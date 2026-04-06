@@ -292,6 +292,11 @@
             <div class="nav-btn" data-p="choke"><span class="nav-icon">&#9879;</span><span>Dual Choke</span></div>
             <div class="nav-btn" data-p="chokeflow"><span class="nav-icon">&#9673;</span><span>Choke Flow Rates</span></div>
             <div class="nav-btn" data-p="sep"><span class="nav-icon">&#9644;</span><span>Separator Retention</span></div>
+            <div class="nav-btn" data-p="bottomsup"><span class="nav-icon">&#8987;</span><span>Bottoms Up Time</span></div>
+            <div class="nav-btn" data-p="solgor"><span class="nav-icon">&#9683;</span><span>Solution GOR</span></div>
+            <div class="nav-btn" data-p="oilgas"><span class="nav-icon">&#9878;</span><span>Oil & Gas Rate</span></div>
+            <div class="nav-btn" data-p="mcfshr"><span class="nav-icon">&#9632;</span><span>MCF & Shrinkage %</span></div>
+            <div class="nav-btn" data-p="casing"><span class="nav-icon">&#9674;</span><span>Casing & Tubing</span></div>
         </div>
         <div class="nav-group">
             <div class="nav-group-label">Production Analysis</div>
@@ -303,6 +308,20 @@
             <div class="nav-btn" data-p="flare"><span class="nav-icon">&#128293;</span><span>Flare Simulation</span></div>
             <div class="nav-btn" data-p="prv"><span class="nav-icon">&#9651;</span><span>PRV / Relief Sizing</span></div>
             <div class="nav-btn" data-p="vessel"><span class="nav-icon">&#9641;</span><span>Vessel & Pipe</span></div>
+            <div class="nav-btn" data-p="flamearr"><span class="nav-icon">&#9650;</span><span>Flame Arrestor</span></div>
+            <div class="nav-btn" data-p="arc"><span class="nav-icon">&#8635;</span><span>ARC Valve Sizing</span></div>
+        </div>
+        <div class="nav-group">
+            <div class="nav-group-label">Engineering</div>
+            <div class="nav-btn" data-p="pumpsz"><span class="nav-icon">&#9955;</span><span>Pump Sizing</span></div>
+            <div class="nav-btn" data-p="seprate"><span class="nav-icon">&#9638;</span><span>Separator Rating</span></div>
+            <div class="nav-btn" data-p="heater"><span class="nav-icon">&#9832;</span><span>Indirect Heater</span></div>
+            <div class="nav-btn" data-p="pipesz"><span class="nav-icon">&#9472;</span><span>Pipe Sizing</span></div>
+            <div class="nav-btn" data-p="turbmeter"><span class="nav-icon">&#9201;</span><span>Turbine Meter</span></div>
+            <div class="nav-btn" data-p="aircomp"><span class="nav-icon">&#9729;</span><span>Air Compressor</span></div>
+            <div class="nav-btn" data-p="gensz"><span class="nav-icon">&#9889;</span><span>Generator Sizing</span></div>
+            <div class="nav-btn" data-p="cablesz"><span class="nav-icon">&#9866;</span><span>Cable Sizing</span></div>
+            <div class="nav-btn" data-p="vdrop"><span class="nav-icon">&#8615;</span><span>Voltage Drop</span></div>
         </div>
         <div class="nav-group">
             <div class="nav-group-label">Field Calculations</div>
@@ -312,6 +331,8 @@
             <div class="nav-btn" data-p="elec"><span class="nav-icon">&#9889;</span><span>Electrical & Pumps</span></div>
             <div class="nav-btn" data-p="chem"><span class="nav-icon">&#9883;</span><span>Chemical & Dosage</span></div>
             <div class="nav-btn" data-p="units"><span class="nav-icon">&#8644;</span><span>Unit Conversions</span></div>
+            <div class="nav-btn" data-p="chokecnv"><span class="nav-icon">&#8646;</span><span>Choke Conversions</span></div>
+            <div class="nav-btn" data-p="analogsig"><span class="nav-icon">&#8766;</span><span>Analog Signal</span></div>
         </div>
         <div class="sidebar-footer"><strong>H2Oil Engineering</strong>software@h2oil.co.uk</div>
     </div>
@@ -447,7 +468,7 @@ function nav(p) {
 function render() {
     const body = $('pgBody');
     body.innerHTML = '';
-    const pages = { home: renderHome, aga3: renderAGA3, units: renderUnits, choke: renderChoke, flare: renderFlare, dca: renderDCA, pta: renderPTA, prv: renderPRV, chokeflow: renderChokeFlow, gascalc: renderGasCalc, fluid: renderFluid, tank: renderTank, vessel: renderVessel, elec: renderElec, chem: renderChem, sep: renderSep };
+    const pages = { home: renderHome, aga3: renderAGA3, units: renderUnits, choke: renderChoke, flare: renderFlare, dca: renderDCA, pta: renderPTA, prv: renderPRV, chokeflow: renderChokeFlow, gascalc: renderGasCalc, fluid: renderFluid, tank: renderTank, vessel: renderVessel, elec: renderElec, chem: renderChem, sep: renderSep, bottomsup: renderBottomsUp, solgor: renderSolGOR, oilgas: renderOilGas, mcfshr: renderMCFShr, casing: renderCasing, chokecnv: renderChokeCnv, analogsig: renderAnalogSig, pumpsz: renderPumpSz, seprate: renderSepRate, heater: renderHeater, pipesz: renderPipeSz, turbmeter: renderTurbMeter, aircomp: renderAirComp, gensz: renderGenSz, cablesz: renderCableSz, vdrop: renderVDrop, flamearr: renderFlameArr, arc: renderARC };
     if (pages[page]) pages[page](body);
 }
 
@@ -546,6 +567,24 @@ function renderHome(body) {
         { id:'elec', icon:'&#9889;', badge:'Utility', bc:'dc-b-blue', title:'Electrical & Pumps', desc:'3-phase motor current, kW/HP conversion, and mud pump output calculations.' },
         { id:'chem', icon:'&#9883;', badge:'Production', bc:'dc-b-green', title:'Chemical & Dosage', desc:'Chemical injection rate calculator and argentometric chloride determination.' },
         { id:'sep', icon:'&#9644;', badge:'Production', bc:'dc-b-green', title:'Separator Retention', desc:'Estimate retention time in separator based on capacity, fluid level, and flow rate.' },
+        { id:'bottomsup', icon:'&#8987;', badge:'Well Testing', bc:'dc-b-green', title:'Bottoms Up Time', desc:'Calculate circulation time for fluid returns based on flow rate and tubing volume.' },
+        { id:'solgor', icon:'&#9683;', badge:'Reservoir', bc:'dc-b-blue', title:'Solution GOR', desc:'Standing and Vasquez & Beggs correlations for solution gas-oil ratio estimation.' },
+        { id:'oilgas', icon:'&#9878;', badge:'Well Testing', bc:'dc-b-green', title:'Oil & Gas Rate + GOR', desc:'Combined oil and gas rate calculation with VCF correction, GOR, and condensate ratio.' },
+        { id:'mcfshr', icon:'&#9632;', badge:'Well Testing', bc:'dc-b-green', title:'MCF & Shrinkage %', desc:'Meter Correction Factor and shrinkage percentage from turbine meter and surge tank readings.' },
+        { id:'casing', icon:'&#9674;', badge:'Well Testing', bc:'dc-b-green', title:'Casing & Tubing', desc:'Casing and tubing dimensions, annular capacity, and total volume calculations.' },
+        { id:'chokecnv', icon:'&#8646;', badge:'Utility', bc:'dc-b-blue', title:'Choke Conversions', desc:'Convert choke sizes between 64ths, decimal inches, and millimeters.' },
+        { id:'analogsig', icon:'&#8766;', badge:'Utility', bc:'dc-b-blue', title:'Analog Signal', desc:'Convert between 4-20 mA, 0-10 V, and process values for instrumentation.' },
+        { id:'pumpsz', icon:'&#9955;', badge:'Engineering', bc:'dc-b-orange', title:'Pump Sizing', desc:'Hydraulic pump sizing with TDH, NPSH analysis, power calculation, and pump type selection.' },
+        { id:'seprate', icon:'&#9638;', badge:'Engineering', bc:'dc-b-orange', title:'Separator Rating', desc:'Souders-Brown gas capacity check and liquid retention time verification.' },
+        { id:'heater', icon:'&#9832;', badge:'Engineering', bc:'dc-b-orange', title:'Indirect Heater', desc:'Water bath heater duty calculation, fuel consumption, and heater category selection.' },
+        { id:'pipesz', icon:'&#9472;', badge:'Engineering', bc:'dc-b-orange', title:'Pipe Sizing', desc:'Pipe selection based on velocity criteria and Darcy-Weisbach pressure drop.' },
+        { id:'flamearr', icon:'&#9650;', badge:'Safety', bc:'dc-b-orange', title:'Flame Arrestor', desc:'Flame arrestor NPS selection based on flow capacity and allowable pressure drop.' },
+        { id:'arc', icon:'&#8635;', badge:'Safety', bc:'dc-b-orange', title:'ARC Valve Sizing', desc:'Automatic recirculation valve sizing for centrifugal pump minimum flow protection.' },
+        { id:'turbmeter', icon:'&#9201;', badge:'Engineering', bc:'dc-b-orange', title:'Turbine Meter', desc:'Liquid turbine meter sizing with Reynolds number and cavitation checks per API MPMS 5.3.' },
+        { id:'aircomp', icon:'&#9729;', badge:'Engineering', bc:'dc-b-blue', title:'Air Compressor', desc:'Compressor type selection and receiver sizing for instrument and utility air systems.' },
+        { id:'gensz', icon:'&#9889;', badge:'Engineering', bc:'dc-b-orange', title:'Generator Sizing', desc:'Generator kVA rating based on running loads and worst-case motor starting scenarios.' },
+        { id:'cablesz', icon:'&#9866;', badge:'Electrical', bc:'dc-b-blue', title:'Cable Sizing', desc:'Copper cable selection based on ampacity derating and voltage drop limits.' },
+        { id:'vdrop', icon:'&#8615;', badge:'Electrical', bc:'dc-b-blue', title:'Voltage Drop', desc:'Verify voltage drop for copper or aluminium cable installations with status assessment.' },
     ];
     mods.forEach(m => {
         const c = el('div','dash-card',`<div class="dc-icon">${m.icon}</div><span class="dc-badge ${m.bc}">${m.badge}</span><h3>${m.title}</h3><p>${m.desc}</p>`);
@@ -3862,6 +3901,995 @@ window.calcSepRetention=function(){
         <div class="rrow"><span class="rl">Retention Time</span><span class="rv" style="color:${warn}">${mins}:${secs.toString().padStart(2,'0')} (mm:ss)</span></div>
         <div class="rrow"><span class="rl">Retention Time</span><span class="rv" style="color:${warn}">${fmt(retMin,2)} minutes</span></div>
         <div class="rrow"><span class="rl">Status</span><span class="rv" style="color:${warn}">${retMin<1?'CRITICALLY LOW':retMin<3?'LOW — May be insufficient':'ADEQUATE'}</span></div>
+    </div>`;
+};
+
+// ══════════════════════════════════════════════
+// NEW CALCULATORS — PB-Handbook formulas
+// ══════════════════════════════════════════════
+
+// ── Bottoms Up Time ──
+function renderBottomsUp(body){
+    $('pgTitle').textContent='Bottoms Up Time Estimation';
+    $('pgSub').textContent='Calculate time for fluid returns based on flow rate and tubing volume';
+    body.innerHTML=`<div class="cols-2"><div>
+      <div class="card"><div class="card-title">Bottoms Up Calculator</div>
+        <div class="fg">
+          <div class="fg-item"><label>Flow Rate (BPD)</label><input type="number" id="bu_q" value="5000"></div>
+          <div class="fg-item"><label>Tubing Volume (bbls)</label><input type="number" id="bu_vol" value="25" step="0.1"></div>
+        </div>
+        <div class="btn-row"><button class="btn btn-primary" onclick="calcBottomsUp()">Calculate</button></div>
+        <div id="bu_res"></div>
+      </div></div>
+      <div><div class="card"><div class="card-title">Notes</div>
+        <div class="info-bar">Bottoms up time is the time required to circulate fluid from the bottom of the well to the surface. It is critical for well testing operations to determine when representative samples arrive at surface.</div>
+      </div></div></div>`;
+    loadInputs('bottomsup',['bu_q','bu_vol']);
+}
+window.calcBottomsUp=function(){
+    const Q=parseFloat($('bu_q').value),vol=parseFloat($('bu_vol').value);
+    saveInputs('bottomsup',['bu_q','bu_vol']);
+    if(Q<=0){$('bu_res').innerHTML='<div class="val-error">Flow rate must be > 0</div>';return;}
+    const bpm=Q/1440;
+    const totalMins=vol/bpm;
+    const hrs=Math.floor(totalMins/60),mins=Math.floor(totalMins%60),secs=Math.round((totalMins-Math.floor(totalMins))*60);
+    $('bu_res').innerHTML=`<div class="rbox" style="margin-top:12px"><div class="rbox-title">Results</div>
+        <div class="rrow"><span class="rl">Flow Rate</span><span class="rv">${fmt(bpm,4)} bbl/min</span></div>
+        <div class="rrow"><span class="rl">Bottoms Up Time</span><span class="rv">${fmt(totalMins,2)} minutes</span></div>
+        <div class="rrow"><span class="rl">Time (HH:MM:SS)</span><span class="rv">${hrs}:${mins.toString().padStart(2,'0')}:${secs.toString().padStart(2,'0')}</span></div>
+    </div>`;
+};
+
+// ── Solution GOR ──
+function renderSolGOR(body){
+    $('pgTitle').textContent='Solution GOR';
+    $('pgSub').textContent='Standing and Vasquez & Beggs correlations for solution gas-oil ratio';
+    body.innerHTML=`<div class="cols-2"><div>
+      <div class="card"><div class="card-title">Solution GOR Calculator</div>
+        <div class="fg">
+          <div class="fg-item"><label>Separator Pressure (psig)</label><input type="number" id="sg_p" value="500"></div>
+          <div class="fg-item"><label>Oil Line Temperature (&deg;F)</label><input type="number" id="sg_t" value="150"></div>
+          <div class="fg-item"><label>Gas Gravity (air=1)</label><input type="number" id="sg_gg" value="0.75" step="0.01"></div>
+          <div class="fg-item"><label>Oil API Gravity (&deg;API @ 60&deg;F)</label><input type="number" id="sg_api" value="35" step="0.1"></div>
+        </div>
+        <div class="btn-row"><button class="btn btn-primary" onclick="calcSolGOR()">Calculate</button></div>
+        <div id="sg_res"></div>
+      </div></div>
+      <div><div class="card"><div class="card-title">Correlations</div>
+        <div class="info-bar" style="margin-bottom:8px"><b>Standing (1947):</b> Based on 105 experimentally determined bubble points from 22 California crude oil systems.</div>
+        <div class="info-bar"><b>Vasquez & Beggs (1980):</b> Based on 600+ PVT measurements. Uses API-dependent coefficients (API &le; 30 vs &gt; 30).</div>
+      </div></div></div>`;
+    loadInputs('solgor',['sg_p','sg_t','sg_gg','sg_api']);
+}
+window.calcSolGOR=function(){
+    const P=parseFloat($('sg_p').value),T=parseFloat($('sg_t').value),gg=parseFloat($('sg_gg').value),API=parseFloat($('sg_api').value);
+    saveInputs('solgor',['sg_p','sg_t','sg_gg','sg_api']);
+    const errs=[];
+    if(isNaN(P)||P<=0) errs.push('Pressure must be > 0');
+    if(isNaN(gg)||gg<=0) errs.push('Gas gravity must be > 0');
+    if(isNaN(API)||API<=0) errs.push('API gravity must be > 0');
+    if(errs.length){$('sg_res').innerHTML=errs.map(e=>'<div class="val-error">'+e+'</div>').join('');return;}
+    // Standing
+    const yg=0.00091*T-0.0125*API;
+    const Rs_standing=gg*Math.pow((P+15)/(18*Math.pow(10,yg)),1.204);
+    // Vasquez & Beggs
+    let C1,C2,C3;
+    if(API<=30){C1=0.0362;C2=1.0937;C3=25.724;}else{C1=0.0178;C2=1.1870;C3=23.931;}
+    const Rs_vb=C1*gg*Math.pow(P+15,C2)*Math.exp(C3*API/(T+460));
+    $('sg_res').innerHTML=`<div class="rbox" style="margin-top:12px"><div class="rbox-title">Solution GOR Results</div>
+        <div class="rrow"><span class="rl">Rs (Standing)</span><span class="rv">${fmt(Rs_standing,1)} scf/stbbl</span></div>
+        <div class="rrow"><span class="rl">Rs (Vasquez & Beggs)</span><span class="rv">${fmt(Rs_vb,1)} scf/stbbl</span></div>
+        <div class="rrow"><span class="rl">API Bracket</span><span class="rv">${API<=30?'&le; 30 (Heavy/Medium)':'&gt; 30 (Light)'}</span></div>
+    </div>`;
+};
+
+// ── Oil & Gas Rate + GOR/CGR ──
+function renderOilGas(body){
+    $('pgTitle').textContent='Oil & Gas Rate + GOR/CGR';
+    $('pgSub').textContent='Combined oil and gas rate calculation with GOR and condensate ratio';
+    body.innerHTML=`<div class="cols-2"><div>
+      <div class="card"><div class="card-title">Oil Rate</div><div class="fg">
+        <div class="fg-item"><label>Calc Interval (min)</label><input type="number" id="og_int" value="60"></div>
+        <div class="fg-item"><label>API Gravity</label><input type="number" id="og_api" value="35" step="0.1"></div>
+        <div class="fg-item"><label>Hydrometer Temp (&deg;F)</label><input type="number" id="og_ht" value="80"></div>
+        <div class="fg-item"><label>Previous Meter (bbls)</label><input type="number" id="og_m0" value="1000" step="0.01"></div>
+        <div class="fg-item"><label>Current Meter (bbls)</label><input type="number" id="og_m1" value="1004.5" step="0.01"></div>
+        <div class="fg-item"><label>Oil Line Temp (&deg;F)</label><input type="number" id="og_olt" value="120"></div>
+        <div class="fg-item"><label>BS&amp;W (%)</label><input type="number" id="og_bsw" value="2" step="0.1"></div>
+        <div class="fg-item"><label>Meter Factor</label><input type="number" id="og_mf" value="1.0" step="0.001"></div>
+        <div class="fg-item"><label>Shrinkage Factor</label><input type="number" id="og_sf" value="0.95" step="0.001"></div>
+      </div></div>
+      <div class="card"><div class="card-title">Gas Rate</div><div class="fg">
+        <div class="fg-item"><label>Meter Run (in)</label><input type="number" id="og_run" value="4" step="0.001"></div>
+        <div class="fg-item"><label>Orifice Plate (in)</label><input type="number" id="og_plate" value="2" step="0.001"></div>
+        <div class="fg-item"><label>Sep Pressure (psig)</label><input type="number" id="og_sp" value="500"></div>
+        <div class="fg-item"><label>Diff Pressure (inH2O)</label><input type="number" id="og_dp" value="50"></div>
+        <div class="fg-item"><label>Gas Gravity (air=1)</label><input type="number" id="og_gg" value="0.75" step="0.01"></div>
+        <div class="fg-item"><label>Gas Temp (&deg;F)</label><input type="number" id="og_gt" value="100"></div>
+      </div></div>
+      <div class="btn-row"><button class="btn btn-primary" onclick="calcOilGas()">Calculate</button></div>
+      <div id="og_res"></div>
+    </div><div>
+      <div class="card"><div class="card-title">How It Works</div>
+        <div class="info-bar">Oil rate uses VCF (Volume Correction Factor) per ASTM D1250 with API temperature correction. Gas rate uses AGA-3 orifice metering with discharge coefficient, expansion factor, and supercompressibility. GOR = Gas Rate / Oil Rate. CGR = Oil Rate / Gas Rate.</div>
+      </div>
+    </div></div>`;
+    loadInputs('oilgas',['og_int','og_api','og_ht','og_m0','og_m1','og_olt','og_bsw','og_mf','og_sf','og_run','og_plate','og_sp','og_dp','og_gg','og_gt']);
+}
+window.calcOilGas=function(){
+    const ids=['og_int','og_api','og_ht','og_m0','og_m1','og_olt','og_bsw','og_mf','og_sf','og_run','og_plate','og_sp','og_dp','og_gg','og_gt'];
+    saveInputs('oilgas',ids);
+    const v=ids.map(id=>parseFloat($(id).value));
+    const [interval,API,hydT,m0,m1,oilT,bsw,MF,SF,run,plate,sepP,diffP,gasGrav,gasT]=v;
+    // Oil rate
+    const Z7=1440/interval;
+    const U6=141360.198/(131.5+API);
+    const V6=1-0.00001278*(hydT-60)-0.0000000062*Math.pow(hydT-60,2);
+    const W6=U6*V6;
+    const X6=341.0957/(W6*W6);
+    const Y6=X6*(oilT-60);
+    const Z6=0.8*Y6;
+    const AA6=Y6*Z6;
+    const AB6=-(Y6+AA6);
+    const AC6=Math.exp(AB6);
+    const AD6=W6/AC6;
+    const AE6=141360.198/AD6-131.5;
+    const U7=AE6/1000,V7=oilT/1000;
+    let W7=1.019803+0.16333*U7+1.88499*U7*U7-0.3341*V7+0.068*V7*V7;
+    let X7=W7-2.65899*U7*V7-30.39381*U7*U7*V7-1.05185*U7*V7*V7;
+    const VCF=X7-17.25759*U7*U7*V7*V7;
+    const netBSW=1-bsw/100;
+    const meterDiff=m1-m0;
+    const corrVol=MF*SF*meterDiff*netBSW*VCF;
+    const oilRate=corrVol*Z7;
+    // Gas rate (simplified AGA-3)
+    const beta=plate/run;
+    const Pabs=sepP+14.73;
+    const Cd=0.5959+0.0312*Math.pow(beta,2.1)-0.184*Math.pow(beta,8)+(beta>0.5?0.09*Math.pow(beta,4)/(1-Math.pow(beta,4))*0.4333:0);
+    const x=diffP/(27.7*sepP);
+    const Y1=Math.sqrt(1+x)-(0.41+0.35*Math.pow(x,4))*x/(1.3*Math.sqrt(1+x));
+    const Tb=520,Pb=14.73;
+    const Fpb=14.73/Pb,Ftb=(gasT+460)/Tb;
+    const Fg=1/Math.sqrt(gasGrav);
+    const Ftf=1/Math.sqrt(gasT+460);
+    let Fpv;
+    if(gasGrav<=0.75){Fpv=1+0.00026*(Pabs-14.73);}else{Fpv=1+0.00035*(Pabs-14.73);}
+    const hw=diffP;
+    const Qgas=Cd*Y1*Math.pow(plate,2)*Math.sqrt(hw*Pabs)*Fpb*Ftb*Fg*Ftf*Fpv*21.827;
+    const gasRate=Qgas/1000; // mscfd
+    // GOR / CGR
+    const GOR=oilRate>0?(gasRate*1000)/oilRate:0;
+    const CGR=gasRate>0?oilRate/(gasRate/1000):0;
+    $('og_res').innerHTML=`<div class="rbox" style="margin-top:12px"><div class="rbox-title">Combined Results</div>
+        <div class="rrow"><span class="rl">Oil Rate</span><span class="rv">${fmt(oilRate,1)} BPD</span></div>
+        <div class="rrow"><span class="rl">VCF</span><span class="rv">${fmt(VCF,6)}</span></div>
+        <div class="rrow"><span class="rl">Gas Rate</span><span class="rv">${fmt(gasRate,3)} MSCFD</span></div>
+        <div class="rrow"><span class="rl">GOR</span><span class="rv">${fmt(GOR,0)} scf/bbl</span></div>
+        <div class="rrow"><span class="rl">CGR</span><span class="rv">${fmt(CGR,1)} bbl/MMscf</span></div>
+    </div>`;
+};
+
+// ── MCF & Shrinkage % ──
+function renderMCFShr(body){
+    $('pgTitle').textContent='MCF & Shrinkage % Calculation';
+    $('pgSub').textContent='Meter Correction Factor and Shrinkage percentage from turbine meter and surge tank readings';
+    body.innerHTML=`<div class="cols-2"><div>
+      <div class="card"><div class="card-title">MCF & Shrinkage Calculator</div><div class="fg">
+        <div class="fg-item"><label>Turbine Meter Initial</label><input type="number" id="ms_ti" value="1000" step="0.001"></div>
+        <div class="fg-item"><label>Turbine Meter Final</label><input type="number" id="ms_tf" value="1010" step="0.001"></div>
+        <div class="fg-item"><label>Surge Tank Initial Level</label><input type="number" id="ms_si" value="50" step="0.01"></div>
+        <div class="fg-item"><label>Surge Tank Final Level</label><input type="number" id="ms_sf" value="60" step="0.01"></div>
+        <div class="fg-item"><label>Surge Tank Stabilized Level</label><input type="number" id="ms_ss" value="58.5" step="0.01"></div>
+      </div>
+      <div class="btn-row"><button class="btn btn-primary" onclick="calcMCFShr()">Calculate</button></div>
+      <div id="ms_res"></div>
+    </div></div>
+    <div><div class="card"><div class="card-title">Definitions</div>
+      <div class="info-bar" style="margin-bottom:8px"><b>MCF (Meter Correction Factor):</b> Ratio of actual volume (surge tank) to metered volume. Corrects for meter inaccuracy.</div>
+      <div class="info-bar"><b>Shrinkage %:</b> Percentage volume reduction when gas comes out of solution as oil cools and pressure drops to stock tank conditions.</div>
+    </div></div></div>`;
+    loadInputs('mcfshr',['ms_ti','ms_tf','ms_si','ms_sf','ms_ss']);
+}
+window.calcMCFShr=function(){
+    saveInputs('mcfshr',['ms_ti','ms_tf','ms_si','ms_sf','ms_ss']);
+    const ti=parseFloat($('ms_ti').value),tf=parseFloat($('ms_tf').value);
+    const si=parseFloat($('ms_si').value),sf=parseFloat($('ms_sf').value),ss=parseFloat($('ms_ss').value);
+    const metered=tf-ti;
+    if(metered<=0){$('ms_res').innerHTML='<div class="val-error">Final meter reading must be > initial</div>';return;}
+    const surgeMoved=sf-si;
+    const stabMoved=ss-si;
+    const MCF=surgeMoved/metered;
+    const SHR=surgeMoved>0?(1-stabMoved/surgeMoved)*100:0;
+    $('ms_res').innerHTML=`<div class="rbox" style="margin-top:12px"><div class="rbox-title">Results</div>
+        <div class="rrow"><span class="rl">Metered Volume</span><span class="rv">${fmt(metered,3)}</span></div>
+        <div class="rrow"><span class="rl">Surge Tank Volume Moved</span><span class="rv">${fmt(surgeMoved,3)}</span></div>
+        <div class="rrow"><span class="rl">MCF</span><span class="rv">${fmt(MCF,6)}</span></div>
+        <div class="rrow"><span class="rl">Shrinkage %</span><span class="rv">${fmt(SHR,4)} %</span></div>
+    </div>`;
+};
+
+// ── Casing & Tubing Size ──
+const casingData=[
+    {od:4.5,wt:9.5,id:4.09},{od:4.5,wt:11.6,id:3.958},{od:4.5,wt:13.5,id:3.826},
+    {od:5,wt:11.5,id:4.56},{od:5,wt:15,id:4.408},{od:5,wt:18,id:4.276},
+    {od:5.5,wt:14,id:5.012},{od:5.5,wt:17,id:4.892},{od:5.5,wt:20,id:4.778},{od:5.5,wt:23,id:4.67},
+    {od:7,wt:17,id:6.538},{od:7,wt:20,id:6.456},{od:7,wt:23,id:6.366},{od:7,wt:26,id:6.276},{od:7,wt:29,id:6.184},{od:7,wt:32,id:6.094},
+    {od:7.625,wt:20,id:7.125},{od:7.625,wt:24,id:7.025},{od:7.625,wt:26.4,id:6.969},{od:7.625,wt:29.7,id:6.875},
+    {od:9.625,wt:32.3,id:9.001},{od:9.625,wt:36,id:8.921},{od:9.625,wt:40,id:8.835},{od:9.625,wt:43.5,id:8.755},{od:9.625,wt:47,id:8.681},
+    {od:10.75,wt:32.75,id:10.192},{od:10.75,wt:40.5,id:10.05},{od:10.75,wt:45.5,id:9.95},
+    {od:13.375,wt:48,id:12.715},{od:13.375,wt:54.5,id:12.615},{od:13.375,wt:61,id:12.515},{od:13.375,wt:68,id:12.415},
+];
+const tubingData=[
+    {od:2.375,wt:4.7,id:1.995},{od:2.375,wt:5.95,id:1.867},
+    {od:2.875,wt:6.5,id:2.441},{od:2.875,wt:8.7,id:2.259},
+    {od:3.5,wt:7.7,id:3.068},{od:3.5,wt:9.3,id:2.992},{od:3.5,wt:12.95,id:2.75},
+    {od:4.5,wt:9.5,id:4.09},{od:4.5,wt:12.75,id:3.958},
+];
+function renderCasing(body){
+    $('pgTitle').textContent='Casing & Tubing Size';
+    $('pgSub').textContent='Casing/tubing dimensions and annular capacity calculations';
+    const cOpts=casingData.map((c,i)=>`<option value="${i}">${c.od}" OD — ${c.wt} lb/ft (ID: ${c.id}")</option>`).join('');
+    const tOpts=tubingData.map((t,i)=>`<option value="${i}">${t.od}" OD — ${t.wt} lb/ft (ID: ${t.id}")</option>`).join('');
+    body.innerHTML=`<div class="cols-2"><div>
+      <div class="card"><div class="card-title">Casing & Tubing Selection</div><div class="fg">
+        <div class="fg-item"><label>Casing</label><select id="ct_cas">${cOpts}</select></div>
+        <div class="fg-item"><label>Tubing</label><select id="ct_tub">${tOpts}</select></div>
+        <div class="fg-item"><label>Casing Length (ft)</label><input type="number" id="ct_cl" value="10000"></div>
+        <div class="fg-item"><label>Tubing Length (ft)</label><input type="number" id="ct_tl" value="9800"></div>
+      </div>
+      <div class="btn-row"><button class="btn btn-primary" onclick="calcCasing()">Calculate</button></div>
+      <div id="ct_res"></div>
+    </div></div>
+    <div><div class="card"><div class="card-title">Reference</div>
+      <div class="info-bar">Annular capacity = (Casing ID&sup2; &minus; Tubing OD&sup2;) &times; 0.0009714 bbl/ft</div>
+    </div></div></div>`;
+    loadInputs('casing',['ct_cas','ct_tub','ct_cl','ct_tl']);
+}
+window.calcCasing=function(){
+    saveInputs('casing',['ct_cas','ct_tub','ct_cl','ct_tl']);
+    const c=casingData[parseInt($('ct_cas').value)];
+    const t=tubingData[parseInt($('ct_tub').value)];
+    const cl=parseFloat($('ct_cl').value),tl=parseFloat($('ct_tl').value);
+    const casBblFt=c.id*c.id*0.0009714;
+    const tubBblFt=t.id*t.id*0.0009714;
+    const annBblFt=(c.id*c.id-t.od*t.od)*0.0009714;
+    const casVol=casBblFt*cl,tubVol=tubBblFt*tl,annVol=annBblFt*Math.min(cl,tl);
+    $('ct_res').innerHTML=`<div class="rbox" style="margin-top:12px"><div class="rbox-title">Casing: ${c.od}" OD, ${c.wt} lb/ft</div>
+        <div class="rrow"><span class="rl">ID</span><span class="rv">${c.id}"</span></div>
+        <div class="rrow"><span class="rl">Capacity</span><span class="rv">${fmt(casBblFt,6)} bbl/ft</span></div>
+        <div class="rrow"><span class="rl">Total Volume</span><span class="rv">${fmt(casVol,2)} bbls</span></div>
+    </div>
+    <div class="rbox" style="margin-top:8px"><div class="rbox-title">Tubing: ${t.od}" OD, ${t.wt} lb/ft</div>
+        <div class="rrow"><span class="rl">ID</span><span class="rv">${t.id}"</span></div>
+        <div class="rrow"><span class="rl">Capacity</span><span class="rv">${fmt(tubBblFt,6)} bbl/ft</span></div>
+        <div class="rrow"><span class="rl">Total Volume</span><span class="rv">${fmt(tubVol,2)} bbls</span></div>
+    </div>
+    <div class="rbox" style="margin-top:8px"><div class="rbox-title">Annular Space</div>
+        <div class="rrow"><span class="rl">Annular Capacity</span><span class="rv">${fmt(annBblFt,6)} bbl/ft</span></div>
+        <div class="rrow"><span class="rl">Annular Capacity</span><span class="rv">${fmt(annBblFt*0.15898683293762*3.281,6)} m&sup3;/m</span></div>
+        <div class="rrow"><span class="rl">Total Annular Volume</span><span class="rv">${fmt(annVol,2)} bbls</span></div>
+    </div>`;
+};
+
+// ── Choke Size Conversions ──
+function renderChokeCnv(body){
+    $('pgTitle').textContent='Choke Size Conversions';
+    $('pgSub').textContent='Convert between 64ths, decimal inches, and millimeters';
+    body.innerHTML=`<div class="cols-2"><div>
+      <div class="card"><div class="card-title">Enter Any One Value</div><div class="fg">
+        <div class="fg-item"><label>Size (64ths)</label><input type="number" id="cc_64" step="0.01" oninput="calcChokeCnv('64')"></div>
+        <div class="fg-item"><label>Decimal Inches</label><input type="number" id="cc_in" step="0.0001" oninput="calcChokeCnv('in')"></div>
+        <div class="fg-item"><label>Millimeters</label><input type="number" id="cc_mm" step="0.01" oninput="calcChokeCnv('mm')"></div>
+      </div></div></div>
+      <div><div class="card"><div class="card-title">Common Sizes</div>
+        <table class="dtable"><tr><th>64ths</th><th>Inches</th><th>mm</th></tr>
+        ${[8,12,16,20,24,28,32,36,40,48,56,64].map(s=>`<tr><td>${s}/64</td><td>${(s/64).toFixed(4)}</td><td>${(s/64*25.4).toFixed(2)}</td></tr>`).join('')}
+        </table>
+      </div></div></div>`;
+}
+window.calcChokeCnv=function(src){
+    let inches;
+    if(src==='64') inches=parseFloat($('cc_64').value)/64;
+    else if(src==='in') inches=parseFloat($('cc_in').value);
+    else inches=parseFloat($('cc_mm').value)/25.4;
+    if(isNaN(inches)) return;
+    if(src!=='64') $('cc_64').value=(inches*64).toFixed(2);
+    if(src!=='in') $('cc_in').value=inches.toFixed(4);
+    if(src!=='mm') $('cc_mm').value=(inches*25.4).toFixed(2);
+};
+
+// ── Analog Signal Conversion ──
+function renderAnalogSig(body){
+    $('pgTitle').textContent='Analog Signal Conversion';
+    $('pgSub').textContent='Convert between 4-20mA, 0-10V, and process value';
+    body.innerHTML=`<div class="cols-2"><div>
+      <div class="card"><div class="card-title">Signal Converter</div><div class="fg">
+        <div class="fg-item"><label>Input Type</label><select id="as_type"><option value="mA">mA (4-20)</option><option value="V">Voltage (0-10V)</option><option value="PV">Process Value</option></select></div>
+        <div class="fg-item"><label>Input Value</label><input type="number" id="as_val" value="12" step="0.01"></div>
+        <div class="fg-item"><label>Lo Range</label><input type="number" id="as_lo" value="0" step="0.01"></div>
+        <div class="fg-item"><label>Hi Range</label><input type="number" id="as_hi" value="100" step="0.01"></div>
+      </div>
+      <div class="btn-row"><button class="btn btn-primary" onclick="calcAnalogSig()">Calculate</button></div>
+      <div id="as_res"></div>
+    </div></div>
+    <div><div class="card"><div class="card-title">Signal Ranges</div>
+      <div class="info-bar" style="margin-bottom:8px"><b>4-20 mA:</b> Industry standard current loop. 4 mA = 0%, 20 mA = 100%.</div>
+      <div class="info-bar" style="margin-bottom:8px"><b>0-10 V:</b> Voltage signal. 0 V = 0%, 10 V = 100%.</div>
+      <div class="info-bar"><b>Process Value (PV):</b> Scaled engineering units (e.g., PSI, &deg;C, BPD).</div>
+    </div></div></div>`;
+    loadInputs('analogsig',['as_type','as_val','as_lo','as_hi']);
+}
+window.calcAnalogSig=function(){
+    saveInputs('analogsig',['as_type','as_val','as_lo','as_hi']);
+    const type=$('as_type').value,val=parseFloat($('as_val').value),lo=parseFloat($('as_lo').value),hi=parseFloat($('as_hi').value);
+    let mA,V,PV,pct;
+    if(type==='mA'){pct=(val-4)/16;PV=lo+pct*(hi-lo);mA=val;V=pct*10;}
+    else if(type==='V'){pct=val/10;PV=lo+pct*(hi-lo);mA=4+pct*16;V=val;}
+    else{PV=val;pct=(hi-lo)!==0?(val-lo)/(hi-lo):0;mA=4+pct*16;V=pct*10;}
+    $('as_res').innerHTML=`<div class="rbox" style="margin-top:12px"><div class="rbox-title">Conversion Results</div>
+        <div class="rrow"><span class="rl">Current (mA)</span><span class="rv">${fmt(mA,3)} mA</span></div>
+        <div class="rrow"><span class="rl">Voltage</span><span class="rv">${fmt(V,3)} V</span></div>
+        <div class="rrow"><span class="rl">Process Value</span><span class="rv">${fmt(PV,3)}</span></div>
+        <div class="rrow"><span class="rl">Percentage</span><span class="rv">${fmt(pct*100,2)} %</span></div>
+    </div>`;
+};
+
+// ── Pump Sizing ──
+function renderPumpSz(body){
+    $('pgTitle').textContent='Pump Size Estimation';
+    $('pgSub').textContent='Hydraulic pump sizing with NPSH analysis and power calculation';
+    body.innerHTML=`<div class="cols-2"><div>
+      <div class="card"><div class="card-title">Process Conditions</div><div class="fg">
+        <div class="fg-item"><label>Flow Rate (BPD)</label><input type="number" id="ps_q" value="5000"></div>
+        <div class="fg-item"><label>Liquid Type</label><select id="ps_liq"><option value="oil">Crude Oil</option><option value="water">Water</option><option value="diesel">Diesel</option><option value="glycol">Glycol</option></select></div>
+        <div class="fg-item"><label>API Gravity (if oil)</label><input type="number" id="ps_api" value="35" step="0.1"></div>
+        <div class="fg-item"><label>Viscosity (cP)</label><input type="number" id="ps_mu" value="5" step="0.1"></div>
+        <div class="fg-item"><label>Temperature (&deg;C)</label><input type="number" id="ps_t" value="40"></div>
+      </div></div>
+      <div class="card"><div class="card-title">System</div><div class="fg">
+        <div class="fg-item"><label>Suction Pressure (psig)</label><input type="number" id="ps_ps" value="50"></div>
+        <div class="fg-item"><label>Discharge Pressure (psig)</label><input type="number" id="ps_pd" value="300"></div>
+        <div class="fg-item"><label>Static Head - Suction (m)</label><input type="number" id="ps_hs" value="2" step="0.1"></div>
+        <div class="fg-item"><label>Static Head - Discharge (m)</label><input type="number" id="ps_hd" value="10" step="0.1"></div>
+        <div class="fg-item"><label>Suction Pipe Length (m)</label><input type="number" id="ps_ls" value="20"></div>
+        <div class="fg-item"><label>Discharge Pipe Length (m)</label><input type="number" id="ps_ld" value="100"></div>
+        <div class="fg-item"><label>Pipe Size (in)</label><select id="ps_pipe"><option value="2">2"</option><option value="3" selected>3"</option><option value="4">4"</option><option value="6">6"</option></select></div>
+        <div class="fg-item"><label>Pump Efficiency (%)</label><input type="number" id="ps_eff" value="65" min="10" max="95"></div>
+        <div class="fg-item"><label>Vapour Pressure (psia)</label><input type="number" id="ps_vp" value="2" step="0.1"></div>
+      </div></div>
+      <div class="btn-row"><button class="btn btn-primary" onclick="calcPumpSz()">Calculate</button></div>
+      <div id="ps_res"></div>
+    </div><div>
+      <div class="card"><div class="card-title">Pump Selection Guide</div>
+        <table class="dtable"><tr><th>Viscosity</th><th>Pump Type</th></tr>
+        <tr><td>&lt; 100 cP</td><td>Centrifugal</td></tr>
+        <tr><td>100 – 200 cP</td><td>Borderline</td></tr>
+        <tr><td>&gt; 200 cP</td><td>Positive Displacement</td></tr></table>
+      </div>
+    </div></div>`;
+    loadInputs('pumpsz',['ps_q','ps_liq','ps_api','ps_mu','ps_t','ps_ps','ps_pd','ps_hs','ps_hd','ps_ls','ps_ld','ps_pipe','ps_eff','ps_vp']);
+}
+window.calcPumpSz=function(){
+    const ids=['ps_q','ps_liq','ps_api','ps_mu','ps_t','ps_ps','ps_pd','ps_hs','ps_hd','ps_ls','ps_ld','ps_pipe','ps_eff','ps_vp'];
+    saveInputs('pumpsz',ids);
+    const Q_bpd=parseFloat($('ps_q').value),liq=$('ps_liq').value,API=parseFloat($('ps_api').value);
+    const mu=parseFloat($('ps_mu').value)/1000,T=parseFloat($('ps_t').value); // mu in Pa.s
+    const Ps=parseFloat($('ps_ps').value),Pd=parseFloat($('ps_pd').value);
+    const Hs=parseFloat($('ps_hs').value),Hd=parseFloat($('ps_hd').value);
+    const Ls=parseFloat($('ps_ls').value),Ld=parseFloat($('ps_ld').value);
+    const pipeIn=parseFloat($('ps_pipe').value),eff=parseFloat($('ps_eff').value)/100;
+    const Pvap=parseFloat($('ps_vp').value);
+    // Density
+    let rho;
+    if(liq==='oil') rho=141.5/(API+131.5)*999; else if(liq==='water') rho=998; else if(liq==='diesel') rho=830; else rho=1115;
+    // Flow in m3/s
+    const Q_m3s=Q_bpd*0.158987/86400;
+    // Pipe ID (SCH40 approx)
+    const pipeIDs={2:0.0525,3:0.0779,4:0.1023,6:0.1541};
+    const D=pipeIDs[pipeIn]||0.0779;
+    const A=Math.PI*D*D/4;
+    const V=Q_m3s/A;
+    // Reynolds & friction
+    const Re=rho*V*D/(mu||0.001);
+    const eps=0.000045; // steel roughness m
+    let f;
+    if(Re<2300) f=64/Re; else f=0.25/Math.pow(Math.log10(eps/(3.7*D)+5.74/Math.pow(Re,0.9)),2);
+    const fittFactor=1.3; // 30% fittings allowance
+    const hf_suc=f*(Ls/D)*(V*V/(2*9.81))*fittFactor;
+    const hf_dis=f*(Ld/D)*(V*V/(2*9.81))*fittFactor;
+    // Pressure head
+    const Hp=(Pd-Ps)*6894.76/(rho*9.81);
+    // TDH
+    const TDH=(Hd-Hs+Hp+hf_suc+hf_dis)*1.06;
+    // Power
+    const P_kW=rho*9.81*Q_m3s*TDH/(eff*1000);
+    const P_hp=P_kW*1.341;
+    // NPSHa
+    const Ps_head=(Ps+14.7)*6894.76/(rho*9.81);
+    const Pvap_head=Pvap*6894.76/(rho*9.81);
+    const NPSHa=Ps_head+Hs-hf_suc-Pvap_head;
+    // Pump type
+    const mu_cP=mu*1000;
+    const pumpType=mu_cP>200?'Positive Displacement':mu_cP>100?'Borderline — Consider PD':'Centrifugal';
+    const stages=Math.ceil(TDH/50);
+    $('ps_res').innerHTML=`<div class="rbox" style="margin-top:12px"><div class="rbox-title">Pump Sizing Results</div>
+        <div class="rrow"><span class="rl">Flow Rate</span><span class="rv">${fmt(Q_m3s*3600,2)} m&sup3;/h (${fmt(Q_bpd,0)} BPD)</span></div>
+        <div class="rrow"><span class="rl">Fluid Density</span><span class="rv">${fmt(rho,1)} kg/m&sup3;</span></div>
+        <div class="rrow"><span class="rl">Pipe Velocity</span><span class="rv">${fmt(V,2)} m/s</span></div>
+        <div class="rrow"><span class="rl">Reynolds Number</span><span class="rv">${fmt(Re,0)}</span></div>
+        <div class="rrow"><span class="rl">Total Dynamic Head</span><span class="rv">${fmt(TDH,1)} m</span></div>
+        <div class="rrow"><span class="rl">Suction Losses</span><span class="rv">${fmt(hf_suc,2)} m</span></div>
+        <div class="rrow"><span class="rl">Discharge Losses</span><span class="rv">${fmt(hf_dis,2)} m</span></div>
+        <div class="rrow"><span class="rl">Power Required</span><span class="rv">${fmt(P_kW,2)} kW (${fmt(P_hp,2)} HP)</span></div>
+        <div class="rrow"><span class="rl">NPSHa</span><span class="rv">${fmt(NPSHa,2)} m</span></div>
+        <div class="rrow"><span class="rl">Pump Type</span><span class="rv">${pumpType}</span></div>
+        <div class="rrow"><span class="rl">Est. Stages (centrifugal)</span><span class="rv">${stages}</span></div>
+    </div>`;
+};
+
+// ── Separator Rating ──
+function renderSepRate(body){
+    $('pgTitle').textContent='Separator Rating Estimation';
+    $('pgSub').textContent='Souders-Brown gas capacity and liquid retention check';
+    body.innerHTML=`<div class="cols-2"><div>
+      <div class="card"><div class="card-title">Separator Details</div><div class="fg">
+        <div class="fg-item"><label>Orientation</label><select id="sr_orient"><option value="H">Horizontal</option><option value="V">Vertical</option></select></div>
+        <div class="fg-item"><label>Separator ID (inches)</label><input type="number" id="sr_id" value="36"></div>
+        <div class="fg-item"><label>Seam-to-Seam Length (ft)</label><input type="number" id="sr_len" value="10"></div>
+        <div class="fg-item"><label>Normal Liquid Level (%)</label><input type="number" id="sr_nll" value="50" min="10" max="90"></div>
+        <div class="fg-item"><label>Operating Pressure (psig)</label><input type="number" id="sr_p" value="500"></div>
+        <div class="fg-item"><label>Temperature (&deg;F)</label><input type="number" id="sr_t" value="100"></div>
+      </div></div>
+      <div class="card"><div class="card-title">Fluid Data</div><div class="fg">
+        <div class="fg-item"><label>Oil Rate (BOPD)</label><input type="number" id="sr_qo" value="3000"></div>
+        <div class="fg-item"><label>Gas Rate (MMSCFD)</label><input type="number" id="sr_qg" value="5" step="0.1"></div>
+        <div class="fg-item"><label>Oil API Gravity</label><input type="number" id="sr_api" value="35" step="0.1"></div>
+        <div class="fg-item"><label>Gas SG (air=1)</label><input type="number" id="sr_gsg" value="0.75" step="0.01"></div>
+        <div class="fg-item"><label>BS&amp;W (%)</label><input type="number" id="sr_bsw" value="5"></div>
+        <div class="fg-item"><label>Foaming Tendency</label><select id="sr_foam"><option value="low">Low</option><option value="med">Medium</option><option value="high">High</option></select></div>
+      </div></div>
+      <div class="btn-row"><button class="btn btn-primary" onclick="calcSepRate()">Calculate</button></div>
+      <div id="sr_res"></div>
+    </div><div>
+      <div class="card"><div class="card-title">Souders-Brown K Factors</div>
+        <table class="dtable"><tr><th>Foaming</th><th>K (vertical)</th><th>K (horizontal)</th></tr>
+        <tr><td>Low</td><td>0.15</td><td>0.35</td></tr>
+        <tr><td>Medium</td><td>0.10</td><td>0.25</td></tr>
+        <tr><td>High</td><td>0.06</td><td>0.15</td></tr></table>
+      </div>
+    </div></div>`;
+    loadInputs('seprate',['sr_orient','sr_id','sr_len','sr_nll','sr_p','sr_t','sr_qo','sr_qg','sr_api','sr_gsg','sr_bsw','sr_foam']);
+}
+window.calcSepRate=function(){
+    const ids=['sr_orient','sr_id','sr_len','sr_nll','sr_p','sr_t','sr_qo','sr_qg','sr_api','sr_gsg','sr_bsw','sr_foam'];
+    saveInputs('seprate',ids);
+    const orient=$('sr_orient').value,ID=parseFloat($('sr_id').value),Len=parseFloat($('sr_len').value);
+    const NLL=parseFloat($('sr_nll').value)/100,P=parseFloat($('sr_p').value)+14.7,T=parseFloat($('sr_t').value)+460;
+    const Qo=parseFloat($('sr_qo').value),Qg=parseFloat($('sr_qg').value),API=parseFloat($('sr_api').value);
+    const gasSG=parseFloat($('sr_gsg').value),BSW=parseFloat($('sr_bsw').value)/100,foam=$('sr_foam').value;
+    // Densities
+    const rho_oil=141.5/(API+131.5)*62.4; // lb/ft3
+    const rho_water=62.4;
+    const rho_liq=rho_oil*(1-BSW)+rho_water*BSW;
+    const MW=gasSG*28.97;
+    const Z=0.90;
+    const rho_gas=P*MW/(Z*10.7316*T); // lb/ft3
+    // Gas capacity (Souders-Brown)
+    const Kv={low:0.15,med:0.10,high:0.06};
+    const Kh={low:0.35,med:0.25,high:0.15};
+    const K=orient==='V'?Kv[foam]:Kh[foam];
+    const V_allow=K*Math.sqrt((rho_liq-rho_gas)/rho_gas);
+    // Vessel cross-section
+    const D_ft=ID/12;
+    const A_total=Math.PI*D_ft*D_ft/4;
+    const A_gas=A_total*(1-NLL);
+    const Q_gas_actual=Qg*1e6*14.7/P*T/520/(Z*86400); // actual ft3/s
+    const V_gas=Q_gas_actual/A_gas;
+    const gasOK=V_gas<=V_allow;
+    // Liquid retention
+    const obstFactor=0.85;
+    const leffFactor=foam==='low'?0.85:foam==='med'?0.75:0.65;
+    const V_liq=A_total*NLL*Len*obstFactor*leffFactor*7.48; // gallons
+    const V_liq_bbl=V_liq/42;
+    const Q_liq_total=Qo*(1+BSW/(1-BSW||1));
+    const retTime=V_liq_bbl/(Q_liq_total/1440);
+    const retTarget=foam==='low'?3:foam==='med'?5:10;
+    const retOK=retTime>=retTarget;
+    const overall=gasOK&&retOK;
+    $('sr_res').innerHTML=`<div class="rbox" style="margin-top:12px"><div class="rbox-title">Separator Rating — ${overall?'<span style="color:var(--green)">PASS</span>':'<span style="color:var(--red)">FAIL</span>'}</div>
+        <div class="rrow"><span class="rl">Gas Density</span><span class="rv">${fmt(rho_gas,3)} lb/ft&sup3;</span></div>
+        <div class="rrow"><span class="rl">Liquid Density</span><span class="rv">${fmt(rho_liq,1)} lb/ft&sup3;</span></div>
+        <div class="rrow"><span class="rl">Allowable Gas Velocity</span><span class="rv">${fmt(V_allow,2)} ft/s</span></div>
+        <div class="rrow"><span class="rl">Actual Gas Velocity</span><span class="rv" style="color:${gasOK?'var(--green)':'var(--red)'}">${fmt(V_gas,2)} ft/s — ${gasOK?'OK':'EXCEEDS LIMIT'}</span></div>
+        <div class="rrow"><span class="rl">Liquid Volume</span><span class="rv">${fmt(V_liq_bbl,2)} bbls</span></div>
+        <div class="rrow"><span class="rl">Retention Time</span><span class="rv" style="color:${retOK?'var(--green)':'var(--red)'}">${fmt(retTime,2)} min (target: ${retTarget} min)</span></div>
+    </div>`;
+};
+
+// ── Indirect Heater ──
+function renderHeater(body){
+    $('pgTitle').textContent='Indirect Heater Estimating';
+    $('pgSub').textContent='Water bath heater duty and fuel consumption';
+    body.innerHTML=`<div class="cols-2"><div>
+      <div class="card"><div class="card-title">Heater Sizing</div><div class="fg">
+        <div class="fg-item"><label>Oil Rate (BPD)</label><input type="number" id="ih_q" value="5000"></div>
+        <div class="fg-item"><label>API Gravity</label><input type="number" id="ih_api" value="30" step="0.1"></div>
+        <div class="fg-item"><label>Inlet Temperature (&deg;C)</label><input type="number" id="ih_ti" value="20"></div>
+        <div class="fg-item"><label>Outlet Temperature (&deg;C)</label><input type="number" id="ih_to" value="65"></div>
+        <div class="fg-item"><label>Water Cut (%)</label><input type="number" id="ih_wc" value="30" min="0" max="100"></div>
+        <div class="fg-item"><label>Heater Efficiency (%)</label><input type="number" id="ih_eff" value="80" min="50" max="95"></div>
+        <div class="fg-item"><label>Burners</label><select id="ih_burn"><option value="1">Single</option><option value="2">Dual</option></select></div>
+      </div>
+      <div class="btn-row"><button class="btn btn-primary" onclick="calcHeater()">Calculate</button></div>
+      <div id="ih_res"></div>
+    </div></div>
+    <div><div class="card"><div class="card-title">Heater Categories</div>
+      <table class="dtable"><tr><th>Category</th><th>Fired Duty</th></tr>
+      <tr><td>Small</td><td>&lt; 0.5 MMBtu/hr</td></tr>
+      <tr><td>Medium</td><td>0.5 – 2.0 MMBtu/hr</td></tr>
+      <tr><td>Large</td><td>2.0 – 5.0 MMBtu/hr</td></tr>
+      <tr><td>Very Large</td><td>&gt; 5.0 MMBtu/hr</td></tr></table>
+    </div></div></div>`;
+    loadInputs('heater',['ih_q','ih_api','ih_ti','ih_to','ih_wc','ih_eff','ih_burn']);
+}
+window.calcHeater=function(){
+    saveInputs('heater',['ih_q','ih_api','ih_ti','ih_to','ih_wc','ih_eff','ih_burn']);
+    const Q=parseFloat($('ih_q').value),API=parseFloat($('ih_api').value);
+    const Ti=parseFloat($('ih_ti').value),To=parseFloat($('ih_to').value);
+    const WC=parseFloat($('ih_wc').value)/100,eff=parseFloat($('ih_eff').value)/100;
+    const burners=parseInt($('ih_burn').value);
+    const SG=141.5/(API+131.5),rho=SG*999;
+    const massFlow=Q*0.158987*rho/86400; // kg/s
+    // Cp based on API bracket
+    let Cp_oil;
+    if(API>40) Cp_oil=2.30; else if(API>30) Cp_oil=2.10; else if(API>20) Cp_oil=2.00; else Cp_oil=1.90;
+    const Cp_water=4.18;
+    const Cp_mix=(1-WC)*Cp_oil+WC*Cp_water;
+    const dT=To-Ti;
+    const Q_W=massFlow*Cp_mix*1000*dT; // Watts
+    const Q_MMBtu=Q_W*3.412142/1e6; // MMBtu/hr
+    const firedDuty=Q_MMBtu/eff;
+    const dieselGPH=firedDuty*1e6/138000;
+    const category=firedDuty<0.5?'Small':firedDuty<2?'Medium':firedDuty<5?'Large':'Very Large';
+    $('ih_res').innerHTML=`<div class="rbox" style="margin-top:12px"><div class="rbox-title">Heater Results</div>
+        <div class="rrow"><span class="rl">Mass Flow Rate</span><span class="rv">${fmt(massFlow,3)} kg/s</span></div>
+        <div class="rrow"><span class="rl">Mixed Cp</span><span class="rv">${fmt(Cp_mix,3)} kJ/kg.&deg;C</span></div>
+        <div class="rrow"><span class="rl">Process Heat Duty</span><span class="rv">${fmt(Q_MMBtu,3)} MMBtu/hr</span></div>
+        <div class="rrow"><span class="rl">Fired Duty (@${(eff*100).toFixed(0)}% eff)</span><span class="rv">${fmt(firedDuty,3)} MMBtu/hr</span></div>
+        <div class="rrow"><span class="rl">Diesel Consumption</span><span class="rv">${fmt(dieselGPH,2)} gal/hr</span></div>
+        ${burners===2?`<div class="rrow"><span class="rl">Per Burner</span><span class="rv">${fmt(firedDuty/2,3)} MMBtu/hr | ${fmt(dieselGPH/2,2)} gal/hr</span></div>`:''}
+        <div class="rrow"><span class="rl">Category</span><span class="rv">${category}</span></div>
+    </div>`;
+};
+
+// ── Pipe Sizing ──
+function renderPipeSz(body){
+    $('pgTitle').textContent='Pipe Size Estimation';
+    $('pgSub').textContent='Pipe selection based on velocity criteria and pressure drop (Darcy-Weisbach)';
+    body.innerHTML=`<div class="cols-2"><div>
+      <div class="card"><div class="card-title">Pipe Sizing</div><div class="fg">
+        <div class="fg-item"><label>Fluid Type</label><select id="pp_fluid"><option value="liquid">Liquid</option><option value="gas">Gas</option></select></div>
+        <div class="fg-item"><label>Operating Pressure (psig)</label><input type="number" id="pp_p" value="500"></div>
+        <div class="fg-item"><label>Line Length (ft)</label><input type="number" id="pp_l" value="500"></div>
+        <div class="fg-item"><label>Liquid Rate (BPD)</label><input type="number" id="pp_ql" value="5000"></div>
+        <div class="fg-item"><label>Gas Rate (MMSCFD)</label><input type="number" id="pp_qg" value="5" step="0.1"></div>
+        <div class="fg-item"><label>API Gravity / Gas SG</label><input type="number" id="pp_sg" value="35" step="0.1"></div>
+      </div>
+      <div class="btn-row"><button class="btn btn-primary" onclick="calcPipeSz()">Calculate</button></div>
+      <div id="pp_res"></div>
+    </div></div>
+    <div><div class="card"><div class="card-title">Velocity Guidelines</div>
+      <table class="dtable"><tr><th>Fluid</th><th>Min (m/s)</th><th>Max (m/s)</th></tr>
+      <tr><td>Liquid</td><td>0.8</td><td>2.5</td></tr>
+      <tr><td>Gas</td><td>10</td><td>20</td></tr></table>
+    </div></div></div>`;
+    loadInputs('pipesz',['pp_fluid','pp_p','pp_l','pp_ql','pp_qg','pp_sg']);
+}
+window.calcPipeSz=function(){
+    saveInputs('pipesz',['pp_fluid','pp_p','pp_l','pp_ql','pp_qg','pp_sg']);
+    const fluid=$('pp_fluid').value,P=parseFloat($('pp_p').value),L=parseFloat($('pp_l').value)*0.3048;
+    const Ql=parseFloat($('pp_ql').value),Qg=parseFloat($('pp_qg').value),sgVal=parseFloat($('pp_sg').value);
+    const pipes=[{nps:'1"',id:0.02664},{nps:'1.5"',id:0.04089},{nps:'2"',id:0.05250},{nps:'3"',id:0.07793},{nps:'4"',id:0.10226},{nps:'6"',id:0.15405},{nps:'8"',id:0.20272},{nps:'10"',id:0.25450},{nps:'12"',id:0.30480}];
+    let Q_m3s,rho,mu,vMin,vMax;
+    if(fluid==='liquid'){
+        const SG=sgVal>10?141.5/(sgVal+131.5):sgVal;
+        rho=SG*999;mu=0.005;Q_m3s=Ql*0.158987/86400;vMin=0.8;vMax=2.5;
+    } else {
+        rho=(P+14.7)*sgVal*28.97/(0.9*10.7316*(80+460))*16.018;mu=0.000015;
+        Q_m3s=Qg*1e6*14.7/(P+14.7)*(80+460)/520/(0.9*86400)*0.02832;vMin=10;vMax=20;
+    }
+    const sch=P<=300?'SCH 40':P<=1000?'SCH 80':'SCH 160';
+    let rows='',rec='';
+    pipes.forEach(p=>{
+        const A=Math.PI*p.id*p.id/4;
+        const V=Q_m3s/A;
+        const Re=rho*V*p.id/(mu||0.001);
+        const eps=0.000045;
+        const f=Re<2300?64/Re:0.25/Math.pow(Math.log10(eps/(3.7*p.id)+5.74/Math.pow(Re,0.9)),2);
+        const dP=f*(L/p.id)*(V*V/(2))*rho/6894.76;
+        const ok=V>=vMin&&V<=vMax;
+        if(ok&&!rec) rec=p.nps;
+        rows+=`<tr style="${ok?'background:rgba(0,200,0,0.05)':''}"><td>${p.nps}</td><td>${fmt(V,2)}</td><td>${ok?'OK':''+(V<vMin?'LOW':'HIGH')}</td><td>${fmt(dP,2)}</td></tr>`;
+    });
+    $('pp_res').innerHTML=`<div class="rbox" style="margin-top:12px"><div class="rbox-title">Recommended: ${rec||'None'} (${sch})</div>
+      <table class="dtable"><tr><th>Size</th><th>Velocity (m/s)</th><th>Status</th><th>&Delta;P (psi)</th></tr>${rows}</table></div>`;
+};
+
+// ── Flame Arrestor Sizing ──
+function renderFlameArr(body){
+    $('pgTitle').textContent='Flame Arrestor Sizing';
+    $('pgSub').textContent='Vent capacity and flame arrestor NPS selection';
+    body.innerHTML=`<div class="cols-2"><div>
+      <div class="card"><div class="card-title">Flame Arrestor Calculator</div><div class="fg">
+        <div class="fg-item"><label>Gas MW</label><input type="number" id="fa_mw" value="18" step="0.1"></div>
+        <div class="fg-item"><label>Gas Flow (MSCFD)</label><input type="number" id="fa_q" value="500"></div>
+        <div class="fg-item"><label>Temperature (&deg;C)</label><input type="number" id="fa_t" value="30"></div>
+        <div class="fg-item"><label>Operating Pressure (psig)</label><input type="number" id="fa_p" value="0"></div>
+        <div class="fg-item"><label>Allowable &Delta;P (psi)</label><input type="number" id="fa_dp" value="1" step="0.1"></div>
+        <div class="fg-item"><label>Type</label><select id="fa_type"><option value="eol">End-of-Line</option><option value="il">In-Line</option></select></div>
+      </div>
+      <div class="btn-row"><button class="btn btn-primary" onclick="calcFlameArr()">Calculate</button></div>
+      <div id="fa_res"></div>
+    </div></div>
+    <div><div class="card"><div class="card-title">Notes</div>
+      <div class="info-bar">Flame arrestors prevent flashback into tanks and vessels. End-of-line types vent to atmosphere. In-line types are installed in piping runs. Selection is based on flow capacity within allowable pressure drop limits.</div>
+    </div></div></div>`;
+    loadInputs('flamearr',['fa_mw','fa_q','fa_t','fa_p','fa_dp','fa_type']);
+}
+window.calcFlameArr=function(){
+    saveInputs('flamearr',['fa_mw','fa_q','fa_t','fa_p','fa_dp','fa_type']);
+    const MW=parseFloat($('fa_mw').value),Q_mscfd=parseFloat($('fa_q').value);
+    const T=parseFloat($('fa_t').value),P=(parseFloat($('fa_p').value)+14.7);
+    const dpAllow=parseFloat($('fa_dp').value),type=$('fa_type').value;
+    const T_R=(T*9/5+32)+460;
+    const SCFM=Q_mscfd*1000/(24*60);
+    const ACFM=SCFM*(T_R/520)*(14.7/P);
+    const rho=P*MW/(1.0*10.7316*T_R);
+    const F=type==='eol'?3.5:3.0;
+    const sizes=[{nps:'2"',id:2.067},{nps:'3"',id:3.068},{nps:'4"',id:4.026},{nps:'6"',id:6.065},{nps:'8"',id:7.981},{nps:'10"',id:10.02},{nps:'12"',id:11.938}];
+    let rows='',rec='';
+    sizes.forEach(s=>{
+        const A_eff=Math.PI*Math.pow(s.id/12,2)/4*F;
+        const V=ACFM/A_eff;
+        const dP=0.5*rho*V*V/144*0.02; // simplified
+        const ok=dP<=dpAllow;
+        if(ok&&!rec) rec=s.nps;
+        rows+=`<tr style="${ok?'background:rgba(0,200,0,0.05)':''}"><td>${s.nps}</td><td>${fmt(V,1)}</td><td>${fmt(dP,3)}</td><td>${ok?'OK':'FAIL'}</td></tr>`;
+    });
+    $('fa_res').innerHTML=`<div class="rbox" style="margin-top:12px"><div class="rbox-title">Recommended: ${rec||'None fit'} (${type==='eol'?'End-of-Line':'In-Line'})</div>
+      <div class="rrow"><span class="rl">ACFM</span><span class="rv">${fmt(ACFM,1)}</span></div>
+      <div class="rrow"><span class="rl">Gas Density</span><span class="rv">${fmt(rho,4)} lb/ft&sup3;</span></div>
+      <table class="dtable" style="margin-top:8px"><tr><th>NPS</th><th>Velocity (ft/min)</th><th>&Delta;P (psi)</th><th>Status</th></tr>${rows}</table></div>`;
+};
+
+// ── ARC Valve Sizing ──
+function renderARC(body){
+    $('pgTitle').textContent='ARC (Circulation Valve) Sizing';
+    $('pgSub').textContent='Minimum flow protection valve sizing for pump bypass';
+    body.innerHTML=`<div class="cols-2"><div>
+      <div class="card"><div class="card-title">ARC Valve Calculator</div><div class="fg">
+        <div class="fg-item"><label>Normal Process Flow (BPD)</label><input type="number" id="av_qn" value="5000"></div>
+        <div class="fg-item"><label>Min Process Flow (BPD)</label><input type="number" id="av_qmin" value="500"></div>
+        <div class="fg-item"><label>API Gravity</label><input type="number" id="av_api" value="35" step="0.1"></div>
+        <div class="fg-item"><label>Pump Discharge @ Shutoff (psig)</label><input type="number" id="av_pso" value="500"></div>
+        <div class="fg-item"><label>Pump Discharge @ Normal (psig)</label><input type="number" id="av_pdn" value="350"></div>
+        <div class="fg-item"><label>Bypass Return Pressure (psig)</label><input type="number" id="av_ret" value="50"></div>
+      </div>
+      <div class="btn-row"><button class="btn btn-primary" onclick="calcARC()">Calculate</button></div>
+      <div id="av_res"></div>
+    </div></div>
+    <div><div class="card"><div class="card-title">About ARC Valves</div>
+      <div class="info-bar">Automatic Recirculation Control (ARC) valves protect centrifugal pumps from damage due to low flow conditions. They bypass flow back to suction when main flow drops below a setpoint.</div>
+    </div></div></div>`;
+    loadInputs('arc',['av_qn','av_qmin','av_api','av_pso','av_pdn','av_ret']);
+}
+window.calcARC=function(){
+    saveInputs('arc',['av_qn','av_qmin','av_api','av_pso','av_pdn','av_ret']);
+    const Qn=parseFloat($('av_qn').value),Qmin=parseFloat($('av_qmin').value);
+    const API=parseFloat($('av_api').value),Pso=parseFloat($('av_pso').value);
+    const Pdn=parseFloat($('av_pdn').value),Pret=parseFloat($('av_ret').value);
+    const SG=141.5/(API+131.5);
+    // Discharge pressure at min flow
+    const Pd_min=Pdn+0.6*(Pso-Pdn);
+    const dP=Math.max(0,Pd_min-Pret);
+    const Qmin_m3h=Qmin*0.158987/24;
+    // Valve capacity table
+    const valves=[{nps:'1"',qmax:1.5},{nps:'1.5"',qmax:4},{nps:'2"',qmax:8},{nps:'3"',qmax:20},{nps:'4"',qmax:40},{nps:'6"',qmax:75},{nps:'8"',qmax:100},{nps:'12"',qmax:130}];
+    let rec='';
+    valves.forEach(v=>{if(Qmin_m3h<=v.qmax&&!rec) rec=v.nps;});
+    const severity=dP<=80?'Normal':dP<=150?'Medium':'High';
+    const sevColor=severity==='Normal'?'var(--green)':severity==='Medium'?'var(--yellow)':'var(--red)';
+    $('av_res').innerHTML=`<div class="rbox" style="margin-top:12px"><div class="rbox-title">ARC Valve Results</div>
+        <div class="rrow"><span class="rl">Recirc Flow</span><span class="rv">${fmt(Qmin_m3h,2)} m&sup3;/h (${fmt(Qmin,0)} BPD)</span></div>
+        <div class="rrow"><span class="rl">Bypass &Delta;P</span><span class="rv">${fmt(dP,1)} psi</span></div>
+        <div class="rrow"><span class="rl">P<sub>discharge</sub> @ Q<sub>min</sub></span><span class="rv">${fmt(Pd_min,1)} psig</span></div>
+        <div class="rrow"><span class="rl">Protection Severity</span><span class="rv" style="color:${sevColor}">${severity}</span></div>
+        <div class="rrow"><span class="rl">Recommended Valve</span><span class="rv">${rec||'Exceeds range'}</span></div>
+    </div>`;
+};
+
+// ── Turbine Meter Sizing ──
+function renderTurbMeter(body){
+    $('pgTitle').textContent='Turbine Meter Sizing (Liquid)';
+    $('pgSub').textContent='Liquid turbine meter selection per API MPMS 5.3';
+    body.innerHTML=`<div class="cols-2"><div>
+      <div class="card"><div class="card-title">Meter Sizing</div><div class="fg">
+        <div class="fg-item"><label>Liquid Type</label><select id="tm_liq"><option value="oil">Crude Oil</option><option value="water">Water</option><option value="diesel">Diesel</option></select></div>
+        <div class="fg-item"><label>API Gravity (if oil)</label><input type="number" id="tm_api" value="35" step="0.1"></div>
+        <div class="fg-item"><label>Temperature (&deg;C)</label><input type="number" id="tm_t" value="40"></div>
+        <div class="fg-item"><label>Viscosity (cP)</label><input type="number" id="tm_mu" value="5" step="0.1"></div>
+        <div class="fg-item"><label>Q<sub>min</sub> (BPD)</label><input type="number" id="tm_qmin" value="500"></div>
+        <div class="fg-item"><label>Q<sub>max</sub> (BPD)</label><input type="number" id="tm_qmax" value="8000"></div>
+        <div class="fg-item"><label>Operating Pressure (psig)</label><input type="number" id="tm_p" value="500"></div>
+      </div>
+      <div class="btn-row"><button class="btn btn-primary" onclick="calcTurbMeter()">Calculate</button></div>
+      <div id="tm_res"></div>
+    </div></div>
+    <div><div class="card"><div class="card-title">Hard Stops</div>
+      <div class="info-bar" style="margin-bottom:4px">Viscosity &gt; 30 cP — turbine meter not suitable</div>
+      <div class="info-bar" style="margin-bottom:4px">Re &lt; 10,000 at Q<sub>min</sub> — linearity not guaranteed</div>
+      <div class="info-bar">Cavitation margin &lt; 3 psi — risk of meter damage</div>
+    </div></div></div>`;
+    loadInputs('turbmeter',['tm_liq','tm_api','tm_t','tm_mu','tm_qmin','tm_qmax','tm_p']);
+}
+window.calcTurbMeter=function(){
+    saveInputs('turbmeter',['tm_liq','tm_api','tm_t','tm_mu','tm_qmin','tm_qmax','tm_p']);
+    const liq=$('tm_liq').value,API=parseFloat($('tm_api').value),T=parseFloat($('tm_t').value);
+    const mu=parseFloat($('tm_mu').value)/1000,Qmin=parseFloat($('tm_qmin').value),Qmax=parseFloat($('tm_qmax').value);
+    const P=parseFloat($('tm_p').value);
+    if(mu*1000>30){$('tm_res').innerHTML='<div class="val-error">Viscosity > 30 cP: Turbine meter NOT suitable. Use PD meter.</div>';return;}
+    let rho;
+    if(liq==='oil'){const SG=141.5/(API+131.5);rho=SG*999;}else if(liq==='water') rho=998;else rho=830;
+    const alpha=0.00069; // thermal expansion approx
+    rho=rho/(1+alpha*(T-15.56));
+    // Meter bore sizes
+    const meters=[{bore:'2"',id:0.0525,qmin:300,qmax:3000},{bore:'3"',id:0.0779,qmin:600,qmax:8000},{bore:'4"',id:0.1023,qmin:1000,qmax:15000},{bore:'6"',id:0.1541,qmin:2500,qmax:35000},{bore:'8"',id:0.2027,qmin:5000,qmax:65000}];
+    let rec=null;
+    meters.forEach(m=>{if(!rec&&Qmin>=m.qmin*0.5&&Qmax<=m.qmax) rec=m;});
+    if(!rec) rec=meters[meters.length-1];
+    const Q_m3s_min=Qmin*0.158987/86400,Q_m3s_max=Qmax*0.158987/86400;
+    const A=Math.PI*rec.id*rec.id/4;
+    const Vmin=Q_m3s_min/A,Vmax=Q_m3s_max/A;
+    const Re_min=rho*Vmin*rec.id/(mu||0.001);
+    // Vapour pressure estimate
+    const Pvap=liq==='water'?0.12:liq==='diesel'?0.05:0.3;
+    const cavMargin=(P+14.7)-Pvap;
+    const reOK=Re_min>=10000;
+    const cavOK=cavMargin>=3;
+    $('tm_res').innerHTML=`<div class="rbox" style="margin-top:12px"><div class="rbox-title">Selected Meter: ${rec.bore}</div>
+        <div class="rrow"><span class="rl">Meter Range</span><span class="rv">${fmt(rec.qmin,0)} – ${fmt(rec.qmax,0)} BPD</span></div>
+        <div class="rrow"><span class="rl">Velocity @ Q<sub>min</sub></span><span class="rv">${fmt(Vmin,3)} m/s</span></div>
+        <div class="rrow"><span class="rl">Velocity @ Q<sub>max</sub></span><span class="rv">${fmt(Vmax,2)} m/s</span></div>
+        <div class="rrow"><span class="rl">Re @ Q<sub>min</sub></span><span class="rv" style="color:${reOK?'var(--green)':'var(--red)'}">${fmt(Re_min,0)} ${reOK?'OK':'LOW'}</span></div>
+        <div class="rrow"><span class="rl">Density @ ${T}&deg;C</span><span class="rv">${fmt(rho,1)} kg/m&sup3;</span></div>
+        <div class="rrow"><span class="rl">Cavitation Margin</span><span class="rv" style="color:${cavOK?'var(--green)':'var(--red)'}">${fmt(cavMargin,1)} psi ${cavOK?'OK':'LOW — Risk!'}</span></div>
+    </div>`;
+};
+
+// ── Air Compressor Estimating ──
+function renderAirComp(body){
+    $('pgTitle').textContent='Air Compressor Estimating';
+    $('pgSub').textContent='Compressor type selection and receiver sizing';
+    body.innerHTML=`<div class="cols-2"><div>
+      <div class="card"><div class="card-title">Compressor Sizing</div><div class="fg">
+        <div class="fg-item"><label>Air Flow (SCFM)</label><input type="number" id="ac_q" value="150"></div>
+        <div class="fg-item"><label>Required Pressure (psig)</label><input type="number" id="ac_p" value="100"></div>
+        <div class="fg-item"><label>Duty Pattern</label><select id="ac_duty"><option value="cont">Continuous</option><option value="int">Intermittent</option></select></div>
+        <div class="fg-item"><label>Application</label><select id="ac_app"><option value="ia">Instrument Air</option><option value="util">Utility Air</option></select></div>
+        <div class="fg-item"><label>Oil-Free Required?</label><select id="ac_of"><option value="no">No</option><option value="yes">Yes</option></select></div>
+      </div>
+      <div class="btn-row"><button class="btn btn-primary" onclick="calcAirComp()">Calculate</button></div>
+      <div id="ac_res"></div>
+    </div></div>
+    <div><div class="card"><div class="card-title">Selection Guide</div>
+      <div class="info-bar" style="margin-bottom:4px"><b>Rotary Screw:</b> &gt; 30 SCFM or continuous instrument air &gt; 15 SCFM</div>
+      <div class="info-bar"><b>Reciprocating:</b> Smaller intermittent duties</div>
+    </div></div></div>`;
+    loadInputs('aircomp',['ac_q','ac_p','ac_duty','ac_app','ac_of']);
+}
+window.calcAirComp=function(){
+    saveInputs('aircomp',['ac_q','ac_p','ac_duty','ac_app','ac_of']);
+    const Q=parseFloat($('ac_q').value),P=parseFloat($('ac_p').value);
+    const duty=$('ac_duty').value,app=$('ac_app').value,oilFree=$('ac_of').value==='yes';
+    const selected=Math.ceil(Q*1.1);
+    const daily=selected*1440;
+    const receiverGal=selected*5;
+    const receiverL=receiverGal*3.78541;
+    let type;
+    if(Q>30||(duty==='cont'&&app==='ia'&&Q>15)) type='Rotary Screw';else type='Reciprocating';
+    if(oilFree) type+=' (Oil-Free)';
+    $('ac_res').innerHTML=`<div class="rbox" style="margin-top:12px"><div class="rbox-title">Compressor Results</div>
+        <div class="rrow"><span class="rl">Selected Capacity</span><span class="rv">${fmt(selected,0)} SCFM</span></div>
+        <div class="rrow"><span class="rl">Daily Capacity</span><span class="rv">${fmt(daily,0)} SCF/D</span></div>
+        <div class="rrow"><span class="rl">Receiver Volume</span><span class="rv">${fmt(receiverL,0)} L (${fmt(receiverGal,0)} gal)</span></div>
+        <div class="rrow"><span class="rl">Compressor Type</span><span class="rv">${type}</span></div>
+    </div>`;
+};
+
+// ── Generator Sizing ──
+function renderGenSz(body){
+    $('pgTitle').textContent='Generator Size Estimation';
+    $('pgSub').textContent='Generator kVA rating based on running and starting loads';
+    body.innerHTML=`<div class="cols-2"><div>
+      <div class="card"><div class="card-title">Load Summary</div><div class="fg">
+        <div class="fg-item"><label>Non-Motor Loads (kW)</label><input type="number" id="gs_nm" value="50"></div>
+        <div class="fg-item"><label>Power Factor</label><input type="number" id="gs_pf" value="0.8" step="0.01" min="0.5" max="1"></div>
+        <div class="fg-item"><label>Generator Voltage (V)</label><input type="number" id="gs_v" value="480"></div>
+        <div class="fg-item"><label>Starting Mode</label><select id="gs_mode"><option value="cons">Conservative (1.20x)</option><option value="norm" selected>Normal (1.10x)</option><option value="agg">Aggressive (1.03x)</option></select></div>
+      </div></div>
+      <div class="card"><div class="card-title">Motors (kW, start method, qty)</div>
+        <div id="gs_motors"></div>
+        <div class="btn-row" style="margin-top:8px"><button class="btn btn-secondary" onclick="addGenMotor()">+ Add Motor</button></div>
+      </div>
+      <div class="btn-row"><button class="btn btn-primary" onclick="calcGenSz()">Calculate</button></div>
+      <div id="gs_res"></div>
+    </div><div>
+      <div class="card"><div class="card-title">Starting Factors</div>
+        <table class="dtable"><tr><th>Method</th><th>Factor</th></tr>
+        <tr><td>DOL (Direct On Line)</td><td>5.0x</td></tr>
+        <tr><td>Star-Delta</td><td>2.2x</td></tr>
+        <tr><td>Soft Starter</td><td>2.5x</td></tr>
+        <tr><td>VFD</td><td>1.2x</td></tr></table>
+      </div>
+    </div></div>`;
+    if(!window._genMotors||window._genMotors.length===0) window._genMotors=[{kw:30,method:'dol',qty:1},{kw:15,method:'sd',qty:2}];
+    renderGenMotors();
+}
+function renderGenMotors(){
+    const c=$('gs_motors');if(!c)return;
+    c.innerHTML=window._genMotors.map((m,i)=>`<div class="fg-grid" style="grid-template-columns:1fr 1fr 60px 30px;gap:6px;margin-bottom:4px">
+        <input type="number" value="${m.kw}" onchange="window._genMotors[${i}].kw=parseFloat(this.value)" placeholder="kW">
+        <select onchange="window._genMotors[${i}].method=this.value"><option value="dol"${m.method==='dol'?' selected':''}>DOL</option><option value="sd"${m.method==='sd'?' selected':''}>Star-Delta</option><option value="ss"${m.method==='ss'?' selected':''}>Soft Starter</option><option value="vfd"${m.method==='vfd'?' selected':''}>VFD</option></select>
+        <input type="number" value="${m.qty}" min="1" onchange="window._genMotors[${i}].qty=parseInt(this.value)" placeholder="Qty">
+        <button class="btn btn-secondary" style="padding:2px 6px" onclick="window._genMotors.splice(${i},1);renderGenMotors()">×</button>
+    </div>`).join('');
+}
+window.addGenMotor=function(){window._genMotors.push({kw:10,method:'dol',qty:1});renderGenMotors();};
+window.calcGenSz=function(){
+    const nmLoad=parseFloat($('gs_nm').value),PF=parseFloat($('gs_pf').value),V=parseFloat($('gs_v').value);
+    const mode=$('gs_mode').value;
+    const dipMod=mode==='cons'?1.20:mode==='norm'?1.10:1.03;
+    const startFactors={dol:5.0,sd:2.2,ss:2.5,vfd:1.2};
+    const motors=window._genMotors||[];
+    let totalMotorKW=0;
+    const units=[];
+    motors.forEach(m=>{
+        for(let i=0;i<m.qty;i++){units.push({kw:m.kw,sf:startFactors[m.method]});totalMotorKW+=m.kw;}
+    });
+    const totalRunKW=nmLoad+totalMotorKW;
+    const runKVA=totalRunKW/PF;
+    // Sort by starting kVA descending, pick top 3
+    units.sort((a,b)=>(b.kw*b.sf)-(a.kw*a.sf));
+    let startKVA=0;
+    units.forEach((u,i)=>{startKVA+=(i<3?u.kw*u.sf:u.kw)/PF;});
+    startKVA+=nmLoad/PF;
+    const adjStartKVA=startKVA*dipMod;
+    const ratedKVA=adjStartKVA/1.6;
+    const baseKVA=Math.max(runKVA,ratedKVA);
+    const recKVA=baseKVA*1.20*1.10;
+    const recKW=recKVA*PF;
+    const FLA=recKVA*1000/(Math.sqrt(3)*V);
+    // Snap to standard
+    const stdSizes=[10,15,20,25,30,40,50,60,75,80,100,125,150,160,200,250,300,350,400,500,600,750,800,1000,1250,1500,2000];
+    let stdKVA=stdSizes[stdSizes.length-1];
+    for(const s of stdSizes){if(s>=recKVA){stdKVA=s;break;}}
+    $('gs_res').innerHTML=`<div class="rbox" style="margin-top:12px"><div class="rbox-title">Generator Sizing Results</div>
+        <div class="rrow"><span class="rl">Running Load</span><span class="rv">${fmt(totalRunKW,1)} kW (${fmt(runKVA,1)} kVA)</span></div>
+        <div class="rrow"><span class="rl">Worst-Case Starting</span><span class="rv">${fmt(adjStartKVA,1)} kVA</span></div>
+        <div class="rrow"><span class="rl">Recommended</span><span class="rv">${fmt(recKVA,1)} kVA / ${fmt(recKW,1)} kW</span></div>
+        <div class="rrow"><span class="rl">Full Load Current</span><span class="rv">${fmt(FLA,1)} A @ ${V}V</span></div>
+        <div class="rrow"><span class="rl">Standard Size</span><span class="rv" style="font-weight:700;color:var(--accent)">${stdKVA} kVA</span></div>
+    </div>`;
+};
+
+// ── Cable Sizing ──
+function renderCableSz(body){
+    $('pgTitle').textContent='Cable Size Estimation';
+    $('pgSub').textContent='Copper cable selection based on ampacity and voltage drop';
+    body.innerHTML=`<div class="cols-2"><div>
+      <div class="card"><div class="card-title">Cable Sizing</div><div class="fg">
+        <div class="fg-item"><label>System</label><select id="cs_sys"><option value="3">3-Phase</option><option value="1">1-Phase</option></select></div>
+        <div class="fg-item"><label>Voltage (V)</label><input type="number" id="cs_v" value="415"></div>
+        <div class="fg-item"><label>Load Current (A)</label><input type="number" id="cs_i" value="50"></div>
+        <div class="fg-item"><label>Power Factor</label><input type="number" id="cs_pf" value="0.85" step="0.01"></div>
+        <div class="fg-item"><label>One-Way Length (m)</label><input type="number" id="cs_l" value="100"></div>
+        <div class="fg-item"><label>Laying Method</label><select id="cs_lay"><option value="0.75">Enclosed (0.75)</option><option value="0.87">Tray (0.87)</option><option value="1.0" selected>Open/Ladder (1.0)</option><option value="1.05">Free Air (1.05)</option></select></div>
+        <div class="fg-item"><label>Ambient Temp (&deg;C)</label><input type="number" id="cs_amb" value="40"></div>
+      </div>
+      <div class="btn-row"><button class="btn btn-primary" onclick="calcCableSz()">Calculate</button></div>
+      <div id="cs_res"></div>
+    </div></div>
+    <div><div class="card"><div class="card-title">Selection Criteria</div>
+      <div class="info-bar" style="margin-bottom:4px">Ampacity must be &ge; load current (derated)</div>
+      <div class="info-bar">Voltage drop must be &le; 5%</div>
+    </div></div></div>`;
+    loadInputs('cablesz',['cs_sys','cs_v','cs_i','cs_pf','cs_l','cs_lay','cs_amb']);
+}
+window.calcCableSz=function(){
+    saveInputs('cablesz',['cs_sys','cs_v','cs_i','cs_pf','cs_l','cs_lay','cs_amb']);
+    const sys=parseInt($('cs_sys').value),V=parseFloat($('cs_v').value),I=parseFloat($('cs_i').value);
+    const PF=parseFloat($('cs_pf').value),L=parseFloat($('cs_l').value)/1000;
+    const layF=parseFloat($('cs_lay').value),amb=parseFloat($('cs_amb').value);
+    // Temp derating (base 30C)
+    const tempF=amb<=25?1.08:amb<=30?1.0:amb<=35?0.94:amb<=40?0.87:amb<=45?0.79:amb<=50?0.71:0.67;
+    const cables=[
+        {mm2:1.5,amp:16},{mm2:2.5,amp:22},{mm2:4,amp:30},{mm2:6,amp:38},{mm2:10,amp:52},
+        {mm2:16,amp:70},{mm2:25,amp:90},{mm2:35,amp:112},{mm2:50,amp:133},{mm2:70,amp:165},
+        {mm2:95,amp:200},{mm2:120,amp:230},{mm2:150,amp:260},{mm2:185,amp:298},{mm2:240,amp:350},{mm2:300,amp:400}
+    ];
+    const sinF=Math.sqrt(1-PF*PF);
+    let rows='',rec=null;
+    cables.forEach(c=>{
+        const ampDerated=c.amp*layF*tempF;
+        const R90=17.241/c.mm2*1.275; // ohm/km at 90C
+        const X=c.mm2<=16?0.09:c.mm2<=70?0.08:c.mm2<=185?0.075:0.07;
+        let dV;
+        if(sys===3) dV=Math.sqrt(3)*I*(R90*PF+X*sinF)*L;
+        else dV=2*I*(R90*PF+X*sinF)*L;
+        const dVpct=dV/V*100;
+        const ampOK=ampDerated>=I;
+        const vdOK=dVpct<=5;
+        const ok=ampOK&&vdOK;
+        if(ok&&!rec) rec=c;
+        rows+=`<tr style="${ok&&c===rec?'background:rgba(0,200,0,0.08);font-weight:600':''}"><td>${c.mm2}</td><td>${fmt(ampDerated,0)}</td><td>${fmt(dV,2)}</td><td>${fmt(dVpct,2)}%</td><td>${ok?'OK':'FAIL'}</td></tr>`;
+    });
+    $('cs_res').innerHTML=`<div class="rbox" style="margin-top:12px"><div class="rbox-title">Recommended: ${rec?rec.mm2+' mm²':'None fit'}</div>
+      <table class="dtable"><tr><th>mm²</th><th>Ampacity (A)</th><th>&Delta;V</th><th>&Delta;V %</th><th>Status</th></tr>${rows}</table></div>`;
+};
+
+// ── Voltage Drop Check ──
+function renderVDrop(body){
+    $('pgTitle').textContent='Voltage Drop Check';
+    $('pgSub').textContent='Verify voltage drop for a specific cable installation';
+    body.innerHTML=`<div class="cols-2"><div>
+      <div class="card"><div class="card-title">Voltage Drop Calculator</div><div class="fg">
+        <div class="fg-item"><label>Load Type</label><select id="vd_lt"><option value="motor">Motor / Power</option><option value="sensitive">Sensitive Equipment</option></select></div>
+        <div class="fg-item"><label>System</label><select id="vd_sys"><option value="3">3-Phase</option><option value="1">1-Phase</option></select></div>
+        <div class="fg-item"><label>Voltage (V)</label><input type="number" id="vd_v" value="415"></div>
+        <div class="fg-item"><label>Load Current (A)</label><input type="number" id="vd_i" value="80"></div>
+        <div class="fg-item"><label>Power Factor</label><input type="number" id="vd_pf" value="0.85" step="0.01"></div>
+        <div class="fg-item"><label>One-Way Length (m)</label><input type="number" id="vd_l" value="150"></div>
+        <div class="fg-item"><label>Cable Size (mm&sup2;)</label><select id="vd_mm">${[1.5,2.5,4,6,10,16,25,35,50,70,95,120,150,185,240,300].map(s=>`<option value="${s}"${s===50?' selected':''}>${s}</option>`).join('')}</select></div>
+        <div class="fg-item"><label>Conductor</label><select id="vd_con"><option value="cu">Copper</option><option value="al">Aluminium</option></select></div>
+        <div class="fg-item"><label>Insulation</label><select id="vd_ins"><option value="xlpe">XLPE (90&deg;C)</option><option value="pvc">PVC (70&deg;C)</option></select></div>
+      </div>
+      <div class="btn-row"><button class="btn btn-primary" onclick="calcVDrop()">Calculate</button></div>
+      <div id="vd_res"></div>
+    </div></div>
+    <div><div class="card"><div class="card-title">Limits</div>
+      <table class="dtable"><tr><th>Load Type</th><th>Max Drop</th></tr>
+      <tr><td>Motor / Power</td><td>5%</td></tr>
+      <tr><td>Sensitive Equipment</td><td>3%</td></tr></table>
+    </div></div></div>`;
+    loadInputs('vdrop',['vd_lt','vd_sys','vd_v','vd_i','vd_pf','vd_l','vd_mm','vd_con','vd_ins']);
+}
+window.calcVDrop=function(){
+    saveInputs('vdrop',['vd_lt','vd_sys','vd_v','vd_i','vd_pf','vd_l','vd_mm','vd_con','vd_ins']);
+    const loadType=$('vd_lt').value,sys=parseInt($('vd_sys').value),V=parseFloat($('vd_v').value);
+    const I=parseFloat($('vd_i').value),PF=parseFloat($('vd_pf').value),L=parseFloat($('vd_l').value)/1000;
+    const mm2=parseFloat($('vd_mm').value),con=$('vd_con').value,ins=$('vd_ins').value;
+    const rho20=con==='cu'?17.241:28.264;
+    const alpha=con==='cu'?0.00393:0.00403;
+    const T_rated=ins==='xlpe'?90:70;
+    const R=rho20/mm2*(1+alpha*(T_rated-20)); // ohm/km
+    const X=mm2<=16?0.09:mm2<=70?0.08:mm2<=185?0.075:0.07;
+    const sinF=Math.sqrt(1-PF*PF);
+    let dV;
+    if(sys===3) dV=Math.sqrt(3)*I*(R*PF+X*sinF)*L;
+    else dV=2*I*(R*PF+X*sinF)*L;
+    const dVpct=dV/V*100;
+    const Vrec=V-dV;
+    const limit=loadType==='motor'?5:3;
+    let status,color;
+    if(dVpct<=limit){status='OK';color='var(--green)';}
+    else if(dVpct<=limit*1.25){status='WARNING';color='var(--yellow)';}
+    else{status='NOT OK';color='var(--red)';}
+    $('vd_res').innerHTML=`<div class="rbox" style="margin-top:12px"><div class="rbox-title">Voltage Drop Results</div>
+        <div class="rrow"><span class="rl">Voltage Drop</span><span class="rv">${fmt(dV,2)} V</span></div>
+        <div class="rrow"><span class="rl">Drop %</span><span class="rv" style="color:${color}">${fmt(dVpct,2)} % (limit: ${limit}%)</span></div>
+        <div class="rrow"><span class="rl">Receiving End Voltage</span><span class="rv">${fmt(Vrec,1)} V</span></div>
+        <div class="rrow"><span class="rl">Conductor</span><span class="rv">${con==='cu'?'Copper':'Aluminium'} — ${ins==='xlpe'?'XLPE 90°C':'PVC 70°C'}</span></div>
+        <div class="rrow"><span class="rl">Status</span><span class="rv" style="color:${color};font-weight:700">${status}</span></div>
     </div>`;
 };
 
