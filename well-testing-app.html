@@ -284,8 +284,8 @@
         </div>
         <div class="nav-group">
             <div class="nav-group-label">Overview</div>
-            <div class="nav-btn active" data-p="home"><span class="nav-icon">&#9670;</span><span>Dashboard</span></div>
-            <div class="nav-btn" data-p="clientinfo"><span class="nav-icon">&#128188;</span><span>Client & Well Info</span></div>
+            <div class="nav-btn" data-p="home"><span class="nav-icon">&#9670;</span><span>Dashboard</span></div>
+            <div class="nav-btn active" data-p="clientinfo"><span class="nav-icon">&#128188;</span><span>Client & Well Info</span></div>
         </div>
         <div class="nav-group">
             <div class="nav-group-label">Well Testing</div>
@@ -438,7 +438,7 @@ function exportCSV(filename, headers, rows) {
 }
 
 // ── Navigation ──
-let page = 'home';
+let page = 'clientinfo';
 const navBtns = document.querySelectorAll('.nav-btn');
 navBtns.forEach(b => b.addEventListener('click', () => nav(b.dataset.p)));
 
@@ -648,7 +648,70 @@ function renderClientInfo(body) {
       <button class="btn btn-primary" onclick="saveClientInfo()">&#128190; Save Information</button>
       <button class="btn btn-secondary" onclick="clearClientInfo()">Clear All</button>
     </div>
-    <div id="ci_status" style="margin-top:8px"></div>`;
+    <div id="ci_status" style="margin-top:8px"></div>
+
+    <div class="card" style="margin-top:24px">
+      <div class="card-title">Getting Started</div>
+      <p style="color:var(--text2);font-size:13px;line-height:1.7;margin-bottom:12px">
+        Welcome to the <strong>H2Oil Well Testing Engineering Suite</strong> — a comprehensive collection of oil &amp; gas engineering calculators built for field engineers, well test supervisors, and operations teams.
+      </p>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin-bottom:16px">
+        <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:14px">
+          <div style="font-weight:700;color:var(--accent);font-size:13px;margin-bottom:6px">1. Fill in Client &amp; Well Info</div>
+          <div style="font-size:12px;color:var(--text2);line-height:1.6">Complete the fields above with your client, well, and engineer details. This information is automatically included on all PDF report exports as a professional cover page.</div>
+        </div>
+        <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:14px">
+          <div style="font-weight:700;color:var(--accent);font-size:13px;margin-bottom:6px">2. Select a Calculator</div>
+          <div style="font-size:12px;color:var(--text2);line-height:1.6">Use the sidebar navigation to choose from 30+ engineering modules. Calculators are grouped by category: Well Testing, Production Analysis, Safety &amp; Process, Engineering, and Field Calculations.</div>
+        </div>
+        <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:14px">
+          <div style="font-weight:700;color:var(--accent);font-size:13px;margin-bottom:6px">3. Enter Parameters &amp; Calculate</div>
+          <div style="font-size:12px;color:var(--text2);line-height:1.6">Input your operating parameters and click the Calculate button. Results are displayed with engineering charts and data tables. All inputs are auto-saved to your browser so they persist between sessions.</div>
+        </div>
+        <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:14px">
+          <div style="font-weight:700;color:var(--accent);font-size:13px;margin-bottom:6px">4. Export Results</div>
+          <div style="font-size:12px;color:var(--text2);line-height:1.6">Use the <strong>PDF</strong> and <strong>PNG</strong> buttons in the top-right corner of any calculator to export results. PDF reports include your client info cover page, charts, and data tables. PNG exports download chart images directly.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Frequently Asked Questions</div>
+      <div id="ci_faq" style="font-size:13px;color:var(--text2)">
+        <details style="border-bottom:1px solid var(--border);padding:10px 0">
+          <summary style="cursor:pointer;font-weight:600;color:var(--text);padding:2px 0">What calculators are available?</summary>
+          <p style="margin:8px 0 4px 16px;line-height:1.7">The suite includes 30+ modules covering: <strong>AGA-3 gas metering</strong>, <strong>choke sizing &amp; flow rates</strong>, <strong>separator retention &amp; rating</strong>, <strong>flare simulation</strong> (API 521 thermal radiation + noise contours), <strong>PRV/relief sizing</strong> (API 520), <strong>decline curve analysis</strong> (Arps, Duong, SE), <strong>pressure transient analysis</strong>, <strong>pump sizing</strong>, <strong>pipe sizing</strong>, <strong>cable sizing &amp; voltage drop</strong>, <strong>generator sizing</strong>, <strong>heater duty</strong>, <strong>solution GOR</strong>, <strong>oil &amp; gas rate calculations</strong>, <strong>unit conversions</strong>, and more.</p>
+        </details>
+        <details style="border-bottom:1px solid var(--border);padding:10px 0">
+          <summary style="cursor:pointer;font-weight:600;color:var(--text);padding:2px 0">Is my data saved?</summary>
+          <p style="margin:8px 0 4px 16px;line-height:1.7">Yes. All calculator inputs and client information are automatically saved to your browser's local storage. Your data stays on your device and is never sent to any server. Clearing your browser data will reset all saved inputs.</p>
+        </details>
+        <details style="border-bottom:1px solid var(--border);padding:10px 0">
+          <summary style="cursor:pointer;font-weight:600;color:var(--text);padding:2px 0">How do I export a report?</summary>
+          <p style="margin:8px 0 4px 16px;line-height:1.7">Every calculator page has <strong>PDF</strong> and <strong>PNG</strong> export buttons in the top-right corner. The PDF report opens a print-friendly page with your client details, charts, and results — use your browser's Print/Save as PDF. PNG exports download chart images directly. Some modules (like Flare Simulation) also have dedicated CSV export options.</p>
+        </details>
+        <details style="border-bottom:1px solid var(--border);padding:10px 0">
+          <summary style="cursor:pointer;font-weight:600;color:var(--text);padding:2px 0">How does the Flare Simulation work?</summary>
+          <p style="margin:8px 0 4px 16px;line-height:1.7">The flare module uses a point-source radiation model per <strong>API 521</strong> with Brzustowski &amp; Sommer flame length and tilt correlations. It calculates thermal radiation contours at standard API 521 Table 5 thresholds and custom levels. The noise model uses thermoacoustic efficiency and hemispherical propagation. You can view results in interactive <strong>3D</strong> (rotate/zoom) or <strong>2D elevation</strong> (with background image overlay for site plans), plus a <strong>noise contour plan view</strong>.</p>
+        </details>
+        <details style="border-bottom:1px solid var(--border);padding:10px 0">
+          <summary style="cursor:pointer;font-weight:600;color:var(--text);padding:2px 0">Can I add a client logo to reports?</summary>
+          <p style="margin:8px 0 4px 16px;line-height:1.7">Yes. Upload a client logo (PNG or JPG) in the <strong>Client Logo</strong> section above. It will appear on the cover page of all PDF exports alongside the H2Oil logo. The logo is stored locally in your browser.</p>
+        </details>
+        <details style="border-bottom:1px solid var(--border);padding:10px 0">
+          <summary style="cursor:pointer;font-weight:600;color:var(--text);padding:2px 0">Does this app work offline?</summary>
+          <p style="margin:8px 0 4px 16px;line-height:1.7">Yes. The entire application is a single HTML file with no external dependencies. Once loaded, it works fully offline — no internet connection required. You can save the HTML file locally or bookmark the page for quick access.</p>
+        </details>
+        <details style="border-bottom:1px solid var(--border);padding:10px 0">
+          <summary style="cursor:pointer;font-weight:600;color:var(--text);padding:2px 0">What standards and correlations are used?</summary>
+          <p style="margin:8px 0 4px 16px;line-height:1.7">Key references include: <strong>AGA Report No. 3 / API 14.3</strong> (orifice metering), <strong>API 521</strong> (flare radiation), <strong>API 520 Part I</strong> (relief valve sizing), <strong>API 526</strong> (standard orifice sizes), <strong>API MPMS 5.3</strong> (turbine metering), <strong>Standing &amp; Vasquez-Beggs</strong> (PVT correlations), <strong>Darcy-Weisbach / Swamee-Jain</strong> (pipe friction), <strong>Souders-Brown</strong> (separator capacity), and <strong>Arps / Duong</strong> (decline curve models).</p>
+        </details>
+        <details style="padding:10px 0">
+          <summary style="cursor:pointer;font-weight:600;color:var(--text);padding:2px 0">Who built this?</summary>
+          <p style="margin:8px 0 4px 16px;line-height:1.7"><strong>H2Oil Engineering</strong> — well testing and engineering services. For enquiries, contact <strong>software@h2oil.co.uk</strong>.</p>
+        </details>
+      </div>
+    </div>`;
 }
 
 window.saveClientInfo = function() {
@@ -794,28 +857,76 @@ window.exportPagePNG = function() {
     });
 };
 
-// Universal PDF export: captures the visible results as a print-friendly page
+// Universal PDF export: captures all inputs, results, and charts
 window.exportPagePDF = function() {
     const body = $('pgBody');
     const title = $('pgTitle').textContent || 'Report';
     const sub = $('pgSub').textContent || '';
+    const pair = (l,v) => `<div class="pair"><span class="lbl">${l}</span><span class="val">${v}</span></div>`;
 
-    // Collect all result sections
-    const results = body.querySelectorAll('.card, .rrow, .dtable, #fl_res');
-    let contentHTML = '<h2>' + sub + '</h2>';
+    let contentHTML = '';
 
-    // Capture any canvases as images
-    const canvases = body.querySelectorAll('canvas');
-    canvases.forEach(cvs => {
-        try {
-            contentHTML += '<div style="text-align:center;margin:12px 0"><img src="' + cvs.toDataURL('image/png') + '" style="max-width:100%;height:auto;border:1px solid #ddd;border-radius:4px"></div>';
-        } catch(e) {}
+    // 1. Collect all input cards with their values
+    const cards = body.querySelectorAll('.card');
+    cards.forEach(card => {
+        const titleEl = card.querySelector('.card-title');
+        if(!titleEl) return;
+        const cardTitle = titleEl.textContent;
+        const inputs = card.querySelectorAll('input, select, textarea');
+        if(inputs.length === 0) return;
+        // Skip cards that are purely results (inside _res div)
+        const resParent = card.closest('[id$="_res"]');
+        if(resParent) return;
+
+        contentHTML += '<h2>' + cardTitle + '</h2>';
+        inputs.forEach(inp => {
+            const fgItem = inp.closest('.fg-item');
+            let label = '';
+            if(fgItem) {
+                const lbl = fgItem.querySelector('label');
+                if(lbl) label = lbl.textContent;
+            }
+            if(!label) return;
+            let val = inp.value;
+            // For selects, show the selected option text
+            if(inp.tagName === 'SELECT') {
+                val = inp.options[inp.selectedIndex]?.text || val;
+            }
+            if(val === '') return;
+            contentHTML += pair(label, val);
+        });
     });
 
-    // Collect result data
-    const resDiv = body.querySelector('[id$="_res"]') || body.querySelector('.card:last-of-type');
-    if(resDiv) {
-        contentHTML += resDiv.innerHTML;
+    // 2. Capture any canvases as chart images
+    const canvases = body.querySelectorAll('canvas');
+    if(canvases.length > 0) {
+        contentHTML += '<h2>Charts</h2>';
+        canvases.forEach(cvs => {
+            try {
+                contentHTML += '<div style="text-align:center;margin:12px 0"><img src="' + cvs.toDataURL('image/png') + '" style="max-width:100%;height:auto;border:1px solid #ddd;border-radius:4px"></div>';
+            } catch(e) {}
+        });
+    }
+
+    // 3. Collect calculated results
+    const resDiv = body.querySelector('[id$="_res"]');
+    if(resDiv && resDiv.innerHTML.trim()) {
+        contentHTML += '<h2>Calculated Results</h2>';
+        // Clone and clean up for print - convert dark theme colors to print-friendly
+        const clone = resDiv.cloneNode(true);
+        // Remove any nested card-title elements (already have h2 above)
+        clone.querySelectorAll('.card').forEach(c => {
+            const ct = c.querySelector('.card-title');
+            if(ct) {
+                const h3 = document.createElement('h3');
+                h3.textContent = ct.textContent;
+                h3.style.cssText = 'font-size:14px;color:#f0883e;margin:16px 0 6px';
+                ct.replaceWith(h3);
+            }
+            // Remove card styling for print
+            c.style.cssText = 'margin-bottom:12px;';
+        });
+        contentHTML += clone.innerHTML;
     }
 
     exportReport(title, contentHTML);
