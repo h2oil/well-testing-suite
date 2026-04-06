@@ -285,6 +285,7 @@
         <div class="nav-group">
             <div class="nav-group-label">Overview</div>
             <div class="nav-btn active" data-p="home"><span class="nav-icon">&#9670;</span><span>Dashboard</span></div>
+            <div class="nav-btn" data-p="clientinfo"><span class="nav-icon">&#128188;</span><span>Client & Well Info</span></div>
         </div>
         <div class="nav-group">
             <div class="nav-group-label">Well Testing</div>
@@ -342,7 +343,13 @@
 
     <!-- Main -->
     <div class="main">
-        <div class="page-header"><h2 id="pgTitle">Dashboard</h2><p id="pgSub">Select a module to get started</p></div>
+        <div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:8px">
+          <div><h2 id="pgTitle">Dashboard</h2><p id="pgSub">Select a module to get started</p></div>
+          <div class="export-btns" id="exportBtns" style="display:none;gap:6px;flex-shrink:0;margin-top:4px">
+            <button class="btn-export" onclick="exportPagePDF()" title="Export as PDF report">&#128424; PDF</button>
+            <button class="btn-export" onclick="exportPagePNG()" title="Export charts as PNG">&#128247; PNG</button>
+          </div>
+        </div>
         <div class="page-body" id="pgBody"></div>
     </div>
 
@@ -430,29 +437,6 @@ function exportCSV(filename, headers, rows) {
     URL.revokeObjectURL(a.href);
 }
 
-// ── Export: Print-friendly report ──
-function exportReport(title, contentHTML) {
-    const w = window.open('','_blank','width=900,height=700');
-    w.document.write(`<!DOCTYPE html><html><head><title>${title}</title>
-    <style>
-        body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;padding:30px 40px;color:#222;max-width:900px;margin:0 auto;}
-        h1{font-size:22px;border-bottom:2px solid #f0883e;padding-bottom:8px;color:#333;}
-        h2{font-size:16px;color:#f0883e;margin-top:24px;margin-bottom:8px;}
-        table{width:100%;border-collapse:collapse;margin:10px 0;font-size:13px;}
-        th{text-align:left;padding:6px 10px;background:#f5f5f5;border:1px solid #ddd;font-weight:700;font-size:11px;text-transform:uppercase;}
-        td{padding:6px 10px;border:1px solid #ddd;}
-        .meta{font-size:12px;color:#666;margin-bottom:20px;}
-        .pair{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #eee;}
-        .pair .lbl{color:#555;font-size:13px;} .pair .val{font-weight:700;font-size:14px;color:#c26a20;font-family:'Courier New',monospace;}
-        @media print{body{padding:10px 20px;}}
-    </style></head><body>
-    <h1>${title}</h1>
-    <div class="meta">H2Oil Engineering &mdash; Generated ${new Date().toLocaleString()}</div>
-    ${contentHTML}
-    <script>window.print();<\/script></body></html>`);
-    w.document.close();
-}
-
 // ── Navigation ──
 let page = 'home';
 const navBtns = document.querySelectorAll('.nav-btn');
@@ -468,8 +452,11 @@ function nav(p) {
 function render() {
     const body = $('pgBody');
     body.innerHTML = '';
-    const pages = { home: renderHome, aga3: renderAGA3, units: renderUnits, choke: renderChoke, flare: renderFlare, dca: renderDCA, pta: renderPTA, prv: renderPRV, chokeflow: renderChokeFlow, gascalc: renderGasCalc, fluid: renderFluid, tank: renderTank, vessel: renderVessel, elec: renderElec, chem: renderChem, sep: renderSep, bottomsup: renderBottomsUp, solgor: renderSolGOR, oilgas: renderOilGas, mcfshr: renderMCFShr, casing: renderCasing, chokecnv: renderChokeCnv, analogsig: renderAnalogSig, pumpsz: renderPumpSz, seprate: renderSepRate, heater: renderHeater, pipesz: renderPipeSz, turbmeter: renderTurbMeter, aircomp: renderAirComp, gensz: renderGenSz, cablesz: renderCableSz, vdrop: renderVDrop, flamearr: renderFlameArr, arc: renderARC };
+    const pages = { home: renderHome, clientinfo: renderClientInfo, aga3: renderAGA3, units: renderUnits, choke: renderChoke, flare: renderFlare, dca: renderDCA, pta: renderPTA, prv: renderPRV, chokeflow: renderChokeFlow, gascalc: renderGasCalc, fluid: renderFluid, tank: renderTank, vessel: renderVessel, elec: renderElec, chem: renderChem, sep: renderSep, bottomsup: renderBottomsUp, solgor: renderSolGOR, oilgas: renderOilGas, mcfshr: renderMCFShr, casing: renderCasing, chokecnv: renderChokeCnv, analogsig: renderAnalogSig, pumpsz: renderPumpSz, seprate: renderSepRate, heater: renderHeater, pipesz: renderPipeSz, turbmeter: renderTurbMeter, aircomp: renderAirComp, gensz: renderGenSz, cablesz: renderCableSz, vdrop: renderVDrop, flamearr: renderFlameArr, arc: renderARC };
     if (pages[page]) pages[page](body);
+    // Show export buttons on calculator pages (not home/clientinfo)
+    const eb = $('exportBtns');
+    if(eb) eb.style.display = (page==='home'||page==='clientinfo') ? 'none' : 'flex';
 }
 
 // ── Canvas Chart Helper ──
@@ -593,6 +580,246 @@ function renderHome(body) {
     });
     body.appendChild(grid);
 }
+
+// ═══════════════════════════════════════
+// CLIENT & WELL INFO
+// ═══════════════════════════════════════
+function renderClientInfo(body) {
+    $('pgTitle').textContent='Client & Well Information';
+    $('pgSub').textContent='Project details for PDF report exports';
+    body.innerHTML='';
+
+    // Load saved info
+    const ci = JSON.parse(localStorage.getItem('h2oil_client_info')||'{}');
+
+    body.innerHTML=`
+    <div class="cols-2">
+      <div>
+        <div class="card">
+          <div class="card-title">Client Information</div>
+          <div class="fg">
+            <div class="fg-item"><label>Client / Company Name</label><input type="text" id="ci_client" value="${ci.client||''}" placeholder="e.g. Tullow Oil"></div>
+            <div class="fg-item"><label>Contact Person</label><input type="text" id="ci_contact" value="${ci.contact||''}" placeholder="e.g. John Smith"></div>
+            <div class="fg-item"><label>Client Email</label><input type="email" id="ci_email" value="${ci.email||''}" placeholder="e.g. john@tullow.com"></div>
+            <div class="fg-item"><label>Client Reference / PO</label><input type="text" id="ci_ref" value="${ci.ref||''}" placeholder="e.g. PO-2026-0042"></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title">Well & Field Information</div>
+          <div class="fg">
+            <div class="fg-item"><label>Well Name</label><input type="text" id="ci_well" value="${ci.well||''}" placeholder="e.g. Well-7H"></div>
+            <div class="fg-item"><label>Field / Block</label><input type="text" id="ci_field" value="${ci.field||''}" placeholder="e.g. Jubilee Field, Block DT-10"></div>
+            <div class="fg-item"><label>Operator</label><input type="text" id="ci_operator" value="${ci.operator||''}" placeholder="e.g. Tullow Oil plc"></div>
+            <div class="fg-item"><label>Country / Region</label><input type="text" id="ci_country" value="${ci.country||''}" placeholder="e.g. Ghana, West Africa"></div>
+            <div class="fg-item"><label>Rig / Vessel</label><input type="text" id="ci_rig" value="${ci.rig||''}" placeholder="e.g. Maersk Deliverer"></div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="card">
+          <div class="card-title">Report Prepared By</div>
+          <div class="fg">
+            <div class="fg-item"><label>Engineer Name</label><input type="text" id="ci_engineer" value="${ci.engineer||''}" placeholder="Your name"></div>
+            <div class="fg-item"><label>Position / Title</label><input type="text" id="ci_position" value="${ci.position||''}" placeholder="e.g. Well Test Engineer"></div>
+            <div class="fg-item"><label>Company</label><input type="text" id="ci_company" value="${ci.company||'H2Oil Engineering'}" placeholder="e.g. H2Oil Engineering"></div>
+            <div class="fg-item"><label>Email</label><input type="email" id="ci_eng_email" value="${ci.eng_email||''}" placeholder="e.g. you@h2oil.co.uk"></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title">Client Logo (for Report Cover Page)</div>
+          <div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap">
+            <div id="ci_logo_preview" style="width:160px;height:80px;border:1px dashed var(--border);border-radius:8px;display:flex;align-items:center;justify-content:center;background:var(--card);overflow:hidden">
+              ${ci.clientLogo ? '<img src="'+ci.clientLogo+'" style="max-width:150px;max-height:72px;object-fit:contain">' : '<span style="color:var(--text3);font-size:12px">No logo uploaded</span>'}
+            </div>
+            <div style="flex:1;min-width:150px">
+              <label class="btn btn-secondary" style="cursor:pointer;display:inline-block;margin-bottom:8px">&#128247; Upload Logo<input type="file" accept="image/*" style="display:none" onchange="uploadClientLogo(this)"></label>
+              <button class="btn btn-secondary" onclick="clearClientLogo()" style="margin-bottom:8px">Clear Logo</button>
+              <div style="font-size:11px;color:var(--text3)">PNG or JPG. Displayed on PDF report cover alongside H2Oil logo.</div>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title">Notes</div>
+          <textarea class="data-textarea" id="ci_notes" placeholder="Additional notes for reports..." style="min-height:80px">${ci.notes||''}</textarea>
+        </div>
+      </div>
+    </div>
+    <div class="btn-row" style="margin-top:12px">
+      <button class="btn btn-primary" onclick="saveClientInfo()">&#128190; Save Information</button>
+      <button class="btn btn-secondary" onclick="clearClientInfo()">Clear All</button>
+    </div>
+    <div id="ci_status" style="margin-top:8px"></div>`;
+}
+
+window.saveClientInfo = function() {
+    const ci = {
+        client: $('ci_client').value, contact: $('ci_contact').value,
+        email: $('ci_email').value, ref: $('ci_ref').value,
+        well: $('ci_well').value, field: $('ci_field').value,
+        operator: $('ci_operator').value, country: $('ci_country').value,
+        rig: $('ci_rig').value, engineer: $('ci_engineer').value,
+        position: $('ci_position').value, company: $('ci_company').value,
+        eng_email: $('ci_eng_email').value, notes: $('ci_notes').value,
+        clientLogo: (JSON.parse(localStorage.getItem('h2oil_client_info')||'{}')).clientLogo || ''
+    };
+    localStorage.setItem('h2oil_client_info', JSON.stringify(ci));
+    $('ci_status').innerHTML='<span style="color:var(--green);font-weight:600">&#10003; Client info saved successfully</span>';
+    setTimeout(()=>{ const s=$('ci_status'); if(s) s.innerHTML=''; }, 2000);
+};
+
+window.uploadClientLogo = function(inp) {
+    const f = inp.files[0]; if(!f) return;
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        const ci = JSON.parse(localStorage.getItem('h2oil_client_info')||'{}');
+        ci.clientLogo = e.target.result;
+        localStorage.setItem('h2oil_client_info', JSON.stringify(ci));
+        const prev = $('ci_logo_preview');
+        if(prev) prev.innerHTML = '<img src="'+e.target.result+'" style="max-width:150px;max-height:72px;object-fit:contain">';
+    };
+    reader.readAsDataURL(f);
+};
+
+window.clearClientLogo = function() {
+    const ci = JSON.parse(localStorage.getItem('h2oil_client_info')||'{}');
+    delete ci.clientLogo;
+    localStorage.setItem('h2oil_client_info', JSON.stringify(ci));
+    const prev = $('ci_logo_preview');
+    if(prev) prev.innerHTML = '<span style="color:var(--text3);font-size:12px">No logo uploaded</span>';
+};
+
+window.clearClientInfo = function() {
+    localStorage.removeItem('h2oil_client_info');
+    nav('clientinfo');
+};
+
+// ═══════════════════════════════════════
+// UNIVERSAL PDF / PNG EXPORT
+// ═══════════════════════════════════════
+function getClientInfo() {
+    return JSON.parse(localStorage.getItem('h2oil_client_info')||'{}');
+}
+
+function getH2OilLogoBlack() {
+    // Get the sidebar logo and apply CSS invert for black version
+    const img = document.querySelector('.sidebar-brand img');
+    if(!img) return '';
+    try {
+        const c = document.createElement('canvas');
+        c.width = img.naturalWidth || 200; c.height = img.naturalHeight || 100;
+        const ctx = c.getContext('2d');
+        ctx.filter = 'invert(1)';
+        ctx.drawImage(img, 0, 0);
+        return c.toDataURL('image/png');
+    } catch(e) { return ''; }
+}
+
+function buildReportCoverHTML(title) {
+    const ci = getClientInfo();
+    const h2Logo = getH2OilLogoBlack();
+    let logoSection = '';
+    if(ci.clientLogo && h2Logo) {
+        logoSection = `<div style="display:flex;align-items:center;justify-content:center;gap:40px;margin:30px 0">
+            <img src="${ci.clientLogo}" style="max-height:80px;max-width:200px;object-fit:contain">
+            <img src="${h2Logo}" style="max-height:60px;max-width:160px;object-fit:contain">
+        </div>`;
+    } else if(ci.clientLogo) {
+        logoSection = `<div style="text-align:center;margin:30px 0"><img src="${ci.clientLogo}" style="max-height:80px;max-width:200px;object-fit:contain"></div>`;
+    } else if(h2Logo) {
+        logoSection = `<div style="text-align:center;margin:30px 0"><img src="${h2Logo}" style="max-height:60px;max-width:160px;object-fit:contain"></div>`;
+    }
+
+    const meta = [];
+    if(ci.client) meta.push(`<tr><td>Client</td><td>${ci.client}</td></tr>`);
+    if(ci.well) meta.push(`<tr><td>Well</td><td>${ci.well}</td></tr>`);
+    if(ci.field) meta.push(`<tr><td>Field / Block</td><td>${ci.field}</td></tr>`);
+    if(ci.operator) meta.push(`<tr><td>Operator</td><td>${ci.operator}</td></tr>`);
+    if(ci.country) meta.push(`<tr><td>Region</td><td>${ci.country}</td></tr>`);
+    if(ci.rig) meta.push(`<tr><td>Rig / Vessel</td><td>${ci.rig}</td></tr>`);
+    if(ci.ref) meta.push(`<tr><td>Reference</td><td>${ci.ref}</td></tr>`);
+    meta.push(`<tr><td>Date Generated</td><td>${new Date().toLocaleString()}</td></tr>`);
+    if(ci.engineer) meta.push(`<tr><td>Prepared By</td><td>${ci.engineer}${ci.position?' — '+ci.position:''}</td></tr>`);
+    if(ci.company) meta.push(`<tr><td>Company</td><td>${ci.company}</td></tr>`);
+
+    return `${logoSection}
+        ${meta.length ? '<table class="meta-tbl">'+meta.join('')+'</table>' : ''}`;
+}
+
+// Enhanced exportReport with client info and cover page
+function exportReport(title, contentHTML) {
+    const ci = getClientInfo();
+    const coverHTML = buildReportCoverHTML(title);
+    const w = window.open('','_blank','width=900,height=700');
+    w.document.write(`<!DOCTYPE html><html><head><title>${title}</title>
+    <style>
+        body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;padding:30px 40px;color:#222;max-width:900px;margin:0 auto;}
+        h1{font-size:22px;border-bottom:2px solid #f0883e;padding-bottom:8px;color:#333;}
+        h2{font-size:16px;color:#f0883e;margin-top:24px;margin-bottom:8px;}
+        table{width:100%;border-collapse:collapse;margin:10px 0;font-size:13px;}
+        th{text-align:left;padding:6px 10px;background:#f5f5f5;border:1px solid #ddd;font-weight:700;font-size:11px;text-transform:uppercase;}
+        td{padding:6px 10px;border:1px solid #ddd;}
+        .meta{font-size:12px;color:#666;margin-bottom:20px;}
+        .pair{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #eee;}
+        .pair .lbl{color:#555;font-size:13px;} .pair .val{font-weight:700;font-size:14px;color:#c26a20;font-family:'Courier New',monospace;}
+        .meta-tbl{width:auto;margin:16px auto;} .meta-tbl td{padding:4px 16px;font-size:13px;border:1px solid #ddd;} .meta-tbl td:first-child{font-weight:600;color:#555;background:#f9f9f9;}
+        @media print{body{padding:10px 20px;}}
+    </style></head><body>
+    <h1>${title}</h1>
+    ${coverHTML}
+    <hr style="border:none;border-top:1px solid #ddd;margin:20px 0">
+    ${contentHTML}
+    <div style="margin-top:30px;padding-top:10px;border-top:1px solid #ddd;font-size:10px;color:#999;text-align:center">
+      ${ci.company||'H2Oil Engineering'} &mdash; Generated ${new Date().toLocaleString()}${ci.engineer?' by '+ci.engineer:''}
+    </div>
+    <script>window.print();<\/script></body></html>`);
+    w.document.close();
+}
+
+// Universal PNG export: captures the page content as image
+window.exportPagePNG = function() {
+    // Find all canvases on the current page
+    const body = $('pgBody');
+    const canvases = body.querySelectorAll('canvas');
+    if(canvases.length === 0) {
+        // For non-canvas pages, export the results section as image via print
+        exportPagePDF();
+        return;
+    }
+    // Export all canvases as PNGs
+    canvases.forEach((cvs, i) => {
+        const a = document.createElement('a');
+        a.download = ($('pgTitle').textContent||'export').replace(/[^a-zA-Z0-9]/g,'_') + (canvases.length>1 ? '_'+(i+1) : '') + '.png';
+        a.href = cvs.toDataURL('image/png');
+        a.click();
+    });
+};
+
+// Universal PDF export: captures the visible results as a print-friendly page
+window.exportPagePDF = function() {
+    const body = $('pgBody');
+    const title = $('pgTitle').textContent || 'Report';
+    const sub = $('pgSub').textContent || '';
+
+    // Collect all result sections
+    const results = body.querySelectorAll('.card, .rrow, .dtable, #fl_res');
+    let contentHTML = '<h2>' + sub + '</h2>';
+
+    // Capture any canvases as images
+    const canvases = body.querySelectorAll('canvas');
+    canvases.forEach(cvs => {
+        try {
+            contentHTML += '<div style="text-align:center;margin:12px 0"><img src="' + cvs.toDataURL('image/png') + '" style="max-width:100%;height:auto;border:1px solid #ddd;border-radius:4px"></div>';
+        } catch(e) {}
+    });
+
+    // Collect result data
+    const resDiv = body.querySelector('[id$="_res"]') || body.querySelector('.card:last-of-type');
+    if(resDiv) {
+        contentHTML += resDiv.innerHTML;
+    }
+
+    exportReport(title, contentHTML);
+};
 
 // ═══════════════════════════════════════
 // AGA-3 ORIFICE GAS RATE CALCULATOR
@@ -989,7 +1216,7 @@ function renderFlare(body) {
     if(flareAnim){cancelAnimationFrame(flareAnim);flareAnim=null;}
 
     // Camera state
-    let camTheta=Math.PI/5, camPhi=Math.PI/7, camZoom=1.0;
+    let camTheta=Math.PI/5, camPhi=Math.PI/7, camZoom=2.0;
     let drag=false, mx0=0, my0=0;
     let flView='3d', time3d=0;
     // 2D pan/zoom state
@@ -1079,7 +1306,7 @@ function renderFlare(body) {
         <div class="flare-canvas-wrap" id="fl_wrap"><canvas id="fl_canvas"></canvas></div>
         <div class="info-bar" style="margin-top:6px" id="fl_hint">&#8635; Drag to rotate &nbsp;|&nbsp; Scroll to zoom &nbsp;|&nbsp; Switch tab for 2D elevation view</div>
         <div style="font-size:12px;font-weight:700;color:var(--blue);margin:16px 0 6px;text-transform:uppercase;letter-spacing:.5px">Noise Contour — Plan View</div>
-        <div class="flare-canvas-wrap" id="fl_wrap2" style="height:460px;background:#f8f9fa"><canvas id="fl_canvas2"></canvas></div>
+        <div class="flare-canvas-wrap" id="fl_wrap2" style="height:460px;background:#0d1117"><canvas id="fl_canvas2"></canvas></div>
         <div class="info-bar" style="margin-top:6px" id="fl_hint2">Hover for dBA reading &nbsp;|&nbsp; Click to pin marker &nbsp;|&nbsp; Double-click to clear &nbsp;|&nbsp; Drag to pan &nbsp;|&nbsp; Scroll to zoom</div>
       </div>
     </div>
@@ -1472,12 +1699,15 @@ function renderFlare(body) {
         function wx(x){return ML+(x-xMin)*sx;}
         function wy(y){return MT+(yMax-y)*sy;}
 
-        // ── Background
-        ctx.fillStyle='#f8f9fa'; ctx.fillRect(0,0,W,Hc);
+        // ── Background (dark theme)
+        ctx.fillStyle='#0d1117'; ctx.fillRect(0,0,W,Hc);
 
         // ── Clip to plot area for content
         ctx.save();
         ctx.beginPath(); ctx.rect(ML,MT,PW,PH); ctx.clip();
+
+        // Plot area background
+        ctx.fillStyle='#161b22'; ctx.fillRect(ML,MT,PW,PH);
 
         // ── Background image overlay (mapped to coordinate system)
         if(flareBg && flareBgCfg){
@@ -1487,7 +1717,6 @@ function renderFlare(body) {
             ctx.drawImage(flareBg, imgX, imgY, imgW, imgH);
             ctx.globalAlpha=1;
         } else if(flareBg){
-            // Default: fit image to visible area with 40% opacity
             ctx.globalAlpha=0.40;
             ctx.drawImage(flareBg, wx(xMin), wy(yMax), PW, PH);
             ctx.globalAlpha=1;
@@ -1500,7 +1729,7 @@ function renderFlare(body) {
         const x0=Math.floor(xMin/gs)*gs;
         for(let x=x0;x<=xMax;x+=gs){
             const px=wx(x);
-            ctx.strokeStyle=(x===0)?'#999':'#ddd'; ctx.lineWidth=(x===0)?1.2:0.5;
+            ctx.strokeStyle=(x===0)?'#4a5568':'#21262d'; ctx.lineWidth=(x===0)?1.2:0.5;
             ctx.setLineDash(x===0?[]:[4,3]);
             ctx.beginPath(); ctx.moveTo(px,MT); ctx.lineTo(px,MT+PH); ctx.stroke();
         }
@@ -1508,7 +1737,7 @@ function renderFlare(body) {
         const y0=Math.floor(yMin/gs)*gs;
         for(let y=y0;y<=yMax;y+=gs){
             const py=wy(y);
-            ctx.strokeStyle=(y===0)?'#999':'#ddd'; ctx.lineWidth=(y===0)?1.2:0.5;
+            ctx.strokeStyle=(y===0)?'#4a5568':'#21262d'; ctx.lineWidth=(y===0)?1.2:0.5;
             ctx.setLineDash(y===0?[]:[4,3]);
             ctx.beginPath(); ctx.moveTo(ML,py); ctx.lineTo(ML+PW,py); ctx.stroke();
         }
@@ -1539,17 +1768,16 @@ function renderFlare(body) {
         if(yMin<=0 && yMax>=0){
             ctx.strokeStyle='#654'; ctx.lineWidth=2; ctx.setLineDash([]);
             ctx.beginPath(); ctx.moveTo(ML,wy(0)); ctx.lineTo(ML+PW,wy(0)); ctx.stroke();
-            // Hatch below ground
-            ctx.fillStyle='rgba(100,80,60,0.08)'; ctx.fillRect(ML,wy(0),PW,MT+PH-wy(0));
+            ctx.fillStyle='rgba(100,80,60,0.06)'; ctx.fillRect(ML,wy(0),PW,MT+PH-wy(0));
         }
 
         // ── Stack
         const sW_px=Math.max(4, fp.D*sx*3);
         const sBot=wy(0), sTop=wy(fp.H), sLeft=wx(0)-sW_px/2;
         const grad2=ctx.createLinearGradient(sLeft,sTop,sLeft+sW_px,sTop);
-        grad2.addColorStop(0,'#556'); grad2.addColorStop(0.5,'#99a'); grad2.addColorStop(1,'#556');
+        grad2.addColorStop(0,'#4a5568'); grad2.addColorStop(0.5,'#8b949e'); grad2.addColorStop(1,'#4a5568');
         ctx.fillStyle=grad2; ctx.fillRect(sLeft,sTop,sW_px,sBot-sTop);
-        ctx.strokeStyle='#445'; ctx.lineWidth=1; ctx.strokeRect(sLeft,sTop,sW_px,sBot-sTop);
+        ctx.strokeStyle='#30363d'; ctx.lineWidth=1; ctx.strokeRect(sLeft,sTop,sW_px,sBot-sTop);
 
         // ── Flame
         const fL=fp.L_m, tR=fp.tiltRad;
@@ -1569,7 +1797,7 @@ function renderFlare(body) {
         ctx.fillStyle=fGrad; ctx.fill();
 
         // ── Annotations
-        ctx.fillStyle='#333'; ctx.font='bold 11px sans-serif'; ctx.textAlign='left';
+        ctx.fillStyle='#c9d1d9'; ctx.font='bold 11px sans-serif'; ctx.textAlign='left';
         ctx.fillText('H = '+fp.H+'m', wx(0)+sW_px/2+6, wy(fp.H/2));
         ctx.fillText('L = '+fmt(fp.L_m,1)+'m', ftPx+8, ftPy-4);
         ctx.fillText('Tilt: '+fmt(fp.tiltDeg,1)+'\u00b0', ftPx+8, ftPy+11);
@@ -1579,57 +1807,57 @@ function renderFlare(body) {
         ctx.restore(); // un-clip
 
         // ── Plot border
-        ctx.strokeStyle='#333'; ctx.lineWidth=1.5;
+        ctx.strokeStyle='#30363d'; ctx.lineWidth=1.5;
         ctx.strokeRect(ML,MT,PW,PH);
 
         // ── X-axis ticks & labels
-        ctx.fillStyle='#333'; ctx.font='11px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='top';
+        ctx.fillStyle='#8b949e'; ctx.font='11px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='top';
         for(let x=x0;x<=xMax;x+=gs){
             const px=wx(x);
             if(px<ML-1||px>ML+PW+1)continue;
-            ctx.beginPath(); ctx.moveTo(px,MT+PH); ctx.lineTo(px,MT+PH+5); ctx.strokeStyle='#333'; ctx.lineWidth=1; ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(px,MT+PH); ctx.lineTo(px,MT+PH+5); ctx.strokeStyle='#484f58'; ctx.lineWidth=1; ctx.stroke();
             ctx.fillText(fmt(x,gs<1?1:0), px, MT+PH+7);
         }
         // X-axis label
-        ctx.font='bold 12px sans-serif'; ctx.fillStyle='#222';
+        ctx.font='bold 12px sans-serif'; ctx.fillStyle='#c9d1d9';
         ctx.fillText('Easting [m]', ML+PW/2, Hc-8);
 
         // ── Y-axis ticks & labels
         ctx.textAlign='right'; ctx.textBaseline='middle';
-        ctx.font='11px sans-serif'; ctx.fillStyle='#333';
+        ctx.font='11px sans-serif'; ctx.fillStyle='#8b949e';
         for(let y=y0;y<=yMax;y+=gs){
             const py=wy(y);
             if(py<MT-1||py>MT+PH+1)continue;
-            ctx.beginPath(); ctx.moveTo(ML,py); ctx.lineTo(ML-5,py); ctx.strokeStyle='#333'; ctx.lineWidth=1; ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(ML,py); ctx.lineTo(ML-5,py); ctx.strokeStyle='#484f58'; ctx.lineWidth=1; ctx.stroke();
             ctx.fillText(fmt(y,gs<1?1:0), ML-8, py);
         }
         // Y-axis label (rotated)
         ctx.save(); ctx.translate(14, MT+PH/2); ctx.rotate(-Math.PI/2);
-        ctx.font='bold 12px sans-serif'; ctx.fillStyle='#222'; ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.font='bold 12px sans-serif'; ctx.fillStyle='#c9d1d9'; ctx.textAlign='center'; ctx.textBaseline='middle';
         ctx.fillText('Elevation [m]', 0, 0);
         ctx.restore();
 
         // ── Info overlay (top-right of plot)
         const infoX=ML+PW-8, infoY=MT+8;
-        ctx.fillStyle='rgba(255,255,255,0.85)'; ctx.strokeStyle='#ccc'; ctx.lineWidth=0.5;
+        ctx.fillStyle='rgba(22,27,34,0.92)'; ctx.strokeStyle='#30363d'; ctx.lineWidth=0.5;
         ctx.fillRect(infoX-145,infoY,148,55); ctx.strokeRect(infoX-145,infoY,148,55);
-        ctx.fillStyle='#1a73e8'; ctx.font='bold 11px sans-serif'; ctx.textAlign='right'; ctx.textBaseline='top';
+        ctx.fillStyle='#58a6ff'; ctx.font='bold 11px sans-serif'; ctx.textAlign='right'; ctx.textBaseline='top';
         ctx.fillText('Wind: '+$('fl_W').value+' m/s \u2192', infoX-4, infoY+4);
         ctx.fillText('Q = '+fmt(fp.Q_kW/1000,2)+' MW', infoX-4, infoY+19);
-        ctx.fillStyle='#555'; ctx.font='10px sans-serif';
+        ctx.fillStyle='#8b949e'; ctx.font='10px sans-serif';
         ctx.fillText('Northing Offset = 0 [m]', infoX-4, infoY+36);
         ctx.textAlign='left'; ctx.textBaseline='alphabetic';
 
         // ── Legend (top-left of plot)
         const legX=ML+8, legY=MT+8;
         const legH=fp.allThresh.length*18+22;
-        ctx.fillStyle='rgba(255,255,255,0.9)'; ctx.strokeStyle='#ccc'; ctx.lineWidth=0.5;
+        ctx.fillStyle='rgba(22,27,34,0.92)'; ctx.strokeStyle='#30363d'; ctx.lineWidth=0.5;
         ctx.fillRect(legX,legY,210,legH); ctx.strokeRect(legX,legY,210,legH);
-        ctx.fillStyle='#222'; ctx.font='bold 10px sans-serif';
+        ctx.fillStyle='#c9d1d9'; ctx.font='bold 10px sans-serif';
         ctx.fillText('API 521 Radiation Zones',legX+6,legY+14);
         fp.allThresh.forEach((t,i)=>{
             ctx.fillStyle=t.col; ctx.fillRect(legX+6,legY+20+i*18,10,10);
-            ctx.fillStyle='#333'; ctx.font='10px sans-serif';
+            ctx.fillStyle='#8b949e'; ctx.font='10px sans-serif';
             const shortLbl=t.lbl.length>30?t.lbl.substring(0,29)+'\u2026':t.lbl;
             ctx.fillText(shortLbl, legX+20, legY+29+i*18);
         });
@@ -1662,12 +1890,15 @@ function renderFlare(body) {
         function wx(x){return ML+(x-xMin)*sx;}
         function wy(y){return MT+(yMax-y)*sy;}
 
-        // Background
-        ctx.fillStyle='#f8f9fa'; ctx.fillRect(0,0,W,Hc);
+        // Background (dark theme)
+        ctx.fillStyle='#0d1117'; ctx.fillRect(0,0,W,Hc);
 
         // Clip to plot
         ctx.save();
         ctx.beginPath(); ctx.rect(ML,MT,PW,PH); ctx.clip();
+
+        // Plot area background
+        ctx.fillStyle='#161b22'; ctx.fillRect(ML,MT,PW,PH);
 
         // Background image
         if(flareBg && flareBgCfg){
@@ -1687,13 +1918,13 @@ function renderFlare(body) {
         const x0=Math.floor(xMin/gs)*gs, y0=Math.floor(yMin/gs)*gs;
         for(let x=x0;x<=xMax;x+=gs){
             const px=wx(x);
-            ctx.strokeStyle=(x===0)?'#999':'#ddd'; ctx.lineWidth=(x===0)?1.2:0.5;
+            ctx.strokeStyle=(x===0)?'#4a5568':'#21262d'; ctx.lineWidth=(x===0)?1.2:0.5;
             ctx.setLineDash(x===0?[]:[4,3]);
             ctx.beginPath(); ctx.moveTo(px,MT); ctx.lineTo(px,MT+PH); ctx.stroke();
         }
         for(let y=y0;y<=yMax;y+=gs){
             const py=wy(y);
-            ctx.strokeStyle=(y===0)?'#999':'#ddd'; ctx.lineWidth=(y===0)?1.2:0.5;
+            ctx.strokeStyle=(y===0)?'#4a5568':'#21262d'; ctx.lineWidth=(y===0)?1.2:0.5;
             ctx.setLineDash(y===0?[]:[4,3]);
             ctx.beginPath(); ctx.moveTo(ML,py); ctx.lineTo(ML+PW,py); ctx.stroke();
         }
@@ -1734,61 +1965,60 @@ function renderFlare(body) {
         // Flare stack marker
         ctx.beginPath(); ctx.arc(wx(0),wy(0),6,0,Math.PI*2);
         ctx.fillStyle='#d63'; ctx.fill(); ctx.strokeStyle='#fff'; ctx.lineWidth=2; ctx.stroke();
-        ctx.fillStyle='#333'; ctx.font='bold 11px sans-serif'; ctx.textAlign='left';
+        ctx.fillStyle='#e6edf3'; ctx.font='bold 11px sans-serif'; ctx.textAlign='left';
         ctx.fillText('Flare Stack', wx(0)+10, wy(0)-8);
 
         // Flame direction indicator
         const arrowLen=Math.min(maxR*0.15, 20);
         const tR=fp.tiltRad;
-        const ax=arrowLen*Math.sin(tR), ay=arrowLen*Math.cos(tR)*0.3; // projected plan view
+        const ax=arrowLen*Math.sin(tR), ay=arrowLen*Math.cos(tR)*0.3;
         ctx.strokeStyle='#f80'; ctx.lineWidth=2.5; ctx.setLineDash([]);
         ctx.beginPath(); ctx.moveTo(wx(0),wy(0)); ctx.lineTo(wx(ax),wy(ay)); ctx.stroke();
-        // Arrowhead
         ctx.beginPath(); ctx.arc(wx(ax),wy(ay),4,0,Math.PI*2); ctx.fillStyle='#f80'; ctx.fill();
 
-        ctx.restore(); // un-clip
+        ctx.restore();
 
         // Plot border
-        ctx.strokeStyle='#333'; ctx.lineWidth=1.5;
+        ctx.strokeStyle='#30363d'; ctx.lineWidth=1.5;
         ctx.strokeRect(ML,MT,PW,PH);
 
         // X-axis ticks & labels
-        ctx.fillStyle='#333'; ctx.font='11px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='top';
+        ctx.fillStyle='#8b949e'; ctx.font='11px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='top';
         for(let x=x0;x<=xMax;x+=gs){
             const px=wx(x);
             if(px<ML-1||px>ML+PW+1)continue;
-            ctx.beginPath(); ctx.moveTo(px,MT+PH); ctx.lineTo(px,MT+PH+5); ctx.strokeStyle='#333'; ctx.lineWidth=1; ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(px,MT+PH); ctx.lineTo(px,MT+PH+5); ctx.strokeStyle='#484f58'; ctx.lineWidth=1; ctx.stroke();
             ctx.fillText(fmt(x,gs<1?1:0), px, MT+PH+7);
         }
-        ctx.font='bold 12px sans-serif'; ctx.fillStyle='#222';
+        ctx.font='bold 12px sans-serif'; ctx.fillStyle='#c9d1d9';
         ctx.fillText('Easting [m]', ML+PW/2, Hc-8);
 
         // Y-axis ticks & labels
-        ctx.textAlign='right'; ctx.textBaseline='middle'; ctx.font='11px sans-serif'; ctx.fillStyle='#333';
+        ctx.textAlign='right'; ctx.textBaseline='middle'; ctx.font='11px sans-serif'; ctx.fillStyle='#8b949e';
         for(let y=y0;y<=yMax;y+=gs){
             const py=wy(y);
             if(py<MT-1||py>MT+PH+1)continue;
-            ctx.beginPath(); ctx.moveTo(ML,py); ctx.lineTo(ML-5,py); ctx.strokeStyle='#333'; ctx.lineWidth=1; ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(ML,py); ctx.lineTo(ML-5,py); ctx.strokeStyle='#484f58'; ctx.lineWidth=1; ctx.stroke();
             ctx.fillText(fmt(y,gs<1?1:0), ML-8, py);
         }
         ctx.save(); ctx.translate(14, MT+PH/2); ctx.rotate(-Math.PI/2);
-        ctx.font='bold 12px sans-serif'; ctx.fillStyle='#222'; ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.font='bold 12px sans-serif'; ctx.fillStyle='#c9d1d9'; ctx.textAlign='center'; ctx.textBaseline='middle';
         ctx.fillText('Northing [m]', 0, 0);
         ctx.restore();
 
         // Title
-        ctx.fillStyle='#222'; ctx.font='bold 13px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='top';
-        ctx.fillText('Flare Noise Contour — Plan View', ML+PW/2, 6);
+        ctx.fillStyle='#c9d1d9'; ctx.font='bold 13px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='top';
+        ctx.fillText('Flare Noise Contour \u2014 Plan View', ML+PW/2, 6);
 
         // Info overlay
         const infoX=ML+PW-8, infoY=MT+8;
-        ctx.fillStyle='rgba(255,255,255,0.9)'; ctx.strokeStyle='#ccc'; ctx.lineWidth=0.5;
+        ctx.fillStyle='rgba(22,27,34,0.92)'; ctx.strokeStyle='#30363d'; ctx.lineWidth=0.5;
         ctx.fillRect(infoX-170,infoY,173,72); ctx.strokeRect(infoX-170,infoY,173,72);
-        ctx.fillStyle='#1a73e8'; ctx.font='bold 11px sans-serif'; ctx.textAlign='right'; ctx.textBaseline='top';
+        ctx.fillStyle='#58a6ff'; ctx.font='bold 11px sans-serif'; ctx.textAlign='right'; ctx.textBaseline='top';
         ctx.fillText('PWL: '+fmt(fp.PWL,1)+' dB', infoX-4, infoY+4);
         ctx.fillText('Acoustic Power: '+fmt(fp.Wacoustic,1)+' W', infoX-4, infoY+18);
         ctx.fillText('\u03B7 = '+fp.eta+' (thermoacoustic)', infoX-4, infoY+32);
-        ctx.fillStyle='#555'; ctx.font='10px sans-serif';
+        ctx.fillStyle='#8b949e'; ctx.font='10px sans-serif';
         ctx.fillText('Q = '+fmt(fp.Q_kW/1000,2)+' MW thermal', infoX-4, infoY+48);
         ctx.fillText('Wind: '+$('fl_W').value+' m/s', infoX-4, infoY+60);
         ctx.textAlign='left'; ctx.textBaseline='alphabetic';
@@ -1796,13 +2026,13 @@ function renderFlare(body) {
         // Legend
         const legX=ML+8, legY=MT+8;
         const legH=fp.noiseThresh.length*18+22;
-        ctx.fillStyle='rgba(255,255,255,0.9)'; ctx.strokeStyle='#ccc'; ctx.lineWidth=0.5;
+        ctx.fillStyle='rgba(22,27,34,0.92)'; ctx.strokeStyle='#30363d'; ctx.lineWidth=0.5;
         ctx.fillRect(legX,legY,240,legH); ctx.strokeRect(legX,legY,240,legH);
-        ctx.fillStyle='#222'; ctx.font='bold 10px sans-serif';
+        ctx.fillStyle='#c9d1d9'; ctx.font='bold 10px sans-serif';
         ctx.fillText('Noise Contours (dBA)', legX+6, legY+14);
         fp.noiseThresh.forEach((n,i)=>{
             ctx.fillStyle=n.col; ctx.fillRect(legX+6,legY+20+i*18,10,10);
-            ctx.fillStyle='#333'; ctx.font='10px sans-serif';
+            ctx.fillStyle='#c9d1d9'; ctx.font='10px sans-serif';
             ctx.fillText(n.spl+' dBA @ '+fmt(n.dist,0)+'m', legX+20, legY+29+i*18);
         });
 
@@ -1832,11 +2062,10 @@ function renderFlare(body) {
                 ctx.fillText(label, lx+2, ly-3);
             });
             ctx.restore();
-            // Summary of pinned markers outside the plot
-            ctx.fillStyle='#666'; ctx.font='10px sans-serif'; ctx.textAlign='left'; ctx.textBaseline='top';
+            ctx.fillStyle='#8b949e'; ctx.font='10px sans-serif'; ctx.textAlign='left'; ctx.textBaseline='top';
             ctx.fillText('Click to pin markers \u2022 Double-click to clear \u2022 '+noiseMarkers.length+' pin(s)', ML+4, Hc-MB+38);
         } else {
-            ctx.fillStyle='#999'; ctx.font='10px sans-serif'; ctx.textAlign='left'; ctx.textBaseline='top';
+            ctx.fillStyle='#484f58'; ctx.font='10px sans-serif'; ctx.textAlign='left'; ctx.textBaseline='top';
             ctx.fillText('Click anywhere on the plot to pin a noise measurement marker', ML+4, Hc-MB+38);
         }
 
