@@ -30,10 +30,11 @@
             overflow-y: auto;
         }
         .sidebar-brand {
-            padding: 20px 18px 16px; border-bottom: 1px solid var(--border);
+            padding: 16px 18px 14px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 12px;
         }
-        .sidebar-brand h1 { font-size: 15px; font-weight: 700; color: var(--accent); letter-spacing: 1.5px; text-transform: uppercase; }
-        .sidebar-brand p { font-size: 11px; color: var(--text3); margin-top: 3px; }
+        .sidebar-brand svg { width: 36px; height: 36px; flex-shrink: 0; }
+        .sidebar-brand h1 { font-size: 14px; font-weight: 700; color: var(--accent); letter-spacing: 1.2px; text-transform: uppercase; line-height: 1.2; }
+        .sidebar-brand p { font-size: 11px; color: var(--text3); margin-top: 2px; }
         .nav-group { padding: 16px 0 4px; }
         .nav-group-label {
             padding: 0 18px 8px; font-size: 10px; font-weight: 700;
@@ -226,7 +227,13 @@
 <body>
     <!-- Sidebar -->
     <div class="sidebar">
-        <div class="sidebar-brand"><h1>Well Testing</h1><p>Engineering Suite v1.0</p></div>
+        <div class="sidebar-brand">
+          <svg viewBox="0 0 100 110" fill="currentColor" style="color:#f0883e">
+            <path d="M50 0C50 0 15 45 15 65C15 84.33 30.67 100 50 100C69.33 100 85 84.33 85 65C85 45 50 0 50 0ZM50 90C36.19 90 25 78.81 25 65C25 51.5 50 14 50 14C50 14 75 51.5 75 65C75 78.81 63.81 90 50 90Z"/>
+            <circle cx="50" cy="62" r="8"/>
+          </svg>
+          <div><h1>H<sub style="font-size:9px;vertical-align:baseline;margin:0 1px">2</sub>Oil</h1><p>Well Testing Suite v1.0</p></div>
+        </div>
         <div class="nav-group">
             <div class="nav-group-label">Overview</div>
             <div class="nav-btn active" data-p="home"><span class="nav-icon">&#9670;</span><span>Dashboard</span></div>
@@ -261,7 +268,7 @@
             <div class="nav-btn" data-p="chem"><span class="nav-icon">&#9883;</span><span>Chemical & Dosage</span></div>
             <div class="nav-btn" data-p="sep"><span class="nav-icon">&#9644;</span><span>Separator Retention</span></div>
         </div>
-        <div class="sidebar-footer"><strong>H2Oil Engineering</strong>james@h2oil.co.uk</div>
+        <div class="sidebar-footer"><strong>H2Oil Engineering</strong>software@h2oil.co.uk</div>
     </div>
 
     <!-- Save flash -->
@@ -889,10 +896,9 @@ function renderFlare(body) {
     let showNoise=true; // toggle noise contours on canvas
 
     body.innerHTML=`
-    <div class="tabs" id="fl_tabs" style="max-width:420px">
+    <div class="tabs" id="fl_tabs" style="max-width:300px">
       <button class="tab-btn active" id="fl_t1">3D View</button>
       <button class="tab-btn" id="fl_t2">2D Elevation</button>
-      <button class="tab-btn" id="fl_t3">Noise Analysis</button>
     </div>
     <div style="display:flex;gap:16px;align-items:flex-start">
       <!-- LEFT PANEL -->
@@ -939,11 +945,6 @@ function renderFlare(body) {
               <span style="font-size:10px;color:var(--text3)">Pipe: 0.002–0.01 &nbsp;|&nbsp; Steam-assisted: 0.005–0.02</span></div>
             <div class="fg-item"><label>Ambient Noise (dBA)</label><input type="number" id="fl_ambN" value="60" step="1" min="30" max="90"></div>
           </div>
-          <div style="margin-top:6px">
-            <label style="font-size:12px;color:var(--text2);cursor:pointer;display:flex;align-items:center;gap:6px">
-              <input type="checkbox" id="fl_showNoise" checked onchange="toggleFlareNoise(this.checked)"> Show noise contours on plot
-            </label>
-          </div>
           <div style="margin-top:8px;font-size:11px;color:var(--text3)">
             <strong>Standard Limits:</strong> 115 dBA (max instantaneous) &bull; 90 dBA (OSHA 8hr TWA) &bull; 85 dBA (action level) &bull; 75 dBA (residential)
           </div>
@@ -968,58 +969,84 @@ function renderFlare(body) {
           <button class="btn-export" onclick="flareExportCSV()">&#128196; CSV</button>
         </div>
       </div>
-      <!-- RIGHT PANEL: Canvas -->
+      <!-- RIGHT PANEL: Canvases -->
       <div style="flex:1;min-width:0">
+        <div style="font-size:12px;font-weight:700;color:var(--accent);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px">Thermal Radiation</div>
         <div class="flare-canvas-wrap" id="fl_wrap"><canvas id="fl_canvas"></canvas></div>
-        <div class="info-bar" style="margin-top:8px" id="fl_hint">&#8635; Drag to rotate &nbsp;|&nbsp; Scroll to zoom &nbsp;|&nbsp; Switch tab for 2D elevation view</div>
+        <div class="info-bar" style="margin-top:6px" id="fl_hint">&#8635; Drag to rotate &nbsp;|&nbsp; Scroll to zoom &nbsp;|&nbsp; Switch tab for 2D elevation view</div>
+        <div style="font-size:12px;font-weight:700;color:var(--blue);margin:16px 0 6px;text-transform:uppercase;letter-spacing:.5px">Noise Contour — Plan View</div>
+        <div class="flare-canvas-wrap" id="fl_wrap2" style="height:460px;background:#f8f9fa"><canvas id="fl_canvas2"></canvas></div>
+        <div class="info-bar" style="margin-top:6px" id="fl_hint2">Hover for dBA reading &nbsp;|&nbsp; Click to pin marker &nbsp;|&nbsp; Double-click to clear &nbsp;|&nbsp; Drag to pan &nbsp;|&nbsp; Scroll to zoom</div>
       </div>
     </div>
     <div id="fl_res" style="margin-top:16px"></div>`;
 
-    // Tab wiring
-    function setFlTab(t){
-        ['fl_t1','fl_t2','fl_t3'].forEach(id=>$(id).className='tab-btn'+(id===t?' active':''));
-    }
-    $('fl_t1').onclick=()=>{ flView='3d'; setFlTab('fl_t1'); $('fl_hint').textContent='\u21BB Drag to rotate\u00a0|\u00a0Scroll to zoom\u00a0|\u00a0Switch tab for 2D elevation view'; calcFlare(); };
-    $('fl_t2').onclick=()=>{ flView='2d'; cancelAnimationFrame(flareAnim); flareAnim=null; setFlTab('fl_t2'); $('fl_hint').textContent='Drag to pan \u00a0|\u00a0 Scroll to zoom \u00a0|\u00a0 Import a site plan as background overlay'; calcFlare(); };
-    $('fl_t3').onclick=()=>{ flView='noise'; cancelAnimationFrame(flareAnim); flareAnim=null; setFlTab('fl_t3'); $('fl_hint').textContent='Hover for dBA reading \u00a0|\u00a0 Click to pin marker \u00a0|\u00a0 Double-click to clear \u00a0|\u00a0 Drag to pan \u00a0|\u00a0 Scroll to zoom'; calcFlare(); };
+    // Tab wiring (heat canvas only — noise always visible below)
+    $('fl_t1').onclick=()=>{ flView='3d'; $('fl_t1').className='tab-btn active'; $('fl_t2').className='tab-btn'; $('fl_hint').textContent='\u21BB Drag to rotate\u00a0|\u00a0Scroll to zoom\u00a0|\u00a0Switch tab for 2D elevation view'; calcFlare(); };
+    $('fl_t2').onclick=()=>{ flView='2d'; cancelAnimationFrame(flareAnim); flareAnim=null; $('fl_t2').className='tab-btn active'; $('fl_t1').className='tab-btn'; $('fl_hint').textContent='Drag to pan \u00a0|\u00a0 Scroll to zoom \u00a0|\u00a0 Import a site plan as background overlay'; calcFlare(); };
 
-    // Noise view state for interactive tooltip
-    let noiseViewState=null; // stores {xMin,xMax,yMin,yMax,sx,sy,ML,MT,PW,PH,fp} for hit-testing
+    // Noise chart state
+    let noiseViewState=null;
+    let noiseMarkers=[];
+    let noiseDrag=false, nmx0=0, nmy0=0;
+    // Separate pan/zoom for noise canvas
+    let noisePanX=0, noisePanY=0, noiseZoom=1.0;
 
-    function redraw2dOrNoise(){ flView==='noise' ? drawFlareNoise() : drawFlare2D(); }
-
-    // Canvas mouse / wheel
+    // ── Heat canvas (fl_canvas) — mouse/wheel for 3D rotate or 2D pan/zoom ──
     const cvs=$('fl_canvas');
     cvs.addEventListener('mousedown',e=>{drag=true;mx0=e.clientX;my0=e.clientY;});
     cvs.addEventListener('mouseup',()=>drag=false);
-    cvs.addEventListener('mouseleave',()=>{drag=false; if(flView==='noise') drawFlareNoise();});
+    cvs.addEventListener('mouseleave',()=>drag=false);
     cvs.addEventListener('mousemove',e=>{
-        if(drag){
-            if(flView==='3d'){
-                camTheta-=(e.clientX-mx0)*0.007;
-                camPhi=Math.max(0.04,Math.min(1.35,camPhi+(e.clientY-my0)*0.007));
-                mx0=e.clientX; my0=e.clientY;
-                drawFlare3D();
-            } else {
-                pan2dX+=(e.clientX-mx0); pan2dY+=(e.clientY-my0);
-                mx0=e.clientX; my0=e.clientY;
-                redraw2dOrNoise();
-            }
-        } else if(flView==='noise' && noiseViewState){
-            // Interactive tooltip: show dBA at cursor position
-            const ns=noiseViewState;
+        if(!drag)return;
+        if(flView==='3d'){
+            camTheta-=(e.clientX-mx0)*0.007;
+            camPhi=Math.max(0.04,Math.min(1.35,camPhi+(e.clientY-my0)*0.007));
+            mx0=e.clientX; my0=e.clientY;
+            drawFlare3D();
+        } else {
+            pan2dX+=(e.clientX-mx0); pan2dY+=(e.clientY-my0);
+            mx0=e.clientX; my0=e.clientY;
+            drawFlare2D();
+        }
+    });
+    cvs.addEventListener('wheel',e=>{
+        e.preventDefault();
+        if(flView==='3d'){
+            camZoom=Math.max(0.3,Math.min(8,camZoom*Math.pow(0.98,e.deltaY>0?3:-3)));
+            drawFlare3D();
+        } else {
+            const old=zoom2d;
+            zoom2d=Math.max(0.3,Math.min(8,zoom2d*Math.pow(0.98,e.deltaY>0?3:-3)));
             const rect=cvs.getBoundingClientRect();
+            const mx=e.clientX-rect.left, my=e.clientY-rect.top;
+            pan2dX = mx - (mx-pan2dX)*(zoom2d/old);
+            pan2dY = my - (my-pan2dY)*(zoom2d/old);
+            drawFlare2D();
+        }
+    },{passive:false});
+
+    // ── Noise canvas (fl_canvas2) — interactive pan/zoom/hover/click ──
+    const cvs2=$('fl_canvas2');
+    cvs2.addEventListener('mousedown',e=>{noiseDrag=true;nmx0=e.clientX;nmy0=e.clientY;});
+    cvs2.addEventListener('mouseup',()=>noiseDrag=false);
+    cvs2.addEventListener('mouseleave',()=>{noiseDrag=false; drawFlareNoise();});
+    cvs2.addEventListener('mousemove',e=>{
+        if(noiseDrag){
+            noisePanX+=(e.clientX-nmx0); noisePanY+=(e.clientY-nmy0);
+            nmx0=e.clientX; nmy0=e.clientY;
+            drawFlareNoise();
+        } else if(noiseViewState){
+            // Interactive tooltip
+            const ns=noiseViewState;
+            const rect=cvs2.getBoundingClientRect();
             const px=e.clientX-rect.left, py=e.clientY-rect.top;
-            // Convert pixel to world coords
             const worldX=ns.xMin+(px-ns.ML)/ns.sx;
             const worldY=ns.yMax-(py-ns.MT)/ns.sy;
             const dist=Math.sqrt(worldX*worldX+worldY*worldY);
-            if(px>=ns.ML && px<=ns.ML+ns.PW && py>=ns.MT && py<=ns.ML+ns.PH){
-                // Redraw then overlay crosshair + tooltip
+            if(px>=ns.ML && px<=ns.ML+ns.PW && py>=ns.MT && py<=ns.MT+ns.PH){
                 drawFlareNoise();
-                const ctx=cvs.getContext('2d');
-                // Crosshair
+                const ctx=cvs2.getContext('2d');
                 ctx.save();
                 ctx.beginPath(); ctx.rect(ns.ML,ns.MT,ns.PW,ns.PH); ctx.clip();
                 ctx.strokeStyle='rgba(0,0,0,0.25)'; ctx.lineWidth=0.5; ctx.setLineDash([3,3]);
@@ -1027,11 +1054,10 @@ function renderFlare(body) {
                 ctx.beginPath(); ctx.moveTo(ns.ML,py); ctx.lineTo(ns.ML+ns.PW,py); ctx.stroke();
                 ctx.setLineDash([]);
                 ctx.restore();
-                // Tooltip box
                 const spl=ns.fp.splAtDist(dist);
                 const tipW=185, tipH=52;
                 let tx=px+12, ty=py-tipH-8;
-                if(tx+tipW>cvs.width) tx=px-tipW-12;
+                if(tx+tipW>cvs2.width) tx=px-tipW-12;
                 if(ty<0) ty=py+16;
                 ctx.fillStyle='rgba(30,30,30,0.92)'; ctx.strokeStyle='rgba(255,255,255,0.3)'; ctx.lineWidth=1;
                 ctx.beginPath(); ctx.roundRect(tx,ty,tipW,tipH,6); ctx.fill(); ctx.stroke();
@@ -1044,29 +1070,20 @@ function renderFlare(body) {
             }
         }
     });
-    cvs.addEventListener('wheel',e=>{
+    cvs2.addEventListener('wheel',e=>{
         e.preventDefault();
-        if(flView==='3d'){
-            camZoom=Math.max(0.3,Math.min(8,camZoom*Math.pow(0.98,e.deltaY>0?3:-3)));
-            drawFlare3D();
-        } else {
-            const old=zoom2d;
-            zoom2d=Math.max(0.3,Math.min(8,zoom2d*Math.pow(0.98,e.deltaY>0?3:-3)));
-            // zoom towards mouse pointer
-            const rect=cvs.getBoundingClientRect();
-            const mx=e.clientX-rect.left, my=e.clientY-rect.top;
-            pan2dX = mx - (mx-pan2dX)*(zoom2d/old);
-            pan2dY = my - (my-pan2dY)*(zoom2d/old);
-            redraw2dOrNoise();
-        }
+        const old=noiseZoom;
+        noiseZoom=Math.max(0.3,Math.min(8,noiseZoom*Math.pow(0.98,e.deltaY>0?3:-3)));
+        const rect=cvs2.getBoundingClientRect();
+        const mx=e.clientX-rect.left, my=e.clientY-rect.top;
+        noisePanX = mx - (mx-noisePanX)*(noiseZoom/old);
+        noisePanY = my - (my-noisePanY)*(noiseZoom/old);
+        drawFlareNoise();
     },{passive:false});
-
-    // Noise view: click to pin measurement markers
-    let noiseMarkers=[];
-    cvs.addEventListener('click',e=>{
-        if(flView!=='noise' || !noiseViewState || drag) return;
+    cvs2.addEventListener('click',e=>{
+        if(!noiseViewState || noiseDrag) return;
         const ns=noiseViewState;
-        const rect=cvs.getBoundingClientRect();
+        const rect=cvs2.getBoundingClientRect();
         const px=e.clientX-rect.left, py=e.clientY-rect.top;
         if(px<ns.ML||px>ns.ML+ns.PW||py<ns.MT||py>ns.MT+ns.PH) return;
         const worldX=ns.xMin+(px-ns.ML)/ns.sx;
@@ -1074,12 +1091,11 @@ function renderFlare(body) {
         const dist=Math.sqrt(worldX*worldX+worldY*worldY);
         const spl=ns.fp.splAtDist(dist);
         noiseMarkers.push({worldX,worldY,dist,spl});
-        if(noiseMarkers.length>10) noiseMarkers.shift(); // max 10 pins
+        if(noiseMarkers.length>10) noiseMarkers.shift();
         drawFlareNoise();
     });
-    cvs.addEventListener('dblclick',e=>{
-        if(flView!=='noise') return;
-        noiseMarkers=[]; drawFlareNoise(); // double-click clears markers
+    cvs2.addEventListener('dblclick',()=>{
+        noiseMarkers=[]; drawFlareNoise();
     });
 
     // ── API 521 CALCULATIONS ──────────────────────────
@@ -1244,24 +1260,7 @@ function renderFlare(body) {
             ctx.fillText(`${fmt(t.lev,2)} kW/m\u00b2 | ${fmt(t.dist,0)}m`,lp.x+6,lp.y-4);
         });
 
-        // ── Noise contour rings (3D, on ground plane, dashed)
-        if(showNoise){
-            fp.noiseThresh.forEach(n=>{
-                if(n.dist<2)return;
-                ctx.strokeStyle=n.col+'99'; ctx.lineWidth=1.4; ctx.setLineDash([6,5]);
-                ctx.beginPath();
-                for(let a=0;a<=72;a++){
-                    const ang=a/72*Math.PI*2;
-                    const p=proj(Math.cos(ang)*n.dist,0,Math.sin(ang)*n.dist);
-                    a===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y);
-                }
-                ctx.closePath(); ctx.stroke();
-                ctx.setLineDash([]);
-                const lp=proj(0,0,n.dist);
-                ctx.fillStyle=n.col; ctx.font='9px sans-serif';
-                ctx.fillText(n.spl+' dBA',lp.x+4,lp.y+3);
-            });
-        }
+        // (Noise contours shown on separate chart below)
 
         // Scale bar on ground
         const sbLen=gridStep; const sbPx=sbLen*px_per_m;
@@ -1317,27 +1316,15 @@ function renderFlare(body) {
         }
 
         // ── Legend (top-left)
-        const noiseLegItems=showNoise?fp.noiseThresh.filter(n=>n.dist>=2):[];
-        const totalLegItems=fp.allThresh.length+(noiseLegItems.length?noiseLegItems.length+1:0);
-        ctx.fillStyle='rgba(10,14,20,0.75)'; ctx.fillRect(10,10,230,totalLegItems*18+20);
+        ctx.fillStyle='rgba(10,14,20,0.75)'; ctx.fillRect(10,10,230,fp.allThresh.length*18+20);
         ctx.fillStyle='#8b949e'; ctx.font='10px sans-serif';
         ctx.fillText('API 521 Radiation Zones',16,24);
-        let li=0;
-        fp.allThresh.forEach((t)=>{
-            ctx.fillStyle=t.col; ctx.fillRect(16,30+li*18,10,10);
+        fp.allThresh.forEach((t,i)=>{
+            ctx.fillStyle=t.col; ctx.fillRect(16,30+i*18,10,10);
             ctx.fillStyle='#c9d1d9'; ctx.font='10px sans-serif';
             const shortLbl=t.lbl.length>28?t.lbl.substring(0,27)+'\u2026':t.lbl;
-            ctx.fillText(shortLbl,32,39+li*18); li++;
+            ctx.fillText(shortLbl,32,39+i*18);
         });
-        if(noiseLegItems.length){
-            ctx.fillStyle='#8b949e'; ctx.font='10px sans-serif';
-            ctx.fillText('Noise Contours',16,34+li*18); li++;
-            noiseLegItems.forEach(n=>{
-                ctx.fillStyle=n.col; ctx.fillRect(16,30+li*18,10,10);
-                ctx.fillStyle='#c9d1d9'; ctx.font='10px sans-serif';
-                ctx.fillText(n.spl+' dBA @ '+fmt(n.dist,0)+'m',32,39+li*18); li++;
-            });
-        }
 
         // Compass / wind indicator
         ctx.fillStyle='rgba(10,14,20,0.7)'; ctx.fillRect(W-90,10,80,55);
@@ -1483,20 +1470,7 @@ function renderFlare(body) {
         ctx.fillText('L = '+fmt(fp.L_m,1)+'m', ftPx+8, ftPy-4);
         ctx.fillText('Tilt: '+fmt(fp.tiltDeg,1)+'\u00b0', ftPx+8, ftPy+11);
 
-        // ── Noise contour overlay (if enabled)
-        if(showNoise){
-            fp.noiseThresh.forEach(n=>{
-                if(n.dist<2)return;
-                ctx.beginPath();
-                ctx.ellipse(wx(0),wy(fp.H*0.5), Math.abs(n.dist*sx), Math.abs(n.dist*sy), 0, 0, Math.PI*2);
-                ctx.strokeStyle=n.col+'88'; ctx.lineWidth=1.2; ctx.setLineDash([5,6]); ctx.stroke();
-                ctx.setLineDash([]);
-                // Small label
-                ctx.fillStyle=n.col; ctx.font='bold 9px sans-serif'; ctx.textAlign='right';
-                ctx.fillText(n.spl+' dBA', wx(-n.dist)+n.dist*sx-4, wy(fp.H*0.5)-6);
-                ctx.textAlign='left';
-            });
-        }
+        // (Noise contours shown on separate chart below)
 
         ctx.restore(); // un-clip
 
@@ -1559,12 +1533,11 @@ function renderFlare(body) {
 
     // ── NOISE CONTOUR RENDER (top-down plan view) ──────
     function drawFlareNoise(){
-        cancelAnimationFrame(flareAnim); flareAnim=null;
-        const cvs=$('fl_canvas'); if(!cvs)return;
-        const wrap=$('fl_wrap');
-        cvs.width=wrap.clientWidth; cvs.height=wrap.clientHeight;
-        const ctx=cvs.getContext('2d');
-        const W=cvs.width, Hc=cvs.height;
+        const ncvs=$('fl_canvas2'); if(!ncvs)return;
+        const nwrap=$('fl_wrap2');
+        ncvs.width=nwrap.clientWidth; ncvs.height=nwrap.clientHeight;
+        const ctx=ncvs.getContext('2d');
+        const W=ncvs.width, Hc=ncvs.height;
         const fp=getFlameParams();
 
         // Plot margins
@@ -1575,11 +1548,11 @@ function renderFlare(body) {
         const maxR=Math.max(...fp.noiseThresh.map(n=>n.dist), ...fp.allThresh.map(t=>t.dist), 50);
         const baseRange=Math.ceil(maxR*1.2/10)*10;
 
-        // World coordinate ranges — plan view centered on flare
-        const rangeX=baseRange*2/zoom2d, rangeY=baseRange*2/zoom2d;
-        const cxW=-pan2dX/(PW/rangeX), cyW=pan2dY/(PH/rangeY);
-        const xMin=-baseRange/zoom2d+cxW, xMax=xMin+rangeX;
-        const yMin=-baseRange/zoom2d+cyW, yMax=yMin+rangeY;
+        // World coordinate ranges — plan view centered on flare (uses noise-specific pan/zoom)
+        const rangeX=baseRange*2/noiseZoom, rangeY=baseRange*2/noiseZoom;
+        const cxW=-noisePanX/(PW/rangeX), cyW=noisePanY/(PH/rangeY);
+        const xMin=-baseRange/noiseZoom+cxW, xMax=xMin+rangeX;
+        const yMin=-baseRange/noiseZoom+cyW, yMax=yMin+rangeY;
 
         const sx=PW/(xMax-xMin), sy=PH/(yMax-yMin);
         function wx(x){return ML+(x-xMin)*sx;}
@@ -1767,7 +1740,12 @@ function renderFlare(body) {
         noiseViewState={xMin,xMax,yMin,yMax,sx,sy,ML,MT,PW,PH,fp};
     }
 
-    function drawFlare(){ flView==='3d' ? drawFlare3D() : flView==='noise' ? drawFlareNoise() : drawFlare2D(); }
+    function drawFlare(){
+        // Heat canvas — 3D or 2D based on tab
+        flView==='3d' ? drawFlare3D() : drawFlare2D();
+        // Noise canvas — always rendered separately
+        drawFlareNoise();
+    }
 
     // ── Custom threshold management ────────────────────
     const CUSTOM_COLORS=['#a371f7','#79c0ff','#56d364','#ff7b72','#ffa657'];
@@ -1892,7 +1870,9 @@ function renderFlare(body) {
     };
     window.resetFlare2DView=function(){
         pan2dX=0; pan2dY=0; zoom2d=1.0;
-        if(flView==='2d') drawFlare2D();
+        noisePanX=0; noisePanY=0; noiseZoom=1.0;
+        noiseMarkers=[];
+        drawFlare();
     };
 
     window.flareExportCSV=function(){
