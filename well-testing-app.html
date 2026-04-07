@@ -1713,10 +1713,10 @@ function renderFlare(body) {
         const W=cvs.width, Hc=cvs.height;
         const fp=getFlameParams();
 
-        // Auto-scale: largest ring fills ~42% of shorter canvas dimension
-        const noiseMax=showNoise?Math.max(...fp.noiseThresh.map(n=>n.dist)):0;
-        const maxR=Math.max(...fp.allThresh.map(t=>t.dist), noiseMax, fp.H*0.8, 10);
-        const px_per_m = Math.min(W,Hc)*0.40/maxR * camZoom;
+        // Auto-scale: heat rings only — noise contours are shown in separate chart
+        // (noise distances can be 100+ km which would dwarf the thermal radiation zones)
+        const maxR=Math.max(...fp.allThresh.map(t=>t.dist), fp.H*1.2, fp.L_m, 20);
+        const px_per_m = Math.min(W,Hc)*0.42/maxR * camZoom;
         const cx3=W*0.5, cy3=Hc*0.60;
 
         // Projection function — perspective camera orbiting scene
@@ -1764,7 +1764,7 @@ function renderFlare(body) {
         // ── Grid (metric, spaced to match scene)
         const gridStep=Math.max(5,Math.round(maxR/6/5)*5);
         const gridMax=Math.ceil(maxR/gridStep+1)*gridStep;
-        ctx.strokeStyle='#151c26'; ctx.lineWidth=0.8;
+        ctx.strokeStyle='#21262d'; ctx.lineWidth=0.8;
         for(let i=-gridMax;i<=gridMax;i+=gridStep){
             let p1=proj(i,0,-gridMax),p2=proj(i,0,gridMax);
             ctx.beginPath();ctx.moveTo(p1.x,p1.y);ctx.lineTo(p2.x,p2.y);ctx.stroke();
@@ -1794,11 +1794,11 @@ function renderFlare(body) {
         // Scale bar on ground
         const sbLen=gridStep; const sbPx=sbLen*px_per_m;
         const sbX1=W-20, sbX2=W-20-sbPx, sbY=Hc-22;
-        ctx.strokeStyle='#445'; ctx.lineWidth=2; ctx.setLineDash([]);
+        ctx.strokeStyle='#8b949e'; ctx.lineWidth=2; ctx.setLineDash([]);
         ctx.beginPath();ctx.moveTo(sbX2,sbY);ctx.lineTo(sbX1,sbY);ctx.stroke();
         ctx.beginPath();ctx.moveTo(sbX2,sbY-5);ctx.lineTo(sbX2,sbY+5);ctx.stroke();
         ctx.beginPath();ctx.moveTo(sbX1,sbY-5);ctx.lineTo(sbX1,sbY+5);ctx.stroke();
-        ctx.fillStyle='#556';ctx.font='10px sans-serif';ctx.textAlign='center';
+        ctx.fillStyle='#c9d1d9';ctx.font='10px sans-serif';ctx.textAlign='center';
         ctx.fillText(sbLen+'m',sbX2+sbPx/2,sbY+14); ctx.textAlign='left';
 
         // ── Stack (cylinder outline)
@@ -2110,9 +2110,9 @@ function renderFlare(body) {
             ctx.globalAlpha=1;
         }
 
-        // Grid
+        // Grid — step must scale up to 10s of km for noise contours
         const gsRaw=(xMax-xMin)/8;
-        const gs=gsRaw<=2?1:gsRaw<=5?2.5:gsRaw<=12?5:gsRaw<=30?10:gsRaw<=60?25:gsRaw<=150?50:100;
+        const gs=gsRaw<=2?1:gsRaw<=5?2.5:gsRaw<=12?5:gsRaw<=30?10:gsRaw<=60?25:gsRaw<=150?50:gsRaw<=300?100:gsRaw<=600?250:gsRaw<=1500?500:gsRaw<=3000?1000:gsRaw<=6000?2500:gsRaw<=15000?5000:gsRaw<=30000?10000:gsRaw<=60000?25000:50000;
         const x0=Math.floor(xMin/gs)*gs, y0=Math.floor(yMin/gs)*gs;
         for(let x=x0;x<=xMax;x+=gs){
             const px=wx(x);
@@ -2180,16 +2180,25 @@ function renderFlare(body) {
         ctx.strokeStyle='#30363d'; ctx.lineWidth=1.5;
         ctx.strokeRect(ML,MT,PW,PH);
 
+        // Format large tick values compactly (e.g., 50000 -> "50k")
+        const fmtTick = v => {
+            const a=Math.abs(v);
+            if(a>=1e6) return (v/1e6).toFixed(a%1e6===0?0:1)+'M';
+            if(a>=1000) return (v/1000).toFixed(a%1000===0?0:1)+'k';
+            return fmt(v,gs<1?1:0);
+        };
+        const unitLbl = gs>=1000 ? '[km]' : '[m]';
+
         // X-axis ticks & labels
         ctx.fillStyle='#8b949e'; ctx.font='11px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='top';
         for(let x=x0;x<=xMax;x+=gs){
             const px=wx(x);
             if(px<ML-1||px>ML+PW+1)continue;
             ctx.beginPath(); ctx.moveTo(px,MT+PH); ctx.lineTo(px,MT+PH+5); ctx.strokeStyle='#484f58'; ctx.lineWidth=1; ctx.stroke();
-            ctx.fillText(fmt(x,gs<1?1:0), px, MT+PH+7);
+            ctx.fillText(fmtTick(x), px, MT+PH+7);
         }
         ctx.font='bold 12px sans-serif'; ctx.fillStyle='#c9d1d9';
-        ctx.fillText('Easting [m]', ML+PW/2, Hc-8);
+        ctx.fillText('Easting '+unitLbl, ML+PW/2, Hc-8);
 
         // Y-axis ticks & labels
         ctx.textAlign='right'; ctx.textBaseline='middle'; ctx.font='11px sans-serif'; ctx.fillStyle='#8b949e';
@@ -2197,11 +2206,11 @@ function renderFlare(body) {
             const py=wy(y);
             if(py<MT-1||py>MT+PH+1)continue;
             ctx.beginPath(); ctx.moveTo(ML,py); ctx.lineTo(ML-5,py); ctx.strokeStyle='#484f58'; ctx.lineWidth=1; ctx.stroke();
-            ctx.fillText(fmt(y,gs<1?1:0), ML-8, py);
+            ctx.fillText(fmtTick(y), ML-8, py);
         }
         ctx.save(); ctx.translate(14, MT+PH/2); ctx.rotate(-Math.PI/2);
         ctx.font='bold 12px sans-serif'; ctx.fillStyle='#c9d1d9'; ctx.textAlign='center'; ctx.textBaseline='middle';
-        ctx.fillText('Northing [m]', 0, 0);
+        ctx.fillText('Northing '+unitLbl, 0, 0);
         ctx.restore();
 
         // Title
