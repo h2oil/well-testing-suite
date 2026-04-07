@@ -412,21 +412,64 @@ function showErrors(targetId, errs) {
 
 // ── LocalStorage ──
 const LS_PREFIX = 'wts_';
+// Track which calculator key the current page belongs to so the global
+// auto-save listener knows where to write changes.
+let __currentCalcKey = null;
+let __currentCalcIds = null;
 function saveInputs(key, ids) {
+    __currentCalcKey = key;
+    __currentCalcIds = ids;
     const data = {};
-    ids.forEach(id => { const e=$(id); if(e) data[id] = e.value; });
+    ids.forEach(id => { const e=$(id); if(e) data[id] = (e.type==='checkbox'?e.checked:e.value); });
     try { localStorage.setItem(LS_PREFIX+key, JSON.stringify(data)); } catch(e){}
     // Flash indicator
     const fl=$('saveFlash'); if(fl){fl.classList.add('show'); setTimeout(()=>fl.classList.remove('show'),1200);}
 }
 function loadInputs(key, ids) {
+    __currentCalcKey = key;
+    __currentCalcIds = ids;
     try {
         const raw = localStorage.getItem(LS_PREFIX+key);
         if(!raw) return;
         const data = JSON.parse(raw);
-        ids.forEach(id => { const e=$(id); if(e && data[id]!==undefined) e.value = data[id]; });
+        ids.forEach(id => {
+            const e=$(id);
+            if(e && data[id]!==undefined) {
+                if(e.type==='checkbox') e.checked = !!data[id];
+                else e.value = data[id];
+            }
+        });
     } catch(e){}
 }
+
+// ── Auto-save: any input/change on the current page flushes to localStorage ──
+// This makes session export bulletproof — every keystroke is persisted, so the
+// user never loses unsaved values when they hit "Export Session".
+document.addEventListener('input', e => {
+    if(!__currentCalcKey || !__currentCalcIds) return;
+    if(!(e.target instanceof HTMLElement)) return;
+    if(!__currentCalcIds.includes(e.target.id)) return;
+    // Throttle: 300ms after last keystroke
+    clearTimeout(window.__h2oilSaveTimer);
+    window.__h2oilSaveTimer = setTimeout(() => {
+        try {
+            const data = {};
+            __currentCalcIds.forEach(id => { const el=$(id); if(el) data[id] = (el.type==='checkbox'?el.checked:el.value); });
+            localStorage.setItem(LS_PREFIX+__currentCalcKey, JSON.stringify(data));
+        } catch(e){}
+    }, 300);
+}, true);
+document.addEventListener('change', e => {
+    // Selects + checkboxes fire 'change', not always 'input'
+    if(!__currentCalcKey || !__currentCalcIds) return;
+    if(!(e.target instanceof HTMLElement)) return;
+    if(!__currentCalcIds.includes(e.target.id)) return;
+    try {
+        const data = {};
+        __currentCalcIds.forEach(id => { const el=$(id); if(el) data[id] = (el.type==='checkbox'?el.checked:el.value); });
+        localStorage.setItem(LS_PREFIX+__currentCalcKey, JSON.stringify(data));
+    } catch(e){}
+}, true);
 
 // ── Export: CSV ──
 function exportCSV(filename, headers, rows) {
@@ -443,6 +486,9 @@ const navBtns = document.querySelectorAll('.nav-btn');
 navBtns.forEach(b => b.addEventListener('click', () => nav(b.dataset.p)));
 
 function nav(p) {
+    // Clear current-calc tracking — each render() will re-set it via loadInputs()
+    __currentCalcKey = null;
+    __currentCalcIds = null;
     page = p;
     navBtns.forEach(b => b.classList.toggle('active', b.dataset.p === p));
     closeMobileSidebar();
@@ -806,26 +852,32 @@ function buildReportCoverHTML(title) {
         ${meta.length ? '<table class="meta-tbl">'+meta.join('')+'</table>' : ''}`;
 }
 
-// Enhanced exportReport with client info and cover page
-function exportReport(title, contentHTML) {
+// Build the full standalone HTML document for a printable report
+function buildReportHTML(title, contentHTML) {
     const ci = getClientInfo();
     const coverHTML = buildReportCoverHTML(title);
-    const w = window.open('','_blank','width=900,height=700');
-    w.document.write(`<!DOCTYPE html><html><head><title>${title}</title>
+    return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title>
     <style>
-        body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;padding:30px 40px;color:#222;max-width:900px;margin:0 auto;}
-        h1{font-size:22px;border-bottom:2px solid #f0883e;padding-bottom:8px;color:#333;}
+        @page { size: A4; margin: 15mm; }
+        body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;padding:0;color:#222;max-width:900px;margin:0 auto;background:#fff;}
+        h1{font-size:22px;border-bottom:2px solid #f0883e;padding-bottom:8px;color:#333;margin-top:0;}
         h2{font-size:16px;color:#f0883e;margin-top:24px;margin-bottom:8px;}
+        h3{font-size:14px;color:#f0883e;margin:16px 0 6px;}
         table{width:100%;border-collapse:collapse;margin:10px 0;font-size:13px;}
-        th{text-align:left;padding:6px 10px;background:#f5f5f5;border:1px solid #ddd;font-weight:700;font-size:11px;text-transform:uppercase;}
-        td{padding:6px 10px;border:1px solid #ddd;}
+        th{text-align:left;padding:6px 10px;background:#f5f5f5;border:1px solid #ddd;font-weight:700;font-size:11px;text-transform:uppercase;color:#333;}
+        td{padding:6px 10px;border:1px solid #ddd;color:#333;}
         .meta{font-size:12px;color:#666;margin-bottom:20px;}
-        .pair{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #eee;}
+        .pair{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #eee;page-break-inside:avoid;}
         .pair .lbl{color:#555;font-size:13px;} .pair .val{font-weight:700;font-size:14px;color:#c26a20;font-family:'Courier New',monospace;}
         .meta-tbl{width:auto;margin:16px auto;} .meta-tbl td{padding:4px 16px;font-size:13px;border:1px solid #ddd;} .meta-tbl td:first-child{font-weight:600;color:#555;background:#f9f9f9;}
-        .logo-row{display:flex;align-items:center;justify-content:center;gap:40px;margin:30px auto;text-align:center;}
+        .logo-row{display:flex;align-items:center;justify-content:center;gap:40px;margin:20px auto 30px;text-align:center;}
         .logo-row img{max-height:80px;max-width:200px;object-fit:contain;display:block;}
-        @media print{body{padding:10px 20px;} .logo-row{page-break-inside:avoid;}}
+        .rrow{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #eee;}
+        .rrow .rl{color:#555;} .rrow .rv{font-weight:700;color:#c26a20;font-family:'Courier New',monospace;}
+        .card{margin-bottom:14px;page-break-inside:avoid;}
+        .card-title{font-size:13px;font-weight:700;color:#f0883e;margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px;}
+        img{max-width:100%;height:auto;}
+        @media print{body{padding:0;} .logo-row{page-break-inside:avoid;} h2,h3{page-break-after:avoid;} table,.pair,.rrow{page-break-inside:avoid;}}
     </style></head><body>
     <h1>${title}</h1>
     ${coverHTML}
@@ -834,136 +886,454 @@ function exportReport(title, contentHTML) {
     <div style="margin-top:30px;padding-top:10px;border-top:1px solid #ddd;font-size:10px;color:#999;text-align:center">
       ${ci.company||'H2Oil Engineering'} &mdash; Generated ${new Date().toLocaleString()}${ci.engineer?' by '+ci.engineer:''}
     </div>
-    <script>window.print();<\/script></body></html>`);
-    w.document.close();
+    </body></html>`;
 }
 
-// Universal PNG export: captures the page content as image
-window.exportPagePNG = function() {
-    // Find all canvases on the current page
-    const body = $('pgBody');
-    const canvases = body.querySelectorAll('canvas');
-    if(canvases.length === 0) {
-        // For non-canvas pages, export the results section as image via print
-        exportPagePDF();
+// Enhanced exportReport with client info and cover page.
+// Uses a hidden iframe (works in Tauri/WebView2 where popups are blocked)
+// then triggers the system print dialog so the user can pick "Save as PDF".
+function exportReport(title, contentHTML) {
+    const html = buildReportHTML(title, contentHTML);
+    // Try popup window first (gives a visible preview on regular browsers)
+    let w = null;
+    try { w = window.open('','_blank','width=900,height=700'); } catch(e) {}
+    if(w && w.document) {
+        w.document.open();
+        w.document.write(html);
+        w.document.write('<script>window.addEventListener("load",function(){setTimeout(function(){window.print();},300);});<\/script>');
+        w.document.close();
         return;
     }
-    // Export all canvases as PNGs
-    canvases.forEach((cvs, i) => {
-        const a = document.createElement('a');
-        a.download = ($('pgTitle').textContent||'export').replace(/[^a-zA-Z0-9]/g,'_') + (canvases.length>1 ? '_'+(i+1) : '') + '.png';
-        a.href = cvs.toDataURL('image/png');
-        a.click();
-    });
-};
+    // Popup blocked (Tauri/WebView2 default) — fall back to a hidden iframe
+    // Remove any previous report iframe
+    const old = document.getElementById('__h2oil_report_iframe');
+    if(old) old.remove();
+    const ifr = document.createElement('iframe');
+    ifr.id = '__h2oil_report_iframe';
+    ifr.setAttribute('aria-hidden','true');
+    ifr.style.cssText = 'position:fixed;left:-10000px;top:-10000px;width:900px;height:1100px;border:0;visibility:hidden;';
+    document.body.appendChild(ifr);
+    ifr.onload = function() {
+        try {
+            const cw = ifr.contentWindow;
+            // Wait for images inside the iframe to load before printing
+            const imgs = cw.document.images || [];
+            let pending = imgs.length;
+            const triggerPrint = () => {
+                try { cw.focus(); cw.print(); } catch(e) { console.error('print failed', e); }
+            };
+            if(pending === 0) { setTimeout(triggerPrint, 200); return; }
+            for(const im of imgs) {
+                if(im.complete) { if(--pending === 0) setTimeout(triggerPrint, 200); }
+                else {
+                    im.addEventListener('load', () => { if(--pending === 0) setTimeout(triggerPrint, 200); });
+                    im.addEventListener('error', () => { if(--pending === 0) setTimeout(triggerPrint, 200); });
+                }
+            }
+        } catch(e) { console.error('iframe report failed', e); }
+    };
+    ifr.srcdoc = html;
+}
 
-// Universal PDF export: captures all inputs, results, and charts
-window.exportPagePDF = function() {
-    const body = $('pgBody');
-    const title = $('pgTitle').textContent || 'Report';
-    const sub = $('pgSub').textContent || '';
-    const pair = (l,v) => `<div class="pair"><span class="lbl">${l}</span><span class="val">${v}</span></div>`;
-
-    let contentHTML = '';
-
-    // 1. Collect all input cards with their values
-    const cards = body.querySelectorAll('.card');
+// ── Helper: collect ALL input fields on the current page into an HTML block ──
+function collectPageInputsHTML(rootEl) {
+    const pair = (l,v) => '<div class="pair"><span class="lbl">'+l+'</span><span class="val">'+v+'</span></div>';
+    const out = [];
+    // Walk only cards that are NOT inside any results container
+    const cards = rootEl.querySelectorAll('.card');
     cards.forEach(card => {
+        // Skip cards inside any results region
+        if(card.closest('[id$="_res"]')) return;
         const titleEl = card.querySelector('.card-title');
-        if(!titleEl) return;
-        const cardTitle = titleEl.textContent;
         const inputs = card.querySelectorAll('input, select, textarea');
         if(inputs.length === 0) return;
-        // Skip cards that are purely results (inside _res div)
-        const resParent = card.closest('[id$="_res"]');
-        if(resParent) return;
 
-        contentHTML += '<h2>' + cardTitle + '</h2>';
+        const rows = [];
         inputs.forEach(inp => {
-            const fgItem = inp.closest('.fg-item');
+            // Skip hidden / file / button inputs
+            if(inp.type === 'hidden' || inp.type === 'file' || inp.type === 'button' || inp.type === 'submit') return;
+            // Find a label - via closest .fg-item, then parent label, then aria-label, then placeholder
             let label = '';
+            const fgItem = inp.closest('.fg-item');
             if(fgItem) {
                 const lbl = fgItem.querySelector('label');
-                if(lbl) label = lbl.textContent;
+                if(lbl) label = lbl.textContent.trim();
             }
+            if(!label) {
+                const parentLabel = inp.closest('label');
+                if(parentLabel) label = parentLabel.textContent.replace(inp.value||'','').trim();
+            }
+            if(!label) label = inp.getAttribute('aria-label') || inp.getAttribute('placeholder') || inp.name || inp.id || '';
             if(!label) return;
             let val = inp.value;
-            // For selects, show the selected option text
-            if(inp.tagName === 'SELECT') {
-                val = inp.options[inp.selectedIndex]?.text || val;
-            }
-            if(val === '') return;
-            contentHTML += pair(label, val);
+            if(inp.type === 'checkbox') val = inp.checked ? 'Yes' : 'No';
+            else if(inp.tagName === 'SELECT') val = inp.options[inp.selectedIndex]?.text || val;
+            if(val === '' || val == null) return;
+            rows.push(pair(label, String(val).replace(/</g,'&lt;')));
         });
+        if(rows.length === 0) return;
+        const cardTitle = titleEl ? titleEl.textContent.trim() : 'Inputs';
+        out.push('<div class="card"><h2>'+cardTitle+'</h2>'+rows.join('')+'</div>');
     });
+    return out.join('');
+}
 
-    // 2. Capture any canvases as chart images
-    const canvases = body.querySelectorAll('canvas');
-    if(canvases.length > 0) {
-        contentHTML += '<h2>Charts</h2>';
-        canvases.forEach(cvs => {
-            try {
-                contentHTML += '<div style="text-align:center;margin:12px 0"><img src="' + cvs.toDataURL('image/png') + '" style="max-width:100%;height:auto;border:1px solid #ddd;border-radius:4px"></div>';
-            } catch(e) {}
-        });
-    }
+// ── Helper: snapshot all canvases on the page as data URLs ──
+function collectPageCanvasesHTML(rootEl) {
+    const canvases = rootEl.querySelectorAll('canvas');
+    if(canvases.length === 0) return '';
+    const imgs = [];
+    canvases.forEach(cvs => {
+        try {
+            // Skip degenerate (zero-size) canvases
+            if(cvs.width === 0 || cvs.height === 0) return;
+            const data = cvs.toDataURL('image/png');
+            imgs.push('<div style="text-align:center;margin:12px 0;page-break-inside:avoid"><img src="'+data+'" style="max-width:100%;height:auto;border:1px solid #ddd;border-radius:4px"></div>');
+        } catch(e) {}
+    });
+    if(imgs.length === 0) return '';
+    return '<h2>Charts</h2>' + imgs.join('');
+}
 
-    // 3. Collect calculated results
-    const resDiv = body.querySelector('[id$="_res"]');
-    if(resDiv && resDiv.innerHTML.trim()) {
-        contentHTML += '<h2>Calculated Results</h2>';
-        // Clone and clean up for print - convert dark theme colors to print-friendly
+// ── Helper: clone results section, normalising dark-theme colors for print ──
+function collectPageResultsHTML(rootEl) {
+    const out = [];
+    rootEl.querySelectorAll('[id$="_res"]').forEach(resDiv => {
+        if(!resDiv.innerHTML.trim()) return;
         const clone = resDiv.cloneNode(true);
-        // Remove any nested card-title elements (already have h2 above)
+        // Strip canvases that snuck inside results (already captured above)
+        clone.querySelectorAll('canvas').forEach(c => c.remove());
         clone.querySelectorAll('.card').forEach(c => {
             const ct = c.querySelector('.card-title');
             if(ct) {
                 const h3 = document.createElement('h3');
                 h3.textContent = ct.textContent;
-                h3.style.cssText = 'font-size:14px;color:#f0883e;margin:16px 0 6px';
                 ct.replaceWith(h3);
             }
-            // Remove card styling for print
             c.style.cssText = 'margin-bottom:12px;';
         });
-        contentHTML += clone.innerHTML;
-    }
+        out.push(clone.innerHTML);
+    });
+    if(out.length === 0) return '';
+    return '<h2>Calculated Results</h2>' + out.join('');
+}
+
+// Universal PDF export: captures all inputs, charts, and results from the
+// currently visible calculator page and routes them through the print pipeline.
+window.exportPagePDF = function() {
+    const body = $('pgBody');
+    if(!body) { alert('No page content to export'); return; }
+    const title = $('pgTitle')?.textContent || 'Report';
+
+    const inputsHTML  = collectPageInputsHTML(body);
+    const canvasesHTML = collectPageCanvasesHTML(body);
+    const resultsHTML  = collectPageResultsHTML(body);
+
+    let contentHTML = '';
+    if(inputsHTML)   contentHTML += '<div class="section"><h2 style="font-size:18px;margin-top:0">Inputs</h2>' + inputsHTML + '</div>';
+    if(canvasesHTML) contentHTML += '<div class="section">' + canvasesHTML + '</div>';
+    if(resultsHTML)  contentHTML += '<div class="section">' + resultsHTML + '</div>';
+    if(!contentHTML) contentHTML = '<p style="color:#666">No data to export from this page.</p>';
 
     exportReport(title, contentHTML);
 };
 
-// ── Session Export (TXT) — all saved calculator inputs + client info ──
-window.exportSession = function() {
-    const ci = getClientInfo();
-    const session = { _format: 'H2Oil_WTS_Session_v1', _exported: new Date().toISOString() };
+// ── PNG export — composites the visible calculator page (no menu) into a single PNG ──
+// Captures: page header (title/subtitle), every input value as text, every canvas
+// chart, and the results table — all rendered into one offscreen canvas.
+window.exportPagePNG = async function() {
+    const body = $('pgBody');
+    if(!body) { alert('No page content to export'); return; }
+    const title = $('pgTitle')?.textContent || 'export';
 
-    // Collect all wts_ localStorage keys
+    // Build a list of "rows" we need to draw: header, sections, canvases, results.
+    // For text content we measure with the canvas API; for canvases we just blit.
+    const ci = getClientInfo();
+    const W = 1200;        // output PNG width
+    const margin = 40;
+    const innerW = W - margin*2;
+
+    // Collect canvases first (so we know their natural sizes)
+    const canvases = [...body.querySelectorAll('canvas')].filter(c => c.width > 0 && c.height > 0);
+
+    // Collect input rows {label,value} per card, in DOM order
+    const sections = [];
+    body.querySelectorAll('.card').forEach(card => {
+        if(card.closest('[id$="_res"]')) return;
+        const titleEl = card.querySelector('.card-title');
+        const inputs = card.querySelectorAll('input, select, textarea');
+        const rows = [];
+        inputs.forEach(inp => {
+            if(['hidden','file','button','submit'].includes(inp.type)) return;
+            const fgItem = inp.closest('.fg-item');
+            let label = '';
+            if(fgItem) { const lbl = fgItem.querySelector('label'); if(lbl) label = lbl.textContent.trim(); }
+            if(!label) label = inp.getAttribute('aria-label')||inp.getAttribute('placeholder')||inp.name||inp.id||'';
+            if(!label) return;
+            let val = inp.value;
+            if(inp.type==='checkbox') val = inp.checked?'Yes':'No';
+            else if(inp.tagName==='SELECT') val = inp.options[inp.selectedIndex]?.text || val;
+            if(val==='' || val==null) return;
+            rows.push({label, value:String(val)});
+        });
+        if(rows.length===0) return;
+        sections.push({title: titleEl?titleEl.textContent.trim():'Inputs', rows});
+    });
+
+    // Collect result rows {label,value} from .rrow elements within _res sections
+    const results = [];
+    body.querySelectorAll('[id$="_res"] .rrow').forEach(row => {
+        const lbl = row.querySelector('.rl')?.textContent?.trim();
+        const val = row.querySelector('.rv')?.textContent?.trim();
+        if(lbl && val) results.push({label:lbl, value:val});
+    });
+    // Also collect simple result tables
+    const resultTables = [...body.querySelectorAll('[id$="_res"] table')];
+
+    // Compute total height by laying everything out
+    const lineH = 22;
+    const sectionGap = 18;
+    const headerH = 130;
+    let H = headerH;
+    sections.forEach(s => { H += 28 + s.rows.length*lineH + sectionGap; });
+    if(canvases.length) {
+        H += 36; // "Charts" header
+        canvases.forEach(c => {
+            const scale = Math.min(1, innerW / c.width);
+            H += c.height * scale + 16;
+        });
+    }
+    if(results.length) H += 36 + results.length*lineH + sectionGap;
+    resultTables.forEach(tbl => { H += tbl.rows.length*22 + 36; });
+    H += margin;
+
+    // Create offscreen canvas
+    const out = document.createElement('canvas');
+    out.width = W; out.height = H;
+    const ctx = out.getContext('2d');
+    // Background
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, W, H);
+
+    // Header
+    let y = margin;
+    ctx.fillStyle = '#0d1117';
+    ctx.font = 'bold 28px -apple-system,Segoe UI,sans-serif';
+    ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+    ctx.fillText(title, margin, y);
+    y += 38;
+    if(ci.client || ci.well) {
+        ctx.fillStyle = '#555';
+        ctx.font = '14px -apple-system,Segoe UI,sans-serif';
+        const meta = [];
+        if(ci.client) meta.push('Client: '+ci.client);
+        if(ci.well)   meta.push('Well: '+ci.well);
+        if(ci.engineer) meta.push('By: '+ci.engineer);
+        ctx.fillText(meta.join('   |   '), margin, y);
+        y += 22;
+    }
+    ctx.fillStyle = '#999';
+    ctx.font = '11px -apple-system,Segoe UI,sans-serif';
+    ctx.fillText('Generated ' + new Date().toLocaleString(), margin, y);
+    y += 22;
+    // Orange divider
+    ctx.strokeStyle = '#f0883e'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(margin, y); ctx.lineTo(W-margin, y); ctx.stroke();
+    y += sectionGap;
+
+    // Inputs sections
+    sections.forEach(s => {
+        ctx.fillStyle = '#f0883e';
+        ctx.font = 'bold 14px -apple-system,Segoe UI,sans-serif';
+        ctx.fillText(s.title.toUpperCase(), margin, y);
+        y += 24;
+        s.rows.forEach(r => {
+            ctx.fillStyle = '#555';
+            ctx.font = '13px -apple-system,Segoe UI,sans-serif';
+            ctx.textAlign = 'left';
+            ctx.fillText(r.label, margin+10, y);
+            ctx.fillStyle = '#c26a20';
+            ctx.font = 'bold 13px Courier New, monospace';
+            ctx.textAlign = 'right';
+            ctx.fillText(r.value, W-margin-10, y);
+            // Underline
+            ctx.strokeStyle = '#eee'; ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.moveTo(margin+10, y+18); ctx.lineTo(W-margin-10, y+18); ctx.stroke();
+            y += lineH;
+        });
+        y += sectionGap;
+    });
+
+    // Charts
+    if(canvases.length) {
+        ctx.fillStyle = '#f0883e';
+        ctx.font = 'bold 14px -apple-system,Segoe UI,sans-serif';
+        ctx.textAlign = 'left';
+        ctx.fillText('CHARTS', margin, y);
+        y += 26;
+        canvases.forEach(c => {
+            const scale = Math.min(1, innerW / c.width);
+            const dw = c.width*scale, dh = c.height*scale;
+            try { ctx.drawImage(c, margin + (innerW-dw)/2, y, dw, dh); } catch(e) {}
+            y += dh + 16;
+        });
+    }
+
+    // Results
+    if(results.length) {
+        ctx.fillStyle = '#f0883e';
+        ctx.font = 'bold 14px -apple-system,Segoe UI,sans-serif';
+        ctx.textAlign = 'left';
+        ctx.fillText('CALCULATED RESULTS', margin, y);
+        y += 24;
+        results.forEach(r => {
+            ctx.fillStyle = '#555';
+            ctx.font = '13px -apple-system,Segoe UI,sans-serif';
+            ctx.textAlign = 'left';
+            ctx.fillText(r.label, margin+10, y);
+            ctx.fillStyle = '#c26a20';
+            ctx.font = 'bold 13px Courier New, monospace';
+            ctx.textAlign = 'right';
+            ctx.fillText(r.value, W-margin-10, y);
+            ctx.strokeStyle = '#eee'; ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.moveTo(margin+10, y+18); ctx.lineTo(W-margin-10, y+18); ctx.stroke();
+            y += lineH;
+        });
+        y += sectionGap;
+    }
+
+    // Result tables (simple grid)
+    resultTables.forEach(tbl => {
+        const rows = [...tbl.rows];
+        const cols = rows[0]?.cells.length || 0;
+        if(cols === 0) return;
+        const colW = innerW / cols;
+        rows.forEach((tr, ri) => {
+            ctx.fillStyle = ri===0 ? '#f5f5f5' : '#ffffff';
+            ctx.fillRect(margin, y, innerW, 22);
+            ctx.strokeStyle = '#ddd'; ctx.lineWidth = 1;
+            ctx.strokeRect(margin, y, innerW, 22);
+            [...tr.cells].forEach((td, ci2) => {
+                ctx.fillStyle = ri===0 ? '#333' : '#222';
+                ctx.font = ri===0 ? 'bold 11px -apple-system,Segoe UI,sans-serif' : '12px -apple-system,Segoe UI,sans-serif';
+                ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+                const txt = (td.textContent||'').trim();
+                ctx.fillText(txt.length>30?txt.substring(0,28)+'…':txt, margin + ci2*colW + 6, y+11);
+            });
+            y += 22;
+        });
+        y += 16;
+    });
+
+    // Save the PNG via showSaveFilePicker (real Save As dialog) or anchor download fallback
+    const slug = (title.replace(/[^a-zA-Z0-9]/g,'_') || 'export') + '_' + new Date().toISOString().slice(0,10);
+    const filename = slug + '.png';
+    out.toBlob(async (blob) => {
+        if(!blob) { alert('Failed to encode PNG'); return; }
+        await saveBlobWithDialog(blob, filename, [{description:'PNG image', accept:{'image/png':['.png']}}]);
+    }, 'image/png');
+};
+
+// ── Universal blob saver: real save dialog where supported, otherwise download ──
+async function saveBlobWithDialog(blob, suggestedName, accepts) {
+    // Modern browsers (Chrome/Edge/Tauri+webview2) — File System Access API
+    if(window.showSaveFilePicker) {
+        try {
+            const handle = await window.showSaveFilePicker({ suggestedName, types: accepts });
+            const writable = await handle.createWritable();
+            await writable.write(blob);
+            await writable.close();
+            return true;
+        } catch(err) {
+            if(err && err.name === 'AbortError') return false; // user cancelled
+            // fall through to download fallback
+            console.warn('showSaveFilePicker failed, falling back to download:', err);
+        }
+    }
+    // Fallback: anchor download (browser routes through default downloads folder)
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = suggestedName;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 100);
+    return true;
+}
+
+// ── Session Export (TXT) — all saved calculator inputs + client info ──
+window.exportSession = async function() {
+    // 1. FLUSH the current page's inputs to localStorage before snapshotting,
+    //    so any keystroke that hasn't fired the throttled auto-save yet is captured.
+    if(__currentCalcKey && __currentCalcIds) {
+        try {
+            const data = {};
+            __currentCalcIds.forEach(id => {
+                const el=$(id);
+                if(el) data[id] = (el.type==='checkbox'?el.checked:el.value);
+            });
+            localStorage.setItem(LS_PREFIX+__currentCalcKey, JSON.stringify(data));
+        } catch(e){}
+    }
+    // Also flush client info form if visible
+    if(page === 'clientinfo') { try { saveClientInfo(); } catch(e) {} }
+
+    const ci = getClientInfo();
+    const session = {
+        _format: 'H2Oil_WTS_Session_v1',
+        _version: 2,
+        _exported: new Date().toISOString(),
+        _appVersion: 'H2Oil Well Testing Suite',
+    };
+
+    // Collect ALL wts_ localStorage keys
+    let calcCount = 0;
     for(let i = 0; i < localStorage.length; i++) {
         const k = localStorage.key(i);
-        if(k.startsWith('wts_')) {
-            try { session[k] = JSON.parse(localStorage.getItem(k)); } catch(e) { session[k] = localStorage.getItem(k); }
+        if(k && k.startsWith('wts_')) {
+            try { session[k] = JSON.parse(localStorage.getItem(k)); }
+            catch(e) { session[k] = localStorage.getItem(k); }
+            calcCount++;
         }
     }
 
-    // Include client info
-    session['h2oil_client_info'] = ci;
-    // Strip clientLogo base64 to keep file small — logos re-uploaded on import
-    if(session['h2oil_client_info'] && session['h2oil_client_info'].clientLogo) {
-        session['h2oil_client_info']._hasLogo = true;
-        delete session['h2oil_client_info'].clientLogo;
+    // Include client info (preserve full clientLogo so re-import keeps the brand)
+    session['h2oil_client_info'] = JSON.parse(JSON.stringify(ci));
+
+    // Snapshot of the currently visible page's live input values, in case any
+    // calculator's saveInputs() list is incomplete or the page hasn't been "calc'd" yet.
+    if(page && page !== 'home' && page !== 'clientinfo') {
+        const liveSnap = {};
+        const body = $('pgBody');
+        if(body) {
+            body.querySelectorAll('input,select,textarea').forEach(el => {
+                if(!el.id) return;
+                if(['hidden','file','button','submit'].includes(el.type)) return;
+                liveSnap[el.id] = (el.type==='checkbox' ? el.checked : el.value);
+            });
+        }
+        if(Object.keys(liveSnap).length) session['_live_'+page] = liveSnap;
     }
 
     const json = JSON.stringify(session, null, 2);
-    const blob = new Blob([json], { type: 'text/plain' });
-    const a = document.createElement('a');
-    // Filename: date_time_clientname.txt
+    const blob = new Blob([json], { type: 'text/plain;charset=utf-8' });
+
+    // Filename: H2Oil_<client>_YYYY-MM-DD_HHMM.txt
     const now = new Date();
-    const dt = now.toISOString().slice(0,16).replace(/[-:T]/g, '_');
+    const dt = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0')
+             +'_'+String(now.getHours()).padStart(2,'0')+String(now.getMinutes()).padStart(2,'0');
     const clientSlug = (ci.client || 'session').replace(/[^a-zA-Z0-9]/g, '_').replace(/_+/g,'_').substring(0, 30);
-    a.download = `H2Oil_${clientSlug}_${dt}.txt`;
-    a.href = URL.createObjectURL(blob);
-    a.click();
-    URL.revokeObjectURL(a.href);
+    const filename = `H2Oil_${clientSlug}_${dt}.txt`;
+
+    const ok = await saveBlobWithDialog(blob, filename, [
+        { description: 'H2Oil session file', accept: { 'text/plain': ['.txt','.json'] } }
+    ]);
+
+    // Status flash on the client info page
+    const status = $('ci_import_status');
+    if(status && ok) {
+        status.innerHTML = '<span style="color:var(--green);font-weight:600">&#10003; Session exported &mdash; ' + calcCount + ' calculators saved</span>';
+        setTimeout(() => { if(status) status.innerHTML = ''; }, 4000);
+    }
 };
 
 // ── Session Import (TXT) — reload all saved values from exported file ──
@@ -999,6 +1369,27 @@ window.importSession = function(inp) {
                 localStorage.setItem('h2oil_client_info', JSON.stringify(imported));
                 count++;
             }
+
+            // Restore live page snapshots — bridge any wts_<key> gap so the
+            // first re-render of those pages picks up every typed value.
+            // We merge _live_<page> entries into the matching wts_<key> entry.
+            Object.keys(session).forEach(k => {
+                if(!k.startsWith('_live_')) return;
+                const live = session[k] || {};
+                // Find any existing wts_ key whose data overlaps these IDs and merge
+                for(let i = 0; i < localStorage.length; i++) {
+                    const lk = localStorage.key(i);
+                    if(!lk || !lk.startsWith('wts_')) continue;
+                    try {
+                        const data = JSON.parse(localStorage.getItem(lk)) || {};
+                        let merged = false;
+                        Object.keys(live).forEach(id => {
+                            if(id in data) { data[id] = live[id]; merged = true; }
+                        });
+                        if(merged) localStorage.setItem(lk, JSON.stringify(data));
+                    } catch(e) {}
+                }
+            });
 
             // Refresh the current page to show imported values
             const status = $('ci_import_status');
@@ -1511,8 +1902,28 @@ function renderFlare(body) {
     <div id="fl_res" style="margin-top:16px"></div>`;
 
     // Tab wiring (heat canvas only — noise always visible below)
-    $('fl_t1').onclick=()=>{ flView='3d'; $('fl_t1').className='tab-btn active'; $('fl_t2').className='tab-btn'; $('fl_hint').textContent='\u21BB Drag to rotate\u00a0|\u00a0Scroll to zoom\u00a0|\u00a0Switch tab for 2D elevation view'; calcFlare(); };
-    $('fl_t2').onclick=()=>{ flView='2d'; cancelAnimationFrame(flareAnim); flareAnim=null; $('fl_t2').className='tab-btn active'; $('fl_t1').className='tab-btn'; $('fl_hint').textContent='Drag to pan \u00a0|\u00a0 Scroll to zoom \u00a0|\u00a0 Import a site plan as background overlay'; calcFlare(); };
+    $('fl_t1').onclick=()=>{
+        if(flView==='3d') return;
+        flView='3d';
+        $('fl_t1').className='tab-btn active';
+        $('fl_t2').className='tab-btn';
+        $('fl_hint').textContent='\u21BB Drag to rotate\u00a0|\u00a0Scroll to zoom\u00a0|\u00a0Switch tab for 2D elevation view';
+        // Restart 3D animation loop
+        if(flareAnim){cancelAnimationFrame(flareAnim);flareAnim=null;}
+        drawFlare3D();
+    };
+    $('fl_t2').onclick=()=>{
+        if(flView==='2d') return;
+        flView='2d';
+        // Stop the 3D rAF loop BEFORE drawing 2D. Any in-flight 3D frame will
+        // exit early via the flView==='3d' guard at the top of drawFlare3D.
+        if(flareAnim){cancelAnimationFrame(flareAnim);flareAnim=null;}
+        $('fl_t2').className='tab-btn active';
+        $('fl_t1').className='tab-btn';
+        $('fl_hint').textContent='Drag to pan \u00a0|\u00a0 Scroll to zoom \u00a0|\u00a0 Import a site plan as background overlay';
+        // Draw 2D synchronously — no rAF defer (which can stall when document hidden)
+        drawFlare2D();
+    };
 
     // Noise chart state
     let noiseViewState=null;
@@ -1706,7 +2117,10 @@ function renderFlare(body) {
 
     // ── 3D RENDER (Canvas perspective) ────────────────
     function drawFlare3D(){
-        const cvs=$('fl_canvas'); if(!cvs)return;
+        // Bail out if user has switched away from 3D view or left the page —
+        // an in-flight rAF callback may still fire after cancelAnimationFrame.
+        if(flView!=='3d') { flareAnim=null; return; }
+        const cvs=$('fl_canvas'); if(!cvs){ flareAnim=null; return; }
         const wrap=$('fl_wrap');
         cvs.width=wrap.clientWidth; cvs.height=wrap.clientHeight;
         const ctx=cvs.getContext('2d');
@@ -1863,7 +2277,9 @@ function renderFlare(body) {
         ctx.fillText('Tilt: '+fmt(fp.tiltDeg,1)+'\u00b0',W-14,54);
         ctx.textAlign='left';
 
-        flareAnim=requestAnimationFrame(drawFlare3D);
+        // Guard against queueing when user has just switched to 2D
+        if(flView==='3d') flareAnim=requestAnimationFrame(drawFlare3D);
+        else flareAnim=null;
     }
 
     // ── 2D ELEVATION RENDER (engineering plot) ──────────
