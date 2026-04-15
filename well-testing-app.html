@@ -299,6 +299,7 @@
             <div class="nav-btn" data-p="oilgas"><span class="nav-icon">&#9878;</span><span>Oil & Gas Rate</span></div>
             <div class="nav-btn" data-p="mcfshr"><span class="nav-icon">&#9632;</span><span>MCF & Shrinkage %</span></div>
             <div class="nav-btn" data-p="casing"><span class="nav-icon">&#9674;</span><span>Casing & Tubing</span></div>
+            <div class="nav-btn" data-p="wts"><span class="nav-icon">&#9733;</span><span>Well Test Simulator</span></div>
         </div>
         <div class="nav-group">
             <div class="nav-group-label">Production Analysis</div>
@@ -499,7 +500,7 @@ function nav(p) {
 function render() {
     const body = $('pgBody');
     body.innerHTML = '';
-    const pages = { home: renderHome, clientinfo: renderClientInfo, aga3: renderAGA3, units: renderUnits, choke: renderChoke, flare: renderFlare, dca: renderDCA, pta: renderPTA, prv: renderPRV, chokeflow: renderChokeFlow, gascalc: renderGasCalc, fluid: renderFluid, tank: renderTank, vessel: renderVessel, elec: renderElec, chem: renderChem, sep: renderSep, bottomsup: renderBottomsUp, solgor: renderSolGOR, oilgas: renderOilGas, mcfshr: renderMCFShr, casing: renderCasing, chokecnv: renderChokeCnv, analogsig: renderAnalogSig, pumpsz: renderPumpSz, seprate: renderSepRate, heater: renderHeater, pipesz: renderPipeSz, turbmeter: renderTurbMeter, aircomp: renderAirComp, gensz: renderGenSz, cablesz: renderCableSz, vdrop: renderVDrop, flamearr: renderFlameArr, arc: renderARC };
+    const pages = { home: renderHome, clientinfo: renderClientInfo, aga3: renderAGA3, units: renderUnits, choke: renderChoke, flare: renderFlare, dca: renderDCA, pta: renderPTA, prv: renderPRV, chokeflow: renderChokeFlow, gascalc: renderGasCalc, fluid: renderFluid, tank: renderTank, vessel: renderVessel, elec: renderElec, chem: renderChem, sep: renderSep, bottomsup: renderBottomsUp, solgor: renderSolGOR, oilgas: renderOilGas, mcfshr: renderMCFShr, casing: renderCasing, chokecnv: renderChokeCnv, analogsig: renderAnalogSig, pumpsz: renderPumpSz, seprate: renderSepRate, heater: renderHeater, pipesz: renderPipeSz, turbmeter: renderTurbMeter, aircomp: renderAirComp, gensz: renderGenSz, cablesz: renderCableSz, vdrop: renderVDrop, flamearr: renderFlameArr, arc: renderARC, wts: renderWTS };
     if (pages[page]) pages[page](body);
     // Show export buttons on calculator pages (not home/clientinfo)
     const eb = $('exportBtns');
@@ -1503,19 +1504,28 @@ window.calcAGA3 = function(){
     }
     Z=Math.max(0.3,Math.min(Z,1.5));
 
-    // Discharge coefficient (Reader-Harris/Gallagher simplified)
-    let Cd=0.5961+0.0261*beta*beta-0.216*Math.pow(beta,8)+0.000521*Math.pow(1e6*beta/1e6,0.7)
-          +(0.0188+0.0063*Math.pow(19000*beta/1e6,0.3))*Math.pow(beta,3.5)*Math.pow(1e6/1e6,0.3);
-    Cd=Math.max(0.58,Math.min(Cd,0.66));
-
+    // Discharge coefficient (Reader-Harris/Gallagher with Re_D iteration)
     const Ev=1/Math.sqrt(1-beta4);
     const x_y=hw*0.03613/Pf1;
     const Y1=1-(0.41+0.35*beta4)*x_y/1.3;
-
-    // Flow (simplified AGA-3)
-    const Fb=338.178*Cd*Ev;
-    const Fpb=Pb/14.696, Ftb=519.67/Tb, Ftf=1/Math.sqrt(Tf/519.67);
+    const Fpb=14.73/Pb, Ftb=519.67/Tb, Ftf=1/Math.sqrt(Tf/519.67);
     const Fgr=1/Math.sqrt(SG), Fpv=1/Math.sqrt(Z);
+    const mu_gas=0.012; // gas viscosity cP (typical natural gas)
+    let Re_D=1e6, Cd=0.606;
+    for(let ri=0;ri<5;ri++){
+        const A=Math.pow(19000*beta/Re_D,0.8);
+        Cd=0.5961+0.0261*beta*beta-0.216*Math.pow(beta,8)
+           +0.000521*Math.pow(1e6*beta/Re_D,0.7)
+           +(0.0188+0.0063*A)*Math.pow(beta,3.5)*Math.pow(1e6/Re_D,0.3);
+        Cd=Math.max(0.58,Math.min(Cd,0.66));
+        const Fb_i=338.178*Cd*Ev;
+        const Qv_i=Fb_i*d*d*Fpb*Ftb*Ftf*Fgr*Fpv*Y1*Math.sqrt(hw*Pf1);
+        // Re_D from pipe flow: Re_D = 4·ṁ/(π·D·μ)
+        Re_D=Math.max(4000, 17.05*Qv_i*Pb*SG/(Tb*D*mu_gas));
+    }
+
+    // Final flow calculation
+    const Fb=338.178*Cd*Ev;
     const Qv=Fb*d*d*Fpb*Ftb*Ftf*Fgr*Fpv*Y1*Math.sqrt(hw*Pf1);
     const Qmscfd=Qv*24/1000, Qmmscfd=Qmscfd/1000;
     const rho_f=Pf1*28.97*SG/(Z*10.73*Tf);
@@ -1534,6 +1544,7 @@ window.calcAGA3 = function(){
         <div class="rrow"><span class="rl">Expansion Factor (Y1)</span><span class="rv">${fmt(Y1,5)}</span></div>
         <div class="rrow"><span class="rl">Z-Factor</span><span class="rv">${fmt(Z,4)}</span></div>
         <div class="rrow"><span class="rl">Tpr / Ppr</span><span class="rv">${fmt(Tpr,3)} / ${fmt(Ppr,3)}</span></div>
+        <div class="rrow"><span class="rl">Pipe Reynolds No.</span><span class="rv">${fmt(Re_D,0)}</span></div>
         <div class="rrow"><span class="rl">Gas Density (lb/ft3)</span><span class="rv">${fmt(rho_f,3)}</span></div>
       </div>
     </div>
@@ -1739,7 +1750,7 @@ window.calcChoke = function(){
         const Tf=T+460;
         Qgas=0.821*cd1*A1*P1*Math.sqrt(2/(SG*Tf))*24/1000;
     } else {
-        Qoil=P1*Math.pow(deq64,1.89)/(435*Math.pow(GOR,0.546));
+        Qoil=P1*Math.pow(deq64,1.89)/(435*Math.pow(GOR/1000,0.546));
     }
 
     $('c_res').innerHTML=`
@@ -4696,7 +4707,7 @@ window.calcChokeOil=function(){
     if(!showErrors('cf_ores',errs))return;
     const P=parseFloat($('cf_op').value),C=parseFloat($('cf_ocs').value),G=parseFloat($('cf_gor').value);
     const Qgilbert=P*Math.pow(C,1.89)/(435*Math.pow(G/1000,0.546));
-    const Qros=P*Math.pow(C,2)/(17.4*Math.pow(G,0.5));
+    const Qros=P*Math.pow(C/64,2)/(17.4*Math.pow(G,0.5));
     $('cf_ores').innerHTML=`<div class="rbox" style="margin-top:12px"><div class="rbox-title">Oil Rate Results</div>
         <div class="rrow"><span class="rl">Gilbert Equation</span><span class="rv">${fmt(Qgilbert,1)} BPD</span></div>
         <div class="rrow"><span class="rl">Ros Equation</span><span class="rv">${fmt(Qros,1)} BPD</span></div>
@@ -5364,7 +5375,7 @@ window.calcSolGOR=function(){
     if(errs.length){$('sg_res').innerHTML=errs.map(e=>'<div class="val-error">'+e+'</div>').join('');return;}
     // Standing
     const yg=0.00091*T-0.0125*API;
-    const Rs_standing=gg*Math.pow((P+15)/(18*Math.pow(10,yg)),1.204);
+    const Rs_standing=gg*Math.pow((P+14.7)/(18.2*Math.pow(10,yg)),1.2048);
     // Vasquez & Beggs
     let C1,C2,C3;
     if(API<=30){C1=0.0362;C2=1.0937;C3=25.724;}else{C1=0.0178;C2=1.1870;C3=23.931;}
