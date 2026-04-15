@@ -2086,17 +2086,25 @@ function renderFlare(body) {
         // Sort ascending
         allThresh.sort((a,b)=>a.dist-b.dist);
 
-        // ── Noise calculations (API 521 / Thermal-acoustic model) ──
+        // ── Noise calculations (API 521 / ISO 9613 model) ──
         const eta=parseFloat($('fl_eta').value)||0.005;
         const ambN=parseFloat($('fl_ambN').value)||60;
-        // Sound Power Level: PWL = 10*log10(η * Q_thermal_W) + 10 (ref 1e-12 W)
         const Q_W = Q_kW * 1000; // Watts thermal
         const Wacoustic = eta * Q_W;  // Acoustic power in Watts
         const PWL = 10*Math.log10(Wacoustic / 1e-12); // dB re 1 pW
-        // SPL at distance r (hemispherical radiation over ground):
-        // SPL = PWL - 10*log10(2πr²) = PWL - 20*log10(r) - 10*log10(2π)
-        // → SPL = PWL - 20*log10(r) - 7.98
-        // Solve for r at given SPL: r = 10^((PWL - SPL - 7.98)/20)
+        // SPL at distance r (hemispherical radiation over ground + atmospheric absorption):
+        // SPL = PWL - 20*log10(r) - 7.98 - α*r
+        // α ≈ 0.005 dB/m broadband A-weighted absorption (ISO 9613-2, ~20°C 50% RH)
+        const alpha_dBm = 0.005;
+        function splAtDist(r){ return r>0 ? PWL - 20*Math.log10(r) - 7.98 - alpha_dBm*r : PWL; }
+        // Solve for distance at given SPL via bisection (not analytically solvable with absorption)
+        function distForSPL(target){
+            let lo=0.5, hi=10000; // 0.5 m to 10 km max
+            if(splAtDist(lo)<=target) return 0;
+            if(splAtDist(hi)>=target) return hi;
+            for(let i=0;i<50;i++){ const mid=(lo+hi)/2; if(splAtDist(mid)>target) lo=mid; else hi=mid; }
+            return (lo+hi)/2;
+        }
         const noiseThresh=[
             {spl:115, lbl:'115 dBA — Max instantaneous (hearing damage)', col:'#f85149'},
             {spl:100, lbl:'100 dBA — Brief exposure limit', col:'#f0883e'},
@@ -2105,12 +2113,7 @@ function renderFlare(body) {
             {spl:75,  lbl:'75 dBA — Residential boundary', col:'#3fb950'},
             {spl:65,  lbl:'65 dBA — Comfortable outdoor', col:'#58a6ff'},
         ];
-        noiseThresh.forEach(n=>{
-            const r=Math.pow(10, (PWL - n.spl - 7.98)/20);
-            n.dist = r>0 ? r : 0;
-        });
-        // SPL at any distance
-        function splAtDist(r){ return r>0 ? PWL - 20*Math.log10(r) - 7.98 : PWL; }
+        noiseThresh.forEach(n=>{ n.dist = distForSPL(n.spl); });
 
         return{H,D,L_m,L_ft,tiltDeg,tiltRad,flameCX,flameCY,Q_BTU_hr,Q_kW,F,tau,Uj,Uw,allThresh,
                eta,ambN,Wacoustic,PWL,noiseThresh,splAtDist};
@@ -2697,11 +2700,149 @@ function renderFlare(body) {
         noiseViewState={xMin,xMax,yMin,yMax,sx,sy,ML,MT,PW,PH,fp};
     }
 
+    // ── 3D NOISE RENDER (perspective, matching thermal 3D camera) ──
+    function drawFlareNoise3D(){
+        const ncvs=$('fl_canvas2'); if(!ncvs)return;
+        const nwrap=$('fl_wrap2');
+        ncvs.width=nwrap.clientWidth; ncvs.height=nwrap.clientHeight;
+        const ctx=ncvs.getContext('2d');
+        const W=ncvs.width, Hc=ncvs.height;
+        const fp=getFlameParams();
+
+        const maxR=Math.max(...fp.noiseThresh.map(n=>n.dist), ...fp.allThresh.map(t=>t.dist), 50);
+        const px_per_m = Math.min(W,Hc)*0.42/maxR * camZoom;
+        const cx3=W*0.5, cy3=Hc*0.60;
+
+        const cT=Math.cos(camTheta), sT=Math.sin(camTheta);
+        const cP=Math.cos(camPhi),   sP=Math.sin(camPhi);
+        const FOCUS=maxR*4;
+        function proj(wx,wy,wz){
+            const rx=wx*cT-wz*sT, rz_h=wx*sT+wz*cT;
+            const ry=wy*cP-rz_h*sP, rz=wy*sP+rz_h*cP;
+            const per=FOCUS/(FOCUS+rz);
+            return{x:cx3+rx*px_per_m*per, y:cy3-ry*px_per_m*per, d:rz, s:per};
+        }
+
+        // Background
+        ctx.fillStyle='#080c12'; ctx.fillRect(0,0,W,Hc);
+
+        // Filled noise zones (outer to inner)
+        const sorted=[...fp.noiseThresh].sort((a,b)=>b.dist-a.dist);
+        sorted.forEach((n,idx)=>{
+            if(n.dist<1)return;
+            const inner=idx<sorted.length-1?sorted[idx+1]:null;
+            const path=new Path2D();
+            for(let a=0;a<=72;a++){
+                const ang=a/72*Math.PI*2;
+                const p=proj(Math.cos(ang)*n.dist,0,Math.sin(ang)*n.dist);
+                a===0?path.moveTo(p.x,p.y):path.lineTo(p.x,p.y);
+            }
+            path.closePath();
+            if(inner&&inner.dist>0.5){
+                for(let a=72;a>=0;a--){
+                    const ang=a/72*Math.PI*2;
+                    const p=proj(Math.cos(ang)*inner.dist,0,Math.sin(ang)*inner.dist);
+                    path.lineTo(p.x,p.y);
+                }
+                path.closePath();
+            }
+            ctx.fillStyle=n.col+'1e';
+            ctx.fill(path,'evenodd');
+        });
+
+        // Grid
+        const gridStep=Math.max(50,Math.round(maxR/6/50)*50);
+        const gridMax=Math.ceil(maxR/gridStep+1)*gridStep;
+        ctx.strokeStyle='#21262d'; ctx.lineWidth=0.8;
+        for(let i=-gridMax;i<=gridMax;i+=gridStep){
+            let p1=proj(i,0,-gridMax),p2=proj(i,0,gridMax);
+            ctx.beginPath();ctx.moveTo(p1.x,p1.y);ctx.lineTo(p2.x,p2.y);ctx.stroke();
+            p1=proj(-gridMax,0,i);p2=proj(gridMax,0,i);
+            ctx.beginPath();ctx.moveTo(p1.x,p1.y);ctx.lineTo(p2.x,p2.y);ctx.stroke();
+        }
+
+        // Noise ring outlines + labels
+        fp.noiseThresh.forEach(n=>{
+            if(n.dist<1)return;
+            ctx.strokeStyle=n.col+'bb'; ctx.lineWidth=1.8; ctx.setLineDash([8,4]);
+            ctx.beginPath();
+            for(let a=0;a<=72;a++){
+                const ang=a/72*Math.PI*2;
+                const p=proj(Math.cos(ang)*n.dist,0,Math.sin(ang)*n.dist);
+                a===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y);
+            }
+            ctx.closePath(); ctx.stroke(); ctx.setLineDash([]);
+            const lp=proj(n.dist,0,0);
+            ctx.fillStyle=n.col; ctx.font='bold 11px sans-serif';
+            ctx.fillText(`${n.spl} dBA | ${fmt(n.dist,0)}m`,lp.x+6,lp.y-4);
+        });
+
+        // Also show heat radiation contours (lighter)
+        fp.allThresh.forEach(t=>{
+            if(t.dist<0.5)return;
+            ctx.strokeStyle=t.col+'55'; ctx.lineWidth=1; ctx.setLineDash([3,5]);
+            ctx.beginPath();
+            for(let a=0;a<=72;a++){
+                const ang=a/72*Math.PI*2;
+                const p=proj(Math.cos(ang)*t.dist,0,Math.sin(ang)*t.dist);
+                a===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y);
+            }
+            ctx.closePath(); ctx.stroke(); ctx.setLineDash([]);
+        });
+
+        // Flare stack marker
+        const sBot=proj(0,0,0);
+        ctx.beginPath(); ctx.arc(sBot.x,sBot.y,6,0,Math.PI*2);
+        ctx.fillStyle='#d63'; ctx.fill(); ctx.strokeStyle='#fff'; ctx.lineWidth=2; ctx.stroke();
+        ctx.fillStyle='#e6edf3'; ctx.font='bold 11px sans-serif'; ctx.textAlign='left';
+        ctx.fillText('Flare Stack', sBot.x+10, sBot.y-8);
+
+        // Scale bar
+        const sbLen=gridStep; const sbPx=sbLen*px_per_m;
+        const sbX1=W-20, sbX2=W-20-sbPx, sbY=Hc-22;
+        ctx.strokeStyle='#8b949e'; ctx.lineWidth=2; ctx.setLineDash([]);
+        ctx.beginPath();ctx.moveTo(sbX2,sbY);ctx.lineTo(sbX1,sbY);ctx.stroke();
+        ctx.beginPath();ctx.moveTo(sbX2,sbY-5);ctx.lineTo(sbX2,sbY+5);ctx.stroke();
+        ctx.beginPath();ctx.moveTo(sbX1,sbY-5);ctx.lineTo(sbX1,sbY+5);ctx.stroke();
+        ctx.fillStyle='#c9d1d9';ctx.font='10px sans-serif';ctx.textAlign='center';
+        ctx.fillText(sbLen>=1000?(sbLen/1000)+'km':sbLen+'m',sbX2+sbPx/2,sbY+14); ctx.textAlign='left';
+
+        // Legend
+        ctx.fillStyle='rgba(10,14,20,0.85)'; ctx.fillRect(10,10,250,fp.noiseThresh.length*18+22);
+        ctx.strokeStyle='#30363d'; ctx.lineWidth=0.5; ctx.strokeRect(10,10,250,fp.noiseThresh.length*18+22);
+        ctx.fillStyle='#c9d1d9'; ctx.font='bold 10px sans-serif';
+        ctx.fillText('Noise Contours (dBA)', 16, 24);
+        fp.noiseThresh.forEach((n,i)=>{
+            ctx.fillStyle=n.col; ctx.fillRect(16,30+i*18,10,10);
+            ctx.fillStyle='#c9d1d9'; ctx.font='10px sans-serif';
+            ctx.fillText(n.spl+' dBA @ '+fmt(n.dist,0)+'m', 30, 39+i*18);
+        });
+
+        // Info overlay
+        ctx.fillStyle='rgba(10,14,20,0.85)'; ctx.fillRect(W-180,10,173,72);
+        ctx.strokeStyle='#30363d'; ctx.lineWidth=0.5; ctx.strokeRect(W-180,10,173,72);
+        ctx.fillStyle='#58a6ff'; ctx.font='bold 11px sans-serif'; ctx.textAlign='right';
+        ctx.fillText('PWL: '+fmt(fp.PWL,1)+' dB', W-14, 24);
+        ctx.fillText('Acoustic Power: '+fmt(fp.Wacoustic,1)+' W', W-14, 38);
+        ctx.fillText('\u03B7 = '+fp.eta+' (thermoacoustic)', W-14, 52);
+        ctx.fillStyle='#8b949e'; ctx.font='10px sans-serif';
+        ctx.fillText('Q = '+fmt(fp.Q_kW/1000,2)+' MW thermal', W-14, 68);
+        ctx.textAlign='left';
+
+        // Title
+        ctx.fillStyle='#c9d1d9'; ctx.font='bold 13px sans-serif'; ctx.textAlign='center';
+        ctx.fillText('Flare Noise Contour \u2014 3D View', W/2, Hc-8);
+        ctx.textAlign='left';
+
+        // Clear interactive tooltip state (3D mode doesn't support hover)
+        noiseViewState=null;
+    }
+
     function drawFlare(){
         // Heat canvas — 3D or 2D based on tab
         flView==='3d' ? drawFlare3D() : drawFlare2D();
-        // Noise canvas — always rendered separately
-        drawFlareNoise();
+        // Noise canvas — matches the same view mode
+        flView==='3d' ? drawFlareNoise3D() : drawFlareNoise();
     }
 
     // ── Custom threshold management ────────────────────
