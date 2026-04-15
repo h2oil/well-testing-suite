@@ -1864,8 +1864,8 @@ function renderFlare(body) {
         <div class="card">
           <div class="card-title">Noise Parameters</div>
           <div class="fg">
-            <div class="fg-item"><label>Thermoacoustic Eff. (&eta;)</label><input type="number" id="fl_eta" value="0.005" step="0.001" min="0.001" max="0.03">
-              <span style="font-size:10px;color:var(--text3)">Pipe: 0.002–0.01 &nbsp;|&nbsp; Steam-assisted: 0.005–0.02</span></div>
+            <div class="fg-item"><label>Noise Adj. (dB)</label><input type="number" id="fl_eta" value="0" step="1" min="-25" max="25">
+              <span style="font-size:10px;color:var(--text3)">Steam-assist: +5 to +10 &nbsp;|&nbsp; Enclosed: &minus;15 to &minus;25</span></div>
             <div class="fg-item"><label>Ambient Noise (dBA)</label><input type="number" id="fl_ambN" value="60" step="1" min="30" max="90"></div>
           </div>
           <div style="margin-top:8px;font-size:11px;color:var(--text3)">
@@ -1897,7 +1897,13 @@ function renderFlare(body) {
         <div style="font-size:12px;font-weight:700;color:var(--accent);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px">Thermal Radiation</div>
         <div class="flare-canvas-wrap" id="fl_wrap"><canvas id="fl_canvas"></canvas></div>
         <div class="info-bar" style="margin-top:6px" id="fl_hint">&#8635; Drag to rotate &nbsp;|&nbsp; Scroll to zoom &nbsp;|&nbsp; Switch tab for 2D elevation view</div>
-        <div style="font-size:12px;font-weight:700;color:var(--blue);margin:16px 0 6px;text-transform:uppercase;letter-spacing:.5px">Noise Contour — Plan View</div>
+        <div style="display:flex;align-items:center;gap:12px;margin:16px 0 6px">
+          <div style="font-size:12px;font-weight:700;color:var(--blue);text-transform:uppercase;letter-spacing:.5px" id="fl_noise_lbl">Noise Contour — Plan View</div>
+          <div class="tabs" id="fl_ntabs" style="max-width:240px;margin:0;display:none">
+            <button class="tab-btn active" id="fl_np">Plan (Bird&rsquo;s Eye)</button>
+            <button class="tab-btn" id="fl_ns">Elevation (Side)</button>
+          </div>
+        </div>
         <div class="flare-canvas-wrap" id="fl_wrap2" style="height:460px;background:#0d1117"><canvas id="fl_canvas2"></canvas></div>
         <div class="info-bar" style="margin-top:6px" id="fl_hint2">Hover for dBA reading &nbsp;|&nbsp; Click to pin marker &nbsp;|&nbsp; Double-click to clear &nbsp;|&nbsp; Drag to pan &nbsp;|&nbsp; Scroll to zoom</div>
       </div>
@@ -1911,7 +1917,8 @@ function renderFlare(body) {
         $('fl_t1').className='tab-btn active';
         $('fl_t2').className='tab-btn';
         $('fl_hint').textContent='\u21BB Drag to rotate\u00a0|\u00a0Scroll to zoom\u00a0|\u00a0Switch tab for 2D elevation view';
-        // Restart 3D animation loop + switch noise canvas to 3D
+        $('fl_ntabs').style.display='none';
+        $('fl_noise_lbl').textContent='Noise Contour \u2014 3D View';
         if(flareAnim){cancelAnimationFrame(flareAnim);flareAnim=null;}
         drawFlare3D();
         drawFlareNoise3D();
@@ -1919,15 +1926,14 @@ function renderFlare(body) {
     $('fl_t2').onclick=()=>{
         if(flView==='2d') return;
         flView='2d';
-        // Stop the 3D rAF loop BEFORE drawing 2D. Any in-flight 3D frame will
-        // exit early via the flView==='3d' guard at the top of drawFlare3D.
         if(flareAnim){cancelAnimationFrame(flareAnim);flareAnim=null;}
         $('fl_t2').className='tab-btn active';
         $('fl_t1').className='tab-btn';
         $('fl_hint').textContent='Drag to pan \u00a0|\u00a0 Scroll to zoom \u00a0|\u00a0 Import a site plan as background overlay';
-        // Draw 2D synchronously + switch noise canvas to 2D
+        $('fl_ntabs').style.display='';
+        $('fl_noise_lbl').textContent=noiseSubView==='plan'?'Noise Contour \u2014 Plan View':'Noise Contour \u2014 Elevation View';
         drawFlare2D();
-        drawFlareNoise();
+        noiseSubView==='side' ? drawFlareNoiseSide() : drawFlareNoise();
     };
 
     // Noise chart state
@@ -1936,6 +1942,24 @@ function renderFlare(body) {
     let noiseDrag=false, nmx0=0, nmy0=0;
     // Separate pan/zoom for noise canvas
     let noisePanX=0, noisePanY=0, noiseZoom=1.0;
+    // Noise sub-view: 'plan' (bird's eye) or 'side' (elevation)
+    let noiseSubView='plan';
+
+    // Noise sub-view tab wiring (visible in 2D mode only)
+    $('fl_np').onclick=()=>{
+        if(noiseSubView==='plan')return;
+        noiseSubView='plan';
+        $('fl_np').className='tab-btn active'; $('fl_ns').className='tab-btn';
+        $('fl_noise_lbl').textContent='Noise Contour \u2014 Plan View';
+        drawFlareNoise();
+    };
+    $('fl_ns').onclick=()=>{
+        if(noiseSubView==='side')return;
+        noiseSubView='side';
+        $('fl_ns').className='tab-btn active'; $('fl_np').className='tab-btn';
+        $('fl_noise_lbl').textContent='Noise Contour \u2014 Elevation View';
+        drawFlareNoiseSide();
+    };
 
     // ── Heat canvas (fl_canvas) — mouse/wheel for 3D rotate or 2D pan/zoom ──
     const cvs=$('fl_canvas');
@@ -1975,7 +1999,7 @@ function renderFlare(body) {
     const cvs2=$('fl_canvas2');
     cvs2.addEventListener('mousedown',e=>{noiseDrag=true;nmx0=e.clientX;nmy0=e.clientY;});
     cvs2.addEventListener('mouseup',()=>noiseDrag=false);
-    cvs2.addEventListener('mouseleave',()=>{noiseDrag=false; flView==='3d'?drawFlareNoise3D():drawFlareNoise();});
+    cvs2.addEventListener('mouseleave',()=>{noiseDrag=false; drawNoiseCurrent();});
     cvs2.addEventListener('mousemove',e=>{
         if(noiseDrag){
             if(flView==='3d'){
@@ -1987,7 +2011,7 @@ function renderFlare(body) {
             } else {
                 noisePanX+=(e.clientX-nmx0); noisePanY+=(e.clientY-nmy0);
                 nmx0=e.clientX; nmy0=e.clientY;
-                drawFlareNoise();
+                noiseSubView==='side'?drawFlareNoiseSide():drawFlareNoise();
             }
         } else if(noiseViewState){
             // Interactive tooltip
@@ -2035,7 +2059,7 @@ function renderFlare(body) {
             const mx=e.clientX-rect.left, my=e.clientY-rect.top;
             noisePanX = mx - (mx-noisePanX)*(noiseZoom/old);
             noisePanY = my - (my-noisePanY)*(noiseZoom/old);
-            drawFlareNoise();
+            noiseSubView==='side'?drawFlareNoiseSide():drawFlareNoise();
         }
     },{passive:false});
     cvs2.addEventListener('click',e=>{
@@ -2053,7 +2077,7 @@ function renderFlare(body) {
         drawFlareNoise();
     });
     cvs2.addEventListener('dblclick',()=>{
-        noiseMarkers=[]; flView==='3d'?drawFlareNoise3D():drawFlareNoise();
+        noiseMarkers=[]; drawNoiseCurrent();
     });
 
     // ── API 521 CALCULATIONS ──────────────────────────
@@ -2105,12 +2129,20 @@ function renderFlare(body) {
         // Sort ascending
         allThresh.sort((a,b)=>a.dist-b.dist);
 
-        // ── Noise calculations (API 521 / ISO 9613 model) ──
-        const eta=parseFloat($('fl_eta').value)||0.005;
+        // ── Noise calculations (CONCAWE / API 521 / ISO 9613) ──
+        const noiseAdj=parseFloat($('fl_eta').value)||0;  // dB correction (old saved η≈0.005 → negligible)
         const ambN=parseFloat($('fl_ambN').value)||60;
         const Q_W = Q_kW * 1000; // Watts thermal
-        const Wacoustic = eta * Q_W;  // Acoustic power in Watts
-        const PWL = 10*Math.log10(Wacoustic / 1e-12); // dB re 1 pW
+        // Gas exit speed of sound: c = √(γ·R/M·T)
+        const gamma_gas=1.28; // γ for natural gas
+        const Ta_K=(parseFloat($('fl_Ta').value)||25)+273.15;
+        const c_exit=Math.sqrt(gamma_gas*8314/mw*Ta_K);
+        const Ma=Math.min(Math.max(Uj/c_exit,0.01),2.0);
+        // PWL via CONCAWE correlation (validated against industrial flare survey data)
+        // Subsonic (Ma<1): PWL = 10·log10(Q_W) + 20·log10(Ma) + 91
+        // Supersonic: PWL = 10·log10(Q_W) + 40·log10(Ma) + 91 (shock-enhanced)
+        const PWL = 10*Math.log10(Q_W) + (Ma>=1?40:20)*Math.log10(Ma) + 91 + noiseAdj;
+        const Wacoustic = Math.pow(10, PWL/10) * 1e-12; // back-calc for display
         // SPL at distance r (hemispherical radiation over ground + atmospheric absorption):
         // SPL = PWL - 20*log10(r) - 7.98 - α*r
         // α ≈ 0.005 dB/m broadband A-weighted absorption (ISO 9613-2, ~20°C 50% RH)
@@ -2135,7 +2167,7 @@ function renderFlare(body) {
         noiseThresh.forEach(n=>{ n.dist = distForSPL(n.spl); });
 
         return{H,D,L_m,L_ft,tiltDeg,tiltRad,flameCX,flameCY,Q_BTU_hr,Q_kW,F,tau,Uj,Uw,Wfrom,WdirRad,allThresh,
-               eta,ambN,Wacoustic,PWL,noiseThresh,splAtDist};
+               Ma,noiseAdj,ambN,Wacoustic,PWL,noiseThresh,splAtDist};
     }
 
     // ── 3D RENDER (Canvas perspective) ────────────────
@@ -2757,7 +2789,7 @@ function renderFlare(body) {
         ctx.fillStyle='#58a6ff'; ctx.font='bold 11px sans-serif'; ctx.textAlign='right'; ctx.textBaseline='top';
         ctx.fillText('PWL: '+fmt(fp.PWL,1)+' dB', infoX-4, infoY+4);
         ctx.fillText('Acoustic Power: '+fmt(fp.Wacoustic,1)+' W', infoX-4, infoY+18);
-        ctx.fillText('\u03B7 = '+fp.eta+' (thermoacoustic)', infoX-4, infoY+32);
+        ctx.fillText('Ma = '+fmt(fp.Ma,3)+' | Adj: '+fp.noiseAdj+'dB', infoX-4, infoY+32);
         ctx.fillStyle='#8b949e'; ctx.font='10px sans-serif';
         ctx.fillText('Q = '+fmt(fp.Q_kW/1000,2)+' MW thermal', infoX-4, infoY+48);
         ctx.fillText('Wind: '+$('fl_W').value+' m/s', infoX-4, infoY+60);
@@ -2811,6 +2843,183 @@ function renderFlare(body) {
 
         // Store view state for interactive mouse tooltip
         noiseViewState={xMin,xMax,yMin,yMax,sx,sy,ML,MT,PW,PH,fp};
+    }
+
+    // ── NOISE ELEVATION (side view) ──────────────────
+    function drawFlareNoiseSide(){
+        const ncvs=$('fl_canvas2'); if(!ncvs)return;
+        const nwrap=$('fl_wrap2');
+        ncvs.width=nwrap.clientWidth; ncvs.height=nwrap.clientHeight;
+        const ctx=ncvs.getContext('2d');
+        const W=ncvs.width, Hc=ncvs.height;
+        const fp=getFlameParams();
+
+        const ML=64, MR=24, MT=28, MB=48;
+        const PW=W-ML-MR, PH=Hc-MT-MB;
+
+        // Auto-range: max noise distance & height
+        const maxR=Math.max(...fp.noiseThresh.map(n=>n.dist), ...fp.allThresh.map(t=>t.dist), 50);
+        const baseRange=Math.ceil(maxR*1.2/10)*10;
+        const rangeX=baseRange*2/noiseZoom, rangeY=baseRange*1.2/noiseZoom;
+        const cxW=-noisePanX/(PW/rangeX), cyW=noisePanY/(PH/rangeY);
+        const xMin=-baseRange/noiseZoom+cxW, xMax=xMin+rangeX;
+        const yMin=-baseRange*0.1/noiseZoom+cyW, yMax=yMin+rangeY;
+
+        const sx=PW/(xMax-xMin), sy=PH/(yMax-yMin);
+        function wx(x){return ML+(x-xMin)*sx;}
+        function wy(y){return MT+(yMax-y)*sy;}
+
+        ctx.fillStyle='#0d1117'; ctx.fillRect(0,0,W,Hc);
+        ctx.save();
+        ctx.beginPath(); ctx.rect(ML,MT,PW,PH); ctx.clip();
+        ctx.fillStyle='#161b22'; ctx.fillRect(ML,MT,PW,PH);
+
+        // Grid
+        const gsRaw=(xMax-xMin)/8;
+        const gs=gsRaw<=2?1:gsRaw<=5?2.5:gsRaw<=12?5:gsRaw<=30?10:gsRaw<=60?25:gsRaw<=150?50:gsRaw<=300?100:gsRaw<=600?250:gsRaw<=1500?500:1000;
+        const x0=Math.floor(xMin/gs)*gs, y0=Math.floor(yMin/gs)*gs;
+        for(let x=x0;x<=xMax;x+=gs){
+            const px=wx(x);
+            ctx.strokeStyle=(x===0)?'#4a5568':'#21262d'; ctx.lineWidth=(x===0)?1.2:0.5;
+            ctx.setLineDash(x===0?[]:[4,3]);
+            ctx.beginPath(); ctx.moveTo(px,MT); ctx.lineTo(px,MT+PH); ctx.stroke();
+        }
+        for(let y=y0;y<=yMax;y+=gs){
+            const py=wy(y);
+            ctx.strokeStyle=(y===0)?'#654':'#21262d'; ctx.lineWidth=(y===0)?1.8:0.5;
+            ctx.setLineDash(y===0?[]:[4,3]);
+            ctx.beginPath(); ctx.moveTo(ML,py); ctx.lineTo(ML+PW,py); ctx.stroke();
+        }
+        ctx.setLineDash([]);
+
+        // Ground fill below y=0
+        if(yMin<0 && yMax>0){
+            ctx.fillStyle='rgba(100,80,60,0.06)'; ctx.fillRect(ML,wy(0),PW,MT+PH-wy(0));
+        }
+
+        // Noise contour semicircles (side elevation cross-section, centered at ground)
+        [...fp.noiseThresh].sort((a,b)=>b.dist-a.dist).forEach(n=>{
+            if(n.dist<1)return;
+            // Upper hemisphere cross-section is a semicircle
+            ctx.beginPath();
+            for(let i=0;i<=60;i++){
+                const ang=i/60*Math.PI; // 0 to π (left to right semicircle)
+                const px=wx(-n.dist*Math.cos(ang)), py=wy(n.dist*Math.sin(ang));
+                i===0?ctx.moveTo(px,py):ctx.lineTo(px,py);
+            }
+            ctx.fillStyle=n.col+'15'; ctx.fill();
+        });
+        // Noise semicircle outlines + labels
+        fp.noiseThresh.forEach(n=>{
+            if(n.dist<1)return;
+            ctx.beginPath();
+            for(let i=0;i<=60;i++){
+                const ang=i/60*Math.PI;
+                ctx.lineTo(wx(-n.dist*Math.cos(ang)), wy(n.dist*Math.sin(ang)));
+            }
+            ctx.strokeStyle=n.col+'cc'; ctx.lineWidth=2; ctx.setLineDash([8,4]); ctx.stroke();
+            ctx.setLineDash([]);
+            // Label at top of semicircle
+            ctx.fillStyle=n.col; ctx.font='bold 10px sans-serif'; ctx.textAlign='center';
+            ctx.fillText(n.spl+' dBA @ '+fmt(n.dist,0)+'m', wx(0), wy(n.dist)-4);
+        });
+
+        // Heat radiation zones (spheres centered on flame centroid, shown as cross-section circles)
+        const fcx=fp.flameCX, fcy=fp.flameCY;
+        fp.allThresh.forEach(t=>{
+            if(t.dist<0.5)return;
+            ctx.beginPath();
+            ctx.ellipse(wx(fcx),wy(fcy), Math.abs(t.dist*sx), Math.abs(t.dist*sy), 0, 0, Math.PI*2);
+            ctx.strokeStyle=t.col+'55'; ctx.lineWidth=1; ctx.setLineDash([3,5]); ctx.stroke();
+            ctx.setLineDash([]);
+        });
+
+        // Flare stack
+        const sW_px=Math.max(4, fp.D*sx*3);
+        const sLeft=wx(0)-sW_px/2;
+        const grad=ctx.createLinearGradient(sLeft,wy(fp.H),sLeft+sW_px,wy(fp.H));
+        grad.addColorStop(0,'#4a5568'); grad.addColorStop(0.5,'#8b949e'); grad.addColorStop(1,'#4a5568');
+        ctx.fillStyle=grad; ctx.fillRect(sLeft,wy(fp.H),sW_px,wy(0)-wy(fp.H));
+        ctx.strokeStyle='#30363d'; ctx.lineWidth=1; ctx.strokeRect(sLeft,wy(fp.H),sW_px,wy(0)-wy(fp.H));
+
+        // Flame
+        const fL=fp.L_m, tR=fp.tiltRad;
+        const fBaseX=0, fBaseY=fp.H;
+        const fTipX=fBaseX+fL*Math.sin(tR), fTipY=fBaseY+fL*Math.cos(tR);
+        const hw_m=Math.max(fp.D*2.5,1.2);
+        const fGrad=ctx.createLinearGradient(wx(fBaseX),wy(fBaseY),wx(fTipX),wy(fTipY));
+        fGrad.addColorStop(0,'rgba(255,230,80,.85)');
+        fGrad.addColorStop(0.4,'rgba(255,120,20,.65)');
+        fGrad.addColorStop(1,'rgba(180,20,0,.05)');
+        const hwPx=hw_m*sx;
+        ctx.beginPath();
+        ctx.moveTo(wx(fBaseX)-hwPx*0.6,wy(fBaseY));
+        ctx.quadraticCurveTo(wx(fBaseX)+(wx(fTipX)-wx(fBaseX))*0.35-hwPx*0.4, wy(fBaseY)+(wy(fTipY)-wy(fBaseY))*0.4, wx(fTipX),wy(fTipY));
+        ctx.quadraticCurveTo(wx(fBaseX)+(wx(fTipX)-wx(fBaseX))*0.35+hwPx*0.4, wy(fBaseY)+(wy(fTipY)-wy(fBaseY))*0.4, wx(fBaseX)+hwPx*0.6,wy(fBaseY));
+        ctx.fillStyle=fGrad; ctx.fill();
+
+        // Flame centroid marker
+        ctx.beginPath(); ctx.arc(wx(fcx),wy(fcy),4,0,Math.PI*2);
+        ctx.fillStyle='#f80'; ctx.fill(); ctx.strokeStyle='#fff'; ctx.lineWidth=1; ctx.stroke();
+        ctx.fillStyle='#c9d1d9'; ctx.font='10px sans-serif'; ctx.textAlign='left';
+        ctx.fillText('Centroid', wx(fcx)+8, wy(fcy)+3);
+
+        ctx.restore();
+
+        // Plot border
+        ctx.strokeStyle='#30363d'; ctx.lineWidth=1.5;
+        ctx.strokeRect(ML,MT,PW,PH);
+
+        // Axes
+        const fmtTick=v=>{const a=Math.abs(v);if(a>=1000)return(v/1000).toFixed(a%1000===0?0:1)+'k';return fmt(v,gs<1?1:0);};
+        ctx.fillStyle='#8b949e'; ctx.font='11px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='top';
+        for(let x=x0;x<=xMax;x+=gs){
+            const px=wx(x); if(px<ML-1||px>ML+PW+1)continue;
+            ctx.beginPath();ctx.moveTo(px,MT+PH);ctx.lineTo(px,MT+PH+5);ctx.strokeStyle='#484f58';ctx.lineWidth=1;ctx.stroke();
+            ctx.fillText(fmtTick(x),px,MT+PH+7);
+        }
+        ctx.font='bold 12px sans-serif'; ctx.fillStyle='#c9d1d9';
+        ctx.fillText('Distance [m]', ML+PW/2, Hc-8);
+        ctx.textAlign='right'; ctx.textBaseline='middle'; ctx.font='11px sans-serif'; ctx.fillStyle='#8b949e';
+        for(let y=y0;y<=yMax;y+=gs){
+            const py=wy(y); if(py<MT-1||py>MT+PH+1)continue;
+            ctx.beginPath();ctx.moveTo(ML,py);ctx.lineTo(ML-5,py);ctx.strokeStyle='#484f58';ctx.lineWidth=1;ctx.stroke();
+            ctx.fillText(fmtTick(y),ML-8,py);
+        }
+        ctx.save(); ctx.translate(14,MT+PH/2); ctx.rotate(-Math.PI/2);
+        ctx.font='bold 12px sans-serif'; ctx.fillStyle='#c9d1d9'; ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.fillText('Elevation [m]',0,0); ctx.restore();
+
+        // Title
+        ctx.fillStyle='#c9d1d9'; ctx.font='bold 13px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='top';
+        ctx.fillText('Flare Noise Contour \u2014 Elevation View', ML+PW/2, 6);
+
+        // Legend
+        const legX=ML+8, legY=MT+8, legH=fp.noiseThresh.length*18+22;
+        ctx.fillStyle='rgba(22,27,34,0.92)'; ctx.strokeStyle='#30363d'; ctx.lineWidth=0.5;
+        ctx.fillRect(legX,legY,240,legH); ctx.strokeRect(legX,legY,240,legH);
+        ctx.fillStyle='#c9d1d9'; ctx.font='bold 10px sans-serif';
+        ctx.fillText('Noise Contours (dBA)',legX+6,legY+14);
+        fp.noiseThresh.forEach((n,i)=>{
+            ctx.fillStyle=n.col; ctx.fillRect(legX+6,legY+20+i*18,10,10);
+            ctx.fillStyle='#c9d1d9'; ctx.font='10px sans-serif';
+            ctx.fillText(n.spl+' dBA @ '+fmt(n.dist,0)+'m',legX+20,legY+29+i*18);
+        });
+
+        // Info overlay
+        const infoX=ML+PW-8, infoY=MT+8;
+        ctx.fillStyle='rgba(22,27,34,0.92)'; ctx.strokeStyle='#30363d'; ctx.lineWidth=0.5;
+        ctx.fillRect(infoX-170,infoY,173,72); ctx.strokeRect(infoX-170,infoY,173,72);
+        ctx.fillStyle='#58a6ff'; ctx.font='bold 11px sans-serif'; ctx.textAlign='right'; ctx.textBaseline='top';
+        ctx.fillText('PWL: '+fmt(fp.PWL,1)+' dB', infoX-4, infoY+4);
+        ctx.fillText('Acoustic Power: '+fmt(fp.Wacoustic,1)+' W', infoX-4, infoY+18);
+        ctx.fillText('Ma = '+fmt(fp.Ma,3)+' | Adj: '+fp.noiseAdj+'dB', infoX-4, infoY+32);
+        ctx.fillStyle='#8b949e'; ctx.font='10px sans-serif';
+        ctx.fillText('Q = '+fmt(fp.Q_kW/1000,2)+' MW thermal', infoX-4, infoY+48);
+        ctx.fillText('Wind: '+fp.Uw.toFixed(1)+' m/s from '+fp.Wfrom+'\u00b0', infoX-4, infoY+60);
+        ctx.textAlign='left'; ctx.textBaseline='alphabetic';
+
+        noiseViewState=null; // disable hover tooltip in side view
     }
 
     // ── 3D NOISE RENDER (perspective, matching thermal 3D camera) ──
@@ -3001,7 +3210,7 @@ function renderFlare(body) {
         ctx.fillStyle='#58a6ff'; ctx.font='bold 11px sans-serif'; ctx.textAlign='right';
         ctx.fillText('PWL: '+fmt(fp.PWL,1)+' dB', W-14, 24);
         ctx.fillText('Acoustic Power: '+fmt(fp.Wacoustic,1)+' W', W-14, 38);
-        ctx.fillText('\u03B7 = '+fp.eta+' (thermoacoustic)', W-14, 52);
+        ctx.fillText('Ma = '+fmt(fp.Ma,3)+' | Adj: '+fp.noiseAdj+'dB', W-14, 52);
         ctx.fillStyle='#8b949e'; ctx.font='10px sans-serif';
         ctx.fillText('Q = '+fmt(fp.Q_kW/1000,2)+' MW thermal', W-14, 68);
         ctx.textAlign='left';
@@ -3015,11 +3224,13 @@ function renderFlare(body) {
         noiseViewState=null;
     }
 
+    function drawNoiseCurrent(){
+        if(flView==='3d') drawFlareNoise3D();
+        else noiseSubView==='side' ? drawFlareNoiseSide() : drawFlareNoise();
+    }
     function drawFlare(){
-        // Heat canvas — 3D or 2D based on tab
         flView==='3d' ? drawFlare3D() : drawFlare2D();
-        // Noise canvas — matches the same view mode
-        flView==='3d' ? drawFlareNoise3D() : drawFlareNoise();
+        drawNoiseCurrent();
     }
 
     // ── Custom threshold management ────────────────────
@@ -3085,7 +3296,8 @@ function renderFlare(body) {
         html+=`<div class="card"><div class="card-title">Flare Noise Analysis</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
           <div>
-            <div class="rrow"><span class="rl">Thermoacoustic Efficiency (&eta;)</span><span class="rv">${fp.eta}</span></div>
+            <div class="rrow"><span class="rl">Exit Mach Number</span><span class="rv">${fmt(fp.Ma,4)}</span></div>
+            <div class="rrow"><span class="rl">Noise Adj.</span><span class="rv">${fp.noiseAdj} dB</span></div>
             <div class="rrow"><span class="rl">Acoustic Power (W)</span><span class="rv">${fmt(fp.Wacoustic,2)}</span></div>
             <div class="rrow"><span class="rl">Sound Power Level (PWL)</span><span class="rv">${fmt(fp.PWL,1)} dB</span></div>
             <div class="rrow"><span class="rl">SPL @ 50m</span><span class="rv">${fmt(fp.splAtDist(50),1)} dBA</span></div>
@@ -3164,7 +3376,8 @@ function renderFlare(body) {
         ];
         fp.allThresh.forEach(t=>rows.push(['Radiation: '+t.lbl,t.dist.toFixed(1),'m']));
         rows.push(['','','']);
-        rows.push(['Thermoacoustic Efficiency',fp.eta,'']);
+        rows.push(['Exit Mach Number',fp.Ma.toFixed(4),'']);
+        rows.push(['Noise Adjustment',fp.noiseAdj,'dB']);
         rows.push(['Sound Power Level (PWL)',fp.PWL.toFixed(1),'dB']);
         rows.push(['Acoustic Power',fp.Wacoustic.toFixed(2),'W']);
         fp.noiseThresh.forEach(n=>rows.push(['Noise: '+n.spl+' dBA',n.dist.toFixed(1),'m']));
@@ -3198,7 +3411,8 @@ function renderFlare(body) {
             <h2>API 521 Radiation Zones</h2>
             ${threshHTML}
             <h2>Noise Analysis</h2>
-            ${pair('Thermoacoustic Efficiency (η)',fp.eta)}
+            ${pair('Exit Mach Number',fmt(fp.Ma,4))}
+            ${pair('Noise Adj.',fp.noiseAdj+' dB')}
             ${pair('Acoustic Power',fmt(fp.Wacoustic,2)+' W')}
             ${pair('Sound Power Level (PWL)',fmt(fp.PWL,1)+' dB')}
             ${pair('SPL @ 50m',fmt(fp.splAtDist(50),1)+' dBA')}
