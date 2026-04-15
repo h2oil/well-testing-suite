@@ -79,6 +79,7 @@
 
         /* ── Forms ── */
         .fg { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px,1fr)); gap: 14px; }
+        .fg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px,1fr)); gap: 10px; }
         .fg-item { display: flex; flex-direction: column; }
         .fg-item label { font-size: 11px; font-weight: 600; color: var(--text2); margin-bottom: 5px; text-transform: uppercase; letter-spacing: .3px; }
         .fg-item input, .fg-item select, .fg-item textarea {
@@ -674,7 +675,7 @@ function renderClientInfo(body) {
         <div class="card">
           <div class="card-title">Client Logo (for Report Cover Page)</div>
           <div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap">
-            <div id="ci_logo_preview" style="width:160px;height:80px;border:1px dashed var(--border);border-radius:8px;display:flex;align-items:center;justify-content:center;background:var(--card);overflow:hidden">
+            <div id="ci_logo_preview" style="width:160px;height:80px;border:1px dashed var(--border);border-radius:8px;display:flex;align-items:center;justify-content:center;background:var(--bg2);overflow:hidden">
               ${ci.clientLogo ? '<img src="'+ci.clientLogo+'" style="max-width:150px;max-height:72px;object-fit:contain">' : '<span style="color:var(--text3);font-size:12px">No logo uploaded</span>'}
             </div>
             <div style="flex:1;min-width:150px">
@@ -706,19 +707,19 @@ function renderClientInfo(body) {
         Welcome to the <strong>H2Oil Well Testing Engineering Suite</strong> — a comprehensive collection of oil &amp; gas engineering calculators built for field engineers, well test supervisors, and operations teams.
       </p>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin-bottom:16px">
-        <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:14px">
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:14px">
           <div style="font-weight:700;color:var(--accent);font-size:13px;margin-bottom:6px">1. Fill in Client &amp; Well Info</div>
           <div style="font-size:12px;color:var(--text2);line-height:1.6">Complete the fields above with your client, well, and engineer details. This information is automatically included on all PDF report exports as a professional cover page.</div>
         </div>
-        <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:14px">
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:14px">
           <div style="font-weight:700;color:var(--accent);font-size:13px;margin-bottom:6px">2. Select a Calculator</div>
           <div style="font-size:12px;color:var(--text2);line-height:1.6">Use the sidebar navigation to choose from 30+ engineering modules. Calculators are grouped by category: Well Testing, Production Analysis, Safety &amp; Process, Engineering, and Field Calculations.</div>
         </div>
-        <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:14px">
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:14px">
           <div style="font-weight:700;color:var(--accent);font-size:13px;margin-bottom:6px">3. Enter Parameters &amp; Calculate</div>
           <div style="font-size:12px;color:var(--text2);line-height:1.6">Input your operating parameters and click the Calculate button. Results are displayed with engineering charts and data tables. All inputs are auto-saved to your browser so they persist between sessions.</div>
         </div>
-        <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:14px">
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:14px">
           <div style="font-weight:700;color:var(--accent);font-size:13px;margin-bottom:6px">4. Export Results</div>
           <div style="font-size:12px;color:var(--text2);line-height:1.6">Use the <strong>PDF</strong> and <strong>PNG</strong> buttons in the top-right corner of any calculator to export results. PDF reports include your client info cover page, charts, and data tables. PNG exports download chart images directly.</div>
         </div>
@@ -1451,7 +1452,7 @@ function renderAGA3(body) {
         </div>
       </div>
     </div>
-    <div class="btn-row"><button class="btn btn-primary" onclick="calcAGA3()">Calculate Gas Rate</button><button class="btn btn-secondary" onclick="$('a_res').innerHTML=''">Clear</button></div>
+    <div class="btn-row"><button class="btn btn-primary" onclick="calcAGA3()">Calculate Gas Rate</button><button class="btn btn-secondary" onclick="document.getElementById('a_res').innerHTML=''">Clear</button></div>
     <div id="a_res"></div>`;
     const agaIds=['a_pD','a_oD','a_dP','a_Ps','a_Tf','a_SG','a_CO2','a_H2S','a_Tb','a_Pb','a_tap'];
     loadInputs('aga3',agaIds);
@@ -1591,7 +1592,7 @@ const UC = {
         'ft':1,'m':3.28084,'in':1/12,'cm':0.0328084,'mm':0.00328084,'km':3280.84,'miles':5280,'yards':3}},
     'Density': { u:['lb/ft3','kg/m3','g/cm3','lb/gal','API','SG'], special:true, fn:(v,f,t)=>{
         let k; if(f==='lb/ft3') k=v*16.0185; else if(f==='kg/m3') k=v; else if(f==='g/cm3') k=v*1000;
-        else if(f==='lb/gal') k=v*119.826; else if(f==='API') k=141.5/(v/131.5+1)*999;
+        else if(f==='lb/gal') k=v*119.826; else if(f==='API') k=141.5/(v+131.5)*999;
         else k=v*999;
         if(t==='lb/ft3') return k/16.0185; if(t==='kg/m3') return k; if(t==='g/cm3') return k/1000;
         if(t==='lb/gal') return k/119.826; if(t==='API') return 141.5/(k/999)-131.5; if(t==='SG') return k/999; return v;
@@ -2971,6 +2972,7 @@ function renderDCA(body) {
             return qi/Math.pow(1+b*di*t,1/b);
         } else if(method==='duong'){
             const {a,m}=params;
+            if(Math.abs(1-m)<1e-10) return qi*Math.pow(t,-m)*Math.exp(a*Math.log(t));
             return qi*Math.pow(t,-m)*Math.exp(a/(1-m)*(Math.pow(t,1-m)-1));
         } else {
             const {tau,n}=params;
@@ -3302,7 +3304,7 @@ function renderPTA(body) {
                 const dl1=Math.log(lines[i].dt)-Math.log(lines[i-1].dt);
                 const dl2=Math.log(lines[i+1].dt)-Math.log(lines[i].dt);
                 const dlT=Math.log(lines[i+1].dt)-Math.log(lines[i-1].dt);
-                if(dlT===0) return null;
+                if(dlT===0||dl1===0||dl2===0) return null;
                 return(dp[i]-dp[i-1])/dl1*dl2/dlT+(dp[i+1]-dp[i])/dl2*dl1/dlT;
             });
 
@@ -3497,7 +3499,7 @@ function renderPTA(body) {
             const rows=r.lines.map(d=>[d.dt,d.pws,((r.tp+d.dt)/d.dt).toFixed(4),Math.log10((r.tp+d.dt)/d.dt).toFixed(4)]);
             exportCSV('pta_horner.csv',['dt(hrs)','Pws(psi)','Horner_Ratio','log_Horner'],rows);
         } else if(type==='loglog'){
-            const rows=r.dpPts.map((d,i)=>[Math.pow(10,d.x).toFixed(4),Math.pow(10,d.y).toFixed(2),r.drPts[i]?Math.pow(10,r.drPts[i].y).toFixed(2):'']);
+            const rows=r.dpPts.map((d)=>{const dt=Math.pow(10,d.x);const dr=r.drPts.find(p=>Math.abs(p.x-d.x)<1e-10);return[dt.toFixed(4),Math.pow(10,d.y).toFixed(2),dr?Math.pow(10,dr.y).toFixed(2):''];});
             exportCSV('pta_loglog.csv',['dt(hrs)','dP(psi)','Bourdet_Deriv'],rows);
         } else {
             const rows=r.supData.map(d=>[d.dt.toFixed(4),d.y.toFixed(2),d.x.toFixed(4)]);
@@ -3566,6 +3568,7 @@ function selectOrifice(areaIn2) {
 
 // Gas coefficient C from k (API 520 Eq. 8, USC)
 function gasCoeffC(k) {
+    if(Math.abs(k-1)<1e-10) return 520*Math.sqrt(2/Math.E);
     return 520 * Math.sqrt(k * Math.pow(2/(k+1), (k+1)/(k-1)));
 }
 
@@ -3859,6 +3862,7 @@ window.calcPRVgas = function() {
     } else {
         // Subcritical — API 520 Eq. 12
         const r = P2/P1;
+        if(r>=1||Math.abs(k-1)<1e-10){showErrors('pg_res',['Back pressure equals or exceeds relieving pressure, or k=1 (invalid for subcritical gas sizing)']);return;}
         const F2 = Math.sqrt((k/(k-1)) * Math.pow(r, 2/k) * (1-Math.pow(r,(k-1)/k)) / (1-r));
         A_in2 = W / (735 * F2 * Kd * Kc) * Math.sqrt(T*Z / (M * P1*(P1-P2)));
         flowNote = `Subcritical flow — Eq. 12 (r = P₂/P₁ = ${fmt(r,3)}, F₂ = ${fmt(F2,4)})`;
@@ -3959,6 +3963,9 @@ window.calcPRVliquid = function() {
 
     const P1_g = Ps*(1+op); // psig with overpressure
     const P2_g = Pb_g;       // psig backpressure
+
+    const dpLiq = cert==='yes' ? (P1_g - P2_g) : (1.25*P1_g - P2_g);
+    if(dpLiq<=0){showErrors('pl_res',[`Back pressure (${fmt(P2_g,1)} psig) must be less than relieving pressure (${fmt(cert==='yes'?P1_g:1.25*P1_g,1)} psig)`]);return;}
 
     const Kd = cert==='yes' ? 0.65 : 0.62;
     const Kw = (vtype==='balanced') ? Math.max(0.5, 1.0 - P2_g/Ps) : 1.0;
@@ -4157,7 +4164,7 @@ window.calcChokeOil=function(){
     if(!showErrors('cf_ores',errs))return;
     const P=parseFloat($('cf_op').value),C=parseFloat($('cf_ocs').value),G=parseFloat($('cf_gor').value);
     const Qgilbert=P*Math.pow(C,1.89)/(435*Math.pow(G/1000,0.546));
-    const Qros=(P+14.73)*Math.pow(C,2)/(17.4*Math.pow(G,0.5));
+    const Qros=P*Math.pow(C,2)/(17.4*Math.pow(G,0.5));
     $('cf_ores').innerHTML=`<div class="rbox" style="margin-top:12px"><div class="rbox-title">Oil Rate Results</div>
         <div class="rrow"><span class="rl">Gilbert Equation</span><span class="rv">${fmt(Qgilbert,1)} BPD</span></div>
         <div class="rrow"><span class="rl">Ros Equation</span><span class="rv">${fmt(Qros,1)} BPD</span></div>
@@ -4347,7 +4354,6 @@ window.calcAPIcorr=function(){
     const SG_obs=141.5/(API+131.5);
     const rho_t=SG_obs*999.012;
     const deltaT=T-60;
-    const K0=341.0957;
     const alpha=0.000414;
     const VCF=Math.exp(-alpha*deltaT*(1+0.8*alpha*deltaT));
     const rho60=rho_t/VCF;
@@ -4371,7 +4377,7 @@ window.calcBubblePoint=function(){
     $('bp_res').innerHTML=`<div class="rbox" style="margin-top:12px"><div class="rbox-title">Bubble Point Results</div>
         <div class="rrow"><span class="rl">Corrected Gas Gravity</span><span class="rv">${fmt(Ygs,4)}</span></div>
         <div class="rrow"><span class="rl">Bubble Point Pressure</span><span class="rv">${fmt(Math.abs(Pb),1)} psia</span></div>
-        <div class="rrow"><span class="rl">Bubble Point Pressure</span><span class="rv">${fmt(Math.abs(Pb)/6.89476,1)} kPa</span></div>
+        <div class="rrow"><span class="rl">Bubble Point Pressure</span><span class="rv">${fmt(Math.abs(Pb)*6.89476,1)} kPa</span></div>
     </div>`;
 };
 window.calcShrinkage=function(){
@@ -4452,15 +4458,17 @@ window.calcRectTank=function(){
     $('tr_res').innerHTML=`<div class="rbox" style="margin-top:12px"><div class="rbox-title">Rectangular Tank</div>
         <div class="rrow"><span class="rl">Total Capacity</span><span class="rv">${fmt(totalBbl,3)} bbls (${fmt(totalGal,1)} gal)</span></div>
         <div class="rrow"><span class="rl">Fluid Volume</span><span class="rv">${fmt(fluidBbl,3)} bbls (${fmt(fluidGal,1)} gal)</span></div>
-        <div class="rrow"><span class="rl">Fill %</span><span class="rv">${fmt(fl/H*100,1)}%</span></div>
+        <div class="rrow"><span class="rl">Fill %</span><span class="rv">${H>0?fmt(fl/H*100,1):'—'}%</span></div>
     </div>`;
 };
 window.calcCylTank=function(){
     const D=parseFloat($('tc_d').value),L=parseFloat($('tc_l').value),fl=parseFloat($('tc_fl').value);
     saveInputs('tank',['tc_d','tc_l','tc_fl']);
     const R=D/2;
+    if(R<=0){$('tc_res').innerHTML='<div class="val-error">Diameter must be greater than zero.</div>';return;}
+    const clampedFl=Math.max(0,Math.min(fl,D));
     const totalArea=Math.PI*R*R;
-    const theta=2*Math.acos((R-fl)/R);
+    const theta=2*Math.acos(Math.max(-1,Math.min(1,(R-clampedFl)/R)));
     const segArea=R*R*(theta-Math.sin(theta))/2;
     const totalVol=totalArea*L*12/9702;
     const fluidVol=segArea*L*12/9702;
@@ -4898,11 +4906,12 @@ window.calcOilGas=function(){
     // Gas rate (simplified AGA-3)
     const beta=plate/run;
     const Pabs=sepP+14.73;
-    const Cd=0.5959+0.0312*Math.pow(beta,2.1)-0.184*Math.pow(beta,8)+(beta>0.5?0.09*Math.pow(beta,4)/(1-Math.pow(beta,4))*0.4333:0);
+    const beta4=Math.pow(beta,4);
+    const Cd=0.5959+0.0312*Math.pow(beta,2.1)-0.184*Math.pow(beta,8)+(beta>0.5&&beta4<1?0.09*beta4/(1-beta4)*0.4333:0);
     const x=diffP/(27.7*sepP);
     const Y1=Math.sqrt(1+x)-(0.41+0.35*Math.pow(x,4))*x/(1.3*Math.sqrt(1+x));
     const Tb=520,Pb=14.73;
-    const Fpb=14.73/Pb,Ftb=(gasT+460)/Tb;
+    const Fpb=14.73/Pb,Ftb=Tb/(gasT+460);
     const Fg=1/Math.sqrt(gasGrav);
     const Ftf=1/Math.sqrt(gasT+460);
     let Fpv;
@@ -5244,7 +5253,7 @@ window.calcSepRate=function(){
     const leffFactor=foam==='low'?0.85:foam==='med'?0.75:0.65;
     const V_liq=A_total*NLL*Len*obstFactor*leffFactor*7.48; // gallons
     const V_liq_bbl=V_liq/42;
-    const Q_liq_total=Qo*(1+BSW/(1-BSW||1));
+    const Q_liq_total=BSW>=1?Qo*100:(1-BSW)>0?Qo/(1-BSW):Qo;
     const retTime=V_liq_bbl/(Q_liq_total/1440);
     const retTarget=foam==='low'?3:foam==='med'?5:10;
     const retOK=retTime>=retTarget;
@@ -5590,16 +5599,19 @@ function renderGenSz(body){
 }
 function renderGenMotors(){
     const c=$('gs_motors');if(!c)return;
-    c.innerHTML=window._genMotors.map((m,i)=>`<div class="fg-grid" style="grid-template-columns:1fr 1fr 60px 30px;gap:6px;margin-bottom:4px">
+    c.innerHTML=window._genMotors.map((m,i)=>`<div class="fg-grid" style="display:grid;grid-template-columns:1fr 1fr 60px 30px;gap:6px;margin-bottom:4px">
         <input type="number" value="${m.kw}" onchange="window._genMotors[${i}].kw=parseFloat(this.value)" placeholder="kW">
         <select onchange="window._genMotors[${i}].method=this.value"><option value="dol"${m.method==='dol'?' selected':''}>DOL</option><option value="sd"${m.method==='sd'?' selected':''}>Star-Delta</option><option value="ss"${m.method==='ss'?' selected':''}>Soft Starter</option><option value="vfd"${m.method==='vfd'?' selected':''}>VFD</option></select>
         <input type="number" value="${m.qty}" min="1" onchange="window._genMotors[${i}].qty=parseInt(this.value)" placeholder="Qty">
         <button class="btn btn-secondary" style="padding:2px 6px" onclick="window._genMotors.splice(${i},1);renderGenMotors()">×</button>
     </div>`).join('');
 }
+window.renderGenMotors=renderGenMotors;
 window.addGenMotor=function(){window._genMotors.push({kw:10,method:'dol',qty:1});renderGenMotors();};
 window.calcGenSz=function(){
     const nmLoad=parseFloat($('gs_nm').value),PF=parseFloat($('gs_pf').value),V=parseFloat($('gs_v').value);
+    if(!PF||PF<=0){$('gs_res').innerHTML='<div class="val-error">Power factor must be greater than zero.</div>';return;}
+    if(!V||V<=0){$('gs_res').innerHTML='<div class="val-error">Voltage must be greater than zero.</div>';return;}
     const mode=$('gs_mode').value;
     const dipMod=mode==='cons'?1.20:mode==='norm'?1.10:1.03;
     const startFactors={dol:5.0,sd:2.2,ss:2.5,vfd:1.2};
@@ -5663,6 +5675,7 @@ window.calcCableSz=function(){
     const sys=parseInt($('cs_sys').value),V=parseFloat($('cs_v').value),I=parseFloat($('cs_i').value);
     const PF=parseFloat($('cs_pf').value),L=parseFloat($('cs_l').value)/1000;
     const layF=parseFloat($('cs_lay').value),amb=parseFloat($('cs_amb').value);
+    if(!V||V<=0){$('cs_res').innerHTML='<div class="val-error">Voltage must be greater than zero.</div>';return;}
     // Temp derating (base 30C)
     const tempF=amb<=25?1.08:amb<=30?1.0:amb<=35?0.94:amb<=40?0.87:amb<=45?0.79:amb<=50?0.71:0.67;
     const cables=[
@@ -5721,12 +5734,14 @@ window.calcVDrop=function(){
     const loadType=$('vd_lt').value,sys=parseInt($('vd_sys').value),V=parseFloat($('vd_v').value);
     const I=parseFloat($('vd_i').value),PF=parseFloat($('vd_pf').value),L=parseFloat($('vd_l').value)/1000;
     const mm2=parseFloat($('vd_mm').value),con=$('vd_con').value,ins=$('vd_ins').value;
+    if(!V||V<=0){$('vd_res').innerHTML='<div class="val-error">Voltage must be greater than zero.</div>';return;}
+    const clampedPF=Math.min(PF,1);
     const rho20=con==='cu'?17.241:28.264;
     const alpha=con==='cu'?0.00393:0.00403;
     const T_rated=ins==='xlpe'?90:70;
     const R=rho20/mm2*(1+alpha*(T_rated-20)); // ohm/km
     const X=mm2<=16?0.09:mm2<=70?0.08:mm2<=185?0.075:0.07;
-    const sinF=Math.sqrt(1-PF*PF);
+    const sinF=Math.sqrt(1-clampedPF*clampedPF);
     let dV;
     if(sys===3) dV=Math.sqrt(3)*I*(R*PF+X*sinF)*L;
     else dV=2*I*(R*PF+X*sinF)*L;
