@@ -1847,6 +1847,8 @@ function renderFlare(body) {
             <div class="fg-item"><label>Fraction Heat Radiated (F)</label><input type="number" id="fl_F" value="0.2" step="0.01" min="0.1" max="0.5"></div>
             <div class="fg-item"><label>Atm. Transmissivity (&tau;)</label><input type="number" id="fl_tau" value="1.0" step="0.01" min="0.5" max="1.0"></div>
             <div class="fg-item"><label>Wind Speed (m/s)</label><input type="number" id="fl_W" value="5" step="0.5"></div>
+            <div class="fg-item"><label>Wind From (&deg;N)</label><input type="number" id="fl_Wd" value="0" step="5" min="0" max="360">
+              <span style="font-size:10px;color:var(--text3)">0=N 90=E 180=S 270=W</span></div>
             <div class="fg-item"><label>Ambient Temp (&deg;C)</label><input type="number" id="fl_Ta" value="25" step="1"></div>
           </div>
         </div>
@@ -1909,9 +1911,10 @@ function renderFlare(body) {
         $('fl_t1').className='tab-btn active';
         $('fl_t2').className='tab-btn';
         $('fl_hint').textContent='\u21BB Drag to rotate\u00a0|\u00a0Scroll to zoom\u00a0|\u00a0Switch tab for 2D elevation view';
-        // Restart 3D animation loop
+        // Restart 3D animation loop + switch noise canvas to 3D
         if(flareAnim){cancelAnimationFrame(flareAnim);flareAnim=null;}
         drawFlare3D();
+        drawFlareNoise3D();
     };
     $('fl_t2').onclick=()=>{
         if(flView==='2d') return;
@@ -1922,8 +1925,9 @@ function renderFlare(body) {
         $('fl_t2').className='tab-btn active';
         $('fl_t1').className='tab-btn';
         $('fl_hint').textContent='Drag to pan \u00a0|\u00a0 Scroll to zoom \u00a0|\u00a0 Import a site plan as background overlay';
-        // Draw 2D synchronously — no rAF defer (which can stall when document hidden)
+        // Draw 2D synchronously + switch noise canvas to 2D
         drawFlare2D();
+        drawFlareNoise();
     };
 
     // Noise chart state
@@ -1971,12 +1975,20 @@ function renderFlare(body) {
     const cvs2=$('fl_canvas2');
     cvs2.addEventListener('mousedown',e=>{noiseDrag=true;nmx0=e.clientX;nmy0=e.clientY;});
     cvs2.addEventListener('mouseup',()=>noiseDrag=false);
-    cvs2.addEventListener('mouseleave',()=>{noiseDrag=false; drawFlareNoise();});
+    cvs2.addEventListener('mouseleave',()=>{noiseDrag=false; flView==='3d'?drawFlareNoise3D():drawFlareNoise();});
     cvs2.addEventListener('mousemove',e=>{
         if(noiseDrag){
-            noisePanX+=(e.clientX-nmx0); noisePanY+=(e.clientY-nmy0);
-            nmx0=e.clientX; nmy0=e.clientY;
-            drawFlareNoise();
+            if(flView==='3d'){
+                // In 3D, drag on noise canvas orbits the shared camera
+                camTheta-=(e.clientX-nmx0)*0.007;
+                camPhi=Math.max(0.04,Math.min(1.35,camPhi+(e.clientY-nmy0)*0.007));
+                nmx0=e.clientX; nmy0=e.clientY;
+                drawFlare3D(); drawFlareNoise3D();
+            } else {
+                noisePanX+=(e.clientX-nmx0); noisePanY+=(e.clientY-nmy0);
+                nmx0=e.clientX; nmy0=e.clientY;
+                drawFlareNoise();
+            }
         } else if(noiseViewState){
             // Interactive tooltip
             const ns=noiseViewState;
@@ -2013,13 +2025,18 @@ function renderFlare(body) {
     });
     cvs2.addEventListener('wheel',e=>{
         e.preventDefault();
-        const old=noiseZoom;
-        noiseZoom=Math.max(0.3,Math.min(8,noiseZoom*Math.pow(0.98,e.deltaY>0?3:-3)));
-        const rect=cvs2.getBoundingClientRect();
-        const mx=e.clientX-rect.left, my=e.clientY-rect.top;
-        noisePanX = mx - (mx-noisePanX)*(noiseZoom/old);
-        noisePanY = my - (my-noisePanY)*(noiseZoom/old);
-        drawFlareNoise();
+        if(flView==='3d'){
+            camZoom=Math.max(0.3,Math.min(8,camZoom*Math.pow(0.98,e.deltaY>0?3:-3)));
+            drawFlare3D(); drawFlareNoise3D();
+        } else {
+            const old=noiseZoom;
+            noiseZoom=Math.max(0.3,Math.min(8,noiseZoom*Math.pow(0.98,e.deltaY>0?3:-3)));
+            const rect=cvs2.getBoundingClientRect();
+            const mx=e.clientX-rect.left, my=e.clientY-rect.top;
+            noisePanX = mx - (mx-noisePanX)*(noiseZoom/old);
+            noisePanY = my - (my-noisePanY)*(noiseZoom/old);
+            drawFlareNoise();
+        }
     },{passive:false});
     cvs2.addEventListener('click',e=>{
         if(!noiseViewState || noiseDrag) return;
@@ -2036,7 +2053,7 @@ function renderFlare(body) {
         drawFlareNoise();
     });
     cvs2.addEventListener('dblclick',()=>{
-        noiseMarkers=[]; drawFlareNoise();
+        noiseMarkers=[]; flView==='3d'?drawFlareNoise3D():drawFlareNoise();
     });
 
     // ── API 521 CALCULATIONS ──────────────────────────
@@ -2048,6 +2065,8 @@ function renderFlare(body) {
         const D   =parseFloat($('fl_D').value)||0.5;     // m
         const Uj  =parseFloat($('fl_V').value)||20;      // m/s exit velocity
         const Uw  =Math.max(parseFloat($('fl_W').value)||5,0.1); // m/s wind
+        const Wfrom=(parseFloat($('fl_Wd').value)||0)%360;  // compass bearing wind comes FROM
+        const WdirRad=((Wfrom+180)%360)*Math.PI/180;        // downwind direction in radians
         const F   =parseFloat($('fl_F').value)||0.2;     // radiation fraction
         const tau =parseFloat($('fl_tau').value)||1.0;   // transmissivity
         const mw  =parseFloat($('fl_mw').value)||20;     // g/mol
@@ -2115,7 +2134,7 @@ function renderFlare(body) {
         ];
         noiseThresh.forEach(n=>{ n.dist = distForSPL(n.spl); });
 
-        return{H,D,L_m,L_ft,tiltDeg,tiltRad,flameCX,flameCY,Q_BTU_hr,Q_kW,F,tau,Uj,Uw,allThresh,
+        return{H,D,L_m,L_ft,tiltDeg,tiltRad,flameCX,flameCY,Q_BTU_hr,Q_kW,F,tau,Uj,Uw,Wfrom,WdirRad,allThresh,
                eta,ambN,Wacoustic,PWL,noiseThresh,splAtDist};
     }
 
@@ -2190,7 +2209,7 @@ function renderFlare(body) {
             ctx.beginPath();ctx.moveTo(p1.x,p1.y);ctx.lineTo(p2.x,p2.y);ctx.stroke();
         }
 
-        // ── Radiation ring outlines + labels
+        // ── Radiation ring outlines on ground + labels
         fp.allThresh.forEach(t=>{
             if(t.dist<0.5)return;
             ctx.strokeStyle=t.col+'bb'; ctx.lineWidth=1.8; ctx.setLineDash([]);
@@ -2201,13 +2220,44 @@ function renderFlare(body) {
                 a===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y);
             }
             ctx.closePath(); ctx.stroke();
-            // Label at front of ring (angle=0, z direction towards viewer)
             const lp=proj(t.dist,0,0);
             ctx.fillStyle=t.col; ctx.font='bold 11px sans-serif';
             ctx.fillText(`${fmt(t.lev,2)} kW/m\u00b2 | ${fmt(t.dist,0)}m`,lp.x+6,lp.y-4);
         });
 
-        // (Noise contours shown on separate chart below)
+        // ── 3D hemisphere wireframes for radiation zones (sphere centered on flame centroid)
+        const fcx3=fp.flameCX, fcy3=fp.flameCY;
+        fp.allThresh.forEach(t=>{
+            if(t.dist<1)return;
+            const r=t.dist;
+            // Max polar angle before sphere goes below ground (clip at y=0)
+            const thMax=fcy3>=r?Math.PI:Math.acos(Math.max(-1,-fcy3/r));
+            ctx.strokeStyle=t.col+'66'; ctx.lineWidth=1;
+            // 6 meridian arcs (vertical great-circle slices)
+            for(let m=0;m<6;m++){
+                const phi=m/6*Math.PI;
+                ctx.beginPath();
+                for(let i=0;i<=48;i++){
+                    const th=i/48*thMax;
+                    const p=proj(fcx3+r*Math.sin(th)*Math.cos(phi), fcy3+r*Math.cos(th), r*Math.sin(th)*Math.sin(phi));
+                    i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y);
+                }
+                ctx.stroke();
+            }
+            // 3 latitude circles (horizontal cross-sections)
+            for(let l=1;l<=3;l++){
+                const th=l/4*thMax;
+                const rLat=r*Math.sin(th), hy=fcy3+r*Math.cos(th);
+                if(hy<0)continue;
+                ctx.beginPath();
+                for(let a=0;a<=72;a++){
+                    const ang=a/72*Math.PI*2;
+                    const p=proj(fcx3+rLat*Math.cos(ang), hy, rLat*Math.sin(ang));
+                    a===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y);
+                }
+                ctx.closePath(); ctx.stroke();
+            }
+        });
 
         // Scale bar on ground
         const sbLen=gridStep; const sbPx=sbLen*px_per_m;
@@ -2221,10 +2271,7 @@ function renderFlare(body) {
 
         // ── Stack (cylinder outline)
         const sD=fp.D;
-        ctx.strokeStyle='#888'; ctx.lineWidth=3;
-        // Draw stack as a thick vertical line in 3D
         const sBot=proj(0,0,0), sTop=proj(0,fp.H,0);
-        // Width at each height via sD
         const wBot=proj(sD/2,0,0).x-sBot.x, wTop=proj(sD/2,fp.H,0).x-sTop.x;
         ctx.fillStyle='#445566';
         ctx.beginPath();
@@ -2234,28 +2281,28 @@ function renderFlare(body) {
         ctx.lineTo(sBot.x+wBot,sBot.y);
         ctx.closePath(); ctx.fill(); ctx.strokeStyle='#667'; ctx.lineWidth=1; ctx.stroke();
 
-        // ── Animated flame
+        // ── Animated flame (tilted in wind direction)
         time3d+=0.028;
         const fL=fp.L_m, tRad=fp.tiltRad;
+        const wdSin=Math.sin(fp.WdirRad), wdCos=Math.cos(fp.WdirRad);
         const flicker=1+0.07*Math.sin(time3d*4.7)+0.04*Math.sin(time3d*11);
         const segs=32;
         for(let i=segs;i>=0;i--){
             const frac=i/segs;
             const wobble=0.025*Math.sin(time3d*6+frac*4)*frac;
-            const fx=(frac*fL*Math.sin(tRad))*(1+wobble);
-            const fz=(frac*fL*0.1*Math.sin(time3d*3+frac*3)); // slight side wobble
+            const fHoriz=frac*fL*Math.sin(tRad)*(1+wobble);
+            const fx=fHoriz*wdSin;
+            const fz=fHoriz*wdCos+(frac*fL*0.1*Math.sin(time3d*3+frac*3));
             const fy=fp.H+frac*fL*Math.cos(tRad);
             const baseRad=(1-frac*0.72)*Math.max(fp.D*2.5, 1.5)*flicker;
             const p=proj(fx,fy,fz);
             const r=baseRad*px_per_m*p.s;
             const alpha=Math.min(1,0.85*(1-frac*0.45));
             const R2=Math.round(255-frac*60), G2=Math.round(200-frac*170), B2=Math.round(80-frac*70);
-            // Glow halo
             const g=ctx.createRadialGradient(p.x,p.y,0,p.x,p.y,r*2.5);
             g.addColorStop(0,`rgba(${R2},${G2},${B2},${(alpha*0.25).toFixed(2)})`);
             g.addColorStop(1,'rgba(255,50,0,0)');
             ctx.fillStyle=g; ctx.fillRect(p.x-r*2.5,p.y-r*2.5,r*5,r*5);
-            // Core
             const gc=ctx.createRadialGradient(p.x,p.y,0,p.x,p.y,r);
             gc.addColorStop(0,`rgba(255,${G2},${B2},${alpha.toFixed(2)})`);
             gc.addColorStop(1,`rgba(220,60,0,0)`);
@@ -2273,13 +2320,47 @@ function renderFlare(body) {
             ctx.fillText(shortLbl,32,39+i*18);
         });
 
-        // Compass / wind indicator
-        ctx.fillStyle='rgba(10,14,20,0.7)'; ctx.fillRect(W-90,10,80,55);
-        ctx.fillStyle='#58a6ff'; ctx.font='bold 11px sans-serif'; ctx.textAlign='right';
-        ctx.fillText('Wind: '+$('fl_W').value+'m/s',W-14,26);
-        ctx.fillText('Uj: '+$('fl_V').value+'m/s',W-14,40);
-        ctx.fillText('Tilt: '+fmt(fp.tiltDeg,1)+'\u00b0',W-14,54);
-        ctx.textAlign='left';
+        // ── Compass rose (rotates with camera, wind arrow adjusts)
+        {
+            const rcx=W-56, rcy=56, rr=40;
+            ctx.fillStyle='rgba(10,14,20,0.8)';
+            ctx.beginPath(); ctx.arc(rcx,rcy,rr+6,0,Math.PI*2); ctx.fill();
+            ctx.strokeStyle='#30363d'; ctx.lineWidth=1;
+            ctx.beginPath(); ctx.arc(rcx,rcy,rr+6,0,Math.PI*2); ctx.stroke();
+            // Cardinal directions — rotate by camera theta so N stays correct
+            const dirs=[{lbl:'N',ang:0,col:'#f85149'},{lbl:'E',ang:Math.PI/2,col:'#8b949e'},{lbl:'S',ang:Math.PI,col:'#8b949e'},{lbl:'W',ang:3*Math.PI/2,col:'#8b949e'}];
+            dirs.forEach(d=>{
+                const a=d.ang-camTheta; // counter-rotate by camera orbit
+                const dx=Math.sin(a), dy=-Math.cos(a);
+                // Tick line
+                ctx.strokeStyle=d.col+'88'; ctx.lineWidth=1.5;
+                ctx.beginPath(); ctx.moveTo(rcx+dx*(rr-8),rcy+dy*(rr-8)); ctx.lineTo(rcx+dx*(rr+2),rcy+dy*(rr+2)); ctx.stroke();
+                // Label
+                ctx.fillStyle=d.col; ctx.font=d.lbl==='N'?'bold 12px sans-serif':'10px sans-serif';
+                ctx.textAlign='center'; ctx.textBaseline='middle';
+                ctx.fillText(d.lbl, rcx+dx*(rr-16), rcy+dy*(rr-16));
+            });
+            // Wind arrow (points downwind)
+            const wa=fp.WdirRad-camTheta;
+            const waSin=Math.sin(wa), waCos=-Math.cos(wa);
+            ctx.strokeStyle='#58a6ff'; ctx.lineWidth=2.5; ctx.setLineDash([]);
+            ctx.beginPath(); ctx.moveTo(rcx,rcy); ctx.lineTo(rcx+waSin*(rr-6),rcy+waCos*(rr-6)); ctx.stroke();
+            // Arrowhead
+            const ax=rcx+waSin*(rr-6), ay=rcy+waCos*(rr-6);
+            const ha=Math.atan2(waSin,waCos);
+            ctx.beginPath();
+            ctx.moveTo(ax,ay);
+            ctx.lineTo(ax-8*Math.cos(ha-0.4), ay-8*Math.sin(ha-0.4));
+            ctx.lineTo(ax-8*Math.cos(ha+0.4), ay-8*Math.sin(ha+0.4));
+            ctx.closePath(); ctx.fillStyle='#58a6ff'; ctx.fill();
+            // Center dot
+            ctx.beginPath(); ctx.arc(rcx,rcy,3,0,Math.PI*2); ctx.fillStyle='#fff'; ctx.fill();
+            // Info text below compass
+            ctx.fillStyle='#8b949e'; ctx.font='9px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='top';
+            ctx.fillText('Wind '+fp.Uw.toFixed(1)+'m/s',rcx,rcy+rr+10);
+            ctx.fillText('from '+fp.Wfrom+'\u00b0 | Tilt '+fmt(fp.tiltDeg,1)+'\u00b0',rcx,rcy+rr+21);
+            ctx.textAlign='left'; ctx.textBaseline='alphabetic';
+        }
 
         // Guard against queueing when user has just switched to 2D
         if(flView==='3d') flareAnim=requestAnimationFrame(drawFlare3D);
@@ -2586,13 +2667,45 @@ function renderFlare(body) {
         ctx.fillStyle='#e6edf3'; ctx.font='bold 11px sans-serif'; ctx.textAlign='left';
         ctx.fillText('Flare Stack', wx(0)+10, wy(0)-8);
 
-        // Flame direction indicator
+        // Flame direction indicator (rotated by wind direction)
         const arrowLen=Math.min(maxR*0.15, 20);
         const tR=fp.tiltRad;
-        const ax=arrowLen*Math.sin(tR), ay=arrowLen*Math.cos(tR)*0.3;
+        // In plan view: X=Easting (sin of bearing), Y=Northing (cos of bearing)
+        const aHoriz=arrowLen*Math.sin(tR);
+        const ax=aHoriz*Math.sin(fp.WdirRad), ay=aHoriz*Math.cos(fp.WdirRad);
         ctx.strokeStyle='#f80'; ctx.lineWidth=2.5; ctx.setLineDash([]);
         ctx.beginPath(); ctx.moveTo(wx(0),wy(0)); ctx.lineTo(wx(ax),wy(ay)); ctx.stroke();
         ctx.beginPath(); ctx.arc(wx(ax),wy(ay),4,0,Math.PI*2); ctx.fillStyle='#f80'; ctx.fill();
+
+        // Compass rose (2D plan view)
+        {
+            const rcx=ML+PW-44, rcy=MT+PH-44, rr=32;
+            ctx.fillStyle='rgba(22,27,34,0.85)';
+            ctx.beginPath(); ctx.arc(rcx,rcy,rr+5,0,Math.PI*2); ctx.fill();
+            ctx.strokeStyle='#30363d'; ctx.lineWidth=1;
+            ctx.beginPath(); ctx.arc(rcx,rcy,rr+5,0,Math.PI*2); ctx.stroke();
+            // In plan view: N=+Y (up on screen), E=+X (right on screen)
+            const dirs2d=[{lbl:'N',dx:0,dy:-1,col:'#f85149'},{lbl:'E',dx:1,dy:0,col:'#8b949e'},{lbl:'S',dx:0,dy:1,col:'#8b949e'},{lbl:'W',dx:-1,dy:0,col:'#8b949e'}];
+            dirs2d.forEach(d=>{
+                ctx.strokeStyle=d.col+'88'; ctx.lineWidth=1.5;
+                ctx.beginPath(); ctx.moveTo(rcx+d.dx*(rr-8),rcy+d.dy*(rr-8)); ctx.lineTo(rcx+d.dx*(rr+2),rcy+d.dy*(rr+2)); ctx.stroke();
+                ctx.fillStyle=d.col; ctx.font=d.lbl==='N'?'bold 11px sans-serif':'10px sans-serif';
+                ctx.textAlign='center'; ctx.textBaseline='middle';
+                ctx.fillText(d.lbl, rcx+d.dx*(rr-15), rcy+d.dy*(rr-15));
+            });
+            // Wind arrow (downwind = WdirRad; in screen: right=E=sin, up=N=cos)
+            const wsx=Math.sin(fp.WdirRad)*(rr-6), wsy=-Math.cos(fp.WdirRad)*(rr-6);
+            ctx.strokeStyle='#58a6ff'; ctx.lineWidth=2; ctx.setLineDash([]);
+            ctx.beginPath(); ctx.moveTo(rcx,rcy); ctx.lineTo(rcx+wsx,rcy+wsy); ctx.stroke();
+            const wha=Math.atan2(wsx,wsy);
+            ctx.beginPath();
+            ctx.moveTo(rcx+wsx,rcy+wsy);
+            ctx.lineTo(rcx+wsx-6*Math.cos(wha-0.4),rcy+wsy-6*Math.sin(wha-0.4));
+            ctx.lineTo(rcx+wsx-6*Math.cos(wha+0.4),rcy+wsy-6*Math.sin(wha+0.4));
+            ctx.closePath(); ctx.fillStyle='#58a6ff'; ctx.fill();
+            ctx.beginPath(); ctx.arc(rcx,rcy,2.5,0,Math.PI*2); ctx.fillStyle='#fff'; ctx.fill();
+            ctx.textAlign='left'; ctx.textBaseline='alphabetic';
+        }
 
         ctx.restore();
 
@@ -2761,7 +2874,7 @@ function renderFlare(body) {
             ctx.beginPath();ctx.moveTo(p1.x,p1.y);ctx.lineTo(p2.x,p2.y);ctx.stroke();
         }
 
-        // Noise ring outlines + labels
+        // Noise ring outlines on ground + labels
         fp.noiseThresh.forEach(n=>{
             if(n.dist<1)return;
             ctx.strokeStyle=n.col+'bb'; ctx.lineWidth=1.8; ctx.setLineDash([8,4]);
@@ -2777,7 +2890,37 @@ function renderFlare(body) {
             ctx.fillText(`${n.spl} dBA | ${fmt(n.dist,0)}m`,lp.x+6,lp.y-4);
         });
 
-        // Also show heat radiation contours (lighter)
+        // ── 3D hemisphere wireframes for noise zones (hemispherical radiation from ground)
+        fp.noiseThresh.forEach(n=>{
+            if(n.dist<1)return;
+            const r=n.dist;
+            ctx.strokeStyle=n.col+'55'; ctx.lineWidth=1;
+            // 6 meridian arcs (upper hemisphere only, ground source)
+            for(let m=0;m<6;m++){
+                const phi=m/6*Math.PI;
+                ctx.beginPath();
+                for(let i=0;i<=24;i++){
+                    const th=i/24*(Math.PI/2); // 0 to π/2 (upper hemisphere)
+                    const p=proj(r*Math.cos(th)*Math.cos(phi), r*Math.sin(th), r*Math.cos(th)*Math.sin(phi));
+                    i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y);
+                }
+                ctx.stroke();
+            }
+            // 2 latitude circles
+            for(let l=1;l<=2;l++){
+                const el=l/3*(Math.PI/2);
+                const rLat=r*Math.cos(el), hy=r*Math.sin(el);
+                ctx.beginPath();
+                for(let a=0;a<=72;a++){
+                    const ang=a/72*Math.PI*2;
+                    const p=proj(rLat*Math.cos(ang), hy, rLat*Math.sin(ang));
+                    a===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y);
+                }
+                ctx.closePath(); ctx.stroke();
+            }
+        });
+
+        // Heat radiation contours (lighter, on ground)
         fp.allThresh.forEach(t=>{
             if(t.dist<0.5)return;
             ctx.strokeStyle=t.col+'55'; ctx.lineWidth=1; ctx.setLineDash([3,5]);
@@ -2817,6 +2960,40 @@ function renderFlare(body) {
             ctx.fillStyle='#c9d1d9'; ctx.font='10px sans-serif';
             ctx.fillText(n.spl+' dBA @ '+fmt(n.dist,0)+'m', 30, 39+i*18);
         });
+
+        // ── Compass rose
+        {
+            const rcx=W-56, rcy=Hc-56, rr=36;
+            ctx.fillStyle='rgba(10,14,20,0.8)';
+            ctx.beginPath(); ctx.arc(rcx,rcy,rr+6,0,Math.PI*2); ctx.fill();
+            ctx.strokeStyle='#30363d'; ctx.lineWidth=1;
+            ctx.beginPath(); ctx.arc(rcx,rcy,rr+6,0,Math.PI*2); ctx.stroke();
+            const dirs=[{lbl:'N',ang:0,col:'#f85149'},{lbl:'E',ang:Math.PI/2,col:'#8b949e'},{lbl:'S',ang:Math.PI,col:'#8b949e'},{lbl:'W',ang:3*Math.PI/2,col:'#8b949e'}];
+            dirs.forEach(d=>{
+                const a=d.ang-camTheta;
+                const dx=Math.sin(a), dy=-Math.cos(a);
+                ctx.strokeStyle=d.col+'88'; ctx.lineWidth=1.5;
+                ctx.beginPath(); ctx.moveTo(rcx+dx*(rr-8),rcy+dy*(rr-8)); ctx.lineTo(rcx+dx*(rr+2),rcy+dy*(rr+2)); ctx.stroke();
+                ctx.fillStyle=d.col; ctx.font=d.lbl==='N'?'bold 12px sans-serif':'10px sans-serif';
+                ctx.textAlign='center'; ctx.textBaseline='middle';
+                ctx.fillText(d.lbl, rcx+dx*(rr-16), rcy+dy*(rr-16));
+            });
+            const wa=fp.WdirRad-camTheta;
+            const waSin=Math.sin(wa), waCos=-Math.cos(wa);
+            ctx.strokeStyle='#58a6ff'; ctx.lineWidth=2.5; ctx.setLineDash([]);
+            ctx.beginPath(); ctx.moveTo(rcx,rcy); ctx.lineTo(rcx+waSin*(rr-6),rcy+waCos*(rr-6)); ctx.stroke();
+            const ax=rcx+waSin*(rr-6), ay=rcy+waCos*(rr-6);
+            const ha=Math.atan2(waSin,waCos);
+            ctx.beginPath();
+            ctx.moveTo(ax,ay);
+            ctx.lineTo(ax-7*Math.cos(ha-0.4), ay-7*Math.sin(ha-0.4));
+            ctx.lineTo(ax-7*Math.cos(ha+0.4), ay-7*Math.sin(ha+0.4));
+            ctx.closePath(); ctx.fillStyle='#58a6ff'; ctx.fill();
+            ctx.beginPath(); ctx.arc(rcx,rcy,3,0,Math.PI*2); ctx.fillStyle='#fff'; ctx.fill();
+            ctx.fillStyle='#8b949e'; ctx.font='9px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='top';
+            ctx.fillText('Wind '+fp.Uw.toFixed(1)+'m/s from '+fp.Wfrom+'\u00b0',rcx,rcy+rr+10);
+            ctx.textAlign='left'; ctx.textBaseline='alphabetic';
+        }
 
         // Info overlay
         ctx.fillStyle='rgba(10,14,20,0.85)'; ctx.fillRect(W-180,10,173,72);
@@ -2874,7 +3051,7 @@ function renderFlare(body) {
     // ── Results table ──────────────────────────────────
     window.calcFlare=function(){
         if(flView==='3d'){cancelAnimationFrame(flareAnim);flareAnim=null;}
-        const flareIds=['fl_flow','fl_nhv','fl_mw','fl_eff','fl_H','fl_D','fl_V','fl_F','fl_tau','fl_W','fl_Ta','fl_eta','fl_ambN'];
+        const flareIds=['fl_flow','fl_nhv','fl_mw','fl_eff','fl_H','fl_D','fl_V','fl_F','fl_tau','fl_W','fl_Wd','fl_Ta','fl_eta','fl_ambN'];
         saveInputs('flare',flareIds);
         const fp=getFlameParams();
 
@@ -3034,7 +3211,7 @@ function renderFlare(body) {
         `);
     };
 
-    const flareIds=['fl_flow','fl_nhv','fl_mw','fl_eff','fl_H','fl_D','fl_V','fl_F','fl_tau','fl_W','fl_Ta','fl_eta','fl_ambN'];
+    const flareIds=['fl_flow','fl_nhv','fl_mw','fl_eff','fl_H','fl_D','fl_V','fl_F','fl_tau','fl_W','fl_Wd','fl_Ta','fl_eta','fl_ambN'];
     loadInputs('flare',flareIds);
 
     setTimeout(()=>calcFlare(), 120);
