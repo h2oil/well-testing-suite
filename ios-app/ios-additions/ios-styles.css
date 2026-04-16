@@ -58,11 +58,12 @@
             -webkit-overflow-scrolling: touch;
         }
 
-        /* Canvas: no long-press context menu, crisp touch */
+        /* Canvas: no long-press menu; touch-action:none lets JS handle
+           all gestures (pan, pinch, rotate) instead of the browser. */
         canvas {
             -webkit-touch-callout: none;
             -webkit-user-select: none;
-            touch-action: manipulation;
+            touch-action: none;
         }
 
         /* Hide native scrollbars (they appear only while scrolling on iOS) */
