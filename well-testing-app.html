@@ -1743,12 +1743,17 @@ window.calcChoke = function(){
     const r1=P2/P1, r2=P3/P2, rT=P3/P1;
     const crit=0.546;
 
-    // Gilbert gas estimate
+    // Thornhill-Craver gas choke equation (API 14B) / Gilbert oil
     const ft=$('c_ft').value;
     let Qgas=0,Qoil=0;
     if(ft==='gas'){
+        const k=1.28; // natural-gas specific-heat ratio
         const Tf=T+460;
-        Qgas=0.821*cd1*A1*P1*Math.sqrt(2/(SG*Tf))*24/1000;
+        const P1abs=P1+14.7, P3abs=P3+14.7;
+        const rCrit=Math.pow(2/(k+1),k/(k-1));
+        const r=Math.max(P3abs/P1abs,rCrit); // clamp to critical when choked
+        const inner=(2*k/((k-1)*Tf*SG))*(Math.pow(r,2/k)-Math.pow(r,(k+1)/k));
+        Qgas=inner>0?1248*cd1*A1*P1abs*Math.sqrt(inner):0; // MSCF/D
     } else {
         Qoil=P1*Math.pow(deq64,1.89)/(435*Math.pow(GOR/1000,0.546));
     }
@@ -5373,9 +5378,9 @@ window.calcSolGOR=function(){
     if(isNaN(gg)||gg<=0) errs.push('Gas gravity must be > 0');
     if(isNaN(API)||API<=0) errs.push('API gravity must be > 0');
     if(errs.length){$('sg_res').innerHTML=errs.map(e=>'<div class="val-error">'+e+'</div>').join('');return;}
-    // Standing
+    // Standing (1947): Rs = γg·[(Pb/18.2 + 1.4)·10^(0.0125·API − 0.00091·T)]^1.2048
     const yg=0.00091*T-0.0125*API;
-    const Rs_standing=gg*Math.pow((P+14.7)/(18.2*Math.pow(10,yg)),1.2048);
+    const Rs_standing=gg*Math.pow((P+14.7)/18.2/Math.pow(10,yg)+1.4,1.2048);
     // Vasquez & Beggs
     let C1,C2,C3;
     if(API<=30){C1=0.0362;C2=1.0937;C3=25.724;}else{C1=0.0178;C2=1.1870;C3=23.931;}
@@ -5446,22 +5451,34 @@ window.calcOilGas=function(){
     const meterDiff=m1-m0;
     const corrVol=MF*SF*meterDiff*netBSW*VCF;
     const oilRate=corrVol*Z7;
-    // Gas rate (simplified AGA-3)
+    // Gas rate (AGA Report 3 — Reader-Harris/Gallagher + Papay Z)
     const beta=plate/run;
-    const Pabs=sepP+14.73;
     const beta4=Math.pow(beta,4);
-    const Cd=0.5959+0.0312*Math.pow(beta,2.1)-0.184*Math.pow(beta,8)+(beta>0.5&&beta4<1?0.09*beta4/(1-beta4)*0.4333:0);
-    const x=diffP/(27.7*sepP);
-    const Y1=Math.sqrt(1+x)-(0.41+0.35*Math.pow(x,4))*x/(1.3*Math.sqrt(1+x));
-    const Tb=520,Pb=14.73;
-    const Fpb=14.73/Pb,Ftb=Tb/(gasT+460);
+    const Pabs=sepP+14.73;
+    const Tf=gasT+460;
+    const Ev=1/Math.sqrt(1-beta4);
+    const x_y=diffP*0.03613/Pabs;
+    const Y1=1-(0.41+0.35*beta4)*x_y/1.3;
+    // Reader-Harris/Gallagher Cd (high-Re)
+    const Re_D=1e6;
+    const A_rhg=Math.pow(19000*beta/Re_D,0.8);
+    let Cd=0.5961+0.0261*beta*beta-0.216*Math.pow(beta,8)
+           +0.000521*Math.pow(1e6*beta/Re_D,0.7)
+           +(0.0188+0.0063*A_rhg)*Math.pow(beta,3.5)*Math.pow(1e6/Re_D,0.3);
+    Cd=Math.max(0.58,Math.min(Cd,0.66));
+    // AGA-3 correction factors
+    const Tb=519.67,Pb=14.73;
+    const Fpb=14.73/Pb, Ftb=Tb/519.67, Ftf=Math.sqrt(519.67/Tf);
     const Fg=1/Math.sqrt(gasGrav);
-    const Ftf=1/Math.sqrt(gasT+460);
-    let Fpv;
-    if(gasGrav<=0.75){Fpv=1+0.00026*(Pabs-14.73);}else{Fpv=1+0.00035*(Pabs-14.73);}
+    // Z-factor via Papay for supercompressibility
+    const Ppc=756.8-131*gasGrav-3.6*gasGrav*gasGrav;
+    const Tpc=169.2+349.5*gasGrav-74*gasGrav*gasGrav;
+    const Ppr=Pabs/Ppc, Tpr=Tf/Tpc;
+    const Z=Math.max(0.3,Math.min(1.2, 1-3.52*Ppr/Math.pow(10,0.9813*Tpr)+0.274*Ppr*Ppr/Math.pow(10,0.8157*Tpr)));
+    const Fpv=1/Math.sqrt(Z);
     const hw=diffP;
-    const Qgas=Cd*Y1*Math.pow(plate,2)*Math.sqrt(hw*Pabs)*Fpb*Ftb*Fg*Ftf*Fpv*21.827;
-    const gasRate=Qgas/1000; // mscfd
+    const Qv=338.178*Cd*Ev*plate*plate*Fpb*Ftb*Ftf*Fg*Fpv*Y1*Math.sqrt(hw*Pabs); // SCF/hr
+    const gasRate=Qv*24/1000; // MSCF/D
     // GOR / CGR
     const GOR=oilRate>0?(gasRate*1000)/oilRate:0;
     const CGR=gasRate>0?oilRate/(gasRate/1000):0;
