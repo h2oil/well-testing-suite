@@ -339,11 +339,12 @@
             -webkit-overflow-scrolling: touch;
         }
 
-        /* Canvas: no long-press context menu, crisp touch */
+        /* Canvas: no long-press menu; touch-action:none lets JS handle
+           all gestures (pan, pinch, rotate) instead of the browser. */
         canvas {
             -webkit-touch-callout: none;
             -webkit-user-select: none;
-            touch-action: manipulation;
+            touch-action: none;
         }
 
         /* Hide native scrollbars (they appear only while scrolling on iOS) */
@@ -2104,6 +2105,50 @@ function renderFlare(body) {
         }
     },{passive:false});
 
+    // ── Touch support for fl_canvas (iOS, iPad, Android) ──
+    const touchDist=(a,b)=>Math.hypot(b.clientX-a.clientX,b.clientY-a.clientY);
+    let cvsPinch=null;
+    cvs.addEventListener('touchstart',e=>{
+        e.preventDefault();
+        if(e.touches.length===1){drag=true;mx0=e.touches[0].clientX;my0=e.touches[0].clientY;}
+        else if(e.touches.length>=2){drag=false;cvsPinch=touchDist(e.touches[0],e.touches[1]);}
+    },{passive:false});
+    cvs.addEventListener('touchmove',e=>{
+        e.preventDefault();
+        if(e.touches.length===1&&drag){
+            const t=e.touches[0];
+            if(flView==='3d'){
+                camTheta-=(t.clientX-mx0)*0.007;
+                camPhi=Math.max(0.04,Math.min(1.35,camPhi+(t.clientY-my0)*0.007));
+                mx0=t.clientX;my0=t.clientY;
+                drawFlare3D();
+            } else {
+                pan2dX+=(t.clientX-mx0);pan2dY+=(t.clientY-my0);
+                mx0=t.clientX;my0=t.clientY;
+                drawFlare2D();
+            }
+        } else if(e.touches.length>=2&&cvsPinch){
+            const d=touchDist(e.touches[0],e.touches[1]);
+            const r=d/cvsPinch;
+            if(flView==='3d'){
+                camZoom=Math.max(0.3,Math.min(8,camZoom*r));
+                drawFlare3D();
+            } else {
+                const old=zoom2d;
+                zoom2d=Math.max(0.3,Math.min(8,zoom2d*r));
+                const rect=cvs.getBoundingClientRect();
+                const mx=(e.touches[0].clientX+e.touches[1].clientX)/2-rect.left;
+                const my=(e.touches[0].clientY+e.touches[1].clientY)/2-rect.top;
+                pan2dX=mx-(mx-pan2dX)*(zoom2d/old);
+                pan2dY=my-(my-pan2dY)*(zoom2d/old);
+                drawFlare2D();
+            }
+            cvsPinch=d;
+        }
+    },{passive:false});
+    cvs.addEventListener('touchend',e=>{if(e.touches.length===0){drag=false;cvsPinch=null;}});
+    cvs.addEventListener('touchcancel',()=>{drag=false;cvsPinch=null;});
+
     // ── Noise canvas (fl_canvas2) — interactive pan/zoom/hover/click ──
     const cvs2=$('fl_canvas2');
     cvs2.addEventListener('mousedown',e=>{noiseDrag=true;nmx0=e.clientX;nmy0=e.clientY;});
@@ -2188,6 +2233,81 @@ function renderFlare(body) {
     cvs2.addEventListener('dblclick',()=>{
         noiseMarkers=[]; drawNoiseCurrent();
     });
+
+    // ── Touch support for fl_canvas2 ──
+    let cvs2Pinch=null, cvs2LastTap=0, cvs2TouchStartX=0, cvs2TouchStartY=0;
+    cvs2.addEventListener('touchstart',e=>{
+        e.preventDefault();
+        if(e.touches.length===1){
+            noiseDrag=true;
+            nmx0=e.touches[0].clientX;nmy0=e.touches[0].clientY;
+            cvs2TouchStartX=nmx0;cvs2TouchStartY=nmy0;
+            // Double-tap detection (clears markers)
+            const now=Date.now();
+            if(now-cvs2LastTap<300){noiseMarkers=[];drawNoiseCurrent();cvs2LastTap=0;}
+            else cvs2LastTap=now;
+        } else if(e.touches.length>=2){
+            noiseDrag=false;
+            cvs2Pinch=touchDist(e.touches[0],e.touches[1]);
+        }
+    },{passive:false});
+    cvs2.addEventListener('touchmove',e=>{
+        e.preventDefault();
+        if(e.touches.length===1&&noiseDrag){
+            const t=e.touches[0];
+            if(flView==='3d'){
+                camTheta-=(t.clientX-nmx0)*0.007;
+                camPhi=Math.max(0.04,Math.min(1.35,camPhi+(t.clientY-nmy0)*0.007));
+                nmx0=t.clientX;nmy0=t.clientY;
+                drawFlare3D();drawFlareNoise3D();
+            } else {
+                noisePanX+=(t.clientX-nmx0);noisePanY+=(t.clientY-nmy0);
+                nmx0=t.clientX;nmy0=t.clientY;
+                noiseSubView==='side'?drawFlareNoiseSide():drawFlareNoise();
+            }
+        } else if(e.touches.length>=2&&cvs2Pinch){
+            const d=touchDist(e.touches[0],e.touches[1]);
+            const r=d/cvs2Pinch;
+            if(flView==='3d'){
+                camZoom=Math.max(0.3,Math.min(8,camZoom*r));
+                drawFlare3D();drawFlareNoise3D();
+            } else {
+                const old=noiseZoom;
+                noiseZoom=Math.max(0.3,Math.min(8,noiseZoom*r));
+                const rect=cvs2.getBoundingClientRect();
+                const mx=(e.touches[0].clientX+e.touches[1].clientX)/2-rect.left;
+                const my=(e.touches[0].clientY+e.touches[1].clientY)/2-rect.top;
+                noisePanX=mx-(mx-noisePanX)*(noiseZoom/old);
+                noisePanY=my-(my-noisePanY)*(noiseZoom/old);
+                noiseSubView==='side'?drawFlareNoiseSide():drawFlareNoise();
+            }
+            cvs2Pinch=d;
+        }
+    },{passive:false});
+    cvs2.addEventListener('touchend',e=>{
+        if(e.touches.length===0){
+            // If it was a tap (no significant move) in 2D plan view, drop a marker
+            const moved=Math.hypot((e.changedTouches[0]?.clientX||0)-cvs2TouchStartX,
+                                   (e.changedTouches[0]?.clientY||0)-cvs2TouchStartY);
+            if(moved<8 && flView!=='3d' && noiseSubView!=='side' && noiseViewState){
+                const ns=noiseViewState;
+                const rect=cvs2.getBoundingClientRect();
+                const px=(e.changedTouches[0]?.clientX||0)-rect.left;
+                const py=(e.changedTouches[0]?.clientY||0)-rect.top;
+                if(px>=ns.ML&&px<=ns.ML+ns.PW&&py>=ns.MT&&py<=ns.MT+ns.PH){
+                    const worldX=ns.xMin+(px-ns.ML)/ns.sx;
+                    const worldY=ns.yMax-(py-ns.MT)/ns.sy;
+                    const dist=Math.sqrt(worldX*worldX+worldY*worldY);
+                    const spl=ns.fp.splAtDist(dist);
+                    noiseMarkers.push({worldX,worldY,dist,spl});
+                    if(noiseMarkers.length>10) noiseMarkers.shift();
+                    drawFlareNoise();
+                }
+            }
+            noiseDrag=false;cvs2Pinch=null;
+        }
+    });
+    cvs2.addEventListener('touchcancel',()=>{noiseDrag=false;cvs2Pinch=null;});
 
     // ── API 521 CALCULATIONS ──────────────────────────
     function getFlameParams(){
