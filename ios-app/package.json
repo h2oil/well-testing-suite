@@ -1,0 +1,29 @@
+{
+  "name": "h2oil-well-testing-ios",
+  "version": "1.0.0",
+  "description": "H2Oil Well Testing Suite — native iOS wrapper (Capacitor)",
+  "private": true,
+  "scripts": {
+    "sync-main": "node scripts/sync-from-main.js",
+    "cap-init": "npx cap add ios",
+    "build": "npm run sync-main && npx cap sync ios",
+    "open": "npx cap open ios",
+    "ios": "npm run build && npm run open",
+    "setup": "npm install && npm run sync-main && npx cap add ios && npx cap sync ios && npx cap open ios",
+    "release": "bash scripts/release.sh"
+  },
+  "dependencies": {
+    "@capacitor/core": "^6.1.2",
+    "@capacitor/ios": "^6.1.2",
+    "@capacitor/app": "^6.0.1",
+    "@capacitor/haptics": "^6.0.1",
+    "@capacitor/share": "^6.0.2",
+    "@capacitor/filesystem": "^6.0.1",
+    "@capacitor/status-bar": "^6.0.1",
+    "@capacitor/splash-screen": "^6.0.2",
+    "@capacitor/preferences": "^6.0.2"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.1.2"
+  }
+}
