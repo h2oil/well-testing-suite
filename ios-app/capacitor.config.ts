@@ -1,0 +1,35 @@
+import type { CapacitorConfig } from '@capacitor/cli';
+
+const config: CapacitorConfig = {
+  appId: 'com.h2oil.welltestingsuite',
+  appName: 'H2Oil Well Testing',
+  webDir: 'www',
+  ios: {
+    contentInset: 'always',
+    limitsNavigationsToAppBoundDomains: false,
+    scrollEnabled: true,
+    allowsLinkPreview: false,
+    backgroundColor: '#0d1117'
+  },
+  plugins: {
+    SplashScreen: {
+      launchShowDuration: 1500,
+      launchAutoHide: true,
+      backgroundColor: '#0d1117',
+      iosSplashResourceName: 'Default',
+      showSpinner: false,
+      splashFullScreen: true,
+      splashImmersive: true
+    },
+    StatusBar: {
+      style: 'DARK',
+      backgroundColor: '#0d1117',
+      overlaysWebView: false
+    },
+    Preferences: {
+      group: 'H2OilWellTesting'
+    }
+  }
+};
+
+export default config;
