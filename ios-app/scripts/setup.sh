@@ -59,6 +59,32 @@ if ! command -v xcodebuild >/dev/null 2>&1; then
     echo "  sudo xcodebuild -license accept"
     exit 1
 fi
+
+# Detect common trap: Xcode.app is installed but xcode-select still points
+# at CommandLineTools. xcodebuild will error out in that case.
+if ! xcodebuild -version >/dev/null 2>&1; then
+    # Check if Xcode.app actually exists
+    if [[ -d /Applications/Xcode.app ]]; then
+        warn "xcode-select is pointing at CommandLineTools instead of Xcode.app."
+        echo "This prevents xcodebuild from working."
+        if confirm "Switch xcode-select to /Applications/Xcode.app? (needs sudo)"; then
+            sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
+            # Accept license non-interactively if needed
+            sudo xcodebuild -license accept 2>/dev/null || true
+            ok "Switched to Xcode.app"
+        else
+            err "Cannot proceed — fix manually:"
+            echo "  sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer"
+            echo "  sudo xcodebuild -license accept"
+            exit 1
+        fi
+    else
+        err "Xcode.app not found in /Applications."
+        echo "Install Xcode from the Mac App Store first:"
+        echo "  open 'macappstore://apps.apple.com/app/xcode/id497799835'"
+        exit 1
+    fi
+fi
 ok "Xcode $(xcodebuild -version 2>/dev/null | head -1 | awk '{print $2}')"
 
 # ─── Xcode Command Line Tools ───
