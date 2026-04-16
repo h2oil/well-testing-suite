@@ -61,12 +61,24 @@ html = html.replace(
 fs.mkdirSync(path.dirname(OUTPUT), { recursive: true });
 fs.writeFileSync(OUTPUT, html, 'utf8');
 
-// ── 5. Copy capacitor.js stub (replaced at runtime by Capacitor native bridge) ──
+// ── 5. Copy Capacitor stub + bundled libs (offline PDF export) ──
 const capStub = `// Capacitor runtime bridge — replaced by Capacitor at build time.
 // In browser (non-native) preview this is a no-op.
 window.Capacitor = window.Capacitor || { isNativePlatform: () => false, Plugins: {} };
 `;
 fs.writeFileSync(path.join(__dirname, '..', 'www', 'capacitor.js'), capStub, 'utf8');
+
+// Copy bundled libraries (jsPDF, html2canvas) into www/ for iOS-offline PDF export.
+const LIBS_DIR = path.join(IOS_ADDITIONS, 'libs');
+if (fs.existsSync(LIBS_DIR)) {
+    const libsOutDir = path.join(__dirname, '..', 'www');
+    fs.readdirSync(LIBS_DIR).forEach(f => {
+        if (f.endsWith('.js')) {
+            fs.copyFileSync(path.join(LIBS_DIR, f), path.join(libsOutDir, f));
+        }
+    });
+    console.log(`[sync] Copied libs/ → www/ (${fs.readdirSync(LIBS_DIR).filter(f => f.endsWith('.js')).length} files)`);
+}
 
 const size = (fs.statSync(OUTPUT).size / 1024).toFixed(1);
 console.log(`[sync] ✓ Wrote www/index.html (${size} KB)`);
