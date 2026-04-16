@@ -6,6 +6,7 @@
   "scripts": {
     "sync-main": "node scripts/sync-from-main.js",
     "cap-init": "npx cap add ios",
+    "assets": "python3 scripts/make-assets.py && npx @capacitor/assets generate --ios",
     "build": "npm run sync-main && npx cap sync ios",
     "open": "npx cap open ios",
     "ios": "npm run build && npm run open",
@@ -24,6 +25,7 @@
     "@capacitor/preferences": "^6.0.2"
   },
   "devDependencies": {
-    "@capacitor/cli": "^6.1.2"
+    "@capacitor/cli": "^6.1.2",
+    "@capacitor/assets": "^3.0.5"
   }
 }
