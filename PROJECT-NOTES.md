@@ -5,6 +5,52 @@ All changes land on `dev`; `master` is the stable tree consumed by the iOS sync 
 
 ---
 
+## App icon + splash screen (H2Oil branding)
+
+Source assets live in `ios-app/resources/` and are generated from the sidebar logo
+embedded in `well-testing-app.html` (base64 PNG at line ~281).
+
+- `icon.png` (1024×1024, opaque `#0d1117`, logo at 72% width) — App Store icon
+- `splash.png` (2732×2732, opaque `#0d1117`, logo at 45% width) — launch image
+- `splash-dark.png` — same as splash (app is already dark-themed)
+- `icon-foreground.png`, `icon-background.png` — optional Android adaptive pieces
+
+**Regenerate**: `python3 scripts/make-assets.py` (if logo changes) then
+`cd ios-app && npx @capacitor/assets generate --ios`. The assets plugin writes
+all required sizes into `ios/App/App/Assets.xcassets/`.
+
+---
+
+## Full-screen layout fix (portrait top gap + landscape right bar)
+
+**Problem**: Large black gap above the mobile header in portrait, and a black strip
+on the right in landscape. Caused by *three* overlapping safe-area mechanisms
+stacking on top of each other:
+
+1. `capacitor.config.json → ios.contentInset: "always"` — WKWebView applies its
+   own safe-area inset.
+2. `StatusBar.overlaysWebView: false` — pushes the whole webview down by the
+   status-bar height.
+3. CSS `.main { padding-top: env(safe-area-inset-top) }` — added another inset.
+
+**Fix** (consistent edge-to-edge strategy):
+
+- `contentInset: "never"` — webview fills the screen.
+- `StatusBar.overlaysWebView: true` — status bar sits on top of webview.
+- `viewport-fit=cover` (already in `ios-meta.html`) — exposes `env(safe-area-inset-*)`.
+- CSS (in `ios-styles.css`) applies insets to the actual UI chrome:
+  - Mobile: `.mob-header` absorbs top + left + right insets; `.main` absorbs
+    left/right/bottom; drawer `.sidebar` absorbs top/left/bottom.
+  - Desktop/tablet: full-height `.sidebar` absorbs top + left; `.main` absorbs right;
+    `.page-body` absorbs bottom.
+- `html, body { background: var(--bg1) }` so the status-bar / home-indicator gutters
+  paint the app colour instead of black.
+
+After the fix the app fills the screen in both orientations; only the actual
+status-bar / dynamic-island / home-indicator zones are reserved.
+
+---
+
 ## Repository layout
 
 ```
