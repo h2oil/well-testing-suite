@@ -930,15 +930,38 @@ function getClientInfo() {
 }
 
 function getH2OilLogoBlack() {
-    // Get the sidebar logo and apply CSS invert for black version
+    // Draw the sidebar logo into a canvas and invert the pixels so it prints
+    // legibly on a white PDF cover. iOS WKWebView's ctx.filter support is
+    // inconsistent, so fall back to a per-pixel invert.
     const img = document.querySelector('.sidebar-brand img');
     if(!img) return '';
     try {
+        const w = img.naturalWidth || 200, h = img.naturalHeight || 100;
         const c = document.createElement('canvas');
-        c.width = img.naturalWidth || 200; c.height = img.naturalHeight || 100;
+        c.width = w; c.height = h;
         const ctx = c.getContext('2d');
-        ctx.filter = 'invert(1)';
-        ctx.drawImage(img, 0, 0);
+        try { ctx.filter = 'invert(1)'; } catch(_) {}
+        ctx.drawImage(img, 0, 0, w, h);
+        // Per-pixel invert fallback (covers browsers that ignore ctx.filter)
+        try {
+            const id = ctx.getImageData(0, 0, w, h);
+            const d = id.data;
+            // Heuristic: if average RGB of non-transparent pixels > 128, the
+            // drawImage with filter didn't invert — do it manually.
+            let sum = 0, n = 0;
+            for (let i = 0; i < d.length; i += 4) {
+                if (d[i+3] > 10) { sum += (d[i] + d[i+1] + d[i+2]) / 3; n++; }
+            }
+            const avg = n ? sum / n : 255;
+            if (avg > 128) {
+                for (let i = 0; i < d.length; i += 4) {
+                    d[i] = 255 - d[i];
+                    d[i+1] = 255 - d[i+1];
+                    d[i+2] = 255 - d[i+2];
+                }
+                ctx.putImageData(id, 0, 0);
+            }
+        } catch(_) { /* canvas may be tainted; accept whatever we got */ }
         return c.toDataURL('image/png');
     } catch(e) { return ''; }
 }
@@ -1005,10 +1028,18 @@ function buildReportHTML(title, contentHTML) {
     </body></html>`;
 }
 
+// Expose buildReportHTML so the iOS bridge (and any other wrapper) can build
+// the styled cover+report HTML using client info from localStorage.
+window.buildReportHTML = buildReportHTML;
+
 // Enhanced exportReport with client info and cover page.
 // Uses a hidden iframe (works in Tauri/WebView2 where popups are blocked)
 // then triggers the system print dialog so the user can pick "Save as PDF".
+// iOS wrapper registers window.__reportOverride to intercept with a real PDF.
 function exportReport(title, contentHTML) {
+    if (typeof window.__reportOverride === 'function') {
+        return window.__reportOverride(title, contentHTML);
+    }
     const html = buildReportHTML(title, contentHTML);
     // Try popup window first (gives a visible preview on regular browsers)
     let w = null;
@@ -7264,31 +7295,42 @@ render();
     }
   }
 
-  // Override exportReport — the app's central PDF entry point.
-  // We keep the same signature: exportReport(title, contentHTML).
-  if (typeof window.exportReport === 'function' || true) {
-    const origExportReport = window.exportReport;
-    window.exportReport = async function(title, contentHTML) {
-      try {
-        // Build the same styled HTML the web version uses, then convert to PDF
-        const html = typeof window.buildReportHTML === 'function'
-            ? window.buildReportHTML(title, contentHTML)
-            : `<!DOCTYPE html><html><head><title>${title}</title></head><body>${contentHTML}</body></html>`;
-        const safeTitle = String(title || 'report').replace(/[^A-Za-z0-9._-]+/g, '_');
-        const filename = safeTitle + '.pdf';
-        const base64 = await htmlToPdfBase64(html, title);
-        const ok = await writeAndShare(filename, base64, true);
-        if (!ok && typeof origExportReport === 'function') {
-          origExportReport(title, contentHTML);
-        }
-      } catch (e) {
-        console.warn('[iOS] PDF export failed, falling back to print:', e);
-        if (typeof origExportReport === 'function') {
-          origExportReport(title, contentHTML);
+  // Register the app's report-override hook. The main HTML's exportReport
+  // checks window.__reportOverride first and delegates to us. This is the only
+  // way to intercept, because the real exportReport lives inside an IIFE and
+  // isn't reachable via window.exportReport.
+  window.__reportOverride = async function(title, contentHTML) {
+    try {
+      // Build the styled HTML with cover page (client info + H2Oil logo).
+      // window.buildReportHTML is exposed by the main app.
+      const html = typeof window.buildReportHTML === 'function'
+          ? window.buildReportHTML(title, contentHTML)
+          : `<!DOCTYPE html><html><head><title>${title}</title></head><body><h1>${title}</h1>${contentHTML}</body></html>`;
+      const safeTitle = String(title || 'report').replace(/[^A-Za-z0-9._-]+/g, '_');
+      const filename = safeTitle + '.pdf';
+      const base64 = await htmlToPdfBase64(html, title);
+      const ok = await writeAndShare(filename, base64, true);
+      if (!ok) {
+        // Last-ditch: show the HTML in a printable window so the user still
+        // has access to the system print → Save-as-PDF fallback.
+        const w = window.open('', '_blank');
+        if (w && w.document) {
+          w.document.open(); w.document.write(html); w.document.close();
         }
       }
-    };
-  }
+    } catch (e) {
+      console.warn('[iOS] PDF export failed:', e);
+      try {
+        const w = window.open('', '_blank');
+        if (w && w.document) {
+          const html = typeof window.buildReportHTML === 'function'
+              ? window.buildReportHTML(title, contentHTML)
+              : `<!DOCTYPE html><html><body>${contentHTML}</body></html>`;
+          w.document.open(); w.document.write(html); w.document.close();
+        }
+      } catch (_) {}
+    }
+  };
 
   // ── Status bar ─────────────────────────────────────────────────
   if (StatusBar) {
