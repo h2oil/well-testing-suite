@@ -1,0 +1,53 @@
+name: Sync iOS www from main HTML
+
+# Auto-regenerates ios-app/www/index.html whenever the root HTML changes.
+# This means a Mac user can clone the repo, open Xcode, and run — without
+# needing Node installed or any manual sync step.
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - 'claude/**'
+    paths:
+      - 'well-testing-app.html'
+      - 'ios-app/ios-additions/**'
+      - 'ios-app/scripts/sync-from-main.js'
+  workflow_dispatch:  # manual trigger
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run sync-from-main
+        working-directory: ios-app
+        run: node scripts/sync-from-main.js
+
+      - name: Commit if changed
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [ -n "$(git status --porcelain ios-app/www/)" ]; then
+            git add ios-app/www/index.html ios-app/www/capacitor.js
+            git commit -m "chore(ios): auto-sync www from main HTML [skip ci]"
+            git push
+            echo "::notice::iOS www/ updated and pushed"
+          else
+            echo "::notice::No changes — www/ already in sync"
+          fi
