@@ -1743,17 +1743,22 @@ window.calcChoke = function(){
     const r1=P2/P1, r2=P3/P2, rT=P3/P1;
     const crit=0.546;
 
-    // Thornhill-Craver gas choke equation (API 14B) / Gilbert oil
+    // Thornhill-Craver gas (Economides) / Gilbert oil
+    // q[MSCF/D] = 879.77·Cd·A·P1 / √(SG·T·Z) · √(k/(k−1)·(r^(2/k)−r^((k+1)/k)))
     const ft=$('c_ft').value;
     let Qgas=0,Qoil=0;
     if(ft==='gas'){
-        const k=1.28; // natural-gas specific-heat ratio
+        const k=1.28;
         const Tf=T+460;
         const P1abs=P1+14.7, P3abs=P3+14.7;
+        // Papay Z at upstream conditions
+        const Ppc=756.8-131*SG-3.6*SG*SG, Tpc=169.2+349.5*SG-74*SG*SG;
+        const Ppr=P1abs/Ppc, Tpr=Tf/Tpc;
+        const Zup=Math.max(0.3,Math.min(1.2,1-3.52*Ppr/Math.pow(10,0.9813*Tpr)+0.274*Ppr*Ppr/Math.pow(10,0.8157*Tpr)));
         const rCrit=Math.pow(2/(k+1),k/(k-1));
-        const r=Math.max(P3abs/P1abs,rCrit); // clamp to critical when choked
-        const inner=(2*k/((k-1)*Tf*SG))*(Math.pow(r,2/k)-Math.pow(r,(k+1)/k));
-        Qgas=inner>0?1248*cd1*A1*P1abs*Math.sqrt(inner):0; // MSCF/D
+        const r=Math.max(P3abs/P1abs,rCrit); // clamp to critical
+        const inner=(k/(k-1))*(Math.pow(r,2/k)-Math.pow(r,(k+1)/k));
+        Qgas=inner>0?879.77*cd1*A1*P1abs/Math.sqrt(SG*Tf*Zup)*Math.sqrt(inner):0; // MSCF/D
     } else {
         Qoil=P1*Math.pow(deq64,1.89)/(435*Math.pow(GOR/1000,0.546));
     }
@@ -6347,7 +6352,8 @@ function renderWTS(body){
       </div></div>
       <div class="card"><div class="card-title">Choke</div><div class="fg">
         <div class="fg-item"><label>Bean Size (64ths)</label><input type="number" id="wts_bean" value="32" min="4" max="128"></div>
-        <div class="fg-item"><label>Downstream P (psig)</label><input type="number" id="wts_Pds" value="600"></div>
+        <div class="fg-item"><label>Discharge Coef (Cd)</label><input type="number" id="wts_Cd" value="0.85" step="0.01" min="0.5" max="1.0"></div>
+        <div class="fg-item"><label>Regime</label><span id="wts_regime" style="font-size:12px;color:var(--text2)">auto</span></div>
       </div></div>
       <div class="card"><div class="card-title">Heater</div><div class="fg">
         <div class="fg-item"><label>Outlet Temp (&deg;F)</label><input type="number" id="wts_Thtr" value="150"></div>
@@ -6360,10 +6366,12 @@ function renderWTS(body){
     </div><div>
       <div class="card"><div class="card-title">Pipe Segments</div>
         <table class="dtable" style="font-size:12px"><tr><th>Segment</th><th>NPS</th><th>Schedule</th><th>Length (ft)</th></tr>
-        ${sR(1,'WH &rarr; Choke','4','150')}
-        ${sR(2,'Choke &rarr; Heater','4','200')}
-        ${sR(3,'Heater &rarr; Sep','4','100')}
-        ${sR(4,'Sep &rarr; Flare','6','300')}
+        ${sR(1,'WH &rarr; SSV','4','50')}
+        ${sR(2,'SSV &rarr; Choke','4','100')}
+        ${sR(3,'Choke &rarr; Heater','4','200')}
+        ${sR(4,'Heater &rarr; Sep','4','100')}
+        ${sR(5,'Sep &rarr; Flare','6','300')}
+        ${sR(6,'Surge &rarr; Atm Tank','3','80')}
         </table></div>
       <div class="card"><div class="card-title">API RP 14E Settings</div><div class="fg">
         <div class="fg-item"><label>C-Factor</label><input type="number" id="wts_Cfac" value="100" min="50" max="300">
@@ -6372,21 +6380,21 @@ function renderWTS(body){
       </div></div>
       <div id="wts_res"></div>
     </div></div></div>`;
-    const ids=['wts_Pwh','wts_Twh','wts_Qg','wts_Qo','wts_Qw','wts_SGg','wts_API','wts_bean','wts_Pds','wts_Thtr','wts_htrEff','wts_bypass','wts_Psep','wts_nps1','wts_sch1','wts_len1','wts_nps2','wts_sch2','wts_len2','wts_nps3','wts_sch3','wts_len3','wts_nps4','wts_sch4','wts_len4','wts_Cfac','wts_eps'];
+    const ids=['wts_Pwh','wts_Twh','wts_Qg','wts_Qo','wts_Qw','wts_SGg','wts_API','wts_bean','wts_Cd','wts_Thtr','wts_htrEff','wts_bypass','wts_Psep','wts_nps1','wts_sch1','wts_len1','wts_nps2','wts_sch2','wts_len2','wts_nps3','wts_sch3','wts_len3','wts_nps4','wts_sch4','wts_len4','wts_nps5','wts_sch5','wts_len5','wts_nps6','wts_sch6','wts_len6','wts_Cfac','wts_eps'];
     loadInputs('wts',ids);
     let wtsT;const wtsAC=()=>{clearTimeout(wtsT);wtsT=setTimeout(calcWTS,250);};
     setTimeout(()=>{document.querySelectorAll('#pgBody input,#pgBody select').forEach(el=>{el.addEventListener('input',wtsAC);el.addEventListener('change',calcWTS);});calcWTS();},50);
 }
 
 window.calcWTS=function(){
-    const ids=['wts_Pwh','wts_Twh','wts_Qg','wts_Qo','wts_Qw','wts_SGg','wts_API','wts_bean','wts_Pds','wts_Thtr','wts_htrEff','wts_bypass','wts_Psep','wts_nps1','wts_sch1','wts_len1','wts_nps2','wts_sch2','wts_len2','wts_nps3','wts_sch3','wts_len3','wts_nps4','wts_sch4','wts_len4','wts_Cfac','wts_eps'];
+    const ids=['wts_Pwh','wts_Twh','wts_Qg','wts_Qo','wts_Qw','wts_SGg','wts_API','wts_bean','wts_Cd','wts_Thtr','wts_htrEff','wts_bypass','wts_Psep','wts_nps1','wts_sch1','wts_len1','wts_nps2','wts_sch2','wts_len2','wts_nps3','wts_sch3','wts_len3','wts_nps4','wts_sch4','wts_len4','wts_nps5','wts_sch5','wts_len5','wts_nps6','wts_sch6','wts_len6','wts_Cfac','wts_eps'];
     saveInputs('wts',ids);
     const gv=id=>{const e=$(id);return e?parseFloat(e.value):NaN;};
     if(!$('wts_Pwh'))return;
     const Pwh=gv('wts_Pwh')||3000,Twh=gv('wts_Twh')||180;
     const Qg=gv('wts_Qg')||0,Qo=gv('wts_Qo')||0,Qw=gv('wts_Qw')||0;
     const SGg=gv('wts_SGg')||0.65,API=gv('wts_API')||35;
-    const bean=gv('wts_bean')||32,Pds=gv('wts_Pds')||600;
+    const bean=gv('wts_bean')||32,Cd_ck=gv('wts_Cd')||0.85;
     const Thtr=gv('wts_Thtr')||150,htrEff=(gv('wts_htrEff')||80)/100;
     const bypass=$('wts_bypass').value==='1';
     const Psep=gv('wts_Psep')||150;
@@ -6405,7 +6413,9 @@ window.calcWTS=function(){
     const mdG=Qg_scfs*rhoGstd;
     const Qo_cfs=Qo*5.615/86400,mdO=Qo_cfs*rhoOil;
     const Qw_cfs=Qw*5.615/86400,mdW=Qw_cfs*rhoWat;
-    const seg=(n,P0,T0,gasOnly)=>{
+    // Pipe segment calculator
+    const seg=(n,P0,T0,phase)=>{
+        // phase: 'multi' | 'gas' | 'liquid'
         const nps=$('wts_nps'+n).value,sch=$('wts_sch'+n).value;
         const ID=(WTS_PIPES[nps]&&WTS_PIPES[nps][sch])||4.026;
         const Dft=ID/12,A=Math.PI/4*Dft*Dft;
@@ -6414,11 +6424,15 @@ window.calcWTS=function(){
         const z=Z(Pp,Tr),rg=rhoG(Pp,Tr);
         const Qga=Qg_scfs*(14.696/Pp)*(Tr/519.67)*z;
         let Qt,rhom;
-        if(gasOnly){Qt=Qga;rhom=rg;}
+        if(phase==='gas'){Qt=Qga;rhom=rg;}
+        else if(phase==='liquid'){
+            Qt=Qo_cfs+Qw_cfs;
+            rhom=Qt>1e-12?(rhoOil*Qo_cfs+rhoWat*Qw_cfs)/Qt:rhoOil;
+        }
         else{Qt=Qga+Qo_cfs+Qw_cfs;rhom=Qt>1e-12?(rg*Qga+rhoOil*Qo_cfs+rhoWat*Qw_cfs)/Qt:rg;}
         const vel=A>0?Qt/A:0;
         const ve=rhom>0.01?Cfac/Math.sqrt(rhom):9999;
-        const muCp=gasOnly?0.012:0.05;
+        const muCp=phase==='gas'?0.012:phase==='liquid'?1.5:0.05;
         const mu=muCp*6.7197e-4;
         const Re=mu>0?rhom*Math.abs(vel)*Dft/mu:1e6;
         const er=(epsIn/12)/Dft;
@@ -6427,22 +6441,57 @@ window.calcWTS=function(){
         else ff=Re>0?64/Re:0.04;
         ff=Math.min(ff,0.1);
         const dP=L>0&&Dft>0?ff*(L/Dft)*rhom*vel*vel/(2*32.174*144):0;
-        const jt=gasOnly?7:3;
+        const jt=phase==='gas'?7:phase==='liquid'?0:3;
         const dT=jt*dP/1000;
-        return{nps,sch,ID,L,P0,Pout:P0-dP,T0,Tout:T0-dT,vel,ve,rhom,dP,dT,z,Re,ff,
-            Thyd:Thyd(Pp),hydR:T0<Thyd(Pp),
-            vSt:vel>ve?'EXCEED':vel>0.8*ve?'WARNING':'OK',
-            vPct:ve>0?vel/ve*100:0};
+        // Liquid lines: check 10 ft/s as conservative limit (not erosional)
+        const velLimit=phase==='liquid'?10:ve;
+        const vSt=phase==='liquid'
+            ? (vel>velLimit?'EXCEED':vel>0.8*velLimit?'WARNING':'OK')
+            : (vel>ve?'EXCEED':vel>0.8*ve?'WARNING':'OK');
+        return{nps,sch,ID,L,phase,P0,Pout:Math.max(P0-dP,0),T0,Tout:T0-dT,vel,ve:velLimit,rhom,dP,dT,z,Re,ff,
+            Thyd:Thyd(Pp),hydR:phase!=='liquid'&&T0<Thyd(Pp),
+            vSt,vPct:velLimit>0?vel/velLimit*100:0};
     };
-    // Walk system
-    const s1=seg(1,Pwh,Twh,false);
-    const Pci=s1.Pout,Tci=s1.Tout;
-    const pratio=(Pds+14.696)/Math.max(Pci+14.696,15);
-    const regime=pratio<0.55?'Critical':'Subcritical';
-    const dPchk=Math.max(Pci-Pds,0);
-    const Tco=Tci-7*dPchk/1000;
-    const s2=seg(2,Pds,Tco,false);
-    const Phi=s2.Pout,Thi=s2.Tout;
+    // ── Walk system ──
+    // Seg 1: WH → SSV (multiphase, negligible ΔP from WH)
+    const s1=seg(1,Pwh,Twh,'multi');
+    const Pssv=s1.Pout,Tssv=s1.Tout;
+    // Seg 2: SSV → Choke (SSV is full-bore, pass-through)
+    const s2=seg(2,Pssv,Tssv,'multi');
+    const Pci=s2.Pout,Tci=s2.Tout;
+    // ── Choke: Thornhill-Craver (Economides form) back-solve for downstream P ──
+    // q_gsc[MSCF/D] = 879.77·Cd·A·P1 / √(SG·T·Z) · √(k/(k-1) · (r^(2/k) − r^((k+1)/k)))
+    const k_ck=1.28;
+    const P1a=Math.max(Pci+14.696,15), Tabs_ck=Tci+459.67;
+    const Z_ck=Z(P1a,Tabs_ck);
+    const A_ck=Math.PI/4*(bean/64)*(bean/64);
+    const Q_mscfd=Qg*1000; // input Qg is MMSCFD → MSCF/D
+    const rCrit=Math.pow(2/(k_ck+1),k_ck/(k_ck-1));
+    const preFac=879.77*Cd_ck*A_ck*P1a/Math.sqrt(SGg*Tabs_ck*Z_ck);
+    const fInner=r=>(k_ck/(k_ck-1))*(Math.pow(r,2/k_ck)-Math.pow(r,(k_ck+1)/k_ck));
+    const Q_crit_max=preFac*Math.sqrt(fInner(rCrit));
+    let Pco_psia, regime, flowLimited=false;
+    if(Qg<=0){Pco_psia=P1a; regime='No Flow';}
+    else if(Q_mscfd>=Q_crit_max){
+        Pco_psia=P1a*rCrit;
+        regime='Critical';
+        flowLimited=Q_mscfd>Q_crit_max*1.01;
+    } else {
+        // Subcritical: bisect for r in [rCrit, 1] where fInner(r) = (Q/preFac)²
+        const Csq=Math.pow(Q_mscfd/preFac,2);
+        let lo=rCrit,hi=1;
+        for(let i=0;i<40;i++){const m=(lo+hi)/2;if(fInner(m)>Csq)lo=m;else hi=m;}
+        Pco_psia=P1a*(lo+hi)/2;
+        regime='Subcritical';
+    }
+    const Pco=Pco_psia-14.696; // convert to psig
+    const dPchk=Pci-Pco;
+    const Tco=Tci-7*dPchk/1000; // J-T cooling
+    const pratio=Pco_psia/P1a;
+    // Seg 3: Choke → Heater
+    const s3=seg(3,Pco,Tco,'multi');
+    const Phi=s3.Pout,Thi=s3.Tout;
+    // ── Heater ──
     const Pho=Phi-5;
     const Tho=bypass?Thi:Math.max(Thtr,Thi);
     const dTh=Tho-Thi;
@@ -6450,29 +6499,43 @@ window.calcWTS=function(){
     const Qdot=(mdG*CpG+mdO*CpO+mdW*CpW)*Math.max(dTh,0)*3600;
     const Qfired=htrEff>0?Qdot/htrEff:0;
     const QMM=Qfired/1e6;
-    const s3=seg(3,Pho,Tho,false);
-    const Tsi=s3.Tout,Parr=s3.Pout;
+    // Seg 4: Heater → Separator
+    const s4=seg(4,Pho,Tho,'multi');
+    const Tsi=s4.Tout,Parr=s4.Pout;
     const cvDrop=Parr-Psep;
-    const s4=seg(4,Psep,Tsi,true);
+    // Seg 5: Separator → Flare (gas only)
+    const s5=seg(5,Psep,Tsi,'gas');
+    // Seg 6: Surge Tank → Atm Tank (liquid only, atmospheric)
+    const s6=seg(6,0,Tsi,'liquid');
+    // ── Build node array ──
     const nodes=[
         {nm:'Wellhead',P:Pwh,T:Twh,th:Thyd(Pwh+14.696)},
-        {nm:'Choke',P:Pds,T:Tco,th:Thyd(Pds+14.696),regime,bean,Pci},
+        {nm:'SSV',P:Pssv,T:Tssv,th:Thyd(Math.max(Pssv+14.696,15))},
+        {nm:'Choke',P:Pco,T:Tco,th:Thyd(Math.max(Pco+14.696,15)),regime,bean,Pci,Qmax:Q_crit_max},
         {nm:'Heater',P:Pho,T:Tho,th:Thyd(Math.max(Pho+14.696,15)),duty:QMM,bypass},
         {nm:'Separator',P:Psep,T:Tsi,th:Thyd(Psep+14.696)},
-        {nm:'Flare',P:Math.max(s4.Pout,0),T:s4.Tout,th:Thyd(Math.max(s4.Pout,0)+14.696)}
+        {nm:'Flare',P:Math.max(s5.Pout,0),T:s5.Tout,th:Thyd(Math.max(s5.Pout,0)+14.696)},
+        {nm:'Surge Tank',P:0,T:Tsi,th:Thyd(14.696)},
+        {nm:'Atm Tank',P:0,T:s6.Tout,th:Thyd(14.696)}
     ];
-    const segs=[s1,s2,s3,s4];
-    const segNm=['WH\u2192Choke','Choke\u2192Heater','Heater\u2192Sep','Sep\u2192Flare'];
-    // Warnings
+    const segs=[s1,s2,s3,s4,s5,s6];
+    const segNm=['WH\u2192SSV','SSV\u2192Choke','Choke\u2192Heater','Heater\u2192Sep','Sep\u2192Flare','Surge\u2192Atm Tank'];
+    // Update regime indicator
+    const regEl=$('wts_regime');
+    if(regEl){
+        regEl.textContent=regime+(flowLimited?' (bean too small!)':'');
+        regEl.style.color=regime==='Critical'?'var(--red)':regime==='Subcritical'?'var(--green)':'var(--text3)';
+    }
+    // ── Warnings ──
     const warns=[];
     segs.forEach((s,i)=>{
-        if(s.vSt==='EXCEED')warns.push({t:'error',m:`${segNm[i]}: Velocity ${fmt(s.vel,0)} ft/s EXCEEDS erosional limit ${fmt(s.ve,0)} ft/s (API RP 14E)`});
-        else if(s.vSt==='WARNING')warns.push({t:'warn',m:`${segNm[i]}: Velocity ${fmt(s.vel,0)} ft/s is ${fmt(s.vPct,0)}% of erosional limit — consider upsizing`});
+        if(s.vSt==='EXCEED')warns.push({t:'error',m:`${segNm[i]}: Velocity ${fmt(s.vel,0)} ft/s EXCEEDS ${s.phase==='liquid'?'liquid limit':'erosional limit'} ${fmt(s.ve,0)} ft/s`});
+        else if(s.vSt==='WARNING')warns.push({t:'warn',m:`${segNm[i]}: Velocity ${fmt(s.vel,0)} ft/s is ${fmt(s.vPct,0)}% of limit — consider upsizing`});
         if(s.hydR)warns.push({t:'info',m:`${segNm[i]}: Hydrate risk — ${fmt(s.T0,0)}&deg;F &lt; hydrate ${fmt(s.Thyd,0)}&deg;F`});
     });
-    if(Pds>Pci)warns.push({t:'error',m:`Choke downstream P (${fmt(Pds,0)} psig) exceeds upstream P (${fmt(Pci,0)} psig) — inputs inconsistent`});
+    if(flowLimited)warns.push({t:'error',m:`Choke is flow-limited — bean ${bean}/64" at Cd=${Cd_ck} can only pass ${fmt(Q_crit_max/1000,2)} MMSCFD; requested ${fmt(Qg,2)} MMSCFD. Increase bean or reduce rate.`});
     if(cvDrop<-5)warns.push({t:'error',m:`Separator pressure too high — arriving ${fmt(Parr,0)} psig &lt; sep operating ${Psep} psig`});
-    if(s4.Pout<0)warns.push({t:'error',m:`Flare line &Delta;P ${fmt(s4.dP,0)} psi exceeds separator pressure ${Psep} psig`});
+    if(s5.Pout<0)warns.push({t:'error',m:`Flare line &Delta;P ${fmt(s5.dP,0)} psi exceeds separator pressure ${Psep} psig`});
     const wEl=$('wts_warn');
     if(wEl){
         if(warns.length>0){
@@ -6486,29 +6549,30 @@ window.calcWTS=function(){
     }
     // Canvas
     wtsDrawDiag(nodes,segs);
-    // Results HTML
+    // ── Results HTML ──
     let h='<div class="rbox" style="margin-top:12px"><div class="rbox-title">Node Conditions</div>';
     h+='<table class="dtable" style="font-size:11px"><tr><th>Node</th><th>P (psig)</th><th>T (&deg;F)</th><th>T (&deg;C)</th><th>T<sub>hyd</sub> (&deg;F)</th><th>Status</th></tr>';
     nodes.forEach(nd=>{
         const Tc=(nd.T-32)*5/9;
-        const hyd=nd.T<nd.th;
+        const hyd=nd.T<nd.th&&nd.P>10; // skip hydrate warning at atmospheric tanks
         const sc=hyd?'color:var(--blue);font-weight:700':'color:var(--green)';
         h+=`<tr><td style="font-weight:600">${nd.nm}</td><td>${fmt(nd.P,0)}</td><td>${fmt(nd.T,1)}</td><td>${fmt(Tc,1)}</td><td>${fmt(nd.th,0)}</td><td style="${sc}">${hyd?'&#10052; HYDRATE RISK':'OK'}</td></tr>`;
     });
     h+='</table></div>';
     h+='<div class="rbox" style="margin-top:10px"><div class="rbox-title">Pipe Segment Analysis</div>';
-    h+='<table class="dtable" style="font-size:11px"><tr><th>Segment</th><th>Pipe</th><th>ID (in)</th><th>Vel (ft/s)</th><th>V<sub>e</sub> (ft/s)</th><th>%V<sub>e</sub></th><th>&Delta;P (psi)</th><th>&Delta;T (&deg;F)</th><th>Status</th></tr>';
+    h+='<table class="dtable" style="font-size:11px"><tr><th>Segment</th><th>Pipe</th><th>ID (in)</th><th>Vel (ft/s)</th><th>Limit (ft/s)</th><th>%Limit</th><th>&Delta;P (psi)</th><th>&Delta;T (&deg;F)</th><th>Status</th></tr>';
     segs.forEach((s,i)=>{
         const vc=s.vSt==='EXCEED'?'var(--red)':s.vSt==='WARNING'?'var(--yellow)':'var(--green)';
         h+=`<tr><td style="font-weight:600">${segNm[i]}</td><td>${s.nps}"/SCH${s.sch}</td><td>${fmt(s.ID,3)}</td><td style="color:${vc};font-weight:700">${fmt(s.vel,1)}</td><td>${fmt(s.ve,0)}</td><td style="color:${vc}">${fmt(s.vPct,0)}%</td><td>${fmt(s.dP,1)}</td><td>${fmt(s.dT,1)}</td><td style="color:${vc};font-weight:700">${s.vSt}${s.hydR?' &#10052;':''}</td></tr>`;
     });
     h+='</table></div>';
-    h+=`<div class="rbox" style="margin-top:10px"><div class="rbox-title">Choke</div>
-        <div class="rrow"><span class="rl">Bean</span><span class="rv">${bean}/64" (${fmt(bean/64,3)}")</span></div>
-        <div class="rrow"><span class="rl">Upstream P</span><span class="rv">${fmt(Pci,0)} psig</span></div>
-        <div class="rrow"><span class="rl">Downstream P</span><span class="rv">${fmt(Pds,0)} psig</span></div>
+    h+=`<div class="rbox" style="margin-top:10px"><div class="rbox-title">Choke (Thornhill-Craver / API 14B)</div>
+        <div class="rrow"><span class="rl">Bean / Cd</span><span class="rv">${bean}/64" (${fmt(bean/64,3)}") &middot; Cd=${Cd_ck}</span></div>
+        <div class="rrow"><span class="rl">Upstream P</span><span class="rv">${fmt(Pci,0)} psig (${fmt(P1a,0)} psia)</span></div>
+        <div class="rrow"><span class="rl">Downstream P (computed)</span><span class="rv" style="color:var(--accent);font-weight:700">${fmt(Pco,0)} psig</span></div>
         <div class="rrow"><span class="rl">P Ratio (P2/P1)</span><span class="rv">${fmt(pratio,3)}</span></div>
-        <div class="rrow"><span class="rl">Flow Regime</span><span class="rv" style="color:${regime==='Critical'?'var(--red)':'var(--green)'};font-weight:700">${regime} (${regime==='Critical'?'Sonic':'Subsonic'})</span></div>
+        <div class="rrow"><span class="rl">Flow Regime</span><span class="rv" style="color:${regime==='Critical'?'var(--red)':'var(--green)'};font-weight:700">${regime}</span></div>
+        <div class="rrow"><span class="rl">Max Rate (Critical)</span><span class="rv">${fmt(Q_crit_max/1000,2)} MMSCFD</span></div>
         <div class="rrow"><span class="rl">&Delta;P Choke</span><span class="rv">${fmt(dPchk,0)} psi</span></div>
         <div class="rrow"><span class="rl">J-T Cooling</span><span class="rv">${fmt(7*dPchk/1000,1)} &deg;F</span></div>
     </div>`;
@@ -6528,7 +6592,7 @@ window.calcWTS=function(){
         <div class="rrow"><span class="rl">Gas MW</span><span class="rv">${fmt(Mg,2)} g/mol</span></div>
         <div class="rrow"><span class="rl">P<sub>pc</sub> / T<sub>pc</sub></span><span class="rv">${fmt(Ppc,1)} psia / ${fmt(Tpc,1)} &deg;R</span></div>
         <div class="rrow"><span class="rl">Z @ Wellhead</span><span class="rv">${fmt(s1.z,4)}</span></div>
-        <div class="rrow"><span class="rl">Z @ Separator</span><span class="rv">${fmt(s4.z,4)}</span></div>
+        <div class="rrow"><span class="rl">Z @ Separator</span><span class="rv">${fmt(s5.z,4)}</span></div>
         <div class="rrow"><span class="rl">&rho;<sub>gas</sub> @ WH</span><span class="rv">${fmt(rhoG(Pwh+14.696,Twh+459.67),3)} lb/ft&sup3;</span></div>
         <div class="rrow"><span class="rl">&rho;<sub>gas</sub> @ Sep</span><span class="rv">${fmt(rhoG(Psep+14.696,Tsi+459.67),3)} lb/ft&sup3;</span></div>
     </div>`;
@@ -6540,102 +6604,131 @@ function wtsDrawDiag(nodes,segs){
     const ctx=cv.getContext('2d');
     const W=cv.width,H=cv.height;
     ctx.clearRect(0,0,W,H);
-    const nx=[100,310,530,750,1020],cy=140;
+    // Top-row node x positions (6 equipment)
+    const tx=[85,230,380,535,695,950];
+    const cy=130;
+    // Bottom-row tank positions
+    const bx=[695,1000], by=cy+115;
+    // Equipment half-widths for pipe clearance
+    const cl=[18,16,20,27,30,10];
     const pipeClr=s=>s.vSt==='EXCEED'?'#f85149':s.vSt==='WARNING'?'#d29922':'#3fb950';
-    const gap=35;
-    // Pipes
-    segs.forEach((s,i)=>{
-        const x1=nx[i]+gap,x2=nx[i+1]-gap;
-        const c=pipeClr(s);
-        ctx.strokeStyle=c;ctx.lineWidth=6;
-        ctx.beginPath();ctx.moveTo(x1,cy);ctx.lineTo(x2,cy);ctx.stroke();
-        ctx.strokeStyle='rgba(255,255,255,0.15)';ctx.lineWidth=1;
-        ctx.beginPath();ctx.moveTo(x1,cy-3);ctx.lineTo(x2,cy-3);ctx.stroke();
-        ctx.beginPath();ctx.moveTo(x1,cy+3);ctx.lineTo(x2,cy+3);ctx.stroke();
-        const mx=(x1+x2)/2;
-        // Flow arrow
-        ctx.fillStyle=c;
-        ctx.beginPath();ctx.moveTo(mx+9,cy);ctx.lineTo(mx-4,cy-5);ctx.lineTo(mx-4,cy+5);ctx.closePath();ctx.fill();
-        ctx.fillStyle=c;ctx.font='bold 10px sans-serif';ctx.textAlign='center';
-        ctx.fillText(fmt(s.vel,0)+' ft/s',mx,cy-14);
-        ctx.fillStyle='#6e7681';ctx.font='9px sans-serif';
-        ctx.fillText(s.nps+'" SCH'+s.sch+' ('+s.L+'ft)',mx,cy+20);
-        ctx.fillStyle='#8b949e';ctx.font='9px sans-serif';
-        ctx.fillText('\u0394P:'+fmt(s.dP,1)+' psi',mx,cy+32);
-        if(s.hydR){ctx.fillStyle='#58a6ff';ctx.font='12px sans-serif';ctx.fillText('\u2744',mx,cy+46);}
-    });
-    // Sep -> Surge Tank vertical
+    // Draw top-row pipes (segs[0..4])
+    for(let i=0;i<5;i++){
+        const s=segs[i];
+        const x1=tx[i]+cl[i]+3, x2=tx[i+1]-cl[i+1]-3;
+        wtsDrawPipe(ctx,x1,x2,cy,s,pipeClr(s));
+    }
+    // Vertical pipe: Separator → Surge Tank
     ctx.strokeStyle='#3fb950';ctx.lineWidth=4;
-    ctx.beginPath();ctx.moveTo(nx[3],cy+18);ctx.lineTo(nx[3],cy+95);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(tx[4],cy+14);ctx.lineTo(tx[4],by-20);ctx.stroke();
     ctx.fillStyle='#3fb950';
-    ctx.beginPath();ctx.moveTo(nx[3]-5,cy+90);ctx.lineTo(nx[3]+5,cy+90);ctx.lineTo(nx[3],cy+100);ctx.closePath();ctx.fill();
-    ctx.fillStyle='#6e7681';ctx.font='9px sans-serif';ctx.textAlign='left';
-    ctx.fillText('Oil/Water',nx[3]+10,cy+60);
-    // Equipment
-    wtsEqWH(ctx,nx[0],cy);
-    wtsEqChk(ctx,nx[1],cy,nodes[1].regime);
-    wtsEqHtr(ctx,nx[2],cy,nodes[2].bypass);
-    wtsEqSep(ctx,nx[3],cy);
-    wtsEqFlr(ctx,nx[4],cy);
-    wtsEqTnk(ctx,nx[3],cy+120);
+    ctx.beginPath();ctx.moveTo(tx[4]-5,by-22);ctx.lineTo(tx[4]+5,by-22);ctx.lineTo(tx[4],by-15);ctx.closePath();ctx.fill();
+    ctx.fillStyle='#6e7681';ctx.font='italic 9px sans-serif';ctx.textAlign='left';
+    ctx.fillText('Oil/Water',tx[4]+7,(cy+by)/2);
+    // Bottom-row pipe: Surge → Atm Tank (segs[5])
+    wtsDrawPipe(ctx,bx[0]+18,bx[1]-20,by,segs[5],pipeClr(segs[5]));
+    // Equipment symbols — top row
+    wtsEqWH(ctx,tx[0],cy);
+    wtsEqSSV(ctx,tx[1],cy);
+    wtsEqChk(ctx,tx[2],cy,nodes[2].regime);
+    wtsEqHtr(ctx,tx[3],cy,nodes[3].bypass);
+    wtsEqSep(ctx,tx[4],cy);
+    wtsEqFlr(ctx,tx[5],cy);
+    // Equipment symbols — bottom row (surge & atm tanks)
+    wtsEqTnk(ctx,bx[0],by);
+    wtsEqAtm(ctx,bx[1],by);
     // Equipment labels
     ctx.textAlign='center';
-    const labels=['Wellhead','Choke','Heater','Separator','Flare'];
-    labels.forEach((l,i)=>{
+    const tlabels=['Wellhead','SSV','Choke','Heater','Separator','Flare'];
+    tlabels.forEach((l,i)=>{
         ctx.fillStyle='#e6edf3';ctx.font='bold 11px sans-serif';
-        ctx.fillText(l,nx[i],cy-48);
+        ctx.fillText(l,tx[i],cy-48);
     });
     ctx.fillStyle='#8b949e';ctx.font='10px sans-serif';
-    ctx.fillText('Surge Tank',nx[3],cy+150);
-    // Node P/T labels
-    nodes.forEach((nd,i)=>{
-        const x=nx[i];
+    ctx.fillText('Surge Tank',bx[0],by+38);
+    ctx.fillText('Atm Tank',bx[1],by+38);
+    // Node P/T labels (top row)
+    for(let i=0;i<6;i++){
+        const nd=nodes[i], x=tx[i];
         ctx.textAlign='center';
         ctx.fillStyle='#f0883e';ctx.font='bold 10px sans-serif';
-        ctx.fillText(fmt(nd.P,0)+' psig',x,cy+58);
+        ctx.fillText(fmt(nd.P,0)+' psig',x,cy+50);
         ctx.fillStyle='#58a6ff';ctx.font='10px sans-serif';
-        ctx.fillText(fmt(nd.T,1)+'\u00b0F / '+fmt((nd.T-32)*5/9,1)+'\u00b0C',x,cy+72);
-        if(nd.T<nd.th){
+        ctx.fillText(fmt(nd.T,1)+'\u00b0F',x,cy+63);
+        if(nd.T<nd.th&&nd.P>10){
             ctx.fillStyle='#58a6ff';ctx.font='bold 9px sans-serif';
-            ctx.fillText('\u2744 HYDRATE',x,cy+86);
+            ctx.fillText('\u2744 HYDRATE',x,cy+76);
         }
-    });
-    // Choke regime
-    if(nodes[1].regime){
-        ctx.fillStyle=nodes[1].regime==='Critical'?'#f85149':'#3fb950';
+    }
+    // Node P/T labels (bottom row)
+    for(let i=6;i<8;i++){
+        const nd=nodes[i], x=bx[i-6];
+        ctx.textAlign='center';
+        ctx.fillStyle='#f0883e';ctx.font='bold 10px sans-serif';
+        ctx.fillText(fmt(nd.P,0)+' psig',x,by+52);
+        ctx.fillStyle='#58a6ff';ctx.font='10px sans-serif';
+        ctx.fillText(fmt(nd.T,1)+'\u00b0F',x,by+65);
+    }
+    // Choke regime (node 2)
+    if(nodes[2].regime){
+        ctx.fillStyle=nodes[2].regime==='Critical'?'#f85149':'#3fb950';
         ctx.font='bold 9px sans-serif';ctx.textAlign='center';
-        ctx.fillText(nodes[1].regime,nx[1],cy-34);
+        ctx.fillText(nodes[2].regime,tx[2],cy-34);
         ctx.fillStyle='#8b949e';ctx.font='9px sans-serif';
-        ctx.fillText(nodes[1].bean+'/64"',nx[1],cy+86);
+        ctx.fillText(nodes[2].bean+'/64"',tx[2],cy+78);
     }
-    // Heater info
-    if(nodes[2].bypass){
+    // Heater info (node 3)
+    if(nodes[3].bypass){
         ctx.fillStyle='#f85149';ctx.font='bold 9px sans-serif';ctx.textAlign='center';
-        ctx.fillText('BYPASSED',nx[2],cy-34);
-    }else if(nodes[2].duty>0){
+        ctx.fillText('BYPASSED',tx[3],cy-34);
+    }else if(nodes[3].duty>0){
         ctx.fillStyle='#d29922';ctx.font='9px sans-serif';ctx.textAlign='center';
-        ctx.fillText(fmt(nodes[2].duty,2)+' MMBtu/hr',nx[2],cy+86);
+        ctx.fillText(fmt(nodes[3].duty,2)+' MMBtu/hr',tx[3],cy+78);
     }
-    // Phase labels above pipes
+    // Phase labels above pipes (top row)
     ctx.fillStyle='#6e7681';ctx.font='italic 9px sans-serif';ctx.textAlign='center';
-    ctx.fillText('Multiphase',(nx[0]+nx[1])/2,cy-28);
-    ctx.fillText('Multiphase',(nx[1]+nx[2])/2,cy-28);
-    ctx.fillText('Multiphase',(nx[2]+nx[3])/2,cy-28);
-    ctx.fillText('Gas Only',(nx[3]+nx[4])/2,cy-28);
+    const phases=['Multiphase','Multiphase','Multiphase','Multiphase','Gas Only'];
+    for(let i=0;i<5;i++){
+        ctx.fillText(phases[i],(tx[i]+tx[i+1])/2,cy-28);
+    }
+    // Phase label for Surge→Atm pipe
+    ctx.fillText('Liquid',(bx[0]+bx[1])/2,by-20);
     // Title
     ctx.fillStyle='#e6edf3';ctx.font='bold 13px sans-serif';ctx.textAlign='left';
     ctx.fillText('Well Test Flow Diagram',20,22);
     ctx.fillStyle='#6e7681';ctx.font='11px sans-serif';
-    ctx.fillText('P — T — Velocity Profile',20,38);
+    ctx.fillText('P — T — Velocity Profile (live choke calculation)',20,38);
     // Legend
-    const ly=H-14;
+    const ly=H-8;
     ctx.font='10px sans-serif';ctx.textAlign='left';
-    const lg=[{c:'#3fb950',t:'OK (<80% V\u2091)'},{c:'#d29922',t:'Warning (80-100% V\u2091)'},{c:'#f85149',t:'Erosion (>V\u2091)'},{c:'#58a6ff',t:'\u2744 Hydrate Risk'}];
+    const lg=[{c:'#3fb950',t:'OK'},{c:'#d29922',t:'Warning'},{c:'#f85149',t:'Erosion / Exceed'},{c:'#58a6ff',t:'\u2744 Hydrate Risk'}];
     lg.forEach((it,i)=>{
-        const lx=20+i*200;
-        ctx.fillStyle=it.c;ctx.fillRect(lx,ly-9,12,9);
-        ctx.fillStyle='#8b949e';ctx.fillText(it.t,lx+16,ly);
+        const lx=20+i*160;
+        ctx.fillStyle=it.c;ctx.fillRect(lx,ly-10,10,8);
+        ctx.fillStyle='#8b949e';ctx.fillText(it.t,lx+14,ly-2);
     });
+}
+
+function wtsDrawPipe(ctx,x1,x2,y,s,c){
+    if(x2<=x1)return;
+    ctx.strokeStyle=c;ctx.lineWidth=6;
+    ctx.beginPath();ctx.moveTo(x1,y);ctx.lineTo(x2,y);ctx.stroke();
+    ctx.strokeStyle='rgba(255,255,255,0.12)';ctx.lineWidth=1;
+    ctx.beginPath();ctx.moveTo(x1,y-3);ctx.lineTo(x2,y-3);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(x1,y+3);ctx.lineTo(x2,y+3);ctx.stroke();
+    const mx=(x1+x2)/2;
+    // Flow arrow
+    ctx.fillStyle=c;
+    ctx.beginPath();ctx.moveTo(mx+9,y);ctx.lineTo(mx-4,y-5);ctx.lineTo(mx-4,y+5);ctx.closePath();ctx.fill();
+    // Velocity label
+    ctx.fillStyle=c;ctx.font='bold 10px sans-serif';ctx.textAlign='center';
+    ctx.fillText(fmt(s.vel,0)+' ft/s',mx,y-14);
+    // Pipe spec
+    ctx.fillStyle='#6e7681';ctx.font='9px sans-serif';
+    ctx.fillText(s.nps+'" SCH'+s.sch+' ('+s.L+'ft)',mx,y+18);
+    ctx.fillStyle='#8b949e';ctx.font='9px sans-serif';
+    ctx.fillText('\u0394P:'+fmt(s.dP,1)+' psi',mx,y+30);
+    if(s.hydR){ctx.fillStyle='#58a6ff';ctx.font='12px sans-serif';ctx.fillText('\u2744',mx,y+42);}
 }
 
 function wtsEqWH(ctx,x,y){
@@ -6703,6 +6796,43 @@ function wtsEqTnk(ctx,x,y){
     ctx.fillStyle='#3d444d';ctx.fill();ctx.stroke();
     ctx.fillStyle='rgba(88,166,255,0.15)';
     ctx.fillRect(x-w/2+1,y-3,w-2,h/2+3-1);
+}
+function wtsEqSSV(ctx,x,y){
+    // Surface Safety Valve — hydraulic ball valve with actuator
+    ctx.fillStyle='#3fb950';ctx.strokeStyle='#e6edf3';ctx.lineWidth=1.5;
+    // Ball body
+    ctx.beginPath();ctx.arc(x,y,12,0,Math.PI*2);ctx.fill();ctx.stroke();
+    // Flow port (line through the ball)
+    ctx.strokeStyle='#0d1117';ctx.lineWidth=1.5;
+    ctx.beginPath();ctx.moveTo(x-11,y);ctx.lineTo(x+11,y);ctx.stroke();
+    // Stem up
+    ctx.strokeStyle='#e6edf3';ctx.lineWidth=1.5;
+    ctx.beginPath();ctx.moveTo(x,y-12);ctx.lineTo(x,y-22);ctx.stroke();
+    // Actuator box (pneumatic/hydraulic)
+    ctx.fillStyle='#d29922';ctx.strokeStyle='#e6edf3';ctx.lineWidth=1.2;
+    ctx.fillRect(x-9,y-32,18,10);ctx.strokeRect(x-9,y-32,18,10);
+    // Small label
+    ctx.fillStyle='#0d1117';ctx.font='bold 7px sans-serif';ctx.textAlign='center';
+    ctx.fillText('FC',x,y-24);
+}
+function wtsEqAtm(ctx,x,y){
+    // Atmospheric tank — open-top with vent
+    ctx.fillStyle='#30363d';ctx.strokeStyle='#e6edf3';ctx.lineWidth=1.5;
+    const w=36,h=36;
+    ctx.fillRect(x-w/2,y-h/2,w,h);ctx.strokeRect(x-w/2,y-h/2,w,h);
+    // Open top (thicker rim)
+    ctx.strokeStyle='#6e7681';ctx.lineWidth=2;
+    ctx.beginPath();ctx.moveTo(x-w/2-2,y-h/2);ctx.lineTo(x+w/2+2,y-h/2);ctx.stroke();
+    // Vent pipe
+    ctx.strokeStyle='#8b949e';ctx.lineWidth=1.2;
+    ctx.beginPath();ctx.moveTo(x,y-h/2);ctx.lineTo(x,y-h/2-9);ctx.stroke();
+    ctx.beginPath();ctx.arc(x,y-h/2-12,2.5,0,Math.PI*2);ctx.stroke();
+    // Liquid (near full)
+    ctx.fillStyle='rgba(88,166,255,0.22)';
+    ctx.fillRect(x-w/2+1,y-h/2+5,w-2,h-6);
+    // "ATM" label
+    ctx.fillStyle='#8b949e';ctx.font='bold 8px sans-serif';ctx.textAlign='center';
+    ctx.fillText('ATM',x,y+3);
 }
 
 // ── Initial render ──
