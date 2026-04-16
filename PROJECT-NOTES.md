@@ -5,6 +5,47 @@ All changes land on `dev`; `master` is the stable tree consumed by the iOS sync 
 
 ---
 
+## PDF export on iOS (real fix — prior one was a no-op)
+
+**Problem**: PDF export on iOS never triggered the bundled jsPDF pipeline —
+it still fell through to `window.print` which WKWebView handles poorly, AND
+the cover page (client info + client logo + H2Oil logo) was missing.
+
+**Root cause**: `exportReport` and `buildReportHTML` live inside the main app's
+top-level IIFE (`(function(){...})()`). They were never attached to `window`,
+so the iOS bridge's `window.exportReport = ...` assignment created an
+unrelated global that no internal call site ever touched. Every calculator
+calls the local `exportReport` (resolved lexically inside the IIFE), which
+took the popup/iframe print path.
+
+**Fix**:
+
+- `well-testing-app.html`: added two minimal hooks right next to the existing
+  definitions —
+  - `window.buildReportHTML = buildReportHTML` so wrappers can build the
+    styled HTML report with the cover page.
+  - At the top of `exportReport`: `if (typeof window.__reportOverride === 'function') return window.__reportOverride(title, contentHTML)`.
+- `ios-bridge.js`: sets `window.__reportOverride` instead of overriding
+  `window.exportReport`. The override calls `window.buildReportHTML` (picks up
+  client info + client logo + H2Oil logo automatically), converts to PDF
+  via bundled jsPDF + html2canvas, then saves via `Filesystem.writeFile` +
+  native share sheet.
+
+**Also hardened `getH2OilLogoBlack`**: iOS WKWebView's `ctx.filter='invert(1)'`
+is unreliable. Added a per-pixel invert fallback (reads the ImageData, flips
+RGB when the average brightness is still high after drawImage), so the H2Oil
+logo on the PDF cover is guaranteed black on the white cover page.
+
+**Client info on PDF** (what the user asked about):
+`buildReportCoverHTML()` already pulls from `localStorage.h2oil_client_info`
+and emits a `<div class="logo-row">` (client logo + H2Oil logo) and a
+`.meta-tbl` (Client, Well, Field, Operator, Rig, Reference, Date, Engineer,
+Company). Once the iOS override correctly calls `buildReportHTML`, all of
+that flows through to the generated PDF automatically. No separate wiring
+needed — the same cover you see on the web version now prints on iOS too.
+
+---
+
 ## App icon + splash screen (H2Oil branding)
 
 Source assets live in `ios-app/resources/` and are generated from the sidebar logo

@@ -190,31 +190,42 @@
     }
   }
 
-  // Override exportReport — the app's central PDF entry point.
-  // We keep the same signature: exportReport(title, contentHTML).
-  if (typeof window.exportReport === 'function' || true) {
-    const origExportReport = window.exportReport;
-    window.exportReport = async function(title, contentHTML) {
-      try {
-        // Build the same styled HTML the web version uses, then convert to PDF
-        const html = typeof window.buildReportHTML === 'function'
-            ? window.buildReportHTML(title, contentHTML)
-            : `<!DOCTYPE html><html><head><title>${title}</title></head><body>${contentHTML}</body></html>`;
-        const safeTitle = String(title || 'report').replace(/[^A-Za-z0-9._-]+/g, '_');
-        const filename = safeTitle + '.pdf';
-        const base64 = await htmlToPdfBase64(html, title);
-        const ok = await writeAndShare(filename, base64, true);
-        if (!ok && typeof origExportReport === 'function') {
-          origExportReport(title, contentHTML);
-        }
-      } catch (e) {
-        console.warn('[iOS] PDF export failed, falling back to print:', e);
-        if (typeof origExportReport === 'function') {
-          origExportReport(title, contentHTML);
+  // Register the app's report-override hook. The main HTML's exportReport
+  // checks window.__reportOverride first and delegates to us. This is the only
+  // way to intercept, because the real exportReport lives inside an IIFE and
+  // isn't reachable via window.exportReport.
+  window.__reportOverride = async function(title, contentHTML) {
+    try {
+      // Build the styled HTML with cover page (client info + H2Oil logo).
+      // window.buildReportHTML is exposed by the main app.
+      const html = typeof window.buildReportHTML === 'function'
+          ? window.buildReportHTML(title, contentHTML)
+          : `<!DOCTYPE html><html><head><title>${title}</title></head><body><h1>${title}</h1>${contentHTML}</body></html>`;
+      const safeTitle = String(title || 'report').replace(/[^A-Za-z0-9._-]+/g, '_');
+      const filename = safeTitle + '.pdf';
+      const base64 = await htmlToPdfBase64(html, title);
+      const ok = await writeAndShare(filename, base64, true);
+      if (!ok) {
+        // Last-ditch: show the HTML in a printable window so the user still
+        // has access to the system print → Save-as-PDF fallback.
+        const w = window.open('', '_blank');
+        if (w && w.document) {
+          w.document.open(); w.document.write(html); w.document.close();
         }
       }
-    };
-  }
+    } catch (e) {
+      console.warn('[iOS] PDF export failed:', e);
+      try {
+        const w = window.open('', '_blank');
+        if (w && w.document) {
+          const html = typeof window.buildReportHTML === 'function'
+              ? window.buildReportHTML(title, contentHTML)
+              : `<!DOCTYPE html><html><body>${contentHTML}</body></html>`;
+          w.document.open(); w.document.write(html); w.document.close();
+        }
+      } catch (_) {}
+    }
+  };
 
   // ── Status bar ─────────────────────────────────────────────────
   if (StatusBar) {
