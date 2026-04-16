@@ -46,11 +46,10 @@ html = html.replace(
 
 // ── 3. Capacitor bridge + iOS-specific JS (haptics, share, keyboard) ──
 const iosBridge = read(path.join(IOS_ADDITIONS, 'ios-bridge.js'));
-const capScript = `    <script src="capacitor.js"></script>\n`;
-// Inject capacitor.js before the main <script>
+// Inject capacitor.js <script> tag before the main <script> block
 html = html.replace(
-    /(\s*)(<script>\s*\(function\(\))/,
-    `\n${capScript}$1$2`
+    /(\s*)(<script>\s*\/\*)/,
+    `$1<script src="capacitor.js"></script>$1$2`
 );
 // Inject ios-bridge.js content inside the IIFE near the end (before })();)
 html = html.replace(
