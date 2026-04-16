@@ -120,6 +120,102 @@
   //     window.iosSaveFile('report.pdf', base64String, true)
   window.iosSaveFile = writeAndShare;
 
+  // ── PDF export: load jsPDF + html2canvas on demand, override exportReport ──
+  // Bundled offline — no CDN calls, safe for App Store.
+  function loadScript(src) {
+    return new Promise((resolve, reject) => {
+      if (document.querySelector(`script[src="${src}"]`)) { resolve(); return; }
+      const s = document.createElement('script');
+      s.src = src; s.onload = () => resolve(); s.onerror = reject;
+      document.head.appendChild(s);
+    });
+  }
+
+  async function ensurePdfLibs() {
+    if (window.jspdf && window.html2canvas) return;
+    // Libraries are copied next to index.html by the sync script
+    await loadScript('jspdf.umd.min.js');
+    await loadScript('html2canvas.min.js');
+  }
+
+  async function htmlToPdfBase64(html, title) {
+    await ensurePdfLibs();
+    // Render the HTML report into an off-screen iframe, then snapshot it.
+    const ifr = document.createElement('iframe');
+    ifr.setAttribute('aria-hidden','true');
+    ifr.style.cssText = 'position:fixed;left:-10000px;top:0;width:794px;height:1123px;border:0;background:#fff;';
+    document.body.appendChild(ifr);
+    try {
+      await new Promise((resolve) => {
+        ifr.onload = () => resolve();
+        const doc = ifr.contentDocument || ifr.contentWindow.document;
+        doc.open(); doc.write(html); doc.close();
+        // onload sometimes fires too early for document.write — wait a tick
+        setTimeout(resolve, 400);
+      });
+      const body = ifr.contentDocument.body;
+      const canvas = await window.html2canvas(body, {
+        backgroundColor: '#ffffff',
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        windowWidth: 794,   // A4 @ 96 dpi
+        windowHeight: body.scrollHeight
+      });
+      const imgData = canvas.toDataURL('image/png');
+      // Multi-page A4 PDF
+      const { jsPDF } = window.jspdf;
+      const pdf = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+      const pageW = 210, pageH = 297;
+      const imgW = pageW;
+      const imgH = canvas.height * pageW / canvas.width;
+      let remaining = imgH;
+      let y = 0;
+      if (imgH <= pageH) {
+        pdf.addImage(imgData, 'PNG', 0, 0, imgW, imgH);
+      } else {
+        // Split across pages
+        while (remaining > 0) {
+          pdf.addImage(imgData, 'PNG', 0, -y, imgW, imgH);
+          remaining -= pageH;
+          y += pageH;
+          if (remaining > 0) pdf.addPage();
+        }
+      }
+      const datauri = pdf.output('datauristring'); // "data:application/pdf;base64,..."
+      const comma = datauri.indexOf(',');
+      return datauri.slice(comma + 1); // base64 only
+    } finally {
+      ifr.remove();
+    }
+  }
+
+  // Override exportReport — the app's central PDF entry point.
+  // We keep the same signature: exportReport(title, contentHTML).
+  if (typeof window.exportReport === 'function' || true) {
+    const origExportReport = window.exportReport;
+    window.exportReport = async function(title, contentHTML) {
+      try {
+        // Build the same styled HTML the web version uses, then convert to PDF
+        const html = typeof window.buildReportHTML === 'function'
+            ? window.buildReportHTML(title, contentHTML)
+            : `<!DOCTYPE html><html><head><title>${title}</title></head><body>${contentHTML}</body></html>`;
+        const safeTitle = String(title || 'report').replace(/[^A-Za-z0-9._-]+/g, '_');
+        const filename = safeTitle + '.pdf';
+        const base64 = await htmlToPdfBase64(html, title);
+        const ok = await writeAndShare(filename, base64, true);
+        if (!ok && typeof origExportReport === 'function') {
+          origExportReport(title, contentHTML);
+        }
+      } catch (e) {
+        console.warn('[iOS] PDF export failed, falling back to print:', e);
+        if (typeof origExportReport === 'function') {
+          origExportReport(title, contentHTML);
+        }
+      }
+    };
+  }
+
   // ── Status bar ─────────────────────────────────────────────────
   if (StatusBar) {
     StatusBar.setStyle({ style: 'DARK' }).catch(() => {});
