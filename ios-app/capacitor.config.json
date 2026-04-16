@@ -3,7 +3,7 @@
   "appName": "H2Oil Well Testing",
   "webDir": "www",
   "ios": {
-    "contentInset": "always",
+    "contentInset": "never",
     "limitsNavigationsToAppBoundDomains": false,
     "scrollEnabled": true,
     "allowsLinkPreview": false,
@@ -22,7 +22,7 @@
     "StatusBar": {
       "style": "DARK",
       "backgroundColor": "#0d1117",
-      "overlaysWebView": false
+      "overlaysWebView": true
     },
     "Preferences": {
       "group": "H2OilWellTesting"

@@ -1,29 +1,54 @@
         /* ══════════════════════════════════════════════════════════
-           iOS additions — keep minimal, don't break existing flex layout
+           iOS additions — edge-to-edge layout with CSS safe-area insets.
+           Pairs with capacitor.config.json: contentInset=never,
+           StatusBar.overlaysWebView=true, viewport-fit=cover.
            ══════════════════════════════════════════════════════════ */
 
-        /* Respect iOS safe-area insets (notch, home indicator) via
-           the sidebar and main panel, NOT body — body stays as the
-           flex container the original CSS expects. */
+        /* Paint the safe-area gutters with the app background so the
+           status-bar / home-indicator zones don't show as black bars. */
+        html, body {
+            background: var(--bg1);
+            overscroll-behavior: none;
+        }
+        html { -webkit-text-size-adjust: 100%; }
+
+        /* Desktop/tablet: sidebar handles the left notch + top inset */
         .sidebar {
             padding-top: calc(16px + env(safe-area-inset-top));
             padding-left: env(safe-area-inset-left);
         }
-        .main, .content, #pgBody {
-            padding-top: env(safe-area-inset-top);
+        /* Main content area respects the right/bottom insets (landscape notch,
+           home indicator). No top inset here on desktop — sidebar is the
+           full-height anchor. */
+        .main {
+            padding-right: env(safe-area-inset-right);
         }
-        .export-bar, .btn-row {
-            padding-bottom: calc(12px + env(safe-area-inset-bottom));
-        }
-
-        /* Lock overscroll rubber-banding without touching position/flex */
-        html, body {
-            overscroll-behavior: none;
+        .page-body {
+            padding-bottom: calc(40px + env(safe-area-inset-bottom));
         }
 
-        /* Prevent iOS text-size-adjust weirdness */
-        html {
-            -webkit-text-size-adjust: 100%;
+        /* Mobile: body stacks column, mob-header is the top bar.
+           Header absorbs the status-bar inset; main absorbs side insets. */
+        @media (max-width: 768px) {
+            .mob-header {
+                padding-top: calc(10px + env(safe-area-inset-top)) !important;
+                padding-left: calc(14px + env(safe-area-inset-left)) !important;
+                padding-right: calc(14px + env(safe-area-inset-right)) !important;
+            }
+            /* Drawer sidebar slides in from the left edge — respect left inset */
+            .sidebar {
+                padding-top: calc(16px + env(safe-area-inset-top));
+                padding-left: calc(env(safe-area-inset-left));
+                padding-bottom: env(safe-area-inset-bottom);
+            }
+            .main {
+                padding-left: env(safe-area-inset-left);
+                padding-right: env(safe-area-inset-right);
+                padding-bottom: env(safe-area-inset-bottom);
+            }
+            .page-body {
+                padding-bottom: calc(30px + env(safe-area-inset-bottom));
+            }
         }
 
         /* Prevent long-press selection on UI chrome (still allow in result boxes) */
