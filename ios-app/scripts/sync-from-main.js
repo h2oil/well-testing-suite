@@ -37,25 +37,39 @@ html = html.replace(
     (m) => m + '\n    ' + iosMeta.trim()
 );
 
-// ── 2. iOS-specific CSS (safe-area, tap highlight, bounce-lock) ──
+// ── 2. iOS-specific CSS (safe-area, tap highlight, bounce-lock + paywall) ──
 const iosCss = read(path.join(IOS_ADDITIONS, 'ios-styles.css'));
+const paywallCss = fs.existsSync(path.join(IOS_ADDITIONS, 'ios-paywall.css'))
+    ? read(path.join(IOS_ADDITIONS, 'ios-paywall.css'))
+    : '';
 html = html.replace(
     /(\s*)(<\/style>)/,
-    `\n        /* ── iOS additions ── */\n${iosCss}$1$2`
+    `\n        /* ── iOS additions ── */\n${iosCss}\n        /* ── iOS paywall ── */\n${paywallCss}$1$2`
 );
 
-// ── 3. Capacitor bridge + iOS-specific JS (haptics, share, keyboard) ──
+// ── 3. Capacitor bridge + iOS-specific JS (haptics, share, keyboard, subs) ──
 const iosBridge = read(path.join(IOS_ADDITIONS, 'ios-bridge.js'));
+const iosSubs = fs.existsSync(path.join(IOS_ADDITIONS, 'ios-subscriptions.js'))
+    ? read(path.join(IOS_ADDITIONS, 'ios-subscriptions.js'))
+    : '';
 // Inject capacitor.js <script> tag before the main <script> block
 html = html.replace(
     /(\s*)(<script>\s*\/\*)/,
     `$1<script src="capacitor.js"></script>$1$2`
 );
-// Inject ios-bridge.js content inside the IIFE near the end (before })();)
+// Inject ios-bridge.js + ios-subscriptions.js inside the IIFE near the end (before })();)
 html = html.replace(
     /(\s*)(}\)\(\);\s*<\/script>\s*<\/body>)/,
-    `\n\n// ── iOS Native Bridge ──\n${iosBridge}\n$1$2`
+    `\n\n// ── iOS Native Bridge ──\n${iosBridge}\n\n// ── iOS Subscription Gate ──\n${iosSubs}\n$1$2`
 );
+
+// ── 3b. Paywall DOM — injected just before </body> so it overlays everything ──
+const paywallHtml = fs.existsSync(path.join(IOS_ADDITIONS, 'ios-paywall.html'))
+    ? read(path.join(IOS_ADDITIONS, 'ios-paywall.html'))
+    : '';
+if (paywallHtml) {
+    html = html.replace(/<\/body>/i, `\n${paywallHtml}\n</body>`);
+}
 
 // ── 4. Ensure output dir exists ──
 fs.mkdirSync(path.dirname(OUTPUT), { recursive: true });
