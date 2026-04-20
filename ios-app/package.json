@@ -1,7 +1,7 @@
 {
   "name": "h2oil-well-testing-ios",
-  "version": "1.0.0",
-  "description": "H2Oil Well Testing Suite — native iOS wrapper (Capacitor)",
+  "version": "1.1.0",
+  "description": "H2Oil Well Testing Suite — native iOS wrapper (Capacitor 7)",
   "private": true,
   "scripts": {
     "sync-main": "node scripts/sync-from-main.js",
@@ -11,23 +11,24 @@
     "open": "npx cap open ios",
     "ios": "npm run build && npm run open",
     "setup": "npm install && npm run sync-main && npx cap add ios && npx cap sync ios && npx cap open ios",
+    "migrate": "npx cap migrate",
     "release": "bash scripts/release.sh"
   },
   "dependencies": {
-    "@capacitor/core": "^6.1.2",
-    "@capacitor/ios": "^6.1.2",
-    "@capacitor/app": "^6.0.1",
-    "@capacitor/haptics": "^6.0.1",
-    "@capacitor/share": "^6.0.2",
-    "@capacitor/filesystem": "^6.0.1",
-    "@capacitor/status-bar": "^6.0.1",
-    "@capacitor/splash-screen": "^6.0.2",
-    "@capacitor/preferences": "^6.0.2",
-    "@revenuecat/purchases-capacitor": "^9.0.0",
-    "@revenuecat/purchases-capacitor-ui": "^9.0.0"
+    "@capacitor/core": "^7.0.0",
+    "@capacitor/ios": "^7.0.0",
+    "@capacitor/app": "^7.0.0",
+    "@capacitor/haptics": "^7.0.0",
+    "@capacitor/share": "^7.0.0",
+    "@capacitor/filesystem": "^7.0.0",
+    "@capacitor/status-bar": "^7.0.0",
+    "@capacitor/splash-screen": "^7.0.0",
+    "@capacitor/preferences": "^7.0.0",
+    "@revenuecat/purchases-capacitor": "^10.3.3",
+    "@revenuecat/purchases-capacitor-ui": "^10.3.3"
   },
   "devDependencies": {
-    "@capacitor/cli": "^6.1.2",
-    "@capacitor/assets": "^3.0.5"
+    "@capacitor/cli": "^7.0.0",
+    "@capacitor/assets": "^4.0.0"
   }
 }

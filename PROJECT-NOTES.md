@@ -5,6 +5,80 @@ All changes land on `dev`; `master` is the stable tree consumed by the iOS sync 
 
 ---
 
+## v1.1 — Capacitor 7 + RevenueCat 10 upgrade
+
+**Why**: RevenueCat's paywall editor requires `purchases-capacitor@^10.3.3`,
+which has a peer dependency of `@capacitor/core: ">=7.0.0"`. To unlock the
+native paywall editor (and Customer Center UI), the whole stack goes to
+Capacitor 7.
+
+**Version bumps**
+- App version: `1.0.0` → `1.1.0` (`package.json`, sidebar brand in
+  `well-testing-app.html`, needs matching bump in Xcode target)
+- `@capacitor/core` + `@capacitor/ios`: `^6.1.2` → `^7.0.0`
+- All `@capacitor/*` plugins: `^6.x.x` → `^7.0.0`
+- `@capacitor/cli`: `^6.1.2` → `^7.0.0`
+- `@capacitor/assets`: `^3.0.5` → `^4.0.0`
+- `@revenuecat/purchases-capacitor` + `@revenuecat/purchases-capacitor-ui`:
+  `^9.0.0` → `^10.3.3`
+
+**Hard requirements on the Mac dev box**
+- Xcode `16.0+` (verify: `xcodebuild -version`)
+- Node `20+` (verify: `node -v`)
+- CocoaPods current (`pod --version` ≥ 1.15)
+
+**Capacitor 7 changes that apply to this project**
+- iOS deployment target 13.0 → 14.0 (automatic via `cap migrate`)
+- `bundledWebRuntime` config option removed (we never used it)
+- No plugin API changes affect our code — Filesystem `directory: 'CACHE'`,
+  StatusBar `overlaysWebView: true`, Share, Haptics, Preferences, App, and
+  SplashScreen options we use are all still valid
+- `capacitor.config.json` needs no edits
+
+**Migration procedure (run on Mac)**
+```bash
+cd ~/well-testing-suite
+git pull origin claude/review-project-errors-x6ZEE
+cd ios-app
+
+# 1. Fresh deps (picks up Capacitor 7 + RC 10.3.3)
+rm -rf node_modules package-lock.json
+npm install
+
+# 2. Let Capacitor migrate the native project (Podfile, deployment target,
+#    pbxproj references). This is the big one — it edits the ios/ folder.
+npx cap migrate
+
+# 3. Reinstall pods against the Capacitor 7 artefacts
+cd ios/App
+pod install
+cd ../..
+
+# 4. Build the sync output + push to Xcode
+npm run build
+
+# 5. Open Xcode, bump the version:
+#      Target App → General → Identity → Version: 1.1
+#      Build: increment from previous (App Store needs a unique build number)
+npm run open
+```
+
+**Post-migration checks**
+- [ ] Xcode → clean build folder (`⇧⌘K`)
+- [ ] Run on simulator — paywall should appear on first launch
+- [ ] Safari Web Inspector console shows:
+      `[H2Oil iOS] Subscription gate active (RevenueCat + native paywall)`
+- [ ] Tick "I am using a supported SDK version" in RevenueCat dashboard
+- [ ] Build a paywall in RC dashboard → Paywalls tab on the `default`
+      offering → publish → restart app to verify it shows
+
+**Rollback plan if Capacitor 7 breaks something**
+Revert the `package.json` diff, delete `node_modules` + `package-lock.json`,
+`npm install`, `npx cap sync ios`. The `ios/` folder you'll need to
+regenerate or revert from git (`git checkout HEAD -- ios/`).
+
+---
+
 ## Subscription — 3-day free trial → $9.99 / month (iOS, via RevenueCat)
 
 **Goal**: Monetise the iOS app via a single auto-renewing subscription tier
