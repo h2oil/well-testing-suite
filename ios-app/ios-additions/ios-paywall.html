@@ -1,0 +1,53 @@
+<!-- ─────────────────────────────────────────────────────────────
+     iOS Paywall (injected into <body> by sync-from-main.js)
+
+     Hidden by default (display:none). ios-subscriptions.js shows it
+     on app launch when the user has no active entitlement, and hides
+     it once a valid subscription / restore / trial is confirmed.
+
+     All copy is Apple-compliant: duration, price, auto-renewal
+     disclosure, and links to T&C + Privacy Policy are all present
+     before the purchase CTA (Guideline 3.1.2).
+     ───────────────────────────────────────────────────────────── -->
+<div id="iosPaywall" class="ios-paywall" role="dialog" aria-modal="true" aria-labelledby="iosPaywallTitle" style="display:none">
+  <div class="ios-paywall-card">
+    <div class="pw-brand">H<sub>2</sub>Oil</div>
+    <h1 id="iosPaywallTitle" class="pw-title">Well Testing Suite Pro</h1>
+    <p class="pw-sub">Unlock every calculator, simulator, and PDF export.</p>
+
+    <ul class="pw-features">
+      <li>AGA-3 gas-rate, Thornhill-Craver, PRV sizing, DCA &amp; PTA</li>
+      <li>Flare radiation 2D/3D &amp; Well Test Simulator</li>
+      <li>Professional PDF reports with client info &amp; logos</li>
+      <li>Offline-first — works on every rig and platform</li>
+    </ul>
+
+    <div class="pw-price-box">
+      <div id="iosPaywallPrice" class="pw-price">$9.99 / month after 3-day free trial</div>
+      <div class="pw-price-note">Cancel any time in Settings before the trial ends to avoid being charged.</div>
+    </div>
+
+    <button id="iosPaywallSubscribe" class="pw-btn pw-btn-primary" type="button">
+      Start 3-Day Free Trial
+    </button>
+    <button id="iosPaywallRestore" class="pw-btn pw-btn-secondary" type="button">
+      Restore Purchases
+    </button>
+
+    <div id="iosPaywallStatus" class="pw-status" aria-live="polite"></div>
+
+    <p class="pw-disclosure">
+      Payment will be charged to your Apple ID account at the end of the 3-day
+      free trial. Subscription automatically renews each month at the price
+      shown above unless cancelled at least 24 hours before the end of the
+      current period. You can manage or cancel your subscription in your
+      Apple ID Account Settings after purchase.
+    </p>
+
+    <div class="pw-links">
+      <a id="iosPaywallTnc" href="https://h2oil.sitify.app" target="_blank" rel="noopener">Terms of Use</a>
+      <span class="pw-sep">·</span>
+      <a id="iosPaywallPrivacy" href="https://h2oil.sitify.app/privacy" target="_blank" rel="noopener">Privacy Policy</a>
+    </div>
+  </div>
+</div>
