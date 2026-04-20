@@ -5,90 +5,104 @@ All changes land on `dev`; `master` is the stable tree consumed by the iOS sync 
 
 ---
 
-## Subscription — 3-day free trial → $9.99 / month (iOS)
+## Subscription — 3-day free trial → $9.99 / month (iOS, via RevenueCat)
 
 **Goal**: Monetise the iOS app via a single auto-renewing subscription tier
 with a 3-day free trial. Whole-app gating (no free tier inside the app).
+Uses RevenueCat as the entitlement / analytics backend on top of StoreKit.
 
 **Product**
 - Product ID: `com.h2oil.welltesting.pro.monthly`
-- Subscription group: `H2Oil Pro`
+- Subscription group: anything you like (name is for your reference only)
 - Price: $9.99 USD / month (configurable per territory in App Store Connect)
 - Intro offer: 3-day free trial (one-time, first-time subscribers)
 - T&C URL: https://h2oil.sitify.app (must also be set as the EULA in App Store
   Connect → App Information)
+- RevenueCat entitlement id: `pro`
 
 **Files added / changed**
-- `ios-app/package.json` — added `@squareetlabs/capacitor-subscriptions` dep
-- `ios-app/ios-additions/ios-subscriptions.js` — StoreKit bridge, cached
-  entitlement, purchase/restore flows, paywall show/hide gate
+- `ios-app/package.json` — added `@revenuecat/purchases-capacitor` dep (v9,
+  the last line that still supports Capacitor 6; v13+ requires Capacitor 7)
+- `ios-app/ios-additions/ios-subscriptions.js` — RevenueCat bridge, offline
+  entitlement cache, purchase/restore flows, paywall show/hide gate
 - `ios-app/ios-additions/ios-paywall.html` — paywall DOM (injected at `</body>`)
 - `ios-app/ios-additions/ios-paywall.css` — full-screen overlay styles
-- `ios-app/scripts/sync-from-main.js` — injects the paywall HTML/CSS/JS into
-  `www/index.html`, same way the rest of the iOS additions are layered in
+- `ios-app/scripts/sync-from-main.js` — injects paywall HTML/CSS/JS into
+  `www/index.html`
 
 **How the gate works**
 1. On launch, `ios-subscriptions.js` reads a cached entitlement from
    localStorage (mirrored into Preferences for iCloud backup). If still
-   valid (not expired) the paywall stays hidden — this means the app works
+   valid (not expired) the paywall stays hidden — lets the app work
    offline for subscribers.
-2. In the background, it queries StoreKit (`getCurrentEntitlements`). On
-   success it updates the cache; on failure it keeps the cached value. If
-   neither path yields an active entitlement, the paywall overlay is shown
-   and blocks the rest of the UI (`z-index: 10000`, scroll lock).
-3. Subscribe button calls `purchaseProduct({ productIdentifier: PRODUCT_ID })`.
-   Apple's StoreKit sheet handles the 3-day free trial automatically because
-   the intro offer is configured in App Store Connect.
-4. Restore Purchases calls `restorePurchases()` (mandatory per App Store
-   Review Guideline 3.1.1).
-5. `visibilitychange` re-evaluates on return from background (catches
-   subscriptions cancelled/renewed in Settings).
+2. In the background, it calls `Purchases.configure` then
+   `Purchases.getCustomerInfo`. If the `pro` entitlement is active,
+   cache is updated and paywall stays hidden.
+3. Subscribe button calls `Purchases.purchasePackage({ aPackage })` using
+   the monthly package from the default offering. StoreKit handles the
+   3-day free trial automatically when the intro offer is configured.
+4. Restore Purchases calls `Purchases.restorePurchases()` (mandatory).
+5. `visibilitychange` re-evaluates on return from background.
+
+**Required config in code** — in `ios-app/ios-additions/ios-subscriptions.js`
+at the top, replace the placeholder API key with the iOS public key from
+your RevenueCat dashboard:
+```js
+const REVENUECAT_API_KEY = 'appl_XXXXXXXXXXXXXXXXXXXXXXXX';
+```
 
 **Apple compliance checklist** (avoids 3.1.2 rejection)
 - [x] Price shown before purchase CTA
 - [x] Duration shown before purchase CTA ("monthly")
 - [x] Trial duration and terms shown
-- [x] Auto-renewal disclosure present ("automatically renews unless cancelled
-      at least 24 hours before the end of the current period")
+- [x] Auto-renewal disclosure present
 - [x] Links to EULA (T&C) and Privacy Policy present on paywall
 - [x] Restore Purchases button present
-- [x] StoreKit used (no external payment)
+- [x] StoreKit used (RevenueCat wraps StoreKit, no external payment)
 
-**App Store Connect setup (must be done on Apple's side too)**
-1. My Apps → H2Oil → Subscriptions → create subscription group "H2Oil Pro"
+**Setup — App Store Connect**
+1. My Apps → H2Oil → Subscriptions → create subscription group
 2. Add subscription:
    - Reference name: `H2Oil Pro Monthly`
    - Product ID: `com.h2oil.welltesting.pro.monthly`
    - Duration: 1 Month
    - Price: Tier matching $9.99 USD
-3. Add Introductory Offer:
-   - Type: Free
-   - Duration: 3 Days
-   - Eligibility: New subscribers
+3. Add Introductory Offer → Type: Free, Duration: 3 Days, Eligibility: New
+   subscribers
 4. Localization — add display name + description (required before review)
-5. App Information → set EULA URL to https://h2oil.sitify.app (or use Apple
-   standard EULA if your T&C doesn't add anything)
+5. App Information → set EULA URL to https://h2oil.sitify.app
 6. App Privacy → declare "Purchases" data type
-7. Review Information → add a sandbox test account with the subscription so
-   the reviewer can test without being charged
+7. Review Information → add a sandbox test account
+
+**Setup — RevenueCat dashboard** (https://app.revenuecat.com)
+1. Create project → add iOS app → link your App Store Connect shared secret
+   (App Store Connect → Users and Access → Keys → In-App Purchase → generate
+   shared secret)
+2. Entitlements → create entitlement with identifier **`pro`**
+3. Products → import from App Store Connect (or create manually with id
+   `com.h2oil.welltesting.pro.monthly`), attach it to the `pro` entitlement
+4. Offerings → create offering with identifier **`default`**, add a Monthly
+   package that points to your product
+5. API Keys → copy the **iOS public key** (starts with `appl_`) and paste
+   it into `REVENUECAT_API_KEY` in `ios-subscriptions.js`
+
+**Why RevenueCat over raw StoreKit**
+- Server-side receipt validation (can't be bypassed by jailbroken devices)
+- Real-time entitlement revocation (refunds, chargebacks)
+- Cross-platform if we add Android later (same `pro` entitlement works)
+- Subscription analytics out of the box (MRR, churn, cohorts)
+- Free up to $2.5k tracked MRR — effectively free for launch
 
 **Dev helper** — reset cached entitlement in Safari Web Inspector:
 ```js
 window.__h2oilResetEntitlement()
 ```
-This is only enabled inside the native wrapper; safe to leave in (no harm
-since it only affects the local cache — the next live StoreKit query will
-restore the correct state).
 
 **Not included (on purpose)**
-- Server-side receipt validation — StoreKit 2 signs receipts and the plugin
-  validates locally, which is fine for a utility app at this scale. Add a
-  backend only if we see meaningful fraud.
-- Analytics / paywall A/B — can bolt on RevenueCat later without code
-  changes from the user's perspective (they'll see the same paywall).
+- Paywall A/B — RevenueCat supports this via remote offerings but we only
+  have one offering right now.
 - Multi-tier (monthly + annual) — stick with monthly only until we have
-  conversion data. Adding annual is 10 lines in `ios-subscriptions.js`
-  plus an extra product in App Store Connect.
+  conversion data.
 
 ---
 

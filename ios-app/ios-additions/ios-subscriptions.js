@@ -1,21 +1,27 @@
 // ══════════════════════════════════════════════════════════════
-// iOS Subscription Gate (@squareetlabs/capacitor-subscriptions)
+// iOS Subscription Gate (RevenueCat — @revenuecat/purchases-capacitor)
 //
 // Blocks the app behind a paywall until the user has an active
-// auto-renewing subscription (or is inside the Apple-granted free
-// trial intro offer). Gracefully no-ops on non-iOS platforms.
+// entitlement. Gracefully no-ops on non-iOS platforms.
 //
-// Product: com.h2oil.welltesting.pro.monthly  ($9.99 / month USD)
-// Intro  : 3-day free trial (configured in App Store Connect)
-// T&C    : https://h2oil.sitify.app
-//
-// Apple compliance checklist:
-//   [x] Restore Purchases button (mandatory)
-//   [x] Auto-renewal disclosure shown before purchase
-//   [x] Price, duration, trial terms shown
-//   [x] Links to EULA (T&C) + Privacy Policy
-//   [x] StoreKit used for digital IAP (no external payment)
+// ─── CONFIG ────────────────────────────────────────────────────
+//   1. Sign up at https://app.revenuecat.com
+//   2. Add your iOS app → copy the PUBLIC iOS API key (starts "appl_")
+//   3. In the dashboard create:
+//        • Entitlement identifier: "pro"
+//        • Product: com.h2oil.welltesting.pro.monthly
+//        • Offering: "default" with a monthly Package linked to the
+//          product above
+//   4. Paste the API key below ↓
+// ──────────────────────────────────────────────────────────────
+const REVENUECAT_API_KEY = 'appl_REPLACE_ME_WITH_REVENUECAT_IOS_KEY';
+const ENTITLEMENT_ID = 'pro';               // matches RC dashboard
+const PRODUCT_ID = 'com.h2oil.welltesting.pro.monthly';
+const TNC_URL = 'https://h2oil.sitify.app';
+const PRIVACY_URL = 'https://h2oil.sitify.app/privacy';
+const ENTITLEMENT_CACHE_KEY = 'h2oil.entitlement';   // offline cache
 // ══════════════════════════════════════════════════════════════
+
 (function(){
   if (typeof window === 'undefined') return;
   const isNative = window.Capacitor
@@ -23,114 +29,142 @@
       && window.Capacitor.isNativePlatform();
   if (!isNative) return;
 
-  const PRODUCT_ID = 'com.h2oil.welltesting.pro.monthly';
-  const TNC_URL = 'https://h2oil.sitify.app';
-  const PRIVACY_URL = 'https://h2oil.sitify.app/privacy';
-  const ENTITLEMENT_KEY = 'h2oil.entitlement';   // cached locally
-  const Subs = (window.Capacitor.Plugins && window.Capacitor.Plugins.Subscriptions) || null;
+  // RevenueCat's Capacitor plugin registers under Plugins.Purchases.
+  const RC = (window.Capacitor.Plugins && window.Capacitor.Plugins.Purchases) || null;
   const Prefs = window.Capacitor.Plugins && window.Capacitor.Plugins.Preferences;
 
-  // ── Entitlement cache ────────────────────────────────────────
-  // Stores { active: bool, expiry: epochMs, productId, source }
-  // so the app can launch offline without re-hitting StoreKit.
-  async function readCachedEntitlement() {
+  let currentPackage = null;  // cached monthly package from getOfferings
+
+  // ── Offline entitlement cache ────────────────────────────────
+  //   RC also caches, but keeping our own lets the app launch
+  //   instantly offline without hitting their CDN.
+  function readCachedEntitlement() {
     try {
-      const raw = localStorage.getItem(ENTITLEMENT_KEY);
+      const raw = localStorage.getItem(ENTITLEMENT_CACHE_KEY);
       if (!raw) return null;
       const o = JSON.parse(raw);
       if (!o || typeof o !== 'object') return null;
       return o;
-    } catch (e) { return null; }
+    } catch (_) { return null; }
   }
   function writeCachedEntitlement(e) {
-    try { localStorage.setItem(ENTITLEMENT_KEY, JSON.stringify(e || {})); } catch (_) {}
-    if (Prefs) Prefs.set({ key: ENTITLEMENT_KEY, value: JSON.stringify(e || {}) }).catch(() => {});
+    try { localStorage.setItem(ENTITLEMENT_CACHE_KEY, JSON.stringify(e || {})); } catch (_) {}
+    if (Prefs) Prefs.set({ key: ENTITLEMENT_CACHE_KEY, value: JSON.stringify(e || {}) }).catch(() => {});
   }
   function isCacheValid(e) {
     return !!(e && e.active && typeof e.expiry === 'number' && Date.now() < e.expiry);
   }
 
-  // ── StoreKit lookups via plugin ──────────────────────────────
-  async function queryLiveEntitlement() {
-    if (!Subs) return null;
-    try {
-      // Plugin exposes getCurrentEntitlements or isSubscriptionValid
-      // depending on version — try both.
-      if (typeof Subs.getCurrentEntitlements === 'function') {
-        const r = await Subs.getCurrentEntitlements();
-        const list = (r && (r.entitlements || r.data)) || [];
-        const ent = list.find(x => x.productIdentifier === PRODUCT_ID || x.productId === PRODUCT_ID);
-        if (ent) {
-          const expiry = ent.expirationDate ? new Date(ent.expirationDate).getTime() : (Date.now() + 60*60*1000);
-          return { active: true, expiry, productId: PRODUCT_ID, source: 'entitlements' };
-        }
-      }
-      if (typeof Subs.isSubscriptionValid === 'function') {
-        const r = await Subs.isSubscriptionValid({ productIdentifier: PRODUCT_ID });
-        if (r && (r.isValid || r.responseCode === 0 || r.responseCode === '0')) {
-          return { active: true, expiry: Date.now() + 24*60*60*1000, productId: PRODUCT_ID, source: 'isValid' };
-        }
-      }
-    } catch (e) {
-      console.warn('[iOS Subs] entitlement query failed:', e);
+  // ── RevenueCat setup ─────────────────────────────────────────
+  let configured = false;
+  async function ensureConfigured() {
+    if (!RC || configured) return configured;
+    if (!REVENUECAT_API_KEY || REVENUECAT_API_KEY.startsWith('appl_REPLACE_ME')) {
+      console.warn('[iOS Subs] RevenueCat API key not configured');
+      return false;
     }
-    return null;
+    try {
+      await RC.configure({ apiKey: REVENUECAT_API_KEY });
+      configured = true;
+      console.log('[iOS Subs] RevenueCat configured');
+      return true;
+    } catch (e) {
+      console.warn('[iOS Subs] RevenueCat configure failed:', e);
+      return false;
+    }
   }
 
-  async function fetchProduct() {
-    if (!Subs) return null;
+  async function loadOfferings() {
+    if (!RC) return null;
+    if (!(await ensureConfigured())) return null;
     try {
-      if (typeof Subs.getProductDetails === 'function') {
-        const r = await Subs.getProductDetails({ productIdentifier: PRODUCT_ID });
-        return (r && (r.data || r.product)) || r;
-      }
+      const res = await RC.getOfferings();
+      const offerings = res && (res.offerings || res);
+      const current = offerings && (offerings.current || (offerings.all && offerings.all.default));
+      if (!current) return null;
+      // Prefer the typed .monthly package, fall back to first available.
+      const pkg = current.monthly
+          || (current.availablePackages && current.availablePackages.find(p =>
+                (p.product && p.product.identifier === PRODUCT_ID) ||
+                p.identifier === '$rc_monthly'))
+          || (current.availablePackages && current.availablePackages[0]);
+      currentPackage = pkg || null;
+      return currentPackage;
     } catch (e) {
-      console.warn('[iOS Subs] product fetch failed:', e);
+      console.warn('[iOS Subs] getOfferings failed:', e);
+      return null;
     }
-    return null;
+  }
+
+  function entitlementFromCustomerInfo(customerInfo) {
+    if (!customerInfo) return null;
+    const active = customerInfo.entitlements && customerInfo.entitlements.active;
+    if (!active) return null;
+    const ent = active[ENTITLEMENT_ID];
+    if (!ent) return null;
+    const expiry = ent.expirationDate ? new Date(ent.expirationDate).getTime()
+                 : (Date.now() + 24*60*60*1000);
+    return {
+      active: true,
+      expiry,
+      productId: ent.productIdentifier || PRODUCT_ID,
+      willRenew: !!ent.willRenew,
+      inTrial: ent.periodType === 'trial' || ent.periodType === 'TRIAL'
+    };
+  }
+
+  async function queryLiveEntitlement() {
+    if (!RC) return null;
+    if (!(await ensureConfigured())) return null;
+    try {
+      const res = await RC.getCustomerInfo();
+      const customerInfo = (res && (res.customerInfo || res)) || null;
+      return entitlementFromCustomerInfo(customerInfo);
+    } catch (e) {
+      console.warn('[iOS Subs] getCustomerInfo failed:', e);
+      return null;
+    }
   }
 
   async function purchase() {
-    if (!Subs) throw new Error('Subscriptions plugin not available');
-    if (typeof Subs.purchaseProduct !== 'function') throw new Error('purchaseProduct not implemented');
-    const r = await Subs.purchaseProduct({ productIdentifier: PRODUCT_ID });
-    // Success responses vary — treat any non-error response with an active
-    // transaction / entitlement as success; re-query to confirm.
-    return r;
+    if (!RC) throw new Error('Purchases plugin not available');
+    if (!(await ensureConfigured())) throw new Error('RevenueCat not configured');
+    if (!currentPackage) {
+      await loadOfferings();
+      if (!currentPackage) throw new Error('No subscription package available');
+    }
+    // RevenueCat's Capacitor bridge expects { aPackage: <Package> }.
+    const res = await RC.purchasePackage({ aPackage: currentPackage });
+    const info = res && (res.customerInfo || (res.purchaseResult && res.purchaseResult.customerInfo));
+    return entitlementFromCustomerInfo(info);
   }
 
   async function restore() {
-    if (!Subs) throw new Error('Subscriptions plugin not available');
-    if (typeof Subs.restorePurchases === 'function') {
-      return Subs.restorePurchases();
-    }
-    if (typeof Subs.getCurrentEntitlements === 'function') {
-      return Subs.getCurrentEntitlements();
-    }
-    throw new Error('No restore method available');
+    if (!RC) throw new Error('Purchases plugin not available');
+    if (!(await ensureConfigured())) throw new Error('RevenueCat not configured');
+    const res = await RC.restorePurchases();
+    const info = res && (res.customerInfo || res);
+    return entitlementFromCustomerInfo(info);
   }
 
-  // ── Paywall UI ────────────────────────────────────────────────
-  function ensurePaywallNode() {
-    return document.getElementById('iosPaywall');
-  }
+  // ── Paywall UI helpers ───────────────────────────────────────
+  function paywallNode() { return document.getElementById('iosPaywall'); }
 
   function showPaywall() {
-    const el = ensurePaywallNode();
+    const el = paywallNode();
     if (!el) return;
     el.style.display = 'flex';
-    // Lock scroll underneath
     document.documentElement.style.overflow = 'hidden';
     document.body.style.overflow = 'hidden';
   }
   function hidePaywall() {
-    const el = ensurePaywallNode();
+    const el = paywallNode();
     if (!el) return;
     el.style.display = 'none';
     document.documentElement.style.overflow = '';
     document.body.style.overflow = '';
   }
-  function setPaywallStatus(msg, isError) {
+  function setStatus(msg, isError) {
     const s = document.getElementById('iosPaywallStatus');
     if (!s) return;
     s.textContent = msg || '';
@@ -144,59 +178,57 @@
   }
 
   async function refreshPricingLabel() {
-    const p = await fetchProduct();
-    if (!p) return;
-    const price = p.displayPrice || p.price || p.localizedPrice || '';
+    const pkg = await loadOfferings();
+    if (!pkg) return;
+    const priceString = (pkg.product && (pkg.product.priceString || pkg.product.price_string))
+                        || pkg.priceString
+                        || '';
     const el = document.getElementById('iosPaywallPrice');
-    if (el && price) {
-      el.textContent = price + ' / month after 3-day free trial';
+    if (el && priceString) {
+      el.textContent = priceString + ' / month after 3-day free trial';
     }
   }
 
-  // ── Gate logic ────────────────────────────────────────────────
+  // ── Gate evaluation ──────────────────────────────────────────
   async function evaluateGate() {
-    // 1) Cached valid → unlock immediately (offline-friendly)
-    const cached = await readCachedEntitlement();
+    const cached = readCachedEntitlement();
     if (isCacheValid(cached)) {
       hidePaywall();
     } else {
       showPaywall();
     }
-    // 2) Always verify against StoreKit in the background.
     const live = await queryLiveEntitlement();
     if (live && live.active) {
       writeCachedEntitlement(live);
       hidePaywall();
     } else if (!isCacheValid(cached)) {
-      // Cache expired AND no live entitlement → keep paywall up.
       writeCachedEntitlement({ active: false });
       showPaywall();
     }
   }
 
-  // ── Event wiring ──────────────────────────────────────────────
+  // ── Button wiring ────────────────────────────────────────────
   function wireButtons() {
     const sub = document.getElementById('iosPaywallSubscribe');
     const rest = document.getElementById('iosPaywallRestore');
     if (sub && !sub.__wired) {
       sub.__wired = true;
       sub.addEventListener('click', async () => {
-        setPaywallStatus('Processing…');
+        setStatus('Processing…');
         setButtonsEnabled(false);
         try {
-          await purchase();
-          const live = await queryLiveEntitlement();
-          if (live && live.active) {
-            writeCachedEntitlement(live);
-            setPaywallStatus('Subscription active. Welcome!');
+          const ent = await purchase();
+          if (ent && ent.active) {
+            writeCachedEntitlement(ent);
+            setStatus('Subscription active. Welcome!');
             setTimeout(hidePaywall, 600);
           } else {
-            setPaywallStatus('Purchase completed but entitlement not yet active. Try Restore Purchases in a moment.', true);
+            setStatus('Purchase completed but entitlement not yet active. Try Restore Purchases.', true);
           }
         } catch (e) {
-          const msg = (e && (e.message || e.errorMessage)) || 'Purchase failed';
-          if (/cancel/i.test(msg)) setPaywallStatus('Purchase cancelled.', true);
-          else setPaywallStatus(msg, true);
+          const cancelled = !!(e && (e.userCancelled || e.user_cancelled));
+          const msg = cancelled ? 'Purchase cancelled.' : (e && (e.message || e.errorMessage) || 'Purchase failed');
+          setStatus(msg, true);
         } finally {
           setButtonsEnabled(true);
         }
@@ -205,53 +237,44 @@
     if (rest && !rest.__wired) {
       rest.__wired = true;
       rest.addEventListener('click', async () => {
-        setPaywallStatus('Restoring…');
+        setStatus('Restoring…');
         setButtonsEnabled(false);
         try {
-          await restore();
-          const live = await queryLiveEntitlement();
-          if (live && live.active) {
-            writeCachedEntitlement(live);
-            setPaywallStatus('Subscription restored.');
+          const ent = await restore();
+          if (ent && ent.active) {
+            writeCachedEntitlement(ent);
+            setStatus('Subscription restored.');
             setTimeout(hidePaywall, 600);
           } else {
-            setPaywallStatus('No active subscription found on this Apple ID.', true);
+            setStatus('No active subscription found on this Apple ID.', true);
           }
         } catch (e) {
-          setPaywallStatus((e && (e.message || e.errorMessage)) || 'Restore failed', true);
+          setStatus((e && (e.message || e.errorMessage)) || 'Restore failed', true);
         } finally {
           setButtonsEnabled(true);
         }
       });
     }
     const tnc = document.getElementById('iosPaywallTnc');
-    if (tnc && !tnc.__wired) {
-      tnc.__wired = true;
-      tnc.setAttribute('href', TNC_URL);
-    }
+    if (tnc) tnc.setAttribute('href', TNC_URL);
     const priv = document.getElementById('iosPaywallPrivacy');
-    if (priv && !priv.__wired) {
-      priv.__wired = true;
-      priv.setAttribute('href', PRIVACY_URL);
-    }
+    if (priv) priv.setAttribute('href', PRIVACY_URL);
   }
 
-  // Expose a dev helper to force-reset entitlement (useful in TestFlight)
+  // Dev helper — reset cached entitlement (visible in Web Inspector)
   window.__h2oilResetEntitlement = function() {
     writeCachedEntitlement({ active: false });
     showPaywall();
   };
 
-  // Re-evaluate when the app returns from background (user may have
-  // cancelled/renewed via Settings).
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) evaluateGate();
   });
 
-  function init() {
+  async function init() {
     wireButtons();
-    refreshPricingLabel();
-    evaluateGate();
+    await refreshPricingLabel();
+    await evaluateGate();
   }
 
   if (document.readyState === 'loading') {
@@ -260,5 +283,5 @@
     init();
   }
 
-  console.log('[H2Oil iOS] Subscription gate active');
+  console.log('[H2Oil iOS] Subscription gate active (RevenueCat)');
 })();
