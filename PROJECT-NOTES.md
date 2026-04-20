@@ -21,11 +21,14 @@ Uses RevenueCat as the entitlement / analytics backend on top of StoreKit.
 - RevenueCat entitlement id: `pro`
 
 **Files added / changed**
-- `ios-app/package.json` — added `@revenuecat/purchases-capacitor` dep (v9,
-  the last line that still supports Capacitor 6; v13+ requires Capacitor 7)
+- `ios-app/package.json` — added `@revenuecat/purchases-capacitor` +
+  `@revenuecat/purchases-capacitor-ui` deps (v9, the last line that still
+  supports Capacitor 6; v13+ requires Capacitor 7)
 - `ios-app/ios-additions/ios-subscriptions.js` — RevenueCat bridge, offline
-  entitlement cache, purchase/restore flows, paywall show/hide gate
-- `ios-app/ios-additions/ios-paywall.html` — paywall DOM (injected at `</body>`)
+  entitlement cache, native paywall + Customer Center wiring, HTML paywall
+  fallback, public `window.H2OilSubs` API
+- `ios-app/ios-additions/ios-paywall.html` — fallback paywall DOM (used
+  only if the native RC paywall can't be shown)
 - `ios-app/ios-additions/ios-paywall.css` — full-screen overlay styles
 - `ios-app/scripts/sync-from-main.js` — injects paywall HTML/CSS/JS into
   `www/index.html`
@@ -33,16 +36,31 @@ Uses RevenueCat as the entitlement / analytics backend on top of StoreKit.
 **How the gate works**
 1. On launch, `ios-subscriptions.js` reads a cached entitlement from
    localStorage (mirrored into Preferences for iCloud backup). If still
-   valid (not expired) the paywall stays hidden — lets the app work
-   offline for subscribers.
-2. In the background, it calls `Purchases.configure` then
-   `Purchases.getCustomerInfo`. If the `pro` entitlement is active,
-   cache is updated and paywall stays hidden.
-3. Subscribe button calls `Purchases.purchasePackage({ aPackage })` using
-   the monthly package from the default offering. StoreKit handles the
-   3-day free trial automatically when the intro offer is configured.
-4. Restore Purchases calls `Purchases.restorePurchases()` (mandatory).
-5. `visibilitychange` re-evaluates on return from background.
+   valid (not expired) the app unlocks instantly — works offline for
+   existing subscribers.
+2. In the background: `Purchases.configure` → `getCustomerInfo`. If the
+   `pro` entitlement is active, cache updates and the gate stays open.
+3. No entitlement → `RevenueCatUI.presentPaywallIfNeeded` shows the
+   native RC paywall (with whatever design was built in the RC dashboard
+   Paywalls tab). StoreKit handles the 3-day trial automatically when the
+   intro offer is configured.
+4. If the UI plugin or the paywall isn't available, we fall through to
+   the custom HTML paywall (same Subscribe + Restore + T&C + Privacy
+   Policy, just not designed in RC's editor).
+5. A small `⚙︎` floating button appears in the corner for subscribers
+   and opens `RevenueCatUI.presentCustomerCenter()` — the native cancel
+   / change-plan / refund-request flow.
+6. `visibilitychange` re-evaluates after returning from the Customer
+   Center or from the iOS Settings app.
+
+**Public API** (for wiring buttons in calculators or the sidebar):
+```js
+await window.H2OilSubs.isEntitled();       // boolean
+await window.H2OilSubs.getEntitlement();   // { active, expiry, productId, willRenew, inTrial }
+await window.H2OilSubs.presentPaywall();   // show RC paywall on demand
+await window.H2OilSubs.presentCustomerCenter();  // manage / cancel
+await window.H2OilSubs.refresh();          // re-run the gate check
+```
 
 **Required config in code** — in `ios-app/ios-additions/ios-subscriptions.js`
 at the top, replace the placeholder API key with the iOS public key from
@@ -79,12 +97,18 @@ const REVENUECAT_API_KEY = 'appl_XXXXXXXXXXXXXXXXXXXXXXXX';
    (App Store Connect → Users and Access → Keys → In-App Purchase → generate
    shared secret)
 2. Entitlements → create entitlement with identifier **`pro`**
+   (display name can be "Well Testing Suite Pro")
 3. Products → import from App Store Connect (or create manually with id
    `com.h2oil.welltesting.pro.monthly`), attach it to the `pro` entitlement
 4. Offerings → create offering with identifier **`default`**, add a Monthly
    package that points to your product
-5. API Keys → copy the **iOS public key** (starts with `appl_`) and paste
+5. **Paywalls** tab (on the `default` offering) → build a paywall with
+   RC's visual editor. This is what `presentPaywallIfNeeded` shows. If you
+   skip this step, the custom HTML paywall (fallback) is used instead.
+6. API Keys → copy the **iOS public key** (starts with `appl_`) and paste
    it into `REVENUECAT_API_KEY` in `ios-subscriptions.js`
+7. Customer Center (free, included) — no setup needed. Appears via the
+   `⚙︎` button once a user is entitled.
 
 **Why RevenueCat over raw StoreKit**
 - Server-side receipt validation (can't be bypassed by jailbroken devices)
