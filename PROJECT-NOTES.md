@@ -5,6 +5,35 @@ All changes land on `dev`; `master` is the stable tree consumed by the iOS sync 
 
 ---
 
+## App Store rejection fix (Guideline 2.3.8 — placeholder-looking icons)
+
+**Reviewer feedback**: "The app icons appear to be placeholder icons."
+
+**Root cause**: My first `make-assets.py` composed the H2Oil wordmark at 72%
+width on the 1024×1024 canvas, leaving ~60% of the area as dark empty space.
+At small sizes (60pt home-screen, 40pt spotlight) the logo shrank into a tiny
+mark surrounded by a dark square — reviewers correctly read this as "default
+dark-square placeholder with a logo pasted in the middle."
+
+**Fix**:
+- Auto-crop the source logo to its alpha bounding box (removes the built-in
+  padding in the PNG).
+- Scale the wordmark to **92% of the icon's longest axis** — leaves just
+  enough margin for iOS's corner rounding without wasting area. The H₂OIL
+  wordmark with droplet now fills the icon and is legible from 20pt spotlight
+  through 1024pt App Store listing.
+- Splash bumped to 60% fill (from 50%) for visual parity with the icon.
+- Dropped the droplet-only variant — while cleaner at tiny sizes, losing the
+  "H2Oil" wordmark made it a generic oil-drop symbol that wouldn't help users
+  identify the app.
+
+Regenerate after any logo change:
+```bash
+cd ios-app && npm run assets   # make-assets.py → @capacitor/assets → ios/
+```
+
+---
+
 ## PDF export on iOS (real fix — prior one was a no-op)
 
 **Problem**: PDF export on iOS never triggered the bundled jsPDF pipeline —
