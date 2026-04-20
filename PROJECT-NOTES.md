@@ -5,6 +5,93 @@ All changes land on `dev`; `master` is the stable tree consumed by the iOS sync 
 
 ---
 
+## Subscription — 3-day free trial → $9.99 / month (iOS)
+
+**Goal**: Monetise the iOS app via a single auto-renewing subscription tier
+with a 3-day free trial. Whole-app gating (no free tier inside the app).
+
+**Product**
+- Product ID: `com.h2oil.welltesting.pro.monthly`
+- Subscription group: `H2Oil Pro`
+- Price: $9.99 USD / month (configurable per territory in App Store Connect)
+- Intro offer: 3-day free trial (one-time, first-time subscribers)
+- T&C URL: https://h2oil.sitify.app (must also be set as the EULA in App Store
+  Connect → App Information)
+
+**Files added / changed**
+- `ios-app/package.json` — added `@squareetlabs/capacitor-subscriptions` dep
+- `ios-app/ios-additions/ios-subscriptions.js` — StoreKit bridge, cached
+  entitlement, purchase/restore flows, paywall show/hide gate
+- `ios-app/ios-additions/ios-paywall.html` — paywall DOM (injected at `</body>`)
+- `ios-app/ios-additions/ios-paywall.css` — full-screen overlay styles
+- `ios-app/scripts/sync-from-main.js` — injects the paywall HTML/CSS/JS into
+  `www/index.html`, same way the rest of the iOS additions are layered in
+
+**How the gate works**
+1. On launch, `ios-subscriptions.js` reads a cached entitlement from
+   localStorage (mirrored into Preferences for iCloud backup). If still
+   valid (not expired) the paywall stays hidden — this means the app works
+   offline for subscribers.
+2. In the background, it queries StoreKit (`getCurrentEntitlements`). On
+   success it updates the cache; on failure it keeps the cached value. If
+   neither path yields an active entitlement, the paywall overlay is shown
+   and blocks the rest of the UI (`z-index: 10000`, scroll lock).
+3. Subscribe button calls `purchaseProduct({ productIdentifier: PRODUCT_ID })`.
+   Apple's StoreKit sheet handles the 3-day free trial automatically because
+   the intro offer is configured in App Store Connect.
+4. Restore Purchases calls `restorePurchases()` (mandatory per App Store
+   Review Guideline 3.1.1).
+5. `visibilitychange` re-evaluates on return from background (catches
+   subscriptions cancelled/renewed in Settings).
+
+**Apple compliance checklist** (avoids 3.1.2 rejection)
+- [x] Price shown before purchase CTA
+- [x] Duration shown before purchase CTA ("monthly")
+- [x] Trial duration and terms shown
+- [x] Auto-renewal disclosure present ("automatically renews unless cancelled
+      at least 24 hours before the end of the current period")
+- [x] Links to EULA (T&C) and Privacy Policy present on paywall
+- [x] Restore Purchases button present
+- [x] StoreKit used (no external payment)
+
+**App Store Connect setup (must be done on Apple's side too)**
+1. My Apps → H2Oil → Subscriptions → create subscription group "H2Oil Pro"
+2. Add subscription:
+   - Reference name: `H2Oil Pro Monthly`
+   - Product ID: `com.h2oil.welltesting.pro.monthly`
+   - Duration: 1 Month
+   - Price: Tier matching $9.99 USD
+3. Add Introductory Offer:
+   - Type: Free
+   - Duration: 3 Days
+   - Eligibility: New subscribers
+4. Localization — add display name + description (required before review)
+5. App Information → set EULA URL to https://h2oil.sitify.app (or use Apple
+   standard EULA if your T&C doesn't add anything)
+6. App Privacy → declare "Purchases" data type
+7. Review Information → add a sandbox test account with the subscription so
+   the reviewer can test without being charged
+
+**Dev helper** — reset cached entitlement in Safari Web Inspector:
+```js
+window.__h2oilResetEntitlement()
+```
+This is only enabled inside the native wrapper; safe to leave in (no harm
+since it only affects the local cache — the next live StoreKit query will
+restore the correct state).
+
+**Not included (on purpose)**
+- Server-side receipt validation — StoreKit 2 signs receipts and the plugin
+  validates locally, which is fine for a utility app at this scale. Add a
+  backend only if we see meaningful fraud.
+- Analytics / paywall A/B — can bolt on RevenueCat later without code
+  changes from the user's perspective (they'll see the same paywall).
+- Multi-tier (monthly + annual) — stick with monthly only until we have
+  conversion data. Adding annual is 10 lines in `ios-subscriptions.js`
+  plus an extra product in App Store Connect.
+
+---
+
 ## App Store rejection fix (Guideline 2.3.8 — placeholder-looking icons)
 
 **Reviewer feedback**: "The app icons appear to be placeholder icons."
