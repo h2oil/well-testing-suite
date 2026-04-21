@@ -5,6 +5,80 @@ All changes land on `dev`; `master` is the stable tree consumed by the iOS sync 
 
 ---
 
+## v1.2 — Capacitor 8 + RevenueCat 13 upgrade
+
+**Why**: RevenueCat 12.x+ requires Capacitor 8, and 10.x / 11.x were
+starting to hit podspec conflicts on modern iOS toolchains. Jumping to
+the top of both trees in one go — latest 8.3.1 Capacitor and 13.0.1
+RevenueCat — trades one migration pain for zero future drift.
+
+**Version bumps**
+- App version: `1.1.0` → `1.2.0` (`package.json`, sidebar brand in
+  `well-testing-app.html`, matching bump in Xcode target)
+- `@capacitor/core` + `@capacitor/ios`: `^7.0.0` → `^8.3.1`
+- `@capacitor/cli`: `^7.0.0` → `^8.3.1`
+- Capacitor plugins: all bumped to their latest 8.x
+  - `@capacitor/app` → `^8.1.0`
+  - `@capacitor/haptics` → `^8.0.2`
+  - `@capacitor/share` → `^8.0.1`
+  - `@capacitor/filesystem` → `^8.1.2`
+  - `@capacitor/status-bar` → `^8.0.2`
+  - `@capacitor/splash-screen` → `^8.0.1`
+  - `@capacitor/preferences` → `^8.0.1`
+- `@capacitor/assets`: held at `^3.0.5` (no v4 on npm)
+- `@revenuecat/purchases-capacitor` + `@revenuecat/purchases-capacitor-ui`:
+  `^11.3.2` → `^13.0.1`
+
+**Hard requirements on the Mac dev box (unchanged from v1.1 except
+deployment target)**
+- Xcode `16.0+`
+- Node `20+`
+- CocoaPods current (`pod --version` ≥ 1.15)
+- iOS deployment target raised `14.0` → `15.1` (automatic via
+  `cap migrate`; RevenueCat 13 paywall UI requires it)
+
+**Capacitor 8 changes that apply to this project**
+- iOS deployment target 14.0 → 15.1 (automatic via `cap migrate`)
+- Swift 6 concurrency — transparent for our plugin usage
+- Minimum Node 20 (was 18 in Cap 7) — we already set 20 in setup.sh
+- No plugin API changes affect our code
+
+**Migration procedure (run on Mac)**
+```bash
+cd ~/well-testing-suite
+git pull origin master
+cd ios-app
+
+# 1. Fresh deps (picks up Capacitor 8 + RC 13.0.1)
+rm -rf node_modules package-lock.json
+npm install
+
+# 2. Migrate native project (Podfile deployment target → 15.1, pbxproj)
+npx cap migrate
+
+# 3. Reinstall pods
+cd ios/App
+rm -f Podfile.lock
+pod repo update
+pod install
+cd ../..
+
+# 4. Sync + open Xcode
+npm run build
+npm run open
+```
+
+In Xcode bump version: target App → General → Identity → Version: `1.2`,
+Build: increment.
+
+**Rollback plan if anything breaks**
+Revert the `package.json` + `PROJECT-NOTES.md` diffs, delete `node_modules`
++ `package-lock.json` + `ios/App/Podfile.lock`, `npm install`, `cap sync`,
+`pod install`. The Podfile's platform target might need manual revert to
+`14.0` if you're going back past Cap 8.
+
+---
+
 ## v1.1 — Capacitor 7 + RevenueCat 10 upgrade
 
 **Why**: RevenueCat's paywall editor requires `purchases-capacitor@^10.3.3`,

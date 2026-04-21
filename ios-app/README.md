@@ -1,7 +1,7 @@
 # H2Oil Well Testing Suite — iOS App
 
-Native iOS wrapper for the H2Oil Well Testing Suite, built with **Capacitor 7**
-and **RevenueCat 10** (for subscription paywall + Customer Center). The web app
+Native iOS wrapper for the H2Oil Well Testing Suite, built with **Capacitor 8**
+and **RevenueCat 13** (for subscription paywall + Customer Center). The web app
 itself stays at the repo root (`well-testing-app.html`); this folder only holds
 the iOS wrapper. A build-time sync script copies the latest HTML from root and
 injects iOS-specific enhancements.
@@ -14,7 +14,7 @@ injects iOS-specific enhancements.
 well-testing-suite/
 ├── well-testing-app.html         ← SINGLE source of truth (edit here)
 └── ios-app/
-    ├── package.json               ← Capacitor 7 + RevenueCat 10 deps + npm scripts
+    ├── package.json               ← Capacitor 8 + RevenueCat 13 deps + npm scripts
     ├── capacitor.config.json      ← iOS app config (bundle ID, splash, etc.)
     ├── PrivacyInfo.xcprivacy      ← iOS 17+ privacy manifest — copy into Xcode
     │                                (ios/App/App/PrivacyInfo.xcprivacy)
@@ -64,7 +64,7 @@ The root HTML stays untouched — it works equally well as a plain webpage and a
 ## Prerequisites (on your Mac)
 
 1. **macOS** (required for iOS development)
-2. **Xcode 16+** — Capacitor 7 requires Xcode 16 (iOS deployment target 14)
+2. **Xcode 16+** — Capacitor 8 requires Xcode 16 (iOS deployment target 15.1)
 3. **CocoaPods 1.15+** — `brew install cocoapods` (preferred over `sudo gem`)
 4. **Apple Developer Program** membership ($99/yr) — required for App Store submission
 5. **Node.js 20+** — *only for the first-time setup below*. After that, not needed.
@@ -427,9 +427,10 @@ npx cap migrate   # migrates native project + bumps deployment target
 npx cap sync ios
 ```
 
-Then consult the [Capacitor migration guide](https://capacitorjs.com/docs/updating/7-0)
-for breaking changes. Note: RevenueCat `purchases-capacitor` 10+ requires
-Capacitor 7.
+Then consult the [Capacitor migration guide](https://capacitorjs.com/docs/updating/8-0)
+for breaking changes. RevenueCat version lines map to Capacitor as follows:
+- `purchases-capacitor` **10.x / 11.x** → Capacitor 7
+- `purchases-capacitor` **12.x / 13.x** → Capacitor 8 ← current
 
 ---
 
