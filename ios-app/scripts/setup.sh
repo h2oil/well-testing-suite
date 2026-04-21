@@ -176,6 +176,11 @@ else
     info "iOS platform already present, skipping cap add"
 fi
 
+# ─── 8b. Mirror Xcode Cloud CI scripts into ios/App/ci_scripts/ ───
+# Xcode Cloud only looks for ci_scripts next to the workspace file.
+info "Installing Xcode Cloud CI scripts..."
+bash scripts/install-xcodecloud-scripts.sh
+
 # ─── 9. CocoaPods install ───
 info "Installing CocoaPods dependencies..."
 (cd ios/App && pod install --silent)

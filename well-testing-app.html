@@ -1896,7 +1896,8 @@ function renderFlare(body) {
           <div class="fg">
             <div class="fg-item"><label>Stack Tip Height (m)</label><input type="number" id="fl_H" value="30" step="1"></div>
             <div class="fg-item"><label>Tip Diameter (m)</label><input type="number" id="fl_D" value="0.5" step="0.05"></div>
-            <div class="fg-item"><label>Exit Velocity (m/s)</label><input type="number" id="fl_V" value="20" step="0.5"></div>
+            <div class="fg-item"><label>Exit Velocity (m/s)</label><input type="number" id="fl_V" value="" step="0.5" placeholder="auto from flow + D">
+              <span style="font-size:10px;color:var(--text3)">Leave blank for auto-derive (flow \u00f7 tip area)</span></div>
           </div>
         </div>
         <div class="card">
@@ -1952,9 +1953,15 @@ function renderFlare(body) {
       </div>
       <!-- RIGHT PANEL: Canvases -->
       <div style="flex:1;min-width:0">
-        <div style="font-size:12px;font-weight:700;color:var(--accent);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px">Thermal Radiation</div>
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px">
+          <div style="font-size:12px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:.5px" id="fl_heat_lbl">Thermal Radiation</div>
+          <div class="tabs" id="fl_htabs" style="max-width:240px;margin:0;display:none">
+            <button class="tab-btn active" id="fl_he">Elevation (Side)</button>
+            <button class="tab-btn" id="fl_hp">Plan (Bird&rsquo;s Eye)</button>
+          </div>
+        </div>
         <div class="flare-canvas-wrap" id="fl_wrap"><canvas id="fl_canvas"></canvas></div>
-        <div class="info-bar" style="margin-top:6px" id="fl_hint">&#8635; Drag to rotate &nbsp;|&nbsp; Scroll to zoom &nbsp;|&nbsp; Switch tab for 2D elevation view</div>
+        <div class="info-bar" style="margin-top:6px" id="fl_hint">&#8635; Drag to rotate &nbsp;|&nbsp; Scroll to zoom &nbsp;|&nbsp; Switch tab for 2D view</div>
         <div style="display:flex;align-items:center;gap:12px;margin:16px 0 6px">
           <div style="font-size:12px;font-weight:700;color:var(--blue);text-transform:uppercase;letter-spacing:.5px" id="fl_noise_lbl">Noise Contour — Plan View</div>
           <div class="tabs" id="fl_ntabs" style="max-width:240px;margin:0;display:none">
@@ -1968,14 +1975,16 @@ function renderFlare(body) {
     </div>
     <div id="fl_res" style="margin-top:16px"></div>`;
 
-    // Tab wiring (heat canvas only — noise always visible below)
+    // Tab wiring (heat canvas — 3D vs 2D; 2D itself has plan/elevation sub-tabs)
     $('fl_t1').onclick=()=>{
         if(flView==='3d') return;
         flView='3d';
         $('fl_t1').className='tab-btn active';
         $('fl_t2').className='tab-btn';
-        $('fl_hint').textContent='\u21BB Drag to rotate\u00a0|\u00a0Scroll to zoom\u00a0|\u00a0Switch tab for 2D elevation view';
+        $('fl_hint').textContent='\u21BB Drag to rotate\u00a0|\u00a0Scroll to zoom\u00a0|\u00a0Switch tab for 2D view';
+        $('fl_htabs').style.display='none';
         $('fl_ntabs').style.display='none';
+        $('fl_heat_lbl').textContent='Thermal Radiation \u2014 3D View';
         $('fl_noise_lbl').textContent='Noise Contour \u2014 3D View';
         if(flareAnim){cancelAnimationFrame(flareAnim);flareAnim=null;}
         drawFlare3D();
@@ -1988,10 +1997,33 @@ function renderFlare(body) {
         $('fl_t2').className='tab-btn active';
         $('fl_t1').className='tab-btn';
         $('fl_hint').textContent='Drag to pan \u00a0|\u00a0 Scroll to zoom \u00a0|\u00a0 Import a site plan as background overlay';
+        $('fl_htabs').style.display='';
         $('fl_ntabs').style.display='';
+        $('fl_heat_lbl').textContent = heatSubView==='plan'?'Thermal Radiation \u2014 Plan View':'Thermal Radiation \u2014 Elevation View';
         $('fl_noise_lbl').textContent=noiseSubView==='plan'?'Noise Contour \u2014 Plan View':'Noise Contour \u2014 Elevation View';
-        drawFlare2D();
+        drawHeatCurrent();
         noiseSubView==='side' ? drawFlareNoiseSide() : drawFlareNoise();
+    };
+
+    // Heat 2D sub-view state + tab wiring
+    let heatSubView='elevation';  // 'elevation' (default, existing behaviour) | 'plan'
+    function drawHeatCurrent(){
+        if(flView!=='2d') return;
+        heatSubView==='plan' ? drawFlareHeatPlan() : drawFlare2D();
+    }
+    $('fl_he').onclick=()=>{
+        if(heatSubView==='elevation')return;
+        heatSubView='elevation';
+        $('fl_he').className='tab-btn active'; $('fl_hp').className='tab-btn';
+        $('fl_heat_lbl').textContent='Thermal Radiation \u2014 Elevation View';
+        drawFlare2D();
+    };
+    $('fl_hp').onclick=()=>{
+        if(heatSubView==='plan')return;
+        heatSubView='plan';
+        $('fl_hp').className='tab-btn active'; $('fl_he').className='tab-btn';
+        $('fl_heat_lbl').textContent='Thermal Radiation \u2014 Plan View';
+        drawFlareHeatPlan();
     };
 
     // Noise chart state
@@ -2264,7 +2296,18 @@ function renderFlare(body) {
         const eff =(parseFloat($('fl_eff').value)||98)/100;
         const H   =parseFloat($('fl_H').value)||30;      // m
         const D   =parseFloat($('fl_D').value)||0.5;     // m
-        const Uj  =parseFloat($('fl_V').value)||20;      // m/s exit velocity
+        // Exit velocity: user value overrides, else derive from flow+D+Ta.
+        // Volumetric flow at tip conditions ≈ standard flow × (Ta/T_std),
+        // atmospheric exit pressure (post-combustion tip). Tying Uj to flow
+        // makes Mach number — and therefore acoustic power — respond to flow
+        // changes, which is the physically correct behaviour: pushing more gas
+        // through a fixed stack increases exit velocity and noise together.
+        const Ta_raw = parseFloat($('fl_Ta').value); // read early for Uj derivation
+        const Ta_K_early = (isFinite(Ta_raw)?Ta_raw:25) + 273.15;
+        const Q_vol = flow * 1e6 * 0.02832 / 86400 * (Ta_K_early/288.15); // m^3/s at tip
+        const Uj_derived = Q_vol / (Math.PI * D * D / 4);
+        const Uj_user = parseFloat($('fl_V').value);
+        const Uj = (isFinite(Uj_user) && Uj_user > 0) ? Uj_user : Uj_derived;
         const Uw  =Math.max(parseFloat($('fl_W').value)||5,0.1); // m/s wind
         const Wfrom=(parseFloat($('fl_Wd').value)||0)%360;  // compass bearing wind comes FROM
         const WdirRad=((Wfrom+180)%360)*Math.PI/180;        // downwind direction in radians
@@ -2310,15 +2353,20 @@ function renderFlare(body) {
         const noiseAdj=parseFloat($('fl_eta').value)||0;  // dB correction (old saved η≈0.005 → negligible)
         const ambN=parseFloat($('fl_ambN').value)||60;
         const Q_W = Q_kW * 1000; // Watts thermal
-        // Gas exit speed of sound: c = √(γ·R/M·T)
+        // Gas exit speed of sound: c = √(γ·R/M·T)   (8314 = R in J/kmol·K, mw in g/mol=kg/kmol)
         const gamma_gas=1.28; // γ for natural gas
-        const Ta_K=(parseFloat($('fl_Ta').value)||25)+273.15;
+        const Ta_K = Ta_K_early;
         const c_exit=Math.sqrt(gamma_gas*8314/mw*Ta_K);
         const Ma=Math.min(Math.max(Uj/c_exit,0.01),2.0);
-        // PWL via CONCAWE correlation (validated against industrial flare survey data)
-        // Subsonic (Ma<1): PWL = 10·log10(Q_W) + 20·log10(Ma) + 91
-        // Supersonic: PWL = 10·log10(Q_W) + 40·log10(Ma) + 91 (shock-enhanced)
-        const PWL = 10*Math.log10(Q_W) + (Ma>=1?40:20)*Math.log10(Ma) + 91 + noiseAdj;
+        // PWL from acoustic efficiency (Chamberlain 1987 / API 521 Annex M):
+        //   η ≈ 1e-4 · Ma²   (subsonic, Lighthill-like W_a ∝ ρ·c³·Ma² term for jet noise)
+        //   η ≈ 1e-3          (sonic/supersonic, shock-associated noise)
+        //   PWL [dB re 1 pW] = 10·log10(η·W_th [W]) + 120
+        // Collapsed: PWL = 10·log10(Q_W) + 20·log10(Ma) + 80  (subsonic)
+        //            PWL = 10·log10(Q_W) + 40·log10(Ma) + 90  (sonic)
+        // Previously used +91 which implied η≈10⁻³·Ma² (≈10× published values),
+        // giving distances 2–3× larger than industrial flare surveys show.
+        const PWL = 10*Math.log10(Q_W) + (Ma>=1?40:20)*Math.log10(Ma) + (Ma>=1?90:80) + noiseAdj;
         const Wacoustic = Math.pow(10, PWL/10) * 1e-12; // back-calc for display
         // SPL at distance r (hemispherical radiation over ground + atmospheric absorption):
         // SPL = PWL - 20*log10(r) - 7.98 - α*r
@@ -2343,8 +2391,8 @@ function renderFlare(body) {
         ];
         noiseThresh.forEach(n=>{ n.dist = distForSPL(n.spl); });
 
-        return{H,D,L_m,L_ft,tiltDeg,tiltRad,flameCX,flameCY,Q_BTU_hr,Q_kW,F,tau,Uj,Uw,Wfrom,WdirRad,allThresh,
-               Ma,noiseAdj,ambN,Wacoustic,PWL,noiseThresh,splAtDist};
+        return{H,D,L_m,L_ft,tiltDeg,tiltRad,flameCX,flameCY,Q_BTU_hr,Q_kW,F,tau,Uj,Uj_derived,Uj_user,Uw,Wfrom,WdirRad,allThresh,
+               Ma,c_exit,noiseAdj,ambN,Wacoustic,PWL,noiseThresh,splAtDist};
     }
 
     // ── 3D RENDER (Canvas perspective) ────────────────
@@ -2887,6 +2935,210 @@ function renderFlare(body) {
         const headers=1+(custRows.length?1:0);
         const legH=(stdRows.length+custRows.length)*18 + headers*16 + 12;
         const legX=ML+8, legY=MT+8;
+        ctx.fillStyle='rgba(22,27,34,0.92)'; ctx.strokeStyle='#30363d'; ctx.lineWidth=0.5;
+        ctx.fillRect(legX,legY,220,legH); ctx.strokeRect(legX,legY,220,legH);
+        let ly=legY+14;
+        ctx.fillStyle='#c9d1d9'; ctx.font='bold 10px sans-serif';
+        ctx.fillText('API 521 Radiation Zones',legX+6,ly); ly+=6;
+        stdRows.forEach(t=>{
+            ctx.fillStyle=t.col; ctx.fillRect(legX+6,ly,10,10);
+            ctx.fillStyle='#8b949e'; ctx.font='10px sans-serif';
+            const short=t.lbl.length>30?t.lbl.substring(0,29)+'\u2026':t.lbl;
+            ctx.fillText(short, legX+20, ly+9); ly+=18;
+        });
+        if(custRows.length){
+            ly+=2;
+            ctx.fillStyle='#c9d1d9'; ctx.font='bold 10px sans-serif';
+            ctx.fillText('Custom Zones (user-added)',legX+6,ly); ly+=6;
+            custRows.forEach(t=>{
+                ctx.strokeStyle=t.col; ctx.lineWidth=1.6; ctx.setLineDash([3,2]);
+                ctx.strokeRect(legX+6.5,ly+0.5,9,9); ctx.setLineDash([]);
+                ctx.fillStyle='#8b949e'; ctx.font='10px sans-serif';
+                const short=t.lbl.length>30?t.lbl.substring(0,29)+'\u2026':t.lbl;
+                ctx.fillText(short, legX+20, ly+9); ly+=18;
+            });
+        }
+    }
+
+    // ── THERMAL RADIATION PLAN VIEW (top-down / bird's eye) ──
+    // Shows heat iso-radiation rings projected onto the ground plane. The
+    // flame centroid is elevated (stack height + flame/2·cos(tilt)) but the
+    // point-source API 521 model treats t.dist as the slant distance to
+    // reach a given intensity — so the ground-projection radius is
+    // sqrt(dist² − flameCY²) when dist > flameCY, else the zone does not
+    // intersect the ground (near-field high-intensity zones). This matches
+    // how practitioners read API 521 Table 5 distances off a site plan.
+    function drawFlareHeatPlan(){
+        const cvs=$('fl_canvas'); if(!cvs) return;
+        const wrap=$('fl_wrap');
+        cvs.width=wrap.clientWidth; cvs.height=wrap.clientHeight;
+        const ctx=cvs.getContext('2d');
+        const W=cvs.width, Hc=cvs.height;
+        const fp=getFlameParams();
+
+        // Plot margins — match the 2D elevation view for layout consistency
+        const ML=64, MR=24, MT=28, MB=48;
+        const PW=W-ML-MR, PH=Hc-MT-MB;
+
+        // Auto-range from heat contours (ground-projected radius)
+        const radsGround = fp.allThresh.map(t =>
+            t.dist > fp.flameCY ? Math.sqrt(t.dist*t.dist - fp.flameCY*fp.flameCY) : 0);
+        const maxR=Math.max(...radsGround, 10);
+        const baseRange=Math.ceil(maxR*1.2/5)*5;
+
+        // Uses the same pan/zoom state as the 2D elevation heat view so the
+        // "Reset View" button still works and switching between plan/elevation
+        // preserves user framing.
+        const rangeX=baseRange*2/zoom2d, rangeY=baseRange*2/zoom2d;
+        const cxW=-pan2dX/(PW/rangeX), cyW=pan2dY/(PH/rangeY);
+        const xMin=-baseRange/zoom2d+cxW, xMax=xMin+rangeX;
+        const yMin=-baseRange/zoom2d+cyW, yMax=yMin+rangeY;
+        const sx=PW/(xMax-xMin), sy=PH/(yMax-yMin);
+        function wx(x){return ML+(x-xMin)*sx;}
+        function wy(y){return MT+(yMax-y)*sy;}
+
+        // Background
+        ctx.fillStyle='#0d1117'; ctx.fillRect(0,0,W,Hc);
+        ctx.save(); ctx.beginPath(); ctx.rect(ML,MT,PW,PH); ctx.clip();
+        ctx.fillStyle='#161b22'; ctx.fillRect(ML,MT,PW,PH);
+
+        // Background image overlay (same behaviour as elevation view)
+        if(flareBg && flareBgCfg){
+            ctx.globalAlpha=flareBgCfg.opacity||0.45;
+            const imgX=wx(flareBgCfg.ox||0), imgY=wy((flareBgCfg.oy||0)+flareBgCfg.hm);
+            ctx.drawImage(flareBg, imgX, imgY, flareBgCfg.wm*sx, flareBgCfg.hm*sy);
+            ctx.globalAlpha=1;
+        } else if(flareBg){
+            ctx.globalAlpha=0.40;
+            ctx.drawImage(flareBg, wx(xMin), wy(yMax), PW, PH);
+            ctx.globalAlpha=1;
+        }
+
+        // Grid (metric)
+        const gsRaw=(xMax-xMin)/8;
+        const gs=gsRaw<=2?1:gsRaw<=5?2.5:gsRaw<=12?5:gsRaw<=30?10:gsRaw<=60?25:gsRaw<=150?50:100;
+        const x0=Math.floor(xMin/gs)*gs, y0=Math.floor(yMin/gs)*gs;
+        for(let x=x0;x<=xMax;x+=gs){
+            const px=wx(x);
+            ctx.strokeStyle=(x===0)?'#4a5568':'#21262d'; ctx.lineWidth=(x===0)?1.2:0.5;
+            ctx.setLineDash(x===0?[]:[4,3]);
+            ctx.beginPath(); ctx.moveTo(px,MT); ctx.lineTo(px,MT+PH); ctx.stroke();
+        }
+        for(let y=y0;y<=yMax;y+=gs){
+            const py=wy(y);
+            ctx.strokeStyle=(y===0)?'#4a5568':'#21262d'; ctx.lineWidth=(y===0)?1.2:0.5;
+            ctx.setLineDash(y===0?[]:[4,3]);
+            ctx.beginPath(); ctx.moveTo(ML,py); ctx.lineTo(ML+PW,py); ctx.stroke();
+        }
+        ctx.setLineDash([]);
+
+        // Ground-projection of flame centroid (in wind direction, X=east/Y=north)
+        const wSin=Math.sin(fp.WdirRad), wCos=Math.cos(fp.WdirRad);
+        const gcx = fp.flameCX * wSin;   // east
+        const gcy = fp.flameCX * wCos;   // north
+
+        // Filled rings (outer to inner) centered on the ground-projection
+        const sortedThresh = [...fp.allThresh].sort((a,b)=>b.dist-a.dist);
+        sortedThresh.forEach(t=>{
+            if(t.dist<=fp.flameCY) return; // zone doesn't reach ground
+            const r = Math.sqrt(t.dist*t.dist - fp.flameCY*fp.flameCY);
+            ctx.beginPath();
+            ctx.ellipse(wx(gcx),wy(gcy), Math.abs(r*sx), Math.abs(r*sy), 0, 0, Math.PI*2);
+            ctx.fillStyle=t.col+'20'; ctx.fill();
+        });
+        // Ring outlines + labels — custom zones dashed + thicker
+        fp.allThresh.forEach(t=>{
+            if(t.dist<=fp.flameCY) return;
+            const r = Math.sqrt(t.dist*t.dist - fp.flameCY*fp.flameCY);
+            ctx.beginPath();
+            ctx.ellipse(wx(gcx),wy(gcy), Math.abs(r*sx), Math.abs(r*sy), 0, 0, Math.PI*2);
+            ctx.strokeStyle = t.col + (t.custom?'ee':'cc');
+            ctx.lineWidth   = t.custom ? 2.4 : 1.8;
+            if(t.custom) ctx.setLineDash([7,4]); else ctx.setLineDash([]);
+            ctx.stroke(); ctx.setLineDash([]);
+            // Label on the upwind side so it doesn't sit on top of the wind arrow
+            const lang = Math.PI - fp.WdirRad;
+            const lx = gcx + r*Math.sin(lang)*0.85;
+            const ly = gcy + r*Math.cos(lang)*0.85;
+            ctx.fillStyle=t.col; ctx.font='bold 10px sans-serif'; ctx.textAlign='left';
+            ctx.fillText(`${fmt(t.lev,2)} kW/m\u00b2 @ ${fmt(r,0)}m${t.custom?' \u2022 custom':''}`, wx(lx)+4, wy(ly)-4);
+        });
+
+        // Flare stack marker at origin
+        ctx.beginPath(); ctx.arc(wx(0),wy(0),6,0,Math.PI*2);
+        ctx.fillStyle='#d63'; ctx.fill(); ctx.strokeStyle='#fff'; ctx.lineWidth=2; ctx.stroke();
+        ctx.fillStyle='#e6edf3'; ctx.font='bold 11px sans-serif'; ctx.textAlign='left';
+        ctx.fillText('Flare Stack', wx(0)+10, wy(0)-8);
+
+        // Flame centroid ground-projection marker (where the dome anchors)
+        if(Math.abs(gcx)+Math.abs(gcy)>0.01){
+            ctx.beginPath(); ctx.arc(wx(gcx),wy(gcy),4,0,Math.PI*2);
+            ctx.fillStyle='rgba(255,180,80,0.9)'; ctx.fill();
+            ctx.fillStyle='#8b949e'; ctx.font='9px sans-serif';
+            ctx.fillText('flame centroid (ground proj.)', wx(gcx)+7, wy(gcy)+12);
+        }
+
+        // Wind direction arrow from stack
+        const arrowLen = Math.min(maxR*0.18, 25);
+        const ax = arrowLen*Math.sin(fp.WdirRad), ay = arrowLen*Math.cos(fp.WdirRad);
+        ctx.strokeStyle='#58a6ff'; ctx.lineWidth=2.5; ctx.setLineDash([]);
+        ctx.beginPath(); ctx.moveTo(wx(0),wy(0)); ctx.lineTo(wx(ax),wy(ay)); ctx.stroke();
+        ctx.beginPath(); ctx.arc(wx(ax),wy(ay),4,0,Math.PI*2); ctx.fillStyle='#58a6ff'; ctx.fill();
+
+        ctx.restore();
+
+        // Border + axes
+        ctx.strokeStyle='#30363d'; ctx.lineWidth=1.5; ctx.strokeRect(ML,MT,PW,PH);
+        ctx.fillStyle='#8b949e'; ctx.font='11px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='top';
+        for(let x=x0;x<=xMax;x+=gs){
+            const px=wx(x);
+            if(px<ML-1||px>ML+PW+1)continue;
+            ctx.beginPath(); ctx.moveTo(px,MT+PH); ctx.lineTo(px,MT+PH+5); ctx.strokeStyle='#484f58'; ctx.lineWidth=1; ctx.stroke();
+            ctx.fillStyle='#8b949e'; ctx.fillText(fmt(x,gs<1?1:0), px, MT+PH+7);
+        }
+        ctx.font='bold 12px sans-serif'; ctx.fillStyle='#c9d1d9';
+        ctx.fillText('Easting [m]', ML+PW/2, Hc-8);
+
+        ctx.textAlign='right'; ctx.textBaseline='middle'; ctx.font='11px sans-serif'; ctx.fillStyle='#8b949e';
+        for(let y=y0;y<=yMax;y+=gs){
+            const py=wy(y);
+            if(py<MT-1||py>MT+PH+1)continue;
+            ctx.beginPath(); ctx.moveTo(ML,py); ctx.lineTo(ML-5,py); ctx.strokeStyle='#484f58'; ctx.lineWidth=1; ctx.stroke();
+            ctx.fillStyle='#8b949e'; ctx.fillText(fmt(y,gs<1?1:0), ML-8, py);
+        }
+        ctx.save(); ctx.translate(14, MT+PH/2); ctx.rotate(-Math.PI/2);
+        ctx.font='bold 12px sans-serif'; ctx.fillStyle='#c9d1d9'; ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.fillText('Northing [m]', 0, 0);
+        ctx.restore();
+
+        // Title
+        ctx.fillStyle='#c9d1d9'; ctx.font='bold 13px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='top';
+        ctx.fillText('Thermal Radiation \u2014 Plan View', ML+PW/2, 6);
+
+        // Compass rose (bottom-right)
+        {
+            const rcx=ML+PW-44, rcy=MT+PH-44, rr=32;
+            ctx.fillStyle='rgba(22,27,34,0.85)';
+            ctx.beginPath(); ctx.arc(rcx,rcy,rr+5,0,Math.PI*2); ctx.fill();
+            ctx.strokeStyle='#30363d'; ctx.lineWidth=1;
+            ctx.beginPath(); ctx.arc(rcx,rcy,rr+5,0,Math.PI*2); ctx.stroke();
+            const dirs2d=[{lbl:'N',dx:0,dy:-1,col:'#f85149'},{lbl:'E',dx:1,dy:0,col:'#8b949e'},{lbl:'S',dx:0,dy:1,col:'#8b949e'},{lbl:'W',dx:-1,dy:0,col:'#8b949e'}];
+            dirs2d.forEach(d=>{
+                ctx.strokeStyle=d.col+'88'; ctx.lineWidth=1.5;
+                ctx.beginPath(); ctx.moveTo(rcx+d.dx*(rr-8),rcy+d.dy*(rr-8)); ctx.lineTo(rcx+d.dx*(rr+2),rcy+d.dy*(rr+2)); ctx.stroke();
+                ctx.fillStyle=d.col; ctx.font=d.lbl==='N'?'bold 11px sans-serif':'10px sans-serif';
+                ctx.textAlign='center'; ctx.textBaseline='middle';
+                ctx.fillText(d.lbl, rcx+d.dx*(rr-15), rcy+d.dy*(rr-15));
+            });
+            ctx.textAlign='left'; ctx.textBaseline='alphabetic';
+        }
+
+        // Legend (top-left) — split API 521 vs Custom
+        const stdRows=fp.allThresh.filter(t=>!t.custom);
+        const custRows=fp.allThresh.filter(t=> t.custom);
+        const headers=1+(custRows.length?1:0);
+        const legH=(stdRows.length+custRows.length)*18 + headers*16 + 12;
+        const legX=ML+8, legY=MT+28;
         ctx.fillStyle='rgba(22,27,34,0.92)'; ctx.strokeStyle='#30363d'; ctx.lineWidth=0.5;
         ctx.fillRect(legX,legY,220,legH); ctx.strokeRect(legX,legY,220,legH);
         let ly=legY+14;
@@ -3554,7 +3806,8 @@ function renderFlare(body) {
         else noiseSubView==='side' ? drawFlareNoiseSide() : drawFlareNoise();
     }
     function drawFlare(){
-        flView==='3d' ? drawFlare3D() : drawFlare2D();
+        if(flView==='3d') drawFlare3D();
+        else drawHeatCurrent();
         drawNoiseCurrent();
     }
 
@@ -3725,7 +3978,7 @@ function renderFlare(body) {
             ${pair('Combustion Efficiency',$('fl_eff').value+'%')}
             ${pair('Stack Tip Height',fp.H+' m')}
             ${pair('Tip Diameter',fp.D+' m')}
-            ${pair('Exit Velocity',fp.Uj+' m/s')}
+            ${pair('Exit Velocity', fmt(fp.Uj,2)+' m/s'+(isFinite(fp.Uj_user)&&fp.Uj_user>0?' (user override, flow-derived = '+fmt(fp.Uj_derived,2)+' m/s)':' (auto-derived from flow \u00f7 tip area)'))}
             ${pair('Wind Speed',fp.Uw+' m/s')}
             ${pair('Fraction Heat Radiated (F)',fp.F)}
             ${pair('Atmospheric Transmissivity (τ)',fp.tau)}

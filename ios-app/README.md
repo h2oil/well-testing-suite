@@ -316,6 +316,105 @@ dashboard.
 
 ---
 
+## Xcode Cloud — autobuild on git push
+
+Xcode Cloud lets Apple's infrastructure build, test, and archive the app
+automatically on every push — no Mac required for CI. It needs two things
+the plain `cap add ios` flow does not set up:
+
+1. **The `ios/` Xcode project must be committed to git.** Xcode Cloud
+   clones the repo and looks for `App.xcworkspace` — if the `ios/`
+   folder was never committed, you get:
+   > Workspace App.xcworkspace does not exist at ios-app/ios/App/App.xcworkspace
+2. **A pre-build sync script** so the cloud runner regenerates
+   `www/index.html` and runs `cap sync` before `xcodebuild` fires.
+   Xcode Cloud only scans for scripts in `ci_scripts/` **next to the
+   workspace** — i.e. `ios-app/ios/App/ci_scripts/`.
+
+### One-time setup (on a Mac)
+
+```bash
+# 1. Generate the native iOS project
+cd ios-app
+bash scripts/setup.sh            # does cap add ios AND installs ci_scripts
+
+# 2. Commit the generated project
+cd ..
+git add ios-app/ios
+git commit -m "chore(ios): commit Xcode project for Xcode Cloud"
+git push
+```
+
+`setup.sh` already calls `install-xcodecloud-scripts.sh`, which mirrors
+the tracked copy at [`ios-app/ci_scripts/`](ci_scripts/) into the
+Xcode-visible `ios-app/ios/App/ci_scripts/`. If you ever re-run `cap
+add ios` from scratch, re-run `bash scripts/install-xcodecloud-scripts.sh`
+to re-populate it.
+
+### Configure the Xcode Cloud workflow
+
+In Xcode on a Mac (needs Xcode 14+ with an active Apple Developer
+account signed in):
+
+1. Open `ios-app/ios/App/App.xcworkspace`.
+2. **Product → Xcode Cloud → Create Workflow**. Xcode detects the
+   workspace automatically.
+3. **Start Conditions**: branch push, choose `master` (or add `Dev`
+   for a second workflow that builds on every dev push).
+4. **Environment**: Xcode 16, macOS latest. Clean: off (let the
+   cache stick).
+5. **Actions**:
+   - `Archive — iOS` → Deploy to `TestFlight (Internal Testing Only)`
+     on successful build. Skip public TestFlight beta until QA
+     approves — Xcode Cloud has a separate post-action for that.
+6. **Post-Actions** (optional): `Notify` on failure; `Deploy to
+   TestFlight External Testing` after QA sign-off.
+7. **Save** — the first build kicks off automatically. Subsequent
+   builds run on every qualifying push.
+
+### What runs inside the Xcode Cloud runner
+
+The script at [`ci_scripts/ci_post_clone.sh`](ci_scripts/ci_post_clone.sh)
+executes right after clone, before the archive step. It:
+
+1. `cd ios-app` and installs JS deps via `npm ci` (uses the committed
+   `package-lock.json`).
+2. Runs `npm run sync-main` to regenerate `www/index.html` from the
+   root HTML — so even if CI didn't commit the latest sync, Xcode
+   Cloud builds the most recent web UI.
+3. Runs `npx cap sync ios`, which copies `www/` into the app bundle
+   and runs `pod install`.
+
+Node and Homebrew are preinstalled on Xcode Cloud runners. CocoaPods
+runs automatically via `cap sync`. No secrets to manage for this
+project — RevenueCat's key is a public iOS key already in source.
+
+### Signing for Xcode Cloud
+
+Xcode Cloud can use your existing App Store Connect signing or it
+can manage a cloud signing certificate for you. The simpler option:
+leave **Automatically manage signing** on in the App target and let
+Xcode Cloud issue its own certificate on first archive. The Team must
+match the one tied to your App Store Connect account.
+
+### Troubleshooting
+
+- **"Workspace App.xcworkspace does not exist"** — the `ios/` folder
+  wasn't committed. Run the one-time setup above.
+- **"cap: command not found"** in the CI log — Node didn't install
+  or PATH isn't exporting. The script installs via brew as a fallback;
+  check the CI log for `brew install node` output.
+- **"Sandbox: rsync.samba(...) deny(1) file-write-create"** — usually
+  a `public/` (Capacitor's webDir copy) conflict. `cap sync` recreates
+  it; if the CI step errors here, the cause is almost always a stale
+  `ios/App/public/` that's been committed accidentally. It's gitignored
+  but double-check.
+- **Build times > 20 min** — normal for the first archive (full pod
+  install + Swift compile). Subsequent builds reuse caches and take
+  5–8 min.
+
+---
+
 ## Updating to a new Capacitor version
 
 ```bash
