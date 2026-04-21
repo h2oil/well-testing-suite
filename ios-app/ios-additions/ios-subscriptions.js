@@ -455,7 +455,10 @@ const ENTITLEMENT_CACHE_KEY = 'h2oil.entitlement';
         apiKeyLooksValid: /^appl_[A-Za-z0-9]{10,}$/.test(REVENUECAT_API_KEY || ''),
         cachedEntitlement: readCache(),
         fallbackDomPresent: !!document.getElementById('iosPaywall'),
-        fallbackDomVisible: document.getElementById('iosPaywall')?.style.display !== 'none',
+        fallbackDomVisible: (() => {
+          const el = document.getElementById('iosPaywall');
+          return !!el && el.style.display !== 'none';
+        })(),
       };
       try { out.liveEntitlement = await queryLiveEntitlement(); } catch (e) { out.liveEntitlementError = String(e); }
       try { const o = await loadOfferings(); out.currentOffering = o ? { id: o.identifier, packages: (o.availablePackages||[]).length } : null; }
