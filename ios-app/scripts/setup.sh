@@ -170,6 +170,17 @@ else
     info "iOS platform already present, skipping cap add"
 fi
 
+# ─── 8a. Generate app icons + splash from resources/ ───
+# `cap add ios` creates a fresh project with Apple's placeholder icons.
+# Regenerate the H2Oil branded icon set from ios-app/resources/*.png every
+# time setup runs, so the branding never gets wiped by a reinstall.
+if [ -f resources/icon.png ] && [ -f resources/splash.png ]; then
+    info "Generating app icons + splash from resources/..."
+    npx @capacitor/assets generate --ios || warn "Asset generation failed — run 'npx @capacitor/assets generate --ios' manually"
+else
+    warn "resources/icon.png or resources/splash.png missing — app will use Apple's placeholder icon"
+fi
+
 # ─── 8b. Mirror Xcode Cloud CI scripts into ios/App/ci_scripts/ ───
 # Xcode Cloud only looks for ci_scripts next to the workspace file.
 info "Installing Xcode Cloud CI scripts..."
