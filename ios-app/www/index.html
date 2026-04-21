@@ -2661,6 +2661,123 @@ function renderFlare(body) {
     }
 
     // ── 3D RENDER (Canvas perspective) ────────────────
+    // Shared helper — renders a boundary as a translucent shaded dome
+    // (sphere clipped at ground) anchored on the flame, using back-to-front
+    // sorted longitudinal slices so the surface reads as a 3D volume rather
+    // than a wireframe cage. Custom (user-added) zones get a dashed silhouette.
+    //
+    //   ctx    — canvas 2D context
+    //   proj   — world→screen projection closure (captures camera state)
+    //   cx,cy,cz — world-space centre of the isosurface (metres)
+    //   radius — sphere radius (metres)
+    //   colHex — hex color like "#f85149"
+    //   opts   — { custom, alpha, slices, arcPts, groundLabel }
+    function drawDome3D(ctx, proj, cx, cy, cz, radius, colHex, opts){
+        opts = opts || {};
+        const slices  = opts.slices  || 22;   // longitudinal segments (orange-slice count)
+        const arcPts  = opts.arcPts  || 16;   // smoothness of each slice's arc
+        const alpha   = opts.alpha   != null ? opts.alpha : 0.085;
+        // θ = 0 at top pole; θ grows downward. Clip when y = cy + r·cosθ = 0.
+        const thMax = cy >= radius ? Math.PI
+                                    : Math.acos(Math.max(-1, Math.min(1, -cy/radius)));
+
+        // Parse colour once.
+        const h = colHex.replace('#','');
+        const R = parseInt(h.slice(0,2),16);
+        const G = parseInt(h.slice(2,4),16);
+        const B = parseInt(h.slice(4,6),16);
+
+        // Light: soft top-front so the dome reads as rounded.
+        const LX=0.30, LY=0.88, LZ=-0.38;
+
+        // Build one polygon per longitudinal slice, record average depth + normal.
+        const segs=[];
+        for(let s=0;s<slices;s++){
+            const phi1=s/slices*Math.PI*2;
+            const phi2=(s+1)/slices*Math.PI*2;
+            const pts=[];
+            let dSum=0, dN=0;
+            // Forward edge: pole → ground along phi1
+            for(let i=0;i<=arcPts;i++){
+                const th=i/arcPts*thMax;
+                const p=proj(cx+radius*Math.sin(th)*Math.cos(phi1),
+                             cy+radius*Math.cos(th),
+                             cz+radius*Math.sin(th)*Math.sin(phi1));
+                pts.push(p); dSum+=p.d; dN++;
+            }
+            // Back edge: ground → pole along phi2
+            for(let i=arcPts;i>=0;i--){
+                const th=i/arcPts*thMax;
+                const p=proj(cx+radius*Math.sin(th)*Math.cos(phi2),
+                             cy+radius*Math.cos(th),
+                             cz+radius*Math.sin(th)*Math.sin(phi2));
+                pts.push(p); dSum+=p.d; dN++;
+            }
+            // Outward normal at slice equator (midpoint of the slice) — used for
+            // Lambert shading; y-up convention.
+            const phiMid=(phi1+phi2)/2;
+            const thMid=thMax*0.5;
+            const nx=Math.sin(thMid)*Math.cos(phiMid);
+            const ny=Math.cos(thMid);
+            const nz=Math.sin(thMid)*Math.sin(phiMid);
+            segs.push({pts, avgD:dSum/dN, nx, ny, nz});
+        }
+        // Painter's algorithm — draw far slices first.
+        segs.sort((a,b)=>b.avgD-a.avgD);
+
+        // Fill with shaded alpha per slice.
+        segs.forEach(seg=>{
+            const dot=seg.nx*LX+seg.ny*LY+seg.nz*LZ;
+            const shade=Math.max(0.35, 0.55+0.45*dot);
+            const r=Math.round(R*shade), g=Math.round(G*shade), b=Math.round(B*shade);
+            ctx.fillStyle=`rgba(${r},${g},${b},${alpha.toFixed(3)})`;
+            ctx.beginPath();
+            seg.pts.forEach((p,i)=> i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y));
+            ctx.closePath(); ctx.fill();
+        });
+
+        // Ground intersection ring — the actual boundary walkers / equipment
+        // would encounter. Standard = solid, custom = dashed.
+        ctx.lineWidth = opts.custom ? 2.2 : 1.8;
+        ctx.strokeStyle = colHex + (opts.custom ? 'ee' : 'bb');
+        if(opts.custom) ctx.setLineDash([7,4]);
+        ctx.beginPath();
+        for(let i=0;i<=72;i++){
+            const ang=i/72*Math.PI*2;
+            const p=proj(cx+radius*Math.sin(thMax)*Math.cos(ang),
+                         cy+radius*Math.cos(thMax),
+                         cz+radius*Math.sin(thMax)*Math.sin(ang));
+            i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y);
+        }
+        ctx.stroke();
+        if(opts.custom) ctx.setLineDash([]);
+
+        // 2 profile meridians for extra depth definition.
+        ctx.strokeStyle = colHex + '55';
+        ctx.lineWidth = 1;
+        for(let mi=0;mi<2;mi++){
+            const phi = mi*Math.PI/2;
+            ctx.beginPath();
+            for(let i=0;i<=24;i++){
+                const th=i/24*thMax;
+                const p=proj(cx+radius*Math.sin(th)*Math.cos(phi),
+                             cy+radius*Math.cos(th),
+                             cz+radius*Math.sin(th)*Math.sin(phi));
+                i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y);
+            }
+            ctx.stroke();
+        }
+
+        // Optional on-ring label (e.g. "4.73 kW/m² | 120m") placed at wind-axis.
+        if(opts.groundLabel){
+            const lp = proj(cx+radius*Math.sin(thMax), cy+radius*Math.cos(thMax), cz);
+            ctx.fillStyle = colHex;
+            ctx.font = opts.custom ? 'bold 11px sans-serif' : 'bold 11px sans-serif';
+            ctx.textAlign = 'left'; ctx.textBaseline='alphabetic';
+            ctx.fillText(opts.groundLabel, lp.x+6, lp.y-4);
+        }
+    }
+
     function drawFlare3D(){
         // Bail out if user has switched away from 3D view or left the page —
         // an in-flight rAF callback may still fire after cancelAnimationFrame.
@@ -2695,19 +2812,26 @@ function renderFlare(body) {
         // ── Ground fill
         ctx.fillStyle='#080c12'; ctx.fillRect(0,0,W,Hc);
 
-        // ── Filled radiation zones (outer to inner, evenodd)
+        // Flame centroid in WORLD coordinates, offset along the actual wind
+        // vector (bug fix: previous version used flameCX as world-X regardless
+        // of wind bearing, so the heat dome drifted east when wind was N/S).
+        const wSin=Math.sin(fp.WdirRad), wCos=Math.cos(fp.WdirRad);
+        const fcx3 = fp.flameCX * wSin;
+        const fcy3 = fp.flameCY;
+        const fcz3 = fp.flameCX * wCos;
+
+        // ── Filled ground-level annuli (flat-plane footprint of the dome).
+        // Sort outer→inner so cutouts work via evenodd fill.
         const sorted=[...fp.allThresh].sort((a,b)=>b.dist-a.dist);
         sorted.forEach((t,idx)=>{
             const inner=idx<sorted.length-1?sorted[idx+1]:null;
             const path=new Path2D();
-            // Outer ring
             for(let a=0;a<=72;a++){
                 const ang=a/72*Math.PI*2;
                 const p=proj(Math.cos(ang)*t.dist,0,Math.sin(ang)*t.dist);
                 a===0?path.moveTo(p.x,p.y):path.lineTo(p.x,p.y);
             }
             path.closePath();
-            // Inner cutout
             if(inner&&inner.dist>0.5){
                 for(let a=72;a>=0;a--){
                     const ang=a/72*Math.PI*2;
@@ -2731,10 +2855,13 @@ function renderFlare(body) {
             ctx.beginPath();ctx.moveTo(p1.x,p1.y);ctx.lineTo(p2.x,p2.y);ctx.stroke();
         }
 
-        // ── Radiation ring outlines on ground + labels
+        // ── Ground footprint rings (what ground-level receivers experience).
+        // Custom user-added thresholds are dashed + thicker so they're obvious.
         fp.allThresh.forEach(t=>{
             if(t.dist<0.5)return;
-            ctx.strokeStyle=t.col+'bb'; ctx.lineWidth=1.8; ctx.setLineDash([]);
+            ctx.strokeStyle = t.col + (t.custom?'ee':'bb');
+            ctx.lineWidth   = t.custom ? 2.2 : 1.8;
+            if(t.custom) ctx.setLineDash([7,4]); else ctx.setLineDash([]);
             ctx.beginPath();
             for(let a=0;a<=72;a++){
                 const ang=a/72*Math.PI*2;
@@ -2742,43 +2869,19 @@ function renderFlare(body) {
                 a===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y);
             }
             ctx.closePath(); ctx.stroke();
-            const lp=proj(t.dist,0,0);
-            ctx.fillStyle=t.col; ctx.font='bold 11px sans-serif';
-            ctx.fillText(`${fmt(t.lev,2)} kW/m\u00b2 | ${fmt(t.dist,0)}m`,lp.x+6,lp.y-4);
+            ctx.setLineDash([]);
         });
 
-        // ── 3D hemisphere wireframes for radiation zones (sphere centered on flame centroid)
-        const fcx3=fp.flameCX, fcy3=fp.flameCY;
-        fp.allThresh.forEach(t=>{
-            if(t.dist<1)return;
-            const r=t.dist;
-            // Max polar angle before sphere goes below ground (clip at y=0)
-            const thMax=fcy3>=r?Math.PI:Math.acos(Math.max(-1,-fcy3/r));
-            ctx.strokeStyle=t.col+'66'; ctx.lineWidth=1;
-            // 6 meridian arcs (vertical great-circle slices)
-            for(let m=0;m<6;m++){
-                const phi=m/6*Math.PI;
-                ctx.beginPath();
-                for(let i=0;i<=48;i++){
-                    const th=i/48*thMax;
-                    const p=proj(fcx3+r*Math.sin(th)*Math.cos(phi), fcy3+r*Math.cos(th), r*Math.sin(th)*Math.sin(phi));
-                    i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y);
-                }
-                ctx.stroke();
-            }
-            // 3 latitude circles (horizontal cross-sections)
-            for(let l=1;l<=3;l++){
-                const th=l/4*thMax;
-                const rLat=r*Math.sin(th), hy=fcy3+r*Math.cos(th);
-                if(hy<0)continue;
-                ctx.beginPath();
-                for(let a=0;a<=72;a++){
-                    const ang=a/72*Math.PI*2;
-                    const p=proj(fcx3+rLat*Math.cos(ang), hy, rLat*Math.sin(ang));
-                    a===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y);
-                }
-                ctx.closePath(); ctx.stroke();
-            }
+        // ── Dome isosurfaces — outer zones first so inner ones overlay cleanly.
+        // Draw each boundary as a translucent shaded sphere centered on the
+        // flame centroid, clipped at the ground plane.
+        [...fp.allThresh].sort((a,b)=>b.dist-a.dist).forEach(t=>{
+            if(t.dist<1) return;
+            drawDome3D(ctx, proj, fcx3, fcy3, fcz3, t.dist, t.col, {
+                custom: !!t.custom,
+                alpha: t.custom ? 0.11 : 0.085,
+                groundLabel: `${fmt(t.lev,2)} kW/m\u00b2 | ${fmt(t.dist,0)}m${t.custom?' \u2022 custom':''}`
+            });
         });
 
         // Scale bar on ground
@@ -2831,16 +2934,35 @@ function renderFlare(body) {
             ctx.fillStyle=gc; ctx.beginPath(); ctx.arc(p.x,p.y,r,0,Math.PI*2); ctx.fill();
         }
 
-        // ── Legend (top-left)
-        ctx.fillStyle='rgba(10,14,20,0.75)'; ctx.fillRect(10,10,230,fp.allThresh.length*18+20);
-        ctx.fillStyle='#8b949e'; ctx.font='10px sans-serif';
-        ctx.fillText('API 521 Radiation Zones',16,24);
-        fp.allThresh.forEach((t,i)=>{
-            ctx.fillStyle=t.col; ctx.fillRect(16,30+i*18,10,10);
+        // ── Legend (top-left) — split into API 521 and Custom subsections
+        const stdRows   = fp.allThresh.filter(t=>!t.custom);
+        const custRows  = fp.allThresh.filter(t=> t.custom);
+        const legRows   = stdRows.length + custRows.length;
+        const legHdrs   = 1 + (custRows.length?1:0);
+        const legHPx    = legRows*18 + legHdrs*14 + 12;
+        ctx.fillStyle='rgba(10,14,20,0.75)'; ctx.fillRect(10,10,240,legHPx);
+        let ly=24;
+        ctx.fillStyle='#8b949e'; ctx.font='bold 10px sans-serif';
+        ctx.fillText('API 521 Radiation Zones',16,ly); ly+=8;
+        stdRows.forEach(t=>{
+            ctx.fillStyle=t.col; ctx.fillRect(16,ly,10,10);
             ctx.fillStyle='#c9d1d9'; ctx.font='10px sans-serif';
-            const shortLbl=t.lbl.length>28?t.lbl.substring(0,27)+'\u2026':t.lbl;
-            ctx.fillText(shortLbl,32,39+i*18);
+            const short=t.lbl.length>28?t.lbl.substring(0,27)+'\u2026':t.lbl;
+            ctx.fillText(short,32,ly+9); ly+=18;
         });
+        if(custRows.length){
+            ly+=4;
+            ctx.fillStyle='#8b949e'; ctx.font='bold 10px sans-serif';
+            ctx.fillText('Custom Zones (user-added)',16,ly); ly+=8;
+            custRows.forEach(t=>{
+                // Swatch: dashed ring instead of solid fill to match the plot.
+                ctx.strokeStyle=t.col; ctx.lineWidth=1.6; ctx.setLineDash([3,2]);
+                ctx.strokeRect(16.5,ly+0.5,9,9); ctx.setLineDash([]);
+                ctx.fillStyle='#c9d1d9'; ctx.font='10px sans-serif';
+                const short=t.lbl.length>28?t.lbl.substring(0,27)+'\u2026':t.lbl;
+                ctx.fillText(short,32,ly+9); ly+=18;
+            });
+        }
 
         // ── Compass rose (rotates with camera, wind arrow adjusts)
         {
@@ -2973,16 +3095,19 @@ function renderFlare(body) {
             ctx.ellipse(wx(fcx),wy(fcy), Math.abs(t.dist*sx), Math.abs(t.dist*sy), 0, 0, Math.PI*2);
             ctx.fillStyle=t.col+'20'; ctx.fill();
         });
-        // Ring outlines + labels
+        // Ring outlines + labels — custom zones dashed + thicker to stand out
         fp.allThresh.forEach(t=>{
             if(t.dist<0.5)return;
             ctx.beginPath();
             ctx.ellipse(wx(fcx),wy(fcy), Math.abs(t.dist*sx), Math.abs(t.dist*sy), 0, 0, Math.PI*2);
-            ctx.strokeStyle=t.col+'cc'; ctx.lineWidth=1.8; ctx.setLineDash([]); ctx.stroke();
-            // Label at right side of ring
+            ctx.strokeStyle = t.col + (t.custom?'ee':'cc');
+            ctx.lineWidth   = t.custom ? 2.4 : 1.8;
+            if(t.custom) ctx.setLineDash([7,4]); else ctx.setLineDash([]);
+            ctx.stroke();
+            ctx.setLineDash([]);
             const lx=fcx+t.dist*0.75, ly=fcy+t.dist*0.35;
             ctx.fillStyle=t.col; ctx.font='bold 10px sans-serif'; ctx.textAlign='left';
-            ctx.fillText(`${fmt(t.lev,2)} kW/m\u00b2 @ ${fmt(t.dist,0)}m`, wx(lx), wy(ly));
+            ctx.fillText(`${fmt(t.lev,2)} kW/m\u00b2 @ ${fmt(t.dist,0)}m${t.custom?' \u2022 custom':''}`, wx(lx), wy(ly));
         });
 
         // ── Ground line (y=0)
@@ -3069,19 +3194,35 @@ function renderFlare(body) {
         ctx.fillText('Northing Offset = 0 [m]', infoX-4, infoY+36);
         ctx.textAlign='left'; ctx.textBaseline='alphabetic';
 
-        // ── Legend (top-left of plot)
+        // ── Legend (top-left of plot) — API 521 and user-added zones split
+        const stdRows=fp.allThresh.filter(t=>!t.custom);
+        const custRows=fp.allThresh.filter(t=> t.custom);
+        const headers=1+(custRows.length?1:0);
+        const legH=(stdRows.length+custRows.length)*18 + headers*16 + 12;
         const legX=ML+8, legY=MT+8;
-        const legH=fp.allThresh.length*18+22;
         ctx.fillStyle='rgba(22,27,34,0.92)'; ctx.strokeStyle='#30363d'; ctx.lineWidth=0.5;
-        ctx.fillRect(legX,legY,210,legH); ctx.strokeRect(legX,legY,210,legH);
+        ctx.fillRect(legX,legY,220,legH); ctx.strokeRect(legX,legY,220,legH);
+        let ly=legY+14;
         ctx.fillStyle='#c9d1d9'; ctx.font='bold 10px sans-serif';
-        ctx.fillText('API 521 Radiation Zones',legX+6,legY+14);
-        fp.allThresh.forEach((t,i)=>{
-            ctx.fillStyle=t.col; ctx.fillRect(legX+6,legY+20+i*18,10,10);
+        ctx.fillText('API 521 Radiation Zones',legX+6,ly); ly+=6;
+        stdRows.forEach(t=>{
+            ctx.fillStyle=t.col; ctx.fillRect(legX+6,ly,10,10);
             ctx.fillStyle='#8b949e'; ctx.font='10px sans-serif';
-            const shortLbl=t.lbl.length>30?t.lbl.substring(0,29)+'\u2026':t.lbl;
-            ctx.fillText(shortLbl, legX+20, legY+29+i*18);
+            const short=t.lbl.length>30?t.lbl.substring(0,29)+'\u2026':t.lbl;
+            ctx.fillText(short, legX+20, ly+9); ly+=18;
         });
+        if(custRows.length){
+            ly+=2;
+            ctx.fillStyle='#c9d1d9'; ctx.font='bold 10px sans-serif';
+            ctx.fillText('Custom Zones (user-added)',legX+6,ly); ly+=6;
+            custRows.forEach(t=>{
+                ctx.strokeStyle=t.col; ctx.lineWidth=1.6; ctx.setLineDash([3,2]);
+                ctx.strokeRect(legX+6.5,ly+0.5,9,9); ctx.setLineDash([]);
+                ctx.fillStyle='#8b949e'; ctx.font='10px sans-serif';
+                const short=t.lbl.length>30?t.lbl.substring(0,29)+'\u2026':t.lbl;
+                ctx.fillText(short, legX+20, ly+9); ly+=18;
+            });
+        }
     }
 
     // ── NOISE CONTOUR RENDER (top-down plan view) ──────
@@ -3172,14 +3313,18 @@ function renderFlare(body) {
             ctx.fillText(`${n.spl} dBA @ ${fmt(n.dist,0)}m`, wx(lx)+4, wy(ly)-4);
         });
 
-        // Also show heat radiation contours (lighter) if enabled
+        // Also show heat radiation contours (lighter) if enabled —
+        // custom zones get a tighter dash pattern so they're visible against
+        // the noise contours.
         if(showNoise){
             fp.allThresh.forEach(t=>{
                 if(t.dist<1)return;
                 ctx.beginPath();
                 ctx.ellipse(wx(fp.flameCX),wy(fp.flameCY), Math.abs(t.dist*sx), Math.abs(t.dist*sy), 0, 0, Math.PI*2);
-                ctx.strokeStyle=t.col+'55'; ctx.lineWidth=1; ctx.setLineDash([3,5]); ctx.stroke();
-                ctx.setLineDash([]);
+                ctx.strokeStyle = t.col + (t.custom?'88':'55');
+                ctx.lineWidth   = t.custom ? 1.6 : 1;
+                ctx.setLineDash(t.custom ? [2,3] : [3,5]);
+                ctx.stroke(); ctx.setLineDash([]);
             });
         }
 
@@ -3414,14 +3559,18 @@ function renderFlare(body) {
             ctx.fillText(n.spl+' dBA @ '+fmt(n.dist,0)+'m', wx(0), wy(n.dist)-4);
         });
 
-        // Heat radiation zones (spheres centered on flame centroid, shown as cross-section circles)
+        // Heat radiation zones (spheres centered on flame centroid, shown as
+        // cross-section circles). Custom zones use a tighter dash to remain
+        // distinguishable even as faint overlays.
         const fcx=fp.flameCX, fcy=fp.flameCY;
         fp.allThresh.forEach(t=>{
             if(t.dist<0.5)return;
             ctx.beginPath();
             ctx.ellipse(wx(fcx),wy(fcy), Math.abs(t.dist*sx), Math.abs(t.dist*sy), 0, 0, Math.PI*2);
-            ctx.strokeStyle=t.col+'55'; ctx.lineWidth=1; ctx.setLineDash([3,5]); ctx.stroke();
-            ctx.setLineDash([]);
+            ctx.strokeStyle = t.col + (t.custom?'88':'55');
+            ctx.lineWidth   = t.custom ? 1.5 : 1;
+            ctx.setLineDash(t.custom ? [2,3] : [3,5]);
+            ctx.stroke(); ctx.setLineDash([]);
         });
 
         // Flare stack
@@ -3535,10 +3684,20 @@ function renderFlare(body) {
             return{x:cx3+rx*px_per_m*per, y:cy3-ry*px_per_m*per, d:rz, s:per};
         }
 
+        // Noise source anchored at flame centroid (physically correct —
+        // jet-noise PWL is an acoustic source distributed along the flame
+        // axis; centroid is the engineering-conventional single-point
+        // approximation). Previous version placed the source at the ground
+        // origin, which made the dome detach visually from the flame.
+        const wSin=Math.sin(fp.WdirRad), wCos=Math.cos(fp.WdirRad);
+        const ncx = fp.flameCX * wSin;
+        const ncy = fp.flameCY;
+        const ncz = fp.flameCX * wCos;
+
         // Background
         ctx.fillStyle='#080c12'; ctx.fillRect(0,0,W,Hc);
 
-        // Filled noise zones (outer to inner)
+        // Filled ground-level annuli (noise footprint)
         const sorted=[...fp.noiseThresh].sort((a,b)=>b.dist-a.dist);
         sorted.forEach((n,idx)=>{
             if(n.dist<1)return;
@@ -3573,56 +3732,37 @@ function renderFlare(body) {
             ctx.beginPath();ctx.moveTo(p1.x,p1.y);ctx.lineTo(p2.x,p2.y);ctx.stroke();
         }
 
-        // Noise ring outlines on ground + labels
+        // Ground footprint rings (solid) — what a ground-level receiver hears
         fp.noiseThresh.forEach(n=>{
             if(n.dist<1)return;
-            ctx.strokeStyle=n.col+'bb'; ctx.lineWidth=1.8; ctx.setLineDash([8,4]);
+            ctx.strokeStyle=n.col+'bb'; ctx.lineWidth=1.8; ctx.setLineDash([]);
             ctx.beginPath();
             for(let a=0;a<=72;a++){
                 const ang=a/72*Math.PI*2;
                 const p=proj(Math.cos(ang)*n.dist,0,Math.sin(ang)*n.dist);
                 a===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y);
             }
-            ctx.closePath(); ctx.stroke(); ctx.setLineDash([]);
-            const lp=proj(n.dist,0,0);
-            ctx.fillStyle=n.col; ctx.font='bold 11px sans-serif';
-            ctx.fillText(`${n.spl} dBA | ${fmt(n.dist,0)}m`,lp.x+6,lp.y-4);
+            ctx.closePath(); ctx.stroke();
         });
 
-        // ── 3D hemisphere wireframes for noise zones (hemispherical radiation from ground)
-        fp.noiseThresh.forEach(n=>{
-            if(n.dist<1)return;
-            const r=n.dist;
-            ctx.strokeStyle=n.col+'55'; ctx.lineWidth=1;
-            // 6 meridian arcs (upper hemisphere only, ground source)
-            for(let m=0;m<6;m++){
-                const phi=m/6*Math.PI;
-                ctx.beginPath();
-                for(let i=0;i<=24;i++){
-                    const th=i/24*(Math.PI/2); // 0 to π/2 (upper hemisphere)
-                    const p=proj(r*Math.cos(th)*Math.cos(phi), r*Math.sin(th), r*Math.cos(th)*Math.sin(phi));
-                    i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y);
-                }
-                ctx.stroke();
-            }
-            // 2 latitude circles
-            for(let l=1;l<=2;l++){
-                const el=l/3*(Math.PI/2);
-                const rLat=r*Math.cos(el), hy=r*Math.sin(el);
-                ctx.beginPath();
-                for(let a=0;a<=72;a++){
-                    const ang=a/72*Math.PI*2;
-                    const p=proj(rLat*Math.cos(ang), hy, rLat*Math.sin(ang));
-                    a===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y);
-                }
-                ctx.closePath(); ctx.stroke();
-            }
+        // ── Dome isosurfaces — sphere around the flame, clipped at ground.
+        // Draw outermost first so inner zones overlay without being buried.
+        [...fp.noiseThresh].sort((a,b)=>b.dist-a.dist).forEach(n=>{
+            if(n.dist<1) return;
+            drawDome3D(ctx, proj, ncx, ncy, ncz, n.dist, n.col, {
+                alpha: 0.07,
+                groundLabel: `${n.spl} dBA | ${fmt(n.dist,0)}m`
+            });
         });
 
-        // Heat radiation contours (lighter, on ground)
+        // Secondary: heat radiation ground contours (dashed, lighter) so the
+        // user can correlate thermal vs acoustic hazard zones. Custom heat
+        // thresholds get their own dashed pattern to stand out.
         fp.allThresh.forEach(t=>{
             if(t.dist<0.5)return;
-            ctx.strokeStyle=t.col+'55'; ctx.lineWidth=1; ctx.setLineDash([3,5]);
+            ctx.strokeStyle = t.col + (t.custom?'88':'55');
+            ctx.lineWidth = t.custom ? 1.5 : 1;
+            ctx.setLineDash(t.custom ? [2,3] : [3,5]);
             ctx.beginPath();
             for(let a=0;a<=72;a++){
                 const ang=a/72*Math.PI*2;
@@ -3631,6 +3771,14 @@ function renderFlare(body) {
             }
             ctx.closePath(); ctx.stroke(); ctx.setLineDash([]);
         });
+
+        // Acoustic source marker at flame centroid — reinforces where the
+        // dome is anchored so the scene reads correctly.
+        {
+            const sp = proj(ncx, ncy, ncz);
+            ctx.fillStyle = 'rgba(255,255,255,0.7)';
+            ctx.beginPath(); ctx.arc(sp.x, sp.y, 3, 0, Math.PI*2); ctx.fill();
+        }
 
         // Flare stack marker
         const sBot=proj(0,0,0);
@@ -3741,7 +3889,7 @@ function renderFlare(body) {
         const lev=parseFloat($('fl_cl').value);
         const lbl=$('fl_clbl').value||('Custom '+lev);
         if(isNaN(lev)||lev<=0)return;
-        customThresholds.push({lev,lbl,col:CUSTOM_COLORS[customThresholds.length%CUSTOM_COLORS.length]});
+        customThresholds.push({lev,lbl,col:CUSTOM_COLORS[customThresholds.length%CUSTOM_COLORS.length],custom:true});
         renderCustomRows();
     };
     window.removeFlareThreshold=function(i){
