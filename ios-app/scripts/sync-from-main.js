@@ -31,10 +31,13 @@ console.log(`[sync] Reading ${path.relative(ROOT, MAIN_HTML)}`);
 let html = read(MAIN_HTML);
 
 // ── 1. iOS-specific <meta> tags for status bar, web app mode, viewport ──
+// Replaces the source viewport entirely — ios-meta.html contains the
+// enhanced iOS viewport (viewport-fit=cover) as its last line, so we
+// drop the basic one and inject the full iOS meta block in its place.
 const iosMeta = read(path.join(IOS_ADDITIONS, 'ios-meta.html'));
 html = html.replace(
     /<meta name="viewport"[^>]*>/,
-    (m) => m + '\n    ' + iosMeta.trim()
+    () => iosMeta.trim()
 );
 
 // ── 2. iOS-specific CSS (safe-area, tap highlight, bounce-lock + paywall) ──

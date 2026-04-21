@@ -242,6 +242,15 @@
     });
   }
 
+  // ── Sanity check: the main app must expose buildReportHTML so the
+  // PDF override can generate the branded cover page. If this assignment
+  // is ever refactored away, PDF export silently regresses — warn loudly.
+  setTimeout(() => {
+    if (typeof window.buildReportHTML !== 'function') {
+      console.warn('[H2Oil iOS] window.buildReportHTML is not exposed — PDF export will fall back to a plain HTML wrapper without the client-info cover page.');
+    }
+  }, 1500);
+
   // ── Mirror localStorage to Preferences (iCloud-eligible backup) ─
   if (Preferences) {
     const origSetItem = Storage.prototype.setItem;

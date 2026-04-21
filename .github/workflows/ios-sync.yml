@@ -44,7 +44,11 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           if [ -n "$(git status --porcelain ios-app/www/)" ]; then
-            git add ios-app/www/index.html ios-app/www/capacitor.js
+            # Stage everything the sync script may have produced: index.html,
+            # capacitor.js, and any bundled libs copied from ios-additions/libs/
+            # (jspdf.umd.min.js, html2canvas.min.js). Using the directory path
+            # picks up all tracked + new files under www/.
+            git add ios-app/www/
             git commit -m "chore(ios): auto-sync www from main HTML [skip ci]"
             git push
             echo "::notice::iOS www/ updated and pushed"
