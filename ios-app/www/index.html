@@ -2209,8 +2209,8 @@ function renderFlare(body) {
           <div class="fg">
             <div class="fg-item"><label>Stack Tip Height (m)</label><input type="number" id="fl_H" value="30" step="1"></div>
             <div class="fg-item"><label>Tip Diameter (m)</label><input type="number" id="fl_D" value="0.5" step="0.05"></div>
-            <div class="fg-item"><label>Exit Velocity (m/s)</label><input type="number" id="fl_V" value="" step="0.5" placeholder="auto from flow + D">
-              <span style="font-size:10px;color:var(--text3)">Leave blank for auto-derive (flow \u00f7 tip area)</span></div>
+            <div class="fg-item"><label>Exit Velocity (m/s)</label><input type="number" id="fl_V" value="" step="0.5" readonly style="background:rgba(88,166,255,0.06);cursor:not-allowed;color:var(--text2)">
+              <span style="font-size:10px;color:var(--text3)">Calculated from flow &divide; tip area (continuity). Updates live as flow or diameter changes.</span></div>
           </div>
         </div>
         <div class="card">
@@ -2609,18 +2609,25 @@ function renderFlare(body) {
         const eff =(parseFloat($('fl_eff').value)||98)/100;
         const H   =parseFloat($('fl_H').value)||30;      // m
         const D   =parseFloat($('fl_D').value)||0.5;     // m
-        // Exit velocity: user value overrides, else derive from flow+D+Ta.
-        // Volumetric flow at tip conditions ≈ standard flow × (Ta/T_std),
-        // atmospheric exit pressure (post-combustion tip). Tying Uj to flow
-        // makes Mach number — and therefore acoustic power — respond to flow
-        // changes, which is the physically correct behaviour: pushing more gas
-        // through a fixed stack increases exit velocity and noise together.
-        const Ta_raw = parseFloat($('fl_Ta').value); // read early for Uj derivation
+        // Exit velocity is ALWAYS derived from flow + tip area + ambient temp
+        // via continuity: Uj = Q_actual / A. Exit velocity is not an
+        // independent design variable for a real flare — it's determined by
+        // how much gas is pushed through the tip. Previously this was a user
+        // input, which meant increasing flow without also increasing the
+        // input did not change Mach number and the noise field barely moved.
+        // Now tying Uj to flow makes Mach — and therefore acoustic power —
+        // respond to flow changes the way physics dictates.
+        const Ta_raw = parseFloat($('fl_Ta').value);
         const Ta_K_early = (isFinite(Ta_raw)?Ta_raw:25) + 273.15;
         const Q_vol = flow * 1e6 * 0.02832 / 86400 * (Ta_K_early/288.15); // m^3/s at tip
-        const Uj_derived = Q_vol / (Math.PI * D * D / 4);
-        const Uj_user = parseFloat($('fl_V').value);
-        const Uj = (isFinite(Uj_user) && Uj_user > 0) ? Uj_user : Uj_derived;
+        const Uj = Q_vol / (Math.PI * D * D / 4);
+        // Mirror the derived value into the display input (readonly). Done
+        // before the PWL calc so the UI always reflects the number actually
+        // used in the calculation.
+        const fl_V_el = $('fl_V');
+        if (fl_V_el) fl_V_el.value = Uj.toFixed(2);
+        const Uj_derived = Uj;   // kept under old name for results-table display
+        const Uj_user = NaN;     // legacy field — no override path exists
         const Uw  =Math.max(parseFloat($('fl_W').value)||5,0.1); // m/s wind
         const Wfrom=(parseFloat($('fl_Wd').value)||0)%360;  // compass bearing wind comes FROM
         const WdirRad=((Wfrom+180)%360)*Math.PI/180;        // downwind direction in radians
@@ -4153,7 +4160,9 @@ function renderFlare(body) {
     // ── Results table ──────────────────────────────────
     window.calcFlare=function(){
         if(flView==='3d'){cancelAnimationFrame(flareAnim);flareAnim=null;}
-        const flareIds=['fl_flow','fl_nhv','fl_mw','fl_eff','fl_H','fl_D','fl_V','fl_F','fl_tau','fl_W','fl_Wd','fl_Ta','fl_eta','fl_ambN'];
+        // fl_V is auto-derived from flow + D + Ta; intentionally omitted from the
+// persisted list so a stale localStorage value can't override the calc.
+const flareIds=['fl_flow','fl_nhv','fl_mw','fl_eff','fl_H','fl_D','fl_F','fl_tau','fl_W','fl_Wd','fl_Ta','fl_eta','fl_ambN'];
         saveInputs('flare',flareIds);
         const fp=getFlameParams();
 
@@ -4316,8 +4325,37 @@ function renderFlare(body) {
         `);
     };
 
-    const flareIds=['fl_flow','fl_nhv','fl_mw','fl_eff','fl_H','fl_D','fl_V','fl_F','fl_tau','fl_W','fl_Wd','fl_Ta','fl_eta','fl_ambN'];
+    // fl_V is auto-derived from flow + D + Ta; intentionally omitted from the
+    // persisted list so a stale localStorage value can't override the calc.
+    const flareIds=['fl_flow','fl_nhv','fl_mw','fl_eff','fl_H','fl_D','fl_F','fl_tau','fl_W','fl_Wd','fl_Ta','fl_eta','fl_ambN'];
     loadInputs('flare',flareIds);
+
+    // One-time migration: clear any legacy fl_V value sitting in the saved
+    // state (pre-auto-derive), so the input reads clean on next save.
+    try {
+        const raw = localStorage.getItem('wts_flare');
+        if (raw) {
+            const o = JSON.parse(raw);
+            if (o && 'fl_V' in o) { delete o.fl_V; localStorage.setItem('wts_flare', JSON.stringify(o)); }
+        }
+    } catch(_) {}
+
+    // Live-update the derived exit velocity display (read-only) whenever any
+    // input it depends on changes. Avoids waiting for Calculate & Render.
+    const recomputeUj = () => {
+        const flow = parseFloat($('fl_flow').value) || 0;
+        const D    = parseFloat($('fl_D').value)    || 0;
+        const Ta_K = ((parseFloat($('fl_Ta').value) || 25) + 273.15);
+        const el   = $('fl_V');
+        if (!el || flow <= 0 || D <= 0) return;
+        const Q_vol = flow * 1e6 * 0.02832 / 86400 * (Ta_K/288.15);
+        const Uj    = Q_vol / (Math.PI * D * D / 4);
+        el.value = Uj.toFixed(2);
+    };
+    ['fl_flow','fl_D','fl_Ta'].forEach(id => {
+        const el = $(id); if (el) el.addEventListener('input', recomputeUj);
+    });
+    recomputeUj(); // initial paint before Calculate runs
 
     setTimeout(()=>calcFlare(), 120);
 }
