@@ -65,9 +65,13 @@ The root HTML stays untouched — it works equally well as a plain webpage and a
 
 1. **macOS** (required for iOS development)
 2. **Xcode 16+** — Capacitor 8 requires Xcode 16 (iOS deployment target 15.1)
-3. **CocoaPods 1.15+** — `brew install cocoapods` (preferred over `sudo gem`)
-4. **Apple Developer Program** membership ($99/yr) — required for App Store submission
-5. **Node.js 20+** — *only for the first-time setup below*. After that, not needed.
+3. **Apple Developer Program** membership ($99/yr) — required for App Store submission
+4. **Node.js 20+** — *only for the first-time setup below*. After that, not needed.
+
+> **Note:** Capacitor 8 uses **Swift Package Manager** instead of CocoaPods.
+> There is no `Podfile` — plugin dependencies are declared in `Package.swift`
+> and resolved natively by Xcode. CocoaPods is no longer required for this
+> project.
 
 ---
 
@@ -401,17 +405,19 @@ match the one tied to your App Store Connect account.
 
 - **"Workspace App.xcworkspace does not exist"** — the `ios/` folder
   wasn't committed. Run the one-time setup above.
+- **"No Podfile found in the project directory"** when running
+  `pod install` — expected on Capacitor 8+. SPM replaced CocoaPods;
+  don't run `pod install`. Just open the workspace and let Xcode
+  resolve packages.
 - **"cap: command not found"** in the CI log — Node didn't install
   or PATH isn't exporting. The script installs via brew as a fallback;
   check the CI log for `brew install node` output.
-- **"Sandbox: rsync.samba(...) deny(1) file-write-create"** — usually
-  a `public/` (Capacitor's webDir copy) conflict. `cap sync` recreates
-  it; if the CI step errors here, the cause is almost always a stale
-  `ios/App/public/` that's been committed accidentally. It's gitignored
-  but double-check.
-- **Build times > 20 min** — normal for the first archive (full pod
-  install + Swift compile). Subsequent builds reuse caches and take
-  5–8 min.
+- **SPM fetch fails in CI** — usually a rate-limit on the first
+  clone of many RevenueCat packages. Retry; Xcode Cloud caches SPM
+  checkouts between runs.
+- **Build times > 20 min** — normal for the first archive (SPM
+  package fetch + Swift compile). Subsequent builds reuse caches and
+  take 5–8 min.
 
 ---
 

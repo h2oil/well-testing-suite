@@ -147,18 +147,12 @@ if [ "${NODE_VER:-0}" -lt 18 ]; then
 fi
 ok "Node.js $(node -v)"
 
-# ─── 5. CocoaPods (install via brew — cleaner than sudo gem) ───
-info "Checking CocoaPods..."
-if ! command -v pod >/dev/null 2>&1; then
-    warn "CocoaPods not found."
-    if confirm "Install CocoaPods via Homebrew?"; then
-        brew install cocoapods
-    else
-        err "CocoaPods required. Run: brew install cocoapods"
-        exit 1
-    fi
-fi
-ok "CocoaPods $(pod --version 2>/dev/null)"
+# ─── 5. CocoaPods (Capacitor 8+ uses Swift Package Manager — skip) ───
+# Capacitor 8 dropped CocoaPods in favour of SPM; the generated iOS
+# project has a Package.swift instead of a Podfile, and Xcode resolves
+# plugin dependencies natively. CocoaPods is only needed if you add
+# non-Capacitor SDKs that don't ship SPM manifests.
+info "CocoaPods not required (Capacitor 8 uses Swift Package Manager)"
 
 # ─── 6. npm dependencies ───
 info "Installing npm dependencies..."
@@ -181,9 +175,12 @@ fi
 info "Installing Xcode Cloud CI scripts..."
 bash scripts/install-xcodecloud-scripts.sh
 
-# ─── 9. CocoaPods install ───
-info "Installing CocoaPods dependencies..."
-(cd ios/App && pod install --silent)
+# ─── 9. SPM package resolution (handled automatically by Xcode on first
+#       build, but pre-resolving here avoids a long wait on first open) ───
+info "Resolving Swift Package Manager dependencies..."
+xcodebuild -resolvePackageDependencies \
+    -workspace ios/App/App.xcworkspace \
+    -scheme App 2>&1 | grep -E "(Resolving|Fetching|Cloning|error:)" || true
 
 # ─── 10. Capacitor sync ───
 info "Syncing Capacitor..."

@@ -42,8 +42,9 @@ fi
 npm run sync-main
 
 # Copy www/ into the iOS app bundle and sync Capacitor plugins.
-# `cap sync ios` also runs `pod install`, so the Pods/ folder is populated
-# before Xcode Cloud's archive step.
+# Capacitor 8 uses Swift Package Manager — `cap sync ios` updates the
+# Package.swift manifest; Xcode Cloud resolves packages automatically
+# before the archive step. No pod install needed.
 npx cap sync ios
 
 echo "── Pre-build sync complete ──"
