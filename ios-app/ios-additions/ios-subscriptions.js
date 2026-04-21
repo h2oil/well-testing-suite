@@ -99,6 +99,11 @@ const ENTITLEMENT_CACHE_KEY = 'h2oil.entitlement';
         return true;
       } catch (e) {
         console.warn('[iOS Subs] RevenueCat configure failed:', e);
+        // Don't cache the failure — if the user fixes their dashboard
+        // while the app is running (or just races a propagation delay),
+        // the next gate re-eval should retry instead of being locked
+        // out until a full app restart.
+        configurePromise = null;
         return false;
       }
     })();
