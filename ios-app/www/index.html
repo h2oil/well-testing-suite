@@ -8063,11 +8063,21 @@ const ENTITLEMENT_CACHE_KEY = 'h2oil.entitlement';
       && window.Capacitor.isNativePlatform();
   if (!isNative) return;
 
-  const Plugins = window.Capacitor.Plugins || {};
-  const Purchases = Plugins.Purchases || null;
-  // UI plugin exposes presentPaywall / presentPaywallIfNeeded / presentCustomerCenter
-  const PurchasesUI = Plugins.RevenueCatUI || Plugins.PurchasesUI || null;
-  const Prefs = Plugins.Preferences || null;
+  // Plugin references are late-bound. Capacitor 8 registers native plugins
+  // asynchronously after the JS bundle parses, so the `Plugins` object
+  // referenced at module-init time may have null values. These `let`
+  // bindings get rebound by `refreshPluginRefs()` once plugins arrive
+  // (called from waitForPurchasesPlugin before any gate work).
+  let Plugins     = (window.Capacitor && window.Capacitor.Plugins) || {};
+  let Purchases   = Plugins.Purchases || null;
+  let PurchasesUI = Plugins.RevenueCatUI || Plugins.PurchasesUI || null;
+  let Prefs       = Plugins.Preferences || null;
+  function refreshPluginRefs() {
+    Plugins     = (window.Capacitor && window.Capacitor.Plugins) || {};
+    Purchases   = Plugins.Purchases || null;
+    PurchasesUI = Plugins.RevenueCatUI || Plugins.PurchasesUI || null;
+    Prefs       = Plugins.Preferences || null;
+  }
 
   // ── Offline entitlement cache ────────────────────────────────
   function readCache() {
@@ -8456,7 +8466,32 @@ const ENTITLEMENT_CACHE_KEY = 'h2oil.entitlement';
     presentPaywall: presentRCPaywall,
     presentCustomerCenter,
     refresh: evaluateGate,
-    resetCache: () => { writeCache({ active: false }); evaluateGate(); }
+    resetCache: () => { writeCache({ active: false }); evaluateGate(); },
+    // Dev diagnostic: prints everything needed to debug paywall issues.
+    diag: async () => {
+      refreshPluginRefs();
+      const out = {
+        isNative, pluginsRegistered: Object.keys(Plugins || {}),
+        hasPurchases: !!Purchases, hasPurchasesUI: !!PurchasesUI,
+        apiKeyLooksValid: /^appl_[A-Za-z0-9]{10,}$/.test(REVENUECAT_API_KEY || ''),
+        cachedEntitlement: readCache(),
+        fallbackDomPresent: !!document.getElementById('iosPaywall'),
+        fallbackDomVisible: document.getElementById('iosPaywall')?.style.display !== 'none',
+      };
+      try { out.liveEntitlement = await queryLiveEntitlement(); } catch (e) { out.liveEntitlementError = String(e); }
+      try { const o = await loadOfferings(); out.currentOffering = o ? { id: o.identifier, packages: (o.availablePackages||[]).length } : null; }
+      catch (e) { out.offeringsError = String(e); }
+      console.log('[iOS Subs diag]', out);
+      return out;
+    },
+    // Force-show the native RC paywall regardless of cached entitlement.
+    // Useful for demos / sandbox testing where you've already subscribed
+    // once and want to see the paywall again without uninstalling.
+    forcePaywall: async () => {
+      writeCache({ active: false });
+      const ok = await presentRCPaywallIfNeeded();
+      if (ok === null) { showFallbackPaywall(); refreshFallbackPricingLabel(); }
+    },
   };
   // Back-compat dev helper
   window.__h2oilResetEntitlement = window.H2OilSubs.resetCache;
@@ -8467,9 +8502,32 @@ const ENTITLEMENT_CACHE_KEY = 'h2oil.entitlement';
     if (!document.hidden) evaluateGate();
   });
 
+  // Capacitor 8 registers native plugins asynchronously after the JS
+  // bundle parses. If init() fires before `Plugins.Purchases` is
+  // populated, configure() fails and the gate bypasses silently.
+  // Poll up to 3 seconds for Purchases to appear before giving up.
+  async function waitForPurchasesPlugin(timeoutMs = 3000) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      refreshPluginRefs();
+      if (Purchases) return true;
+      await new Promise(r => setTimeout(r, 80));
+    }
+    refreshPluginRefs();
+    return !!Purchases;
+  }
+
   async function init() {
     wireFallbackButtons();
     renderManageButton();
+
+    const ready = await waitForPurchasesPlugin();
+    console.log('[iOS Subs] Plugins at init:', Object.keys(Plugins || {}).join(','),
+                '| Purchases:', !!Purchases, '| PurchasesUI:', !!PurchasesUI);
+    if (!ready) {
+      console.warn('[iOS Subs] Purchases plugin never registered — gate will run in fallback mode only. Fix: `cd ios-app && npx cap sync ios`, then rebuild.');
+    }
+
     await configureOnce();
     // Pricing label is refreshed from within evaluateGate when the
     // fallback paywall actually needs to be shown — no need to query
