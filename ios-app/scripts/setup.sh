@@ -189,8 +189,10 @@ bash scripts/install-xcodecloud-scripts.sh
 # ─── 9. SPM package resolution (handled automatically by Xcode on first
 #       build, but pre-resolving here avoids a long wait on first open) ───
 info "Resolving Swift Package Manager dependencies..."
+# Capacitor 8 + SPM uses .xcodeproj directly — there's no standalone
+# .xcworkspace (CocoaPods-era artefact). Resolve against the project.
 xcodebuild -resolvePackageDependencies \
-    -workspace ios/App/App.xcworkspace \
+    -project ios/App/App.xcodeproj \
     -scheme App 2>&1 | grep -E "(Resolving|Fetching|Cloning|error:)" || true
 
 # ─── 10. Capacitor sync ───
@@ -202,7 +204,7 @@ echo ""
 ok "Setup complete!"
 echo ""
 info "Opening Xcode project..."
-open ios/App/App.xcworkspace
+open ios/App/App.xcodeproj
 
 echo ""
 echo "${BOLD}Next steps in Xcode:${RESET}"

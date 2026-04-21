@@ -121,7 +121,7 @@ Then in Xcode: ⌘+R.
 ### Opening in Xcode
 
 ```bash
-open ios/App/App.xcworkspace
+open ios/App/App.xcodeproj    # Capacitor 8 + SPM: no standalone .xcworkspace
 ```
 
 Or `npm run open` from `ios-app/`.
@@ -327,13 +327,16 @@ automatically on every push — no Mac required for CI. It needs two things
 the plain `cap add ios` flow does not set up:
 
 1. **The `ios/` Xcode project must be committed to git.** Xcode Cloud
-   clones the repo and looks for `App.xcworkspace` — if the `ios/`
-   folder was never committed, you get:
+   clones the repo and needs to find the `.xcodeproj`. If the `ios/`
+   folder was never committed you'll see:
    > Workspace App.xcworkspace does not exist at ios-app/ios/App/App.xcworkspace
+   (Note: the error text mentions `.xcworkspace` regardless, but under
+   Capacitor 8 + SPM the real path is `App.xcodeproj`. Configure the
+   workflow accordingly — see below.)
 2. **A pre-build sync script** so the cloud runner regenerates
    `www/index.html` and runs `cap sync` before `xcodebuild` fires.
    Xcode Cloud only scans for scripts in `ci_scripts/` **next to the
-   workspace** — i.e. `ios-app/ios/App/ci_scripts/`.
+   project** — i.e. `ios-app/ios/App/ci_scripts/`.
 
 ### One-time setup (on a Mac)
 
@@ -360,7 +363,7 @@ to re-populate it.
 In Xcode on a Mac (needs Xcode 14+ with an active Apple Developer
 account signed in):
 
-1. Open `ios-app/ios/App/App.xcworkspace`.
+1. Open `ios-app/ios/App/App.xcodeproj` (no standalone `.xcworkspace` under Capacitor 8 + SPM).
 2. **Product → Xcode Cloud → Create Workflow**. Xcode detects the
    workspace automatically.
 3. **Start Conditions**: branch push, choose `master` (or add `Dev`
@@ -403,8 +406,13 @@ match the one tied to your App Store Connect account.
 
 ### Troubleshooting
 
-- **"Workspace App.xcworkspace does not exist"** — the `ios/` folder
-  wasn't committed. Run the one-time setup above.
+- **"Workspace App.xcworkspace does not exist"** — two possible causes:
+  1. The `ios/` folder wasn't committed — run the one-time setup.
+  2. The Xcode Cloud workflow is configured with a `.xcworkspace` path
+     but Capacitor 8 + SPM projects don't have one. Edit the workflow in
+     Xcode → Cloud tab → Edit Workflow → Primary Repository → switch to
+     `ios-app/ios/App/App.xcodeproj`. Or delete and recreate the workflow
+     from the `.xcodeproj` so Xcode auto-picks the right path.
 - **"No Podfile found in the project directory"** when running
   `pod install` — expected on Capacitor 8+. SPM replaced CocoaPods;
   don't run `pod install`. Just open the workspace and let Xcode

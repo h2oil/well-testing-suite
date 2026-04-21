@@ -26,7 +26,7 @@ echo "→ Archiving release build..."
 rm -rf build/
 mkdir -p build/
 
-xcodebuild -workspace ios/App/App.xcworkspace \
+xcodebuild -project ios/App/App.xcodeproj \
     -scheme "$SCHEME" \
     -configuration "$CONFIG" \
     -destination "generic/platform=iOS" \
