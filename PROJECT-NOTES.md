@@ -20,7 +20,8 @@ Capacitor 7.
 - `@capacitor/cli`: `^6.1.2` → `^7.0.0`
 - `@capacitor/assets`: `^3.0.5` → `^4.0.0`
 - `@revenuecat/purchases-capacitor` + `@revenuecat/purchases-capacitor-ui`:
-  `^9.0.0` → `^10.3.3`
+  `^9.0.0` → `^10.3.3` → `^11.3.2` (latest on the Capacitor-7 line;
+  12.x+ needs Capacitor 8)
 
 **Hard requirements on the Mac dev box**
 - Xcode `16.0+` (verify: `xcodebuild -version`)
