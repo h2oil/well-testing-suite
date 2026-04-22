@@ -327,11 +327,14 @@ const ENTITLEMENT_CACHE_KEY = 'h2oil.entitlement';
       console.log('[iOS Subs diag]', out);
       return out;
     },
-    // Force the native paywall to present regardless of cached state.
-    // Useful for demos / sandbox re-testing without uninstalling.
+    // Force the native paywall to present regardless of cached state
+    // OR active entitlement. Useful for demos / sandbox re-testing
+    // without uninstalling or cancelling the subscription. Uses
+    // presentPaywall (unconditional) rather than presentPaywallIfNeeded
+    // so it shows even for already-subscribed users.
     forcePaywall: async () => {
       writeCache({ active: false });
-      const ok = await presentRCPaywallIfNeeded();
+      const ok = await presentRCPaywall();
       if (ok === null) console.error('[iOS Subs] forcePaywall: RC paywall unavailable (UI plugin missing or configure failed).');
     },
   };
