@@ -1,37 +1,35 @@
 // ══════════════════════════════════════════════════════════════
-// iOS Subscription Gate — RevenueCat
-//   @revenuecat/purchases-capacitor      (StoreKit bridge)
-//   @revenuecat/purchases-capacitor-ui   (native paywall + Customer Center)
+// iOS Subscription Gate — RevenueCat (RC 13 + Capacitor 8)
+//   @revenuecat/purchases-capacitor      — StoreKit bridge
+//   @revenuecat/purchases-capacitor-ui   — native paywall + Customer Center
 //
 // Flow on launch:
 //   1. Configure RC with the iOS public key.
-//   2. Fetch customerInfo. If the "pro" entitlement is active → unlock.
-//   3. Otherwise try the native RC paywall (presentPaywallIfNeeded).
-//   4. If the native paywall isn't available (UI plugin missing or no
-//      paywall configured for the offering), fall back to the custom
-//      HTML paywall declared in ios-paywall.html.
+//   2. Check the cached entitlement for instant offline unlock.
+//   3. Verify with RC in the background via getCustomerInfo.
+//   4. If the user lacks the "pro" entitlement, present RC's native
+//      paywall (presentPaywallIfNeeded). The paywall is fully designed
+//      in the RC dashboard — no local HTML.
+//   5. Re-evaluate whenever the app returns from background (visibility
+//      change), the Customer Center closes, or H2OilSubs.refresh() is
+//      called.
 //
-// Exposes window.H2OilSubs for in-app "Manage Subscription" buttons.
+// Exposes window.H2OilSubs for in-app "Manage Subscription" buttons and
+// dev helpers (diag, forcePaywall, resetCache).
 //
 // ─── CONFIG ────────────────────────────────────────────────────
-//   1. RevenueCat dashboard → Project settings → API Keys → iOS public
-//      key (starts "appl_") → paste into REVENUECAT_API_KEY below.
-//      iOS native StoreKit REQUIRES an appl_ key. A test_ web-billing key
-//      will not work — the runtime guard below rejects non-appl_ keys.
-//   2. Dashboard → Entitlements → create identifier "pro" (display name
-//      can be "Well Testing Suite Pro").
-//   3. Dashboard → Products → import com.h2oil.welltesting.pro.monthly,
-//      attach to "pro".
-//   4. Dashboard → Offerings → default offering, Monthly package →
-//      points at that product. Build a Paywall on this offering in the
-//      Paywalls tab to get native paywall UI.
+//   1. RC dashboard → Project Settings → API Keys → iOS public key
+//      (starts "appl_") → REVENUECAT_API_KEY below. iOS native StoreKit
+//      requires an appl_ key; the runtime guard rejects everything else.
+//   2. Entitlements → create identifier "pro".
+//   3. Products → import com.h2oil.welltesting.pro.monthly, attach to "pro".
+//   4. Offerings → "default" → Monthly package pointing at the product,
+//      marked Current. Paywalls tab → design + Publish.
 // ──────────────────────────────────────────────────────────────
 const REVENUECAT_API_KEY = 'appl_ZgPLTWenoIgrqCgSDmqMRdMXyFF';
-const ENTITLEMENT_ID = 'pro';                                // must match dashboard id
-const OFFERING_ID = 'default';                               // RC default offering
-const PRODUCT_ID = 'com.h2oil.welltesting.pro.monthly';
-const TNC_URL = 'https://h2oil.sitify.app';
-const PRIVACY_URL = 'https://h2oil.sitify.app/privacy';
+const ENTITLEMENT_ID = 'pro';
+const OFFERING_ID    = 'default';
+const PRODUCT_ID     = 'com.h2oil.welltesting.pro.monthly';
 const ENTITLEMENT_CACHE_KEY = 'h2oil.entitlement';
 // ══════════════════════════════════════════════════════════════
 
@@ -42,11 +40,10 @@ const ENTITLEMENT_CACHE_KEY = 'h2oil.entitlement';
       && window.Capacitor.isNativePlatform();
   if (!isNative) return;
 
-  // Plugin references are late-bound. Capacitor 8 registers native plugins
-  // asynchronously after the JS bundle parses, so the `Plugins` object
-  // referenced at module-init time may have null values. These `let`
-  // bindings get rebound by `refreshPluginRefs()` once plugins arrive
-  // (called from waitForPurchasesPlugin before any gate work).
+  // Plugin references are late-bound. Capacitor 8 registers native
+  // plugins asynchronously after the JS bundle parses, so capturing
+  // refs at module-init can grab nulls. These `let` bindings get
+  // rebound by refreshPluginRefs() from waitForPurchasesPlugin().
   let Plugins     = (window.Capacitor && window.Capacitor.Plugins) || {};
   let Purchases   = Plugins.Purchases || null;
   let PurchasesUI = Plugins.RevenueCatUI || Plugins.PurchasesUI || null;
@@ -83,11 +80,8 @@ const ENTITLEMENT_CACHE_KEY = 'h2oil.entitlement';
       configurePromise = Promise.resolve(false);
       return configurePromise;
     }
-    // iOS native StoreKit only accepts "appl_" public keys. Reject anything
-    // else (empty, placeholder, test_ web-billing key, etc.) before calling
-    // configure — otherwise RC silently errors at purchase time.
     if (!/^appl_[A-Za-z0-9]{10,}$/.test(REVENUECAT_API_KEY || '')) {
-      console.warn('[iOS Subs] RevenueCat iOS API key invalid or placeholder — paywall will run in offline/fallback mode. Expected format: appl_XXXXXXXX...');
+      console.error('[iOS Subs] RevenueCat iOS API key invalid. Expected format: appl_XXXXXXXX... App will launch without a gate.');
       configurePromise = Promise.resolve(false);
       return configurePromise;
     }
@@ -99,10 +93,9 @@ const ENTITLEMENT_CACHE_KEY = 'h2oil.entitlement';
         return true;
       } catch (e) {
         console.warn('[iOS Subs] RevenueCat configure failed:', e);
-        // Don't cache the failure — if the user fixes their dashboard
-        // while the app is running (or just races a propagation delay),
-        // the next gate re-eval should retry instead of being locked
-        // out until a full app restart.
+        // Reset promise on failure so a later fix (dashboard change,
+        // CDN propagation) can retry instead of locking us out until
+        // a full app restart.
         configurePromise = null;
         return false;
       }
@@ -111,19 +104,16 @@ const ENTITLEMENT_CACHE_KEY = 'h2oil.entitlement';
   }
 
   // Far-future sentinel for entitlements without an expirationDate
-  // (lifetime / non-subscription entitlements). Prevents a legitimate
-  // non-expiring entitlement from being flagged as expired after 24h.
+  // (lifetime / non-subscription entitlements).
   const NO_EXPIRY = 8640000000000000; // max safe Date ms
 
-  // Maps RevenueCat's CustomerInfo → our minimal entitlement shape.
   function entitlementFromCustomerInfo(customerInfo) {
     if (!customerInfo) return null;
     const active = customerInfo.entitlements && customerInfo.entitlements.active;
     if (!active) return null;
     const ent = active[ENTITLEMENT_ID];
     if (!ent) return null;
-    const expiry = ent.expirationDate ? new Date(ent.expirationDate).getTime()
-                                      : NO_EXPIRY;
+    const expiry = ent.expirationDate ? new Date(ent.expirationDate).getTime() : NO_EXPIRY;
     return {
       active: true,
       expiry,
@@ -162,37 +152,24 @@ const ENTITLEMENT_CACHE_KEY = 'h2oil.entitlement';
     }
   }
 
-  async function currentMonthlyPackage() {
-    const off = await loadOfferings();
-    if (!off) return null;
-    return off.monthly
-        || (off.availablePackages && off.availablePackages.find(p =>
-              (p.product && p.product.identifier === PRODUCT_ID) ||
-              p.identifier === '$rc_monthly'))
-        || (off.availablePackages && off.availablePackages[0])
-        || null;
-  }
-
   // ── Native RC paywall ────────────────────────────────────────
-  // Returns true if an active entitlement is present AFTER the paywall
-  // interaction (purchase/restore), false if user dismissed without
-  // buying, or null if the UI plugin isn't available.
+  // Returns:
+  //   true  → the user now has the entitlement (purchased / restored)
+  //   false → paywall was shown and user dismissed without subscribing
+  //   null  → UI plugin unavailable OR the call threw (RC misconfigured,
+  //           network, etc.) — the app will log and stay locked until
+  //           the next gate re-evaluation (visibility change / refresh).
   async function presentRCPaywallIfNeeded() {
     if (!PurchasesUI) return null;
     if (!(await configureOnce())) return null;
     try {
-      // presentPaywallIfNeeded: shows only if user lacks the entitlement.
-      // Returns a result string ("PURCHASED" | "RESTORED" | "CANCELLED" | ...).
-      const res = await PurchasesUI.presentPaywallIfNeeded({
+      await PurchasesUI.presentPaywallIfNeeded({
         requiredEntitlementIdentifier: ENTITLEMENT_ID
       });
-      const outcome = (res && (res.result || res)) || '';
-      // Regardless of the reported outcome string, re-query entitlement
-      // — the source of truth is always customerInfo.
       const ent = await queryLiveEntitlement();
       return !!(ent && ent.active);
     } catch (e) {
-      console.warn('[iOS Subs] RC paywall failed, falling back:', e);
+      console.warn('[iOS Subs] RC paywall presentation failed:', e);
       return null;
     }
   }
@@ -215,142 +192,23 @@ const ENTITLEMENT_CACHE_KEY = 'h2oil.entitlement';
     if (!(await configureOnce())) { alert('Subscription service not configured.'); return; }
     try {
       await PurchasesUI.presentCustomerCenter();
-      // Re-check entitlement after the user returns — they may have cancelled.
       const ent = await queryLiveEntitlement();
-      if (ent && ent.active) writeCache(ent);
-      else writeCache({ active: false });
+      writeCache(ent && ent.active ? ent : { active: false });
       evaluateGate();
     } catch (e) {
       console.warn('[iOS Subs] Customer Center failed:', e);
     }
   }
 
-  // ── Fallback custom HTML paywall ─────────────────────────────
-  function paywallNode() { return document.getElementById('iosPaywall'); }
-  function showFallbackPaywall() {
-    const el = paywallNode();
-    if (!el) return;
-    el.style.display = 'flex';
-    document.documentElement.style.overflow = 'hidden';
-    document.body.style.overflow = 'hidden';
-  }
-  function hideFallbackPaywall() {
-    const el = paywallNode();
-    if (!el) return;
-    el.style.display = 'none';
-    document.documentElement.style.overflow = '';
-    document.body.style.overflow = '';
-  }
-  function setFallbackStatus(msg, isError) {
-    const s = document.getElementById('iosPaywallStatus');
-    if (!s) return;
-    s.textContent = msg || '';
-    s.classList.toggle('pw-err', !!isError);
-  }
-  function setFallbackButtonsEnabled(enabled) {
-    ['iosPaywallSubscribe','iosPaywallRestore'].forEach(id => {
-      const b = document.getElementById(id);
-      if (b) b.disabled = !enabled;
-    });
-  }
-
-  async function refreshFallbackPricingLabel() {
-    const pkg = await currentMonthlyPackage();
-    if (!pkg) return;
-    const price = (pkg.product && (pkg.product.priceString || pkg.product.price_string))
-                  || pkg.priceString || '';
-    const el = document.getElementById('iosPaywallPrice');
-    if (el && price) el.textContent = price + ' / month after 3-day free trial';
-  }
-
-  async function purchaseViaFallback() {
-    if (!Purchases) throw new Error('Purchases plugin not available');
-    if (!(await configureOnce())) throw new Error('RevenueCat not configured');
-    const pkg = await currentMonthlyPackage();
-    if (!pkg) throw new Error('No subscription package available');
-    const res = await Purchases.purchasePackage({ aPackage: pkg });
-    const info = res && (res.customerInfo || (res.purchaseResult && res.purchaseResult.customerInfo));
-    return entitlementFromCustomerInfo(info);
-  }
-
-  async function restoreViaFallback() {
-    if (!Purchases) throw new Error('Purchases plugin not available');
-    if (!(await configureOnce())) throw new Error('RevenueCat not configured');
-    const res = await Purchases.restorePurchases();
-    return entitlementFromCustomerInfo(res && (res.customerInfo || res));
-  }
-
-  function wireFallbackButtons() {
-    const sub = document.getElementById('iosPaywallSubscribe');
-    const rest = document.getElementById('iosPaywallRestore');
-    if (sub && !sub.__wired) {
-      sub.__wired = true;
-      sub.addEventListener('click', async () => {
-        setFallbackStatus('Processing…');
-        setFallbackButtonsEnabled(false);
-        try {
-          // Prefer the native RC paywall (richer design, matches what the
-          // user saw on launch). Only fall through to direct purchase if
-          // the UI plugin is unavailable.
-          let ent = null;
-          if (PurchasesUI) {
-            const ok = await presentRCPaywallIfNeeded();
-            if (ok === true) ent = await queryLiveEntitlement();
-            else if (ok === false) { setFallbackStatus(''); return; } // dismissed — leave fallback visible
-          }
-          if (!ent) ent = await purchaseViaFallback();
-          if (ent && ent.active) {
-            writeCache(ent);
-            setFallbackStatus('Subscription active. Welcome!');
-            setTimeout(hideFallbackPaywall, 600);
-          } else {
-            setFallbackStatus('Purchase completed but entitlement not yet active. Try Restore Purchases.', true);
-          }
-        } catch (e) {
-          const cancelled = !!(e && (e.userCancelled || e.user_cancelled));
-          const msg = cancelled ? 'Purchase cancelled.' : ((e && (e.message || e.errorMessage)) || 'Purchase failed');
-          setFallbackStatus(msg, true);
-        } finally {
-          setFallbackButtonsEnabled(true);
-        }
-      });
-    }
-    if (rest && !rest.__wired) {
-      rest.__wired = true;
-      rest.addEventListener('click', async () => {
-        setFallbackStatus('Restoring…');
-        setFallbackButtonsEnabled(false);
-        try {
-          const ent = await restoreViaFallback();
-          if (ent && ent.active) {
-            writeCache(ent);
-            setFallbackStatus('Subscription restored.');
-            setTimeout(hideFallbackPaywall, 600);
-          } else {
-            setFallbackStatus('No active subscription found on this Apple ID.', true);
-          }
-        } catch (e) {
-          setFallbackStatus((e && (e.message || e.errorMessage)) || 'Restore failed', true);
-        } finally {
-          setFallbackButtonsEnabled(true);
-        }
-      });
-    }
-    const tnc = document.getElementById('iosPaywallTnc');
-    if (tnc) tnc.setAttribute('href', TNC_URL);
-    const priv = document.getElementById('iosPaywallPrivacy');
-    if (priv) priv.setAttribute('href', PRIVACY_URL);
-  }
-
   // ── Manage Subscription FAB (visible when entitled) ──────────
   function renderManageButton() {
     if (document.getElementById('iosManageSub')) return;
-    if (!PurchasesUI) return;  // no Customer Center → no button
+    if (!PurchasesUI) return;
     const fab = document.createElement('button');
     fab.id = 'iosManageSub';
     fab.type = 'button';
     fab.title = 'Manage subscription';
-    fab.textContent = '⚙︎';
+    fab.textContent = '\u2699\ufe0e';
     fab.style.cssText = `
       position: fixed;
       right: calc(14px + env(safe-area-inset-right));
@@ -377,8 +235,7 @@ const ENTITLEMENT_CACHE_KEY = 'h2oil.entitlement';
 
   // ── Gate evaluation ──────────────────────────────────────────
   // `gating` prevents overlapping evaluations. `pendingRecheck` captures
-  // any re-check request that arrives mid-flight (e.g. visibilitychange
-  // while we're still talking to RC) so it isn't silently dropped.
+  // any re-check request that arrives mid-flight so it isn't dropped.
   let gating = false;
   let pendingRecheck = false;
   async function evaluateGate() {
@@ -388,50 +245,47 @@ const ENTITLEMENT_CACHE_KEY = 'h2oil.entitlement';
       do {
         pendingRecheck = false;
 
-        // Optimistic unlock if we have a valid cached entitlement — app
-        // launches instantly offline for existing subscribers.
+        // Optimistic unlock if cached entitlement is still valid — lets
+        // existing subscribers launch instantly even offline.
         const cached = readCache();
         if (isCacheValid(cached)) {
-          hideFallbackPaywall();
           setManageButtonVisible(true);
-        } else {
-          showFallbackPaywall();
-          setManageButtonVisible(false);
         }
 
-        // Always verify with RC in the background.
+        // Authoritative check against RC's backend.
         const live = await queryLiveEntitlement();
         if (live && live.active) {
           writeCache(live);
-          hideFallbackPaywall();
           setManageButtonVisible(true);
-          continue; // pendingRecheck may have been set; loop re-runs if so
+          continue;
         }
 
-        // No entitlement — try the native RC paywall first. This returns:
-        //   true  → purchase/restore completed
-        //   false → paywall shown and user dismissed
-        //   null  → UI plugin unavailable OR call failed
+        // No active entitlement → present the native RC paywall. Designed
+        // in the RC dashboard; if you don't have one published the SDK
+        // will no-op and the gate stays open (see warning below).
         const nativeOk = await presentRCPaywallIfNeeded();
         if (nativeOk === true) {
           const ent = await queryLiveEntitlement();
           if (ent && ent.active) {
             writeCache(ent);
-            hideFallbackPaywall();
             setManageButtonVisible(true);
             continue;
           }
         }
 
-        // Either UI plugin unavailable, or user dismissed native paywall.
-        // Either way the gate stays closed — show HTML fallback. Its
-        // Subscribe button prefers the native paywall when available
-        // (see wireFallbackButtons), so dismissing→Subscribe→native is
-        // a consistent loop rather than a design swap.
+        // Three reasons we land here:
+        //   null  — RC UI plugin missing or the call threw
+        //   false — user dismissed the paywall without subscribing
+        //   true but re-query didn't show the entitlement (rare race)
+        // In all cases we've done what we can on this pass. Mark the
+        // gate closed, hide the manage button, and rely on the next
+        // visibility change (or explicit H2OilSubs.refresh()) to
+        // retry. There is no local fallback paywall any more.
         writeCache({ active: false });
-        showFallbackPaywall();
         setManageButtonVisible(false);
-        refreshFallbackPricingLabel();
+        if (nativeOk === null) {
+          console.error('[iOS Subs] RC paywall unavailable — check dashboard offering/paywall config.');
+        }
       } while (pendingRecheck);
     } finally {
       gating = false;
@@ -451,48 +305,48 @@ const ENTITLEMENT_CACHE_KEY = 'h2oil.entitlement';
     presentCustomerCenter,
     refresh: evaluateGate,
     resetCache: () => { writeCache({ active: false }); evaluateGate(); },
-    // Dev diagnostic: prints everything needed to debug paywall issues.
     diag: async () => {
       refreshPluginRefs();
       const out = {
-        isNative, pluginsRegistered: Object.keys(Plugins || {}),
-        hasPurchases: !!Purchases, hasPurchasesUI: !!PurchasesUI,
+        isNative,
+        pluginsRegistered: Object.keys(Plugins || {}),
+        hasPurchases: !!Purchases,
+        hasPurchasesUI: !!PurchasesUI,
         apiKeyLooksValid: /^appl_[A-Za-z0-9]{10,}$/.test(REVENUECAT_API_KEY || ''),
         cachedEntitlement: readCache(),
-        fallbackDomPresent: !!document.getElementById('iosPaywall'),
-        fallbackDomVisible: (() => {
-          const el = document.getElementById('iosPaywall');
-          return !!el && el.style.display !== 'none';
-        })(),
       };
       try { out.liveEntitlement = await queryLiveEntitlement(); } catch (e) { out.liveEntitlementError = String(e); }
-      try { const o = await loadOfferings(); out.currentOffering = o ? { id: o.identifier, packages: (o.availablePackages||[]).length } : null; }
-      catch (e) { out.offeringsError = String(e); }
+      try {
+        const o = await loadOfferings();
+        out.currentOffering = o ? {
+          id: o.identifier,
+          packages: (o.availablePackages || []).length,
+          hasPaywall: !!(o.paywall || o.paywallComponents),
+        } : null;
+      } catch (e) { out.offeringsError = String(e); }
       console.log('[iOS Subs diag]', out);
       return out;
     },
-    // Force-show the native RC paywall regardless of cached entitlement.
-    // Useful for demos / sandbox testing where you've already subscribed
-    // once and want to see the paywall again without uninstalling.
+    // Force the native paywall to present regardless of cached state.
+    // Useful for demos / sandbox re-testing without uninstalling.
     forcePaywall: async () => {
       writeCache({ active: false });
       const ok = await presentRCPaywallIfNeeded();
-      if (ok === null) { showFallbackPaywall(); refreshFallbackPricingLabel(); }
+      if (ok === null) console.error('[iOS Subs] forcePaywall: RC paywall unavailable (UI plugin missing or configure failed).');
     },
   };
   // Back-compat dev helper
   window.__h2oilResetEntitlement = window.H2OilSubs.resetCache;
 
-  // Re-check when app comes back from background (covers cancel/renew
-  // via Settings and return from the Customer Center).
+  // Re-check when the app returns from background — covers cancels or
+  // renewals done via iOS Settings, and the return from Customer Center.
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) evaluateGate();
   });
 
-  // Capacitor 8 registers native plugins asynchronously after the JS
-  // bundle parses. If init() fires before `Plugins.Purchases` is
-  // populated, configure() fails and the gate bypasses silently.
-  // Poll up to 3 seconds for Purchases to appear before giving up.
+  // Capacitor 8 registers native plugins asynchronously. Poll for
+  // Purchases to appear before running init() so the first configure
+  // call doesn't race an empty plugin registry.
   async function waitForPurchasesPlugin(timeoutMs = 3000) {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
@@ -505,20 +359,14 @@ const ENTITLEMENT_CACHE_KEY = 'h2oil.entitlement';
   }
 
   async function init() {
-    wireFallbackButtons();
     renderManageButton();
-
     const ready = await waitForPurchasesPlugin();
     console.log('[iOS Subs] Plugins at init:', Object.keys(Plugins || {}).join(','),
                 '| Purchases:', !!Purchases, '| PurchasesUI:', !!PurchasesUI);
     if (!ready) {
-      console.warn('[iOS Subs] Purchases plugin never registered — gate will run in fallback mode only. Fix: `cd ios-app && npx cap sync ios`, then rebuild.');
+      console.error('[iOS Subs] Purchases plugin never registered — subscription gate disabled. Fix: `cd ios-app && npx cap sync ios` then rebuild.');
     }
-
     await configureOnce();
-    // Pricing label is refreshed from within evaluateGate when the
-    // fallback paywall actually needs to be shown — no need to query
-    // offerings on launch for already-entitled users.
     evaluateGate();
   }
 
@@ -528,5 +376,5 @@ const ENTITLEMENT_CACHE_KEY = 'h2oil.entitlement';
     init();
   }
 
-  console.log('[H2Oil iOS] Subscription gate active (RevenueCat + native paywall)');
+  console.log('[H2Oil iOS] Subscription gate active (RevenueCat native paywall only)');
 })();

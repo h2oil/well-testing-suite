@@ -40,14 +40,11 @@ html = html.replace(
     () => iosMeta.trim()
 );
 
-// ── 2. iOS-specific CSS (safe-area, tap highlight, bounce-lock + paywall) ──
+// ── 2. iOS-specific CSS (safe-area, tap highlight, bounce-lock) ──
 const iosCss = read(path.join(IOS_ADDITIONS, 'ios-styles.css'));
-const paywallCss = fs.existsSync(path.join(IOS_ADDITIONS, 'ios-paywall.css'))
-    ? read(path.join(IOS_ADDITIONS, 'ios-paywall.css'))
-    : '';
 html = html.replace(
     /(\s*)(<\/style>)/,
-    `\n        /* ── iOS additions ── */\n${iosCss}\n        /* ── iOS paywall ── */\n${paywallCss}$1$2`
+    `\n        /* ── iOS additions ── */\n${iosCss}$1$2`
 );
 
 // ── 3. Capacitor bridge + iOS-specific JS (haptics, share, keyboard, subs) ──
@@ -66,25 +63,10 @@ html = html.replace(
     `\n\n// ── iOS Native Bridge ──\n${iosBridge}\n\n// ── iOS Subscription Gate ──\n${iosSubs}\n$1$2`
 );
 
-// ── 3b. Paywall DOM — injected just before the REAL </body> so it overlays
-// everything. The main HTML file has template-literal strings inside
-// buildReportHTML() and the iOS bridge that contain literal `</body>` for
-// PDF report generation — we must NOT inject into those. Target the final
-// document-closing </body> by matching `</body>\n</html>` at the end of
-// the file; those only appear once, at the actual DOCUMENT close.
-const paywallHtml = fs.existsSync(path.join(IOS_ADDITIONS, 'ios-paywall.html'))
-    ? read(path.join(IOS_ADDITIONS, 'ios-paywall.html'))
-    : '';
-if (paywallHtml) {
-    // Anchor: closing body immediately followed (optionally with whitespace)
-    // by closing html — that pattern is the document terminator, not an
-    // embedded template string.
-    const before = html;
-    html = html.replace(/<\/body>(\s*)<\/html>\s*$/i, `\n${paywallHtml}\n</body>$1</html>\n`);
-    if (html === before) {
-        throw new Error('[sync] Failed to locate real </body></html> document terminator for paywall injection');
-    }
-}
+// NOTE: the HTML fallback paywall (ios-paywall.html/ios-paywall.css) has
+// been removed as of v1.3. The native RC paywall is the only paywall —
+// ios-subscriptions.js loops on presentPaywallIfNeeded until the user
+// completes the purchase or the SDK reports an error to the console.
 
 // ── 4. Ensure output dir exists ──
 fs.mkdirSync(path.dirname(OUTPUT), { recursive: true });

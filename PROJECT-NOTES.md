@@ -5,6 +5,54 @@ All changes land on `dev`; `master` is the stable tree consumed by the iOS sync 
 
 ---
 
+## v1.3 — Remove HTML fallback paywall; RC native paywall is sole gate
+
+**Why**: once the RevenueCat dashboard was fully configured (product +
+entitlement + offering + published paywall) and the native RC paywall
+was verified working end-to-end with sandbox StoreKit, the HTML
+fallback became dead weight. It existed to cover the RC misconfig
+transition period — with that behind us, it's just extra code and a
+UX inconsistency (users who swiped down the native paywall would land
+on the less-polished HTML one).
+
+**Removed**
+- `ios-app/ios-additions/ios-paywall.html` (67 lines)
+- `ios-app/ios-additions/ios-paywall.css` (149 lines)
+- From `ios-subscriptions.js`: showFallbackPaywall, hideFallbackPaywall,
+  setFallbackStatus, setFallbackButtonsEnabled, refreshFallbackPricingLabel,
+  purchaseViaFallback, restoreViaFallback, wireFallbackButtons — about
+  115 lines. evaluateGate simplified accordingly.
+- From `scripts/sync-from-main.js`: the ios-paywall.css CSS injection
+  and the ios-paywall.html DOM injection before `</body>`.
+- From `getFlameParams` / results table: unchanged; this is purely
+  subscription code.
+
+**Tradeoff** — if RC's CDN hiccups or the SDK fails at runtime
+(network loss right at launch, future RC bug, dashboard config
+regression) the gate logs an error to the console and stays closed
+pending the next visibility change. No emergency subscribe UI is
+shown. Acceptable because:
+- The gate re-fires on every app foreground, so recovery is automatic
+  once connectivity / dashboard returns
+- Developers see a prominent console.error in Safari Web Inspector
+- Shipping without the fallback matches most production
+  RC-integrated apps
+
+**Version bumps**
+- App version: `1.2.0` → `1.3.0` (package.json + sidebar brand)
+- No Capacitor or RevenueCat version changes
+
+**Follow-on on Mac**
+```bash
+git pull origin master
+cd ios-app
+npx cap sync ios
+# In Xcode: Product → Clean Build Folder, ⌘R, delete app on device
+# first to force a fresh bundle install
+```
+
+---
+
 ## v1.2 — Capacitor 8 + RevenueCat 13 upgrade
 
 **Why**: RevenueCat 12.x+ requires Capacitor 8, and 10.x / 11.x were
