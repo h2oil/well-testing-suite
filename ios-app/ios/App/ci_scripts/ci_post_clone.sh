@@ -47,4 +47,28 @@ npm run sync-main
 # before the archive step. No pod install needed.
 npx cap sync ios
 
+# ── Auto-stamp version + build number from Xcode Cloud's build index ──
+# Versioning scheme (H2Oil v1.3.x line):
+#   MARKETING_VERSION       = 1.3.${CI_BUILD_NUMBER}    # e.g. 1.3.42
+#   CURRENT_PROJECT_VERSION = ${CI_BUILD_NUMBER}        # e.g. 42
+# Each Xcode Cloud run gets a fresh, monotonically increasing
+# CI_BUILD_NUMBER from Apple. Since MARKETING_VERSION changes on every
+# build, every upload is its own "version train" and Apple won't reject
+# with ITMS-90186 or ITMS-90062 even if prior build numbers were higher.
+# No manual version bumps required — every commit → push → fresh upload.
+VERSION_BASE="1.3"
+PBXPROJ="$CI_PRIMARY_REPOSITORY_PATH/ios-app/ios/App/App.xcodeproj/project.pbxproj"
+if [ -n "${CI_BUILD_NUMBER:-}" ] && [ -f "$PBXPROJ" ]; then
+    FULL_VERSION="${VERSION_BASE}.${CI_BUILD_NUMBER}"
+    echo "Stamping version ${FULL_VERSION} (build ${CI_BUILD_NUMBER}) into project.pbxproj..."
+    # Escape any slashes/dots safely for sed (none expected in numeric values,
+    # but defensive). BSD sed (macOS) requires the empty -i argument.
+    sed -i '' -E "s/MARKETING_VERSION = [^;]*;/MARKETING_VERSION = ${FULL_VERSION};/g" "$PBXPROJ"
+    sed -i '' -E "s/CURRENT_PROJECT_VERSION = [^;]*;/CURRENT_PROJECT_VERSION = ${CI_BUILD_NUMBER};/g" "$PBXPROJ"
+    echo "Verification:"
+    grep -E "MARKETING_VERSION|CURRENT_PROJECT_VERSION" "$PBXPROJ" | head -4
+else
+    echo "CI_BUILD_NUMBER not set or pbxproj missing — leaving committed values in place"
+fi
+
 echo "── Pre-build sync complete ──"
