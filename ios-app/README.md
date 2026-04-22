@@ -64,7 +64,7 @@ The root HTML stays untouched — it works equally well as a plain webpage and a
 ## Prerequisites (on your Mac)
 
 1. **macOS** (required for iOS development)
-2. **Xcode 16+** — Capacitor 8 requires Xcode 16 (iOS deployment target 15.1)
+2. **Xcode 16+** (Xcode 26 recommended, latest stable) — Capacitor 8 requires Xcode 16 minimum (iOS deployment target 15.1)
 3. **Apple Developer Program** membership ($99/yr) — required for App Store submission
 4. **Node.js 20+** — *only for the first-time setup below*. After that, not needed.
 
@@ -368,7 +368,7 @@ account signed in):
    workspace automatically.
 3. **Start Conditions**: branch push, choose `master` (or add `Dev`
    for a second workflow that builds on every dev push).
-4. **Environment**: Xcode 16, macOS latest. Clean: off (let the
+4. **Environment**: Xcode Latest Release (Xcode 26 as of 2026), macOS latest. Clean: off (let the
    cache stick).
 5. **Actions**:
    - `Archive — iOS` → Deploy to `TestFlight (Internal Testing Only)`
