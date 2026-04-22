@@ -67,12 +67,23 @@ else
     ok "No legacy .xcworkspace (correct for Cap 8 + SPM)"
 fi
 
-# ─── 2. Regenerate web assets so the build has latest www/ ───
+# ─── 2. Regenerate web assets + the local CapApp-SPM package ───
 info "Syncing web assets from main HTML..."
 npm run sync-main --silent
-npx cap sync ios --quiet >/dev/null 2>&1 || npx cap sync ios
+# `cap sync ios` regenerates CapApp-SPM/Package.swift from the current
+# plugin list in package.json. If a plugin was added/removed since the
+# last sync, this fixes the 'Missing package product CapApp-SPM' error.
+info "Regenerating CapApp-SPM local package..."
+npx cap sync ios 2>&1 | tail -10
 
-# ─── 3. Pre-resolve SPM packages (avoids a 60s stall in Xcode on first open) ───
+# ─── 3. Nuke stale SPM caches (most common cause of package-resolution failures) ───
+info "Clearing stale SPM + DerivedData caches..."
+rm -rf ios/App/.build
+rm -rf ios/App/App.xcodeproj/project.xcworkspace/xcshareddata/swiftpm
+rm -rf ~/Library/Developer/Xcode/DerivedData/App-* 2>/dev/null || true
+ok "Caches cleared"
+
+# ─── 4. Pre-resolve SPM packages against the fresh Package.swift ───
 info "Pre-resolving Swift Package Manager dependencies..."
 xcodebuild -resolvePackageDependencies \
     -project "$PROJECT" \
@@ -80,18 +91,18 @@ xcodebuild -resolvePackageDependencies \
     | grep -E "(Resolved|Resolving|Fetching|error:)" \
     | tail -20 || true
 
-# ─── 4. Install / refresh the Xcode Cloud CI scripts ───
+# ─── 5. Install / refresh the Xcode Cloud CI scripts ───
 info "Installing Xcode Cloud CI scripts into ios/App/ci_scripts/..."
 bash scripts/install-xcodecloud-scripts.sh
 
-# ─── 5. Open Xcode at the correct container ───
+# ─── 6. Open Xcode at the correct container ───
 info "Opening $PROJECT in Xcode..."
 open "$PROJECT"
 
 # Give Xcode time to fully load the project and index
 sleep 4
 
-# ─── 6. Try to drive Xcode's "Create Workflow" menu via AppleScript ───
+# ─── 7. Try to drive Xcode's "Create Workflow" menu via AppleScript ───
 # This only works if the user has granted Accessibility permission to
 # Script Editor / osascript in System Settings → Privacy & Security.
 # If it fails, we fall through to printed instructions, which is fine —
@@ -117,7 +128,7 @@ else
     echo "  Trigger it manually:  Product → Xcode Cloud → Create Workflow…"
 fi
 
-# ─── 7. Print explicit step-by-step instructions ───
+# ─── 8. Print explicit step-by-step instructions ───
 cat <<INSTRUCTIONS
 
 ${BOLD}${GREEN}Next steps in Xcode (30-60 seconds):${RESET}
