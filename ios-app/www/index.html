@@ -7818,7 +7818,24 @@ render();
 //   @revenuecat/purchases-capacitor      — StoreKit bridge
 //   @revenuecat/purchases-capacitor-ui   — native paywall + Customer Center
 //
-// Flow on launch:
+// ─── DORMANT MODE (current state) ──────────────────────────────
+// GATE_ENABLED = false → this entire module is a no-op on iOS. The
+// app launches straight into the main UI with no paywall, no entitlement
+// checks, no RC network calls. The RC Capacitor plugins are still in
+// Package.swift (so the iOS build still links them) but they're never
+// invoked — effectively dead weight at runtime.
+//
+// WHY: product decision to make subscriptions web-only for now. This
+// file is retained so (a) the code path is preserved for the day we
+// want iOS paywalls back, and (b) the web version can crib the
+// RevenueCat wiring patterns (see note at bottom of file re: web SDK).
+//
+// TO RE-ENABLE: flip GATE_ENABLED below to `true`, rebuild, push.
+// All the RC dashboard config (product, entitlement, offering,
+// published paywall at https://app.revenuecat.com) stays valid.
+// ──────────────────────────────────────────────────────────────
+//
+// Flow on launch (when GATE_ENABLED = true):
 //   1. Configure RC with the iOS public key.
 //   2. Check the cached entitlement for instant offline unlock.
 //   3. Verify with RC in the background via getCustomerInfo.
@@ -7830,7 +7847,8 @@ render();
 //      called.
 //
 // Exposes window.H2OilSubs for in-app "Manage Subscription" buttons and
-// dev helpers (diag, forcePaywall, resetCache).
+// dev helpers (diag, forcePaywall, resetCache). When dormant these
+// helpers still exist but report the dormant state.
 //
 // ─── CONFIG ────────────────────────────────────────────────────
 //   1. RC dashboard → Project Settings → API Keys → iOS public key
@@ -7841,6 +7859,7 @@ render();
 //   4. Offerings → "default" → Monthly package pointing at the product,
 //      marked Current. Paywalls tab → design + Publish.
 // ──────────────────────────────────────────────────────────────
+const GATE_ENABLED = false;  // ← flip to `true` to re-activate the iOS paywall
 const REVENUECAT_API_KEY = 'appl_ZgPLTWenoIgrqCgSDmqMRdMXyFF';
 const ENTITLEMENT_ID = 'pro';
 const OFFERING_ID    = 'default';
@@ -7854,6 +7873,28 @@ const ENTITLEMENT_CACHE_KEY = 'h2oil.entitlement';
       && window.Capacitor.isNativePlatform
       && window.Capacitor.isNativePlatform();
   if (!isNative) return;
+
+  // ── DORMANT MODE EARLY EXIT ──────────────────────────────────
+  // When GATE_ENABLED is false, expose a stubbed window.H2OilSubs
+  // that reports "always entitled" so any downstream code that might
+  // call isEntitled() etc. gets a consistent "yes" and the app behaves
+  // as a fully-unlocked free app. The real RC code below never runs.
+  if (!GATE_ENABLED) {
+    window.H2OilSubs = {
+      getEntitlement:        async () => ({ active: true, expiry: 8640000000000000, productId: null, willRenew: false, inTrial: false, dormant: true }),
+      isEntitled:            async () => true,
+      presentPaywall:        async () => { console.log('[H2Oil iOS] Subscription gate dormant — no paywall to show.'); return null; },
+      presentCustomerCenter: async () => { console.log('[H2Oil iOS] Subscription gate dormant — no subscription to manage.'); },
+      refresh:               async () => {},
+      resetCache:            () => {},
+      diag:                  async () => { const out = { dormant: true, gateEnabled: GATE_ENABLED }; console.log('[iOS Subs diag]', out); return out; },
+      forcePaywall:          async () => { console.log('[H2Oil iOS] Subscription gate dormant — flip GATE_ENABLED in ios-subscriptions.js to re-enable.'); },
+    };
+    window.__h2oilResetEntitlement = () => {};
+    console.log('[H2Oil iOS] Subscription gate DORMANT (GATE_ENABLED=false). App runs as free.');
+    return;
+  }
+  // ─────────────────────────────────────────────────────────────
 
   // Plugin references are late-bound. Capacitor 8 registers native
   // plugins asynchronously after the JS bundle parses, so capturing
@@ -8196,6 +8237,39 @@ const ENTITLEMENT_CACHE_KEY = 'h2oil.entitlement';
 
   console.log('[H2Oil iOS] Subscription gate active (RevenueCat native paywall only)');
 })();
+
+// ══════════════════════════════════════════════════════════════
+// NOTE — reusing this module on the standalone web version
+// ══════════════════════════════════════════════════════════════
+// The code above is Capacitor-specific (talks to window.Capacitor.Plugins
+// .Purchases). For a pure web paywall on well-testing-app.html served
+// from a browser, you'd swap the plugin calls for RevenueCat's web SDK:
+//
+//   npm i @revenuecat/purchases-js
+//
+// The JS-facing API is similar:
+//   import { Purchases } from '@revenuecat/purchases-js';
+//   const p = await Purchases.configure({ apiKey: 'rcb_...' });  // web key, NOT appl_
+//   const offerings = await p.getOfferings();
+//   await p.purchase({ rcPackage: offerings.current.monthly });
+//
+// Differences vs the Capacitor SDK:
+//   - API key starts with "rcb_" or "rcbweb_" (RC web-billing key),
+//     NOT "appl_" (iOS) or "goog_" (Android).
+//   - Payment flow uses RevenueCat's hosted checkout (Stripe-backed)
+//     rather than StoreKit. User pays with card/Apple Pay on web.
+//   - The `pro` entitlement can be shared across iOS + web in the same
+//     RC project, so a user who subscribed on iOS is automatically
+//     entitled on web (and vice versa) if you pass the same appUserID
+//     to configure on both.
+//   - Web-SDK install is vanilla JS/ESM — no Capacitor, no plugin
+//     bridging, no native build. Just import + use.
+//
+// When you do integrate: copy the patterns from this file (cache
+// shape, entitlement mapping, gate evaluation loop, H2OilSubs public
+// API) and swap the `await Plugins.Purchases.xxx()` calls for the
+// web SDK equivalents. The rest of the logic is platform-agnostic.
+// ══════════════════════════════════════════════════════════════
 
 
 
