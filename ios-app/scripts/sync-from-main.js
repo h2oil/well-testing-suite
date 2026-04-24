@@ -30,6 +30,18 @@ function read(p) {
 console.log(`[sync] Reading ${path.relative(ROOT, MAIN_HTML)}`);
 let html = read(MAIN_HTML);
 
+// ── 0. Strip web-only blocks flagged <!-- GA:START --> ... <!-- GA:END -->
+// Google Analytics and any similar network-analytics snippets live only
+// on the web version. iOS builds shouldn't phone home to Google (Apple
+// privacy manifest hassle; RevenueCat already handles subscription
+// analytics). The markers are added in well-testing-app.html; this
+// regex removes everything between them, inclusive.
+const gaBefore = html.length;
+html = html.replace(/<!--\s*GA:START[\s\S]*?GA:END\s*-->/g, '<!-- GA stripped from iOS bundle -->');
+if (html.length !== gaBefore) {
+    console.log(`[sync] Stripped Google Analytics block (${gaBefore - html.length} chars)`);
+}
+
 // ── 1. iOS-specific <meta> tags for status bar, web app mode, viewport ──
 // Replaces the source viewport entirely — ios-meta.html contains the
 // enhanced iOS viewport (viewport-fit=cover) as its last line, so we
