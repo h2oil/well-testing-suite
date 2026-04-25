@@ -265,11 +265,13 @@ function PRiSM_renderPlotsTab() {
                     '</select>' +
                 '</label>' +
                 '<button class="btn btn-secondary" id="prism_plot_bourdet_btn">Compute Bourdet derivative</button>' +
+                '<button class="btn btn-secondary" id="prism_plot_reset" title="Reset zoom to fit all data">⟳ Reset view</button>' +
                 '<label style="font-size:12px; color:var(--text2); display:flex; align-items:center; gap:6px;">' +
                     '<input type="checkbox" id="prism_plot_overlay" ' +
                         (st.modelCurve ? 'checked' : 'disabled') + '>' +
                     '<span>Show model overlay</span>' +
                 '</label>' +
+                '<span style="font-size:11px; color:var(--text3); margin-left:auto;">Drag a rectangle to zoom · click ⟳ Reset view to fit all data</span>' +
                 '<label id="prism_plot_period_lbl" style="font-size:12px; color:var(--text2); display:none; align-items:center; gap:6px;">' +
                     '<span>Period</span>' +
                     '<select id="prism_plot_period" style="padding:6px 10px; background:var(--bg1); color:var(--text); border:1px solid var(--border); border-radius:4px;"></select>' +
@@ -310,6 +312,21 @@ function PRiSM_renderPlotsTab() {
 
     $('prism_plot_picker').onchange = function () {
         st.activePlot = this.value;
+        PRiSM_drawActivePlot();
+    };
+
+    // Reset zoom — clears stashed axes + handlers so the next render
+    // re-autoscales from the data range. Works for any of the 14 plot
+    // types since they all build their scaleX/scaleY in PRiSM_plot_axes
+    // from the data extent.
+    var resetBtn = $('prism_plot_reset');
+    if (resetBtn) resetBtn.onclick = function () {
+        var c = $('prism_plot_canvas');
+        if (c) {
+            try { delete c._prismOriginalScale; } catch (_) { c._prismOriginalScale = null; }
+            try { delete c._prismHandlers; }      catch (_) { c._prismHandlers = null; }
+            try { delete c._prismAxes; }          catch (_) { c._prismAxes = null; }
+        }
         PRiSM_drawActivePlot();
     };
 
@@ -636,14 +653,29 @@ function PRiSM_renderParamsTab() {
             '<div id="prism_params_msg" style="margin-top:8px; font-size:12px; color:var(--text2); min-height:16px;"></div>' +
         '</div>' +
         '<div class="card">' +
-            '<div class="card-title">Live Forward Simulation</div>' +
+            '<div class="card-title" style="display:flex; align-items:center; justify-content:space-between;">' +
+                '<span>Live Forward Simulation</span>' +
+                '<button class="btn btn-secondary" id="prism_params_reset_view" title="Reset zoom to fit all data" style="font-size:11px; padding:4px 10px;">⟳ Reset view</button>' +
+            '</div>' +
             '<div style="font-size:12px; color:var(--text2); margin-bottom:8px;">' +
-            'Curve recomputed on every edit using td = logspace(0.001, 1000, 100).</div>' +
+            'Curve recomputed on every edit using td = logspace(0.001, 1000, 100). Drag a rectangle to zoom.</div>' +
             '<div style="background:var(--bg1); border:1px solid var(--border); border-radius:6px; padding:6px;">' +
                 '<canvas id="prism_params_canvas" style="width:100%; height:calc(100vh - 360px); min-height:480px; display:block;"></canvas>' +
             '</div>' +
             '<div id="prism_params_simmsg" style="margin-top:6px; font-size:11px; color:var(--text3);"></div>' +
         '</div>';
+
+    // Wire reset-view for params canvas.
+    var pResetBtn = $('prism_params_reset_view');
+    if (pResetBtn) pResetBtn.onclick = function () {
+        var c = $('prism_params_canvas');
+        if (c) {
+            try { delete c._prismOriginalScale; } catch (_) { c._prismOriginalScale = null; }
+            try { delete c._prismHandlers; }      catch (_) { c._prismHandlers = null; }
+            try { delete c._prismAxes; }          catch (_) { c._prismAxes = null; }
+        }
+        if (typeof PRiSM_recomputeAndDrawParamCurve === 'function') PRiSM_recomputeAndDrawParamCurve();
+    };
 
     // Wire param inputs (live preview).
     host.querySelectorAll('[data-prism-pkey]').forEach(function (inp) {
@@ -800,13 +832,29 @@ function PRiSM_renderMatchTab() {
                     '<div id="prism_match_msg" style="margin-top:8px; font-size:12px; color:var(--text2); min-height:16px;"></div>' +
                 '</div>' +
                 '<div>' +
-                    '<div style="font-size:11px; color:var(--text3); margin-bottom:6px;">Bourdet diagnostic with overlay</div>' +
+                    '<div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">' +
+                        '<span style="font-size:11px; color:var(--text3);">Bourdet diagnostic with overlay · drag rectangle to zoom</span>' +
+                        '<button class="btn btn-secondary" id="prism_match_reset_view" title="Reset zoom" style="font-size:11px; padding:4px 10px;">⟳ Reset view</button>' +
+                    '</div>' +
                     '<div style="background:var(--bg1); border:1px solid var(--border); border-radius:6px; padding:6px;">' +
                         '<canvas id="prism_match_canvas" style="width:100%; height:calc(100vh - 340px); min-height:500px; display:block; cursor:grab;"></canvas>' +
                     '</div>' +
                 '</div>' +
             '</div>' +
         '</div>';
+
+    // Wire match-canvas reset-view (find redraw fn from Match tab body).
+    var mResetBtn = $('prism_match_reset_view');
+    if (mResetBtn) mResetBtn.onclick = function () {
+        var c = $('prism_match_canvas');
+        if (c) {
+            try { delete c._prismOriginalScale; } catch (_) { c._prismOriginalScale = null; }
+            try { delete c._prismHandlers; }      catch (_) { c._prismHandlers = null; }
+            try { delete c._prismAxes; }          catch (_) { c._prismAxes = null; }
+        }
+        // Re-render the match view by toggling tabs (cheap reload).
+        if (typeof PRiSM_renderMatchTab === 'function') PRiSM_renderMatchTab();
+    };
 
     if (!hasData) return;
 
@@ -913,40 +961,172 @@ function PRiSM_renderMatchTab() {
 
 
 // =========================================================================
-// TAB 6 — REGRESS (Phase-3 placeholder)
+// TAB 6 — REGRESS — Levenberg-Marquardt regression + Auto-match
 // =========================================================================
 
 function PRiSM_renderRegressTab() {
     var host = $('prism_tab_6');
     if (!host) return;
+    var st = window.PRiSM_state || {};
+    var current = window.PRiSM_MODELS && window.PRiSM_MODELS[st.model];
+    var hasLM = typeof window.PRiSM_runRegression === 'function';
+    var hasAuto = typeof window.PRiSM_autoMatch === 'function';
+    var hasInterp = typeof window.PRiSM_interpretFit === 'function';
+
+    // Param table for the active model with Fix/Float toggles + initial values.
+    var paramRows = '';
+    if (current && current.paramSpec) {
+        current.paramSpec.forEach(function (s) {
+            if (typeof s.default !== 'number') return; // skip categorical params
+            var v = (st.params && st.params[s.key] != null) ? st.params[s.key] : s['default'];
+            var frozen = !!(st.paramFreeze && st.paramFreeze[s.key]);
+            paramRows += '<tr>' +
+                '<td>' + s.key + '</td>' +
+                '<td style="font-size:11px; color:var(--text2);">' + s.label + '</td>' +
+                '<td><input type="number" step="any" id="prism_reg_' + s.key + '" value="' + v + '" style="width:90px;"/></td>' +
+                '<td style="font-size:11px; color:var(--text3);">' + (s.unit || '-') + '</td>' +
+                '<td><label style="font-size:11px; cursor:pointer;"><input type="checkbox" id="prism_reg_freeze_' + s.key + '"' + (frozen ? ' checked' : '') + '/> freeze</label></td>' +
+                '</tr>';
+        });
+    }
+
     host.innerHTML =
-        '<div class="card">' +
-            '<div class="card-title">Non-Linear Regression</div>' +
-            '<div class="info-bar" style="background:var(--bg2); border:1px dashed var(--border); padding:14px; border-radius:6px; color:var(--text2); font-size:13px; margin-bottom:14px;">' +
-                '<strong style="color:var(--text);">Auto-match (Levenberg-Marquardt regression) is part of Phase 3 — coming soon.</strong>' +
-                '<div style="margin-top:8px;">Use <em>Tab 5 — Match</em> for visual fitting in the meantime. ' +
-                'Phase 3 will add bounded LM, parameter confidence intervals, and AIC scoring.</div>' +
+        '<div style="display:flex; flex-direction:column; gap:14px;">' +
+            // ── Action bar ─────────────────────────────────────────────
+            '<div class="card">' +
+                '<div class="card-title">Non-Linear Regression</div>' +
+                '<div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:10px;">' +
+                    '<button class="btn btn-primary" id="prism_regress_run"' + (hasLM ? '' : ' disabled') + '>Run regression</button>' +
+                    '<button class="btn btn-secondary" id="prism_regress_auto"' + (hasAuto ? '' : ' disabled') + '>Run auto-match</button>' +
+                    '<span style="font-size:11px; color:var(--text3);">Active model: <b>' + st.model + '</b> · Levenberg-Marquardt + Jacobian CIs + AIC scoring</span>' +
+                '</div>' +
+                '<div id="prism_regress_status" style="font-size:12px; color:var(--text2); min-height:18px;"></div>' +
             '</div>' +
-            '<div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">' +
-                '<button class="btn btn-secondary" id="prism_regress_try">Try anyway (Phase 3 preview)</button>' +
-                '<span style="font-size:11px; color:var(--text3);">Calls window.PRiSM_runRegression() if available.</span>' +
+            // ── Two-column layout ──────────────────────────────────────
+            '<div class="cols-2">' +
+                // Initial params + freeze toggles
+                '<div class="card">' +
+                    '<div class="card-title">Initial Parameters</div>' +
+                    (paramRows
+                        ? '<table class="dtable"><thead><tr><th>Key</th><th>Label</th><th>Initial</th><th>Unit</th><th>Mode</th></tr></thead><tbody>' + paramRows + '</tbody></table>'
+                        : '<div style="color:var(--text3); font-style:italic;">No floating params for this model.</div>') +
+                    '<div style="margin-top:8px; font-size:11px; color:var(--text3);">Edit initial guesses; toggle freeze to lock a parameter at its current value during the fit.</div>' +
+                '</div>' +
+                // Fit results panel — populated by Run
+                '<div class="card">' +
+                    '<div class="card-title">Fit Results</div>' +
+                    '<div id="prism_regress_results" style="min-height:200px;">' +
+                        '<div style="color:var(--text3); font-style:italic;">Click <b>Run regression</b> to fit the active model, or <b>Run auto-match</b> to race the candidate set ranked by AIC.</div>' +
+                    '</div>' +
+                '</div>' +
             '</div>' +
-            '<div id="prism_regress_msg" style="margin-top:10px; font-size:12px; color:var(--text2); min-height:16px;"></div>' +
+            // ── Auto-match results panel ──────────────────────────────
+            '<div class="card">' +
+                '<div class="card-title">Auto-Match Ranking</div>' +
+                '<div id="prism_automatch_panel" style="min-height:120px;">' +
+                    '<div style="color:var(--text3); font-style:italic;">Auto-match races candidate models against your data and ranks by AIC. Click <b>Run auto-match</b> above to start.</div>' +
+                '</div>' +
+            '</div>' +
         '</div>';
 
-    $('prism_regress_try').onclick = function () {
-        if (typeof window.PRiSM_runRegression === 'function') {
-            try {
-                var res = window.PRiSM_runRegression();
-                $('prism_regress_msg').innerHTML = '<span style="color:var(--green);">Regression returned: ' +
-                    (typeof res === 'object' ? JSON.stringify(res).slice(0, 240) : String(res)) + '</span>';
-            } catch (e) {
-                $('prism_regress_msg').innerHTML = '<span style="color:var(--red);">Error: ' + e.message + '</span>';
-            }
-        } else {
-            alert('Phase 3 regression engine not yet loaded.');
+    // ── Wire: Run regression on the active model ───────────────────────
+    $('prism_regress_run').onclick = function () {
+        if (!hasLM) { alert('Regression engine not loaded.'); return; }
+        // Pull initial values + freeze flags from the form into PRiSM_state.
+        if (current && current.paramSpec) {
+            current.paramSpec.forEach(function (s) {
+                if (typeof s.default !== 'number') return;
+                var inp = $('prism_reg_' + s.key);
+                var fz  = $('prism_reg_freeze_' + s.key);
+                if (inp) {
+                    var v = parseFloat(inp.value);
+                    if (isFinite(v)) {
+                        st.params = st.params || {};
+                        st.params[s.key] = v;
+                    }
+                }
+                if (fz) {
+                    st.paramFreeze = st.paramFreeze || {};
+                    st.paramFreeze[s.key] = !!fz.checked;
+                }
+            });
+        }
+        $('prism_regress_status').innerHTML = '<span style="color:var(--accent);">Running Levenberg-Marquardt fit…</span>';
+        try {
+            var res = window.PRiSM_runRegression();
+            // Stash into state so other tabs (Report, interpretation) can see it.
+            window.PRiSM_state.lastFit = {
+                modelKey: st.model,
+                params:   res.params || st.params,
+                stderr:   res.stderr,
+                ci95:     res.ci95,
+                CI95:     res.ci95,
+                AIC:      res.aic,
+                R2:       res.r2,
+                RMSE:     res.rmse,
+                iterations: res.iterations,
+                converged:  res.converged,
+                timestamp: new Date().toISOString()
+            };
+            PRiSM_renderRegressionResultsInto($('prism_regress_results'), window.PRiSM_state.lastFit);
+            $('prism_regress_status').innerHTML = '<span style="color:var(--green);">✓ Fit complete (' + (res.iterations || '?') + ' iterations, ' + (res.converged ? 'converged' : 'NOT converged') + ').</span>';
+            if (typeof window.PRiSM_drawActivePlot === 'function') window.PRiSM_drawActivePlot();
+        } catch (e) {
+            $('prism_regress_status').innerHTML = '<span style="color:var(--red);">Error: ' + e.message + '</span>';
         }
     };
+
+    // ── Wire: Run auto-match (races candidates ranked by AIC) ──────────
+    $('prism_regress_auto').onclick = function () {
+        if (!hasAuto) { alert('Auto-match not loaded.'); return; }
+        $('prism_regress_status').innerHTML = '<span style="color:var(--accent);">Auto-match running… (races candidate models in parallel)</span>';
+        Promise.resolve(window.PRiSM_autoMatch())
+            .then(function (result) {
+                if (typeof window.PRiSM_renderAutoMatchPanel === 'function') {
+                    window.PRiSM_renderAutoMatchPanel($('prism_automatch_panel'), result);
+                } else {
+                    $('prism_automatch_panel').innerHTML = '<pre style="font-size:11px; color:var(--text2);">' + JSON.stringify(result, null, 2).slice(0, 800) + '</pre>';
+                }
+                var bestStr = result.bestKey ? ('best = <b>' + result.bestKey + '</b>') : '(no best)';
+                $('prism_regress_status').innerHTML = '<span style="color:var(--green);">✓ Auto-match done in ' + (result.elapsedMs || '?') + ' ms. ' + bestStr + '. ' + (result.classification && result.classification.summary ? result.classification.summary : '') + '</span>';
+            })
+            .catch(function (e) {
+                $('prism_regress_status').innerHTML = '<span style="color:var(--red);">Auto-match error: ' + (e && e.message || e) + '</span>';
+            });
+    };
+}
+
+// Helper: paint a fit-result block (used by Tab 6 + the Report tab).
+function PRiSM_renderRegressionResultsInto(container, fit) {
+    if (!container || !fit) return;
+    var paramRows = '';
+    if (fit.params) {
+        for (var k in fit.params) {
+            if (!Object.prototype.hasOwnProperty.call(fit.params, k)) continue;
+            var v = fit.params[k];
+            var ci = fit.CI95 && fit.CI95[k];
+            var ciTxt = (ci && ci.length === 2 && isFinite(ci[0]) && isFinite(ci[1]))
+                ? '[' + ci[0].toFixed(3) + ', ' + ci[1].toFixed(3) + ']'
+                : '—';
+            var stderr = fit.stderr && fit.stderr[k];
+            var seTxt = (typeof stderr === 'number' && isFinite(stderr)) ? stderr.toExponential(2) : '—';
+            paramRows += '<tr><td><b>' + k + '</b></td><td>' + (typeof v === 'number' ? v.toPrecision(6) : v) + '</td><td>' + seTxt + '</td><td>' + ciTxt + '</td></tr>';
+        }
+    }
+    var fmtN = function (x, dp) { return (typeof x === 'number' && isFinite(x)) ? x.toFixed(dp != null ? dp : 4) : '—'; };
+    container.innerHTML =
+        '<div style="display:flex; flex-direction:column; gap:10px;">' +
+            '<div style="display:flex; gap:14px; flex-wrap:wrap; font-size:12px;">' +
+                '<div><span style="color:var(--text3);">R²:</span> <b>' + fmtN(fit.R2, 5) + '</b></div>' +
+                '<div><span style="color:var(--text3);">RMSE:</span> <b>' + fmtN(fit.RMSE, 4) + '</b></div>' +
+                '<div><span style="color:var(--text3);">AIC:</span> <b>' + fmtN(fit.AIC, 2) + '</b></div>' +
+                '<div><span style="color:var(--text3);">Iterations:</span> <b>' + (fit.iterations != null ? fit.iterations : '—') + '</b></div>' +
+                '<div><span style="color:var(--text3);">Converged:</span> <b style="color:' + (fit.converged ? 'var(--green)' : 'var(--red)') + ';">' + (fit.converged ? 'yes' : 'no') + '</b></div>' +
+            '</div>' +
+            '<table class="dtable"><thead><tr><th>Param</th><th>Value</th><th>Stderr</th><th>95% CI</th></tr></thead><tbody>' +
+                (paramRows || '<tr><td colspan="4" style="color:var(--text3);">No params.</td></tr>') +
+            '</tbody></table>' +
+        '</div>';
 }
 
 

@@ -4742,6 +4742,764 @@ function _schematic_verticalPulse() {
     return s;
 }
 
+// =========================================================================
+// SECTION 1b — Additional schematics (round-2 fix: cover all 45 models)
+// =========================================================================
+// Compact diagrams for the remaining models in the registry. Use shared
+// helpers for layered reservoirs / observation pairs / decline curves to
+// keep total LOC manageable.
+
+// ---- Shared helpers for the 1b additions --------------------------------
+
+// Generic N-layer reservoir block (rectangles stacked vertically).
+// Each layer gets a coloured fill + label. Returns SVG fragment + bottom Y.
+function _svg_layers(x, y, w, layerSpecs) {
+    // layerSpecs: [{label, h, color, opacity?}]
+    var s = '';
+    var yy = y;
+    for (var i = 0; i < layerSpecs.length; i++) {
+        var L = layerSpecs[i];
+        s += '<rect x="' + x + '" y="' + yy + '" width="' + w + '" height="' + L.h + '" ' +
+             'fill="' + (L.color || '#3fb950') + '" fill-opacity="' + (L.opacity || 0.22) + '" ' +
+             'stroke="' + (L.color || '#3fb950') + '" stroke-width="0.7"/>';
+        s += '<text x="' + (x + 6) + '" y="' + (yy + L.h / 2 + 3) + '" font-size="9" fill="#c9d1d9">' + L.label + '</text>';
+        yy += L.h;
+    }
+    return { svg: s, bottom: yy };
+}
+
+// Cross-flow arrow between two y-levels (inside the well column).
+function _svg_xflowArrow(x, y1, y2, color) {
+    color = color || '#58a6ff';
+    var dir = (y2 > y1) ? 1 : -1;
+    var ay = y2 - dir * 4;
+    return '<line x1="' + x + '" y1="' + y1 + '" x2="' + x + '" y2="' + y2 + '" stroke="' + color +
+           '" stroke-width="1" stroke-dasharray="2,2"/>' +
+           '<polygon points="' + (x - 3) + ',' + ay + ' ' + (x + 3) + ',' + ay + ' ' + x + ',' + y2 +
+           '" fill="' + color + '"/>';
+}
+
+// Sealing fault tick-line (red line + hatching).
+function _svg_seal(x1, y1, x2, y2, hatchSide) {
+    hatchSide = hatchSide || 'right';
+    var s = '<line x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '" stroke="#da3633" stroke-width="2.5"/>';
+    var dx = x2 - x1, dy = y2 - y1;
+    var len = Math.sqrt(dx * dx + dy * dy);
+    var nx = -dy / len, ny = dx / len;
+    if (hatchSide === 'left') { nx = -nx; ny = -ny; }
+    var n = 10;
+    for (var i = 1; i < n; i++) {
+        var t = i / n;
+        var mx = x1 + dx * t, my = y1 + dy * t;
+        s += '<line x1="' + mx + '" y1="' + my + '" x2="' + (mx + nx * 6) + '" y2="' + (my + ny * 6) +
+             '" stroke="#da3633" stroke-width="0.7"/>';
+    }
+    return s;
+}
+
+// Mini decline-curve plot in a box. expressionType is 'exp', 'hyp', 'harm',
+// 'duong', 'sepd', 'fetkovich'.
+function _svg_declineCurve(x, y, w, h, type, label) {
+    var s = '<rect x="' + x + '" y="' + y + '" width="' + w + '" height="' + h +
+            '" fill="#0d1117" stroke="#30363d" stroke-width="0.7"/>';
+    // Axes
+    s += '<line x1="' + (x + 8) + '" y1="' + (y + 8) + '" x2="' + (x + 8) + '" y2="' + (y + h - 12) +
+         '" stroke="#8b949e" stroke-width="0.6"/>';
+    s += '<line x1="' + (x + 8) + '" y1="' + (y + h - 12) + '" x2="' + (x + w - 8) + '" y2="' + (y + h - 12) +
+         '" stroke="#8b949e" stroke-width="0.6"/>';
+    // Curve
+    var pts = '', N = 40;
+    for (var i = 0; i < N; i++) {
+        var u = i / (N - 1);                         // 0..1
+        var qFrac;
+        switch (type) {
+            case 'exp':       qFrac = Math.exp(-3.5 * u);                                    break;
+            case 'harm':      qFrac = 1 / (1 + 5 * u);                                       break;
+            case 'hyp':       qFrac = Math.pow(1 + 4.5 * u, -1.4);                           break;
+            case 'duong':     qFrac = Math.pow(1 + 0.05 * u * 80, -1.3) * (1 + 0.1 * u * 80) / (1 + 8); break;
+            case 'sepd':      qFrac = Math.exp(-Math.pow(4 * u, 0.6));                       break;
+            case 'fetkovich': qFrac = (u < 0.3) ? 1 - 0.6 * u : Math.exp(-3 * (u - 0.3));    break;
+            default:          qFrac = Math.exp(-2 * u);
+        }
+        var px = x + 8 + u * (w - 16);
+        var py = y + h - 12 - qFrac * (h - 24);
+        pts += (i ? ' L ' : 'M ') + px.toFixed(1) + ' ' + py.toFixed(1);
+    }
+    s += '<path d="' + pts + '" fill="none" stroke="#f0883e" stroke-width="1.6"/>';
+    // Label
+    s += '<text x="' + (x + w / 2) + '" y="' + (y + 8) + '" font-size="9" fill="#c9d1d9" text-anchor="middle">' + label + '</text>';
+    s += '<text x="' + (x + 4) + '" y="' + (y + 12) + '" font-size="7" fill="#8b949e">q</text>';
+    s += '<text x="' + (x + w - 14) + '" y="' + (y + h - 3) + '" font-size="7" fill="#8b949e">t</text>';
+    return s;
+}
+
+// Small inline observation well at (x, y_obs) with target marker.
+function _svg_obswell(x, ySurface, yObs, color) {
+    color = color || '#58a6ff';
+    var s = '<polygon points="' + (x - 4) + ',12 ' + (x + 4) + ',12 ' + x + ',22" fill="' + color + '"/>';
+    s += '<rect x="' + (x - 3) + '" y="' + ySurface + '" width="6" height="' + (yObs - ySurface) +
+         '" fill="#0d1117" stroke="' + color + '" stroke-width="1"/>';
+    s += '<circle cx="' + x + '" cy="' + yObs + '" r="4" fill="' + color + '" stroke="' + color + '" stroke-width="1.5"/>';
+    return s;
+}
+
+// ---- Schematics for the 32 remaining models -----------------------------
+
+// 15. Closed channel (3-sided: parallelChannel + one closed end).
+function _schematic_closedChannel3() {
+    var s = _svg_open();
+    s += '<rect x="20" y="40" width="360" height="220" fill="#0d1117" stroke="#8b949e" stroke-width="0.5"/>';
+    // Top + bottom parallel sealing faults
+    s += _svg_seal(20, 80, 380, 80, 'right');
+    s += _svg_seal(20, 220, 380, 220, 'left');
+    // Closed end on the right (vertical sealing line)
+    s += _svg_seal(380, 80, 380, 220, 'left');
+    // Producer
+    s += '<circle cx="160" cy="150" r="7" fill="#f0883e" stroke="#f0883e" stroke-width="2"/>';
+    s += '<text x="148" y="138" font-size="10" fill="#f0883e">well</text>';
+    // Width annotation
+    s += '<line x1="345" y1="80" x2="345" y2="220" stroke="#8b949e" stroke-width="0.6"/>';
+    s += '<text x="355" y="155" font-size="11" fill="#c9d1d9" font-style="italic">W</text>';
+    // Distance to closed end
+    s += '<line x1="160" y1="240" x2="380" y2="240" stroke="#8b949e" stroke-width="0.6" stroke-dasharray="2,2"/>';
+    s += '<text x="265" y="252" font-size="9" fill="#8b949e" font-style="italic">d_end</text>';
+    s += _svg_caption('Producer in 3-sided closed channel (two parallel + one closing boundary)');
+    s += _svg_close();
+    return s;
+}
+
+// 16. Fog / partial-transmissibility boundary.
+function _schematic_fogBoundary() {
+    var s = _svg_open();
+    s += '<rect x="20" y="40" width="360" height="220" fill="#0d1117" stroke="#8b949e" stroke-width="0.5"/>';
+    // Partial fault — orange/amber dashed line (not solid red sealing).
+    s += '<line x1="20" y1="150" x2="380" y2="150" stroke="#f0883e" stroke-width="2.5" stroke-dasharray="6,4"/>';
+    // Fog symbol — blurry pressure communication across the line.
+    for (var i = 0; i < 12; i++) {
+        var xx = 50 + i * 25;
+        s += '<circle cx="' + xx + '" cy="150" r="3" fill="#f0883e" fill-opacity="0.35"/>';
+    }
+    s += '<text x="200" y="142" font-size="10" fill="#f0883e" text-anchor="middle">partially sealing — transmissibility &#964; &#8712; (-1, 1)</text>';
+    // Producer
+    s += '<circle cx="200" cy="200" r="7" fill="#f0883e" stroke="#f0883e" stroke-width="2"/>';
+    s += '<text x="208" y="196" font-size="10" fill="#f0883e">well</text>';
+    // Pressure isobars on producer side
+    s += _svg_isobars(200, 200, 70, 4);
+    // Distance annotation
+    s += '<line x1="200" y1="158" x2="200" y2="195" stroke="#8b949e" stroke-width="0.7" stroke-dasharray="2,2"/>';
+    s += '<text x="208" y="180" font-size="9" fill="#8b949e" font-style="italic">L</text>';
+    s += _svg_caption('Producer + leaky/fog boundary: transmissibility &#964; sets sealed (1) ↔ fully open (-1)');
+    s += _svg_close();
+    return s;
+}
+
+// 17-20. Decline-curve schematics (Arps / Duong / SEPD / Fetkovich).
+function _schematic_arps() {
+    var s = _svg_open();
+    s += '<rect x="20" y="40" width="360" height="220" fill="#0d1117" stroke="#8b949e" stroke-width="0.5"/>';
+    s += _svg_declineCurve(40,  60,  150, 100, 'exp',  'b = 0 (exponential)');
+    s += _svg_declineCurve(210, 60,  150, 100, 'harm', 'b = 1 (harmonic)');
+    s += _svg_declineCurve(40,  175, 150, 75,  'hyp',  'b ∈ (0, 1) hyperbolic');
+    s += '<text x="285" y="200" font-size="10" fill="#c9d1d9" text-anchor="middle">q(t) = q_i / (1 + b·D_i·t)^(1/b)</text>';
+    s += '<text x="285" y="220" font-size="9" fill="#8b949e" text-anchor="middle">Arps (1945)</text>';
+    s += _svg_caption('Arps decline — three regimes (exp / hyp / harmonic) by b-factor');
+    s += _svg_close();
+    return s;
+}
+function _schematic_duong() {
+    var s = _svg_open();
+    s += '<rect x="20" y="40" width="360" height="220" fill="#0d1117" stroke="#8b949e" stroke-width="0.5"/>';
+    s += _svg_declineCurve(60, 60, 280, 140, 'duong', 'Duong shale rate-time');
+    s += '<text x="200" y="225" font-size="10" fill="#c9d1d9" text-anchor="middle">q(t) = q_1 · t^(-m) · exp[a/(1-m) (t^(1-m) - 1)]</text>';
+    s += '<text x="200" y="245" font-size="9" fill="#8b949e" text-anchor="middle">Duong (2011) — for transient shale gas/oil</text>';
+    s += _svg_close();
+    return s;
+}
+function _schematic_sepd() {
+    var s = _svg_open();
+    s += '<rect x="20" y="40" width="360" height="220" fill="#0d1117" stroke="#8b949e" stroke-width="0.5"/>';
+    s += _svg_declineCurve(60, 60, 280, 140, 'sepd', 'Stretched Exponential');
+    s += '<text x="200" y="225" font-size="10" fill="#c9d1d9" text-anchor="middle">q(t) = q_i · exp[-(t/τ)^n]</text>';
+    s += '<text x="200" y="245" font-size="9" fill="#8b949e" text-anchor="middle">Valko (2009) — finite-EUR decline form</text>';
+    s += _svg_close();
+    return s;
+}
+function _schematic_fetkovich() {
+    var s = _svg_open();
+    s += '<rect x="20" y="40" width="360" height="220" fill="#0d1117" stroke="#8b949e" stroke-width="0.5"/>';
+    s += _svg_declineCurve(60, 60, 280, 140, 'fetkovich', 'Fetkovich type curve');
+    s += '<text x="200" y="225" font-size="10" fill="#c9d1d9" text-anchor="middle">Transient → BDF blend (closed-circle implied geometry)</text>';
+    s += '<text x="200" y="245" font-size="9" fill="#8b949e" text-anchor="middle">Fetkovich (JPT Jun 1980)</text>';
+    s += _svg_close();
+    return s;
+}
+
+// 21. Radial composite — two concentric zones, mobility ratio M.
+function _schematic_radialComposite() {
+    var s = _svg_open();
+    s += '<rect x="20" y="40" width="360" height="220" fill="#0d1117" stroke="#8b949e" stroke-width="0.5"/>';
+    var cx = 200, cy = 150;
+    // Outer zone
+    s += '<circle cx="' + cx + '" cy="' + cy + '" r="100" fill="#3fb950" fill-opacity="0.10" stroke="#3fb950" stroke-width="0.7"/>';
+    s += '<text x="' + (cx + 80) + '" y="' + (cy - 70) + '" font-size="10" fill="#3fb950">k_2, &#956;_2</text>';
+    // Inner zone
+    s += '<circle cx="' + cx + '" cy="' + cy + '" r="55" fill="#58a6ff" fill-opacity="0.20" stroke="#58a6ff" stroke-width="1.2"/>';
+    s += '<text x="' + (cx - 6) + '" y="' + (cy + 36) + '" font-size="10" fill="#58a6ff">k_1, &#956;_1</text>';
+    // Producer at centre
+    s += '<circle cx="' + cx + '" cy="' + cy + '" r="6" fill="#f0883e"/>';
+    s += '<text x="' + (cx - 28) + '" y="' + (cy - 8) + '" font-size="10" fill="#f0883e">well</text>';
+    // Interface radius R
+    s += '<line x1="' + cx + '" y1="' + cy + '" x2="' + (cx + 55) + '" y2="' + cy + '" stroke="#c9d1d9" stroke-dasharray="2,2"/>';
+    s += '<text x="' + (cx + 25) + '" y="' + (cy - 4) + '" font-size="9" fill="#c9d1d9" font-style="italic">R</text>';
+    s += '<text x="200" y="60" font-size="11" fill="#c9d1d9" text-anchor="middle">Mobility ratio M = (k/&#956;)_2 / (k/&#956;)_1</text>';
+    s += _svg_caption('Radial composite reservoir — inner zone + outer zone of different mobility');
+    s += _svg_close();
+    return s;
+}
+
+// 22. Linear composite — vertical bands of different mobility.
+function _schematic_linearComposite() {
+    var s = _svg_open();
+    s += '<rect x="20" y="40" width="360" height="220" fill="#0d1117" stroke="#8b949e" stroke-width="0.5"/>';
+    var bands = [
+        { x: 20,  w: 110, color: '#58a6ff', label: 'k_1' },
+        { x: 130, w: 110, color: '#3fb950', label: 'k_2' },
+        { x: 240, w: 140, color: '#a371f7', label: 'k_3' }
+    ];
+    for (var i = 0; i < bands.length; i++) {
+        var b = bands[i];
+        s += '<rect x="' + b.x + '" y="40" width="' + b.w + '" height="220" fill="' + b.color +
+             '" fill-opacity="0.15" stroke="' + b.color + '" stroke-width="0.7"/>';
+        s += '<text x="' + (b.x + b.w / 2) + '" y="60" font-size="11" fill="' + b.color +
+             '" text-anchor="middle">' + b.label + '</text>';
+    }
+    // Discontinuities (vertical dashed)
+    s += '<line x1="130" y1="40" x2="130" y2="260" stroke="#c9d1d9" stroke-width="0.8" stroke-dasharray="3,3"/>';
+    s += '<line x1="240" y1="40" x2="240" y2="260" stroke="#c9d1d9" stroke-width="0.8" stroke-dasharray="3,3"/>';
+    // Producer in zone 1
+    s += '<circle cx="80" cy="150" r="6" fill="#f0883e"/>';
+    s += '<text x="68" y="170" font-size="10" fill="#f0883e">well</text>';
+    // Distance labels
+    s += '<text x="130" y="278" font-size="9" fill="#8b949e" text-anchor="middle">L_1</text>';
+    s += '<text x="240" y="278" font-size="9" fill="#8b949e" text-anchor="middle">L_2</text>';
+    s += _svg_caption('Linear composite — discontinuities at L_1, L_2 (up to 5 zones)');
+    s += _svg_close();
+    return s;
+}
+
+// 23. Two-layer with cross-flow.
+function _schematic_twoLayerXF() {
+    var s = _svg_open();
+    s += _svg_caprock(40, 25);
+    s += '<rect x="20" y="65" width="360" height="80" fill="#3fb950" fill-opacity="0.18" stroke="#3fb950" stroke-width="0.7"/>';
+    s += '<text x="34" y="108" font-size="10" fill="#3fb950">Layer 1 — k_1, &#966;_1, h_1</text>';
+    s += '<rect x="20" y="145" width="360" height="80" fill="#58a6ff" fill-opacity="0.18" stroke="#58a6ff" stroke-width="0.7"/>';
+    s += '<text x="34" y="188" font-size="10" fill="#58a6ff">Layer 2 — k_2, &#966;_2, h_2</text>';
+    s += _svg_baserock(225, 25);
+    s += _svg_vwell(200, 24, 225, '#f0883e');
+    // Cross-flow arrows
+    s += _svg_xflowArrow(170, 100, 170, 175, '#c9d1d9');
+    s += _svg_xflowArrow(230, 175, 230, 100, '#c9d1d9');
+    s += '<text x="248" y="148" font-size="10" fill="#c9d1d9">&#955; cross-flow</text>';
+    s += _svg_well_label(200, 'producer');
+    s += _svg_caption('Two-layer reservoir with PSS cross-flow rate &#955;');
+    s += _svg_close();
+    return s;
+}
+
+// 24. Multi-layer with cross-flow — N stacked layers.
+function _schematic_multiLayerXF() {
+    var s = _svg_open();
+    s += _svg_caprock(40, 20);
+    var layers = _svg_layers(20, 60, 360, [
+        { label: 'Layer 1', h: 50, color: '#3fb950' },
+        { label: 'Layer 2', h: 50, color: '#58a6ff' },
+        { label: 'Layer 3', h: 50, color: '#a371f7' },
+        { label: 'Layer 4', h: 50, color: '#d29922' }
+    ]);
+    s += layers.svg;
+    s += _svg_baserock(layers.bottom, 20);
+    s += _svg_vwell(200, 24, layers.bottom, '#f0883e');
+    // Cross-flow indicators between adjacent layers
+    s += _svg_xflowArrow(176, 95,  176, 145, '#c9d1d9');
+    s += _svg_xflowArrow(176, 145, 176, 195, '#c9d1d9');
+    s += _svg_xflowArrow(176, 195, 176, 245, '#c9d1d9');
+    s += '<text x="100" y="280" font-size="10" fill="#c9d1d9">&#955; controls inter-layer transient flow</text>';
+    s += _svg_well_label(200, 'producer');
+    s += _svg_caption('Multi-layer reservoir (N≤5) with cross-flow between adjacent pairs');
+    s += _svg_close();
+    return s;
+}
+
+// 25. Multi-layer NO cross-flow (commingled).
+function _schematic_multiLayerNoXF() {
+    var s = _svg_open();
+    s += _svg_caprock(40, 20);
+    var layers = _svg_layers(20, 60, 360, [
+        { label: 'Layer 1 (kh_1, S_1)', h: 60, color: '#3fb950' },
+        { label: 'Layer 2 (kh_2, S_2)', h: 60, color: '#58a6ff' },
+        { label: 'Layer 3 (kh_3, S_3)', h: 60, color: '#a371f7' }
+    ]);
+    s += layers.svg;
+    // Sealing barriers between layers (red bars)
+    s += '<rect x="20" y="119" width="360" height="2" fill="#da3633"/>';
+    s += '<rect x="20" y="179" width="360" height="2" fill="#da3633"/>';
+    s += _svg_baserock(layers.bottom, 20);
+    s += _svg_vwell(200, 24, layers.bottom, '#f0883e');
+    s += '<text x="100" y="280" font-size="10" fill="#c9d1d9">no inter-layer flow → commingled</text>';
+    s += _svg_well_label(200, 'producer');
+    s += _svg_caption('Multi-layer commingled (no cross-flow): rate weighted by kh fraction');
+    s += _svg_close();
+    return s;
+}
+
+// 26. Multi-layer fractured commingled.
+function _schematic_mlNoXFFrac() {
+    var s = _svg_open();
+    s += _svg_caprock(40, 20);
+    var layers = _svg_layers(20, 60, 360, [
+        { label: 'frac', h: 60, color: '#3fb950' },
+        { label: 'frac', h: 60, color: '#58a6ff' },
+        { label: 'frac', h: 60, color: '#a371f7' }
+    ]);
+    s += layers.svg;
+    s += '<rect x="20" y="119" width="360" height="2" fill="#da3633"/>';
+    s += '<rect x="20" y="179" width="360" height="2" fill="#da3633"/>';
+    s += _svg_baserock(layers.bottom, 20);
+    s += _svg_vwell(200, 24, layers.bottom, '#f0883e');
+    // Each layer has a horizontal fracture symbol
+    var fracY = [90, 150, 210];
+    for (var i = 0; i < fracY.length; i++) {
+        s += '<rect x="100" y="' + (fracY[i] - 2) + '" width="200" height="4" fill="#f0883e" fill-opacity="0.7"/>';
+    }
+    s += '<text x="305" y="90" font-size="9" fill="#f0883e">x_f</text>';
+    s += _svg_well_label(200, 'producer');
+    s += _svg_caption('Multi-layer fractured commingled (each layer has its own ∞-cond fracture)');
+    s += _svg_close();
+    return s;
+}
+
+// 27. Multi-layer horizontal commingled.
+function _schematic_mlNoXFHoriz() {
+    var s = _svg_open();
+    s += _svg_caprock(40, 20);
+    var layers = _svg_layers(20, 60, 360, [
+        { label: 'horiz', h: 60, color: '#3fb950' },
+        { label: 'horiz', h: 60, color: '#58a6ff' },
+        { label: 'horiz', h: 60, color: '#a371f7' }
+    ]);
+    s += layers.svg;
+    s += '<rect x="20" y="119" width="360" height="2" fill="#da3633"/>';
+    s += '<rect x="20" y="179" width="360" height="2" fill="#da3633"/>';
+    s += _svg_baserock(layers.bottom, 20);
+    // Vertical riser on left, then horizontal segments per layer
+    s += '<rect x="56" y="24" width="8" height="36" fill="#0d1117" stroke="#f0883e" stroke-width="1.5"/>';
+    s += _svg_hwell(60, 320, 90,  '#f0883e');
+    s += _svg_hwell(60, 320, 150, '#f0883e');
+    s += _svg_hwell(60, 320, 210, '#f0883e');
+    s += _svg_well_label(60, 'multi-lateral horizontal');
+    s += _svg_caption('Multi-layer horizontal commingled — one lateral per layer, no XF');
+    s += _svg_close();
+    return s;
+}
+
+// 28. ML horizontal with cross-flow.
+function _schematic_mlHorizontalXF() {
+    var s = _svg_open();
+    s += _svg_caprock(40, 20);
+    var layers = _svg_layers(20, 60, 360, [
+        { label: 'Layer 1', h: 50, color: '#3fb950' },
+        { label: 'Layer 2 ← horizontal', h: 50, color: '#58a6ff' },
+        { label: 'Layer 3', h: 50, color: '#a371f7' },
+        { label: 'Layer 4', h: 50, color: '#d29922' }
+    ]);
+    s += layers.svg;
+    s += _svg_baserock(layers.bottom, 20);
+    // Vertical riser
+    s += '<rect x="56" y="24" width="8" height="86" fill="#0d1117" stroke="#f0883e" stroke-width="1.5"/>';
+    // Horizontal completion in layer 2
+    s += _svg_hwell(60, 340, 135, '#f0883e');
+    // Cross-flow arrows
+    s += _svg_xflowArrow(280, 110, 280, 160, '#c9d1d9');
+    s += _svg_xflowArrow(280, 160, 280, 210, '#c9d1d9');
+    s += '<text x="290" y="178" font-size="9" fill="#c9d1d9">&#955; cross-flow</text>';
+    s += _svg_well_label(60, 'horizontal');
+    s += _svg_caption('Horizontal well in N-layer reservoir with full transient cross-flow');
+    s += _svg_close();
+    return s;
+}
+
+// 29. Inclined well in multi-layer with XF.
+function _schematic_inclinedMLXF() {
+    var s = _svg_open();
+    s += _svg_caprock(40, 20);
+    var layers = _svg_layers(20, 60, 360, [
+        { label: 'Layer 1', h: 60, color: '#3fb950' },
+        { label: 'Layer 2', h: 60, color: '#58a6ff' },
+        { label: 'Layer 3', h: 60, color: '#a371f7' }
+    ]);
+    s += layers.svg;
+    s += _svg_baserock(layers.bottom, 20);
+    // Inclined well
+    s += '<polygon points="105,12 125,12 115,24" fill="#f0883e"/>';
+    s += '<line x1="115" y1="24" x2="265" y2="240" stroke="#f0883e" stroke-width="3"/>';
+    s += '<text x="150" y="40" font-size="10" fill="#f0883e">inclined &#952;_w</text>';
+    // Cross-flow arrows
+    s += _svg_xflowArrow(330, 90,  330, 150, '#c9d1d9');
+    s += _svg_xflowArrow(330, 150, 330, 210, '#c9d1d9');
+    s += _svg_caption('Inclined well penetrating N layers with full transient XF');
+    s += _svg_close();
+    return s;
+}
+
+// 30. Multi-lateral (star pattern) in ML+XF.
+function _schematic_multiLatMLXF() {
+    var s = _svg_open();
+    s += _svg_caprock(40, 20);
+    var layers = _svg_layers(20, 60, 360, [
+        { label: 'Layer 1', h: 50, color: '#3fb950' },
+        { label: 'Layer 2', h: 50, color: '#58a6ff' },
+        { label: 'Layer 3', h: 50, color: '#a371f7' }
+    ]);
+    s += layers.svg;
+    s += _svg_baserock(210, 20);
+    // Vertical riser to mid layer
+    s += '<rect x="196" y="24" width="8" height="111" fill="#0d1117" stroke="#f0883e" stroke-width="1.5"/>';
+    // Three lateral legs at junction (mid of layer 2)
+    var jx = 200, jy = 135;
+    s += '<line x1="' + jx + '" y1="' + jy + '" x2="60"  y2="' + jy + '" stroke="#f0883e" stroke-width="3"/>';
+    s += '<line x1="' + jx + '" y1="' + jy + '" x2="340" y2="' + jy + '" stroke="#f0883e" stroke-width="3"/>';
+    s += '<line x1="' + jx + '" y1="' + jy + '" x2="' + jx + '" y2="200" stroke="#f0883e" stroke-width="3"/>';
+    s += '<circle cx="' + jx + '" cy="' + jy + '" r="5" fill="#f0883e"/>';
+    s += _svg_well_label(200, 'multi-lateral');
+    s += '<text x="200" y="280" font-size="10" fill="#c9d1d9" text-anchor="middle">N parallel/star segments — superposed line-source coupling</text>';
+    s += _svg_close();
+    return s;
+}
+
+// 31. ML multi-perforation (≤4 perfs at various depths).
+function _schematic_mlMultiPerf() {
+    var s = _svg_open();
+    s += _svg_caprock(40, 20);
+    var layers = _svg_layers(20, 60, 360, [
+        { label: 'Layer 1', h: 50, color: '#3fb950' },
+        { label: 'Layer 2', h: 50, color: '#58a6ff' },
+        { label: 'Layer 3', h: 50, color: '#a371f7' },
+        { label: 'Layer 4', h: 50, color: '#d29922' }
+    ]);
+    s += layers.svg;
+    s += _svg_baserock(layers.bottom, 20);
+    s += _svg_vwell(200, 24, layers.bottom, '#f0883e');
+    // Perfs at the centre of layers 1, 2, 4 (skipping 3).
+    var perfYs = [85, 135, 235];
+    for (var i = 0; i < perfYs.length; i++) {
+        var y = perfYs[i];
+        for (var k = 0; k < 3; k++) {
+            s += '<line x1="196" y1="' + (y - 4 + k * 4) + '" x2="170" y2="' + (y - 4 + k * 4) + '" stroke="#f0883e" stroke-width="1"/>';
+            s += '<line x1="204" y1="' + (y - 4 + k * 4) + '" x2="230" y2="' + (y - 4 + k * 4) + '" stroke="#f0883e" stroke-width="1"/>';
+        }
+    }
+    s += _svg_well_label(200, 'producer (perfs)');
+    s += _svg_caption('Multi-perforation in layered reservoir with cross-flow (1-4 perfs)');
+    s += _svg_close();
+    return s;
+}
+
+// 32. General ML no-XF (heterogeneous well types per layer).
+function _schematic_generalMLNoXF() {
+    var s = _svg_open();
+    s += _svg_caprock(40, 20);
+    // Layer 1: vertical well, Layer 2: fracture, Layer 3: horizontal
+    s += '<rect x="20" y="60" width="360" height="60" fill="#3fb950" fill-opacity="0.15" stroke="#3fb950" stroke-width="0.7"/>';
+    s += '<text x="34" y="92" font-size="9" fill="#3fb950">Layer 1 — vertical well + WBS</text>';
+    s += '<rect x="20" y="120" width="360" height="60" fill="#58a6ff" fill-opacity="0.15" stroke="#58a6ff" stroke-width="0.7"/>';
+    s += '<text x="34" y="152" font-size="9" fill="#58a6ff">Layer 2 — hydraulic fracture</text>';
+    s += '<rect x="20" y="180" width="360" height="60" fill="#a371f7" fill-opacity="0.15" stroke="#a371f7" stroke-width="0.7"/>';
+    s += '<text x="34" y="212" font-size="9" fill="#a371f7">Layer 3 — horizontal completion</text>';
+    s += '<rect x="20" y="119" width="360" height="2" fill="#da3633"/>';
+    s += '<rect x="20" y="179" width="360" height="2" fill="#da3633"/>';
+    s += _svg_baserock(240, 20);
+    s += _svg_vwell(200, 24, 121, '#f0883e');                       // vertical perfs in layer 1
+    s += '<rect x="100" y="148" width="200" height="4" fill="#f0883e"/>';   // fracture in layer 2
+    s += _svg_hwell(60, 340, 210, '#f0883e');                       // horizontal in layer 3
+    s += _svg_caption('General multi-layer no-XF — each layer can be a different well/reservoir type');
+    s += _svg_close();
+    return s;
+}
+
+// 33. General heterogeneity radial composite (3 zones).
+function _schematic_genHetRadial() {
+    var s = _svg_open();
+    s += '<rect x="20" y="40" width="360" height="220" fill="#0d1117" stroke="#8b949e" stroke-width="0.5"/>';
+    var cx = 200, cy = 150;
+    s += '<circle cx="' + cx + '" cy="' + cy + '" r="100" fill="#a371f7" fill-opacity="0.10" stroke="#a371f7" stroke-width="0.7"/>';
+    s += '<text x="' + (cx + 80) + '" y="' + (cy - 70) + '" font-size="10" fill="#a371f7">Zone 3</text>';
+    s += '<circle cx="' + cx + '" cy="' + cy + '" r="65" fill="#3fb950" fill-opacity="0.18" stroke="#3fb950" stroke-width="1"/>';
+    s += '<text x="' + (cx + 50) + '" y="' + (cy - 32) + '" font-size="10" fill="#3fb950">Zone 2</text>';
+    s += '<circle cx="' + cx + '" cy="' + cy + '" r="35" fill="#58a6ff" fill-opacity="0.25" stroke="#58a6ff" stroke-width="1.2"/>';
+    s += '<text x="' + (cx - 14) + '" y="' + (cy + 28) + '" font-size="10" fill="#58a6ff">Zone 1</text>';
+    s += '<circle cx="' + cx + '" cy="' + cy + '" r="6" fill="#f0883e"/>';
+    s += '<text x="' + (cx - 22) + '" y="' + (cy - 8) + '" font-size="9" fill="#f0883e">well</text>';
+    s += '<text x="200" y="60" font-size="11" fill="#c9d1d9" text-anchor="middle">Radial composite (3 zones, R₁ &lt; R₂)</text>';
+    s += _svg_caption('General heterogeneity — multi-zone radial composite');
+    s += _svg_close();
+    return s;
+}
+
+// 34. General heterogeneity radial+linear composite.
+function _schematic_genHetRadialLinear() {
+    var s = _svg_open();
+    s += '<rect x="20" y="40" width="360" height="220" fill="#0d1117" stroke="#8b949e" stroke-width="0.5"/>';
+    var cx = 200, cy = 150;
+    s += '<circle cx="' + cx + '" cy="' + cy + '" r="90" fill="#3fb950" fill-opacity="0.15" stroke="#3fb950" stroke-width="0.7"/>';
+    s += '<circle cx="' + cx + '" cy="' + cy + '" r="50" fill="#58a6ff" fill-opacity="0.20" stroke="#58a6ff" stroke-width="1"/>';
+    s += '<circle cx="' + cx + '" cy="' + cy + '" r="6" fill="#f0883e"/>';
+    // Linear discontinuity (vertical fault on right)
+    s += _svg_seal(330, 60, 330, 240, 'left');
+    s += '<text x="280" y="55" font-size="9" fill="#da3633">linear fault</text>';
+    s += '<text x="200" y="270" font-size="10" fill="#c9d1d9" text-anchor="middle">Radial composite + linear discontinuity</text>';
+    s += _svg_close();
+    return s;
+}
+
+// 35. Two-well interference test.
+function _schematic_interference() {
+    var s = _svg_open();
+    s += _svg_caprock(40, 25);
+    s += _svg_sand(65, 170);
+    s += _svg_baserock(235, 25);
+    s += _svg_vwell(110, 24, 235, '#f0883e');
+    s += _svg_well_label(110, 'producer');
+    s += _svg_obswell(290, 24, 150, '#58a6ff');
+    s += '<text x="295" y="170" font-size="10" fill="#58a6ff">observation</text>';
+    // Pressure pulse arrows
+    s += _svg_isobars(110, 150, 90, 4);
+    // Distance annotation
+    s += '<line x1="110" y1="252" x2="290" y2="252" stroke="#8b949e" stroke-width="0.7"/>';
+    s += '<line x1="110" y1="248" x2="110" y2="256" stroke="#8b949e" stroke-width="0.7"/>';
+    s += '<line x1="290" y1="248" x2="290" y2="256" stroke="#8b949e" stroke-width="0.7"/>';
+    s += '<text x="200" y="266" font-size="10" fill="#c9d1d9" text-anchor="middle" font-style="italic">r_obs</text>';
+    s += _svg_caption('Producer + observation well: pressure response from a flowing well (line-source)');
+    s += _svg_close();
+    return s;
+}
+
+// 36. ML horizontal interference test.
+function _schematic_mlHorizInterference() {
+    var s = _svg_open();
+    s += _svg_caprock(40, 20);
+    var layers = _svg_layers(20, 60, 360, [
+        { label: 'Layer 1', h: 50, color: '#3fb950' },
+        { label: 'Layer 2', h: 50, color: '#58a6ff' },
+        { label: 'Layer 3', h: 50, color: '#a371f7' }
+    ]);
+    s += layers.svg;
+    s += _svg_baserock(210, 20);
+    // Producer horizontal in layer 2
+    s += '<rect x="36" y="24" width="8" height="86" fill="#0d1117" stroke="#f0883e" stroke-width="1.5"/>';
+    s += _svg_hwell(40, 200, 135, '#f0883e');
+    s += _svg_well_label(40, 'producer');
+    // Observation horizontal in same layer
+    s += '<rect x="356" y="24" width="8" height="86" fill="#0d1117" stroke="#58a6ff" stroke-width="1.5"/>';
+    s += _svg_hwell(220, 360, 135, '#58a6ff');
+    s += '<text x="280" y="155" font-size="10" fill="#58a6ff">observation</text>';
+    s += _svg_caption('Two horizontal wells in layered reservoir — interference test');
+    s += _svg_close();
+    return s;
+}
+
+// 37. ML multi-perf interference test.
+function _schematic_mlMultiPerfInterference() {
+    var s = _svg_open();
+    s += _svg_caprock(40, 20);
+    var layers = _svg_layers(20, 60, 360, [
+        { label: 'Layer 1', h: 50, color: '#3fb950' },
+        { label: 'Layer 2', h: 50, color: '#58a6ff' },
+        { label: 'Layer 3', h: 50, color: '#a371f7' }
+    ]);
+    s += layers.svg;
+    s += _svg_baserock(210, 20);
+    // Producer with perfs in layers 1, 3
+    s += _svg_vwell(120, 24, 210, '#f0883e');
+    for (var k = 0; k < 3; k++) {
+        s += '<line x1="116" y1="' + (85 + k * 4) + '" x2="100" y2="' + (85 + k * 4) + '" stroke="#f0883e" stroke-width="1"/>';
+        s += '<line x1="116" y1="' + (185 + k * 4) + '" x2="100" y2="' + (185 + k * 4) + '" stroke="#f0883e" stroke-width="1"/>';
+    }
+    s += _svg_well_label(120, 'producer');
+    // Observation in layer 2
+    s += _svg_obswell(280, 24, 135, '#58a6ff');
+    s += '<text x="285" y="155" font-size="10" fill="#58a6ff">obs</text>';
+    s += _svg_caption('Multi-perforation interference (≤3 producing perfs + 1 observation)');
+    s += _svg_close();
+    return s;
+}
+
+// 38. Inclined-well interference test.
+function _schematic_inclinedInterference() {
+    var s = _svg_open();
+    s += _svg_caprock(40, 25);
+    s += _svg_sand(65, 170);
+    s += _svg_baserock(235, 25);
+    // Producer inclined well
+    s += '<polygon points="65,12 85,12 75,24" fill="#f0883e"/>';
+    s += '<line x1="75" y1="24" x2="180" y2="235" stroke="#f0883e" stroke-width="3"/>';
+    s += '<text x="32" y="40" font-size="9" fill="#f0883e">producer &#952;_p</text>';
+    // Observation inclined well
+    s += '<polygon points="305,12 325,12 315,24" fill="#58a6ff"/>';
+    s += '<line x1="315" y1="24" x2="240" y2="235" stroke="#58a6ff" stroke-width="3"/>';
+    s += '<text x="305" y="40" font-size="9" fill="#58a6ff">obs &#952;_o</text>';
+    s += _svg_caption('Two inclined wells in homogeneous (or double-porosity) reservoir');
+    s += _svg_close();
+    return s;
+}
+
+// 39. Linear-composite interference test.
+function _schematic_linearCompInterference() {
+    var s = _svg_open();
+    s += '<rect x="20" y="40" width="360" height="220" fill="#0d1117" stroke="#8b949e" stroke-width="0.5"/>';
+    s += '<rect x="20" y="40" width="120" height="220" fill="#58a6ff" fill-opacity="0.15"/>';
+    s += '<rect x="140" y="40" width="120" height="220" fill="#3fb950" fill-opacity="0.15"/>';
+    s += '<rect x="260" y="40" width="120" height="220" fill="#a371f7" fill-opacity="0.15"/>';
+    s += '<line x1="140" y1="40" x2="140" y2="260" stroke="#c9d1d9" stroke-width="0.8" stroke-dasharray="3,3"/>';
+    s += '<line x1="260" y1="40" x2="260" y2="260" stroke="#c9d1d9" stroke-width="0.8" stroke-dasharray="3,3"/>';
+    s += '<circle cx="60" cy="150" r="6" fill="#f0883e"/>';
+    s += '<text x="48" y="170" font-size="10" fill="#f0883e">producer</text>';
+    s += _svg_obswell(330, 24, 150, '#58a6ff');
+    s += '<text x="306" y="178" font-size="9" fill="#58a6ff">observation</text>';
+    s += _svg_caption('Observation well in linear-composite reservoir (≤5 zones)');
+    s += _svg_close();
+    return s;
+}
+
+// 40. Linear-composite multi-lateral.
+function _schematic_linearCompMultiLat() {
+    var s = _svg_open();
+    s += '<rect x="20" y="40" width="180" height="220" fill="#58a6ff" fill-opacity="0.15"/>';
+    s += '<rect x="200" y="40" width="180" height="220" fill="#3fb950" fill-opacity="0.15"/>';
+    s += '<line x1="200" y1="40" x2="200" y2="260" stroke="#c9d1d9" stroke-width="0.8" stroke-dasharray="3,3"/>';
+    // Multi-lateral producer in zone 1 (left)
+    s += '<rect x="96" y="24" width="8" height="86" fill="#0d1117" stroke="#f0883e" stroke-width="1.5"/>';
+    s += '<line x1="100" y1="135" x2="40"  y2="135" stroke="#f0883e" stroke-width="3"/>';
+    s += '<line x1="100" y1="135" x2="160" y2="135" stroke="#f0883e" stroke-width="3"/>';
+    s += '<line x1="100" y1="135" x2="100" y2="200" stroke="#f0883e" stroke-width="3"/>';
+    s += '<circle cx="100" cy="135" r="5" fill="#f0883e"/>';
+    s += _svg_caption('Multi-lateral producer in linear-composite reservoir');
+    s += _svg_close();
+    return s;
+}
+
+// 41. Linear-composite multi-lateral interference.
+function _schematic_linearCompMultiLatInterference() {
+    var s = _svg_open();
+    s += '<rect x="20" y="40" width="180" height="220" fill="#58a6ff" fill-opacity="0.15"/>';
+    s += '<rect x="200" y="40" width="180" height="220" fill="#3fb950" fill-opacity="0.15"/>';
+    s += '<line x1="200" y1="40" x2="200" y2="260" stroke="#c9d1d9" stroke-width="0.8" stroke-dasharray="3,3"/>';
+    s += '<rect x="96" y="24" width="8" height="86" fill="#0d1117" stroke="#f0883e" stroke-width="1.5"/>';
+    s += '<line x1="100" y1="135" x2="40"  y2="135" stroke="#f0883e" stroke-width="3"/>';
+    s += '<line x1="100" y1="135" x2="160" y2="135" stroke="#f0883e" stroke-width="3"/>';
+    s += '<circle cx="100" cy="135" r="5" fill="#f0883e"/>';
+    s += _svg_obswell(320, 24, 150, '#58a6ff');
+    s += '<text x="296" y="178" font-size="9" fill="#58a6ff">obs</text>';
+    s += _svg_caption('Observation well + multi-lateral producer in linear-composite');
+    s += _svg_close();
+    return s;
+}
+
+// 42. ML interference with cross-flow.
+function _schematic_mlInterferenceXF() {
+    var s = _svg_open();
+    s += _svg_caprock(40, 20);
+    var layers = _svg_layers(20, 60, 360, [
+        { label: 'Layer 1', h: 50, color: '#3fb950' },
+        { label: 'Layer 2', h: 50, color: '#58a6ff' },
+        { label: 'Layer 3', h: 50, color: '#a371f7' }
+    ]);
+    s += layers.svg;
+    s += _svg_baserock(210, 20);
+    s += _svg_vwell(100, 24, 210, '#f0883e');
+    s += _svg_well_label(100, 'producer');
+    s += _svg_obswell(290, 24, 135, '#58a6ff');
+    s += '<text x="296" y="155" font-size="9" fill="#58a6ff">obs (x, y)</text>';
+    // XF arrows between layers
+    s += _svg_xflowArrow(200, 110, 200, 160, '#c9d1d9');
+    s += _svg_xflowArrow(200, 160, 200, 210, '#c9d1d9');
+    s += _svg_caption('Interference at arbitrary (x, y) point in any layer with PSS &#955;-controlled XF');
+    s += _svg_close();
+    return s;
+}
+
+// 43. Radial composite interference.
+function _schematic_radialCompInterference() {
+    var s = _svg_open();
+    s += '<rect x="20" y="40" width="360" height="220" fill="#0d1117" stroke="#8b949e" stroke-width="0.5"/>';
+    var cx = 160, cy = 150;
+    s += '<circle cx="' + cx + '" cy="' + cy + '" r="100" fill="#3fb950" fill-opacity="0.10" stroke="#3fb950" stroke-width="0.7"/>';
+    s += '<circle cx="' + cx + '" cy="' + cy + '" r="50" fill="#58a6ff" fill-opacity="0.20" stroke="#58a6ff" stroke-width="1.2"/>';
+    s += '<circle cx="' + cx + '" cy="' + cy + '" r="6" fill="#f0883e"/>';
+    s += '<text x="' + (cx - 30) + '" y="' + (cy - 12) + '" font-size="10" fill="#f0883e">producer</text>';
+    // Observation outside outer zone
+    s += '<circle cx="320" cy="80" r="5" fill="#58a6ff"/>';
+    s += '<text x="290" y="74" font-size="9" fill="#58a6ff">obs (x, y)</text>';
+    s += _svg_caption('Observation pressure in 2-zone radial-composite reservoir');
+    s += _svg_close();
+    return s;
+}
+
+// 44. User-defined type curve — table icon + curve.
+function _schematic_userDefined() {
+    var s = _svg_open();
+    s += '<rect x="20" y="40" width="360" height="220" fill="#0d1117" stroke="#8b949e" stroke-width="0.5"/>';
+    // Mini table (left).
+    s += '<rect x="40" y="60" width="130" height="180" fill="#161b22" stroke="#30363d"/>';
+    s += '<text x="105" y="78" font-size="11" fill="#c9d1d9" text-anchor="middle">td      pd</text>';
+    s += '<line x1="50" y1="84" x2="160" y2="84" stroke="#30363d"/>';
+    var rows = ['1e-3   0.02', '1e-2   0.12', '1e-1   0.57', '1      2.30', '10     4.61', '100    6.91'];
+    for (var i = 0; i < rows.length; i++) {
+        s += '<text x="105" y="' + (102 + i * 22) + '" font-size="10" fill="#8b949e" text-anchor="middle" font-family="monospace">' + rows[i] + '</text>';
+    }
+    // Right: log-log curve from the table.
+    var x0 = 200, y0 = 70, w = 170, h = 170;
+    s += '<rect x="' + x0 + '" y="' + y0 + '" width="' + w + '" height="' + h + '" fill="#0d1117" stroke="#30363d"/>';
+    s += '<line x1="' + (x0 + 12) + '" y1="' + (y0 + 12) + '" x2="' + (x0 + 12) + '" y2="' + (y0 + h - 16) + '" stroke="#8b949e" stroke-width="0.6"/>';
+    s += '<line x1="' + (x0 + 12) + '" y1="' + (y0 + h - 16) + '" x2="' + (x0 + w - 8) + '" y2="' + (y0 + h - 16) + '" stroke="#8b949e" stroke-width="0.6"/>';
+    var pts = '';
+    for (var k = 0; k < 30; k++) {
+        var u = k / 29;
+        var px = x0 + 12 + u * (w - 20);
+        var py = y0 + h - 16 - Math.log10(1 + 9 * u) * (h - 28) * 0.85;
+        pts += (k ? ' L ' : 'M ') + px.toFixed(1) + ' ' + py.toFixed(1);
+    }
+    s += '<path d="' + pts + '" fill="none" stroke="#f0883e" stroke-width="1.6"/>';
+    s += '<text x="' + (x0 + w / 2) + '" y="' + (y0 + 8) + '" font-size="10" fill="#c9d1d9" text-anchor="middle">log-log interpolation</text>';
+    s += _svg_caption('User-defined type-curve — load (td, pd) table + linear interp in log-log');
+    s += _svg_close();
+    return s;
+}
+
+// 45. Water injection — front + saturation profile.
+function _schematic_waterInjection() {
+    var s = _svg_open();
+    s += _svg_caprock(40, 25);
+    s += '<rect x="20" y="65" width="360" height="170" fill="url(#sandPattern)" stroke="#8b949e" stroke-width="0.5"/>';
+    s += _svg_baserock(235, 25);
+    // Injection well (left). Arrow points DOWN to indicate injection.
+    s += '<polygon points="65,12 85,12 75,24" fill="#58a6ff" transform="rotate(180 75 18)"/>';
+    s += _svg_vwell(75, 24, 235, '#58a6ff');
+    s += '<text x="35" y="20" font-size="10" fill="#58a6ff">injector</text>';
+    // Water-swept (blue) inner zone
+    s += '<rect x="20" y="65" width="160" height="170" fill="#58a6ff" fill-opacity="0.30"/>';
+    s += '<text x="100" y="105" font-size="10" fill="#58a6ff" text-anchor="middle">water swept (S_w &gt; S_wc)</text>';
+    // Front (vertical sharp boundary)
+    s += '<line x1="180" y1="65" x2="180" y2="235" stroke="#58a6ff" stroke-width="2"/>';
+    s += '<text x="186" y="80" font-size="9" fill="#58a6ff" font-style="italic">r_f (front)</text>';
+    // Oil zone
+    s += '<rect x="180" y="65" width="200" height="170" fill="#f0883e" fill-opacity="0.10"/>';
+    s += '<text x="285" y="160" font-size="10" fill="#f0883e" text-anchor="middle">oil (S_w = S_wc)</text>';
+    s += _svg_caption('Water injection — Buckley-Leverett-like piston front advances with W_inj');
+    s += _svg_close();
+    return s;
+}
+
 // Generic placeholder for unsupported keys.
 function _schematic_placeholder(modelKey) {
     var s = _svg_open();
@@ -4758,10 +5516,11 @@ function _schematic_placeholder(modelKey) {
     return s;
 }
 
-// Public dispatch.
+// Public dispatch — covers all 45 PRiSM_MODELS entries.
 window.PRiSM_getModelSchematic = function (modelKey) {
     if (!modelKey) return '';
     switch (modelKey) {
+        // Core (Phase 1+2)
         case 'homogeneous':      return _schematic_homogeneous();
         case 'infiniteFrac':     return _schematic_infiniteFrac();
         case 'finiteFrac':       return _schematic_finiteFrac();
@@ -4776,6 +5535,43 @@ window.PRiSM_getModelSchematic = function (modelKey) {
         case 'doublePorosity':   return _schematic_doublePorosity();
         case 'partialPen':       return _schematic_partialPen();
         case 'verticalPulse':    return _schematic_verticalPulse();
+        // Boundary (Phase 2 extras)
+        case 'closedChannel3':   return _schematic_closedChannel3();
+        case 'fogBoundary':      return _schematic_fogBoundary();
+        // Decline (Phase 3)
+        case 'arps':             return _schematic_arps();
+        case 'duong':            return _schematic_duong();
+        case 'sepd':             return _schematic_sepd();
+        case 'fetkovich':        return _schematic_fetkovich();
+        // Composite + multi-layer (Phase 5)
+        case 'radialComposite':  return _schematic_radialComposite();
+        case 'linearComposite':  return _schematic_linearComposite();
+        case 'twoLayerXF':       return _schematic_twoLayerXF();
+        case 'multiLayerXF':     return _schematic_multiLayerXF();
+        case 'multiLayerNoXF':   return _schematic_multiLayerNoXF();
+        case 'genHetRadial':     return _schematic_genHetRadial();
+        case 'genHetRadialLinear': return _schematic_genHetRadialLinear();
+        // Multi-layer well variants (Phase 6)
+        case 'mlNoXFFrac':       return _schematic_mlNoXFFrac();
+        case 'mlNoXFHoriz':      return _schematic_mlNoXFHoriz();
+        case 'mlHorizontalXF':   return _schematic_mlHorizontalXF();
+        case 'inclinedMLXF':     return _schematic_inclinedMLXF();
+        case 'multiLatMLXF':     return _schematic_multiLatMLXF();
+        case 'mlMultiPerf':      return _schematic_mlMultiPerf();
+        case 'generalMLNoXF':    return _schematic_generalMLNoXF();
+        // Interference variants (Phase 6)
+        case 'interference':     return _schematic_interference();
+        case 'mlHorizInterference': return _schematic_mlHorizInterference();
+        case 'mlMultiPerfInterference': return _schematic_mlMultiPerfInterference();
+        case 'inclinedInterference': return _schematic_inclinedInterference();
+        case 'linearCompInterference': return _schematic_linearCompInterference();
+        case 'linearCompMultiLat': return _schematic_linearCompMultiLat();
+        case 'linearCompMultiLatInterference': return _schematic_linearCompMultiLatInterference();
+        case 'mlInterferenceXF': return _schematic_mlInterferenceXF();
+        case 'radialCompInterference': return _schematic_radialCompInterference();
+        // Specialised solvers (Phase 7)
+        case 'userDefined':      return _schematic_userDefined();
+        case 'waterInjection':   return _schematic_waterInjection();
         default:                 return _schematic_placeholder(modelKey);
     }
 };
