@@ -11778,6 +11778,45 @@ if (!window.PRiSM_MODELS.homogeneous && typeof PRiSM_model_homogeneous === 'func
     };
 }
 
+// ── Bridge Phase 1+2 plot functions onto window so the dispatch in
+//    PRiSM_drawActivePlot (which looks up window[entry.fn]) can find them.
+//    The plot functions are declared as top-level `function PRiSM_plot_*`
+//    in 02-plots.js (no IIFE); they hoist to the host main IIFE scope.
+//    From inside this inner IIFE, direct identifier references resolve
+//    via the lexical-scope chain — assigning each to window publishes it
+//    so the string-keyed dispatch can resolve it.
+(function _bridgePlotFnsToWindow() {
+    var names = [
+        'PRiSM_plot_cartesian',
+        'PRiSM_plot_horner',
+        'PRiSM_plot_bourdet',
+        'PRiSM_plot_sqrt_time',
+        'PRiSM_plot_quarter_root_time',
+        'PRiSM_plot_spherical',
+        'PRiSM_plot_sandface_convolution',
+        'PRiSM_plot_buildup_superposition',
+        'PRiSM_plot_rate_time_cartesian',
+        'PRiSM_plot_rate_time_semilog',
+        'PRiSM_plot_rate_time_loglog',
+        'PRiSM_plot_rate_cumulative',
+        'PRiSM_plot_loss_ratio',
+        'PRiSM_plot_typecurve_overlay'
+    ];
+    for (var i = 0; i < names.length; i++) {
+        var n = names[i];
+        if (typeof window[n] === 'function') continue; // already exposed
+        // Direct identifier lookup via host-IIFE lexical scope.
+        // eval here is intentional — it's the only way to convert a string
+        // back into a lexically-scoped binding of the same name.
+        try {
+            // eslint-disable-next-line no-eval
+            var fn = eval(n);
+            if (typeof fn === 'function') window[n] = fn;
+        } catch (e) { /* function not in scope yet — non-fatal */ }
+    }
+})();
+
+
 // ── Shared state container for tabs 2-7 ──────────────────────────────────
 window.PRiSM_state = window.PRiSM_state || {
     model: 'homogeneous',
@@ -12040,6 +12079,26 @@ function PRiSM_renderPlotsTab() {
     PRiSM_drawActivePlot();
 }
 
+// Clear the canvas + draw a single-line status message at its visible
+// centre. Used by every error/empty-state branch in PRiSM_drawActivePlot
+// so successive calls don't pile overlapping text.
+function PRiSM_drawCanvasMessage(canvas, msg, color) {
+    var ctx = canvas.getContext('2d');
+    var dpr = window.devicePixelRatio || 1;
+    // Reset transform so clearRect uses backing-buffer pixels.
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    // Switch to CSS-pixel coords so fillText centres correctly on retina.
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    var cssW = canvas.width / dpr;
+    var cssH = canvas.height / dpr;
+    ctx.fillStyle = color || '#888';
+    ctx.font = '13px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(msg, cssW / 2, cssH / 2);
+}
+
 function PRiSM_drawActivePlot() {
     var canvas = $('prism_plot_canvas');
     if (!canvas) return;
@@ -12047,13 +12106,13 @@ function PRiSM_drawActivePlot() {
     var ds = window.PRiSM_dataset;
     var entry = PRISM_PLOT_REGISTRY[st.activePlot];
     if (!entry) return;
+    if (!ds || !Array.isArray(ds.t) || !ds.t.length) {
+        PRiSM_drawCanvasMessage(canvas, 'No data loaded — paste/upload data on Tab 1.', '#888');
+        return;
+    }
     var fn = window[entry.fn];
     if (typeof fn !== 'function') {
-        var ctx = canvas.getContext('2d');
-        ctx.fillStyle = '#888';
-        ctx.font = '13px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText('Plot function ' + entry.fn + ' not available.', canvas.width / 2, canvas.height / 2);
+        PRiSM_drawCanvasMessage(canvas, 'Plot function ' + entry.fn + ' not available.', '#f87');
         return;
     }
 
@@ -12081,11 +12140,7 @@ function PRiSM_drawActivePlot() {
         fn(canvas, data, opts);
     } catch (e) {
         console.error('PRiSM plot render error:', e);
-        var ctx2 = canvas.getContext('2d');
-        ctx2.fillStyle = '#f87';
-        ctx2.font = '13px sans-serif';
-        ctx2.textAlign = 'center';
-        ctx2.fillText('Render error: ' + e.message, canvas.width / 2, canvas.height / 2);
+        PRiSM_drawCanvasMessage(canvas, 'Render error: ' + e.message, '#f87');
     }
 }
 
