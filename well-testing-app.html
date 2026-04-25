@@ -34,21 +34,47 @@
         return (el && el.textContent || '').replace(/\s+/g,' ').trim().slice(0, 80);
       }
 
-      // ── 1. Page view on SPA navigation ─────────────────────
-      // The app fires h2oil:pagechange after every internal nav. We send
-      // page_view with virtual page_path + page_title so GA Realtime shows
-      // section flow inside the SPA, not just the single index.html load.
+      // ── 1. Page view + per-module engagement timing ────────
+      // The app fires h2oil:pagechange after every internal nav. We send:
+      //   - page_view: virtual SPA pageview (so GA Realtime shows
+      //     section flow inside the app, not just one index.html load)
+      //   - module_view: explicit per-module event with module_id, lets
+      //     us rank "most-used calculator" via a single dimension query
+      //   - module_engagement: fired when LEAVING a module, with the
+      //     dwell time. Lets us answer "where do users spend time?"
+      var __h2oilCurrentPage = null;
+      var __h2oilPageEnteredAt = 0;
+      function emitEngagementForCurrentPage(){
+        if (!__h2oilCurrentPage || !__h2oilPageEnteredAt) return;
+        var dwellMs = Date.now() - __h2oilPageEnteredAt;
+        // Skip noise: <1.5s dwell is usually a pass-through, not real use
+        if (dwellMs < 1500) return;
+        track('module_engagement', {
+          module_id: __h2oilCurrentPage,
+          dwell_seconds: Math.round(dwellMs / 1000),
+          dwell_ms: dwellMs
+        });
+      }
       document.addEventListener('h2oil:pagechange', function(e){
         var p = (e && e.detail && e.detail.page) || 'unknown';
+        // Close the previous page's engagement window before opening the new one.
+        emitEngagementForCurrentPage();
         track('page_view', {
           page_path: '/#/' + p,
           page_title: 'H2Oil — ' + p,
           page_location: window.location.origin + window.location.pathname + '#/' + p
         });
-        // Also dispatch a synthetic scroll-reset so the 25/50/75/100%
-        // milestones can re-fire on the next page.
+        track('module_view', { module_id: p });
+        __h2oilCurrentPage = p;
+        __h2oilPageEnteredAt = Date.now();
         document.dispatchEvent(new CustomEvent('h2oil:scrollreset'));
       });
+      // Fire one last engagement event when the tab is hidden / closed —
+      // visibilitychange is more reliable than beforeunload on mobile.
+      document.addEventListener('visibilitychange', function(){
+        if (document.visibilityState === 'hidden') emitEngagementForCurrentPage();
+      });
+      window.addEventListener('beforeunload', emitEngagementForCurrentPage);
 
       // ── 2. Click delegation: nav buttons, dashboard tiles, calc/export ──
       document.addEventListener('click', function(e){
@@ -7787,6 +7813,10 @@ function renderReleaseNotes(body){
 const GA_EVENTS = [
     { name:'page_view',           trigger:'SPA navigation between calculators (h2oil:pagechange)',
       params:'page_path, page_title, page_location' },
+    { name:'module_view',         trigger:'Each time a calculator/module opens (paired with page_view)',
+      params:'module_id (e.g. aga3, choke, sephand)' },
+    { name:'module_engagement',   trigger:'When LEAVING a module \u2014 page change, tab hidden, or window close',
+      params:'module_id, dwell_seconds, dwell_ms (skipped if dwell < 1.5s)' },
     { name:'nav_click',           trigger:'Sidebar nav button click',
       params:'nav_target, nav_label, nav_source' },
     { name:'dashboard_tile_click',trigger:'Dashboard quickcard click',
@@ -7843,6 +7873,48 @@ function renderGAEvents(body){
             <li>String values truncated to 80 characters before sending (search_term, link_text, nav_label).</li>
             <li>All custom events include the current calculator key under <code>page</code> or <code>calc_id</code> for cohort analysis in GA4 Explorations.</li>
           </ul>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Common questions — how to answer them in GA4</div>
+          <p style="font-size:13px;color:var(--text2);margin-bottom:10px">
+            All these are queries you build in <strong>GA4 → Reports → Library → Custom report</strong>
+            (or faster, in <strong>Explore</strong>). Wait ~24h after the events first fire for them to
+            appear in standard Reports; they show in Realtime within ~30 sec.
+          </p>
+          <table class="dtable">
+            <tr><th>Question</th><th>Event</th><th>Group by (Dimension)</th><th>Metric</th></tr>
+            <tr><td>Which calculator gets the most Calculate clicks?</td>
+                <td><code>calculator_calculate</code></td>
+                <td><code>calc_id</code></td>
+                <td>Event count, descending</td></tr>
+            <tr><td>Which module is most visited?</td>
+                <td><code>module_view</code></td>
+                <td><code>module_id</code></td>
+                <td>Event count</td></tr>
+            <tr><td>Which module do users spend most time on?</td>
+                <td><code>module_engagement</code></td>
+                <td><code>module_id</code></td>
+                <td>Sum of <code>dwell_seconds</code></td></tr>
+            <tr><td>Average session depth per user?</td>
+                <td><code>module_view</code></td>
+                <td>Date</td>
+                <td>Event count / Active users</td></tr>
+            <tr><td>Which export format is preferred?</td>
+                <td><code>report_export</code></td>
+                <td><code>format</code></td>
+                <td>Event count</td></tr>
+            <tr><td>How far do users scroll on long pages?</td>
+                <td><code>scroll_depth</code></td>
+                <td><code>percent</code> + <code>page</code></td>
+                <td>Event count</td></tr>
+          </table>
+          <p style="font-size:11px;color:var(--text3);margin-top:10px">
+            <strong>To see these dimensions in standard reports</strong>, you must register them as
+            <em>Custom Dimensions</em> in <strong>Admin → Data display → Custom definitions</strong>.
+            One-time setup per dimension (calc_id, module_id, format, percent, dwell_seconds, etc.)
+            — takes ~10 sec each. After registration GA4 starts populating them on the next event.
+          </p>
         </div>
 
         <div class="card">
