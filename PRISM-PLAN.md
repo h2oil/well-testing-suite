@@ -322,23 +322,23 @@ Key reference texts to have open during implementation:
 
 ### Phase 1 — Foundation (LAUNCH SCOPE)
 
-- [ ] **Stehfest Laplace inversion engine** — N=12 default, lookup table of weights, real-axis evaluator. Used by every Laplace-domain model.
-- [ ] **#1 Homogeneous Reservoir** — radial flow, finite-radius vertical well, WBS + skin. Most basic model; baseline for comparison. _Refs: Mavor & Cinco (SPE 7977); Gringarten (SPE 10044)._
+- [x] **Stehfest Laplace inversion engine** — N=12 default, lookup table of weights, real-axis evaluator. Used by every Laplace-domain model.
+- [x] **#1 Homogeneous Reservoir** — radial flow, finite-radius vertical well, WBS + skin. Most basic model; baseline for comparison. _Refs: Mavor & Cinco (SPE 7977); Gringarten (SPE 10044)._
 
 ### Phase 2 — Standard well/reservoir set (LAUNCH SCOPE)
 
-- [ ] **#3 Infinite-Conductivity Hydraulic Fracture** — vertical well + hydraulic fracture in homogeneous reservoir; high fracture conductivity → negligible pressure drop in fracture. _Ref: Gringarten, Ramey, Raghavan (SPEJ Aug 1974)._
-- [ ] **#4 Finite-Conductivity Hydraulic Fracture** — vertical fracture with significant pressure drop. Table-lookup solution from Cinco-Ley semi-analytic. _Ref: Cinco et al (SPE 6014)._
-- [ ] **#7 Inclined-Well Model** — slant well in homogeneous reservoir; transition between inclined-radial and horizontal-radial flow. _Ref: Cinco, Miller, Ramey (JPT Nov 1975)._
-- [ ] **#8 Horizontal Well Model** — horizontal well in homogeneous reservoir; transition between vertical and pseudo-radial flow. _Ref: Raghavan, Ozkan, Joshi (SPE 16378)._
-- [ ] **#10 Reservoir Boundaries — Single Linear** — image-well technique, sealing or constant-pressure. Doubling-of-slope diagnostic. _Ref: Van Poolen et al (JPT Aug 1963)._
-- [ ] **#10 Reservoir Boundaries — Parallel (channel)** — derivative ½-slope diagnostic; channel-width from linear flow. _Ref: as above._
-- [ ] **#10 Reservoir Boundaries — Closed Channel (3-sided)** — extension of parallel + end closure. _Ref: as above._
-- [ ] **#10 Reservoir Boundaries — Closed Rectangle** — full PSS late-time behaviour; reservoir-limits test. _Ref: as above._
-- [ ] **#10 Reservoir Boundaries — Intersecting** — radial-flow stabilisation related to angle of intersection. _Ref: as above._
-- [ ] **#10 Boundary "fog factor"** — fractional transmissibility (-1 to 1) for partially sealing / leaky faults.
-- [ ] **#12 Finite-Conductivity Fracture WITH Skin** — same as #4 plus fracture-face skin restricting flow. _Ref: Cinco-Ley & Samaniego (SPE 6752)._
-- [ ] **#30 Partial-Penetration Hydraulic Fracture** — vertical fracture height < reservoir thickness, with fracture skin. _Ref: Gringarten, Ramey (SPE 3818)._
+- [x] **#3 Infinite-Conductivity Hydraulic Fracture** — vertical well + hydraulic fracture in homogeneous reservoir; high fracture conductivity → negligible pressure drop in fracture. _Ref: Gringarten, Ramey, Raghavan (SPEJ Aug 1974)._
+- [x] **#4 Finite-Conductivity Hydraulic Fracture** — vertical fracture with significant pressure drop. Table-lookup solution from Cinco-Ley semi-analytic. _Ref: Cinco et al (SPE 6014)._
+- [x] **#7 Inclined-Well Model** — slant well in homogeneous reservoir; transition between inclined-radial and horizontal-radial flow. _Ref: Cinco, Miller, Ramey (JPT Nov 1975)._
+- [x] **#8 Horizontal Well Model** — horizontal well in homogeneous reservoir; transition between vertical and pseudo-radial flow. _Ref: Raghavan, Ozkan, Joshi (SPE 16378)._
+- [x] **#10 Reservoir Boundaries — Single Linear** — image-well technique, sealing or constant-pressure. Doubling-of-slope diagnostic. _Ref: Van Poolen et al (JPT Aug 1963)._
+- [x] **#10 Reservoir Boundaries — Parallel (channel)** — derivative ½-slope diagnostic; channel-width from linear flow. _Ref: as above._
+- [x] **#10 Reservoir Boundaries — Closed Channel (3-sided)** — extension of parallel + end closure. _Ref: as above._
+- [x] **#10 Reservoir Boundaries — Closed Rectangle** — full PSS late-time behaviour; reservoir-limits test. _Ref: as above._
+- [x] **#10 Reservoir Boundaries — Intersecting** — radial-flow stabilisation related to angle of intersection. _Ref: as above._
+- [x] **#10 Boundary "fog factor"** — fractional transmissibility (-1 to 1) for partially sealing / leaky faults.
+- [x] **#12 Finite-Conductivity Fracture WITH Skin** — same as #4 plus fracture-face skin restricting flow. _Ref: Cinco-Ley & Samaniego (SPE 6752)._
+- [x] **#30 Partial-Penetration Hydraulic Fracture** — vertical fracture height < reservoir thickness, with fracture skin. _Ref: Gringarten, Ramey (SPE 3818)._
 
 ### Phase 3 — Auto-match + Decline + Multi-rate
 
