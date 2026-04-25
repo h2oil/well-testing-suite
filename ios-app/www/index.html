@@ -8,6 +8,7 @@
 <html lang="en">
 <head>
     <!-- GA stripped from iOS bundle -->
+    <!-- GA stripped from iOS bundle -->
     <meta charset="UTF-8">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -399,6 +400,8 @@
             <div class="nav-group-label">Overview</div>
             <div class="nav-btn" data-p="home"><span class="nav-icon">&#9670;</span><span>Dashboard</span></div>
             <div class="nav-btn active" data-p="clientinfo"><span class="nav-icon">&#128188;</span><span>Client & Well Info</span></div>
+            <div class="nav-btn" data-p="releasenotes"><span class="nav-icon">&#128221;</span><span>Release Notes</span></div>
+            <div class="nav-btn" data-p="gaevents"><span class="nav-icon">&#128202;</span><span>GA4 Events Reference</span></div>
         </div>
         <div class="nav-group">
             <div class="nav-group-label">Well Testing</div>
@@ -615,11 +618,14 @@ function nav(p) {
 function render() {
     const body = $('pgBody');
     body.innerHTML = '';
-    const pages = { home: renderHome, clientinfo: renderClientInfo, aga3: renderAGA3, units: renderUnits, choke: renderChoke, flare: renderFlare, dca: renderDCA, pta: renderPTA, prv: renderPRV, chokeflow: renderChokeFlow, gascalc: renderGasCalc, fluid: renderFluid, tank: renderTank, vessel: renderVessel, elec: renderElec, chem: renderChem, sep: renderSep, bottomsup: renderBottomsUp, solgor: renderSolGOR, oilgas: renderOilGas, mcfshr: renderMCFShr, casing: renderCasing, chokecnv: renderChokeCnv, analogsig: renderAnalogSig, pumpsz: renderPumpSz, seprate: renderSepRate, sephand: renderSepHandling, heater: renderHeater, pipesz: renderPipeSz, turbmeter: renderTurbMeter, aircomp: renderAirComp, gensz: renderGenSz, cablesz: renderCableSz, vdrop: renderVDrop, flamearr: renderFlameArr, arc: renderARC, wts: renderWTS };
+    const pages = { home: renderHome, clientinfo: renderClientInfo, aga3: renderAGA3, units: renderUnits, choke: renderChoke, flare: renderFlare, dca: renderDCA, pta: renderPTA, prv: renderPRV, chokeflow: renderChokeFlow, gascalc: renderGasCalc, fluid: renderFluid, tank: renderTank, vessel: renderVessel, elec: renderElec, chem: renderChem, sep: renderSep, bottomsup: renderBottomsUp, solgor: renderSolGOR, oilgas: renderOilGas, mcfshr: renderMCFShr, casing: renderCasing, chokecnv: renderChokeCnv, analogsig: renderAnalogSig, pumpsz: renderPumpSz, seprate: renderSepRate, sephand: renderSepHandling, heater: renderHeater, pipesz: renderPipeSz, turbmeter: renderTurbMeter, aircomp: renderAirComp, gensz: renderGenSz, cablesz: renderCableSz, vdrop: renderVDrop, flamearr: renderFlameArr, arc: renderARC, wts: renderWTS, releasenotes: renderReleaseNotes, gaevents: renderGAEvents };
     if (pages[page]) pages[page](body);
     // Show export buttons on calculator pages (not home/clientinfo)
     const eb = $('exportBtns');
     if(eb) eb.style.display = (page==='home'||page==='clientinfo') ? 'none' : 'flex';
+    // Notify analytics + any other listeners that the SPA has navigated.
+    // Used by the GA4 tracker for virtual page_view + scroll-depth reset.
+    try { document.dispatchEvent(new CustomEvent('h2oil:pagechange', { detail: { page } })); } catch(_){}
 }
 
 // ── Canvas Chart Helper ──
@@ -7579,6 +7585,185 @@ window.calcVDrop=function(){
         <div class="rrow"><span class="rl">Status</span><span class="rv" style="color:${color};font-weight:700">${status}</span></div>
     </div>`;
 };
+
+// ══════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════
+// ── Release Notes (in-app changelog) ──
+// ══════════════════════════════════════════════════════════════
+// Maintained as a flat array, newest first. Renderer groups by
+// YYYY-MM and prints in reverse-chrono. New releases: prepend a new
+// entry object — keep the date in ISO YYYY-MM-DD, headline under
+// 60 chars, details 1-3 sentences.
+const RELEASE_NOTES = [
+    { date:'2026-04-25', tag:'feature',  title:'Separator Handling Estimator — full v1',
+      details:'New Engineering calculator combining Souders-Brown gas capacity, oil/water retention, outlet velocity checks (PCV/LCV/lines/Daniel/turbines), required Cv recommendation, slug capacity, sensitivity analysis at \u00b120% flow, fix-it hints, and a vessel cross-section diagram. Inspired by pb-handbook.com but reimplemented natively. Mist-eliminator credit and Papay/Sutton Z-factor included.' },
+    { date:'2026-04-24', tag:'web',     title:'Google Analytics 4 enabled on web',
+      details:'GA4 measurement (G-6QKCBNWHYB) now tracks the standalone HTML version. Custom event tracker fires nav_click, dashboard_tile_click, calculator_calculate, report_export, copy_clipboard, scroll_depth, click_outbound and SPA page_view. Stripped from the iOS bundle so the native app makes no Google calls.' },
+    { date:'2026-04-23', tag:'ios',     title:'iOS auto-versioning via Xcode Cloud',
+      details:'Every Xcode Cloud build now stamps MARKETING_VERSION = 1.3.${CI_BUILD_NUMBER} and CURRENT_PROJECT_VERSION = ${CI_BUILD_NUMBER} into project.pbxproj before archive. No more App Store Connect rejections for "version closed for new builds" — each upload is its own version train.' },
+    { date:'2026-04-23', tag:'ios',     title:'iOS subscription gate dormant',
+      details:'Decision: subscriptions live on the web only. The iOS RevenueCat gate is shipped but disabled — app launches free on iOS until we re-enable it from a single config flag. Module kept hot for fast re-activation.' },
+    { date:'2026-04-22', tag:'release', title:'v1.3 — HTML paywall removed; RC native is sole gate',
+      details:'Removed the local HTML fallback paywall (~215 lines + 2 files). The RevenueCat dashboard-designed paywall is now the only paywall users see. Configure failures retry on next gate eval instead of caching forever, so dashboard fixes land without an app restart.' },
+    { date:'2026-04-22', tag:'ios',     title:'Capacitor 8 + RevenueCat 13 upgrade',
+      details:'Jumped both toolchains to the top of their lines (Capacitor 8.3.1, RevenueCat 13.0.1). iOS deployment target raised 14 \u2192 15.1. Cap 8 dropped CocoaPods in favour of Swift Package Manager, so no Podfile any more — the .xcodeproj is the container Xcode Cloud points at.' },
+    { date:'2026-04-22', tag:'ios',     title:'Xcode Cloud scaffolding',
+      details:'Added ci_post_clone.sh that npm-installs, regenerates www/index.html from the root HTML, and runs cap sync ios before archive. install-xcodecloud-scripts.sh mirrors the tracked CI scripts into ios/App/ci_scripts/ where Xcode Cloud actually scans. fix-xcode-cloud.sh helper for one-shot recovery.' },
+    { date:'2026-04-21', tag:'feature', title:'Flare 3D — shaded dome rewrite',
+      details:'Replaced the sparse wireframe-cage rendering of heat and noise iso-surfaces with translucent shaded domes (longitudinal slices, painter\'s-algorithm sorted, Lambert shading). Heat dome anchored on the wind-aligned flame centroid; noise dome anchored on the flame, not the ground. Custom user-added thresholds now render with a distinct dashed outline across all four views.' },
+    { date:'2026-04-21', tag:'fix',     title:'Flare noise — recalibrated + Uj derived from flow',
+      details:'Acoustic-efficiency constant lowered (\u221221 dB on PWL) so distances match industrial flare survey ranges. Exit velocity is now always derived from flow \u00f7 tip area rather than a stuck user input — doubling flow now properly extends the 75 dBA boundary by 2.3\u00d7 instead of 1.25\u00d7.' },
+    { date:'2026-04-21', tag:'feature', title:'Heat 2D plan view; flare custom zones flagged',
+      details:'Added a Plan (bird\'s-eye) sub-tab for thermal radiation alongside the existing Elevation view, matching how noise already had both. Custom thresholds (user-added kW/m\u00b2 levels) get a dashed outline + accent colour throughout, and the legend splits API 521 from Custom.' },
+    { date:'2026-04-20', tag:'release', title:'v1.1 \u2014 Capacitor 7 + RevenueCat 10',
+      details:'Initial subscription scaffolding. Whole-app gating with a 3-day free trial \u2192 $9.99/month tier. Wired RevenueCat presentPaywallIfNeeded, Customer Center via the floating cog button, and an offline entitlement cache for instant launch.' },
+    { date:'2026-04-20', tag:'docs',    title:'PROJECT-NOTES.md established',
+      details:'Started a running architecture journal at the repo root. Captures the why behind every major change \u2014 toolchain bumps, paywall flow, Calculation fixes audit batch, Well Test Simulator history, iOS migration steps. Each release is documented with a rollback plan.' },
+];
+const RELEASE_TAG_COLORS = {
+    feature:'var(--green)', release:'var(--accent)', fix:'var(--blue)',
+    ios:'var(--purple)', web:'var(--blue)', docs:'var(--text2)'
+};
+function renderReleaseNotes(body){
+    $('pgTitle').textContent='Release Notes';
+    $('pgSub').textContent='Site updates, newest first. Grouped by month.';
+    // Group by YYYY-MM
+    const byMonth = {};
+    RELEASE_NOTES.forEach(e => {
+        const k = e.date.substring(0,7);
+        (byMonth[k] = byMonth[k] || []).push(e);
+    });
+    const months = Object.keys(byMonth).sort().reverse();
+    const monthName = (k) => {
+        const d = new Date(k + '-01T00:00:00');
+        return d.toLocaleDateString(undefined, { year:'numeric', month:'long' });
+    };
+    const html = months.map(m => `
+      <section style="margin-bottom:32px">
+        <h2 style="font-size:18px;color:var(--accent);margin-bottom:12px;letter-spacing:.3px">${monthName(m)}</h2>
+        ${byMonth[m].map(e => {
+            const col = RELEASE_TAG_COLORS[e.tag] || 'var(--text2)';
+            return `
+            <article style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:14px 18px;margin-bottom:10px">
+              <header style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:6px">
+                <time datetime="${e.date}" style="font-family:'Courier New',monospace;font-size:12px;color:var(--text3)">${e.date}</time>
+                <span style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:${col};border:1px solid ${col};padding:1px 7px;border-radius:10px">${e.tag}</span>
+                <h3 style="font-size:15px;font-weight:700;color:var(--text);margin:0">${e.title}</h3>
+              </header>
+              <p style="font-size:13px;color:var(--text2);line-height:1.55;margin:0">${e.details}</p>
+            </article>`;
+        }).join('')}
+      </section>
+    `).join('');
+    body.innerHTML = `
+      <div style="max-width:780px">
+        ${html}
+        <aside style="margin-top:24px;padding:14px 18px;border:1px dashed var(--border);border-radius:8px;font-size:12px;color:var(--text3);background:var(--bg2)">
+          <strong style="color:var(--text2)">Format for new entries:</strong>
+          add a new object at the top of <code>RELEASE_NOTES</code> in <code>well-testing-app.html</code>:
+          <pre style="margin:8px 0 0;padding:10px;background:var(--bg1);border-radius:4px;overflow-x:auto;font-size:11px;color:var(--text)">{ date: 'YYYY-MM-DD',
+  tag: 'feature' | 'fix' | 'release' | 'ios' | 'web' | 'docs',
+  title: 'Short headline (under 60 chars)',
+  details: '2-3 sentences, plain prose. No markdown.' }</pre>
+          Reverse chronological inside each month. Tag determines the colour pill.
+        </aside>
+      </div>`;
+}
+
+// ══════════════════════════════════════════════════════════════
+// ── GA4 Events Reference ──
+// ══════════════════════════════════════════════════════════════
+// In-app documentation of every event the GA4 tracker fires. Keep
+// in sync with the tracker block in <head> (search for GA:START).
+const GA_EVENTS = [
+    { name:'page_view',           trigger:'SPA navigation between calculators (h2oil:pagechange)',
+      params:'page_path, page_title, page_location' },
+    { name:'nav_click',           trigger:'Sidebar nav button click',
+      params:'nav_target, nav_label, nav_source' },
+    { name:'dashboard_tile_click',trigger:'Dashboard quickcard click',
+      params:'tile_id, tile_label' },
+    { name:'calculator_calculate',trigger:'Click on a button whose label starts with "Calculate"',
+      params:'calc_id (current calculator key)' },
+    { name:'report_export',       trigger:'Click on Export Report / CSV / PNG buttons',
+      params:'calc_id, format (pdf | csv | png)' },
+    { name:'session_save',        trigger:'Click "Save Session"',
+      params:'(none)' },
+    { name:'session_load',        trigger:'Click "Load Session" / "Import Session"',
+      params:'(none)' },
+    { name:'copy_clipboard',      trigger:'Any document-level copy event (Ctrl/\u2318+C)',
+      params:'content_type (code | text), char_count, page' },
+    { name:'search',              trigger:'Input event on element with [data-ga-search] attribute',
+      params:'search_term (truncated to 80 chars), search_scope' },
+    { name:'select_filter',       trigger:'Input event on element with [data-ga-filter] attribute',
+      params:'filter_type, filter_value' },
+    { name:'scroll_depth',        trigger:'Reaching 25 / 50 / 75 / 100% of #pgBody scroll height',
+      params:'percent (25 | 50 | 75 | 100), page' },
+    { name:'click_outbound',      trigger:'Click on any external <a href="http(s)://..."> link',
+      params:'link_url, link_text' },
+];
+function renderGAEvents(body){
+    $('pgTitle').textContent='GA4 Events Reference';
+    $('pgSub').textContent='Custom events fired by the analytics tracker on the web build.';
+    const rows = GA_EVENTS.map(e => `
+      <tr>
+        <td style="font-family:'Courier New',monospace;color:var(--accent);white-space:nowrap">${e.name}</td>
+        <td>${e.trigger}</td>
+        <td style="font-family:'Courier New',monospace;font-size:11px;color:var(--text2)">${e.params}</td>
+      </tr>`).join('');
+    body.innerHTML = `
+      <div style="max-width:920px">
+        <div class="info-bar" style="background:rgba(63,185,80,.06);border-color:rgba(63,185,80,.2);color:var(--green)">
+          GA4 measurement ID <strong>G-6QKCBNWHYB</strong>. Tracker is web-only \u2014 the entire script block lives between
+          <code>&lt;!-- GA:START --&gt;</code> markers in the &lt;head&gt; and is stripped from the iOS bundle by
+          <code>ios-app/scripts/sync-from-main.js</code>.
+        </div>
+
+        <div class="card">
+          <div class="card-title">Events fired</div>
+          <table class="dtable">
+            <tr><th>Event name</th><th>Trigger</th><th>Parameters</th></tr>
+            ${rows}
+          </table>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Naming conventions</div>
+          <ul style="margin:0;padding-left:20px;font-size:13px;line-height:1.6;color:var(--text2)">
+            <li>Event names: <code>snake_case</code>, lowercase, verb-led where possible.</li>
+            <li>Parameter names: <code>snake_case</code>, lowercase. GA4 reserves a few names (page_view's <code>page_path</code>, <code>page_title</code>, <code>page_location</code>) \u2014 we honour those for SPA virtual pageviews.</li>
+            <li>String values truncated to 80 characters before sending (search_term, link_text, nav_label).</li>
+            <li>All custom events include the current calculator key under <code>page</code> or <code>calc_id</code> for cohort analysis in GA4 Explorations.</li>
+          </ul>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Verifying live</div>
+          <ol style="margin:0;padding-left:20px;font-size:13px;line-height:1.6;color:var(--text2)">
+            <li>GA4 dashboard \u2192 <strong>Realtime</strong> report \u2014 events appear within ~30 seconds.</li>
+            <li>Browser DevTools \u2192 Network tab \u2192 filter by <code>collect</code> \u2014 each event is a POST to <code>google-analytics.com/g/collect</code>.</li>
+            <li>Console: <code>window.h2oilTrack('test_event', {note:'manual fire'})</code> sends a one-off event for sanity checking.</li>
+            <li>To preview without sending, set <code>window.dataLayer</code> to a console-logging proxy in DevTools before page load.</li>
+          </ol>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Adding new events</div>
+          <p style="font-size:13px;color:var(--text2);line-height:1.55;margin-bottom:10px">
+            Edit the GA tracker block in <code>well-testing-app.html</code> (search for <code>GA:START \u2014 Custom event tracker</code>).
+            Use the <code>track(name, params)</code> helper. Then add a row to the <code>GA_EVENTS</code> array at the top of
+            <code>renderGAEvents</code> so this page stays current.
+          </p>
+          <pre style="margin:0;padding:10px;background:var(--bg1);border-radius:4px;overflow-x:auto;font-size:11px;color:var(--text)">// inside the tracker IIFE
+track('my_new_event', {
+    custom_param: 'value',
+    char_count: text.length
+});
+
+// then in GA_EVENTS list:
+{ name: 'my_new_event', trigger: 'when X happens', params: 'custom_param, char_count' },</pre>
+        </div>
+      </div>`;
+}
 
 // ══════════════════════════════════════════════════════════════
 // ── Well Test Simulator ──
