@@ -115,10 +115,46 @@ const checks = [
   ['window.PRiSM_plot_cartesian',         typeof win.PRiSM_plot_cartesian === 'function'],
   ['window.PRiSM_plot_horner',            typeof win.PRiSM_plot_horner === 'function'],
   ['window.PRiSM_plot_buildup_superposition', typeof win.PRiSM_plot_buildup_superposition === 'function'],
+  // Round-2 — Phase 5 composite + multi-layer
+  ['PRiSM_MODELS has twoLayerXF',         !!(win.PRiSM_MODELS && win.PRiSM_MODELS.twoLayerXF)],
+  ['PRiSM_MODELS has radialComposite',    !!(win.PRiSM_MODELS && win.PRiSM_MODELS.radialComposite)],
+  ['PRiSM_MODELS has multiLayerXF',       !!(win.PRiSM_MODELS && win.PRiSM_MODELS.multiLayerXF)],
+  ['PRiSM_MODELS has multiLayerNoXF',     !!(win.PRiSM_MODELS && win.PRiSM_MODELS.multiLayerNoXF)],
+  ['PRiSM_MODELS has linearComposite',    !!(win.PRiSM_MODELS && win.PRiSM_MODELS.linearComposite)],
+  // Round-2 — Phase 6 interference / multi-lateral (sample 3 of 16)
+  ['PRiSM_MODELS has interference',       !!(win.PRiSM_MODELS && win.PRiSM_MODELS.interference)],
+  ['PRiSM_MODELS has mlHorizontalXF',     !!(win.PRiSM_MODELS && win.PRiSM_MODELS.mlHorizontalXF)],
+  ['PRiSM_MODELS has multiLatMLXF',       !!(win.PRiSM_MODELS && win.PRiSM_MODELS.multiLatMLXF)],
+  // Round-2 — Phase 7 specialised solvers
+  ['PRiSM_MODELS has userDefined',        !!(win.PRiSM_MODELS && win.PRiSM_MODELS.userDefined)],
+  ['PRiSM_MODELS has waterInjection',     !!(win.PRiSM_MODELS && win.PRiSM_MODELS.waterInjection)],
+  // Round-2 — polish (SVG + analysis keys + PNG + GA4)
+  ['window.PRiSM_getModelSchematic',      typeof win.PRiSM_getModelSchematic === 'function'],
+  ['window.PRiSM_analysisKeys (≥20)',     !!(win.PRiSM_analysisKeys && Object.keys(win.PRiSM_analysisKeys).length >= 20)],
+  ['window.PRiSM_armAnalysisKey',         typeof win.PRiSM_armAnalysisKey === 'function'],
+  ['window.PRiSM_exportReportPDF',        typeof win.PRiSM_exportReportPDF === 'function'],
+  ['window.PRiSM_exportPlotPNG',          typeof win.PRiSM_exportPlotPNG === 'function'],
+  // Round-2 — Data crop
+  ['window.PRiSM_renderCropTool',         typeof win.PRiSM_renderCropTool === 'function'],
+  ['window.PRiSM_applyCrop',              typeof win.PRiSM_applyCrop === 'function'],
+  ['window.PRiSM_resetCrop',              typeof win.PRiSM_resetCrop === 'function'],
+  // Round-2 — Auto-match
+  ['window.PRiSM_classifyRegimes',        typeof win.PRiSM_classifyRegimes === 'function'],
+  ['window.PRiSM_autoMatch',              typeof win.PRiSM_autoMatch === 'function'],
+  ['window.PRiSM_suggestInitialParams',   typeof win.PRiSM_suggestInitialParams === 'function'],
+  // Round-2 — Interpretation
+  ['window.PRiSM_interpretFit',           typeof win.PRiSM_interpretFit === 'function'],
+  ['window.PRiSM_buildNarrative',         typeof win.PRiSM_buildNarrative === 'function'],
+  ['window.PRiSM_renderInterpretationPanel', typeof win.PRiSM_renderInterpretationPanel === 'function'],
+  // Round-2 — Annotations + auto-Bourdet-L
+  ['window.PRiSM_autoBourdet_L',          typeof win.PRiSM_autoBourdet_L === 'function'],
+  ['window.PRiSM_detectAnnotations',      typeof win.PRiSM_detectAnnotations === 'function'],
+  ['window.PRiSM_drawPlotAnnotations',    typeof win.PRiSM_drawPlotAnnotations === 'function'],
+  ['window.PRiSM_enableAutoAnnotations',  typeof win.PRiSM_enableAutoAnnotations === 'function'],
 ];
 
 let modelCount = win.PRiSM_MODELS ? Object.keys(win.PRiSM_MODELS).length : 0;
-checks.push(['PRiSM_MODELS count >= 19', modelCount >= 19]);
+checks.push(['PRiSM_MODELS count >= 45', modelCount >= 45]);
 
 console.log('\nNamespace checks:');
 let fails = 0;
