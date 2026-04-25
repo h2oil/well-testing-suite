@@ -151,6 +151,49 @@ const checks = [
   ['window.PRiSM_detectAnnotations',      typeof win.PRiSM_detectAnnotations === 'function'],
   ['window.PRiSM_drawPlotAnnotations',    typeof win.PRiSM_drawPlotAnnotations === 'function'],
   ['window.PRiSM_enableAutoAnnotations',  typeof win.PRiSM_enableAutoAnnotations === 'function'],
+  // Round-3 — PVT
+  ['window.PRiSM_pvt',                    typeof win.PRiSM_pvt === 'object'],
+  ['window.PRiSM_pvt_correlations',       typeof win.PRiSM_pvt_correlations === 'object'],
+  ['window.PRiSM_pvt_compute',            typeof win.PRiSM_pvt_compute === 'function'],
+  ['window.PRiSM_dimensionalize',         typeof win.PRiSM_dimensionalize === 'function'],
+  ['window.PRiSM_nondimensionalize',      typeof win.PRiSM_nondimensionalize === 'function'],
+  ['window.PRiSM_renderPVTPanel',         typeof win.PRiSM_renderPVTPanel === 'function'],
+  ['window.PRiSM_interpretFitWithPVT',    typeof win.PRiSM_interpretFitWithPVT === 'function'],
+  // Round-3 — Deconvolution
+  ['window.PRiSM_deconvolve',             typeof win.PRiSM_deconvolve === 'function'],
+  ['window.PRiSM_deconvolve_lcurve',      typeof win.PRiSM_deconvolve_lcurve === 'function'],
+  ['window.PRiSM_convolve_rate_response', typeof win.PRiSM_convolve_rate_response === 'function'],
+  ['window.PRiSM_invert_to_unit_rate',    typeof win.PRiSM_invert_to_unit_rate === 'function'],
+  ['window.PRiSM_renderDeconvolutionPanel', typeof win.PRiSM_renderDeconvolutionPanel === 'function'],
+  // Round-3 — Tide analysis
+  ['window.PRiSM_tideAnalysis',           typeof win.PRiSM_tideAnalysis === 'function'],
+  ['window.PRiSM_applyTideCorrection',    typeof win.PRiSM_applyTideCorrection === 'function'],
+  ['window.PRiSM_resetTideCorrection',    typeof win.PRiSM_resetTideCorrection === 'function'],
+  ['window.PRiSM_renderTidePanel',        typeof win.PRiSM_renderTidePanel === 'function'],
+  ['window.PRiSM_TIDE_CONSTITUENTS',      typeof win.PRiSM_TIDE_CONSTITUENTS === 'object'],
+  // Round-3 — Data managers
+  ['window.PRiSM_storage',                typeof win.PRiSM_storage === 'object'],
+  ['window.PRiSM_gaugeData',              typeof win.PRiSM_gaugeData === 'object'],
+  ['window.PRiSM_analysisData',           typeof win.PRiSM_analysisData === 'object'],
+  ['window.PRiSM_project',                typeof win.PRiSM_project === 'object'],
+  ['window.PRiSM_renderGaugeManager',     typeof win.PRiSM_renderGaugeManager === 'function'],
+  ['window.PRiSM_renderAnalysisManager',  typeof win.PRiSM_renderAnalysisManager === 'function'],
+  ['window.PRiSM_renderProjectToolbar',   typeof win.PRiSM_renderProjectToolbar === 'function'],
+  // Round-3 — Synthetic PLT + inverse simulation
+  ['window.PRiSM_syntheticPLT',           typeof win.PRiSM_syntheticPLT === 'function'],
+  ['window.PRiSM_inverseSim',             typeof win.PRiSM_inverseSim === 'function'],
+  ['window.PRiSM_unitRateResponse',       typeof win.PRiSM_unitRateResponse === 'function'],
+  ['window.PRiSM_renderPLTPanel',         typeof win.PRiSM_renderPLTPanel === 'function'],
+  ['window.PRiSM_renderInverseSimPanel',  typeof win.PRiSM_renderInverseSimPanel === 'function'],
+  // Round-3 — Plot utilities
+  ['window.PRiSM_overlays',               typeof win.PRiSM_overlays === 'object'],
+  ['window.PRiSM_drawOverlays',           typeof win.PRiSM_drawOverlays === 'function'],
+  ['window.PRiSM_renderOverlayManager',   typeof win.PRiSM_renderOverlayManager === 'function'],
+  ['window.PRiSM_datasetDiff',            typeof win.PRiSM_datasetDiff === 'function'],
+  ['window.PRiSM_exportXML',              typeof win.PRiSM_exportXML === 'function'],
+  ['window.PRiSM_exportXMLDownload',      typeof win.PRiSM_exportXMLDownload === 'function'],
+  ['window.PRiSM_copyPlotToClipboard',    typeof win.PRiSM_copyPlotToClipboard === 'function'],
+  ['window.PRiSM_copyDataToClipboard',    typeof win.PRiSM_copyDataToClipboard === 'function'],
 ];
 
 let modelCount = win.PRiSM_MODELS ? Object.keys(win.PRiSM_MODELS).length : 0;
