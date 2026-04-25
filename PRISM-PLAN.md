@@ -1,8 +1,18 @@
 # PRiSM — Advanced Well Test Analysis (Plan)
 
-> Planning document for an advanced Well Test Analysis module to sit
-> alongside the existing PTA Quick Look. Nothing here is implemented
-> yet. Edit / re-shape / strike out before execution.
+> Planning document for an advanced Well Test Analysis module that
+> ABSORBS the existing PTA Quick Look + DCA Quick Run modules.
+> Nothing here is implemented yet — edit before execution.
+
+## ⚙️ Decisions locked (2026-04-25)
+
+| Question | Decision |
+|---|---|
+| Name | **PRiSM** _(Pressure Reservoir inversion & Simulation Model)_ |
+| Sidebar placement | Inside `Production & Reservoir`, displayed as `PRiSM` |
+| Existing PTA + DCA modules | **Roll both into PRiSM** — retired as standalone, capabilities absorbed |
+| Phasing | **Ship Phase 1 + 2 as one release** (~90% of routine work covered) |
+| iOS | **Yes, full module on iOS too** |
 
 ---
 
@@ -24,21 +34,47 @@ Pick one. My ranked suggestions:
 
 ## 2. Where it sits in the suite
 
-- **New sidebar group: `Advanced Analysis`** — between
-  _Production & Reservoir_ and _Separation & Vessels_.
-- One module inside it: `PRiSM — Well Test Analysis`.
-- Keep the existing PTA module — rename it to **`PTA Quick Look`** so
-  users can see there's a heavier sibling. Both stay easy to reach.
-- Data formats compatible — users can graduate from Quick Look to
-  PRiSM without re-typing.
+- Stays inside the existing **`Production & Reservoir`** sidebar
+  group. Group becomes:
+  - Oil & Gas Rate
+  - Solution GOR
+  - **PRiSM** (replaces both DCA and PTA entries)
+- **DCA Quick Run** (current `dca` route) and **PTA Quick Look**
+  (current `pta` route) are RETIRED as standalone modules. Their
+  models and plots become PRiSM's `Decline` and `Transient` modes.
+- **Back-compat redirects**: `dca` and `pta` routes both forward to
+  `prism` so existing bookmarks / shared deeplinks keep working.
+  Toast pops on first visit to either: _"DCA / PTA is now part of
+  PRiSM."_
+- **Data migration**: existing `wts_dca` and `wts_pta` localStorage
+  keys are read once on first PRiSM open and migrated into the new
+  `wts_prism` namespace. Old keys retained for one release as
+  fallback, then dropped.
 
 ---
 
-## 3. Workflow — 7 tabs across the top of the module
+## 3. Workflow — analysis mode toggle + 7 tabs
+
+A top-bar **Analysis Mode selector** drives which model library and
+plots are visible. PRiSM unifies the two analysis paradigms that
+were separate modules (PTA + DCA) into one workflow:
 
 ```
+Mode:  ( Transient PTA | Decline DCA | Combined )
+
 [1 Data] → [2 Plots] → [3 Model] → [4 Params] → [5 Match] → [6 Regress] → [7 Report]
 ```
+
+- **Transient PTA** — short-time pressure-rate behaviour. Plots and
+  models are the type-curve set inherited from the old PTA module
+  plus the new advanced library.
+- **Decline DCA** — long-time rate-time behaviour. Plots and models
+  are the Arps / Duong / Stretched-Exponential set inherited from
+  the old DCA module plus type-curve regression.
+- **Combined** — early-time period fits to a transient model
+  (constrains kh, S, boundary distance), late-time period fits to a
+  decline model (constrains EUR, b-factor). Both fits share the same
+  PVT inputs and well info — single source of truth for the well.
 
 ### 3.1 Data Import & Cleanup
 
@@ -51,6 +87,8 @@ Pick one. My ranked suggestions:
 
 ### 3.2 Plot Workshop — diagnostic suite
 
+**Transient mode** plots:
+
 | Plot | Purpose |
 |---|---|
 | Cartesian P vs t | First-look, period boundaries |
@@ -62,8 +100,22 @@ Pick one. My ranked suggestions:
 | Sandface-rate convolution | Wellbore-storage-distorted multi-rate cleanup |
 | Build-up superposition | Multi-rate interpretation |
 
-All canvas-rendered, zoomable, multi-period overlay so build-ups can
-be compared side by side.
+**Decline mode** plots (inherited + extended from old DCA module):
+
+| Plot | Purpose |
+|---|---|
+| Cartesian rate vs time | Visual decline pattern |
+| Semi-log rate vs time | Exponential decline = straight line |
+| Log-log rate vs time | Hyperbolic / harmonic curvature |
+| Rate-cumulative (q vs Np) | Reserves estimate, OOIP intercept |
+| Loss-ratio plot (1/D vs t) | Identify decline mechanism |
+| **Type-curve overlay** | Match rate-time data to Arps / Duong / SEPD type curve |
+
+**Combined mode** stacks both — early-time on transient axes,
+late-time on decline axes, with shared period selector.
+
+All canvas-rendered, zoomable, multi-period overlay so build-ups
+can be compared side by side.
 
 ### 3.3 Model Library — categorised picker
 
@@ -251,4 +303,107 @@ When Phase 1 starts, key references to have open:
 
 ---
 
-_Last updated: planning document only — no code yet._
+## 9. Type-Curve Model Library — Implementation Tasks
+
+37 models in total, grouped by execution phase. Phase 1 + 2 ships
+together as the launch (~10 models, covers ~80% of routine work).
+The rest is a tracked backlog.
+
+All models share the common chassis: full analytic solutions
+(Laplace / Fourier transforms, Bessel functions), wellbore storage
++ skin via Laplace inversion, finite well-bore radius (no line-source
+solutions), Stehfest numerical inversion of the Laplace solution.
+
+Key reference texts to have open during implementation:
+- Earlougher, R. C. _Advances in Well-Test Analysis_, SPE Monograph 5
+- Bourdet, D. _Well Test Analysis: Use of Advanced Interpretation Models_
+- Lee, J. _Pressure Transient Testing_, SPE Textbook Series 9
+- Stehfest, H. (1970). _Numerical Inversion of Laplace Transforms_, Comm. ACM 13
+
+### Phase 1 — Foundation (LAUNCH SCOPE)
+
+- [ ] **Stehfest Laplace inversion engine** — N=12 default, lookup table of weights, real-axis evaluator. Used by every Laplace-domain model.
+- [ ] **#1 Homogeneous Reservoir** — radial flow, finite-radius vertical well, WBS + skin. Most basic model; baseline for comparison. _Refs: Mavor & Cinco (SPE 7977); Gringarten (SPE 10044)._
+
+### Phase 2 — Standard well/reservoir set (LAUNCH SCOPE)
+
+- [ ] **#3 Infinite-Conductivity Hydraulic Fracture** — vertical well + hydraulic fracture in homogeneous reservoir; high fracture conductivity → negligible pressure drop in fracture. _Ref: Gringarten, Ramey, Raghavan (SPEJ Aug 1974)._
+- [ ] **#4 Finite-Conductivity Hydraulic Fracture** — vertical fracture with significant pressure drop. Table-lookup solution from Cinco-Ley semi-analytic. _Ref: Cinco et al (SPE 6014)._
+- [ ] **#7 Inclined-Well Model** — slant well in homogeneous reservoir; transition between inclined-radial and horizontal-radial flow. _Ref: Cinco, Miller, Ramey (JPT Nov 1975)._
+- [ ] **#8 Horizontal Well Model** — horizontal well in homogeneous reservoir; transition between vertical and pseudo-radial flow. _Ref: Raghavan, Ozkan, Joshi (SPE 16378)._
+- [ ] **#10 Reservoir Boundaries — Single Linear** — image-well technique, sealing or constant-pressure. Doubling-of-slope diagnostic. _Ref: Van Poolen et al (JPT Aug 1963)._
+- [ ] **#10 Reservoir Boundaries — Parallel (channel)** — derivative ½-slope diagnostic; channel-width from linear flow. _Ref: as above._
+- [ ] **#10 Reservoir Boundaries — Closed Channel (3-sided)** — extension of parallel + end closure. _Ref: as above._
+- [ ] **#10 Reservoir Boundaries — Closed Rectangle** — full PSS late-time behaviour; reservoir-limits test. _Ref: as above._
+- [ ] **#10 Reservoir Boundaries — Intersecting** — radial-flow stabilisation related to angle of intersection. _Ref: as above._
+- [ ] **#10 Boundary "fog factor"** — fractional transmissibility (-1 to 1) for partially sealing / leaky faults.
+- [ ] **#12 Finite-Conductivity Fracture WITH Skin** — same as #4 plus fracture-face skin restricting flow. _Ref: Cinco-Ley & Samaniego (SPE 6752)._
+- [ ] **#30 Partial-Penetration Hydraulic Fracture** — vertical fracture height < reservoir thickness, with fracture skin. _Ref: Gringarten, Ramey (SPE 3818)._
+
+### Phase 3 — Auto-match + Decline + Multi-rate
+
+- [ ] **Levenberg-Marquardt regression engine** — bounds, fix/float per parameter, Marquardt-factor adapt, Jacobian-based confidence intervals, AIC scoring.
+- [ ] **Multi-rate superposition** — convolution over arbitrary rate history, including shut-ins.
+- [ ] **Sandface-rate convolution plot** — for WBS-distorted multi-rate cleanup.
+- [ ] **#17 Fetkovich and Arps Decline-Curves** — exponential / hyperbolic / harmonic + Fetkovich dimensionless type-curves. Closed-circle implied geometry. _Ref: Fetkovich (JPT Jun 1980)._
+- [ ] **DCA Quick Run port** — bring across Arps + Duong + Stretched-Exponential models from the existing DCA module into PRiSM's Decline mode.
+
+### Phase 4 — Specialised single-well
+
+- [ ] **#2 Double-Porosity Reservoir** — Warren-Root with PSS, 1D-transient, and 3D-transient interporosity flow options. λ and ω params. _Ref: Mavor & Cinco (SPE 7977); Gringarten (SPE 10044)._
+- [ ] **#5 Partial-Penetration Model** — small perforated interval in thick reservoir; spherical-flow transition; Kv/Kh estimation. _Ref: Gringarten, Ramey (SPEJ Aug 1974)._
+- [ ] **#16 Vertical Pulse-Test** — pressure measurement at a point above/below the perforations. _Ref: Gringarten, Ramey (SPEJ Aug 1974)._
+
+### Phase 5 — Composite + Multi-layer
+
+- [ ] **#6 Two-Layer Reservoir With Cross-Flow** — bi-layer / dual-permeability, λ controls cross-flow. _Ref: Bourdet (SPE 13628)._
+- [ ] **#9 Radial Composite Reservoir** — two concentric zones, mobility + storativity ratios. Common for water-injection. _Refs: Abbaszadeh & Medhat (SPE Reservoir Eng Feb 1989); Sutman et al (SPE 8909)._
+- [ ] **#11 Multi-Layer Reservoir With Cross-Flow** — N layers, λ between each pair, ω + κ per layer. _Ref: Economides (SPE 14167)._
+- [ ] **#14 Multi-Layer Reservoir Without Cross-Flow** — commingled production from isolated layers; per-layer initial pressure, perm, skin. _Ref: Kuchuk & Wilkinson (SPE 18125)._
+- [ ] **#15 Linear Composite Reservoir** — homogeneous reservoir with linear discontinuities; up to 5 zones.
+- [ ] **#20 General Heterogeneity Radial/Linear Composite** — three-zone composite (R-zone + ±X-zones), up to 9 discontinuities each, piecewise-linear or step-wise.
+- [ ] **#21 General Heterogeneity Radial Composite** — refines #9 with up to 9 piecewise-linear or step-wise discontinuities in radial direction.
+
+### Phase 6 — Interference & Multi-lateral
+
+- [ ] **#13 Interference Test Model** — observation well pressure response from a flowing well; both wells have storage + skin; line-source. _Ref: Ogbe & Brigham (SPE 13253)._
+- [ ] **#19 Multi-Layer Horizontal-Well With Cross-Flow** — single horizontal well in N-layer reservoir with full transient inter-layer flow. _Ref: Kuchuk (SPE 22731)._
+- [ ] **#22 Multi-Layer No-Cross-Flow Hydraulic-Fracture** — commingled production, each layer fractured. _Ref: Kuchuk & Wilkinson (SPE 18125)._
+- [ ] **#23 Multi-Layer No-Cross-Flow Horizontal-Well** — commingled production, each layer with horizontal completion. _Ref: as above._
+- [ ] **#24 Inclined-Well in Multi-Layer With Cross-Flow** — slant well penetrating one or more layers with full transient cross-flow. _Ref: Kuchuk (SPE 22731)._
+- [ ] **#25 Multi-Lateral Well in Multi-Layer With Cross-Flow** — multiple horizontal segments (star or parallel layout). _Ref: Kuchuk (SPE 22731)._
+- [ ] **#26 Multi-Layer Multi-Perforation** — 1–4 perforated intervals at arbitrary depths, layered reservoir with cross-flow. _Ref: Kuchuk (SPE 22731)._
+- [ ] **#27 Multi-Layer Horizontal-Well Interference-Test** — pressure response between two horizontal wells in layered reservoir. _Ref: Kuchuk (SPE 22731)._
+- [ ] **#28 Multi-Layer Multi-Perforation Interference-Test** — up to 3 producing perforated intervals + 1 observation. _Ref: Kuchuk (SPE 22731)._
+- [ ] **#29 Inclined-Well Interference-Test** — between two inclined wells in homogeneous or double-porosity reservoir. _Refs: Cinco et al (JPT Nov 1975); Kuchuk & Wilkinson (SPE 18125)._
+- [ ] **#31 Linear-Composite Interference-Test** — observation pressure in linear-composite reservoir, up to 5 zones. _Ref: as #15._
+- [ ] **#32 Linear-Composite Multi-Lateral Well** — multi-lateral producer in linear-composite reservoir.
+- [ ] **#34 Linear-Composite Multi-Lateral Interference-Test** — interference at an observation well from a multi-lateral producer.
+- [ ] **#35 General Multi-Layer No-Cross-Flow Model** — each layer can be a different well/reservoir type (vertical homogeneous through to horizontal in linear-composite). Maximum flexibility, maximum compute.
+- [ ] **#36 Interference-Test in Multi-Layer With Cross-Flow** — pressure at arbitrary (x, y) point in any layer, with PSS λ-controlled cross-flow.
+- [ ] **#37 Radial-Composite Interference-Test** — pressure at arbitrary (x, y) in 2-zone radial-composite reservoir.
+
+### Phase 7 — Specialised solvers (reach goals)
+
+- [ ] **#18 User-Defined Model** — tabulated `td`/`pd` type-curves with interpolation/extrapolation, log-log and semi-log; user supplies the table file in the documented format.
+- [ ] **#38 Water Injection Model** — non-linear semi-analytic two-phase displacement (Buckley-Leverett-like). Requires injection history (negative or zero rates only) and non-zero water compressibility. Largest single piece of work in the catalogue.
+
+### Cross-cutting tasks (touch every phase)
+
+- [ ] Common parameter UI per model: list, units, bounds, fix/float toggle.
+- [ ] Schematic SVG per model — vessel cross-section / plan-view diagrams matching the references.
+- [ ] Per-model "Specialised analysis keys" port — STABIL, HALFSL, OMEGA, LAMBDA, FAULT, CHANEL, ANGLE, INJSTB, INJSLP, PPNSTB, PPNSLP, PPNSKN, HORSLP, HORSTB, BND-ON, BND-DV, 3-SIDE, AUTOSL, 1/4SLP, SPHERE. (These are click-on-plot helpers that mark a slope or stabilisation and back-calculate parameters.)
+- [ ] Result reporting: parameter table with units + uncertainty + reference.
+- [ ] Plot export (PNG + into PDF report).
+
+### Post-launch decision points
+
+After Phase 2 ships, evaluate before committing to Phase 3+:
+- Real usage telemetry (GA4 events on PRiSM → which models get clicked?)
+- Reasonable to scope Phase 3 (auto-match) before Phase 4–7 since regression amplifies the value of every existing model.
+- Phases 5 and 6 are very compute-heavy (Kuchuk multi-layer with full transient cross-flow); decide if acceptable to push these to web-only and mark "iOS = limited model set" in PRiSM intro screen.
+
+---
+
+_Last updated: 2026-04-25 — planning document only, no code yet._
+_All decisions in §⚙️ are locked. §9 task list is the implementation queue._
