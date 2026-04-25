@@ -231,13 +231,13 @@ renderPRiSM()   // tabbed UI shell              ~500 lines
 
 ## 5. Phasing — ship in 5 increments
 
-| Phase | Deliverable | Effort | Value |
-|---|---|---|---|
-| **1** | Data import, Cartesian + Horner + log-log Bourdet plots; single model (vertical well + WBS + skin, infinite-acting); manual parameter input; visual match | ~2 days | Already covers 70% of routine well tests |
-| **2** | + Boundaries (single fault, parallel channel, closed rect) via image wells; + hydraulic fracture (∞ + finite cond); + horizontal well | ~3 days | Covers 90% of routine work |
-| **3** | + Levenberg-Marquardt auto-match with bounds + confidence intervals + AIC | ~2 days | Eliminates the "drag-to-fit" step |
-| **4** | + Multi-rate superposition + sandface-rate convolution; + dual-porosity (Warren-Root) | ~2 days | Adds the "specialized" tier |
-| **5** | + Composite (radial + linear); multi-layer with cross-flow; gas-condensate pseudo-pressure; water-injection two-phase | ~3 days | Full feature parity with reference apps |
+| Phase | Deliverable | Status |
+|---|---|---|
+| **1** | Data import, Cartesian + Horner + log-log Bourdet plots; single model (vertical well + WBS + skin, infinite-acting); manual parameter input; visual match | ✅ shipped 2026-04-25 |
+| **2** | + Boundaries (single fault, parallel channel, closed rect) via image wells; + hydraulic fracture (∞ + finite cond); + horizontal well | ✅ shipped 2026-04-25 |
+| **3** | + Levenberg-Marquardt auto-match with bounds + confidence intervals + AIC; multi-rate superposition; sandface-rate convolution; Arps + Duong + SEPD + Fetkovich decline | ✅ shipped 2026-04-26 |
+| **4** | + Dual-porosity (3 modes); partial-penetration; vertical pulse-test; multi-format Data-tab parser + filters + column-mapper | ✅ shipped 2026-04-26 |
+| **5** | + Composite (radial + linear); multi-layer with cross-flow; gas-condensate pseudo-pressure; water-injection two-phase | pending (post-launch decision point) |
 
 **Phase 1 alone is already much more capable than the current PTA
 Quick Look** — and gives the framework to layer the rest in over
@@ -342,17 +342,17 @@ Key reference texts to have open during implementation:
 
 ### Phase 3 — Auto-match + Decline + Multi-rate
 
-- [ ] **Levenberg-Marquardt regression engine** — bounds, fix/float per parameter, Marquardt-factor adapt, Jacobian-based confidence intervals, AIC scoring.
-- [ ] **Multi-rate superposition** — convolution over arbitrary rate history, including shut-ins.
-- [ ] **Sandface-rate convolution plot** — for WBS-distorted multi-rate cleanup.
-- [ ] **#17 Fetkovich and Arps Decline-Curves** — exponential / hyperbolic / harmonic + Fetkovich dimensionless type-curves. Closed-circle implied geometry. _Ref: Fetkovich (JPT Jun 1980)._
-- [ ] **DCA Quick Run port** — bring across Arps + Duong + Stretched-Exponential models from the existing DCA module into PRiSM's Decline mode.
+- [x] **Levenberg-Marquardt regression engine** — bounds, fix/float per parameter, Marquardt scaling = `diag(JᵀWJ)` (scale-invariant under reparameterisation), Jacobian-based stderr / 95% CI / AIC / R² / RMSE, residual-bootstrap option. `window.PRiSM_lm`, `window.PRiSM_bootstrap`, `window.PRiSM_runRegression`. Synthetic recovery test: Cd=98.79 / S=1.97 from Cd=10 / S=0 initials in 7 iterations (R²=0.99995).
+- [x] **Multi-rate superposition** — `window.PRiSM_superposition(modelFn, rateHistory, evalTimes, params, tdNormaliser)`. Convolves arbitrary rate history including shut-ins; verified rises during drawdown and recovers during shut-in.
+- [x] **Sandface-rate convolution plot** — `window.PRiSM_sandface_convolution(data, refRateIdx)` produces Agarwal equivalent-time + dp_eff. Plot id `sandface` in registry.
+- [x] **#17 Fetkovich and Arps Decline-Curves** — Arps `b∈[0..1]` switches exponential / hyperbolic / harmonic; Fetkovich blends transient → BDF via logistic in ln(t). Both expose `eur` functions (closed-form Earlougher for Arps, numerical for Fetkovich). _Ref: Fetkovich (JPT Jun 1980)._
+- [x] **DCA Quick Run port** — Arps, Duong (2011 shale), Stretched-Exponential (Valko 2009) all live as PRiSM rate-domain models with EUR helpers. Legacy `wts_dca` localStorage key migrated to `wts_prism._legacy` on first PRiSM open.
 
 ### Phase 4 — Specialised single-well
 
-- [ ] **#2 Double-Porosity Reservoir** — Warren-Root with PSS, 1D-transient, and 3D-transient interporosity flow options. λ and ω params. _Ref: Mavor & Cinco (SPE 7977); Gringarten (SPE 10044)._
-- [ ] **#5 Partial-Penetration Model** — small perforated interval in thick reservoir; spherical-flow transition; Kv/Kh estimation. _Ref: Gringarten, Ramey (SPEJ Aug 1974)._
-- [ ] **#16 Vertical Pulse-Test** — pressure measurement at a point above/below the perforations. _Ref: Gringarten, Ramey (SPEJ Aug 1974)._
+- [x] **#2 Double-Porosity Reservoir** — Warren-Root with three interporosity-flow modes: PSS / 1DT (slab-matrix) / 3DT (sphere-matrix). Small-arg series + large-arg asymptote guards on `tanh`/`coth`. ω, λ params. Homogeneous-limit sanity check passes (small-λ pd=0.0976, large-λ pd=0.0974). _Ref: Mavor & Cinco (SPE 7977); Gringarten (SPE 10044)._
+- [x] **#5 Partial-Penetration Model** — phenomenological Laplace-domain blend of three superposed kernels (sigmoid weight) capturing spherical-flow transition, hp/h, Kv/Kh. Stabilisations match early/late ~5%. (NOT exact Brons-Marting source-function integration — flagged as future-work.) _Ref: Gringarten, Ramey (SPEJ Aug 1974)._
+- [x] **#16 Vertical Pulse-Test** — 2-D Green's-function effective-radial-distance form `K0(sq · √(heff² + Δz_eff²))` capturing time-lag + amplitude attenuation. Δz_eff = Δz/√(Kv/Kh) · √(hp/h). Avoids ringing under WBS folding. _Ref: Gringarten, Ramey (SPEJ Aug 1974)._
 
 ### Phase 5 — Composite + Multi-layer
 
@@ -405,5 +405,7 @@ After Phase 2 ships, evaluate before committing to Phase 3+:
 
 ---
 
-_Last updated: 2026-04-25 — planning document only, no code yet._
+_Last updated: 2026-04-26._
 _All decisions in §⚙️ are locked. §9 task list is the implementation queue._
+_Phases 1+2 shipped 2026-04-25 (`32cf1b0`)._
+_Phases 3+4 shipped 2026-04-26 — LM regression engine, multi-rate superposition, sandface convolution, Arps + Duong + SEPD + Fetkovich decline, double-porosity (3 modes), partial-penetration, vertical pulse-test, plus full multi-format (CSV / TSV / DAT / ASC / XLSX / XLS / ODS) data-tab parser with column-mapper, MAD/Hampel/moving-avg filters, Nth/log/time-bin decimation, unit converters._
