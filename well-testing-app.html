@@ -6679,10 +6679,14 @@ function renderSepHandling(body){
         <div class="fg-item"><label>Turbine bore (in, 0=none)</label><input type="number" id="sh_wturb" value="1" step="0.25"></div>
       </div></div>
       <div class="card"><div class="card-title">Velocity &amp; Cv Limits</div><div class="fg">
-        <div class="fg-item"><label>Gas line/PCV limit (m/s)</label><input type="number" id="sh_vlimg" value="20" step="0.5"></div>
-        <div class="fg-item"><label>Liquid line/LCV limit (m/s)</label><input type="number" id="sh_vliml" value="3" step="0.1"></div>
-        <div class="fg-item"><label>Turbine bore warn (m/s)</label><input type="number" id="sh_vlimt" value="6" step="0.5"></div>
-        <div class="fg-item"><label>Daniel box limit (m/s)</label><input type="number" id="sh_vlimd" value="20" step="0.5"></div>
+        <div class="fg-item"><label>Gas line/PCV limit (m/s)</label><input type="number" id="sh_vlimg" value="20" step="0.5">
+          <span style="font-size:10px;color:var(--text3)">Norsok P-100 / BS 6364 — noise &amp; vibration. API RP 14E erosional shown alongside.</span></div>
+        <div class="fg-item"><label>Liquid line/LCV limit (m/s)</label><input type="number" id="sh_vliml" value="3" step="0.1">
+          <span style="font-size:10px;color:var(--text3)">CRANE TP-410 — typical liquid piping; 1-5 m/s range.</span></div>
+        <div class="fg-item"><label>Turbine bore warn (m/s)</label><input type="number" id="sh_vlimt" value="6" step="0.5">
+          <span style="font-size:10px;color:var(--text3)">API MPMS Ch. 5.3 — liquid turbine linearity upper bound.</span></div>
+        <div class="fg-item"><label>Daniel box limit (m/s)</label><input type="number" id="sh_vlimd" value="20" step="0.5">
+          <span style="font-size:10px;color:var(--text3)">At separator pressure (Daniel sits upstream of PCV). Same physics as line.</span></div>
         <div class="fg-item"><label>LCV ΔP design (psi)</label><input type="number" id="sh_dplcv" value="25" step="1"><span style="font-size:10px;color:var(--text3)">Used for required-Cv calc</span></div>
         <div class="fg-item"><label>Target valve travel (%)</label><input type="number" id="sh_travel" value="50" min="20" max="90"><span style="font-size:10px;color:var(--text3)">Cv recommendation basis</span></div>
       </div></div>
@@ -6879,12 +6883,28 @@ window.calcSepHandling=function(){
     }
     // API RP 14E erosional velocity (continuous service, C=100)
     function v_erosional(rho){ return 100 / Math.sqrt(rho * 0.062428) * 0.3048; }
-    // Gas outlet uses downstream P (conservative — higher actual vol flow)
+    // ── Gas outlet pressure conventions ──────────────────────
+    // The gas leg of a typical well-test separator runs:
+    //   vessel (P_sep) → Daniel orifice fitting (P_sep, used for FT/FE
+    //   measurement, ALWAYS upstream of throttle) → Gas PCV (drops
+    //   P_sep → P_downstream) → Outlet flowline / Daniel-after-PCV
+    //   (P_downstream).
+    // So density and actual volumetric flow differ between the upstream
+    // (vessel) and downstream (post-PCV) sides:
+    //   - Daniel box → vessel-pressure (UPSTREAM): denser gas, smaller
+    //     volume flow, lower velocity. Using downstream P here would
+    //     over-estimate Daniel velocity by P_sep/P_downstream (≈5× at
+    //     500/100 psig).
+    //   - Gas PCV    → conservative use downstream (higher v at same Q)
+    //     because the PCV body sees both sides; downstream is where
+    //     aerodynamic noise / Mach risk dominates.
+    //   - Gas line   → outlet flowline (post-PCV) → downstream P.
     const rho_oil_local = 141500/(inp.API+131.5);
     const rho_w = 1000;
     const rho_gas_ds = r.rho_gas * (r.Pd_psia/r.P_psia);
     const Qg_ds_m3s = r.Qg_actual_m3s * (r.P_psia/r.Pd_psia);
-    const vErosGasDS = v_erosional(rho_gas_ds);
+    const vErosGasUS = v_erosional(r.rho_gas);   // vessel-pressure (Daniel)
+    const vErosGasDS = v_erosional(rho_gas_ds);  // downstream (PCV, line)
 
     function outletRow(label, Q_m3s, d_in, qty, vLim, vEros){
         if (!d_in || d_in<=0) return { label, skipped:true };
@@ -6892,12 +6912,12 @@ window.calcSepHandling=function(){
         return { label, v_ms:v, vLim, vEros, passUser:v<=vLim, passEros:vEros?v<=vEros:true, qty, d_in };
     }
     const outletChecks = [
-        outletRow('Gas PCV',          Qg_ds_m3s, gPCV_in,  gQty, vLimGas, vErosGasDS),
-        outletRow('Gas line',         Qg_ds_m3s, gLine_in, gQty, vLimGas, vErosGasDS),
-        outletRow('Gas Daniel box',   Qg_ds_m3s, gDan_in,  gQty, vLimDan, vErosGasDS),
-        outletRow('Oil LCV',          r.Q_oil_m3s, oLCV_in,  oQty, vLimLiq, v_erosional(rho_oil_local)),
-        outletRow('Oil line',         r.Q_oil_m3s, oLine_in, oQty, vLimLiq, v_erosional(rho_oil_local)),
-        outletRow('Oil turbine bore', r.Q_oil_m3s, oTurb_in, oQty, vLimTurb, null),
+        outletRow('Gas PCV (downstream)',     Qg_ds_m3s,        gPCV_in,  gQty, vLimGas, vErosGasDS),
+        outletRow('Gas line (downstream)',    Qg_ds_m3s,        gLine_in, gQty, vLimGas, vErosGasDS),
+        outletRow('Gas Daniel box (@ P_sep)', r.Qg_actual_m3s,  gDan_in,  gQty, vLimDan, vErosGasUS),
+        outletRow('Oil LCV',                  r.Q_oil_m3s,      oLCV_in,  oQty, vLimLiq, v_erosional(rho_oil_local)),
+        outletRow('Oil line',                 r.Q_oil_m3s,      oLine_in, oQty, vLimLiq, v_erosional(rho_oil_local)),
+        outletRow('Oil turbine bore',         r.Q_oil_m3s,      oTurb_in, oQty, vLimTurb, null),
     ];
     if (inp.service >= 3) {
         outletChecks.push(outletRow('Water LCV',          r.Q_wat_m3s, wLCV_in,  wQty, vLimLiq, v_erosional(rho_w)));
