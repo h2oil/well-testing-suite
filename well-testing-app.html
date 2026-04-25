@@ -472,7 +472,10 @@
             <div class="nav-btn" data-p="home"><span class="nav-icon">&#9670;</span><span>Dashboard</span></div>
             <div class="nav-btn active" data-p="clientinfo"><span class="nav-icon">&#128188;</span><span>Client & Well Info</span></div>
             <div class="nav-btn" data-p="releasenotes"><span class="nav-icon">&#128221;</span><span>Release Notes</span></div>
-            <div class="nav-btn" data-p="gaevents"><span class="nav-icon">&#128202;</span><span>GA4 Events Reference</span></div>
+            <!-- GA4 Events Reference is intentionally not in the nav. Reachable
+                 by typing the page key into the SPA router (e.g. via console:
+                 nav('gaevents')) or by anyone you share a deep link with. -->
+
         </div>
         <div class="nav-group">
             <div class="nav-group-label">Well Testing</div>
@@ -6614,8 +6617,7 @@ window.calcSepRate=function(){
 };
 
 // ── Separator Handling Estimator (enhanced) ──
-// Inspired by pb-handbook.com/separator-handling-estimator. Screening tool
-// that combines:
+// Screening tool that combines:
 //   - Souders-Brown gas capacity (with mist-pad credit)
 //   - Liquid retention with oil/water split for 3-phase
 //   - Outlet hardware velocity + erosional checks (PCV/LCV/line/turbine/Daniel)
@@ -6628,7 +6630,7 @@ window.calcSepRate=function(){
 // Produces a single PASS / PASS WITH WARNINGS / FAIL verdict.
 function renderSepHandling(body){
     $('pgTitle').textContent='Separator Handling Estimator';
-    $('pgSub').textContent='Screening: gas capacity + retention + outlet velocity verdict (PASS/WARN/FAIL). Inspired by pb-handbook.com.';
+    $('pgSub').textContent='Screening: gas capacity + retention + outlet velocity verdict (PASS/WARN/FAIL).';
     body.innerHTML=`<div class="cols-2"><div>
       <div class="card"><div class="card-title">Configuration</div><div class="fg">
         <div class="fg-item"><label>Service</label><select id="sh_service"><option value="2">2-Phase</option><option value="3" selected>3-Phase</option><option value="4">4-Phase (treat as 3+caution)</option></select></div>
@@ -7665,7 +7667,7 @@ window.calcVDrop=function(){
 // 60 chars, details 1-3 sentences.
 const RELEASE_NOTES = [
     { date:'2026-04-25', tag:'feature',  title:'Separator Handling Estimator — full v1',
-      details:'New Engineering calculator combining Souders-Brown gas capacity, oil/water retention, outlet velocity checks (PCV/LCV/lines/Daniel/turbines), required Cv recommendation, slug capacity, sensitivity analysis at \u00b120% flow, fix-it hints, and a vessel cross-section diagram. Inspired by pb-handbook.com but reimplemented natively. Mist-eliminator credit and Papay/Sutton Z-factor included.' },
+      details:'New Engineering calculator combining Souders-Brown gas capacity, oil/water retention, outlet velocity checks (PCV/LCV/lines/Daniel/turbines), required Cv recommendation, slug capacity, sensitivity analysis at \u00b120% flow, fix-it hints, and a vessel cross-section diagram. Mist-eliminator credit and Papay/Sutton Z-factor included.' },
     { date:'2026-04-24', tag:'web',     title:'Google Analytics 4 enabled on web',
       details:'GA4 measurement (G-6QKCBNWHYB) now tracks the standalone HTML version. Custom event tracker fires nav_click, dashboard_tile_click, calculator_calculate, report_export, copy_clipboard, scroll_depth, click_outbound and SPA page_view. Stripped from the iOS bundle so the native app makes no Google calls.' },
     { date:'2026-04-23', tag:'ios',     title:'iOS auto-versioning via Xcode Cloud',
