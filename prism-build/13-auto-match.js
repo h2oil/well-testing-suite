@@ -244,13 +244,25 @@ function PRiSM_classifyRegimes(t, p, dp) {
         };
     }
 
-    // Convert pressure to Δp if it doesn't already start at zero. Use the
-    // input dp (= Bourdet derivative) when supplied; otherwise compute it.
+    // Convert pressure to Δp using a SIGN-AWARE convention so both buildup
+    // (p increases from p0) and drawdown (p decreases from p0) yield POSITIVE
+    // Δp through the test. Bug fix 2026-04-26 — was previously p[i]-p[0]
+    // which produced negative values on drawdowns, killing the regime
+    // classifier (it filters log10(d≤0) → NaN → zero candidates → only Arps
+    // survives the race with R²=−195).
     var deltaP = new Array(n);
     var p0 = p[0];
-    for (var i = 0; i < n; i++) deltaP[i] = p[i] - p0;
+    var pEnd = p[n - 1];
+    var sign = (pEnd - p0) >= 0 ? 1 : -1;   // +1 buildup, -1 drawdown
+    for (var i = 0; i < n; i++) deltaP[i] = sign * (p[i] - p0);
 
     var deriv = (Array.isArray(dp) && dp.length === n) ? dp.slice() : _bourdet(t, deltaP, 0.2);
+    // Also flip the supplied dp's sign if the trend is drawdown — caller may
+    // have computed it from the raw signed pressure, in which case half the
+    // values would be negative.
+    if (sign < 0 && Array.isArray(dp)) {
+        for (var dk = 0; dk < deriv.length; dk++) deriv[dk] = Math.abs(deriv[dk]);
+    }
 
     // Build (logT, logD) sample list with finite, positive values only.
     var X = [], Y = [], idxMap = [];
@@ -525,11 +537,17 @@ function PRiSM_suggestInitialParams(modelKey, t, p, dp, classification) {
 
     if (!Array.isArray(t) || !t.length) return out;
 
-    // Ensure dp is usable; recompute if needed.
+    // Ensure dp is usable; recompute if needed. Same sign-aware convention
+    // as the regime classifier (see _classifyRegimes for rationale).
     var deltaP = new Array(t.length);
     var p0 = p[0];
-    for (var i = 0; i < t.length; i++) deltaP[i] = p[i] - p0;
+    var pEnd = p[t.length - 1];
+    var sign = (pEnd - p0) >= 0 ? 1 : -1;
+    for (var i = 0; i < t.length; i++) deltaP[i] = sign * (p[i] - p0);
     var deriv = (Array.isArray(dp) && dp.length === t.length) ? dp : _bourdet(t, deltaP, 0.2);
+    if (sign < 0 && Array.isArray(dp)) {
+        deriv = deriv.map(function (v) { return Math.abs(v); });
+    }
 
     // ── Feature extraction ────────────────────────────────────────────
     var regimes = (classification && classification.regimes) || [];
@@ -730,9 +748,24 @@ function PRiSM_autoMatch(opts) {
     }
 
     // Compute Bourdet derivative once (re-used by classifier and seed).
-    var deltaP = new Array(dataset.t.length);
-    for (var i = 0; i < dataset.t.length; i++) deltaP[i] = dataset.p[i] - dataset.p[0];
+    // Sign-aware: drawdowns get |Δp| so the derivative magnitudes are positive
+    // and the regime classifier can do log10() without NaN.
+    var nDS = dataset.t.length;
+    var p0DS = dataset.p[0];
+    var pEndDS = dataset.p[nDS - 1];
+    var signDS = (pEndDS - p0DS) >= 0 ? 1 : -1;   // +1 buildup, -1 drawdown
+    var deltaP = new Array(nDS);
+    for (var i = 0; i < nDS; i++) deltaP[i] = signDS * (dataset.p[i] - p0DS);
     var deriv = _bourdet(dataset.t, deltaP, 0.2);
+    // Stash the dataset's flow-direction sign + magnitude-Δp on the dataset
+    // so the LM call below uses positive Δp against positive model pd.
+    var datasetForLM = {
+        t: dataset.t,
+        p: deltaP.map(function (v, k) { return p0DS + v; }), // p flipped if drawdown
+        q: dataset.q,
+        _signedDeltaP: deltaP,
+        _signFlow: signDS
+    };
 
     var classification = PRiSM_classifyRegimes(dataset.t, dataset.p, deriv);
 
@@ -789,7 +822,17 @@ function PRiSM_autoMatch(opts) {
     };
 
     var topN = Math.max(1, Math.min(8, opts.topN || 5));
-    var data = { t: dataset.t.slice(), p: dataset.p.slice() };
+    // Sign-aware data passed to LM: model pd is always positive (pwd ≥ 0),
+    // so the LM target must be positive too. For drawdowns we feed LM the
+    // mirror-image pressure: p_LM[i] = p0 + |p[i] - p0| so that p_LM
+    // increases monotonically just like a buildup. Without this fix the LM
+    // sees negative residuals everywhere and converges to garbage on
+    // drawdown datasets.
+    var data = {
+        t: dataset.t.slice(),
+        p: deltaP.map(function (v) { return p0DS + v; }),  // mirrored to positive Δp
+        q: dataset.q ? dataset.q.slice() : null
+    };
     var results = [];
     var idx = 0;
 

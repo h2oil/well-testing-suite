@@ -288,7 +288,10 @@ function PRiSM_renderPlotsTab() {
                 '</label>' +
             '</div>' +
             '<div style="background:var(--bg1); border:1px solid var(--border); border-radius:6px; padding:6px;">' +
-                '<canvas id="prism_plot_canvas" style="width:100%; height:500px; display:block;"></canvas>' +
+                // Canvas height fills available viewport space; min-height ensures
+                // it never collapses on small screens. calc() subtracts header /
+                // tab strip / picker bar so the canvas isn't cropped by overflow.
+                '<canvas id="prism_plot_canvas" style="width:100%; height:calc(100vh - 320px); min-height:500px; display:block;"></canvas>' +
             '</div>' +
             '<div id="prism_plot_msg" style="margin-top:8px; font-size:12px; color:var(--text2); min-height:16px;"></div>' +
         '</div>';
@@ -509,17 +512,48 @@ function PRiSM_renderModelTab() {
             '</div>' +
             '<div class="card">' +
                 '<div class="card-title">Schematic</div>' +
-                '<div style="background:var(--bg1); border:1px dashed var(--border); border-radius:6px; padding:24px; text-align:center; min-height:180px; display:flex; align-items:center; justify-content:center; flex-direction:column;">' +
-                    '<div style="font-size:32px; color:var(--text3); margin-bottom:10px;">[ ' + st.model + ' ]</div>' +
-                    '<div style="color:var(--text2); font-size:13px; max-width:300px;">' + (current.description || '') + '</div>' +
-                    '<div style="color:var(--text3); font-size:11px; margin-top:14px;">Schematic — see reference for diagram.</div>' +
+                '<div id="prism_schematic_host" style="background:var(--bg1); border:1px solid var(--border); border-radius:6px; padding:8px; min-height:240px; display:flex; align-items:center; justify-content:center;">' +
+                    // Placeholder; populated below by PRiSM_getModelSchematic
                 '</div>' +
+                '<div style="color:var(--text2); font-size:12px; margin-top:8px; line-height:1.4;">' + (current.description || '') + '</div>' +
             '</div>' +
         '</div>';
     }
 
     html += '</div>';
     host.innerHTML = html;
+
+    // Inject the SVG schematic for the active model (Round-2 polish layer).
+    // The 14 schematics live in PRiSM_getModelSchematic from 11-polish.js.
+    // Falls back to a placeholder text if the polish layer isn't loaded.
+    var schemHost = host.querySelector('#prism_schematic_host');
+    if (schemHost) {
+        var svg = '';
+        if (typeof window.PRiSM_getModelSchematic === 'function') {
+            try { svg = window.PRiSM_getModelSchematic(st.model) || ''; }
+            catch (_e) { svg = ''; }
+        }
+        if (svg && svg.length > 50) {
+            // Make the SVG fill the host so it scales with the card width.
+            // PRiSM_getModelSchematic returns SVG with viewBox — wrap to scale.
+            schemHost.innerHTML = '<div style="width:100%; max-width:380px;">' + svg + '</div>';
+            // Force responsive sizing on the inner SVG element.
+            var inner = schemHost.querySelector('svg');
+            if (inner) {
+                inner.removeAttribute('width');
+                inner.removeAttribute('height');
+                inner.style.width = '100%';
+                inner.style.height = 'auto';
+                inner.style.maxHeight = '320px';
+            }
+        } else {
+            schemHost.innerHTML =
+                '<div style="text-align:center; color:var(--text3);">' +
+                    '<div style="font-size:32px; margin-bottom:8px;">[ ' + st.model + ' ]</div>' +
+                    '<div style="font-size:11px;">Schematic not available for this model.</div>' +
+                '</div>';
+        }
+    }
 
     // Wire card-click selection.
     host.querySelectorAll('.prism-model-card').forEach(function (card) {
@@ -618,7 +652,7 @@ function PRiSM_renderParamsTab() {
             '<div style="font-size:12px; color:var(--text2); margin-bottom:8px;">' +
             'Curve recomputed on every edit using td = logspace(0.001, 1000, 100).</div>' +
             '<div style="background:var(--bg1); border:1px solid var(--border); border-radius:6px; padding:6px;">' +
-                '<canvas id="prism_params_canvas" style="width:100%; height:340px; display:block;"></canvas>' +
+                '<canvas id="prism_params_canvas" style="width:100%; height:calc(100vh - 360px); min-height:480px; display:block;"></canvas>' +
             '</div>' +
             '<div id="prism_params_simmsg" style="margin-top:6px; font-size:11px; color:var(--text3);"></div>' +
         '</div>';
@@ -780,7 +814,7 @@ function PRiSM_renderMatchTab() {
                 '<div>' +
                     '<div style="font-size:11px; color:var(--text3); margin-bottom:6px;">Bourdet diagnostic with overlay</div>' +
                     '<div style="background:var(--bg1); border:1px solid var(--border); border-radius:6px; padding:6px;">' +
-                        '<canvas id="prism_match_canvas" style="width:100%; height:380px; display:block; cursor:grab;"></canvas>' +
+                        '<canvas id="prism_match_canvas" style="width:100%; height:calc(100vh - 340px); min-height:500px; display:block; cursor:grab;"></canvas>' +
                     '</div>' +
                 '</div>' +
             '</div>' +

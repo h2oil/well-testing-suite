@@ -12010,7 +12010,10 @@ function PRiSM_renderPlotsTab() {
                 '</label>' +
             '</div>' +
             '<div style="background:var(--bg1); border:1px solid var(--border); border-radius:6px; padding:6px;">' +
-                '<canvas id="prism_plot_canvas" style="width:100%; height:500px; display:block;"></canvas>' +
+                // Canvas height fills available viewport space; min-height ensures
+                // it never collapses on small screens. calc() subtracts header /
+                // tab strip / picker bar so the canvas isn't cropped by overflow.
+                '<canvas id="prism_plot_canvas" style="width:100%; height:calc(100vh - 320px); min-height:500px; display:block;"></canvas>' +
             '</div>' +
             '<div id="prism_plot_msg" style="margin-top:8px; font-size:12px; color:var(--text2); min-height:16px;"></div>' +
         '</div>';
@@ -12231,17 +12234,48 @@ function PRiSM_renderModelTab() {
             '</div>' +
             '<div class="card">' +
                 '<div class="card-title">Schematic</div>' +
-                '<div style="background:var(--bg1); border:1px dashed var(--border); border-radius:6px; padding:24px; text-align:center; min-height:180px; display:flex; align-items:center; justify-content:center; flex-direction:column;">' +
-                    '<div style="font-size:32px; color:var(--text3); margin-bottom:10px;">[ ' + st.model + ' ]</div>' +
-                    '<div style="color:var(--text2); font-size:13px; max-width:300px;">' + (current.description || '') + '</div>' +
-                    '<div style="color:var(--text3); font-size:11px; margin-top:14px;">Schematic — see reference for diagram.</div>' +
+                '<div id="prism_schematic_host" style="background:var(--bg1); border:1px solid var(--border); border-radius:6px; padding:8px; min-height:240px; display:flex; align-items:center; justify-content:center;">' +
+                    // Placeholder; populated below by PRiSM_getModelSchematic
                 '</div>' +
+                '<div style="color:var(--text2); font-size:12px; margin-top:8px; line-height:1.4;">' + (current.description || '') + '</div>' +
             '</div>' +
         '</div>';
     }
 
     html += '</div>';
     host.innerHTML = html;
+
+    // Inject the SVG schematic for the active model (Round-2 polish layer).
+    // The 14 schematics live in PRiSM_getModelSchematic from 11-polish.js.
+    // Falls back to a placeholder text if the polish layer isn't loaded.
+    var schemHost = host.querySelector('#prism_schematic_host');
+    if (schemHost) {
+        var svg = '';
+        if (typeof window.PRiSM_getModelSchematic === 'function') {
+            try { svg = window.PRiSM_getModelSchematic(st.model) || ''; }
+            catch (_e) { svg = ''; }
+        }
+        if (svg && svg.length > 50) {
+            // Make the SVG fill the host so it scales with the card width.
+            // PRiSM_getModelSchematic returns SVG with viewBox — wrap to scale.
+            schemHost.innerHTML = '<div style="width:100%; max-width:380px;">' + svg + '</div>';
+            // Force responsive sizing on the inner SVG element.
+            var inner = schemHost.querySelector('svg');
+            if (inner) {
+                inner.removeAttribute('width');
+                inner.removeAttribute('height');
+                inner.style.width = '100%';
+                inner.style.height = 'auto';
+                inner.style.maxHeight = '320px';
+            }
+        } else {
+            schemHost.innerHTML =
+                '<div style="text-align:center; color:var(--text3);">' +
+                    '<div style="font-size:32px; margin-bottom:8px;">[ ' + st.model + ' ]</div>' +
+                    '<div style="font-size:11px;">Schematic not available for this model.</div>' +
+                '</div>';
+        }
+    }
 
     // Wire card-click selection.
     host.querySelectorAll('.prism-model-card').forEach(function (card) {
@@ -12340,7 +12374,7 @@ function PRiSM_renderParamsTab() {
             '<div style="font-size:12px; color:var(--text2); margin-bottom:8px;">' +
             'Curve recomputed on every edit using td = logspace(0.001, 1000, 100).</div>' +
             '<div style="background:var(--bg1); border:1px solid var(--border); border-radius:6px; padding:6px;">' +
-                '<canvas id="prism_params_canvas" style="width:100%; height:340px; display:block;"></canvas>' +
+                '<canvas id="prism_params_canvas" style="width:100%; height:calc(100vh - 360px); min-height:480px; display:block;"></canvas>' +
             '</div>' +
             '<div id="prism_params_simmsg" style="margin-top:6px; font-size:11px; color:var(--text3);"></div>' +
         '</div>';
@@ -12502,7 +12536,7 @@ function PRiSM_renderMatchTab() {
                 '<div>' +
                     '<div style="font-size:11px; color:var(--text3); margin-bottom:6px;">Bourdet diagnostic with overlay</div>' +
                     '<div style="background:var(--bg1); border:1px solid var(--border); border-radius:6px; padding:6px;">' +
-                        '<canvas id="prism_match_canvas" style="width:100%; height:380px; display:block; cursor:grab;"></canvas>' +
+                        '<canvas id="prism_match_canvas" style="width:100%; height:calc(100vh - 340px); min-height:500px; display:block; cursor:grab;"></canvas>' +
                     '</div>' +
                 '</div>' +
             '</div>' +
@@ -23718,13 +23752,25 @@ function PRiSM_classifyRegimes(t, p, dp) {
         };
     }
 
-    // Convert pressure to Δp if it doesn't already start at zero. Use the
-    // input dp (= Bourdet derivative) when supplied; otherwise compute it.
+    // Convert pressure to Δp using a SIGN-AWARE convention so both buildup
+    // (p increases from p0) and drawdown (p decreases from p0) yield POSITIVE
+    // Δp through the test. Bug fix 2026-04-26 — was previously p[i]-p[0]
+    // which produced negative values on drawdowns, killing the regime
+    // classifier (it filters log10(d≤0) → NaN → zero candidates → only Arps
+    // survives the race with R²=−195).
     var deltaP = new Array(n);
     var p0 = p[0];
-    for (var i = 0; i < n; i++) deltaP[i] = p[i] - p0;
+    var pEnd = p[n - 1];
+    var sign = (pEnd - p0) >= 0 ? 1 : -1;   // +1 buildup, -1 drawdown
+    for (var i = 0; i < n; i++) deltaP[i] = sign * (p[i] - p0);
 
     var deriv = (Array.isArray(dp) && dp.length === n) ? dp.slice() : _bourdet(t, deltaP, 0.2);
+    // Also flip the supplied dp's sign if the trend is drawdown — caller may
+    // have computed it from the raw signed pressure, in which case half the
+    // values would be negative.
+    if (sign < 0 && Array.isArray(dp)) {
+        for (var dk = 0; dk < deriv.length; dk++) deriv[dk] = Math.abs(deriv[dk]);
+    }
 
     // Build (logT, logD) sample list with finite, positive values only.
     var X = [], Y = [], idxMap = [];
@@ -23999,11 +24045,17 @@ function PRiSM_suggestInitialParams(modelKey, t, p, dp, classification) {
 
     if (!Array.isArray(t) || !t.length) return out;
 
-    // Ensure dp is usable; recompute if needed.
+    // Ensure dp is usable; recompute if needed. Same sign-aware convention
+    // as the regime classifier (see _classifyRegimes for rationale).
     var deltaP = new Array(t.length);
     var p0 = p[0];
-    for (var i = 0; i < t.length; i++) deltaP[i] = p[i] - p0;
+    var pEnd = p[t.length - 1];
+    var sign = (pEnd - p0) >= 0 ? 1 : -1;
+    for (var i = 0; i < t.length; i++) deltaP[i] = sign * (p[i] - p0);
     var deriv = (Array.isArray(dp) && dp.length === t.length) ? dp : _bourdet(t, deltaP, 0.2);
+    if (sign < 0 && Array.isArray(dp)) {
+        deriv = deriv.map(function (v) { return Math.abs(v); });
+    }
 
     // ── Feature extraction ────────────────────────────────────────────
     var regimes = (classification && classification.regimes) || [];
@@ -24204,9 +24256,24 @@ function PRiSM_autoMatch(opts) {
     }
 
     // Compute Bourdet derivative once (re-used by classifier and seed).
-    var deltaP = new Array(dataset.t.length);
-    for (var i = 0; i < dataset.t.length; i++) deltaP[i] = dataset.p[i] - dataset.p[0];
+    // Sign-aware: drawdowns get |Δp| so the derivative magnitudes are positive
+    // and the regime classifier can do log10() without NaN.
+    var nDS = dataset.t.length;
+    var p0DS = dataset.p[0];
+    var pEndDS = dataset.p[nDS - 1];
+    var signDS = (pEndDS - p0DS) >= 0 ? 1 : -1;   // +1 buildup, -1 drawdown
+    var deltaP = new Array(nDS);
+    for (var i = 0; i < nDS; i++) deltaP[i] = signDS * (dataset.p[i] - p0DS);
     var deriv = _bourdet(dataset.t, deltaP, 0.2);
+    // Stash the dataset's flow-direction sign + magnitude-Δp on the dataset
+    // so the LM call below uses positive Δp against positive model pd.
+    var datasetForLM = {
+        t: dataset.t,
+        p: deltaP.map(function (v, k) { return p0DS + v; }), // p flipped if drawdown
+        q: dataset.q,
+        _signedDeltaP: deltaP,
+        _signFlow: signDS
+    };
 
     var classification = PRiSM_classifyRegimes(dataset.t, dataset.p, deriv);
 
@@ -24263,7 +24330,17 @@ function PRiSM_autoMatch(opts) {
     };
 
     var topN = Math.max(1, Math.min(8, opts.topN || 5));
-    var data = { t: dataset.t.slice(), p: dataset.p.slice() };
+    // Sign-aware data passed to LM: model pd is always positive (pwd ≥ 0),
+    // so the LM target must be positive too. For drawdowns we feed LM the
+    // mirror-image pressure: p_LM[i] = p0 + |p[i] - p0| so that p_LM
+    // increases monotonically just like a buildup. Without this fix the LM
+    // sees negative residuals everywhere and converges to garbage on
+    // drawdown datasets.
+    var data = {
+        t: dataset.t.slice(),
+        p: deltaP.map(function (v) { return p0DS + v; }),  // mirrored to positive Δp
+        q: dataset.q ? dataset.q.slice() : null
+    };
     var results = [];
     var idx = 0;
 
