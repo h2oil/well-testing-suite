@@ -430,6 +430,7 @@
             <div class="nav-group-label">Engineering</div>
             <div class="nav-btn" data-p="pumpsz"><span class="nav-icon">&#9955;</span><span>Pump Sizing</span></div>
             <div class="nav-btn" data-p="seprate"><span class="nav-icon">&#9638;</span><span>Separator Rating</span></div>
+            <div class="nav-btn" data-p="sephand"><span class="nav-icon">&#9707;</span><span>Separator Handling</span></div>
             <div class="nav-btn" data-p="heater"><span class="nav-icon">&#9832;</span><span>Indirect Heater</span></div>
             <div class="nav-btn" data-p="pipesz"><span class="nav-icon">&#9472;</span><span>Pipe Sizing</span></div>
             <div class="nav-btn" data-p="turbmeter"><span class="nav-icon">&#9201;</span><span>Turbine Meter</span></div>
@@ -614,7 +615,7 @@ function nav(p) {
 function render() {
     const body = $('pgBody');
     body.innerHTML = '';
-    const pages = { home: renderHome, clientinfo: renderClientInfo, aga3: renderAGA3, units: renderUnits, choke: renderChoke, flare: renderFlare, dca: renderDCA, pta: renderPTA, prv: renderPRV, chokeflow: renderChokeFlow, gascalc: renderGasCalc, fluid: renderFluid, tank: renderTank, vessel: renderVessel, elec: renderElec, chem: renderChem, sep: renderSep, bottomsup: renderBottomsUp, solgor: renderSolGOR, oilgas: renderOilGas, mcfshr: renderMCFShr, casing: renderCasing, chokecnv: renderChokeCnv, analogsig: renderAnalogSig, pumpsz: renderPumpSz, seprate: renderSepRate, heater: renderHeater, pipesz: renderPipeSz, turbmeter: renderTurbMeter, aircomp: renderAirComp, gensz: renderGenSz, cablesz: renderCableSz, vdrop: renderVDrop, flamearr: renderFlameArr, arc: renderARC, wts: renderWTS };
+    const pages = { home: renderHome, clientinfo: renderClientInfo, aga3: renderAGA3, units: renderUnits, choke: renderChoke, flare: renderFlare, dca: renderDCA, pta: renderPTA, prv: renderPRV, chokeflow: renderChokeFlow, gascalc: renderGasCalc, fluid: renderFluid, tank: renderTank, vessel: renderVessel, elec: renderElec, chem: renderChem, sep: renderSep, bottomsup: renderBottomsUp, solgor: renderSolGOR, oilgas: renderOilGas, mcfshr: renderMCFShr, casing: renderCasing, chokecnv: renderChokeCnv, analogsig: renderAnalogSig, pumpsz: renderPumpSz, seprate: renderSepRate, sephand: renderSepHandling, heater: renderHeater, pipesz: renderPipeSz, turbmeter: renderTurbMeter, aircomp: renderAirComp, gensz: renderGenSz, cablesz: renderCableSz, vdrop: renderVDrop, flamearr: renderFlameArr, arc: renderARC, wts: renderWTS };
     if (pages[page]) pages[page](body);
     // Show export buttons on calculator pages (not home/clientinfo)
     const eb = $('exportBtns');
@@ -725,6 +726,7 @@ function renderHome(body) {
         { id:'analogsig', icon:'&#8766;', badge:'Utility', bc:'dc-b-blue', title:'Analog Signal', desc:'Convert between 4-20 mA, 0-10 V, and process values for instrumentation.' },
         { id:'pumpsz', icon:'&#9955;', badge:'Engineering', bc:'dc-b-orange', title:'Pump Sizing', desc:'Hydraulic pump sizing with TDH, NPSH analysis, power calculation, and pump type selection.' },
         { id:'seprate', icon:'&#9638;', badge:'Engineering', bc:'dc-b-orange', title:'Separator Rating', desc:'Souders-Brown gas capacity check and liquid retention time verification.' },
+        { id:'sephand', icon:'&#9707;', badge:'Engineering', bc:'dc-b-orange', title:'Separator Handling', desc:'Full handling check: Souders-Brown gas, retention by emulsion, oil/water split, plus PCV/LCV/line/turbine outlet velocity verdict.' },
         { id:'heater', icon:'&#9832;', badge:'Engineering', bc:'dc-b-orange', title:'Indirect Heater', desc:'Water bath heater duty calculation, fuel consumption, and heater category selection.' },
         { id:'pipesz', icon:'&#9472;', badge:'Engineering', bc:'dc-b-orange', title:'Pipe Sizing', desc:'Pipe selection based on velocity criteria and Darcy-Weisbach pressure drop.' },
         { id:'flamearr', icon:'&#9650;', badge:'Safety', bc:'dc-b-orange', title:'Flame Arrestor', desc:'Flame arrestor NPS selection based on flow capacity and allowable pressure drop.' },
@@ -6533,6 +6535,315 @@ window.calcSepRate=function(){
         <div class="rrow"><span class="rl">Actual Gas Velocity</span><span class="rv" style="color:${gasOK?'var(--green)':'var(--red)'}">${fmt(V_gas,2)} ft/s — ${gasOK?'OK':'EXCEEDS LIMIT'}</span></div>
         <div class="rrow"><span class="rl">Liquid Volume</span><span class="rv">${fmt(V_liq_bbl,2)} bbls</span></div>
         <div class="rrow"><span class="rl">Retention Time</span><span class="rv" style="color:${retOK?'var(--green)':'var(--red)'}">${fmt(retTime,2)} min (target: ${retTarget} min)</span></div>
+    </div>`;
+};
+
+// ── Separator Handling Estimator ──
+// Inspired by pb-handbook.com/separator-handling-estimator. Screening tool
+// that combines vessel gas capacity (Souders-Brown), liquid retention time
+// (oil + water split for 3-phase), AND outlet hardware velocity checks
+// (gas PCV, gas line, Daniel box, oil/water LCV, oil/water lines, turbine
+// meters). Produces a single PASS / PASS WITH WARNINGS / FAIL verdict
+// with the supporting numbers, suitable for well-test spread sizing.
+function renderSepHandling(body){
+    $('pgTitle').textContent='Separator Handling Estimator';
+    $('pgSub').textContent='Screening: gas capacity + retention + outlet velocity verdict (PASS/WARN/FAIL). Inspired by pb-handbook.com.';
+    body.innerHTML=`<div class="cols-2"><div>
+      <div class="card"><div class="card-title">Configuration</div><div class="fg">
+        <div class="fg-item"><label>Service</label><select id="sh_service"><option value="2">2-Phase</option><option value="3" selected>3-Phase</option><option value="4">4-Phase (treat as 3+caution)</option></select></div>
+        <div class="fg-item"><label>Orientation</label><select id="sh_orient"><option value="H" selected>Horizontal</option><option value="V">Vertical</option></select></div>
+        <div class="fg-item"><label>Internals Type</label><select id="sh_internals"><option value="weir">Weir</option><option value="bucket">Bucket &amp; Weir</option></select></div>
+        <div class="fg-item"><label>Separator ID (in)</label><input type="number" id="sh_id" value="42"></div>
+        <div class="fg-item"><label>Seam-to-Seam Length (ft)</label><input type="number" id="sh_len" value="12.5" step="0.5"></div>
+        <div class="fg-item"><label>Normal Liquid Level (%)</label><input type="number" id="sh_nll" value="50" min="40" max="60"></div>
+        <div class="fg-item"><label>Oil Section (% of length)</label><input type="number" id="sh_oilfrac" value="60" min="20" max="80"></div>
+      </div></div>
+      <div class="card"><div class="card-title">Operating Conditions</div><div class="fg">
+        <div class="fg-item"><label>Operating Pressure (psig)</label><input type="number" id="sh_p" value="500"></div>
+        <div class="fg-item"><label>Downstream Pressure (psig)</label><input type="number" id="sh_pd" value="100"></div>
+        <div class="fg-item"><label>Temperature (&deg;C)</label><input type="number" id="sh_t" value="40"></div>
+      </div></div>
+      <div class="card"><div class="card-title">Fluids</div><div class="fg">
+        <div class="fg-item"><label>Liquid Rate Basis</label><select id="sh_qbasis"><option value="bopd" selected>Oil only (BOPD)</option><option value="blpd">Total liquid (BLPD)</option></select></div>
+        <div class="fg-item"><label>Liquid Rate (BPD)</label><input type="number" id="sh_qo" value="3000"></div>
+        <div class="fg-item"><label>Gas Rate (MMSCFD)</label><input type="number" id="sh_qg" value="5" step="0.1"></div>
+        <div class="fg-item"><label>Gas SG (air=1)</label><input type="number" id="sh_gsg" value="0.75" step="0.01"></div>
+        <div class="fg-item"><label>Oil API</label><input type="number" id="sh_api" value="35" step="0.1"></div>
+        <div class="fg-item"><label>BS&amp;W (% of total liquid)</label><input type="number" id="sh_bsw" value="20" min="0" max="100"></div>
+        <div class="fg-item"><label>Foaming Tendency</label><select id="sh_foam"><option value="low" selected>Low</option><option value="med">Medium</option><option value="high">High</option></select></div>
+        <div class="fg-item"><label>Emulsion Tendency</label><select id="sh_emul"><option value="low" selected>Low</option><option value="med">Medium</option><option value="high">High</option></select></div>
+      </div></div>
+      <div class="card"><div class="card-title">Gas Outlet</div><div class="fg">
+        <div class="fg-item"><label>Lines (qty)</label><select id="sh_gqty"><option value="1" selected>1</option><option value="2">2 (50/50 split)</option></select></div>
+        <div class="fg-item"><label>PCV size (in)</label><input type="number" id="sh_gpcv" value="2" step="0.25"></div>
+        <div class="fg-item"><label>Line size (in)</label><input type="number" id="sh_gline" value="3" step="0.5"></div>
+        <div class="fg-item"><label>Daniel box ID (in, 0=none)</label><input type="number" id="sh_gdan" value="4" step="0.5"></div>
+      </div></div>
+      <div class="card"><div class="card-title">Oil Outlet</div><div class="fg">
+        <div class="fg-item"><label>Lines (qty)</label><select id="sh_oqty"><option value="1" selected>1</option><option value="2">2 (50/50 split)</option></select></div>
+        <div class="fg-item"><label>LCV size (in)</label><input type="number" id="sh_olcv" value="2" step="0.25"></div>
+        <div class="fg-item"><label>Line size (in)</label><input type="number" id="sh_oline" value="3" step="0.5"></div>
+        <div class="fg-item"><label>Turbine bore (in, 0=none)</label><input type="number" id="sh_oturb" value="1.5" step="0.25"></div>
+      </div></div>
+      <div class="card"><div class="card-title">Water Outlet (3-phase only)</div><div class="fg">
+        <div class="fg-item"><label>Lines (qty)</label><select id="sh_wqty"><option value="1" selected>1</option><option value="2">2 (50/50 split)</option></select></div>
+        <div class="fg-item"><label>LCV size (in)</label><input type="number" id="sh_wlcv" value="2" step="0.25"></div>
+        <div class="fg-item"><label>Line size (in)</label><input type="number" id="sh_wline" value="2" step="0.5"></div>
+        <div class="fg-item"><label>Turbine bore (in, 0=none)</label><input type="number" id="sh_wturb" value="1" step="0.25"></div>
+      </div></div>
+      <div class="card"><div class="card-title">Velocity Limits</div><div class="fg">
+        <div class="fg-item"><label>Gas line/PCV limit (m/s)</label><input type="number" id="sh_vlimg" value="20" step="0.5"></div>
+        <div class="fg-item"><label>Liquid line/LCV limit (m/s)</label><input type="number" id="sh_vliml" value="3" step="0.1"></div>
+        <div class="fg-item"><label>Turbine bore warn (m/s)</label><input type="number" id="sh_vlimt" value="6" step="0.5"></div>
+        <div class="fg-item"><label>Daniel box limit (m/s)</label><input type="number" id="sh_vlimd" value="20" step="0.5"></div>
+      </div></div>
+      <div class="btn-row"><button class="btn btn-primary" onclick="calcSepHandling()">Calculate</button></div>
+      <div id="sh_res"></div>
+    </div><div>
+      <div class="card"><div class="card-title">Methodology — quick reference</div>
+        <p style="font-size:12px;color:var(--text2);margin-bottom:8px">
+          Screening tool. Final design must still be confirmed by vendor sizing per project standards.
+        </p>
+        <table class="dtable"><tr><th>Souders-Brown K (ft/s)</th><th>Vertical</th><th>Horizontal</th></tr>
+        <tr><td>Low foaming</td><td>0.18</td><td>0.45</td></tr>
+        <tr><td>Medium foaming</td><td>0.13</td><td>0.30</td></tr>
+        <tr><td>High foaming</td><td>0.08</td><td>0.20</td></tr></table>
+        <table class="dtable" style="margin-top:8px"><tr><th>Retention target (min)</th><th>Oil</th><th>Water</th></tr>
+        <tr><td>Low emulsion</td><td>3</td><td>5</td></tr>
+        <tr><td>Medium emulsion</td><td>5</td><td>10</td></tr>
+        <tr><td>High emulsion</td><td>10</td><td>20</td></tr></table>
+        <p style="font-size:11px;color:var(--text3);margin-top:8px">
+          Vmax = K&middot;&radic;((&rho;<sub>L</sub>&minus;&rho;<sub>G</sub>)/&rho;<sub>G</sub>); Z = 0.90; &rho;<sub>w</sub> = 1000 kg/m&sup3;.
+          Effective length de-rated for foaming/emulsion. Outlet velocities use API RP 14E erosional limit screening
+          (C/&radic;&rho; with C = 100 continuous service) layered on top of the user limits.
+        </p>
+      </div>
+    </div></div>`;
+    loadInputs('sephand',['sh_service','sh_orient','sh_internals','sh_id','sh_len','sh_nll','sh_oilfrac','sh_p','sh_pd','sh_t','sh_qbasis','sh_qo','sh_qg','sh_gsg','sh_api','sh_bsw','sh_foam','sh_emul','sh_gqty','sh_gpcv','sh_gline','sh_gdan','sh_oqty','sh_olcv','sh_oline','sh_oturb','sh_wqty','sh_wlcv','sh_wline','sh_wturb','sh_vlimg','sh_vliml','sh_vlimt','sh_vlimd']);
+}
+window.calcSepHandling=function(){
+    const ids=['sh_service','sh_orient','sh_internals','sh_id','sh_len','sh_nll','sh_oilfrac','sh_p','sh_pd','sh_t','sh_qbasis','sh_qo','sh_qg','sh_gsg','sh_api','sh_bsw','sh_foam','sh_emul','sh_gqty','sh_gpcv','sh_gline','sh_gdan','sh_oqty','sh_olcv','sh_oline','sh_oturb','sh_wqty','sh_wlcv','sh_wline','sh_wturb','sh_vlimg','sh_vliml','sh_vlimt','sh_vlimd'];
+    saveInputs('sephand',ids);
+    // ── Inputs ────────────────────────────────────────────────
+    const service = parseInt($('sh_service').value);   // 2, 3, or 4 (4 treated as 3 + caution)
+    const orient = $('sh_orient').value;                // H or V
+    const ID_in = parseFloat($('sh_id').value);
+    const Len_ft = parseFloat($('sh_len').value);
+    const NLL = parseFloat($('sh_nll').value)/100;      // fraction
+    const oilFrac = parseFloat($('sh_oilfrac').value)/100;
+    const P_psig = parseFloat($('sh_p').value);
+    const Pd_psig = parseFloat($('sh_pd').value);
+    const T_C = parseFloat($('sh_t').value);
+    const qBasis = $('sh_qbasis').value;                // 'bopd' or 'blpd'
+    const Q_BPD = parseFloat($('sh_qo').value);         // either oil or total
+    const Qg_MMSCFD = parseFloat($('sh_qg').value);
+    const gasSG = parseFloat($('sh_gsg').value);
+    const API = parseFloat($('sh_api').value);
+    const BSW = parseFloat($('sh_bsw').value)/100;
+    const foam = $('sh_foam').value;
+    const emul = $('sh_emul').value;
+    // Outlet hardware
+    const gQty = parseInt($('sh_gqty').value);
+    const gPCV_in = parseFloat($('sh_gpcv').value);
+    const gLine_in = parseFloat($('sh_gline').value);
+    const gDan_in = parseFloat($('sh_gdan').value);
+    const oQty = parseInt($('sh_oqty').value);
+    const oLCV_in = parseFloat($('sh_olcv').value);
+    const oLine_in = parseFloat($('sh_oline').value);
+    const oTurb_in = parseFloat($('sh_oturb').value);
+    const wQty = parseInt($('sh_wqty').value);
+    const wLCV_in = parseFloat($('sh_wlcv').value);
+    const wLine_in = parseFloat($('sh_wline').value);
+    const wTurb_in = parseFloat($('sh_wturb').value);
+    // Limits
+    const vLimGas = parseFloat($('sh_vlimg').value);
+    const vLimLiq = parseFloat($('sh_vliml').value);
+    const vLimTurb = parseFloat($('sh_vlimt').value);
+    const vLimDan = parseFloat($('sh_vlimd').value);
+
+    // ── Derived densities (SI) ────────────────────────────────
+    const T_K = T_C + 273.15;
+    const T_R = (T_C * 9/5 + 32) + 460;
+    const P_psia = P_psig + 14.7;
+    const P_Pa = P_psia * 6894.76;
+    const Z = 0.90;
+    const MW = gasSG * 28.97;                            // kg/kmol
+    const R_uni = 8314.46;                                // J/(kmol·K)
+    const rho_gas = P_Pa * MW / (Z * R_uni * T_K);       // kg/m^3
+    const rho_oil = 141500 / (API + 131.5);              // kg/m^3 (≈SG×1000)
+    const rho_w = 1000;                                   // fixed per spec
+    // Total liquid density blended by BSW (volumetric basis)
+    const rho_liq = rho_oil*(1-BSW) + rho_w*BSW;
+    // English-unit equivalents for K-factor block (K is given in ft/s)
+    const rho_gas_pcf = rho_gas * 0.062428;               // lb/ft^3
+    const rho_liq_pcf = rho_liq * 0.062428;
+
+    // ── Souders-Brown gas-handling capacity ───────────────────
+    // K (ft/s) — values calibrated for screening; foaming knocks K down.
+    const Kvals = orient==='V'
+        ? { low:0.18, med:0.13, high:0.08 }
+        : { low:0.45, med:0.30, high:0.20 };
+    const K = Kvals[foam];
+    const v_allow_fps = K * Math.sqrt((rho_liq_pcf - rho_gas_pcf) / rho_gas_pcf);
+    const v_allow_ms = v_allow_fps * 0.3048;
+    // Vessel cross-section
+    const D_m = ID_in * 0.0254;
+    const A_total_m2 = Math.PI * D_m * D_m / 4;
+    // Gas cross-section above NLL — for horizontal vessels use a circular
+    // segment area; for vertical, the full cross-section participates.
+    function chordSegmentArea(D, h) {
+        // Area of the segment of a circle (D=diameter) below liquid height h.
+        const r = D/2;
+        const x = (r - h);
+        const theta = 2 * Math.acos(Math.max(-1, Math.min(1, x/r)));
+        return 0.5 * r*r * (theta - Math.sin(theta));
+    }
+    let A_gas_m2;
+    if (orient === 'H') {
+        const h_liq = NLL * D_m;
+        const A_liq = chordSegmentArea(D_m, h_liq);
+        A_gas_m2 = A_total_m2 - A_liq;
+    } else {
+        A_gas_m2 = A_total_m2;       // vertical: gas occupies full bore
+    }
+    // Actual gas flow at separator P,T
+    const Qg_actual_m3s = Qg_MMSCFD*1e6 * (14.7/P_psia) * (T_R/520) * (1/Z) / 86400 * 0.0283168;
+    const v_gas_actual_ms = Qg_actual_m3s / A_gas_m2;
+    const gasOK = v_gas_actual_ms <= v_allow_ms;
+
+    // ── Liquid retention ──────────────────────────────────────
+    // De-rated effective length: foaming + emulsion both eat into Leff.
+    const dr = { low:1.0, med:0.85, high:0.7 };
+    const Leff_factor = Math.min(dr[foam], dr[emul]);
+    const Len_m = Len_ft * 0.3048;
+    const Leff_m = Len_m * Leff_factor;
+    // Liquid cross-section (horizontal segment / vertical fraction)
+    let A_liq_m2;
+    if (orient === 'H') {
+        const h_liq = NLL * D_m;
+        A_liq_m2 = chordSegmentArea(D_m, h_liq);
+    } else {
+        A_liq_m2 = A_total_m2 * NLL;
+    }
+    const V_liq_m3 = A_liq_m2 * Leff_m;
+    // Convert flows
+    const m3PerBbl = 0.158987;
+    const Q_oil_BPD = qBasis==='bopd' ? Q_BPD : Q_BPD*(1-BSW);
+    const Q_wat_BPD = qBasis==='bopd' ? Q_BPD*BSW/Math.max(1-BSW,1e-9) : Q_BPD*BSW;
+    const Q_oil_m3s = Q_oil_BPD * m3PerBbl / 86400;
+    const Q_wat_m3s = Q_wat_BPD * m3PerBbl / 86400;
+    const Q_liq_m3s = Q_oil_m3s + Q_wat_m3s;
+    // 3-phase: split vessel volume between oil and water sections
+    let retOil_min, retWat_min;
+    if (service >= 3) {
+        const V_oil_m3 = V_liq_m3 * oilFrac;
+        const V_wat_m3 = V_liq_m3 * (1-oilFrac);
+        retOil_min = Q_oil_m3s>0 ? V_oil_m3 / Q_oil_m3s / 60 : Infinity;
+        retWat_min = Q_wat_m3s>0 ? V_wat_m3 / Q_wat_m3s / 60 : Infinity;
+    } else {
+        retOil_min = Q_liq_m3s>0 ? V_liq_m3 / Q_liq_m3s / 60 : Infinity;
+        retWat_min = NaN;
+    }
+    const retTargets = {
+        low : { oil:3, water:5 },
+        med : { oil:5, water:10 },
+        high: { oil:10, water:20 },
+    }[emul];
+    const oilRetOK = retOil_min >= retTargets.oil;
+    const watRetOK = service<3 ? true : retWat_min >= retTargets.water;
+
+    // ── Outlet velocity helpers ───────────────────────────────
+    function pipeArea_m2(d_in){ const d = d_in*0.0254; return Math.PI*d*d/4; }
+    function v_through(Q_m3s, d_in, qty){
+        if (!d_in || d_in<=0) return null;
+        return (Q_m3s/qty) / pipeArea_m2(d_in);
+    }
+    // API RP 14E erosional velocity (continuous service, C=100)
+    function v_erosional(rho){ return 100 / Math.sqrt(rho * 0.062428) * 0.3048; }  // m/s
+
+    // Gas outlets — use downstream pressure for line/PCV (lower pressure
+    // → higher actual flow → higher velocity, the conservative side).
+    const Pd_psia = Math.max(Pd_psig + 14.7, 14.7);
+    const rho_gas_ds = P_Pa>0 ? rho_gas * (Pd_psia/P_psia) : rho_gas;  // ideal-gas extrap
+    const Qg_ds_m3s = Qg_actual_m3s * (P_psia/Pd_psia);
+    const vErosGasDS = v_erosional(rho_gas_ds);
+
+    function outletRow(label, Q_m3s, d_in, qty, vLim, vEros){
+        if (!d_in || d_in<=0) return { label, skipped:true };
+        const v = v_through(Q_m3s, d_in, qty);
+        const passUser = v <= vLim;
+        const passEros = vEros ? v <= vEros : true;
+        return { label, v_ms:v, vLim, vEros, passUser, passEros, qty, d_in };
+    }
+    const outletChecks = [
+        outletRow('Gas PCV',          Qg_ds_m3s, gPCV_in,  gQty, vLimGas, vErosGasDS),
+        outletRow('Gas line',         Qg_ds_m3s, gLine_in, gQty, vLimGas, vErosGasDS),
+        outletRow('Gas Daniel box',   Qg_ds_m3s, gDan_in,  gQty, vLimDan, vErosGasDS),
+        outletRow('Oil LCV',          Q_oil_m3s, oLCV_in,  oQty, vLimLiq, v_erosional(rho_oil)),
+        outletRow('Oil line',         Q_oil_m3s, oLine_in, oQty, vLimLiq, v_erosional(rho_oil)),
+        outletRow('Oil turbine bore', Q_oil_m3s, oTurb_in, oQty, vLimTurb, null),
+    ];
+    if (service >= 3) {
+        outletChecks.push(outletRow('Water LCV',          Q_wat_m3s, wLCV_in,  wQty, vLimLiq, v_erosional(rho_w)));
+        outletChecks.push(outletRow('Water line',         Q_wat_m3s, wLine_in, wQty, vLimLiq, v_erosional(rho_w)));
+        outletChecks.push(outletRow('Water turbine bore', Q_wat_m3s, wTurb_in, wQty, vLimTurb, null));
+    }
+
+    // ── Verdict ──────────────────────────────────────────────
+    const reasons = [];
+    if (!gasOK)    reasons.push(`Gas velocity ${fmt(v_gas_actual_ms,2)} m/s exceeds Souders-Brown allow ${fmt(v_allow_ms,2)} m/s`);
+    if (!oilRetOK) reasons.push(`Oil retention ${fmt(retOil_min,1)} min < target ${retTargets.oil} min`);
+    if (!watRetOK) reasons.push(`Water retention ${fmt(retWat_min,1)} min < target ${retTargets.water} min`);
+    let warnings = [];
+    outletChecks.forEach(c => {
+        if (c.skipped) return;
+        if (!c.passUser) reasons.push(`${c.label}: ${fmt(c.v_ms,2)} m/s > limit ${fmt(c.vLim,2)} m/s`);
+        else if (c.vEros && !c.passEros) warnings.push(`${c.label}: ${fmt(c.v_ms,2)} m/s exceeds API RP 14E erosional ${fmt(c.vEros,2)} m/s (continuous)`);
+        if (c.label.includes('turbine') && c.v_ms > vLimTurb) warnings.push(`${c.label}: ${fmt(c.v_ms,2)} m/s above turbine warn ${fmt(vLimTurb,2)} m/s — check meter accuracy`);
+    });
+    if (service === 4) warnings.push('4-phase service screened as 3-phase — verify gas/condensate/oil/water split with vendor');
+
+    const fail = reasons.length > 0;
+    const warn = !fail && warnings.length > 0;
+    const verdict = fail ? '<span style="color:var(--red)">FAIL</span>'
+                  : warn ? '<span style="color:var(--yellow)">PASS WITH WARNINGS</span>'
+                         : '<span style="color:var(--green)">PASS</span>';
+
+    // ── Render results ────────────────────────────────────────
+    const outletRows = outletChecks.map(c => {
+        if (c.skipped) return `<tr><td>${c.label}</td><td colspan="4" style="color:var(--text3)">— not configured —</td></tr>`;
+        const userCol = c.passUser ? `<span style="color:var(--green)">${fmt(c.v_ms,2)} m/s ✓</span>`
+                                    : `<span style="color:var(--red)">${fmt(c.v_ms,2)} m/s ✗</span>`;
+        const erosCol = c.vEros==null ? '<span style="color:var(--text3)">n/a</span>'
+                       : c.passEros ? `<span style="color:var(--green)">${fmt(c.vEros,2)} ok</span>`
+                                    : `<span style="color:var(--yellow)">${fmt(c.vEros,2)} warn</span>`;
+        return `<tr><td>${c.label}</td><td>${c.d_in}"</td><td>×${c.qty}</td><td>${userCol}</td><td>${erosCol}</td></tr>`;
+    }).join('');
+
+    $('sh_res').innerHTML = `
+    <div class="rbox" style="margin-top:12px">
+      <div class="rbox-title">Verdict — ${verdict}</div>
+      ${reasons.length?`<div style="margin:6px 0 8px;color:var(--red);font-size:13px"><strong>Failures:</strong><ul style="margin:4px 0 0 18px">${reasons.map(r=>`<li>${r}</li>`).join('')}</ul></div>`:''}
+      ${warnings.length?`<div style="margin:6px 0 8px;color:var(--yellow);font-size:13px"><strong>Warnings:</strong><ul style="margin:4px 0 0 18px">${warnings.map(r=>`<li>${r}</li>`).join('')}</ul></div>`:''}
+    </div>
+    <div class="rbox" style="margin-top:10px">
+      <div class="rbox-title">Vessel Capacity</div>
+      <div class="rrow"><span class="rl">Gas density @ vessel</span><span class="rv">${fmt(rho_gas,2)} kg/m³ (${fmt(rho_gas_pcf,3)} lb/ft³)</span></div>
+      <div class="rrow"><span class="rl">Liquid density (oil+water blend)</span><span class="rv">${fmt(rho_liq,1)} kg/m³</span></div>
+      <div class="rrow"><span class="rl">Souders-Brown K</span><span class="rv">${fmt(K,3)} ft/s (${orient==='V'?'vertical':'horizontal'}, ${foam} foam)</span></div>
+      <div class="rrow"><span class="rl">Allowable gas velocity</span><span class="rv">${fmt(v_allow_ms,2)} m/s</span></div>
+      <div class="rrow"><span class="rl">Actual gas velocity</span><span class="rv" style="color:${gasOK?'var(--green)':'var(--red)'}">${fmt(v_gas_actual_ms,2)} m/s ${gasOK?'✓':'✗'}</span></div>
+      <div class="rrow"><span class="rl">Effective length factor</span><span class="rv">${fmt(Leff_factor,2)} (foam ${foam}, emulsion ${emul})</span></div>
+      <div class="rrow"><span class="rl">Liquid holdup volume</span><span class="rv">${fmt(V_liq_m3,2)} m³ (${fmt(V_liq_m3*6.2898,1)} bbls)</span></div>
+      <div class="rrow"><span class="rl">Oil retention</span><span class="rv" style="color:${oilRetOK?'var(--green)':'var(--red)'}">${isFinite(retOil_min)?fmt(retOil_min,1)+' min':'—'} (target ${retTargets.oil})</span></div>
+      ${service>=3?`<div class="rrow"><span class="rl">Water retention</span><span class="rv" style="color:${watRetOK?'var(--green)':'var(--red)'}">${isFinite(retWat_min)?fmt(retWat_min,1)+' min':'—'} (target ${retTargets.water})</span></div>`:''}
+    </div>
+    <div class="rbox" style="margin-top:10px">
+      <div class="rbox-title">Outlet Velocity Checks</div>
+      <table class="dtable">
+        <tr><th>Outlet</th><th>Size</th><th>Lines</th><th>Velocity vs user limit</th><th>API RP 14E erosional</th></tr>
+        ${outletRows}
+      </table>
     </div>`;
 };
 
