@@ -482,18 +482,24 @@
             <div class="nav-btn" data-p="aga3"><span class="nav-icon">&#9881;</span><span>AGA-3 Gas Metering</span></div>
             <div class="nav-btn" data-p="choke"><span class="nav-icon">&#9879;</span><span>Dual Choke</span></div>
             <div class="nav-btn" data-p="chokeflow"><span class="nav-icon">&#9673;</span><span>Choke Flow Rates</span></div>
-            <div class="nav-btn" data-p="sep"><span class="nav-icon">&#9644;</span><span>Separator Retention</span></div>
+            <div class="nav-btn" data-p="chokecnv"><span class="nav-icon">&#8646;</span><span>Choke Conversions</span></div>
             <div class="nav-btn" data-p="bottomsup"><span class="nav-icon">&#8987;</span><span>Bottoms Up Time</span></div>
-            <div class="nav-btn" data-p="solgor"><span class="nav-icon">&#9683;</span><span>Solution GOR</span></div>
-            <div class="nav-btn" data-p="oilgas"><span class="nav-icon">&#9878;</span><span>Oil & Gas Rate</span></div>
             <div class="nav-btn" data-p="mcfshr"><span class="nav-icon">&#9632;</span><span>MCF & Shrinkage %</span></div>
             <div class="nav-btn" data-p="casing"><span class="nav-icon">&#9674;</span><span>Casing & Tubing</span></div>
             <div class="nav-btn" data-p="wts"><span class="nav-icon">&#9733;</span><span>Well Test Simulator</span></div>
         </div>
         <div class="nav-group">
-            <div class="nav-group-label">Production Analysis</div>
+            <div class="nav-group-label">Production & Reservoir</div>
+            <div class="nav-btn" data-p="oilgas"><span class="nav-icon">&#9878;</span><span>Oil & Gas Rate</span></div>
+            <div class="nav-btn" data-p="solgor"><span class="nav-icon">&#9683;</span><span>Solution GOR</span></div>
             <div class="nav-btn" data-p="dca"><span class="nav-icon">&#9660;</span><span>DCA — Decline Curves</span></div>
             <div class="nav-btn" data-p="pta"><span class="nav-icon">&#9654;</span><span>PTA — Pressure Analysis</span></div>
+        </div>
+        <div class="nav-group">
+            <div class="nav-group-label">Separation & Vessels</div>
+            <div class="nav-btn" data-p="sep"><span class="nav-icon">&#9644;</span><span>Separator Retention</span></div>
+            <div class="nav-btn" data-p="seprate"><span class="nav-icon">&#9638;</span><span>Separator Rating</span></div>
+            <div class="nav-btn" data-p="sephand"><span class="nav-icon">&#9707;</span><span>Separator Handling</span></div>
         </div>
         <div class="nav-group">
             <div class="nav-group-label">Safety & Process</div>
@@ -504,27 +510,27 @@
             <div class="nav-btn" data-p="arc"><span class="nav-icon">&#8635;</span><span>ARC Valve Sizing</span></div>
         </div>
         <div class="nav-group">
-            <div class="nav-group-label">Engineering</div>
-            <div class="nav-btn" data-p="pumpsz"><span class="nav-icon">&#9955;</span><span>Pump Sizing</span></div>
-            <div class="nav-btn" data-p="seprate"><span class="nav-icon">&#9638;</span><span>Separator Rating</span></div>
-            <div class="nav-btn" data-p="sephand"><span class="nav-icon">&#9707;</span><span>Separator Handling</span></div>
-            <div class="nav-btn" data-p="heater"><span class="nav-icon">&#9832;</span><span>Indirect Heater</span></div>
+            <div class="nav-group-label">Process Equipment</div>
             <div class="nav-btn" data-p="pipesz"><span class="nav-icon">&#9472;</span><span>Pipe Sizing</span></div>
+            <div class="nav-btn" data-p="pumpsz"><span class="nav-icon">&#9955;</span><span>Pump Sizing</span></div>
             <div class="nav-btn" data-p="turbmeter"><span class="nav-icon">&#9201;</span><span>Turbine Meter</span></div>
+            <div class="nav-btn" data-p="heater"><span class="nav-icon">&#9832;</span><span>Indirect Heater</span></div>
             <div class="nav-btn" data-p="aircomp"><span class="nav-icon">&#9729;</span><span>Air Compressor</span></div>
+        </div>
+        <div class="nav-group">
+            <div class="nav-group-label">Electrical</div>
             <div class="nav-btn" data-p="gensz"><span class="nav-icon">&#9889;</span><span>Generator Sizing</span></div>
             <div class="nav-btn" data-p="cablesz"><span class="nav-icon">&#9866;</span><span>Cable Sizing</span></div>
             <div class="nav-btn" data-p="vdrop"><span class="nav-icon">&#8615;</span><span>Voltage Drop</span></div>
+            <div class="nav-btn" data-p="elec"><span class="nav-icon">&#9889;</span><span>Electrical & Pumps</span></div>
         </div>
         <div class="nav-group">
-            <div class="nav-group-label">Field Calculations</div>
+            <div class="nav-group-label">Fluid & Field Calcs</div>
             <div class="nav-btn" data-p="gascalc"><span class="nav-icon">&#9671;</span><span>Gas Calculations</span></div>
             <div class="nav-btn" data-p="fluid"><span class="nav-icon">&#9679;</span><span>Fluid Properties</span></div>
             <div class="nav-btn" data-p="tank"><span class="nav-icon">&#9645;</span><span>Tank Calculator</span></div>
-            <div class="nav-btn" data-p="elec"><span class="nav-icon">&#9889;</span><span>Electrical & Pumps</span></div>
             <div class="nav-btn" data-p="chem"><span class="nav-icon">&#9883;</span><span>Chemical & Dosage</span></div>
             <div class="nav-btn" data-p="units"><span class="nav-icon">&#8644;</span><span>Unit Conversions</span></div>
-            <div class="nav-btn" data-p="chokecnv"><span class="nav-icon">&#8646;</span><span>Choke Conversions</span></div>
             <div class="nav-btn" data-p="analogsig"><span class="nav-icon">&#8766;</span><span>Analog Signal</span></div>
         </div>
         <div class="sidebar-footer"><strong>H2Oil Engineering</strong>software@h2oil.co.uk</div>
@@ -779,41 +785,53 @@ function renderHome(body) {
     $('pgTitle').textContent='Dashboard';
     $('pgSub').textContent='Select a module to get started';
     const grid = el('div','dash-grid');
+    // Tile order matches the sidebar groups so the dashboard reads like
+    // a visual table of contents. Badges = sidebar group names (colour
+    // pills consistent with the group convention: green=well/production,
+    // orange=safety/process, blue=electrical/utility).
     const mods = [
-        { id:'aga3', icon:'&#9881;', badge:'Metering', bc:'dc-b-orange', title:'AGA-3 Gas Rate Calculator', desc:'Orifice meter gas flow rate per AGA Report No.3 / API 14.3 with Z-factor and discharge coefficient.' },
-        { id:'units', icon:'&#8644;', badge:'Utility', bc:'dc-b-blue', title:'Unit Conversions', desc:'10 categories: gas/liquid flow, pressure, temperature, length, density, viscosity, volume, energy, mass.' },
-        { id:'choke', icon:'&#9879;', badge:'Production', bc:'dc-b-green', title:'Dual Choke Calculation', desc:'Intermediate pressure, equivalent choke sizing, critical flow check and Gilbert correlation.' },
-        { id:'flare', icon:'&#9632;', badge:'Safety', bc:'dc-b-orange', title:'Flare Simulation', desc:'Interactive flare model with thermal radiation zones per API 521. Import drawings as background.' },
-        { id:'dca', icon:'&#9660;', badge:'Reservoir', bc:'dc-b-green', title:'DCA Quick Run', desc:'Arps (exp/hyp/harmonic), Duong, and Stretched Exponential decline models with EUR forecast.' },
-        { id:'pta', icon:'&#9654;', badge:'Reservoir', bc:'dc-b-green', title:'PTA Analysis', desc:'Horner plot, log-log diagnostic with Bourdet derivative, and superposition time analysis.' },
-        { id:'prv', icon:'&#9651;', badge:'Safety', bc:'dc-b-orange', title:'PRV / Relief Sizing', desc:'API 520 Part I orifice area sizing for gas/vapor, steam, and liquid service. Critical/subcritical flow, correction factors, and standard API 526 orifice selection.' },
-        { id:'chokeflow', icon:'&#9673;', badge:'Production', bc:'dc-b-green', title:'Choke Flow Rates', desc:'Gas rate through fixed choke (coefficient method) and oil rate using Gilbert & Ros equations.' },
-        { id:'gascalc', icon:'&#9671;', badge:'Production', bc:'dc-b-green', title:'Gas Calculations', desc:'Gas velocity, gas volume, gas gradient and downhole pressure calculations.' },
-        { id:'fluid', icon:'&#9679;', badge:'Reservoir', bc:'dc-b-blue', title:'Fluid Properties', desc:'API gravity correction to 60°F, bubble point estimation, and shrinkage factor.' },
-        { id:'tank', icon:'&#9645;', badge:'Utility', bc:'dc-b-blue', title:'Tank Calculator', desc:'Rectangular & cylindrical tank volumes, fluid levels, and flow rate from tank readings.' },
-        { id:'vessel', icon:'&#9641;', badge:'Safety', bc:'dc-b-orange', title:'Vessel / Pipe', desc:'ASME pressure vessel minimum wall thickness for shells and 2:1 elliptical heads.' },
-        { id:'elec', icon:'&#9889;', badge:'Utility', bc:'dc-b-blue', title:'Electrical & Pumps', desc:'3-phase motor current, kW/HP conversion, and mud pump output calculations.' },
-        { id:'chem', icon:'&#9883;', badge:'Production', bc:'dc-b-green', title:'Chemical & Dosage', desc:'Chemical injection rate calculator and argentometric chloride determination.' },
-        { id:'sep', icon:'&#9644;', badge:'Production', bc:'dc-b-green', title:'Separator Retention', desc:'Estimate retention time in separator based on capacity, fluid level, and flow rate.' },
-        { id:'bottomsup', icon:'&#8987;', badge:'Well Testing', bc:'dc-b-green', title:'Bottoms Up Time', desc:'Calculate circulation time for fluid returns based on flow rate and tubing volume.' },
-        { id:'solgor', icon:'&#9683;', badge:'Reservoir', bc:'dc-b-blue', title:'Solution GOR', desc:'Standing and Vasquez & Beggs correlations for solution gas-oil ratio estimation.' },
-        { id:'oilgas', icon:'&#9878;', badge:'Well Testing', bc:'dc-b-green', title:'Oil & Gas Rate + GOR', desc:'Combined oil and gas rate calculation with VCF correction, GOR, and condensate ratio.' },
-        { id:'mcfshr', icon:'&#9632;', badge:'Well Testing', bc:'dc-b-green', title:'MCF & Shrinkage %', desc:'Meter Correction Factor and shrinkage percentage from turbine meter and surge tank readings.' },
-        { id:'casing', icon:'&#9674;', badge:'Well Testing', bc:'dc-b-green', title:'Casing & Tubing', desc:'Casing and tubing dimensions, annular capacity, and total volume calculations.' },
-        { id:'chokecnv', icon:'&#8646;', badge:'Utility', bc:'dc-b-blue', title:'Choke Conversions', desc:'Convert choke sizes between 64ths, decimal inches, and millimeters.' },
-        { id:'analogsig', icon:'&#8766;', badge:'Utility', bc:'dc-b-blue', title:'Analog Signal', desc:'Convert between 4-20 mA, 0-10 V, and process values for instrumentation.' },
-        { id:'pumpsz', icon:'&#9955;', badge:'Engineering', bc:'dc-b-orange', title:'Pump Sizing', desc:'Hydraulic pump sizing with TDH, NPSH analysis, power calculation, and pump type selection.' },
-        { id:'seprate', icon:'&#9638;', badge:'Engineering', bc:'dc-b-orange', title:'Separator Rating', desc:'Souders-Brown gas capacity check and liquid retention time verification.' },
-        { id:'sephand', icon:'&#9707;', badge:'Engineering', bc:'dc-b-orange', title:'Separator Handling', desc:'Full handling check: Souders-Brown gas, retention by emulsion, oil/water split, plus PCV/LCV/line/turbine outlet velocity verdict.' },
-        { id:'heater', icon:'&#9832;', badge:'Engineering', bc:'dc-b-orange', title:'Indirect Heater', desc:'Water bath heater duty calculation, fuel consumption, and heater category selection.' },
-        { id:'pipesz', icon:'&#9472;', badge:'Engineering', bc:'dc-b-orange', title:'Pipe Sizing', desc:'Pipe selection based on velocity criteria and Darcy-Weisbach pressure drop.' },
-        { id:'flamearr', icon:'&#9650;', badge:'Safety', bc:'dc-b-orange', title:'Flame Arrestor', desc:'Flame arrestor NPS selection based on flow capacity and allowable pressure drop.' },
-        { id:'arc', icon:'&#8635;', badge:'Safety', bc:'dc-b-orange', title:'ARC Valve Sizing', desc:'Automatic recirculation valve sizing for centrifugal pump minimum flow protection.' },
-        { id:'turbmeter', icon:'&#9201;', badge:'Engineering', bc:'dc-b-orange', title:'Turbine Meter', desc:'Liquid turbine meter sizing with Reynolds number and cavitation checks per API MPMS 5.3.' },
-        { id:'aircomp', icon:'&#9729;', badge:'Engineering', bc:'dc-b-blue', title:'Air Compressor', desc:'Compressor type selection and receiver sizing for instrument and utility air systems.' },
-        { id:'gensz', icon:'&#9889;', badge:'Engineering', bc:'dc-b-orange', title:'Generator Sizing', desc:'Generator kVA rating based on running loads and worst-case motor starting scenarios.' },
-        { id:'cablesz', icon:'&#9866;', badge:'Electrical', bc:'dc-b-blue', title:'Cable Sizing', desc:'Copper cable selection based on ampacity derating and voltage drop limits.' },
-        { id:'vdrop', icon:'&#8615;', badge:'Electrical', bc:'dc-b-blue', title:'Voltage Drop', desc:'Verify voltage drop for copper or aluminium cable installations with status assessment.' },
+        // ─── Well Testing ───
+        { id:'aga3',      icon:'&#9881;',  badge:'Well Testing', bc:'dc-b-green',  title:'AGA-3 Gas Rate Calculator', desc:'Orifice meter gas flow rate per AGA Report No.3 / API 14.3 with Z-factor and discharge coefficient.' },
+        { id:'choke',     icon:'&#9879;',  badge:'Well Testing', bc:'dc-b-green',  title:'Dual Choke Calculation', desc:'Intermediate pressure, equivalent choke sizing, critical flow check and Gilbert correlation.' },
+        { id:'chokeflow', icon:'&#9673;',  badge:'Well Testing', bc:'dc-b-green',  title:'Choke Flow Rates', desc:'Gas rate through fixed choke (coefficient method) and oil rate using Gilbert & Ros equations.' },
+        { id:'chokecnv',  icon:'&#8646;',  badge:'Well Testing', bc:'dc-b-green',  title:'Choke Conversions', desc:'Convert choke sizes between 64ths, decimal inches, and millimeters.' },
+        { id:'bottomsup', icon:'&#8987;',  badge:'Well Testing', bc:'dc-b-green',  title:'Bottoms Up Time', desc:'Calculate circulation time for fluid returns based on flow rate and tubing volume.' },
+        { id:'mcfshr',    icon:'&#9632;',  badge:'Well Testing', bc:'dc-b-green',  title:'MCF & Shrinkage %', desc:'Meter Correction Factor and shrinkage percentage from turbine meter and surge tank readings.' },
+        { id:'casing',    icon:'&#9674;',  badge:'Well Testing', bc:'dc-b-green',  title:'Casing & Tubing', desc:'Casing and tubing dimensions, annular capacity, and total volume calculations.' },
+        { id:'wts',       icon:'&#9733;',  badge:'Well Testing', bc:'dc-b-green',  title:'Well Test Simulator', desc:'Full surface flow tree: Wellhead → SSV → Choke → Heater → Separator → Flare with live P, T and velocity.' },
+        // ─── Production & Reservoir ───
+        { id:'oilgas',    icon:'&#9878;',  badge:'Production',   bc:'dc-b-green',  title:'Oil & Gas Rate + GOR', desc:'Combined oil and gas rate calculation with VCF correction, GOR, and condensate ratio.' },
+        { id:'solgor',    icon:'&#9683;',  badge:'Production',   bc:'dc-b-green',  title:'Solution GOR', desc:'Standing and Vasquez & Beggs correlations for solution gas-oil ratio estimation.' },
+        { id:'dca',       icon:'&#9660;',  badge:'Reservoir',    bc:'dc-b-green',  title:'DCA Quick Run', desc:'Arps (exp/hyp/harmonic), Duong, and Stretched Exponential decline models with EUR forecast.' },
+        { id:'pta',       icon:'&#9654;',  badge:'Reservoir',    bc:'dc-b-green',  title:'PTA Analysis', desc:'Horner plot, log-log diagnostic with Bourdet derivative, and superposition time analysis.' },
+        // ─── Separation & Vessels ───
+        { id:'sep',       icon:'&#9644;',  badge:'Separation',   bc:'dc-b-orange', title:'Separator Retention', desc:'Estimate retention time in separator based on capacity, fluid level, and flow rate.' },
+        { id:'seprate',   icon:'&#9638;',  badge:'Separation',   bc:'dc-b-orange', title:'Separator Rating', desc:'Souders-Brown gas capacity check and liquid retention time verification.' },
+        { id:'sephand',   icon:'&#9707;',  badge:'Separation',   bc:'dc-b-orange', title:'Separator Handling', desc:'Full handling check: Souders-Brown gas, retention by emulsion, oil/water split, plus PCV/LCV/line/turbine outlet velocity verdict.' },
+        // ─── Safety & Process ───
+        { id:'flare',     icon:'&#9632;',  badge:'Safety',       bc:'dc-b-orange', title:'Flare Simulation', desc:'Interactive flare model with thermal radiation zones per API 521. Import drawings as background.' },
+        { id:'prv',       icon:'&#9651;',  badge:'Safety',       bc:'dc-b-orange', title:'PRV / Relief Sizing', desc:'API 520 Part I orifice area sizing for gas/vapor, steam, and liquid service. API 526 orifice selection.' },
+        { id:'vessel',    icon:'&#9641;',  badge:'Safety',       bc:'dc-b-orange', title:'Vessel / Pipe', desc:'ASME pressure vessel minimum wall thickness for shells and 2:1 elliptical heads.' },
+        { id:'flamearr',  icon:'&#9650;',  badge:'Safety',       bc:'dc-b-orange', title:'Flame Arrestor', desc:'Flame arrestor NPS selection based on flow capacity and allowable pressure drop.' },
+        { id:'arc',       icon:'&#8635;',  badge:'Safety',       bc:'dc-b-orange', title:'ARC Valve Sizing', desc:'Automatic recirculation valve sizing for centrifugal pump minimum flow protection.' },
+        // ─── Process Equipment ───
+        { id:'pipesz',    icon:'&#9472;',  badge:'Process',      bc:'dc-b-orange', title:'Pipe Sizing', desc:'Pipe selection based on velocity criteria and Darcy-Weisbach pressure drop.' },
+        { id:'pumpsz',    icon:'&#9955;',  badge:'Process',      bc:'dc-b-orange', title:'Pump Sizing', desc:'Hydraulic pump sizing with TDH, NPSH analysis, power calculation, and pump type selection.' },
+        { id:'turbmeter', icon:'&#9201;',  badge:'Process',      bc:'dc-b-orange', title:'Turbine Meter', desc:'Liquid turbine meter sizing with Reynolds number and cavitation checks per API MPMS 5.3.' },
+        { id:'heater',    icon:'&#9832;',  badge:'Process',      bc:'dc-b-orange', title:'Indirect Heater', desc:'Water bath heater duty calculation, fuel consumption, and heater category selection.' },
+        { id:'aircomp',   icon:'&#9729;',  badge:'Process',      bc:'dc-b-orange', title:'Air Compressor', desc:'Compressor type selection and receiver sizing for instrument and utility air systems.' },
+        // ─── Electrical ───
+        { id:'gensz',     icon:'&#9889;',  badge:'Electrical',   bc:'dc-b-blue',   title:'Generator Sizing', desc:'Generator kVA rating based on running loads and worst-case motor starting scenarios.' },
+        { id:'cablesz',   icon:'&#9866;',  badge:'Electrical',   bc:'dc-b-blue',   title:'Cable Sizing', desc:'Copper cable selection based on ampacity derating and voltage drop limits.' },
+        { id:'vdrop',     icon:'&#8615;',  badge:'Electrical',   bc:'dc-b-blue',   title:'Voltage Drop', desc:'Verify voltage drop for copper or aluminium cable installations with status assessment.' },
+        { id:'elec',      icon:'&#9889;',  badge:'Electrical',   bc:'dc-b-blue',   title:'Electrical & Pumps', desc:'3-phase motor current, kW/HP conversion, and mud pump output calculations.' },
+        // ─── Fluid & Field Calcs ───
+        { id:'gascalc',   icon:'&#9671;',  badge:'Field Calc',   bc:'dc-b-blue',   title:'Gas Calculations', desc:'Gas velocity, gas volume, gas gradient and downhole pressure calculations.' },
+        { id:'fluid',     icon:'&#9679;',  badge:'Field Calc',   bc:'dc-b-blue',   title:'Fluid Properties', desc:'API gravity correction to 60°F, bubble point estimation, and shrinkage factor.' },
+        { id:'tank',      icon:'&#9645;',  badge:'Field Calc',   bc:'dc-b-blue',   title:'Tank Calculator', desc:'Rectangular & cylindrical tank volumes, fluid levels, and flow rate from tank readings.' },
+        { id:'chem',      icon:'&#9883;',  badge:'Field Calc',   bc:'dc-b-blue',   title:'Chemical & Dosage', desc:'Chemical injection rate calculator and argentometric chloride determination.' },
+        { id:'units',     icon:'&#8644;',  badge:'Field Calc',   bc:'dc-b-blue',   title:'Unit Conversions', desc:'10 categories: gas/liquid flow, pressure, temperature, length, density, viscosity, volume, energy, mass.' },
+        { id:'analogsig', icon:'&#8766;',  badge:'Field Calc',   bc:'dc-b-blue',   title:'Analog Signal', desc:'Convert between 4-20 mA, 0-10 V, and process values for instrumentation.' },
     ];
     mods.forEach(m => {
         const c = el('div','dash-card',`<div class="dc-icon">${m.icon}</div><span class="dc-badge ${m.bc}">${m.badge}</span><h3>${m.title}</h3><p>${m.desc}</p>`);
