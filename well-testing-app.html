@@ -10943,34 +10943,76 @@ function PRiSM_plot_bourdet(canvas, data, opts) {
         const tr = PRiSM_plot_axes(ctx, plot, scaleX, scaleY, {
             title: opts.title || 'Log-Log Bourdet Derivative'
         });
-        // Slope guides (dashed, very faint) — always informative
+        // ── Slope guides ─────────────────────────────────────────────
+        // Anchored to the ACTUAL DATA so the user can see at a glance
+        // whether each regime is present:
+        //   • WBS (slope 1) line passes through the EARLIEST derivative
+        //     point — if the data follows it for a decade, that's WBS.
+        //   • Radial (slope 0) line passes through the LATE-TIME derivative
+        //     stabilisation level — should be flat where the data is flat.
+        //   • Linear (½) and bilinear (¼) anchored at the geometric mean
+        //     of the derivative range (intermediate regimes — user moves
+        //     mentally to see if any data segment lies along them).
         ctx.save();
         PRiSM_plot_clip(ctx, plot.x, plot.y, plot.w, plot.h);
-        const slopes = [
-            { m: 1.0, label: 'WBS (slope 1)',     color: 'rgba(248,81,73,0.40)' },
-            { m: 0.5, label: 'Linear (slope ½)',  color: 'rgba(210,153,34,0.40)' },
-            { m: 0.25, label: 'Bilinear (¼)',     color: 'rgba(188,140,255,0.35)' },
-            { m: 0.0, label: 'Radial (slope 0)',  color: 'rgba(63,185,80,0.40)' }
+
+        // Compute anchor points from the actual data derivative.
+        var earlyAnchor = null, lateAnchor = null;
+        if (drPts.length >= 2) {
+            // First valid derivative point = WBS anchor.
+            earlyAnchor = { x: drPts[0][0], y: drPts[0][1] };
+            // Late-time stabilisation = arithmetic mean of last 25% of
+            // derivative points (in log space, since the derivative is
+            // log-distributed at late time).
+            var nLate = Math.max(2, Math.floor(drPts.length * 0.25));
+            var sumLog = 0;
+            for (var li = drPts.length - nLate; li < drPts.length; li++) {
+                sumLog += Math.log(drPts[li][1]);
+            }
+            lateAnchor = {
+                x: drPts[Math.max(0, drPts.length - Math.floor(nLate / 2)) - 1][0],
+                y: Math.exp(sumLog / nLate)
+            };
+        }
+        var midX = Math.sqrt(scaleX.min * scaleX.max);
+        var midY = Math.sqrt(scaleY.min * scaleY.max);
+
+        var slopes = [
+            { m: 1.0,  label: 'WBS (slope 1)',     color: 'rgba(248,81,73,0.55)',
+              anchor: earlyAnchor || { x: scaleX.min, y: midY } },
+            { m: 0.5,  label: 'Linear (slope ½)',  color: 'rgba(210,153,34,0.40)',
+              anchor: { x: midX, y: midY } },
+            { m: 0.25, label: 'Bilinear (¼)',      color: 'rgba(188,140,255,0.35)',
+              anchor: { x: midX, y: midY * 0.6 } },
+            { m: 0.0,  label: 'Radial (slope 0)',  color: 'rgba(63,185,80,0.55)',
+              anchor: lateAnchor || { x: scaleX.max, y: midY } }
         ];
-        // Anchor at left-mid of plot
-        const xA = scaleX.min, yMid = Math.sqrt(scaleY.min * scaleY.max);
-        slopes.forEach(s => {
-            const x1 = scaleX.max;
-            const y1 = yMid * Math.pow(x1 / xA, s.m);
+        slopes.forEach(function (s) {
+            // y = anchor.y * (x / anchor.x)^m  in log-log space.
+            var xL = scaleX.min, xR = scaleX.max;
+            var yL = s.anchor.y * Math.pow(xL / s.anchor.x, s.m);
+            var yR = s.anchor.y * Math.pow(xR / s.anchor.x, s.m);
             ctx.strokeStyle = s.color;
-            ctx.lineWidth = 1.2;
-            ctx.setLineDash([4, 4]);
+            ctx.lineWidth = (s.m === 1.0 || s.m === 0.0) ? 1.5 : 1.0;
+            ctx.setLineDash([5, 4]);
             ctx.beginPath();
-            ctx.moveTo(tr.toX(xA), tr.toY(yMid));
-            ctx.lineTo(tr.toX(x1), tr.toY(y1));
+            ctx.moveTo(tr.toX(xL), tr.toY(yL));
+            ctx.lineTo(tr.toX(xR), tr.toY(yR));
             ctx.stroke();
             ctx.setLineDash([]);
-            // Tiny label
-            ctx.fillStyle = s.color.replace(/0\.[34]0?\)/, '0.85)');
+            // Anchor marker (small circle) so the user sees where the line is pinned.
+            if (s.anchor && (earlyAnchor || lateAnchor) && (s.m === 1.0 || s.m === 0.0)) {
+                ctx.fillStyle = s.color.replace(/0\.\d+\)/, '0.95)');
+                ctx.beginPath();
+                ctx.arc(tr.toX(s.anchor.x), tr.toY(s.anchor.y), 3, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            // Label at right edge.
+            ctx.fillStyle = s.color.replace(/0\.\d+\)/, '0.95)');
             ctx.font = '9px sans-serif';
             ctx.textAlign = 'right';
             ctx.textBaseline = 'bottom';
-            const ly = Math.max(plot.y + 2, Math.min(plot.y + plot.h - 2, tr.toY(y1)));
+            var ly = Math.max(plot.y + 2, Math.min(plot.y + plot.h - 2, tr.toY(yR)));
             ctx.fillText(s.label, plot.x + plot.w - 4, ly - 2);
         });
         ctx.restore();
@@ -12100,7 +12142,8 @@ function PRiSM_renderPlotsTab() {
                         (st.modelCurve ? 'checked' : 'disabled') + '>' +
                     '<span>Show model overlay</span>' +
                 '</label>' +
-                '<span style="font-size:11px; color:var(--text3); margin-left:auto;">Drag a rectangle to zoom · click ⟳ Reset view to fit all data</span>' +
+                '<button class="btn btn-secondary" id="prism_plot_autofit" title="Reset match shifts and auto-align the model curve to the data range">⌖ Auto-fit overlay</button>' +
+                '<span style="font-size:11px; color:var(--text3); margin-left:auto;">Drag rectangle = zoom · ⟳ Reset view · ⌖ Auto-fit re-aligns the model</span>' +
                 '<label id="prism_plot_period_lbl" style="font-size:12px; color:var(--text2); display:none; align-items:center; gap:6px;">' +
                     '<span>Period</span>' +
                     '<select id="prism_plot_period" style="padding:6px 10px; background:var(--bg1); color:var(--text); border:1px solid var(--border); border-radius:4px;"></select>' +
@@ -12157,6 +12200,33 @@ function PRiSM_renderPlotsTab() {
             try { delete c._prismAxes; }          catch (_) { c._prismAxes = null; }
         }
         PRiSM_drawActivePlot();
+    };
+
+    // Auto-fit overlay — reset match shifts to 0, enable overlay if a
+    // model curve exists, then redraw. The dispatch in PRiSM_drawActivePlot
+    // sees timeShift===0 && pressShift===0 and auto-computes shifts that
+    // align the model with the data range.
+    var autofitBtn = $('prism_plot_autofit');
+    if (autofitBtn) autofitBtn.onclick = function () {
+        if (!st.modelCurve) {
+            // Try to seed a model curve from the active model + current params.
+            try {
+                var td = (typeof PRiSM_logspace === 'function') ? PRiSM_logspace(-3, 4, 120) : null;
+                if (td) {
+                    st.modelCurve = PRiSM_evalModelCurve(st.model, st.params, td);
+                }
+            } catch (_e) { /* nothing */ }
+        }
+        if (!st.modelCurve) {
+            $('prism_plot_msg').innerHTML = '<span style="color:var(--orange);">Pick a model on Tab 3 first.</span>';
+            return;
+        }
+        st.match.timeShift = 0;
+        st.match.pressShift = 0;
+        var ovChk = $('prism_plot_overlay');
+        if (ovChk) { ovChk.disabled = false; ovChk.checked = true; }
+        PRiSM_drawActivePlot();
+        $('prism_plot_msg').innerHTML = '<span style="color:var(--green);">Overlay auto-aligned. Tab 5 (Match) shows the computed shifts; refine there.</span>';
     };
 
     $('prism_plot_bourdet_btn').onclick = function () {
@@ -12239,9 +12309,60 @@ function PRiSM_drawActivePlot() {
     var overlayChk = $('prism_plot_overlay');
     if (overlayChk && overlayChk.checked && st.modelCurve) {
         var c = st.modelCurve;
-        // Apply current match shifts so the overlay tracks the visual match.
-        var shifted = PRiSM_applyMatch(c.td, c.pd, st.match.timeShift, st.match.pressShift);
+        // ── Auto-fit on first overlay ─────────────────────────────────
+        // The model curve is in dimensionless (td, pwd). The data is in
+        // real (hours, psi). Without a shift they don't overlay at all.
+        // If the user hasn't manually adjusted the match shifts (Tab 5),
+        // compute auto-shifts that align the model's overall (t, Δp) range
+        // with the data's range, in log-log space. This makes the overlay
+        // immediately useful — the user can see whether the SHAPES match
+        // (WBS hump position, radial stabilisation level) without dragging.
+        var dt = st.match.timeShift, dp = st.match.pressShift;
+        var autoApplied = false;
+        if (dt === 0 && dp === 0 && c.td && c.td.length > 1) {
+            var dpData = ds.p.map(function (v) { return Math.abs(v - ds.p[0]); });
+            var tDataPos = [], pDataPos = [];
+            for (var ki = 0; ki < ds.t.length; ki++) {
+                if (ds.t[ki] > 0 && dpData[ki] > 0 && isFinite(dpData[ki])) {
+                    tDataPos.push(ds.t[ki]);
+                    pDataPos.push(dpData[ki]);
+                }
+            }
+            var modelPwdPos = [];
+            for (var kj = 0; kj < c.pd.length; kj++) {
+                if (c.pd[kj] > 0 && isFinite(c.pd[kj])) modelPwdPos.push(c.pd[kj]);
+            }
+            if (tDataPos.length > 1 && modelPwdPos.length > 1) {
+                // Match centre of data t-range to centre of model td-range
+                // (geometric mean since axes are log).
+                var tDataCentre = Math.sqrt(tDataPos[0] * tDataPos[tDataPos.length - 1]);
+                var tdModelCentre = Math.sqrt(c.td[0] * c.td[c.td.length - 1]);
+                dt = Math.log10(tDataCentre / tdModelCentre);
+                // Match late-time pressure level (radial stabilisation).
+                var nLate = Math.max(2, Math.floor(pDataPos.length * 0.25));
+                var pDataLate = 0;
+                for (var lk = pDataPos.length - nLate; lk < pDataPos.length; lk++) pDataLate += pDataPos[lk];
+                pDataLate /= nLate;
+                var pwdLate = modelPwdPos[modelPwdPos.length - 1];
+                dp = pDataLate - pwdLate;
+                autoApplied = true;
+            }
+        }
+        var shifted = PRiSM_applyMatch(c.td, c.pd, dt, dp);
         data.overlay = { t: shifted.t, p: shifted.p };
+        if (c.pdPrime && c.pdPrime.length === c.td.length) {
+            // Also shift the model derivative so the overlay's Δp' shows.
+            var shiftedPrime = PRiSM_applyMatch(c.td, c.pdPrime, dt, dp);
+            data.overlay.dp = shiftedPrime.p;
+        }
+        if (autoApplied) {
+            // Stash the computed shifts so Tab 5 reflects them and the
+            // user can see / refine them. Don't overwrite if user already
+            // dragged — the dt===0 && dp===0 guard above ensures we only
+            // touch them on first overlay.
+            st.match.timeShift = dt;
+            st.match.pressShift = dp;
+        }
     }
 
     var opts = {
