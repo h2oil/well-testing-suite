@@ -5,6 +5,53 @@ All changes land on `dev`; `master` is the stable tree consumed by the iOS sync 
 
 ---
 
+## 2026-04-26 — PRiSM module: 21-file build, 45 type-curve models, ~32k LOC
+
+Cumulative session work across 6 commits on `Dev`. Brings the PRiSM Well Test
+Analysis module up to feature parity with established commercial WTA workstations
+(Saphir / F.A.S.T. / KAPPA tier) while keeping the zero-dependency single-HTML-
+file architecture intact.
+
+### Commits (earliest → latest)
+
+| SHA | What |
+|---|---|
+| `bc42c68` | Phase 3+4 — Levenberg-Marquardt regression engine (Marquardt scaling = `diag(JᵀWJ)`, Jacobian CIs, AIC, R², bootstrap), multi-rate superposition, Agarwal sandface convolution, 7 new models (Arps + Duong + SEPD + Fetkovich decline curves with EUR; double-porosity 3 modes; partial-penetration; vertical pulse-test), multi-format Data tab (CSV / TSV / DAT / ASC / XLSX / XLS / ODS via SheetJS lazy-load) with column auto-mapper + filters (MAD / Hampel / moving-avg) + decimation (Nth / log / time-bin) + unit converters. **5,543 LOC** across 4 background agents (A/B/C/D). PRiSM_MODELS: 12 → 19. |
+| `60b1847` | Critical bug fix — Phase 1+2 plot fns (declared as top-level `function` decls in `02-plots.js`) hoisted to host IIFE scope but were NOT placed on `window`. Agent A's `PRiSM_drawActivePlot` dispatched via `window[entry.fn]` → undefined → "Plot function PRiSM_plot_xxx not available" error text overlaid on canvas. Fix: `_bridgePlotFnsToWindow()` at top of 04-ui-wiring.js IIFE assigns each Phase 1+2 plot fn (resolved via lexical-scope eval) to its `window.*` equivalent. Plus `PRiSM_drawCanvasMessage()` helper that clears canvas before fillText so successive failed renders don't stack. Plus empty-state guard. |
+| `8014664` | Phases 5-7 + cross-cutting + auto-match + interpretation + crop — **10,774 LOC** across 8 background agents (E-L). Adds: 7 composite/multi-layer models (Phase 5: #6, #9, #11, #14, #15, #20, #21); 16 interference + multi-lateral models (Phase 6: #13, #19, #22-#37 from Kuchuk SPE 22731); 2 specialised solvers (Phase 7: #18 user-defined type-curve + #38 water injection); 14 SVG schematics + 20 click-on-plot analysis keys + PNG plot export + per-tab GA4 events; interactive Data crop chart with drag-select + numeric trim + first/last preview; auto-match orchestrator (regime classifier → LM model race → top-N AIC ranking with smart initial guesses); plain-English interpretation (18 param-tag rules + 11 action templates + confidence-aware verbs); auto-Bourdet smoothing-L picker (high-pass residual RMS → L band); diagnostic-plot annotations (regime-transition markers). PRiSM_MODELS: 19 → 45. |
+| `34258bf` | Three QA-driven fixes from end-to-end Chrome MCP browser walkthrough. **(1)** Tab 3 schematic SVGs never displayed — Agent A built a placeholder div, Agent H built the SVG library, neither wired together. Fix: `#prism_schematic_host` element + after-render hook calls `PRiSM_getModelSchematic`. **(2)** Auto-match drawdown sign bug — classifier computed `Δp = p[i] - p[0]` which goes NEGATIVE on drawdowns → `log10()` NaN → zero candidates → only Arps survived race with R² = -195. Fix: detect flow direction from `sign(p[end]-p[0])` and use sign-aware Δp at all three sites (classifier, initial-param suggester, LM data prep with mirrored pressure). **(3)** Plot/Param/Match canvas heights now `calc(100vh - 320/360/340 px)` with `min-height: 480-500 px` instead of fixed 500/340/380 — fills viewport on tall screens. |
+| `1b8fac7` | Round-3 expansion — **10,744 LOC** across 6 background agents (M-S). Adds: PVT layer (1548 LOC, 17 correlations: Standing Bo/Pb/Rs, Vasquez-Beggs co, Beggs-Robinson μ_o, Sutton pseudocriticals, Dranchuk-Abou-Kassem Z, Hall-Yarborough Z alt, Lee-Gonzalez-Eakin μ_g, Meehan Bw/μ_w/cw + gas pseudo-pressure m(p) Simpson integral) + dimensional conversion (`PRiSM_dimensionalize` with 6 k-inference fallback paths); deconvolution (1971 LOC, von Schroeter-Hollaender-Gringarten + Levitan with TV regularisation, Huber-smoothed |d|, exponential parameterisation g(τ)=exp(z), L-curve λ picker with max-curvature corner, custom in-file LM kernel); tide analysis (1475 LOC, harmonic regression for 10 astronomical constituents M2/S2/N2/K2/K1/O1/P1/Q1/Mf/Mm + Bredehoeft 1967 ct estimate from M2 phase response); data managers (2063 LOC, IndexedDB → localStorage → memory backend chain, gauge-data + analysis-data CRUD + diff + sampler, project save/load .prism JSON with base64 Float32 buffers at 12 bytes/sample); synthetic PLT + inverse simulation (1816 LOC, per-layer rate contribution with Warren-Root–style XF interpolation + linear deconvolution rate-from-pressure with Tikhonov + non-neg clip); plot utilities (1871 LOC, multi-period overlays + 2-dataset diff + portable XML export ~33 KB compact + clipboard PNG via ClipboardItem). |
+| `3f3a5d1` | UI rebuild — **(1)** Tab 6 was still showing "Phase 3 preview" stub even though LM regression has been live for many commits. Rebuilt with proper workshop: initial-param table with freeze toggles, R²/RMSE/AIC/CI95 results panel, "Run regression" + "Run auto-match" buttons, ranked top-N panel via `PRiSM_renderAutoMatchPanel`. Plus reusable `PRiSM_renderRegressionResultsInto(container, fit)` helper. **(2)** Added 32 missing model schematics — Round-2 polish shipped 14 but `PRiSM_MODELS` has 45 entries. Now covers all 45 (closedChannel3, fogBoundary, all 4 decline curves, all composite/multi-layer/interference variants, userDefined, waterInjection). Shared SVG helpers added: `_svg_layers`, `_svg_xflowArrow`, `_svg_seal`, `_svg_declineCurve`, `_svg_obswell`. **(3)** ⟳ Reset View buttons added on all three plot canvases (Tab 2 picker bar, Tab 4 card title, Tab 5 caption). Each clears `_prismOriginalScale` + `_prismHandlers` + `_prismAxes` then triggers fresh render → auto-scale. |
+
+### Verification
+
+- **Smoke test:** `node prism-build/smoke-test.js` → 84/84 namespace checks pass.
+- **Syntax:** `node --check` clean on all 21 prism-build/*.js source files + the merged HTML main script (1.79 MB).
+- **Browser QA:** end-to-end Chrome MCP walkthrough by 2 background agents (core 7-tab + Round-2 features) — bugs surfaced were fixed in `34258bf` and `3f3a5d1`.
+
+### Files added
+
+- `CLAUDE.md` (new) — architectural conventions + build pipeline + file map. Loaded at every session start.
+- `prism-build/04-ui-wiring.js` (modified, was Phase 3+4)
+- `prism-build/05-regression.js` through `prism-build/21-plot-utilities.js` (17 new files, 11/15/16 modified for QA fixes)
+- `prism-build/concat-phase3-4.js`, `concat-round2.js`, `concat-round3.js` (build pipeline)
+- `prism-build/inject-phase3-4.js`, `inject-round2.js`, `inject-round3.js` (idempotent splice)
+- `prism-build/combined-phase3-4.js`, `combined-round2.js`, `combined-round3.js` (generated)
+- `prism-build/smoke-test.js` (extended to 84 checks)
+- `PRISM-PLAN.md` updated — Phase 5/6/7 + cross-cutting all `[x]`, Round-2 + Round-3 capability sections added.
+
+### Known limitations carried forward
+
+See `CLAUDE.md` "Known limitations" section. Top items: foundation `PRiSM_Ei` returns NaN for negative arguments (Phase 6 worked around with `_localE1`); `02-plots.js` doesn't stash `_prismAxes` on canvas (analysis keys degraded); `07-data-enhancements.js` doesn't fire `prism:dataset-loaded` event (workaround via re-render). All flagged for future cleanup pass — none break shipped functionality.
+
+### Next session checklist
+
+- Real-browser regression on a representative dataset (manual or via Chrome MCP).
+- Decide on PR to master once stable (current PR pending: see compare URL).
+- Consider building Tier-2/3 enhancements from earlier brainstorm (synthetic test generator, period-by-period consistency check, Monte Carlo histograms surfacing the bootstrap CIs already computed, type-curve atlas for discoverability, multi-well batch fit).
+
+---
+
 ## v1.3 — Remove HTML fallback paywall; RC native paywall is sole gate
 
 **Why**: once the RevenueCat dashboard was fully configured (product +

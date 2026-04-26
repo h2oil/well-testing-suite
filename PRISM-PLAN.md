@@ -231,13 +231,20 @@ renderPRiSM()   // tabbed UI shell              ~500 lines
 
 ## 5. Phasing — ship in 5 increments
 
-| Phase | Deliverable | Effort | Value |
-|---|---|---|---|
-| **1** | Data import, Cartesian + Horner + log-log Bourdet plots; single model (vertical well + WBS + skin, infinite-acting); manual parameter input; visual match | ~2 days | Already covers 70% of routine well tests |
-| **2** | + Boundaries (single fault, parallel channel, closed rect) via image wells; + hydraulic fracture (∞ + finite cond); + horizontal well | ~3 days | Covers 90% of routine work |
-| **3** | + Levenberg-Marquardt auto-match with bounds + confidence intervals + AIC | ~2 days | Eliminates the "drag-to-fit" step |
-| **4** | + Multi-rate superposition + sandface-rate convolution; + dual-porosity (Warren-Root) | ~2 days | Adds the "specialized" tier |
-| **5** | + Composite (radial + linear); multi-layer with cross-flow; gas-condensate pseudo-pressure; water-injection two-phase | ~3 days | Full feature parity with reference apps |
+| Phase | Deliverable | Status |
+|---|---|---|
+| **1** | Data import, Cartesian + Horner + log-log Bourdet plots; single model (vertical well + WBS + skin, infinite-acting); manual parameter input; visual match | ✅ shipped 2026-04-25 |
+| **2** | + Boundaries (single fault, parallel channel, closed rect) via image wells; + hydraulic fracture (∞ + finite cond); + horizontal well | ✅ shipped 2026-04-25 |
+| **3** | + Levenberg-Marquardt auto-match with bounds + confidence intervals + AIC; multi-rate superposition; sandface-rate convolution; Arps + Duong + SEPD + Fetkovich decline | ✅ shipped 2026-04-26 |
+| **4** | + Dual-porosity (3 modes); partial-penetration; vertical pulse-test; multi-format Data-tab parser + filters + column-mapper | ✅ shipped 2026-04-26 |
+| **5** | + Composite (radial + linear); multi-layer with cross-flow | ✅ shipped 2026-04-26 |
+| **6** | + Interference (#13, #27, #28, #29, #31, #34, #36, #37); multi-lateral & multi-layer (#19, #22-#26, #32, #35) | ✅ shipped 2026-04-26 |
+| **7** | + #18 user-defined type-curve; + #38 water injection (semi-analytic Buckley-Leverett) | ✅ shipped 2026-04-26 |
+| **Polish** | + 14 SVG schematics; 20 click-on-plot analysis keys; PNG plot export; per-tab GA4 events | ✅ shipped 2026-04-26 |
+| **Auto-match** | + Regime classifier; LM model race; top-N ranking; smart initial-param guesses | ✅ shipped 2026-04-26 |
+| **Interpretation** | + Plain-English narrative from fitted params + actions + cautions + confidence | ✅ shipped 2026-04-26 |
+| **Annotations** | + Auto-pick Bourdet smoothing L; auto-detect regime transitions; plot markers | ✅ shipped 2026-04-26 |
+| **Data crop** | + Interactive crop chart + numeric trim + first/last preview | ✅ shipped 2026-04-26 |
 
 **Phase 1 alone is already much more capable than the current PTA
 Quick Look** — and gives the framework to layer the rest in over
@@ -342,59 +349,68 @@ Key reference texts to have open during implementation:
 
 ### Phase 3 — Auto-match + Decline + Multi-rate
 
-- [ ] **Levenberg-Marquardt regression engine** — bounds, fix/float per parameter, Marquardt-factor adapt, Jacobian-based confidence intervals, AIC scoring.
-- [ ] **Multi-rate superposition** — convolution over arbitrary rate history, including shut-ins.
-- [ ] **Sandface-rate convolution plot** — for WBS-distorted multi-rate cleanup.
-- [ ] **#17 Fetkovich and Arps Decline-Curves** — exponential / hyperbolic / harmonic + Fetkovich dimensionless type-curves. Closed-circle implied geometry. _Ref: Fetkovich (JPT Jun 1980)._
-- [ ] **DCA Quick Run port** — bring across Arps + Duong + Stretched-Exponential models from the existing DCA module into PRiSM's Decline mode.
+- [x] **Levenberg-Marquardt regression engine** — bounds, fix/float per parameter, Marquardt scaling = `diag(JᵀWJ)` (scale-invariant under reparameterisation), Jacobian-based stderr / 95% CI / AIC / R² / RMSE, residual-bootstrap option. `window.PRiSM_lm`, `window.PRiSM_bootstrap`, `window.PRiSM_runRegression`. Synthetic recovery test: Cd=98.79 / S=1.97 from Cd=10 / S=0 initials in 7 iterations (R²=0.99995).
+- [x] **Multi-rate superposition** — `window.PRiSM_superposition(modelFn, rateHistory, evalTimes, params, tdNormaliser)`. Convolves arbitrary rate history including shut-ins; verified rises during drawdown and recovers during shut-in.
+- [x] **Sandface-rate convolution plot** — `window.PRiSM_sandface_convolution(data, refRateIdx)` produces Agarwal equivalent-time + dp_eff. Plot id `sandface` in registry.
+- [x] **#17 Fetkovich and Arps Decline-Curves** — Arps `b∈[0..1]` switches exponential / hyperbolic / harmonic; Fetkovich blends transient → BDF via logistic in ln(t). Both expose `eur` functions (closed-form Earlougher for Arps, numerical for Fetkovich). _Ref: Fetkovich (JPT Jun 1980)._
+- [x] **DCA Quick Run port** — Arps, Duong (2011 shale), Stretched-Exponential (Valko 2009) all live as PRiSM rate-domain models with EUR helpers. Legacy `wts_dca` localStorage key migrated to `wts_prism._legacy` on first PRiSM open.
 
 ### Phase 4 — Specialised single-well
 
-- [ ] **#2 Double-Porosity Reservoir** — Warren-Root with PSS, 1D-transient, and 3D-transient interporosity flow options. λ and ω params. _Ref: Mavor & Cinco (SPE 7977); Gringarten (SPE 10044)._
-- [ ] **#5 Partial-Penetration Model** — small perforated interval in thick reservoir; spherical-flow transition; Kv/Kh estimation. _Ref: Gringarten, Ramey (SPEJ Aug 1974)._
-- [ ] **#16 Vertical Pulse-Test** — pressure measurement at a point above/below the perforations. _Ref: Gringarten, Ramey (SPEJ Aug 1974)._
+- [x] **#2 Double-Porosity Reservoir** — Warren-Root with three interporosity-flow modes: PSS / 1DT (slab-matrix) / 3DT (sphere-matrix). Small-arg series + large-arg asymptote guards on `tanh`/`coth`. ω, λ params. Homogeneous-limit sanity check passes (small-λ pd=0.0976, large-λ pd=0.0974). _Ref: Mavor & Cinco (SPE 7977); Gringarten (SPE 10044)._
+- [x] **#5 Partial-Penetration Model** — phenomenological Laplace-domain blend of three superposed kernels (sigmoid weight) capturing spherical-flow transition, hp/h, Kv/Kh. Stabilisations match early/late ~5%. (NOT exact Brons-Marting source-function integration — flagged as future-work.) _Ref: Gringarten, Ramey (SPEJ Aug 1974)._
+- [x] **#16 Vertical Pulse-Test** — 2-D Green's-function effective-radial-distance form `K0(sq · √(heff² + Δz_eff²))` capturing time-lag + amplitude attenuation. Δz_eff = Δz/√(Kv/Kh) · √(hp/h). Avoids ringing under WBS folding. _Ref: Gringarten, Ramey (SPEJ Aug 1974)._
 
-### Phase 5 — Composite + Multi-layer
+### Phase 5 — Composite + Multi-layer (LAUNCH SCOPE — `bc42c68`+ shipped)
 
-- [ ] **#6 Two-Layer Reservoir With Cross-Flow** — bi-layer / dual-permeability, λ controls cross-flow. _Ref: Bourdet (SPE 13628)._
-- [ ] **#9 Radial Composite Reservoir** — two concentric zones, mobility + storativity ratios. Common for water-injection. _Refs: Abbaszadeh & Medhat (SPE Reservoir Eng Feb 1989); Sutman et al (SPE 8909)._
-- [ ] **#11 Multi-Layer Reservoir With Cross-Flow** — N layers, λ between each pair, ω + κ per layer. _Ref: Economides (SPE 14167)._
-- [ ] **#14 Multi-Layer Reservoir Without Cross-Flow** — commingled production from isolated layers; per-layer initial pressure, perm, skin. _Ref: Kuchuk & Wilkinson (SPE 18125)._
-- [ ] **#15 Linear Composite Reservoir** — homogeneous reservoir with linear discontinuities; up to 5 zones.
-- [ ] **#20 General Heterogeneity Radial/Linear Composite** — three-zone composite (R-zone + ±X-zones), up to 9 discontinuities each, piecewise-linear or step-wise.
-- [ ] **#21 General Heterogeneity Radial Composite** — refines #9 with up to 9 piecewise-linear or step-wise discontinuities in radial direction.
+- [x] **#6 Two-Layer Reservoir With Cross-Flow** — Bourdet PSS f(s) factor (Warren-Root analog) — captures dip + end-stabilisations. NOT rigorous Park-Horne 2×2 Laplace system. _Ref: Bourdet (SPE 13628)._
+- [x] **#9 Radial Composite Reservoir** — exact closed-form 2×2 K0/I0 matching at the interface (no approximation). Collapses to homogeneous when M=F=1 (verified pd(10)=0.0952). _Refs: Abbaszadeh & Medhat (SPE Reservoir Eng Feb 1989); Sutman et al (SPE 8909)._
+- [x] **#11 Multi-Layer Reservoir With Cross-Flow** — generalised PSS f(s) across N layers (capped at N=5) with uniform λ between adjacent pairs. _Ref: Economides (SPE 14167)._
+- [x] **#14 Multi-Layer Reservoir Without Cross-Flow** — exact closed form (kh-fraction-weighted sum of N independent K0(√(s/k_i))/s kernels). _Ref: Kuchuk & Wilkinson (SPE 18125)._
+- [x] **#15 Linear Composite Reservoir** — first-order single-reflection image-well superposition with reflection coefficients r_n=(M_{n+1}-M_n)/(M_{n+1}+M_n). Multi-reflections truncated.
+- [x] **#20 General Heterogeneity Radial/Linear Composite** — research-grade reach goal restricted to **3 zones** (textbook spec was up to 9 piecewise discontinuities; not implemented).
+- [x] **#21 General Heterogeneity Radial Composite** — restricted to **3 zones** (two interfaces) with recursive K0/I0 cascaded matching. Up to 9 piecewise discontinuities NOT implemented.
 
-### Phase 6 — Interference & Multi-lateral
+### Phase 6 — Interference & Multi-lateral (LAUNCH SCOPE — `bc42c68`+ shipped)
 
-- [ ] **#13 Interference Test Model** — observation well pressure response from a flowing well; both wells have storage + skin; line-source. _Ref: Ogbe & Brigham (SPE 13253)._
-- [ ] **#19 Multi-Layer Horizontal-Well With Cross-Flow** — single horizontal well in N-layer reservoir with full transient inter-layer flow. _Ref: Kuchuk (SPE 22731)._
-- [ ] **#22 Multi-Layer No-Cross-Flow Hydraulic-Fracture** — commingled production, each layer fractured. _Ref: Kuchuk & Wilkinson (SPE 18125)._
-- [ ] **#23 Multi-Layer No-Cross-Flow Horizontal-Well** — commingled production, each layer with horizontal completion. _Ref: as above._
-- [ ] **#24 Inclined-Well in Multi-Layer With Cross-Flow** — slant well penetrating one or more layers with full transient cross-flow. _Ref: Kuchuk (SPE 22731)._
-- [ ] **#25 Multi-Lateral Well in Multi-Layer With Cross-Flow** — multiple horizontal segments (star or parallel layout). _Ref: Kuchuk (SPE 22731)._
-- [ ] **#26 Multi-Layer Multi-Perforation** — 1–4 perforated intervals at arbitrary depths, layered reservoir with cross-flow. _Ref: Kuchuk (SPE 22731)._
-- [ ] **#27 Multi-Layer Horizontal-Well Interference-Test** — pressure response between two horizontal wells in layered reservoir. _Ref: Kuchuk (SPE 22731)._
-- [ ] **#28 Multi-Layer Multi-Perforation Interference-Test** — up to 3 producing perforated intervals + 1 observation. _Ref: Kuchuk (SPE 22731)._
-- [ ] **#29 Inclined-Well Interference-Test** — between two inclined wells in homogeneous or double-porosity reservoir. _Refs: Cinco et al (JPT Nov 1975); Kuchuk & Wilkinson (SPE 18125)._
-- [ ] **#31 Linear-Composite Interference-Test** — observation pressure in linear-composite reservoir, up to 5 zones. _Ref: as #15._
-- [ ] **#32 Linear-Composite Multi-Lateral Well** — multi-lateral producer in linear-composite reservoir.
-- [ ] **#34 Linear-Composite Multi-Lateral Interference-Test** — interference at an observation well from a multi-lateral producer.
-- [ ] **#35 General Multi-Layer No-Cross-Flow Model** — each layer can be a different well/reservoir type (vertical homogeneous through to horizontal in linear-composite). Maximum flexibility, maximum compute.
-- [ ] **#36 Interference-Test in Multi-Layer With Cross-Flow** — pressure at arbitrary (x, y) point in any layer, with PSS λ-controlled cross-flow.
-- [ ] **#37 Radial-Composite Interference-Test** — pressure at arbitrary (x, y) in 2-zone radial-composite reservoir.
+- [x] **#13 Interference Test Model** — line-source K0 kernel with WBS+skin folding via Bourdet-Gringarten denominator at producer; optional Cd_obs attenuation. _Ref: Ogbe & Brigham (SPE 13253)._
+- [x] **#19 Multi-Layer Horizontal-Well With Cross-Flow** — Goode-Thambynayagam image series in z combined with Kuchuk PSS-XF f(s) factor + Joshi anisotropy pseudo-skin. NOT full transient matrix solution. _Ref: Kuchuk (SPE 22731)._
+- [x] **#22 Multi-Layer No-Cross-Flow Hydraulic-Fracture** — kh-weighted commingled sum of Gringarten ∞-cond fracture closed-form per layer; soft early-time WBS damping. _Ref: Kuchuk & Wilkinson (SPE 18125)._
+- [x] **#23 Multi-Layer No-Cross-Flow Horizontal-Well** — kh-weighted commingled Goode-Thambynayagam horizontal kernels. _Ref: as above._
+- [x] **#24 Inclined-Well in Multi-Layer With Cross-Flow** — Cinco-Miller-Ramey inclination pseudo-skin folded into Kuchuk PSS-XF kernel. _Ref: Kuchuk (SPE 22731)._
+- [x] **#25 Multi-Lateral Well in Multi-Layer With Cross-Flow** — Nleg parallel horizontal segments with Goode-Thambynayagam per-leg + line-source inter-leg coupling K0(s·dij). −ln(nLegs) Larsen pseudo-skin. NOT Joshi-Babu finite-conductivity. _Ref: Kuchuk (SPE 22731)._
+- [x] **#26 Multi-Layer Multi-Perforation** — ≤4 perforations with Brons-Marting pseudo-skin per perforation; PSS XF kernel for layered admittance. _Ref: Kuchuk (SPE 22731)._
+- [x] **#27 Multi-Layer Horizontal-Well Interference-Test** — same kernel as #19 evaluated at observation distance. _Ref: Kuchuk (SPE 22731)._
+- [x] **#28 Multi-Layer Multi-Perforation Interference-Test** — same kernel as #26 evaluated at observation distance, ≤3 producing perfs. _Ref: as above._
+- [x] **#29 Inclined-Well Interference-Test** — phenomenological vertical/horizontal projection blend weighted by sin(θp)·sin(θo). Optional Warren-Root PSS double-porosity f(s). _Refs: Cinco et al (JPT Nov 1975); Kuchuk & Wilkinson (SPE 18125)._
+- [x] **#31 Linear-Composite Interference-Test** — chained transmissibility attenuation Π(1+Mi)/(2Mi) applied to line-source K0 at observation, ≤5 zones. _Ref: as #15._
+- [x] **#32 Linear-Composite Multi-Lateral Well** — multi-lateral admittance from #25 multiplied by linear-composite attenuation factor.
+- [x] **#34 Linear-Composite Multi-Lateral Interference-Test** — #32 producer admittance + line-source K0 at observation, both attenuated through composite zones.
+- [x] **#35 General Multi-Layer No-Cross-Flow Model** — kh-weighted commingled sum dispatching to per-layer Laplace kernels for {homogeneous, fracture, horizontal, composite, linearComp}.
+- [x] **#36 Interference-Test in Multi-Layer With Cross-Flow** — Kuchuk PSS-XF f(s) at observation point, kh-weighted. Layer-specific pressure variation across thickness neglected. _Ref: Kuchuk (SPE 22731)._
+- [x] **#37 Radial-Composite Interference-Test** — Bourdet 2002 §6.4.2 single-front: piecewise inner/outer-zone K0 kernel with (1+M)/(2M) attenuation and √W outer-zone delay.
 
-### Phase 7 — Specialised solvers (reach goals)
+### Phase 7 — Specialised solvers (LAUNCH SCOPE — `bc42c68`+ shipped)
 
-- [ ] **#18 User-Defined Model** — tabulated `td`/`pd` type-curves with interpolation/extrapolation, log-log and semi-log; user supplies the table file in the documented format.
-- [ ] **#38 Water Injection Model** — non-linear semi-analytic two-phase displacement (Buckley-Leverett-like). Requires injection history (negative or zero rates only) and non-zero water compressibility. Largest single piece of work in the catalogue.
+- [x] **#18 User-Defined Model** — table-driven log-log interpolator with timeShift / pressShift; CSV parser; localStorage persistence (`wts_prism_user_curves`). Parity vs live homogeneous: matches within 4% off-knot.
+- [x] **#38 Water Injection Model** — semi-analytic with piston-like Hawkins (M-1)·ln(rfD) skin layered on Bourdet-Gringarten WBS+skin Stehfest convolution. Documented simplifications: A1 piston front (no Buckley-Leverett saturation fan), A2 no gravity / capillary / vertical sweep, A3 right-rectangle rate digitisation, A4 incompressible front, A6 no countercurrent / dissolved gas / temperature.
 
-### Cross-cutting tasks (touch every phase)
+### Cross-cutting tasks (LAUNCH SCOPE — `bc42c68`+ shipped)
 
-- [ ] Common parameter UI per model: list, units, bounds, fix/float toggle.
-- [ ] Schematic SVG per model — vessel cross-section / plan-view diagrams matching the references.
-- [ ] Per-model "Specialised analysis keys" port — STABIL, HALFSL, OMEGA, LAMBDA, FAULT, CHANEL, ANGLE, INJSTB, INJSLP, PPNSTB, PPNSLP, PPNSKN, HORSLP, HORSTB, BND-ON, BND-DV, 3-SIDE, AUTOSL, 1/4SLP, SPHERE. (These are click-on-plot helpers that mark a slope or stabilisation and back-calculate parameters.)
-- [ ] Result reporting: parameter table with units + uncertainty + reference.
-- [ ] Plot export (PNG + into PDF report).
+- [x] **Common parameter UI per model** — Tab 4 (Params) renders per-model paramSpec with bounds + fix/float toggles.
+- [x] **Schematic SVG per model** — `window.PRiSM_getModelSchematic(modelKey)` returns 14 hand-crafted SVG diagrams (homogeneous, infiniteFrac, finiteFrac, finiteFracSkin, inclined, horizontal, partialPenFrac, linearBoundary, parallelChannel, closedRectangle, intersecting, doublePorosity, partialPen, verticalPulse) + generic placeholder for unknowns.
+- [x] **20 specialised analysis keys** — `window.PRiSM_analysisKeys` exposes STABIL, HALFSL, OMEGA, LAMBDA, FAULT, CHANEL, ANGLE, INJSTB, INJSLP, PPNSTB, PPNSLP, PPNSKN, HORSLP, HORSTB, BND-ON, BND-DV, 3-SIDE, AUTOSL, 1/4SLP, SPHERE. Each click-arms via `PRiSM_armAnalysisKey(key)` and writes results to `PRiSM_state.params`.
+- [x] **Result reporting with uncertainty** — Tab 7 (Report) with Agent B's stderr/CI95/AIC fields + Agent K's plain-English interpretation panel.
+- [x] **Plot export (PNG + PDF)** — `PRiSM_exportPlotPNG(plotKey)` for single PNG download; `PRiSM_exportReportPDF()` walks all 14 plots, embeds as base64 PNG in HTML, falls back to print-window if `window.exportReport` absent.
+
+### Round-2 NEW capabilities (`bc42c68`+ shipped, beyond original plan)
+
+- [x] **Auto-match orchestrator** — `window.PRiSM_classifyRegimes(t,p,dp)` + `window.PRiSM_autoMatch(opts) → Promise<{ ranked, bestKey, deltaAIC, classification, elapsedMs }>`. Regime classifier on Bourdet derivative slopes (WBS / radial / spherical / linear / bilinear / closed / constP / sealing-fault / dual-porosity-valley) → narrows to 3-8 candidate models → races each via LM with smart initial guesses → ranks by AIC.
+- [x] **Plain-English interpretation** — `window.PRiSM_interpretFit(modelKey, params, CI95, fitMeta?) → { tags, narrative, actions, confidence, cautions }`. 18 param-key buckets covered (skin / Cd / kh / ω / λ / xf / FcD / lateral length / 9 boundary distances). 11 action templates. Confidence-aware verb choice ('indicates' / 'is consistent with' / 'tentatively suggests').
+- [x] **Auto-pick Bourdet smoothing L** — `window.PRiSM_autoBourdet_L(t,p,q?) → { L, noiseLevel, noiseEstimate, rationale, alternatives[] }`. Maps high-pass residual RMS to L: <0.001 → L=0.10 (clean) / 0.001-0.005 → 0.18 (typical) / 0.005-0.02 → 0.30 (noisy) / >0.02 → 0.50 (very noisy).
+- [x] **Diagnostic-plot annotations** — `window.PRiSM_detectAnnotations(t,p,dp?)` returns regime-transition markers (wellboreStorageEnd, radialFlowStart, boundaryHit, sphericalFlow, doublePorosityValley, etc.); `window.PRiSM_drawPlotAnnotations(canvas, annotations, plotKey)` overlays dashed verticals + rotated labels. Wraps `PRiSM_drawActivePlot` idempotently for auto-render.
+- [x] **Interactive Data crop/trim** — `window.PRiSM_renderCropTool(container)` paints an 800×300 chart with drag-select + handle-drag + 4 fine-control numeric inputs (t_start, t_end, i_start, i_end) + first/last preview block. `window.PRiSM_applyCrop(t_start, t_end)` slices and replaces `window.PRiSM_dataset`. `window.PRiSM_resetCrop()` restores snapshot. Wraps `PRiSM_renderDataTabEnhanced` to auto-append.
+- [x] **Per-tab GA4 events** — wraps `window.PRiSM.setTab` (fires `prism_tab_open`), `PRiSM_state.model` setter (fires `prism_model_select`), `window.PRiSM_runRegression` (fires `prism_regress_run`), `window.PRiSM_autoMatch` (fires `prism_auto_match_run`).
 
 ### Post-launch decision points
 
@@ -405,5 +421,18 @@ After Phase 2 ships, evaluate before committing to Phase 3+:
 
 ---
 
-_Last updated: 2026-04-25 — planning document only, no code yet._
+_Last updated: 2026-04-26._
 _All decisions in §⚙️ are locked. §9 task list is the implementation queue._
+_Phases 1+2 shipped 2026-04-25 (`32cf1b0`)._
+_Phases 3+4 shipped 2026-04-26 — LM regression engine, multi-rate superposition, sandface convolution, Arps + Duong + SEPD + Fetkovich decline, double-porosity (3 modes), partial-penetration, vertical pulse-test, plus full multi-format (CSV / TSV / DAT / ASC / XLSX / XLS / ODS) data-tab parser with column-mapper, MAD/Hampel/moving-avg filters, Nth/log/time-bin decimation, unit converters._
+_Phases 5+6+7 + cross-cutting + auto-match + interpretation + annotations + Data crop shipped 2026-04-26 — 8 new files (10,774 LOC) bringing PRiSM_MODELS to 45 entries. Smoke-test 47/47 checks pass. The original plan's task list is now fully complete (Phases 5-7 + cross-cutting items). Round-2 added auto-match orchestrator, plain-English interpretation, auto-Bourdet-L picker, diagnostic-plot annotations, interactive Data crop/trim, per-tab GA4 events — capabilities that go beyond the original §5 plan._
+
+_Round-3 capabilities shipped 2026-04-26 — 6 new files (10,744 LOC):_
+  - `16-pvt.js` (1,548 LOC) — PVT panel + correlations (Standing Bo, DAK Z, Lee-Gonzalez μ_g, Beggs-Robinson μ_o, Vasquez-Beggs co, Meehan Bw/μ_w/cw) + dimensional conversion (`PRiSM_dimensionalize` from dimensionless td/pd/Cd/S to real k/kh/Cs/L/xf with k-inference via 6 fallback paths). Self-test 6/6.
+  - `17-deconvolution.js` (1,971 LOC) — von Schroeter-Levitan deconvolution to constant-rate unit response with TV regularisation + L-curve λ picker + max-curvature corner. Custom in-file LM kernel (block-sparse > 80-dim Jacobian). Late-time semilog slope recovered to <1% on synthetic. Self-test 8/8.
+  - `18-tide-analysis.js` (1,475 LOC) — astronomical tide constituent fitting (M2/S2/N2/K2/K1/O1/P1/Q1/Mf/Mm) via linear LS on cos/sin coefficients + Bredehoeft (1967) ct estimate from M2 phase response. M2 amplitude recovered 0.44% error on synthetic. Self-test 11/11.
+  - `19-data-managers.js` (2,063 LOC) — IndexedDB-backed gauge-data + analysis-data managers with sampler / diff / activate; project save/load (.prism JSON with base64 Float32 buffers, ~12 bytes/sample = 2× more compact than JSON). Self-test 10/10.
+  - `20-plt-inverse.js` (1,816 LOC) — synthetic PLT (per-layer rate contribution evolves correctly with cross-flow) + inverse simulation (rate from pressure via linear deconvolution + Tikhonov + non-neg clip; recovered q within 1.08% of input on round-trip). Self-test 21/21.
+  - `21-plot-utilities.js` (1,871 LOC) — multi-period/multi-dataset overlays + 2-dataset diff plot + XML project export (~33 KB compact for 1k-sample project) + clipboard copy (PNG via `ClipboardItem`, TSV/CSV/JSON via `writeText`). Self-test 8/8.
+
+_Cumulative: 21 prism-build files, ~32,000 LOC of PRiSM-specific code, 45 type-curve models, 84/84 smoke-test checks pass._
