@@ -283,7 +283,8 @@ function PRiSM_renderPlotsTab() {
                         (st.modelCurve ? 'checked' : 'disabled') + '>' +
                     '<span>Show model overlay</span>' +
                 '</label>' +
-                '<span style="font-size:11px; color:var(--text3); margin-left:auto;">Drag a rectangle to zoom · click ⟳ Reset view to fit all data</span>' +
+                '<button class="btn btn-secondary" id="prism_plot_autofit" title="Reset match shifts and auto-align the model curve to the data range">⌖ Auto-fit overlay</button>' +
+                '<span style="font-size:11px; color:var(--text3); margin-left:auto;">Drag rectangle = zoom · ⟳ Reset view · ⌖ Auto-fit re-aligns the model</span>' +
                 '<label id="prism_plot_period_lbl" style="font-size:12px; color:var(--text2); display:none; align-items:center; gap:6px;">' +
                     '<span>Period</span>' +
                     '<select id="prism_plot_period" style="padding:6px 10px; background:var(--bg1); color:var(--text); border:1px solid var(--border); border-radius:4px;"></select>' +
@@ -340,6 +341,33 @@ function PRiSM_renderPlotsTab() {
             try { delete c._prismAxes; }          catch (_) { c._prismAxes = null; }
         }
         PRiSM_drawActivePlot();
+    };
+
+    // Auto-fit overlay — reset match shifts to 0, enable overlay if a
+    // model curve exists, then redraw. The dispatch in PRiSM_drawActivePlot
+    // sees timeShift===0 && pressShift===0 and auto-computes shifts that
+    // align the model with the data range.
+    var autofitBtn = $('prism_plot_autofit');
+    if (autofitBtn) autofitBtn.onclick = function () {
+        if (!st.modelCurve) {
+            // Try to seed a model curve from the active model + current params.
+            try {
+                var td = (typeof PRiSM_logspace === 'function') ? PRiSM_logspace(-3, 4, 120) : null;
+                if (td) {
+                    st.modelCurve = PRiSM_evalModelCurve(st.model, st.params, td);
+                }
+            } catch (_e) { /* nothing */ }
+        }
+        if (!st.modelCurve) {
+            $('prism_plot_msg').innerHTML = '<span style="color:var(--orange);">Pick a model on Tab 3 first.</span>';
+            return;
+        }
+        st.match.timeShift = 0;
+        st.match.pressShift = 0;
+        var ovChk = $('prism_plot_overlay');
+        if (ovChk) { ovChk.disabled = false; ovChk.checked = true; }
+        PRiSM_drawActivePlot();
+        $('prism_plot_msg').innerHTML = '<span style="color:var(--green);">Overlay auto-aligned. Tab 5 (Match) shows the computed shifts; refine there.</span>';
     };
 
     $('prism_plot_bourdet_btn').onclick = function () {
@@ -422,9 +450,60 @@ function PRiSM_drawActivePlot() {
     var overlayChk = $('prism_plot_overlay');
     if (overlayChk && overlayChk.checked && st.modelCurve) {
         var c = st.modelCurve;
-        // Apply current match shifts so the overlay tracks the visual match.
-        var shifted = PRiSM_applyMatch(c.td, c.pd, st.match.timeShift, st.match.pressShift);
+        // ── Auto-fit on first overlay ─────────────────────────────────
+        // The model curve is in dimensionless (td, pwd). The data is in
+        // real (hours, psi). Without a shift they don't overlay at all.
+        // If the user hasn't manually adjusted the match shifts (Tab 5),
+        // compute auto-shifts that align the model's overall (t, Δp) range
+        // with the data's range, in log-log space. This makes the overlay
+        // immediately useful — the user can see whether the SHAPES match
+        // (WBS hump position, radial stabilisation level) without dragging.
+        var dt = st.match.timeShift, dp = st.match.pressShift;
+        var autoApplied = false;
+        if (dt === 0 && dp === 0 && c.td && c.td.length > 1) {
+            var dpData = ds.p.map(function (v) { return Math.abs(v - ds.p[0]); });
+            var tDataPos = [], pDataPos = [];
+            for (var ki = 0; ki < ds.t.length; ki++) {
+                if (ds.t[ki] > 0 && dpData[ki] > 0 && isFinite(dpData[ki])) {
+                    tDataPos.push(ds.t[ki]);
+                    pDataPos.push(dpData[ki]);
+                }
+            }
+            var modelPwdPos = [];
+            for (var kj = 0; kj < c.pd.length; kj++) {
+                if (c.pd[kj] > 0 && isFinite(c.pd[kj])) modelPwdPos.push(c.pd[kj]);
+            }
+            if (tDataPos.length > 1 && modelPwdPos.length > 1) {
+                // Match centre of data t-range to centre of model td-range
+                // (geometric mean since axes are log).
+                var tDataCentre = Math.sqrt(tDataPos[0] * tDataPos[tDataPos.length - 1]);
+                var tdModelCentre = Math.sqrt(c.td[0] * c.td[c.td.length - 1]);
+                dt = Math.log10(tDataCentre / tdModelCentre);
+                // Match late-time pressure level (radial stabilisation).
+                var nLate = Math.max(2, Math.floor(pDataPos.length * 0.25));
+                var pDataLate = 0;
+                for (var lk = pDataPos.length - nLate; lk < pDataPos.length; lk++) pDataLate += pDataPos[lk];
+                pDataLate /= nLate;
+                var pwdLate = modelPwdPos[modelPwdPos.length - 1];
+                dp = pDataLate - pwdLate;
+                autoApplied = true;
+            }
+        }
+        var shifted = PRiSM_applyMatch(c.td, c.pd, dt, dp);
         data.overlay = { t: shifted.t, p: shifted.p };
+        if (c.pdPrime && c.pdPrime.length === c.td.length) {
+            // Also shift the model derivative so the overlay's Δp' shows.
+            var shiftedPrime = PRiSM_applyMatch(c.td, c.pdPrime, dt, dp);
+            data.overlay.dp = shiftedPrime.p;
+        }
+        if (autoApplied) {
+            // Stash the computed shifts so Tab 5 reflects them and the
+            // user can see / refine them. Don't overwrite if user already
+            // dragged — the dt===0 && dp===0 guard above ensures we only
+            // touch them on first overlay.
+            st.match.timeShift = dt;
+            st.match.pressShift = dp;
+        }
     }
 
     var opts = {
