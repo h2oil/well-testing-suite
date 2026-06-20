@@ -1423,6 +1423,20 @@ function PRiSM_exportCSV() {
 
 
 // =========================================================================
+// EXPOSE TAB RENDERERS ON window — so the foundation's PRiSM_renderTab can
+// delegate to them deterministically (no polling, no setTab wrapping). This
+// is the primary dispatch path; the hook below is a backward-compat fallback
+// for older foundation builds that don't delegate.
+// =========================================================================
+window.PRiSM_renderPlotsTab   = PRiSM_renderPlotsTab;
+window.PRiSM_renderModelTab   = PRiSM_renderModelTab;
+window.PRiSM_renderParamsTab  = PRiSM_renderParamsTab;
+window.PRiSM_renderMatchTab   = PRiSM_renderMatchTab;
+window.PRiSM_renderRegressTab = PRiSM_renderRegressTab;
+window.PRiSM_renderReportTab  = PRiSM_renderReportTab;
+
+
+// =========================================================================
 // TAB-SWITCH HOOK — wrap window.PRiSM.setTab so each switch renders
 // =========================================================================
 
@@ -1436,6 +1450,10 @@ function PRiSM_installSetTabHook() {
     var orig = window.PRiSM.setTab;
     var wrapped = function (n) {
         orig(n);
+        // If the foundation delegates to the window renderers itself
+        // (newer builds set PRiSM_tabDelegationActive), orig(n) already
+        // rendered the right tab — skip to avoid a double render.
+        if (window.PRiSM_tabDelegationActive) return;
         n = parseInt(n, 10);
         if (n === 2) PRiSM_renderPlotsTab();
         else if (n === 3) PRiSM_renderModelTab();

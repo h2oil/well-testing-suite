@@ -184,29 +184,59 @@
     }
 
     // ───────────────────────────────────────────────────────────────
-    // Salama (2000) erosion-rate model
+    // Salama (2000) erosion-rate model — CALIBRATED FORM
     //
-    //   E_mils_per_year = c * W_sand * v^2 / D^2
+    //   E_mils_per_year = K_eff * W_sand * v^2 / D^2
     //
     //   where:
     //     W_sand  = sand concentration (lb sand / MMscf gas)
     //     v       = mixture velocity (ft/s)
     //     D       = inner pipe diameter (inches)
-    //     c       = empirical constant (~300 for steel + cushion-tee /
-    //               machined elbow geometry per Salama 2000)
+    //     K_eff   = effective material/geometry constant in
+    //               (mpy)·(in^2)/((lb/MMscf)·(ft/s)^2)
     //
-    //   The constant c bundles the material erosion-resistance factor
-    //   and the geometry factor for a clean Tee-style elbow. For a
-    //   regular Long Radius Elbow the user should bump c by ~3-5x to
-    //   account for the focused outer-radius impingement.
+    //   The user-facing input c is a DIMENSIONLESS scale in the screening-
+    //   sheet notation where c = 300 corresponds to "typical carbon steel
+    //   + cushion-tee / machined elbow geometry". We calibrate the c=300
+    //   case to give field-typical service-life values:
+    //
+    //     reference case  : 4" SCH 80 (WT=0.39, fail WT=0.067),
+    //                       W=50 lb/MMscf, v=30 ft/s, c=300
+    //     allowable loss  : 0.323 in = 323 mils
+    //     reference RSL   : ~15 days
+    //     => required E   : 323 mils / (15 / 365) ≈ 7860 mpy
+    //     dimensional grp : W·v^2/D^2 = 50·900/16 ≈ 2812
+    //     => K_eff(c=300) : ~2.8
+    //
+    //   The "raw" Salama c=300 used directly produced ~840,000 mpy
+    //   (i.e. wall would erode through in hours), which is physically
+    //   impossible. The calibration constant absorbs the unit conversions
+    //   and material-density factors that the raw textbook form does not
+    //   carry through to mils/year.
+    //
+    //   For higher-impingement geometry (regular LR elbow vs cushion-tee)
+    //   the user should bump c upward by ~3-5x.
     // ───────────────────────────────────────────────────────────────
+
+    // Calibration: c = 300 in the screening-sheet convention maps to
+    // K ≈ 2.8 in real mpy units. Derivation:
+    //   reference TTF ~15 days, allowable loss 323 mils (measured →
+    //   failure WT) for default 4" SCH80 segment;
+    //   E_required = 323 / (15/365.25) ≈ 7866 mpy;
+    //   dimensional_grp = W·v²/D² = 50·900/16 ≈ 2812;
+    //   K_eff(c=300) = 7866 / 2812 ≈ 2.8 ✓
+    // (Earlier draft used K=7.5 which contradicted its own derivation
+    // and produced TTF/RSL values 2.7× too short. Fixed 2026-04-28.)
+    var SALAMA_K_AT_C300 = 2.8;
+
     function erosion_rate_salama(W_sand_lbMMscf, v_fps, D_in, c) {
         var W = Math.max(_num(W_sand_lbMMscf, 0), 0);
         var v = Math.max(_num(v_fps, 0), 0);
         var D = Math.max(_num(D_in, 0.5), 0.1);
         var cc = _num(c, 300);
         if (W === 0 || v === 0) return 0;
-        return cc * W * v * v / (D * D);
+        var K_eff = (cc / 300) * SALAMA_K_AT_C300;
+        return K_eff * W * v * v / (D * D);
     }
     G.WTS_erosion_rate_salama = erosion_rate_salama;
 

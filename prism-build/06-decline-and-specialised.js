@@ -887,7 +887,12 @@ function _pdLap_partialPen(s, params) {
   // Smooth blend in s: low s (late) → pdFull dominates; high s (early) →
   // pdPerf dominates; pdSph contributes a small transient bump across the
   // middle (gated by w*(1-w) so it vanishes at both ends).
-  var w = 1 / (1 + s * hp);   // soft transition centred at s ~ 1/hp
+  // Bug-fix 2026-04-28: weighting was inverted — `w = 1/(1+s·hp)` gives
+  // w→1 as s→0 (late time), which made pdPerf dominate late instead of
+  // pdFull. Late-time pwd' was landing at ~1/hp ≈ 1.67 (for hp=0.3)
+  // instead of the textbook radial 0.5. Now correctly: w → 0 at small s
+  // so pdFull wins late, and w → 1 at large s so pdPerf wins early.
+  var w = (s * hp) / (1 + s * hp);   // soft transition centred at s ~ 1/hp
   var pd = w * pdPerf + (1 - w) * pdFull + pdSph * (w * (1 - w));
   return pd;
 }

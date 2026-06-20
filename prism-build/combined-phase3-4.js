@@ -1435,6 +1435,20 @@ function PRiSM_exportCSV() {
 
 
 // =========================================================================
+// EXPOSE TAB RENDERERS ON window — so the foundation's PRiSM_renderTab can
+// delegate to them deterministically (no polling, no setTab wrapping). This
+// is the primary dispatch path; the hook below is a backward-compat fallback
+// for older foundation builds that don't delegate.
+// =========================================================================
+window.PRiSM_renderPlotsTab   = PRiSM_renderPlotsTab;
+window.PRiSM_renderModelTab   = PRiSM_renderModelTab;
+window.PRiSM_renderParamsTab  = PRiSM_renderParamsTab;
+window.PRiSM_renderMatchTab   = PRiSM_renderMatchTab;
+window.PRiSM_renderRegressTab = PRiSM_renderRegressTab;
+window.PRiSM_renderReportTab  = PRiSM_renderReportTab;
+
+
+// =========================================================================
 // TAB-SWITCH HOOK — wrap window.PRiSM.setTab so each switch renders
 // =========================================================================
 
@@ -1448,6 +1462,10 @@ function PRiSM_installSetTabHook() {
     var orig = window.PRiSM.setTab;
     var wrapped = function (n) {
         orig(n);
+        // If the foundation delegates to the window renderers itself
+        // (newer builds set PRiSM_tabDelegationActive), orig(n) already
+        // rendered the right tab — skip to avoid a double render.
+        if (window.PRiSM_tabDelegationActive) return;
         n = parseInt(n, 10);
         if (n === 2) PRiSM_renderPlotsTab();
         else if (n === 3) PRiSM_renderModelTab();
@@ -3613,7 +3631,12 @@ function _pdLap_partialPen(s, params) {
   // Smooth blend in s: low s (late) → pdFull dominates; high s (early) →
   // pdPerf dominates; pdSph contributes a small transient bump across the
   // middle (gated by w*(1-w) so it vanishes at both ends).
-  var w = 1 / (1 + s * hp);   // soft transition centred at s ~ 1/hp
+  // Bug-fix 2026-04-28: weighting was inverted — `w = 1/(1+s·hp)` gives
+  // w→1 as s→0 (late time), which made pdPerf dominate late instead of
+  // pdFull. Late-time pwd' was landing at ~1/hp ≈ 1.67 (for hp=0.3)
+  // instead of the textbook radial 0.5. Now correctly: w → 0 at small s
+  // so pdFull wins late, and w → 1 at large s so pdPerf wins early.
+  var w = (s * hp) / (1 + s * hp);   // soft transition centred at s ~ 1/hp
   var pd = w * pdPerf + (1 - w) * pdFull + pdSph * (w * (1 - w));
   return pd;
 }
@@ -4944,6 +4967,14 @@ var REGISTRY_ADDITIONS = {
         var msg3 = _byId('prism_data_msg');
         if (msg3) msg3.innerHTML = '<span style="color:var(--green);">Dataset of '
             + ds.t.length + ' points active. Switch to the Plots tab to visualise.</span>';
+        // Notify listeners (data-crop tool, plot panels, etc.) that a new
+        // dataset is live. CustomEvent is supported in every browser this
+        // app targets; the try/catch is defensive against unusual hosts.
+        try {
+            window.dispatchEvent(new CustomEvent('prism:dataset-loaded', {
+                detail: { source: 'file', dataset: ds }
+            }));
+        } catch (_) { /* CustomEvent not supported */ }
     };
 
 
