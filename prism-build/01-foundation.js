@@ -195,15 +195,16 @@ function PRiSM_besselK1(x) {
            y * (0.00325614 + y * -0.00068245))))));
 }
 
-// ── Exponential integral E1(x) and convenience -Ei(-x) form ──
+// ── Exponential integral E1(x) and convenience Ei(x) form ──
 // E1(x) = ∫_x^∞ e^{-t}/t dt for x > 0. We expose two related routines:
 //
 //   PRiSM_E1(x)  — true E1(x), x > 0
-//   PRiSM_Ei(x)  — for our PTA / DCA use-cases this is the "negative
-//                  exponential integral" sometimes written -Ei(-x); it
-//                  equals E1(x) for x > 0 and is the building block of the
-//                  Theis line-source pressure solution. For x ≤ 0 we return
-//                  NaN since negative arguments aren't physical here.
+//   PRiSM_Ei(x)  — petroleum-engineering convention. For Theis-style line-
+//                  source solutions we want the well function W(u)=E1(u);
+//                  PE textbooks often write this as Ei(u) where u>0. For
+//                  callers using the strict mathematical convention with
+//                  negative arguments we return -E1(-x) so the standard
+//                  identity  Ei(x<0) = -E1(-x)  is honoured. Ei(0) = -∞.
 //
 // Implementation: A&S 5.1.53 (rational polynomial) for 0 < x ≤ 1 and the
 // Cody-Thacher continued-fraction expansion for x > 1.
@@ -241,10 +242,21 @@ function PRiSM_E1(x) {
     return h * Math.exp(-x);
 }
 
-// For decline-curve / Theis-style usage. x > 0.
+// For decline-curve / Theis-style usage. Supports both the petroleum-eng
+// convention (Ei(x>0) = E1(x), well function W(u)) and the strict math
+// convention (Ei(x<0) = -E1(-x)). Ei(0) = -∞.
 function PRiSM_Ei(x) {
-    if (x <= 0 || !isFinite(x)) return NaN;
-    return PRiSM_E1(x);
+    if (!isFinite(x)) return NaN;
+    if (x > 0) return PRiSM_E1(x);          // pet-eng: Ei(x>0) = E1(x)
+    if (x < 0) return -PRiSM_E1(-x);        // math:    Ei(x<0) = -E1(-x)
+    return -Infinity;                        //          Ei(0)   = -∞
+}
+
+// Expose foundation versions on window so downstream modules (e.g.
+// 09-interference-multilateral) can drop their local _localE1 workarounds.
+if (typeof window !== 'undefined') {
+    if (typeof window.PRiSM_E1 !== 'function') window.PRiSM_E1 = PRiSM_E1;
+    if (typeof window.PRiSM_Ei !== 'function') window.PRiSM_Ei = PRiSM_Ei;
 }
 
 // ── logspace ──
@@ -473,6 +485,23 @@ function renderPRiSM(body) {
 function PRiSM_renderTab(n) {
     const host = $('prism_tab_' + n);
     if (!host) return;
+    // ── Delegate to the wired renderers (UI-wiring layer) when present ──
+    // These are exposed on window by 04-ui-wiring.js. Calling them here on
+    // every activation is deterministic — no setTab-wrapping or polling.
+    // They re-render fresh each time so they reflect the latest data/params.
+    const wired = {
+        2: window.PRiSM_renderPlotsTab,
+        3: window.PRiSM_renderModelTab,
+        4: window.PRiSM_renderParamsTab,
+        5: window.PRiSM_renderMatchTab,
+        6: window.PRiSM_renderRegressTab,
+        7: window.PRiSM_renderReportTab
+    };
+    if (typeof wired[n] === 'function') {
+        window.PRiSM_tabDelegationActive = true;   // tell the hook to stand down
+        try { wired[n](); host.dataset.prismRendered = '1'; return; }
+        catch (e) { console.warn('PRiSM wired tab ' + n + ' failed, using placeholder:', e); }
+    }
     // Skip if already rendered (cheap idempotency check on a marker).
     if (host.dataset.prismRendered === '1' && n !== 1) return;
     switch (n) {

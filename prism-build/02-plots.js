@@ -288,6 +288,22 @@ function PRiSM_plot_axes(ctx, plot, scaleX, scaleY, opts) {
         ctx.fillText(opts.title, plot.x, 8);
     }
 
+    // Stash the world-pixel transforms + axis scales onto the canvas
+    // (when the caller passed it through opts.canvas) so click-on-plot
+    // analysis helpers can back-calculate absolute data coords from
+    // pixel positions. Falls back gracefully if not provided.
+    if (opts.canvas) {
+        try {
+            opts.canvas._prismAxes = {
+                scaleX: scaleX,
+                scaleY: scaleY,
+                toX: toX,
+                toY: toY,
+                plot: plot
+            };
+        } catch (_) { /* canvas may be a detached node */ }
+    }
+
     return { toX, toY, xLog, yLog };
 }
 
@@ -668,7 +684,7 @@ function PRiSM_plot_cartesian(canvas, data, opts) {
     const points = PRiSM_plot_zip(data.t, data.p);
 
     function render() {
-        const tr = PRiSM_plot_axes(ctx, plot, scaleX, scaleY, { title: opts.title || 'Cartesian P vs t' });
+        const tr = PRiSM_plot_axes(ctx, plot, scaleX, scaleY, { canvas: canvas, title: opts.title || 'Cartesian P vs t' });
         PRiSM_plot_periods(ctx, data.periods, opts.activePeriod, tr.toX, plot);
         PRiSM_plot_clip(ctx, plot.x, plot.y, plot.w, plot.h);
         PRiSM_plot_line(ctx, points, tr.toX, tr.toY, PRiSM_THEME.accent, { width: 2 });
@@ -727,7 +743,7 @@ function PRiSM_plot_horner(canvas, data, opts) {
     const points = PRiSM_plot_zip(xs, ys);
 
     function render() {
-        const tr = PRiSM_plot_axes(ctx, plot, scaleX, scaleY, { title: opts.title || 'Horner Plot' });
+        const tr = PRiSM_plot_axes(ctx, plot, scaleX, scaleY, { canvas: canvas, title: opts.title || 'Horner Plot' });
         PRiSM_plot_clip(ctx, plot.x, plot.y, plot.w, plot.h);
         PRiSM_plot_line(ctx, points, tr.toX, tr.toY, PRiSM_THEME.accent, { width: 2 });
         PRiSM_plot_dots(ctx, points, tr.toX, tr.toY, PRiSM_THEME.accent, 2.5);
@@ -858,6 +874,7 @@ function PRiSM_plot_bourdet(canvas, data, opts) {
 
     function render() {
         const tr = PRiSM_plot_axes(ctx, plot, scaleX, scaleY, {
+            canvas: canvas,
             title: opts.title || 'Log-Log Bourdet Derivative'
         });
         // ── Slope guides ─────────────────────────────────────────────
@@ -991,7 +1008,7 @@ function PRiSM_plot_sqrt_time(canvas, data, opts) {
     const points = PRiSM_plot_zip(xs, ys);
 
     function render() {
-        const tr = PRiSM_plot_axes(ctx, plot, scaleX, scaleY, { title: opts.title || 'Square-Root Time' });
+        const tr = PRiSM_plot_axes(ctx, plot, scaleX, scaleY, { canvas: canvas, title: opts.title || 'Square-Root Time' });
         PRiSM_plot_clip(ctx, plot.x, plot.y, plot.w, plot.h);
         PRiSM_plot_line(ctx, points, tr.toX, tr.toY, PRiSM_THEME.accent, { width: 2 });
         PRiSM_plot_dots(ctx, points, tr.toX, tr.toY, PRiSM_THEME.accent, 2);
@@ -1046,7 +1063,7 @@ function PRiSM_plot_quarter_root_time(canvas, data, opts) {
     const points = PRiSM_plot_zip(xs, ys);
 
     function render() {
-        const tr = PRiSM_plot_axes(ctx, plot, scaleX, scaleY, { title: opts.title || 'Quarter-Root Time (Bilinear)' });
+        const tr = PRiSM_plot_axes(ctx, plot, scaleX, scaleY, { canvas: canvas, title: opts.title || 'Quarter-Root Time (Bilinear)' });
         PRiSM_plot_clip(ctx, plot.x, plot.y, plot.w, plot.h);
         PRiSM_plot_line(ctx, points, tr.toX, tr.toY, PRiSM_THEME.accent, { width: 2 });
         PRiSM_plot_dots(ctx, points, tr.toX, tr.toY, PRiSM_THEME.accent, 2);
@@ -1102,6 +1119,7 @@ function PRiSM_plot_spherical(canvas, data, opts) {
 
     function render() {
         const tr = PRiSM_plot_axes(ctx, plot, scaleX, scaleY, {
+            canvas: canvas,
             title: opts.title || 'Spherical Flow (Partial Penetration)'
         });
         PRiSM_plot_clip(ctx, plot.x, plot.y, plot.w, plot.h);
@@ -1169,7 +1187,7 @@ function PRiSM_plot_sandface_convolution(canvas, data, opts) {
     const points = PRiSM_plot_zip(xs, ys);
 
     function render() {
-        const tr = PRiSM_plot_axes(ctx, plot, scaleX, scaleY, { title: opts.title || 'Sandface-Rate Convolution' });
+        const tr = PRiSM_plot_axes(ctx, plot, scaleX, scaleY, { canvas: canvas, title: opts.title || 'Sandface-Rate Convolution' });
         PRiSM_plot_clip(ctx, plot.x, plot.y, plot.w, plot.h);
         PRiSM_plot_line(ctx, points, tr.toX, tr.toY, PRiSM_THEME.accent, { width: 2 });
         PRiSM_plot_dots(ctx, points, tr.toX, tr.toY, PRiSM_THEME.accent, 2);
@@ -1284,7 +1302,7 @@ function PRiSM_plot_buildup_superposition(canvas, data, opts) {
     const points = PRiSM_plot_zip(xs, ys);
 
     function render() {
-        const tr = PRiSM_plot_axes(ctx, plot, scaleX, scaleY, { title: opts.title || 'Build-up Superposition' });
+        const tr = PRiSM_plot_axes(ctx, plot, scaleX, scaleY, { canvas: canvas, title: opts.title || 'Build-up Superposition' });
         PRiSM_plot_clip(ctx, plot.x, plot.y, plot.w, plot.h);
         PRiSM_plot_line(ctx, points, tr.toX, tr.toY, PRiSM_THEME.accent, { width: 2 });
         PRiSM_plot_dots(ctx, points, tr.toX, tr.toY, PRiSM_THEME.accent, 2);
@@ -1337,7 +1355,7 @@ function PRiSM_plot_rate_time_cartesian(canvas, data, opts) {
     const points = PRiSM_plot_zip(data.t, data.q);
 
     function render() {
-        const tr = PRiSM_plot_axes(ctx, plot, scaleX, scaleY, { title: opts.title || 'Rate vs Time (Cartesian)' });
+        const tr = PRiSM_plot_axes(ctx, plot, scaleX, scaleY, { canvas: canvas, title: opts.title || 'Rate vs Time (Cartesian)' });
         PRiSM_plot_clip(ctx, plot.x, plot.y, plot.w, plot.h);
         PRiSM_plot_line(ctx, points, tr.toX, tr.toY, PRiSM_THEME.accent, { width: 2 });
         PRiSM_plot_dots(ctx, points, tr.toX, tr.toY, PRiSM_THEME.accent, 2);
@@ -1382,7 +1400,7 @@ function PRiSM_plot_rate_time_semilog(canvas, data, opts) {
     }
 
     function render() {
-        const tr = PRiSM_plot_axes(ctx, plot, scaleX, scaleY, { title: opts.title || 'Rate vs Time (Semi-log)' });
+        const tr = PRiSM_plot_axes(ctx, plot, scaleX, scaleY, { canvas: canvas, title: opts.title || 'Rate vs Time (Semi-log)' });
         PRiSM_plot_clip(ctx, plot.x, plot.y, plot.w, plot.h);
         PRiSM_plot_line(ctx, pts, tr.toX, tr.toY, PRiSM_THEME.accent, { width: 2 });
         PRiSM_plot_dots(ctx, pts, tr.toX, tr.toY, PRiSM_THEME.accent, 2);
@@ -1432,7 +1450,7 @@ function PRiSM_plot_rate_time_loglog(canvas, data, opts) {
     const scaleY = { kind: 'log', min: yR.min, max: yR.max, label: opts.yLabel || 'Rate, q (bbl/d)' };
 
     function render() {
-        const tr = PRiSM_plot_axes(ctx, plot, scaleX, scaleY, { title: opts.title || 'Rate vs Time (Log-Log)' });
+        const tr = PRiSM_plot_axes(ctx, plot, scaleX, scaleY, { canvas: canvas, title: opts.title || 'Rate vs Time (Log-Log)' });
         PRiSM_plot_clip(ctx, plot.x, plot.y, plot.w, plot.h);
         PRiSM_plot_line(ctx, pts, tr.toX, tr.toY, PRiSM_THEME.accent, { width: 2 });
         PRiSM_plot_dots(ctx, pts, tr.toX, tr.toY, PRiSM_THEME.accent, 2);
@@ -1492,7 +1510,7 @@ function PRiSM_plot_rate_cumulative(canvas, data, opts) {
     const scaleY = { kind: 'lin', min: Math.max(0, yR.min), max: yR.max, label: opts.yLabel || 'Rate, q (bbl/d)' };
 
     function render() {
-        const tr = PRiSM_plot_axes(ctx, plot, scaleX, scaleY, { title: opts.title || 'Rate vs Cumulative' });
+        const tr = PRiSM_plot_axes(ctx, plot, scaleX, scaleY, { canvas: canvas, title: opts.title || 'Rate vs Cumulative' });
         PRiSM_plot_clip(ctx, plot.x, plot.y, plot.w, plot.h);
         PRiSM_plot_line(ctx, pts, tr.toX, tr.toY, PRiSM_THEME.accent, { width: 2 });
         PRiSM_plot_dots(ctx, pts, tr.toX, tr.toY, PRiSM_THEME.accent, 2);
@@ -1581,7 +1599,7 @@ function PRiSM_plot_loss_ratio(canvas, data, opts) {
     const points = PRiSM_plot_zip(xs, ys);
 
     function render() {
-        const tr = PRiSM_plot_axes(ctx, plot, scaleX, scaleY, { title: opts.title || 'Loss-Ratio (1/D vs t)' });
+        const tr = PRiSM_plot_axes(ctx, plot, scaleX, scaleY, { canvas: canvas, title: opts.title || 'Loss-Ratio (1/D vs t)' });
         PRiSM_plot_clip(ctx, plot.x, plot.y, plot.w, plot.h);
         PRiSM_plot_line(ctx, points, tr.toX, tr.toY, PRiSM_THEME.accent, { width: 2 });
         PRiSM_plot_dots(ctx, points, tr.toX, tr.toY, PRiSM_THEME.green, 3);
@@ -1696,7 +1714,7 @@ function PRiSM_plot_typecurve_overlay(canvas, data, opts) {
     const scaleY = { kind: 'log', min: yR.min, max: yR.max, label: opts.yLabel || 'qD = q / qi' };
 
     function render() {
-        const tr = PRiSM_plot_axes(ctx, plot, scaleX, scaleY, { title: opts.title || 'Type-Curve Overlay (Arps qD-tD)' });
+        const tr = PRiSM_plot_axes(ctx, plot, scaleX, scaleY, { canvas: canvas, title: opts.title || 'Type-Curve Overlay (Arps qD-tD)' });
         PRiSM_plot_clip(ctx, plot.x, plot.y, plot.w, plot.h);
         // Background curves (thin)
         curves.forEach(c => {

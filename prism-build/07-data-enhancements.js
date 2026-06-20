@@ -999,6 +999,14 @@
         var msg3 = _byId('prism_data_msg');
         if (msg3) msg3.innerHTML = '<span style="color:var(--green);">Dataset of '
             + ds.t.length + ' points active. Switch to the Plots tab to visualise.</span>';
+        // Notify listeners (data-crop tool, plot panels, etc.) that a new
+        // dataset is live. CustomEvent is supported in every browser this
+        // app targets; the try/catch is defensive against unusual hosts.
+        try {
+            window.dispatchEvent(new CustomEvent('prism:dataset-loaded', {
+                detail: { source: 'file', dataset: ds }
+            }));
+        } catch (_) { /* CustomEvent not supported */ }
     };
 
 

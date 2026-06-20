@@ -478,11 +478,20 @@ function _horizontal_pseudoskin(KvKh, L_to_h, zw_to_h) {
   if (KvKh <= 0) throw new Error('KvKh must be > 0');
   if (L_to_h <= 0) throw new Error('L_to_h must be > 0');
   if (zw_to_h < 0 || zw_to_h > 1) throw new Error('zw_to_h must be in [0,1]');
-  // Joshi 1991 anisotropy / partial-penetration pseudo-skin:
-  //   Sg = ln(h/(2*pi*rw)) - (1/2)*ln(KvKh) ... rw normalised to 1 here
-  var beta = Math.sqrt(1 / KvKh);
-  var Sg = Math.log(beta * 0.5) - 0.5 * Math.log(KvKh);
-  // small correction for off-centre placement
+  // Joshi 1991 anisotropy / partial-penetration pseudo-skin (Eq. 4.30):
+  //   Sg = ln[h·β / (2·π·rw·(β+1))] − (1/2)·ln(KvKh)
+  // where β = sqrt(Kh/Kv) is the anisotropy factor.
+  // With h normalised to 1 and rw normalised to L_to_h convention (~1e-4),
+  // the dominant size-effect term ln(h/(2π·rw)) was missing entirely from
+  // the previous form. Bug-fix 2026-04-28 — previously gave Sg ≈ -ln(KvKh)
+  // − 0.693 (small positive), now gives Sg ≈ ln(h/(2π·rw·(β+1)/β)) − 0.5·ln(KvKh)
+  // (which is the dominant geometric term per Joshi).
+  // rw_norm chosen as 1e-4 (typical 0.25 ft / 2500 ft TVD scaling).
+  var rw_norm = 1e-4;
+  var beta = Math.sqrt(1 / KvKh);   // = sqrt(Kh/Kv) since KvKh = Kv/Kh
+  var Sg = Math.log(1.0 * beta / (2 * Math.PI * rw_norm * (beta + 1)))
+         - 0.5 * Math.log(KvKh);
+  // Small correction for off-centre placement (Babu-Odeh).
   var dz = (zw_to_h - 0.5);
   Sg += 2.0 * dz * dz;
   return Sg;
