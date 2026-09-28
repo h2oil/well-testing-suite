@@ -120,6 +120,15 @@
   //     window.iosSaveFile('report.pdf', base64String, true)
   window.iosSaveFile = writeAndShare;
 
+  // Project file (.h2oilproj) Save / Save As from the top-right File toolbar
+  // (prism-build/29-project-save.js checks this hook before any download).
+  // Writes the JSON to the app cache and opens the share sheet ("Save to
+  // Files", AirDrop, Mail…). Resolves false so the caller can fall back.
+  window.__projectSaveOverride = function(filename, jsonText) {
+    const name = String(filename || 'project.h2oilproj').replace(/[\\/:*?"<>|]+/g, '-');
+    return writeAndShare(name, String(jsonText == null ? '' : jsonText), false);
+  };
+
   // ── PDF export: load jsPDF + html2canvas on demand, override exportReport ──
   // Bundled offline — no CDN calls, safe for App Store.
   function loadScript(src) {
@@ -162,26 +171,47 @@
         windowWidth: 794,   // A4 @ 96 dpi
         windowHeight: body.scrollHeight
       });
-      const imgData = canvas.toDataURL('image/png');
-      // Multi-page A4 PDF
+      // Multi-page A4 PDF with margins. Page breaks are snapped to element
+      // boundaries (sections, table rows, result rows) so nothing is sliced
+      // through the middle.
       const { jsPDF } = window.jspdf;
       const pdf = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
-      const pageW = 210, pageH = 297;
-      const imgW = pageW;
-      const imgH = canvas.height * pageW / canvas.width;
-      let remaining = imgH;
-      let y = 0;
-      if (imgH <= pageH) {
-        pdf.addImage(imgData, 'PNG', 0, 0, imgW, imgH);
-      } else {
-        // Split across pages
-        while (remaining > 0) {
-          pdf.addImage(imgData, 'PNG', 0, -y, imgW, imgH);
-          remaining -= pageH;
-          y += pageH;
-          if (remaining > 0) pdf.addPage();
+      const pageW = 210, pageH = 297, margin = 10, footer = 6;
+      const contentW = pageW - 2 * margin, contentH = pageH - 2 * margin - footer;
+      const pxPerMm = canvas.width / contentW;
+      const pagePx = Math.floor(contentH * pxPerMm);
+      const scale = canvas.width / body.scrollWidth;
+      const bodyTop = body.getBoundingClientRect().top;
+      const cuts = [];
+      ifr.contentDocument.querySelectorAll('.rp-hero, .rp-meta, .rp-part, .rp-sec, .rp-kvr, .rp-fig, tr, .card, .rrow, .pair, h2, h3, figure, .rp-foot')
+        .forEach(el => { cuts.push(Math.round((el.getBoundingClientRect().top - bodyTop) * scale)); });
+      cuts.sort((a, b) => a - b);
+      const slices = [];
+      let start = 0;
+      while (start < canvas.height - 2) {
+        let end = start + pagePx;
+        if (end >= canvas.height) end = canvas.height;
+        else {
+          // Latest element top that still leaves the page at least half full.
+          let best = -1;
+          for (const c of cuts) { if (c > start + pagePx * 0.5 && c <= end) best = c; }
+          if (best > 0) end = best;
         }
+        slices.push([start, end]);
+        start = end;
       }
+      slices.forEach(([s, e], i) => {
+        if (i > 0) pdf.addPage();
+        const pc = document.createElement('canvas');
+        pc.width = canvas.width; pc.height = e - s;
+        const pctx = pc.getContext('2d');
+        pctx.fillStyle = '#ffffff'; pctx.fillRect(0, 0, pc.width, pc.height);
+        pctx.drawImage(canvas, 0, s, canvas.width, e - s, 0, 0, canvas.width, e - s);
+        pdf.addImage(pc.toDataURL('image/jpeg', 0.92), 'JPEG', margin, margin, contentW, (e - s) / pxPerMm);
+        pdf.setFontSize(7.5); pdf.setTextColor(140, 149, 159);
+        pdf.text(String(title || 'Report'), margin, pageH - margin + 1);
+        pdf.text('Page ' + (i + 1) + ' of ' + slices.length, pageW - margin, pageH - margin + 1, { align: 'right' });
+      });
       const datauri = pdf.output('datauristring'); // "data:application/pdf;base64,..."
       const comma = datauri.indexOf(',');
       return datauri.slice(comma + 1); // base64 only
