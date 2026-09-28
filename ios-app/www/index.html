@@ -8454,6 +8454,90 @@ function PRiSM_renderTabPlaceholder(host, title, msg) {
 // key 'wts_prism' via the existing loadInputs/saveInputs pattern.
 // =============================================================================
 
+// ── Default sample dataset ──────────────────────────────────────────────
+// Physically-correct homogeneous drawdown (Cd=80, S=2.5, k=45 md, h=35 ft,
+// q=850 STB/d) so PRiSM is immediately usable. Seeded ONCE on first open;
+// user loads/clears stick thereafter (Clear sets 'wts_prism_sample_suppress').
+const PRiSM_DEFAULT_SAMPLE_CSV =
+`time,pressure,rate
+0.01000,3861.4,850
+0.01190,3823.1,850
+0.01416,3783.2,850
+0.01685,3743.4,850
+0.02005,3705.0,850
+0.02386,3668.2,850
+0.02840,3633.4,850
+0.03379,3602.4,850
+0.04021,3575.4,850
+0.04785,3551.4,850
+0.05694,3530.4,850
+0.06776,3512.9,850
+0.08063,3497.6,850
+0.09595,3483.3,850
+0.1142,3470.1,850
+0.1359,3458.5,850
+0.1617,3447.2,850
+0.1924,3435.7,850
+0.2289,3425.0,850
+0.2724,3415.1,850
+0.3242,3405.0,850
+0.3858,3394.7,850
+0.4591,3385.2,850
+0.5463,3375.9,850
+0.6501,3366.0,850
+0.7736,3356.1,850
+0.9206,3347.0,850
+1.095,3337.7,850
+1.304,3327.8,850
+1.551,3318.4,850
+1.846,3309.6,850
+2.197,3300.4,850
+2.614,3290.8,850
+3.111,3281.8,850
+3.701,3273.0,850
+4.405,3263.6,850
+5.241,3254.0,850
+6.237,3245.0,850
+7.422,3236.1,850
+8.832,3226.5,850
+10.51,3217.2,850
+12.51,3208.5,850
+14.88,3199.5,850
+17.71,3190.0,850
+21.08,3181.0,850
+25.08,3172.3,850
+29.84,3163.0,850
+35.51,3153.4,850
+42.26,3144.5,850
+50.29,3135.6,850
+59.84,3126.1,850
+71.21,3116.8,850
+84.74,3108.2,850
+100.8,3099.3,850
+120.0,3089.8,850`;
+window.PRiSM_DEFAULT_SAMPLE_CSV = PRiSM_DEFAULT_SAMPLE_CSV;
+
+function PRiSM_seedDefaultSample(textareaId) {
+    try {
+        if (localStorage.getItem('wts_prism_sample_suppress')) return false;
+        const ds = window.PRiSM_dataset;
+        if (ds && ds.t && ds.t.length) return false;
+        const ta = document.getElementById(textareaId || 'prism_data_paste');
+        if (ta && ta.value && ta.value.trim()) return false;
+        if (ta) ta.value = PRiSM_DEFAULT_SAMPLE_CSV;
+        const lines = PRiSM_DEFAULT_SAMPLE_CSV.trim().split(/\r?\n/);
+        const t = [], p = [], q = [];
+        for (let i = 1; i < lines.length; i++) {
+            const c = lines[i].split(',');
+            const tt = parseFloat(c[0]), pp = parseFloat(c[1]), qq = parseFloat(c[2]);
+            if (isFinite(tt) && isFinite(pp)) { t.push(tt); p.push(pp); q.push(isFinite(qq) ? qq : 0); }
+        }
+        window.PRiSM_dataset = { t, p, q };
+        return true;
+    } catch (e) { return false; }
+}
+window.PRiSM_seedDefaultSample = PRiSM_seedDefaultSample;
+
 function PRiSM_renderTabData(host) {
     host.innerHTML = `
     <div class="cols-2">
@@ -8513,6 +8597,7 @@ function PRiSM_renderTabData(host) {
     // ── Persistence ──
     const PERSIST_IDS = ['prism_data_paste'];
     loadInputs('prism', PERSIST_IDS);
+    if (PRiSM_seedDefaultSample('prism_data_paste')) saveInputs('prism', PERSIST_IDS);
 
     // Restore multi-rate rows from a separate JSON entry. localStorage strings
     // outside the loadInputs system because the table isn't a single input.
@@ -8545,6 +8630,7 @@ function PRiSM_renderTabData(host) {
         $('prism_data_stats').innerHTML   = '<div style="color:var(--text3); font-size:12px;">No data parsed yet.</div>';
         $('prism_data_msg').textContent   = '';
         window.PRiSM_dataset = null;
+        try { localStorage.setItem('wts_prism_sample_suppress', '1'); } catch (e) {}
         saveInputs('prism', PERSIST_IDS);
     };
     $('prism_mrate_add').onclick = function() {
@@ -16613,6 +16699,12 @@ var REGISTRY_ADDITIONS = {
 
         // ── Persistence: re-load paste textarea ──
         _load('prism', ['prism_data_paste']);
+        // Seed the default sample on first open (delegates to the foundation
+        // helper, which fills the textarea + window.PRiSM_dataset once).
+        if (typeof window.PRiSM_seedDefaultSample === 'function' &&
+            window.PRiSM_seedDefaultSample('prism_data_paste')) {
+            _save('prism', ['prism_data_paste']);
+        }
 
         // Wire file input.
         var fi = _byId('prism_data_file');
@@ -16639,6 +16731,7 @@ var REGISTRY_ADDITIONS = {
             _byId('prism_sheet_card').style.display = 'none';
             window.PRiSM_dataset = null;
             window.PRiSM._dataEnh = null;
+            try { localStorage.setItem('wts_prism_sample_suppress', '1'); } catch (e) {}
             _save('prism', ['prism_data_paste']);
         };
 
@@ -25491,15 +25584,31 @@ function PRiSM_autoMatch(opts) {
 
     var classification = PRiSM_classifyRegimes(dataset.t, dataset.p, deriv);
 
-    // If the dataset has a meaningful rate column, append decline candidates.
+    // Append decline candidates only when the rate column is the PRIMARY
+    // SIGNAL — i.e. it is non-zero AND actually DECLINING over the test.
+    // A CONSTANT non-zero rate (e.g. 850 STB/d throughout) is a pressure-
+    // transient flow period, NOT decline data — racing decline curves there
+    // mis-classifies a homogeneous drawdown as "Duong". So we require both
+    //   (a) most points have q > 0, and
+    //   (b) the rate trends downward by > 15% (late mean < early mean).
     var hasRateMode = false;
-    if (dataset.q && Array.isArray(dataset.q)) {
-        var nonZeroRates = 0;
+    if (dataset.q && Array.isArray(dataset.q) && dataset.q.length >= 8) {
+        var nonZeroRates = 0, qvals = [];
         for (var qi2 = 0; qi2 < dataset.q.length; qi2++) {
-            if (dataset.q[qi2] != null && isFinite(dataset.q[qi2]) && dataset.q[qi2] > 0) nonZeroRates++;
+            var qv = dataset.q[qi2];
+            if (qv != null && isFinite(qv) && qv > 0) { nonZeroRates++; qvals.push(qv); }
+            else qvals.push(0);
         }
-        // If rate is a primary signal (most points have q > 0), assume DCA.
-        if (nonZeroRates > 0.5 * dataset.q.length) hasRateMode = true;
+        if (nonZeroRates > 0.5 * dataset.q.length) {
+            // Compare first-quarter mean to last-quarter mean.
+            var nq = Math.max(2, Math.floor(qvals.length / 4));
+            var early = 0, late = 0;
+            for (var e = 0; e < nq; e++) early += qvals[e];
+            for (var l = qvals.length - nq; l < qvals.length; l++) late += qvals[l];
+            early /= nq; late /= nq;
+            // Decline only if the rate falls meaningfully (DCA), else PTA.
+            if (early > 0 && late < 0.85 * early) hasRateMode = true;
+        }
     }
 
     // Build candidate list.
@@ -25610,6 +25719,50 @@ function PRiSM_autoMatch(opts) {
                     }
                 }
 
+                // ── Dimensional auto-scaling for pressure-kind models ──
+                // Type-curve models output dimensionless pwd(td); field data
+                // is real Δp(t). Fit an amplitude scale A (psi per pd-unit)
+                // and a time scale B (td per hour) alongside the model params
+                // so the dimensionless curve maps onto the measured data.
+                // Rate-domain decline models already fit real units → skip.
+                var modelFnForLM = entry.pd;
+                var kind = entry.kind || 'pressure';
+                if (kind !== 'rate') {
+                    var dpMax = 0;
+                    for (var di = 0; di < data.p.length; di++) {
+                        var dv = Math.abs(data.p[di] - data.p[0]);
+                        if (dv > dpMax) dpMax = dv;
+                    }
+                    if (!(dpMax > 0)) dpMax = 1;
+                    var probeTd = data.t.map(function (t) { return Math.max(1e-9, t); });
+                    var pdProbe = null;
+                    try { pdProbe = entry.pd(probeTd, initParams); } catch (e) { pdProbe = null; }
+                    var pdMax = 1;
+                    if (pdProbe && pdProbe.length) {
+                        for (var ppi = 0; ppi < pdProbe.length; ppi++) {
+                            if (isFinite(pdProbe[ppi]) && pdProbe[ppi] > pdMax) pdMax = pdProbe[ppi];
+                        }
+                    }
+                    var A0 = dpMax / pdMax;
+                    initParams.__ampScale  = A0;
+                    // td/hr for typical field data is O(1e3-1e5) — start mid-
+                    // range and let LM refine across a wide span.
+                    initParams.__timeScale = 1e3;
+                    bounds.__ampScale  = [A0 / 1e3, A0 * 1e3];
+                    bounds.__timeScale = [1e-3, 1e7];
+                    modelFnForLM = function (tArr, params) {
+                        var B = (params.__timeScale > 0) ? params.__timeScale : 1;
+                        var A = (typeof params.__ampScale === 'number') ? params.__ampScale : 1;
+                        var td = tArr.map(function (t) { return Math.max(1e-9, t * B); });
+                        var pd;
+                        try { pd = entry.pd(td, params); }
+                        catch (e) { return tArr.map(function () { return NaN; }); }
+                        var out = new Array(pd.length);
+                        for (var oi = 0; oi < pd.length; oi++) out[oi] = A * pd[oi];
+                        return out;
+                    };
+                }
+
                 if (typeof G.PRiSM_lm !== 'function') {
                     resolve({
                         modelKey:   modelKey,
@@ -25626,7 +25779,7 @@ function PRiSM_autoMatch(opts) {
 
                 var fit;
                 try {
-                    fit = G.PRiSM_lm(entry.pd, data, initParams, bounds, freeze, lmOpts);
+                    fit = G.PRiSM_lm(modelFnForLM, data, initParams, bounds, freeze, lmOpts);
                 } catch (e) {
                     resolve({
                         modelKey:   modelKey,
@@ -25640,11 +25793,22 @@ function PRiSM_autoMatch(opts) {
                     });
                     return;
                 }
+                // Split the internal dimensional scales (__ampScale psi/pd,
+                // __timeScale td/hr) out of the user-facing params/CI tables.
+                var userParams = {}, userCI = {}, userSE = {}, scales = {};
+                for (var fk in fit.params) {
+                    if (!fit.params.hasOwnProperty(fk)) continue;
+                    if (fk.indexOf('__') === 0) { scales[fk.slice(2)] = fit.params[fk]; continue; }
+                    userParams[fk] = fit.params[fk];
+                    if (fit.ci95 && fit.ci95[fk]) userCI[fk] = fit.ci95[fk];
+                    if (fit.stderr && fit.stderr[fk] != null) userSE[fk] = fit.stderr[fk];
+                }
                 resolve({
                     modelKey:   modelKey,
-                    params:     fit.params,
-                    CI95:       fit.ci95,
-                    stderr:     fit.stderr,
+                    params:     userParams,
+                    scales:     scales,      // { ampScale, timeScale } for pressure models
+                    CI95:       userCI,
+                    stderr:     userSE,
                     AIC:        isFinite(fit.aic) ? fit.aic : Infinity,
                     R2:         isFinite(fit.r2)  ? fit.r2  : -Infinity,
                     RMSE:       fit.rmse,

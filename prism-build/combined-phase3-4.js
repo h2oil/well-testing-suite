@@ -4763,6 +4763,12 @@ var REGISTRY_ADDITIONS = {
 
         // ── Persistence: re-load paste textarea ──
         _load('prism', ['prism_data_paste']);
+        // Seed the default sample on first open (delegates to the foundation
+        // helper, which fills the textarea + window.PRiSM_dataset once).
+        if (typeof window.PRiSM_seedDefaultSample === 'function' &&
+            window.PRiSM_seedDefaultSample('prism_data_paste')) {
+            _save('prism', ['prism_data_paste']);
+        }
 
         // Wire file input.
         var fi = _byId('prism_data_file');
@@ -4789,6 +4795,7 @@ var REGISTRY_ADDITIONS = {
             _byId('prism_sheet_card').style.display = 'none';
             window.PRiSM_dataset = null;
             window.PRiSM._dataEnh = null;
+            try { localStorage.setItem('wts_prism_sample_suppress', '1'); } catch (e) {}
             _save('prism', ['prism_data_paste']);
         };
 
