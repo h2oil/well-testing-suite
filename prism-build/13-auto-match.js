@@ -769,15 +769,31 @@ function PRiSM_autoMatch(opts) {
 
     var classification = PRiSM_classifyRegimes(dataset.t, dataset.p, deriv);
 
-    // If the dataset has a meaningful rate column, append decline candidates.
+    // Append decline candidates only when the rate column is the PRIMARY
+    // SIGNAL — i.e. it is non-zero AND actually DECLINING over the test.
+    // A CONSTANT non-zero rate (e.g. 850 STB/d throughout) is a pressure-
+    // transient flow period, NOT decline data — racing decline curves there
+    // mis-classifies a homogeneous drawdown as "Duong". So we require both
+    //   (a) most points have q > 0, and
+    //   (b) the rate trends downward by > 15% (late mean < early mean).
     var hasRateMode = false;
-    if (dataset.q && Array.isArray(dataset.q)) {
-        var nonZeroRates = 0;
+    if (dataset.q && Array.isArray(dataset.q) && dataset.q.length >= 8) {
+        var nonZeroRates = 0, qvals = [];
         for (var qi2 = 0; qi2 < dataset.q.length; qi2++) {
-            if (dataset.q[qi2] != null && isFinite(dataset.q[qi2]) && dataset.q[qi2] > 0) nonZeroRates++;
+            var qv = dataset.q[qi2];
+            if (qv != null && isFinite(qv) && qv > 0) { nonZeroRates++; qvals.push(qv); }
+            else qvals.push(0);
         }
-        // If rate is a primary signal (most points have q > 0), assume DCA.
-        if (nonZeroRates > 0.5 * dataset.q.length) hasRateMode = true;
+        if (nonZeroRates > 0.5 * dataset.q.length) {
+            // Compare first-quarter mean to last-quarter mean.
+            var nq = Math.max(2, Math.floor(qvals.length / 4));
+            var early = 0, late = 0;
+            for (var e = 0; e < nq; e++) early += qvals[e];
+            for (var l = qvals.length - nq; l < qvals.length; l++) late += qvals[l];
+            early /= nq; late /= nq;
+            // Decline only if the rate falls meaningfully (DCA), else PTA.
+            if (early > 0 && late < 0.85 * early) hasRateMode = true;
+        }
     }
 
     // Build candidate list.
@@ -888,6 +904,50 @@ function PRiSM_autoMatch(opts) {
                     }
                 }
 
+                // ── Dimensional auto-scaling for pressure-kind models ──
+                // Type-curve models output dimensionless pwd(td); field data
+                // is real Δp(t). Fit an amplitude scale A (psi per pd-unit)
+                // and a time scale B (td per hour) alongside the model params
+                // so the dimensionless curve maps onto the measured data.
+                // Rate-domain decline models already fit real units → skip.
+                var modelFnForLM = entry.pd;
+                var kind = entry.kind || 'pressure';
+                if (kind !== 'rate') {
+                    var dpMax = 0;
+                    for (var di = 0; di < data.p.length; di++) {
+                        var dv = Math.abs(data.p[di] - data.p[0]);
+                        if (dv > dpMax) dpMax = dv;
+                    }
+                    if (!(dpMax > 0)) dpMax = 1;
+                    var probeTd = data.t.map(function (t) { return Math.max(1e-9, t); });
+                    var pdProbe = null;
+                    try { pdProbe = entry.pd(probeTd, initParams); } catch (e) { pdProbe = null; }
+                    var pdMax = 1;
+                    if (pdProbe && pdProbe.length) {
+                        for (var ppi = 0; ppi < pdProbe.length; ppi++) {
+                            if (isFinite(pdProbe[ppi]) && pdProbe[ppi] > pdMax) pdMax = pdProbe[ppi];
+                        }
+                    }
+                    var A0 = dpMax / pdMax;
+                    initParams.__ampScale  = A0;
+                    // td/hr for typical field data is O(1e3-1e5) — start mid-
+                    // range and let LM refine across a wide span.
+                    initParams.__timeScale = 1e3;
+                    bounds.__ampScale  = [A0 / 1e3, A0 * 1e3];
+                    bounds.__timeScale = [1e-3, 1e7];
+                    modelFnForLM = function (tArr, params) {
+                        var B = (params.__timeScale > 0) ? params.__timeScale : 1;
+                        var A = (typeof params.__ampScale === 'number') ? params.__ampScale : 1;
+                        var td = tArr.map(function (t) { return Math.max(1e-9, t * B); });
+                        var pd;
+                        try { pd = entry.pd(td, params); }
+                        catch (e) { return tArr.map(function () { return NaN; }); }
+                        var out = new Array(pd.length);
+                        for (var oi = 0; oi < pd.length; oi++) out[oi] = A * pd[oi];
+                        return out;
+                    };
+                }
+
                 if (typeof G.PRiSM_lm !== 'function') {
                     resolve({
                         modelKey:   modelKey,
@@ -904,7 +964,7 @@ function PRiSM_autoMatch(opts) {
 
                 var fit;
                 try {
-                    fit = G.PRiSM_lm(entry.pd, data, initParams, bounds, freeze, lmOpts);
+                    fit = G.PRiSM_lm(modelFnForLM, data, initParams, bounds, freeze, lmOpts);
                 } catch (e) {
                     resolve({
                         modelKey:   modelKey,
@@ -918,11 +978,22 @@ function PRiSM_autoMatch(opts) {
                     });
                     return;
                 }
+                // Split the internal dimensional scales (__ampScale psi/pd,
+                // __timeScale td/hr) out of the user-facing params/CI tables.
+                var userParams = {}, userCI = {}, userSE = {}, scales = {};
+                for (var fk in fit.params) {
+                    if (!fit.params.hasOwnProperty(fk)) continue;
+                    if (fk.indexOf('__') === 0) { scales[fk.slice(2)] = fit.params[fk]; continue; }
+                    userParams[fk] = fit.params[fk];
+                    if (fit.ci95 && fit.ci95[fk]) userCI[fk] = fit.ci95[fk];
+                    if (fit.stderr && fit.stderr[fk] != null) userSE[fk] = fit.stderr[fk];
+                }
                 resolve({
                     modelKey:   modelKey,
-                    params:     fit.params,
-                    CI95:       fit.ci95,
-                    stderr:     fit.stderr,
+                    params:     userParams,
+                    scales:     scales,      // { ampScale, timeScale } for pressure models
+                    CI95:       userCI,
+                    stderr:     userSE,
                     AIC:        isFinite(fit.aic) ? fit.aic : Infinity,
                     R2:         isFinite(fit.r2)  ? fit.r2  : -Infinity,
                     RMSE:       fit.rmse,

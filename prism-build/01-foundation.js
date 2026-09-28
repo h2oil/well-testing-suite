@@ -555,6 +555,100 @@ function PRiSM_renderTabPlaceholder(host, title, msg) {
 // key 'wts_prism' via the existing loadInputs/saveInputs pattern.
 // =============================================================================
 
+// ── Default sample dataset ──────────────────────────────────────────────
+// A physically-correct homogeneous-reservoir drawdown (Cd=80, S=2.5,
+// k=45 md, h=35 ft, q=850 STB/d) so PRiSM is immediately usable — the user
+// can flip to Plots / Model / Match and see a textbook Bourdet (unit-slope
+// wellbore storage → hump → 0.5 radial stabilisation) without loading
+// anything. Seeded exactly ONCE (first PRiSM open); after that the user's
+// own loads / clears stick (guarded by localStorage 'wts_prism_sample_seeded').
+const PRiSM_DEFAULT_SAMPLE_CSV =
+`time,pressure,rate
+0.01000,3861.4,850
+0.01190,3823.1,850
+0.01416,3783.2,850
+0.01685,3743.4,850
+0.02005,3705.0,850
+0.02386,3668.2,850
+0.02840,3633.4,850
+0.03379,3602.4,850
+0.04021,3575.4,850
+0.04785,3551.4,850
+0.05694,3530.4,850
+0.06776,3512.9,850
+0.08063,3497.6,850
+0.09595,3483.3,850
+0.1142,3470.1,850
+0.1359,3458.5,850
+0.1617,3447.2,850
+0.1924,3435.7,850
+0.2289,3425.0,850
+0.2724,3415.1,850
+0.3242,3405.0,850
+0.3858,3394.7,850
+0.4591,3385.2,850
+0.5463,3375.9,850
+0.6501,3366.0,850
+0.7736,3356.1,850
+0.9206,3347.0,850
+1.095,3337.7,850
+1.304,3327.8,850
+1.551,3318.4,850
+1.846,3309.6,850
+2.197,3300.4,850
+2.614,3290.8,850
+3.111,3281.8,850
+3.701,3273.0,850
+4.405,3263.6,850
+5.241,3254.0,850
+6.237,3245.0,850
+7.422,3236.1,850
+8.832,3226.5,850
+10.51,3217.2,850
+12.51,3208.5,850
+14.88,3199.5,850
+17.71,3190.0,850
+21.08,3181.0,850
+25.08,3172.3,850
+29.84,3163.0,850
+35.51,3153.4,850
+42.26,3144.5,850
+50.29,3135.6,850
+59.84,3126.1,850
+71.21,3116.8,850
+84.74,3108.2,850
+100.8,3099.3,850
+120.0,3089.8,850`;
+window.PRiSM_DEFAULT_SAMPLE_CSV = PRiSM_DEFAULT_SAMPLE_CSV;
+
+// Seed the default sample whenever PRiSM has no data — UNLESS the user has
+// explicitly cleared it (Clear sets 'wts_prism_sample_suppress'). Fills the
+// textarea (if empty) AND parses straight into window.PRiSM_dataset so
+// Plots/Model/Match work even before the user visits Tab 1. Returns true if
+// it seeded this call. (Seed-until-cleared can't get stuck empty the way a
+// seed-once flag can if persistence is wiped externally.)
+function PRiSM_seedDefaultSample(textareaId) {
+    try {
+        if (localStorage.getItem('wts_prism_sample_suppress')) return false; // user cleared
+        const ds = window.PRiSM_dataset;
+        if (ds && ds.t && ds.t.length) return false;        // already have data
+        const ta = document.getElementById(textareaId || 'prism_data_paste');
+        if (ta && ta.value && ta.value.trim()) return false; // persisted user content
+        if (ta) ta.value = PRiSM_DEFAULT_SAMPLE_CSV;
+        // Parse CSV → window.PRiSM_dataset directly (renderer-independent).
+        const lines = PRiSM_DEFAULT_SAMPLE_CSV.trim().split(/\r?\n/);
+        const t = [], p = [], q = [];
+        for (let i = 1; i < lines.length; i++) {
+            const c = lines[i].split(',');
+            const tt = parseFloat(c[0]), pp = parseFloat(c[1]), qq = parseFloat(c[2]);
+            if (isFinite(tt) && isFinite(pp)) { t.push(tt); p.push(pp); q.push(isFinite(qq) ? qq : 0); }
+        }
+        window.PRiSM_dataset = { t, p, q };
+        return true;
+    } catch (e) { return false; }
+}
+window.PRiSM_seedDefaultSample = PRiSM_seedDefaultSample;
+
 function PRiSM_renderTabData(host) {
     host.innerHTML = `
     <div class="cols-2">
@@ -614,6 +708,9 @@ function PRiSM_renderTabData(host) {
     // ── Persistence ──
     const PERSIST_IDS = ['prism_data_paste'];
     loadInputs('prism', PERSIST_IDS);
+    // Seed the default sample on first open (textarea + dataset), then persist
+    // it so it survives a reload like any user-loaded data.
+    if (PRiSM_seedDefaultSample('prism_data_paste')) saveInputs('prism', PERSIST_IDS);
 
     // Restore multi-rate rows from a separate JSON entry. localStorage strings
     // outside the loadInputs system because the table isn't a single input.
@@ -646,6 +743,7 @@ function PRiSM_renderTabData(host) {
         $('prism_data_stats').innerHTML   = '<div style="color:var(--text3); font-size:12px;">No data parsed yet.</div>';
         $('prism_data_msg').textContent   = '';
         window.PRiSM_dataset = null;
+        try { localStorage.setItem('wts_prism_sample_suppress', '1'); } catch (e) {}
         saveInputs('prism', PERSIST_IDS);
     };
     $('prism_mrate_add').onclick = function() {
