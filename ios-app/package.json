@@ -23,9 +23,7 @@
     "@capacitor/filesystem": "^8.1.2",
     "@capacitor/status-bar": "^8.0.2",
     "@capacitor/splash-screen": "^8.0.1",
-    "@capacitor/preferences": "^8.0.1",
-    "@revenuecat/purchases-capacitor": "^13.0.1",
-    "@revenuecat/purchases-capacitor-ui": "^13.0.1"
+    "@capacitor/preferences": "^8.0.1"
   },
   "devDependencies": {
     "@capacitor/cli": "^8.3.1",

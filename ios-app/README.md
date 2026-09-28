@@ -1,7 +1,8 @@
 # H2Oil Well Testing Suite — iOS App
 
-Native iOS wrapper for the H2Oil Well Testing Suite, built with **Capacitor 8**
-and **RevenueCat 13** (for subscription paywall + Customer Center). The web app
+Native iOS wrapper for the H2Oil Well Testing Suite, built with **Capacitor 8**.
+The iOS app is **free and fully unlocked** — no in-app purchases, no
+subscription SDK, no paywall. The web app
 itself stays at the repo root (`well-testing-app.html`); this folder only holds
 the iOS wrapper. A build-time sync script copies the latest HTML from root and
 injects iOS-specific enhancements.
@@ -14,7 +15,7 @@ injects iOS-specific enhancements.
 well-testing-suite/
 ├── well-testing-app.html         ← SINGLE source of truth (edit here)
 └── ios-app/
-    ├── package.json               ← Capacitor 8 + RevenueCat 13 deps + npm scripts
+    ├── package.json               ← Capacitor 8 deps + npm scripts
     ├── capacitor.config.json      ← iOS app config (bundle ID, splash, etc.)
     ├── PrivacyInfo.xcprivacy      ← iOS 17+ privacy manifest — copy into Xcode
     │                                (ios/App/App/PrivacyInfo.xcprivacy)
@@ -26,9 +27,6 @@ well-testing-suite/
     │   ├── ios-meta.html          ← <meta> tags for web-app mode, theme-color
     │   ├── ios-styles.css         ← safe-area insets, bounce-lock, 44pt targets
     │   ├── ios-bridge.js          ← native plugin glue (haptics, share, PDF)
-    │   ├── ios-subscriptions.js   ← RevenueCat paywall gate + Customer Center
-    │   ├── ios-paywall.html       ← fallback paywall DOM (used if native unavail.)
-    │   ├── ios-paywall.css        ← fallback paywall styles
     │   └── libs/                  ← bundled jsPDF + html2canvas (offline PDF)
     ├── www/                       ← GENERATED (committed for Mac-only clones)
     │   ├── index.html
@@ -66,7 +64,7 @@ The root HTML stays untouched — it works equally well as a plain webpage and a
 1. **macOS** (required for iOS development)
 2. **Xcode 16+** (Xcode 26 recommended, latest stable) — Capacitor 8 requires Xcode 16 minimum (iOS deployment target 15.1)
 3. **Apple Developer Program** membership ($99/yr) — required for App Store submission
-4. **Node.js 20+** — *only for the first-time setup below*. After that, not needed.
+4. **Node.js 22+** (required by the Capacitor 8 CLI) — *only for the first-time setup below*. After that, not needed.
 
 > **Note:** Capacitor 8 uses **Swift Package Manager** instead of CocoaPods.
 > There is no `Podfile` — plugin dependencies are declared in `Package.swift`
@@ -200,14 +198,10 @@ At [appstoreconnect.apple.com](https://appstoreconnect.apple.com):
 - **Age rating** questionnaire — this app is 4+
 
 **Privacy & data:**
-- App stores calculator data locally. **Purchase History** is collected via
-  RevenueCat for subscription state — declare on the App Privacy form:
-  - Category: **Purchases → Purchase History**
-  - Linked to user: **No** (RC uses anonymous IDs)
-  - Used for tracking: **No**
-- **Contains 3rd-party SDKs: Yes** — RevenueCat (`@revenuecat/purchases-capacitor`
-  + `@revenuecat/purchases-capacitor-ui`). Makes network calls to
-  `api.revenuecat.com` for receipt validation and entitlement checks.
+- App stores calculator data locally only. **No data is collected** — on the
+  App Privacy form answer "No, we do not collect data from this app".
+- No third-party SDKs beyond Capacitor's own plugins; no analytics, no
+  in-app purchases, no network calls for app functionality.
 - **Privacy manifest** — copy `ios-app/PrivacyInfo.xcprivacy` into the Xcode
   project at `ios/App/App/PrivacyInfo.xcprivacy` and add it to the **App**
   target. Required by App Store Connect for iOS 17+ builds.
@@ -220,16 +214,10 @@ Include a note emphasizing the native integrations so Apple doesn't flag 4.2.1:
 > flare radiation per API 521, well test simulator with live Thornhill-Craver
 > choke back-solve, etc.), interactive 3D flare visualisations, decline-curve
 > analysis, and a full well-test flow simulator. All calculations run
-> on-device — the only network call is RevenueCat's receipt validation for
-> subscription entitlement. Native integrations: haptic feedback, native
-> share sheet for CSV/PDF exports, status-bar theming, file-save to
-> Files/iCloud, native StoreKit paywall and Customer Center via RevenueCat,
-> and offline entitlement cache so existing subscribers can use the app
-> without a network connection.
-
-**Sandbox tester for review:** Add a sandbox Apple ID in App Store Connect
-→ Users and Access → Sandbox, and include the credentials in the review
-notes so Apple can verify the trial + purchase flow.
+> on-device and the app works fully offline. The app is free with no
+> in-app purchases or account required. Native integrations: haptic
+> feedback, native share sheet for CSV/PDF exports, status-bar theming,
+> and file-save to Files/iCloud.
 
 ### 6. Submit for review
 
@@ -237,11 +225,10 @@ Review typically takes 24-48 hours. Common rejection reasons and how we've addre
 
 | Guideline | Reason | Mitigation |
 |-----------|--------|-----------|
-| 4.2.1 | "Just a repackaged website" | Native haptics, share sheet, StoreKit paywall, Customer Center, offline-first layout |
+| 4.2.1 | "Just a repackaged website" | Native haptics, share sheet, native PDF/CSV export to Files, offline-first layout |
 | 2.1 | App crashes | Test on real device, not just simulator |
 | 2.3.10 | Android references | None present |
-| 5.1.1 | Privacy violations | Only Purchase History collected (via RevenueCat) — declared in App Privacy |
-| 3.1.2 | Subscription disclosure | Paywall shows price, duration, trial, auto-renew, T&C, Privacy, Restore |
+| 5.1.1 | Privacy violations | No data collected — App Privacy declares "Data Not Collected" |
 | 2.3.8 | Placeholder icons | Custom H2Oil wordmark at 92% of longest axis — see PROJECT-NOTES |
 
 ---
@@ -284,39 +271,18 @@ Suggested screens to capture:
 
 ---
 
-## Subscriptions (RevenueCat)
+## Monetisation — none (free app)
 
-The iOS build is gated by a single auto-renewing monthly subscription with a
-3-day free trial, enforced via RevenueCat.
+The iOS app is free and fully unlocked. The subscription SDK, the paywall
+module (`ios-subscriptions.js`) and all in-app-purchase code were removed
+(the SDK's Swift package was also breaking Xcode Cloud archives). The app
+launches straight into the full UI. There is no StoreKit / IAP code in the
+binary.
 
-- Product ID: `com.h2oil.welltesting.pro.monthly`
-- Entitlement ID: `pro`
-- Offering ID: `default`
-- Price: $9.99 USD / month after 3-day free trial
-- API key (public, safe to ship): set in `ios-additions/ios-subscriptions.js`
-  as `REVENUECAT_API_KEY` — must start with `appl_` (iOS native StoreKit
-  key). A `test_` web-billing key will be rejected at runtime.
-
-**Flow**: launch → check cached entitlement → verify with RC in background
-→ if no entitlement, present native RC paywall (designed in RC dashboard)
-→ if native paywall unavailable or dismissed, fall back to the HTML paywall
-in `ios-additions/ios-paywall.html`. A ⚙︎ floating button opens the
-native Customer Center (cancel / change plan / refund request) once
-entitled.
-
-Public API for in-app "Manage Subscription" buttons:
-
-```js
-await window.H2OilSubs.isEntitled();        // boolean
-await window.H2OilSubs.getEntitlement();    // { active, expiry, productId, willRenew, inTrial }
-await window.H2OilSubs.presentPaywall();    // show RC paywall on demand
-await window.H2OilSubs.presentCustomerCenter();
-await window.H2OilSubs.refresh();           // re-run gate check
-window.H2OilSubs.resetCache();              // dev: clear cached entitlement
-```
-
-See `PROJECT-NOTES.md` for full setup in App Store Connect + RevenueCat
-dashboard.
+If paid features are ever reintroduced, add the dependency back via
+`npm install` + `npx cap sync ios` (which regenerates
+`ios/App/CapApp-SPM/Package.swift`), then re-resolve packages in Xcode and
+commit the updated `Package.resolved`.
 
 ---
 
@@ -384,17 +350,27 @@ account signed in):
 The script at [`ci_scripts/ci_post_clone.sh`](ci_scripts/ci_post_clone.sh)
 executes right after clone, before the archive step. It:
 
-1. `cd ios-app` and installs JS deps via `npm ci` (uses the committed
-   `package-lock.json`).
-2. Runs `npm run sync-main` to regenerate `www/index.html` from the
+1. `cd ios-app`, makes sure Node ≥ 22 is available (installs the
+   `node@22` Homebrew formula if Node is missing or older — the
+   Capacitor 8 CLI refuses to run on older Node).
+2. Installs JS deps via `npm ci --ignore-scripts` (uses the committed
+   `package-lock.json`; install scripts are skipped because the only
+   one is the dev-only `sharp` image library, which CI doesn't need).
+3. Runs `npm run sync-main` to regenerate `www/index.html` from the
    root HTML — so even if CI didn't commit the latest sync, Xcode
    Cloud builds the most recent web UI.
-3. Runs `npx cap sync ios`, which copies `www/` into the app bundle
-   and runs `pod install`.
+4. Runs `npx cap sync ios`, which copies `www/` into the app bundle
+   and regenerates `ios/App/CapApp-SPM/Package.swift` from the plugins
+   in `package.json`. No CocoaPods.
+5. Stamps `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION` from
+   `CI_BUILD_NUMBER`.
 
-Node and Homebrew are preinstalled on Xcode Cloud runners. CocoaPods
-runs automatically via `cap sync`. No secrets to manage for this
-project — RevenueCat's key is a public iOS key already in source.
+Xcode Cloud then resolves Swift packages **strictly from the committed**
+`ios/App/App.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved`
+(automatic package resolution is disabled on Xcode Cloud). Whenever a
+Capacitor plugin is added/removed/upgraded, re-resolve packages in Xcode
+on a Mac (File → Packages → Resolve Package Versions) and commit the
+updated `Package.resolved`. No secrets to manage for this project.
 
 ### Signing for Xcode Cloud
 
@@ -420,9 +396,13 @@ match the one tied to your App Store Connect account.
 - **"cap: command not found"** in the CI log — Node didn't install
   or PATH isn't exporting. The script installs via brew as a fallback;
   check the CI log for `brew install node` output.
-- **SPM fetch fails in CI** — usually a rate-limit on the first
-  clone of many RevenueCat packages. Retry; Xcode Cloud caches SPM
-  checkouts between runs.
+- **"an out-of-date resolved file was detected"** — `Package.resolved`
+  doesn't match the current `CapApp-SPM/Package.swift`. On a Mac:
+  `cd ios-app && npm ci && npx cap sync ios`, open
+  `ios/App/App.xcodeproj`, File → Packages → Resolve Package Versions,
+  then commit `Package.resolved`.
+- **SPM fetch fails in CI** — usually a transient GitHub rate-limit.
+  Retry; Xcode Cloud caches SPM checkouts between runs.
 - **Build times > 20 min** — normal for the first archive (SPM
   package fetch + Swift compile). Subsequent builds reuse caches and
   take 5–8 min.
@@ -435,27 +415,25 @@ match the one tied to your App Store Connect account.
 npm update @capacitor/core @capacitor/cli @capacitor/ios @capacitor/app \
   @capacitor/haptics @capacitor/share @capacitor/filesystem \
   @capacitor/status-bar @capacitor/splash-screen @capacitor/preferences
-npm update @revenuecat/purchases-capacitor @revenuecat/purchases-capacitor-ui
 npx cap migrate   # migrates native project + bumps deployment target
-(cd ios/App && pod install)
-npx cap sync ios
+npx cap sync ios  # regenerates CapApp-SPM/Package.swift (SPM — no pod install)
 ```
 
-Then consult the [Capacitor migration guide](https://capacitorjs.com/docs/updating/8-0)
-for breaking changes. RevenueCat version lines map to Capacitor as follows:
-- `purchases-capacitor` **10.x / 11.x** → Capacitor 7
-- `purchases-capacitor` **12.x / 13.x** → Capacitor 8 ← current
+Then open `ios/App/App.xcodeproj`, run File → Packages → Resolve Package
+Versions, and commit the updated `Package.resolved` (Xcode Cloud only
+builds against the committed pins). Consult the
+[Capacitor migration guide](https://capacitorjs.com/docs/updating/8-0)
+for breaking changes.
 
 ---
 
 ## Troubleshooting
 
-### "pod install" fails with "xcrun: error"
+### "xcrun: error" / xcodebuild can't find the developer tools
 
 ```bash
 sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
 sudo xcodebuild -license accept
-cd ios/App && pod install
 ```
 
 ### App is blank on launch

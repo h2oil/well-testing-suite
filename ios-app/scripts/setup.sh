@@ -130,18 +130,18 @@ if ! command -v node >/dev/null 2>&1; then
     if confirm "Install Node.js LTS via Homebrew?"; then
         brew install node
     else
-        err "Node.js 18+ required. Install manually from https://nodejs.org"
+        err "Node.js 22+ required (Capacitor 8). Install manually from https://nodejs.org"
         exit 1
     fi
 fi
 
 NODE_VER=$(node -v 2>/dev/null | sed 's/v//' | cut -d. -f1)
-if [ "${NODE_VER:-0}" -lt 18 ]; then
-    warn "Node.js v${NODE_VER} is too old — need 18+."
+if [ "${NODE_VER:-0}" -lt 22 ]; then
+    warn "Node.js v${NODE_VER} is too old — need 22+ (Capacitor 8)."
     if confirm "Upgrade via Homebrew?"; then
         brew upgrade node || brew install node
     else
-        err "Node 18+ required."
+        err "Node 22+ required (Capacitor 8)."
         exit 1
     fi
 fi

@@ -33,13 +33,34 @@ let html = read(MAIN_HTML);
 // ── 0. Strip web-only blocks flagged <!-- GA:START --> ... <!-- GA:END -->
 // Google Analytics and any similar network-analytics snippets live only
 // on the web version. iOS builds shouldn't phone home to Google (Apple
-// privacy manifest hassle; RevenueCat already handles subscription
-// analytics). The markers are added in well-testing-app.html; this
-// regex removes everything between them, inclusive.
+// privacy manifest hassle — the iOS app declares no data collection).
+// The markers are added in well-testing-app.html; this regex removes
+// everything between them, inclusive.
 const gaBefore = html.length;
 html = html.replace(/<!--\s*GA:START[\s\S]*?GA:END\s*-->/g, '<!-- GA stripped from iOS bundle -->');
 if (html.length !== gaBefore) {
     console.log(`[sync] Stripped Google Analytics block (${gaBefore - html.length} chars)`);
+}
+
+// ── 0b. Drop in-app Release Notes entries about the old iOS subscription
+// work. The iOS app is free with no in-app purchases; release-note text
+// mentioning paywalls / subscription pricing / web-only subscriptions
+// would be misleading in the iOS build (and is an App Review risk). The
+// web build keeps them. Entries look like:
+//     { date:'…', tag:'…', title:'…',
+//       details:'…' },
+// Only entries whose text matches the pattern below are removed; if the
+// release-notes format ever changes this is a harmless no-op.
+const RELEASE_ENTRY_RE = /\r?\n[ \t]*\{ date:'[^'\n]*',\s*tag:'[^'\n]*',\s*title:'(?:[^'\\\n]|\\.)*',\s*details:'(?:[^'\\\n]|\\.)*' \},?/g;
+// (vendor name of the removed subscription SDK is matched as revenue\s?cat)
+const IOS_MONETISATION_RE = /revenue\s?cat|paywall|subscription|entitlement/i;
+let droppedNotes = 0;
+html = html.replace(RELEASE_ENTRY_RE, (entry) => {
+    if (IOS_MONETISATION_RE.test(entry)) { droppedNotes++; return ''; }
+    return entry;
+});
+if (droppedNotes) {
+    console.log(`[sync] Dropped ${droppedNotes} subscription-related Release Notes entr${droppedNotes === 1 ? 'y' : 'ies'} from iOS bundle`);
 }
 
 // ── 1. iOS-specific <meta> tags for status bar, web app mode, viewport ──
@@ -59,26 +80,21 @@ html = html.replace(
     `\n        /* ── iOS additions ── */\n${iosCss}$1$2`
 );
 
-// ── 3. Capacitor bridge + iOS-specific JS (haptics, share, keyboard, subs) ──
+// ── 3. Capacitor bridge + iOS-specific JS (haptics, share, file export) ──
 const iosBridge = read(path.join(IOS_ADDITIONS, 'ios-bridge.js'));
-const iosSubs = fs.existsSync(path.join(IOS_ADDITIONS, 'ios-subscriptions.js'))
-    ? read(path.join(IOS_ADDITIONS, 'ios-subscriptions.js'))
-    : '';
 // Inject capacitor.js <script> tag before the main <script> block
 html = html.replace(
     /(\s*)(<script>\s*\/\*)/,
     `$1<script src="capacitor.js"></script>$1$2`
 );
-// Inject ios-bridge.js + ios-subscriptions.js inside the IIFE near the end (before })();)
+// Inject ios-bridge.js inside the IIFE near the end (before })();)
 html = html.replace(
     /(\s*)(}\)\(\);\s*<\/script>\s*<\/body>)/,
-    `\n\n// ── iOS Native Bridge ──\n${iosBridge}\n\n// ── iOS Subscription Gate ──\n${iosSubs}\n$1$2`
+    `\n\n// ── iOS Native Bridge ──\n${iosBridge}\n$1$2`
 );
 
-// NOTE: the HTML fallback paywall (ios-paywall.html/ios-paywall.css) has
-// been removed as of v1.3. The native RC paywall is the only paywall —
-// ios-subscriptions.js loops on presentPaywallIfNeeded until the user
-// completes the purchase or the SDK reports an error to the console.
+// NOTE: the iOS app is free and fully unlocked — there is no subscription
+// gate, paywall or in-app-purchase SDK. It loads straight into the full app.
 
 // ── 4. Ensure output dir exists ──
 fs.mkdirSync(path.dirname(OUTPUT), { recursive: true });
