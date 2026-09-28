@@ -9,7 +9,7 @@
 ## TL;DR — What this project is
 
 - **Single-file vanilla-JS HTML web app** (`well-testing-app.html`, ~37k lines after PRiSM expansion). Zero external runtime deps; pure `Math.*` for all engineering modules. Deployed at `pb-handbook.com` historically — now standalone on `localhost:8080` via `npx http-server` for development.
-- **iOS Capacitor wrapper** (`ios-app/`) — wraps the same HTML for App Store distribution. iOS builds via Xcode Cloud; subscriptions via RevenueCat 13 + Capacitor 8.
+- **iOS Capacitor wrapper** (`ios-app/`) — wraps the same HTML for App Store distribution. iOS builds via Xcode Cloud; Capacitor 8 (SPM). The iOS app is free — no in-app purchases / subscription SDK.
 - **PRiSM module** is the flagship advanced Well Test Analysis tab, ~32k LOC of its own (pressure-transient + decline-curve workshop with 45 type-curve models, LM regression, auto-match, deconvolution, PVT, tide analysis, multi-dataset project files, etc.). Built across 21 numbered source files in `prism-build/` then concatenated and injected into `well-testing-app.html`.
 
 ---
@@ -22,7 +22,7 @@ ios-app/
   www/index.html                ← derived from well-testing-app.html via sync-from-main.js
                                   (GA stripped, iOS additions injected)
   scripts/sync-from-main.js     ← regenerates ios-app/www/index.html
-  ios-additions/                ← iOS-only JS (Capacitor bridge, RevenueCat paywall)
+  ios-additions/                ← iOS-only JS/CSS (Capacitor bridge, meta tags, bundled PDF libs)
   ci_scripts/ci_post_clone.sh   ← Xcode Cloud post-clone hook
   PrivacyInfo.xcprivacy
 prism-build/                    ← PRiSM module source (21 numbered files + tooling)
@@ -148,10 +148,11 @@ node prism-build/smoke-test.js | tail -5
 
 ### iOS deployment notes
 
-- RevenueCat key is `appl_ZgPLTWenoIgrqCgSDmqMRdMXyFF` (real native StoreKit key, NOT a `test_` web-billing key — that was a critical early bug).
-- Capacitor 8 + RevenueCat 13. Don't downgrade.
-- The `ci_scripts/ci_post_clone.sh` hook bootstraps the `ios-app/www/` and runs `pod install` for Xcode Cloud.
-- v1.3 removed the HTML fallback paywall — RC native paywall is sole subscription gate.
+- **The iOS app is free and fully unlocked — no in-app purchases, no subscription SDK, no paywall.** The subscription SDK and `ios-additions/ios-subscriptions.js` were removed entirely (its Swift package broke Xcode Cloud archives). Don't re-add an IAP/subscription SDK without an explicit user decision.
+- Capacitor 8 (Swift Package Manager — **no CocoaPods / Podfile**). Don't downgrade. Capacitor 8 CLI needs **Node ≥ 22**.
+- SPM wiring: `npx cap sync ios` regenerates `ios-app/ios/App/CapApp-SPM/Package.swift` from the plugins in `ios-app/package.json`. Xcode Cloud resolves packages strictly from the committed `ios-app/ios/App/App.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved` — whenever a plugin is added/removed/upgraded, re-resolve in Xcode on a Mac and commit the updated `Package.resolved`, or the archive fails with "out-of-date resolved file".
+- The `ci_scripts/ci_post_clone.sh` hook (Xcode Cloud runs the copy in `ios-app/ios/App/ci_scripts/` — keep both copies identical) ensures Node ≥ 22, runs `npm ci --ignore-scripts`, regenerates `ios-app/www/` (`npm run sync-main`), runs `npx cap sync ios`, and stamps the version from `CI_BUILD_NUMBER`.
+- `ios-app/package-lock.json` must stay in sync with `package.json` (`npm ci` hard-fails otherwise).
 
 ---
 

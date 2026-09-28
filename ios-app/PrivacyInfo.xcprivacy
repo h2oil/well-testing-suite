@@ -12,8 +12,9 @@
 
         Summary of declarations:
         - No user tracking (no IDFA, no ad networks).
-        - Purchase history collected via RevenueCat for subscription
-          management; not linked to user identity, not used for tracking.
+        - No data collected: the app is free and fully unlocked (no
+          in-app purchases, no subscription SDK, no analytics). All
+          calculations run on-device.
         - Required-reason APIs: NSUserDefaults (local calculator state)
           and File Timestamp (FileSystem plugin for PDF/CSV export).
     -->
@@ -24,21 +25,7 @@
     <array/>
 
     <key>NSPrivacyCollectedDataTypes</key>
-    <array>
-        <!-- Purchase history: collected by RevenueCat (subscription state). -->
-        <dict>
-            <key>NSPrivacyCollectedDataType</key>
-            <string>NSPrivacyCollectedDataTypePurchaseHistory</string>
-            <key>NSPrivacyCollectedDataTypeLinked</key>
-            <false/>
-            <key>NSPrivacyCollectedDataTypeTracking</key>
-            <false/>
-            <key>NSPrivacyCollectedDataTypePurposes</key>
-            <array>
-                <string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
-            </array>
-        </dict>
-    </array>
+    <array/>
 
     <key>NSPrivacyAccessedAPITypes</key>
     <array>
