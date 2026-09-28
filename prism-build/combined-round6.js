@@ -940,16 +940,29 @@
 //
 //   Default registrations cover WTS, ESD Hi-Pilot, ESD Lo-Pilot,
 //   Hydrate Management, Liquid Line, Pipe Service Life, PRiSM, PVT,
-//   and the global units toggle — each of which already stashes state
-//   under window.WTS_state.<key> or window.PRiSM_*.
+//   the global units toggle, and — the one that carries almost all of
+//   the user's typed values — `storage`: a raw snapshot of every
+//   localStorage key starting with `wts_` or `h2oil_` (legacy per-
+//   calculator keys, the host's universal wts_page_<page> autosave
+//   records, h2oil_client_info, PRiSM keys). Preference keys (unit
+//   system, sample-suppress, consent/analytics flags) are never saved,
+//   loaded or cleared.
 //
 // PUBLIC API
 //   window.WTS_project = {
 //       save(filename?)         → Promise<{ blob, filename, payload }>
-//       saveDownload(filename?) → triggers an <a download> click
+//       saveDownload(filename?) → download (or iOS share-sheet) the file
+//       saveAs()                → real "Save As" dialog where the File
+//                                 System Access API exists (remembers the
+//                                 file handle), else prompt + download
+//       saveCurrent()           → silent write to the remembered handle,
+//                                 else falls back to saveAs / download
+//       open(fileInput?)        → showOpenFilePicker where available, else
+//                                 clicks the given <input type=file>
 //       load(file: File)        → Promise<{ loaded: [...], skipped: [...] }>
 //       loadFromObject(obj)     → synchronous; same shape as load result
-//       new()                   → wipe registered module state
+//       new()                   → wipe project state (keeps preferences)
+//       currentFile()           → { name, hasHandle } | null
 //       info()                  → { modules: [...], modifiedAt, size }
 //       registerModule(name, { read, write })
 //       unregisterModule(name)
@@ -957,15 +970,32 @@
 //   };
 //   window.WTS_renderProjectToolbar(container) → mounts the File toolbar
 //
+// HOST HOOKS (well-testing-app.html, all optional)
+//   window.WTS_pageAutosave.flush() — push the visible page's live values
+//                                     into localStorage before a save
+//   window.WTS_rerender({discardPending}) — repaint the current page from
+//                                     storage after Open / New
+//   window.__projectSaveOverride(filename, jsonText) — iOS bridge: write +
+//                                     share-sheet instead of <a download>
+//   'wts:autosaved' event            — drives the "● Autosaved hh:mm" status
+//
+// EVENTS (document)
+//   'wts:project-loaded' {loaded, skipped} — after Open replaced storage
+//   'wts:project-new'    {cleared}         — after New cleared storage
+//   'wts:projectfile'    {name, hasHandle} — current file name changed
+//   Layers that cache localStorage in memory should re-read on these.
+//
 // FILE FORMAT (.h2oilproj — JSON)
 //   {
 //     "format":   "h2oilproj",
 //     "version":  "1.0",
 //     "generator":"H2Oil Well Testing Suite",
 //     "savedAt":  "2026-04-28T12:34:56.789Z",
-//     "modules":  { "<key>": <state>, ... },
+//     "modules":  { "<key>": <state>, ..., "storage": { keys: {k: raw}, skipped: [] } },
 //     "meta":     { client?, well?, field?, notes? }
 //   }
+//   Files written before the `storage` module existed still load (the
+//   other modules apply; nothing in localStorage is cleared).
 //
 // CONVENTIONS
 //   • Single outer IIFE, 'use strict'
@@ -1012,6 +1042,108 @@
             .replace(/[^a-z0-9-_]+/g, '-')
             .replace(/^-+|-+$/g, '')
             .substring(0, 60) || 'project';
+    }
+
+    var EXT = '.h2oilproj';
+
+    // Keep the user's spelling/case, drop characters no file system accepts.
+    function _fileName(base) {
+        var s = String(base == null ? '' : base).trim().replace(/\.h2oilproj$/i, '');
+        s = s.replace(/[\\\/:*?"<>|\u0000-\u001f]+/g, '-').replace(/^[.\s-]+|[.\s-]+$/g, '').substring(0, 80);
+        return (s || 'project') + EXT;
+    }
+
+    function _isIOSApp() {
+        if (!_hasWin) return false;
+        if (G.isIOSApp === true) return true;
+        try { return !!(G.Capacitor && G.Capacitor.isNativePlatform && G.Capacitor.isNativePlatform()); }
+        catch (e) { return false; }
+    }
+
+    // ───────────────────────────────────────────────────────────────
+    // localStorage helpers (storage module + New)
+    // ───────────────────────────────────────────────────────────────
+    var KEY_PREFIXES = ['wts_', 'h2oil_'];
+    // Preferences / install flags — describe the user or the device, not
+    // the project: never saved into a file, never overwritten or cleared.
+    var PREF_KEYS = {
+        'wts_unit_system': 1,            // 22-units.js STORAGE_KEY
+        'wts_prism_sample_suppress': 1,  // PRiSM "don't re-seed sample data"
+        'wts_prism_migrated': 1          // one-shot DCA/PTA → PRiSM migration flag
+    };
+    var PREF_RE = /consent|analytics|tracking|(^|_)ga(_|$)|subscri|entitle|purchase/i;
+    // Cross-project libraries: saved in the file, restored on Open only
+    // when missing locally, kept on New.
+    var LIBRARY_RE = /^wts_prism_(user_curves|presets|mapping_)/;
+    // "Prepared by" fields of Client & Well Info survive New.
+    var PREPARER_FIELDS = ['engineer', 'position', 'company', 'eng_email'];
+    var MAX_KEY_CHARS = 2 * 1024 * 1024;   // skip transient blobs bigger than ~2 MB
+
+    function _ls() {
+        try {
+            var ls = (typeof localStorage !== 'undefined') ? localStorage : (G.localStorage || null);
+            return (ls && typeof ls.getItem === 'function') ? ls : null;
+        } catch (e) { return null; }
+    }
+    function _lsKeys(ls) {
+        var out = [];
+        if (!ls) return out;
+        try {
+            if (typeof ls.key === 'function' && typeof ls.length === 'number') {
+                for (var i = 0; i < ls.length; i++) { var k = ls.key(i); if (k != null) out.push(k); }
+            } else if (ls._ && typeof ls._ === 'object') {       // smoke-test stub
+                out = Object.keys(ls._);
+            }
+        } catch (e) {}
+        return out;
+    }
+    function _hasPrefix(k) {
+        for (var i = 0; i < KEY_PREFIXES.length; i++) if (String(k).indexOf(KEY_PREFIXES[i]) === 0) return true;
+        return false;
+    }
+    function _isPrefKey(k)    { return !!PREF_KEYS[k] || PREF_RE.test(String(k)); }
+    function _isLibraryKey(k) { return LIBRARY_RE.test(String(k)); }
+    function _isProjectKey(k) { return _hasPrefix(k) && !_isPrefKey(k); }
+
+    function _readClientInfo() {
+        var ls = _ls();
+        try { return JSON.parse((ls && ls.getItem('h2oil_client_info')) || '{}') || {}; }
+        catch (e) { return {}; }
+    }
+
+    // Remove every project key (keeps preferences + libraries). Keeps the
+    // "Report prepared by" part of Client & Well Info.
+    function _clearProjectKeys() {
+        var ls = _ls();
+        if (!ls) return [];
+        var ci = _readClientInfo();
+        var removed = [];
+        var keys = _lsKeys(ls);
+        for (var i = 0; i < keys.length; i++) {
+            var k = keys[i];
+            if (!_isProjectKey(k) || _isLibraryKey(k)) continue;
+            try { ls.removeItem(k); removed.push(k); } catch (e) {}
+        }
+        var keep = {}, any = false;
+        for (var j = 0; j < PREPARER_FIELDS.length; j++) {
+            var f = PREPARER_FIELDS[j];
+            if (ci[f]) { keep[f] = ci[f]; any = true; }
+        }
+        if (any) { try { ls.setItem('h2oil_client_info', JSON.stringify(keep)); } catch (e) {} }
+        return removed;
+    }
+
+    function _flushAutosave() {
+        try {
+            if (G.WTS_pageAutosave && typeof G.WTS_pageAutosave.flush === 'function') G.WTS_pageAutosave.flush();
+        } catch (e) { _warn('[WTS_project] autosave flush failed', e); }
+    }
+
+    // Repaint the visible page from storage (host hook) — after Open / New.
+    function _rerender() {
+        try {
+            if (typeof G.WTS_rerender === 'function') G.WTS_rerender({ discardPending: true });
+        } catch (e) { _warn('[WTS_project] re-render failed', e); }
     }
 
     // ───────────────────────────────────────────────────────────────
@@ -1219,8 +1351,74 @@
                 s.clientInfo = _clone(state);
             }
         });
+
+        // storage — every user-typed value on every page. Raw localStorage
+        // strings for keys prefixed wts_ / h2oil_ (minus preferences).
+        //   read()      flushes the visible page first, skips values > 2 MB
+        //   write(obj)  replaces the project keys with the file's keys
+        //   write(null) clears the project keys (New)
+        registerModule('storage', {
+            read: function () {
+                _flushAutosave();
+                var ls = _ls();
+                if (!ls) return null;
+                var keys = _lsKeys(ls).filter(_isProjectKey).sort();
+                var out = {}, skipped = [], n = 0;
+                for (var i = 0; i < keys.length; i++) {
+                    var v = null;
+                    try { v = ls.getItem(keys[i]); } catch (e) { v = null; }
+                    if (v == null) continue;
+                    if (v.length > MAX_KEY_CHARS) {
+                        skipped.push({ key: keys[i], chars: v.length });
+                        continue;
+                    }
+                    out[keys[i]] = String(v);
+                    n++;
+                }
+                if (skipped.length) {
+                    _warn('[WTS_project] storage: skipped ' + skipped.length +
+                          ' oversized key(s) (> 2 MB):', skipped);
+                }
+                return n ? { keys: out, skipped: skipped } : null;
+            },
+            write: function (state) {
+                var ls = _ls();
+                if (!ls) return;
+                if (state === null) { _clearProjectKeys(); return; }        // New
+                if (!state || typeof state !== 'object' || !state.keys ||
+                    typeof state.keys !== 'object') return;
+                _clearProjectKeys();
+                var keys = state.keys;
+                for (var k in keys) {
+                    if (!Object.prototype.hasOwnProperty.call(keys, k)) continue;
+                    if (!_isProjectKey(k) || typeof keys[k] !== 'string') continue;
+                    if (_isLibraryKey(k) && ls.getItem(k) != null) continue;  // keep local library
+                    try { ls.setItem(k, keys[k]); }
+                    catch (e) { _warn('[WTS_project] storage: could not write ' + k, e); }
+                }
+            }
+        });
     }
     _registerDefaults();
+
+    // Report metadata from Client & Well Info (used for the file name).
+    function _defaultMeta() {
+        var ci = _readClientInfo(), m = {};
+        if (ci.client) m.client = String(ci.client);
+        if (ci.well) m.well = String(ci.well);
+        if (ci.field) m.field = String(ci.field);
+        if (ci.operator) m.operator = String(ci.operator);
+        return m;
+    }
+    function _suggestedName() {
+        if (_current.name) return _current.name;
+        var well = '';
+        try {
+            well = _readClientInfo().well ||
+                   (G.WTS_state && G.WTS_state.clientInfo && G.WTS_state.clientInfo.wellName) || '';
+        } catch (e) {}
+        return _fileName(well || 'project');
+    }
 
     // ───────────────────────────────────────────────────────────────
     // Build the file payload by polling every registered module
@@ -1241,7 +1439,7 @@
             version:   '1.0',
             generator: 'H2Oil Well Testing Suite',
             savedAt:   _nowISO(),
-            meta:      meta || {},
+            meta:      meta || _defaultMeta(),
             modules:   modules
         };
         return payload;
@@ -1256,6 +1454,8 @@
         if (payload.format && payload.format !== 'h2oilproj') {
             return { loaded: loaded, skipped: skipped, error: 'wrong format: ' + payload.format };
         }
+        // Drop pending debounced autosaves so they can't overwrite loaded keys.
+        try { if (G.WTS_pageAutosave && G.WTS_pageAutosave.cancel) G.WTS_pageAutosave.cancel(); } catch (e) {}
         var mods = payload.modules || {};
         for (var k in mods) {
             if (!Object.prototype.hasOwnProperty.call(mods, k)) continue;
@@ -1272,22 +1472,25 @@
     }
 
     // ───────────────────────────────────────────────────────────────
-    // Save — returns a Promise<{ blob, filename, payload }>
+    // Save — returns a Promise<{ blob, filename, payload, json }>
     // ───────────────────────────────────────────────────────────────
+    function _saveSync(filename, meta) {
+        var payload = _buildPayload(meta);
+        var json = JSON.stringify(payload, null, 2);
+        var blob = null;
+        if (typeof G.Blob === 'function') {
+            try { blob = new G.Blob([json], { type: 'application/json' }); }
+            catch (e) { blob = null; }
+        }
+        var name = filename ? _fileName(filename) : _suggestedName();
+        // In node (smoke-test) Blob won't exist — fall back to a stub object.
+        if (!blob || typeof blob.size !== 'number') blob = { size: json.length, type: 'application/json', _text: json };
+        return { blob: blob, filename: name, payload: payload, json: json };
+    }
+
     function save(filename, meta) {
         try {
-            var payload = _buildPayload(meta);
-            var json = JSON.stringify(payload, null, 2);
-            var blob = null;
-            if (typeof G.Blob === 'function') {
-                try { blob = new G.Blob([json], { type: 'application/json' }); }
-                catch (e) { blob = null; }
-            }
-            var name = _slugify(filename || (payload.meta && payload.meta.well) ||
-                                (payload.meta && payload.meta.well_name) || 'project') + '.h2oilproj';
-            // In node (smoke-test) Blob won't exist — fall back to a stub object.
-            if (!blob) blob = { size: json.length, type: 'application/json', _text: json };
-            var res = { blob: blob, filename: name, payload: payload };
+            var res = _saveSync(filename, meta);
             if (typeof G.Promise === 'function') return G.Promise.resolve(res);
             return res;
         } catch (e) {
@@ -1297,36 +1500,195 @@
         }
     }
 
+    // Anchor download (desktop browsers without the File System Access API).
+    function _download(res) {
+        if (!_hasDoc) return false;
+        try {
+            var url = (G.URL && typeof G.URL.createObjectURL === 'function' && res.blob && !res.blob._text)
+                ? G.URL.createObjectURL(res.blob) : null;
+            var a = document.createElement('a');
+            a.href = url || ('data:application/json;charset=utf-8,' + encodeURIComponent(res.json));
+            a.download = res.filename;
+            a.style.display = 'none';
+            document.body.appendChild(a);
+            a.click();
+            setTimeout(function () {
+                try { document.body.removeChild(a); } catch (e) {}
+                if (url && G.URL && G.URL.revokeObjectURL) {
+                    try { G.URL.revokeObjectURL(url); } catch (e) {}
+                }
+            }, 250);
+            return true;
+        } catch (e) { _warn('download could not click', e); return false; }
+    }
+
+    // Deliver a built file: iOS override (write + share sheet) or download.
+    function _deliver(res) {
+        if (typeof G.__projectSaveOverride === 'function') {
+            return G.Promise.resolve()
+                .then(function () { return G.__projectSaveOverride(res.filename, res.json); })
+                .then(function (ok) {
+                    if (ok === false) { _download(res); res.method = 'download'; }
+                    else res.method = 'override';
+                    return res;
+                }, function (e) {
+                    _warn('[WTS_project] save override failed, downloading instead', e);
+                    _download(res); res.method = 'download';
+                    return res;
+                });
+        }
+        _download(res);
+        res.method = 'download';
+        return G.Promise.resolve(res);
+    }
+
     // ───────────────────────────────────────────────────────────────
-    // saveDownload — clicks an <a download> programmatically
+    // saveDownload — build + deliver (download / iOS share sheet)
     // ───────────────────────────────────────────────────────────────
     function saveDownload(filename, meta) {
         try {
-            var p = save(filename, meta);
-            var apply = function (res) {
-                if (!_hasDoc) return res;
-                try {
-                    var url = (G.URL && typeof G.URL.createObjectURL === 'function')
-                        ? G.URL.createObjectURL(res.blob) : null;
-                    var a = document.createElement('a');
-                    a.href = url || ('data:application/json;charset=utf-8,' +
-                        encodeURIComponent(JSON.stringify(res.payload, null, 2)));
-                    a.download = res.filename;
-                    a.style.display = 'none';
-                    document.body.appendChild(a);
-                    a.click();
-                    setTimeout(function () {
-                        try { document.body.removeChild(a); } catch (e) {}
-                        if (url && G.URL && G.URL.revokeObjectURL) {
-                            try { G.URL.revokeObjectURL(url); } catch (e) {}
-                        }
-                    }, 250);
-                } catch (e) { _warn('saveDownload could not click', e); }
-                return res;
-            };
-            if (p && typeof p.then === 'function') return p.then(apply);
-            return apply(p);
+            var res = _saveSync(filename, meta);
+            if (!_hasDoc) return (typeof G.Promise === 'function') ? G.Promise.resolve(res) : res;
+            return _deliver(res);
         } catch (e) { _err('saveDownload failed', e); throw e; }
+    }
+
+    // ───────────────────────────────────────────────────────────────
+    // Save / Save As with a remembered file (File System Access API)
+    // ───────────────────────────────────────────────────────────────
+    var _current = { handle: null, name: null };
+    var PICKER_TYPES = [{ description: 'H2Oil project', accept: { 'application/json': [EXT] } }];
+
+    function _hasSavePicker() {
+        return _hasWin && typeof G.showSaveFilePicker === 'function' &&
+               typeof G.__projectSaveOverride !== 'function';
+    }
+    function _hasOpenPicker() {
+        return _hasWin && typeof G.showOpenFilePicker === 'function' && !_isIOSApp();
+    }
+    function _notifyFile() {
+        try {
+            if (_hasDoc && typeof CustomEvent === 'function') {
+                document.dispatchEvent(new CustomEvent('wts:projectfile', { detail: currentFile() }));
+            }
+        } catch (e) {}
+    }
+    function _setCurrent(handle, name) {
+        _current = { handle: handle || null, name: name || null };
+        _notifyFile();
+    }
+    function currentFile() {
+        return _current.name ? { name: _current.name, hasHandle: !!_current.handle } : null;
+    }
+
+    function _writeHandle(handle, text) {
+        return G.Promise.resolve()
+            .then(function () {
+                if (typeof handle.queryPermission !== 'function') return;
+                return handle.queryPermission({ mode: 'readwrite' }).then(function (st) {
+                    if (st === 'granted' || typeof handle.requestPermission !== 'function') return;
+                    return handle.requestPermission({ mode: 'readwrite' }).then(function (st2) {
+                        if (st2 !== 'granted') throw new Error('write permission denied');
+                    });
+                });
+            })
+            .then(function () { return handle.createWritable(); })
+            .then(function (w) { return G.Promise.resolve(w.write(text)).then(function () { return w.close(); }); });
+    }
+
+    // Download fallback for Save As — ask for a name first.
+    function _downloadAs(res, askName) {
+        var name = res.filename;
+        if (askName && typeof G.prompt === 'function') {
+            var nm = G.prompt('Save project as…', name.replace(/\.h2oilproj$/i, ''));
+            if (nm == null || !String(nm).trim()) return G.Promise.resolve({ cancelled: true });
+            name = _fileName(nm);
+        }
+        res.filename = name;
+        return _deliver(res).then(function (r) {
+            _setCurrent(null, name);
+            return { saved: true, filename: name, method: r.method };
+        });
+    }
+
+    function saveAs() {
+        var res;
+        try { res = _saveSync(null); } catch (e) { return G.Promise.reject(e); }
+        if (_hasSavePicker()) {
+            var picked;
+            try {
+                picked = G.showSaveFilePicker({ suggestedName: res.filename, types: PICKER_TYPES });
+            } catch (e) { picked = G.Promise.reject(e); }
+            return G.Promise.resolve(picked).then(function (handle) {
+                return _writeHandle(handle, res.json).then(function () {
+                    _setCurrent(handle, handle.name || res.filename);
+                    return { saved: true, filename: _current.name, method: 'picker' };
+                });
+            }, function (e) {
+                if (e && e.name === 'AbortError') return { cancelled: true };
+                _warn('[WTS_project] save dialog unavailable, downloading instead', e);
+                return _downloadAs(res, true);
+            });
+        }
+        return _downloadAs(res, true);
+    }
+
+    function saveCurrent() {
+        // First Save with a dialog-capable browser = Save As (must run in the click's activation)
+        if (!_current.handle && _hasSavePicker()) return saveAs();
+        var res;
+        try { res = _saveSync(null); } catch (e) { return G.Promise.reject(e); }
+        if (_current.handle) {
+            var h = _current.handle;
+            return _writeHandle(h, res.json).then(function () {
+                _notifyFile();
+                return { saved: true, filename: _current.name, method: 'handle' };
+            }, function (e) {
+                _warn('[WTS_project] could not write ' + _current.name + ' — choosing a new file', e);
+                return saveAs();
+            });
+        }
+        return _downloadAs(res, false);              // no dialog API: download / share silently
+    }
+
+    // Open: native picker (remembers the handle so Save overwrites it) or
+    // the hidden <input type=file>. Returns a Promise; with the <input>
+    // path it resolves { deferred: true } and the input's change handler
+    // does the load.
+    function open(fileInput) {
+        function viaInput() {
+            if (!fileInput || typeof fileInput.click !== 'function') {
+                return G.Promise.reject(new Error('no file picker available'));
+            }
+            try {
+                // iOS greys out unknown extensions (.h2oilproj has no UTI) — accept anything there.
+                if (_isIOSApp()) fileInput.removeAttribute('accept');
+                else fileInput.setAttribute('accept', EXT + ',.json,application/json');
+            } catch (e) {}
+            fileInput.click();
+            return G.Promise.resolve({ deferred: true });
+        }
+        if (!_hasOpenPicker()) return viaInput();
+        var picked;
+        try {
+            picked = G.showOpenFilePicker({ multiple: false, types: [{ description: 'H2Oil project',
+                     accept: { 'application/json': [EXT, '.json'] } }] });
+        } catch (e) { picked = G.Promise.reject(e); }
+        return G.Promise.resolve(picked).then(function (handles) {
+            var h = handles && handles[0];
+            if (!h) return { cancelled: true };
+            return h.getFile().then(function (file) {
+                return load(file).then(function (r) {
+                    if (r && !r.error) _setCurrent(h, file.name);
+                    if (r) r.filename = file.name;
+                    return r;
+                });
+            });
+        }, function (e) {
+            if (e && e.name === 'AbortError') return { cancelled: true };
+            _warn('[WTS_project] open dialog unavailable, using file input', e);
+            return viaInput();
+        });
     }
 
     // ───────────────────────────────────────────────────────────────
@@ -1377,14 +1739,30 @@
         });
     }
 
+    // Tell other layers (caches kept in memory) that storage was replaced.
+    function _emit(name, detail) {
+        try {
+            if (_hasDoc && typeof CustomEvent === 'function') {
+                document.dispatchEvent(new CustomEvent(name, { detail: detail || {} }));
+            }
+        } catch (e) {}
+    }
+
     function loadFromObject(obj) {
-        return _applyPayload(obj);
+        var res = _applyPayload(obj);
+        if (res && !res.error && res.loaded.length) {
+            _emit('wts:project-loaded', { loaded: res.loaded.slice(), skipped: res.skipped.slice() });
+            _rerender();
+        }
+        return res;
     }
 
     // ───────────────────────────────────────────────────────────────
-    // New — clear every registered module's state
+    // New — clear every registered module's state + project keys in
+    // localStorage (preferences / libraries / "prepared by" are kept)
     // ───────────────────────────────────────────────────────────────
     function newProject() {
+        try { if (G.WTS_pageAutosave && G.WTS_pageAutosave.cancel) G.WTS_pageAutosave.cancel(); } catch (e) {}
         var cleared = [];
         for (var k in MODULES) {
             if (!Object.prototype.hasOwnProperty.call(MODULES, k)) continue;
@@ -1395,6 +1773,11 @@
         }
         // Reset WTS_state to a blank object for non-module keys too.
         try { G.WTS_state = {}; } catch (e) {}
+        // In-memory row models that outlive a page render.
+        try { if (Array.isArray(G._genMotors)) G._genMotors = []; } catch (e) {}
+        _setCurrent(null, null);
+        _emit('wts:project-new', { cleared: cleared.slice() });
+        _rerender();
         return { cleared: cleared };
     }
 
@@ -1419,13 +1802,20 @@
             emptyModules:      modulesEmpty,
             registeredModules: listModules(),
             modifiedAt:        payload.savedAt,
-            size:              size
+            size:              size,
+            file:              currentFile()
         };
     }
 
     // ───────────────────────────────────────────────────────────────
-    // File toolbar UI — New | Open | Save | Save As
+    // File toolbar UI — New | Open | Save | Save As  + status
     // ───────────────────────────────────────────────────────────────
+    function _hhmm(t) {
+        var d = new Date(t);
+        var h = d.getHours(), m = d.getMinutes();
+        return (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m;
+    }
+
     function renderProjectToolbar(container) {
         if (!_hasDoc || !container || !('innerHTML' in container)) return;
 
@@ -1437,39 +1827,78 @@
         var wrap = document.createElement('div');
         wrap.setAttribute('data-wts-project-toolbar', '1');
         wrap.style.cssText =
-            'display:flex;align-items:center;gap:6px;padding:6px 10px;background:#161b22;' +
-            'border:1px solid #30363d;border-radius:6px;font-family:Segoe UI,sans-serif;' +
-            'font-size:12px;color:#c9d1d9';
+            'display:flex;align-items:center;gap:6px;padding:4px 8px;background:var(--bg2,#161b22);' +
+            'border:1px solid var(--border,#30363d);border-radius:6px;font-size:12px;' +
+            'color:var(--text2,#8b949e);flex-wrap:wrap';
 
         var btnStyle =
-            'padding:4px 10px;background:#21262d;border:1px solid #30363d;border-radius:4px;' +
-            'color:#c9d1d9;font-size:12px;cursor:pointer;line-height:1.4;font-family:inherit';
-        var labelStyle = 'color:#8b949e;margin-right:6px;font-weight:600';
+            'padding:4px 10px;background:var(--bg4,#21262d);border:1px solid var(--border,#30363d);' +
+            'border-radius:4px;color:var(--text,#e6edf3);font-size:12px;cursor:pointer;line-height:1.4;' +
+            'font-family:inherit';
+        var labelStyle = 'color:var(--text2,#8b949e);margin-right:2px;font-weight:600';
 
         wrap.innerHTML =
             '<span style="' + labelStyle + '">File:</span>' +
-            '<button type="button" data-act="new"  style="' + btnStyle + '">New</button>' +
-            '<button type="button" data-act="open" style="' + btnStyle + '">Open…</button>' +
-            '<button type="button" data-act="save" style="' + btnStyle + '">Save</button>' +
-            '<button type="button" data-act="saveas" style="' + btnStyle + '">Save As…</button>' +
-            '<span data-role="status" style="margin-left:auto;color:#8b949e;font-size:11px"></span>' +
+            '<button type="button" data-act="new"  style="' + btnStyle + '" title="Start a new project (clears all calculator inputs)">New</button>' +
+            '<button type="button" data-act="open" style="' + btnStyle + '" title="Open a .h2oilproj project file">Open…</button>' +
+            '<button type="button" data-act="save" style="' + btnStyle + '" title="Save the project (all inputs on every page)">Save</button>' +
+            '<button type="button" data-act="saveas" style="' + btnStyle + '" title="Save the project to a new file">Save As…</button>' +
+            '<span data-role="status" style="display:inline-flex;align-items:center;gap:8px;margin-left:4px;' +
+                'font-size:11px;white-space:nowrap">' +
+              '<span data-role="msg"></span>' +
+              '<span data-role="file" style="color:var(--text2,#8b949e);max-width:180px;overflow:hidden;' +
+                  'text-overflow:ellipsis;display:none" title="Current project file"></span>' +
+              '<span data-role="autosave" style="color:var(--text3,#6e7681)" ' +
+                  'title="Every input on every page is saved in this browser automatically">' +
+                  '<span style="color:var(--green,#3fb950)">&#9679;</span> Autosave on</span>' +
+            '</span>' +
             '<input type="file" data-role="picker" accept=".h2oilproj,.json,application/json" ' +
             'style="display:none">';
 
         try { container.appendChild(wrap); } catch (e) { return; }
 
+        var msgEl  = wrap.querySelector('[data-role="msg"]');
+        var fileEl = wrap.querySelector('[data-role="file"]');
+        var autoEl = wrap.querySelector('[data-role="autosave"]');
+        var msgTimer = null;
+
         function _setStatus(msg, kind) {
-            var s = wrap.querySelector('[data-role="status"]');
-            if (!s) return;
-            var color = (kind === 'err') ? '#f85149' :
-                        (kind === 'ok')  ? '#56d364' : '#8b949e';
-            s.style.color = color;
-            s.textContent = String(msg || '');
+            if (!msgEl) return;
+            var color = (kind === 'err') ? 'var(--red,#f85149)' :
+                        (kind === 'ok')  ? 'var(--green,#3fb950)' : 'var(--text2,#8b949e)';
+            msgEl.style.color = color;
+            msgEl.textContent = String(msg || '');
+            clearTimeout(msgTimer);
             if (msg && kind !== 'err') {
-                setTimeout(function () {
-                    if (s.textContent === msg) s.textContent = '';
+                msgTimer = setTimeout(function () {
+                    if (msgEl.textContent === msg) msgEl.textContent = '';
                 }, 4000);
             }
+        }
+        function _showFile() {
+            if (!fileEl) return;
+            var cf = currentFile();
+            fileEl.textContent = cf ? cf.name : '';
+            fileEl.title = cf ? ('Current project file: ' + cf.name +
+                (cf.hasHandle ? ' (Save writes to this file)' : '')) : '';
+            fileEl.style.display = cf ? '' : 'none';
+        }
+        function _showAutosave(at) {
+            if (!autoEl || !at) return;
+            autoEl.innerHTML = '<span style="color:var(--green,#3fb950)">&#9679;</span> Autosaved ' + _esc(_hhmm(at));
+        }
+        document.addEventListener('wts:autosaved', function (e) {
+            _showAutosave(e && e.detail && e.detail.at);
+        });
+        document.addEventListener('wts:projectfile', _showFile);
+        if (G.WTS_lastAutosave && G.WTS_lastAutosave.at) _showAutosave(G.WTS_lastAutosave.at);
+        _showFile();
+
+        function _errMsg(e) { return (e && e.message) ? e.message : String(e); }
+        function _loadedMsg(res, name) {
+            var ln = res ? (res.loaded || []).length : 0;
+            var sk = res ? (res.skipped || []).length : 0;
+            return 'Opened ' + (name || 'project') + ' (' + ln + ' modules' + (sk ? ', ' + sk + ' skipped' : '') + ')';
         }
 
         // Wire buttons.
@@ -1482,55 +1911,56 @@
         if (btnNew) btnNew.addEventListener('click', function () {
             var ok = true;
             if (typeof G.confirm === 'function') {
-                ok = G.confirm('Clear all calculator state? Unsaved work will be lost.');
+                ok = G.confirm('Start a new project?\n\nAll calculator inputs on every page will be cleared ' +
+                               '(unit system and "Report prepared by" details are kept). ' +
+                               'Save first if you want to keep the current project.');
             }
             if (!ok) return;
-            var res = newProject();
-            _setStatus('Cleared ' + res.cleared.length + ' modules.', 'ok');
+            newProject();
+            _setStatus('New project started.', 'ok');
         });
 
         if (btnOpen && picker) {
-            btnOpen.addEventListener('click', function () { picker.click(); });
+            btnOpen.addEventListener('click', function () {
+                open(picker).then(function (res) {
+                    if (!res || res.cancelled || res.deferred) return;
+                    if (res.error) _setStatus('Open failed: ' + res.error, 'err');
+                    else _setStatus(_loadedMsg(res, res.filename), 'ok');
+                }, function (err) {
+                    _setStatus('Open failed: ' + _errMsg(err), 'err');
+                });
+            });
             picker.addEventListener('change', function (ev) {
                 var f = ev.target && ev.target.files && ev.target.files[0];
                 if (!f) return;
-                _setStatus('Loading ' + f.name + '…');
+                _setStatus('Opening ' + f.name + '…');
                 load(f).then(function (res) {
                     if (res && res.error) {
-                        _setStatus('Load failed: ' + res.error, 'err');
+                        _setStatus('Open failed: ' + res.error, 'err');
                     } else {
-                        var ln = res ? (res.loaded || []).length : 0;
-                        var sk = res ? (res.skipped || []).length : 0;
-                        _setStatus('Loaded ' + ln + ' modules' +
-                                   (sk ? ' (' + sk + ' skipped)' : ''), 'ok');
+                        _setCurrent(null, f.name);
+                        _setStatus(_loadedMsg(res, f.name), 'ok');
                     }
                     picker.value = '';
                 }, function (err) {
-                    _setStatus('Load failed: ' + (err && err.message ? err.message : err), 'err');
+                    _setStatus('Open failed: ' + _errMsg(err), 'err');
                     picker.value = '';
                 });
             });
         }
 
-        function _doSave(name) {
-            try {
-                saveDownload(name);
-                _setStatus('Saved.', 'ok');
-            } catch (e) {
-                _setStatus('Save failed: ' + (e && e.message ? e.message : e), 'err');
-            }
+        function _afterSave(r) {
+            if (!r || r.cancelled) return;
+            _setStatus(r.method === 'download' ? 'Downloaded ' + r.filename :
+                       r.method === 'override' ? 'Saved ' + r.filename : 'Saved.', 'ok');
+            _showFile();
         }
-        if (btnSave) btnSave.addEventListener('click', function () { _doSave(null); });
+        function _saveErr(e) { _setStatus('Save failed: ' + _errMsg(e), 'err'); }
+        if (btnSave) btnSave.addEventListener('click', function () {
+            try { saveCurrent().then(_afterSave, _saveErr); } catch (e) { _saveErr(e); }
+        });
         if (btnSaveAs) btnSaveAs.addEventListener('click', function () {
-            var def = 'project';
-            try {
-                var clientInfo = (G.WTS_state && G.WTS_state.clientInfo) ?
-                                 G.WTS_state.clientInfo : null;
-                if (clientInfo && clientInfo.wellName) def = _slugify(clientInfo.wellName);
-            } catch (e) {}
-            var nm = (typeof G.prompt === 'function')
-                ? G.prompt('Save project as…', def) : def;
-            if (nm) _doSave(nm);
+            try { saveAs().then(_afterSave, _saveErr); } catch (e) { _saveErr(e); }
         });
     }
 
@@ -1540,10 +1970,14 @@
     G.WTS_project = {
         save:             save,
         saveDownload:     saveDownload,
+        saveAs:           saveAs,
+        saveCurrent:      saveCurrent,
+        open:             open,
         load:             load,
         loadFromObject:   loadFromObject,
         'new':            newProject,   // reserved word — bracket-access from callers
         clearAll:         newProject,   // friendlier alias
+        currentFile:      currentFile,
         info:             info,
         registerModule:   registerModule,
         unregisterModule: unregisterModule,
@@ -1738,7 +2172,18 @@
 
     // ─── Header ───────────────────────────────────────────────────
     function _renderHeader() {
-        var ci = (G.WTS_state && G.WTS_state.clientInfo) ? G.WTS_state.clientInfo : {};
+        // Client & Well Info page persists to localStorage 'h2oil_client_info'
+        // ({client, well, field, ref, engineer, …}); WTS_state.clientInfo is
+        // only populated by project files.
+        var ci = {};
+        try { ci = JSON.parse(G.localStorage.getItem('h2oil_client_info') || '{}') || {}; } catch (e) { ci = {}; }
+        if (G.WTS_state && G.WTS_state.clientInfo) {
+            var pci = G.WTS_state.clientInfo;
+            for (var pk in pci) if (Object.prototype.hasOwnProperty.call(pci, pk) && ci[pk] == null) ci[pk] = pci[pk];
+        }
+        ci.clientName = ci.clientName || ci.client;
+        ci.wellName   = ci.wellName   || ci.well;
+        ci.jobId      = ci.jobId      || ci.ref;
         var now = new Date();
         var dateStr = now.toISOString().substring(0, 10) + ' ' +
                       now.toTimeString().substring(0, 5);
@@ -2077,6 +2522,14 @@
     // generate(opts) → opens a new window with the report and triggers print
     // ───────────────────────────────────────────────────────────────
     function generate(opts) {
+        // The host's job report covers every calculator the user has run
+        // (captured automatically), with the shared report styling, the
+        // Client & Well Info cover and the iOS PDF path. The legacy
+        // per-module summary below remains as a fallback.
+        if (typeof G.WTS_exportJobReport === 'function') {
+            try { G.WTS_exportJobReport(opts); return { opened: true, delegated: true }; }
+            catch (e) { _warn('job report failed — falling back to legacy quick report', e); }
+        }
         var html = _buildHTML(opts);
         if (!_hasWin || typeof G.open !== 'function') {
             return { html: html, opened: false };

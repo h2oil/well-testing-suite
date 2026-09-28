@@ -24,10 +24,14 @@
 //                         -> DOM output (display system)
 //
 //   The 35 calculator implementations stay 100% imperial. They are
-//   never edited by this layer. Pre-Calculate, we silently swap each
-//   tagged input.value to its canonical form, let the original handler
-//   run, then restore the displayed metric value and convert any
-//   newly-written outputs.
+//   never edited by this layer. Every tagged input gets an own 'value'
+//   accessor: while a calculator runs (a "canonical context" — any
+//   window.calc* / *Export call, or any input/change/click/key event
+//   inside #pgBody) it returns the canonical imperial value; at all
+//   other times it returns the text on screen. So live recalcs,
+//   setTimeout(calc) after render and odd button labels are covered,
+//   with no DOM swapping. Tagged outputs are converted when the
+//   context closes.
 //
 // PUBLIC API (all on window.*)
 //
@@ -156,6 +160,18 @@
             imperial: { unit: 'in', label: 'in', factor: 25.4, offset: 0 },
             metric:   { unit: 'mm', label: 'mm', factor: 1,    offset: 0 }
         },
+        // Tank dimensions — metric is ALWAYS centimetres (never a mix
+        // of m and mm). Canonical reference is mm, same as lengthSmall.
+        // Optional 'dp' = decimals kept when a value is converted on a
+        // unit flip (2 dp in cm keeps x.xx in -> cm exact: 1 in = 2.54 cm).
+        lengthCm: {
+            imperial: { unit: 'in', label: 'in', factor: 25.4,  offset: 0, dp: 4 },
+            metric:   { unit: 'cm', label: 'cm', factor: 10,    offset: 0, dp: 2 }
+        },
+        lengthFtCm: {
+            imperial: { unit: 'ft', label: 'ft', factor: 304.8, offset: 0, dp: 4 },
+            metric:   { unit: 'cm', label: 'cm', factor: 10,    offset: 0, dp: 2 }
+        },
         // Area.
         area: {
             imperial: { unit: 'ft2', label: 'ft²', factor: 0.092903, offset: 0 },
@@ -197,6 +213,11 @@
         mass: {
             imperial: { unit: 'lb', label: 'lb', factor: 0.453592, offset: 0 },
             metric:   { unit: 'kg', label: 'kg', factor: 1,        offset: 0 }
+        },
+        // Short ton (2000 lb) <-> metric tonne.
+        massTon: {
+            imperial: { unit: 'ton', label: 'tons',   factor: 907.18474, offset: 0 },
+            metric:   { unit: 't',   label: 'tonnes', factor: 1000,      offset: 0 }
         },
         massRate: {
             imperial: { unit: 'lb/hr', label: 'lb/hr', factor: 0.453592, offset: 0 },
@@ -437,29 +458,16 @@
             },
             outputs: {}
         },
+        // Flare is authored natively in mixed units (MMSCFD + BTU/SCF,
+        // everything else SI: m, m/s, °C, kW/m²) and reads its inputs
+        // from closures (getFlameParams) driven by requestAnimationFrame,
+        // canvas drag/wheel and resize — paths no canonical context can
+        // cover. Tagging the SI fields as imperial-canonical made BOTH
+        // modes lie (Imperial: "Ambient Temp (°F)" holding °C numbers;
+        // Metric: 25 °C shown as -3.9 °C). Left untagged: the page shows
+        // its native units in both systems and every path stays correct.
         flare: {
-            inputs: {
-                fl_flow: 'gasRate',
-                fl_nhv:  'heatingValue',
-                fl_mw:   'dimensionless',
-                fl_eff:  'percent',
-                fl_H:    'length',
-                fl_D:    'length',
-                fl_V:    'velocity',
-                fl_F:    'dimensionless',
-                fl_tau:  'dimensionless',
-                fl_W:    'velocity',
-                fl_Wd:   'dimensionless',
-                fl_Ta:   'temperature',
-                fl_cl:   'radiation',
-                fl_eta:  'noise',
-                fl_ambN: 'noise',
-                fl_bgW:  'length',
-                fl_bgH:  'length',
-                fl_bgOX: 'length',
-                fl_bgOY: 'length',
-                fl_bgOp: 'percent'
-            },
+            inputs: {},
             outputs: {}
         },
         dca: {
@@ -554,20 +562,24 @@
         },
         tank: {
             inputs: {
-                tr_h:    'lengthSmall',
-                tr_l:    'lengthSmall',
-                tr_w:    'lengthSmall',
-                tr_fl:   'lengthSmall',
-                tc_d:    'lengthSmall',
-                tc_l:    'length',
-                tc_fl:   'lengthSmall',
+                // Every tank dimension is cm in metric (in / ft imperial).
+                tr_h:    'lengthCm',
+                tr_l:    'lengthCm',
+                tr_w:    'lengthCm',
+                tr_fl:   'lengthCm',
+                tv_d:    'lengthCm',
+                tv_h:    'lengthCm',
+                tv_fl:   'lengthCm',
+                tc_d:    'lengthCm',
+                tc_l:    'lengthFtCm',    // feet in imperial
+                tc_fl:   'lengthCm',
                 tk_v1:   'volume',
                 tk_v2:   'volume',
                 tk_t1:   'time',
                 tk_t2:   'time',
                 tw_ppg:  'densityLiquid',
                 tw_gal:  'volumeSmall',
-                tw_tare: 'mass',          // tons treated as mass
+                tw_tare: 'massTon',       // short tons <-> tonnes
                 tw_area: 'area'
             },
             outputs: {}
@@ -593,7 +605,8 @@
                 el_kw:  'powerKw',
                 el_pf:  'powerFactor',
                 el_kw2: 'powerKw',
-                el_hp:  'power',
+                // el_hp is the HP side of the kW <-> HP converter — must
+                // stay HP in both systems (was relabelled "(kW)" in metric).
                 mp_d:   'lengthSmall',
                 mp_sl:  'lengthSmall',
                 mp_eff: 'percent',
@@ -605,11 +618,11 @@
         chem: {
             inputs: {
                 ch_q:   'liquidRate',
-                ch_ppm: 'concentration',
-                cl_a:   'volumeSmall',  // ml — kept as L/gal proxy; numeric ml stays the same
-                cl_b:   'volumeSmall',
-                cl_n:   'concentration',
-                cl_d:   'volumeSmall'
+                ch_ppm: 'concentration'
+                // cl_a / cl_b / cl_d are titration volumes in ml and cl_n
+                // is a normality — unit-free in both systems. (They were
+                // tagged gal<->L / ppm, which relabelled "(ml)" as "(gal)"
+                // and converted 29.3 ml to "110.9 L" in metric.)
             },
             outputs: {}
         },
@@ -694,13 +707,12 @@
                 ps_q:   'liquidRate',
                 ps_api: 'api',
                 ps_mu:  'viscosity',
-                ps_t:   'temperature', // SI in source HTML — see below
+                // ps_t (°C) and ps_hs/ps_hd/ps_ls/ps_ld (m) are SI in the
+                // calc — left untagged so both systems show their native
+                // units. (NB ps_t / ps_ps ids also exist on PRV, where ps_t
+                // is °F — tagging is route-scoped so they don't collide.)
                 ps_ps:  'pressureG',
                 ps_pd:  'pressureG',
-                ps_hs:  'length',
-                ps_hd:  'length',
-                ps_ls:  'length',
-                ps_ld:  'length',
                 ps_eff: 'percent',
                 ps_vp:  'pressure'
             },
@@ -730,10 +742,9 @@
                 sh_oilfrac:'percent',
                 sh_p:      'pressureG',
                 sh_pd:     'pressureG',
-                // sh_t is in °C in the source HTML — already SI.
-                // Tag as temperature so the toggle re-paints labels,
-                // but its imperial display (when enabled) becomes °F.
-                sh_t:      'temperature',
+                // sh_t is °C in the calc (T_C) — left untagged (native
+                // °C in both systems; tagging it imperial-canonical made
+                // 40 °C display as 4.4 °C in metric and "(°F)" in imperial).
                 sh_zman:   'dimensionless',
                 sh_qo:     'liquidRate',
                 sh_qg:     'gasRate',
@@ -758,8 +769,7 @@
             inputs: {
                 ih_q:   'liquidRate',
                 ih_api: 'api',
-                ih_ti:  'temperature', // °C in source — tag for label switch
-                ih_to:  'temperature',
+                // ih_ti / ih_to are °C in the calc — left untagged.
                 ih_wc:  'percent',
                 ih_eff: 'percent'
             },
@@ -779,7 +789,7 @@
             inputs: {
                 fa_mw: 'dimensionless',
                 fa_q:  'gasRateSmall',  // MSCFD
-                fa_t:  'temperature',
+                // fa_t is °C in the calc — left untagged.
                 fa_p:  'pressureG',
                 fa_dp: 'pressure'
             },
@@ -799,7 +809,7 @@
         turbmeter: {
             inputs: {
                 tm_api:  'api',
-                tm_t:    'temperature', // °C in source
+                // tm_t is °C in the calc — left untagged.
                 tm_mu:   'viscosity',
                 tm_qmin: 'liquidRate',
                 tm_qmax: 'liquidRate',
@@ -826,9 +836,8 @@
             inputs: {
                 cs_v:   'voltage',
                 cs_i:   'current',
-                cs_pf:  'powerFactor',
-                cs_l:   'length',  // labelled "(m)" in source — already SI.
-                cs_amb: 'temperature' // °C
+                cs_pf:  'powerFactor'
+                // cs_l (m) and cs_amb (°C) are SI in the calc — untagged.
             },
             outputs: {}
         },
@@ -836,8 +845,8 @@
             inputs: {
                 vd_v:  'voltage',
                 vd_i:  'current',
-                vd_pf: 'powerFactor',
-                vd_l:  'length'  // (m)
+                vd_pf: 'powerFactor'
+                // vd_l (m) is SI in the calc — untagged.
             },
             outputs: {}
         }
@@ -893,6 +902,189 @@
         var cat = CATEGORIES[category];
         if (!cat) return '';
         return cat[_state.system].label;
+    }
+
+    // Rounding applied when an input is flipped between systems. A
+    // category side may pin its decimals via 'dp'; otherwise the
+    // legacy rule (1 dp at >= 100, else 4 dp) applies.
+    function _roundForDisplay(value, category, system) {
+        var cat = CATEGORIES[category];
+        var cfg = cat && cat[system];
+        if (cfg && typeof cfg.dp === 'number') return Number(value.toFixed(cfg.dp));
+        return (Math.abs(value) >= 100) ? Number(value.toFixed(1)) : Number(value.toFixed(4));
+    }
+
+    // Convert one input element's displayed value fromSys -> toSys.
+    // Exact round-trip: the pre-conversion text is remembered on the
+    // node, and if the field is still showing exactly what we wrote
+    // when it is flipped back, the original text is restored instead
+    // of re-converting a rounded number (so imperial -> metric ->
+    // imperial always returns the user's original numbers).
+    // Machine-precision text (a stored canonical such as 1450.37680789,
+    // produced by a metric -> imperial conversion) is shown to 7
+    // significant digits. Human-typed numbers never reach 8 decimals,
+    // so they — and small legitimate values like 0.00015 — are untouched.
+    function _tidyText(s) {
+        s = String(s);
+        return /^-?\d+\.\d{8,}$/.test(s) ? String(Number(parseFloat(s).toPrecision(7))) : s;
+    }
+
+    // NB: __wts_memo = { cat, sys, orig, shown } is also read by the
+    // host's universal page autosave (__ctrlValue) — keep its meaning.
+    function _convertInputEl(el, cat, fromSys, toSys) {
+        if (!el || fromSys === toSys) return;
+        var cur = String(_nget(el));
+        var memo = el.__wts_memo;
+        if (memo && memo.cat === cat && memo.sys === toSys && memo.shown === cur) {
+            try { _nset(el, _tidyText(memo.orig)); } catch (e) { return; }
+            el.__wts_memo = { cat: cat, sys: fromSys, orig: cur, shown: String(_nget(el)) };
+            return;
+        }
+        var raw = parseFloat(cur);
+        if (!isFinite(raw)) return;
+        var converted = convertCategory(raw, cat, fromSys, toSys);
+        if (typeof converted !== 'number' || !isFinite(converted)) return;
+        try { _nset(el, _roundForDisplay(converted, cat, toSys)); } catch (e) { return; }
+        el.__wts_memo = { cat: cat, sys: fromSys, orig: cur, shown: String(_nget(el)) };
+    }
+
+    // ───────────────────────────────────────────────────────────────
+    // CANONICAL CONTEXT
+    //
+    // Contract for every tagged input (data-wts-unit-cat):
+    //   • OUTSIDE a canonical context, el.value is the text on screen
+    //     (display system) — what autosave, page export / reports and
+    //     any WYSIWYG reader expect.
+    //   • INSIDE a canonical context, el.value returns the canonical
+    //     imperial value the calculators were written for, and an
+    //     assignment is taken as canonical and shown converted.
+    //
+    // A context is open while (a) any window.calc* / *Export(CSV|PDF)
+    // function runs — they are wrapped, so button clicks, live
+    // input/change recalcs, setTimeout(calc…) after render and calls
+    // from other modules are all covered; (b) any input / change /
+    // click / key event is being dispatched inside #pgBody (listeners
+    // on #pgBody capture + bubble, so document-level listeners such as
+    // autosave run outside it); (c) WTS_units.runCanonical(fn) runs.
+    // Nothing is written to the DOM to achieve this (each tagged input
+    // gets an own 'value' accessor that consults the context depth), so
+    // there is no caret jump, no flicker, and nesting (a wrapped calc
+    // called from a wrapped calc / event) can never double-convert.
+    // ───────────────────────────────────────────────────────────────
+    var _inDesc = null;
+    try {
+        if (typeof HTMLInputElement !== 'undefined' && HTMLInputElement.prototype) {
+            _inDesc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value') || null;
+        }
+    } catch (e) { _inDesc = null; }
+    function _isInputEl(el) {
+        return !!(_inDesc && _inDesc.get && typeof HTMLInputElement !== 'undefined' && el instanceof HTMLInputElement);
+    }
+    // Native (display) accessors — bypass the per-element accessor.
+    function _nget(el) { return _isInputEl(el) ? _inDesc.get.call(el) : el.value; }
+    function _nset(el, v) { if (_isInputEl(el)) _inDesc.set.call(el, v); else el.value = v; }
+
+    var _ctxDepth = 0;
+    function _enterCanonical() { _ctxDepth++; return { done: false }; }
+    function _exitCanonical(tok) {
+        if (!tok || tok.done) return;
+        tok.done = true;
+        if (_ctxDepth > 0) _ctxDepth--;
+        if (_ctxDepth === 0) { try { _syncTaggedOutputs(false); } catch (e) {} }
+    }
+    function runCanonical(fn, self, args) {
+        var tok = _enterCanonical();
+        try { return fn.apply(self, args || []); }
+        finally { _exitCanonical(tok); }
+    }
+
+    // Canonical text of a tagged input (memo-exact when the field still
+    // shows exactly what the units layer wrote, so an untouched default
+    // reaches the calc bit-for-bit identical to imperial mode).
+    function _canonicalText(el, cat) {
+        var shown = String(_nget(el));
+        if (_state.system === 'imperial') return shown;
+        var memo = el.__wts_memo;
+        if (memo && memo.cat === cat && memo.sys === 'imperial' && memo.shown === shown) return String(memo.orig);
+        var n = parseFloat(shown);
+        if (shown === '' || !isFinite(n)) return shown;
+        var c = convertCategory(n, cat, 'metric', 'imperial');
+        return (typeof c === 'number' && isFinite(c)) ? String(Number(c.toPrecision(12))) : shown;
+    }
+    function _accGet() {
+        var cat = this.getAttribute && this.getAttribute('data-wts-unit-cat');
+        if (!cat || _ctxDepth === 0) return _inDesc.get.call(this);
+        return _canonicalText(this, cat);
+    }
+    function _accSet(v) {
+        var cat = this.getAttribute && this.getAttribute('data-wts-unit-cat');
+        if (!cat || _ctxDepth === 0 || _state.system === 'imperial') { _inDesc.set.call(this, v); return; }
+        // Inside a canonical context an assignment is canonical imperial.
+        var s = (v == null) ? '' : String(v), n = parseFloat(s);
+        if (s === '' || !isFinite(n)) { _inDesc.set.call(this, v); return; }
+        var d = convertCategory(n, cat, 'imperial', 'metric');
+        if (typeof d !== 'number' || !isFinite(d)) { _inDesc.set.call(this, v); return; }
+        _inDesc.set.call(this, _roundForDisplay(d, cat, 'metric'));
+        this.__wts_memo = { cat: cat, sys: 'imperial', orig: s, shown: String(_inDesc.get.call(this)) };
+    }
+    function _installAccessor(el) {
+        if (!_isInputEl(el) || el.__wts_acc) return;
+        try {
+            Object.defineProperty(el, 'value', { configurable: true, enumerable: true, get: _accGet, set: _accSet });
+            el.__wts_acc = true;
+        } catch (e) {}
+    }
+
+    // Wrap calculator entry points on window so ANY invocation (button,
+    // live input/change handler, setTimeout after render, other module)
+    // runs inside a canonical context. Re-run on every page change to
+    // pick up late-defined functions; idempotent.
+    var ENTRY_RE = /^calc[A-Z0-9_]|Export(CSV|PDF)$/;
+    function _wrapEntryPoints() {
+        if (!_hasWin) return 0;
+        var n = 0, keys;
+        try { keys = Object.keys(G); } catch (e) { return 0; }
+        for (var i = 0; i < keys.length; i++) {
+            var k = keys[i];
+            if (!ENTRY_RE.test(k)) continue;
+            var f;
+            try { f = G[k]; } catch (e) { continue; }
+            if (typeof f !== 'function' || f.__wtsCanon) continue;
+            (function (orig, name) {
+                var w = function () { return runCanonical(orig, this, arguments); };
+                w.__wtsCanon = true;
+                w.__wtsOrig = orig;
+                try { G[name] = w; n++; } catch (e) {}
+            })(f, k);
+        }
+        return n;
+    }
+
+    // Events dispatched inside #pgBody run in a canonical context:
+    // entered in #pgBody's capture phase (after document-level capture
+    // listeners such as the autosave), left in its bubble phase (before
+    // document-level bubble listeners); a setTimeout fallback closes it
+    // if propagation was stopped below #pgBody.
+    var CTX_EVENTS = ['input', 'change', 'click', 'keydown', 'keyup'];
+    var _ctxHost = null;
+    function _installEventContext() {
+        if (!_hasDoc) return;
+        var host = _byId('pgBody');
+        if (!host || host === _ctxHost || typeof host.addEventListener !== 'function') return;
+        _ctxHost = host;
+        CTX_EVENTS.forEach(function (type) {
+            var stack = [];   // nested dispatches (a handler clicking another node) nest cleanly
+            host.addEventListener(type, function () {
+                while (stack.length && stack[stack.length - 1].done) stack.pop();
+                var tok = _enterCanonical();
+                stack.push(tok);
+                if (typeof setTimeout === 'function') setTimeout(function () { _exitCanonical(tok); }, 0);
+            }, true);
+            host.addEventListener(type, function () {
+                var tok = stack.pop();
+                if (tok) _exitCanonical(tok);
+            }, false);
+        });
     }
 
     // ───────────────────────────────────────────────────────────────
@@ -978,6 +1170,20 @@
         // Update the visible label to match current system.
         var labelEl = _findLabelFor(el);
         if (labelEl) _updateLabelText(labelEl, category);
+        // A freshly rendered node holds a canonical (imperial) value —
+        // HTML default, loadInputs() or the page-autosave restore — so
+        // show it in the active system, once. (__wts_flipped = "this
+        // node's text is in the display system"; the host autosave
+        // reads it.)
+        if (!el.__wts_flipped) {
+            el.__wts_flipped = true;
+            if (_state.system !== 'imperial' && 'value' in el) _convertInputEl(el, category, 'imperial', _state.system);
+            else if (_isInputEl(el)) {
+                var t0 = String(_nget(el)), t1 = _tidyText(t0);
+                if (t1 !== t0) _nset(el, t1);
+            }
+        }
+        _installAccessor(el);
         return true;
     }
 
@@ -989,6 +1195,76 @@
             else if (el.setAttribute) el.setAttribute('data-wts-unit-cat-out', category);
         } catch (e) {}
         return true;
+    }
+
+    // Tagged OUTPUTS (data-wts-unit-cat-out): calculators write canonical
+    // text; convert it to the display system. Runs whenever a canonical
+    // context closes (button, live recalc, timer — same path for all)
+    // and on every unit flip (force = re-convert from the stored canonical).
+    function _syncTaggedOutputs(force) {
+        if (!_hasDoc || typeof document.querySelectorAll !== 'function') return;
+        var outs;
+        try { outs = document.querySelectorAll('[data-wts-unit-cat-out]'); } catch (e) { return; }
+        for (var i = 0; i < outs.length; i++) {
+            var out = outs[i];
+            var cat = out.getAttribute('data-wts-unit-cat-out');
+            if (!cat || !CATEGORIES[cat]) continue;
+            var isCtl = (out.tagName === 'INPUT' || out.tagName === 'TEXTAREA');
+            var text = String(isCtl ? _nget(out) : (out.textContent || ''));
+            var st = out.__wts_out;
+            var canon;
+            if (st && st.shown === text) {
+                if (!force) continue;          // still showing what we wrote
+                canon = st.canon;
+            } else {
+                canon = parseFloat(text);      // fresh canonical text from a calc
+                if (!isFinite(canon)) continue;
+            }
+            var shown = text;
+            if (_state.system === 'metric') {
+                var d = convertCategory(canon, cat, 'imperial', 'metric');
+                if (typeof d !== 'number' || !isFinite(d)) continue;
+                shown = (Math.abs(d) >= 100) ? d.toFixed(1) : d.toFixed(3);
+            } else if (st && st.shown === text) {
+                shown = st.canonText;
+            }
+            try {
+                if (shown !== text) { if (isCtl) _nset(out, shown); else out.textContent = shown; }
+            } catch (e) {}
+            out.__wts_out = { canon: canon, canonText: (st && st.shown === text) ? st.canonText : text, shown: shown };
+        }
+    }
+
+    // Static unit captions that are not <label>s of a tagged input, e.g.
+    // a table header over a column of tagged inputs:
+    //   <th data-wts-unit-label="length">Length (ft)</th>
+    function _refreshUnitLabels() {
+        if (!_hasDoc || typeof document.querySelectorAll !== 'function') return;
+        var els;
+        try { els = document.querySelectorAll('[data-wts-unit-label]'); } catch (e) { return; }
+        for (var i = 0; i < els.length; i++) {
+            var cat = els[i].getAttribute('data-wts-unit-label');
+            if (cat && CATEGORIES[cat]) _updateLabelText(els[i], cat);
+        }
+    }
+
+    // Route-scoped tagging: ids are only unique per page (ps_t is °F on
+    // PRV but °C on Pump Sizing), so tag the manifest of the page on
+    // screen. Unknown route -> legacy behaviour (every manifest).
+    var _currentRoute = null;
+    function _detectRoute() {
+        if (!_hasDoc) return null;
+        try {
+            var b = document.querySelector('.nav-btn.active');
+            return (b && b.getAttribute('data-p')) || null;
+        } catch (e) { return null; }
+    }
+    function _applyForCurrentPage() {
+        var r = _currentRoute || _detectRoute();
+        var n = (r && MANIFEST[r]) ? applyManifest(r) : (r ? 0 : applyAllManifests());
+        _refreshUnitLabels();
+        _syncTaggedOutputs(false);
+        return n;
     }
 
     function applyManifest(routeName) {
@@ -1025,6 +1301,12 @@
     // the Calculate-button wrapper.
     // ───────────────────────────────────────────────────────────────
     function _categoryFor(elementId) {
+        // Live tag first — ids are only unique per page.
+        var live = _byId(elementId);
+        if (live && live.getAttribute) {
+            var lc = live.getAttribute('data-wts-unit-cat') || live.getAttribute('data-wts-unit-cat-out');
+            if (lc) return lc;
+        }
         var routes = Object.keys(MANIFEST);
         for (var i = 0; i < routes.length; i++) {
             var entry = MANIFEST[routes[i]];
@@ -1043,12 +1325,11 @@
     function readInput(elementId) {
         var el = _byId(elementId);
         if (!el) return NaN;
-        var raw = parseFloat(el.value);
-        if (!isFinite(raw)) return NaN;
-        if (_state.system === 'imperial') return raw;
-        var cat = _categoryFor(elementId);
-        if (!cat) return raw;
-        return convertCategory(raw, cat, 'metric', 'imperial');
+        var cat = el.getAttribute && el.getAttribute('data-wts-unit-cat');
+        // Tagged: the canonical text (memo-exact). Untagged nodes hold
+        // canonical values already (fresh render / no conversion).
+        var raw = parseFloat(cat ? _canonicalText(el, cat) : _nget(el));
+        return isFinite(raw) ? raw : NaN;
     }
 
     function readInputs(idList) {
@@ -1072,9 +1353,13 @@
             ? (Math.abs(v) >= 100 ? v.toFixed(1) : v.toFixed(3))
             : '';
         try {
-            if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') el.value = disp;
+            if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') _nset(el, disp);
             else el.textContent = disp;
         } catch (e) {}
+        // Remember the canonical so a unit flip re-converts it.
+        if (el.getAttribute && el.getAttribute('data-wts-unit-cat-out') && typeof canonicalValue === 'number') {
+            el.__wts_out = { canon: canonicalValue, canonText: String(canonicalValue), shown: disp };
+        }
         return true;
     }
 
@@ -1118,20 +1403,14 @@
                 var cat = (el.dataset && el.dataset.wtsUnitCat) ||
                           (el.getAttribute && el.getAttribute('data-wts-unit-cat'));
                 if (!cat) continue;
-                var raw = parseFloat(el.value);
-                if (isFinite(raw)) {
-                    var converted = convertCategory(raw, cat, oldSystem, newSystem);
-                    if (typeof converted === 'number' && isFinite(converted)) {
-                        var rounded = (Math.abs(converted) >= 100)
-                            ? Number(converted.toFixed(1))
-                            : Number(converted.toFixed(4));
-                        try { el.value = rounded; } catch (e) {}
-                    }
-                }
+                _convertInputEl(el, cat, oldSystem, newSystem);
+                el.__wts_flipped = true;
                 // Rewrite label.
                 var lab = _findLabelFor(el);
                 if (lab) _updateLabelText(lab, cat);
             }
+            _refreshUnitLabels();
+            _syncTaggedOutputs(true);
         }
 
         // Update any visible toggle button styling.
@@ -1149,131 +1428,109 @@
     }
 
     // ───────────────────────────────────────────────────────────────
-    // CALCULATE-BUTTON WRAPPER
-    //
-    // Capture-phase document click listener. Whenever a button whose
-    // text contains "Calculate" / "Compute" / "Run" / etc. is clicked
-    // AND the system is 'metric', we:
-    //
-    //   1. Walk the panel's tagged inputs.
-    //   2. Read each displayed metric value.
-    //   3. Convert metric -> imperial (canonical).
-    //   4. Set input.value to the canonical value (so the original
-    //      handler reads imperial, exactly as the calculator expects).
-    //   5. Schedule a setTimeout(0) microtask to:
-    //         a. Restore each input.value to its metric display.
-    //         b. Walk tagged outputs and convert their canonical
-    //            text content to metric.
-    //
-    // In imperial mode, this listener is a no-op (early return).
+    // (The old capture-phase Calculate-button swap — which rewrote the
+    // inputs to canonical only for buttons whose text matched
+    // /calculate|compute|run|.../ and so missed every live recalc,
+    // setTimeout(calc) after render, and buttons such as "Correct to
+    // 60°F" — is replaced by the CANONICAL CONTEXT above.)
     // ───────────────────────────────────────────────────────────────
-    var CALC_BUTTON_RE = /\b(calculate|compute|run|generate|build|simulate|analyse|analyze|estimate|size\b)/i;
 
-    function _findPanel(btn) {
-        if (!btn) return null;
-        var node = btn;
-        for (var i = 0; i < 12 && node; i++) {
-            // Heuristic: stop at the page body (id="pgBody") or a
-            // .module / .panel / .calc / .card-grid container.
-            if (node.id === 'pgBody') return node;
-            if (node.classList && node.classList.contains) {
-                if (node.classList.contains('module') ||
-                    node.classList.contains('panel') ||
-                    node.classList.contains('calc') ||
-                    node.classList.contains('cols-2')) {
-                    // Walk up one more level to capture sibling cards.
-                    return node.parentNode || node;
-                }
-            }
-            node = node.parentNode;
+    // ───────────────────────────────────────────────────────────────
+    // AUTO-SAVE CANONICALISER
+    //
+    // The host auto-saves every edit by writing the DISPLAYED input
+    // values to localStorage 'wts_<calcKey>' ('input' debounced 300 ms,
+    // 'change' immediately). In metric mode those are metric numbers,
+    // but loadInputs() + tagInput()'s fresh flip treat stored values as
+    // canonical imperial, so on the next visit a metric value would be
+    // converted twice (300 cm saved as "300", reloaded as 300 in, shown
+    // as 762 cm). Once the host's write has landed we rewrite every
+    // tagged field in that record back to canonical imperial, so the
+    // stored values are imperial no matter which system is showing
+    // (same as saveInputs() inside a calc, which runs in a canonical
+    // context and therefore reads canonical values).
+    // ───────────────────────────────────────────────────────────────
+    var _canonTimer = null;
+    var HOST_LS_PREFIX = 'wts_';
+
+    function _canonicaliseSaved(targetId) {
+        if (_state.system !== 'metric' || !targetId) return;
+        if (_ctxDepth > 0) {
+            if (typeof setTimeout === 'function') setTimeout(function () { _canonicaliseSaved(targetId); }, 50);
+            return;
         }
-        return _hasDoc && document.body ? document.body : null;
-    }
-
-    function _onClickCapture(ev) {
+        var target = _byId(targetId);
+        if (!target || !('value' in target)) return;
+        var ls = null;
+        try { ls = (typeof localStorage !== 'undefined') ? localStorage : null; } catch (e) { ls = null; }
+        if (!ls || typeof ls.key !== 'function') return;
+        var keys = [];
         try {
-            if (_state.system === 'imperial') return;
-            var btn = ev && ev.target;
-            if (!btn || !btn.tagName) return;
-            // Walk up one level if the click landed on a child of the
-            // button (e.g. an icon span).
-            if (btn.tagName !== 'BUTTON') {
-                var p = btn.parentNode;
-                if (p && p.tagName === 'BUTTON') btn = p;
-                else return;
+            for (var i = 0; i < ls.length; i++) {
+                var k = ls.key(i);
+                if (k && k.indexOf(HOST_LS_PREFIX) === 0 && k !== STORAGE_KEY) keys.push(k);
             }
-            var text = (btn.textContent || '').trim();
-            if (!CALC_BUTTON_RE.test(text)) return;
-
-            var panel = _findPanel(btn);
-            if (!panel || typeof panel.querySelectorAll !== 'function') return;
-
-            var taggedInputs;
-            try { taggedInputs = panel.querySelectorAll('[data-wts-unit-cat]'); }
-            catch (e) { taggedInputs = []; }
-
-            var rollback = [];
-            for (var i = 0; i < taggedInputs.length; i++) {
-                var inp = taggedInputs[i];
-                if (!inp || !('value' in inp)) continue;
-                var cat = (inp.dataset && inp.dataset.wtsUnitCat) ||
-                          (inp.getAttribute && inp.getAttribute('data-wts-unit-cat'));
+        } catch (e) { return; }
+        for (var j = 0; j < keys.length; j++) {
+            var data;
+            try {
+                var rawJson = ls.getItem(keys[j]);
+                if (!rawJson || rawJson.charAt(0) !== '{') continue;
+                data = JSON.parse(rawJson);
+            } catch (e) { continue; }
+            if (!data || typeof data !== 'object') continue;
+            // Only the record the host just wrote holds the edited
+            // field's live display text.
+            if (data[targetId] === undefined || String(data[targetId]) !== String(target.value)) continue;
+            var changed = false;
+            var ids = Object.keys(data);
+            for (var m = 0; m < ids.length; m++) {
+                var el = _byId(ids[m]);
+                if (!el || !('value' in el)) continue;
+                var cat = (el.dataset && el.dataset.wtsUnitCat) ||
+                          (el.getAttribute && el.getAttribute('data-wts-unit-cat'));
                 if (!cat) continue;
-                var displayVal = parseFloat(inp.value);
-                if (!isFinite(displayVal)) continue;
-                var canonicalVal = convertCategory(displayVal, cat, 'metric', 'imperial');
-                if (typeof canonicalVal !== 'number' || !isFinite(canonicalVal)) continue;
-                rollback.push({ inp: inp, displayVal: inp.value });
-                try { inp.value = canonicalVal; } catch (e) {}
+                // Stored text differs from the display -> already canonical.
+                if (String(data[ids[m]]) !== String(el.value)) continue;
+                var v = parseFloat(data[ids[m]]);
+                if (!isFinite(v)) continue;
+                var c = convertCategory(v, cat, 'metric', 'imperial');
+                if (typeof c !== 'number' || !isFinite(c)) continue;
+                data[ids[m]] = String(Number(c.toPrecision(12)));
+                changed = true;
             }
-
-            // Restore display values + post-convert outputs.
-            var restore = function () {
-                for (var k = 0; k < rollback.length; k++) {
-                    try { rollback[k].inp.value = rollback[k].displayVal; } catch (e) {}
-                }
-                if (panel && typeof panel.querySelectorAll === 'function') {
-                    var outs;
-                    try { outs = panel.querySelectorAll('[data-wts-unit-cat-out]'); }
-                    catch (e) { outs = []; }
-                    for (var m = 0; m < outs.length; m++) {
-                        var out = outs[m];
-                        var ocat = (out.dataset && out.dataset.wtsUnitCatOut) ||
-                                   (out.getAttribute && out.getAttribute('data-wts-unit-cat-out'));
-                        if (!ocat) continue;
-                        var raw = (out.tagName === 'INPUT' || out.tagName === 'TEXTAREA')
-                            ? parseFloat(out.value)
-                            : parseFloat(out.textContent || '');
-                        if (!isFinite(raw)) continue;
-                        var dispVal = convertCategory(raw, ocat, 'imperial', 'metric');
-                        if (typeof dispVal !== 'number' || !isFinite(dispVal)) continue;
-                        var rounded = (Math.abs(dispVal) >= 100)
-                            ? dispVal.toFixed(1)
-                            : dispVal.toFixed(3);
-                        try {
-                            if (out.tagName === 'INPUT' || out.tagName === 'TEXTAREA') out.value = rounded;
-                            else out.textContent = rounded;
-                        } catch (e) {}
-                    }
-                }
-            };
-            // Use setTimeout(0) so we run AFTER the original click
-            // handler completes (synchronous handler will have read
-            // the canonical values we just stuffed in).
-            if (typeof setTimeout === 'function') setTimeout(restore, 0);
-        } catch (e) {
-            _err('[WTS_units] Calculate-wrapper crashed:', e && e.message);
+            if (changed) { try { ls.setItem(keys[j], JSON.stringify(data)); } catch (e) {} }
         }
     }
 
-    var _wrapperInstalled = false;
-    function _installCalculateWrapper() {
-        if (_wrapperInstalled) return;
-        if (!_hasDoc || typeof document.addEventListener !== 'function') return;
+    var _canonInstalled = false;
+    function _installAutosaveCanonicaliser() {
+        if (_canonInstalled) return;
+        if (!_hasDoc || typeof document.addEventListener !== 'function' || typeof setTimeout !== 'function') return;
         try {
-            document.addEventListener('click', _onClickCapture, true);
-            _wrapperInstalled = true;
+            document.addEventListener('input', function (ev) {
+                if (_state.system !== 'metric') return;
+                var id = ev && ev.target && ev.target.id;
+                if (!id) return;
+                clearTimeout(_canonTimer);
+                // Host debounce is 300 ms — land just after its write.
+                _canonTimer = setTimeout(function () { _canonicaliseSaved(id); }, 400);
+            }, true);
+            document.addEventListener('change', function (ev) {
+                if (_state.system !== 'metric') return;
+                var id = ev && ev.target && ev.target.id;
+                if (!id) return;
+                setTimeout(function () { _canonicaliseSaved(id); }, 0);
+            }, true);
+            _canonInstalled = true;
         } catch (e) {}
+    }
+
+    // Installs the canonical-context plumbing: wraps window.calc* /
+    // *Export(CSV|PDF) entry points and hooks #pgBody events.
+    function _installCalculateWrapper() {
+        _wrapEntryPoints();
+        _installEventContext();
     }
 
     // ───────────────────────────────────────────────────────────────
@@ -1391,61 +1648,32 @@
     function _patchNavHide() {
         if (!_hasDoc || typeof document.addEventListener !== 'function') return;
         try {
-            document.addEventListener('h2oil:pagechange', function () {
+            document.addEventListener('h2oil:pagechange', function (ev) {
+                _currentRoute = (ev && ev.detail && ev.detail.page) || _detectRoute();
                 var ebar = _byId('exportBtns');
-                if (!ebar) return;
                 var tog = _byId(_toggleId);
-                if (tog && ebar.contains && ebar.contains(tog)) {
+                if (ebar && tog && ebar.contains && ebar.contains(tog)) {
                     if (ebar.style.display === 'none' || !ebar.style.display) {
                         ebar.style.display = 'flex';
                     }
                 }
-                // Also re-apply any manifest tags for the new route.
-                // The host calls render() which rewrites pgBody, so
-                // input IDs are fresh — re-tag them.
+                // render() has rewritten #pgBody (and the page autosave
+                // has restored its values) — tag the fresh inputs of THIS
+                // route now, and once more after any deferred rendering.
+                _installCalculateWrapper();
+                _applyForCurrentPage();
                 if (typeof setTimeout === 'function') {
                     setTimeout(function () {
-                        applyAllManifests();
-                        // If we're in metric mode, also flip every
-                        // newly-rendered input from its imperial
-                        // default to the metric display.
-                        if (_state.system === 'metric') {
-                            _flipFreshInputs('imperial', 'metric');
-                        }
+                        _installCalculateWrapper();
+                        _applyForCurrentPage();
                     }, 30);
                 }
             });
         } catch (e) {}
     }
 
-    // Helper used right after a re-render: flips every tagged input's
-    // default value from imperial -> metric (or vice versa). Distinct
-    // from setSystem because the system flag has NOT changed.
-    function _flipFreshInputs(fromSys, toSys) {
-        if (!_hasDoc || typeof document.querySelectorAll !== 'function') return;
-        var inputs;
-        try { inputs = document.querySelectorAll('[data-wts-unit-cat]'); }
-        catch (e) { return; }
-        for (var i = 0; i < inputs.length; i++) {
-            var el = inputs[i];
-            if (!el || !('value' in el)) continue;
-            // Skip fresh inputs that have already been flipped
-            // (marker on the DOM node, cleared on each tagInput call).
-            if (el.__wts_flipped) continue;
-            el.__wts_flipped = true;
-            var cat = (el.dataset && el.dataset.wtsUnitCat) ||
-                      (el.getAttribute && el.getAttribute('data-wts-unit-cat'));
-            if (!cat) continue;
-            var raw = parseFloat(el.value);
-            if (!isFinite(raw)) continue;
-            var converted = convertCategory(raw, cat, fromSys, toSys);
-            if (typeof converted !== 'number' || !isFinite(converted)) continue;
-            var rounded = (Math.abs(converted) >= 100)
-                ? Number(converted.toFixed(1))
-                : Number(converted.toFixed(4));
-            try { el.value = rounded; } catch (e) {}
-        }
-    }
+    // (Fresh-node flipping now happens inside tagInput(), atomically
+    // with tagging, so a node is never tagged-but-unflipped.)
 
     // ───────────────────────────────────────────────────────────────
     // DOM-READY BOOTSTRAP
@@ -1458,15 +1686,12 @@
         if (_mounted) return;
         _mounted = true;
         _installCalculateWrapper();
+        _installAutosaveCanonicaliser();
         _patchNavHide();
-        // Initial mount + tag pass.
+        // Initial mount + tag pass (tagInput flips fresh nodes to the
+        // persisted system).
         _autoMount();
-        applyAllManifests();
-        // If persisted state is metric, flip the inputs that just got
-        // tagged (they hold imperial defaults from the host HTML).
-        if (_state.system === 'metric') {
-            _flipFreshInputs('imperial', 'metric');
-        }
+        _applyForCurrentPage();
     }
 
     if (_hasDoc) {
@@ -1507,15 +1732,26 @@
 
         renderToggle: renderToggle,
 
+        // Canonical context (see CANONICAL CONTEXT): run fn so that
+        // tagged inputs read/write canonical imperial values.
+        runCanonical: function (fn, self, args) { return runCanonical(fn, self, args); },
+        inCanonicalContext: function () { return _ctxDepth > 0; },
+        // The text actually on screen for an input, in any context.
+        displayValue: function (el) { return el ? String(_nget(el)) : ''; },
+
         CATEGORIES: CATEGORIES,
         MANIFEST: MANIFEST,
 
         // Test-friendly internals (not in the public contract but
         // useful for the self-test below).
         _convertValue: _convertValue,
+        _roundForDisplay: _roundForDisplay,
+        _convertInputEl: _convertInputEl,
+        _canonicalText: _canonicalText,
+        _canonicaliseSaved: _canonicaliseSaved,
+        _wrapEntryPoints: _wrapEntryPoints,
         _findLabelFor: _findLabelFor,
         _updateLabelText: _updateLabelText,
-        _onClickCapture: _onClickCapture,
         _bootstrap: _bootstrap
     };
 

@@ -348,13 +348,15 @@
         if (activeKey === 'custom')        activeStage = '';
 
         var W  = 920, H  = 200;
-        var pad = 40;
+        // pad leaves room for the outer boxes (76 wide) plus the flow arrow
+        // beyond the last one — at 40 the arrow was drawn over "Flare".
+        var pad = 64;
         var n   = stages.length;
         var step = (W - 2 * pad) / (n - 1);
 
         var lines = [];
-        // Pipe line connecting all stages.
-        lines.push('<line x1="' + pad + '" y1="100" x2="' + (W - pad) + '" y2="100" '
+        // Pipe line connecting all stages (runs on to the flow arrow).
+        lines.push('<line x1="' + pad + '" y1="100" x2="' + (W - pad + 44) + '" y2="100" '
             + 'stroke="#3d444d" stroke-width="6" stroke-linecap="round"/>');
 
         // Each stage as a labelled box.
@@ -409,8 +411,8 @@
         }
 
         // Flow direction arrow at the right.
-        lines.push('<polygon points="' + (W - pad + 6) + ',92 ' + (W - pad + 22) + ',100 '
-            + (W - pad + 6) + ',108" fill="#6e7681"/>');
+        lines.push('<polygon points="' + (W - pad + 42) + ',92 ' + (W - pad + 56) + ',100 '
+            + (W - pad + 42) + ',108" fill="#6e7681"/>');
 
         // Title strip.
         lines.push('<text x="' + (W / 2) + '" y="180" font-size="11" fill="#6e7681" '
@@ -442,7 +444,10 @@
     // ───────────────────────────────────────────────────────────────
     function renderESDHiPilot(body) {
         if (!_hasDoc) return;
-        if (!body || !body.innerHTML) return;
+        // Guard on the element, not its content — the router clears
+        // body.innerHTML to '' before calling us, so a falsy-innerHTML check
+        // made this page render blank every time it was opened.
+        if (!body || typeof body.innerHTML !== 'string') return;
 
         // Set page title / sub if the host header exists.
         var pgT = document.getElementById('pgTitle');

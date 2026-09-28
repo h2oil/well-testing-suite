@@ -156,7 +156,18 @@
 
     // ─── Header ───────────────────────────────────────────────────
     function _renderHeader() {
-        var ci = (G.WTS_state && G.WTS_state.clientInfo) ? G.WTS_state.clientInfo : {};
+        // Client & Well Info page persists to localStorage 'h2oil_client_info'
+        // ({client, well, field, ref, engineer, …}); WTS_state.clientInfo is
+        // only populated by project files.
+        var ci = {};
+        try { ci = JSON.parse(G.localStorage.getItem('h2oil_client_info') || '{}') || {}; } catch (e) { ci = {}; }
+        if (G.WTS_state && G.WTS_state.clientInfo) {
+            var pci = G.WTS_state.clientInfo;
+            for (var pk in pci) if (Object.prototype.hasOwnProperty.call(pci, pk) && ci[pk] == null) ci[pk] = pci[pk];
+        }
+        ci.clientName = ci.clientName || ci.client;
+        ci.wellName   = ci.wellName   || ci.well;
+        ci.jobId      = ci.jobId      || ci.ref;
         var now = new Date();
         var dateStr = now.toISOString().substring(0, 10) + ' ' +
                       now.toTimeString().substring(0, 5);
@@ -495,6 +506,14 @@
     // generate(opts) → opens a new window with the report and triggers print
     // ───────────────────────────────────────────────────────────────
     function generate(opts) {
+        // The host's job report covers every calculator the user has run
+        // (captured automatically), with the shared report styling, the
+        // Client & Well Info cover and the iOS PDF path. The legacy
+        // per-module summary below remains as a fallback.
+        if (typeof G.WTS_exportJobReport === 'function') {
+            try { G.WTS_exportJobReport(opts); return { opened: true, delegated: true }; }
+            catch (e) { _warn('job report failed — falling back to legacy quick report', e); }
+        }
         var html = _buildHTML(opts);
         if (!_hasWin || typeof G.open !== 'function') {
             return { html: html, opened: false };

@@ -42,26 +42,8 @@ if (html.length !== gaBefore) {
     console.log(`[sync] Stripped Google Analytics block (${gaBefore - html.length} chars)`);
 }
 
-// ── 0b. Drop in-app Release Notes entries about the old iOS subscription
-// work. The iOS app is free with no in-app purchases; release-note text
-// mentioning paywalls / subscription pricing / web-only subscriptions
-// would be misleading in the iOS build (and is an App Review risk). The
-// web build keeps them. Entries look like:
-//     { date:'…', tag:'…', title:'…',
-//       details:'…' },
-// Only entries whose text matches the pattern below are removed; if the
-// release-notes format ever changes this is a harmless no-op.
-const RELEASE_ENTRY_RE = /\r?\n[ \t]*\{ date:'[^'\n]*',\s*tag:'[^'\n]*',\s*title:'(?:[^'\\\n]|\\.)*',\s*details:'(?:[^'\\\n]|\\.)*' \},?/g;
-// (vendor name of the removed subscription SDK is matched as revenue\s?cat)
-const IOS_MONETISATION_RE = /revenue\s?cat|paywall|subscription|entitlement/i;
-let droppedNotes = 0;
-html = html.replace(RELEASE_ENTRY_RE, (entry) => {
-    if (IOS_MONETISATION_RE.test(entry)) { droppedNotes++; return ''; }
-    return entry;
-});
-if (droppedNotes) {
-    console.log(`[sync] Dropped ${droppedNotes} subscription-related Release Notes entr${droppedNotes === 1 ? 'y' : 'ies'} from iOS bundle`);
-}
+// (The in-app Release Notes are engineering-only and identical on web and
+// iOS, so no release-note filtering is needed here.)
 
 // ── 1. iOS-specific <meta> tags for status bar, web app mode, viewport ──
 // Replaces the source viewport entirely — ios-meta.html contains the

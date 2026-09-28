@@ -199,6 +199,29 @@ const checks = [
 let modelCount = win.PRiSM_MODELS ? Object.keys(win.PRiSM_MODELS).length : 0;
 checks.push(['PRiSM_MODELS count >= 45', modelCount >= 45]);
 
+// Round-6 — project file (.h2oilproj) + host universal autosave hooks
+checks.push(['window.WTS_project',                   typeof win.WTS_project === 'object']);
+checks.push(['window.WTS_pageAutosave.flush',        !!(win.WTS_pageAutosave && typeof win.WTS_pageAutosave.flush === 'function')]);
+checks.push(['window.WTS_rerender',                  typeof win.WTS_rerender === 'function']);
+checks.push(['WTS_project has storage module',       !!(win.WTS_project && win.WTS_project.listModules().indexOf('storage') !== -1)]);
+(function storageRoundTrip() {
+  let ok = false;
+  try {
+    const ls = ctx.localStorage;
+    ls.setItem('wts_page_smoke', '{"v":1,"f":{"x":"7"}}');
+    ls.setItem('wts_unit_system', 'metric');
+    const payload = win.WTS_project._buildPayload();
+    const keys = payload.modules.storage && payload.modules.storage.keys;
+    const captured = !!keys && keys.wts_page_smoke === '{"v":1,"f":{"x":"7"}}' && !('wts_unit_system' in keys);
+    ls.removeItem('wts_page_smoke');
+    const res = win.WTS_project.loadFromObject(JSON.parse(JSON.stringify(payload)));
+    ok = captured && !res.error && ls.getItem('wts_page_smoke') === '{"v":1,"f":{"x":"7"}}' &&
+         ls.getItem('wts_unit_system') === 'metric';
+    ls.removeItem('wts_page_smoke'); ls.removeItem('wts_unit_system');
+  } catch (e) { console.error('storage round-trip threw:', e.message); }
+  checks.push(['WTS_project storage module round-trip', ok]);
+})();
+
 console.log('\nNamespace checks:');
 let fails = 0;
 for (const [name, ok] of checks) {

@@ -479,19 +479,42 @@
     // UI rendering
     //
     // Layout (top-to-bottom):
-    //   1. Title + sub
-    //   2. Banner: "elbow + valve geometry assumptions"
-    //   3. Operating-conditions card (sand rate, c, gas/oil/water rates)
-    //   4. Six segment cards in a horizontal flow with measured-WT
-    //      sub-card per segment.
-    //   5. Banner: "separator bypass note"
-    //   6. Footer: limiting segment / overall min life.
+    //   1. Geometry-assumption banner
+    //   2. Operating-conditions card (+ "use Well Test Simulator" import)
+    //   3. Pipe-segment INPUT table — one row per segment, including the
+    //      flowing P/T that drives the mixture-velocity calc
+    //   4. RESULTS table — velocity, erosion, RSL, TTF, MAWP, status
+    //   5. System summary + warnings
+    // Inputs persist to localStorage ('wts_pipelife') and WTS_state.pipelife
+    // so they survive navigation and are captured by project Save.
     // ───────────────────────────────────────────────────────────────
+    var PL_LS_KEY = 'wts_pipelife';
+    var PL_OP_IDS = ['wts_pl_sand','wts_pl_c','wts_pl_qg','wts_pl_qo','wts_pl_qw','wts_pl_sg','wts_pl_bypass'];
+    var PL_SEG_FIELDS = ['mat','nps','sch','len','pseg','tseg','meas','minspec','fail','dp','dt'];
+
+    function _allInputIds() {
+        var ids = PL_OP_IDS.slice();
+        for (var i = 0; i < DEFAULT_SEGMENTS.length; i++) {
+            for (var f = 0; f < PL_SEG_FIELDS.length; f++) ids.push('wts_pl_seg' + i + '_' + PL_SEG_FIELDS[f]);
+        }
+        return ids;
+    }
+
     function _formatDays(days) {
-        if (!isFinite(days)) return '— days';
+        if (!isFinite(days)) return '—';
+        if (days >= 50 * 365.25 - 1) return '> 50 yr';
         if (days >= 365.25 * 10) return _fmt(days / 365.25, 1) + ' yr';
-        if (days >= 365.25)      return _fmt(days, 0) + ' days  (' + _fmt(days / 365.25, 2) + ' yr)';
-        return _fmt(days, 1) + ' days';
+        if (days >= 365.25)      return _fmt(days, 0) + ' d (' + _fmt(days / 365.25, 1) + ' yr)';
+        if (days >= 1)           return _fmt(days, 1) + ' days';
+        var hrs = days * 24;
+        if (hrs >= 1)            return _fmt(hrs, 1) + ' hours';
+        return _fmt(hrs * 60, 0) + ' min';
+    }
+
+    function _lifeColor(days) {
+        return days < 30 ? 'var(--red, #f85149)'
+             : days < 90 ? 'var(--yellow, #d29922)'
+             : 'var(--green, #3fb950)';
     }
 
     function _materialOptions(selected) {
@@ -526,51 +549,49 @@
         return html;
     }
 
-    function _segmentCard(seg, idx) {
-        var m = MATERIALS[seg.material] || MATERIALS['A333gr6'];
-        var hose = !m.erodes;
-        return '' +
-        '<div class="card pl-seg" data-seg-idx="' + idx + '" style="min-width:240px;flex:1 1 240px;display:flex;flex-direction:column;gap:6px;padding:8px">' +
-            '<div class="card-title" style="font-size:12px;font-weight:700;border-bottom:1px solid var(--bd, #2a2f3a);padding-bottom:4px">' +
-                _esc(seg.label) +
-            '</div>' +
-            '<div class="fg-item"><label style="font-size:11px;color:var(--text2)">Material</label>' +
-                '<select id="wts_pl_seg' + idx + '_mat" style="width:100%">' + _materialOptions(seg.material) + '</select>' +
-            '</div>' +
-            '<div id="wts_pl_seg' + idx + '_results" style="padding:6px 4px;background:var(--bg0, #0d1117);border-radius:4px;margin:4px 0">' +
-                (hose
-                    ? '<div style="font-weight:700;color:var(--orange, #e0b020);font-size:13px">NOT APPLICABLE TO HOSE</div>' +
-                      '<div style="font-size:10px;color:var(--text3)">flexible-wall hose — sand erosion not modelled</div>'
-                    : '<div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.5px">Remaining Service Life</div>' +
-                      '<div id="wts_pl_seg' + idx + '_rsl" style="font-size:18px;font-weight:700;color:var(--green, #4caf50)">— days</div>' +
-                      '<div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.5px;margin-top:4px">Time to failure at current flowing conditions</div>' +
-                      '<div id="wts_pl_seg' + idx + '_ttf" style="font-size:13px;font-weight:600;color:var(--text2)">— days</div>' +
-                      '<div id="wts_pl_seg' + idx + '_rate" style="font-size:10px;color:var(--text3);margin-top:4px">erosion: — mpy</div>'
-                ) +
-            '</div>' +
-            '<div class="card" style="padding:6px;background:var(--bg1, #161b22);font-size:11px">' +
-                '<div style="font-size:10px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px">Wall Thickness Inputs</div>' +
-                '<div class="fg" style="display:grid;grid-template-columns:1fr 1fr;gap:4px">' +
-                    '<div class="fg-item"><label style="font-size:10px">Measured WT (in)</label>' +
-                        '<input type="number" id="wts_pl_seg' + idx + '_meas" step="0.001" min="0" value="' + seg.measured_WT_in + '"></div>' +
-                    '<div class="fg-item"><label style="font-size:10px">Min-spec WT (in)</label>' +
-                        '<input type="number" id="wts_pl_seg' + idx + '_minspec" step="0.001" min="0" value="' + seg.min_spec_WT_in + '"></div>' +
-                    '<div class="fg-item"><label style="font-size:10px">Failure WT (in)</label>' +
-                        '<input type="number" id="wts_pl_seg' + idx + '_fail" step="0.001" min="0" value="' + seg.failure_WT_in + '"></div>' +
-                    '<div class="fg-item"><label style="font-size:10px">Size (NPS)</label>' +
-                        '<select id="wts_pl_seg' + idx + '_nps">' + _npsOptions(seg.nps_in) + '</select></div>' +
-                    '<div class="fg-item"><label style="font-size:10px">Schedule</label>' +
-                        '<select id="wts_pl_seg' + idx + '_sch">' + _scheduleOptions(seg.sch) + '</select></div>' +
-                    '<div class="fg-item"><label style="font-size:10px">Length (ft)</label>' +
-                        '<input type="number" id="wts_pl_seg' + idx + '_len" step="1" min="0" value="' + seg.length_ft + '"></div>' +
-                    '<div class="fg-item"><label style="font-size:10px">Design P (psig)</label>' +
-                        '<input type="number" id="wts_pl_seg' + idx + '_dp" step="50" min="0" value="' + seg.design_p_psig + '"></div>' +
-                    '<div class="fg-item"><label style="font-size:10px">Design T (°F)</label>' +
-                        '<input type="number" id="wts_pl_seg' + idx + '_dt" step="5" min="-50" value="' + seg.design_T_F + '"></div>' +
-                '</div>' +
-                '<div id="wts_pl_seg' + idx + '_warn" style="font-size:10px;color:var(--orange, #e0b020);margin-top:4px"></div>' +
-            '</div>' +
-        '</div>';
+    function _numCell(id, val, step, min, w) {
+        return '<td><input type="number" id="' + id + '" step="' + step + '"' +
+               (min != null ? ' min="' + min + '"' : '') + ' value="' + val + '"' +
+               ' style="width:100%;min-width:' + (w || 70) + 'px"></td>';
+    }
+
+    function _segmentInputRow(seg, idx) {
+        var p = 'wts_pl_seg' + idx + '_';
+        return '<tr data-seg-idx="' + idx + '">' +
+            '<td style="font-weight:600;white-space:nowrap;color:var(--text)">' + _esc(seg.label.replace('->', '→')) + '</td>' +
+            '<td><select id="' + p + 'mat" style="width:100%;min-width:150px">' + _materialOptions(seg.material) + '</select></td>' +
+            '<td><select id="' + p + 'nps" style="width:100%;min-width:62px">' + _npsOptions(seg.nps_in) + '</select></td>' +
+            '<td><select id="' + p + 'sch" style="width:100%;min-width:92px">' + _scheduleOptions(seg.sch) + '</select></td>' +
+            _numCell(p + 'len', seg.length_ft, 1, 0, 64) +
+            _numCell(p + 'pseg', seg.p_seg_psig, 10, 0, 76) +
+            _numCell(p + 'tseg', seg.t_seg_F, 5, -50, 64) +
+            _numCell(p + 'meas', seg.measured_WT_in, 0.001, 0, 74) +
+            _numCell(p + 'minspec', seg.min_spec_WT_in, 0.001, 0, 74) +
+            _numCell(p + 'fail', seg.failure_WT_in, 0.001, 0, 74) +
+            _numCell(p + 'dp', seg.design_p_psig, 50, 0, 76) +
+            _numCell(p + 'dt', seg.design_T_F, 5, -50, 64) +
+        '</tr>';
+    }
+
+    function _segmentResultRow(seg, idx) {
+        var p = 'wts_pl_seg' + idx + '_';
+        return '<tr>' +
+            '<td style="font-weight:600;white-space:nowrap;color:var(--text)">' + _esc(seg.label.replace('->', '→')) + '</td>' +
+            '<td id="' + p + 'pipe" style="white-space:nowrap">—</td>' +
+            '<td id="' + p + 'vel">—</td>' +
+            '<td id="' + p + 'ero">—</td>' +
+            '<td id="' + p + 'rsl" style="font-weight:700;white-space:nowrap">—</td>' +
+            '<td id="' + p + 'ttf" style="white-space:nowrap">—</td>' +
+            '<td id="' + p + 'mawp">—</td>' +
+            '<td id="' + p + 'stat" style="font-weight:700;white-space:nowrap">—</td>' +
+        '</tr>';
+    }
+
+    function _kpi(label, id) {
+        return '<div class="kpi" style="background:var(--bg1, #0d1117);border:1px solid var(--border, #30363d);border-radius:8px;padding:10px 12px">' +
+                   '<div class="kpi-l" style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;font-weight:700">' + label + '</div>' +
+                   '<div class="kpi-v" id="' + id + '" style="font-size:18px;font-weight:700;margin-top:4px;color:var(--text)">—</div>' +
+               '</div>';
     }
 
     function renderPipeLife(body) {
@@ -580,93 +601,166 @@
         if (titleEl) titleEl.textContent = 'Pipe Remaining Service Life';
         if (subEl)   subEl.textContent   = 'Sand erosion-based time-to-failure (Salama 2000) per pipe segment.';
 
-        var cardsHtml = '';
+        var inRows = '', resRows = '';
         for (var i = 0; i < DEFAULT_SEGMENTS.length; i++) {
-            cardsHtml += _segmentCard(DEFAULT_SEGMENTS[i], i);
+            inRows  += _segmentInputRow(DEFAULT_SEGMENTS[i], i);
+            resRows += _segmentResultRow(DEFAULT_SEGMENTS[i], i);
         }
+        var th = function (t, sub) {
+            return '<th style="white-space:nowrap">' + t + (sub ? '<div style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--text3)">' + sub + '</div>' : '') + '</th>';
+        };
 
         body.innerHTML = '' +
-        '<div style="display:flex;flex-direction:column;gap:10px">' +
-            // Banner — elbow + valve assumption
-            '<div class="card" style="padding:8px;border-left:3px solid var(--orange, #e0b020);background:rgba(224,176,32,0.05)">' +
-                '<div style="font-size:11px;color:var(--text2)">' +
-                    '<strong>Important:</strong> These estimations assume that <em>Cushion Tees</em> and/or ' +
-                    '<em>Machined Block Elbows</em> are used and all valves are <em>Full Port</em>. Regular Long ' +
-                    'and Short Radius Elbows will concentrate the sand poundage to the outer radius of the elbow ' +
-                    'and increase local erosion rate. Regular and Reduced Port Valves will increase fluid velocity ' +
-                    'through the valve also increasing local erosion rate.' +
+        '<div style="display:flex;flex-direction:column;gap:14px">' +
+            '<div class="card" style="padding:10px 14px;border-left:3px solid var(--yellow, #d29922)">' +
+                '<div style="font-size:12px;color:var(--text2);line-height:1.55">' +
+                    '<strong style="color:var(--text)">Geometry assumption:</strong> estimates assume <em>cushion tees</em> and/or ' +
+                    '<em>machined block elbows</em> with <em>full-port</em> valves. Long/short-radius elbows concentrate sand on the ' +
+                    'outer radius and reduced-port valves raise local velocity; both increase local erosion (raise "c" 3–5×).' +
                 '</div>' +
             '</div>' +
 
-            // Top operating conditions
-            '<div class="card" style="padding:8px">' +
-                '<div class="card-title">Operating Conditions</div>' +
-                '<div class="fg" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(140px, 1fr));gap:8px">' +
-                    '<div class="fg-item"><label>Sand Production (lbs/MMscf)</label>' +
+            '<div class="card">' +
+                '<div class="card-title" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">' +
+                    '<span>Operating Conditions</span>' +
+                    '<button type="button" class="btn btn-secondary" id="wts_pl_import" style="padding:5px 12px;font-size:12px">' +
+                        '&#8635; Use Well Test Simulator conditions</button>' +
+                '</div>' +
+                '<div class="fg">' +
+                    '<div class="fg-item"><label>Sand Production (lb/MMscf)</label>' +
                         '<input type="number" id="wts_pl_sand" step="1" min="0" value="50"></div>' +
                     '<div class="fg-item"><label>Empirical Constant "c"</label>' +
                         '<input type="number" id="wts_pl_c" step="10" min="50" max="2000" value="300"></div>' +
                     '<div class="fg-item"><label>Gas Rate (MMscfd)</label>' +
-                        '<input type="number" id="wts_pl_qg" step="0.5" min="0" value="25"></div>' +
-                    '<div class="fg-item"><label>Oil Rate (bpd)</label>' +
-                        '<input type="number" id="wts_pl_qo" step="50" min="0" value="2500"></div>' +
+                        '<input type="number" id="wts_pl_qg" step="0.5" min="0" value="10"></div>' +
+                    '<div class="fg-item"><label>Oil / Condensate Rate (bpd)</label>' +
+                        '<input type="number" id="wts_pl_qo" step="50" min="0" value="1000"></div>' +
                     '<div class="fg-item"><label>Water Rate (bpd)</label>' +
-                        '<input type="number" id="wts_pl_qw" step="50" min="0" value="400"></div>' +
-                    '<div class="fg-item"><label>Gas SG (air=1)</label>' +
-                        '<input type="number" id="wts_pl_sg" step="0.01" min="0.55" max="1.20" value="0.78"></div>' +
+                        '<input type="number" id="wts_pl_qw" step="50" min="0" value="200"></div>' +
+                    '<div class="fg-item"><label>Gas SG (air = 1)</label>' +
+                        '<input type="number" id="wts_pl_sg" step="0.01" min="0.55" max="1.20" value="0.65"></div>' +
                     '<div class="fg-item"><label>Separator Bypass</label>' +
-                        '<select id="wts_pl_bypass"><option value="0" selected>No</option><option value="1">Yes</option></select></div>' +
+                        '<select id="wts_pl_bypass"><option value="0" selected>No</option><option value="1">Yes (sand to flare)</option></select></div>' +
                 '</div>' +
+                '<div id="wts_pl_import_msg" style="font-size:11px;color:var(--text3);margin-top:6px"></div>' +
             '</div>' +
 
-            // Segment grid (horizontal flow, will wrap on narrow screens)
-            '<div style="display:flex;flex-wrap:wrap;gap:8px">' + cardsHtml + '</div>' +
-
-            // Separator note (right-aligned per spec, but full-width for readability)
-            '<div class="card" style="padding:8px;border-left:3px solid var(--blue, #4a90e2);background:rgba(74,144,226,0.05)">' +
-                '<div style="font-size:11px;color:var(--text2)">' +
-                    '<strong>Note:</strong> It is assumed that any residual sand fines will drop out in the separator. ' +
-                    'Hence changes to Sand Poundage and Filter Efficiency will have no effect on erosion in the ' +
-                    'Separator -> Flare line unless the Separator is Bypassed.' +
+            '<div class="card">' +
+                '<div class="card-title">Pipe Segments — Inputs</div>' +
+                '<div style="overflow-x:auto;-webkit-overflow-scrolling:touch">' +
+                    '<table class="dtable" style="min-width:1080px">' +
+                        '<thead><tr>' + th('Segment') + th('Material') + th('NPS') + th('Schedule') + th('Length', 'ft') +
+                            th('Flowing P', 'psig') + th('Flowing T', '°F') + th('Measured WT', 'in') + th('Min-spec WT', 'in') +
+                            th('Failure WT', 'in') + th('Design P', 'psig') + th('Design T', '°F') + '</tr></thead>' +
+                        '<tbody>' + inRows + '</tbody>' +
+                    '</table>' +
                 '</div>' +
+                '<div style="font-size:11px;color:var(--text3);margin-top:8px">Flowing P/T set the in-situ gas volume and therefore mixture velocity — ' +
+                    'the dominant term in erosion (∝ v²). Changing NPS / schedule auto-fills min-spec WT at 87.5 % of nominal.</div>' +
             '</div>' +
 
-            // Footer summary
-            '<div class="card" style="padding:8px">' +
-                '<div class="card-title">System Summary</div>' +
-                '<div id="wts_pl_summary" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));gap:8px;font-size:12px">' +
-                    '<div><div style="font-size:10px;color:var(--text3);text-transform:uppercase">Limiting Segment</div>' +
-                        '<div id="wts_pl_lim" style="font-weight:700">—</div></div>' +
-                    '<div><div style="font-size:10px;color:var(--text3);text-transform:uppercase">Overall min RSL</div>' +
-                        '<div id="wts_pl_minlife" style="font-weight:700">—</div></div>' +
-                    '<div><div style="font-size:10px;color:var(--text3);text-transform:uppercase">Status</div>' +
-                        '<div id="wts_pl_status" style="font-weight:700">—</div></div>' +
+            '<div class="card" id="wts_pl_res">' +
+                '<div class="card-title">Results — Remaining Service Life</div>' +
+                '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:12px">' +
+                    _kpi('Limiting segment', 'wts_pl_lim') + _kpi('Overall min RSL', 'wts_pl_minlife') + _kpi('Status', 'wts_pl_status') +
+                '</div>' +
+                '<div style="overflow-x:auto;-webkit-overflow-scrolling:touch">' +
+                    '<table class="dtable" style="min-width:820px">' +
+                        '<thead><tr>' + th('Segment') + th('Pipe', 'NPS / SCH · ID') + th('Velocity', 'ft/s') + th('Erosion', 'mpy') +
+                            th('Remaining life', 'to min-spec WT') + th('Time to failure', 'to failure WT') + th('MAWP', 'psig') + th('Status') + '</tr></thead>' +
+                        '<tbody>' + resRows + '</tbody>' +
+                    '</table>' +
+                '</div>' +
+                '<div id="wts_pl_warns" style="margin-top:10px"></div>' +
+            '</div>' +
+
+            '<div class="card" style="padding:10px 14px;border-left:3px solid var(--blue, #58a6ff)">' +
+                '<div style="font-size:12px;color:var(--text2);line-height:1.55">' +
+                    '<strong style="color:var(--text)">Separator note:</strong> residual sand fines are assumed to drop out in the separator, ' +
+                    'so sand rate has no effect on the Separator → Flare line unless the separator is bypassed.' +
                 '</div>' +
             '</div>' +
         '</div>';
 
+        _loadPipeLifeState();
         _wirePipeLife();
         _calcPipeLife();
     }
     G.renderPipeLife = renderPipeLife;
 
     // ───────────────────────────────────────────────────────────────
+    // Persistence — localStorage + WTS_state.pipelife (project Save)
+    // ───────────────────────────────────────────────────────────────
+    function _savePipeLifeState() {
+        if (typeof document === 'undefined') return;
+        var ids = _allInputIds(), vals = {};
+        for (var i = 0; i < ids.length; i++) {
+            var el = _$(ids[i]);
+            if (el) vals[ids[i]] = el.value;
+        }
+        try { localStorage.setItem(PL_LS_KEY, JSON.stringify(vals)); } catch (e) {}
+        if (!G.WTS_state || typeof G.WTS_state !== 'object') G.WTS_state = {};
+        G.WTS_state.pipelife = { values: vals };
+    }
+
+    function _loadPipeLifeState() {
+        if (typeof document === 'undefined') return;
+        var vals = null;
+        try { vals = JSON.parse(localStorage.getItem(PL_LS_KEY) || 'null'); } catch (e) { vals = null; }
+        if (!vals && G.WTS_state && G.WTS_state.pipelife && G.WTS_state.pipelife.values) vals = G.WTS_state.pipelife.values;
+        if (!vals || typeof vals !== 'object') return;
+        for (var id in vals) {
+            if (!Object.prototype.hasOwnProperty.call(vals, id)) continue;
+            var el = _$(id);
+            if (el && vals[id] != null) el.value = vals[id];
+        }
+    }
+
+    // Pull solved conditions from the Well Test Simulator (window.WTS_lastCalc,
+    // published by calcWTS). WTS segment order: WH→SSV, SSV→Choke,
+    // Choke→Heater, Heater→Sep, Sep→Flare, Surge→Atm Tank.
+    function _importFromWTS() {
+        var msg = _$('wts_pl_import_msg');
+        var lc = G.WTS_lastCalc;
+        if (!lc || !lc.segs || !lc.inputs) {
+            if (msg) { msg.style.color = 'var(--yellow, #d29922)'; msg.textContent = 'Open the Well Test Simulator once so it can solve the flow path, then import.'; }
+            return;
+        }
+        var s = lc.segs, inp = lc.inputs;
+        var setV = function (id, v, dp) { var el = _$(id); if (el && isFinite(v)) el.value = (dp != null) ? Number(v).toFixed(dp) : v; };
+        setV('wts_pl_qg', inp.Qg); setV('wts_pl_qo', inp.Qo); setV('wts_pl_qw', inp.Qw); setV('wts_pl_sg', inp.SGg);
+        // [pipe-life segment idx, WTS segment, use outlet?]
+        var map = [[0, s[0], false], [1, s[0], true], [2, s[1], false], [3, s[2], false], [4, s[3], false], [5, s[4], false]];
+        for (var i = 0; i < map.length; i++) {
+            var idx = map[i][0], sg = map[i][1], out = map[i][2];
+            if (!sg) continue;
+            setV('wts_pl_seg' + idx + '_pseg', out ? sg.Pout : sg.P0, 0);
+            setV('wts_pl_seg' + idx + '_tseg', out ? sg.Tout : sg.T0, 0);
+            // Only carry pipe size across for rigid segments whose NPS/SCH exist here.
+            if (idx >= 2) {
+                var npsEl = _$('wts_pl_seg' + idx + '_nps'), schEl = _$('wts_pl_seg' + idx + '_sch');
+                var hasOpt = function (sel, v) { if (!sel) return false; for (var k = 0; k < sel.options.length; k++) if (sel.options[k].value === String(v)) return true; return false; };
+                if (hasOpt(npsEl, sg.nps) && hasOpt(schEl, sg.sch) &&
+                    (npsEl.value !== String(sg.nps) || schEl.value !== String(sg.sch))) {
+                    npsEl.value = String(sg.nps); schEl.value = String(sg.sch);
+                    // A different pipe makes the old UT reading meaningless —
+                    // start from nominal wall for the new size.
+                    var measEl = _$('wts_pl_seg' + idx + '_meas');
+                    if (measEl) measEl.value = getNominalWT(sg.nps, sg.sch).toFixed(3);
+                    _autoFillMinSpec({ target: schEl });
+                }
+            }
+        }
+        if (msg) { msg.style.color = 'var(--green, #3fb950)'; msg.textContent = '✓ Imported rates, flowing P/T and pipe sizes from the Well Test Simulator.'; }
+        _calcPipeLife();
+    }
+
+    // ───────────────────────────────────────────────────────────────
     // Wire all inputs to recompute on change.
     // ───────────────────────────────────────────────────────────────
     function _wirePipeLife() {
         if (typeof document === 'undefined') return;
-        var ids = ['wts_pl_sand','wts_pl_c','wts_pl_qg','wts_pl_qo','wts_pl_qw','wts_pl_sg','wts_pl_bypass'];
-        for (var i = 0; i < DEFAULT_SEGMENTS.length; i++) {
-            ids.push('wts_pl_seg' + i + '_mat');
-            ids.push('wts_pl_seg' + i + '_meas');
-            ids.push('wts_pl_seg' + i + '_minspec');
-            ids.push('wts_pl_seg' + i + '_fail');
-            ids.push('wts_pl_seg' + i + '_nps');
-            ids.push('wts_pl_seg' + i + '_sch');
-            ids.push('wts_pl_seg' + i + '_len');
-            ids.push('wts_pl_seg' + i + '_dp');
-            ids.push('wts_pl_seg' + i + '_dt');
-        }
+        var ids = _allInputIds();
         var t = null;
         var fire = function () {
             if (t) clearTimeout(t);
@@ -675,13 +769,15 @@
         for (var k = 0; k < ids.length; k++) {
             var el = _$(ids[k]);
             if (!el) continue;
-            // Auto-update min-spec when material/sch change.
-            if (/_mat$/.test(ids[k]) || /_sch$/.test(ids[k]) || /_nps$/.test(ids[k])) {
+            // Auto-update min-spec when nps/sch change.
+            if (/_sch$/.test(ids[k]) || /_nps$/.test(ids[k])) {
                 el.addEventListener('change', _autoFillMinSpec);
             }
             el.addEventListener('input',  fire);
             el.addEventListener('change', fire);
         }
+        var imp = _$('wts_pl_import');
+        if (imp) imp.addEventListener('click', _importFromWTS);
     }
 
     function _autoFillMinSpec(ev) {
@@ -704,31 +800,22 @@
         var segs = [];
         for (var i = 0; i < DEFAULT_SEGMENTS.length; i++) {
             var d = DEFAULT_SEGMENTS[i];
-            var matEl = _$('wts_pl_seg' + i + '_mat');
-            var meas  = _$('wts_pl_seg' + i + '_meas');
-            var minsp = _$('wts_pl_seg' + i + '_minspec');
-            var fail  = _$('wts_pl_seg' + i + '_fail');
-            var nps   = _$('wts_pl_seg' + i + '_nps');
-            var sch   = _$('wts_pl_seg' + i + '_sch');
-            var len   = _$('wts_pl_seg' + i + '_len');
-            var dp    = _$('wts_pl_seg' + i + '_dp');
-            var dt    = _$('wts_pl_seg' + i + '_dt');
+            var v = function (f) { var el = _$('wts_pl_seg' + i + '_' + f); return el ? el.value : undefined; };
             segs.push({
                 key: d.key,
                 label: d.label,
-                material: matEl ? matEl.value : d.material,
-                nps_in: nps ? _num(nps.value, d.nps_in) : d.nps_in,
-                sch:    sch ? sch.value : d.sch,
-                length_ft: len ? _num(len.value, d.length_ft) : d.length_ft,
-                measured_WT_in: meas ? _num(meas.value, d.measured_WT_in) : d.measured_WT_in,
-                min_spec_WT_in: minsp ? _num(minsp.value, d.min_spec_WT_in) : d.min_spec_WT_in,
-                failure_WT_in:  fail ? _num(fail.value, d.failure_WT_in) : d.failure_WT_in,
-                design_p_psig:  dp ? _num(dp.value, d.design_p_psig) : d.design_p_psig,
-                design_T_F:     dt ? _num(dt.value, d.design_T_F) : d.design_T_F,
-                // Operating-state proxies for the velocity calc — the typical
-                // along-the-string flowing values are baked into DEFAULT_SEGMENTS.
-                p_seg_psig:     _num(d.p_seg_psig, d.design_p_psig * 0.5),
-                t_seg_F:        _num(d.t_seg_F, 100)
+                material: v('mat') || d.material,
+                nps_in: _num(v('nps'), d.nps_in),
+                sch:    v('sch') || d.sch,
+                length_ft: _num(v('len'), d.length_ft),
+                measured_WT_in: _num(v('meas'), d.measured_WT_in),
+                min_spec_WT_in: _num(v('minspec'), d.min_spec_WT_in),
+                failure_WT_in:  _num(v('fail'), d.failure_WT_in),
+                design_p_psig:  _num(v('dp'), d.design_p_psig),
+                design_T_F:     _num(v('dt'), d.design_T_F),
+                // Flowing conditions drive the in-situ gas volume (velocity).
+                p_seg_psig:     _num(v('pseg'), d.p_seg_psig),
+                t_seg_F:        _num(v('tseg'), d.t_seg_F)
             });
         }
         return segs;
@@ -739,14 +826,15 @@
         if (!_$('wts_pl_sand')) return;
         var sand   = _num((_$('wts_pl_sand') || {}).value, 50);
         var c      = _num((_$('wts_pl_c') || {}).value, 300);
-        var qg     = _num((_$('wts_pl_qg') || {}).value, 25);
-        var qo     = _num((_$('wts_pl_qo') || {}).value, 2500);
-        var qw     = _num((_$('wts_pl_qw') || {}).value, 400);
-        var sg     = _num((_$('wts_pl_sg') || {}).value, 0.78);
+        var qg     = _num((_$('wts_pl_qg') || {}).value, 10);
+        var qo     = _num((_$('wts_pl_qo') || {}).value, 1000);
+        var qw     = _num((_$('wts_pl_qw') || {}).value, 200);
+        var sg     = _num((_$('wts_pl_sg') || {}).value, 0.65);
         var bypEl  = _$('wts_pl_bypass');
         var bypass = bypEl ? (bypEl.value === '1' || bypEl.value === 'true') : false;
 
-        var inputs = {
+        var segIn = _readSegmentInputs();
+        var report = pipelife_compute({
             sand_production_lbMMscf: sand,
             c_constant: c,
             gas_rate_MMscfd: qg,
@@ -754,53 +842,51 @@
             water_rate_bpd: qw,
             gasSG: sg,
             bypass_separator: bypass,
-            segments: _readSegmentInputs()
-        };
-        var report = pipelife_compute(inputs);
+            segments: segIn
+        });
         G.WTS_pipelife_lastReport = report;
+        _savePipeLifeState();
 
-        // Paint per-segment.
+        var warnHtml = [];
+        var set = function (id, txt, color) { var el = _$(id); if (!el) return; el.textContent = txt; if (color !== undefined) el.style.color = color; };
         for (var i = 0; i < report.segments.length; i++) {
-            var r = report.segments[i];
-            var rslEl  = _$('wts_pl_seg' + i + '_rsl');
-            var ttfEl  = _$('wts_pl_seg' + i + '_ttf');
-            var rateEl = _$('wts_pl_seg' + i + '_rate');
-            var warnEl = _$('wts_pl_seg' + i + '_warn');
+            var r = report.segments[i], p = 'wts_pl_seg' + i + '_';
+            set(p + 'pipe', r.nps_in + '" SCH ' + r.sch + ' · ' + _fmt(r.ID_in, 3) + '"');
+            set(p + 'mawp', _fmt(r.max_allowable_pressure_psig, 0));
             if (!r.applicable) {
-                if (rslEl) rslEl.textContent = 'N/A';
-                if (ttfEl) ttfEl.textContent = 'N/A';
-                if (rateEl) rateEl.textContent = '';
-                if (warnEl) warnEl.textContent = '';
+                set(p + 'vel', '—'); set(p + 'ero', '—');
+                set(p + 'rsl', 'N/A (hose)', 'var(--text3)'); set(p + 'ttf', '—');
+                set(p + 'stat', 'HOSE', 'var(--text3)');
                 continue;
             }
-            if (rslEl) {
-                rslEl.textContent = _formatDays(r.remaining_service_life_days);
-                rslEl.style.color = r.remaining_service_life_days < 30  ? 'var(--red, #ef4444)'
-                                  : r.remaining_service_life_days < 90  ? 'var(--orange, #e0b020)'
-                                  : 'var(--green, #4caf50)';
-            }
-            if (ttfEl) ttfEl.textContent = _formatDays(r.time_to_failure_at_current_days);
-            if (rateEl) rateEl.textContent =
-                'erosion: ' + _fmt(r.erosion_rate_mils_yr, 1) + ' mpy  •  v=' +
-                _fmt(r.mixture_velocity_fps, 0) + ' ft/s  •  MAWP ' +
-                _fmt(r.max_allowable_pressure_psig, 0) + ' psig';
-            if (warnEl) {
-                warnEl.textContent = (r.warnings && r.warnings.length) ? r.warnings.join(' • ') : '';
+            set(p + 'vel', _fmt(r.mixture_velocity_fps, 1));
+            set(p + 'ero', r.erosion_rate_mils_yr > 0 ? _fmt(r.erosion_rate_mils_yr, 1) : '0');
+            set(p + 'rsl', _formatDays(r.remaining_service_life_days), _lifeColor(r.remaining_service_life_days));
+            set(p + 'ttf', _formatDays(r.time_to_failure_at_current_days), _lifeColor(r.time_to_failure_at_current_days));
+            var st = !r.ok_to_operate ? ['INSPECT NOW', 'var(--red, #f85149)']
+                   : r.remaining_service_life_days < 90 ? ['MITIGATE', 'var(--yellow, #d29922)']
+                   : ['OK', 'var(--green, #3fb950)'];
+            set(p + 'stat', st[0], st[1]);
+            if (r.warnings && r.warnings.length) {
+                for (var w = 0; w < r.warnings.length; w++) {
+                    warnHtml.push('<div style="padding:6px 12px;border-left:3px solid ' + (r.ok_to_operate ? 'var(--yellow, #d29922)' : 'var(--red, #f85149)') +
+                        ';background:rgba(248,81,73,.06);border-radius:4px;margin-bottom:4px;font-size:12px;color:var(--text2)">' +
+                        '<strong style="color:var(--text)">' + _esc(r.label.replace('->', '→')) + ':</strong> ' + _esc(r.warnings[w]) + '</div>');
+                }
             }
         }
+        var wEl = _$('wts_pl_warns');
+        if (wEl) wEl.innerHTML = warnHtml.join('');
 
-        // Summary footer.
-        var limEl = _$('wts_pl_lim'), minLifeEl = _$('wts_pl_minlife'), statEl = _$('wts_pl_status');
-        if (limEl) limEl.textContent = report.limiting_segment ? report.limiting_segment.label : '—';
-        if (minLifeEl) minLifeEl.textContent = _formatDays(report.overall_min_life_days);
-        if (statEl) {
-            var ok = true;
-            for (var s = 0; s < report.segments.length; s++) {
-                if (report.segments[s].applicable && !report.segments[s].ok_to_operate) { ok = false; break; }
-            }
-            statEl.textContent = ok ? 'OK' : 'ATTENTION';
-            statEl.style.color = ok ? 'var(--green, #4caf50)' : 'var(--red, #ef4444)';
+        // Summary KPIs.
+        set('wts_pl_lim', report.limiting_segment ? report.limiting_segment.label.replace('->', '→') : '—');
+        set('wts_pl_minlife', report.limiting_segment ? _formatDays(report.overall_min_life_days) : '—',
+            report.limiting_segment ? _lifeColor(report.overall_min_life_days) : undefined);
+        var ok = true;
+        for (var s = 0; s < report.segments.length; s++) {
+            if (report.segments[s].applicable && !report.segments[s].ok_to_operate) { ok = false; break; }
         }
+        set('wts_pl_status', ok ? 'OK' : 'ATTENTION', ok ? 'var(--green, #3fb950)' : 'var(--red, #f85149)');
     }
 
     // === SELF-TEST ===
