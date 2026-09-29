@@ -4,7 +4,7 @@
 //   • 08-composite-multilayer        (Phase 5: 7 composite/multi-layer single-well)
 //   • 09-interference-multilateral   (Phase 6: 16 interference + multi-lateral)
 //   • 10-specialised-solvers         (Phase 7: #18 user-defined + #38 water injection)
-//   • 11-polish                      (14 SVG schematics + 20 analysis keys + PNG + GA4)
+//   • 11-polish                      (14 SVG schematics + 24 line tools + PNG + GA4)
 //   • 12-data-crop                   (interactive Data-tab crop/trim chart)
 //   • 13-auto-match                  (regime classifier + LM model race + top-N ranking)
 //   • 14-interpretation              (plain-English fit narrative + actions + cautions)
@@ -19,13 +19,13 @@
 // =============================================================================
 // Pressure Reservoir Inversion & Simulation Model — Advanced Well Test Analysis
 //
-// This file extends the PRiSM model registry with 7 new evaluators that cover
+// This file extends the PRiSM model registry with 7 evaluators that cover
 // composite reservoirs and multi-layer geometries.  All entries are merged
 // additively into window.PRiSM_MODELS so the Phase 1-4 entries survive.
 //
 //   Composite reservoirs (kind: 'pressure'):
 //      9. radialComposite       — two concentric zones, mobility ratio M,
-//                                 storativity ratio F.  (Abbaszadeh-Medhat
+//                                 storativity ratio F.  (Abbaszadeh-Kamal
 //                                 SPE Reservoir Eng Feb 1989)
 //     15. linearComposite       — up to 5 zones with linear discontinuities
 //                                 at distances L_1..L_4 (image superposition).
@@ -36,83 +36,31 @@
 //                                 SPE 13628)
 //     11. multiLayerXF          — N adjacent layers (default 3, max 5) with
 //                                 PSS cross-flow between successive pairs.
-//                                 (Economides SPE 14167)
 //     14. multiLayerNoXF        — N isolated commingled layers (default 3,
-//                                 max 5).  Closed-form pressure-weighted sum
-//                                 of homogeneous layers.  (Kuchuk-Wilkinson
-//                                 SPE 18125)
+//                                 max 5).  kh-weighted sum of layer kernels.
 //
-//   General-heterogeneity research-grade simplifications (kind: 'pressure'):
-//     20. genHetRadialLinear    — three-zone radial composite combined with a
-//                                 three-zone linear composite (single linear
-//                                 fault).  Up to 9 piecewise discontinuities
-//                                 in the spec are NOT implemented; the model
-//                                 is restricted to two radial interfaces +
-//                                 one linear fault.
-//     21. genHetRadial          — three-zone radial composite (refines #9
-//                                 with one extra mobility / storativity step
-//                                 at radius R2).  Up to 9 piecewise
-//                                 discontinuities in the spec are NOT
-//                                 implemented; the model is restricted to
-//                                 two interfaces (three concentric zones).
+//   General-heterogeneity simplifications (kind: 'pressure'):
+//     20. genHetRadialLinear    — three-zone radial composite + one linear
+//                                 fault (image well).
+//     21. genHetRadial          — three-zone radial composite.
 //
-// Approximations / phenomenological blends explicitly used (also documented
-// in each evaluator's `description`):
+// Numerics (WP4b):
+//   * Every kernel uses the finite-wellbore well term K0(√s)/(s·√s·K1(√s))
+//     (or its zone-matched equivalent), so early time is storage-dominated
+//     and there is no line-source early-time artefact.
+//   * The composite solutions are solved as a radial impedance cascade with
+//     exponentially scaled Bessel functions (I·e^-x, K·e^x).  The previous
+//     Cramer solve overflowed (I0(uR) > 1e308 for R ≥ 1000) and produced
+//     spikes; the cascade is exact and overflow-free for any number of zones.
+//   * WBS + skin fold is valid for negative skin (effective-wellbore-radius
+//     transform: rw-normalised radii scale by e^S, λ by e^-2S).
+//   * Diffusivity convention (radialComposite, linearComposite): M = λ1/λ2
+//     (mobility inner/outer), F = (φct)1/(φct)2, so the outer-zone
+//     diffusivity is η2/η1 = F/M and the outer Laplace argument is √(s·M/F).
+//     (Earlier versions used √(s·F/M), i.e. inverted the stated definition.)
 //
-//   * `twoLayerXF`   — Bourdet's PSS cross-flow factor f(s) is reused with
-//                       a Warren-Root-style two-layer kernel.  The wellbore
-//                       pressure is the kh-fraction-weighted sum of the two
-//                       layers' pressures and the cross-flow coupling is the
-//                       interporosity λ formalism (rigorous in Laplace).
-//
-//   * `radialComposite` — exact Laplace-domain inner-zone solution
-//                          P̂_inner(s) = K0(√(s)) / s
-//                                      + α(s) · I0(√(s))
-//                          plus exact outer-zone solution
-//                          P̂_outer(s) = β(s) · K0(√(s · ω) · r/R)
-//                          matched in pressure + flux at r = R.  Interface
-//                          coefficients α, β solved analytically.
-//
-//   * `multiLayerXF` — N-layer cross-flow uses the same PSS factor f(s) per
-//                      adjacent pair; the wellbore pressure is the kh-weighted
-//                      sum of layer Pds.  This is a tractable simplification:
-//                      a fully-rigorous Park-Horne 1989 NxN tridiagonal
-//                      Laplace system reduces to this form when all
-//                      interporosity λ are equal (homogeneous coupling).  For
-//                      heterogeneous λ the result is a smooth approximation
-//                      that still captures the dual-porosity dip.  See
-//                      `description`.
-//
-//   * `multiLayerNoXF` — exact for commingled layers (no cross-flow): Pd is
-//                        the kh-weighted sum of N independent homogeneous
-//                        layer Pds.  Uses the Phase-1 homogeneous kernel.
-//
-//   * `linearComposite` — image-well superposition.  Each interface at L_i
-//                          contributes a single image well at distance
-//                          2·L_i with a transmission/reflection coefficient
-//                          based on the mobility-ratio jumps.  Higher-order
-//                          multi-reflections truncated.  Matches the early-
-//                          time response of the first-zone homogeneous
-//                          solution and the late-time stabilisation derived
-//                          from the harmonic-mean mobility across all zones.
-//
-//   * `genHetRadialLinear` and `genHetRadial` — research-grade reach goals.
-//                        The textbook spec allows up to 9 piecewise-linear /
-//                        step-wise discontinuities radially or linearly.
-//                        We implement the engineering-useful 3-zone case for
-//                        each (two radial interfaces; for #20 also one linear
-//                        fault).  The simplification is documented in each
-//                        evaluator's `description`.
-//
-// Foundation primitives in scope (defined in 01-foundation.js, also published
-// on window for sibling-file access):
-//   PRiSM_stehfest(F̂, t, N=12)   numerical inverse Laplace
-//   PRiSM_besselK0(x), PRiSM_besselK1(x)
-//   PRiSM_besselI0(x), PRiSM_besselI1(x)
-//   PRiSM_Ei(x), PRiSM_E1(x)
-//   PRiSM_logspace(min, max, n)
-//   PRiSM_factorial(n)
-//   PRiSM_STEHFEST_W (precomputed weight tables)
+// Foundation primitives: only PRiSM_stehfest is used when present (same
+// N = 12 weights); all Bessel functions are local (see SECTION 0).
 // =============================================================================
 
 (function () {
@@ -121,38 +69,23 @@
 // =============================================================================
 // SECTION 1 — Helpers + foundation primitive resolver
 // =============================================================================
-//
-// All helpers prefixed `_` are file-private.  Public symbols start with
-// `PRiSM_`.  We resolve foundation primitives lazily via window.* so the
-// self-test at the bottom can stub them in for standalone Node testing.
-// =============================================================================
 
-var STEHFEST_N      = 12;       // Stehfest order used by every Laplace model
-var IMAGE_CAP       = 200;      // hard cap on image-series terms
-var IMAGE_TOL       = 1e-9;     // convergence tolerance per term contribution
-var DERIV_REL_STEP  = 1e-3;     // relative log-step for numerical derivative
 var MAX_LAYERS      = 5;        // hard cap for multi-layer N
 
-// resolve a foundation primitive by name from window.* / globalThis
 function _foundation(name) {
   var g = (typeof window !== 'undefined') ? window
         : (typeof globalThis !== 'undefined' ? globalThis : {});
   if (typeof g[name] === 'function') return g[name];
-  // also accept symbols introduced via plain `var` in an IIFE host
   try { return eval(name); } catch (e) { return null; }
+}
+
+function _win() {
+  return (typeof window !== 'undefined') ? window
+       : (typeof globalThis !== 'undefined' ? globalThis : {});
 }
 
 function _num(v) {
   return (typeof v === 'number') && isFinite(v) && !isNaN(v);
-}
-
-function _arrayMap(td, fn) {
-  if (Array.isArray(td)) {
-    var out = new Array(td.length);
-    for (var i = 0; i < td.length; i++) out[i] = fn(td[i]);
-    return out;
-  }
-  return fn(td);
 }
 
 function _requirePositiveTd(td) {
@@ -179,97 +112,6 @@ function _requireParams(params, keys) {
   }
 }
 
-// fold WBS + skin into a Laplace-domain reservoir solution Pd_lap_res(s)
-// (Agarwal-Ramey 1970 / Bourdet-Gringarten 1980)
-//
-//   Pwd_lap = ( s * Pd_lap_res + S ) / ( s · ( 1 + Cd · s · ( s · Pd_lap_res + S ) ) )
-function _foldWbsSkin(pdResLap, s, Cd, S) {
-  var inner = s * pdResLap + S;
-  var denom = s * (1 + Cd * s * inner);
-  if (!_num(denom) || denom === 0) return 1e30;
-  return inner / denom;
-}
-
-function _stehfestEval(pdResLapFn, td, Cd, S) {
-  var stehfest = _foundation('PRiSM_stehfest');
-  if (!stehfest) throw new Error('PRiSM_stehfest() missing — foundation file not loaded');
-  var Fhat = function (s) { return _foldWbsSkin(pdResLapFn(s), s, Cd, S); };
-  return _arrayMap(td, function (t) { return stehfest(Fhat, t, STEHFEST_N); });
-}
-
-// generic numerical logarithmic derivative td * dPd/dtd via 5-point central
-// difference in ln(td).  Used when the Laplace-domain derivative is not a
-// clean closed form.
-function _numericLogDeriv(pdFn, td, params) {
-  var h = DERIV_REL_STEP;
-  var lnTd = Math.log(td);
-  var f_m2 = pdFn(Math.exp(lnTd - 2 * h), params);
-  var f_m1 = pdFn(Math.exp(lnTd -     h), params);
-  var f_p1 = pdFn(Math.exp(lnTd +     h), params);
-  var f_p2 = pdFn(Math.exp(lnTd + 2 * h), params);
-  if (Array.isArray(f_m2)) f_m2 = f_m2[0];
-  if (Array.isArray(f_m1)) f_m1 = f_m1[0];
-  if (Array.isArray(f_p1)) f_p1 = f_p1[0];
-  if (Array.isArray(f_p2)) f_p2 = f_p2[0];
-  return (-f_p2 + 8 * f_p1 - 8 * f_m1 + f_m2) / (12 * h);
-}
-
-// Safe Bessel I0 wrapper — needed for radial-composite inner-zone solution
-// (cylindrical-coord inhomogeneous solution combines K0 + I0).  Uses the
-// foundation routine if available.
-function _besselI0(x) {
-  var I0 = _foundation('PRiSM_besselI0');
-  if (I0) return I0(x);
-  // light fallback for self-test (Abramowitz-Stegun small-x series)
-  var ax = Math.abs(x);
-  if (ax < 3.75) {
-    var y = ax / 3.75; var y2 = y * y;
-    return 1.0 + y2 * (3.5156229 + y2 * (3.0899424 + y2 * (1.2067492 +
-            y2 * (0.2659732 + y2 * (0.0360768 + y2 * 0.0045813)))));
-  }
-  var y2 = 3.75 / ax;
-  return (Math.exp(ax) / Math.sqrt(ax)) * (0.39894228 + y2 * (0.01328592 +
-         y2 * (0.00225319 + y2 * (-0.00157565 + y2 * (0.00916281 +
-         y2 * (-0.02057706 + y2 * (0.02635537 + y2 * (-0.01647633 +
-         y2 * 0.00392377))))))));
-}
-
-function _besselI1(x) {
-  var I1 = _foundation('PRiSM_besselI1');
-  if (I1) return I1(x);
-  // light fallback for self-test
-  var ax = Math.abs(x); var result;
-  if (ax < 3.75) {
-    var y = ax / 3.75; var y2 = y * y;
-    result = ax * (0.5 + y2 * (0.87890594 + y2 * (0.51498869 +
-             y2 * (0.15084934 + y2 * (0.02658733 + y2 * (0.00301532 +
-             y2 * 0.00032411))))));
-  } else {
-    var y = 3.75 / ax;
-    result = 0.39894228 + y * (-0.03988024 + y * (-0.00362018 +
-             y * (0.00163801 + y * (-0.01031555 + y * (0.02282967 +
-             y * (-0.02895312 + y * (0.01787654 + y * -0.00420059)))))));
-    result *= (Math.exp(ax) / Math.sqrt(ax));
-  }
-  return x < 0 ? -result : result;
-}
-
-// Bessel K0 (with safety check)
-function _besselK0(x) {
-  var K0 = _foundation('PRiSM_besselK0');
-  if (!K0) throw new Error('PRiSM_besselK0() missing — foundation file not loaded');
-  if (!(x > 0) || !isFinite(x)) return 1e30;
-  return K0(x);
-}
-
-// Bessel K1
-function _besselK1(x) {
-  var K1 = _foundation('PRiSM_besselK1');
-  if (!K1) throw new Error('PRiSM_besselK1() missing — foundation file not loaded');
-  if (!(x > 0) || !isFinite(x)) return 1e30;
-  return K1(x);
-}
-
 // Clamp a value to a safe Laplace return (avoid Infinity / NaN)
 function _safeLap(v) {
   if (!_num(v)) return 1e30;
@@ -278,11 +120,8 @@ function _safeLap(v) {
   return v;
 }
 
-// PSS interporosity factor — same form as Warren-Root for double-porosity:
+// PSS interporosity factor (Warren-Root form):
 //   f(s) = ( ω·(1-ω)·s + λ ) / ( (1-ω)·s + λ )
-// This is shared between twoLayerXF, multiLayerXF, and the cross-flow models
-// so we expose it as a private helper.  Note: this f(s) replaces s → s·f(s)
-// in the homogeneous Laplace kernel.
 function _pssXFactor(s, omega, lambda) {
   var num = omega * (1 - omega) * s + lambda;
   var den = (1 - omega) * s + lambda;
@@ -290,19 +129,245 @@ function _pssXFactor(s, omega, lambda) {
   return num / den;
 }
 
+// =============================================================================
+// SECTION 0 — Numerics (WP4b): smooth scaled Bessel functions, Stehfest,
+//             wellbore-storage + skin fold
+// =============================================================================
+//
+// Why local Bessel functions: the Abramowitz-Stegun polynomial fits switch
+// formula at x = 2 (K) and x = 3.75 (I) with ~1e-7 jumps.  Stehfest (N = 12,
+// weights up to 8e6) amplifies such jumps into percent-level pwd errors when
+// the 12 sample points straddle a breakpoint (3.7 % measured at Cd = 0.01).
+// The forms below (power series / continued fraction / Hankel series, each
+// used only where it is accurate to machine precision) agree to ~1e-14 across
+// their switch points and are exponentially scaled, so they never over- or
+// underflow.
+// =============================================================================
+
+var _EULER = 0.5772156649015329;
+
+// K_nu(x)·e^x for nu ∈ {0,1}, x > 0 (all branches accurate to ~1e-15):
+//   x < 2       : power series (K0: −(ln(x/2)+γ)·I0 + Σ q^k/(k!)²·H_k; K1 likewise)
+//   2 ≤ x ≤ 30  : Steed / Temme continued fraction CF2 (Numerical Recipes bessik)
+//   x > 30      : Hankel asymptotic series, optimally truncated (error < e^-60)
+function _Kse(nu, x) {
+  if (!(x > 0)) return Infinity;
+  if (x === Infinity) return 0;
+  if (x > 30) {
+    var mu = 4 * nu * nu, a = 1, s = 1, prev = Infinity;
+    for (var j = 1; j < 80; j++) {
+      a *= (mu - (2 * j - 1) * (2 * j - 1)) / (j * 8 * x);
+      var at = Math.abs(a);
+      if (at > prev) break;
+      s += a; prev = at;
+      if (at < 1e-17) break;
+    }
+    return s * Math.sqrt(Math.PI / (2 * x));
+  }
+  if (x < 2) {
+    var q = 0.25 * x * x, lx = Math.log(0.5 * x);
+    if (!nu) {
+      // K0 = −(ln(x/2)+γ)·I0 + Σ_{k≥1} q^k/(k!)²·H_k
+      var t = 1, I0 = 1, S = 0, H = 0;
+      for (var k = 1; k < 60; k++) { t *= q / (k * k); H += 1 / k; I0 += t; S += t * H; if (t < 1e-18) break; }
+      return (-(lx + _EULER) * I0 + S) * Math.exp(x);
+    }
+    // K1 = 1/x + ln(x/2)·I1 − (x/4)·Σ_{k≥0} (ψ(k+1)+ψ(k+2))·q^k/(k!(k+1)!)
+    var tk = 1, I1s = 1, S1 = (-_EULER) + (1 - _EULER), Hk = 0;
+    for (var k2 = 1; k2 < 60; k2++) {
+      tk *= q / (k2 * (k2 + 1));
+      Hk += 1 / k2;
+      I1s += tk;
+      S1 += tk * ((-_EULER + Hk) + (-_EULER + Hk + 1 / (k2 + 1)));
+      if (tk < 1e-18) break;
+    }
+    var I1 = 0.5 * x * I1s;
+    return (1 / x + lx * I1 - 0.25 * x * S1) * Math.exp(x);
+  }
+  // 2 ≤ x ≤ 30: Steed's continued fraction CF2 (Temme), nu = 0 → K0e, K1e
+  var b = 2 * (1 + x), d = 1 / b, h = d, delh = d, q1 = 0, q2 = 1, a1 = 0.25;
+  var qq = a1, c = a1, aa = -a1, ss = 1 + qq * delh;
+  for (var i = 2; i < 1000; i++) {
+    aa -= 2 * (i - 1);
+    c = -aa * c / i;
+    var qnew = (q1 - b * q2) / aa;
+    q1 = q2; q2 = qnew;
+    qq += c * qnew;
+    b += 2;
+    d = 1 / (b + aa * d);
+    delh = (b * d - 1) * delh;
+    h += delh;
+    var dels = qq * delh;
+    ss += dels;
+    if (Math.abs(dels / ss) < 1e-17) break;
+  }
+  h = a1 * h;
+  var k0e = Math.sqrt(Math.PI / (2 * x)) / ss;
+  return nu ? k0e * (x + 0.5 - h) / x : k0e;
+}
+function _K0e(x) { return _Kse(0, x); }
+function _K1e(x) { return _Kse(1, x); }
+
+// I_nu(x)·e^-x for nu ∈ {0,1}: power series for x ≤ 15, Hankel series above.
+function _Ise(nu, x) {
+  x = Math.abs(x);
+  if (x <= 15) {
+    var q = 0.25 * x * x, term = nu ? 0.5 * x : 1, sum = term;
+    for (var k = 1; k < 200; k++) {
+      term *= q / (k * (k + nu));
+      sum += term;
+      if (term < 1e-17 * sum) break;
+    }
+    return sum * Math.exp(-x);
+  }
+  var mu = 4 * nu * nu, a = 1, s = 1, prev = Infinity;
+  for (var j = 1; j < 60; j++) {
+    a *= -(mu - (2 * j - 1) * (2 * j - 1)) / (j * 8 * x);
+    var at = Math.abs(a);
+    if (at > prev) break;
+    s += a; prev = at;
+    if (at < 1e-17) break;
+  }
+  return s / Math.sqrt(2 * Math.PI * x);
+}
+function _I0e(x) { return _Ise(0, x); }
+function _I1e(x) { return _Ise(1, x); }
+
+// Finite-wellbore well term K0(x) / (x·K1(x)) — scale factors cancel.
+function _wellTerm(x) { return _K0e(x) / (x * _K1e(x)); }
+
+// ---- Stehfest (N = 12) ----------------------------------------------------
+var _SW12 = (function () {
+  var N = 12, f = [1], w = [];
+  for (var i = 1; i <= N; i++) f[i] = f[i - 1] * i;
+  for (var n = 1; n <= N; n++) {
+    var s = 0;
+    for (var k = Math.floor((n + 1) / 2); k <= Math.min(n, N / 2); k++) {
+      s += Math.pow(k, N / 2) * f[2 * k] /
+           (f[N / 2 - k] * f[k] * f[k - 1] * f[n - k] * f[2 * k - n]);
+    }
+    w.push(((n + N / 2) % 2 === 0 ? 1 : -1) * s);
+  }
+  return w;
+})();
+var _stehImpl;   // foundation PRiSM_stehfest (same weights), resolved lazily
+function _steh(F, t) {
+  if (_stehImpl === undefined) _stehImpl = _foundation('PRiSM_stehfest') || null;
+  if (_stehImpl) return _stehImpl(F, t, 12);
+  var a = Math.LN2 / t, s = 0;
+  for (var i = 1; i <= 12; i++) s += _SW12[i - 1] * F(i * a);
+  return a * s;
+}
+
+// ---- Wellbore storage + skin fold ------------------------------------------
+//   p̄wD(s) = (s·p̄ + S) / ( s·(1 + Cd·s·(s·p̄ + S)) )     (Agarwal-Ramey 1970)
+// p̄(s) is the unit-rate reservoir response at the well, built with the
+// FINITE-wellbore well term, so pwd → td/Cd at early time.
+//
+// Negative skin: for S < 0 the fold has a real positive pole wherever
+// s·p̄ + S = −1/(Cd·s); Stehfest then returns garbage.  We use the effective-
+// wellbore-radius transform (rwa = rw·e^−S): evaluate with S = 0 at
+// tDa = td·e^{2S}, CDa = Cd·e^{2S}; the kernel receives sc = e^{S} and scales
+// its rw-normalised distances by sc and rw²-normalised coefficients (λ) by
+// 1/sc².  Late time is exactly 0.5(ln td + 0.80907) + S.
+function _foldTransform(Cd, S) {
+  Cd = _num(Cd) && Cd > 0 ? Cd : 0;
+  S = _num(S) ? S : 0;
+  if (S < 0) {
+    var sc = Math.exp(S);
+    return { sc: sc, tf: sc * sc, Cd: Cd * sc * sc, S: 0 };
+  }
+  return { sc: 1, tf: 1, Cd: Cd, S: S };
+}
+function _foldF(lap, Cd, S) {
+  return function (s) {
+    var g = s * lap(s) + S;
+    if (!(Cd > 0)) return g / s;
+    return g / (s * (1 + Cd * s * g));
+  };
+}
+// Optional delegation to the shared export (WP4a, 03-models.js).  It is
+// called only in the unambiguous S ≥ 0 form (after our own transform) and its
+// first value is cross-checked against the local inversion.
+function _extFold(lap, tArr, Cd, S, F) {
+  var ext = _win().PRiSM_evalWbsSkin;
+  if (typeof ext !== 'function' || !tArr.length) return null;
+  try {
+    var r = ext(lap, tArr.slice(), Cd, S, {});
+    if (!r || r.length !== tArr.length) return null;
+    for (var i = 0; i < r.length; i++) if (!_num(r[i])) return null;
+    var chk = _steh(F, tArr[0]);
+    if (!(Math.abs(r[0] - chk) <= 2e-3 * Math.max(Math.abs(chk), 1e-12))) return null;
+    var out = new Array(r.length);
+    for (var j = 0; j < r.length; j++) out[j] = r[j];
+    return out;
+  } catch (e) { return null; }
+}
+// lapFn(s, sc) → p̄(s).  Returns pwd (deriv false) or td·dpwd/dtd (deriv true,
+// from the Laplace identity L[t·f'] = t·L^-1[s·F(s)] since pwd(0) = 0).
+// localOnly: never delegate (kernels that depend on the inversion context).
+function _evalWbsSkin(lapFn, td, Cd, S, deriv, localOnly) {
+  var isArr = Array.isArray(td), arr = isArr ? td : [td];
+  var T = _foldTransform(Cd, S);
+  var lap = function (s) { return lapFn(s, T.sc); };
+  var F = _foldF(lap, T.Cd, T.S);
+  var tArr = new Array(arr.length);
+  for (var i = 0; i < arr.length; i++) tArr[i] = arr[i] * T.tf;
+  var out = null;
+  if (!deriv && !localOnly) out = _extFold(lap, tArr, T.Cd, T.S, F);
+  if (!out) {
+    out = new Array(arr.length);
+    var Fd = deriv ? function (s) { return s * F(s); } : null;
+    for (var k = 0; k < arr.length; k++) {
+      out[k] = deriv ? tArr[k] * _steh(Fd, tArr[k]) : _steh(F, tArr[k]);
+    }
+  }
+  for (var m = 0; m < out.length; m++) {          // round-off below 1e-10 → 0
+    if (out[m] < 0 && out[m] > -1e-10) out[m] = 0;
+  }
+  return isArr ? out : out[0];
+}
+
+// ---- Radial impedance cascade (composite reservoirs) ------------------------
+// zones: inner → outer, [{m, f, R}], m = mobility and f = storativity relative
+// to the pD / tD reference, R = OUTER radius of the zone in rw units (last
+// zone: Infinity).  In zone j, P = A·K0(k r) + B·I0(k r), k = √(s·f/m).
+// Z(r) = P / (−m·∂P/∂r) is continuous across every interface (pressure and
+// flux continuity), so we propagate Z from the outermost zone inwards and
+// return p̄w = Z(1)/s for a unit sandface flux (finite wellbore at r = 1).
+// All Bessel functions are exponentially scaled; the only exponentials left
+// are e^{−2k(R−r_in)} ≤ 1.
+function _radialCascadeLap(s, zones) {
+  var n = zones.length;
+  var last = zones[n - 1];
+  var kL = Math.sqrt(s * last.f / last.m);
+  var rIn = (n >= 2) ? zones[n - 2].R : 1;
+  var Z = _K0e(kL * rIn) / (last.m * kL * _K1e(kL * rIn));
+  for (var j = n - 2; j >= 0; j--) {
+    var zj = zones[j];
+    var kj = Math.sqrt(s * zj.f / zj.m);
+    var R = zj.R, rin = (j >= 1) ? zones[j - 1].R : 1;
+    var mk = zj.m * kj, kR = kj * R, kr = kj * rin;
+    var bt = (Z * mk * _K1e(kR) - _K0e(kR)) / (_I0e(kR) + Z * mk * _I1e(kR));
+    var E = Math.exp(-2 * kj * (R - rin));
+    Z = (_K0e(kr) + bt * _I0e(kr) * E) / (mk * (_K1e(kr) - bt * _I1e(kr) * E));
+  }
+  return _safeLap(Z / s);
+}
+
+// radius in rw units after the negative-skin scale, kept outside the wellbore
+function _scaledR(R, sc) {
+  var r = R * (sc || 1);
+  return r > 1.000001 ? r : 1.000001;
+}
+
 
 // =============================================================================
 // SECTION 2 — Model evaluators
 // =============================================================================
 //
-// Each evaluator follows the standard PRiSM contract:
-//
-//   pd(td, params) → number | number[]
-//   pdPrime(td, params) → number | number[]   (logarithmic derivative
-//                                              tdp = td * d(pd)/dtd)
-//
-// Inputs are dimensionless throughout; physical-unit conversion lives in the
-// parameter layer that calls these functions.
+//   pd(td, params)      → number | number[]
+//   pdPrime(td, params) → number | number[]  (td · d(pd)/dtd, Laplace form)
 // =============================================================================
 
 
@@ -310,84 +375,52 @@ function _pssXFactor(s, omega, lambda) {
 // MODEL #6 — TWO-LAYER RESERVOIR WITH CROSS-FLOW
 // -----------------------------------------------------------------------------
 //
-// Reference: Bourdet, D. "Pressure Behavior of Layered Reservoirs With
-//            Crossflow", SPE 13628 (1985).  Also Park, H., Horne, R.N.
-//            "Well Test Analysis of a Multilayered Reservoir With
-//            Formation Crossflow", SPE 19800 (1989).
-//
-// Physics: a vertical well intersects two layers of contrasting permeability
-// (κ = k_1/k_2) and storativity (ω = (φc_t h)_1 / (φc_t h)_total).  The two
-// layers exchange fluid by pseudo-steady-state cross-flow controlled by an
-// interporosity coefficient λ (analogous to the Warren-Root λ in double-
-// porosity).  At early time each layer pressure transient propagates
-// independently; at late time they equilibrate to a homogeneous-equivalent
-// kh = k_1 h_1 + k_2 h_2.
-//
-// Laplace-domain reservoir Pd at the wellbore (kh-weighted average of the
-// two layers, coupled via λ):
+// Reference: Bourdet, D. SPE 13628 (1985); Park-Horne SPE 19800 (1989).
 //
 //   f_xf(s)  = (ω·(1-ω)·s + λ) / ((1-ω)·s + λ)        ← PSS xf factor
-//   x        = sqrt( s · f_xf(s) / κ_eff )
-//   Pd_res   = K0(x) / s                                ← coupled kernel
-//
-// where κ_eff = ω·κ + (1-ω) = effective kh ratio with κ = k_1/k_2.  This
-// reduces correctly to the homogeneous limit when ω = 1 (single layer) or
-// κ = 1 (equal permeabilities).
-//
-// IMPORTANT: This is the standard Bourdet two-layer cross-flow form (Warren-
-// Root analog).  A fully-rigorous 2x2 layer Laplace system (Park-Horne 1989)
-// gives a more accurate kernel but for engineering work the PSS f(s) form
-// captures the same diagnostic dual-porosity-style dip in the derivative
-// curve.  The κ parameter is folded as a permeability-rescaling so the early
-// and late stabilisation values match the kh-weighted target.
+//   x        = sqrt( s · f_xf(s) / κ_eff ),  κ_eff = ω·κ + (1-ω)
+//   Pd_res   = K0(x) / ( s·x·K1(x) )                    ← finite wellbore
 //
 // Params: { Cd, S, kappa, lambda, omega }
-//   Cd     : wellbore-storage dimensionless
-//   S      : total mechanical skin
-//   kappa  : layer permeability ratio k_1 / k_2  (> 0)
-//   lambda : cross-flow interporosity coefficient (1e-9 .. 1e-2)
-//   omega  : layer storativity ratio (φct h)_1 / (φct h)_total in (0, 1)
 // -----------------------------------------------------------------------------
 
-function _pdLap_twoLayerXF(s, params) {
-  var omega  = params.omega;
-  var lambda = params.lambda;
-  var kappa  = params.kappa;
-  if (!_num(omega) || omega <= 0 || omega >= 1) {
+function _checkTwoLayer(params) {
+  if (!_num(params.omega) || params.omega <= 0 || params.omega >= 1) {
     throw new Error('PRiSM twoLayerXF: omega must be in (0, 1)');
   }
-  if (!_num(lambda) || lambda <= 0) {
+  if (!_num(params.lambda) || params.lambda <= 0) {
     throw new Error('PRiSM twoLayerXF: lambda must be > 0');
   }
-  if (!_num(kappa) || kappa <= 0) {
+  if (!_num(params.kappa) || params.kappa <= 0) {
     throw new Error('PRiSM twoLayerXF: kappa must be > 0');
   }
-  // PSS cross-flow factor (Bourdet, Warren-Root form)
+}
+
+function _pdLap_twoLayerXF(s, params, sc) {
+  var omega = params.omega;
+  var lambda = params.lambda / ((sc || 1) * (sc || 1));
   var f = _pssXFactor(s, omega, lambda);
-  // Effective kh weighting: ω·κ + (1-ω)·1 fraction.  When κ = 1 this is 1
-  // and the model collapses to homogeneous; when κ ≠ 1 the early/late
-  // stabilisations split correctly.
-  var kappaEff = omega * kappa + (1 - omega);
+  var kappaEff = omega * params.kappa + (1 - omega);
   if (kappaEff <= 0) kappaEff = 1;
   var sf = s * f / kappaEff;
-  if (sf <= 0 || !_num(sf)) return 1e30;
-  var x = Math.sqrt(sf);
-  return _besselK0(x) / s;
+  if (!(sf > 0) || !_num(sf)) return 1e30;
+  return _wellTerm(Math.sqrt(sf)) / s;
 }
 
 function PRiSM_model_twoLayerXF(td, params) {
   _requirePositiveTd(td);
   _requireParams(params, ['Cd', 'S', 'kappa', 'lambda', 'omega']);
-  return _stehfestEval(function (s) { return _pdLap_twoLayerXF(s, params); },
-                       td, params.Cd, params.S);
+  _checkTwoLayer(params);
+  return _evalWbsSkin(function (s, sc) { return _pdLap_twoLayerXF(s, params, sc); },
+                      td, params.Cd, params.S, false);
 }
 
 function PRiSM_model_twoLayerXF_pd_prime(td, params) {
   _requirePositiveTd(td);
   _requireParams(params, ['Cd', 'S', 'kappa', 'lambda', 'omega']);
-  return _arrayMap(td, function (t) {
-    return _numericLogDeriv(PRiSM_model_twoLayerXF, t, params);
-  });
+  _checkTwoLayer(params);
+  return _evalWbsSkin(function (s, sc) { return _pdLap_twoLayerXF(s, params, sc); },
+                      td, params.Cd, params.S, true);
 }
 
 
@@ -395,133 +428,48 @@ function PRiSM_model_twoLayerXF_pd_prime(td, params) {
 // MODEL #9 — RADIAL COMPOSITE RESERVOIR
 // -----------------------------------------------------------------------------
 //
-// References:
-//   Abbaszadeh, M., Kamal, M.M.  "Pressure-Transient Testing of Water-
-//      Injection Wells".  SPE Reservoir Engineering, Feb 1989.
-//   Sutman, M., Civan, F., Akin, S.  Various formulations of two-zone
-//      composite analysis.  See SPE 8909.
+// References: Abbaszadeh & Kamal, SPE Reservoir Eng Feb 1989;
+//             Satman, Eggenschwiler, Ramey, SPE 8909.
 //
-// Physics: an inner zone of radius R has mobility (k/μ)_1 and storativity
-// (φc_t)_1; an outer zone (r ≥ R) has mobility (k/μ)_2 and storativity
-// (φc_t)_2.  Common in water-injection: the "swept" inner zone has different
-// mobility than the un-swept outer formation.  Two dimensionless ratios:
+// Inner zone (1 ≤ r ≤ R): mobility λ1, storativity (φct)1 (the reference).
+// Outer zone (r ≥ R):     λ2 = λ1/M, (φct)2 = (φct)1/F, diffusivity ratio
+//                          η2/η1 = F/M.
+//   M = λ1/λ2, F = (φct)1/(φct)2, R = interface radius / rw
 //
-//   M = (k/μ)_1 / (k/μ)_2          mobility ratio (>1 favourable injection)
-//   F = (φc_t)_1 / (φc_t)_2        storativity ratio
-//   R = inner-zone outer radius / well radius  (dimensionless)
-//
-// Laplace-domain solution (line-source vertical well, rigorous):
-//
-//   Inner zone (rwd ≤ r ≤ R):
-//     P̂_1(s, r) = K0(√s · r) / s + α(s) · I0(√s · r)
-//
-//   Outer zone (r ≥ R):
-//     P̂_2(s, r) = β(s) · K0(√(s·F/M) · r)
-//
-//   Continuity at r = R:
-//     pressure:  P̂_1(s, R) = P̂_2(s, R)
-//     flux  :  ∂P̂_1/∂r |_R  = (1/M) · ∂P̂_2/∂r |_R
-//
-// Solve the 2×2 linear system for α(s), β(s), then evaluate at r = rwd = 1
-// (well radius normalised).  Closed form:
-//
-//   Let u = √s, v = √(s·F/M).
-//   numerator   = M·u·K1(u·R)·K0(v·R) + v·K1(v·R)·K0(u·R)
-//   denominator = (M·u·K1(u·R)·I0(u·R) - v·K1(v·R)·I0(u·R)) ← careful with sign
-//
-//   For a line source at the well (rwd = 1) with the inner-zone bounded
-//   between rw and R, the wellbore Pd reduces to:
-//
-//     Pd_res(s) = [ K0(u) · D2 + (M · I0(u) · v · K1(v·R) − I1(u) · u · K0(v·R) · M · ?? )
-//                  ... ]  ← solved by Cramer's rule
-//
-// Implementation: build the 2x2 matrix and solve directly with Cramer's rule
-// (closed form, no numerical inversion needed).  When R → ∞ this collapses
-// to the homogeneous solution K0(u)/s; when M = 1 and F = 1 it also collapses
-// (no contrast across the interface).
+// Solved exactly with the impedance cascade (finite wellbore at r = 1).
+// Early derivative 0.5 (inner zone), late derivative 0.5·M (outer zone).
+// Collapses to the homogeneous solution when M = F = 1 or R → ∞.
 //
 // Params: { Cd, S, M, F, R }
-//   Cd : wellbore-storage dimensionless
-//   S  : total mechanical skin
-//   M  : mobility ratio (k/μ)_1 / (k/μ)_2  (> 0)
-//   F  : storativity ratio (φc_t)_1 / (φc_t)_2  (> 0)
-//   R  : inner-zone outer radius / rw  (> 1)
 // -----------------------------------------------------------------------------
 
-function _pdLap_radialComposite(s, params) {
-  var M = params.M;
-  var F = params.F;
-  var R = params.R;
-  if (!_num(M) || M <= 0) throw new Error('PRiSM radialComposite: M must be > 0');
-  if (!_num(F) || F <= 0) throw new Error('PRiSM radialComposite: F must be > 0');
-  if (!_num(R) || R <= 1) throw new Error('PRiSM radialComposite: R must be > 1');
+function _checkRadialComposite(params) {
+  if (!_num(params.M) || params.M <= 0) throw new Error('PRiSM radialComposite: M must be > 0');
+  if (!_num(params.F) || params.F <= 0) throw new Error('PRiSM radialComposite: F must be > 0');
+  if (!_num(params.R) || params.R <= 1) throw new Error('PRiSM radialComposite: R must be > 1');
+}
 
-  var u = Math.sqrt(s);
-  var v = Math.sqrt(s * F / M);
-  if (!_num(u) || !_num(v)) return 1e30;
-
-  // Bessel arguments at the interface r = R
-  var uR = u * R;
-  var vR = v * R;
-
-  // Pre-compute Bessel functions
-  var K0u  = _besselK0(u);
-  var K1u  = _besselK1(u);
-  var I0u  = _besselI0(u);
-  var I1u  = _besselI1(u);
-  var K0uR = _besselK0(uR);
-  var K1uR = _besselK1(uR);
-  var I0uR = _besselI0(uR);
-  var I1uR = _besselI1(uR);
-  var K0vR = _besselK0(vR);
-  var K1vR = _besselK1(vR);
-
-  // Inner-zone:  P̂_1(r) = (K0(u·r) + α · I0(u·r)) / s
-  //   ∂P̂_1/∂r  = (-u · K1(u·r) + α · u · I1(u·r)) / s
-  // Outer-zone:  P̂_2(r) = β · K0(v·r) / s
-  //   ∂P̂_2/∂r  = -β · v · K1(v·r) / s
-  //
-  // Continuity at r = R:
-  //   K0(uR) + α · I0(uR) = β · K0(vR)
-  //   M · ( -u · K1(uR) + α · u · I1(uR) ) = - β · v · K1(vR)
-  //
-  // Rewriting the flux equation: (mobility ratio M is on the inner side as
-  // q_1 = -(k/μ)_1 · ∂P/∂r and q_2 = -(k/μ)_2 · ∂P/∂r; equating fluxes
-  // gives M · ∂P_1/∂r = ∂P_2/∂r  →  M · (-u · K1(uR) + α · u · I1(uR))
-  //                                = -β · v · K1(vR))
-  //
-  // Solve 2x2 for [α, β]:
-  //   [ I0(uR)        -K0(vR) ]   [α]   [ -K0(uR)        ]
-  //   [ M·u·I1(uR)     v·K1(vR) ] · [β] = [  M·u·K1(uR) ]
-  //
-  // Determinant:
-  var detA = I0uR * v * K1vR - (-K0vR) * (M * u * I1uR);
-  if (!_num(detA) || Math.abs(detA) < 1e-300) return 1e30;
-
-  // Cramer's rule:
-  //   α = ( (-K0(uR)) * v · K1(vR) - (-K0(vR)) · (M · u · K1(uR)) ) / detA
-  //   β = ( I0(uR) · (M · u · K1(uR)) - (M · u · I1(uR)) · (-K0(uR)) ) / detA
-  var alpha = ((-K0uR) * v * K1vR - (-K0vR) * (M * u * K1uR)) / detA;
-  // We don't need β to evaluate at the well — only α, since the wellbore
-  // pressure is in the inner zone:
-  //   Pd_res(s) = ( K0(u) + α · I0(u) ) / s
-  var pd = (K0u + alpha * I0u) / s;
-  return _safeLap(pd);
+function _pdLap_radialComposite(s, params, sc) {
+  return _radialCascadeLap(s, [
+    { m: 1, f: 1, R: _scaledR(params.R, sc) },
+    { m: 1 / params.M, f: 1 / params.F, R: Infinity }
+  ]);
 }
 
 function PRiSM_model_radialComposite(td, params) {
   _requirePositiveTd(td);
   _requireParams(params, ['Cd', 'S', 'M', 'F', 'R']);
-  return _stehfestEval(function (s) { return _pdLap_radialComposite(s, params); },
-                       td, params.Cd, params.S);
+  _checkRadialComposite(params);
+  return _evalWbsSkin(function (s, sc) { return _pdLap_radialComposite(s, params, sc); },
+                      td, params.Cd, params.S, false);
 }
 
 function PRiSM_model_radialComposite_pd_prime(td, params) {
   _requirePositiveTd(td);
   _requireParams(params, ['Cd', 'S', 'M', 'F', 'R']);
-  return _arrayMap(td, function (t) {
-    return _numericLogDeriv(PRiSM_model_radialComposite, t, params);
-  });
+  _checkRadialComposite(params);
+  return _evalWbsSkin(function (s, sc) { return _pdLap_radialComposite(s, params, sc); },
+                      td, params.Cd, params.S, true);
 }
 
 
@@ -529,67 +477,34 @@ function PRiSM_model_radialComposite_pd_prime(td, params) {
 // MODEL #11 — MULTI-LAYER WITH CROSS-FLOW
 // -----------------------------------------------------------------------------
 //
-// Reference: Economides, M.J., Joseph, J., Ambrose, R.W., Norwood, C.
-//            "A Modern Generalized Approach to Reservoir Limit Testing in
-//             Multilayer Reservoirs", SPE 14167 (1985).
-//            Park, H., Horne, R.N. "Well Test Analysis of a Multilayered
-//             Reservoir With Formation Crossflow", SPE 19800 (1989).
+// Reference: Economides et al, SPE 14167 (1985); Park-Horne SPE 19800 (1989).
 //
-// Physics: N adjacent layers, each with its own ω_i (storativity fraction)
-// and κ_i (kh fraction).  Cross-flow between adjacent layer pairs is
-// controlled by an interporosity λ.  At early time each layer behaves
-// individually; at late time the system equilibrates to a homogeneous-
-// equivalent kh = Σ kh_i.
-//
-// Implementation (engineering simplification — see header):
-//   For N layers we use a generalised Warren-Root PSS factor f_N(s) where
-//   the cross-flow couples successive layer pairs with the same λ:
-//
-//     f_N(s) = [ Σ ω_i · (1-ω_i) · s + λ ] / [ Σ (1-ω_i) · s + λ ]
-//
-//   Then Pd_res(s) = K0( sqrt(s · f_N(s) / κ_eff) ) / s, where
-//   κ_eff = Σ ω_i · κ_i.  Reduces to the homogeneous limit when N = 1
-//   (single layer with ω = 1) or all (ω, κ) equal (uniform layers).
-//
-//   The fully-rigorous Park-Horne 1989 NxN tridiagonal Laplace system is
-//   replaced by this simplified (Bourdet-style) PSS factor; it captures the
-//   dual-porosity dip and the late-time stabilisation correctly when the
-//   cross-flow coupling is uniform.  For heterogeneous λ the result is a
-//   smooth approximation.  Documented in the model `description`.
+// Engineering simplification: generalised Warren-Root PSS factor across N
+// layers with a single λ,
+//     f_N(s) = [ Σ ω_i·(1-ω_i) · s + λ ] / [ Σ (1-ω_i) · s + λ ]
+// (smooth, f → 1 at late time) and Pd_res = K0(x)/(s·x·K1(x)),
+// x = √(s·f_N/κ_eff), κ_eff = N·Σ ω_i κ_i.
 //
 // Params: { Cd, S, N, omegas, kappas, lambda }
-//   Cd     : wellbore storage
-//   S      : skin
-//   N      : number of layers, integer in [2, 5]
-//   omegas : array of length N of layer storativity fractions, sum to 1
-//   kappas : array of length N of layer kh fractions, sum to 1
-//   lambda : single cross-flow coefficient (between every adjacent pair)
-//
-// (For convenience the registry default is N=3 with equal omegas, kappas
-// and a single λ.)
 // -----------------------------------------------------------------------------
 
 function _normaliseLayers(arr, N, defaultVal) {
-  // Normalise to length N; sum to 1 for omegas and kappas.
-  if (!Array.isArray(arr) || arr.length !== N) {
-    arr = new Array(N);
-    for (var i = 0; i < N; i++) arr[i] = defaultVal;
-  }
+  var out = new Array(N);
+  var src = (Array.isArray(arr) && arr.length === N) ? arr : null;
   var sum = 0;
   for (var j = 0; j < N; j++) {
-    arr[j] = (typeof arr[j] === 'number' && isFinite(arr[j]) && arr[j] > 0) ? arr[j] : defaultVal;
-    sum += arr[j];
+    var v = src ? src[j] : defaultVal;
+    out[j] = (typeof v === 'number' && isFinite(v) && v > 0) ? v : defaultVal;
+    sum += out[j];
   }
   if (sum <= 0) sum = 1;
-  for (var k = 0; k < N; k++) arr[k] = arr[k] / sum;
-  return arr;
+  for (var k = 0; k < N; k++) out[k] = out[k] / sum;
+  return out;
 }
 
 function _multiLayerXF_factor(s, omegas, lambda) {
-  // Generalised PSS factor across N layers (uniform λ between adjacent pairs).
   var Nloc = omegas.length;
-  var num = 0;
-  var den = 0;
+  var num = 0, den = 0;
   for (var i = 0; i < Nloc; i++) {
     var w = omegas[i];
     num += w * (1 - w);
@@ -601,43 +516,43 @@ function _multiLayerXF_factor(s, omegas, lambda) {
   return num / den;
 }
 
-function _pdLap_multiLayerXF(s, params) {
+function _pdLap_multiLayerXF(s, params, sc) {
   var Nloc = params.N | 0;
   if (Nloc < 2) Nloc = 2;
   if (Nloc > MAX_LAYERS) Nloc = MAX_LAYERS;
   var omegas = _normaliseLayers(params.omegas, Nloc, 1.0 / Nloc);
   var kappas = _normaliseLayers(params.kappas, Nloc, 1.0 / Nloc);
-  var lambda = params.lambda;
-  if (!_num(lambda) || lambda <= 0) {
-    throw new Error('PRiSM multiLayerXF: lambda must be > 0');
-  }
+  var lambda = params.lambda / ((sc || 1) * (sc || 1));
   var f = _multiLayerXF_factor(s, omegas, lambda);
-  // effective kh weighting Σ ω_i κ_i — when uniform this is 1
   var kappaEff = 0;
   for (var i = 0; i < Nloc; i++) kappaEff += omegas[i] * kappas[i];
-  if (kappaEff <= 0) kappaEff = 1;
-  // Renormalise: divide by uniform-mean baseline so kappaEff = 1 is the
-  // homogeneous case (avoids spurious time-rescaling when κ = ω uniformly).
+  if (kappaEff <= 0) kappaEff = 1 / Nloc;
   kappaEff = kappaEff * Nloc;
   var sf = s * f / kappaEff;
-  if (sf <= 0 || !_num(sf)) return 1e30;
-  var x = Math.sqrt(sf);
-  return _besselK0(x) / s;
+  if (!(sf > 0) || !_num(sf)) return 1e30;
+  return _wellTerm(Math.sqrt(sf)) / s;
+}
+
+function _checkMultiLayerXF(params) {
+  if (!_num(params.lambda) || params.lambda <= 0) {
+    throw new Error('PRiSM multiLayerXF: lambda must be > 0');
+  }
 }
 
 function PRiSM_model_multiLayerXF(td, params) {
   _requirePositiveTd(td);
   _requireParams(params, ['Cd', 'S', 'lambda']);
-  return _stehfestEval(function (s) { return _pdLap_multiLayerXF(s, params); },
-                       td, params.Cd, params.S);
+  _checkMultiLayerXF(params);
+  return _evalWbsSkin(function (s, sc) { return _pdLap_multiLayerXF(s, params, sc); },
+                      td, params.Cd, params.S, false);
 }
 
 function PRiSM_model_multiLayerXF_pd_prime(td, params) {
   _requirePositiveTd(td);
   _requireParams(params, ['Cd', 'S', 'lambda']);
-  return _arrayMap(td, function (t) {
-    return _numericLogDeriv(PRiSM_model_multiLayerXF, t, params);
-  });
+  _checkMultiLayerXF(params);
+  return _evalWbsSkin(function (s, sc) { return _pdLap_multiLayerXF(s, params, sc); },
+                      td, params.Cd, params.S, true);
 }
 
 
@@ -645,53 +560,25 @@ function PRiSM_model_multiLayerXF_pd_prime(td, params) {
 // MODEL #14 — MULTI-LAYER WITHOUT CROSS-FLOW (COMMINGLED)
 // -----------------------------------------------------------------------------
 //
-// Reference: Kuchuk, F.J., Wilkinson, D.J. "Pressure Behavior of Commingled
-//            Reservoirs", SPE 18125 (1991).  Also Lefkovits, H.C., Hazebroek,
-//            P., Allen, E.E., Matthews, C.S. "A Study of the Behavior of
-//            Bounded Reservoirs Composed of Stratified Layers", SPEJ March
-//            1961.
+// Reference: Kuchuk-Wilkinson SPE 18125 (1991); Lefkovits et al SPEJ 1961.
 //
-// Physics: N isolated layers (no cross-flow), each producing into the same
-// wellbore.  Each layer has its own initial pressure p_i, permeability k_i,
-// thickness h_i, and skin S_i.  For a constant-rate test the wellbore
-// pressure is the kh-weighted sum of N independent homogeneous Pds; there is
-// no dual-porosity dip but each layer's transient signature can still be
-// distinguished if the (k_i, S_i) vary widely.
-//
-// Implementation (closed form): Pd_res(s) = Σ_i (kh_i / kh_total) · Pd_hom(s, i)
-// where Pd_hom is the homogeneous Pd evaluated with each layer's (k_i, S_i)
-// (skin folded outside, so we just use the K0(√s)/s base kernel and let the
-// outer fold handle the global skin).
-//
-// For this evaluator we expose a per-layer scalar "perm contrast" (k_i/k_avg)
-// instead of asking the user to define every kh fraction; the Pd kernel for
-// each layer becomes K0(√(s/perm_i))/s, weighted by the layer kh fraction.
+//   Pd_res(s) = Σ_i κ_i · K0(x_i)/(s·x_i·K1(x_i)),  x_i = √(s/perm_i)
 //
 // Params: { Cd, S, N, perms, khFracs }
-//   Cd      : wellbore storage (single common well)
-//   S       : global skin (added once outside the kh-weighted sum)
-//   N       : number of layers in [2, 5]
-//   perms   : array of length N of k_i/k_avg ratios (default 1 each)
-//   khFracs : array of length N of layer kh fractions (sum to 1)
 // -----------------------------------------------------------------------------
 
 function _pdLap_multiLayerNoXF(s, params) {
   var Nloc = params.N | 0;
   if (Nloc < 2) Nloc = 2;
   if (Nloc > MAX_LAYERS) Nloc = MAX_LAYERS;
-  var perms = (Array.isArray(params.perms) && params.perms.length === Nloc)
-            ? params.perms.slice()
-            : (function () { var a = []; for (var i = 0; i < Nloc; i++) a.push(1); return a; })();
+  var perms = (Array.isArray(params.perms) && params.perms.length === Nloc) ? params.perms : null;
   var khFracs = _normaliseLayers(params.khFracs, Nloc, 1.0 / Nloc);
-  // Each layer Pd (no skin per-layer here — global skin folded outside)
   var pdSum = 0;
   for (var i = 0; i < Nloc; i++) {
-    var perm = (typeof perms[i] === 'number' && perms[i] > 0) ? perms[i] : 1;
-    // K0( sqrt(s/perm) ) / s
+    var perm = (perms && typeof perms[i] === 'number' && perms[i] > 0) ? perms[i] : 1;
     var arg = Math.sqrt(s / perm);
     if (!_num(arg) || arg <= 0) continue;
-    var pdLayer = _besselK0(arg) / s;
-    pdSum += khFracs[i] * pdLayer;
+    pdSum += khFracs[i] * _wellTerm(arg) / s;
   }
   return _safeLap(pdSum);
 }
@@ -699,16 +586,15 @@ function _pdLap_multiLayerNoXF(s, params) {
 function PRiSM_model_multiLayerNoXF(td, params) {
   _requirePositiveTd(td);
   _requireParams(params, ['Cd', 'S']);
-  return _stehfestEval(function (s) { return _pdLap_multiLayerNoXF(s, params); },
-                       td, params.Cd, params.S);
+  return _evalWbsSkin(function (s) { return _pdLap_multiLayerNoXF(s, params); },
+                      td, params.Cd, params.S, false);
 }
 
 function PRiSM_model_multiLayerNoXF_pd_prime(td, params) {
   _requirePositiveTd(td);
   _requireParams(params, ['Cd', 'S']);
-  return _arrayMap(td, function (t) {
-    return _numericLogDeriv(PRiSM_model_multiLayerNoXF, t, params);
-  });
+  return _evalWbsSkin(function (s) { return _pdLap_multiLayerNoXF(s, params); },
+                      td, params.Cd, params.S, true);
 }
 
 
@@ -716,42 +602,22 @@ function PRiSM_model_multiLayerNoXF_pd_prime(td, params) {
 // MODEL #15 — LINEAR COMPOSITE RESERVOIR
 // -----------------------------------------------------------------------------
 //
-// Physics: a vertical well in zone 1 that is bounded by linear interfaces at
-// distances L_1 < L_2 < L_3 < L_4 from the wellbore (up to 5 zones).  Across
-// each interface the mobility-storativity contrast changes; the response is
-// the early-time homogeneous solution (zone 1) plus image-well superposition
-// across each interface, with a transmission-coefficient amplitude based on
-// the mobility-ratio jumps.
+// A vertical well in zone 1, linear interfaces at distances L_1 < ... < L_4
+// (rw units).  First-order image superposition: each interface n contributes
+// an image at distance 2·L_n with reflection coefficient
 //
-// At the n-th interface, the reflection coefficient for a planar wave in
-// porous media is
+//   r_n = (M_{n+1} − M_n) / (M_{n+1} + M_n)
 //
-//   r_n = (M_{n+1} - M_n) / (M_{n+1} + M_n)         (transmission analogy)
+// where M_n = λ1/λn is the mobility ratio of zone 1 to zone n (M_1 = 1), the
+// same convention as radialComposite: a less mobile zone behind the interface
+// (M_{n+1} > M_n) gives r > 0 (sealing-like, r → +1), a more mobile one r < 0
+// (constant-pressure-like, r → −1).  The image is evaluated with the zone-n
+// diffusivity: argument √(s·M_n/F_n)·2L_n (η_n/η_1 = F_n/M_n).
+// Higher-order multi-reflections are truncated.
 //
-// where M_n = (k/μ)_n (mobility in zone n).  An "incoming" disturbance from
-// the well at distance L_n produces an image at distance 2·L_n with
-// amplitude r_n; multi-reflections (image at 2·L_n - 2·L_{n-1}, etc.) are
-// truncated at first order.
-//
-// Implementation: Laplace-domain reservoir Pd is the homogeneous K0(√s)/s
-// plus Σ r_n · K0(√(s · F_n / M_n) · 2·L_n) / s for each interface; the
-// √(F_n / M_n) factor accounts for the diffusivity in the n-th zone.
-//
-// Reduces to the homogeneous solution when all M_n = 1 (no contrast).
-//
-// IMPORTANT: This is a single-reflection (first-order) image-well kernel.
-// Higher-order multi-reflections (which would matter when M contrast is
-// large or zones are thin) are NOT included.  This matches the textbook
-// engineering practice for linear-composite reservoirs at the level of a
-// quick-look analysis.
+//   Pd_res = K0(√s)/(s√s K1(√s)) + Σ r_n K0(√(s M_n/F_n)·2L_n)/(s√s K1(√s))
 //
 // Params: { Cd, S, Nzones, L, M, F }
-//   Cd     : wellbore storage
-//   S      : skin
-//   Nzones : number of zones in [2, 5] (so Nzones - 1 interfaces)
-//   L      : array of (Nzones-1) interface distances in r/rw (increasing)
-//   M      : array of length Nzones of mobility ratios M_n (M_1 = 1 reference)
-//   F      : array of length Nzones of storativity ratios F_n (F_1 = 1)
 // -----------------------------------------------------------------------------
 
 function _padArray(arr, N, defaultVal) {
@@ -764,14 +630,13 @@ function _padArray(arr, N, defaultVal) {
   return out;
 }
 
-function _pdLap_linearComposite(s, params) {
+function _pdLap_linearComposite(s, params, sc) {
   var Nz = params.Nzones | 0;
   if (Nz < 2) Nz = 2;
   if (Nz > 5) Nz = 5;
   var L = _padArray(params.L, Nz - 1, 100);
   var M = _padArray(params.M, Nz, 1);
   var F = _padArray(params.F, Nz, 1);
-  // Sanitise: M, F must be > 0; L must be increasing and > 0.
   for (var i = 0; i < Nz; i++) {
     if (M[i] <= 0) M[i] = 1;
     if (F[i] <= 0) F[i] = 1;
@@ -780,211 +645,86 @@ function _pdLap_linearComposite(s, params) {
     if (L[j] <= 0) L[j] = 100;
     if (j > 0 && L[j] <= L[j - 1]) L[j] = L[j - 1] * 1.5;
   }
-
   var u = Math.sqrt(s);
   if (!_num(u)) return 1e30;
-  // Direct solution in zone 1 (where the well lives):
-  var pd = _besselK0(u) / s;
-
-  // First-order image contributions for each interface
+  var K1eu = _K1e(u);
+  var pd = _K0e(u) / (u * K1eu);
   for (var n = 0; n < Nz - 1; n++) {
-    var Mn = M[n], Mnext = M[n + 1];
-    var Fn = F[n];
-    // Reflection coefficient (planar wave analogy)
-    var rn = (Mnext - Mn) / (Mnext + Mn);
+    var rn = (M[n + 1] - M[n]) / (M[n + 1] + M[n]);
     if (!_num(rn) || rn === 0) continue;
-    // Effective diffusivity in zone n: η_n ∝ M_n / F_n; the Laplace argument
-    // for an image at distance 2·L_n in zone n is sqrt(s · F_n / M_n) · 2·L_n.
-    var diffArg = Math.sqrt(s * Fn / Mn) * 2 * L[n];
-    if (!_num(diffArg) || diffArg <= 0) continue;
-    // Cap argument to avoid K0(huge) underflow killing numerics
-    if (diffArg > 700) continue;
-    var image = _besselK0(diffArg) / s;
-    pd += rn * image;
+    var arg = Math.sqrt(s * M[n] / F[n]) * 2 * L[n] * (sc || 1);
+    if (!(arg > 0)) continue;
+    var ex = -(arg - u);
+    if (ex < -700) continue;
+    pd += rn * _K0e(arg) / (u * K1eu) * Math.exp(ex);
   }
-  return _safeLap(pd);
+  return _safeLap(pd / s);
 }
 
 function PRiSM_model_linearComposite(td, params) {
   _requirePositiveTd(td);
   _requireParams(params, ['Cd', 'S']);
-  return _stehfestEval(function (s) { return _pdLap_linearComposite(s, params); },
-                       td, params.Cd, params.S);
+  return _evalWbsSkin(function (s, sc) { return _pdLap_linearComposite(s, params, sc); },
+                      td, params.Cd, params.S, false);
 }
 
 function PRiSM_model_linearComposite_pd_prime(td, params) {
   _requirePositiveTd(td);
   _requireParams(params, ['Cd', 'S']);
-  return _arrayMap(td, function (t) {
-    return _numericLogDeriv(PRiSM_model_linearComposite, t, params);
-  });
+  return _evalWbsSkin(function (s, sc) { return _pdLap_linearComposite(s, params, sc); },
+                      td, params.Cd, params.S, true);
 }
 
 
 // -----------------------------------------------------------------------------
-// MODEL #21 — GENERAL HETEROGENEITY RADIAL COMPOSITE (3-zone simplification)
+// MODEL #21 — GENERAL HETEROGENEITY RADIAL COMPOSITE (3-zone)
 // -----------------------------------------------------------------------------
 //
-// Research-grade model: textbook spec allows up to 9 piecewise-linear or
-// step-wise discontinuities radially.  We implement the engineering-useful
-// 3-zone case (two interfaces, three zones).  The kernel is a recursive
-// cylindrical-wave matching at each interface, evaluated analytically.
+// well -- zone 1 (M1, F1) -- R1 -- zone 2 (M2, F2) -- R2 -- zone 3 (M3, F3) -- ∞
 //
-// Geometry:
-//   well -- zone 1 (M_1, F_1) -- R1 -- zone 2 (M_2, F_2) -- R2 -- zone 3 (M_3, F_3) -- ∞
-//
-// Implementation: at each interface we apply the same continuity-of-pressure
-// and continuity-of-flux rules as #9 (radial composite).  The recursive
-// nature of the linear system means we solve a 4×4 system (α_1, β_1, α_2,
-// β_2) where α, β are the inhomogeneous K0/I0 coefficients in each finite
-// zone (zone 1 and zone 2; zone 3 has only a K0 outgoing term).
-//
-// We reduce the 4×4 system to a sequence of two 2×2 systems by enforcing
-// the inner→outer recursion: solve interface R2 first (assuming a unit-flux
-// inner boundary), then propagate the result inward through R1.  This is
-// the standard "cascaded matching" recipe for layered cylindrical wave
-// problems and gives the exact 3-zone closed form.
-//
-// IMPORTANT: 3 zones only.  Up to 9-zone piecewise discontinuities in the
-// textbook spec are NOT implemented — extending to N zones would replicate
-// the same recursive matching N-1 times.  Documented in the description.
+// M_n, F_n are the mobility and storativity of zone n relative to the pD / tD
+// reference (so k_n = √(s·F_n/M_n)).  Solved exactly with the impedance
+// cascade; extending to more zones only adds entries to the zone list.
+// Up to 9 piecewise discontinuities (textbook spec) are NOT exposed.
 //
 // Params: { Cd, S, R1, R2, M1, M2, M3, F1, F2, F3 }
-//   M_n, F_n in zone n (M_1, F_1 are reference 1 by convention but allowed
-//   to vary).
 // -----------------------------------------------------------------------------
 
-function _pdLap_genHetRadial(s, params) {
-  var R1 = params.R1, R2 = params.R2;
-  var M1 = params.M1, M2 = params.M2, M3 = params.M3;
-  var F1 = params.F1, F2 = params.F2, F3 = params.F3;
-  if (!_num(R1) || R1 <= 1) throw new Error('PRiSM genHetRadial: R1 must be > 1');
-  if (!_num(R2) || R2 <= R1) throw new Error('PRiSM genHetRadial: R2 must be > R1');
-  if (!_num(M1) || M1 <= 0) M1 = 1;
-  if (!_num(M2) || M2 <= 0) M2 = 1;
-  if (!_num(M3) || M3 <= 0) M3 = 1;
-  if (!_num(F1) || F1 <= 0) F1 = 1;
-  if (!_num(F2) || F2 <= 0) F2 = 1;
-  if (!_num(F3) || F3 <= 0) F3 = 1;
+function _posOr1(v) { return (_num(v) && v > 0) ? v : 1; }
 
-  // Wavenumbers in each zone:  k_n = sqrt(s · F_n / M_n)
-  var k1 = Math.sqrt(s * F1 / M1);
-  var k2 = Math.sqrt(s * F2 / M2);
-  var k3 = Math.sqrt(s * F3 / M3);
-  if (!_num(k1) || !_num(k2) || !_num(k3)) return 1e30;
+function _checkGenHet(params) {
+  if (!_num(params.R1) || params.R1 <= 1) throw new Error('PRiSM genHetRadial: R1 must be > 1');
+  if (!_num(params.R2) || params.R2 <= params.R1) throw new Error('PRiSM genHetRadial: R2 must be > R1');
+}
 
-  // Field forms:
-  //   zone 1 (rwd <= r <= R1):  P̂_1 = K0(k1·r)/s + α_1 · I0(k1·r)/s
-  //   zone 2 (R1 <= r <= R2):    P̂_2 = α_2 · K0(k2·r)/s + β_2 · I0(k2·r)/s
-  //   zone 3 (r >= R2):           P̂_3 = β_3 · K0(k3·r)/s
-  //
-  // 4 unknowns: α_1, α_2, β_2, β_3.  4 continuity equations (pressure +
-  // flux at R1, R2).  We solve by elimination starting from R2:
-  //
-  // At R2:
-  //   α_2·K0(k2·R2) + β_2·I0(k2·R2) = β_3·K0(k3·R2)              (P)
-  //   M2·(-α_2·k2·K1(k2·R2) + β_2·k2·I1(k2·R2)) = M3·(-β_3·k3·K1(k3·R2))   (F)
-  //
-  // Express β_2 and β_3 in terms of α_2 (using P + F): two equations, three
-  // unknowns ⇒ one-parameter family parameterised by α_2.  Equivalently
-  // β_2 = γ_22 · α_2 and β_3 = γ_32 · α_2 for some γ coefficients.
-  //
-  // Substitute into the inner interface R1:
-  //   K0(k1·R1) + α_1·I0(k1·R1) = α_2·K0(k2·R1) + β_2·I0(k2·R1)             (P)
-  //   M1·(-k1·K1(k1·R1) + α_1·k1·I1(k1·R1)) = M2·(-α_2·k2·K1(k2·R1) + β_2·k2·I1(k2·R1))  (F)
-  //
-  // Two equations, two unknowns (α_1, α_2 — once β_2 is expressed via α_2).
-  // Solve 2×2 by Cramer's rule.
-  //
-  // Then evaluate P̂_1 at the wellbore r = 1 (rwd normalised):
-  //   Pd_res(s) = ( K0(k1) + α_1 · I0(k1) ) / s
+function _genHetZones(params, sc) {
+  var R1 = _scaledR(params.R1, sc), R2 = _scaledR(params.R2, sc);
+  if (R2 <= R1) R2 = R1 * 1.000001;
+  return [
+    { m: _posOr1(params.M1), f: _posOr1(params.F1), R: R1 },
+    { m: _posOr1(params.M2), f: _posOr1(params.F2), R: R2 },
+    { m: _posOr1(params.M3), f: _posOr1(params.F3), R: Infinity }
+  ];
+}
 
-  // Bessel evaluations
-  var k1R1 = k1 * R1, k2R1 = k2 * R1;
-  var k2R2 = k2 * R2, k3R2 = k3 * R2;
-
-  var K0_k1   = _besselK0(k1);
-  var I0_k1   = _besselI0(k1);
-
-  var K0_k1R1 = _besselK0(k1R1);
-  var I0_k1R1 = _besselI0(k1R1);
-  var K1_k1R1 = _besselK1(k1R1);
-  var I1_k1R1 = _besselI1(k1R1);
-
-  var K0_k2R1 = _besselK0(k2R1);
-  var I0_k2R1 = _besselI0(k2R1);
-  var K1_k2R1 = _besselK1(k2R1);
-  var I1_k2R1 = _besselI1(k2R1);
-
-  var K0_k2R2 = _besselK0(k2R2);
-  var I0_k2R2 = _besselI0(k2R2);
-  var K1_k2R2 = _besselK1(k2R2);
-  var I1_k2R2 = _besselI1(k2R2);
-
-  var K0_k3R2 = _besselK0(k3R2);
-  var K1_k3R2 = _besselK1(k3R2);
-
-  // ---- step 1: eliminate β_3 from the R2 system ----
-  // From (P): β_3 = (α_2·K0_k2R2 + β_2·I0_k2R2) / K0_k3R2
-  // Substitute into (F):
-  //   M2·(-α_2·k2·K1_k2R2 + β_2·k2·I1_k2R2)
-  //   = M3·(-((α_2·K0_k2R2 + β_2·I0_k2R2) / K0_k3R2)·k3·K1_k3R2)
-  // Rearrange to express β_2 in terms of α_2:
-  //   β_2 · [ M2·k2·I1_k2R2 + M3·k3·K1_k3R2 / K0_k3R2 · I0_k2R2 ]
-  //   = α_2 · [ M2·k2·K1_k2R2 - M3·k3·K1_k3R2 / K0_k3R2 · K0_k2R2 ]
-  //
-  // Solve for β_2/α_2 = γ
-  var ratio = (K0_k3R2 !== 0) ? (M3 * k3 * K1_k3R2 / K0_k3R2) : 0;
-  var num_b = M2 * k2 * K1_k2R2 - ratio * K0_k2R2;
-  var den_b = M2 * k2 * I1_k2R2 + ratio * I0_k2R2;
-  var gamma22;
-  if (!_num(den_b) || Math.abs(den_b) < 1e-300) {
-    gamma22 = 0;  // degenerate — fall back to outer-only solution
-  } else {
-    gamma22 = num_b / den_b;
-  }
-
-  // ---- step 2: solve inner interface R1 for [α_1, α_2] ----
-  // (P): K0_k1R1 + α_1·I0_k1R1 = α_2·K0_k2R1 + β_2·I0_k2R1
-  //                            = α_2·(K0_k2R1 + γ22·I0_k2R1)
-  // (F): M1·(-k1·K1_k1R1 + α_1·k1·I1_k1R1)
-  //    = M2·(-α_2·k2·K1_k2R1 + β_2·k2·I1_k2R1)
-  //    = M2·α_2·k2·(-K1_k2R1 + γ22·I1_k2R1)
-  //
-  // Matrix form: [ I0_k1R1                     -(K0_k2R1 + γ22·I0_k2R1)        ] [α_1]   [ -K0_k1R1                      ]
-  //              [ M1·k1·I1_k1R1               -M2·k2·(-K1_k2R1 + γ22·I1_k2R1) ] [α_2] = [  M1·k1·K1_k1R1                 ]
-  var A11 = I0_k1R1;
-  var A12 = -(K0_k2R1 + gamma22 * I0_k2R1);
-  var A21 = M1 * k1 * I1_k1R1;
-  var A22 = -M2 * k2 * (-K1_k2R1 + gamma22 * I1_k2R1);
-  var b1  = -K0_k1R1;
-  var b2  =  M1 * k1 * K1_k1R1;
-
-  var detA = A11 * A22 - A12 * A21;
-  if (!_num(detA) || Math.abs(detA) < 1e-300) {
-    // degenerate — collapse to single-zone homogeneous answer
-    return _besselK0(k1) / s;
-  }
-  var alpha1 = (b1 * A22 - A12 * b2) / detA;
-
-  // wellbore P̂_1 evaluated at r = 1:
-  var pd = (K0_k1 + alpha1 * I0_k1) / s;
-  return _safeLap(pd);
+function _pdLap_genHetRadial(s, params, sc) {
+  return _radialCascadeLap(s, _genHetZones(params, sc));
 }
 
 function PRiSM_model_genHetRadial(td, params) {
   _requirePositiveTd(td);
   _requireParams(params, ['Cd', 'S', 'R1', 'R2', 'M1', 'M2', 'M3', 'F1', 'F2', 'F3']);
-  return _stehfestEval(function (s) { return _pdLap_genHetRadial(s, params); },
-                       td, params.Cd, params.S);
+  _checkGenHet(params);
+  return _evalWbsSkin(function (s, sc) { return _pdLap_genHetRadial(s, params, sc); },
+                      td, params.Cd, params.S, false);
 }
 
 function PRiSM_model_genHetRadial_pd_prime(td, params) {
   _requirePositiveTd(td);
   _requireParams(params, ['Cd', 'S', 'R1', 'R2', 'M1', 'M2', 'M3', 'F1', 'F2', 'F3']);
-  return _arrayMap(td, function (t) {
-    return _numericLogDeriv(PRiSM_model_genHetRadial, t, params);
-  });
+  _checkGenHet(params);
+  return _evalWbsSkin(function (s, sc) { return _pdLap_genHetRadial(s, params, sc); },
+                      td, params.Cd, params.S, true);
 }
 
 
@@ -992,71 +732,38 @@ function PRiSM_model_genHetRadial_pd_prime(td, params) {
 // MODEL #20 — GENERAL HETEROGENEITY RADIAL + LINEAR COMPOSITE
 // -----------------------------------------------------------------------------
 //
-// Research-grade model: textbook spec allows up to 9 piecewise-linear or
-// step-wise discontinuities each in the radial (R-zone) and linear (±X-
-// zone) directions.  We implement the engineering-useful simplification:
-// the Phase 5 #21 three-zone radial composite kernel (already implemented)
-// PLUS a single linear-fault image-well contribution.  This captures the
-// most common "swept-zone with linear fault" geometry seen in injection
-// pilots and faulted reservoirs.
+// Three-zone radial composite (#21) plus one linear fault at Lf (rw units)
+// represented by an image well in the zone-1 diffusivity:
 //
-// Geometry:
-//   - radial:  three zones (M1, M2, M3 with interfaces at R1 and R2)
-//   - linear:  one fault at distance Lf from the well, with reflection
-//              coefficient r_f based on the mobility-ratio jump (Mfault).
+//   Pd_res(s) = Pd_radial_3zone(s) + r_f · K0(k1·2Lf)/(s·M1·k1·K1(k1))
 //
-// Implementation:
-//   Pd_res(s) = Pd_radial_3zone(s)  +  r_f · K0( sqrt(s) · 2·Lf ) / s
-//
-// where the linear-fault image is computed in the inner-zone diffusivity
-// (k_1, F_1 = 1).  The reflection coefficient r_f follows the same
-// formula as #15:  r_f = (Mfault - M1) / (Mfault + M1), where Mfault is
-// the mobility behind the fault.
-//
-// IMPORTANT: 3-zone radial + 1-fault linear only.  Up to 9 piecewise
-// discontinuities in either direction in the textbook spec are NOT
-// implemented — that would require a full multi-image lattice-summation
-// kernel.  Documented in the description.
+// r_f = (M1 − Mfault)/(M1 + Mfault) with Mfault the relative mobility behind
+// the fault (Mfault → 0 sealing, r_f → +1; Mfault → ∞ constant pressure,
+// r_f → −1).  BC 'sealing' forces r_f = +1, 'constP' forces r_f = −1.
 //
 // Params: { Cd, S, R1, R2, M1, M2, M3, F1, F2, F3, Lf, Mfault, BC }
-//   (radial params identical to genHetRadial #21)
-//   Lf      : linear-fault distance from the well (in r/rw)
-//   Mfault  : mobility behind the fault (M1 = no contrast → no image)
-//   BC      : 'noflow' (default) or 'constP' (override Mfault → 0 for
-//             constant-pressure boundary, Mfault → ∞ for sealing)
 // -----------------------------------------------------------------------------
 
-function _pdLap_genHetRadialLinear(s, params) {
-  // 1) radial 3-zone composite contribution (from #21 helper)
-  var pdRadial = _pdLap_genHetRadial(s, params);
-
-  // 2) single linear-fault image-well contribution
+function _pdLap_genHetRadialLinear(s, params, sc) {
+  var pdRadial = _pdLap_genHetRadial(s, params, sc);
   var Lf = params.Lf;
-  var Mf = params.Mfault;
-  var M1 = params.M1;
   var BC = params.BC || 'noflow';
-  if (!_num(Lf) || Lf <= 0) return _safeLap(pdRadial);
-  if (!_num(M1) || M1 <= 0) M1 = 1;
-
-  // Reflection coefficient — boundary-condition shortcut overrides
+  if (!_num(Lf) || Lf <= 0) return pdRadial;
+  var M1 = _posOr1(params.M1), F1 = _posOr1(params.F1);
   var rf;
-  if (BC === 'constP') {
-    rf = -1;     // perfect constant-pressure mirror
-  } else if (BC === 'sealing') {
-    rf = +1;     // perfect sealing fault
-  } else {
-    if (!_num(Mf) || Mf <= 0) Mf = M1;
-    rf = (Mf - M1) / (Mf + M1);
+  if (BC === 'constP') rf = -1;
+  else if (BC === 'sealing') rf = +1;
+  else {
+    var Mf = (_num(params.Mfault) && params.Mfault >= 0) ? params.Mfault : M1;
+    rf = (M1 - Mf) / (M1 + Mf);
   }
-  if (!_num(rf) || rf === 0) return _safeLap(pdRadial);
-
-  // image-well argument in inner-zone diffusivity (k1 = sqrt(s · F1 / M1))
-  var F1 = (_num(params.F1) && params.F1 > 0) ? params.F1 : 1;
+  if (!_num(rf) || rf === 0) return pdRadial;
   var k1 = Math.sqrt(s * F1 / M1);
-  if (!_num(k1) || k1 <= 0) return _safeLap(pdRadial);
-  var arg = k1 * 2 * Lf;
-  if (arg > 700) return _safeLap(pdRadial);   // K0(huge) → 0, image vanishes
-  var image = _besselK0(arg) / s;
+  if (!(k1 > 0)) return pdRadial;
+  var d = 2 * Lf * (sc || 1);
+  var ex = -k1 * (d - 1);
+  if (ex < -700) return pdRadial;
+  var image = _K0e(k1 * d) / (M1 * k1 * _K1e(k1)) * Math.exp(ex) / s;
   return _safeLap(pdRadial + rf * image);
 }
 
@@ -1064,17 +771,18 @@ function PRiSM_model_genHetRadialLinear(td, params) {
   _requirePositiveTd(td);
   _requireParams(params, ['Cd', 'S', 'R1', 'R2', 'M1', 'M2', 'M3',
                           'F1', 'F2', 'F3', 'Lf']);
-  return _stehfestEval(function (s) { return _pdLap_genHetRadialLinear(s, params); },
-                       td, params.Cd, params.S);
+  _checkGenHet(params);
+  return _evalWbsSkin(function (s, sc) { return _pdLap_genHetRadialLinear(s, params, sc); },
+                      td, params.Cd, params.S, false);
 }
 
 function PRiSM_model_genHetRadialLinear_pd_prime(td, params) {
   _requirePositiveTd(td);
   _requireParams(params, ['Cd', 'S', 'R1', 'R2', 'M1', 'M2', 'M3',
                           'F1', 'F2', 'F3', 'Lf']);
-  return _arrayMap(td, function (t) {
-    return _numericLogDeriv(PRiSM_model_genHetRadialLinear, t, params);
-  });
+  _checkGenHet(params);
+  return _evalWbsSkin(function (s, sc) { return _pdLap_genHetRadialLinear(s, params, sc); },
+                      td, params.Cd, params.S, true);
 }
 
 
@@ -1082,11 +790,8 @@ function PRiSM_model_genHetRadialLinear_pd_prime(td, params) {
 // SECTION 3 — REGISTRY MERGE
 // =============================================================================
 //
-// One entry per model.  All Phase 5 entries are kind: 'pressure'.  We tag
-// the new categories as 'composite' (radial / linear / general het.) and
-// 'multilayer' (cross-flow / commingled).  These categories are NEW —
-// the existing Phase 1-4 categories (homogeneous / fracture / boundary /
-// reservoir / well-type / decline) are preserved unchanged.
+// All Phase 5 entries are kind: 'pressure', refLength 'rw'.  Categories:
+// 'composite' (radial / linear / general het.) and 'multilayer'.
 // =============================================================================
 
 var REGISTRY_ADDITIONS = {
@@ -1096,15 +801,16 @@ var REGISTRY_ADDITIONS = {
     pdPrime: PRiSM_model_twoLayerXF_pd_prime,
     defaults: { Cd: 100, S: 0, kappa: 0.5, lambda: 1e-5, omega: 0.5 },
     paramSpec: [
-      { key: 'Cd',     label: 'Wellbore storage Cd',         unit: '-',  min: 0,     max: 1e10,  default: 100   },
+      { key: 'Cd',     label: 'Wellbore storage Cd',         unit: '-',  min: 0,     max: 1e10,  default: 100, scale: 'log' },
       { key: 'S',      label: 'Skin S',                      unit: '-',  min: -7,    max: 50,    default: 0     },
-      { key: 'kappa',  label: 'Layer perm ratio κ=k1/k2',    unit: '-',  min: 0.01,  max: 100,   default: 0.5   },
-      { key: 'lambda', label: 'Cross-flow coefficient λ',    unit: '-',  min: 1e-9,  max: 1e-2,  default: 1e-5  },
+      { key: 'kappa',  label: 'Layer perm ratio κ=k1/k2',    unit: '-',  min: 0.01,  max: 100,   default: 0.5, scale: 'log' },
+      { key: 'lambda', label: 'Cross-flow coefficient λ',    unit: '-',  min: 1e-9,  max: 1e-2,  default: 1e-5, scale: 'log' },
       { key: 'omega',  label: 'Layer storativity ratio ω',   unit: '-',  min: 0.01,  max: 0.99,  default: 0.5   }
     ],
+    refLength: 'rw',
     reference: 'Bourdet, D. SPE 13628 (1985); Park-Horne SPE 19800 (1989)',
     category: 'multilayer',
-    description: 'Two-layer reservoir with PSS cross-flow controlled by λ. ω = layer storativity ratio, κ = mobility ratio. Uses Bourdet PSS f(s) factor (Warren-Root analog) — engineering-grade simplification of the rigorous Park-Horne 2x2 Laplace system.',
+    description: 'Two-layer reservoir with PSS cross-flow controlled by λ. ω = layer storativity ratio, κ = permeability ratio. Uses the PSS f(s) factor (Warren-Root analogue) — engineering simplification of the rigorous 2x2 Laplace system.',
     kind: 'pressure'
   },
 
@@ -1113,15 +819,16 @@ var REGISTRY_ADDITIONS = {
     pdPrime: PRiSM_model_radialComposite_pd_prime,
     defaults: { Cd: 100, S: 0, M: 2.0, F: 1.0, R: 50 },
     paramSpec: [
-      { key: 'Cd', label: 'Wellbore storage Cd',                   unit: '-', min: 0,     max: 1e10, default: 100  },
+      { key: 'Cd', label: 'Wellbore storage Cd',                   unit: '-', min: 0,     max: 1e10, default: 100, scale: 'log' },
       { key: 'S',  label: 'Skin S',                                unit: '-', min: -7,    max: 50,   default: 0    },
-      { key: 'M',  label: 'Mobility ratio M = (k/μ)₁/(k/μ)₂',       unit: '-', min: 0.01,  max: 100,  default: 2.0  },
-      { key: 'F',  label: 'Storativity ratio F = (φc_t)₁/(φc_t)₂',  unit: '-', min: 0.01,  max: 100,  default: 1.0  },
-      { key: 'R',  label: 'Inner-zone radius R = r/rw',             unit: '-', min: 1.5,   max: 1e5,  default: 50   }
+      { key: 'M',  label: 'Mobility ratio M = (k/μ)₁/(k/μ)₂',       unit: '-', min: 0.01,  max: 100,  default: 2.0, scale: 'log' },
+      { key: 'F',  label: 'Storativity ratio F = (φc_t)₁/(φc_t)₂',  unit: '-', min: 0.01,  max: 100,  default: 1.0, scale: 'log' },
+      { key: 'R',  label: 'Inner-zone radius R = r/rw',             unit: '-', min: 1.5,   max: 1e5,  default: 50,  scale: 'log' }
     ],
-    reference: 'Abbaszadeh & Kamal, SPE Reservoir Eng Feb 1989; Sutman et al, SPE 8909',
+    refLength: 'rw',
+    reference: 'Abbaszadeh & Kamal, SPE Reservoir Eng Feb 1989; Satman et al, SPE 8909',
     category: 'composite',
-    description: 'Radial composite reservoir: two concentric zones (inner + outer) with mobility ratio M and storativity ratio F. Common in water-injection. Exact closed-form Laplace solution by 2x2 K0/I0 matching at the interface.',
+    description: 'Radial composite reservoir: two concentric zones with mobility ratio M and storativity ratio F (outer diffusivity η2/η1 = F/M). Late derivative 0.5·M. Exact Laplace solution (scaled-Bessel impedance cascade).',
     kind: 'pressure'
   },
 
@@ -1130,15 +837,17 @@ var REGISTRY_ADDITIONS = {
     pdPrime: PRiSM_model_multiLayerXF_pd_prime,
     defaults: { Cd: 100, S: 0, N: 3, omegas: [1/3, 1/3, 1/3], kappas: [1/3, 1/3, 1/3], lambda: 1e-5 },
     paramSpec: [
-      { key: 'Cd',     label: 'Wellbore storage Cd',     unit: '-',     min: 0,     max: 1e10,  default: 100   },
+      { key: 'Cd',     label: 'Wellbore storage Cd',     unit: '-',     min: 0,     max: 1e10,  default: 100, scale: 'log' },
       { key: 'S',      label: 'Skin S',                  unit: '-',     min: -7,    max: 50,    default: 0     },
       { key: 'N',      label: 'Number of layers N',      unit: '-',     min: 2,     max: 5,     default: 3     },
-      { key: 'lambda', label: 'Cross-flow coefficient λ', unit: '-',    min: 1e-9,  max: 1e-2,  default: 1e-5  }
+      { key: 'lambda', label: 'Cross-flow coefficient λ', unit: '-',    min: 1e-9,  max: 1e-2,  default: 1e-5, scale: 'log' }
       // omegas[] and kappas[] are array params, normalised at runtime
     ],
+    refLength: 'rw',
+    defaultFrozen: ['N'],
     reference: 'Economides et al, SPE 14167 (1985); Park-Horne SPE 19800 (1989)',
     category: 'multilayer',
-    description: 'N adjacent layers (N=2..5) with PSS cross-flow between successive pairs. Default N=3, equal ω and κ per layer, single λ. Engineering simplification of the rigorous Park-Horne tridiagonal Laplace system: collapses to the dual-porosity dip pattern when one layer dominates storage.',
+    description: 'N adjacent layers (N=2..5) with PSS cross-flow between successive pairs. Default N=3, equal ω and κ per layer, single λ. Engineering simplification of the rigorous tridiagonal Laplace system.',
     kind: 'pressure'
   },
 
@@ -1147,14 +856,16 @@ var REGISTRY_ADDITIONS = {
     pdPrime: PRiSM_model_multiLayerNoXF_pd_prime,
     defaults: { Cd: 100, S: 0, N: 3, perms: [1, 1, 1], khFracs: [1/3, 1/3, 1/3] },
     paramSpec: [
-      { key: 'Cd',     label: 'Wellbore storage Cd',  unit: '-', min: 0,    max: 1e10, default: 100 },
+      { key: 'Cd',     label: 'Wellbore storage Cd',  unit: '-', min: 0,    max: 1e10, default: 100, scale: 'log' },
       { key: 'S',      label: 'Global skin S',        unit: '-', min: -7,   max: 50,   default: 0   },
       { key: 'N',      label: 'Number of layers N',   unit: '-', min: 2,    max: 5,    default: 3   }
       // perms[] and khFracs[] are array params
     ],
+    refLength: 'rw',
+    defaultFrozen: ['N'],
     reference: 'Kuchuk-Wilkinson SPE 18125 (1991); Lefkovits et al SPEJ March 1961',
     category: 'multilayer',
-    description: 'N isolated commingled layers (N=2..5) with no cross-flow. Closed-form pressure-weighted sum of N independent homogeneous-layer K0/s kernels (per-layer perm, kh-fraction). Default N=3, equal kh and perm.',
+    description: 'N isolated commingled layers (N=2..5) with no cross-flow: kh-weighted sum of N finite-wellbore layer kernels (per-layer perm, kh-fraction). Default N=3, equal kh and perm.',
     kind: 'pressure'
   },
 
@@ -1163,14 +874,16 @@ var REGISTRY_ADDITIONS = {
     pdPrime: PRiSM_model_linearComposite_pd_prime,
     defaults: { Cd: 100, S: 0, Nzones: 2, L: [100], M: [1, 2], F: [1, 1] },
     paramSpec: [
-      { key: 'Cd',     label: 'Wellbore storage Cd',      unit: '-', min: 0,    max: 1e10, default: 100 },
+      { key: 'Cd',     label: 'Wellbore storage Cd',      unit: '-', min: 0,    max: 1e10, default: 100, scale: 'log' },
       { key: 'S',      label: 'Skin S',                   unit: '-', min: -7,   max: 50,   default: 0   },
       { key: 'Nzones', label: 'Number of zones (2..5)',   unit: '-', min: 2,    max: 5,    default: 2   }
-      // L[], M[], F[] are array params (Nzones-1 interfaces, Nzones zones)
+      // L[] (rw units), M[] (λ1/λn), F[] ((φct)1/(φct)n) are array params
     ],
-    reference: 'Image-well superposition (no single ref); see van Poolen 1963 for the linear-boundary kernel and Bourdet 2002 §4 for composite extension',
+    refLength: 'rw',
+    defaultFrozen: ['Nzones'],
+    reference: 'Image-well superposition; van Poolen (1963) linear-boundary kernel; Bourdet (2002) §4 composite extension',
     category: 'composite',
-    description: 'Linear composite reservoir: up to 5 zones with linear discontinuities at distances L[]. Image-well superposition with first-order reflection coefficients r_n = (M_{n+1}-M_n)/(M_{n+1}+M_n). Higher-order multi-reflections truncated.',
+    description: 'Linear composite reservoir: up to 5 zones with linear discontinuities at distances L[]. First-order images with r_n = (M_{n+1}-M_n)/(M_{n+1}+M_n), M_n = λ1/λn. Higher-order multi-reflections truncated.',
     kind: 'pressure'
   },
 
@@ -1180,23 +893,25 @@ var REGISTRY_ADDITIONS = {
     defaults: { Cd: 100, S: 0, R1: 30, R2: 200, M1: 1.0, M2: 2.0, M3: 1.0,
                 F1: 1.0, F2: 1.0, F3: 1.0, Lf: 500, Mfault: 0.1, BC: 'noflow' },
     paramSpec: [
-      { key: 'Cd',     label: 'Wellbore storage Cd',      unit: '-', min: 0,    max: 1e10, default: 100 },
+      { key: 'Cd',     label: 'Wellbore storage Cd',      unit: '-', min: 0,    max: 1e10, default: 100, scale: 'log' },
       { key: 'S',      label: 'Skin S',                   unit: '-', min: -7,   max: 50,   default: 0   },
-      { key: 'R1',     label: 'Inner radial interface R₁', unit: '-', min: 1.5, max: 1e5,  default: 30  },
-      { key: 'R2',     label: 'Outer radial interface R₂', unit: '-', min: 2,   max: 1e5,  default: 200 },
-      { key: 'M1',     label: 'Mobility zone-1 M₁',        unit: '-', min: 0.01, max: 100, default: 1.0 },
-      { key: 'M2',     label: 'Mobility zone-2 M₂',        unit: '-', min: 0.01, max: 100, default: 2.0 },
-      { key: 'M3',     label: 'Mobility zone-3 M₃',        unit: '-', min: 0.01, max: 100, default: 1.0 },
-      { key: 'F1',     label: 'Storativity zone-1 F₁',     unit: '-', min: 0.01, max: 100, default: 1.0 },
-      { key: 'F2',     label: 'Storativity zone-2 F₂',     unit: '-', min: 0.01, max: 100, default: 1.0 },
-      { key: 'F3',     label: 'Storativity zone-3 F₃',     unit: '-', min: 0.01, max: 100, default: 1.0 },
-      { key: 'Lf',     label: 'Linear fault distance Lf',  unit: '-', min: 1,    max: 1e5,  default: 500 },
+      { key: 'R1',     label: 'Inner radial interface R₁', unit: '-', min: 1.5, max: 1e5,  default: 30,  scale: 'log' },
+      { key: 'R2',     label: 'Outer radial interface R₂', unit: '-', min: 2,   max: 1e5,  default: 200, scale: 'log' },
+      { key: 'M1',     label: 'Mobility zone-1 M₁',        unit: '-', min: 0.01, max: 100, default: 1.0, scale: 'log' },
+      { key: 'M2',     label: 'Mobility zone-2 M₂',        unit: '-', min: 0.01, max: 100, default: 2.0, scale: 'log' },
+      { key: 'M3',     label: 'Mobility zone-3 M₃',        unit: '-', min: 0.01, max: 100, default: 1.0, scale: 'log' },
+      { key: 'F1',     label: 'Storativity zone-1 F₁',     unit: '-', min: 0.01, max: 100, default: 1.0, scale: 'log' },
+      { key: 'F2',     label: 'Storativity zone-2 F₂',     unit: '-', min: 0.01, max: 100, default: 1.0, scale: 'log' },
+      { key: 'F3',     label: 'Storativity zone-3 F₃',     unit: '-', min: 0.01, max: 100, default: 1.0, scale: 'log' },
+      { key: 'Lf',     label: 'Linear fault distance Lf',  unit: '-', min: 1,    max: 1e5,  default: 500, scale: 'log' },
       { key: 'Mfault', label: 'Mobility behind fault',     unit: '-', min: 0,    max: 1e6,  default: 0.1 },
       { key: 'BC',     label: 'Linear-fault BC',           unit: '',  options: ['noflow', 'constP', 'sealing'], default: 'noflow' }
     ],
-    reference: 'Research-grade composite (no single ref); 3-zone radial + 1-fault linear simplification — see source header for details.',
+    refLength: 'rw',
+    defaultFrozen: ['M1', 'F1'],
+    reference: 'Composite simplification: 3-zone radial composite + 1-fault linear image — see source header.',
     category: 'composite',
-    description: 'General heterogeneity radial+linear composite. SIMPLIFICATION: 3-zone radial composite (two interfaces R₁, R₂) combined with a single linear fault at Lf. Up to 9 piecewise-linear discontinuities in the textbook spec are NOT implemented — research-grade reach goal restricted to the engineering-useful 3-zone + 1-fault case.',
+    description: 'General heterogeneity radial+linear composite: 3-zone radial composite (interfaces R₁, R₂; exact impedance cascade) plus a single linear fault at Lf (image well, reflection (M₁−M_f)/(M₁+M_f)).',
     kind: 'pressure'
   },
 
@@ -1206,36 +921,36 @@ var REGISTRY_ADDITIONS = {
     defaults: { Cd: 100, S: 0, R1: 30, R2: 200, M1: 1.0, M2: 2.0, M3: 1.0,
                 F1: 1.0, F2: 1.0, F3: 1.0 },
     paramSpec: [
-      { key: 'Cd', label: 'Wellbore storage Cd',     unit: '-', min: 0,     max: 1e10, default: 100 },
+      { key: 'Cd', label: 'Wellbore storage Cd',     unit: '-', min: 0,     max: 1e10, default: 100, scale: 'log' },
       { key: 'S',  label: 'Skin S',                  unit: '-', min: -7,    max: 50,   default: 0   },
-      { key: 'R1', label: 'Inner radial interface R₁', unit: '-', min: 1.5, max: 1e5,  default: 30  },
-      { key: 'R2', label: 'Outer radial interface R₂', unit: '-', min: 2,   max: 1e5,  default: 200 },
-      { key: 'M1', label: 'Mobility zone-1 M₁',       unit: '-', min: 0.01, max: 100,  default: 1.0 },
-      { key: 'M2', label: 'Mobility zone-2 M₂',       unit: '-', min: 0.01, max: 100,  default: 2.0 },
-      { key: 'M3', label: 'Mobility zone-3 M₃',       unit: '-', min: 0.01, max: 100,  default: 1.0 },
-      { key: 'F1', label: 'Storativity zone-1 F₁',    unit: '-', min: 0.01, max: 100,  default: 1.0 },
-      { key: 'F2', label: 'Storativity zone-2 F₂',    unit: '-', min: 0.01, max: 100,  default: 1.0 },
-      { key: 'F3', label: 'Storativity zone-3 F₃',    unit: '-', min: 0.01, max: 100,  default: 1.0 }
+      { key: 'R1', label: 'Inner radial interface R₁', unit: '-', min: 1.5, max: 1e5,  default: 30,  scale: 'log' },
+      { key: 'R2', label: 'Outer radial interface R₂', unit: '-', min: 2,   max: 1e5,  default: 200, scale: 'log' },
+      { key: 'M1', label: 'Mobility zone-1 M₁',       unit: '-', min: 0.01, max: 100,  default: 1.0, scale: 'log' },
+      { key: 'M2', label: 'Mobility zone-2 M₂',       unit: '-', min: 0.01, max: 100,  default: 2.0, scale: 'log' },
+      { key: 'M3', label: 'Mobility zone-3 M₃',       unit: '-', min: 0.01, max: 100,  default: 1.0, scale: 'log' },
+      { key: 'F1', label: 'Storativity zone-1 F₁',    unit: '-', min: 0.01, max: 100,  default: 1.0, scale: 'log' },
+      { key: 'F2', label: 'Storativity zone-2 F₂',    unit: '-', min: 0.01, max: 100,  default: 1.0, scale: 'log' },
+      { key: 'F3', label: 'Storativity zone-3 F₃',    unit: '-', min: 0.01, max: 100,  default: 1.0, scale: 'log' }
     ],
-    reference: 'Research-grade composite (no single ref); refines #9 radial composite — see source header.',
+    refLength: 'rw',
+    defaultFrozen: ['M1', 'F1'],
+    reference: 'Composite simplification refining #9 radial composite — see source header.',
     category: 'composite',
-    description: 'General heterogeneity radial composite — 3-zone refinement of #9. SIMPLIFICATION: two interfaces (R₁, R₂) only; up to 9 piecewise-linear discontinuities in the textbook spec are NOT implemented. Recursive K0/I0 matching at each interface, exact 4x4 closed form reduced to a sequence of two 2x2 systems.',
+    description: 'General heterogeneity radial composite — 3-zone refinement of #9 (interfaces R₁, R₂). Exact Laplace solution via a scaled-Bessel impedance cascade; zone mobilities/storativities relative to the reference.',
     kind: 'pressure'
   }
 };
 
 
-// install in window.PRiSM_MODELS, additive (do NOT replace existing entries)
+// install in window.PRiSM_MODELS, additive (never replace the registry object)
 (function _installRegistry() {
-  var g = (typeof window !== 'undefined') ? window
-        : (typeof globalThis !== 'undefined' ? globalThis : {});
+  var g = _win();
   if (!g.PRiSM_MODELS) g.PRiSM_MODELS = {};
   for (var key in REGISTRY_ADDITIONS) {
     if (REGISTRY_ADDITIONS.hasOwnProperty(key)) {
       g.PRiSM_MODELS[key] = REGISTRY_ADDITIONS[key];
     }
   }
-  // expose evaluators on the global namespace for direct reference / debugging
   g.PRiSM_model_twoLayerXF              = PRiSM_model_twoLayerXF;
   g.PRiSM_model_twoLayerXF_pd_prime     = PRiSM_model_twoLayerXF_pd_prime;
   g.PRiSM_model_radialComposite         = PRiSM_model_radialComposite;
@@ -1254,28 +969,18 @@ var REGISTRY_ADDITIONS = {
 
 
 // =============================================================================
-// SECTION 4 — Optional helpers exposed on window for plot overlays / regression
+// SECTION 4 — Optional helpers exposed on window for plot overlays
 // =============================================================================
 
-// Exported helper: radial-composite mobility / storativity diagnostic.  Given
-// (M, F, R), returns the early-time Pd asymptote (radial in inner zone) and
-// the late-time Pd asymptote (radial in equivalent kh).  Useful for type-
-// curve plot overlays where the user wants to see where the early / late
-// stabilisation values fall.  Both returned values are dimensionless.
+// Radial-composite derivative stabilisations (dimensionless): early 0.5
+// (inner zone), late 0.5·M (outer zone, pD normalised by the inner mobility).
 function PRiSM_radialComposite_asymptotes(params) {
   if (!params || typeof params !== 'object') return { early: NaN, late: NaN };
-  var M = params.M, F = params.F;
-  // Early-time: pure inner-zone radial — derivative stabilises at 0.5
-  // Late-time: outer-zone-dominated; effective mobility = harmonic average
-  // weighted by zone areas.  For an infinite outer zone the late-time
-  // derivative stabilises at 0.5 / M_late where M_late = M2 (referenced).
-  var M_late = (M > 0) ? 1.0 / M : 1;
-  return { early: 0.5, late: 0.5 * M_late };
+  var M = params.M;
+  return { early: 0.5, late: (_num(M) && M > 0) ? 0.5 * M : 0.5 };
 }
 
-// Exported helper: multi-layer kh-fraction sanity-check.  Given an array of
-// kh-fractions and storativity-fractions, returns whether the sum is close
-// to unity and the equivalent homogeneous Pd at td=10 (a quick diagnostic).
+// Multi-layer kh-fraction sanity-check.
 function PRiSM_multiLayer_diagnose(omegas, kappas) {
   if (!Array.isArray(omegas) || !Array.isArray(kappas)) {
     return { ok: false, reason: 'omegas and kappas must be arrays' };
@@ -1292,10 +997,8 @@ function PRiSM_multiLayer_diagnose(omegas, kappas) {
   return { ok: ok, sumOmega: sumOm, sumKappa: sumKa, N: omegas.length };
 }
 
-// publish helpers
 (function _publishHelpers() {
-  var g = (typeof window !== 'undefined') ? window
-        : (typeof globalThis !== 'undefined' ? globalThis : {});
+  var g = _win();
   g.PRiSM_radialComposite_asymptotes = PRiSM_radialComposite_asymptotes;
   g.PRiSM_multiLayer_diagnose        = PRiSM_multiLayer_diagnose;
 })();
@@ -1313,72 +1016,61 @@ function PRiSM_multiLayer_diagnose(omegas, kappas) {
 // =============================================================================
 // Pressure Reservoir Inversion & Simulation Model — Phase 6
 //
-// This module registers SIXTEEN advanced multi-well, multi-lateral, multi-
-// layer, and interference evaluators on window.PRiSM_MODELS. They extend
-// the Phase 1-5 single-well analytic library to (a) wells with cross-flow
-// between layers, (b) wells with multiple lateral or perforated branches,
-// and (c) observation-well pressure response from a flowing well at a known
-// (rxObs, thetaObs) coordinate.
+// This module registers SIXTEEN multi-well, multi-lateral, multi-layer and
+// interference evaluators on window.PRiSM_MODELS.
 //
-//   Model #  | key                          | Description
-//   ─────────┼───────────────────────────────┼──────────────────────────────────
-//   #13      | interference                  | Two-well interference (line-source + wbs/skin)
-//   #19      | mlHorizontalXF                | Horiz well in N-layer reservoir w/ XF
-//   #22      | mlNoXFFrac                    | Multi-layer no-XF, fractured layers
-//   #23      | mlNoXFHoriz                   | Multi-layer no-XF, horizontal layers
-//   #24      | inclinedMLXF                  | Inclined well in multi-layer w/ XF
-//   #25      | multiLatMLXF                  | Multi-lateral well in multi-layer
-//   #26      | mlMultiPerf                   | Multi-layer multi-perforation
-//   #27      | mlHorizInterference           | Two horiz wells in multi-layer
-//   #28      | mlMultiPerfInterference       | ML multi-perf interference
-//   #29      | inclinedInterference          | Two inclined wells (homog or DP)
-//   #31      | linearCompInterference        | Observation in linear-composite
-//   #32      | linearCompMultiLat            | Multi-lateral in linear-composite
-//   #34      | linearCompMultiLatInterference| Interference + multilat + linearComp
-//   #35      | generalMLNoXF                 | Heterogeneous N-layer no-XF
-//   #36      | mlInterferenceXF              | Off-well observation in ML w/ XF
-//   #37      | radialCompInterference        | Off-well observation in 2-zone radial composite
+//   Model #  | key                           | ref. length | Description
+//   ─────────┼───────────────────────────────┼─────────────┼──────────────────
+//   #13      | interference                  | rw  | Two-well interference
+//   #19      | mlHorizontalXF                | Lh  | Horizontal well, N layers, XF
+//   #22      | mlNoXFFrac                    | xf  | Commingled fractured layers
+//   #23      | mlNoXFHoriz                   | Lh  | Commingled horizontal layers
+//   #24      | inclinedMLXF                  | rw  | Inclined well, N layers, XF
+//   #25      | multiLatMLXF                  | Lh  | Multi-lateral well, N layers
+//   #26      | mlMultiPerf                   | rw  | Multi-perforation, N layers
+//   #27      | mlHorizInterference           | rw  | Horizontal producer → obs well
+//   #28      | mlMultiPerfInterference       | rw  | Multi-perf producer → obs
+//   #29      | inclinedInterference          | rw  | Two inclined wells
+//   #31      | linearCompInterference        | rw  | Obs in linear composite
+//   #32      | linearCompMultiLat            | Lh  | Multi-lateral, linear comp.
+//   #34      | linearCompMultiLatInterference| rw  | Multi-lateral → obs, lin. comp.
+//   #35      | generalMLNoXF                 | rw  | Heterogeneous commingled layers
+//   #36      | mlInterferenceXF              | rw  | Obs in N-layer XF reservoir
+//   #37      | radialCompInterference        | rw  | Obs in radial composite
 //
 // REFERENCES (primary):
-//   • Ogbe, D.O., Brigham, W.E. — SPE 13253 (1984), Pulse-test interference
-//   • Kuchuk, F.J. — SPE 22731 (1991), "Multilayer Transient Pressure Analysis"
-//   • Kuchuk & Wilkinson — SPE 18125 (1989), "Transient Behavior of Wells in
-//        Commingled (No-Crossflow) Layered Reservoirs"
-//   • Cinco, Miller, Ramey — JPT November 1975 (inclined wells)
+//   • Ogbe, D.O., Brigham, W.E. — SPE 13253 (1984), interference testing
+//   • Kuchuk, F.J. — SPE 22731 (1991), multilayer transient analysis
+//   • Kuchuk & Wilkinson — SPE 18125, commingled layered reservoirs
+//   • Ozkan, E., Raghavan, R. — SPE Formation Evaluation (1991), source
+//        functions for horizontal wells (Laplace domain)
+//   • Cinco-Ley, Miller, Ramey — JPT Nov 1975 (slanted wells)
+//   • Brons & Marting (1961) partial-penetration pseudo-skin
 //   • Lefkovits & Hazebroek — SPEJ 1961 (commingled layered reservoirs)
-//   • Bourdet, D. — Well Test Analysis: Use of Advanced Interpretation Models
-//        (2002 textbook, Elsevier) — for interference & composite kernels
 //
-// CONVENTIONS (identical to Phase 3-5):
-//   • Universal evaluator signature: PRiSM_model_<name>(td, params) → pd
-//   • Bourdet derivative signature : PRiSM_model_<name>_pd_prime(td, params)
-//   • Single outer IIFE.
-//   • All public symbols PRiSM_*  +  registry merged onto window.PRiSM_MODELS.
-//   • Stehfest order N=12, image-cap 200, image-tol 1e-9.
-//   • Foundation primitives accessed via window.* with `_foundation()` shim
-//     so that the self-test below can stub them when running standalone.
+// NUMERICS (WP4b):
+//   • Smooth, exponentially scaled Bessel functions and ∫K0 (local), so the
+//     Stehfest inversion is accurate to ~1e-8 and never overflows.
+//   • Horizontal wells use the Ozkan-Raghavan uniform-flux line source between
+//     no-flow planes (window.PRiSM_lap_horizontal when present and consistent,
+//     else the local kernel).  The geometry is in the kernel: the old additive
+//     "Sg" / "−ln(nLegs)" pseudo-skins are gone.  Multi-laterals superpose the
+//     laterals (uniform rate split, averaged wellbore pressure).
+//   • Multi-layer cross-flow factor is the smooth Warren-Root form per layer
+//     (no hard clamp): f(s) = Σ κ_i·[ω_i(1−ω_i)s + λ_i]/[(1−ω_i)s + λ_i].
+//   • WBS + skin fold is valid for negative skin: rw-referenced models use the
+//     effective-wellbore-radius transform; horizontal (Lh) models move the
+//     wellbore-radius offset of the kernel (rw → rw·e^−s_m).
+//   • Interference (observation) models switch to the line-source shape
+//     E1(rD²/4tD) for tD/rD² < 0.2, scaled to the Laplace value at the switch
+//     (continuous, monotone), and zero-clamp |values| < 1e-10.
+//   • Pseudo-skins: Brons-Marting (perforations), Cinco-Ley (inclination),
+//     taken from window.PRiSM_pseudoSkin when present.
 //
-// MODELLING APPROXIMATIONS (documented inline at each model):
-//   • Multi-layer XF — Kuchuk SPE 22731 "PSS-coupled" reduction. We use
-//     reservoir admittance Y(s) = Σ (kh_i/μ) · y_i(s) where y_i is the layer
-//     pressure-influence function. PSS XF is governed by per-layer λ_i.
-//     Full transient XF requires solving an N×N matrix in Laplace space; we
-//     use the diagonal-dominant PSS reduction that recovers the kh-weighted
-//     limit at large td and the early-time fastest-layer behaviour.
-//   • Multi-lateral wells — modelled as Nleg parallel horizontal segments
-//     with line-source superposition between leg endpoints. NOT full
-//     Joshi-Babu finite-conductivity coupling.
-//   • Inclined-well interference — phenomenological blend of a vertical
-//     line-source kernel and a horizontal-projection kernel weighted by
-//     cos(θ). Captures the angular dependence but not the finite-length
-//     wellbore signature exactly.
-//   • Multi-perforation — superposition of partial-penetration source
-//     functions placed at user-specified depths zi.
-//   • #35 generalMLNoXF — kh-weighted commingled sum with per-layer
-//     dispatch to one of {homogeneous, fracture, horizontal, composite,
-//     linearComp} base evaluators. Layer evaluators must already be
-//     registered (we guard with typeof checks).
-//
+// CONVENTIONS: PRiSM_model_<name>(td, params) → pd;
+//   PRiSM_model_<name>_pd_prime(td, params) → td·dpd/dtd.  Single outer IIFE;
+//   registry merged onto window.PRiSM_MODELS.  Parameters starting with "__"
+//   (e.g. __h_rw = h/rw, default 100) are injected by the physical wrapper.
 // =============================================================================
 
 (function () {
@@ -1388,9 +1080,6 @@ function PRiSM_multiLayer_diagnose(omegas, kappas) {
 // SECTION 1 — Shared helpers & primitives
 // =============================================================================
 
-// Resolve a foundation primitive by name. Foundation runs first in the host
-// page; in the standalone self-test we stub the names directly on window
-// before this IIFE runs.
 function _foundation(name) {
     var g = (typeof window !== 'undefined') ? window
           : (typeof globalThis !== 'undefined' ? globalThis : {});
@@ -1398,22 +1087,13 @@ function _foundation(name) {
     try { return eval(name); } catch (e) { return null; }
 }
 
-// Phase-3/4/5 model dispatch — for #35 generalMLNoXF.
-function _registry() {
-    var g = (typeof window !== 'undefined') ? window
-          : (typeof globalThis !== 'undefined' ? globalThis : {});
-    return g.PRiSM_MODELS || {};
+function _win() {
+    return (typeof window !== 'undefined') ? window
+         : (typeof globalThis !== 'undefined' ? globalThis : {});
 }
 
-// ------------------------------------------------------------------ constants
-var STEHFEST_N      = 12;
-var IMAGE_CAP       = 200;
-var IMAGE_TOL       = 1e-9;
-var DERIV_REL_STEP  = 1e-3;
 var BIG             = 1e30;
-var SMALL_S         = 1e-30;
 
-// ------------------------------------------------------------------ guards
 function _num(v) {
     return (typeof v === 'number') && isFinite(v) && !isNaN(v);
 }
@@ -1448,121 +1128,407 @@ function _requireParams(params, keys) {
     }
 }
 
-function _arrayMap(td, fn) {
-    if (Array.isArray(td)) {
-        var out = new Array(td.length);
-        for (var i = 0; i < td.length; i++) out[i] = fn(td[i]);
-        return out;
-    }
-    return fn(td);
-}
+function _posOr(v, d) { return (_num(v) && v > 0) ? v : d; }
 
-// Standard wellbore-storage + skin folding (Agarwal-Ramey / Bourdet-Gringarten):
-//   Pwd_lap = (s · Pres_lap + S) / [s · (1 + Cd·s·(s·Pres_lap + S))]
-function _foldWbsSkin(pdResLap, s, Cd, S) {
-    var inner = s * pdResLap + S;
-    var denom = s * (1 + Cd * s * inner);
-    if (!_num(denom) || denom === 0) return BIG;
-    return inner / denom;
-}
+// h/rw (injected by the physical wrapper as __h_rw; default 100)
+function _hOverRw(params) { return _posOr(params && params.__h_rw, 100); }
 
-// Stehfest evaluation of a Laplace-domain Pres function with WBS+skin folding.
-function _stehfestEval(pdResLapFn, td, Cd, S) {
-    var stehfest = _foundation('PRiSM_stehfest');
-    if (!stehfest) {
-        throw new Error('PRiSM_stehfest() missing — foundation file not loaded');
-    }
-    var Fhat = function (s) { return _foldWbsSkin(pdResLapFn(s), s, Cd, S); };
-    return _arrayMap(td, function (t) { return stehfest(Fhat, t, STEHFEST_N); });
-}
-
-// Stehfest evaluation of an arbitrary Laplace-domain function (NO folding).
-// Used for off-well observation models where we evaluate the reservoir
-// kernel directly at the observation point.
-function _stehfestEvalRaw(LapFn, td) {
-    var stehfest = _foundation('PRiSM_stehfest');
-    if (!stehfest) {
-        throw new Error('PRiSM_stehfest() missing — foundation file not loaded');
-    }
-    return _arrayMap(td, function (t) { return stehfest(LapFn, t, STEHFEST_N); });
-}
-
-// Numerical 5-point central log-derivative td · dPd/d(ln td).
-function _numericLogDeriv(pdFn, td, params) {
-    var h = DERIV_REL_STEP;
-    var lnTd = Math.log(td);
-    var f_m2 = pdFn(Math.exp(lnTd - 2 * h), params);
-    var f_m1 = pdFn(Math.exp(lnTd -     h), params);
-    var f_p1 = pdFn(Math.exp(lnTd +     h), params);
-    var f_p2 = pdFn(Math.exp(lnTd + 2 * h), params);
-    return (-f_p2 + 8 * f_p1 - 8 * f_m1 + f_m2) / (12 * h);
-}
-
-// Safe Bessel K0 wrapper that returns 0 for very large argument (instead of
-// underflowing to NaN). K0(x) ~ sqrt(π/2x)·e^-x for large x.
-function _safeK0(x) {
-    var K0 = _foundation('PRiSM_besselK0');
-    if (!K0) throw new Error('PRiSM_besselK0 missing');
-    if (x <= 0 || !isFinite(x)) return BIG;
-    if (x > 200) return 0;   // exponentially negligible
-    return K0(x);
-}
-
-function _safeK1(x) {
-    var K1 = _foundation('PRiSM_besselK1');
-    if (!K1) throw new Error('PRiSM_besselK1 missing');
-    if (x <= 0 || !isFinite(x)) return BIG;
-    if (x > 200) return 0;
-    return K1(x);
-}
-
-// Effective radial distance from the flowing well centre to an observation
-// point at (rx, theta_deg) where rx is in units of well radius and theta is
-// measured from the +x axis. Used by all interference models.
-//
-// In a homogeneous radial system the line-source pressure at distance r is:
-//
-//      pd(rD, td) = -0.5 · Ei(-rD^2 / (4·td))   (Theis 1935)
-//      Pd_lap(s)  = K0(rD · sqrt(s)) / s        (Laplace-domain form)
-//
-// where rD = r/rw is dimensionless distance.
+// Observation point from (rxObs, thetaObs) in rw units.
 function _rdFromObs(rxObs, thetaDeg) {
-    // For a single flowing well at the origin, the observation pressure
-    // depends only on |r| not on θ in a fully symmetric case. θ becomes
-    // relevant only when there are multiple flowing sources or anisotropy.
-    // We expose θ for compatibility with multi-source kernels.
     if (rxObs == null || !_num(rxObs) || rxObs <= 0) {
         throw new Error('rxObs must be > 0 (got ' + rxObs + ')');
     }
-    var th = (thetaDeg == null) ? 0 : (thetaDeg * Math.PI / 180);
+    var th = (thetaDeg == null || !_num(thetaDeg)) ? 0 : (thetaDeg * Math.PI / 180);
     return { rD: rxObs, theta: th, x: rxObs * Math.cos(th), y: rxObs * Math.sin(th) };
 }
 
-// Distance between two points (xa,ya) and (xb,yb).
-function _dist(xa, ya, xb, yb) {
-    var dx = xa - xb, dy = ya - yb;
-    return Math.sqrt(dx * dx + dy * dy);
+// =============================================================================
+// SECTION 0 — Numerics (WP4b): smooth scaled Bessel functions, Stehfest,
+//             wellbore-storage + skin fold
+// =============================================================================
+//
+// Why local Bessel functions: the Abramowitz-Stegun polynomial fits switch
+// formula at x = 2 (K) and x = 3.75 (I) with ~1e-7 jumps.  Stehfest (N = 12,
+// weights up to 8e6) amplifies such jumps into percent-level pwd errors when
+// the 12 sample points straddle a breakpoint (3.7 % measured at Cd = 0.01).
+// The forms below (power series / continued fraction / Hankel series, each
+// used only where it is accurate to machine precision) agree to ~1e-14 across
+// their switch points and are exponentially scaled, so they never over- or
+// underflow.
+// =============================================================================
+
+var _EULER = 0.5772156649015329;
+
+// K_nu(x)·e^x for nu ∈ {0,1}, x > 0 (all branches accurate to ~1e-15):
+//   x < 2       : power series (K0: −(ln(x/2)+γ)·I0 + Σ q^k/(k!)²·H_k; K1 likewise)
+//   2 ≤ x ≤ 30  : Steed / Temme continued fraction CF2 (Numerical Recipes bessik)
+//   x > 30      : Hankel asymptotic series, optimally truncated (error < e^-60)
+function _Kse(nu, x) {
+  if (!(x > 0)) return Infinity;
+  if (x === Infinity) return 0;
+  if (x > 30) {
+    var mu = 4 * nu * nu, a = 1, s = 1, prev = Infinity;
+    for (var j = 1; j < 80; j++) {
+      a *= (mu - (2 * j - 1) * (2 * j - 1)) / (j * 8 * x);
+      var at = Math.abs(a);
+      if (at > prev) break;
+      s += a; prev = at;
+      if (at < 1e-17) break;
+    }
+    return s * Math.sqrt(Math.PI / (2 * x));
+  }
+  if (x < 2) {
+    var q = 0.25 * x * x, lx = Math.log(0.5 * x);
+    if (!nu) {
+      // K0 = −(ln(x/2)+γ)·I0 + Σ_{k≥1} q^k/(k!)²·H_k
+      var t = 1, I0 = 1, S = 0, H = 0;
+      for (var k = 1; k < 60; k++) { t *= q / (k * k); H += 1 / k; I0 += t; S += t * H; if (t < 1e-18) break; }
+      return (-(lx + _EULER) * I0 + S) * Math.exp(x);
+    }
+    // K1 = 1/x + ln(x/2)·I1 − (x/4)·Σ_{k≥0} (ψ(k+1)+ψ(k+2))·q^k/(k!(k+1)!)
+    var tk = 1, I1s = 1, S1 = (-_EULER) + (1 - _EULER), Hk = 0;
+    for (var k2 = 1; k2 < 60; k2++) {
+      tk *= q / (k2 * (k2 + 1));
+      Hk += 1 / k2;
+      I1s += tk;
+      S1 += tk * ((-_EULER + Hk) + (-_EULER + Hk + 1 / (k2 + 1)));
+      if (tk < 1e-18) break;
+    }
+    var I1 = 0.5 * x * I1s;
+    return (1 / x + lx * I1 - 0.25 * x * S1) * Math.exp(x);
+  }
+  // 2 ≤ x ≤ 30: Steed's continued fraction CF2 (Temme), nu = 0 → K0e, K1e
+  var b = 2 * (1 + x), d = 1 / b, h = d, delh = d, q1 = 0, q2 = 1, a1 = 0.25;
+  var qq = a1, c = a1, aa = -a1, ss = 1 + qq * delh;
+  for (var i = 2; i < 1000; i++) {
+    aa -= 2 * (i - 1);
+    c = -aa * c / i;
+    var qnew = (q1 - b * q2) / aa;
+    q1 = q2; q2 = qnew;
+    qq += c * qnew;
+    b += 2;
+    d = 1 / (b + aa * d);
+    delh = (b * d - 1) * delh;
+    h += delh;
+    var dels = qq * delh;
+    ss += dels;
+    if (Math.abs(dels / ss) < 1e-17) break;
+  }
+  h = a1 * h;
+  var k0e = Math.sqrt(Math.PI / (2 * x)) / ss;
+  return nu ? k0e * (x + 0.5 - h) / x : k0e;
+}
+function _K0e(x) { return _Kse(0, x); }
+function _K1e(x) { return _Kse(1, x); }
+
+// I_nu(x)·e^-x for nu ∈ {0,1}: power series for x ≤ 15, Hankel series above.
+function _Ise(nu, x) {
+  x = Math.abs(x);
+  if (x <= 15) {
+    var q = 0.25 * x * x, term = nu ? 0.5 * x : 1, sum = term;
+    for (var k = 1; k < 200; k++) {
+      term *= q / (k * (k + nu));
+      sum += term;
+      if (term < 1e-17 * sum) break;
+    }
+    return sum * Math.exp(-x);
+  }
+  var mu = 4 * nu * nu, a = 1, s = 1, prev = Infinity;
+  for (var j = 1; j < 60; j++) {
+    a *= -(mu - (2 * j - 1) * (2 * j - 1)) / (j * 8 * x);
+    var at = Math.abs(a);
+    if (at > prev) break;
+    s += a; prev = at;
+    if (at < 1e-17) break;
+  }
+  return s / Math.sqrt(2 * Math.PI * x);
+}
+function _I0e(x) { return _Ise(0, x); }
+function _I1e(x) { return _Ise(1, x); }
+
+// Finite-wellbore well term K0(x) / (x·K1(x)) — scale factors cancel.
+function _wellTerm(x) { return _K0e(x) / (x * _K1e(x)); }
+
+// ---- Stehfest (N = 12) ----------------------------------------------------
+var _SW12 = (function () {
+  var N = 12, f = [1], w = [];
+  for (var i = 1; i <= N; i++) f[i] = f[i - 1] * i;
+  for (var n = 1; n <= N; n++) {
+    var s = 0;
+    for (var k = Math.floor((n + 1) / 2); k <= Math.min(n, N / 2); k++) {
+      s += Math.pow(k, N / 2) * f[2 * k] /
+           (f[N / 2 - k] * f[k] * f[k - 1] * f[n - k] * f[2 * k - n]);
+    }
+    w.push(((n + N / 2) % 2 === 0 ? 1 : -1) * s);
+  }
+  return w;
+})();
+var _stehImpl;   // foundation PRiSM_stehfest (same weights), resolved lazily
+function _steh(F, t) {
+  if (_stehImpl === undefined) _stehImpl = _foundation('PRiSM_stehfest') || null;
+  if (_stehImpl) return _stehImpl(F, t, 12);
+  var a = Math.LN2 / t, s = 0;
+  for (var i = 1; i <= 12; i++) s += _SW12[i - 1] * F(i * a);
+  return a * s;
 }
 
+// ---- Wellbore storage + skin fold ------------------------------------------
+//   p̄wD(s) = (s·p̄ + S) / ( s·(1 + Cd·s·(s·p̄ + S)) )     (Agarwal-Ramey 1970)
+// p̄(s) is the unit-rate reservoir response at the well, built with the
+// FINITE-wellbore well term, so pwd → td/Cd at early time.
+//
+// Negative skin: for S < 0 the fold has a real positive pole wherever
+// s·p̄ + S = −1/(Cd·s); Stehfest then returns garbage.  We use the effective-
+// wellbore-radius transform (rwa = rw·e^−S): evaluate with S = 0 at
+// tDa = td·e^{2S}, CDa = Cd·e^{2S}; the kernel receives sc = e^{S} and scales
+// its rw-normalised distances by sc and rw²-normalised coefficients (λ) by
+// 1/sc².  Late time is exactly 0.5(ln td + 0.80907) + S.
+function _foldTransform(Cd, S) {
+  Cd = _num(Cd) && Cd > 0 ? Cd : 0;
+  S = _num(S) ? S : 0;
+  if (S < 0) {
+    var sc = Math.exp(S);
+    return { sc: sc, tf: sc * sc, Cd: Cd * sc * sc, S: 0 };
+  }
+  return { sc: 1, tf: 1, Cd: Cd, S: S };
+}
+function _foldF(lap, Cd, S) {
+  return function (s) {
+    var g = s * lap(s) + S;
+    if (!(Cd > 0)) return g / s;
+    return g / (s * (1 + Cd * s * g));
+  };
+}
+// Optional delegation to the shared export (WP4a, 03-models.js).  It is
+// called only in the unambiguous S ≥ 0 form (after our own transform) and its
+// first value is cross-checked against the local inversion.
+function _extFold(lap, tArr, Cd, S, F) {
+  var ext = _win().PRiSM_evalWbsSkin;
+  if (typeof ext !== 'function' || !tArr.length) return null;
+  try {
+    var r = ext(lap, tArr.slice(), Cd, S, {});
+    if (!r || r.length !== tArr.length) return null;
+    for (var i = 0; i < r.length; i++) if (!_num(r[i])) return null;
+    var chk = _steh(F, tArr[0]);
+    if (!(Math.abs(r[0] - chk) <= 2e-3 * Math.max(Math.abs(chk), 1e-12))) return null;
+    var out = new Array(r.length);
+    for (var j = 0; j < r.length; j++) out[j] = r[j];
+    return out;
+  } catch (e) { return null; }
+}
+// lapFn(s, sc) → p̄(s).  Returns pwd (deriv false) or td·dpwd/dtd (deriv true,
+// from the Laplace identity L[t·f'] = t·L^-1[s·F(s)] since pwd(0) = 0).
+// localOnly: never delegate (kernels that depend on the inversion context).
+function _evalWbsSkin(lapFn, td, Cd, S, deriv, localOnly) {
+  var isArr = Array.isArray(td), arr = isArr ? td : [td];
+  var T = _foldTransform(Cd, S);
+  var lap = function (s) { return lapFn(s, T.sc); };
+  var F = _foldF(lap, T.Cd, T.S);
+  var tArr = new Array(arr.length);
+  for (var i = 0; i < arr.length; i++) tArr[i] = arr[i] * T.tf;
+  var out = null;
+  if (!deriv && !localOnly) out = _extFold(lap, tArr, T.Cd, T.S, F);
+  if (!out) {
+    out = new Array(arr.length);
+    var Fd = deriv ? function (s) { return s * F(s); } : null;
+    for (var k = 0; k < arr.length; k++) {
+      out[k] = deriv ? tArr[k] * _steh(Fd, tArr[k]) : _steh(F, tArr[k]);
+    }
+  }
+  for (var m = 0; m < out.length; m++) {          // round-off below 1e-10 → 0
+    if (out[m] < 0 && out[m] > -1e-10) out[m] = 0;
+  }
+  return isArr ? out : out[0];
+}
+
+// ---- Stehfest context --------------------------------------------------------
+// The horizontal-well kernel chooses its series representation and truncation
+// from the Laplace-variable range of the current inversion ([ln2/t, 12·ln2/t]),
+// so every sample of one inversion uses the same representation (a smooth
+// error in s; Stehfest amplifies jumps, not smooth errors).
+var _ctx = null;
+var _stehBase = _steh;
+_steh = function (F, t) {
+    var prev = _ctx;
+    _ctx = { sMin: Math.LN2 / t, sMax: 12 * Math.LN2 / t };
+    try { return _stehBase(F, t); } finally { _ctx = prev; }
+};
+function _uRange(uOf, u) {
+    if (!_ctx) return { lo: u, hi: u };
+    var a = uOf(_ctx.sMin), b = uOf(_ctx.sMax);
+    return { lo: Math.min(a, b, u), hi: Math.max(a, b, u) };
+}
+
+// ---- Pseudo-skins (shared export preferred) ---------------------------------
+function _pseudoLib() {
+    var lib = _win().PRiSM_pseudoSkin;
+    return (lib && typeof lib === 'object') ? lib : null;
+}
+function _bronsMartingLocal(b, hD) {
+    if (!_num(b) || !_num(hD) || b <= 0 || b >= 1 || hD <= 0) return 0;
+    var G = 2.948 - 7.363 * b + 11.45 * b * b - 4.675 * b * b * b;
+    return Math.max(0, (1 / b - 1) * (Math.log(hD) - G));
+}
+function _bronsMarting(b, hD) {
+    var lib = _pseudoLib();
+    if (lib && typeof lib.bronsMarting === 'function') {
+        try { var v = lib.bronsMarting(b, hD); if (_num(v)) return v; } catch (e) { /* local */ }
+    }
+    return _bronsMartingLocal(b, hD);
+}
+// Cinco-Ley, Miller & Ramey (1975) slant pseudo-skin, θ in degrees:
+//   θ' = atan(√(kv/kh)·tan θ);  S_θ = −(θ'/41)^2.06 − (θ'/56)^1.865·log10(hD/100)
+//   hD = (h/rw)·√(kh/kv)
+function _cincoLeyLocal(thetaDeg, kvkh, hD) {
+    if (!_num(thetaDeg) || thetaDeg <= 0) return 0;
+    var th = Math.min(thetaDeg, 89.9) * Math.PI / 180;
+    var thp = Math.atan(Math.sqrt(_posOr(kvkh, 1)) * Math.tan(th)) * 180 / Math.PI;
+    var hd = _posOr(hD, 100);
+    return -Math.pow(thp / 41, 2.06) - Math.pow(thp / 56, 1.865) * (Math.log(hd / 100) / Math.LN10);
+}
+function _cincoLey(thetaDeg, kvkh, hD) {
+    var lib = _pseudoLib();
+    if (lib && typeof lib.cincoLey === 'function') {
+        try { var v = lib.cincoLey(thetaDeg, kvkh, hD); if (_num(v)) return v; } catch (e) { /* local */ }
+    }
+    return _cincoLeyLocal(thetaDeg, kvkh, hD);
+}
+
+// ---- ∫K0, E1, Gauss-Legendre, line-source integrals ---------------------------
+// Ki(z) = ∫_0^z K0(t) dt: exact power series for z ≤ 12, π/2 − tail above.
+function _KiSeries(z) {
+    var hz = 0.5 * z, lz = Math.log(hz), q = hz * hz;
+    var pw = 2 * hz, inv = 1, H = 0, sum = 0;
+    for (var k = 0; k < 200; k++) {
+        if (k > 0) { pw *= q; inv /= (k * k); H += 1 / k; }
+        var m = 2 * k + 1;
+        var term = inv * pw / m * (H - _EULER - lz + 1 / m);
+        sum += term;
+        if (k > 3 && Math.abs(term) < 1e-17 * Math.abs(sum)) break;
+    }
+    return sum;
+}
+function _KicAsym(z) {   // ∫_z^∞ K0, z > 12
+    var iz = 1 / z;
+    return Math.sqrt(Math.PI / (2 * z)) * Math.exp(-z) *
+        (1 + iz * (-0.625 + iz * (1.0078125 + iz * (-2.5927734375 + iz * 9.186859130859375))));
+}
+function _Ki(z)  { if (!(z > 0)) return 0; return z <= 12 ? _KiSeries(z) : Math.PI / 2 - _KicAsym(z); }
+function _Kic(z) { if (!(z > 0)) return Math.PI / 2; return z <= 12 ? Math.PI / 2 - _KiSeries(z) : _KicAsym(z); }
+
+// E1(x), x > 0 (series ≤ 1, continued fraction above).
+function _E1(x) {
+    if (!(x > 0) || !isFinite(x)) return (x === Infinity) ? 0 : NaN;
+    if (x <= 1.0) {
+        var sum = 0, term = 1;
+        for (var n = 1; n <= 60; n++) {
+            term *= -x / n;
+            var add = -term / n;
+            sum += add;
+            if (Math.abs(add) < 1e-16 * Math.abs(sum)) break;
+        }
+        return -Math.log(x) - _EULER + sum;
+    }
+    var TINY = 1e-300, b = x + 1.0, c = 1.0 / TINY, d = 1.0 / b, h = d;
+    for (var i = 1; i <= 200; i++) {
+        var a = -i * i;
+        b += 2.0;
+        d = 1.0 / (a * d + b); if (d === 0) d = TINY;
+        c = b + a / c;          if (c === 0) c = TINY;
+        var delta = c * d;
+        h *= delta;
+        if (Math.abs(delta - 1.0) < 1e-14) break;
+    }
+    return h * Math.exp(-x);
+}
+
+var _GLC = {};
+function _GL(n) {
+    if (_GLC[n]) return _GLC[n];
+    var x = [], w = [];
+    for (var i = 1; i <= n; i++) {
+        var z = Math.cos(Math.PI * (i - 0.25) / (n + 0.5)), pp = 1;
+        for (var it = 0; it < 100; it++) {
+            var p1 = 1, p2 = 0;
+            for (var j = 1; j <= n; j++) { var p3 = p2; p2 = p1; p1 = ((2 * j - 1) * z * p2 - (j - 1) * p3) / j; }
+            pp = n * (z * p1 - p2) / (z * z - 1);
+            var z1 = z; z = z1 - p1 / pp;
+            if (Math.abs(z - z1) < 1e-15) break;
+        }
+        x.push(z); w.push(2 / ((1 - z * z) * pp * pp));
+    }
+    return (_GLC[n] = { x: x, w: w });
+}
+function _glInt(f, a, b, n) {
+    var g = _GL(n), m = 0.5 * (b + a), r = 0.5 * (b - a), s = 0;
+    for (var i = 0; i < g.x.length; i++) s += g.w[i] * f(m + r * g.x[i]);
+    return s * r;
+}
+// ∫ g(√(τ² + y²)) dτ over τ = α − x, α ∈ [−1, 1], with the substitution
+// τ = y·sinh w (smooth integrand even when y ≪ 1).  The interval is split at
+// τ = 0 when the point projects onto the segment (|x| < 1).  wCap bounds w
+// where the integrand has decayed by e^-40 relative to its peak (a smooth
+// function of the Laplace variable, so Stehfest sees a smooth error).
+function _segInt(gOfW, x, y, n, wCap) {
+    var t0 = -1 - x, t1 = 1 - x;
+    var cap = (wCap > 0) ? wCap : Infinity;
+    function piece(a, b) {                     // 0 ≤ a < b
+        if (!(b > a)) return 0;
+        var lo = Math.asinh(a / y), hi = Math.min(Math.asinh(b / y), cap);
+        if (!(hi > lo)) return 0;
+        return _glInt(gOfW, lo, hi, n);
+    }
+    if (t0 >= 0) return piece(t0, t1);
+    if (t1 <= 0) return piece(-t1, -t0);
+    return piece(0, -t0) + piece(0, t1);
+}
+// ∫_{-1}^{1} K0(k·√((x−α)² + y²)) dα, y > 0
+function _lineK0(k, x, y) {
+    if (!(k > 0)) return 0;
+    y = Math.max(y, 1e-9);
+    var ky = k * y;
+    if (ky > 60) return 0;                     // < e^-60 of the near-well terms
+    return _segInt(function (w) {
+        var c = Math.cosh(w), z = ky * c;
+        return z > 700 ? 0 : _K0e(z) * Math.exp(-z) * y * c;
+    }, x, y, 32, Math.acosh(1 + 40 / ky));
+}
+// ∫_{-1}^{1} exp(−k·R)/R dα, R = √((x−α)² + ρ²)
+function _lineExp(k, x, rho) {
+    rho = Math.max(rho, 1e-12);
+    var kr = k * rho;
+    return _segInt(function (w) {
+        var z = kr * Math.cosh(w);
+        return z > 700 ? 0 : Math.exp(-z);
+    }, x, rho, 40, kr > 0 ? Math.acosh(1 + 40 / kr) : Infinity);
+}
+// K0(y·r)/(y·K1(y)) — finite-wellbore-normalised line source at distance r
+// (r in wellbore radii; an observation point cannot lie inside the effective
+// wellbore, e.g. rD·e^S < 1 under a large negative skin, so r ≥ 1)
+function _kOverWell(y, r) {
+    r = Math.max(r, 1);
+    var ex = -y * (r - 1);
+    if (ex < -745) return 0;
+    if (ex > 700) ex = 700;
+    return _K0e(y * r) / (y * _K1e(y)) * Math.exp(ex);
+}
+
+
 // =============================================================================
-// SECTION 1.5 — Multi-layer Laplace coupling (Kuchuk SPE 22731)
+// SECTION 1.5 — Multi-layer cross-flow factor
 // =============================================================================
-// Cross-flow between N layers driven by per-layer interporosity coefficients
-// λ_i. We use the PSS-XF reduction (analogous to double-porosity PSS):
+// Layers carry storativity ω_i (fraction of total), conductivity κ_i = kh_i/Σkh
+// and a cross-flow coefficient λ_i.  Smooth Warren-Root form per layer:
 //
-//   Effective Laplace influence function for the flowing well in a layered
-//   reservoir with PSS XF:
+//   f(s) = Σ_i κ_i · [ω_i(1−ω_i)s + λ_i] / [(1−ω_i)s + λ_i]
 //
-//      f_layered(s) = Σ_i  ω_i · λ_i / (λ_i + s · ω_i · (1-ω_i))
-//
-//   then the homogeneous-equivalent pressure response is:
-//
-//      Pd_lap(s) = K0(sqrt(s · f_layered(s))) / s
-//
-//   This captures the late-time kh-weighted radial flow plus an intermediate
-//   "double-permeability" transition controlled by λ_i. Each layer carries
-//   storativity ω_i = (φ·ct·h)_i / Σ(φ·ct·h)_j and conductivity weight
-//   κ_i = (k·h)_i / Σ(k·h)_j (used for the kh-weighted no-XF limit).
+// f → Σ κ_i ω_i at early time (only the fast storage responds) and → 1 at late
+// time (kh-weighted radial flow).  One layer with κ = 1 is exactly the
+// Warren-Root double-porosity factor.  The previous form had f → 0 at early
+// time and relied on a hard clamp (min(1, max(f, 0.001))), which put kinks in
+// the transform and Stehfest noise in the derivative.  λ is referenced to the
+// model's own dimensionless time (rw² or Lh²) and scales by 1/sc² under the
+// negative-skin transform.
 // =============================================================================
 
 function _normaliseLayers(layers) {
@@ -1581,7 +1547,6 @@ function _normaliseLayers(layers) {
         if (!_num(lam) || lam < 0) throw new Error('PRiSM ML: layer ' + i + ' lambda must be ≥ 0');
         sumKh += kh; sumOmega += om;
     }
-    if (sumKh <= 0) throw new Error('PRiSM ML: total kh must be > 0');
     var norm = [];
     for (var j = 0; j < layers.length; j++) {
         var Lj = layers[j];
@@ -1594,59 +1559,306 @@ function _normaliseLayers(layers) {
             omega: (sumOmega > 0) ? om2 / sumOmega : (1 / layers.length),
             lambda: lam2,
             type: Lj.type || 'homogeneous',
-            // pass-through extras for #35
             extras: Lj.extras || {}
         });
     }
     return norm;
 }
 
-// PSS multi-layer Laplace influence factor f(s).
-//   f(s) = Σ κ_i · λ_i / (λ_i + s · ω_i · (1 - ω_i))
-// Designed so f(s) → 1 at large s (early time, no XF, fastest layer dominates)
-// and f(s) → Σ κ_i = 1 at small s (late time, kh-weighted radial).
-function _multiLayerXF_f(s, layers) {
+function _multiLayerXF_f(s, layers, sc) {
+    var inv2 = 1 / ((sc || 1) * (sc || 1));
     var f = 0;
-    var totKappa = 0;
     for (var i = 0; i < layers.length; i++) {
         var L = layers[i];
-        var lam = L.lambda;
         var om = Math.min(0.99, Math.max(0.01, L.omega));
-        var denom = lam + s * om * (1 - om);
-        var ratio = (lam <= 0) ? 1 : (lam / denom);
-        f += L.kappa * ratio;
-        totKappa += L.kappa;
+        var lam = L.lambda * inv2;
+        var den = (1 - om) * s + lam;
+        f += L.kappa * ((den > 0) ? (om * (1 - om) * s + lam) / den : om);
     }
-    // Renormalise — at very large s the ratio → 0, but physically we want the
-    // layered system to behave like the dominant layer at early time. Using
-    // the asymptotic "1" floor keeps the kernel finite and well-behaved.
-    if (f <= 0) return 1;
-    if (totKappa <= 0) return f;
-    // soft asymptote: f never exceeds 1 (at small s) and never below ~kappa_min
-    return Math.min(1, Math.max(f, 0.001));
+    return f > 0 ? f : 1;
+}
+function _multiLayerXF_fInf(layers) {
+    var f = 0;
+    for (var i = 0; i < layers.length; i++) f += layers[i].kappa * Math.min(0.99, Math.max(0.01, layers[i].omega));
+    return f > 0 ? f : 1;
 }
 
-// Multi-layer Laplace-domain pwd kernel (XF, well-centred at origin).
-function _pdLap_multiLayerXF(s, layers) {
-    var f = _multiLayerXF_f(s, layers);
-    var sf = s * f;
-    if (sf <= 0 || !_num(sf)) return BIG;
-    return _safeK0(Math.sqrt(sf)) / s;
+// Vertical well in the layered XF system (finite wellbore)
+function _pdLap_multiLayerXF(s, layers, sc) {
+    var sf = s * _multiLayerXF_f(s, layers, sc);
+    if (!(sf > 0) || !_num(sf)) return BIG;
+    return _wellTerm(Math.sqrt(sf)) / s;
 }
 
-// kh-weighted no-XF commingled Laplace kernel: each layer is independent;
-// total response is Σ κ_i · Pd_layer(s). Each layer's Pd is a standard
-// homogeneous K0(sqrt(s))/s with internal λ-dummy and ω parameters ignored.
-function _pdLap_multiLayerNoXF_homog(s, layers) {
-    var pd = 0;
-    for (var i = 0; i < layers.length; i++) {
-        var L = layers[i];
-        // each layer carries its own dimensionless time scale; here we
-        // assume that the user has normalised time consistently.
-        pd += L.kappa * _safeK0(Math.sqrt(s)) / s;
-    }
-    return pd;
+
+// =============================================================================
+// SECTION 1.6 — Horizontal-well kernel (Ozkan-Raghavan, Laplace domain)
+// =============================================================================
+// Uniform-flux line source of half-length Lh along x, at height zw in a slab
+// with no-flow top and bottom.  Lengths in Lh units, anisotropy through
+// LD = (Lh/h)·√(kv/kh).  With u the Laplace variable of the flow problem
+// (u = s, or s·f(s) with cross-flow) the well response is p̄ = H(u)/s:
+//
+//   H(u) = ½∫₋₁¹K0(√u|xD−α|)dα
+//          + Σ_{n≥1} cos(nπzD)cos(nπzwD) ∫₋₁¹K0(√(u+n²π²LD²)|xD−α|)dα
+//
+// evaluated at the infinite-conductivity equivalent point xD = 0.732 and
+// zD = zwD + rw/h (the wellbore wall).  Two exact representations are used:
+//   • eigen series (above) with the 1/n and u/n³ asymptotic terms summed in
+//     closed form / precomputed, for small-to-moderate u;
+//   • the image (Poisson-dual) form for large u (early time):
+//       H(u) = 1/(4LD) · Σ_images ∫₋₁¹ exp(−√u·R)/R dα
+// They agree to ~1e-10; the choice and the truncation are fixed for a whole
+// Stehfest inversion (see _ctx).  Early radial derivative 1/(4LD)
+// (= 0.5·(h/L)·√(kh/kv), L = 2Lh), late pseudo-radial derivative 0.5.
+// =============================================================================
+
+var _HZ_XD = 0.732;
+var _hzCache = {}, _hzCacheN = 0;
+
+function _hzGeom(LD, zw, dz, KvKh) {
+    zw = Math.min(0.98, Math.max(0.02, _num(zw) ? zw : 0.5));
+    var zD = Math.min(zw + dz, 0.999);
+    var key = LD + '|' + zw + '|' + zD + '|' + KvKh;
+    var g = _hzCache[key];
+    if (g) return g;
+    if (_hzCacheN > 400) { _hzCache = {}; _hzCacheN = 0; }
+    var d = zD - zw, sg = zD + zw;
+    var Cinf = -0.5 * (Math.log(Math.abs(2 * Math.sin(Math.PI * d / 2))) +
+                       Math.log(Math.abs(2 * Math.sin(Math.PI * sg / 2))));
+    var M = Math.min(200000, Math.max(20000, Math.ceil(50 / Math.max(d, 1e-6)))), S3 = 0;
+    for (var n = M; n >= 1; n--) S3 += Math.cos(n * Math.PI * zD) * Math.cos(n * Math.PI * zw) / (n * n * n);
+    g = { LD: LD, zw: zw, zD: zD, dz: d, KvKh: KvKh, xD: _HZ_XD, a: 1 + _HZ_XD, b: 1 - _HZ_XD,
+          Cinf: Cinf, S3: S3, piLD: Math.PI * LD, ext: undefined };
+    _hzCache[key] = g; _hzCacheN++;
+    return g;
 }
+
+function _hzSelfEigen(u, g, N) {
+    var su = Math.sqrt(u);
+    var H = (_Ki(su * g.a) + _Ki(su * g.b)) / (2 * su);
+    var sum = 0;
+    for (var n = 1; n <= N; n++) {
+        var cc = Math.cos(n * Math.PI * g.zD) * Math.cos(n * Math.PI * g.zw);
+        var nl = n * g.piLD, en = Math.sqrt(u + nl * nl);
+        var r = u / (nl * nl);
+        // π(1/ε_n − 1/nl) + π·u/(2 nl³) = (π/nl)(1/√(1+r) − 1 + r/2)
+        var alg = (r < 1e-3) ? (Math.PI / nl) * r * r * (0.375 - 0.3125 * r)
+                             : (Math.PI / nl) * (1 / Math.sqrt(1 + r) - 1 + 0.5 * r);
+        sum += cc * (alg - (_Kic(g.a * en) + _Kic(g.b * en)) / en);
+    }
+    var B = -Math.PI * u / (2 * g.piLD * g.piLD * g.piLD) * g.S3;
+    return H + sum + g.Cinf / g.LD + B;
+}
+
+function _hzSelfImage(u, g) {
+    var su = Math.sqrt(u), tot = 0, LD = g.LD;
+    for (var m = 0; m < 6000; m++) {
+        var any = false;
+        var list = (m === 0) ? [g.zD - g.zw, g.zD + g.zw]
+                             : [g.zD - g.zw - 2 * m, g.zD - g.zw + 2 * m, g.zD + g.zw - 2 * m, g.zD + g.zw + 2 * m];
+        for (var i = 0; i < list.length; i++) {
+            var rho = Math.abs(list[i]) / LD;
+            if (su * rho > 45) continue;
+            any = true;
+            tot += _lineExp(su, g.xD, rho);
+        }
+        if (!any && m > 0) break;
+    }
+    return tot / (4 * LD);
+}
+
+// Representation: image form when the images are far apart on the diffusion
+// scale (always for √u ≥ 20·LD) or when it needs far fewer operations than
+// the eigen series (thin-geometry / small-LD cases); fixed per inversion.
+function _hzSelfLocal(u, g, rng) {
+    var lo = rng ? rng.lo : u, hi = rng ? rng.hi : u;
+    var slo = Math.sqrt(lo);
+    if (slo >= 20 * g.LD) return _hzSelfImage(u, g);
+    var N = Math.ceil(60 * Math.sqrt(Math.max(hi, 1)) / g.piLD) + Math.ceil(40 / (g.b * g.piLD)) + 10;
+    var shells = (slo > 0) ? Math.ceil(45 * g.LD / (2 * slo)) + 1 : Infinity;
+    if (shells * 40 < N && shells < 5000) return _hzSelfImage(u, g);
+    return _hzSelfEigen(u, g, Math.min(N, 20000));
+}
+
+// Delegation to window.PRiSM_lap_horizontal(s, params) → p̄ (= H(s)/s) when it
+// exists and reproduces the local kernel for this geometry (checked once).
+function _hzExtParams(g) {
+    var kvkh = _posOr(g.KvKh, 1);
+    return { KvKh: kvkh, L_to_h: 2 * g.LD / Math.sqrt(kvkh), zw_to_h: g.zw,
+             __h_rw: 1 / Math.max(g.dz, 1e-9), Cd: 0, S: 0, S_perf: 0, S_global: 0 };
+}
+// Finite-wellbore correction: the line source evaluated at the wellbore wall
+// has the near-well term K0(z)/(2LD), z = √u·dz/LD; replacing it by the
+// cylinder form K0(z)/(z·K1(z))/(2LD) keeps s·p̄ ~ 1/√s at early time (so
+// storage is honoured and Stehfest stays well conditioned) and changes
+// nothing once √u·dz/LD ≪ 1.
+function _hzWellCorr(u, g) {
+    var z = Math.sqrt(u) * g.dz / g.LD;
+    if (!(z > 0)) return 0;
+    var k0e = _K0e(z);
+    return k0e * (1 / (z * _K1e(z)) - Math.exp(-z)) / (2 * g.LD);
+}
+function _hzSelf(u, g, rng) {
+    return _hzSelfLine(u, g, rng) + _hzWellCorr(u, g);
+}
+function _hzSelfLine(u, g, rng) {
+    var ext = _win().PRiSM_lap_horizontal;
+    if (typeof ext === 'function' && g.ext !== false) {
+        var P = _hzExtParams(g);
+        if (g.ext === undefined) {
+            g.ext = false;
+            try {
+                var ok = true, probes = [1e-3, 1, 100];
+                for (var i = 0; i < probes.length && ok; i++) {
+                    var pu = probes[i];
+                    var ve = pu * ext(pu, P), vl = _hzSelfLocal(pu, g, null);
+                    ok = _num(ve) && Math.abs(ve - vl) <= 1e-3 * Math.abs(vl);
+                }
+                g.ext = ok;
+            } catch (e) { g.ext = false; }
+        }
+        if (g.ext) {
+            try { var v = u * ext(u, P); if (_num(v) && v > 0) return v; } catch (e2) { /* local */ }
+        }
+    }
+    return _hzSelfLocal(u, g, rng);
+}
+
+// Kernel of another lateral (same zw, horizontal offset y > 0, Lh units),
+// evaluated at xD = 0.732 of the receiving lateral.  Converges exponentially
+// in n (e^{−nπLD·y}); the truncation depends on the geometry only.
+function _hzCross(u, g, y) {
+    var su = Math.sqrt(u);
+    var H = 0.5 * _lineK0(su, g.xD, y);
+    var N = Math.min(2000, Math.ceil(40 / (g.piLD * y)) + 2);
+    for (var n = 1; n <= N; n++) {
+        var c = Math.cos(n * Math.PI * g.zw);
+        var nl = n * g.piLD, en = Math.sqrt(u + nl * nl);
+        if (en * y > 60) break;                // all further terms vanish
+        H += c * c * _lineK0(en, g.xD, y);
+    }
+    return H;
+}
+// Vertically-averaged observation response (fully penetrating obs well) at
+// (x, y) Lh units from the lateral centre: the n = 0 term.
+function _hzObs(u, x, y) {
+    return 0.5 * _lineK0(Math.sqrt(u), x, Math.max(Math.abs(y), 1e-6));
+}
+
+// Lateral positions (Lh units), centred on y = 0
+function _legOffsets(nLegs, spacingLh) {
+    var ys = [];
+    for (var i = 0; i < nLegs; i++) ys.push((i - (nLegs - 1) / 2) * spacingLh);
+    return ys;
+}
+// Multi-lateral H: uniform rate split, averaged wellbore pressure
+//   H_ml = (1/n²)·[n·H_self + Σ_{i≠j} H_cross(|y_i − y_j|)]
+function _hzMulti(u, g, ys, rng) {
+    var n = ys.length;
+    var self = _hzSelf(u, g, rng);
+    if (n <= 1) return self;
+    var cross = 0, memo = {};
+    for (var i = 0; i < n; i++) {
+        for (var j = i + 1; j < n; j++) {
+            var dy = Math.abs(ys[i] - ys[j]), key = dy.toPrecision(12);
+            if (!(key in memo)) memo[key] = _hzCross(u, g, dy);   // equal spacings repeat
+            cross += 2 * memo[key];
+        }
+    }
+    return (n * self + cross) / (n * n);
+}
+
+// Horizontal geometry from params: LD, zw, rw/h offset, anisotropy
+function _hzParams(params, L_to_h_override) {
+    var KvKh = params.KvKh, L2h = (L_to_h_override != null) ? L_to_h_override : params.L_to_h;
+    if (!_num(KvKh) || KvKh <= 0) throw new Error('PRiSM horizontal: KvKh must be > 0');
+    if (!_num(L2h) || L2h <= 0) throw new Error('PRiSM horizontal: L_to_h must be > 0');
+    return { LD: 0.5 * L2h * Math.sqrt(KvKh), zw: _num(params.zw_to_h) ? params.zw_to_h : 0.5,
+             dz0: 1 / _hOverRw(params), KvKh: KvKh };
+}
+
+// Negative skin on a horizontal well (Lh-referenced): a mechanical skin s_m
+// adds s_m·c to s·p̄ where c = Σ(weights)/(2LD) is the coefficient of −ln(rw)
+// in the near-well term.  S < 0 is applied as rw → rw·e^{−s_m}, s_m = S/c
+// (capped so the wellbore wall stays well inside the layer and close to the
+// lateral compared with its length, dz ≤ 0.1·LD); any remainder uses
+// the generic transform in the fold.
+function _hzSkin(S, c, dz0, zw, LD) {
+    if (!(S < 0) || !(c > 0)) return { dz: dz0, S: S };
+    var sm = S / c;
+    var dzMax = Math.min(0.45 * Math.min(zw, 1 - zw), 0.1 * LD);
+    if (!(dzMax > dz0)) return { dz: dz0, S: S };
+    var dz = dz0 * Math.exp(-sm);
+    if (dz <= dzMax) return { dz: dz, S: 0 };
+    var used = Math.log(dzMax / dz0);            // = −s_m actually applied
+    return { dz: dzMax, S: S + used * c };
+}
+
+
+// =============================================================================
+// SECTION 1.7 — Observation (interference) fold
+// =============================================================================
+// Observation pressure with producer storage and skin:
+//   p̄_obs = p̄_res(r) / (1 + Cd·s·(s·p̄_well + S))
+// p̄_res(r) uses the finite-wellbore normalisation of the producer.  At small
+// tD/rD² the Stehfest inversion of the (tiny) line-source response degrades
+// (N = 12: −2 % at tD/rD² = 0.05, 1e-4 at 0.2, garbage at 0.02), so for
+// tD < 0.2·rD²·f∞ the time-domain shape E1(rD²f∞/4tD) is used, scaled to the
+// Laplace value at the switch (continuous and monotone; without storage the
+// scale is ½ to 1e-4, i.e. the plain line source ½·E1).  |values| < 1e-10
+// are clamped to 0.
+function _evalObs(wellLap, obsLap, td, Cd, S, early, deriv) {
+    var isArr = Array.isArray(td), arr = isArr ? td : [td];
+    var T = _foldTransform(Cd, S);
+    var F = function (s) {
+        var o = obsLap(s, T.sc);
+        if (!(T.Cd > 0)) return o;
+        var g = s * wellLap(s, T.sc) + T.S;
+        return o / (1 + T.Cd * s * g);
+    };
+    var Fd = function (s) { return s * F(s); };
+    var U_SW = 1.25;                                   // u = rD²f∞/(4tD) at the switch
+    var tsw = (early && early.r2 > 0) ? early.r2 * (early.finf || 1) / (4 * U_SW) : 0;
+    var swC = null;
+    function switchCoef() {
+        if (swC === null) {
+            var v = _steh(F, tsw * T.tf);
+            swC = (_num(v) && v > 0) ? v / _E1(U_SW) : 0;
+        }
+        return swC;
+    }
+    var out = new Array(arr.length);
+    for (var i = 0; i < arr.length; i++) {
+        var t0 = arr[i], v;
+        if (t0 < tsw) {
+            var u = U_SW * tsw / t0;
+            var c = switchCoef();
+            v = deriv ? c * Math.exp(-u) : c * _E1(u);
+        } else {
+            var t = t0 * T.tf;
+            v = deriv ? t * _steh(Fd, t) : _steh(F, t);
+        }
+        if (_num(v) && Math.abs(v) < 1e-10) v = 0;
+        out[i] = v;
+    }
+    return isArr ? out : out[0];
+}
+
+// Linear-composite chained attenuation (constant factor, phenomenological).
+function _linearCompFactor(s, zones) {
+    if (!Array.isArray(zones) || zones.length === 0) return 1;
+    var damp = 1;
+    for (var i = 1; i < zones.length; i++) {
+        var Z = zones[i];
+        var M = (Z && Z.M != null) ? Z.M : 1;
+        var W = (Z && Z.W != null) ? Z.W : 1;
+        if (!(M > 0) || !(W > 0)) continue;
+        damp *= (1 + M) / (2 * M);
+    }
+    return damp;
+}
+
 
 // =============================================================================
 // SECTION 2 — MODEL EVALUATORS
@@ -1655,1010 +1867,506 @@ function _pdLap_multiLayerNoXF_homog(s, layers) {
 // -------------------------------------------------------------------- #13
 // MODEL #13 — Two-well Interference (Ogbe & Brigham SPE 13253)
 // ----------------------------------------------------------------------------
-// Observation pressure at distance rxObs from a flowing well in an infinite-
-// acting homogeneous reservoir. Both wells have storage and skin via Laplace
-// inversion. Line-source (Theis) approximation for the reservoir kernel:
-//
-//     Pres_lap(s) = K0(rD · sqrt(s)) / s
-//
-// where rD = rxObs / rw. With WBS+skin at the flowing well, the observation
-// pressure is the bare kernel divided by s and folded for the producer-side
-// WBS only (the observation well's storage attenuates the response slightly
-// at very early time if we include it; we expose Cd_obs as an optional
-// convolution but default to 0).
-//
-// Theta (azimuth) is recorded for plot annotation but does not affect the
-// scalar pwd in a fully symmetric homogeneous reservoir.
+// Observation pressure at rD = rxObs (rw units) from a producer with storage
+// and skin in an infinite homogeneous reservoir:
+//   p̄_obs = K0(rD√s)/(s·√s·K1(√s)) / (1 + Cd·s·(s·p̄_w + S))
+// Theta is a geometric label only (isotropic reservoir).  Cd_obs (optional)
+// attenuates the observation response by 1/(1 + Cd_obs·s).
 // ----------------------------------------------------------------------------
-function PRiSM_model_interference(td, params) {
+function _interferenceEval(td, params, deriv) {
     _requirePositiveTd(td);
     _requireParams(params, ['Cd', 'S', 'rxObs']);
-    var Cd = params.Cd, S = params.S;
     var obs = _rdFromObs(params.rxObs, params.thetaObs);
-    var Cd_obs = (params.Cd_obs != null) ? params.Cd_obs : 0;
-    var stehfest = _foundation('PRiSM_stehfest');
-    if (!stehfest) throw new Error('PRiSM_stehfest missing');
-    return _arrayMap(td, function (t) {
-        // Observation pressure at rD: combine flowing-well WBS+skin with the
-        // line-source kernel evaluated at rD (instead of at the well-bore).
-        // Pwd_obs_lap(s) = K0(rD·sqrt(s)) / s  ÷  [s · denom_flowing]
-        var Fhat = function (s) {
-            var sq = Math.sqrt(s);
-            // Flowing-well admittance denominator (Bourdet-Gringarten):
-            // denom = (1 + Cd·s·(s·Pres + S))  but evaluated at the WELLBORE.
-            var pres_well = _safeK0(sq) / s;
-            var inner = s * pres_well + S;
-            var denomFlow = 1 + Cd * s * inner;
-            // Reservoir kernel at the observation point.
-            var pres_obs = _safeK0(obs.rD * sq) / s;
-            // Observation well storage attenuates response.
-            var attenObs = (Cd_obs > 0) ? (1 / (1 + Cd_obs * s)) : 1;
-            return (pres_obs / denomFlow) * attenObs;
-        };
-        return stehfest(Fhat, t, STEHFEST_N);
-    });
+    var Cd_obs = _posOr(params.Cd_obs, 0);
+    return _evalObs(
+        function (s) { return _wellTerm(Math.sqrt(s)) / s; },
+        function (s, sc) {
+            var o = _kOverWell(Math.sqrt(s), obs.rD * sc) / s;
+            return (Cd_obs > 0) ? o / (1 + Cd_obs * (sc * sc) * s) : o;
+        },
+        td, params.Cd, params.S, { r2: obs.rD * obs.rD, finf: 1 }, deriv);
 }
-
-function PRiSM_model_interference_pd_prime(td, params) {
-    _requirePositiveTd(td);
-    _requireParams(params, ['Cd', 'S', 'rxObs']);
-    return _arrayMap(td, function (t) {
-        return _numericLogDeriv(PRiSM_model_interference, t, params);
-    });
-}
+function PRiSM_model_interference(td, params) { return _interferenceEval(td, params, false); }
+function PRiSM_model_interference_pd_prime(td, params) { return _interferenceEval(td, params, true); }
 
 // -------------------------------------------------------------------- #19
-// MODEL #19 — Single Horizontal Well in N-layer Reservoir, Full Transient XF
+// MODEL #19 — Single Horizontal Well in N-layer Reservoir with cross-flow
 // ----------------------------------------------------------------------------
-// Reference: Kuchuk, F.J. SPE 22731 (1991) "Multilayer Transient Pressure
-// Analysis with Crossflow"
-//
-// Physics: a horizontal well of length L penetrates one or more layers in a
-// stratified reservoir. Cross-flow between layers is governed by per-layer
-// λ_i. Three flow regimes are visible:
-//   1. Early time — vertical-radial flow over rw within the penetrated
-//      layer(s). Exponentially small at td<1.
-//   2. Intermediate — "horizontal-linear" flow normal to L within each
-//      layer; Σ kh-weighted contribution.
-//   3. Late time — fully-developed pseudo-radial flow with kh-weighted
-//      effective horizontal permeability k̄h.
-//
-// Implementation: combines the Goode-Thambynayagam horizontal kernel with
-// the Kuchuk PSS-XF coupling factor f(s):
-//
-//     Pres_lap(s) = K0(sqrt(s·f(s))) / s
-//                 + 2·Σ_n K0(sqrt(s·f(s)) · 2·n·h_dim) / s
-//
-// where h_dim = h_total / L. Pseudo-skin from anisotropy and partial
-// penetration is computed from the kh-weighted Joshi expression.
+// Ozkan-Raghavan horizontal kernel with the layered cross-flow factor:
+//   p̄ = H(s·f(s)) / s        (td, Cd referenced to Lh)
+// Total skin S_perf + S_global (S_global frozen by default — collinear).
 // ----------------------------------------------------------------------------
-function PRiSM_model_mlHorizontalXF(td, params) {
+function _mlHorizontalXFEval(td, params, deriv) {
     _requirePositiveTd(td);
     _requireParams(params, ['Cd', 'S_perf', 'S_global', 'L_to_h', 'KvKh', 'layers']);
-    var Cd = params.Cd;
-    var L_to_h = params.L_to_h;
-    var KvKh = params.KvKh;
+    var hp = _hzParams(params);
     var layers = _normaliseLayers(params.layers);
-    var h_dim = 1 / L_to_h;
-    // Joshi pseudo-skin (kh-weighted)
-    var Sg = Math.log(0.5 * Math.sqrt(1 / KvKh)) - 0.5 * Math.log(KvKh);
-    var Stotal = (params.S_perf || 0) + (params.S_global || 0) + Sg;
-    return _stehfestEval(function (s) {
-        var f = _multiLayerXF_f(s, layers);
-        var sf = s * f;
-        if (sf <= 0 || !_num(sf)) return BIG;
-        var sq = Math.sqrt(sf);
-        var pd = _safeK0(sq) / s;
-        // Goode-Thambynayagam image series for horizontal well thickness.
-        for (var n = 1; n <= 50; n++) {
-            var arg = sq * (2 * n * h_dim);
-            if (arg > 50) break;
-            var inc = 2 * _safeK0(arg) / s;
-            pd += inc;
-            if (Math.abs(inc) < IMAGE_TOL) break;
-        }
-        return pd;
-    }, td, Cd, Stotal);
+    var sk = _hzSkin((params.S_perf || 0) + (params.S_global || 0), 1 / (2 * hp.LD), hp.dz0, hp.zw, hp.LD);
+    var g = _hzGeom(hp.LD, hp.zw, sk.dz, hp.KvKh);
+    return _evalWbsSkin(function (s, sc) {
+        var uOf = function (x) { return x * _multiLayerXF_f(x, layers, sc); };
+        var u = uOf(s);
+        return _hzSelf(u, g, _uRange(uOf, u)) / s;
+    }, td, params.Cd, sk.S, deriv, true);
 }
-
-function PRiSM_model_mlHorizontalXF_pd_prime(td, params) {
-    _requirePositiveTd(td);
-    return _arrayMap(td, function (t) {
-        return _numericLogDeriv(PRiSM_model_mlHorizontalXF, t, params);
-    });
-}
+function PRiSM_model_mlHorizontalXF(td, params) { return _mlHorizontalXFEval(td, params, false); }
+function PRiSM_model_mlHorizontalXF_pd_prime(td, params) { return _mlHorizontalXFEval(td, params, true); }
 
 // -------------------------------------------------------------------- #22
-// MODEL #22 — Multi-layer No-XF, Each Layer Fractured (commingled fractured)
+// MODEL #22 — Multi-layer No-XF, Each Layer Fractured (commingled)
 // ----------------------------------------------------------------------------
-// Reference: Kuchuk & Wilkinson SPE 18125 (1989).
-//
-// N layers produce in parallel; no cross-flow between layers (sealed inter-
-// layer contacts). Each layer has its own infinite-conductivity hydraulic
-// fracture characterised by xf_i (fracture half-length). The total well
-// response is the kh-weighted sum of individual layer pressures:
-//
-//     Pwd(td) = Σ κ_i · Pd_frac_i(tDxf_i)
-//
-// where tDxf_i = k_i · t / (φμct·xf_i^2) is layer-i dimensionless time.
-//
-// We use the Gringarten infinite-conductivity fracture solution per layer
-// (closed-form pd = sqrt(π·tDxf)·erf(1/(2√tDxf)) − 0.5·Ei(−1/(4·tDxf))).
+// Reference: Kuchuk & Wilkinson SPE 18125; Gringarten et al (1974).
+// Each layer has a uniform-flux vertical fracture (the Gringarten closed form
+// √(πtD)·erf(1/(2√tD)) + ½E1(1/(4tD)) at xD = 0), half-length ratio
+// xf_ratio = xf_i/xf_ref.  Laplace form of layer i (tD on xf_ref):
+//   p̄_i(s) = xfR_i · Ki(√s/xfR_i) / s^{3/2}
+//   p̄ = Σ κ_i p̄_i,  folded with Cd and S (proper WBS + skin fold; the old
+//   time-domain "damping" put the skin at early time instead of late time).
 // ----------------------------------------------------------------------------
-function _erf(x) {
-    var sign = (x < 0) ? -1 : 1;
-    var a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741;
-    var a4 = -1.453152027, a5 = 1.061405429, p = 0.3275911;
-    var ax = Math.abs(x);
-    var t = 1 / (1 + p * ax);
-    var y = 1 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-ax * ax);
-    return sign * y;
-}
-
-// Local E1(x) for x > 0 — series for small x, continued fraction for large x.
-// Defined here so that we don't depend on the foundation's PRiSM_Ei (which
-// returns NaN for negative arguments). For the Gringarten formula we need
-// Ei(-y) for y > 0, which equals -E1(y).
-function _localE1(x) {
-    if (x <= 0 || !isFinite(x)) return NaN;
-    if (x <= 1.0) {
-        var sum = 0, term = 1;
-        for (var n = 1; n <= 50; n++) {
-            term *= -x / n;
-            var add = -term / n;
-            sum += add;
-            if (Math.abs(add) < 1e-15 * Math.abs(sum)) break;
-        }
-        return -Math.log(x) - 0.5772156649015329 + sum;
+function _pdLap_mlNoXFFrac(s, layers) {
+    var ss = Math.sqrt(s), pd = 0;
+    for (var i = 0; i < layers.length; i++) {
+        var L = layers[i];
+        var xfR = (L.extras && _num(L.extras.xf_ratio) && L.extras.xf_ratio > 0) ? L.extras.xf_ratio : 1;
+        pd += L.kappa * xfR * _Ki(ss / xfR) / (s * ss);
     }
-    var TINY = 1e-300;
-    var b = x + 1.0;
-    var c = 1.0 / TINY;
-    var d = 1.0 / b;
-    var h = d;
-    for (var i = 1; i <= 100; i++) {
-        var a = -i * i;
-        b += 2.0;
-        d = 1.0 / (a * d + b); if (d === 0) d = TINY;
-        c = b + a / c;          if (c === 0) c = TINY;
-        var delta = c * d;
-        h *= delta;
-        if (Math.abs(delta - 1.0) < 1e-12) break;
-    }
-    return h * Math.exp(-x);
+    return pd;
 }
-
-function _pd_infFrac_closed(tDxf) {
-    if (tDxf <= 0) return 0;
-    var sqrtT = Math.sqrt(tDxf);
-    var arg = 1 / (2 * sqrtT);
-    var term1 = Math.sqrt(Math.PI * tDxf) * _erf(arg);
-    // -0.5 · Ei(-1/(4·tDxf)) = -0.5 · (-E1(1/(4·tDxf))) = 0.5 · E1(1/(4·tDxf))
-    var y = 1 / (4 * tDxf);
-    var term2 = 0.5 * _localE1(y);
-    return term1 + term2;
-}
-
-function PRiSM_model_mlNoXFFrac(td, params) {
+function _mlNoXFFracEval(td, params, deriv) {
     _requirePositiveTd(td);
     _requireParams(params, ['Cd', 'S', 'layers']);
-    var Cd = params.Cd, S = params.S;
     var layers = _normaliseLayers(params.layers);
-    // each layer's tDxf scale relative to the well's reference tD: ratio_i =
-    // xfRef^2 / xf_i^2. Default ratio = 1 if not specified.
-    return _arrayMap(td, function (t) {
-        var pd = 0;
-        for (var i = 0; i < layers.length; i++) {
-            var L = layers[i];
-            var xfR = (L.extras && _num(L.extras.xf_ratio)) ? L.extras.xf_ratio : 1;
-            var tDxf_i = t * xfR * xfR;
-            pd += L.kappa * _pd_infFrac_closed(tDxf_i);
-        }
-        // approximate WBS+skin folding via simple additive skin (commingled
-        // layers do not admit a clean closed-form WBS at the well — we use
-        // a phenomenological dampening to keep the response monotonic).
-        if (Cd > 0 || S !== 0) {
-            // soft early-time damp via 1/(1 + Cd/td):
-            var damp = 1 / (1 + Cd / Math.max(t, 1e-12));
-            pd = pd * damp + S * (1 - damp);
-        }
-        return pd;
-    });
+    return _evalWbsSkin(function (s) { return _pdLap_mlNoXFFrac(s, layers); },
+                        td, params.Cd, params.S, deriv);
 }
-
-function PRiSM_model_mlNoXFFrac_pd_prime(td, params) {
-    _requirePositiveTd(td);
-    return _arrayMap(td, function (t) {
-        return _numericLogDeriv(PRiSM_model_mlNoXFFrac, t, params);
-    });
-}
+function PRiSM_model_mlNoXFFrac(td, params) { return _mlNoXFFracEval(td, params, false); }
+function PRiSM_model_mlNoXFFrac_pd_prime(td, params) { return _mlNoXFFracEval(td, params, true); }
 
 // -------------------------------------------------------------------- #23
-// MODEL #23 — Multi-layer No-XF, Each Layer Horizontal
+// MODEL #23 — Multi-layer No-XF, Each Layer Horizontal (commingled)
 // ----------------------------------------------------------------------------
-// Same kh-weighted commingled sum but each layer carries a Goode-
-// Thambynayagam horizontal-well kernel with per-layer L_to_h_i (defaults to
-// the global L_to_h if not specified). No XF between layers.
+// kh-weighted sum of Ozkan-Raghavan kernels, per-layer L/h (extras.L_to_h,
+// default the global L_to_h), same lateral length (Lh reference).
 // ----------------------------------------------------------------------------
-function PRiSM_model_mlNoXFHoriz(td, params) {
+function _mlNoXFHorizEval(td, params, deriv) {
     _requirePositiveTd(td);
     _requireParams(params, ['Cd', 'S_perf', 'S_global', 'KvKh', 'L_to_h', 'layers']);
-    var Cd = params.Cd;
-    var KvKh = params.KvKh;
-    var L_to_h = params.L_to_h;
-    var Sg = Math.log(0.5 * Math.sqrt(1 / KvKh)) - 0.5 * Math.log(KvKh);
-    var Stotal = (params.S_perf || 0) + (params.S_global || 0) + Sg;
     var layers = _normaliseLayers(params.layers);
-    return _stehfestEval(function (s) {
-        var pdSum = 0;
-        var sq = Math.sqrt(s);
-        for (var i = 0; i < layers.length; i++) {
-            var L = layers[i];
-            var L2h_i = (L.extras && _num(L.extras.L_to_h)) ? L.extras.L_to_h : L_to_h;
-            var h_dim = 1 / L2h_i;
-            var pd = _safeK0(sq) / s;
-            for (var n = 1; n <= 50; n++) {
-                var arg = sq * (2 * n * h_dim);
-                if (arg > 50) break;
-                var inc = 2 * _safeK0(arg) / s;
-                pd += inc;
-                if (Math.abs(inc) < IMAGE_TOL) break;
-            }
-            pdSum += L.kappa * pd;
-        }
-        return pdSum;
-    }, td, Cd, Stotal);
+    var base = _hzParams(params);
+    var geo = [], c = 0;
+    for (var i = 0; i < layers.length; i++) {
+        var L = layers[i];
+        var l2h = (L.extras && _num(L.extras.L_to_h) && L.extras.L_to_h > 0) ? L.extras.L_to_h : params.L_to_h;
+        var hp = _hzParams(params, l2h);
+        geo.push({ kappa: L.kappa, hp: hp });
+        c += L.kappa / (2 * hp.LD);
+    }
+    var LDmin = Infinity;
+    for (var q = 0; q < geo.length; q++) LDmin = Math.min(LDmin, geo[q].hp.LD);
+    var sk = _hzSkin((params.S_perf || 0) + (params.S_global || 0), c, base.dz0, base.zw, LDmin);
+    for (var j = 0; j < geo.length; j++) geo[j].g = _hzGeom(geo[j].hp.LD, geo[j].hp.zw, sk.dz, geo[j].hp.KvKh);
+    var uOf = function (x) { return x; };
+    return _evalWbsSkin(function (s) {
+        var rng = _uRange(uOf, s), pd = 0;
+        for (var k = 0; k < geo.length; k++) pd += geo[k].kappa * _hzSelf(s, geo[k].g, rng);
+        return pd / s;
+    }, td, params.Cd, sk.S, deriv, true);
 }
-
-function PRiSM_model_mlNoXFHoriz_pd_prime(td, params) {
-    _requirePositiveTd(td);
-    return _arrayMap(td, function (t) {
-        return _numericLogDeriv(PRiSM_model_mlNoXFHoriz, t, params);
-    });
-}
+function PRiSM_model_mlNoXFHoriz(td, params) { return _mlNoXFHorizEval(td, params, false); }
+function PRiSM_model_mlNoXFHoriz_pd_prime(td, params) { return _mlNoXFHorizEval(td, params, true); }
 
 // -------------------------------------------------------------------- #24
 // MODEL #24 — Inclined Well in Multi-layer with Cross-Flow
 // ----------------------------------------------------------------------------
-// Reference: Kuchuk SPE 22731 + Cinco-Miller-Ramey JPT Nov 1975.
-//
-// Inclined well at angle θ that penetrates one or more layers. Cross-flow
-// between layers is treated with the same PSS-XF f(s) factor as #19. The
-// inclination adds the Cinco-Miller-Ramey pseudo-skin S_θ.
+// Layered XF kernel (vertical-well form) plus the slant pseudo-skin:
+//   Sg = S_θ(Cinco-Ley; θ, kv/kh, hD) [+ Brons-Marting(hp/h, hD) if hp < 1]
+//   hD = (h/rw)·√(kh/kv).  (The partial-completion term is additive —
+//   an approximation of the combined Cinco-Ley tables.)
 // ----------------------------------------------------------------------------
-function _inclined_pseudoskin(theta_deg, KvKh, hp_to_h) {
-    if (KvKh <= 0) throw new Error('KvKh must be > 0');
-    if (hp_to_h <= 0 || hp_to_h > 1) throw new Error('hp_to_h must be in (0,1]');
-    var theta = theta_deg * Math.PI / 180;
-    var thetaW_rad = Math.atan(Math.sqrt(KvKh) * Math.tan(theta));
-    var thetaW_deg = thetaW_rad * 180 / Math.PI;
-    var part1 = -Math.pow(Math.max(thetaW_deg / 41, 1e-6), 2.06);
-    var part2 = -Math.pow(Math.max(thetaW_deg / 56, 1e-6), 1.865) * Math.log10(hp_to_h);
-    return part1 + part2;
+function _inclined_pseudoskin(params) {
+    var KvKh = params.KvKh, hp = params.hp_to_h;
+    if (!_num(KvKh) || KvKh <= 0) throw new Error('KvKh must be > 0');
+    if (!_num(hp) || hp <= 0 || hp > 1) throw new Error('hp_to_h must be in (0,1]');
+    var hD = _hOverRw(params) * Math.sqrt(1 / KvKh);
+    var S = _cincoLey(params.theta_deg, KvKh, hD);
+    if (hp < 1) S += _bronsMarting(hp, hD);
+    return S;
 }
-
-function PRiSM_model_inclinedMLXF(td, params) {
+function _inclinedMLXFEval(td, params, deriv) {
     _requirePositiveTd(td);
     _requireParams(params, ['Cd', 'S_perf', 'S_global', 'KvKh', 'theta_deg', 'hp_to_h', 'layers']);
-    var Cd = params.Cd;
-    var Sg = _inclined_pseudoskin(params.theta_deg, params.KvKh, params.hp_to_h);
-    var Stotal = (params.S_perf || 0) + (params.S_global || 0) + Sg;
+    var Stotal = (params.S_perf || 0) + (params.S_global || 0) + _inclined_pseudoskin(params);
     var layers = _normaliseLayers(params.layers);
-    return _stehfestEval(function (s) {
-        return _pdLap_multiLayerXF(s, layers);
-    }, td, Cd, Stotal);
+    return _evalWbsSkin(function (s, sc) { return _pdLap_multiLayerXF(s, layers, sc); },
+                        td, params.Cd, Stotal, deriv);
 }
-
-function PRiSM_model_inclinedMLXF_pd_prime(td, params) {
-    _requirePositiveTd(td);
-    return _arrayMap(td, function (t) {
-        return _numericLogDeriv(PRiSM_model_inclinedMLXF, t, params);
-    });
-}
+function PRiSM_model_inclinedMLXF(td, params) { return _inclinedMLXFEval(td, params, false); }
+function PRiSM_model_inclinedMLXF_pd_prime(td, params) { return _inclinedMLXFEval(td, params, true); }
 
 // -------------------------------------------------------------------- #25
 // MODEL #25 — Multi-lateral Well in Multi-layer (with XF)
 // ----------------------------------------------------------------------------
-// Reference: Kuchuk SPE 22731 (multi-layer kernel) + Larsen & Hegre
-// SPE 28298 (multi-lateral horizontal segment superposition).
-//
-// A multi-lateral well consists of N_leg parallel horizontal segments
-// (legs) of length L_i, each at vertical position zi_to_h. Each leg is
-// modelled as a Goode-Thambynayagam horizontal source; total response is
-// the linear superposition (not normalised by leg count — the legs share
-// the same wellbore pressure but produce additively). For the Laplace
-// kernel we sum the per-leg horizontal Pres at each leg's reference point.
-//
-// APPROXIMATION: legs are treated as independent uniform-flux horizontal
-// sources at the reservoir centreline, neglecting inter-leg interference
-// at very early time. This is reasonable when leg spacing > 2·rw.
+// nLegs parallel laterals (length L = 2Lh each, spacing legSpacing×L) at the
+// same depth, sharing the wellbore pressure.  Laterals are superposed with a
+// uniform rate split (exact for two symmetric legs) and the wellbore pressure
+// is the lateral average:
+//   p̄ = (1/n²)[n·H_self(u) + Σ_{i≠j} H_cross(u, |y_i−y_j|)] / s,  u = s·f(s)
 // ----------------------------------------------------------------------------
+function _multiLatEval(td, params, deriv, useXF, attnZones) {
+    var hp = _hzParams(params);
+    var nLegs = Math.max(1, Math.round(_posOr(params.nLegs, 1)));
+    var spacing = 2 * _posOr(params.legSpacing, 2.0);              // Lh units
+    var ys = _legOffsets(nLegs, spacing);
+    var layers = useXF ? _normaliseLayers(params.layers) : null;
+    var sk = _hzSkin((params.S_perf || 0) + (params.S_global || 0), 1 / (2 * hp.LD * nLegs), hp.dz0, hp.zw, hp.LD);
+    var g = _hzGeom(hp.LD, hp.zw, sk.dz, hp.KvKh);
+    return _evalWbsSkin(function (s, sc) {
+        var uOf = useXF ? function (x) { return x * _multiLayerXF_f(x, layers, sc); } : function (x) { return x; };
+        var u = uOf(s);
+        var H = _hzMulti(u, g, ys, _uRange(uOf, u));
+        if (attnZones) H *= _linearCompFactor(s, attnZones);
+        return H / s;
+    }, td, params.Cd, sk.S, deriv, true);
+}
 function PRiSM_model_multiLatMLXF(td, params) {
     _requirePositiveTd(td);
     _requireParams(params, ['Cd', 'S_perf', 'S_global', 'KvKh', 'L_to_h', 'nLegs', 'layers']);
-    var Cd = params.Cd;
-    var KvKh = params.KvKh;
-    var L_to_h = params.L_to_h;
-    var nLegs = Math.max(1, Math.round(params.nLegs));
-    // pseudo-skin from anisotropy (one effective leg-length scale)
-    var Sg = Math.log(0.5 * Math.sqrt(1 / KvKh)) - 0.5 * Math.log(KvKh);
-    // multi-lateral effective pseudo-skin from leg-count (Larsen 1996):
-    //   Sml = -ln(nLegs) for parallel legs sharing a common pressure
-    var Sml = -Math.log(Math.max(1, nLegs));
-    var Stotal = (params.S_perf || 0) + (params.S_global || 0) + Sg + Sml;
-    var layers = _normaliseLayers(params.layers);
-    var h_dim = 1 / L_to_h;
-    // leg spacing in dimensionless units (default 2·L away from each other)
-    var dLeg = (params.legSpacing != null && _num(params.legSpacing)) ? params.legSpacing : 2.0;
-    return _stehfestEval(function (s) {
-        var f = _multiLayerXF_f(s, layers);
-        var sf = s * f;
-        if (sf <= 0 || !_num(sf)) return BIG;
-        var sq = Math.sqrt(sf);
-        // Per-leg horizontal kernel (image series in z) plus inter-leg
-        // line-source contributions. We sum the per-leg admittance.
-        var pdLeg = _safeK0(sq) / s;
-        for (var n = 1; n <= 50; n++) {
-            var arg = sq * (2 * n * h_dim);
-            if (arg > 50) break;
-            pdLeg += 2 * _safeK0(arg) / s;
-        }
-        // Inter-leg contributions: each pair (i,j) adds K0(sq·dij)/s where
-        // dij is the dimensionless leg-to-leg lateral offset. For nLegs
-        // arranged on a regular line at spacing dLeg, dij = |i-j|·dLeg.
-        var pdInter = 0;
-        for (var i = 0; i < nLegs; i++) {
-            for (var j = i + 1; j < nLegs; j++) {
-                var dij = (j - i) * dLeg;
-                if (dij <= 0) continue;
-                var arg2 = sq * dij;
-                if (arg2 > 200) continue;
-                pdInter += 2 * _safeK0(arg2) / s;
-            }
-        }
-        // Total per-leg + inter-leg coupling, normalised by nLegs (parallel
-        // production from a common bottomhole pressure).
-        return (nLegs * pdLeg + pdInter) / (nLegs * nLegs);
-    }, td, Cd, Stotal);
+    return _multiLatEval(td, params, false, true, null);
 }
-
 function PRiSM_model_multiLatMLXF_pd_prime(td, params) {
     _requirePositiveTd(td);
-    return _arrayMap(td, function (t) {
-        return _numericLogDeriv(PRiSM_model_multiLatMLXF, t, params);
-    });
+    _requireParams(params, ['Cd', 'S_perf', 'S_global', 'KvKh', 'L_to_h', 'nLegs', 'layers']);
+    return _multiLatEval(td, params, true, true, null);
 }
 
 // -------------------------------------------------------------------- #26
 // MODEL #26 — Multi-layer Multi-perforation (1-4 perforated intervals)
 // ----------------------------------------------------------------------------
-// Reference: Kuchuk SPE 22731.
-//
-// A vertical well with multiple perforated intervals at arbitrary depths
-// inside a layered reservoir with cross-flow. Each perforation acts as a
-// partial-penetration source. Total Pwd is a kh-weighted superposition of
-// the per-perforation partial-penetration Pres functions, with PSS-XF
-// coupling f(s) modulating the layered admittance.
-//
-// APPROXIMATION: per-perforation pseudo-skin from Brons-Marting plus the
-// Kuchuk multi-layer kernel. Spherical-flow ½-slope-down on the early-time
-// derivative is captured via the perforation-length pseudo-skin term.
+// Layered XF kernel (vertical-well form) with the partial-penetration
+// pseudo-skin of the perforated intervals: Brons-Marting with the combined
+// open fraction b = Σ hp_i (≤ 1) and hD = (h/rw)·√(kh/kv).  Using the
+// combined fraction (rather than averaging per-interval skins, each of which
+// assumes that interval carries the whole rate) is the standard approximation
+// for several intervals sharing the flow.
 // ----------------------------------------------------------------------------
-function _perfPseudoSkin(hp_to_h, KvKh) {
-    // Brons-Marting (1961) partial-penetration pseudo-skin for one perf:
-    //   Sp = (1/hp_to_h - 1) · [ln(hD/2) - G(hp_to_h)] where hD = h/rw·sqrt(1/KvKh)
-    // We use the simplified Bourdet form with hD = sqrt(1/KvKh)/hp_to_h.
-    if (hp_to_h <= 0 || hp_to_h > 1) return 0;
-    var hD = Math.sqrt(Math.max(1e-9, 1 / KvKh)) / hp_to_h;
-    var G = (1 - hp_to_h) * Math.log(Math.PI * hp_to_h);
-    var Sp = (1 / hp_to_h - 1) * (Math.log(Math.max(hD, 1.001) / 2) - G);
-    return Sp;
+function _perfPseudoSkin(hp_to_h, KvKh, h_rw) {
+    if (!_num(hp_to_h) || hp_to_h <= 0 || hp_to_h >= 1) return 0;
+    var hD = _posOr(h_rw, 100) * Math.sqrt(1 / _posOr(KvKh, 1));
+    return _bronsMarting(hp_to_h, hD);
 }
-
-function PRiSM_model_mlMultiPerf(td, params) {
-    _requirePositiveTd(td);
-    _requireParams(params, ['Cd', 'S_perf', 'S_global', 'KvKh', 'perfs', 'layers']);
-    var Cd = params.Cd;
-    var KvKh = params.KvKh;
+function _multiPerfSkin(params, maxPerfs, label) {
     var perfs = params.perfs;
     if (!Array.isArray(perfs) || perfs.length === 0) {
-        throw new Error('PRiSM mlMultiPerf: perfs array required');
+        throw new Error('PRiSM ' + label + ': perfs array required');
     }
-    if (perfs.length > 4) {
-        // documented limit per Kuchuk SPE 22731 phenomenological reduction
-        perfs = perfs.slice(0, 4);
-    }
-    // total perforated fraction & weighted pseudo-skin
-    var totHp = 0, weightedSp = 0;
+    if (perfs.length > maxPerfs) perfs = perfs.slice(0, maxPerfs);
+    var totHp = 0;
     for (var i = 0; i < perfs.length; i++) {
-        var hi = perfs[i].hp_to_h;
+        var hi = perfs[i] && perfs[i].hp_to_h;
         if (!_num(hi) || hi <= 0 || hi > 1) {
-            throw new Error('PRiSM mlMultiPerf: perfs[' + i + '].hp_to_h must be in (0,1]');
+            throw new Error('PRiSM ' + label + ': perfs[' + i + '].hp_to_h must be in (0,1]');
         }
         totHp += hi;
-        weightedSp += hi * _perfPseudoSkin(hi, KvKh);
     }
-    if (totHp <= 0) throw new Error('PRiSM mlMultiPerf: total perforated fraction must be > 0');
-    var Sp_eff = weightedSp / totHp;
-    var Stotal = (params.S_perf || 0) + (params.S_global || 0) + Sp_eff;
-    var layers = _normaliseLayers(params.layers);
-    return _stehfestEval(function (s) {
-        return _pdLap_multiLayerXF(s, layers);
-    }, td, Cd, Stotal);
+    return _perfPseudoSkin(Math.min(1, totHp), params.KvKh, _hOverRw(params));
 }
-
-function PRiSM_model_mlMultiPerf_pd_prime(td, params) {
+function _mlMultiPerfEval(td, params, deriv) {
     _requirePositiveTd(td);
-    return _arrayMap(td, function (t) {
-        return _numericLogDeriv(PRiSM_model_mlMultiPerf, t, params);
-    });
+    _requireParams(params, ['Cd', 'S_perf', 'S_global', 'KvKh', 'perfs', 'layers']);
+    var Stotal = (params.S_perf || 0) + (params.S_global || 0) + _multiPerfSkin(params, 4, 'mlMultiPerf');
+    var layers = _normaliseLayers(params.layers);
+    return _evalWbsSkin(function (s, sc) { return _pdLap_multiLayerXF(s, layers, sc); },
+                        td, params.Cd, Stotal, deriv);
 }
+function PRiSM_model_mlMultiPerf(td, params) { return _mlMultiPerfEval(td, params, false); }
+function PRiSM_model_mlMultiPerf_pd_prime(td, params) { return _mlMultiPerfEval(td, params, true); }
 
 // -------------------------------------------------------------------- #27
 // MODEL #27 — Multi-layer Horizontal-Well Interference
 // ----------------------------------------------------------------------------
-// Reference: Kuchuk SPE 22731 + Babu & Odeh SPE 18298.
-//
-// Two horizontal wells in a layered reservoir with cross-flow. One is the
-// flowing producer; the other is the observation well at a known centreline
-// distance rxObs and azimuth thetaObs. The kernel uses the Kuchuk multi-
-// layer XF f(s) factor and evaluates the line-source K0 at the dimensionless
-// well-to-well distance.
+// Horizontal producer (lateral length L = L_to_h·h) in a layered XF reservoir,
+// fully penetrating observation well at rxObs (rw units) and azimuth thetaObs
+// measured from the lateral direction.  rw-referenced: with a = Lh/rw,
+//   producer   p̄_w   = H(σ)/s,          σ = s·f(s)·a²
+//   observation p̄_obs = ½∫₋₁¹K0(√σ·ρ)dα/s  at (x, y) = rxObs(cos θ, sin θ)/a
+// Negative skin moves the producer wellbore wall (rw → rw·e^−s_m).
 // ----------------------------------------------------------------------------
-function PRiSM_model_mlHorizInterference(td, params) {
+function _mlHorizInterferenceEval(td, params, deriv) {
     _requirePositiveTd(td);
     _requireParams(params, ['Cd', 'S_perf', 'S_global', 'KvKh', 'L_to_h', 'rxObs', 'layers']);
-    var Cd = params.Cd;
-    var KvKh = params.KvKh;
-    var L_to_h = params.L_to_h;
+    var hp = _hzParams(params);
     var obs = _rdFromObs(params.rxObs, params.thetaObs);
-    var Sg = Math.log(0.5 * Math.sqrt(1 / KvKh)) - 0.5 * Math.log(KvKh);
-    var Stotal = (params.S_perf || 0) + (params.S_global || 0) + Sg;
     var layers = _normaliseLayers(params.layers);
-    var h_dim = 1 / L_to_h;
-    var stehfest = _foundation('PRiSM_stehfest');
-    return _arrayMap(td, function (t) {
-        var Fhat = function (s) {
-            var f = _multiLayerXF_f(s, layers);
-            var sf = s * f;
-            if (sf <= 0 || !_num(sf)) return BIG;
-            var sq = Math.sqrt(sf);
-            // Flowing-well admittance denominator
-            var pres_well = _safeK0(sq) / s;
-            for (var n = 1; n <= 50; n++) {
-                var arg = sq * (2 * n * h_dim);
-                if (arg > 50) break;
-                pres_well += 2 * _safeK0(arg) / s;
-            }
-            var inner = s * pres_well + Stotal;
-            var denomFlow = 1 + Cd * s * inner;
-            // Pres at observation well distance
-            var pres_obs = _safeK0(obs.rD * sq) / s;
-            return pres_obs / denomFlow;
-        };
-        return stehfest(Fhat, t, STEHFEST_N);
-    });
+    var a = 0.5 * params.L_to_h * _hOverRw(params);            // Lh / rw (× sc under the
+    var a2 = a * a;                                              // residual rwa transform)
+    var sk = _hzSkin((params.S_perf || 0) + (params.S_global || 0), 1 / (2 * hp.LD), hp.dz0, hp.zw, hp.LD);
+    var g = _hzGeom(hp.LD, hp.zw, sk.dz, hp.KvKh);
+    function uOfSc(sc) {
+        var as2 = a2 * sc * sc;
+        return function (x) { return x * _multiLayerXF_f(x, layers, sc) * as2; };
+    }
+    return _evalObs(
+        function (s, sc) {
+            var uOf = uOfSc(sc), u = uOf(s);
+            return _hzSelf(u, g, _uRange(uOf, u)) / s;
+        },
+        function (s, sc) {
+            var u = uOfSc(sc)(s);
+            return _hzObs(u, obs.x / a, obs.y / a) / s;
+        },
+        td, params.Cd, sk.S, { r2: obs.rD * obs.rD, finf: _multiLayerXF_fInf(layers) }, deriv);
 }
-
-function PRiSM_model_mlHorizInterference_pd_prime(td, params) {
-    _requirePositiveTd(td);
-    return _arrayMap(td, function (t) {
-        return _numericLogDeriv(PRiSM_model_mlHorizInterference, t, params);
-    });
-}
+function PRiSM_model_mlHorizInterference(td, params) { return _mlHorizInterferenceEval(td, params, false); }
+function PRiSM_model_mlHorizInterference_pd_prime(td, params) { return _mlHorizInterferenceEval(td, params, true); }
 
 // -------------------------------------------------------------------- #28
 // MODEL #28 — Multi-layer Multi-perforation Interference
 // ----------------------------------------------------------------------------
-// Reference: Kuchuk SPE 22731.
-//
-// A producing well with up to 3 perforated intervals; observation pressure
-// measured at distance rxObs (1 observation point). Total response is the
-// Kuchuk ML kernel evaluated at the observation point, with the producer's
-// effective Brons-Marting pseudo-skin folded in. Identical kernel topology
-// to #27 with the perforation pseudo-skin replacing the horizontal pseudo-
-// skin.
+// Producer with ≤ 3 perforated intervals (Brons-Marting skin on the combined
+// open fraction) in a layered XF reservoir; observation at rxObs (rw units).
 // ----------------------------------------------------------------------------
-function PRiSM_model_mlMultiPerfInterference(td, params) {
+function _mlMultiPerfInterferenceEval(td, params, deriv) {
     _requirePositiveTd(td);
     _requireParams(params, ['Cd', 'S_perf', 'S_global', 'KvKh', 'rxObs', 'perfs', 'layers']);
-    var Cd = params.Cd;
-    var KvKh = params.KvKh;
-    var perfs = params.perfs;
-    if (!Array.isArray(perfs) || perfs.length === 0) {
-        throw new Error('PRiSM mlMultiPerfInterference: perfs array required');
-    }
-    if (perfs.length > 3) perfs = perfs.slice(0, 3);
-    var totHp = 0, weightedSp = 0;
-    for (var i = 0; i < perfs.length; i++) {
-        var hi = perfs[i].hp_to_h;
-        if (!_num(hi) || hi <= 0 || hi > 1) {
-            throw new Error('PRiSM mlMultiPerfInterference: perfs[' + i + '].hp_to_h must be in (0,1]');
-        }
-        totHp += hi;
-        weightedSp += hi * _perfPseudoSkin(hi, KvKh);
-    }
-    if (totHp <= 0) throw new Error('PRiSM mlMultiPerfInterference: totHp must be > 0');
-    var Sp_eff = weightedSp / totHp;
-    var Stotal = (params.S_perf || 0) + (params.S_global || 0) + Sp_eff;
+    var Stotal = (params.S_perf || 0) + (params.S_global || 0) +
+                 _multiPerfSkin(params, 3, 'mlMultiPerfInterference');
     var obs = _rdFromObs(params.rxObs, params.thetaObs);
     var layers = _normaliseLayers(params.layers);
-    var stehfest = _foundation('PRiSM_stehfest');
-    return _arrayMap(td, function (t) {
-        var Fhat = function (s) {
-            var f = _multiLayerXF_f(s, layers);
-            var sf = s * f;
-            if (sf <= 0 || !_num(sf)) return BIG;
-            var sq = Math.sqrt(sf);
-            var pres_well = _safeK0(sq) / s;
-            var inner = s * pres_well + Stotal;
-            var denomFlow = 1 + Cd * s * inner;
-            var pres_obs = _safeK0(obs.rD * sq) / s;
-            return pres_obs / denomFlow;
-        };
-        return stehfest(Fhat, t, STEHFEST_N);
-    });
+    return _evalObs(
+        function (s, sc) { return _pdLap_multiLayerXF(s, layers, sc); },
+        function (s, sc) {
+            var x = Math.sqrt(s * _multiLayerXF_f(s, layers, sc));
+            return _kOverWell(x, obs.rD * sc) / s;
+        },
+        td, params.Cd, Stotal, { r2: obs.rD * obs.rD, finf: _multiLayerXF_fInf(layers) }, deriv);
 }
-
-function PRiSM_model_mlMultiPerfInterference_pd_prime(td, params) {
-    _requirePositiveTd(td);
-    return _arrayMap(td, function (t) {
-        return _numericLogDeriv(PRiSM_model_mlMultiPerfInterference, t, params);
-    });
-}
+function PRiSM_model_mlMultiPerfInterference(td, params) { return _mlMultiPerfInterferenceEval(td, params, false); }
+function PRiSM_model_mlMultiPerfInterference_pd_prime(td, params) { return _mlMultiPerfInterferenceEval(td, params, true); }
 
 // -------------------------------------------------------------------- #29
 // MODEL #29 — Two Inclined Wells (Homogeneous or Double-Porosity)
 // ----------------------------------------------------------------------------
-// Reference: Cinco et al JPT Nov 1975 + Kuchuk & Wilkinson SPE 18125.
-//
-// Two inclined wells at angles θ_p (producer) and θ_o (observation), with
-// the observation well at distance rxObs, azimuth thetaObs. Reservoir is
-// either homogeneous or double-porosity (params.dpMode = 'pss' switches
-// in the Warren-Root f(s) factor).
-//
-// APPROXIMATION: phenomenological blend of the vertical line-source kernel
-// (K0 at rD) and a horizontal-projection kernel (K0 at rD·cos(θ)) weighted
-// by sin(θ_p)·sin(θ_o). At θ_p=θ_o=0 (both vertical) this reduces to the
-// pure line-source. The kernel captures angular dependence of effective
-// well-to-well distance but does not represent the finite-length well-bore
-// geometry exactly.
+// Phenomenological blend of the vertical line-source response at rD and a
+// projected response at rD·cos(½(θp+θo)), weighted by w = sin θp·sin θo.
+// dpMode 'pss' adds the Warren-Root f(s).
 // ----------------------------------------------------------------------------
 function _doublePorosity_f_pss(s, omega, lambda) {
-    // Warren-Root PSS f(s) = ω·(1-ω)·s + λ / [(1-ω)·s + λ]
-    if (lambda <= 0) return omega;
+    if (!(lambda > 0)) return omega;
     var denom = (1 - omega) * s + lambda;
     if (denom <= 0) return omega;
     return (omega * (1 - omega) * s + lambda) / denom;
 }
-
-function PRiSM_model_inclinedInterference(td, params) {
+function _inclinedInterferenceEval(td, params, deriv) {
     _requirePositiveTd(td);
     _requireParams(params, ['Cd', 'S', 'rxObs', 'theta_p_deg', 'theta_o_deg']);
-    var Cd = params.Cd, S = params.S;
     var obs = _rdFromObs(params.rxObs, params.thetaObs);
     var thp = params.theta_p_deg * Math.PI / 180;
     var tho = params.theta_o_deg * Math.PI / 180;
-    var dpMode = params.dpMode || 'none';
-    var omega = (params.omega != null) ? params.omega : 0.1;
-    var lambda = (params.lambda != null) ? params.lambda : 1e-5;
-    // angular blending weight: 0 = both vertical, 1 = both horizontal
+    var dp = (params.dpMode === 'pss');
+    var omega = _num(params.omega) ? Math.min(0.999, Math.max(0.001, params.omega)) : 0.1;
+    var lambda = _posOr(params.lambda, 1e-5);
     var w = Math.sin(thp) * Math.sin(tho);
-    var stehfest = _foundation('PRiSM_stehfest');
-    return _arrayMap(td, function (t) {
-        var Fhat = function (s) {
-            var feff = (dpMode === 'pss') ? _doublePorosity_f_pss(s, omega, lambda) : 1;
-            var sf = s * feff;
-            if (sf <= 0 || !_num(sf)) return BIG;
-            var sq = Math.sqrt(sf);
-            var pres_well = _safeK0(sq) / s;
-            var inner = s * pres_well + S;
-            var denomFlow = 1 + Cd * s * inner;
-            // vertical and projected kernels
-            var pres_v = _safeK0(obs.rD * sq) / s;
-            var rD_h = obs.rD * Math.max(0.1, Math.cos(0.5 * (thp + tho)));
-            var pres_h = _safeK0(rD_h * sq) / s;
-            var pres_obs = (1 - w) * pres_v + w * pres_h;
-            return pres_obs / denomFlow;
-        };
-        return stehfest(Fhat, t, STEHFEST_N);
-    });
+    var rDh = obs.rD * Math.max(0.1, Math.cos(0.5 * (thp + tho)));
+    function fOf(s, sc) { return dp ? _doublePorosity_f_pss(s, omega, lambda / (sc * sc)) : 1; }
+    return _evalObs(
+        function (s, sc) { return _wellTerm(Math.sqrt(s * fOf(s, sc))) / s; },
+        function (s, sc) {
+            var x = Math.sqrt(s * fOf(s, sc));
+            return ((1 - w) * _kOverWell(x, obs.rD * sc) + w * _kOverWell(x, rDh * sc)) / s;
+        },
+        td, params.Cd, params.S, { r2: rDh * rDh, finf: dp ? omega : 1 }, deriv);
 }
-
-function PRiSM_model_inclinedInterference_pd_prime(td, params) {
-    _requirePositiveTd(td);
-    return _arrayMap(td, function (t) {
-        return _numericLogDeriv(PRiSM_model_inclinedInterference, t, params);
-    });
-}
+function PRiSM_model_inclinedInterference(td, params) { return _inclinedInterferenceEval(td, params, false); }
+function PRiSM_model_inclinedInterference_pd_prime(td, params) { return _inclinedInterferenceEval(td, params, true); }
 
 // -------------------------------------------------------------------- #31
 // MODEL #31 — Linear-Composite Reservoir Interference
 // ----------------------------------------------------------------------------
-// Reference: extends Phase 5 #15 (linear-composite single well) to the
-// observation well. A linear-composite reservoir has up to 5 zones separated
-// by vertical interfaces; mobility (k/μ) and storativity (φ·ct·h) change
-// abruptly at each interface. The observation well sits in some zone (zone
-// index zoneObs) at distance rxObs from the producer.
-//
-// APPROXIMATION: piecewise line-source attenuation. For each zone we apply
-// a transmissibility ratio to the K0 kernel. A single-front 2-zone case
-// (Bourdet 2002 §6.4.2) is exact in Laplace; multi-zone (>2) is the same
-// kernel applied recursively with chained transmissibility factors.
+// Line-source observation response with a chained transmissibility
+// attenuation Π_{i≥1} (1+M_i)/(2M_i) over the zones beyond the first
+// (phenomenological; zones carry no distances).
 // ----------------------------------------------------------------------------
-function _linearCompFactor(s, zones) {
-    // Build a chained transmissibility attenuation for a multi-zone medium.
-    // Each zone has M (mobility ratio = (k/μ)_i / (k/μ)_1) and W (storativity
-    // ratio). The Laplace-domain pwd at the producer in a 2-zone radial-comp
-    // analogue is K0(sq)/s · (1+M)/(2M) at late time. We use a phenomenological
-    // damping product: f(s) = Π_i (1 + M_i*sqrt(W_i*s)/((1+s)·M_i))^(-1).
-    if (!Array.isArray(zones) || zones.length === 0) return 1;
-    var damp = 1;
-    for (var i = 0; i < zones.length; i++) {
-        var Z = zones[i];
-        var M = (Z.M != null) ? Z.M : 1;
-        var W = (Z.W != null) ? Z.W : 1;
-        if (M <= 0 || W <= 0) continue;
-        var attn = (1 + M) / (2 * M);
-        damp *= (i === 0) ? 1 : attn;
-    }
-    return damp;
-}
-
-function PRiSM_model_linearCompInterference(td, params) {
+function _linearCompInterferenceEval(td, params, deriv) {
     _requirePositiveTd(td);
     _requireParams(params, ['Cd', 'S', 'rxObs', 'zones']);
-    var Cd = params.Cd, S = params.S;
     var obs = _rdFromObs(params.rxObs, params.thetaObs);
     var zones = params.zones;
     if (!Array.isArray(zones) || zones.length === 0) {
         throw new Error('PRiSM linearCompInterference: zones array required');
     }
     if (zones.length > 5) zones = zones.slice(0, 5);
-    var stehfest = _foundation('PRiSM_stehfest');
-    return _arrayMap(td, function (t) {
-        var Fhat = function (s) {
-            var sq = Math.sqrt(s);
-            var pres_well = _safeK0(sq) / s;
-            var inner = s * pres_well + S;
-            var denomFlow = 1 + Cd * s * inner;
-            // line-source observation kernel attenuated by chained factor
-            var attn = _linearCompFactor(s, zones);
-            var pres_obs = (_safeK0(obs.rD * sq) / s) * attn;
-            return pres_obs / denomFlow;
-        };
-        return stehfest(Fhat, t, STEHFEST_N);
-    });
+    return _evalObs(
+        function (s) { return _wellTerm(Math.sqrt(s)) / s; },
+        function (s, sc) { return _linearCompFactor(s, zones) * _kOverWell(Math.sqrt(s), obs.rD * sc) / s; },
+        td, params.Cd, params.S, { r2: obs.rD * obs.rD, finf: 1 }, deriv);
 }
-
-function PRiSM_model_linearCompInterference_pd_prime(td, params) {
-    _requirePositiveTd(td);
-    return _arrayMap(td, function (t) {
-        return _numericLogDeriv(PRiSM_model_linearCompInterference, t, params);
-    });
-}
+function PRiSM_model_linearCompInterference(td, params) { return _linearCompInterferenceEval(td, params, false); }
+function PRiSM_model_linearCompInterference_pd_prime(td, params) { return _linearCompInterferenceEval(td, params, true); }
 
 // -------------------------------------------------------------------- #32
 // MODEL #32 — Multi-lateral Producer in Linear-Composite Reservoir
 // ----------------------------------------------------------------------------
-// Combines the multi-lateral kernel from #25 with the linear-composite
-// attenuation from #31. The producer is multi-lateral; the well-bore
-// pressure is the kh-weighted parallel response of the legs, attenuated
-// by composite-zone transmissibility ratios.
+// Multi-lateral kernel of #25 (no cross-flow) times the chained zone
+// attenuation of #31 (Lh-referenced).
 // ----------------------------------------------------------------------------
 function PRiSM_model_linearCompMultiLat(td, params) {
     _requirePositiveTd(td);
     _requireParams(params, ['Cd', 'S_perf', 'S_global', 'KvKh', 'L_to_h', 'nLegs', 'zones']);
-    var Cd = params.Cd;
-    var KvKh = params.KvKh;
-    var L_to_h = params.L_to_h;
-    var nLegs = Math.max(1, Math.round(params.nLegs));
-    var zones = params.zones || [];
-    var Sg = Math.log(0.5 * Math.sqrt(1 / KvKh)) - 0.5 * Math.log(KvKh);
-    var Sml = -Math.log(Math.max(1, nLegs));
-    var Stotal = (params.S_perf || 0) + (params.S_global || 0) + Sg + Sml;
-    var h_dim = 1 / L_to_h;
-    var dLeg = (params.legSpacing != null && _num(params.legSpacing)) ? params.legSpacing : 2.0;
-    return _stehfestEval(function (s) {
-        var attn = _linearCompFactor(s, zones);
-        var sq = Math.sqrt(s);
-        var pdLeg = _safeK0(sq) / s;
-        for (var n = 1; n <= 50; n++) {
-            var arg = sq * (2 * n * h_dim);
-            if (arg > 50) break;
-            pdLeg += 2 * _safeK0(arg) / s;
-        }
-        var pdInter = 0;
-        for (var i = 0; i < nLegs; i++) {
-            for (var j = i + 1; j < nLegs; j++) {
-                var dij = (j - i) * dLeg;
-                if (dij <= 0) continue;
-                var arg2 = sq * dij;
-                if (arg2 > 200) continue;
-                pdInter += 2 * _safeK0(arg2) / s;
-            }
-        }
-        return ((nLegs * pdLeg + pdInter) / (nLegs * nLegs)) * attn;
-    }, td, Cd, Stotal);
+    return _multiLatEval(td, params, false, false, params.zones || []);
 }
-
 function PRiSM_model_linearCompMultiLat_pd_prime(td, params) {
     _requirePositiveTd(td);
-    return _arrayMap(td, function (t) {
-        return _numericLogDeriv(PRiSM_model_linearCompMultiLat, t, params);
-    });
+    _requireParams(params, ['Cd', 'S_perf', 'S_global', 'KvKh', 'L_to_h', 'nLegs', 'zones']);
+    return _multiLatEval(td, params, true, false, params.zones || []);
 }
 
 // -------------------------------------------------------------------- #34
 // MODEL #34 — Linear-Composite Multi-lateral Interference
 // ----------------------------------------------------------------------------
-// Combines the multi-lateral producer kernel (#25/#32) with an observation
-// well at (rxObs, thetaObs) in a linear-composite reservoir. The well-bore
-// admittance includes the multi-lateral leg coupling; the observation
-// pressure picks up the line-source K0 at rxObs attenuated by the composite
-// transmissibility chain.
+// Multi-lateral producer (rw-referenced, a = Lh/rw) and a fully penetrating
+// observation well at rxObs (rw units, azimuth from the lateral direction,
+// measured from the centre of the lateral set), attenuated by the chained
+// zone factor:  p̄_obs = attn · (1/n)Σ_j ½∫K0(√σ·ρ_j)dα / s,  σ = s·a².
 // ----------------------------------------------------------------------------
-function PRiSM_model_linearCompMultiLatInterference(td, params) {
+function _linearCompMultiLatInterferenceEval(td, params, deriv) {
     _requirePositiveTd(td);
     _requireParams(params, ['Cd', 'S_perf', 'S_global', 'KvKh', 'L_to_h', 'nLegs', 'rxObs', 'zones']);
-    var Cd = params.Cd;
-    var KvKh = params.KvKh;
-    var L_to_h = params.L_to_h;
-    var nLegs = Math.max(1, Math.round(params.nLegs));
+    var hp = _hzParams(params);
     var obs = _rdFromObs(params.rxObs, params.thetaObs);
     var zones = params.zones || [];
-    var Sg = Math.log(0.5 * Math.sqrt(1 / KvKh)) - 0.5 * Math.log(KvKh);
-    var Sml = -Math.log(Math.max(1, nLegs));
-    var Stotal = (params.S_perf || 0) + (params.S_global || 0) + Sg + Sml;
-    var h_dim = 1 / L_to_h;
-    var dLeg = (params.legSpacing != null && _num(params.legSpacing)) ? params.legSpacing : 2.0;
-    var stehfest = _foundation('PRiSM_stehfest');
-    return _arrayMap(td, function (t) {
-        var Fhat = function (s) {
-            var sq = Math.sqrt(s);
-            // Producer well-bore admittance
-            var pdLeg = _safeK0(sq) / s;
-            for (var n = 1; n <= 50; n++) {
-                var arg = sq * (2 * n * h_dim);
-                if (arg > 50) break;
-                pdLeg += 2 * _safeK0(arg) / s;
-            }
-            var pdInter = 0;
-            for (var i = 0; i < nLegs; i++) {
-                for (var j = i + 1; j < nLegs; j++) {
-                    var dij = (j - i) * dLeg;
-                    if (dij <= 0) continue;
-                    var arg2 = sq * dij;
-                    if (arg2 > 200) continue;
-                    pdInter += 2 * _safeK0(arg2) / s;
-                }
-            }
-            var pres_well = (nLegs * pdLeg + pdInter) / (nLegs * nLegs);
-            var inner = s * pres_well + Stotal;
-            var denomFlow = 1 + Cd * s * inner;
-            // Observation kernel at rxObs, attenuated through composite zones
-            var attn = _linearCompFactor(s, zones);
-            var pres_obs = (_safeK0(obs.rD * sq) / s) * attn;
-            return pres_obs / denomFlow;
-        };
-        return stehfest(Fhat, t, STEHFEST_N);
-    });
+    var nLegs = Math.max(1, Math.round(_posOr(params.nLegs, 1)));
+    var ys = _legOffsets(nLegs, 2 * _posOr(params.legSpacing, 2.0));
+    var a = 0.5 * params.L_to_h * _hOverRw(params), a2 = a * a;
+    var sk = _hzSkin((params.S_perf || 0) + (params.S_global || 0), 1 / (2 * hp.LD * nLegs), hp.dz0, hp.zw, hp.LD);
+    var g = _hzGeom(hp.LD, hp.zw, sk.dz, hp.KvKh);
+    function uOfSc(sc) { var as2 = a2 * sc * sc; return function (x) { return x * as2; }; }
+    return _evalObs(
+        function (s, sc) { var uOf = uOfSc(sc), u = uOf(s); return _hzMulti(u, g, ys, _uRange(uOf, u)) / s; },
+        function (s, sc) {
+            var u = uOfSc(sc)(s), tot = 0;
+            for (var j = 0; j < ys.length; j++) tot += _hzObs(u, obs.x / a, obs.y / a - ys[j]);
+            return _linearCompFactor(s, zones) * tot / (ys.length * s);
+        },
+        td, params.Cd, sk.S, { r2: obs.rD * obs.rD, finf: 1 }, deriv);
 }
-
-function PRiSM_model_linearCompMultiLatInterference_pd_prime(td, params) {
-    _requirePositiveTd(td);
-    return _arrayMap(td, function (t) {
-        return _numericLogDeriv(PRiSM_model_linearCompMultiLatInterference, t, params);
-    });
-}
+function PRiSM_model_linearCompMultiLatInterference(td, params) { return _linearCompMultiLatInterferenceEval(td, params, false); }
+function PRiSM_model_linearCompMultiLatInterference_pd_prime(td, params) { return _linearCompMultiLatInterferenceEval(td, params, true); }
 
 // -------------------------------------------------------------------- #35
 // MODEL #35 — General Multi-layer No-XF (heterogeneous layer types)
 // ----------------------------------------------------------------------------
-// Reference: research-grade composite — kh-weighted commingled sum of N
-// independent layers, each of arbitrary type. Supported per-layer types:
-//
-//      'homogeneous' — basic line-source K0 kernel
-//      'fracture'    — Gringarten infinite-conductivity fracture (closed-form)
-//      'horizontal'  — Goode-Thambynayagam horizontal kernel (image series)
-//      'composite'   — radial-composite with one front (M, W ratios)
-//      'linearComp'  — linear-composite chained attenuation
-//
-// Each layer's pd is computed at the SAME global td (assumption: time
-// non-dimensionalised consistently across layers via the user's reference
-// rw and reservoir kh). The well-bore Pwd is Σ κ_i · pd_i. WBS+skin folded
-// once at the well via _stehfestEval.
-//
-// APPROXIMATION: each layer is treated as if it sees the full producing
-// rate (commingled) — there is NO inter-layer cross-flow. This is the
-// standard Lefkovits-Hazebroek limit (κ_i = (kh)_i / Σ kh).
+// kh-weighted commingled sum (Lefkovits-Hazebroek limit) of layer kernels in
+// rw units, WBS + skin folded once at the well:
+//   'homogeneous' — K0(√s)/(s√s K1(√s))
+//   'fracture'    — uniform-flux fracture, extras.xf_rw = xf/rw (default 100):
+//                   Ki(xf·√s)/(xf·s^{3/2})
+//   'horizontal'  — Ozkan-Raghavan kernel, extras.L_to_h (default 5),
+//                   extras.KvKh (default 1): H(s·a²)/s, a = Lh/rw
+//   'composite'   — homogeneous × (1+M)/(2M) (extras.M)
+//   'linearComp'  — homogeneous × chained attenuation (extras.zones)
+// Negative skin: effective-wellbore-radius transform (all rw-normalised
+// lengths of every layer scale by e^S).
 // ----------------------------------------------------------------------------
-function _layerPdLap(s, L) {
-    var sq = Math.sqrt(s);
+function _layerPdLap(s, L, params, sc) {
+    var ss = Math.sqrt(s);
     var typ = L.type || 'homogeneous';
     var ex = L.extras || {};
-    if (typ === 'homogeneous') {
-        return _safeK0(sq) / s;
-    }
     if (typ === 'fracture') {
-        // simple Laplace approximation for infinite-cond fracture: K0(sq)/s
-        // (uniform-flux surrogate). Real implementation would Stehfest-invert
-        // Cinco-Ley but here we want a single-shot Laplace evaluation.
-        return _safeK0(sq) / s;
+        var xf = _posOr(ex.xf_rw, 100) * sc;
+        return _Ki(xf * ss) / (xf * s * ss);
     }
     if (typ === 'horizontal') {
-        var L_to_h = ex.L_to_h || 5;
-        var h_dim = 1 / L_to_h;
-        var pd = _safeK0(sq) / s;
-        for (var n = 1; n <= 50; n++) {
-            var arg = sq * (2 * n * h_dim);
-            if (arg > 50) break;
-            pd += 2 * _safeK0(arg) / s;
-        }
-        return pd;
+        var l2h = _posOr(ex.L_to_h, 5), kvkh = _posOr(ex.KvKh, 1);
+        var hrw = _hOverRw(params) * sc;
+        var LD = 0.5 * l2h * Math.sqrt(kvkh);
+        var a = 0.5 * l2h * hrw;
+        var g = _hzGeom(LD, _num(ex.zw_to_h) ? ex.zw_to_h : 0.5, 1 / hrw, kvkh);
+        var u = s * a * a;
+        return _hzSelf(u, g, _uRange(function (x) { return x * a * a; }, u)) / s;
     }
+    var base = _wellTerm(ss) / s;
     if (typ === 'composite') {
-        // 2-zone radial-composite Laplace (Bourdet 2002 §6.4.2):
-        //   Pres_lap = K0(sq) / s · (1 + M) / (2·M)   at late time
-        // Simplified one-front step in Laplace.
-        var M = ex.M || 1;
-        var attn = (1 + M) / (2 * Math.max(M, 0.001));
-        return (_safeK0(sq) / s) * attn;
+        var M = _posOr(ex.M, 1);
+        return base * (1 + M) / (2 * Math.max(M, 0.001));
     }
-    if (typ === 'linearComp') {
-        var zones = ex.zones || [];
-        var attn2 = _linearCompFactor(s, zones);
-        return (_safeK0(sq) / s) * attn2;
-    }
-    // unknown type — fall back to homogeneous
-    return _safeK0(sq) / s;
+    if (typ === 'linearComp') return base * _linearCompFactor(s, ex.zones || []);
+    return base;
 }
-
-function PRiSM_model_generalMLNoXF(td, params) {
+function _generalMLNoXFEval(td, params, deriv) {
     _requirePositiveTd(td);
     _requireParams(params, ['Cd', 'S', 'layers']);
-    var Cd = params.Cd, S = params.S;
     var layers = _normaliseLayers(params.layers);
-    return _stehfestEval(function (s) {
+    return _evalWbsSkin(function (s, sc) {
         var pd = 0;
-        for (var i = 0; i < layers.length; i++) {
-            pd += layers[i].kappa * _layerPdLap(s, layers[i]);
-        }
+        for (var i = 0; i < layers.length; i++) pd += layers[i].kappa * _layerPdLap(s, layers[i], params, sc);
         return pd;
-    }, td, Cd, S);
+    }, td, params.Cd, params.S, deriv, true);
 }
-
-function PRiSM_model_generalMLNoXF_pd_prime(td, params) {
-    _requirePositiveTd(td);
-    return _arrayMap(td, function (t) {
-        return _numericLogDeriv(PRiSM_model_generalMLNoXF, t, params);
-    });
-}
+function PRiSM_model_generalMLNoXF(td, params) { return _generalMLNoXFEval(td, params, false); }
+function PRiSM_model_generalMLNoXF_pd_prime(td, params) { return _generalMLNoXFEval(td, params, true); }
 
 // -------------------------------------------------------------------- #36
-// MODEL #36 — Multi-layer Interference at Arbitrary (x,y), PSS λ-XF
+// MODEL #36 — Multi-layer Interference, PSS λ cross-flow
 // ----------------------------------------------------------------------------
-// Reference: Kuchuk SPE 22731.
-//
-// Observation pressure measured at an arbitrary point (x_obs, y_obs) in
-// any layer of a multi-layer reservoir with PSS-controlled cross-flow.
-// The observation point is specified in well-radius units; the layer index
-// (zoneObs, optional) determines which layer's storativity gets weight.
-//
-// Kernel: Pres_obs_lap(s) = K0(rD · sqrt(s · f(s))) / s
-// where f(s) is the Kuchuk PSS-XF factor and rD is the radial distance from
-// the producer to the observation point.
-//
-// APPROXIMATION: layer-specific pressure variation across thickness is
-// neglected — the model returns the kh-weighted average pressure at the
-// observation point. To recover layer-specific pressure use generalMLNoXF
-// with appropriate per-layer ω,λ and a single-layer extras.zoneObs.
+//   p̄_obs = K0(rD·x)/(s·x·K1(x)),  x = √(s·f(s)) (layer-averaged pressure)
 // ----------------------------------------------------------------------------
-function PRiSM_model_mlInterferenceXF(td, params) {
+function _mlInterferenceXFEval(td, params, deriv) {
     _requirePositiveTd(td);
     _requireParams(params, ['Cd', 'S', 'rxObs', 'layers']);
-    var Cd = params.Cd, S = params.S;
     var obs = _rdFromObs(params.rxObs, params.thetaObs);
     var layers = _normaliseLayers(params.layers);
-    var stehfest = _foundation('PRiSM_stehfest');
-    return _arrayMap(td, function (t) {
-        var Fhat = function (s) {
-            var f = _multiLayerXF_f(s, layers);
-            var sf = s * f;
-            if (sf <= 0 || !_num(sf)) return BIG;
-            var sq = Math.sqrt(sf);
-            var pres_well = _safeK0(sq) / s;
-            var inner = s * pres_well + S;
-            var denomFlow = 1 + Cd * s * inner;
-            var pres_obs = _safeK0(obs.rD * sq) / s;
-            return pres_obs / denomFlow;
-        };
-        return stehfest(Fhat, t, STEHFEST_N);
-    });
+    return _evalObs(
+        function (s, sc) { return _pdLap_multiLayerXF(s, layers, sc); },
+        function (s, sc) {
+            var x = Math.sqrt(s * _multiLayerXF_f(s, layers, sc));
+            return _kOverWell(x, obs.rD * sc) / s;
+        },
+        td, params.Cd, params.S, { r2: obs.rD * obs.rD, finf: _multiLayerXF_fInf(layers) }, deriv);
 }
-
-function PRiSM_model_mlInterferenceXF_pd_prime(td, params) {
-    _requirePositiveTd(td);
-    return _arrayMap(td, function (t) {
-        return _numericLogDeriv(PRiSM_model_mlInterferenceXF, t, params);
-    });
-}
+function PRiSM_model_mlInterferenceXF(td, params) { return _mlInterferenceXFEval(td, params, false); }
+function PRiSM_model_mlInterferenceXF_pd_prime(td, params) { return _mlInterferenceXFEval(td, params, true); }
 
 // -------------------------------------------------------------------- #37
 // MODEL #37 — Radial-Composite Reservoir Interference
 // ----------------------------------------------------------------------------
-// Reference: extends Phase 5 #9 radial-composite single well to the
-// observation point. A two-zone radial composite has an inner zone of
-// radius RD and outer zone with mobility ratio M = (k/μ)_outer/(k/μ)_inner
-// and storativity ratio W = (φ·ct·h)_outer/(φ·ct·h)_inner.
-//
-// The observation point can be in either zone. We use the Bourdet 2002
-// §6.4.2 single-front Laplace solution:
-//
-//   For obs in inner zone (rD ≤ RD):
-//     Pres_obs_lap = K0(rD·sq)/s · (1 + (M-1)/(M+1) · A(rD,RD,sq))
-//
-//   For obs in outer zone (rD > RD):
-//     Pres_obs_lap = K0(rD·sq)/s · 2·M / (1+M) · B(rD,RD,sq)
-//
-// where A and B are slowly-varying functions; for engineering-grade
-// interpretation we use the late-time limits A → 1, B → 1, leaving a clean
-// (1+M)/(2M) attenuation that captures the ½-line shift.
+// Single-front engineering approximation (Bourdet 2002 §6.4.2):
+//   obs in inner zone (rD ≤ RD): line source × (1 + (M−1)/(M+1)·K0(2RD√s)/K0(rD√s))
+//   obs in outer zone (rD > RD): line source at rD·√W × 2M/(1+M)
+// M = (k/μ)_outer/(k/μ)_inner, W = storativity ratio outer/inner.
 // ----------------------------------------------------------------------------
-function PRiSM_model_radialCompInterference(td, params) {
+function _radialCompInterferenceEval(td, params, deriv) {
     _requirePositiveTd(td);
     _requireParams(params, ['Cd', 'S', 'rxObs', 'RD', 'M']);
-    var Cd = params.Cd, S = params.S;
     var obs = _rdFromObs(params.rxObs, params.thetaObs);
-    var RD = params.RD;
-    var M = params.M;
-    var W = (params.W != null) ? params.W : 1;
+    var RD = params.RD, M = params.M;
+    var W = _posOr(params.W, 1);
     if (!_num(M) || M <= 0) throw new Error('PRiSM radialCompInterference: M must be > 0');
     if (!_num(RD) || RD <= 0) throw new Error('PRiSM radialCompInterference: RD must be > 0');
-    var stehfest = _foundation('PRiSM_stehfest');
-    return _arrayMap(td, function (t) {
-        var Fhat = function (s) {
-            var sq = Math.sqrt(s);
-            var pres_well = _safeK0(sq) / s;
-            var inner = s * pres_well + S;
-            var denomFlow = 1 + Cd * s * inner;
-            // observation kernel: piecewise depending on whether obs is in
-            // inner or outer zone.
-            var pres_obs;
-            if (obs.rD <= RD) {
-                // inner-zone observation: pure K0 with small front correction
-                var A = 1 + (M - 1) / (M + 1) * _safeK0(2 * RD * sq) / Math.max(_safeK0(obs.rD * sq), 1e-30);
-                pres_obs = (_safeK0(obs.rD * sq) / s) * Math.max(0.1, Math.min(10, A));
-            } else {
-                // outer-zone observation: attenuated by transmissibility step
-                // include sqrt(W) correction for outer storativity (delays arrival)
-                var sqW = Math.sqrt(Math.max(W, 1e-9));
-                var arg = obs.rD * sq * sqW;
-                pres_obs = (_safeK0(arg) / s) * (2 * M / (1 + M));
+    var inner = obs.rD <= RD;
+    var rEarly = inner ? obs.rD : obs.rD * Math.sqrt(W);
+    return _evalObs(
+        function (s) { return _wellTerm(Math.sqrt(s)) / s; },
+        function (s, sc) {
+            var y = Math.sqrt(s);
+            if (inner) {
+                var r = obs.rD * sc, R2 = 2 * RD * sc;
+                var ratio = _K0e(y * R2) / _K0e(y * r) * Math.exp(-y * (R2 - r));
+                var A = 1 + (M - 1) / (M + 1) * ratio;
+                return _kOverWell(y, r) * Math.max(0.1, Math.min(10, A)) / s;
             }
-            return pres_obs / denomFlow;
-        };
-        return stehfest(Fhat, t, STEHFEST_N);
-    });
+            return _kOverWell(y, obs.rD * sc * Math.sqrt(W)) * (2 * M / (1 + M)) / s;
+        },
+        td, params.Cd, params.S, { r2: rEarly * rEarly, finf: 1 }, deriv);
 }
-
-function PRiSM_model_radialCompInterference_pd_prime(td, params) {
-    _requirePositiveTd(td);
-    return _arrayMap(td, function (t) {
-        return _numericLogDeriv(PRiSM_model_radialCompInterference, t, params);
-    });
-}
+function PRiSM_model_radialCompInterference(td, params) { return _radialCompInterferenceEval(td, params, false); }
+function PRiSM_model_radialCompInterference_pd_prime(td, params) { return _radialCompInterferenceEval(td, params, true); }
 
 
 // =============================================================================
 // SECTION 3 — Registry merge (additive)
 // =============================================================================
-// One entry per model. Categories:
-//   'interference'  — observation-pressure models
-//   'multilayer'    — multi-layer well/reservoir kernels
-//   'multilateral'  — multi-leg horizontal wells
-//   'composite'     — linear- or radial-composite (single well)
-// kind: 'pressure' for all sixteen.
+// Categories: 'interference', 'multilayer', 'multilateral', 'composite'.
+// kind: 'pressure' for all sixteen.  refLength: 'rw' | 'Lh' | 'xf'.
 // =============================================================================
 
 var DEFAULT_LAYERS_2 = [
@@ -2676,6 +2384,8 @@ var DEFAULT_ZONES_2 = [
     { M: 0.5, W: 0.7 }
 ];
 
+var SKIN_FROZEN = ['S_global'];
+
 var REGISTRY_ADDITIONS = {
 
     interference: {
@@ -2683,15 +2393,17 @@ var REGISTRY_ADDITIONS = {
         pdPrime: PRiSM_model_interference_pd_prime,
         defaults: { Cd: 100, S: 0, rxObs: 1000, thetaObs: 0, Cd_obs: 0 },
         paramSpec: [
-            { key: 'Cd',       label: 'Wellbore storage Cd (producer)', unit: '-', min: 0, max: 1e10, default: 100 },
+            { key: 'Cd',       label: 'Wellbore storage Cd (producer)', unit: '-', min: 0, max: 1e10, default: 100, scale: 'log' },
             { key: 'S',        label: 'Skin S (producer)',              unit: '-', min: -7, max: 50, default: 0 },
-            { key: 'rxObs',    label: 'Observation radial distance rD', unit: 'r_w', min: 1, max: 1e6, default: 1000 },
+            { key: 'rxObs',    label: 'Observation radial distance rD', unit: 'r_w', min: 1, max: 1e6, default: 1000, scale: 'log' },
             { key: 'thetaObs', label: 'Observation azimuth',            unit: 'deg', min: 0, max: 360, default: 0 },
             { key: 'Cd_obs',   label: 'Obs-well storage Cd_obs',        unit: '-', min: 0, max: 1e10, default: 0 }
         ],
+        refLength: 'rw',
+        defaultFrozen: ['thetaObs', 'Cd_obs'],
         reference: 'Ogbe & Brigham, SPE 13253 (1984); Bourdet 2002 §7.4',
         category: 'interference',
-        description: 'Two-well interference test. Line-source observation at rD with producer storage + skin. Theta is geometric label (no anisotropy here).',
+        description: 'Two-well interference test. Line-source observation at rD with producer storage + skin. Theta is a geometric label (isotropic reservoir).',
         kind: 'pressure'
     },
 
@@ -2699,20 +2411,23 @@ var REGISTRY_ADDITIONS = {
         pd: PRiSM_model_mlHorizontalXF,
         pdPrime: PRiSM_model_mlHorizontalXF_pd_prime,
         defaults: {
-            Cd: 100, S_perf: 0, S_global: 0, KvKh: 0.1, L_to_h: 5.0,
+            Cd: 100, S_perf: 0, S_global: 0, KvKh: 0.1, L_to_h: 5.0, zw_to_h: 0.5,
             layers: DEFAULT_LAYERS_2
         },
         paramSpec: [
-            { key: 'Cd',       label: 'Wellbore storage Cd', unit: '-', min: 0, max: 1e10, default: 100 },
+            { key: 'Cd',       label: 'Wellbore storage Cd', unit: '-', min: 0, max: 1e10, default: 100, scale: 'log' },
             { key: 'S_perf',   label: 'Perforation skin',     unit: '-', min: -7, max: 50, default: 0 },
             { key: 'S_global', label: 'Global skin',          unit: '-', min: -7, max: 50, default: 0 },
-            { key: 'KvKh',     label: 'Anisotropy Kv/Kh',     unit: '-', min: 0.001, max: 10, default: 0.1 },
-            { key: 'L_to_h',   label: 'L / h_total',          unit: '-', min: 0.1, max: 100, default: 5.0 },
+            { key: 'KvKh',     label: 'Anisotropy Kv/Kh',     unit: '-', min: 0.001, max: 10, default: 0.1, scale: 'log' },
+            { key: 'L_to_h',   label: 'Lateral length L / h_total', unit: '-', min: 0.1, max: 100, default: 5.0, scale: 'log' },
+            { key: 'zw_to_h',  label: 'Lateral height zw/h',  unit: '-', min: 0.05, max: 0.95, default: 0.5 },
             { key: 'layers',   label: 'Layers (kh, ω, λ)',    unit: 'array', default: DEFAULT_LAYERS_2 }
         ],
-        reference: 'Kuchuk SPE 22731 (1991) — full transient cross-flow',
+        refLength: 'Lh',
+        defaultFrozen: ['S_global', 'zw_to_h'],
+        reference: 'Ozkan & Raghavan (1991) horizontal-well source functions; Kuchuk SPE 22731 (1991)',
         category: 'multilayer',
-        description: 'Horizontal well in N-layer reservoir with PSS cross-flow (Kuchuk SPE 22731). Goode-Thambynayagam image series in z, multi-layer admittance f(s).',
+        description: 'Horizontal well in an N-layer reservoir with PSS cross-flow: Ozkan-Raghavan uniform-flux line source between no-flow planes evaluated at s·f(s). Time referenced to the lateral half-length.',
         kind: 'pressure'
     },
 
@@ -2731,9 +2446,10 @@ var REGISTRY_ADDITIONS = {
             { key: 'S',      label: 'Effective skin S',    unit: '-', min: -7, max: 50, default: 0 },
             { key: 'layers', label: 'Layers (kh, ω, xf_ratio)', unit: 'array', default: null }
         ],
-        reference: 'Kuchuk & Wilkinson SPE 18125 (1989); Lefkovits-Hazebroek SPEJ 1961',
+        refLength: 'xf',
+        reference: 'Kuchuk & Wilkinson SPE 18125 (1989); Gringarten, Ramey & Raghavan (1974); Lefkovits-Hazebroek SPEJ 1961',
         category: 'multilayer',
-        description: 'Multi-layer commingled (no-XF), each layer with infinite-conductivity hydraulic fracture. kh-weighted Gringarten closed-form per layer.',
+        description: 'Multi-layer commingled (no-XF), each layer with a uniform-flux vertical fracture (half-length ratio xf_ratio). kh-weighted Laplace sum, proper storage + skin fold. Time referenced to the reference half-length.',
         kind: 'pressure'
     },
 
@@ -2748,16 +2464,18 @@ var REGISTRY_ADDITIONS = {
             ]
         },
         paramSpec: [
-            { key: 'Cd',       label: 'Wellbore storage Cd', unit: '-', min: 0, max: 1e10, default: 100 },
+            { key: 'Cd',       label: 'Wellbore storage Cd', unit: '-', min: 0, max: 1e10, default: 100, scale: 'log' },
             { key: 'S_perf',   label: 'Perforation skin',     unit: '-', min: -7, max: 50, default: 0 },
             { key: 'S_global', label: 'Global skin',          unit: '-', min: -7, max: 50, default: 0 },
-            { key: 'KvKh',     label: 'Anisotropy Kv/Kh',     unit: '-', min: 0.001, max: 10, default: 0.1 },
-            { key: 'L_to_h',   label: 'Default L / h',        unit: '-', min: 0.1, max: 100, default: 5.0 },
+            { key: 'KvKh',     label: 'Anisotropy Kv/Kh',     unit: '-', min: 0.001, max: 10, default: 0.1, scale: 'log' },
+            { key: 'L_to_h',   label: 'Default L / h',        unit: '-', min: 0.1, max: 100, default: 5.0, scale: 'log' },
             { key: 'layers',   label: 'Layers (kh, ω, L_to_h)', unit: 'array', default: null }
         ],
-        reference: 'Kuchuk & Wilkinson SPE 18125 (1989)',
+        refLength: 'Lh',
+        defaultFrozen: SKIN_FROZEN,
+        reference: 'Kuchuk & Wilkinson SPE 18125 (1989); Ozkan & Raghavan (1991)',
         category: 'multilayer',
-        description: 'Multi-layer commingled (no-XF), each layer with horizontal well kernel (Goode-Thambynayagam image series). Per-layer L/h overrideable.',
+        description: 'Multi-layer commingled (no-XF), each layer with an Ozkan-Raghavan horizontal-well kernel (per-layer L/h). Time referenced to the lateral half-length.',
         kind: 'pressure'
     },
 
@@ -2769,17 +2487,20 @@ var REGISTRY_ADDITIONS = {
             hp_to_h: 1.0, layers: DEFAULT_LAYERS_2
         },
         paramSpec: [
-            { key: 'Cd',        label: 'Wellbore storage Cd', unit: '-',   min: 0, max: 1e10, default: 100 },
+            { key: 'Cd',        label: 'Wellbore storage Cd', unit: '-',   min: 0, max: 1e10, default: 100, scale: 'log' },
             { key: 'S_perf',    label: 'Perforation skin',    unit: '-',   min: -7, max: 50, default: 0 },
             { key: 'S_global',  label: 'Global skin',         unit: '-',   min: -7, max: 50, default: 0 },
-            { key: 'KvKh',      label: 'Anisotropy Kv/Kh',    unit: '-',   min: 0.001, max: 10, default: 1 },
+            { key: 'KvKh',      label: 'Anisotropy Kv/Kh',    unit: '-',   min: 0.001, max: 10, default: 1, scale: 'log' },
             { key: 'theta_deg', label: 'Inclination angle',   unit: 'deg', min: 0, max: 89, default: 45 },
             { key: 'hp_to_h',   label: 'Perforated fraction', unit: '-',   min: 0.01, max: 1, default: 1.0 },
             { key: 'layers',    label: 'Layers (kh, ω, λ)',   unit: 'array', default: DEFAULT_LAYERS_2 }
         ],
-        reference: 'Kuchuk SPE 22731 (1991); Cinco-Miller-Ramey JPT Nov 1975',
+        refLength: 'rw',
+        defaultFrozen: SKIN_FROZEN,
+        pseudoSkin: function (params) { return _inclined_pseudoskin(params || {}); },
+        reference: 'Cinco-Ley, Miller & Ramey JPT Nov 1975; Kuchuk SPE 22731 (1991); Brons-Marting (1961)',
         category: 'multilayer',
-        description: 'Inclined / slant well penetrating one or more layers with full PSS cross-flow. Cinco-Miller-Ramey pseudo-skin folded in.',
+        description: 'Inclined / slant well in a layered reservoir with PSS cross-flow. Geometric skin = Cinco-Ley slant pseudo-skin (+ Brons-Marting when partially completed).',
         kind: 'pressure'
     },
 
@@ -2791,18 +2512,20 @@ var REGISTRY_ADDITIONS = {
             nLegs: 2, legSpacing: 2.0, layers: DEFAULT_LAYERS_2
         },
         paramSpec: [
-            { key: 'Cd',         label: 'Wellbore storage Cd', unit: '-', min: 0, max: 1e10, default: 100 },
+            { key: 'Cd',         label: 'Wellbore storage Cd', unit: '-', min: 0, max: 1e10, default: 100, scale: 'log' },
             { key: 'S_perf',     label: 'Perforation skin',     unit: '-', min: -7, max: 50, default: 0 },
             { key: 'S_global',   label: 'Global skin',          unit: '-', min: -7, max: 50, default: 0 },
-            { key: 'KvKh',       label: 'Anisotropy Kv/Kh',     unit: '-', min: 0.001, max: 10, default: 0.1 },
-            { key: 'L_to_h',     label: 'Leg L / h',            unit: '-', min: 0.1, max: 100, default: 5.0 },
+            { key: 'KvKh',       label: 'Anisotropy Kv/Kh',     unit: '-', min: 0.001, max: 10, default: 0.1, scale: 'log' },
+            { key: 'L_to_h',     label: 'Leg length L / h',     unit: '-', min: 0.1, max: 100, default: 5.0, scale: 'log' },
             { key: 'nLegs',      label: 'Number of legs',       unit: '-', min: 1, max: 8, default: 2 },
-            { key: 'legSpacing', label: 'Leg spacing (×L)',     unit: '-', min: 0.1, max: 50, default: 2.0 },
+            { key: 'legSpacing', label: 'Leg spacing (×L)',     unit: '-', min: 0.1, max: 50, default: 2.0, scale: 'log' },
             { key: 'layers',     label: 'Layers (kh, ω, λ)',    unit: 'array', default: DEFAULT_LAYERS_2 }
         ],
-        reference: 'Kuchuk SPE 22731 (1991); Larsen & Hegre SPE 28298',
+        refLength: 'Lh',
+        defaultFrozen: ['S_global', 'nLegs'],
+        reference: 'Ozkan & Raghavan (1991) source functions; Kuchuk SPE 22731 (1991); Larsen & Hegre SPE 28298',
         category: 'multilateral',
-        description: 'Multi-lateral well (parallel horizontal legs) in multi-layer reservoir with PSS cross-flow. Per-leg image series + inter-leg line-source coupling.',
+        description: 'Multi-lateral well (parallel horizontal legs sharing the wellbore pressure) in a layered reservoir with PSS cross-flow: superposed Ozkan-Raghavan laterals, uniform rate split.',
         kind: 'pressure'
     },
 
@@ -2815,16 +2538,19 @@ var REGISTRY_ADDITIONS = {
             layers: DEFAULT_LAYERS_2
         },
         paramSpec: [
-            { key: 'Cd',       label: 'Wellbore storage Cd',    unit: '-', min: 0, max: 1e10, default: 100 },
+            { key: 'Cd',       label: 'Wellbore storage Cd',    unit: '-', min: 0, max: 1e10, default: 100, scale: 'log' },
             { key: 'S_perf',   label: 'Perforation skin',       unit: '-', min: -7, max: 50, default: 0 },
             { key: 'S_global', label: 'Global skin',            unit: '-', min: -7, max: 50, default: 0 },
-            { key: 'KvKh',     label: 'Anisotropy Kv/Kh',       unit: '-', min: 0.001, max: 100, default: 0.1 },
+            { key: 'KvKh',     label: 'Anisotropy Kv/Kh',       unit: '-', min: 0.001, max: 100, default: 0.1, scale: 'log' },
             { key: 'perfs',    label: 'Perforations (≤4 hp/h, zw/h)', unit: 'array', default: DEFAULT_PERFS_2 },
             { key: 'layers',   label: 'Layers (kh, ω, λ)',      unit: 'array', default: DEFAULT_LAYERS_2 }
         ],
-        reference: 'Kuchuk SPE 22731 (1991); Brons-Marting (1961) for perf pseudo-skin',
+        refLength: 'rw',
+        defaultFrozen: SKIN_FROZEN,
+        pseudoSkin: function (params) { return _multiPerfSkin(params || {}, 4, 'mlMultiPerf'); },
+        reference: 'Kuchuk SPE 22731 (1991); Brons-Marting (1961) perforation pseudo-skin',
         category: 'multilayer',
-        description: 'Multi-layer reservoir with up to 4 perforated intervals (vertical well). Layer cross-flow via PSS f(s); kh-weighted Brons-Marting pseudo-skin per perf.',
+        description: 'Layered reservoir with up to 4 perforated intervals (vertical well). Layer cross-flow via PSS f(s); Brons-Marting pseudo-skin on the combined open fraction.',
         kind: 'pressure'
     },
 
@@ -2836,18 +2562,20 @@ var REGISTRY_ADDITIONS = {
             rxObs: 1000, thetaObs: 0, layers: DEFAULT_LAYERS_2
         },
         paramSpec: [
-            { key: 'Cd',       label: 'Wellbore storage Cd',  unit: '-', min: 0, max: 1e10, default: 100 },
+            { key: 'Cd',       label: 'Wellbore storage Cd',  unit: '-', min: 0, max: 1e10, default: 100, scale: 'log' },
             { key: 'S_perf',   label: 'Perforation skin',     unit: '-', min: -7, max: 50, default: 0 },
             { key: 'S_global', label: 'Global skin',          unit: '-', min: -7, max: 50, default: 0 },
-            { key: 'KvKh',     label: 'Anisotropy Kv/Kh',     unit: '-', min: 0.001, max: 10, default: 0.1 },
-            { key: 'L_to_h',   label: 'L / h',                unit: '-', min: 0.1, max: 100, default: 5.0 },
-            { key: 'rxObs',    label: 'Observation distance', unit: 'r_w', min: 1, max: 1e6, default: 1000 },
-            { key: 'thetaObs', label: 'Observation azimuth',  unit: 'deg', min: 0, max: 360, default: 0 },
+            { key: 'KvKh',     label: 'Anisotropy Kv/Kh',     unit: '-', min: 0.001, max: 10, default: 0.1, scale: 'log' },
+            { key: 'L_to_h',   label: 'Lateral length L / h', unit: '-', min: 0.1, max: 100, default: 5.0, scale: 'log' },
+            { key: 'rxObs',    label: 'Observation distance', unit: 'r_w', min: 1, max: 1e6, default: 1000, scale: 'log' },
+            { key: 'thetaObs', label: 'Observation azimuth (from lateral)', unit: 'deg', min: 0, max: 360, default: 0 },
             { key: 'layers',   label: 'Layers (kh, ω, λ)',    unit: 'array', default: DEFAULT_LAYERS_2 }
         ],
-        reference: 'Kuchuk SPE 22731 (1991) + Babu-Odeh SPE 18298 (horizontal kernel)',
+        refLength: 'rw',
+        defaultFrozen: ['S_global', 'thetaObs'],
+        reference: 'Ozkan & Raghavan (1991) source functions; Kuchuk SPE 22731 (1991)',
         category: 'interference',
-        description: 'Multi-layer horizontal-well interference: observation pressure from a horizontal producer in layered reservoir with PSS cross-flow.',
+        description: 'Horizontal producer in a layered reservoir with PSS cross-flow, pressure at a fully penetrating observation well (vertically averaged Ozkan-Raghavan response).',
         kind: 'pressure'
     },
 
@@ -2861,18 +2589,21 @@ var REGISTRY_ADDITIONS = {
             layers: DEFAULT_LAYERS_2
         },
         paramSpec: [
-            { key: 'Cd',       label: 'Wellbore storage Cd',    unit: '-', min: 0, max: 1e10, default: 100 },
+            { key: 'Cd',       label: 'Wellbore storage Cd',    unit: '-', min: 0, max: 1e10, default: 100, scale: 'log' },
             { key: 'S_perf',   label: 'Perforation skin',       unit: '-', min: -7, max: 50, default: 0 },
             { key: 'S_global', label: 'Global skin',            unit: '-', min: -7, max: 50, default: 0 },
-            { key: 'KvKh',     label: 'Anisotropy Kv/Kh',       unit: '-', min: 0.001, max: 100, default: 0.1 },
-            { key: 'rxObs',    label: 'Observation distance',   unit: 'r_w', min: 1, max: 1e6, default: 1000 },
+            { key: 'KvKh',     label: 'Anisotropy Kv/Kh',       unit: '-', min: 0.001, max: 100, default: 0.1, scale: 'log' },
+            { key: 'rxObs',    label: 'Observation distance',   unit: 'r_w', min: 1, max: 1e6, default: 1000, scale: 'log' },
             { key: 'thetaObs', label: 'Observation azimuth',    unit: 'deg', min: 0, max: 360, default: 0 },
             { key: 'perfs',    label: 'Producer perfs (≤3)',    unit: 'array', default: DEFAULT_PERFS_2 },
             { key: 'layers',   label: 'Layers (kh, ω, λ)',      unit: 'array', default: DEFAULT_LAYERS_2 }
         ],
-        reference: 'Kuchuk SPE 22731 (1991)',
+        refLength: 'rw',
+        defaultFrozen: ['S_global', 'thetaObs'],
+        pseudoSkin: function (params) { return _multiPerfSkin(params || {}, 3, 'mlMultiPerfInterference'); },
+        reference: 'Kuchuk SPE 22731 (1991); Brons-Marting (1961)',
         category: 'interference',
-        description: 'Multi-layer multi-perforation interference: ≤3 producing intervals + 1 observation point in layered reservoir with PSS cross-flow.',
+        description: 'Multi-layer multi-perforation interference: ≤3 producing intervals + 1 observation point in a layered reservoir with PSS cross-flow.',
         kind: 'pressure'
     },
 
@@ -2885,19 +2616,21 @@ var REGISTRY_ADDITIONS = {
             dpMode: 'none', omega: 0.1, lambda: 1e-5
         },
         paramSpec: [
-            { key: 'Cd',          label: 'Wellbore storage Cd', unit: '-',  min: 0, max: 1e10, default: 100 },
+            { key: 'Cd',          label: 'Wellbore storage Cd', unit: '-',  min: 0, max: 1e10, default: 100, scale: 'log' },
             { key: 'S',           label: 'Producer skin S',     unit: '-',  min: -7, max: 50, default: 0 },
-            { key: 'rxObs',       label: 'Observation distance', unit: 'r_w', min: 1, max: 1e6, default: 1000 },
+            { key: 'rxObs',       label: 'Observation distance', unit: 'r_w', min: 1, max: 1e6, default: 1000, scale: 'log' },
             { key: 'thetaObs',    label: 'Observation azimuth', unit: 'deg', min: 0, max: 360, default: 0 },
             { key: 'theta_p_deg', label: 'Producer inclination', unit: 'deg', min: 0, max: 89, default: 45 },
             { key: 'theta_o_deg', label: 'Observation incl',     unit: 'deg', min: 0, max: 89, default: 30 },
             { key: 'dpMode',      label: 'Reservoir kind',       unit: '',   options: ['none', 'pss'], default: 'none' },
             { key: 'omega',       label: 'DP storativity ω',     unit: '-',  min: 0.001, max: 0.999, default: 0.1 },
-            { key: 'lambda',      label: 'DP coefficient λ',     unit: '-',  min: 1e-9, max: 1e-2, default: 1e-5 }
+            { key: 'lambda',      label: 'DP coefficient λ',     unit: '-',  min: 1e-9, max: 1e-2, default: 1e-5, scale: 'log' }
         ],
+        refLength: 'rw',
+        defaultFrozen: ['thetaObs'],
         reference: 'Cinco et al JPT Nov 1975; Kuchuk & Wilkinson SPE 18125 (1989)',
         category: 'interference',
-        description: 'Two inclined wells in homogeneous or PSS double-porosity reservoir. Phenomenological vertical/horizontal projection blend by sin(θ_p)·sin(θ_o).',
+        description: 'Two inclined wells in a homogeneous or PSS double-porosity reservoir. Phenomenological vertical/projected blend weighted by sin(θ_p)·sin(θ_o).',
         kind: 'pressure'
     },
 
@@ -2909,13 +2642,15 @@ var REGISTRY_ADDITIONS = {
             zones: DEFAULT_ZONES_2
         },
         paramSpec: [
-            { key: 'Cd',       label: 'Wellbore storage Cd', unit: '-', min: 0, max: 1e10, default: 100 },
+            { key: 'Cd',       label: 'Wellbore storage Cd', unit: '-', min: 0, max: 1e10, default: 100, scale: 'log' },
             { key: 'S',        label: 'Producer skin S',     unit: '-', min: -7, max: 50, default: 0 },
-            { key: 'rxObs',    label: 'Observation distance', unit: 'r_w', min: 1, max: 1e6, default: 1000 },
+            { key: 'rxObs',    label: 'Observation distance', unit: 'r_w', min: 1, max: 1e6, default: 1000, scale: 'log' },
             { key: 'thetaObs', label: 'Observation azimuth', unit: 'deg', min: 0, max: 360, default: 0 },
             { key: 'zones',    label: 'Zones (≤5: M, W ratios)', unit: 'array', default: DEFAULT_ZONES_2 }
         ],
-        reference: 'Bourdet 2002 §6.4; Kuchuk PSS chained kernel',
+        refLength: 'rw',
+        defaultFrozen: ['thetaObs'],
+        reference: 'Bourdet 2002 §6.4; chained transmissibility approximation',
         category: 'interference',
         description: 'Observation pressure in a linear-composite reservoir (≤5 zones). Chained transmissibility attenuation from producer through each interface.',
         kind: 'pressure'
@@ -2929,18 +2664,20 @@ var REGISTRY_ADDITIONS = {
             nLegs: 2, legSpacing: 2.0, zones: DEFAULT_ZONES_2
         },
         paramSpec: [
-            { key: 'Cd',         label: 'Wellbore storage Cd', unit: '-', min: 0, max: 1e10, default: 100 },
+            { key: 'Cd',         label: 'Wellbore storage Cd', unit: '-', min: 0, max: 1e10, default: 100, scale: 'log' },
             { key: 'S_perf',     label: 'Perforation skin',     unit: '-', min: -7, max: 50, default: 0 },
             { key: 'S_global',   label: 'Global skin',          unit: '-', min: -7, max: 50, default: 0 },
-            { key: 'KvKh',       label: 'Anisotropy Kv/Kh',     unit: '-', min: 0.001, max: 10, default: 0.1 },
-            { key: 'L_to_h',     label: 'Leg L / h',            unit: '-', min: 0.1, max: 100, default: 5.0 },
+            { key: 'KvKh',       label: 'Anisotropy Kv/Kh',     unit: '-', min: 0.001, max: 10, default: 0.1, scale: 'log' },
+            { key: 'L_to_h',     label: 'Leg length L / h',     unit: '-', min: 0.1, max: 100, default: 5.0, scale: 'log' },
             { key: 'nLegs',      label: 'Number of legs',       unit: '-', min: 1, max: 8, default: 2 },
-            { key: 'legSpacing', label: 'Leg spacing (×L)',     unit: '-', min: 0.1, max: 50, default: 2.0 },
+            { key: 'legSpacing', label: 'Leg spacing (×L)',     unit: '-', min: 0.1, max: 50, default: 2.0, scale: 'log' },
             { key: 'zones',      label: 'Zones (≤5: M, W)',     unit: 'array', default: DEFAULT_ZONES_2 }
         ],
-        reference: 'Composite of Kuchuk SPE 22731 (#15-related) and Larsen multilat (#25)',
+        refLength: 'Lh',
+        defaultFrozen: ['S_global', 'nLegs'],
+        reference: 'Ozkan & Raghavan (1991) laterals + chained zone attenuation (#31)',
         category: 'composite',
-        description: 'Multi-lateral producer in linear-composite reservoir. Combines parallel-leg admittance with chained zone transmissibility attenuation.',
+        description: 'Multi-lateral producer in a linear-composite reservoir: superposed Ozkan-Raghavan laterals with chained zone transmissibility attenuation.',
         kind: 'pressure'
     },
 
@@ -2953,20 +2690,22 @@ var REGISTRY_ADDITIONS = {
             zones: DEFAULT_ZONES_2
         },
         paramSpec: [
-            { key: 'Cd',         label: 'Wellbore storage Cd', unit: '-', min: 0, max: 1e10, default: 100 },
+            { key: 'Cd',         label: 'Wellbore storage Cd', unit: '-', min: 0, max: 1e10, default: 100, scale: 'log' },
             { key: 'S_perf',     label: 'Perforation skin',     unit: '-', min: -7, max: 50, default: 0 },
             { key: 'S_global',   label: 'Global skin',          unit: '-', min: -7, max: 50, default: 0 },
-            { key: 'KvKh',       label: 'Anisotropy Kv/Kh',     unit: '-', min: 0.001, max: 10, default: 0.1 },
-            { key: 'L_to_h',     label: 'Leg L / h',            unit: '-', min: 0.1, max: 100, default: 5.0 },
+            { key: 'KvKh',       label: 'Anisotropy Kv/Kh',     unit: '-', min: 0.001, max: 10, default: 0.1, scale: 'log' },
+            { key: 'L_to_h',     label: 'Leg length L / h',     unit: '-', min: 0.1, max: 100, default: 5.0, scale: 'log' },
             { key: 'nLegs',      label: 'Number of legs',       unit: '-', min: 1, max: 8, default: 2 },
-            { key: 'legSpacing', label: 'Leg spacing (×L)',     unit: '-', min: 0.1, max: 50, default: 2.0 },
-            { key: 'rxObs',      label: 'Observation distance', unit: 'r_w', min: 1, max: 1e6, default: 1000 },
+            { key: 'legSpacing', label: 'Leg spacing (×L)',     unit: '-', min: 0.1, max: 50, default: 2.0, scale: 'log' },
+            { key: 'rxObs',      label: 'Observation distance', unit: 'r_w', min: 1, max: 1e6, default: 1000, scale: 'log' },
             { key: 'thetaObs',   label: 'Observation azimuth',  unit: 'deg', min: 0, max: 360, default: 0 },
             { key: 'zones',      label: 'Zones (≤5: M, W)',     unit: 'array', default: DEFAULT_ZONES_2 }
         ],
-        reference: 'Composite — Kuchuk SPE 22731 + Larsen multilat + line-source obs',
+        refLength: 'rw',
+        defaultFrozen: ['S_global', 'nLegs', 'thetaObs'],
+        reference: 'Ozkan & Raghavan (1991) laterals + chained zone attenuation + fully penetrating observation well',
         category: 'composite',
-        description: 'Multi-lateral producer in linear-composite reservoir, observation pressure at off-well point. Combines #15 + #25 + observation line-source.',
+        description: 'Multi-lateral producer in a linear-composite reservoir, pressure at an off-well (fully penetrating) observation point.',
         kind: 'pressure'
     },
 
@@ -2981,13 +2720,14 @@ var REGISTRY_ADDITIONS = {
             ]
         },
         paramSpec: [
-            { key: 'Cd',     label: 'Wellbore storage Cd', unit: '-', min: 0, max: 1e10, default: 100 },
+            { key: 'Cd',     label: 'Wellbore storage Cd', unit: '-', min: 0, max: 1e10, default: 100, scale: 'log' },
             { key: 'S',      label: 'Effective skin S',    unit: '-', min: -7, max: 50, default: 0 },
             { key: 'layers', label: 'Heterogeneous layers (per-layer type)', unit: 'array', default: null }
         ],
-        reference: 'Lefkovits-Hazebroek SPEJ 1961 (commingled limit) + per-layer Phase 1-5 base evaluators',
+        refLength: 'rw',
+        reference: 'Lefkovits-Hazebroek SPEJ 1961 (commingled limit); Ozkan & Raghavan (1991); Gringarten et al (1974)',
         category: 'multilayer',
-        description: 'General multi-layer no-XF: each layer of arbitrary type ∈ {homogeneous, fracture, horizontal, composite, linearComp}. kh-weighted commingled sum.',
+        description: 'General multi-layer no-XF: each layer of type homogeneous, fracture (xf/rw), horizontal (L/h), composite or linearComp. kh-weighted commingled sum.',
         kind: 'pressure'
     },
 
@@ -2999,15 +2739,17 @@ var REGISTRY_ADDITIONS = {
             layers: DEFAULT_LAYERS_2
         },
         paramSpec: [
-            { key: 'Cd',       label: 'Wellbore storage Cd', unit: '-', min: 0, max: 1e10, default: 100 },
+            { key: 'Cd',       label: 'Wellbore storage Cd', unit: '-', min: 0, max: 1e10, default: 100, scale: 'log' },
             { key: 'S',        label: 'Producer skin S',     unit: '-', min: -7, max: 50, default: 0 },
-            { key: 'rxObs',    label: 'Observation distance', unit: 'r_w', min: 1, max: 1e6, default: 1000 },
+            { key: 'rxObs',    label: 'Observation distance', unit: 'r_w', min: 1, max: 1e6, default: 1000, scale: 'log' },
             { key: 'thetaObs', label: 'Observation azimuth', unit: 'deg', min: 0, max: 360, default: 0 },
             { key: 'layers',   label: 'Layers (kh, ω, λ)',   unit: 'array', default: DEFAULT_LAYERS_2 }
         ],
+        refLength: 'rw',
+        defaultFrozen: ['thetaObs'],
         reference: 'Kuchuk SPE 22731 (1991)',
         category: 'interference',
-        description: 'Interference at arbitrary (x,y) in any layer of a multi-layer reservoir with PSS λ-controlled cross-flow.',
+        description: 'Interference in a multi-layer reservoir with PSS λ-controlled cross-flow (layer-averaged observation pressure).',
         kind: 'pressure'
     },
 
@@ -3019,33 +2761,46 @@ var REGISTRY_ADDITIONS = {
             RD: 100, M: 0.5, W: 1.0
         },
         paramSpec: [
-            { key: 'Cd',       label: 'Wellbore storage Cd', unit: '-',  min: 0, max: 1e10, default: 100 },
+            { key: 'Cd',       label: 'Wellbore storage Cd', unit: '-',  min: 0, max: 1e10, default: 100, scale: 'log' },
             { key: 'S',        label: 'Producer skin S',     unit: '-',  min: -7, max: 50, default: 0 },
-            { key: 'rxObs',    label: 'Observation distance', unit: 'r_w', min: 1, max: 1e6, default: 1000 },
+            { key: 'rxObs',    label: 'Observation distance', unit: 'r_w', min: 1, max: 1e6, default: 1000, scale: 'log' },
             { key: 'thetaObs', label: 'Observation azimuth', unit: 'deg', min: 0, max: 360, default: 0 },
-            { key: 'RD',       label: 'Inner-zone radius RD', unit: 'r_w', min: 1, max: 1e6, default: 100 },
-            { key: 'M',        label: 'Mobility ratio M',    unit: '-',  min: 0.01, max: 100, default: 0.5 },
-            { key: 'W',        label: 'Storativity ratio W', unit: '-',  min: 0.01, max: 100, default: 1.0 }
+            { key: 'RD',       label: 'Inner-zone radius RD', unit: 'r_w', min: 1, max: 1e6, default: 100, scale: 'log' },
+            { key: 'M',        label: 'Mobility ratio M',    unit: '-',  min: 0.01, max: 100, default: 0.5, scale: 'log' },
+            { key: 'W',        label: 'Storativity ratio W', unit: '-',  min: 0.01, max: 100, default: 1.0, scale: 'log' }
         ],
+        refLength: 'rw',
+        defaultFrozen: ['thetaObs'],
         reference: 'Bourdet 2002 §6.4.2 (single-front radial composite)',
         category: 'interference',
-        description: 'Interference at arbitrary (x,y) in 2-zone radial-composite reservoir. Late-time (1+M)/(2M) attenuation; sqrt(W) outer-zone delay.',
+        description: 'Interference in a 2-zone radial-composite reservoir. Single-front approximation: (1+M)/(2M)-type attenuation, √W outer-zone delay.',
         kind: 'pressure'
     }
 
 };
 
+/**
+ * Horizontal-well kernel H(u) (p̄ = H(u)/s) for {KvKh, L_to_h, zw_to_h, __h_rw},
+ * lengths in Lh units.  opts.line → without the finite-wellbore correction;
+ * opts.local → never delegate to window.PRiSM_lap_horizontal.
+ */
+function PRiSM_horizontalKernelH(u, params, opts) {
+    var hp = _hzParams(params || {});
+    var g = _hzGeom(hp.LD, hp.zw, hp.dz0, hp.KvKh);
+    var o = opts || {};
+    var H = o.local ? _hzSelfLocal(u, g, null) : _hzSelfLine(u, g, null);
+    return o.line ? H : H + _hzWellCorr(u, g);
+}
+
 // install — additive, never replace.
 (function _installRegistry() {
-    var g = (typeof window !== 'undefined') ? window
-          : (typeof globalThis !== 'undefined' ? globalThis : {});
+    var g = _win();
     if (!g.PRiSM_MODELS) g.PRiSM_MODELS = {};
     for (var key in REGISTRY_ADDITIONS) {
         if (REGISTRY_ADDITIONS.hasOwnProperty(key)) {
             g.PRiSM_MODELS[key] = REGISTRY_ADDITIONS[key];
         }
     }
-    // Also expose evaluators on the global namespace.
     g.PRiSM_model_interference                       = PRiSM_model_interference;
     g.PRiSM_model_interference_pd_prime              = PRiSM_model_interference_pd_prime;
     g.PRiSM_model_mlHorizontalXF                     = PRiSM_model_mlHorizontalXF;
@@ -3078,6 +2833,7 @@ var REGISTRY_ADDITIONS = {
     g.PRiSM_model_mlInterferenceXF_pd_prime          = PRiSM_model_mlInterferenceXF_pd_prime;
     g.PRiSM_model_radialCompInterference             = PRiSM_model_radialCompInterference;
     g.PRiSM_model_radialCompInterference_pd_prime    = PRiSM_model_radialCompInterference_pd_prime;
+    g.PRiSM_horizontalKernelH                        = PRiSM_horizontalKernelH;
 })();
 
 })();  // end IIFE
@@ -3153,8 +2909,16 @@ var REGISTRY_ADDITIONS = {
 //       composite-radial response (treated as the reservoir-side input).
 //
 // These approximations are appropriate for engineering quick-look /
-// regression-pre-screening; for production decisions a full reservoir
-// simulator (Eclipse, IMEX, OPM, MRST) should be used.
+// regression-pre-screening; for production decisions use a full numerical
+// reservoir simulation.
+//
+// TIME INPUT: the water-injection evaluator takes REAL TIME IN DAYS (registry
+// timeInput: 'days'); the physical-model wrapper passes days, not tD.  Its
+// physical parameters (kh, mu_o, ct, ...) are model inputs, not scale factors.
+// Negative total skin (mechanical + composite) is handled with the
+// effective-wellbore-radius transform, and the Bessel functions are the
+// smooth scaled forms of SECTION 0B (no Stehfest amplification of polynomial
+// breakpoints).
 // ════════════════════════════════════════════════════════════════════════════
 
 (function () {
@@ -3178,6 +2942,210 @@ function _foundation(name) {
 
 function _num(v) {
     return (typeof v === 'number') && isFinite(v) && !isNaN(v);
+}
+
+function _win() {
+    return (typeof window !== 'undefined') ? window
+         : (typeof globalThis !== 'undefined' ? globalThis : {});
+}
+
+// =============================================================================
+// SECTION 0B — Numerics (WP4b): smooth scaled Bessel functions, Stehfest,
+//             wellbore-storage + skin fold
+// =============================================================================
+//
+// Why local Bessel functions: the Abramowitz-Stegun polynomial fits switch
+// formula at x = 2 (K) and x = 3.75 (I) with ~1e-7 jumps.  Stehfest (N = 12,
+// weights up to 8e6) amplifies such jumps into percent-level pwd errors when
+// the 12 sample points straddle a breakpoint (3.7 % measured at Cd = 0.01).
+// The forms below (power series / continued fraction / Hankel series, each
+// used only where it is accurate to machine precision) agree to ~1e-14 across
+// their switch points and are exponentially scaled, so they never over- or
+// underflow.
+// =============================================================================
+
+var _EULER = 0.5772156649015329;
+
+// K_nu(x)·e^x for nu ∈ {0,1}, x > 0 (all branches accurate to ~1e-15):
+//   x < 2       : power series (K0: −(ln(x/2)+γ)·I0 + Σ q^k/(k!)²·H_k; K1 likewise)
+//   2 ≤ x ≤ 30  : Steed / Temme continued fraction CF2 (Numerical Recipes bessik)
+//   x > 30      : Hankel asymptotic series, optimally truncated (error < e^-60)
+function _Kse(nu, x) {
+  if (!(x > 0)) return Infinity;
+  if (x === Infinity) return 0;
+  if (x > 30) {
+    var mu = 4 * nu * nu, a = 1, s = 1, prev = Infinity;
+    for (var j = 1; j < 80; j++) {
+      a *= (mu - (2 * j - 1) * (2 * j - 1)) / (j * 8 * x);
+      var at = Math.abs(a);
+      if (at > prev) break;
+      s += a; prev = at;
+      if (at < 1e-17) break;
+    }
+    return s * Math.sqrt(Math.PI / (2 * x));
+  }
+  if (x < 2) {
+    var q = 0.25 * x * x, lx = Math.log(0.5 * x);
+    if (!nu) {
+      // K0 = −(ln(x/2)+γ)·I0 + Σ_{k≥1} q^k/(k!)²·H_k
+      var t = 1, I0 = 1, S = 0, H = 0;
+      for (var k = 1; k < 60; k++) { t *= q / (k * k); H += 1 / k; I0 += t; S += t * H; if (t < 1e-18) break; }
+      return (-(lx + _EULER) * I0 + S) * Math.exp(x);
+    }
+    // K1 = 1/x + ln(x/2)·I1 − (x/4)·Σ_{k≥0} (ψ(k+1)+ψ(k+2))·q^k/(k!(k+1)!)
+    var tk = 1, I1s = 1, S1 = (-_EULER) + (1 - _EULER), Hk = 0;
+    for (var k2 = 1; k2 < 60; k2++) {
+      tk *= q / (k2 * (k2 + 1));
+      Hk += 1 / k2;
+      I1s += tk;
+      S1 += tk * ((-_EULER + Hk) + (-_EULER + Hk + 1 / (k2 + 1)));
+      if (tk < 1e-18) break;
+    }
+    var I1 = 0.5 * x * I1s;
+    return (1 / x + lx * I1 - 0.25 * x * S1) * Math.exp(x);
+  }
+  // 2 ≤ x ≤ 30: Steed's continued fraction CF2 (Temme), nu = 0 → K0e, K1e
+  var b = 2 * (1 + x), d = 1 / b, h = d, delh = d, q1 = 0, q2 = 1, a1 = 0.25;
+  var qq = a1, c = a1, aa = -a1, ss = 1 + qq * delh;
+  for (var i = 2; i < 1000; i++) {
+    aa -= 2 * (i - 1);
+    c = -aa * c / i;
+    var qnew = (q1 - b * q2) / aa;
+    q1 = q2; q2 = qnew;
+    qq += c * qnew;
+    b += 2;
+    d = 1 / (b + aa * d);
+    delh = (b * d - 1) * delh;
+    h += delh;
+    var dels = qq * delh;
+    ss += dels;
+    if (Math.abs(dels / ss) < 1e-17) break;
+  }
+  h = a1 * h;
+  var k0e = Math.sqrt(Math.PI / (2 * x)) / ss;
+  return nu ? k0e * (x + 0.5 - h) / x : k0e;
+}
+function _K0e(x) { return _Kse(0, x); }
+function _K1e(x) { return _Kse(1, x); }
+
+// I_nu(x)·e^-x for nu ∈ {0,1}: power series for x ≤ 15, Hankel series above.
+function _Ise(nu, x) {
+  x = Math.abs(x);
+  if (x <= 15) {
+    var q = 0.25 * x * x, term = nu ? 0.5 * x : 1, sum = term;
+    for (var k = 1; k < 200; k++) {
+      term *= q / (k * (k + nu));
+      sum += term;
+      if (term < 1e-17 * sum) break;
+    }
+    return sum * Math.exp(-x);
+  }
+  var mu = 4 * nu * nu, a = 1, s = 1, prev = Infinity;
+  for (var j = 1; j < 60; j++) {
+    a *= -(mu - (2 * j - 1) * (2 * j - 1)) / (j * 8 * x);
+    var at = Math.abs(a);
+    if (at > prev) break;
+    s += a; prev = at;
+    if (at < 1e-17) break;
+  }
+  return s / Math.sqrt(2 * Math.PI * x);
+}
+function _I0e(x) { return _Ise(0, x); }
+function _I1e(x) { return _Ise(1, x); }
+
+// Finite-wellbore well term K0(x) / (x·K1(x)) — scale factors cancel.
+function _wellTerm(x) { return _K0e(x) / (x * _K1e(x)); }
+
+// ---- Stehfest (N = 12) ----------------------------------------------------
+var _SW12 = (function () {
+  var N = 12, f = [1], w = [];
+  for (var i = 1; i <= N; i++) f[i] = f[i - 1] * i;
+  for (var n = 1; n <= N; n++) {
+    var s = 0;
+    for (var k = Math.floor((n + 1) / 2); k <= Math.min(n, N / 2); k++) {
+      s += Math.pow(k, N / 2) * f[2 * k] /
+           (f[N / 2 - k] * f[k] * f[k - 1] * f[n - k] * f[2 * k - n]);
+    }
+    w.push(((n + N / 2) % 2 === 0 ? 1 : -1) * s);
+  }
+  return w;
+})();
+var _stehImpl;   // foundation PRiSM_stehfest (same weights), resolved lazily
+function _steh(F, t) {
+  if (_stehImpl === undefined) _stehImpl = _foundation('PRiSM_stehfest') || null;
+  if (_stehImpl) return _stehImpl(F, t, 12);
+  var a = Math.LN2 / t, s = 0;
+  for (var i = 1; i <= 12; i++) s += _SW12[i - 1] * F(i * a);
+  return a * s;
+}
+
+// ---- Wellbore storage + skin fold ------------------------------------------
+//   p̄wD(s) = (s·p̄ + S) / ( s·(1 + Cd·s·(s·p̄ + S)) )     (Agarwal-Ramey 1970)
+// p̄(s) is the unit-rate reservoir response at the well, built with the
+// FINITE-wellbore well term, so pwd → td/Cd at early time.
+//
+// Negative skin: for S < 0 the fold has a real positive pole wherever
+// s·p̄ + S = −1/(Cd·s); Stehfest then returns garbage.  We use the effective-
+// wellbore-radius transform (rwa = rw·e^−S): evaluate with S = 0 at
+// tDa = td·e^{2S}, CDa = Cd·e^{2S}; the kernel receives sc = e^{S} and scales
+// its rw-normalised distances by sc and rw²-normalised coefficients (λ) by
+// 1/sc².  Late time is exactly 0.5(ln td + 0.80907) + S.
+function _foldTransform(Cd, S) {
+  Cd = _num(Cd) && Cd > 0 ? Cd : 0;
+  S = _num(S) ? S : 0;
+  if (S < 0) {
+    var sc = Math.exp(S);
+    return { sc: sc, tf: sc * sc, Cd: Cd * sc * sc, S: 0 };
+  }
+  return { sc: 1, tf: 1, Cd: Cd, S: S };
+}
+function _foldF(lap, Cd, S) {
+  return function (s) {
+    var g = s * lap(s) + S;
+    if (!(Cd > 0)) return g / s;
+    return g / (s * (1 + Cd * s * g));
+  };
+}
+// Optional delegation to the shared export (WP4a, 03-models.js).  It is
+// called only in the unambiguous S ≥ 0 form (after our own transform) and its
+// first value is cross-checked against the local inversion.
+function _extFold(lap, tArr, Cd, S, F) {
+  var ext = _win().PRiSM_evalWbsSkin;
+  if (typeof ext !== 'function' || !tArr.length) return null;
+  try {
+    var r = ext(lap, tArr.slice(), Cd, S, {});
+    if (!r || r.length !== tArr.length) return null;
+    for (var i = 0; i < r.length; i++) if (!_num(r[i])) return null;
+    var chk = _steh(F, tArr[0]);
+    if (!(Math.abs(r[0] - chk) <= 2e-3 * Math.max(Math.abs(chk), 1e-12))) return null;
+    var out = new Array(r.length);
+    for (var j = 0; j < r.length; j++) out[j] = r[j];
+    return out;
+  } catch (e) { return null; }
+}
+// lapFn(s, sc) → p̄(s).  Returns pwd (deriv false) or td·dpwd/dtd (deriv true,
+// from the Laplace identity L[t·f'] = t·L^-1[s·F(s)] since pwd(0) = 0).
+// localOnly: never delegate (kernels that depend on the inversion context).
+function _evalWbsSkin(lapFn, td, Cd, S, deriv, localOnly) {
+  var isArr = Array.isArray(td), arr = isArr ? td : [td];
+  var T = _foldTransform(Cd, S);
+  var lap = function (s) { return lapFn(s, T.sc); };
+  var F = _foldF(lap, T.Cd, T.S);
+  var tArr = new Array(arr.length);
+  for (var i = 0; i < arr.length; i++) tArr[i] = arr[i] * T.tf;
+  var out = null;
+  if (!deriv && !localOnly) out = _extFold(lap, tArr, T.Cd, T.S, F);
+  if (!out) {
+    out = new Array(arr.length);
+    var Fd = deriv ? function (s) { return s * F(s); } : null;
+    for (var k = 0; k < arr.length; k++) {
+      out[k] = deriv ? tArr[k] * _steh(Fd, tArr[k]) : _steh(F, tArr[k]);
+    }
+  }
+  for (var m = 0; m < out.length; m++) {          // round-off below 1e-10 → 0
+    if (out[m] < 0 && out[m] > -1e-10) out[m] = 0;
+  }
+  return isArr ? out : out[0];
 }
 
 function _arrayMap(td, fn) {
@@ -3784,28 +3752,22 @@ function _compositeRadialSkin(rfD, M) {
  * and a very-good approximation for the transient regime.
  */
 function _waterInjectionPwd(td_inj, rfD, M, Cd, S_well, N_steh) {
-    var stehfest = _foundation('PRiSM_stehfest');
-    var K0 = _foundation('PRiSM_besselK0') || _foundation('PRiSM_K0');
-    var K1 = _foundation('PRiSM_besselK1') || _foundation('PRiSM_K1');
-    if (!stehfest || !K0 || !K1) {
-        throw new Error('PRiSM 10: foundation primitives (PRiSM_stehfest / besselK0 / besselK1) not loaded');
-    }
     var S_comp = _compositeRadialSkin(rfD, M);
     var S_eff  = S_well + S_comp;
-
-    // Bourdet-Gringarten Laplace pwd with WBS + (mech + composite) skin:
-    //   num   = K0(√s) + S_eff · √s · K1(√s)
-    //   denom = √s · K1(√s) + Cd · s · num
-    //   pwd_lap = num / (s · denom)
+    // Bourdet-Gringarten Laplace pwd with WBS + (mech + composite) skin,
+    // written with the finite-wellbore term K0/(√s·K1):
+    //   pwd_lap = (w + S) / ( s·(1 + Cd·s·(w + S)) ),  w = K0(√s)/(√s·K1(√s))
+    // For S_eff < 0 the effective-wellbore-radius transform is used
+    // (td → td·e^{2S}, Cd → Cd·e^{2S}, S → 0) so the transform has no pole.
+    var t = td_inj, C = (Cd > 0) ? Cd : 0, S = S_eff;
+    if (S < 0) { var f = Math.exp(2 * S); t *= f; C *= f; S = 0; }
     var Phat = function (s) {
-        var sqs = Math.sqrt(s);
-        var k0 = K0(sqs);
-        var k1 = K1(sqs);
-        var num = k0 + S_eff * sqs * k1;
-        var denom = sqs * k1 + Cd * s * num;
-        return num / (s * denom);
+        var g = _wellTerm(Math.sqrt(s)) + S;
+        return (C > 0) ? g / (s * (1 + C * s * g)) : g / s;
     };
-    return stehfest(Phat, td_inj, N_steh);
+    var ext = _foundation('PRiSM_stehfest');
+    if (ext && N_steh && N_steh !== 12) return ext(Phat, t, N_steh);
+    return _steh(Phat, t);
 }
 
 // =============================================================================
@@ -3995,9 +3957,9 @@ var REGISTRY_ADDITIONS = {
             rateProfile: null
         },
         paramSpec: [
-            { key: 'Cd',       label: 'WBS Cd',              unit: '-',     min: 0,     max: 1e10, default: 100 },
+            { key: 'Cd',       label: 'WBS Cd',              unit: '-',     min: 0,     max: 1e10, default: 100, scale: 'log' },
             { key: 'S',        label: 'Skin',                unit: '-',     min: -7,    max: 50,   default: 0 },
-            { key: 'kh',       label: 'Permeability-thickness kh', unit: 'md·ft', min: 0.1, max: 1e7, default: 1000 },
+            { key: 'kh',       label: 'Permeability-thickness kh', unit: 'md·ft', min: 0.1, max: 1e7, default: 1000, scale: 'log' },
             { key: 'mu_o',     label: 'Oil viscosity',       unit: 'cp',    min: 0.1,   max: 1000, default: 1.0 },
             { key: 'mu_w',     label: 'Water viscosity',     unit: 'cp',    min: 0.1,   max: 10,   default: 0.5 },
             { key: 'B',        label: 'Water FVF',           unit: 'rb/stb', min: 0.5,  max: 2.0,  default: 1.0 },
@@ -4013,7 +3975,9 @@ var REGISTRY_ADDITIONS = {
         ],
         reference: 'Buckley-Leverett (1942); Bratvold & Horne SPE 19819 (1990); Aanonsen SPE 17386; Hawkins composite skin (1956). Semi-analytic two-zone water-injection — see source header for full list of approximations.',
         category: 'special',
-        description: 'Water Injection (two-phase, semi-analytic). Piston-like radial displacement with mobility ratio M = (krw·μo)/(kro·μw); composite Hawkins-style skin from inner (water) and outer (oil) zones; WBS+skin folded via Stehfest. Time IS REAL TIME IN DAYS (not dimensionless); rateProfile is optional [[t,q],...] in days/bbl/d. APPROXIMATIONS: piston-like front, single-stratum, no gravity/capillary, incompressible-front volumetric balance. NOT a substitute for a commercial reservoir simulator.',
+        description: 'Water Injection (two-phase, semi-analytic). Piston-like radial displacement with mobility ratio M = (krw·μo)/(kro·μw); composite Hawkins-style skin from inner (water) and outer (oil) zones; WBS+skin folded via Stehfest. Time is REAL TIME IN DAYS (timeInput days); rateProfile is optional [[t,q],...] in days/bbl/d. APPROXIMATIONS: piston-like front, single-stratum, no gravity/capillary, incompressible-front volumetric balance. Quick-look only; not a substitute for full reservoir simulation.',
+        timeInput: 'days',
+        refLength: 'rw',
         kind: 'pressure'
     }
 };
@@ -4182,74 +4146,109 @@ function _escapeAttr(s) {
 // ═══════════════════════════════════════════════════════════════════════
 // =============================================================================
 // PRiSM ─ Layer 11 — Cross-cutting polish
-//   1. SVG schematics                 — PRiSM_getModelSchematic(modelKey)
-//   2. Specialised analysis keys      — PRiSM_analysisKeys / PRiSM_armAnalysisKey /
-//                                       PRiSM_renderAnalysisKeyToolbar
-//   3. PNG export pipeline            — PRiSM_exportReportPDF / PRiSM_exportPlotPNG
-//   4. Per-tab GA4 events             — wraps window.PRiSM.setTab,
-//                                       window.PRiSM_runRegression and
-//                                       state.model setter
+//   1. SVG schematics          — PRiSM_getModelSchematic(modelKey)
+//   2. Plot line tools         — click-on-plot straight-line / slope analyses
+//                                (PRiSM_analysisKeys, PRiSM_armAnalysisKey,
+//                                 PRiSM_runAnalysisKey, PRiSM_renderAnalysisKeyToolbar)
+//   3. PNG / PDF export        — PRiSM_exportPlotPNG / PRiSM_exportReportPDF /
+//                                PRiSM_renderPlotToCanvas / PRiSM_listPlots
+//   4. Usage analytics (GA4)   — PRiSM_tabHooks.any + prism:model-changed /
+//                                prism:fit-updated listeners (no wrappers)
 // -----------------------------------------------------------------------------
-// This layer adds NO new physics. It improves the existing 20+ models with
-// proper diagrams, click-on-plot specialised-analysis helpers (ported from
-// the legacy reservoir-engineering toolset), a robust PDF export that bakes
-// canvas-rendered plots in as PNG data URLs, and per-tab GA4 instrumentation.
+// This layer adds NO new reservoir model. It provides model diagrams, the
+// classic straight-line and slope analyses a well-test engineer performs by
+// clicking on a diagnostic plot, a PDF/PNG export that bakes the canvas plots
+// in as PNG data URLs, and analytics events.
 //
-// Public API (all on window.*):
-//   PRiSM_getModelSchematic(modelKey)             -> SVG string
-//   PRiSM_analysisKeys                            -> { KEY: { label, plot, clicks, action } }
-//   PRiSM_armAnalysisKey(key)                     -> arm canvas to capture clicks
-//   PRiSM_renderAnalysisKeyToolbar(host, plotKey) -> render toolbar of buttons
-//   PRiSM_exportReportPDF()                       -> open print window with PNG-baked report
-//   PRiSM_exportPlotPNG(plotKey)                  -> trigger PNG download
-//   PRiSM_listPlots()                             -> array of {key, fn, label, mode}
-//   PRiSM_setModel(key)                           -> setter that fires GA4 prism_model_select
+// Units: field units throughout. Δt in hours, p in psia, q in STB/d (oil) or
+// Mscf/d (gas), k in md, h / rw / distances in ft, ct in 1/psi, μ in cp,
+// C in bbl/psi.
+//
+// Inputs come from the shared Well & Test store (window.PRiSM_getWell, C1)
+// and the shared analysis data (window.PRiSM_getAnalysisData, C2). When an
+// input is a default (or the store is absent) the result carries an amber
+// "default inputs" warning — values are never silently invented.
+//
+// Results go to PRiSM_state.analysisKeyResults[key] (never PRiSM_state.params).
 //
 // Conventions:
-//   - Single outer IIFE (this whole file).
-//   - All public symbols start with PRiSM_ and live on window.*.
+//   - Single outer IIFE (this whole file). Public symbols on window.PRiSM_*.
 //   - No external dependencies — pure vanilla JS, SVG strings only.
-//   - Defensive against missing host integrations: if gtag is absent it
-//     no-ops silently; if window.exportReport is absent the PDF export
-//     falls back to a print-window approach.
+//   - No polling installers and no function wrapping: mounting goes through
+//     the C7 registries (PRiSM_registerTabPanel / PRiSM_tabPanels,
+//     PRiSM_tabHooks) and window CustomEvents.
+//   - Every cross-module call is guarded with typeof checks.
 // =============================================================================
 
 (function () {
 'use strict';
 
-// -------------------------------------------------------------------------
-// Toast helper — re-uses the host app's toast() if present, otherwise
-// falls back to a console.log + one-shot floating div in the bottom-right.
-// -------------------------------------------------------------------------
+var G = (typeof window !== 'undefined') ? window : globalThis;
+var _hasDoc = (typeof document !== 'undefined') && !!document &&
+              typeof document.createElement === 'function';
+
+function _on(target, type, fn) {
+    try {
+        if (target && typeof target.addEventListener === 'function') target.addEventListener(type, fn);
+    } catch (e) { /* stub environments */ }
+}
+
+function _emit(type, detail) {
+    try {
+        if (typeof G.dispatchEvent !== 'function' || typeof CustomEvent !== 'function') return;
+        G.dispatchEvent(new CustomEvent(type, { detail: detail }));
+    } catch (e) { /* non-fatal */ }
+}
+
+function _esc(s) {
+    return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// Toast helper — re-uses a host toast() if present, otherwise a one-shot
+// floating div (bottom of the viewport, phone-safe width).
 function _polishToast(msg, kind) {
     kind = kind || 'info';
-    if (typeof window.toast === 'function') {
-        try { window.toast(msg, kind); return; } catch (e) { /* fall through */ }
+    if (typeof G.toast === 'function') {
+        try { G.toast(msg, kind); return; } catch (e) { /* fall through */ }
     }
-    try {
-        var prefix = (kind === 'error') ? '[PRiSM]' :
-                     (kind === 'success') ? '[PRiSM]' : '[PRiSM]';
-        console.log(prefix + ' ' + msg);
-    } catch (e) { /* silent */ }
-    // Floating toast (one at a time — replaces previous)
+    try { console.log('[PRiSM] ' + msg); } catch (e) { /* silent */ }
+    if (!_hasDoc || !document.body) return;
     try {
         var existing = document.getElementById('prism_polish_toast');
         if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
         var div = document.createElement('div');
         div.id = 'prism_polish_toast';
+        div.setAttribute('role', 'status');
         div.style.cssText =
-            'position:fixed; bottom:20px; right:20px; z-index:99999;' +
-            'background:' + (kind === 'error' ? '#5b1f1f' :
-                             kind === 'success' ? '#1f5b2a' : '#1f2a5b') + ';' +
-            'color:#f0f6fc; padding:10px 14px; border-radius:6px;' +
-            'font:13px sans-serif; box-shadow:0 4px 12px rgba(0,0,0,.4);' +
-            'max-width:340px; line-height:1.4;';
+            'position:fixed; bottom:16px; right:16px; z-index:99999;' +
+            'background:var(--bg2, #161b22); color:var(--text, #e6edf3);' +
+            'border:1px solid ' + (kind === 'error' ? 'var(--red, #f85149)' :
+                                   kind === 'success' ? 'var(--green, #3fb950)' :
+                                   kind === 'warn' ? 'var(--yellow, #d29922)' : 'var(--border, #30363d)') + ';' +
+            'padding:10px 14px; border-radius:6px; font:13px sans-serif;' +
+            'box-shadow:0 4px 12px rgba(0,0,0,.4); max-width:min(340px, calc(100vw - 32px));' +
+            'line-height:1.4; box-sizing:border-box; overflow-wrap:anywhere;';
         div.textContent = msg;
         document.body.appendChild(div);
         setTimeout(function () {
             if (div.parentNode) div.parentNode.removeChild(div);
         }, 4500);
     } catch (e) { /* silent */ }
+}
+
+// C7 panel registration: prefer the shell helper, else merge into the registry.
+function _registerTabPanel(n, spec) {
+    if (typeof G.PRiSM_registerTabPanel === 'function') {
+        try { G.PRiSM_registerTabPanel(n, spec); return; } catch (e) { /* fall back */ }
+    }
+    G.PRiSM_tabPanels = G.PRiSM_tabPanels || {};
+    var arr = G.PRiSM_tabPanels[n] = G.PRiSM_tabPanels[n] || [];
+    for (var i = 0; i < arr.length; i++) {
+        if (arr[i] && arr[i].id === spec.id) { arr[i] = spec; return; }
+    }
+    arr.push(spec);
 }
 
 // =========================================================================
@@ -5517,7 +5516,7 @@ function _schematic_placeholder(modelKey) {
 }
 
 // Public dispatch — covers all 45 PRiSM_MODELS entries.
-window.PRiSM_getModelSchematic = function (modelKey) {
+G.PRiSM_getModelSchematic = function (modelKey) {
     if (!modelKey) return '';
     switch (modelKey) {
         // Core (Phase 1+2)
@@ -5576,819 +5575,1683 @@ window.PRiSM_getModelSchematic = function (modelKey) {
     }
 };
 
+// =========================================================================
+// SECTION 2 — PLOT LINE TOOLS (click-on-plot straight-line & slope analyses)
+// =========================================================================
+// Each tool: { label, hint, plot, clicks, prompts[], group, action(pts, cx) }
+//   plot     plot key (or array of keys) the tool works on
+//   pts      [{x, y, xKind, yKind}] in data units of the clicked plot
+//            (log-log derivative plot: x = Δt [hr], y = Δp or Δp′ [psi])
+//   cx       context: cx.w(key) reads a Well & Test input (and records that
+//            it was used), cx.ad() the analysis data, cx.k() the permeability
+//            source, cx.teq(t) the equivalent drawdown time.
+//   action → { values:{}, text?, note, warnings[] } or { error }
+// Results are stored in PRiSM_state.analysisKeyResults[key].
+// =========================================================================
 
-// =========================================================================
-// SECTION 2 — SPECIALISED ANALYSIS KEYS
-// =========================================================================
-// Each entry is { label, plot, clicks, action(clicks, state) -> {note, ...} }
-// `clicks` is the number of canvas clicks needed; the action gets an array
-// of {x, y, dataX, dataY} objects + the live PRiSM_state and should return
-// an object whose keys (other than `note`) are written into state.params.
-//
-// All slope-based helpers operate in log10-log10 space when the plot is
-// 'bourdet' or another log-log derivative plot. Sqrt-time / spherical-flow
-// helpers operate in their respective natural axes (handled by the action).
-// =========================================================================
+var WELL_KEYS  = ['q', 'B', 'mu', 'ct', 'h', 'phi', 'rw'];
+var WELL_LABEL = { q: 'q', B: 'B', mu: 'μ', ct: 'ct', h: 'h', phi: 'φ', rw: 'rw' };
+// Last-resort values. Only ever used together with an amber
+// "default inputs" warning on the result.
+var FALLBACK_WELL = { q: 1000, B: 1.2, mu: 1.0, ct: 1e-5, h: 50, phi: 0.2, rw: 0.354 };
 
-// Helpers — slope between two points in log10 / linear axes.
-function _slopeLog(p1, p2) {
-    var dx = Math.log10(Math.max(1e-30, p2.dataX)) - Math.log10(Math.max(1e-30, p1.dataX));
-    var dy = Math.log10(Math.max(1e-30, p2.dataY)) - Math.log10(Math.max(1e-30, p1.dataY));
-    if (dx === 0) return NaN;
-    return dy / dx;
+// Quantity catalogue: display label + unit for every value a tool returns.
+var QTY = {
+    dpPrime:    { label: 'Δp′',                 unit: 'psi' },
+    kh:         { label: 'kh',                  unit: 'md·ft' },
+    k:          { label: 'k',                   unit: 'md' },
+    S:          { label: 'S',                   unit: '' },
+    rinv:       { label: 'r_inv',               unit: 'ft' },
+    C:          { label: 'C',                   unit: 'bbl/psi' },
+    CD:         { label: 'CD',                  unit: '' },
+    mLinear:    { label: 'm (linear)',          unit: 'psi/hr^½' },
+    xfSqrtK:    { label: 'xf·√k',               unit: 'ft·md^½' },
+    xf:         { label: 'xf',                  unit: 'ft' },
+    mBilinear:  { label: 'm (bilinear)',        unit: 'psi/hr^¼' },
+    kfwf:       { label: 'kf·wf',               unit: 'md·ft' },
+    mSpherical: { label: 'm (spherical)',       unit: 'psi·hr^½' },
+    ks:         { label: 'k (spherical)',       unit: 'md' },
+    ratio:      { label: 'Dip ratio',           unit: '' },
+    omega:      { label: 'ω',                   unit: '' },
+    lambda:     { label: 'λ',                   unit: '' },
+    tMin:       { label: 't at dip',            unit: 'hr' },
+    L:          { label: 'Distance',            unit: 'ft' },
+    W:          { label: 'Channel width',       unit: 'ft' },
+    theta:      { label: 'Wedge angle',         unit: '°' },
+    area:       { label: 'Drainage area',       unit: 'acres' },
+    poreVolume: { label: 'Pore volume',         unit: 'bbl' },
+    re:         { label: 'Equivalent radius',   unit: 'ft' },
+    kyKzLw:     { label: '√(ky·kz)·Lw',         unit: 'md·ft' },
+    LwSqrtKy:   { label: 'Lw·√ky',              unit: 'ft·md^½' },
+    kxKyH:      { label: '√(kx·ky)·h',          unit: 'md·ft' },
+    kH:         { label: '√(kx·ky)',            unit: 'md' },
+    slope:      { label: 'Slope',               unit: '' },
+    m:          { label: 'm',                   unit: 'psi/cycle' },
+    pStar:      { label: 'p*',                  unit: 'psia' },
+    p1hr:       { label: 'p1hr',                unit: 'psia' },
+    tx:         { label: 'Intersection Δt',     unit: 'hr' }
+};
+
+function _num(v) { return typeof v === 'number' && isFinite(v); }
+function _pos(v) { return _num(v) && v > 0; }
+
+function _fmt(v, sig) {
+    if (!_num(v)) return '—';
+    sig = sig || 4;
+    var a = Math.abs(v);
+    if (a !== 0 && (a >= 1e6 || a < 1e-3)) {
+        return v.toExponential(Math.max(0, sig - 2)).replace(/\.?0+e/, 'e').replace('e+', 'e');
+    }
+    var s = v.toPrecision(sig);
+    if (s.indexOf('e') !== -1) s = String(Number(s));
+    if (s.indexOf('.') !== -1) s = s.replace(/0+$/, '').replace(/\.$/, '');
+    return s;
 }
-function _slopeLin(p1, p2) {
-    var dx = p2.dataX - p1.dataX;
-    if (dx === 0) return NaN;
-    return (p2.dataY - p1.dataY) / dx;
+
+function _rankine(T) {
+    if (!_num(T)) return null;
+    return T > 400 ? T : T + 459.67;          // °F → °R unless already absolute
 }
 
-// Default rate / Bo / mu pulled from state.params or sane fallbacks.
-function _stableInputs(state) {
-    var p = state.params || {};
+// ---- Inputs (C1) ----------------------------------------------------------
+function _wellInputs() {
+    var out = { v: {}, defaulted: [], missing: [], source: 'none', fluid: 'oil',
+                T_R: null, testType: null, pi: null, tp: null, pwf0: null };
+    var w = null;
+    if (typeof G.PRiSM_getWell === 'function') {
+        try { w = G.PRiSM_getWell(); } catch (e) { w = null; }
+    }
+    var i, k;
+    if (w && typeof w === 'object') {
+        out.source = 'Well & Test';
+        var dflt = Array.isArray(w.defaulted) ? w.defaulted : [];
+        for (i = 0; i < WELL_KEYS.length; i++) {
+            k = WELL_KEYS[i];
+            if (_pos(w[k])) {
+                out.v[k] = w[k];
+                if (dflt.indexOf(k) !== -1) out.defaulted.push(k);
+            } else {
+                out.v[k] = FALLBACK_WELL[k];
+                out.defaulted.push(k);
+                out.missing.push(k);
+            }
+        }
+        out.fluid    = w.fluid || 'oil';
+        out.T_R      = _num(w.T_R) ? w.T_R : null;
+        out.testType = w.testType || null;
+        out.pi       = _pos(w.pi) ? w.pi : null;
+        out.tp       = _pos(w.tp) ? w.tp : null;
+        out.pwf0     = _pos(w.pwf0) ? w.pwf0 : null;
+        return out;
+    }
+    // No Well & Test store: read the PVT store. Its values have no
+    // provenance, so every one of them is reported as a default.
+    var pvt = G.PRiSM_pvt || null;
+    var c = (pvt && pvt._computed) || null;
+    if (pvt && (!c || !_pos(c.ct)) && typeof G.PRiSM_pvt_compute === 'function') {
+        try { c = G.PRiSM_pvt_compute() || c; } catch (e) { /* keep */ }
+    }
+    out.source = pvt ? 'stored PVT values (not confirmed)' : 'built-in defaults';
+    var raw = {
+        q:   pvt && pvt.q,
+        B:   (c && c.B)  || (pvt && pvt.Bo),
+        mu:  (c && c.mu) || (pvt && pvt.mu_o),
+        ct:  (c && c.ct) || (pvt && pvt.ct),
+        h:   pvt && pvt.h,
+        phi: pvt && pvt.phi,
+        rw:  pvt && pvt.rw
+    };
+    for (i = 0; i < WELL_KEYS.length; i++) {
+        k = WELL_KEYS[i];
+        out.v[k] = _pos(raw[k]) ? raw[k] : FALLBACK_WELL[k];
+        out.defaulted.push(k);
+        if (!_pos(raw[k])) out.missing.push(k);
+    }
+    out.fluid = (pvt && pvt.fluidType) || 'oil';
+    out.T_R   = (pvt && _num(pvt.T_res)) ? pvt.T_res : null;
+    return out;
+}
+
+// ---- Analysis data (C2) ---------------------------------------------------
+function _localBourdet(t, y, L) {
+    if (typeof G.PRiSM_compute_bourdet === 'function') {
+        try {
+            var r = G.PRiSM_compute_bourdet(t, y, L);
+            if (r && r.length === t.length) return r;
+        } catch (e) { /* inline fallback */ }
+    }
+    var n = t.length, d = new Array(n), i;
+    for (i = 0; i < n; i++) d[i] = NaN;
+    for (i = 1; i < n - 1; i++) {
+        var i1 = i - 1, i2 = i + 1;
+        if (L > 0) {
+            while (i1 > 0 && Math.log(t[i]) - Math.log(t[i1]) < L) i1--;
+            while (i2 < n - 1 && Math.log(t[i2]) - Math.log(t[i]) < L) i2++;
+        }
+        var dl1 = Math.log(t[i]) - Math.log(t[i1]);
+        var dl2 = Math.log(t[i2]) - Math.log(t[i]);
+        var dlT = Math.log(t[i2]) - Math.log(t[i1]);
+        if (!(dl1 > 0) || !(dl2 > 0) || !(dlT > 0)) continue;
+        d[i] = (y[i] - y[i1]) / dl1 * (dl2 / dlT) + (y[i2] - y[i]) / dl2 * (dl1 / dlT);
+    }
+    return d;
+}
+
+function _localAnalysisData(ds, L) {
+    if (!ds || !ds.t || !ds.p || ds.t.length < 3) {
+        return { ok: false, reason: 'No pressure data', t: [], dp: [], deriv: [] };
+    }
+    var n = ds.t.length, p0 = ds.p[0];
+    var sign = (ds.p[n - 1] - p0) >= 0 ? 1 : -1;     // +1 buildup, -1 drawdown
+    var t = [], p = [], dp = [];
+    for (var i = 0; i < n; i++) {
+        if (!(ds.t[i] > 0) || !_num(ds.p[i])) continue;
+        t.push(ds.t[i]); p.push(ds.p[i]); dp.push(sign * (ds.p[i] - p0));
+    }
     return {
-        q:   (p.q  != null) ? p.q  : 100,    // STB/D (or m³/d)
-        Bo:  (p.Bo != null) ? p.Bo : 1.2,
-        mu:  (p.mu != null) ? p.mu : 1.0,    // cp
-        h:   (p.h  != null) ? p.h  : 30,     // ft
-        phi: (p.phi != null) ? p.phi : 0.20,
-        ct:  (p.ct  != null) ? p.ct  : 1e-5, // 1/psi
-        rw:  (p.rw  != null) ? p.rw  : 0.354 // ft (8.5" hole)
+        ok: t.length >= 3, t: t, tAbs: t.slice(), p: p, dp: dp,
+        deriv: _localBourdet(t, dp, L), L: L, sign: sign, pRef: p0,
+        pRefSource: 'first-sample', testType: sign > 0 ? 'buildup' : 'drawdown', tp: null,
+        warnings: ['Δp is measured from the first sample — skin is biased (set pi on Tab 1).']
     };
 }
 
-window.PRiSM_analysisKeys = {
-    // ── Radial-flow ────────────────────────────────────────────────────
-    STABIL: {
-        label: 'Stabilisation → kh',
-        plot:  'bourdet',
-        clicks: 1,
-        action: function (clicks, state) {
-            var inp = _stableInputs(state);
-            var dpStab = clicks[0].dataY;            // ψ = dp' on the IARF plateau
-            // Bourdet IARF: dp' = 70.6·q·μ·B / (k·h)  →  k·h = 70.6·q·μ·B / dp'
-            var kh = (70.6 * inp.q * inp.mu * inp.Bo) / Math.max(1e-9, dpStab);
-            var k  = kh / Math.max(1e-9, inp.h);
-            return { kh: kh, k: k,
-                     note: 'IARF plateau dp\'=' + dpStab.toPrecision(4) +
-                           ' → kh=' + kh.toPrecision(4) +
-                           ' md·ft (k=' + k.toPrecision(4) + ' md)' };
+function _analysisData() {
+    var st = G.PRiSM_state || {};
+    if (typeof G.PRiSM_getAnalysisData === 'function') {
+        try {
+            var o = {};
+            if (_num(st.activePeriod) && st.activePeriod >= 0) o.period = st.activePeriod;
+            if (_num(st.bourdetL)) o.L = st.bourdetL;
+            if (st.timeFn) o.timeFn = st.timeFn;
+            var ad = G.PRiSM_getAnalysisData(G.PRiSM_dataset, o);
+            if (ad && ad.ok && ad.t && ad.t.length) return ad;
+        } catch (e) { /* fall back */ }
+    }
+    return _localAnalysisData(G.PRiSM_dataset, _num(st.bourdetL) ? st.bourdetL : 0.15);
+}
+
+// Positive (log t, log y) pairs of one AData series — cached on the object.
+function _pairs(ad, which) {
+    if (!ad || !ad.t) return { x: [], y: [] };
+    var cacheKey = '_prismPairs_' + which;
+    if (ad[cacheKey]) return ad[cacheKey];
+    var src = ad[which] || [], xs = [], ys = [];
+    for (var i = 0; i < ad.t.length; i++) {
+        if (ad.t[i] > 0 && src[i] > 0 && _num(src[i])) {
+            xs.push(Math.log10(ad.t[i]));
+            ys.push(Math.log10(src[i]));
         }
-    },
-    HALFSL: {
-        label: '½-slope → x_f',
-        plot:  'bourdet',
-        clicks: 2,
-        action: function (clicks, state) {
-            var inp = _stableInputs(state);
-            var sl = _slopeLog(clicks[0], clicks[1]);
-            // Linear flow: dp = 4.064·(qB/h)·sqrt(t/(φ·μ·ct·k))/x_f
-            //   → x_f·sqrt(k) is back-calculable from a chord & the slope check.
-            var dpRef = clicks[1].dataY, tRef = clicks[1].dataX;
-            // Solve: dp = m_lin · sqrt(t)  with  m_lin = dpRef/sqrt(tRef)
-            var mLin = dpRef / Math.max(1e-9, Math.sqrt(tRef));
-            var xf_sqrtk = (4.064 * inp.q * inp.Bo / inp.h) /
-                           Math.max(1e-9, mLin * Math.sqrt(inp.phi * inp.mu * inp.ct));
-            return { xf_sqrtk: xf_sqrtk,
-                     note: '½-slope (' + sl.toFixed(2) + ') → x_f·√k=' +
-                           xf_sqrtk.toPrecision(4) + ' ft·√md' };
+    }
+    var r = { x: xs, y: ys };
+    try { ad[cacheKey] = r; } catch (e) { /* frozen */ }
+    return r;
+}
+
+function _interpLogLog(pr, t) {
+    if (!pr.x.length || !(t > 0)) return NaN;
+    var lx = Math.log10(t), n = pr.x.length;
+    if (lx < pr.x[0] - 0.05 || lx > pr.x[n - 1] + 0.05) return NaN;
+    if (lx <= pr.x[0]) return Math.pow(10, pr.y[0]);
+    if (lx >= pr.x[n - 1]) return Math.pow(10, pr.y[n - 1]);
+    for (var i = 1; i < n; i++) {
+        if (pr.x[i] >= lx) {
+            var f = (lx - pr.x[i - 1]) / Math.max(1e-12, pr.x[i] - pr.x[i - 1]);
+            return Math.pow(10, pr.y[i - 1] + f * (pr.y[i] - pr.y[i - 1]));
         }
-    },
-    OMEGA: {
-        label: 'Valley depth → ω',
-        plot:  'bourdet',
-        clicks: 2,
-        action: function (clicks, state) {
-            // Click two points: (1) IARF plateau before valley, (2) bottom of valley.
-            var dpPlateau = clicks[0].dataY;
-            var dpValley  = clicks[1].dataY;
-            // ω ≈ 10^(−2·log10(dpPlateau/dpValley)) approximated by depth ratio.
-            var ratio = dpPlateau / Math.max(1e-9, dpValley);
-            var omega = 1 / Math.pow(ratio, 2);   // engineering proxy
-            if (omega < 0.001) omega = 0.001;
-            if (omega > 1)     omega = 1;
-            return { omega: omega,
-                     note: 'Valley depth ratio=' + ratio.toFixed(2) +
-                           ' → ω≈' + omega.toPrecision(3) };
+    }
+    return NaN;
+}
+
+// Which log-log curve (Δp or Δp′) is nearest the clicked point.
+function _whichCurve(ad, t, y) {
+    if (!ad || !ad.ok || !(y > 0)) return null;
+    var a = _interpLogLog(_pairs(ad, 'dp'), t);
+    var b = _interpLogLog(_pairs(ad, 'deriv'), t);
+    var ly = Math.log10(y);
+    var da = _pos(a) ? Math.abs(ly - Math.log10(a)) : Infinity;
+    var db = _pos(b) ? Math.abs(ly - Math.log10(b)) : Infinity;
+    if (da === Infinity && db === Infinity) return null;
+    return da < db ? 'dp' : 'deriv';
+}
+
+// Local log-log slope of a series around t (least squares over ±¼ then ±½ cycle).
+function _localSlope(ad, t, which) {
+    if (!ad || !ad.ok || !(t > 0)) return NaN;
+    var pr = _pairs(ad, which || 'deriv'), lt = Math.log10(t), widths = [0.25, 0.5];
+    for (var w = 0; w < widths.length; w++) {
+        var sx = 0, sy = 0, sxx = 0, sxy = 0, m = 0;
+        for (var i = 0; i < pr.x.length; i++) {
+            if (Math.abs(pr.x[i] - lt) > widths[w]) continue;
+            sx += pr.x[i]; sy += pr.y[i]; sxx += pr.x[i] * pr.x[i]; sxy += pr.x[i] * pr.y[i]; m++;
         }
-    },
-    LAMBDA: {
-        label: 'Valley time → λ',
-        plot:  'bourdet',
-        clicks: 1,
-        action: function (clicks, state) {
-            // tD at valley minimum ↔ λ via λ = (Cd·e^(2S)) / (tD·something).
-            // Engineering proxy: λ ≈ 1 / tValley (in dimensionless units).
-            var tValley = clicks[0].dataX;
-            var lambda = 1 / Math.max(1e-9, tValley);
-            return { lambda: lambda,
-                     note: 'Valley at t=' + tValley.toPrecision(3) +
-                           ' → λ≈' + lambda.toPrecision(3) };
+        var den = m * sxx - sx * sx;
+        if (m >= 3 && Math.abs(den) > 1e-12) return (m * sxy - sx * sy) / den;
+    }
+    return NaN;
+}
+
+function _isBuildup(tt) { return tt === 'buildup' || tt === 'falloff'; }
+
+// Permeability from earlier work (newest-first priority list).
+function _kFromContext(st) {
+    var r = (st && st.analysisKeyResults) || {};
+    var order = ['radialPlateau', 'mdhLine', 'hornerLine', 'dualPorosityDip', 'boundaryDoubling'];
+    var names = { radialPlateau: 'radial-plateau pick', mdhLine: 'semilog line', hornerLine: 'Horner line',
+                  dualPorosityDip: 'plateau pick', boundaryDoubling: 'plateau pick' };
+    for (var i = 0; i < order.length; i++) {
+        var e = r[order[i]];
+        if (e && e.values && _pos(e.values.k)) return { k: e.values.k, source: names[order[i]] };
+    }
+    var lf = null;
+    if (typeof G.PRiSM_getLastFit === 'function') { try { lf = G.PRiSM_getLastFit(); } catch (e2) { lf = null; } }
+    if (!lf && st) lf = st.lastFit;
+    if (lf && lf.phys && _pos(lf.phys.k) && !lf.stale) return { k: lf.phys.k, source: 'model fit' };
+    if (st && st.semilog && _pos(st.semilog.k)) return { k: st.semilog.k, source: 'semilog analysis' };
+    if (st && st.phys && _pos(st.phys.k)) return { k: st.phys.k, source: 'model parameters' };
+    return null;
+}
+
+function _omegaFromContext(st) {
+    var r = (st && st.analysisKeyResults) || {};
+    var order = ['dualPorosityDip', 'storativityRatio'];
+    for (var i = 0; i < order.length; i++) {
+        var e = r[order[i]];
+        if (e && e.values && _pos(e.values.omega)) return { omega: e.values.omega, source: e.label };
+    }
+    var lf = st && st.lastFit;
+    if (lf && lf.params && _pos(lf.params.omega)) return { omega: lf.params.omega, source: 'model fit' };
+    if (st && st.params && _pos(st.params.omega)) return { omega: st.params.omega, source: 'model parameters' };
+    return null;
+}
+
+// ω from the dip-to-plateau derivative ratio (pseudo-steady interporosity flow):
+//   Δp′_min/Δp′_r = 1 + ω^(1/(1−ω)) − ω^(ω/(1−ω))
+function _dipRatio(w) { return 1 + Math.pow(w, 1 / (1 - w)) - Math.pow(w, w / (1 - w)); }
+function _omegaFromDipRatio(ratio) {
+    if (!(ratio > 0) || !(ratio < 1)) return NaN;
+    var lo = Math.log(1e-8), hi = Math.log(0.999);
+    if (ratio <= _dipRatio(1e-8)) return 1e-8;
+    for (var i = 0; i < 200; i++) {
+        var mid = 0.5 * (lo + hi);
+        if (_dipRatio(Math.exp(mid)) < ratio) lo = mid; else hi = mid;
+        if (hi - lo < 1e-12) break;
+    }
+    return Math.exp(0.5 * (lo + hi));
+}
+
+function _regimeForSlope(s) {
+    if (!_num(s)) return 'unknown';
+    if (Math.abs(s) < 0.1)        return 'radial flow (flat derivative)';
+    if (Math.abs(s - 0.25) < 0.08) return 'bilinear flow (¼ slope)';
+    if (Math.abs(s - 0.5) < 0.1)  return 'linear flow (½ slope)';
+    if (Math.abs(s - 1) < 0.15)   return 'unit slope (storage, or a closed system at late time)';
+    if (Math.abs(s + 0.5) < 0.1)  return 'spherical flow (−½ slope)';
+    if (s <= -0.6)                return 'pressure support (falling derivative)';
+    return 'transition';
+}
+
+function _semilogX(pt) {                     // semilog abscissa (log10 of the axis value)
+    return (pt.xKind === 'log') ? Math.log10(pt.x) : pt.x;
+}
+
+// Optional hand-off to the semilog engine. Its stored result is left as it was.
+function _semilogEngine(method, t0, t1, cx) {
+    if (typeof G.PRiSM_semilogAnalysis !== 'function') return null;
+    var st = cx.st, before = st ? st.semilog : undefined, res = null;
+    try {
+        var well = null;
+        if (typeof G.PRiSM_getWell === 'function') { try { well = G.PRiSM_getWell(); } catch (e0) { well = null; } }
+        res = G.PRiSM_semilogAnalysis(cx.ad(), well,
+            { method: method, window: { t0: Math.min(t0, t1), t1: Math.max(t0, t1) }, store: false });
+    } catch (e) { res = null; }
+    if (st) { if (before === undefined) { try { delete st.semilog; } catch (e1) { st.semilog = undefined; } } else st.semilog = before; }
+    if (!res || typeof res !== 'object' || res.ok === false) return null;
+    if (res.window && res.window.auto === true) return null;      // the clicked window was not used
+    var pStar = _num(res.pStar) ? res.pStar : (_num(res.pstar) ? res.pstar : null);
+    return { m: res.m, kh: res.kh, k: res.k, p1hr: res.p1hr, S: res.S, pStar: pStar,
+             method: res.method, n: res.window && res.window.n };
+}
+
+function _sqrtRatio(mu, phi, ct) { return Math.sqrt(mu / (phi * ct)); }
+
+G.PRiSM_analysisKeys = {
+
+    // ── Radial flow & storage ─────────────────────────────────────────────
+    radialPlateau: {
+        label: 'Pick radial plateau → kh',
+        hint: 'Click the flat part of the derivative (radial flow).',
+        plot: 'bourdet', clicks: 1, group: 'Radial flow & storage',
+        prompts: ['Click the flat part of the derivative (radial flow)'],
+        action: function (pts, cx) {
+            var t = pts[0].x, y = pts[0].y, warnings = [];
+            if (!_pos(y)) return { error: 'Click on the derivative plateau (Δp′ must be positive).' };
+            var q = cx.w('q'), B = cx.w('B'), mu = cx.w('mu'), h = cx.w('h'), kh;
+            if (cx.pseudo()) {
+                var T = cx.rankine();
+                if (!T) return { error: 'Gas pseudo-pressure data: set the reservoir temperature on Tab 1.' };
+                kh = 711 * q * T / y;                      // Δm′ plateau, psi²/cp
+            } else {
+                kh = 70.6 * q * B * mu / y;                // Bourdet: Δp′ = 70.6 qBμ/kh
+            }
+            var k = kh / h, v = { dpPrime: y, kh: kh, k: k };
+            var ad = cx.ad(), s = _localSlope(ad, t, 'deriv');
+            if (_num(s) && Math.abs(s) > 0.1) {
+                warnings.push('The derivative is not flat here (local slope ' + s.toFixed(2) + ') — pick the radial-flow plateau.');
+            }
+            if (ad && ad.ok && !cx.pseudo()) {
+                var dpr = _interpLogLog(_pairs(ad, 'dp'), t);
+                var phi = cx.w('phi'), ct = cx.w('ct'), rw = cx.w('rw');
+                if (_pos(dpr)) {
+                    var te = cx.teq(t);
+                    v.S = 0.5 * (dpr / y - Math.log(0.0002637 * k * te / (phi * mu * ct * rw * rw)) - 0.80907);
+                    if (ad.pRefSource && ad.pRefSource !== 'pi' && ad.pRefSource !== 'pwf0') {
+                        warnings.push('Δp is measured from the ' + String(ad.pRefSource).replace('-', ' ') +
+                                      ', not pi — skin is biased. Set pi on Tab 1.');
+                    }
+                }
+                var tEnd = 0;
+                for (var i = 0; i < ad.t.length; i++) if (ad.t[i] > tEnd) tEnd = ad.t[i];
+                if (tEnd > 0) v.rinv = Math.sqrt(k * tEnd / (948 * phi * mu * ct));
+            }
+            return {
+                values: v, warnings: warnings,
+                note: 'Radial plateau Δp′ = ' + _fmt(y) + ' psi → kh = ' + _fmt(kh) + ' md·ft, k = ' + _fmt(k) + ' md' +
+                      (_num(v.S) ? ', S = ' + _fmt(v.S, 3) : '')
+            };
         }
     },
 
-    // ── Boundaries ────────────────────────────────────────────────────
-    FAULT: {
-        label: 'Slope-doubling → L',
-        plot:  'bourdet',
-        clicks: 1,
-        action: function (clicks, state) {
-            // Click on the time of slope doubling on the derivative curve.
-            // For a sealing fault: t_2m ≈ 948 · φ·μ·ct·L² / k
-            //   → L = sqrt(k · t_2m / (948 · φ·μ·ct))
-            var inp = _stableInputs(state);
-            var t = clicks[0].dataX;
-            var k = (state.params && state.params.k) ? state.params.k : 50;
-            var L = Math.sqrt(k * t / (948 * inp.phi * inp.mu * inp.ct));
-            return { L: L,
-                     note: 'Slope doubles at t=' + t.toPrecision(3) +
-                           ' h → L≈' + L.toFixed(0) + ' ft' };
+    unitSlope: {
+        label: 'Unit slope → C',
+        hint: 'Click a point on the early unit-slope line (wellbore storage).',
+        plot: 'bourdet', clicks: 1, group: 'Radial flow & storage',
+        prompts: ['Click a point on the early unit-slope (storage) line'],
+        action: function (pts, cx) {
+            var t = pts[0].x, y = pts[0].y, warnings = [];
+            if (!_pos(t) || !_pos(y)) return { error: 'Click on the unit-slope line.' };
+            var q = cx.w('q'), B = cx.w('B');
+            var C = q * B * t / (24 * y);                   // Δp = qBΔt/(24C)
+            var CD = 0.8936 * C / (cx.w('phi') * cx.w('ct') * cx.w('h') * cx.w('rw') * cx.w('rw'));
+            var s = _localSlope(cx.ad(), t, 'dp');
+            if (_num(s) && Math.abs(s - 1) > 0.15) {
+                warnings.push('The data is not on a unit slope here (local slope ' + s.toFixed(2) + ') — storage may be over before the first point.');
+            }
+            return { values: { C: C, CD: CD }, warnings: warnings,
+                     note: 'Unit slope at Δt = ' + _fmt(t, 3) + ' hr, Δp = ' + _fmt(y) + ' psi → C = ' + _fmt(C, 3) + ' bbl/psi (CD = ' + _fmt(CD, 3) + ')' };
         }
     },
-    'BND-ON': {
+
+    // ── Fractures & linear flow ──────────────────────────────────────────
+    halfSlope: {
+        label: '½-slope → xf·√k',
+        hint: 'Click the ½-slope part of the curves (fracture linear flow).',
+        plot: 'bourdet', clicks: 1, group: 'Fractures & linear flow',
+        prompts: ['Click the ½-slope part of the derivative (linear flow)'],
+        action: function (pts, cx) {
+            var t = pts[0].x, y = pts[0].y, warnings = [];
+            if (!_pos(t) || !_pos(y)) return { error: 'Click on the ½-slope segment.' };
+            var ad = cx.ad(), curve = _whichCurve(ad, t, y) || 'deriv';
+            var m = (curve === 'dp' ? y : 2 * y) / Math.sqrt(t);       // Δp = m√t, Δp′ = ½ m√t
+            var xfk = 4.064 * cx.w('q') * cx.w('B') / (cx.w('h') * m) * _sqrtRatio(cx.w('mu'), cx.w('phi'), cx.w('ct'));
+            var v = { mLinear: m, xfSqrtK: xfk };
+            var s = _localSlope(ad, t, 'deriv');
+            if (_num(s) && Math.abs(s - 0.5) > 0.1) warnings.push('Local derivative slope is ' + s.toFixed(2) + ', not ½ — check the flow regime.');
+            var kk = cx.k();
+            if (kk) v.xf = xfk / Math.sqrt(kk.k);
+            return { values: v, warnings: warnings,
+                     note: '½-slope on ' + (curve === 'dp' ? 'Δp' : 'Δp′') + ' → m = ' + _fmt(m) + ' psi/hr^½, xf·√k = ' + _fmt(xfk) + ' ft·md^½' +
+                           (v.xf ? ', xf = ' + _fmt(v.xf) + ' ft' : '') };
+        }
+    },
+
+    quarterSlope: {
+        label: '¼-slope → kf·wf',
+        hint: 'Click the ¼-slope part of the curves (bilinear flow). Needs k.',
+        plot: 'bourdet', clicks: 1, group: 'Fractures & linear flow', needsK: true,
+        prompts: ['Click the ¼-slope part of the derivative (bilinear flow)'],
+        action: function (pts, cx) {
+            var t = pts[0].x, y = pts[0].y, warnings = [];
+            if (!_pos(t) || !_pos(y)) return { error: 'Click on the ¼-slope segment.' };
+            var kk = cx.k();
+            if (!kk) return { error: 'Needs k: pick the radial plateau first (or run a fit).' };
+            var ad = cx.ad(), curve = _whichCurve(ad, t, y) || 'deriv';
+            var m = (curve === 'dp' ? y : 4 * y) / Math.pow(t, 0.25);  // Δp = m t^¼, Δp′ = ¼ m t^¼
+            var mu = cx.w('mu');
+            var kfwf = Math.pow(44.1 * cx.w('q') * cx.w('B') * mu /
+                                (cx.w('h') * m * Math.pow(cx.w('phi') * mu * cx.w('ct') * kk.k, 0.25)), 2);
+            var s = _localSlope(ad, t, 'deriv');
+            if (_num(s) && Math.abs(s - 0.25) > 0.08) warnings.push('Local derivative slope is ' + s.toFixed(2) + ', not ¼ — check the flow regime.');
+            return { values: { mBilinear: m, kfwf: kfwf }, warnings: warnings,
+                     note: '¼-slope → m = ' + _fmt(m) + ' psi/hr^¼, kf·wf = ' + _fmt(kfwf) + ' md·ft (k = ' + _fmt(kk.k, 3) + ' md from ' + kk.source + ')' };
+        }
+    },
+
+    sphericalSlope: {
+        label: '−½ slope → spherical k',
+        hint: 'Click the −½-slope part of the derivative (spherical flow).',
+        plot: 'bourdet', clicks: 1, group: 'Fractures & linear flow',
+        prompts: ['Click the −½-slope part of the derivative (spherical flow)'],
+        action: function (pts, cx) {
+            var t = pts[0].x, y = pts[0].y, warnings = [];
+            if (!_pos(t) || !_pos(y)) return { error: 'Click on the −½-slope derivative.' };
+            var ad = cx.ad();
+            if (_whichCurve(ad, t, y) === 'dp') return { error: 'Click on the derivative (Δp′), not on Δp.' };
+            var m = 2 * y * Math.sqrt(t);                  // Δp′ = ½·|m|/√t
+            var mu = cx.w('mu');
+            var ks = Math.pow(2452.9 * cx.w('q') * cx.w('B') * mu * Math.sqrt(cx.w('phi') * mu * cx.w('ct')) / m, 2 / 3);
+            var s = _localSlope(ad, t, 'deriv');
+            if (_num(s) && Math.abs(s + 0.5) > 0.12) warnings.push('Local derivative slope is ' + s.toFixed(2) + ', not −½ — check the flow regime.');
+            return { values: { mSpherical: m, ks: ks }, warnings: warnings,
+                     note: '−½ slope → |m| = ' + _fmt(m) + ' psi·hr^½, spherical k = ' + _fmt(ks) + ' md' };
+        }
+    },
+
+    // ── Dual porosity ────────────────────────────────────────────────────
+    dualPorosityDip: {
+        label: 'Click the dip → ω, λ',
+        hint: 'Click the radial plateau, then the bottom of the derivative dip.',
+        plot: 'bourdet', clicks: 2, group: 'Dual porosity',
+        prompts: ['Click the radial plateau', 'Click the bottom of the derivative dip'],
+        action: function (pts, cx) {
+            var yr = pts[0].y, tm = pts[1].x, ym = pts[1].y;
+            if (!_pos(yr) || !_pos(ym)) return { error: 'Both points must be on the derivative.' };
+            var ratio = ym / yr;
+            if (!(ratio < 1)) return { error: 'The dip must lie below the plateau (ratio ' + _fmt(ratio, 3) + ').' };
+            var omega = _omegaFromDipRatio(ratio);
+            var mu = cx.w('mu'), kh = 70.6 * cx.w('q') * cx.w('B') * mu / yr, k = kh / cx.w('h');
+            var rw = cx.w('rw'), te = cx.teq(tm);
+            var lambda = omega * Math.log(1 / omega) * cx.w('phi') * mu * cx.w('ct') * rw * rw / (0.0002637 * k * te);
+            return { values: { kh: kh, k: k, ratio: ratio, omega: omega, tMin: tm, lambda: lambda }, warnings: [],
+                     note: 'Dip ratio ' + _fmt(ratio, 3) + ' → ω = ' + _fmt(omega, 3) + '; dip at ' + _fmt(tm, 3) + ' hr → λ = ' + _fmt(lambda, 3) + ' (k = ' + _fmt(k, 3) + ' md)' };
+        }
+    },
+
+    storativityRatio: {
+        label: 'Dip depth → ω',
+        hint: 'Click the radial plateau, then the bottom of the dip.',
+        plot: 'bourdet', clicks: 2, group: 'Dual porosity',
+        prompts: ['Click the radial plateau', 'Click the bottom of the derivative dip'],
+        action: function (pts) {
+            var ratio = pts[1].y / pts[0].y;
+            if (!(ratio > 0 && ratio < 1)) return { error: 'The dip must lie below the plateau.' };
+            var omega = _omegaFromDipRatio(ratio);
+            return { values: { ratio: ratio, omega: omega }, warnings: [],
+                     note: 'Dip ratio ' + _fmt(ratio, 3) + ' → ω = ' + _fmt(omega, 3) };
+        }
+    },
+
+    interporosityFlow: {
+        label: 'Dip time → λ',
+        hint: 'Click the bottom of the dip. Needs ω and k.',
+        plot: 'bourdet', clicks: 1, group: 'Dual porosity', needsK: true,
+        prompts: ['Click the bottom of the derivative dip'],
+        action: function (pts, cx) {
+            var tm = pts[0].x;
+            var om = _omegaFromContext(cx.st);
+            if (!om) return { error: 'Needs ω: use "Dip depth → ω" first.' };
+            var kk = cx.k();
+            if (!kk) return { error: 'Needs k: pick the radial plateau first (or run a fit).' };
+            var rw = cx.w('rw'), te = cx.teq(tm);
+            var lambda = om.omega * Math.log(1 / om.omega) * cx.w('phi') * cx.w('mu') * cx.w('ct') * rw * rw / (0.0002637 * kk.k * te);
+            return { values: { tMin: tm, omega: om.omega, lambda: lambda }, warnings: [],
+                     note: 'Dip at ' + _fmt(tm, 3) + ' hr, ω = ' + _fmt(om.omega, 3) + ', k = ' + _fmt(kk.k, 3) + ' md → λ = ' + _fmt(lambda, 3) };
+        }
+    },
+
+    // ── Boundaries ────────────────────────────────────────────────────────
+    boundaryDoubling: {
+        label: 'Boundary doubling → distance',
+        hint: 'Click the radial plateau, then a point where the derivative is rising towards double.',
+        plot: 'bourdet', clicks: 2, group: 'Boundaries',
+        prompts: ['Click the radial plateau', 'Click the rising derivative (between 1× and 2× the plateau)'],
+        action: function (pts, cx) {
+            var yr = pts[0].y, t = pts[1].x, y = pts[1].y;
+            var R = y / yr;
+            if (!(R > 1.005 && R < 1.995)) {
+                return { error: 'Pick a point where the derivative is between 1× and 2× the plateau (this one is ' + _fmt(R, 3) + '×).' };
+            }
+            var mu = cx.w('mu'), kh = 70.6 * cx.w('q') * cx.w('B') * mu / yr, k = kh / cx.w('h');
+            var te = cx.teq(t);
+            // Single sealing fault (image at 2L): R − 1 = exp(−L²φμct/(0.0002637 k t))
+            var L = Math.sqrt(0.0002637 * k * te * Math.log(1 / (R - 1)) / (cx.w('phi') * mu * cx.w('ct')));
+            return { values: { kh: kh, k: k, ratio: R, L: L }, warnings: [],
+                     note: 'Derivative at ' + _fmt(R, 3) + '× the plateau at ' + _fmt(t, 3) + ' hr → distance to a sealing fault ≈ ' + _fmt(L, 3) + ' ft (k = ' + _fmt(k, 3) + ' md)' };
+        }
+    },
+
+    boundaryOnset: {
         label: 'Boundary onset → distance',
-        plot:  'bourdet',
-        clicks: 1,
-        action: function (clicks, state) {
-            // Onset of any boundary: t_b ≈ 380 · φ·μ·ct·L² / k.
-            var inp = _stableInputs(state);
-            var t = clicks[0].dataX;
-            var k = (state.params && state.params.k) ? state.params.k : 50;
-            var L = Math.sqrt(k * t / (380 * inp.phi * inp.mu * inp.ct));
-            return { Lb: L,
-                     note: 'Boundary onset at t=' + t.toPrecision(3) +
-                           ' h → L≈' + L.toFixed(0) + ' ft' };
+        hint: 'Click where the derivative first leaves the plateau (≈10% above). Needs k.',
+        plot: 'bourdet', clicks: 1, group: 'Boundaries', needsK: true,
+        prompts: ['Click where the derivative first rises above the plateau'],
+        action: function (pts, cx) {
+            var t = pts[0].x;
+            var kk = cx.k();
+            if (!kk) return { error: 'Needs k: pick the radial plateau first (or run a fit).' };
+            var te = cx.teq(t);
+            var L = Math.sqrt(0.0002637 * kk.k * te * Math.log(10) / (cx.w('phi') * cx.w('mu') * cx.w('ct')));
+            return { values: { L: L }, warnings: [],
+                     note: 'Boundary felt at ' + _fmt(t, 3) + ' hr → distance ≈ ' + _fmt(L, 3) + ' ft (k = ' + _fmt(kk.k, 3) + ' md from ' + kk.source + ')' };
         }
     },
-    'BND-DV': {
-        label: 'Derivative deviation → boundary type',
-        plot:  'bourdet',
-        clicks: 2,
-        action: function (clicks) {
-            // Click pre-deviation point and post-deviation point on derivative.
-            var slope = _slopeLog(clicks[0], clicks[1]);
+
+    boundaryType: {
+        label: 'Late slope → boundary type',
+        hint: 'Click two points on the late-time derivative.',
+        plot: 'bourdet', clicks: 2, group: 'Boundaries',
+        prompts: ['Click the first late-time derivative point', 'Click a later derivative point'],
+        action: function (pts, cx) {
+            var dx = Math.log10(pts[1].x) - Math.log10(pts[0].x);
+            if (!(Math.abs(dx) > 1e-6)) return { error: 'The two points need different times.' };
+            var s = (Math.log10(pts[1].y) - Math.log10(pts[0].y)) / dx;
             var typ;
-            if      (slope >  0.7) typ = 'sealing fault (dp\' ↑)';
-            else if (slope < -0.7) typ = 'constant-pressure boundary (dp\' ↓)';
-            else                   typ = 'channel / partial-seal (intermediate)';
-            return { boundaryType: typ,
-                     note: 'Derivative slope after deviation ≈ ' +
-                           slope.toFixed(2) + ' → ' + typ };
-        }
-    },
-    CHANEL: {
-        label: '½-slope onset → channel width',
-        plot:  'bourdet',
-        clicks: 1,
-        action: function (clicks, state) {
-            // Channel ½-slope onset: t_lin ≈ 152 · φ·μ·ct·W² / k.
-            var inp = _stableInputs(state);
-            var t = clicks[0].dataX;
-            var k = (state.params && state.params.k) ? state.params.k : 50;
-            var W = Math.sqrt(k * t / (152 * inp.phi * inp.mu * inp.ct));
-            return { W: W,
-                     note: '½-slope onset at t=' + t.toPrecision(3) +
-                           ' h → channel W≈' + W.toFixed(0) + ' ft' };
-        }
-    },
-    ANGLE: {
-        label: 'Plateau after 2 faults → θ',
-        plot:  'bourdet',
-        clicks: 2,
-        action: function (clicks) {
-            // Late-time plateau ratio to IARF plateau ↔ 2π/θ.
-            var dpIARF  = clicks[0].dataY;
-            var dpLate  = clicks[1].dataY;
-            var ratio   = dpLate / Math.max(1e-9, dpIARF);
-            var theta_rad = 2 * Math.PI / Math.max(1, ratio);
-            var theta_deg = theta_rad * 180 / Math.PI;
-            return { theta_deg: theta_deg,
-                     note: 'Late/IARF ratio=' + ratio.toFixed(2) +
-                           ' → intersecting-fault angle ≈ ' +
-                           theta_deg.toFixed(1) + '°' };
+            if (s >= 0.8) typ = 'closed system (pseudo-steady state)';
+            else if (s >= 0.35) typ = 'parallel boundaries / channel (½ slope)';
+            else if (s >= 0.1) typ = 'sealing fault or partial barrier';
+            else if (s > -0.1) typ = 'no boundary effect (radial flow)';
+            else typ = 'pressure support (constant-pressure boundary or aquifer)';
+            var warnings = [];
+            var ad = cx.ad();
+            if (ad && _isBuildup(ad.testType) && s < -0.1) warnings.push('On a buildup a falling derivative can also mean a closed system.');
+            return { values: { slope: s }, text: typ, warnings: warnings,
+                     note: 'Late slope ' + s.toFixed(2) + ' → ' + typ };
         }
     },
 
-    // ── Injectivity ────────────────────────────────────────────────────
-    INJSTB: {
-        label: 'sqrt(t) stabilisation → conformance',
-        plot:  'sqrt',
-        clicks: 1,
-        action: function (clicks) {
-            // Stabilisation level on sqrt(t) plot indicates injection-zone
-            // conformance vs. multi-zone behaviour.
-            var dpStab = clicks[0].dataY;
-            var conf   = (dpStab > 0) ? 1 - Math.exp(-dpStab / 100) : 0;
-            return { injConformance: conf,
-                     note: 'sqrt(t) stabilisation Δp=' + dpStab.toPrecision(3) +
-                           ' → conformance ≈ ' + (conf * 100).toFixed(1) + '%' };
-        }
-    },
-    INJSLP: {
-        label: 'sqrt(t) slope → injectivity II',
-        plot:  'sqrt',
-        clicks: 2,
-        action: function (clicks, state) {
-            var inp = _stableInputs(state);
-            var slope = _slopeLin(clicks[0], clicks[1]);    // psi/√h
-            // II = q / (slope·…) — engineering proxy.
-            var II = inp.q / Math.max(1e-9, Math.abs(slope) * Math.sqrt(1));
-            return { II: II,
-                     note: 'sqrt(t) slope=' + slope.toPrecision(3) +
-                           ' psi/√h → II≈' + II.toPrecision(3) + ' bbl/d/psi' };
+    channelWidth: {
+        label: 'Late ½-slope → channel width',
+        hint: 'Click the late ½-slope part of the curves (flow between parallel boundaries). Needs k.',
+        plot: 'bourdet', clicks: 1, group: 'Boundaries', needsK: true,
+        prompts: ['Click the late ½-slope part of the derivative'],
+        action: function (pts, cx) {
+            var t = pts[0].x, y = pts[0].y;
+            var kk = cx.k();
+            if (!kk) return { error: 'Needs k: pick the radial plateau first (or run a fit).' };
+            var ad = cx.ad(), curve = _whichCurve(ad, t, y) || 'deriv';
+            var te = cx.teq(t);
+            var m = (curve === 'dp' ? y : 2 * y) / Math.sqrt(te);
+            var W = 8.128 * cx.w('q') * cx.w('B') / (cx.w('h') * m) * Math.sqrt(cx.w('mu') / (kk.k * cx.w('phi') * cx.w('ct')));
+            return { values: { mLinear: m, W: W }, warnings: [],
+                     note: 'Late ½-slope → m = ' + _fmt(m) + ' psi/hr^½, channel width ≈ ' + _fmt(W, 3) + ' ft (k = ' + _fmt(kk.k, 3) + ' md)' };
         }
     },
 
-    // ── Partial penetration ───────────────────────────────────────────
-    PPNSTB: {
-        label: 'Spherical-flow stabil → kh',
-        plot:  'spherical',
-        clicks: 1,
-        action: function (clicks, state) {
-            var inp = _stableInputs(state);
-            var dp = clicks[0].dataY;
-            var kh = (70.6 * inp.q * inp.mu * inp.Bo) / Math.max(1e-9, dp);
-            return { kh: kh,
-                     note: 'Spherical-flow late-time plateau Δp=' +
-                           dp.toPrecision(3) + ' → kh=' + kh.toPrecision(4) + ' md·ft' };
-        }
-    },
-    PPNSLP: {
-        label: 'Spherical slope → k·√k',
-        plot:  'spherical',
-        clicks: 2,
-        action: function (clicks, state) {
-            var inp = _stableInputs(state);
-            var slope = _slopeLin(clicks[0], clicks[1]);
-            // m_sph = 2452.9 · qBμ / (k_sph^1.5)  →  k_sph^1.5 = 2452.9·qBμ/m_sph
-            var k_sph_15 = (2452.9 * inp.q * inp.Bo * inp.mu) / Math.max(1e-9, Math.abs(slope));
-            var k_sph    = Math.pow(k_sph_15, 2 / 3);
-            return { k_sph: k_sph,
-                     note: 'Spherical slope=' + slope.toPrecision(3) +
-                           ' → k_sph≈' + k_sph.toPrecision(4) + ' md' };
-        }
-    },
-    PPNSKN: {
-        label: 'Stabil offset → partial-pen pseudo-skin',
-        plot:  'bourdet',
-        clicks: 2,
-        action: function (clicks) {
-            // Compare actual plateau (clicks[1]) vs. ideal full-penetration
-            // plateau (clicks[0]). S_pp = 0.5 · ln(actual/ideal).
-            var actual = clicks[1].dataY;
-            var ideal  = clicks[0].dataY;
-            var ratio  = actual / Math.max(1e-9, ideal);
-            var Spp    = 0.5 * Math.log(ratio);
-            return { Spp: Spp,
-                     note: 'Δp(act)/Δp(ideal)=' + ratio.toFixed(2) +
-                           ' → S_pp≈' + Spp.toFixed(2) };
+    wedgeAngle: {
+        label: 'Second plateau → fault angle',
+        hint: 'Click the radial plateau, then the higher late plateau (two intersecting faults).',
+        plot: 'bourdet', clicks: 2, group: 'Boundaries',
+        prompts: ['Click the radial plateau', 'Click the late (higher) plateau'],
+        action: function (pts) {
+            var ratio = pts[1].y / pts[0].y;
+            if (!(ratio > 1.05)) return { error: 'The late plateau must be above the radial plateau.' };
+            var theta = 360 / ratio;
+            return { values: { ratio: ratio, theta: theta }, warnings: [],
+                     note: 'Late / radial plateau = ' + _fmt(ratio, 3) + ' → angle between the faults ≈ ' + _fmt(theta, 3) + '°' };
         }
     },
 
-    // ── Horizontal well ──────────────────────────────────────────────
-    HORSLP: {
-        label: 'Early ½-slope → L·√(kh·kv)',
-        plot:  'bourdet',
-        clicks: 2,
-        action: function (clicks, state) {
-            var inp = _stableInputs(state);
-            var dp = clicks[1].dataY, t = clicks[1].dataX;
-            var mLin = dp / Math.max(1e-9, Math.sqrt(t));
-            // dp_lin = 8.128·qB/(L·h) · sqrt(t/(φμct)) / sqrt(kv·kh) — proxy.
-            var L_sqrt = (8.128 * inp.q * inp.Bo / inp.h) /
-                         Math.max(1e-9, mLin * Math.sqrt(inp.phi * inp.mu * inp.ct));
-            return { L_sqrt_khkv: L_sqrt,
-                     note: 'Early ½-slope → L·√(kh·kv)≈' +
-                           L_sqrt.toPrecision(4) + ' ft·md' };
-        }
-    },
-    HORSTB: {
-        label: 'Late stabilisation → kh (horiz)',
-        plot:  'bourdet',
-        clicks: 1,
-        action: function (clicks, state) {
-            var inp = _stableInputs(state);
-            var dp = clicks[0].dataY;
-            var kh = (70.6 * inp.q * inp.mu * inp.Bo) / Math.max(1e-9, dp);
-            return { kh: kh,
-                     note: 'Horizontal late-pseudo-radial plateau dp\'=' +
-                           dp.toPrecision(3) + ' → kh=' + kh.toPrecision(4) + ' md·ft' };
+    closedDrainageArea: {
+        label: 'Late unit slope → drainage area',
+        hint: 'Click the late unit-slope derivative of a drawdown (closed system).',
+        plot: 'bourdet', clicks: 1, group: 'Boundaries',
+        prompts: ['Click the late unit-slope derivative'],
+        action: function (pts, cx) {
+            var t = pts[0].x, y = pts[0].y, warnings = [];
+            var ad = cx.ad();
+            if (_whichCurve(ad, t, y) === 'dp') return { error: 'Click on the derivative (Δp′), not on Δp.' };
+            if (ad && _isBuildup(ad.testType)) warnings.push('Pseudo-steady state is a drawdown regime; on a buildup this area is not valid.');
+            var phi = cx.w('phi'), h = cx.w('h');
+            var Aft2 = 0.23395 * cx.w('q') * cx.w('B') * t / (phi * cx.w('ct') * h * y);  // Δp′ = 0.23395 qB t/(φ ct h A)
+            return { values: { area: Aft2 / 43560, poreVolume: phi * h * Aft2 / 5.615, re: Math.sqrt(Aft2 / Math.PI) }, warnings: warnings,
+                     note: 'Late unit slope → drainage area ≈ ' + _fmt(Aft2 / 43560, 3) + ' acres (re ≈ ' + _fmt(Math.sqrt(Aft2 / Math.PI), 3) + ' ft)' };
         }
     },
 
-    // ── 3-sided / Horner ─────────────────────────────────────────────
-    '3-SIDE': {
-        label: '3-sided closed → Horner late linear',
-        plot:  'horner',
-        clicks: 2,
-        action: function (clicks, state) {
-            var inp = _stableInputs(state);
-            // Horner Δp vs. Horner-time slope on late linear regime.
-            var slope = _slopeLin(clicks[0], clicks[1]);
-            var kh = (162.6 * inp.q * inp.mu * inp.Bo) / Math.max(1e-9, Math.abs(slope));
-            return { kh_3side: kh,
-                     note: 'Horner late-linear slope=' + slope.toPrecision(3) +
-                           ' → kh (3-sided)≈' + kh.toPrecision(4) + ' md·ft' };
+    // ── Horizontal wells ─────────────────────────────────────────────────
+    horizontalEarlyRadial: {
+        label: 'Early plateau (horizontal) → √(ky·kz)·Lw',
+        hint: 'Click the early plateau (vertical-plane radial flow around the lateral).',
+        plot: 'bourdet', clicks: 1, group: 'Horizontal wells',
+        prompts: ['Click the early derivative plateau'],
+        action: function (pts, cx) {
+            var y = pts[0].y;
+            if (!_pos(y)) return { error: 'Click on the derivative plateau.' };
+            var v = 70.6 * cx.w('q') * cx.w('B') * cx.w('mu') / y;
+            return { values: { kyKzLw: v }, warnings: [],
+                     note: 'Early plateau Δp′ = ' + _fmt(y) + ' psi → √(ky·kz)·Lw = ' + _fmt(v) + ' md·ft' };
         }
     },
 
-    // ── General-purpose utilities ────────────────────────────────────
-    AUTOSL: {
-        label: 'Auto-fit slope (general)',
-        plot:  'bourdet',
-        clicks: 2,
-        action: function (clicks) {
-            var sl = _slopeLog(clicks[0], clicks[1]);
-            var regime = '';
-            if      (Math.abs(sl) < 0.1)       regime = 'IARF (radial-flow plateau)';
-            else if (Math.abs(sl - 0.5) < 0.1) regime = 'linear flow (½-slope)';
-            else if (Math.abs(sl - 0.25) < 0.1)regime = 'bilinear flow (¼-slope)';
-            else if (Math.abs(sl + 0.5) < 0.1) regime = 'spherical flow (-½ slope)';
-            else if (Math.abs(sl - 1.0) < 0.15)regime = 'pseudo-steady / closed (unit slope)';
-            else                                regime = 'transitional';
-            return { lastSlope: sl,
-                     note: 'Slope=' + sl.toFixed(3) + ' → ' + regime };
+    horizontalLinear: {
+        label: 'Early ½-slope (horizontal) → Lw·√ky',
+        hint: 'Click the intermediate ½-slope part of the curves (linear flow to the lateral).',
+        plot: 'bourdet', clicks: 1, group: 'Horizontal wells',
+        prompts: ['Click the intermediate ½-slope part of the derivative'],
+        action: function (pts, cx) {
+            var t = pts[0].x, y = pts[0].y;
+            if (!_pos(t) || !_pos(y)) return { error: 'Click on the ½-slope segment.' };
+            var curve = _whichCurve(cx.ad(), t, y) || 'deriv';
+            var m = (curve === 'dp' ? y : 2 * y) / Math.sqrt(t);
+            var v = 8.128 * cx.w('q') * cx.w('B') / (cx.w('h') * m) * _sqrtRatio(cx.w('mu'), cx.w('phi'), cx.w('ct'));
+            return { values: { mLinear: m, LwSqrtKy: v }, warnings: [],
+                     note: 'Intermediate ½-slope → m = ' + _fmt(m) + ' psi/hr^½, Lw·√ky = ' + _fmt(v) + ' ft·md^½' };
         }
     },
-    '1/4SLP': {
-        label: '¼-slope → bilinear / finite-cond',
-        plot:  'bourdet',
-        clicks: 1,
-        action: function (clicks, state) {
-            var inp = _stableInputs(state);
-            // Bilinear flow: dp = 44.13·qBμ / (h · (kf·wf)^0.5 · (kφμct)^0.25) · t^0.25
-            var dp = clicks[0].dataY, t = clicks[0].dataX;
-            var mBi = dp / Math.max(1e-9, Math.pow(t, 0.25));
-            var k = (state.params && state.params.k) ? state.params.k : 50;
-            var kfwf = Math.pow((44.13 * inp.q * inp.Bo * inp.mu) /
-                                (inp.h * mBi * Math.pow(k * inp.phi * inp.mu * inp.ct, 0.25)), 2);
-            return { kfwf: kfwf,
-                     note: '¼-slope onset → k_f·w_f ≈ ' + kfwf.toPrecision(4) + ' md·ft' };
+
+    horizontalLateRadial: {
+        label: 'Late plateau (horizontal) → √(kx·ky)·h',
+        hint: 'Click the late plateau (pseudo-radial flow in the horizontal plane).',
+        plot: 'bourdet', clicks: 1, group: 'Horizontal wells',
+        prompts: ['Click the late derivative plateau'],
+        action: function (pts, cx) {
+            var y = pts[0].y;
+            if (!_pos(y)) return { error: 'Click on the derivative plateau.' };
+            var h = cx.w('h'), v = 70.6 * cx.w('q') * cx.w('B') * cx.w('mu') / y;
+            return { values: { kxKyH: v, kH: v / h }, warnings: [],
+                     note: 'Late plateau Δp′ = ' + _fmt(y) + ' psi → √(kx·ky)·h = ' + _fmt(v) + ' md·ft (' + _fmt(v / h, 3) + ' md)' };
         }
     },
-    SPHERE: {
-        label: '-½ slope → spherical-flow entry',
-        plot:  'bourdet',
-        clicks: 1,
-        action: function (clicks) {
-            var t = clicks[0].dataX;
-            return { tSphericalEntry: t,
-                     note: 'Spherical-flow regime entry detected at t=' +
-                           t.toPrecision(3) + ' h (-½ slope)' };
+
+    // ── General ───────────────────────────────────────────────────────────
+    slopeCheck: {
+        label: 'Measure slope → flow regime',
+        hint: 'Click two points on a curve to measure its log-log slope.',
+        plot: 'bourdet', clicks: 2, group: 'General',
+        prompts: ['Click the first point', 'Click the second point'],
+        action: function (pts) {
+            var dx = Math.log10(pts[1].x) - Math.log10(pts[0].x);
+            if (!(Math.abs(dx) > 1e-6)) return { error: 'The two points need different times.' };
+            var s = (Math.log10(pts[1].y) - Math.log10(pts[0].y)) / dx;
+            var reg = _regimeForSlope(s);
+            return { values: { slope: s }, text: reg, warnings: [], note: 'Slope ' + s.toFixed(3) + ' → ' + reg };
+        }
+    },
+
+    // ── Straight lines on specialised plots ──────────────────────────────
+    mdhLine: {
+        label: 'Semilog line → kh, S',
+        hint: 'Click two points on the semilog straight line (radial flow).',
+        plot: 'mdh', clicks: 2, group: 'Straight lines',
+        prompts: ['Click a first point on the straight line', 'Click a second point on the straight line'],
+        action: function (pts, cx) { return _semilogLine('mdh', pts, cx); }
+    },
+
+    hornerLine: {
+        label: 'Horner line → kh, p*, S',
+        hint: 'Click two points on the Horner straight line (radial flow).',
+        plot: 'horner', clicks: 2, group: 'Straight lines',
+        prompts: ['Click a first point on the straight line', 'Click a second point on the straight line'],
+        action: function (pts, cx) { return _semilogLine('horner', pts, cx); }
+    },
+
+    lineIntersection: {
+        label: 'Line intersection → fault distance',
+        hint: 'Click where the radial line and the steeper late line cross. Needs k.',
+        plot: ['mdh', 'horner'], clicks: 1, group: 'Straight lines', needsK: true,
+        prompts: ['Click where the two straight lines intersect'],
+        action: function (pts, cx) {
+            var kk = cx.k();
+            if (!kk) return { error: 'Needs k: fit the semilog line first (or pick the radial plateau).' };
+            var tx;
+            if (cx.plotKey === 'horner') {
+                var tp = cx.tp();
+                if (!tp) return { error: 'Needs the producing time tp (set it on Tab 1).' };
+                var ratio = pts[0].xKind === 'log' ? pts[0].x : Math.pow(10, pts[0].x);
+                if (!(ratio > 1)) return { error: 'Click to the right of Horner ratio 1.' };
+                tx = tp / (ratio - 1);
+            } else {
+                tx = pts[0].xKind === 'log' ? pts[0].x : Math.pow(10, pts[0].x);
+            }
+            var L = 0.01217 * Math.sqrt(kk.k * tx / (cx.w('phi') * cx.w('mu') * cx.w('ct')));
+            return { values: { tx: tx, L: L }, warnings: [],
+                     note: 'Lines intersect at Δt = ' + _fmt(tx, 3) + ' hr → distance to a sealing fault ≈ ' + _fmt(L, 3) + ' ft' };
+        }
+    },
+
+    sqrtLine: {
+        label: '√t line → xf·√k',
+        hint: 'Click two points on the straight line of the √t plot (linear flow).',
+        plot: 'sqrt', clicks: 2, group: 'Straight lines',
+        prompts: ['Click a first point on the straight line', 'Click a second point on the straight line'],
+        action: function (pts, cx) {
+            var m = Math.abs((pts[1].y - pts[0].y) / (pts[1].x - pts[0].x));
+            if (!_pos(m)) return { error: 'The two points need different x and y.' };
+            var xfk = 4.064 * cx.w('q') * cx.w('B') / (cx.w('h') * m) * _sqrtRatio(cx.w('mu'), cx.w('phi'), cx.w('ct'));
+            var v = { mLinear: m, xfSqrtK: xfk }, kk = cx.k();
+            if (kk) v.xf = xfk / Math.sqrt(kk.k);
+            return { values: v, warnings: [],
+                     note: '√t slope m = ' + _fmt(m) + ' psi/hr^½ → xf·√k = ' + _fmt(xfk) + ' ft·md^½' + (v.xf ? ', xf = ' + _fmt(v.xf) + ' ft' : '') };
+        }
+    },
+
+    quarterLine: {
+        label: '⁴√t line → kf·wf',
+        hint: 'Click two points on the straight line of the ⁴√t plot (bilinear flow). Needs k.',
+        plot: 'quarter', clicks: 2, group: 'Straight lines', needsK: true,
+        prompts: ['Click a first point on the straight line', 'Click a second point on the straight line'],
+        action: function (pts, cx) {
+            var m = Math.abs((pts[1].y - pts[0].y) / (pts[1].x - pts[0].x));
+            if (!_pos(m)) return { error: 'The two points need different x and y.' };
+            var kk = cx.k();
+            if (!kk) return { error: 'Needs k: pick the radial plateau first (or run a fit).' };
+            var mu = cx.w('mu');
+            var kfwf = Math.pow(44.1 * cx.w('q') * cx.w('B') * mu / (cx.w('h') * m * Math.pow(cx.w('phi') * mu * cx.w('ct') * kk.k, 0.25)), 2);
+            return { values: { mBilinear: m, kfwf: kfwf }, warnings: [],
+                     note: '⁴√t slope m = ' + _fmt(m) + ' psi/hr^¼ → kf·wf = ' + _fmt(kfwf) + ' md·ft' };
+        }
+    },
+
+    sphericalLine: {
+        label: 'Spherical line → spherical k',
+        hint: 'Click two points on the straight line of the spherical (1/√t) plot.',
+        plot: 'spherical', clicks: 2, group: 'Straight lines',
+        prompts: ['Click a first point on the straight line', 'Click a second point on the straight line'],
+        action: function (pts, cx) {
+            var m = Math.abs((pts[1].y - pts[0].y) / (pts[1].x - pts[0].x));
+            if (!_pos(m)) return { error: 'The two points need different x and y.' };
+            var mu = cx.w('mu');
+            var ks = Math.pow(2452.9 * cx.w('q') * cx.w('B') * mu * Math.sqrt(cx.w('phi') * mu * cx.w('ct')) / m, 2 / 3);
+            return { values: { mSpherical: m, ks: ks }, warnings: [],
+                     note: 'Spherical slope |m| = ' + _fmt(m) + ' psi·hr^½ → spherical k = ' + _fmt(ks) + ' md' };
         }
     }
 };
 
-// ---- Click-capture state machine ----------------------------------------
-
-var _activeKey      = null;            // name of armed key
-var _activeCanvas   = null;            // canvas element listening
-var _activeListener = null;            // bound mousedown handler
-var _clickBuf       = [];              // accumulated {x,y,dataX,dataY}
-
-// Read the data-axis transform that the plot library stashed on the canvas.
-// 02-plots.js stores this as canvas._prismAxes = {x0, y0, x1, y1, dx0, dx1,
-// dy0, dy1, xLog, yLog} after each draw. If absent we fall back to a linear
-// 0..1 mapping that still gives a relative slope.
-function _toDataCoords(canvas, ev) {
-    var rect = canvas.getBoundingClientRect();
-    var dpr  = window.devicePixelRatio || 1;
-    var px   = (ev.clientX - rect.left);
-    var py   = (ev.clientY - rect.top);
-    var ax   = canvas._prismAxes;
-    var dataX, dataY;
-    if (ax) {
-        var fx = (px - ax.x0) / Math.max(1, (ax.x1 - ax.x0));
-        var fy = (py - ax.y0) / Math.max(1, (ax.y1 - ax.y0));
-        // Y axis is inverted (top y < bottom y in pixel space).
-        var fyDom = 1 - fy;
-        dataX = ax.xLog
-            ? Math.pow(10, Math.log10(ax.dx0) + fx * (Math.log10(ax.dx1) - Math.log10(ax.dx0)))
-            : ax.dx0 + fx * (ax.dx1 - ax.dx0);
-        dataY = ax.yLog
-            ? Math.pow(10, Math.log10(ax.dy0) + fyDom * (Math.log10(ax.dy1) - Math.log10(ax.dy0)))
-            : ax.dy0 + fyDom * (ax.dy1 - ax.dy0);
+// Semilog straight line (MDH: p vs log Δt; Horner: p vs log((tp+Δt)/Δt)).
+function _semilogLine(kind, pts, cx) {
+    var x0 = _semilogX(pts[0]), x1 = _semilogX(pts[1]);
+    if (!(Math.abs(x1 - x0) > 1e-9)) return { error: 'The two points need different times.' };
+    var m = (pts[1].y - pts[0].y) / (x1 - x0);         // psi per log cycle (signed)
+    if (!(Math.abs(m) > 0)) return { error: 'The line is flat — pick two points on the sloping straight line.' };
+    var warnings = [], v = {};
+    var q = cx.w('q'), B = cx.w('B'), mu = cx.w('mu'), h = cx.w('h'), kh;
+    if (cx.pseudo()) {
+        var T = cx.rankine();
+        if (!T) return { error: 'Gas pseudo-pressure data: set the reservoir temperature on Tab 1.' };
+        kh = 1637 * q * T / Math.abs(m);
     } else {
-        // Best-effort fallback. Just return relative pixel coordinates.
-        dataX = px / Math.max(1, rect.width);
-        dataY = 1 - py / Math.max(1, rect.height);
+        kh = 162.6 * q * B * mu / Math.abs(m);
     }
-    return { x: px, y: py, dataX: dataX, dataY: dataY };
+    var k = kh / h;
+    v.m = m; v.kh = kh; v.k = k;
+    var logTerm = function () {
+        var phi = cx.w('phi'), ct = cx.w('ct'), rw = cx.w('rw');
+        return Math.log10(k / (phi * mu * ct * rw * rw)) - 3.2275;
+    };
+    var ad = cx.ad(), tp = cx.tp(), yIsDp = cx.yIsDp();
+    var tt = ad && ad.testType ? ad.testType : cx.well.testType;
+    var t0, t1;
+    if (kind === 'horner') {
+        v.pStar = pts[0].y - m * x0;                    // line at log ratio = 0
+        if (tp) {
+            v.p1hr = v.pStar + m * Math.log10(tp + 1);
+            var pwf0 = cx.pwf0();
+            if (_num(pwf0)) {
+                v.S = 1.1513 * (Math.abs(v.p1hr - pwf0) / Math.abs(m) - logTerm() + Math.log10((tp + 1) / tp));
+            } else {
+                warnings.push('Set pwf at shut-in (Tab 1) to compute skin.');
+            }
+            var r0 = pts[0].xKind === 'log' ? pts[0].x : Math.pow(10, pts[0].x);
+            var r1 = pts[1].xKind === 'log' ? pts[1].x : Math.pow(10, pts[1].x);
+            if (r0 > 1 && r1 > 1) { t0 = tp / (r0 - 1); t1 = tp / (r1 - 1); }
+        } else {
+            warnings.push('Set the producing time tp (Tab 1) to compute p1hr and skin.');
+        }
+    } else {
+        v.p1hr = pts[0].y - m * x0;                     // line at Δt = 1 hr
+        t0 = Math.pow(10, x0); t1 = Math.pow(10, x1);
+        if (yIsDp) {
+            v.S = 1.1513 * (Math.abs(v.p1hr) / Math.abs(m) - logTerm());
+        } else if (_isBuildup(tt)) {
+            var pw = cx.pwf0();
+            if (_num(pw)) v.S = 1.1513 * (Math.abs(v.p1hr - pw) / Math.abs(m) - logTerm());
+            else warnings.push('Set pwf at shut-in (Tab 1) to compute skin.');
+        } else {
+            var pi = cx.pi();
+            if (_num(pi)) v.S = 1.1513 * (Math.abs(pi - v.p1hr) / Math.abs(m) - logTerm());
+            else warnings.push('Set the initial pressure pi (Tab 1) to compute skin.');
+        }
+    }
+    // Hand the clicked window to the semilog engine when it is available.
+    if (_pos(t0) && _pos(t1)) {
+        var eng = _semilogEngine(kind, t0, t1, cx);
+        if (eng && _num(eng.S) && (!eng.method || eng.method === kind)) {
+            if (_num(eng.m)) v.m = eng.m;
+            if (_pos(eng.kh)) v.kh = eng.kh;
+            if (_pos(eng.k)) v.k = eng.k;
+            if (_num(eng.p1hr)) v.p1hr = eng.p1hr;
+            if (kind === 'horner' && _num(eng.pStar)) v.pStar = eng.pStar;
+            v.S = eng.S;
+            warnings.push('Line fitted through the ' + (eng.n || 'measured') + ' data points between your two clicks.');
+        }
+    }
+    v.m = Math.abs(v.m);
+    var note = (kind === 'horner' ? 'Horner' : 'Semilog') + ' line m = ' + _fmt(v.m) + ' psi/cycle → kh = ' + _fmt(v.kh) +
+               ' md·ft, k = ' + _fmt(v.k) + ' md' + (_num(v.pStar) ? ', p* = ' + _fmt(v.pStar, 5) + ' psia' : '') +
+               (_num(v.S) ? ', S = ' + _fmt(v.S, 3) : '');
+    return { values: v, warnings: warnings, note: note };
+}
+
+function _keyPlots(key) { return Array.isArray(key.plot) ? key.plot : [key.plot]; }
+function _keyOnPlot(key, plotKey) { return _keyPlots(key).indexOf(plotKey) !== -1; }
+
+function _plotLabel(plotKey) {
+    var reg = G.PRiSM_PLOT_REGISTRY;
+    if (reg && reg[plotKey] && reg[plotKey].label) return reg[plotKey].label;
+    for (var i = 0; i < _PLOTS_SNAPSHOT.length; i++) if (_PLOTS_SNAPSHOT[i].key === plotKey) return _PLOTS_SNAPSHOT[i].label;
+    return plotKey;
+}
+
+function _makeCtx(plotKey, axes) {
+    var st = G.PRiSM_state || {};
+    var well = _wellInputs();
+    var used = {};
+    var adCache, kCache;
+    var cx = {
+        st: st, well: well, plotKey: plotKey, axes: axes || null, used: used, kInfo: null,
+        w: function (key) { used[key] = true; return well.v[key]; },
+        ad: function () { if (adCache === undefined) adCache = _analysisData(); return adCache; },
+        k: function () {
+            if (kCache === undefined) { kCache = _kFromContext(st); cx.kInfo = kCache; }
+            return kCache;
+        },
+        pseudo: function () {
+            var ad = cx.ad();
+            return !!(ad && (ad.pseudo === true || ad.dpUnit === 'psi2/cp'));
+        },
+        rankine: function () { return _rankine(well.T_R); },
+        tp: function () {
+            var ad = cx.ad();
+            if (ad && _pos(ad.tp)) return ad.tp;
+            return well.tp;
+        },
+        pwf0: function () {
+            var ad = cx.ad();
+            if (ad && ad.pRefSource === 'pwf0' && _num(ad.pRef)) return ad.pRef;
+            if (_num(well.pwf0)) return well.pwf0;
+            if (ad && _isBuildup(ad.testType) && _num(ad.pRef)) return ad.pRef;
+            return null;
+        },
+        pi: function () {
+            var ad = cx.ad();
+            if (ad && ad.pRefSource === 'pi' && _num(ad.pRef)) return ad.pRef;
+            return well.pi;
+        },
+        yIsDp: function () {
+            var lab = axes && axes.scaleY && axes.scaleY.label;
+            return !!(lab && /Δp|dp|delta/i.test(String(lab)) && !/pws|pwf|pressure,?\s*p\b/i.test(String(lab)));
+        },
+        // Equivalent drawdown time (Agarwal) on a single-rate buildup.
+        teq: function (t) {
+            var ad = cx.ad(), tp = cx.tp();
+            if (ad && _isBuildup(ad.testType) && _pos(tp)) return tp * t / (tp + t);
+            return t;
+        }
+    };
+    return cx;
+}
+
+function _defaultKinds(plotKey) {
+    if (plotKey === 'bourdet' || plotKey === 'sandface') return { x: 'log', y: 'log' };
+    if (plotKey === 'mdh' || plotKey === 'horner') return { x: 'log', y: 'lin' };
+    return { x: 'lin', y: 'lin' };
+}
+
+function _normPoint(p, kinds) {
+    p = p || {};
+    return {
+        x: _num(p.x) ? p.x : (_num(p.t) ? p.t : p.dataX),
+        y: _num(p.y) ? p.y : p.dataY,
+        xKind: p.xKind || kinds.x, yKind: p.yKind || kinds.y
+    };
+}
+
+// Run a tool on data-space points: points = [{x, y}] (or {t, y}).
+G.PRiSM_runAnalysisKey = function (keyName, points, opts) {
+    opts = opts || {};
+    var key = G.PRiSM_analysisKeys[keyName];
+    if (!key) return { ok: false, error: 'Unknown tool: ' + keyName };
+    if (!Array.isArray(points) || points.length < key.clicks) {
+        return { ok: false, error: key.label + ' needs ' + key.clicks + ' point(s).' };
+    }
+    var plotKey = opts.plotKey || _keyPlots(key)[0];
+    var kinds = _defaultKinds(plotKey), pts = [];
+    for (var i = 0; i < key.clicks; i++) {
+        var np = _normPoint(points[i], kinds);
+        if (!_num(np.x) || !_num(np.y)) return { ok: false, error: 'Point ' + (i + 1) + ' is not a number.' };
+        pts.push(np);
+    }
+    var cx = _makeCtx(plotKey, opts.axes);
+    var res;
+    try { res = key.action(pts, cx); } catch (e) { res = { error: 'Calculation failed: ' + (e && e.message) }; }
+    if (!res || res.error) return { ok: false, error: (res && res.error) || 'No result.' };
+    var usedKeys = Object.keys(cx.used);
+    var defaulted = usedKeys.filter(function (k) { return cx.well.defaulted.indexOf(k) !== -1; });
+    var warnings = (res.warnings || []).slice();
+    if (defaulted.length) {
+        warnings.unshift('Default inputs used (' + defaulted.map(function (k) { return WELL_LABEL[k]; }).join(', ') +
+                         ') — confirm them in Well & Test on Tab 1.');
+    }
+    var inputs = {};
+    usedKeys.forEach(function (k) { inputs[k] = cx.well.v[k]; });
+    var entry = {
+        key: keyName, label: key.label, plotKey: plotKey,
+        values: res.values || {}, text: res.text || null, note: res.note || '',
+        warnings: warnings, defaultInputs: defaulted, inputs: inputs, inputSource: cx.well.source,
+        kSource: cx.kInfo ? cx.kInfo.source : null,
+        points: pts.map(function (p) { return { x: p.x, y: p.y }; }),
+        timestamp: Date.now()
+    };
+    // Display map (quantity label with unit → value) for generic report readers.
+    var results = {};
+    Object.keys(entry.values).forEach(function (vk) {
+        var qd = QTY[vk] || { label: vk, unit: '' };
+        if (_num(entry.values[vk])) results[qd.label + (qd.unit ? ' (' + qd.unit + ')' : '')] = entry.values[vk];
+    });
+    entry.results = results;
+    var st = G.PRiSM_state;
+    if (!st) st = G.PRiSM_state = {};
+    if (!st.analysisKeyResults || typeof st.analysisKeyResults !== 'object') st.analysisKeyResults = {};
+    st.analysisKeyResults[keyName] = entry;
+    _emit('prism:analysis-key', { key: keyName, result: entry });
+    if (typeof G.PRiSM_saveState === 'function') { try { G.PRiSM_saveState(); } catch (e2) { /* non-fatal */ } }
+    _refreshToolbars();
+    return { ok: true, key: keyName, result: entry };
+};
+
+// Rows for reports: one row per value of every stored result.
+G.PRiSM_analysisKeyReportRows = function () {
+    var st = G.PRiSM_state || {}, r = st.analysisKeyResults || {}, rows = [];
+    Object.keys(r).sort(function (a, b) { return (r[a].timestamp || 0) - (r[b].timestamp || 0); }).forEach(function (k) {
+        var e = r[k];
+        if (!e || !e.values) return;
+        Object.keys(e.values).forEach(function (vk) {
+            var qd = QTY[vk] || { label: vk, unit: '' };
+            rows.push({ key: k, tool: e.label, quantity: qd.label, value: e.values[vk], unit: qd.unit,
+                        defaulted: !!(e.defaultInputs && e.defaultInputs.length) });
+        });
+        if (e.text) rows.push({ key: k, tool: e.label, quantity: 'Interpretation', value: e.text, unit: '', defaulted: false });
+    });
+    return rows;
+};
+
+// ---- Axis inversion (C6 _prismAxes) --------------------------------------
+function _invAxis(sc, off, len, flip) {
+    if (!sc || !_num(sc.min) || !_num(sc.max) || !(len > 0)) return null;
+    var lo = sc.min, hi = sc.max;
+    if (sc.kind === 'log') {
+        if (!(lo > 0 && hi > 0)) return null;
+        var a = Math.log10(lo), b = Math.log10(hi);
+        return function (px) { var f = (px - off) / len; if (flip) f = 1 - f; return Math.pow(10, a + f * (b - a)); };
+    }
+    return function (px) { var f = (px - off) / len; if (flip) f = 1 - f; return lo + f * (hi - lo); };
+}
+
+function _axesInverse(ax) {
+    if (!ax) return null;
+    var plot = ax.plot || null;
+    var kx = (ax.scaleX && ax.scaleX.kind) || (ax.xLog ? 'log' : 'lin');
+    var ky = (ax.scaleY && ax.scaleY.kind) || (ax.yLog ? 'log' : 'lin');
+    if (typeof ax.fromX === 'function' && typeof ax.fromY === 'function') {
+        return { fromX: ax.fromX, fromY: ax.fromY, plot: plot, xKind: kx, yKind: ky };
+    }
+    if (ax.scaleX && ax.scaleY && plot) {
+        var fx = _invAxis(ax.scaleX, plot.x, plot.w, false);
+        var fy = _invAxis(ax.scaleY, plot.y, plot.h, true);
+        if (fx && fy) return { fromX: fx, fromY: fy, plot: plot, xKind: kx, yKind: ky };
+    }
+    if (_num(ax.x0) && _num(ax.x1) && _num(ax.dx0) && _num(ax.dx1)) {       // older shape
+        var p2 = { x: ax.x0, y: ax.y0, w: ax.x1 - ax.x0, h: ax.y1 - ax.y0 };
+        var gx = _invAxis({ kind: kx, min: ax.dx0, max: ax.dx1 }, p2.x, p2.w, false);
+        var gy = _invAxis({ kind: ky, min: ax.dy0, max: ax.dy1 }, p2.y, p2.h, true);
+        if (gx && gy) return { fromX: gx, fromY: gy, plot: p2, xKind: kx, yKind: ky };
+    }
+    return null;
+}
+
+function _fwdAxis(sc, off, len, flip) {
+    if (!sc || !_num(sc.min) || !_num(sc.max) || !(len > 0)) return null;
+    if (sc.kind === 'log') {
+        if (!(sc.min > 0 && sc.max > 0)) return null;
+        var a = Math.log10(sc.min), b = Math.log10(sc.max);
+        return function (v) { if (!(v > 0)) return NaN; var f = (Math.log10(v) - a) / (b - a); return flip ? off + len - f * len : off + f * len; };
+    }
+    return function (v) { var f = (v - sc.min) / (sc.max - sc.min); return flip ? off + len - f * len : off + f * len; };
+}
+
+function _axesForward(ax) {
+    if (!ax) return null;
+    if (typeof ax.toX === 'function' && typeof ax.toY === 'function') return { toX: ax.toX, toY: ax.toY, plot: ax.plot };
+    if (ax.scaleX && ax.scaleY && ax.plot) {
+        var fx = _fwdAxis(ax.scaleX, ax.plot.x, ax.plot.w, false), fy = _fwdAxis(ax.scaleY, ax.plot.y, ax.plot.h, true);
+        if (fx && fy) return { toX: fx, toY: fy, plot: ax.plot };
+    }
+    return null;
+}
+
+function _toDataCoords(canvas, ev) {
+    var inv = _axesInverse(canvas && canvas._prismAxes);
+    if (!inv) return null;
+    var rect = { left: 0, top: 0, width: 0, height: 0 };
+    try { if (canvas.getBoundingClientRect) rect = canvas.getBoundingClientRect(); } catch (e) { /* keep */ }
+    var px = (ev.clientX || 0) - (rect.left || 0);
+    var py = (ev.clientY || 0) - (rect.top || 0);
+    var plot = inv.plot || {};
+    // Canvas shown at a different CSS size than it was drawn at → rescale.
+    if (plot.cssW && rect.width > 0 && Math.abs(rect.width - plot.cssW) > 0.5) px *= plot.cssW / rect.width;
+    if (plot.cssH && rect.height > 0 && Math.abs(rect.height - plot.cssH) > 0.5) py *= plot.cssH / rect.height;
+    var inside = !(plot.w > 0) ||
+        (px >= plot.x - 1 && px <= plot.x + plot.w + 1 && py >= plot.y - 1 && py <= plot.y + plot.h + 1);
+    return { px: px, py: py, x: inv.fromX(px), y: inv.fromY(py), xKind: inv.xKind, yKind: inv.yKind, inside: inside };
+}
+
+// ---- Arming (Pointer Events) ----------------------------------------------
+var _arm = null;   // { key, canvas, listener, pts[], prevCursor, prevTouch }
+
+function _statusEls() {
+    if (!_hasDoc || typeof document.querySelectorAll !== 'function') return [];
+    try { return Array.prototype.slice.call(document.querySelectorAll('[data-prism-akey-status]')); } catch (e) { return []; }
+}
+
+function _status(msg, kind) {
+    var color = kind === 'error' ? 'var(--red, #f85149)' : kind === 'warn' ? 'var(--yellow, #d29922)' :
+                kind === 'success' ? 'var(--green, #3fb950)' : 'var(--text2, #8b949e)';
+    var els = _statusEls();
+    for (var i = 0; i < els.length; i++) { els[i].textContent = msg || ''; els[i].style.color = color; }
+    if (!els.length && msg && kind && kind !== 'info') _polishToast(msg, kind);
+}
+
+function _showHint(text) {
+    if (!_hasDoc || !document.body) return;
+    var h = document.getElementById('prism_akey_hint');
+    if (!h) {
+        h = document.createElement('div');
+        h.id = 'prism_akey_hint';
+        h.setAttribute('role', 'status');
+        h.style.cssText =
+            'position:fixed; top:12px; left:50%; transform:translateX(-50%); z-index:99999;' +
+            'background:var(--bg2, #161b22); border:1px solid var(--accent, #f0883e); color:var(--text, #e6edf3);' +
+            'padding:8px 12px; border-radius:6px; font:12px sans-serif; text-align:center;' +
+            'max-width:calc(100vw - 32px); box-sizing:border-box; box-shadow:0 4px 10px rgba(0,0,0,.4);';
+        document.body.appendChild(h);
+    }
+    h.textContent = text;
+}
+
+function _hideHint() {
+    if (!_hasDoc) return;
+    var h = document.getElementById('prism_akey_hint');
+    if (h && h.parentNode) h.parentNode.removeChild(h);
+}
+
+function _markArmedButtons() {
+    if (!_hasDoc || typeof document.querySelectorAll !== 'function') return;
+    var nodes = document.querySelectorAll('[data-prism-akey]');
+    for (var i = 0; i < nodes.length; i++) {
+        var on = !!(_arm && nodes[i].getAttribute('data-prism-akey') === _arm.key);
+        nodes[i].setAttribute('aria-pressed', on ? 'true' : 'false');
+        nodes[i].style.outline = on ? '2px solid var(--accent, #f0883e)' : '';
+    }
 }
 
 function _disarm() {
-    if (_activeCanvas && _activeListener) {
-        _activeCanvas.removeEventListener('mousedown', _activeListener);
-        _activeCanvas.style.cursor = '';
+    if (_arm && _arm.canvas) {
+        try { _arm.canvas.removeEventListener('pointerdown', _arm.listener); } catch (e) { /* ignore */ }
+        try {
+            _arm.canvas.style.cursor = _arm.prevCursor || '';
+            _arm.canvas.style.touchAction = _arm.prevTouch || '';
+        } catch (e2) { /* ignore */ }
     }
-    _activeKey = null;
-    _activeCanvas = null;
-    _activeListener = null;
-    _clickBuf = [];
-    var hint = document.getElementById('prism_polish_armhint');
-    if (hint && hint.parentNode) hint.parentNode.removeChild(hint);
+    _arm = null;
+    _hideHint();
+    _markArmedButtons();
 }
 
-function _showArmHint(label, needed) {
-    var hint = document.getElementById('prism_polish_armhint');
-    if (!hint) {
-        hint = document.createElement('div');
-        hint.id = 'prism_polish_armhint';
-        hint.style.cssText =
-            'position:fixed; top:12px; left:50%; transform:translateX(-50%);' +
-            'background:#21262d; border:1px solid #f0883e; color:#f0f6fc;' +
-            'padding:8px 14px; border-radius:5px; z-index:99999;' +
-            'font:12px sans-serif; box-shadow:0 4px 10px rgba(0,0,0,.4);';
-        document.body.appendChild(hint);
-    }
-    hint.textContent = '[' + label + '] click ' + needed + ' point(s) on the plot — Esc to cancel';
+function _prompt() {
+    if (!_arm) return;
+    var key = G.PRiSM_analysisKeys[_arm.key];
+    var n = _arm.pts.length;
+    var text = (key.prompts && key.prompts[n]) || ('Click point ' + (n + 1) + ' of ' + key.clicks);
+    var msg = key.label + ': ' + text + (key.clicks > 1 ? ' (' + (n + 1) + '/' + key.clicks + ')' : '') + ' — Esc to cancel';
+    _showHint(msg);
+    _status(msg, 'info');
 }
 
-window.PRiSM_armAnalysisKey = function (keyName) {
-    var key = window.PRiSM_analysisKeys[keyName];
-    if (!key) {
-        _polishToast('Unknown analysis key: ' + keyName, 'error');
-        return;
-    }
-    var canvas = document.getElementById('prism_plot_canvas');
-    if (!canvas) {
-        _polishToast('No plot canvas active. Open Tab 2 first.', 'error');
-        return;
-    }
-    if (_activeKey) _disarm();
-    _activeKey = keyName;
-    _activeCanvas = canvas;
-    _clickBuf = [];
-    canvas.style.cursor = 'crosshair';
-    _showArmHint(key.label, key.clicks);
+function _markClick(canvas, px, py) {
+    try {
+        var ctx = canvas.getContext('2d');
+        if (!ctx) return;
+        ctx.save();
+        ctx.strokeStyle = '#f0883e';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(px - 6, py); ctx.lineTo(px + 6, py);
+        ctx.moveTo(px, py - 6); ctx.lineTo(px, py + 6);
+        ctx.stroke();
+        ctx.restore();
+    } catch (e) { /* cosmetic */ }
+}
 
-    _activeListener = function (ev) {
-        var pt = _toDataCoords(canvas, ev);
-        _clickBuf.push(pt);
-        if (_clickBuf.length >= key.clicks) {
-            // Snapshot to avoid race with disarm()
-            var clicks = _clickBuf.slice();
-            var keyEntry = key;
-            _disarm();
-            try {
-                var result = keyEntry.action(clicks, window.PRiSM_state || {});
-                if (result && typeof result === 'object') {
-                    if (!window.PRiSM_state) window.PRiSM_state = { params: {} };
-                    if (!window.PRiSM_state.params) window.PRiSM_state.params = {};
-                    for (var rk in result) {
-                        if (rk === 'note') continue;
-                        if (Object.prototype.hasOwnProperty.call(result, rk)) {
-                            window.PRiSM_state.params[rk] = result[rk];
-                        }
-                    }
-                    var msg = '[' + keyName + '] ' + (result.note || 'result computed');
-                    console.log('PRiSM analysis-key ' + keyName + ':', result);
-                    _polishToast(msg, 'success');
-                }
-            } catch (e) {
-                console.error('PRiSM analysis-key ' + keyName + ' failed:', e);
-                _polishToast('Analysis-key error: ' + e.message, 'error');
-            }
-        } else {
-            _polishToast('[' + keyName + '] need ' +
-                         (key.clicks - _clickBuf.length) + ' more click(s)', 'info');
-        }
-    };
-    canvas.addEventListener('mousedown', _activeListener);
+function _onPointer(ev) {
+    if (!_arm) return;
+    if (ev && ev.button != null && ev.button > 0) return;          // secondary buttons
+    try { ev.preventDefault(); ev.stopPropagation(); } catch (e) { /* ignore */ }
+    var canvas = _arm.canvas, key = G.PRiSM_analysisKeys[_arm.key];
+    var pt = _toDataCoords(canvas, ev);
+    if (!pt) { _status('The plot axes are not available — redraw the plot and pick the tool again.', 'error'); _disarm(); return; }
+    if (!pt.inside) { _status('Click inside the plot area.', 'warn'); return; }
+    _arm.pts.push(pt);
+    _markClick(canvas, pt.px, pt.py);
+    if (_arm.pts.length < key.clicks) { _prompt(); return; }
+    var name = _arm.key, pts = _arm.pts.slice(), axes = canvas._prismAxes;
+    var plotKey = (G.PRiSM_state && G.PRiSM_state.activePlot) || (axes && axes.plotKey) || _keyPlots(key)[0];
+    _disarm();
+    var r = G.PRiSM_runAnalysisKey(name, pts, { plotKey: plotKey, axes: axes });
+    if (r.ok) {
+        var warn = r.result.warnings && r.result.warnings.length;
+        _status(r.result.note + (warn ? ' — ' + r.result.warnings[0] : ''), warn ? 'warn' : 'success');
+    } else {
+        _status(r.error, 'error');
+    }
+}
+
+G.PRiSM_armAnalysisKey = function (keyName, opts) {
+    opts = opts || {};
+    var key = G.PRiSM_analysisKeys[keyName];
+    if (!key) { _status('Unknown tool: ' + keyName, 'error'); return false; }
+    var st = G.PRiSM_state || {};
+    var plotKey = st.activePlot || 'bourdet';
+    if (!_keyOnPlot(key, plotKey)) {
+        _status('"' + key.label + '" works on the ' + _keyPlots(key).map(_plotLabel).join(' / ') +
+                ' plot — switch the plot type first.', 'warn');
+        return false;
+    }
+    var canvas = opts.canvas || (_hasDoc ? document.getElementById('prism_plot_canvas') : null);
+    if (!canvas) { _status('Open the diagnostic plot first.', 'error'); return false; }
+    if (!_axesInverse(canvas._prismAxes)) {
+        _status('The plot has not been drawn yet — draw it, then pick the tool again.', 'error');
+        return false;
+    }
+    _disarm();
+    _arm = { key: keyName, canvas: canvas, pts: [], listener: _onPointer,
+             prevCursor: canvas.style ? canvas.style.cursor : '', prevTouch: canvas.style ? canvas.style.touchAction : '' };
+    try { canvas.style.cursor = 'crosshair'; canvas.style.touchAction = 'none'; } catch (e) { /* ignore */ }
+    canvas.addEventListener('pointerdown', _onPointer);
+    _markArmedButtons();
+    _prompt();
+    return true;
 };
 
-// Esc cancels any pending arm.
-document.addEventListener('keydown', function (ev) {
-    if (ev.key === 'Escape' && _activeKey) {
-        _polishToast('Analysis-key cancelled.', 'info');
-        _disarm();
-    }
-});
+G.PRiSM_disarmAnalysisKey = function () { var was = !!_arm; _disarm(); if (was) _status('Tool cancelled.', 'info'); };
 
-// Render a grid of analysis-key buttons filtered by plotKey (e.g. 'bourdet',
-// 'sqrt', 'spherical', 'horner'). Container can be a DOM element or an id.
-window.PRiSM_renderAnalysisKeyToolbar = function (container, plotKey) {
-    var host = (typeof container === 'string')
-        ? document.getElementById(container) : container;
+if (_hasDoc) {
+    _on(document, 'keydown', function (ev) {
+        if (ev && ev.key === 'Escape' && _arm) { _disarm(); _status('Tool cancelled.', 'info'); }
+    });
+}
+
+// ---- Toolbar + results -----------------------------------------------------
+var _BTN_CSS = 'font-size:12px; padding:6px 10px; margin:0; white-space:normal; text-align:left; ' +
+               'max-width:100%; box-sizing:border-box; line-height:1.3;';
+
+function _resultRowHTML(e) {
+    var parts = [];
+    Object.keys(e.values || {}).forEach(function (vk) {
+        var qd = QTY[vk] || { label: vk, unit: '' };
+        var val = e.values[vk];
+        var sig = (vk === 'pStar' || vk === 'p1hr') ? 5 : 4;
+        parts.push('<span style="white-space:nowrap;">' + _esc(qd.label) + ' <b style="color:var(--text, #e6edf3);">' +
+                   _esc(_fmt(val, sig)) + '</b>' + (qd.unit ? ' ' + _esc(qd.unit) : '') + '</span>');
+    });
+    var chip = (e.defaultInputs && e.defaultInputs.length)
+        ? ' <span title="' + _esc(e.warnings[0] || '') + '" style="display:inline-block; font-size:10px; padding:1px 6px; border-radius:8px; ' +
+          'background:rgba(210,153,34,.18); color:var(--yellow, #d29922); border:1px solid var(--yellow, #d29922);">default inputs</span>'
+        : '';
+    var warn = '';
+    (e.warnings || []).forEach(function (w, i) {
+        if (i === 0 && chip) return;     // already shown as the chip tooltip
+        warn += '<div style="font-size:11px; color:var(--yellow, #d29922); margin-top:2px;">' + _esc(w) + '</div>';
+    });
+    return '<div data-prism-akey-row="' + _esc(e.key) + '" style="padding:6px 0; border-top:1px solid var(--border, #30363d); ' +
+               'font-size:12px; color:var(--text2, #8b949e); overflow-wrap:anywhere;">' +
+             '<div style="display:flex; gap:6px; align-items:flex-start; justify-content:space-between;">' +
+               '<div style="min-width:0;"><span style="color:var(--text, #e6edf3); font-weight:600;">' + _esc(e.label) + '</span>' + chip + '</div>' +
+               '<button type="button" data-prism-akey-clear="' + _esc(e.key) + '" aria-label="Remove result" ' +
+                 'style="background:none; border:none; color:var(--text3, #6e7681); cursor:pointer; font-size:14px; padding:0 4px;">×</button>' +
+             '</div>' +
+             '<div style="display:flex; flex-wrap:wrap; gap:4px 12px; margin-top:2px;">' + parts.join('') + '</div>' +
+             (e.text ? '<div style="margin-top:2px;">' + _esc(e.text) + '</div>' : '') +
+             warn +
+           '</div>';
+}
+
+G.PRiSM_renderAnalysisKeyToolbar = function (container, plotKey) {
+    if (!_hasDoc) return;
+    var host = (typeof container === 'string') ? document.getElementById(container) : container;
     if (!host) return;
-    plotKey = plotKey || 'bourdet';
-    var keys = window.PRiSM_analysisKeys;
+    var st = G.PRiSM_state || {};
+    plotKey = plotKey || st.activePlot || 'bourdet';
+    host.setAttribute('data-prism-linetools', '1');     // refreshed with the active plot
+    var keys = G.PRiSM_analysisKeys, groups = {}, order = [];
+    Object.keys(keys).forEach(function (k) {
+        if (!_keyOnPlot(keys[k], plotKey)) return;
+        var g = keys[k].group || 'Tools';
+        if (!groups[g]) { groups[g] = []; order.push(g); }
+        groups[g].push(k);
+    });
+    var well = _wellInputs();
+    var chip = '';
+    if (well.defaulted.length) {
+        chip = '<div data-prism-akey-defaults style="margin:6px 0; padding:6px 8px; border-radius:6px; font-size:12px; ' +
+               'background:rgba(210,153,34,.12); border:1px solid var(--yellow, #d29922); color:var(--yellow, #d29922);">' +
+               '⚠ Default inputs: ' + _esc(well.defaulted.map(function (k) { return WELL_LABEL[k]; }).join(', ')) +
+               ' — results that use them are marked. Set them in Well & Test on Tab 1.</div>';
+    }
     var btns = '';
-    for (var k in keys) {
-        if (!Object.prototype.hasOwnProperty.call(keys, k)) continue;
-        if (keys[k].plot !== plotKey) continue;
-        btns += '<button class="btn btn-secondary" data-prism-akey="' + k + '" ' +
-                'style="font-size:11px; padding:4px 8px; margin:2px;" ' +
-                'title="' + keys[k].label + '">' +
-                k + '</button>';
-    }
+    order.forEach(function (g) {
+        btns += '<div style="margin-top:6px;"><div style="font-size:11px; color:var(--text3, #6e7681); margin-bottom:4px;">' + _esc(g) + '</div>' +
+                '<div style="display:flex; flex-wrap:wrap; gap:6px;">';
+        groups[g].forEach(function (k) {
+            btns += '<button type="button" class="btn btn-secondary" data-prism-akey="' + _esc(k) + '" title="' + _esc(keys[k].hint || '') + '" ' +
+                    'style="' + _BTN_CSS + '">' + _esc(keys[k].label) + '</button>';
+        });
+        btns += '</div></div>';
+    });
     if (!btns) {
-        btns = '<span style="font-size:11px; color:#8b949e; font-style:italic;">' +
-               'No analysis keys for plot type \'' + plotKey + '\'.</span>';
+        btns = '<div style="font-size:12px; color:var(--text3, #6e7681); margin-top:6px;">No line tools for the ' +
+               _esc(_plotLabel(plotKey)) + ' plot. Switch to the log-log derivative, semilog, Horner, √t, ⁴√t or spherical plot.</div>';
     }
+    var res = st.analysisKeyResults || {};
+    var resKeys = Object.keys(res).filter(function (k) { return res[k] && res[k].values; })
+        .sort(function (a, b) { return (res[b].timestamp || 0) - (res[a].timestamp || 0); });
+    var rows = resKeys.map(function (k) { return _resultRowHTML(res[k]); }).join('');
     host.innerHTML =
-        '<div style="border:1px solid #30363d; border-radius:6px; padding:8px; ' +
-                    'background:#161b22; margin-top:8px;">' +
-            '<div style="font-size:11px; font-weight:700; color:#c9d1d9; ' +
-                        'text-transform:uppercase; letter-spacing:.5px; margin-bottom:6px;">' +
-                'Analysis keys (' + plotKey + ')</div>' +
-            '<div style="display:flex; flex-wrap:wrap; gap:2px;">' + btns + '</div>' +
+        '<div class="prism-linetools" style="max-width:100%; box-sizing:border-box; color:var(--text, #e6edf3);">' +
+          '<div style="font-size:12px; color:var(--text2, #8b949e);">Tools for the <b style="color:var(--text, #e6edf3);">' +
+            _esc(_plotLabel(plotKey)) + '</b> plot — pick a tool, then click the plot.</div>' +
+          chip + btns +
+          '<div data-prism-akey-status role="status" aria-live="polite" style="margin-top:8px; font-size:12px; min-height:16px; ' +
+            'color:var(--text2, #8b949e); overflow-wrap:anywhere;"></div>' +
+          (rows
+            ? '<div style="margin-top:6px;"><div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">' +
+                '<span style="font-size:11px; color:var(--text3, #6e7681);">Results</span>' +
+                '<button type="button" data-prism-akey-clearall style="background:none; border:1px solid var(--border, #30363d); ' +
+                  'color:var(--text2, #8b949e); border-radius:4px; font-size:11px; padding:2px 8px; cursor:pointer;">Clear all</button></div>' +
+                rows + '</div>'
+            : '') +
         '</div>';
-    // Wire each button to arm its key.
     var nodes = host.querySelectorAll('[data-prism-akey]');
     for (var i = 0; i < nodes.length; i++) {
         (function (node) {
-            node.onclick = function () { window.PRiSM_armAnalysisKey(node.dataset.prismAkey); };
+            node.onclick = function () { G.PRiSM_armAnalysisKey(node.getAttribute('data-prism-akey')); };
         })(nodes[i]);
     }
-};
-
-
-// =========================================================================
-// SECTION 3 — PNG EXPORT (REPORT PDF + STANDALONE PLOT PNG)
-// =========================================================================
-// We can't reach the locally-scoped PRISM_PLOT_REGISTRY in 04-ui-wiring.js,
-// so we maintain a parallel snapshot. Update _PLOTS_SNAPSHOT here if a new
-// plot is added to that registry.
-
-var _PLOTS_SNAPSHOT = [
-    { key: 'cartesian',     fn: 'PRiSM_plot_cartesian',             label: 'Cartesian P vs t',     mode: 'transient' },
-    { key: 'horner',        fn: 'PRiSM_plot_horner',                label: 'Horner',               mode: 'transient' },
-    { key: 'bourdet',       fn: 'PRiSM_plot_bourdet',               label: 'Log-Log Bourdet',      mode: 'transient' },
-    { key: 'sqrt',          fn: 'PRiSM_plot_sqrt_time',             label: 'Square-root time',     mode: 'transient' },
-    { key: 'quarter',       fn: 'PRiSM_plot_quarter_root_time',     label: 'Quarter-root time',    mode: 'transient' },
-    { key: 'spherical',     fn: 'PRiSM_plot_spherical',             label: 'Spherical',            mode: 'transient' },
-    { key: 'sandface',      fn: 'PRiSM_plot_sandface_convolution',  label: 'Sandface convolution', mode: 'transient' },
-    { key: 'superposition', fn: 'PRiSM_plot_buildup_superposition', label: 'Buildup superposition',mode: 'transient' },
-    { key: 'rateCart',      fn: 'PRiSM_plot_rate_time_cartesian',   label: 'Rate vs time (cart)',  mode: 'decline' },
-    { key: 'rateSemi',      fn: 'PRiSM_plot_rate_time_semilog',     label: 'Rate vs time (semi)',  mode: 'decline' },
-    { key: 'rateLog',       fn: 'PRiSM_plot_rate_time_loglog',      label: 'Rate vs time (log)',   mode: 'decline' },
-    { key: 'rateCum',       fn: 'PRiSM_plot_rate_cumulative',       label: 'Rate vs cumulative',   mode: 'decline' },
-    { key: 'lossRatio',     fn: 'PRiSM_plot_loss_ratio',            label: 'Loss-ratio',           mode: 'decline' },
-    { key: 'typeCurve',     fn: 'PRiSM_plot_typecurve_overlay',     label: 'Type-curve overlay',   mode: 'decline' }
-];
-
-window.PRiSM_listPlots = function () {
-    return _PLOTS_SNAPSHOT.slice();
-};
-
-// Render a plot to an offscreen canvas at the given resolution, return data URL.
-function _renderPlotToDataURL(plotKey, w, h) {
-    var entry = null;
-    for (var i = 0; i < _PLOTS_SNAPSHOT.length; i++) {
-        if (_PLOTS_SNAPSHOT[i].key === plotKey) { entry = _PLOTS_SNAPSHOT[i]; break; }
+    var clears = host.querySelectorAll('[data-prism-akey-clear]');
+    for (var j = 0; j < clears.length; j++) {
+        (function (node) {
+            node.onclick = function () {
+                var s = G.PRiSM_state || {};
+                if (s.analysisKeyResults) delete s.analysisKeyResults[node.getAttribute('data-prism-akey-clear')];
+                if (typeof G.PRiSM_saveState === 'function') { try { G.PRiSM_saveState(); } catch (e) { /* ignore */ } }
+                _refreshToolbars();
+                _redraw();
+            };
+        })(clears[j]);
     }
-    if (!entry) return null;
-    var fn = window[entry.fn];
-    if (typeof fn !== 'function') return null;
-    var ds = window.PRiSM_dataset || {};
-    var st = window.PRiSM_state   || {};
-    var c = document.createElement('canvas');
-    c.width  = w || 1200;
-    c.height = h || 800;
-    var data = {
-        t: ds.t || [], p: ds.p || [], q: ds.q || null
+    var ca = host.querySelector('[data-prism-akey-clearall]');
+    if (ca) ca.onclick = function () {
+        var s = G.PRiSM_state || {};
+        s.analysisKeyResults = {};
+        if (typeof G.PRiSM_saveState === 'function') { try { G.PRiSM_saveState(); } catch (e) { /* ignore */ } }
+        _refreshToolbars();
+        _redraw();
     };
-    if (ds.dp) data.dp = ds.dp;
-    if (ds.periods) data.periods = ds.periods;
-    if (st.modelCurve && typeof window.PRiSM_applyMatch === 'function') {
-        try {
-            var m = st.match || { timeShift: 0, pressShift: 0 };
-            var sh = window.PRiSM_applyMatch(st.modelCurve.td, st.modelCurve.pd,
-                                             m.timeShift, m.pressShift);
-            data.overlay = { t: sh.t, p: sh.p };
-        } catch (e) { /* ignore — overlay just won't appear */ }
+    _markArmedButtons();
+};
+
+function _refreshToolbars() {
+    if (!_hasDoc || typeof document.querySelectorAll !== 'function') return;
+    var hosts;
+    try { hosts = document.querySelectorAll('[data-prism-linetools]'); } catch (e) { return; }
+    for (var i = 0; i < hosts.length; i++) {
+        try { G.PRiSM_renderAnalysisKeyToolbar(hosts[i]); } catch (e2) { /* ignore */ }
     }
-    try {
-        fn(c, data, { hover: false, dragZoom: false, showLegend: true });
-    } catch (e) {
-        console.warn('PRiSM PNG render of', plotKey, 'failed:', e.message);
-        // Still return whatever was drawn so the user gets *something*.
-    }
-    try { return c.toDataURL('image/png'); }
-    catch (e) { console.warn('toDataURL failed:', e.message); return null; }
 }
 
-// Standalone PNG download for a single plot.
-window.PRiSM_exportPlotPNG = function (plotKey) {
-    if (!plotKey) {
-        _polishToast('PRiSM_exportPlotPNG: plotKey required', 'error');
-        return;
+function _redraw() {
+    if (typeof G.PRiSM_drawActivePlot === 'function') { try { G.PRiSM_drawActivePlot(); } catch (e) { /* ignore */ } }
+}
+
+// Tab 2 panel (C7).
+_registerTabPanel(2, {
+    id: 'linetools',
+    title: 'Plot line tools',
+    order: 10,
+    collapsed: false,
+    render: function (host) {
+        if (!host) return;
+        host.innerHTML = '<div id="prism_linetools"></div>';
+        G.PRiSM_renderAnalysisKeyToolbar(host.querySelector('#prism_linetools') || host);
     }
-    var dataUrl = _renderPlotToDataURL(plotKey, 1200, 800);
-    if (!dataUrl) {
-        _polishToast('PNG export failed — plot ' + plotKey + ' not available', 'error');
-        return;
+});
+
+_on(G, 'prism:plot-changed', function () {
+    var st = G.PRiSM_state || {};
+    if (_arm && !_keyOnPlot(G.PRiSM_analysisKeys[_arm.key], st.activePlot || 'bourdet')) _disarm();
+    _refreshToolbars();
+});
+_on(G, 'prism:well-changed', _refreshToolbars);
+_on(G, 'prism:dataset-loaded', _refreshToolbars);
+
+// Post-draw hook (C7): redraw the stored picks of the tools used on this plot.
+function _linetoolsPostDraw(info) {
+    if (!info || !info.canvas || !info.canvas.getContext) return;
+    var st = G.PRiSM_state || {}, res = st.analysisKeyResults || {};
+    var tr = _axesForward(info.axes || info.canvas._prismAxes);
+    if (!tr) return;
+    var plotKey = info.plotKey || st.activePlot;
+    var list = Object.keys(res).map(function (k) { return res[k]; })
+        .filter(function (e) { return e && e.plotKey === plotKey && Array.isArray(e.points); })
+        .sort(function (a, b) { return (b.timestamp || 0) - (a.timestamp || 0); }).slice(0, 4);
+    if (!list.length) return;
+    var ctx = info.canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.save();
+    try {
+        var pl = tr.plot;
+        if (pl && _num(pl.w)) { ctx.beginPath(); ctx.rect(pl.x, pl.y, pl.w, pl.h); ctx.clip(); }
+        list.forEach(function (e) {
+            var xy = e.points.map(function (p) { return [tr.toX(p.x), tr.toY(p.y)]; })
+                .filter(function (p) { return _num(p[0]) && _num(p[1]); });
+            if (!xy.length) return;
+            ctx.strokeStyle = 'rgba(240,136,62,0.9)';
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([4, 3]);
+            if (xy.length >= 2) {
+                ctx.beginPath(); ctx.moveTo(xy[0][0], xy[0][1]);
+                for (var i = 1; i < xy.length; i++) ctx.lineTo(xy[i][0], xy[i][1]);
+                ctx.stroke();
+            }
+            ctx.setLineDash([]);
+            xy.forEach(function (p) {
+                ctx.beginPath(); ctx.moveTo(p[0] - 5, p[1]); ctx.lineTo(p[0] + 5, p[1]);
+                ctx.moveTo(p[0], p[1] - 5); ctx.lineTo(p[0], p[1] + 5); ctx.stroke();
+            });
+        });
+    } catch (e) { /* cosmetic */ }
+    ctx.restore();
+}
+_linetoolsPostDraw._prismId = 'linetools-picks';
+
+function _registerPostDraw(fn) {
+    var hooks = G.PRiSM_postDrawHooks = Array.isArray(G.PRiSM_postDrawHooks) ? G.PRiSM_postDrawHooks : [];
+    for (var i = 0; i < hooks.length; i++) if (hooks[i] && hooks[i]._prismId === fn._prismId) { hooks[i] = fn; return; }
+    hooks.push(fn);
+}
+_registerPostDraw(_linetoolsPostDraw);
+
+
+// =========================================================================
+// SECTION 3 — PNG / PDF EXPORT
+// =========================================================================
+// Plots are rendered off-screen from window.PRiSM_buildPlotData(plotKey)
+// (C7) — the same data the screen uses — and the post-draw hooks are run
+// on the off-screen canvas so exports match the screen.
+// =========================================================================
+
+var _PLOTS_SNAPSHOT = [
+    { key: 'cartesian',     fn: 'PRiSM_plot_cartesian',             label: 'Cartesian P vs t',      mode: 'transient' },
+    { key: 'horner',        fn: 'PRiSM_plot_horner',                label: 'Horner',                mode: 'transient' },
+    { key: 'mdh',           fn: 'PRiSM_plot_mdh',                   label: 'Semilog (MDH)',         mode: 'transient' },
+    { key: 'bourdet',       fn: 'PRiSM_plot_bourdet',               label: 'Log-Log Bourdet',       mode: 'transient' },
+    { key: 'sqrt',          fn: 'PRiSM_plot_sqrt_time',             label: 'Square-root time',      mode: 'transient' },
+    { key: 'quarter',       fn: 'PRiSM_plot_quarter_root_time',     label: 'Quarter-root time',     mode: 'transient' },
+    { key: 'spherical',     fn: 'PRiSM_plot_spherical',             label: 'Spherical',             mode: 'transient' },
+    { key: 'sandface',      fn: 'PRiSM_plot_sandface_convolution',  label: 'Material-balance time', mode: 'transient' },
+    { key: 'superposition', fn: 'PRiSM_plot_buildup_superposition', label: 'Buildup superposition', mode: 'transient' },
+    { key: 'rateCart',      fn: 'PRiSM_plot_rate_time_cartesian',   label: 'Rate vs time (cart)',   mode: 'decline' },
+    { key: 'rateSemi',      fn: 'PRiSM_plot_rate_time_semilog',     label: 'Rate vs time (semi)',   mode: 'decline' },
+    { key: 'rateLog',       fn: 'PRiSM_plot_rate_time_loglog',      label: 'Rate vs time (log)',    mode: 'decline' },
+    { key: 'rateCum',       fn: 'PRiSM_plot_rate_cumulative',       label: 'Rate vs cumulative',    mode: 'decline' },
+    { key: 'lossRatio',     fn: 'PRiSM_plot_loss_ratio',            label: 'Loss-ratio',            mode: 'decline' },
+    { key: 'typeCurve',     fn: 'PRiSM_plot_typecurve_overlay',     label: 'Type-curve overlay',    mode: 'decline' }
+];
+
+function _plotEntries() {
+    var reg = G.PRiSM_PLOT_REGISTRY, out = [];
+    if (reg && typeof reg === 'object') {
+        for (var k in reg) {
+            if (!Object.prototype.hasOwnProperty.call(reg, k) || !reg[k]) continue;
+            out.push({ key: k, fn: reg[k].fn, label: reg[k].label || k, mode: reg[k].mode || 'transient' });
+        }
+    }
+    if (!out.length) out = _PLOTS_SNAPSHOT.slice();
+    return out;
+}
+
+function _plotFn(entry) {
+    if (!entry) return null;
+    if (typeof entry.fn === 'function') return entry.fn;
+    if (typeof entry.fn === 'string' && typeof G[entry.fn] === 'function') return G[entry.fn];
+    return null;
+}
+
+G.PRiSM_listPlots = function () {
+    return _plotEntries().map(function (e) {
+        return { key: e.key, fn: typeof e.fn === 'string' ? e.fn : ((e.fn && e.fn.name) || ''), label: e.label, mode: e.mode };
+    });
+};
+
+var _DECLINE_PLOTS = { rateCart: 1, rateSemi: 1, rateLog: 1, rateCum: 1, lossRatio: 1, typeCurve: 1 };
+
+// Only used when the dispatcher's PRiSM_buildPlotData is not available.
+function _fallbackPlotData(plotKey) {
+    var ds = G.PRiSM_dataset;
+    if (!ds || !ds.t || !ds.t.length) return null;
+    if (_DECLINE_PLOTS[plotKey]) {
+        var td = [];
+        for (var i = 0; i < ds.t.length; i++) td.push(ds.t[i] / 24);
+        return { data: { t: td, q: ds.q || null }, opts: { timeUnit: 'd', xLabel: 'Time (days)' } };
+    }
+    if (plotKey === 'cartesian') return { data: { t: ds.t, p: ds.p, q: ds.q, periods: ds.periods }, opts: {} };
+    var ad = _analysisData();
+    if (ad && ad.ok) {
+        if (plotKey === 'bourdet' || plotKey === 'sandface') return { data: { t: ad.t, dp: ad.dp, deriv: ad.deriv }, opts: {} };
+        var o = {};
+        if (_pos(ad.tp)) o.tp = ad.tp;
+        return { data: { t: ad.t, p: ad.p, dp: ad.dp, tp: ad.tp }, opts: o };
+    }
+    return { data: { t: ds.t, p: ds.p, q: ds.q }, opts: {} };
+}
+
+// Render a plot off-screen → canvas (or null).
+G.PRiSM_renderPlotToCanvas = function (plotKey, w, h) {
+    if (!_hasDoc) return null;
+    var entries = _plotEntries(), entry = null;
+    for (var i = 0; i < entries.length; i++) if (entries[i].key === plotKey) { entry = entries[i]; break; }
+    var fn = _plotFn(entry);
+    if (!fn) return null;
+    var built = null;
+    if (typeof G.PRiSM_buildPlotData === 'function') {
+        try { built = G.PRiSM_buildPlotData(plotKey); } catch (e) { built = null; }
+    }
+    if (!built || !built.data) built = _fallbackPlotData(plotKey);
+    if (!built || !built.data) return null;
+    w = w || 1200; h = h || 800;
+    var c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    try { c.style.width = w + 'px'; c.style.height = h + 'px'; } catch (e0) { /* ignore */ }
+    var o = {}, src = built.opts || {};
+    for (var k in src) if (Object.prototype.hasOwnProperty.call(src, k)) o[k] = src[k];
+    o.width = w; o.height = h; o.hover = false; o.dragZoom = false;
+    if (o.showLegend == null) o.showLegend = true;
+    var st = G.PRiSM_state || {};
+    if (o.smoothL == null && _num(st.bourdetL)) o.smoothL = st.bourdetL;
+    try { fn(c, built.data, o); } catch (e1) {
+        try { console.warn('PRiSM export: plot ' + plotKey + ' failed: ' + (e1 && e1.message)); } catch (e2) { /* ignore */ }
+    }
+    var hooks = G.PRiSM_postDrawHooks;
+    if (Array.isArray(hooks)) {
+        for (var j = 0; j < hooks.length; j++) {
+            try { hooks[j]({ canvas: c, plotKey: plotKey, data: built.data, opts: o, axes: c._prismAxes || null, exporting: true }); }
+            catch (e3) { /* a hook must never break an export */ }
+        }
+    }
+    return c;
+};
+
+function _plotDataURL(plotKey, w, h) {
+    var c = G.PRiSM_renderPlotToCanvas(plotKey, w, h);
+    if (!c) return null;
+    try { return c.toDataURL('image/png'); } catch (e) { return null; }
+}
+
+G.PRiSM_exportPlotPNG = function (plotKey) {
+    var st = G.PRiSM_state || {};
+    plotKey = plotKey || st.activePlot || 'bourdet';
+    var url = _plotDataURL(plotKey, 1200, 800);
+    if (!url || !_hasDoc) {
+        _polishToast('PNG export failed — the ' + _plotLabel(plotKey) + ' plot is not available.', 'error');
+        return false;
     }
     var a = document.createElement('a');
-    a.href = dataUrl;
+    a.href = url;
     a.download = 'prism_' + plotKey + '.png';
+    a.style.display = 'none';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     _polishToast('PNG saved: prism_' + plotKey + '.png', 'success');
+    return true;
 };
 
-// PDF export with embedded PNGs.
-window.PRiSM_exportReportPDF = function () {
-    var html;
+function _galleryHTML() {
+    var ds = G.PRiSM_dataset;
+    if (!ds || !ds.t || !ds.t.length) return '<p><em>No dataset loaded — plot gallery skipped.</em></p>';
+    var mode = (G.PRiSM && G.PRiSM.mode) || 'transient';
+    var html = '<h2 style="page-break-before:always;">Plots</h2>', cnt = 0;
+    _plotEntries().forEach(function (e) {
+        if (mode !== 'combined' && e.mode !== mode && e.mode !== 'both') return;
+        var url = _plotDataURL(e.key, 1200, 800);
+        if (!url) return;
+        cnt++;
+        html += '<div style="page-break-inside:avoid; margin-bottom:18px;"><h3 style="margin:6px 0;">' + _esc(e.label) + '</h3>' +
+                '<img src="' + url + '" alt="' + _esc(e.label) + '" style="width:100%; max-width:1100px; height:auto; border:1px solid #ccc;"/></div>';
+    });
+    if (!cnt) html += '<p><em>No plots could be rendered.</em></p>';
+    return html;
+}
+
+// PDF export: report body (36) + PNG gallery → host PDF pipeline.
+// Returns 'host' | 'window' | false.
+G.PRiSM_exportReportPDF = function () {
+    var body;
     try {
-        if (typeof window.PRiSM_buildReportHTML === 'function') {
-            html = window.PRiSM_buildReportHTML();
-        } else {
-            html = '<h2>PRiSM Report</h2><p>(Report builder not available.)</p>';
-        }
+        body = (typeof G.PRiSM_buildReportHTML === 'function')
+            ? G.PRiSM_buildReportHTML({ plots: false })   // the gallery below carries the plots
+            : '<p>(The report builder is not available — plots only.)</p>';
     } catch (e) {
-        _polishToast('Report build failed: ' + e.message, 'error');
-        return;
+        _polishToast('Report build failed: ' + (e && e.message), 'error');
+        return false;
     }
-
-    // Bake every available plot as a high-res PNG and append to the report.
-    var ds = window.PRiSM_dataset;
-    var hasData = !!(ds && Array.isArray(ds.t) && ds.t.length > 0);
-    var st = window.PRiSM_state || {};
-    var mode = (window.PRiSM && window.PRiSM.mode) || 'transient';
-
-    var augHTML = '';
-    if (hasData) {
-        augHTML += '<h2 style="page-break-before:always;">High-Resolution Plot Gallery</h2>';
-        var cnt = 0;
-        for (var i = 0; i < _PLOTS_SNAPSHOT.length; i++) {
-            var entry = _PLOTS_SNAPSHOT[i];
-            // Only embed plots compatible with the active mode (or both).
-            if (mode !== 'combined' && entry.mode !== mode) continue;
-            var url = _renderPlotToDataURL(entry.key, 1200, 800);
-            if (!url) continue;
-            cnt++;
-            augHTML +=
-                '<div style="page-break-inside:avoid; margin-bottom:18px;">' +
-                    '<h3 style="margin:6px 0;">' + entry.label + '</h3>' +
-                    '<img src="' + url + '" style="width:100%; max-width:1100px; ' +
-                        'height:auto; border:1px solid #ccc;"/>' +
-                '</div>';
-        }
-        if (cnt === 0) {
-            augHTML += '<p><em>No plots could be rendered.</em></p>';
-        }
-    } else {
-        augHTML += '<p><em>No dataset loaded — gallery skipped.</em></p>';
+    var html = String(body || '') + _galleryHTML();
+    var st = G.PRiSM_state || {};
+    var title = 'PRiSM Well-Test Analysis';
+    var sub = st.model ? ('Model: ' + st.model) : '';
+    // Lexical host pipeline (this file is concatenated inside the host IIFE).
+    if (typeof exportReport === 'function') {
+        try { exportReport(title, html, sub); return 'host'; }
+        catch (e1) { try { console.warn('Host report export failed, using a print window: ' + e1.message); } catch (e2) { /* ignore */ } }
     }
-
-    // Try the host's exportReport first (gives consistent cover page).
-    if (typeof window.exportReport === 'function') {
-        try {
-            window.exportReport('PRiSM Analysis - ' + (st.model || ''), html + augHTML);
-            _polishToast('Report sent to host PDF pipeline.', 'success');
-            return;
-        } catch (e) {
-            console.warn('Host exportReport failed, falling back to print window:', e.message);
-        }
+    if (typeof G.exportReport === 'function') {
+        try { G.exportReport(title, html, sub); return 'host'; } catch (e3) { /* fall through */ }
     }
-
-    // Fallback: open a new window, dump the augmented report, call print().
-    var w;
-    try { w = window.open('', 'prism_report', 'width=900,height=1100'); }
-    catch (e) { w = null; }
-    if (!w) {
+    var w = null;
+    try { w = G.open('', 'prism_report', 'width=900,height=1100'); } catch (e4) { w = null; }
+    if (!w || !w.document) {
         _polishToast('Pop-up blocked — allow pop-ups to export the report.', 'error');
-        return;
+        return false;
     }
-    var fullHTML =
-        '<!DOCTYPE html><html><head><title>PRiSM Report</title>' +
-        '<style>' +
-            'body { font-family: Arial, sans-serif; margin: 24px; color:#222; }' +
-            'h1, h2, h3 { color:#222; }' +
-            'table { border-collapse: collapse; margin: 8px 0; }' +
-            'th, td { border:1px solid #ddd; padding:4px 8px; font-size:12px; }' +
-            'img { max-width:100%; height:auto; }' +
-            '@media print { body { margin:12px; } }' +
-        '</style></head><body>' +
-        '<h1>PRiSM Well-Test Analysis Report</h1>' +
-        html + augHTML +
-        '<script>window.onload = function(){ setTimeout(function(){' +
-        ' try { window.print(); } catch(e){} }, 400); };<\/script>' +
+    var full = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + title + '</title>' +
+        '<meta name="viewport" content="width=device-width, initial-scale=1">' +
+        '<style>body{font-family:Arial,sans-serif;margin:24px;color:#222;}h1,h2,h3{color:#222;}' +
+        'table{border-collapse:collapse;margin:8px 0;}th,td{border:1px solid #ddd;padding:4px 8px;font-size:12px;}' +
+        'img{max-width:100%;height:auto;}@media print{body{margin:12px;}}</style></head><body>' +
+        '<h1>' + title + '</h1>' + html +
+        '<script>window.onload=function(){setTimeout(function(){try{window.print();}catch(e){}},400);};<\/script>' +
         '</body></html>';
     try {
-        w.document.open();
-        w.document.write(fullHTML);
-        w.document.close();
-        _polishToast('Report opened — use browser print to save as PDF.', 'success');
-    } catch (e) {
-        _polishToast('Print-window write failed: ' + e.message, 'error');
+        w.document.open(); w.document.write(full); w.document.close();
+        _polishToast('Report opened — use the print dialog to save it as PDF.', 'success');
+        return 'window';
+    } catch (e5) {
+        _polishToast('Print-window write failed: ' + (e5 && e5.message), 'error');
+        return false;
     }
 };
 
 
 // =========================================================================
-// SECTION 4 — PER-TAB GA4 EVENTS
+// SECTION 4 — USAGE ANALYTICS (GA4)
 // =========================================================================
-// Three integration points:
-//   - window.PRiSM.setTab          → 'prism_tab_open'
-//   - window.PRiSM_state.model     → 'prism_model_select'
-//   - window.PRiSM_runRegression   → 'prism_regress_run'
+// Tab opens come from the shell's PRiSM_tabHooks.any; model and fit events
+// from window CustomEvents. Nothing is wrapped and nothing polls.
 // =========================================================================
 
 function _ga4(eventName, params) {
-    if (typeof window.gtag === 'function') {
-        try { window.gtag('event', eventName, params); }
-        catch (e) { /* swallow — GA failures must not break the app */ }
+    if (typeof G.gtag === 'function') {
+        try { G.gtag('event', eventName, params); } catch (e) { /* GA must never break the app */ }
     }
 }
 
-// ---- 4a) Wrap window.PRiSM.setTab ---------------------------------------
-(function _wrapSetTabForGA4() {
-    if (!window.PRiSM || typeof window.PRiSM.setTab !== 'function') {
-        // Try again later — Phase 1+2 setTab is created inside renderPRiSM.
-        setTimeout(_wrapSetTabForGA4, 250);
-        return;
-    }
-    if (window.PRiSM.setTab._ga4Wrapped) return;
-    var orig = window.PRiSM.setTab;
-    window.PRiSM.setTab = function (n) {
-        var tabNames = ['', 'Data', 'Plots', 'Model', 'Params', 'Match', 'Regress', 'Report'];
-        var name = tabNames[n] || ('Tab ' + n);
-        _ga4('prism_tab_open', {
-            event_category: 'PRiSM',
-            event_label:    name,
-            value:          n,
-            tab_index:      n
-        });
-        return orig.apply(this, arguments);
-    };
-    window.PRiSM.setTab._ga4Wrapped = true;
+var _TAB_NAMES = ['', 'Data', 'Plots', 'Model', 'Params', 'Match', 'Regress', 'Report'];
+
+function _gaTabHook(n) {
+    _ga4('prism_tab_open', { event_category: 'PRiSM', event_label: _TAB_NAMES[n] || ('Tab ' + n), value: n, tab_index: n });
+}
+_gaTabHook._prismId = 'ga4-tab-open';
+
+(function _registerGA() {
+    var hooks = G.PRiSM_tabHooks = (G.PRiSM_tabHooks && typeof G.PRiSM_tabHooks === 'object') ? G.PRiSM_tabHooks : {};
+    var any = hooks.any = Array.isArray(hooks.any) ? hooks.any : [];
+    for (var i = 0; i < any.length; i++) if (any[i] && any[i]._prismId === _gaTabHook._prismId) return;
+    any.push(_gaTabHook);
 })();
 
-// ---- 4b) Wrap state.model setter ----------------------------------------
-//   Tab 3 currently does `window.PRiSM_state.model = key` directly. We
-//   install an Object.defineProperty getter/setter on the model field so
-//   any assignment fires GA4. Also expose PRiSM_setModel(key) for callers
-//   that prefer an explicit setter.
-(function _instrumentModelField() {
-    if (!window.PRiSM_state) {
-        setTimeout(_instrumentModelField, 250);
-        return;
-    }
-    var st = window.PRiSM_state;
-    if (st._modelInstrumented) return;
-    var current = st.model;
-    try {
-        Object.defineProperty(st, 'model', {
-            configurable: true,
-            enumerable:   true,
-            get: function () { return current; },
-            set: function (v) {
-                if (v !== current) {
-                    current = v;
-                    _ga4('prism_model_select', {
-                        event_category: 'PRiSM',
-                        event_label:    String(v),
-                        model_key:      String(v)
-                    });
-                } else {
-                    current = v;
-                }
-            }
-        });
-        st._modelInstrumented = true;
-    } catch (e) {
-        console.warn('PRiSM model-setter instrumentation failed:', e.message);
-    }
-})();
+_on(G, 'prism:model-changed', function (ev) {
+    var d = (ev && ev.detail) || {};
+    var key = d.modelKey || d.model || (G.PRiSM_state && G.PRiSM_state.model) || 'unknown';
+    _ga4('prism_model_select', { event_category: 'PRiSM', event_label: String(key), model_key: String(key) });
+});
+_on(G, 'prism:fit-updated', function (ev) {
+    var d = (ev && ev.detail) || {};
+    var src = d.source || (d.fit && d.fit.source) || '';
+    var key = d.modelKey || (d.fit && (d.fit.modelKey || d.fit.model)) || (G.PRiSM_state && G.PRiSM_state.model) || 'unknown';
+    var name = src === 'regression' ? 'prism_regress_run' : src === 'automatch' ? 'prism_automatch_apply' :
+               src === 'match' ? 'prism_typecurve_apply' : src === 'semilog' ? 'prism_semilog_run' : 'prism_fit_update';
+    _ga4(name, { event_category: 'PRiSM', event_label: String(key), model_key: String(key), source: String(src) });
+});
+_on(G, 'prism:analysis-key', function (ev) {
+    var d = (ev && ev.detail) || {};
+    _ga4('prism_line_tool', { event_category: 'PRiSM', event_label: String(d.key || ''), tool: String(d.key || '') });
+});
 
-window.PRiSM_setModel = function (key) {
-    if (!window.PRiSM_state) window.PRiSM_state = { params: {}, model: key };
-    window.PRiSM_state.model = key;        // triggers the GA4 event via the setter
-    if (window.PRiSM_MODELS && window.PRiSM_MODELS[key]) {
-        var defs = window.PRiSM_MODELS[key].defaults || {};
-        window.PRiSM_state.params = {};
-        for (var k in defs) {
-            if (Object.prototype.hasOwnProperty.call(defs, k)) {
-                window.PRiSM_state.params[k] = defs[k];
-            }
+// Fallback model setter — only when the dispatcher (04) has not provided one.
+if (typeof G.PRiSM_setModel !== 'function') {
+    G.PRiSM_setModel = function (key) {
+        var st = G.PRiSM_state || (G.PRiSM_state = { params: {} });
+        st.model = key;
+        var entry = G.PRiSM_MODELS && G.PRiSM_MODELS[key];
+        if (entry) {
+            var defs = entry.defaults || {};
+            st.params = {};
+            for (var k in defs) if (Object.prototype.hasOwnProperty.call(defs, k)) st.params[k] = defs[k];
+            st.modelCurve = null;
         }
-        window.PRiSM_state.modelCurve = null;
-    }
-};
-
-// ---- 4c) Wrap window.PRiSM_runRegression --------------------------------
-(function _wrapRunRegression() {
-    if (typeof window.PRiSM_runRegression !== 'function') {
-        setTimeout(_wrapRunRegression, 250);
-        return;
-    }
-    if (window.PRiSM_runRegression._ga4Wrapped) return;
-    var orig = window.PRiSM_runRegression;
-    window.PRiSM_runRegression = function (opts) {
-        var st = window.PRiSM_state || {};
-        _ga4('prism_regress_run', {
-            event_category: 'PRiSM',
-            event_label:    String(st.model || 'unknown'),
-            model_key:      String(st.model || 'unknown')
-        });
-        return orig.apply(this, arguments);
+        _emit('prism:model-changed', { modelKey: key });
     };
-    window.PRiSM_runRegression._ga4Wrapped = true;
-})();
+}
 
 })();
 
@@ -6407,14 +7270,15 @@ window.PRiSM_setModel = function (key) {
 // ════════════════════════════════════════════════════════════════════
 //
 // USER FLOW
-//   1. Tab 1 file picker fills window.PRiSM_dataset = { t, p, q, ... }
-//   2. This module appends an interactive crop chart below the existing
-//      preview. The user drags handles or types t_start/t_end/i_start/i_end
-//      to define the cropped window.
+//   1. Step ① Data loads window.PRiSM_dataset = { t, p, q, ... }
+//   2. This module is a Tab 1 panel ("Crop & trim", C7 registry, order 30).
+//      The user drags handles (Pointer Events — mouse, pen and touch) or
+//      types t_start/t_end/i_start/i_end to define the window.
 //   3. A first-3 / last-3 preview block updates live.
-//   4. "Confirm crop" replaces window.PRiSM_dataset with the slice and
-//      fires window CustomEvent('prism:dataset-cropped', { detail }).
-//   5. "Reset" restores the original snapshot.
+//   4. "Confirm crop" makes the slice the active dataset (absolute times
+//      kept) through window.PRiSM_commitDataset → 'prism:dataset-loaded'
+//      {source:'crop'}, fires 'prism:dataset-cropped' and redraws the plot.
+//   5. "Reset" restores the original snapshot the same way.
 //
 // PUBLIC API
 //   window.PRiSM_renderCropTool(container)
@@ -6429,7 +7293,9 @@ window.PRiSM_setModel = function (key) {
 //   • No external libraries — vanilla canvas, plain DOM.
 //   • The original (uncropped) dataset is snapshotted on first interaction
 //     and restored on reset; subsequent crops always slice from that snapshot
-//     so a reset is always exact.
+//     so a reset is always exact. The snapshot survives re-renders of the
+//     Data tab while the active dataset is still the one this tool set; a
+//     newly loaded dataset starts a new snapshot.
 // ════════════════════════════════════════════════════════════════════
 
 (function () {
@@ -6479,6 +7345,7 @@ window.PRiSM_setModel = function (key) {
         layout: null,         // { x, y, w, h, cssW, cssH, tMin, tMax, pMin, pMax }
         drag: null,           // { kind: 'left'|'right'|'new', startX, ... }
         debounceTimer: null,
+        owned: null,          // the dataset object this tool last made active
         wired: false
     };
 
@@ -6490,31 +7357,43 @@ window.PRiSM_setModel = function (key) {
     // SECTION 2 — DATASET HELPERS
     // ═══════════════════════════════════════════════════════════════
 
-    // Take a SHALLOW snapshot of the active dataset's array refs (we only
-    // ever .slice() — never mutate the originals, so shallow is safe).
+    var _isArr = function (a) {
+        return !!a && (Array.isArray(a) || (typeof ArrayBuffer !== 'undefined' && ArrayBuffer.isView && ArrayBuffer.isView(a)));
+    };
+    var _copy = function (a) { return Array.prototype.slice.call(a); };
+
+    // Keys that are derived from the full record and would be wrong for a
+    // slice (they are rebuilt by their owners on 'prism:dataset-loaded').
+    var DERIVED_KEYS = { periods: 1, dp: 1, deriv: 1, _cache: 1 };
+
+    // Take a snapshot of the active dataset (arrays copied — we never mutate
+    // the originals).
     function _snapshotDataset(ds) {
         if (!ds) return null;
+        var n = (ds.t || []).length;
         var snap = {
-            t: (ds.t || []).slice(),
-            p: ds.p ? ds.p.slice() : null,
-            q: ds.q ? ds.q.slice() : null
+            t: _copy(ds.t || []),
+            p: _isArr(ds.p) ? _copy(ds.p) : null,
+            q: _isArr(ds.q) ? _copy(ds.q) : null
         };
-        // Optional period array.
-        if (ds.period) snap.period = ds.period.slice();
-        // Optional multi-phase rates.
+        if (_isArr(ds.period)) snap.period = _copy(ds.period);
         if (ds.phases) {
             snap.phases = {
-                oil:   ds.phases.oil   ? ds.phases.oil.slice()   : null,
-                gas:   ds.phases.gas   ? ds.phases.gas.slice()   : null,
-                water: ds.phases.water ? ds.phases.water.slice() : null
+                oil:   _isArr(ds.phases.oil)   ? _copy(ds.phases.oil)   : null,
+                gas:   _isArr(ds.phases.gas)   ? _copy(ds.phases.gas)   : null,
+                water: _isArr(ds.phases.water) ? _copy(ds.phases.water) : null
             };
         }
-        // Carry through any other simple top-level keys the dataset may
-        // already hold (e.g. .units, .meta), so we don't drop info.
+        // Carry other top-level keys: parallel arrays are copied, other
+        // arrays (derived, e.g. detected periods) are dropped, scalars and
+        // small objects (name, source, units, …) are kept.
         for (var k in ds) {
-            if (snap[k] !== undefined) continue;
+            if (!Object.prototype.hasOwnProperty.call(ds, k)) continue;
+            if (snap[k] !== undefined || DERIVED_KEYS[k]) continue;
             if (k === 't' || k === 'p' || k === 'q' || k === 'period' || k === 'phases') continue;
-            try { snap[k] = ds[k]; } catch (e) { /* ignore */ }
+            var v = ds[k];
+            if (_isArr(v)) { if (v.length === n) snap[k] = _copy(v); continue; }
+            try { snap[k] = v; } catch (e) { /* ignore */ }
         }
         return snap;
     }
@@ -6524,9 +7403,10 @@ window.PRiSM_setModel = function (key) {
     // exclusive at i_end (matching Array.prototype.slice).
     function _sliceDataset(snap, i_start, i_end) {
         if (!snap) return null;
+        var n = snap.t.length;
         var out = { t: snap.t.slice(i_start, i_end) };
-        if (snap.p) out.p = snap.p.slice(i_start, i_end);
-        if (snap.q) out.q = snap.q.slice(i_start, i_end);
+        out.p = snap.p ? snap.p.slice(i_start, i_end) : null;
+        out.q = snap.q ? snap.q.slice(i_start, i_end) : null;
         if (snap.period) out.period = snap.period.slice(i_start, i_end);
         if (snap.phases) {
             out.phases = {
@@ -6535,13 +7415,27 @@ window.PRiSM_setModel = function (key) {
                 water: snap.phases.water ? snap.phases.water.slice(i_start, i_end) : null
             };
         }
-        // Carry through scalar keys.
         for (var k in snap) {
+            if (!Object.prototype.hasOwnProperty.call(snap, k)) continue;
             if (out[k] !== undefined) continue;
             if (k === 't' || k === 'p' || k === 'q' || k === 'period' || k === 'phases') continue;
-            try { out[k] = snap[k]; } catch (e) {}
+            var v = snap[k];
+            if (_isArr(v)) { if (v.length === n) out[k] = v.slice(i_start, i_end); continue; }
+            try { out[k] = v; } catch (e) {}
         }
         return out;
+    }
+
+    // Make ds active through the shared commit path (one
+    // 'prism:dataset-loaded' {source:'crop'}), then redraw the active plot.
+    function _commit(ds) {
+        cropState.owned = ds;
+        if (typeof G.PRiSM_commitDataset === 'function') {
+            G.PRiSM_commitDataset(ds, { source: 'crop' });
+        } else {
+            G.PRiSM_dataset = ds;
+            _dispatch('prism:dataset-loaded', { source: 'crop', dataset: ds });
+        }
     }
 
     // Find the smallest index i such that t[i] >= target.
@@ -6606,9 +7500,13 @@ window.PRiSM_setModel = function (key) {
         }
         cropState.t_start = ts;
         cropState.t_end   = te;
-        // Derive sample indices.
-        cropState.i_start = _findIndex(t, ts);
-        cropState.i_end   = _findIndex(t, te) + 1; // exclusive
+        // Derive sample indices: keep tStart ≤ t ≤ tEnd (small tolerance for
+        // values typed from rounded times).
+        var eps = 1e-9 * Math.max(1, Math.abs(tMax - tMin));
+        cropState.i_start = _findIndex(t, ts - eps);
+        var last = _findIndex(t, te + eps);
+        if (t[last] > te + eps) last--;
+        cropState.i_end   = last + 1; // exclusive
         if (cropState.i_end > t.length) cropState.i_end = t.length;
         if (cropState.i_start < 0) cropState.i_start = 0;
         if (cropState.i_end <= cropState.i_start) cropState.i_end = cropState.i_start + 1;
@@ -6677,12 +7575,13 @@ window.PRiSM_setModel = function (key) {
         var p = snap.p && snap.p.length === t.length ? snap.p
               : (snap.q && snap.q.length === t.length ? snap.q : t);
 
-        // Compute target canvas size from container.
+        // Canvas fills its container (down to 200 px on a phone) so the page
+        // never scrolls sideways.
         var container = cropState.container;
         var maxW = 800;
         var availW = (container && container.clientWidth) ? container.clientWidth : maxW;
-        var cssW = Math.max(360, Math.min(maxW, availW));
-        var cssH = 300;
+        var cssW = Math.max(200, Math.min(maxW, availW));
+        var cssH = cssW < 480 ? 220 : 300;
         var setup = _setupCanvas(canvas, { width: cssW, height: cssH });
         var ctx = setup.ctx;
         if (!ctx) return;
@@ -6828,12 +7727,17 @@ window.PRiSM_setModel = function (key) {
     // SECTION 4 — POINTER / DRAG INTERACTION
     // ═══════════════════════════════════════════════════════════════
 
+    // Pointer → canvas CSS-pixel x (the layout frame). Scales by the drawn
+    // width in case CSS max-width shrank the canvas below its set width.
     function _eventToCanvasX(canvas, ev) {
         if (!canvas || !canvas.getBoundingClientRect) return 0;
         var rect = canvas.getBoundingClientRect();
         var clientX = (ev.clientX != null) ? ev.clientX
                       : (ev.touches && ev.touches[0] ? ev.touches[0].clientX : 0);
-        return clientX - rect.left;
+        var x = clientX - rect.left;
+        var L = cropState.layout;
+        if (L && rect.width > 0 && L.cssW > 0 && Math.abs(rect.width - L.cssW) > 0.5) x *= L.cssW / rect.width;
+        return x;
     }
 
     function _xToTime(x) {
@@ -7060,9 +7964,9 @@ window.PRiSM_setModel = function (key) {
         var el = _byId(id);
         if (!el) return;
         var color = '';
-        if (colorVar === 'green') color = 'color:#3fb950;';
-        else if (colorVar === 'red') color = 'color:#f85149;';
-        else color = 'color:#8b949e;';
+        if (colorVar === 'green') color = 'color:var(--green, #3fb950);';
+        else if (colorVar === 'red') color = 'color:var(--red, #f85149);';
+        else color = 'color:var(--text2, #8b949e);';
         el.innerHTML = '<span style="' + color + '">' + html + '</span>';
     }
 
@@ -7130,72 +8034,57 @@ window.PRiSM_setModel = function (key) {
     // SECTION 7 — PUBLIC API
     // ═══════════════════════════════════════════════════════════════
 
+    var INPUT_STYLE = 'width:120px; max-width:100%; padding:4px 6px; background:var(--bg1, #0d1117); color:var(--text, #c9d1d9); ' +
+                      'border:1px solid var(--border, #30363d); border-radius:4px; font-family:monospace; font-size:12px;';
+    var LABEL_STYLE = 'display:flex; flex-direction:column; gap:3px; font-size:11px; color:var(--text2, #8b949e);';
+
     G.PRiSM_renderCropTool = function PRiSM_renderCropTool(container) {
         if (!_hasDoc) return;
         if (!container) return;
         cropState.container = container;
 
-        // Build UI markup.
         container.innerHTML =
-              '<div class="prism-crop-card" style="background:#161b22; border:1px solid #30363d; border-radius:6px; padding:12px;">'
-            +   '<div style="font-weight:600; color:#c9d1d9; font-size:13px; margin-bottom:6px;">'
-            +     'Interactive crop &amp; trim'
+              '<div class="prism-crop-card">'
+            +   '<div style="font-size:12px; color:var(--text2, #8b949e); margin-bottom:10px; line-height:1.5;">'
+            +     'Drag across the chart to choose the part of the record to keep, or type the limits. '
+            +     '<b style="color:var(--text, #c9d1d9);">Confirm crop</b> makes it the active dataset; '
+            +     '<b style="color:var(--text, #c9d1d9);">Reset</b> brings the full record back.'
             +   '</div>'
-            +   '<div style="font-size:12px; color:#8b949e; margin-bottom:10px;">'
-            +     'Drag on the chart to define a crop window, or fine-tune with the inputs below. '
-            +     'Click <b>Confirm crop</b> to replace the active dataset.'
-            +   '</div>'
-            +   '<canvas id="prism_crop_canvas" width="800" height="300" '
-            +     'style="display:block; background:#0d1117; border:1px solid #30363d; '
-            +     'border-radius:6px; max-width:100%; touch-action:none;"></canvas>'
+            +   '<canvas id="prism_crop_canvas" width="800" height="300" aria-label="Crop chart: drag to select the time window" '
+            +     'style="display:block; width:100%; max-width:100%; background:var(--bg1, #0d1117); border:1px solid var(--border, #30363d); '
+            +     'border-radius:6px; touch-action:none;"></canvas>'
             +   '<div class="prism-crop-controls" style="margin-top:10px; display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end;">'
-            +     '<label style="display:flex; flex-direction:column; font-size:11px; color:#8b949e;">'
-            +       't start'
-            +       '<input type="number" id="prism_crop_tstart" step="0.001" '
-            +         'style="width:120px; padding:4px 6px; background:#0d1117; color:#c9d1d9; '
-            +         'border:1px solid #30363d; border-radius:4px; font-family:monospace; font-size:12px;">'
-            +     '</label>'
-            +     '<label style="display:flex; flex-direction:column; font-size:11px; color:#8b949e;">'
-            +       't end'
-            +       '<input type="number" id="prism_crop_tend" step="0.001" '
-            +         'style="width:120px; padding:4px 6px; background:#0d1117; color:#c9d1d9; '
-            +         'border:1px solid #30363d; border-radius:4px; font-family:monospace; font-size:12px;">'
-            +     '</label>'
-            +     '<label style="display:flex; flex-direction:column; font-size:11px; color:#8b949e;">'
-            +       'i start'
-            +       '<input type="number" id="prism_crop_istart" min="0" step="1" '
-            +         'style="width:90px; padding:4px 6px; background:#0d1117; color:#c9d1d9; '
-            +         'border:1px solid #30363d; border-radius:4px; font-family:monospace; font-size:12px;">'
-            +     '</label>'
-            +     '<label style="display:flex; flex-direction:column; font-size:11px; color:#8b949e;">'
-            +       'i end'
-            +       '<input type="number" id="prism_crop_iend" min="0" step="1" '
-            +         'style="width:90px; padding:4px 6px; background:#0d1117; color:#c9d1d9; '
-            +         'border:1px solid #30363d; border-radius:4px; font-family:monospace; font-size:12px;">'
-            +     '</label>'
-            +     '<button id="prism_crop_apply" type="button" class="btn btn-primary" '
-            +       'style="padding:6px 14px; background:#238636; color:#fff; border:1px solid #2ea043; '
-            +       'border-radius:4px; cursor:pointer; font-size:12px; font-weight:600;">Confirm crop</button>'
-            +     '<button id="prism_crop_reset" type="button" class="btn btn-secondary" '
-            +       'style="padding:6px 14px; background:#21262d; color:#c9d1d9; border:1px solid #30363d; '
-            +       'border-radius:4px; cursor:pointer; font-size:12px;">Reset</button>'
-            +     '<span id="prism_crop_msg" style="font-size:12px; color:#8b949e;"></span>'
+            +     '<label style="' + LABEL_STYLE + '">t start (h)'
+            +       '<input type="number" id="prism_crop_tstart" step="0.001" style="' + INPUT_STYLE + '"></label>'
+            +     '<label style="' + LABEL_STYLE + '">t end (h)'
+            +       '<input type="number" id="prism_crop_tend" step="0.001" style="' + INPUT_STYLE + '"></label>'
+            +     '<label style="' + LABEL_STYLE + '">first row'
+            +       '<input type="number" id="prism_crop_istart" min="0" step="1" style="' + INPUT_STYLE.replace('120px', '90px') + '"></label>'
+            +     '<label style="' + LABEL_STYLE + '">last row (excl.)'
+            +       '<input type="number" id="prism_crop_iend" min="0" step="1" style="' + INPUT_STYLE.replace('120px', '90px') + '"></label>'
+            +     '<button id="prism_crop_apply" type="button" class="btn btn-primary" style="padding:8px 14px; font-size:12px;">Confirm crop</button>'
+            +     '<button id="prism_crop_reset" type="button" class="btn btn-secondary" style="padding:8px 14px; font-size:12px;">Reset</button>'
+            +     '<span id="prism_crop_msg" role="status" aria-live="polite" style="font-size:12px; color:var(--text2, #8b949e);"></span>'
             +   '</div>'
             +   '<pre id="prism_crop_preview" '
-            +     'style="margin-top:12px; padding:10px; background:#0d1117; color:#c9d1d9; '
-            +     'border:1px solid #30363d; border-radius:6px; font-size:11px; '
+            +     'style="margin-top:12px; padding:10px; background:var(--bg1, #0d1117); color:var(--text, #c9d1d9); '
+            +     'border:1px solid var(--border, #30363d); border-radius:6px; font-size:11px; '
             +     'font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace; '
-            +     'max-height:240px; overflow:auto; white-space:pre;">'
+            +     'max-height:240px; overflow:auto; white-space:pre; max-width:100%;">'
             +     'No dataset loaded yet.'
             +   '</pre>'
             + '</div>';
 
-        cropState.canvas = _byId('prism_crop_canvas');
+        cropState.canvas = container.querySelector ? container.querySelector('#prism_crop_canvas') : _byId('prism_crop_canvas');
         _wireCanvasEvents(cropState.canvas);
         _wireInputs();
 
-        // Snapshot the live dataset (if any) and paint.
-        cropState.fullDataset = null;  // force re-snapshot for fresh load
+        // Keep the snapshot while the active dataset is still the one this
+        // tool set (a re-render of the Data tab must not lose "Reset").
+        if (!(cropState.fullDataset && cropState.owned && G.PRiSM_dataset === cropState.owned)) {
+            cropState.fullDataset = null;
+            cropState.owned = null;
+        }
         _ensureSnapshot();
         if (cropState.fullDataset) {
             _normaliseBounds();
@@ -7205,9 +8094,9 @@ window.PRiSM_setModel = function (key) {
         }
 
         // Repaint on window resize so the canvas keeps filling its container.
-        if (_hasWin && !cropState._resizeWired) {
+        if (_hasWin && !cropState._resizeWired && G.addEventListener) {
             G.addEventListener('resize', function () {
-                if (cropState.fullDataset && cropState.canvas) {
+                if (cropState.fullDataset && cropState.canvas && cropState.canvas.isConnected !== false) {
                     _drawCropChart();
                 }
             });
@@ -7224,14 +8113,11 @@ window.PRiSM_setModel = function (key) {
         _normaliseBounds();
         var from = G.PRiSM_dataset || snap;
         var cropped = _sliceDataset(snap, cropState.i_start, cropState.i_end);
-        G.PRiSM_dataset = cropped;
-        // Update displays.
+        _commit(cropped);
         _syncInputs();
         _drawCropChart();
         _renderPreviewBlock();
-        // Fire event.
         _dispatchCropEvent(from, cropped);
-        // Refresh active plot if the host bound it.
         if (typeof G.PRiSM_drawActivePlot === 'function') {
             try { G.PRiSM_drawActivePlot(); } catch (e) { /* ignore */ }
         }
@@ -7244,13 +8130,12 @@ window.PRiSM_setModel = function (key) {
         if (!snap) return null;
         var from = G.PRiSM_dataset;
         var restored = _snapshotDataset(snap);
-        G.PRiSM_dataset = restored;
-        // Reset window to full range.
         var t = snap.t;
         cropState.t_start = t[0];
         cropState.t_end   = t[t.length - 1];
         cropState.i_start = 0;
         cropState.i_end   = t.length;
+        _commit(restored);
         _syncInputs();
         _drawCropChart();
         _renderPreviewBlock();
@@ -7313,95 +8198,94 @@ window.PRiSM_setModel = function (key) {
     // SECTION 8 — EVENTS + INTEGRATION
     // ═══════════════════════════════════════════════════════════════
 
-    function _dispatchCropEvent(from, to) {
-        if (!_hasWin) return;
+    function _dispatch(type, detail) {
+        if (!_hasWin || typeof G.dispatchEvent !== 'function') return;
         try {
-            var ev;
-            if (typeof CustomEvent === 'function') {
-                ev = new CustomEvent('prism:dataset-cropped', {
-                    detail: { from: from, to: to, t_start: cropState.t_start, t_end: cropState.t_end,
-                              i_start: cropState.i_start, i_end: cropState.i_end }
-                });
-            } else if (_hasDoc && document.createEvent) {
+            var ev = null;
+            if (typeof CustomEvent === 'function') ev = new CustomEvent(type, { detail: detail });
+            else if (_hasDoc && document.createEvent) {
                 ev = document.createEvent('CustomEvent');
-                ev.initCustomEvent('prism:dataset-cropped', false, false,
-                    { from: from, to: to, t_start: cropState.t_start, t_end: cropState.t_end,
-                      i_start: cropState.i_start, i_end: cropState.i_end });
+                ev.initCustomEvent(type, false, false, detail);
             }
-            if (ev && G.dispatchEvent) G.dispatchEvent(ev);
+            if (ev) G.dispatchEvent(ev);
         } catch (e) { /* ignore */ }
     }
 
-    // Listen for an upstream "dataset-loaded" signal — when a new file is
-    // loaded, we want to forget the previous snapshot.
+    function _dispatchCropEvent(from, to) {
+        _dispatch('prism:dataset-cropped', {
+            from: from, to: to, t_start: cropState.t_start, t_end: cropState.t_end,
+            i_start: cropState.i_start, i_end: cropState.i_end
+        });
+    }
+
+    // A dataset loaded from anywhere else starts a new snapshot; our own
+    // commits (source 'crop') keep it.
+    function _forgetSnapshot() {
+        cropState.fullDataset = null;
+        cropState.owned = null;
+        cropState.t_start = cropState.t_end = null;
+        cropState.i_start = cropState.i_end = null;
+    }
+
+    function _connected() {
+        var c = cropState.container;
+        return !!(c && c.isConnected !== false);
+    }
+
     if (_hasWin && G.addEventListener) {
-        G.addEventListener('prism:dataset-loaded', function () {
-            cropState.fullDataset = null;
-            cropState.t_start = cropState.t_end = null;
-            cropState.i_start = cropState.i_end = null;
-            if (cropState.container) {
+        G.addEventListener('prism:dataset-loaded', function (ev) {
+            var d = ev && ev.detail;
+            if (d && d.source === 'crop') return;
+            _forgetSnapshot();
+            if (cropState.container && _connected()) {
                 _ensureSnapshot();
                 if (cropState.fullDataset) {
                     _normaliseBounds();
                     _syncInputs();
                     _drawCropChart();
-                    _renderPreviewBlock();
                 }
+                _renderPreviewBlock();
             }
+        });
+        G.addEventListener('prism:dataset-cleared', function () {
+            _forgetSnapshot();
+            if (cropState.container && _connected()) _renderPreviewBlock();
         });
     }
 
 
     // ═══════════════════════════════════════════════════════════════
-    // SECTION 9 — WRAP THE ENHANCED DATA-TAB RENDER
+    // SECTION 9 — TAB 1 PANEL (C7 registry)
     // ═══════════════════════════════════════════════════════════════
+    // Mounted by PRiSM_renderTab(1) after the Data tab, below the Well &
+    // Test card (order 10). No wrapping of other renderers, no timers.
 
-    (function _wrapDataRender() {
-        if (!_hasWin) return;
-        if (typeof G.PRiSM_renderDataTabEnhanced !== 'function') {
-            // Tab 1 may render via the foundation directly. Try again later.
-            if (typeof setTimeout === 'function') {
-                setTimeout(_wrapDataRender, 250);
-            }
-            return;
+    var CROP_PANEL = {
+        id: 'crop',
+        title: 'Crop & trim the record',
+        order: 30,
+        render: function (host) {
+            if (!_hasDoc || !host) return;
+            host.innerHTML = '';
+            var box = document.createElement('div');
+            box.id = 'prism_crop_tool_host';
+            box.className = 'prism-crop-tool';
+            host.appendChild(box);
+            G.PRiSM_renderCropTool(box);
         }
-        if (G.PRiSM_renderDataTabEnhanced._cropToolWrapped) return;
-        var orig = G.PRiSM_renderDataTabEnhanced;
-        var wrapped = function (container) {
-            var ret = orig.apply(this, arguments);
-            try {
-                // Find or create a host below the existing data card.
-                var host = null;
-                if (_hasDoc) {
-                    host = document.getElementById('prism_crop_tool_host');
-                    if (!host) {
-                        // Place it inside the Tab 1 body if we can find it.
-                        var tab1 = container && container.appendChild
-                            ? container
-                            : document.getElementById('prism_tab_1');
-                        if (tab1 && tab1.appendChild) {
-                            host = document.createElement('div');
-                            host.id = 'prism_crop_tool_host';
-                            host.className = 'prism-crop-tool';
-                            host.style.marginTop = '16px';
-                            tab1.appendChild(host);
-                        }
-                    }
-                }
-                if (host && typeof G.PRiSM_renderCropTool === 'function') {
-                    G.PRiSM_renderCropTool(host);
-                }
-            } catch (e) {
-                if (typeof console !== 'undefined' && console.warn) {
-                    console.warn('PRiSM crop-tool render failed:', e);
-                }
-            }
-            return ret;
-        };
-        // Preserve flags so other wrappers don't rewrap.
-        for (var k in orig) { try { wrapped[k] = orig[k]; } catch (e) {} }
-        wrapped._cropToolWrapped = true;
-        G.PRiSM_renderDataTabEnhanced = wrapped;
+    };
+
+    (function _registerPanel() {
+        if (!_hasWin) return;
+        if (typeof G.PRiSM_registerTabPanel === 'function') {
+            try { G.PRiSM_registerTabPanel(1, CROP_PANEL); return; } catch (e) { /* fall through */ }
+        }
+        G.PRiSM_tabPanels = G.PRiSM_tabPanels || {};
+        var list = G.PRiSM_tabPanels[1] = G.PRiSM_tabPanels[1] || [];
+        for (var i = 0; i < list.length; i++) {
+            if (list[i] && list[i].id === CROP_PANEL.id) { list[i] = CROP_PANEL; return; }
+        }
+        list.push(CROP_PANEL);
     })();
 
 
@@ -7419,26 +8303,45 @@ window.PRiSM_setModel = function (key) {
 // ═══════════════════════════════════════════════════════════════════════
 // ════════════════════════════════════════════════════════════════════
 // PRiSM ─ Layer 13 — Auto-Match Orchestrator
-//   Classifies flow regimes from Bourdet derivative shape, narrows to a
-//   candidate model set, races them via LM regression, ranks by AIC.
+//   Classifies flow regimes from the (sign-aware) Bourdet derivative,
+//   narrows to a candidate model set, races every candidate through a
+//   PHYSICAL parameterisation (k, C, S [, pi, shape]) and ranks by AIC on
+//   an identical residual vector. Decline (rate) models race separately.
 // -----------------------------------------------------------------------------
 // PUBLIC API (all on window.PRiSM_*)
-//   PRiSM_classifyRegimes(t, p, dp?)       → { regimes, candidates, summary }
-//   PRiSM_autoMatch(opts?)                 → Promise<{ ranked, bestKey, ... }>
-//   PRiSM_suggestInitialParams(modelKey,
-//                              t, p, dp,
-//                              classification) → params
-//   PRiSM_renderAutoMatchPanel(host, res)  → void
+//   PRiSM_classifyRegimes(t, p, deriv?, opts?) → { regimes, candidates, summary, flags }
+//   PRiSM_autoMatch(opts?)            → Promise<AutoMatchResult>   (yields between fits)
+//   PRiSM_autoMatchSync(opts?)        → AutoMatchResult             (same, blocking)
+//   PRiSM_applyAutoMatchRow(rowOrKey, result?) → row | null
+//   PRiSM_suggestInitialParams(modelKey, t, p, deriv, classification) → params
+//   PRiSM_renderAutoMatchPanel(host, result?)
+//   PRiSM_modelPlainName(modelKey)    → 'Homogeneous reservoir' …
 //
-// CONVENTIONS
-//   • Single outer IIFE, 'use strict'.
-//   • All public symbols on window.PRiSM_*.
-//   • Reads PRiSM_MODELS, never replaces.
-//   • No external dependencies — pure vanilla JS, Math.*.
-//   • Defensive against missing primitives (PRiSM_compute_bourdet, PRiSM_lm).
-//   • Yields to UI between heavy fits via await new Promise(r => setTimeout(r, 0)).
-//   • GA4 'prism_auto_match_run' fires if window.gtag exists.
-//   • Self-test at the bottom.
+// AutoMatchResult = { ok, kind:'pressure'|'rate', mode, ranked:[row], top:[row ≤ 3],
+//   bestKey (first CONVERGED row) , recommendedKey, bestConverged, deltaAIC:[],
+//   decline:{ranked, top}|null, failed:[{modelKey, error}], classification,
+//   analysis:{n, pRef, pRefSource, testType, timeFn, warnings}, well:{complete, missing},
+//   elapsedMs, timestamp, warnings }
+// row = C4 LastFit object + { rank, dAIC, akaikeWeight, label, status, modelName }
+//   label: 'Best fit' (rank 1 AND converged) | 'Alternative' | 'Starting point — refine'
+//   A non-converged row is NEVER labelled 'Best fit'.
+//
+// PHYSICAL PARAMETERISATION (contract C3). The response is fitted as
+//   Δp(t) = A · pD(B·t; Cd, S, shape)   with
+//   A  = 141.2 q B μ /(k h)             [psi per unit pD]
+//   B  = 0.0002637 k /(φ μ ct Lref²)    [tD per hour]
+//   Cd = 0.8936 C /(φ ct h Lref²)
+// so A and B are tied through k and cannot absorb skin independently.
+// When the well inputs are incomplete the race runs in SCALE mode
+// (A, T = B/Cd, Cd·e^2S) and reports kh and C only; S is flagged as not
+// identifiable without φ·ct·rw².
+//
+// Engines: window.PRiSM_fitPhysical / PRiSM_fitRate (05) and
+// PRiSM_getAnalysisData / PRiSM_getWell / PRiSM_physicalModel (33) are used
+// when present; every one has a local fallback in this file.
+//
+// CONVENTIONS: single outer IIFE; window.PRiSM_* only; registries read,
+// never replaced; no external deps; never writes PRiSM_state.match.
 // ════════════════════════════════════════════════════════════════════
 
 (function () {
@@ -7448,32 +8351,29 @@ var G = (typeof window !== 'undefined') ? window
       : (typeof globalThis !== 'undefined' ? globalThis : {});
 
 // =========================================================================
-// SECTION 0 — TINY UTILITIES + DEFENSIVE STUBS
+// SECTION 0 — SMALL UTILITIES
 // =========================================================================
-//
-// Inline number formatter (avoid depending on host fmt()). Returns a string
-// with the requested number of significant figures, falls back gracefully on
-// NaN / Infinity.
+
 function _fmt(n, sig) {
-    if (n == null || !isFinite(n)) return '—';
+    if (n == null || typeof n !== 'number' || !isFinite(n)) return '—';
     sig = sig || 4;
     var a = Math.abs(n);
     if (a === 0) return '0';
     if (a >= 1e6 || a < 1e-3) return n.toExponential(Math.max(0, sig - 1));
-    return n.toPrecision(sig).replace(/\.?0+$/, '').replace(/\.?0+e/, 'e');
+    var s = n.toPrecision(sig);
+    if (s.indexOf('.') !== -1 && s.indexOf('e') === -1) s = s.replace(/0+$/, '').replace(/\.$/, '');
+    return s;
 }
 
-// Stable mean of a numeric array (NaNs ignored). Returns NaN if no finite vals.
+function _num(v) { return typeof v === 'number' && isFinite(v); }
+function _pos(v) { return typeof v === 'number' && isFinite(v) && v > 0; }
+
 function _mean(arr) {
     var s = 0, n = 0;
-    for (var i = 0; i < arr.length; i++) {
-        var v = arr[i];
-        if (isFinite(v)) { s += v; n++; }
-    }
+    for (var i = 0; i < arr.length; i++) if (isFinite(arr[i])) { s += arr[i]; n++; }
     return n > 0 ? (s / n) : NaN;
 }
 
-// Median of a finite-only copy. Returns NaN if empty.
 function _median(arr) {
     var f = [];
     for (var i = 0; i < arr.length; i++) if (isFinite(arr[i])) f.push(arr[i]);
@@ -7483,7 +8383,6 @@ function _median(arr) {
     return (f.length & 1) ? f[m] : 0.5 * (f[m - 1] + f[m]);
 }
 
-// Linear least-squares slope of y = a + m·x. Returns NaN if degenerate.
 function _slope(xs, ys) {
     var n = 0, sx = 0, sy = 0, sxx = 0, sxy = 0;
     for (var i = 0; i < xs.length; i++) {
@@ -7497,35 +8396,103 @@ function _slope(xs, ys) {
     return (n * sxy - sx * sy) / denom;
 }
 
-// Bourdet derivative — uses host PRiSM_compute_bourdet if available, else
-// inline 5-point central difference in log-log space (Bourdet 1989).
-function _bourdet(t, dp, L) {
-    if (typeof G.PRiSM_compute_bourdet === 'function') {
-        return G.PRiSM_compute_bourdet(t, dp, L != null ? L : 0.2);
-    }
-    L = (L != null) ? L : 0.2;
-    var n = t.length;
+function _clone(o) {
+    if (o == null || typeof o !== 'object') return o;
+    if (Array.isArray(o)) return o.map(_clone);
+    var out = {};
+    for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) out[k] = _clone(o[k]);
+    return out;
+}
+
+function _now() {
+    return (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+}
+
+function _esc(s) {
+    if (s == null) return '';
+    return String(s).replace(/[&<>"']/g, function (c) {
+        return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c];
+    });
+}
+
+function _toArr(a) {
+    if (!a) return null;
+    if (Array.isArray(a)) return a;
+    if (typeof a.length === 'number') return Array.prototype.slice.call(a);
+    return null;
+}
+
+// Bourdet derivative d(y)/d(ln x) with log-window L (natural-log units).
+// The SAME operator is applied to data and model inside the objective so the
+// derivative comparison is free of smoothing bias.
+function _bourdet(x, y, L) {
+    L = (L != null && isFinite(L)) ? Math.max(0, L) : 0.15;
+    var n = x.length;
     var d = new Array(n);
     for (var k = 0; k < n; k++) d[k] = NaN;
     if (n < 3) return d;
+    var lx = new Array(n);
+    for (var j = 0; j < n; j++) lx[j] = (x[j] > 0) ? Math.log(x[j]) : NaN;
     for (var i = 1; i < n - 1; i++) {
-        if (!(t[i] > 0) || !isFinite(dp[i])) continue;
+        if (!isFinite(lx[i]) || !isFinite(y[i])) continue;
         var i1 = i - 1, i2 = i + 1;
         if (L > 0) {
-            while (i1 > 0 && Math.log(t[i]) - Math.log(t[i1]) < L) i1--;
-            while (i2 < n - 1 && Math.log(t[i2]) - Math.log(t[i]) < L) i2++;
+            while (i1 > 0 && lx[i] - lx[i1] < L) i1--;
+            while (i2 < n - 1 && lx[i2] - lx[i] < L) i2++;
         }
-        var t1 = t[i1], t2 = t[i2], ti = t[i];
-        if (!(t1 > 0) || !(t2 > 0)) continue;
-        var dl1 = Math.log(ti) - Math.log(t1);
-        var dl2 = Math.log(t2) - Math.log(ti);
-        var dlT = Math.log(t2) - Math.log(t1);
-        if (dl1 === 0 || dl2 === 0 || dlT === 0) continue;
-        var a = (dp[i] - dp[i1]) / dl1 * (dl2 / dlT);
-        var b = (dp[i2] - dp[i]) / dl2 * (dl1 / dlT);
-        d[i] = a + b;
+        var dl1 = lx[i] - lx[i1], dl2 = lx[i2] - lx[i], dlT = lx[i2] - lx[i1];
+        if (!(dl1 > 0) || !(dl2 > 0) || !(dlT > 0)) continue;
+        d[i] = (y[i] - y[i1]) / dl1 * (dl2 / dlT) + (y[i2] - y[i]) / dl2 * (dl1 / dlT);
     }
     return d;
+}
+
+function _dispatch(name, detail) {
+    try {
+        if (typeof G.dispatchEvent === 'function' && typeof G.CustomEvent === 'function') {
+            G.dispatchEvent(new G.CustomEvent(name, { detail: detail }));
+        }
+    } catch (e) { /* silent */ }
+}
+
+// Plain-language model names (never product names).
+var PLAIN_NAMES = {
+    homogeneous:       'Homogeneous reservoir',
+    infiniteFrac:      'Fractured well (infinite conductivity)',
+    finiteFrac:        'Fractured well (finite conductivity)',
+    finiteFracSkin:    'Fractured well with fracture-face skin',
+    inclined:          'Inclined (slanted) well',
+    horizontal:        'Horizontal well',
+    partialPenFrac:    'Partially penetrating fracture',
+    linearBoundary:    'Single fault',
+    parallelChannel:   'Channel (two parallel faults)',
+    closedChannel3:    'Channel closed at one end',
+    closedRectangle:   'Closed rectangle',
+    intersecting:      'Intersecting faults',
+    fogBoundary:       'Leaky fault',
+    doublePorosity:    'Dual porosity (naturally fractured)',
+    partialPen:        'Partial penetration',
+    verticalPulse:     'Vertical pulse test',
+    twoLayerXF:        'Two layers with crossflow',
+    radialComposite:   'Radial composite',
+    multiLayerXF:      'Multi-layer with crossflow',
+    multiLayerNoXF:    'Multi-layer without crossflow',
+    linearComposite:   'Linear composite',
+    arps:              'Arps decline',
+    duong:             'Duong decline',
+    sepd:              'Stretched-exponential decline',
+    fetkovich:         'Fetkovich decline',
+    userDefined:       'User-defined type curve'
+};
+
+function PRiSM_modelPlainName(key) {
+    if (!key) return '';
+    if (PLAIN_NAMES[key]) return PLAIN_NAMES[key];
+    var e = G.PRiSM_MODELS && G.PRiSM_MODELS[key];
+    if (e && typeof e.label === 'string' && e.label) return e.label;
+    if (e && typeof e.name === 'string' && e.name) return e.name;
+    var s = String(key).replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/_/g, ' ');
+    return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
 }
 
 
@@ -7533,42 +8500,18 @@ function _bourdet(t, dp, L) {
 // SECTION 1 — REGIME CLASSIFIER
 // =========================================================================
 //
-// Algorithm:
-//   1. Compute Bourdet derivative (skip the input-supplied dp if missing).
-//   2. Window the t-axis into ≈ 6 log-spaced segments (with a min of 4 pts
-//      per segment, falling back to fewer segments on tiny datasets).
-//   3. Linear-regress slope d(log dp')/d(log t) inside each segment.
-//   4. Tag each segment by its slope:
-//          slope ≈  1.0 → wellboreStorage    (early-time hump)
-//          slope ≈  0.5 → linearFlow         (channel / fracture)
-//          slope ≈  0.25 → bilinearFlow      (finite-conductivity fracture)
-//          slope ≈  0.0 → radialFlow         (stabilisation)
-//          slope ≈ -0.5 → sphericalFlow      (partial penetration)
-//          slope ≈ -1.0 → constPressure      (constant-pressure boundary)
-//          slope ≈ +1.0 (late) → closedBoundary (PSS reservoir limits)
-//   5. Detect higher-order shapes:
-//          – derivative-doubling (sealingFault) when two consecutive
-//            radial segments differ by ~2× in level.
-//          – valley between two stabilisations (doublePorosity).
-//   6. Map detected regimes to a candidate model list using the rules
-//      table in the task spec.
-//
-// Output:
-//   { regimes:   [ { tag, tdStart, tdEnd, slope, confidence, level? }, ... ],
-//     candidates: [ modelKey, ... ],
-//     summary:   string }
-//
-// Confidence is the inverse of segment fit residual relative to the slope
-// magnitude; clamped to [0, 1]. Uncertain slopes return confidence < 0.4.
-//
-// "Level" is the geometric-mean Bourdet derivative value across the segment,
-// which lets us spot derivative-doubling (sealingFault) without re-walking
-// the data.
+//   1. Window the log-t axis into ≈ 6 segments; regress d(log Δp')/d(log t).
+//   2. Tag each by the nearest library slope (±tolerance).
+//   3. HUMP RULE (fix for classifier-skin-hump-as-spherical): a negative-
+//      slope segment is only tagged spherical (−½) or constant-pressure (−1)
+//      when it FOLLOWS a flat/radial segment, or starts more than 1.5 log
+//      cycles after the derivative maximum. Otherwise it is the falling limb
+//      of the wellbore-storage hump ('storageHump') and routes to the
+//      WBS → homogeneous rule. (The Δp reference does not change the
+//      derivative, so this is purely a shape rule.)
+//   4. Higher-order shapes: derivative doubling (fault), valley (dual φ).
 // =========================================================================
 
-// Slope library — order matters for tie-break. Each entry: { slope, tag,
-// tolerance }. We compare absolute distance from the segment's measured
-// slope to each library slope and pick the closest within tolerance.
 var SLOPE_LIBRARY = [
     { slope:  1.00, tag: 'wellboreStorage', tol: 0.20 },
     { slope:  0.50, tag: 'linearFlow',      tol: 0.18 },
@@ -7577,134 +8520,100 @@ var SLOPE_LIBRARY = [
     { slope: -0.50, tag: 'sphericalFlow',   tol: 0.18 },
     { slope: -1.00, tag: 'constPressure',   tol: 0.20 }
 ];
-
-// Late-time (positive slope) PSS detector. Distinct entry — only fires for
-// the latest segment(s) so we don't conflate it with WBS.
 var LATE_PSS_TOL = 0.25;
+var HUMP_LOG_CYCLES = 1.5;
 
-// Map regime-tag combinations to candidate model lists. Probed with a flag
-// matrix below. Order in each entry roughly reflects "most likely first".
 var CANDIDATE_RULES = [
-    {
-        cond: function (f) { return f.wbs && f.radial && !f.fault && !f.lin && !f.bilin && !f.spheric && !f.dpor; },
-        models: ['homogeneous', 'partialPen']
-    },
-    {
-        cond: function (f) { return f.wbs && f.lin && !f.bilin; },
-        models: ['infiniteFrac', 'partialPenFrac', 'parallelChannel']
-    },
-    {
-        cond: function (f) { return f.bilin; },
-        models: ['finiteFrac', 'finiteFracSkin']
-    },
-    {
-        cond: function (f) { return f.radial && f.spheric; },
-        models: ['partialPen', 'verticalPulse']
-    },
-    {
-        cond: function (f) { return f.dpor; },
-        models: ['doublePorosity', 'twoLayerXF']
-    },
-    {
-        cond: function (f) { return f.radial && f.fault; },
-        models: ['linearBoundary', 'parallelChannel', 'closedChannel3']
-    },
-    {
-        cond: function (f) { return f.pss; },
-        models: ['closedRectangle', 'intersecting']
-    },
-    {
-        cond: function (f) { return f.constP; },
-        models: ['linearBoundary', 'radialComposite']
-    }
+    { cond: function (f) { return f.wbs && f.radial && !f.fault && !f.lin && !f.bilin && !f.spheric && !f.dpor; },
+      models: ['homogeneous', 'partialPen'] },
+    { cond: function (f) { return f.lin && !f.bilin; },
+      models: ['infiniteFrac', 'parallelChannel', 'partialPenFrac'] },
+    { cond: function (f) { return f.bilin; },
+      models: ['finiteFrac', 'finiteFracSkin'] },
+    { cond: function (f) { return f.radial && f.spheric; },
+      models: ['partialPen', 'verticalPulse'] },
+    { cond: function (f) { return f.dpor; },
+      models: ['doublePorosity', 'twoLayerXF'] },
+    { cond: function (f) { return f.radial && f.fault; },
+      models: ['linearBoundary', 'parallelChannel', 'closedChannel3'] },
+    { cond: function (f) { return f.pss; },
+      models: ['closedRectangle', 'intersecting'] },
+    { cond: function (f) { return f.constP; },
+      models: ['linearBoundary', 'radialComposite'] },
+    { cond: function (f) { return f.radial; },
+      models: ['homogeneous'] }
 ];
 
-// Default set when the classifier is uncertain. Per task spec — 7 fits.
-var DEFAULT_CANDIDATES = [
-    'homogeneous',
-    'linearBoundary',
-    'infiniteFrac',
-    'horizontal',
-    'doublePorosity',
-    'radialComposite',
-    'partialPen'
-];
-
-// Decline (rate-vs-time) candidates appended whenever the dataset has a
-// rate column (q present) and looks more like a rate decline than pressure.
+var DEFAULT_CANDIDATES = ['homogeneous', 'linearBoundary', 'infiniteFrac', 'doublePorosity',
+                          'radialComposite', 'horizontal', 'partialPen'];
 var DECLINE_CANDIDATES = ['arps', 'duong', 'sepd', 'fetkovich'];
+var MAX_PRESSURE_CANDIDATES = 7;
+var MIN_PRESSURE_CANDIDATES = 4;
+
+var PRETTY_TAG = {
+    wellboreStorage: 'Wellbore storage (unit slope)',
+    storageHump:     'Wellbore-storage hump (damaged/storage)',
+    linearFlow:      'Linear flow (½-slope)',
+    bilinearFlow:    'Bilinear flow (¼-slope)',
+    radialFlow:      'Radial flow',
+    sphericalFlow:   'Spherical flow (−½-slope)',
+    constPressure:   'Constant-pressure boundary',
+    closedBoundary:  'Pseudo-steady state (closed)',
+    sealingFault:    'Derivative doubling (sealing fault)',
+    doublePorosity:  'Valley (dual porosity)'
+};
 
 /**
- * Classify the flow regimes present in (t, dp) by walking the Bourdet
- * derivative.
- *
- * @param {number[]} t   Elapsed time (any consistent unit; > 0).
- * @param {number[]} p   Pressure (or Δp; if pressure, converted to Δp by
- *                        subtracting first sample).
- * @param {number[]=} dp Optional pre-computed Bourdet derivative. If null
- *                        we compute it inline.
- * @return {object}      { regimes, candidates, summary }
+ * Classify flow regimes.
+ * @param {number[]} t      Δt (> 0)
+ * @param {number[]} p      pressure or Δp (only used when deriv is absent)
+ * @param {number[]=} deriv Bourdet derivative (sign-aware, positive). If
+ *                          absent it is computed from sign-aware Δp.
+ * @param {object=} opts    { L }
  */
-function PRiSM_classifyRegimes(t, p, dp) {
-    if (!Array.isArray(t) || !Array.isArray(p) || t.length !== p.length) {
-        return {
-            regimes: [],
-            candidates: DEFAULT_CANDIDATES.slice(),
-            summary: 'Invalid input — t and p arrays required.'
-        };
+function PRiSM_classifyRegimes(t, p, deriv, opts) {
+    opts = opts || {};
+    t = _toArr(t); p = _toArr(p); deriv = _toArr(deriv);
+    if (!t || !p || t.length !== p.length) {
+        return { regimes: [], candidates: DEFAULT_CANDIDATES.slice(), flags: {},
+                 summary: 'Invalid input — t and p arrays required.' };
     }
     var n = t.length;
     if (n < 4) {
-        return {
-            regimes: [{ tag: 'unknown', tdStart: t[0] || 0, tdEnd: t[n - 1] || 0,
-                         slope: NaN, confidence: 0 }],
-            candidates: DEFAULT_CANDIDATES.slice(),
-            summary: 'Dataset too short (< 4 samples) — using default candidates.'
-        };
+        return { regimes: [{ tag: 'unknown', tdStart: t[0] || 0, tdEnd: t[n - 1] || 0, slope: NaN, confidence: 0 }],
+                 candidates: DEFAULT_CANDIDATES.slice(), flags: {},
+                 summary: 'Dataset too short (< 4 samples) — using default candidates.' };
     }
 
-    // Convert pressure to Δp using a SIGN-AWARE convention so both buildup
-    // (p increases from p0) and drawdown (p decreases from p0) yield POSITIVE
-    // Δp through the test. Bug fix 2026-04-26 — was previously p[i]-p[0]
-    // which produced negative values on drawdowns, killing the regime
-    // classifier (it filters log10(d≤0) → NaN → zero candidates → only Arps
-    // survives the race with R²=−195).
-    var deltaP = new Array(n);
-    var p0 = p[0];
-    var pEnd = p[n - 1];
-    var sign = (pEnd - p0) >= 0 ? 1 : -1;   // +1 buildup, -1 drawdown
-    for (var i = 0; i < n; i++) deltaP[i] = sign * (p[i] - p0);
-
-    var deriv = (Array.isArray(dp) && dp.length === n) ? dp.slice() : _bourdet(t, deltaP, 0.2);
-    // Also flip the supplied dp's sign if the trend is drawdown — caller may
-    // have computed it from the raw signed pressure, in which case half the
-    // values would be negative.
-    if (sign < 0 && Array.isArray(dp)) {
-        for (var dk = 0; dk < deriv.length; dk++) deriv[dk] = Math.abs(deriv[dk]);
+    var d;
+    if (deriv && deriv.length === n) {
+        d = deriv.map(function (v) { return Math.abs(v); });
+    } else {
+        // Sign-aware Δp (CLAUDE.md): +1 buildup, −1 drawdown.
+        var sign = (p[n - 1] - p[0]) >= 0 ? 1 : -1;
+        var dP = new Array(n);
+        for (var i = 0; i < n; i++) dP[i] = sign * (p[i] - p[0]);
+        d = _bourdet(t, dP, opts.L != null ? opts.L : 0.2);
     }
 
-    // Build (logT, logD) sample list with finite, positive values only.
     var X = [], Y = [], idxMap = [];
     for (var k = 0; k < n; k++) {
         if (!(t[k] > 0)) continue;
-        var d = deriv[k];
-        if (!isFinite(d) || d <= 0) continue;
-        X.push(Math.log10(t[k]));
-        Y.push(Math.log10(d));
-        idxMap.push(k);
+        if (!isFinite(d[k]) || d[k] <= 0) continue;
+        X.push(Math.log10(t[k])); Y.push(Math.log10(d[k])); idxMap.push(k);
     }
     var nGood = X.length;
     if (nGood < 3) {
-        return {
-            regimes: [{ tag: 'unknown', tdStart: t[0], tdEnd: t[n - 1],
-                         slope: NaN, confidence: 0 }],
-            candidates: DEFAULT_CANDIDATES.slice(),
-            summary: 'Bourdet derivative dominated by NaN/non-positive values — using default candidates.'
-        };
+        return { regimes: [{ tag: 'unknown', tdStart: t[0], tdEnd: t[n - 1], slope: NaN, confidence: 0 }],
+                 candidates: DEFAULT_CANDIDATES.slice(), flags: {},
+                 summary: 'Derivative dominated by non-positive values — using default candidates.' };
     }
 
-    // Choose number of windows. Aim for 6 segments × ≥ 3 points each;
-    // shrink on small datasets.
+    // Derivative maximum (for the hump rule).
+    var iMax = 0;
+    for (var im = 1; im < nGood; im++) if (Y[im] > Y[iMax]) iMax = im;
+    var xMax = X[iMax];
+
     var nSeg = Math.max(3, Math.min(6, Math.floor(nGood / 3)));
     var perSeg = Math.floor(nGood / nSeg);
     var segments = [];
@@ -7712,1062 +8621,1717 @@ function PRiSM_classifyRegimes(t, p, dp) {
         var i0 = s * perSeg;
         var i1 = (s === nSeg - 1) ? nGood : i0 + perSeg;
         if (i1 - i0 < 2) continue;
-        var xs = X.slice(i0, i1);
-        var ys = Y.slice(i0, i1);
+        var xs = X.slice(i0, i1), ys = Y.slice(i0, i1);
         var m = _slope(xs, ys);
-        // Residual SD around the regressed line — used for confidence.
         var b = _mean(ys) - m * _mean(xs);
         var sse = 0;
-        for (var rr = 0; rr < xs.length; rr++) {
-            var pred = b + m * xs[rr];
-            var e = ys[rr] - pred;
-            sse += e * e;
-        }
-        var rmse = Math.sqrt(sse / xs.length);
-
-        // Geometric mean of derivative level inside the segment (used to
-        // detect derivative-doubling between consecutive radial windows).
-        var lvl = Math.pow(10, _mean(ys));
-
-        segments.push({
-            tdStart: t[idxMap[i0]],
-            tdEnd:   t[idxMap[i1 - 1]],
-            slope:   m,
-            rmse:    rmse,
-            level:   lvl,
-            ys:      ys
-        });
+        for (var rr = 0; rr < xs.length; rr++) { var e = ys[rr] - (b + m * xs[rr]); sse += e * e; }
+        segments.push({ tdStart: t[idxMap[i0]], tdEnd: t[idxMap[i1 - 1]], x0: xs[0],
+                        slope: m, rmse: Math.sqrt(sse / xs.length), level: Math.pow(10, _mean(ys)) });
     }
 
-    // Tag each segment by its closest library slope. Confidence falls off
-    // as |meas - lib| approaches the tolerance and as the segment RMSE
-    // grows.
     var regimes = [];
     var lastSegIdx = segments.length - 1;
+    var seenFlat = false;
     for (var ss = 0; ss < segments.length; ss++) {
         var seg = segments[ss];
         var best = null, bestErr = Infinity;
         for (var li = 0; li < SLOPE_LIBRARY.length; li++) {
-            var lib = SLOPE_LIBRARY[li];
-            var err = Math.abs(seg.slope - lib.slope);
-            if (err < bestErr) { bestErr = err; best = lib; }
+            var err = Math.abs(seg.slope - SLOPE_LIBRARY[li].slope);
+            if (err < bestErr) { bestErr = err; best = SLOPE_LIBRARY[li]; }
         }
-        // Late-time PSS detector: positive slope on the latest segment.
-        if (ss === lastSegIdx && seg.slope > 0.6 && seg.slope < 1.4) {
-            regimes.push({
-                tag:        'closedBoundary',
-                tdStart:    seg.tdStart,
-                tdEnd:      seg.tdEnd,
-                slope:      seg.slope,
-                confidence: Math.max(0.3, 1 - Math.abs(seg.slope - 1) / LATE_PSS_TOL - seg.rmse),
-                level:      seg.level
-            });
+        if (ss === lastSegIdx && ss > 0 && seenFlat && seg.slope > 0.6 && seg.slope < 1.4) {
+            regimes.push({ tag: 'closedBoundary', tdStart: seg.tdStart, tdEnd: seg.tdEnd, slope: seg.slope,
+                           confidence: Math.max(0.3, 1 - Math.abs(seg.slope - 1) / LATE_PSS_TOL - seg.rmse),
+                           level: seg.level });
             continue;
         }
         var tag = (best && bestErr <= best.tol) ? best.tag : 'unknown';
         var conf = 1 - (bestErr / Math.max(best.tol, 1e-6)) - Math.min(0.4, seg.rmse);
         if (conf < 0) conf = 0; if (conf > 1) conf = 1;
-        regimes.push({
-            tag:        tag,
-            tdStart:    seg.tdStart,
-            tdEnd:      seg.tdEnd,
-            slope:      seg.slope,
-            confidence: conf,
-            level:      seg.level
-        });
+
+        // Hump rule.
+        if (seg.slope < -0.2 && !seenFlat && (seg.x0 - xMax) <= HUMP_LOG_CYCLES) {
+            tag = 'storageHump';
+            conf = Math.max(conf, 0.6);
+        }
+        if (tag === 'radialFlow' || Math.abs(seg.slope) < 0.15) seenFlat = true;
+        regimes.push({ tag: tag, tdStart: seg.tdStart, tdEnd: seg.tdEnd, slope: seg.slope,
+                       confidence: conf, level: seg.level });
     }
 
-    // ── Higher-order shape: derivative-doubling between two consecutive
-    //    radial segments → sealingFault. The level on the second segment
-    //    should be ~2× the first.
+    // Derivative doubling between two radial segments → sealing fault.
     var faultDetected = false;
-    for (var rk = 1; rk < regimes.length; rk++) {
+    var baseLen = regimes.length;
+    for (var rk = 1; rk < baseLen; rk++) {
         var a = regimes[rk - 1], b2 = regimes[rk];
-        if (a.tag === 'radialFlow' && b2.tag === 'radialFlow') {
-            if (a.level > 0 && b2.level / a.level > 1.4 && b2.level / a.level < 3.0) {
-                regimes.push({
-                    tag:        'sealingFault',
-                    tdStart:    a.tdEnd,
-                    tdEnd:      b2.tdStart,
-                    slope:      0,
-                    confidence: Math.min(0.95, 0.5 + 0.4 * (1 - Math.abs(b2.level / a.level - 2.0))),
-                    level:      b2.level
-                });
+        if (a.tag === 'radialFlow' && b2.tag === 'radialFlow' && a.level > 0) {
+            var ratio = b2.level / a.level;
+            if (ratio > 1.4 && ratio < 3.0) {
+                regimes.push({ tag: 'sealingFault', tdStart: a.tdEnd, tdEnd: b2.tdStart, slope: 0,
+                               confidence: Math.min(0.95, 0.5 + 0.4 * (1 - Math.abs(ratio - 2.0))), level: b2.level });
                 faultDetected = true;
                 break;
             }
         }
     }
-
-    // ── Valley between two stabilisations → doublePorosity.
-    //    Look for radial - dip - radial (the dip's segment slope < -0.2 or
-    //    its level is conspicuously below both flanking radial segments).
-    var dporDetected = false;
-    if (regimes.length >= 3) {
-        for (var v = 1; v < regimes.length - 1; v++) {
-            var pre = regimes[v - 1], cur = regimes[v], nxt = regimes[v + 1];
-            var preR = (pre.tag === 'radialFlow');
-            var nxtR = (nxt.tag === 'radialFlow');
-            if (preR && nxtR && cur.level > 0 &&
-                cur.level < 0.7 * Math.min(pre.level, nxt.level)) {
-                regimes.push({
-                    tag:        'doublePorosity',
-                    tdStart:    pre.tdEnd,
-                    tdEnd:      nxt.tdStart,
-                    slope:      cur.slope,
-                    confidence: 0.7,
-                    level:      cur.level
-                });
-                dporDetected = true;
-                break;
+    // Rising segment between two flats with a level step → fault as well.
+    if (!faultDetected) {
+        for (var rf = 1; rf < baseLen - 1; rf++) {
+            var pr = regimes[rf - 1], cu = regimes[rf], nx = regimes[rf + 1];
+            if (pr.tag === 'radialFlow' && nx.tag === 'radialFlow' && cu.slope > 0.1 && cu.slope < 0.8 && pr.level > 0) {
+                var rt = nx.level / pr.level;
+                if (rt > 1.4 && rt < 3.0) {
+                    regimes.push({ tag: 'sealingFault', tdStart: cu.tdStart, tdEnd: cu.tdEnd, slope: cu.slope,
+                                   confidence: 0.7, level: nx.level });
+                    faultDetected = true;
+                    break;
+                }
             }
         }
     }
 
-    // ── Build a flag set for the candidate-rule table. Anything with conf
-    //    above 0.45 counts.
-    var f = {
-        wbs:     false, lin:    false, bilin:   false, radial: false,
-        spheric: false, constP: false, pss:     false,
-        fault:   faultDetected, dpor: dporDetected
-    };
+    // Valley between two stabilisations → dual porosity.
+    var dporDetected = false;
+    for (var v = 1; v < baseLen - 1; v++) {
+        var pre = regimes[v - 1], cur = regimes[v], nxt = regimes[v + 1];
+        if (pre.tag === 'radialFlow' && nxt.tag === 'radialFlow' && cur.level > 0 &&
+            cur.level < 0.7 * Math.min(pre.level, nxt.level)) {
+            regimes.push({ tag: 'doublePorosity', tdStart: pre.tdEnd, tdEnd: nxt.tdStart, slope: cur.slope,
+                           confidence: 0.7, level: cur.level });
+            dporDetected = true;
+            break;
+        }
+    }
+
+    var f = { wbs: false, hump: false, lin: false, bilin: false, radial: false, spheric: false,
+              constP: false, pss: false, fault: faultDetected, dpor: dporDetected };
     for (var rg = 0; rg < regimes.length; rg++) {
         var r = regimes[rg];
         if (r.confidence < 0.45) continue;
         switch (r.tag) {
-            case 'wellboreStorage': f.wbs    = true; break;
-            case 'linearFlow':      f.lin    = true; break;
-            case 'bilinearFlow':    f.bilin  = true; break;
+            case 'wellboreStorage': f.wbs = true; break;
+            case 'storageHump':     f.hump = true; f.wbs = true; break;
+            case 'linearFlow':      f.lin = true; break;
+            case 'bilinearFlow':    f.bilin = true; break;
             case 'radialFlow':      f.radial = true; break;
             case 'sphericalFlow':   f.spheric = true; break;
             case 'constPressure':   f.constP = true; break;
-            case 'closedBoundary':  f.pss    = true; break;
-            case 'sealingFault':    f.fault  = true; break;
-            case 'doublePorosity':  f.dpor   = true; break;
+            case 'closedBoundary':  f.pss = true; break;
         }
     }
-
-    // Build candidate list — first match wins (rules are ordered most-
-    // specific → least). Always merge in the homogeneous default at the end
-    // for safety.
+    // A hump followed by radial flow counts as WBS + radial even when the
+    // unit-slope itself was not sampled (data starting after WBS).
     var candidates = [];
     for (var c = 0; c < CANDIDATE_RULES.length; c++) {
-        if (CANDIDATE_RULES[c].cond(f)) {
-            candidates = CANDIDATE_RULES[c].models.slice();
-            break;
-        }
+        if (CANDIDATE_RULES[c].cond(f)) { candidates = CANDIDATE_RULES[c].models.slice(); break; }
     }
     if (!candidates.length) candidates = DEFAULT_CANDIDATES.slice();
-
-    // Always include homogeneous at the back as a sanity reference unless
-    // already present.
     if (candidates.indexOf('homogeneous') === -1) candidates.push('homogeneous');
 
-    // Ensure every candidate exists in the registry; drop unknowns silently.
-    // (When the registry is empty — e.g. classifier called before models are
-    //  loaded, or in standalone test — keep the suggested keys so callers can
-    //  inspect them.)
     var registry = G.PRiSM_MODELS || {};
     if (Object.keys(registry).length > 0) {
-        candidates = candidates.filter(function (k) { return !!registry[k]; });
+        candidates = candidates.filter(function (key) { return !!registry[key]; });
     }
 
-    // Build human-readable summary.
-    var tagOrder = [];
-    var seenT = {};
+    var tagOrder = [], seenT = {};
     for (var rg2 = 0; rg2 < regimes.length; rg2++) {
-        var rt = regimes[rg2].tag;
-        if (rt === 'unknown') continue;
-        if (seenT[rt]) continue;
-        seenT[rt] = true;
-        tagOrder.push(rt);
+        var tg = regimes[rg2].tag;
+        if (tg === 'unknown' || seenT[tg]) continue;
+        seenT[tg] = true; tagOrder.push(tg);
     }
-    var prettyTag = {
-        wellboreStorage: 'Wellbore storage',
-        linearFlow:      'Linear flow (½-slope)',
-        bilinearFlow:    'Bilinear flow (¼-slope)',
-        radialFlow:      'Radial flow',
-        sphericalFlow:   'Spherical flow (-½-slope)',
-        constPressure:   'Constant-pressure boundary',
-        closedBoundary:  'Pseudo-steady (closed)',
-        sealingFault:    'Derivative doubling (sealing fault)',
-        doublePorosity:  'Valley (double porosity)'
-    };
     var summary;
     if (tagOrder.length) {
-        summary = tagOrder.map(function (t) { return prettyTag[t] || t; }).join(' → ');
-        summary += '. Candidates: ' + candidates.slice(0, 4).join(', ');
+        summary = tagOrder.map(function (x) { return PRETTY_TAG[x] || x; }).join(' → ');
+        summary += '. Candidates: ' + candidates.slice(0, 4).map(PRiSM_modelPlainName).join(', ');
         if (candidates.length > 4) summary += ' (+' + (candidates.length - 4) + ')';
         summary += '.';
     } else {
-        summary = 'No clear regime detected — fitting default candidate set.';
+        summary = 'No clear regime detected — fitting the default candidate set.';
     }
-
-    return {
-        regimes:    regimes,
-        candidates: candidates,
-        summary:    summary
-    };
+    return { regimes: regimes, candidates: candidates, summary: summary, flags: f,
+             derivMax: { t: t[idxMap[iMax]], value: Math.pow(10, Y[iMax]) } };
 }
 
 
 // =========================================================================
-// SECTION 2 — SMART INITIAL GUESSES
+// SECTION 2 — SHAPE-PARAMETER STARTS
 // =========================================================================
-//
-// For each candidate model, derive initial parameter values from features
-// of the diagnostic data. These are ROUGH starts — LM will refine. Bounds
-// remain whatever the model's paramSpec declares.
-//
-// Heuristics used:
-//   Cd:     end of slope-1 (WBS) segment in log time → Cd ≈ tWBS_end · 60
-//   S:      stabilisation level of derivative vs ideal homogeneous (~0.5)
-//             S = -0.5·ln(2·level) - 0.40546   (rearranged radial-flow eqn)
-//   FcD:    bilinear-flow level → conductivity
-//   L / dF: time of slope-doubling (sealingFault) → distance via Lr = sqrt(t)
-//   ω, λ:   depth + horizontal extent of derivative valley
-//   qi:     first observed rate (decline models)
-//   Di:     ln(q[0]/q[end]) / (t[end]-t[0]) (decline)
-//
-// Failsafe: if a heuristic can't be evaluated (no relevant regime found),
-// fall back to the model's defaults entry. The orchestrator never crashes.
-// =========================================================================
+// Dimensionless shape parameters start from the registry defaults, nudged by
+// diagnostic features. k, C, S and pi are seeded physically in SECTION 4.
 
-/**
- * Derive a sensible initial-parameter set for the named model from data
- * features extracted by PRiSM_classifyRegimes.
- *
- * @param {string} modelKey         Registry key, e.g. 'homogeneous'.
- * @param {number[]} t              Elapsed time.
- * @param {number[]} p              Pressure (or Δp).
- * @param {number[]} dp             Bourdet derivative.
- * @param {object=} classification  Output of PRiSM_classifyRegimes.
- * @return {object}                 Initial-parameter dict (always at least
- *                                   the model's defaults).
- */
-function PRiSM_suggestInitialParams(modelKey, t, p, dp, classification) {
+function PRiSM_suggestInitialParams(modelKey, t, p, deriv, classification) {
     var registry = G.PRiSM_MODELS || {};
     var entry = registry[modelKey];
     var defaults = (entry && entry.defaults) ? entry.defaults : {};
-    // Start from a copy of defaults so unknown models still get a sensible
-    // (possibly empty) object back.
     var out = {};
-    for (var k in defaults) if (defaults.hasOwnProperty(k)) out[k] = defaults[k];
-
-    if (!Array.isArray(t) || !t.length) return out;
-
-    // Ensure dp is usable; recompute if needed. Same sign-aware convention
-    // as the regime classifier (see _classifyRegimes for rationale).
-    var deltaP = new Array(t.length);
-    var p0 = p[0];
-    var pEnd = p[t.length - 1];
-    var sign = (pEnd - p0) >= 0 ? 1 : -1;
-    for (var i = 0; i < t.length; i++) deltaP[i] = sign * (p[i] - p0);
-    var deriv = (Array.isArray(dp) && dp.length === t.length) ? dp : _bourdet(t, deltaP, 0.2);
-    if (sign < 0 && Array.isArray(dp)) {
-        deriv = deriv.map(function (v) { return Math.abs(v); });
-    }
-
-    // ── Feature extraction ────────────────────────────────────────────
+    for (var k in defaults) if (Object.prototype.hasOwnProperty.call(defaults, k)) out[k] = defaults[k];
     var regimes = (classification && classification.regimes) || [];
 
-    // (a) End-of-WBS time (slope ≈ 1) → Cd start.
-    var wbsEnd = NaN;
-    for (var rg = 0; rg < regimes.length; rg++) {
-        if (regimes[rg].tag === 'wellboreStorage') {
-            wbsEnd = regimes[rg].tdEnd;
-        }
-    }
-    // Fallback: time at which derivative slope flattens to within 0.3 of zero.
-    if (!isFinite(wbsEnd)) {
-        // Walk t, find the first index where last-3 derivative log-slope < 0.5.
-        for (var ix = 5; ix < t.length; ix++) {
-            var x1 = Math.log10(t[ix - 4]), x2 = Math.log10(t[ix]);
-            var y1 = Math.log10(deriv[ix - 4] || 1e-9), y2 = Math.log10(deriv[ix] || 1e-9);
-            if (!isFinite(x1) || !isFinite(x2) || x2 - x1 < 1e-6) continue;
-            var sl = (y2 - y1) / (x2 - x1);
-            if (sl < 0.5) { wbsEnd = t[ix - 4]; break; }
-        }
-    }
-
-    // (b) Median radial-flow derivative level → S, kh.
-    var radLvl = NaN;
-    for (var rg2 = 0; rg2 < regimes.length; rg2++) {
-        if (regimes[rg2].tag === 'radialFlow') {
-            radLvl = regimes[rg2].level;
-            break;
-        }
-    }
-    if (!isFinite(radLvl)) {
-        // Fallback: median of the late half of the derivative.
-        var lateHalf = [];
-        for (var jx = (t.length / 2) | 0; jx < t.length; jx++) {
-            var dvv = deriv[jx];
-            if (isFinite(dvv) && dvv > 0) lateHalf.push(dvv);
-        }
-        radLvl = _median(lateHalf);
-    }
-
-    // (c) Time of slope-doubling (sealingFault) → boundary distance.
-    var faultT = NaN, faultLvl = NaN;
-    for (var rg3 = 0; rg3 < regimes.length; rg3++) {
-        if (regimes[rg3].tag === 'sealingFault') {
-            faultT = regimes[rg3].tdStart;
-            faultLvl = regimes[rg3].level;
-            break;
-        }
-    }
-
-    // (d) Bilinear-flow level → FcD.
-    var bilinLvl = NaN;
-    for (var rg4 = 0; rg4 < regimes.length; rg4++) {
-        if (regimes[rg4].tag === 'bilinearFlow') {
-            bilinLvl = regimes[rg4].level;
-            break;
-        }
-    }
-
-    // (e) Decline-curve features.
-    var qi = NaN, Di_guess = NaN;
-    if (G.PRiSM_dataset && Array.isArray(G.PRiSM_dataset.q)) {
-        var Q = G.PRiSM_dataset.q;
-        var qFin = Q.filter(function (v) { return isFinite(v) && v > 0; });
-        if (qFin.length) {
-            qi = qFin[0];
-            var qLast = qFin[qFin.length - 1];
-            var dt = t[t.length - 1] - t[0];
-            if (qi > 0 && qLast > 0 && dt > 0) {
-                Di_guess = Math.log(qi / qLast) / dt;
-                if (!isFinite(Di_guess) || Di_guess <= 0) Di_guess = NaN;
-            }
-        }
-    }
-
-    // ── Now translate features into per-parameter starting values ──────
-
-    // Cd guess: end-of-WBS time scaled (rough — Stehfest sees Cd · t_d_unit).
-    // For an idealised homogeneous + WBS response, the unit-slope WBS line
-    // ends roughly where t_d ≈ Cd / 5. So Cd ≈ 5 · t_wbs_end. We clamp to
-    // the model's own min/max (default 0..1e10) so it never goes negative.
-    if ('Cd' in out) {
-        if (isFinite(wbsEnd) && wbsEnd > 0) {
-            var cdGuess = Math.max(1, Math.min(1e6, 5 * wbsEnd));
-            out.Cd = cdGuess;
-        }
-    }
-
-    // S guess from stabilisation level:
-    //   For ideal homogeneous, derivative on a Bourdet plot stabilises at
-    //   the dimensional value 70.6·q·μ·B / (k·h) when params have units. In
-    //   dimensionless space the level is 0.5 at zero skin. For a real
-    //   dataset we can't separate kh and S without dimensional context, so
-    //   we leave S = 0 unless the regime confidence flagged something.
-    if ('S' in out) {
-        // Default keep model.defaults.S; but if WBS hump appears very late
-        // relative to first stabilisation, tilt S positive (damaged well).
-        if (isFinite(wbsEnd) && isFinite(radLvl) && radLvl > 0) {
-            // No reliable kh-free formula. Use a small bias around zero,
-            // keeping LM bounds wide.
-            out.S = Math.max(-3, Math.min(10, 0));
-        }
-    }
-
-    // Fault distance dF (linearBoundary): scale with time-to-doubling.
-    if ('dF' in out) {
-        if (isFinite(faultT) && faultT > 0) {
-            // Lr = sqrt(0.000264 · k · t / (φ · μ · ct)). Without kh we use
-            // the dimensionless form: dF (in r_w) ≈ sqrt(faultT / 4 · Cd).
-            var cdRef = ('Cd' in out) ? out.Cd : 100;
-            var dfGuess = Math.max(10, Math.min(1e5, Math.sqrt(faultT * cdRef / 4)));
-            out.dF = dfGuess;
-        }
-    }
-    // Parallel/closed channels — same heuristic for both faults.
-    if ('dF1' in out && isFinite(faultT) && faultT > 0) {
-        var cdRef2 = ('Cd' in out) ? out.Cd : 100;
-        var dfg = Math.max(10, Math.min(1e5, Math.sqrt(faultT * cdRef2 / 4)));
-        out.dF1 = dfg;
-        if ('dF2' in out) out.dF2 = dfg;
-        if ('dEnd' in out) out.dEnd = dfg * 2;
-    }
-
-    // FcD guess from bilinear level (very rough). Higher FcD = steeper
-    // bilinear → smaller derivative level.
-    if ('FcD' in out && isFinite(bilinLvl) && bilinLvl > 0) {
-        var fcdGuess = Math.max(0.5, Math.min(500, 5 / bilinLvl));
-        out.FcD = fcdGuess;
-    }
-
-    // Double-porosity ω (storativity ratio) ≈ ratio of valley level to
-    // first-radial level.
+    // Dual porosity ω ≈ valley / first-radial level.
     if ('omega' in out) {
         var firstR = NaN, valley = NaN;
-        for (var rg5 = 0; rg5 < regimes.length; rg5++) {
-            if (regimes[rg5].tag === 'radialFlow' && !isFinite(firstR)) firstR = regimes[rg5].level;
-            if (regimes[rg5].tag === 'doublePorosity') valley = regimes[rg5].level;
+        for (var i = 0; i < regimes.length; i++) {
+            if (regimes[i].tag === 'radialFlow' && !isFinite(firstR)) firstR = regimes[i].level;
+            if (regimes[i].tag === 'doublePorosity') valley = regimes[i].level;
         }
-        if (isFinite(firstR) && firstR > 0 && isFinite(valley) && valley > 0) {
-            var omegaG = Math.max(0.005, Math.min(0.5, valley / firstR));
-            out.omega = omegaG;
+        if (_pos(firstR) && _pos(valley)) out.omega = Math.max(0.005, Math.min(0.5, valley / firstR));
+    }
+    // Decline starts (rate models).
+    var q = (G.PRiSM_dataset && _toArr(G.PRiSM_dataset.q)) || null;
+    if (q && t && t.length) {
+        var qf = q.filter(function (v) { return _pos(v); });
+        if (qf.length) {
+            if ('qi' in out) out.qi = qf[0];
+            if ('q1' in out) out.q1 = qf[0];
         }
     }
-
-    // Decline models.
-    if ('qi' in out && isFinite(qi)) out.qi = qi;
-    if ('q1' in out && isFinite(qi)) out.q1 = qi;
-    if ('Di' in out && isFinite(Di_guess)) out.Di = Math.max(1e-4, Math.min(2.0, Di_guess));
-    if ('tau' in out && isFinite(Di_guess) && Di_guess > 0) out.tau = 1 / Di_guess;
-
     return out;
 }
 
+// Race-time freeze when the registry carries no `defaultFrozen` metadata
+// (S_perf / S_global are collinear; geometry fractions are rarely resolved).
+var RACE_FREEZE_FALLBACK = {
+    partialPen:    ['S_global', 'zw_to_h', 'h_eff'],
+    verticalPulse: ['zw_to_h', 'zobs_to_h', 'h_eff'],
+    horizontal:    ['S_global', 'zw_to_h'],
+    inclined:      ['S_global', 'hp_to_h'],
+    fogBoundary:   [],
+    doublePorosity:[]
+};
+
+var DISTANCE_KEYS = ['L', 'dF', 'dF1', 'dF2', 'dEnd', 'dN', 'dS', 'dE', 'dW', 'R', 'rD', 'reD', 'Ri'];
+
 
 // =========================================================================
-// SECTION 3 — MODEL RACE ORCHESTRATOR
-// =========================================================================
-//
-// For each candidate, derive initial params from the classification, build
-// the bounds dict from paramSpec, freeze any string/categorical params,
-// and call PRiSM_lm. We yield the event loop between fits so a 30-model
-// race doesn't lock up the UI.
-//
-// Ranking:  AIC ascending. Ties broken on R². Drop fits where converged
-// is false AND R² < 0.5. Keep non-converged but high-R² fits as
-// "best-effort" with the bestEffort flag set.
-//
-// Result shape (per ranked entry):
-//   { modelKey, params, CI95, AIC, R2, RMSE, iterations, converged,
-//     bestEffort?, error? }
+// SECTION 3 — INPUTS: WELL + ANALYSIS DATA (core API or local fallback)
 // =========================================================================
 
-/**
- * Race candidate models against the active dataset using LM regression.
- * Returns a Promise resolving to a ranked-by-AIC result object.
- *
- * @param {object=} opts {
- *     dataset?     — { t, p, q? } override. Else reads window.PRiSM_dataset.
- *     candidates?  — array of model keys to race. Else uses classifier.
- *     topN?        — keep top-N entries (default 5; enforced ≤ 8).
- *     classifyOnly? — if true, skip LM; just return classification.
- *     maxIter?     — passed through to PRiSM_lm (default 30 for speed).
- *     tolerance?   — passed through to PRiSM_lm (default 1e-5).
- *     onProgress?  — callback(idx, total, modelKey).
- *  }
- * @return {Promise<object>}
- */
-function PRiSM_autoMatch(opts) {
-    opts = opts || {};
-    var t0 = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+var WELL_REQUIRED = ['q', 'B', 'mu', 'ct', 'h', 'phi', 'rw'];
 
-    // Resolve dataset.
-    var dataset = opts.dataset || G.PRiSM_dataset;
-    if (!dataset || !Array.isArray(dataset.t) || !Array.isArray(dataset.p) ||
-        dataset.t.length !== dataset.p.length || dataset.t.length < 4) {
-        return Promise.reject(new Error('PRiSM_autoMatch: no usable dataset (need t[] and p[] of equal length, ≥ 4 samples).'));
-    }
+function _finishWell(w) {
+    w = w || {};
+    var missing = [];
+    for (var i = 0; i < WELL_REQUIRED.length; i++) if (!_pos(w[WELL_REQUIRED[i]])) missing.push(WELL_REQUIRED[i]);
+    if (typeof w.complete !== 'boolean') w.complete = missing.length === 0;
+    if (!Array.isArray(w.missing)) w.missing = missing;
+    if (!Array.isArray(w.defaulted)) w.defaulted = [];
+    if (!w.testType) w.testType = 'auto';
+    if (!w.fluid) w.fluid = 'oil';
+    return w;
+}
 
-    // Compute Bourdet derivative once (re-used by classifier and seed).
-    // Sign-aware: drawdowns get |Δp| so the derivative magnitudes are positive
-    // and the regime classifier can do log10() without NaN.
-    var nDS = dataset.t.length;
-    var p0DS = dataset.p[0];
-    var pEndDS = dataset.p[nDS - 1];
-    var signDS = (pEndDS - p0DS) >= 0 ? 1 : -1;   // +1 buildup, -1 drawdown
-    var deltaP = new Array(nDS);
-    for (var i = 0; i < nDS; i++) deltaP[i] = signDS * (dataset.p[i] - p0DS);
-    var deriv = _bourdet(dataset.t, deltaP, 0.2);
-    // Stash the dataset's flow-direction sign + magnitude-Δp on the dataset
-    // so the LM call below uses positive Δp against positive model pd.
-    var datasetForLM = {
-        t: dataset.t,
-        p: deltaP.map(function (v, k) { return p0DS + v; }), // p flipped if drawdown
-        q: dataset.q,
-        _signedDeltaP: deltaP,
-        _signFlow: signDS
-    };
+function _medianPositive(arr) {
+    if (!arr) return NaN;
+    var f = [];
+    for (var i = 0; i < arr.length; i++) if (_pos(arr[i])) f.push(arr[i]);
+    return _median(f);
+}
 
-    var classification = PRiSM_classifyRegimes(dataset.t, dataset.p, deriv);
-
-    // Append decline candidates only when the rate column is the PRIMARY
-    // SIGNAL — i.e. it is non-zero AND actually DECLINING over the test.
-    // A CONSTANT non-zero rate (e.g. 850 STB/d throughout) is a pressure-
-    // transient flow period, NOT decline data — racing decline curves there
-    // mis-classifies a homogeneous drawdown as "Duong". So we require both
-    //   (a) most points have q > 0, and
-    //   (b) the rate trends downward by > 15% (late mean < early mean).
-    var hasRateMode = false;
-    if (dataset.q && Array.isArray(dataset.q) && dataset.q.length >= 8) {
-        var nonZeroRates = 0, qvals = [];
-        for (var qi2 = 0; qi2 < dataset.q.length; qi2++) {
-            var qv = dataset.q[qi2];
-            if (qv != null && isFinite(qv) && qv > 0) { nonZeroRates++; qvals.push(qv); }
-            else qvals.push(0);
-        }
-        if (nonZeroRates > 0.5 * dataset.q.length) {
-            // Compare first-quarter mean to last-quarter mean.
-            var nq = Math.max(2, Math.floor(qvals.length / 4));
-            var early = 0, late = 0;
-            for (var e = 0; e < nq; e++) early += qvals[e];
-            for (var l = qvals.length - nq; l < qvals.length; l++) late += qvals[l];
-            early /= nq; late /= nq;
-            // Decline only if the rate falls meaningfully (DCA), else PTA.
-            if (early > 0 && late < 0.85 * early) hasRateMode = true;
-        }
-    }
-
-    // Build candidate list.
-    var candidates;
-    if (Array.isArray(opts.candidates) && opts.candidates.length) {
-        candidates = opts.candidates.slice();
-    } else {
-        candidates = classification.candidates.slice();
-        if (hasRateMode) {
-            for (var di = 0; di < DECLINE_CANDIDATES.length; di++) {
-                if (candidates.indexOf(DECLINE_CANDIDATES[di]) === -1) {
-                    candidates.push(DECLINE_CANDIDATES[di]);
-                }
-            }
-        }
-    }
-    // Filter to ones that actually exist in the registry.
-    var registry = G.PRiSM_MODELS || {};
-    candidates = candidates.filter(function (k) { return !!registry[k]; });
-    if (!candidates.length) {
-        return Promise.reject(new Error('PRiSM_autoMatch: no valid candidate models in registry.'));
-    }
-
-    // Trim to a hard ceiling (8) so a misconfigured caller can't run all 27
-    // models accidentally.
-    if (candidates.length > 8) candidates = candidates.slice(0, 8);
-
-    if (opts.classifyOnly) {
-        return Promise.resolve({
-            ranked:         [],
-            bestKey:        null,
-            deltaAIC:       [],
-            classification: classification,
-            elapsedMs:      0,
-            timestamp:      new Date().toISOString()
-        });
-    }
-
-    var lmOpts = {
-        maxIter:   (opts.maxIter   != null) ? opts.maxIter   : 30,
-        tolerance: (opts.tolerance != null) ? opts.tolerance : 1e-5
-    };
-
-    var topN = Math.max(1, Math.min(8, opts.topN || 5));
-    // Sign-aware data passed to LM: model pd is always positive (pwd ≥ 0),
-    // so the LM target must be positive too. For drawdowns we feed LM the
-    // mirror-image pressure: p_LM[i] = p0 + |p[i] - p0| so that p_LM
-    // increases monotonically just like a buildup. Without this fix the LM
-    // sees negative residuals everywhere and converges to garbage on
-    // drawdown datasets.
-    var data = {
-        t: dataset.t.slice(),
-        p: deltaP.map(function (v) { return p0DS + v; }),  // mirrored to positive Δp
-        q: dataset.q ? dataset.q.slice() : null
-    };
-    var results = [];
-    var idx = 0;
-
-    function _onProgress(modelKey) {
-        if (typeof opts.onProgress === 'function') {
-            try { opts.onProgress(idx, candidates.length, modelKey); } catch (e) { /* silent */ }
-        }
-    }
-
-    // Fit one candidate. Returns a settled Promise — never rejects, errors
-    // are captured into the result entry so the race continues.
-    function _raceOne(modelKey) {
-        return new Promise(function (resolve) {
-            // Yield to UI so a 30-model race doesn't freeze the browser.
-            setTimeout(function () {
-                _onProgress(modelKey);
-                var entry = registry[modelKey];
-                if (!entry || typeof entry.pd !== 'function') {
-                    resolve({
-                        modelKey:   modelKey,
-                        error:      'No pd evaluator',
-                        AIC:        Infinity,
-                        R2:         -Infinity,
-                        RMSE:       NaN,
-                        iterations: 0,
-                        converged:  false
-                    });
-                    return;
-                }
-
-                // Initial params + bounds.
-                var initParams;
-                try {
-                    initParams = PRiSM_suggestInitialParams(modelKey, dataset.t, dataset.p, deriv, classification);
-                } catch (e) {
-                    initParams = {};
-                    for (var k in entry.defaults) if (entry.defaults.hasOwnProperty(k)) initParams[k] = entry.defaults[k];
-                }
-
-                var bounds = {};
-                if (Array.isArray(entry.paramSpec)) {
-                    for (var ps = 0; ps < entry.paramSpec.length; ps++) {
-                        var sp = entry.paramSpec[ps];
-                        if (sp.min != null && sp.max != null) bounds[sp.key] = [sp.min, sp.max];
-                    }
-                }
-
-                // Auto-freeze categoricals.
-                var freeze = {};
-                for (var pk in initParams) {
-                    if (initParams.hasOwnProperty(pk) && typeof initParams[pk] !== 'number') {
-                        freeze[pk] = true;
-                    }
-                }
-
-                // ── Dimensional auto-scaling for pressure-kind models ──
-                // Type-curve models output dimensionless pwd(td); field data
-                // is real Δp(t). Fit an amplitude scale A (psi per pd-unit)
-                // and a time scale B (td per hour) alongside the model params
-                // so the dimensionless curve maps onto the measured data.
-                // Rate-domain decline models already fit real units → skip.
-                var modelFnForLM = entry.pd;
-                var kind = entry.kind || 'pressure';
-                if (kind !== 'rate') {
-                    var dpMax = 0;
-                    for (var di = 0; di < data.p.length; di++) {
-                        var dv = Math.abs(data.p[di] - data.p[0]);
-                        if (dv > dpMax) dpMax = dv;
-                    }
-                    if (!(dpMax > 0)) dpMax = 1;
-                    var probeTd = data.t.map(function (t) { return Math.max(1e-9, t); });
-                    var pdProbe = null;
-                    try { pdProbe = entry.pd(probeTd, initParams); } catch (e) { pdProbe = null; }
-                    var pdMax = 1;
-                    if (pdProbe && pdProbe.length) {
-                        for (var ppi = 0; ppi < pdProbe.length; ppi++) {
-                            if (isFinite(pdProbe[ppi]) && pdProbe[ppi] > pdMax) pdMax = pdProbe[ppi];
-                        }
-                    }
-                    var A0 = dpMax / pdMax;
-                    initParams.__ampScale  = A0;
-                    // td/hr for typical field data is O(1e3-1e5) — start mid-
-                    // range and let LM refine across a wide span.
-                    initParams.__timeScale = 1e3;
-                    bounds.__ampScale  = [A0 / 1e3, A0 * 1e3];
-                    bounds.__timeScale = [1e-3, 1e7];
-                    modelFnForLM = function (tArr, params) {
-                        var B = (params.__timeScale > 0) ? params.__timeScale : 1;
-                        var A = (typeof params.__ampScale === 'number') ? params.__ampScale : 1;
-                        var td = tArr.map(function (t) { return Math.max(1e-9, t * B); });
-                        var pd;
-                        try { pd = entry.pd(td, params); }
-                        catch (e) { return tArr.map(function () { return NaN; }); }
-                        var out = new Array(pd.length);
-                        for (var oi = 0; oi < pd.length; oi++) out[oi] = A * pd[oi];
-                        return out;
-                    };
-                }
-
-                if (typeof G.PRiSM_lm !== 'function') {
-                    resolve({
-                        modelKey:   modelKey,
-                        error:      'PRiSM_lm not available',
-                        AIC:        Infinity,
-                        R2:         -Infinity,
-                        RMSE:       NaN,
-                        params:     initParams,
-                        iterations: 0,
-                        converged:  false
-                    });
-                    return;
-                }
-
-                var fit;
-                try {
-                    fit = G.PRiSM_lm(modelFnForLM, data, initParams, bounds, freeze, lmOpts);
-                } catch (e) {
-                    resolve({
-                        modelKey:   modelKey,
-                        error:      String(e && e.message || e),
-                        AIC:        Infinity,
-                        R2:         -Infinity,
-                        RMSE:       NaN,
-                        params:     initParams,
-                        iterations: 0,
-                        converged:  false
-                    });
-                    return;
-                }
-                // Split the internal dimensional scales (__ampScale psi/pd,
-                // __timeScale td/hr) out of the user-facing params/CI tables.
-                var userParams = {}, userCI = {}, userSE = {}, scales = {};
-                for (var fk in fit.params) {
-                    if (!fit.params.hasOwnProperty(fk)) continue;
-                    if (fk.indexOf('__') === 0) { scales[fk.slice(2)] = fit.params[fk]; continue; }
-                    userParams[fk] = fit.params[fk];
-                    if (fit.ci95 && fit.ci95[fk]) userCI[fk] = fit.ci95[fk];
-                    if (fit.stderr && fit.stderr[fk] != null) userSE[fk] = fit.stderr[fk];
-                }
-                resolve({
-                    modelKey:   modelKey,
-                    params:     userParams,
-                    scales:     scales,      // { ampScale, timeScale } for pressure models
-                    CI95:       userCI,
-                    stderr:     userSE,
-                    AIC:        isFinite(fit.aic) ? fit.aic : Infinity,
-                    R2:         isFinite(fit.r2)  ? fit.r2  : -Infinity,
-                    RMSE:       fit.rmse,
-                    iterations: fit.iterations,
-                    converged:  fit.converged
-                });
-            }, 0);
-        });
-    }
-
-    // Sequential race so each model gets the main thread to itself, with a
-    // setTimeout(0) yield so the UI stays responsive.
-    function _raceLoop() {
-        if (idx >= candidates.length) return Promise.resolve();
-        var key = candidates[idx];
-        return _raceOne(key).then(function (res) {
-            results.push(res);
-            idx++;
-            return _raceLoop();
-        });
-    }
-
-    return _raceLoop().then(function () {
-        // Drop hopeless fits (no convergence AND low R²) but keep
-        // non-converged-but-decent ones with bestEffort flag.
-        var keep = [];
-        for (var r = 0; r < results.length; r++) {
-            var rs = results[r];
-            if (rs.error) {
-                // Errors stay in keep so caller can see why a candidate failed,
-                // but they sort to the bottom by AIC = +Infinity.
-                keep.push(rs);
-                continue;
-            }
-            if (!rs.converged && rs.R2 < 0.5) continue;
-            if (!rs.converged) rs.bestEffort = true;
-            keep.push(rs);
-        }
-
-        // Rank: AIC asc, ties on R² desc.
-        keep.sort(function (a, b) {
-            if (a.AIC !== b.AIC) return a.AIC - b.AIC;
-            return b.R2 - a.R2;
-        });
-
-        var ranked = keep.slice(0, topN);
-        var bestKey = ranked.length ? ranked[0].modelKey : null;
-        var bestAIC = ranked.length ? ranked[0].AIC : NaN;
-        var deltaAIC = ranked.map(function (r) {
-            return (isFinite(r.AIC) && isFinite(bestAIC)) ? (r.AIC - bestAIC) : NaN;
-        });
-
-        var t1 = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
-        var elapsedMs = t1 - t0;
-
-        var result = {
-            ranked:         ranked,
-            bestKey:        bestKey,
-            deltaAIC:       deltaAIC,
-            classification: classification,
-            elapsedMs:      elapsedMs,
-            timestamp:      new Date().toISOString()
-        };
-
-        // GA4 hook (silent if gtag absent).
-        try {
-            if (typeof G.gtag === 'function') {
-                G.gtag('event', 'prism_auto_match_run', {
-                    event_category: 'PRiSM',
-                    best_model:     bestKey || 'none',
-                    elapsed_ms:     Math.round(elapsedMs),
-                    n_candidates:   ranked.length
-                });
-            }
-        } catch (e) { /* silent */ }
-
-        return result;
+function _localWell(ds) {
+    var pvt = G.PRiSM_pvt || {};
+    var c = pvt._computed || {};
+    var fluid = pvt.fluidType || 'oil';
+    var qData = ds ? _medianPositive(_toArr(ds.q)) : NaN;
+    var B, mu;
+    if (fluid === 'gas')        { B = _pos(pvt.Bg) ? pvt.Bg : c.Bg; mu = _pos(pvt.mu_g) ? pvt.mu_g : c.mu_g; }
+    else if (fluid === 'water') { B = pvt.Bw; mu = pvt.mu_w; }
+    else                        { B = _pos(pvt.Bo) ? pvt.Bo : c.Bo; mu = _pos(pvt.mu_o) ? pvt.mu_o : c.mu_o; }
+    if (!_pos(B)) B = c.B;
+    if (!_pos(mu)) mu = c.mu;
+    var prov = (pvt.provenance && pvt.provenance.p_res) || null;
+    var piOk = prov === 'user' || prov === 'sample' || prov === 'deconvolution';
+    return _finishWell({
+        fluid: fluid,
+        q: _pos(qData) ? qData : pvt.q,
+        B: B, mu: mu,
+        ct: _pos(pvt.ct) ? pvt.ct : c.ct,
+        h: pvt.h, phi: pvt.phi, rw: pvt.rw,
+        pi: (piOk && _pos(pvt.p_res)) ? pvt.p_res : null,
+        T_R: _num(pvt.T_res) ? pvt.T_res + 459.67 : null,
+        testType: pvt.testType || 'auto',
+        tp: _pos(pvt.tp) ? pvt.tp : null,
+        tShut: _pos(pvt.tShut) ? pvt.tShut : null,
+        pwf0: _pos(pvt.pwf0) ? pvt.pwf0 : null,
+        _local: true
     });
 }
 
-
-// =========================================================================
-// SECTION 4 — UI PANEL
-// =========================================================================
-//
-// Renders a side-by-side comparison panel: best-fit model + up to 2
-// alternatives. Each row shows params, ±CI95, AIC, R², ΔAIC and an
-// "Apply this fit" button that promotes the row's params to PRiSM_state
-// and re-renders the active plot.
-//
-// Style: defensive — works with or without the host's stylesheet. Inline
-// CSS keeps the panel readable in any context (Tab 5/6 of the PRiSM UI,
-// or a stand-alone debug iframe).
-// =========================================================================
-
-/**
- * Render an auto-match result panel into the supplied container.
- *
- * @param {HTMLElement} container Host node — innerHTML is replaced.
- * @param {object}      result    Output of PRiSM_autoMatch.
- */
-function PRiSM_renderAutoMatchPanel(container, result) {
-    if (!container || typeof container.innerHTML !== 'string') return;
-    if (!result) {
-        container.innerHTML = '<div style="padding:12px; color:#999; font-size:13px;">No auto-match result yet.</div>';
-        return;
+function _resolveWell(ds, opts, useCore) {
+    if (opts.well) return _finishWell(_clone(opts.well));
+    if (useCore && typeof G.PRiSM_getWell === 'function') {
+        try { var w = G.PRiSM_getWell(ds); if (w) return _finishWell(_clone(w)); } catch (e) { /* fall back */ }
     }
-    if (!result.ranked || !result.ranked.length) {
-        var msg = (result.classification && result.classification.summary) || 'No converged fits.';
-        container.innerHTML =
-            '<div style="padding:14px; color:#999; font-size:13px;">' +
-            '<strong style="color:#ddd;">Auto-match found no acceptable fit.</strong>' +
-            '<div style="margin-top:6px;">' + _esc(msg) + '</div>' +
-            '</div>';
-        return;
+    return _localWell(ds);
+}
+
+// Local analysis-data builder (subset of contract C2): sign-aware Δp,
+// reference pressure with provenance, Δt re-zeroed at shut-in.
+function _localAnalysisData(ds, well, opts) {
+    var t = _toArr(ds && ds.t), p = _toArr(ds && ds.p), q = _toArr(ds && ds.q);
+    if (!t || !p || t.length !== p.length) return { ok: false, reason: 'No pressure data (need t[] and p[]).' };
+    var n = t.length;
+    var warnings = [];
+
+    // Test type.
+    var testType = (well.testType && well.testType !== 'auto') ? well.testType : null;
+    var tShut = _pos(well.tShut) ? well.tShut : null;
+    var qRef = _pos(well.q) ? well.q : NaN;
+    if (q && q.length === n) {
+        var firstZeroAfterFlow = -1, sawFlow = false;
+        for (var i = 0; i < n; i++) {
+            if (_pos(q[i])) sawFlow = true;
+            else if (sawFlow && q[i] === 0) { firstZeroAfterFlow = i; break; }
+        }
+        if (firstZeroAfterFlow > 0) {
+            if (!testType) testType = 'buildup';
+            if (!tShut) tShut = t[firstZeroAfterFlow - 1] + 0.5 * (t[firstZeroAfterFlow] - t[firstZeroAfterFlow - 1]);
+            var qBefore = _medianPositive(q.slice(0, firstZeroAfterFlow));
+            if (_pos(qBefore)) qRef = qBefore;
+        }
+    }
+    if (!testType) testType = ((p[n - 1] - p[0]) >= 0) ? 'buildup' : 'drawdown';
+    var ddSign = (testType === 'drawdown' || testType === 'falloff') ? -1 : 1;   // Δp = ddSign·(p − pRef)
+
+    var isBU = (testType === 'buildup' || testType === 'falloff');
+    var tStart = isBU ? (tShut || 0) : 0;
+    var tp = isBU ? (_pos(well.tp) ? well.tp : (tStart > 0 ? tStart : null)) : null;
+
+    // Reference pressure.
+    var pRef = NaN, pRefSource = null;
+    if (!isBU) {
+        if (_pos(well.pi)) { pRef = well.pi; pRefSource = 'pi'; }
+        else {
+            for (var z = 0; z < n; z++) if (t[z] <= 0 && _num(p[z])) { pRef = p[z]; pRefSource = 't0-row'; break; }
+        }
+        if (!_num(pRef)) {
+            var pts = [];
+            for (var e = 0; e < n && pts.length < 3; e++) if (t[e] > 0 && _num(p[e])) pts.push([t[e], p[e]]);
+            if (pts.length >= 2) {
+                var sl = _slope(pts.map(function (a) { return a[0]; }), pts.map(function (a) { return a[1]; }));
+                var p0 = _mean(pts.map(function (a) { return a[1]; })) - sl * _mean(pts.map(function (a) { return a[0]; }));
+                if (_num(p0) && ddSign * (pts[0][1] - p0) > 0) { pRef = p0; pRefSource = 'extrapolated'; }
+            }
+            if (!_num(pRef)) { pRef = p[0]; pRefSource = 'first-sample'; }
+            warnings.push('No initial reservoir pressure pi entered — Δp is measured from the ' +
+                          (pRefSource === 'extrapolated' ? 'extrapolated first points' : 'first sample') +
+                          ', so skin is biased. Enter pi or let the fit float it.');
+        }
+    } else {
+        if (_pos(well.pwf0)) { pRef = well.pwf0; pRefSource = 'pwf0'; }
+        else {
+            var bestIdx = -1;
+            for (var b = 0; b < n; b++) if (t[b] <= tStart + 1e-12) bestIdx = b;
+            if (bestIdx >= 0) { pRef = p[bestIdx]; pRefSource = 't0-row'; }
+            else { pRef = p[0]; pRefSource = 'first-sample'; }
+        }
     }
 
-    var registry = G.PRiSM_MODELS || {};
-    var classification = result.classification || { regimes: [], candidates: [], summary: '' };
+    var tt = [], tA = [], pp = [], dp = [];
+    for (var k = 0; k < n; k++) {
+        var dt = t[k] - tStart;
+        if (!(dt > 0) || !_num(p[k])) continue;
+        var d = ddSign * (p[k] - pRef);
+        if (!(d > 0)) continue;
+        tt.push(dt); tA.push(t[k]); pp.push(p[k]); dp.push(d);
+    }
+    if (tt.length < 5) return { ok: false, reason: 'Fewer than 5 points with positive Δp.', warnings: warnings };
+    var L = _num(opts.L) ? opts.L : ((G.PRiSM_state && _num(G.PRiSM_state.bourdetL)) ? G.PRiSM_state.bourdetL : 0.15);
+    var rateHistory = [{ t: 0, q: _pos(qRef) ? qRef : 1 }];
+    if (isBU && _pos(tp)) rateHistory = [{ t: 0, q: _pos(qRef) ? qRef : 1 }, { t: tp, q: 0 }];
+    else if (isBU) warnings.push('Buildup without a producing time tp — analysed as a drawdown-equivalent.');
+    return {
+        ok: true, n: tt.length, t: tt, tAbs: tA, p: pp, dp: dp, x: tt.slice(),
+        deriv: _bourdet(tt, dp, L), L: L, timeFn: 'dt',
+        sign: ddSign, pRef: pRef, pRefSource: pRefSource, testType: testType,
+        tStart: isBU && _pos(tp) ? tp : 0, tShut: tShut, tp: tp, qRef: _pos(qRef) ? qRef : null,
+        rateHistory: rateHistory, periods: [], fluid: well.fluid, warnings: warnings, _local: true
+    };
+}
 
-    // ── Header — best model + summary ─────────────────────────────────
-    var best = result.ranked[0];
-    var bestEntry = registry[best.modelKey] || {};
-    var bestLabel = (bestEntry.description) ? best.modelKey : best.modelKey;
-    var headerHTML =
-        '<div style="padding:12px 14px; border:1px solid #2a3340; border-radius:8px; background:#0e131a; margin-bottom:10px;">' +
-        '<div style="display:flex; align-items:baseline; flex-wrap:wrap; gap:14px;">' +
-            '<div style="font-size:12px; font-weight:700; color:#7ad7ff; text-transform:uppercase; letter-spacing:.5px;">Best fit</div>' +
-            '<div style="font-size:16px; font-weight:600; color:#e6f1ff;">' + _esc(bestLabel) + '</div>' +
-            '<div style="font-size:13px; color:#9fb1c8;">R² = ' + _fmt(best.R2, 4) +
-                '  ·  AIC = ' + _fmt(best.AIC, 5) +
-                '  ·  RMSE = ' + _fmt(best.RMSE, 4) +
-                '  ·  ' + (best.converged ? 'converged' : (best.bestEffort ? 'best-effort' : '—')) +
-                ' in ' + (best.iterations || 0) + ' iter</div>' +
-            '<div style="margin-left:auto; font-size:11px; color:#6c7c93;">elapsed ' + _fmt(result.elapsedMs, 4) + ' ms</div>' +
-        '</div>' +
-        '<div style="margin-top:6px; font-size:12px; color:#9fb1c8;">' +
-            '<strong style="color:#cfd8e3;">Diagnostic:</strong> ' + _esc(classification.summary || '') +
-        '</div>' +
-        '</div>';
+function _resolveAdata(ds, well, opts, useCore) {
+    if (opts.adata && opts.adata.t) return opts.adata;
+    if (useCore && typeof G.PRiSM_getAnalysisData === 'function') {
+        try {
+            var a = G.PRiSM_getAnalysisData(ds, { period: opts.period, timeFn: opts.timeFn, L: opts.L });
+            if (a) return a;
+        } catch (e) { /* fall back */ }
+    }
+    return _localAnalysisData(ds, well, opts);
+}
 
-    // ── Comparison table — best + up to 2 alternatives ────────────────
-    var rowHTML = '';
-    var nShow = Math.min(3, result.ranked.length);
-    for (var r = 0; r < nShow; r++) {
-        var row = result.ranked[r];
-        var entry = registry[row.modelKey] || {};
-        var deltaA = isFinite(result.deltaAIC[r]) ? _fmt(result.deltaAIC[r], 4) : '—';
-        var rankBadge = (r === 0) ? '★ best' : ('#' + (r + 1));
-        var paramListHTML = '';
-        if (row.params && typeof row.params === 'object') {
-            var keys = Object.keys(row.params);
-            for (var pk = 0; pk < keys.length; pk++) {
-                var k = keys[pk];
-                var v = row.params[k];
-                var ciVal = (row.CI95 && row.CI95[k]) ? row.CI95[k] : null;
-                var ciHTML = '';
-                if (ciVal && isFinite(ciVal[0]) && isFinite(ciVal[1]) && typeof v === 'number') {
-                    var halfW = 0.5 * (ciVal[1] - ciVal[0]);
-                    if (isFinite(halfW)) ciHTML = ' ± ' + _fmt(halfW, 3);
-                }
-                var unit = '';
-                if (Array.isArray(entry.paramSpec)) {
-                    for (var sp = 0; sp < entry.paramSpec.length; sp++) {
-                        if (entry.paramSpec[sp].key === k && entry.paramSpec[sp].unit) {
-                            unit = ' ' + entry.paramSpec[sp].unit;
-                            break;
-                        }
-                    }
-                }
-                var vLabel = (typeof v === 'number') ? _fmt(v, 4) : String(v);
-                paramListHTML +=
-                    '<div style="display:flex; gap:8px; padding:2px 0; font-size:12px;">' +
-                    '<span style="color:#8ea0b8; min-width:60px;">' + _esc(k) + '</span>' +
-                    '<span style="color:#e6f1ff; font-family:Menlo,monospace;">' + _esc(vLabel) + _esc(unit) + ciHTML + '</span>' +
-                    '</div>';
+
+// =========================================================================
+// SECTION 4 — LOCAL PHYSICAL MODEL (contract C3 subset)
+// =========================================================================
+
+var NOMINAL_WELL = { q: 1000, B: 1.2, mu: 1.0, ct: 1e-5, h: 50, phi: 0.2, rw: 0.354 };
+
+function _specOf(entry, key) {
+    var ps = entry && entry.paramSpec;
+    if (Array.isArray(ps)) for (var i = 0; i < ps.length; i++) if (ps[i].key === key) return ps[i];
+    return null;
+}
+
+function _isLogShape(sp, def) {
+    if (!sp) return false;
+    if (sp.scale === 'log') return true;
+    if (sp.scale === 'lin') return false;
+    if (_pos(sp.min) && _num(sp.max) && sp.max / sp.min >= 100) return true;
+    if (sp.min === 0 && _pos(def) && _num(sp.max) && sp.max / def >= 100) return true;
+    return false;
+}
+
+// Superposed dimensionless response for the analysed period.
+// A is psi per unit pD at the reference rate qA (single-rate: Δp = A·pD).
+function _superposedDp(entry, params, A, qA, Bt, adata, tArr) {
+    var hist = adata.rateHistory || [];
+    var tStart = _num(adata.tStart) ? adata.tStart : 0;
+    var multi = hist.length > 1 && tStart > 0;
+    if (!multi) {
+        var tdArr = tArr.map(function (x) { return Math.max(1e-12, Bt * x); });
+        var pd = entry.pd(tdArr, params);
+        return pd.map(function (v) { return A * v; });
+    }
+    var A1 = A / qA;
+    // P(T) = A1 Σ Δq_i pD(B (T − t_i));  Δp(Δt) = sgn [P(tStart+Δt) − P(tStart)]
+    var steps = [];
+    var prevQ = 0;
+    for (var i = 0; i < hist.length; i++) {
+        var qi = _num(hist[i].q) ? hist[i].q : 0;
+        if (hist[i].t < tStart + 1e-12 || i === 0) steps.push({ t: hist[i].t, dq: qi - prevQ });
+        prevQ = qi;
+    }
+    var lastQBefore = 0, qNow = 0;
+    for (var j = 0; j < hist.length; j++) {
+        if (hist[j].t < tStart - 1e-12) lastQBefore = hist[j].q;
+        if (hist[j].t <= tStart + 1e-12) qNow = hist[j].q;
+    }
+    var sgn = (qNow - lastQBefore) >= 0 ? 1 : -1;
+    var args = [], map = [];
+    function _push(T, si, ti) {
+        var a = T - steps[si].t;
+        if (a > 0) { map.push([si, ti, args.length]); args.push(Math.max(1e-12, Bt * a)); }
+    }
+    for (var s = 0; s < steps.length; s++) {
+        _push(tStart, s, -1);
+        for (var k = 0; k < tArr.length; k++) _push(tStart + tArr[k], s, k);
+    }
+    var pdv = args.length ? entry.pd(args, params) : [];
+    var P0 = 0, P = new Array(tArr.length);
+    for (var z = 0; z < tArr.length; z++) P[z] = 0;
+    for (var m = 0; m < map.length; m++) {
+        var contrib = A1 * steps[map[m][0]].dq * pdv[map[m][2]];
+        if (map[m][1] < 0) P0 += contrib; else P[map[m][1]] += contrib;
+    }
+    return P.map(function (v) { return sgn * (v - P0); });
+}
+
+function _localPM(modelKey, well, adata, opts) {
+    var entry = (G.PRiSM_MODELS || {})[modelKey];
+    if (!entry || typeof entry.pd !== 'function') return { ok: false, reason: 'No evaluator for ' + modelKey };
+    if (entry.kind === 'rate') return { ok: false, reason: modelKey + ' is a rate model' };
+    var defaults = entry.defaults || {};
+    var hasCd = _num(defaults.Cd);
+    var skinKey = _num(defaults.S) ? 'S' : (_num(defaults.S_perf) ? 'S_perf' : null);
+    var refLength = entry.refLength || 'rw';
+    var refKey = (refLength === 'xf' || refLength === 'Lh') ? refLength : null;
+    var scale = !well.complete || !!opts.forceScale;
+    var W = {};
+    for (var wk in NOMINAL_WELL) W[wk] = _pos(well[wk]) ? well[wk] : NOMINAL_WELL[wk];
+    var qA = W.q;
+
+    var frozen = {};
+    var df = Array.isArray(entry.defaultFrozen) ? entry.defaultFrozen : (RACE_FREEZE_FALLBACK[modelKey] || []);
+    df.forEach(function (k) { frozen[k] = true; });
+    if (opts.freeze) for (var fz in opts.freeze) if (opts.freeze[fz]) frozen[fz] = true;
+
+    var keys = [], spec = {}, fixed = {};
+    function addKey(k, lo, hi, isLog, unit, def) {
+        keys.push(k); spec[k] = { min: lo, max: hi, scale: isLog ? 'log' : 'lin', unit: unit || '', default: def };
+    }
+    var shapeKeys = [];
+    for (var dk in defaults) {
+        if (!Object.prototype.hasOwnProperty.call(defaults, dk)) continue;
+        var dv = defaults[dk];
+        if (dk === 'Cd' || dk === skinKey || dk.indexOf('__') === 0) continue;
+        if (typeof dv !== 'number') { fixed[dk] = dv; continue; }
+        if (refKey && dk === refKey) continue;
+        shapeKeys.push(dk);
+    }
+    var skinSpec = skinKey ? _specOf(entry, skinKey) : null;
+    var sLo = (skinSpec && _num(skinSpec.min)) ? Math.max(skinSpec.min, -7) : -7;
+    var sHi = (skinSpec && _num(skinSpec.max)) ? Math.min(skinSpec.max, 50) : 50;
+
+    if (!scale) {
+        addKey('k', 1e-4, 1e6, true, 'md');
+        if (hasCd) addKey('C', 1e-8, 10, true, 'bbl/psi');
+        if (skinKey) addKey('S', sLo, sHi, false, '');
+        if (refKey) addKey(refKey, 1, 1e5, true, 'ft', 100);
+    } else {
+        addKey('A', 1e-3, 1e7, true, 'psi');
+        if (hasCd) addKey('T', 1e-6, 1e9, true, '1/hr'); else addKey('Bt', 1e-2, 1e12, true, '1/hr');
+        if (hasCd && skinKey) addKey('CDe2S', 1e-6, 1e60, true, '');
+        else if (skinKey) { frozen.S = true; }
+    }
+    shapeKeys.forEach(function (sk) {
+        var sp = _specOf(entry, sk) || {};
+        var def = defaults[sk];
+        var lg = _isLogShape(sp, def);
+        var lo = _num(sp.min) ? sp.min : (def > 0 ? def / 1e4 : -1e3);
+        var hi = _num(sp.max) ? sp.max : (def > 0 ? def * 1e4 : 1e3);
+        if (lg && !(lo > 0)) lo = Math.max(def / 1e4, 1e-12);
+        addKey(sk, lo, hi, lg, sp.unit || '', def);
+    });
+    var floatPi = !scale && !!opts.floatPi && (adata.testType === 'drawdown' || adata.testType === 'injection');
+    if (floatPi) {
+        var pmax = -Infinity, pmin = Infinity;
+        (adata.p || []).forEach(function (v) { if (v > pmax) pmax = v; if (v < pmin) pmin = v; });
+        var span = Math.max(1, pmax - pmin);
+        if (adata.testType === 'injection') addKey('pi', pmin - 3 * span, pmin - 0.01, false, 'psia');
+        else addKey('pi', pmax + 0.01, pmax + 3 * span, false, 'psia');
+    }
+    var Cd0 = 100;
+
+    function toModelParams(phys) {
+        var params = {};
+        for (var d0 in defaults) if (Object.prototype.hasOwnProperty.call(defaults, d0)) params[d0] = defaults[d0];
+        for (var fx in fixed) params[fx] = fixed[fx];
+        shapeKeys.forEach(function (sk) { if (_num(phys[sk])) params[sk] = phys[sk]; });
+        var A, Bt, Lref = W.rw;
+        if (!scale) {
+            if (refKey) Lref = phys[refKey];
+            var kh = phys.k * W.h;
+            A = 141.2 * qA * W.B * W.mu / kh;
+            Bt = 0.0002637 * phys.k / (W.phi * W.mu * W.ct * Lref * Lref);
+            if (hasCd) params.Cd = 0.8936 * phys.C / (W.phi * W.ct * W.h * Lref * Lref);
+            if (skinKey) params[skinKey] = phys.S;
+            if (refKey) { params[refKey] = phys[refKey]; params.__h_rw = W.h / W.rw; }
+        } else {
+            A = phys.A;
+            if (hasCd) {
+                params.Cd = Cd0;
+                Bt = phys.T * Cd0;
+                if (skinKey) params[skinKey] = 0.5 * Math.log(phys.CDe2S / Cd0);
+            } else {
+                Bt = phys.Bt;
+                if (skinKey) params[skinKey] = _num(phys.S) ? phys.S : 0;
             }
         }
-        var refHTML = (entry.reference)
-            ? '<div style="font-size:11px; color:#6c7c93; margin-top:6px;">' + _esc(entry.reference) + '</div>'
-            : '';
-        var errHTML = row.error
-            ? '<div style="font-size:12px; color:#f85149; margin-top:6px;">⚠ ' + _esc(row.error) + '</div>'
-            : '';
-
-        rowHTML +=
-            '<div data-prism-am-row="' + r + '" data-prism-am-key="' + _esc(row.modelKey) + '" style="' +
-                'padding:12px; border:1px solid ' + (r === 0 ? '#2d8def' : '#2a3340') + ';' +
-                ' border-radius:8px; background:' + (r === 0 ? '#10202e' : '#0c1117') + '; min-width:240px; flex:1 1 240px;">' +
-            '<div style="display:flex; align-items:baseline; gap:8px;">' +
-                '<span style="font-size:11px; padding:1px 6px; border-radius:10px; background:' + (r === 0 ? '#2d8def' : '#2a3340') + '; color:#fff;">' + _esc(rankBadge) + '</span>' +
-                '<span style="font-size:14px; font-weight:600; color:#e6f1ff;">' + _esc(row.modelKey) + '</span>' +
-                '<span style="margin-left:auto; font-size:11px; color:#9fb1c8;">ΔAIC ' + _esc(deltaA) + '</span>' +
-            '</div>' +
-            '<div style="margin-top:8px; font-size:12px; color:#9fb1c8;">' +
-                'R² ' + _fmt(row.R2, 3) + '  ·  RMSE ' + _fmt(row.RMSE, 3) + '  ·  ' + (row.iterations || 0) + ' iter' +
-            '</div>' +
-            '<div style="margin-top:8px;">' + paramListHTML + '</div>' +
-            errHTML + refHTML +
-            '<button data-prism-am-apply="' + _esc(row.modelKey) + '" style="' +
-                'margin-top:10px; padding:6px 12px; font-size:12px; border-radius:4px; cursor:pointer;' +
-                ' background:' + (r === 0 ? '#2d8def' : '#2a3340') + '; color:#fff; border:0;">' +
-                'Apply this fit' +
-            '</button>' +
-            '</div>';
+        return { params: params, A: A, B: Bt, Lref: Lref };
     }
 
-    var altsHTML =
-        '<div style="display:flex; flex-wrap:wrap; gap:10px;">' + rowHTML + '</div>';
-
-    // Re-run + bottom controls.
-    var footerHTML =
-        '<div style="margin-top:12px; padding-top:10px; border-top:1px dashed #2a3340; font-size:11px; color:#6c7c93;">' +
-            'Tested ' + result.ranked.length + ' candidate' + (result.ranked.length === 1 ? '' : 's') +
-            (result.ranked.some(function (x) { return x.bestEffort; }) ? '  ·  some fits flagged best-effort (non-converged but R² ≥ 0.5)' : '') +
-            '<button id="prism_am_rerun" style="margin-left:14px; padding:4px 10px; font-size:11px; border-radius:4px; cursor:pointer; background:#1a2230; color:#e6f1ff; border:1px solid #2a3340;">Re-run with different candidates…</button>' +
-        '</div>';
-
-    container.innerHTML = headerHTML + altsHTML + footerHTML;
-
-    // ── Wire "Apply this fit" buttons ─────────────────────────────────
-    var applyBtns = container.querySelectorAll('button[data-prism-am-apply]');
-    for (var ai = 0; ai < applyBtns.length; ai++) {
-        applyBtns[ai].onclick = function (ev) {
-            var key = ev.currentTarget.getAttribute('data-prism-am-apply');
-            _applyAutoMatchRow(result, key);
-        };
+    function dpFn(tArr, phys) {
+        var mp = toModelParams(phys);
+        return _superposedDp(entry, mp.params, mp.A, qA, mp.B, adata, tArr);
     }
 
-    // ── Re-run button — opens a checklist dialog of all 27+ models ────
-    var rerunBtn = container.querySelector('#prism_am_rerun');
-    if (rerunBtn) {
-        rerunBtn.onclick = function () {
-            _openCandidateChooser(container, result);
+    function seed(work) {
+        // Late derivative level → kh; unit slope → C; late point → S.
+        var n = work.t.length, tEnd = work.t[n - 1];
+        var late = [];
+        for (var i = 0; i < n; i++) if (work.t[i] >= tEnd / 10 && _pos(work.deriv[i])) late.push(i);
+        if (late.length < 3) for (var i2 = Math.max(0, n - 6); i2 < n; i2++) if (_pos(work.deriv[i2]) && late.indexOf(i2) < 0) late.push(i2);
+        var dLate = _median(late.map(function (ix) { return work.deriv[ix]; }));
+        if (!_pos(dLate)) dLate = _median(work.dp) / 5;
+        var kh = 70.6 * qA * W.B * W.mu / dLate;
+        var k = kh / W.h;
+        var Cs = [];
+        for (var u = 1; u < n - 1 && u < 12; u++) {
+            var s1 = Math.log(work.dp[u + 1] / work.dp[u - 1]) / Math.log(work.t[u + 1] / work.t[u - 1]);
+            if (s1 > 0.85 && s1 < 1.15) Cs.push(qA * W.B * work.t[u] / (24 * work.dp[u]));
+        }
+        var C = Cs.length ? _median(Cs) : 0.7 * qA * W.B * work.t[0] / (24 * work.dp[0]);
+        var r = late.length ? late[late.length - 1] : n - 1;
+        var dpr = work.dp[r], dr = _pos(work.deriv[r]) ? work.deriv[r] : dLate;
+        var S = 0.5 * (dpr / dr - Math.log(0.0002637 * k * work.t[r] / (W.phi * W.mu * W.ct * W.rw * W.rw)) - 0.80907);
+        if (!_num(S)) S = 0;
+        var phys = {};
+        if (!scale) {
+            phys.k = k;
+            if (hasCd) phys.C = C;
+            if (skinKey) phys.S = S;
+            if (refKey) phys[refKey] = 100;
+        } else {
+            var Bt = 0.0002637 * k / (W.phi * W.mu * W.ct * W.rw * W.rw);
+            var Cd = 0.8936 * C / (W.phi * W.ct * W.h * W.rw * W.rw);
+            phys.A = 141.2 * qA * W.B * W.mu / kh;
+            if (hasCd) phys.T = Bt / Cd; else phys.Bt = Bt;
+            if (hasCd && skinKey) phys.CDe2S = Cd * Math.exp(2 * Math.max(-3, S));
+        }
+        var shape = PRiSM_suggestInitialParams(modelKey, work.t, work.dp, work.deriv, opts.classification);
+        shapeKeys.forEach(function (sk) { phys[sk] = _num(shape[sk]) ? shape[sk] : defaults[sk]; });
+        // Boundary distance seed from a detected fault time.
+        var reg = (opts.classification && opts.classification.regimes) || [];
+        var tf = NaN;
+        reg.forEach(function (rg) { if (rg.tag === 'sealingFault' && !_num(tf)) tf = rg.tdStart; });
+        if (_pos(tf) && !scale) {
+            var rinvF = Math.sqrt(k * tf / (948 * W.phi * W.mu * W.ct));
+            ['dF', 'dF1', 'dF2'].forEach(function (dk2) { if (shapeKeys.indexOf(dk2) >= 0) phys[dk2] = 0.5 * rinvF / W.rw; });
+        }
+        if (floatPi) phys.pi = _pos(well.pi) ? well.pi : (adata.testType === 'injection' ? adata.pRef - 1 : adata.pRef + 1);
+        keys.forEach(function (kk) {
+            var sp = spec[kk];
+            if (!_num(phys[kk])) phys[kk] = _num(sp.default) ? sp.default : (sp.scale === 'log' ? Math.sqrt(sp.min * sp.max) : 0.5 * (sp.min + sp.max));
+            phys[kk] = Math.min(sp.max, Math.max(sp.min, phys[kk]));
+        });
+        return phys;
+    }
+
+    function derived(phys, tEnd) {
+        var mp = toModelParams(phys);
+        var out = {};
+        if (!scale) {
+            out.k = phys.k; out.kh = phys.k * W.h;
+            if (hasCd) { out.C = phys.C; out.Cd = mp.params.Cd; }
+            if (skinKey) out.S = phys.S;
+            if (refKey) out[refKey] = phys[refKey];
+            if (_pos(tEnd)) out.rinv = Math.sqrt(phys.k * tEnd / (948 * W.phi * W.mu * W.ct));
+            out.pi = _num(phys.pi) ? phys.pi : (_pos(well.pi) ? well.pi : null);
+        } else {
+            var known = _pos(well.q) && _pos(well.B) && _pos(well.mu);
+            out.kh = known ? 141.2 * well.q * well.B * well.mu / phys.A : null;
+            out.k = (out.kh && _pos(well.h)) ? out.kh / well.h : null;
+            out.C = (out.kh && hasCd) ? 0.0002951 * out.kh / (well.mu * phys.T) : null;
+            out.Cd = null; out.S = null;
+            if (_num(phys.CDe2S)) out.CDe2S = phys.CDe2S;
+            out.pi = _pos(well.pi) ? well.pi : null;
+        }
+        var dist = {};
+        DISTANCE_KEYS.forEach(function (dk3) {
+            if (shapeKeys.indexOf(dk3) >= 0 && _num(phys[dk3]) && !scale) dist[dk3] = phys[dk3] * mp.Lref;
+        });
+        if (Object.keys(dist).length) out.distances_ft = dist;
+        out.A = mp.A; out.B = mp.B;
+        return out;
+    }
+
+    return {
+        ok: true, mode: scale ? 'scale' : 'physical', kind: 'pressure',
+        keys: keys, spec: spec, frozen: frozen, floatPi: floatPi, skinKey: skinKey,
+        toModelParams: toModelParams, dp: dpFn, seed: seed, derived: derived, _local: true
+    };
+}
+
+// Adapter over the core PM (33) so it exposes the same surface.
+function _corePM(modelKey, well, adata, opts) {
+    if (typeof G.PRiSM_physicalModel !== 'function') return null;
+    var pm;
+    try { pm = G.PRiSM_physicalModel(modelKey, well, adata, { floatPi: !!opts.floatPi }); }
+    catch (e) { return null; }
+    if (!pm || !pm.ok || typeof pm.dp !== 'function' || !Array.isArray(pm.keys)) return null;
+    var entry = (G.PRiSM_MODELS || {})[modelKey] || {};
+    var frozen = {};
+    var df = Array.isArray(entry.defaultFrozen) ? entry.defaultFrozen : (RACE_FREEZE_FALLBACK[modelKey] || []);
+    df.forEach(function (k) { frozen[k] = true; });
+    if (opts.freeze) for (var fz in opts.freeze) if (opts.freeze[fz]) frozen[fz] = true;
+    var spec = {};
+    pm.keys.forEach(function (k) {
+        var s = (pm.spec && pm.spec[k]) || {};
+        var lg = s.scale === 'log';
+        var lo = _num(s.min) ? s.min : (lg ? 1e-6 : -1e3), hi = _num(s.max) ? s.max : (lg ? 1e6 : 1e3);
+        if (lg && !(lo > 0)) lo = 1e-12;
+        spec[k] = { min: lo, max: hi, scale: lg ? 'log' : 'lin', unit: s.unit || '', default: s.default };
+    });
+    return {
+        ok: true, mode: pm.mode || 'physical', kind: 'pressure', keys: pm.keys.slice(), spec: spec,
+        frozen: frozen, floatPi: pm.keys.indexOf('pi') >= 0, skinKey: _num((entry.defaults || {}).S) ? 'S' : 'S_perf',
+        toModelParams: function (phys) { return pm.toModelParams(phys); },
+        dp: function (t, phys) { return pm.dp(t, phys); },
+        seed: function () {
+            var s = (typeof pm.seed === 'function') ? (pm.seed() || {}) : {};
+            pm.keys.forEach(function (k) {
+                var sp = spec[k];
+                if (!_num(s[k])) s[k] = _num(sp.default) ? sp.default : (sp.scale === 'log' ? Math.sqrt(sp.min * sp.max) : 0.5 * (sp.min + sp.max));
+                s[k] = Math.min(sp.max, Math.max(sp.min, s[k]));
+            });
+            return s;
+        },
+        derived: function (phys, tEnd) {
+            var d = (typeof pm.derived === 'function') ? (pm.derived(phys) || {}) : {};
+            var mp = pm.toModelParams(phys) || {};
+            if (!_num(d.A)) d.A = mp.A;
+            if (!_num(d.B)) d.B = mp.B;
+            return d;
+        },
+        _core: true
+    };
+}
+
+
+// =========================================================================
+// SECTION 5 — CANDIDATE FITTER (normalised LM on the physical keys)
+// =========================================================================
+//
+// Every free key is mapped affinely onto u ∈ [1, 2] (log10 for log keys), so
+// the forward-difference Jacobian step is well scaled whatever PRiSM_lm's
+// step rule. The LM sees data.p = 0 and a model that returns −residuals,
+// which lets pi float (the Δp target moves with pi).
+//
+// Objective 'dp+deriv' (default): [ln Δp_d − ln Δp_m] ∪ [ln Δp'_d − ln Δp'_m],
+// each block weighted 0.5 of the total. Δp' is computed with the SAME
+// Bourdet operator for data and model. 'dp' uses linear psi residuals.
+// AIC = N ln(max(SSR, N·ε²)/N) + 2p on that identical vector (ε = gauge floor).
+
+var LOG_FLOOR = 1e-4;       // log-residual resolution floor for AIC
+var RATE_LOG_FLOOR = 1e-6;
+
+function _tr(v, isLog) { return isLog ? Math.log(v) / Math.LN10 : v; }
+function _itr(v, isLog) { return isLog ? Math.pow(10, v) : v; }
+
+function _decimate(adata, maxN) {
+    var n = adata.t.length;
+    if (n <= maxN) return null;
+    var lo = Math.log10(adata.t[0]), hi = Math.log10(adata.t[n - 1]);
+    var step = (hi - lo) / (maxN - 1);
+    var keep = [], last = -1;
+    for (var i = 0; i < n; i++) {
+        var cell = Math.floor((Math.log10(adata.t[i]) - lo) / Math.max(step, 1e-12));
+        if (cell !== last) { keep.push(i); last = cell; }
+    }
+    if (keep[keep.length - 1] !== n - 1) keep.push(n - 1);
+    return keep;
+}
+
+function _buildWork(adata, opts) {
+    var idx = null;
+    var maxN = opts.maxPoints || 240;
+    var keep = _decimate(adata, maxN);
+    var n = adata.t.length;
+    idx = keep || (function () { var a = []; for (var i = 0; i < n; i++) a.push(i); return a; })();
+    var pick = function (arr) { return arr ? idx.map(function (i) { return arr[i]; }) : null; };
+    var w = {
+        t: pick(adata.t), p: pick(adata.p), dp: pick(adata.dp),
+        x: pick(adata.x && adata.x.length === n ? adata.x : adata.t),
+        L: _num(adata.L) ? adata.L : 0.15, decimated: !!keep
+    };
+    w.deriv = _bourdet(w.x, w.dp, w.L);
+    var tmin = (opts.window && _num(opts.window.tmin)) ? opts.window.tmin : -Infinity;
+    var tmax = (opts.window && _num(opts.window.tmax)) ? opts.window.tmax : Infinity;
+    w.dpIdx = []; w.dvIdx = [];
+    for (var j = 0; j < w.t.length; j++) {
+        if (w.t[j] < tmin || w.t[j] > tmax) continue;
+        if (_pos(w.dp[j])) w.dpIdx.push(j);
+        if (_pos(w.deriv[j])) w.dvIdx.push(j);
+    }
+    w.window = { tmin: _num(tmin) ? tmin : w.t[0], tmax: _num(tmax) ? tmax : w.t[w.t.length - 1] };
+    return w;
+}
+
+function _targetDp(work, phys, pm, adata) {
+    if (!pm.floatPi || !_num(phys.pi)) return work.dp;
+    var inj = adata.testType === 'injection';
+    return work.p.map(function (pv) { return inj ? pv - phys.pi : phys.pi - pv; });
+}
+
+function _residuals(work, phys, pm, adata, objective) {
+    var mp = pm.dp(work.t, phys);
+    var dpD = _targetDp(work, phys, pm, adata);
+    var out = [];
+    var nDp = work.dpIdx.length, nDv = (objective === 'dp') ? 0 : work.dvIdx.length;
+    var N = nDp + nDv;
+    if (objective === 'dp') {
+        for (var a = 0; a < nDp; a++) {
+            var ia = work.dpIdx[a];
+            var m = mp[ia];
+            out.push(_num(m) ? (dpD[ia] - m) : 1e6);
+        }
+        return { r: out, mp: mp };
+    }
+    var wDp = Math.sqrt(0.5 * N / Math.max(1, nDp));
+    var wDv = Math.sqrt(0.5 * N / Math.max(1, nDv));
+    for (var i = 0; i < nDp; i++) {
+        var ii = work.dpIdx[i];
+        var md = mp[ii], dd = dpD[ii];
+        if (!(dd > 0)) { out.push(5 * wDp); continue; }
+        out.push(((_pos(md)) ? (Math.log(dd) - Math.log(md)) : 7) * wDp);
+    }
+    if (nDv) {
+        var mder = _bourdet(work.x, mp, work.L);
+        for (var j = 0; j < nDv; j++) {
+            var jj = work.dvIdx[j];
+            var mdv = mder[jj];
+            out.push(((_pos(mdv)) ? (Math.log(work.deriv[jj]) - Math.log(mdv)) : 7) * wDv);
+        }
+    }
+    return { r: out, mp: mp };
+}
+
+function _ssr(r) { var s = 0; for (var i = 0; i < r.length; i++) s += r[i] * r[i]; return s; }
+
+function _fitWithPM(modelKey, pm, adata, work, opts) {
+    var objective = opts.objective || 'dp+deriv';
+    var maxIter = opts.maxIter || 40;
+    var free = pm.keys.filter(function (k) { return !pm.frozen[k]; });
+    var seed0 = pm.seed(work);
+    if (typeof G.PRiSM_lm !== 'function') throw new Error('Regression engine (PRiSM_lm) not loaded');
+
+    function enc(phys) {
+        var u = {};
+        free.forEach(function (k) {
+            var s = pm.spec[k], lg = s.scale === 'log';
+            var lo = _tr(s.min, lg), hi = _tr(s.max, lg);
+            u['u_' + k] = 1 + (_tr(Math.min(s.max, Math.max(s.min, phys[k])), lg) - lo) / (hi - lo);
+        });
+        return u;
+    }
+    function dec(u, base) {
+        var phys = {};
+        for (var b in base) phys[b] = base[b];
+        free.forEach(function (k) {
+            var s = pm.spec[k], lg = s.scale === 'log';
+            var lo = _tr(s.min, lg), hi = _tr(s.max, lg);
+            phys[k] = _itr(lo + (u['u_' + k] - 1) * (hi - lo), lg);
+        });
+        return phys;
+    }
+
+    var nRes = _residuals(work, seed0, pm, adata, objective).r.length;
+    var tIdx = [], zeros = [];
+    for (var z = 0; z < nRes; z++) { tIdx.push(z); zeros.push(0); }
+    var bounds = {};
+    free.forEach(function (k) { bounds['u_' + k] = [1, 2]; });
+
+    function runFrom(start) {
+        var modelFn = function (tArr, up) {
+            var phys = dec(up, start);
+            var r;
+            try { r = _residuals(work, phys, pm, adata, objective).r; }
+            catch (e) { r = zeros.map(function () { return 1e3; }); }
+            return r.map(function (v) { return _num(v) ? -v : -1e3; });
         };
+        var lm = G.PRiSM_lm(modelFn, { t: tIdx, p: zeros }, enc(start), bounds, {},
+                            { maxIter: maxIter, tolerance: opts.tolerance || 1e-6, weightingMode: 'uniform' });
+        var phys = dec(lm.params, start);
+        var ssr = _ssr(_residuals(work, phys, pm, adata, objective).r);
+        return { lm: lm, phys: phys, ssr: ssr };
+    }
+
+    var best = runFrom(seed0);
+    // Extra starts on skin when the first fit is not clean (C3 / WP2 2.2).
+    if (free.indexOf('S') >= 0 && (best.lm.iterations >= maxIter || !(best.ssr < 1e-3 * nRes))) {
+        [2, -2].forEach(function (dS) {
+            var st2 = _clone(seed0);
+            st2.S = Math.min(pm.spec.S.max, Math.max(pm.spec.S.min, seed0.S + dS));
+            try {
+                var alt = runFrom(st2);
+                if (alt.ssr < best.ssr) best = alt;
+            } catch (e) { /* keep best */ }
+        });
+    }
+    return _assemblePressureRow(modelKey, pm, adata, work, best, free, maxIter, objective, opts);
+}
+
+function _tQuantile(dof) { return 1.96 + 2.4 / Math.max(1, dof); }
+
+function _assemblePressureRow(modelKey, pm, adata, work, best, free, maxIter, objective, opts) {
+    var lm = best.lm, phys = best.phys;
+    var res = _residuals(work, phys, pm, adata, objective);
+    var N = res.r.length, p = free.length;
+    var ssr = _ssr(res.r);
+    var floor = (objective === 'dp') ? 0.01 : LOG_FLOOR;
+    var aic = N * Math.log(Math.max(ssr, N * floor * floor) / N) + 2 * p;
+
+    // Linear Δp statistics (psi) inside the window.
+    var dpD = _targetDp(work, phys, pm, adata);
+    var mean = 0, cnt = 0;
+    work.dpIdx.forEach(function (i) { mean += dpD[i]; cnt++; });
+    mean /= Math.max(1, cnt);
+    var ssT = 0, ssR = 0;
+    work.dpIdx.forEach(function (i) {
+        var e = dpD[i] - res.mp[i]; ssR += e * e;
+        var d = dpD[i] - mean; ssT += d * d;
+    });
+    var r2 = ssT > 0 ? 1 - ssR / ssT : NaN;
+    var rmse = Math.sqrt(ssR / Math.max(1, cnt));
+
+    // CIs: u-space stderr → physical.
+    var dof = Math.max(1, N - p), tq = _tQuantile(dof);
+    var ci95 = {}, stderr = {}, identifiable = {};
+    free.forEach(function (k) {
+        var s = pm.spec[k], lg = s.scale === 'log';
+        var seU = lm.stderr ? lm.stderr['u_' + k] : NaN;
+        var span = _tr(s.max, lg) - _tr(s.min, lg);
+        var se = _num(seU) ? seU * span : NaN;
+        var v = phys[k];
+        if (_num(se)) {
+            if (lg) {
+                var lv = _tr(v, true);
+                ci95[k] = [Math.pow(10, lv - tq * se), Math.pow(10, lv + tq * se)];
+                stderr[k] = v * se * Math.LN10;
+            } else {
+                ci95[k] = [v - tq * se, v + tq * se];
+                stderr[k] = se;
+            }
+        } else { ci95[k] = [NaN, NaN]; stderr[k] = NaN; }
+        var uVal = 1 + (_tr(v, lg) - _tr(s.min, lg)) / span;
+        var atBound = uVal < 1 + 1e-3 || uVal > 2 - 1e-3;
+        var wide;
+        if (!_num(se)) wide = true;
+        else if (lg) wide = tq * se > 0.5;                                  // > ±half a decade
+        else wide = tq * se > Math.max(Math.abs(v), 1);
+        identifiable[k] = !(atBound || wide);
+    });
+    var corr = null;
+    if (lm.covariance && Array.isArray(lm.freeKeys)) {
+        var cv = lm.covariance, fk = lm.freeKeys.map(function (x) { return String(x).replace(/^u_/, ''); });
+        corr = cv.map(function (row, a) {
+            return row.map(function (c, b) {
+                var den = Math.sqrt(Math.abs(cv[a][a] * cv[b][b]));
+                return den > 0 ? c / den : NaN;
+            });
+        });
+        for (var a2 = 0; a2 < fk.length; a2++) for (var b2 = 0; b2 < fk.length; b2++) {
+            if (a2 !== b2 && Math.abs(corr[a2][b2]) > 0.98) identifiable[fk[a2]] = false;
+        }
+        corr = { keys: fk, matrix: corr };
+    }
+
+    var mp = pm.toModelParams(phys);
+    var params = {};
+    for (var pk in mp.params) if (pk.indexOf('__') !== 0) params[pk] = mp.params[pk];
+    var tEnd = work.t[work.t.length - 1];
+    var physOut = pm.derived(phys, tEnd) || {};
+    // Shape parameters stay dimensionless in params; derived CIs.
+    if (ci95.C && _num(physOut.C) && _num(physOut.Cd) && physOut.C > 0) {
+        var f = physOut.Cd / physOut.C;
+        ci95.Cd = [ci95.C[0] * f, ci95.C[1] * f];
+        identifiable.Cd = identifiable.C;
+    }
+    if (ci95.k && _num(physOut.kh) && _num(physOut.k) && physOut.k > 0) {
+        var hh = physOut.kh / physOut.k;
+        ci95.kh = [ci95.k[0] * hh, ci95.k[1] * hh];
+    }
+    var warnings = [];
+    if (pm.mode === 'scale') {
+        warnings.push('Well inputs incomplete — skin is not identifiable without φ·ct·rw²; kh and C are reported from the fit scales.');
+    }
+    if (adata.pRefSource && adata.pRefSource !== 'pi' && adata.pRefSource !== 'pwf0' && !pm.floatPi &&
+        (adata.testType === 'drawdown' || adata.testType === 'injection')) {
+        warnings.push('Δp reference is ' + adata.pRefSource + ' (no pi) — skin is biased.');
+    }
+    var unresolved = Object.keys(identifiable).filter(function (k) { return identifiable[k] === false; });
+    if (unresolved.length) warnings.push('Not resolved by the data: ' + unresolved.join(', ') + '.');
+    var converged = !!(lm.converged || lm.iterations < maxIter) && isFinite(ssr);
+
+    var row = {
+        modelKey: modelKey, model: modelKey, modelName: PRiSM_modelPlainName(modelKey),
+        kind: 'pressure', source: 'automatch', mode: pm.mode,
+        params: params, phys: physOut,
+        fitted: _clone(phys),
+        ci95: ci95, stderr: stderr, corr: corr, identifiable: identifiable,
+        r2: r2, rmse: rmse, aic: aic, ssr: ssr, nObs: N, nFree: p,
+        iterations: lm.iterations, converged: converged,
+        objective: objective, window: _clone(work.window),
+        scales: { A: mp.A, B: mp.B },
+        pRef: _num(phys.pi) && pm.floatPi ? phys.pi : adata.pRef,
+        pRefSource: pm.floatPi ? 'floated' : adata.pRefSource,
+        timestamp: new Date().toISOString(),
+        warnings: warnings,
+        engine: pm._core ? 'core-model' : 'local'
+    };
+    if (typeof G.PRiSM_datasetHash === 'function') {
+        try { row.datasetHash = G.PRiSM_datasetHash(G.PRiSM_dataset); } catch (e) { /* ignore */ }
+    }
+    return row;
+}
+
+// Normalise a C4 object returned by the regression engine (05).
+function _normaliseEngineRow(modelKey, fit) {
+    var row = _clone(fit) || {};
+    row.modelKey = row.modelKey || row.model || modelKey;
+    row.model = row.modelKey;
+    row.modelName = PRiSM_modelPlainName(row.modelKey);
+    if (!_num(row.r2) && _num(row.R2)) row.r2 = row.R2;
+    if (!_num(row.rmse) && _num(row.RMSE)) row.rmse = row.RMSE;
+    if (!_num(row.aic) && _num(row.AIC)) row.aic = row.AIC;
+    if (!row.ci95 && row.CI95) row.ci95 = row.CI95;
+    row.kind = row.kind || 'pressure';
+    row.source = 'automatch';
+    row.converged = !!row.converged;
+    row.warnings = Array.isArray(row.warnings) ? row.warnings : [];
+    row.engine = 'core-fit';
+    return row;
+}
+
+
+// =========================================================================
+// SECTION 6 — RATE (DECLINE) FITTER
+// =========================================================================
+
+function _rateSeries(ds) {
+    var t = _toArr(ds && ds.t), q = _toArr(ds && ds.q);
+    if (!t || !q || t.length !== q.length) return null;
+    var unit = String((ds && ds.timeUnit) || 'h').toLowerCase();
+    var toDays = (unit === 'd' || unit === 'day' || unit === 'days') ? 1 : 1 / 24;
+    var td = [], qq = [];
+    for (var i = 0; i < t.length; i++) {
+        if (!(t[i] > 0) || !_pos(q[i])) continue;
+        td.push(t[i] * toDays); qq.push(q[i]);
+    }
+    return td.length >= 4 ? { t: td, q: qq } : null;
+}
+
+function _rateVaries(ds) {
+    var q = _toArr(ds && ds.q);
+    if (!q || q.length < 8) return false;
+    var vals = [], nz = 0;
+    for (var i = 0; i < q.length; i++) { var v = q[i]; if (_pos(v)) { nz++; vals.push(v); } else vals.push(0); }
+    if (nz <= 0.5 * q.length) return false;
+    var nq = Math.max(2, Math.floor(vals.length / 4)), early = 0, late = 0;
+    for (var e = 0; e < nq; e++) early += vals[e];
+    for (var l = vals.length - nq; l < vals.length; l++) late += vals[l];
+    early /= nq; late /= nq;
+    return early > 0 && late < 0.85 * early;
+}
+
+function _fitRateLocal(modelKey, series, opts) {
+    var entry = (G.PRiSM_MODELS || {})[modelKey];
+    if (!entry || typeof entry.pd !== 'function') throw new Error('No evaluator for ' + modelKey);
+    if (typeof G.PRiSM_lm !== 'function') throw new Error('Regression engine (PRiSM_lm) not loaded');
+    var defaults = entry.defaults || {};
+    var t = series.t, q = series.q, n = t.length;
+    var qMax = Math.max.apply(null, q);
+    var Di0 = Math.log(q[0] / q[n - 1]) / Math.max(1e-9, t[n - 1] - t[0]);
+    if (!(Di0 > 0)) Di0 = 0.01;
+    var seed = {}, spec = {}, keys = [], fixed = {};
+    for (var k in defaults) {
+        if (!Object.prototype.hasOwnProperty.call(defaults, k)) continue;
+        if (typeof defaults[k] !== 'number') { fixed[k] = defaults[k]; continue; }
+        var sp = _specOf(entry, k) || {};
+        var lo = _num(sp.min) ? sp.min : 0, hi = _num(sp.max) ? sp.max : 1e6, lg = false, s0 = defaults[k];
+        if (k === 'qi' || k === 'q1') { lo = qMax / 20; hi = qMax * 20; lg = true; s0 = (k === 'qi') ? q[0] * Math.exp(Di0 * t[0]) : q[0]; }
+        else if (k === 'Di') { lo = 1e-6; hi = Math.max(5, Di0 * 100); lg = true; s0 = Di0; }
+        else if (k === 'tau') { lo = Math.max(1e-3, _num(sp.min) ? sp.min : 1e-3); hi = Math.max(1e6, hi); lg = true; s0 = 1 / Di0; }
+        else if (k === 'reD') { lg = true; lo = Math.max(1, lo); }
+        else if (k === 'b') { lo = 0; hi = _num(sp.max) ? sp.max : 2; s0 = 0.5; }
+        s0 = Math.min(hi, Math.max(lo, s0));
+        keys.push(k); spec[k] = { min: lo, max: hi, scale: lg ? 'log' : 'lin' }; seed[k] = s0;
+    }
+    var freeze = {};
+    if (opts.freeze) for (var f in opts.freeze) if (opts.freeze[f]) freeze[f] = true;
+    var free = keys.filter(function (kk) { return !freeze[kk]; });
+    function dec(u) {
+        var p = {};
+        for (var fx in fixed) p[fx] = fixed[fx];
+        keys.forEach(function (kk) { p[kk] = seed[kk]; });
+        free.forEach(function (kk) {
+            var s = spec[kk], lg = s.scale === 'log', lo = _tr(s.min, lg), hi = _tr(s.max, lg);
+            p[kk] = _itr(lo + (u['u_' + kk] - 1) * (hi - lo), lg);
+        });
+        return p;
+    }
+    var u0 = {}, bounds = {};
+    free.forEach(function (kk) {
+        var s = spec[kk], lg = s.scale === 'log', lo = _tr(s.min, lg), hi = _tr(s.max, lg);
+        u0['u_' + kk] = 1 + (_tr(seed[kk], lg) - lo) / (hi - lo);
+        bounds['u_' + kk] = [1, 2];
+    });
+    function resid(p) {
+        var qm;
+        try { qm = entry.pd(t, p); } catch (e) { qm = null; }
+        return t.map(function (_, i) {
+            var m = qm ? qm[i] : NaN;
+            return _pos(m) ? Math.log(q[i]) - Math.log(m) : 7;
+        });
+    }
+    var zeros = t.map(function () { return 0; });
+    var idx = t.map(function (_, i) { return i; });
+    var maxIter = opts.maxIter || 60;
+    var lm = G.PRiSM_lm(function (_t, up) { return resid(dec(up)).map(function (v) { return -v; }); },
+                        { t: idx, p: zeros }, u0, bounds, {}, { maxIter: maxIter, tolerance: 1e-9, weightingMode: 'uniform' });
+    var params = dec(lm.params);
+    var r = resid(params), ssr = _ssr(r), N = r.length, p = free.length;
+    var aic = N * Math.log(Math.max(ssr, N * RATE_LOG_FLOOR * RATE_LOG_FLOOR) / N) + 2 * p;
+    var qm2 = entry.pd(t, params), mq = _mean(q), ssT = 0, ssR = 0;
+    q.forEach(function (v, i) { ssT += (v - mq) * (v - mq); ssR += (v - qm2[i]) * (v - qm2[i]); });
+    var dof = Math.max(1, N - p), tq = _tQuantile(dof), ci95 = {}, stderr = {}, identifiable = {};
+    free.forEach(function (kk) {
+        var s = spec[kk], lg = s.scale === 'log', span = _tr(s.max, lg) - _tr(s.min, lg);
+        var seU = lm.stderr ? lm.stderr['u_' + kk] : NaN, se = _num(seU) ? seU * span : NaN, v = params[kk];
+        if (_num(se)) {
+            ci95[kk] = lg ? [Math.pow(10, _tr(v, true) - tq * se), Math.pow(10, _tr(v, true) + tq * se)] : [v - tq * se, v + tq * se];
+            stderr[kk] = lg ? v * se * Math.LN10 : se;
+            identifiable[kk] = lg ? tq * se < 0.5 : tq * se < Math.max(Math.abs(v), 0.1);
+        } else { ci95[kk] = [NaN, NaN]; stderr[kk] = NaN; identifiable[kk] = false; }
+    });
+    var physOut = {};
+    keys.forEach(function (kk) { physOut[kk] = params[kk]; });
+    physOut.timeUnit = 'd';
+    if (typeof entry.eur === 'function') {
+        try { physOut.eurAtEnd = entry.eur(t[t.length - 1], params); } catch (e) { /* optional */ }
+    }
+    return {
+        modelKey: modelKey, model: modelKey, modelName: PRiSM_modelPlainName(modelKey),
+        kind: 'rate', source: 'automatch', mode: 'rate',
+        params: params, phys: physOut, ci95: ci95, stderr: stderr, identifiable: identifiable,
+        r2: ssT > 0 ? 1 - ssR / ssT : NaN, rmse: Math.sqrt(ssR / N), aic: aic, ssr: ssr,
+        nObs: N, nFree: p, iterations: lm.iterations,
+        converged: !!(lm.converged || lm.iterations < maxIter),
+        objective: 'ln q', window: { tmin: t[0] * 24, tmax: t[t.length - 1] * 24 },
+        timestamp: new Date().toISOString(), warnings: [], engine: 'local'
+    };
+}
+
+function _raceRate(ds, candidates, opts, useCore, failed) {
+    var series = _rateSeries(ds);
+    if (!series) return [];
+    var rows = [];
+    candidates.forEach(function (key) {
+        try {
+            var row;
+            if (useCore && typeof G.PRiSM_fitRate === 'function' && opts.engine !== 'local') {
+                row = _normaliseEngineRow(key, G.PRiSM_fitRate(key, ds, { maxIter: opts.maxIter || 60 }));
+                row.kind = 'rate';
+            } else {
+                row = _fitRateLocal(key, series, opts);
+            }
+            if (!_num(row.aic)) throw new Error('fit returned no AIC');
+            rows.push(row);
+        } catch (e) {
+            failed.push({ modelKey: key, modelName: PRiSM_modelPlainName(key), error: String(e && e.message || e) });
+        }
+    });
+    return rows;
+}
+
+
+// =========================================================================
+// SECTION 7 — ORCHESTRATOR
+// =========================================================================
+
+// Parsimony: AIC differences under 2 are not meaningful evidence. When the
+// AIC leader carries a parameter the data cannot determine (identifiable[k]
+// === false, e.g. a tiny fracture half-length collinear with skin) and a
+// converged alternative within ΔAIC < 2 has none, the simpler, fully
+// determined model leads. Shared with ▶ Analyse (37) so both rank alike.
+function _hasUndetermined(r) {
+    var id = r && r.identifiable;
+    if (!id) return false;
+    for (var k in id) if (Object.prototype.hasOwnProperty.call(id, k) && id[k] === false) return true;
+    return false;
+}
+function PRiSM_rankCandidates(rows, aicOf) {
+    aicOf = aicOf || function (r) { return r.aic; };
+    rows.sort(function (a, b) {
+        var d = aicOf(a) - aicOf(b);
+        if (d !== 0 && !isNaN(d)) return d;
+        return (b.r2 || -Infinity) - (a.r2 || -Infinity);
+    });
+    if (rows.length > 1 && _hasUndetermined(rows[0])) {
+        for (var j = 1; j < rows.length; j++) {
+            if (!(aicOf(rows[j]) - aicOf(rows[0]) < 2)) break;
+            if (rows[j].converged !== false && !_hasUndetermined(rows[j])) {
+                var pick = rows.splice(j, 1)[0];
+                pick.parsimony = true;
+                rows.unshift(pick);
+                break;
+            }
+        }
+    }
+    return rows;
+}
+window.PRiSM_rankCandidates = PRiSM_rankCandidates;
+
+function _rankRows(rows) {
+    PRiSM_rankCandidates(rows);
+    var best = rows.length ? Math.min.apply(null, rows.map(function (r) { return r.aic; })) : NaN;
+    var wsum = 0;
+    rows.forEach(function (r, i) {
+        r.rank = i + 1;
+        r.dAIC = r.aic - best;
+        r.akaikeWeight = Math.exp(-0.5 * r.dAIC);
+        wsum += r.akaikeWeight;
+    });
+    rows.forEach(function (r) {
+        r.akaikeWeight = wsum > 0 ? r.akaikeWeight / wsum : NaN;
+        if (!r.converged) { r.status = 'refine'; r.label = 'Starting point — refine'; }
+        else if (r.rank === 1) { r.status = 'best'; r.label = r.parsimony ? 'Best fit — simplest equivalent model' : 'Best fit'; }
+        else { r.status = 'alternative'; r.label = 'Alternative'; }
+        // ΔAIC relative to the next-ranked row, used by the interpretation cautions.
+    });
+    for (var i = 0; i < rows.length; i++) {
+        if (i === 0 && rows.length > 1) { rows[i].dAICnext = Math.abs(rows[1].aic - rows[0].aic); rows[i].secondModelKey = rows[1].modelKey; }
+    }
+    return rows;
+}
+
+function _resolveMode(ds, opts) {
+    if (opts.mode) return opts.mode;
+    var p = _toArr(ds && ds.p);
+    var hasP = p && p.some(function (v) { return _num(v); });
+    if (!hasP) return 'decline';
+    var st = G.PRiSM_state;
+    if (st && (st.mode === 'decline' || st.mode === 'combined' || st.mode === 'transient')) return st.mode;
+    return 'transient';
+}
+
+function _pressureCandidates(opts, classification) {
+    var registry = G.PRiSM_MODELS || {};
+    var list;
+    if (Array.isArray(opts.candidates) && opts.candidates.length) {
+        list = opts.candidates.slice();
+    } else {
+        list = classification.candidates.slice();
+        var minN = opts.minCandidates || MIN_PRESSURE_CANDIDATES;
+        for (var i = 0; i < DEFAULT_CANDIDATES.length && list.length < minN; i++) {
+            if (list.indexOf(DEFAULT_CANDIDATES[i]) === -1) list.push(DEFAULT_CANDIDATES[i]);
+        }
+    }
+    // The infinite-conductivity fracture (cheap) is raced just before the
+    // finite-conductivity ones: it is their FcD → ∞ limit and warm-starts
+    // their (slow) fits. Added after the padding so it never displaces a
+    // default candidate.
+    if (!(Array.isArray(opts.candidates) && opts.candidates.length) && list.indexOf('infiniteFrac') === -1) {
+        var iff = -1;
+        for (var j = 0; j < list.length; j++) if (list[j] === 'finiteFrac' || list[j] === 'finiteFracSkin') { iff = j; break; }
+        if (iff >= 0) list.splice(iff, 0, 'infiniteFrac');
+    }
+    list = list.filter(function (k, i) {
+        return registry[k] && registry[k].kind !== 'rate' && list.indexOf(k) === i;
+    });
+    var cap = Math.max(1, Math.min(MAX_PRESSURE_CANDIDATES, opts.maxCandidates || MAX_PRESSURE_CANDIDATES));
+    return list.slice(0, cap);
+}
+
+// Prepare everything the race needs; returns a context or an error result.
+function _prepare(opts) {
+    opts = opts || {};
+    var useCore = opts.useCore !== false;
+    var ds = opts.dataset || G.PRiSM_dataset;
+    var t0 = _now();
+    var ctx = { opts: opts, useCore: useCore, ds: ds, t0: t0, failed: [], warnings: [] };
+    if (!ds || !_toArr(ds.t) || _toArr(ds.t).length < 4) {
+        ctx.error = 'No usable dataset — load data on step ① first (need at least 4 samples).';
+        return ctx;
+    }
+    ctx.mode = _resolveMode(ds, opts);
+    ctx.runPressure = ctx.mode !== 'decline';
+    ctx.runRate = (ctx.mode === 'decline') || (ctx.mode === 'combined' && _rateVaries(ds));
+    if (Array.isArray(opts.candidates) && opts.candidates.length) {
+        var reg = G.PRiSM_MODELS || {};
+        var anyRate = opts.candidates.some(function (k) { return reg[k] && reg[k].kind === 'rate'; });
+        var anyP = opts.candidates.some(function (k) { return reg[k] && reg[k].kind !== 'rate'; });
+        if (anyRate && _rateSeries(ds)) ctx.runRate = true;
+        if (!anyP) ctx.runPressure = false;
+    }
+    if (ctx.runPressure) {
+        ctx.well = _resolveWell(ds, opts, useCore);
+        ctx.adata = _resolveAdata(ds, ctx.well, opts, useCore);
+        if (!ctx.adata || !ctx.adata.ok) {
+            ctx.runPressure = false;
+            ctx.warnings.push('Pressure analysis unavailable: ' + ((ctx.adata && ctx.adata.reason) || 'no analysis data') + '.');
+        } else {
+            var derivForClass = _toArr(ctx.adata.deriv);
+            ctx.classification = PRiSM_classifyRegimes(_toArr(ctx.adata.t), _toArr(ctx.adata.dp), derivForClass);
+            ctx.work = _buildWork(ctx.adata, opts);
+            ctx.floatPi = (opts.floatPi != null) ? !!opts.floatPi
+                : !(ctx.adata.pRefSource === 'pi' || ctx.adata.pRefSource === 'pwf0' ||
+                    ctx.adata.testType === 'buildup' || ctx.adata.testType === 'falloff');
+            ctx.candidates = _pressureCandidates(opts, ctx.classification);
+            (ctx.adata.warnings || []).forEach(function (w) { ctx.warnings.push(w); });
+        }
+    }
+    if (!ctx.classification) ctx.classification = { regimes: [], candidates: [], summary: ctx.runRate ? 'Rate-decline data.' : '' };
+    if (ctx.runRate) {
+        var rc = DECLINE_CANDIDATES.slice();
+        if (Array.isArray(opts.candidates) && opts.candidates.length) {
+            var reg2 = G.PRiSM_MODELS || {};
+            var picked = opts.candidates.filter(function (k) { return reg2[k] && reg2[k].kind === 'rate'; });
+            if (picked.length) rc = picked;
+        }
+        ctx.rateCandidates = rc.filter(function (k) { return !!(G.PRiSM_MODELS || {})[k]; });
+    }
+    if (!ctx.runPressure && !ctx.runRate) {
+        ctx.error = ctx.warnings.length ? ctx.warnings.join(' ') : 'Nothing to fit for this dataset and mode.';
+    }
+    return ctx;
+}
+
+function _fitPressureCandidate(ctx, key) {
+    var opts = ctx.opts;
+    var fOpts = { maxIter: opts.maxIter || 40, objective: opts.objective || 'dp+deriv', window: opts.window,
+                  floatPi: ctx.floatPi, freeze: opts.freeze, classification: ctx.classification,
+                  forceScale: opts.forceScale, maxPoints: opts.maxPoints };
+    var entry = (G.PRiSM_MODELS || {})[key] || {};
+    if (ctx.useCore && opts.engine !== 'local' && typeof G.PRiSM_fitPhysical === 'function') {
+        var frz = {};
+        var df = Array.isArray(entry.defaultFrozen) ? entry.defaultFrozen : (RACE_FREEZE_FALLBACK[key] || []);
+        df.forEach(function (k) { frz[k] = true; });
+        if (opts.freeze) for (var f in opts.freeze) if (opts.freeze[f]) frz[f] = true;
+        // Finite-conductivity fractures start from the infinite-conductivity
+        // result when it was raced (same k, C, S, xf; FcD from a high value).
+        var warm = null, inf = ctx.rowsByKey && ctx.rowsByKey.infiniteFrac;
+        if ((key === 'finiteFrac' || key === 'finiteFracSkin') && inf && inf.phys && _num(inf.phys.k) && _num(inf.phys.xf)) {
+            warm = { k: inf.phys.k, xf: inf.phys.xf, FcD: 100 };
+            if (_num(inf.phys.C)) warm.C = inf.phys.C;
+            if (_num(inf.phys.S)) warm.S = inf.phys.S;
+            if (_num(inf.phys.pi) && ctx.floatPi) warm.pi = inf.phys.pi;
+        }
+        var fit = G.PRiSM_fitPhysical(key, ctx.adata, ctx.well,
+            { maxIter: fOpts.maxIter, objective: fOpts.objective, window: opts.window, freeze: frz,
+              floatPi: ctx.floatPi, race: true, start: warm || undefined });
+        if (!fit || fit.ok === false) throw new Error((fit && (fit.reason || fit.error)) || 'fit failed');
+        var row = _normaliseEngineRow(key, fit);
+        if (!_num(row.aic)) throw new Error('fit returned no AIC');
+        return row;
+    }
+    var pm = (ctx.useCore && opts.engine !== 'local') ? _corePM(key, ctx.well, ctx.adata, fOpts) : null;
+    if (!pm) pm = _localPM(key, ctx.well, ctx.adata, fOpts);
+    if (!pm || !pm.ok) throw new Error((pm && pm.reason) || 'physical model unavailable');
+    return _fitWithPM(key, pm, ctx.adata, ctx.work, fOpts);
+}
+
+function _finish(ctx, pRows, rRows) {
+    var opts = ctx.opts;
+    var topN = Math.max(1, Math.min(8, opts.topN || 5));
+    _rankRows(pRows); _rankRows(rRows);
+    var primaryKind = ctx.runPressure && pRows.length ? 'pressure' : 'rate';
+    var primary = primaryKind === 'pressure' ? pRows : rRows;
+    var ranked = primary.slice(0, topN);
+    var firstConv = null;
+    for (var i = 0; i < ranked.length; i++) if (ranked[i].converged) { firstConv = ranked[i]; break; }
+    var elapsed = _now() - ctx.t0;
+    var result = {
+        ok: ranked.length > 0,
+        kind: primaryKind, mode: ctx.mode,
+        ranked: ranked, top: ranked.slice(0, 3), candidates: ranked.slice(0, 3),
+        bestKey: firstConv ? firstConv.modelKey : null,
+        recommendedKey: ranked.length ? ranked[0].modelKey : null,
+        bestConverged: !!(ranked[0] && ranked[0].converged),
+        deltaAIC: ranked.map(function (r) { return r.dAIC; }),
+        decline: (primaryKind === 'pressure' && rRows.length) ? { ranked: rRows.slice(0, topN), top: rRows.slice(0, 3) } : null,
+        failed: ctx.failed,
+        classification: ctx.classification,
+        analysis: ctx.adata ? { n: ctx.adata.n || (ctx.adata.t && ctx.adata.t.length), pRef: ctx.adata.pRef,
+                                pRefSource: ctx.adata.pRefSource, testType: ctx.adata.testType,
+                                timeFn: ctx.adata.timeFn, warnings: (ctx.adata.warnings || []).slice(),
+                                floatPi: !!ctx.floatPi, decimated: !!(ctx.work && ctx.work.decimated) } : null,
+        well: ctx.well ? { complete: !!ctx.well.complete, missing: (ctx.well.missing || []).slice(),
+                           defaulted: (ctx.well.defaulted || []).slice() } : null,
+        elapsedMs: Math.round(elapsed),
+        timestamp: new Date().toISOString(),
+        warnings: ctx.warnings.slice()
+    };
+    // Stamp the ranking with the data it was computed on (report / rail ignore
+    // a ranking whose hash no longer matches the active dataset).
+    if (typeof G.PRiSM_datasetHash === 'function') {
+        try { result.datasetHash = G.PRiSM_datasetHash(ctx.ds || G.PRiSM_dataset); } catch (e) { /* ignore */ }
+    }
+    result.activePeriod = (G.PRiSM_state && G.PRiSM_state.activePeriod != null) ? G.PRiSM_state.activePeriod : null;
+    if (!result.ok) result.error = ctx.failed.length ? 'No candidate could be fitted.' : 'No candidates to fit.';
+    if (ranked.length && !ranked[0].converged) {
+        result.warnings.push('The top-ranked model did not converge — treat it as a starting point and refine it in regression.');
+    }
+    try {
+        if (G.PRiSM_state && typeof G.PRiSM_state === 'object') G.PRiSM_state.autoMatch = result;
+    } catch (e) { /* silent */ }
+    _dispatch('prism:automatch-updated', { bestKey: result.bestKey, kind: result.kind });
+    try {
+        if (typeof G.gtag === 'function') {
+            G.gtag('event', 'prism_auto_match_run', { event_category: 'PRiSM', best_model: result.bestKey || 'none',
+                   elapsed_ms: result.elapsedMs, n_candidates: ranked.length });
+        }
+    } catch (e) { /* silent */ }
+    if (opts.apply && result.ok) {
+        var toApply = firstConv || (opts.applyUnconverged ? ranked[0] : null);
+        if (toApply) PRiSM_applyAutoMatchRow(toApply, result, { quiet: true });
+    }
+    return result;
+}
+
+function _errorResult(ctx) {
+    return { ok: false, error: ctx.error, kind: null, mode: ctx.mode || null, ranked: [], top: [], candidates: [],
+             bestKey: null, recommendedKey: null, bestConverged: false, deltaAIC: [], decline: null,
+             failed: ctx.failed || [], classification: ctx.classification || { regimes: [], candidates: [], summary: ctx.error },
+             analysis: null, well: null, elapsedMs: 0, timestamp: new Date().toISOString(), warnings: ctx.warnings || [] };
+}
+
+function _raceOnePressure(ctx, key, rows) {
+    try {
+        var row = _fitPressureCandidate(ctx, key);
+        if (!_num(row.aic)) throw new Error('fit produced no finite objective');
+        rows.push(row);
+        ctx.rowsByKey = ctx.rowsByKey || {};
+        ctx.rowsByKey[key] = row;
+    } catch (e) {
+        ctx.failed.push({ modelKey: key, modelName: PRiSM_modelPlainName(key), error: String(e && e.message || e) });
     }
 }
 
-// Promote a ranked result row's params + model to PRiSM_state, then
-// trigger PRiSM_drawActivePlot if available.
-function _applyAutoMatchRow(result, modelKey) {
-    if (!result || !result.ranked) return;
-    var row = null;
-    for (var i = 0; i < result.ranked.length; i++) {
-        if (result.ranked[i].modelKey === modelKey) { row = result.ranked[i]; break; }
+/** Blocking race. See header for the result shape. */
+function PRiSM_autoMatchSync(opts) {
+    var ctx = _prepare(opts || {});
+    if (ctx.error) return _errorResult(ctx);
+    if (ctx.opts.classifyOnly) {
+        var r0 = _errorResult(ctx); r0.ok = true; r0.error = null; r0.classification = ctx.classification;
+        r0.candidateKeys = ctx.candidates || [];
+        return r0;
     }
-    if (!row) return;
-    if (!G.PRiSM_state) G.PRiSM_state = { params: {}, paramFreeze: {} };
-    G.PRiSM_state.model = modelKey;
-    G.PRiSM_state.params = {};
-    if (row.params) {
-        for (var k in row.params) if (row.params.hasOwnProperty(k)) G.PRiSM_state.params[k] = row.params[k];
+    var pRows = [], rRows = [];
+    if (ctx.runPressure) {
+        ctx.candidates.forEach(function (key, i) {
+            if (typeof ctx.opts.onProgress === 'function') { try { ctx.opts.onProgress(i, ctx.candidates.length, key); } catch (e) {} }
+            _raceOnePressure(ctx, key, pRows);
+        });
     }
-    G.PRiSM_state.match = row;
+    if (ctx.runRate) rRows = _raceRate(ctx.ds, ctx.rateCandidates, ctx.opts, ctx.useCore, ctx.failed);
+    return _finish(ctx, pRows, rRows);
+}
+
+/** Race with a yield to the UI between candidates. Resolves with the result. */
+function PRiSM_autoMatch(opts) {
+    opts = opts || {};
+    var ctx;
+    try { ctx = _prepare(opts); } catch (e) { return Promise.reject(e); }
+    if (ctx.error) return Promise.resolve(_errorResult(ctx));
+    if (opts.classifyOnly) return Promise.resolve(PRiSM_autoMatchSync(opts));
+    var pRows = [], rRows = [];
+    var list = ctx.runPressure ? ctx.candidates.slice() : [];
+    var i = 0;
+    function _yield() { return new Promise(function (r) { setTimeout(r, 0); }); }
+    function _loop() {
+        if (i >= list.length) return Promise.resolve();
+        // opts.shouldCancel() → stop racing; the models fitted so far are ranked.
+        if (typeof opts.shouldCancel === 'function') {
+            var stopNow = false;
+            try { stopNow = !!opts.shouldCancel(); } catch (e) { stopNow = false; }
+            if (stopNow) {
+                ctx.warnings.push('Model race cancelled after ' + i + ' of ' + list.length + ' candidates.');
+                return Promise.resolve();
+            }
+        }
+        return _yield().then(function () {
+            var key = list[i];
+            if (typeof opts.onProgress === 'function') { try { opts.onProgress(i, list.length, key); } catch (e) {} }
+            _raceOnePressure(ctx, key, pRows);
+            i++;
+            return _loop();
+        });
+    }
+    return _loop().then(function () {
+        if (ctx.runRate) return _yield().then(function () { rRows = _raceRate(ctx.ds, ctx.rateCandidates, opts, ctx.useCore, ctx.failed); });
+    }).then(function () { return _finish(ctx, pRows, rRows); });
+}
+
+
+// =========================================================================
+// SECTION 8 — APPLY A ROW (propagates everywhere; never writes st.match)
+// =========================================================================
+
+function _fmtPhysSummary(row) {
+    var ph = row.phys || {};
+    if (row.kind === 'rate') {
+        var bits = [];
+        if (_num(ph.qi)) bits.push('qi ' + _fmt(ph.qi, 4));
+        if (_num(ph.Di)) bits.push('Di ' + _fmt(ph.Di, 3) + ' 1/d');
+        if (_num(ph.b)) bits.push('b ' + _fmt(ph.b, 3));
+        return bits.join(', ');
+    }
+    var s = [];
+    if (_num(ph.k)) s.push('k ' + (ph.k >= 100 ? ph.k.toFixed(0) : ph.k.toFixed(1)) + ' md');
+    else if (_num(ph.kh)) s.push('kh ' + _fmt(ph.kh, 3) + ' md·ft');
+    if (_num(ph.S)) s.push('S ' + ph.S.toFixed(2));
+    if (_num(ph.C)) s.push('C ' + ph.C.toExponential(1) + ' bbl/psi');
+    return s.join(', ');
+}
+
+function _findRow(rowOrKey, result) {
+    if (rowOrKey && typeof rowOrKey === 'object') return rowOrKey;
+    var res = result || (G.PRiSM_state && G.PRiSM_state.autoMatch);
+    if (!res) return null;
+    var lists = [res.ranked || []];
+    if (res.decline && res.decline.ranked) lists.push(res.decline.ranked);
+    for (var l = 0; l < lists.length; l++) for (var i = 0; i < lists[l].length; i++) {
+        if (lists[l][i].modelKey === rowOrKey) return lists[l][i];
+    }
+    return null;
+}
+
+function PRiSM_applyAutoMatchRow(rowOrKey, result, applyOpts) {
+    applyOpts = applyOpts || {};
+    var row = _findRow(rowOrKey, result);
+    if (!row) return null;
+    var key = row.modelKey;
+    if (!G.PRiSM_state) G.PRiSM_state = { model: key, params: {}, paramFreeze: {}, match: { timeShift: 0, pressShift: 0 } };
+    var st = G.PRiSM_state;
+    if (typeof G.PRiSM_setModel === 'function') {
+        try { G.PRiSM_setModel(key); } catch (e) { st.model = key; }
+    } else { st.model = key; }
+    st.params = _clone(row.params || {});
+    st.phys = _clone(row.phys || {});
+    var entry = (G.PRiSM_MODELS || {})[key] || {};
+    var frz = {};
+    var df = Array.isArray(entry.defaultFrozen) ? entry.defaultFrozen : [];
+    df.forEach(function (k) { frz[k] = true; });
+    st.paramFreeze = frz;
+    var fit = _clone(row);
+    fit.source = 'automatch';
+    fit.model = key;
+    if (row.kind !== 'rate' && row.scales && _pos(row.scales.A) && _pos(row.scales.B)) {
+        st.tcMatch = { logPM: Math.log10(1 / row.scales.A), logTM: Math.log10(row.scales.B), source: 'automatch' };
+    }
+    if (typeof G.PRiSM_setLastFit === 'function') {
+        try { G.PRiSM_setLastFit(fit); } catch (e) { st.lastFit = fit; }
+    } else {
+        st.lastFit = fit;
+        if (typeof G.PRiSM_interpretCurrentFit === 'function') {
+            try { st.interp = G.PRiSM_interpretCurrentFit(); } catch (e) { /* silent */ }
+        }
+        _dispatch('prism:fit-updated', { source: 'automatch', modelKey: key });
+    }
+    if (typeof G.PRiSM_evalModelCurve === 'function') {
+        try { G.PRiSM_evalModelCurve(key, st.params, { phys: st.phys }); } catch (e) { /* silent */ }
+    }
     if (typeof G.PRiSM_drawActivePlot === 'function') {
         try { G.PRiSM_drawActivePlot(); } catch (e) { /* silent */ }
     }
-    // Toast feedback if available.
-    if (typeof G.toast === 'function') {
-        try { G.toast('Applied ' + modelKey, 'success'); } catch (e) { /* silent */ }
+    if (typeof G.PRiSM_saveState === 'function') {
+        try { G.PRiSM_saveState(); } catch (e) { /* silent */ }
     }
+    var msg = 'Applied ' + PRiSM_modelPlainName(key) + ' — ' + _fmtPhysSummary(row);
+    st.autoMatchStatus = msg;
+    if (typeof document !== 'undefined' && document.getElementById) {
+        var el = document.getElementById('prism_am_status');
+        if (el) el.textContent = msg;
+    }
+    if (!applyOpts.quiet && typeof G.toast === 'function') { try { G.toast(msg, 'success'); } catch (e) {} }
     try {
-        if (typeof G.gtag === 'function') {
-            G.gtag('event', 'prism_auto_match_apply', {
-                event_category: 'PRiSM',
-                model_key:      modelKey
-            });
-        }
+        if (typeof G.gtag === 'function') G.gtag('event', 'prism_auto_match_apply', { event_category: 'PRiSM', model_key: key });
     } catch (e) { /* silent */ }
+    return row;
 }
 
-// Open a simple modal-ish overlay listing every model in the registry
-// with a checkbox; user picks the candidate set then re-races.
-function _openCandidateChooser(host, prevResult) {
-    if (typeof document === 'undefined') return;
-    var registry = G.PRiSM_MODELS || {};
-    var keys = Object.keys(registry).sort();
-    if (!keys.length) return;
-    // Pre-select whatever was used last time.
-    var preselect = {};
-    if (prevResult && prevResult.ranked) {
-        for (var i = 0; i < prevResult.ranked.length; i++) preselect[prevResult.ranked[i].modelKey] = true;
+
+// =========================================================================
+// SECTION 9 — PANEL UI ("Recommended models")
+// =========================================================================
+// Top-3 cards: plain model name, status chip, ΔAIC, R², key physical results
+// with ±95 % CI, and a "Use this model" button. Styled with the host theme
+// variables; flex-wraps to a single column at phone width.
+
+var PANEL_CSS =
+    '.prism-am{display:flex;flex-direction:column;gap:10px;color:var(--text);font-size:13px;min-width:0}' +
+    '.prism-am-head{display:flex;flex-wrap:wrap;gap:8px;align-items:center}' +
+    '.prism-am-diag{font-size:12px;color:var(--text2);overflow-wrap:anywhere}' +
+    '.prism-am-cards{display:flex;flex-wrap:wrap;gap:10px}' +
+    '.prism-am-card{flex:1 1 220px;min-width:0;max-width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg2)}' +
+    '.prism-am-card--best{border-color:var(--green)}' +
+    '.prism-am-card--refine{border-color:var(--yellow)}' +
+    '.prism-am-name{font-weight:600;font-size:14px;overflow-wrap:anywhere}' +
+    '.prism-am-chip{display:inline-block;font-size:11px;padding:1px 8px;border-radius:10px;border:1px solid var(--border);color:var(--text2);white-space:nowrap}' +
+    '.prism-am-chip--best{color:var(--green);border-color:var(--green)}' +
+    '.prism-am-chip--refine{color:var(--yellow);border-color:var(--yellow)}' +
+    '.prism-am-stats{font-size:12px;color:var(--text2);margin-top:4px}' +
+    '.prism-am-res{margin-top:6px;font-size:12px;display:grid;grid-template-columns:auto 1fr;gap:2px 8px}' +
+    '.prism-am-res span:nth-child(odd){color:var(--text3)}' +
+    '.prism-am-res span:nth-child(even){font-family:Menlo,Consolas,monospace;overflow-wrap:anywhere}' +
+    '.prism-am-btn{margin-top:8px;padding:6px 12px;font-size:12px;border-radius:4px;cursor:pointer;border:1px solid var(--border);background:var(--bg1);color:var(--text)}' +
+    '.prism-am-btn--primary{background:var(--accent);border-color:var(--accent);color:#fff}' +
+    '.prism-am-warn{font-size:12px;color:var(--yellow)}' +
+    '.prism-am-muted{font-size:11px;color:var(--text3)}' +
+    '.prism-am-status{font-size:12px;color:var(--green);min-height:16px}';
+
+function _ensureCss() {
+    if (typeof document === 'undefined' || !document.getElementById || !document.createElement) return;
+    if (document.getElementById('prism_am_css')) return;
+    var s = document.createElement('style');
+    s.id = 'prism_am_css';
+    s.textContent = PANEL_CSS;
+    var head = document.head || document.body;
+    if (head && head.appendChild) head.appendChild(s);
+}
+
+function _ciText(v, ci, digits) {
+    if (!_num(v)) return '—';
+    var txt = (typeof digits === 'function') ? digits(v) : _fmt(v, 3);
+    if (ci && _num(ci[0]) && _num(ci[1])) {
+        var half = 0.5 * (ci[1] - ci[0]);
+        if (half > 0) txt += ' ± ' + _fmt(half, 2);
     }
+    return txt;
+}
 
-    var existing = document.getElementById('prism_am_chooser');
-    if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
-
-    var overlay = document.createElement('div');
-    overlay.id = 'prism_am_chooser';
-    overlay.style.cssText =
-        'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:9999;' +
-        ' display:flex; align-items:center; justify-content:center;';
-
-    var checkboxes = '';
-    for (var k = 0; k < keys.length; k++) {
-        var key = keys[k];
-        var entry = registry[key];
-        var category = entry.category || '—';
-        var checked = preselect[key] ? 'checked' : '';
-        checkboxes +=
-            '<label style="display:flex; align-items:center; gap:8px; padding:4px 6px; font-size:12px; color:#e6f1ff; border-bottom:1px dashed #1f2734;">' +
-            '<input type="checkbox" data-prism-am-cand value="' + _esc(key) + '" ' + checked + '>' +
-            '<span style="font-weight:600; min-width:160px;">' + _esc(key) + '</span>' +
-            '<span style="color:#9fb1c8;">' + _esc(category) + '</span>' +
-            '</label>';
-    }
-    overlay.innerHTML =
-        '<div style="background:#0e131a; border:1px solid #2a3340; border-radius:10px; max-width:560px; width:90%; max-height:80vh; display:flex; flex-direction:column;">' +
-            '<div style="padding:14px; border-bottom:1px solid #2a3340; font-size:14px; font-weight:600; color:#e6f1ff;">Select models to race</div>' +
-            '<div style="padding:8px 14px; overflow-y:auto; flex:1;">' + checkboxes + '</div>' +
-            '<div style="padding:14px; border-top:1px solid #2a3340; display:flex; gap:8px; justify-content:flex-end;">' +
-                '<button id="prism_am_chooser_cancel" style="padding:6px 12px; font-size:12px; border-radius:4px; background:#1a2230; color:#e6f1ff; border:1px solid #2a3340; cursor:pointer;">Cancel</button>' +
-                '<button id="prism_am_chooser_run" style="padding:6px 12px; font-size:12px; border-radius:4px; background:#2d8def; color:#fff; border:0; cursor:pointer;">Run race</button>' +
-            '</div>' +
-        '</div>';
-    document.body.appendChild(overlay);
-
-    overlay.querySelector('#prism_am_chooser_cancel').onclick = function () {
-        overlay.parentNode.removeChild(overlay);
-    };
-    overlay.querySelector('#prism_am_chooser_run').onclick = function () {
-        var picked = [];
-        var boxes = overlay.querySelectorAll('input[data-prism-am-cand]');
-        for (var b = 0; b < boxes.length; b++) {
-            if (boxes[b].checked) picked.push(boxes[b].value);
-        }
-        if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
-        if (!picked.length) return;
-        // Disable host button while running.
-        host.innerHTML = '<div style="padding:14px; color:#9fb1c8; font-size:13px;">Racing ' + picked.length + ' model' + (picked.length === 1 ? '' : 's') + '…</div>';
-        PRiSM_autoMatch({ candidates: picked }).then(function (newResult) {
-            PRiSM_renderAutoMatchPanel(host, newResult);
-        }, function (err) {
-            host.innerHTML = '<div style="padding:14px; color:#f85149; font-size:13px;">Auto-match failed: ' + _esc(String(err && err.message || err)) + '</div>';
+function _resultRows(row) {
+    var ph = row.phys || {}, ci = row.ci95 || {}, out = [];
+    if (row.kind === 'rate') {
+        Object.keys(ph).forEach(function (k) {
+            if (k === 'timeUnit' || !_num(ph[k])) return;
+            out.push([k === 'eurAtEnd' ? 'Cum. to end' : k, _ciText(ph[k], ci[k])]);
         });
-    };
+        return out;
+    }
+    if (_num(ph.k)) out.push(['k', _ciText(ph.k, ci.k) + ' md']);
+    if (_num(ph.kh)) out.push(['kh', _ciText(ph.kh, ci.kh) + ' md·ft']);
+    if (_num(ph.S)) out.push(['S', _ciText(ph.S, ci.S, function (v) { return v.toFixed(2); })]);
+    else if (row.mode === 'scale') out.push(['S', 'not identifiable (well inputs incomplete)']);
+    if (_num(ph.C)) out.push(['C', _ciText(ph.C, ci.C) + ' bbl/psi']);
+    if (_num(ph.xf)) out.push(['xf', _ciText(ph.xf, ci.xf) + ' ft']);
+    if (_num(ph.Lh)) out.push(['Lh', _ciText(ph.Lh, ci.Lh) + ' ft']);
+    if (ph.distances_ft) Object.keys(ph.distances_ft).forEach(function (k) {
+        out.push([k + ' distance', _fmt(ph.distances_ft[k], 3) + ' ft']);
+    });
+    if (row.pRefSource === 'floated' && _num(row.pRef)) out.push(['pi', _fmt(row.pRef, 5) + ' psia']);
+    return out;
 }
 
-// HTML escape helper for user-facing strings.
-function _esc(s) {
-    if (s == null) return '';
-    return String(s).replace(/[&<>"']/g, function (c) {
-        return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c];
+function _cardHTML(row, idx) {
+    var cls = row.status === 'best' ? ' prism-am-card--best' : (row.status === 'refine' ? ' prism-am-card--refine' : '');
+    var chip = row.status === 'best' ? ' prism-am-chip--best' : (row.status === 'refine' ? ' prism-am-chip--refine' : '');
+    var res = _resultRows(row).map(function (p) { return '<span>' + _esc(p[0]) + '</span><span>' + _esc(p[1]) + '</span>'; }).join('');
+    var warn = (row.warnings && row.warnings.length) ? '<div class="prism-am-warn">⚠ ' + _esc(row.warnings[0]) + '</div>' : '';
+    return '<div class="prism-am-card' + cls + '" data-prism-am-row="' + idx + '" data-prism-am-key="' + _esc(row.modelKey) + '">' +
+        '<div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;">' +
+            '<span class="prism-am-name">' + _esc(row.modelName || PRiSM_modelPlainName(row.modelKey)) + '</span>' +
+            '<span class="prism-am-chip' + chip + '">' + _esc(row.label) + '</span>' +
+        '</div>' +
+        '<div class="prism-am-stats">ΔAIC ' + (_num(row.dAIC) ? row.dAIC.toFixed(1) : '—') +
+            ' · R² ' + (_num(row.r2) ? row.r2.toFixed(4) : '—') +
+            ' · ' + (row.converged ? '✓ converged' : 'not converged') +
+            (_num(row.iterations) ? ' (' + row.iterations + ' it)' : '') + '</div>' +
+        '<div class="prism-am-res">' + res + '</div>' + warn +
+        '<button type="button" class="prism-am-btn' + (row.status === 'best' ? ' prism-am-btn--primary' : '') +
+            '" data-prism-am-apply="' + _esc(row.modelKey) + '">' +
+            (row.status === 'refine' ? 'Use as starting point' : 'Use this model') + '</button>' +
+        '</div>';
+}
+
+function PRiSM_renderAutoMatchPanel(container, result) {
+    if (!container || typeof container.innerHTML !== 'string') return;
+    _ensureCss();
+    if (result === undefined) result = G.PRiSM_state && G.PRiSM_state.autoMatch;
+    var runBtn = '<button type="button" class="prism-am-btn prism-am-btn--primary" id="prism_am_run">Find best model</button>';
+    if (!result) {
+        container.innerHTML = '<div class="prism-am"><div class="prism-am-muted">Races the likely models against your data in physical units (k, C, S) and ranks them by AIC.</div>' + runBtn + '<div class="prism-am-status" id="prism_am_status"></div></div>';
+        _wirePanel(container, null);
+        return;
+    }
+    var h = ['<div class="prism-am">'];
+    h.push('<div class="prism-am-head"><strong>Recommended models</strong>' +
+           '<span class="prism-am-muted">' + (result.ranked ? result.ranked.length : 0) + ' fitted · ' +
+           (_num(result.elapsedMs) ? result.elapsedMs + ' ms' : '') + '</span></div>');
+    if (result.classification && result.classification.summary) {
+        h.push('<div class="prism-am-diag"><b>Diagnostic:</b> ' + _esc(result.classification.summary) + '</div>');
+    }
+    (result.warnings || []).slice(0, 3).forEach(function (w) { h.push('<div class="prism-am-warn">⚠ ' + _esc(w) + '</div>'); });
+    if (!result.ok || !result.ranked || !result.ranked.length) {
+        h.push('<div class="prism-am-warn">No model could be fitted' + (result.error ? ': ' + _esc(result.error) : '.') + '</div>');
+    } else {
+        h.push('<div class="prism-am-cards">' + result.top.map(_cardHTML).join('') + '</div>');
+    }
+    if (result.decline && result.decline.top && result.decline.top.length) {
+        h.push('<div><strong>Decline models (rate)</strong></div><div class="prism-am-cards">' +
+               result.decline.top.map(function (r, i) { return _cardHTML(r, 100 + i); }).join('') + '</div>');
+    }
+    if (result.failed && result.failed.length) {
+        h.push('<div class="prism-am-muted">Could not fit: ' + result.failed.map(function (f) {
+            return _esc(f.modelName || f.modelKey);
+        }).join(', ') + '</div>');
+    }
+    h.push('<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
+           runBtn.replace('Find best model', 'Run again') +
+           '<button type="button" class="prism-am-btn" id="prism_am_choose">Choose models…</button></div>');
+    h.push('<div class="prism-am-status" id="prism_am_status">' + _esc((G.PRiSM_state && G.PRiSM_state.autoMatchStatus) || '') + '</div>');
+    h.push('</div>');
+    container.innerHTML = h.join('');
+    _wirePanel(container, result);
+}
+
+function _runAndRender(container, opts) {
+    var status = container.querySelector ? container.querySelector('#prism_am_status') : null;
+    if (status) status.textContent = 'Fitting candidate models…';
+    return PRiSM_autoMatch(opts || {}).then(function (res) {
+        PRiSM_renderAutoMatchPanel(container, res);
+        return res;
+    }, function (err) {
+        if (status) status.textContent = 'Auto-match failed: ' + String(err && err.message || err);
     });
 }
 
+function _wirePanel(container, result) {
+    if (!container.querySelectorAll) return;
+    var btns = container.querySelectorAll('button[data-prism-am-apply]');
+    for (var i = 0; i < btns.length; i++) {
+        btns[i].onclick = function (ev) {
+            var key = (ev && ev.currentTarget ? ev.currentTarget : this).getAttribute('data-prism-am-apply');
+            PRiSM_applyAutoMatchRow(key, result);
+        };
+    }
+    var run = container.querySelector('#prism_am_run');
+    if (run) run.onclick = function () { _runAndRender(container, {}); };
+    var choose = container.querySelector('#prism_am_choose');
+    if (choose) choose.onclick = function () { _openCandidateChooser(container, result); };
+}
+
+function _openCandidateChooser(host, prevResult) {
+    if (typeof document === 'undefined' || !document.createElement) return;
+    _ensureCss();
+    var registry = G.PRiSM_MODELS || {};
+    var keys = Object.keys(registry).sort(function (a, b) {
+        return PRiSM_modelPlainName(a).localeCompare(PRiSM_modelPlainName(b));
+    });
+    if (!keys.length) return;
+    var pre = {};
+    if (prevResult && prevResult.ranked) prevResult.ranked.forEach(function (r) { pre[r.modelKey] = true; });
+    var old = document.getElementById('prism_am_chooser');
+    if (old && old.parentNode) old.parentNode.removeChild(old);
+    var ov = document.createElement('div');
+    ov.id = 'prism_am_chooser';
+    ov.style.cssText = 'position:fixed;left:0;top:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;';
+    var rows = keys.map(function (k) {
+        var e = registry[k] || {};
+        return '<label style="display:flex;align-items:center;gap:8px;padding:4px 2px;font-size:12px;border-bottom:1px dashed var(--border);">' +
+            '<input type="checkbox" data-prism-am-cand value="' + _esc(k) + '"' + (pre[k] ? ' checked' : '') + '>' +
+            '<span style="flex:1;min-width:0;overflow-wrap:anywhere;">' + _esc(PRiSM_modelPlainName(k)) + '</span>' +
+            '<span style="color:var(--text3);">' + _esc(e.kind === 'rate' ? 'decline' : (e.category || '')) + '</span></label>';
+    }).join('');
+    ov.innerHTML = '<div style="background:var(--bg1);border:1px solid var(--border);border-radius:10px;width:100%;max-width:520px;max-height:80vh;display:flex;flex-direction:column;color:var(--text);">' +
+        '<div style="padding:12px;border-bottom:1px solid var(--border);font-weight:600;">Choose models to compare</div>' +
+        '<div style="padding:8px 12px;overflow-y:auto;flex:1;">' + rows + '</div>' +
+        '<div style="padding:12px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end;">' +
+            '<button type="button" class="prism-am-btn" id="prism_am_chooser_cancel">Cancel</button>' +
+            '<button type="button" class="prism-am-btn prism-am-btn--primary" id="prism_am_chooser_run">Compare</button></div></div>';
+    document.body.appendChild(ov);
+    ov.querySelector('#prism_am_chooser_cancel').onclick = function () { if (ov.parentNode) ov.parentNode.removeChild(ov); };
+    ov.querySelector('#prism_am_chooser_run').onclick = function () {
+        var picked = [];
+        var boxes = ov.querySelectorAll('input[data-prism-am-cand]');
+        for (var b = 0; b < boxes.length; b++) if (boxes[b].checked) picked.push(boxes[b].value);
+        if (ov.parentNode) ov.parentNode.removeChild(ov);
+        if (picked.length) _runAndRender(host, { candidates: picked });
+    };
+}
+
 
 // =========================================================================
-// SECTION 5 — EXPOSE PUBLIC API
+// SECTION 10 — EXPORTS
 // =========================================================================
 
 G.PRiSM_classifyRegimes      = PRiSM_classifyRegimes;
-G.PRiSM_autoMatch             = PRiSM_autoMatch;
+G.PRiSM_autoMatch            = PRiSM_autoMatch;
+G.PRiSM_autoMatchSync        = PRiSM_autoMatchSync;
+G.PRiSM_applyAutoMatchRow    = PRiSM_applyAutoMatchRow;
 G.PRiSM_suggestInitialParams = PRiSM_suggestInitialParams;
 G.PRiSM_renderAutoMatchPanel = PRiSM_renderAutoMatchPanel;
+G.PRiSM_modelPlainName       = PRiSM_modelPlainName;
+// Internal hooks for the acceptance tests (not a public contract).
+G.PRiSM__autoMatchInternals  = { localPM: _localPM, localAnalysisData: _localAnalysisData, bourdet: _bourdet };
+
+// A ranking belongs to the data and flow period it was run on: drop it when
+// either changes, so the report's model comparison and the Recommended strip
+// never show another dataset's ΔAIC.
+if (typeof G.addEventListener === 'function' && !G.__PRiSM_amStaleListener) {
+    G.__PRiSM_amStaleListener = true;
+    ['prism:dataset-loaded', 'prism:dataset-cleared', 'prism:period-changed'].forEach(function (type) {
+        G.addEventListener(type, function () {
+            try {
+                var st = G.PRiSM_state;
+                if (st && typeof st === 'object') { st.autoMatch = null; if (st.lastAutoMatch) st.lastAutoMatch = null; }
+                if (G.PRiSM_lastAutoMatch) G.PRiSM_lastAutoMatch = null;
+            } catch (e) { /* silent */ }
+        });
+    });
+}
 
 })();
 
@@ -8779,36 +10343,50 @@ G.PRiSM_renderAutoMatchPanel = PRiSM_renderAutoMatchPanel;
 // ═══════════════════════════════════════════════════════════════════════
 // ════════════════════════════════════════════════════════════════════
 // PRiSM ─ Layer 14 — Plain-English Interpretation
-//   Turns fitted parameter values + CIs into a narrative report:
-//   qualitative tags, severity, suggested actions, cautions.
+//   Turns the current fit (C4 lastFit: physical k, C, S + dimensionless
+//   shape parameters + CIs) into a narrative with honest precision,
+//   qualitative tags, skin-based actions and cautions.
 // ────────────────────────────────────────────────────────────────────
 //
 // Public API (all on window.*):
-//   PRiSM_interpretFit(modelKey, params, CI95)         -> { tags, narrative,
-//                                                            actions, confidence,
-//                                                            cautions }
-//   PRiSM_interpretCurrentFit()                        -> result | null
-//   PRiSM_renderInterpretationPanel(container, interp) -> void
-//   PRiSM_buildNarrative(tags, modelKey, classification)-> string
+//   PRiSM_interpretFit(modelKey, params, CI95, fitMeta?) -> Interp
+//   PRiSM_interpretCurrentFit()                          -> Interp | null  (pure)
+//   PRiSM_refreshInterpretation()                        -> Interp | null  (writes st.interp)
+//   PRiSM_renderInterpretationPanel(container, interp?)  -> void
+//   PRiSM_buildNarrative(tags, modelKey, ctx)            -> string
+//   PRiSM_formatWithCI(value, halfWidth, unit?)          -> '45.0 ± 0.3 md'
 //
-// Conventions:
-//   - Single outer IIFE, 'use strict'.
-//   - All public symbols on window.PRiSM_*.
-//   - No external dependencies — pure vanilla JS, Math.*.
-//   - Defensive against missing models / lastFit / DOM.
-//   - Self-test at the bottom.
+// Interp = { tags, narrative, headline, actions, confidence, cautions,
+//            skin:{S_total, S_pseudo, S_mech, Sf, FE, DR, dpS, J, J_ideal, rwEff},
+//            modelKey, source, timestamp }
+//
+// fitMeta (all optional): { r2, dAIC (margin to runner-up), iterations,
+//   secondModelKey, lateRMSE, phys:{k,kh,C,Cd,S,pi,rinv,…}, identifiable:{},
+//   well:{q,B,mu,rw,h,…}, pwf, pbar, testType, source, stale, mode }
+//
+// Skin rules (actions keyed on the MECHANICAL skin S_mech = S_total − pseudo-skins):
+//   S_mech 2–5            → consider an acid wash
+//   S_mech 5–10           → remedial treatment recommended (moderate)
+//   S_mech > 10 or FE < ½ → stimulation strongly indicated
+//   S < −4 in a radial model → rw′ > 50·rw, try a fracture model
+//   Sf > 0.5              → fracture-face damage
+//   "No workover" reassurance only when EVERY skin term is acceptable.
+//
+// Conventions: single outer IIFE; window.PRiSM_* only; no external deps;
+// defensive against missing models / lastFit / DOM; self-test at the end.
 // ════════════════════════════════════════════════════════════════════
 
 (function () {
 'use strict';
 
-// Global container — works in browser and Node (smoke-test stub).
 var G = (typeof window !== 'undefined') ? window
       : (typeof globalThis !== 'undefined' ? globalThis : {});
 var _hasDoc = (typeof document !== 'undefined');
 
-// Compact in-prose number formatter — fewer trailing zeros, exponential
-// for very small or very large magnitudes.
+function _num(v) { return typeof v === 'number' && isFinite(v); }
+function _pos(v) { return typeof v === 'number' && isFinite(v) && v > 0; }
+
+// Compact in-prose number formatter.
 function _prose(n) {
     if (n == null || !isFinite(n)) return '—';
     var v = Number(n), a = Math.abs(v);
@@ -8819,31 +10397,61 @@ function _prose(n) {
     return v.toFixed(3);
 }
 
+// Honest precision: round the half-width to 1 significant figure (2 when it
+// starts with a 1) and the value to the same decimal place.
+function _decimalsFor(half) {
+    if (!_pos(half)) return null;
+    var e = Math.floor(Math.log10(half));
+    var lead = half / Math.pow(10, e);
+    var sig = lead < 1.95 ? 2 : 1;
+    return Math.max(0, -(e - sig + 1));
+}
+
+function PRiSM_formatWithCI(v, half, unit) {
+    if (!_num(v)) return '—';
+    var u = unit ? ' ' + unit : '';
+    var a = Math.abs(v);
+    if (_pos(half)) {
+        if (half >= a && a > 0) return '≈' + _sig(v, 1) + u + ' (poorly constrained)';
+        if (a !== 0 && (a < 1e-3 || a >= 1e6)) {
+            var relDigits = Math.max(1, Math.min(4, Math.ceil(Math.log10(a / half)) + 1));
+            return v.toExponential(relDigits - 1) + ' ± ' + half.toExponential(0) + u;
+        }
+        var d = _decimalsFor(half);
+        if (d > 6) d = 6;
+        return v.toFixed(d) + ' ± ' + half.toFixed(d) + u;
+    }
+    return _sig(v, 3) + u;
+}
+
+function _sig(v, n) {
+    if (!_num(v)) return '—';
+    var a = Math.abs(v);
+    if (a === 0) return '0';
+    if (a < 1e-3 || a >= 1e6) return v.toExponential(Math.max(0, n - 1));
+    var d = Math.max(0, n - 1 - Math.floor(Math.log10(a)));
+    return v.toFixed(Math.min(6, d));
+}
+
+function _half(range) {
+    if (!range || !_num(range[0]) || !_num(range[1])) return NaN;
+    return 0.5 * Math.abs(range[1] - range[0]);
+}
+
 
 // ════════════════════════════════════════════════════════════════════
 // SECTION 1 — PARAM-TO-TAG RULES
 // ════════════════════════════════════════════════════════════════════
-// Each rule maps a parameter key to a function returning a tag object:
-//   { qualitative, severity, hint }
-// where hint is a short verb-phrase used in the narrative chain.
-//
 // Severity ladder: 'good' | 'normal' | 'warning' | 'important'
-//   - 'good'      : positive finding, no action required
-//   - 'normal'    : within typical range, no action required
-//   - 'warning'   : worth flagging, possible action
-//   - 'important' : strongly suggests action / further work
-// ════════════════════════════════════════════════════════════════════
 
-// Bucket tables — each entry is [upperBound, qualitative, severity, hint].
-// First entry whose value < upperBound wins. Last entry must use Infinity.
 var SKIN_BUCKETS = [
-    [-5,        'highly stimulated',         'good',      'completion is highly stimulated'],
+    [-5,        'highly stimulated',         'good',      'a highly stimulated completion'],
     [-2,        'effectively stimulated',    'good',      'an effectively stimulated completion'],
     [ 0,        'mildly stimulated',         'good',      'a mildly stimulated completion'],
     [ 2,        'no significant skin',       'normal',    'no significant skin'],
-    [ 5,        'mildly damaged',            'warning',   'mild near-wellbore damage'],
-    [10,        'damaged',                   'warning',   'near-wellbore damage'],
-    [Infinity,  'severely damaged',          'important', 'severe near-wellbore damage']
+    [ 5,        'mildly damaged',            'warning',   'mild damage near the wellbore'],
+    [10,        'damaged',                   'warning',   'moderate damage near the wellbore'],
+    [Infinity,  'severely damaged',          'important', 'severe damage near the wellbore']
 ];
 var CD_BUCKETS = [
     [50,        'low WBS',                                          'normal',    'low wellbore storage'],
@@ -8890,56 +10498,44 @@ var FCD_BUCKETS = [
     [300,       'effectively infinite-conductivity',       'good',    'a high-conductivity fracture (effectively infinite)'],
     [Infinity,  'fully conductive fracture',               'good',    'a fully conductive fracture']
 ];
+var SF_BUCKETS = [
+    [0.5,       'clean fracture face',       'normal',  'a clean fracture face'],
+    [Infinity,  'fracture-face damage',      'warning', 'fracture-face damage']
+];
 
 function _bucketLookup(buckets, v) {
     if (!isFinite(v)) return null;
     for (var i = 0; i < buckets.length; i++) {
-        if (v < buckets[i][0]) {
-            return { qualitative: buckets[i][1], severity: buckets[i][2], hint: buckets[i][3] };
-        }
+        if (v < buckets[i][0]) return { qualitative: buckets[i][1], severity: buckets[i][2], hint: buckets[i][3] };
     }
     return null;
 }
 
-// Boundary rule needs label substitution because keys distinguish
-// fault 1 / fault 2 / N / S / E / W boundaries.
-function _ruleBoundaryL(v, label) {
+function _ruleBoundaryL(v, label, unitFt) {
     if (!isFinite(v)) return null;
     var name = label || 'Boundary';
     var lname = name.toLowerCase();
-    if (v < 100)   return { qualitative: name + ' very close — recheck data quality', severity: 'warning',
-                             hint: lname + ' very close to the wellbore — data quality should be re-checked' };
-    if (v < 500)   return { qualitative: 'near ' + lname + ' detected',               severity: 'important',
-                             hint: 'a near ' + lname + ' is detected' };
-    if (v < 2000)  return { qualitative: name + ' detected at moderate distance',     severity: 'important',
-                             hint: 'a ' + lname + ' is detected at moderate distance' };
-    return             { qualitative: 'far ' + lname + ' — late-time signal only', severity: 'normal',
-                             hint: 'a far ' + lname + ' is hinted by the late-time signal' };
+    // Distances in ft when known (phys.distances_ft), else in the model's own units.
+    var near = unitFt ? 150 : 100, mid = unitFt ? 600 : 500, far = unitFt ? 3000 : 2000;
+    if (v < near)  return { qualitative: name + ' very close — recheck data quality', severity: 'warning',
+                            hint: lname + ' very close to the wellbore — data quality should be re-checked' };
+    if (v < mid)   return { qualitative: 'near ' + lname + ' detected', severity: 'important',
+                            hint: 'a near ' + lname + ' is detected' };
+    if (v < far)   return { qualitative: name + ' detected at moderate distance', severity: 'important',
+                            hint: 'a ' + lname + ' is detected at moderate distance' };
+    return { qualitative: 'far ' + lname + ' — late-time signal only', severity: 'normal',
+             hint: 'a far ' + lname + ' is hinted by the late-time signal' };
 }
 
-// Param-key dispatch — names follow the registry keys used in 03/06/08/09.
-//
-// A note on the boundary-distance keys:
-//   Layer 03 uses dF, dF1, dF2, dEnd, dN, dS, dE, dW (units of r_w).
-//   The Task contract above describes "L" (ft). We treat both as
-//   distance-to-boundary tags — the qualitative buckets are unitless
-//   bands so the labelling is correct in either case, and the value is
-//   reported in the unit attached to the parameter when known.
-// --------------------------------------------------------------------
 var BOUNDARY_KEYS = {
-    'L':     'Boundary',
-    'dF':    'Boundary',
-    'dF1':   'Fault 1',
-    'dF2':   'Fault 2',
-    'dEnd':  'End',
-    'dN':    'North boundary',
-    'dS':    'South boundary',
-    'dE':    'East boundary',
-    'dW':    'West boundary'
+    'L': 'Boundary', 'dF': 'Boundary', 'dF1': 'Fault 1', 'dF2': 'Fault 2', 'dEnd': 'End',
+    'dN': 'North boundary', 'dS': 'South boundary', 'dE': 'East boundary', 'dW': 'West boundary'
 };
+var SKIN_KEYS = { S: 1, S_perf: 1, S_global: 1, S_mech: 1, Sf: 1 };
 
 function _ruleForKey(key, value) {
-    if (key === 'S' || key === 'S_global' || key === 'S_perf') return _bucketLookup(SKIN_BUCKETS, value);
+    if (key === 'S' || key === 'S_global' || key === 'S_perf' || key === 'S_mech') return _bucketLookup(SKIN_BUCKETS, value);
+    if (key === 'Sf')                              return _bucketLookup(SF_BUCKETS, value);
     if (key === 'Cd')                              return _bucketLookup(CD_BUCKETS, value);
     if (key === 'kh')                              return _bucketLookup(KH_BUCKETS, value);
     if (key === 'omega')                           return _bucketLookup(OMEGA_BUCKETS, value);
@@ -8947,23 +10543,28 @@ function _ruleForKey(key, value) {
     if (key === 'xf')                              return _bucketLookup(XF_BUCKETS, value);
     if (key === 'FcD')                             return _bucketLookup(FCD_BUCKETS, value);
     if (key === 'Lh' || key === 'Llat')            return _bucketLookup(LATERAL_BUCKETS, value);
-    if (BOUNDARY_KEYS.hasOwnProperty(key))         return _ruleBoundaryL(value, BOUNDARY_KEYS[key]);
+    if (BOUNDARY_KEYS.hasOwnProperty(key))         return _ruleBoundaryL(value, BOUNDARY_KEYS[key], false);
     return null;
 }
 
 
 // ════════════════════════════════════════════════════════════════════
-// SECTION 2 — PER-MODEL NARRATIVE TEMPLATES
-// ════════════════════════════════════════════════════════════════════
-// Each model class produces a different opening sentence. We don't
-// need a per-model template for every one of the 27 — we group them by
-// category and primary parameter signature.
+// SECTION 2 — MODEL HELPERS
 // ════════════════════════════════════════════════════════════════════
 
-// Categories that need a special opening clause beyond the generic one.
+function _entry(modelKey) { return (G.PRiSM_MODELS && G.PRiSM_MODELS[modelKey]) || null; }
+
+function _plainName(modelKey) {
+    if (typeof G.PRiSM_modelPlainName === 'function') {
+        try { var n = G.PRiSM_modelPlainName(modelKey); if (n) return n; } catch (e) { /* ignore */ }
+    }
+    return modelKey || 'model';
+}
+
 function _modelCategoryOpening(modelKey) {
-    var spec = (G.PRiSM_MODELS && G.PRiSM_MODELS[modelKey]) || null;
+    var spec = _entry(modelKey);
     var cat = spec && spec.category;
+    if (modelKey === 'homogeneous' || cat === 'homogeneous') return 'a radial-flow (homogeneous reservoir) response';
     if (!cat) return null;
     if (cat === 'fracture')      return 'a hydraulically fractured response';
     if (cat === 'boundary')      return 'a bounded reservoir response';
@@ -8974,68 +10575,184 @@ function _modelCategoryOpening(modelKey) {
     if (cat === 'decline')       return 'a production-decline signature';
     if (cat === 'special')       return 'a specialised flow regime';
     if (cat === 'reservoir')     return 'a naturally fractured reservoir response';
+    if (cat === 'well-type')     return 'a ' + _plainName(modelKey).toLowerCase() + ' response';
     return null;
 }
 
-// Look up parameter unit / label from the registry — graceful fallback.
+// A radial model has no fracture / lateral reference length.
+function _isRadialModel(modelKey, params) {
+    var e = _entry(modelKey);
+    var cat = e && e.category;
+    if (cat === 'fracture' || cat === 'multilateral' || cat === 'decline') return false;
+    if (e && e.refLength && e.refLength !== 'rw') return false;
+    if (params && (_num(params.xf) || _num(params.Lh) || _num(params.FcD))) return false;
+    if (modelKey === 'horizontal' || modelKey === 'inclined') return false;
+    return true;
+}
+
 function _paramMeta(modelKey, key) {
-    var spec = (G.PRiSM_MODELS && G.PRiSM_MODELS[modelKey]) || null;
+    var spec = _entry(modelKey);
     if (!spec || !spec.paramSpec) return { unit: '', label: key };
-    for (var i = 0; i < spec.paramSpec.length; i++) {
-        if (spec.paramSpec[i].key === key) return spec.paramSpec[i];
-    }
+    for (var i = 0; i < spec.paramSpec.length; i++) if (spec.paramSpec[i].key === key) return spec.paramSpec[i];
     return { unit: '', label: key };
 }
 
-// Produce a tag entry (the public-API tag shape) from a value + rule.
-function _makeTag(key, value, range, rule) {
-    return {
-        param:       key,
-        value:       value,
-        range:       range || [NaN, NaN],
-        qualitative: rule.qualitative,
-        severity:    rule.severity,
-        hint:        rule.hint
-    };
+function _makeTag(key, value, range, rule, extra) {
+    var t = { param: key, value: value, range: range || [NaN, NaN],
+              qualitative: rule.qualitative, severity: rule.severity, hint: rule.hint };
+    if (extra) for (var k in extra) t[k] = extra[k];
+    return t;
 }
 
 
 // ════════════════════════════════════════════════════════════════════
-// SECTION 3 — ACTION RECOMMENDER
-// ════════════════════════════════════════════════════════════════════
-// Severity → list of suggested actions, keyed off the tag's qualitative
-// label so we can be specific (e.g. 'damaged' vs 'high WBS').
+// SECTION 3 — SKIN ANALYSIS (S_total → S_mech, FE / DR)
 // ════════════════════════════════════════════════════════════════════
 
-// Map qualitative-label-substring → action sentence.
-// Order matters: more-specific phrases come first.
+function _skinAnalysis(modelKey, params, meta) {
+    var phys = meta.phys || {};
+    var entry = _entry(modelKey) || {};
+    var out = { S_total: NaN, S_pseudo: 0, S_mech: NaN, Sf: NaN, FE: NaN, DR: NaN, dpS: NaN,
+                J: NaN, J_ideal: NaN, rwEff: NaN, hasPseudo: false, source: null };
+    var Sfit;
+    // Scale mode (φ, ct or rw missing): params.S is only the curve's skin at the
+    // arbitrary reference Cd, not a result. Skin comes from phys.S (null) only.
+    if (meta.mode === 'scale') {
+        if (_num(phys.S)) Sfit = phys.S;
+    } else if (_num(params.S)) Sfit = params.S;
+    else if (_num(params.S_perf) || _num(params.S_global)) Sfit = (params.S_perf || 0) + (params.S_global || 0);
+    else if (_num(phys.S)) Sfit = phys.S;
+    if (!_num(Sfit)) return out;
+    if (_num(params.Sf)) out.Sf = params.Sf;
+    var well = meta.well || {};
+    var g0 = meta.geom || {};
+    var geom = { h: _num(g0.h) ? g0.h : well.h, rw: _num(g0.rw) ? g0.rw : well.rw,
+                 hp: _num(g0.hp) ? g0.hp : well.hp, kvkh: _num(g0.kvkh) ? g0.kvkh : params.KvKh,
+                 theta: _num(g0.theta) ? g0.theta : params.theta_deg, xf: phys.xf };
+
+    // Three cases (plan §4: pseudo-skin models already separate Sg internally):
+    //  (a) registry pseudoSkin metadata → fitted skin is mechanical,
+    //      S_total = S_fit + pseudoSkin(params);
+    //  (b) S_perf / S_global models without metadata → fitted skin is
+    //      mechanical; the internal geometric term is not reported;
+    //  (c) plain-S models → fitted skin is TOTAL; decompose only when the
+    //      user supplied partial-penetration / slant geometry or D·q.
+    var separates = params.S_perf != null || params.S_global != null;
+    var pseudo = NaN;
+    if (typeof entry.pseudoSkin === 'function') {
+        try { pseudo = entry.pseudoSkin(params, geom); } catch (e) { pseudo = NaN; }
+    }
+    var decomposed = false;
+    var hasGeom = (_pos(geom.hp) && _pos(geom.h) && geom.hp < geom.h) || (_num(geom.theta) && geom.theta !== 0) ||
+                  (_num(meta.D) && _pos(well.q));
+    if (!_num(pseudo) && !separates && hasGeom && typeof G.PRiSM_skinDecomposition === 'function') {
+        try {
+            var dec = G.PRiSM_skinDecomposition({ S_total: Sfit, modelKey: modelKey, params: params, geom: geom,
+                                                  D: meta.D, q: well.q });
+            if (dec && _num(dec.S_mech)) {
+                out.S_total = Sfit;
+                out.S_mech = dec.S_mech;
+                out.S_pseudo = Sfit - dec.S_mech;
+                out.hasPseudo = Math.abs(out.S_pseudo) > 1e-6;
+                decomposed = true;
+            }
+        } catch (e) { /* fall back */ }
+    }
+    if (!decomposed) {
+        out.S_pseudo = _num(pseudo) ? pseudo : 0;
+        out.S_mech = Sfit;
+        out.S_total = Sfit + out.S_pseudo;
+        out.hasPseudo = _num(pseudo) && Math.abs(pseudo) > 1e-6;
+    }
+    if (_pos(well.rw)) out.rwEff = well.rw * Math.exp(-out.S_total);
+
+    // FE / DR / ΔpS (on the mechanical, i.e. removable, skin).
+    var kh = _num(phys.kh) ? phys.kh : (_num(phys.k) && _pos(well.h) ? phys.k * well.h : NaN);
+    var pbar = _num(meta.pbar) ? meta.pbar : (_num(phys.pi) ? phys.pi : well.pi);
+    var pwf = meta.pwf;
+    var args = { S: out.S_mech, kh: kh, k: phys.k, q: well.q, B: well.B, mu: well.mu, rw: well.rw,
+                 pbar: pbar, pwf: pwf, testType: meta.testType, CD: phys.Cd };
+    var ss = null;
+    if (typeof G.PRiSM_skinSummary === 'function' && _pos(kh)) {
+        try { ss = G.PRiSM_skinSummary(args); } catch (e) { ss = null; }
+    }
+    function pick(o, names) {
+        if (!o) return NaN;
+        for (var i = 0; i < names.length; i++) if (_num(o[names[i]])) return o[names[i]];
+        return NaN;
+    }
+    out.FE = pick(ss, ['FE', 'fe']);
+    out.DR = pick(ss, ['DR', 'dr']);
+    out.dpS = pick(ss, ['dpS', 'dPs', 'deltaPs', 'dpSkin', 'dps']);
+    out.J = pick(ss, ['J']);
+    out.J_ideal = pick(ss, ['J_ideal', 'Jideal']);
+    if (ss) out.source = 'skinSummary';
+    if (!_num(out.FE) && _pos(kh) && _pos(well.q) && _pos(well.B) && _pos(well.mu) && _num(pbar) && _num(pwf)) {
+        var dd = Math.abs(pbar - pwf);
+        if (dd > 0) {
+            out.dpS = 141.2 * well.q * well.B * well.mu * out.S_mech / kh;
+            out.FE = (dd - out.dpS) / dd;
+            out.DR = out.FE !== 0 ? 1 / out.FE : NaN;
+            out.J = well.q / dd;
+            out.J_ideal = (dd - out.dpS) > 0 ? well.q / (dd - out.dpS) : NaN;
+            out.source = 'local';
+        }
+    }
+    if (!_num(out.DR) && _num(out.FE) && out.FE !== 0) out.DR = 1 / out.FE;
+    return out;
+}
+
+function _skinActions(skin, modelKey, params) {
+    var actions = [];
+    var Sm = skin.S_mech;
+    if (!_num(Sm)) return actions;
+    var feLow = _num(skin.FE) && skin.FE < 0.5;
+    var smTxt = Sm.toFixed(1);
+    if (Sm > 10 || feLow) {
+        actions.push('Stimulation strongly indicated — mechanical skin ' + smTxt +
+                     (feLow ? ' and flow efficiency ' + Math.round(100 * skin.FE) + '%' : '') +
+                     ' (matrix acid or re-perforation)');
+    } else if (Sm >= 5) {
+        actions.push('Remedial treatment recommended (moderate damage, mechanical skin ' + smTxt + ')');
+    } else if (Sm >= 2) {
+        actions.push('Consider an acid wash if production targets are unmet (mild damage, mechanical skin ' + smTxt + ')');
+    }
+    if (_num(skin.S_total) && skin.S_total < -4 && _isRadialModel(modelKey, params)) {
+        var ratio = Math.exp(-skin.S_total);
+        actions.push('Effective wellbore radius rw′ ≈ ' + (ratio >= 100 ? ratio.toFixed(0) : ratio.toFixed(1)) +
+                     '·rw (> 50·rw) — try a fracture model');
+    }
+    if (_num(skin.Sf) && skin.Sf > 0.5) {
+        actions.push('Fracture-face damage (Sf = ' + skin.Sf.toFixed(2) + ') — consider a fracture clean-up or re-stimulation');
+    }
+    return actions;
+}
+
+
+// ════════════════════════════════════════════════════════════════════
+// SECTION 4 — OTHER ACTIONS
+// ════════════════════════════════════════════════════════════════════
+
 var ACTION_TEMPLATES = [
-    // important
-    { match: /severely damaged/i,             action: 'Matrix acid stimulation strongly indicated' },
-    { match: /^damaged/i,                     action: 'Matrix acid stimulation strongly indicated' },
-    { match: /very high WBS/i,                action: 'Mandatory downhole shut-in for next test' },
-    { match: /near .* detected|detected at/i, action: 'Confirm boundary against seismic / well-spacing geometry; revise rate planning' },
-    { match: /very close/i,                   action: 'Re-examine the early-time data — boundary very close may indicate logging or pressure-gauge artefacts' },
-    // warning
-    { match: /mildly damaged/i,               action: 'Consider acid wash or matrix stimulation if production targets unmet' },
-    { match: /short fracture/i,               action: 'Re-frac candidate evaluation' },
-    { match: /^high WBS/i,                    action: 'Future tests: downhole shut-in or longer build-up' },
+    { match: /very high WBS/i,                action: 'Use a downhole shut-in for the next test' },
+    { match: /near .* detected|detected at/i, action: 'Confirm the boundary against seismic / well-spacing geometry; revise rate planning' },
+    { match: /very close/i,                   action: 'Re-examine the early-time data — a very close boundary may be a gauge or data artefact' },
+    { match: /short fracture/i,               action: 'Evaluate as a re-fracture candidate' },
+    { match: /^high WBS/i,                    action: 'Future tests: downhole shut-in or a longer buildup' },
     { match: /low productivity/i,             action: 'Confirm completion efficiency; consider re-perforation or stimulation' },
-    { match: /weak fracture signature/i,      action: 'Re-fit as homogeneous; compare AIC' },
-    { match: /low FcD/i,                      action: 'Investigate fracture cleanup or proppant pack quality' }
-    // 'good' and 'normal' produce no actions.
+    { match: /weak fracture signature/i,      action: 'Re-fit as homogeneous and compare AIC' },
+    { match: /low FcD/i,                      action: 'Investigate fracture clean-up or proppant pack quality' }
 ];
 
 function _actionsForTags(tags) {
     var out = [];
     for (var i = 0; i < tags.length; i++) {
         var t = tags[i];
+        if (SKIN_KEYS[t.param]) continue;        // skin handled by _skinActions
         if (t.severity !== 'warning' && t.severity !== 'important') continue;
         for (var j = 0; j < ACTION_TEMPLATES.length; j++) {
             if (ACTION_TEMPLATES[j].match.test(t.qualitative)) {
-                if (out.indexOf(ACTION_TEMPLATES[j].action) < 0) {
-                    out.push(ACTION_TEMPLATES[j].action);
-                }
+                if (out.indexOf(ACTION_TEMPLATES[j].action) < 0) out.push(ACTION_TEMPLATES[j].action);
                 break;
             }
         }
@@ -9043,481 +10760,543 @@ function _actionsForTags(tags) {
     return out;
 }
 
-// Number of action templates implemented (for the final report).
-var ACTION_TEMPLATES_COUNT = ACTION_TEMPLATES.length;
-
 
 // ════════════════════════════════════════════════════════════════════
-// SECTION 4 — CONFIDENCE ASSESSMENT
+// SECTION 5 — CONFIDENCE
 // ════════════════════════════════════════════════════════════════════
-// Combine R², CI tightness vs param value, and ΔAIC margin (if known).
-//
-//   high    : R² ≥ 0.99 AND all CIs < 30 % AND ΔAIC > 10
-//   medium  : R² ≥ 0.95 AND most CIs < 50 %
-//   low     : R² < 0.95  OR any CI > 100 %  OR ΔAIC < 2
-// ════════════════════════════════════════════════════════════════════
+//   high   : R² ≥ 0.99 AND all CIs < 30 % AND (margin to runner-up > 10 or unknown)
+//   medium : R² ≥ 0.95
+//   low    : R² < 0.95 OR any CI > 100 % OR margin < 2 OR not converged
 
 function _ciFractionalWidth(value, range) {
     if (!range || !isFinite(range[0]) || !isFinite(range[1])) return Infinity;
     if (!isFinite(value)) return Infinity;
     var halfWidth = 0.5 * (range[1] - range[0]);
-    // For near-zero parameter values (e.g. S = 0), fractional width is
-    // ill-defined. Use the half-width directly as an absolute tolerance
-    // and treat anything < 1.0 (in skin units, etc.) as "tight".
-    if (Math.abs(value) < 1e-3) {
-        return Math.abs(halfWidth);
-    }
+    if (Math.abs(value) < 1) return Math.abs(halfWidth);      // skin-like values near zero
     return Math.abs(halfWidth / value);
 }
 
 function _confidenceLevel(tags, fitMeta) {
-    var r2     = (fitMeta && isFinite(fitMeta.r2))     ? fitMeta.r2     : NaN;
-    var dAIC   = (fitMeta && isFinite(fitMeta.dAIC))   ? fitMeta.dAIC   : NaN;
-    // Inspect CI tightness across tagged params.
-    var widths = tags.map(function (t) { return _ciFractionalWidth(t.value, t.range); });
+    var r2 = (fitMeta && isFinite(fitMeta.r2)) ? fitMeta.r2 : NaN;
+    var dAIC = (fitMeta && isFinite(fitMeta.dAIC)) ? fitMeta.dAIC : NaN;
+    var withCI = tags.filter(function (t) { return t.range && isFinite(t.range[0]) && isFinite(t.range[1]); });
+    var widths = withCI.map(function (t) { return _ciFractionalWidth(t.value, t.range); });
     var anyVeryWide = widths.some(function (w) { return w > 1.0; });
-    var allTight    = widths.every(function (w) { return w < 0.30; });
-    var mostMedium  = widths.filter(function (w) { return w < 0.50; }).length
-                       >= Math.max(1, Math.floor(widths.length / 2 + 0.5));
-
-    // Low takes precedence — any bad signal demotes the verdict.
+    var allTight = widths.length > 0 && widths.every(function (w) { return w < 0.30; });
+    if (fitMeta && fitMeta.converged === false) return 'low';
     if (isFinite(r2) && r2 < 0.95) return 'low';
-    if (anyVeryWide)                return 'low';
+    if (anyVeryWide) return 'low';
     if (isFinite(dAIC) && dAIC < 2) return 'low';
-    // High requires every gate to pass; if AIC margin unknown, accept other gates.
     if ((!isFinite(r2) || r2 >= 0.99) && allTight && (!isFinite(dAIC) || dAIC > 10)) return 'high';
-    // Medium fallback.
-    if ((!isFinite(r2) || r2 >= 0.95) && mostMedium) return 'medium';
     return 'medium';
 }
 
-// Confidence-tinted verbs to keep the prose honest.
 function _confidenceVerb(level) {
-    if (level === 'high')   return 'indicates';
+    if (level === 'high')   return 'shows';
     if (level === 'medium') return 'is consistent with';
     return 'tentatively suggests';
 }
 
 function _confidenceStatement(level) {
     if (level === 'high')   return 'Confidence in this interpretation is high';
-    if (level === 'medium') return 'Confidence is moderate — tighten CIs with longer flow periods if possible';
+    if (level === 'medium') return 'Confidence is moderate — longer flow periods would tighten the ranges';
     return 'Confidence is low — treat this interpretation as preliminary';
 }
 
 
 // ════════════════════════════════════════════════════════════════════
-// SECTION 5 — NARRATIVE COMPOSITION
-// ════════════════════════════════════════════════════════════════════
-// Generate the full prose paragraph from tags + classification info.
-// Kept tight (60-120 words) by chaining short clauses.
+// SECTION 6 — NARRATIVE
 // ════════════════════════════════════════════════════════════════════
 
 function _findTag(tags, key) {
     for (var i = 0; i < tags.length; i++) if (tags[i].param === key) return tags[i];
     return null;
 }
-function _findTagByPrefix(tags, prefix) {
-    for (var i = 0; i < tags.length; i++) {
-        if (tags[i].param.indexOf(prefix) === 0) return tags[i];
-    }
-    return null;
+function _findSkinTag(tags) {
+    return _findTag(tags, 'S_mech') || _findTag(tags, 'S') || _findTag(tags, 'S_perf') || _findTag(tags, 'S_global');
 }
 function _findBoundaryTags(tags) {
-    var out = [];
-    for (var i = 0; i < tags.length; i++) {
-        if (BOUNDARY_KEYS.hasOwnProperty(tags[i].param)) out.push(tags[i]);
-    }
-    return out;
+    return tags.filter(function (t) { return BOUNDARY_KEYS.hasOwnProperty(t.param); });
 }
 
-// Build a value+CI string ("S = -1.4 ± 0.3" or "kh = 245 md·ft").
 function _valueWithCI(tag, modelKey) {
     var meta = _paramMeta(modelKey, tag.param);
-    var unit = meta.unit && meta.unit !== '-' ? (' ' + meta.unit) : '';
-    var v = _prose(tag.value);
-    var halfCI = NaN;
-    if (tag.range && isFinite(tag.range[0]) && isFinite(tag.range[1])) {
-        halfCI = 0.5 * (tag.range[1] - tag.range[0]);
-    }
-    if (isFinite(halfCI) && halfCI > 0) {
-        return tag.param + ' = ' + v + ' ± ' + _prose(halfCI) + unit;
-    }
-    return tag.param + ' = ' + v + unit;
+    var unit = (meta.unit && meta.unit !== '-') ? meta.unit : '';
+    if (tag.identifiable === false) return tag.param + ' ≈ ' + _sig(tag.value, 2) + (unit ? ' ' + unit : '') + ' (not resolved)';
+    return tag.param + ' = ' + PRiSM_formatWithCI(tag.value, _half(tag.range), unit);
 }
 
-G.PRiSM_buildNarrative = function PRiSM_buildNarrative(tags, modelKey, classification) {
+function _capitalize(s) { return (s && s.length) ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
+
+G.PRiSM_buildNarrative = function PRiSM_buildNarrative(tags, modelKey, ctx) {
+    ctx = ctx || {};
     if (!tags || !tags.length) {
-        return 'No interpretable parameters were extracted from this fit.';
+        if (ctx.phys && _num(ctx.phys.kh)) tags = [];
+        else return 'No interpretable parameters were extracted from this fit.';
     }
-    var verb = _confidenceVerb((classification && classification.confidence) || 'medium');
-    var spec = (G.PRiSM_MODELS && G.PRiSM_MODELS[modelKey]) || null;
-    var modelKnown = !!spec;
+    var conf = ctx.confidence || 'medium';
+    var verb = _confidenceVerb(conf);
+    var modelKnown = !!_entry(modelKey);
+    var phys = ctx.phys || {};
+    var ci = ctx.ci95 || {};
+    var ident = ctx.identifiable || {};
+    var skin = ctx.skin || {};
     var clauses = [];
 
-    // Opening — model class + skin tag (if present).
-    var skinTag = _findTagByPrefix(tags, 'S');
-    var openCat = _modelCategoryOpening(modelKey);
-    var opening;
-    if (modelKnown && openCat) {
-        if (skinTag) {
-            opening = 'This well ' + verb + ' ' + openCat + ' with '
-                    + skinTag.hint + ' (' + _valueWithCI(skinTag, modelKey) + ').';
-        } else {
-            opening = 'This well ' + verb + ' ' + openCat + '.';
-        }
-    } else if (skinTag) {
-        opening = 'This well ' + verb + ' ' + skinTag.hint
-                + ' (' + _valueWithCI(skinTag, modelKey) + ').';
-    } else {
-        opening = 'Fitted parameters described below.';
+    var skinTag = _findSkinTag(tags);
+    var openCat = modelKnown ? _modelCategoryOpening(modelKey) : null;
+    var skinPart = '';
+    if (skinTag) {
+        skinPart = skinTag.hint + ' (' + _valueWithCI(skinTag, modelKey) + ')';
     }
-    clauses.push(opening);
+    if (openCat) {
+        clauses.push('This well ' + verb + ' ' + openCat + (skinPart ? ' with ' + skinPart : '') + '.');
+    } else if (skinPart) {
+        clauses.push('This well ' + verb + ' ' + skinPart + '.');
+    } else {
+        clauses.push('Fitted parameters are described below.');
+    }
+    if (skin.hasPseudo && _num(skin.S_total) && _num(skin.S_mech)) {
+        clauses.push('The total skin of ' + skin.S_total.toFixed(2) + ' includes ' + skin.S_pseudo.toFixed(2) +
+                     ' of geometric (pseudo-)skin, leaving a mechanical skin of ' + skin.S_mech.toFixed(2) + '.');
+    }
 
-    // Wellbore storage clause.
+    // Permeability / productivity in field units.
+    if (_num(phys.k)) {
+        var kTxt = ident.k === false ? '≈' + _sig(phys.k, 2) + ' md (not resolved)'
+                                     : PRiSM_formatWithCI(phys.k, _half(ci.k), 'md');
+        var khTxt = _num(phys.kh) ? ' (kh ' + PRiSM_formatWithCI(phys.kh, _half(ci.kh), 'md·ft') + ')' : '';
+        var khTag = _findTag(tags, 'kh');
+        clauses.push('Permeability is ' + kTxt + khTxt + (khTag ? ', ' + khTag.hint + ' productivity' : '') + '.');
+    } else if (_num(phys.kh)) {
+        clauses.push('Flow capacity kh is ' + PRiSM_formatWithCI(phys.kh, _half(ci.kh), 'md·ft') + '.');
+    }
+
     var cdTag = _findTag(tags, 'Cd');
     if (cdTag) {
-        clauses.push('Wellbore storage is ' + cdTag.hint + ' (Cd ≈ '
-                     + _prose(cdTag.value) + ').');
+        var cTxt = _num(phys.C) ? 'C ' + PRiSM_formatWithCI(phys.C, _half(ci.C), 'bbl/psi') + ', ' : '';
+        clauses.push('Wellbore storage is ' + cdTag.hint + ' (' + cTxt + 'Cd ≈ ' + _sig(cdTag.value, 2) + ').');
     }
 
-    // Productivity clause (kh).
-    var khTag = _findTag(tags, 'kh');
-    if (khTag) {
-        var khMeta = _paramMeta(modelKey, 'kh');
-        var unit = khMeta.unit && khMeta.unit !== '-' ? (' ' + khMeta.unit) : ' md·ft';
-        clauses.push('Productivity is ' + khTag.hint + ' (kh = '
-                     + _prose(khTag.value) + unit + ').');
-    }
-
-    // Boundary clauses (one per boundary tag found).
-    var bTags = _findBoundaryTags(tags);
-    for (var i = 0; i < bTags.length; i++) {
-        var bt = bTags[i];
-        var bMeta = _paramMeta(modelKey, bt.param);
-        var bUnit = (bMeta.unit && bMeta.unit !== '-') ? (' ' + bMeta.unit) : ' ft';
-        var hintAct = '';
-        if (bt.severity === 'important') {
-            hintAct = ' — confirm against geology before extending production at this rate';
-        } else if (bt.severity === 'warning') {
-            hintAct = ' — verify data quality at the early-time end of the test';
+    // Flow efficiency wording.
+    if (_num(skin.FE) && skin.FE > 0) {
+        var fePct = Math.round(100 * skin.FE);
+        var gain = _num(skin.DR) ? Math.round(100 * (skin.DR - 1)) : NaN;
+        var txt = 'The well flows at ' + fePct + '% of its undamaged potential (FE ' + fePct + '%';
+        if (_num(skin.DR)) txt += ', DR ' + skin.DR.toFixed(2);
+        txt += ')';
+        if (_num(gain) && gain > 0) {
+            txt += '; removing the skin would add ≈' + gain + '% rate';
+            if (_num(skin.dpS)) txt += ' (skin pressure drop ≈' + _sig(skin.dpS, 3) + ' psi)';
+        } else if (_num(gain) && gain < 0) {
+            txt += '; the completion outperforms an undamaged well by ≈' + Math.abs(gain) + '%';
         }
-        clauses.push(_capitalize(bt.hint) + ' at ' + _prose(bt.value) + bUnit
-                     + ' from the wellbore' + hintAct + '.');
+        clauses.push(txt + '.');
     }
 
-    // Fracture clause (xf, FcD).
+    _findBoundaryTags(tags).forEach(function (bt) {
+        var dFt = phys.distances_ft && phys.distances_ft[bt.param];
+        var hintAct = '';
+        if (bt.severity === 'important') hintAct = ' — confirm against geology before extending production at this rate';
+        else if (bt.severity === 'warning') hintAct = ' — verify data quality at the early-time end of the test';
+        var where = _num(dFt) ? (' about ' + _sig(dFt, 2) + ' ft') : (' at ' + _prose(bt.value) + ' (model units)');
+        if (bt.identifiable === false) {
+            clauses.push('A ' + (BOUNDARY_KEYS[bt.param] || 'boundary').toLowerCase() + ' is not resolved by the data (beyond the radius investigated).');
+        } else {
+            clauses.push(_capitalize(bt.hint) + where + ' from the wellbore' + hintAct + '.');
+        }
+    });
+
     var xfTag = _findTag(tags, 'xf');
-    if (xfTag) {
-        clauses.push(_capitalize(xfTag.hint) + ' is observed (xf = '
-                     + _prose(xfTag.value) + ' ft).');
-    }
+    if (xfTag) clauses.push(_capitalize(xfTag.hint) + ' is observed (xf ' + PRiSM_formatWithCI(xfTag.value, _half(xfTag.range), 'ft') + ').');
     var fcdTag = _findTag(tags, 'FcD');
-    if (fcdTag) {
-        clauses.push('The data show ' + fcdTag.hint + ' (FcD ≈ '
-                     + _prose(fcdTag.value) + ').');
-    }
+    if (fcdTag) clauses.push('The data show ' + fcdTag.hint + ' (FcD ≈ ' + _sig(fcdTag.value, 2) + ').');
+    var sfTag = _findTag(tags, 'Sf');
+    if (sfTag && sfTag.severity !== 'normal') clauses.push('There is ' + sfTag.hint + ' (Sf = ' + sfTag.value.toFixed(2) + ').');
 
-    // Naturally fractured clause (ω, λ).
-    var omegaTag  = _findTag(tags, 'omega');
-    var lambdaTag = _findTag(tags, 'lambda');
+    var omegaTag = _findTag(tags, 'omega'), lambdaTag = _findTag(tags, 'lambda');
     if (omegaTag || lambdaTag) {
-        var nf = 'The double-porosity signature shows ';
         var parts = [];
-        if (omegaTag)  parts.push(omegaTag.hint  + ' (ω = '  + _prose(omegaTag.value)  + ')');
-        if (lambdaTag) parts.push(lambdaTag.hint + ' (λ = '  + _prose(lambdaTag.value) + ')');
-        clauses.push(nf + parts.join(' and ') + '.');
+        if (omegaTag)  parts.push(omegaTag.hint  + ' (ω ≈ ' + _sig(omegaTag.value, 2) + ')');
+        if (lambdaTag) parts.push(lambdaTag.hint + ' (λ ≈ ' + _sig(lambdaTag.value, 2) + ')');
+        clauses.push('The dual-porosity signature shows ' + parts.join(' and ') + '.');
     }
-
-    // Lateral length clause (horizontal wells).
     var lhTag = _findTag(tags, 'Lh') || _findTag(tags, 'Llat');
-    if (lhTag) {
-        clauses.push('Completion length is consistent with ' + lhTag.hint + '.');
-    }
+    if (lhTag) clauses.push('Completion length is consistent with ' + lhTag.hint + '.');
 
-    // Closing — confidence + primary action hint.
-    var conf = (classification && classification.confidence) || 'medium';
+    if (_num(phys.rinv)) clauses.push('The test investigated about ' + _sig(phys.rinv, 2) + ' ft from the well.');
+
     clauses.push(_confidenceStatement(conf) + '.');
-
-    // Unknown-model caveat.
-    if (!modelKnown) {
-        clauses.push('Note: model "' + (modelKey || '?') + '" is not in the PRiSM registry — '
-                     + 'this is a generic interpretation.');
-    }
-
+    if (!modelKnown) clauses.push('Note: model "' + (modelKey || '?') + '" is not in the PRiSM registry — this is a generic interpretation.');
     return clauses.join(' ');
 };
 
-function _capitalize(s) {
-    if (!s || !s.length) return s;
-    return s.charAt(0).toUpperCase() + s.slice(1);
+function _headline(skin, tags, modelKey, fitMeta) {
+    var parts = [];
+    var st = _findSkinTag(tags);
+    fitMeta = fitMeta || {};
+    if (fitMeta.mode === 'scale') {
+        parts.push(_plainName(modelKey));
+        parts.push('skin not identifiable (enter φ, ct, rw)');
+    } else if (st) {
+        var q = st.qualitative;
+        var label = /damaged/.test(q) ? _capitalize(q) + ' well' : (/stimulated/.test(q) ? _capitalize(q) + ' well' : 'No significant skin');
+        parts.push(label + ' (S ' + (_num(skin.S_total) ? skin.S_total.toFixed(1) : _sig(st.value, 2)) + ')');
+    } else {
+        parts.push(_plainName(modelKey));
+    }
+    if (_num(skin.FE) && skin.FE > 0) parts.push('FE ' + Math.round(100 * skin.FE) + '%');
+    if (fitMeta.mode !== 'scale' && Array.isArray(fitMeta.inputsDefaulted) && fitMeta.inputsDefaulted.length) {
+        parts.push('based on default ' + fitMeta.inputsDefaulted.join(', '));
+    }
+    var b = _findBoundaryTags(tags).filter(function (t) { return t.severity === 'important' && t.identifiable !== false; })[0];
+    if (b) parts.push((BOUNDARY_KEYS[b.param] || 'boundary').toLowerCase() + ' detected');
+    return parts.join(' · ');
 }
 
 
 // ════════════════════════════════════════════════════════════════════
-// SECTION 6 — PUBLIC API: PRiSM_interpretFit
-// ════════════════════════════════════════════════════════════════════
-//
-// Inputs:
-//   modelKey  — registry key (e.g. 'homogeneous', 'singleFault')
-//   params    — { paramKey: numericValue, ... }
-//   CI95      — { paramKey: [lo, hi], ... }   (optional, may be partial)
-//
-// Optional 4th argument: fitMeta = { r2, dAIC, iterations, secondModelKey }
-//   used to refine confidence + cautions.
-//
-// Output:
-//   { tags, narrative, actions, confidence, cautions }
+// SECTION 7 — PUBLIC API: PRiSM_interpretFit
 // ════════════════════════════════════════════════════════════════════
 
 G.PRiSM_interpretFit = function PRiSM_interpretFit(modelKey, params, CI95, fitMeta) {
     params = params || {};
-    CI95   = CI95   || {};
+    CI95 = CI95 || {};
     fitMeta = fitMeta || {};
-
-    var modelKnown = !!(G.PRiSM_MODELS && G.PRiSM_MODELS[modelKey]);
+    var phys = fitMeta.phys || {};
+    var ident = fitMeta.identifiable || {};
+    var spec = _entry(modelKey);
+    var modelKnown = !!spec;
     var tags = [];
 
-    // Determine the iteration set: union of known param keys.
-    // Prefer the model's paramSpec ordering when available, else
-    // iterate the supplied params object.
     var keys = [];
-    if (modelKnown) {
-        var spec = G.PRiSM_MODELS[modelKey];
-        if (spec.paramSpec && spec.paramSpec.length) {
-            for (var i = 0; i < spec.paramSpec.length; i++) {
-                keys.push(spec.paramSpec[i].key);
-            }
-        }
-    }
-    // Append any extra keys present in `params` but not in paramSpec.
-    for (var k in params) {
-        if (Object.prototype.hasOwnProperty.call(params, k) && keys.indexOf(k) < 0) {
-            keys.push(k);
-        }
-    }
+    if (spec && spec.paramSpec) spec.paramSpec.forEach(function (s) { keys.push(s.key); });
+    for (var k in params) if (Object.prototype.hasOwnProperty.call(params, k) && keys.indexOf(k) < 0) keys.push(k);
 
+    var skinScale = fitMeta.mode === 'scale';
     for (var ki = 0; ki < keys.length; ki++) {
         var key = keys[ki];
         var v = params[key];
         if (typeof v !== 'number' || !isFinite(v)) continue;
-        var rule = _ruleForKey(key, v);
+        // Scale mode: S is not identifiable and Cd is the arbitrary reference value.
+        if (skinScale && (key === 'S' || key === 'S_perf' || key === 'S_global' || key === 'Cd')) continue;
+        var rule;
+        var dFt = phys.distances_ft && phys.distances_ft[key];
+        if (BOUNDARY_KEYS.hasOwnProperty(key) && _num(dFt)) rule = _ruleBoundaryL(dFt, BOUNDARY_KEYS[key], true);
+        else rule = _ruleForKey(key, v);
         if (!rule) continue;
-        var range = (CI95 && CI95[key]) ? CI95[key] : [NaN, NaN];
-        tags.push(_makeTag(key, v, range, rule));
+        var range = CI95[key] ? CI95[key] : [NaN, NaN];
+        tags.push(_makeTag(key, v, range, rule, ident.hasOwnProperty(key) ? { identifiable: ident[key] } : null));
+    }
+    // kh tag from the physical results.
+    if (_num(phys.kh) && !_findTag(tags, 'kh')) {
+        var khRule = _ruleForKey('kh', phys.kh);
+        if (khRule) tags.push(_makeTag('kh', phys.kh, CI95.kh || [NaN, NaN], khRule));
     }
 
-    // Confidence — pick before narrative so the prose can reflect it.
+    var skin = _skinAnalysis(modelKey, params, fitMeta);
+    // Mechanical-skin tag when it differs from the fitted skin (pseudo-skin present).
+    if (skin.hasPseudo && _num(skin.S_mech)) {
+        var smRule = _ruleForKey('S_mech', skin.S_mech);
+        if (smRule) tags.unshift(_makeTag('S_mech', skin.S_mech, [NaN, NaN], smRule));
+    }
+    // Combined skin tag when the model splits skin (S_perf + S_global) or only
+    // the physical results carry S.
+    if (!_findTag(tags, 'S') && !_findTag(tags, 'S_mech') && _num(skin.S_mech)) {
+        var sRule = _ruleForKey('S', skin.S_mech);
+        if (sRule) tags.unshift(_makeTag('S', skin.S_mech, CI95.S || [NaN, NaN], sRule));
+    }
+
     var confidence = _confidenceLevel(tags, fitMeta);
+    var cautions = _buildCautions(tags, fitMeta, modelKnown, modelKey, skin);
+    var narrative = G.PRiSM_buildNarrative(tags, modelKey, {
+        confidence: confidence, phys: phys, ci95: CI95, identifiable: ident, skin: skin });
 
-    // Cautions — explicit data-quality / fit-quality flags.
-    var cautions = _buildCautions(tags, fitMeta, modelKnown, modelKey);
+    var actions = _skinActions(skin, modelKey, params).concat(_actionsForTags(tags));
+    // Reassurance only when EVERY skin term is acceptable.
+    var skinTags = tags.filter(function (t) { return SKIN_KEYS[t.param]; });
+    var allSkinOk = skinTags.length > 0 &&
+        skinTags.every(function (t) { return t.severity === 'good' || t.severity === 'normal'; }) &&
+        _num(skin.S_mech) && skin.S_mech < 2 &&
+        !(_num(skin.FE) && skin.FE < 0.5) &&
+        !(_num(skin.S_total) && skin.S_total < -4 && _isRadialModel(modelKey, params)) &&
+        !(_num(skin.Sf) && skin.Sf > 0.5);
+    if (allSkinOk) actions.push('Skin is acceptable; no immediate workover indicated');
 
-    var narrative = G.PRiSM_buildNarrative(tags, modelKey, { confidence: confidence });
-    var actions   = _actionsForTags(tags);
-
-    // If skin is acceptable (good/normal) explicitly add a "no workover" reassurance.
-    var skinTag = _findTagByPrefix(tags, 'S');
-    if (skinTag && (skinTag.severity === 'good' || skinTag.severity === 'normal')) {
-        actions.push('Skin is acceptable; no immediate workover indicated');
-    }
-
-    // If a boundary CI is wide, suggest a longer build-up.
     for (var bi = 0; bi < tags.length; bi++) {
         var t = tags[bi];
         if (BOUNDARY_KEYS.hasOwnProperty(t.param)) {
             var w = _ciFractionalWidth(t.value, t.range);
             if (isFinite(w) && w > 0.10) {
-                actions.push('Re-run buildup at higher resolution if data permits, to better-constrain '
-                             + t.param + ' (currently ±' + _prose(0.5 * (t.range[1] - t.range[0])) + ')');
+                actions.push('Extend the test or re-run the buildup at higher resolution to better constrain ' + t.param +
+                             ' (currently ±' + _prose(0.5 * (t.range[1] - t.range[0])) + ')');
                 break;
             }
         }
     }
 
     return {
-        tags:       tags,
-        narrative:  narrative,
-        actions:    actions,
-        confidence: confidence,
-        cautions:   cautions
+        tags: tags, narrative: narrative, headline: _headline(skin, tags, modelKey, fitMeta),
+        actions: actions, confidence: confidence, cautions: cautions,
+        skin: { S_total: skin.S_total, S_pseudo: skin.S_pseudo, S_mech: skin.S_mech, Sf: skin.Sf,
+                FE: skin.FE, DR: skin.DR, dpS: skin.dpS, J: skin.J, J_ideal: skin.J_ideal, rwEff: skin.rwEff },
+        modelKey: modelKey, modelName: _plainName(modelKey), source: fitMeta.source || null,
+        timestamp: new Date().toISOString()
     };
 };
 
-function _buildCautions(tags, fitMeta, modelKnown, modelKey) {
+function _buildCautions(tags, fitMeta, modelKnown, modelKey, skin) {
     var cautions = [];
-    if (!modelKnown) {
-        cautions.push('Model "' + (modelKey || '?') + '" is not in the PRiSM registry — interpretation is generic.');
-    }
-    if (fitMeta) {
-        if (isFinite(fitMeta.iterations) && isFinite(fitMeta.dAIC)) {
-            // Format both — exact wording matches the example in the spec.
-            var iters = Math.round(fitMeta.iterations);
-            if (fitMeta.secondModelKey) {
-                cautions.push('Fit converged in ' + iters + ' LM iterations; AIC strongly prefers '
-                              + (modelKey || 'this model') + ' over '
-                              + fitMeta.secondModelKey + ' (ΔAIC = ' + _prose(fitMeta.dAIC) + ').');
-            } else {
-                cautions.push('Fit converged in ' + iters + ' LM iterations (ΔAIC vs runner-up = '
-                              + _prose(fitMeta.dAIC) + ').');
-            }
-        } else if (isFinite(fitMeta.iterations)) {
-            cautions.push('Fit converged in ' + Math.round(fitMeta.iterations) + ' LM iterations.');
-        }
-        if (isFinite(fitMeta.r2) && fitMeta.r2 < 0.99 && fitMeta.r2 >= 0.95) {
-            cautions.push('Late-time data shows residual structure — possible second mechanism out of range.');
-        }
-        if (isFinite(fitMeta.lateRMSE) && fitMeta.lateRMSE > 0.02) {
-            cautions.push('Late-time data (td > 1000) shows ~' + _prose(100 * fitMeta.lateRMSE)
-                          + '% RMSE — possible second boundary out of range.');
+    if (!modelKnown) cautions.push('Model "' + (modelKey || '?') + '" is not in the PRiSM registry — interpretation is generic.');
+    if (fitMeta.stale) cautions.push('The fit is out of date (data or model changed since it was run) — re-run the fit.');
+    if (fitMeta.converged === false) cautions.push('The fit did not converge — values are a starting point, not a result.');
+    if (fitMeta.mode === 'scale') cautions.push('Well inputs are incomplete — skin cannot be identified without φ, ct and rw.');
+    if (isFinite(fitMeta.iterations)) {
+        var iters = Math.round(fitMeta.iterations);
+        if (isFinite(fitMeta.dAIC) && fitMeta.secondModelKey) {
+            cautions.push('Fit converged in ' + iters + ' iterations; AIC prefers ' + _plainName(modelKey) + ' over ' +
+                          _plainName(fitMeta.secondModelKey) + ' by ' + _prose(fitMeta.dAIC) + '.');
+        } else {
+            cautions.push('Fit finished in ' + iters + ' iterations.');
         }
     }
-    // Wide-CI flag per tag.
-    var anyVeryWide = false;
-    for (var i = 0; i < tags.length; i++) {
-        var w = _ciFractionalWidth(tags[i].value, tags[i].range);
-        if (isFinite(w) && w > 1.0) { anyVeryWide = true; break; }
+    if (isFinite(fitMeta.r2) && fitMeta.r2 < 0.99 && fitMeta.r2 >= 0.95) {
+        cautions.push('Residual structure remains (R² ' + fitMeta.r2.toFixed(3) + ') — a second mechanism may be present.');
     }
-    if (anyVeryWide) {
-        cautions.push('At least one parameter has a CI wider than the value itself — interpret with care.');
+    if (isFinite(fitMeta.lateRMSE) && fitMeta.lateRMSE > 0.02) {
+        cautions.push('Late-time data show ~' + _prose(100 * fitMeta.lateRMSE) + '% RMSE — a boundary may lie beyond the fitted model.');
     }
+    if (tags.some(function (t) { var w = _ciFractionalWidth(t.value, t.range); return isFinite(w) && w > 1.0; })) {
+        cautions.push('At least one parameter has a range wider than its value — interpret with care.');
+    }
+    var unresolved = tags.filter(function (t) { return t.identifiable === false; }).map(function (t) { return t.param; });
+    if (unresolved.length) cautions.push('Not resolved by the data: ' + unresolved.join(', ') + '.');
+    if (skin && skin.hasPseudo) cautions.push('Actions are based on the mechanical skin, not the total skin.');
+    if (Array.isArray(fitMeta.warnings)) fitMeta.warnings.forEach(function (w) {
+        if (typeof w === 'string' && cautions.indexOf(w) < 0 && !/^Not resolved/.test(w)) cautions.push(w);
+    });
     return cautions;
 }
 
 
 // ════════════════════════════════════════════════════════════════════
-// SECTION 7 — PUBLIC API: PRiSM_interpretCurrentFit
+// SECTION 8 — CURRENT FIT (reads the normalised lastFit)
 // ════════════════════════════════════════════════════════════════════
-// Convenience wrapper — pulls everything from PRiSM_state.lastFit.
-// Returns null if no fit is available.
-// ════════════════════════════════════════════════════════════════════
+
+function _normaliseFit(lf) {
+    if (!lf) return null;
+    var f = {};
+    for (var k in lf) if (Object.prototype.hasOwnProperty.call(lf, k)) f[k] = lf[k];
+    if (!_num(f.r2) && _num(f.R2)) f.r2 = f.R2;
+    if (!_num(f.rmse) && _num(f.RMSE)) f.rmse = f.RMSE;
+    if (!_num(f.aic) && _num(f.AIC)) f.aic = f.AIC;
+    if (!f.ci95 && f.CI95) f.ci95 = f.CI95;
+    if (!f.modelKey && f.model) f.modelKey = f.model;
+    return f;
+}
+
+function _currentWell() {
+    if (typeof G.PRiSM_getWell === 'function') {
+        try { var w = G.PRiSM_getWell(); if (w) return w; } catch (e) { /* fall back */ }
+    }
+    var pvt = G.PRiSM_pvt || {}, c = pvt._computed || {};
+    var ds = G.PRiSM_dataset;
+    var qd = NaN;
+    if (ds && ds.q && ds.q.length) {
+        var qs = []; for (var i = 0; i < ds.q.length; i++) if (_pos(ds.q[i])) qs.push(ds.q[i]);
+        qs.sort(function (a, b) { return a - b; });
+        if (qs.length) qd = qs[qs.length >> 1];
+    }
+    var prov = pvt.provenance && pvt.provenance.p_res;
+    return {
+        q: _pos(qd) ? qd : pvt.q, B: _pos(pvt.Bo) ? pvt.Bo : c.B, mu: _pos(pvt.mu_o) ? pvt.mu_o : c.mu,
+        ct: _pos(pvt.ct) ? pvt.ct : c.ct, h: pvt.h, phi: pvt.phi, rw: pvt.rw,
+        pi: (prov === 'user' || prov === 'sample' || prov === 'deconvolution') ? pvt.p_res : null,
+        testType: pvt.testType || 'auto', pwf0: pvt.pwf0
+    };
+}
+
+// Flowing pressure used for FE: last flowing pressure (drawdown) or pwf at shut-in (buildup).
+function _pwfFor(testType, well, lf) {
+    if (lf && _num(lf.pwf)) return lf.pwf;
+    var ds = G.PRiSM_dataset;
+    if (testType === 'buildup' || testType === 'falloff') {
+        if (_num(well.pwf0)) return well.pwf0;
+        if (lf && lf.pRefSource === 'pwf0' && _num(lf.pRef)) return lf.pRef;
+        return NaN;
+    }
+    if (ds && ds.p && ds.p.length) {
+        for (var i = ds.p.length - 1; i >= 0; i--) if (_num(ds.p[i])) return ds.p[i];
+    }
+    return NaN;
+}
 
 G.PRiSM_interpretCurrentFit = function PRiSM_interpretCurrentFit() {
     var st = G.PRiSM_state;
-    if (!st) return null;
-    var modelKey = st.model;
-    // Prefer a stored lastFit (set by the auto-match orchestrator) but fall
-    // back to the live params + (no CI) so we still produce a narrative.
-    var lf = st.lastFit;
+    var lf = null;
+    if (typeof G.PRiSM_getLastFit === 'function') {
+        try { lf = G.PRiSM_getLastFit(); } catch (e) { lf = null; }
+    }
+    if (!lf && st) lf = st.lastFit;
+    lf = _normaliseFit(lf);
+    var modelKey = (st && st.model) || null;
     var params, ci, fitMeta;
     if (lf && lf.params) {
-        params  = lf.params;
-        ci      = lf.ci95 || lf.CI95 || {};
+        if (lf.kind === 'rate') return null;             // decline results are interpreted by 35
+        modelKey = lf.modelKey || modelKey;
+        params = lf.params;
+        ci = lf.ci95 || {};
+        var well = _currentWell() || {};
+        var testType = (lf.testType) || (well.testType && well.testType !== 'auto' ? well.testType : null) || 'drawdown';
         fitMeta = {
-            r2:             lf.r2,
-            dAIC:           lf.dAIC,
-            iterations:     lf.iterations,
+            r2: lf.r2,
+            // Margin to the runner-up (the applied auto-match row carries dAICnext).
+            dAIC: _num(lf.dAICnext) ? lf.dAICnext : NaN,
             secondModelKey: lf.secondModelKey,
-            lateRMSE:       lf.lateRMSE
+            iterations: lf.iterations, lateRMSE: lf.lateRMSE,
+            converged: (lf.converged === false) ? false : undefined,
+            phys: lf.phys || (st && st.phys) || {},
+            identifiable: lf.identifiable || {},
+            well: well, testType: testType,
+            pbar: (lf.phys && _num(lf.phys.pi)) ? lf.phys.pi : (_num(lf.pRef) && (lf.pRefSource === 'pi' || lf.pRefSource === 'floated') ? lf.pRef : well.pi),
+            pwf: _pwfFor(testType, well, lf),
+            source: lf.source, stale: !!lf.stale, mode: lf.mode, warnings: lf.warnings,
+            inputsDefaulted: lf.inputsDefaulted,
+            geom: (st && (st.skinGeom || (st.semilog && st.semilog.geom))) || null,
+            D: (st && st.semilog && _num(st.semilog.D)) ? st.semilog.D : undefined
         };
-        if (lf.modelKey) modelKey = lf.modelKey;
-    } else if (st.params) {
-        params  = st.params;
-        ci      = {};
-        fitMeta = {};
+    } else if (st && st.params) {
+        params = st.params; ci = {}; fitMeta = { phys: st.phys || {}, source: 'manual' };
     } else {
         return null;
     }
     return G.PRiSM_interpretFit(modelKey, params, ci, fitMeta);
 };
 
-
-// ════════════════════════════════════════════════════════════════════
-// SECTION 8 — UI RENDER
-// ════════════════════════════════════════════════════════════════════
-// Render a styled panel into the container with:
-//   • confidence badge
-//   • narrative paragraph
-//   • parameter chips colour-coded by severity
-//   • actions checklist
-//   • cautions block
-// ════════════════════════════════════════════════════════════════════
-
-var SEV_COLORS = {
-    'good':      { bg: '#0f3a1f', border: '#2ea043', text: '#7ee787' },
-    'normal':    { bg: '#1f2937', border: '#30363d', text: '#c9d1d9' },
-    'warning':   { bg: '#3a2f0f', border: '#bb8009', text: '#f0c674' },
-    'important': { bg: '#3a0f0f', border: '#cf222e', text: '#ff9494' }
+// Recompute and store st.interp (read by the results rail and the report).
+G.PRiSM_refreshInterpretation = function PRiSM_refreshInterpretation() {
+    var interp = null;
+    try { interp = G.PRiSM_interpretCurrentFit(); } catch (e) { interp = null; }
+    if (G.PRiSM_state && typeof G.PRiSM_state === 'object') G.PRiSM_state.interp = interp;
+    return interp;
 };
 
-var CONF_COLORS = {
-    'high':   { bg: '#0f3a1f', text: '#7ee787', label: 'High confidence' },
-    'medium': { bg: '#1f2a3a', text: '#79b8ff', label: 'Medium confidence' },
-    'low':    { bg: '#3a2f0f', text: '#f0c674', label: 'Low confidence' }
-};
+if (typeof G.addEventListener === 'function' && !G.__prismInterpListeners) {
+    G.__prismInterpListeners = true;
+    ['prism:fit-updated', 'prism:well-changed'].forEach(function (evName) {
+        G.addEventListener(evName, function () { G.PRiSM_refreshInterpretation(); });
+    });
+}
+
+
+// ════════════════════════════════════════════════════════════════════
+// SECTION 9 — UI RENDER
+// ════════════════════════════════════════════════════════════════════
+
+var PANEL_CSS =
+    '.prism-interp{background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:12px;color:var(--text);font-size:13px;line-height:1.5;min-width:0;overflow-wrap:anywhere}' +
+    '.prism-interp-head{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:8px}' +
+    '.prism-interp-title{font-weight:700;font-size:14px}' +
+    '.prism-interp-chip{display:inline-block;padding:2px 10px;border-radius:12px;font-size:11px;border:1px solid var(--border);color:var(--text2)}' +
+    '.prism-interp-chip--high{color:var(--green);border-color:var(--green)}' +
+    '.prism-interp-chip--medium{color:var(--blue);border-color:var(--blue)}' +
+    '.prism-interp-chip--low{color:var(--yellow);border-color:var(--yellow)}' +
+    '.prism-interp-headline{font-weight:600;margin-bottom:6px}' +
+    '.prism-interp-text{padding:8px 10px;background:var(--bg1);border-left:3px solid var(--accent);border-radius:4px;margin-bottom:10px}' +
+    '.prism-interp-h{font-weight:600;font-size:11px;color:var(--text3);margin:8px 0 4px;text-transform:uppercase;letter-spacing:.5px}' +
+    '.prism-interp-tags{display:flex;flex-wrap:wrap;gap:6px}' +
+    '.prism-interp-tag{display:inline-block;padding:3px 9px;border-radius:12px;font-size:11px;border:1px solid var(--border);color:var(--text2);max-width:100%}' +
+    '.prism-interp-tag--good{color:var(--green);border-color:var(--green)}' +
+    '.prism-interp-tag--warning{color:var(--yellow);border-color:var(--yellow)}' +
+    '.prism-interp-tag--important{color:var(--red);border-color:var(--red)}' +
+    '.prism-interp ul{margin:0;padding-left:18px}' +
+    '.prism-interp-cautions{color:var(--text2);font-size:12px}';
+
+function _ensureCss() {
+    if (!_hasDoc || !document.getElementById || !document.createElement) return;
+    if (document.getElementById('prism_interp_css')) return;
+    var s = document.createElement('style');
+    s.id = 'prism_interp_css';
+    s.textContent = PANEL_CSS;
+    var head = document.head || document.body;
+    if (head && head.appendChild) head.appendChild(s);
+}
 
 function _esc(s) {
     if (s == null) return '';
-    return String(s)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-// Shared style fragments (single-line) — keeps the renderer compact.
-var _PANEL_STYLE   = 'background:#0d1117; border:1px solid #30363d; border-radius:6px; padding:14px; color:#c9d1d9; font-size:13px; line-height:1.5;';
-var _HEADING_STYLE = 'font-weight:600; font-size:12px; color:#8b949e; margin-bottom:6px; text-transform:uppercase; letter-spacing:0.5px;';
-var _CHIP_STYLE    = 'display:inline-block; padding:4px 10px; border-radius:12px; font-size:11px; ';
+var CONF_LABEL = { high: 'High confidence', medium: 'Medium confidence', low: 'Low confidence' };
 
 G.PRiSM_renderInterpretationPanel = function PRiSM_renderInterpretationPanel(container, interp) {
     if (!_hasDoc || !container) return;
+    _ensureCss();
+    if (interp === undefined) {
+        var st = G.PRiSM_state;
+        interp = (st && st.interp) || G.PRiSM_refreshInterpretation();
+    }
     if (!interp) {
-        container.innerHTML = '<div style="padding:12px; color:#8b949e; font-style:italic;">'
-            + 'No interpretation available. Run a fit first, then re-open this panel.</div>';
+        container.innerHTML = '<div class="prism-interp"><em style="color:var(--text3);">No interpretation yet — fit a model first.</em></div>';
         return;
     }
-    var conf = CONF_COLORS[interp.confidence] || CONF_COLORS.medium;
+    var conf = interp.confidence || 'medium';
     var h = [];
-    h.push('<div class="prism-interp-panel" style="' + _PANEL_STYLE + '">');
-    // Header — confidence badge.
-    h.push('<div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; gap:12px; flex-wrap:wrap;">'
-         + '<div style="font-weight:700; font-size:14px; color:#c9d1d9;">Interpretation</div>'
-         + '<span style="' + _CHIP_STYLE + 'font-weight:600; background:' + conf.bg + '; color:' + conf.text + ';">'
-         + _esc(conf.label) + '</span></div>');
-    // Narrative paragraph.
-    h.push('<div style="margin-bottom:14px; padding:10px; background:#161b22; border-left:3px solid '
-         + conf.text + '; border-radius:4px;">' + _esc(interp.narrative || '') + '</div>');
-    // Parameter chips.
+    h.push('<div class="prism-interp" id="prism_interp_body">');
+    h.push('<div class="prism-interp-head"><span class="prism-interp-title">Interpretation</span>' +
+           '<span class="prism-interp-chip prism-interp-chip--' + _esc(conf) + '">' + _esc(CONF_LABEL[conf] || conf) + '</span></div>');
+    if (interp.headline) h.push('<div class="prism-interp-headline">' + _esc(interp.headline) + '</div>');
+    h.push('<div class="prism-interp-text">' + _esc(interp.narrative || '') + '</div>');
     if (interp.tags && interp.tags.length) {
-        h.push('<div style="margin-bottom:12px;"><div style="' + _HEADING_STYLE + '">Parameter findings</div>'
-             + '<div style="display:flex; flex-wrap:wrap; gap:6px;">');
-        for (var i = 0; i < interp.tags.length; i++) {
-            var t = interp.tags[i], sev = SEV_COLORS[t.severity] || SEV_COLORS.normal;
-            var rangeStr = (t.range && isFinite(t.range[0]) && isFinite(t.range[1]))
-                ? ' [' + _prose(t.range[0]) + ', ' + _prose(t.range[1]) + ']' : '';
-            h.push('<span style="' + _CHIP_STYLE + 'background:' + sev.bg + '; color:' + sev.text
-                + '; border:1px solid ' + sev.border + ';" title="' + _esc(t.qualitative + rangeStr) + '">'
-                + _esc(t.param) + ' = ' + _esc(_prose(t.value)) + ' — ' + _esc(t.qualitative) + '</span>');
-        }
-        h.push('</div></div>');
+        h.push('<div class="prism-interp-h">Findings</div><div class="prism-interp-tags">');
+        interp.tags.forEach(function (t) {
+            var sev = t.severity === 'good' || t.severity === 'warning' || t.severity === 'important' ? ' prism-interp-tag--' + t.severity : '';
+            h.push('<span class="prism-interp-tag' + sev + '">' + _esc(t.param) + ' ' + _esc(_sig(t.value, 3)) + ' — ' + _esc(t.qualitative) + '</span>');
+        });
+        h.push('</div>');
     }
-    // Actions checklist.
     if (interp.actions && interp.actions.length) {
-        h.push('<div style="margin-bottom:12px;"><div style="' + _HEADING_STYLE + '">Suggested actions</div>'
-             + '<ul style="margin:0; padding-left:20px; list-style:none;">');
-        for (var ai = 0; ai < interp.actions.length; ai++) {
-            h.push('<li style="margin-bottom:4px; position:relative;">'
-                + '<span style="position:absolute; left:-18px; color:#79b8ff;">□</span>'
-                + _esc(interp.actions[ai]) + '</li>');
-        }
-        h.push('</ul></div>');
+        h.push('<div class="prism-interp-h">Suggested actions</div><ul>');
+        interp.actions.forEach(function (a) { h.push('<li>' + _esc(a) + '</li>'); });
+        h.push('</ul>');
     }
-    // Cautions.
     if (interp.cautions && interp.cautions.length) {
-        h.push('<div><div style="' + _HEADING_STYLE.replace('#8b949e', '#f0c674') + '">Cautions &amp; fit notes</div>'
-             + '<ul style="margin:0; padding-left:20px; color:#a6a39a; font-size:12px;">');
-        for (var ci = 0; ci < interp.cautions.length; ci++) {
-            h.push('<li style="margin-bottom:4px;">' + _esc(interp.cautions[ci]) + '</li>');
-        }
-        h.push('</ul></div>');
+        h.push('<div class="prism-interp-h">Cautions &amp; fit notes</div><ul class="prism-interp-cautions">');
+        interp.cautions.forEach(function (c) { h.push('<li>' + _esc(c) + '</li>'); });
+        h.push('</ul>');
     }
     h.push('</div>');
     container.innerHTML = h.join('');
 };
 
+// Tab 6 panel (contract C7): shown once a fit exists.
+function _hasFit() {
+    var st = G.PRiSM_state;
+    if (typeof G.PRiSM_getLastFit === 'function') {
+        try { var lf = G.PRiSM_getLastFit(); if (lf && lf.params) return true; } catch (e) { /* ignore */ }
+    }
+    return !!(st && st.lastFit && st.lastFit.params);
+}
+var INTERP_PANEL = {
+    id: 'prism_interp_panel', title: 'Interpretation', order: 30,
+    when: _hasFit,
+    render: function (hostEl) { G.PRiSM_renderInterpretationPanel(hostEl); }
+};
+(function _registerPanel() {
+    try {
+        if (typeof G.PRiSM_registerTabPanel === 'function') { G.PRiSM_registerTabPanel(6, INTERP_PANEL); return; }
+        G.PRiSM_tabPanels = G.PRiSM_tabPanels || {};
+        var list = G.PRiSM_tabPanels[6] = G.PRiSM_tabPanels[6] || [];
+        for (var i = 0; i < list.length; i++) if (list[i] && list[i].id === INTERP_PANEL.id) return;
+        list.push(INTERP_PANEL);
+    } catch (e) { /* silent */ }
+})();
+
+G.PRiSM_formatWithCI = PRiSM_formatWithCI;
+
 
 // ════════════════════════════════════════════════════════════════════
-// SECTION 9 — SELF-TEST
+// SECTION 10 — SELF-TEST
 // ════════════════════════════════════════════════════════════════════
 
 })();
@@ -9529,56 +11308,55 @@ G.PRiSM_renderInterpretationPanel = function PRiSM_renderInterpretationPanel(con
 // ─── BEGIN 15-diagnostic-annotations ───────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════
 // ════════════════════════════════════════════════════════════════════
-// PRiSM ─ Layer 15 — Diagnostic Plot Annotations + Auto-Bourdet-L
-//   Two compounding wins:
-//     • Auto-pick Bourdet smoothing L based on data noise level
-//     • Render flow-regime transition markers on diagnostic plots
+// PRiSM ─ Layer 15 — Flow-regime markers + derivative smoothing (L)
+//   • Auto-pick the Bourdet smoothing L from the gauge noise level
+//   • Detect flow-regime transitions and mark them on the log-log plot
 //
 // PUBLIC API (all on window.*)
-//   PRiSM_autoBourdet_L(t, p, q?)          → { L, noiseLevel, noiseEstimate, rationale, alternatives[] }
-//   PRiSM_detectAnnotations(t, p, dp?)     → [{ type, td, label, priority }, ...]  (sorted by td)
-//   PRiSM_drawPlotAnnotations(canvas, annotations, plotKey)  → void
-//   PRiSM_enableAutoAnnotations(enabled?)  → void  (default true)
-//   PRiSM_renderAnnotationToolbar(host)    → void  (UI helper)
+//   PRiSM_autoBourdet_L(t, p, q?)            → { L, noiseLevel, noiseEstimate, rationale, alternatives[] }
+//   PRiSM_detectAnnotations(t, p, deriv?)    → [{ type, td, label, priority }, ...]  (sorted by td)
+//   PRiSM_detectAnnotationsForData(adata)    → same, from C2 analysis data {t, dp, deriv}
+//   PRiSM_drawPlotAnnotations(canvas, annotations, plotKey, axes?) → void
+//   PRiSM_enableAutoAnnotations(enabled?)    → void  (default true)
+//   PRiSM_renderAnnotationToolbar(host)      → void  (Tab 2 panel body)
 //
-// CONVENTIONS
-//   • Single outer IIFE, 'use strict'.
-//   • Pure vanilla JS, no external dependencies.
-//   • Failure-tolerant: any error in detection or drawing is swallowed —
-//     annotations are NICE-TO-HAVE and must NEVER break the underlying plot.
-//   • Defensive against missing primitives — stubs PRiSM_compute_bourdet,
-//     PRiSM_classifyRegimes, PRiSM_drawActivePlot if absent so the module
-//     can still load + self-test in the smoke-test stub harness.
-//   • PRiSM_drawActivePlot wrap is idempotent (guarded by ._annotationsWrapped).
+// MOUNTING (C7 — no polling, no function wrapping)
+//   • Post-draw hook in window.PRiSM_postDrawHooks draws the markers after
+//     every PRiSM_drawActivePlot, from the same data (and L) as the plot.
+//   • Tab 2 panel "Flow-regime markers" (PRiSM_registerTabPanel or the
+//     PRiSM_tabPanels registry). L is stored in PRiSM_state.bourdetL.
+//
+// DETECTION
+//   • Prefers the regime classifier (PRiSM_classifyRegimes → raw.regimes),
+//     falls back to a local log-log slope detector.
+//   • Storage-hump guard: a −½ slope is only reported as spherical flow when
+//     it starts more than 1.5 log cycles after the derivative maximum, or is
+//     preceded by a flat (radial) segment. Otherwise it is the falling limb
+//     of the wellbore-storage hump of a damaged well.
+//
+// Δp is sign-aware (CLAUDE.md): Δp = sign·(p − p0), sign = +1 buildup, −1 drawdown.
 // ════════════════════════════════════════════════════════════════════
 
 (function () {
     'use strict';
 
-    // ───────────────────────────────────────────────────────────────
-    // Tiny env shims so the module can load in the smoke-test stub.
-    // ───────────────────────────────────────────────────────────────
-    var _hasDoc = (typeof document !== 'undefined');
+    var _hasDoc = (typeof document !== 'undefined') && !!document && typeof document.createElement === 'function';
     var _hasWin = (typeof window !== 'undefined');
     var G       = _hasWin ? window : (typeof globalThis !== 'undefined' ? globalThis : {});
 
-    // Theme palette — match PRiSM_THEME if available, else fall back.
+    // Theme palette — the plot layer's theme when available, else the dark defaults.
     function _theme() {
+        /* global PRiSM_THEME */
+        if (typeof PRiSM_THEME !== 'undefined' && PRiSM_THEME && typeof PRiSM_THEME === 'object') return PRiSM_THEME;
         if (G.PRiSM_THEME && typeof G.PRiSM_THEME === 'object') return G.PRiSM_THEME;
         return {
-            bg:        '#0d1117', panel: '#161b22', border: '#30363d',
-            grid:      '#21262d', gridMajor: '#30363d',
-            text:      '#c9d1d9', text2: '#8b949e', text3: '#6e7681',
-            accent:    '#f0883e', blue: '#58a6ff', green: '#3fb950',
-            red:       '#f85149', yellow: '#d29922', cyan: '#39c5cf',
-            purple:    '#bc8cff'
+            bg: '#0d1117', panel: '#161b22', border: '#30363d', grid: '#21262d', gridMajor: '#30363d',
+            text: '#c9d1d9', text2: '#8b949e', text3: '#6e7681', accent: '#f0883e', blue: '#58a6ff',
+            green: '#3fb950', red: '#f85149', yellow: '#d29922', cyan: '#39c5cf', purple: '#bc8cff'
         };
     }
 
-    // Default padding (mirrors PRiSM_DEFAULT_PADDING).
-    function _defaultPad() {
-        return { top: 30, right: 80, bottom: 48, left: 64 };
-    }
+    function _defaultPad() { return { top: 30, right: 80, bottom: 48, left: 64 }; }
 
     function _ga4(eventName, params) {
         if (typeof G.gtag === 'function') {
@@ -9586,16 +11364,49 @@ G.PRiSM_renderInterpretationPanel = function PRiSM_renderInterpretationPanel(con
         }
     }
 
-    // Locate the bourdet derivative helper if present.
+    function _num(v) { return typeof v === 'number' && isFinite(v); }
+
+    function _esc(s) {
+        return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function _on(target, type, fn) {
+        try { if (target && typeof target.addEventListener === 'function') target.addEventListener(type, fn); }
+        catch (e) { /* stub environments */ }
+    }
+
+    function _registerTabPanel(n, spec) {
+        if (typeof G.PRiSM_registerTabPanel === 'function') {
+            try { G.PRiSM_registerTabPanel(n, spec); return; } catch (e) { /* fall back */ }
+        }
+        G.PRiSM_tabPanels = G.PRiSM_tabPanels || {};
+        var arr = G.PRiSM_tabPanels[n] = G.PRiSM_tabPanels[n] || [];
+        for (var i = 0; i < arr.length; i++) if (arr[i] && arr[i].id === spec.id) { arr[i] = spec; return; }
+        arr.push(spec);
+    }
+
+    function _registerPostDraw(fn) {
+        var hooks = G.PRiSM_postDrawHooks = Array.isArray(G.PRiSM_postDrawHooks) ? G.PRiSM_postDrawHooks : [];
+        for (var i = 0; i < hooks.length; i++) if (hooks[i] && hooks[i]._prismId === fn._prismId) { hooks[i] = fn; return; }
+        hooks.push(fn);
+    }
+
+    function _redraw() {
+        if (typeof G.PRiSM_drawActivePlot === 'function') { try { G.PRiSM_drawActivePlot(); } catch (e) { /* ignore */ } }
+    }
+
+    // Bourdet derivative (3-point, window L in ln t).
     function _bourdet(t, dp, L) {
         if (typeof G.PRiSM_compute_bourdet === 'function') {
-            return G.PRiSM_compute_bourdet(t, dp, L);
+            try {
+                var r = G.PRiSM_compute_bourdet(t, dp, L);
+                if (r && r.length === t.length) return r;
+            } catch (e) { /* inline fallback */ }
         }
-        // Inline fallback — mirrors layer-2 implementation.
         L = L || 0;
-        var n = t.length;
-        var d = new Array(n);
-        for (var k = 0; k < n; k++) d[k] = NaN;
+        var n = t.length, d = new Array(n), k;
+        for (k = 0; k < n; k++) d[k] = NaN;
         if (n < 3) return d;
         for (var i = 1; i < n - 1; i++) {
             if (!isFinite(t[i]) || t[i] <= 0 || !isFinite(dp[i])) continue;
@@ -9610,41 +11421,56 @@ G.PRiSM_renderInterpretationPanel = function PRiSM_renderInterpretationPanel(con
             var dl2 = Math.log(t2) - Math.log(ti);
             var dlT = Math.log(t2) - Math.log(t1);
             if (dl1 === 0 || dl2 === 0 || dlT === 0) continue;
-            var a = (dp[i] - dp[i1]) / dl1 * (dl2 / dlT);
-            var b = (dp[i2] - dp[i]) / dl2 * (dl1 / dlT);
-            d[i] = a + b;
+            d[i] = (dp[i] - dp[i1]) / dl1 * (dl2 / dlT) + (dp[i2] - dp[i]) / dl2 * (dl1 / dlT);
         }
         return d;
+    }
+
+    // Analysis data (C2) with a sign-aware local fallback.
+    function _analysisData() {
+        var st = G.PRiSM_state || {};
+        var L = _num(st.bourdetL) ? st.bourdetL : 0.15;
+        if (typeof G.PRiSM_getAnalysisData === 'function') {
+            try {
+                var o = { L: L };
+                if (_num(st.activePeriod) && st.activePeriod >= 0) o.period = st.activePeriod;
+                if (st.timeFn) o.timeFn = st.timeFn;
+                var ad = G.PRiSM_getAnalysisData(G.PRiSM_dataset, o);
+                if (ad && ad.ok && ad.t && ad.t.length) return ad;
+            } catch (e) { /* fall back */ }
+        }
+        var ds = G.PRiSM_dataset;
+        if (!ds || !ds.t || !ds.p || ds.t.length < 5) return { ok: false, t: [], dp: [], deriv: [] };
+        var n = ds.t.length, p0 = ds.p[0];
+        var sign = (ds.p[n - 1] - p0) >= 0 ? 1 : -1;
+        var t = [], p = [], dp = [];
+        for (var i = 0; i < n; i++) {
+            if (!(ds.t[i] > 0) || !_num(ds.p[i])) continue;
+            t.push(ds.t[i]); p.push(ds.p[i]); dp.push(sign * (ds.p[i] - p0));
+        }
+        return { ok: t.length >= 5, t: t, p: p, dp: dp, deriv: _bourdet(t, dp, L), L: L,
+                 pRefSource: 'first-sample', testType: sign > 0 ? 'buildup' : 'drawdown' };
     }
 
     // ═══════════════════════════════════════════════════════════════
     // SECTION 1 — NOISE-LEVEL ESTIMATOR + L PICKER
     // ═══════════════════════════════════════════════════════════════
     //
-    // Estimate gauge-noise level by:
-    //   1. Compute a moving-average low-pass of p with window=5 samples
-    //   2. Subtract → high-pass residual
-    //   3. RMS(residual) / |mean(p)|  → noise as a relative fraction
-    //
+    // Gauge noise = RMS(p − 5-point moving average) / mean|p|  (relative).
     // Map noise band → L:
-    //   noise < 0.001 → L = 0.10  ('clean')
-    //   0.001-0.005   → L = 0.18  ('typical')
-    //   0.005-0.02    → L = 0.30  ('noisy')
-    //   > 0.02        → L = 0.50  ('very noisy')
+    //   noise < 0.001 → L = 0.10  (clean)
+    //   0.001-0.005   → L = 0.18  (typical)
+    //   0.005-0.02    → L = 0.30  (noisy)
+    //   > 0.02        → L = 0.50  (very noisy)
     // ═══════════════════════════════════════════════════════════════
 
     function _movingAverage(p, win) {
-        var n = p.length;
-        var out = new Array(n);
+        var n = p.length, out = new Array(n);
         if (n === 0) return out;
         var half = Math.max(1, Math.floor(win / 2));
         for (var i = 0; i < n; i++) {
-            var i0 = Math.max(0, i - half);
-            var i1 = Math.min(n - 1, i + half);
-            var sum = 0, cnt = 0;
-            for (var j = i0; j <= i1; j++) {
-                if (isFinite(p[j])) { sum += p[j]; cnt++; }
-            }
+            var i0 = Math.max(0, i - half), i1 = Math.min(n - 1, i + half), sum = 0, cnt = 0;
+            for (var j = i0; j <= i1; j++) if (isFinite(p[j])) { sum += p[j]; cnt++; }
             out[i] = cnt > 0 ? sum / cnt : NaN;
         }
         return out;
@@ -9652,88 +11478,57 @@ G.PRiSM_renderInterpretationPanel = function PRiSM_renderInterpretationPanel(con
 
     function _meanAbs(arr) {
         var s = 0, n = 0;
-        for (var i = 0; i < arr.length; i++) {
-            if (isFinite(arr[i])) { s += Math.abs(arr[i]); n++; }
-        }
+        for (var i = 0; i < arr.length; i++) if (isFinite(arr[i])) { s += Math.abs(arr[i]); n++; }
         return n > 0 ? s / n : 0;
     }
 
     function _rms(arr) {
         var s = 0, n = 0;
-        for (var i = 0; i < arr.length; i++) {
-            if (isFinite(arr[i])) { s += arr[i] * arr[i]; n++; }
-        }
+        for (var i = 0; i < arr.length; i++) if (isFinite(arr[i])) { s += arr[i] * arr[i]; n++; }
         return n > 0 ? Math.sqrt(s / n) : 0;
     }
 
-    // Estimate the relative noise floor of pressure data.
-    // Returns a positive number (RMS of high-pass residual / |mean(p)|).
     function _estimateNoise(p) {
-        if (!Array.isArray(p) || p.length < 5) return 0;
-        // Smooth with a 5-pt MA — anything wiggling faster than that is "noise".
-        var smooth = _movingAverage(p, 5);
-        var resid = new Array(p.length);
+        if (!p || p.length < 5) return 0;
+        var smooth = _movingAverage(p, 5), resid = new Array(p.length);
         for (var i = 0; i < p.length; i++) {
             resid[i] = (isFinite(p[i]) && isFinite(smooth[i])) ? (p[i] - smooth[i]) : NaN;
         }
-        var rms  = _rms(resid);
         var mean = _meanAbs(p);
-        if (mean === 0) return 0;
-        return rms / mean;
+        return mean === 0 ? 0 : _rms(resid) / mean;
     }
 
-    // Map noise → suggested L.
     function _pickL(noise) {
-        if (!isFinite(noise) || noise <= 0)   return { L: 0.18, level: 'low' };
-        if (noise < 0.001)                    return { L: 0.10, level: 'low' };
-        if (noise < 0.005)                    return { L: 0.18, level: 'low' };
-        if (noise < 0.02)                     return { L: 0.30, level: 'medium' };
+        if (!isFinite(noise) || noise <= 0) return { L: 0.18, level: 'low' };
+        if (noise < 0.001) return { L: 0.10, level: 'low' };
+        if (noise < 0.005) return { L: 0.18, level: 'low' };
+        if (noise < 0.02)  return { L: 0.30, level: 'medium' };
         return { L: 0.50, level: 'high' };
     }
 
     function _rationale(level, noise, L) {
         var pct = (noise * 100).toFixed(2);
-        if (level === 'low' && L <= 0.12) {
-            return 'Very clean gauge data (~' + pct + '% RMS of mean pressure) — using minimal smoothing L=' + L.toFixed(2) + ' to preserve regime transitions.';
-        }
-        if (level === 'low') {
-            return 'Low noise floor (~' + pct + '% of mean pressure) — using small L=' + L.toFixed(2) + ' to preserve regime transitions.';
-        }
-        if (level === 'medium') {
-            return 'Moderate noise (~' + pct + '% of mean pressure) — using standard smoothing L=' + L.toFixed(2) + ' to balance feature retention and noise rejection.';
-        }
-        return 'Heavy noise (~' + pct + '% of mean pressure) — using large L=' + L.toFixed(2) + ' to suppress gauge jitter; some sharp transitions may be smeared.';
+        if (level === 'low' && L <= 0.12) return 'Very clean gauge data (~' + pct + '% RMS of mean pressure) — minimal smoothing L=' + L.toFixed(2) + ' preserves regime transitions.';
+        if (level === 'low')    return 'Low noise floor (~' + pct + '% of mean pressure) — small L=' + L.toFixed(2) + ' preserves regime transitions.';
+        if (level === 'medium') return 'Moderate noise (~' + pct + '% of mean pressure) — standard smoothing L=' + L.toFixed(2) + ' balances detail and noise rejection.';
+        return 'Heavy noise (~' + pct + '% of mean pressure) — large L=' + L.toFixed(2) + ' suppresses gauge jitter; sharp transitions may be smeared.';
     }
 
+    var _ALTERNATIVES = [
+        { L: 0.10, description: 'minimal smoothing (preserves all features, may be noisy)' },
+        { L: 0.30, description: 'standard smoothing (balanced)' },
+        { L: 0.50, description: 'heavy smoothing (clean curve, may hide transitions)' }
+    ];
+
     G.PRiSM_autoBourdet_L = function PRiSM_autoBourdet_L(t, p, q) {
-        // q is currently unused — accepted for future extension (e.g., rate
-        // sensitivity analysis where short rate perturbations dominate noise).
-        var fallback = {
-            L: 0.18,
-            noiseLevel: 'low',
-            noiseEstimate: 0,
-            rationale: 'Default smoothing L=0.18 (no pressure data supplied).',
-            alternatives: [
-                { L: 0.10, description: 'minimal smoothing (preserves all features, may be noisy)' },
-                { L: 0.30, description: 'standard smoothing (balanced)' },
-                { L: 0.50, description: 'heavy smoothing (clean curve, may hide transitions)' }
-            ]
-        };
+        var fallback = { L: 0.18, noiseLevel: 'low', noiseEstimate: 0,
+                         rationale: 'Default smoothing L=0.18 (no pressure data supplied).',
+                         alternatives: _ALTERNATIVES.slice() };
         try {
-            if (!Array.isArray(t) || !Array.isArray(p) || p.length < 5) return fallback;
-            var noise = _estimateNoise(p);
-            var pick  = _pickL(noise);
-            return {
-                L: pick.L,
-                noiseLevel: pick.level,
-                noiseEstimate: noise,
-                rationale: _rationale(pick.level, noise, pick.L),
-                alternatives: [
-                    { L: 0.10, description: 'minimal smoothing (preserves all features, may be noisy)' },
-                    { L: 0.30, description: 'standard smoothing (balanced)' },
-                    { L: 0.50, description: 'heavy smoothing (clean curve, may hide transitions)' }
-                ]
-            };
+            if (!t || !p || typeof p.length !== 'number' || p.length < 5) return fallback;
+            var noise = _estimateNoise(p), pick = _pickL(noise);
+            return { L: pick.L, noiseLevel: pick.level, noiseEstimate: noise,
+                     rationale: _rationale(pick.level, noise, pick.L), alternatives: _ALTERNATIVES.slice() };
         } catch (e) {
             return fallback;
         }
@@ -9743,37 +11538,49 @@ G.PRiSM_renderInterpretationPanel = function PRiSM_renderInterpretationPanel(con
     // ═══════════════════════════════════════════════════════════════
     // SECTION 2 — REGIME-TRANSITION DETECTOR
     // ═══════════════════════════════════════════════════════════════
-    //
-    // Heuristic local-slope detector that runs on the Bourdet derivative.
-    // Sliding 5-point window in log(t) space, computes
-    //   slope = d(log10 dp)/d(log10 t)
-    // for each interior point. Then scans for "kicks" — slope deltas > 0.3
-    // between adjacent windows — and tags transitions by surrounding slopes.
-    //
-    // If window.PRiSM_classifyRegimes (Agent J) is loaded, prefer its output
-    // and convert it into the annotation list shape.
-    // ═══════════════════════════════════════════════════════════════
 
-    // Compute a smoothed log-log slope at each point in (t, y).
-    // Returns array of slopes (NaN at boundaries). Operates on |y| because
-    // diagnostic plots conventionally use the magnitude of the bourdet
-    // derivative (sign depends on drawdown vs buildup).
+    var LABELS = {
+        wellboreStorageEnd:   'Storage ends',
+        radialFlowStart:      'Radial flow',
+        linearFlowStart:      '½-slope (linear flow)',
+        bilinearFlowStart:    '¼-slope (bilinear flow)',
+        bilinearToLinear:     'Bilinear → linear',
+        sphericalFlow:        '−½ slope (spherical flow)',
+        storageHump:          'Storage hump',
+        boundaryHit:          'Boundary effect',
+        closedBoundaryHit:    'Closed boundary',
+        constPressureHit:     'Pressure support',
+        sealingFault:         'Derivative doubling (fault)',
+        doublePorosityValley: 'Dual-porosity dip'
+    };
+
+    // Classifier regime tag → marker type.
+    var TAG_TYPE = {
+        radialFlow: 'radialFlowStart', linearFlow: 'linearFlowStart', bilinearFlow: 'bilinearFlowStart',
+        sphericalFlow: 'sphericalFlow', constPressure: 'constPressureHit', closedBoundary: 'closedBoundaryHit',
+        sealingFault: 'sealingFault', doublePorosity: 'doublePorosityValley', storageHump: 'storageHump',
+        wellboreStorage: 'wellboreStorage'
+    };
+
+    function _typePriority(type) {
+        if (type === 'wellboreStorageEnd' || type === 'radialFlowStart') return 1;
+        if (type === 'boundaryHit' || type === 'closedBoundaryHit' || type === 'constPressureHit' || type === 'sealingFault') return 2;
+        return 3;
+    }
+
+    function _typeLabel(type) { return LABELS[type] || String(type); }
+
+    // Smoothed log-log slope at each point (least squares over ±halfWin points).
     function _logLogSlopes(t, y, halfWin) {
-        var n = t.length;
-        var slopes = new Array(n);
-        for (var k = 0; k < n; k++) slopes[k] = NaN;
+        var n = t.length, slopes = new Array(n), k;
+        for (k = 0; k < n; k++) slopes[k] = NaN;
         halfWin = halfWin || 2;
         for (var i = 0; i < n; i++) {
-            var i0 = Math.max(0, i - halfWin);
-            var i1 = Math.min(n - 1, i + halfWin);
-            // Linear regression in log space (absolute y).
+            var i0 = Math.max(0, i - halfWin), i1 = Math.min(n - 1, i + halfWin);
             var sx = 0, sy = 0, sxx = 0, sxy = 0, m = 0;
             for (var j = i0; j <= i1; j++) {
-                if (!isFinite(t[j]) || t[j] <= 0 || !isFinite(y[j])) continue;
-                var ay = Math.abs(y[j]);
-                if (ay <= 0) continue;
-                var lx = Math.log10(t[j]);
-                var ly = Math.log10(ay);
+                if (!isFinite(t[j]) || t[j] <= 0 || !isFinite(y[j]) || y[j] <= 0) continue;
+                var lx = Math.log10(t[j]), ly = Math.log10(y[j]);
                 sx += lx; sy += ly; sxx += lx * lx; sxy += lx * ly; m++;
             }
             if (m < 3) continue;
@@ -9784,443 +11591,349 @@ G.PRiSM_renderInterpretationPanel = function PRiSM_renderInterpretationPanel(con
         return slopes;
     }
 
-    // Classify a "kick" between slope_before and slope_after into a regime
-    // transition. Returns an annotation type/label/priority object, or null
-    // if the pair doesn't match a known signature.
     function _classifyKick(sBefore, sAfter) {
         if (!isFinite(sBefore) || !isFinite(sAfter)) return null;
-        // WBS-end / radial-flow start: slope ~1 → ~0
-        if (sBefore > 0.55 && sAfter < 0.30 && sAfter > -0.30) {
-            return { type: 'wellboreStorageEnd', label: 'WBS ends', priority: 1 };
-        }
-        // Radial → linear-channel boundary (parallel faults, slope ½)
-        if (sBefore > -0.20 && sBefore < 0.30 && sAfter > 0.35 && sAfter < 0.65) {
-            return { type: 'boundaryHit', label: 'Boundary signature begins', priority: 2 };
-        }
-        // Radial → closed-boundary (PSS / circular drainage, slope 1)
-        if (sBefore > -0.20 && sBefore < 0.30 && sAfter > 0.75) {
-            return { type: 'closedBoundaryHit', label: 'Closed boundary (PSS)', priority: 2 };
-        }
-        // Radial → spherical: dropping slope, < -0.3
-        if (sBefore > -0.20 && sBefore < 0.30 && sAfter < -0.30) {
-            return { type: 'sphericalFlow', label: '−½ slope (spherical flow)', priority: 3 };
-        }
-        // Linear → radial (entering radial after a fracture-linear regime)
-        if (sBefore > 0.35 && sBefore < 0.65 && sAfter > -0.20 && sAfter < 0.30) {
-            return { type: 'radialFlowStart', label: 'Radial flow starts', priority: 1 };
-        }
-        // Bilinear → linear (¼ → ½)
-        if (sBefore > 0.15 && sBefore < 0.40 && sAfter > 0.40 && sAfter < 0.65) {
-            return { type: 'bilinearToLinear', label: 'Bilinear → linear', priority: 3 };
-        }
+        if (sBefore > 0.55 && sAfter < 0.30 && sAfter > -0.30) return { type: 'wellboreStorageEnd' };
+        if (sBefore < -0.20 && Math.abs(sAfter) < 0.15)        return { type: 'radialFlowStart' };   // end of a hump or of spherical flow
+        if (sBefore > -0.20 && sBefore < 0.30 && sAfter > 0.35 && sAfter < 0.65) return { type: 'boundaryHit' };
+        if (sBefore > -0.20 && sBefore < 0.30 && sAfter > 0.75) return { type: 'closedBoundaryHit' };
+        if (sBefore > -0.20 && sBefore < 0.30 && sAfter < -0.30) return { type: 'sphericalFlow' };
+        if (sBefore > 0.35 && sBefore < 0.65 && sAfter > -0.20 && sAfter < 0.30) return { type: 'radialFlowStart' };
+        if (sBefore > 0.15 && sBefore < 0.40 && sAfter > 0.40 && sAfter < 0.65) return { type: 'bilinearToLinear' };
         return null;
     }
 
-    // Pick representative td values for each detected kick. Returns an array
-    // sorted by td, deduplicated within ~0.3 decade.
+    function _mk(type, td, extra) {
+        var a = { type: type, td: td, label: _typeLabel(type), priority: _typePriority(type) };
+        if (extra) for (var k in extra) if (Object.prototype.hasOwnProperty.call(extra, k)) a[k] = extra[k];
+        return a;
+    }
+
     function _findKicks(t, slopes) {
-        var n = t.length;
-        var out = [];
-        // We compare slopes a half-decade apart to suppress single-point flicker.
+        var n = t.length, out = [];
         for (var i = 1; i < n - 1; i++) {
             if (!isFinite(slopes[i]) || !isFinite(slopes[i - 1])) continue;
-            // Look for a "stable before" / "stable after" via wider sampling.
-            var iBefore = Math.max(0, i - 5);
-            var iAfter  = Math.min(n - 1, i + 5);
-            var sBefore = slopes[iBefore];
-            var sAfter  = slopes[iAfter];
+            var sBefore = slopes[Math.max(0, i - 5)], sAfter = slopes[Math.min(n - 1, i + 5)];
             if (!isFinite(sBefore) || !isFinite(sAfter)) continue;
             if (Math.abs(sAfter - sBefore) < 0.3) continue;
-            var ann = _classifyKick(sBefore, sAfter);
-            if (!ann) continue;
-            ann.td = t[i];
-            out.push(ann);
+            var k = _classifyKick(sBefore, sAfter);
+            if (!k) continue;
+            out.push(_mk(k.type, t[i], { tdStart: t[i], source: 'local' }));
         }
-        // De-dup: only keep one annotation of any (type, ~decade) bucket.
-        // Most regime transitions occur once in a test (WBS-end, radial start,
-        // boundary-hit), so we use a strong global dedup. sphericalFlow may
-        // legitimately repeat across multi-region tests.
-        out.sort(function (a, b) { return a.td - b.td; });
-        var dedup = [];
-        for (var k = 0; k < out.length; k++) {
-            var cur = out[k];
-            var skip = false;
-            for (var m = 0; m < dedup.length; m++) {
-                var existing = dedup[m];
-                if (existing.type === cur.type) {
-                    if (cur.type === 'sphericalFlow') {
-                        // Allow if at least 1 decade away.
-                        var ratio = (cur.td > 0 && existing.td > 0)
-                            ? Math.abs(Math.log10(cur.td) - Math.log10(existing.td))
-                            : 0;
-                        if (ratio < 1.0) { skip = true; break; }
-                    } else {
-                        // Once-per-test types: keep first occurrence only.
-                        skip = true; break;
-                    }
-                }
-            }
-            if (!skip) dedup.push(cur);
-        }
-        return dedup;
+        return out;
     }
 
-    // Sustained-spherical-flow regime — runs of points with slope < -0.3.
+    // Sustained runs with slope < −0.3 (≥ 4 points) → candidate spherical flow.
     function _findSphericalRun(t, slopes) {
-        var n = t.length;
-        var out = [];
-        var runStart = -1, runLen = 0;
+        var n = t.length, out = [], runStart = -1, runLen = 0;
+        function flush() {
+            if (runLen >= 4 && runStart >= 0) {
+                var mid = runStart + Math.floor(runLen / 2);
+                if (t[mid] > 0) out.push(_mk('sphericalFlow', t[mid], { tdStart: t[runStart], source: 'local' }));
+            }
+            runStart = -1; runLen = 0;
+        }
         for (var i = 0; i < n; i++) {
-            if (isFinite(slopes[i]) && slopes[i] < -0.30) {
-                if (runStart < 0) runStart = i;
-                runLen++;
+            if (isFinite(slopes[i]) && slopes[i] < -0.30) { if (runStart < 0) runStart = i; runLen++; }
+            else flush();
+        }
+        flush();
+        return out;
+    }
+
+    // Storage-hump guard. True when a −½ segment starting at tStart is real
+    // spherical flow: it starts > 1.5 log cycles after the derivative maximum,
+    // or a flat (radial) run of ≥ 3 points spanning ≥ 0.2 cycle precedes it.
+    function _isRealSpherical(t, deriv, slopes, tStart) {
+        var iMax = -1, vMax = -Infinity, iStart = -1;
+        for (var i = 0; i < t.length; i++) {
+            if (!(t[i] > 0) || !(t[i] <= tStart * (1 + 1e-9))) continue;
+            iStart = i;
+            if (deriv[i] > 0 && deriv[i] > vMax) { vMax = deriv[i]; iMax = i; }
+        }
+        if (iMax < 0) return false;
+        if (Math.log10(tStart) - Math.log10(t[iMax]) > 1.5) return true;
+        var run = 0, runT0 = 0;
+        for (var j = iMax; j <= iStart; j++) {
+            if (isFinite(slopes[j]) && Math.abs(slopes[j]) < 0.1) {
+                if (run === 0) runT0 = t[j];
+                run++;
+                if (run >= 3 && Math.log10(t[j]) - Math.log10(runT0) >= 0.2) return true;
             } else {
-                if (runLen >= 4 && runStart >= 0) {
-                    var midIdx = runStart + Math.floor(runLen / 2);
-                    if (t[midIdx] > 0) {
-                        out.push({
-                            type: 'sphericalFlow',
-                            td: t[midIdx],
-                            label: '−½ slope (spherical flow)',
-                            priority: 3
-                        });
-                    }
-                }
-                runStart = -1; runLen = 0;
+                run = 0;
             }
         }
-        if (runLen >= 4 && runStart >= 0) {
-            var midIdx2 = runStart + Math.floor(runLen / 2);
-            if (t[midIdx2] > 0) {
-                out.push({
-                    type: 'sphericalFlow',
-                    td: t[midIdx2],
-                    label: '−½ slope (spherical flow)',
-                    priority: 3
-                });
-            }
-        }
-        return out;
+        return false;
     }
 
-    // Convert PRiSM_classifyRegimes output (Agent J) into an annotation list.
-    // The exact shape may vary — we accept either an array or an object with
-    // a `transitions` field, and look for { type/regime/name, td/t/time }.
-    function _normaliseAgentJOutput(raw) {
+    function _humpGuard(t, deriv, anns) {
+        var slopes = null;
+        return anns.map(function (a) {
+            if (!a || a.type !== 'sphericalFlow') return a;
+            slopes = slopes || _logLogSlopes(t, deriv, 2);
+            var tStart = _num(a.tdStart) ? a.tdStart : a.td;
+            if (_isRealSpherical(t, deriv, slopes, tStart)) return a;
+            return _mk('storageHump', a.td, { tdStart: tStart, source: a.source });
+        });
+    }
+
+    // Classifier output → markers. Accepts { regimes:[{tag, tdStart, tdEnd,
+    // confidence}] } (segments) and older transition-list shapes.
+    function _fromClassifier(raw) {
         if (!raw) return null;
-        var arr = Array.isArray(raw) ? raw
-                : (Array.isArray(raw.transitions) ? raw.transitions
-                : (Array.isArray(raw.annotations) ? raw.annotations : null));
-        if (!arr) return null;
-        var out = [];
-        for (var i = 0; i < arr.length; i++) {
-            var e = arr[i];
-            if (!e) continue;
-            var td = (e.td != null) ? e.td
-                   : (e.t  != null) ? e.t
-                   : (e.time != null) ? e.time
-                   : null;
-            if (!isFinite(td) || td <= 0) continue;
-            var type = e.type || e.regime || e.name || 'transition';
-            var label = e.label || e.description || _typeLabel(type);
-            var priority = (e.priority != null) ? e.priority : _typePriority(type);
-            out.push({ type: String(type), td: Number(td), label: String(label), priority: Number(priority) });
+        if (!Array.isArray(raw.regimes)) {
+            var arr = Array.isArray(raw) ? raw : (Array.isArray(raw.transitions) ? raw.transitions
+                    : (Array.isArray(raw.annotations) ? raw.annotations : null));
+            if (!arr) return null;
+            var legacy = [];
+            for (var i = 0; i < arr.length; i++) {
+                var e = arr[i];
+                if (!e) continue;
+                var td = (e.td != null) ? e.td : (e.t != null) ? e.t : e.time;
+                if (!isFinite(td) || td <= 0) continue;
+                var type = String(e.type || e.regime || e.name || 'transition');
+                legacy.push({ type: type, td: Number(td), tdStart: Number(td),
+                              label: String(e.label || e.description || _typeLabel(type)),
+                              priority: Number(e.priority != null ? e.priority : _typePriority(type)), source: 'classifier' });
+            }
+            return legacy;
         }
-        out.sort(function (a, b) { return a.td - b.td; });
+        function sure(r) { return r.confidence == null || r.confidence >= 0.45; }
+        var segs = raw.regimes.filter(function (r) {
+            return r && r.tag && r.tag !== 'unknown' && _num(r.tdStart) && r.tdStart > 0 &&
+                   (r.confidence == null || r.confidence >= 0.3);
+        });
+        var shapes = segs.filter(function (r) { return (r.tag === 'sealingFault' || r.tag === 'doublePorosity') && sure(r); });
+        var all = segs.filter(function (r) { return r.tag !== 'sealingFault' && r.tag !== 'doublePorosity'; })
+                      .sort(function (a, b) { return a.tdStart - b.tdStart; });
+        // Keep confident segments, plus weaker ones that run into a confident
+        // segment of the same regime (so a regime is marked where it starts).
+        var seq = all.filter(function (r, i) {
+            if (sure(r)) return true;
+            for (var j = i + 1; j < all.length && all[j].tag === r.tag; j++) if (sure(all[j])) return true;
+            return false;
+        });
+        var out = [], prevTag = null;
+        for (var k = 0; k < seq.length; k++) {
+            var r = seq[k];
+            if (r.tag === prevTag) continue;                    // merge consecutive segments
+            if (prevTag === null) { prevTag = r.tag; continue; } // no marker at the first data point
+            var ty = TAG_TYPE[r.tag] || r.tag;
+            if (ty === 'wellboreStorage') { prevTag = r.tag; continue; }
+            if (ty === 'radialFlowStart' && (prevTag === 'wellboreStorage' || prevTag === 'storageHump')) {
+                out.push(_mk('radialFlowStart', r.tdStart, { tdStart: r.tdStart, source: 'classifier' }));
+            } else {
+                out.push(_mk(ty, r.tdStart, { tdStart: r.tdStart, tdEnd: r.tdEnd, source: 'classifier' }));
+            }
+            prevTag = r.tag;
+        }
+        shapes.forEach(function (r) {
+            var tdm = _num(r.tdEnd) && r.tdEnd > 0 ? Math.sqrt(r.tdStart * r.tdEnd) : r.tdStart;
+            out.push(_mk(TAG_TYPE[r.tag], tdm, { tdStart: r.tdStart, source: 'classifier' }));
+        });
         return out;
     }
 
-    function _typeLabel(type) {
-        switch (type) {
-            case 'wellboreStorageEnd': return 'WBS ends';
-            case 'radialFlowStart':    return 'Radial flow starts';
-            case 'boundaryHit':        return 'Boundary signature begins';
-            case 'closedBoundaryHit':  return 'Closed boundary (PSS)';
-            case 'sphericalFlow':      return '−½ slope (spherical flow)';
-            case 'doublePorosityValley': return 'Double-porosity valley';
-            case 'bilinearToLinear':   return 'Bilinear → linear';
-            default:                   return String(type);
-        }
-    }
+    var BOUNDARY_TYPES = { boundaryHit: 1, closedBoundaryHit: 1, constPressureHit: 1, sealingFault: 1 };
 
-    function _typePriority(type) {
-        if (type === 'wellboreStorageEnd' || type === 'radialFlowStart') return 1;
-        if (type === 'boundaryHit' || type === 'closedBoundaryHit') return 2;
-        return 3;
-    }
-
-    G.PRiSM_detectAnnotations = function PRiSM_detectAnnotations(t, p, dp) {
-        try {
-            if (!Array.isArray(t) || t.length < 5) return [];
-
-            // Compute (or accept) the bourdet derivative.
-            var dpUsed = dp;
-            if (!Array.isArray(dpUsed) || dpUsed.length !== t.length) {
-                if (!Array.isArray(p)) return [];
-                var deltaP = new Array(t.length);
-                var p0 = p[0];
-                for (var i = 0; i < t.length; i++) deltaP[i] = (p[i] - p0);
-                // Use auto-L for the derivative computation.
-                var auto = G.PRiSM_autoBourdet_L(t, p);
-                dpUsed = _bourdet(t, deltaP, auto.L);
-            }
-
-            // Try Agent J first.
-            if (typeof G.PRiSM_classifyRegimes === 'function') {
-                try {
-                    var raw = G.PRiSM_classifyRegimes(t, p, dpUsed);
-                    var norm = _normaliseAgentJOutput(raw);
-                    if (norm && norm.length) {
-                        norm._source = 'classifyRegimes';
-                        return norm;
-                    }
-                } catch (e) {
-                    // Fall through to local detector.
+    function _dedup(anns) {
+        anns.sort(function (a, b) { return a.td - b.td; });
+        var out = [];
+        for (var i = 0; i < anns.length; i++) {
+            var cur = anns[i], skip = false;
+            for (var j = 0; j < out.length; j++) {
+                var gap = Math.abs(Math.log10(cur.td) - Math.log10(out[j].td));
+                if (BOUNDARY_TYPES[cur.type] && BOUNDARY_TYPES[out[j].type] && out[j].type !== cur.type && gap < 0.3) {
+                    out[j] = cur;              // keep the later, more specific boundary label
+                    skip = true; break;
                 }
+                if (out[j].type !== cur.type) continue;
+                var repeatable = cur.type === 'sphericalFlow' || cur.type === 'storageHump' || cur.type === 'radialFlowStart';
+                if (!repeatable || gap < 1.0) { skip = true; break; }
             }
+            if (!skip) out.push(cur);
+        }
+        return out;
+    }
 
-            // Local fallback detector.
-            var slopes = _logLogSlopes(t, dpUsed, 2);
-            var kicks = _findKicks(t, slopes);
+    // Core detector on sign-aware Δp and its derivative.
+    function _detectCore(t, dp, deriv) {
+        var anns = null, source = 'fallback';
+        if (typeof G.PRiSM_classifyRegimes === 'function') {
+            try {
+                anns = _fromClassifier(G.PRiSM_classifyRegimes(t, dp, deriv));
+                if (anns && anns.length) source = 'classifyRegimes';
+            } catch (e) { anns = null; }
+        }
+        if (!anns || !anns.length) {
+            var slopes = _logLogSlopes(t, deriv, 2);
+            anns = _findKicks(t, slopes);
             var spheres = _findSphericalRun(t, slopes);
-            // Merge and de-dup spheres against existing kicks of same type.
             for (var s = 0; s < spheres.length; s++) {
                 var dup = false;
-                for (var m2 = 0; m2 < kicks.length; m2++) {
-                    if (kicks[m2].type === spheres[s].type) {
-                        var ratio2 = Math.abs(Math.log10(spheres[s].td) - Math.log10(kicks[m2].td));
-                        if (ratio2 < 0.3) { dup = true; break; }
-                    }
+                for (var m = 0; m < anns.length; m++) {
+                    if (anns[m].type !== 'sphericalFlow') continue;
+                    var lk = Math.log10(anns[m].td);
+                    if (Math.abs(Math.log10(spheres[s].td) - lk) < 0.3 ||
+                        Math.abs(Math.log10(spheres[s].tdStart) - lk) < 0.3) { dup = true; break; }
                 }
-                if (!dup) kicks.push(spheres[s]);
+                if (!dup) anns.push(spheres[s]);
             }
-            kicks.sort(function (a, b) { return a.td - b.td; });
-            kicks._source = 'fallback';
-            return kicks;
+            source = 'fallback';
+        }
+        var out = _dedup(_humpGuard(t, deriv, anns));
+        out._source = source;
+        return out;
+    }
+
+    function _toArr(a) {
+        if (!a) return null;
+        if (Array.isArray(a)) return a;
+        try { return Array.prototype.slice.call(a); } catch (e) { return null; }
+    }
+
+    // Legacy signature: (t, p, deriv?) — p is pressure; Δp is sign-aware.
+    G.PRiSM_detectAnnotations = function PRiSM_detectAnnotations(t, p, deriv) {
+        try {
+            t = _toArr(t); p = _toArr(p); deriv = _toArr(deriv);
+            if (!t || t.length < 5 || !p || p.length !== t.length) return [];
+            var n = t.length, sign = (p[n - 1] - p[0]) >= 0 ? 1 : -1, dp = new Array(n);
+            for (var i = 0; i < n; i++) dp[i] = sign * (p[i] - p[0]);
+            if (!deriv || deriv.length !== n) {
+                deriv = _bourdet(t, dp, G.PRiSM_autoBourdet_L(t, p).L);
+            } else {
+                deriv = deriv.map(function (v) { return Math.abs(v); });
+            }
+            return _detectCore(t, dp, deriv);
         } catch (e) {
-            try { console.warn('PRiSM_detectAnnotations error:', e && e.message); } catch (_) {}
+            try { console.warn('PRiSM_detectAnnotations error:', e && e.message); } catch (_) { /* ignore */ }
+            return [];
+        }
+    };
+
+    // From C2 analysis data {t, dp (≥0), deriv}.
+    G.PRiSM_detectAnnotationsForData = function PRiSM_detectAnnotationsForData(ad) {
+        try {
+            if (!ad || !ad.t || !ad.dp || ad.t.length < 5) return [];
+            var t = _toArr(ad.t), dp = _toArr(ad.dp), deriv = _toArr(ad.deriv);
+            if (!deriv || deriv.length !== t.length) {
+                var st = G.PRiSM_state || {};
+                deriv = _bourdet(t, dp, _num(ad.L) ? ad.L : (_num(st.bourdetL) ? st.bourdetL : 0.15));
+            }
+            return _detectCore(t, dp, deriv);
+        } catch (e) {
             return [];
         }
     };
 
 
     // ═══════════════════════════════════════════════════════════════
-    // SECTION 3 — ANNOTATION RENDERER
+    // SECTION 3 — MARKER RENDERER
     // ═══════════════════════════════════════════════════════════════
-    //
-    // Convert each annotation td → canvas pixel x using the plot's most
-    // recent data range. We can't easily reach the live plot's `lastTransform`
-    // (it's closed over inside the per-render IIFE), so we recompute the
-    // x-axis transform from PRiSM_dataset's range, mirroring layer-2's tick
-    // generator.
-    //
-    // The renderer is idempotent — it tags the canvas with a flag while it's
-    // drawing and stores the most-recent annotation set on the canvas so that
-    // other modules can inspect it.
+    // Uses the plot's own world→pixel transform (canvas._prismAxes, C6).
+    // Markers make sense on plots whose x axis is Δt: log-log derivative and
+    // semilog (MDH). Labels are drawn inside the plot box, near its top.
     // ═══════════════════════════════════════════════════════════════
 
-    // Canvas-pixel range for the plot drawing area, given the canvas + opts.
-    // Mirrors PRiSM_plot_setup's plot {x, y, w, h, cssW, cssH} computation.
-    function _plotRect(canvas) {
-        var cssW = canvas.clientWidth || canvas.width || 600;
-        var cssH = canvas.clientHeight || canvas.height || 400;
-        // Some tests / smoke environments leave width/height un-set.
-        // Prefer the canvas.style.width if present (set by PRiSM_plot_setup).
-        if (canvas.style && canvas.style.width) {
-            var w = parseInt(canvas.style.width, 10);
-            if (isFinite(w) && w > 0) cssW = w;
+    var ANN_PLOTS = { bourdet: 1, mdh: 1 };
+
+    function _axisFwd(sc, off, len, flip) {
+        if (!sc || !_num(sc.min) || !_num(sc.max) || !(len > 0)) return null;
+        if (sc.kind === 'log') {
+            if (!(sc.min > 0 && sc.max > 0)) return null;
+            var a = Math.log10(sc.min), b = Math.log10(sc.max);
+            return function (v) { if (!(v > 0)) return NaN; var f = (Math.log10(v) - a) / (b - a); return flip ? off + len - f * len : off + f * len; };
         }
-        if (canvas.style && canvas.style.height) {
-            var h = parseInt(canvas.style.height, 10);
-            if (isFinite(h) && h > 0) cssH = h;
-        }
+        return function (v) { var f = (v - sc.min) / (sc.max - sc.min); return flip ? off + len - f * len : off + f * len; };
+    }
+
+    function _plotRectFromCanvas(canvas) {
+        var cssW = canvas.clientWidth || canvas.width || 600, cssH = canvas.clientHeight || canvas.height || 400;
+        if (canvas.style && canvas.style.width) { var w = parseInt(canvas.style.width, 10); if (w > 0) cssW = w; }
+        if (canvas.style && canvas.style.height) { var h = parseInt(canvas.style.height, 10); if (h > 0) cssH = h; }
         var pad = _defaultPad();
-        return {
-            x: pad.left,
-            y: pad.top,
-            w: Math.max(1, cssW - pad.left - pad.right),
-            h: Math.max(1, cssH - pad.top - pad.bottom),
-            cssW: cssW,
-            cssH: cssH,
-            pad: pad
-        };
+        return { x: pad.left, y: pad.top, w: Math.max(1, cssW - pad.left - pad.right), h: Math.max(1, cssH - pad.top - pad.bottom) };
     }
 
-    // Determine the t-range the plot is showing. Bourdet, sqrt, quarter-root,
-    // spherical etc all use the dataset's t array. We reuse PRiSM_dataset
-    // unless something tighter is supplied via canvas._prismOriginalScale.x
-    // (which the layer-2 plots set on each render).
-    function _xRange(canvas, plotKey) {
-        // Layer-2 stores the original scale (post-zoom-reset) on the canvas.
-        if (canvas && canvas._prismOriginalScale && canvas._prismOriginalScale.x) {
-            var sx = canvas._prismOriginalScale.x;
-            if (isFinite(sx.min) && isFinite(sx.max) && sx.min > 0 && sx.max > sx.min) {
-                return { min: sx.min, max: sx.max, kind: sx.kind || 'log' };
-            }
+    // → { toX, plot, xMin, xMax } or null
+    function _xTransform(canvas, axes) {
+        var ax = axes || (canvas && canvas._prismAxes) || null;
+        if (ax && ax.plot && ax.scaleX) {
+            var toX = (typeof ax.toX === 'function') ? ax.toX : _axisFwd(ax.scaleX, ax.plot.x, ax.plot.w, false);
+            if (toX) return { toX: toX, plot: ax.plot, xMin: ax.scaleX.min, xMax: ax.scaleX.max, kind: ax.scaleX.kind };
         }
-        var ds = G.PRiSM_dataset;
-        if (!ds || !Array.isArray(ds.t) || !ds.t.length) {
-            return { min: 1e-3, max: 1, kind: 'log' };
+        var os = canvas && canvas._prismOriginalScale;
+        if (os && os.x && _num(os.x.min) && _num(os.x.max)) {
+            var pr = _plotRectFromCanvas(canvas);
+            var fx = _axisFwd({ kind: os.x.kind || 'log', min: os.x.min, max: os.x.max }, pr.x, pr.w, false);
+            if (fx) return { toX: fx, plot: pr, xMin: os.x.min, xMax: os.x.max, kind: os.x.kind || 'log' };
         }
-        var minT = Infinity, maxT = -Infinity;
-        for (var i = 0; i < ds.t.length; i++) {
-            var v = ds.t[i];
-            if (isFinite(v) && v > 0) {
-                if (v < minT) minT = v;
-                if (v > maxT) maxT = v;
-            }
-        }
-        if (!isFinite(minT) || !isFinite(maxT) || minT >= maxT) {
-            return { min: 1e-3, max: 1, kind: 'log' };
-        }
-        // Most diagnostic plots use a log x-axis; the cartesian P-vs-t variant
-        // and rate plots use linear. Default to log for known log plots.
-        var logPlots = { bourdet: 1, sqrt: 0, quarter: 0, spherical: 0,
-                         sandface: 1, superposition: 0, rateLog: 1,
-                         typeCurve: 1 };
-        var isLog = logPlots[plotKey] !== 0; // default true for unknown
-        if (plotKey === 'sqrt' || plotKey === 'quarter' || plotKey === 'spherical' ||
-            plotKey === 'cartesian' || plotKey === 'horner' || plotKey === 'superposition' ||
-            plotKey === 'rateCart' || plotKey === 'rateSemi' || plotKey === 'rateCum' ||
-            plotKey === 'lossRatio') {
-            isLog = false;
-        }
-        return { min: minT, max: maxT, kind: isLog ? 'log' : 'lin' };
-    }
-
-    // World→pixel for x. Mirrors layer-2's toX construction.
-    function _toX(plot, scaleX) {
-        if (scaleX.kind === 'log') {
-            var lmin = Math.log10(scaleX.min);
-            var lmax = Math.log10(scaleX.max);
-            var rng = lmax - lmin;
-            return function (v) {
-                if (!isFinite(v) || v <= 0) return NaN;
-                return plot.x + (Math.log10(v) - lmin) / rng * plot.w;
-            };
-        }
-        return function (v) {
-            if (!isFinite(v)) return NaN;
-            return plot.x + (v - scaleX.min) / (scaleX.max - scaleX.min) * plot.w;
-        };
+        return null;
     }
 
     function _colorForPriority(priority) {
         var th = _theme();
         if (priority === 1) return th.accent || '#f0883e';
-        if (priority === 2) return th.blue   || '#58a6ff';
+        if (priority === 2) return th.blue || '#58a6ff';
         return th.text2 || '#8b949e';
     }
 
-    G.PRiSM_drawPlotAnnotations = function PRiSM_drawPlotAnnotations(canvas, annotations, plotKey) {
+    G.PRiSM_drawPlotAnnotations = function PRiSM_drawPlotAnnotations(canvas, annotations, plotKey, axes) {
         if (!canvas || !canvas.getContext) return;
-        if (!Array.isArray(annotations) || !annotations.length) {
-            // Clear stored set.
-            try { canvas._prismAnnotations = []; } catch (e) {}
-            return;
-        }
         plotKey = plotKey || 'bourdet';
-        // Annotation rendering is meaningful only on log-x diagnostic plots
-        // (Bourdet, sandface, type-curve, rate-log). Skip for other plots
-        // where the regime semantics don't apply.
-        var skip = { cartesian: 1, horner: 1, sqrt: 1, quarter: 1, spherical: 1,
-                     superposition: 1, rateCart: 1, rateSemi: 1, rateCum: 1,
-                     lossRatio: 1 };
-        if (skip[plotKey]) {
-            try { canvas._prismAnnotations = []; } catch (e) {}
+        if (!Array.isArray(annotations) || !annotations.length || !ANN_PLOTS[plotKey]) {
+            try { canvas._prismAnnotations = []; } catch (e) { /* ignore */ }
             return;
         }
+        if (canvas._prismAnnotationsDrawing) return;          // re-entrancy guard
+        canvas._prismAnnotationsDrawing = true;
         try {
-            // Idempotency guard — if we are already drawing, bail.
-            if (canvas._prismAnnotationsDrawing) return;
-            canvas._prismAnnotationsDrawing = true;
-
             var ctx = canvas.getContext('2d');
-            if (!ctx) { canvas._prismAnnotationsDrawing = false; return; }
-
-            // The layer-2 setup applied a setTransform(dpr,0,0,dpr,0,0). When
-            // wrapped from PRiSM_drawActivePlot, that transform is still in
-            // effect, so our css-pixel coordinates draw at the right scale.
-            // If we are called standalone (rare), assume identity.
-            var plot = _plotRect(canvas);
-            var scaleX = _xRange(canvas, plotKey);
-            var toX = _toX(plot, scaleX);
-
-            var th = _theme();
-
-            // Filter annotations into the visible x range.
-            var visible = [];
+            var tr = _xTransform(canvas, axes);
+            if (!ctx || !tr) { canvas._prismAnnotations = []; return; }
+            var plot = tr.plot, visible = [];
             for (var i = 0; i < annotations.length; i++) {
                 var a = annotations[i];
-                if (!a || !isFinite(a.td)) continue;
-                if (scaleX.kind === 'log') {
-                    if (a.td <= 0) continue;
-                    if (a.td < scaleX.min || a.td > scaleX.max) continue;
-                } else {
-                    if (a.td < scaleX.min || a.td > scaleX.max) continue;
-                }
-                var px = toX(a.td);
-                if (!isFinite(px)) continue;
-                if (px < plot.x - 1 || px > plot.x + plot.w + 1) continue;
+                if (!a || !_num(a.td)) continue;
+                if (tr.kind === 'log' && a.td <= 0) continue;
+                if (a.td < Math.min(tr.xMin, tr.xMax) || a.td > Math.max(tr.xMin, tr.xMax)) continue;
+                var px = tr.toX(a.td);
+                if (!_num(px) || px < plot.x - 1 || px > plot.x + plot.w + 1) continue;
                 visible.push({ ann: a, px: px });
             }
-            // Stash the visible set for inspection.
             canvas._prismAnnotations = visible.slice();
-
+            canvas._prismAnnotationsDrawCount = (canvas._prismAnnotationsDrawCount || 0) + 1;
             ctx.save();
-            // Ensure clean state — don't inherit any clip from the plot lib.
             ctx.font = '11px sans-serif';
-
-            // Draw each annotation: dashed vertical line + label.
             for (var k = 0; k < visible.length; k++) {
-                var item = visible[k];
-                var aa = item.ann;
-                var px2 = item.px;
-                var color = _colorForPriority(aa.priority);
-
+                var aa = visible[k].ann, x = visible[k].px, color = _colorForPriority(aa.priority);
                 ctx.strokeStyle = color;
-                ctx.fillStyle = color;
                 ctx.lineWidth = 1;
                 ctx.setLineDash([4, 3]);
-
                 ctx.beginPath();
-                ctx.moveTo(px2 + 0.5, plot.y);
-                ctx.lineTo(px2 + 0.5, plot.y + plot.h);
+                ctx.moveTo(x + 0.5, plot.y);
+                ctx.lineTo(x + 0.5, plot.y + plot.h);
                 ctx.stroke();
                 ctx.setLineDash([]);
-
-                // Label: alternate above (k even → above) / below (k odd → below)
-                var above = (k % 2 === 0);
+                // Rotated label inside the plot box, reading bottom-to-top,
+                // ending just below the top edge; alternate sides of the line.
+                var text = String(aa.label || aa.type || '');
+                var tw = ctx.measureText(text).width || 0;
+                var off = (k % 2 === 0) ? -4 : 12;
                 ctx.save();
-                if (above) {
-                    // Above the plot box: rotate -90° and write reading bottom-up.
-                    ctx.translate(px2 + 4, plot.y - 4);
-                    ctx.rotate(-Math.PI / 2);
-                    ctx.textAlign = 'left';
-                    ctx.textBaseline = 'middle';
-                } else {
-                    // Below the plot box: rotate -90° and write reading top-down.
-                    ctx.translate(px2 - 4, plot.y + plot.h + 6);
-                    ctx.rotate(-Math.PI / 2);
-                    ctx.textAlign = 'right';
-                    ctx.textBaseline = 'middle';
-                }
-                // Draw a faint label background for legibility.
-                var labelText = String(aa.label || aa.type || '');
-                var tw = ctx.measureText(labelText).width;
+                ctx.translate(x + off, plot.y + 6);
+                ctx.rotate(-Math.PI / 2);
+                ctx.textAlign = 'right';
+                ctx.textBaseline = 'middle';
                 ctx.fillStyle = 'rgba(13,17,23,0.78)';
-                if (above) {
-                    ctx.fillRect(-2, -8, tw + 4, 14);
-                } else {
-                    ctx.fillRect(-tw - 2, -8, tw + 4, 14);
-                }
+                ctx.fillRect(-tw - 2, -7, tw + 4, 13);
                 ctx.fillStyle = color;
-                ctx.fillText(labelText, 0, 0);
+                ctx.fillText(text, 0, 0);
                 ctx.restore();
             }
             ctx.restore();
         } catch (e) {
-            try { console.warn('PRiSM_drawPlotAnnotations error:', e && e.message); } catch (_) {}
+            try { console.warn('PRiSM_drawPlotAnnotations error:', e && e.message); } catch (_) { /* ignore */ }
         } finally {
             canvas._prismAnnotationsDrawing = false;
         }
@@ -10228,225 +11941,154 @@ G.PRiSM_renderInterpretationPanel = function PRiSM_renderInterpretationPanel(con
 
 
     // ═══════════════════════════════════════════════════════════════
-    // SECTION 4 — WRAP PRiSM_drawActivePlot FOR AUTO-ANNOTATION
+    // SECTION 4 — POST-DRAW HOOK (C7)
     // ═══════════════════════════════════════════════════════════════
 
-    // Default-on. The user can disable via PRiSM_enableAutoAnnotations(false)
-    // or via the toolbar checkbox.
-    if (typeof G.PRiSM_annotationsEnabled === 'undefined') {
-        G.PRiSM_annotationsEnabled = true;
+    if (typeof G.PRiSM_annotationsEnabled === 'undefined') G.PRiSM_annotationsEnabled = true;
+
+    var _cache = { key: null, anns: null };
+
+    function _sig(t, dp, deriv) {
+        var n = t.length, mid = Math.floor(n / 2);
+        return [n, t[0], t[n - 1], dp[0], dp[n - 1], deriv[mid], deriv[n - 2],
+                typeof G.PRiSM_classifyRegimes === 'function' ? 1 : 0].join('|');
     }
 
-    function _wrapDrawActivePlot() {
-        if (!_hasWin) return;
-        if (typeof G.PRiSM_drawActivePlot !== 'function') {
-            // The plot dispatcher hasn't been defined yet (PRiSM Phase 1+2
-            // wires it in renderPRiSM). Try again shortly.
-            if (typeof setTimeout === 'function') {
-                setTimeout(_wrapDrawActivePlot, 250);
-            }
-            return;
-        }
-        if (G.PRiSM_drawActivePlot._annotationsWrapped) return;
-        var orig = G.PRiSM_drawActivePlot;
-        var wrapped = function () {
-            var ret = orig.apply(this, arguments);
-            if (G.PRiSM_annotationsEnabled === false) return ret;
-            try {
-                var canvas = (_hasDoc && document.getElementById)
-                    ? document.getElementById('prism_plot_canvas') : null;
-                var ds = G.PRiSM_dataset;
-                if (canvas && ds && Array.isArray(ds.t) && ds.t.length > 0) {
-                    var ann = G.PRiSM_detectAnnotations(ds.t, ds.p, ds.dp);
-                    var st = G.PRiSM_state || {};
-                    var plotKey = st.activePlot || 'bourdet';
-                    G.PRiSM_drawPlotAnnotations(canvas, ann, plotKey);
-                }
-            } catch (e) {
-                // Annotations are non-essential — fail quiet.
-                try { console.warn('PRiSM auto-annotation error:', e && e.message); } catch (_) {}
-            }
-            return ret;
-        };
-        // Preserve any flags set by other wrappers on the original.
-        for (var k in orig) { try { wrapped[k] = orig[k]; } catch (e) {} }
-        wrapped._annotationsWrapped = true;
-        G.PRiSM_drawActivePlot = wrapped;
+    function _annotationsFor(t, dp, deriv) {
+        var key = _sig(t, dp, deriv);
+        if (_cache.key === key && _cache.anns) return _cache.anns;
+        var anns = _detectCore(_toArr(t), _toArr(dp), _toArr(deriv));
+        _cache = { key: key, anns: anns };
+        return anns;
     }
+
+    function _annotationsPostDraw(info) {
+        if (!info || !info.canvas || G.PRiSM_annotationsEnabled === false) return;
+        var st = G.PRiSM_state || {};
+        var plotKey = info.plotKey || st.activePlot || 'bourdet';
+        if (!ANN_PLOTS[plotKey]) return;
+        var d = info.data, t, dp, deriv;
+        if (d && d.t && d.dp && d.deriv && d.t.length >= 5 && d.dp.length === d.t.length && d.deriv.length === d.t.length) {
+            t = d.t; dp = d.dp; deriv = d.deriv;         // exactly what the plot shows (same L)
+        } else {
+            var ad = _analysisData();
+            if (!ad || !ad.ok || !ad.deriv) return;
+            t = ad.t; dp = ad.dp; deriv = ad.deriv;
+        }
+        var anns = _annotationsFor(t, dp, deriv);
+        G.PRiSM_drawPlotAnnotations(info.canvas, anns, plotKey, info.axes || info.canvas._prismAxes);
+    }
+    _annotationsPostDraw._prismId = 'flow-regime-markers';
+    _registerPostDraw(_annotationsPostDraw);
 
     G.PRiSM_enableAutoAnnotations = function PRiSM_enableAutoAnnotations(enabled) {
-        // Default to true if no argument is supplied.
-        var on = (typeof enabled === 'undefined') ? true : !!enabled;
-        G.PRiSM_annotationsEnabled = on;
-        // Trigger a redraw if possible so annotations appear/disappear
-        // immediately.
-        try {
-            if (typeof G.PRiSM_drawActivePlot === 'function') G.PRiSM_drawActivePlot();
-        } catch (e) {
-            // Ignore — caller will redraw soon enough.
-        }
+        G.PRiSM_annotationsEnabled = (typeof enabled === 'undefined') ? true : !!enabled;
+        _redraw();
     };
-
-    // Kick off the wrap. It self-defers if drawActivePlot isn't ready yet.
-    _wrapDrawActivePlot();
 
 
     // ═══════════════════════════════════════════════════════════════
-    // SECTION 5 — TOOLBAR UI
+    // SECTION 5 — TAB 2 PANEL: "Flow-regime markers"
     // ═══════════════════════════════════════════════════════════════
 
-    // Toolbar state — stored on a single global so re-renders preserve UX.
-    G.PRiSM_annotationToolbarState = G.PRiSM_annotationToolbarState || {
-        autoL: true,
-        manualL: 0.18
-    };
-
-    // Apply the auto-L (or manualL) to PRiSM_state.smoothL so the next
-    // bourdet plot picks it up.
-    function _applyL() {
+    function _currentL() {
         var st = G.PRiSM_state || {};
-        var s = G.PRiSM_annotationToolbarState;
-        var ds = G.PRiSM_dataset;
-        var info = null;
-        if (s.autoL) {
-            if (ds && Array.isArray(ds.t) && Array.isArray(ds.p)) {
-                info = G.PRiSM_autoBourdet_L(ds.t, ds.p, ds.q);
-                st.smoothL = info.L;
-            } else {
-                st.smoothL = 0.18;
-                info = { L: 0.18, noiseLevel: 'low', noiseEstimate: 0,
-                         rationale: 'Auto-pick disabled (no data) — using L=0.18.' };
-            }
-        } else {
-            st.smoothL = s.manualL;
-            info = { L: s.manualL, noiseLevel: 'manual', noiseEstimate: 0,
-                     rationale: 'Manual L selected (' + s.manualL.toFixed(2) + ').' };
-        }
-        return info;
+        return _num(st.bourdetL) ? st.bourdetL : 0.15;
     }
 
-    function _updateInfoLine(host, info) {
-        if (!host || !host.querySelector) return;
+    function _setL(L) {
+        var st = G.PRiSM_state;
+        if (!st) return;
+        st.bourdetL = Math.max(0, Math.min(0.5, L));
+        if (typeof G.PRiSM_saveState === 'function') { try { G.PRiSM_saveState(); } catch (e) { /* ignore */ } }
+    }
+
+    function _fmtT(t) {
+        if (!_num(t)) return '—';
+        if (t >= 100) return t.toFixed(0);
+        if (t >= 1) return t.toPrecision(3).replace(/\.?0+$/, '');
+        return t.toPrecision(2);
+    }
+
+    function _detectedText() {
+        var ad = _analysisData();
+        if (!ad || !ad.ok) return 'No pressure data to analyse.';
+        var anns = _annotationsFor(ad.t, ad.dp, ad.deriv);
+        if (!anns.length) return 'No clear flow-regime transition detected.';
+        return 'Detected: ' + anns.map(function (a) { return a.label + ' (' + _fmtT(a.td) + ' hr)'; }).join(' · ');
+    }
+
+    function _updateInfo(host, info) {
         var line = host.querySelector('#prism_ann_infoline');
-        if (!line) return;
-        if (!info) { line.textContent = ''; return; }
-        var summary = 'Noise: ' + info.noiseLevel +
-            ' (~' + (info.noiseEstimate * 100).toFixed(2) + '% RMS)' +
-            '  •  Suggested L = ' + info.L.toFixed(2);
-        line.textContent = summary;
-        line.title = info.rationale || '';
+        if (line) {
+            line.textContent = info ? ('Noise: ' + info.noiseLevel + ' (~' + (info.noiseEstimate * 100).toFixed(2) +
+                                       '% RMS) · suggested L = ' + info.L.toFixed(2)) : '';
+            if (info) line.title = info.rationale || '';
+        }
+        var list = host.querySelector('#prism_ann_list');
+        if (list) { try { list.textContent = _detectedText(); } catch (e) { list.textContent = ''; } }
     }
 
     G.PRiSM_renderAnnotationToolbar = function PRiSM_renderAnnotationToolbar(container) {
-        var host = (typeof container === 'string')
-            ? (_hasDoc ? document.getElementById(container) : null)
-            : container;
+        var host = (typeof container === 'string') ? (_hasDoc ? document.getElementById(container) : null) : container;
         if (!host) return;
-        var s = G.PRiSM_annotationToolbarState;
         var enabled = (G.PRiSM_annotationsEnabled !== false);
-
+        var L = _currentL();
         host.innerHTML =
-            '<div style="border:1px solid #30363d; border-radius:6px; padding:10px 12px; ' +
-                        'background:#161b22; margin-top:8px; font:12px sans-serif; color:#c9d1d9;">' +
-                '<div style="font-size:11px; font-weight:700; color:#c9d1d9; ' +
-                            'text-transform:uppercase; letter-spacing:.5px; margin-bottom:8px;">' +
-                    'Diagnostic Annotations & Bourdet-L' +
-                '</div>' +
-                '<div style="display:flex; flex-wrap:wrap; align-items:center; gap:14px;">' +
+            '<div class="prism-regimes" style="max-width:100%; box-sizing:border-box; font-size:12px; color:var(--text, #e6edf3);">' +
+                '<div style="display:flex; flex-wrap:wrap; align-items:center; gap:10px 16px;">' +
                     '<label style="display:flex; align-items:center; gap:6px; cursor:pointer;">' +
-                        '<input type="checkbox" id="prism_ann_show"' +
-                            (enabled ? ' checked' : '') + '>' +
-                        '<span>Show annotations</span>' +
-                    '</label>' +
-                    '<label style="display:flex; align-items:center; gap:6px; cursor:pointer;">' +
-                        '<input type="checkbox" id="prism_ann_autoL"' +
-                            (s.autoL ? ' checked' : '') + '>' +
-                        '<span>Auto-pick smoothing L</span>' +
-                    '</label>' +
-                    '<label style="display:flex; align-items:center; gap:6px;' +
-                        (s.autoL ? ' opacity:0.55;' : '') + '">' +
-                        '<span>Manual L</span>' +
-                        '<input type="range" id="prism_ann_lslider" min="0.05" max="0.5" step="0.01" ' +
-                            'value="' + s.manualL.toFixed(2) + '" ' +
-                            (s.autoL ? 'disabled' : '') +
-                            ' style="width:120px;">' +
-                        '<span id="prism_ann_lvalue" style="color:#8b949e; min-width:34px;">' +
-                            s.manualL.toFixed(2) + '</span>' +
-                    '</label>' +
-                    '<button class="btn btn-secondary" id="prism_ann_reclassify" ' +
-                        'style="font-size:11px; padding:4px 10px;">Re-classify regimes</button>' +
+                        '<input type="checkbox" id="prism_ann_show"' + (enabled ? ' checked' : '') + '>' +
+                        '<span>Show flow-regime markers</span></label>' +
+                    '<label style="display:flex; align-items:center; gap:6px;">' +
+                        '<span>Derivative smoothing L</span>' +
+                        '<input type="number" id="prism_ann_L" min="0" max="0.5" step="0.01" value="' + L.toFixed(2) + '" ' +
+                            'style="width:72px; padding:4px 6px; background:var(--bg1, #0d1117); color:var(--text, #e6edf3); ' +
+                            'border:1px solid var(--border, #30363d); border-radius:4px;"></label>' +
+                    '<button type="button" class="btn btn-secondary" id="prism_ann_autoL" ' +
+                        'style="font-size:12px; padding:5px 10px;">Auto L</button>' +
                 '</div>' +
-                '<div id="prism_ann_infoline" style="margin-top:8px; font-size:11px; color:#8b949e; ' +
-                                                  'min-height:14px;"></div>' +
+                '<div id="prism_ann_infoline" style="margin-top:6px; font-size:11px; color:var(--text2, #8b949e); min-height:14px;"></div>' +
+                '<div id="prism_ann_list" role="status" style="margin-top:4px; font-size:12px; color:var(--text2, #8b949e); overflow-wrap:anywhere;"></div>' +
             '</div>';
 
-        // Compute & paint the info line.
-        try { _updateInfoLine(host, _applyL()); } catch (e) {}
+        _updateInfo(host, null);
+        var showChk = host.querySelector('#prism_ann_show');
+        var lIn     = host.querySelector('#prism_ann_L');
+        var autoBtn = host.querySelector('#prism_ann_autoL');
 
-        // Wire up controls.
-        var showChk    = host.querySelector('#prism_ann_show');
-        var autoChk    = host.querySelector('#prism_ann_autoL');
-        var slider     = host.querySelector('#prism_ann_lslider');
-        var sliderVal  = host.querySelector('#prism_ann_lvalue');
-        var btn        = host.querySelector('#prism_ann_reclassify');
-
-        if (showChk && showChk.addEventListener) {
-            showChk.addEventListener('change', function () {
-                G.PRiSM_enableAutoAnnotations(!!showChk.checked);
-                _ga4('prism_annotation_toggle', {
-                    enabled: !!showChk.checked,
-                    autoL:   !!s.autoL
-                });
-            });
-        }
-
-        if (autoChk && autoChk.addEventListener) {
-            autoChk.addEventListener('change', function () {
-                s.autoL = !!autoChk.checked;
-                if (slider) slider.disabled = s.autoL;
-                try {
-                    var info = _applyL();
-                    _updateInfoLine(host, info);
-                    if (typeof G.PRiSM_drawActivePlot === 'function') G.PRiSM_drawActivePlot();
-                } catch (e) {}
-                _ga4('prism_annotation_toggle', {
-                    enabled: (G.PRiSM_annotationsEnabled !== false),
-                    autoL:   !!s.autoL
-                });
-            });
-        }
-
-        if (slider && slider.addEventListener) {
-            slider.addEventListener('input', function () {
-                var v = parseFloat(slider.value);
-                if (isFinite(v)) {
-                    s.manualL = v;
-                    if (sliderVal) sliderVal.textContent = v.toFixed(2);
-                    if (!s.autoL) {
-                        try {
-                            _updateInfoLine(host, _applyL());
-                            if (typeof G.PRiSM_drawActivePlot === 'function') G.PRiSM_drawActivePlot();
-                        } catch (e) {}
-                    }
-                }
-            });
-        }
-
-        if (btn && btn.addEventListener) {
-            btn.addEventListener('click', function () {
-                try {
-                    var info = _applyL();
-                    _updateInfoLine(host, info);
-                    if (typeof G.PRiSM_drawActivePlot === 'function') G.PRiSM_drawActivePlot();
-                } catch (e) {}
-                _ga4('prism_annotation_toggle', {
-                    enabled: (G.PRiSM_annotationsEnabled !== false),
-                    autoL:   !!s.autoL,
-                    action:  'reclassify'
-                });
-            });
-        }
+        if (showChk) showChk.addEventListener('change', function () {
+            G.PRiSM_enableAutoAnnotations(!!showChk.checked);
+            _ga4('prism_annotation_toggle', { enabled: !!showChk.checked });
+        });
+        if (lIn) lIn.addEventListener('change', function () {
+            var v = parseFloat(lIn.value);
+            if (!isFinite(v)) { lIn.value = _currentL().toFixed(2); return; }
+            _setL(v);
+            lIn.value = _currentL().toFixed(2);
+            _redraw();
+            _updateInfo(host, null);
+        });
+        if (autoBtn) autoBtn.addEventListener('click', function () {
+            var ad = _analysisData();
+            var info = G.PRiSM_autoBourdet_L(ad && (ad.tAbs || ad.t), ad && ad.p);
+            _setL(info.L);
+            if (lIn) lIn.value = _currentL().toFixed(2);
+            _redraw();
+            _updateInfo(host, info);
+            _ga4('prism_annotation_toggle', { enabled: G.PRiSM_annotationsEnabled !== false, action: 'autoL', L: info.L });
+        });
     };
+
+    _registerTabPanel(2, {
+        id: 'regimes',
+        title: 'Flow-regime markers',
+        order: 20,
+        collapsed: false,
+        render: function (host) { G.PRiSM_renderAnnotationToolbar(host); }
+    });
+
+    _on(G, 'prism:dataset-loaded', function () { _cache = { key: null, anns: null }; });
 
 
     // ═══════════════════════════════════════════════════════════════

@@ -1,73 +1,108 @@
 // =============================================================================
 // PRiSM ─ Layer 11 — Cross-cutting polish
-//   1. SVG schematics                 — PRiSM_getModelSchematic(modelKey)
-//   2. Specialised analysis keys      — PRiSM_analysisKeys / PRiSM_armAnalysisKey /
-//                                       PRiSM_renderAnalysisKeyToolbar
-//   3. PNG export pipeline            — PRiSM_exportReportPDF / PRiSM_exportPlotPNG
-//   4. Per-tab GA4 events             — wraps window.PRiSM.setTab,
-//                                       window.PRiSM_runRegression and
-//                                       state.model setter
+//   1. SVG schematics          — PRiSM_getModelSchematic(modelKey)
+//   2. Plot line tools         — click-on-plot straight-line / slope analyses
+//                                (PRiSM_analysisKeys, PRiSM_armAnalysisKey,
+//                                 PRiSM_runAnalysisKey, PRiSM_renderAnalysisKeyToolbar)
+//   3. PNG / PDF export        — PRiSM_exportPlotPNG / PRiSM_exportReportPDF /
+//                                PRiSM_renderPlotToCanvas / PRiSM_listPlots
+//   4. Usage analytics (GA4)   — PRiSM_tabHooks.any + prism:model-changed /
+//                                prism:fit-updated listeners (no wrappers)
 // -----------------------------------------------------------------------------
-// This layer adds NO new physics. It improves the existing 20+ models with
-// proper diagrams, click-on-plot specialised-analysis helpers (ported from
-// the legacy reservoir-engineering toolset), a robust PDF export that bakes
-// canvas-rendered plots in as PNG data URLs, and per-tab GA4 instrumentation.
+// This layer adds NO new reservoir model. It provides model diagrams, the
+// classic straight-line and slope analyses a well-test engineer performs by
+// clicking on a diagnostic plot, a PDF/PNG export that bakes the canvas plots
+// in as PNG data URLs, and analytics events.
 //
-// Public API (all on window.*):
-//   PRiSM_getModelSchematic(modelKey)             -> SVG string
-//   PRiSM_analysisKeys                            -> { KEY: { label, plot, clicks, action } }
-//   PRiSM_armAnalysisKey(key)                     -> arm canvas to capture clicks
-//   PRiSM_renderAnalysisKeyToolbar(host, plotKey) -> render toolbar of buttons
-//   PRiSM_exportReportPDF()                       -> open print window with PNG-baked report
-//   PRiSM_exportPlotPNG(plotKey)                  -> trigger PNG download
-//   PRiSM_listPlots()                             -> array of {key, fn, label, mode}
-//   PRiSM_setModel(key)                           -> setter that fires GA4 prism_model_select
+// Units: field units throughout. Δt in hours, p in psia, q in STB/d (oil) or
+// Mscf/d (gas), k in md, h / rw / distances in ft, ct in 1/psi, μ in cp,
+// C in bbl/psi.
+//
+// Inputs come from the shared Well & Test store (window.PRiSM_getWell, C1)
+// and the shared analysis data (window.PRiSM_getAnalysisData, C2). When an
+// input is a default (or the store is absent) the result carries an amber
+// "default inputs" warning — values are never silently invented.
+//
+// Results go to PRiSM_state.analysisKeyResults[key] (never PRiSM_state.params).
 //
 // Conventions:
-//   - Single outer IIFE (this whole file).
-//   - All public symbols start with PRiSM_ and live on window.*.
+//   - Single outer IIFE (this whole file). Public symbols on window.PRiSM_*.
 //   - No external dependencies — pure vanilla JS, SVG strings only.
-//   - Defensive against missing host integrations: if gtag is absent it
-//     no-ops silently; if window.exportReport is absent the PDF export
-//     falls back to a print-window approach.
+//   - No polling installers and no function wrapping: mounting goes through
+//     the C7 registries (PRiSM_registerTabPanel / PRiSM_tabPanels,
+//     PRiSM_tabHooks) and window CustomEvents.
+//   - Every cross-module call is guarded with typeof checks.
 // =============================================================================
 
 (function () {
 'use strict';
 
-// -------------------------------------------------------------------------
-// Toast helper — re-uses the host app's toast() if present, otherwise
-// falls back to a console.log + one-shot floating div in the bottom-right.
-// -------------------------------------------------------------------------
+var G = (typeof window !== 'undefined') ? window : globalThis;
+var _hasDoc = (typeof document !== 'undefined') && !!document &&
+              typeof document.createElement === 'function';
+
+function _on(target, type, fn) {
+    try {
+        if (target && typeof target.addEventListener === 'function') target.addEventListener(type, fn);
+    } catch (e) { /* stub environments */ }
+}
+
+function _emit(type, detail) {
+    try {
+        if (typeof G.dispatchEvent !== 'function' || typeof CustomEvent !== 'function') return;
+        G.dispatchEvent(new CustomEvent(type, { detail: detail }));
+    } catch (e) { /* non-fatal */ }
+}
+
+function _esc(s) {
+    return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// Toast helper — re-uses a host toast() if present, otherwise a one-shot
+// floating div (bottom of the viewport, phone-safe width).
 function _polishToast(msg, kind) {
     kind = kind || 'info';
-    if (typeof window.toast === 'function') {
-        try { window.toast(msg, kind); return; } catch (e) { /* fall through */ }
+    if (typeof G.toast === 'function') {
+        try { G.toast(msg, kind); return; } catch (e) { /* fall through */ }
     }
-    try {
-        var prefix = (kind === 'error') ? '[PRiSM]' :
-                     (kind === 'success') ? '[PRiSM]' : '[PRiSM]';
-        console.log(prefix + ' ' + msg);
-    } catch (e) { /* silent */ }
-    // Floating toast (one at a time — replaces previous)
+    try { console.log('[PRiSM] ' + msg); } catch (e) { /* silent */ }
+    if (!_hasDoc || !document.body) return;
     try {
         var existing = document.getElementById('prism_polish_toast');
         if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
         var div = document.createElement('div');
         div.id = 'prism_polish_toast';
+        div.setAttribute('role', 'status');
         div.style.cssText =
-            'position:fixed; bottom:20px; right:20px; z-index:99999;' +
-            'background:' + (kind === 'error' ? '#5b1f1f' :
-                             kind === 'success' ? '#1f5b2a' : '#1f2a5b') + ';' +
-            'color:#f0f6fc; padding:10px 14px; border-radius:6px;' +
-            'font:13px sans-serif; box-shadow:0 4px 12px rgba(0,0,0,.4);' +
-            'max-width:340px; line-height:1.4;';
+            'position:fixed; bottom:16px; right:16px; z-index:99999;' +
+            'background:var(--bg2, #161b22); color:var(--text, #e6edf3);' +
+            'border:1px solid ' + (kind === 'error' ? 'var(--red, #f85149)' :
+                                   kind === 'success' ? 'var(--green, #3fb950)' :
+                                   kind === 'warn' ? 'var(--yellow, #d29922)' : 'var(--border, #30363d)') + ';' +
+            'padding:10px 14px; border-radius:6px; font:13px sans-serif;' +
+            'box-shadow:0 4px 12px rgba(0,0,0,.4); max-width:min(340px, calc(100vw - 32px));' +
+            'line-height:1.4; box-sizing:border-box; overflow-wrap:anywhere;';
         div.textContent = msg;
         document.body.appendChild(div);
         setTimeout(function () {
             if (div.parentNode) div.parentNode.removeChild(div);
         }, 4500);
     } catch (e) { /* silent */ }
+}
+
+// C7 panel registration: prefer the shell helper, else merge into the registry.
+function _registerTabPanel(n, spec) {
+    if (typeof G.PRiSM_registerTabPanel === 'function') {
+        try { G.PRiSM_registerTabPanel(n, spec); return; } catch (e) { /* fall back */ }
+    }
+    G.PRiSM_tabPanels = G.PRiSM_tabPanels || {};
+    var arr = G.PRiSM_tabPanels[n] = G.PRiSM_tabPanels[n] || [];
+    for (var i = 0; i < arr.length; i++) {
+        if (arr[i] && arr[i].id === spec.id) { arr[i] = spec; return; }
+    }
+    arr.push(spec);
 }
 
 // =========================================================================
@@ -1335,7 +1370,7 @@ function _schematic_placeholder(modelKey) {
 }
 
 // Public dispatch — covers all 45 PRiSM_MODELS entries.
-window.PRiSM_getModelSchematic = function (modelKey) {
+G.PRiSM_getModelSchematic = function (modelKey) {
     if (!modelKey) return '';
     switch (modelKey) {
         // Core (Phase 1+2)
@@ -1394,906 +1429,1757 @@ window.PRiSM_getModelSchematic = function (modelKey) {
     }
 };
 
+// =========================================================================
+// SECTION 2 — PLOT LINE TOOLS (click-on-plot straight-line & slope analyses)
+// =========================================================================
+// Each tool: { label, hint, plot, clicks, prompts[], group, action(pts, cx) }
+//   plot     plot key (or array of keys) the tool works on
+//   pts      [{x, y, xKind, yKind}] in data units of the clicked plot
+//            (log-log derivative plot: x = Δt [hr], y = Δp or Δp′ [psi])
+//   cx       context: cx.w(key) reads a Well & Test input (and records that
+//            it was used), cx.ad() the analysis data, cx.k() the permeability
+//            source, cx.teq(t) the equivalent drawdown time.
+//   action → { values:{}, text?, note, warnings[] } or { error }
+// Results are stored in PRiSM_state.analysisKeyResults[key].
+// =========================================================================
 
-// =========================================================================
-// SECTION 2 — SPECIALISED ANALYSIS KEYS
-// =========================================================================
-// Each entry is { label, plot, clicks, action(clicks, state) -> {note, ...} }
-// `clicks` is the number of canvas clicks needed; the action gets an array
-// of {x, y, dataX, dataY} objects + the live PRiSM_state and should return
-// an object whose keys (other than `note`) are written into state.params.
-//
-// All slope-based helpers operate in log10-log10 space when the plot is
-// 'bourdet' or another log-log derivative plot. Sqrt-time / spherical-flow
-// helpers operate in their respective natural axes (handled by the action).
-// =========================================================================
+var WELL_KEYS  = ['q', 'B', 'mu', 'ct', 'h', 'phi', 'rw'];
+var WELL_LABEL = { q: 'q', B: 'B', mu: 'μ', ct: 'ct', h: 'h', phi: 'φ', rw: 'rw' };
+// Last-resort values. Only ever used together with an amber
+// "default inputs" warning on the result.
+var FALLBACK_WELL = { q: 1000, B: 1.2, mu: 1.0, ct: 1e-5, h: 50, phi: 0.2, rw: 0.354 };
 
-// Helpers — slope between two points in log10 / linear axes.
-function _slopeLog(p1, p2) {
-    var dx = Math.log10(Math.max(1e-30, p2.dataX)) - Math.log10(Math.max(1e-30, p1.dataX));
-    var dy = Math.log10(Math.max(1e-30, p2.dataY)) - Math.log10(Math.max(1e-30, p1.dataY));
-    if (dx === 0) return NaN;
-    return dy / dx;
+// Quantity catalogue: display label + unit for every value a tool returns.
+var QTY = {
+    dpPrime:    { label: 'Δp′',                 unit: 'psi' },
+    kh:         { label: 'kh',                  unit: 'md·ft' },
+    k:          { label: 'k',                   unit: 'md' },
+    S:          { label: 'S',                   unit: '' },
+    rinv:       { label: 'r_inv',               unit: 'ft' },
+    C:          { label: 'C',                   unit: 'bbl/psi' },
+    CD:         { label: 'CD',                  unit: '' },
+    mLinear:    { label: 'm (linear)',          unit: 'psi/hr^½' },
+    xfSqrtK:    { label: 'xf·√k',               unit: 'ft·md^½' },
+    xf:         { label: 'xf',                  unit: 'ft' },
+    mBilinear:  { label: 'm (bilinear)',        unit: 'psi/hr^¼' },
+    kfwf:       { label: 'kf·wf',               unit: 'md·ft' },
+    mSpherical: { label: 'm (spherical)',       unit: 'psi·hr^½' },
+    ks:         { label: 'k (spherical)',       unit: 'md' },
+    ratio:      { label: 'Dip ratio',           unit: '' },
+    omega:      { label: 'ω',                   unit: '' },
+    lambda:     { label: 'λ',                   unit: '' },
+    tMin:       { label: 't at dip',            unit: 'hr' },
+    L:          { label: 'Distance',            unit: 'ft' },
+    W:          { label: 'Channel width',       unit: 'ft' },
+    theta:      { label: 'Wedge angle',         unit: '°' },
+    area:       { label: 'Drainage area',       unit: 'acres' },
+    poreVolume: { label: 'Pore volume',         unit: 'bbl' },
+    re:         { label: 'Equivalent radius',   unit: 'ft' },
+    kyKzLw:     { label: '√(ky·kz)·Lw',         unit: 'md·ft' },
+    LwSqrtKy:   { label: 'Lw·√ky',              unit: 'ft·md^½' },
+    kxKyH:      { label: '√(kx·ky)·h',          unit: 'md·ft' },
+    kH:         { label: '√(kx·ky)',            unit: 'md' },
+    slope:      { label: 'Slope',               unit: '' },
+    m:          { label: 'm',                   unit: 'psi/cycle' },
+    pStar:      { label: 'p*',                  unit: 'psia' },
+    p1hr:       { label: 'p1hr',                unit: 'psia' },
+    tx:         { label: 'Intersection Δt',     unit: 'hr' }
+};
+
+function _num(v) { return typeof v === 'number' && isFinite(v); }
+function _pos(v) { return _num(v) && v > 0; }
+
+function _fmt(v, sig) {
+    if (!_num(v)) return '—';
+    sig = sig || 4;
+    var a = Math.abs(v);
+    if (a !== 0 && (a >= 1e6 || a < 1e-3)) {
+        return v.toExponential(Math.max(0, sig - 2)).replace(/\.?0+e/, 'e').replace('e+', 'e');
+    }
+    var s = v.toPrecision(sig);
+    if (s.indexOf('e') !== -1) s = String(Number(s));
+    if (s.indexOf('.') !== -1) s = s.replace(/0+$/, '').replace(/\.$/, '');
+    return s;
 }
-function _slopeLin(p1, p2) {
-    var dx = p2.dataX - p1.dataX;
-    if (dx === 0) return NaN;
-    return (p2.dataY - p1.dataY) / dx;
+
+function _rankine(T) {
+    if (!_num(T)) return null;
+    return T > 400 ? T : T + 459.67;          // °F → °R unless already absolute
 }
 
-// Default rate / Bo / mu pulled from state.params or sane fallbacks.
-function _stableInputs(state) {
-    var p = state.params || {};
+// ---- Inputs (C1) ----------------------------------------------------------
+function _wellInputs() {
+    var out = { v: {}, defaulted: [], missing: [], source: 'none', fluid: 'oil',
+                T_R: null, testType: null, pi: null, tp: null, pwf0: null };
+    var w = null;
+    if (typeof G.PRiSM_getWell === 'function') {
+        try { w = G.PRiSM_getWell(); } catch (e) { w = null; }
+    }
+    var i, k;
+    if (w && typeof w === 'object') {
+        out.source = 'Well & Test';
+        var dflt = Array.isArray(w.defaulted) ? w.defaulted : [];
+        for (i = 0; i < WELL_KEYS.length; i++) {
+            k = WELL_KEYS[i];
+            if (_pos(w[k])) {
+                out.v[k] = w[k];
+                if (dflt.indexOf(k) !== -1) out.defaulted.push(k);
+            } else {
+                out.v[k] = FALLBACK_WELL[k];
+                out.defaulted.push(k);
+                out.missing.push(k);
+            }
+        }
+        out.fluid    = w.fluid || 'oil';
+        out.T_R      = _num(w.T_R) ? w.T_R : null;
+        out.testType = w.testType || null;
+        out.pi       = _pos(w.pi) ? w.pi : null;
+        out.tp       = _pos(w.tp) ? w.tp : null;
+        out.pwf0     = _pos(w.pwf0) ? w.pwf0 : null;
+        return out;
+    }
+    // No Well & Test store: read the PVT store. Its values have no
+    // provenance, so every one of them is reported as a default.
+    var pvt = G.PRiSM_pvt || null;
+    var c = (pvt && pvt._computed) || null;
+    if (pvt && (!c || !_pos(c.ct)) && typeof G.PRiSM_pvt_compute === 'function') {
+        try { c = G.PRiSM_pvt_compute() || c; } catch (e) { /* keep */ }
+    }
+    out.source = pvt ? 'stored PVT values (not confirmed)' : 'built-in defaults';
+    var raw = {
+        q:   pvt && pvt.q,
+        B:   (c && c.B)  || (pvt && pvt.Bo),
+        mu:  (c && c.mu) || (pvt && pvt.mu_o),
+        ct:  (c && c.ct) || (pvt && pvt.ct),
+        h:   pvt && pvt.h,
+        phi: pvt && pvt.phi,
+        rw:  pvt && pvt.rw
+    };
+    for (i = 0; i < WELL_KEYS.length; i++) {
+        k = WELL_KEYS[i];
+        out.v[k] = _pos(raw[k]) ? raw[k] : FALLBACK_WELL[k];
+        out.defaulted.push(k);
+        if (!_pos(raw[k])) out.missing.push(k);
+    }
+    out.fluid = (pvt && pvt.fluidType) || 'oil';
+    out.T_R   = (pvt && _num(pvt.T_res)) ? pvt.T_res : null;
+    return out;
+}
+
+// ---- Analysis data (C2) ---------------------------------------------------
+function _localBourdet(t, y, L) {
+    if (typeof G.PRiSM_compute_bourdet === 'function') {
+        try {
+            var r = G.PRiSM_compute_bourdet(t, y, L);
+            if (r && r.length === t.length) return r;
+        } catch (e) { /* inline fallback */ }
+    }
+    var n = t.length, d = new Array(n), i;
+    for (i = 0; i < n; i++) d[i] = NaN;
+    for (i = 1; i < n - 1; i++) {
+        var i1 = i - 1, i2 = i + 1;
+        if (L > 0) {
+            while (i1 > 0 && Math.log(t[i]) - Math.log(t[i1]) < L) i1--;
+            while (i2 < n - 1 && Math.log(t[i2]) - Math.log(t[i]) < L) i2++;
+        }
+        var dl1 = Math.log(t[i]) - Math.log(t[i1]);
+        var dl2 = Math.log(t[i2]) - Math.log(t[i]);
+        var dlT = Math.log(t[i2]) - Math.log(t[i1]);
+        if (!(dl1 > 0) || !(dl2 > 0) || !(dlT > 0)) continue;
+        d[i] = (y[i] - y[i1]) / dl1 * (dl2 / dlT) + (y[i2] - y[i]) / dl2 * (dl1 / dlT);
+    }
+    return d;
+}
+
+function _localAnalysisData(ds, L) {
+    if (!ds || !ds.t || !ds.p || ds.t.length < 3) {
+        return { ok: false, reason: 'No pressure data', t: [], dp: [], deriv: [] };
+    }
+    var n = ds.t.length, p0 = ds.p[0];
+    var sign = (ds.p[n - 1] - p0) >= 0 ? 1 : -1;     // +1 buildup, -1 drawdown
+    var t = [], p = [], dp = [];
+    for (var i = 0; i < n; i++) {
+        if (!(ds.t[i] > 0) || !_num(ds.p[i])) continue;
+        t.push(ds.t[i]); p.push(ds.p[i]); dp.push(sign * (ds.p[i] - p0));
+    }
     return {
-        q:   (p.q  != null) ? p.q  : 100,    // STB/D (or m³/d)
-        Bo:  (p.Bo != null) ? p.Bo : 1.2,
-        mu:  (p.mu != null) ? p.mu : 1.0,    // cp
-        h:   (p.h  != null) ? p.h  : 30,     // ft
-        phi: (p.phi != null) ? p.phi : 0.20,
-        ct:  (p.ct  != null) ? p.ct  : 1e-5, // 1/psi
-        rw:  (p.rw  != null) ? p.rw  : 0.354 // ft (8.5" hole)
+        ok: t.length >= 3, t: t, tAbs: t.slice(), p: p, dp: dp,
+        deriv: _localBourdet(t, dp, L), L: L, sign: sign, pRef: p0,
+        pRefSource: 'first-sample', testType: sign > 0 ? 'buildup' : 'drawdown', tp: null,
+        warnings: ['Δp is measured from the first sample — skin is biased (set pi on Tab 1).']
     };
 }
 
-window.PRiSM_analysisKeys = {
-    // ── Radial-flow ────────────────────────────────────────────────────
-    STABIL: {
-        label: 'Stabilisation → kh',
-        plot:  'bourdet',
-        clicks: 1,
-        action: function (clicks, state) {
-            var inp = _stableInputs(state);
-            var dpStab = clicks[0].dataY;            // ψ = dp' on the IARF plateau
-            // Bourdet IARF: dp' = 70.6·q·μ·B / (k·h)  →  k·h = 70.6·q·μ·B / dp'
-            var kh = (70.6 * inp.q * inp.mu * inp.Bo) / Math.max(1e-9, dpStab);
-            var k  = kh / Math.max(1e-9, inp.h);
-            return { kh: kh, k: k,
-                     note: 'IARF plateau dp\'=' + dpStab.toPrecision(4) +
-                           ' → kh=' + kh.toPrecision(4) +
-                           ' md·ft (k=' + k.toPrecision(4) + ' md)' };
+function _analysisData() {
+    var st = G.PRiSM_state || {};
+    if (typeof G.PRiSM_getAnalysisData === 'function') {
+        try {
+            var o = {};
+            if (_num(st.activePeriod) && st.activePeriod >= 0) o.period = st.activePeriod;
+            if (_num(st.bourdetL)) o.L = st.bourdetL;
+            if (st.timeFn) o.timeFn = st.timeFn;
+            var ad = G.PRiSM_getAnalysisData(G.PRiSM_dataset, o);
+            if (ad && ad.ok && ad.t && ad.t.length) return ad;
+        } catch (e) { /* fall back */ }
+    }
+    return _localAnalysisData(G.PRiSM_dataset, _num(st.bourdetL) ? st.bourdetL : 0.15);
+}
+
+// Positive (log t, log y) pairs of one AData series — cached on the object.
+function _pairs(ad, which) {
+    if (!ad || !ad.t) return { x: [], y: [] };
+    var cacheKey = '_prismPairs_' + which;
+    if (ad[cacheKey]) return ad[cacheKey];
+    var src = ad[which] || [], xs = [], ys = [];
+    for (var i = 0; i < ad.t.length; i++) {
+        if (ad.t[i] > 0 && src[i] > 0 && _num(src[i])) {
+            xs.push(Math.log10(ad.t[i]));
+            ys.push(Math.log10(src[i]));
         }
-    },
-    HALFSL: {
-        label: '½-slope → x_f',
-        plot:  'bourdet',
-        clicks: 2,
-        action: function (clicks, state) {
-            var inp = _stableInputs(state);
-            var sl = _slopeLog(clicks[0], clicks[1]);
-            // Linear flow: dp = 4.064·(qB/h)·sqrt(t/(φ·μ·ct·k))/x_f
-            //   → x_f·sqrt(k) is back-calculable from a chord & the slope check.
-            var dpRef = clicks[1].dataY, tRef = clicks[1].dataX;
-            // Solve: dp = m_lin · sqrt(t)  with  m_lin = dpRef/sqrt(tRef)
-            var mLin = dpRef / Math.max(1e-9, Math.sqrt(tRef));
-            var xf_sqrtk = (4.064 * inp.q * inp.Bo / inp.h) /
-                           Math.max(1e-9, mLin * Math.sqrt(inp.phi * inp.mu * inp.ct));
-            return { xf_sqrtk: xf_sqrtk,
-                     note: '½-slope (' + sl.toFixed(2) + ') → x_f·√k=' +
-                           xf_sqrtk.toPrecision(4) + ' ft·√md' };
+    }
+    var r = { x: xs, y: ys };
+    try { ad[cacheKey] = r; } catch (e) { /* frozen */ }
+    return r;
+}
+
+function _interpLogLog(pr, t) {
+    if (!pr.x.length || !(t > 0)) return NaN;
+    var lx = Math.log10(t), n = pr.x.length;
+    if (lx < pr.x[0] - 0.05 || lx > pr.x[n - 1] + 0.05) return NaN;
+    if (lx <= pr.x[0]) return Math.pow(10, pr.y[0]);
+    if (lx >= pr.x[n - 1]) return Math.pow(10, pr.y[n - 1]);
+    for (var i = 1; i < n; i++) {
+        if (pr.x[i] >= lx) {
+            var f = (lx - pr.x[i - 1]) / Math.max(1e-12, pr.x[i] - pr.x[i - 1]);
+            return Math.pow(10, pr.y[i - 1] + f * (pr.y[i] - pr.y[i - 1]));
         }
-    },
-    OMEGA: {
-        label: 'Valley depth → ω',
-        plot:  'bourdet',
-        clicks: 2,
-        action: function (clicks, state) {
-            // Click two points: (1) IARF plateau before valley, (2) bottom of valley.
-            var dpPlateau = clicks[0].dataY;
-            var dpValley  = clicks[1].dataY;
-            // ω ≈ 10^(−2·log10(dpPlateau/dpValley)) approximated by depth ratio.
-            var ratio = dpPlateau / Math.max(1e-9, dpValley);
-            var omega = 1 / Math.pow(ratio, 2);   // engineering proxy
-            if (omega < 0.001) omega = 0.001;
-            if (omega > 1)     omega = 1;
-            return { omega: omega,
-                     note: 'Valley depth ratio=' + ratio.toFixed(2) +
-                           ' → ω≈' + omega.toPrecision(3) };
+    }
+    return NaN;
+}
+
+// Which log-log curve (Δp or Δp′) is nearest the clicked point.
+function _whichCurve(ad, t, y) {
+    if (!ad || !ad.ok || !(y > 0)) return null;
+    var a = _interpLogLog(_pairs(ad, 'dp'), t);
+    var b = _interpLogLog(_pairs(ad, 'deriv'), t);
+    var ly = Math.log10(y);
+    var da = _pos(a) ? Math.abs(ly - Math.log10(a)) : Infinity;
+    var db = _pos(b) ? Math.abs(ly - Math.log10(b)) : Infinity;
+    if (da === Infinity && db === Infinity) return null;
+    return da < db ? 'dp' : 'deriv';
+}
+
+// Local log-log slope of a series around t (least squares over ±¼ then ±½ cycle).
+function _localSlope(ad, t, which) {
+    if (!ad || !ad.ok || !(t > 0)) return NaN;
+    var pr = _pairs(ad, which || 'deriv'), lt = Math.log10(t), widths = [0.25, 0.5];
+    for (var w = 0; w < widths.length; w++) {
+        var sx = 0, sy = 0, sxx = 0, sxy = 0, m = 0;
+        for (var i = 0; i < pr.x.length; i++) {
+            if (Math.abs(pr.x[i] - lt) > widths[w]) continue;
+            sx += pr.x[i]; sy += pr.y[i]; sxx += pr.x[i] * pr.x[i]; sxy += pr.x[i] * pr.y[i]; m++;
         }
-    },
-    LAMBDA: {
-        label: 'Valley time → λ',
-        plot:  'bourdet',
-        clicks: 1,
-        action: function (clicks, state) {
-            // tD at valley minimum ↔ λ via λ = (Cd·e^(2S)) / (tD·something).
-            // Engineering proxy: λ ≈ 1 / tValley (in dimensionless units).
-            var tValley = clicks[0].dataX;
-            var lambda = 1 / Math.max(1e-9, tValley);
-            return { lambda: lambda,
-                     note: 'Valley at t=' + tValley.toPrecision(3) +
-                           ' → λ≈' + lambda.toPrecision(3) };
+        var den = m * sxx - sx * sx;
+        if (m >= 3 && Math.abs(den) > 1e-12) return (m * sxy - sx * sy) / den;
+    }
+    return NaN;
+}
+
+function _isBuildup(tt) { return tt === 'buildup' || tt === 'falloff'; }
+
+// Permeability from earlier work (newest-first priority list).
+function _kFromContext(st) {
+    var r = (st && st.analysisKeyResults) || {};
+    var order = ['radialPlateau', 'mdhLine', 'hornerLine', 'dualPorosityDip', 'boundaryDoubling'];
+    var names = { radialPlateau: 'radial-plateau pick', mdhLine: 'semilog line', hornerLine: 'Horner line',
+                  dualPorosityDip: 'plateau pick', boundaryDoubling: 'plateau pick' };
+    for (var i = 0; i < order.length; i++) {
+        var e = r[order[i]];
+        if (e && e.values && _pos(e.values.k)) return { k: e.values.k, source: names[order[i]] };
+    }
+    var lf = null;
+    if (typeof G.PRiSM_getLastFit === 'function') { try { lf = G.PRiSM_getLastFit(); } catch (e2) { lf = null; } }
+    if (!lf && st) lf = st.lastFit;
+    if (lf && lf.phys && _pos(lf.phys.k) && !lf.stale) return { k: lf.phys.k, source: 'model fit' };
+    if (st && st.semilog && _pos(st.semilog.k)) return { k: st.semilog.k, source: 'semilog analysis' };
+    if (st && st.phys && _pos(st.phys.k)) return { k: st.phys.k, source: 'model parameters' };
+    return null;
+}
+
+function _omegaFromContext(st) {
+    var r = (st && st.analysisKeyResults) || {};
+    var order = ['dualPorosityDip', 'storativityRatio'];
+    for (var i = 0; i < order.length; i++) {
+        var e = r[order[i]];
+        if (e && e.values && _pos(e.values.omega)) return { omega: e.values.omega, source: e.label };
+    }
+    var lf = st && st.lastFit;
+    if (lf && lf.params && _pos(lf.params.omega)) return { omega: lf.params.omega, source: 'model fit' };
+    if (st && st.params && _pos(st.params.omega)) return { omega: st.params.omega, source: 'model parameters' };
+    return null;
+}
+
+// ω from the dip-to-plateau derivative ratio (pseudo-steady interporosity flow):
+//   Δp′_min/Δp′_r = 1 + ω^(1/(1−ω)) − ω^(ω/(1−ω))
+function _dipRatio(w) { return 1 + Math.pow(w, 1 / (1 - w)) - Math.pow(w, w / (1 - w)); }
+function _omegaFromDipRatio(ratio) {
+    if (!(ratio > 0) || !(ratio < 1)) return NaN;
+    var lo = Math.log(1e-8), hi = Math.log(0.999);
+    if (ratio <= _dipRatio(1e-8)) return 1e-8;
+    for (var i = 0; i < 200; i++) {
+        var mid = 0.5 * (lo + hi);
+        if (_dipRatio(Math.exp(mid)) < ratio) lo = mid; else hi = mid;
+        if (hi - lo < 1e-12) break;
+    }
+    return Math.exp(0.5 * (lo + hi));
+}
+
+function _regimeForSlope(s) {
+    if (!_num(s)) return 'unknown';
+    if (Math.abs(s) < 0.1)        return 'radial flow (flat derivative)';
+    if (Math.abs(s - 0.25) < 0.08) return 'bilinear flow (¼ slope)';
+    if (Math.abs(s - 0.5) < 0.1)  return 'linear flow (½ slope)';
+    if (Math.abs(s - 1) < 0.15)   return 'unit slope (storage, or a closed system at late time)';
+    if (Math.abs(s + 0.5) < 0.1)  return 'spherical flow (−½ slope)';
+    if (s <= -0.6)                return 'pressure support (falling derivative)';
+    return 'transition';
+}
+
+function _semilogX(pt) {                     // semilog abscissa (log10 of the axis value)
+    return (pt.xKind === 'log') ? Math.log10(pt.x) : pt.x;
+}
+
+// Optional hand-off to the semilog engine. Its stored result is left as it was.
+function _semilogEngine(method, t0, t1, cx) {
+    if (typeof G.PRiSM_semilogAnalysis !== 'function') return null;
+    var st = cx.st, before = st ? st.semilog : undefined, res = null;
+    try {
+        var well = null;
+        if (typeof G.PRiSM_getWell === 'function') { try { well = G.PRiSM_getWell(); } catch (e0) { well = null; } }
+        res = G.PRiSM_semilogAnalysis(cx.ad(), well,
+            { method: method, window: { t0: Math.min(t0, t1), t1: Math.max(t0, t1) }, store: false });
+    } catch (e) { res = null; }
+    if (st) { if (before === undefined) { try { delete st.semilog; } catch (e1) { st.semilog = undefined; } } else st.semilog = before; }
+    if (!res || typeof res !== 'object' || res.ok === false) return null;
+    if (res.window && res.window.auto === true) return null;      // the clicked window was not used
+    var pStar = _num(res.pStar) ? res.pStar : (_num(res.pstar) ? res.pstar : null);
+    return { m: res.m, kh: res.kh, k: res.k, p1hr: res.p1hr, S: res.S, pStar: pStar,
+             method: res.method, n: res.window && res.window.n };
+}
+
+function _sqrtRatio(mu, phi, ct) { return Math.sqrt(mu / (phi * ct)); }
+
+G.PRiSM_analysisKeys = {
+
+    // ── Radial flow & storage ─────────────────────────────────────────────
+    radialPlateau: {
+        label: 'Pick radial plateau → kh',
+        hint: 'Click the flat part of the derivative (radial flow).',
+        plot: 'bourdet', clicks: 1, group: 'Radial flow & storage',
+        prompts: ['Click the flat part of the derivative (radial flow)'],
+        action: function (pts, cx) {
+            var t = pts[0].x, y = pts[0].y, warnings = [];
+            if (!_pos(y)) return { error: 'Click on the derivative plateau (Δp′ must be positive).' };
+            var q = cx.w('q'), B = cx.w('B'), mu = cx.w('mu'), h = cx.w('h'), kh;
+            if (cx.pseudo()) {
+                var T = cx.rankine();
+                if (!T) return { error: 'Gas pseudo-pressure data: set the reservoir temperature on Tab 1.' };
+                kh = 711 * q * T / y;                      // Δm′ plateau, psi²/cp
+            } else {
+                kh = 70.6 * q * B * mu / y;                // Bourdet: Δp′ = 70.6 qBμ/kh
+            }
+            var k = kh / h, v = { dpPrime: y, kh: kh, k: k };
+            var ad = cx.ad(), s = _localSlope(ad, t, 'deriv');
+            if (_num(s) && Math.abs(s) > 0.1) {
+                warnings.push('The derivative is not flat here (local slope ' + s.toFixed(2) + ') — pick the radial-flow plateau.');
+            }
+            if (ad && ad.ok && !cx.pseudo()) {
+                var dpr = _interpLogLog(_pairs(ad, 'dp'), t);
+                var phi = cx.w('phi'), ct = cx.w('ct'), rw = cx.w('rw');
+                if (_pos(dpr)) {
+                    var te = cx.teq(t);
+                    v.S = 0.5 * (dpr / y - Math.log(0.0002637 * k * te / (phi * mu * ct * rw * rw)) - 0.80907);
+                    if (ad.pRefSource && ad.pRefSource !== 'pi' && ad.pRefSource !== 'pwf0') {
+                        warnings.push('Δp is measured from the ' + String(ad.pRefSource).replace('-', ' ') +
+                                      ', not pi — skin is biased. Set pi on Tab 1.');
+                    }
+                }
+                var tEnd = 0;
+                for (var i = 0; i < ad.t.length; i++) if (ad.t[i] > tEnd) tEnd = ad.t[i];
+                if (tEnd > 0) v.rinv = Math.sqrt(k * tEnd / (948 * phi * mu * ct));
+            }
+            return {
+                values: v, warnings: warnings,
+                note: 'Radial plateau Δp′ = ' + _fmt(y) + ' psi → kh = ' + _fmt(kh) + ' md·ft, k = ' + _fmt(k) + ' md' +
+                      (_num(v.S) ? ', S = ' + _fmt(v.S, 3) : '')
+            };
         }
     },
 
-    // ── Boundaries ────────────────────────────────────────────────────
-    FAULT: {
-        label: 'Slope-doubling → L',
-        plot:  'bourdet',
-        clicks: 1,
-        action: function (clicks, state) {
-            // Click on the time of slope doubling on the derivative curve.
-            // For a sealing fault: t_2m ≈ 948 · φ·μ·ct·L² / k
-            //   → L = sqrt(k · t_2m / (948 · φ·μ·ct))
-            var inp = _stableInputs(state);
-            var t = clicks[0].dataX;
-            var k = (state.params && state.params.k) ? state.params.k : 50;
-            var L = Math.sqrt(k * t / (948 * inp.phi * inp.mu * inp.ct));
-            return { L: L,
-                     note: 'Slope doubles at t=' + t.toPrecision(3) +
-                           ' h → L≈' + L.toFixed(0) + ' ft' };
+    unitSlope: {
+        label: 'Unit slope → C',
+        hint: 'Click a point on the early unit-slope line (wellbore storage).',
+        plot: 'bourdet', clicks: 1, group: 'Radial flow & storage',
+        prompts: ['Click a point on the early unit-slope (storage) line'],
+        action: function (pts, cx) {
+            var t = pts[0].x, y = pts[0].y, warnings = [];
+            if (!_pos(t) || !_pos(y)) return { error: 'Click on the unit-slope line.' };
+            var q = cx.w('q'), B = cx.w('B');
+            var C = q * B * t / (24 * y);                   // Δp = qBΔt/(24C)
+            var CD = 0.8936 * C / (cx.w('phi') * cx.w('ct') * cx.w('h') * cx.w('rw') * cx.w('rw'));
+            var s = _localSlope(cx.ad(), t, 'dp');
+            if (_num(s) && Math.abs(s - 1) > 0.15) {
+                warnings.push('The data is not on a unit slope here (local slope ' + s.toFixed(2) + ') — storage may be over before the first point.');
+            }
+            return { values: { C: C, CD: CD }, warnings: warnings,
+                     note: 'Unit slope at Δt = ' + _fmt(t, 3) + ' hr, Δp = ' + _fmt(y) + ' psi → C = ' + _fmt(C, 3) + ' bbl/psi (CD = ' + _fmt(CD, 3) + ')' };
         }
     },
-    'BND-ON': {
+
+    // ── Fractures & linear flow ──────────────────────────────────────────
+    halfSlope: {
+        label: '½-slope → xf·√k',
+        hint: 'Click the ½-slope part of the curves (fracture linear flow).',
+        plot: 'bourdet', clicks: 1, group: 'Fractures & linear flow',
+        prompts: ['Click the ½-slope part of the derivative (linear flow)'],
+        action: function (pts, cx) {
+            var t = pts[0].x, y = pts[0].y, warnings = [];
+            if (!_pos(t) || !_pos(y)) return { error: 'Click on the ½-slope segment.' };
+            var ad = cx.ad(), curve = _whichCurve(ad, t, y) || 'deriv';
+            var m = (curve === 'dp' ? y : 2 * y) / Math.sqrt(t);       // Δp = m√t, Δp′ = ½ m√t
+            var xfk = 4.064 * cx.w('q') * cx.w('B') / (cx.w('h') * m) * _sqrtRatio(cx.w('mu'), cx.w('phi'), cx.w('ct'));
+            var v = { mLinear: m, xfSqrtK: xfk };
+            var s = _localSlope(ad, t, 'deriv');
+            if (_num(s) && Math.abs(s - 0.5) > 0.1) warnings.push('Local derivative slope is ' + s.toFixed(2) + ', not ½ — check the flow regime.');
+            var kk = cx.k();
+            if (kk) v.xf = xfk / Math.sqrt(kk.k);
+            return { values: v, warnings: warnings,
+                     note: '½-slope on ' + (curve === 'dp' ? 'Δp' : 'Δp′') + ' → m = ' + _fmt(m) + ' psi/hr^½, xf·√k = ' + _fmt(xfk) + ' ft·md^½' +
+                           (v.xf ? ', xf = ' + _fmt(v.xf) + ' ft' : '') };
+        }
+    },
+
+    quarterSlope: {
+        label: '¼-slope → kf·wf',
+        hint: 'Click the ¼-slope part of the curves (bilinear flow). Needs k.',
+        plot: 'bourdet', clicks: 1, group: 'Fractures & linear flow', needsK: true,
+        prompts: ['Click the ¼-slope part of the derivative (bilinear flow)'],
+        action: function (pts, cx) {
+            var t = pts[0].x, y = pts[0].y, warnings = [];
+            if (!_pos(t) || !_pos(y)) return { error: 'Click on the ¼-slope segment.' };
+            var kk = cx.k();
+            if (!kk) return { error: 'Needs k: pick the radial plateau first (or run a fit).' };
+            var ad = cx.ad(), curve = _whichCurve(ad, t, y) || 'deriv';
+            var m = (curve === 'dp' ? y : 4 * y) / Math.pow(t, 0.25);  // Δp = m t^¼, Δp′ = ¼ m t^¼
+            var mu = cx.w('mu');
+            var kfwf = Math.pow(44.1 * cx.w('q') * cx.w('B') * mu /
+                                (cx.w('h') * m * Math.pow(cx.w('phi') * mu * cx.w('ct') * kk.k, 0.25)), 2);
+            var s = _localSlope(ad, t, 'deriv');
+            if (_num(s) && Math.abs(s - 0.25) > 0.08) warnings.push('Local derivative slope is ' + s.toFixed(2) + ', not ¼ — check the flow regime.');
+            return { values: { mBilinear: m, kfwf: kfwf }, warnings: warnings,
+                     note: '¼-slope → m = ' + _fmt(m) + ' psi/hr^¼, kf·wf = ' + _fmt(kfwf) + ' md·ft (k = ' + _fmt(kk.k, 3) + ' md from ' + kk.source + ')' };
+        }
+    },
+
+    sphericalSlope: {
+        label: '−½ slope → spherical k',
+        hint: 'Click the −½-slope part of the derivative (spherical flow).',
+        plot: 'bourdet', clicks: 1, group: 'Fractures & linear flow',
+        prompts: ['Click the −½-slope part of the derivative (spherical flow)'],
+        action: function (pts, cx) {
+            var t = pts[0].x, y = pts[0].y, warnings = [];
+            if (!_pos(t) || !_pos(y)) return { error: 'Click on the −½-slope derivative.' };
+            var ad = cx.ad();
+            if (_whichCurve(ad, t, y) === 'dp') return { error: 'Click on the derivative (Δp′), not on Δp.' };
+            var m = 2 * y * Math.sqrt(t);                  // Δp′ = ½·|m|/√t
+            var mu = cx.w('mu');
+            var ks = Math.pow(2452.9 * cx.w('q') * cx.w('B') * mu * Math.sqrt(cx.w('phi') * mu * cx.w('ct')) / m, 2 / 3);
+            var s = _localSlope(ad, t, 'deriv');
+            if (_num(s) && Math.abs(s + 0.5) > 0.12) warnings.push('Local derivative slope is ' + s.toFixed(2) + ', not −½ — check the flow regime.');
+            return { values: { mSpherical: m, ks: ks }, warnings: warnings,
+                     note: '−½ slope → |m| = ' + _fmt(m) + ' psi·hr^½, spherical k = ' + _fmt(ks) + ' md' };
+        }
+    },
+
+    // ── Dual porosity ────────────────────────────────────────────────────
+    dualPorosityDip: {
+        label: 'Click the dip → ω, λ',
+        hint: 'Click the radial plateau, then the bottom of the derivative dip.',
+        plot: 'bourdet', clicks: 2, group: 'Dual porosity',
+        prompts: ['Click the radial plateau', 'Click the bottom of the derivative dip'],
+        action: function (pts, cx) {
+            var yr = pts[0].y, tm = pts[1].x, ym = pts[1].y;
+            if (!_pos(yr) || !_pos(ym)) return { error: 'Both points must be on the derivative.' };
+            var ratio = ym / yr;
+            if (!(ratio < 1)) return { error: 'The dip must lie below the plateau (ratio ' + _fmt(ratio, 3) + ').' };
+            var omega = _omegaFromDipRatio(ratio);
+            var mu = cx.w('mu'), kh = 70.6 * cx.w('q') * cx.w('B') * mu / yr, k = kh / cx.w('h');
+            var rw = cx.w('rw'), te = cx.teq(tm);
+            var lambda = omega * Math.log(1 / omega) * cx.w('phi') * mu * cx.w('ct') * rw * rw / (0.0002637 * k * te);
+            return { values: { kh: kh, k: k, ratio: ratio, omega: omega, tMin: tm, lambda: lambda }, warnings: [],
+                     note: 'Dip ratio ' + _fmt(ratio, 3) + ' → ω = ' + _fmt(omega, 3) + '; dip at ' + _fmt(tm, 3) + ' hr → λ = ' + _fmt(lambda, 3) + ' (k = ' + _fmt(k, 3) + ' md)' };
+        }
+    },
+
+    storativityRatio: {
+        label: 'Dip depth → ω',
+        hint: 'Click the radial plateau, then the bottom of the dip.',
+        plot: 'bourdet', clicks: 2, group: 'Dual porosity',
+        prompts: ['Click the radial plateau', 'Click the bottom of the derivative dip'],
+        action: function (pts) {
+            var ratio = pts[1].y / pts[0].y;
+            if (!(ratio > 0 && ratio < 1)) return { error: 'The dip must lie below the plateau.' };
+            var omega = _omegaFromDipRatio(ratio);
+            return { values: { ratio: ratio, omega: omega }, warnings: [],
+                     note: 'Dip ratio ' + _fmt(ratio, 3) + ' → ω = ' + _fmt(omega, 3) };
+        }
+    },
+
+    interporosityFlow: {
+        label: 'Dip time → λ',
+        hint: 'Click the bottom of the dip. Needs ω and k.',
+        plot: 'bourdet', clicks: 1, group: 'Dual porosity', needsK: true,
+        prompts: ['Click the bottom of the derivative dip'],
+        action: function (pts, cx) {
+            var tm = pts[0].x;
+            var om = _omegaFromContext(cx.st);
+            if (!om) return { error: 'Needs ω: use "Dip depth → ω" first.' };
+            var kk = cx.k();
+            if (!kk) return { error: 'Needs k: pick the radial plateau first (or run a fit).' };
+            var rw = cx.w('rw'), te = cx.teq(tm);
+            var lambda = om.omega * Math.log(1 / om.omega) * cx.w('phi') * cx.w('mu') * cx.w('ct') * rw * rw / (0.0002637 * kk.k * te);
+            return { values: { tMin: tm, omega: om.omega, lambda: lambda }, warnings: [],
+                     note: 'Dip at ' + _fmt(tm, 3) + ' hr, ω = ' + _fmt(om.omega, 3) + ', k = ' + _fmt(kk.k, 3) + ' md → λ = ' + _fmt(lambda, 3) };
+        }
+    },
+
+    // ── Boundaries ────────────────────────────────────────────────────────
+    boundaryDoubling: {
+        label: 'Boundary doubling → distance',
+        hint: 'Click the radial plateau, then a point where the derivative is rising towards double.',
+        plot: 'bourdet', clicks: 2, group: 'Boundaries',
+        prompts: ['Click the radial plateau', 'Click the rising derivative (between 1× and 2× the plateau)'],
+        action: function (pts, cx) {
+            var yr = pts[0].y, t = pts[1].x, y = pts[1].y;
+            var R = y / yr;
+            if (!(R > 1.005 && R < 1.995)) {
+                return { error: 'Pick a point where the derivative is between 1× and 2× the plateau (this one is ' + _fmt(R, 3) + '×).' };
+            }
+            var mu = cx.w('mu'), kh = 70.6 * cx.w('q') * cx.w('B') * mu / yr, k = kh / cx.w('h');
+            var te = cx.teq(t);
+            // Single sealing fault (image at 2L): R − 1 = exp(−L²φμct/(0.0002637 k t))
+            var L = Math.sqrt(0.0002637 * k * te * Math.log(1 / (R - 1)) / (cx.w('phi') * mu * cx.w('ct')));
+            return { values: { kh: kh, k: k, ratio: R, L: L }, warnings: [],
+                     note: 'Derivative at ' + _fmt(R, 3) + '× the plateau at ' + _fmt(t, 3) + ' hr → distance to a sealing fault ≈ ' + _fmt(L, 3) + ' ft (k = ' + _fmt(k, 3) + ' md)' };
+        }
+    },
+
+    boundaryOnset: {
         label: 'Boundary onset → distance',
-        plot:  'bourdet',
-        clicks: 1,
-        action: function (clicks, state) {
-            // Onset of any boundary: t_b ≈ 380 · φ·μ·ct·L² / k.
-            var inp = _stableInputs(state);
-            var t = clicks[0].dataX;
-            var k = (state.params && state.params.k) ? state.params.k : 50;
-            var L = Math.sqrt(k * t / (380 * inp.phi * inp.mu * inp.ct));
-            return { Lb: L,
-                     note: 'Boundary onset at t=' + t.toPrecision(3) +
-                           ' h → L≈' + L.toFixed(0) + ' ft' };
+        hint: 'Click where the derivative first leaves the plateau (≈10% above). Needs k.',
+        plot: 'bourdet', clicks: 1, group: 'Boundaries', needsK: true,
+        prompts: ['Click where the derivative first rises above the plateau'],
+        action: function (pts, cx) {
+            var t = pts[0].x;
+            var kk = cx.k();
+            if (!kk) return { error: 'Needs k: pick the radial plateau first (or run a fit).' };
+            var te = cx.teq(t);
+            var L = Math.sqrt(0.0002637 * kk.k * te * Math.log(10) / (cx.w('phi') * cx.w('mu') * cx.w('ct')));
+            return { values: { L: L }, warnings: [],
+                     note: 'Boundary felt at ' + _fmt(t, 3) + ' hr → distance ≈ ' + _fmt(L, 3) + ' ft (k = ' + _fmt(kk.k, 3) + ' md from ' + kk.source + ')' };
         }
     },
-    'BND-DV': {
-        label: 'Derivative deviation → boundary type',
-        plot:  'bourdet',
-        clicks: 2,
-        action: function (clicks) {
-            // Click pre-deviation point and post-deviation point on derivative.
-            var slope = _slopeLog(clicks[0], clicks[1]);
+
+    boundaryType: {
+        label: 'Late slope → boundary type',
+        hint: 'Click two points on the late-time derivative.',
+        plot: 'bourdet', clicks: 2, group: 'Boundaries',
+        prompts: ['Click the first late-time derivative point', 'Click a later derivative point'],
+        action: function (pts, cx) {
+            var dx = Math.log10(pts[1].x) - Math.log10(pts[0].x);
+            if (!(Math.abs(dx) > 1e-6)) return { error: 'The two points need different times.' };
+            var s = (Math.log10(pts[1].y) - Math.log10(pts[0].y)) / dx;
             var typ;
-            if      (slope >  0.7) typ = 'sealing fault (dp\' ↑)';
-            else if (slope < -0.7) typ = 'constant-pressure boundary (dp\' ↓)';
-            else                   typ = 'channel / partial-seal (intermediate)';
-            return { boundaryType: typ,
-                     note: 'Derivative slope after deviation ≈ ' +
-                           slope.toFixed(2) + ' → ' + typ };
-        }
-    },
-    CHANEL: {
-        label: '½-slope onset → channel width',
-        plot:  'bourdet',
-        clicks: 1,
-        action: function (clicks, state) {
-            // Channel ½-slope onset: t_lin ≈ 152 · φ·μ·ct·W² / k.
-            var inp = _stableInputs(state);
-            var t = clicks[0].dataX;
-            var k = (state.params && state.params.k) ? state.params.k : 50;
-            var W = Math.sqrt(k * t / (152 * inp.phi * inp.mu * inp.ct));
-            return { W: W,
-                     note: '½-slope onset at t=' + t.toPrecision(3) +
-                           ' h → channel W≈' + W.toFixed(0) + ' ft' };
-        }
-    },
-    ANGLE: {
-        label: 'Plateau after 2 faults → θ',
-        plot:  'bourdet',
-        clicks: 2,
-        action: function (clicks) {
-            // Late-time plateau ratio to IARF plateau ↔ 2π/θ.
-            var dpIARF  = clicks[0].dataY;
-            var dpLate  = clicks[1].dataY;
-            var ratio   = dpLate / Math.max(1e-9, dpIARF);
-            var theta_rad = 2 * Math.PI / Math.max(1, ratio);
-            var theta_deg = theta_rad * 180 / Math.PI;
-            return { theta_deg: theta_deg,
-                     note: 'Late/IARF ratio=' + ratio.toFixed(2) +
-                           ' → intersecting-fault angle ≈ ' +
-                           theta_deg.toFixed(1) + '°' };
+            if (s >= 0.8) typ = 'closed system (pseudo-steady state)';
+            else if (s >= 0.35) typ = 'parallel boundaries / channel (½ slope)';
+            else if (s >= 0.1) typ = 'sealing fault or partial barrier';
+            else if (s > -0.1) typ = 'no boundary effect (radial flow)';
+            else typ = 'pressure support (constant-pressure boundary or aquifer)';
+            var warnings = [];
+            var ad = cx.ad();
+            if (ad && _isBuildup(ad.testType) && s < -0.1) warnings.push('On a buildup a falling derivative can also mean a closed system.');
+            return { values: { slope: s }, text: typ, warnings: warnings,
+                     note: 'Late slope ' + s.toFixed(2) + ' → ' + typ };
         }
     },
 
-    // ── Injectivity ────────────────────────────────────────────────────
-    INJSTB: {
-        label: 'sqrt(t) stabilisation → conformance',
-        plot:  'sqrt',
-        clicks: 1,
-        action: function (clicks) {
-            // Stabilisation level on sqrt(t) plot indicates injection-zone
-            // conformance vs. multi-zone behaviour.
-            var dpStab = clicks[0].dataY;
-            var conf   = (dpStab > 0) ? 1 - Math.exp(-dpStab / 100) : 0;
-            return { injConformance: conf,
-                     note: 'sqrt(t) stabilisation Δp=' + dpStab.toPrecision(3) +
-                           ' → conformance ≈ ' + (conf * 100).toFixed(1) + '%' };
-        }
-    },
-    INJSLP: {
-        label: 'sqrt(t) slope → injectivity II',
-        plot:  'sqrt',
-        clicks: 2,
-        action: function (clicks, state) {
-            var inp = _stableInputs(state);
-            var slope = _slopeLin(clicks[0], clicks[1]);    // psi/√h
-            // II = q / (slope·…) — engineering proxy.
-            var II = inp.q / Math.max(1e-9, Math.abs(slope) * Math.sqrt(1));
-            return { II: II,
-                     note: 'sqrt(t) slope=' + slope.toPrecision(3) +
-                           ' psi/√h → II≈' + II.toPrecision(3) + ' bbl/d/psi' };
+    channelWidth: {
+        label: 'Late ½-slope → channel width',
+        hint: 'Click the late ½-slope part of the curves (flow between parallel boundaries). Needs k.',
+        plot: 'bourdet', clicks: 1, group: 'Boundaries', needsK: true,
+        prompts: ['Click the late ½-slope part of the derivative'],
+        action: function (pts, cx) {
+            var t = pts[0].x, y = pts[0].y;
+            var kk = cx.k();
+            if (!kk) return { error: 'Needs k: pick the radial plateau first (or run a fit).' };
+            var ad = cx.ad(), curve = _whichCurve(ad, t, y) || 'deriv';
+            var te = cx.teq(t);
+            var m = (curve === 'dp' ? y : 2 * y) / Math.sqrt(te);
+            var W = 8.128 * cx.w('q') * cx.w('B') / (cx.w('h') * m) * Math.sqrt(cx.w('mu') / (kk.k * cx.w('phi') * cx.w('ct')));
+            return { values: { mLinear: m, W: W }, warnings: [],
+                     note: 'Late ½-slope → m = ' + _fmt(m) + ' psi/hr^½, channel width ≈ ' + _fmt(W, 3) + ' ft (k = ' + _fmt(kk.k, 3) + ' md)' };
         }
     },
 
-    // ── Partial penetration ───────────────────────────────────────────
-    PPNSTB: {
-        label: 'Spherical-flow stabil → kh',
-        plot:  'spherical',
-        clicks: 1,
-        action: function (clicks, state) {
-            var inp = _stableInputs(state);
-            var dp = clicks[0].dataY;
-            var kh = (70.6 * inp.q * inp.mu * inp.Bo) / Math.max(1e-9, dp);
-            return { kh: kh,
-                     note: 'Spherical-flow late-time plateau Δp=' +
-                           dp.toPrecision(3) + ' → kh=' + kh.toPrecision(4) + ' md·ft' };
-        }
-    },
-    PPNSLP: {
-        label: 'Spherical slope → k·√k',
-        plot:  'spherical',
-        clicks: 2,
-        action: function (clicks, state) {
-            var inp = _stableInputs(state);
-            var slope = _slopeLin(clicks[0], clicks[1]);
-            // m_sph = 2452.9 · qBμ / (k_sph^1.5)  →  k_sph^1.5 = 2452.9·qBμ/m_sph
-            var k_sph_15 = (2452.9 * inp.q * inp.Bo * inp.mu) / Math.max(1e-9, Math.abs(slope));
-            var k_sph    = Math.pow(k_sph_15, 2 / 3);
-            return { k_sph: k_sph,
-                     note: 'Spherical slope=' + slope.toPrecision(3) +
-                           ' → k_sph≈' + k_sph.toPrecision(4) + ' md' };
-        }
-    },
-    PPNSKN: {
-        label: 'Stabil offset → partial-pen pseudo-skin',
-        plot:  'bourdet',
-        clicks: 2,
-        action: function (clicks) {
-            // Compare actual plateau (clicks[1]) vs. ideal full-penetration
-            // plateau (clicks[0]). S_pp = 0.5 · ln(actual/ideal).
-            var actual = clicks[1].dataY;
-            var ideal  = clicks[0].dataY;
-            var ratio  = actual / Math.max(1e-9, ideal);
-            var Spp    = 0.5 * Math.log(ratio);
-            return { Spp: Spp,
-                     note: 'Δp(act)/Δp(ideal)=' + ratio.toFixed(2) +
-                           ' → S_pp≈' + Spp.toFixed(2) };
+    wedgeAngle: {
+        label: 'Second plateau → fault angle',
+        hint: 'Click the radial plateau, then the higher late plateau (two intersecting faults).',
+        plot: 'bourdet', clicks: 2, group: 'Boundaries',
+        prompts: ['Click the radial plateau', 'Click the late (higher) plateau'],
+        action: function (pts) {
+            var ratio = pts[1].y / pts[0].y;
+            if (!(ratio > 1.05)) return { error: 'The late plateau must be above the radial plateau.' };
+            var theta = 360 / ratio;
+            return { values: { ratio: ratio, theta: theta }, warnings: [],
+                     note: 'Late / radial plateau = ' + _fmt(ratio, 3) + ' → angle between the faults ≈ ' + _fmt(theta, 3) + '°' };
         }
     },
 
-    // ── Horizontal well ──────────────────────────────────────────────
-    HORSLP: {
-        label: 'Early ½-slope → L·√(kh·kv)',
-        plot:  'bourdet',
-        clicks: 2,
-        action: function (clicks, state) {
-            var inp = _stableInputs(state);
-            var dp = clicks[1].dataY, t = clicks[1].dataX;
-            var mLin = dp / Math.max(1e-9, Math.sqrt(t));
-            // dp_lin = 8.128·qB/(L·h) · sqrt(t/(φμct)) / sqrt(kv·kh) — proxy.
-            var L_sqrt = (8.128 * inp.q * inp.Bo / inp.h) /
-                         Math.max(1e-9, mLin * Math.sqrt(inp.phi * inp.mu * inp.ct));
-            return { L_sqrt_khkv: L_sqrt,
-                     note: 'Early ½-slope → L·√(kh·kv)≈' +
-                           L_sqrt.toPrecision(4) + ' ft·md' };
-        }
-    },
-    HORSTB: {
-        label: 'Late stabilisation → kh (horiz)',
-        plot:  'bourdet',
-        clicks: 1,
-        action: function (clicks, state) {
-            var inp = _stableInputs(state);
-            var dp = clicks[0].dataY;
-            var kh = (70.6 * inp.q * inp.mu * inp.Bo) / Math.max(1e-9, dp);
-            return { kh: kh,
-                     note: 'Horizontal late-pseudo-radial plateau dp\'=' +
-                           dp.toPrecision(3) + ' → kh=' + kh.toPrecision(4) + ' md·ft' };
+    closedDrainageArea: {
+        label: 'Late unit slope → drainage area',
+        hint: 'Click the late unit-slope derivative of a drawdown (closed system).',
+        plot: 'bourdet', clicks: 1, group: 'Boundaries',
+        prompts: ['Click the late unit-slope derivative'],
+        action: function (pts, cx) {
+            var t = pts[0].x, y = pts[0].y, warnings = [];
+            var ad = cx.ad();
+            if (_whichCurve(ad, t, y) === 'dp') return { error: 'Click on the derivative (Δp′), not on Δp.' };
+            if (ad && _isBuildup(ad.testType)) warnings.push('Pseudo-steady state is a drawdown regime; on a buildup this area is not valid.');
+            var phi = cx.w('phi'), h = cx.w('h');
+            var Aft2 = 0.23395 * cx.w('q') * cx.w('B') * t / (phi * cx.w('ct') * h * y);  // Δp′ = 0.23395 qB t/(φ ct h A)
+            return { values: { area: Aft2 / 43560, poreVolume: phi * h * Aft2 / 5.615, re: Math.sqrt(Aft2 / Math.PI) }, warnings: warnings,
+                     note: 'Late unit slope → drainage area ≈ ' + _fmt(Aft2 / 43560, 3) + ' acres (re ≈ ' + _fmt(Math.sqrt(Aft2 / Math.PI), 3) + ' ft)' };
         }
     },
 
-    // ── 3-sided / Horner ─────────────────────────────────────────────
-    '3-SIDE': {
-        label: '3-sided closed → Horner late linear',
-        plot:  'horner',
-        clicks: 2,
-        action: function (clicks, state) {
-            var inp = _stableInputs(state);
-            // Horner Δp vs. Horner-time slope on late linear regime.
-            var slope = _slopeLin(clicks[0], clicks[1]);
-            var kh = (162.6 * inp.q * inp.mu * inp.Bo) / Math.max(1e-9, Math.abs(slope));
-            return { kh_3side: kh,
-                     note: 'Horner late-linear slope=' + slope.toPrecision(3) +
-                           ' → kh (3-sided)≈' + kh.toPrecision(4) + ' md·ft' };
+    // ── Horizontal wells ─────────────────────────────────────────────────
+    horizontalEarlyRadial: {
+        label: 'Early plateau (horizontal) → √(ky·kz)·Lw',
+        hint: 'Click the early plateau (vertical-plane radial flow around the lateral).',
+        plot: 'bourdet', clicks: 1, group: 'Horizontal wells',
+        prompts: ['Click the early derivative plateau'],
+        action: function (pts, cx) {
+            var y = pts[0].y;
+            if (!_pos(y)) return { error: 'Click on the derivative plateau.' };
+            var v = 70.6 * cx.w('q') * cx.w('B') * cx.w('mu') / y;
+            return { values: { kyKzLw: v }, warnings: [],
+                     note: 'Early plateau Δp′ = ' + _fmt(y) + ' psi → √(ky·kz)·Lw = ' + _fmt(v) + ' md·ft' };
         }
     },
 
-    // ── General-purpose utilities ────────────────────────────────────
-    AUTOSL: {
-        label: 'Auto-fit slope (general)',
-        plot:  'bourdet',
-        clicks: 2,
-        action: function (clicks) {
-            var sl = _slopeLog(clicks[0], clicks[1]);
-            var regime = '';
-            if      (Math.abs(sl) < 0.1)       regime = 'IARF (radial-flow plateau)';
-            else if (Math.abs(sl - 0.5) < 0.1) regime = 'linear flow (½-slope)';
-            else if (Math.abs(sl - 0.25) < 0.1)regime = 'bilinear flow (¼-slope)';
-            else if (Math.abs(sl + 0.5) < 0.1) regime = 'spherical flow (-½ slope)';
-            else if (Math.abs(sl - 1.0) < 0.15)regime = 'pseudo-steady / closed (unit slope)';
-            else                                regime = 'transitional';
-            return { lastSlope: sl,
-                     note: 'Slope=' + sl.toFixed(3) + ' → ' + regime };
+    horizontalLinear: {
+        label: 'Early ½-slope (horizontal) → Lw·√ky',
+        hint: 'Click the intermediate ½-slope part of the curves (linear flow to the lateral).',
+        plot: 'bourdet', clicks: 1, group: 'Horizontal wells',
+        prompts: ['Click the intermediate ½-slope part of the derivative'],
+        action: function (pts, cx) {
+            var t = pts[0].x, y = pts[0].y;
+            if (!_pos(t) || !_pos(y)) return { error: 'Click on the ½-slope segment.' };
+            var curve = _whichCurve(cx.ad(), t, y) || 'deriv';
+            var m = (curve === 'dp' ? y : 2 * y) / Math.sqrt(t);
+            var v = 8.128 * cx.w('q') * cx.w('B') / (cx.w('h') * m) * _sqrtRatio(cx.w('mu'), cx.w('phi'), cx.w('ct'));
+            return { values: { mLinear: m, LwSqrtKy: v }, warnings: [],
+                     note: 'Intermediate ½-slope → m = ' + _fmt(m) + ' psi/hr^½, Lw·√ky = ' + _fmt(v) + ' ft·md^½' };
         }
     },
-    '1/4SLP': {
-        label: '¼-slope → bilinear / finite-cond',
-        plot:  'bourdet',
-        clicks: 1,
-        action: function (clicks, state) {
-            var inp = _stableInputs(state);
-            // Bilinear flow: dp = 44.13·qBμ / (h · (kf·wf)^0.5 · (kφμct)^0.25) · t^0.25
-            var dp = clicks[0].dataY, t = clicks[0].dataX;
-            var mBi = dp / Math.max(1e-9, Math.pow(t, 0.25));
-            var k = (state.params && state.params.k) ? state.params.k : 50;
-            var kfwf = Math.pow((44.13 * inp.q * inp.Bo * inp.mu) /
-                                (inp.h * mBi * Math.pow(k * inp.phi * inp.mu * inp.ct, 0.25)), 2);
-            return { kfwf: kfwf,
-                     note: '¼-slope onset → k_f·w_f ≈ ' + kfwf.toPrecision(4) + ' md·ft' };
+
+    horizontalLateRadial: {
+        label: 'Late plateau (horizontal) → √(kx·ky)·h',
+        hint: 'Click the late plateau (pseudo-radial flow in the horizontal plane).',
+        plot: 'bourdet', clicks: 1, group: 'Horizontal wells',
+        prompts: ['Click the late derivative plateau'],
+        action: function (pts, cx) {
+            var y = pts[0].y;
+            if (!_pos(y)) return { error: 'Click on the derivative plateau.' };
+            var h = cx.w('h'), v = 70.6 * cx.w('q') * cx.w('B') * cx.w('mu') / y;
+            return { values: { kxKyH: v, kH: v / h }, warnings: [],
+                     note: 'Late plateau Δp′ = ' + _fmt(y) + ' psi → √(kx·ky)·h = ' + _fmt(v) + ' md·ft (' + _fmt(v / h, 3) + ' md)' };
         }
     },
-    SPHERE: {
-        label: '-½ slope → spherical-flow entry',
-        plot:  'bourdet',
-        clicks: 1,
-        action: function (clicks) {
-            var t = clicks[0].dataX;
-            return { tSphericalEntry: t,
-                     note: 'Spherical-flow regime entry detected at t=' +
-                           t.toPrecision(3) + ' h (-½ slope)' };
+
+    // ── General ───────────────────────────────────────────────────────────
+    slopeCheck: {
+        label: 'Measure slope → flow regime',
+        hint: 'Click two points on a curve to measure its log-log slope.',
+        plot: 'bourdet', clicks: 2, group: 'General',
+        prompts: ['Click the first point', 'Click the second point'],
+        action: function (pts) {
+            var dx = Math.log10(pts[1].x) - Math.log10(pts[0].x);
+            if (!(Math.abs(dx) > 1e-6)) return { error: 'The two points need different times.' };
+            var s = (Math.log10(pts[1].y) - Math.log10(pts[0].y)) / dx;
+            var reg = _regimeForSlope(s);
+            return { values: { slope: s }, text: reg, warnings: [], note: 'Slope ' + s.toFixed(3) + ' → ' + reg };
+        }
+    },
+
+    // ── Straight lines on specialised plots ──────────────────────────────
+    mdhLine: {
+        label: 'Semilog line → kh, S',
+        hint: 'Click two points on the semilog straight line (radial flow).',
+        plot: 'mdh', clicks: 2, group: 'Straight lines',
+        prompts: ['Click a first point on the straight line', 'Click a second point on the straight line'],
+        action: function (pts, cx) { return _semilogLine('mdh', pts, cx); }
+    },
+
+    hornerLine: {
+        label: 'Horner line → kh, p*, S',
+        hint: 'Click two points on the Horner straight line (radial flow).',
+        plot: 'horner', clicks: 2, group: 'Straight lines',
+        prompts: ['Click a first point on the straight line', 'Click a second point on the straight line'],
+        action: function (pts, cx) { return _semilogLine('horner', pts, cx); }
+    },
+
+    lineIntersection: {
+        label: 'Line intersection → fault distance',
+        hint: 'Click where the radial line and the steeper late line cross. Needs k.',
+        plot: ['mdh', 'horner'], clicks: 1, group: 'Straight lines', needsK: true,
+        prompts: ['Click where the two straight lines intersect'],
+        action: function (pts, cx) {
+            var kk = cx.k();
+            if (!kk) return { error: 'Needs k: fit the semilog line first (or pick the radial plateau).' };
+            var tx;
+            if (cx.plotKey === 'horner') {
+                var tp = cx.tp();
+                if (!tp) return { error: 'Needs the producing time tp (set it on Tab 1).' };
+                var ratio = pts[0].xKind === 'log' ? pts[0].x : Math.pow(10, pts[0].x);
+                if (!(ratio > 1)) return { error: 'Click to the right of Horner ratio 1.' };
+                tx = tp / (ratio - 1);
+            } else {
+                tx = pts[0].xKind === 'log' ? pts[0].x : Math.pow(10, pts[0].x);
+            }
+            var L = 0.01217 * Math.sqrt(kk.k * tx / (cx.w('phi') * cx.w('mu') * cx.w('ct')));
+            return { values: { tx: tx, L: L }, warnings: [],
+                     note: 'Lines intersect at Δt = ' + _fmt(tx, 3) + ' hr → distance to a sealing fault ≈ ' + _fmt(L, 3) + ' ft' };
+        }
+    },
+
+    sqrtLine: {
+        label: '√t line → xf·√k',
+        hint: 'Click two points on the straight line of the √t plot (linear flow).',
+        plot: 'sqrt', clicks: 2, group: 'Straight lines',
+        prompts: ['Click a first point on the straight line', 'Click a second point on the straight line'],
+        action: function (pts, cx) {
+            var m = Math.abs((pts[1].y - pts[0].y) / (pts[1].x - pts[0].x));
+            if (!_pos(m)) return { error: 'The two points need different x and y.' };
+            var xfk = 4.064 * cx.w('q') * cx.w('B') / (cx.w('h') * m) * _sqrtRatio(cx.w('mu'), cx.w('phi'), cx.w('ct'));
+            var v = { mLinear: m, xfSqrtK: xfk }, kk = cx.k();
+            if (kk) v.xf = xfk / Math.sqrt(kk.k);
+            return { values: v, warnings: [],
+                     note: '√t slope m = ' + _fmt(m) + ' psi/hr^½ → xf·√k = ' + _fmt(xfk) + ' ft·md^½' + (v.xf ? ', xf = ' + _fmt(v.xf) + ' ft' : '') };
+        }
+    },
+
+    quarterLine: {
+        label: '⁴√t line → kf·wf',
+        hint: 'Click two points on the straight line of the ⁴√t plot (bilinear flow). Needs k.',
+        plot: 'quarter', clicks: 2, group: 'Straight lines', needsK: true,
+        prompts: ['Click a first point on the straight line', 'Click a second point on the straight line'],
+        action: function (pts, cx) {
+            var m = Math.abs((pts[1].y - pts[0].y) / (pts[1].x - pts[0].x));
+            if (!_pos(m)) return { error: 'The two points need different x and y.' };
+            var kk = cx.k();
+            if (!kk) return { error: 'Needs k: pick the radial plateau first (or run a fit).' };
+            var mu = cx.w('mu');
+            var kfwf = Math.pow(44.1 * cx.w('q') * cx.w('B') * mu / (cx.w('h') * m * Math.pow(cx.w('phi') * mu * cx.w('ct') * kk.k, 0.25)), 2);
+            return { values: { mBilinear: m, kfwf: kfwf }, warnings: [],
+                     note: '⁴√t slope m = ' + _fmt(m) + ' psi/hr^¼ → kf·wf = ' + _fmt(kfwf) + ' md·ft' };
+        }
+    },
+
+    sphericalLine: {
+        label: 'Spherical line → spherical k',
+        hint: 'Click two points on the straight line of the spherical (1/√t) plot.',
+        plot: 'spherical', clicks: 2, group: 'Straight lines',
+        prompts: ['Click a first point on the straight line', 'Click a second point on the straight line'],
+        action: function (pts, cx) {
+            var m = Math.abs((pts[1].y - pts[0].y) / (pts[1].x - pts[0].x));
+            if (!_pos(m)) return { error: 'The two points need different x and y.' };
+            var mu = cx.w('mu');
+            var ks = Math.pow(2452.9 * cx.w('q') * cx.w('B') * mu * Math.sqrt(cx.w('phi') * mu * cx.w('ct')) / m, 2 / 3);
+            return { values: { mSpherical: m, ks: ks }, warnings: [],
+                     note: 'Spherical slope |m| = ' + _fmt(m) + ' psi·hr^½ → spherical k = ' + _fmt(ks) + ' md' };
         }
     }
 };
 
-// ---- Click-capture state machine ----------------------------------------
-
-var _activeKey      = null;            // name of armed key
-var _activeCanvas   = null;            // canvas element listening
-var _activeListener = null;            // bound mousedown handler
-var _clickBuf       = [];              // accumulated {x,y,dataX,dataY}
-
-// Read the data-axis transform that the plot library stashed on the canvas.
-// 02-plots.js stores this as canvas._prismAxes = {x0, y0, x1, y1, dx0, dx1,
-// dy0, dy1, xLog, yLog} after each draw. If absent we fall back to a linear
-// 0..1 mapping that still gives a relative slope.
-function _toDataCoords(canvas, ev) {
-    var rect = canvas.getBoundingClientRect();
-    var dpr  = window.devicePixelRatio || 1;
-    var px   = (ev.clientX - rect.left);
-    var py   = (ev.clientY - rect.top);
-    var ax   = canvas._prismAxes;
-    var dataX, dataY;
-    if (ax) {
-        var fx = (px - ax.x0) / Math.max(1, (ax.x1 - ax.x0));
-        var fy = (py - ax.y0) / Math.max(1, (ax.y1 - ax.y0));
-        // Y axis is inverted (top y < bottom y in pixel space).
-        var fyDom = 1 - fy;
-        dataX = ax.xLog
-            ? Math.pow(10, Math.log10(ax.dx0) + fx * (Math.log10(ax.dx1) - Math.log10(ax.dx0)))
-            : ax.dx0 + fx * (ax.dx1 - ax.dx0);
-        dataY = ax.yLog
-            ? Math.pow(10, Math.log10(ax.dy0) + fyDom * (Math.log10(ax.dy1) - Math.log10(ax.dy0)))
-            : ax.dy0 + fyDom * (ax.dy1 - ax.dy0);
+// Semilog straight line (MDH: p vs log Δt; Horner: p vs log((tp+Δt)/Δt)).
+function _semilogLine(kind, pts, cx) {
+    var x0 = _semilogX(pts[0]), x1 = _semilogX(pts[1]);
+    if (!(Math.abs(x1 - x0) > 1e-9)) return { error: 'The two points need different times.' };
+    var m = (pts[1].y - pts[0].y) / (x1 - x0);         // psi per log cycle (signed)
+    if (!(Math.abs(m) > 0)) return { error: 'The line is flat — pick two points on the sloping straight line.' };
+    var warnings = [], v = {};
+    var q = cx.w('q'), B = cx.w('B'), mu = cx.w('mu'), h = cx.w('h'), kh;
+    if (cx.pseudo()) {
+        var T = cx.rankine();
+        if (!T) return { error: 'Gas pseudo-pressure data: set the reservoir temperature on Tab 1.' };
+        kh = 1637 * q * T / Math.abs(m);
     } else {
-        // Best-effort fallback. Just return relative pixel coordinates.
-        dataX = px / Math.max(1, rect.width);
-        dataY = 1 - py / Math.max(1, rect.height);
+        kh = 162.6 * q * B * mu / Math.abs(m);
     }
-    return { x: px, y: py, dataX: dataX, dataY: dataY };
+    var k = kh / h;
+    v.m = m; v.kh = kh; v.k = k;
+    var logTerm = function () {
+        var phi = cx.w('phi'), ct = cx.w('ct'), rw = cx.w('rw');
+        return Math.log10(k / (phi * mu * ct * rw * rw)) - 3.2275;
+    };
+    var ad = cx.ad(), tp = cx.tp(), yIsDp = cx.yIsDp();
+    var tt = ad && ad.testType ? ad.testType : cx.well.testType;
+    var t0, t1;
+    if (kind === 'horner') {
+        v.pStar = pts[0].y - m * x0;                    // line at log ratio = 0
+        if (tp) {
+            v.p1hr = v.pStar + m * Math.log10(tp + 1);
+            var pwf0 = cx.pwf0();
+            if (_num(pwf0)) {
+                v.S = 1.1513 * (Math.abs(v.p1hr - pwf0) / Math.abs(m) - logTerm() + Math.log10((tp + 1) / tp));
+            } else {
+                warnings.push('Set pwf at shut-in (Tab 1) to compute skin.');
+            }
+            var r0 = pts[0].xKind === 'log' ? pts[0].x : Math.pow(10, pts[0].x);
+            var r1 = pts[1].xKind === 'log' ? pts[1].x : Math.pow(10, pts[1].x);
+            if (r0 > 1 && r1 > 1) { t0 = tp / (r0 - 1); t1 = tp / (r1 - 1); }
+        } else {
+            warnings.push('Set the producing time tp (Tab 1) to compute p1hr and skin.');
+        }
+    } else {
+        v.p1hr = pts[0].y - m * x0;                     // line at Δt = 1 hr
+        t0 = Math.pow(10, x0); t1 = Math.pow(10, x1);
+        if (yIsDp) {
+            v.S = 1.1513 * (Math.abs(v.p1hr) / Math.abs(m) - logTerm());
+        } else if (_isBuildup(tt)) {
+            var pw = cx.pwf0();
+            if (_num(pw)) v.S = 1.1513 * (Math.abs(v.p1hr - pw) / Math.abs(m) - logTerm());
+            else warnings.push('Set pwf at shut-in (Tab 1) to compute skin.');
+        } else {
+            var pi = cx.pi();
+            if (_num(pi)) v.S = 1.1513 * (Math.abs(pi - v.p1hr) / Math.abs(m) - logTerm());
+            else warnings.push('Set the initial pressure pi (Tab 1) to compute skin.');
+        }
+    }
+    // Hand the clicked window to the semilog engine when it is available.
+    if (_pos(t0) && _pos(t1)) {
+        var eng = _semilogEngine(kind, t0, t1, cx);
+        if (eng && _num(eng.S) && (!eng.method || eng.method === kind)) {
+            if (_num(eng.m)) v.m = eng.m;
+            if (_pos(eng.kh)) v.kh = eng.kh;
+            if (_pos(eng.k)) v.k = eng.k;
+            if (_num(eng.p1hr)) v.p1hr = eng.p1hr;
+            if (kind === 'horner' && _num(eng.pStar)) v.pStar = eng.pStar;
+            v.S = eng.S;
+            warnings.push('Line fitted through the ' + (eng.n || 'measured') + ' data points between your two clicks.');
+        }
+    }
+    v.m = Math.abs(v.m);
+    var note = (kind === 'horner' ? 'Horner' : 'Semilog') + ' line m = ' + _fmt(v.m) + ' psi/cycle → kh = ' + _fmt(v.kh) +
+               ' md·ft, k = ' + _fmt(v.k) + ' md' + (_num(v.pStar) ? ', p* = ' + _fmt(v.pStar, 5) + ' psia' : '') +
+               (_num(v.S) ? ', S = ' + _fmt(v.S, 3) : '');
+    return { values: v, warnings: warnings, note: note };
+}
+
+function _keyPlots(key) { return Array.isArray(key.plot) ? key.plot : [key.plot]; }
+function _keyOnPlot(key, plotKey) { return _keyPlots(key).indexOf(plotKey) !== -1; }
+
+function _plotLabel(plotKey) {
+    var reg = G.PRiSM_PLOT_REGISTRY;
+    if (reg && reg[plotKey] && reg[plotKey].label) return reg[plotKey].label;
+    for (var i = 0; i < _PLOTS_SNAPSHOT.length; i++) if (_PLOTS_SNAPSHOT[i].key === plotKey) return _PLOTS_SNAPSHOT[i].label;
+    return plotKey;
+}
+
+function _makeCtx(plotKey, axes) {
+    var st = G.PRiSM_state || {};
+    var well = _wellInputs();
+    var used = {};
+    var adCache, kCache;
+    var cx = {
+        st: st, well: well, plotKey: plotKey, axes: axes || null, used: used, kInfo: null,
+        w: function (key) { used[key] = true; return well.v[key]; },
+        ad: function () { if (adCache === undefined) adCache = _analysisData(); return adCache; },
+        k: function () {
+            if (kCache === undefined) { kCache = _kFromContext(st); cx.kInfo = kCache; }
+            return kCache;
+        },
+        pseudo: function () {
+            var ad = cx.ad();
+            return !!(ad && (ad.pseudo === true || ad.dpUnit === 'psi2/cp'));
+        },
+        rankine: function () { return _rankine(well.T_R); },
+        tp: function () {
+            var ad = cx.ad();
+            if (ad && _pos(ad.tp)) return ad.tp;
+            return well.tp;
+        },
+        pwf0: function () {
+            var ad = cx.ad();
+            if (ad && ad.pRefSource === 'pwf0' && _num(ad.pRef)) return ad.pRef;
+            if (_num(well.pwf0)) return well.pwf0;
+            if (ad && _isBuildup(ad.testType) && _num(ad.pRef)) return ad.pRef;
+            return null;
+        },
+        pi: function () {
+            var ad = cx.ad();
+            if (ad && ad.pRefSource === 'pi' && _num(ad.pRef)) return ad.pRef;
+            return well.pi;
+        },
+        yIsDp: function () {
+            var lab = axes && axes.scaleY && axes.scaleY.label;
+            return !!(lab && /Δp|dp|delta/i.test(String(lab)) && !/pws|pwf|pressure,?\s*p\b/i.test(String(lab)));
+        },
+        // Equivalent drawdown time (Agarwal) on a single-rate buildup.
+        teq: function (t) {
+            var ad = cx.ad(), tp = cx.tp();
+            if (ad && _isBuildup(ad.testType) && _pos(tp)) return tp * t / (tp + t);
+            return t;
+        }
+    };
+    return cx;
+}
+
+function _defaultKinds(plotKey) {
+    if (plotKey === 'bourdet' || plotKey === 'sandface') return { x: 'log', y: 'log' };
+    if (plotKey === 'mdh' || plotKey === 'horner') return { x: 'log', y: 'lin' };
+    return { x: 'lin', y: 'lin' };
+}
+
+function _normPoint(p, kinds) {
+    p = p || {};
+    return {
+        x: _num(p.x) ? p.x : (_num(p.t) ? p.t : p.dataX),
+        y: _num(p.y) ? p.y : p.dataY,
+        xKind: p.xKind || kinds.x, yKind: p.yKind || kinds.y
+    };
+}
+
+// Run a tool on data-space points: points = [{x, y}] (or {t, y}).
+G.PRiSM_runAnalysisKey = function (keyName, points, opts) {
+    opts = opts || {};
+    var key = G.PRiSM_analysisKeys[keyName];
+    if (!key) return { ok: false, error: 'Unknown tool: ' + keyName };
+    if (!Array.isArray(points) || points.length < key.clicks) {
+        return { ok: false, error: key.label + ' needs ' + key.clicks + ' point(s).' };
+    }
+    var plotKey = opts.plotKey || _keyPlots(key)[0];
+    var kinds = _defaultKinds(plotKey), pts = [];
+    for (var i = 0; i < key.clicks; i++) {
+        var np = _normPoint(points[i], kinds);
+        if (!_num(np.x) || !_num(np.y)) return { ok: false, error: 'Point ' + (i + 1) + ' is not a number.' };
+        pts.push(np);
+    }
+    var cx = _makeCtx(plotKey, opts.axes);
+    var res;
+    try { res = key.action(pts, cx); } catch (e) { res = { error: 'Calculation failed: ' + (e && e.message) }; }
+    if (!res || res.error) return { ok: false, error: (res && res.error) || 'No result.' };
+    var usedKeys = Object.keys(cx.used);
+    var defaulted = usedKeys.filter(function (k) { return cx.well.defaulted.indexOf(k) !== -1; });
+    var warnings = (res.warnings || []).slice();
+    if (defaulted.length) {
+        warnings.unshift('Default inputs used (' + defaulted.map(function (k) { return WELL_LABEL[k]; }).join(', ') +
+                         ') — confirm them in Well & Test on Tab 1.');
+    }
+    var inputs = {};
+    usedKeys.forEach(function (k) { inputs[k] = cx.well.v[k]; });
+    var entry = {
+        key: keyName, label: key.label, plotKey: plotKey,
+        values: res.values || {}, text: res.text || null, note: res.note || '',
+        warnings: warnings, defaultInputs: defaulted, inputs: inputs, inputSource: cx.well.source,
+        kSource: cx.kInfo ? cx.kInfo.source : null,
+        points: pts.map(function (p) { return { x: p.x, y: p.y }; }),
+        timestamp: Date.now()
+    };
+    // Display map (quantity label with unit → value) for generic report readers.
+    var results = {};
+    Object.keys(entry.values).forEach(function (vk) {
+        var qd = QTY[vk] || { label: vk, unit: '' };
+        if (_num(entry.values[vk])) results[qd.label + (qd.unit ? ' (' + qd.unit + ')' : '')] = entry.values[vk];
+    });
+    entry.results = results;
+    var st = G.PRiSM_state;
+    if (!st) st = G.PRiSM_state = {};
+    if (!st.analysisKeyResults || typeof st.analysisKeyResults !== 'object') st.analysisKeyResults = {};
+    st.analysisKeyResults[keyName] = entry;
+    _emit('prism:analysis-key', { key: keyName, result: entry });
+    if (typeof G.PRiSM_saveState === 'function') { try { G.PRiSM_saveState(); } catch (e2) { /* non-fatal */ } }
+    _refreshToolbars();
+    return { ok: true, key: keyName, result: entry };
+};
+
+// Rows for reports: one row per value of every stored result.
+G.PRiSM_analysisKeyReportRows = function () {
+    var st = G.PRiSM_state || {}, r = st.analysisKeyResults || {}, rows = [];
+    Object.keys(r).sort(function (a, b) { return (r[a].timestamp || 0) - (r[b].timestamp || 0); }).forEach(function (k) {
+        var e = r[k];
+        if (!e || !e.values) return;
+        Object.keys(e.values).forEach(function (vk) {
+            var qd = QTY[vk] || { label: vk, unit: '' };
+            rows.push({ key: k, tool: e.label, quantity: qd.label, value: e.values[vk], unit: qd.unit,
+                        defaulted: !!(e.defaultInputs && e.defaultInputs.length) });
+        });
+        if (e.text) rows.push({ key: k, tool: e.label, quantity: 'Interpretation', value: e.text, unit: '', defaulted: false });
+    });
+    return rows;
+};
+
+// ---- Axis inversion (C6 _prismAxes) --------------------------------------
+function _invAxis(sc, off, len, flip) {
+    if (!sc || !_num(sc.min) || !_num(sc.max) || !(len > 0)) return null;
+    var lo = sc.min, hi = sc.max;
+    if (sc.kind === 'log') {
+        if (!(lo > 0 && hi > 0)) return null;
+        var a = Math.log10(lo), b = Math.log10(hi);
+        return function (px) { var f = (px - off) / len; if (flip) f = 1 - f; return Math.pow(10, a + f * (b - a)); };
+    }
+    return function (px) { var f = (px - off) / len; if (flip) f = 1 - f; return lo + f * (hi - lo); };
+}
+
+function _axesInverse(ax) {
+    if (!ax) return null;
+    var plot = ax.plot || null;
+    var kx = (ax.scaleX && ax.scaleX.kind) || (ax.xLog ? 'log' : 'lin');
+    var ky = (ax.scaleY && ax.scaleY.kind) || (ax.yLog ? 'log' : 'lin');
+    if (typeof ax.fromX === 'function' && typeof ax.fromY === 'function') {
+        return { fromX: ax.fromX, fromY: ax.fromY, plot: plot, xKind: kx, yKind: ky };
+    }
+    if (ax.scaleX && ax.scaleY && plot) {
+        var fx = _invAxis(ax.scaleX, plot.x, plot.w, false);
+        var fy = _invAxis(ax.scaleY, plot.y, plot.h, true);
+        if (fx && fy) return { fromX: fx, fromY: fy, plot: plot, xKind: kx, yKind: ky };
+    }
+    if (_num(ax.x0) && _num(ax.x1) && _num(ax.dx0) && _num(ax.dx1)) {       // older shape
+        var p2 = { x: ax.x0, y: ax.y0, w: ax.x1 - ax.x0, h: ax.y1 - ax.y0 };
+        var gx = _invAxis({ kind: kx, min: ax.dx0, max: ax.dx1 }, p2.x, p2.w, false);
+        var gy = _invAxis({ kind: ky, min: ax.dy0, max: ax.dy1 }, p2.y, p2.h, true);
+        if (gx && gy) return { fromX: gx, fromY: gy, plot: p2, xKind: kx, yKind: ky };
+    }
+    return null;
+}
+
+function _fwdAxis(sc, off, len, flip) {
+    if (!sc || !_num(sc.min) || !_num(sc.max) || !(len > 0)) return null;
+    if (sc.kind === 'log') {
+        if (!(sc.min > 0 && sc.max > 0)) return null;
+        var a = Math.log10(sc.min), b = Math.log10(sc.max);
+        return function (v) { if (!(v > 0)) return NaN; var f = (Math.log10(v) - a) / (b - a); return flip ? off + len - f * len : off + f * len; };
+    }
+    return function (v) { var f = (v - sc.min) / (sc.max - sc.min); return flip ? off + len - f * len : off + f * len; };
+}
+
+function _axesForward(ax) {
+    if (!ax) return null;
+    if (typeof ax.toX === 'function' && typeof ax.toY === 'function') return { toX: ax.toX, toY: ax.toY, plot: ax.plot };
+    if (ax.scaleX && ax.scaleY && ax.plot) {
+        var fx = _fwdAxis(ax.scaleX, ax.plot.x, ax.plot.w, false), fy = _fwdAxis(ax.scaleY, ax.plot.y, ax.plot.h, true);
+        if (fx && fy) return { toX: fx, toY: fy, plot: ax.plot };
+    }
+    return null;
+}
+
+function _toDataCoords(canvas, ev) {
+    var inv = _axesInverse(canvas && canvas._prismAxes);
+    if (!inv) return null;
+    var rect = { left: 0, top: 0, width: 0, height: 0 };
+    try { if (canvas.getBoundingClientRect) rect = canvas.getBoundingClientRect(); } catch (e) { /* keep */ }
+    var px = (ev.clientX || 0) - (rect.left || 0);
+    var py = (ev.clientY || 0) - (rect.top || 0);
+    var plot = inv.plot || {};
+    // Canvas shown at a different CSS size than it was drawn at → rescale.
+    if (plot.cssW && rect.width > 0 && Math.abs(rect.width - plot.cssW) > 0.5) px *= plot.cssW / rect.width;
+    if (plot.cssH && rect.height > 0 && Math.abs(rect.height - plot.cssH) > 0.5) py *= plot.cssH / rect.height;
+    var inside = !(plot.w > 0) ||
+        (px >= plot.x - 1 && px <= plot.x + plot.w + 1 && py >= plot.y - 1 && py <= plot.y + plot.h + 1);
+    return { px: px, py: py, x: inv.fromX(px), y: inv.fromY(py), xKind: inv.xKind, yKind: inv.yKind, inside: inside };
+}
+
+// ---- Arming (Pointer Events) ----------------------------------------------
+var _arm = null;   // { key, canvas, listener, pts[], prevCursor, prevTouch }
+
+function _statusEls() {
+    if (!_hasDoc || typeof document.querySelectorAll !== 'function') return [];
+    try { return Array.prototype.slice.call(document.querySelectorAll('[data-prism-akey-status]')); } catch (e) { return []; }
+}
+
+function _status(msg, kind) {
+    var color = kind === 'error' ? 'var(--red, #f85149)' : kind === 'warn' ? 'var(--yellow, #d29922)' :
+                kind === 'success' ? 'var(--green, #3fb950)' : 'var(--text2, #8b949e)';
+    var els = _statusEls();
+    for (var i = 0; i < els.length; i++) { els[i].textContent = msg || ''; els[i].style.color = color; }
+    if (!els.length && msg && kind && kind !== 'info') _polishToast(msg, kind);
+}
+
+function _showHint(text) {
+    if (!_hasDoc || !document.body) return;
+    var h = document.getElementById('prism_akey_hint');
+    if (!h) {
+        h = document.createElement('div');
+        h.id = 'prism_akey_hint';
+        h.setAttribute('role', 'status');
+        h.style.cssText =
+            'position:fixed; top:12px; left:50%; transform:translateX(-50%); z-index:99999;' +
+            'background:var(--bg2, #161b22); border:1px solid var(--accent, #f0883e); color:var(--text, #e6edf3);' +
+            'padding:8px 12px; border-radius:6px; font:12px sans-serif; text-align:center;' +
+            'max-width:calc(100vw - 32px); box-sizing:border-box; box-shadow:0 4px 10px rgba(0,0,0,.4);';
+        document.body.appendChild(h);
+    }
+    h.textContent = text;
+}
+
+function _hideHint() {
+    if (!_hasDoc) return;
+    var h = document.getElementById('prism_akey_hint');
+    if (h && h.parentNode) h.parentNode.removeChild(h);
+}
+
+function _markArmedButtons() {
+    if (!_hasDoc || typeof document.querySelectorAll !== 'function') return;
+    var nodes = document.querySelectorAll('[data-prism-akey]');
+    for (var i = 0; i < nodes.length; i++) {
+        var on = !!(_arm && nodes[i].getAttribute('data-prism-akey') === _arm.key);
+        nodes[i].setAttribute('aria-pressed', on ? 'true' : 'false');
+        nodes[i].style.outline = on ? '2px solid var(--accent, #f0883e)' : '';
+    }
 }
 
 function _disarm() {
-    if (_activeCanvas && _activeListener) {
-        _activeCanvas.removeEventListener('mousedown', _activeListener);
-        _activeCanvas.style.cursor = '';
+    if (_arm && _arm.canvas) {
+        try { _arm.canvas.removeEventListener('pointerdown', _arm.listener); } catch (e) { /* ignore */ }
+        try {
+            _arm.canvas.style.cursor = _arm.prevCursor || '';
+            _arm.canvas.style.touchAction = _arm.prevTouch || '';
+        } catch (e2) { /* ignore */ }
     }
-    _activeKey = null;
-    _activeCanvas = null;
-    _activeListener = null;
-    _clickBuf = [];
-    var hint = document.getElementById('prism_polish_armhint');
-    if (hint && hint.parentNode) hint.parentNode.removeChild(hint);
+    _arm = null;
+    _hideHint();
+    _markArmedButtons();
 }
 
-function _showArmHint(label, needed) {
-    var hint = document.getElementById('prism_polish_armhint');
-    if (!hint) {
-        hint = document.createElement('div');
-        hint.id = 'prism_polish_armhint';
-        hint.style.cssText =
-            'position:fixed; top:12px; left:50%; transform:translateX(-50%);' +
-            'background:#21262d; border:1px solid #f0883e; color:#f0f6fc;' +
-            'padding:8px 14px; border-radius:5px; z-index:99999;' +
-            'font:12px sans-serif; box-shadow:0 4px 10px rgba(0,0,0,.4);';
-        document.body.appendChild(hint);
-    }
-    hint.textContent = '[' + label + '] click ' + needed + ' point(s) on the plot — Esc to cancel';
+function _prompt() {
+    if (!_arm) return;
+    var key = G.PRiSM_analysisKeys[_arm.key];
+    var n = _arm.pts.length;
+    var text = (key.prompts && key.prompts[n]) || ('Click point ' + (n + 1) + ' of ' + key.clicks);
+    var msg = key.label + ': ' + text + (key.clicks > 1 ? ' (' + (n + 1) + '/' + key.clicks + ')' : '') + ' — Esc to cancel';
+    _showHint(msg);
+    _status(msg, 'info');
 }
 
-window.PRiSM_armAnalysisKey = function (keyName) {
-    var key = window.PRiSM_analysisKeys[keyName];
-    if (!key) {
-        _polishToast('Unknown analysis key: ' + keyName, 'error');
-        return;
-    }
-    var canvas = document.getElementById('prism_plot_canvas');
-    if (!canvas) {
-        _polishToast('No plot canvas active. Open Tab 2 first.', 'error');
-        return;
-    }
-    if (_activeKey) _disarm();
-    _activeKey = keyName;
-    _activeCanvas = canvas;
-    _clickBuf = [];
-    canvas.style.cursor = 'crosshair';
-    _showArmHint(key.label, key.clicks);
+function _markClick(canvas, px, py) {
+    try {
+        var ctx = canvas.getContext('2d');
+        if (!ctx) return;
+        ctx.save();
+        ctx.strokeStyle = '#f0883e';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(px - 6, py); ctx.lineTo(px + 6, py);
+        ctx.moveTo(px, py - 6); ctx.lineTo(px, py + 6);
+        ctx.stroke();
+        ctx.restore();
+    } catch (e) { /* cosmetic */ }
+}
 
-    _activeListener = function (ev) {
-        var pt = _toDataCoords(canvas, ev);
-        _clickBuf.push(pt);
-        if (_clickBuf.length >= key.clicks) {
-            // Snapshot to avoid race with disarm()
-            var clicks = _clickBuf.slice();
-            var keyEntry = key;
-            _disarm();
-            try {
-                var result = keyEntry.action(clicks, window.PRiSM_state || {});
-                if (result && typeof result === 'object') {
-                    if (!window.PRiSM_state) window.PRiSM_state = { params: {} };
-                    if (!window.PRiSM_state.params) window.PRiSM_state.params = {};
-                    for (var rk in result) {
-                        if (rk === 'note') continue;
-                        if (Object.prototype.hasOwnProperty.call(result, rk)) {
-                            window.PRiSM_state.params[rk] = result[rk];
-                        }
-                    }
-                    var msg = '[' + keyName + '] ' + (result.note || 'result computed');
-                    console.log('PRiSM analysis-key ' + keyName + ':', result);
-                    _polishToast(msg, 'success');
-                }
-            } catch (e) {
-                console.error('PRiSM analysis-key ' + keyName + ' failed:', e);
-                _polishToast('Analysis-key error: ' + e.message, 'error');
-            }
-        } else {
-            _polishToast('[' + keyName + '] need ' +
-                         (key.clicks - _clickBuf.length) + ' more click(s)', 'info');
-        }
-    };
-    canvas.addEventListener('mousedown', _activeListener);
+function _onPointer(ev) {
+    if (!_arm) return;
+    if (ev && ev.button != null && ev.button > 0) return;          // secondary buttons
+    try { ev.preventDefault(); ev.stopPropagation(); } catch (e) { /* ignore */ }
+    var canvas = _arm.canvas, key = G.PRiSM_analysisKeys[_arm.key];
+    var pt = _toDataCoords(canvas, ev);
+    if (!pt) { _status('The plot axes are not available — redraw the plot and pick the tool again.', 'error'); _disarm(); return; }
+    if (!pt.inside) { _status('Click inside the plot area.', 'warn'); return; }
+    _arm.pts.push(pt);
+    _markClick(canvas, pt.px, pt.py);
+    if (_arm.pts.length < key.clicks) { _prompt(); return; }
+    var name = _arm.key, pts = _arm.pts.slice(), axes = canvas._prismAxes;
+    var plotKey = (G.PRiSM_state && G.PRiSM_state.activePlot) || (axes && axes.plotKey) || _keyPlots(key)[0];
+    _disarm();
+    var r = G.PRiSM_runAnalysisKey(name, pts, { plotKey: plotKey, axes: axes });
+    if (r.ok) {
+        var warn = r.result.warnings && r.result.warnings.length;
+        _status(r.result.note + (warn ? ' — ' + r.result.warnings[0] : ''), warn ? 'warn' : 'success');
+    } else {
+        _status(r.error, 'error');
+    }
+}
+
+G.PRiSM_armAnalysisKey = function (keyName, opts) {
+    opts = opts || {};
+    var key = G.PRiSM_analysisKeys[keyName];
+    if (!key) { _status('Unknown tool: ' + keyName, 'error'); return false; }
+    var st = G.PRiSM_state || {};
+    var plotKey = st.activePlot || 'bourdet';
+    if (!_keyOnPlot(key, plotKey)) {
+        _status('"' + key.label + '" works on the ' + _keyPlots(key).map(_plotLabel).join(' / ') +
+                ' plot — switch the plot type first.', 'warn');
+        return false;
+    }
+    var canvas = opts.canvas || (_hasDoc ? document.getElementById('prism_plot_canvas') : null);
+    if (!canvas) { _status('Open the diagnostic plot first.', 'error'); return false; }
+    if (!_axesInverse(canvas._prismAxes)) {
+        _status('The plot has not been drawn yet — draw it, then pick the tool again.', 'error');
+        return false;
+    }
+    _disarm();
+    _arm = { key: keyName, canvas: canvas, pts: [], listener: _onPointer,
+             prevCursor: canvas.style ? canvas.style.cursor : '', prevTouch: canvas.style ? canvas.style.touchAction : '' };
+    try { canvas.style.cursor = 'crosshair'; canvas.style.touchAction = 'none'; } catch (e) { /* ignore */ }
+    canvas.addEventListener('pointerdown', _onPointer);
+    _markArmedButtons();
+    _prompt();
+    return true;
 };
 
-// Esc cancels any pending arm.
-document.addEventListener('keydown', function (ev) {
-    if (ev.key === 'Escape' && _activeKey) {
-        _polishToast('Analysis-key cancelled.', 'info');
-        _disarm();
-    }
-});
+G.PRiSM_disarmAnalysisKey = function () { var was = !!_arm; _disarm(); if (was) _status('Tool cancelled.', 'info'); };
 
-// Render a grid of analysis-key buttons filtered by plotKey (e.g. 'bourdet',
-// 'sqrt', 'spherical', 'horner'). Container can be a DOM element or an id.
-window.PRiSM_renderAnalysisKeyToolbar = function (container, plotKey) {
-    var host = (typeof container === 'string')
-        ? document.getElementById(container) : container;
+if (_hasDoc) {
+    _on(document, 'keydown', function (ev) {
+        if (ev && ev.key === 'Escape' && _arm) { _disarm(); _status('Tool cancelled.', 'info'); }
+    });
+}
+
+// ---- Toolbar + results -----------------------------------------------------
+var _BTN_CSS = 'font-size:12px; padding:6px 10px; margin:0; white-space:normal; text-align:left; ' +
+               'max-width:100%; box-sizing:border-box; line-height:1.3;';
+
+function _resultRowHTML(e) {
+    var parts = [];
+    Object.keys(e.values || {}).forEach(function (vk) {
+        var qd = QTY[vk] || { label: vk, unit: '' };
+        var val = e.values[vk];
+        var sig = (vk === 'pStar' || vk === 'p1hr') ? 5 : 4;
+        parts.push('<span style="white-space:nowrap;">' + _esc(qd.label) + ' <b style="color:var(--text, #e6edf3);">' +
+                   _esc(_fmt(val, sig)) + '</b>' + (qd.unit ? ' ' + _esc(qd.unit) : '') + '</span>');
+    });
+    var chip = (e.defaultInputs && e.defaultInputs.length)
+        ? ' <span title="' + _esc(e.warnings[0] || '') + '" style="display:inline-block; font-size:10px; padding:1px 6px; border-radius:8px; ' +
+          'background:rgba(210,153,34,.18); color:var(--yellow, #d29922); border:1px solid var(--yellow, #d29922);">default inputs</span>'
+        : '';
+    var warn = '';
+    (e.warnings || []).forEach(function (w, i) {
+        if (i === 0 && chip) return;     // already shown as the chip tooltip
+        warn += '<div style="font-size:11px; color:var(--yellow, #d29922); margin-top:2px;">' + _esc(w) + '</div>';
+    });
+    return '<div data-prism-akey-row="' + _esc(e.key) + '" style="padding:6px 0; border-top:1px solid var(--border, #30363d); ' +
+               'font-size:12px; color:var(--text2, #8b949e); overflow-wrap:anywhere;">' +
+             '<div style="display:flex; gap:6px; align-items:flex-start; justify-content:space-between;">' +
+               '<div style="min-width:0;"><span style="color:var(--text, #e6edf3); font-weight:600;">' + _esc(e.label) + '</span>' + chip + '</div>' +
+               '<button type="button" data-prism-akey-clear="' + _esc(e.key) + '" aria-label="Remove result" ' +
+                 'style="background:none; border:none; color:var(--text3, #6e7681); cursor:pointer; font-size:14px; padding:0 4px;">×</button>' +
+             '</div>' +
+             '<div style="display:flex; flex-wrap:wrap; gap:4px 12px; margin-top:2px;">' + parts.join('') + '</div>' +
+             (e.text ? '<div style="margin-top:2px;">' + _esc(e.text) + '</div>' : '') +
+             warn +
+           '</div>';
+}
+
+G.PRiSM_renderAnalysisKeyToolbar = function (container, plotKey) {
+    if (!_hasDoc) return;
+    var host = (typeof container === 'string') ? document.getElementById(container) : container;
     if (!host) return;
-    plotKey = plotKey || 'bourdet';
-    var keys = window.PRiSM_analysisKeys;
+    var st = G.PRiSM_state || {};
+    plotKey = plotKey || st.activePlot || 'bourdet';
+    host.setAttribute('data-prism-linetools', '1');     // refreshed with the active plot
+    var keys = G.PRiSM_analysisKeys, groups = {}, order = [];
+    Object.keys(keys).forEach(function (k) {
+        if (!_keyOnPlot(keys[k], plotKey)) return;
+        var g = keys[k].group || 'Tools';
+        if (!groups[g]) { groups[g] = []; order.push(g); }
+        groups[g].push(k);
+    });
+    var well = _wellInputs();
+    var chip = '';
+    if (well.defaulted.length) {
+        chip = '<div data-prism-akey-defaults style="margin:6px 0; padding:6px 8px; border-radius:6px; font-size:12px; ' +
+               'background:rgba(210,153,34,.12); border:1px solid var(--yellow, #d29922); color:var(--yellow, #d29922);">' +
+               '⚠ Default inputs: ' + _esc(well.defaulted.map(function (k) { return WELL_LABEL[k]; }).join(', ')) +
+               ' — results that use them are marked. Set them in Well & Test on Tab 1.</div>';
+    }
     var btns = '';
-    for (var k in keys) {
-        if (!Object.prototype.hasOwnProperty.call(keys, k)) continue;
-        if (keys[k].plot !== plotKey) continue;
-        btns += '<button class="btn btn-secondary" data-prism-akey="' + k + '" ' +
-                'style="font-size:11px; padding:4px 8px; margin:2px;" ' +
-                'title="' + keys[k].label + '">' +
-                k + '</button>';
-    }
+    order.forEach(function (g) {
+        btns += '<div style="margin-top:6px;"><div style="font-size:11px; color:var(--text3, #6e7681); margin-bottom:4px;">' + _esc(g) + '</div>' +
+                '<div style="display:flex; flex-wrap:wrap; gap:6px;">';
+        groups[g].forEach(function (k) {
+            btns += '<button type="button" class="btn btn-secondary" data-prism-akey="' + _esc(k) + '" title="' + _esc(keys[k].hint || '') + '" ' +
+                    'style="' + _BTN_CSS + '">' + _esc(keys[k].label) + '</button>';
+        });
+        btns += '</div></div>';
+    });
     if (!btns) {
-        btns = '<span style="font-size:11px; color:#8b949e; font-style:italic;">' +
-               'No analysis keys for plot type \'' + plotKey + '\'.</span>';
+        btns = '<div style="font-size:12px; color:var(--text3, #6e7681); margin-top:6px;">No line tools for the ' +
+               _esc(_plotLabel(plotKey)) + ' plot. Switch to the log-log derivative, semilog, Horner, √t, ⁴√t or spherical plot.</div>';
     }
+    var res = st.analysisKeyResults || {};
+    var resKeys = Object.keys(res).filter(function (k) { return res[k] && res[k].values; })
+        .sort(function (a, b) { return (res[b].timestamp || 0) - (res[a].timestamp || 0); });
+    var rows = resKeys.map(function (k) { return _resultRowHTML(res[k]); }).join('');
     host.innerHTML =
-        '<div style="border:1px solid #30363d; border-radius:6px; padding:8px; ' +
-                    'background:#161b22; margin-top:8px;">' +
-            '<div style="font-size:11px; font-weight:700; color:#c9d1d9; ' +
-                        'text-transform:uppercase; letter-spacing:.5px; margin-bottom:6px;">' +
-                'Analysis keys (' + plotKey + ')</div>' +
-            '<div style="display:flex; flex-wrap:wrap; gap:2px;">' + btns + '</div>' +
+        '<div class="prism-linetools" style="max-width:100%; box-sizing:border-box; color:var(--text, #e6edf3);">' +
+          '<div style="font-size:12px; color:var(--text2, #8b949e);">Tools for the <b style="color:var(--text, #e6edf3);">' +
+            _esc(_plotLabel(plotKey)) + '</b> plot — pick a tool, then click the plot.</div>' +
+          chip + btns +
+          '<div data-prism-akey-status role="status" aria-live="polite" style="margin-top:8px; font-size:12px; min-height:16px; ' +
+            'color:var(--text2, #8b949e); overflow-wrap:anywhere;"></div>' +
+          (rows
+            ? '<div style="margin-top:6px;"><div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">' +
+                '<span style="font-size:11px; color:var(--text3, #6e7681);">Results</span>' +
+                '<button type="button" data-prism-akey-clearall style="background:none; border:1px solid var(--border, #30363d); ' +
+                  'color:var(--text2, #8b949e); border-radius:4px; font-size:11px; padding:2px 8px; cursor:pointer;">Clear all</button></div>' +
+                rows + '</div>'
+            : '') +
         '</div>';
-    // Wire each button to arm its key.
     var nodes = host.querySelectorAll('[data-prism-akey]');
     for (var i = 0; i < nodes.length; i++) {
         (function (node) {
-            node.onclick = function () { window.PRiSM_armAnalysisKey(node.dataset.prismAkey); };
+            node.onclick = function () { G.PRiSM_armAnalysisKey(node.getAttribute('data-prism-akey')); };
         })(nodes[i]);
     }
-};
-
-
-// =========================================================================
-// SECTION 3 — PNG EXPORT (REPORT PDF + STANDALONE PLOT PNG)
-// =========================================================================
-// We can't reach the locally-scoped PRISM_PLOT_REGISTRY in 04-ui-wiring.js,
-// so we maintain a parallel snapshot. Update _PLOTS_SNAPSHOT here if a new
-// plot is added to that registry.
-
-var _PLOTS_SNAPSHOT = [
-    { key: 'cartesian',     fn: 'PRiSM_plot_cartesian',             label: 'Cartesian P vs t',     mode: 'transient' },
-    { key: 'horner',        fn: 'PRiSM_plot_horner',                label: 'Horner',               mode: 'transient' },
-    { key: 'bourdet',       fn: 'PRiSM_plot_bourdet',               label: 'Log-Log Bourdet',      mode: 'transient' },
-    { key: 'sqrt',          fn: 'PRiSM_plot_sqrt_time',             label: 'Square-root time',     mode: 'transient' },
-    { key: 'quarter',       fn: 'PRiSM_plot_quarter_root_time',     label: 'Quarter-root time',    mode: 'transient' },
-    { key: 'spherical',     fn: 'PRiSM_plot_spherical',             label: 'Spherical',            mode: 'transient' },
-    { key: 'sandface',      fn: 'PRiSM_plot_sandface_convolution',  label: 'Sandface convolution', mode: 'transient' },
-    { key: 'superposition', fn: 'PRiSM_plot_buildup_superposition', label: 'Buildup superposition',mode: 'transient' },
-    { key: 'rateCart',      fn: 'PRiSM_plot_rate_time_cartesian',   label: 'Rate vs time (cart)',  mode: 'decline' },
-    { key: 'rateSemi',      fn: 'PRiSM_plot_rate_time_semilog',     label: 'Rate vs time (semi)',  mode: 'decline' },
-    { key: 'rateLog',       fn: 'PRiSM_plot_rate_time_loglog',      label: 'Rate vs time (log)',   mode: 'decline' },
-    { key: 'rateCum',       fn: 'PRiSM_plot_rate_cumulative',       label: 'Rate vs cumulative',   mode: 'decline' },
-    { key: 'lossRatio',     fn: 'PRiSM_plot_loss_ratio',            label: 'Loss-ratio',           mode: 'decline' },
-    { key: 'typeCurve',     fn: 'PRiSM_plot_typecurve_overlay',     label: 'Type-curve overlay',   mode: 'decline' }
-];
-
-window.PRiSM_listPlots = function () {
-    return _PLOTS_SNAPSHOT.slice();
-};
-
-// Render a plot to an offscreen canvas at the given resolution, return data URL.
-function _renderPlotToDataURL(plotKey, w, h) {
-    var entry = null;
-    for (var i = 0; i < _PLOTS_SNAPSHOT.length; i++) {
-        if (_PLOTS_SNAPSHOT[i].key === plotKey) { entry = _PLOTS_SNAPSHOT[i]; break; }
+    var clears = host.querySelectorAll('[data-prism-akey-clear]');
+    for (var j = 0; j < clears.length; j++) {
+        (function (node) {
+            node.onclick = function () {
+                var s = G.PRiSM_state || {};
+                if (s.analysisKeyResults) delete s.analysisKeyResults[node.getAttribute('data-prism-akey-clear')];
+                if (typeof G.PRiSM_saveState === 'function') { try { G.PRiSM_saveState(); } catch (e) { /* ignore */ } }
+                _refreshToolbars();
+                _redraw();
+            };
+        })(clears[j]);
     }
-    if (!entry) return null;
-    var fn = window[entry.fn];
-    if (typeof fn !== 'function') return null;
-    var ds = window.PRiSM_dataset || {};
-    var st = window.PRiSM_state   || {};
-    var c = document.createElement('canvas');
-    c.width  = w || 1200;
-    c.height = h || 800;
-    var data = {
-        t: ds.t || [], p: ds.p || [], q: ds.q || null
+    var ca = host.querySelector('[data-prism-akey-clearall]');
+    if (ca) ca.onclick = function () {
+        var s = G.PRiSM_state || {};
+        s.analysisKeyResults = {};
+        if (typeof G.PRiSM_saveState === 'function') { try { G.PRiSM_saveState(); } catch (e) { /* ignore */ } }
+        _refreshToolbars();
+        _redraw();
     };
-    if (ds.dp) data.dp = ds.dp;
-    if (ds.periods) data.periods = ds.periods;
-    if (st.modelCurve && typeof window.PRiSM_applyMatch === 'function') {
-        try {
-            var m = st.match || { timeShift: 0, pressShift: 0 };
-            var sh = window.PRiSM_applyMatch(st.modelCurve.td, st.modelCurve.pd,
-                                             m.timeShift, m.pressShift);
-            data.overlay = { t: sh.t, p: sh.p };
-        } catch (e) { /* ignore — overlay just won't appear */ }
+    _markArmedButtons();
+};
+
+function _refreshToolbars() {
+    if (!_hasDoc || typeof document.querySelectorAll !== 'function') return;
+    var hosts;
+    try { hosts = document.querySelectorAll('[data-prism-linetools]'); } catch (e) { return; }
+    for (var i = 0; i < hosts.length; i++) {
+        try { G.PRiSM_renderAnalysisKeyToolbar(hosts[i]); } catch (e2) { /* ignore */ }
     }
-    try {
-        fn(c, data, { hover: false, dragZoom: false, showLegend: true });
-    } catch (e) {
-        console.warn('PRiSM PNG render of', plotKey, 'failed:', e.message);
-        // Still return whatever was drawn so the user gets *something*.
-    }
-    try { return c.toDataURL('image/png'); }
-    catch (e) { console.warn('toDataURL failed:', e.message); return null; }
 }
 
-// Standalone PNG download for a single plot.
-window.PRiSM_exportPlotPNG = function (plotKey) {
-    if (!plotKey) {
-        _polishToast('PRiSM_exportPlotPNG: plotKey required', 'error');
-        return;
+function _redraw() {
+    if (typeof G.PRiSM_drawActivePlot === 'function') { try { G.PRiSM_drawActivePlot(); } catch (e) { /* ignore */ } }
+}
+
+// Tab 2 panel (C7).
+_registerTabPanel(2, {
+    id: 'linetools',
+    title: 'Plot line tools',
+    order: 10,
+    collapsed: false,
+    render: function (host) {
+        if (!host) return;
+        host.innerHTML = '<div id="prism_linetools"></div>';
+        G.PRiSM_renderAnalysisKeyToolbar(host.querySelector('#prism_linetools') || host);
     }
-    var dataUrl = _renderPlotToDataURL(plotKey, 1200, 800);
-    if (!dataUrl) {
-        _polishToast('PNG export failed — plot ' + plotKey + ' not available', 'error');
-        return;
+});
+
+_on(G, 'prism:plot-changed', function () {
+    var st = G.PRiSM_state || {};
+    if (_arm && !_keyOnPlot(G.PRiSM_analysisKeys[_arm.key], st.activePlot || 'bourdet')) _disarm();
+    _refreshToolbars();
+});
+_on(G, 'prism:well-changed', _refreshToolbars);
+_on(G, 'prism:dataset-loaded', _refreshToolbars);
+
+// Post-draw hook (C7): redraw the stored picks of the tools used on this plot.
+function _linetoolsPostDraw(info) {
+    if (!info || !info.canvas || !info.canvas.getContext) return;
+    var st = G.PRiSM_state || {}, res = st.analysisKeyResults || {};
+    var tr = _axesForward(info.axes || info.canvas._prismAxes);
+    if (!tr) return;
+    var plotKey = info.plotKey || st.activePlot;
+    var list = Object.keys(res).map(function (k) { return res[k]; })
+        .filter(function (e) { return e && e.plotKey === plotKey && Array.isArray(e.points); })
+        .sort(function (a, b) { return (b.timestamp || 0) - (a.timestamp || 0); }).slice(0, 4);
+    if (!list.length) return;
+    var ctx = info.canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.save();
+    try {
+        var pl = tr.plot;
+        if (pl && _num(pl.w)) { ctx.beginPath(); ctx.rect(pl.x, pl.y, pl.w, pl.h); ctx.clip(); }
+        list.forEach(function (e) {
+            var xy = e.points.map(function (p) { return [tr.toX(p.x), tr.toY(p.y)]; })
+                .filter(function (p) { return _num(p[0]) && _num(p[1]); });
+            if (!xy.length) return;
+            ctx.strokeStyle = 'rgba(240,136,62,0.9)';
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([4, 3]);
+            if (xy.length >= 2) {
+                ctx.beginPath(); ctx.moveTo(xy[0][0], xy[0][1]);
+                for (var i = 1; i < xy.length; i++) ctx.lineTo(xy[i][0], xy[i][1]);
+                ctx.stroke();
+            }
+            ctx.setLineDash([]);
+            xy.forEach(function (p) {
+                ctx.beginPath(); ctx.moveTo(p[0] - 5, p[1]); ctx.lineTo(p[0] + 5, p[1]);
+                ctx.moveTo(p[0], p[1] - 5); ctx.lineTo(p[0], p[1] + 5); ctx.stroke();
+            });
+        });
+    } catch (e) { /* cosmetic */ }
+    ctx.restore();
+}
+_linetoolsPostDraw._prismId = 'linetools-picks';
+
+function _registerPostDraw(fn) {
+    var hooks = G.PRiSM_postDrawHooks = Array.isArray(G.PRiSM_postDrawHooks) ? G.PRiSM_postDrawHooks : [];
+    for (var i = 0; i < hooks.length; i++) if (hooks[i] && hooks[i]._prismId === fn._prismId) { hooks[i] = fn; return; }
+    hooks.push(fn);
+}
+_registerPostDraw(_linetoolsPostDraw);
+
+
+// =========================================================================
+// SECTION 3 — PNG / PDF EXPORT
+// =========================================================================
+// Plots are rendered off-screen from window.PRiSM_buildPlotData(plotKey)
+// (C7) — the same data the screen uses — and the post-draw hooks are run
+// on the off-screen canvas so exports match the screen.
+// =========================================================================
+
+var _PLOTS_SNAPSHOT = [
+    { key: 'cartesian',     fn: 'PRiSM_plot_cartesian',             label: 'Cartesian P vs t',      mode: 'transient' },
+    { key: 'horner',        fn: 'PRiSM_plot_horner',                label: 'Horner',                mode: 'transient' },
+    { key: 'mdh',           fn: 'PRiSM_plot_mdh',                   label: 'Semilog (MDH)',         mode: 'transient' },
+    { key: 'bourdet',       fn: 'PRiSM_plot_bourdet',               label: 'Log-Log Bourdet',       mode: 'transient' },
+    { key: 'sqrt',          fn: 'PRiSM_plot_sqrt_time',             label: 'Square-root time',      mode: 'transient' },
+    { key: 'quarter',       fn: 'PRiSM_plot_quarter_root_time',     label: 'Quarter-root time',     mode: 'transient' },
+    { key: 'spherical',     fn: 'PRiSM_plot_spherical',             label: 'Spherical',             mode: 'transient' },
+    { key: 'sandface',      fn: 'PRiSM_plot_sandface_convolution',  label: 'Material-balance time', mode: 'transient' },
+    { key: 'superposition', fn: 'PRiSM_plot_buildup_superposition', label: 'Buildup superposition', mode: 'transient' },
+    { key: 'rateCart',      fn: 'PRiSM_plot_rate_time_cartesian',   label: 'Rate vs time (cart)',   mode: 'decline' },
+    { key: 'rateSemi',      fn: 'PRiSM_plot_rate_time_semilog',     label: 'Rate vs time (semi)',   mode: 'decline' },
+    { key: 'rateLog',       fn: 'PRiSM_plot_rate_time_loglog',      label: 'Rate vs time (log)',    mode: 'decline' },
+    { key: 'rateCum',       fn: 'PRiSM_plot_rate_cumulative',       label: 'Rate vs cumulative',    mode: 'decline' },
+    { key: 'lossRatio',     fn: 'PRiSM_plot_loss_ratio',            label: 'Loss-ratio',            mode: 'decline' },
+    { key: 'typeCurve',     fn: 'PRiSM_plot_typecurve_overlay',     label: 'Type-curve overlay',    mode: 'decline' }
+];
+
+function _plotEntries() {
+    var reg = G.PRiSM_PLOT_REGISTRY, out = [];
+    if (reg && typeof reg === 'object') {
+        for (var k in reg) {
+            if (!Object.prototype.hasOwnProperty.call(reg, k) || !reg[k]) continue;
+            out.push({ key: k, fn: reg[k].fn, label: reg[k].label || k, mode: reg[k].mode || 'transient' });
+        }
+    }
+    if (!out.length) out = _PLOTS_SNAPSHOT.slice();
+    return out;
+}
+
+function _plotFn(entry) {
+    if (!entry) return null;
+    if (typeof entry.fn === 'function') return entry.fn;
+    if (typeof entry.fn === 'string' && typeof G[entry.fn] === 'function') return G[entry.fn];
+    return null;
+}
+
+G.PRiSM_listPlots = function () {
+    return _plotEntries().map(function (e) {
+        return { key: e.key, fn: typeof e.fn === 'string' ? e.fn : ((e.fn && e.fn.name) || ''), label: e.label, mode: e.mode };
+    });
+};
+
+var _DECLINE_PLOTS = { rateCart: 1, rateSemi: 1, rateLog: 1, rateCum: 1, lossRatio: 1, typeCurve: 1 };
+
+// Only used when the dispatcher's PRiSM_buildPlotData is not available.
+function _fallbackPlotData(plotKey) {
+    var ds = G.PRiSM_dataset;
+    if (!ds || !ds.t || !ds.t.length) return null;
+    if (_DECLINE_PLOTS[plotKey]) {
+        var td = [];
+        for (var i = 0; i < ds.t.length; i++) td.push(ds.t[i] / 24);
+        return { data: { t: td, q: ds.q || null }, opts: { timeUnit: 'd', xLabel: 'Time (days)' } };
+    }
+    if (plotKey === 'cartesian') return { data: { t: ds.t, p: ds.p, q: ds.q, periods: ds.periods }, opts: {} };
+    var ad = _analysisData();
+    if (ad && ad.ok) {
+        if (plotKey === 'bourdet' || plotKey === 'sandface') return { data: { t: ad.t, dp: ad.dp, deriv: ad.deriv }, opts: {} };
+        var o = {};
+        if (_pos(ad.tp)) o.tp = ad.tp;
+        return { data: { t: ad.t, p: ad.p, dp: ad.dp, tp: ad.tp }, opts: o };
+    }
+    return { data: { t: ds.t, p: ds.p, q: ds.q }, opts: {} };
+}
+
+// Render a plot off-screen → canvas (or null).
+G.PRiSM_renderPlotToCanvas = function (plotKey, w, h) {
+    if (!_hasDoc) return null;
+    var entries = _plotEntries(), entry = null;
+    for (var i = 0; i < entries.length; i++) if (entries[i].key === plotKey) { entry = entries[i]; break; }
+    var fn = _plotFn(entry);
+    if (!fn) return null;
+    var built = null;
+    if (typeof G.PRiSM_buildPlotData === 'function') {
+        try { built = G.PRiSM_buildPlotData(plotKey); } catch (e) { built = null; }
+    }
+    if (!built || !built.data) built = _fallbackPlotData(plotKey);
+    if (!built || !built.data) return null;
+    w = w || 1200; h = h || 800;
+    var c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    try { c.style.width = w + 'px'; c.style.height = h + 'px'; } catch (e0) { /* ignore */ }
+    var o = {}, src = built.opts || {};
+    for (var k in src) if (Object.prototype.hasOwnProperty.call(src, k)) o[k] = src[k];
+    o.width = w; o.height = h; o.hover = false; o.dragZoom = false;
+    if (o.showLegend == null) o.showLegend = true;
+    var st = G.PRiSM_state || {};
+    if (o.smoothL == null && _num(st.bourdetL)) o.smoothL = st.bourdetL;
+    try { fn(c, built.data, o); } catch (e1) {
+        try { console.warn('PRiSM export: plot ' + plotKey + ' failed: ' + (e1 && e1.message)); } catch (e2) { /* ignore */ }
+    }
+    var hooks = G.PRiSM_postDrawHooks;
+    if (Array.isArray(hooks)) {
+        for (var j = 0; j < hooks.length; j++) {
+            try { hooks[j]({ canvas: c, plotKey: plotKey, data: built.data, opts: o, axes: c._prismAxes || null, exporting: true }); }
+            catch (e3) { /* a hook must never break an export */ }
+        }
+    }
+    return c;
+};
+
+function _plotDataURL(plotKey, w, h) {
+    var c = G.PRiSM_renderPlotToCanvas(plotKey, w, h);
+    if (!c) return null;
+    try { return c.toDataURL('image/png'); } catch (e) { return null; }
+}
+
+G.PRiSM_exportPlotPNG = function (plotKey) {
+    var st = G.PRiSM_state || {};
+    plotKey = plotKey || st.activePlot || 'bourdet';
+    var url = _plotDataURL(plotKey, 1200, 800);
+    if (!url || !_hasDoc) {
+        _polishToast('PNG export failed — the ' + _plotLabel(plotKey) + ' plot is not available.', 'error');
+        return false;
     }
     var a = document.createElement('a');
-    a.href = dataUrl;
+    a.href = url;
     a.download = 'prism_' + plotKey + '.png';
+    a.style.display = 'none';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     _polishToast('PNG saved: prism_' + plotKey + '.png', 'success');
+    return true;
 };
 
-// PDF export with embedded PNGs.
-window.PRiSM_exportReportPDF = function () {
-    var html;
+function _galleryHTML() {
+    var ds = G.PRiSM_dataset;
+    if (!ds || !ds.t || !ds.t.length) return '<p><em>No dataset loaded — plot gallery skipped.</em></p>';
+    var mode = (G.PRiSM && G.PRiSM.mode) || 'transient';
+    var html = '<h2 style="page-break-before:always;">Plots</h2>', cnt = 0;
+    _plotEntries().forEach(function (e) {
+        if (mode !== 'combined' && e.mode !== mode && e.mode !== 'both') return;
+        var url = _plotDataURL(e.key, 1200, 800);
+        if (!url) return;
+        cnt++;
+        html += '<div style="page-break-inside:avoid; margin-bottom:18px;"><h3 style="margin:6px 0;">' + _esc(e.label) + '</h3>' +
+                '<img src="' + url + '" alt="' + _esc(e.label) + '" style="width:100%; max-width:1100px; height:auto; border:1px solid #ccc;"/></div>';
+    });
+    if (!cnt) html += '<p><em>No plots could be rendered.</em></p>';
+    return html;
+}
+
+// PDF export: report body (36) + PNG gallery → host PDF pipeline.
+// Returns 'host' | 'window' | false.
+G.PRiSM_exportReportPDF = function () {
+    var body;
     try {
-        if (typeof window.PRiSM_buildReportHTML === 'function') {
-            html = window.PRiSM_buildReportHTML();
-        } else {
-            html = '<h2>PRiSM Report</h2><p>(Report builder not available.)</p>';
-        }
+        body = (typeof G.PRiSM_buildReportHTML === 'function')
+            ? G.PRiSM_buildReportHTML({ plots: false })   // the gallery below carries the plots
+            : '<p>(The report builder is not available — plots only.)</p>';
     } catch (e) {
-        _polishToast('Report build failed: ' + e.message, 'error');
-        return;
+        _polishToast('Report build failed: ' + (e && e.message), 'error');
+        return false;
     }
-
-    // Bake every available plot as a high-res PNG and append to the report.
-    var ds = window.PRiSM_dataset;
-    var hasData = !!(ds && Array.isArray(ds.t) && ds.t.length > 0);
-    var st = window.PRiSM_state || {};
-    var mode = (window.PRiSM && window.PRiSM.mode) || 'transient';
-
-    var augHTML = '';
-    if (hasData) {
-        augHTML += '<h2 style="page-break-before:always;">High-Resolution Plot Gallery</h2>';
-        var cnt = 0;
-        for (var i = 0; i < _PLOTS_SNAPSHOT.length; i++) {
-            var entry = _PLOTS_SNAPSHOT[i];
-            // Only embed plots compatible with the active mode (or both).
-            if (mode !== 'combined' && entry.mode !== mode) continue;
-            var url = _renderPlotToDataURL(entry.key, 1200, 800);
-            if (!url) continue;
-            cnt++;
-            augHTML +=
-                '<div style="page-break-inside:avoid; margin-bottom:18px;">' +
-                    '<h3 style="margin:6px 0;">' + entry.label + '</h3>' +
-                    '<img src="' + url + '" style="width:100%; max-width:1100px; ' +
-                        'height:auto; border:1px solid #ccc;"/>' +
-                '</div>';
-        }
-        if (cnt === 0) {
-            augHTML += '<p><em>No plots could be rendered.</em></p>';
-        }
-    } else {
-        augHTML += '<p><em>No dataset loaded — gallery skipped.</em></p>';
+    var html = String(body || '') + _galleryHTML();
+    var st = G.PRiSM_state || {};
+    var title = 'PRiSM Well-Test Analysis';
+    var sub = st.model ? ('Model: ' + st.model) : '';
+    // Lexical host pipeline (this file is concatenated inside the host IIFE).
+    if (typeof exportReport === 'function') {
+        try { exportReport(title, html, sub); return 'host'; }
+        catch (e1) { try { console.warn('Host report export failed, using a print window: ' + e1.message); } catch (e2) { /* ignore */ } }
     }
-
-    // Try the host's exportReport first (gives consistent cover page).
-    if (typeof window.exportReport === 'function') {
-        try {
-            window.exportReport('PRiSM Analysis - ' + (st.model || ''), html + augHTML);
-            _polishToast('Report sent to host PDF pipeline.', 'success');
-            return;
-        } catch (e) {
-            console.warn('Host exportReport failed, falling back to print window:', e.message);
-        }
+    if (typeof G.exportReport === 'function') {
+        try { G.exportReport(title, html, sub); return 'host'; } catch (e3) { /* fall through */ }
     }
-
-    // Fallback: open a new window, dump the augmented report, call print().
-    var w;
-    try { w = window.open('', 'prism_report', 'width=900,height=1100'); }
-    catch (e) { w = null; }
-    if (!w) {
+    var w = null;
+    try { w = G.open('', 'prism_report', 'width=900,height=1100'); } catch (e4) { w = null; }
+    if (!w || !w.document) {
         _polishToast('Pop-up blocked — allow pop-ups to export the report.', 'error');
-        return;
+        return false;
     }
-    var fullHTML =
-        '<!DOCTYPE html><html><head><title>PRiSM Report</title>' +
-        '<style>' +
-            'body { font-family: Arial, sans-serif; margin: 24px; color:#222; }' +
-            'h1, h2, h3 { color:#222; }' +
-            'table { border-collapse: collapse; margin: 8px 0; }' +
-            'th, td { border:1px solid #ddd; padding:4px 8px; font-size:12px; }' +
-            'img { max-width:100%; height:auto; }' +
-            '@media print { body { margin:12px; } }' +
-        '</style></head><body>' +
-        '<h1>PRiSM Well-Test Analysis Report</h1>' +
-        html + augHTML +
-        '<script>window.onload = function(){ setTimeout(function(){' +
-        ' try { window.print(); } catch(e){} }, 400); };<\/script>' +
+    var full = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + title + '</title>' +
+        '<meta name="viewport" content="width=device-width, initial-scale=1">' +
+        '<style>body{font-family:Arial,sans-serif;margin:24px;color:#222;}h1,h2,h3{color:#222;}' +
+        'table{border-collapse:collapse;margin:8px 0;}th,td{border:1px solid #ddd;padding:4px 8px;font-size:12px;}' +
+        'img{max-width:100%;height:auto;}@media print{body{margin:12px;}}</style></head><body>' +
+        '<h1>' + title + '</h1>' + html +
+        '<script>window.onload=function(){setTimeout(function(){try{window.print();}catch(e){}},400);};<\/script>' +
         '</body></html>';
     try {
-        w.document.open();
-        w.document.write(fullHTML);
-        w.document.close();
-        _polishToast('Report opened — use browser print to save as PDF.', 'success');
-    } catch (e) {
-        _polishToast('Print-window write failed: ' + e.message, 'error');
+        w.document.open(); w.document.write(full); w.document.close();
+        _polishToast('Report opened — use the print dialog to save it as PDF.', 'success');
+        return 'window';
+    } catch (e5) {
+        _polishToast('Print-window write failed: ' + (e5 && e5.message), 'error');
+        return false;
     }
 };
 
 
 // =========================================================================
-// SECTION 4 — PER-TAB GA4 EVENTS
+// SECTION 4 — USAGE ANALYTICS (GA4)
 // =========================================================================
-// Three integration points:
-//   - window.PRiSM.setTab          → 'prism_tab_open'
-//   - window.PRiSM_state.model     → 'prism_model_select'
-//   - window.PRiSM_runRegression   → 'prism_regress_run'
+// Tab opens come from the shell's PRiSM_tabHooks.any; model and fit events
+// from window CustomEvents. Nothing is wrapped and nothing polls.
 // =========================================================================
 
 function _ga4(eventName, params) {
-    if (typeof window.gtag === 'function') {
-        try { window.gtag('event', eventName, params); }
-        catch (e) { /* swallow — GA failures must not break the app */ }
+    if (typeof G.gtag === 'function') {
+        try { G.gtag('event', eventName, params); } catch (e) { /* GA must never break the app */ }
     }
 }
 
-// ---- 4a) Wrap window.PRiSM.setTab ---------------------------------------
-(function _wrapSetTabForGA4() {
-    if (!window.PRiSM || typeof window.PRiSM.setTab !== 'function') {
-        // Try again later — Phase 1+2 setTab is created inside renderPRiSM.
-        setTimeout(_wrapSetTabForGA4, 250);
-        return;
-    }
-    if (window.PRiSM.setTab._ga4Wrapped) return;
-    var orig = window.PRiSM.setTab;
-    window.PRiSM.setTab = function (n) {
-        var tabNames = ['', 'Data', 'Plots', 'Model', 'Params', 'Match', 'Regress', 'Report'];
-        var name = tabNames[n] || ('Tab ' + n);
-        _ga4('prism_tab_open', {
-            event_category: 'PRiSM',
-            event_label:    name,
-            value:          n,
-            tab_index:      n
-        });
-        return orig.apply(this, arguments);
-    };
-    window.PRiSM.setTab._ga4Wrapped = true;
+var _TAB_NAMES = ['', 'Data', 'Plots', 'Model', 'Params', 'Match', 'Regress', 'Report'];
+
+function _gaTabHook(n) {
+    _ga4('prism_tab_open', { event_category: 'PRiSM', event_label: _TAB_NAMES[n] || ('Tab ' + n), value: n, tab_index: n });
+}
+_gaTabHook._prismId = 'ga4-tab-open';
+
+(function _registerGA() {
+    var hooks = G.PRiSM_tabHooks = (G.PRiSM_tabHooks && typeof G.PRiSM_tabHooks === 'object') ? G.PRiSM_tabHooks : {};
+    var any = hooks.any = Array.isArray(hooks.any) ? hooks.any : [];
+    for (var i = 0; i < any.length; i++) if (any[i] && any[i]._prismId === _gaTabHook._prismId) return;
+    any.push(_gaTabHook);
 })();
 
-// ---- 4b) Wrap state.model setter ----------------------------------------
-//   Tab 3 currently does `window.PRiSM_state.model = key` directly. We
-//   install an Object.defineProperty getter/setter on the model field so
-//   any assignment fires GA4. Also expose PRiSM_setModel(key) for callers
-//   that prefer an explicit setter.
-(function _instrumentModelField() {
-    if (!window.PRiSM_state) {
-        setTimeout(_instrumentModelField, 250);
-        return;
-    }
-    var st = window.PRiSM_state;
-    if (st._modelInstrumented) return;
-    var current = st.model;
-    try {
-        Object.defineProperty(st, 'model', {
-            configurable: true,
-            enumerable:   true,
-            get: function () { return current; },
-            set: function (v) {
-                if (v !== current) {
-                    current = v;
-                    _ga4('prism_model_select', {
-                        event_category: 'PRiSM',
-                        event_label:    String(v),
-                        model_key:      String(v)
-                    });
-                } else {
-                    current = v;
-                }
-            }
-        });
-        st._modelInstrumented = true;
-    } catch (e) {
-        console.warn('PRiSM model-setter instrumentation failed:', e.message);
-    }
-})();
+_on(G, 'prism:model-changed', function (ev) {
+    var d = (ev && ev.detail) || {};
+    var key = d.modelKey || d.model || (G.PRiSM_state && G.PRiSM_state.model) || 'unknown';
+    _ga4('prism_model_select', { event_category: 'PRiSM', event_label: String(key), model_key: String(key) });
+});
+_on(G, 'prism:fit-updated', function (ev) {
+    var d = (ev && ev.detail) || {};
+    var src = d.source || (d.fit && d.fit.source) || '';
+    var key = d.modelKey || (d.fit && (d.fit.modelKey || d.fit.model)) || (G.PRiSM_state && G.PRiSM_state.model) || 'unknown';
+    var name = src === 'regression' ? 'prism_regress_run' : src === 'automatch' ? 'prism_automatch_apply' :
+               src === 'match' ? 'prism_typecurve_apply' : src === 'semilog' ? 'prism_semilog_run' : 'prism_fit_update';
+    _ga4(name, { event_category: 'PRiSM', event_label: String(key), model_key: String(key), source: String(src) });
+});
+_on(G, 'prism:analysis-key', function (ev) {
+    var d = (ev && ev.detail) || {};
+    _ga4('prism_line_tool', { event_category: 'PRiSM', event_label: String(d.key || ''), tool: String(d.key || '') });
+});
 
-window.PRiSM_setModel = function (key) {
-    if (!window.PRiSM_state) window.PRiSM_state = { params: {}, model: key };
-    window.PRiSM_state.model = key;        // triggers the GA4 event via the setter
-    if (window.PRiSM_MODELS && window.PRiSM_MODELS[key]) {
-        var defs = window.PRiSM_MODELS[key].defaults || {};
-        window.PRiSM_state.params = {};
-        for (var k in defs) {
-            if (Object.prototype.hasOwnProperty.call(defs, k)) {
-                window.PRiSM_state.params[k] = defs[k];
-            }
+// Fallback model setter — only when the dispatcher (04) has not provided one.
+if (typeof G.PRiSM_setModel !== 'function') {
+    G.PRiSM_setModel = function (key) {
+        var st = G.PRiSM_state || (G.PRiSM_state = { params: {} });
+        st.model = key;
+        var entry = G.PRiSM_MODELS && G.PRiSM_MODELS[key];
+        if (entry) {
+            var defs = entry.defaults || {};
+            st.params = {};
+            for (var k in defs) if (Object.prototype.hasOwnProperty.call(defs, k)) st.params[k] = defs[k];
+            st.modelCurve = null;
         }
-        window.PRiSM_state.modelCurve = null;
-    }
-};
-
-// ---- 4c) Wrap window.PRiSM_runRegression --------------------------------
-(function _wrapRunRegression() {
-    if (typeof window.PRiSM_runRegression !== 'function') {
-        setTimeout(_wrapRunRegression, 250);
-        return;
-    }
-    if (window.PRiSM_runRegression._ga4Wrapped) return;
-    var orig = window.PRiSM_runRegression;
-    window.PRiSM_runRegression = function (opts) {
-        var st = window.PRiSM_state || {};
-        _ga4('prism_regress_run', {
-            event_category: 'PRiSM',
-            event_label:    String(st.model || 'unknown'),
-            model_key:      String(st.model || 'unknown')
-        });
-        return orig.apply(this, arguments);
+        _emit('prism:model-changed', { modelKey: key });
     };
-    window.PRiSM_runRegression._ga4Wrapped = true;
-})();
+}
 
 
 // =========================================================================
 // SELF-TEST
 // =========================================================================
-// Verifies the four contract checks and logs a pass/fail line. The setTab
-// wrap check uses a stub if window.PRiSM.setTab isn't yet defined (early
-// load order); we install a no-op stub in that case so the wrap can run
-// against it and the assertion still meaningfully validates the wrap.
-// =========================================================================
-
 (function _selfTest() {
-    function reportResult(label, ok, detail) {
-        var sym = ok ? '[PASS]' : '[FAIL]';
-        try {
-            console.log('PRiSM-polish self-test ' + sym + ' ' + label +
-                        (detail ? '  ' + detail : ''));
-        } catch (e) { /* silent */ }
-        return ok;
-    }
-    var passes = 0, total = 0;
-
-    // 1. Schematic returns a non-empty SVG string.
-    total++;
-    var svg = '';
-    try { svg = window.PRiSM_getModelSchematic('homogeneous'); } catch (e) {}
-    var ok1 = (typeof svg === 'string') && svg.indexOf('<svg') === 0 && svg.length > 200;
-    if (reportResult('SVG schematic for homogeneous',
-                     ok1, '(' + (svg ? svg.length : 0) + ' chars)')) passes++;
-
-    // 2. PRiSM_analysisKeys has all 20 entries.
-    total++;
-    var expected = ['STABIL','HALFSL','OMEGA','LAMBDA','FAULT','CHANEL','ANGLE',
-                    'INJSTB','INJSLP','PPNSTB','PPNSLP','PPNSKN','HORSLP','HORSTB',
-                    'BND-ON','BND-DV','3-SIDE','AUTOSL','1/4SLP','SPHERE'];
-    var missing = [];
-    for (var i = 0; i < expected.length; i++) {
-        if (!window.PRiSM_analysisKeys || !window.PRiSM_analysisKeys[expected[i]]) {
-            missing.push(expected[i]);
-        }
-    }
-    var ok2 = (missing.length === 0) &&
-              window.PRiSM_analysisKeys &&
-              Object.keys(window.PRiSM_analysisKeys).length >= 20;
-    if (reportResult('20 analysis keys registered',
-                     ok2, '(' + Object.keys(window.PRiSM_analysisKeys || {}).length +
-                          ' present, missing: ' + missing.join(',') + ')')) passes++;
-
-    // 3. PNG export functions exist and are callable.
-    total++;
-    var ok3 = (typeof window.PRiSM_exportPlotPNG === 'function') &&
-              (typeof window.PRiSM_exportReportPDF === 'function') &&
-              (typeof window.PRiSM_listPlots === 'function');
-    if (reportResult('PNG export functions exposed', ok3)) passes++;
-
-    // 4. After a stub setTab is in place + the wrapper has run, _ga4Wrapped
-    //    should be true. If renderPRiSM hasn't created setTab yet, do it now
-    //    with a no-op stub and re-trigger the wrapper.
-    total++;
-    if (!window.PRiSM) window.PRiSM = {};
-    if (typeof window.PRiSM.setTab !== 'function') {
-        window.PRiSM.setTab = function () {};
-        // Re-run the wrap idempotently (the IIFE above retries every 250 ms;
-        // we trigger it synchronously here to keep self-test deterministic).
-        if (!window.PRiSM.setTab._ga4Wrapped) {
-            var orig = window.PRiSM.setTab;
-            window.PRiSM.setTab = function (n) {
-                var tabNames = ['', 'Data', 'Plots', 'Model', 'Params', 'Match', 'Regress', 'Report'];
-                var name = tabNames[n] || ('Tab ' + n);
-                _ga4('prism_tab_open', {
-                    event_category: 'PRiSM',
-                    event_label:    name,
-                    value:          n,
-                    tab_index:      n
-                });
-                return orig.apply(this, arguments);
-            };
-            window.PRiSM.setTab._ga4Wrapped = true;
-        }
-    }
-    var ok4 = !!(window.PRiSM && window.PRiSM.setTab && window.PRiSM.setTab._ga4Wrapped);
-    if (reportResult('window.PRiSM.setTab wrapped with GA4', ok4)) passes++;
-
-    // Summary
+    var checks = [];
+    function check(name, ok, detail) { checks.push({ name: name, ok: !!ok, detail: detail || '' }); }
+    var savedWell = G.PRiSM_getWell, savedAD = G.PRiSM_getAnalysisData, savedState = G.PRiSM_state;
     try {
-        console.log('PRiSM-polish self-test summary: ' + passes + '/' + total +
-                    ' checks passed');
+        var svg = G.PRiSM_getModelSchematic('homogeneous');
+        check('schematic SVG for homogeneous', typeof svg === 'string' && svg.indexOf('<svg') === 0 && svg.length > 200);
+
+        var names = Object.keys(G.PRiSM_analysisKeys);
+        check('≥ 20 line tools with plain labels', names.length >= 20 && names.every(function (n) {
+            var k = G.PRiSM_analysisKeys[n];
+            return k.label && k.label.length > 6 && typeof k.action === 'function' && k.clicks >= 1;
+        }), names.length + ' tools');
+
+        // Sample well (C1 contract) — k 45 md, kh 1575 md·ft.
+        G.PRiSM_getWell = function () {
+            return { fluid: 'oil', q: 850, B: 1.25, mu: 1.1, ct: 1.2e-5, h: 35, phi: 0.18, rw: 0.354,
+                     pi: 4200, testType: 'drawdown', complete: true, missing: [], defaulted: [] };
+        };
+        G.PRiSM_getAnalysisData = function () { return { ok: false }; };
+        G.PRiSM_state = { params: { k: 1 }, activePlot: 'bourdet' };
+
+        var r1 = G.PRiSM_runAnalysisKey('radialPlateau', [{ x: 50, y: 52.39 }]);
+        check('radial plateau 52.39 psi → kh 1575, k 45', r1.ok &&
+              Math.abs(r1.result.values.kh - 1575) < 15 && Math.abs(r1.result.values.k - 45) < 0.5 &&
+              G.PRiSM_state.params.k === 1, r1.ok ? _fmt(r1.result.values.kh) : r1.error);
+
+        var mlf = 4.064 * 850 * 1.25 / (35 * 1000) * Math.sqrt(1.1 / (0.18 * 1.2e-5));
+        var r2 = G.PRiSM_runAnalysisKey('halfSlope', [{ x: 10, y: 0.5 * mlf * Math.sqrt(10) }]);
+        check('½-slope xf·√k = 1000', r2.ok && Math.abs(r2.result.values.xfSqrtK / 1000 - 1) < 0.02,
+              r2.ok ? _fmt(r2.result.values.xfSqrtK) : r2.error);
+
+        var tR = 300 * 300 * 0.18 * 1.1 * 1.2e-5 / (0.0002637 * 45 * Math.log(2));
+        var r3 = G.PRiSM_runAnalysisKey('boundaryDoubling', [{ x: 1, y: 52.39 }, { x: tR, y: 1.5 * 52.39 }]);
+        check('boundary doubling R = 1.5 → L = 300 ft', r3.ok && Math.abs(r3.result.values.L - 300) < 10,
+              r3.ok ? _fmt(r3.result.values.L) : r3.error);
+
+        check('ω from dip ratio 0.0549', Math.abs(_omegaFromDipRatio(_dipRatio(0.01)) - 0.01) < 1e-6 &&
+              Math.abs(_omegaFromDipRatio(0.0549) - 0.01) < 5e-4);
+
+        var noWell = G.PRiSM_getWell;
+        G.PRiSM_getWell = undefined;
+        var r4 = G.PRiSM_runAnalysisKey('radialPlateau', [{ x: 50, y: 52.39 }]);
+        G.PRiSM_getWell = noWell;
+        check('missing Well & Test store → default-inputs warning', r4.ok && r4.result.defaultInputs.length > 0 &&
+              /Default inputs/.test(r4.result.warnings[0] || ''));
+
+        check('export functions exposed', typeof G.PRiSM_exportPlotPNG === 'function' &&
+              typeof G.PRiSM_exportReportPDF === 'function' && typeof G.PRiSM_listPlots === 'function' &&
+              G.PRiSM_listPlots().length >= 14);
+
+        var hooked = G.PRiSM_tabHooks && Array.isArray(G.PRiSM_tabHooks.any) &&
+                     G.PRiSM_tabHooks.any.some(function (f) { return f && f._prismId === 'ga4-tab-open'; });
+        check('GA4 registered through PRiSM_tabHooks.any (no wrappers)', hooked);
+
+        var panels = (G.PRiSM_tabPanels && G.PRiSM_tabPanels[2]) || [];
+        var panelOk = panels.some(function (p) { return p && p.id === 'linetools'; });
+        check('line tools registered as a Tab 2 panel', panelOk || typeof G.PRiSM_registerTabPanel === 'function');
+    } catch (e) {
+        check('self-test ran without throwing', false, e && e.message);
+    } finally {
+        G.PRiSM_getWell = savedWell;
+        G.PRiSM_getAnalysisData = savedAD;
+        G.PRiSM_state = savedState;
+    }
+    var fails = checks.filter(function (c) { return !c.ok; });
+    try {
+        checks.forEach(function (c) { console.log('PRiSM-polish self-test ' + (c.ok ? '[PASS] ' : '[FAIL] ') + c.name + (c.detail ? '  (' + c.detail + ')' : '')); });
+        console.log('PRiSM-polish self-test summary: ' + (checks.length - fails.length) + '/' + checks.length + ' checks passed');
     } catch (e) { /* silent */ }
 })();
 

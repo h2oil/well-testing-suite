@@ -63,8 +63,16 @@
 //       composite-radial response (treated as the reservoir-side input).
 //
 // These approximations are appropriate for engineering quick-look /
-// regression-pre-screening; for production decisions a full reservoir
-// simulator (Eclipse, IMEX, OPM, MRST) should be used.
+// regression-pre-screening; for production decisions use a full numerical
+// reservoir simulation.
+//
+// TIME INPUT: the water-injection evaluator takes REAL TIME IN DAYS (registry
+// timeInput: 'days'); the physical-model wrapper passes days, not tD.  Its
+// physical parameters (kh, mu_o, ct, ...) are model inputs, not scale factors.
+// Negative total skin (mechanical + composite) is handled with the
+// effective-wellbore-radius transform, and the Bessel functions are the
+// smooth scaled forms of SECTION 0B (no Stehfest amplification of polynomial
+// breakpoints).
 // ════════════════════════════════════════════════════════════════════════════
 
 (function () {
@@ -88,6 +96,210 @@ function _foundation(name) {
 
 function _num(v) {
     return (typeof v === 'number') && isFinite(v) && !isNaN(v);
+}
+
+function _win() {
+    return (typeof window !== 'undefined') ? window
+         : (typeof globalThis !== 'undefined' ? globalThis : {});
+}
+
+// =============================================================================
+// SECTION 0B — Numerics (WP4b): smooth scaled Bessel functions, Stehfest,
+//             wellbore-storage + skin fold
+// =============================================================================
+//
+// Why local Bessel functions: the Abramowitz-Stegun polynomial fits switch
+// formula at x = 2 (K) and x = 3.75 (I) with ~1e-7 jumps.  Stehfest (N = 12,
+// weights up to 8e6) amplifies such jumps into percent-level pwd errors when
+// the 12 sample points straddle a breakpoint (3.7 % measured at Cd = 0.01).
+// The forms below (power series / continued fraction / Hankel series, each
+// used only where it is accurate to machine precision) agree to ~1e-14 across
+// their switch points and are exponentially scaled, so they never over- or
+// underflow.
+// =============================================================================
+
+var _EULER = 0.5772156649015329;
+
+// K_nu(x)·e^x for nu ∈ {0,1}, x > 0 (all branches accurate to ~1e-15):
+//   x < 2       : power series (K0: −(ln(x/2)+γ)·I0 + Σ q^k/(k!)²·H_k; K1 likewise)
+//   2 ≤ x ≤ 30  : Steed / Temme continued fraction CF2 (Numerical Recipes bessik)
+//   x > 30      : Hankel asymptotic series, optimally truncated (error < e^-60)
+function _Kse(nu, x) {
+  if (!(x > 0)) return Infinity;
+  if (x === Infinity) return 0;
+  if (x > 30) {
+    var mu = 4 * nu * nu, a = 1, s = 1, prev = Infinity;
+    for (var j = 1; j < 80; j++) {
+      a *= (mu - (2 * j - 1) * (2 * j - 1)) / (j * 8 * x);
+      var at = Math.abs(a);
+      if (at > prev) break;
+      s += a; prev = at;
+      if (at < 1e-17) break;
+    }
+    return s * Math.sqrt(Math.PI / (2 * x));
+  }
+  if (x < 2) {
+    var q = 0.25 * x * x, lx = Math.log(0.5 * x);
+    if (!nu) {
+      // K0 = −(ln(x/2)+γ)·I0 + Σ_{k≥1} q^k/(k!)²·H_k
+      var t = 1, I0 = 1, S = 0, H = 0;
+      for (var k = 1; k < 60; k++) { t *= q / (k * k); H += 1 / k; I0 += t; S += t * H; if (t < 1e-18) break; }
+      return (-(lx + _EULER) * I0 + S) * Math.exp(x);
+    }
+    // K1 = 1/x + ln(x/2)·I1 − (x/4)·Σ_{k≥0} (ψ(k+1)+ψ(k+2))·q^k/(k!(k+1)!)
+    var tk = 1, I1s = 1, S1 = (-_EULER) + (1 - _EULER), Hk = 0;
+    for (var k2 = 1; k2 < 60; k2++) {
+      tk *= q / (k2 * (k2 + 1));
+      Hk += 1 / k2;
+      I1s += tk;
+      S1 += tk * ((-_EULER + Hk) + (-_EULER + Hk + 1 / (k2 + 1)));
+      if (tk < 1e-18) break;
+    }
+    var I1 = 0.5 * x * I1s;
+    return (1 / x + lx * I1 - 0.25 * x * S1) * Math.exp(x);
+  }
+  // 2 ≤ x ≤ 30: Steed's continued fraction CF2 (Temme), nu = 0 → K0e, K1e
+  var b = 2 * (1 + x), d = 1 / b, h = d, delh = d, q1 = 0, q2 = 1, a1 = 0.25;
+  var qq = a1, c = a1, aa = -a1, ss = 1 + qq * delh;
+  for (var i = 2; i < 1000; i++) {
+    aa -= 2 * (i - 1);
+    c = -aa * c / i;
+    var qnew = (q1 - b * q2) / aa;
+    q1 = q2; q2 = qnew;
+    qq += c * qnew;
+    b += 2;
+    d = 1 / (b + aa * d);
+    delh = (b * d - 1) * delh;
+    h += delh;
+    var dels = qq * delh;
+    ss += dels;
+    if (Math.abs(dels / ss) < 1e-17) break;
+  }
+  h = a1 * h;
+  var k0e = Math.sqrt(Math.PI / (2 * x)) / ss;
+  return nu ? k0e * (x + 0.5 - h) / x : k0e;
+}
+function _K0e(x) { return _Kse(0, x); }
+function _K1e(x) { return _Kse(1, x); }
+
+// I_nu(x)·e^-x for nu ∈ {0,1}: power series for x ≤ 15, Hankel series above.
+function _Ise(nu, x) {
+  x = Math.abs(x);
+  if (x <= 15) {
+    var q = 0.25 * x * x, term = nu ? 0.5 * x : 1, sum = term;
+    for (var k = 1; k < 200; k++) {
+      term *= q / (k * (k + nu));
+      sum += term;
+      if (term < 1e-17 * sum) break;
+    }
+    return sum * Math.exp(-x);
+  }
+  var mu = 4 * nu * nu, a = 1, s = 1, prev = Infinity;
+  for (var j = 1; j < 60; j++) {
+    a *= -(mu - (2 * j - 1) * (2 * j - 1)) / (j * 8 * x);
+    var at = Math.abs(a);
+    if (at > prev) break;
+    s += a; prev = at;
+    if (at < 1e-17) break;
+  }
+  return s / Math.sqrt(2 * Math.PI * x);
+}
+function _I0e(x) { return _Ise(0, x); }
+function _I1e(x) { return _Ise(1, x); }
+
+// Finite-wellbore well term K0(x) / (x·K1(x)) — scale factors cancel.
+function _wellTerm(x) { return _K0e(x) / (x * _K1e(x)); }
+
+// ---- Stehfest (N = 12) ----------------------------------------------------
+var _SW12 = (function () {
+  var N = 12, f = [1], w = [];
+  for (var i = 1; i <= N; i++) f[i] = f[i - 1] * i;
+  for (var n = 1; n <= N; n++) {
+    var s = 0;
+    for (var k = Math.floor((n + 1) / 2); k <= Math.min(n, N / 2); k++) {
+      s += Math.pow(k, N / 2) * f[2 * k] /
+           (f[N / 2 - k] * f[k] * f[k - 1] * f[n - k] * f[2 * k - n]);
+    }
+    w.push(((n + N / 2) % 2 === 0 ? 1 : -1) * s);
+  }
+  return w;
+})();
+var _stehImpl;   // foundation PRiSM_stehfest (same weights), resolved lazily
+function _steh(F, t) {
+  if (_stehImpl === undefined) _stehImpl = _foundation('PRiSM_stehfest') || null;
+  if (_stehImpl) return _stehImpl(F, t, 12);
+  var a = Math.LN2 / t, s = 0;
+  for (var i = 1; i <= 12; i++) s += _SW12[i - 1] * F(i * a);
+  return a * s;
+}
+
+// ---- Wellbore storage + skin fold ------------------------------------------
+//   p̄wD(s) = (s·p̄ + S) / ( s·(1 + Cd·s·(s·p̄ + S)) )     (Agarwal-Ramey 1970)
+// p̄(s) is the unit-rate reservoir response at the well, built with the
+// FINITE-wellbore well term, so pwd → td/Cd at early time.
+//
+// Negative skin: for S < 0 the fold has a real positive pole wherever
+// s·p̄ + S = −1/(Cd·s); Stehfest then returns garbage.  We use the effective-
+// wellbore-radius transform (rwa = rw·e^−S): evaluate with S = 0 at
+// tDa = td·e^{2S}, CDa = Cd·e^{2S}; the kernel receives sc = e^{S} and scales
+// its rw-normalised distances by sc and rw²-normalised coefficients (λ) by
+// 1/sc².  Late time is exactly 0.5(ln td + 0.80907) + S.
+function _foldTransform(Cd, S) {
+  Cd = _num(Cd) && Cd > 0 ? Cd : 0;
+  S = _num(S) ? S : 0;
+  if (S < 0) {
+    var sc = Math.exp(S);
+    return { sc: sc, tf: sc * sc, Cd: Cd * sc * sc, S: 0 };
+  }
+  return { sc: 1, tf: 1, Cd: Cd, S: S };
+}
+function _foldF(lap, Cd, S) {
+  return function (s) {
+    var g = s * lap(s) + S;
+    if (!(Cd > 0)) return g / s;
+    return g / (s * (1 + Cd * s * g));
+  };
+}
+// Optional delegation to the shared export (WP4a, 03-models.js).  It is
+// called only in the unambiguous S ≥ 0 form (after our own transform) and its
+// first value is cross-checked against the local inversion.
+function _extFold(lap, tArr, Cd, S, F) {
+  var ext = _win().PRiSM_evalWbsSkin;
+  if (typeof ext !== 'function' || !tArr.length) return null;
+  try {
+    var r = ext(lap, tArr.slice(), Cd, S, {});
+    if (!r || r.length !== tArr.length) return null;
+    for (var i = 0; i < r.length; i++) if (!_num(r[i])) return null;
+    var chk = _steh(F, tArr[0]);
+    if (!(Math.abs(r[0] - chk) <= 2e-3 * Math.max(Math.abs(chk), 1e-12))) return null;
+    var out = new Array(r.length);
+    for (var j = 0; j < r.length; j++) out[j] = r[j];
+    return out;
+  } catch (e) { return null; }
+}
+// lapFn(s, sc) → p̄(s).  Returns pwd (deriv false) or td·dpwd/dtd (deriv true,
+// from the Laplace identity L[t·f'] = t·L^-1[s·F(s)] since pwd(0) = 0).
+// localOnly: never delegate (kernels that depend on the inversion context).
+function _evalWbsSkin(lapFn, td, Cd, S, deriv, localOnly) {
+  var isArr = Array.isArray(td), arr = isArr ? td : [td];
+  var T = _foldTransform(Cd, S);
+  var lap = function (s) { return lapFn(s, T.sc); };
+  var F = _foldF(lap, T.Cd, T.S);
+  var tArr = new Array(arr.length);
+  for (var i = 0; i < arr.length; i++) tArr[i] = arr[i] * T.tf;
+  var out = null;
+  if (!deriv && !localOnly) out = _extFold(lap, tArr, T.Cd, T.S, F);
+  if (!out) {
+    out = new Array(arr.length);
+    var Fd = deriv ? function (s) { return s * F(s); } : null;
+    for (var k = 0; k < arr.length; k++) {
+      out[k] = deriv ? tArr[k] * _steh(Fd, tArr[k]) : _steh(F, tArr[k]);
+    }
+  }
+  for (var m = 0; m < out.length; m++) {          // round-off below 1e-10 → 0
+    if (out[m] < 0 && out[m] > -1e-10) out[m] = 0;
+  }
+  return isArr ? out : out[0];
 }
 
 function _arrayMap(td, fn) {
@@ -694,28 +906,22 @@ function _compositeRadialSkin(rfD, M) {
  * and a very-good approximation for the transient regime.
  */
 function _waterInjectionPwd(td_inj, rfD, M, Cd, S_well, N_steh) {
-    var stehfest = _foundation('PRiSM_stehfest');
-    var K0 = _foundation('PRiSM_besselK0') || _foundation('PRiSM_K0');
-    var K1 = _foundation('PRiSM_besselK1') || _foundation('PRiSM_K1');
-    if (!stehfest || !K0 || !K1) {
-        throw new Error('PRiSM 10: foundation primitives (PRiSM_stehfest / besselK0 / besselK1) not loaded');
-    }
     var S_comp = _compositeRadialSkin(rfD, M);
     var S_eff  = S_well + S_comp;
-
-    // Bourdet-Gringarten Laplace pwd with WBS + (mech + composite) skin:
-    //   num   = K0(√s) + S_eff · √s · K1(√s)
-    //   denom = √s · K1(√s) + Cd · s · num
-    //   pwd_lap = num / (s · denom)
+    // Bourdet-Gringarten Laplace pwd with WBS + (mech + composite) skin,
+    // written with the finite-wellbore term K0/(√s·K1):
+    //   pwd_lap = (w + S) / ( s·(1 + Cd·s·(w + S)) ),  w = K0(√s)/(√s·K1(√s))
+    // For S_eff < 0 the effective-wellbore-radius transform is used
+    // (td → td·e^{2S}, Cd → Cd·e^{2S}, S → 0) so the transform has no pole.
+    var t = td_inj, C = (Cd > 0) ? Cd : 0, S = S_eff;
+    if (S < 0) { var f = Math.exp(2 * S); t *= f; C *= f; S = 0; }
     var Phat = function (s) {
-        var sqs = Math.sqrt(s);
-        var k0 = K0(sqs);
-        var k1 = K1(sqs);
-        var num = k0 + S_eff * sqs * k1;
-        var denom = sqs * k1 + Cd * s * num;
-        return num / (s * denom);
+        var g = _wellTerm(Math.sqrt(s)) + S;
+        return (C > 0) ? g / (s * (1 + C * s * g)) : g / s;
     };
-    return stehfest(Phat, td_inj, N_steh);
+    var ext = _foundation('PRiSM_stehfest');
+    if (ext && N_steh && N_steh !== 12) return ext(Phat, t, N_steh);
+    return _steh(Phat, t);
 }
 
 // =============================================================================
@@ -905,9 +1111,9 @@ var REGISTRY_ADDITIONS = {
             rateProfile: null
         },
         paramSpec: [
-            { key: 'Cd',       label: 'WBS Cd',              unit: '-',     min: 0,     max: 1e10, default: 100 },
+            { key: 'Cd',       label: 'WBS Cd',              unit: '-',     min: 0,     max: 1e10, default: 100, scale: 'log' },
             { key: 'S',        label: 'Skin',                unit: '-',     min: -7,    max: 50,   default: 0 },
-            { key: 'kh',       label: 'Permeability-thickness kh', unit: 'md·ft', min: 0.1, max: 1e7, default: 1000 },
+            { key: 'kh',       label: 'Permeability-thickness kh', unit: 'md·ft', min: 0.1, max: 1e7, default: 1000, scale: 'log' },
             { key: 'mu_o',     label: 'Oil viscosity',       unit: 'cp',    min: 0.1,   max: 1000, default: 1.0 },
             { key: 'mu_w',     label: 'Water viscosity',     unit: 'cp',    min: 0.1,   max: 10,   default: 0.5 },
             { key: 'B',        label: 'Water FVF',           unit: 'rb/stb', min: 0.5,  max: 2.0,  default: 1.0 },
@@ -923,7 +1129,9 @@ var REGISTRY_ADDITIONS = {
         ],
         reference: 'Buckley-Leverett (1942); Bratvold & Horne SPE 19819 (1990); Aanonsen SPE 17386; Hawkins composite skin (1956). Semi-analytic two-zone water-injection — see source header for full list of approximations.',
         category: 'special',
-        description: 'Water Injection (two-phase, semi-analytic). Piston-like radial displacement with mobility ratio M = (krw·μo)/(kro·μw); composite Hawkins-style skin from inner (water) and outer (oil) zones; WBS+skin folded via Stehfest. Time IS REAL TIME IN DAYS (not dimensionless); rateProfile is optional [[t,q],...] in days/bbl/d. APPROXIMATIONS: piston-like front, single-stratum, no gravity/capillary, incompressible-front volumetric balance. NOT a substitute for a commercial reservoir simulator.',
+        description: 'Water Injection (two-phase, semi-analytic). Piston-like radial displacement with mobility ratio M = (krw·μo)/(kro·μw); composite Hawkins-style skin from inner (water) and outer (oil) zones; WBS+skin folded via Stehfest. Time is REAL TIME IN DAYS (timeInput days); rateProfile is optional [[t,q],...] in days/bbl/d. APPROXIMATIONS: piston-like front, single-stratum, no gravity/capillary, incompressible-front volumetric balance. Quick-look only; not a substitute for full reservoir simulation.',
+        timeInput: 'days',
+        refLength: 'rw',
         kind: 'pressure'
     }
 };

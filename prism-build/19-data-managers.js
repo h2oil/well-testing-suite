@@ -14,7 +14,26 @@
 //   PRiSM_project          — project save / load / new / info
 //   PRiSM_renderGaugeManager(container)    — UI for gauge-data manager
 //   PRiSM_renderAnalysisManager(container) — UI for analysis-data manager
-//   PRiSM_renderProjectToolbar(container)  — UI for File menu
+//   PRiSM_renderDatasetsPanel(container)   — Tab 1 panel "Gauges & analysis
+//                                            datasets" (C7): both managers +
+//                                            .prism import/export inside
+//   PRiSM_renderProjectToolbar(container)  — compact .prism import / export +
+//                                            info (tools drawer). No New / Save:
+//                                            the header project file (29) owns
+//                                            the whole-project New / Open / Save
+//   PRiSM_gaugeData.importText(text, meta) — parse a text file into a gauge
+//   PRiSM_gaugeData.addFromDataset(ds?, m) — store the working data as a gauge
+//
+// PROJECT INTEGRATION
+//   The gauge / analysis records are registered with the header project
+//   file (window.WTS_project, module 'prism_gauges') so Save / Open / New
+//   there carry them too. With the localStorage backend the records are
+//   already wts_* keys (saved by the 'storage' module), so the module
+//   reports nothing to avoid storing them twice.
+//
+// DATASET EVENTS
+//   Activating an analysis replaces window.PRiSM_dataset, dispatches
+//   'prism:dataset-loaded' and redraws via window.PRiSM_drawActivePlot.
 //
 // CONVENTIONS
 //   • Single outer IIFE, 'use strict'.
@@ -82,6 +101,47 @@ function _hasLS() {
         localStorage.removeItem(k);
         return true;
     } catch (e) { return false; }
+}
+
+// ── Shared-contract adapters (C7 panels + events). Guarded. ──
+function _dispatch(name, detail) {
+    try {
+        if (_hasWin && typeof G.dispatchEvent === 'function' && typeof CustomEvent === 'function') {
+            G.dispatchEvent(new CustomEvent(name, { detail: detail || {} }));
+        }
+    } catch (e) { /* ignore */ }
+}
+
+// Every dataset mutation: publish, announce, redraw — through the single
+// commit path (PRiSM_commitDataset) when it is loaded, so the demo-input
+// release and the event contract (C7) apply to this module too.
+function _commitDataset(ds, source) {
+    if (ds && ds.t && ds.t.length && typeof G.PRiSM_commitDataset === 'function') {
+        G.PRiSM_commitDataset(ds, { source: source });
+    } else {
+        G.PRiSM_dataset = ds;
+        _dispatch('prism:dataset-loaded', { source: source, n: (ds && ds.t) ? ds.t.length : 0 });
+    }
+    if (typeof G.PRiSM_drawActivePlot === 'function') {
+        try { G.PRiSM_drawActivePlot(); } catch (e) { /* ignore */ }
+    }
+}
+
+function _registerPanel(n, spec) {
+    if (typeof G.PRiSM_registerTabPanel === 'function') {
+        try { G.PRiSM_registerTabPanel(n, spec); return; } catch (e) { /* fall through */ }
+    }
+    G.PRiSM_tabPanels = G.PRiSM_tabPanels || {};
+    var list = G.PRiSM_tabPanels[n] = G.PRiSM_tabPanels[n] || [];
+    for (var i = 0; i < list.length; i++) {
+        if (list[i] && list[i].id === spec.id) { list[i] = spec; return; }
+    }
+    list.push(spec);
+}
+
+function _clone(v) {
+    if (v == null) return v;
+    try { return JSON.parse(JSON.stringify(v)); } catch (e) { return null; }
 }
 
 // Promise polyfill check — just bail if Promise isn't available.
@@ -434,6 +494,47 @@ G.PRiSM_storage = {
     estimatedQuotaBytes: function () { return _quotaEstimate(); }
 };
 
+// ── In-memory mirror of every record (raw buffers), kept in step with
+// each put / delete, so the header project file (29, synchronous read())
+// can include the gauge + analysis sets without an async round-trip.
+// Base64 encoding happens only when a project file is actually written. ──
+var _mirror = { gauge: {}, analysis: {} };
+var MIRROR_MAX_BYTES = 18 * 1024 * 1024;   // beyond this: metadata only
+
+function _recToFile(rec) {
+    return {
+        id: rec.id, metadata: rec.metadata, provenance: rec.provenance || null,
+        createdAt: rec.createdAt || null,
+        dataB64: rec.data ? {
+            t: _bufToB64(rec.data.t),
+            p: _bufToB64(rec.data.p),
+            q: rec.data.q ? _bufToB64(rec.data.q) : null
+        } : null
+    };
+}
+function _mirrorPut(rec) {
+    if (!rec || !_mirror[rec.kind] || _backend === 'localStorage') return;
+    _mirror[rec.kind][rec.id] = {
+        id: rec.id, kind: rec.kind, metadata: rec.metadata, provenance: rec.provenance || null,
+        createdAt: rec.createdAt || null, data: rec.data || null
+    };
+}
+function _mirrorDel(id) { delete _mirror.gauge[id]; delete _mirror.analysis[id]; }
+function _mirrorList(kind) {
+    var out = [], m = _mirror[kind] || {};
+    for (var k in m) if (Object.prototype.hasOwnProperty.call(m, k)) out.push(m[k]);
+    return out;
+}
+function _mirrorFill() {
+    if (_backend === 'localStorage' || !_Promise) return _resolved();
+    return _Promise.all([_list('gauge'), _list('analysis')]).then(function (pair) {
+        var ids = pair[0].concat(pair[1]).map(function (e) { return e.id; });
+        return _Promise.all(ids.map(function (id) { return _get(id); }));
+    }).then(function (recs) {
+        recs.forEach(function (r) { if (r) _mirrorPut(r); });
+    }).catch(function () { /* ignore */ });
+}
+
 function _put(id, kind, blob) {
     var rec = {
         id: id,
@@ -443,10 +544,11 @@ function _put(id, kind, blob) {
         provenance: blob.provenance || null,
         data: blob.data || null
     };
-    if (_backend === 'indexedDB')   return _idbPut(rec);
-    if (_backend === 'localStorage') return _lsPut(rec);
-    if (!_memStore) _memStore = new Map();
-    return _memPut(rec);
+    var p;
+    if (_backend === 'indexedDB')        p = _idbPut(rec);
+    else if (_backend === 'localStorage') p = _lsPut(rec);
+    else { if (!_memStore) _memStore = new Map(); p = _memPut(rec); }
+    return p.then(function (r) { _mirrorPut(rec); return r; });
 }
 function _get(id) {
     if (_backend === 'indexedDB')   return _idbGet(id);
@@ -455,10 +557,11 @@ function _get(id) {
     return _memGet(id);
 }
 function _del(id) {
-    if (_backend === 'indexedDB')   return _idbDelete(id);
-    if (_backend === 'localStorage') return _lsDelete(id);
-    if (!_memStore) _memStore = new Map();
-    return _memDel(id);
+    var p;
+    if (_backend === 'indexedDB')        p = _idbDelete(id);
+    else if (_backend === 'localStorage') p = _lsDelete(id);
+    else { if (!_memStore) _memStore = new Map(); p = _memDel(id); }
+    return p.then(function (r) { _mirrorDel(id); return r; });
 }
 function _list(kind) {
     if (_backend === 'indexedDB')   return _idbListByKind(kind);
@@ -468,7 +571,8 @@ function _list(kind) {
 }
 
 // Kick off init at load — caller can await PRiSM_storage.init() too.
-try { G.PRiSM_storage.init(); } catch (e) { /* ignore */ }
+// Then build the project-file mirror (IndexedDB / memory backends).
+try { G.PRiSM_storage.init().then(function () { return _mirrorFill(); }); } catch (e) { /* ignore */ }
 
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -618,8 +722,69 @@ G.PRiSM_gaugeData = {
                 if (!a || !b) throw new Error('PRiSM_gaugeData.diff: gauge missing');
                 return _diffPair(a, b);
             });
+    },
+
+    // Parse a delimited text file (time in hours, pressure, optional rate)
+    // into a new gauge. The working dataset is not touched.
+    importText: function (text, metadata) {
+        var data = _parseGaugeText(text);
+        if (!data.t.length) return _rejected(new Error('No numeric (time, pressure) rows found'));
+        var meta = {};
+        for (var k in (metadata || {})) meta[k] = metadata[k];
+        if (data.note) meta.notes = meta.notes ? meta.notes + ' ' + data.note : data.note;
+        return G.PRiSM_gaugeData.add(meta, data.t, data.p, data.q);
+    },
+
+    // Store the working dataset (or `ds`) as a gauge.
+    addFromDataset: function (ds, metadata) {
+        ds = ds || G.PRiSM_dataset;
+        if (!ds || !Array.isArray(ds.t) || !ds.t.length || !Array.isArray(ds.p) || ds.p.length !== ds.t.length) {
+            return _rejected(new Error('No working data with time and pressure to store'));
+        }
+        var meta = {};
+        for (var k in (metadata || {})) meta[k] = metadata[k];
+        if (!meta.name) meta.name = 'Working data ' + _now().slice(0, 16).replace('T', ' ');
+        if (!meta.source) meta.source = ds.source || 'working data';
+        var q = (Array.isArray(ds.q) && ds.q.length === ds.t.length) ? ds.q : null;
+        return G.PRiSM_gaugeData.add(meta, ds.t, ds.p, q);
     }
 };
+
+// Text → { t, p, q|null } using the Data-step parser + column mapper when
+// present (07), else a permissive numeric reader. Time is taken as hours.
+function _parseGaugeText(text) {
+    if (typeof G.PRiSM_parseTextEnhanced === 'function') {
+        try {
+            var res = G.PRiSM_parseTextEnhanced(String(text || ''));
+            var rows = (res && Array.isArray(res.rows)) ? res.rows : [];
+            if (rows.length) {
+                var map = (typeof G.PRiSM_autoMapColumns === 'function')
+                    ? G.PRiSM_autoMapColumns(res.headers, rows) : [];
+                var it = -1, ip = -1, iq = -1;
+                for (var c = 0; c < (map || []).length; c++) {
+                    if (map[c] === 'time' && it < 0) it = c;
+                    else if (map[c] === 'pressure' && ip < 0) ip = c;
+                    else if (/^rate/.test(map[c] || '') && iq < 0) iq = c;
+                }
+                if (it < 0) it = 0;
+                if (ip < 0) ip = (it === 0) ? 1 : 0;
+                var t = [], p = [], q = (iq >= 0) ? [] : null;
+                for (var r = 0; r < rows.length; r++) {
+                    var tv = +rows[r][it], pv = +rows[r][ip];
+                    if (!isFinite(tv) || !isFinite(pv)) continue;
+                    t.push(tv); p.push(pv);
+                    if (q) q.push(isFinite(+rows[r][iq]) ? +rows[r][iq] : 0);
+                }
+                if (t.length) {
+                    var note = (res.headers && res.headers[it]) ? 'Columns: ' + [res.headers[it], res.headers[ip]]
+                        .concat(iq >= 0 ? [res.headers[iq]] : []).join(', ') + ' (time read as hours).' : '';
+                    return { t: t, p: p, q: q, note: note };
+                }
+            }
+        } catch (e) { /* fall back */ }
+    }
+    return _quickCSV(text);
+}
 
 // Compute pA - pB at common times via linear interpolation onto the union
 // of the two time sets restricted to overlap. Returns the diff arrays plus
@@ -761,10 +926,9 @@ G.PRiSM_analysisData = {
     delete: function (analysisId) {
         return _ensureInit().then(function () {
             return G.PRiSM_storage.deleteAnalysis(analysisId).then(function () {
-                if (_activeAnalysisId === analysisId) {
-                    _activeAnalysisId = null;
-                    G.PRiSM_dataset = null;
-                }
+                // Deleting the stored copy leaves the working data alone;
+                // it simply is no longer linked to a stored analysis.
+                if (_activeAnalysisId === analysisId) _activeAnalysisId = null;
                 _ga4('prism_analysis_deleted', {});
             });
         });
@@ -802,12 +966,13 @@ G.PRiSM_analysisData = {
     activate: function (analysisId) {
         return G.PRiSM_analysisData.get(analysisId).then(function (a) {
             if (!a) throw new Error('Analysis ' + analysisId + ' not found');
-            G.PRiSM_dataset = { t: a.t, p: a.p, q: a.q };
             _activeAnalysisId = analysisId;
-            // Reflect activation in the host UI if a re-render hook is wired.
-            if (typeof G.PRiSM_drawActivePlot === 'function') {
-                try { G.PRiSM_drawActivePlot(); } catch (e) { /* swallow */ }
-            }
+            // Working dataset (hours), then prism:dataset-loaded + redraw.
+            _commitDataset({
+                t: a.t, p: a.p, q: a.q, timeUnit: 'h',
+                source: 'analysis-data', analysisId: analysisId,
+                name: (a.metadata && a.metadata.name) || ''
+            }, 'analysis-data');
             _ga4('prism_analysis_activated', { sample_count: a.t.length });
         });
     },
@@ -1026,19 +1191,9 @@ G.PRiSM_project = {
                     } : null
                 };
             });
-            // 2) Snapshot host state.
+            // 2) Snapshot host state (the C8 key set + well inputs + data).
             _projectMeta.modifiedAt = _now();
-            var st = G.PRiSM_state || {};
-            var stateSnap = {
-                activeAnalysisId: _activeAnalysisId,
-                model: st.model || null,
-                params: st.params || {},
-                paramFreeze: st.paramFreeze || {},
-                lastFit: st.lastFit || null,
-                presets: st.presets || [],
-                pvt: G.PRiSM_pvt || st.pvt || null,
-                activePlot: st.activePlot || null
-            };
+            var stateSnap = _stateSnapshot();
             var project = {
                 version: '1.0',
                 meta: _projectMeta,
@@ -1083,53 +1238,24 @@ G.PRiSM_project = {
 
     // Programmatic load — used by self-test and round-trip.
     loadFromObject: function (proj) {
-        return _ensureInit().then(function () {
-            // Wipe existing data then reinsert.
-            return _wipeAll();
-        }).then(function () {
-            var gaugePuts = (proj.gaugeData || []).map(function (g) {
-                return G.PRiSM_storage.putGauge(g.id, {
-                    metadata: g.metadata,
-                    createdAt: (g.metadata && g.metadata.createdAt) || _now(),
-                    data: g.dataB64 ? {
-                        t: _b64ToBuf(g.dataB64.t),
-                        p: _b64ToBuf(g.dataB64.p),
-                        q: g.dataB64.q ? _b64ToBuf(g.dataB64.q) : null
-                    } : null
-                });
-            });
-            var analysisPuts = (proj.analysisData || []).map(function (a) {
-                return G.PRiSM_storage.putAnalysis(a.id, {
-                    metadata: a.metadata,
-                    provenance: a.provenance,
-                    createdAt: (a.provenance && a.provenance.createdAt) || _now(),
-                    data: a.dataB64 ? {
-                        t: _b64ToBuf(a.dataB64.t),
-                        p: _b64ToBuf(a.dataB64.p),
-                        q: a.dataB64.q ? _b64ToBuf(a.dataB64.q) : null
-                    } : null
-                });
-            });
-            return _Promise.all(gaugePuts.concat(analysisPuts));
-        }).then(function () {
+        return _restoreRecords(proj).then(function () {
             // Restore state.
             _projectMeta = proj.meta || _projectMeta;
             _projectMeta.modifiedAt = _now();
             var st = proj.state || {};
-            G.PRiSM_state = G.PRiSM_state || {};
-            if (st.model)        G.PRiSM_state.model = st.model;
-            if (st.params)       G.PRiSM_state.params = st.params;
-            if (st.paramFreeze)  G.PRiSM_state.paramFreeze = st.paramFreeze;
-            if (st.lastFit)      G.PRiSM_state.lastFit = st.lastFit;
-            if (st.presets)      G.PRiSM_state.presets = st.presets;
-            if (st.pvt)          { G.PRiSM_pvt = st.pvt; G.PRiSM_state.pvt = st.pvt; }
-            if (st.activePlot)   G.PRiSM_state.activePlot = st.activePlot;
-            // Re-activate analysis if specified.
+            _applyState(st);
+            // Re-activate analysis if specified (commits the dataset);
+            // else bring back the saved working data.
             if (st.activeAnalysisId) {
-                return G.PRiSM_analysisData.activate(st.activeAnalysisId).catch(function () { /* silent */ });
+                return G.PRiSM_analysisData.activate(st.activeAnalysisId).catch(function () {
+                    if (st.dataset && Array.isArray(st.dataset.t)) _commitDataset(st.dataset, 'project');
+                });
             }
+            _activeAnalysisId = null;
+            if (st.dataset && Array.isArray(st.dataset.t)) _commitDataset(st.dataset, 'project');
             return null;
         }).then(function () {
+            _refreshMounted();
             _ga4('prism_project_loaded', {
                 gauge_count: (proj.gaugeData || []).length,
                 analysis_count: (proj.analysisData || []).length
@@ -1140,12 +1266,13 @@ G.PRiSM_project = {
     new: function () {
         return _ensureInit().then(function () { return _wipeAll(); }).then(function () {
             _activeAnalysisId = null;
-            G.PRiSM_dataset = null;
+            _commitDataset(null, 'project-new');
             _projectMeta = {
                 name: 'Untitled project',
                 createdAt: _now(),
                 modifiedAt: _now()
             };
+            _refreshMounted();
             _ga4('prism_project_new', {});
         });
     },
@@ -1196,6 +1323,172 @@ function _wipeAll() {
         });
 }
 
+// Replace every stored gauge / analysis record with those of a project
+// object ({ gaugeData, analysisData } with dataB64 buffers).
+function _restoreRecords(proj) {
+    return _ensureInit().then(function () {
+        return _wipeAll();
+    }).then(function () {
+        var gaugePuts = (proj.gaugeData || []).filter(function (g) { return g && g.id; }).map(function (g) {
+            return G.PRiSM_storage.putGauge(g.id, {
+                metadata: g.metadata,
+                createdAt: g.createdAt || (g.metadata && g.metadata.createdAt) || _now(),
+                data: g.dataB64 ? {
+                    t: _b64ToBuf(g.dataB64.t),
+                    p: _b64ToBuf(g.dataB64.p),
+                    q: g.dataB64.q ? _b64ToBuf(g.dataB64.q) : null
+                } : null
+            });
+        });
+        var analysisPuts = (proj.analysisData || []).filter(function (a) { return a && a.id; }).map(function (a) {
+            return G.PRiSM_storage.putAnalysis(a.id, {
+                metadata: a.metadata,
+                provenance: a.provenance,
+                createdAt: a.createdAt || (a.provenance && a.provenance.createdAt) || _now(),
+                data: a.dataB64 ? {
+                    t: _b64ToBuf(a.dataB64.t),
+                    p: _b64ToBuf(a.dataB64.p),
+                    q: a.dataB64.q ? _b64ToBuf(a.dataB64.q) : null
+                } : null
+            });
+        });
+        return _Promise.all(gaugePuts.concat(analysisPuts));
+    });
+}
+
+// PRiSM state carried by a .prism file: the C8 persistence key set, the
+// fit (C4), the well inputs (C1, without the computed block) and the
+// working dataset (when it is not huge).
+var STATE_KEYS = ['model', 'params', 'paramFreeze', 'phys', 'tcMatch', 'activePlot', 'activePeriod',
+                  'bourdetL', 'timeFn', 'semilog', 'analysisKeyResults', 'mode', 'tab', 'presets'];
+
+function _stateSnapshot() {
+    var st = G.PRiSM_state || {};
+    var out = { activeAnalysisId: _activeAnalysisId };
+    for (var i = 0; i < STATE_KEYS.length; i++) {
+        var k = STATE_KEYS[i];
+        if (st[k] !== undefined) out[k] = _clone(st[k]);
+    }
+    var lf = null;
+    if (typeof G.PRiSM_getLastFit === 'function') {
+        try { lf = G.PRiSM_getLastFit(); } catch (e) { lf = null; }
+    }
+    if (!lf) lf = st.lastFit || null;
+    out.lastFit = _clone(lf);
+    if (out.lastFit && typeof out.lastFit === 'object') delete out.lastFit.stale;
+    if (G.PRiSM_pvt) {
+        var pv = _clone(G.PRiSM_pvt);
+        if (pv) delete pv._computed;
+        out.pvt = pv;
+    }
+    var ds = G.PRiSM_dataset;
+    if (ds && Array.isArray(ds.t) && ds.t.length && ds.t.length <= 200000) out.dataset = _clone(ds);
+    return out;
+}
+
+// Restore through the shared setters when present: model first (it resets
+// defaults), then params / state keys, then the fit, then the well inputs.
+function _applyState(st) {
+    if (!st || typeof st !== 'object') return;
+    var S = G.PRiSM_state = G.PRiSM_state || {};
+    var model = st.model || st.activeModel;              // legacy key accepted
+    if (model) {
+        if (typeof G.PRiSM_setModel === 'function') {
+            try { G.PRiSM_setModel(model); } catch (e) { S.model = model; }
+        } else {
+            S.model = model;
+        }
+    }
+    for (var i = 0; i < STATE_KEYS.length; i++) {
+        var k = STATE_KEYS[i];
+        if (k === 'model') continue;
+        if (st[k] !== undefined && st[k] !== null) S[k] = _clone(st[k]);
+    }
+    if (st.lastFit) {
+        if (typeof G.PRiSM_setLastFit === 'function') {
+            try { G.PRiSM_setLastFit(_clone(st.lastFit)); } catch (e) { S.lastFit = _clone(st.lastFit); }
+        } else {
+            S.lastFit = _clone(st.lastFit);
+        }
+    }
+    if (st.pvt && typeof st.pvt === 'object') {
+        var pvt = G.PRiSM_pvt = G.PRiSM_pvt || {};           // extend, never replace
+        for (var pk in st.pvt) {
+            if (Object.prototype.hasOwnProperty.call(st.pvt, pk) && pk !== '_computed') pvt[pk] = _clone(st.pvt[pk]);
+        }
+        if (typeof G.PRiSM_pvt_compute === 'function') {
+            try { G.PRiSM_pvt_compute(); } catch (e) { /* ignore */ }
+        }
+        var announced = false;
+        if (typeof G.PRiSM_setWell === 'function') {
+            try { G.PRiSM_setWell({}, { source: 'user' }); announced = true; } catch (e) { /* fall back */ }
+        }
+        if (!announced) _dispatch('prism:well-changed', { source: 'project' });
+    }
+    if (typeof G.PRiSM_saveState === 'function') {
+        try { G.PRiSM_saveState(); } catch (e) { /* ignore */ }
+    }
+}
+
+// ── Header project file (29) integration ────────────────────────────
+// Module 'prism_gauges': read() is synchronous, served from the mirror.
+// Registered once 29 has loaded (it loads after this file).
+var _projModDone = false;
+function _registerProjectModule() {
+    if (_projModDone) return true;
+    var P = G.WTS_project;
+    if (!P || typeof P.registerModule !== 'function') return false;
+    _projModDone = !!P.registerModule('prism_gauges', {
+        read: function () {
+            if (!_backend || _backend === 'localStorage') return null;   // covered by the 'storage' module
+            var g = _mirrorList('gauge'), a = _mirrorList('analysis');
+            if (!g.length && !a.length) return null;
+            var size = 0;
+            g.concat(a).forEach(function (r) { if (r.data) size += _byteLen(r.data); });
+            if (size > MIRROR_MAX_BYTES) {
+                var metaOnly = function (r) { return { id: r.id, metadata: r.metadata, provenance: r.provenance }; };
+                return { truncated: true, activeAnalysisId: _activeAnalysisId,
+                         gaugeData: g.map(metaOnly), analysisData: a.map(metaOnly) };
+            }
+            return { activeAnalysisId: _activeAnalysisId, gaugeData: g.map(_recToFile), analysisData: a.map(_recToFile) };
+        },
+        write: function (state) {
+            if (!_Promise) return;
+            if (state === null) {                                     // New
+                _ensureInit().then(function () { return _wipeAll(); }).then(function () {
+                    _activeAnalysisId = null;
+                    _refreshMounted();
+                }).catch(function () { /* ignore */ });
+                return;
+            }
+            if (!state || typeof state !== 'object' || state.truncated) return;
+            _restoreRecords(state).then(function () {
+                _activeAnalysisId = state.activeAnalysisId || null;
+                _refreshMounted();
+            }).catch(function () { /* ignore */ });
+        }
+    });
+    return _projModDone;
+}
+if (!_registerProjectModule() && _hasDoc && typeof document.addEventListener === 'function') {
+    // One-shot: 29 is defined by the time the document has loaded.
+    var _onDocReady = function () { _registerProjectModule(); };
+    document.addEventListener('DOMContentLoaded', _onDocReady);
+    if (_hasWin && typeof G.addEventListener === 'function') G.addEventListener('load', _onDocReady);
+}
+
+// Re-render every mounted datasets panel that is still in the document.
+var _mountedHosts = [];
+function _refreshMounted() {
+    var hosts = _mountedHosts.slice();
+    _mountedHosts = [];
+    for (var i = 0; i < hosts.length; i++) {
+        var h = hosts[i];
+        if (!h || h.isConnected === false) continue;
+        try { G.PRiSM_renderDatasetsPanel(h, h.__prismPanelOpts || {}); } catch (e) { /* ignore */ }
+    }
+}
+
 function _readFileAsText(file) {
     return new _Promise(function (resolve, reject) {
         try {
@@ -1243,8 +1536,15 @@ function _mkRow(label, value) {
     if (!_hasDoc) return null;
     var d = document.createElement('div');
     d.style.display = 'flex'; d.style.gap = '8px'; d.style.fontSize = '12px';
-    d.innerHTML = '<span style="color:' + _theme().text3 + ';min-width:90px;">' + label + ':</span>' +
-                  '<span style="color:' + _theme().text + ';">' + value + '</span>';
+    // Built with textContent: label / value carry file names and .prism
+    // metadata (user- or file-controlled strings), never markup.
+    var a = document.createElement('span');
+    a.style.color = _theme().text3; a.style.minWidth = '90px';
+    a.textContent = String(label == null ? '' : label) + ':';
+    var b = document.createElement('span');
+    b.style.color = _theme().text;
+    b.textContent = String(value == null ? '' : value);
+    d.appendChild(a); d.appendChild(b);
     return d;
 }
 
@@ -1263,6 +1563,7 @@ G.PRiSM_renderGaugeManager = function (container) {
     var head = document.createElement('div');
     head.style.display = 'flex'; head.style.justifyContent = 'space-between';
     head.style.alignItems = 'center'; head.style.marginBottom = '12px';
+    head.style.flexWrap = 'wrap'; head.style.gap = '8px';
     var title = document.createElement('div');
     title.innerHTML = '<span style="font-size:16px;font-weight:600;color:' + T.text + ';">Gauge Data</span>' +
                       '<span style="font-size:12px;color:' + T.text3 + ';margin-left:10px;">' +
@@ -1278,7 +1579,7 @@ G.PRiSM_renderGaugeManager = function (container) {
 
     var listHost = document.createElement('div');
     listHost.style.display = 'grid';
-    listHost.style.gridTemplateColumns = 'repeat(auto-fill, minmax(280px, 1fr))';
+    listHost.style.gridTemplateColumns = 'repeat(auto-fill, minmax(min(100%, 240px), 1fr))';
     listHost.style.gap = '10px';
     container.appendChild(listHost);
 
@@ -1357,46 +1658,25 @@ function _openImportPicker(rootContainer) {
     if (!_hasDoc) return;
     var inp = document.createElement('input');
     inp.type = 'file';
-    inp.accept = '.csv,.tsv,.txt,.dat,.asc,.xlsx,.xls';
+    inp.accept = '.csv,.tsv,.txt,.dat,.asc';
     inp.style.display = 'none';
     inp.addEventListener('change', function () {
         var f = inp.files && inp.files[0];
         if (!f) return;
-        // Use PRiSM_loadFile if available; otherwise read as text and use a
-        // very permissive CSV parser.
+        // Parse the file on its own (Data-step parser + column mapper when
+        // present) — importing a gauge never replaces the working data.
         var name = f.name;
-        if (typeof G.PRiSM_loadFile === 'function') {
-            G.PRiSM_loadFile(f).then(function () {
-                // After PRiSM_loadFile parses, the dataset is on PRiSM_dataset.
-                var ds = G.PRiSM_dataset;
-                if (ds && ds.t && ds.t.length) {
-                    G.PRiSM_gaugeData.add({
-                        name: name.replace(/\.[^.]+$/, ''),
-                        source: name,
-                        well: ''
-                    }, ds.t, ds.p, ds.q).then(function () {
-                        G.PRiSM_renderGaugeManager(rootContainer);
-                    });
-                }
-            }).catch(function (e) {
-                alert('Import failed: ' + (e && e.message || e));
-            });
-        } else {
-            // Inline minimal CSV reader
-            var r = new FileReader();
-            r.onload = function (ev) {
-                var data = _quickCSV(ev.target.result);
-                if (data.t.length) {
-                    G.PRiSM_gaugeData.add({ name: name.replace(/\.[^.]+$/, ''), source: name },
-                                          data.t, data.p, data.q).then(function () {
-                        G.PRiSM_renderGaugeManager(rootContainer);
-                    });
-                } else {
-                    alert('No data rows found in ' + name);
-                }
-            };
-            r.readAsText(f);
+        if (/\.(xlsx|xls|xlsm|xlsb|ods)$/i.test(name)) {
+            alert('Spreadsheet gauges: load the file on the Data step, then use "Save working data as gauge".');
+            return;
         }
+        _readFileAsText(f).then(function (text) {
+            return G.PRiSM_gaugeData.importText(text, { name: name.replace(/\.[^.]+$/, ''), source: name });
+        }).then(function () {
+            G.PRiSM_renderGaugeManager(rootContainer);
+        }).catch(function (e) {
+            alert('Import failed: ' + (e && e.message || e));
+        });
     });
     document.body.appendChild(inp);
     inp.click();
@@ -1478,6 +1758,7 @@ G.PRiSM_renderAnalysisManager = function (container) {
     var head = document.createElement('div');
     head.style.display = 'flex'; head.style.justifyContent = 'space-between';
     head.style.alignItems = 'center'; head.style.marginBottom = '12px';
+    head.style.flexWrap = 'wrap'; head.style.gap = '8px';
     var title = document.createElement('div');
     title.innerHTML = '<span style="font-size:16px;font-weight:600;color:' + T.text + ';">Analysis Data</span>' +
                       '<span style="font-size:12px;color:' + T.text3 + ';margin-left:10px;">' +
@@ -1492,7 +1773,7 @@ G.PRiSM_renderAnalysisManager = function (container) {
 
     var listHost = document.createElement('div');
     listHost.style.display = 'grid';
-    listHost.style.gridTemplateColumns = 'repeat(auto-fill, minmax(300px, 1fr))';
+    listHost.style.gridTemplateColumns = 'repeat(auto-fill, minmax(min(100%, 240px), 1fr))';
     listHost.style.gap = '10px';
     container.appendChild(listHost);
 
@@ -1688,7 +1969,126 @@ function _openSamplerModal(rootContainer) {
 
 
 // ═══════════════════════════════════════════════════════════════════════
-// SECTION 7 — UI: PROJECT TOOLBAR
+// SECTION 6B — UI: "Gauges & analysis datasets" panel (Tab 1, C7)
+// ═══════════════════════════════════════════════════════════════════════
+// Both managers plus the .prism import / export. There is deliberately no
+// New / Save / Open project toolbar here: the header project file (29)
+// owns those, and carries these records through the 'prism_gauges' module.
+
+function _workingLine() {
+    var ds = G.PRiSM_dataset;
+    if (!ds || !Array.isArray(ds.t) || !ds.t.length) return 'Working data: none loaded.';
+    var t0 = ds.t[0], t1 = ds.t[ds.t.length - 1];
+    var fmt = function (v) { return (isFinite(v) ? (Math.abs(v) >= 100 ? v.toFixed(0) : +v.toPrecision(3)) : '?'); };
+    var s = 'Working data: ' + ds.t.length + ' points · ' + fmt(t0) + '–' + fmt(t1) + ' h'
+          + (Array.isArray(ds.q) ? ' · with rates' : '');
+    if (ds.analysisId && ds.analysisId === _activeAnalysisId) s += ' · from analysis set "' + (ds.name || ds.analysisId) + '"';
+    else if (ds.source && ds.source !== 'analysis-data') s += ' · ' + ds.source;
+    return s;
+}
+
+function _updateWorkingLines() {
+    for (var i = 0; i < _mountedHosts.length; i++) {
+        var h = _mountedHosts[i];
+        var el = (h && h.querySelector) ? h.querySelector('.prism-dsets-working') : null;
+        if (el) el.textContent = _workingLine();
+    }
+}
+if (_hasWin && typeof G.addEventListener === 'function') {
+    G.addEventListener('prism:dataset-loaded', _updateWorkingLines);
+}
+
+G.PRiSM_renderDatasetsPanel = function (container, opts) {
+    if (!_hasDoc || !container) return;
+    opts = opts || {};
+    container.__prismPanelOpts = opts;
+    if (_mountedHosts.indexOf(container) === -1) _mountedHosts.push(container);
+    _registerProjectModule();
+
+    container.innerHTML = '';
+    var wrap = document.createElement('div');
+    wrap.className = 'prism-datasets';
+    wrap.style.cssText = 'color:var(--text,#e6edf3); font-size:12px; line-height:1.5; max-width:100%; box-sizing:border-box;'
+        + (opts.embedded ? '' : ' border:1px solid var(--border,#30363d); border-radius:6px; padding:12px; background:var(--bg2,#161b22);');
+    if (!opts.embedded) {
+        var ttl = document.createElement('div');
+        ttl.style.cssText = 'font-weight:700; font-size:14px; margin-bottom:6px;';
+        ttl.textContent = 'Gauges & analysis datasets';
+        wrap.appendChild(ttl);
+    }
+    var intro = document.createElement('div');
+    intro.style.cssText = 'color:var(--text2,#8b949e); margin-bottom:8px;';
+    intro.textContent = 'Keep several gauge records and prepared analysis sets in one project. '
+        + 'Activating an analysis set makes it the working data.';
+    wrap.appendChild(intro);
+
+    var working = document.createElement('div');
+    working.className = 'prism-dsets-working';
+    working.style.cssText = 'padding:6px 10px; background:var(--bg1,#0d1117); border-left:3px solid var(--blue,#58a6ff); border-radius:4px; margin-bottom:8px;';
+    working.textContent = _workingLine();
+    wrap.appendChild(working);
+
+    var actions = document.createElement('div');
+    actions.style.cssText = 'display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-bottom:6px;';
+    var msg = document.createElement('div');
+    msg.className = 'prism-dsets-msg';
+    msg.style.cssText = 'min-height:14px; font-size:11.5px; color:var(--text2,#8b949e); margin-bottom:8px;';
+    var say = function (text, kind) {
+        msg.style.color = kind === 'err' ? 'var(--red,#f85149)' : kind === 'ok' ? 'var(--green,#3fb950)' : 'var(--text2,#8b949e)';
+        msg.textContent = text;
+    };
+
+    var gHost = document.createElement('div');
+    gHost.id = 'prism_gauge_manager';
+    gHost.style.marginTop = '6px';
+    var aHost = document.createElement('div');
+    aHost.id = 'prism_analysis_manager';
+    aHost.style.marginTop = '14px';
+
+    var bAdd = _mkBtn('Save working data as gauge', 'primary', function () {
+        G.PRiSM_gaugeData.addFromDataset(null).then(function () {
+            say('Working data stored as a gauge.', 'ok');
+            G.PRiSM_renderGaugeManager(gHost);
+        }).catch(function (e) { say(String(e && e.message || e), 'err'); });
+    });
+    bAdd.id = 'prism_dsets_add_working';
+    var bImp = _mkBtn('Import .prism', null, function () {
+        var inp = document.createElement('input');
+        inp.type = 'file'; inp.accept = '.prism,.json';
+        inp.style.display = 'none';
+        inp.addEventListener('change', function () {
+            var f = inp.files && inp.files[0];
+            if (!f) return;
+            say('Loading ' + f.name + '…');
+            G.PRiSM_project.load(f).then(function () {
+                say('Loaded ' + f.name + '.', 'ok');
+            }).catch(function (err) { say('Load failed: ' + (err && err.message || err), 'err'); });
+        });
+        document.body.appendChild(inp); inp.click();
+        setTimeout(function () { try { document.body.removeChild(inp); } catch (e) { /* ignore */ } }, 1000);
+    });
+    bImp.id = 'prism_dsets_import';
+    var bExp = _mkBtn('Export .prism', null, function () {
+        G.PRiSM_project.save().then(function (out) {
+            say('Saved ' + out.filename + ' (' + Math.max(1, Math.round(out.sizeBytes / 1024)) + ' KB).', 'ok');
+        }).catch(function (err) { say('Save failed: ' + (err && err.message || err), 'err'); });
+    });
+    bExp.id = 'prism_dsets_export';
+    [bAdd, bImp, bExp].forEach(function (b) { b.style.marginRight = '0'; b.style.minHeight = '32px'; actions.appendChild(b); });
+    wrap.appendChild(actions);
+    wrap.appendChild(msg);
+    wrap.appendChild(gHost);
+    wrap.appendChild(aHost);
+    container.appendChild(wrap);
+
+    G.PRiSM_renderGaugeManager(gHost);
+    G.PRiSM_renderAnalysisManager(aHost);
+};
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// SECTION 7 — UI: .prism FILE TOOLBAR (import / export / info only — the
+// header project file of 29 owns New / Open / Save of the whole project)
 // ═══════════════════════════════════════════════════════════════════════
 
 G.PRiSM_renderProjectToolbar = function (container) {
@@ -1696,10 +2096,10 @@ G.PRiSM_renderProjectToolbar = function (container) {
     container.innerHTML = '';
     var T = _theme();
     var bar = document.createElement('div');
-    bar.style.display = 'flex'; bar.style.alignItems = 'center';
+    bar.style.display = 'flex'; bar.style.alignItems = 'center'; bar.style.flexWrap = 'wrap';
     bar.style.gap = '6px'; bar.style.padding = '8px';
     bar.style.background = T.panel; bar.style.border = '1px solid ' + T.border;
-    bar.style.borderRadius = '6px';
+    bar.style.borderRadius = '6px'; bar.style.maxWidth = '100%'; bar.style.boxSizing = 'border-box';
 
     var pName = document.createElement('span');
     pName.style.color = T.accent; pName.style.fontWeight = '600';
@@ -1707,22 +2107,12 @@ G.PRiSM_renderProjectToolbar = function (container) {
     pName.textContent = _projectMeta.name;
     bar.appendChild(pName);
 
-    bar.appendChild(_mkBtn('New', null, function () {
-        if (confirm('Discard current project? All unsaved data will be lost.')) {
-            G.PRiSM_project.new().then(function () {
-                pName.textContent = _projectMeta.name;
-                if (typeof G.PRiSM_renderGaugeManager === 'function') {
-                    var gh = document.getElementById('prism_gauge_manager');
-                    if (gh) G.PRiSM_renderGaugeManager(gh);
-                }
-                if (typeof G.PRiSM_renderAnalysisManager === 'function') {
-                    var ah = document.getElementById('prism_analysis_manager');
-                    if (ah) G.PRiSM_renderAnalysisManager(ah);
-                }
-            });
-        }
-    }));
-    bar.appendChild(_mkBtn('Open…', null, function () {
+    var note = document.createElement('div');
+    note.style.cssText = 'flex-basis:100%; font-size:11px; color:' + T.text2 + ';';
+    note.textContent = '.prism files carry the gauge / analysis sets and the PRiSM state. '
+        + 'New / Save / Open of the whole project are in the page header.';
+
+    var bImp = _mkBtn('Import .prism', null, function () {
         var inp = document.createElement('input');
         inp.type = 'file'; inp.accept = '.prism,.json';
         inp.style.display = 'none';
@@ -1731,34 +2121,22 @@ G.PRiSM_renderProjectToolbar = function (container) {
             if (!f) return;
             G.PRiSM_project.load(f).then(function () {
                 pName.textContent = _projectMeta.name;
-                if (typeof G.PRiSM_renderGaugeManager === 'function') {
-                    var gh = document.getElementById('prism_gauge_manager');
-                    if (gh) G.PRiSM_renderGaugeManager(gh);
-                }
-                if (typeof G.PRiSM_renderAnalysisManager === 'function') {
-                    var ah = document.getElementById('prism_analysis_manager');
-                    if (ah) G.PRiSM_renderAnalysisManager(ah);
-                }
             }).catch(function (err) {
                 alert('Load failed: ' + (err && err.message || err));
             });
         });
         document.body.appendChild(inp); inp.click();
         setTimeout(function () { try { document.body.removeChild(inp); } catch (e) {} }, 1000);
-    }));
-    bar.appendChild(_mkBtn('Save', null, function () {
+    });
+    bImp.id = 'prism_prj_import';
+    bar.appendChild(bImp);
+    var bExp = _mkBtn('Export .prism', null, function () {
         G.PRiSM_project.save().catch(function (err) {
             alert('Save failed: ' + (err && err.message || err));
         });
-    }));
-    bar.appendChild(_mkBtn('Save As…', null, function () {
-        var nm = prompt('Project name', _projectMeta.name);
-        if (nm) {
-            G.PRiSM_project.setName(nm);
-            pName.textContent = nm;
-            G.PRiSM_project.save(nm + '.prism');
-        }
-    }));
+    });
+    bExp.id = 'prism_prj_export';
+    bar.appendChild(bExp);
     bar.appendChild(_mkBtn('Info', null, function () {
         G.PRiSM_project.refreshInfo().then(function (info) {
             alert('Project: ' + info.name +
@@ -1770,6 +2148,7 @@ G.PRiSM_renderProjectToolbar = function (container) {
                   '\nModified: ' + info.modifiedAt);
         });
     }));
+    bar.appendChild(note);
 
     container.appendChild(bar);
 };
@@ -1863,7 +2242,7 @@ function _modal() {
     var box = document.createElement('div');
     box.style.background = T.panel; box.style.border = '1px solid ' + T.border;
     box.style.borderRadius = '6px'; box.style.padding = '16px';
-    box.style.maxWidth = '640px'; box.style.width = '90%';
+    box.style.maxWidth = '640px'; box.style.width = '92%'; box.style.boxSizing = 'border-box';
     box.style.maxHeight = '80vh'; box.style.overflow = 'auto';
     bg.appendChild(box);
     document.body.appendChild(bg);
@@ -1873,6 +2252,20 @@ function _modal() {
     bg.addEventListener('click', function (e) { if (e.target === bg) close(); });
     return { body: box, close: close };
 }
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// PANEL REGISTRATION (C7) — Tab 1, after Well & Test, crop and tide.
+// ═══════════════════════════════════════════════════════════════════════
+_registerPanel(1, {
+    id: 'prism_datasets',
+    title: 'Gauges & analysis datasets',
+    order: 50,
+    collapsed: true,
+    tool: true,
+    description: 'Several gauge records and analysis sets per project; .prism import / export',
+    render: function (hostEl) { G.PRiSM_renderDatasetsPanel(hostEl, { embedded: true }); }
+});
 
 
 // ═══════════════════════════════════════════════════════════════════════

@@ -222,6 +222,65 @@ checks.push(['WTS_project has storage module',       !!(win.WTS_project && win.W
   checks.push(['WTS_project storage module round-trip', ok]);
 })();
 
+// ── Gap-closure contracts C1–C9 + work-package exports (WP0 task 0.5) ──
+const CONTRACT_FNS = {
+  C1: ['PRiSM_getWell', 'PRiSM_setWell', 'PRiSM_acceptWellDefaults', 'PRiSM_pvt_effective', 'PRiSM_mpTable', 'PRiSM_renderWellCard'],
+  C2: ['PRiSM_getAnalysisData', 'PRiSM_rateHistory', 'PRiSM_timeFunction', 'PRiSM_datasetHash', 'PRiSM_compute_bourdet'],
+  C3: ['PRiSM_physicalModel', 'PRiSM_evalWbsSkin', 'PRiSM_lap_horizontal', 'PRiSM_pd_lap_homogeneous'],
+  C4: ['PRiSM_setLastFit', 'PRiSM_getLastFit', 'PRiSM_fitPhysical', 'PRiSM_fitRate', 'PRiSM_agarwalTime'],
+  C5: ['PRiSM_applyTypeCurveMatch', 'PRiSM_matchToPhysical'],
+  C6: ['PRiSM_plot_mdh', 'PRiSM_plot_message', 'PRiSM_plotResetView', 'PRiSM_plotSetView', 'PRiSM_buildPlotData',
+       'PRiSM_drawActivePlot', 'PRiSM_evalModelCurve', 'PRiSM_detectPeriods'],
+  C7: ['PRiSM_registerTabPanel', 'PRiSM_mountTabPanels', 'PRiSM_registerPostDrawHook', 'PRiSM_commitDataset', 'PRiSM_setModel'],
+  C8: ['PRiSM_saveState', 'PRiSM_restoreState'],
+  C9: ['PRiSM_gotoStep', 'PRiSM_currentStep', 'PRiSM_stepStatus', 'PRiSM_renderRail', 'PRiSM_analyse', 'PRiSM_openTools',
+       'PRiSM_closeTools', 'PRiSM_listTools', 'PRiSM_undo', 'PRiSM_redo', 'PRiSM_canUndo', 'PRiSM_canRedo',
+       'PRiSM_loadDemoData', 'PRiSM_seedDefaultSample', 'PRiSM_renderFlowPeriods'],
+  WP3: ['PRiSM_autoMatchSync', 'PRiSM_applyAutoMatchRow', 'PRiSM_refreshInterpretation', 'PRiSM_renderAutoMatchPanel', 'PRiSM_interpretCurrentFit'],
+  WP5: ['PRiSM_semilogAnalysis', 'PRiSM_skinSummary', 'PRiSM_skinDecomposition', 'PRiSM_rateDependentSkin', 'PRiSM_renderSemilogPanel', 'PRiSM_semilogPlotLine'],
+  WP7: ['PRiSM_renderPlotsTab', 'PRiSM_renderModelTab', 'PRiSM_renderParamsTab', 'PRiSM_renderMatchTab', 'PRiSM_renderRegressTab', 'PRiSM_autoAlignOverlay', 'PRiSM_renderFitResults'],
+  WP9: ['PRiSM_renderReportTab', 'PRiSM_buildReportHTML', 'PRiSM_buildReportCSV', 'PRiSM_exportCSV', 'PRiSM_reportData', 'PRiSM_reportResults', 'PRiSM_exportReport'],
+  WP10: ['PRiSM_runAnalysisKey', 'PRiSM_disarmAnalysisKey', 'PRiSM_renderAnalysisKeyToolbar', 'PRiSM_renderPlotToolsPanel', 'PRiSM_detectAnnotationsForData'],
+  WP11: ['PRiSM_deconvolveDataset', 'PRiSM_applyDeconvolvedPi', 'PRiSM_inverseSimDataset', 'PRiSM_renderDatasetsPanel', 'PRiSM_renderPLTInversePanel'],
+  WP12: ['PRiSM_declineResults', 'PRiSM_fitDecline', 'PRiSM_rtaData', 'PRiSM_rtaFMB', 'PRiSM_rtaLinearFlow', 'PRiSM_rtaSummary',
+         'PRiSM_renderDeclineResultsPanel', 'PRiSM_renderRTAPanel', 'PRiSM_fetkovich_typecurve'],
+};
+Object.keys(CONTRACT_FNS).forEach((c) => CONTRACT_FNS[c].forEach((fn) => checks.push([c + ' window.' + fn, typeof win[fn] === 'function'])));
+checks.push(['C3 window.PRiSM_convert (object)', !!win.PRiSM_convert && typeof win.PRiSM_convert.kh === 'function']);
+checks.push(['C3 window.PRiSM_pseudoSkin.bronsMarting', !!win.PRiSM_pseudoSkin && typeof win.PRiSM_pseudoSkin.bronsMarting === 'function']);
+checks.push(['C1 window.PRiSM_DEFAULT_SAMPLE_META', !!win.PRiSM_DEFAULT_SAMPLE_META && win.PRiSM_DEFAULT_SAMPLE_META.pi === 4200]);
+checks.push(['C6 window.PRiSM_PLOT_REGISTRY has mdh', !!(win.PRiSM_PLOT_REGISTRY && win.PRiSM_PLOT_REGISTRY.mdh)]);
+checks.push(['C7 registries (tabPanels, tabHooks, postDrawHooks, stepViews)',
+  !!win.PRiSM_tabPanels && !!win.PRiSM_tabHooks && !!win.PRiSM_postDrawHooks && !!win.PRiSM_stepViews && typeof win.PRiSM_stepViews[2] === 'function']);
+(function panelIds() {
+  const ids = (n) => { const p = win.PRiSM_tabPanels && win.PRiSM_tabPanels[n]; return (Array.isArray(p) ? p : []).map((x) => x && x.id); };
+  const want = { 1: ['prism_well_test', 'crop'], 2: ['semilog', 'linetools', 'regimes'], 6: ['prism_interp_panel', 'dcaResults'] };
+  Object.keys(want).forEach((n) => want[n].forEach((id) => checks.push(['C7 Tab ' + n + ' panel "' + id + '"', ids(n).indexOf(id) !== -1])));
+})();
+(function registryMeta() {
+  const M = win.PRiSM_MODELS || {};
+  const bad = Object.keys(M).filter((k) => k !== 'userDefined' && !(M[k] && (M[k].kind === 'pressure' || M[k].kind === 'rate')));
+  if (bad.length) console.error('models without kind:', bad.join(', '));
+  checks.push(['C3 every registry model has kind pressure|rate', bad.length === 0]);
+})();
+
+// No perpetual timers (WP0 0.5): load the real page in the acceptance harness,
+// open PRiSM on the demo data, let it idle 5 s of virtual time → nothing pending.
+(function noPerpetualTimers() {
+  let ok = false, detail = '';
+  try {
+    const harness = require('./tests/_harness');
+    const app = harness.loadApp({ fromSources: false, timers: 'manual', console: 'capture' });
+    app.openPRiSM();
+    app.flush(5000);
+    const n = app.pendingTimers();
+    ok = n === 0;
+    if (!ok && typeof app.timers === 'function') detail = JSON.stringify(app.timers()).slice(0, 600);
+  } catch (e) { detail = e.message; }
+  if (detail) console.error('pending timers after 5 s idle:', detail);
+  checks.push(['no perpetual timers after 5 s idle (PRiSM open)', ok]);
+})();
+
 console.log('\nNamespace checks:');
 let fails = 0;
 for (const [name, ok] of checks) {

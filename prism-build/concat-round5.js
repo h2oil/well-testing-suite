@@ -18,7 +18,8 @@ const FILES = [
 
 const ROOT = __dirname;
 
-function stripSelfTest(src, fileLabel) {
+function stripSelfTest(src, fileLabel, logger) {
+  const log = logger || console;
   const lines = src.split(/\r?\n/);
   let selfTestStart = -1;
   for (let i = lines.length - 1; i >= 0; i--) {
@@ -29,7 +30,7 @@ function stripSelfTest(src, fileLabel) {
     }
   }
   if (selfTestStart === -1) {
-    console.warn(`[WARN] ${fileLabel}: no self-test marker — leaving unchanged`);
+    log.warn(`[WARN] ${fileLabel}: no self-test marker — leaving unchanged`);
     return src;
   }
   let cutAt = selfTestStart;
@@ -51,12 +52,12 @@ function stripSelfTest(src, fileLabel) {
   if (openCount > closeCount) {
     head.push('');
     head.push('})();');
-    console.log(`         (appended ${openCount - closeCount} closing IIFE)`);
+    log.log(`         (appended ${openCount - closeCount} closing IIFE)`);
   } else {
-    console.log(`         (already balanced; ${openCount} open / ${closeCount} close)`);
+    log.log(`         (already balanced; ${openCount} open / ${closeCount} close)`);
   }
   head.push('');
-  console.log(`[strip] ${fileLabel}: ${lines.length} → ${head.length} lines (cut self-test from line ${selfTestStart + 1})`);
+  log.log(`[strip] ${fileLabel}: ${lines.length} → ${head.length} lines (cut self-test from line ${selfTestStart + 1})`);
   return head.join('\n');
 }
 
@@ -68,24 +69,40 @@ const banner = (label) =>
 const footer = (label) =>
   '\n// ─── END ' + label + ' ─────────────────────────────────────────────\n\n';
 
-let combined =
-  '\n// ═══════════════════════════════════════════════════════════════════════\n' +
-  '// Test System Safety (Round-5 expansion) — auto-injected\n' +
-  '//   • 23-esd-hipilot   (gas release during ESD response window)\n' +
-  '//   • 24-esd-lopilot   (leak-detection drawdown sizing)\n' +
-  '//   • 25-hydrate       (per-segment hydrate temp + inhibitor injection)\n' +
-  '//   • 26-liquidline    (gas blowby + RO sizing + flammability radii)\n' +
-  '//   • 27-pipelife      (Salama sand-erosion service life per segment)\n' +
-  '// ═══════════════════════════════════════════════════════════════════════\n';
-
-for (const f of FILES) {
-  const p = path.join(ROOT, f);
-  const src = fs.readFileSync(p, 'utf8');
-  const stripped = stripSelfTest(src, f);
-  const label = f.replace(/\.js$/, '');
-  combined += banner(label) + stripped + footer(label);
+// opts.read(fileName) → source text, or null to skip the file
+//   (default: read prism-build/<fileName>; a missing file throws, as before).
+// opts.log → { log, warn } (default: console).
+function build(opts) {
+  opts = opts || {};
+  const log = opts.log || console;
+  const read = opts.read || ((f) => fs.readFileSync(path.join(ROOT, f), 'utf8'));
+  let combined =
+    '\n// ═══════════════════════════════════════════════════════════════════════\n' +
+    '// Test System Safety (Round-5 expansion) — auto-injected\n' +
+    '//   • 23-esd-hipilot   (gas release during ESD response window)\n' +
+    '//   • 24-esd-lopilot   (leak-detection drawdown sizing)\n' +
+    '//   • 25-hydrate       (per-segment hydrate temp + inhibitor injection)\n' +
+    '//   • 26-liquidline    (gas blowby + RO sizing + flammability radii)\n' +
+    '//   • 27-pipelife      (Salama sand-erosion service life per segment)\n' +
+    '// ═══════════════════════════════════════════════════════════════════════\n';
+  for (const f of FILES) {
+    const src = read(f);
+    if (src == null) { log.warn(`[WARN] ${f}: not available — skipped`); continue; }
+    const stripped = stripSelfTest(src, f, log);
+    const label = f.replace(/\.js$/, '');
+    combined += banner(label) + stripped + footer(label);
+  }
+  return combined;
 }
 
-const outPath = path.join(ROOT, 'combined-round5.js');
-fs.writeFileSync(outPath, combined, 'utf8');
-console.log(`\n[ok] wrote ${outPath} (${combined.split('\n').length} lines)`);
+const OUT = path.join(ROOT, 'combined-round5.js');
+
+function main() {
+  const combined = build();
+  const outPath = OUT;
+  fs.writeFileSync(outPath, combined, 'utf8');
+  console.log(`\n[ok] wrote ${outPath} (${combined.split('\n').length} lines)`);
+}
+
+module.exports = { FILES, OUT, build, stripSelfTest, main };
+if (require.main === module) main();

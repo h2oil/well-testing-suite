@@ -17,7 +17,8 @@
 //     • Hydrate Management Summary   (per-node risk + MeOH duty)
 //     • Liquid Line / RO Sizing      (PROTECTED / UNDERSIZED)
 //     • Pipe Service Life            (limiting segment, remaining days)
-//     • PRiSM Type-Curve Fit         (model, params, R², notes)
+//     • PRiSM Well Test Analysis     (model, R², RMSE, AIC, k, kh, S, C,
+//                                     ΔpS, FE, parameters, interpretation)
 //
 // PUBLIC API
 //   window.WTS_quickReport = {
@@ -93,7 +94,7 @@
         { key: 'hydrate',    label: 'Hydrate Management' },
         { key: 'liquidline', label: 'Liquid Line / RO Sizing' },
         { key: 'pipelife',   label: 'Pipe Service Life' },
-        { key: 'prism',      label: 'PRiSM Type-Curve Fit' }
+        { key: 'prism',      label: 'PRiSM Well Test Analysis' }
     ];
 
     var SELECTED = null;   // null = all; otherwise array of keys
@@ -128,9 +129,67 @@
             case 'hydrate':    return !!(G.WTS_state && G.WTS_state.hydrate);
             case 'liquidline': return !!(G.WTS_state && G.WTS_state.liquidline);
             case 'pipelife':   return !!(G.WTS_state && G.WTS_state.pipelife);
-            case 'prism':      return !!(G.PRiSM_state && (G.PRiSM_state.lastFit || G.PRiSM_state.activeModel));
+            case 'prism': {
+                // A fit exists, or a model is chosen and data is loaded.
+                if (_prismFit()) return true;
+                var st = G.PRiSM_state, ds = G.PRiSM_dataset;
+                return !!(st && st.model && ds && ds.t && ds.t.length);
+            }
             default:           return false;
         }
+    }
+
+    // ─── PRiSM helpers ────────────────────────────────────────────
+    // Last fit through the C4 getter (normalised keys), else the raw state
+    // with both key spellings accepted (R2/r2, RMSE/rmse, AIC/aic, model/modelKey).
+    function _num() {
+        for (var i = 0; i < arguments.length; i++) if (_isNum(arguments[i])) return arguments[i];
+        return NaN;
+    }
+    function _prismFit() {
+        var f = null;
+        if (typeof G.PRiSM_getLastFit === 'function') {
+            try { f = G.PRiSM_getLastFit(); } catch (e) { f = null; }
+        }
+        if (!f && G.PRiSM_state && G.PRiSM_state.lastFit && typeof G.PRiSM_state.lastFit === 'object') f = G.PRiSM_state.lastFit;
+        if (!f) return null;
+        return {
+            modelKey: f.modelKey || f.model || (G.PRiSM_state && G.PRiSM_state.model) || null,
+            source: f.source || '', kind: f.kind || 'pressure',
+            r2: _num(f.r2, f.R2), rmse: _num(f.rmse, f.RMSE), aic: _num(f.aic, f.AIC),
+            ci95: f.ci95 || f.CI95 || {}, params: f.params || {}, phys: f.phys || {},
+            converged: f.converged, iterations: f.iterations, stale: !!f.stale
+        };
+    }
+    function _prismModelLabel(key) {
+        var e = key && G.PRiSM_MODELS ? G.PRiSM_MODELS[key] : null;
+        var lbl = (e && (e.label || e.name)) || '';
+        if (!lbl && key) lbl = String(key).replace(/([a-z])([A-Z])/g, '$1 $2').replace(/^./, function (c) { return c.toUpperCase(); });
+        return lbl;
+    }
+    // Key results: the report layer's summary when present, else computed
+    // here from lastFit.phys and the well inputs (field units).
+    function _prismResults(fit) {
+        if (typeof G.PRiSM_reportResults === 'function') {
+            try { var r = G.PRiSM_reportResults(); if (r) return r; } catch (e) { _warn('reportResults failed', e); }
+        }
+        var ph = (fit && fit.phys) || {};
+        var w = null;
+        if (typeof G.PRiSM_getWell === 'function') { try { w = G.PRiSM_getWell(); } catch (e) { w = null; } }
+        if (!w) {
+            var s = G.PRiSM_pvt || {}, c = s._computed || {};
+            w = { q: s.q, B: _num(s.Bo, c.B), mu: _num(s.mu_o, c.mu), h: s.h, rw: s.rw,
+                  pi: (s.provenance && s.provenance.p_res && s.provenance.p_res !== 'default') ? s.p_res : null, fluid: s.fluidType };
+        }
+        var k = _num(ph.k), kh = _num(ph.kh, k * w.h), S = _num(ph.S, fit && fit.params ? fit.params.S : NaN);
+        var out = { k: k, kh: kh, S: S, C: _num(ph.C), Cd: _num(ph.Cd, fit && fit.params ? fit.params.Cd : NaN), dpS: NaN, FE: NaN };
+        if (w.fluid !== 'gas') out.dpS = 141.2 * w.q * w.B * w.mu * S / kh;
+        var ds = G.PRiSM_dataset, pi = _num(ph.pi, w.pi);
+        if (_isNum(out.dpS) && _isNum(pi) && ds && ds.p && ds.p.length) {
+            var pwf = ds.p[ds.p.length - 1], dd = pi - pwf;
+            if (_isNum(pwf) && dd > 0) out.FE = (dd - out.dpS) / dd;
+        }
+        return out;
     }
 
     // ───────────────────────────────────────────────────────────────
@@ -370,34 +429,64 @@
             '<table class="qr-kv">' + rows + '</table>' + segTbl);
     }
 
-    // ─── PRiSM Type-Curve Fit ──────────────────────────────────────
+    // ─── PRiSM Well Test Analysis ──────────────────────────────────
+    var PRISM_SOURCES = { regression: 'Regression', automatch: 'Auto-match', match: 'Type-curve match', semilog: 'Straight line' };
+    function _sig(v, n) {
+        if (!_isNum(v)) return '—';
+        var a = Math.abs(v);
+        if (a === 0) return '0';
+        if (a >= 1e5 || a < 1e-3) return v.toExponential(n - 1).replace('e+', 'e');
+        return v.toFixed(Math.max(0, n - 1 - Math.floor(Math.log(a) / Math.LN10 + 1e-12)));
+    }
+    function _pm(ci, key, dp) {
+        var c = ci && ci[key];
+        if (!c || c.length !== 2 || !_isNum(c[0]) || !_isNum(c[1])) return '';
+        return ' ± ' + (Math.abs(c[1] - c[0]) / 2).toFixed(dp);
+    }
     function _renderPRiSM() {
-        if (!_hasState('prism')) return _placeholder('PRiSM Type-Curve Fit');
+        if (!_hasState('prism')) return _placeholder('PRiSM Well Test Analysis');
         var ps = G.PRiSM_state || {};
-        var fit = ps.lastFit || {};
+        var fit = _prismFit();
+        var key = (fit && fit.modelKey) || ps.model || '';
+        var res = fit ? (_prismResults(fit) || {}) : {};
         var rows = '';
-        rows += _row('Active Model', ps.activeModel || fit.model || '—');
-        rows += _row('R²', _fmt(fit.r2 || fit.R2, 4));
-        rows += _row('RMSE', _fmt(fit.rmse, 3));
-        rows += _row('AIC',  _fmt(fit.aic, 2));
-        var params = fit.params || ps.params || {};
+        rows += _row('Model', key ? (res.modelLabel || _prismModelLabel(key)) + ' (' + key + ')' : '—');
+        if (!fit) {
+            rows += _row('Result', 'No fit yet — model chosen and data loaded');
+            return _section('PRiSM Well Test Analysis', '<table class="qr-kv">' + rows + '</table>');
+        }
+        var ci = res.ci || fit.ci95 || {};
+        rows += _row('Result from', PRISM_SOURCES[fit.source] || fit.source || '—');
+        rows += _row('R²', _isNum(fit.r2) ? fit.r2.toFixed(5) : '—');
+        rows += _row('RMSE', _sig(fit.rmse, 3), fit.kind === 'rate' ? 'rate units' : 'psi');
+        rows += _row('AIC', _isNum(fit.aic) ? fit.aic.toFixed(1) : '—');
+        if (fit.kind !== 'rate') {
+            rows += _row('Permeability k', _isNum(res.k) ? _sig(res.k, 3) + _pm(ci, 'k', res.k >= 10 ? 1 : 2) : '—', 'md');
+            rows += _row('Permeability-thickness kh', _sig(res.kh, 4), 'md·ft');
+            rows += _row('Skin S', _isNum(res.S) ? res.S.toFixed(2) + _pm(ci, 'S', 2) : '—');
+            rows += _row('Wellbore storage C', _sig(res.C, 3), 'bbl/psi');
+            rows += _row('Pressure drop due to skin ΔpS', _sig(res.dpS, 3), 'psi');
+            rows += _row('Flow efficiency FE', _sig(res.FE, 3));
+        }
+        if (fit.stale) rows += _row('Note', 'The fit was made on different data or a different model — re-run it.');
+        var params = fit.params || {};
         var paramRows = '';
         var paramKeys = [];
-        for (var k in params) if (Object.prototype.hasOwnProperty.call(params, k)) paramKeys.push(k);
+        for (var k in params) if (Object.prototype.hasOwnProperty.call(params, k) && k.indexOf('__') !== 0) paramKeys.push(k);
         if (paramKeys.length) {
-            paramRows = '<h3 class="qr-h3">Fitted Parameters</h3>' +
+            paramRows = '<h3 class="qr-h3">Model Parameters</h3>' +
                 '<table class="qr-table"><thead><tr><th>Parameter</th><th>Value</th></tr></thead><tbody>';
             for (var pi = 0; pi < paramKeys.length; pi++) {
                 var pk = paramKeys[pi];
                 var pv = params[pk];
                 paramRows += '<tr><td>' + _esc(pk) + '</td><td>' +
-                             (_isNum(pv) ? _fmt(pv, 4) : _esc(pv)) + '</td></tr>';
+                             (_isNum(pv) ? _fmt(pv, 4) : _esc(Array.isArray(pv) ? '(' + pv.length + ' items)' : pv)) + '</td></tr>';
             }
             paramRows += '</tbody></table>';
         }
-        var interp = (ps.interp && ps.interp.narrative) ?
-            ('<p class="qr-rationale">' + _esc(ps.interp.narrative) + '</p>') : '';
-        return _section('PRiSM Type-Curve Fit',
+        var narrative = (ps.interp && ps.interp.narrative) || '';
+        var interp = narrative ? ('<p class="qr-rationale">' + _esc(narrative) + '</p>') : '';
+        return _section('PRiSM Well Test Analysis',
             '<table class="qr-kv">' + rows + '</table>' + paramRows + interp);
     }
 
@@ -652,13 +741,20 @@
                       time_to_failure_at_current_days: 14200, max_allowable_pressure_psig: 4200 }
                 ]
             };
-            G.PRiSM_state = G.PRiSM_state || {};
-            G.PRiSM_state.activeModel = 'homogeneous';
+            // PRiSM fixture in the real lastFit schema (C4): dimensionless
+            // registry params + field-unit phys, lower-case stats keys.
+            var keepPRiSM = { st: G.PRiSM_state, ds: G.PRiSM_dataset, pvt: G.PRiSM_pvt };
+            G.PRiSM_state = { model: 'homogeneous', params: { Cd: 80, S: 2.5 } };
             G.PRiSM_state.lastFit = {
-                model: 'homogeneous', r2: 0.987, rmse: 12.4, aic: 145.2,
-                params: { k: 12.4, S: -3.5, Cd: 1200 }
+                modelKey: 'homogeneous', kind: 'pressure', source: 'regression',
+                r2: 0.99999, rmse: 0.31, aic: -120.4, iterations: 7, converged: true,
+                params: { Cd: 80, S: 2.5 }, ci95: { k: [44.8, 45.2], S: [2.47, 2.53] },
+                phys: { k: 45.0, kh: 1575, C: 8.48e-4, Cd: 80, S: 2.5, pi: 4200 }
             };
-            G.PRiSM_state.interp = { narrative: 'Excellent radial-flow fit; mild stimulation.' };
+            G.PRiSM_state.interp = { narrative: 'Radial flow with mild damage; flow efficiency about 76 %.' };
+            G.PRiSM_dataset = { t: [1, 120], p: [3340.9, 3089.8], q: [850, 850] };
+            G.PRiSM_pvt = { fluidType: 'oil', q: 850, Bo: 1.25, mu_o: 1.1, h: 35, rw: 0.354, p_res: 4200,
+                            provenance: { p_res: 'sample' } };
 
             // availableModules now should have everything
             var avail = G.WTS_quickReport.availableModules();
@@ -683,7 +779,21 @@
             checks.push({ n: 'preview includes Pipe Service Life',
                           ok: html.indexOf('Pipe Service Life') !== -1 });
             checks.push({ n: 'preview includes PRiSM section',
-                          ok: html.indexOf('PRiSM Type-Curve Fit') !== -1 });
+                          ok: html.indexOf('PRiSM Well Test Analysis') !== -1 });
+            checks.push({ n: 'PRiSM section shows model key, RMSE and AIC',
+                          ok: html.indexOf('homogeneous') !== -1 && html.indexOf('0.310') !== -1 && html.indexOf('-120.4') !== -1 });
+            checks.push({ n: 'PRiSM section shows k, S, ΔpS and FE',
+                          ok: html.indexOf('45.0 ± 0.2') !== -1 && html.indexOf('2.50 ± 0.03') !== -1 &&
+                              html.indexOf('>262 ') !== -1 && html.indexOf('0.764') !== -1 });
+            var st0 = G.PRiSM_state, lf0 = st0.lastFit;
+            st0.lastFit = null;
+            checks.push({ n: 'PRiSM counts as run when a model and data exist (no fit)',
+                          ok: G.WTS_quickReport.availableModules().indexOf('prism') !== -1 });
+            st0.lastFit = { model: 'homogeneous', R2: 0.9, RMSE: 1.5, AIC: 12 };
+            var legacyHtml = G.WTS_quickReport.preview();
+            checks.push({ n: 'legacy key case (R2 / RMSE / AIC) accepted',
+                          ok: legacyHtml.indexOf('0.90000') !== -1 && legacyHtml.indexOf('1.50') !== -1 });
+            st0.lastFit = lf0;
             checks.push({ n: 'preview includes client name',
                           ok: html.indexOf('Acme Energy') !== -1 });
             checks.push({ n: 'preview includes print CSS',
@@ -722,6 +832,7 @@
             checks.push({ n: 'getModules returns array',
                           ok: Array.isArray(mods) && mods.length > 0 });
 
+            G.PRiSM_state = keepPRiSM.st; G.PRiSM_dataset = keepPRiSM.ds; G.PRiSM_pvt = keepPRiSM.pvt;
             G.WTS_quickReport_selfTestResults = { checks: checks };
 
             var fails = checks.filter(function (c) { return !c.ok; });

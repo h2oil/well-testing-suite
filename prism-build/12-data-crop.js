@@ -7,14 +7,15 @@
 // ════════════════════════════════════════════════════════════════════
 //
 // USER FLOW
-//   1. Tab 1 file picker fills window.PRiSM_dataset = { t, p, q, ... }
-//   2. This module appends an interactive crop chart below the existing
-//      preview. The user drags handles or types t_start/t_end/i_start/i_end
-//      to define the cropped window.
+//   1. Step ① Data loads window.PRiSM_dataset = { t, p, q, ... }
+//   2. This module is a Tab 1 panel ("Crop & trim", C7 registry, order 30).
+//      The user drags handles (Pointer Events — mouse, pen and touch) or
+//      types t_start/t_end/i_start/i_end to define the window.
 //   3. A first-3 / last-3 preview block updates live.
-//   4. "Confirm crop" replaces window.PRiSM_dataset with the slice and
-//      fires window CustomEvent('prism:dataset-cropped', { detail }).
-//   5. "Reset" restores the original snapshot.
+//   4. "Confirm crop" makes the slice the active dataset (absolute times
+//      kept) through window.PRiSM_commitDataset → 'prism:dataset-loaded'
+//      {source:'crop'}, fires 'prism:dataset-cropped' and redraws the plot.
+//   5. "Reset" restores the original snapshot the same way.
 //
 // PUBLIC API
 //   window.PRiSM_renderCropTool(container)
@@ -29,7 +30,9 @@
 //   • No external libraries — vanilla canvas, plain DOM.
 //   • The original (uncropped) dataset is snapshotted on first interaction
 //     and restored on reset; subsequent crops always slice from that snapshot
-//     so a reset is always exact.
+//     so a reset is always exact. The snapshot survives re-renders of the
+//     Data tab while the active dataset is still the one this tool set; a
+//     newly loaded dataset starts a new snapshot.
 // ════════════════════════════════════════════════════════════════════
 
 (function () {
@@ -79,6 +82,7 @@
         layout: null,         // { x, y, w, h, cssW, cssH, tMin, tMax, pMin, pMax }
         drag: null,           // { kind: 'left'|'right'|'new', startX, ... }
         debounceTimer: null,
+        owned: null,          // the dataset object this tool last made active
         wired: false
     };
 
@@ -90,31 +94,43 @@
     // SECTION 2 — DATASET HELPERS
     // ═══════════════════════════════════════════════════════════════
 
-    // Take a SHALLOW snapshot of the active dataset's array refs (we only
-    // ever .slice() — never mutate the originals, so shallow is safe).
+    var _isArr = function (a) {
+        return !!a && (Array.isArray(a) || (typeof ArrayBuffer !== 'undefined' && ArrayBuffer.isView && ArrayBuffer.isView(a)));
+    };
+    var _copy = function (a) { return Array.prototype.slice.call(a); };
+
+    // Keys that are derived from the full record and would be wrong for a
+    // slice (they are rebuilt by their owners on 'prism:dataset-loaded').
+    var DERIVED_KEYS = { periods: 1, dp: 1, deriv: 1, _cache: 1 };
+
+    // Take a snapshot of the active dataset (arrays copied — we never mutate
+    // the originals).
     function _snapshotDataset(ds) {
         if (!ds) return null;
+        var n = (ds.t || []).length;
         var snap = {
-            t: (ds.t || []).slice(),
-            p: ds.p ? ds.p.slice() : null,
-            q: ds.q ? ds.q.slice() : null
+            t: _copy(ds.t || []),
+            p: _isArr(ds.p) ? _copy(ds.p) : null,
+            q: _isArr(ds.q) ? _copy(ds.q) : null
         };
-        // Optional period array.
-        if (ds.period) snap.period = ds.period.slice();
-        // Optional multi-phase rates.
+        if (_isArr(ds.period)) snap.period = _copy(ds.period);
         if (ds.phases) {
             snap.phases = {
-                oil:   ds.phases.oil   ? ds.phases.oil.slice()   : null,
-                gas:   ds.phases.gas   ? ds.phases.gas.slice()   : null,
-                water: ds.phases.water ? ds.phases.water.slice() : null
+                oil:   _isArr(ds.phases.oil)   ? _copy(ds.phases.oil)   : null,
+                gas:   _isArr(ds.phases.gas)   ? _copy(ds.phases.gas)   : null,
+                water: _isArr(ds.phases.water) ? _copy(ds.phases.water) : null
             };
         }
-        // Carry through any other simple top-level keys the dataset may
-        // already hold (e.g. .units, .meta), so we don't drop info.
+        // Carry other top-level keys: parallel arrays are copied, other
+        // arrays (derived, e.g. detected periods) are dropped, scalars and
+        // small objects (name, source, units, …) are kept.
         for (var k in ds) {
-            if (snap[k] !== undefined) continue;
+            if (!Object.prototype.hasOwnProperty.call(ds, k)) continue;
+            if (snap[k] !== undefined || DERIVED_KEYS[k]) continue;
             if (k === 't' || k === 'p' || k === 'q' || k === 'period' || k === 'phases') continue;
-            try { snap[k] = ds[k]; } catch (e) { /* ignore */ }
+            var v = ds[k];
+            if (_isArr(v)) { if (v.length === n) snap[k] = _copy(v); continue; }
+            try { snap[k] = v; } catch (e) { /* ignore */ }
         }
         return snap;
     }
@@ -124,9 +140,10 @@
     // exclusive at i_end (matching Array.prototype.slice).
     function _sliceDataset(snap, i_start, i_end) {
         if (!snap) return null;
+        var n = snap.t.length;
         var out = { t: snap.t.slice(i_start, i_end) };
-        if (snap.p) out.p = snap.p.slice(i_start, i_end);
-        if (snap.q) out.q = snap.q.slice(i_start, i_end);
+        out.p = snap.p ? snap.p.slice(i_start, i_end) : null;
+        out.q = snap.q ? snap.q.slice(i_start, i_end) : null;
         if (snap.period) out.period = snap.period.slice(i_start, i_end);
         if (snap.phases) {
             out.phases = {
@@ -135,13 +152,27 @@
                 water: snap.phases.water ? snap.phases.water.slice(i_start, i_end) : null
             };
         }
-        // Carry through scalar keys.
         for (var k in snap) {
+            if (!Object.prototype.hasOwnProperty.call(snap, k)) continue;
             if (out[k] !== undefined) continue;
             if (k === 't' || k === 'p' || k === 'q' || k === 'period' || k === 'phases') continue;
-            try { out[k] = snap[k]; } catch (e) {}
+            var v = snap[k];
+            if (_isArr(v)) { if (v.length === n) out[k] = v.slice(i_start, i_end); continue; }
+            try { out[k] = v; } catch (e) {}
         }
         return out;
+    }
+
+    // Make ds active through the shared commit path (one
+    // 'prism:dataset-loaded' {source:'crop'}), then redraw the active plot.
+    function _commit(ds) {
+        cropState.owned = ds;
+        if (typeof G.PRiSM_commitDataset === 'function') {
+            G.PRiSM_commitDataset(ds, { source: 'crop' });
+        } else {
+            G.PRiSM_dataset = ds;
+            _dispatch('prism:dataset-loaded', { source: 'crop', dataset: ds });
+        }
     }
 
     // Find the smallest index i such that t[i] >= target.
@@ -206,9 +237,13 @@
         }
         cropState.t_start = ts;
         cropState.t_end   = te;
-        // Derive sample indices.
-        cropState.i_start = _findIndex(t, ts);
-        cropState.i_end   = _findIndex(t, te) + 1; // exclusive
+        // Derive sample indices: keep tStart ≤ t ≤ tEnd (small tolerance for
+        // values typed from rounded times).
+        var eps = 1e-9 * Math.max(1, Math.abs(tMax - tMin));
+        cropState.i_start = _findIndex(t, ts - eps);
+        var last = _findIndex(t, te + eps);
+        if (t[last] > te + eps) last--;
+        cropState.i_end   = last + 1; // exclusive
         if (cropState.i_end > t.length) cropState.i_end = t.length;
         if (cropState.i_start < 0) cropState.i_start = 0;
         if (cropState.i_end <= cropState.i_start) cropState.i_end = cropState.i_start + 1;
@@ -277,12 +312,13 @@
         var p = snap.p && snap.p.length === t.length ? snap.p
               : (snap.q && snap.q.length === t.length ? snap.q : t);
 
-        // Compute target canvas size from container.
+        // Canvas fills its container (down to 200 px on a phone) so the page
+        // never scrolls sideways.
         var container = cropState.container;
         var maxW = 800;
         var availW = (container && container.clientWidth) ? container.clientWidth : maxW;
-        var cssW = Math.max(360, Math.min(maxW, availW));
-        var cssH = 300;
+        var cssW = Math.max(200, Math.min(maxW, availW));
+        var cssH = cssW < 480 ? 220 : 300;
         var setup = _setupCanvas(canvas, { width: cssW, height: cssH });
         var ctx = setup.ctx;
         if (!ctx) return;
@@ -428,12 +464,17 @@
     // SECTION 4 — POINTER / DRAG INTERACTION
     // ═══════════════════════════════════════════════════════════════
 
+    // Pointer → canvas CSS-pixel x (the layout frame). Scales by the drawn
+    // width in case CSS max-width shrank the canvas below its set width.
     function _eventToCanvasX(canvas, ev) {
         if (!canvas || !canvas.getBoundingClientRect) return 0;
         var rect = canvas.getBoundingClientRect();
         var clientX = (ev.clientX != null) ? ev.clientX
                       : (ev.touches && ev.touches[0] ? ev.touches[0].clientX : 0);
-        return clientX - rect.left;
+        var x = clientX - rect.left;
+        var L = cropState.layout;
+        if (L && rect.width > 0 && L.cssW > 0 && Math.abs(rect.width - L.cssW) > 0.5) x *= L.cssW / rect.width;
+        return x;
     }
 
     function _xToTime(x) {
@@ -660,9 +701,9 @@
         var el = _byId(id);
         if (!el) return;
         var color = '';
-        if (colorVar === 'green') color = 'color:#3fb950;';
-        else if (colorVar === 'red') color = 'color:#f85149;';
-        else color = 'color:#8b949e;';
+        if (colorVar === 'green') color = 'color:var(--green, #3fb950);';
+        else if (colorVar === 'red') color = 'color:var(--red, #f85149);';
+        else color = 'color:var(--text2, #8b949e);';
         el.innerHTML = '<span style="' + color + '">' + html + '</span>';
     }
 
@@ -730,72 +771,57 @@
     // SECTION 7 — PUBLIC API
     // ═══════════════════════════════════════════════════════════════
 
+    var INPUT_STYLE = 'width:120px; max-width:100%; padding:4px 6px; background:var(--bg1, #0d1117); color:var(--text, #c9d1d9); ' +
+                      'border:1px solid var(--border, #30363d); border-radius:4px; font-family:monospace; font-size:12px;';
+    var LABEL_STYLE = 'display:flex; flex-direction:column; gap:3px; font-size:11px; color:var(--text2, #8b949e);';
+
     G.PRiSM_renderCropTool = function PRiSM_renderCropTool(container) {
         if (!_hasDoc) return;
         if (!container) return;
         cropState.container = container;
 
-        // Build UI markup.
         container.innerHTML =
-              '<div class="prism-crop-card" style="background:#161b22; border:1px solid #30363d; border-radius:6px; padding:12px;">'
-            +   '<div style="font-weight:600; color:#c9d1d9; font-size:13px; margin-bottom:6px;">'
-            +     'Interactive crop &amp; trim'
+              '<div class="prism-crop-card">'
+            +   '<div style="font-size:12px; color:var(--text2, #8b949e); margin-bottom:10px; line-height:1.5;">'
+            +     'Drag across the chart to choose the part of the record to keep, or type the limits. '
+            +     '<b style="color:var(--text, #c9d1d9);">Confirm crop</b> makes it the active dataset; '
+            +     '<b style="color:var(--text, #c9d1d9);">Reset</b> brings the full record back.'
             +   '</div>'
-            +   '<div style="font-size:12px; color:#8b949e; margin-bottom:10px;">'
-            +     'Drag on the chart to define a crop window, or fine-tune with the inputs below. '
-            +     'Click <b>Confirm crop</b> to replace the active dataset.'
-            +   '</div>'
-            +   '<canvas id="prism_crop_canvas" width="800" height="300" '
-            +     'style="display:block; background:#0d1117; border:1px solid #30363d; '
-            +     'border-radius:6px; max-width:100%; touch-action:none;"></canvas>'
+            +   '<canvas id="prism_crop_canvas" width="800" height="300" aria-label="Crop chart: drag to select the time window" '
+            +     'style="display:block; width:100%; max-width:100%; background:var(--bg1, #0d1117); border:1px solid var(--border, #30363d); '
+            +     'border-radius:6px; touch-action:none;"></canvas>'
             +   '<div class="prism-crop-controls" style="margin-top:10px; display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end;">'
-            +     '<label style="display:flex; flex-direction:column; font-size:11px; color:#8b949e;">'
-            +       't start'
-            +       '<input type="number" id="prism_crop_tstart" step="0.001" '
-            +         'style="width:120px; padding:4px 6px; background:#0d1117; color:#c9d1d9; '
-            +         'border:1px solid #30363d; border-radius:4px; font-family:monospace; font-size:12px;">'
-            +     '</label>'
-            +     '<label style="display:flex; flex-direction:column; font-size:11px; color:#8b949e;">'
-            +       't end'
-            +       '<input type="number" id="prism_crop_tend" step="0.001" '
-            +         'style="width:120px; padding:4px 6px; background:#0d1117; color:#c9d1d9; '
-            +         'border:1px solid #30363d; border-radius:4px; font-family:monospace; font-size:12px;">'
-            +     '</label>'
-            +     '<label style="display:flex; flex-direction:column; font-size:11px; color:#8b949e;">'
-            +       'i start'
-            +       '<input type="number" id="prism_crop_istart" min="0" step="1" '
-            +         'style="width:90px; padding:4px 6px; background:#0d1117; color:#c9d1d9; '
-            +         'border:1px solid #30363d; border-radius:4px; font-family:monospace; font-size:12px;">'
-            +     '</label>'
-            +     '<label style="display:flex; flex-direction:column; font-size:11px; color:#8b949e;">'
-            +       'i end'
-            +       '<input type="number" id="prism_crop_iend" min="0" step="1" '
-            +         'style="width:90px; padding:4px 6px; background:#0d1117; color:#c9d1d9; '
-            +         'border:1px solid #30363d; border-radius:4px; font-family:monospace; font-size:12px;">'
-            +     '</label>'
-            +     '<button id="prism_crop_apply" type="button" class="btn btn-primary" '
-            +       'style="padding:6px 14px; background:#238636; color:#fff; border:1px solid #2ea043; '
-            +       'border-radius:4px; cursor:pointer; font-size:12px; font-weight:600;">Confirm crop</button>'
-            +     '<button id="prism_crop_reset" type="button" class="btn btn-secondary" '
-            +       'style="padding:6px 14px; background:#21262d; color:#c9d1d9; border:1px solid #30363d; '
-            +       'border-radius:4px; cursor:pointer; font-size:12px;">Reset</button>'
-            +     '<span id="prism_crop_msg" style="font-size:12px; color:#8b949e;"></span>'
+            +     '<label style="' + LABEL_STYLE + '">t start (h)'
+            +       '<input type="number" id="prism_crop_tstart" step="0.001" style="' + INPUT_STYLE + '"></label>'
+            +     '<label style="' + LABEL_STYLE + '">t end (h)'
+            +       '<input type="number" id="prism_crop_tend" step="0.001" style="' + INPUT_STYLE + '"></label>'
+            +     '<label style="' + LABEL_STYLE + '">first row'
+            +       '<input type="number" id="prism_crop_istart" min="0" step="1" style="' + INPUT_STYLE.replace('120px', '90px') + '"></label>'
+            +     '<label style="' + LABEL_STYLE + '">last row (excl.)'
+            +       '<input type="number" id="prism_crop_iend" min="0" step="1" style="' + INPUT_STYLE.replace('120px', '90px') + '"></label>'
+            +     '<button id="prism_crop_apply" type="button" class="btn btn-primary" style="padding:8px 14px; font-size:12px;">Confirm crop</button>'
+            +     '<button id="prism_crop_reset" type="button" class="btn btn-secondary" style="padding:8px 14px; font-size:12px;">Reset</button>'
+            +     '<span id="prism_crop_msg" role="status" aria-live="polite" style="font-size:12px; color:var(--text2, #8b949e);"></span>'
             +   '</div>'
             +   '<pre id="prism_crop_preview" '
-            +     'style="margin-top:12px; padding:10px; background:#0d1117; color:#c9d1d9; '
-            +     'border:1px solid #30363d; border-radius:6px; font-size:11px; '
+            +     'style="margin-top:12px; padding:10px; background:var(--bg1, #0d1117); color:var(--text, #c9d1d9); '
+            +     'border:1px solid var(--border, #30363d); border-radius:6px; font-size:11px; '
             +     'font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace; '
-            +     'max-height:240px; overflow:auto; white-space:pre;">'
+            +     'max-height:240px; overflow:auto; white-space:pre; max-width:100%;">'
             +     'No dataset loaded yet.'
             +   '</pre>'
             + '</div>';
 
-        cropState.canvas = _byId('prism_crop_canvas');
+        cropState.canvas = container.querySelector ? container.querySelector('#prism_crop_canvas') : _byId('prism_crop_canvas');
         _wireCanvasEvents(cropState.canvas);
         _wireInputs();
 
-        // Snapshot the live dataset (if any) and paint.
-        cropState.fullDataset = null;  // force re-snapshot for fresh load
+        // Keep the snapshot while the active dataset is still the one this
+        // tool set (a re-render of the Data tab must not lose "Reset").
+        if (!(cropState.fullDataset && cropState.owned && G.PRiSM_dataset === cropState.owned)) {
+            cropState.fullDataset = null;
+            cropState.owned = null;
+        }
         _ensureSnapshot();
         if (cropState.fullDataset) {
             _normaliseBounds();
@@ -805,9 +831,9 @@
         }
 
         // Repaint on window resize so the canvas keeps filling its container.
-        if (_hasWin && !cropState._resizeWired) {
+        if (_hasWin && !cropState._resizeWired && G.addEventListener) {
             G.addEventListener('resize', function () {
-                if (cropState.fullDataset && cropState.canvas) {
+                if (cropState.fullDataset && cropState.canvas && cropState.canvas.isConnected !== false) {
                     _drawCropChart();
                 }
             });
@@ -824,14 +850,11 @@
         _normaliseBounds();
         var from = G.PRiSM_dataset || snap;
         var cropped = _sliceDataset(snap, cropState.i_start, cropState.i_end);
-        G.PRiSM_dataset = cropped;
-        // Update displays.
+        _commit(cropped);
         _syncInputs();
         _drawCropChart();
         _renderPreviewBlock();
-        // Fire event.
         _dispatchCropEvent(from, cropped);
-        // Refresh active plot if the host bound it.
         if (typeof G.PRiSM_drawActivePlot === 'function') {
             try { G.PRiSM_drawActivePlot(); } catch (e) { /* ignore */ }
         }
@@ -844,13 +867,12 @@
         if (!snap) return null;
         var from = G.PRiSM_dataset;
         var restored = _snapshotDataset(snap);
-        G.PRiSM_dataset = restored;
-        // Reset window to full range.
         var t = snap.t;
         cropState.t_start = t[0];
         cropState.t_end   = t[t.length - 1];
         cropState.i_start = 0;
         cropState.i_end   = t.length;
+        _commit(restored);
         _syncInputs();
         _drawCropChart();
         _renderPreviewBlock();
@@ -913,95 +935,94 @@
     // SECTION 8 — EVENTS + INTEGRATION
     // ═══════════════════════════════════════════════════════════════
 
-    function _dispatchCropEvent(from, to) {
-        if (!_hasWin) return;
+    function _dispatch(type, detail) {
+        if (!_hasWin || typeof G.dispatchEvent !== 'function') return;
         try {
-            var ev;
-            if (typeof CustomEvent === 'function') {
-                ev = new CustomEvent('prism:dataset-cropped', {
-                    detail: { from: from, to: to, t_start: cropState.t_start, t_end: cropState.t_end,
-                              i_start: cropState.i_start, i_end: cropState.i_end }
-                });
-            } else if (_hasDoc && document.createEvent) {
+            var ev = null;
+            if (typeof CustomEvent === 'function') ev = new CustomEvent(type, { detail: detail });
+            else if (_hasDoc && document.createEvent) {
                 ev = document.createEvent('CustomEvent');
-                ev.initCustomEvent('prism:dataset-cropped', false, false,
-                    { from: from, to: to, t_start: cropState.t_start, t_end: cropState.t_end,
-                      i_start: cropState.i_start, i_end: cropState.i_end });
+                ev.initCustomEvent(type, false, false, detail);
             }
-            if (ev && G.dispatchEvent) G.dispatchEvent(ev);
+            if (ev) G.dispatchEvent(ev);
         } catch (e) { /* ignore */ }
     }
 
-    // Listen for an upstream "dataset-loaded" signal — when a new file is
-    // loaded, we want to forget the previous snapshot.
+    function _dispatchCropEvent(from, to) {
+        _dispatch('prism:dataset-cropped', {
+            from: from, to: to, t_start: cropState.t_start, t_end: cropState.t_end,
+            i_start: cropState.i_start, i_end: cropState.i_end
+        });
+    }
+
+    // A dataset loaded from anywhere else starts a new snapshot; our own
+    // commits (source 'crop') keep it.
+    function _forgetSnapshot() {
+        cropState.fullDataset = null;
+        cropState.owned = null;
+        cropState.t_start = cropState.t_end = null;
+        cropState.i_start = cropState.i_end = null;
+    }
+
+    function _connected() {
+        var c = cropState.container;
+        return !!(c && c.isConnected !== false);
+    }
+
     if (_hasWin && G.addEventListener) {
-        G.addEventListener('prism:dataset-loaded', function () {
-            cropState.fullDataset = null;
-            cropState.t_start = cropState.t_end = null;
-            cropState.i_start = cropState.i_end = null;
-            if (cropState.container) {
+        G.addEventListener('prism:dataset-loaded', function (ev) {
+            var d = ev && ev.detail;
+            if (d && d.source === 'crop') return;
+            _forgetSnapshot();
+            if (cropState.container && _connected()) {
                 _ensureSnapshot();
                 if (cropState.fullDataset) {
                     _normaliseBounds();
                     _syncInputs();
                     _drawCropChart();
-                    _renderPreviewBlock();
                 }
+                _renderPreviewBlock();
             }
+        });
+        G.addEventListener('prism:dataset-cleared', function () {
+            _forgetSnapshot();
+            if (cropState.container && _connected()) _renderPreviewBlock();
         });
     }
 
 
     // ═══════════════════════════════════════════════════════════════
-    // SECTION 9 — WRAP THE ENHANCED DATA-TAB RENDER
+    // SECTION 9 — TAB 1 PANEL (C7 registry)
     // ═══════════════════════════════════════════════════════════════
+    // Mounted by PRiSM_renderTab(1) after the Data tab, below the Well &
+    // Test card (order 10). No wrapping of other renderers, no timers.
 
-    (function _wrapDataRender() {
-        if (!_hasWin) return;
-        if (typeof G.PRiSM_renderDataTabEnhanced !== 'function') {
-            // Tab 1 may render via the foundation directly. Try again later.
-            if (typeof setTimeout === 'function') {
-                setTimeout(_wrapDataRender, 250);
-            }
-            return;
+    var CROP_PANEL = {
+        id: 'crop',
+        title: 'Crop & trim the record',
+        order: 30,
+        render: function (host) {
+            if (!_hasDoc || !host) return;
+            host.innerHTML = '';
+            var box = document.createElement('div');
+            box.id = 'prism_crop_tool_host';
+            box.className = 'prism-crop-tool';
+            host.appendChild(box);
+            G.PRiSM_renderCropTool(box);
         }
-        if (G.PRiSM_renderDataTabEnhanced._cropToolWrapped) return;
-        var orig = G.PRiSM_renderDataTabEnhanced;
-        var wrapped = function (container) {
-            var ret = orig.apply(this, arguments);
-            try {
-                // Find or create a host below the existing data card.
-                var host = null;
-                if (_hasDoc) {
-                    host = document.getElementById('prism_crop_tool_host');
-                    if (!host) {
-                        // Place it inside the Tab 1 body if we can find it.
-                        var tab1 = container && container.appendChild
-                            ? container
-                            : document.getElementById('prism_tab_1');
-                        if (tab1 && tab1.appendChild) {
-                            host = document.createElement('div');
-                            host.id = 'prism_crop_tool_host';
-                            host.className = 'prism-crop-tool';
-                            host.style.marginTop = '16px';
-                            tab1.appendChild(host);
-                        }
-                    }
-                }
-                if (host && typeof G.PRiSM_renderCropTool === 'function') {
-                    G.PRiSM_renderCropTool(host);
-                }
-            } catch (e) {
-                if (typeof console !== 'undefined' && console.warn) {
-                    console.warn('PRiSM crop-tool render failed:', e);
-                }
-            }
-            return ret;
-        };
-        // Preserve flags so other wrappers don't rewrap.
-        for (var k in orig) { try { wrapped[k] = orig[k]; } catch (e) {} }
-        wrapped._cropToolWrapped = true;
-        G.PRiSM_renderDataTabEnhanced = wrapped;
+    };
+
+    (function _registerPanel() {
+        if (!_hasWin) return;
+        if (typeof G.PRiSM_registerTabPanel === 'function') {
+            try { G.PRiSM_registerTabPanel(1, CROP_PANEL); return; } catch (e) { /* fall through */ }
+        }
+        G.PRiSM_tabPanels = G.PRiSM_tabPanels || {};
+        var list = G.PRiSM_tabPanels[1] = G.PRiSM_tabPanels[1] || [];
+        for (var i = 0; i < list.length; i++) {
+            if (list[i] && list[i].id === CROP_PANEL.id) { list[i] = CROP_PANEL; return; }
+        }
+        list.push(CROP_PANEL);
     })();
 
 
@@ -1013,106 +1034,67 @@
         var log = (typeof console !== 'undefined' && console.log) ? console.log.bind(console) : function () {};
         var err = (typeof console !== 'undefined' && console.error) ? console.error.bind(console) : function () {};
         var checks = [];
+        var prevDS = G.PRiSM_dataset;
+        var prevState = { full: cropState.fullDataset, owned: cropState.owned, ts: cropState.t_start, te: cropState.t_end,
+                          is: cropState.i_start, ie: cropState.i_end };
 
-        // ─── Test 1: PRiSM_renderCropTool injects expected DOM elements
-        // We can't easily exercise the real DOM in the smoke-test harness, so
-        // this test runs a lightweight DOM-presence check using a fake
-        // container with a recording appendChild + getElementById.
+        // Test 1: applyCrop slices by absolute time and replaces the dataset.
         try {
-            if (_hasDoc && typeof document.createElement === 'function') {
-                // Create a container detached from <body> — only works in a
-                // real browser. In smoke-test stubs, document.body may exist
-                // but appendChild is a noop, so we just check the API exists.
-                var c = document.createElement('div');
-                if (c && c.style) {
-                    G.PRiSM_renderCropTool(c);
-                    // Check innerHTML now contains the expected ids.
-                    var html = c.innerHTML || '';
-                    var ids = ['prism_crop_canvas', 'prism_crop_tstart', 'prism_crop_tend',
-                               'prism_crop_istart', 'prism_crop_iend',
-                               'prism_crop_apply',  'prism_crop_reset',
-                               'prism_crop_preview'];
-                    var allPresent = true;
-                    for (var i = 0; i < ids.length; i++) {
-                        if (html.indexOf(ids[i]) < 0) { allPresent = false; break; }
-                    }
-                    checks.push({ name: 'renderCropTool injects all expected ids', ok: allPresent });
-                } else {
-                    checks.push({ name: 'renderCropTool injects all expected ids', ok: true /* skipped: no DOM */ });
-                }
-            } else {
-                checks.push({ name: 'renderCropTool injects all expected ids', ok: true /* skipped: no DOM */ });
-            }
-        } catch (e) {
-            checks.push({ name: 'renderCropTool injects all expected ids', ok: false, msg: e && e.message });
-        }
-
-        // ─── Test 2: PRiSM_applyCrop slices correctly + replaces dataset
-        try {
-            // Build a synthetic dataset of 100 samples, t in [0, 99].
             var t = [], p = [], q = [];
             for (var i2 = 0; i2 < 100; i2++) { t.push(i2); p.push(2000 + i2); q.push(500); }
-            var prevDS = G.PRiSM_dataset;
-            G.PRiSM_dataset = { t: t.slice(), p: p.slice(), q: q.slice() };
-            // Force snapshot from this dataset.
-            cropState.fullDataset = null;
-            // Apply a crop t in [25, 74] — should yield 50 samples.
+            G.PRiSM_dataset = { t: t.slice(), p: p.slice(), q: q.slice(), name: 'x', periods: [{ t0: 0, t1: 99 }] };
+            _forgetSnapshot();
             var res = G.PRiSM_applyCrop(25, 74);
             var n = res && res.t ? res.t.length : 0;
-            var firstOK = res && res.t[0] === 25;
-            var lastOK  = res && res.t[res.t.length - 1] === 74;
-            var datasetReplaced = (G.PRiSM_dataset === res);
-            // Counts to 50: t[25] .. t[74] inclusive.
-            var countOK = (n === 50);
             checks.push({ name: 'applyCrop slices to expected range',
-                ok: firstOK && lastOK && datasetReplaced && countOK,
-                msg: 'n=' + n + ' first=' + (res && res.t[0]) + ' last=' + (res && res.t[res.t.length - 1]) });
-            // Also: original snapshot length is still 100.
+                ok: res && res.t[0] === 25 && res.t[n - 1] === 74 && G.PRiSM_dataset === res && n === 50 });
+            checks.push({ name: 'applyCrop keeps scalars, drops derived periods',
+                ok: res && res.name === 'x' && res.periods === undefined });
             checks.push({ name: 'applyCrop preserves snapshot of full dataset',
                 ok: cropState.fullDataset && cropState.fullDataset.t.length === 100 });
-            // Restore previous global state.
-            G.PRiSM_dataset = prevDS;
         } catch (e) {
             checks.push({ name: 'applyCrop slices to expected range', ok: false, msg: e && e.message });
         }
 
-        // ─── Test 3: PRiSM_getCropPreview returns first/last + valid stats
+        // Test 2: getCropPreview returns first/last + valid stats.
         try {
-            // Re-prep a dataset.
             var t3 = [], p3 = [], q3 = [];
             for (var i3 = 0; i3 < 50; i3++) { t3.push(i3 * 0.1); p3.push(1000 + i3 * 2); q3.push(100); }
             G.PRiSM_dataset = { t: t3, p: p3, q: q3 };
-            cropState.fullDataset = null;
-            G.PRiSM_applyCrop(1.0, 3.0); // slice to ~ 21 samples
+            _forgetSnapshot();
+            G.PRiSM_applyCrop(1.0, 3.0);
             var prev = G.PRiSM_getCropPreview();
-            var hasFirst = prev && prev.firstRows && prev.firstRows.length === 3;
-            var hasLast  = prev && prev.lastRows  && prev.lastRows.length === 3;
-            var hasN     = prev && prev.n === 21;
-            var hasSpan  = prev && prev.tSpan && Math.abs(prev.tSpan.delta - 2.0) < 1e-6;
-            var hasPRng  = prev && prev.pRange && prev.pRange.range > 0;
             checks.push({ name: 'getCropPreview returns first/last + stats',
-                ok: hasFirst && hasLast && hasN && hasSpan && hasPRng,
-                msg: 'n=' + (prev && prev.n) + ' delta=' + (prev && prev.tSpan && prev.tSpan.delta) });
+                ok: prev && prev.firstRows.length === 3 && prev.lastRows.length === 3 && prev.n === 21 &&
+                    Math.abs(prev.tSpan.delta - 2.0) < 1e-6 && prev.pRange && prev.pRange.range > 0 });
         } catch (e) {
             checks.push({ name: 'getCropPreview returns first/last + stats', ok: false, msg: e && e.message });
         }
 
-        // ─── Test 4: PRiSM_resetCrop restores the full snapshot
+        // Test 3: resetCrop restores the full snapshot; rate-only data works.
         try {
-            var t4 = [], p4 = [];
-            for (var i4 = 0; i4 < 30; i4++) { t4.push(i4); p4.push(1500 + i4); }
-            G.PRiSM_dataset = { t: t4.slice(), p: p4.slice(), q: null };
-            cropState.fullDataset = null;
-            G.PRiSM_applyCrop(5, 20);   // crop to 16 samples
+            var t4 = [], q4 = [];
+            for (var i4 = 0; i4 < 30; i4++) { t4.push(i4); q4.push(900 - i4); }
+            G.PRiSM_dataset = { t: t4.slice(), p: null, q: q4.slice() };
+            _forgetSnapshot();
+            G.PRiSM_applyCrop(5, 20);
             var beforeReset = G.PRiSM_dataset.t.length;
             G.PRiSM_resetCrop();
-            var afterReset  = G.PRiSM_dataset.t.length;
-            checks.push({ name: 'resetCrop restores full snapshot',
-                ok: beforeReset === 16 && afterReset === 30,
-                msg: 'before=' + beforeReset + ' after=' + afterReset });
+            checks.push({ name: 'resetCrop restores full snapshot (rate-only data)',
+                ok: beforeReset === 16 && G.PRiSM_dataset.t.length === 30 && G.PRiSM_dataset.p === null });
         } catch (e) {
             checks.push({ name: 'resetCrop restores full snapshot', ok: false, msg: e && e.message });
         }
+
+        // Test 4: the crop panel is registered for Tab 1.
+        var reg = G.PRiSM_tabPanels && G.PRiSM_tabPanels[1];
+        checks.push({ name: 'crop panel registered on Tab 1',
+            ok: !_hasWin || !!(reg && reg.some(function (s) { return s && s.id === 'crop'; })) });
+
+        G.PRiSM_dataset = prevDS;
+        cropState.fullDataset = prevState.full; cropState.owned = prevState.owned;
+        cropState.t_start = prevState.ts; cropState.t_end = prevState.te;
+        cropState.i_start = prevState.is; cropState.i_end = prevState.ie;
 
         var fails = checks.filter(function (c) { return !c.ok; });
         if (fails.length) {

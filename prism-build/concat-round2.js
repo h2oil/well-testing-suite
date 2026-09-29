@@ -22,7 +22,8 @@ const FILES = [
 
 const ROOT = __dirname;
 
-function stripSelfTest(src, fileLabel) {
+function stripSelfTest(src, fileLabel, logger) {
+  const log = logger || console;
   const lines = src.split(/\r?\n/);
   let selfTestStart = -1;
   // Find the LAST self-test marker. Accepts:
@@ -38,7 +39,7 @@ function stripSelfTest(src, fileLabel) {
     }
   }
   if (selfTestStart === -1) {
-    console.warn(`[WARN] ${fileLabel}: no self-test marker — leaving unchanged`);
+    log.warn(`[WARN] ${fileLabel}: no self-test marker — leaving unchanged`);
     return src;
   }
   // Walk back over comment-banner separator lines + blank lines.
@@ -63,7 +64,7 @@ function stripSelfTest(src, fileLabel) {
   head.push('');
   const before = lines.length;
   const after = head.length;
-  console.log(`[strip] ${fileLabel}: ${before} → ${after} lines (cut self-test from line ${selfTestStart + 1})`);
+  log.log(`[strip] ${fileLabel}: ${before} → ${after} lines (cut self-test from line ${selfTestStart + 1})`);
   return head.join('\n');
 }
 
@@ -76,27 +77,43 @@ const banner = (label) =>
 const footer = (label) =>
   '\n// ─── END ' + label + ' ─────────────────────────────────────────────\n\n';
 
-let combined =
-  '\n// ═══════════════════════════════════════════════════════════════════════\n' +
-  '// PRiSM Round-2 expansion — auto-injected from prism-build/\n' +
-  '//   • 08-composite-multilayer        (Phase 5: 7 composite/multi-layer single-well)\n' +
-  '//   • 09-interference-multilateral   (Phase 6: 16 interference + multi-lateral)\n' +
-  '//   • 10-specialised-solvers         (Phase 7: #18 user-defined + #38 water injection)\n' +
-  '//   • 11-polish                      (14 SVG schematics + 20 analysis keys + PNG + GA4)\n' +
-  '//   • 12-data-crop                   (interactive Data-tab crop/trim chart)\n' +
-  '//   • 13-auto-match                  (regime classifier + LM model race + top-N ranking)\n' +
-  '//   • 14-interpretation              (plain-English fit narrative + actions + cautions)\n' +
-  '//   • 15-diagnostic-annotations      (auto-Bourdet-L picker + plot-regime markers)\n' +
-  '// ═══════════════════════════════════════════════════════════════════════\n';
-
-for (const f of FILES) {
-  const p = path.join(ROOT, f);
-  const src = fs.readFileSync(p, 'utf8');
-  const stripped = stripSelfTest(src, f);
-  const label = f.replace(/\.js$/, '');
-  combined += banner(label) + stripped + footer(label);
+// opts.read(fileName) → source text, or null to skip the file
+//   (default: read prism-build/<fileName>; a missing file throws, as before).
+// opts.log → { log, warn } (default: console).
+function build(opts) {
+  opts = opts || {};
+  const log = opts.log || console;
+  const read = opts.read || ((f) => fs.readFileSync(path.join(ROOT, f), 'utf8'));
+  let combined =
+    '\n// ═══════════════════════════════════════════════════════════════════════\n' +
+    '// PRiSM Round-2 expansion — auto-injected from prism-build/\n' +
+    '//   • 08-composite-multilayer        (Phase 5: 7 composite/multi-layer single-well)\n' +
+    '//   • 09-interference-multilateral   (Phase 6: 16 interference + multi-lateral)\n' +
+    '//   • 10-specialised-solvers         (Phase 7: #18 user-defined + #38 water injection)\n' +
+    '//   • 11-polish                      (14 SVG schematics + 24 line tools + PNG + GA4)\n' +
+    '//   • 12-data-crop                   (interactive Data-tab crop/trim chart)\n' +
+    '//   • 13-auto-match                  (regime classifier + LM model race + top-N ranking)\n' +
+    '//   • 14-interpretation              (plain-English fit narrative + actions + cautions)\n' +
+    '//   • 15-diagnostic-annotations      (auto-Bourdet-L picker + plot-regime markers)\n' +
+    '// ═══════════════════════════════════════════════════════════════════════\n';
+  for (const f of FILES) {
+    const src = read(f);
+    if (src == null) { log.warn(`[WARN] ${f}: not available — skipped`); continue; }
+    const stripped = stripSelfTest(src, f, log);
+    const label = f.replace(/\.js$/, '');
+    combined += banner(label) + stripped + footer(label);
+  }
+  return combined;
 }
 
-const outPath = path.join(ROOT, 'combined-round2.js');
-fs.writeFileSync(outPath, combined, 'utf8');
-console.log(`\n[ok] wrote ${outPath} (${combined.split('\n').length} lines)`);
+const OUT = path.join(ROOT, 'combined-round2.js');
+
+function main() {
+  const combined = build();
+  const outPath = OUT;
+  fs.writeFileSync(outPath, combined, 'utf8');
+  console.log(`\n[ok] wrote ${outPath} (${combined.split('\n').length} lines)`);
+}
+
+module.exports = { FILES, OUT, build, stripSelfTest, main };
+if (require.main === module) main();

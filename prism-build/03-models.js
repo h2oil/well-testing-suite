@@ -1,38 +1,70 @@
 // =============================================================================
-// PRiSM — Phase 2 Type-Curve Models (12 evaluators)
+// PRiSM — Phase 2 Type-Curve Models (model kernels I)
 // =============================================================================
 // Pressure Reservoir inversion & Simulation Model — Advanced Well Test Analysis
 //
-// This file implements 11 standard well/reservoir/boundary models (12 total
-// evaluator functions including #4 vs #12 finite-conductivity variants).
-// Models #1 (Homogeneous) is supplied by the foundation file.
+// This file owns the Laplace-domain kernels for the 03 model family plus the
+// shared wellbore-storage/skin evaluator used by the rest of the model library:
+//
+//   homogeneous      #1   vertical well, finite wellbore, WBS + skin
+//   infiniteFrac     #3   infinite-conductivity (or uniform-flux) fracture
+//   finiteFrac       #4   finite-conductivity fracture (semi-analytic)
+//   inclined         #7   slant well (homogeneous + Cinco-Ley pseudo-skin)
+//   horizontal       #8   horizontal well (uniform-flux line source in a slab)
+//   linearBoundary   #10a single sealing / constant-pressure boundary
+//   parallelChannel  #10b two parallel sealing faults
+//   closedChannel3   #10c channel closed at one end
+//   closedRectangle  #10d closed rectangle, well anywhere inside
+//   intersecting     #10e two intersecting sealing faults
+//   fogBoundary      #10f leaky fault (constant partial-image approximation)
+//   finiteFracSkin   #12  finite-conductivity fracture + fracture-face skin
+//   partialPenFrac   #30  partial-height fracture (Green's-function shortcut)
 //
 // Universal signature for every model:
 //
-//   PRiSM_model_<name>(td, params) -> pd            (number or array)
-//   PRiSM_model_<name>_pd_prime(td, params) -> tdp  (logarithmic derivative
-//                                                    td * dPd/dtd of the
-//                                                    Bourdet kind, no superpos)
+//   PRiSM_model_<name>(td, params) -> pd                (number or array)
+//   PRiSM_model_<name>_pd_prime(td, params) -> pd'      (td·dpd/dtd, Bourdet
+//                                                         derivative, no
+//                                                         superposition)
 //
-// Conventions:
-//  - Dimensionless time td is referenced to fracture half-length, well radius,
-//    horizontal-well length, or other relevant characteristic length depending
-//    on the model. Each function header documents the convention.
-//  - Wellbore storage Cd and total skin S are folded in via the Laplace-domain
-//    relation
+// Units & conventions
+//  - Everything here is dimensionless. td is referenced to the model's
+//    reference length (registry `refLength`: 'rw', 'xf' or 'Lh').
+//    pD = kh·Δp / (141.2 qBμ) in field units, i.e. referenced to the
+//    formation kh, for every model.
+//  - Wellbore storage Cd and skin S are folded in the Laplace domain:
 //
-//                    Pd_lap_reservoir + S
-//      Pd_lap = ---------------------------------
-//               s * ( 1 + s*Cd*(s*Pd_lap_res + S) )
+//                    s·p̄ + S
+//      p̄_wD = ----------------------------          p̄ = reservoir solution
+//              s · ( 1 + Cd·s·(s·p̄ + S) )               (no WBS, no skin)
 //
-//    (Agarwal-Ramey, Bourdet-Gringarten). The Stehfest inverter is then
-//    applied to F(s) = Pd_lap(s).
-//  - Logarithmic derivative tdp = td * dPd/dtd is computed with a 5-point
-//    central difference in ln(td) space when an analytic Laplace derivative
-//    is unavailable.
-//  - Image-well series cap at 200 total terms, with early break when the
-//    contribution of new image pairs drops below 1e-9. Convergence warnings
-//    are emitted via console.warn (never thrown).
+//    (Agarwal-Al-Hussainy-Ramey 1970). This is done in ONE place,
+//    PRiSM_evalWbsSkin(), exported for every other model file.
+//  - Negative skin. The fold has a pole where s·p̄ + S = 0 when S < 0. For
+//    S < 0 we therefore use the effective-wellbore-radius transform
+//    (rwa = rw·e^−S): evaluate the S = 0 problem at tDa = td·e^{2S},
+//    CDa = Cd·e^{2S}, with rw-normalised distances multiplied by e^{S}.
+//    pD is invariant and td·dpD/dtd = tDa·dpD/dtDa. For xf / Lh referenced
+//    models the same transform is applied to time and storage only
+//    (an effective-length stretch); their shape parameters are unchanged.
+//  - rw-referenced models use the finite-wellbore well term
+//      p̄_w = K0(√s) / ( s·√s·K1(√s) )
+//    and image wells  K0(√s·r) / ( s·√s·K1(√s) ),  evaluated with
+//    exponentially scaled Bessel functions so nothing underflows to 0/0 at
+//    large s (very early time or strongly negative skin).
+//  - The Bourdet derivative is computed in the Laplace domain:
+//    td·dpD/dtd = td · L⁻¹[ s·p̄_wD(s) ](td)  (pD(0+) = 0), inverted with the
+//    same Stehfest weights, so derivative and pressure are consistent.
+//  - Image lattices (channel, 3-sided channel, rectangle) are summed with the
+//    Laplace transform of the product of two 1-D theta functions:
+//
+//      Σ_images K0(√s·r_i) = ∫_0^∞ e^{−st} [Θx(t)·Θy(t) − 1] / (2t) dt
+//
+//    where Θ(t) = Σ_offsets e^{−d²/(4t)} is evaluated in its image form for
+//    small t and in its Fourier (Poisson-summed) form for large t. The
+//    integral is done with the trapezoid rule in ln t (double-exponential
+//    decay at both ends). This has no image-count cap, honours the well
+//    position, and reaches pseudo-steady state exactly (Θ grows as √t).
 //
 // References inline above each evaluator.
 // =============================================================================
@@ -40,1063 +72,933 @@
 (function () {
 'use strict';
 
-// ---- foundation primitives (assumed defined in the orchestrator scope) ----
-//   PRiSM_stehfest(Fhat, t, N)        Stehfest numerical Laplace inversion
-//   PRiSM_besselK0(x), PRiSM_besselK1(x)
-//   PRiSM_Ei(x)                       exponential integral
-//   PRiSM_pd_lap_homogeneous(s, p)    Laplace-domain Pd of the Homogeneous
-//                                     reservoir model (with WBS+S folded in
-//                                     by the foundation file)
-//
-// They live on the global / IIFE-host scope. We resolve them lazily so the
-// self-test block below can stub them in if the foundation file has not
-// been loaded yet.
+var _G = (typeof window !== 'undefined') ? window
+       : (typeof globalThis !== 'undefined' ? globalThis : {});
 
+// ---- foundation primitives ------------------------------------------------
+// The foundation file (01) declares its primitives as plain functions / consts
+// in the host IIFE scope (not on window). Resolve by name: window first, then
+// the lexical scope via a guarded direct eval (identifier names only).
+// Nothing in this file REQUIRES the foundation: the Stehfest weights and the
+// Bessel functions below are self-contained, so the file also runs standalone.
+var _fcache = {};
 function _foundation(name) {
-  var g = (typeof window !== 'undefined') ? window : (typeof globalThis !== 'undefined' ? globalThis : {});
-  if (typeof g[name] === 'function') return g[name];
-  // also accept symbols introduced via plain `var` in an IIFE host
-  // (works in the orchestrated build; in the self-test we replace these).
-  if (typeof eval(name + ' === "function"') === 'undefined') {
-    // shouldn't reach here
+  if (_fcache[name]) return _fcache[name];
+  var f = null;
+  if (_G[name] != null && (typeof _G[name] === 'function' || typeof _G[name] === 'object')) {
+    f = _G[name];
+  } else if (/^[A-Za-z_$][\w$]*$/.test(name)) {
+    try { f = eval(name); } catch (e) { f = null; }
   }
-  try { return eval(name); } catch (e) { return null; }
+  if (f != null) _fcache[name] = f;
+  return f;
 }
 
 // ============================================================================
-// Common helpers
+// SECTION 1 — Numerics: Stehfest, scaled Bessel K, ∫K0
 // ============================================================================
 
-var STEHFEST_N      = 12;     // Stehfest order used by every Laplace model
-var IMAGE_CAP       = 200;    // hard cap on image-well terms per series
-var IMAGE_TOL       = 1e-9;   // convergence tolerance per term contribution
-var DERIV_REL_STEP  = 1e-3;   // relative log-step for numerical derivative
+var STEHFEST_N = 12;
+var EULER      = 0.5772156649015329;
+var HALF_PI    = Math.PI / 2;
 
-// numeric guards ------------------------------------------------------------
-
-function _num(v) {
-  return (typeof v === 'number') && isFinite(v) && !isNaN(v);
-}
-
-function _requirePositiveTd(td) {
-  if (Array.isArray(td)) {
-    for (var i = 0; i < td.length; i++) {
-      if (!_num(td[i]) || td[i] <= 0) {
-        throw new Error('PRiSM model: td must be > 0 (got ' + td[i] + ' at index ' + i + ')');
-      }
+var _W12 = null;
+function _stehfestWeights() {
+  if (_W12) return _W12;
+  var tbl = _foundation('PRiSM_STEHFEST_W');
+  if (tbl && tbl[STEHFEST_N] && tbl[STEHFEST_N].length === STEHFEST_N) {
+    _W12 = tbl[STEHFEST_N];
+    return _W12;
+  }
+  // Local copy of the same Stehfest (1970) weights (only used standalone).
+  var N = STEHFEST_N, N2 = N / 2, fact = [1];
+  for (var i = 1; i <= 2 * N; i++) fact[i] = fact[i - 1] * i;
+  var W = new Array(N);
+  for (var n = 1; n <= N; n++) {
+    var sum = 0;
+    for (var k = Math.floor((n + 1) / 2); k <= Math.min(n, N2); k++) {
+      sum += Math.pow(k, N2) * fact[2 * k] /
+             (fact[N2 - k] * fact[k] * fact[k - 1] * fact[n - k] * fact[2 * k - n]);
     }
+    W[n - 1] = (((n + N2) % 2 === 0) ? 1 : -1) * sum;
+  }
+  _W12 = W;
+  return W;
+}
+
+// f(t) ≈ (ln2/t) Σ V_i F(i ln2 / t)
+function _invert(F, t) {
+  var W = _stehfestWeights();
+  var a = Math.LN2 / t, acc = 0;
+  for (var i = 1; i <= STEHFEST_N; i++) acc += W[i - 1] * F(i * a);
+  return a * acc;
+}
+
+// Modified Bessel functions to ~1e-15 relative. The Laplace kernels are
+// inverted with Stehfest, which amplifies any non-smooth error in F(s) by
+// ~1e5, so the 1e-7 polynomial approximations are not good enough here.
+//  x ≤ 2 : ascending series (A&S 9.6.10-13)
+//  x > 2 : trapezoid rule on K_ν(x)·e^x = ∫_0^∞ e^{−x(cosh u − 1)} cosh(νu) du
+//          (analytic in |Im u| < π/2 → error ~ e^{−π²/h}; h = 0.2 → 1e-21).
+var BESSEL_H = 0.2;
+function _KsmallPair(x) {            // [K0(x), K1(x)] by series, 0 < x ≤ 2
+  var y = x * x / 4, lx = Math.log(x / 2);
+  var t0 = 1, t1 = 1;                // (y^k/(k!)^2), (y^k/(k!(k+1)!))
+  var I0 = 0, I1s = 0, s0 = 0, s1 = 0, psi = -EULER, psi1 = 1 - EULER;
+  for (var k = 0; k < 60; k++) {
+    if (k > 0) {
+      t0 *= y / (k * k); t1 *= y / (k * (k + 1));
+      psi += 1 / k; psi1 += 1 / (k + 1);
+    }
+    I0 += t0; I1s += t1;
+    s0 += psi * t0; s1 += (psi + psi1) * t1;
+    if (t0 < 1e-18 * I0 && k > 2) break;
+  }
+  var I1 = (x / 2) * I1s;
+  return [-lx * I0 + s0, 1 / x + lx * I1 - (x / 4) * s1];
+}
+function _KePair(x) {                // [K0e(x), K1e(x)] for x > 2
+  var h = BESSEL_H, s0 = 0.5, s1 = 0.5;
+  for (var k = 1; k < 400; k++) {
+    var u = k * h, ch = Math.cosh(u), e = Math.exp(-x * (ch - 1));
+    s0 += e; s1 += e * ch;
+    if (e * ch < 1e-18 * s1) break;
+  }
+  return [s0 * h, s1 * h];
+}
+function _K0e(x) {
+  if (x <= 2) return _KsmallPair(x)[0] * Math.exp(x);
+  return _KePair(x)[0];
+}
+function _K1e(x) {
+  if (x <= 2) return _KsmallPair(x)[1] * Math.exp(x);
+  return _KePair(x)[1];
+}
+function _K0(x) {
+  if (!(x > 0)) return Infinity;
+  if (x <= 2) return _KsmallPair(x)[0];
+  if (x > 740) return 0;
+  return _KePair(x)[0] * Math.exp(-x);
+}
+
+// ∫_0^z K0(t) dt: exact term-by-term integral of the K0 ascending series for
+// z ≤ 2; beyond, π/2 − T(z) with T(z) = ∫_z^∞ K0 = ∫_0^∞ e^{−z cosh u}/cosh u du
+// (trapezoid, same exponential accuracy as above).
+function _tailK0(z) {                 // ∫_z^∞ K0(t) dt
+  if (!(z > 0)) return HALF_PI;
+  if (z <= 2) return HALF_PI - _intK0(z);
+  if (z > 740) return 0;
+  var h = BESSEL_H, s = 0.5;
+  for (var k = 1; k < 400; k++) {
+    var ch = Math.cosh(k * h), e = Math.exp(-z * (ch - 1)) / ch;
+    s += e;
+    if (e < 1e-18 * s) break;
+  }
+  return s * h * Math.exp(-z);
+}
+function _intK0(z) {
+  if (!(z > 0)) return 0;
+  if (z > 2) return HALF_PI - _tailK0(z);
+  var w = z / 2, lnw = Math.log(w), w2 = w * w;
+  var pw = w, ak = 1, Hk = 0, sum = 0;
+  for (var k = 0; k < 400; k++) {
+    if (k > 0) { ak /= (k * k); Hk += 1 / k; pw *= w2; }
+    var inv = 1 / (2 * k + 1);
+    var term = ak * 2 * pw * inv * (Hk - EULER - lnw + inv);
+    sum += term;
+    if (k > w && Math.abs(term) <= 1e-17 * Math.abs(sum)) break;
+  }
+  return sum;
+}
+
+// ---- Laplace building blocks (reservoir p̄, no WBS / skin) ---------------
+// finite-wellbore well term  K0(√s) / (s √s K1(√s))
+function _wellTerm(s) {
+  var q = Math.sqrt(s);
+  return _K0e(q) / (s * q * _K1e(q));
+}
+// image well at distance r (rw units)  K0(√s r) / (s √s K1(√s))
+function _imageTerm(s, r) {
+  var q = Math.sqrt(s);
+  if (!(r > 0)) return 0;
+  var num;
+  if (r >= 1) {
+    var e = q * (r - 1);
+    if (e > 740) return 0;
+    num = _K0e(q * r) * Math.exp(-e);
   } else {
-    if (!_num(td) || td <= 0) {
-      throw new Error('PRiSM model: td must be > 0 (got ' + td + ')');
-    }
+    num = _K0(q * r) * Math.exp(Math.min(q, 700));
   }
+  return num / (s * q * _K1e(q));
+}
+// convert a raw image sum B = Σ K0(√s r_i) into the finite-wellbore form
+function _latticeTerm(s, B) {
+  if (!(B > 0)) return 0;
+  var q = Math.sqrt(s);
+  var lg = Math.log(B) + q;
+  if (lg > 700) lg = 700;
+  return Math.exp(lg) / (s * q * _K1e(q));
 }
 
-function _requireParams(params, keys) {
-  if (!params || typeof params !== 'object') {
-    throw new Error('PRiSM model: params object required');
+// ---- Theta-function lattice sums ------------------------------------------
+// axis spec:
+//   null                               no boundary on this axis (Θ = 1)
+//   {finite:[d1, d2, ...]}             finite set of non-zero image offsets
+//   {L, w}                             two walls a distance L apart, well at w
+//                                      from the first: offsets {2iL} ∪ {2w+2iL}
+function _axisRmin(ax) {
+  if (!ax) return Infinity;
+  if (ax.finite) {
+    var m = Infinity;
+    for (var i = 0; i < ax.finite.length; i++) m = Math.min(m, Math.abs(ax.finite[i]));
+    return m;
   }
-  for (var i = 0; i < keys.length; i++) {
-    var k = keys[i];
-    if (!(k in params)) {
-      throw new Error('PRiSM model: missing required param "' + k + '"');
+  return Math.min(2 * ax.L, 2 * ax.w, 2 * (ax.L - ax.w));
+}
+function _thetaM1(ax, t) {           // Θ(t) − 1  (the zero offset excluded)
+  if (!ax) return 0;
+  var sum = 0, i, e;
+  if (ax.finite) {
+    for (i = 0; i < ax.finite.length; i++) {
+      e = ax.finite[i] * ax.finite[i] / (4 * t);
+      if (e < 745) sum += Math.exp(-e);
     }
-    var v = params[k];
-    if (typeof v === 'number' && !_num(v)) {
-      throw new Error('PRiSM model: param "' + k + '" is NaN/Infinity');
-    }
+    return sum;
   }
+  var L = ax.L, w = ax.w;
+  if (t < L * L) {
+    // image form: Σ_{i≠0} e^{-i²L²/t} + Σ_i e^{-(w+iL)²/t}
+    for (i = 1; i < 1000; i++) {
+      e = i * i * L * L / t;
+      if (e > 745) break;
+      sum += 2 * Math.exp(-e);
+    }
+    for (i = 0; i < 1000; i++) {
+      e = (w + i * L) * (w + i * L) / t;
+      if (e > 745) break;
+      sum += Math.exp(-e);
+    }
+    for (i = -1; i > -1000; i--) {
+      e = (w + i * L) * (w + i * L) / t;
+      if (e > 745) break;
+      sum += Math.exp(-e);
+    }
+    return sum;
+  }
+  // Fourier (Poisson) form: Θ = (√(πt)/L)[2 + 2Σ e^{-m²π²t/L²}(1 + cos(2mπw/L))]
+  var a = Math.PI * Math.PI * t / (L * L), f = 2;
+  for (var m = 1; m < 50; m++) {
+    e = m * m * a;
+    if (e > 745) break;
+    f += 2 * Math.exp(-e) * (1 + Math.cos(2 * m * Math.PI * w / L));
+  }
+  return Math.sqrt(Math.PI * t) / L * f - 1;
+}
+// Σ_images K0(√s r) over the product lattice of two axes
+var LATTICE_H = 0.1;          // trapezoid step in ln t
+function _latticeK0Sum(s, ax, ay) {
+  var rmin = Math.min(_axisRmin(ax), _axisRmin(ay));
+  if (!isFinite(rmin) || !(rmin > 0)) return 0;
+  var q = Math.sqrt(s);
+  if (q * rmin > 80) return 0;                 // < e^-80 relative: negligible
+  var vlo = Math.log(rmin * rmin / 200);
+  var vhi = Math.log(50 / s);
+  if (vhi <= vlo) return 0;
+  var n = Math.ceil((vhi - vlo) / LATTICE_H);
+  var h = (vhi - vlo) / n, sum = 0;
+  for (var k = 0; k <= n; k++) {
+    var t = Math.exp(vlo + k * h);
+    var gx = _thetaM1(ax, t), gy = _thetaM1(ay, t);
+    var g = gx * gy + gx + gy;
+    if (g === 0) continue;
+    var val = 0.5 * Math.exp(-s * t) * g;
+    sum += (k === 0 || k === n) ? 0.5 * val : val;
+  }
+  return sum * h;
 }
 
-function _arrayMap(td, fn) {
+// ============================================================================
+// SECTION 2 — Shared WBS + skin evaluator  (window.PRiSM_evalWbsSkin)
+// ============================================================================
+//
+//   PRiSM_evalWbsSkin(lapRes, td, Cd, S, opts) → pd (or pd' when
+//                                                opts.derivative) for td
+//                                                number | array
+//     lapRes(s, dScale) → reservoir p̄(s) (no WBS, no skin). dScale is the
+//                          factor to apply to rw-normalised distances
+//                          (1, or e^{S} under the S < 0 transform).
+//     opts.scaleDistances  (default true) pass dScale = e^S when S < 0;
+//                          false → dScale is always 1 (xf / Lh models).
+//     opts.derivative      return td·dpd/dtd instead of pd.
+//
+// Pure-storage fast path: when tDa < min(1e-3·CDa, 1e-12·CDa²) the response is
+// pd = td/Cd to better than ~1e-6 relative (the first correction is
+// O(√tDa/CDa)), and so is the derivative.
+
+function _fold(u, s, C, S) {
+  var inner = u + S;
+  return inner / (s * (1 + C * s * inner));
+}
+
+function _evalOne(lapRes, t, Cd, S, scaleDist, deriv) {
+  if (!(t > 0)) return 0;
+  var C = (Cd > 0) ? Cd : 0, SS = S || 0, tt = t, dScale = 1;
+  if (SS < 0) {
+    var e2 = Math.exp(2 * SS);
+    tt = t * e2; C = C * e2;
+    dScale = scaleDist ? Math.exp(SS) : 1;
+    SS = 0;
+  }
+  if (C > 0 && tt < Math.min(1e-3 * C, 1e-12 * C * C)) return tt / C;
+  var F = function (s) {
+    var pbar = lapRes(s, dScale);
+    return _fold(s * pbar, s, C, SS);
+  };
+  var v;
+  if (deriv) v = tt * _invert(function (s) { return s * F(s); }, tt);
+  else v = _invert(F, tt);
+  return v;
+}
+
+function PRiSM_evalWbsSkin(lapRes, td, Cd, S, opts) {
+  if (typeof lapRes !== 'function') throw new Error('PRiSM_evalWbsSkin: lapRes must be a function');
+  opts = opts || {};
+  var scaleDist = opts.scaleDistances !== false;
+  var deriv = !!opts.derivative;
+  if (!isFinite(Cd)) throw new Error('PRiSM_evalWbsSkin: Cd must be finite');
+  if (!isFinite(S)) throw new Error('PRiSM_evalWbsSkin: S must be finite');
   if (Array.isArray(td)) {
     var out = new Array(td.length);
-    for (var i = 0; i < td.length; i++) out[i] = fn(td[i]);
+    for (var i = 0; i < td.length; i++) out[i] = _evalOne(lapRes, +td[i], Cd, S, scaleDist, deriv);
     return out;
   }
-  return fn(td);
-}
-
-// fold WBS + skin into a Laplace-domain reservoir solution Pd_lap_res(s)
-// using the standard relation:
-//
-//      Pwd_lap = ( s*Pd_lap_res + S ) / ( s * ( 1 + Cd * s * (s*Pd_lap_res + S) ) )
-//
-// (Agarwal-Ramey 1970; Bourdet-Gringarten 1980)
-function _foldWbsSkin(pdResLap, s, Cd, S) {
-  var inner = s * pdResLap + S;
-  var denom = s * (1 + Cd * s * inner);
-  if (!_num(denom) || denom === 0) return 1e30;
-  return inner / denom;
-}
-
-// numerical logarithmic derivative td * dPd/dtd via 5-point central diff in ln td
-function _numericLogDeriv(pdFn, td, params) {
-  var h = DERIV_REL_STEP;
-  // u = ln(td); we evaluate pd at u-2h, u-h, u+h, u+2h
-  var lnTd = Math.log(td);
-  var f_m2 = pdFn(Math.exp(lnTd - 2 * h), params);
-  var f_m1 = pdFn(Math.exp(lnTd -     h), params);
-  var f_p1 = pdFn(Math.exp(lnTd +     h), params);
-  var f_p2 = pdFn(Math.exp(lnTd + 2 * h), params);
-  // 5-point central derivative w.r.t. ln td
-  var dPd_dlnTd = (-f_p2 + 8 * f_p1 - 8 * f_m1 + f_m2) / (12 * h);
-  return dPd_dlnTd;  // == td * dPd/dtd
-}
-
-// generic primer helper: take a Laplace-domain Pd_lap_res(s) generator and
-// return a real-time pd(td) (number or array) with WBS+skin already folded.
-function _stehfestEval(pdResLapFn, td, Cd, S) {
-  var stehfest = _foundation('PRiSM_stehfest');
-  if (!stehfest) {
-    throw new Error('PRiSM_stehfest() missing — foundation file not loaded');
-  }
-  var Fhat = function (s) { return _foldWbsSkin(pdResLapFn(s), s, Cd, S); };
-  return _arrayMap(td, function (t) { return stehfest(Fhat, t, STEHFEST_N); });
+  return _evalOne(lapRes, +td, Cd, S, scaleDist, deriv);
 }
 
 // ============================================================================
-// MODEL #3 — Infinite-Conductivity Hydraulic Fracture (vertical well)
-// ============================================================================
-//
-// Reference: Gringarten, A.C., Ramey, H.J., Raghavan, R.
-//   "Unsteady-State Pressure Distributions Created by a Well with a Single
-//    Infinite-Conductivity Vertical Fracture." SPEJ, August 1974.
-//
-// Physics: vertical fracture of half-length xf in a homogeneous infinite
-//   reservoir; pressure drop along the fracture is negligible (infinite
-//   conductivity), so the entire fracture face is at uniform pressure.
-//   Early-time response is linear flow into the fracture (½-slope on log-log
-//   derivative); late-time transitions to pseudo-radial flow.
-//
-// Dimensionless time: tDxf = k * t / ( phi * mu * ct * xf^2 )
-//
-// Solution (Gringarten 1974, Eq. 5 — uniform-flux fracture used as the
-// rigorous infinite-conductivity surrogate, accurate to <1% beyond tDxf=0.1):
-//
-//   pd(tDxf) = sqrt(pi*tDxf) * erf(1/(2*sqrt(tDxf)))
-//             - 0.5 * Ei(-1/(4*tDxf))
-//
-// where erf is the error function. We provide a simple polynomial erf and
-// reuse the foundation's PRiSM_Ei. For regression-quality use we also expose
-// a Laplace-domain wellbore-storage path through _stehfestEval.
-//
-// Params: { Cd, S }
-//   Cd = wellbore storage coefficient, dimensionless
-//   S  = mechanical / fracture-face skin, dimensionless
+// SECTION 3 — Parameter helpers
 // ============================================================================
 
-function _erf(x) {
-  // Abramowitz & Stegun 7.1.26 — max error 1.5e-7
-  var sign = (x < 0) ? -1 : 1;
-  var a1 =  0.254829592, a2 = -0.284496736, a3 =  1.421413741;
-  var a4 = -1.453152027, a5 =  1.061405429, p  =  0.3275911;
-  var ax = Math.abs(x);
-  var t = 1 / (1 + p * ax);
-  var y = 1 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-ax * ax);
-  return sign * y;
-}
+function _num(v) { return (typeof v === 'number') && isFinite(v); }
 
-// Closed-form (no WBS) infinite-conductivity fracture solution
-function _pd_infFrac_closed(tDxf) {
-  if (tDxf <= 0) return 0;
-  var Ei = _foundation('PRiSM_Ei');
-  // pd = sqrt(pi*tDxf) * erf(1/(2*sqrt(tDxf))) - 0.5*Ei(-1/(4*tDxf))
-  var sqrtT = Math.sqrt(tDxf);
-  var arg   = 1 / (2 * sqrtT);
-  var term1 = Math.sqrt(Math.PI * tDxf) * _erf(arg);
-  var arg2  = -1 / (4 * tDxf);
-  var term2 = -0.5 * (Ei ? Ei(arg2) : 0);  // Ei(negative arg)
-  return term1 + term2;
-}
-
-// Laplace-domain Pd_lap of the infinite-conductivity fracture (Ozkan-
-// Raghavan 1991 source-function form, no WBS):
-//
-//   Pd_lap_res(s) = K0(sqrt(s)) / s        ... approximation valid for the
-//                                              uniform-flux surrogate
-//
-// For higher fidelity at very early time we fall back to the closed form
-// when Cd == 0 and S == 0; otherwise we go through Laplace + Stehfest.
-
-function _pdLap_infFrac(s, params) {
-  // params unused beyond Cd/S which are folded outside
-  var K0 = _foundation('PRiSM_besselK0');
-  if (!K0) throw new Error('PRiSM_besselK0 missing');
-  var sq = Math.sqrt(s);
-  return K0(sq) / s;
-}
-
-/**
- * Infinite-conductivity hydraulic fracture (Gringarten-Ramey-Raghavan 1974).
- * @param {number|number[]} td - dimensionless time tDxf
- * @param {{Cd:number, S:number}} params
- * @returns {number|number[]} Pd
- */
-function PRiSM_model_infiniteFrac(td, params) {
-  _requirePositiveTd(td);
-  _requireParams(params, ['Cd', 'S']);
-  var Cd = params.Cd, S = params.S;
-  if (Cd === 0 && S === 0) {
-    return _arrayMap(td, _pd_infFrac_closed);
-  }
-  return _stehfestEval(function (s) { return _pdLap_infFrac(s, params); }, td, Cd, S);
-}
-
-function PRiSM_model_infiniteFrac_pd_prime(td, params) {
-  _requirePositiveTd(td);
-  _requireParams(params, ['Cd', 'S']);
-  return _arrayMap(td, function (t) {
-    return _numericLogDeriv(PRiSM_model_infiniteFrac, t, params);
-  });
-}
-
-// ============================================================================
-// MODEL #4 — Finite-Conductivity Hydraulic Fracture
-// ============================================================================
-//
-// Reference: Cinco-Ley, H., Samaniego-V., F., Dominguez-A., N.
-//   "Transient Pressure Behavior for a Well with a Finite-Conductivity
-//    Vertical Fracture." SPE 6014 (1976) / SPEJ Aug 1978.
-//
-// Physics: finite-conductivity vertical fracture characterised by FcD =
-//   kf*wf / (k*xf). For FcD < ~50 the bilinear-flow regime ( 1/4-slope on
-//   the log-log derivative ) is observed at early time, transitioning into
-//   formation-linear flow ( ½-slope ), then fracture-radial flow.
-//
-// Approximation used here:
-//
-//   We splice three asymptotes that bracket the rigorous Cinco-Ley curve to
-//   within ~5% over the engineering range 0.1 < FcD < 500:
-//
-//     bilinear  :  pd_b  = 2.45 * tDxf^(1/4) / sqrt(FcD)
-//     linear    :  pd_l  = sqrt(pi * tDxf)
-//     radial    :  pd_r  = 0.5*(ln(tDxf) + 0.80907)  (Theis-like)
-//
-//   Splice with a smooth weighting based on tDxf relative to the regime
-//   transition times that depend on FcD:
-//     tD_bl_to_l = 0.0205 * (FcD - 1.5)^-1.6  (Cinco-Ley 1981)
-//     tD_l_to_r  = 0.1 / (FcD/(FcD+5))         (heuristic crossover)
-//
-// IMPORTANT:  This is NOT the exact Cinco-Ley double-integral solution.  The
-//             splice covers the engineering window used by quick-look analysis
-//             but should not be used for high-precision regression.  A future
-//             release should replace this with the Cinco-Ley table-lookup or
-//             the fractional Stehfest evaluation through the Bessel kernel.
-//
-// Params: { Cd, S, FcD }
-// ============================================================================
-
-function _pd_finFrac_approx(tDxf, FcD) {
-  if (tDxf <= 0) return 0;
-  if (FcD <= 0) throw new Error('FcD must be > 0');
-  var pdB = 2.45 * Math.pow(tDxf, 0.25) / Math.sqrt(FcD);
-  var pdL = Math.sqrt(Math.PI * tDxf);
-  var pdR = 0.5 * (Math.log(tDxf) + 0.80907);
-  // smooth weighting in ln(tDxf) -- soft-min of the three regimes
-  // approach: take the minimum of (bilinear, linear) at early time, then
-  // blend with radial via a softplus once tDxf is large enough.
-  var earlyAsym = Math.min(pdB, pdL);
-  // weight toward radial as tDxf grows; transition centred at tDxf ~ 1.0
-  var w = 1 / (1 + Math.exp(-2.5 * (Math.log(tDxf) - Math.log(1.0))));
-  return (1 - w) * earlyAsym + w * Math.max(pdR, 0);
-}
-
-function _pdLap_finFrac(s, params) {
-  // Laplace approximation: weighted sum of bilinear and radial Laplace
-  // pieces. Useful only when WBS folding is required; the time-domain
-  // approximation above is preferred for regression.
-  var K0 = _foundation('PRiSM_besselK0');
-  if (!K0) throw new Error('PRiSM_besselK0 missing');
-  var FcD = params.FcD;
-  var sq  = Math.sqrt(s);
-  // Bilinear Laplace (Cinco-Ley 1981 short-time):
-  //    Pd_lap_b = pi / (s^(5/4) * sqrt(FcD))
-  // Radial Laplace asymptote (line-source):
-  //    Pd_lap_r = K0(sq) / s
-  var pdB = Math.PI / (Math.pow(s, 1.25) * Math.sqrt(FcD));
-  var pdR = K0(sq) / s;
-  // soft transition driven by 1 / (s + 1)
-  var w = 1 / (1 + s);
-  return w * pdB + (1 - w) * pdR;
-}
-
-/**
- * Finite-conductivity hydraulic fracture (Cinco-Ley et al. 1976).
- * APPROXIMATION: spliced bilinear/linear/radial asymptotes — see header.
- * @param {number|number[]} td - dimensionless time tDxf
- * @param {{Cd:number, S:number, FcD:number}} params
- */
-function PRiSM_model_finiteFrac(td, params) {
-  _requirePositiveTd(td);
-  _requireParams(params, ['Cd', 'S', 'FcD']);
-  if (params.FcD <= 0) throw new Error('PRiSM finiteFrac: FcD must be > 0');
-  var Cd = params.Cd, S = params.S, FcD = params.FcD;
-  if (Cd === 0 && S === 0) {
-    return _arrayMap(td, function (t) { return _pd_finFrac_approx(t, FcD); });
-  }
-  return _stehfestEval(function (s) { return _pdLap_finFrac(s, params); }, td, Cd, S);
-}
-
-function PRiSM_model_finiteFrac_pd_prime(td, params) {
-  _requirePositiveTd(td);
-  _requireParams(params, ['Cd', 'S', 'FcD']);
-  return _arrayMap(td, function (t) {
-    return _numericLogDeriv(PRiSM_model_finiteFrac, t, params);
-  });
-}
-
-// ============================================================================
-// MODEL #7 — Inclined Well
-// ============================================================================
-//
-// Reference: Cinco, H., Miller, F.G., Ramey, H.J.
-//   "Unsteady-State Pressure Distribution Created by a Directionally
-//    Drilled Well." JPT, November 1975.
-//
-// Physics: a slant well that pierces the producing layer at angle theta
-//   between vertical (theta=0) and horizontal (theta=90 deg). Early-time
-//   response is dominated by inclined-radial flow (the well looks like a
-//   cylinder of length h/cos(theta)); late-time transitions to vertical-
-//   radial flow as boundaries of the perforated interval are felt.
-//
-// Implementation:
-//   We use the Cinco/Miller/Ramey "pseudo-skin" decomposition, which
-//   represents the inclined well as an equivalent vertical well with an
-//   additional pseudo-skin S_theta that captures the geometry:
-//
-//      S_theta = -(theta_w/41)^2.06 - (theta_w/56)^1.865 * log(hp/h)
-//
-//   where theta_w is the corrected angle in the formation
-//   (theta_w = atan(sqrt(KvKh) * tan(theta))) and hp/h is the perforated
-//   fraction. Total skin S_total = S_perf + S_global + S_theta and is
-//   folded into the homogeneous Laplace solution.
-//
-// Params: { Cd, S_perf, S_global, KvKh, theta_deg, hp_to_h }
-// ============================================================================
-
-function _inclined_pseudoskin(theta_deg, KvKh, hp_to_h) {
-  if (KvKh <= 0) throw new Error('KvKh must be > 0');
-  if (hp_to_h <= 0 || hp_to_h > 1) throw new Error('hp_to_h must be in (0,1]');
-  var theta = theta_deg * Math.PI / 180;
-  // corrected angle in formation
-  var thetaW_rad = Math.atan(Math.sqrt(KvKh) * Math.tan(theta));
-  var thetaW_deg = thetaW_rad * 180 / Math.PI;
-  // Cinco-Miller-Ramey pseudo-skin
-  var part1 = -Math.pow(thetaW_deg / 41, 2.06);
-  var part2 = -Math.pow(thetaW_deg / 56, 1.865) * Math.log10(hp_to_h);
-  return part1 + part2;
-}
-
-function _pdLap_inclined(s, params) {
-  // We delegate to the Homogeneous Laplace solution, with a modified skin.
-  var pdHom = _foundation('PRiSM_pd_lap_homogeneous');
-  if (!pdHom) {
-    // graceful fallback to line-source K0 if foundation hom solution missing
-    var K0 = _foundation('PRiSM_besselK0');
-    return K0(Math.sqrt(s)) / s;
-  }
-  var Stotal = (params.S_perf || 0) + (params.S_global || 0)
-             + _inclined_pseudoskin(params.theta_deg, params.KvKh, params.hp_to_h);
-  // Pass synthetic params with combined skin and zero Cd (we will fold WBS
-  // again outside via _foldWbsSkin, so here we ask the homogeneous solution
-  // for the *reservoir* pressure only and rely on the caller's folding).
-  return pdHom(s, { Cd: 0, S: 0, _S_extra: Stotal });
-}
-
-/**
- * Inclined / slant well in homogeneous reservoir (Cinco-Miller-Ramey 1975).
- * @param {number|number[]} td
- * @param {{Cd:number,S_perf:number,S_global:number,KvKh:number,
- *          theta_deg:number,hp_to_h:number}} params
- */
-function PRiSM_model_inclined(td, params) {
-  _requirePositiveTd(td);
-  _requireParams(params, ['Cd', 'S_perf', 'S_global', 'KvKh', 'theta_deg', 'hp_to_h']);
-  var Cd = params.Cd;
-  // total skin includes the geometric pseudo-skin
-  var Sg = _inclined_pseudoskin(params.theta_deg, params.KvKh, params.hp_to_h);
-  var Stotal = (params.S_perf || 0) + (params.S_global || 0) + Sg;
-  // use foundation hom Laplace (without WBS/skin folded inside) and fold
-  // here with the combined skin
-  return _stehfestEval(function (s) {
-    var pdHom = _foundation('PRiSM_pd_lap_homogeneous');
-    if (pdHom) {
-      // ask for the bare reservoir Pd_lap (Cd=0, S=0)
-      return pdHom(s, { Cd: 0, S: 0 });
+function _checkTd(td) {
+  if (Array.isArray(td)) {
+    for (var i = 0; i < td.length; i++) {
+      if (typeof td[i] !== 'number' || isNaN(td[i])) {
+        throw new Error('PRiSM model: td must be numeric (got ' + td[i] + ' at index ' + i + ')');
+      }
     }
-    var K0 = _foundation('PRiSM_besselK0');
-    return K0(Math.sqrt(s)) / s;
-  }, td, Cd, Stotal);
-}
-
-function PRiSM_model_inclined_pd_prime(td, params) {
-  _requirePositiveTd(td);
-  _requireParams(params, ['Cd', 'S_perf', 'S_global', 'KvKh', 'theta_deg', 'hp_to_h']);
-  return _arrayMap(td, function (t) {
-    return _numericLogDeriv(PRiSM_model_inclined, t, params);
-  });
-}
-
-// ============================================================================
-// MODEL #8 — Horizontal Well
-// ============================================================================
-//
-// Reference: Raghavan, R., Ozkan, E., Joshi, S.D.
-//   "Horizontal Well Pressure Behavior." SPE 16378.
-//   Also Goode, P.A., Thambynayagam, R.K.M. SPE 14250 (1985)
-//   (Goode-Thambynayagam image-summation kernel).
-//
-// Physics: horizontal well of length L drilled at vertical position zw in a
-//   reservoir of thickness h, anisotropy KvKh = kv/kh. Three flow regimes:
-//     1. early-time radial flow about the wellbore (vertical radial):
-//          pd ~ 0.5 [ln(tDw) + 0.80907]
-//          tDw = kh * t / (phi*mu*ct*rw^2)
-//     2. intermediate linear flow normal to the well length:
-//          pd ~ sqrt(pi * tDL)  (Joshi)
-//          tDL = kh * t / (phi*mu*ct*L^2)
-//     3. late-time pseudo-radial flow in the horizontal plane:
-//          pd ~ 0.5 [ln(tDL) + 0.80907 + 2*Sg]
-//   where Sg is the geometric pseudo-skin from anisotropy and partial
-//   penetration of the reservoir thickness (Joshi 1991).
-//
-// Implementation:
-//   Goode-Thambynayagam image-summation kernel for the vertical-radial-to-
-//   linear transition (uniform-flux line source mirrored at z=0 and z=h):
-//
-//      Pd_lap_h(s) = K0(sqrt(s)) / s
-//                  + 2 * sum_{n=1..N} K0(sqrt(s) * (2 * n * h_dim))
-//
-//   where h_dim = h / L is the dimensionless reservoir thickness, capped at
-//   N <= 50 image terms or until the marginal contribution drops below
-//   IMAGE_TOL.  Pseudo-skin from Joshi adds to the global S.
-//
-// Params: { Cd, S_perf, S_global, KvKh, L_to_h, zw_to_h }
-// ============================================================================
-
-function _horizontal_pseudoskin(KvKh, L_to_h, zw_to_h) {
-  if (KvKh <= 0) throw new Error('KvKh must be > 0');
-  if (L_to_h <= 0) throw new Error('L_to_h must be > 0');
-  if (zw_to_h < 0 || zw_to_h > 1) throw new Error('zw_to_h must be in [0,1]');
-  // Joshi 1991 anisotropy / partial-penetration pseudo-skin (Eq. 4.30):
-  //   Sg = ln[h·β / (2·π·rw·(β+1))] − (1/2)·ln(KvKh)
-  // where β = sqrt(Kh/Kv) is the anisotropy factor.
-  // With h normalised to 1 and rw normalised to L_to_h convention (~1e-4),
-  // the dominant size-effect term ln(h/(2π·rw)) was missing entirely from
-  // the previous form. Bug-fix 2026-04-28 — previously gave Sg ≈ -ln(KvKh)
-  // − 0.693 (small positive), now gives Sg ≈ ln(h/(2π·rw·(β+1)/β)) − 0.5·ln(KvKh)
-  // (which is the dominant geometric term per Joshi).
-  // rw_norm chosen as 1e-4 (typical 0.25 ft / 2500 ft TVD scaling).
-  var rw_norm = 1e-4;
-  var beta = Math.sqrt(1 / KvKh);   // = sqrt(Kh/Kv) since KvKh = Kv/Kh
-  var Sg = Math.log(1.0 * beta / (2 * Math.PI * rw_norm * (beta + 1)))
-         - 0.5 * Math.log(KvKh);
-  // Small correction for off-centre placement (Babu-Odeh).
-  var dz = (zw_to_h - 0.5);
-  Sg += 2.0 * dz * dz;
-  return Sg;
-}
-
-function _pdLap_horizontal(s, params) {
-  var K0 = _foundation('PRiSM_besselK0');
-  if (!K0) throw new Error('PRiSM_besselK0 missing');
-  // Goode-Thambynayagam image series
-  var h_dim = 1 / params.L_to_h;            // h normalised to L
-  var sq = Math.sqrt(s);
-  var pd = K0(sq) / s;
-  var nMax = 50;
-  for (var n = 1; n <= nMax; n++) {
-    var arg = sq * (2 * n * h_dim);
-    if (arg > 50) break;                   // K0 is exponentially small
-    var inc = 2 * K0(arg) / s;
-    pd += inc;
-    if (Math.abs(inc) < IMAGE_TOL) break;
+  } else if (typeof td !== 'number' || isNaN(td)) {
+    throw new Error('PRiSM model: td must be numeric (got ' + td + ')');
   }
-  return pd;
 }
 
-/**
- * Horizontal well in homogeneous reservoir (Goode-Thambynayagam / Joshi).
- * @param {number|number[]} td - tD referenced to L^2
- * @param {{Cd:number,S_perf:number,S_global:number,KvKh:number,
- *          L_to_h:number,zw_to_h:number}} params
- */
-function PRiSM_model_horizontal(td, params) {
-  _requirePositiveTd(td);
-  _requireParams(params, ['Cd', 'S_perf', 'S_global', 'KvKh', 'L_to_h', 'zw_to_h']);
-  var Cd = params.Cd;
-  var Sg = _horizontal_pseudoskin(params.KvKh, params.L_to_h, params.zw_to_h);
-  var Stotal = (params.S_perf || 0) + (params.S_global || 0) + Sg;
-  return _stehfestEval(function (s) { return _pdLap_horizontal(s, params); }, td, Cd, Stotal);
+// Merge params over the model defaults; reject NaN / Infinity values.
+function _prep(params, defaults) {
+  if (params != null && typeof params !== 'object') {
+    throw new Error('PRiSM model: params object required');
+  }
+  var p = {}, k;
+  for (k in defaults) if (Object.prototype.hasOwnProperty.call(defaults, k)) p[k] = defaults[k];
+  if (params) {
+    for (k in params) {
+      if (!Object.prototype.hasOwnProperty.call(params, k)) continue;
+      var v = params[k];
+      if (v == null) continue;
+      if (typeof v === 'number' && !isFinite(v)) {
+        throw new Error('PRiSM model: param "' + k + '" is NaN/Infinity');
+      }
+      p[k] = v;
+    }
+  }
+  if (!_num(p.Cd) || p.Cd < 0) throw new Error('PRiSM model: Cd must be ≥ 0 (got ' + p.Cd + ')');
+  return p;
 }
 
-function PRiSM_model_horizontal_pd_prime(td, params) {
-  _requirePositiveTd(td);
-  _requireParams(params, ['Cd', 'S_perf', 'S_global', 'KvKh', 'L_to_h', 'zw_to_h']);
-  return _arrayMap(td, function (t) {
-    return _numericLogDeriv(PRiSM_model_horizontal, t, params);
-  });
+function _positive(name, v) {
+  if (!_num(v) || v <= 0) throw new Error('PRiSM model: ' + name + ' must be > 0 (got ' + v + ')');
+  return v;
+}
+
+// h/rw injected by the physical-model wrapper as '__h_rw' (default 100)
+function _hRw(p) {
+  var v = p.__h_rw;
+  return (_num(v) && v > 1) ? v : 100;
 }
 
 // ============================================================================
-// MODEL #10a — Single Linear Boundary
-// ============================================================================
-//
-// Reference: van Poolen, H.K., Bixel, H.C., Jargon, J.R.
-//   "Individual Well Pressures in Reservoirs of Various Shapes."
-//   JPT, August 1963.
-//
-// Physics: infinite-acting homogeneous reservoir bounded by a single linear
-//   boundary (sealing fault or constant-pressure aquifer/gas-cap) at
-//   dimensionless distance dF (in units of well radius). One image well at
-//   distance 2*dF is added; sign +1 for sealing (no-flow), -1 for constant
-//   pressure (subtracts the image contribution).
-//
-//   Sealing fault → derivative doubles (slope 1.0 on log-log → 2.0).
-//   Const-pressure → derivative drops to zero (rolls over).
-//
-// Params: { Cd, S, dF, BC }
-//   BC: 'noflow' (default) or 'constP'
+// SECTION 4 — Pseudo-skin library  (window.PRiSM_pseudoSkin)
 // ============================================================================
 
-function _pdLap_linearBoundary(s, params) {
-  var K0 = _foundation('PRiSM_besselK0');
-  if (!K0) throw new Error('PRiSM_besselK0 missing');
-  var sign = (params.BC === 'constP') ? -1 : +1;
-  var dF = params.dF;
-  if (!_num(dF) || dF <= 0) throw new Error('dF must be > 0');
-  var sq = Math.sqrt(s);
-  var pwd = K0(sq) / s;
-  var image = K0(sq * 2 * dF) / s;
-  return pwd + sign * image;
+// Brons & Marting (1961) partial-penetration pseudo-skin
+//   Sp = (1/b − 1)·[ln hD − G(b)],  G(b) = 2.948 − 7.363b + 11.45b² − 4.675b³
+//   b = hp/h (open fraction), hD = (h/rw)·√(kh/kv).
+// Call as bronsMarting(b, hD) or bronsMarting(b, h, rw, kvkh).
+function _bronsMarting(b, hD, rw, kvkh) {
+  if (arguments.length >= 3) {
+    var kk = (_num(kvkh) && kvkh > 0) ? kvkh : 1;
+    hD = (hD / rw) * Math.sqrt(1 / kk);
+  }
+  if (!_num(b) || b <= 0) return NaN;
+  if (b >= 1) return 0;
+  if (!_num(hD) || hD <= 0) return NaN;
+  var G = 2.948 - 7.363 * b + 11.45 * b * b - 4.675 * b * b * b;
+  return (1 / b - 1) * (Math.log(hD) - G);
 }
 
-/**
- * Single linear boundary (van Poolen 1963).
- * @param {number|number[]} td
- * @param {{Cd:number,S:number,dF:number,BC:string}} params
- */
-function PRiSM_model_linearBoundary(td, params) {
-  _requirePositiveTd(td);
-  _requireParams(params, ['Cd', 'S', 'dF']);
-  if (params.BC && params.BC !== 'noflow' && params.BC !== 'constP') {
+// Cinco-Ley, Ramey & Miller (1975) slant-well pseudo-skin
+//   S_θ = −(θ'/41)^2.06 − (θ'/56)^1.865 · log10(hD/100)
+//   θ' = atan(√(kv/kh)·tanθ) [deg],  hD = (h/rw)·√(kh/kv).
+// Call as cincoLey(thetaDeg, kvkh, h_over_rw) or cincoLey(thetaDeg, kvkh, h, rw).
+function _cincoLey(thetaDeg, kvkh, hRw, rw) {
+  var kk = (_num(kvkh) && kvkh > 0) ? kvkh : 1;
+  var ratio = (arguments.length >= 4 && _num(rw) && rw > 0) ? hRw / rw : hRw;
+  if (!_num(ratio) || ratio <= 0) ratio = 100;
+  if (!_num(thetaDeg)) return NaN;
+  var th = Math.abs(thetaDeg);
+  if (th === 0) return 0;
+  if (th >= 90) th = 89.999;
+  var thP = Math.atan(Math.sqrt(kk) * Math.tan(th * Math.PI / 180)) * 180 / Math.PI;
+  var hD = ratio * Math.sqrt(1 / kk);
+  return -Math.pow(thP / 41, 2.06) - Math.pow(thP / 56, 1.865) * (Math.log(hD / 100) / Math.LN10);
+}
+
+// Equivalent (pseudo-radial) skin of a vertical fracture referenced to rw.
+//   'infinite'    infinite conductivity:  rw' = xf/2        → S = ln(2rw/xf)
+//   'uniformFlux' uniform flux:           rw' = xf/e        → S = ln(e·rw/xf)
+//   'finite'      finite conductivity FcD (4th argument), unified-fracture-
+//                 design correlation (Economides et al. 2002):
+//                 S + ln(xf/rw) = (1.65 − 0.328u + 0.116u²)/(1 + 0.180u + 0.064u² + 0.005u³),
+//                 u = ln FcD  (→ ln 2 as FcD → ∞)
+function _fractureSkin(xf, rw, type, FcD) {
+  if (!_num(xf) || xf <= 0 || !_num(rw) || rw <= 0) return NaN;
+  var t = type || 'infinite';
+  if (t === 'uniformFlux' || t === 'uniform') return 1 + Math.log(rw / xf);
+  if (t === 'finite') {
+    if (!_num(FcD) || FcD <= 0) return NaN;
+    var u = Math.log(FcD);
+    var f = (1.65 - 0.328 * u + 0.116 * u * u) /
+            (1 + 0.180 * u + 0.064 * u * u + 0.005 * u * u * u);
+    return f - Math.log(xf / rw);
+  }
+  return Math.log(2 * rw / xf);
+}
+
+// Joshi-type equivalent skin of a horizontal well of total length L, for
+// REPORTING ONLY (the horizontal kernel models the geometry exactly).
+// Joshi (1988) productivity with the Economides anisotropy correction, in the
+// limit of a large drainage radius, equated to a vertical well:
+//   S_eq = ln(4·rw/L) + (βh/L)·ln( βh / ((β+1)·rw) ),   β = √(kh/kv)
+function _horizontalEquivalent(L, h, rw, kvkh) {
+  if (!_num(L) || L <= 0 || !_num(h) || h <= 0 || !_num(rw) || rw <= 0) return NaN;
+  var kk = (_num(kvkh) && kvkh > 0) ? kvkh : 1;
+  var beta = Math.sqrt(1 / kk);
+  return Math.log(4 * rw / L) + (beta * h / L) * Math.log(beta * h / ((beta + 1) * rw));
+}
+
+// ============================================================================
+// SECTION 5 — MODEL #1 — Homogeneous (vertical well, WBS + skin)
+// ============================================================================
+// Reference: Agarwal, Al-Hussainy & Ramey, SPEJ Sept 1970; Mavor & Cinco-Ley
+//   SPE 7977. Same closed form as the foundation PRiSM_model_homogeneous for
+//   S ≥ 0; negative skin goes through the effective-radius transform so the
+//   Laplace fold never meets its pole.
+// Params: { Cd, S }        refLength: rw
+// ============================================================================
+
+var HOM_DEFAULTS = { Cd: 100, S: 0 };
+function _lapHom(s) { return _wellTerm(s); }
+
+function PRiSM_model_homogeneous_rwa(td, params) {
+  _checkTd(td);
+  var p = _prep(params, HOM_DEFAULTS);
+  return PRiSM_evalWbsSkin(_lapHom, td, p.Cd, p.S);
+}
+function PRiSM_model_homogeneous_rwa_pd_prime(td, params) {
+  _checkTd(td);
+  var p = _prep(params, HOM_DEFAULTS);
+  return PRiSM_evalWbsSkin(_lapHom, td, p.Cd, p.S, { derivative: true });
+}
+
+// ============================================================================
+// SECTION 6 — MODEL #3 — Infinite-conductivity fracture
+// ============================================================================
+// Reference: Gringarten, Ramey & Raghavan, SPEJ Aug 1974.
+//   Uniform-flux fracture observed at xD = 0.732 (reproduces the
+//   infinite-conductivity solution), Laplace form:
+//     p̄ = [ ∫_0^{√s(1+0.732)} K0 + ∫_0^{√s(1−0.732)} K0 ] / (2 s √s)
+//   params.uniformFlux truthy → observed at xD = 0:  p̄ = ∫_0^{√s} K0 / (s √s).
+//   Early time: pD = √(π tD) (half slope); late: ½(ln tD + 2.2).
+//   Always evaluated in Laplace (Cd = 0 is continuous with Cd → 0).
+// Params: { Cd, S }        refLength: xf     (tD = 0.0002637 k t /(φ μ ct xf²))
+// ============================================================================
+
+var XD_INF = 0.732;
+function _lapInfFrac(s, uniformFlux) {
+  var q = Math.sqrt(s);
+  if (uniformFlux) return _intK0(q) / (s * q);
+  return (_intK0(q * (1 + XD_INF)) + _intK0(q * (1 - XD_INF))) / (2 * s * q);
+}
+
+var INFFRAC_DEFAULTS = { Cd: 100, S: 0 };
+function PRiSM_model_infiniteFrac(td, params) {
+  _checkTd(td);
+  var p = _prep(params, INFFRAC_DEFAULTS);
+  var uf = !!p.uniformFlux;
+  return PRiSM_evalWbsSkin(function (s) { return _lapInfFrac(s, uf); }, td, p.Cd, p.S,
+                           { scaleDistances: false });
+}
+function PRiSM_model_infiniteFrac_pd_prime(td, params) {
+  _checkTd(td);
+  var p = _prep(params, INFFRAC_DEFAULTS);
+  var uf = !!p.uniformFlux;
+  return PRiSM_evalWbsSkin(function (s) { return _lapInfFrac(s, uf); }, td, p.Cd, p.S,
+                           { scaleDistances: false, derivative: true });
+}
+
+// ============================================================================
+// SECTION 7 — MODELS #4 / #12 — Finite-conductivity fracture (+ face skin)
+// ============================================================================
+// Reference: Cinco-Ley, Samaniego & Dominguez, SPEJ Aug 1978 (semi-analytic
+//   solution); Cinco-Ley & Samaniego, JPT Sept 1981 (fracture-face skin).
+//   Laplace-domain form: the fracture half-length is split into NSEG
+//   uniform-flux segments. Reservoir response at segment midpoint x_i
+//     p̄_r(x_i) = ½ Σ_j q̄_j ∫_seg_j [K0(√s|x_i−α|) + K0(√s(x_i+α))] dα
+//   Fracture (1-D linear flow, conductivity FcD):
+//     p̄_w = p̄_r(x_i) + Sf·q̄_i + (π/FcD)[x_i/s − ∫_0^{x_i}∫_0^{x'} q̄]
+//   with Σ q̄_j Δx_j = 1/s. Solved as an (NSEG+1)² linear system per s.
+//   Sf here is the Cinco-Ley fracture-face skin (π/2)(bs/xf)(k/ks − 1).
+//   Early: bilinear pD = 2.45 tD^¼/√FcD; FcD → ∞ approaches infiniteFrac;
+//   late: ½(ln tD + 0.809) + pseudo-skin.
+// Params: { Cd, S, FcD [, Sf] }      refLength: xf
+// ============================================================================
+
+var NSEG = 20;
+// Uniform mesh: edges e_j = j/N, midpoints x_i = (i+½)/N. Every kernel
+// argument |x_i − e_j| and x_i + e_j is an odd multiple of 1/(2N), so the
+// ∫K0 values are tabulated once per s (4N+2 evaluations instead of 2N(N+1)).
+// The integration weights c_ij of the fracture-flow term do not depend on s.
+var _FRAC_C = (function () {
+  var N = NSEG, d = 1 / N, C = [];
+  for (var i = 0; i < N; i++) {
+    var xi = (i + 0.5) * d, row = [];
+    for (var j = 0; j < N; j++) {
+      var a = j * d, b = (j + 1) * d;
+      if (b <= xi)     row.push(d * (xi - b) + 0.5 * d * d);
+      else if (a < xi) row.push(0.5 * (xi - a) * (xi - a));
+      else             row.push(0);
+    }
+    C.push(row);
+  }
+  return C;
+})();
+
+function _solveLinear(A, b) {        // Gaussian elimination, partial pivoting
+  var n = b.length, i, j, k;
+  for (k = 0; k < n; k++) {
+    var piv = k, mx = Math.abs(A[k][k]);
+    for (i = k + 1; i < n; i++) if (Math.abs(A[i][k]) > mx) { mx = Math.abs(A[i][k]); piv = i; }
+    if (!(mx > 0)) return null;
+    if (piv !== k) { var tr = A[k]; A[k] = A[piv]; A[piv] = tr; var tb = b[k]; b[k] = b[piv]; b[piv] = tb; }
+    for (i = k + 1; i < n; i++) {
+      var f = A[i][k] / A[k][k];
+      if (f === 0) continue;
+      for (j = k; j < n; j++) A[i][j] -= f * A[k][j];
+      b[i] -= f * b[k];
+    }
+  }
+  var x = new Array(n);
+  for (i = n - 1; i >= 0; i--) {
+    var sum = b[i];
+    for (j = i + 1; j < n; j++) sum -= A[i][j] * x[j];
+    x[i] = sum / A[i][i];
+  }
+  return x;
+}
+
+function _lapFinFrac(s, FcD, Sf) {
+  var q = Math.sqrt(s), N = NSEG, d = 1 / N, i, j;
+  var K = new Array(4 * N + 3);                 // K[m] = ∫_0^{q·m/(2N)} K0
+  for (var m = 0; m < K.length; m++) K[m] = _intK0(q * m * 0.5 * d);
+  var A = new Array(N + 1), b = new Array(N + 1);
+  var cpf = Math.PI / FcD;
+  for (i = 0; i < N; i++) {
+    var row = new Array(N + 1), ci = _FRAC_C[i];
+    for (j = 0; j < N; j++) {
+      // segment j = [j/N, (j+1)/N], observation x_i = (2i+1)/(2N)
+      var g;
+      if (j > i)      g = K[2 * (j - i) + 1] - K[2 * (j - i) - 1];
+      else if (j < i) g = K[2 * (i - j) + 1] - K[2 * (i - j) - 1];
+      else            g = 2 * K[1];
+      g += K[2 * i + 2 * j + 3] - K[2 * i + 2 * j + 1];   // mirror wing
+      g /= q;
+      row[j] = 0.5 * g - cpf * ci[j] + ((i === j) ? Sf : 0);
+    }
+    row[N] = -1;                    // −P
+    A[i] = row;
+    b[i] = -cpf * (i + 0.5) * d;    // RHS (unknowns scaled by s: Q = s·q̄, P = s·p̄w)
+  }
+  var last = new Array(N + 1);
+  for (j = 0; j < N; j++) last[j] = d;
+  last[N] = 0;
+  A[N] = last; b[N] = 1;
+  var x = _solveLinear(A, b);
+  if (!x) return NaN;
+  return x[N] / s;
+}
+
+var FINFRAC_DEFAULTS = { Cd: 100, S: 0, FcD: 10 };
+var FINFRACSKIN_DEFAULTS = { Cd: 100, S: 0, FcD: 10, Sf: 0.5 };
+
+function _finFracEval(td, params, defaults, deriv, withSf) {
+  _checkTd(td);
+  var p = _prep(params, defaults);
+  var FcD = _positive('FcD', p.FcD);
+  var Sf = withSf ? (_num(p.Sf) ? Math.max(0, p.Sf) : 0) : 0;
+  return PRiSM_evalWbsSkin(function (s) { return _lapFinFrac(s, FcD, Sf); }, td, p.Cd, p.S,
+                           { scaleDistances: false, derivative: deriv });
+}
+function PRiSM_model_finiteFrac(td, params)          { return _finFracEval(td, params, FINFRAC_DEFAULTS, false, false); }
+function PRiSM_model_finiteFrac_pd_prime(td, params) { return _finFracEval(td, params, FINFRAC_DEFAULTS, true, false); }
+function PRiSM_model_finiteFracSkin(td, params)          { return _finFracEval(td, params, FINFRACSKIN_DEFAULTS, false, true); }
+function PRiSM_model_finiteFracSkin_pd_prime(td, params) { return _finFracEval(td, params, FINFRACSKIN_DEFAULTS, true, true); }
+
+// ============================================================================
+// SECTION 8 — MODEL #7 — Inclined (slant) well
+// ============================================================================
+// Reference: Cinco, Miller & Ramey, JPT Nov 1975 (pseudo-skin correlation).
+//   Evaluated as the homogeneous model with S = S_perf + S_global + S_θ
+//   (+ Brons-Marting partial penetration when hp_to_h < 1, additive
+//   engineering approximation). S_θ < 0 for any θ > 0, so this model relies
+//   on the negative-skin transform. θ, Kv/Kh and hp/h enter only through the
+//   constant S_θ and are therefore collinear with S_perf: they are frozen by
+//   default (registry defaultFrozen).
+//   hD = __h_rw·√(kh/kv); __h_rw = h/rw is injected by the physical wrapper
+//   (default 100 → the log10 term vanishes).
+// Params: { Cd, S_perf, S_global, KvKh, theta_deg, hp_to_h }   refLength: rw
+// ============================================================================
+
+var INCL_DEFAULTS = { Cd: 100, S_perf: 0, S_global: 0, KvKh: 1.0, theta_deg: 45, hp_to_h: 1.0 };
+
+function _inclinedPseudoSkin(p) {
+  var kk = (_num(p.KvKh) && p.KvKh > 0) ? p.KvKh : 1;
+  var hRw = _hRw(p);
+  var St = _cincoLey(_num(p.theta_deg) ? p.theta_deg : 0, kk, hRw);
+  var b = _num(p.hp_to_h) ? p.hp_to_h : 1;
+  var Sp = (b > 0 && b < 1) ? _bronsMarting(b, hRw * Math.sqrt(1 / kk)) : 0;
+  return St + (isFinite(Sp) ? Sp : 0);
+}
+function _inclinedTotalS(p) {
+  return (p.S_perf || 0) + (p.S_global || 0) + _inclinedPseudoSkin(p);
+}
+function PRiSM_model_inclined(td, params) {
+  _checkTd(td);
+  var p = _prep(params, INCL_DEFAULTS);
+  return PRiSM_evalWbsSkin(_lapHom, td, p.Cd, _inclinedTotalS(p));
+}
+function PRiSM_model_inclined_pd_prime(td, params) {
+  _checkTd(td);
+  var p = _prep(params, INCL_DEFAULTS);
+  return PRiSM_evalWbsSkin(_lapHom, td, p.Cd, _inclinedTotalS(p), { derivative: true });
+}
+
+// ============================================================================
+// SECTION 9 — MODEL #8 — Horizontal well
+// ============================================================================
+// Reference: Ozkan & Raghavan, SPEFE Sept 1991 (uniform-flux line source
+//   between two no-flow planes), evaluated at xD = 0.732, zD = zwD + rwD:
+//
+//   p̄ = (1/s){ ½∫_{-1}^{1}K0(√s|xD−α|)dα
+//              + Σ_{n≥1} cos(nπzD)cos(nπzwD)∫_{-1}^{1}K0(β_n|xD−α|)dα }
+//   β_n = √(s + n²π²LD²),  LD = (Lh/h)·√(kv/kh),  Lh = half-length = L/2.
+//
+//   Evaluation: ∫K0 over the well length = π/β_n minus two exponentially
+//   small end corrections; the π/β_n part of the series is summed exactly,
+//   by Poisson summation into vertical image wells when √s/(πLD) ≥ 0.05
+//   (early time) and by a Kummer-accelerated Fourier sum otherwise.
+//   No additive geometric skin: the geometry is in the kernel. S_perf and
+//   S_global (collinear; S_global frozen by default) add to pD directly.
+//   Early radial: pD' = ½·(h/L)·√(kh/kv) (L = total length); late
+//   pseudo-radial: pD' = ½.
+// Params: { Cd, S_perf, S_global, KvKh, L_to_h, zw_to_h }  (L_to_h = total
+//   length / h; __h_rw = h/rw injected, default 100; optional __Lh_h = Lh/h
+//   injected by a wrapper that floats Lh overrides L_to_h)  refLength: Lh
+// ============================================================================
+
+var HORIZ_DEFAULTS = { Cd: 100, S_perf: 0, S_global: 0, KvKh: 0.1, L_to_h: 5.0, zw_to_h: 0.5 };
+
+// Σ_{n≥1} cos(nθ)/√(s + n²ω²)
+function _cosSeries(s, theta, omega) {
+  var c = Math.sqrt(s) / omega;
+  var sum = 0, k, arg;
+  if (c >= 0.05) {
+    // Poisson: Σ_{n∈Z} e^{inθ}/√(s+n²ω²) = (2/ω) Σ_k K0(c|θ + 2πk|)
+    for (k = 0; k < 100000; k++) {
+      arg = c * Math.abs(theta + 2 * Math.PI * k);
+      if (arg > 50) break;
+      sum += _K0(arg);
+    }
+    for (k = -1; k > -100000; k--) {
+      arg = c * Math.abs(theta + 2 * Math.PI * k);
+      if (arg > 50) break;
+      sum += _K0(arg);
+    }
+    return sum / omega - 0.5 / Math.sqrt(s);
+  }
+  // Kummer: (1/ω)Σcos(nθ)/n = −(1/ω) ln|2 sin(θ/2)|, remainder ~ s/(2n³ω³)
+  var base = -Math.log(Math.abs(2 * Math.sin(theta / 2))) / omega;
+  var nMax = Math.min(20000, Math.ceil(Math.pow(s / (2e-13 * omega * omega * omega), 1 / 3)) + 2);
+  for (var n = 1; n <= nMax; n++) {
+    var no = n * omega;
+    sum += Math.cos(n * theta) * (1 / Math.sqrt(s + no * no) - 1 / no);
+  }
+  return base + sum;
+}
+
+function _horizGeom(p) {
+  var KvKh = _positive('KvKh', p.KvKh);
+  // '__Lh_h' (= Lh/h, injected by a physical wrapper that floats Lh in ft)
+  // takes precedence over the L_to_h shape parameter so the two cannot disagree.
+  var Lh_h = (_num(p.__Lh_h) && p.__Lh_h > 0) ? p.__Lh_h : 0.5 * _positive('L_to_h', p.L_to_h);
+  var zw = _num(p.zw_to_h) ? p.zw_to_h : 0.5;
+  if (zw < 0 || zw > 1) throw new Error('PRiSM horizontal: zw_to_h must be in [0,1]');
+  var rwD = 1 / _hRw(p);
+  var zD = zw + rwD;
+  if (zD > 1) zD = zw - rwD;
+  return { LD: Lh_h * Math.sqrt(KvKh), zw: zw, zD: zD };
+}
+
+function PRiSM_lap_horizontal(s, params) {
+  var g = (params && params.__geom) ? params.__geom : _horizGeom(_prep(params, HORIZ_DEFAULTS));
+  var x = XD_INF, q = Math.sqrt(s);
+  var omega = Math.PI * g.LD;
+  // n = 0 term
+  var tot = 0.5 * (_intK0(q * (1 + x)) + _intK0(q * (1 - x))) / q;
+  // end corrections of the n ≥ 1 terms: I_n − π/β_n = −[T(β(1+x)) + T(β(1−x))]/β
+  for (var n = 1; n < 100000; n++) {
+    var beta = Math.sqrt(s + n * n * omega * omega);
+    if (beta * (1 - x) > 40) break;
+    var cn = Math.cos(n * Math.PI * g.zD) * Math.cos(n * Math.PI * g.zw);
+    tot -= cn * (_tailK0(beta * (1 + x)) + _tailK0(beta * (1 - x))) / beta;
+  }
+  // π Σ c_n/β_n,  c_n = ½[cos(nπ(zD−zw)) + cos(nπ(zD+zw))]
+  var ta = _cosSeries(s, Math.PI * Math.abs(g.zD - g.zw), omega);
+  var tb = _cosSeries(s, Math.PI * (g.zD + g.zw), omega);
+  tot += Math.PI * 0.5 * (ta + tb);
+  return tot / s;
+}
+
+function _horizEval(td, params, deriv) {
+  _checkTd(td);
+  var p = _prep(params, HORIZ_DEFAULTS);
+  var geom = _horizGeom(p);
+  var pp = { __geom: geom };
+  var S = (p.S_perf || 0) + (p.S_global || 0);
+  return PRiSM_evalWbsSkin(function (s) { return PRiSM_lap_horizontal(s, pp); }, td, p.Cd, S,
+                           { scaleDistances: false, derivative: deriv });
+}
+function PRiSM_model_horizontal(td, params)          { return _horizEval(td, params, false); }
+function PRiSM_model_horizontal_pd_prime(td, params) { return _horizEval(td, params, true); }
+
+// ============================================================================
+// SECTION 10 — Boundary models (rw-referenced, image wells)
+// ============================================================================
+// Reference: van Poolen, Bixel & Jargon, JPT Aug 1963 (image wells);
+//   Earlougher, SPE Monograph 5 (1977) ch. 2. All distances are in rw.
+//
+// #10a linearBoundary  one image at 2dF (+1 sealing, −1 constant pressure).
+// #10b parallelChannel walls at dF1 / dF2 (width W = dF1 + dF2); image
+//      shells 2K0(2nW) + K0(2nW−2dF1) + K0(2nW−2dF2) — summed exactly via the
+//      theta lattice. Late: pD' = √(π tD)/W.
+// #10c closedChannel3  channel + end wall at dEnd: the whole channel image
+//      set is reflected once in the end wall. Late: pD' = 2√(π tD)/W.
+// #10d closedRectangle well at (dW, dS) in a (dW+dE)×(dS+dN) rectangle; four-
+//      image lattice (±xw + 2iLx, ±yw + 2jLy). Late PSS: pD' = 2π tD/A.
+// #10e intersecting    circular image pattern (unchanged geometry).
+// #10f fogBoundary     leaky fault — constant partial-image approximation:
+//      one image of strength fog ∈ [−1, 1] (+1 sealing, 0 none, −1 constant
+//      pressure). An engineering approximation, not the rigorous
+//      semi-permeable-fault solution.
+// ============================================================================
+
+var LB_DEFAULTS  = { Cd: 100, S: 0, dF: 1000, BC: 'noflow' };
+var PC_DEFAULTS  = { Cd: 100, S: 0, dF1: 500, dF2: 500 };
+var CC3_DEFAULTS = { Cd: 100, S: 0, dF1: 500, dF2: 500, dEnd: 1000 };
+var CR_DEFAULTS  = { Cd: 100, S: 0, dN: 500, dS: 500, dE: 500, dW: 500 };
+var INT_DEFAULTS = { Cd: 100, S: 0, dF1: 500, dF2: 500, angleDeg: 90 };
+var FOG_DEFAULTS = { Cd: 100, S: 0, dF: 1000, fog: 0.5 };
+
+function _lapLinearBoundary(p) {
+  var dF = _positive('dF', p.dF);
+  if (p.BC && p.BC !== 'noflow' && p.BC !== 'constP') {
     throw new Error('PRiSM linearBoundary: BC must be "noflow" or "constP"');
   }
-  return _stehfestEval(function (s) { return _pdLap_linearBoundary(s, params); },
-                       td, params.Cd, params.S);
+  var sign = (p.BC === 'constP') ? -1 : 1;
+  return function (s, d) { return _wellTerm(s) + sign * _imageTerm(s, 2 * dF * d); };
 }
-
-function PRiSM_model_linearBoundary_pd_prime(td, params) {
-  _requirePositiveTd(td);
-  _requireParams(params, ['Cd', 'S', 'dF']);
-  return _arrayMap(td, function (t) {
-    return _numericLogDeriv(PRiSM_model_linearBoundary, t, params);
-  });
+function _lapFog(p) {
+  var dF = _positive('dF', p.dF), fog = p.fog;
+  if (!_num(fog) || fog < -1 || fog > 1) throw new Error('PRiSM fogBoundary: fog must be in [-1, 1]');
+  return function (s, d) { return _wellTerm(s) + fog * _imageTerm(s, 2 * dF * d); };
 }
-
-// ============================================================================
-// MODEL #10b — Parallel Channel (two parallel sealing faults)
-// ============================================================================
-//
-// Two parallel sealing boundaries at distances dF1 and dF2 either side of
-// the well form an infinite chain of image wells. The classical image-well
-// series for a single image-pair offset is:
-//
-//   Pd_res_lap(s) = K0(sq) / s
-//                 + sum_{n=1..N} [K0(sq*Rn+) + K0(sq*Rn-)] / s
-//
-// where Rn+ and Rn- are the distances to image wells generated by reflecting
-// alternately across the two boundaries. We truncate at IMAGE_CAP=200 pairs
-// (50 default) once the marginal term drops below IMAGE_TOL.
-//
-// Late-time expected behaviour: derivative goes to ½-slope (linear flow in
-// the channel).
-//
-// Params: { Cd, S, dF1, dF2 }
-// ============================================================================
-
-function _pdLap_parallelChannel(s, params) {
-  var K0 = _foundation('PRiSM_besselK0');
-  if (!K0) throw new Error('PRiSM_besselK0 missing');
-  var dF1 = params.dF1, dF2 = params.dF2;
-  if (!_num(dF1) || dF1 <= 0 || !_num(dF2) || dF2 <= 0) {
-    throw new Error('dF1, dF2 must be > 0');
-  }
-  var sq = Math.sqrt(s);
-  var pd = K0(sq) / s;
-  var W = dF1 + dF2;        // channel width
-  var added = 0;
-  for (var n = 1; n <= IMAGE_CAP; n++) {
-    var off1 = 2 * n * W;          // primary even-pair offset
-    var off2 = 2 * n * W - 2 * dF1; // alternate offsets
-    var off3 = 2 * n * W - 2 * dF2;
-    var inc = (K0(sq * off1) + K0(sq * Math.max(off2, 1e-12))
-                              + K0(sq * Math.max(off3, 1e-12))) / s;
-    if (Math.abs(inc) < IMAGE_TOL && n > 5) break;
-    pd += inc;
-    added++;
-  }
-  if (added >= IMAGE_CAP) {
+function _lapParallelChannel(p) {
+  var dF1 = _positive('dF1', p.dF1), dF2 = _positive('dF2', p.dF2);
+  return function (s, d) {
+    var ay = { L: (dF1 + dF2) * d, w: dF1 * d };
+    return _wellTerm(s) + _latticeTerm(s, _latticeK0Sum(s, null, ay));
+  };
+}
+function _lapClosedChannel3(p) {
+  var dF1 = _positive('dF1', p.dF1), dF2 = _positive('dF2', p.dF2), dEnd = _positive('dEnd', p.dEnd);
+  return function (s, d) {
+    var ay = { L: (dF1 + dF2) * d, w: dF1 * d };
+    var ax = { finite: [2 * dEnd * d] };
+    return _wellTerm(s) + _latticeTerm(s, _latticeK0Sum(s, ax, ay));
+  };
+}
+function _lapClosedRectangle(p) {
+  var dN = _positive('dN', p.dN), dS = _positive('dS', p.dS);
+  var dE = _positive('dE', p.dE), dW = _positive('dW', p.dW);
+  return function (s, d) {
+    var ax = { L: (dE + dW) * d, w: dW * d };
+    var ay = { L: (dN + dS) * d, w: dS * d };
+    return _wellTerm(s) + _latticeTerm(s, _latticeK0Sum(s, ax, ay));
+  };
+}
+var _warnedAngle = {};
+function _lapIntersecting(p) {
+  var dF1 = _positive('dF1', p.dF1), dF2 = _positive('dF2', p.dF2), ang = p.angleDeg;
+  if (!_num(ang) || ang <= 0 || ang >= 360) throw new Error('PRiSM intersecting: angleDeg must be in (0,360)');
+  var ratio = 360 / ang, nImages = Math.max(1, Math.min(719, Math.round(ratio) - 1));
+  if (Math.abs(ratio - Math.round(ratio)) > 1e-6 && !_warnedAngle[ang]) {
+    _warnedAngle[ang] = true;
     if (typeof console !== 'undefined' && console.warn) {
-      console.warn('PRiSM parallelChannel: image-well series did not converge within ' + IMAGE_CAP + ' terms');
+      console.warn('PRiSM intersecting: 360/angleDeg = ' + ratio + ' is non-integer; image lattice approximate');
     }
   }
-  return pd;
-}
-
-/**
- * Parallel-channel boundaries (image-well series).
- * @param {number|number[]} td
- * @param {{Cd:number,S:number,dF1:number,dF2:number}} params
- */
-function PRiSM_model_parallelChannel(td, params) {
-  _requirePositiveTd(td);
-  _requireParams(params, ['Cd', 'S', 'dF1', 'dF2']);
-  return _stehfestEval(function (s) { return _pdLap_parallelChannel(s, params); },
-                       td, params.Cd, params.S);
-}
-
-function PRiSM_model_parallelChannel_pd_prime(td, params) {
-  _requirePositiveTd(td);
-  _requireParams(params, ['Cd', 'S', 'dF1', 'dF2']);
-  return _arrayMap(td, function (t) {
-    return _numericLogDeriv(PRiSM_model_parallelChannel, t, params);
-  });
-}
-
-// ============================================================================
-// MODEL #10c — Closed Channel (3-sided)
-// ============================================================================
-//
-// Two parallel sealing boundaries (channel) PLUS a third sealing boundary at
-// the channel end (distance dEnd). 2D image-well lattice: parallel chain of
-// images mirrored once more about the end boundary. Late-time response is
-// pseudo-steady-state along the channel length (unit slope on the
-// derivative).
-//
-// Params: { Cd, S, dF1, dF2, dEnd }
-// ============================================================================
-
-function _pdLap_closedChannel3(s, params) {
-  var K0 = _foundation('PRiSM_besselK0');
-  if (!K0) throw new Error('PRiSM_besselK0 missing');
-  var dF1 = params.dF1, dF2 = params.dF2, dEnd = params.dEnd;
-  if (!_num(dF1) || dF1 <= 0 || !_num(dF2) || dF2 <= 0 || !_num(dEnd) || dEnd <= 0) {
-    throw new Error('dF1, dF2, dEnd must all be > 0');
-  }
-  var sq = Math.sqrt(s);
-  var pd = K0(sq) / s;
-  var W = dF1 + dF2;
-  // primary parallel images
-  var added = 0;
-  for (var n = 1; n <= 100; n++) {
-    var off1 = 2 * n * W;
-    var off2 = Math.abs(2 * n * W - 2 * dF1);
-    var off3 = Math.abs(2 * n * W - 2 * dF2);
-    var inc1 = (K0(sq * off1) + K0(sq * Math.max(off2, 1e-12))
-                              + K0(sq * Math.max(off3, 1e-12))) / s;
-    pd += inc1;
-    added++;
-    if (Math.abs(inc1) < IMAGE_TOL && n > 5) break;
-  }
-  // end-boundary mirror images (distance 2*dEnd shifted by parallel offsets)
-  for (var m = 1; m <= 100; m++) {
-    var off_end = 2 * m * dEnd;
-    var inc2 = K0(sq * off_end) / s;
-    pd += inc2;
-    added++;
-    if (Math.abs(inc2) < IMAGE_TOL && m > 5) break;
-    if (added >= IMAGE_CAP) {
-      if (typeof console !== 'undefined' && console.warn) {
-        console.warn('PRiSM closedChannel3: image cap reached');
-      }
-      break;
-    }
-  }
-  return pd;
-}
-
-/**
- * Closed channel (3-sided) boundary set.
- * @param {number|number[]} td
- * @param {{Cd:number,S:number,dF1:number,dF2:number,dEnd:number}} params
- */
-function PRiSM_model_closedChannel3(td, params) {
-  _requirePositiveTd(td);
-  _requireParams(params, ['Cd', 'S', 'dF1', 'dF2', 'dEnd']);
-  return _stehfestEval(function (s) { return _pdLap_closedChannel3(s, params); },
-                       td, params.Cd, params.S);
-}
-
-function PRiSM_model_closedChannel3_pd_prime(td, params) {
-  _requirePositiveTd(td);
-  _requireParams(params, ['Cd', 'S', 'dF1', 'dF2', 'dEnd']);
-  return _arrayMap(td, function (t) {
-    return _numericLogDeriv(PRiSM_model_closedChannel3, t, params);
-  });
-}
-
-// ============================================================================
-// MODEL #10d — Closed Rectangle
-// ============================================================================
-//
-// Full 2D image-well lattice for a rectangular sealed boundary set with the
-// well at an arbitrary interior point. Distances dN, dS, dE, dW (north,
-// south, east, west) define the rectangle of dimension (dE+dW) by (dN+dS).
-//
-// The image lattice is doubly-periodic with periods 2*(dE+dW) and 2*(dN+dS).
-// We sum images on a square grid up to normalised distance norm <= 50, with
-// an early break per shell once contributions are below IMAGE_TOL.
-//
-// Late-time response is true pseudo-steady-state (unit-slope derivative) —
-// the classical reservoir-limits test signature.
-//
-// Params: { Cd, S, dN, dS, dE, dW }
-// ============================================================================
-
-function _pdLap_closedRectangle(s, params) {
-  var K0 = _foundation('PRiSM_besselK0');
-  if (!K0) throw new Error('PRiSM_besselK0 missing');
-  var dN = params.dN, dS = params.dS, dE = params.dE, dW = params.dW;
-  [dN, dS, dE, dW].forEach(function (d) {
-    if (!_num(d) || d <= 0) throw new Error('All boundary distances must be > 0');
-  });
-  var Lx = dE + dW;       // east-west period (full width)
-  var Ly = dN + dS;       // north-south period (full height)
-  var sq = Math.sqrt(s);
-  // well at origin within the cell; image lattice at (i*Lx, j*Ly) for
-  // (i,j) != (0,0). Each image contributes K0(sq * R) / s.
-  var pd = K0(sq) / s;     // primary well
-  var totalAdded = 0;
-  // shell iteration
-  for (var shell = 1; shell <= 200; shell++) {
-    var shellSum = 0;
-    // perimeter of square shell
-    for (var i = -shell; i <= shell; i++) {
-      for (var j = -shell; j <= shell; j++) {
-        if (Math.max(Math.abs(i), Math.abs(j)) !== shell) continue;
-        var x = i * Lx, y = j * Ly;
-        var r = Math.sqrt(x * x + y * y);
-        if (sq * r > 50) continue;          // K0 negligible
-        var k = K0(sq * r);
-        shellSum += k / s;
-        totalAdded++;
-        if (totalAdded >= IMAGE_CAP) break;
-      }
-      if (totalAdded >= IMAGE_CAP) break;
-    }
-    pd += shellSum;
-    if (Math.abs(shellSum) < IMAGE_TOL && shell > 3) break;
-    if (totalAdded >= IMAGE_CAP) {
-      if (typeof console !== 'undefined' && console.warn) {
-        console.warn('PRiSM closedRectangle: image cap reached at shell ' + shell);
-      }
-      break;
-    }
-  }
-  return pd;
-}
-
-/**
- * Closed rectangle (full 2D image lattice).
- * @param {number|number[]} td
- * @param {{Cd:number,S:number,dN:number,dS:number,dE:number,dW:number}} params
- */
-function PRiSM_model_closedRectangle(td, params) {
-  _requirePositiveTd(td);
-  _requireParams(params, ['Cd', 'S', 'dN', 'dS', 'dE', 'dW']);
-  return _stehfestEval(function (s) { return _pdLap_closedRectangle(s, params); },
-                       td, params.Cd, params.S);
-}
-
-function PRiSM_model_closedRectangle_pd_prime(td, params) {
-  _requirePositiveTd(td);
-  _requireParams(params, ['Cd', 'S', 'dN', 'dS', 'dE', 'dW']);
-  return _arrayMap(td, function (t) {
-    return _numericLogDeriv(PRiSM_model_closedRectangle, t, params);
-  });
-}
-
-// ============================================================================
-// MODEL #10e — Intersecting Boundaries
-// ============================================================================
-//
-// Two sealing boundaries intersecting at angle theta (degrees) with the well
-// in between. Image-well count = 360/theta - 1, arranged in a circular
-// pattern at distances determined by the well's perpendicular distances to
-// each boundary (dF1 to first boundary, dF2 to second).
-//
-// Late-time effect: radial-flow stabilisation increases by a factor
-//   m_intersecting / m_infinite = 360/theta
-// (e.g. a 90-degree intersection increases the slope 4x).
-//
-// We warn (don't throw) when 360/angleDeg is non-integer; the lattice is
-// still built but with a slightly under-determined image set.
-//
-// Params: { Cd, S, dF1, dF2, angleDeg }
-// ============================================================================
-
-function _pdLap_intersecting(s, params) {
-  var K0 = _foundation('PRiSM_besselK0');
-  if (!K0) throw new Error('PRiSM_besselK0 missing');
-  var dF1 = params.dF1, dF2 = params.dF2, ang = params.angleDeg;
-  if (!_num(dF1) || dF1 <= 0 || !_num(dF2) || dF2 <= 0) {
-    throw new Error('dF1, dF2 must be > 0');
-  }
-  if (!_num(ang) || ang <= 0 || ang >= 360) {
-    throw new Error('angleDeg must be in (0,360)');
-  }
-  var nImages = Math.round(360 / ang) - 1;
-  if (Math.abs(360 / ang - Math.round(360 / ang)) > 1e-6) {
-    if (typeof console !== 'undefined' && console.warn) {
-      console.warn('PRiSM intersecting: 360/angleDeg = ' + (360 / ang)
-                   + ' is non-integer; image lattice approximate');
-    }
-  }
-  if (nImages < 1) nImages = 1;
-  if (nImages > IMAGE_CAP) nImages = IMAGE_CAP;
-  // approximate: well at perpendicular distance from each boundary; we use
-  // a circular image arrangement centred on the boundary intersection.
-  // The radial distance from the well to each image is taken as
-  //   2 * sqrt(dF1^2 + dF2^2 - 2*dF1*dF2*cos(angRad)) for the first image
-  //   and rotates around for each subsequent image with stride ang.
-  var sq = Math.sqrt(s);
-  var pd = K0(sq) / s;
   var dCentral = Math.sqrt(dF1 * dF1 + dF2 * dF2);
-  for (var n = 1; n <= nImages; n++) {
-    var rho = 2 * dCentral * Math.sin(n * ang * Math.PI / 360);
-    if (sq * rho > 50) continue;
-    pd += K0(sq * rho) / s;
+  var rho = [];
+  for (var n = 1; n <= nImages; n++) rho.push(2 * dCentral * Math.sin(n * ang * Math.PI / 360));
+  return function (s, d) {
+    var v = _wellTerm(s);
+    for (var i = 0; i < rho.length; i++) v += _imageTerm(s, Math.abs(rho[i]) * d);
+    return v;
+  };
+}
+
+function _makeRwModel(defaults, lapFactory) {
+  function run(td, params, deriv) {
+    _checkTd(td);
+    var p = _prep(params, defaults);
+    var lap = lapFactory(p);
+    return PRiSM_evalWbsSkin(lap, td, p.Cd, _num(p.S) ? p.S : 0, { derivative: deriv });
   }
-  return pd;
+  return {
+    pd: function (td, params) { return run(td, params, false); },
+    pdPrime: function (td, params) { return run(td, params, true); }
+  };
 }
+var _LB  = _makeRwModel(LB_DEFAULTS,  _lapLinearBoundary);
+var _PC  = _makeRwModel(PC_DEFAULTS,  _lapParallelChannel);
+var _CC3 = _makeRwModel(CC3_DEFAULTS, _lapClosedChannel3);
+var _CR  = _makeRwModel(CR_DEFAULTS,  _lapClosedRectangle);
+var _INT = _makeRwModel(INT_DEFAULTS, _lapIntersecting);
+var _FOG = _makeRwModel(FOG_DEFAULTS, _lapFog);
 
-/**
- * Intersecting boundaries — circular image-well lattice.
- * @param {number|number[]} td
- * @param {{Cd:number,S:number,dF1:number,dF2:number,angleDeg:number}} params
- */
-function PRiSM_model_intersecting(td, params) {
-  _requirePositiveTd(td);
-  _requireParams(params, ['Cd', 'S', 'dF1', 'dF2', 'angleDeg']);
-  return _stehfestEval(function (s) { return _pdLap_intersecting(s, params); },
-                       td, params.Cd, params.S);
-}
-
-function PRiSM_model_intersecting_pd_prime(td, params) {
-  _requirePositiveTd(td);
-  _requireParams(params, ['Cd', 'S', 'dF1', 'dF2', 'angleDeg']);
-  return _arrayMap(td, function (t) {
-    return _numericLogDeriv(PRiSM_model_intersecting, t, params);
-  });
-}
+function PRiSM_model_linearBoundary(td, params)            { return _LB.pd(td, params); }
+function PRiSM_model_linearBoundary_pd_prime(td, params)   { return _LB.pdPrime(td, params); }
+function PRiSM_model_parallelChannel(td, params)           { return _PC.pd(td, params); }
+function PRiSM_model_parallelChannel_pd_prime(td, params)  { return _PC.pdPrime(td, params); }
+function PRiSM_model_closedChannel3(td, params)            { return _CC3.pd(td, params); }
+function PRiSM_model_closedChannel3_pd_prime(td, params)   { return _CC3.pdPrime(td, params); }
+function PRiSM_model_closedRectangle(td, params)           { return _CR.pd(td, params); }
+function PRiSM_model_closedRectangle_pd_prime(td, params)  { return _CR.pdPrime(td, params); }
+function PRiSM_model_intersecting(td, params)              { return _INT.pd(td, params); }
+function PRiSM_model_intersecting_pd_prime(td, params)     { return _INT.pdPrime(td, params); }
+function PRiSM_model_fogBoundary(td, params)               { return _FOG.pd(td, params); }
+function PRiSM_model_fogBoundary_pd_prime(td, params)      { return _FOG.pdPrime(td, params); }
 
 // ============================================================================
-// MODEL #10f — Boundary "Fog Factor"
+// SECTION 11 — MODEL #30 — Partial-penetration hydraulic fracture
 // ============================================================================
-//
-// Single linear boundary with continuously variable transmissibility,
-// expressed as fog ∈ [-1, 1]:
-//   fog = +1  → fully sealing fault (image strength +1)
-//   fog =  0  → infinite-acting (no boundary)
-//   fog = -1  → fully constant-pressure (image strength -1)
-//   fog ∈ between → leaky / partially-sealing fault
-//
-// Image-well strength scales linearly with fog, capturing the engineering
-// intuition of partial transmissibility as a single tuning knob.
-//
-// Params: { Cd, S, dF, fog }
+// Reference: Gringarten & Ramey, SPEJ Oct 1973 (source functions).
+//   Green's-function shortcut (engineering approximation, ~5%): uniform-flux
+//   fracture kernel (early fracture-linear flow) + a partial-height vertical
+//   kernel exp(−√s/(hf/h))/(s(1+√s)) + an off-centre constant (zw/h − ½)².
+// Params: { Cd, S, hf_to_h, zw_to_h }      refLength: xf
 // ============================================================================
 
-function _pdLap_fogBoundary(s, params) {
-  var K0 = _foundation('PRiSM_besselK0');
-  if (!K0) throw new Error('PRiSM_besselK0 missing');
-  var dF = params.dF, fog = params.fog;
-  if (!_num(dF) || dF <= 0) throw new Error('dF must be > 0');
-  if (!_num(fog) || fog < -1 || fog > 1) throw new Error('fog must be in [-1, 1]');
-  var sq = Math.sqrt(s);
-  return (K0(sq) + fog * K0(sq * 2 * dF)) / s;
+var PPF_DEFAULTS = { Cd: 100, S: 0, hf_to_h: 0.5, zw_to_h: 0.5 };
+function _lapPartialPenFrac(p) {
+  var hf = p.hf_to_h, zw = p.zw_to_h;
+  if (!_num(hf) || hf <= 0 || hf > 1) throw new Error('PRiSM partialPenFrac: hf_to_h must be in (0,1]');
+  if (!_num(zw) || zw < 0 || zw > 1) throw new Error('PRiSM partialPenFrac: zw_to_h must be in [0,1]');
+  var A = 1 / hf, dz = zw - 0.5;
+  return function (s) {
+    var q = Math.sqrt(s);
+    return _lapInfFrac(s, true) + Math.exp(-A * q) / (s * (1 + q)) + dz * dz / s;
+  };
 }
-
-/**
- * Boundary fog factor — continuously variable transmissibility.
- * @param {number|number[]} td
- * @param {{Cd:number,S:number,dF:number,fog:number}} params
- */
-function PRiSM_model_fogBoundary(td, params) {
-  _requirePositiveTd(td);
-  _requireParams(params, ['Cd', 'S', 'dF', 'fog']);
-  return _stehfestEval(function (s) { return _pdLap_fogBoundary(s, params); },
-                       td, params.Cd, params.S);
+function _ppfEval(td, params, deriv) {
+  _checkTd(td);
+  var p = _prep(params, PPF_DEFAULTS);
+  return PRiSM_evalWbsSkin(_lapPartialPenFrac(p), td, p.Cd, _num(p.S) ? p.S : 0,
+                           { scaleDistances: false, derivative: deriv });
 }
-
-function PRiSM_model_fogBoundary_pd_prime(td, params) {
-  _requirePositiveTd(td);
-  _requireParams(params, ['Cd', 'S', 'dF', 'fog']);
-  return _arrayMap(td, function (t) {
-    return _numericLogDeriv(PRiSM_model_fogBoundary, t, params);
-  });
-}
+function PRiSM_model_partialPenFrac(td, params)          { return _ppfEval(td, params, false); }
+function PRiSM_model_partialPenFrac_pd_prime(td, params) { return _ppfEval(td, params, true); }
 
 // ============================================================================
-// MODEL #12 — Finite-Conductivity Fracture WITH Fracture-Face Skin
+// SECTION 12 — REGISTRY
 // ============================================================================
-//
-// Reference: Cinco-Ley, H., Samaniego-V., F.
-//   "Transient Pressure Analysis for Fractured Wells." SPE 6752 / JPT
-//    Sept 1981.
-//
-// Same as #4 plus an additional fracture-face skin Sf representing damage on
-// the fracture wall (mud invasion, polymer residue, etc.). Sf damps the
-// early-time bilinear-flow signature:
-//
-//      Pd_eff = Pd_finite(td, FcD) + Sf * exp(-2*sqrt(td/FcD))
-//
-// where the exponential decay reflects how Sf only matters while the bilinear
-// transient is active. Once linear/radial flow takes over, Sf merges into
-// the global skin S.
-//
-// Params: { Cd, S, FcD, Sf }
-// ============================================================================
+// Metadata consumed by the physical-model wrapper (C3) and the regression:
+//   refLength      'rw' | 'xf' | 'Lh'  — length that td and Cd refer to
+//   defaultFrozen  parameters frozen unless the user frees them
+//   paramSpec[i].scale 'log' — regress in log space
+//   timeInput      'td'  — the evaluator takes dimensionless time
+//   pseudoSkin(params, geom) / equivalentSkin(params, geom) → number | NaN
+//     geom = {h, rw, xf, Lh, kvkh} in ft (optional; params.__h_rw used if set)
 
-function _pd_finFracSkin(td, params) {
-  var pdBase = _pd_finFrac_approx(td, params.FcD);
-  var Sf = params.Sf || 0;
-  var damp = Math.exp(-2 * Math.sqrt(td / params.FcD));
-  return pdBase + Sf * damp;
+function _geomHRw(params, geom) {
+  if (geom && _num(geom.h) && _num(geom.rw) && geom.rw > 0) return geom.h / geom.rw;
+  return _hRw(params || {});
 }
 
-function _pdLap_finFracSkin(s, params) {
-  var pdBase = _pdLap_finFrac(s, params);
-  var Sf = params.Sf || 0;
-  // Laplace transform of  Sf * exp(-2*sqrt(td/FcD))  approximated as
-  //   Sf * exp(-1/sqrt(s*FcD)) / s
-  // (Schapery-style first-order approx; sufficient for engineering work)
-  if (Sf === 0) return pdBase;
-  var damp = Math.exp(-1 / Math.sqrt(Math.max(s * params.FcD, 1e-12)));
-  return pdBase + Sf * damp / s;
-}
-
-/**
- * Finite-conductivity fracture with fracture-face skin (Cinco-Samaniego 1981).
- * @param {number|number[]} td
- * @param {{Cd:number,S:number,FcD:number,Sf:number}} params
- */
-function PRiSM_model_finiteFracSkin(td, params) {
-  _requirePositiveTd(td);
-  _requireParams(params, ['Cd', 'S', 'FcD', 'Sf']);
-  if (params.FcD <= 0) throw new Error('FcD must be > 0');
-  var Cd = params.Cd, S = params.S;
-  if (Cd === 0 && S === 0) {
-    return _arrayMap(td, function (t) { return _pd_finFracSkin(t, params); });
-  }
-  return _stehfestEval(function (s) { return _pdLap_finFracSkin(s, params); }, td, Cd, S);
-}
-
-function PRiSM_model_finiteFracSkin_pd_prime(td, params) {
-  _requirePositiveTd(td);
-  _requireParams(params, ['Cd', 'S', 'FcD', 'Sf']);
-  return _arrayMap(td, function (t) {
-    return _numericLogDeriv(PRiSM_model_finiteFracSkin, t, params);
-  });
-}
-
-// ============================================================================
-// MODEL #30 — Partial-Penetration Hydraulic Fracture
-// ============================================================================
-//
-// Reference: Gringarten, A.C., Ramey, H.J.
-//   "The Use of Source and Green's Functions in Solving Unsteady-Flow
-//    Problems in Reservoirs." SPE 3818 / SPEJ Oct 1973.
-//
-// Vertical hydraulic fracture whose height hf does NOT span the full
-// reservoir thickness h. Three diagnostic regimes:
-//
-//   1. Early time — fracture-linear flow (½-slope on derivative)
-//      pd ~ sqrt(pi * tDxf)
-//   2. Intermediate — vertical pseudo-radial in the (xf, hf) cylinder
-//      pd ~ 0.5 [ln(tDxf) + ln(hf_to_h^2)]
-//   3. Late time — horizontal pseudo-radial about the wellbore with
-//      partial-penetration pseudo-skin Sg added:
-//      Sg = (h/hf - 1) * [ln(h/(2*rw)) - 0.5]
-//
-// Implementation uses Green's-function shortcuts: Laplace-domain
-// superposition of (a) a uniform-flux fracture source kernel K0(sq)/s and
-// (b) a partial-penetration vertical-radial kernel exp(-A*sqrt(s))/s with
-// A = 1/hf_to_h. The off-centre placement zw_to_h shifts the source.
-//
-// IMPORTANT: Green's-function shortcut. The exact Gringarten-Ramey solution
-// requires integrating an infinite series of source images over the fracture
-// height; the approximation here is accurate to ~5% in the engineering
-// window and avoids the cost of a 2D integral inside the Stehfest loop.
-//
-// Params: { Cd, S, hf_to_h, zw_to_h }
-// ============================================================================
-
-function _pdLap_partialPenFrac(s, params) {
-  var K0 = _foundation('PRiSM_besselK0');
-  if (!K0) throw new Error('PRiSM_besselK0 missing');
-  var hf_h = params.hf_to_h;
-  var zw_h = params.zw_to_h;
-  if (!_num(hf_h) || hf_h <= 0 || hf_h > 1) {
-    throw new Error('hf_to_h must be in (0,1]');
-  }
-  if (!_num(zw_h) || zw_h < 0 || zw_h > 1) {
-    throw new Error('zw_to_h must be in [0,1]');
-  }
-  var sq = Math.sqrt(s);
-  // Fracture-linear kernel
-  var pd_frac = K0(sq) / s;
-  // Vertical pseudo-radial kernel with partial-penetration scaling
-  var A = 1 / hf_h;
-  var pd_vert = Math.exp(-A * sq) / (s * (1 + sq));
-  // off-centre adjustment as additional skin-like term
-  var dz = zw_h - 0.5;
-  var pd_off = (dz * dz) / s;
-  return pd_frac + pd_vert + pd_off;
-}
-
-/**
- * Partial-penetration hydraulic fracture (Gringarten-Ramey 1973).
- * Green's-function shortcut, see header.
- * @param {number|number[]} td
- * @param {{Cd:number,S:number,hf_to_h:number,zw_to_h:number}} params
- */
-function PRiSM_model_partialPenFrac(td, params) {
-  _requirePositiveTd(td);
-  _requireParams(params, ['Cd', 'S', 'hf_to_h', 'zw_to_h']);
-  return _stehfestEval(function (s) { return _pdLap_partialPenFrac(s, params); },
-                       td, params.Cd, params.S);
-}
-
-function PRiSM_model_partialPenFrac_pd_prime(td, params) {
-  _requirePositiveTd(td);
-  _requireParams(params, ['Cd', 'S', 'hf_to_h', 'zw_to_h']);
-  return _arrayMap(td, function (t) {
-    return _numericLogDeriv(PRiSM_model_partialPenFrac, t, params);
-  });
-}
-
-// ============================================================================
-// REGISTRY
-// ============================================================================
-//
-// One entry per model — used by the model picker UI, regression engine, and
-// schematic renderer. The "homogeneous" entry is filled by the foundation
-// file (file 01); we only add ours.
+var CD_SPEC = { key: 'Cd', label: 'Wellbore storage Cd', unit: '-', min: 0, max: 1e10, default: 100, scale: 'log' };
+function _cd(def) { var o = {}; for (var k in CD_SPEC) o[k] = CD_SPEC[k]; if (def != null) o.default = def; return o; }
+function _sSpec() { return { key: 'S', label: 'Skin S', unit: '-', min: -7, max: 50, default: 0 }; }
 
 var REGISTRY_ADDITIONS = {
+  homogeneous: {
+    pd: PRiSM_model_homogeneous_rwa,
+    pdPrime: PRiSM_model_homogeneous_rwa_pd_prime,
+    defaults: { Cd: 100, S: 0 },
+    paramSpec: [ _cd(100), _sSpec() ],
+    reference: 'Agarwal, Al-Hussainy & Ramey, SPEJ Sept 1970; Bourdet 2002 §3.2',
+    category: 'homogeneous',
+    kind: 'pressure',
+    refLength: 'rw',
+    defaultFrozen: [],
+    timeInput: 'td',
+    description: 'Vertical well in an infinite-acting homogeneous reservoir, with wellbore storage and constant skin (damaged or stimulated).'
+  },
+
   infiniteFrac: {
     pd: PRiSM_model_infiniteFrac,
     pdPrime: PRiSM_model_infiniteFrac_pd_prime,
     defaults: { Cd: 100, S: 0 },
-    paramSpec: [
-      { key: 'Cd', label: 'Wellbore storage Cd',     unit: '-', min: 0,    max: 1e10, default: 100 },
-      { key: 'S',  label: 'Skin S',                  unit: '-', min: -7,   max: 50,   default: 0   }
-    ],
-    reference: 'Gringarten, Ramey, Raghavan, SPEJ Aug 1974',
+    paramSpec: [ _cd(100), _sSpec() ],
+    reference: 'Gringarten, Ramey & Raghavan, SPEJ Aug 1974',
     category: 'fracture',
-    description: 'Vertical well with infinite-conductivity hydraulic fracture in a homogeneous reservoir.'
+    kind: 'pressure',
+    refLength: 'xf',
+    defaultFrozen: [],
+    timeInput: 'td',
+    equivalentSkin: function (params, geom) {
+      if (!geom || !_num(geom.xf) || !_num(geom.rw)) return NaN;
+      return _fractureSkin(geom.xf, geom.rw, (params && params.uniformFlux) ? 'uniformFlux' : 'infinite');
+    },
+    description: 'Vertical well with an infinite-conductivity hydraulic fracture in a homogeneous reservoir (half-slope linear flow, then pseudo-radial).'
   },
 
   finiteFrac: {
@@ -1104,13 +1006,20 @@ var REGISTRY_ADDITIONS = {
     pdPrime: PRiSM_model_finiteFrac_pd_prime,
     defaults: { Cd: 100, S: 0, FcD: 10 },
     paramSpec: [
-      { key: 'Cd',  label: 'Wellbore storage Cd',  unit: '-', min: 0,   max: 1e10, default: 100 },
-      { key: 'S',   label: 'Skin S',               unit: '-', min: -7,  max: 50,   default: 0   },
-      { key: 'FcD', label: 'Fracture conductivity FcD', unit: '-', min: 0.1, max: 1000, default: 10 }
+      _cd(100), _sSpec(),
+      { key: 'FcD', label: 'Fracture conductivity FcD', unit: '-', min: 0.1, max: 1e4, default: 10, scale: 'log' }
     ],
-    reference: 'Cinco-Ley, Samaniego, Dominguez, SPE 6014 / SPEJ Aug 1978',
+    reference: 'Cinco-Ley, Samaniego & Dominguez, SPEJ Aug 1978 (semi-analytic, 20 segments)',
     category: 'fracture',
-    description: 'Vertical well with finite-conductivity hydraulic fracture (spliced asymptotic approximation).'
+    kind: 'pressure',
+    refLength: 'xf',
+    defaultFrozen: [],
+    timeInput: 'td',
+    equivalentSkin: function (params, geom) {
+      if (!geom || !_num(geom.xf) || !_num(geom.rw)) return NaN;
+      return _fractureSkin(geom.xf, geom.rw, 'finite', (params && params.FcD) || 10);
+    },
+    description: 'Vertical well with a finite-conductivity hydraulic fracture (bilinear, linear, then pseudo-radial flow).'
   },
 
   inclined: {
@@ -1118,16 +1027,25 @@ var REGISTRY_ADDITIONS = {
     pdPrime: PRiSM_model_inclined_pd_prime,
     defaults: { Cd: 100, S_perf: 0, S_global: 0, KvKh: 1.0, theta_deg: 45, hp_to_h: 1.0 },
     paramSpec: [
-      { key: 'Cd',        label: 'Wellbore storage Cd', unit: '-',   min: 0,    max: 1e10, default: 100 },
-      { key: 'S_perf',    label: 'Perforation skin',     unit: '-',  min: -7,   max: 50,   default: 0   },
-      { key: 'S_global',  label: 'Global skin',          unit: '-',  min: -7,   max: 50,   default: 0   },
-      { key: 'KvKh',      label: 'Anisotropy Kv/Kh',     unit: '-',  min: 0.001, max: 10,   default: 1   },
-      { key: 'theta_deg', label: 'Inclination angle',    unit: 'deg', min: 0,   max: 89,   default: 45  },
-      { key: 'hp_to_h',   label: 'Perforated fraction',  unit: '-',   min: 0.01, max: 1,   default: 1.0 }
+      _cd(100),
+      { key: 'S_perf',    label: 'Mechanical skin',      unit: '-',   min: -7,    max: 50,  default: 0 },
+      { key: 'S_global',  label: 'Global skin',          unit: '-',   min: -7,    max: 50,  default: 0 },
+      { key: 'KvKh',      label: 'Anisotropy Kv/Kh',     unit: '-',   min: 0.001, max: 10,  default: 1, scale: 'log' },
+      { key: 'theta_deg', label: 'Inclination angle',    unit: 'deg', min: 0,     max: 75,  default: 45 },
+      { key: 'hp_to_h',   label: 'Open fraction hp/h',   unit: '-',   min: 0.01,  max: 1,   default: 1.0 }
     ],
-    reference: 'Cinco, Miller, Ramey, JPT Nov 1975',
+    reference: 'Cinco, Miller & Ramey, JPT Nov 1975 (slant-well pseudo-skin); Brons & Marting 1961',
     category: 'well-type',
-    description: 'Slant / inclined well with directionally-dependent skin in a homogeneous reservoir.'
+    kind: 'pressure',
+    refLength: 'rw',
+    defaultFrozen: ['S_global', 'theta_deg', 'KvKh', 'hp_to_h'],
+    timeInput: 'td',
+    pseudoSkin: function (params, geom) {
+      var p = _prep(params, INCL_DEFAULTS);
+      p.__h_rw = _geomHRw(params, geom);
+      return _inclinedPseudoSkin(p);
+    },
+    description: 'Slant well in a homogeneous reservoir: vertical-well response with the Cinco-Ley inclination pseudo-skin (always negative).'
   },
 
   horizontal: {
@@ -1135,16 +1053,26 @@ var REGISTRY_ADDITIONS = {
     pdPrime: PRiSM_model_horizontal_pd_prime,
     defaults: { Cd: 100, S_perf: 0, S_global: 0, KvKh: 0.1, L_to_h: 5.0, zw_to_h: 0.5 },
     paramSpec: [
-      { key: 'Cd',       label: 'Wellbore storage Cd', unit: '-', min: 0,    max: 1e10, default: 100 },
-      { key: 'S_perf',   label: 'Perforation skin',    unit: '-', min: -7,   max: 50,   default: 0   },
-      { key: 'S_global', label: 'Global skin',         unit: '-', min: -7,   max: 50,   default: 0   },
-      { key: 'KvKh',     label: 'Anisotropy Kv/Kh',    unit: '-', min: 0.001, max: 10,  default: 0.1 },
-      { key: 'L_to_h',   label: 'L / h (lateral / thickness)', unit: '-', min: 0.1, max: 100, default: 5.0 },
-      { key: 'zw_to_h',  label: 'Vertical placement zw/h', unit: '-', min: 0, max: 1, default: 0.5 }
+      _cd(100),
+      { key: 'S_perf',   label: 'Mechanical skin',          unit: '-', min: -7,    max: 50,  default: 0 },
+      { key: 'S_global', label: 'Global skin',              unit: '-', min: -7,    max: 50,  default: 0 },
+      { key: 'KvKh',     label: 'Anisotropy Kv/Kh',         unit: '-', min: 0.001, max: 10,  default: 0.1, scale: 'log' },
+      { key: 'L_to_h',   label: 'Well length / thickness L/h', unit: '-', min: 0.1, max: 200, default: 5.0, scale: 'log' },
+      { key: 'zw_to_h',  label: 'Vertical position zw/h',   unit: '-', min: 0,     max: 1,   default: 0.5 }
     ],
-    reference: 'Raghavan, Ozkan, Joshi, SPE 16378 (Goode-Thambynayagam kernel)',
+    reference: 'Ozkan & Raghavan, SPEFE Sept 1991 (uniform-flux line source in a slab)',
     category: 'well-type',
-    description: 'Horizontal well in homogeneous reservoir with vertical-radial → linear → pseudo-radial regimes.'
+    kind: 'pressure',
+    refLength: 'Lh',
+    refLengthNote: 'Lh = half-length = 0.5·L_to_h·h; td and Cd are referenced to Lh. A wrapper that floats Lh should inject __Lh_h = Lh/h (overrides L_to_h) and freeze L_to_h.',
+    defaultFrozen: ['S_global'],
+    timeInput: 'td',
+    equivalentSkin: function (params, geom) {
+      var p = _prep(params, HORIZ_DEFAULTS);
+      var hRw = _geomHRw(params, geom);
+      return _horizontalEquivalent(p.L_to_h, 1, 1 / hRw, p.KvKh);
+    },
+    description: 'Horizontal well: early radial flow in the vertical plane, intermediate linear flow, late pseudo-radial flow.'
   },
 
   linearBoundary: {
@@ -1152,14 +1080,17 @@ var REGISTRY_ADDITIONS = {
     pdPrime: PRiSM_model_linearBoundary_pd_prime,
     defaults: { Cd: 100, S: 0, dF: 1000, BC: 'noflow' },
     paramSpec: [
-      { key: 'Cd', label: 'Wellbore storage Cd', unit: '-',  min: 0,   max: 1e10, default: 100 },
-      { key: 'S',  label: 'Skin S',              unit: '-',  min: -7,  max: 50,   default: 0   },
-      { key: 'dF', label: 'Distance to boundary', unit: 'r_w', min: 1, max: 1e6, default: 1000 },
-      { key: 'BC', label: 'Boundary condition',   unit: '',   options: ['noflow', 'constP'], default: 'noflow' }
+      _cd(100), _sSpec(),
+      { key: 'dF', label: 'Distance to boundary', unit: 'r_w', min: 1, max: 1e7, default: 1000, scale: 'log' },
+      { key: 'BC', label: 'Boundary condition',   unit: '',    options: ['noflow', 'constP'], default: 'noflow' }
     ],
-    reference: 'van Poolen, Bixel, Jargon, JPT Aug 1963',
+    reference: 'van Poolen, Bixel & Jargon, JPT Aug 1963',
     category: 'boundary',
-    description: 'Single linear boundary (sealing fault or constant pressure) via image-well technique.'
+    kind: 'pressure',
+    refLength: 'rw',
+    defaultFrozen: [],
+    timeInput: 'td',
+    description: 'Single linear boundary (sealing fault or constant pressure) via an image well.'
   },
 
   parallelChannel: {
@@ -1167,14 +1098,17 @@ var REGISTRY_ADDITIONS = {
     pdPrime: PRiSM_model_parallelChannel_pd_prime,
     defaults: { Cd: 100, S: 0, dF1: 500, dF2: 500 },
     paramSpec: [
-      { key: 'Cd',  label: 'Wellbore storage Cd', unit: '-',  min: 0,  max: 1e10, default: 100 },
-      { key: 'S',   label: 'Skin S',              unit: '-',  min: -7, max: 50,   default: 0   },
-      { key: 'dF1', label: 'Distance to fault 1', unit: 'r_w', min: 1, max: 1e6, default: 500 },
-      { key: 'dF2', label: 'Distance to fault 2', unit: 'r_w', min: 1, max: 1e6, default: 500 }
+      _cd(100), _sSpec(),
+      { key: 'dF1', label: 'Distance to fault 1', unit: 'r_w', min: 1, max: 1e7, default: 500, scale: 'log' },
+      { key: 'dF2', label: 'Distance to fault 2', unit: 'r_w', min: 1, max: 1e7, default: 500, scale: 'log' }
     ],
-    reference: 'van Poolen et al., JPT Aug 1963 (image-well series)',
+    reference: 'van Poolen et al., JPT Aug 1963 (complete image lattice)',
     category: 'boundary',
-    description: 'Parallel sealing boundaries (channel) — image-well series, late-time ½-slope linear flow.'
+    kind: 'pressure',
+    refLength: 'rw',
+    defaultFrozen: [],
+    timeInput: 'td',
+    description: 'Two parallel sealing faults (channel): late-time half-slope linear flow.'
   },
 
   closedChannel3: {
@@ -1182,15 +1116,18 @@ var REGISTRY_ADDITIONS = {
     pdPrime: PRiSM_model_closedChannel3_pd_prime,
     defaults: { Cd: 100, S: 0, dF1: 500, dF2: 500, dEnd: 1000 },
     paramSpec: [
-      { key: 'Cd',   label: 'Wellbore storage Cd', unit: '-',  min: 0,  max: 1e10, default: 100 },
-      { key: 'S',    label: 'Skin S',              unit: '-',  min: -7, max: 50,   default: 0   },
-      { key: 'dF1',  label: 'Distance to fault 1', unit: 'r_w', min: 1, max: 1e6, default: 500 },
-      { key: 'dF2',  label: 'Distance to fault 2', unit: 'r_w', min: 1, max: 1e6, default: 500 },
-      { key: 'dEnd', label: 'Distance to end',     unit: 'r_w', min: 1, max: 1e6, default: 1000 }
+      _cd(100), _sSpec(),
+      { key: 'dF1',  label: 'Distance to fault 1', unit: 'r_w', min: 1, max: 1e7, default: 500,  scale: 'log' },
+      { key: 'dF2',  label: 'Distance to fault 2', unit: 'r_w', min: 1, max: 1e7, default: 500,  scale: 'log' },
+      { key: 'dEnd', label: 'Distance to end wall', unit: 'r_w', min: 1, max: 1e7, default: 1000, scale: 'log' }
     ],
     reference: 'van Poolen et al., JPT Aug 1963',
     category: 'boundary',
-    description: 'Closed channel (3-sided) — parallel + end-closure image-well lattice.'
+    kind: 'pressure',
+    refLength: 'rw',
+    defaultFrozen: [],
+    timeInput: 'td',
+    description: 'Channel closed at one end (three sealing faults): linear flow doubles its derivative once the end wall is felt.'
   },
 
   closedRectangle: {
@@ -1198,16 +1135,19 @@ var REGISTRY_ADDITIONS = {
     pdPrime: PRiSM_model_closedRectangle_pd_prime,
     defaults: { Cd: 100, S: 0, dN: 500, dS: 500, dE: 500, dW: 500 },
     paramSpec: [
-      { key: 'Cd', label: 'Wellbore storage Cd', unit: '-', min: 0,  max: 1e10, default: 100 },
-      { key: 'S',  label: 'Skin S',              unit: '-', min: -7, max: 50,   default: 0   },
-      { key: 'dN', label: 'Distance N',          unit: 'r_w', min: 1, max: 1e6, default: 500 },
-      { key: 'dS', label: 'Distance S',          unit: 'r_w', min: 1, max: 1e6, default: 500 },
-      { key: 'dE', label: 'Distance E',          unit: 'r_w', min: 1, max: 1e6, default: 500 },
-      { key: 'dW', label: 'Distance W',          unit: 'r_w', min: 1, max: 1e6, default: 500 }
+      _cd(100), _sSpec(),
+      { key: 'dN', label: 'Distance north', unit: 'r_w', min: 1, max: 1e7, default: 500, scale: 'log' },
+      { key: 'dS', label: 'Distance south', unit: 'r_w', min: 1, max: 1e7, default: 500, scale: 'log' },
+      { key: 'dE', label: 'Distance east',  unit: 'r_w', min: 1, max: 1e7, default: 500, scale: 'log' },
+      { key: 'dW', label: 'Distance west',  unit: 'r_w', min: 1, max: 1e7, default: 500, scale: 'log' }
     ],
-    reference: 'van Poolen et al., JPT Aug 1963 — full 2D image lattice',
+    reference: 'van Poolen et al., JPT Aug 1963; Earlougher, SPE Monograph 5 — full image lattice',
     category: 'boundary',
-    description: 'Closed rectangle — late-time PSS unit-slope (reservoir-limits test).'
+    kind: 'pressure',
+    refLength: 'rw',
+    defaultFrozen: [],
+    timeInput: 'td',
+    description: 'Closed rectangle with the well anywhere inside: late-time pseudo-steady state (unit slope).'
   },
 
   intersecting: {
@@ -1215,15 +1155,18 @@ var REGISTRY_ADDITIONS = {
     pdPrime: PRiSM_model_intersecting_pd_prime,
     defaults: { Cd: 100, S: 0, dF1: 500, dF2: 500, angleDeg: 90 },
     paramSpec: [
-      { key: 'Cd',       label: 'Wellbore storage Cd', unit: '-',  min: 0,  max: 1e10, default: 100 },
-      { key: 'S',        label: 'Skin S',              unit: '-',  min: -7, max: 50,   default: 0   },
-      { key: 'dF1',      label: 'Distance to fault 1', unit: 'r_w', min: 1, max: 1e6, default: 500 },
-      { key: 'dF2',      label: 'Distance to fault 2', unit: 'r_w', min: 1, max: 1e6, default: 500 },
-      { key: 'angleDeg', label: 'Intersection angle',  unit: 'deg', min: 1, max: 359, default: 90  }
+      _cd(100), _sSpec(),
+      { key: 'dF1',      label: 'Distance to fault 1', unit: 'r_w', min: 1, max: 1e7, default: 500, scale: 'log' },
+      { key: 'dF2',      label: 'Distance to fault 2', unit: 'r_w', min: 1, max: 1e7, default: 500, scale: 'log' },
+      { key: 'angleDeg', label: 'Intersection angle',  unit: 'deg', min: 1, max: 359, default: 90 }
     ],
     reference: 'van Poolen et al., JPT Aug 1963 — circular image pattern',
     category: 'boundary',
-    description: 'Two intersecting sealing faults — derivative slope amplified by 360/angle.'
+    kind: 'pressure',
+    refLength: 'rw',
+    defaultFrozen: [],
+    timeInput: 'td',
+    description: 'Two intersecting sealing faults: derivative rises by 360/angle.'
   },
 
   fogBoundary: {
@@ -1231,14 +1174,18 @@ var REGISTRY_ADDITIONS = {
     pdPrime: PRiSM_model_fogBoundary_pd_prime,
     defaults: { Cd: 100, S: 0, dF: 1000, fog: 0.5 },
     paramSpec: [
-      { key: 'Cd',  label: 'Wellbore storage Cd', unit: '-',  min: 0,  max: 1e10, default: 100 },
-      { key: 'S',   label: 'Skin S',              unit: '-',  min: -7, max: 50,   default: 0   },
-      { key: 'dF',  label: 'Distance to boundary', unit: 'r_w', min: 1, max: 1e6, default: 1000 },
-      { key: 'fog', label: 'Fog factor (transmissibility)', unit: '-', min: -1, max: 1, default: 0.5 }
+      _cd(100), _sSpec(),
+      { key: 'dF',  label: 'Distance to fault', unit: 'r_w', min: 1, max: 1e7, default: 1000, scale: 'log' },
+      { key: 'fog', label: 'Image strength (1 sealing, 0 open, −1 constant pressure)', unit: '-', min: -1, max: 1, default: 0.5 }
     ],
-    reference: 'PRiSM original — partially-sealing boundary as continuous transmissibility',
+    reference: 'Constant partial-image approximation of a leaky fault (image of strength fog)',
     category: 'boundary',
-    description: 'Single boundary with continuously variable transmissibility, fog ∈ [-1, +1].'
+    kind: 'pressure',
+    refLength: 'rw',
+    defaultFrozen: [],
+    timeInput: 'td',
+    label: 'Leaky fault — constant partial-image approximation',
+    description: 'Leaky fault — constant partial-image approximation: one image well of strength fog ∈ [−1, 1]. Approximate; not the rigorous semi-permeable-fault solution.'
   },
 
   finiteFracSkin: {
@@ -1246,14 +1193,22 @@ var REGISTRY_ADDITIONS = {
     pdPrime: PRiSM_model_finiteFracSkin_pd_prime,
     defaults: { Cd: 100, S: 0, FcD: 10, Sf: 0.5 },
     paramSpec: [
-      { key: 'Cd',  label: 'Wellbore storage Cd', unit: '-', min: 0,    max: 1e10, default: 100 },
-      { key: 'S',   label: 'Skin S',              unit: '-', min: -7,   max: 50,   default: 0   },
-      { key: 'FcD', label: 'Fracture conductivity FcD', unit: '-', min: 0.1, max: 1000, default: 10 },
-      { key: 'Sf',  label: 'Fracture-face skin Sf', unit: '-', min: 0,  max: 20,   default: 0.5 }
+      _cd(100), _sSpec(),
+      { key: 'FcD', label: 'Fracture conductivity FcD', unit: '-', min: 0.1, max: 1e4, default: 10, scale: 'log' },
+      { key: 'Sf',  label: 'Fracture-face skin Sf',     unit: '-', min: 0,   max: 20,  default: 0.5 }
     ],
-    reference: 'Cinco-Ley & Samaniego, SPE 6752 / JPT Sept 1981',
+    reference: 'Cinco-Ley & Samaniego, JPT Sept 1981',
     category: 'fracture',
-    description: 'Finite-conductivity fracture with additional fracture-face skin damping early bilinear flow.'
+    kind: 'pressure',
+    refLength: 'xf',
+    defaultFrozen: [],
+    timeInput: 'td',
+    equivalentSkin: function (params, geom) {
+      if (!geom || !_num(geom.xf) || !_num(geom.rw)) return NaN;
+      var p = params || {};
+      return _fractureSkin(geom.xf, geom.rw, 'finite', p.FcD || 10) + (_num(p.Sf) ? p.Sf : 0);
+    },
+    description: 'Finite-conductivity fracture with fracture-face damage (Sf) that masks early bilinear flow.'
   },
 
   partialPenFrac: {
@@ -1261,217 +1216,110 @@ var REGISTRY_ADDITIONS = {
     pdPrime: PRiSM_model_partialPenFrac_pd_prime,
     defaults: { Cd: 100, S: 0, hf_to_h: 0.5, zw_to_h: 0.5 },
     paramSpec: [
-      { key: 'Cd',      label: 'Wellbore storage Cd', unit: '-', min: 0,  max: 1e10, default: 100 },
-      { key: 'S',       label: 'Skin S',              unit: '-', min: -7, max: 50,   default: 0   },
+      _cd(100), _sSpec(),
       { key: 'hf_to_h', label: 'Fracture-height fraction hf/h', unit: '-', min: 0.01, max: 1, default: 0.5 },
-      { key: 'zw_to_h', label: 'Vertical placement zw/h', unit: '-', min: 0, max: 1, default: 0.5 }
+      { key: 'zw_to_h', label: 'Vertical position zw/h',         unit: '-', min: 0,    max: 1, default: 0.5 }
     ],
-    reference: 'Gringarten & Ramey, SPE 3818 / SPEJ Oct 1973',
+    reference: 'Gringarten & Ramey, SPEJ Oct 1973 (Green\'s-function shortcut)',
     category: 'fracture',
-    description: 'Partial-penetration hydraulic fracture (Green\'s-function shortcut) — fracture-linear → vertical-radial → horizontal-radial.'
+    kind: 'pressure',
+    refLength: 'xf',
+    defaultFrozen: [],
+    timeInput: 'td',
+    description: 'Partial-height hydraulic fracture (approximate Green\'s-function shortcut): fracture-linear, vertical-radial, then horizontal-radial flow.'
   }
 };
 
-// merge into the registry that the foundation file is expected to seed.
-// foundation must run first; if it has not registered "homogeneous" yet we
-// at least set up the namespace so the merge is non-destructive.
-
 (function _installRegistry() {
-  var g = (typeof window !== 'undefined') ? window : (typeof globalThis !== 'undefined' ? globalThis : {});
-  if (!g.PRiSM_MODELS) g.PRiSM_MODELS = {};
+  var g = _G;
+  if (!g.PRiSM_MODELS || typeof g.PRiSM_MODELS !== 'object') g.PRiSM_MODELS = {};
   for (var key in REGISTRY_ADDITIONS) {
-    if (REGISTRY_ADDITIONS.hasOwnProperty(key)) {
+    if (Object.prototype.hasOwnProperty.call(REGISTRY_ADDITIONS, key)) {
       g.PRiSM_MODELS[key] = REGISTRY_ADDITIONS[key];
     }
   }
-  // also expose the evaluator functions on the global so the foundation
-  // file or the rest of the app can reference them by name.
-  g.PRiSM_model_infiniteFrac          = PRiSM_model_infiniteFrac;
-  g.PRiSM_model_infiniteFrac_pd_prime = PRiSM_model_infiniteFrac_pd_prime;
-  g.PRiSM_model_finiteFrac            = PRiSM_model_finiteFrac;
-  g.PRiSM_model_finiteFrac_pd_prime   = PRiSM_model_finiteFrac_pd_prime;
-  g.PRiSM_model_inclined              = PRiSM_model_inclined;
-  g.PRiSM_model_inclined_pd_prime     = PRiSM_model_inclined_pd_prime;
-  g.PRiSM_model_horizontal            = PRiSM_model_horizontal;
-  g.PRiSM_model_horizontal_pd_prime   = PRiSM_model_horizontal_pd_prime;
-  g.PRiSM_model_linearBoundary        = PRiSM_model_linearBoundary;
-  g.PRiSM_model_linearBoundary_pd_prime = PRiSM_model_linearBoundary_pd_prime;
-  g.PRiSM_model_parallelChannel       = PRiSM_model_parallelChannel;
+  // shared kernels / evaluator for every other model file
+  g.PRiSM_evalWbsSkin        = PRiSM_evalWbsSkin;
+  g.PRiSM_pd_lap_homogeneous = function (s) { return _wellTerm(s); };
+  g.PRiSM_lap_wellTerm       = _wellTerm;
+  g.PRiSM_lap_imageTerm      = _imageTerm;
+  g.PRiSM_lap_infiniteFrac   = function (s, params) { return _lapInfFrac(s, !!(params && params.uniformFlux)); };
+  g.PRiSM_lap_horizontal     = PRiSM_lap_horizontal;
+  g.PRiSM_intK0              = _intK0;
+  var ps = (g.PRiSM_pseudoSkin && typeof g.PRiSM_pseudoSkin === 'object') ? g.PRiSM_pseudoSkin : {};
+  ps.bronsMarting         = _bronsMarting;
+  ps.cincoLey             = _cincoLey;
+  ps.fracture             = _fractureSkin;
+  ps.horizontalEquivalent = _horizontalEquivalent;
+  g.PRiSM_pseudoSkin = ps;
+  // evaluator functions on the global so other modules can reference them
+  g.PRiSM_model_homogeneous_rwa          = PRiSM_model_homogeneous_rwa;
+  g.PRiSM_model_homogeneous_rwa_pd_prime = PRiSM_model_homogeneous_rwa_pd_prime;
+  g.PRiSM_model_infiniteFrac             = PRiSM_model_infiniteFrac;
+  g.PRiSM_model_infiniteFrac_pd_prime    = PRiSM_model_infiniteFrac_pd_prime;
+  g.PRiSM_model_finiteFrac               = PRiSM_model_finiteFrac;
+  g.PRiSM_model_finiteFrac_pd_prime      = PRiSM_model_finiteFrac_pd_prime;
+  g.PRiSM_model_inclined                 = PRiSM_model_inclined;
+  g.PRiSM_model_inclined_pd_prime        = PRiSM_model_inclined_pd_prime;
+  g.PRiSM_model_horizontal               = PRiSM_model_horizontal;
+  g.PRiSM_model_horizontal_pd_prime      = PRiSM_model_horizontal_pd_prime;
+  g.PRiSM_model_linearBoundary           = PRiSM_model_linearBoundary;
+  g.PRiSM_model_linearBoundary_pd_prime  = PRiSM_model_linearBoundary_pd_prime;
+  g.PRiSM_model_parallelChannel          = PRiSM_model_parallelChannel;
   g.PRiSM_model_parallelChannel_pd_prime = PRiSM_model_parallelChannel_pd_prime;
-  g.PRiSM_model_closedChannel3        = PRiSM_model_closedChannel3;
-  g.PRiSM_model_closedChannel3_pd_prime = PRiSM_model_closedChannel3_pd_prime;
-  g.PRiSM_model_closedRectangle       = PRiSM_model_closedRectangle;
+  g.PRiSM_model_closedChannel3           = PRiSM_model_closedChannel3;
+  g.PRiSM_model_closedChannel3_pd_prime  = PRiSM_model_closedChannel3_pd_prime;
+  g.PRiSM_model_closedRectangle          = PRiSM_model_closedRectangle;
   g.PRiSM_model_closedRectangle_pd_prime = PRiSM_model_closedRectangle_pd_prime;
-  g.PRiSM_model_intersecting          = PRiSM_model_intersecting;
-  g.PRiSM_model_intersecting_pd_prime = PRiSM_model_intersecting_pd_prime;
-  g.PRiSM_model_fogBoundary           = PRiSM_model_fogBoundary;
-  g.PRiSM_model_fogBoundary_pd_prime  = PRiSM_model_fogBoundary_pd_prime;
-  g.PRiSM_model_finiteFracSkin        = PRiSM_model_finiteFracSkin;
-  g.PRiSM_model_finiteFracSkin_pd_prime = PRiSM_model_finiteFracSkin_pd_prime;
-  g.PRiSM_model_partialPenFrac        = PRiSM_model_partialPenFrac;
-  g.PRiSM_model_partialPenFrac_pd_prime = PRiSM_model_partialPenFrac_pd_prime;
+  g.PRiSM_model_intersecting             = PRiSM_model_intersecting;
+  g.PRiSM_model_intersecting_pd_prime    = PRiSM_model_intersecting_pd_prime;
+  g.PRiSM_model_fogBoundary              = PRiSM_model_fogBoundary;
+  g.PRiSM_model_fogBoundary_pd_prime     = PRiSM_model_fogBoundary_pd_prime;
+  g.PRiSM_model_finiteFracSkin           = PRiSM_model_finiteFracSkin;
+  g.PRiSM_model_finiteFracSkin_pd_prime  = PRiSM_model_finiteFracSkin_pd_prime;
+  g.PRiSM_model_partialPenFrac           = PRiSM_model_partialPenFrac;
+  g.PRiSM_model_partialPenFrac_pd_prime  = PRiSM_model_partialPenFrac_pd_prime;
 })();
 
 // ============================================================================
 // === SELF-TEST ===
 // ============================================================================
-//
-// Lightweight smoke test: stub the foundation primitives and run every
-// registered evaluator against td = [1, 10, 100] with default params.
-// Confirms each function returns finite numbers (and arrays where expected).
+// Registry scan + key textbook asymptotes. Stripped at concat.
 
 (function _selfTest() {
-  // Only run when executed directly (e.g. from Node) and when foundation
-  // primitives are NOT already present. In production the foundation file
-  // installs the real Stehfest / Bessel / Ei before this file runs.
-  var g = (typeof window !== 'undefined') ? window : (typeof globalThis !== 'undefined' ? globalThis : {});
-  var hadFoundation = (typeof g.PRiSM_stehfest === 'function');
-
-  // ---- mocks (only installed if not already present) ----------------------
-  if (!hadFoundation) {
-    // trivial K0/K1 approximations: small-arg series + large-arg asymptotic
-    g.PRiSM_besselK0 = function (x) {
-      if (x <= 0 || !isFinite(x)) return 1e30;
-      if (x < 2) {
-        var t = x / 2;
-        var t2 = t * t;
-        // Abramowitz 9.8.5
-        return -Math.log(t) * (1 + 3.5156229 * t2) + (-0.57721566
-          + 0.42278420 * t2 + 0.23069756 * t2 * t2);
-      }
-      // 9.8.6 large-x
-      var z = 2 / x;
-      return Math.exp(-x) / Math.sqrt(x) *
-        (1.25331414 - 0.07832358 * z + 0.02189568 * z * z);
-    };
-    g.PRiSM_besselK1 = function (x) {
-      if (x <= 0) return 1e30;
-      if (x < 2) {
-        var t = x / 2;
-        var t2 = t * t;
-        return Math.log(t) * (x / 2) * (1 + 0.5 * t2) +
-               (1 / x) * (1 + 0.15443144 * t2 - 0.67278579 * t2 * t2);
-      }
-      var z = 2 / x;
-      return Math.exp(-x) / Math.sqrt(x) *
-        (1.25331414 + 0.23498619 * z - 0.03655620 * z * z);
-    };
-    g.PRiSM_Ei = function (x) {
-      // Series for small |x|, asymptotic for large |x|. Crude but finite.
-      if (x === 0) return -Infinity;
-      if (x < 0) {
-        // for negative x compute Ei(-|x|) ~ E1(|x|) with sign flip
-        var ax = -x;
-        if (ax < 1) {
-          // series
-          var s = 0.57721566 + Math.log(ax);
-          var term = 1, sum = 0;
-          for (var n = 1; n < 30; n++) {
-            term *= -ax / n;
-            sum += term / n;
-          }
-          return -(s - sum);  // Ei(-x) for x>0
-        } else {
-          var sum2 = 1, term2 = 1;
-          for (var k = 1; k < 10; k++) {
-            term2 *= -k / ax;
-            sum2 += term2;
-          }
-          return -Math.exp(-ax) / ax * sum2;
+  var log = (typeof console !== 'undefined' && console.log) ? console.log.bind(console) : function () {};
+  var fails = [];
+  function check(name, ok, detail) { if (!ok) fails.push(name + (detail ? ' — ' + detail : '')); }
+  function near(name, v, e, tol) { check(name, Math.abs(v - e) <= tol, 'got ' + v + ', expected ' + e + ' ± ' + tol); }
+  var td = [];
+  for (var i = -2; i <= 7; i += 0.5) td.push(Math.pow(10, i));
+  var keys = Object.keys(REGISTRY_ADDITIONS);
+  keys.forEach(function (key) {
+    var m = REGISTRY_ADDITIONS[key];
+    [-3, 0, 2.5].forEach(function (S) {
+      var p = {}, k;
+      for (k in m.defaults) p[k] = m.defaults[k];
+      if ('S' in p) p.S = S; else p.S_perf = S;
+      try {
+        var pd = m.pd(td, p), dp = m.pdPrime(td, p);
+        for (var j = 0; j < td.length; j++) {
+          if (!isFinite(pd[j]) || pd[j] < 0 || !isFinite(dp[j])) { check(key + ' S=' + S, false, 'bad value at td=' + td[j]); break; }
+          if (j > 0 && pd[j] < pd[j - 1] * (1 - 1e-9)) { check(key + ' S=' + S, false, 'not monotone at td=' + td[j]); break; }
         }
-      }
-      // x > 0
-      var s2 = 0.57721566 + Math.log(x);
-      var t3 = 1, sm = 0;
-      for (var i = 1; i < 30; i++) {
-        t3 *= x / i;
-        sm += t3 / i;
-      }
-      return s2 + sm;
-    };
-
-    // Stehfest (Stehfest 1970, Comm. ACM 13) — N=12
-    var STEHFEST_V_CACHE = {};
-    function _stehfest_V(N) {
-      if (STEHFEST_V_CACHE[N]) return STEHFEST_V_CACHE[N];
-      var V = new Array(N + 1);
-      var fact = [1];
-      for (var i = 1; i <= N; i++) fact[i] = fact[i - 1] * i;
-      for (var n = 1; n <= N; n++) {
-        var sum = 0;
-        var k1 = Math.floor((n + 1) / 2);
-        var k2 = Math.min(n, N / 2);
-        for (var k = k1; k <= k2; k++) {
-          sum += Math.pow(k, N / 2) * fact[2 * k] /
-                 (fact[N / 2 - k] * fact[k] * fact[k - 1] *
-                  fact[n - k] * fact[2 * k - n]);
-        }
-        V[n] = (Math.pow(-1, n + N / 2)) * sum;
-      }
-      STEHFEST_V_CACHE[N] = V;
-      return V;
-    }
-    g.PRiSM_stehfest = function (Fhat, t, N) {
-      if (!N) N = 12;
-      var V = _stehfest_V(N);
-      var ln2_t = Math.log(2) / t;
-      var sum = 0;
-      for (var n = 1; n <= N; n++) {
-        sum += V[n] * Fhat(n * ln2_t);
-      }
-      return sum * ln2_t;
-    };
-
-    // Foundation Pd_lap_homogeneous (line-source approx) — used by inclined.
-    g.PRiSM_pd_lap_homogeneous = function (s, p) {
-      var sq = Math.sqrt(s);
-      return g.PRiSM_besselK0(sq) / s;
-    };
-  }
-
-  // ---- run every registered evaluator ------------------------------------
-  var tdVec = [1, 10, 100];
-  var allOk = true;
-  var results = [];
-  for (var key in REGISTRY_ADDITIONS) {
-    if (!REGISTRY_ADDITIONS.hasOwnProperty(key)) continue;
-    var entry = REGISTRY_ADDITIONS[key];
-    var defaults = entry.defaults;
-    try {
-      var pdArr = entry.pd(tdVec, defaults);
-      var ok = Array.isArray(pdArr) && pdArr.every(function (v) {
-        return typeof v === 'number' && isFinite(v) && !isNaN(v);
-      });
-      if (!ok) {
-        allOk = false;
-        results.push(key + ': pd returned ' + JSON.stringify(pdArr));
-      } else {
-        results.push(key + ': pd ok (' + pdArr.map(function (v) {
-          return v.toFixed(3);
-        }).join(', ') + ')');
-      }
-      // pdPrime check
-      var pdpArr = entry.pdPrime(tdVec, defaults);
-      var ok2 = Array.isArray(pdpArr) && pdpArr.every(function (v) {
-        return typeof v === 'number' && isFinite(v) && !isNaN(v);
-      });
-      if (!ok2) {
-        allOk = false;
-        results.push(key + ': pdPrime returned ' + JSON.stringify(pdpArr));
-      }
-    } catch (e) {
-      allOk = false;
-      results.push(key + ': THREW ' + (e && e.message ? e.message : e));
-    }
-  }
-
-  if (typeof console !== 'undefined' && console.log) {
-    if (allOk) {
-      console.log('PRiSM 03-models: all 12 model evaluators returned finite values');
-    } else {
-      console.log('PRiSM 03-models: SELF-TEST FAILED');
-      results.forEach(function (r) { console.log('  ' + r); });
-    }
+      } catch (e) { check(key + ' S=' + S, false, 'threw ' + (e && e.message)); }
+    });
+  });
+  var hom = REGISTRY_ADDITIONS.homogeneous;
+  near('homogeneous S=-3 late', hom.pd(1e6, { Cd: 100, S: -3 }), 0.5 * (Math.log(1e6) + 0.80907) - 3, 0.01);
+  near('inclined S_theta 45', _cincoLey(45, 1, 100 / 0.354), -1.511, 0.01);
+  near('Brons-Marting b=0.2', _bronsMarting(0.2, 35, 0.354, 1), 10.79, 0.02);
+  near('infiniteFrac late', PRiSM_model_infiniteFrac(1e5, { Cd: 0, S: 0 }), 0.5 * (Math.log(1e5) + 2.20), 0.03);
+  near('parallelChannel pd\'(1e8)', PRiSM_model_parallelChannel_pd_prime(1e8, {}), 17.73, 0.36);
+  if (fails.length) {
+    log('PRiSM 03-models: SELF-TEST FAILED');
+    fails.forEach(function (f) { log('  ' + f); });
+  } else {
+    log('PRiSM 03-models: all ' + keys.length + ' registry models finite, >= 0 and monotone; asymptotes OK');
   }
 })();
 
