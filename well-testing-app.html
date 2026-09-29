@@ -532,6 +532,97 @@
             .export-bar { flex-direction: column; }
         }
 
+        /* ── v3.0 navigation: sidebar search + collapsible groups ── */
+        .sb-search { padding: 10px 14px 4px; }
+        .sb-search input {
+            width: 100%; min-width: 0; box-sizing: border-box; background: var(--bg1); border: 1px solid var(--border);
+            border-radius: 6px; padding: 7px 10px; color: var(--text); font-size: 13px; font-family: inherit; outline: none;
+        }
+        .sb-search input:focus { border-color: var(--accent); }
+        .sb-empty { padding: 8px 18px; font-size: 12px; color: var(--text3); }
+        .nav-group-label { display: flex; align-items: center; justify-content: space-between; gap: 8px; cursor: pointer; user-select: none; -webkit-user-select: none; }
+        .nav-group-label::after { content: '\25BE'; font-size: 11px; color: var(--text3); transition: transform .15s; }
+        .nav-group-label:hover, .nav-group-label:focus-visible { color: var(--text2); outline: none; }
+        .nav-group.collapsed .nav-group-label::after { transform: rotate(-90deg); }
+        .nav-group.collapsed .nav-btn:not(.active) { display: none; }
+        .sidebar.sb-searching .nav-group.collapsed .nav-btn { display: flex; }
+        .sidebar .nav-btn.sb-hide, .sidebar .nav-group.sb-hide { display: none !important; }
+        .sidebar.sb-searching .nav-group-label::after { visibility: hidden; }
+
+        /* ── v3.0 dashboard: search, favourites, recently used, group headings ── */
+        .dash-tools { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+        .dash-tools input {
+            flex: 1 1 260px; min-width: 0; max-width: 520px; box-sizing: border-box; background: var(--bg1); border: 1px solid var(--border);
+            border-radius: 8px; padding: 10px 12px; color: var(--text); font-size: 14px; font-family: inherit; outline: none;
+        }
+        .dash-tools input:focus { border-color: var(--accent); }
+        .dash-count { font-size: 12px; color: var(--text3); }
+        .dash-sec { margin-bottom: 22px; }
+        .dash-group-h { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--text2); margin: 0 0 10px; display: flex; align-items: center; gap: 8px; }
+        .dash-group-n { font-size: 10px; font-weight: 700; color: var(--text3); background: var(--bg3); border: 1px solid var(--border); border-radius: 10px; padding: 1px 7px; letter-spacing: 0; }
+        .dash-minis { display: flex; flex-wrap: wrap; gap: 8px; }
+        .dash-mini {
+            display: inline-flex; align-items: center; gap: 8px; max-width: 100%; min-width: 0; padding: 8px 12px; border-radius: 8px;
+            border: 1px solid var(--border); background: var(--bg3); color: var(--text); font-size: 13px; font-family: inherit; cursor: pointer; text-align: left;
+        }
+        .dash-mini:hover, .dash-mini:focus-visible { border-color: var(--accent); outline: none; }
+        .dash-mini .dc-icon { font-size: 16px; flex: none; }
+        .dash-mini span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+        .dash-hint { font-size: 12px; color: var(--text3); margin: -4px 0 18px; }
+        .dash-empty { font-size: 13px; color: var(--text2); padding: 18px 0; }
+        .dash-card { position: relative; }
+        .dash-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+        .dash-card .dc-fav {
+            position: absolute; top: 10px; right: 10px; width: 34px; height: 34px; border-radius: 50%; border: 1px solid transparent;
+            background: transparent; color: var(--text3); font-size: 18px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center;
+        }
+        .dash-card .dc-fav:hover, .dash-card .dc-fav:focus-visible { border-color: var(--border); color: var(--accent); outline: none; }
+        .dash-card .dc-fav[aria-pressed="true"] { color: var(--accent); }
+
+        /* ── Stacked input tables on phones ──
+           Host __wtsStackTables() marks multi-column input tables (.wts-stack) and gives each
+           cell a data-label from its column header; below 600 px each row becomes a card of
+           label / value pairs. The header stays in the DOM (visually hidden) and no ids change,
+           so autosave and the report engine read the table exactly as before. */
+        @media (max-width: 600px) {
+            /* Phones: grid/flex children may shrink to the screen instead of pushing it wider
+               (a 1fr track grows to its widest child's min-content) — same fix as the iOS app. */
+            .cols-2 > *, .cols-3 > *, .fg > *, .fg-grid > *, .dash-grid > *, .fg-item, .card, .rbox { min-width: 0; }
+            .fg-item input, .fg-item select, .fg-item textarea { max-width: 100%; min-width: 0; box-sizing: border-box; }
+            #pgBody select { contain: paint; }
+            #pgBody { overflow-wrap: break-word; }
+            #pgBody pre { max-width: 100%; overflow-x: auto; }
+            #pgBody img { max-width: 100%; height: auto; }
+            .dash-card { padding: 16px 18px; }
+            .dash-card .dc-icon { font-size: 22px; margin-bottom: 6px; }
+            .page-body table.wts-stack { display: block; width: 100% !important; min-width: 0 !important; max-width: 100%; overflow: visible; border-collapse: separate; }
+            .page-body table.wts-stack > thead, .page-body table.wts-stack tr.wts-stack-head {
+                position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: 0 !important; border: 0 !important;
+                overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
+            }
+            .page-body table.wts-stack > tbody, .page-body table.wts-stack > tfoot { display: block; width: 100%; }
+            .page-body table.wts-stack tr { display: block; border: 1px solid var(--border); border-radius: 8px; background: var(--bg2); padding: 4px 12px; margin: 0 0 10px; }
+            .page-body table.wts-stack tr > td, .page-body table.wts-stack tr > th {
+                display: flex; align-items: center; justify-content: space-between; gap: 10px; width: auto !important; min-width: 0 !important;
+                padding: 6px 0; border: none; border-bottom: 1px solid var(--border); text-align: right; white-space: normal !important;
+            }
+            .page-body table.wts-stack tr > :last-child { border-bottom: none; }
+            .page-body table.wts-stack tr:hover td { background: none; }
+            .page-body table.wts-stack td[data-label]::before {
+                content: attr(data-label); flex: 0 1 45%; min-width: 0; text-align: left; font-size: 11px; font-weight: 600;
+                color: var(--text2); text-transform: uppercase; letter-spacing: .3px; overflow-wrap: anywhere;
+            }
+            .page-body table.wts-stack td > :where(input, select, textarea) { flex: 1 1 55%; min-width: 0; width: auto !important; max-width: 60%; }
+            /* no font-weight here: the report engine reads a cell's computed weight (bold cells) */
+            .page-body table.wts-stack td.wts-stack-title { justify-content: flex-start; font-size: 13px; color: var(--accent); }
+            .page-body table.wts-stack td.wts-stack-title::before { content: none; }
+            .page-body table.wts-stack td:empty { display: none; }
+        }
+        @media (max-width: 768px) {
+            .nav-group-label { padding-top: 8px; padding-bottom: 10px; }
+            .dash-tools input { max-width: none; }
+        }
+
         /* ── Saved indicator ── */
         .save-flash { position: fixed; top: 16px; right: 16px; background: var(--green); color: #fff; padding: 8px 16px; border-radius: 6px; font-size: 12px; font-weight: 600; z-index: 9999; opacity: 0; transition: opacity .3s; pointer-events: none; }
         .save-flash.show { opacity: 1; }
@@ -554,6 +645,8 @@
           <script>(function(){var s=document.querySelector('.sidebar-brand img'),m=document.getElementById('mobLogo');if(s&&m)m.src=s.src;})();</script>
           <div><h1>H<sub style="font-size:9px;vertical-align:baseline;margin:0 1px">2</sub>Oil</h1><p>Well Testing Suite v1.7</p></div>
         </div>
+        <div class="sb-search" role="search"><input type="search" id="sb_search" placeholder="Search calculators" aria-label="Search calculators" autocomplete="off" spellcheck="false" data-no-persist></div>
+        <div class="sb-empty hidden" id="sb_empty">No calculator matches.</div>
         <div class="nav-group">
             <div class="nav-group-label">Overview</div>
             <div class="nav-btn" data-p="home"><span class="nav-icon">&#9670;</span><span>Dashboard</span></div>
@@ -645,7 +738,8 @@
             <div id="wts_unit_toggle_host"></div>
             <!-- Quick-report button. Wired by prism-build/30-quick-report.js. -->
             <div id="wts_quick_report_host"></div>
-            <div class="export-btns" id="exportBtns" style="display:none;gap:6px">
+            <div class="export-btns" id="exportBtns" style="display:none;gap:6px;flex-wrap:wrap">
+              <button class="btn-export" id="copyResultsBtn" onclick="copyPageResults()" title="Copy inputs and results as text (tables tab-separated)">&#128203; Copy results</button>
               <button class="btn-export" onclick="exportPagePDF()" title="Export as PDF report">&#128424; PDF</button>
               <button class="btn-export" onclick="exportPagePNG()" title="Export charts as PNG">&#128247; PNG</button>
               <button class="btn-export" onclick="exportPageCSV()" title="Export inputs and results as CSV">&#128196; CSV</button>
@@ -1293,11 +1387,249 @@ function __calcHomeTiles(mods) {
     return mods;
 }
 
+// ── v3.0 navigation UX ──
+// Sidebar search + collapsible groups, dashboard search / group headings /
+// favourites / recently used, stacked input tables on phones. UI preferences
+// live in wts_ui_* keys (29-project-save.js treats them as device preferences:
+// never saved into project files). Event-driven only — no timers or polling.
+const __UI_FAV = 'wts_ui_favs', __UI_RECENT = 'wts_ui_recent', __UI_NAVC = 'wts_ui_nav_collapsed';
+const __UI_RECENT_MAX = 8, __UI_RECENT_SHOW = 6;
+const __UI_NOT_TILE = { home:1, clientinfo:1, releasenotes:1, privacy:1, gaevents:1, dca:1, pta:1 };
+let __homeTilesNow = {};     // id → tile of the dashboard on screen (for the favourites / recent chips)
+function __uiList(k) {
+    try {
+        const v = JSON.parse(localStorage.getItem(k) || '[]');
+        return Array.isArray(v) ? v.filter(x => typeof x === 'string' && x.length > 0 && x.length <= 64) : [];
+    } catch(e) { return []; }
+}
+function __uiSetList(k, a) { try { localStorage.setItem(k, JSON.stringify(a)); } catch(e) {} }
+function __uiTokens(q) { return String(q == null ? '' : q).toLowerCase().split(/\s+/).filter(Boolean); }
+function __uiMatch(tokens, hay) { hay = String(hay || '').toLowerCase(); return tokens.every(t => hay.indexOf(t) !== -1); }
+function __uiRecordRecent(p) {
+    if(!p || __UI_NOT_TILE[p] || !/^[a-z][a-z0-9_]{1,31}$/.test(p)) return;
+    const a = __uiList(__UI_RECENT).filter(x => x !== p);
+    a.unshift(p);
+    __uiSetList(__UI_RECENT, a.slice(0, __UI_RECENT_MAX));
+}
+function __uiToggleFav(id) {
+    const a = __uiList(__UI_FAV), i = a.indexOf(id);
+    if(i === -1) a.push(id); else a.splice(i, 1);
+    __uiSetList(__UI_FAV, a);
+    return i === -1;
+}
+// Extra sidebar search text for plug-in calculators (subtitle / tile text).
+function __uiRegText(key) {
+    const hit = __calcEntries().find(x => x.key === key);
+    return hit ? [hit.e.title, hit.e.sub, hit.e.desc].filter(Boolean).join(' ') : '';
+}
+
+// Sidebar: collapsible groups (persisted) + search filter.
+function __navGroupKey(g) {
+    const l = g && g.querySelector ? g.querySelector('.nav-group-label') : null;
+    return l ? String(l.textContent).trim().toLowerCase() : '';
+}
+function __sidebarFilter() {
+    const sb = $('sidebar'), inp = $('sb_search');
+    if(!sb || typeof sb.querySelectorAll !== 'function') return 0;
+    const q = __uiTokens(inp ? inp.value : '');
+    if(sb.classList) sb.classList.toggle('sb-searching', q.length > 0);
+    let n = 0;
+    Array.from(sb.querySelectorAll('.nav-group')).forEach(g => {
+        const gl = __navGroupKey(g);
+        let m = 0;
+        Array.from(g.querySelectorAll('.nav-btn')).forEach(b => {
+            const p = b.getAttribute('data-p') || '';
+            const ok = !q.length || __uiMatch(q, gl + ' ' + b.textContent + ' ' + p + ' ' + __uiRegText(p));
+            b.classList.toggle('sb-hide', !ok);
+            if(ok) m++;
+        });
+        g.classList.toggle('sb-hide', !m);
+        n += m;
+    });
+    const e = $('sb_empty');
+    if(e && e.classList) e.classList.toggle('hidden', !(q.length && !n));
+    return n;
+}
+function __sidebarEnhance() {
+    const sb = $('sidebar');
+    if(!sb || typeof sb.querySelectorAll !== 'function') return;
+    const closed = __uiList(__UI_NAVC);
+    Array.from(sb.querySelectorAll('.nav-group')).forEach(g => {
+        const l = g.querySelector('.nav-group-label');
+        if(!l) return;
+        if(!l.getAttribute('role')) { l.setAttribute('role', 'button'); l.setAttribute('tabindex', '0'); }
+        const c = closed.indexOf(__navGroupKey(g)) !== -1;
+        g.classList.toggle('collapsed', c);
+        l.setAttribute('aria-expanded', c ? 'false' : 'true');
+    });
+    __sidebarFilter();
+}
+function __sidebarToggle(g, force) {
+    const k = __navGroupKey(g);
+    if(!k) return false;
+    const c = typeof force === 'boolean' ? force : !g.classList.contains('collapsed');
+    const a = __uiList(__UI_NAVC).filter(x => x !== k);
+    if(c) a.push(k);
+    __uiSetList(__UI_NAVC, a);
+    g.classList.toggle('collapsed', c);
+    const l = g.querySelector('.nav-group-label');
+    if(l) l.setAttribute('aria-expanded', c ? 'false' : 'true');
+    return c;
+}
+
+// Dashboard: tiles grouped under the sidebar group headings, in sidebar order.
+function __homeGroups(mods) {
+    const tiles = {}, seen = {}, out = [];
+    mods.forEach(m => { tiles[m.id] = m; });
+    const sb = $('sidebar');
+    if(sb && typeof sb.querySelectorAll === 'function') Array.from(sb.querySelectorAll('.nav-group')).forEach(g => {
+        const l = g.querySelector('.nav-group-label');
+        const ids = Array.from(g.querySelectorAll('.nav-btn[data-p]')).map(b => b.getAttribute('data-p')).filter(id => tiles[id] && !seen[id]);
+        ids.forEach(id => { seen[id] = 1; });
+        if(ids.length) out.push({ label: l ? String(l.textContent).trim() : 'Calculators', ids });
+    });
+    const rest = mods.filter(m => !seen[m.id]).map(m => m.id);
+    if(rest.length) out.push({ label: 'More', ids: rest });
+    return { tiles, groups: out };
+}
+function __homeQuick(tiles) {
+    const q = $('dash_quick');
+    if(!q) return;
+    const favs = __uiList(__UI_FAV).filter(id => tiles[id]);
+    const rec = __uiList(__UI_RECENT).filter(id => tiles[id]).slice(0, __UI_RECENT_SHOW);
+    const chip = id => '<button type="button" class="dash-mini" data-go="' + id + '"><span class="dc-icon">' + tiles[id].icon + '</span><span>' + tiles[id].title + '</span></button>';
+    q.innerHTML =
+        (favs.length ? '<section class="dash-sec" data-sec="fav"><h3 class="dash-group-h">&#9733; Favourites</h3><div class="dash-minis">' + favs.map(chip).join('') + '</div></section>'
+                     : '<div class="dash-hint">Tap &#9734; on a calculator to pin it here.</div>') +
+        (rec.length ? '<section class="dash-sec" data-sec="recent"><h3 class="dash-group-h">Recently used</h3><div class="dash-minis">' + rec.map(chip).join('') + '</div></section>' : '');
+}
+function __homeFilter() {
+    const body = $('pgBody'), inp = $('dash_search');
+    if(!body || typeof body.querySelectorAll !== 'function') return 0;
+    const q = __uiTokens(inp ? inp.value : '');
+    let n = 0, total = 0;
+    Array.from(body.querySelectorAll('.dash-sec[data-group]')).forEach(sec => {
+        let m = 0;
+        Array.from(sec.querySelectorAll('.dash-card')).forEach(c => {
+            total++;
+            const ok = !q.length || __uiMatch(q, c.getAttribute('data-search'));
+            c.classList.toggle('hidden', !ok);
+            if(ok) m++;
+        });
+        sec.classList.toggle('hidden', !m);
+        n += m;
+    });
+    const quick = $('dash_quick'), cnt = $('dash_count'), empty = $('dash_empty');
+    if(quick && quick.classList) quick.classList.toggle('hidden', q.length > 0);
+    if(cnt) cnt.textContent = q.length ? (n + ' of ' + total + ' calculators') : (total + ' calculators');
+    if(empty && empty.classList) empty.classList.toggle('hidden', !(q.length && !n));
+    return n;
+}
+function __homeSetFavState(id, on) {
+    const body = $('pgBody');
+    if(!body || typeof body.querySelectorAll !== 'function') return;
+    Array.from(body.querySelectorAll('.dc-fav')).forEach(b => {
+        if(b.getAttribute('data-fav') !== id) return;
+        b.setAttribute('aria-pressed', on ? 'true' : 'false');
+        b.setAttribute('title', on ? 'Remove from favourites' : 'Add to favourites');
+        b.innerHTML = on ? '&#9733;' : '&#9734;';
+    });
+}
+
+// Stacked input tables: every multi-column table in #pgBody with a header row and
+// form controls in its body rows gets .wts-stack and a data-label per cell (from
+// the column header, colspan-aware). The CSS applies below 600 px only. Re-run
+// after render/restore, after every click / input / change inside #pgBody (rows
+// added or rebuilt) and after a unit-system switch (unit labels in headers).
+function __stackLabelOf(th) { try { return _thText(th); } catch(e) { return String(th.textContent || '').replace(/\s+/g, ' ').trim(); } }
+function __wtsStackTables(root) {
+    root = root || $('pgBody');
+    if(!root || typeof root.querySelectorAll !== 'function' || page === 'prism') return 0;
+    let n = 0;
+    Array.from(root.querySelectorAll('table')).forEach(t => {
+        if(t.parentElement && t.parentElement.closest('table')) return;             // nested tables stay as they are
+        if(t.closest('[data-no-stack], #wts_viz, #prism_shell')) return;
+        const rows = Array.from(t.rows || []);
+        if(rows.length < 2) return;
+        const thead = t.tHead;
+        let head = null;
+        if(thead && thead.rows && thead.rows.length) head = thead.rows[thead.rows.length - 1];
+        else if(rows[0].cells.length && Array.from(rows[0].cells).every(c => c.tagName === 'TH')) head = rows[0];
+        if(!head || head.cells.length < 2) return;
+        const bodyRows = rows.filter(r => r !== head && !(thead && r.parentElement === thead));
+        if(!bodyRows.some(r => r.querySelector('input, select, textarea'))) return;
+        const labels = [];
+        Array.from(head.cells).forEach(c => { const s = Math.max(1, c.colSpan || 1), tx = __stackLabelOf(c); for(let i = 0; i < s; i++) labels.push(tx); });
+        if(!t.classList.contains('wts-stack')) t.classList.add('wts-stack');
+        if(!thead && !head.classList.contains('wts-stack-head')) head.classList.add('wts-stack-head');
+        bodyRows.forEach(r => {
+            let col = 0;
+            Array.from(r.cells).forEach((c, i) => {
+                const lab = labels[col] || '';
+                if(lab) { if(c.getAttribute('data-label') !== lab) c.setAttribute('data-label', lab); }
+                else if(c.hasAttribute('data-label')) c.removeAttribute('data-label');
+                const title = i === 0 && !c.querySelector('input, select, textarea, button');
+                if(c.classList.contains('wts-stack-title') !== title) c.classList.toggle('wts-stack-title', title);
+                col += Math.max(1, c.colSpan || 1);
+            });
+        });
+        n++;
+    });
+    return n;
+}
+window.WTS_stackTables = __wtsStackTables;
+
 // ── Navigation ──
 let page = 'clientinfo';
 const navBtns = document.querySelectorAll('.nav-btn');
 navBtns.forEach(b => b.addEventListener('click', () => nav(b.dataset.p)));
 { const pl = $('sbPrivacyLink'); if(pl) pl.addEventListener('click', ev => { ev.preventDefault(); nav('privacy'); }); }
+// v3.0 sidebar: group labels toggle their group (click, Enter, Space); the search box
+// filters the buttons (Enter opens the first match, Escape clears).
+{
+    const sb = $('sidebar'), si = $('sb_search');
+    const labelOf = e => (e && e.target && typeof e.target.closest === 'function') ? e.target.closest('.nav-group-label') : null;
+    if(sb && typeof sb.addEventListener === 'function') {
+        sb.addEventListener('click', e => { const l = labelOf(e); if(l && l.parentElement) __sidebarToggle(l.parentElement); });
+        sb.addEventListener('keydown', e => {
+            const l = labelOf(e);
+            if(l && l.parentElement && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); __sidebarToggle(l.parentElement); }
+        });
+    }
+    if(si && typeof si.addEventListener === 'function') {
+        si.addEventListener('input', () => __sidebarFilter());
+        si.addEventListener('search', () => __sidebarFilter());
+        si.addEventListener('keydown', e => {
+            if(e.key === 'Escape') { si.value = ''; __sidebarFilter(); }
+            else if(e.key === 'Enter') {
+                const b = sb && sb.querySelector('.nav-btn[data-p]:not(.sb-hide)');
+                if(b && si.value.trim()) { e.preventDefault(); nav(b.getAttribute('data-p')); }
+            }
+        });
+    }
+    try { __sidebarEnhance(); } catch(e) { console.warn('[nav] sidebar enhance failed', e); }
+    // Stacked input tables: relabel after anything in the page body changes rows.
+    const pb = $('pgBody');
+    if(pb && typeof pb.addEventListener === 'function') {
+        // Dashboard: a star toggles its favourite (and never opens the tile); a chip opens its calculator.
+        pb.addEventListener('click', e => {
+            if(page !== 'home' || !e.target || typeof e.target.closest !== 'function') return;
+            const f = e.target.closest('.dc-fav');
+            if(f) {
+                e.stopPropagation(); e.preventDefault();
+                const id = f.getAttribute('data-fav');
+                __homeSetFavState(id, __uiToggleFav(id));
+                __homeQuick(__homeTilesNow);
+                return;
+            }
+            const g = e.target.closest('.dash-mini[data-go]');
+            if(g) { e.stopPropagation(); nav(g.getAttribute('data-go')); }
+        }, true);
+        const re = () => { try { __wtsStackTables(pb); } catch(e) { /* layout aid only */ } };
+        pb.addEventListener('click', re); pb.addEventListener('input', re); pb.addEventListener('change', re);
+    }
+    document.addEventListener('wts:unit-system-changed', () => Promise.resolve().then(() => { try { __wtsStackTables(); } catch(e) {} }));
+}
 // Host pages whose results are formatted with _uFmt()/_uMetric(): re-run the
 // shown result when the unit system flips, so a result computed in one
 // system is never left on screen next to inputs converted to the other
@@ -1328,6 +1660,7 @@ function nav(p) {
     __currentCalcKey = null;
     __currentCalcIds = null;
     page = p;
+    __uiRecordRecent(p);                       // dashboard "Recently used"
     document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.p === p));   // live list: includes registry buttons
     closeMobileSidebar();
     render();
@@ -1339,6 +1672,7 @@ function render() {
     body.innerHTML = '';
     const pages = { home: renderHome, clientinfo: renderClientInfo, aga3: renderAGA3, units: renderUnits, choke: renderChoke, flare: renderFlare, prv: renderPRV, chokeflow: renderChokeFlow, gascalc: renderGasCalc, fluid: renderFluid, tank: renderTank, vessel: renderVessel, elec: renderElec, chem: renderChem, sep: renderSep, bottomsup: renderBottomsUp, solgor: renderSolGOR, oilgas: renderOilGas, mcfshr: renderMCFShr, casing: renderCasing, chokecnv: renderChokeCnv, analogsig: renderAnalogSig, pumpsz: renderPumpSz, seprate: renderSepRate, sephand: renderSepHandling, heater: renderHeater, pipesz: renderPipeSz, turbmeter: renderTurbMeter, aircomp: renderAirComp, gensz: renderGenSz, cablesz: renderCableSz, vdrop: renderVDrop, flamearr: renderFlameArr, arc: renderARC, wts: renderWTS, releasenotes: renderReleaseNotes, gaevents: renderGAEvents, privacy: renderPrivacy, prism: renderPRiSM, dca: renderPRiSM, pta: renderPRiSM, esdhi: window.renderESDHiPilot, esdlo: window.renderESDLoPilot, hydrate: window.renderHydrateManagement, liquidline: window.renderLiquidLine, pipelife: window.renderPipeLife };
     __mountCalcNav(pages);                     // sidebar buttons for plug-in calculators (idempotent)
+    try { __sidebarEnhance(); } catch(e) {}    // collapsed state + search filter for new groups/buttons
     if (pages[page]) pages[page](body);
     else __renderRegistryCalc(page, body);     // plug-in calculators (window.WTS_calcRegistry)
     // Re-apply every autosaved value / dynamic row for this page
@@ -1349,6 +1683,8 @@ function render() {
     // Notify analytics + any other listeners that the SPA has navigated.
     // Used by the GA4 tracker for virtual page_view + scroll-depth reset.
     try { document.dispatchEvent(new CustomEvent('h2oil:pagechange', { detail: { page } })); } catch(_){}
+    // Phone card layout for input tables — after pagechange, whose listeners (units layer) rewrite header unit labels.
+    try { __wtsStackTables(body); } catch(e) {}
 }
 
 // ── Canvas Chart Helper ──
@@ -1428,10 +1764,9 @@ function drawLineChart(canvas, datasets, opts={}) {
 // ═══════════════════════════════════════
 function renderHome(body) {
     $('pgTitle').textContent='Dashboard';
-    $('pgSub').textContent='Select a module to get started';
-    const grid = el('div','dash-grid');
-    // Tile order matches the sidebar groups so the dashboard reads like
-    // a visual table of contents. Badges = sidebar group names (colour
+    $('pgSub').textContent='Search, pin favourites or pick a calculator';
+    // Tiles are shown under the sidebar group headings, in sidebar order, so the
+    // dashboard reads like a visual table of contents. Badges = sidebar group names (colour
     // pills consistent with the group convention: green=well/production,
     // orange=safety/process, blue=electrical/utility).
     const mods = [
@@ -1444,6 +1779,12 @@ function renderHome(body) {
         { id:'mcfshr',    icon:'&#9632;',  badge:'Well Testing', bc:'dc-b-green',  title:'MCF & Shrinkage %', desc:'Meter Correction Factor and shrinkage percentage from turbine meter and surge tank readings.' },
         { id:'casing',    icon:'&#9674;',  badge:'Well Testing', bc:'dc-b-green',  title:'Casing & Tubing', desc:'Casing and tubing dimensions, annular capacity, and total volume calculations.' },
         { id:'wts',       icon:'&#9733;',  badge:'Well Testing', bc:'dc-b-green',  title:'Well Test Simulator', desc:'Full surface flow tree: Wellhead → SSV → Choke → Heater → Separator → Flare with live P, T and velocity.' },
+        // ─── Test System Safety ───
+        { id:'esdhi',     icon:'&#9888;',  badge:'Safety',       bc:'dc-b-orange', title:'ESD Hi-Pilot', desc:'Hi-pilot (PSH) set point that fires the ESD before a blocked section reaches its relief setting during the ESD response time.' },
+        { id:'esdlo',     icon:'&#9881;',  badge:'Safety',       bc:'dc-b-orange', title:'ESD Lo-Pilot', desc:'Lo-pilot (PSL) set point that fires the ESD on a target detectable leak rate.' },
+        { id:'hydrate',   icon:'&#10052;', badge:'Safety',       bc:'dc-b-orange', title:'Hydrate Management', desc:'Per-segment hydrate-formation check and methanol / glycol inhibitor injection rate.' },
+        { id:'liquidline',icon:'&#9858;',  badge:'Safety',       bc:'dc-b-orange', title:'Liquid Line / RO', desc:'Gas blow-by protection from the separator to the atmospheric tank: LCV blow-by and restriction-orifice sizing.' },
+        { id:'pipelife',  icon:'&#9201;',  badge:'Safety',       bc:'dc-b-orange', title:'Pipe Service Life', desc:'Sand-erosion time to failure for each pipe segment of the test spread.' },
         // ─── Production & Reservoir ───
         { id:'oilgas',    icon:'&#9878;',  badge:'Production',   bc:'dc-b-green',  title:'Oil & Gas Rate + GOR', desc:'Combined oil and gas rate calculation with VCF correction, GOR, and condensate ratio.' },
         { id:'solgor',    icon:'&#9683;',  badge:'Production',   bc:'dc-b-green',  title:'Solution GOR', desc:'Standing and Vasquez & Beggs correlations for solution gas-oil ratio estimation.' },
@@ -1478,12 +1819,58 @@ function renderHome(body) {
         { id:'analogsig', icon:'&#8766;',  badge:'Field Calc',   bc:'dc-b-blue',   title:'Analog Signal', desc:'Convert between 4-20 mA, 0-10 V, and process values for instrumentation.' },
     ];
     __calcHomeTiles(mods);   // + plug-in calculators (window.WTS_calcRegistry), in sidebar order
-    mods.forEach(m => {
-        const c = el('div','dash-card',`<div class="dc-icon">${m.icon}</div><span class="dc-badge ${m.bc}">${m.badge}</span><h3>${m.title}</h3><p>${m.desc}</p>`);
+    // v3.0: search box, favourites + recently used (compact chips, so every tile
+    // appears once in the grids below), then one heading + grid per sidebar group.
+    const { tiles, groups } = __homeGroups(mods);
+    const favs = __uiList(__UI_FAV);
+    const tools = el('div', 'dash-tools', '<input type="search" id="dash_search" placeholder="Search calculators" title="Search by name, method or standard" aria-label="Search calculators" autocomplete="off" spellcheck="false" data-no-persist><span class="dash-count" id="dash_count"></span>');
+    body.appendChild(tools);
+    const quick = el('div', 'dash-quick'); quick.id = 'dash_quick';
+    body.appendChild(quick);
+    const card = m => {
+        const on = favs.indexOf(m.id) !== -1;
+        const c = el('div','dash-card',`<button type="button" class="dc-fav" data-fav="${m.id}" aria-pressed="${on}" title="${on ? 'Remove from favourites' : 'Add to favourites'}">${on ? '&#9733;' : '&#9734;'}</button><div class="dc-icon">${m.icon}</div><span class="dc-badge ${m.bc}">${m.badge}</span><h3>${m.title}</h3><p>${m.desc}</p>`);
+        const name = String(c.querySelector('h3').textContent || m.id).trim();
+        c.setAttribute('data-id', m.id);
+        c.setAttribute('tabindex', '0');
+        c.setAttribute('role', 'link');
+        c.setAttribute('aria-label', name);
+        c.querySelector('.dc-fav').setAttribute('aria-label', 'Favourite: ' + name);
         c.onclick = () => nav(m.id);
-        grid.appendChild(c);
+        c.addEventListener('keydown', e => { if(e.target === c && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); nav(m.id); } });
+        return c;
+    };
+    groups.forEach(g => {
+        const sec = el('section', 'dash-sec');
+        sec.setAttribute('data-group', g.label);
+        sec.innerHTML = '<h3 class="dash-group-h">' + __calcEsc(g.label) + ' <span class="dash-group-n">' + g.ids.length + '</span></h3>';
+        const grid = el('div','dash-grid');
+        g.ids.forEach(id => {
+            const c = card(tiles[id]);
+            c.setAttribute('data-search', (g.label + ' ' + id + ' ' + c.textContent).replace(/[★☆]/g, ' ').replace(/\s+/g, ' ').toLowerCase());
+            grid.appendChild(c);
+        });
+        sec.appendChild(grid);
+        body.appendChild(sec);
     });
-    body.appendChild(grid);
+    const empty = el('div', 'dash-empty hidden', 'No calculator matches the search. Try fewer or shorter words.');
+    empty.id = 'dash_empty';
+    body.appendChild(empty);
+    __homeTilesNow = tiles;
+    __homeQuick(tiles);
+    const si = $('dash_search');
+    if(si) {
+        si.addEventListener('input', __homeFilter);
+        si.addEventListener('search', __homeFilter);
+        si.addEventListener('keydown', e => {
+            if(e.key === 'Escape') { si.value = ''; __homeFilter(); }
+            else if(e.key === 'Enter') {
+                const c = body.querySelector('.dash-sec[data-group] .dash-card:not(.hidden)');
+                if(c && si.value.trim()) { e.preventDefault(); nav(c.getAttribute('data-id')); }
+            }
+        });
+    }
+    __homeFilter();
 }
 
 // ═══════════════════════════════════════
@@ -3104,6 +3491,60 @@ window.exportPageJSON = async function() {
     const blob = new Blob([JSON.stringify(_resultsData(model, page), null, 2)], { type:'application/json' });
     return saveBlobWithDialog(blob, _resultsFile(model, 'json'), [{ description:'JSON file', accept:{ 'application/json':['.json'] } }]);
 };
+// ── Copy results (header button on every calculator page) ──
+// Plain text from the same report model as PDF/CSV/JSON: title, then Inputs and
+// Results sections as "label: value" lines; tables tab-separated so they paste
+// into a spreadsheet as cells.
+function _resultsText(model) {
+    const out = [model.title + (model.subtitle ? ' — ' + model.subtitle : '')];
+    [['INPUTS', model.inputs], ['RESULTS', model.results]].forEach(([head, list]) => {
+        if(!list.length) return;
+        out.push('', head);
+        list.forEach(s => {
+            out.push('', s.title);
+            s.items.forEach(it => {
+                if(it.type === 'kv') out.push(it.label + ': ' + it.value);
+                else if(it.type === 'table') {
+                    if(it.head) out.push(it.head.join('\t'));
+                    it.rows.forEach(r => out.push(r.map(c => c.t).join('\t')));
+                } else if(it.type === 'note') out.push((it.title ? it.title + ': ' : '') + it.text);
+            });
+        });
+    });
+    return out.join('\n') + '\n';
+}
+window.WTS_resultsText = _resultsText;
+function __flashMsg(msg) {
+    const fl = $('saveFlash');
+    if(!fl || !fl.classList) return;
+    const prev = fl.getAttribute('data-default') || fl.textContent;
+    fl.setAttribute('data-default', prev);
+    fl.textContent = msg;
+    fl.classList.add('show');
+    setTimeout(() => { fl.classList.remove('show'); fl.textContent = prev; }, 1400);
+}
+window.copyPageResults = async function() {
+    const body = $('pgBody');
+    if(!body) return false;
+    const model = collectPageReport(body, { charts:false });
+    if(!model.inputs.length && !model.results.length) { alert('Nothing to copy on this page yet.'); return false; }
+    const text = _resultsText(model);
+    let ok = false;
+    try {
+        if(navigator.clipboard && typeof navigator.clipboard.writeText === 'function') { await navigator.clipboard.writeText(text); ok = true; }
+    } catch(e) { ok = false; }
+    if(!ok) {
+        try {
+            const ta = document.createElement('textarea');
+            ta.value = text; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.left = '-9999px';
+            document.body.appendChild(ta); ta.select();
+            ok = !!(document.execCommand && document.execCommand('copy'));
+            ta.remove();
+        } catch(e) { ok = false; }
+    }
+    __flashMsg(ok ? 'Results copied' : 'Copy failed — use CSV or JSON export');
+    return ok;
+};
 
 // ── CSV import for test-point tables (P9) ──
 // WTS_csv.table(text, spec) parses pasted / loaded CSV (comma, semicolon or
@@ -4353,7 +4794,7 @@ function renderFlare(body) {
           <div class="card-title">Custom Threshold Levels</div>
           <div id="fl_custom_rows" style="margin-bottom:10px"></div>
           <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
-            <div class="fg-item" style="flex:1 1 90px"><label>kW/m&sup2;</label><input type="number" id="fl_cl" value="15.77" step="0.01"></div>
+            <div class="fg-item" style="flex:1 1 90px"><label>Radiation level (kW/m&sup2;)</label><input type="number" id="fl_cl" value="15.77" step="0.01"></div>
             <div class="fg-item" style="flex:2 1 130px"><label>Label</label><input type="text" id="fl_clbl" value="Emergency short"></div>
             <button class="btn btn-secondary" style="height:36px;margin-bottom:2px" onclick="addFlareThreshold()">+ Add</button>
           </div>
@@ -9811,10 +10252,10 @@ function renderGenSz(body){
 function renderGenMotors(){
     const c=$('gs_motors');if(!c)return;
     c.innerHTML=window._genMotors.map((m,i)=>`<div class="fg-grid" style="display:grid;grid-template-columns:1fr 1fr 60px 30px;gap:6px;margin-bottom:4px">
-        <input type="number" value="${m.kw}" onchange="window._genMotors[${i}].kw=parseFloat(this.value)" placeholder="kW">
-        <select onchange="window._genMotors[${i}].method=this.value"><option value="dol"${m.method==='dol'?' selected':''}>DOL</option><option value="sd"${m.method==='sd'?' selected':''}>Star-Delta</option><option value="ss"${m.method==='ss'?' selected':''}>Soft Starter</option><option value="vfd"${m.method==='vfd'?' selected':''}>VFD</option></select>
-        <input type="number" value="${m.qty}" min="1" onchange="window._genMotors[${i}].qty=parseInt(this.value)" placeholder="Qty">
-        <button class="btn btn-secondary" style="padding:2px 6px" onclick="window._genMotors.splice(${i},1);renderGenMotors()">×</button>
+        <input type="number" value="${m.kw}" onchange="window._genMotors[${i}].kw=parseFloat(this.value)" placeholder="kW" aria-label="Motor ${i+1} rating (kW)" title="Motor rating (kW)">
+        <select onchange="window._genMotors[${i}].method=this.value" aria-label="Starting method" title="Starting method"><option value="dol"${m.method==='dol'?' selected':''}>DOL</option><option value="sd"${m.method==='sd'?' selected':''}>Star-Delta</option><option value="ss"${m.method==='ss'?' selected':''}>Soft Starter</option><option value="vfd"${m.method==='vfd'?' selected':''}>VFD</option></select>
+        <input type="number" value="${m.qty}" min="1" onchange="window._genMotors[${i}].qty=parseInt(this.value)" placeholder="Qty" aria-label="Motor ${i+1} quantity" title="Quantity">
+        <button class="btn btn-secondary" style="padding:2px 6px" onclick="window._genMotors.splice(${i},1);renderGenMotors()" aria-label="Remove motor ${i+1}" title="Remove motor">×</button>
     </div>`).join('');
 }
 window.renderGenMotors=renderGenMotors;
@@ -55766,7 +56207,8 @@ _registerPanel(6, {
         'wts_prism_sample_suppress': 1,  // PRiSM "don't re-seed sample data"
         'wts_prism_migrated': 1          // one-shot DCA/PTA → PRiSM migration flag
     };
-    var PREF_RE = /consent|analytics|tracking|(^|_)ga(_|$)|subscri|entitle|purchase/i;
+    // wts_ui_*: navigation preferences (favourites, recently used, collapsed sidebar groups).
+    var PREF_RE = /consent|analytics|tracking|(^|_)ga(_|$)|subscri|entitle|purchase|^wts_ui_/i;
     // Cross-project libraries: saved in the file, restored on Open only
     // when missing locally, kept on New.
     var LIBRARY_RE = /^wts_prism_(user_curves|presets|mapping_)/;
