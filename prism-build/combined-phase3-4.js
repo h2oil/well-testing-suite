@@ -4744,6 +4744,7 @@ function PRiSM_fitPhysical(modelKey, adata, well, opts) {
         ci95: ci95, stderr: stderr, corr: corrOut, corrKeys: best.freeKeys.slice(), identifiable: identifiable,
         r2: r2, rmse: rmse, aic: best.aic, dAIC: 0,
         iterations: best.iterations, converged: convergedOut, stopReason: stopOut,
+        settled: _lmSettled(best), atBoundKeys: _boundKeys(best, keys, freeze),
         stalledAtBound: stalledAtBound, inputsDefaulted: inputsDefaulted,
         objective: objective, objectiveValue: best.ssr, derivMode: derivMode,
         nPoints: { dp: idxDp.length, deriv: idxD.length }, starts: nStartsOk,
@@ -4780,6 +4781,27 @@ function _betterRun(res, best) {
     if (res.converged && !best.converged && res.ssr <= best.ssr + tol) return true;
     if (!res.converged && best.converged && res.ssr >= best.ssr - tol) return false;
     return res.ssr < best.ssr;
+}
+
+// Did an LM run settle? A converged run did. An unconverged one (maxIter,
+// lambda-max, time budget) counts as settled only when its last iteration
+// changed the objective by less than 1 % — i.e. it stopped on a plateau of the
+// objective, not in mid-descent (a 3-iteration run from a garbage start can
+// pass R² ≥ 0.9 while still moving by orders of magnitude per step).
+var SETTLED_REL_DROP = 0.01;
+function _lmSettled(res) {
+    if (!res) return false;
+    if (res.converged) return true;
+    var h = res.residualHistory;
+    if (!Array.isArray(h) || h.length < 2) return false;
+    var prev = h[h.length - 2], last = h[h.length - 1];
+    if (!isFinite(prev) || !isFinite(last)) return false;
+    return (prev - last) <= SETTLED_REL_DROP * Math.max(Math.abs(prev), 1e-300);
+}
+
+// Free parameters sitting (within LM tolerance) at any bound, natural ones included.
+function _boundKeys(res, keys, freeze) {
+    return keys.filter(function (k) { return !freeze[k] && !!(res && res.atBound && res.atBound[k]); });
 }
 
 function _fmtNum(v) { return _num(v) ? (Math.abs(v) >= 1e4 || Math.abs(v) < 1e-3 ? v.toExponential(3) : +v.toPrecision(4)) : String(v); }
@@ -4945,6 +4967,7 @@ function PRiSM_fitRate(modelKey, ds, opts) {
         identifiable: best.identifiable,
         r2: r2, rmse: rmse, aic: best.aic, dAIC: 0,
         iterations: best.iterations, converged: best.converged, stopReason: best.stopReason,
+        settled: _lmSettled(best), atBoundKeys: _boundKeys(best, Object.keys(bounds), freeze),
         objective: 'lnq', objectiveValue: best.ssr,
         nPoints: { q: Q.length },
         window: { tmin: T[0], tmax: T[T.length - 1] }, timeUnit: 'd',
@@ -4974,8 +4997,10 @@ function PRiSM_fitRate(modelKey, ds, opts) {
 // Dispatch by entry.kind (missing kind = pressure). Pressure fits use the
 // well store (scale mode + warning when incomplete). The fit is always handed
 // to PRiSM_setLastFit (honest status: converged / r2 / warnings), but
-// st.params / st.phys / st.tcMatch are only adopted when the fit converged or
-// R² ≥ 0.9. PRiSM_state.match is never written.
+// st.params / st.phys / st.tcMatch are only adopted when R² ≥ 0.9 and nothing
+// is stalled at a bound; an unconverged fit must also have settled (last step
+// < 1 % SSR change) with no free parameter at any bound. PRiSM_state.match is
+// never written.
 // =============================================================================
 
 function _storeLastFit(fit) {
@@ -5045,14 +5070,25 @@ function PRiSM_runRegression(opts) {
     // Adopt only a sane fit: R² ≥ 0.9 and no headline parameter stuck at a bound
     // (the LM 'stationary' / 'plateau' stops can report converged at a bound
     // with a strongly negative R²). Without an R², fall back to convergence.
+    // An UNconverged fit (maxIter / lambda-max / time budget) is adopted only
+    // when the objective had settled (last step changed SSR < 1 %) and no free
+    // parameter is pinned at any bound — natural bounds included, since only a
+    // converged (stationarity-checked) fit may rest on one. Otherwise an early
+    // stop from a garbage start that happens to cross R² 0.9 mid-descent (e.g.
+    // C slammed to its 1e-8 floor after 3 iterations) would replace st.params.
     var stalled = !!(fit.stalledAtBound && fit.stalledAtBound.length);
-    var adopt = isFinite(fit.r2) ? (fit.r2 >= 0.9 && !stalled) : (!!fit.converged && !stalled);
+    var unsettled = !fit.converged && fit.settled === false;
+    var boundUnconv = (!fit.converged && Array.isArray(fit.atBoundKeys)) ? fit.atBoundKeys : [];
+    var adopt = isFinite(fit.r2) ? (fit.r2 >= 0.9 && !stalled && !unsettled && !boundUnconv.length)
+                                 : (!!fit.converged && !stalled);
     fit.adopted = adopt;
     if (!adopt) {
         // Name the actual reason(s): the stall, the low R², or non-convergence.
         var why = [];
         if (stalled) why.push('parameter at a bound: ' + fit.stalledAtBound.join(', '));
+        else if (boundUnconv.length) why.push('not converged with parameter at a bound: ' + boundUnconv.join(', '));
         if (isFinite(fit.r2) && fit.r2 < 0.9) why.push('R² ' + fit.r2.toFixed(3) + ' < 0.9');
+        if (unsettled) why.push('not converged (' + (fit.stopReason || 'stopped') + ') and still improving');
         if (!isFinite(fit.r2) && !fit.converged) why.push('not converged');
         if (!why.length) why.push('not converged');
         fit.converged = false;

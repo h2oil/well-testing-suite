@@ -419,10 +419,17 @@ module.exports = [
       w.PRiSM_state.params = app.toWin({ Cd: 123, S: 4.5 });
       w.PRiSM_state.phys = app.toWin({ k: 7 });
       const before = JSON.stringify(w.PRiSM_state.params);
+      // Three LM steps from a garbage start stop mid-descent. Whether the R² of
+      // that early stop happens to cross 0.9 depends on the last bits of the
+      // Math.* results (it does on Linux V8: R² 0.94 with C slammed to its 1e-8
+      // floor), so rejection must not hinge on R²: an unconverged fit is only
+      // adopted when it has settled and no free parameter sits at a bound.
       const f = w.PRiSM_runRegression({ well: wellCopy(), start: { k: 5e4, C: 5, S: 45 }, maxIter: 3 });
       assert.equal(f.converged, false);
+      assert.equal(f.settled, false);
       assert.equal(f.adopted, false);
       assert.ok(f.warnings.some((m) => /not adopted/i.test(m)));
+      assert.ok(f.warnings.some((m) => /not adopted.*(still improving|at a bound|< 0\.9)/i.test(m)));
       assert.equal(JSON.stringify(w.PRiSM_state.params), before);
       assert.equal(w.PRiSM_state.phys.k, 7);
       assert.deepEqual(JSON.parse(JSON.stringify(w.PRiSM_state.match)), { timeShift: 0, pressShift: 0 });
@@ -430,6 +437,40 @@ module.exports = [
       const g = w.PRiSM_runRegression({ modelKey: 'no_such_model' });
       assert.equal(g.ok, false);
       assert.equal(g.converged, false);
+    },
+  },
+  {
+    name: 'unconverged fits: adopted only once settled (near-optimum early stop yes, mid-descent / at-bound no)',
+    wp: 'WP2',
+    run(app, assert) {
+      useLocalFallbacks(app);
+      app.openPRiSM();
+      const w = app.win;
+      w.PRiSM_state.model = 'homogeneous';
+      // Near the optimum: one step is still a large relative SSR drop, two are settled.
+      const near = { k: 44, C: 8.3e-4, S: 2.4 };
+      w.PRiSM_state.params = app.toWin({ Cd: 123, S: 4.5 });
+      const before = JSON.stringify(w.PRiSM_state.params);
+      const a = w.PRiSM_runRegression({ well: wellCopy(), start: near, maxIter: 1 });
+      assert.equal(a.converged, false);
+      assert.ok(a.r2 > 0.99, 'good R² ' + a.r2);
+      assert.equal(a.settled, false);
+      assert.equal(a.adopted, false);
+      assert.ok(a.warnings.some((m) => /still improving/i.test(m)));
+      assert.equal(JSON.stringify(w.PRiSM_state.params), before);
+      // Settled but not converged (the auto-match time-budget case) is still adopted.
+      const b = w.PRiSM_runRegression({ well: wellCopy(), start: near, maxIter: 3 });
+      assert.equal(b.converged, false);
+      assert.equal(b.settled, true);
+      assert.deepEqual(Array.from(b.atBoundKeys), []);
+      assert.equal(b.adopted, true);
+      assert.rel(b.phys.k, 45, 0.01);
+      assert.notEqual(JSON.stringify(w.PRiSM_state.params), before);
+      // A converged fit reports settled too.
+      const c = w.PRiSM_runRegression({ well: wellCopy() });
+      assert.equal(c.converged, true);
+      assert.equal(c.settled, true);
+      assert.equal(c.adopted, true);
     },
   },
   {
