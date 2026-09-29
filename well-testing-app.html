@@ -1703,6 +1703,28 @@ function _blockTitleEl(b) {
     const t = b.querySelector('.card-title, .rbox-title');
     return (t && t.closest('.card, .rbox') === b) ? t : null;
 }
+// An input-table row left blank: it has at least one text/number field, every
+// such field is empty, every select still shows its default option, and its
+// plain cells hold at most a row number or a dash (e.g. unused test points 4-6
+// whose only content is a "Transient" dropdown). Checkboxes/radios count as content.
+function _blankCtlRow(tr) {
+    const ctls = [...tr.querySelectorAll('input, select, textarea')].filter(_reportableCtl);
+    if(!ctls.some(c => c.tagName !== 'SELECT' && c.type !== 'checkbox' && c.type !== 'radio')) return false;
+    for(const c of ctls) {
+        if(c.type === 'checkbox' || c.type === 'radio') return false;
+        if(c.tagName === 'SELECT') {
+            const o = c.options, i = c.selectedIndex;
+            let d = -1;
+            for(let k = 0; k < o.length; k++) if(o[k].defaultSelected) { d = k; break; }
+            if(i !== (d === -1 ? 0 : d)) return false;
+        } else if(String(c.value || '').trim() !== '') return false;
+    }
+    for(const td of tr.cells) {
+        if(td.querySelector('input, select, textarea')) continue;
+        if(!/^(#?\d+\.?|[—–-])?$/.test(_cleanText(td))) return false;
+    }
+    return true;
+}
 function _tableItem(tbl) {
     const rows = [...tbl.rows].filter(_isShown);
     if(!rows.length) return null;
@@ -1715,6 +1737,7 @@ function _tableItem(tbl) {
         body = rows.slice(1);
     }
     const hasCtl = !!tbl.querySelector('input, select, textarea');
+    if(hasCtl) body = body.filter(tr => !_blankCtlRow(tr));
     const data = body.map(tr => [...tr.cells].map(td => {
         const ctls = [...td.querySelectorAll('input, select, textarea')].filter(_reportableCtl);
         if(ctls.length) return { t: ctls.map(_ctlValue).filter(Boolean).join(' '), span: td.colSpan || 1 };
@@ -47228,6 +47251,8 @@ _registerPanel(6, {
         gor:      { imperial: { unit: 'scf/stb', label: 'SCF/STB', factor: 0.0283168466 / 0.158987294928, offset: 0 }, metric: { unit: 'sm3/sm3', label: 'sm³/sm³', factor: 1, offset: 0 } },
         // Condensate-gas ratio: 1 bbl/MMscf = 0.158987 m³ / 28316.8 m³ = 5.61458 m³/10⁶ m³.
         cgr:      { imperial: { unit: 'bbl/MMscf', label: 'bbl/MMscf', factor: 0.158987294928 / 28316.8466 * 1e6, offset: 0 }, metric: { unit: 'm3/1e6m3', label: 'm³/10⁶ m³', factor: 1, offset: 0 } },
+        // Productivity index: 1 STB/d/psi = 0.158987 m³/d / 6.89476 kPa = 0.0230592 m³/d/kPa.
+        productivityIndex: { imperial: { unit: 'stb/d/psi', label: 'STB/d/psi', factor: 0.158987 / 6.89476, offset: 0 }, metric: { unit: 'm3/d/kPa', label: 'm³/d/kPa', factor: 1, offset: 0 } },
         time:     { imperial: { unit: 'hr',   label: 'hr',   factor: 1, offset: 0 }, metric: { unit: 'hr',   label: 'hr',   factor: 1, offset: 0 } },
         timeMin:  { imperial: { unit: 'min',  label: 'min',  factor: 1, offset: 0 }, metric: { unit: 'min',  label: 'min',  factor: 1, offset: 0 } },
         // Mass-flow specific to compressors (SCFM): no conversion (pure rate).
@@ -74608,7 +74633,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
 
         var fe = isFinite(inp.fe) ? inp.fe : 1;
         var h = '<div class="rbox"><div class="rbox-title">IPR Result — ' + MODE_LABEL[r.mode] + '</div>';
-        if (r.J != null) h += _row('Productivity index J', _metric() ? _u(r.J, 'liquidRate', 4, 'BPD') + '/psi' : _fix(r.J, 4) + ' BPD/psi');
+        if (r.J != null) h += _row('Productivity index J', _metric() ? _u(r.J, 'productivityIndex', 5, 'BPD/psi') : _fix(r.J, 4) + ' BPD/psi');
         if (r.qb != null) h += _row('Rate at bubble point q_b', fmtUI.q(r.qb));
         h += _row('Maximum rate qmax (AOF)', fmtUI.q(r.qmax));
         if (r.mode === 'vogel-sat' && fe !== 1) h += _row('qmax at FE = 1', fmtUI.q(r.qmaxFE1));

@@ -373,7 +373,7 @@
 
         var fe = isFinite(inp.fe) ? inp.fe : 1;
         var h = '<div class="rbox"><div class="rbox-title">IPR Result — ' + MODE_LABEL[r.mode] + '</div>';
-        if (r.J != null) h += _row('Productivity index J', _metric() ? _u(r.J, 'liquidRate', 4, 'BPD') + '/psi' : _fix(r.J, 4) + ' BPD/psi');
+        if (r.J != null) h += _row('Productivity index J', _metric() ? _u(r.J, 'productivityIndex', 5, 'BPD/psi') : _fix(r.J, 4) + ' BPD/psi');
         if (r.qb != null) h += _row('Rate at bubble point q_b', fmtUI.q(r.qb));
         h += _row('Maximum rate qmax (AOF)', fmtUI.q(r.qmax));
         if (r.mode === 'vogel-sat' && fe !== 1) h += _row('qmax at FE = 1', fmtUI.q(r.qmaxFE1));

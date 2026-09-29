@@ -495,8 +495,8 @@ module.exports = [
     name: 'G5 report export: collectPageReport captures inputs and results for every G5 page',
     wp: 'G5',
     run(app, assert) {
-      // pipesz / cablesz results are <table>s: the harness DOM has no HTMLTableElement.rows,
-      // so _tableItem sees no rows here — their table export was checked in the browser.
+      // pipesz / cablesz results are <table>s (captured through table.rows / tr.cells,
+      // which the harness DOM models); the labels below are checked on the kv items.
       const pages = { pipesz: ['calcPipeSz', 'Liquid Rate', null], pumpsz: ['calcPumpSz', 'Flow Rate', 'Total Dynamic Head'],
         aircomp: ['calcAirComp', 'Air Flow', 'Selected Capacity'], gensz: ['calcGenSz', 'Power Factor', 'Standard Size'],
         cablesz: ['calcCableSz', 'Load Current', null], vdrop: ['calcVDrop', 'Load Current', 'Receiving End Voltage'],

@@ -43,8 +43,8 @@ function rvText(app, resId, label) {
   return r ? r.v : null;
 }
 // Table row whose first cell STARTS WITH `first` → array of cell texts.
-// (The harness DOM has no table.rows, so collectPageReport table capture is
-// verified in a real browser; reportHas() below checks .fg-item/.rrow/notes.)
+// (reportHas() below checks .fg-item/.rrow/notes; the harness DOM models
+// table.rows / tr.cells, so collectPageReport captures tables here too.)
 function trow(app, rootId, first) {
   const tr = app.findAll('#' + rootId + ' tr').find((r) => {
     const c = r.querySelector('td'); return c && String(c.textContent).trim().indexOf(first) === 0;

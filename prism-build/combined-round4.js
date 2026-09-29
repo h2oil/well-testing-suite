@@ -329,6 +329,8 @@
         gor:      { imperial: { unit: 'scf/stb', label: 'SCF/STB', factor: 0.0283168466 / 0.158987294928, offset: 0 }, metric: { unit: 'sm3/sm3', label: 'sm³/sm³', factor: 1, offset: 0 } },
         // Condensate-gas ratio: 1 bbl/MMscf = 0.158987 m³ / 28316.8 m³ = 5.61458 m³/10⁶ m³.
         cgr:      { imperial: { unit: 'bbl/MMscf', label: 'bbl/MMscf', factor: 0.158987294928 / 28316.8466 * 1e6, offset: 0 }, metric: { unit: 'm3/1e6m3', label: 'm³/10⁶ m³', factor: 1, offset: 0 } },
+        // Productivity index: 1 STB/d/psi = 0.158987 m³/d / 6.89476 kPa = 0.0230592 m³/d/kPa.
+        productivityIndex: { imperial: { unit: 'stb/d/psi', label: 'STB/d/psi', factor: 0.158987 / 6.89476, offset: 0 }, metric: { unit: 'm3/d/kPa', label: 'm³/d/kPa', factor: 1, offset: 0 } },
         time:     { imperial: { unit: 'hr',   label: 'hr',   factor: 1, offset: 0 }, metric: { unit: 'hr',   label: 'hr',   factor: 1, offset: 0 } },
         timeMin:  { imperial: { unit: 'min',  label: 'min',  factor: 1, offset: 0 }, metric: { unit: 'min',  label: 'min',  factor: 1, offset: 0 } },
         // Mass-flow specific to compressors (SCFM): no conversion (pure rate).
