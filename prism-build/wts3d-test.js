@@ -174,6 +174,22 @@ const SECTION_A = (G, src) => {
       s.dispose(); s.dispose(); s.advance(100); s.setFault('slugging', true); s.tripESD('x');
       return s.getState() === st && st.t === t && st.faults.slugging === false && s.disposed === true;
     }],
+    ['31: divert valves / suction / auto-divert API + snapshot (twin surge compartments, gauge inlets)', () => {
+      const s = S.create(F, { seed: 5, config: { noise: { on: false } } }); const st = s.getState(), bad = [];
+      if (!['setValve', 'setSuction', 'setAutoDivert', 'getControls', 'setControls'].every(k => typeof s[k] === 'function')) return 'api';
+      const c0 = JSON.stringify(s.getControls());
+      if (c0 !== JSON.stringify({ surge: { inlet: [true, true], suction: 'both', auto: false, sp: 0.8, hyst: 0.1 }, gauge: { inlet: [true, false], auto: false, sp: 0.9, hyst: 0.1 }, v: 1 })) bad.push('defaults ' + c0);
+      if (st.surge.comps.length !== 2 || st.surge.comps[0].tag !== 'T-201A' || st.gauge.tanks[1].valveTag !== 'XV-301B' || st.surge.auto.on !== false) bad.push('snapshot');
+      s.setValve('gauge', 1, true); s.setValve('gauge', 0, false); s.setValve('surge', 1, false); s.setSuction('B'); s.setAutoDivert('surge', true, { sp: 0.85 });
+      for (let i = 0; i < 60; i++) s.advance(10);
+      const c1 = s.getControls(), st1 = s.getState();
+      if (st1.gauge.active !== 1 || st1.gauge.tanks[0].inlet || !st1.gauge.tanks[1].inlet || st1.surge.comps[1].fill_bpd !== 0 || st1.surge.suction !== 'B') bad.push('lineup');
+      const s2 = S.create(F, { seed: 5 }); s2.setControls(JSON.parse(JSON.stringify(c1)), { initial: true });
+      if (JSON.stringify(s2.getControls()) !== JSON.stringify(c1)) bad.push('round-trip');
+      if (s.setSuction('X') !== false || s.setValve('tank', 0, true) !== false) bad.push('validation');
+      const m = st1.health.massErr; if (Math.abs(m.oil) > 1e-9 || Math.abs(m.water) > 1e-9) bad.push('mass');
+      return bad.length === 0 || bad.join('; ');
+    }],
     ['31: invalid flow keeps the old flow and flags health.flowInvalid', () => {
       const s = S.create(F, { seed: 1 }); const seq = s.getState().flowSeq;
       s.setFlow({ inputs: { Qg: NaN } }); const a = s.getState().health.flowInvalid && s.getState().flowSeq === seq;
@@ -237,6 +253,19 @@ const SECTION_B = (G /*, src */) => {
       if (!F) return true;
       const up = I.phaseFractions(F.inputs.Qg, F.inputs.Qo, F.inputs.Qw, F.segs[0].P0, F.segs[0].T0), dn = I.phaseFractions(F.inputs.Qg, F.inputs.Qo, F.inputs.Qw, F.segs[2].P0, F.segs[2].T0);
       return Math.abs(I.flameLength(F.inputs.Qg) - 5.08) < 0.02 && dn.g > up.g && I.velToScene(F.segs[2].vel) > 2 * I.velToScene(F.segs[0].vel);
+    }],
+    ['32: normalize maps twin surge compartments + inlet valves; six operable valve proxies (tap targets)', () => {
+      const VP = I.VALVE_PROXIES || [];
+      const ids = VP.map(v => v[0]).sort().join(',');
+      if (ids !== 'suction:surge:0,suction:surge:1,valve:gauge:0,valve:gauge:1,valve:surge:0,valve:surge:1') return 'proxies ' + ids;
+      if (!S || !F) return true;
+      const s = S.create(F, { seed: 6 }); s.setValve('surge', 0, false); s.setValve('gauge', 1, true); s.setSuction('A');
+      for (let i = 0; i < 30; i++) s.advance(10);
+      const st = s.getState(), n = I.normalize(st, I.makeNorm());
+      const old = I.normalize({ sep: {}, surge: { frac: 0.4, fracW: 0.1 }, gauge: { active: 1, tanks: [{}, {}] } }, I.makeNorm());   // pre-divert snapshot shape
+      return (n.surge.comps[0].inlet === false && n.surge.comps[1].inlet === true && n.surge.comps[0].suction === true && n.surge.comps[1].suction === false &&
+        n.surge.comps[1].frac === st.surge.comps[1].frac && n.gauge.tanks[1].inlet === true && n.surge.suction === 'A' &&
+        old.surge.comps[0].frac === 0.4 && old.surge.comps[1].inlet === true && old.gauge.tanks[1].inlet === true && old.gauge.tanks[0].inlet === false) || 'mapping';
     }],
     ['32: oilColor() hex strings, darker for heavy crude', () => { const h = W.oilColor(20), l = W.oilColor(45); return /^#[0-9a-f]{6}$/.test(h.body) && /^#[0-9a-f]{6}$/.test(l.tracer) && I.luminance(h.body) < I.luminance(l.body) && h.alphaFront > l.alphaFront; }],
     ['32: layoutLabels keeps chips out of the info-card rect and hides chips it cannot place over it', () => {
@@ -377,6 +406,15 @@ const SECTION_C = (G, src) => {
     ['38: readPrefs defaults + validation (D34)', () => {
       const p = I.readPrefs();
       return p.mode === '3d' && p.speed === 10 && p.labels === 'all' && p.overlay === 'phase' && p.quality === 'auto' && p.legend === false;
+    }],
+    ['38: readPrefs keeps a saved divert lineup (ctl) and drops a malformed one', () => {
+      const keep = G.localStorage;
+      const put = v => { G.localStorage = { getItem: () => JSON.stringify(v), setItem() {}, removeItem() {} }; };
+      try {
+        const ctl = { surge: { inlet: [true, false], suction: 'A', auto: true, sp: 0.8, hyst: 0.1 }, gauge: { inlet: [false, true], auto: false, sp: 0.9, hyst: 0.1 }, v: 1 };
+        put({ ctl }); const a = I.readPrefs(); put({ ctl: 'x' }); const b = I.readPrefs(); put({ ctl: { surge: 1 } }); const c = I.readPrefs();
+        return JSON.stringify(a.ctl) === JSON.stringify(ctl) && b.ctl === null && c.ctl === null || 'prefs ' + JSON.stringify([a.ctl, b.ctl, c.ctl]);
+      } finally { G.localStorage = keep; }
     }],
     ['38: bpOf breakpoints', () => I.bpOf(1380) === 'lg' && I.bpOf(1000) === 'lg' && I.bpOf(999) === 'md' && I.bpOf(768) === 'md' && I.bpOf(767) === 'sm'],
     ['38: CSS carries the iOS min-height neutraliser, z-stack and the blur budget', () =>
