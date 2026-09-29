@@ -22,6 +22,8 @@ const FILES = [
   '36-report.js',
   '37-prism-workflow.js',
   '39-prism-fieldtools.js',
+  '51-prism-workspace.js',
+  '52-prism-gas.js',
 ];
 
 const ROOT = __dirname;
@@ -90,6 +92,8 @@ function build(opts) {
     '//   • 36-report            (Tab 7 report + CSV export)\n' +
     '//   • 37-prism-workflow    (workflow shell content: flow periods, rail, tools)\n' +
     '//   • 39-prism-fieldtools  (gauge register, sequence of events, ct builder)\n' +
+    '//   • 51-prism-workspace   (fit library + compare overlays, analysis branches, model browser)\n' +
+    '//   • 52-prism-gas         (gas m(p) results, pseudo-time, skin vs rate, AOF / IPR)\n' +
     '// ═══════════════════════════════════════════════════════════════════════\n';
   let included = 0;
   for (const f of FILES) {

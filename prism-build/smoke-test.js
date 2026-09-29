@@ -281,6 +281,15 @@ const CONTRACT_FNS = {
          'PRiSM_clearEvents', 'PRiSM_setEventClock', 'PRiSM_eventsToRateSchedule', 'PRiSM_seedPeriodsFromEvents',
          'PRiSM_rockCompressibility', 'PRiSM_ctBuild', 'PRiSM_ctApply', 'PRiSM_renderGaugeRegister', 'PRiSM_renderEventsLog',
          'PRiSM_renderCtBuilder', 'PRiSM_renderGaugeCheckPanel'],
+  WP15: ['PRiSM_saveFit', 'PRiSM_listFits', 'PRiSM_getFit', 'PRiSM_removeFit', 'PRiSM_renameFit', 'PRiSM_adoptFit',
+         'PRiSM_setFitCompare', 'PRiSM_getFitCompare', 'PRiSM_toggleFitCompare', 'PRiSM_setFitOverlay', 'PRiSM_fitCompareTable',
+         'PRiSM_fitOverlayCurve', 'PRiSM_createBranch', 'PRiSM_switchBranch', 'PRiSM_renameBranch', 'PRiSM_deleteBranch',
+         'PRiSM_listBranches', 'PRiSM_activeBranch', 'PRiSM_modelPlainInfo', 'PRiSM_searchModels', 'PRiSM_modelSearchTerms',
+         'PRiSM_renderFitWorkspacePanel', 'PRiSM_renderModelBrowserPanel',
+         'PRiSM_gasPseudoTime', 'PRiSM_gasSkinSummary', 'PRiSM_gasBasis', 'PRiSM_setGasOption', 'PRiSM_skinVsRate',
+         'PRiSM_deliverabilityPoints', 'PRiSM_gasDeliverability', 'PRiSM_oilDeliverability', 'PRiSM_deliverability',
+         'PRiSM_renderGasPanel', 'PRiSM_renderRateSkinPanel', 'PRiSM_renderDeliverabilityPanel',
+         'PRiSM_declineDiagnostics', 'PRiSM_plot_decline_D', 'PRiSM_plot_decline_b'],
 };
 Object.keys(CONTRACT_FNS).forEach((c) => CONTRACT_FNS[c].forEach((fn) => checks.push([c + ' window.' + fn, typeof win[fn] === 'function'])));
 checks.push(['C3 window.PRiSM_convert (object)', !!win.PRiSM_convert && typeof win.PRiSM_convert.kh === 'function']);
@@ -292,11 +301,25 @@ checks.push(['C7 registries (tabPanels, tabHooks, postDrawHooks, stepViews)',
 (function panelIds() {
   const ids = (n) => { const p = win.PRiSM_tabPanels && win.PRiSM_tabPanels[n]; return (Array.isArray(p) ? p : []).map((x) => x && x.id); };
   const want = { 1: ['prism_well_test', 'crop', 'prism_ct_builder', 'prism_gauge_register', 'prism_events_log'],
-                 2: ['semilog', 'linetools', 'regimes', 'prism_gauge_resolution'], 6: ['prism_interp_panel', 'dcaResults'] };
+                 2: ['semilog', 'linetools', 'regimes', 'prism_gauge_resolution', 'prism_gas_basis', 'prism_rate_skin', 'prism_deliverability', 'prism_fit_compare'],
+                 3: ['prism_model_browser'], 6: ['prism_interp_panel', 'dcaResults', 'prism_fit_workspace'] };
   Object.keys(want).forEach((n) => want[n].forEach((id) => checks.push(['C7 Tab ' + n + ' panel "' + id + '"', ids(n).indexOf(id) !== -1])));
 })();
 checks.push(['WP14 field-tools post-draw hook registered once',
   Array.isArray(win.PRiSM_postDrawHooks) && win.PRiSM_postDrawHooks.filter((f) => f && f._prismId === 'fieldtools-markers').length === 1]);
+['workspace-fit-overlays', 'gas-pseudotime-label'].forEach((id) => checks.push(['WP15 post-draw hook "' + id + '" registered once',
+  Array.isArray(win.PRiSM_postDrawHooks) && win.PRiSM_postDrawHooks.filter((f) => f && f._prismId === id).length === 1]));
+checks.push(['WP15 report sections registry (workspace + gas)', Array.isArray(win.PRiSM_reportSections) && win.PRiSM_reportSections.length >= 4]);
+checks.push(['WP15 plot registry declineD / declineB', !!(win.PRiSM_PLOT_REGISTRY && win.PRiSM_PLOT_REGISTRY.declineD && win.PRiSM_PLOT_REGISTRY.declineB)]);
+(function wp15Numbers() {
+  // Hand values: linear m(p) = 2p → ΔpS = 0.8686·100·2/2 = 86.86 psi at pwf 1000; Arps b = 0.5, Di = 0.01: D(100 d) = 0.01/1.5.
+  let ok = false;
+  try {
+    const g = win.PRiSM_gasSkinSummary({ S: 2, m: 100, pbar: 2000, pwf: 1000, table: { mOf: (p) => 2 * p, pOf: (m) => m / 2 } });
+    ok = Math.abs(g.dpS - 86.86) < 1e-9 && win.PRiSM_searchModels('valley')[0].key === 'doublePorosity';
+  } catch (e) { ok = false; }
+  checks.push(['WP15 gas skin summary + model search', ok]);
+})();
 (function fieldToolsNumbers() {
   // Hand value: Hall (1953) φ = 0.2 → 1.782e-6 / 0.2^0.438 = 3.6063e-6 1/psi.
   let ok = false;
