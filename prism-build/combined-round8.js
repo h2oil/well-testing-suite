@@ -8841,12 +8841,17 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
 
     // Adoption rule shared with PRiSM_runRegression (05): a fit is committed only
     // when R² ≥ 0.9 and no parameter is stalled at a bound (without an R²,
-    // convergence decides). Returns the reason a fit is rejected, or null.
+    // convergence decides); an unconverged fit must also have settled and have
+    // no free parameter at any bound. Returns the reason a fit is rejected, or null.
     function fitRejectReason(f) {
         if (!f) return 'no fit';
         var why = [];
         var stalled = isArr(f.stalledAtBound) ? toArr(f.stalledAtBound) : [];
+        var unconv = f.converged === false;
+        var boundUnconv = (unconv && isArr(f.atBoundKeys)) ? toArr(f.atBoundKeys) : [];
         if (stalled.length) why.push('parameter at a bound: ' + stalled.join(', '));
+        else if (boundUnconv.length) why.push('not converged with parameter at a bound: ' + boundUnconv.join(', '));
+        if (unconv && f.settled === false) why.push('not converged (' + (f.stopReason || 'stopped') + ') and still improving');
         var r2 = r2Of(f);
         if (r2 != null && r2 < 0.9) why.push('R² ' + r2.toFixed(3) + ' < 0.9');
         if (r2 == null && f.converged === false) why.push('not converged');
