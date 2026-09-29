@@ -125,14 +125,14 @@ module.exports = [
       assert.near(num(rvText(app, 'bu_res', 'Flow Rate')), 5000 / 1440 * BBL_M3, 6e-4);
       assert.includes(rvText(app, 'bu_res', 'Flow Rate'), 'm³');
       sys(app, 'imperial');
-      // Solution GOR: result computed in Metric, then flipped → scf/stbbl (not sm³/sm³ next to psig inputs)
+      // Solution GOR: result computed in Metric, then flipped → scf/STB (not sm³/sm³ next to psig inputs)
       go(app, 'solgor');
       sys(app, 'metric');
       calcBtn(app, 'calcSolGOR');
       const rsMet = num(rvText(app, 'sg_res', 'Rs (Standing)'));
       assert.includes(rvText(app, 'sg_res', 'Rs (Standing)'), 'sm³/sm³');
       sys(app, 'imperial');
-      assert.includes(rvText(app, 'sg_res', 'Rs (Standing)'), 'scf/stbbl');
+      assert.includes(rvText(app, 'sg_res', 'Rs (Standing)'), 'scf/STB');
       // 1 sm³/sm³ = 0.158987294928 / 0.028316846592 = 5.6146 scf/STB
       assert.near(num(rvText(app, 'sg_res', 'Rs (Standing)')), rsMet * BBL_M3 / 0.028316846592, 0.06);
       assert.deepEqual(app.consoleErrors(), []);

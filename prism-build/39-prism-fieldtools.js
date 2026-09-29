@@ -505,7 +505,7 @@
         var unplaced = list.length - placed.length;
         if (unplaced > 0) warnings.push(unplaced + ' event' + (unplaced > 1 ? 's have' : ' has') + ' no time on the dataset clock and ' + (unplaced > 1 ? 'were' : 'was') + ' ignored: set the clock zero or enter t.');
         placed.sort(function (a, b) { return a.t - b.t; });
-        var rows = [], open = false, qCur = 0, used = 0;
+        var rows = [], open = false, everOpen = false, qCur = 0, used = 0;
         function push(t, q) {
             if (rows.length && Math.abs(rows[rows.length - 1].t - t) < 1e-9) rows.pop();
             if (rows.length ? rows[rows.length - 1].q === q : q === 0) { qCur = q; return; }
@@ -522,15 +522,17 @@
                         if ((placed[j].type === 'rate' || placed[j].type === 'choke') && placed[j].q != null) { q = placed[j].q; break; }
                     }
                 }
-                open = true;
+                open = true; everOpen = true;
                 if (q == null) { warnings.push('Open at t = ' + fmt(e.t, 4) + ' h has no rate and no later rate before the next close: add a rate to seed this period.'); continue; }
                 push(e.t, q); used++;
             } else if (e.type === 'choke' || e.type === 'rate') {
                 if (e.q == null) continue;
                 if (!open) {
                     if (e.q === 0) continue;
-                    warnings.push('A rate at t = ' + fmt(e.t, 4) + ' h comes before any open event: it is taken as the flow start.');
-                    open = true;
+                    // v3 logic audit: after a close the old text wrongly said "before any open event".
+                    warnings.push('A rate at t = ' + fmt(e.t, 4) + ' h comes ' + (everOpen ? 'after a close with no new open event' : 'before any open event') +
+                                  ': it is taken as the flow start.');
+                    open = true; everOpen = true;
                 }
                 push(e.t, e.q); used++;
             } else if (e.type === 'close') {
