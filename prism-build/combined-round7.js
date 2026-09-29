@@ -7177,7 +7177,7 @@ function createController(vizEl, mopts) {
         var st = state();
         if (!ids || !ids.length) return;
         _alarmMap = alarmReduce(_alarmMap, (st && st.alarms) || [], st ? st.t : 0, ids);
-        track('wts_alarm_ack', { count: ids.length });
+        track('wts_alarm_ack', {});   // no payload: how many alarms were acknowledged is simulation data
         if (E.alarm) E.alarm.__sig = '';
         updatePill(st);
         if (drawerOpen) renderDrawer(st, true);

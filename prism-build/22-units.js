@@ -1263,12 +1263,43 @@
 
     // Update a label text to reflect the active unit. Two modes:
     //   - If text contains a parenthesised unit ("Pressure (psig)")
-    //     replace the inside of the FIRST () with the new unit.
+    //     replace that () group with the new unit: the group that holds
+    //     one of this category's unit labels, else the first group that
+    //     holds any known unit label, else the FIRST group.
     //   - Otherwise append " (<unit>)".
+    // Groups may nest one level, so the metric gauge label "(kPa(g))" is
+    // one group: flipping back to imperial gives "(psig)", not "(kPa(psig))",
+    // and "Static (line) pressure (psig)" keeps "(line)".
     //
     // For dimensionless/empty-unit categories, we do NOTHING (no
     // suffix, no rewrite) so the text stays as the author wrote it.
-    var _UNIT_PAREN_RE = /\(([^()]*)\)/;
+    var _UNIT_PAREN_RE = /\(((?:[^()]|\([^()]*\))*)\)/g;
+    var _allUnitTexts = null;
+    function _unitTexts(cat, into) {
+        var out = into || {};
+        if (!cat) return out;
+        ['imperial', 'metric'].forEach(function (s) {
+            var c = cat[s];
+            if (!c) return;
+            if (c.label) out[String(c.label).trim().toLowerCase()] = true;
+            if (c.unit) out[String(c.unit).trim().toLowerCase()] = true;
+        });
+        return out;
+    }
+    function _unitParenGroup(text, category) {
+        var groups = [], m;
+        _UNIT_PAREN_RE.lastIndex = 0;
+        while ((m = _UNIT_PAREN_RE.exec(text))) groups.push({ at: m.index, len: m[0].length, txt: m[1].trim().toLowerCase() });
+        if (!groups.length) return null;
+        var own = _unitTexts(CATEGORIES[category]), i;
+        for (i = 0; i < groups.length; i++) if (own[groups[i].txt]) return groups[i];
+        if (!_allUnitTexts) {
+            _allUnitTexts = {};
+            for (var k in CATEGORIES) if (Object.prototype.hasOwnProperty.call(CATEGORIES, k)) _unitTexts(CATEGORIES[k], _allUnitTexts);
+        }
+        for (i = 0; i < groups.length; i++) if (_allUnitTexts[groups[i].txt]) return groups[i];
+        return groups[0];
+    }
     function _updateLabelText(labelEl, category) {
         if (!labelEl) return;
         var lbl = _label(category);
@@ -1276,9 +1307,9 @@
         var current = labelEl.textContent || labelEl.innerText || '';
         // Skip if label already shows the active unit.
         if (current.indexOf('(' + lbl + ')') !== -1) return;
-        var next;
-        if (_UNIT_PAREN_RE.test(current)) {
-            next = current.replace(_UNIT_PAREN_RE, '(' + lbl + ')');
+        var next, g = _unitParenGroup(current, category);
+        if (g) {
+            next = current.slice(0, g.at) + '(' + lbl + ')' + current.slice(g.at + g.len);
         } else {
             // Append with a single leading space.
             next = current.replace(/\s+$/, '') + ' (' + lbl + ')';

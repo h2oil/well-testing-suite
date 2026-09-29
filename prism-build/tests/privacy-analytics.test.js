@@ -77,7 +77,8 @@ function topKeys(obj) {
   }
   return keys;
 }
-// Every analytics call site in the numbered PRiSM sources: _ga4('name', {...}) and gtag('event', 'name', {...}).
+// Every analytics call site in the numbered sources: _ga4('name', {...}), gtag('event', 'name', {...})
+// and the live simulator's track('name', {...}) (38-wts-live.js → h2oilTrack).
 function callSites() {
   const files = fs.readdirSync(BUILD).filter((f) => /^\d\d-.*\.js$/.test(f));
   const out = [];
@@ -85,11 +86,11 @@ function callSites() {
     let src = fs.readFileSync(path.join(BUILD, f), 'utf8');
     const cut = src.search(/\/\/ (=== SELF-TEST ===|SECTION \d+ — SELF-TEST)/);
     if (cut > 0) src = src.slice(0, cut);
-    const re = /(?:_ga4\(\s*(?:'([\w]+)'|(\w+))\s*,\s*|gtag\(\s*'event'\s*,\s*(?:'([\w]+)'|(\w+))\s*,\s*)\{/g;
+    const re = /(?:_ga4\(\s*(?:'([\w]+)'|(\w+))\s*,\s*|gtag\(\s*'event'\s*,\s*(?:'([\w]+)'|(\w+))\s*,\s*|\btrack\(\s*'([\w]+)'\s*,\s*)\{/g;
     let m;
     while ((m = re.exec(src))) {
       const obj = objectAt(src, re.lastIndex - 1);
-      out.push({ file: f, name: m[1] || m[2] || m[3] || m[4], keys: topKeys(obj || '{}'), src: obj });
+      out.push({ file: f, name: m[1] || m[2] || m[3] || m[4] || m[5], keys: topKeys(obj || '{}'), src: obj });
     }
   }
   return out;
@@ -181,6 +182,10 @@ module.exports = [
       const P = allowed(loadFilter().policy);
       const sites = callSites();
       assert.ok(sites.length >= 30, 'found ' + sites.length + ' call sites');
+      const live = sites.filter((s) => s.file === '38-wts-live.js');
+      assert.ok(live.length >= 8, 'live simulator track() sites scanned: ' + live.length);
+      const ackSite = live.find((s) => s.name === 'wts_alarm_ack');
+      assert.ok(ackSite && ackSite.keys.length === 0, 'wts_alarm_ack carries no payload: ' + (ackSite && ackSite.src));
       const bad = [];
       for (const s of sites) for (const k of s.keys) if (!P.has(k)) bad.push(s.file + ' ' + s.name + ': ' + k);
       assert.deepEqual(bad, [], 'non-allow-listed analytics keys');

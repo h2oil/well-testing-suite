@@ -537,7 +537,11 @@ module.exports = [
         tm_p: 510 * 6.89476, tm_pv: 514.7 * 6.89476 });
       app.win.calcTurbMeter();
       assert.near(rv(app, 'tm_res', 'Vapour Pressure'), 514.7 * 6.89476, 0.6);   // kPa
-      assert.near(rv(app, 'tm_res', 'Cavitation Margin'), 10.0, 0.051);
+      // Margin shown in kPa too (was the psi number next to kPa inputs): 10.0 psi = 68.95 kPa
+      assert.near(rv(app, 'tm_res', 'Cavitation Margin'), 10.0 * 6.894757, 0.4);
+      assert.includes(rvText(app, 'tm_res', 'Cavitation Margin'), 'kPa');
+      // Meter range in m³/d: 3" meter 600 – 8,000 BPD × 0.158987 = 95 – 1,272 m³/d
+      assert.includes(rvText(app, 'tm_res', 'Meter Range'), '95 – 1,272 m³/d');
       assert.includes(app.el('tm_pv').parentNode.querySelector('label').textContent, 'kPa');
     },
   },
