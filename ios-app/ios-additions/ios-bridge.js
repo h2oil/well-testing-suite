@@ -27,6 +27,9 @@ if (typeof window !== 'undefined' && !window.WTS3D_LOCAL_URL) {
   }
 
   window.isIOSApp = true;
+  // Scope for the iOS-only layout rules in ios-styles.css (also set by the <head> script in
+  // ios-meta.html, before first paint). The web version never gets this class.
+  try { document.documentElement.classList.add('ios-app'); } catch (e) {}
   const P = window.Capacitor.Plugins || {};
   const { Haptics, Share, Filesystem, StatusBar, App, Preferences } = P;
 
@@ -278,11 +281,32 @@ if (typeof window !== 'undefined' && !window.WTS3D_LOCAL_URL) {
   // ── App lifecycle ─────────────────────────────────────────────
   if (App) {
     App.addListener('appStateChange', (state) => {
-      if (!state.isActive) {
-        try { document.dispatchEvent(new Event('app-backgrounded')); } catch (e) {}
-      }
+      // app-foregrounded restarts the live views: WKWebView does not reliably fire
+      // visibilitychange / pageshow when the app returns from the background.
+      try { document.dispatchEvent(new Event(state.isActive ? 'app-foregrounded' : 'app-backgrounded')); } catch (e) {}
     });
   }
+
+  // ── Keep the focused field visible above the keyboard ─────────
+  // The app scrolls inside .main / .page-body, not the document, so WKWebView's own
+  // "scroll the caret into view" can leave a field behind the keyboard. When the visual
+  // viewport shrinks (keyboard shown) and the focused control's box sits below it,
+  // scroll that control to the middle of what is still visible. Event-driven only.
+  const isField = (el) => !!(el && el.matches && el.matches('input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=button]):not([type=submit]), select, textarea, [contenteditable="true"]'));
+  function revealFocused() {
+    const el = document.activeElement;
+    if (!isField(el) || typeof el.getBoundingClientRect !== 'function') return;
+    const vv = window.visualViewport;
+    const visTop = vv ? vv.offsetTop : 0;
+    const visBottom = vv ? vv.offsetTop + vv.height : window.innerHeight;
+    const r = el.getBoundingClientRect();
+    if (r.top >= visTop + 8 && r.bottom <= visBottom - 8) return;
+    try { el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' }); }
+    catch (e) { try { el.scrollIntoView(false); } catch (e2) {} }
+  }
+  if (window.visualViewport) window.visualViewport.addEventListener('resize', revealFocused);
+  // A field focused while the keyboard is already up gets no viewport resize.
+  document.addEventListener('focusin', (e) => { if (isField(e.target)) requestAnimationFrame(revealFocused); });
 
   // ── Sanity check: the main app must expose buildReportHTML so the
   // PDF override can generate the branded cover page. If this assignment
@@ -304,8 +328,10 @@ if (typeof window !== 'undefined' && !window.WTS3D_LOCAL_URL) {
     };
   }
 
-  // ── Prevent pinch-zoom (iOS PWA quirk) ────────────────────────
-  document.addEventListener('gesturestart', e => e.preventDefault());
+  // Pinch-zoom is allowed again (accessibility): the viewport no longer sets
+  // maximum-scale=1 / user-scalable=no and gesturestart is not cancelled. Focus
+  // auto-zoom is prevented instead by the 16 px minimum on form controls
+  // (ios-styles.css) and double-tap zoom by touch-action: manipulation.
 
   console.log('[H2Oil iOS] Native bridge active');
 })();
