@@ -311,32 +311,41 @@
         A9:  0.1056,    A10: 0.6134,    A11: 0.7210
     };
 
-    // Z-factor via DAK (Newton on ρ_pr, max 50 iters).
+    // Z-factor via DAK: Newton on ρ_pr with a bisection safeguard.
+    //   f(ρ) = Z_EOS(ρ) − 0.27·Ppr/(ρ·Tpr) = 0
+    // (The earlier successive substitution Z ← Z_EOS(0.27·Ppr/(Z·Tpr)) diverged
+    //  at low Tpr / high Ppr — e.g. Tpr 1.5, Ppr 8 gave 1.60 instead of ≈ 0.99.
+    //  Where it converged, the root is the same.)
     function Z_dranchukAbouKassem(Tpr, Ppr) {
         if (!_isFiniteNum(Tpr) || !_isFiniteNum(Ppr) || Tpr <= 0 || Ppr < 0) return NaN;
         if (Ppr === 0) return 1;
-        // initial Z guess
-        var Z = 1;
-        var rho;
-        for (var iter = 0; iter < 50; iter++) {
-            rho = 0.27 * Ppr / (Z * Tpr);
-            var Tpr2 = Tpr * Tpr, Tpr3 = Tpr2 * Tpr, Tpr4 = Tpr3 * Tpr, Tpr5 = Tpr4 * Tpr;
-            var c1 = DAK.A1 + DAK.A2 / Tpr + DAK.A3 / Tpr3 + DAK.A4 / Tpr4 + DAK.A5 / Tpr5;
-            var c2 = DAK.A6 + DAK.A7 / Tpr + DAK.A8 / Tpr2;
-            var c3 = DAK.A9 * (DAK.A7 / Tpr + DAK.A8 / Tpr2);
-            var rho2 = rho * rho;
-            var rho5 = rho2 * rho2 * rho;
-            var expo = Math.exp(-DAK.A11 * rho2);
-            var Znew = 1 + c1 * rho + c2 * rho2 - c3 * rho5
-                     + DAK.A10 * (1 + DAK.A11 * rho2) * (rho2 / Tpr3) * expo;
-            if (!isFinite(Znew) || Znew <= 0) Znew = 1;
-            if (Math.abs(Znew - Z) < 1e-8) {
-                Z = Znew;
-                break;
-            }
-            Z = Znew;
+        var Tpr2 = Tpr * Tpr, Tpr3 = Tpr2 * Tpr, Tpr4 = Tpr3 * Tpr, Tpr5 = Tpr4 * Tpr;
+        var c1 = DAK.A1 + DAK.A2 / Tpr + DAK.A3 / Tpr3 + DAK.A4 / Tpr4 + DAK.A5 / Tpr5;
+        var c2 = DAK.A6 + DAK.A7 / Tpr + DAK.A8 / Tpr2;
+        var c3 = DAK.A9 * (DAK.A7 / Tpr + DAK.A8 / Tpr2);
+        var k = 0.27 * Ppr / Tpr;
+        var a10 = DAK.A10 / Tpr3, a11 = DAK.A11;
+        var fr = 0, dfr = 0;
+        function evalF(r) {              // sets fr = f(ρ), dfr = f'(ρ)
+            var r2 = r * r, r4 = r2 * r2, e = Math.exp(-a11 * r2);
+            fr = 1 + c1 * r + c2 * r2 - c3 * r4 * r + a10 * (r2 + a11 * r4) * e - k / r;
+            dfr = c1 + 2 * c2 * r - 5 * c3 * r4
+                + a10 * e * (2 * r + 2 * a11 * r2 * r - 2 * a11 * a11 * r4 * r) + k / r2;
         }
-        return Z;
+        // Newton from the ideal-gas density ρ = 0.27·Ppr/Tpr, kept inside a
+        // bracket [lo, hi] (f → −∞ as ρ → 0; hi found by stepping up on demand).
+        var lo = 0, hi = Infinity, r = k;
+        for (var iter = 0; iter < 100; iter++) {
+            evalF(r);
+            if (!isFinite(fr)) { hi = r; r = 0.5 * (lo + hi); continue; }
+            if (fr < 0) lo = r; else hi = r;
+            var rn = (isFinite(dfr) && dfr > 0) ? r - fr / dfr : NaN;
+            if (!(rn > lo && rn < hi)) rn = isFinite(hi) ? 0.5 * (lo + hi) : 2 * r;
+            if (Math.abs(rn - r) <= 1e-11 * r) { r = rn; break; }
+            r = rn;
+        }
+        var Z = k / r;
+        return (_isFiniteNum(Z) && Z > 0) ? Z : NaN;
     }
 
     // Z-factor via Hall-Yarborough — alternative EOS.
