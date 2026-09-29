@@ -3,6 +3,18 @@
 // Only active when running inside the native iOS wrapper.
 // Gracefully falls back to browser behaviour when not.
 // ══════════════════════════════════════════════════════════════
+// ── Offline 3D: bundled three.js r170 ─────────────────────────
+// sync-from-main.js copies ios-additions/libs/three.module.min.js next to
+// index.html in www/ (served at capacitor://localhost/three.module.min.js).
+// 32-wts-3d.js tries WTS3D_LOCAL_URL before the CDN, still checks the pinned
+// SHA-384 before importing it, and reports hasLocalCopy() = true, so a first
+// launch with no network opens the 3D view instead of falling back to 2D.
+// Set for every www/ load (also a desktop preview of www/, where the file
+// exists too); a page that already chose a URL keeps it.
+if (typeof window !== 'undefined' && !window.WTS3D_LOCAL_URL) {
+  window.WTS3D_LOCAL_URL = 'three.module.min.js';
+}
+
 (function(){
   const isNative = typeof window !== 'undefined'
         && window.Capacitor

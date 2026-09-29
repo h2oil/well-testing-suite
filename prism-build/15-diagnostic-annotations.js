@@ -767,7 +767,7 @@
             if (lIn) lIn.value = _currentL().toFixed(2);
             _redraw();
             _updateInfo(host, info);
-            _ga4('prism_annotation_toggle', { enabled: G.PRiSM_annotationsEnabled !== false, action: 'autoL', L: info.L });
+            _ga4('prism_annotation_toggle', { enabled: G.PRiSM_annotationsEnabled !== false, action: 'autoL' });
         });
     };
 

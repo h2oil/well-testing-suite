@@ -9929,8 +9929,7 @@ function _finish(ctx, pRows, rRows) {
     _dispatch('prism:automatch-updated', { bestKey: result.bestKey, kind: result.kind });
     try {
         if (typeof G.gtag === 'function') {
-            G.gtag('event', 'prism_auto_match_run', { event_category: 'PRiSM', best_model: result.bestKey || 'none',
-                   elapsed_ms: result.elapsedMs, n_candidates: ranked.length });
+            G.gtag('event', 'prism_auto_match_run', { event_category: 'PRiSM', best_model: result.bestKey || 'none' });
         }
     } catch (e) { /* silent */ }
     if (opts.apply && result.ok) {
@@ -12076,7 +12075,7 @@ G.PRiSM_formatWithCI = PRiSM_formatWithCI;
             if (lIn) lIn.value = _currentL().toFixed(2);
             _redraw();
             _updateInfo(host, info);
-            _ga4('prism_annotation_toggle', { enabled: G.PRiSM_annotationsEnabled !== false, action: 'autoL', L: info.L });
+            _ga4('prism_annotation_toggle', { enabled: G.PRiSM_annotationsEnabled !== false, action: 'autoL' });
         });
     };
 

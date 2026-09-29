@@ -414,6 +414,7 @@
             <div class="nav-btn" data-p="home"><span class="nav-icon">&#9670;</span><span>Dashboard</span></div>
             <div class="nav-btn active" data-p="clientinfo"><span class="nav-icon">&#128188;</span><span>Client & Well Info</span></div>
             <div class="nav-btn" data-p="releasenotes"><span class="nav-icon">&#128221;</span><span>Release Notes</span></div>
+            <div class="nav-btn" data-p="privacy"><span class="nav-icon">&#128274;</span><span>Privacy</span></div>
             <!-- GA4 Events Reference is intentionally not in the nav. Reachable
                  by typing the page key into the SPA router (e.g. via console:
                  nav('gaevents')) or by anyone you share a deep link with. -->
@@ -482,7 +483,7 @@
             <div class="nav-btn" data-p="units"><span class="nav-icon">&#8644;</span><span>Unit Conversions</span></div>
             <div class="nav-btn" data-p="analogsig"><span class="nav-icon">&#8766;</span><span>Analog Signal</span></div>
         </div>
-        <div class="sidebar-footer"><strong>H2Oil Engineering</strong>software@h2oil.co.uk</div>
+        <div class="sidebar-footer"><strong>H2Oil Engineering</strong>software@h2oil.co.uk<br><a href="#" id="sbPrivacyLink" style="color:var(--text3)">Privacy — your data stays on this device</a></div>
     </div>
 
     <!-- Save flash -->
@@ -690,7 +691,7 @@ document.addEventListener('change', e => {
 // Unit-tagged inputs (22-units.js) are stored canonical (imperial), like the
 // legacy wts_<key> records. PRiSM routes keep their own persistence.
 const PAGE_LS_PREFIX = 'wts_page_';
-const PAGE_AUTOSAVE_SKIP = { home:1, releasenotes:1, gaevents:1, prism:1, dca:1, pta:1 };
+const PAGE_AUTOSAVE_SKIP = { home:1, releasenotes:1, gaevents:1, privacy:1, prism:1, dca:1, pta:1 };
 let __pageState = null;       // live record of the page currently rendered
 let __pageRestoring = false;  // true while render() re-applies saved values
 let __pageDirty = false;
@@ -1134,6 +1135,7 @@ function __calcHomeTiles(mods) {
 let page = 'clientinfo';
 const navBtns = document.querySelectorAll('.nav-btn');
 navBtns.forEach(b => b.addEventListener('click', () => nav(b.dataset.p)));
+{ const pl = $('sbPrivacyLink'); if(pl) pl.addEventListener('click', ev => { ev.preventDefault(); nav('privacy'); }); }
 
 function nav(p) {
     // Persist pending edits of the page we are leaving (universal autosave)
@@ -1151,7 +1153,7 @@ function render() {
     const body = $('pgBody');
     if(__pageDirty) __flushPageState(false);   // same-page re-render keeps pending edits
     body.innerHTML = '';
-    const pages = { home: renderHome, clientinfo: renderClientInfo, aga3: renderAGA3, units: renderUnits, choke: renderChoke, flare: renderFlare, prv: renderPRV, chokeflow: renderChokeFlow, gascalc: renderGasCalc, fluid: renderFluid, tank: renderTank, vessel: renderVessel, elec: renderElec, chem: renderChem, sep: renderSep, bottomsup: renderBottomsUp, solgor: renderSolGOR, oilgas: renderOilGas, mcfshr: renderMCFShr, casing: renderCasing, chokecnv: renderChokeCnv, analogsig: renderAnalogSig, pumpsz: renderPumpSz, seprate: renderSepRate, sephand: renderSepHandling, heater: renderHeater, pipesz: renderPipeSz, turbmeter: renderTurbMeter, aircomp: renderAirComp, gensz: renderGenSz, cablesz: renderCableSz, vdrop: renderVDrop, flamearr: renderFlameArr, arc: renderARC, wts: renderWTS, releasenotes: renderReleaseNotes, gaevents: renderGAEvents, prism: renderPRiSM, dca: renderPRiSM, pta: renderPRiSM, esdhi: window.renderESDHiPilot, esdlo: window.renderESDLoPilot, hydrate: window.renderHydrateManagement, liquidline: window.renderLiquidLine, pipelife: window.renderPipeLife };
+    const pages = { home: renderHome, clientinfo: renderClientInfo, aga3: renderAGA3, units: renderUnits, choke: renderChoke, flare: renderFlare, prv: renderPRV, chokeflow: renderChokeFlow, gascalc: renderGasCalc, fluid: renderFluid, tank: renderTank, vessel: renderVessel, elec: renderElec, chem: renderChem, sep: renderSep, bottomsup: renderBottomsUp, solgor: renderSolGOR, oilgas: renderOilGas, mcfshr: renderMCFShr, casing: renderCasing, chokecnv: renderChokeCnv, analogsig: renderAnalogSig, pumpsz: renderPumpSz, seprate: renderSepRate, sephand: renderSepHandling, heater: renderHeater, pipesz: renderPipeSz, turbmeter: renderTurbMeter, aircomp: renderAirComp, gensz: renderGenSz, cablesz: renderCableSz, vdrop: renderVDrop, flamearr: renderFlameArr, arc: renderARC, wts: renderWTS, releasenotes: renderReleaseNotes, gaevents: renderGAEvents, privacy: renderPrivacy, prism: renderPRiSM, dca: renderPRiSM, pta: renderPRiSM, esdhi: window.renderESDHiPilot, esdlo: window.renderESDLoPilot, hydrate: window.renderHydrateManagement, liquidline: window.renderLiquidLine, pipelife: window.renderPipeLife };
     __mountCalcNav(pages);                     // sidebar buttons for plug-in calculators (idempotent)
     if (pages[page]) pages[page](body);
     else __renderRegistryCalc(page, body);     // plug-in calculators (window.WTS_calcRegistry)
@@ -2332,7 +2334,7 @@ window.exportPagePNG = async function() {
 // model is cached (memory + localStorage 'wts_report_snapshots', so it also
 // travels in project files). The job report stitches every captured
 // calculator into one document with a summary table.
-const _REPORT_SKIP = { home:1, clientinfo:1, releasenotes:1, gaevents:1, prism:1, dca:1, pta:1 };
+const _REPORT_SKIP = { home:1, clientinfo:1, releasenotes:1, gaevents:1, privacy:1, prism:1, dca:1, pta:1 };
 const _reportSnaps = (function() {
     try { return JSON.parse(localStorage.getItem('wts_report_snapshots') || '{}') || {}; } catch(e) { return {}; }
 })();
@@ -9018,12 +9020,14 @@ function renderReleaseNotes(body){
     body.innerHTML = '<style>' + RN_STYLE + '</style>' +
         '<div class="rn-wrap">' +
             '<div class="rn-top">' +
-                '<div class="rn-meta">Current version <b>' + latest.ver + '</b> · ' + RELEASE_NOTES.length + ' releases since ' + rnFmtDate(first.date) + '</div>' +
+                '<div class="rn-meta">Current version <b>' + latest.ver + '</b> · ' + RELEASE_NOTES.length + ' releases since ' + rnFmtDate(first.date) + ' · <a href="#" id="rnPrivacyLink" style="color:var(--text2)">Privacy</a></div>' +
                 '<div class="rn-filters" role="group" aria-label="Filter by category">' + filters + '</div>' +
             '</div>' +
             '<div class="rn-tl">' + releases + '</div>' +
         '</div>';
     const wrap = body.querySelector('.rn-wrap');
+    const pl = body.querySelector('#rnPrivacyLink');
+    if (pl) pl.addEventListener('click', ev => { ev.preventDefault(); nav('privacy'); });
     const btns = wrap.querySelectorAll('.rn-f');
     btns.forEach(btn => btn.addEventListener('click', () => {
         const f = btn.getAttribute('data-f');
@@ -9044,7 +9048,7 @@ const GA_EVENTS = [
     { name:'module_view',         trigger:'Each time a calculator/module opens (paired with page_view)',
       params:'module_id (e.g. aga3, choke, sephand)' },
     { name:'module_engagement',   trigger:'When LEAVING a module \u2014 page change, tab hidden, or window close',
-      params:'module_id, dwell_seconds, dwell_ms (skipped if dwell < 1.5s)' },
+      params:'module_id, dwell_seconds (skipped if dwell < 1.5s)' },
     { name:'nav_click',           trigger:'Sidebar nav button click',
       params:'nav_target, nav_label, nav_source' },
     { name:'dashboard_tile_click',trigger:'Dashboard quickcard click',
@@ -9058,11 +9062,11 @@ const GA_EVENTS = [
     { name:'session_load',        trigger:'Click "Load Session" / "Import Session"',
       params:'(none)' },
     { name:'copy_clipboard',      trigger:'Any document-level copy event (Ctrl/\u2318+C)',
-      params:'content_type (code | text), char_count, page' },
+      params:'content_type (code | text), page \u2014 the copied text is never sent' },
     { name:'search',              trigger:'Input event on element with [data-ga-search] attribute',
-      params:'search_term (truncated to 80 chars), search_scope' },
+      params:'search_scope \u2014 the search text is never sent' },
     { name:'select_filter',       trigger:'Input event on element with [data-ga-filter] attribute',
-      params:'filter_type, filter_value' },
+      params:'filter_type \u2014 the chosen value is never sent' },
     { name:'scroll_depth',        trigger:'Reaching 25 / 50 / 75 / 100% of #pgBody scroll height',
       params:'percent (25 | 50 | 75 | 100), page' },
     { name:'click_outbound',      trigger:'Click on any external <a href="http(s)://..."> link',
@@ -9078,7 +9082,7 @@ const GA_EVENTS = [
     { name:'wts_esd',             trigger:'Live simulation ESD tripped or reset by the user',
       params:'action (trip | reset)' },
     { name:'wts_alarm_ack',       trigger:'Live simulation alarms acknowledged',
-      params:'count' },
+      params:'(none \u2014 the count is dropped by the privacy filter)' },
     { name:'wts_fault',           trigger:'Live simulation scenario fault toggled',
       params:'id, on' },
 ];
@@ -9112,7 +9116,7 @@ function renderGAEvents(body){
           <ul style="margin:0;padding-left:20px;font-size:13px;line-height:1.6;color:var(--text2)">
             <li>Event names: <code>snake_case</code>, lowercase, verb-led where possible.</li>
             <li>Parameter names: <code>snake_case</code>, lowercase. GA4 reserves a few names (page_view's <code>page_path</code>, <code>page_title</code>, <code>page_location</code>) \u2014 we honour those for SPA virtual pageviews.</li>
-            <li>String values truncated to 80 characters before sending (search_term, link_text, nav_label).</li>
+            <li>Privacy filter: <code>gtag</code> itself passes every event through <code>window.h2oilGaPolicy</code> (an allow-list of parameter names). Unknown parameters, numbers outside the UI counters, number-only strings, objects and arrays are dropped; strings are capped at 100 characters. No input value, client / well name, file content or result ever leaves the device. See Overview \u2192 Privacy.</li>
             <li>All custom events include the current calculator key under <code>page</code> or <code>calc_id</code> for cohort analysis in GA4 Explorations.</li>
           </ul>
         </div>
@@ -9178,14 +9182,59 @@ function renderGAEvents(body){
           </p>
           <pre style="margin:0;padding:10px;background:var(--bg1);border-radius:4px;overflow-x:auto;font-size:11px;color:var(--text)">// inside the tracker IIFE
 track('my_new_event', {
-    custom_param: 'value',
-    char_count: text.length
+    calc_id: window.__currentCalcKey   // allow-listed key; add new keys to h2oilGaPolicy
 });
 
 // then in GA_EVENTS list:
-{ name: 'my_new_event', trigger: 'when X happens', params: 'custom_param, char_count' },</pre>
+{ name: 'my_new_event', trigger: 'when X happens', params: 'calc_id' },</pre>
         </div>
       </div>`;
+}
+
+// ══════════════════════════════════════════════════════════════
+// ── Privacy statement ──
+// ══════════════════════════════════════════════════════════════
+// Reachable from the sidebar (Overview), the sidebar footer and the
+// Release Notes page. Fixed text only — nothing read from storage.
+function renderPrivacy(body){
+    $('pgTitle').textContent = 'Privacy';
+    $('pgSub').textContent = 'How the Well Testing Suite handles your data.';
+    const ios = !!window.isIOSApp;
+    const gaOn = typeof window.gtag === 'function';
+    const build = ios ? 'iOS app — no analytics code is included in this build.'
+        : gaOn ? 'Web version — anonymous usage analytics are active (see below).'
+        : 'Web version — analytics are not loaded (blocked or stripped), so nothing is sent.';
+    const li = a => '<ul style="margin:0;padding-left:20px;font-size:13px;line-height:1.65;color:var(--text2)">' +
+        a.map(x => '<li>' + x + '</li>').join('') + '</ul>';
+    body.innerHTML = '<div id="privacy_root" style="max-width:860px">' +
+      '<div class="info-bar" style="background:rgba(63,185,80,.06);border-color:rgba(63,185,80,.2);color:var(--green)">' +
+        '<strong>Your well data never leaves your device.</strong> This build: ' + build + '</div>' +
+      '<div class="card"><div class="card-title">Calculations run on your device</div>' + li([
+        'Every calculator, PRiSM analysis, simulation and report is computed in your browser or in the app on your device. There is no server-side calculation.',
+        'There are no user accounts, no sign-in and no H2Oil server that receives your inputs, results or files.'
+      ]) + '</div>' +
+      '<div class="card"><div class="card-title">Where your data is stored</div>' + li([
+        'Inputs, client &amp; well details, loaded gauge data and results are kept in this browser’s local storage (in the iOS app: the app’s own local storage on the device).',
+        'Clearing the browser’s site data (or deleting the app) removes them. We cannot see or recover them.',
+        'Project files (<code>.h2oilproj</code> / <code>.prism</code>), PDF, PNG and CSV exports are created only when you choose to save or share them, and go only where you put them.'
+      ]) + '</div>' +
+      '<div class="card"><div class="card-title">Analytics (web version only)</div>' + li([
+        'The web version uses Google Analytics 4 to count anonymous usage: page / module views, time spent on a module, and generic events such as “calculate clicked”, “export as PDF” or “PRiSM tab opened”.',
+        'Events carry only page / route names, fixed button or model names and a few UI counters (tab number, scroll depth, seconds on a page).',
+        'An allow-list filter inside the tracker drops everything else before it is sent: no input values, no client or well names, no file contents, no results or other numbers from your data, and no search or copied text.',
+        'Blocking analytics (for example with a content blocker) does not affect any feature.'
+      ]) + '</div>' +
+      '<div class="card"><div class="card-title">iOS app</div>' + li([
+        'The analytics code is removed from the iOS bundle when it is built from the web version (<code>ios-app/scripts/sync-from-main.js</code> strips every <code>GA:START … GA:END</code> block), so the app sends no analytics at all.',
+        'The 3D engine and the PDF libraries are bundled inside the app, so they work offline.'
+      ]) + '</div>' +
+      '<div class="card"><div class="card-title">Other network requests</div>' + li([
+        'Some optional features download a public code library the first time they are used: the 3D engine for the Well Test Simulator (web version) and the spreadsheet reader for .xlsx imports.',
+        'These are plain file downloads from a public content-delivery network. No inputs or data are sent with them; the 3D engine is checked against a pinned SHA-384 hash before it is used.'
+      ]) + '</div>' +
+      '<div class="card"><div class="card-title">Contact</div>' +
+        '<p style="font-size:13px;color:var(--text2);line-height:1.6">Questions about privacy: <strong>software@h2oil.co.uk</strong>.</p></div>' +
+    '</div>';
 }
 
 
@@ -33645,8 +33694,7 @@ function _finish(ctx, pRows, rRows) {
     _dispatch('prism:automatch-updated', { bestKey: result.bestKey, kind: result.kind });
     try {
         if (typeof G.gtag === 'function') {
-            G.gtag('event', 'prism_auto_match_run', { event_category: 'PRiSM', best_model: result.bestKey || 'none',
-                   elapsed_ms: result.elapsedMs, n_candidates: ranked.length });
+            G.gtag('event', 'prism_auto_match_run', { event_category: 'PRiSM', best_model: result.bestKey || 'none' });
         }
     } catch (e) { /* silent */ }
     if (opts.apply && result.ok) {
@@ -35792,7 +35840,7 @@ G.PRiSM_formatWithCI = PRiSM_formatWithCI;
             if (lIn) lIn.value = _currentL().toFixed(2);
             _redraw();
             _updateInfo(host, info);
-            _ga4('prism_annotation_toggle', { enabled: G.PRiSM_annotationsEnabled !== false, action: 'autoL', L: info.L });
+            _ga4('prism_annotation_toggle', { enabled: G.PRiSM_annotationsEnabled !== false, action: 'autoL' });
         });
     };
 
@@ -38951,10 +38999,7 @@ G.PRiSM_formatWithCI = PRiSM_formatWithCI;
                 + ' (largest with RMSE ≤ ' + allow.toFixed(3) + ' psi; best ' + rMin.toFixed(3) + ' psi)';
             chosen.lambdaSweep = runs.map(function (r) { return { lambda: r.lambda, rmse: r.res.rmse, p_initial: r.res.p_initial }; });
             if (!opts.silent) {
-                _ga4('prism_deconvolution_run', {
-                    nNodes: chosen.diagnostics.nNodes, converged: chosen.converged,
-                    iter: chosen.iterations, rmse: chosen.rmse, lambda: chosen.lambda
-                });
+                _ga4('prism_deconvolution_run', {});      // no fit numbers (privacy)
             }
             return chosen;
         }
@@ -39048,13 +39093,7 @@ G.PRiSM_formatWithCI = PRiSM_formatWithCI;
 
         // ─── Done ──────────────────────────────────────────────────
         if (!opts.silent) {
-            _ga4('prism_deconvolution_run', {
-                nNodes:    grid.nNodes,
-                converged: lmRes.converged,
-                iter:      lmRes.iter,
-                rmse:      rmse,
-                lambda:    lambdaUsed
-            });
+            _ga4('prism_deconvolution_run', {});          // no fit numbers (privacy)
         }
 
         var stepsOut = [];
@@ -39327,7 +39366,7 @@ G.PRiSM_formatWithCI = PRiSM_formatWithCI;
         if (typeof G.PRiSM_setWell === 'function') {
             try {
                 G.PRiSM_setWell({ p_res: v }, { source: 'deconvolution' });
-                _ga4('prism_deconvolution_apply_pi', { pi: v });
+                _ga4('prism_deconvolution_apply_pi', {});
                 return v;
             } catch (e) { /* fall back to the direct write */ }
         }
@@ -39339,7 +39378,7 @@ G.PRiSM_formatWithCI = PRiSM_formatWithCI;
             try { G.PRiSM_pvt_compute(); } catch (e) { /* ignore */ }
         }
         _dispatch('prism:well-changed', { keys: ['p_res'], source: 'deconvolution' });
-        _ga4('prism_deconvolution_apply_pi', { pi: v });
+        _ga4('prism_deconvolution_apply_pi', {});
         return v;
     }
 
@@ -39370,7 +39409,7 @@ G.PRiSM_formatWithCI = PRiSM_formatWithCI;
         };
         S.responseDs = ds;
         _commitDataset(ds, 'deconvolution');
-        _ga4('prism_deconvolution_save', { nNodes: t.length });
+        _ga4('prism_deconvolution_save', {});
         return ds;
     }
 
@@ -40474,15 +40513,7 @@ G.PRiSM_formatWithCI = PRiSM_formatWithCI;
         }
 
         try {
-            _ga4('prism_tide_analysis', {
-                n_samples:          nIn,
-                duration_h:         Math.round(duration_h * 10) / 10,
-                fitted_count:       fitList.length,
-                m2_amp_psi:         m2 ? Math.round(m2.amplitude * 1000) / 1000 : null,
-                snr:                Math.round(snr * 10) / 10,
-                ct_estimate:        ct,
-                has_depth:          isFinite(o.depth_ft) && o.depth_ft > 0
-            });
+            _ga4('prism_tide_analysis', {});   // no amplitudes / ct / sample counts (privacy)
         } catch (e) { /* swallow */ }
 
         return {
@@ -40599,11 +40630,7 @@ G.PRiSM_formatWithCI = PRiSM_formatWithCI;
         _commitDataset(newDs, 'tide-correction');
 
         try {
-            _ga4('prism_tide_correction_applied', {
-                n_samples: snap.t.length,
-                m2_amp_psi: (res.constituents && res.constituents[0] && res.constituents[0].name === 'M2')
-                            ? Math.round(res.constituents[0].amplitude * 1000) / 1000 : null
-            });
+            _ga4('prism_tide_correction_applied', {});
         } catch (e) { /* swallow */ }
 
         return newDs;
@@ -41821,7 +41848,7 @@ G.PRiSM_gaugeData = {
             return G.PRiSM_storage.putGauge(id, {
                 metadata: meta, data: data, createdAt: _now()
             }).then(function () {
-                _ga4('prism_gauge_added', { sample_count: meta.sampleCount, has_rate: !!q });
+                _ga4('prism_gauge_added', {});
                 return id;
             });
         });
@@ -42065,7 +42092,7 @@ G.PRiSM_analysisData = {
             return G.PRiSM_storage.putAnalysis(id, {
                 metadata: meta, data: data, provenance: prov, createdAt: _now()
             }).then(function () {
-                _ga4('prism_analysis_added', { sample_count: meta.sampleCount, source_count: prov.gaugeIds.length });
+                _ga4('prism_analysis_added', {});
                 return id;
             });
         });
@@ -42141,7 +42168,7 @@ G.PRiSM_analysisData = {
                 source: 'analysis-data', analysisId: analysisId,
                 name: (a.metadata && a.metadata.name) || ''
             }, 'analysis-data');
-            _ga4('prism_analysis_activated', { sample_count: a.t.length });
+            _ga4('prism_analysis_activated', {});
         });
     },
 
@@ -42388,7 +42415,7 @@ G.PRiSM_project = {
                     setTimeout(function () { try { document.body.removeChild(a); URL.revokeObjectURL(url); } catch (e) {} }, 100);
                 } catch (e) { /* silent */ }
             }
-            _ga4('prism_project_saved', { gauge_count: gaugeData.length, analysis_count: analysisData.length, size_bytes: json.length });
+            _ga4('prism_project_saved', {});
             return { blob: blob, filename: name, sizeBytes: json.length };
         });
     },
@@ -42424,10 +42451,7 @@ G.PRiSM_project = {
             return null;
         }).then(function () {
             _refreshMounted();
-            _ga4('prism_project_loaded', {
-                gauge_count: (proj.gaugeData || []).length,
-                analysis_count: (proj.analysisData || []).length
-            });
+            _ga4('prism_project_loaded', {});
         });
     },
 
@@ -44676,7 +44700,7 @@ function _pltCompute(container) {
         + '.' + _esc(qNote) + '</span>');
     _pltPaint(container, _pltLastResult);
     if (typeof G.gtag === 'function') {
-        try { G.gtag('event', 'prism_plt_compute', { model: fit.modelKey, n_layers: d.nLayers }); }
+        try { G.gtag('event', 'prism_plt_compute', { model: String(fit.modelKey || '') }); }
         catch (e) { /* swallow */ }
     }
 }
@@ -44851,7 +44875,7 @@ function _pltExport(container) {
     }
     _download('prism-layer-rates.csv', lines.join('\n'), 'text/csv');
     if (typeof G.gtag === 'function') {
-        try { G.gtag('event', 'prism_plt_export', { n_rows: t.length, n_layers: layers.length }); }
+        try { G.gtag('event', 'prism_plt_export', {}); }
         catch (e) { /* swallow */ }
     }
 }
@@ -44983,7 +45007,7 @@ function _invRun(container) {
         + ' · RMSE(p) = ' + _fmtSig(result.rmse, 3) + ' psi.</span>');
     _invPaint(container, _invLastResult);
     if (typeof G.gtag === 'function') {
-        try { G.gtag('event', 'prism_inverse_sim_run', { model: result.modelKey, n: result.t.length, rmse: result.rmse }); }
+        try { G.gtag('event', 'prism_inverse_sim_run', { model: String(result.modelKey || '') }); }
         catch (e) { /* swallow */ }
     }
 }
@@ -45012,7 +45036,7 @@ function _invSave(container) {
         _say(container, 'prism_inv_msg', '<span style="color:' + TV.yellow + ';">Analysis-set storage is not available in this build.</span>');
     }
     if (typeof G.gtag === 'function') {
-        try { G.gtag('event', 'prism_inverse_sim_save', { model: last.modelKey, n: last.t.length }); }
+        try { G.gtag('event', 'prism_inverse_sim_save', { model: String(last.modelKey || '') }); }
         catch (e) { /* swallow */ }
     }
 }
@@ -46291,7 +46315,7 @@ _registerPanel(6, {
                     ' · RMS Δp = ' + (isFinite(diff.rms) ? diff.rms.toPrecision(4) : '—') + ' psi' +
                     ' · max |Δp| = ' + (isFinite(diff.maxAbs) ? diff.maxAbs.toPrecision(4) : '—') + ' psi';
             }
-            _ga4('prism_diff_compute', { n: diff.nCommon });
+            _ga4('prism_diff_compute', {});
         });
     };
 
@@ -46662,7 +46686,7 @@ _registerPanel(6, {
         var blob = null;
         try { if (typeof Blob === 'function' || typeof Blob === 'object') blob = new Blob([xml], { type: 'application/xml' }); }
         catch (e) { blob = null; }
-        _ga4('prism_xml_export', { sizeBytes: xml.length });
+        _ga4('prism_xml_export', {});
         return { blob: blob, filename: filename, xmlString: xml };
     };
 
@@ -46750,7 +46774,7 @@ _registerPanel(6, {
                     try {
                         var item = new G.ClipboardItem({ 'image/png': blob });
                         G.navigator.clipboard.write([item]).then(function () {
-                            _ga4('prism_copy_plot', { sizeBytes: blob.size });
+                            _ga4('prism_copy_plot', {});
                             resolve({ success: true });
                         }, function (err) {
                             resolve({ success: false, error: (err && err.message) || String(err) });
@@ -46829,7 +46853,7 @@ _registerPanel(6, {
                     return;
                 }
                 G.navigator.clipboard.writeText(text).then(function () {
-                    _ga4('prism_copy_data', { format: format, length: text.length });
+                    _ga4('prism_copy_data', { format: String(format) });
                     resolve({ success: true, length: text.length, text: text });
                 }, function (err) {
                     resolve({ success: false, error: (err && err.message) || String(err) });
@@ -76672,6 +76696,18 @@ render();
 // Only active when running inside the native iOS wrapper.
 // Gracefully falls back to browser behaviour when not.
 // ══════════════════════════════════════════════════════════════
+// ── Offline 3D: bundled three.js r170 ─────────────────────────
+// sync-from-main.js copies ios-additions/libs/three.module.min.js next to
+// index.html in www/ (served at capacitor://localhost/three.module.min.js).
+// 32-wts-3d.js tries WTS3D_LOCAL_URL before the CDN, still checks the pinned
+// SHA-384 before importing it, and reports hasLocalCopy() = true, so a first
+// launch with no network opens the 3D view instead of falling back to 2D.
+// Set for every www/ load (also a desktop preview of www/, where the file
+// exists too); a page that already chose a URL keeps it.
+if (typeof window !== 'undefined' && !window.WTS3D_LOCAL_URL) {
+  window.WTS3D_LOCAL_URL = 'three.module.min.js';
+}
+
 (function(){
   const isNative = typeof window !== 'undefined'
         && window.Capacitor
