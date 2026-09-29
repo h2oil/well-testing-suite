@@ -276,6 +276,11 @@ const CONTRACT_FNS = {
   WP11: ['PRiSM_deconvolveDataset', 'PRiSM_applyDeconvolvedPi', 'PRiSM_inverseSimDataset', 'PRiSM_renderDatasetsPanel', 'PRiSM_renderPLTInversePanel'],
   WP12: ['PRiSM_declineResults', 'PRiSM_fitDecline', 'PRiSM_rtaData', 'PRiSM_rtaFMB', 'PRiSM_rtaLinearFlow', 'PRiSM_rtaSummary',
          'PRiSM_renderDeclineResultsPanel', 'PRiSM_renderRTAPanel', 'PRiSM_fetkovich_typecurve'],
+  WP14: ['PRiSM_listGauges', 'PRiSM_setGauge', 'PRiSM_removeGauge', 'PRiSM_setPrimaryGauge', 'PRiSM_primaryGauge',
+         'PRiSM_gaugeResolutionCheck', 'PRiSM_gaugeSamplingLimit', 'PRiSM_addEvent', 'PRiSM_listEvents', 'PRiSM_removeEvent',
+         'PRiSM_clearEvents', 'PRiSM_setEventClock', 'PRiSM_eventsToRateSchedule', 'PRiSM_seedPeriodsFromEvents',
+         'PRiSM_rockCompressibility', 'PRiSM_ctBuild', 'PRiSM_ctApply', 'PRiSM_renderGaugeRegister', 'PRiSM_renderEventsLog',
+         'PRiSM_renderCtBuilder', 'PRiSM_renderGaugeCheckPanel'],
 };
 Object.keys(CONTRACT_FNS).forEach((c) => CONTRACT_FNS[c].forEach((fn) => checks.push([c + ' window.' + fn, typeof win[fn] === 'function'])));
 checks.push(['C3 window.PRiSM_convert (object)', !!win.PRiSM_convert && typeof win.PRiSM_convert.kh === 'function']);
@@ -286,8 +291,17 @@ checks.push(['C7 registries (tabPanels, tabHooks, postDrawHooks, stepViews)',
   !!win.PRiSM_tabPanels && !!win.PRiSM_tabHooks && !!win.PRiSM_postDrawHooks && !!win.PRiSM_stepViews && typeof win.PRiSM_stepViews[2] === 'function']);
 (function panelIds() {
   const ids = (n) => { const p = win.PRiSM_tabPanels && win.PRiSM_tabPanels[n]; return (Array.isArray(p) ? p : []).map((x) => x && x.id); };
-  const want = { 1: ['prism_well_test', 'crop'], 2: ['semilog', 'linetools', 'regimes'], 6: ['prism_interp_panel', 'dcaResults'] };
+  const want = { 1: ['prism_well_test', 'crop', 'prism_ct_builder', 'prism_gauge_register', 'prism_events_log'],
+                 2: ['semilog', 'linetools', 'regimes', 'prism_gauge_resolution'], 6: ['prism_interp_panel', 'dcaResults'] };
   Object.keys(want).forEach((n) => want[n].forEach((id) => checks.push(['C7 Tab ' + n + ' panel "' + id + '"', ids(n).indexOf(id) !== -1])));
+})();
+checks.push(['WP14 field-tools post-draw hook registered once',
+  Array.isArray(win.PRiSM_postDrawHooks) && win.PRiSM_postDrawHooks.filter((f) => f && f._prismId === 'fieldtools-markers').length === 1]);
+(function fieldToolsNumbers() {
+  // Hand value: Hall (1953) φ = 0.2 → 1.782e-6 / 0.2^0.438 = 3.6063e-6 1/psi.
+  let ok = false;
+  try { ok = Math.abs(win.PRiSM_rockCompressibility(0.2, 'hall') - 3.6063e-6) < 1e-9; } catch (e) { ok = false; }
+  checks.push(['WP14 Hall rock compressibility', ok]);
 })();
 (function registryMeta() {
   const M = win.PRiSM_MODELS || {};

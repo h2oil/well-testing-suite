@@ -21,6 +21,7 @@ const FILES = [
   '35-rta-dca.js',
   '36-report.js',
   '37-prism-workflow.js',
+  '39-prism-fieldtools.js',
 ];
 
 const ROOT = __dirname;
@@ -88,6 +89,7 @@ function build(opts) {
     '//   • 35-rta-dca           (decline results + rate-transient analysis)\n' +
     '//   • 36-report            (Tab 7 report + CSV export)\n' +
     '//   • 37-prism-workflow    (workflow shell content: flow periods, rail, tools)\n' +
+    '//   • 39-prism-fieldtools  (gauge register, sequence of events, ct builder)\n' +
     '// ═══════════════════════════════════════════════════════════════════════\n';
   let included = 0;
   for (const f of FILES) {

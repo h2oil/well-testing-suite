@@ -1376,7 +1376,7 @@ G.PRiSM_matchToPhysical = function PRiSM_matchToPhysical(tc, modelKey, params, w
 // ═══════════════════════════════════════════════════════════════
 
 var STATE_FIELDS = ['model', 'params', 'paramFreeze', 'phys', 'tcMatch', 'activePlot', 'activePeriod',
-                    'bourdetL', 'timeFn', 'lastFit', 'semilog', 'analysisKeyResults'];
+                    'bourdetL', 'timeFn', 'lastFit', 'semilog', 'analysisKeyResults', 'fieldTools'];
 
 G.PRiSM_saveState = function PRiSM_saveState() {
     var st = G.PRiSM_state;
@@ -1424,6 +1424,8 @@ G.PRiSM_restoreState = function PRiSM_restoreState(obj) {
     if (snap.lastFit && typeof snap.lastFit === 'object') st.lastFit = snap.lastFit;
     if (snap.semilog && typeof snap.semilog === 'object') st.semilog = snap.semilog;
     if (snap.analysisKeyResults && typeof snap.analysisKeyResults === 'object') st.analysisKeyResults = snap.analysisKeyResults;
+    // Gauge register, sequence of events, ct builder (39-prism-fieldtools.js).
+    if (snap.fieldTools && typeof snap.fieldTools === 'object') st.fieldTools = snap.fieldTools;
     // Legacy field stays neutral: fits never live in st.match.
     st.match = { timeShift: 0, pressShift: 0 };
     if (snap.mode != null || snap.tab != null) {
