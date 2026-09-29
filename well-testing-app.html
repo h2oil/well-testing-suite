@@ -648,6 +648,8 @@
             <div class="export-btns" id="exportBtns" style="display:none;gap:6px">
               <button class="btn-export" onclick="exportPagePDF()" title="Export as PDF report">&#128424; PDF</button>
               <button class="btn-export" onclick="exportPagePNG()" title="Export charts as PNG">&#128247; PNG</button>
+              <button class="btn-export" onclick="exportPageCSV()" title="Export inputs and results as CSV">&#128196; CSV</button>
+              <button class="btn-export" onclick="exportPageJSON()" title="Export inputs and results as JSON">{ } JSON</button>
             </div>
           </div>
         </div>
@@ -2519,27 +2521,223 @@ document.addEventListener('h2oil:pagechange', e => { _snapPage = e.detail && e.d
     _snapTimer = setTimeout(_snapshotPage, 900);  // after debounced live recalcs settle
 }, true));
 
-window.WTS_exportJobReport = function() {
-    _snapshotPage();
-    const order = [...document.querySelectorAll('.nav-btn[data-p]')].map(b => b.dataset.p);
-    const keys = Object.keys(_reportSnaps).filter(k => !_REPORT_SKIP[k] && _reportSnaps[k])
-        .sort((a, b) => order.indexOf(a) - order.indexOf(b));
-    let prismHTML = '';
+// ── Report templates (P4) ──
+// A template is an ordered list of sections under the shared report cover
+// (buildReportCoverHTML: title, Client & Well Info). Each section is one of
+// RT_TYPES; 'pages' sections pull the captured per-page snapshots above.
+// Built-in templates cannot be edited (the picker duplicates them); user
+// templates are saved in localStorage 'wts_report_templates' — a wts_* key,
+// so they travel in project files. Everything read from storage is
+// sanitised (_rtSanitize) and every string is escaped when rendered.
+const RT_KEY = 'wts_report_templates';
+const RT_TYPES = {
+    summary: 'Summary table (key result per page)',
+    client: 'Client & well information',
+    notes: 'Free text',
+    events: 'Sequence of events',
+    rates: 'Rates summary (Oil & Gas, AGA-3, simulator)',
+    sim: 'Simulator rates & cumulative volumes',
+    pages: 'Calculator page(s)',
+    allPages: 'All other captured pages',
+    prism: 'PRiSM well test analysis'
+};
+const RT_BUILTIN = [
+    { id:'all', name:'All captured pages', title:'Well Test Job Report', builtin:true,
+      sections:[ { type:'summary' }, { type:'allPages' }, { type:'prism' } ] },
+    { id:'daily', name:'Daily well-test report', title:'Daily Well Test Report', builtin:true,
+      sections:[
+        { type:'client', heading:'Client & well information' },
+        { type:'events', heading:'Sequence of events' },
+        { type:'rates', heading:'Rates' },
+        { type:'pages', heading:'Rate calculations', pages:['oilgas', 'aga3'] },
+        { type:'sim', heading:'Cumulative volumes' },
+        { type:'pages', heading:'Flare emissions', pages:['flareghg'] }
+      ] },
+    { id:'final', name:'Final well-test report', title:'Final Well Test Report', builtin:true,
+      sections:[
+        { type:'client', heading:'Client & well information' },
+        { type:'summary', heading:'Test summary' },
+        { type:'rates', heading:'Rates' },
+        { type:'pages', heading:'Deliverability & inflow performance', pages:['gasdeliv', 'oilipr'] },
+        { type:'prism', heading:'Pressure-transient analysis (PRiSM)' },
+        { type:'pages', heading:'Emissions', pages:['flareghg'] },
+        { type:'pages', heading:'Safety checks', pages:['esdhi', 'esdlo', 'hydrate', 'liquidline', 'pipelife', 'h2sroe'] }
+      ] }
+];
+const _rtStr = (v, n) => typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, n) : '';
+function _rtSanitize(t) {
+    if(!t || typeof t !== 'object') return null;
+    const id = String(t.id || '');
+    if(!/^u[a-z0-9_-]{1,40}$/.test(id)) return null;          // user template ids start with 'u'
+    const name = _rtStr(t.name, 80) || 'Untitled template';
+    const sections = (Array.isArray(t.sections) ? t.sections : []).slice(0, 60).map(s => {
+        if(!s || typeof s !== 'object' || !Object.prototype.hasOwnProperty.call(RT_TYPES, s.type)) return null;
+        const o = { type: s.type };
+        const hd = _rtStr(s.heading, 120); if(hd) o.heading = hd;
+        if(s.type === 'pages') {
+            o.pages = (Array.isArray(s.pages) ? s.pages : []).filter(k => typeof k === 'string' && /^[a-z][a-z0-9_]{0,31}$/.test(k)).slice(0, 40);
+            if(!o.pages.length) return null;
+        }
+        if(s.type === 'notes') o.text = typeof s.text === 'string' ? s.text.replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, '').slice(0, 4000) : '';
+        if(s.detail === 'results' && (s.type === 'pages' || s.type === 'allPages')) o.detail = 'results';
+        return o;
+    }).filter(Boolean);
+    return { id, name, title: _rtStr(t.title, 120) || name, sections };
+}
+function _rtLoad() {
+    let o = null;
+    try { o = JSON.parse(localStorage.getItem(RT_KEY) || 'null'); } catch(e) { o = null; }
+    if(!o || typeof o !== 'object') o = {};
+    const templates = (Array.isArray(o.templates) ? o.templates : []).map(_rtSanitize).filter(Boolean).slice(0, 30);
+    const ids = RT_BUILTIN.map(t => t.id).concat(templates.map(t => t.id));
+    return { v: 1, defaultId: (typeof o.defaultId === 'string' && ids.indexOf(o.defaultId) !== -1) ? o.defaultId : 'all', templates };
+}
+function _rtSave(st) {
+    return __lsSet(RT_KEY, JSON.stringify({ v: 1, defaultId: st.defaultId, templates: st.templates.map(_rtSanitize).filter(Boolean) }));
+}
+const _rtClone = o => JSON.parse(JSON.stringify(o));
+function _rtAll() { return RT_BUILTIN.map(_rtClone).concat(_rtLoad().templates); }
+function _rtGet(id) { return _rtAll().filter(t => t.id === id)[0] || null; }
+
+// Page title for a route: captured snapshot, sidebar label, registry title, key.
+function _rtPageTitle(k) {
+    if(_reportSnaps[k] && _reportSnaps[k].title) return _reportSnaps[k].title;
+    try {
+        const b = document.querySelector('.nav-btn[data-p="' + k + '"]');
+        if(b) { const c = b.cloneNode(true); c.querySelectorAll('.nav-icon').forEach(n => n.remove()); const t = _cleanText(c); if(t) return t; }
+    } catch(e) {}
+    const R = window.WTS_calcRegistry;
+    if(R && R[k] && R[k].title) return String(R[k].title);
+    return k;
+}
+// Every report-able route in sidebar order (for the template editor).
+function _rtKnownPages() {
+    const out = [];
+    document.querySelectorAll('.nav-btn[data-p]').forEach(b => {
+        const k = b.dataset.p;
+        if(k && !_REPORT_SKIP[k] && out.indexOf(k) === -1) out.push(k);
+    });
+    Object.keys(_reportSnaps).forEach(k => { if(!_REPORT_SKIP[k] && out.indexOf(k) === -1) out.push(k); });
+    return out;
+}
+
+// Sequence of events: a future app-wide log (WTS_state.events = [{time|t, tag, msg}])
+// first, else the Well Test Simulator's event/alarm log (sim time, seconds).
+function _rtClock(t) {
+    t = Math.max(0, Math.floor(Number(t) || 0));
+    const p = x => (x < 10 ? '0' : '') + x;
+    return p(Math.floor(t / 3600)) + ':' + p(Math.floor(t / 60) % 60) + ':' + p(t % 60);
+}
+function _rtEvents() {
+    const S = window.WTS_state || {};
+    if(Array.isArray(S.events) && S.events.length) {
+        return S.events.slice(-300).filter(e => e && typeof e === 'object').map(e => ({
+            time: e.time != null ? String(e.time) : (isFinite(e.t) ? _rtClock(e.t) : ''),
+            tag: String(e.tag || ''), msg: String(e.msg || e.text || '') })).filter(e => e.msg);
+    }
+    try {
+        const sim = window.WTS_live && typeof window.WTS_live.getSim === 'function' ? window.WTS_live.getSim() : null;
+        const st = sim && typeof sim.getState === 'function' ? sim.getState() : null;
+        const log = st && Array.isArray(st.alarmLog) ? st.alarmLog : [];
+        const KIND = { event:'Event', trip:'Trip', reset:'Reset', switch:'Switch', batch:'Batch', raise:'Alarm', clear:'Cleared', fault:'Fault' };
+        return log.filter(e => e && KIND[e.type]).map(e => ({
+            time: 'T+' + _rtClock(e.t), tag: String(e.tag || ''), msg: KIND[e.type] + (e.msg ? ' — ' + e.msg : (e.id ? ' — ' + e.id : '')) }));
+    } catch(e) { return []; }
+}
+// Rates summary rows. Live values (WTS_state, imperial, formatted in the
+// display system) first; after a reload the captured page snapshots are
+// used (their text is already in the units they were captured in).
+function _rtSnapKV(k, re) {
+    const s = _reportSnaps[k];
+    if(!s) return '';
+    for(const sec of s.results) for(const it of sec.items) if(it.type === 'kv' && re.test(it.label)) return it.value;
+    return '';
+}
+function _rtRates() {
+    const S = window.WTS_state || {}, rows = [];
+    const q = (v, cat, d, lab, dm) => (v != null && isFinite(v)) ? _uFmt(v, cat, d, lab, dm) : '—';
+    const og = S.oilgas;
+    if(og && isFinite(og.oil_stbd)) rows.push(['Oil & Gas Rate', q(og.oil_stbd, 'liquidRate', 1, 'BPD', 2), q(og.gas_mscfd, 'gasRateSmall', 1, 'MSCFD', 1), '—', q(og.gor, 'gor', 0, 'scf/bbl', 1)]);
+    else if(_reportSnaps.oilgas) rows.push(['Oil & Gas Rate', _rtSnapKV('oilgas', /^oil rate$/i) || '—', _rtSnapKV('oilgas', /^gas rate$/i) || '—', '—', _rtSnapKV('oilgas', /^gor$/i) || '—']);
+    const ag = S.aga3;
+    if(ag && isFinite(ag.gas_mscfd)) rows.push(['AGA-3 Gas Metering', '—', q(ag.gas_mscfd, 'gasRateSmall', 1, 'MSCFD', 1), '—', '—']);
+    else if(_reportSnaps.aga3) { const g = _rtSnapKV('aga3', /^gas rate \(mscf\/d\)$/i); if(g) rows.push(['AGA-3 Gas Metering', '—', g + ' MSCF/D', '—', '—']); }
+    const sm = S.sim;
+    if(sm && sm.rates) {
+        const R = sm.rates;
+        rows.push(['Well Test Simulator (T+' + _rtClock((Number(sm.elapsed_h) || 0) * 3600) + ')', q(R.oil_stbd, 'liquidRate', 1, 'BPD', 2),
+            q(isFinite(R.gas_mmscfd) ? R.gas_mmscfd * 1000 : NaN, 'gasRateSmall', 1, 'MSCFD', 1), q(R.water_bpd, 'liquidRate', 1, 'BPD', 2),
+            R.gor != null ? q(R.gor, 'gor', 0, 'scf/bbl', 1) : '—']);
+    }
+    return rows;
+}
+function _rtSimKV() {
+    const sm = (window.WTS_state || {}).sim;
+    if(!sm || !sm.cum) return [];
+    const C = sm.cum, kv = (label, value) => ({ type:'kv', label, value, kind:'result' });
+    const n = v => isFinite(v) ? v : NaN;
+    return [
+        kv('Elapsed test time', 'T+' + _rtClock((Number(sm.elapsed_h) || 0) * 3600)),
+        kv('Cumulative oil', _uFmt(n(C.oil_stb), 'volume', 1, 'STB', 2)),
+        kv('Cumulative water', _uFmt(n(C.water_bbl), 'volume', 1, 'bbl', 2)),
+        kv('Cumulative gas', _uFmt(n(C.gas_mmscf), 'gasVolume', 4, 'MMSCF', 3)),
+        kv('Gas flared', _uFmt(n(C.flared_mmscf), 'gasVolume', 4, 'MMSCF', 3))
+    ];
+}
+
+function _rtPrismFit() {
     const _pst = window.PRiSM_state || {};
-    const _pFit = (typeof window.PRiSM_getLastFit === 'function' ? window.PRiSM_getLastFit() : null) || _pst.lastFit || null;
-    if((_pFit || (_pst.model && window.PRiSM_dataset)) && typeof window.PRiSM_buildReportHTML === 'function') {
-        try { prismHTML = window.PRiSM_buildReportHTML() || ''; } catch(e) { prismHTML = ''; }
+    return (typeof window.PRiSM_getLastFit === 'function' ? window.PRiSM_getLastFit() : null) || _pst.lastFit || null;
+}
+// Cheap check (the picker preview): would the PRiSM fragment be produced?
+function _rtPrismReady() {
+    const _pst = window.PRiSM_state || {};
+    return !!((_rtPrismFit() || (_pst.model && window.PRiSM_dataset)) && typeof window.PRiSM_buildReportHTML === 'function');
+}
+function _rtPrism() {
+    let html = '';
+    const _pst = window.PRiSM_state || {};
+    const _pFit = _rtPrismFit();
+    if(_rtPrismReady()) {
+        try { html = window.PRiSM_buildReportHTML() || ''; } catch(e) { html = ''; }
     }
     const _pNum = (v, d) => (typeof v === 'number' && isFinite(v)) ? v.toFixed(d) : null;
     const _pPhys = (_pFit && _pFit.phys) || {};
-    const _pKey = [_pNum(_pPhys.k, 1) != null ? 'k = ' + _pNum(_pPhys.k, 1) + ' md' : '', _pNum(_pPhys.S, 2) != null ? 'S = ' + _pNum(_pPhys.S, 2) : '']
+    const key = [_pNum(_pPhys.k, 1) != null ? 'k = ' + _pNum(_pPhys.k, 1) + ' md' : '', _pNum(_pPhys.S, 2) != null ? 'S = ' + _pNum(_pPhys.S, 2) : '']
         .filter(Boolean).join(', ') || (_pFit ? '' : 'not fitted yet');
-    const _pModel = (_pFit && (_pFit.modelKey || _pFit.model)) || _pst.model || '';
-    if(!keys.length && !prismHTML) {
-        alert('No calculations captured yet.\n\nRun one or more calculators, then press Quick Report to combine them into a single job report.');
-        return;
-    }
+    const model = (_pFit && (_pFit.modelKey || _pFit.model)) || _pst.model || '';
+    return { html, key: [model, key].filter(Boolean).join(' · ') };
+}
+
+// Build the report body for a template → {html, pages, n, empty}.
+function _rtBuild(tpl) {
+    const order = [...document.querySelectorAll('.nav-btn[data-p]')].map(b => b.dataset.p);
+    const captured = Object.keys(_reportSnaps).filter(k => !_REPORT_SKIP[k] && _reportSnaps[k])
+        .sort((a, b) => order.indexOf(a) - order.indexOf(b));
+    const secs = tpl.sections || [];
+    const placed = {};
+    secs.forEach(s => { if(s.type === 'pages') s.pages.forEach(k => { placed[k] = 1; }); });
+    const wantPrism = secs.some(s => s.type === 'prism');
+    const P = wantPrism ? _rtPrism() : { html:'', key:'' };
+    // Resolve every section first so the summary table can list the lot.
+    const plan = secs.map(s => {
+        const r = { s };
+        if(s.type === 'pages') { r.keys = s.pages.filter(k => captured.indexOf(k) !== -1); r.missing = s.pages.filter(k => captured.indexOf(k) === -1 && !_REPORT_SKIP[k]); }
+        else if(s.type === 'allPages') r.keys = captured.filter(k => !placed[k]);
+        else if(s.type === 'events') r.rows = _rtEvents();
+        else if(s.type === 'rates') r.rows = _rtRates();
+        else if(s.type === 'sim') r.kv = _rtSimKV();
+        else if(s.type === 'client') { const ci = getClientInfo(); r.kv = reportClientFields(ci).map(f => ({ type:'kv', label:f.label, value:f.value, kind:'input' })); r.notes = (ci.notes || '').trim(); }
+        return r;
+    });
+    const pages = [];
+    plan.forEach(r => (r.keys || []).forEach(k => { if(pages.indexOf(k) === -1) pages.push(k); }));
+    const hasContent = pages.length || (wantPrism && P.html) ||
+        plan.some(r => (r.rows && r.rows.length) || (r.kv && r.kv.length && r.s.type === 'sim'));
+    if(!hasContent) return { html:'', pages, n:0, empty:true };
+
     const pad2 = n => String(n).padStart(2, '0');
+    const when = iso => { try { return new Date(iso).toLocaleString(undefined, { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' }); } catch(e) { return ''; } };
     const keyResult = s => {
         for(const sec of s.results) for(const it of sec.items) if(it.type === 'note' && it.verdict) return it.text;
         for(const sec of s.results) for(const it of sec.items) if(it.type === 'kv') return it.label + ': ' + it.value;
@@ -2548,26 +2746,720 @@ window.WTS_exportJobReport = function() {
         }
         return '—';
     };
-    const when = iso => { try { return new Date(iso).toLocaleString(undefined, { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' }); } catch(e) { return ''; } };
-    let h = '<div class="rp-part"><span>00</span>Summary</div><section class="rp-sec"><h2>Calculators in this report</h2>' +
-        '<div class="rp-tblwrap"><table class="rp-tbl"><thead><tr><th>#</th><th>Calculator</th><th>Key result</th><th>Captured</th></tr></thead><tbody>' +
-        keys.map((k, i) => '<tr><td>' + pad2(i + 1) + '</td><td class="b">' + _rEsc(_reportSnaps[k].title) + '</td><td>' +
-            _rEsc(keyResult(_reportSnaps[k])) + '</td><td>' + _rEsc(when(_reportSnaps[k].at)) + '</td></tr>').join('') +
-        (prismHTML ? '<tr><td>' + pad2(keys.length + 1) + '</td><td class="b">PRiSM Well Test Analysis</td><td>' +
-            _rEsc([_pModel, _pKey].filter(Boolean).join(' · ')) + '</td><td>—</td></tr>' : '') +
-        '</tbody></table></div></section>';
-    keys.forEach((k, i) => {
+    const snapHTML = (k, detail) => {
         const s = _reportSnaps[k];
-        h += '<div class="rp-part rp-module"><span>' + pad2(i + 1) + '</span>' + _rEsc(s.title) + '</div>';
-        if(s.subtitle) h += '<p class="rp-modsub">' + _rEsc(s.subtitle) + '</p>';
-        s.inputs.forEach(sec => { h += '<section class="rp-sec rp-in"><h2>' + _rEsc(sec.title) + '</h2>' + _itemHTML(sec.items) + '</section>'; });
+        let h = '';
+        if(detail !== 'results') s.inputs.forEach(sec => { h += '<section class="rp-sec rp-in"><h2>' + _rEsc(sec.title) + '</h2>' + _itemHTML(sec.items) + '</section>'; });
         s.results.forEach(sec => { h += '<section class="rp-sec rp-out"><h2>' + _rEsc(sec.title) + '</h2>' + _itemHTML(sec.items) + '</section>'; });
+        return h;
+    };
+    const table = (head, rows) => '<div class="rp-tblwrap"><table class="rp-tbl"><thead><tr>' + head.map(t => '<th>' + _rEsc(t) + '</th>').join('') +
+        '</tr></thead><tbody>' + rows.map(r => '<tr>' + r.map((c, i) => '<td' + (i === 0 ? ' class="b"' : '') + '>' + _rEsc(c) + '</td>').join('') + '</tr>').join('') + '</tbody></table></div>';
+    let h = '', num = 0;
+    const part = (label, first) => { const n = (first && num === 0) ? '00' : pad2(++num); h += '<div class="rp-part' + (first ? '' : ' rp-module') + '"><span>' + n + '</span>' + _rEsc(label) + '</div>'; };
+    plan.forEach((r, idx) => {
+        const s = r.s, head = s.heading;
+        if(s.type === 'summary') {
+            const rows = pages.map((k, i) => [pad2(i + 1), _reportSnaps[k].title, keyResult(_reportSnaps[k]), when(_reportSnaps[k].at)]);
+            if(wantPrism && P.html) rows.push([pad2(pages.length + 1), 'PRiSM Well Test Analysis', P.key, '—']);
+            if(!rows.length) return;
+            part(head || 'Summary', idx === 0);
+            h += '<section class="rp-sec"><h2>' + (head ? 'Pages in this report' : 'Calculators in this report') + '</h2>' +
+                '<div class="rp-tblwrap"><table class="rp-tbl"><thead><tr><th>#</th><th>Calculator</th><th>Key result</th><th>Captured</th></tr></thead><tbody>' +
+                rows.map(c => '<tr><td>' + _rEsc(c[0]) + '</td><td class="b">' + _rEsc(c[1]) + '</td><td>' + _rEsc(c[2]) + '</td><td>' + _rEsc(c[3]) + '</td></tr>').join('') +
+                '</tbody></table></div></section>';
+        } else if(s.type === 'client') {
+            if(!r.kv.length && !r.notes) return;
+            part(head || 'Client & well information');
+            h += '<section class="rp-sec rp-in"><h2>' + _rEsc(head || 'Client & well information') + '</h2>' + _itemHTML(r.kv) +
+                (r.notes ? '<div class="rp-note"><b>Notes</b> ' + _rEsc(r.notes).replace(/\n/g, '<br>') + '</div>' : '') + '</section>';
+        } else if(s.type === 'notes') {
+            if(!s.text && !head) return;
+            part(head || 'Notes');
+            if(s.text) h += '<section class="rp-sec"><div class="rp-note">' + _rEsc(s.text).replace(/\n/g, '<br>') + '</div></section>';
+        } else if(s.type === 'events') {
+            if(!r.rows.length) return;                         // "if present"
+            part(head || 'Sequence of events');
+            h += '<section class="rp-sec rp-out"><h2>' + _rEsc(head || 'Sequence of events') + '</h2>' + table(['Time', 'Tag', 'Event'], r.rows.map(e => [e.time, e.tag, e.msg])) + '</section>';
+        } else if(s.type === 'rates') {
+            if(!r.rows.length) return;
+            part(head || 'Rates');
+            h += '<section class="rp-sec rp-out"><h2>' + _rEsc(head || 'Rates') + '</h2>' + table(['Source', 'Oil', 'Gas', 'Water', 'GOR'], r.rows) + '</section>';
+        } else if(s.type === 'sim') {
+            if(!r.kv.length) return;
+            part(head || 'Simulator rates & cumulative volumes');
+            h += '<section class="rp-sec rp-out"><h2>Well Test Simulator — totals since test start</h2>' + _itemHTML(r.kv) + '</section>';
+        } else if(s.type === 'prism') {
+            if(!P.html) return;
+            part(head || 'PRiSM Well Test Analysis');
+            h += P.html;
+        } else if(s.type === 'allPages' || (s.type === 'pages' && !head)) {
+            r.keys.forEach(k => {
+                part(_reportSnaps[k].title);
+                if(_reportSnaps[k].subtitle) h += '<p class="rp-modsub">' + _rEsc(_reportSnaps[k].subtitle) + '</p>';
+                h += snapHTML(k, s.detail);
+            });
+        } else if(s.type === 'pages') {
+            if(!r.keys.length && !r.missing.length) return;
+            part(head);
+            r.keys.forEach(k => {
+                const sn = _reportSnaps[k];
+                if(r.keys.length > 1 || sn.title !== head) h += '<p class="rp-modsub"><b>' + _rEsc(sn.title) + '</b>' + (sn.subtitle ? ' — ' + _rEsc(sn.subtitle) : '') + '</p>';
+                h += snapHTML(k, s.detail);
+            });
+            if(r.missing.length) h += '<div class="rp-note n-amber">Not captured yet: ' + _rEsc(r.missing.map(_rtPageTitle).join(', ')) +
+                '. Run ' + (r.missing.length === 1 ? 'that page' : 'those pages') + ' to include ' + (r.missing.length === 1 ? 'it' : 'them') + '.</div>';
+        }
     });
-    if(prismHTML) h += '<div class="rp-part rp-module"><span>' + pad2(keys.length + 1) + '</span>PRiSM Well Test Analysis</div>' + prismHTML;
+    return { html: h, pages, n: pages.length + (wantPrism && P.html ? 1 : 0), empty: false };
+}
+
+// opts.template: a template id or object. Default: the template chosen as the
+// Quick Report default in the picker ('all' = every captured page, as before).
+window.WTS_exportJobReport = function(opts) {
+    _snapshotPage();
+    opts = opts || {};
+    let tpl = opts.template;
+    if(typeof tpl === 'string') tpl = _rtGet(tpl);
+    else if(tpl && typeof tpl === 'object' && !RT_BUILTIN.some(b => b.id === tpl.id)) tpl = _rtSanitize(Object.assign({}, tpl, { id: /^u/.test(String(tpl.id || '')) ? tpl.id : 'utmp' }));
+    if(!tpl || !Array.isArray(tpl.sections)) tpl = _rtGet(_rtLoad().defaultId) || RT_BUILTIN[0];
+    const out = _rtBuild(tpl);
+    if(out.empty) {
+        alert(tpl.id === 'all'
+            ? 'No calculations captured yet.\n\nRun one or more calculators, then press Quick Report to combine them into a single job report.'
+            : 'Nothing captured yet for the "' + tpl.name + '" template.\n\nRun the calculators it lists (or the Well Test Simulator / PRiSM), then generate the report again.');
+        return false;
+    }
     const ci = getClientInfo();
-    const n = keys.length + (prismHTML ? 1 : 0);
-    exportReport('Well Test Job Report', h, (ci.well ? ci.well + ' · ' : '') + n + ' calculator' + (n === 1 ? '' : 's'));
+    exportReport(tpl.title || 'Well Test Job Report', out.html,
+        (ci.well ? ci.well + ' · ' : '') + (tpl.id === 'all' ? '' : tpl.name + ' · ') + out.n + ' calculator' + (out.n === 1 ? '' : 's'));
+    return true;
 };
+
+// ── Template picker / editor (header "▾" next to Quick Report) ──
+const _RT_CSS = '.wts-rt-ov{position:fixed;inset:0;background:rgba(1,4,9,.7);z-index:10050;display:flex;align-items:flex-start;justify-content:center;overflow:auto;padding:24px 16px}' +
+    '.wts-rt-box{background:var(--bg2);border:1px solid var(--border);border-radius:10px;width:min(720px,100%);padding:18px 18px 14px;color:var(--text);font-size:13px}' +
+    '.wts-rt-box h3{margin:0 0 10px;font-size:16px}.wts-rt-box .muted{color:var(--text2);font-size:12px}' +
+    '.wts-rt-list{display:flex;flex-direction:column;gap:4px;margin:8px 0}.wts-rt-list label{display:flex;gap:8px;align-items:center;padding:6px 8px;border:1px solid var(--border);border-radius:6px;cursor:pointer}' +
+    '.wts-rt-sec{margin:6px 0 0;padding-left:20px}.wts-rt-sec li{margin:2px 0}.wts-rt-ok{color:var(--green)}.wts-rt-no{color:var(--text3)}' +
+    '.wts-rt-btns{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}' +
+    '.wts-rt-box input[type=text],.wts-rt-box textarea,.wts-rt-box select{width:100%;min-width:0;box-sizing:border-box;padding:5px 7px;background:var(--bg1);color:var(--text);border:1px solid var(--border);border-radius:4px;font-size:12px}' +
+    '.wts-rt-ed{width:100%;border-collapse:collapse}.wts-rt-ed td{padding:4px;border-top:1px solid var(--border);vertical-align:top}.wts-rt-ed .t{font-size:11px;color:var(--text2)}' +
+    '.wts-rt-ed button{padding:3px 7px}.wts-rt-msg{min-height:16px;margin-top:6px;font-size:12px;color:var(--yellow)}';
+const _rtUI = { sel: null, mode: 'list', draft: null, msg: '' };
+function _rtCaptured(s) {
+    if(s.type === 'pages') { const n = s.pages.filter(k => _reportSnaps[k]).length; return [n > 0, n + ' of ' + s.pages.length + ' captured']; }
+    if(s.type === 'allPages') { const n = Object.keys(_reportSnaps).filter(k => !_REPORT_SKIP[k]).length; return [n > 0, n + ' captured']; }
+    if(s.type === 'events') { const n = _rtEvents().length; return [n > 0, n ? n + ' events' : 'no events logged — section skipped']; }
+    if(s.type === 'rates') { const n = _rtRates().length; return [n > 0, n ? n + ' sources' : 'no rates yet — section skipped']; }
+    if(s.type === 'sim') { const ok = _rtSimKV().length > 0; return [ok, ok ? 'from the simulator' : 'simulator not run — section skipped']; }
+    if(s.type === 'prism') { const ok = _rtPrismReady(); return [ok, ok ? 'analysis available' : 'no PRiSM analysis — section skipped']; }
+    if(s.type === 'client') { const ok = reportClientFields().length > 0; return [ok, ok ? 'from Client & Well Info' : 'Client & Well Info is empty']; }
+    return [true, ''];
+}
+function _rtSecLabel(s) {
+    if(s.type === 'pages') return (s.heading ? s.heading + ': ' : '') + s.pages.map(_rtPageTitle).join(', ');
+    return s.heading || RT_TYPES[s.type];
+}
+function _rtListHTML() {
+    const st = _rtLoad(), all = _rtAll();
+    if(!_rtUI.sel || !all.some(t => t.id === _rtUI.sel)) _rtUI.sel = st.defaultId;
+    const cur = all.filter(t => t.id === _rtUI.sel)[0] || all[0];
+    let h = '<h3 id="wts_rt_h">Report templates</h3><div class="muted">Choose what goes into the report, in which order. Built-in templates can be duplicated and edited; your templates are saved in the project file.</div>';
+    h += '<div class="wts-rt-list" role="radiogroup" aria-label="Templates">' + all.map(t =>
+        '<label><input type="radio" name="wts_rt_pick" value="' + _rEsc(t.id) + '"' + (t.id === cur.id ? ' checked' : '') + '> <span><b>' + _rEsc(t.name) + '</b>' +
+        (t.builtin ? ' <span class="muted">built-in</span>' : '') + (t.id === st.defaultId ? ' <span class="muted">· Quick Report default</span>' : '') + '</span></label>').join('') + '</div>';
+    h += '<div class="muted">Sections of “' + _rEsc(cur.name) + '” (cover: ' + _rEsc(cur.title) + ')</div><ol class="wts-rt-sec">' + cur.sections.map(s => {
+        const c = _rtCaptured(s);
+        return '<li><span class="' + (c[0] ? 'wts-rt-ok' : 'wts-rt-no') + '">' + (c[0] ? '&#10003;' : '&#8211;') + '</span> ' + _rEsc(_rtSecLabel(s)) +
+            (c[1] ? ' <span class="muted">(' + _rEsc(c[1]) + ')</span>' : '') + '</li>';
+    }).join('') + '</ol>';
+    h += '<label style="display:flex;gap:6px;align-items:center;margin-top:10px"><input type="checkbox" data-rt="default"' + (cur.id === st.defaultId ? ' checked' : '') + '> Use this template for the Quick Report button</label>';
+    h += '<div class="wts-rt-msg" role="status">' + _rEsc(_rtUI.msg) + '</div>';
+    h += '<div class="wts-rt-btns"><button class="btn btn-primary" data-rt="generate">Generate report</button>' +
+        '<button class="btn btn-secondary" data-rt="edit">' + (cur.builtin ? 'Duplicate &amp; edit' : 'Edit') + '</button>' +
+        '<button class="btn btn-secondary" data-rt="new">New template</button>' +
+        (cur.builtin ? '' : '<button class="btn btn-secondary" data-rt="delete">Delete</button>') +
+        '<button class="btn btn-secondary" data-rt="close">Close</button></div>';
+    return h;
+}
+function _rtEditHTML() {
+    const d = _rtUI.draft;
+    let h = '<h3 id="wts_rt_h">Edit template</h3>';
+    h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><label>Template name<input type="text" data-rt-f="name" maxlength="80" value="' + _rEsc(d.name) + '"></label>' +
+        '<label>Report title (cover)<input type="text" data-rt-f="title" maxlength="120" value="' + _rEsc(d.title) + '"></label></div>';
+    h += '<table class="wts-rt-ed" aria-label="Sections"><tbody>' + d.sections.map((s, i) =>
+        '<tr><td style="width:24px">' + (i + 1) + '</td><td><div class="t">' + _rEsc(RT_TYPES[s.type]) +
+        (s.type === 'pages' ? ': ' + _rEsc(s.pages.map(_rtPageTitle).join(', ')) : '') + '</div>' +
+        '<input type="text" data-rt-h="' + i + '" maxlength="120" placeholder="Heading (optional)" value="' + _rEsc(s.heading || '') + '" aria-label="Heading of section ' + (i + 1) + '">' +
+        (s.type === 'notes' ? '<textarea data-rt-x="' + i + '" rows="3" maxlength="4000" aria-label="Text of section ' + (i + 1) + '">' + _rEsc(s.text || '') + '</textarea>' : '') +
+        ((s.type === 'pages' || s.type === 'allPages') ? '<label class="t" style="display:flex;gap:5px;align-items:center"><input type="checkbox" data-rt-d="' + i + '"' + (s.detail === 'results' ? ' checked' : '') + '> Results only (leave out the inputs)</label>' : '') +
+        '</td><td style="width:96px;white-space:nowrap"><button class="btn btn-secondary" data-rt="up" data-i="' + i + '" aria-label="Move section ' + (i + 1) + ' up">&#8593;</button> ' +
+        '<button class="btn btn-secondary" data-rt="down" data-i="' + i + '" aria-label="Move section ' + (i + 1) + ' down">&#8595;</button> ' +
+        '<button class="btn btn-secondary" data-rt="rm" data-i="' + i + '" aria-label="Remove section ' + (i + 1) + '">&#215;</button></td></tr>').join('') + '</tbody></table>';
+    const opts = Object.keys(RT_TYPES).filter(k => k !== 'pages').map(k => '<option value="t:' + k + '">' + _rEsc(RT_TYPES[k]) + '</option>').join('') +
+        '<optgroup label="Calculator page">' + _rtKnownPages().map(k => '<option value="p:' + _rEsc(k) + '">' + _rEsc(_rtPageTitle(k)) + (_reportSnaps[k] ? '' : ' (not captured yet)') + '</option>').join('') + '</optgroup>';
+    h += '<div style="display:flex;gap:8px;margin-top:10px;align-items:center"><select data-rt-f="add" aria-label="Section to add">' + opts + '</select>' +
+        '<button class="btn btn-secondary" data-rt="add">Add section</button></div>';
+    h += '<div class="wts-rt-msg" role="status">' + _rEsc(_rtUI.msg) + '</div>';
+    h += '<div class="wts-rt-btns"><button class="btn btn-primary" data-rt="save">Save template</button><button class="btn btn-secondary" data-rt="cancel">Cancel</button></div>';
+    return h;
+}
+function _rtPaint() {
+    const box = $('wts_rt_box');
+    if(!box) return;
+    box.innerHTML = _rtUI.mode === 'edit' ? _rtEditHTML() : _rtListHTML();
+    _rtUI.msg = '';
+}
+// Pull the edit form's current text back into the draft before any re-paint.
+function _rtReadDraft() {
+    const box = $('wts_rt_box'), d = _rtUI.draft;
+    if(!box || !d) return;
+    box.querySelectorAll('[data-rt-f]').forEach(e => { const f = e.getAttribute('data-rt-f'); if(f === 'name' || f === 'title') d[f] = e.value; });
+    box.querySelectorAll('[data-rt-h]').forEach(e => { const s = d.sections[+e.getAttribute('data-rt-h')]; if(s) s.heading = e.value; });
+    box.querySelectorAll('[data-rt-x]').forEach(e => { const s = d.sections[+e.getAttribute('data-rt-x')]; if(s) s.text = e.value; });
+    box.querySelectorAll('[data-rt-d]').forEach(e => { const s = d.sections[+e.getAttribute('data-rt-d')]; if(s) { if(e.checked) s.detail = 'results'; else delete s.detail; } });
+}
+function _rtClick(ev) {
+    const b = ev.target && ev.target.closest ? ev.target.closest('[data-rt]') : null;
+    if(!b) { if(ev.target && ev.target.id === 'wts_rt_ov') _rtClose(); return; }
+    const act = b.getAttribute('data-rt'), st = _rtLoad();
+    const pick = () => { const r = document.querySelector('#wts_rt_box input[name="wts_rt_pick"]:checked'); return r ? r.value : _rtUI.sel; };
+    if(act === 'default') { _rtUI.sel = pick(); st.defaultId = b.checked ? _rtUI.sel : 'all'; _rtSave(st); _rtPaint(); return; }
+    if(act === 'close' || act === 'cancel') { if(act === 'cancel') { _rtUI.mode = 'list'; _rtUI.draft = null; _rtPaint(); } else _rtClose(); return; }
+    if(act === 'generate') { const id = pick(); _rtClose(); window.WTS_exportJobReport({ template: id }); return; }
+    if(act === 'edit' || act === 'new') {
+        const src = act === 'new' ? { name:'New template', title:'Well Test Report', sections:[{ type:'client', heading:'Client & well information' }, { type:'summary' }] } : _rtGet(pick());
+        const d = _rtClone(src || RT_BUILTIN[0]);
+        if(act === 'new' || d.builtin) { d.id = 'u' + Date.now().toString(36); d.name = act === 'new' ? d.name : d.name + ' (copy)'; delete d.builtin; }
+        _rtUI.draft = d; _rtUI.mode = 'edit'; _rtPaint(); return;
+    }
+    if(act === 'delete') {
+        const id = pick();
+        if(!/^u/.test(id) || !confirm('Delete this template?')) return;
+        st.templates = st.templates.filter(t => t.id !== id);
+        if(st.defaultId === id) st.defaultId = 'all';
+        _rtSave(st); _rtUI.sel = st.defaultId; _rtPaint(); return;
+    }
+    const d = _rtUI.draft;
+    if(!d) return;
+    _rtReadDraft();
+    const i = +b.getAttribute('data-i');
+    if(act === 'up' && i > 0) { const t = d.sections[i - 1]; d.sections[i - 1] = d.sections[i]; d.sections[i] = t; }
+    else if(act === 'down' && i < d.sections.length - 1) { const t = d.sections[i + 1]; d.sections[i + 1] = d.sections[i]; d.sections[i] = t; }
+    else if(act === 'rm') d.sections.splice(i, 1);
+    else if(act === 'add') {
+        const v = String((document.querySelector('#wts_rt_box [data-rt-f="add"]') || {}).value || '');
+        if(/^t:/.test(v) && RT_TYPES[v.slice(2)]) d.sections.push(v.slice(2) === 'notes' ? { type:'notes', heading:'Notes', text:'' } : { type: v.slice(2) });
+        else if(/^p:[a-z][a-z0-9_]{0,31}$/.test(v)) d.sections.push({ type:'pages', heading:_rtPageTitle(v.slice(2)), pages:[v.slice(2)] });
+    } else if(act === 'save') {
+        const clean = _rtSanitize(d);
+        if(!clean || !clean.sections.length) { _rtUI.msg = 'Add at least one section before saving.'; _rtPaint(); return; }
+        const k = st.templates.findIndex(t => t.id === clean.id);
+        if(k === -1) { if(st.templates.length >= 30) { _rtUI.msg = 'Up to 30 templates can be saved — delete one first.'; _rtPaint(); return; } st.templates.push(clean); }
+        else st.templates[k] = clean;
+        if(!_rtSave(st)) { _rtUI.msg = 'Could not save — device storage is full.'; _rtPaint(); return; }
+        _rtUI.sel = clean.id; _rtUI.mode = 'list'; _rtUI.draft = null; _rtUI.msg = 'Template saved.';
+    }
+    _rtPaint();
+}
+function _rtKey(ev) { if(ev.key === 'Escape') _rtClose(); }
+function _rtClose() {
+    const ov = $('wts_rt_ov');
+    if(ov) ov.remove();
+    document.removeEventListener('keydown', _rtKey);
+    _rtUI.mode = 'list'; _rtUI.draft = null;
+}
+function _rtOpen() {
+    _snapshotPage();
+    if(!$('wts_rt_css')) { const s = document.createElement('style'); s.id = 'wts_rt_css'; s.textContent = _RT_CSS; document.head.appendChild(s); }
+    _rtClose();
+    const ov = document.createElement('div');
+    ov.id = 'wts_rt_ov'; ov.className = 'wts-rt-ov';
+    ov.innerHTML = '<div class="wts-rt-box" id="wts_rt_box" role="dialog" aria-modal="true" aria-labelledby="wts_rt_h"></div>';
+    document.body.appendChild(ov);
+    ov.addEventListener('click', _rtClick);
+    ov.addEventListener('change', ev => { const t = ev.target; if(t && t.name === 'wts_rt_pick') { _rtUI.sel = t.value; _rtPaint(); } });
+    document.addEventListener('keydown', _rtKey);
+    _rtUI.mode = 'list'; _rtUI.sel = null;
+    _rtPaint();
+    const first = ov.querySelector('input, button');
+    if(first && first.focus) try { first.focus(); } catch(e) {}
+}
+window.WTS_reportTemplates = {
+    KEY: RT_KEY, types: RT_TYPES,
+    list: () => _rtAll().map(t => ({ id: t.id, name: t.name, title: t.title, builtin: !!t.builtin, sections: t.sections.length })),
+    get: id => { const t = _rtGet(id); return t ? _rtClone(t) : null; },
+    save: t => { const c = _rtSanitize(t); if(!c) return null; const st = _rtLoad(); const k = st.templates.findIndex(x => x.id === c.id);
+                 if(k === -1) st.templates.push(c); else st.templates[k] = c; return _rtSave(st) ? c.id : null; },
+    remove: id => { const st = _rtLoad(); const n = st.templates.length; st.templates = st.templates.filter(t => t.id !== id); if(st.defaultId === id) st.defaultId = 'all'; _rtSave(st); return st.templates.length < n; },
+    getDefault: () => _rtLoad().defaultId,
+    setDefault: id => { const st = _rtLoad(); if(!_rtGet(id)) return false; st.defaultId = id; return _rtSave(st); },
+    build: id => { const t = typeof id === 'object' ? id : _rtGet(id); return t ? _rtBuild(t) : null; },
+    generate: id => window.WTS_exportJobReport({ template: id }),
+    openPicker: _rtOpen, closePicker: _rtClose
+};
+
+// ── Export results as CSV / JSON (P9) ──
+// Same model as the PDF/PNG export (collectPageReport, charts skipped), so
+// every page gets it for free. Values are the text shown on the page (in the
+// active unit system); "number" / "unit" split a leading number from its unit.
+function _resNumUnit(v) {
+    const m = /^([-+]?(?:\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?|\.\d+)(?:[eE][-+]?\d+)?)(?:$|\s+(.+)$|\s*([%°].*)$)/.exec(String(v == null ? '' : v).trim());
+    if(!m) return null;
+    const n = parseFloat(m[1].replace(/,/g, ''));
+    return isFinite(n) ? { n, u: (m[2] || m[3] || '').trim() } : null;
+}
+function _resultsData(model, pageKey) {
+    const U = window.WTS_units;
+    const secOut = s => ({ title: s.title, items: s.items.map(it => {
+        if(it.type === 'kv') { const o = { type:'value', label: it.label, value: it.value }, nu = _resNumUnit(it.value); if(nu) { o.number = nu.n; if(nu.u) o.unit = nu.u; } return o; }
+        if(it.type === 'table') return { type:'table', columns: it.head || null, rows: it.rows.map(r => r.map(c => c.t)) };
+        if(it.type === 'note') { const o = { type: it.verdict ? 'verdict' : 'note', text: it.text }; if(it.title) o.title = it.title; if(it.sem) o.level = it.sem; return o; }
+        return null;
+    }).filter(Boolean) });
+    return {
+        format: 'h2oil-wts-results', version: 1, page: pageKey || '', title: model.title, subtitle: model.subtitle,
+        exported: new Date().toISOString(),
+        unitSystem: (U && typeof U.getSystem === 'function') ? U.getSystem() : 'imperial',
+        client: model.client.map(f => ({ label: f.label, value: f.value })),
+        inputs: model.inputs.map(secOut), results: model.results.map(secOut)
+    };
+}
+// RFC 4180 quoting; a text cell that a spreadsheet would run as a formula
+// (= + - @ tab CR at the start, not a plain number) gets a leading apostrophe.
+function _csvCell(v) {
+    let s = v == null ? '' : String(v);
+    if(/^[=+\-@\t\r]/.test(s) && !/^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(s)) s = "'" + s;
+    return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+function _resultsCSV(d) {
+    const out = [['Part', 'Section', 'Row', 'Item', 'Value', 'Number', 'Unit']];
+    const put = (part, sec, row, item, value) => {
+        const nu = _resNumUnit(value);
+        out.push([part, sec, row, item, value, nu ? nu.n : '', nu ? nu.u : '']);
+    };
+    put('Report', '', '', 'Title', d.title);
+    if(d.subtitle) put('Report', '', '', 'Subtitle', d.subtitle);
+    put('Report', '', '', 'Exported', d.exported);
+    put('Report', '', '', 'Unit system', d.unitSystem);
+    d.client.forEach(f => put('Client', '', '', f.label, f.value));
+    [['Inputs', d.inputs], ['Results', d.results]].forEach(([part, list]) => list.forEach(s => s.items.forEach(it => {
+        if(it.type === 'value') put(part, s.title, '', it.label, it.value);
+        else if(it.type === 'table') it.rows.forEach((r, i) => r.forEach((c, j) => {
+            if(c === '' || c == null) return;
+            put(part, s.title, i + 1, (it.columns && it.columns[j]) || ('Column ' + (j + 1)), c);
+        }));
+        else put(part, s.title, '', it.title || (it.type === 'verdict' ? 'Verdict' : 'Note'), it.text);
+    })));
+    return out.map(r => r.map(_csvCell).join(',')).join('\r\n') + '\r\n';
+}
+function _resultsFile(model, ext) {
+    return (model.title.replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_|_$/g, '') || 'results') + '_' + new Date().toISOString().slice(0, 10) + '.' + ext;
+}
+window.WTS_pageResults = function(root) {
+    return _resultsData(collectPageReport(root || $('pgBody'), { charts:false }), page);
+};
+window.WTS_resultsToCSV = _resultsCSV;
+window.exportPageCSV = async function() {
+    const body = $('pgBody');
+    if(!body) { alert('No page content to export'); return false; }
+    const model = collectPageReport(body, { charts:false });
+    if(!model.inputs.length && !model.results.length) { alert('Nothing to export on this page yet.'); return false; }
+    const blob = new Blob(['﻿' + _resultsCSV(_resultsData(model, page))], { type:'text/csv;charset=utf-8' });
+    return saveBlobWithDialog(blob, _resultsFile(model, 'csv'), [{ description:'CSV file', accept:{ 'text/csv':['.csv'] } }]);
+};
+window.exportPageJSON = async function() {
+    const body = $('pgBody');
+    if(!body) { alert('No page content to export'); return false; }
+    const model = collectPageReport(body, { charts:false });
+    if(!model.inputs.length && !model.results.length) { alert('Nothing to export on this page yet.'); return false; }
+    const blob = new Blob([JSON.stringify(_resultsData(model, page), null, 2)], { type:'application/json' });
+    return saveBlobWithDialog(blob, _resultsFile(model, 'json'), [{ description:'JSON file', accept:{ 'application/json':['.json'] } }]);
+};
+
+// ── CSV import for test-point tables (P9) ──
+// WTS_csv.table(text, spec) parses pasted / loaded CSV (comma, semicolon or
+// tab; RFC 4180 quotes), finds the header row (or maps columns by position),
+// reads units from the header ("q (MMSCFD)", "pwf [psig]") or from a unit row
+// under it, converts every value to the page's canonical field unit, and
+// validates. Values without a unit are taken in the unit shown on the page.
+// Conversion factors: NIST SP 811 (2008) Appendix B — 1 psi = 6.894757 kPa,
+// 1 bar = 100 kPa, 1 atm = 101.325 kPa = 14.69595 psi, 1 ft³ = 0.02831685 m³,
+// 1 bbl (US oil) = 0.1589873 m³.
+const WTS_csv = (function() {
+    const PSI_KPA = 6.894757, ATM_PSI = 14.69595, FT3_M3 = 0.02831685, BBL_M3 = 0.1589873;
+    // [factor, offset, gauge?] — canonical = x·factor + offset
+    const UNITS = {
+        pressure: {
+            psia: [1, 0], psi: [1, 0], 'psi(a)': [1, 0], psig: [1, ATM_PSI, true], 'psi(g)': [1, ATM_PSI, true],
+            kpa: [1 / PSI_KPA, 0], kpaa: [1 / PSI_KPA, 0], kpag: [1 / PSI_KPA, ATM_PSI, true],
+            bar: [100 / PSI_KPA, 0], bara: [100 / PSI_KPA, 0], barg: [100 / PSI_KPA, ATM_PSI, true],
+            mpa: [1000 / PSI_KPA, 0], mpaa: [1000 / PSI_KPA, 0], mpag: [1000 / PSI_KPA, ATM_PSI, true]
+        },
+        gasRate: {                                                // canonical MSCFD
+            mscfd: [1, 0], 'mscf/d': [1, 0], 'mcf/d': [1, 0], mcfd: [1, 0], 'mscf/day': [1, 0], 'mcf/day': [1, 0],
+            mmscfd: [1000, 0], 'mmscf/d': [1000, 0], 'mmcf/d': [1000, 0], mmcfd: [1000, 0], 'mmscf/day': [1000, 0],
+            scfd: [0.001, 0], 'scf/d': [0.001, 0], 'scf/day': [0.001, 0], 'scf/h': [0.024, 0], scfh: [0.024, 0], 'scf/hr': [0.024, 0],
+            'm3/d': [1 / FT3_M3 / 1000, 0, 'm3'], 'sm3/d': [1 / FT3_M3 / 1000, 0, 'm3'], 'm3/day': [1 / FT3_M3 / 1000, 0, 'm3'], 'sm3/day': [1 / FT3_M3 / 1000, 0, 'm3'],
+            'e3m3/d': [1 / FT3_M3, 0, 'm3'], 'e3sm3/d': [1 / FT3_M3, 0, 'm3'], '10^3m3/d': [1 / FT3_M3, 0, 'm3'], '10^3sm3/d': [1 / FT3_M3, 0, 'm3'],
+            '1000m3/d': [1 / FT3_M3, 0, 'm3'], '1000sm3/d': [1 / FT3_M3, 0, 'm3']
+        },
+        liquidRate: {                                             // canonical bbl/d
+            bpd: [1, 0], 'bbl/d': [1, 0], 'stb/d': [1, 0], stbd: [1, 0], bopd: [1, 0], bwpd: [1, 0], blpd: [1, 0], 'b/d': [1, 0], 'bbl/day': [1, 0], 'stb/day': [1, 0],
+            bph: [24, 0], 'bbl/h': [24, 0], 'bbl/hr': [24, 0],
+            'm3/d': [1 / BBL_M3, 0], 'sm3/d': [1 / BBL_M3, 0], 'm3/day': [1 / BBL_M3, 0], 'm3/h': [24 / BBL_M3, 0], 'sm3/h': [24 / BBL_M3, 0]
+        }
+    };
+    const AMBIGUOUS = { 'mm3/d': 1, 'mm3/day': 1, 'msm3/d': 1 };   // "Mm³" = thousand or million m³?
+    const normUnit = u => String(u || '').toLowerCase().replace(/²/g, '2').replace(/³/g, '3').replace(/\s+/g, '')
+        .replace(/\((a|abs)\)$/, 'a').replace(/\((g|gauge)\)$/, 'g').replace(/10\*\*3/g, '10^3');
+    function detectDelim(text) {
+        const line = (String(text).split(/\r\n|\n|\r/).filter(l => l.trim())[0]) || '';
+        let inQ = false, c = { '\t': 0, ';': 0, ',': 0 };
+        for(const ch of line) { if(ch === '"') inQ = !inQ; else if(!inQ && c[ch] !== undefined) c[ch]++; }
+        if(c['\t']) return '\t';
+        return c[';'] > c[','] ? ';' : ',';
+    }
+    function parse(text, delim) {
+        text = String(text == null ? '' : text).replace(/^﻿/, '');
+        delim = delim || detectDelim(text);
+        const rows = []; let row = [], cell = '', inQ = false;
+        for(let i = 0; i < text.length; i++) {
+            const ch = text[i];
+            if(inQ) {
+                if(ch === '"') { if(text[i + 1] === '"') { cell += '"'; i++; } else inQ = false; }
+                else cell += ch;
+            } else if(ch === '"' && cell.trim() === '') { inQ = true; cell = ''; }
+            else if(ch === delim) { row.push(cell.trim()); cell = ''; }
+            else if(ch === '\n' || ch === '\r') {
+                if(ch === '\r' && text[i + 1] === '\n') i++;
+                row.push(cell.trim()); rows.push(row); row = []; cell = '';
+            } else cell += ch;
+        }
+        if(cell !== '' || row.length) { row.push(cell.trim()); rows.push(row); }
+        return { delim, rows: rows.filter(r => r.some(c => c !== '')) };
+    }
+    // Number text → number (NaN if not a number). Decimal commas are accepted
+    // when the delimiter is ';' or tab; "1,234.5" thousands separators always.
+    function num(s, delim) {
+        s = String(s == null ? '' : s).trim().replace(/\s+/g, '');
+        if(s === '') return NaN;
+        if(delim !== ',' && /^[-+]?\d+,\d+$/.test(s)) s = s.replace(',', '.');
+        else if(/^[-+]?\d{1,3}(,\d{3})+(\.\d+)?$/.test(s)) s = s.replace(/,/g, '');
+        return /^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(s) ? parseFloat(s) : NaN;
+    }
+    // "q (MMSCFD)" / "pwf [psig]" / "pwf, psia" / "pwf psia" → {name, unit}
+    function splitHeader(h) {
+        h = String(h || '').trim();
+        let m = /^(.*?)\s*[\(\[]\s*([^\)\]]*)\s*[\)\]]\s*$/.exec(h);
+        if(m && m[1]) return { name: m[1], unit: m[2] };
+        m = /^(.*?),\s*(\S+)$/.exec(h);
+        if(m) return { name: m[1], unit: m[2] };
+        return { name: h, unit: '' };
+    }
+    const normName = s => String(s || '').toLowerCase().replace(/[_\-.]+/g, ' ').replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
+    function matchCol(spec, name) {
+        const n = normName(name);
+        for(const c of spec.columns) if(c.names.some(x => normName(x) === n)) return c;
+        return null;
+    }
+    const isUnitRow = (row, kinds) => row.every((c, i) => c === '' || (kinds[i] && !isFinite(num(c)) &&
+        (UNITS[kinds[i]] && (UNITS[kinds[i]][normUnit(c)] || AMBIGUOUS[normUnit(c)]))));
+    // Display unit (the page's own) → canonical, through WTS_units' category factors.
+    function fromDisplay(v, cat) {
+        const U = window.WTS_units, C = U && U.CATEGORIES && U.CATEGORIES[cat];
+        if(!C || !(U.getSystem && U.getSystem() === 'metric')) return v;
+        return v * C.metric.factor / C.imperial.factor;
+    }
+    // spec: {columns:[{key, names[], kind:'pressure'|'gasRate'|'liquidRate'|'enum'|'number', cat (WTS_units category
+    //        for unit-less values), label, required, min, positive, values:{canon: RegExp}}], maxRows, positional:[keys]}
+    function table(text, spec) {
+        const res = { ok: false, rows: [], errors: [], warnings: [], columns: [], header: false };
+        const p = parse(text);
+        if(!p.rows.length) { res.errors.push('Nothing to import — paste CSV rows or open a .csv file.'); return res; }
+        let start = 0, map = [];
+        const first = p.rows[0];
+        const hdr = first.map(splitHeader);
+        const hits = hdr.map(h => matchCol(spec, h.name));
+        if(first.some(c => c !== '' && !isFinite(num(c, p.delim))) && hits.some(Boolean)) {
+            res.header = true; start = 1;
+            const used = {};
+            hdr.forEach((h, i) => {
+                const c = hits[i];
+                if(!c) { if(first[i]) res.warnings.push('Column "' + first[i] + '" was not recognised and is ignored.'); map[i] = null; return; }
+                if(used[c.key]) { res.errors.push('Two columns map to ' + c.label + ' ("' + used[c.key] + '" and "' + first[i] + '").'); map[i] = null; return; }
+                used[c.key] = first[i];
+                map[i] = { col: c, unit: h.unit };
+            });
+            // Optional unit row directly under the header.
+            if(p.rows[1] && isUnitRow(p.rows[1], map.map(m => m && m.col.kind))) {
+                p.rows[1].forEach((u, i) => { if(map[i] && u) map[i].unit = u; });
+                start = 2;
+            }
+        } else {
+            // No header: the documented column order.
+            const pos = spec.positional || spec.columns.map(c => c.key);
+            let keys = pos.slice();
+            if(spec.leadingEnum && first.length && !isFinite(num(first[0], p.delim))) keys = [spec.leadingEnum].concat(pos.filter(k => k !== spec.leadingEnum));
+            else keys = keys.filter(k => k !== spec.leadingEnum);
+            const width = Math.max.apply(null, p.rows.map(r => r.length));
+            for(let i = 0; i < width; i++) { const col = spec.columns.filter(x => x.key === keys[i])[0]; map[i] = col ? { col, unit: '' } : null; }
+            if(width > keys.length) res.warnings.push('No header row: columns after the ' + keys.length + ' expected (' + keys.map(k => spec.columns.filter(x => x.key === k)[0].label).join(', ') + ') are ignored.');
+        }
+        spec.columns.forEach(c => { if(c.required && !map.some(m => m && m.col === c)) res.errors.push('Missing column: ' + c.label + (res.header ? ' (headers found: ' + first.filter(Boolean).join(', ') + ')' : '') + '.'); });
+        // Resolve units per column.
+        const gaugeCols = [], m3Cols = [];
+        map.forEach((m, i) => {
+            if(!m) return;
+            m.conv = null;
+            if(!(m.col.kind in UNITS)) return;
+            const u = normUnit(m.unit);
+            if(!u) return;                                             // page display unit
+            if(AMBIGUOUS[u]) { res.errors.push(m.col.label + ': unit "' + m.unit + '" is ambiguous (thousand or million m³?) — use e3m3/d or m3/d.'); return; }
+            const f = UNITS[m.col.kind][u];
+            if(!f) { res.errors.push(m.col.label + ': unit "' + m.unit + '" is not recognised (use ' + Object.keys(UNITS[m.col.kind]).slice(0, 6).join(', ') + ' …).'); return; }
+            m.conv = f;
+            if(f[2] === true) gaugeCols.push(m.col.label);
+            if(f[2] === 'm3') m3Cols.push(m.col.label);
+        });
+        if(gaugeCols.length) res.warnings.push(gaugeCols.join(', ') + ': gauge pressures converted to absolute with 1 atm = ' + ATM_PSI + ' psi (101.325 kPa). Use absolute values if the local barometric pressure differs.');
+        if(m3Cols.length) res.warnings.push(m3Cols.join(', ') + ': m³ converted to scf by volume (1 ft³ = 0.02831685 m³) with no base-condition correction — enter the rates on the app\'s standard-conditions basis.');
+        res.columns = map.map(m => m ? { key: m.col.key, unit: m.unit || '' } : null);
+        const data = p.rows.slice(start);
+        if(!data.length) res.errors.push('No data rows under the header.');
+        const max = spec.maxRows || 50;
+        if(data.length > max) res.warnings.push(data.length + ' data rows found — only the first ' + max + ' fit the table and are imported.');
+        if(res.errors.length) return res;
+        data.slice(0, max).forEach((r, ri) => {
+            const rowNo = ri + start + 1, out = {};
+            spec.columns.forEach(c => { out[c.key] = c.kind === 'enum' ? null : NaN; });
+            map.forEach((m, i) => {
+                if(!m) return;
+                const c = m.col, raw = r[i] == null ? '' : r[i];
+                if(raw === '') { if(c.required) res.errors.push('Row ' + rowNo + ': ' + c.label + ' is empty.'); return; }
+                if(c.kind === 'enum') {
+                    const k = Object.keys(c.values).filter(v => c.values[v].test(raw))[0];
+                    if(!k) res.errors.push('Row ' + rowNo + ': ' + c.label + ' "' + raw + '" is not one of ' + Object.keys(c.values).join(' / ') + '.');
+                    else out[c.key] = k;
+                    return;
+                }
+                let v = num(raw, p.delim);
+                if(!isFinite(v)) { res.errors.push('Row ' + rowNo + ': ' + c.label + ' "' + raw + '" is not a number.'); return; }
+                v = m.conv ? v * m.conv[0] + m.conv[1] : fromDisplay(v, c.cat);
+                if(c.positive && !(v > 0)) { res.errors.push('Row ' + rowNo + ': ' + c.label + ' must be greater than zero.'); return; }
+                if(c.min != null && v < c.min) { res.errors.push('Row ' + rowNo + ': ' + c.label + ' must be at least ' + c.min + '.'); return; }
+                out[c.key] = Number(v.toPrecision(12));
+            });
+            res.rows.push(out);
+        });
+        res.ok = !res.errors.length;
+        return res;
+    }
+    // Paste / file import panel. apply(result) writes the rows into the page
+    // (canonical values) and returns a status line. The panel is .rp-skip, so
+    // reports ignore it; its controls have no id, so autosave ignores them.
+    function mountImporter(host, spec, apply) {
+        if(!host) return null;
+        const esc = _rEsc;
+        host.innerHTML = '<div class="wts-csv rp-skip" style="margin-top:10px">' +
+            '<button type="button" class="btn btn-secondary" data-csv="toggle" aria-expanded="false">&#128203; Paste / import CSV</button>' +
+            '<div data-csv="panel" style="display:none;margin-top:8px">' +
+            '<div class="info-bar" style="font-size:12px">' + spec.hint + '</div>' +
+            '<textarea data-csv="text" rows="5" spellcheck="false" aria-label="' + esc(spec.aria || 'CSV rows') + '" placeholder="' + esc(spec.example) + '" style="width:100%;margin-top:6px;font-family:monospace;font-size:12px;box-sizing:border-box"></textarea>' +
+            '<div class="btn-row" style="flex-wrap:wrap"><button type="button" class="btn btn-primary" data-csv="import">Import rows</button>' +
+            '<label class="btn btn-secondary" style="cursor:pointer">Open file&#8230;<input type="file" data-csv="file" accept=".csv,.tsv,.txt,text/csv,text/plain" style="display:none"></label>' +
+            '<button type="button" class="btn btn-secondary" data-csv="example">Insert example</button></div>' +
+            '<div data-csv="msg" role="status" aria-live="polite" style="font-size:12px;margin-top:6px"></div></div></div>';
+        const q = s => host.querySelector('[data-csv="' + s + '"]');
+        const say = (html, color) => { const m = q('msg'); if(m) { m.style.color = color || 'var(--text2)'; m.innerHTML = html; } };
+        const run = () => {
+            const r = table(q('text').value, spec);
+            if(!r.ok) {
+                say('<b>Not imported — please fix:</b><ul style="margin:4px 0 0 18px;padding:0">' + r.errors.slice(0, 12).map(e => '<li>' + esc(e) + '</li>').join('') +
+                    (r.errors.length > 12 ? '<li>… ' + (r.errors.length - 12) + ' more</li>' : '') + '</ul>', 'var(--red)');
+                return r;
+            }
+            let status = '';
+            try { status = apply(r) || ''; } catch(e) { say('Import failed: ' + esc(e && e.message || e), 'var(--red)'); return r; }
+            say('&#10003; ' + esc(status || ('Imported ' + r.rows.length + ' row' + (r.rows.length === 1 ? '' : 's') + '.')) +
+                (r.warnings.length ? '<ul style="margin:4px 0 0 18px;padding:0;color:var(--yellow)">' + r.warnings.map(w => '<li>' + esc(w) + '</li>').join('') + '</ul>' : ''), 'var(--green)');
+            try { window.WTS_pageAutosave.flush(); } catch(e) {}
+            return r;
+        };
+        host.addEventListener('click', ev => {
+            const b = ev.target && ev.target.closest ? ev.target.closest('[data-csv]') : null;
+            if(!b) return;
+            const a = b.getAttribute('data-csv');
+            if(a === 'toggle') { const p = q('panel'), open = p.style.display === 'none'; p.style.display = open ? '' : 'none'; b.setAttribute('aria-expanded', open ? 'true' : 'false'); }
+            else if(a === 'import') run();
+            else if(a === 'example') { q('text').value = spec.example; say(''); }
+        });
+        host.addEventListener('change', ev => {
+            const f = ev.target && ev.target.getAttribute && ev.target.getAttribute('data-csv') === 'file' && ev.target.files && ev.target.files[0];
+            if(!f) return;
+            if(f.size > 1048576) { say('File is larger than 1 MB — not a test-point table.', 'var(--red)'); ev.target.value = ''; return; }
+            const rd = new FileReader();
+            rd.onload = () => { q('text').value = String(rd.result || ''); ev.target.value = ''; run(); };
+            rd.onerror = () => say('Could not read the file.', 'var(--red)');
+            rd.readAsText(f);
+        });
+        return { run, host };
+    }
+    return { UNITS, parse, num, splitHeader, detectDelim, table, mountImporter, ATM_PSI };
+})();
+window.WTS_csv = WTS_csv;
+
+// ── Send a rate step to the PRiSM rate history (P9) ──
+// PRiSM's rate history (C2: PRiSM_rateHistory) comes from the ① Data
+// multi-rate table (window.PRiSM.multiRate, persisted 'wts_prism_mrate') when
+// it holds a non-zero rate, else from the dataset's rate column. A step is
+// only ever APPENDED after the last one, so the flow periods that
+// st.activePeriod indexes keep their numbers; when the table is still empty
+// it is first seeded with the steps C2 detected from the data, so those are
+// not silently replaced. Rates are field units: STB/d oil, Mscf/d gas.
+window.WTS_sendRateToPRiSM = function(o) {
+    o = o || {};
+    const fail = (code, msg) => ({ ok:false, code, error: msg });
+    const ds = window.PRiSM_dataset;
+    if(!ds || !Array.isArray(ds.t) || !ds.t.length) return fail('no-dataset', 'No PRiSM dataset is loaded. Open PRiSM, load the gauge data (step ① Data), then send the rate.');
+    const pvt = window.PRiSM_pvt || {};
+    const fluid = pvt.fluidType === 'gas' ? 'gas' : (pvt.fluidType === 'water' ? 'water' : 'oil');
+    const phase = o.phase === 'gas' ? 'gas' : (o.phase === 'water' ? 'water' : 'oil');
+    if(phase !== fluid) return fail('phase', 'PRiSM is set up for a ' + fluid + ' well (Well & fluid → fluid type), so only the ' + fluid + ' rate can be added to its rate history.');
+    const q = Number(o.q), t = Number(o.t);
+    if(!isFinite(q) || q < 0) return fail('rate', 'The rate must be a number of zero or more (calculate the page first).');
+    if(!isFinite(t)) return fail('time', 'Enter the time the rate step starts, in hours on the PRiSM data clock.');
+    const P = window.PRiSM = (window.PRiSM && typeof window.PRiSM === 'object') ? window.PRiSM : {};
+    let rows = (Array.isArray(P.multiRate) ? P.multiRate : []).filter(r => r && isFinite(r.t) && isFinite(r.q)).map(r => ({ t: +r.t, q: +r.q }));
+    if(!rows.length) {                  // PRiSM not opened this session: read the saved table
+        try {
+            const a = JSON.parse(localStorage.getItem('wts_prism_mrate') || 'null');
+            if(Array.isArray(a)) rows = a.filter(r => r && isFinite(r.t) && isFinite(r.q)).map(r => ({ t: +r.t, q: +r.q }));
+            if(rows.length === 1 && rows[0].t === 0 && rows[0].q === 0) rows = [];
+        } catch(e) {}
+    }
+    let seeded = false;
+    if(!rows.some(r => r.q !== 0) && typeof window.PRiSM_rateHistory === 'function') {
+        let h = null; try { h = window.PRiSM_rateHistory(ds); } catch(e) { h = null; }
+        if(h && h.ok && h.source === 'dataset' && h.steps.length) { rows = h.steps.map(s => ({ t: +s.t, q: +s.q })); seeded = true; }
+    }
+    rows.sort((a, b) => a.t - b.t);
+    const last = rows.length ? rows[rows.length - 1] : null;
+    if(last && !(t > last.t)) return fail('order', 'The new step must start after the last rate step (t = ' + last.t + ' h). Steps can only be appended, so the existing flow periods keep their numbers.');
+    const prevQ = last ? last.q : 0;
+    if(Math.abs(q - prevQ) <= 0.01 * Math.max(Math.abs(q), Math.abs(prevQ))) return fail('same', 'The rate is within 1 % of the previous step (' + prevQ + '), so PRiSM would merge it — nothing was added.');
+    rows.push({ t, q: Number(q.toPrecision(10)) });
+    P.multiRate = rows;
+    __lsSet('wts_prism_mrate', JSON.stringify(rows));
+    try { if(typeof PRiSM_renderMultiRateRows === 'function') PRiSM_renderMultiRateRows(); } catch(e) {}
+    const tEnd = Math.max.apply(null, ds.t.filter(isFinite));
+    const warnings = [];
+    if(t > tEnd) warnings.push('The step starts after the end of the loaded data (' + (+tEnd.toPrecision(6)) + ' h), so it does not change the current analysis.');
+    if(seeded) warnings.push('The rate table was empty, so it was first filled with the ' + (rows.length - 1) + ' step(s) read from the data.');
+    const st = window.PRiSM_state || {};
+    try { window.dispatchEvent(new CustomEvent('prism:period-changed', { detail: { source:'rate-history', period: st.activePeriod } })); } catch(e) {}
+    return { ok:true, steps: rows.map(r => ({ t: r.t, q: r.q })), seeded, warnings, unit: fluid === 'gas' ? 'Mscf/d' : 'STB/d' };
+};
+// Card on the Oil & Gas Rate and AGA-3 pages. .rp-skip keeps it out of reports.
+function _prismSendCard(p, phases) {
+    const opt = phases.map(ph => '<option value="' + ph + '">' + (ph === 'gas' ? 'Gas rate (Mscf/d)' : 'Oil rate (STB/d)') + '</option>').join('');
+    return '<div class="card rp-skip" style="margin-top:12px"><div class="card-title">Send to PRiSM Rate History</div><div class="fg">' +
+        (phases.length > 1 ? '<div class="fg-item"><label for="' + p + '_ps_ph">Rate to send</label><select id="' + p + '_ps_ph">' + opt + '</select></div>' : '') +
+        '<div class="fg-item"><label for="' + p + '_ps_t">Step start, hours on the PRiSM data clock</label><input type="number" id="' + p + '_ps_t" step="any" placeholder="e.g. 12.5"></div></div>' +
+        '<div class="btn-row"><button type="button" class="btn btn-secondary" id="' + p + '_ps_go">Append rate step to PRiSM</button></div>' +
+        '<div id="' + p + '_ps_msg" role="status" aria-live="polite" style="font-size:12px;margin-top:6px"></div>' +
+        '<div style="font-size:12px;color:var(--text2);margin-top:6px">Adds the calculated rate as a new step at the end of PRiSM’s rate history (① Data → rate changes), used for superposition and the flow periods. The step must start after the last one; earlier steps are never changed.</div></div>';
+}
+function _prismSendWire(p, phases, getRate) {
+    const btn = $(p + '_ps_go');
+    if(!btn) return;
+    btn.addEventListener('click', () => {
+        const phase = phases.length > 1 ? String(($(p + '_ps_ph') || {}).value || phases[0]) : phases[0];
+        const q = getRate(phase);
+        const r = window.WTS_sendRateToPRiSM({ phase, q, t: parseFloat(($(p + '_ps_t') || {}).value) });
+        const m = $(p + '_ps_msg');
+        if(!m) return;
+        m.style.color = r.ok ? 'var(--green)' : 'var(--red)';
+        m.innerHTML = r.ok
+            ? '&#10003; Step added: ' + _rEsc(String(+Number(q).toPrecision(6))) + ' ' + r.unit + ' from t = ' + _rEsc(String(r.steps[r.steps.length - 1].t)) + ' h (' + r.steps.length + ' steps in PRiSM).' +
+              r.warnings.map(w => '<div style="color:var(--yellow)">' + _rEsc(w) + '</div>').join('')
+            : _rEsc(r.error);
+    });
+}
+
+// ── SW:START — offline web app (P2). sync-from-main.js strips this block from the iOS bundle. ──
+// Registers ./sw.js on http(s) only — never file:, capacitor: or a native
+// Capacitor shell. The worker keeps the app page and its pinned libraries
+// for offline use (no user data: that lives in localStorage). When a newer
+// page or worker is found, a bar offers "Reload".
+const WTS_offline = (function() {
+    const st = { status: 'idle', reg: null, waiting: null, prompted: false, wantReload: false };
+    function eligible(loc, nav, win) {
+        const proto = String((loc && loc.protocol) || '');
+        if(proto !== 'https:' && proto !== 'http:') return 'protocol';
+        try { if(win && win.Capacitor && typeof win.Capacitor.isNativePlatform === 'function' && win.Capacitor.isNativePlatform()) return 'native'; } catch(e) {}
+        if(!nav || !nav.serviceWorker || typeof nav.serviceWorker.register !== 'function') return 'unsupported';
+        return '';
+    }
+    function prompt() {
+        st.prompted = true;
+        if($('wts_sw_bar')) return;
+        const bar = document.createElement('div');
+        bar.id = 'wts_sw_bar';
+        bar.setAttribute('role', 'status');
+        bar.style.cssText = 'position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:10040;background:var(--bg3);color:var(--text);border:1px solid var(--border);' +
+            'border-radius:8px;padding:8px 10px 8px 14px;display:flex;gap:10px;align-items:center;font-size:13px;max-width:calc(100vw - 32px);box-shadow:0 6px 24px rgba(0,0,0,.4)';
+        bar.innerHTML = '<span>A new version of the app is available.</span><button type="button" class="btn btn-primary" id="wts_sw_reload" style="padding:5px 12px">Reload</button>' +
+            '<button type="button" class="btn btn-secondary" id="wts_sw_later" aria-label="Dismiss" style="padding:5px 9px">&#215;</button>';
+        document.body.appendChild(bar);
+        $('wts_sw_reload').addEventListener('click', applyUpdate);
+        $('wts_sw_later').addEventListener('click', () => bar.remove());
+    }
+    function applyUpdate() {
+        try { window.WTS_pageAutosave.flush(); } catch(e) {}
+        if(st.waiting) {
+            st.wantReload = true;
+            try { st.waiting.postMessage({ type: 'WTS_SKIP_WAITING' }); return; } catch(e) {}
+        }
+        location.reload();
+    }
+    // Listen straight away (an update notice can arrive while the page is still
+    // loading); register after the load event so it never competes with it.
+    function init(opts) {
+        const why = eligible(location, navigator, window);
+        if(why) { st.status = 'off:' + why; return st.status; }
+        const sw = navigator.serviceWorker;
+        if(!st.listening) {
+            st.listening = true;
+            sw.addEventListener('message', ev => { const d = ev && ev.data; if(d && d.type === 'WTS_SW_UPDATE') prompt(); });
+            sw.addEventListener('controllerchange', () => { if(st.wantReload) { st.wantReload = false; location.reload(); } });
+        }
+        if(opts && opts.defer) {
+            st.status = 'waiting-for-load';
+            if(document.readyState === 'complete') return init();
+            window.addEventListener('load', () => init(), { once: true });
+            return st.status;
+        }
+        st.status = 'registering';
+        Promise.resolve().then(() => sw.register('sw.js', { scope: './' })).then(reg => {
+            st.reg = reg; st.status = 'registered';
+            const waitFor = w => { if(w && w.addEventListener) w.addEventListener('statechange', () => { if(w.state === 'installed' && sw.controller) { st.waiting = w; prompt(); } }); };
+            if(reg.waiting && sw.controller) { st.waiting = reg.waiting; prompt(); }
+            if(reg.addEventListener) reg.addEventListener('updatefound', () => waitFor(reg.installing));
+            // Keep a copy of the page actually loaded (index.html, well-testing-app.html …).
+            const shell = String(location.href).split('#')[0].split('?')[0];
+            const post = w => { try { if(w) w.postMessage({ type: 'WTS_CACHE_SHELL', url: shell }); } catch(e) {} };
+            if(reg.active) post(reg.active);
+            else if(sw.ready && sw.ready.then) sw.ready.then(r => post(r && r.active));
+        }).catch(e => { st.status = 'error'; try { console.warn('[offline] service worker registration failed', e); } catch(_) {} });
+        return st.status;
+    }
+    return { init, eligible, applyUpdate, prompt, state: () => ({ status: st.status, waiting: !!st.waiting, prompted: st.prompted }) };
+})();
+window.WTS_offline = WTS_offline;
+WTS_offline.init({ defer: true });
+// ── SW:END ──
 
 // ── Universal blob saver: real save dialog where supported, otherwise download ──
 // (The iOS bridge intercepts the <a download> fallback and routes it to the share sheet.)
@@ -2834,9 +3726,12 @@ function renderAGA3(body) {
       </div>
     </div>
     <div class="btn-row"><button class="btn btn-primary" onclick="calcAGA3()">Calculate Gas Rate</button><button class="btn btn-secondary" onclick="document.getElementById('a_res').innerHTML=''">Clear</button></div>
-    <div id="a_res"></div>`;
+    <div id="a_res"></div>
+    <div id="a_prism_host"></div>`;
     const agaIds=['a_pD','a_oD','a_dP','a_Ps','a_Tf','a_SG','a_CO2','a_H2S','a_Tb','a_Pb','a_tap'];
     loadInputs('aga3',agaIds);
+    $('a_prism_host').innerHTML=_prismSendCard('a',['gas']);
+    _prismSendWire('a',['gas'],()=>{ window.calcAGA3(); const s=(window.WTS_state||{}).aga3; return (s&&s.ok)?s.gas_mscfd:NaN; });
 }
 // Pure AGA-3 orifice compute (roadmap #6). Field units in, object out; no DOM.
 // Shared by the AGA-3 page (calcAGA3) and the Orifice Plate Selection page.
@@ -2958,6 +3853,7 @@ window.calcAGA3 = function(){
         ['a_Tb','Base Temperature',['required',{min:-459}]],
         ['a_Pb','Base Pressure',['required','positive']],
     ]);
+    window.WTS_state=window.WTS_state||{}; window.WTS_state.aga3={ok:false,ts:Date.now()};
     if(!showErrors('a_res',errs)) return;
     const agaIds=['a_pD','a_oD','a_dP','a_Ps','a_Tf','a_SG','a_CO2','a_H2S','a_Tb','a_Pb','a_tap'];
     saveInputs('aga3',agaIds);
@@ -2967,6 +3863,7 @@ window.calcAGA3 = function(){
         SG:v('a_SG'), co2:v('a_CO2'), h2s:v('a_H2S'), n2:($('a_N2')?v('a_N2'):0), TbF:v('a_Tb'), Pb:v('a_Pb'), tap:$('a_tap').value});
     if(!r.ok){showErrors('a_res',r.errors);return;}
     const {D,d,beta,Cd,Ev,Y1,Z,Tpr,Ppr,Re_D,rho_f,Qv,Qmscfd,Qmmscfd,Ps,SG,co2,h2s,hw}=r, Tf_F=r.TfF;
+    window.WTS_state.aga3={ok:true,gas_mscfd:Qmscfd,ts:Date.now()};   // MSCFD at the entered base conditions
     const agaNotes=r.notes.slice();
     // Metric mode: also report the rate in standard m³ (at the entered base conditions)
     // and the flowing density in kg/m³ — field-unit rows stay for continuity.
@@ -7181,18 +8078,22 @@ function renderOilGas(body){
       </div></div>
       <div class="btn-row"><button class="btn btn-primary" onclick="calcOilGas()">Calculate</button></div>
       <div id="og_res"></div>
+      <div id="og_prism_host"></div>
     </div><div>
       <div class="card"><div class="card-title">How It Works</div>
         <div class="info-bar">Oil rate: the hydrometer API is corrected to 60°F at the hydrometer temperature (API MPMS 11.1 / ASTM D1250 Table 5A) and the meter volume is corrected from oil line temperature to 60°F with the Table 6A VCF. Gas rate uses the same AGA-3 engine as the AGA-3 and Orifice Plate Selection pages: the AGA-3 / API MPMS 14.3.1 flange-tap discharge coefficient (iterated on Reynolds number), the expansion factor, and supercompressibility Fpv = 1/&radic;Z from the Dranchuk &amp; Abou-Kassem (1975) Z-factor with Standing (1977) pseudo-critical properties (valid 1.0 &lt; Tpr &le; 3.0, 0.2 &le; Ppr &lt; 30; a note is shown outside that range). Base conditions 60°F / 14.73 psia. Differential pressure is inH2O at 60°F (27.707 inH2O per psi). GOR = Gas Rate / Oil Rate; CGR = Oil Rate / Gas Rate; either shows — when its denominator is zero.</div>
       </div>
     </div></div>`;
     loadInputs('oilgas',['og_int','og_api','og_ht','og_m0','og_m1','og_olt','og_bsw','og_mf','og_sf','og_run','og_plate','og_sp','og_dp','og_gg','og_gt']);
+    $('og_prism_host').innerHTML=_prismSendCard('og',['oil','gas']);
+    _prismSendWire('og',['oil','gas'],ph=>{ window.calcOilGas(); const s=(window.WTS_state||{}).oilgas; return (s&&s.ok)?(ph==='gas'?s.gas_mscfd:s.oil_stbd):NaN; });
 }
 window.calcOilGas=function(){
     const ids=['og_int','og_api','og_ht','og_m0','og_m1','og_olt','og_bsw','og_mf','og_sf','og_run','og_plate','og_sp','og_dp','og_gg','og_gt'];
     saveInputs('oilgas',ids);
     const v=ids.map(id=>parseFloat($(id).value));
     const [interval,API,hydT,m0,m1,oilT,bsw,MF,SF,run,plate,sepP,diffP,gasGrav,gasT]=v;
+    window.WTS_state=window.WTS_state||{}; window.WTS_state.oilgas={ok:false,ts:Date.now()};
     const errs=[];
     if(!(interval>0)) errs.push('Calc interval must be greater than zero');
     if(!(API>0)) errs.push('API gravity must be greater than zero');
@@ -7234,6 +8135,8 @@ window.calcOilGas=function(){
     const CGR=gasRate>0?oilRate/(gasRate/1000):NaN;
     const gorTxt=isFinite(GOR)?_uFmt(GOR,'gor',0,'scf/bbl',1):'— (no oil flow)';
     const cgrTxt=isFinite(CGR)?_uFmt(CGR,'cgr',1):'— (no gas flow)';
+    // Field units (STB/d, MSCFD, scf/STB) for the report templates and "Send to PRiSM".
+    window.WTS_state.oilgas={ok:true,oil_stbd:oilRate,gas_mscfd:gasRate,gor:isFinite(GOR)?GOR:null,ts:Date.now()};
     $('og_res').innerHTML=`<div class="rbox" style="margin-top:12px"><div class="rbox-title">Combined Results</div>
         <div class="rrow"><span class="rl">Oil Rate</span><span class="rv">${_uFmt(oilRate,'liquidRate',1,'BPD',2)}</span></div>
         <div class="rrow"><span class="rl">API @ 60°F</span><span class="rv">${fmt(AE6,1)}</span></div>
@@ -56431,6 +57334,25 @@ _registerPanel(6, {
             catch (e) { _err('Quick Report button click failed', e); }
         });
         try { container.appendChild(btn); } catch (e) {}
+        // Template picker (host WTS_reportTemplates: daily / final / user templates).
+        var tpl = document.createElement('button');
+        tpl.setAttribute('type', 'button');
+        tpl.setAttribute('data-wts-qr-tpl', '1');
+        tpl.setAttribute('aria-label', 'Report templates');
+        tpl.setAttribute('aria-haspopup', 'dialog');
+        tpl.className = 'btn btn-primary';
+        tpl.style.cssText =
+            'padding:6px 9px;margin-left:2px;background:#1f6feb;border:1px solid #1f6feb;border-radius:4px;' +
+            'color:#fff;font-size:12px;font-weight:600;cursor:pointer;font-family:Segoe UI,sans-serif';
+        tpl.innerHTML = '&#9662;';
+        tpl.title = 'Report templates — daily or final well-test report, or your own template.';
+        tpl.addEventListener('click', function () {
+            try {
+                if (G.WTS_reportTemplates && typeof G.WTS_reportTemplates.openPicker === 'function') G.WTS_reportTemplates.openPicker();
+                else generate();
+            } catch (e) { _err('Report templates button click failed', e); }
+        });
+        try { container.appendChild(tpl); } catch (e) {}
     }
 
     // ───────────────────────────────────────────────────────────────
@@ -75424,6 +76346,41 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
 
     var DEF_ROWS = [[2624.6, 1700], [4154.7, 1500], [5425.1, 1300]];
 
+    // CSV paste / file import of the test points (host WTS_csv, P9). The
+    // host parses, reads units from the header and converts to psia / MSCFD;
+    // values without a unit are taken in the unit shown on the page.
+    var CSV_SPEC = {
+        maxRows: NROWS, leadingEnum: 'kind', positional: ['kind', 'q', 'pwf', 'pws'],
+        aria: 'Test points as CSV',
+        columns: [
+            { key: 'kind', label: 'Point type', kind: 'enum', names: ['type', 'point type', 'kind', 'point', 'flow type', 'test type'],
+              values: { stab: /^\s*(stab|stabili[sz]ed|extended|s)\s*$/i, trans: /^\s*(trans|transient|t|iso|isochronal)\s*$/i } },
+            { key: 'q', label: 'Rate q', kind: 'gasRate', cat: 'gasRateSmall', required: true, positive: true,
+              names: ['q', 'qg', 'rate', 'rate q', 'gas rate', 'flow rate', 'q gas', 'gas flow rate'] },
+            { key: 'pwf', label: 'pwf', kind: 'pressure', cat: 'pressure', required: true, positive: true,
+              names: ['pwf', 'p wf', 'pwf abs', 'flowing pressure', 'bottomhole flowing pressure', 'bhfp', 'fbhp'] },
+            { key: 'pws', label: 'pws', kind: 'pressure', cat: 'pressure', positive: true,
+              names: ['pws', 'p ws', 'pws abs', 'pws before flow', 'pws before flow abs', 'shut in pressure', 'shutin pressure', 'sibhp'] }
+        ],
+        hint: 'One row per test point (up to ' + NROWS + '). Header names: type (stab / trans), q, pwf, pws — in any order, with units in brackets, ' +
+            'e.g. <b>q (MMSCFD)</b>, <b>pwf [psig]</b>, <b>kPa(a)</b>, <b>bar</b>, <b>e3m3/d</b>. Without a header the order is type (optional), q, pwf, pws. ' +
+            'Comma, semicolon or tab separated. Values without a unit are read in the units shown in the table. Gauge pressures are made absolute with 1 atm.',
+        example: 'type,q (MSCFD),pwf (psia),pws (psia)\nstab,2624.6,1700,\nstab,4154.7,1500,\nstab,5425.1,1300,'
+    };
+    function _applyCsv(res) {
+        var n = res.rows.length;
+        _canon(function () {
+            for (var i = 1; i <= NROWS; i++) {
+                var r = res.rows[i - 1];
+                var put = function (id, v) { var e = _byId(id); if (e) e.value = (r && isFinite(v)) ? String(v) : ''; };
+                put(P + 'q' + i, r && r.q); put(P + 'pwf' + i, r && r.pwf); put(P + 'pws' + i, r && r.pws);
+                if (r && r.kind) { var k = _byId(P + 'k' + i); if (k) k.value = r.kind; }
+            }
+        });
+        G.calcGasDeliv();
+        return 'Imported ' + n + ' test point' + (n === 1 ? '' : 's') + (n < NROWS ? '; rows ' + (n + 1) + '–' + NROWS + ' cleared.' : '.');
+    }
+
     function _field(id, label, value, extra) {
         return '<div class="fg-item"><label for="' + id + '">' + label + '</label>' +
             '<input type="number" step="any" id="' + id + '" value="' + (value == null ? '' : value) + '"' + (extra || '') + '></div>';
@@ -75469,6 +76426,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         }
         h += '</tbody></table></div>';
         h += '<div class="info-bar" style="margin-top:12px">A row is used when both rate and pwf are filled in. pws is only needed for transient points of a modified isochronal test. All pressures absolute.</div>';
+        h += '<div id="gd_csv_host"></div>';
         h += '<div class="btn-row"><button class="btn btn-primary" id="gd_go" onclick="calcGasDeliv()">Calculate</button></div>';
         h += '</div>';
         h += '</div><div style="min-width:0"><div id="gd_res"></div></div></div></div>';
@@ -75483,6 +76441,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         if (s) s.textContent = SUB;
         body.innerHTML = _pageHtml();
         _tag(UNITS);
+        if (G.WTS_csv && typeof G.WTS_csv.mountImporter === 'function') G.WTS_csv.mountImporter(_byId('gd_csv_host'), CSV_SPEC, _applyCsv);
         var root = _byId('gd_root');
         if (root && root.addEventListener) {
             root.addEventListener('change', function (e) {
@@ -75938,6 +76897,35 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
     var UNITS = { oi_pr: 'pressure', oi_pb: 'pressure', oi_pwfd: 'pressure', oi_prf: 'pressure', oi_qt: 'liquidRate' };
     for (var ui = 1; ui <= NPTS; ui++) { UNITS['oi_q' + ui] = 'liquidRate'; UNITS['oi_pwf' + ui] = 'pressure'; }
 
+    // CSV paste / file import of the test points (host WTS_csv, P9): q and pwf,
+    // converted to BPD / psia; values without a unit are in the page's units.
+    var CSV_SPEC = {
+        maxRows: NPTS, positional: ['q', 'pwf'], aria: 'Test points as CSV',
+        columns: [
+            { key: 'q', label: 'Rate q', kind: 'liquidRate', cat: 'liquidRate', required: true, positive: true,
+              names: ['q', 'qo', 'ql', 'rate', 'rate q', 'oil rate', 'liquid rate', 'flow rate', 'q oil', 'test rate'] },
+            { key: 'pwf', label: 'pwf', kind: 'pressure', cat: 'pressure', required: true, positive: true,
+              names: ['pwf', 'p wf', 'pwf abs', 'flowing pressure', 'bottomhole flowing pressure', 'bhfp', 'fbhp'] }
+        ],
+        hint: 'One row per test point (up to ' + NPTS + '). Header names q and pwf in any order, units in brackets, e.g. <b>q (STB/d)</b>, <b>q [m3/d]</b>, ' +
+            '<b>pwf (psig)</b>, <b>bar</b>, <b>kPa(a)</b>. Without a header the order is q, pwf. Comma, semicolon or tab separated. ' +
+            'Values without a unit are read in the units shown in the table. Gauge pressures are made absolute with 1 atm.',
+        example: 'q (BPD),pwf (psia)\n100,1800\n160,1400'
+    };
+    function _applyCsv(res) {
+        var n = res.rows.length;
+        _canon(function () {
+            for (var i = 1; i <= NPTS; i++) {
+                var r = res.rows[i - 1];
+                var eq = _byId('oi_q' + i), ep = _byId('oi_pwf' + i);
+                if (eq) eq.value = (r && isFinite(r.q)) ? String(r.q) : '';
+                if (ep) ep.value = (r && isFinite(r.pwf)) ? String(r.pwf) : '';
+            }
+        });
+        G.calcOilIPR();
+        return 'Imported ' + n + ' test point' + (n === 1 ? '' : 's') + (n < NPTS ? '; rows ' + (n + 1) + '–' + NPTS + ' cleared.' : '.');
+    }
+
     function _field(id, label, val, extra) {
         return '<div class="fg-item"><label for="' + id + '">' + label + '</label>' +
             '<input type="number" id="' + id + '" value="' + val + '" step="any"' + (extra || '') + '></div>';
@@ -75973,12 +76961,14 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             '<th data-wts-unit-label="liquidRate">Rate q (' + _lab('liquidRate', 'BPD') + ')</th>' +
             '<th data-wts-unit-label="pressure">pwf, abs (' + _lab('pressure', 'psia') + ')</th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
             '<div style="font-size:12px;color:var(--text2);margin-top:6px">Vogel and straight-line PI use test point 1; Fetkovich fits every filled row.</div>' +
+            '<div id="oi_csv_host"></div>' +
             '<div class="btn-row"><button class="btn btn-primary" id="oi_go" onclick="calcOilIPR()">Calculate</button></div>' +
             '</div>' +
             '</div>' +
             '<div><div id="oi_res"></div></div>' +
             '</div></div>';
         _tag(UNITS);
+        if (G.WTS_csv && typeof G.WTS_csv.mountImporter === 'function') G.WTS_csv.mountImporter(_byId('oi_csv_host'), CSV_SPEC, _applyCsv);
         var root = _byId('oi_root');
         if (root && root.addEventListener) {
             root.addEventListener('change', function (e) {

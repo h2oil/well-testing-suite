@@ -456,6 +456,41 @@
 
     var DEF_ROWS = [[2624.6, 1700], [4154.7, 1500], [5425.1, 1300]];
 
+    // CSV paste / file import of the test points (host WTS_csv, P9). The
+    // host parses, reads units from the header and converts to psia / MSCFD;
+    // values without a unit are taken in the unit shown on the page.
+    var CSV_SPEC = {
+        maxRows: NROWS, leadingEnum: 'kind', positional: ['kind', 'q', 'pwf', 'pws'],
+        aria: 'Test points as CSV',
+        columns: [
+            { key: 'kind', label: 'Point type', kind: 'enum', names: ['type', 'point type', 'kind', 'point', 'flow type', 'test type'],
+              values: { stab: /^\s*(stab|stabili[sz]ed|extended|s)\s*$/i, trans: /^\s*(trans|transient|t|iso|isochronal)\s*$/i } },
+            { key: 'q', label: 'Rate q', kind: 'gasRate', cat: 'gasRateSmall', required: true, positive: true,
+              names: ['q', 'qg', 'rate', 'rate q', 'gas rate', 'flow rate', 'q gas', 'gas flow rate'] },
+            { key: 'pwf', label: 'pwf', kind: 'pressure', cat: 'pressure', required: true, positive: true,
+              names: ['pwf', 'p wf', 'pwf abs', 'flowing pressure', 'bottomhole flowing pressure', 'bhfp', 'fbhp'] },
+            { key: 'pws', label: 'pws', kind: 'pressure', cat: 'pressure', positive: true,
+              names: ['pws', 'p ws', 'pws abs', 'pws before flow', 'pws before flow abs', 'shut in pressure', 'shutin pressure', 'sibhp'] }
+        ],
+        hint: 'One row per test point (up to ' + NROWS + '). Header names: type (stab / trans), q, pwf, pws — in any order, with units in brackets, ' +
+            'e.g. <b>q (MMSCFD)</b>, <b>pwf [psig]</b>, <b>kPa(a)</b>, <b>bar</b>, <b>e3m3/d</b>. Without a header the order is type (optional), q, pwf, pws. ' +
+            'Comma, semicolon or tab separated. Values without a unit are read in the units shown in the table. Gauge pressures are made absolute with 1 atm.',
+        example: 'type,q (MSCFD),pwf (psia),pws (psia)\nstab,2624.6,1700,\nstab,4154.7,1500,\nstab,5425.1,1300,'
+    };
+    function _applyCsv(res) {
+        var n = res.rows.length;
+        _canon(function () {
+            for (var i = 1; i <= NROWS; i++) {
+                var r = res.rows[i - 1];
+                var put = function (id, v) { var e = _byId(id); if (e) e.value = (r && isFinite(v)) ? String(v) : ''; };
+                put(P + 'q' + i, r && r.q); put(P + 'pwf' + i, r && r.pwf); put(P + 'pws' + i, r && r.pws);
+                if (r && r.kind) { var k = _byId(P + 'k' + i); if (k) k.value = r.kind; }
+            }
+        });
+        G.calcGasDeliv();
+        return 'Imported ' + n + ' test point' + (n === 1 ? '' : 's') + (n < NROWS ? '; rows ' + (n + 1) + '–' + NROWS + ' cleared.' : '.');
+    }
+
     function _field(id, label, value, extra) {
         return '<div class="fg-item"><label for="' + id + '">' + label + '</label>' +
             '<input type="number" step="any" id="' + id + '" value="' + (value == null ? '' : value) + '"' + (extra || '') + '></div>';
@@ -501,6 +536,7 @@
         }
         h += '</tbody></table></div>';
         h += '<div class="info-bar" style="margin-top:12px">A row is used when both rate and pwf are filled in. pws is only needed for transient points of a modified isochronal test. All pressures absolute.</div>';
+        h += '<div id="gd_csv_host"></div>';
         h += '<div class="btn-row"><button class="btn btn-primary" id="gd_go" onclick="calcGasDeliv()">Calculate</button></div>';
         h += '</div>';
         h += '</div><div style="min-width:0"><div id="gd_res"></div></div></div></div>';
@@ -515,6 +551,7 @@
         if (s) s.textContent = SUB;
         body.innerHTML = _pageHtml();
         _tag(UNITS);
+        if (G.WTS_csv && typeof G.WTS_csv.mountImporter === 'function') G.WTS_csv.mountImporter(_byId('gd_csv_host'), CSV_SPEC, _applyCsv);
         var root = _byId('gd_root');
         if (root && root.addEventListener) {
             root.addEventListener('change', function (e) {
@@ -970,6 +1007,35 @@
     var UNITS = { oi_pr: 'pressure', oi_pb: 'pressure', oi_pwfd: 'pressure', oi_prf: 'pressure', oi_qt: 'liquidRate' };
     for (var ui = 1; ui <= NPTS; ui++) { UNITS['oi_q' + ui] = 'liquidRate'; UNITS['oi_pwf' + ui] = 'pressure'; }
 
+    // CSV paste / file import of the test points (host WTS_csv, P9): q and pwf,
+    // converted to BPD / psia; values without a unit are in the page's units.
+    var CSV_SPEC = {
+        maxRows: NPTS, positional: ['q', 'pwf'], aria: 'Test points as CSV',
+        columns: [
+            { key: 'q', label: 'Rate q', kind: 'liquidRate', cat: 'liquidRate', required: true, positive: true,
+              names: ['q', 'qo', 'ql', 'rate', 'rate q', 'oil rate', 'liquid rate', 'flow rate', 'q oil', 'test rate'] },
+            { key: 'pwf', label: 'pwf', kind: 'pressure', cat: 'pressure', required: true, positive: true,
+              names: ['pwf', 'p wf', 'pwf abs', 'flowing pressure', 'bottomhole flowing pressure', 'bhfp', 'fbhp'] }
+        ],
+        hint: 'One row per test point (up to ' + NPTS + '). Header names q and pwf in any order, units in brackets, e.g. <b>q (STB/d)</b>, <b>q [m3/d]</b>, ' +
+            '<b>pwf (psig)</b>, <b>bar</b>, <b>kPa(a)</b>. Without a header the order is q, pwf. Comma, semicolon or tab separated. ' +
+            'Values without a unit are read in the units shown in the table. Gauge pressures are made absolute with 1 atm.',
+        example: 'q (BPD),pwf (psia)\n100,1800\n160,1400'
+    };
+    function _applyCsv(res) {
+        var n = res.rows.length;
+        _canon(function () {
+            for (var i = 1; i <= NPTS; i++) {
+                var r = res.rows[i - 1];
+                var eq = _byId('oi_q' + i), ep = _byId('oi_pwf' + i);
+                if (eq) eq.value = (r && isFinite(r.q)) ? String(r.q) : '';
+                if (ep) ep.value = (r && isFinite(r.pwf)) ? String(r.pwf) : '';
+            }
+        });
+        G.calcOilIPR();
+        return 'Imported ' + n + ' test point' + (n === 1 ? '' : 's') + (n < NPTS ? '; rows ' + (n + 1) + '–' + NPTS + ' cleared.' : '.');
+    }
+
     function _field(id, label, val, extra) {
         return '<div class="fg-item"><label for="' + id + '">' + label + '</label>' +
             '<input type="number" id="' + id + '" value="' + val + '" step="any"' + (extra || '') + '></div>';
@@ -1005,12 +1071,14 @@
             '<th data-wts-unit-label="liquidRate">Rate q (' + _lab('liquidRate', 'BPD') + ')</th>' +
             '<th data-wts-unit-label="pressure">pwf, abs (' + _lab('pressure', 'psia') + ')</th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
             '<div style="font-size:12px;color:var(--text2);margin-top:6px">Vogel and straight-line PI use test point 1; Fetkovich fits every filled row.</div>' +
+            '<div id="oi_csv_host"></div>' +
             '<div class="btn-row"><button class="btn btn-primary" id="oi_go" onclick="calcOilIPR()">Calculate</button></div>' +
             '</div>' +
             '</div>' +
             '<div><div id="oi_res"></div></div>' +
             '</div></div>';
         _tag(UNITS);
+        if (G.WTS_csv && typeof G.WTS_csv.mountImporter === 'function') G.WTS_csv.mountImporter(_byId('oi_csv_host'), CSV_SPEC, _applyCsv);
         var root = _byId('oi_root');
         if (root && root.addEventListener) {
             root.addEventListener('change', function (e) {
