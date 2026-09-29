@@ -1228,7 +1228,7 @@ function _pltCompute(container) {
         + '.' + _esc(qNote) + '</span>');
     _pltPaint(container, _pltLastResult);
     if (typeof G.gtag === 'function') {
-        try { G.gtag('event', 'prism_plt_compute', { model: fit.modelKey, n_layers: d.nLayers }); }
+        try { G.gtag('event', 'prism_plt_compute', { model: String(fit.modelKey || '') }); }
         catch (e) { /* swallow */ }
     }
 }
@@ -1403,7 +1403,7 @@ function _pltExport(container) {
     }
     _download('prism-layer-rates.csv', lines.join('\n'), 'text/csv');
     if (typeof G.gtag === 'function') {
-        try { G.gtag('event', 'prism_plt_export', { n_rows: t.length, n_layers: layers.length }); }
+        try { G.gtag('event', 'prism_plt_export', {}); }
         catch (e) { /* swallow */ }
     }
 }
@@ -1535,7 +1535,7 @@ function _invRun(container) {
         + ' · RMSE(p) = ' + _fmtSig(result.rmse, 3) + ' psi.</span>');
     _invPaint(container, _invLastResult);
     if (typeof G.gtag === 'function') {
-        try { G.gtag('event', 'prism_inverse_sim_run', { model: result.modelKey, n: result.t.length, rmse: result.rmse }); }
+        try { G.gtag('event', 'prism_inverse_sim_run', { model: String(result.modelKey || '') }); }
         catch (e) { /* swallow */ }
     }
 }
@@ -1564,7 +1564,7 @@ function _invSave(container) {
         _say(container, 'prism_inv_msg', '<span style="color:' + TV.yellow + ';">Analysis-set storage is not available in this build.</span>');
     }
     if (typeof G.gtag === 'function') {
-        try { G.gtag('event', 'prism_inverse_sim_save', { model: last.modelKey, n: last.t.length }); }
+        try { G.gtag('event', 'prism_inverse_sim_save', { model: String(last.modelKey || '') }); }
         catch (e) { /* swallow */ }
     }
 }

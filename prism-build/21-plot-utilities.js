@@ -1123,7 +1123,7 @@
                     ' · RMS Δp = ' + (isFinite(diff.rms) ? diff.rms.toPrecision(4) : '—') + ' psi' +
                     ' · max |Δp| = ' + (isFinite(diff.maxAbs) ? diff.maxAbs.toPrecision(4) : '—') + ' psi';
             }
-            _ga4('prism_diff_compute', { n: diff.nCommon });
+            _ga4('prism_diff_compute', {});
         });
     };
 
@@ -1494,7 +1494,7 @@
         var blob = null;
         try { if (typeof Blob === 'function' || typeof Blob === 'object') blob = new Blob([xml], { type: 'application/xml' }); }
         catch (e) { blob = null; }
-        _ga4('prism_xml_export', { sizeBytes: xml.length });
+        _ga4('prism_xml_export', {});
         return { blob: blob, filename: filename, xmlString: xml };
     };
 
@@ -1582,7 +1582,7 @@
                     try {
                         var item = new G.ClipboardItem({ 'image/png': blob });
                         G.navigator.clipboard.write([item]).then(function () {
-                            _ga4('prism_copy_plot', { sizeBytes: blob.size });
+                            _ga4('prism_copy_plot', {});
                             resolve({ success: true });
                         }, function (err) {
                             resolve({ success: false, error: (err && err.message) || String(err) });
@@ -1661,7 +1661,7 @@
                     return;
                 }
                 G.navigator.clipboard.writeText(text).then(function () {
-                    _ga4('prism_copy_data', { format: format, length: text.length });
+                    _ga4('prism_copy_data', { format: String(format) });
                     resolve({ success: true, length: text.length, text: text });
                 }, function (err) {
                     resolve({ success: false, error: (err && err.message) || String(err) });

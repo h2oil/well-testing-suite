@@ -653,7 +653,7 @@ G.PRiSM_gaugeData = {
             return G.PRiSM_storage.putGauge(id, {
                 metadata: meta, data: data, createdAt: _now()
             }).then(function () {
-                _ga4('prism_gauge_added', { sample_count: meta.sampleCount, has_rate: !!q });
+                _ga4('prism_gauge_added', {});
                 return id;
             });
         });
@@ -897,7 +897,7 @@ G.PRiSM_analysisData = {
             return G.PRiSM_storage.putAnalysis(id, {
                 metadata: meta, data: data, provenance: prov, createdAt: _now()
             }).then(function () {
-                _ga4('prism_analysis_added', { sample_count: meta.sampleCount, source_count: prov.gaugeIds.length });
+                _ga4('prism_analysis_added', {});
                 return id;
             });
         });
@@ -973,7 +973,7 @@ G.PRiSM_analysisData = {
                 source: 'analysis-data', analysisId: analysisId,
                 name: (a.metadata && a.metadata.name) || ''
             }, 'analysis-data');
-            _ga4('prism_analysis_activated', { sample_count: a.t.length });
+            _ga4('prism_analysis_activated', {});
         });
     },
 
@@ -1220,7 +1220,7 @@ G.PRiSM_project = {
                     setTimeout(function () { try { document.body.removeChild(a); URL.revokeObjectURL(url); } catch (e) {} }, 100);
                 } catch (e) { /* silent */ }
             }
-            _ga4('prism_project_saved', { gauge_count: gaugeData.length, analysis_count: analysisData.length, size_bytes: json.length });
+            _ga4('prism_project_saved', {});
             return { blob: blob, filename: name, sizeBytes: json.length };
         });
     },
@@ -1256,10 +1256,7 @@ G.PRiSM_project = {
             return null;
         }).then(function () {
             _refreshMounted();
-            _ga4('prism_project_loaded', {
-                gauge_count: (proj.gaugeData || []).length,
-                analysis_count: (proj.analysisData || []).length
-            });
+            _ga4('prism_project_loaded', {});
         });
     },
 

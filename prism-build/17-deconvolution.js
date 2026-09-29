@@ -1348,10 +1348,7 @@
                 + ' (largest with RMSE ≤ ' + allow.toFixed(3) + ' psi; best ' + rMin.toFixed(3) + ' psi)';
             chosen.lambdaSweep = runs.map(function (r) { return { lambda: r.lambda, rmse: r.res.rmse, p_initial: r.res.p_initial }; });
             if (!opts.silent) {
-                _ga4('prism_deconvolution_run', {
-                    nNodes: chosen.diagnostics.nNodes, converged: chosen.converged,
-                    iter: chosen.iterations, rmse: chosen.rmse, lambda: chosen.lambda
-                });
+                _ga4('prism_deconvolution_run', {});      // no fit numbers (privacy)
             }
             return chosen;
         }
@@ -1445,13 +1442,7 @@
 
         // ─── Done ──────────────────────────────────────────────────
         if (!opts.silent) {
-            _ga4('prism_deconvolution_run', {
-                nNodes:    grid.nNodes,
-                converged: lmRes.converged,
-                iter:      lmRes.iter,
-                rmse:      rmse,
-                lambda:    lambdaUsed
-            });
+            _ga4('prism_deconvolution_run', {});          // no fit numbers (privacy)
         }
 
         var stepsOut = [];
@@ -1724,7 +1715,7 @@
         if (typeof G.PRiSM_setWell === 'function') {
             try {
                 G.PRiSM_setWell({ p_res: v }, { source: 'deconvolution' });
-                _ga4('prism_deconvolution_apply_pi', { pi: v });
+                _ga4('prism_deconvolution_apply_pi', {});
                 return v;
             } catch (e) { /* fall back to the direct write */ }
         }
@@ -1736,7 +1727,7 @@
             try { G.PRiSM_pvt_compute(); } catch (e) { /* ignore */ }
         }
         _dispatch('prism:well-changed', { keys: ['p_res'], source: 'deconvolution' });
-        _ga4('prism_deconvolution_apply_pi', { pi: v });
+        _ga4('prism_deconvolution_apply_pi', {});
         return v;
     }
 
@@ -1767,7 +1758,7 @@
         };
         S.responseDs = ds;
         _commitDataset(ds, 'deconvolution');
-        _ga4('prism_deconvolution_save', { nNodes: t.length });
+        _ga4('prism_deconvolution_save', {});
         return ds;
     }
 

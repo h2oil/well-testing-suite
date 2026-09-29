@@ -3123,10 +3123,7 @@
                 + ' (largest with RMSE ≤ ' + allow.toFixed(3) + ' psi; best ' + rMin.toFixed(3) + ' psi)';
             chosen.lambdaSweep = runs.map(function (r) { return { lambda: r.lambda, rmse: r.res.rmse, p_initial: r.res.p_initial }; });
             if (!opts.silent) {
-                _ga4('prism_deconvolution_run', {
-                    nNodes: chosen.diagnostics.nNodes, converged: chosen.converged,
-                    iter: chosen.iterations, rmse: chosen.rmse, lambda: chosen.lambda
-                });
+                _ga4('prism_deconvolution_run', {});      // no fit numbers (privacy)
             }
             return chosen;
         }
@@ -3220,13 +3217,7 @@
 
         // ─── Done ──────────────────────────────────────────────────
         if (!opts.silent) {
-            _ga4('prism_deconvolution_run', {
-                nNodes:    grid.nNodes,
-                converged: lmRes.converged,
-                iter:      lmRes.iter,
-                rmse:      rmse,
-                lambda:    lambdaUsed
-            });
+            _ga4('prism_deconvolution_run', {});          // no fit numbers (privacy)
         }
 
         var stepsOut = [];
@@ -3499,7 +3490,7 @@
         if (typeof G.PRiSM_setWell === 'function') {
             try {
                 G.PRiSM_setWell({ p_res: v }, { source: 'deconvolution' });
-                _ga4('prism_deconvolution_apply_pi', { pi: v });
+                _ga4('prism_deconvolution_apply_pi', {});
                 return v;
             } catch (e) { /* fall back to the direct write */ }
         }
@@ -3511,7 +3502,7 @@
             try { G.PRiSM_pvt_compute(); } catch (e) { /* ignore */ }
         }
         _dispatch('prism:well-changed', { keys: ['p_res'], source: 'deconvolution' });
-        _ga4('prism_deconvolution_apply_pi', { pi: v });
+        _ga4('prism_deconvolution_apply_pi', {});
         return v;
     }
 
@@ -3542,7 +3533,7 @@
         };
         S.responseDs = ds;
         _commitDataset(ds, 'deconvolution');
-        _ga4('prism_deconvolution_save', { nNodes: t.length });
+        _ga4('prism_deconvolution_save', {});
         return ds;
     }
 
@@ -4646,15 +4637,7 @@
         }
 
         try {
-            _ga4('prism_tide_analysis', {
-                n_samples:          nIn,
-                duration_h:         Math.round(duration_h * 10) / 10,
-                fitted_count:       fitList.length,
-                m2_amp_psi:         m2 ? Math.round(m2.amplitude * 1000) / 1000 : null,
-                snr:                Math.round(snr * 10) / 10,
-                ct_estimate:        ct,
-                has_depth:          isFinite(o.depth_ft) && o.depth_ft > 0
-            });
+            _ga4('prism_tide_analysis', {});   // no amplitudes / ct / sample counts (privacy)
         } catch (e) { /* swallow */ }
 
         return {
@@ -4771,11 +4754,7 @@
         _commitDataset(newDs, 'tide-correction');
 
         try {
-            _ga4('prism_tide_correction_applied', {
-                n_samples: snap.t.length,
-                m2_amp_psi: (res.constituents && res.constituents[0] && res.constituents[0].name === 'M2')
-                            ? Math.round(res.constituents[0].amplitude * 1000) / 1000 : null
-            });
+            _ga4('prism_tide_correction_applied', {});
         } catch (e) { /* swallow */ }
 
         return newDs;
@@ -5993,7 +5972,7 @@ G.PRiSM_gaugeData = {
             return G.PRiSM_storage.putGauge(id, {
                 metadata: meta, data: data, createdAt: _now()
             }).then(function () {
-                _ga4('prism_gauge_added', { sample_count: meta.sampleCount, has_rate: !!q });
+                _ga4('prism_gauge_added', {});
                 return id;
             });
         });
@@ -6237,7 +6216,7 @@ G.PRiSM_analysisData = {
             return G.PRiSM_storage.putAnalysis(id, {
                 metadata: meta, data: data, provenance: prov, createdAt: _now()
             }).then(function () {
-                _ga4('prism_analysis_added', { sample_count: meta.sampleCount, source_count: prov.gaugeIds.length });
+                _ga4('prism_analysis_added', {});
                 return id;
             });
         });
@@ -6313,7 +6292,7 @@ G.PRiSM_analysisData = {
                 source: 'analysis-data', analysisId: analysisId,
                 name: (a.metadata && a.metadata.name) || ''
             }, 'analysis-data');
-            _ga4('prism_analysis_activated', { sample_count: a.t.length });
+            _ga4('prism_analysis_activated', {});
         });
     },
 
@@ -6560,7 +6539,7 @@ G.PRiSM_project = {
                     setTimeout(function () { try { document.body.removeChild(a); URL.revokeObjectURL(url); } catch (e) {} }, 100);
                 } catch (e) { /* silent */ }
             }
-            _ga4('prism_project_saved', { gauge_count: gaugeData.length, analysis_count: analysisData.length, size_bytes: json.length });
+            _ga4('prism_project_saved', {});
             return { blob: blob, filename: name, sizeBytes: json.length };
         });
     },
@@ -6596,10 +6575,7 @@ G.PRiSM_project = {
             return null;
         }).then(function () {
             _refreshMounted();
-            _ga4('prism_project_loaded', {
-                gauge_count: (proj.gaugeData || []).length,
-                analysis_count: (proj.analysisData || []).length
-            });
+            _ga4('prism_project_loaded', {});
         });
     },
 
@@ -8848,7 +8824,7 @@ function _pltCompute(container) {
         + '.' + _esc(qNote) + '</span>');
     _pltPaint(container, _pltLastResult);
     if (typeof G.gtag === 'function') {
-        try { G.gtag('event', 'prism_plt_compute', { model: fit.modelKey, n_layers: d.nLayers }); }
+        try { G.gtag('event', 'prism_plt_compute', { model: String(fit.modelKey || '') }); }
         catch (e) { /* swallow */ }
     }
 }
@@ -9023,7 +8999,7 @@ function _pltExport(container) {
     }
     _download('prism-layer-rates.csv', lines.join('\n'), 'text/csv');
     if (typeof G.gtag === 'function') {
-        try { G.gtag('event', 'prism_plt_export', { n_rows: t.length, n_layers: layers.length }); }
+        try { G.gtag('event', 'prism_plt_export', {}); }
         catch (e) { /* swallow */ }
     }
 }
@@ -9155,7 +9131,7 @@ function _invRun(container) {
         + ' · RMSE(p) = ' + _fmtSig(result.rmse, 3) + ' psi.</span>');
     _invPaint(container, _invLastResult);
     if (typeof G.gtag === 'function') {
-        try { G.gtag('event', 'prism_inverse_sim_run', { model: result.modelKey, n: result.t.length, rmse: result.rmse }); }
+        try { G.gtag('event', 'prism_inverse_sim_run', { model: String(result.modelKey || '') }); }
         catch (e) { /* swallow */ }
     }
 }
@@ -9184,7 +9160,7 @@ function _invSave(container) {
         _say(container, 'prism_inv_msg', '<span style="color:' + TV.yellow + ';">Analysis-set storage is not available in this build.</span>');
     }
     if (typeof G.gtag === 'function') {
-        try { G.gtag('event', 'prism_inverse_sim_save', { model: last.modelKey, n: last.t.length }); }
+        try { G.gtag('event', 'prism_inverse_sim_save', { model: String(last.modelKey || '') }); }
         catch (e) { /* swallow */ }
     }
 }
@@ -10463,7 +10439,7 @@ _registerPanel(6, {
                     ' · RMS Δp = ' + (isFinite(diff.rms) ? diff.rms.toPrecision(4) : '—') + ' psi' +
                     ' · max |Δp| = ' + (isFinite(diff.maxAbs) ? diff.maxAbs.toPrecision(4) : '—') + ' psi';
             }
-            _ga4('prism_diff_compute', { n: diff.nCommon });
+            _ga4('prism_diff_compute', {});
         });
     };
 
@@ -10834,7 +10810,7 @@ _registerPanel(6, {
         var blob = null;
         try { if (typeof Blob === 'function' || typeof Blob === 'object') blob = new Blob([xml], { type: 'application/xml' }); }
         catch (e) { blob = null; }
-        _ga4('prism_xml_export', { sizeBytes: xml.length });
+        _ga4('prism_xml_export', {});
         return { blob: blob, filename: filename, xmlString: xml };
     };
 
@@ -10922,7 +10898,7 @@ _registerPanel(6, {
                     try {
                         var item = new G.ClipboardItem({ 'image/png': blob });
                         G.navigator.clipboard.write([item]).then(function () {
-                            _ga4('prism_copy_plot', { sizeBytes: blob.size });
+                            _ga4('prism_copy_plot', {});
                             resolve({ success: true });
                         }, function (err) {
                             resolve({ success: false, error: (err && err.message) || String(err) });
@@ -11001,7 +10977,7 @@ _registerPanel(6, {
                     return;
                 }
                 G.navigator.clipboard.writeText(text).then(function () {
-                    _ga4('prism_copy_data', { format: format, length: text.length });
+                    _ga4('prism_copy_data', { format: String(format) });
                     resolve({ success: true, length: text.length, text: text });
                 }, function (err) {
                     resolve({ success: false, error: (err && err.message) || String(err) });
