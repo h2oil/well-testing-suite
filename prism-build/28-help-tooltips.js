@@ -216,9 +216,10 @@
             references: ['API 14C']
         },
         'loPilotSetting': {
-            description: 'Low-pressure ESD pilot setpoint. Catches leaks / line breaks on ' +
-                         'the downstream side. Set above hydrate / wax dropout pressure.',
-            typicalRange: 'Operating × (0.50 – 0.75)',
+            description: 'Low-pressure ESD pilot setpoint. Catches leaks / line breaks: set a false-trip ' +
+                         'margin below the lowest flowing pressure, high enough that the target leak ' +
+                         'takes the section through it within the required detection time.',
+            typicalRange: 'P_flow − margin (≥ 5 psi)',
             units: 'psig',
             references: ['API 14C']
         },
@@ -409,11 +410,11 @@
             references: ['SPE 30435']
         },
         'salamaConstant': {
-            description: 'Salama c-factor for sand-erosion screening. 200 = piggable Cushion-tee ' +
-                         'spool; 300 = baseline carbon steel; 400+ = standard LR elbow.',
-            typicalRange: '200 – 600 (300 typical)',
+            description: 'Constant "c" of the legacy calibrated erosion fit (v1.8 default; used only when ' +
+                         'the Legacy model is selected). The default model is DNV-RP-O501 (pipe bend).',
+            typicalRange: '200 – 600 (300 = v1.8 default)',
             units: 'dimensionless',
-            references: ['Salama 2000']
+            references: ['DNVGL-RP-O501 (2015)']
         },
         'mixtureVelocity': {
             description: 'Multiphase mixture velocity. API RP 14E erosion velocity Ve = C / √ρm ' +
@@ -454,10 +455,10 @@
         },
         'pipeSchedule': {
             description: 'Pipe wall schedule. SCH 80 = 1,500-class flowline; SCH 160 = 5K hot-tap; ' +
-                         'SCH 180 / XXH = 10K-15K choke manifold.',
-            typicalRange: '40 / 80 / 160 / 180 / XXH',
+                         'XXS (double extra strong) = 10K-15K choke manifold. "Sch 180" is not an ASME B36.10M schedule (loads as XXS).',
+            typicalRange: '40 / 80 / 160 / XXS',
             units: '',
-            references: ['ANSI B36.10']
+            references: ['ASME B36.10M']
         },
         'measuredWT': {
             description: 'Latest UT-measured wall thickness. Compare to mill-tolerance minimum ' +

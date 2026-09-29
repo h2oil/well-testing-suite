@@ -44,7 +44,11 @@ module.exports = [
       setBase(app, '60F_14.73');
       assert.rel(f().pressureDrop_psi, hand(14.73, 519.67), 1e-9, '60 °F / 14.73 psia');
       // Consistent with the hi-pilot page (which already applied Tb): both are pure mole balances.
-      assert.rel(f().psl_target_psig, 1971 - hand(14.73, 519.67) - 5, 1e-9, 'PSL = Pflow − ΔP − margin');
+      // v3.0 trip criterion: recommended PSL = Pflow − false-trip margin (was Pflow − ΔP − margin
+      // = 1956.22 psig, a setting the leak does not reach within the window); the time to reach
+      // it is margin / (dP/dt) = 5 / (ΔP/5 s).
+      assert.rel(f().psl_target_psig, 1971 - 5, 1e-12, 'PSL = Pflow − margin');
+      assert.rel(f().timeToTrip_s, 5 / (hand(14.73, 519.67) / 5), 1e-9, 't_trip = margin / rate');
     },
   },
   {
