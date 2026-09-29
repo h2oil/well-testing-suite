@@ -178,7 +178,7 @@ module.exports = [
       try {
         W.WTS_state.gasdeliv = { aofCn: 12000 };
         app.click('hs_useaof');
-        assert.rel(parseFloat(U.displayValue(app.el('hs_q'))), 12 * 28316.8 / 1000, 1e-4, 'shown in Mm³/d');
+        assert.rel(parseFloat(U.displayValue(app.el('hs_q'))), 12 * 28316.8 / 1000, 1e-4, 'shown in 10³ m³/d');
         assert.rel(S(app).x100_ft, W.WTS_h2s_roe(12, 10000).x100_ft, 1e-6, 'metric AOF → imperial calc');
       } finally { U.setSystem('imperial'); }
       assert.rel(parseFloat(app.el('hs_q').value), 12, 1e-6, 'back in MMSCFD');
@@ -196,15 +196,15 @@ module.exports = [
       try {
         open(app);
         const lab = app.el('hs_q').closest('.fg-item').querySelector('label');
-        assert.match(String(lab.textContent), /Maximum escape rate \(Mm³\/d\)/, 'gasRate label');
+        assert.match(String(lab.textContent), /Maximum escape rate \(10³ m³\/d\)/, 'gasRate label');
         const lab2 = app.el('hs_fce').closest('.fg-item').querySelector('label');
         assert.match(String(lab2.textContent), /\(%\)/, 'percent label');
         ['x100_ft', 'x500_ft', 'so2_lbhr', 'scav_gal_d'].forEach((k) => assert.rel(S(app)[k], imp[k], 1e-6, 'metric ' + k));
-        assert.rel(parseFloat(U.displayValue(app.el('hs_q'))), 283.168, 1e-3, '10 MMSCFD shown as Mm³/d (display rounding)');
+        assert.rel(parseFloat(U.displayValue(app.el('hs_q'))), 283.168, 1e-3, '10 MMSCFD shown as 10³ m³/d (display rounding)');
         app.input('hs_q', '141.584'); calc(app);       // = 5 MMSCFD
         assert.rel(S(app).x100_ft, app.win.WTS_h2s_roe(5, 10000).x100_ft, 1e-6, 'metric entry converted');
         set(app, { hs_q: 0 }); calc(app);
-        assert.includes(errText(app, 'hs_roe_res'), 'Mm³/d', 'limit shown in display units');
+        assert.includes(errText(app, 'hs_roe_res'), '10³ m³/d', 'limit shown in display units');
         set(app, { hs_q: 283.168 }); calc(app);
       } finally { U.setSystem('imperial'); }
       assert.rel(S(app).x100_ft, imp.x100_ft, 1e-6, 'recalc after flip keeps the physical value');

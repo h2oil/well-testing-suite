@@ -151,7 +151,7 @@ module.exports = [
     },
   },
   {
-    name: 'G2 casing metric: 3048 m of casing = 162.5 bbl (same as 10 000 ft)',
+    name: 'G2 casing metric: 3048 m of casing = 25.84 m³ (162.5 bbl); IDs in mm, capacities in m³/m',
     wp: WP,
     run(app, assert) {
       setMetric(app, true);
@@ -159,8 +159,15 @@ module.exports = [
       app.select('ct_cas', '0'); app.select('ct_tub', '0');
       set(app, { ct_cl: 3048, ct_tl: 2987.04 });
       clickIn(app, '#pgBody', 'Calculate');
-      assert.rel(rv(app, 'ct_res', 'Total Volume', 0), 0.0162501 * 10000, 5e-4);
-      assert.rel(rv(app, 'ct_res', 'Total Annular Volume'), 0.0107707 * 9800, 5e-4);
+      const M3 = 0.158987294928;
+      assert.rel(rv(app, 'ct_res', 'Total Volume', 0), 0.0162501 * 10000 * M3, 5e-4);        // 25.84 m³
+      assert.rel(rv(app, 'ct_res', 'Total Annular Volume'), 0.0107707 * 9800 * M3, 5e-4);
+      assert.rel(rv(app, 'ct_res', 'Capacity', 0), 0.0162501 * M3 / 0.3048, 5e-4);            // m³/m
+      assert.near(rv(app, 'ct_res', 'ID', 0), 4.09 * 25.4, 0.051);                             // 103.9 mm
+      const t = String(app.el('ct_res').textContent);
+      assert.ok(!/bbl/.test(t), 'no bbl in metric casing results: ' + t);
+      assert.includes(t, 'm³/m');
+      assert.equal(rows(app, 'ct_res').filter((r) => r.l === 'Annular Capacity').length, 1, 'one annular capacity row in metric');
       reportHas(app, assert, ['Casing Length', 'Annular Capacity']);
     },
   },
@@ -236,8 +243,15 @@ module.exports = [
         og_gg: 0.75, og_gt: C(100) });
       clickIn(app, '#pgBody', 'Calculate');
       const vcf = refVcf(refApi60(35, 80), 120);
-      assert.rel(rv(app, 'og_res', 'Oil Rate'), 4.5 * 24 * 0.95 * 0.98 * vcf, 2e-3);
-      assert.rel(rv(app, 'og_res', 'Gas Rate'), 3792.68, 1.5e-3);
+      // Results in metric: oil m³/d, gas m³/d, GOR sm³/sm³, CGR m³/10⁶ m³.
+      const oilBpd = 4.5 * 24 * 0.95 * 0.98 * vcf;
+      assert.rel(rv(app, 'og_res', 'Oil Rate'), oilBpd * 0.158987, 2e-3);
+      assert.rel(rv(app, 'og_res', 'Gas Rate'), 3792.68 * 28.3168466, 1.5e-3);
+      assert.rel(rv(app, 'og_res', 'GOR'), 3792.68e3 / oilBpd * 0.178108, 2e-3);
+      assert.rel(rv(app, 'og_res', 'CGR'), oilBpd / 3.79268 * 5.61458, 2e-3);
+      const t = String(app.el('og_res').textContent);
+      assert.ok(!/BPD|MSCFD|scf|bbl/.test(t), 'no field units in metric results: ' + t);
+      assert.includes(t, 'm³/d'); assert.includes(t, 'sm³/sm³'); assert.includes(t, 'm³/10⁶ m³');
       reportHas(app, assert, ['Oil Rate', 'Gas Rate', 'Hydrometer Temp']);
     },
   },
@@ -292,7 +306,7 @@ module.exports = [
       set(app, Object.assign({}, base, { og_ht: C(60), og_m0: 0, og_m1: 10 * 0.158987, og_olt: C(60), og_run: 101.6,
         og_plate: 38.1, og_sp: 300 * 6.89476, og_dp: 80 * 68.94757 / 27.707, og_gt: C(80) }));
       clickIn(app, '#pgBody', 'Calculate');
-      assert.rel(rv(app, 'og_res', 'Gas Rate'), imp, 1e-4);        // was −5e-4 with the 39.2 °F column
+      assert.rel(rv(app, 'og_res', 'Gas Rate'), imp * 28.3168466, 1e-4);  // m³/d; was −5e-4 with the 39.2 °F column
       const lab = app.el('og_dp').parentNode.querySelector('label').textContent;
       assert.includes(lab, 'mbar');
     },
@@ -331,8 +345,9 @@ module.exports = [
       app.hook.nav('solgor');
       set(app, { sg_p: 500 * 6.89476, sg_t: (150 - 32) * 5 / 9, sg_gg: 0.75, sg_api: 35 });
       clickIn(app, '#pgBody', 'Calculate');
-      assert.near(rv(app, 'sg_res', 'Standing'), 102.74, 0.06);
-      assert.near(rv(app, 'sg_res', 'Vasquez'), 87.18, 0.06);
+      assert.near(rv(app, 'sg_res', 'Standing'), 102.74 * 0.178108, 0.011);   // sm³/sm³
+      assert.near(rv(app, 'sg_res', 'Vasquez'), 87.18 * 0.178108, 0.011);
+      assert.includes(rvText(app, 'sg_res', 'Standing'), 'sm³/sm³');
       reportHas(app, assert, ['Rs (Standing)', 'Separator Pressure']);
     },
   },
@@ -563,6 +578,59 @@ module.exports = [
         assert.ok(app.findAll('#pgBody .rrow, #pgBody #uc_res').length > 0, p + ' shows results');
       }
       assert.deepEqual(app.consoleErrors(), []);
+    },
+  },
+  {
+    name: 'G2 fluid metric (fix): Bubble Point and Shrinkage inputs are unit-tagged; results in kPa(a) / sm³/sm³',
+    wp: WP,
+    run(app, assert) {
+      setMetric(app, true);
+      app.hook.nav('fluid');
+      app.click('flt2');
+      const C = (f) => (f - 32) * 5 / 9;
+      const lab = (id) => String(app.el(id).parentNode.querySelector('label').textContent);
+      assert.includes(lab('bp_sp'), 'kPa(g)'); assert.includes(lab('bp_rt'), '°C'); assert.includes(lab('bp_gor'), 'sm³/sm³');
+      set(app, { bp_api: 45, bp_gor: 300 * 0.178108, bp_gg: 0.7, bp_st: C(110), bp_sp: 500 * 6.89476, bp_rt: C(440) });
+      clickIn(app, '#pgBody', 'Calculate Bubble Point');
+      const ygs = 0.7 * (1 + 5.912e-5 * 45 * 110 * Math.log10(514.7 / 114.7));
+      const pb = 18.2 * (Math.pow(300 / ygs, 0.83) * Math.pow(10, 0.00091 * 440 - 0.0125 * 45) - 1.4);
+      assert.rel(rv(app, 'bp_res', 'Bubble Point Pressure', 0), pb * 6.89476, 2e-4);        // kPa(a)
+      assert.ok(!/psia/.test(String(app.el('bp_res').textContent)), 'no psia in metric');
+      app.click('flt3');
+      assert.includes(lab('sf_sp'), 'kPa(g)'); assert.includes(lab('sf_st'), '°C');
+      set(app, { sf_sp: 710 * 6.89476, sf_st: C(121), sf_gg: 0.751, sf_api: 52 });
+      clickIn(app, '#pgBody', 'Calculate');
+      const go = 141.5 / 183.5;
+      const rs = 0.751 * Math.pow((724.7 / 18.2 + 1.4) * Math.pow(10, 0.0125 * 52 - 0.00091 * 121), 1.2048);
+      const bo = 0.9759 + 0.00012 * Math.pow(rs * Math.sqrt(0.751 / go) + 1.25 * 121, 1.2);
+      assert.near(rv(app, 'sf_res', 'Bo (FVF)'), bo, 1e-4);
+      assert.near(rv(app, 'sf_res', 'Solution GOR'), rs * 0.178108, 0.011);
+      assert.includes(rvText(app, 'sf_res', 'Solution GOR'), 'sm³/sm³');
+      // Stored values stay canonical imperial: back in Imperial the inputs read psig / °F.
+      setMetric(app, false);
+      assert.near(parseFloat(app.el('sf_sp').value), 710, 0.01);
+      assert.near(parseFloat(app.el('sf_st').value), 121, 0.01);
+      noBadNumbers(assert, app, 'fluid metric bp/sf');
+      assert.deepEqual(app.consoleErrors(), []);
+    },
+  },
+  {
+    name: 'G2 bottomsup metric (fix): flow rate shown in m³/min; units categories (10³ m³/d, sm³/sm³, AGA-3 dP @ 60 °F)',
+    wp: WP,
+    run(app, assert) {
+      setMetric(app, true);
+      app.hook.nav('bottomsup');
+      set(app, { bu_q: 5000 * 0.158987, bu_vol: 25 * 0.158987 });
+      clickIn(app, '#pgBody', 'Calculate');
+      const t = rvText(app, 'bu_res', 'Flow Rate');
+      assert.includes(t, 'm³/min');
+      assert.near(rv(app, 'bu_res', 'Flow Rate'), 5000 / 1440 * 0.158987, 1e-4);
+      const U = app.win.WTS_units;
+      assert.equal(U.label('gasRate'), '10³ m³/d');
+      assert.rel(U.convertCategory(1000, 'gor', 'imperial', 'metric'), 178.108, 1e-4);
+      assert.rel(U.convertCategory(1, 'cgr', 'imperial', 'metric'), 5.61458, 1e-4);
+      assert.rel(U.convertCategory(1, 'capacity', 'imperial', 'metric'), 0.521612, 1e-5);
+      assert.equal(U.MANIFEST.aga3.inputs.a_dP, 'pressureSmall60');
     },
   },
 ];

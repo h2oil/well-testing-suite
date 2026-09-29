@@ -116,7 +116,7 @@ module.exports = [
       assert.match(title(app, 'pp_res'), /Recommended: 3"/);
       clean(app, assert, 'pipesz gas imperial');
 
-      // Metric: 10 MMSCFD = 283.168 Mm³/d, 500 psig = 3447.38 kPa(g), 1000 ft = 304.8 m
+      // Metric: 10 MMSCFD = 283.168 × 10³ m³/d, 500 psig = 3447.38 kPa(g), 1000 ft = 304.8 m
       go(app, 'pipesz', 'metric');
       app.el('pp_fluid').value = 'gas';
       setv(app, { pp_p: 3447.38, pp_l: 304.8, pp_qg: 283.168, pp_sg: 0.65 });

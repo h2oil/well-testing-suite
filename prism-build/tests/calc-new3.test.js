@@ -209,7 +209,7 @@ module.exports = [
     },
   },
   {
-    name: 'metric: tagged labels show kPa / °C / Mm³/d, results equal the imperial run',
+    name: 'metric: tagged labels show kPa / °C / 10³ m³/d, results equal the imperial run',
     wp: WP,
     run(app, assert) {
       const U = app.win.WTS_units;
@@ -223,7 +223,7 @@ module.exports = [
         const lbl = (id) => text(app.el(id).closest('.fg-item').querySelector('label'));
         assert(/\(kPa\)/.test(lbl('fe_pbase')), lbl('fe_pbase'));
         assert(/\(°C\)/.test(lbl('fe_tb')), lbl('fe_tb'));
-        assert(/\(Mm³\/d\)/.test(lbl('fe_qg')), lbl('fe_qg'));
+        assert(/\(10³ m³\/d\)/.test(lbl('fe_qg')), lbl('fe_qg'));
         assert(/\(m³\/d\)/.test(lbl('fe_qo')), lbl('fe_qo'));
         const met = app.win.WTS_state.flareghg;
         STATE_KEYS.forEach((k) => {
@@ -232,7 +232,7 @@ module.exports = [
         });
         assert(/MJ\/m³/.test(rowText(app, 'Heating value HHV')), 'HHV in MJ/m³');
         assert.rel(firstNum(rowText(app, 'Heating value HHV')), 1131.0 * 0.0372589, 2e-3);
-        // Metric entry: 100 Mm³/d = 3.5315 MMSCFD
+        // Metric entry: 100 × 10³ m³/d = 3.5315 MMSCFD
         app.input('fe_qg', '100');
         assert.rel(app.win.WTS_state.flareghg.V_scf, 100 * 1000 / 28316.8 * 1e6, 1e-4, 'metric entry converted');
       } finally { U.setSystem('imperial'); }

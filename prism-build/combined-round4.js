@@ -194,14 +194,15 @@
             metric:   { unit: 'L',   label: 'L',   factor: 1,       offset: 0 }
         },
         // Gas volume / rate (canonical = m³, so MMSCF -> 28316.8 m³;
-        // metric label "Mm3" = 1000 m³, so factor on metric = 1000).
+        // the metric unit is 1000 m³, so factor on metric = 1000). Label
+        // "10³ m³" — "Mm³" reads as million m³ (audit G2).
         gasVolume: {
-            imperial: { unit: 'MMSCF', label: 'MMSCF', factor: 28316.8, offset: 0 },
-            metric:   { unit: 'Mm3',   label: 'Mm³ (10^3 m³)', factor: 1000, offset: 0 }
+            imperial: { unit: 'MMSCF', label: 'MMSCF',  factor: 28316.8, offset: 0 },
+            metric:   { unit: 'Mm3',   label: '10³ m³', factor: 1000,    offset: 0 }
         },
         gasRate: {
-            imperial: { unit: 'MMSCFD', label: 'MMSCFD', factor: 28316.8, offset: 0 },
-            metric:   { unit: 'Mm3/d',  label: 'Mm³/d',  factor: 1000,    offset: 0 }
+            imperial: { unit: 'MMSCFD', label: 'MMSCFD',   factor: 28316.8, offset: 0 },
+            metric:   { unit: 'Mm3/d',  label: '10³ m³/d', factor: 1000,    offset: 0 }
         },
         gasRateSmall: {
             imperial: { unit: 'MSCFD', label: 'MSCFD', factor: 28.3168, offset: 0 },
@@ -211,6 +212,11 @@
         liquidRate: {
             imperial: { unit: 'bbl/d', label: 'BPD',  factor: 0.158987, offset: 0 },
             metric:   { unit: 'm3/d',  label: 'm³/d', factor: 1,        offset: 0 }
+        },
+        // Pipe capacity (volume per length): bbl/ft <-> m³/m.
+        capacity: {
+            imperial: { unit: 'bbl/ft', label: 'bbl/ft', factor: 0.158987294928 / 0.3048, offset: 0 },
+            metric:   { unit: 'm3/m',   label: 'm³/m',   factor: 1,                        offset: 0 }
         },
         liquidRateSmall: {
             imperial: { unit: 'gal/min', label: 'gpm',   factor: 3.78541, offset: 0 },
@@ -319,7 +325,10 @@
         // Acoustic / engineering ratios.
         noise:    { imperial: { unit: 'dBA',  label: 'dBA',  factor: 1, offset: 0 }, metric: { unit: 'dBA',  label: 'dBA',  factor: 1, offset: 0 } },
         ratio:    { imperial: { unit: '',     label: '',     factor: 1, offset: 0 }, metric: { unit: '',     label: '',     factor: 1, offset: 0 } },
-        gor:      { imperial: { unit: 'scf/stb', label: 'SCF/STB', factor: 1, offset: 0 }, metric: { unit: 'scf/stb', label: 'SCF/STB', factor: 1, offset: 0 } },
+        // Gas-oil ratio: 1 scf/STB = 0.0283168 m³ / 0.158987 m³ = 0.178108 sm³/sm³.
+        gor:      { imperial: { unit: 'scf/stb', label: 'SCF/STB', factor: 0.0283168466 / 0.158987294928, offset: 0 }, metric: { unit: 'sm3/sm3', label: 'sm³/sm³', factor: 1, offset: 0 } },
+        // Condensate-gas ratio: 1 bbl/MMscf = 0.158987 m³ / 28316.8 m³ = 5.61458 m³/10⁶ m³.
+        cgr:      { imperial: { unit: 'bbl/MMscf', label: 'bbl/MMscf', factor: 0.158987294928 / 28316.8466 * 1e6, offset: 0 }, metric: { unit: 'm3/1e6m3', label: 'm³/10⁶ m³', factor: 1, offset: 0 } },
         time:     { imperial: { unit: 'hr',   label: 'hr',   factor: 1, offset: 0 }, metric: { unit: 'hr',   label: 'hr',   factor: 1, offset: 0 } },
         timeMin:  { imperial: { unit: 'min',  label: 'min',  factor: 1, offset: 0 }, metric: { unit: 'min',  label: 'min',  factor: 1, offset: 0 } },
         // Mass-flow specific to compressors (SCFM): no conversion (pure rate).
@@ -437,7 +446,7 @@
             inputs: {
                 a_pD:   'lengthSmall',
                 a_oD:   'lengthSmall',
-                a_dP:   'pressureSmall',  // inH2O
+                a_dP:   'pressureSmall60',  // inH2O @ 60 °F (N3 = 27.707, as the calc)
                 a_Ps:   'pressureG',
                 a_Tf:   'temperature',
                 a_SG:   'sg',
@@ -563,7 +572,18 @@
                 fp_api:  'api',
                 fp_t:    'temperature',
                 fp_sg:   'sg',
-                fp_api2: 'api'
+                fp_api2: 'api',
+                // Bubble Point and Shrinkage tabs (audit G2: were untagged).
+                bp_api:  'api',
+                bp_gor:  'gor',
+                bp_gg:   'sg',
+                bp_st:   'temperature',
+                bp_sp:   'pressureG',
+                bp_rt:   'temperature',
+                sf_sp:   'pressureG',
+                sf_st:   'temperature',
+                sf_gg:   'sg',
+                sf_api:  'api'
             },
             outputs: {}
         },

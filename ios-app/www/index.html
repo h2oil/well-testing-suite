@@ -712,6 +712,15 @@ function __unitsApi() {
     const U = window.WTS_units;
     return (U && typeof U.getSystem === 'function' && typeof U.convertCategory === 'function') ? U : null;
 }
+// Result text in the active unit system. v is canonical imperial; impLabel
+// overrides the imperial caption (e.g. 'bbls'); dpMet defaults to dp.
+function _uMetric() { const U = __unitsApi(); return !!(U && U.getSystem() === 'metric' && typeof U.format === 'function'); }
+function _uFmt(v, cat, dp, impLabel, dpMet) {
+    if(!isFinite(v)) return '—';
+    if(_uMetric()) { const f = window.WTS_units.format(v, cat); return fmt(f.value, dpMet == null ? dp : dpMet) + ' ' + f.label; }
+    const U = window.WTS_units;
+    return fmt(v, dp) + ' ' + (impLabel != null ? impLabel : (U && U.CATEGORIES && U.CATEGORIES[cat] ? U.CATEGORIES[cat].imperial.label : ''));
+}
 function __unitCat(el) {
     return (el.dataset && el.dataset.wtsUnitCat) || (el.getAttribute && el.getAttribute('data-wts-unit-cat')) || null;
 }
@@ -6246,8 +6255,9 @@ window.calcBubblePoint=function(){
     if(!(Ygs>0)||!isFinite(Pb)||Pb<=0){$('bp_res').innerHTML='<div class="val-error">GOR is too low for the Standing correlation at these conditions (computed Pb ≤ 0). Check GOR, gravities and temperature.</div>';return;}
     $('bp_res').innerHTML=`<div class="rbox" style="margin-top:12px"><div class="rbox-title">Bubble Point Results</div>
         <div class="rrow"><span class="rl">Corrected Gas Gravity</span><span class="rv">${fmt(Ygs,4)}</span></div>
-        <div class="rrow"><span class="rl">Bubble Point Pressure</span><span class="rv">${fmt(Pb,1)} psia</span></div>
-        <div class="rrow"><span class="rl">Bubble Point Pressure</span><span class="rv">${fmt(Pb*6.89476,1)} kPa(a)</span></div>
+        ${_uMetric()?`<div class="rrow"><span class="rl">Bubble Point Pressure</span><span class="rv">${fmt(Pb*6.89476,1)} kPa(a)</span></div>
+        <div class="rrow"><span class="rl">Bubble Point Pressure</span><span class="rv">${fmt(Pb*0.0689476,2)} bar(a)</span></div>`:`<div class="rrow"><span class="rl">Bubble Point Pressure</span><span class="rv">${fmt(Pb,1)} psia</span></div>
+        <div class="rrow"><span class="rl">Bubble Point Pressure</span><span class="rv">${fmt(Pb*6.89476,1)} kPa(a)</span></div>`}
     </div>`;
 };
 window.calcShrinkage=function(){
@@ -6271,7 +6281,7 @@ window.calcShrinkage=function(){
     const Bo=0.9759+0.00012*Math.pow(Math.max(F,0),1.2);
     const shrinkage=1/Bo;
     $('sf_res').innerHTML=`<div class="rbox" style="margin-top:12px"><div class="rbox-title">Shrinkage Results</div>
-        <div class="rrow"><span class="rl">Solution GOR at separator (Standing)</span><span class="rv">${fmt(Rs,1)} scf/STB</span></div>
+        <div class="rrow"><span class="rl">Solution GOR at separator (Standing)</span><span class="rv">${_uFmt(Rs,'gor',1,'scf/STB',2)}</span></div>
         <div class="rrow"><span class="rl">Standing F-factor</span><span class="rv">${fmt(F,2)}</span></div>
         <div class="rrow"><span class="rl">Bo (FVF)</span><span class="rv">${fmt(Bo,4)}</span></div>
         <div class="rrow"><span class="rl">Shrinkage Factor (1/Bo)</span><span class="rv">${fmt(shrinkage,4)}</span></div>
@@ -6808,7 +6818,7 @@ window.calcBottomsUp=function(){
     const totSec=Math.round(totalMins*60);
     const hrs=Math.floor(totSec/3600),mins=Math.floor((totSec%3600)/60),secs=totSec%60;
     $('bu_res').innerHTML=`<div class="rbox" style="margin-top:12px"><div class="rbox-title">Results</div>
-        <div class="rrow"><span class="rl">Flow Rate</span><span class="rv">${fmt(bpm,4)} bbl/min</span></div>
+        <div class="rrow"><span class="rl">Flow Rate</span><span class="rv">${_uFmt(bpm,'volume',4,'bbl')}/min</span></div>
         <div class="rrow"><span class="rl">Bottoms Up Time</span><span class="rv">${fmt(totalMins,2)} minutes</span></div>
         <div class="rrow"><span class="rl">Time (HH:MM:SS)</span><span class="rv">${hrs}:${mins.toString().padStart(2,'0')}:${secs.toString().padStart(2,'0')}</span></div>
     </div>`;
@@ -6858,8 +6868,8 @@ window.calcSolGOR=function(){
     // gas gravity; the entered gravity is used as-is.
     const Rs_vb=C1*gg*Math.pow(P+14.7,C2)*Math.exp(C3*API/(T+460));
     $('sg_res').innerHTML=`<div class="rbox" style="margin-top:12px"><div class="rbox-title">Solution GOR Results</div>
-        <div class="rrow"><span class="rl">Rs (Standing)</span><span class="rv">${fmt(Rs_standing,1)} scf/stbbl</span></div>
-        <div class="rrow"><span class="rl">Rs (Vasquez & Beggs)</span><span class="rv">${fmt(Rs_vb,1)} scf/stbbl</span></div>
+        <div class="rrow"><span class="rl">Rs (Standing)</span><span class="rv">${_uFmt(Rs_standing,'gor',1,'scf/stbbl',2)}</span></div>
+        <div class="rrow"><span class="rl">Rs (Vasquez & Beggs)</span><span class="rv">${_uFmt(Rs_vb,'gor',1,'scf/stbbl',2)}</span></div>
         <div class="rrow"><span class="rl">API Bracket</span><span class="rv">${API<=30?'&le; 30 (Heavy/Medium)':'&gt; 30 (Light)'}</span></div>
     </div>`;
 };
@@ -6972,13 +6982,13 @@ window.calcOilGas=function(){
     // A zero denominator makes the ratio undefined, not 0 (verifier G2): show "—".
     const GOR=oilRate>0?(gasRate*1000)/oilRate:NaN;
     const CGR=gasRate>0?oilRate/(gasRate/1000):NaN;
-    const gorTxt=isFinite(GOR)?fmt(GOR,0)+' scf/bbl':'— (no oil flow)';
-    const cgrTxt=isFinite(CGR)?fmt(CGR,1)+' bbl/MMscf':'— (no gas flow)';
+    const gorTxt=isFinite(GOR)?_uFmt(GOR,'gor',0,'scf/bbl',1):'— (no oil flow)';
+    const cgrTxt=isFinite(CGR)?_uFmt(CGR,'cgr',1):'— (no gas flow)';
     $('og_res').innerHTML=`<div class="rbox" style="margin-top:12px"><div class="rbox-title">Combined Results</div>
-        <div class="rrow"><span class="rl">Oil Rate</span><span class="rv">${fmt(oilRate,1)} BPD</span></div>
+        <div class="rrow"><span class="rl">Oil Rate</span><span class="rv">${_uFmt(oilRate,'liquidRate',1,'BPD',2)}</span></div>
         <div class="rrow"><span class="rl">API @ 60°F</span><span class="rv">${fmt(AE6,1)}</span></div>
         <div class="rrow"><span class="rl">VCF</span><span class="rv">${fmt(VCF,6)}</span></div>
-        <div class="rrow"><span class="rl">Gas Rate</span><span class="rv">${fmt(gasRate,3)} MSCFD</span></div>
+        <div class="rrow"><span class="rl">Gas Rate</span><span class="rv">${_uFmt(gasRate,'gasRateSmall',3,'MSCFD',1)}</span></div>
         <div class="rrow"><span class="rl">Discharge Coeff (Cd)</span><span class="rv">${fmt(Cd,5)}</span></div>
         <div class="rrow"><span class="rl">GOR</span><span class="rv">${gorTxt}</span></div>
         <div class="rrow"><span class="rl">CGR</span><span class="rv">${cgrTxt}</span></div>
@@ -7069,7 +7079,7 @@ function renderCasing(body){
       <div id="ct_res"></div>
     </div></div>
     <div><div class="card"><div class="card-title">Reference</div>
-      <div class="info-bar">Annular capacity = (Casing ID&sup2; &minus; Tubing OD&sup2;) &times; 0.0009714 bbl/ft</div>
+      <div class="info-bar">Annular capacity = (Casing ID&sup2; &minus; Tubing OD&sup2;) &times; 0.0009714 bbl/ft (diameters in inches; 1 bbl/ft = 0.521612 m&sup3;/m)</div>
     </div></div></div>`;
     loadInputs('casing',['ct_cas','ct_tub','ct_cl','ct_tl']);
 }
@@ -7086,20 +7096,23 @@ window.calcCasing=function(){
     const tubBblFt=t.id*t.id*0.0009714;
     const annBblFt=(c.id*c.id-t.od*t.od)*0.0009714;
     const casVol=casBblFt*cl,tubVol=tubBblFt*tl,annVol=annBblFt*Math.min(cl,tl);
+    // Tubular sizes stay named in inches (API 5CT); IDs, capacities and volumes
+    // follow the unit system (audit G2: metric showed bbl/ft and bbls).
+    const idTxt=x=>_uMetric()?_uFmt(x,'lengthSmall',3,null,1):x+'"';
     $('ct_res').innerHTML=`<div class="rbox" style="margin-top:12px"><div class="rbox-title">Casing: ${c.od}" OD, ${c.wt} lb/ft</div>
-        <div class="rrow"><span class="rl">ID</span><span class="rv">${c.id}"</span></div>
-        <div class="rrow"><span class="rl">Capacity</span><span class="rv">${fmt(casBblFt,6)} bbl/ft</span></div>
-        <div class="rrow"><span class="rl">Total Volume</span><span class="rv">${fmt(casVol,2)} bbls</span></div>
+        <div class="rrow"><span class="rl">ID</span><span class="rv">${idTxt(c.id)}</span></div>
+        <div class="rrow"><span class="rl">Capacity</span><span class="rv">${_uFmt(casBblFt,'capacity',6)}</span></div>
+        <div class="rrow"><span class="rl">Total Volume</span><span class="rv">${_uFmt(casVol,'volume',2,'bbls')}</span></div>
     </div>
     <div class="rbox" style="margin-top:8px"><div class="rbox-title">Tubing: ${t.od}" OD, ${t.wt} lb/ft</div>
-        <div class="rrow"><span class="rl">ID</span><span class="rv">${t.id}"</span></div>
-        <div class="rrow"><span class="rl">Capacity</span><span class="rv">${fmt(tubBblFt,6)} bbl/ft</span></div>
-        <div class="rrow"><span class="rl">Total Volume</span><span class="rv">${fmt(tubVol,2)} bbls</span></div>
+        <div class="rrow"><span class="rl">ID</span><span class="rv">${idTxt(t.id)}</span></div>
+        <div class="rrow"><span class="rl">Capacity</span><span class="rv">${_uFmt(tubBblFt,'capacity',6)}</span></div>
+        <div class="rrow"><span class="rl">Total Volume</span><span class="rv">${_uFmt(tubVol,'volume',2,'bbls')}</span></div>
     </div>
     <div class="rbox" style="margin-top:8px"><div class="rbox-title">Annular Space</div>
-        <div class="rrow"><span class="rl">Annular Capacity</span><span class="rv">${fmt(annBblFt,6)} bbl/ft</span></div>
-        <div class="rrow"><span class="rl">Annular Capacity</span><span class="rv">${fmt(annBblFt*0.158987294928/0.3048,6)} m&sup3;/m</span></div>
-        <div class="rrow"><span class="rl">Total Annular Volume</span><span class="rv">${fmt(annVol,2)} bbls</span></div>
+        <div class="rrow"><span class="rl">Annular Capacity</span><span class="rv">${_uFmt(annBblFt,'capacity',6)}</span></div>
+        ${_uMetric()?'':`<div class="rrow"><span class="rl">Annular Capacity</span><span class="rv">${fmt(annBblFt*0.158987294928/0.3048,6)} m&sup3;/m</span></div>`}
+        <div class="rrow"><span class="rl">Total Annular Volume</span><span class="rv">${_uFmt(annVol,'volume',2,'bbls')}</span></div>
     </div>`;
 };
 
@@ -7367,11 +7380,11 @@ window.calcSepRate=function(){
     const retOK=retTime>=retTarget;
     const overall=gasOK&&retOK;
     $('sr_res').innerHTML=`<div class="rbox" style="margin-top:12px"><div class="rbox-title">Separator Rating — ${overall?'<span style="color:var(--green)">PASS</span>':'<span style="color:var(--red)">FAIL</span>'}</div>
-        <div class="rrow"><span class="rl">Gas Density (Z = ${fmt(Z,2)} assumed)</span><span class="rv">${fmt(rho_gas,3)} lb/ft&sup3;</span></div>
-        <div class="rrow"><span class="rl">Liquid Density</span><span class="rv">${fmt(rho_liq,1)} lb/ft&sup3;</span></div>
-        <div class="rrow"><span class="rl">Allowable Gas Velocity</span><span class="rv">${fmt(V_allow,2)} ft/s</span></div>
-        <div class="rrow"><span class="rl">Actual Gas Velocity</span><span class="rv" style="color:${gasOK?'var(--green)':'var(--red)'}">${fmt(V_gas,2)} ft/s — ${gasOK?'OK':'EXCEEDS LIMIT'}</span></div>
-        <div class="rrow"><span class="rl">Liquid Volume</span><span class="rv">${fmt(V_liq_bbl,2)} bbls</span></div>
+        <div class="rrow"><span class="rl">Gas Density (Z = ${fmt(Z,2)} assumed)</span><span class="rv">${_uFmt(rho_gas,'density',3,'lb/ft&sup3;',2)}</span></div>
+        <div class="rrow"><span class="rl">Liquid Density</span><span class="rv">${_uFmt(rho_liq,'density',1,'lb/ft&sup3;',0)}</span></div>
+        <div class="rrow"><span class="rl">Allowable Gas Velocity</span><span class="rv">${_uFmt(V_allow,'velocity',2,null,3)}</span></div>
+        <div class="rrow"><span class="rl">Actual Gas Velocity</span><span class="rv" style="color:${gasOK?'var(--green)':'var(--red)'}">${_uFmt(V_gas,'velocity',2,null,3)} — ${gasOK?'OK':'EXCEEDS LIMIT'}</span></div>
+        <div class="rrow"><span class="rl">Liquid Volume</span><span class="rv">${_uFmt(V_liq_bbl,'volume',2,'bbls',3)}</span></div>
         <div class="rrow"><span class="rl">Retention Time</span><span class="rv" style="color:${retOK?'var(--green)':'var(--red)'}">${isFinite(retTime)?fmt(retTime,2)+' min':'— (no liquid flow)'} (target: ${retTarget} min)</span></div>
     </div>`;
 };
@@ -8665,6 +8678,7 @@ const RELEASE_NOTES = [
         ['fix', 'Safety calculators', 'Non-certified liquid relief-valve sizing now uses the selected overpressure; flare, flame arrestor, ESD, hydrate, liquid-line and pipe-life fixes; relief-valve and flame-arrestor pages keep metric units.'],
         ['fix', 'Mechanical &amp; electrical', 'Gas pipe sizing caps velocity at the erosional limit and checks pressure drop; mud-pump output, cable ambient factors and conductor resistance, air-compressor rounding and generator sizing basis corrected.'],
         ['ux', 'Storage &amp; start-up', 'A full browser storage no longer loses autosaves silently (oldest report snapshots are freed first, with a warning), and analytics no longer delay the first page draw.'],
+        ['fix', 'Metric results', 'In Metric mode, Fluid Properties, Solution GOR, Oil &amp; Gas Rate, Casing &amp; Tubing, Bottoms Up and Separator Rating now show their results in metric units (m³/d, 10³ m³/d, sm³/sm³, m³/m, kg/m³, m/s) instead of field units. Bubble-point and shrinkage inputs follow the units switch, GOR inputs and results use sm³/sm³, metric gas rates read 10³ m³/d (was Mm³/d), and the AGA-3 differential uses inH<sub>2</sub>O at 60 °F in mbar.'],
         // <!-- v1.7 more items -->  (add further v1.7 items here, same shape as above)
       ] },
     { ver:'v1.6', date:'2026-09-29', title:'Live 3D Well Test Simulator',
@@ -8742,7 +8756,7 @@ const RELEASE_NOTES = [
       ] },
     { ver:'v1.3.x', date:'2026-04-28', title:'Imperial ⇄ Metric units',
       items:[
-        ['ux', 'Units toggle', 'A Units switch in the page header flips every calculator between oilfield units (psi, °F, ft, bbl, MMSCFD, BPD) and metric (kPa, °C, m, m³, Mm³/d, m³/d).'],
+        ['ux', 'Units toggle', 'A Units switch in the page header flips every calculator between oilfield units (psi, °F, ft, bbl, MMSCFD, BPD) and metric (kPa, °C, m, m³, 10³ m³/d, m³/d, sm³/sm³).'],
         ['ux', 'Coverage', '50 unit categories and 286 input fields across 34 calculators.'],
         ['ux', 'Consistent results', 'Calculation engines are unchanged and conversion happens at the input/output boundary, so results agree in either system. The choice is remembered between sessions.'],
       ] },
@@ -46972,14 +46986,15 @@ _registerPanel(6, {
             metric:   { unit: 'L',   label: 'L',   factor: 1,       offset: 0 }
         },
         // Gas volume / rate (canonical = m³, so MMSCF -> 28316.8 m³;
-        // metric label "Mm3" = 1000 m³, so factor on metric = 1000).
+        // the metric unit is 1000 m³, so factor on metric = 1000). Label
+        // "10³ m³" — "Mm³" reads as million m³ (audit G2).
         gasVolume: {
-            imperial: { unit: 'MMSCF', label: 'MMSCF', factor: 28316.8, offset: 0 },
-            metric:   { unit: 'Mm3',   label: 'Mm³ (10^3 m³)', factor: 1000, offset: 0 }
+            imperial: { unit: 'MMSCF', label: 'MMSCF',  factor: 28316.8, offset: 0 },
+            metric:   { unit: 'Mm3',   label: '10³ m³', factor: 1000,    offset: 0 }
         },
         gasRate: {
-            imperial: { unit: 'MMSCFD', label: 'MMSCFD', factor: 28316.8, offset: 0 },
-            metric:   { unit: 'Mm3/d',  label: 'Mm³/d',  factor: 1000,    offset: 0 }
+            imperial: { unit: 'MMSCFD', label: 'MMSCFD',   factor: 28316.8, offset: 0 },
+            metric:   { unit: 'Mm3/d',  label: '10³ m³/d', factor: 1000,    offset: 0 }
         },
         gasRateSmall: {
             imperial: { unit: 'MSCFD', label: 'MSCFD', factor: 28.3168, offset: 0 },
@@ -46989,6 +47004,11 @@ _registerPanel(6, {
         liquidRate: {
             imperial: { unit: 'bbl/d', label: 'BPD',  factor: 0.158987, offset: 0 },
             metric:   { unit: 'm3/d',  label: 'm³/d', factor: 1,        offset: 0 }
+        },
+        // Pipe capacity (volume per length): bbl/ft <-> m³/m.
+        capacity: {
+            imperial: { unit: 'bbl/ft', label: 'bbl/ft', factor: 0.158987294928 / 0.3048, offset: 0 },
+            metric:   { unit: 'm3/m',   label: 'm³/m',   factor: 1,                        offset: 0 }
         },
         liquidRateSmall: {
             imperial: { unit: 'gal/min', label: 'gpm',   factor: 3.78541, offset: 0 },
@@ -47097,7 +47117,10 @@ _registerPanel(6, {
         // Acoustic / engineering ratios.
         noise:    { imperial: { unit: 'dBA',  label: 'dBA',  factor: 1, offset: 0 }, metric: { unit: 'dBA',  label: 'dBA',  factor: 1, offset: 0 } },
         ratio:    { imperial: { unit: '',     label: '',     factor: 1, offset: 0 }, metric: { unit: '',     label: '',     factor: 1, offset: 0 } },
-        gor:      { imperial: { unit: 'scf/stb', label: 'SCF/STB', factor: 1, offset: 0 }, metric: { unit: 'scf/stb', label: 'SCF/STB', factor: 1, offset: 0 } },
+        // Gas-oil ratio: 1 scf/STB = 0.0283168 m³ / 0.158987 m³ = 0.178108 sm³/sm³.
+        gor:      { imperial: { unit: 'scf/stb', label: 'SCF/STB', factor: 0.0283168466 / 0.158987294928, offset: 0 }, metric: { unit: 'sm3/sm3', label: 'sm³/sm³', factor: 1, offset: 0 } },
+        // Condensate-gas ratio: 1 bbl/MMscf = 0.158987 m³ / 28316.8 m³ = 5.61458 m³/10⁶ m³.
+        cgr:      { imperial: { unit: 'bbl/MMscf', label: 'bbl/MMscf', factor: 0.158987294928 / 28316.8466 * 1e6, offset: 0 }, metric: { unit: 'm3/1e6m3', label: 'm³/10⁶ m³', factor: 1, offset: 0 } },
         time:     { imperial: { unit: 'hr',   label: 'hr',   factor: 1, offset: 0 }, metric: { unit: 'hr',   label: 'hr',   factor: 1, offset: 0 } },
         timeMin:  { imperial: { unit: 'min',  label: 'min',  factor: 1, offset: 0 }, metric: { unit: 'min',  label: 'min',  factor: 1, offset: 0 } },
         // Mass-flow specific to compressors (SCFM): no conversion (pure rate).
@@ -47215,7 +47238,7 @@ _registerPanel(6, {
             inputs: {
                 a_pD:   'lengthSmall',
                 a_oD:   'lengthSmall',
-                a_dP:   'pressureSmall',  // inH2O
+                a_dP:   'pressureSmall60',  // inH2O @ 60 °F (N3 = 27.707, as the calc)
                 a_Ps:   'pressureG',
                 a_Tf:   'temperature',
                 a_SG:   'sg',
@@ -47341,7 +47364,18 @@ _registerPanel(6, {
                 fp_api:  'api',
                 fp_t:    'temperature',
                 fp_sg:   'sg',
-                fp_api2: 'api'
+                fp_api2: 'api',
+                // Bubble Point and Shrinkage tabs (audit G2: were untagged).
+                bp_api:  'api',
+                bp_gor:  'gor',
+                bp_gg:   'sg',
+                bp_st:   'temperature',
+                bp_sp:   'pressureG',
+                bp_rt:   'temperature',
+                sf_sp:   'pressureG',
+                sf_st:   'temperature',
+                sf_gg:   'sg',
+                sf_api:  'api'
             },
             outputs: {}
         },
