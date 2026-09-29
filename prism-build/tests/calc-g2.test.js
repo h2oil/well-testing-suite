@@ -186,6 +186,44 @@ module.exports = [
     },
   },
   {
+    name: 'G2 casing ← WTS_tubulars: same dropdown order (saved indexes valid), exact π/4·12/9702 capacities, API drift rows',
+    wp: WP,
+    run(app, assert) {
+      const T = app.win.WTS_tubulars;
+      app.hook.nav('casing');
+      // Option order = host order: option i is WTS_tubulars.hostCasingKeys[i] (OD, weight, ID in the label).
+      const cOpts = app.findAll('#ct_cas option'), tOpts = app.findAll('#ct_tub option');
+      assert.strictEqual(cOpts.length, 32, '32 casing rows'); assert.strictEqual(tOpts.length, 9, '9 tubing rows');
+      T.hostCasingKeys.forEach((k, i) => {
+        const e = T.find(k);
+        assert.strictEqual(cOpts[i].getAttribute('value'), String(i));
+        assert.includes(String(cOpts[i].textContent), e.od + '" OD — ' + e.wt + ' lb/ft (ID: ' + e.id + '")', 'casing option ' + i);
+      });
+      T.hostTubingKeys.forEach((k, i) => assert.includes(String(tOpts[i].textContent), '(ID: ' + T.find(k).id + '")', 'tubing option ' + i));
+      // A saved index (v1.7 projects store the index) still selects the same pipe: 3 = 5" 11.5 lb/ft, ID 4.560".
+      app.select('ct_cas', '3'); app.select('ct_tub', '2');
+      set(app, { ct_cl: 10000, ct_tl: 9800 });
+      app.win.calcCasing();
+      assert.near(rv(app, 'ct_res', 'ID', 0), 4.56, 1e-9, 'index 3 → 5" 11.5# casing');
+      assert.near(rv(app, 'ct_res', 'ID', 1), 2.441, 1e-9, 'index 2 → 2-7/8" 6.5# tubing');
+      // API 5CT drift: casing ≤ 9-5/8" ID − 1/8"; tubing ≤ 2-7/8" ID − 3/32".
+      assert.near(rv(app, 'ct_res', 'API drift', 0), 4.56 - 0.125, 1e-9, 'casing drift');
+      assert.near(rv(app, 'ct_res', 'API drift', 1), 2.347, 1e-9, 'tubing drift 2.441 − 0.09375 = 2.347');
+      // Volumes with the exact constant (1 bbl = 9702 in³); the old 0.0009714 read 0.0013 % low.
+      app.select('ct_cas', '0'); app.select('ct_tub', '0'); app.win.calcCasing();
+      const K = Math.PI / 4 * 12 / 9702;                                   // 0.000971413 bbl/ft per in²
+      assert.near(rv(app, 'ct_res', 'Total Volume', 0), 4.09 * 4.09 * K * 10000, 0.0051, 'casing volume 162.50 bbl');
+      assert.near(rv(app, 'ct_res', 'Total Volume', 1), 1.995 * 1.995 * K * 9800, 0.0051, 'tubing volume');
+      assert.near(rv(app, 'ct_res', 'Total Annular Volume'), (4.09 * 4.09 - 2.375 * 2.375) * K * 9800, 0.0051, 'annular volume');
+      // 13-3/8" 48 lb/ft (index 28, ID 12.715") × 10,000 ft: 1570.50 bbl (the old constant gave 1570.47).
+      app.select('ct_cas', '28'); app.win.calcCasing();
+      assert.near(rv(app, 'ct_res', 'Total Volume', 0), 12.715 * 12.715 * K * 10000, 0.0051, '13-3/8" casing volume');
+      assert.ok(Math.abs(12.715 * 12.715 * 0.0009714 * 10000 - rv(app, 'ct_res', 'Total Volume', 0)) > 0.02, 'differs from the old rounded constant');
+      noBadNumbers(assert, app, 'casing tubulars');
+      assert.deepEqual(app.consoleErrors(), []);
+    },
+  },
+  {
     name: 'G2 casing metric: 3048 m of casing = 25.84 m³ (162.5 bbl); IDs in mm, capacities in m³/m',
     wp: WP,
     run(app, assert) {
