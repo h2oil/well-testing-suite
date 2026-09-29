@@ -139,7 +139,8 @@ module.exports = [
       // a dashboard tile is a keyboard button too
       app.hook.nav('home'); app.flush(50);
       const tile = app.find('.dash-card');
-      assert.equal(tile.getAttribute('role'), 'button');
+      // v3.0 dashboard marks tiles role="link" (they navigate to a page); either keyboard role is correct.
+      assert.ok(/^(button|link)$/.test(tile.getAttribute('role') || ''), 'tile has a keyboard role: ' + tile.getAttribute('role'));
       assert.equal(tile.getAttribute('tabindex'), '0');
       tile.focus(); app.key(tile, ' ');
       app.flush(50);

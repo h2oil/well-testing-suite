@@ -1,19 +1,19 @@
 
 // ═══════════════════════════════════════════════════════════════════════
-// Round-10 (live data) — auto-injected from prism-build/5N-*.js
+// Round-10 (live data) — auto-injected from prism-build/6N-*.js
 //   window.WTS_modbus (Modbus TCP / RTU master, station, virtual slave) and the
 //   registry pages `modbus` and `wellos` (Mini WellOS).
-//   • 50-modbus-core
-//   • 51-modbus-station
-//   • 52-modbus-page
-//   • 53-wellos
+//   • 60-modbus-core
+//   • 61-modbus-station
+//   • 62-modbus-page
+//   • 63-wellos
 // ═══════════════════════════════════════════════════════════════════════
 
 // ═══════════════════════════════════════════════════════════════════════
-// ─── BEGIN 50-modbus-core ───────────────────────────────────────────
+// ─── BEGIN 60-modbus-core ───────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════
 // =============================================================================
-// 50-modbus-core.js — Modbus protocol core (Round-10, "Live Data")
+// 60-modbus-core.js — Modbus protocol core (Round-10, "Live Data")
 // -----------------------------------------------------------------------------
 // window.WTS_modbus — pure-JS Modbus master for the Mini WellOS / Modbus pages.
 //
@@ -812,17 +812,17 @@ M.createClient = createClient;
 M.createSlave = createSlave;
 })();
 
-// ─── END 50-modbus-core ─────────────────────────────────────────────
+// ─── END 60-modbus-core ─────────────────────────────────────────────
 
 
 // ═══════════════════════════════════════════════════════════════════════
-// ─── BEGIN 51-modbus-station ───────────────────────────────────────────
+// ─── BEGIN 61-modbus-station ───────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════
 // =============================================================================
-// 51-modbus-station.js — Modbus configuration, polling station, alarms,
+// 61-modbus-station.js — Modbus configuration, polling station, alarms,
 // app-variable links and the built-in virtual slave (Round-10, "Live Data")
 // -----------------------------------------------------------------------------
-// Extends window.WTS_modbus (50-modbus-core.js):
+// Extends window.WTS_modbus (60-modbus-core.js):
 //   VARS / varsFromState / applyVarsToState   well-test variables (WTS_sim snapshot paths)
 //   UNITS / toCanonical / fromCanonical       tag engineering unit → app field unit
 //   defaultConfig / demoConfig / normalizeConfig / getConfig / saveConfig / setPaused
@@ -1894,14 +1894,14 @@ M.fmtNum = fmtNum;
 M._reset = function () { if (_station) _station.dispose(); _station = null; _owners = {}; if (_vs && _vs.driver) _vs.driver.reset(); _vs = null; _cache = { raw: null, cfg: null }; };
 })();
 
-// ─── END 51-modbus-station ─────────────────────────────────────────────
+// ─── END 61-modbus-station ─────────────────────────────────────────────
 
 
 // ═══════════════════════════════════════════════════════════════════════
-// ─── BEGIN 52-modbus-page ───────────────────────────────────────────
+// ─── BEGIN 62-modbus-page ───────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════
 // =============================================================================
-// 52-modbus-page.js — "Modbus" configuration page (route `modbus`, group "Live Data")
+// 62-modbus-page.js — "Modbus" configuration page (route `modbus`, group "Live Data")
 // -----------------------------------------------------------------------------
 // Devices (transport, address, unit id, poll rate, timeout, retries, byte/word order),
 // tags (register table, address with a 0/1-based toggle, data type, word order,
@@ -2379,14 +2379,14 @@ G.WTS_calcRegistry.modbus = {
 };
 })();
 
-// ─── END 52-modbus-page ─────────────────────────────────────────────
+// ─── END 62-modbus-page ─────────────────────────────────────────────
 
 
 // ═══════════════════════════════════════════════════════════════════════
-// ─── BEGIN 53-wellos ───────────────────────────────────────────
+// ─── BEGIN 63-wellos ───────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════
 // =============================================================================
-// 53-wellos.js — Mini WellOS (route `wellos`, its own sidebar group "Mini WellOS")
+// 63-wellos.js — Mini WellOS (route `wellos`, its own sidebar group "Mini WellOS")
 // -----------------------------------------------------------------------------
 // SCADA-style live view of a surface well-test spread: KPI tiles, 3D process
 // view (the Round-7 WTS_3d handle driven by this page's own data feed), 2D P&ID
@@ -3044,5 +3044,5 @@ G.WTS_calcRegistry.wellos = {
 };
 })();
 
-// ─── END 53-wellos ─────────────────────────────────────────────
+// ─── END 63-wellos ─────────────────────────────────────────────
 
