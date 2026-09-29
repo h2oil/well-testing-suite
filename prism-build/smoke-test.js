@@ -223,6 +223,11 @@ checks.push(['window.WTS_rerender',                  typeof win.WTS_rerender ===
 // Round-6 — multi-well projects + read-only snapshots (29-multiwell.js)
 checks.push(['window.WTS_wells + wells module',       !!(win.WTS_wells && typeof win.WTS_wells.switchTo === 'function' && win.WTS_project && win.WTS_project.listModules().indexOf('wells') !== -1)]);
 checks.push(['window.WTS_snapshot.sanitize strips scripts', !!(win.WTS_snapshot && !/<script|onerror/i.test(win.WTS_snapshot.sanitize('<img src=x onerror=a()><script>b()</script>')))]);
+// v3.0 P10 accessibility layer (50-a11y.js) + P6 cached number formatter (host)
+checks.push(['window.WTS_a11y.apply / name',         !!(win.WTS_a11y && typeof win.WTS_a11y.apply === 'function' && typeof win.WTS_a11y.name === 'function')]);
+checks.push(['WTS_parseNumber default is plain parseFloat', typeof win.WTS_parseNumber === 'function' && win.WTS_parseNumber('12,5') === 12 && win.WTS_parseNumber('2.5') === 2.5]);
+checks.push(['WTS_fmtNum ≡ toLocaleString',          typeof win.WTS_fmtNum === 'function' &&
+  win.WTS_fmtNum(1234.5678, 0, 2) === (1234.5678).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })]);
 // Round-9 — plug-in calculator registry (host); prism-build/4N-calc-*.js register into it
 checks.push(['window.WTS_calcRegistry (object)',     !!win.WTS_calcRegistry && typeof win.WTS_calcRegistry === 'object']);
 checks.push(['WTS_calcRegistry entries well-formed', Object.keys(win.WTS_calcRegistry || {}).every((k) => {

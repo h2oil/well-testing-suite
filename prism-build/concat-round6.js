@@ -9,6 +9,7 @@ const FILES = [
   '29-project-save.js',
   '29-multiwell.js',
   '30-quick-report.js',
+  '50-a11y.js',          // P10 accessibility layer + decimal-comma input (v3.0)
 ];
 
 const ROOT = __dirname;
@@ -70,6 +71,7 @@ function build(opts) {
     '//   • 29-project-save    (.h2oilproj project file save/load across modules)\n' +
     '//   • 29-multiwell       (multi-well projects, well switcher, comparison, read-only snapshots)\n' +
     '//   • 30-quick-report    (one-click cross-suite PDF report)\n' +
+    '//   • 50-a11y            (keyboard navigation, ARIA names, live regions, decimal comma)\n' +
     '// ═══════════════════════════════════════════════════════════════════════\n';
   for (const f of FILES) {
     const src = read(f);
