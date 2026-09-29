@@ -235,8 +235,18 @@
             if (k % 4 === 0) table.push({ p: pk, Ppr: pk / pc.Ppc, zDAK: zb.dak, zHY: zb.hy, Bg_ft3scf: P_SC * zb.dak * TR / (T_SC * pk) });
         }
 
+        // Separator point: the same Tpr ≥ 1.0 limit as the main point (below the
+        // pseudo-critical temperature DAK/HY return a liquid-like root, e.g. γ 1.2 at
+        // −40 °F: Tpr 0.87, Z 0.25, 31 lb/ft³), plus the same range warnings.
         var sep = null;
-        if (sepGiven) sep = _state(L, pc, sg, psep, tsep, false);
+        if (sepGiven) {
+            sep = _state(L, pc, sg, psep, tsep, false);
+            if (!(_fin(sep.zDAK) && _fin(sep.zHY) && sep.Tpr >= 1.0)) {
+                return { ok: false, bad: ['tsep'], keys: ['tsepTpc'], tpcF: pc.Tpc - RANKINE, errors: ['Separator temperature is below the pseudo-critical temperature (' + _fmt(pc.Tpc - RANKINE, 1) + ' °F); the gas correlations do not apply (Tpr must be at least 1.0).'] };
+            }
+            if (sep.Tpr < 1.05) warnings.push('Separator Tpr = ' + _fmt(sep.Tpr, 3) + ' is below 1.05, the lower limit of the range the Z correlations were fitted over.');
+            if (sep.Ppr > 15) warnings.push('Separator Ppr = ' + _fmt(sep.Ppr, 2) + ' is above 15; Z is extrapolated beyond the Standing–Katz chart.');
+        }
 
         return {
             ok: true, sg: sg, p: p, t: t, co2: co2, h2s: h2s, n2: n2, M: M,
@@ -271,7 +281,8 @@
         t: function () { return 'Temperature must be between ' + _u(-40, 'temperature', 0, '°F') + ' and ' + _u(700, 'temperature', 0, '°F') + '.'; },
         psep: function () { return 'Separator pressure must be above 0 and no more than ' + _u(30000, 'pressure', 0, 'psia') + ' (or leave both separator fields blank).'; },
         tsep: function () { return 'Separator temperature must be between ' + _u(-40, 'temperature', 0, '°F') + ' and ' + _u(700, 'temperature', 0, '°F') + ' (or leave both separator fields blank).'; },
-        tpc: function (r) { return 'Temperature is below the pseudo-critical temperature (' + _u(r.tpcF, 'temperature', 1, '°F') + '); the gas correlations do not apply (Tpr must be at least 1.0).'; }
+        tpc: function (r) { return 'Temperature is below the pseudo-critical temperature (' + _u(r.tpcF, 'temperature', 1, '°F') + '); the gas correlations do not apply (Tpr must be at least 1.0).'; },
+        tsepTpc: function (r) { return 'Separator temperature is below the pseudo-critical temperature (' + _u(r.tpcF, 'temperature', 1, '°F') + '); the gas correlations do not apply (Tpr must be at least 1.0).'; }
     };
 
     function _fg(id, label, val, extra) {

@@ -420,7 +420,7 @@
         else kv += _ok('Kill fluid gives ' + P(k.obActual) + ' overbalance at the top perforation.');
         h += '<div class="rbox"><div class="rbox-title">Kill Fluid</div>' +
             _row('Balance density', _ppgTriple(k.balance)) +
-            _row('Overbalance as density', _fixed(k.obPpg, 2) + ' ppg') +
+            _row('Overbalance as density', _metric() ? _den(k.obPpg) : _fixed(k.obPpg, 2) + ' ppg') +
             _row('Kill weight', _ppgTriple(k.kwf)) +
             _row('Kill fluid used', _ppgTriple(k.used) + (k.auto ? ' (rounded up)' : ' (selected)')) +
             _row('Kill fluid gradient', _grad(k.grad)) +
