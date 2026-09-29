@@ -74876,7 +74876,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
 //     od, id, wall, drift in inches; wt = nominal weight, lb/ft.
 //     wall = (od − id) / 2 (API 5CT: ID = OD − 2·wall).
 //     drift = API 5CT drift mandrel diameter:
-//       casing   ID − 1/8"  (OD ≤ 9-5/8"), ID − 5/32" (10-3/4" to 13-3/8"),
+//       casing   ID − 1/8"  (OD below 9-5/8"), ID − 5/32" (9-5/8" to 13-3/8"),
 //                ID − 3/16" (16" and larger)
 //       tubing   ID − 3/32" (OD ≤ 2-7/8"), ID − 1/8" (3-1/2" and larger)
 //       drill pipe: no API drift → null.
@@ -74919,7 +74919,10 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         if (Math.abs(rem * 64 - Math.round(rem * 64)) > 1e-6) return String(od);
         return (whole ? whole + '-' : '') + n + '/' + d;
     }
-    function _casingDrift(od, id) { return id - (od <= 9.625 + 1e-9 ? 0.125 : od < 16 - 1e-9 ? 0.15625 : 0.1875); }
+    // API Spec 5CT, drift-mandrel table: casing smaller than 9-5/8" → d − 1/8" (3.18 mm);
+    // 9-5/8" to 13-3/8" inclusive → d − 5/32" (3.97 mm); larger than 13-3/8" → d − 3/16" (4.76 mm).
+    // Check: 9-5/8" 47# ID 8.681" → drift 8.525" (published); 9-5/8" 53.5# 8.535" → 8.379".
+    function _casingDrift(od, id) { return id - (od < 9.625 - 1e-9 ? 0.125 : od <= 13.375 + 1e-9 ? 0.15625 : 0.1875); }
     function _tubingDrift(od, id) { return id - (od <= 2.875 + 1e-9 ? 0.09375 : 0.125); }
 
     function _mk(type, od, wt, id, note) {
@@ -77567,8 +77570,18 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             if (k % 4 === 0) table.push({ p: pk, Ppr: pk / pc.Ppc, zDAK: zb.dak, zHY: zb.hy, Bg_ft3scf: P_SC * zb.dak * TR / (T_SC * pk) });
         }
 
+        // Separator point: the same Tpr ≥ 1.0 limit as the main point (below the
+        // pseudo-critical temperature DAK/HY return a liquid-like root, e.g. γ 1.2 at
+        // −40 °F: Tpr 0.87, Z 0.25, 31 lb/ft³), plus the same range warnings.
         var sep = null;
-        if (sepGiven) sep = _state(L, pc, sg, psep, tsep, false);
+        if (sepGiven) {
+            sep = _state(L, pc, sg, psep, tsep, false);
+            if (!(_fin(sep.zDAK) && _fin(sep.zHY) && sep.Tpr >= 1.0)) {
+                return { ok: false, bad: ['tsep'], keys: ['tsepTpc'], tpcF: pc.Tpc - RANKINE, errors: ['Separator temperature is below the pseudo-critical temperature (' + _fmt(pc.Tpc - RANKINE, 1) + ' °F); the gas correlations do not apply (Tpr must be at least 1.0).'] };
+            }
+            if (sep.Tpr < 1.05) warnings.push('Separator Tpr = ' + _fmt(sep.Tpr, 3) + ' is below 1.05, the lower limit of the range the Z correlations were fitted over.');
+            if (sep.Ppr > 15) warnings.push('Separator Ppr = ' + _fmt(sep.Ppr, 2) + ' is above 15; Z is extrapolated beyond the Standing–Katz chart.');
+        }
 
         return {
             ok: true, sg: sg, p: p, t: t, co2: co2, h2s: h2s, n2: n2, M: M,
@@ -77603,7 +77616,8 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         t: function () { return 'Temperature must be between ' + _u(-40, 'temperature', 0, '°F') + ' and ' + _u(700, 'temperature', 0, '°F') + '.'; },
         psep: function () { return 'Separator pressure must be above 0 and no more than ' + _u(30000, 'pressure', 0, 'psia') + ' (or leave both separator fields blank).'; },
         tsep: function () { return 'Separator temperature must be between ' + _u(-40, 'temperature', 0, '°F') + ' and ' + _u(700, 'temperature', 0, '°F') + ' (or leave both separator fields blank).'; },
-        tpc: function (r) { return 'Temperature is below the pseudo-critical temperature (' + _u(r.tpcF, 'temperature', 1, '°F') + '); the gas correlations do not apply (Tpr must be at least 1.0).'; }
+        tpc: function (r) { return 'Temperature is below the pseudo-critical temperature (' + _u(r.tpcF, 'temperature', 1, '°F') + '); the gas correlations do not apply (Tpr must be at least 1.0).'; },
+        tsepTpc: function (r) { return 'Separator temperature is below the pseudo-critical temperature (' + _u(r.tpcF, 'temperature', 1, '°F') + '); the gas correlations do not apply (Tpr must be at least 1.0).'; }
     };
 
     function _fg(id, label, val, extra) {
@@ -78247,7 +78261,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         else kv += _ok('Kill fluid gives ' + P(k.obActual) + ' overbalance at the top perforation.');
         h += '<div class="rbox"><div class="rbox-title">Kill Fluid</div>' +
             _row('Balance density', _ppgTriple(k.balance)) +
-            _row('Overbalance as density', _fixed(k.obPpg, 2) + ' ppg') +
+            _row('Overbalance as density', _metric() ? _den(k.obPpg) : _fixed(k.obPpg, 2) + ' ppg') +
             _row('Kill weight', _ppgTriple(k.kwf)) +
             _row('Kill fluid used', _ppgTriple(k.used) + (k.auto ? ' (rounded up)' : ' (selected)')) +
             _row('Kill fluid gradient', _grad(k.grad)) +

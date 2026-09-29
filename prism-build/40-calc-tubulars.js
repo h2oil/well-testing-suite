@@ -15,7 +15,7 @@
 //     od, id, wall, drift in inches; wt = nominal weight, lb/ft.
 //     wall = (od − id) / 2 (API 5CT: ID = OD − 2·wall).
 //     drift = API 5CT drift mandrel diameter:
-//       casing   ID − 1/8"  (OD ≤ 9-5/8"), ID − 5/32" (10-3/4" to 13-3/8"),
+//       casing   ID − 1/8"  (OD below 9-5/8"), ID − 5/32" (9-5/8" to 13-3/8"),
 //                ID − 3/16" (16" and larger)
 //       tubing   ID − 3/32" (OD ≤ 2-7/8"), ID − 1/8" (3-1/2" and larger)
 //       drill pipe: no API drift → null.
@@ -58,7 +58,10 @@
         if (Math.abs(rem * 64 - Math.round(rem * 64)) > 1e-6) return String(od);
         return (whole ? whole + '-' : '') + n + '/' + d;
     }
-    function _casingDrift(od, id) { return id - (od <= 9.625 + 1e-9 ? 0.125 : od < 16 - 1e-9 ? 0.15625 : 0.1875); }
+    // API Spec 5CT, drift-mandrel table: casing smaller than 9-5/8" → d − 1/8" (3.18 mm);
+    // 9-5/8" to 13-3/8" inclusive → d − 5/32" (3.97 mm); larger than 13-3/8" → d − 3/16" (4.76 mm).
+    // Check: 9-5/8" 47# ID 8.681" → drift 8.525" (published); 9-5/8" 53.5# 8.535" → 8.379".
+    function _casingDrift(od, id) { return id - (od < 9.625 - 1e-9 ? 0.125 : od <= 13.375 + 1e-9 ? 0.15625 : 0.1875); }
     function _tubingDrift(od, id) { return id - (od <= 2.875 + 1e-9 ? 0.09375 : 0.125); }
 
     function _mk(type, od, wt, id, note) {

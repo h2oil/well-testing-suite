@@ -100,7 +100,7 @@ module.exports = [
         if (e.type !== 'drillpipe') assert.ok(e.drift > 0 && e.drift < e.id, e.key + ' drift');
       });
       // API drift rules
-      assert.rel(T.find('casing-9.625-47').drift, 8.681 - 0.125, 1e-9, '9-5/8 drift');
+      assert.rel(T.find('casing-9.625-47').drift, 8.525, 1e-9, '9-5/8 drift (5/32", API 5CT: 8.525")');
       assert.rel(T.find('casing-13.375-68').drift, 12.415 - 5 / 32, 1e-3, '13-3/8 drift (5/32")');
       assert.rel(T.find('tubing-2.375-4.7').drift, 1.901, 1e-9, '2-3/8 drift (3/32")');
       assert.rel(T.find('tubing-3.5-9.3').drift, 2.867, 1e-9, '3-1/2 drift (1/8")');
