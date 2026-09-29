@@ -220,6 +220,9 @@ checks.push(['PRiSM_MODELS count >= 45', modelCount >= 45]);
 checks.push(['window.WTS_project',                   typeof win.WTS_project === 'object']);
 checks.push(['window.WTS_pageAutosave.flush',        !!(win.WTS_pageAutosave && typeof win.WTS_pageAutosave.flush === 'function')]);
 checks.push(['window.WTS_rerender',                  typeof win.WTS_rerender === 'function']);
+// Round-6 — multi-well projects + read-only snapshots (29-multiwell.js)
+checks.push(['window.WTS_wells + wells module',       !!(win.WTS_wells && typeof win.WTS_wells.switchTo === 'function' && win.WTS_project && win.WTS_project.listModules().indexOf('wells') !== -1)]);
+checks.push(['window.WTS_snapshot.sanitize strips scripts', !!(win.WTS_snapshot && !/<script|onerror/i.test(win.WTS_snapshot.sanitize('<img src=x onerror=a()><script>b()</script>')))]);
 // Round-9 — plug-in calculator registry (host); prism-build/4N-calc-*.js register into it
 checks.push(['window.WTS_calcRegistry (object)',     !!win.WTS_calcRegistry && typeof win.WTS_calcRegistry === 'object']);
 checks.push(['WTS_calcRegistry entries well-formed', Object.keys(win.WTS_calcRegistry || {}).every((k) => {
