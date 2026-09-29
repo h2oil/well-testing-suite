@@ -20,7 +20,7 @@ function loadCore() {
   const ctx = { console: { log() {}, warn() {} }, Math, Date, JSON, setTimeout, clearTimeout, Promise, Uint8Array, Uint16Array, Float64Array,
     DataView, ArrayBuffer, Buffer, WebSocket: globalThis.WebSocket, encodeURIComponent };
   ctx.globalThis = ctx; vm.createContext(ctx);
-  for (const f of ['50-modbus-core.js', '51-modbus-station.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, '..', f), 'utf8'), ctx, { filename: f });
+  for (const f of ['60-modbus-core.js', '61-modbus-station.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, '..', f), 'utf8'), ctx, { filename: f });
   return ctx.WTS_modbus;
 }
 const plain = (x) => JSON.parse(JSON.stringify(Array.from(x)));

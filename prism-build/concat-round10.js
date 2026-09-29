@@ -4,12 +4,12 @@
 // Run with:  node prism-build/concat-round10.js
 // Writes:    prism-build/combined-round10.js
 //
-// Like Round-9, FILES is not a hand-kept list: every prism-build/5N-*.js (N = 0-9)
+// Like Round-9, FILES is not a hand-kept list: every prism-build/6N-*.js (N = 0-9)
 // is picked up automatically, in numeric order (ties by name):
-//   50-modbus-core.js     WTS_modbus protocol core (framing, CRC, data types, client, transports, virtual slave)
-//   51-modbus-station.js  configuration, polling station, alarms, variables, historian hook, simulator driver
-//   52-modbus-page.js     route `modbus` (WTS_calcRegistry, group "Live Data")
-//   53-wellos.js          route `wellos` (WTS_calcRegistry, group "Mini WellOS")
+//   60-modbus-core.js     WTS_modbus protocol core (framing, CRC, data types, client, transports, virtual slave)
+//   61-modbus-station.js  configuration, polling station, alarms, variables, historian hook, simulator driver
+//   62-modbus-page.js     route `modbus` (WTS_calcRegistry, group "Live Data")
+//   63-wellos.js          route `wellos` (WTS_calcRegistry, group "Mini WellOS")
 // Self-tests are stripped exactly like Round-8 / Round-9.
 //
 // require()-able: module.exports = { PATTERN, FILES, OUT, listFiles, build, stripSelfTest, main }.
@@ -21,7 +21,7 @@ const { stripSelfTest } = require('./concat-round8');
 
 const ROOT = __dirname;
 const OUT = path.join(ROOT, 'combined-round10.js');
-const PATTERN = /^5[0-9]-[\w.-]+\.js$/;
+const PATTERN = /^6[0-9]-[\w.-]+\.js$/;
 
 function _num(f) { return parseInt(f, 10); }
 function sortFiles(list) {
@@ -54,7 +54,7 @@ function build(opts) {
   const files = listFiles(opts.extraFiles);
   let combined =
     '\n// ═══════════════════════════════════════════════════════════════════════\n' +
-    '// Round-10 (live data) — auto-injected from prism-build/5N-*.js\n' +
+    '// Round-10 (live data) — auto-injected from prism-build/6N-*.js\n' +
     '//   window.WTS_modbus (Modbus TCP / RTU master, station, virtual slave) and the\n' +
     '//   registry pages `modbus` and `wellos` (Mini WellOS).\n' +
     (files.length ? files.map((f) => '//   • ' + f.replace(/\.js$/, '')).join('\n') + '\n' : '//   (no files)\n') +

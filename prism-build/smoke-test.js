@@ -243,7 +243,7 @@ checks.push(['WTS_calcRegistry entries well-formed', Object.keys(win.WTS_calcReg
   checks.push(['WTS_calcRegistry.' + k + ' registered',  !!(win.WTS_calcRegistry && win.WTS_calcRegistry[k])]);
   checks.push(['window.' + fn + ' (function)',          typeof win[fn] === 'function']);
 });
-// Round-10 — live data (5N-*.js): Modbus core + station, Modbus page, Mini WellOS
+// Round-10 — live data (6N-*.js): Modbus core + station, Modbus page, Mini WellOS
 checks.push(['window.WTS_modbus (object)',            !!win.WTS_modbus && typeof win.WTS_modbus === 'object']);
 checks.push(['WTS_modbus.createClient / createStation', !!win.WTS_modbus && typeof win.WTS_modbus.createClient === 'function' && typeof win.WTS_modbus.createStation === 'function']);
 checks.push(['WTS_modbus.crc16("123456789") = 0x4B37', (() => { try { return win.WTS_modbus.crc16([49, 50, 51, 52, 53, 54, 55, 56, 57]) === 0x4B37; } catch (e) { return false; } })()]);

@@ -1,8 +1,8 @@
 // =============================================================================
-// 51-modbus-station.js — Modbus configuration, polling station, alarms,
+// 61-modbus-station.js — Modbus configuration, polling station, alarms,
 // app-variable links and the built-in virtual slave (Round-10, "Live Data")
 // -----------------------------------------------------------------------------
-// Extends window.WTS_modbus (50-modbus-core.js):
+// Extends window.WTS_modbus (60-modbus-core.js):
 //   VARS / varsFromState / applyVarsToState   well-test variables (WTS_sim snapshot paths)
 //   UNITS / toCanonical / fromCanonical       tag engineering unit → app field unit
 //   defaultConfig / demoConfig / normalizeConfig / getConfig / saveConfig / setPaused
@@ -1080,5 +1080,5 @@ M._reset = function () { if (_station) _station.dispose(); _station = null; _own
     if (!M || !M.planBlocks) return;
     var b = M.planBlocks([{ table: 'holding', addr: 0, count: 2, ref: 1 }, { table: 'holding', addr: 2, count: 2, ref: 2 }, { table: 'holding', addr: 200, count: 1, ref: 3 }], { maxGap: 0 });
     var ok = b.length === 2 && b[0].count === 4 && Math.abs(M.toCanonical(10, 'bar', 'pressureG') - 145.0377) < 1e-3;
-    if (typeof console !== 'undefined') console[ok ? 'log' : 'warn']('[51-modbus-station] self-test ' + (ok ? 'passed' : 'FAILED'));
+    if (typeof console !== 'undefined') console[ok ? 'log' : 'warn']('[61-modbus-station] self-test ' + (ok ? 'passed' : 'FAILED'));
 })();

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Idempotently injects prism-build/combined-round10.js (live data: Modbus +
-// Mini WellOS, prism-build/5N-*.js) into well-testing-app.html.
+// Mini WellOS, prism-build/6N-*.js) into well-testing-app.html.
 //
 // First run: inserted right after the Round-9 (calculators) END sentinel (inside
 // the host IIFE, before the Well Test Simulator code and the initial render()),

@@ -1,5 +1,5 @@
 // =============================================================================
-// 50-modbus-core.js — Modbus protocol core (Round-10, "Live Data")
+// 60-modbus-core.js — Modbus protocol core (Round-10, "Live Data")
 // -----------------------------------------------------------------------------
 // window.WTS_modbus — pure-JS Modbus master for the Mini WellOS / Modbus pages.
 //
@@ -805,5 +805,5 @@ M.createSlave = createSlave;
     var ok = M.crc16([0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39]) === 0x4B37 &&
         M.hex(M.encodeRtu(1, M.buildReadPdu(3, 0, 10))) === '01 03 00 00 00 0A C5 CD' &&
         Math.abs(M.decodeValue(M.encodeValue(123.456, 'float32', 'CDAB'), 'float32', 'CDAB') - 123.456) < 1e-4;
-    if (typeof console !== 'undefined') console[ok ? 'log' : 'warn']('[50-modbus-core] self-test ' + (ok ? 'passed' : 'FAILED'));
+    if (typeof console !== 'undefined') console[ok ? 'log' : 'warn']('[60-modbus-core] self-test ' + (ok ? 'passed' : 'FAILED'));
 })();

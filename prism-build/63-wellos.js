@@ -1,5 +1,5 @@
 // =============================================================================
-// 53-wellos.js — Mini WellOS (route `wellos`, its own sidebar group "Mini WellOS")
+// 63-wellos.js — Mini WellOS (route `wellos`, its own sidebar group "Mini WellOS")
 // -----------------------------------------------------------------------------
 // SCADA-style live view of a surface well-test spread: KPI tiles, 3D process
 // view (the Round-7 WTS_3d handle driven by this page's own data feed), 2D P&ID
@@ -661,5 +661,5 @@ G.WTS_calcRegistry.wellos = {
 (function () {
     var G = (typeof window !== 'undefined') ? window : globalThis;
     var ok = !!(G.WTS_calcRegistry && G.WTS_calcRegistry.wellos && G.WTS_modbus && G.WTS_modbus.wellos);
-    if (typeof console !== 'undefined') console[ok ? 'log' : 'warn']('[53-wellos] self-test ' + (ok ? 'passed' : 'FAILED'));
+    if (typeof console !== 'undefined') console[ok ? 'log' : 'warn']('[63-wellos] self-test ' + (ok ? 'passed' : 'FAILED'));
 })();

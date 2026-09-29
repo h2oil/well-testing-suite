@@ -1,4 +1,4 @@
-// Modbus core (50-modbus-core.js) + station (51-modbus-station.js) — protocol and logic tests.
+// Modbus core (60-modbus-core.js) + station (61-modbus-station.js) — protocol and logic tests.
 //
 // Expected values are independent of the code under test:
 //   • PDUs: MODBUS Application Protocol Specification V1.1b3 worked examples (§6.1-6.12, §7).
@@ -21,7 +21,7 @@ function load(extra) {
   const ctx = Object.assign({ console: { log() {}, warn() {}, error() {} }, Math, Date, JSON, setTimeout, clearTimeout, Promise,
     Uint8Array, Uint16Array, Float64Array, DataView, ArrayBuffer, Buffer }, extra || {});
   ctx.globalThis = ctx; vm.createContext(ctx);
-  for (const f of ['50-modbus-core.js', '51-modbus-station.js']) vm.runInContext(fs.readFileSync(path.join(D, f), 'utf8'), ctx, { filename: f });
+  for (const f of ['60-modbus-core.js', '61-modbus-station.js']) vm.runInContext(fs.readFileSync(path.join(D, f), 'utf8'), ctx, { filename: f });
   return ctx.WTS_modbus;
 }
 const hx = (M, b) => M.hex(b);
@@ -401,7 +401,7 @@ module.exports = [
     run(app, assert) {
       const ctx = { console: { log() {}, warn() {} }, Math, Date, JSON, setTimeout, clearTimeout, Promise, Uint8Array, Uint16Array, Float64Array, DataView, ArrayBuffer, Buffer };
       ctx.globalThis = ctx; vm.createContext(ctx);
-      for (const f of ['31-wts-sim.js', '50-modbus-core.js', '51-modbus-station.js']) vm.runInContext(fs.readFileSync(path.join(D, f), 'utf8').split('// === SELF-TEST ===')[0], ctx, { filename: f });
+      for (const f of ['31-wts-sim.js', '60-modbus-core.js', '61-modbus-station.js']) vm.runInContext(fs.readFileSync(path.join(D, f), 'utf8').split('// === SELF-TEST ===')[0], ctx, { filename: f });
       const M = ctx.WTS_modbus, sim = ctx.WTS_sim.create(ctx.WTS_sim.SAMPLE_FLOW, { seed: 3 });
       sim.advance(30);
       const base = sim.getState();

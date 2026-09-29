@@ -1,5 +1,5 @@
 // =============================================================================
-// 52-modbus-page.js — "Modbus" configuration page (route `modbus`, group "Live Data")
+// 62-modbus-page.js — "Modbus" configuration page (route `modbus`, group "Live Data")
 // -----------------------------------------------------------------------------
 // Devices (transport, address, unit id, poll rate, timeout, retries, byte/word order),
 // tags (register table, address with a 0/1-based toggle, data type, word order,
@@ -481,5 +481,5 @@ G.WTS_calcRegistry.modbus = {
 (function () {
     var G = (typeof window !== 'undefined') ? window : globalThis;
     var ok = !!(G.WTS_calcRegistry && G.WTS_calcRegistry.modbus && typeof G.WTS_calcRegistry.modbus.render === 'function');
-    if (typeof console !== 'undefined') console[ok ? 'log' : 'warn']('[52-modbus-page] self-test ' + (ok ? 'passed' : 'FAILED'));
+    if (typeof console !== 'undefined') console[ok ? 'log' : 'warn']('[62-modbus-page] self-test ' + (ok ? 'passed' : 'FAILED'));
 })();

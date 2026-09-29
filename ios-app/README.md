@@ -292,7 +292,7 @@ Modbus TCP to PLCs / RTUs on the local network without the WebSocket bridge the 
   prompt on the first connection. While the prompt is open the first connect attempt fails
   ("waiting") and the page retries automatically. No Bonjour services are browsed, so
   `NSBonjourServices` is not needed. Raw TCP is not subject to App Transport Security.
-- JS side: `prism-build/50-modbus-core.js` → `WTS_modbus.transports.nativeTcp`
+- JS side: `prism-build/60-modbus-core.js` → `WTS_modbus.transports.nativeTcp`
   (`connect({host, port, timeoutMs}) → {id}`, `send({id, data: base64})`, `disconnect({id})`,
   events `data` / `closed`).
 
