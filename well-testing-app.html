@@ -10754,6 +10754,8 @@ const RELEASE_NOTES = [
         ['fix', 'Logic audit', 'Turbine Meter picks the right meter for a wide range; Analog Signal fault bands only on mA; Tank and MCF follow the units switch; edited-but-not-recalculated results are dimmed and left out of reports; Separator Rating FAIL shown in the Quick Report; clearer labels.'],
         ['ux', 'Navigation', 'Dashboard search, group headings, ☆ favourites and Recently used; sidebar search and collapsible groups; input tables become cards on phones; “Copy results” on every calculator; metric results completed across the remaining pages.'],
         ['ux', 'Accessibility &amp; speed', 'Full keyboard navigation, labels on every input, announced results, chart text summaries, higher-contrast text, an optional decimal-comma mode; very large plots redraw about three times faster.'],
+        ['calc', 'Historian', 'Records Modbus, form and simulator data in an in-browser SQLite database (OPFS, or sql.js saved in IndexedDB, or IndexedDB) with a multi-axis trend viewer (zoom, pan, cursor), a time-aligned data table, retention and 1-minute downsampling, CSV / Excel export and .sqlite / .json backup and restore. Polling rate and logging are set per device and tag on the Modbus page.'],
+        ['ux', 'Privacy page', 'Now covers Modbus live data and the historian, and credits the open-source components.'],
         // <!-- v3.0 more items -->  (add further v3.0 items here, same shape as above)
       ] },
     { ver:'v1.8', date:'2026-09-29', title:'Thirteen new calculators, simulator divert valves &amp; metric everywhere',
@@ -11233,8 +11235,18 @@ function renderPrivacy(body){
         'The 3D engine and the PDF libraries are bundled inside the app, so they work offline.'
       ]) + '</div>' +
       '<div class="card"><div class="card-title">Other network requests</div>' + li([
-        'Some optional features download a public code library the first time they are used: the 3D engine for the Well Test Simulator (web version) and the spreadsheet reader for .xlsx imports.',
+        'Some optional features download a public code library the first time they are used: the 3D engine for the Well Test Simulator and Mini WellOS, the historian database engine (SQLite) and the spreadsheet library for .xlsx import/export (web version).',
         'These are plain file downloads from a public content-delivery network. No inputs or data are sent with them; the 3D engine is checked against a pinned SHA-384 hash before it is used.'
+      ]) + '</div>' +
+      '<div class="card"><div class="card-title">Live data (Modbus) and the historian</div>' + li([
+        'Modbus connects only to the devices you configure. On the web it goes through a bridge program you run yourself on your own network (bound to this computer by default); in the iOS app it connects directly on your local network, after iOS asks for Local Network permission.',
+        'Tag values, alarms and history are stored only in this browser’s or app’s local database (the historian). Nothing is sent to H2Oil or any server; CSV / Excel / backup files are created only when you export them.',
+        'Writing to equipment is off by default and needs “Enable writes” plus a confirmation for each write.'
+      ]) + '</div>' +
+      '<div class="card"><div class="card-title">Open-source components</div>' + li([
+        'three.js (MIT) — 3D views; jsPDF and html2canvas (MIT) — PDF / PNG export; SheetJS Community Edition (Apache-2.0) — Excel import/export.',
+        'SQLite (public domain) with the official SQLite WebAssembly build (@sqlite.org/sqlite-wasm, Apache-2.0) and sql.js (MIT), both built with Emscripten (MIT) — historian database.',
+        'Web versions load these from a public content-delivery network on first use and check the pinned SHA-384 hash before running them (the spreadsheet library excepted); the iOS app bundles them.'
       ]) + '</div>' +
       '<div class="card"><div class="card-title">Contact</div>' +
         '<p style="font-size:13px;color:var(--text2);line-height:1.6">Questions about privacy: <strong>software@h2oil.co.uk</strong>.</p></div>' +
