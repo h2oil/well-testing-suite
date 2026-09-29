@@ -3472,7 +3472,7 @@ const PRiSM_THEME = {
     gridMajor: '#30363d',
     text:      '#c9d1d9',
     text2:     '#8b949e',
-    text3:     '#6e7681',
+    text3:     '#848d97',   // P10 contrast (was #6e7681); synced from --text3
     accent:    '#f0883e', // orange — primary series
     blue:      '#58a6ff', // overlay / model curve
     green:     '#3fb950', // derivative / good fit
@@ -4052,6 +4052,40 @@ function PRiSM_plot_legend(ctx, items, plot, opts) {
 // ─────────────────────────────────────────────────────────────────────
 // SHARED — line series, scatter series
 // ─────────────────────────────────────────────────────────────────────
+// P6 plot decimation (drawing only — data, fits and _prismAxes are untouched).
+// A series longer than PRiSM_PLOT_DECIMATE_MIN points is drawn with the M4 rule:
+// per pixel column keep the first, lowest, highest and last vertex in their
+// original order, which rasterises to the same polyline (Jugel et al., "M4: A
+// Visualization-Oriented Time Series Data Aggregation", PVLDB 7(10), 2014).
+// Markers keep one dot per half-pixel cell.
+const PRiSM_PLOT_DECIMATE_MIN = 1500;
+function PRiSM_plot_pathM4(ctx, pts, toX, toY) {
+    let started = false, col = null, b = null;
+    const flush = function () {
+        if (!b) return;
+        let last = -1;
+        [b.f, b.mn, b.mx, b.l].sort(function (a, c) { return a.i - c.i; }).forEach(function (q) {
+            if (q.i === last) return;
+            last = q.i;
+            if (!started) { ctx.moveTo(q.x, q.y); started = true; } else ctx.lineTo(q.x, q.y);
+        });
+        b = null;
+    };
+    for (let i = 0; i < pts.length; i++) {
+        const p = pts[i];
+        const x = (p && isFinite(p[0]) && isFinite(p[1])) ? toX(p[0]) : NaN;
+        const y = isFinite(x) ? toY(p[1]) : NaN;
+        if (!isFinite(x) || !isFinite(y)) { flush(); started = false; col = null; continue; }
+        const c = Math.floor(x);
+        if (b && c !== col) flush();
+        col = c;
+        const q = { i: i, x: x, y: y };
+        if (!b) b = { f: q, mn: q, mx: q, l: q };
+        else { if (y < b.mn.y) b.mn = q; if (y > b.mx.y) b.mx = q; b.l = q; }
+    }
+    flush();
+}
+
 function PRiSM_plot_line(ctx, pts, toX, toY, color, opts) {
     if (!pts || !pts.length) return;
     opts = opts || {};
@@ -4060,6 +4094,12 @@ function PRiSM_plot_line(ctx, pts, toX, toY, color, opts) {
     ctx.lineWidth = opts.width || 2;
     if (opts.dash) ctx.setLineDash(opts.dash);
     ctx.beginPath();
+    if (pts.length > PRiSM_PLOT_DECIMATE_MIN) {
+        PRiSM_plot_pathM4(ctx, pts, toX, toY);
+        ctx.stroke();
+        ctx.restore();
+        return;
+    }
     let started = false;
     for (let i = 0; i < pts.length; i++) {
         const p = pts[i];
@@ -4078,10 +4118,16 @@ function PRiSM_plot_dots(ctx, pts, toX, toY, color, r) {
     r = r || 2.5;
     ctx.save();
     ctx.fillStyle = color;
+    const seen = pts.length > PRiSM_PLOT_DECIMATE_MIN ? new Set() : null;
     pts.forEach(function (p) {
         if (!p || !isFinite(p[0]) || !isFinite(p[1])) return;
         const x = toX(p[0]), y = toY(p[1]);
         if (!isFinite(x) || !isFinite(y)) return;
+        if (seen) {
+            const k = Math.round(x * 2) + ',' + Math.round(y * 2);
+            if (seen.has(k)) return;
+            seen.add(k);
+        }
         ctx.beginPath();
         ctx.arc(x, y, r, 0, Math.PI * 2);
         ctx.fill();
@@ -4262,6 +4308,7 @@ function PRiSM_plot_finish(setup, render, cfg) {
     }
     try { canvas._prismOriginalScale = { x: PRiSM_plot_copyScale(auto.x), y: PRiSM_plot_copyScale(auto.y) }; }
     catch (_) { /* detached */ }
+    PRiSM_plot_ariaSummary(canvas, opts, cfg, plotKey);
     S.cur = {
         canvas: canvas, ctx: setup.ctx, plot: setup.plot, render: render, opts: opts, extra: setup.extra,
         data: cfg.data || null, plotKey: plotKey, scaleX: sx, scaleY: sy, auto: auto, zoomed: zoomed,
@@ -4270,6 +4317,31 @@ function PRiSM_plot_finish(setup, render, cfg) {
     };
     PRiSM_plot_paint(S, 'initial');
     PRiSM_plot_install(canvas, S);
+}
+
+// P10: the plot is an image to assistive technology — role="img" plus a text
+// summary (plot, axes, point count and data ranges). An author-set label wins.
+function PRiSM_plot_ariaSummary(canvas, opts, cfg, plotKey) {
+    try {
+        if (!canvas || typeof canvas.setAttribute !== 'function') return;
+        if (canvas.hasAttribute && canvas.hasAttribute('aria-label') && !canvas.hasAttribute('data-a11y-auto')) return;
+        const pts = cfg.sigPoints || cfg.points || [];   // the measured series (Bourdet: Δp, not Δp + derivative)
+        let n = 0, x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+        for (let i = 0; i < pts.length; i++) {
+            const p = pts[i];
+            if (!p || !isFinite(p[0]) || !isFinite(p[1])) continue;
+            n++;
+            if (p[0] < x0) x0 = p[0]; if (p[0] > x1) x1 = p[0];
+            if (p[1] < y0) y0 = p[1]; if (p[1] > y1) y1 = p[1];
+        }
+        const name = String(opts.title || plotKey || 'PRiSM') + ' plot';
+        const xn = String(cfg.xName || 'x'), yn = String(cfg.yName || 'y');
+        const f = function (v) { return PRiSM_plot_format_eng(v, 3); };
+        canvas.setAttribute('role', 'img');
+        canvas.setAttribute('data-a11y-auto', '1');
+        canvas.setAttribute('aria-label', name + ': ' + yn + ' against ' + xn + '. ' +
+            (n ? n + ' points; ' + xn + ' ' + f(x0) + ' to ' + f(x1) + ', ' + yn + ' ' + f(y0) + ' to ' + f(y1) + '.' : 'No data points.'));
+    } catch (_) { /* a label is a nicety — never break a plot */ }
 }
 
 function PRiSM_plot_decorate(S) {

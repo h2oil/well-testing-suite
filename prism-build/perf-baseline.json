@@ -1,0 +1,17 @@
+{
+  "date": "2026-09-29",
+  "bytes": {
+    "html": 4898057,
+    "www": 4906511,
+    "mainScript": 4842202,
+    "htmlGzip": 1301037
+  },
+  "compileMs": 81.1,
+  "startupMs": 60.8,
+  "startupMinMs": 57.8,
+  "firstIdleMs": 0,
+  "calibMs": 17.37,
+  "startupRatio": 3.33,
+  "runs": 9,
+  "loadErrors": 0
+}

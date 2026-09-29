@@ -220,6 +220,11 @@ checks.push(['PRiSM_MODELS count >= 45', modelCount >= 45]);
 checks.push(['window.WTS_project',                   typeof win.WTS_project === 'object']);
 checks.push(['window.WTS_pageAutosave.flush',        !!(win.WTS_pageAutosave && typeof win.WTS_pageAutosave.flush === 'function')]);
 checks.push(['window.WTS_rerender',                  typeof win.WTS_rerender === 'function']);
+// v3.0 P10 accessibility layer (50-a11y.js) + P6 cached number formatter (host)
+checks.push(['window.WTS_a11y.apply / name',         !!(win.WTS_a11y && typeof win.WTS_a11y.apply === 'function' && typeof win.WTS_a11y.name === 'function')]);
+checks.push(['WTS_parseNumber default is plain parseFloat', typeof win.WTS_parseNumber === 'function' && win.WTS_parseNumber('12,5') === 12 && win.WTS_parseNumber('2.5') === 2.5]);
+checks.push(['WTS_fmtNum ≡ toLocaleString',          typeof win.WTS_fmtNum === 'function' &&
+  win.WTS_fmtNum(1234.5678, 0, 2) === (1234.5678).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })]);
 // Round-9 — plug-in calculator registry (host); prism-build/4N-calc-*.js register into it
 checks.push(['window.WTS_calcRegistry (object)',     !!win.WTS_calcRegistry && typeof win.WTS_calcRegistry === 'object']);
 checks.push(['WTS_calcRegistry entries well-formed', Object.keys(win.WTS_calcRegistry || {}).every((k) => {

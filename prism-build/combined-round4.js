@@ -1743,6 +1743,9 @@
             imp.style.color      = (active === 'imperial') ? '#0d1117' : 'var(--text2, #8b949e)';
             imp.style.fontWeight = (active === 'imperial') ? '700' : '500';
         }
+        // P10: a two-button toggle — the pressed state is announced, not just coloured.
+        if (imp && imp.setAttribute) imp.setAttribute('aria-pressed', active === 'imperial' ? 'true' : 'false');
+        if (met && met.setAttribute) met.setAttribute('aria-pressed', active === 'metric' ? 'true' : 'false');
         if (met && met.style) {
             met.style.background = (active === 'metric') ? 'var(--accent, #f0883e)' : 'transparent';
             met.style.color      = (active === 'metric') ? '#0d1117' : 'var(--text2, #8b949e)';
@@ -1764,9 +1767,11 @@
         }
         var wrap = document.createElement('div');
         wrap.id = _toggleId;
+        wrap.setAttribute('role', 'group');                       // P10
+        wrap.setAttribute('aria-label', 'Unit system and standard conditions');
         wrap.style.cssText = 'display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:11px;color:var(--text2,#8b949e);margin-left:12px;';
         wrap.innerHTML =
-            '<span>Units:</span>' +
+            '<span aria-hidden="true">Units:</span>' +
             '<button type="button" id="wts_units_imperial" class="btn btn-secondary" ' +
                 'style="padding:3px 8px;font-size:11px;border-radius:4px;border:1px solid var(--border,#30363d);cursor:pointer;background:transparent;color:var(--text2,#8b949e);">Imperial</button>' +
             '<button type="button" id="wts_units_metric" class="btn btn-secondary" ' +

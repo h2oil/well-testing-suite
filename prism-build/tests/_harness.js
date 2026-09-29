@@ -29,6 +29,8 @@
 //                (print console.error only). Env PRISM_HARNESS_VERBOSE=1 → 'inherit'.
 //   confirm      value returned by window.confirm (default true)
 //   prompt       value returned by window.prompt (default null)
+//   globals      extra properties merged into the app's global object before load
+//                (perf-budget.js passes a real-time mark function).
 //   seed         false (default) — when true, clear the sample-suppress flag
 //                and seed the default sample right after load.
 //
@@ -631,6 +633,8 @@ function loadApp(opts) {
     Buffer: undefined,
   };
   Object.assign(sandbox, timers.api);
+  // opts.globals: extra realm globals (e.g. a real-time clock for perf-budget.js marks).
+  if (opts.globals) Object.assign(sandbox, opts.globals);
   sandbox.gtag = function () { sandbox.dataLayer.push(Array.from(arguments)); };
 
   const ctx = vm.createContext(sandbox, { name: 'prism-app' });

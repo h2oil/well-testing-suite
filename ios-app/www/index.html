@@ -32,12 +32,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Well Testing Suite — H2Oil</title>
     <style>
+        /* P10 contrast (WCAG 2.2 AA, 4.5:1 for small text): --text3 was #6e7681 (3.3–4.2:1 on
+           --bg0…--bg4); #848d97 gives 4.5–5.7:1 and stays dimmer than --text2. --on-accent is the
+           text colour on the orange/green fills (white was 2.5:1; #0d1117 is 7.5:1); --focus is the
+           keyboard focus ring. (No comments inside :root — the test harness parses it naively.) */
         :root {
             --bg0: #0a0e14; --bg1: #0d1117; --bg2: #161b22; --bg3: #1c2128; --bg4: #21262d;
             --border: #30363d; --border-light: #3d444d;
-            --text: #e6edf3; --text2: #8b949e; --text3: #6e7681;
+            --text: #e6edf3; --text2: #8b949e; --text3: #848d97;
             --accent: #f0883e; --accent2: #d17a2f;
             --green: #3fb950; --blue: #58a6ff; --purple: #bc8cff; --red: #f85149; --yellow: #d29922;
+            --on-accent: #0d1117; --focus: #58a6ff;
         }
         *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
         html, body { height: 100%; width: 100%; overflow: hidden; }
@@ -137,7 +142,7 @@
             padding: 10px 20px; border-radius: 6px; border: none;
             font-size: 13px; font-weight: 600; cursor: pointer; transition: all .15s;
         }
-        .btn-primary { background: var(--accent); color: #fff; }
+        .btn-primary { background: var(--accent); color: var(--on-accent); }
         .btn-primary:hover { background: var(--accent2); }
         .btn-secondary { background: var(--bg4); color: var(--text); border: 1px solid var(--border); }
         .btn-secondary:hover { background: var(--border); }
@@ -162,7 +167,7 @@
             transition: all .15s; text-align: center;
         }
         .tab-btn:hover { background: var(--bg4); color: var(--text); }
-        .tab-btn.active { background: var(--accent); color: #fff; }
+        .tab-btn.active { background: var(--accent); color: var(--on-accent); }
 
         /* ── Grid layouts ── */
         .cols-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
@@ -208,7 +213,7 @@
             display: flex; align-items: center; justify-content: center; font-size: 16px;
             transition: all .2s; margin-bottom: 2px;
         }
-        .swap-btn:hover { background: var(--accent); color: #fff; }
+        .swap-btn:hover { background: var(--accent); color: var(--on-accent); }
 
         /* ── Info banner ── */
         .info-bar { background: rgba(88,166,255,.06); border: 1px solid rgba(88,166,255,.15); border-radius: 8px; padding: 10px 14px; font-size: 12px; color: var(--blue); margin-bottom: 12px; }
@@ -302,8 +307,22 @@
         }
 
         /* ── Saved indicator ── */
-        .save-flash { position: fixed; top: 16px; right: 16px; background: var(--green); color: #fff; padding: 8px 16px; border-radius: 6px; font-size: 12px; font-weight: 600; z-index: 9999; opacity: 0; transition: opacity .3s; pointer-events: none; }
+        .save-flash { position: fixed; top: 16px; right: 16px; background: var(--green); color: var(--on-accent); padding: 8px 16px; border-radius: 6px; font-size: 12px; font-weight: 600; z-index: 9999; opacity: 0; transition: opacity .3s; pointer-events: none; }
         .save-flash.show { opacity: 1; }
+
+        /* ── Accessibility (P10) ── */
+        /* Visible keyboard focus everywhere (WCAG 2.4.7); mouse clicks keep the old look. */
+        :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+        .nav-btn:focus-visible { outline-offset: -2px; background: var(--bg2); color: var(--text); }
+        .dash-card:focus-visible { border-color: var(--focus); }
+        #pgBody:focus-visible { outline-offset: -2px; }
+        .page-body :where(input, select, textarea):focus-visible, .fg-item :where(input, select, textarea):focus-visible {
+            outline: 2px solid var(--focus); outline-offset: 1px; }
+        .skip-link { position: fixed; left: 8px; top: -60px; z-index: 10000; background: var(--accent); color: var(--on-accent);
+            padding: 8px 14px; border-radius: 6px; font-size: 13px; font-weight: 700; text-decoration: none; }
+        .skip-link:focus { top: 8px; }
+        /* White on the orange fill is 2.5:1; the PRiSM primary/active controls use the dark text token (7.5:1). */
+        :root body :is(.prism-hbtn--primary, .prism-step.is-active, .prism-chip.is-on, .prism-am-btn--primary, .prism-btn--primary) { color: var(--on-accent); }
         /* ── iOS additions ── */
         /* ══════════════════════════════════════════════════════════
            iOS additions — edge-to-edge layout with CSS safe-area insets.
@@ -463,17 +482,18 @@
     </style>
 </head>
 <body>
+    <a class="skip-link" href="#pgBody" id="wts_skip_link">Skip to content</a>
     <!-- Sidebar -->
     <!-- Mobile header -->
     <div class="mob-header" id="mobHeader">
-        <button class="mob-burger" id="mobBurger" onclick="toggleMobileSidebar()">&#9776;</button>
+        <button class="mob-burger" id="mobBurger" onclick="toggleMobileSidebar()" aria-label="Menu" aria-controls="sidebar">&#9776;</button>
         <img id="mobLogo" alt="H2Oil">
         <span class="mob-title">H<sub style="font-size:8px">2</sub>Oil</span>
     </div>
     <div class="sidebar-overlay" id="sidebarOverlay" onclick="closeMobileSidebar()"></div>
 
     <!-- Sidebar -->
-    <div class="sidebar" id="sidebar">
+    <div class="sidebar" id="sidebar" role="navigation" aria-label="Calculators">
         <div class="sidebar-brand">
           <img src="data:image/png;base64,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" alt="H2Oil">
           <script>(function(){var s=document.querySelector('.sidebar-brand img'),m=document.getElementById('mobLogo');if(s&&m)m.src=s.src;})();</script>
@@ -560,7 +580,7 @@
     <div class="save-flash" id="saveFlash">Inputs saved</div>
 
     <!-- Main -->
-    <div class="main">
+    <div class="main" role="main">
         <div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:8px">
           <div><h2 id="pgTitle">Dashboard</h2><p id="pgSub">Select a module to get started</p></div>
           <div class="page-actions" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:4px">
@@ -611,7 +631,19 @@ window.closeMobileSidebar = function() {
     ov.classList.remove('show');
 };
 const closeMobileSidebar = window.closeMobileSidebar;
-const fmt = (v,d=2) => { if(v==null||isNaN(v)) return '—'; return Number(v).toLocaleString(undefined,{minimumFractionDigits:0,maximumFractionDigits:d}); };
+// P6: Number#toLocaleString(undefined, opts) builds a new Intl.NumberFormat on every call
+// (tens of µs each; ~15 ms per PRiSM / simulator render). Reuse one formatter per option
+// set — the output is identical (ECMA-402: toLocaleString(locales, options) ≡
+// new Intl.NumberFormat(locales, options).format(x)); bad options still throw RangeError.
+const __nfCache = new Map();
+function __numFmt(min, max) {
+    const k = typeof min + ':' + min + '|' + typeof max + ':' + max;
+    let f = __nfCache.get(k);
+    if(!f) { f = new Intl.NumberFormat(undefined, { minimumFractionDigits:min, maximumFractionDigits:max }); __nfCache.set(k, f); }
+    return f;
+}
+window.WTS_fmtNum = (v, min, max) => __numFmt(min, max).format(Number(v));
+const fmt = (v,d=2) => { if(v==null||isNaN(v)) return '—'; return __numFmt(0, d).format(Number(v)); };
 const el = (tag,cls,html) => { const e=document.createElement(tag); if(cls) e.className=cls; if(html) e.innerHTML=html; return e; };
 
 // ── Validation ──
@@ -1279,6 +1311,54 @@ function render() {
 }
 
 // ── Canvas Chart Helper ──
+// P6 plot decimation (drawing only — the data and every computed value are untouched).
+// Series longer than __DECIMATE_MIN points are drawn with the M4 rule: per pixel column
+// keep the first, lowest, highest and last vertex in their original order, which renders
+// the same polyline pixels as the full series (Jugel et al., "M4: A Visualization-Oriented
+// Time Series Data Aggregation", PVLDB 7(10), 2014).
+const __DECIMATE_MIN = 1500;
+function __pathM4(ctx, pts, toX, toY) {
+    let started = false, col = null, b = null;
+    const flush = () => {
+        if(!b) return;
+        let last = -1;
+        [b.f, b.mn, b.mx, b.l].sort((a, c) => a.i - c.i).forEach(q => {
+            if(q.i === last) return; last = q.i;
+            if(!started) { ctx.moveTo(q.x, q.y); started = true; } else ctx.lineTo(q.x, q.y);
+        });
+        b = null;
+    };
+    for(let i = 0; i < pts.length; i++) {
+        const x = toX(pts[i].x), y = toY(pts[i].y);
+        const c = Math.floor(x);
+        if(b && c !== col) flush();
+        col = c;
+        const q = { i, x, y };
+        if(!b) b = { f:q, mn:q, mx:q, l:q };
+        else { if(y < b.mn.y) b.mn = q; if(y > b.mx.y) b.mx = q; b.l = q; }
+    }
+    flush();
+}
+// P10: a canvas is an image to assistive technology — give it role="img" and a text
+// summary of what is drawn (axes, series, point counts, ranges). An author-set label wins.
+function __chartSummary(canvas, datasets, opts) {
+    try {
+        if(!canvas || !canvas.setAttribute) return;
+        if(canvas.hasAttribute('aria-label') && !canvas.hasAttribute('data-a11y-auto')) return;
+        const yl = String(opts.yLabel || 'value'), xl = String(opts.xLabel || 'x');
+        const parts = datasets.filter(ds => ds && ds.data).map(ds => {
+            const p = ds.data.filter(q => q && isFinite(q.x) && isFinite(q.y));
+            if(!p.length) return (ds.label || 'series') + ': no points';
+            let ymin = Infinity, ymax = -Infinity, xmin = Infinity, xmax = -Infinity;
+            p.forEach(q => { if(q.y < ymin) ymin = q.y; if(q.y > ymax) ymax = q.y; if(q.x < xmin) xmin = q.x; if(q.x > xmax) xmax = q.x; });
+            return (ds.label || 'series') + ': ' + p.length + ' points, ' + yl + ' ' + fmt(ymin, 3) + ' to ' + fmt(ymax, 3) +
+                   ' over ' + xl + ' ' + fmt(xmin, 3) + ' to ' + fmt(xmax, 3);
+        });
+        canvas.setAttribute('role', 'img');
+        canvas.setAttribute('data-a11y-auto', '1');
+        canvas.setAttribute('aria-label', 'Chart of ' + yl + ' against ' + xl + '. ' + parts.join('; ') + '.');
+    } catch(e) { /* a label is a nicety — never break a chart */ }
+}
 function drawLineChart(canvas, datasets, opts={}) {
     const ctx = canvas.getContext('2d');
     const W = canvas.width, H = canvas.height;
@@ -1290,8 +1370,10 @@ function drawLineChart(canvas, datasets, opts={}) {
     // Compute bounds
     let allX=[], allY=[];
     datasets.forEach(ds => { ds.data.forEach(p => { if(p) { allX.push(p.x); allY.push(p.y); } }); });
-    let xMin=opts.xMin??Math.min(...allX), xMax=opts.xMax??Math.max(...allX);
-    let yMin=opts.yMin??Math.min(...allY), yMax=opts.yMax??Math.max(...allY);
+    // Chunked so a long series cannot overflow the argument limit of Math.min(...a) (same result).
+    const mm = (f, a) => { if(a.length < 50000) return f(...a); let r = f(); for(let i = 0; i < a.length; i += 50000) r = f(r, f(...a.slice(i, i + 50000))); return r; };
+    let xMin=opts.xMin??mm(Math.min, allX), xMax=opts.xMax??mm(Math.max, allX);
+    let yMin=opts.yMin??mm(Math.min, allY), yMax=opts.yMax??mm(Math.max, allY);
     if(xMin===xMax) xMax=xMin+1; if(yMin===yMax) yMax=yMin+1;
     const xPad=(xMax-xMin)*0.05, yPad=(yMax-yMin)*0.08;
     xMin-=xPad; xMax+=xPad; yMin-=yPad; yMax+=yPad;
@@ -1330,14 +1412,21 @@ function drawLineChart(canvas, datasets, opts={}) {
         ctx.strokeStyle=ds.color||'#f0883e'; ctx.lineWidth=ds.width||2;
         if(ds.dash) ctx.setLineDash(ds.dash); else ctx.setLineDash([]);
         ctx.beginPath();
-        pts.forEach((p,i) => { const x=toX(p.x), y=toY(p.y); i===0?ctx.moveTo(x,y):ctx.lineTo(x,y); });
+        if(pts.length > __DECIMATE_MIN) __pathM4(ctx, pts, toX, toY);   // P6: long series → ≤ 4 vertices per pixel column
+        else pts.forEach((p,i) => { const x=toX(p.x), y=toY(p.y); i===0?ctx.moveTo(x,y):ctx.lineTo(x,y); });
         ctx.stroke(); ctx.setLineDash([]);
         // Points
         if(ds.points!==false){
             ctx.fillStyle=ds.color||'#f0883e';
-            pts.forEach(p => { ctx.beginPath(); ctx.arc(toX(p.x),toY(p.y),3,0,Math.PI*2); ctx.fill(); });
+            const seen = pts.length > __DECIMATE_MIN ? new Set() : null;   // P6: one marker per half-pixel cell
+            pts.forEach(p => {
+                const x = toX(p.x), y = toY(p.y);
+                if(seen) { const k = Math.round(x*2) + ',' + Math.round(y*2); if(seen.has(k)) return; seen.add(k); }
+                ctx.beginPath(); ctx.arc(x,y,3,0,Math.PI*2); ctx.fill();
+            });
         }
     });
+    __chartSummary(canvas, datasets, opts);
 
     // Legend
     if(datasets.length>1){
@@ -1702,8 +1791,10 @@ function _ctlLabel(c) {
         try { const l = document.querySelector('label[for="' + CSS.escape(c.id) + '"]'); if(l) { const t=_cleanText(l); if(t) return t; } } catch(e) {}
     }
     const pl = c.closest('label'); if(pl) { const t = _cleanText(pl); if(t) return t; }
-    return (c.getAttribute('aria-label') || c.getAttribute('title') || c.getAttribute('placeholder') || '').trim();
+    return (_authorAria(c) || c.getAttribute('title') || c.getAttribute('placeholder') || '').trim();
 }
+// aria-labels generated by the accessibility layer (data-a11y-auto) are not report captions.
+function _authorAria(c) { return c.hasAttribute('data-a11y-auto') ? '' : (c.getAttribute('aria-label') || ''); }
 function _blockTitleEl(b) {
     for(const ch of b.children) if(ch.matches('.card-title, .rbox-title')) return ch;
     const t = b.querySelector('.card-title, .rbox-title');
@@ -1918,7 +2009,7 @@ function collectPageReport(root, opts) {
                 const row = ctls.map(c => ({ t: _ctlValue(c) }));
                 const prev = out[out.length-1];
                 if(prev && prev._loose && prev.rows[0].length === row.length) { prev.rows.push(row); return; }
-                const head = ctls.map(c => (c.getAttribute('placeholder') || c.getAttribute('aria-label') || c.getAttribute('title') ||
+                const head = ctls.map(c => (c.getAttribute('placeholder') || _authorAria(c) || c.getAttribute('title') ||
                                             (c.tagName === 'SELECT' ? 'Type' : 'Value')).trim());
                 out.push({ type:'table', head, rows:[row], kind:'input', _loose:true });
             } else if(ctls.length === 1) {
@@ -13842,7 +13933,7 @@ const PRiSM_THEME = {
     gridMajor: '#30363d',
     text:      '#c9d1d9',
     text2:     '#8b949e',
-    text3:     '#6e7681',
+    text3:     '#848d97',   // P10 contrast (was #6e7681); synced from --text3
     accent:    '#f0883e', // orange — primary series
     blue:      '#58a6ff', // overlay / model curve
     green:     '#3fb950', // derivative / good fit
@@ -14422,6 +14513,40 @@ function PRiSM_plot_legend(ctx, items, plot, opts) {
 // ─────────────────────────────────────────────────────────────────────
 // SHARED — line series, scatter series
 // ─────────────────────────────────────────────────────────────────────
+// P6 plot decimation (drawing only — data, fits and _prismAxes are untouched).
+// A series longer than PRiSM_PLOT_DECIMATE_MIN points is drawn with the M4 rule:
+// per pixel column keep the first, lowest, highest and last vertex in their
+// original order, which rasterises to the same polyline (Jugel et al., "M4: A
+// Visualization-Oriented Time Series Data Aggregation", PVLDB 7(10), 2014).
+// Markers keep one dot per half-pixel cell.
+const PRiSM_PLOT_DECIMATE_MIN = 1500;
+function PRiSM_plot_pathM4(ctx, pts, toX, toY) {
+    let started = false, col = null, b = null;
+    const flush = function () {
+        if (!b) return;
+        let last = -1;
+        [b.f, b.mn, b.mx, b.l].sort(function (a, c) { return a.i - c.i; }).forEach(function (q) {
+            if (q.i === last) return;
+            last = q.i;
+            if (!started) { ctx.moveTo(q.x, q.y); started = true; } else ctx.lineTo(q.x, q.y);
+        });
+        b = null;
+    };
+    for (let i = 0; i < pts.length; i++) {
+        const p = pts[i];
+        const x = (p && isFinite(p[0]) && isFinite(p[1])) ? toX(p[0]) : NaN;
+        const y = isFinite(x) ? toY(p[1]) : NaN;
+        if (!isFinite(x) || !isFinite(y)) { flush(); started = false; col = null; continue; }
+        const c = Math.floor(x);
+        if (b && c !== col) flush();
+        col = c;
+        const q = { i: i, x: x, y: y };
+        if (!b) b = { f: q, mn: q, mx: q, l: q };
+        else { if (y < b.mn.y) b.mn = q; if (y > b.mx.y) b.mx = q; b.l = q; }
+    }
+    flush();
+}
+
 function PRiSM_plot_line(ctx, pts, toX, toY, color, opts) {
     if (!pts || !pts.length) return;
     opts = opts || {};
@@ -14430,6 +14555,12 @@ function PRiSM_plot_line(ctx, pts, toX, toY, color, opts) {
     ctx.lineWidth = opts.width || 2;
     if (opts.dash) ctx.setLineDash(opts.dash);
     ctx.beginPath();
+    if (pts.length > PRiSM_PLOT_DECIMATE_MIN) {
+        PRiSM_plot_pathM4(ctx, pts, toX, toY);
+        ctx.stroke();
+        ctx.restore();
+        return;
+    }
     let started = false;
     for (let i = 0; i < pts.length; i++) {
         const p = pts[i];
@@ -14448,10 +14579,16 @@ function PRiSM_plot_dots(ctx, pts, toX, toY, color, r) {
     r = r || 2.5;
     ctx.save();
     ctx.fillStyle = color;
+    const seen = pts.length > PRiSM_PLOT_DECIMATE_MIN ? new Set() : null;
     pts.forEach(function (p) {
         if (!p || !isFinite(p[0]) || !isFinite(p[1])) return;
         const x = toX(p[0]), y = toY(p[1]);
         if (!isFinite(x) || !isFinite(y)) return;
+        if (seen) {
+            const k = Math.round(x * 2) + ',' + Math.round(y * 2);
+            if (seen.has(k)) return;
+            seen.add(k);
+        }
         ctx.beginPath();
         ctx.arc(x, y, r, 0, Math.PI * 2);
         ctx.fill();
@@ -14632,6 +14769,7 @@ function PRiSM_plot_finish(setup, render, cfg) {
     }
     try { canvas._prismOriginalScale = { x: PRiSM_plot_copyScale(auto.x), y: PRiSM_plot_copyScale(auto.y) }; }
     catch (_) { /* detached */ }
+    PRiSM_plot_ariaSummary(canvas, opts, cfg, plotKey);
     S.cur = {
         canvas: canvas, ctx: setup.ctx, plot: setup.plot, render: render, opts: opts, extra: setup.extra,
         data: cfg.data || null, plotKey: plotKey, scaleX: sx, scaleY: sy, auto: auto, zoomed: zoomed,
@@ -14640,6 +14778,31 @@ function PRiSM_plot_finish(setup, render, cfg) {
     };
     PRiSM_plot_paint(S, 'initial');
     PRiSM_plot_install(canvas, S);
+}
+
+// P10: the plot is an image to assistive technology — role="img" plus a text
+// summary (plot, axes, point count and data ranges). An author-set label wins.
+function PRiSM_plot_ariaSummary(canvas, opts, cfg, plotKey) {
+    try {
+        if (!canvas || typeof canvas.setAttribute !== 'function') return;
+        if (canvas.hasAttribute && canvas.hasAttribute('aria-label') && !canvas.hasAttribute('data-a11y-auto')) return;
+        const pts = cfg.sigPoints || cfg.points || [];   // the measured series (Bourdet: Δp, not Δp + derivative)
+        let n = 0, x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+        for (let i = 0; i < pts.length; i++) {
+            const p = pts[i];
+            if (!p || !isFinite(p[0]) || !isFinite(p[1])) continue;
+            n++;
+            if (p[0] < x0) x0 = p[0]; if (p[0] > x1) x1 = p[0];
+            if (p[1] < y0) y0 = p[1]; if (p[1] > y1) y1 = p[1];
+        }
+        const name = String(opts.title || plotKey || 'PRiSM') + ' plot';
+        const xn = String(cfg.xName || 'x'), yn = String(cfg.yName || 'y');
+        const f = function (v) { return PRiSM_plot_format_eng(v, 3); };
+        canvas.setAttribute('role', 'img');
+        canvas.setAttribute('data-a11y-auto', '1');
+        canvas.setAttribute('aria-label', name + ': ' + yn + ' against ' + xn + '. ' +
+            (n ? n + ' points; ' + xn + ' ' + f(x0) + ' to ' + f(x1) + ', ' + yn + ' ' + f(y0) + ' to ' + f(y1) + '.' : 'No data points.'));
+    } catch (_) { /* a label is a nicety — never break a plot */ }
 }
 
 function PRiSM_plot_decorate(S) {
@@ -49839,6 +50002,9 @@ _registerPanel(6, {
             imp.style.color      = (active === 'imperial') ? '#0d1117' : 'var(--text2, #8b949e)';
             imp.style.fontWeight = (active === 'imperial') ? '700' : '500';
         }
+        // P10: a two-button toggle — the pressed state is announced, not just coloured.
+        if (imp && imp.setAttribute) imp.setAttribute('aria-pressed', active === 'imperial' ? 'true' : 'false');
+        if (met && met.setAttribute) met.setAttribute('aria-pressed', active === 'metric' ? 'true' : 'false');
         if (met && met.style) {
             met.style.background = (active === 'metric') ? 'var(--accent, #f0883e)' : 'transparent';
             met.style.color      = (active === 'metric') ? '#0d1117' : 'var(--text2, #8b949e)';
@@ -49860,9 +50026,11 @@ _registerPanel(6, {
         }
         var wrap = document.createElement('div');
         wrap.id = _toggleId;
+        wrap.setAttribute('role', 'group');                       // P10
+        wrap.setAttribute('aria-label', 'Unit system and standard conditions');
         wrap.style.cssText = 'display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:11px;color:var(--text2,#8b949e);margin-left:12px;';
         wrap.innerHTML =
-            '<span>Units:</span>' +
+            '<span aria-hidden="true">Units:</span>' +
             '<button type="button" id="wts_units_imperial" class="btn btn-secondary" ' +
                 'style="padding:3px 8px;font-size:11px;border-radius:4px;border:1px solid var(--border,#30363d);cursor:pointer;background:transparent;color:var(--text2,#8b949e);">Imperial</button>' +
             '<button type="button" id="wts_units_metric" class="btn btn-secondary" ' +
@@ -54239,6 +54407,7 @@ _registerPanel(6, {
 //   • 28-help-tooltips   (ⓘ hover-help on every tagged input + 61 entries)
 //   • 29-project-save    (.h2oilproj project file save/load across modules)
 //   • 30-quick-report    (one-click cross-suite PDF report)
+//   • 50-a11y            (keyboard navigation, ARIA names, live regions, decimal comma)
 // ═══════════════════════════════════════════════════════════════════════
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -57505,6 +57674,586 @@ _registerPanel(6, {
 })();
 
 // ─── END 30-quick-report ─────────────────────────────────────────────
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// ─── BEGIN 50-a11y ───────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════
+// prism-build/50-a11y.js — accessibility layer + decimal-comma input (ROADMAP P10).
+//
+// Loaded in Round-6 (feature layer). Everything here is additive: it only adds
+// ARIA attributes, tabindex values and keyboard handlers, and — when the user
+// turns the setting on — rewrites a typed decimal comma to a point. It never
+// changes a calculation.
+//
+// What it does (idempotent; re-run on page change, PRiSM tab/step change, unit
+// switch, focus and — in a browser — DOM mutations under #pgBody):
+//   • sidebar: role=button + roving tabindex (one Tab stop; ↑/↓/Home/End move,
+//     Enter/Space open), aria-current="page" on the active page;
+//   • tab strips (.tabs > .tab-btn, role=tablist): role=tab, aria-selected,
+//     roving tabindex, ←/→/Home/End move and activate (WAI-ARIA APG "Tabs");
+//   • click-only elements (dashboard tiles, [onclick] divs/spans): role=button,
+//     tabindex=0, Enter/Space activate; icon-only buttons get an aria-label;
+//   • form controls without an accessible name: the .fg-item label, or for a
+//     table cell the column header + row label ("Choke → Heater, Length (ft)");
+//     generated labels carry data-a11y-auto so reports ignore them and the next
+//     pass refreshes them (unit labels change with the unit system);
+//   • result containers (id …_res / …_result / …_results) get aria-live=polite;
+//   • canvases / SVG diagrams without a label get role=img + a label from their
+//     card heading (drawLineChart and the PRiSM plots add a data summary);
+//   • decimal comma (setting, default off; localStorage 'wtspref_decimal_comma'
+//     — deliberately not a wts_* key, so it is a device preference that does not
+//     travel in project files): "12,5" typed or pasted into a numeric field is
+//     read as 12.5. Only a single comma with digits after it and no point is
+//     converted, so "1,500" becomes 1.5 while the setting is on (stated in the
+//     toggle's tooltip).
+//
+// Public API: window.WTS_a11y = { apply(root?), name(el), decimalComma(on?),
+//   parseNumber(str) }, window.WTS_parseNumber(str).
+// References: WAI-ARIA Authoring Practices 1.2 (Tabs, Button, roving tabindex);
+//   W3C Accessible Name and Description Computation 1.2; WCAG 2.2 SC 1.1.1,
+//   1.3.1, 2.1.1, 2.4.1, 2.4.3, 2.4.7, 4.1.2, 4.1.3.
+
+(function () {
+    'use strict';
+    var G = (typeof window !== 'undefined') ? window : globalThis;
+    var _hasDoc = typeof document !== 'undefined' && !!document && typeof document.querySelectorAll === 'function';
+
+    var AUTO = 'data-a11y-auto';
+    var PREF_KEY = 'wtspref_decimal_comma';
+    var CONTROL_SEL = 'input, select, textarea';
+    var SKIP_TYPES = { hidden: 1, button: 1, submit: 1, reset: 1, image: 1 };
+    var DEC_COMMA_RE = /^\s*([-+]?\d*),(\d+(?:[eE][-+]?\d+)?)\s*$/;
+
+    // ── text helpers ─────────────────────────────────────────────────────
+    function _clean(el) {
+        if (!el) return '';
+        var c;
+        try { c = el.cloneNode(true); } catch (e) { return ''; }
+        try {
+            var rm = c.querySelectorAll('button, input, select, textarea, script, style, svg, .wts-help-icon, [aria-hidden="true"]');
+            for (var i = 0; i < rm.length; i++) if (rm[i].parentNode) rm[i].parentNode.removeChild(rm[i]);
+        } catch (e) { /* ignore */ }
+        return String(c.textContent || '').replace(/\s+/g, ' ').trim();
+    }
+    function _short(s, n) { s = String(s || ''); return s.length > n ? s.slice(0, n - 1) + '…' : s; }
+    function _attr(el, a) { return (el && el.getAttribute) ? (el.getAttribute(a) || '') : ''; }
+    function _byId(id) { return _hasDoc ? document.getElementById(id) : null; }
+
+    var _forMap = null;          // id → <label for> during a pass (one document scan, not one per control)
+    // Accessible name, following the accname algorithm closely enough for our
+    // markup: aria-labelledby → aria-label → <label for> / wrapping <label> →
+    // content (buttons, links, role=button/tab) → title → placeholder / alt.
+    function name(el) {
+        if (!el || el.nodeType !== 1) return '';
+        var lb = _attr(el, 'aria-labelledby');
+        if (lb) {
+            var s = lb.split(/\s+/).map(function (id) { var r = _byId(id); return r ? _clean(r) : ''; }).join(' ').trim();
+            if (s) return s;
+        }
+        var al = _attr(el, 'aria-label').trim();
+        if (al) return al;
+        var tag = String(el.localName || el.tagName || '').toLowerCase();
+        if (tag === 'input' || tag === 'select' || tag === 'textarea' || tag === 'meter' || tag === 'progress') {
+            if (el.id) {
+                var lf = null;
+                if (_forMap) lf = _forMap[el.id] || null;
+                else try { lf = document.querySelector('label[for="' + String(el.id).replace(/"/g, '\\"') + '"]'); } catch (e) { lf = null; }
+                if (lf) { var t = _clean(lf); if (t) return t; }
+            }
+            var wrap = el.closest && el.closest('label');
+            if (wrap) { var tw = _clean(wrap); if (tw) return tw; }
+            if (tag === 'input' && /^(button|submit|reset)$/i.test(el.type || '')) { if (el.value) return String(el.value); }
+        } else if (tag === 'img') {
+            var alt = _attr(el, 'alt').trim(); if (alt) return alt;
+        } else if (tag === 'button' || tag === 'a' || /^(button|tab|link|menuitem|option)$/.test(_attr(el, 'role'))) {
+            var tc = String(el.textContent || '').replace(/\s+/g, ' ').trim();
+            if (/[A-Za-z0-9À-ɏͰ-Ͽ]/.test(tc)) return tc;
+        }
+        var ti = _attr(el, 'title').trim(); if (ti) return ti;
+        var ph = _attr(el, 'placeholder').trim(); if (ph) return ph;
+        return '';
+    }
+    // Name from author markup only (ignores a label this layer generated earlier).
+    function _authorName(el) {
+        if (el.hasAttribute && el.hasAttribute(AUTO)) {
+            var keep = el.getAttribute('aria-label');
+            el.removeAttribute('aria-label');
+            var n = name(el);
+            if (keep != null) el.setAttribute('aria-label', keep);
+            return n;
+        }
+        return name(el);
+    }
+    function _setAuto(el, attr, value) {
+        if (!value) return;
+        if (el.getAttribute(attr) !== value) el.setAttribute(attr, value);
+        if (!el.hasAttribute(AUTO)) el.setAttribute(AUTO, '1');
+    }
+
+    // ── table cell → "row label, column header" ─────────────────────────
+    function _colIndex(cell) {
+        var row = cell.parentNode, idx = 0;
+        var cells = row && row.children ? row.children : [];
+        for (var i = 0; i < cells.length && cells[i] !== cell; i++) idx += Math.max(1, +cells[i].colSpan || 1);
+        return idx;
+    }
+    function _cellAt(row, idx) {
+        var cells = row.children || [], at = 0;
+        for (var i = 0; i < cells.length; i++) {
+            var span = Math.max(1, +cells[i].colSpan || 1);
+            if (idx >= at && idx < at + span) return cells[i];
+            at += span;
+        }
+        return null;
+    }
+    function _headerRow(table, ownRow) {
+        var rows = table.rows || table.querySelectorAll('tr');
+        if (table.tHead && table.tHead.rows && table.tHead.rows.length) return table.tHead.rows[table.tHead.rows.length - 1];
+        for (var i = 0; i < rows.length; i++) {
+            var r = rows[i];
+            if (r === ownRow) return null;
+            var ths = 0, all = 0;
+            for (var k = 0; k < r.children.length; k++) { var t = String(r.children[k].localName || '').toLowerCase(); if (t === 'th') ths++; if (t === 'th' || t === 'td') all++; }
+            if (all && ths === all) return r;
+            if (i >= 2) return null;
+        }
+        return null;
+    }
+    function _tableName(ctl) {
+        var cell = ctl.closest && ctl.closest('td, th');
+        var table = cell && cell.closest('table');
+        if (!cell || !table) return '';
+        var row = cell.parentNode;
+        var idx = _colIndex(cell);
+        var col = '';
+        var hr = _headerRow(table, row);
+        if (hr && hr !== row) { var hc = _cellAt(hr, idx); if (hc) col = _clean(hc); }
+        var rowLabel = '';
+        var cells = row.children || [];
+        for (var i = 0; i < cells.length; i++) {
+            var c = cells[i];
+            if (c === cell) break;
+            if (c.querySelector && c.querySelector(CONTROL_SEL)) {
+                // a select naming the row (e.g. a segment picker) labels the row
+                var sel = c.querySelector('select');
+                if (sel && i === 0 && sel.options && sel.selectedIndex >= 0 && sel.options[sel.selectedIndex]) {
+                    rowLabel = String(sel.options[sel.selectedIndex].text || '').trim();
+                    break;
+                }
+                continue;
+            }
+            var t = _clean(c);
+            if (t) { rowLabel = t; break; }
+        }
+        // several controls in one cell (value + unit select): number them
+        var inCell = cell.querySelectorAll(CONTROL_SEL), nth = '';
+        if (inCell.length > 1) {
+            for (var j = 0; j < inCell.length; j++) if (inCell[j] === ctl) nth = String(ctl.localName).toLowerCase() === 'select' ? ' (unit / option)' : (j ? ' (' + (j + 1) + ')' : '');
+        }
+        if (!rowLabel) {
+            var ri = typeof row.rowIndex === 'number' && row.rowIndex >= 0 ? row.rowIndex : -1;
+            if (hr && ri >= 0) { var hri = hr.rowIndex; if (typeof hri === 'number' && hri >= 0 && ri > hri) ri -= hri; }
+            if (ri >= 0) rowLabel = 'Row ' + (ri + (hr ? 0 : 1));
+        }
+        if (!col) col = 'column ' + (idx + 1);
+        return _short((rowLabel ? rowLabel + ', ' : '') + col + nth, 160);
+    }
+
+    function _contextHeading(el) {
+        var box = el.closest && el.closest('.card, .rbox, .chart-wrap, section, [data-rp-block]');
+        var guard = 0;
+        while (box && guard++ < 6) {
+            var h = box.querySelector && box.querySelector('.card-title, .rbox-title, h1, h2, h3, h4, h5, legend');
+            if (h) { var t = _clean(h); if (t) return _short(t, 90); }
+            box = box.parentNode && box.parentNode.closest ? box.parentNode.closest('.card, .rbox, .chart-wrap, section') : null;
+        }
+        var pt = _byId('pgTitle');
+        return pt ? _short(_clean(pt), 90) : '';
+    }
+    function _humanId(id) {
+        id = String(id || '').replace(/^[a-z0-9]{1,6}_/i, '');
+        return id.replace(/[_-]+/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2').trim();
+    }
+
+    function _labelControl(ctl) {
+        var type = String(ctl.type || '').toLowerCase();
+        if (SKIP_TYPES[type] && String(ctl.localName).toLowerCase() === 'input') return;
+        if (_authorName(ctl)) { if (ctl.hasAttribute(AUTO)) { ctl.removeAttribute('aria-label'); ctl.removeAttribute(AUTO); } return; }
+        var label = '';
+        var fg = ctl.closest && ctl.closest('.fg-item');
+        if (fg && !(ctl.closest('table') && fg.contains(ctl.closest('table')))) {
+            var l = fg.querySelector('label');
+            var lt = l ? _clean(l) : '';
+            if (lt) {
+                var ctls = fg.querySelectorAll(CONTROL_SEL), k = 0;
+                for (var i = 0; i < ctls.length; i++) if (ctls[i] === ctl) k = i;
+                label = k === 0 ? lt : lt + (String(ctl.localName).toLowerCase() === 'select' ? ' — unit / option' : ' (' + (k + 1) + ')');
+            }
+        }
+        if (!label && ctl.closest && ctl.closest('td, th')) label = _tableName(ctl);
+        if (!label) {
+            var prev = ctl.previousElementSibling;
+            if (prev && /^(label|span|b|strong|small|div)$/i.test(prev.localName || '') && !prev.querySelector(CONTROL_SEL)) {
+                var pt = _clean(prev); if (pt && pt.length <= 80) label = pt;
+            }
+        }
+        if (!label && type === 'file') label = 'Choose file';
+        if (!label) {
+            var ctx = _contextHeading(ctl), hid = _humanId(ctl.id);
+            label = (ctx && hid) ? ctx + ' — ' + hid : (hid || ctx || '');
+        }
+        _setAuto(ctl, 'aria-label', _short(label, 160));
+    }
+
+    // Icon-only native buttons: fall back to their title, then a symbol map.
+    var ICONS = { '×': 'Remove', '✕': 'Close', '✖': 'Close', '☰': 'Menu', '↶': 'Undo', '↷': 'Redo',
+        '↑': 'Move up', '↓': 'Move down', '▲': 'Move up', '▼': 'Move down', '+': 'Add', '−': 'Remove', '-': 'Remove',
+        '⤢': 'Expand', '⛶': 'Full screen', '⟲': 'Reset', '↺': 'Reset', '⚙': 'Settings', '?': 'Help', 'i': 'Help',
+        '▶': 'Play', '⏸': 'Pause', '■': 'Stop', '⏹': 'Stop', '‹': 'Back', '›': 'Next', '«': 'First', '»': 'Last' };
+    function _labelButton(b) {
+        if (_authorName(b)) return;
+        var tc = String(b.textContent || '').replace(/\s+/g, '').trim();
+        var lab = ICONS[tc] || '';
+        if (!lab) { var ctx = _contextHeading(b); lab = ctx ? ctx + ' — button' : ''; }
+        if (lab) _setAuto(b, 'aria-label', lab);
+    }
+
+    // ── roving tabindex helpers ──────────────────────────────────────────
+    function _rove(items, current) {
+        for (var i = 0; i < items.length; i++) {
+            var want = items[i] === current ? '0' : '-1';
+            if (items[i].getAttribute('tabindex') !== want) items[i].setAttribute('tabindex', want);
+        }
+    }
+    function _navButtons() { return _hasDoc ? Array.prototype.slice.call(document.querySelectorAll('#sidebar .nav-btn')) : []; }
+    function _syncSidebar() {
+        var btns = _navButtons();
+        if (!btns.length) return;
+        var active = null;
+        for (var i = 0; i < btns.length; i++) {
+            var b = btns[i];
+            if (b.getAttribute('role') !== 'button' && String(b.localName).toLowerCase() !== 'button') b.setAttribute('role', 'button');
+            var on = b.classList && b.classList.contains('active');
+            if (on) { active = active || b; if (b.getAttribute('aria-current') !== 'page') b.setAttribute('aria-current', 'page'); }
+            else if (b.hasAttribute('aria-current')) b.removeAttribute('aria-current');
+        }
+        var focused = document.activeElement;
+        _rove(btns, btns.indexOf(focused) !== -1 ? focused : (active || btns[0]));
+    }
+    function _tabsOf(list) {
+        var out = [], ch = list.children || [];
+        for (var i = 0; i < ch.length; i++) {
+            var c = ch[i];
+            if ((c.classList && c.classList.contains('tab-btn')) || c.getAttribute('role') === 'tab') out.push(c);
+        }
+        return out;
+    }
+    function _syncTablist(list) {
+        var tabs = _tabsOf(list);
+        if (tabs.length < 2) return;
+        if (!list.getAttribute('role')) list.setAttribute('role', 'tablist');
+        var sel = null, byClass = false;
+        for (var a = 0; a < tabs.length; a++) if (tabs[a].classList && tabs[a].classList.contains('active')) byClass = true;
+        for (var i = 0; i < tabs.length; i++) {
+            var t = tabs[i];
+            if (t.getAttribute('role') !== 'tab') t.setAttribute('role', 'tab');
+            // the .active class is the source of truth where the strip uses it, else aria-selected
+            var on = byClass ? t.classList.contains('active') : t.getAttribute('aria-selected') === 'true';
+            if (on && !sel) sel = t;
+            var want = on ? 'true' : 'false';
+            if (t.getAttribute('aria-selected') !== want) t.setAttribute('aria-selected', want);
+        }
+        var focused = _hasDoc ? document.activeElement : null;
+        _rove(tabs, tabs.indexOf(focused) !== -1 ? focused : (sel || tabs[0]));
+    }
+    function _syncTabs(root) {
+        var lists = (root || document).querySelectorAll('.tabs, [role="tablist"]');
+        for (var i = 0; i < lists.length; i++) _syncTablist(lists[i]);
+    }
+
+    // ── the pass ─────────────────────────────────────────────────────────
+    function apply(root) {
+        if (!_hasDoc) return 0;
+        var n = 0;
+        try {
+            _forMap = {};
+            var fl = document.querySelectorAll('label[for]');
+            for (var f = fl.length - 1; f >= 0; f--) _forMap[fl[f].getAttribute('for')] = fl[f];   // first label wins
+            var sb = _byId('sidebar');
+            if (sb && !sb.getAttribute('role')) { sb.setAttribute('role', 'navigation'); sb.setAttribute('aria-label', 'Calculators'); }
+            _syncSidebar();
+            var pg = _byId('pgBody');
+            if (pg && !pg.hasAttribute('tabindex')) pg.setAttribute('tabindex', '-1');   // skip-link target
+            var sf = _byId('saveFlash');
+            if (sf && !sf.getAttribute('role')) { sf.setAttribute('role', 'status'); sf.setAttribute('aria-live', 'polite'); }
+            var hdr = document.querySelector('.page-header');   // header controls live outside #pgBody
+            if (hdr && root) _labelArea(hdr);
+            root = root || document.body || document;
+            _syncTabs(root);
+
+            // click-only elements → buttons
+            var clickables = root.querySelectorAll('.dash-card, [data-dc], [onclick]');
+            for (var i = 0; i < clickables.length; i++) {
+                var el = clickables[i], tag = String(el.localName || '').toLowerCase();
+                if (/^(button|a|input|select|textarea|label|option|body|html|summary|tr|td|th|table|tbody|thead)$/.test(tag)) continue;
+                if (el.id === 'sidebarOverlay' || (el.classList && el.classList.contains('sidebar-overlay'))) continue;
+                if (el.querySelector && el.querySelector('button, a[href], input, select, textarea')) continue;   // a container, not a control
+                if (!el.getAttribute('role')) el.setAttribute('role', 'button');
+                if (!el.hasAttribute('tabindex')) el.setAttribute('tabindex', '0');
+                if (el.classList && el.classList.contains('dash-card') && !_authorName(el)) {
+                    var h = el.querySelector('h3, .dc-title');
+                    if (h) _setAuto(el, 'aria-label', _clean(h));
+                }
+                n++;
+            }
+            // native buttons without a name
+            var btns = root.querySelectorAll('button, [role="button"]');
+            for (var b = 0; b < btns.length; b++) _labelButton(btns[b]);
+            // form controls
+            var ctls = root.querySelectorAll(CONTROL_SEL);
+            for (var c = 0; c < ctls.length; c++) { _labelControl(ctls[c]); n++; }
+            // result areas → polite live regions (WCAG 4.1.3 status messages)
+            var res = root.querySelectorAll('[id$="_res"], [id$="_result"], [id$="_results"], [data-wts-project-toolbar] [data-role="msg"]');
+            for (var r = 0; r < res.length; r++) {
+                var re = res[r], rt = String(re.localName || '').toLowerCase();
+                if (rt === 'input' || rt === 'select' || rt === 'textarea' || rt === 'canvas') continue;
+                if (!re.hasAttribute('aria-live')) re.setAttribute('aria-live', 'polite');
+            }
+            // canvases and diagrams → images with a name
+            var imgs = root.querySelectorAll('canvas, svg');
+            for (var m = 0; m < imgs.length; m++) {
+                var im = imgs[m];
+                if (im.getAttribute('aria-hidden') === 'true' || /^(presentation|none)$/.test(im.getAttribute('role') || '')) continue;
+                if (String(im.localName).toLowerCase() === 'svg' && im.parentNode && im.parentNode.closest && im.parentNode.closest('button, a, svg, .nav-icon, [role="button"]')) continue;
+                if (im.getAttribute('aria-label') || im.getAttribute('aria-labelledby')) continue;
+                var ttl = '';
+                if (String(im.localName).toLowerCase() === 'svg') { var te = im.querySelector('title'); ttl = te ? _clean(te) : ''; }
+                var ctxh = _contextHeading(im);
+                var kind = String(im.localName).toLowerCase() === 'svg' ? 'diagram' : 'chart';
+                if (!im.getAttribute('role')) im.setAttribute('role', 'img');
+                _setAuto(im, 'aria-label', ttl || (ctxh ? ctxh + ' ' + kind : kind.charAt(0).toUpperCase() + kind.slice(1)));
+            }
+            _renderDecimalToggle();
+        } catch (e) {
+            try { console.warn('[a11y] pass failed', e); } catch (_) { /* ignore */ }
+        }
+        _forMap = null;
+        return n;
+    }
+
+    function _labelArea(area) {
+        var c = area.querySelectorAll(CONTROL_SEL);
+        for (var i = 0; i < c.length; i++) _labelControl(c[i]);
+        var b = area.querySelectorAll('button');
+        for (var j = 0; j < b.length; j++) _labelButton(b[j]);
+    }
+    function _applyPage() { apply(_byId('pgBody') || undefined); }
+
+    // ── keyboard ─────────────────────────────────────────────────────────
+    function _isNative(el) { return /^(button|a|input|select|textarea|summary)$/i.test(el.localName || ''); }
+    function _move(list, cur, key) {
+        var i = list.indexOf(cur);
+        if (i === -1) return null;
+        if (key === 'Home') return list[0];
+        if (key === 'End') return list[list.length - 1];
+        var d = (key === 'ArrowDown' || key === 'ArrowRight') ? 1 : -1;
+        return list[(i + d + list.length) % list.length];
+    }
+    function _onKey(ev) {
+        var t = ev.target;
+        if (!t || t.nodeType !== 1 || ev.defaultPrevented || ev.altKey || ev.ctrlKey || ev.metaKey) return;
+        var key = ev.key;
+        // sidebar: ↑/↓/Home/End move the single tab stop
+        if (t.classList && t.classList.contains('nav-btn') && t.closest && t.closest('#sidebar')) {
+            if (key === 'ArrowDown' || key === 'ArrowUp' || key === 'Home' || key === 'End') {
+                var nb = _move(_navButtons(), t, key);
+                if (nb) { ev.preventDefault(); _rove(_navButtons(), nb); try { nb.focus(); } catch (e) { /* ignore */ } }
+                return;
+            }
+        }
+        // tabs: ←/→/Home/End move and activate (automatic activation)
+        if (t.getAttribute('role') === 'tab' && (key === 'ArrowLeft' || key === 'ArrowRight' || key === 'Home' || key === 'End')) {
+            var list = t.parentNode ? _tabsOf(t.parentNode) : [];
+            var nt = _move(list, t, key);
+            if (nt) {
+                ev.preventDefault();
+                _rove(list, nt);
+                try { nt.focus(); } catch (e) { /* ignore */ }
+                try { nt.click(); } catch (e) { /* ignore */ }
+                var nf = nt.id ? _byId(nt.id) : null;            // tab strip may have been re-rendered
+                if (nf && nf !== nt) try { nf.focus(); } catch (e) { /* ignore */ }
+            }
+            return;
+        }
+        // Enter / Space on a non-native button
+        if ((key === 'Enter' || key === ' ' || key === 'Spacebar') && !_isNative(t) && /^(button|tab|link|menuitem)$/.test(t.getAttribute('role') || '')) {
+            if (t.isContentEditable) return;
+            ev.preventDefault();
+            try { t.click(); } catch (e) { /* ignore */ }
+            return;
+        }
+        if (key === 'Escape') {
+            var sb = _byId('sidebar'), ov = _byId('sidebarOverlay');
+            if (ov && ov.classList && ov.classList.contains('show') && typeof G.closeMobileSidebar === 'function') {
+                G.closeMobileSidebar();
+                var burger = _byId('mobBurger'); if (burger) try { burger.focus(); } catch (e) { /* ignore */ }
+            } else if (sb && sb.contains && sb.contains(t)) { /* nothing */ }
+        }
+    }
+
+    // ── decimal comma ────────────────────────────────────────────────────
+    function _prefGet() { try { return G.localStorage && G.localStorage.getItem(PREF_KEY) === '1'; } catch (e) { return false; } }
+    function decimalComma(on) {
+        if (on === undefined) return _prefGet();
+        try { if (on) G.localStorage.setItem(PREF_KEY, '1'); else G.localStorage.removeItem(PREF_KEY); } catch (e) { /* storage blocked */ }
+        _renderDecimalToggle();
+        return !!on;
+    }
+    function parseNumber(s) {
+        if (typeof s === 'number') return s;
+        s = String(s == null ? '' : s);
+        if (_prefGet()) { var m = DEC_COMMA_RE.exec(s); if (m) s = m[1] + '.' + m[2]; }
+        return parseFloat(s);
+    }
+    function _numericField(t) {
+        if (!t || String(t.localName || '').toLowerCase() !== 'input') return false;
+        if (t.hasAttribute && t.hasAttribute('data-no-decimal-comma')) return false;
+        var ty = String(t.getAttribute('type') || 'text').toLowerCase();
+        return ty === 'number' || ty === 'text' || ty === 'tel' || ty === '' || (ty === 'search' && t.getAttribute('inputmode') === 'decimal');
+    }
+    function _onValue(ev) {
+        var t = ev.target;
+        if (!_numericField(t) || !_prefGet()) return;
+        var v = String(t.value == null ? '' : t.value), m = DEC_COMMA_RE.exec(v);
+        if (m) { try { t.value = m[1] + '.' + m[2]; } catch (e) { /* ignore */ } }
+    }
+    function _insert(text) {
+        try { return !!(document.execCommand && document.execCommand('insertText', false, text)); } catch (e) { return false; }
+    }
+    function _onKeyComma(ev) {
+        if (ev.key !== ',' || ev.ctrlKey || ev.metaKey || ev.altKey) return;
+        var t = ev.target;
+        if (!t || String(t.getAttribute && t.getAttribute('type') || '').toLowerCase() !== 'number' || !_prefGet()) return;
+        if (_insert('.')) ev.preventDefault();          // a number field would otherwise drop "12,5" to ""
+    }
+    function _onPaste(ev) {
+        var t = ev.target;
+        if (!_numericField(t) || !_prefGet()) return;
+        var d = ev.clipboardData || G.clipboardData, s = '';
+        try { s = d ? d.getData('text') : ''; } catch (e) { s = ''; }
+        var m = DEC_COMMA_RE.exec(String(s || ''));
+        if (m && _insert(m[1] + '.' + m[2])) ev.preventDefault();
+    }
+    function _renderDecimalToggle() {
+        if (!_hasDoc) return;
+        var host = _byId('wts_unit_toggle_host');
+        if (!host) return;
+        var b = _byId('wts_dec_comma');
+        if (!b) {
+            b = document.createElement('button');
+            b.type = 'button';
+            b.id = 'wts_dec_comma';
+            b.className = 'btn btn-secondary';
+            b.textContent = '1,5';
+            b.setAttribute('title', 'Decimal comma: when on, 12,5 typed or pasted into a number field is read as 12.5 ' +
+                '(a single comma with digits after it and no point; 1,500 then means 1.5)');
+            b.style.cssText = 'padding:3px 8px;font-size:11px;border-radius:4px;border:1px solid var(--border,#30363d);' +
+                'cursor:pointer;background:transparent;color:var(--text2,#8b949e);margin-left:6px;';
+            b.addEventListener('click', function () { decimalComma(!_prefGet()); });
+            try { host.appendChild(b); } catch (e) { return; }
+        }
+        var on = _prefGet();
+        b.setAttribute('aria-pressed', on ? 'true' : 'false');
+        b.setAttribute('aria-label', 'Accept decimal comma in number fields');
+        b.style.background = on ? 'var(--accent, #f0883e)' : 'transparent';
+        b.style.color = on ? 'var(--on-accent, #0d1117)' : 'var(--text2, #8b949e)';
+    }
+
+    // ── wiring ───────────────────────────────────────────────────────────
+    // One-shot, coalescing scheduler (not polling): a full #pgBody pass after PRiSM
+    // events, or — for DOM mutations — a pass over just the added subtrees.
+    var _moTimer = null, _full = false, _roots = [];
+    function _scheduleApply(roots) {
+        if (Array.isArray(roots)) { for (var i = 0; i < roots.length && _roots.length < 200; i++) _roots.push(roots[i]); }
+        else _full = true;
+        if (_moTimer) return;
+        _moTimer = setTimeout(function () {
+            _moTimer = null;
+            var full = _full || _roots.length >= 200, list = _roots;
+            _full = false; _roots = [];
+            if (full) { _applyPage(); return; }
+            for (var k = 0; k < list.length; k++) {
+                var r = list[k];
+                if (!r || !r.isConnected && r.isConnected !== undefined) continue;
+                if (r.matches && r.matches(CONTROL_SEL)) _labelControl(r);
+                else if (r.querySelectorAll) apply(r);
+            }
+        }, 0);
+    }
+    function _labelOne(ev) {
+        var t = ev.target;
+        if (!t || t.nodeType !== 1) return;
+        try {
+            if (t.matches && t.matches(CONTROL_SEL)) _labelControl(t);
+            else if (String(t.localName).toLowerCase() === 'button') _labelButton(t);
+        } catch (e) { /* ignore */ }
+    }
+    function _init() {
+        if (!_hasDoc || G.__wtsA11yWired) return;
+        G.__wtsA11yWired = true;
+        document.addEventListener('keydown', _onKey);
+        document.addEventListener('keydown', _onKeyComma, true);
+        document.addEventListener('paste', _onPaste, true);
+        document.addEventListener('input', _onValue, true);
+        document.addEventListener('change', _onValue, true);
+        document.addEventListener('focusin', _labelOne);
+        // after any click the tab strips / sidebar may have changed state
+        document.addEventListener('click', function (ev) {
+            var t = ev.target;
+            if (!t || !t.closest) return;
+            var list = t.closest('.tabs, [role="tablist"]');
+            if (list) _syncTablist(list);
+            if (t.closest('#wts_skip_link')) {
+                ev.preventDefault();
+                var pg = _byId('pgBody');
+                if (pg) { if (!pg.hasAttribute('tabindex')) pg.setAttribute('tabindex', '-1'); try { pg.focus(); } catch (e) { /* ignore */ } }
+            }
+        });
+        // end of every host render(): label the new page now (synchronously)
+        document.addEventListener('h2oil:pagechange', _applyPage);
+        document.addEventListener('wts:unit-system-changed', _applyPage);
+        // PRiSM re-renders tabs / panels in place: one coalesced pass after the burst
+        if (typeof G.addEventListener === 'function') {
+            ['prism:tab-open', 'prism:step-changed', 'prism:fit-updated', 'prism:dataset-loaded'].forEach(function (e) {
+                G.addEventListener(e, function () { _scheduleApply(); });
+            });
+        }
+        if (G.MutationObserver) {
+            try {
+                var pg = _byId('pgBody');
+                if (pg) new G.MutationObserver(function (muts) {
+                    var add = [];
+                    for (var i = 0; i < muts.length; i++) {
+                        var an = muts[i].addedNodes || [];
+                        for (var j = 0; j < an.length; j++) if (an[j].nodeType === 1) add.push(an[j]);
+                    }
+                    if (add.length) _scheduleApply(add);
+                }).observe(pg, { childList: true, subtree: true });
+            } catch (e) { /* ignore */ }
+        }
+        apply();
+    }
+    if (_hasDoc) {
+        if (document.readyState === 'loading' && typeof document.addEventListener === 'function') document.addEventListener('DOMContentLoaded', _init);
+        else _init();
+    }
+
+    G.WTS_a11y = { apply: apply, name: name, decimalComma: decimalComma, parseNumber: parseNumber };
+    G.WTS_parseNumber = parseNumber;
+})();
+
+// ─── END 50-a11y ─────────────────────────────────────────────
 
 
 // ── Round-6 (features) injection END ──
@@ -77543,7 +78292,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
     function _blank(id) { var e = _byId(id); return !e || String(e.value).trim() === ''; }
     function _fmt(v, d) {
         if (v == null || !isFinite(v)) return '—';
-        return Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) });
+        return (G.WTS_fmtNum ? G.WTS_fmtNum(v, 0, (d == null ? 2 : d)) : Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) }));
     }
     function _metric() { var U = G.WTS_units; return !!(U && U.getSystem && U.getSystem() === 'metric' && U.format); }
     // Value in the display system; impLabel is the imperial text shown in imperial.
@@ -78092,7 +78841,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
     // ── Page helpers (shared calculator pattern) ─────────────────────────
     function _byId(id) { return (typeof document !== 'undefined' && document.getElementById) ? document.getElementById(id) : null; }
     function _num(id) { var e = _byId(id); if (!e) return NaN; var s = String(e.value).trim(); return s === '' ? NaN : parseFloat(s); }
-    function _fmt(v, d) { if (v == null || !isFinite(v)) return '—'; return Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) }); }
+    function _fmt(v, d) { if (v == null || !isFinite(v)) return '—'; return (G.WTS_fmtNum ? G.WTS_fmtNum(v, 0, (d == null ? 2 : d)) : Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) })); }
     function _fix(v, d) { if (v == null || !isFinite(v)) return '—'; return Number(v).toFixed(d); }
     function _metric() { var U = G.WTS_units; return !!(U && U.getSystem && U.getSystem() === 'metric' && U.format); }
     // value in the display system; impLabel is the imperial text ('psia' where the category says 'psi')
@@ -78617,7 +79366,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
     function _blank(id) { var e = _byId(id); return !e || String(e.value).trim() === ''; }
     function _fmt(v, d) {
         if (v == null || !isFinite(v)) return '—';
-        return Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) });
+        return (G.WTS_fmtNum ? G.WTS_fmtNum(v, 0, (d == null ? 2 : d)) : Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) }));
     }
     // value in the display system; impLabel is the imperial text
     function _u(v, cat, d, impLabel) {
@@ -79053,7 +79802,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
     function _num(id) { var e = _byId(id); if (!e) return NaN; var s = String(e.value).trim(); return s === '' ? NaN : parseFloat(s); }
     function _fmt(v, d) {
         if (v == null || !isFinite(v)) return '—';
-        return Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) });
+        return (G.WTS_fmtNum ? G.WTS_fmtNum(v, 0, (d == null ? 2 : d)) : Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) }));
     }
     // Auto decimals: about 4-5 significant figures without trailing zeros.
     function _fa(v) {
@@ -79507,7 +80256,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
     function _num(id) { var e = _byId(id); if (!e) return NaN; var s = String(e.value).trim(); return s === '' ? NaN : parseFloat(s); }
     function _fmt(v, d) {
         if (v == null || !isFinite(v)) return '—';
-        return Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) });
+        return (G.WTS_fmtNum ? G.WTS_fmtNum(v, 0, (d == null ? 2 : d)) : Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) }));
     }
     function _metric() { var U = G.WTS_units; return !!(U && U.getSystem && U.getSystem() === 'metric' && U.format); }
     function _u(v, cat, d, impLabel, dMet) {
@@ -79957,7 +80706,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
     function _fin(x) { return typeof x === 'number' && isFinite(x); }
     function _fmt(v, d) {
         if (v == null || !isFinite(v)) return '—';
-        return Number(v).toLocaleString(undefined, { minimumFractionDigits: (d == null ? 2 : d), maximumFractionDigits: (d == null ? 2 : d) });
+        return (G.WTS_fmtNum ? G.WTS_fmtNum(v, (d == null ? 2 : d), (d == null ? 2 : d)) : Number(v).toLocaleString(undefined, { minimumFractionDigits: (d == null ? 2 : d), maximumFractionDigits: (d == null ? 2 : d) }));
     }
     function _sig(v, s) {   // significant figures, no grouping ambiguity for small numbers
         if (v == null || !isFinite(v)) return '—';
@@ -80467,11 +81216,11 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
     function _str(id) { var e = _byId(id); return e ? String(e.value) : ''; }
     function _fmt(v, d) {
         if (v == null || !isFinite(v)) return '—';
-        return Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) });
+        return (G.WTS_fmtNum ? G.WTS_fmtNum(v, 0, (d == null ? 2 : d)) : Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) }));
     }
     function _fixed(v, d) {
         if (v == null || !isFinite(v)) return '—';
-        return Number(v).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
+        return (G.WTS_fmtNum ? G.WTS_fmtNum(v, d, d) : Number(v).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d }));
     }
     function _metric() { var U = G.WTS_units; return !!(U && U.getSystem && U.getSystem() === 'metric'); }
     // value in the display system; impLabel is the imperial text
@@ -81180,7 +81929,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
     function _opt(x) { return (x === '' || x == null) ? NaN : Number(x); }
     function _fmt(v, d) {
         if (v == null || !isFinite(v)) return '—';
-        return Number(v).toLocaleString(undefined, { minimumFractionDigits: (d == null ? 2 : d), maximumFractionDigits: (d == null ? 2 : d) });
+        return (G.WTS_fmtNum ? G.WTS_fmtNum(v, (d == null ? 2 : d), (d == null ? 2 : d)) : Number(v).toLocaleString(undefined, { minimumFractionDigits: (d == null ? 2 : d), maximumFractionDigits: (d == null ? 2 : d) }));
     }
     function _metric() { var U = G.WTS_units; return !!(U && U.getSystem && U.getSystem() === 'metric' && U.format); }
     function _u(v, cat, d, impLabel, dMet) {
@@ -81769,7 +82518,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
     function _str(id) { var e = _byId(id); return e ? String(e.value) : ''; }
     function _fmt(v, d) {
         if (v == null || !isFinite(v)) return '—';
-        return Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) });
+        return (G.WTS_fmtNum ? G.WTS_fmtNum(v, 0, (d == null ? 2 : d)) : Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) }));
     }
     function _sig(v) {   // 3 significant figures for concentrations spanning decades
         if (v == null || !isFinite(v)) return '—';
@@ -82302,7 +83051,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
     function _str(id) { var e = _byId(id); return e ? String(e.value) : ''; }
     function _fmt(v, d) {
         if (v == null || !isFinite(v)) return '—';
-        return Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) });
+        return (G.WTS_fmtNum ? G.WTS_fmtNum(v, 0, (d == null ? 2 : d)) : Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) }));
     }
     function _metric() { var U = G.WTS_units; return !!(U && U.getSystem && U.getSystem() === 'metric'); }
     function _u(v, cat, d, impLabel, dMet) {
@@ -83112,11 +83861,11 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
     function _str(id) { var e = _byId(id); return e ? String(e.value) : ''; }
     function _fmt(v, d) {
         if (v == null || !isFinite(v)) return '—';
-        return Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) });
+        return (G.WTS_fmtNum ? G.WTS_fmtNum(v, 0, (d == null ? 2 : d)) : Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) }));
     }
     function _fx(v, d) {
         if (v == null || !isFinite(v)) return '—';
-        return Number(v).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
+        return (G.WTS_fmtNum ? G.WTS_fmtNum(v, d, d) : Number(v).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d }));
     }
     function _metric() { var U = G.WTS_units; return !!(U && U.getSystem && U.getSystem() === 'metric'); }
     function _u(v, cat, d, impLabel, dMet) {
@@ -83424,7 +84173,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
     function _str(id) { var e = _byId(id); return e ? String(e.value) : ''; }
     function _fmt(v, d) {
         if (v == null || !isFinite(v)) return '—';
-        return Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) });
+        return (G.WTS_fmtNum ? G.WTS_fmtNum(v, 0, (d == null ? 2 : d)) : Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) }));
     }
     function _metric() { var U = G.WTS_units; return !!(U && U.getSystem && U.getSystem() === 'metric'); }
     function _u(v, cat, d, impLabel, dMet) {
@@ -83961,7 +84710,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
     function _blank(x) { return x === '' || x == null || (typeof x === 'number' && isNaN(x)); }
     function _fmt(v, d) {
         if (v == null || !isFinite(v)) return '—';
-        return Number(v).toLocaleString(undefined, { minimumFractionDigits: (d == null ? 2 : d), maximumFractionDigits: (d == null ? 2 : d) });
+        return (G.WTS_fmtNum ? G.WTS_fmtNum(v, (d == null ? 2 : d), (d == null ? 2 : d)) : Number(v).toLocaleString(undefined, { minimumFractionDigits: (d == null ? 2 : d), maximumFractionDigits: (d == null ? 2 : d) }));
     }
     function _fx(v, d) { return (v == null || !isFinite(v)) ? '—' : Number(v).toFixed(d); }
     function _metric() { var U = G.WTS_units; return !!(U && U.getSystem && U.getSystem() === 'metric' && U.format); }
@@ -84695,11 +85444,11 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
     function _num(id) { var e = _byId(id); if (!e) return NaN; var s = String(e.value).trim(); return s === '' ? NaN : parseFloat(s); }
     function _fmt(v, d) {
         if (v == null || !isFinite(v)) return '—';
-        return Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) });
+        return (G.WTS_fmtNum ? G.WTS_fmtNum(v, 0, (d == null ? 2 : d)) : Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) }));
     }
     function _fx(v, d) {
         if (v == null || !isFinite(v)) return '—';
-        return Number(v).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
+        return (G.WTS_fmtNum ? G.WTS_fmtNum(v, d, d) : Number(v).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d }));
     }
     function _sci(v) { return (v == null || !isFinite(v)) ? '—' : v === 0 ? '0' : Number(v).toExponential(3); }
     function _metric() { var U = G.WTS_units; return !!(U && U.getSystem && U.getSystem() === 'metric'); }
@@ -84977,7 +85726,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
     function _blank(x) { return x === '' || x == null || (typeof x === 'number' && isNaN(x)); }
     function _fmt(v, d) {
         if (v == null || !isFinite(v)) return '—';
-        return Number(v).toLocaleString(undefined, { minimumFractionDigits: (d == null ? 2 : d), maximumFractionDigits: (d == null ? 2 : d) });
+        return (G.WTS_fmtNum ? G.WTS_fmtNum(v, (d == null ? 2 : d), (d == null ? 2 : d)) : Number(v).toLocaleString(undefined, { minimumFractionDigits: (d == null ? 2 : d), maximumFractionDigits: (d == null ? 2 : d) }));
     }
     function _esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
     function _metric() { var U = G.WTS_units; return !!(U && U.getSystem && U.getSystem() === 'metric' && U.format); }
