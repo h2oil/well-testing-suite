@@ -674,7 +674,9 @@
                 sg_p:   'pressureG',
                 sg_t:   'temperature',
                 sg_gg:  'sg',
-                sg_api: 'api'
+                sg_api: 'api',
+                sg_psep: 'pressureG',     // optional V&B gas-gravity separator P (blank = sg_p)
+                sg_tsep: 'temperature'    // optional V&B gas-gravity separator T (blank = sg_t)
             },
             outputs: {}
         },
@@ -841,7 +843,8 @@
                 tm_mu:   'viscosity',
                 tm_qmin: 'liquidRate',
                 tm_qmax: 'liquidRate',
-                tm_p:    'pressureG'
+                tm_p:    'pressureG',
+                tm_pv:   'pressure'      // optional true vapour pressure, absolute
             },
             outputs: {}
         },
