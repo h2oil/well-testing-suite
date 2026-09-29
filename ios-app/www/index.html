@@ -9898,6 +9898,7 @@ const RELEASE_NOTES = [
         ['fix', 'Calculation fixes', 'Oil &amp; Gas Rate uses the Dranchuk &amp; Abou-Kassem Z (Papay read up to 1.8 % low at high pressure); Solution GOR corrects gas gravity to a 100 psig separator for Vasquez &amp; Beggs; Turbine Meter takes the true vapour pressure; the PRiSM Z-factor solver no longer diverges at high reduced pressure; ESD Lo-Pilot allows for the base temperature; 9-5/8" casing drift follows API 5CT; the simulator water-dump valve opens exactly at its set point.'],
         ['fix', 'Regression', 'A fit that stopped early while still improving, or with a parameter at a limit before converging, is no longer adopted; the previous result is kept and the warning says why.'],
         ['ux', 'Offline &amp; privacy', 'The web app works offline and offers a reload when a new version is available; the iOS app bundles the 3D engine; a Privacy page explains that data stays on your device, and web analytics never include well values or typed text.'],
+        ['ux', 'iOS app', 'The 3D Well Test Simulator loads its bundled 3D engine directly inside the app and recovers when you switch away and back, instead of dropping to the 2D schematic. Input forms fit the phone and iPad screen: no sideways page scrolling, no zoom when you tap a field, wide tables scroll inside their own box, and pinch-zoom works again.'],
         // <!-- v1.8 more items -->  (add further v1.8 items here, same shape as above)
       ] },
     { ver:'v1.7', date:'2026-09-29', title:'Four new calculators &amp; a calculator accuracy audit',
