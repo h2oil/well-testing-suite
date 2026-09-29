@@ -243,6 +243,13 @@ checks.push(['WTS_calcRegistry entries well-formed', Object.keys(win.WTS_calcReg
   checks.push(['WTS_calcRegistry.' + k + ' registered',  !!(win.WTS_calcRegistry && win.WTS_calcRegistry[k])]);
   checks.push(['window.' + fn + ' (function)',          typeof win[fn] === 'function']);
 });
+// Round-10 — live data (5N-*.js): Modbus core + station, Modbus page, Mini WellOS
+checks.push(['window.WTS_modbus (object)',            !!win.WTS_modbus && typeof win.WTS_modbus === 'object']);
+checks.push(['WTS_modbus.createClient / createStation', !!win.WTS_modbus && typeof win.WTS_modbus.createClient === 'function' && typeof win.WTS_modbus.createStation === 'function']);
+checks.push(['WTS_modbus.crc16("123456789") = 0x4B37', (() => { try { return win.WTS_modbus.crc16([49, 50, 51, 52, 53, 54, 55, 56, 57]) === 0x4B37; } catch (e) { return false; } })()]);
+checks.push(['WTS_modbus.getTags (function)',        !!win.WTS_modbus && typeof win.WTS_modbus.getTags === 'function']);
+checks.push(['WTS_calcRegistry.modbus + wellos registered', !!(win.WTS_calcRegistry && win.WTS_calcRegistry.modbus && win.WTS_calcRegistry.wellos)]);
+checks.push(['WTS_modbus idle: no station at load',  !!win.WTS_modbus && win.WTS_modbus.station() === null]);
 checks.push(['WTS_project has storage module',       !!(win.WTS_project && win.WTS_project.listModules().indexOf('storage') !== -1)]);
 (function storageRoundTrip() {
   let ok = false;
@@ -356,6 +363,26 @@ checks.push(['WP15 plot registry declineD / declineB', !!(win.PRiSM_PLOT_REGISTR
   } catch (e) { detail = e.message; }
   if (detail) console.error('pending timers after 5 s idle:', detail);
   checks.push(['no perpetual timers after 5 s idle (PRiSM open)', ok]);
+})();
+// Round-10: Mini WellOS polling Modbus (built-in simulator) stops when the page closes.
+(function noModbusTimersAfterLeaving() {
+  let ok = false, detail = '';
+  try {
+    const harness = require('./tests/_harness');
+    const app = harness.loadApp({ fromSources: false, timers: 'manual', console: 'capture' });
+    const M = app.win.WTS_modbus;
+    M.saveConfig(M.demoConfig());
+    app.storage.setItem('wts_wellos_ui', JSON.stringify({ source: 'modbus', view: '2d' }));
+    app.hook.nav('wellos');
+    app.flush(2500);
+    const polling = !!(M.station() && M.station().isRunning());
+    app.hook.nav('home');
+    app.flush(5000);
+    ok = polling && app.pendingTimers() === 0 && M.station() === null;
+    if (!ok) detail = 'polling=' + polling + ' pending=' + app.pendingTimers() + ' ' + (typeof app.timers === 'function' ? JSON.stringify(app.timers()).slice(0, 400) : '');
+  } catch (e) { detail = e.message; }
+  if (detail) console.error('Mini WellOS timers:', detail);
+  checks.push(['no timers after leaving Mini WellOS (Modbus polling stopped)', ok]);
 })();
 
 console.log('\nNamespace checks:');
