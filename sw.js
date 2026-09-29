@@ -14,8 +14,10 @@
  *   static  same-origin fonts, images, stylesheets and scripts under the
  *           scope (cache first).
  *   lib     the pinned CDN libraries the app loads on demand (three.js
- *           r170 for the 3D view, SheetJS 0.18.5 for .xlsx import), by exact
- *           versioned URL (cache first; fetched in CORS mode).
+ *           r170 for the 3D view, SheetJS 0.18.5 for .xlsx import, SQLite WASM
+ *           3.53.4 and sql.js 1.14.2 for the historian), by exact versioned URL
+ *           (cache first; fetched in CORS mode). The app checks each file's
+ *           SHA-384 before use, so a cached copy is never trusted blindly.
  *
  * NEVER CACHED: non-GET requests, other origins (analytics …), URLs outside
  * the scope, Range requests, responses that are not 200 OK or are marked
@@ -36,9 +38,18 @@ var SHELL_PAGES = ['well-testing-app.html'];                     // relative to 
 var CDN_LIBS = [
     'https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js',
     'https://unpkg.com/three@0.170.0/build/three.module.min.js',
-    'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js'
+    'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js',
+    // Historian (47-calc-historian.js): official SQLite WASM build and sql.js, pinned + SHA-384 checked by the app
+    'https://cdn.jsdelivr.net/npm/@sqlite.org/sqlite-wasm@3.53.4-build1/dist/index.mjs',
+    'https://cdn.jsdelivr.net/npm/@sqlite.org/sqlite-wasm@3.53.4-build1/dist/sqlite3.wasm',
+    'https://cdn.jsdelivr.net/npm/sql.js@1.14.2/dist/sql-wasm.js',
+    'https://cdn.jsdelivr.net/npm/sql.js@1.14.2/dist/sql-wasm.wasm',
+    'https://unpkg.com/@sqlite.org/sqlite-wasm@3.53.4-build1/dist/index.mjs',
+    'https://unpkg.com/@sqlite.org/sqlite-wasm@3.53.4-build1/dist/sqlite3.wasm',
+    'https://unpkg.com/sql.js@1.14.2/dist/sql-wasm.js',
+    'https://unpkg.com/sql.js@1.14.2/dist/sql-wasm.wasm'
 ];
-var PRECACHE_LIBS = [CDN_LIBS[0], CDN_LIBS[2]];
+var PRECACHE_LIBS = [CDN_LIBS[0], CDN_LIBS[2], CDN_LIBS[3], CDN_LIBS[4], CDN_LIBS[5], CDN_LIBS[6]];
 var STATIC_RE = /\.(?:woff2?|ttf|otf|css|js|mjs|png|jpe?g|gif|webp|svg|ico|webmanifest)$/i;
 
 function scopeURL() {
