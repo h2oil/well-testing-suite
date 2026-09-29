@@ -174,7 +174,7 @@ module.exports = [
 
   // ── Oil & gas rate ─────────────────────────────────────────────────────
   {
-    name: 'G2 oilgas: API 35 @ 80°F hydrometer → 33.49 API@60; VCF(120°F) 0.97190; oil 97.72 BPD; AGA-3 gas 3792.7 MSCFD',
+    name: 'G2 oilgas: API 35 @ 80°F hydrometer → 33.49 API@60; VCF(120°F) 0.97190; oil 97.72 BPD; AGA-3 gas 3800.8 MSCFD (DAK Z)',
     wp: WP,
     run(app, assert) {
       app.hook.nav('oilgas');
@@ -187,15 +187,18 @@ module.exports = [
       assert.near(rv(app, 'og_res', 'API @ 60'), api60, 0.051);
       assert.near(rv(app, 'og_res', 'VCF'), vcf, 2e-6);
       assert.near(rv(app, 'og_res', 'Oil Rate'), oil, 0.051);
-      // Independent SI solution of ISO 5167-2 (flange taps, Papay Z, μ 0.012 cP): 3792.68 MSCFD, C 0.60301
+      // Independent SI solution of ISO 5167-2 (flange taps, μ 0.012 cP) with a DAK Z solved by Newton on ρr and
+      // Standing (1977) pseudo-criticals (Tpc 404.7 °R, Ppc 667.2 psia → Tpr 1.383, Ppr 0.7715, Z 0.89999):
+      // 3800.75 MSCFD, C 0.60301 (was 3792.68 with Papay Z 0.90381)
       const gas = rv(app, 'og_res', 'Gas Rate');
-      assert.rel(gas, 3792.68, 1e-3);
+      assert.rel(gas, 3800.75, 1e-3);
+      assert.near(rv(app, 'og_res', 'Z-Factor'), 0.89999, 2e-4);
       assert.near(rv(app, 'og_res', 'Discharge Coeff'), 0.60301, 2e-5);
       assert.rel(rv(app, 'og_res', 'GOR'), gas * 1000 / oil, 2e-3);
       assert.rel(rv(app, 'og_res', 'CGR'), oil / (gas / 1000), 2e-3);
-      // β = 0.7 (2.8" plate in a 4" run): independent 8275.4 MSCFD, C 0.60447
+      // β = 0.7 (2.8" plate in a 4" run): independent 8292.98 MSCFD, C 0.60447
       set(app, { og_plate: 2.8 }); app.win.calcOilGas();
-      assert.rel(rv(app, 'og_res', 'Gas Rate'), 8275.37, 1.5e-3);
+      assert.rel(rv(app, 'og_res', 'Gas Rate'), 8292.98, 1.5e-3);
       assert.near(rv(app, 'og_res', 'Discharge Coeff'), 0.60447, 3e-5);
       // hydrometer at 60°F and oil line at 60°F → no correction at all
       set(app, { og_plate: 2, og_ht: 60, og_olt: 60 }); app.win.calcOilGas();
@@ -212,8 +215,8 @@ module.exports = [
       set(app, { og_int: 60, og_api: 35, og_ht: 60, og_m0: 0, og_m1: 10, og_olt: 60, og_bsw: 0, og_mf: 1, og_sf: 1,
         og_run: 2.067, og_plate: 1.0, og_sp: 100, og_dp: 25, og_gg: 0.65, og_gt: 80 });
       app.win.calcOilGas();
-      // independent SI solution incl. ISO small-pipe term (D < 71.12 mm): 332.58 MSCFD, C 0.60626
-      assert.rel(rv(app, 'og_res', 'Gas Rate'), 332.58, 1.5e-3);
+      // independent SI solution incl. ISO small-pipe term (D < 71.12 mm), DAK Z 0.98087: 332.29 MSCFD, C 0.60626
+      assert.rel(rv(app, 'og_res', 'Gas Rate'), 332.29, 1.5e-3);
       assert.near(rv(app, 'og_res', 'Discharge Coeff'), 0.60626, 3e-5);
       assert.near(rv(app, 'og_res', 'Oil Rate'), 240, 1e-9);                 // 10 bbl/h × 24
       set(app, { og_dp: 0 }); app.win.calcOilGas();
@@ -246,9 +249,9 @@ module.exports = [
       // Results in metric: oil m³/d, gas m³/d, GOR sm³/sm³, CGR m³/10⁶ m³.
       const oilBpd = 4.5 * 24 * 0.95 * 0.98 * vcf;
       assert.rel(rv(app, 'og_res', 'Oil Rate'), oilBpd * 0.158987, 2e-3);
-      assert.rel(rv(app, 'og_res', 'Gas Rate'), 3792.68 * 28.3168466, 1.5e-3);
-      assert.rel(rv(app, 'og_res', 'GOR'), 3792.68e3 / oilBpd * 0.178108, 2e-3);
-      assert.rel(rv(app, 'og_res', 'CGR'), oilBpd / 3.79268 * 5.61458, 2e-3);
+      assert.rel(rv(app, 'og_res', 'Gas Rate'), 3800.75 * 28.3168466, 1.5e-3);
+      assert.rel(rv(app, 'og_res', 'GOR'), 3800.75e3 / oilBpd * 0.178108, 2e-3);
+      assert.rel(rv(app, 'og_res', 'CGR'), oilBpd / 3.80075 * 5.61458, 2e-3);
       const t = String(app.el('og_res').textContent);
       assert.ok(!/BPD|MSCFD|scf|bbl/.test(t), 'no field units in metric results: ' + t);
       assert.includes(t, 'm³/d'); assert.includes(t, 'sm³/sm³'); assert.includes(t, 'm³/10⁶ m³');
@@ -264,7 +267,7 @@ module.exports = [
         og_run: 4, og_plate: 2, og_sp: 500, og_dp: 50, og_gg: 0.75, og_gt: 100 });
       app.win.calcOilGas();
       assert.equal(rv(app, 'og_res', 'Oil Rate'), 0);
-      assert.rel(rv(app, 'og_res', 'Gas Rate'), 3792.68, 1e-3);
+      assert.rel(rv(app, 'og_res', 'Gas Rate'), 3800.75, 1e-3);
       assert.match(rvText(app, 'og_res', 'GOR'), /^—/, 'GOR with no oil is —');
       assert.ok(!/\d/.test(rvText(app, 'og_res', 'GOR')), 'GOR shows no number: ' + rvText(app, 'og_res', 'GOR'));
       assert.equal(rv(app, 'og_res', 'CGR'), 0);                       // 0 bbl/MMscf is real here
@@ -278,13 +281,14 @@ module.exports = [
     },
   },
   {
-    name: 'G2 oilgas (fix): How It Works names the ISO 5167-2 Cd and Papay Z actually used (not plain AGA-3)',
+    name: 'G2 oilgas (fix): How It Works names the ISO 5167-2 Cd and DAK Z actually used (not plain AGA-3 / Papay)',
     wp: WP,
     run(app, assert) {
       app.hook.nav('oilgas');
       const t = String(app.el('pgBody').textContent || '');
       assert.includes(t, 'ISO 5167-2');
-      assert.includes(t, 'Papay');
+      assert.includes(t, 'Dranchuk');
+      assert.ok(!/Papay/.test(t), 'Papay no longer named on the page');
       assert.includes(t, 'inH2O at 60°F');
       assert.ok(!/Gas rate uses AGA-3 orifice metering/.test(t), 'old AGA-3-only wording removed');
     },
@@ -312,9 +316,32 @@ module.exports = [
     },
   },
 
+  {
+    name: 'G2 oilgas (ROADMAP 1.5): DAK Z above Ppr 3 — 3000 psig gives Z 0.7318 (Papay read 0.7594) and 10,201 MSCFD',
+    wp: WP,
+    run(app, assert) {
+      app.hook.nav('oilgas');
+      set(app, { og_int: 60, og_api: 35, og_ht: 60, og_m0: 0, og_m1: 10, og_olt: 60, og_bsw: 0, og_mf: 1, og_sf: 1,
+        og_run: 4, og_plate: 2, og_sp: 3000, og_dp: 50, og_gg: 0.75, og_gt: 100 });
+      app.win.calcOilGas();
+      // Standing pseudo-criticals: Ppr = 3014.696/667.16 = 4.519, Tpr = 559.67/404.72 = 1.383.
+      // Independent Newton-on-ρr DAK: Z = 0.73182 (Standing-Katz chart ≈ 0.73). Independent SI
+      // ISO 5167-2 solve: 10,201.3 MSCFD, C 0.60246 (Papay's 0.75943 under-read the rate by 1.8 %).
+      assert.near(rv(app, 'og_res', 'Z-Factor'), 0.7318, 2e-4);
+      assert.rel(rv(app, 'og_res', 'Gas Rate'), 10201.31, 1.5e-3);
+      assert.near(rv(app, 'og_res', 'Discharge Coeff'), 0.60246, 3e-5);
+      assert.ok(!/outside the Dranchuk/.test(app.el('og_res').textContent), 'inside the DAK range: no caution');
+      // Very cold gas: SG 0.75 at −80 °F → Tpr 0.94 < 1.0 → range caution, still a finite rate
+      set(app, { og_sp: 500, og_gt: -80 }); app.win.calcOilGas();
+      assert.includes(app.el('og_res').textContent, 'outside the Dranchuk');
+      noBadNumbers(assert, app, 'oilgas dak');
+      assert.deepEqual(app.consoleErrors(), []);
+    },
+  },
+
   // ── Solution GOR ───────────────────────────────────────────────────────
   {
-    name: 'G2 solgor: 500 psig, 150°F, γg 0.75, 35 API → Standing 102.74, Vasquez-Beggs 87.18 scf/STB',
+    name: 'G2 solgor: 500 psig, 150°F, γg 0.75, 35 API → Standing 102.74, Vasquez-Beggs 104.82 scf/STB (γgs 0.9018)',
     wp: WP,
     run(app, assert) {
       app.hook.nav('solgor');
@@ -322,13 +349,34 @@ module.exports = [
       app.win.calcSolGOR();
       // Standing: 0.75·[(514.7/18.2+1.4)·10^(0.4375−0.1365)]^1.2048
       const st = 0.75 * Math.pow((514.7 / 18.2 + 1.4) * Math.pow(10, 0.0125 * 35 - 0.00091 * 150), 1.2048);
-      // V&B (API > 30): 0.0178·0.75·514.7^1.187·exp(23.931·35/610)
-      const vb = 0.0178 * 0.75 * Math.pow(514.7, 1.187) * Math.exp(23.931 * 35 / 610);
+      // V&B γg correction to a 100 psig separator (blank separator fields = 500 psig, 150 °F):
+      //   γgs = 0.75·[1 + 5.912e-5·35·150·log10(514.7/114.7)] = 0.75·1.20237 = 0.90177
+      const ggs = 0.75 * (1 + 5.912e-5 * 35 * 150 * Math.log10(514.7 / 114.7));
+      // V&B (API > 30): 0.0178·γgs·514.7^1.187·exp(23.931·35/610) = 104.82 (87.18 with the raw 0.75)
+      const vb = 0.0178 * ggs * Math.pow(514.7, 1.187) * Math.exp(23.931 * 35 / 610);
+      assert.near(ggs, 0.90177, 1e-5);
       assert.near(rv(app, 'sg_res', 'Standing'), st, 0.051);
       assert.near(rv(app, 'sg_res', 'Vasquez'), vb, 0.051);
-      // Heavy oil bracket (API ≤ 30): C1 0.0362, C2 1.0937, C3 25.724
-      set(app, { sg_api: 25 }); app.win.calcSolGOR();
-      assert.near(rv(app, 'sg_res', 'Vasquez'), 0.0362 * 0.75 * Math.pow(514.7, 1.0937) * Math.exp(25.724 * 25 / 610), 0.051);
+      assert.near(rv(app, 'sg_res', 'Gas Gravity (V'), 0.9018, 1e-4);
+      assert.near(rv(app, 'sg_res', 'Gas Gravity (Standing)'), 0.75, 1e-9);
+      assert.includes(app.el('sg_res').textContent, 'separator pressure and oil line temperature above');
+      // Gas gravity measured on a 100 psig separator: log10(1) = 0 → used as entered (87.18)
+      set(app, { sg_psep: 100, sg_tsep: 150 }); app.win.calcSolGOR();
+      assert.near(rv(app, 'sg_res', 'Vasquez'), 0.0178 * 0.75 * Math.pow(514.7, 1.187) * Math.exp(23.931 * 35 / 610), 0.051);
+      assert.near(rv(app, 'sg_res', 'Vasquez'), 87.18, 0.051);
+      // 200 psig / 80 °F separator: γgs = 0.75·[1 + 5.912e-5·35·80·log10(214.7/114.7)] = 0.78380 → 91.11
+      set(app, { sg_psep: 200, sg_tsep: 80 }); app.win.calcSolGOR();
+      assert.near(rv(app, 'sg_res', 'Gas Gravity (V'), 0.7838, 1e-4);
+      assert.near(rv(app, 'sg_res', 'Vasquez'), 91.11, 0.051);
+      assert.near(rv(app, 'sg_res', 'Standing'), st, 0.051);          // Standing unaffected
+      // Heavy oil bracket (API ≤ 30): C1 0.0362, C2 1.0937, C3 25.724; γgs(API 25) = 0.85841
+      set(app, { sg_psep: '', sg_tsep: '', sg_api: 25 }); app.win.calcSolGOR();
+      const ggs25 = 0.75 * (1 + 5.912e-5 * 25 * 150 * Math.log10(514.7 / 114.7));
+      assert.near(rv(app, 'sg_res', 'Vasquez'), 0.0362 * ggs25 * Math.pow(514.7, 1.0937) * Math.exp(25.724 * 25 / 610), 0.051);
+      assert.near(rv(app, 'sg_res', 'Vasquez'), 82.39, 0.051);
+      set(app, { sg_api: 35, sg_psep: -20 }); app.win.calcSolGOR();
+      assert.match(errText(app, 'sg_res'), /separator pressure/);
+      set(app, { sg_psep: '' });
       set(app, { sg_t: '' }); app.win.calcSolGOR();
       assert.match(errText(app, 'sg_res'), /temperature/);
       set(app, { sg_t: 150, sg_p: 0 }); app.win.calcSolGOR();
@@ -346,7 +394,13 @@ module.exports = [
       set(app, { sg_p: 500 * 6.89476, sg_t: (150 - 32) * 5 / 9, sg_gg: 0.75, sg_api: 35 });
       clickIn(app, '#pgBody', 'Calculate');
       assert.near(rv(app, 'sg_res', 'Standing'), 102.74 * 0.178108, 0.011);   // sm³/sm³
+      assert.near(rv(app, 'sg_res', 'Vasquez'), 104.82 * 0.178108, 0.011);
+      // separator fields in kPa(g)/°C: 100 psig = 689.476 kPa(g), 150 °F = 65.56 °C → raw gravity, 87.18 scf/STB
+      set(app, { sg_psep: 100 * 6.89476, sg_tsep: (150 - 32) * 5 / 9 });
+      clickIn(app, '#pgBody', 'Calculate');
       assert.near(rv(app, 'sg_res', 'Vasquez'), 87.18 * 0.178108, 0.011);
+      assert.near(rv(app, 'sg_res', 'Gas Gravity (V'), 0.75, 1e-4);
+      assert.includes(app.el('sg_psep').parentNode.querySelector('label').textContent, 'kPa');
       assert.includes(rvText(app, 'sg_res', 'Standing'), 'sm³/sm³');
       reportHas(app, assert, ['Rs (Standing)', 'Separator Pressure']);
     },

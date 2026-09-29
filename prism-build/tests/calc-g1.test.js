@@ -493,6 +493,78 @@ module.exports = [
       assert.includes(app.el('tm_res').textContent, 'Selected Meter: 3"');
     },
   },
+  {
+    name: 'G1 turbmeter (ROADMAP 1.5): vapour pressure is an input — blank = per-liquid default, entered TVP drives the margin',
+    wp: WP,
+    run(app, assert) {
+      app.hook.nav('turbmeter');
+      set(app, { tm_liq: 'oil', tm_api: 35, tm_t: 40, tm_mu: 5, tm_qmin: 500, tm_qmax: 8000, tm_p: 500, tm_pv: '' });
+      app.win.calcTurbMeter();
+      // default stabilised-crude screening value 0.3 psia → margin 514.7 − 0.3 = 514.4 psi, with the live-crude note
+      assert.near(rv(app, 'tm_res', 'Vapour Pressure'), 0.3, 1e-9);
+      assert.near(rv(app, 'tm_res', 'Cavitation Margin'), 514.4, 0.06);
+      assert.includes(app.el('tm_res').textContent, 'bubble point');
+      // live crude off a 500 psig separator: TVP ≈ 514.7 psia; meter at 510 psig → margin 524.7 − 514.7 = 10.0 psi
+      set(app, { tm_pv: 514.7, tm_p: 510 }); app.win.calcTurbMeter();
+      assert.near(rv(app, 'tm_res', 'Vapour Pressure'), 514.7, 1e-9);
+      assert.near(rv(app, 'tm_res', 'Cavitation Margin'), 10.0, 0.051);
+      assert.includes(rvText(app, 'tm_res', 'Cavitation Margin'), 'OK');
+      assert.ok(!/bubble point/.test(app.el('tm_res').textContent), 'no default-TVP note once a TVP is entered');
+      // 2 psi above TVP → below the 3 psi hard stop
+      set(app, { tm_p: 502 }); app.win.calcTurbMeter();
+      assert.near(rv(app, 'tm_res', 'Cavitation Margin'), 2.0, 0.051);
+      assert.includes(rvText(app, 'tm_res', 'Cavitation Margin'), 'LOW');
+      // diesel default 0.05 psia; water default Antoine at 40 °C (1.070 psia)
+      set(app, { tm_liq: 'diesel', tm_pv: '', tm_p: 500 }); app.win.calcTurbMeter();
+      assert.near(rv(app, 'tm_res', 'Vapour Pressure'), 0.05, 1e-9);
+      set(app, { tm_liq: 'water' }); app.win.calcTurbMeter();
+      assert.near(rv(app, 'tm_res', 'Vapour Pressure'), Math.pow(10, 8.07131 - 1730.63 / 273.426) / 51.7149, 0.006);
+      assert.includes(rvText(app, 'tm_res', 'Vapour Pressure') === null ? '' : rows(app, 'tm_res').find((r) => r.l.indexOf('Vapour') !== -1).l, 'Antoine');
+      set(app, { tm_pv: -1 }); app.win.calcTurbMeter();
+      assert.includes(errText(app, 'tm_res'), 'Vapour pressure');
+      assert.includes(String(app.el('pgBody').textContent), 'Vapour Pressure Basis');
+      noBadNumbers(assert, app, 'turbmeter pv');
+      assert.deepEqual(app.consoleErrors(), []);
+    },
+  },
+  {
+    name: 'G1 turbmeter (ROADMAP 1.5): metric vapour pressure in kPa gives the same margin',
+    wp: WP,
+    run(app, assert) {
+      setMetric(app, true);
+      app.hook.nav('turbmeter');
+      set(app, { tm_liq: 'oil', tm_api: 35, tm_t: 40, tm_mu: 5, tm_qmin: 500 * 0.158987, tm_qmax: 8000 * 0.158987,
+        tm_p: 510 * 6.89476, tm_pv: 514.7 * 6.89476 });
+      app.win.calcTurbMeter();
+      assert.near(rv(app, 'tm_res', 'Vapour Pressure'), 514.7 * 6.89476, 0.6);   // kPa
+      assert.near(rv(app, 'tm_res', 'Cavitation Margin'), 10.0, 0.051);
+      assert.includes(app.el('tm_pv').parentNode.querySelector('label').textContent, 'kPa');
+    },
+  },
+  {
+    name: 'G1 chokeflow (ROADMAP 1.5): 7/64 and 20/64 coefficients flagged as out of line (values unchanged, caution shown)',
+    wp: WP,
+    run(app, assert) {
+      app.hook.nav('chokeflow');
+      const t = String(app.el('pgBody').textContent);
+      assert.includes(t, 'out of line with their neighbours');
+      assert.includes(t, '43.64 *');
+      assert.includes(t, '5.166 *');
+      // values kept as tabulated: 20/64, 3000 psig, 120 °F, SG 0.7 → 43.64·3014.7/√(0.7·580)
+      set(app, { cf_cs: 20, cf_whp: 3000, cf_wht: 120, cf_sg: 0.7 });
+      app.win.calcChokeGas();
+      assert.rel(rv(app, 'cf_gres', 'Gas Rate'), 43.64 * 3014.7 / Math.sqrt(0.7 * 580), 1e-4);
+      assert.includes(app.el('cf_gres').textContent, '20/64 table coefficient');
+      // neighbour-consistent C/S² at 20/64 ≈ 0.10568 → C ≈ 42.27; the tabulated value is 3.2 % higher
+      const cs2 = (37.98 / 361 + 46.818 / 441) / 2;
+      assert.near(cs2 * 400, 42.27, 0.01);
+      set(app, { cf_cs: 7 }); app.win.calcChokeGas();
+      assert.includes(app.el('cf_gres').textContent, '7/64 table coefficient');
+      set(app, { cf_cs: 32 }); app.win.calcChokeGas();
+      assert.ok(!/table coefficient/.test(app.el('cf_gres').textContent), 'no caution at 32/64');
+      noBadNumbers(assert, app, 'chokeflow suspect');
+    },
+  },
   // ── Console hygiene over every G1 page ─────────────────────────────────
   {
     name: 'G1 all pages: default Calculate on every page raises no console errors and shows no NaN/Infinity',

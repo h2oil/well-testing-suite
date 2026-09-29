@@ -6051,6 +6051,13 @@ window.prvExportPDF = function(type) {
 // ═══════════════════════════════════════
 // CHOKE FLOW RATES (Gas coefficient + Gilbert/Ros Oil)
 // ═══════════════════════════════════════
+// ROADMAP §1.5 review (2026-09-29): C/S² rises smoothly from ≈0.098 (8/64) to ≈0.124 (128/64),
+// but two entries break the progression: 7/64 = 5.166 (C/S² 0.1054 between 0.1025 at 6/64 and
+// 0.0977 at 8/64; the 6→7 step exceeds the 7→8 step) and 20/64 = 43.64 (C/S² 0.1091 between
+// 0.1052 at 19/64 and 0.1062 at 21/64; the 20→21 step is smaller than 19→20). A neighbour-
+// consistent C/S² would give ≈4.90 and ≈42.3. The source table the values were transcribed from
+// is not cited here, so they are NOT changed; CHOKE_COEFF_SUSPECT flags them on the page.
+const CHOKE_COEFF_SUSPECT={7:4.90,20:42.3};
 const CHOKE_COEFF={2:0.324,3:0.918,4:1.638,5:2.61,6:3.69,7:5.166,8:6.25,9:7.992,10:9.954,11:12.132,12:14.44,13:17.208,14:20.088,15:23.184,16:26.51,17:30.006,18:33.93,19:37.98,20:43.64,21:46.818,22:51.588,23:56.592,24:61.21,25:67.32,26:73.134,27:79.092,28:85.13,29:91.818,30:98.532,31:105.516,32:112.72,36:144.18,40:179.74,44:219.168,48:260.99,50:286.192,52:310.604,54:336.059,56:362.56,58:390.11,60:418.713,62:448.371,64:479.088,68:543.709,72:612.598,80:763.266,88:931.251,96:1116.697,112:1540.494,128:2035.612};
 function getChokeCoeff(size){if(CHOKE_COEFF[size])return CHOKE_COEFF[size];const keys=Object.keys(CHOKE_COEFF).map(Number).sort((a,b)=>a-b);let lo=keys[0],hi=keys[keys.length-1];for(let i=0;i<keys.length-1;i++){if(keys[i]<=size&&keys[i+1]>=size){lo=keys[i];hi=keys[i+1];break;}}if(lo===hi)return CHOKE_COEFF[lo];return CHOKE_COEFF[lo]+(CHOKE_COEFF[hi]-CHOKE_COEFF[lo])*(size-lo)/(hi-lo);}
 
@@ -6085,8 +6092,9 @@ function renderChokeFlow(body){
         <div class="card"><div class="card-title">Choke Coefficient Reference</div>
           <div style="max-height:500px;overflow-y:auto"><table class="dtable" id="cf_tbl">
             <tr><th>Size (64ths)</th><th>Coefficient</th></tr>
-            ${Object.entries(CHOKE_COEFF).map(([k,v])=>`<tr><td>${k}/64"</td><td>${v}</td></tr>`).join('')}
+            ${Object.entries(CHOKE_COEFF).map(([k,v])=>`<tr><td>${k}/64"</td><td>${v}${CHOKE_COEFF_SUSPECT[k]?' *':''}</td></tr>`).join('')}
           </table></div>
+          <div class="info-bar" style="margin-top:8px"><b>Notes</b> * The 7/64 (5.166) and 20/64 (43.64) coefficients are out of line with their neighbours (a smooth C/S&sup2; progression would give about 4.90 and 42.3, i.e. 5 % and 3 % lower). They are kept as tabulated until checked against the source table; rates at or next to these sizes may read high by up to that amount.</div>
         </div>
       </div>
     </div>`;
@@ -6106,7 +6114,8 @@ window.calcChokeGas=function(){
         <div class="rrow"><span class="rl">Choke Coefficient</span><span class="rv">${fmt(coeff,3)}</span></div>
         <div class="rrow"><span class="rl">Gas Rate</span><span class="rv">${fmt(Q,1)} MSCF/D</span></div>
         <div class="rrow"><span class="rl">Gas Rate</span><span class="rv">${fmt(Q/1000,3)} MMSCF/D</span></div>
-    </div>`;
+    </div>
+    ${((cs>6&&cs<8)||(cs>19&&cs<21))?`<div class="info-bar" style="margin-top:8px">&#9888; This size uses the ${cs>6&&cs<8?'7/64':'20/64'} table coefficient, which is out of line with its neighbours (see the note under the coefficient table): the rate may read up to ${cs>6&&cs<8?'5':'3'} % high.</div>`:''}`;
 };
 window.calcChokeOil=function(){
     const errs=validate([['cf_op','Upstream Pressure',['required','positive']],['cf_ocs','Choke Size',['required','positive']],['cf_gor','GOR',['required','positive']]]);
@@ -6364,6 +6373,12 @@ window.calcAPIcorr=function(){
 };
 window.sgToAPI=function(){const sg=parseFloat($('fp_sg').value);if(!(sg>0)){$('fp_res2').innerHTML='<div class="val-error">Specific gravity must be greater than zero.</div>';return;}$('fp_api2').value=(141.5/sg-131.5).toFixed(1);$('fp_res2').innerHTML=`<div class="rbox" style="margin-top:12px"><div class="rrow"><span class="rl">API Gravity</span><span class="rv">${fmt(141.5/sg-131.5,1)}</span></div></div>`;};
 window.apiToSG=function(){const api=parseFloat($('fp_api2').value);if(!(api>-131.5)){$('fp_res2').innerHTML='<div class="val-error">Enter a valid API gravity (greater than −131.5).</div>';return;}$('fp_sg').value=(141.5/(api+131.5)).toFixed(4);$('fp_res2').innerHTML=`<div class="rbox" style="margin-top:12px"><div class="rrow"><span class="rl">Specific Gravity</span><span class="rv">${fmt(141.5/(api+131.5),4)}</span></div></div>`;};
+// Vasquez & Beggs (1980) separator-gas-gravity normalisation to a 100 psig separator:
+//   γgs = γg·[1 + 5.912e-5·API·Ts·log10(Ps/114.7)],  Ps psia, Ts °F.
+// Shared by the bubble-point tab and the Solution GOR page (psig in, as on both pages).
+function _vbGasGravity100(gg,API,TsF,PsPsig){
+    return gg*(1+5.912e-5*API*TsF*Math.log10((PsPsig+14.7)/114.7));
+}
 window.calcBubblePoint=function(){
     const API=parseFloat($('bp_api').value),GOR=parseFloat($('bp_gor').value),Yg=parseFloat($('bp_gg').value);
     const Ts=parseFloat($('bp_st').value),Ps=parseFloat($('bp_sp').value),Tr=parseFloat($('bp_rt').value);
@@ -6377,7 +6392,7 @@ window.calcBubblePoint=function(){
     if(errs.length){$('bp_res').innerHTML=errs.map(e=>'<div class="val-error">'+e+'</div>').join('');return;}
     // Vasquez & Beggs (1980) gas-gravity normalisation: separator pressure is psia
     // (was fed psig — audit G2).
-    const Ygs=Yg*(1+5.912e-5*API*Ts*Math.log10((Ps+14.7)/114.7));
+    const Ygs=_vbGasGravity100(Yg,API,Ts,Ps);
     // Standing (1947): Pb = 18.2·[(Rs/γg)^0.83·10^(0.00091·T − 0.0125·API) − 1.4], psia
     const Pb=18.2*(Math.pow(GOR/Ygs,0.83)*Math.pow(10,0.00091*Tr-0.0125*API)-1.4);
     // A non-positive Pb means the GOR is below the correlation's range — report it
@@ -6965,24 +6980,31 @@ function renderSolGOR(body){
           <div class="fg-item"><label>Oil Line Temperature (&deg;F)</label><input type="number" id="sg_t" value="150"></div>
           <div class="fg-item"><label>Gas Gravity (air=1)</label><input type="number" id="sg_gg" value="0.75" step="0.01"></div>
           <div class="fg-item"><label>Oil API Gravity (&deg;API @ 60&deg;F)</label><input type="number" id="sg_api" value="35" step="0.1"></div>
+          <div class="fg-item"><label>Gas-Gravity Separator Pressure (psig)</label><input type="number" id="sg_psep" value="" placeholder="= separator pressure"></div>
+          <div class="fg-item"><label>Gas-Gravity Separator Temp (&deg;F)</label><input type="number" id="sg_tsep" value="" placeholder="= oil line temperature"></div>
         </div>
         <div class="btn-row"><button class="btn btn-primary" onclick="calcSolGOR()">Calculate</button></div>
         <div id="sg_res"></div>
       </div></div>
       <div><div class="card"><div class="card-title">Correlations</div>
-        <div class="info-bar" style="margin-bottom:8px"><b>Standing (1947):</b> Based on 105 experimentally determined bubble points from 22 California crude oil systems.</div>
-        <div class="info-bar"><b>Vasquez & Beggs (1980):</b> Based on 600+ PVT measurements. Uses API-dependent coefficients (API &le; 30 vs &gt; 30).</div>
+        <div class="info-bar" style="margin-bottom:8px"><b>Standing (1947):</b> Based on 105 experimentally determined bubble points from 22 California crude oil systems. Uses the entered gas gravity.</div>
+        <div class="info-bar"><b>Vasquez & Beggs (1980):</b> Based on 600+ PVT measurements. Uses API-dependent coefficients (API &le; 30 vs &gt; 30). The correlation is fitted to the gas gravity of a 100 psig separator, so the entered gravity is first corrected with &gamma;gs = &gamma;g&middot;[1 + 5.912&times;10&#8315;&#8309;&middot;API&middot;Ts&middot;log10(Ps/114.7)] (Ps psia, Ts &deg;F), where Ps/Ts are the conditions of the separator the gas gravity was measured at. Leave those two fields blank to use the separator pressure and oil line temperature above; at 100 psig the gravity is used as entered.</div>
       </div></div></div>`;
-    loadInputs('solgor',['sg_p','sg_t','sg_gg','sg_api']);
+    loadInputs('solgor',['sg_p','sg_t','sg_gg','sg_api','sg_psep','sg_tsep']);
 }
 window.calcSolGOR=function(){
     const P=parseFloat($('sg_p').value),T=parseFloat($('sg_t').value),gg=parseFloat($('sg_gg').value),API=parseFloat($('sg_api').value);
-    saveInputs('solgor',['sg_p','sg_t','sg_gg','sg_api']);
+    // Optional gas-gravity separator conditions (blank = the pressure/temperature above).
+    const psepTxt=String($('sg_psep').value).trim(),tsepTxt=String($('sg_tsep').value).trim();
+    const Psep=psepTxt===''?P:parseFloat(psepTxt),Tsep=tsepTxt===''?T:parseFloat(tsepTxt);
+    saveInputs('solgor',['sg_p','sg_t','sg_gg','sg_api','sg_psep','sg_tsep']);
     const errs=[];
     if(isNaN(P)||P<=0) errs.push('Pressure must be > 0');
     if(isNaN(gg)||gg<=0) errs.push('Gas gravity must be > 0');
     if(isNaN(API)||API<=0) errs.push('API gravity must be > 0');
     if(!isFinite(T)||T<=-459.67) errs.push('Enter a valid oil line temperature');
+    if(!isFinite(Psep)||Psep+14.7<=0) errs.push('Enter a valid gas-gravity separator pressure (or leave it blank)');
+    if(!isFinite(Tsep)||Tsep<=-459.67) errs.push('Enter a valid gas-gravity separator temperature (or leave it blank)');
     if(errs.length){$('sg_res').innerHTML=errs.map(e=>'<div class="val-error">'+e+'</div>').join('');return;}
     // Standing (1947): Rs = γg·[(Pb/18.2 + 1.4)·10^(0.0125·API − 0.00091·T)]^1.2048
     // Bug-fix 2026-04-28: previously had +1.4 added AFTER the 10^x division
@@ -6995,13 +7017,21 @@ window.calcSolGOR=function(){
     if(API<=30){C1=0.0362;C2=1.0937;C3=25.724;}else{C1=0.0178;C2=1.1870;C3=23.931;}
     // Vasquez & Beggs (1980): Rs = C1·γgs·p^C2·exp[C3·API/(T+460)], p in psia
     // (was P+15; atmospheric is 14.7 psi — audit G2). γgs is the 100 psig-separator
-    // gas gravity; the entered gravity is used as-is.
-    const Rs_vb=C1*gg*Math.pow(P+14.7,C2)*Math.exp(C3*API/(T+460));
+    // gas gravity: ROADMAP §1.5 fix — the entered gravity is now corrected with the
+    // V&B separator relation (same as the bubble-point tab) at the gas-gravity
+    // separator conditions (default: the pressure/temperature above).
+    const ggs=_vbGasGravity100(gg,API,Tsep,Psep);
+    if(!(ggs>0)){$('sg_res').innerHTML='<div class="val-error">The corrected gas gravity is not positive at these separator conditions — check the separator pressure and temperature.</div>';return;}
+    const Rs_vb=C1*ggs*Math.pow(P+14.7,C2)*Math.exp(C3*API/(T+460));
+    const sepDefault=psepTxt===''&&tsepTxt==='';
     $('sg_res').innerHTML=`<div class="rbox" style="margin-top:12px"><div class="rbox-title">Solution GOR Results</div>
         <div class="rrow"><span class="rl">Rs (Standing)</span><span class="rv">${_uFmt(Rs_standing,'gor',1,'scf/stbbl',2)}</span></div>
         <div class="rrow"><span class="rl">Rs (Vasquez & Beggs)</span><span class="rv">${_uFmt(Rs_vb,'gor',1,'scf/stbbl',2)}</span></div>
+        <div class="rrow"><span class="rl">Gas Gravity (Standing)</span><span class="rv">${fmt(gg,4)} (as entered)</span></div>
+        <div class="rrow"><span class="rl">Gas Gravity (V&amp;B, 100 psig)</span><span class="rv">${fmt(ggs,4)}</span></div>
         <div class="rrow"><span class="rl">API Bracket</span><span class="rv">${API<=30?'&le; 30 (Heavy/Medium)':'&gt; 30 (Light)'}</span></div>
-    </div>`;
+    </div>
+    <div class="info-bar" style="margin-top:8px">Vasquez &amp; Beggs used &gamma;gs = ${fmt(ggs,4)}: the entered &gamma;g ${fmt(gg,4)} corrected to a 100 psig separator from ${_uFmt(Psep,'pressureG',1,'psig')} and ${_uFmt(Tsep,'temperature',1,'&deg;F')}${sepDefault?' (the separator pressure and oil line temperature above)':''}. Standing uses the entered gravity.</div>`;
 };
 
 // ── Oil & Gas Rate + GOR/CGR ──
@@ -7032,7 +7062,7 @@ function renderOilGas(body){
       <div id="og_res"></div>
     </div><div>
       <div class="card"><div class="card-title">How It Works</div>
-        <div class="info-bar">Oil rate: the hydrometer API is corrected to 60°F at the hydrometer temperature (API MPMS 11.1 / ASTM D1250 Table 5A) and the meter volume is corrected from oil line temperature to 60°F with the Table 6A VCF. Gas rate uses the orifice-meter equation in AGA-3 field-unit form (flange taps) with the ISO 5167-2 Reader-Harris/Gallagher discharge coefficient (flange-tap terms, iterated on Reynolds number), the expansion factor, and supercompressibility from a Papay Z-factor. The dedicated AGA-3 page uses the AGA-3 flange-tap Cd and a Dranchuk &amp; Abou-Kassem Z-factor, so the two pages can differ by a fraction of a percent. Differential pressure is inH2O at 60°F (27.707 inH2O per psi). GOR = Gas Rate / Oil Rate; CGR = Oil Rate / Gas Rate; either shows — when its denominator is zero.</div>
+        <div class="info-bar">Oil rate: the hydrometer API is corrected to 60°F at the hydrometer temperature (API MPMS 11.1 / ASTM D1250 Table 5A) and the meter volume is corrected from oil line temperature to 60°F with the Table 6A VCF. Gas rate uses the orifice-meter equation in AGA-3 field-unit form (flange taps) with the ISO 5167-2 Reader-Harris/Gallagher discharge coefficient (flange-tap terms, iterated on Reynolds number), the expansion factor, and supercompressibility Fpv = 1/&radic;Z from the Dranchuk &amp; Abou-Kassem (1975) Z-factor with Standing (1977) pseudo-critical properties (valid 1.0 &lt; Tpr &le; 3.0, 0.2 &le; Ppr &lt; 30; a note is shown outside that range). The dedicated AGA-3 page uses the same Z-factor with the AGA-3 flange-tap Cd, so the two pages can differ by a fraction of a percent. Differential pressure is inH2O at 60°F (27.707 inH2O per psi). GOR = Gas Rate / Oil Rate; CGR = Oil Rate / Gas Rate; either shows — when its denominator is zero.</div>
       </div>
     </div></div>`;
     loadInputs('oilgas',['og_int','og_api','og_ht','og_m0','og_m1','og_olt','og_bsw','og_mf','og_sf','og_run','og_plate','og_sp','og_dp','og_gg','og_gt']);
@@ -7068,7 +7098,7 @@ window.calcOilGas=function(){
     const corrVol=MF*SF*meterDiff*netBSW*VCF;
     const oilRate=corrVol*Z7;
     // Gas rate (AGA-3 field-unit orifice equation with the ISO 5167-2 Reader-Harris/
-    // Gallagher Cd, flange taps + Papay Z — stated as such in How It Works)
+    // Gallagher Cd, flange taps + DAK Z — stated as such in How It Works)
     const beta=plate/run;
     const beta4=Math.pow(beta,4);
     const Pabs=sepP+14.696;          // atmospheric 14.696 psia (14.73 is the base pressure)
@@ -7080,11 +7110,22 @@ window.calcOilGas=function(){
     const Tb=519.67,Pb=14.73;
     const Fpb=14.73/Pb, Ftb=Tb/519.67, Ftf=Math.sqrt(519.67/Tf);
     const Fg=1/Math.sqrt(gasGrav);
-    // Z-factor via Papay for supercompressibility
-    const Ppc=756.8-131*gasGrav-3.6*gasGrav*gasGrav;
-    const Tpc=169.2+349.5*gasGrav-74*gasGrav*gasGrav;
+    // Z-factor for supercompressibility — Dranchuk & Abou-Kassem (1975) 11-constant fit
+    // of the Standing-Katz chart with Standing (1977) natural-gas pseudo-criticals, the
+    // same pair as the AGA-3 page (ROADMAP §1.5: the former Papay explicit Z is only
+    // reliable below Ppr ≈ 3 — e.g. −3.6 % in Z at 3000 psig, SG 0.75, 100 °F).
+    // Solved by bisection on the reduced density ρr (always converges).
+    const Tpc=168+325*gasGrav-12.5*gasGrav*gasGrav;
+    const Ppc=677+15*gasGrav-37.5*gasGrav*gasGrav;
     const Ppr=Pabs/Ppc, Tpr=Tf/Tpc;
-    const Z=Math.max(0.3,Math.min(1.2, 1-3.52*Ppr/Math.pow(10,0.9813*Tpr)+0.274*Ppr*Ppr/Math.pow(10,0.8157*Tpr)));
+    const Zr=r=>1+(0.3265-1.0700/Tpr-0.5339/Math.pow(Tpr,3)+0.01569/Math.pow(Tpr,4)-0.05165/Math.pow(Tpr,5))*r
+        +(0.5475-0.7361/Tpr+0.1844/(Tpr*Tpr))*r*r
+        -0.1056*(-0.7361/Tpr+0.1844/(Tpr*Tpr))*Math.pow(r,5)
+        +0.6134*(1+0.7210*r*r)*(r*r/Math.pow(Tpr,3))*Math.exp(-0.7210*r*r);
+    let rLo=1e-9, rHi=3;
+    for(let i=0;i<100;i++){ const m=(rLo+rHi)/2; if(Zr(m)-0.27*Ppr/(m*Tpr)>0) rHi=m; else rLo=m; }
+    const Z=0.27*Ppr/(((rLo+rHi)/2)*Tpr);
+    if(!(Z>0)||!isFinite(Z)){$('og_res').innerHTML='<div class="val-error">Z-factor could not be solved for these conditions (check gas temperature and pressure)</div>';return;}
     const Fpv=1/Math.sqrt(Z);
     const hw=diffP;
     // Reader-Harris/Gallagher Cd (ISO 5167-2:2003 §5.3.2.1) with the flange-tap terms
@@ -7120,9 +7161,11 @@ window.calcOilGas=function(){
         <div class="rrow"><span class="rl">VCF</span><span class="rv">${fmt(VCF,6)}</span></div>
         <div class="rrow"><span class="rl">Gas Rate</span><span class="rv">${_uFmt(gasRate,'gasRateSmall',3,'MSCFD',1)}</span></div>
         <div class="rrow"><span class="rl">Discharge Coeff (Cd)</span><span class="rv">${fmt(Cd,5)}</span></div>
+        <div class="rrow"><span class="rl">Z-Factor (DAK)</span><span class="rv">${fmt(Z,4)} (Ppr ${fmt(Ppr,2)}, Tpr ${fmt(Tpr,3)})</span></div>
         <div class="rrow"><span class="rl">GOR</span><span class="rv">${gorTxt}</span></div>
         <div class="rrow"><span class="rl">CGR</span><span class="rv">${cgrTxt}</span></div>
-    </div>`;
+    </div>
+    ${(Tpr<=1.0||Tpr>3.0||Ppr>=30)?`<div class="info-bar" style="margin-top:8px">&#9888; Tpr ${fmt(Tpr,3)} / Ppr ${fmt(Ppr,2)} is outside the Dranchuk &amp; Abou-Kassem range (1.0 &lt; Tpr &le; 3.0, Ppr &lt; 30): treat the Z-factor and gas rate as approximate.</div>`:''}`;
 };
 
 // ── MCF & Shrinkage % ──
@@ -8450,6 +8493,7 @@ function renderTurbMeter(body){
         <div class="fg-item"><label>Q<sub>min</sub> (BPD)</label><input type="number" id="tm_qmin" value="500"></div>
         <div class="fg-item"><label>Q<sub>max</sub> (BPD)</label><input type="number" id="tm_qmax" value="8000"></div>
         <div class="fg-item"><label>Operating Pressure (psig)</label><input type="number" id="tm_p" value="500"></div>
+        <div class="fg-item"><label>True Vapour Pressure, abs (psi)</label><input type="number" id="tm_pv" value="" step="0.01" placeholder="blank = default for liquid"></div>
       </div>
       <div class="btn-row"><button class="btn btn-primary" onclick="calcTurbMeter()">Calculate</button></div>
       <div id="tm_res"></div>
@@ -8458,11 +8502,14 @@ function renderTurbMeter(body){
       <div class="info-bar" style="margin-bottom:4px">Viscosity &gt; 30 cP — turbine meter not suitable</div>
       <div class="info-bar" style="margin-bottom:4px">Re &lt; 10,000 at Q<sub>min</sub> — linearity not guaranteed</div>
       <div class="info-bar">Cavitation margin &lt; 3 psi — risk of meter damage</div>
+    </div>
+    <div class="card"><div class="card-title">Vapour Pressure Basis</div>
+      <div class="info-bar"><b>Notes</b> Cavitation margin = operating pressure (psia) &minus; true vapour pressure (TVP) at the meter. Enter the TVP when it is known; leave it blank to use a default. Water: Antoine equation (NIST, 1&ndash;100 &deg;C). Diesel: 0.05 psia screening value (low-volatility distillate). Crude oil: 0.3 psia screening value for a stabilised (tank) crude only. Crude leaving a test separator is at its bubble point, so its TVP is about the separator pressure (psia) &mdash; enter that, or the margin will be overstated.</div>
     </div></div></div>`;
-    loadInputs('turbmeter',['tm_liq','tm_api','tm_t','tm_mu','tm_qmin','tm_qmax','tm_p']);
+    loadInputs('turbmeter',['tm_liq','tm_api','tm_t','tm_mu','tm_qmin','tm_qmax','tm_p','tm_pv']);
 }
 window.calcTurbMeter=function(){
-    saveInputs('turbmeter',['tm_liq','tm_api','tm_t','tm_mu','tm_qmin','tm_qmax','tm_p']);
+    saveInputs('turbmeter',['tm_liq','tm_api','tm_t','tm_mu','tm_qmin','tm_qmax','tm_p','tm_pv']);
     const liq=$('tm_liq').value,API=parseFloat($('tm_api').value),T=parseFloat($('tm_t').value);
     const mu=parseFloat($('tm_mu').value)/1000,Qmin=parseFloat($('tm_qmin').value),Qmax=parseFloat($('tm_qmax').value);
     const P=parseFloat($('tm_p').value);
@@ -8472,6 +8519,9 @@ window.calcTurbMeter=function(){
         ['tm_qmin','Qmin',['required','positive']],['tm_qmax','Qmax',['required','positive']],['tm_p','Operating Pressure',['required',{min:-14.6}]]]
         .concat(liq==='oil'?[['tm_api','API Gravity',['required',{min:-10,max:100}]]]:[]));
     if(!errs.length&&Qmax<Qmin) errs.push('Qmax must be greater than or equal to Qmin');
+    // Optional true vapour pressure (psia); blank = the per-liquid default below.
+    const pvTxt=String($('tm_pv').value).trim(), PvIn=parseFloat(pvTxt);
+    if(pvTxt!==''&&!(PvIn>=0)) errs.push('Vapour pressure must be 0 psia or more (or leave it blank for the default)');
     if(!showErrors('tm_res',errs))return;
     if(mu*1000>30){$('tm_res').innerHTML='<div class="val-error">Viscosity > 30 cP: Turbine meter NOT suitable. Use PD meter.</div>';return;}
     let rho;
@@ -8493,9 +8543,15 @@ window.calcTurbMeter=function(){
     const Re_min=rho*Vmin*rec.id/(mu||0.001);
     // Vapour pressure estimate (psia). G1 audit fix: water used a fixed 0.12 psia
     // (≈ 4 °C); now Antoine (NIST, 1–100 °C): log10 P[mmHg] = 8.07131 − 1730.63/(233.426 + T[°C]),
-    // e.g. 1.07 psia at 40 °C. Crude/diesel remain screening constants (no TVP input).
+    // e.g. 1.07 psia at 40 °C. ROADMAP §1.5: the true vapour pressure is now an input
+    // (tm_pv, psia); blank falls back to Antoine for water and the screening constants
+    // for diesel (0.05 psia) and stabilised crude (0.3 psia). Live crude from a test
+    // separator is at its bubble point (TVP ≈ separator pressure) — the page says so.
     const Tw=Math.max(1,Math.min(100,T));
-    const Pvap=liq==='water'?Math.pow(10,8.07131-1730.63/(233.426+Tw))/51.7149:liq==='diesel'?0.05:0.3;
+    const pvUser=pvTxt!=='';
+    const Pvap=pvUser?PvIn:liq==='water'?Math.pow(10,8.07131-1730.63/(233.426+Tw))/51.7149:liq==='diesel'?0.05:0.3;
+    const pvBasis=pvUser?'entered':liq==='water'?'Antoine, water at '+fmt(Tw,1)+' °C':liq==='diesel'?'diesel screening value':'stabilised-crude screening value';
+    if(!pvUser&&liq==='oil') tmNotes.push('Crude vapour pressure is the 0.3 psia screening value for stabilised crude. Crude straight from a separator is at its bubble point (vapour pressure ≈ separator pressure): enter the true vapour pressure for a meaningful cavitation margin.');
     const cavMargin=(P+14.7)-Pvap;
     const reOK=Re_min>=10000;
     const cavOK=cavMargin>=3;
@@ -8505,6 +8561,7 @@ window.calcTurbMeter=function(){
         <div class="rrow"><span class="rl">Velocity @ Q<sub>max</sub></span><span class="rv">${fmt(Vmax,2)} m/s</span></div>
         <div class="rrow"><span class="rl">Re @ Q<sub>min</sub></span><span class="rv" style="color:${reOK?'var(--green)':'var(--red)'}">${fmt(Re_min,0)} ${reOK?'OK':'LOW'}</span></div>
         <div class="rrow"><span class="rl">Density @ ${T}&deg;C</span><span class="rv">${fmt(rho,1)} kg/m&sup3;</span></div>
+        <div class="rrow"><span class="rl">Vapour Pressure (${pvBasis})</span><span class="rv">${_uFmt(Pvap,'pressure',2,'psia')}</span></div>
         <div class="rrow"><span class="rl">Cavitation Margin</span><span class="rv" style="color:${cavOK?'var(--green)':'var(--red)'}">${fmt(cavMargin,1)} psi ${cavOK?'OK':'LOW — Risk!'}</span></div>
     </div>
     ${tmNotes.length?`<div class="info-bar" style="margin-top:12px"><b>Notes:</b> ${tmNotes.join(' ')}</div>`:''}`;
@@ -47634,7 +47691,9 @@ _registerPanel(6, {
                 sg_p:   'pressureG',
                 sg_t:   'temperature',
                 sg_gg:  'sg',
-                sg_api: 'api'
+                sg_api: 'api',
+                sg_psep: 'pressureG',     // optional V&B gas-gravity separator P (blank = sg_p)
+                sg_tsep: 'temperature'    // optional V&B gas-gravity separator T (blank = sg_t)
             },
             outputs: {}
         },
@@ -47801,7 +47860,8 @@ _registerPanel(6, {
                 tm_mu:   'viscosity',
                 tm_qmin: 'liquidRate',
                 tm_qmax: 'liquidRate',
-                tm_p:    'pressureG'
+                tm_p:    'pressureG',
+                tm_pv:   'pressure'      // optional true vapour pressure, absolute
             },
             outputs: {}
         },
