@@ -159,7 +159,10 @@
             mu: L.mu_g_leeGonzalezEakin(sg, tF, Z, p)
         };
         s.E = 1 / s.Bg_ft3scf;
-        s.Fpv = 1 / Math.sqrt(Z);
+        // AGA-3 / API MPMS 14.3.3 supercompressibility Fpv = √(Zb/Zf) (v3.0, as the AGA-3 engine;
+        // was 1/√Z with Zb = 1): Zb = DAK Z at the standard conditions on the same pseudo-criticals.
+        s.Zb = L.Z_dranchukAbouKassem(T_SC / pc.Tpc, P_SC / pc.Ppc);
+        s.Fpv = Math.sqrt(s.Zb / Z);
         if (full) {
             // cg = 1/p − (1/Z)·dZ/dp, dZ/dp from DAK by central difference in Ppr.
             var h = Math.max(1e-4 * Ppr, 1e-5);
@@ -297,7 +300,7 @@
         var h = '';
         // 1 — pseudo-criticals
         h += '<div class="rbox"><div class="rbox-title">Pseudo-critical Properties</div>' +
-            _row('Apparent molecular weight', _fmt(r.M, 2) + ' lb/lb-mol') +
+            _row('Apparent molecular weight', _fmt(r.M, 2) + (_metric() ? ' kg/kmol' : ' lb/lb-mol')) +   // same number in both
             _row('Hydrocarbon gas gravity', _fmt(r.sgHc, 4)) +
             _row('Tpc, hydrocarbon (Sutton)', _u(r.TpcHc, 'tempAbsolute', 1, '°R')) +
             _row('Ppc, hydrocarbon (Sutton)', _u(r.PpcHc, 'pressure', 1, 'psia')) +
@@ -339,7 +342,7 @@
                 _row('Bg', met ? _sig(s.Bg_ft3scf, 4) + ' rm³/sm³' : _sig(s.Bg_ft3scf, 4) + ' ft³/scf') +
                 _row('Gas density', _us(s.rho, 'density', 4, 'lb/ft³')) +
                 _row('Viscosity (Lee–Gonzalez–Eakin)', _us(s.mu, 'viscosity', 4, 'cp')) +
-                _row('Supercompressibility Fpv = √(1/Z)', _fmt(s.Fpv, 4)) +
+                _row('Supercompressibility Fpv = √(Zb/Z)', _fmt(s.Fpv, 4) + ' (Zb ' + _fmt(s.Zb, 5) + ')') +
                 '</div>';
         }
         // 5 — verdicts
@@ -366,7 +369,7 @@
             'impurity correction). k is the ideal-gas Cp°/Cv° at the flowing temperature: Cp° of a paraffin gas of the ' +
             'hydrocarbon molecular weight (interpolated between methane, ethane and propane) mixed with N2, CO2 and H2S ' +
             '(Reid–Prausnitz–Poling heat capacities). Speed of sound c = √(k·Z·R·T/M); the real-gas departure of k is ' +
-            'neglected, which is usual for engineering use but understates c at high pressure. Fpv takes base Z as 1.</div>';
+            'neglected, which is usual for engineering use but understates c at high pressure. Fpv = √(Zb/Z) with the DAK base Z at 14.696 psia / 60 °F (AGA-3; v3.0, was 1/√Z).</div>';
         return h;
     }
 

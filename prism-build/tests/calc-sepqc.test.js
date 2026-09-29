@@ -121,7 +121,7 @@ module.exports = [
       try {
         const e = F(Object.assign({}, BASE));
         assert.ok(e.ok && /AGA-3/.test(e.zLabSrc), 'AGA-3 fallback');
-        const ag = W.WTS_aga3_compute({ D: 4, d: 2, hw: 50, Ps: 500, TfF: 100, SG: 0.75, co2: 2, h2s: 0, n2: 0.5 });
+        const ag = W.WTS_aga3_compute({ D: 4, d: 2, hw: 50, Ps: 500, TfF: 100, SG: 0.75, sgBasis: 'ideal', co2: 2, h2s: 0, n2: 0.5 });
         assert.rel(e.zLab, ag.Z, 1e-12, 'Z from WTS_aga3_compute');
       } finally { W.WTS_gaspvt_compute = keep; }
 

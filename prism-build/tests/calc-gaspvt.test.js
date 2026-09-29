@@ -168,7 +168,19 @@ module.exports = [
       const sp = F({ sg: 0.7, p: 3000, t: 200, psep: 1000, tsep: 100 });
       assert.ok(sp.sep && sp.sep.p === 1000, 'separator state');
       assert.rel(sp.sep.Tpr, 559.67 / 377.59, 1e-12, 'sep Tpr');
-      assert.rel(sp.sep.Fpv, 1 / Math.sqrt(sp.sep.zDAK), 1e-12, 'Fpv');
+      // v3.0 AGA-3 Fpv = √(Zb/Zf); Zb by an independent DAK bisection at 519.67 °R / 14.696 psia on the same Tpc'/Ppc'
+      const dakB = (Tpr, Ppr) => {
+        const A = [0, 0.3265, -1.07, -0.5339, 0.01569, -0.05165, 0.5475, -0.7361, 0.1844, 0.1056, 0.6134, 0.7210];
+        const Zof = (r) => 1 + (A[1] + A[2] / Tpr + A[3] / Tpr ** 3 + A[4] / Tpr ** 4 + A[5] / Tpr ** 5) * r
+          + (A[6] + A[7] / Tpr + A[8] / Tpr ** 2) * r * r - A[9] * (A[7] / Tpr + A[8] / Tpr ** 2) * r ** 5
+          + A[10] * (1 + A[11] * r * r) * (r * r / Tpr ** 3) * Math.exp(-A[11] * r * r);
+        let lo = 1e-9, hi = 3;
+        for (let i = 0; i < 200; i++) { const m = (lo + hi) / 2; if (Zof(m) - 0.27 * Ppr / (m * Tpr) > 0) hi = m; else lo = m; }
+        return 0.27 * Ppr / (((lo + hi) / 2) * Tpr);
+      };
+      const zbHand = dakB(519.67 / sp.Tpc, 14.696 / sp.Ppc);   // ≈ 0.9971
+      assert.near(sp.sep.Zb, zbHand, 1e-6, 'Zb');
+      assert.rel(sp.sep.Fpv, Math.sqrt(zbHand / sp.sep.zDAK), 1e-6, 'Fpv = √(Zb/Zf)');
       assert.rel(sp.sep.Bg_ft3scf, 14.696 * sp.sep.zDAK * 559.67 / (519.67 * 1000), 1e-9, 'sep Bg');
       assert.strictEqual(a.sep, null, 'no separator when blank');
       // Z vs pressure table: 11 rows to 5,000 psia, matches the point value at 3,000 psia
@@ -221,7 +233,7 @@ module.exports = [
       assert.ok(app.findAll('#gp_res .rbox-title').some((t) => t.textContent === 'At Separator Conditions'), 'separator card');
       const sr = app.win.WTS_gaspvt_compute({ sg: 0.7, p: 3000, t: 200, co2: 5, h2s: 10, n2: 2, psep: 1000, tsep: 100 });
       assert.rel(S(app).sep.zDAK, sr.sep.zDAK, 1e-12, 'sep state');
-      assert.rel(rv(app, 'gp_res', 'Supercompressibility Fpv = √(1/Z)'), sr.sep.Fpv, 1e-4);
+      assert.rel(rv(app, 'gp_res', 'Supercompressibility Fpv = √(Zb/Z)'), sr.sep.Fpv, 1e-4);
       assert.rel(rv(app, 'gp_res', 'Wichert–Aziz ε'), 20.74, 1e-3);
       assert.includes(txt(app, 'gp_res'), '⚠ Sour gas: Wichert–Aziz correction applied');
       // Out-of-range warning (Ppr > 15)
@@ -260,6 +272,8 @@ module.exports = [
       open(app);
       set(app, { gp_psep: 1000, gp_tsep: 100 }); calc(app);
       const imp = JSON.parse(JSON.stringify(S(app)));
+      const impM = rv(app, 'gp_res', 'Apparent molecular weight');
+      assert.includes(rowText(app, 'gp_res', 'Apparent molecular weight'), 'lb/lb-mol');
       const U = app.win.WTS_units;
       app.flush(10);
       U.setSystem('metric');
@@ -276,6 +290,10 @@ module.exports = [
         assert.rel(rv(app, 'gp_res', 'Tpc, corrected'), imp.Tpc * 5 / 9, 1e-3, 'K');
         assert.rel(rv(app, 'gp_res', 'Gas compressibility cg'), imp.cg / 6.89476, 1e-3, '1/kPa');
         assert.includes(rowText(app, 'gp_res', 'Bg'), 'rm³/sm³');
+        // v3.0: molar mass in kg/kmol in metric (numerically equal to lb/lb-mol)
+        assert.includes(rowText(app, 'gp_res', 'Apparent molecular weight'), 'kg/kmol');
+        assert.ok(!/lb/.test(rowText(app, 'gp_res', 'Apparent molecular weight')), 'no lb/lb-mol in metric');
+        assert.rel(rv(app, 'gp_res', 'Apparent molecular weight'), impM, 1e-9, 'same number');
         // metric entry: 20,684.28 kPa = 3000 psia, 93.333 °C = 200 °F
         app.input('gp_p', '20684.28'); app.input('gp_t', '93.3333333'); calc(app);
         assert.rel(S(app).z, imp.z, 1e-6, 'metric entry converted');

@@ -8,8 +8,11 @@
 //     0.000511, 0.0210, 0.0049 + tap term) with Re_D iteration, Y1 = 1 −
 //     (0.41+0.35β⁴)·hw/(27.707·Pf1·1.3), Z from Dranchuk–Abou-Kassem (bisection) on
 //     Standing (1977) + Wichert–Aziz pseudo-criticals — flow solved in SI mass-flow form
-//     qm = Cd·Ev·Y·πd²/4·√(2ρΔP), Qv = qm/ρb (Zb = 1). Qv = qm/ρb carries the base
-//     temperature independently of the app's Ftb factor (ρb ∝ Pb/Tb).
+//     qm = Cd·Ev·Y·πd²/4·√(2ρΔP), Qv = qm/ρb with the REAL base density
+//     ρb = Pb·M/(Zb·R·Tb) (v3.0: Zb = DAK at Tb/Pb; was Zb = 1). Qv = qm/ρb carries the base
+//     temperature and Zb independently of the app's Ftb / Fpv = √(Zb/Zf) / Fgr = 1/√Gr factors.
+//     Gravity basis (AGA-3 Part 3): the entered SG is the real gravity Gr unless 'ideal';
+//     M = 28.9625·Gi with Gi = Gr·Zb/0.99959 (Zb_air = 0.99959 at 60 °F / 14.73 psia).
 //   • Dual choke gas: SI nozzle equation ṁ = C·A·√(2ρ1p1·k/(k−1)·(r^(2/k) − r^((k+1)/k)))
 //     on both chokes (k = 1.28, Papay Z), P2 by bisection so q1 = q2.
 //   • Gilbert (1954) q = P·S^1.89/(435·GLR^0.546) (GLR Mscf/bbl, P psig);
@@ -79,16 +82,20 @@ function dakZ(Tpr, Ppr) {
   return 0.27 * Ppr / (((lo + hi) / 2) * Tpr);
 }
 function agaRef(o) {
-  const { D, d, hw, Ps, TfF, SG, co2 = 0, h2s = 0, TbF = 60, Pb = 14.696, mu = 0.012 } = o;
+  const { D, d, hw, Ps, TfF, SG, co2 = 0, h2s = 0, TbF = 60, Pb = 14.696, mu = 0.012, basis = 'real' } = o;
   const beta = d / D, b4 = beta ** 4, Ev = 1 / Math.sqrt(1 - b4);
   const Pf = Ps + 14.696, Tf = TfF + 459.67, Tb = TbF + 459.67;
-  const Tpc = 168 + 325 * SG - 12.5 * SG * SG, Ppc = 677 + 15 * SG - 37.5 * SG * SG;
   const A = (co2 + h2s) / 100, B = h2s / 100, eps = 120 * (A ** 0.9 - A ** 1.6) + 15 * (B ** 0.5 - B ** 4);
-  const Tpc2 = Tpc - eps, Ppc2 = Ppc * Tpc2 / (Tpc + B * (1 - B) * eps);
-  const Z = o.Z > 0 ? o.Z : dakZ(Tf / Tpc2, Pf / Ppc2);   // o.Z: an entered override
+  const crit = (g) => {
+    const Tpc = 168 + 325 * g - 12.5 * g * g, Ppc = 677 + 15 * g - 37.5 * g * g, Tpc2 = Tpc - eps;
+    return { T: Tpc2, P: Ppc * Tpc2 / (Tpc + B * (1 - B) * eps) };
+  };
+  let Gi = SG, c = crit(Gi), Zb = dakZ(Tb / c.T, Pb / c.P);
+  if (basis !== 'ideal') for (let i = 0; i < 60; i++) { Gi = SG * Zb / 0.99959; c = crit(Gi); Zb = dakZ(Tb / c.T, Pb / c.P); }
+  const Z = o.Z > 0 ? o.Z : dakZ(Tf / c.T, Pf / c.P);   // o.Z: an entered override (Zb stays DAK)
   const Y = 1 - (0.41 + 0.35 * b4) * hw / (27.707 * Pf) / 1.3;
-  const dm = d * 0.0254, Dm = D * 0.0254, dP = hw * 248.84, M = 28.9625e-3 * SG, R = 8.314462;
-  const rho = Pf * 6894.757 * M / (Z * R * Tf * 5 / 9), rhob = Pb * 6894.757 * M / (R * Tb * 5 / 9);
+  const dm = d * 0.0254, Dm = D * 0.0254, dP = hw * 248.84, M = 28.9625e-3 * Gi, R = 8.314462;
+  const rho = Pf * 6894.757 * M / (Z * R * Tf * 5 / 9), rhob = Pb * 6894.757 * M / (Zb * R * Tb * 5 / 9);
   const L = 1 / D, M2 = 2 * L / (1 - beta), M1 = Math.max(2.8 - D, 0);
   let Re = 1e6, Cd = 0.6, qm = 0;
   for (let i = 0; i < 60; i++) {
@@ -100,7 +107,7 @@ function agaRef(o) {
     qm = Cd * Ev * Y * Math.PI / 4 * dm * dm * Math.sqrt(2 * rho * dP);
     Re = 4 * qm / (Math.PI * mu * 1e-3 * Dm);
   }
-  return { Z, Cd, Qv: qm / rhob / 0.0283168466 * 3600 };
+  return { Z, Zb, Gi, Cd, Qv: qm / rhob / 0.0283168466 * 3600 };
 }
 // Gas PVT basis (independent): Sutton (1985) on the hydrocarbon gravity, Kay mixing with
 // N2 (227.16 °R, 493.1 psia), CO2 (547.58, 1071.0), H2S (672.12, 1300.0), Wichert–Aziz, DAK.
@@ -148,6 +155,16 @@ module.exports = [
       assert.rel(rv(app, 'a_res', 'Gas Rate (MSCF/D)'), ref.Qv * 24 / 1000, 1e-3, 'MSCF/D');
       assert.near(rv(app, 'a_res', 'Z-Factor'), ref.Z, 2e-4, 'DAK Z (old garbled fit gave 0.9219)');
       assert.near(rv(app, 'a_res', 'Discharge Coeff'), ref.Cd, 2e-5, 'RG flange-tap Cd');
+      // v3.0: Fpv = √(Zb/Zf) — base Z at 60 °F / 14.696 psia ≈ 0.99728 (DAK); rate was 4,129.04 MSCF/D with Zb = 1
+      assert.near(rv(app, 'a_res', 'Base Z-Factor (Zb)'), ref.Zb, 2e-5, 'Zb');
+      assert.near(rv(app, 'a_res', 'Supercompressibility Fpv'), Math.sqrt(ref.Zb / ref.Z), 2e-5, 'Fpv = √(Zb/Zf)');
+      assert.rel(rv(app, 'a_res', 'Gas Rate (MSCF/D)') / 4129.04, 0.99843, 2e-4, 'v3.0 rate is 0.16 % below the Zb = 1 figure');
+      // ideal gravity entered: Gr = 0.65·0.99959/Zb → rate × √(Gi/Gr)-ish; independent reference with basis 'ideal'
+      set(app, { a_sgb: 'ideal' }); app.win.calcAGA3();
+      const refI = agaRef({ D: 4.026, d: 2, hw: 50, Ps: 500, TfF: 80, SG: 0.65, co2: 0.5, basis: 'ideal' });
+      assert.rel(rv(app, 'a_res', 'Gas Rate (SCF/hr)'), refI.Qv, 1e-3, 'ideal-gravity basis');
+      assert.near(rv(app, 'a_res', 'Gas gravity real Gr', 0), 0.65 * 0.99959 / refI.Zb, 2e-4, 'Gr = Gi·Zb_air/Zb');
+      set(app, { a_sgb: 'real' }); app.win.calcAGA3();
       noBadNumbers(assert, app, 'aga3 default');
       reportHas(app, assert, ['Pipe Internal Dia', 'Gas Rate (MSCF/D)', 'Discharge Coeff']);
       // sour, higher pressure: old Z was 0.8238 vs DAK 0.7274 (≈ −6 % rate error)
@@ -195,7 +212,7 @@ module.exports = [
     },
   },
   {
-    name: 'G1 aga3: base temperature ≠ 60 °F — Ftb = Tb/519.67 (100 °F base reads 1.0770× the 60 °F rate; 32 °F 0.9461×)',
+    name: 'G1 aga3: base temperature ≠ 60 °F — Ftb = Tb/519.67 and Fpv = √(Zb/Zf) (100 °F base ≈ 1.0773× the 60 °F rate; 32 °F ≈ 0.9457×)',
     wp: WP,
     run(app, assert) {
       // Verifier case: 6.065"/3.0" flange, 80 inH2O, 800 psig, 100 °F, SG 0.75, 1 % CO2, Pb 14.73.
@@ -210,8 +227,11 @@ module.exports = [
         const ref = agaRef({ D: 6.065, d: 3, hw: 80, Ps: 800, TfF: 100, SG: 0.75, co2: 1, TbF, Pb: 14.73 });
         assert.rel(q[TbF], ref.Qv, 1e-3, 'Tb ' + TbF + ' °F SCF/hr vs mass-flow reference');
       }
-      assert.rel(q[100] / q[60], 559.67 / 519.67, 1e-6, '100 °F / 60 °F rate ratio = 1.0770');
-      assert.rel(q[32] / q[60], 491.67 / 519.67, 1e-6, '32 °F / 60 °F rate ratio = 0.9461');
+      // Ideal-gas ratio Tb/519.67 times the real-gas base-Z effect, both from the independent reference
+      const rr = (TbF) => agaRef({ D: 6.065, d: 3, hw: 80, Ps: 800, TfF: 100, SG: 0.75, co2: 1, TbF, Pb: 14.73 }).Qv;
+      assert.rel(q[100] / q[60], rr(100) / rr(60), 2e-5, '100 °F / 60 °F rate ratio');
+      assert.rel(q[32] / q[60], rr(32) / rr(60), 2e-5, '32 °F / 60 °F rate ratio');
+      assert.ok(Math.abs(q[100] / q[60] / (559.67 / 519.67) - 1) < 1e-3, 'within 0.1 % of the ideal-gas Tb ratio');
       noBadNumbers(assert, app, 'aga3 base temperature');
     },
   },
@@ -247,9 +267,11 @@ module.exports = [
       const qDak = rv(app, 'a_res', 'Gas Rate (SCF/hr)');
       assert.ok(app.el('a_usez'), 'button present');
       app.click('a_usez');
-      const zHand = pvtZ(0.65, 514.696, 80, 0.5, 0, 1);                       // ≈ 0.9237 (N2 counted; Standing basis gives 0.9150)
+      // Gas PVT takes the ideal gravity: the entered 0.65 is real → Gi = 0.65·Zb/0.99959 ≈ 0.6485
+      const giHand = agaRef({ D: 4.026, d: 2, hw: 50, Ps: 500, TfF: 80, SG: 0.65, co2: 0.5 }).Gi;
+      const zHand = pvtZ(giHand, 514.696, 80, 0.5, 0, 1);                     // ≈ 0.924 (N2 counted; Standing basis gives 0.915)
       assert.near(parseFloat(app.el('a_Z').value), zHand, 1.5e-4, 'a_Z filled with the Gas PVT Z');
-      assert.strictEqual(app.el('a_Z').value, app.win.WTS_gaspvt_compute({ sg: 0.65, p: 514.696, t: 80, co2: 0.5, h2s: 0, n2: 1 }).z.toFixed(4), '4 dp');
+      assert.strictEqual(app.el('a_Z').value, app.win.WTS_gaspvt_compute({ sg: app.win.WTS_aga3_compute({ D: 4, d: 2, hw: 0, Ps: 500, TfF: 80, SG: 0.65, co2: 0.5, TbF: 60, Pb: 14.696 }).Gi, p: 514.696, t: 80, co2: 0.5, h2s: 0, n2: 1 }).z.toFixed(4), '4 dp');
       const zUsed = parseFloat(app.el('a_Z').value);
       assert.near(rv(app, 'a_res', 'Z-Factor'), zUsed, 1e-9, 'rate uses the override');
       assert.includes(rvText(app, 'a_res', 'Z Source'), 'Override — calculated Z (Gas PVT');
@@ -400,7 +422,16 @@ module.exports = [
       app.hook.nav('chokeflow');
       set(app, { cf_cs: 32, cf_whp: 3000 * 6.89476, cf_wht: (120 - 32) * 5 / 9, cf_sg: 0.7 });
       app.win.calcChokeGas();
-      assert.rel(rv(app, 'cf_gres', 'Gas Rate'), 112.72 * 3014.7 / Math.sqrt(0.7 * 580), 1e-4);
+      // v3.0: results in metric too — 16,865 MSCF/D × 28.3168 = 477,560 m³/d; 477.56 10³ m³/d
+      const q = 112.72 * 3014.7 / Math.sqrt(0.7 * 580);
+      assert.rel(rv(app, 'cf_gres', 'Gas Rate'), q * 28.3168, 1e-4, 'm³/d');
+      assert.includes(rvText(app, 'cf_gres', 'Gas Rate'), 'm³/d');
+      assert.rel(rv(app, 'cf_gres', 'Gas Rate', 1), q / 1000 * 28.3168, 1e-3, '10³ m³/d');
+      set(app, { cf_op: 1500 * 6.89476, cf_ocs: 32, cf_gor: 500 * 0.178107607 });
+      app.win.calcChokeOil();
+      assert.rel(rv(app, 'cf_ores', 'Gilbert'), 1500 * Math.pow(32, 1.89) / (435 * Math.pow(0.5, 0.546)) * 0.158987, 1e-3, 'Gilbert m³/d');
+      assert.rel(rv(app, 'cf_ores', 'Ros'), 1500 * 1024 / (17.4 * Math.sqrt(500)) * 0.158987, 1e-3, 'Ros m³/d');
+      assert.ok(!/MSCF|BPD/.test(app.el('cf_gres').textContent + app.el('cf_ores').textContent), 'no field units in metric results');
     },
   },
   // ── Choke conversions ──────────────────────────────────────────────────
@@ -460,10 +491,24 @@ module.exports = [
       set(app, { gv_z: 0.9727, gv_t: (80 - 32) * 5 / 9, gv_p: 4000 * 6.89476, gv_q: 40000 * 28.3168, gv_d: 2.85 * 25.4 });
       app.win.calcGasVel();
       const Bg = 0.02833 * 0.9727 * 540 / 4000;
-      assert.rel(rv(app, 'gv_res', 'Gas Velocity'), 40000 * 1000 * Bg / 86400 / (Math.PI / 4 * Math.pow(2.85 / 12, 2)), 3e-3);
+      // v3.0: velocity shown in m/s (1 ft/s = 0.3048 m/s)
+      assert.rel(rv(app, 'gv_res', 'Gas Velocity'), 0.3048 * 40000 * 1000 * Bg / 86400 / (Math.PI / 4 * Math.pow(2.85 / 12, 2)), 3e-3);
+      assert.includes(rvText(app, 'gv_res', 'Gas Velocity'), 'm/s');
+      set(app, { gq_p: 3000 * 6.89476, gq_d: 32 });
+      app.win.calcGasQuick();
+      assert.rel(rv(app, 'gq_res', 'Gas Volume'), 18000 * 28.3168, 1e-3, 'quick estimate in m³/d');
       set(app, { gg_pwh: 2500 * 6.89476, gg_sg: 0.7, gg_d: 13650 * 0.3048, gg_t: 600 * 5 / 9, gg_z: 0.831 });
       app.win.calcGasGrad();
-      assert.rel(rv(app, 'gg_res', 'BHP (exponential)'), 2500 * Math.exp(0.01875 * 0.7 * 13650 / (0.831 * 600)), 1e-3);
+      const pws = 2500 * Math.exp(0.01875 * 0.7 * 13650 / (0.831 * 600));
+      assert.rel(rv(app, 'gg_res', 'BHP (exponential)'), pws * 6.894757, 1e-3, 'BHP in kPa');
+      assert.rel(rv(app, 'gg_res', 'Gas Column'), (pws - 2500) * 6.894757, 2e-3, 'ΔP in kPa');
+      set(app, { gs_p: 3731 * 6.89476, gs_sg: 0.7, gs_t: 600 * 5 / 9, gs_z: 0.91 });
+      app.win.calcGasGradSimple();
+      // 1 psi/ft = 6.894757 kPa / 0.3048 m = 22.6206 kPa/m
+      assert.rel(rv(app, 'gs_res', 'Gas Gradient'), 0.01875 * 0.7 * 3731 / (0.91 * 600) * 22.62059, 1e-3, 'gradient kPa/m');
+      assert.includes(rvText(app, 'gs_res', 'Gas Gradient'), 'kPa/m');
+      assert.includes(rvText(app, 'gg_res', 'BHP (exponential)'), 'kPa');
+      assert.ok(!/ft\/sec|psi\/ft|MSCF/.test(['gv_res', 'gq_res', 'gg_res', 'gs_res'].map((id) => app.el(id).textContent).join(' ')), 'no field units in metric results');
       noBadNumbers(assert, app, 'gascalc metric');
     },
   },
@@ -606,27 +651,38 @@ module.exports = [
     },
   },
   {
-    name: 'G1 chokeflow (ROADMAP 1.5): 7/64 and 20/64 coefficients flagged as out of line (values unchanged, caution shown)',
+    name: 'G1 chokeflow (v3.0): 7/64 and 20/64 coefficients corrected to the log-log fit of their neighbours (4.923, 42.279); no flags',
     wp: WP,
     run(app, assert) {
+      // Independent fit: least-squares line of ln C on ln S through two tabulated sizes each side.
+      const fit = (pts, s) => {
+        const X = pts.map((p) => Math.log(p[0])), Yv = pts.map((p) => Math.log(p[1])), n = X.length;
+        const mx = X.reduce((a, b) => a + b) / n, my = Yv.reduce((a, b) => a + b) / n;
+        let sxy = 0, sxx = 0; for (let i = 0; i < n; i++) { sxy += (X[i] - mx) * (Yv[i] - my); sxx += (X[i] - mx) ** 2; }
+        return Math.exp(my + sxy / sxx * (Math.log(s) - mx));
+      };
+      const c7 = fit([[5, 2.61], [6, 3.69], [8, 6.25], [9, 7.992]], 7);           // 4.9231
+      const c20 = fit([[18, 33.93], [19, 37.98], [21, 46.818], [22, 51.588]], 20); // 42.2787
       app.hook.nav('chokeflow');
       const t = String(app.el('pgBody').textContent);
-      assert.includes(t, 'out of line with their neighbours');
-      assert.includes(t, '43.64 *');
-      assert.includes(t, '5.166 *');
-      // values kept as tabulated: 20/64, 3000 psig, 120 °F, SG 0.7 → 43.64·3014.7/√(0.7·580)
+      assert.ok(!/out of line with their neighbours|5\.166|43\.64| \*/.test(app.el('cf_tbl').textContent), 'no flagged / old values in the table');
+      assert.includes(t, 'corrected to 4.923 and 42.279');
       set(app, { cf_cs: 20, cf_whp: 3000, cf_wht: 120, cf_sg: 0.7 });
       app.win.calcChokeGas();
-      assert.rel(rv(app, 'cf_gres', 'Gas Rate'), 43.64 * 3014.7 / Math.sqrt(0.7 * 580), 1e-4);
-      assert.includes(app.el('cf_gres').textContent, '20/64 table coefficient');
-      // neighbour-consistent C/S² at 20/64 ≈ 0.10568 → C ≈ 42.27; the tabulated value is 3.2 % higher
-      const cs2 = (37.98 / 361 + 46.818 / 441) / 2;
-      assert.near(cs2 * 400, 42.27, 0.01);
+      assert.near(rv(app, 'cf_gres', 'Choke Coefficient'), c20, 6e-4, 'C(20/64)');
+      assert.rel(rv(app, 'cf_gres', 'Gas Rate'), c20 * 3014.7 / Math.sqrt(0.7 * 580), 1e-4, 'rate at 20/64 (was 43.64-based, 3.1 % higher)');
       set(app, { cf_cs: 7 }); app.win.calcChokeGas();
-      assert.includes(app.el('cf_gres').textContent, '7/64 table coefficient');
-      set(app, { cf_cs: 32 }); app.win.calcChokeGas();
-      assert.ok(!/table coefficient/.test(app.el('cf_gres').textContent), 'no caution at 32/64');
-      noBadNumbers(assert, app, 'chokeflow suspect');
+      assert.near(rv(app, 'cf_gres', 'Choke Coefficient'), c7, 6e-4, 'C(7/64)');
+      // interpolation between 6 and 7/64 uses the corrected value: 6.5/64 → (3.69 + 4.923)/2
+      set(app, { cf_cs: 6.5 }); app.win.calcChokeGas();
+      assert.near(rv(app, 'cf_gres', 'Choke Coefficient'), (3.69 + 4.923) / 2, 1e-3, 'C(6.5/64)');
+      assert.ok(!/table coefficient|out of line/.test(app.el('cf_gres').textContent), 'no caution any more');
+      // C/S² now progresses smoothly through both sizes
+      const cs = [6, 7, 8].map((s) => [3.69, 4.923, 6.25][s - 6] / (s * s));
+      assert.ok(cs[0] > cs[1] && cs[1] > cs[2], 'C/S² monotone through 7/64');
+      const cs2 = [19, 20, 21].map((s, i) => [37.98, 42.279, 46.818][i] / (s * s));
+      assert.ok(cs2[0] < cs2[1] && cs2[1] < cs2[2], 'C/S² monotone through 20/64');
+      noBadNumbers(assert, app, 'chokeflow corrected');
     },
   },
   // ── Console hygiene over every G1 page ─────────────────────────────────

@@ -232,6 +232,14 @@ module.exports = [
         });
         assert(/MJ\/m³/.test(rowText(app, 'Heating value HHV')), 'HHV in MJ/m³');
         assert.rel(firstNum(rowText(app, 'Heating value HHV')), 1131.0 * 0.0372589, 2e-3);
+        // v3.0 metric rows: molar volume R·Tb/Pb in SI (8.314462·288.706 K/101.3529 kPa = 23.684 m³/kmol
+        // at 60 °F / 14.696 psia), molar mass in kg/kmol (same number), intensity per 10³ Sm³.
+        const vmSI = 8.314462 * (519.67 * 5 / 9) / (14.696 * 6.894757);
+        assert(/Sm³\/kmol/.test(rowText(app, 'Molar volume at base')), rowText(app, 'Molar volume at base'));
+        assert.rel(firstNum(rowText(app, 'Molar volume at base')), vmSI, 2e-4, 'molar volume m³/kmol');
+        assert(/kg\/kmol/.test(rowText(app, 'Molar mass')) && !/lb/.test(rowText(app, 'Molar mass')), rowText(app, 'Molar mass'));
+        assert(/t CO2e per 10³ Sm³/.test(rowText(app, 'Intensity')), rowText(app, 'Intensity'));
+        assert.rel(firstNum(rowText(app, 'Intensity')), imp.co2e_t / (imp.V_scf / 1e6) / 28.3168466, 3e-3, 'intensity per 10³ Sm³');
         // Metric entry: 100 × 10³ m³/d = 3.5315 MMSCFD
         app.input('fe_qg', '100');
         assert.rel(app.win.WTS_state.flareghg.V_scf, 100 * 1000 / 28316.8 * 1e6, 1e-4, 'metric entry converted');
