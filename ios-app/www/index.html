@@ -74836,6 +74836,9 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
 //   • 45-calc-orifice
 //   • 46-calc-gaspvt
 //   • 48-calc-wellkill
+//   • 49-calc-dispersion
+//   • 49-calc-fluids
+//   • 49-calc-scale
 // ═══════════════════════════════════════════════════════════════════════
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -76003,7 +76006,8 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
 //               window.calcFlareGHG()            — reads the DOM, validates, renders
 //               window.WTS_flareghg_compute(inp) — pure, field units in/out, no DOM
 //   State     : window.WTS_state.flareghg = {V_scf, E_MMBtu, co2_t, ch4_t, n2o_kg,
-//                                            so2_t, co2e_t, co2oil_t, gwp, ts}
+//                                            so2_t, co2e_t, co2oil_t, gwp, hrs,
+//                                            h2sUnburned_kg, ts}
 //
 // Flared gas volume, heat released and CO2 / CH4 / N2O / CO2e / SO2 for well
 // test flaring, plus CO2 from an oil / condensate burner. Field units inside
@@ -76382,7 +76386,8 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         G.WTS_state = G.WTS_state || {};
         G.WTS_state.flareghg = {
             V_scf: r.Vscf, E_MMBtu: r.E_MMBtu, co2_t: r.co2_t, ch4_t: r.ch4_t, n2o_kg: r.n2o_kg,
-            so2_t: r.so2_t, co2e_t: r.co2e_t, co2oil_t: r.co2oil_t, gwp: r.gwp, ts: Date.now()
+            so2_t: r.so2_t, co2e_t: r.co2e_t, co2oil_t: r.co2oil_t, gwp: r.gwp,
+            hrs: r.hrs, h2sUnburned_kg: r.h2sUnburned_kg, ts: Date.now()
         };
         res.setAttribute('data-done', '1');
         return r;
@@ -78479,6 +78484,1343 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
 })();
 
 // ─── END 48-calc-wellkill ─────────────────────────────────────────────
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// ─── BEGIN 49-calc-dispersion ───────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════
+// WTS — Round-9 plug-in calculator — SO2 / H2S Dispersion Screening (dispersion)
+//
+// PURPOSE
+//   Screening estimate of the ground-level, plume-centreline concentration of
+//   SO2 (from flaring sour gas) and H2S (unburned, or a cold vent / leak)
+//   downwind of a flare tip or vent, against IDLH / STEL / TWA limits.
+//   SCREENING ONLY — NOT A SUBSTITUTE FOR A SITE DISPERSION STUDY.
+//
+// METHOD (every formula checked against the reference in brackets)
+//   1. Gaussian plume, ground-reflected, centreline at ground level
+//        C(x,0,0) = Q / (π·u·σy·σz) · exp(−H² / (2·σz²))            [Turner 1970, eq. 3.1 with y = z = 0]
+//   2. Briggs (1973) open-country (rural) dispersion coefficients, x in m
+//      (100 m < x < 10 km), as tabulated by Hanna, Briggs & Hosker (1982)
+//      and in the EPA ISC3 user guide (EPA-454/B-95-003b, Table 1-1 note):
+//        class  σy                        σz
+//        A      0.22x(1+0.0001x)^-1/2     0.20x
+//        B      0.16x(1+0.0001x)^-1/2     0.12x
+//        C      0.11x(1+0.0001x)^-1/2     0.08x(1+0.0002x)^-1/2
+//        D      0.08x(1+0.0001x)^-1/2     0.06x(1+0.0015x)^-1/2
+//        E      0.06x(1+0.0001x)^-1/2     0.03x(1+0.0003x)^-1
+//        F      0.04x(1+0.0001x)^-1/2     0.016x(1+0.0003x)^-1
+//   3. Wind at the release height from the 10 m wind by the rural power law
+//      u = u10·(h/10)^p, p = 0.07, 0.07, 0.10, 0.15, 0.35, 0.55 for A–F,
+//      h not below 10 m, u not below 1 m/s                              [EPA ISC3 / SCREEN3 user guides]
+//   4. Flare buoyancy flux from the net (sensible) heat release
+//        F = g·Q_H / (π·ρa·cp·Ta) = 8.81×10⁻⁶·Q_H [W]  (ρa·Ta = p/R_air)
+//      with Q_H = (1 − radiant fraction)·total heat release. With the
+//      default 55 % radiant loss this is F = 1.66×10⁻⁵·H [cal/s], the EPA
+//      SCREEN3 flare formula                                               [Briggs 1975; EPA-454/B-95-004 §2.1.3]
+//   5. Briggs buoyant plume rise
+//        neutral / unstable (A–D): Δh = 21.425·F^¾/u,  x_f = 49·F^⅝     (F < 55)
+//                                  Δh = 38.71·F^⅗/u,   x_f = 119·F^⅖    (F ≥ 55)
+//        stable (E, F): s = g/Ta·dθ/dz (0.020 K/m E, 0.035 K/m F)
+//                       Δh = 2.6·(F/(u·s))^⅓, x_f = 2.0715·u/√s, taken as
+//                       the smaller of the stable and neutral values       [EPA ISC3 user guide §1.1.4]
+//        transitional rise before x_f (Briggs "2/3 law"):
+//                       Δh(x) = 1.6·F^⅓·x^⅔/u, capped at the final rise    [Briggs 1975]
+//      Gradual rise is used at every distance (lower plume near the flare =
+//      higher ground concentration; the conservative choice).
+//   6. Effective height H(x) = flare tip / vent height + Δh(x). The flame
+//      length that SCREEN3 adds is not included (conservative).
+//   7. ppm = mg/m³ × 24.45 / MW (25 °C, 1 atm, the NIOSH / ACGIH basis).
+//
+// EXPOSURE LIMITS (defaults, editable; ppm)
+//   H2S : IDLH 100 (NIOSH); STEL 10 = NIOSH REL ceiling (10 min);
+//         TWA 1 = ACGIH TLV-TWA (2010)                     [NIOSH Pocket Guide; ACGIH TLVs]
+//   SO2 : IDLH 100 (NIOSH); STEL 5 (NIOSH REL); TWA 2 (NIOSH REL)
+//
+// UNITS
+//   Field units on the page (lb/hr, MMBtu/hr, ft, mph, °F); the plume maths
+//   runs in SI internally (the published σ and rise formulas are in metres).
+//
+// PUBLIC API (window.*)
+//   renderDispersion(body), calcDispersion()
+//   WTS_dispersion_compute(input) → {ok, …} or {ok:false, errors, bad}
+//   WTS_dispersion_sigma(cls, x_m) → {sy, sz} (m)
+//   WTS_dispersionUseFlare() / WTS_dispersionUseH2S()  copy release rates
+//     from WTS_state.flareghg / WTS_state.h2sroe
+//
+// STATE
+//   WTS_state.dispersion = {maxSO2_ppm, maxH2S_ppm, xMax_ft, hEff_ft, rise_ft,
+//                           so2Idlh_ft, h2sIdlh_ft, ts, result}
+// Registers window.WTS_calcRegistry.dispersion (group "Safety & Process").
+// ════════════════════════════════════════════════════════════════════
+(function () {
+    'use strict';
+
+    var G = (typeof window !== 'undefined') ? window : globalThis;
+
+    // ── Constants ────────────────────────────────────────────────────
+    var FT = 0.3048, MPH = 0.44704, LBHR_GS = 453.59237 / 3600;
+    var MMBTUHR_W = 1.05505585262e9 / 3600;          // W per MMBtu/hr
+    var GRAV = 9.80665, CP = 1004, R_AIR = 287.05, P_ATM = 101325;
+    var F_COEF = GRAV / (Math.PI * CP * P_ATM / R_AIR); // 8.81e-6 m⁴/s³ per W
+    var VM25 = 24.45;                                 // L/mol at 25 °C, 1 atm
+    var MW = { so2: 64.064, h2s: 34.081 };
+    var CLASSES = ['A', 'B', 'C', 'D', 'E', 'F'];
+    var P_EXP = { A: 0.07, B: 0.07, C: 0.10, D: 0.15, E: 0.35, F: 0.55 };
+    var DTHETA = { E: 0.020, F: 0.035 };
+    var X_MIN = 10, X_MAX = 10000;                    // m, curve range
+    var DEF_LIMITS = { h2sIdlh: 100, h2sStel: 10, h2sTwa: 1, so2Idlh: 100, so2Stel: 5, so2Twa: 2 };
+    var TABLE_FT = [100, 250, 500, 1000, 2000, 3000, 5000, 10000, 20000, 32800];
+
+    function sigma(cls, x) {
+        var sy, sz, r = 1 / Math.sqrt(1 + 0.0001 * x);
+        switch (cls) {
+            case 'A': sy = 0.22 * x * r; sz = 0.20 * x; break;
+            case 'B': sy = 0.16 * x * r; sz = 0.12 * x; break;
+            case 'C': sy = 0.11 * x * r; sz = 0.08 * x / Math.sqrt(1 + 0.0002 * x); break;
+            case 'D': sy = 0.08 * x * r; sz = 0.06 * x / Math.sqrt(1 + 0.0015 * x); break;
+            case 'E': sy = 0.06 * x * r; sz = 0.03 * x / (1 + 0.0003 * x); break;
+            default: sy = 0.04 * x * r; sz = 0.016 * x / (1 + 0.0003 * x); break;
+        }
+        return { sy: sy, sz: sz };
+    }
+
+    // ── Helpers ─────────────────────────────────────────────────────
+    function _byId(id) { return (typeof document !== 'undefined' && document.getElementById) ? document.getElementById(id) : null; }
+    function _num(id) { var e = _byId(id); if (!e) return NaN; var s = String(e.value).trim(); return s === '' ? NaN : parseFloat(s); }
+    function _str(id) { var e = _byId(id); return e ? String(e.value) : ''; }
+    function _fmt(v, d) {
+        if (v == null || !isFinite(v)) return '—';
+        return Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) });
+    }
+    function _sig(v) {   // 3 significant figures for concentrations spanning decades
+        if (v == null || !isFinite(v)) return '—';
+        if (v === 0) return '0';
+        var a = Math.abs(v), d = a >= 100 ? 0 : a >= 10 ? 1 : a >= 1 ? 2 : Math.min(6, 2 - Math.floor(Math.log10(a)));
+        return _fmt(v, d);
+    }
+    function _metric() { var U = G.WTS_units; return !!(U && U.getSystem && U.getSystem() === 'metric'); }
+    function _u(v, cat, d, impLabel, dMet) {
+        var U = G.WTS_units;
+        if (_metric() && U.format) { var f = U.format(v, cat); return _fmt(f.value, dMet == null ? d : dMet) + ' ' + f.label; }
+        return _fmt(v, d) + ' ' + impLabel;
+    }
+    function _disp(v, cat) { var U = G.WTS_units; return (_metric() && U.format) ? U.format(v, cat).value : v; }
+    function _lab(cat, imp) { var U = G.WTS_units; return (_metric() && U.format) ? U.format(1, cat).label : imp; }
+    function _tag(map) { var U = G.WTS_units; if (!U || !U.tagInput) return; for (var id in map) U.tagInput(id, map[id]); }
+    function _canon(fn) { var U = G.WTS_units; return (U && U.runCanonical) ? U.runCanonical(fn) : fn(); }
+    function _fin(x) { return typeof x === 'number' && isFinite(x); }
+
+    // ── Pure compute ─────────────────────────────────────────────────
+    // input = {src:'flare'|'vent', so2 lb/hr, h2s lb/hr, heat MMBtu/hr (total), frad %,
+    //          hs ft (flare tip / vent height), u10 mph (10 m wind), cls 'A'..'F', ta °F,
+    //          limits:{h2sIdlh,h2sStel,h2sTwa,so2Idlh,so2Stel,so2Twa} ppm (missing → defaults)}
+    function compute(input) {
+        var i = input || {}, errors = [], bad = [];
+        function need(ok, key, msg) { if (!ok) { errors.push(msg); bad.push(key); } return ok; }
+        var src = i.src === 'vent' ? 'vent' : 'flare';
+        var so2 = Number(i.so2), h2s = Number(i.h2s), heat = Number(i.heat), frad = Number(i.frad);
+        var hs = Number(i.hs), u10 = Number(i.u10), ta = Number(i.ta);
+        var cls = String(i.cls || 'D').toUpperCase();
+        var lim = {}, L = i.limits || {};
+        Object.keys(DEF_LIMITS).forEach(function (k) {
+            var v = L[k];
+            lim[k] = (v == null || v === '' || (typeof v === 'number' && isNaN(v))) ? DEF_LIMITS[k] : Number(v);
+        });
+        if (src === 'vent') { if (!_fin(so2)) so2 = 0; if (!_fin(heat)) heat = 0; }
+        need(_fin(so2) && so2 >= 0 && so2 <= 1e6, 'so2', 'SO2 release rate must be between 0 and 1,000,000 lb/hr.');
+        need(_fin(h2s) && h2s >= 0 && h2s <= 1e6, 'h2s', 'H2S release rate must be between 0 and 1,000,000 lb/hr.');
+        if (_fin(so2) && _fin(h2s) && so2 >= 0 && h2s >= 0) need(so2 + h2s > 0, 'so2', 'Enter an SO2 or H2S release rate above 0.');
+        if (src === 'flare') {
+            need(_fin(heat) && heat > 0 && heat <= 1e5, 'heat', 'Flare heat release must be above 0 and no more than 100,000 MMBtu/hr.');
+            need(_fin(frad) && frad >= 0 && frad < 100, 'frad', 'Radiant heat fraction must be 0 or more and below 100 %.');
+        }
+        need(_fin(hs) && hs >= 0 && hs <= 1000, 'hs', 'Release height must be between 0 and 1,000 ft.');
+        need(_fin(u10) && u10 >= 1 && u10 <= 100, 'u10', 'Wind speed at 10 m must be between 1 and 100 mph.');
+        need(CLASSES.indexOf(cls) !== -1, 'cls', 'Select a stability class A to F.');
+        need(_fin(ta) && ta >= -60 && ta <= 140, 'ta', 'Ambient temperature must be between -60 and 140 °F.');
+        Object.keys(lim).forEach(function (k) { need(_fin(lim[k]) && lim[k] > 0 && lim[k] <= 1e5, k, 'Exposure limits must be above 0 ppm.'); });
+        if (errors.length) return { ok: false, errors: errors, bad: bad };
+
+        var hsM = hs * FT, u10M = u10 * MPH, TaK = (ta - 32) / 1.8 + 273.15;
+        var hRef = Math.max(hsM, 10);
+        var u = Math.max(1, u10M * Math.pow(hRef / 10, P_EXP[cls]));
+        // Plume rise
+        var QH_W = 0, F = 0, dhF = 0, xf = 0, stableUsed = false;
+        if (src === 'flare') {
+            QH_W = heat * MMBTUHR_W * (1 - frad / 100);
+            F = F_COEF * QH_W;
+            if (F < 55) { dhF = 21.425 * Math.pow(F, 0.75) / u; xf = 49 * Math.pow(F, 0.625); }
+            else { dhF = 38.71 * Math.pow(F, 0.6) / u; xf = 119 * Math.pow(F, 0.4); }
+            if (cls === 'E' || cls === 'F') {
+                var s = GRAV / TaK * DTHETA[cls];
+                var dhS = 2.6 * Math.pow(F / (u * s), 1 / 3), xfS = 2.0715 * u / Math.sqrt(s);
+                if (dhS < dhF) { dhF = dhS; xf = xfS; stableUsed = true; }
+            }
+        }
+        function rise(x) { return F > 0 ? Math.min(dhF, 1.6 * Math.pow(F, 1 / 3) * Math.pow(x, 2 / 3) / u) : 0; }
+        var qs = { so2: so2 * LBHR_GS, h2s: h2s * LBHR_GS };   // g/s
+        // unit-release ground-level concentration, (g/m³) per (g/s)
+        function chi1(x) {
+            var sg = sigma(cls, x), H = hsM + rise(x);
+            return Math.exp(-H * H / (2 * sg.sz * sg.sz)) / (Math.PI * u * sg.sy * sg.sz);
+        }
+        function ppm(gas, x) { return qs[gas] * chi1(x) * 1000 * VM25 / MW[gas]; }
+
+        // Curve on a log grid 10 m … 10 km
+        var N = 400, curve = [];
+        for (var n = 0; n <= N; n++) {
+            var x = X_MIN * Math.pow(X_MAX / X_MIN, n / N);
+            curve.push({ x: x, so2: ppm('so2', x), h2s: ppm('h2s', x) });
+        }
+        function peak(gas) {
+            var best = 0, k = 0;
+            curve.forEach(function (c, j) { if (c[gas] > best) { best = c[gas]; k = j; } });
+            // golden-section refinement between the neighbours
+            var a = curve[Math.max(0, k - 1)].x, b = curve[Math.min(N, k + 1)].x;
+            for (var it = 0; it < 60; it++) {
+                var m1 = a + (b - a) * 0.382, m2 = a + (b - a) * 0.618;
+                if (ppm(gas, m1) > ppm(gas, m2)) b = m2; else a = m1;
+            }
+            var xm = (a + b) / 2, v = ppm(gas, xm);
+            return v >= best ? { x: xm, ppm: v } : { x: curve[k].x, ppm: best };
+        }
+        function crossing(gas, lo, hi, limit) {       // bisection on log x
+            for (var it = 0; it < 60; it++) {
+                var mid = Math.sqrt(lo * hi);
+                if ((ppm(gas, mid) >= limit) === (ppm(gas, lo) >= limit)) lo = mid; else hi = mid;
+            }
+            return Math.sqrt(lo * hi);
+        }
+        function exceed(gas, limit) {
+            if (!(qs[gas] > 0)) return { none: true, reached: false };
+            var from = null, to = null, fromEdge = false, toEdge = false;
+            for (var j = 0; j <= N; j++) {
+                var over = curve[j][gas] >= limit;
+                if (over && from == null) {
+                    if (j === 0) { from = curve[0].x; fromEdge = true; }
+                    else from = crossing(gas, curve[j - 1].x, curve[j].x, limit);
+                }
+                if (over) {
+                    if (j === N) { to = curve[N].x; toEdge = true; }
+                    else if (!(curve[j + 1][gas] >= limit)) to = crossing(gas, curve[j].x, curve[j + 1].x, limit);
+                }
+            }
+            if (from == null) return { reached: false };
+            return { reached: true, from_m: from, to_m: to, from_ft: from / FT, to_ft: to / FT, fromEdge: fromEdge, toEdge: toEdge, limit: limit };
+        }
+        var pk = { so2: so2 > 0 ? peak('so2') : null, h2s: h2s > 0 ? peak('h2s') : null };
+        var ex = {
+            so2: { idlh: exceed('so2', lim.so2Idlh), stel: exceed('so2', lim.so2Stel), twa: exceed('so2', lim.so2Twa) },
+            h2s: { idlh: exceed('h2s', lim.h2sIdlh), stel: exceed('h2s', lim.h2sStel), twa: exceed('h2s', lim.h2sTwa) }
+        };
+        var table = TABLE_FT.map(function (xft) {
+            var x = xft * FT, sg = sigma(cls, x), dh = rise(x);
+            return { x_ft: xft, x_m: x, sy_m: sg.sy, sz_m: sg.sz, rise_m: dh, H_m: hsM + dh, so2: ppm('so2', x), h2s: ppm('h2s', x) };
+        });
+        var warn = [];
+        var u10ms = u10M;
+        if (cls === 'A' && u10ms > 3) warn.push('Class A is normally limited to 10 m winds below about 3 m/s (6.7 mph).');
+        if (cls === 'B' && u10ms > 5) warn.push('Class B is normally limited to 10 m winds below about 5 m/s (11 mph).');
+        if ((cls === 'E' || cls === 'F') && u10ms > 5) warn.push('Stable classes E and F normally occur only with 10 m winds below about 5 m/s (11 mph) at night.');
+        return {
+            ok: true, src: src, cls: cls, limits: lim,
+            q_gs: qs, u_ms: u, u_mph: u / MPH, p: P_EXP[cls], ta_K: TaK,
+            qh_W: QH_W, qh_MMBtuhr: QH_W / MMBTUHR_W, F: F,
+            rise_m: dhF, rise_ft: dhF / FT, xf_m: xf, xf_ft: xf / FT, stableRise: stableUsed,
+            hs_m: hsM, hEff_m: hsM + dhF, hEff_ft: (hsM + dhF) / FT,
+            peak: pk, exceed: ex, table: table, curve: curve, warnings: warn,
+            chi: function (gas, xm) { return ppm(gas, xm); }
+        };
+    }
+
+    G.WTS_dispersion_compute = compute;
+    G.WTS_dispersion_sigma = sigma;
+    G.WTS_dispersion_limits = DEF_LIMITS;
+
+    // ── Page ─────────────────────────────────────────────────────────
+    var TITLE = 'SO2 / H2S Dispersion Screening';
+    var SUB = 'Gaussian plume with Briggs rural dispersion and flare plume rise: ground-level SO2 and H2S vs distance against IDLH, STEL and TWA. Screening only';
+    var UNITS = {
+        ds_so2: 'massRate', ds_h2s: 'massRate', ds_heat: 'powerLarge', ds_frad: 'percent',
+        ds_hs: 'length', ds_u10: 'windSpeed', ds_ta: 'temperature'
+    };
+    var IDS = {
+        so2: 'ds_so2', h2s: 'ds_h2s', heat: 'ds_heat', frad: 'ds_frad', hs: 'ds_hs', u10: 'ds_u10', cls: 'ds_cls', ta: 'ds_ta',
+        h2sIdlh: 'ds_lhi', h2sStel: 'ds_lhs', h2sTwa: 'ds_lht', so2Idlh: 'ds_lsi', so2Stel: 'ds_lss', so2Twa: 'ds_lst'
+    };
+    var MSG = {
+        so2: function () { return 'SO2 release rate must be between 0 and ' + _u(1e6, 'massRate', 0, 'lb/hr') + '.'; },
+        h2s: function () { return 'H2S release rate must be between 0 and ' + _u(1e6, 'massRate', 0, 'lb/hr') + '.'; },
+        heat: function () { return 'Flare heat release must be above 0 and no more than ' + _u(1e5, 'powerLarge', 0, 'MMBtu/hr') + '.'; },
+        hs: function () { return 'Release height must be between 0 and ' + _u(1000, 'length', 0, 'ft') + '.'; },
+        u10: function () { return 'Wind speed at 10 m must be between ' + _u(1, 'windSpeed', 0, 'mph', 2) + ' and ' + _u(100, 'windSpeed', 0, 'mph', 1) + '.'; },
+        ta: function () { return 'Ambient temperature must be between ' + _u(-60, 'temperature', 0, '°F') + ' and ' + _u(140, 'temperature', 0, '°F') + '.'; }
+    };
+
+    function _fg(id, label, val, extra) {
+        return '<div class="fg-item"><label for="' + id + '">' + label + '</label>' +
+            '<input type="number" id="' + id + '" value="' + val + '" step="any"' + (extra || '') + '></div>';
+    }
+    function _sel(id, label, opts, val) {
+        var h = '<div class="fg-item"><label for="' + id + '">' + label + '</label><select id="' + id + '">';
+        opts.forEach(function (o) { h += '<option value="' + o.v + '"' + (o.v === val ? ' selected' : '') + '>' + o.t + '</option>'; });
+        return h + '</select></div>';
+    }
+    function _row(l, v) { return '<div class="rrow"><span class="rl">' + l + '</span><span class="rv">' + v + '</span></div>'; }
+    function _ok(t) { return '<div style="color:var(--green)">✓ ' + t + '</div>'; }
+    function _warn(t) { return '<div style="color:var(--yellow)">⚠ ' + t + '</div>'; }
+    function _bad(t) { return '<div style="color:var(--red)">✗ ' + t + '</div>'; }
+    function _note(t) { return '<div style="margin-top:10px;font-size:12px;color:var(--text2)"><b>Notes</b> ' + t + '</div>'; }
+    function _tbl(head, rows) {
+        return '<div style="overflow-x:auto"><table class="dtable"><thead><tr>' + head.map(function (h) { return '<th>' + h + '</th>'; }).join('') +
+            '</tr></thead><tbody>' + rows.map(function (r) { return '<tr>' + r.map(function (c) { return '<td>' + c + '</td>'; }).join('') + '</tr>'; }).join('') +
+            '</tbody></table></div>';
+    }
+    var ftx = function (v) { return _u(v, 'length', 0, 'ft', 0); };
+
+    function _exText(e) {
+        if (e.none) return 'no release';
+        if (!e.reached) return 'not reached';
+        return (e.fromEdge ? 'from the source' : 'from ' + ftx(e.from_ft)) + ' to ' + (e.toEdge ? 'beyond ' : '') + ftx(e.to_ft);
+    }
+
+    function _paint(r) {
+        var res = _byId('ds_res');
+        if (!res) return;
+        if (!r.ok) {
+            var items = '', seen = {};
+            r.bad.forEach(function (k, j) {
+                var el = _byId(IDS[k]); if (el && el.classList) el.classList.add('input-err');
+                if (seen[k]) return; seen[k] = 1;
+                items += '<li>' + (MSG[k] ? MSG[k]() : r.errors[j]) + '</li>';
+            });
+            res.innerHTML = '<div class="val-error"><strong>Please fix the following:</strong><ul>' + items + '</ul></div>';
+            res.setAttribute('data-done', '1');
+            return;
+        }
+        var h = '';
+        h += '<div class="rbox"><div class="rbox-title">Screening Only</div>' +
+            _warn('Screening only, not a substitute for a site dispersion study. Flat open terrain, steady wind, no buildings, no inversion lid, no dense-gas slumping.') +
+            '</div>';
+        // Plume
+        h += '<div class="rbox"><div class="rbox-title">Plume Rise &amp; Effective Height</div>' +
+            _row('Wind at release height', _u(r.u_mph, 'windSpeed', 1, 'mph', 2) + ' (power-law exponent ' + _fmt(r.p, 2) + ')') +
+            (r.src === 'flare' ?
+                _row('Net (convective) heat release', _u(r.qh_MMBtuhr, 'powerLarge', 2, 'MMBtu/hr', 0)) +
+                _row('Buoyancy flux F', _fmt(r.F, 2) + ' m⁴/s³') +
+                _row('Final plume rise', _u(r.rise_ft, 'length', 0, 'ft', 1) + (r.stableRise ? ' (stable formula)' : '')) +
+                _row('Distance to final rise', _u(r.xf_ft, 'length', 0, 'ft', 0)) : _row('Plume rise', 'none (cold vent, no buoyancy)')) +
+            _row('Effective height after final rise', _u(r.hEff_ft, 'length', 0, 'ft', 1)) +
+            r.warnings.map(_warn).join('') + '</div>';
+
+        // Exceedance
+        var L = r.limits, rows = [], v = '';
+        [['h2s', 'H2S'], ['so2', 'SO2']].forEach(function (g) {
+            var gas = g[0], nm = g[1], pk = r.peak[gas], E = r.exceed[gas];
+            if (!pk) return;
+            rows.push([nm, 'IDLH', _fmt(L[gas + 'Idlh'], 2) + ' ppm', _exText(E.idlh)]);
+            rows.push([nm, 'STEL / ceiling', _fmt(L[gas + 'Stel'], 2) + ' ppm', _exText(E.stel)]);
+            rows.push([nm, 'TWA', _fmt(L[gas + 'Twa'], 2) + ' ppm', _exText(E.twa)]);
+            if (E.idlh.reached) v += _bad(nm + ' exceeds IDLH ' + _exText(E.idlh) + ' downwind.');
+            else if (E.stel.reached) v += _warn(nm + ' exceeds the STEL ' + _exText(E.stel) + ' downwind; IDLH not reached.');
+            else if (E.twa.reached) v += _warn(nm + ' exceeds the TWA ' + _exText(E.twa) + ' downwind.');
+            else v += _ok(nm + ' stays below the TWA at ground level at every distance.');
+        });
+        h += '<div class="rbox"><div class="rbox-title">Ground-Level Maximum &amp; Exceedance Distances</div>' +
+            (r.peak.h2s ? _row('H2S maximum', _sig(r.peak.h2s.ppm) + ' ppm at ' + ftx(r.peak.h2s.x / FT)) : '') +
+            (r.peak.so2 ? _row('SO2 maximum', _sig(r.peak.so2.ppm) + ' ppm at ' + ftx(r.peak.so2.x / FT)) : '') +
+            ((r.peak.h2s && r.peak.h2s.x >= X_MAX * 0.999) || (r.peak.so2 && r.peak.so2.x >= X_MAX * 0.999) ?
+                _warn('The ground-level maximum lies at or beyond ' + ftx(X_MAX / FT) + ', outside the range of the Briggs curves.') : '') +
+            _tbl(['Gas', 'Limit', 'Value', 'Exceeded downwind'], rows) + v +
+            _note('Limits: IDLH 100 ppm for H2S and SO2 (NIOSH); STEL is the NIOSH REL (SO2 5 ppm; H2S 10 ppm 10-minute ceiling); ' +
+                'TWA: SO2 2 ppm NIOSH REL, H2S 1 ppm ACGIH TLV. Edit the limits to your site standard.') +
+            '</div>';
+
+        // Distance table
+        h += '<div class="rbox"><div class="rbox-title">Concentration vs Distance</div>' +
+            _tbl(['Distance', 'σy (m)', 'σz (m)', 'Plume height', 'H2S (ppm)', 'SO2 (ppm)'], r.table.map(function (t) {
+                return [ftx(t.x_ft), _fmt(t.sy_m, 1), _fmt(t.sz_m, 1), _u(t.H_m / FT, 'length', 0, 'ft', 0), _sig(t.h2s), _sig(t.so2)];
+            })) +
+            '<div class="chart-wrap"><canvas id="ds_chart" width="600" height="340"></canvas></div>' +
+            _note('Ground-level plume-centreline concentration, Gaussian plume with Briggs (1973) rural σy/σz, ' +
+                'Briggs buoyant plume rise from the net heat release (gradual rise), ppm at 25 °C. The σ curves are ' +
+                'for about 10-minute to 1-hour averages and are fitted for 100 m to 10 km; values nearer than 100 m ' +
+                '(330 ft) are extrapolated. The wind does not hold one direction for 8 hours, so the TWA comparison is conservative. ' +
+                'Unburned H2S is taken to leave with the flare plume.') +
+            '</div>';
+        res.innerHTML = h;
+        _chart(r);
+        res.setAttribute('data-done', '1');
+    }
+
+    function _chart(r) {
+        var cv = _byId('ds_chart');
+        var draw = (typeof drawLineChart === 'function') ? drawLineChart : (typeof G.drawLineChart === 'function' ? G.drawLineChart : null); // eslint-disable-line no-undef
+        if (!cv || !draw || !cv.getContext) return;
+        // x range: to twice the farthest TWA exceedance or 3× the peak distance, 500 m … 10 km
+        var far = 0;
+        ['so2', 'h2s'].forEach(function (g) {
+            var e = r.exceed[g].twa; if (e && e.reached) far = Math.max(far, e.to_m * 2);
+            if (r.peak[g]) far = Math.max(far, r.peak[g].x * 3);
+        });
+        var xMax = Math.min(X_MAX, Math.max(500, far));
+        var FLOOR = 1e-3;
+        function pts(g) {
+            return r.curve.filter(function (c) { return c.x <= xMax; }).map(function (c) {
+                return { x: _disp(c.x / FT, 'length'), y: Math.log10(Math.max(FLOOR, c[g])) };
+            });
+        }
+        function hline(v) { return [{ x: _disp(X_MIN / FT, 'length'), y: Math.log10(v) }, { x: _disp(xMax / FT, 'length'), y: Math.log10(v) }]; }
+        var ds = [];
+        if (r.peak.h2s) ds.push({ label: 'H2S', color: '#f0883e', data: pts('h2s'), points: false, width: 2 });
+        if (r.peak.so2) ds.push({ label: 'SO2', color: '#58a6ff', data: pts('so2'), points: false, width: 2 });
+        ds.push({ label: 'IDLH 100 ppm', color: '#f85149', dash: [6, 4], data: hline(r.limits.h2sIdlh), points: false, width: 1 });
+        if (r.peak.h2s) ds.push({ label: 'H2S STEL', color: '#d29922', dash: [3, 3], data: hline(r.limits.h2sStel), points: false, width: 1 });
+        if (r.peak.so2) ds.push({ label: 'SO2 STEL', color: '#a371f7', dash: [3, 3], data: hline(r.limits.so2Stel), points: false, width: 1 });
+        try {
+            draw(cv, ds, { xLabel: 'Distance downwind (' + _lab('length', 'ft') + ')', yLabel: 'log10 concentration (ppm)', xMin: 0, xDec: 0, yDec: 1 });
+        } catch (e) { /* decorative */ }
+    }
+
+    function _read() {
+        return {
+            src: _str('ds_src'), so2: _num('ds_so2'), h2s: _num('ds_h2s'), heat: _num('ds_heat'), frad: _num('ds_frad'),
+            hs: _num('ds_hs'), u10: _num('ds_u10'), cls: _str('ds_cls'), ta: _num('ds_ta'),
+            limits: {
+                h2sIdlh: _num('ds_lhi'), h2sStel: _num('ds_lhs'), h2sTwa: _num('ds_lht'),
+                so2Idlh: _num('ds_lsi'), so2Stel: _num('ds_lss'), so2Twa: _num('ds_lst')
+            }
+        };
+    }
+
+    function _calcImpl() {
+        var root = _byId('ds_root');
+        if (!root) return null;
+        var ins = root.querySelectorAll ? root.querySelectorAll('input,select') : [];
+        for (var n = 0; n < ins.length; n++) if (ins[n].classList) ins[n].classList.remove('input-err');
+        var r = compute(_read());
+        _paint(r);
+        var ex = function (g, k) { return r.ok && r.exceed[g][k].reached ? r.exceed[g][k].to_ft : null; };
+        G.WTS_state = G.WTS_state || {};
+        G.WTS_state.dispersion = {
+            maxSO2_ppm: r.ok && r.peak.so2 ? r.peak.so2.ppm : null,
+            maxH2S_ppm: r.ok && r.peak.h2s ? r.peak.h2s.ppm : null,
+            xMaxSO2_ft: r.ok && r.peak.so2 ? r.peak.so2.x / FT : null,
+            xMaxH2S_ft: r.ok && r.peak.h2s ? r.peak.h2s.x / FT : null,
+            hEff_ft: r.ok ? r.hEff_ft : null, rise_ft: r.ok ? r.rise_ft : null,
+            so2Idlh_ft: ex('so2', 'idlh'), h2sIdlh_ft: ex('h2s', 'idlh'),
+            ts: Date.now(), result: r
+        };
+        return r;
+    }
+    G.calcDispersion = function () { return _canon(_calcImpl); };
+
+    function _setVal(id, v) {
+        var el = _byId(id);
+        if (!el) return;
+        _canon(function () { el.value = String(Number(v.toPrecision(10))); });
+        try {
+            if (typeof Event === 'function' && el.dispatchEvent) {
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+        } catch (e) { /* ignore */ }
+    }
+    function _msg(t) { var res = _byId('ds_res'); if (res) res.innerHTML = _warn(t); }
+
+    // Flare Emissions: totals over the flaring duration → rates.
+    // Heat: E (HHV basis) × 0.90 ≈ LHV for natural gas (methane LHV/HHV = 909.4/1010.0).
+    G.WTS_dispersionUseFlare = function () {
+        var st = G.WTS_state && G.WTS_state.flareghg;
+        var hrs = st ? Number(st.hrs) : NaN;
+        if (!st || !(hrs > 0) || !_fin(Number(st.so2_t))) { _msg('Open Flare Emissions and calculate first.'); return false; }
+        var so2 = Number(st.so2_t) * 1000 / 0.45359237 / hrs;
+        var h2s = _fin(Number(st.h2sUnburned_kg)) ? Number(st.h2sUnburned_kg) / 0.45359237 / hrs : 0;
+        var heat = _fin(Number(st.E_MMBtu)) ? Number(st.E_MMBtu) / hrs * 0.90 : NaN;
+        var s = _byId('ds_src'); if (s) { s.value = 'flare'; }
+        _setVal('ds_so2', so2); _setVal('ds_h2s', h2s);
+        if (heat > 0) _setVal('ds_heat', heat);
+        G.calcDispersion();
+        return true;
+    };
+    // H2S Safety: flare card (SO2 + unburned H2S) for a flare; escape rate × H2S for a cold vent.
+    G.WTS_dispersionUseH2S = function () {
+        var st = G.WTS_state && G.WTS_state.h2sroe;
+        var src = _str('ds_src') === 'vent' ? 'vent' : 'flare';
+        if (src === 'flare') {
+            var b = st && st.so2;
+            if (!b || !b.ok) { _msg('Open H2S Exposure &amp; Scavenger and calculate the flaring card first.'); return false; }
+            _setVal('ds_so2', Number(b.so2_lbhr)); _setVal('ds_h2s', Number(b.h2s_lbhr) || 0);
+        } else {
+            var a = st && st.roe;
+            if (!a || !a.ok || !_fin(Number(a.h2s_lbd))) { _msg('Open H2S Exposure &amp; Scavenger and calculate the radius-of-exposure card first.'); return false; }
+            _setVal('ds_h2s', Number(a.h2s_lbd) / 24); _setVal('ds_so2', 0);
+        }
+        G.calcDispersion();
+        return true;
+    };
+
+    function render(body) {
+        if (!body) return;
+        var t = _byId('pgTitle'), s = _byId('pgSub');
+        if (t) t.textContent = TITLE;
+        if (s) s.textContent = SUB;
+        body.innerHTML =
+            '<div id="ds_root"><div class="cols-2">' +
+            '<div>' +
+            '<div class="card"><div class="card-title">Release</div><div class="fg">' +
+            _sel('ds_src', 'Source', [{ v: 'flare', t: 'Flare (buoyant plume)' }, { v: 'vent', t: 'Cold vent / leak (no rise)' }], 'flare') +
+            _fg('ds_so2', 'SO2 release rate (lb/hr)', '400', ' min="0"') +
+            _fg('ds_h2s', 'H2S release rate, unburned or vented (lb/hr)', '4', ' min="0"') +
+            _fg('ds_heat', 'Flare heat release, total (MMBtu/hr)', '200', ' min="0"') +
+            _fg('ds_frad', 'Heat lost as radiation (%)', '55', ' min="0" max="99"') +
+            _fg('ds_hs', 'Flare tip / vent height above grade (ft)', '30', ' min="0"') +
+            '</div><div class="btn-row">' +
+            '<button class="btn" id="ds_useflare" onclick="WTS_dispersionUseFlare()">Use Flare Emissions</button>' +
+            '<button class="btn" id="ds_useh2s" onclick="WTS_dispersionUseH2S()">Use H2S Safety</button>' +
+            '</div></div>' +
+            '<div class="card"><div class="card-title">Weather</div><div class="fg">' +
+            _fg('ds_u10', 'Wind speed at 10 m (mph)', '20', ' min="0"') +
+            _sel('ds_cls', 'Stability class', [
+                { v: 'A', t: 'A, very unstable' }, { v: 'B', t: 'B, unstable' }, { v: 'C', t: 'C, slightly unstable' },
+                { v: 'D', t: 'D, neutral' }, { v: 'E', t: 'E, slightly stable' }, { v: 'F', t: 'F, stable' }], 'D') +
+            _fg('ds_ta', 'Ambient temperature (°F)', '68') +
+            '</div></div>' +
+            '<div class="card"><div class="card-title">Exposure Limits</div><div class="fg">' +
+            _fg('ds_lhi', 'H2S IDLH, ppm', '100', ' min="0"') +
+            _fg('ds_lhs', 'H2S STEL / ceiling, ppm', '10', ' min="0"') +
+            _fg('ds_lht', 'H2S TWA, ppm', '1', ' min="0"') +
+            _fg('ds_lsi', 'SO2 IDLH, ppm', '100', ' min="0"') +
+            _fg('ds_lss', 'SO2 STEL, ppm', '5', ' min="0"') +
+            _fg('ds_lst', 'SO2 TWA, ppm', '2', ' min="0"') +
+            '</div><div class="btn-row"><button class="btn btn-primary" id="ds_calc" onclick="calcDispersion()">Calculate</button></div></div>' +
+            '</div>' +
+            '<div><div id="ds_res"></div></div>' +
+            '</div></div>';
+        _tag(UNITS);
+        var root = _byId('ds_root');
+        if (root && root.addEventListener) {
+            root.addEventListener('change', function (e) {
+                if (e && e.target && /^ds_/.test(e.target.id || '')) G.calcDispersion();
+            });
+        }
+        G.calcDispersion();
+    }
+    G.renderDispersion = render;
+
+    // ── Registry (merge, never replace) ──────────────────────────────
+    G.WTS_calcRegistry = G.WTS_calcRegistry || {};
+    G.WTS_calcRegistry.dispersion = {
+        key: 'dispersion',
+        title: TITLE,
+        navTitle: 'SO2 / H2S Dispersion',
+        sub: SUB,
+        group: 'Safety & Process',
+        icon: '&#9729;',
+        badge: 'Screening',
+        bc: 'dc-b-orange',
+        desc: 'Gaussian plume screening of SO2 and H2S downwind of a flare or vent: plume rise, ground-level ppm vs distance, IDLH / STEL / TWA distances.',
+        render: function (body) { return G.renderDispersion(body); }
+    };
+
+    if (typeof document !== 'undefined' && document.addEventListener) {
+        document.addEventListener('wts:unit-system-changed', function () {
+            var r = _byId('ds_res');
+            if (r && r.getAttribute && r.getAttribute('data-done') === '1') G.calcDispersion();
+        });
+    }
+})();
+
+// ─── END 49-calc-dispersion ─────────────────────────────────────────────
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// ─── BEGIN 49-calc-fluids ───────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════
+// WTS — Round-9 plug-in calculator — Cement & Completion Fluids (complfluids)
+//
+// PURPOSE (kept modest, roadmap #17)
+//   A. Cement slurry: water requirement and yield of a neat slurry from its
+//      density (absolute-volume mass balance), annular and shoe-track slurry
+//      volume with open-hole excess, sacks, mix water and displacement.
+//   B. Brine blending: density of a blend of two clear brines (volume
+//      fractions) and the volumes of each for a target density, with
+//      crystallisation-point and compatibility cautions. The salt list and
+//      maximum densities are the Well Kill page's brine guide
+//      (window.WTS_wellkill_brines, 48-calc-wellkill.js), not a copy.
+//
+// METHOD (references in brackets)
+//   Absolute volume of cement = 1 / (SG·8.33) gal/lb (Class G / H SG 3.14
+//   to 3.18 → 0.0382 gal/lb). Per sack of mass m (94 lb US):
+//     ρ = (m + 8.33·w) / (m·v_c + w)  →  w = (m − ρ·m·v_c) / (ρ − 8.33)   gal/sk
+//     yield Y = (m·v_c + w) / 7.4805 ft³/sk                               [API RP 10B-2 / Nelson & Guillot,
+//                                                                            Well Cementing (2006) ch. 4]
+//     Check: Class G neat at 15.8 ppg → 4.97 gal/sk (44 % water), 1.15 ft³/sk.
+//   Capacities: annulus (Dh² − OD²)/1029.4 bbl/ft, pipe ID²/1029.4 bbl/ft.
+//   Slurry = annulus·L·(1 + excess) + shoe track; sacks = slurry ft³ / Y;
+//   mix water = sacks·w / 42 bbl; displacement = casing capacity × (shoe − shoe track).
+//   Brine blend (ideal volume additivity, mass balance):
+//     ρ_mix = (ρA·VA + ρB·VB) / (VA + VB);   VA = V·(ρt − ρB)/(ρA − ρB)    [API RP 13J, clear brine practice]
+//
+// PUBLIC API (window.*)
+//   renderComplFluids(body), calcComplFluids()
+//   WTS_complfluids_compute(input) → {ok, cement, blend} (each card validated separately)
+//   WTS_cement_slurry(input), WTS_brine_blend(input)
+//
+// STATE  WTS_state.complfluids = {slurryBbl, sacks, yieldFt3, waterGalSk, mixWaterBbl, dispBbl,
+//                                 blendPpg, vA, vB, ts, cement, blend}
+// Registers window.WTS_calcRegistry.complfluids (group "Test System Safety", next to Well Kill).
+// ════════════════════════════════════════════════════════════════════
+(function () {
+    'use strict';
+
+    var G = (typeof window !== 'undefined') ? window : globalThis;
+    var WATER_PPG = 8.33, GAL_FT3 = 7.4805, GAL_BBL = 42, K_CAP = 1029.4;
+    var FT3_BBL = 5.6146;
+    // Fallback when the Well Kill page is not loaded (same values, guidance only).
+    var FALLBACK = [
+        { name: 'Fresh water', ppg: 8.33 }, { name: 'Seawater', ppg: 8.55 },
+        { name: 'Potassium chloride, KCl', ppg: 9.7 }, { name: 'Sodium chloride, NaCl', ppg: 10.0 },
+        { name: 'Calcium chloride, CaCl2', ppg: 11.6 }, { name: 'Calcium bromide, CaBr2', ppg: 14.2 }
+    ];
+    function _brines() {
+        var b = G.WTS_wellkill_brines;
+        return (b && b.length) ? b : FALLBACK;
+    }
+    function _fin(x) { return typeof x === 'number' && isFinite(x); }
+    function _isCa(n) { return /calcium|CaCl2|CaBr2/i.test(n); }
+    function _isSulphateOrFormate(n) { return /seawater|formate/i.test(n); }
+
+    // ── A. Cement slurry ─────────────────────────────────────────────
+    // input = {dh in (hole), od in (casing OD), cid in (casing ID), shoe ft MD, toc ft MD,
+    //          track ft (shoe track), excess %, rho ppg, sgc (cement SG), sack lb}
+    function cement(input) {
+        var i = input || {}, errors = [], bad = [];
+        function need(ok, key, msg) { if (!ok) { errors.push(msg); bad.push(key); } return ok; }
+        var dh = Number(i.dh), od = Number(i.od), cid = Number(i.cid), shoe = Number(i.shoe), toc = Number(i.toc);
+        var track = Number(i.track), ex = Number(i.excess), rho = Number(i.rho), sgc = Number(i.sgc), sack = Number(i.sack);
+        var odOk = need(_fin(od) && od > 0 && od <= 30, 'od', 'Casing OD must be above 0 and no more than 30 in.');
+        need(_fin(dh) && dh > 0 && dh <= 48 && (!odOk || dh > od), 'dh', 'Hole diameter must be larger than the casing OD and no more than 48 in.');
+        need(_fin(cid) && cid > 0 && (!odOk || cid < od), 'cid', 'Casing ID must be above 0 and below the casing OD.');
+        var shoeOk = need(_fin(shoe) && shoe > 0 && shoe <= 40000, 'shoe', 'Casing shoe depth must be above 0 and no more than 40,000 ft.');
+        need(_fin(toc) && toc >= 0 && (!shoeOk || toc < shoe), 'toc', 'Top of cement must be 0 or deeper and above the casing shoe.');
+        need(_fin(track) && track >= 0 && (!shoeOk || track < shoe), 'track', 'Shoe track length must be 0 or more and shorter than the shoe depth.');
+        need(_fin(ex) && ex >= 0 && ex <= 300, 'excess', 'Open-hole excess must be between 0 and 300 %.');
+        var sgOk = need(_fin(sgc) && sgc >= 2 && sgc <= 4, 'sgc', 'Cement specific gravity must be between 2 and 4.');
+        need(_fin(sack) && sack > 0 && sack <= 200, 'sack', 'Sack weight must be above 0 and no more than 200 lb.');
+        var rhoMax = sgOk ? sgc * WATER_PPG : 30;
+        need(_fin(rho) && rho > WATER_PPG + 0.5 && rho < rhoMax - 0.5, 'rho', 'Slurry density must lie between water (8.83 ppg) and the dry cement density minus 0.5 ppg.');
+        if (errors.length) return { ok: false, errors: errors, bad: bad };
+
+        var vc = 1 / (sgc * WATER_PPG);                 // gal/lb absolute volume
+        var absGal = sack * vc;                         // gal per sack
+        var w = (sack - rho * absGal) / (rho - WATER_PPG);
+        var yieldFt3 = (absGal + w) / GAL_FT3;
+        var wcr = w * WATER_PPG / sack;                 // water / cement mass ratio
+        var annCap = (dh * dh - od * od) / K_CAP, pipeCap = cid * cid / K_CAP;
+        var annLen = shoe - toc;
+        var annBbl = annCap * annLen, annEx = annBbl * (1 + ex / 100), trackBbl = pipeCap * track;
+        var slurry = annEx + trackBbl, slurryFt3 = slurry * FT3_BBL;
+        var sacks = slurryFt3 / yieldFt3;
+        var mixWater = sacks * w / GAL_BBL;
+        var disp = pipeCap * (shoe - track);
+        return {
+            ok: true, waterGalSk: w, yieldFt3: yieldFt3, wcr: wcr, absGalSk: absGal,
+            annCap: annCap, pipeCap: pipeCap, annLen: annLen, annBbl: annBbl, annExBbl: annEx, excessBbl: annEx - annBbl,
+            trackBbl: trackBbl, slurryBbl: slurry, slurryFt3: slurryFt3, sacks: sacks, sacksRounded: Math.ceil(sacks - 1e-9),
+            mixWaterBbl: mixWater, dispBbl: disp,
+            lowWater: wcr < 0.35, highWater: wcr > 0.60
+        };
+    }
+
+    // ── B. Brine blend ────────────────────────────────────────────────
+    // input = {a, b: brine indices into the guide (or -1 = other), ra, rb ppg, va, vb bbl,
+    //          target ppg (blank → none), vt bbl (final volume for the target)}
+    function blend(input) {
+        var i = input || {}, errors = [], bad = [];
+        function need(ok, key, msg) { if (!ok) { errors.push(msg); bad.push(key); } return ok; }
+        var list = _brines();
+        var ia = parseInt(i.a, 10), ib = parseInt(i.b, 10);
+        var A = (ia >= 0 && ia < list.length) ? list[ia] : null, B = (ib >= 0 && ib < list.length) ? list[ib] : null;
+        var ra = Number(i.ra), rb = Number(i.rb), va = Number(i.va), vb = Number(i.vb);
+        var tgt = (i.target == null || i.target === '' || (typeof i.target === 'number' && isNaN(i.target))) ? null : Number(i.target);
+        var vt = Number(i.vt);
+        var raOk = need(_fin(ra) && ra >= 6 && ra <= 25, 'ra', 'Brine A density must be between 6 and 25 ppg.');
+        var rbOk = need(_fin(rb) && rb >= 6 && rb <= 25, 'rb', 'Brine B density must be between 6 and 25 ppg.');
+        need(_fin(va) && va >= 0 && va <= 1e5, 'va', 'Brine A volume must be between 0 and 100,000 bbl.');
+        need(_fin(vb) && vb >= 0 && vb <= 1e5 && (!_fin(va) || va + vb > 0), 'vb', 'Brine B volume must be 0 or more, with a total above 0.');
+        if (tgt != null) {
+            var lo = Math.min(ra, rb), hi = Math.max(ra, rb);
+            need(_fin(tgt) && raOk && rbOk && Math.abs(ra - rb) > 1e-6 && tgt >= lo - 1e-9 && tgt <= hi + 1e-9, 'target',
+                'Target density must lie between the two brine densities, and the brines must differ.');
+            need(_fin(vt) && vt > 0 && vt <= 1e5, 'vt', 'Final blend volume must be above 0 and no more than 100,000 bbl.');
+        }
+        if (errors.length) return { ok: false, errors: errors, bad: bad };
+        var v = va + vb, mix = (ra * va + rb * vb) / v;
+        var out = {
+            ok: true, a: A ? A.name : 'Other brine', b: B ? B.name : 'Other brine', aMax: A ? A.ppg : null, bMax: B ? B.ppg : null,
+            ra: ra, rb: rb, va: va, vb: vb, vol: v, fa: va / v, fb: vb / v, mix: mix, sg: mix / WATER_PPG, kgm3: mix * 119.826,
+            target: null, cautions: []
+        };
+        if (tgt != null) {
+            var fa = Math.abs(ra - rb) > 1e-9 ? (tgt - rb) / (ra - rb) : 1;
+            out.target = { ppg: tgt, vt: vt, fa: fa, va: vt * fa, vb: vt * (1 - fa) };
+        }
+        // Cautions (guidance)
+        [['A', A, ra], ['B', B, rb]].forEach(function (x) {
+            if (!x[1]) return;
+            if (x[2] > x[1].ppg + 1e-9) out.cautions.push({ lvl: 'bad', t: 'Brine ' + x[0] + ' is above the usual maximum density of ' + x[1].name + ' (' + x[1].ppg.toFixed(2) + ' ppg). It cannot be made or will crystallise.' });
+            else if (x[2] >= 0.97 * x[1].ppg && x[1].ppg > 8.6) out.cautions.push({ lvl: 'warn', t: 'Brine ' + x[0] + ' is within 3 % of the maximum density of ' + x[1].name + ': the crystallisation temperature rises steeply here.' });
+        });
+        if (A && B && A.name !== B.name) out.cautions.push({ lvl: 'warn', t: 'Two different salts: the blend crystallisation temperature is not the average of the two. Confirm TCT with the supplier.' });
+        if (A && B && ((_isCa(A.name) && _isSulphateOrFormate(B.name)) || (_isCa(B.name) && _isSulphateOrFormate(A.name))))
+            out.cautions.push({ lvl: 'warn', t: 'Calcium brine with seawater or formate: calcium sulphate, carbonate or formate may precipitate. Test compatibility.' });
+        return out;
+    }
+
+    function compute(input) {
+        var i = input || {};
+        return { ok: true, cement: cement(i.cement), blend: blend(i.blend) };
+    }
+    G.WTS_cement_slurry = cement;
+    G.WTS_brine_blend = blend;
+    G.WTS_complfluids_compute = compute;
+
+    // ── Page ─────────────────────────────────────────────────────────
+    var TITLE = 'Cement & Completion Fluids';
+    var SUB = 'Neat cement slurry water requirement, yield, sacks and volumes; two-brine blending density with crystallisation cautions';
+    var UNITS = {
+        cmf_dh: 'lengthSmall', cmf_od: 'lengthSmall', cmf_cid: 'lengthSmall', cmf_shoe: 'length', cmf_toc: 'length',
+        cmf_track: 'length', cmf_ex: 'percent', cmf_rho: 'densityLiquid', cmf_sgc: 'sg', cmf_sack: 'mass',
+        cmf_ra: 'densityLiquid', cmf_rb: 'densityLiquid', cmf_va: 'volume', cmf_vb: 'volume', cmf_tgt: 'densityLiquid', cmf_vt: 'volume'
+    };
+    var CIDS = { dh: 'cmf_dh', od: 'cmf_od', cid: 'cmf_cid', shoe: 'cmf_shoe', toc: 'cmf_toc', track: 'cmf_track', excess: 'cmf_ex', rho: 'cmf_rho', sgc: 'cmf_sgc', sack: 'cmf_sack' };
+    var BIDS = { ra: 'cmf_ra', rb: 'cmf_rb', va: 'cmf_va', vb: 'cmf_vb', target: 'cmf_tgt', vt: 'cmf_vt' };
+
+    function _byId(id) { return (typeof document !== 'undefined' && document.getElementById) ? document.getElementById(id) : null; }
+    function _num(id) { var e = _byId(id); if (!e) return NaN; var s = String(e.value).trim(); return s === '' ? NaN : parseFloat(s); }
+    function _str(id) { var e = _byId(id); return e ? String(e.value) : ''; }
+    function _fmt(v, d) {
+        if (v == null || !isFinite(v)) return '—';
+        return Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) });
+    }
+    function _fx(v, d) {
+        if (v == null || !isFinite(v)) return '—';
+        return Number(v).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
+    }
+    function _metric() { var U = G.WTS_units; return !!(U && U.getSystem && U.getSystem() === 'metric'); }
+    function _u(v, cat, d, impLabel, dMet) {
+        var U = G.WTS_units;
+        if (_metric() && U.format) { var f = U.format(v, cat); return _fmt(f.value, dMet == null ? d : dMet) + ' ' + f.label; }
+        return _fmt(v, d) + ' ' + impLabel;
+    }
+    function _tag(map) { var U = G.WTS_units; if (!U || !U.tagInput) return; for (var id in map) U.tagInput(id, map[id]); }
+    function _canon(fn) { var U = G.WTS_units; return (U && U.runCanonical) ? U.runCanonical(fn) : fn(); }
+    function _fg(id, label, val, extra) {
+        return '<div class="fg-item"><label for="' + id + '">' + label + '</label>' +
+            '<input type="number" id="' + id + '" value="' + val + '" step="any"' + (extra || '') + '></div>';
+    }
+    function _sel(id, label, opts, val) {
+        var h = '<div class="fg-item"><label for="' + id + '">' + label + '</label><select id="' + id + '">';
+        opts.forEach(function (o) { h += '<option value="' + o.v + '"' + (o.v === val ? ' selected' : '') + '>' + o.t + '</option>'; });
+        return h + '</select></div>';
+    }
+    function _row(l, v) { return '<div class="rrow"><span class="rl">' + l + '</span><span class="rv">' + v + '</span></div>'; }
+    function _ok(t) { return '<div style="color:var(--green)">✓ ' + t + '</div>'; }
+    function _warn(t) { return '<div style="color:var(--yellow)">⚠ ' + t + '</div>'; }
+    function _bad(t) { return '<div style="color:var(--red)">✗ ' + t + '</div>'; }
+    function _note(t) { return '<div style="margin-top:10px;font-size:12px;color:var(--text2)"><b>Notes</b> ' + t + '</div>'; }
+    function _tbl(head, rows) {
+        return '<div style="overflow-x:auto"><table class="dtable"><thead><tr>' + head.map(function (h) { return '<th>' + h + '</th>'; }).join('') +
+            '</tr></thead><tbody>' + rows.map(function (r) { return '<tr>' + r.map(function (c) { return '<td>' + c + '</td>'; }).join('') + '</tr>'; }).join('') +
+            '</tbody></table></div>';
+    }
+    function _den(v) { return _u(v, 'densityLiquid', 2, 'ppg', 3); }
+    function _ppg3(v) { return _fx(v, 2) + ' ppg · SG ' + _fx(v / WATER_PPG, 3) + ' · ' + _fmt(v * 119.826, 0) + ' kg/m³'; }
+    var V = function (v) { return _u(v, 'volume', 1, 'bbl', 2); };
+    var MSG = {
+        od: function () { return 'Casing OD must be above 0 and no more than ' + _u(30, 'lengthSmall', 0, 'in') + '.'; },
+        dh: function () { return 'Hole diameter must be larger than the casing OD and no more than ' + _u(48, 'lengthSmall', 0, 'in') + '.'; },
+        shoe: function () { return 'Casing shoe depth must be above 0 and no more than ' + _u(40000, 'length', 0, 'ft') + '.'; },
+        rho: function () { return 'Slurry density must lie between water (' + _den(8.83) + ') and the dry cement density minus ' + _den(0.5) + '.'; },
+        sack: function () { return 'Sack weight must be above 0 and no more than ' + _u(200, 'mass', 0, 'lb') + '.'; },
+        ra: function () { return 'Brine A density must be between ' + _den(6) + ' and ' + _den(25) + '.'; },
+        rb: function () { return 'Brine B density must be between ' + _den(6) + ' and ' + _den(25) + '.'; },
+        va: function () { return 'Brine A volume must be between 0 and ' + _u(1e5, 'volume', 0, 'bbl') + '.'; },
+        vt: function () { return 'Final blend volume must be above 0 and no more than ' + _u(1e5, 'volume', 0, 'bbl') + '.'; }
+    };
+    function _errors(resId, ids, r) {
+        var res = _byId(resId), items = '', seen = {};
+        r.bad.forEach(function (k, j) {
+            var el = _byId(ids[k]); if (el && el.classList) el.classList.add('input-err');
+            if (seen[k]) return; seen[k] = 1;
+            items += '<li>' + (MSG[k] ? MSG[k]() : r.errors[j]) + '</li>';
+        });
+        if (res) { res.innerHTML = '<div class="val-error"><strong>Please fix the following:</strong><ul>' + items + '</ul></div>'; res.setAttribute('data-done', '1'); }
+    }
+
+    function _paintCement(r) {
+        var res = _byId('cmf_cres');
+        if (!res) return;
+        if (!r.ok) { _errors('cmf_cres', CIDS, r); return; }
+        var v = '';
+        if (r.lowWater) v += _warn('Water-to-cement ratio ' + _fx(r.wcr, 2) + ' is below about 0.35: a dispersant is needed to mix and pump this slurry.');
+        else if (r.highWater) v += _warn('Water-to-cement ratio ' + _fx(r.wcr, 2) + ' is above about 0.60: expect free water and low strength without an extender.');
+        else v += _ok('Water-to-cement ratio ' + _fx(r.wcr, 2) + ' is in the normal neat-slurry range.');
+        res.innerHTML =
+            '<div class="rbox"><div class="rbox-title">Slurry Design</div>' +
+            _row('Water requirement', _fx(r.waterGalSk, 2) + ' gal/sack (' + _fx(r.waterGalSk * 3.78541, 1) + ' L/sack)') +
+            _row('Water-to-cement ratio', _fx(r.wcr * 100, 1) + ' % by mass') +
+            _row('Slurry yield', _fx(r.yieldFt3, 3) + ' ft³/sack (' + _fx(r.yieldFt3 * 28.3168, 1) + ' L/sack)') +
+            v + '</div>' +
+            '<div class="rbox"><div class="rbox-title">Slurry Volume &amp; Sacks</div>' +
+            _tbl(['Section', 'Length', 'Capacity', 'Volume'], [
+                ['Annulus, casing x hole', _u(r.annLen, 'length', 0, 'ft', 1), _u(r.annCap, 'capacity', 5, 'bbl/ft', 5), V(r.annBbl)],
+                ['Open-hole excess', '', '', V(r.excessBbl)],
+                ['Shoe track', '', _u(r.pipeCap, 'capacity', 5, 'bbl/ft', 5), V(r.trackBbl)]
+            ]) +
+            _row('Total slurry', V(r.slurryBbl) + ' (' + _fmt(r.slurryFt3, 0) + ' ft³)') +
+            _row('Cement', _fmt(r.sacksRounded, 0) + ' sacks') +
+            _row('Mix water', V(r.mixWaterBbl)) +
+            _row('Displacement to the float collar', V(r.dispBbl)) +
+            _note('Neat cement only: additives change the absolute volume and water demand, so use the laboratory yield for a ' +
+                'designed slurry. Yield and water from the absolute-volume mass balance (API RP 10B-2). Excess applies to the ' +
+                'open-hole annulus; use a caliper log where available.') +
+            '</div>';
+        res.setAttribute('data-done', '1');
+    }
+
+    function _paintBlend(r) {
+        var res = _byId('cmf_bres');
+        if (!res) return;
+        if (!r.ok) { _errors('cmf_bres', BIDS, r); return; }
+        var h = '<div class="rbox"><div class="rbox-title">Brine Blend</div>' +
+            _tbl(['Brine', 'Density', 'Volume', 'Fraction', 'Guide max'], [
+                ['A: ' + r.a, _den(r.ra), V(r.va), _fx(r.fa * 100, 1) + ' %', r.aMax == null ? '—' : _den(r.aMax)],
+                ['B: ' + r.b, _den(r.rb), V(r.vb), _fx(r.fb * 100, 1) + ' %', r.bMax == null ? '—' : _den(r.bMax)]
+            ]) +
+            _row('Blend volume', V(r.vol)) +
+            _row('Blend density', _ppg3(r.mix));
+        if (r.target) {
+            h += _row('Target density', _ppg3(r.target.ppg)) +
+                _row('Brine A for target', V(r.target.va) + ' (' + _fx(r.target.fa * 100, 1) + ' %)') +
+                _row('Brine B for target', V(r.target.vb));
+        }
+        var v = r.cautions.map(function (c) { return c.lvl === 'bad' ? _bad(c.t) : _warn(c.t); }).join('');
+        if (!r.cautions.length) v = _ok('No crystallisation or compatibility flags for this pair.');
+        h += v + _note('Densities at surface temperature (about 70 °F). Volumes are taken as additive; real blends can shrink by up to about 1 %. ' +
+            'Brine density falls as temperature rises. The crystallisation temperature (TCT) rises steeply near the maximum density ' +
+            'and with pressure; order the blend to a TCT below the lowest temperature it will see, including seabed and surface lines. ' +
+            'Guide densities from the Well Kill page brine guide.') + '</div>';
+        res.innerHTML = h;
+        res.setAttribute('data-done', '1');
+    }
+
+    function _readCement() {
+        return { dh: _num('cmf_dh'), od: _num('cmf_od'), cid: _num('cmf_cid'), shoe: _num('cmf_shoe'), toc: _num('cmf_toc'),
+            track: _num('cmf_track'), excess: _num('cmf_ex'), rho: _num('cmf_rho'), sgc: _num('cmf_sgc'), sack: _num('cmf_sack') };
+    }
+    function _readBlend() {
+        return { a: _str('cmf_a'), b: _str('cmf_b'), ra: _num('cmf_ra'), rb: _num('cmf_rb'), va: _num('cmf_va'), vb: _num('cmf_vb'),
+            target: _num('cmf_tgt'), vt: _num('cmf_vt') };
+    }
+    function _calcImpl() {
+        var root = _byId('cmf_root');
+        if (!root) return null;
+        var ins = root.querySelectorAll ? root.querySelectorAll('input,select') : [];
+        for (var n = 0; n < ins.length; n++) if (ins[n].classList) ins[n].classList.remove('input-err');
+        var c = cement(_readCement()), b = blend(_readBlend());
+        _paintCement(c);
+        _paintBlend(b);
+        G.WTS_state = G.WTS_state || {};
+        G.WTS_state.complfluids = {
+            slurryBbl: c.ok ? c.slurryBbl : null, sacks: c.ok ? c.sacks : null, yieldFt3: c.ok ? c.yieldFt3 : null,
+            waterGalSk: c.ok ? c.waterGalSk : null, mixWaterBbl: c.ok ? c.mixWaterBbl : null, dispBbl: c.ok ? c.dispBbl : null,
+            blendPpg: b.ok ? b.mix : null, vA: b.ok && b.target ? b.target.va : null, vB: b.ok && b.target ? b.target.vb : null,
+            ts: Date.now(), cement: c, blend: b
+        };
+        return { cement: c, blend: b };
+    }
+    G.calcComplFluids = function () { return _canon(_calcImpl); };
+
+    function render(body) {
+        if (!body) return;
+        var t = _byId('pgTitle'), s = _byId('pgSub');
+        if (t) t.textContent = TITLE;
+        if (s) s.textContent = SUB;
+        var bl = _brines();
+        var opts = bl.map(function (b, k) { return { v: String(k), t: b.name + ' (max ' + b.ppg.toFixed(1) + ' ppg)' }; });
+        opts.push({ v: '-1', t: 'Other brine' });
+        function idx(re, def) { for (var k = 0; k < bl.length; k++) if (re.test(bl[k].name)) return String(k); return def; }
+        var btn = '<div class="btn-row"><button class="btn btn-primary" onclick="calcComplFluids()">Calculate</button></div>';
+        body.innerHTML =
+            '<div id="cmf_root"><div class="cols-2">' +
+            '<div>' +
+            '<div class="card"><div class="card-title">Cement Slurry</div><div class="fg">' +
+            _fg('cmf_dh', 'Hole diameter (in)', '8.5', ' min="0"') +
+            _fg('cmf_od', 'Casing OD (in)', '7', ' min="0"') +
+            _fg('cmf_cid', 'Casing ID (in)', '6.276', ' min="0"') +
+            _fg('cmf_shoe', 'Casing shoe depth, MD (ft)', '10000', ' min="0"') +
+            _fg('cmf_toc', 'Top of cement, MD (ft)', '8000', ' min="0"') +
+            _fg('cmf_track', 'Shoe track length (ft)', '80', ' min="0"') +
+            _fg('cmf_ex', 'Open-hole excess (%)', '20', ' min="0"') +
+            _fg('cmf_rho', 'Slurry density (ppg)', '15.8', ' min="0"') +
+            _fg('cmf_sgc', 'Cement specific gravity', '3.14', ' min="0"') +
+            _fg('cmf_sack', 'Sack weight (lb)', '94', ' min="0"') +
+            '</div>' + btn.replace('<button', '<button id="cmf_calc"') + '<div id="cmf_cres" style="margin-top:14px"></div></div>' +
+            '</div>' +
+            '<div>' +
+            '<div class="card"><div class="card-title">Brine Blending</div><div class="fg">' +
+            _sel('cmf_a', 'Brine A', opts, idx(/^Calcium bromide/i, '0')) +
+            _fg('cmf_ra', 'Brine A density (ppg)', '14.2', ' min="0"') +
+            _fg('cmf_va', 'Brine A volume (bbl)', '100', ' min="0"') +
+            _sel('cmf_b', 'Brine B', opts, idx(/^Calcium chloride/i, '0')) +
+            _fg('cmf_rb', 'Brine B density (ppg)', '11.6', ' min="0"') +
+            _fg('cmf_vb', 'Brine B volume (bbl)', '100', ' min="0"') +
+            _fg('cmf_tgt', 'Target density, optional (ppg)', '13.0', ' min="0"') +
+            _fg('cmf_vt', 'Final blend volume for the target (bbl)', '300', ' min="0"') +
+            '</div>' + btn.replace('<button', '<button id="cmf_bcalc"') + '<div id="cmf_bres" style="margin-top:14px"></div></div>' +
+            '</div>' +
+            '</div></div>';
+        _tag(UNITS);
+        var root = _byId('cmf_root');
+        if (root && root.addEventListener) {
+            root.addEventListener('change', function (e) {
+                if (e && e.target && /^cmf_/.test(e.target.id || '')) G.calcComplFluids();
+            });
+        }
+        G.calcComplFluids();
+    }
+    G.renderComplFluids = render;
+
+    G.WTS_calcRegistry = G.WTS_calcRegistry || {};
+    G.WTS_calcRegistry.complfluids = {
+        key: 'complfluids',
+        title: TITLE,
+        navTitle: 'Cement & Brines',
+        sub: SUB,
+        group: 'Test System Safety',
+        icon: '&#9707;',
+        badge: 'Completions',
+        bc: 'dc-b-blue',
+        desc: 'Neat cement water requirement, yield, sacks and displacement; two-brine blend density and target volumes with crystallisation cautions.',
+        render: function (body) { return G.renderComplFluids(body); }
+    };
+
+    if (typeof document !== 'undefined' && document.addEventListener) {
+        document.addEventListener('wts:unit-system-changed', function () {
+            var ids = ['cmf_cres', 'cmf_bres'];
+            for (var n = 0; n < ids.length; n++) {
+                var r = _byId(ids[n]);
+                if (r && r.getAttribute && r.getAttribute('data-done') === '1') { G.calcComplFluids(); return; }
+            }
+        });
+    }
+})();
+
+// ─── END 49-calc-fluids ─────────────────────────────────────────────
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// ─── BEGIN 49-calc-scale ───────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════
+// WTS — Round-9 plug-in calculator — Scale & Water Analysis (scale)
+//
+// PURPOSE
+//   From a produced / injection water analysis (mg/L): ion molarities and
+//   meq/L, charge balance, TDS, ionic strength, Langelier and Stiff–Davis
+//   calcium carbonate indices, and Oddo–Tomson saturation indices for
+//   calcite, barite, celestite, gypsum and anhydrite at temperature and
+//   pressure, with ✓ / ⚠ / ✗ scaling-tendency verdicts, an SI-vs-temperature
+//   table and chart.
+//
+// METHOD (references in brackets)
+//   Molarity c = mg/L / (1000·MW); meq/L = mg/L·|z| / MW.
+//   Ionic strength I = ½ Σ cᵢ·zᵢ² (mol/L).                         [Standard Methods 1030 / USBR MS-2016 eq. 1]
+//   Charge balance % = (Σcat − Σan)/(Σcat + Σan)·100 in meq/L;
+//     ≤ 5 % acceptable, 5–10 % questionable, > 10 % poor.           [Standard Methods 1030 E; USBR MS-2016 eq. 3]
+//   Langelier (Carrier 1965 form):                                   [ASTM D3739; Carrier (1965)]
+//     pHs = (9.3 + A + B) − (C + D); A = (log10 TDS − 1)/10,
+//     B = −13.12·log10(T_K) + 34.55, C = log10(Ca as CaCO3, mg/L) − 0.4,
+//     D = log10(total alkalinity as CaCO3, mg/L); LSI = pH − pHs.
+//     Valid for TDS ≤ 10,000 mg/L.
+//   Stiff–Davis: S&DSI = pH − pCa − pAlk − K, pCa = −log10[Ca] (mol/L),
+//     pAlk = −log10(total alkalinity, eq/L); K from the ASTM D4582 chart
+//     curve fit (USBR MS-2016 eqs. 13–14, T in °C):
+//       I < 1.2: K = 2.022·exp((ln I + 7.544)²/102.6) − 0.0002·T² + 0.00097·T + 0.262
+//       I ≥ 1.2: K = −0.1·I − 0.0002·T² − 0.00097·T + 3.887
+//   Oddo–Tomson (1994), SPE Production & Facilities 9(1) 47–54; T in °F,
+//   P in psia, concentrations and I in mol/L:
+//     calcite (pH known):
+//       SI = log10([Ca][HCO3]) + pH − 2.76 + 9.88e-3·T + 0.61e-6·T² − 3.03e-5·P − 2.348·√I + 0.77·I
+//     sulphates: SI = log10([Me][SO4]) + A + B·T + C·T² + D·P + E·√I + F·I + G·√I·T
+//       mineral      A      B          C          D          E       F      G
+//       gypsum       3.47   1.8e-3     2.5e-6    −5.9e-5    −1.13   0.37   −2.0e-3
+//       anhydrite    2.52   9.98e-3   −0.97e-6   −3.07e-5   −1.09   0.50   −3.3e-3
+//       celestite    6.11   2.0e-3     6.4e-6    −4.6e-5    −1.89   0.67   −1.9e-3
+//       barite      10.03  −4.8e-3    11.4e-6    −4.8e-5    −2.62   0.89   −2.0e-3
+//     (coefficient table as reproduced in Mathematical Modelling of
+//      Engineering Problems 11(9), 2024, Table 9.) Valid 32–392 °F,
+//      14.7–20,000 psia, I up to about 6 mol/L.
+//   Verdicts: SI ≤ 0 ✓ undersaturated; 0 < SI ≤ 0.5 ⚠ marginal / slight
+//   tendency; SI > 0.5 ✗ scale likely (common oilfield screening bands).
+//
+// PUBLIC API (window.*)
+//   renderScale(body), calcScale()
+//   WTS_scale_compute(input) → {ok, ions, I, tds, cb, lsi, sdi, si, curve, …} or {ok:false, errors, bad}
+//   WTS_scale_oddoTomson(mineral, {ca, sr, ba, so4, hco3 (mol/L), ph, t °F, p psia, I}) → SI
+//
+// STATE  WTS_state.scale = {I, tds, cbPct, lsi, sdi, si:{calcite,barite,celestite,gypsum,anhydrite}, ts, result}
+// Registers window.WTS_calcRegistry.scale (group "Fluid & Field Calcs").
+// ════════════════════════════════════════════════════════════════════
+(function () {
+    'use strict';
+
+    var G = (typeof window !== 'undefined') ? window : globalThis;
+
+    // Ions: molar mass g/mol (IUPAC 2013 atomic weights) and charge.
+    var IONS = [
+        { k: 'na', name: 'Sodium, Na⁺', mw: 22.990, z: 1 },
+        { k: 'k', name: 'Potassium, K⁺', mw: 39.098, z: 1 },
+        { k: 'ca', name: 'Calcium, Ca²⁺', mw: 40.078, z: 2 },
+        { k: 'mg', name: 'Magnesium, Mg²⁺', mw: 24.305, z: 2 },
+        { k: 'ba', name: 'Barium, Ba²⁺', mw: 137.327, z: 2 },
+        { k: 'sr', name: 'Strontium, Sr²⁺', mw: 87.62, z: 2 },
+        { k: 'fe', name: 'Iron, Fe²⁺', mw: 55.845, z: 2 },
+        { k: 'cl', name: 'Chloride, Cl⁻', mw: 35.453, z: -1 },
+        { k: 'so4', name: 'Sulphate, SO4²⁻', mw: 96.06, z: -2 },
+        { k: 'hco3', name: 'Bicarbonate, HCO3⁻', mw: 61.017, z: -1 },
+        { k: 'co3', name: 'Carbonate, CO3²⁻', mw: 60.009, z: -2 }
+    ];
+    var CACO3 = 100.087;
+    var OT = {
+        gypsum: [3.47, 1.8e-3, 2.5e-6, -5.9e-5, -1.13, 0.37, -2.0e-3],
+        anhydrite: [2.52, 9.98e-3, -0.97e-6, -3.07e-5, -1.09, 0.50, -3.3e-3],
+        celestite: [6.11, 2.0e-3, 6.4e-6, -4.6e-5, -1.89, 0.67, -1.9e-3],
+        barite: [10.03, -4.8e-3, 11.4e-6, -4.8e-5, -2.62, 0.89, -2.0e-3]
+    };
+    var MINERALS = [
+        { k: 'calcite', name: 'Calcite, CaCO3' },
+        { k: 'barite', name: 'Barite, BaSO4' },
+        { k: 'celestite', name: 'Celestite, SrSO4' },
+        { k: 'gypsum', name: 'Gypsum, CaSO4·2H2O' },
+        { k: 'anhydrite', name: 'Anhydrite, CaSO4' }
+    ];
+    var SI_WARN = 0, SI_BAD = 0.5;
+
+    function oddoTomson(min, c) {
+        var T = c.t, P = c.p, I = c.I, sI = Math.sqrt(I);
+        if (min === 'calcite') {
+            if (!(c.ca > 0 && c.hco3 > 0)) return null;
+            return Math.log10(c.ca * c.hco3) + c.ph - 2.76 + 9.88e-3 * T + 0.61e-6 * T * T - 3.03e-5 * P - 2.348 * sI + 0.77 * I;
+        }
+        var k = OT[min]; if (!k) return null;
+        var me = min === 'barite' ? c.ba : min === 'celestite' ? c.sr : c.ca;
+        if (!(me > 0 && c.so4 > 0)) return null;
+        return Math.log10(me * c.so4) + k[0] + k[1] * T + k[2] * T * T + k[3] * P + k[4] * sI + k[5] * I + k[6] * sI * T;
+    }
+
+    function _fin(x) { return typeof x === 'number' && isFinite(x); }
+
+    // input = {na,k,ca,mg,ba,sr,fe,cl,so4,hco3,co3 mg/L (blank → 0), ph, tds mg/L (blank → sum of ions),
+    //          t °F, p psia}
+    function compute(input) {
+        var i = input || {}, errors = [], bad = [];
+        function need(ok, key, msg) { if (!ok) { errors.push(msg); bad.push(key); } return ok; }
+        var mg = {};
+        IONS.forEach(function (ion) {
+            var v = i[ion.k];
+            v = (v == null || v === '' || (typeof v === 'number' && isNaN(v))) ? 0 : Number(v);
+            mg[ion.k] = v;
+            need(_fin(v) && v >= 0 && v <= 400000, ion.k, ion.name + ' must be between 0 and 400,000 mg/L.');
+        });
+        var ph = Number(i.ph), t = Number(i.t), p = Number(i.p);
+        var tdsIn = (i.tds == null || i.tds === '' || (typeof i.tds === 'number' && isNaN(i.tds))) ? null : Number(i.tds);
+        need(_fin(ph) && ph >= 3 && ph <= 11, 'ph', 'pH must be between 3 and 11.');
+        need(_fin(t) && t >= 32 && t <= 392, 't', 'Temperature must be between 32 and 392 °F.');
+        need(_fin(p) && p >= 14.7 && p <= 20000, 'p', 'Pressure must be between 14.7 and 20,000 psia.');
+        if (tdsIn != null) need(_fin(tdsIn) && tdsIn > 0 && tdsIn <= 500000, 'tds', 'TDS must be above 0 and no more than 500,000 mg/L, or blank.');
+        if (!errors.length) need(mg.ca > 0, 'ca', 'Calcium is needed for the carbonate and sulphate indices.');
+        if (!errors.length) need(mg.hco3 + mg.co3 > 0, 'hco3', 'Enter bicarbonate or carbonate alkalinity.');
+        if (errors.length) return { ok: false, errors: errors, bad: bad };
+
+        var ions = [], c = {}, cat = 0, an = 0, I2 = 0, sum = 0;
+        IONS.forEach(function (ion) {
+            var m = mg[ion.k] / (1000 * ion.mw), meq = mg[ion.k] * Math.abs(ion.z) / ion.mw;
+            c[ion.k] = m; sum += mg[ion.k]; I2 += m * ion.z * ion.z;
+            if (ion.z > 0) cat += meq; else an += meq;
+            ions.push({ k: ion.k, name: ion.name, mgL: mg[ion.k], molL: m, meqL: meq, z: ion.z });
+        });
+        var I = I2 / 2;
+        var cbPct = (cat + an) > 0 ? (cat - an) / (cat + an) * 100 : 0;
+        var tds = tdsIn != null ? tdsIn : sum;
+        var tK = (t - 32) / 1.8 + 273.15, tC = tK - 273.15;
+        // Alkalinity: HCO3 + 2·CO3 in eq/L; as CaCO3 mg/L = eq/L × 50,043.5
+        var alkEq = c.hco3 + 2 * c.co3;
+        var caCaCO3 = c.ca * CACO3 * 1000, alkCaCO3 = alkEq * CACO3 / 2 * 1000;
+        // Langelier (Carrier)
+        var A = (Math.log10(tds) - 1) / 10, B = -13.12 * Math.log10(tK) + 34.55;
+        var C = Math.log10(caCaCO3) - 0.4, D = Math.log10(alkCaCO3);
+        var pHsL = 9.3 + A + B - (C + D);
+        // Stiff–Davis (ASTM D4582 fit, T °C)
+        var K = I < 1.2 ? 2.022 * Math.exp(Math.pow(Math.log(I) + 7.544, 2) / 102.6) - 0.0002 * tC * tC + 0.00097 * tC + 0.262
+            : -0.1 * I - 0.0002 * tC * tC - 0.00097 * tC + 3.887;
+        var pCa = -Math.log10(c.ca), pAlk = -Math.log10(alkEq);
+        var pHsS = pCa + pAlk + K;
+        // Oddo–Tomson at T, P
+        var cond = { ca: c.ca, ba: c.ba, sr: c.sr, so4: c.so4, hco3: c.hco3, ph: ph, t: t, p: p, I: I };
+        var si = {};
+        MINERALS.forEach(function (m) { si[m.k] = oddoTomson(m.k, cond); });
+        // SI vs temperature at the same pressure
+        var tLo = Math.min(50, Math.floor(t / 10) * 10), tHi = Math.max(300, Math.ceil(t / 10) * 10), curve = [];
+        for (var n = 0; n <= 25; n++) {
+            var tt = tLo + (tHi - tLo) * n / 25, row = { t: tt };
+            MINERALS.forEach(function (m) { row[m.k] = oddoTomson(m.k, { ca: c.ca, ba: c.ba, sr: c.sr, so4: c.so4, hco3: c.hco3, ph: ph, t: tt, p: p, I: I }); });
+            curve.push(row);
+        }
+        var table = [];
+        for (var tt2 = 50; tt2 <= 350; tt2 += 50) {
+            var r2 = { t: tt2 };
+            MINERALS.forEach(function (m) { r2[m.k] = oddoTomson(m.k, { ca: c.ca, ba: c.ba, sr: c.sr, so4: c.so4, hco3: c.hco3, ph: ph, t: tt2, p: p, I: I }); });
+            table.push(r2);
+        }
+        function band(v) { return v == null ? 'none' : v > SI_BAD ? 'bad' : v > SI_WARN ? 'warn' : 'ok'; }
+        var verdicts = {};
+        MINERALS.forEach(function (m) { verdicts[m.k] = band(si[m.k]); });
+        return {
+            ok: true, ions: ions, molar: c, cations_meq: cat, anions_meq: an, cbPct: cbPct,
+            cb: Math.abs(cbPct) <= 5 ? 'ok' : Math.abs(cbPct) <= 10 ? 'warn' : 'bad',
+            sumIons: sum, tds: tds, tdsMeasured: tdsIn != null, I: I, t: t, p: p, ph: ph, tC: tC,
+            alkEq: alkEq, caCaCO3: caCaCO3, alkCaCO3: alkCaCO3,
+            lsi: { A: A, B: B, C: C, D: D, pHs: pHsL, value: ph - pHsL, valid: tds <= 10000, band: band(ph - pHsL) },
+            sdi: { K: K, pCa: pCa, pAlk: pAlk, pHs: pHsS, value: ph - pHsS, band: band(ph - pHsS), tempOk: tC >= 0 && tC <= 90 },
+            si: si, verdicts: verdicts, curve: curve, table: table
+        };
+    }
+    G.WTS_scale_compute = compute;
+    G.WTS_scale_oddoTomson = oddoTomson;
+
+    // ── Page ─────────────────────────────────────────────────────────
+    var TITLE = 'Scale & Water Analysis';
+    var SUB = 'Charge balance, ionic strength, Langelier and Stiff–Davis indices, Oddo–Tomson saturation indices for calcite, barite, celestite, gypsum and anhydrite vs temperature and pressure';
+    var UNITS = { sc_t: 'temperature', sc_p: 'pressure' };
+
+    function _byId(id) { return (typeof document !== 'undefined' && document.getElementById) ? document.getElementById(id) : null; }
+    function _num(id) { var e = _byId(id); if (!e) return NaN; var s = String(e.value).trim(); return s === '' ? NaN : parseFloat(s); }
+    function _fmt(v, d) {
+        if (v == null || !isFinite(v)) return '—';
+        return Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) });
+    }
+    function _fx(v, d) {
+        if (v == null || !isFinite(v)) return '—';
+        return Number(v).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
+    }
+    function _sci(v) { return (v == null || !isFinite(v)) ? '—' : v === 0 ? '0' : Number(v).toExponential(3); }
+    function _metric() { var U = G.WTS_units; return !!(U && U.getSystem && U.getSystem() === 'metric'); }
+    function _u(v, cat, d, impLabel, dMet) {
+        var U = G.WTS_units;
+        if (_metric() && U.format) { var f = U.format(v, cat); return _fmt(f.value, dMet == null ? d : dMet) + ' ' + f.label; }
+        return _fmt(v, d) + ' ' + impLabel;
+    }
+    function _disp(v, cat) { var U = G.WTS_units; return (_metric() && U.format) ? U.format(v, cat).value : v; }
+    function _lab(cat, imp) { var U = G.WTS_units; return (_metric() && U.format) ? U.format(1, cat).label : imp; }
+    function _tag(map) { var U = G.WTS_units; if (!U || !U.tagInput) return; for (var id in map) U.tagInput(id, map[id]); }
+    function _canon(fn) { var U = G.WTS_units; return (U && U.runCanonical) ? U.runCanonical(fn) : fn(); }
+    function _fg(id, label, val, extra) {
+        return '<div class="fg-item"><label for="' + id + '">' + label + '</label>' +
+            '<input type="number" id="' + id + '" value="' + val + '" step="any"' + (extra || '') + '></div>';
+    }
+    function _row(l, v) { return '<div class="rrow"><span class="rl">' + l + '</span><span class="rv">' + v + '</span></div>'; }
+    function _ok(t) { return '<div style="color:var(--green)">✓ ' + t + '</div>'; }
+    function _warn(t) { return '<div style="color:var(--yellow)">⚠ ' + t + '</div>'; }
+    function _bad(t) { return '<div style="color:var(--red)">✗ ' + t + '</div>'; }
+    function _note(t) { return '<div style="margin-top:10px;font-size:12px;color:var(--text2)"><b>Notes</b> ' + t + '</div>'; }
+    function _tbl(head, rows) {
+        return '<div style="overflow-x:auto"><table class="dtable"><thead><tr>' + head.map(function (h) { return '<th>' + h + '</th>'; }).join('') +
+            '</tr></thead><tbody>' + rows.map(function (r) { return '<tr>' + r.map(function (c) { return '<td>' + c + '</td>'; }).join('') + '</tr>'; }).join('') +
+            '</tbody></table></div>';
+    }
+    var MSG = {
+        t: function () { return 'Temperature must be between ' + _u(32, 'temperature', 0, '°F') + ' and ' + _u(392, 'temperature', 0, '°F') + '.'; },
+        p: function () { return 'Pressure must be between ' + _u(14.7, 'pressure', 1, 'psia') + ' and ' + _u(20000, 'pressure', 0, 'psia') + '.'; }
+    };
+    function _verdict(nm, v, band) {
+        if (band === 'none') return '';
+        var s = nm + ' SI ' + _fx(v, 2);
+        if (band === 'bad') return _bad(s + ': scale likely.');
+        if (band === 'warn') return _warn(s + ': slightly supersaturated, marginal scaling tendency.');
+        return _ok(s + ': undersaturated, no scaling tendency.');
+    }
+
+    function _paint(r) {
+        var res = _byId('sc_res');
+        if (!res) return;
+        if (!r.ok) {
+            var items = '', seen = {};
+            r.bad.forEach(function (k, j) {
+                var el = _byId('sc_' + k); if (el && el.classList) el.classList.add('input-err');
+                if (seen[k]) return; seen[k] = 1;
+                items += '<li>' + (MSG[k] ? MSG[k]() : r.errors[j]) + '</li>';
+            });
+            res.innerHTML = '<div class="val-error"><strong>Please fix the following:</strong><ul>' + items + '</ul></div>';
+            res.setAttribute('data-done', '1');
+            return;
+        }
+        var h = '';
+        // Water analysis
+        var cbv = r.cb === 'ok' ? _ok('Charge balance ' + _fx(r.cbPct, 2) + ' %: analysis acceptable (within ±5 %).')
+            : r.cb === 'warn' ? _warn('Charge balance ' + _fx(r.cbPct, 2) + ' %: questionable (5 to 10 %). Check the analysis.')
+                : _bad('Charge balance ' + _fx(r.cbPct, 2) + ' %: poor (above 10 %). Resample or re-analyse before relying on the indices.');
+        h += '<div class="rbox"><div class="rbox-title">Water Analysis</div>' +
+            _tbl(['Ion', 'mg/L', 'mol/L', 'meq/L'], r.ions.map(function (x) { return [x.name, _fmt(x.mgL, 1), _sci(x.molL), _fmt(x.meqL, 3)]; })) +
+            _row('Sum of cations', _fmt(r.cations_meq, 2) + ' meq/L') +
+            _row('Sum of anions', _fmt(r.anions_meq, 2) + ' meq/L') +
+            _row('Charge balance', _fx(r.cbPct, 2) + ' %') +
+            _row('Sum of ions', _fmt(r.sumIons, 0) + ' mg/L') +
+            _row('TDS used', _fmt(r.tds, 0) + ' mg/L' + (r.tdsMeasured ? ' (measured)' : ' (sum of ions)')) +
+            _row('Ionic strength', _fx(r.I, 4) + ' mol/L') +
+            _row('Total alkalinity as CaCO3', _fmt(r.alkCaCO3, 1) + ' mg/L') +
+            cbv + '</div>';
+        // Carbonate indices
+        var L = r.lsi, S = r.sdi;
+        h += '<div class="rbox"><div class="rbox-title">Calcium Carbonate Indices</div>' +
+            _row('Langelier saturation pH, pHs', _fx(L.pHs, 2)) +
+            _row('Langelier index, LSI', _fx(L.value, 2)) +
+            _row('Stiff–Davis K', _fx(S.K, 3)) +
+            _row('Stiff–Davis saturation pH', _fx(S.pHs, 2)) +
+            _row('Stiff–Davis index, S&DSI', _fx(S.value, 2)) +
+            (L.valid ? _verdict('Langelier', L.value, L.band) : _warn('TDS is above 10,000 mg/L: the Langelier index is outside its range. Use Stiff–Davis or Oddo–Tomson.')) +
+            _verdict('Stiff–Davis', S.value, S.band) +
+            (S.tempOk ? '' : _warn('Temperature is outside the 0 to 90 °C range of the Stiff–Davis chart; K is extrapolated.')) +
+            _note('Both indices use the measured pH and the analysis temperature. LSI by the Carrier (1965) form of ASTM D3739; ' +
+                'Stiff–Davis K from the ASTM D4582 chart fit. Positive values mean calcium carbonate tends to deposit; ' +
+                'values below −0.5 mean the water is aggressive to carbonate films.') +
+            '</div>';
+        // Oddo–Tomson
+        var v = '';
+        MINERALS.forEach(function (m) {
+            if (r.si[m.k] == null) v += '<div>' + m.name + ': not computed, an ion is zero.</div>';
+            else v += _verdict(m.name, r.si[m.k], r.verdicts[m.k]);
+        });
+        h += '<div class="rbox"><div class="rbox-title">Oddo–Tomson Saturation Indices</div>' +
+            _row('Conditions', _u(r.t, 'temperature', 0, '°F') + ', ' + _u(r.p, 'pressure', 0, 'psia')) +
+            MINERALS.map(function (m) { return _row(m.name, r.si[m.k] == null ? '—' : _fx(r.si[m.k], 2)); }).join('') +
+            v +
+            _note('SI = log10(ion product / conditional solubility product), Oddo & Tomson (1994). SI 0 is saturation; ' +
+                'SI above 0.5 is taken as scale likely. Calcite uses the measured pH; the pH at downhole conditions is usually ' +
+                'lower than a degassed surface sample, so the calcite SI is conservative. Gypsum and anhydrite: the stable ' +
+                'calcium sulphate is gypsum at low temperature and anhydrite at high temperature; watch the larger SI.') +
+            '</div>';
+        // SI vs temperature
+        var tl = _lab('temperature', '°F');
+        h += '<div class="rbox"><div class="rbox-title">Saturation Index vs Temperature</div>' +
+            _tbl(['Temperature (' + tl + ')'].concat(MINERALS.map(function (m) { return m.name; })), r.table.map(function (row) {
+                return [_fmt(_disp(row.t, 'temperature'), 0)].concat(MINERALS.map(function (m) { return row[m.k] == null ? '—' : _fx(row[m.k], 2); }));
+            })) +
+            '<div class="chart-wrap"><canvas id="sc_chart" width="600" height="340"></canvas></div>' +
+            _note('Each row keeps the water composition, pH and pressure (' + _u(r.p, 'pressure', 0, 'psia') + ') and changes the temperature only.') +
+            '</div>';
+        res.innerHTML = h;
+        _chart(r);
+        res.setAttribute('data-done', '1');
+    }
+
+    function _chart(r) {
+        var cv = _byId('sc_chart');
+        var draw = (typeof drawLineChart === 'function') ? drawLineChart : (typeof G.drawLineChart === 'function' ? G.drawLineChart : null); // eslint-disable-line no-undef
+        if (!cv || !draw || !cv.getContext) return;
+        var colors = { calcite: '#f0883e', barite: '#58a6ff', celestite: '#3fb950', gypsum: '#bc8cff', anhydrite: '#d29922' };
+        var ds = [];
+        MINERALS.forEach(function (m) {
+            if (r.si[m.k] == null) return;
+            ds.push({ label: m.name, color: colors[m.k], points: false, width: 2, data: r.curve.map(function (c) { return { x: _disp(c.t, 'temperature'), y: c[m.k] }; }) });
+        });
+        var t0 = r.curve[0].t, t1 = r.curve[r.curve.length - 1].t;
+        ds.push({ label: 'SI = 0', color: '#8b949e', dash: [4, 4], points: false, width: 1, data: [{ x: _disp(t0, 'temperature'), y: 0 }, { x: _disp(t1, 'temperature'), y: 0 }] });
+        try { draw(cv, ds, { xLabel: 'Temperature (' + _lab('temperature', '°F') + ')', yLabel: 'Saturation index', xDec: 0, yDec: 1 }); } catch (e) { /* decorative */ }
+    }
+
+    function _read() {
+        var o = { ph: _num('sc_ph'), tds: _num('sc_tds'), t: _num('sc_t'), p: _num('sc_p') };
+        IONS.forEach(function (ion) { o[ion.k] = _num('sc_' + ion.k); });
+        return o;
+    }
+    function _calcImpl() {
+        var root = _byId('sc_root');
+        if (!root) return null;
+        var ins = root.querySelectorAll ? root.querySelectorAll('input,select') : [];
+        for (var n = 0; n < ins.length; n++) if (ins[n].classList) ins[n].classList.remove('input-err');
+        var r = compute(_read());
+        _paint(r);
+        G.WTS_state = G.WTS_state || {};
+        G.WTS_state.scale = {
+            I: r.ok ? r.I : null, tds: r.ok ? r.tds : null, cbPct: r.ok ? r.cbPct : null,
+            lsi: r.ok ? r.lsi.value : null, sdi: r.ok ? r.sdi.value : null,
+            si: r.ok ? r.si : null, ts: Date.now(), result: r
+        };
+        return r;
+    }
+    G.calcScale = function () { return _canon(_calcImpl); };
+
+    var DEF = { na: 30000, k: 400, ca: 2500, mg: 400, ba: 50, sr: 300, fe: 10, cl: 52000, so4: 20, hco3: 600, co3: 0 };
+    function render(body) {
+        if (!body) return;
+        var t = _byId('pgTitle'), s = _byId('pgSub');
+        if (t) t.textContent = TITLE;
+        if (s) s.textContent = SUB;
+        var ions = '';
+        IONS.forEach(function (ion) { ions += _fg('sc_' + ion.k, ion.name + ', mg/L', String(DEF[ion.k]), ' min="0"'); });
+        body.innerHTML =
+            '<div id="sc_root"><div class="cols-2">' +
+            '<div>' +
+            '<div class="card"><div class="card-title">Water Analysis</div><div class="fg">' + ions +
+            _fg('sc_ph', 'pH, measured', '6.8', ' min="0" max="14"') +
+            _fg('sc_tds', 'TDS measured, blank = sum of ions, mg/L', '', ' min="0"') +
+            '</div></div>' +
+            '<div class="card"><div class="card-title">Conditions</div><div class="fg">' +
+            _fg('sc_t', 'Temperature (°F)', '180') +
+            _fg('sc_p', 'Pressure (psia)', '2000', ' min="0"') +
+            '</div><div class="btn-row"><button class="btn btn-primary" id="sc_calc" onclick="calcScale()">Calculate</button></div></div>' +
+            '</div>' +
+            '<div><div id="sc_res"></div></div>' +
+            '</div></div>';
+        _tag(UNITS);
+        var root = _byId('sc_root');
+        if (root && root.addEventListener) {
+            root.addEventListener('change', function (e) {
+                if (e && e.target && /^sc_/.test(e.target.id || '')) G.calcScale();
+            });
+        }
+        G.calcScale();
+    }
+    G.renderScale = render;
+
+    G.WTS_calcRegistry = G.WTS_calcRegistry || {};
+    G.WTS_calcRegistry.scale = {
+        key: 'scale',
+        title: TITLE,
+        sub: SUB,
+        group: 'Fluid & Field Calcs',
+        icon: '&#9878;',
+        badge: 'Chemistry',
+        bc: 'dc-b-blue',
+        desc: 'Water analysis QC and scaling tendency: charge balance, ionic strength, LSI, Stiff–Davis and Oddo–Tomson SI for calcite, barite, celestite, gypsum and anhydrite.',
+        render: function (body) { return G.renderScale(body); }
+    };
+
+    if (typeof document !== 'undefined' && document.addEventListener) {
+        document.addEventListener('wts:unit-system-changed', function () {
+            var r = _byId('sc_res');
+            if (r && r.getAttribute && r.getAttribute('data-done') === '1') G.calcScale();
+        });
+    }
+})();
+
+// ─── END 49-calc-scale ─────────────────────────────────────────────
 
 
 // ── Round-9 (calculators) injection END ──

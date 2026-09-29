@@ -7,7 +7,8 @@
 //               window.calcFlareGHG()            — reads the DOM, validates, renders
 //               window.WTS_flareghg_compute(inp) — pure, field units in/out, no DOM
 //   State     : window.WTS_state.flareghg = {V_scf, E_MMBtu, co2_t, ch4_t, n2o_kg,
-//                                            so2_t, co2e_t, co2oil_t, gwp, ts}
+//                                            so2_t, co2e_t, co2oil_t, gwp, hrs,
+//                                            h2sUnburned_kg, ts}
 //
 // Flared gas volume, heat released and CO2 / CH4 / N2O / CO2e / SO2 for well
 // test flaring, plus CO2 from an oil / condensate burner. Field units inside
@@ -386,7 +387,8 @@
         G.WTS_state = G.WTS_state || {};
         G.WTS_state.flareghg = {
             V_scf: r.Vscf, E_MMBtu: r.E_MMBtu, co2_t: r.co2_t, ch4_t: r.ch4_t, n2o_kg: r.n2o_kg,
-            so2_t: r.so2_t, co2e_t: r.co2e_t, co2oil_t: r.co2oil_t, gwp: r.gwp, ts: Date.now()
+            so2_t: r.so2_t, co2e_t: r.co2e_t, co2oil_t: r.co2oil_t, gwp: r.gwp,
+            hrs: r.hrs, h2sUnburned_kg: r.h2sUnburned_kg, ts: Date.now()
         };
         res.setAttribute('data-done', '1');
         return r;
