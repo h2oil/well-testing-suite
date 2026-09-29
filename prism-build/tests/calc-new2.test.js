@@ -212,6 +212,45 @@ module.exports = [
     },
   },
   {
+    name: 'NEW2 oilipr metric Fetkovich C: m³/d/kPa²ⁿ equals a log-log fit done directly in SI; imperial C unchanged',
+    wp: WP,
+    run(app, assert) {
+      open(app);
+      clearPts(app);
+      const O4 = { oi_method: 'fetk', oi_pr: 2000, oi_q1: 500, oi_pwf1: 1800, oi_q2: 900, oi_pwf2: 1600, oi_q3: 1200, oi_pwf3: 1400, oi_pwfd: 1000, oi_qt: 1000, oi_prf: '' };
+      set(app, O4);
+      app.click('oi_go');
+      const C = S(app).C, n = S(app).n;
+      assert.ok(/BPD\/psia²ⁿ/.test(rows(app).find((x) => x.l === 'Fetkovich C').v), 'imperial label unchanged');
+      assert.rel(rv(app, 'Fetkovich C'), 2.9027e-3, 1e-3, 'imperial C unchanged');
+      // The same test points in SI (m³/d, kPa — the units layer's own factors) fitted independently.
+      const FQ = 0.158987, FP = 6.89476;
+      const si = fetkRef(2000 * FP, [{ q: 500 * FQ, pwf: 1800 * FP }, { q: 900 * FQ, pwf: 1600 * FP }, { q: 1200 * FQ, pwf: 1400 * FP }]);
+      assert.rel(si.n, n, 1e-9, 'n is unit-free');
+      assert.rel(S(app).CMetric, si.C, 1e-6, 'state CMetric = SI fit');
+      const U = app.win.WTS_units;
+      app.flush(10);
+      U.setSystem('metric');
+      try {
+        app.hook.nav('home');
+        open(app);
+        const row = rows(app).find((x) => x.l === 'Fetkovich C');
+        assert.ok(/m³\/d\/kPa²ⁿ/.test(row.v), 'metric label: ' + row.v);
+        assert.ok(!/psia/.test(row.v), 'no psia in the metric C row');
+        // (restored inputs pass through the metric display rounding, so the refit moves by ~0.1 %)
+        assert.rel(rv(app, 'Fetkovich C'), S(app).CMetric, 1e-4, 'metric C shown = state');
+        assert.rel(S(app).CMetric, si.C, 5e-3, 'metric C ≈ SI fit (' + si.C.toExponential(4) + ')');
+        // Entering the points in metric gives the same C
+        clearPts(app);
+        set(app, { oi_method: 'fetk', oi_pr: 2000 * FP, oi_q1: 500 * FQ, oi_pwf1: 1800 * FP, oi_q2: 900 * FQ, oi_pwf2: 1600 * FP, oi_q3: 1200 * FQ, oi_pwf3: 1400 * FP });
+        app.click('oi_go');
+        assert.rel(S(app).C, C, 1e-6, 'canonical C from metric entry');
+        assert.rel(S(app).CMetric, si.C, 1e-6, 'metric C from metric entry');
+      } finally { U.setSystem('imperial'); }
+      noBadNumbers(assert, app, 'fetk metric');
+    },
+  },
+  {
     name: 'NEW2 oilipr autosave/reload restore, PDF + Quick Report capture, no timers left',
     wp: WP,
     run(app, assert) {

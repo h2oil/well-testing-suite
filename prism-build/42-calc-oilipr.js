@@ -30,7 +30,8 @@
 //   WTS_oilipr_compute(input[, fmt])  pure, field units in and out, no DOM
 //   renderOilIPR(body)                paints the page into body
 //   calcOilIPR()                      read DOM → validate → compute → render
-//   WTS_state.oilipr                  last result {ok, mode, J, qb, qmax, …}
+//   WTS_oilipr_fetkCMetric(C, n)      Fetkovich C (BPD/psia²ⁿ) → m³/d/kPa²ⁿ (shown in Metric mode)
+//   WTS_state.oilipr                  last result {ok, mode, J, qb, qmax, C, CMetric, …}
 // ═══════════════════════════════════════════════════════════════════════
 (function () {
     'use strict';
@@ -267,6 +268,21 @@
     }
     G.WTS_oilipr_compute = compute;
 
+    // Fetkovich C in metric. q = C·(p̄r² − pwf²)ⁿ holds in any consistent units, so
+    // with q_m = fq·q (m³/d per BPD) and p_m = fp·p (kPa per psi):
+    //   q_m = fq·C·((p̄r_m² − pwf_m²)/fp²)ⁿ  →  C_m = fq·C / fp^(2n)   [m³/d/kPa²ⁿ].
+    // fq and fp are the units layer's own factors (liquidRate, pressure) so C_m is
+    // consistent with the metric pressures and rates shown on the page.
+    function fetkCMetric(C, n) {
+        var U = G.WTS_units, fq = 0.158987294928, fp = 6.894757;
+        if (U && U.CATEGORIES && U.CATEGORIES.liquidRate && U.CATEGORIES.pressure) {
+            fq = U.CATEGORIES.liquidRate.imperial.factor / U.CATEGORIES.liquidRate.metric.factor;
+            fp = U.CATEGORIES.pressure.imperial.factor / U.CATEGORIES.pressure.metric.factor;
+        }
+        return fq * C / Math.pow(fp, 2 * n);
+    }
+    G.WTS_oilipr_fetkCMetric = fetkCMetric;
+
     // ── Page ─────────────────────────────────────────────────────────────
     var UNITS = { oi_pr: 'pressure', oi_pb: 'pressure', oi_pwfd: 'pressure', oi_prf: 'pressure', oi_qt: 'liquidRate' };
     for (var ui = 1; ui <= NPTS; ui++) { UNITS['oi_q' + ui] = 'liquidRate'; UNITS['oi_pwf' + ui] = 'pressure'; }
@@ -366,6 +382,7 @@
 
         G.WTS_state.oilipr = {
             ok: true, mode: r.mode, J: r.J, qb: r.qb, qmax: r.qmax, qmaxFE1: r.qmaxFE1, n: r.n, C: r.C, r2: r.r2,
+            CMetric: r.C != null ? fetkCMetric(r.C, r.n) : null,
             qAtPwf: r.qAtPwf, pwfAtQ: r.pwfAtQ, qmaxFuture: r.future ? r.future.qmax : null,
             qAtPwfFuture: r.future ? r.future.qAtPwf : null, ts: Date.now()
         };
@@ -379,7 +396,11 @@
         if (r.mode === 'vogel-sat' && fe !== 1) h += _row('qmax at FE = 1', fmtUI.q(r.qmaxFE1));
         if (r.pwfLimitFE != null) h += _row('FE validity limit pwf', fmtUI.p(r.pwfLimitFE));
         if (r.n != null) h += _row('Fetkovich n', _fix(r.n, 4));
-        if (r.C != null) h += _row('Fetkovich C', Number(r.C).toExponential(4) + ' BPD/psia²ⁿ');
+        // Metric C: q[m³/d] = C_m·(p̄r² − pwf²)ⁿ with p in kPa (absolute) →
+        //   C_m = C·0.158987 / 6.894757^(2n)   [m³/d/kPa²ⁿ] (the exponent n is unit-free).
+        if (r.C != null) h += _row('Fetkovich C', _metric()
+            ? Number(fetkCMetric(r.C, r.n)).toExponential(4) + ' m³/d/kPa²ⁿ (n = ' + _fix(r.n, 4) + ')'
+            : Number(r.C).toExponential(4) + ' BPD/psia²ⁿ');
         if (r.r2 != null) h += _row('Fit R²', _fix(r.r2, 4));
         if (isFinite(inp.pwfDesign)) h += _row('Rate at pwf = ' + fmtUI.p(inp.pwfDesign), fmtUI.q(r.qAtPwf));
         if (isFinite(inp.qTarget)) h += _row('pwf at q = ' + fmtUI.q(inp.qTarget), r.pwfAtQ == null ? '—' : fmtUI.p(r.pwfAtQ));
