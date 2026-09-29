@@ -6,6 +6,10 @@
 // Markers used to find the splice point (substring matches, no regex
 // metacharacters in the host so the search is robust):
 //   START sentinel comment is auto-inserted on first run for re-runs.
+//
+// require()-able: module.exports = { START, END, BLOB, HTML, inject, main }.
+// inject(html, blob) is pure: returns { out, mode, messages } or throws an
+// Error whose .lines are the CLI error lines.
 
 const fs = require('fs');
 const path = require('path');
@@ -17,24 +21,19 @@ const BLOB = path.join(__dirname, 'combined-phase3-4.js');
 const START = '// ── PRiSM Phase 3+4 injection START ──';
 const END   = '// ── PRiSM Phase 3+4 injection END ──';
 
-const html = fs.readFileSync(HTML, 'utf8');
-const blob = fs.readFileSync(BLOB, 'utf8');
+function fail(lines) { const e = new Error(lines[0]); e.lines = lines; throw e; }
 
-const wrapped = '\n' + START + '\n' + blob + '\n' + END + '\n';
-
-let out;
-const startIdx = html.indexOf(START);
-if (startIdx !== -1) {
-  // Already injected — replace the block.
-  const endIdx = html.indexOf(END, startIdx);
-  if (endIdx === -1) {
-    console.error('Found START sentinel but no END sentinel — aborting');
-    process.exit(1);
+function inject(html, blob) {
+  const wrapped = '\n' + START + '\n' + blob + '\n' + END + '\n';
+  const startIdx = html.indexOf(START);
+  if (startIdx !== -1) {
+    // Already injected — replace the block.
+    const endIdx = html.indexOf(END, startIdx);
+    if (endIdx === -1) fail(['Found START sentinel but no END sentinel — aborting']);
+    const blockEnd = endIdx + END.length;
+    const out = html.slice(0, startIdx) + START + '\n' + blob + '\n' + END + html.slice(blockEnd);
+    return { out, mode: 'replace', messages: ['[replace] Replaced existing Phase 3+4 block'] };
   }
-  const blockEnd = endIdx + END.length;
-  out = html.slice(0, startIdx) + START + '\n' + blob + '\n' + END + html.slice(blockEnd);
-  console.log('[replace] Replaced existing Phase 3+4 block');
-} else {
   // First-time inject: splice in after the migration shim.
   // The migration shim ends with this exact line (verified by Read).
   // Host file uses CRLF line endings (Windows); match them.
@@ -42,19 +41,30 @@ if (startIdx !== -1) {
   const ANCHOR = 'renderPRiSM.__h2oilMigrated = true;' + eol + '}' + eol;
   const anchorIdx = html.indexOf(ANCHOR);
   if (anchorIdx === -1) {
-    console.error('Could not find migration-shim anchor — aborting');
-    console.error('(searched for: ' + JSON.stringify(ANCHOR) + ')');
-    process.exit(1);
+    fail(['Could not find migration-shim anchor — aborting',
+          '(searched for: ' + JSON.stringify(ANCHOR) + ')']);
   }
   const insertAt = anchorIdx + ANCHOR.length;
-  out = html.slice(0, insertAt) + wrapped + html.slice(insertAt);
-  console.log('[insert] Injected Phase 3+4 block at offset ' + insertAt +
-              ' (line ' + (html.slice(0, insertAt).split('\n').length) + ')');
+  const out = html.slice(0, insertAt) + wrapped + html.slice(insertAt);
+  return { out, mode: 'insert', messages: ['[insert] Injected Phase 3+4 block at offset ' + insertAt +
+              ' (line ' + (html.slice(0, insertAt).split('\n').length) + ')'] };
 }
 
-fs.writeFileSync(HTML, out, 'utf8');
-const total = out.split('\n').length;
-const added = total - html.split('\n').length;
-console.log('[ok] wrote ' + HTML);
-console.log('     before: ' + html.split('\n').length + ' lines');
-console.log('     after:  ' + total + ' lines (+' + added + ')');
+function main() {
+  const html = fs.readFileSync(HTML, 'utf8');
+  const blob = fs.readFileSync(BLOB, 'utf8');
+  let res;
+  try { res = inject(html, blob); }
+  catch (e) { (e.lines || [e.message]).forEach((l) => console.error(l)); process.exit(1); }
+  res.messages.forEach((m) => console.log(m));
+  const out = res.out;
+  fs.writeFileSync(HTML, out, 'utf8');
+  const total = out.split('\n').length;
+  const added = total - html.split('\n').length;
+  console.log('[ok] wrote ' + HTML);
+  console.log('     before: ' + html.split('\n').length + ' lines');
+  console.log('     after:  ' + total + ' lines (+' + added + ')');
+}
+
+module.exports = { START, END, BLOB, HTML, inject, main };
+if (require.main === module) main();

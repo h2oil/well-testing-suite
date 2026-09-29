@@ -10,7 +10,10 @@
 //
 //   Default registrations cover WTS, ESD Hi-Pilot, ESD Lo-Pilot,
 //   Hydrate Management, Liquid Line, Pipe Service Life, PRiSM, PVT,
-//   the global units toggle, and — the one that carries almost all of
+//   the global units toggle (PRiSM is three modules applied in the order
+//   pvt → prism_dataset → prism: well & fluid inputs with provenance, the
+//   dataset, then model / params / freeze / fit / type-curve match /
+//   straight-line / mode / crop; New resets all three), and — the one that carries almost all of
 //   the user's typed values — `storage`: a raw snapshot of every
 //   localStorage key starting with `wts_` or `h2oil_` (legacy per-
 //   calculator keys, the host's universal wts_page_<page> autosave
@@ -259,6 +262,234 @@
         return G.WTS_state;
     }
 
+    // ───────────────────────────────────────────────────────────────
+    // PRiSM state helpers (analysis state, dataset, well store)
+    //
+    // Saved from window.PRiSM_state: the persisted analysis fields (C8)
+    // plus interpretation, model race, saved fits, rail pins and period
+    // flags; other plain JSON fields ride along under `extra`. Derived or
+    // library fields (model curves, presets) and the legacy `match` are not
+    // saved. Shell state: PRiSM.mode / tab / multiRate. Crop window from
+    // window.PRiSM_cropState. Legacy files (`activeModel`) still load.
+    // ───────────────────────────────────────────────────────────────
+    var PRISM_KEYS = ['model', 'params', 'paramFreeze', 'phys', 'tcMatch', 'activePlot', 'activePeriod',
+                      'bourdetL', 'timeFn', 'lastFit', 'semilog', 'analysisKeyResults', 'interp',
+                      'autoMatch', 'fits', 'reportPins', 'periodFlags'];
+    var PRISM_SKIP = { presets: 1, match: 1, modelCurve: 1, modelCurveData: 1, autoMatchStatus: 1,
+                       project: 1, activeModel: 1, autoMatchTopN: 1, pvt: 1, crop: 1 };
+    var EXTRA_MAX_CHARS = 200000;
+    // Fresh analysis state as the UI layer created it (captured when this
+    // layer loads, before any restore) — used by New.
+    var _PRISM_TEMPLATE = (G.PRiSM_state && typeof G.PRiSM_state === 'object') ? _clone(G.PRiSM_state) : null;
+
+    function _own(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
+    function _isPlain(v) {
+        if (v === null || typeof v !== 'object') return true;
+        if (Array.isArray(v)) return true;
+        var pr = Object.getPrototypeOf(v);
+        return pr === Object.prototype || pr === null;
+    }
+    function _numOrNull(v) { return (typeof v === 'number' && isFinite(v)) ? v : null; }
+
+    // Dataset copy with typed arrays turned into plain arrays (JSON-safe).
+    function _plainDataset(ds) {
+        if (!ds || typeof ds !== 'object') return null;
+        function plain(v) {
+            if (v && typeof v === 'object' && typeof v.length === 'number' && !Array.isArray(v) &&
+                typeof ArrayBuffer !== 'undefined' && ArrayBuffer.isView && ArrayBuffer.isView(v)) {
+                return Array.prototype.slice.call(v);
+            }
+            return v;
+        }
+        var out = {};
+        for (var k in ds) {
+            if (!_own(ds, k)) continue;
+            var v = plain(ds[k]);
+            if (v && typeof v === 'object' && !Array.isArray(v) && _isPlain(v)) {
+                var o = {};
+                for (var j in v) if (_own(v, j)) o[j] = plain(v[j]);
+                v = o;
+            }
+            out[k] = v;
+        }
+        return _clone(out);
+    }
+
+    // Replace the contents of a window object in place (other layers keep
+    // references to it).
+    function _replaceInPlace(name, fresh) {
+        var cur = G[name];
+        if (!cur || typeof cur !== 'object' || cur === fresh) { G[name] = fresh; return; }
+        var k;
+        for (k in cur) if (_own(cur, k)) delete cur[k];
+        for (k in fresh) if (_own(fresh, k)) cur[k] = fresh[k];
+    }
+
+    function _readPRiSM() {
+        var st = G.PRiSM_state;
+        if (!st || typeof st !== 'object') return null;
+        var out = { schema: 2 };
+        for (var i = 0; i < PRISM_KEYS.length; i++) {
+            var key = PRISM_KEYS[i];
+            if (st[key] === undefined) continue;
+            out[key] = (st[key] === null) ? null : _clone(st[key]);
+        }
+        var extra = {}, nExtra = 0;
+        for (var k in st) {
+            if (!_own(st, k) || PRISM_KEYS.indexOf(k) >= 0 || PRISM_SKIP[k] || k.charAt(0) === '_') continue;
+            var v = st[k];
+            if (v === undefined || typeof v === 'function' || !_isPlain(v)) continue;
+            var txt;
+            try { txt = JSON.stringify(v); } catch (e) { continue; }
+            if (txt == null || txt.length > EXTRA_MAX_CHARS) continue;
+            extra[k] = JSON.parse(txt);
+            nExtra++;
+        }
+        if (nExtra) out.extra = extra;
+        var P = G.PRiSM;
+        if (P && typeof P === 'object') {
+            if (P.mode != null) out.mode = P.mode;
+            if (P.tab != null) out.tab = P.tab;
+            if (Array.isArray(P.multiRate)) out.multiRate = _clone(P.multiRate);
+        }
+        var cs = G.PRiSM_cropState;
+        if (cs && typeof cs === 'object' && (cs.t_start != null || cs.t_end != null || cs.fullDataset)) {
+            out.crop = { t_start: _numOrNull(cs.t_start), t_end: _numOrNull(cs.t_end),
+                         i_start: _numOrNull(cs.i_start), i_end: _numOrNull(cs.i_end),
+                         fullDataset: cs.fullDataset ? _plainDataset(cs.fullDataset) : null };
+        }
+        var ds = G.PRiSM_dataset;
+        out.hasDataset = !!(ds && ds.t && ds.t.length);
+        return out;
+    }
+
+    // Load: model first (through the UI layer's setter when present), then
+    // parameters, then everything else; the fit is restored last.
+    function _applyPRiSM(state) {
+        var st = G.PRiSM_state;
+        if (!st || typeof st !== 'object') st = G.PRiSM_state = {};
+        var reg = G.PRiSM_MODELS || {};
+        var model = (typeof state.model === 'string' && state.model) ||
+                    (typeof state.activeModel === 'string' && state.activeModel) || null;
+        var hasParams = !!(state.params && typeof state.params === 'object');
+        if (model) {
+            var viaSetter = false;
+            if (reg[model] && typeof G.PRiSM_setModel === 'function') {
+                try { G.PRiSM_setModel(model, { source: 'project' }); viaSetter = true; }
+                catch (e) { _warn('[WTS_project] PRiSM_setModel failed', e); }
+            }
+            if (st.model !== model) st.model = model;
+            if (!viaSetter && reg[model] && reg[model].defaults && !hasParams) {
+                st.params = _clone(reg[model].defaults) || {};
+            }
+        }
+        if (hasParams) {
+            var base = (st.params && typeof st.params === 'object') ? st.params : {};
+            var merged = {}, p;
+            for (p in base) if (_own(base, p)) merged[p] = base[p];
+            for (p in state.params) if (_own(state.params, p)) merged[p] = _clone(state.params[p]);
+            st.params = merged;
+        }
+        if (state.paramFreeze && typeof state.paramFreeze === 'object') st.paramFreeze = _clone(state.paramFreeze);
+        var later = { model: 1, params: 1, paramFreeze: 1, lastFit: 1, interp: 1 };
+        for (var i = 0; i < PRISM_KEYS.length; i++) {
+            var key = PRISM_KEYS[i];
+            if (later[key] || !_own(state, key)) continue;
+            st[key] = (state[key] === null) ? null : _clone(state[key]);
+        }
+        if (state.extra && typeof state.extra === 'object') {
+            for (var x in state.extra) if (_own(state.extra, x) && !PRISM_SKIP[x] && PRISM_KEYS.indexOf(x) < 0) st[x] = _clone(state.extra[x]);
+        }
+        st.match = { timeShift: 0, pressShift: 0 };     // legacy field: never holds a fit
+        if ('modelCurve' in st) st.modelCurve = null;   // derived; rebuilt by the UI
+        st.lastFit = state.lastFit ? _clone(state.lastFit) : null;
+        st.interp = null;
+        if (st.lastFit && typeof G.PRiSM_interpretCurrentFit === 'function') {
+            try { st.interp = G.PRiSM_interpretCurrentFit() || null; } catch (e) { st.interp = null; }
+        }
+        if (!st.interp && state.interp) st.interp = _clone(state.interp);
+        // Shell state
+        if (!G.PRiSM || typeof G.PRiSM !== 'object') G.PRiSM = { mode: 'transient', tab: 1, multiRate: [] };
+        if (['transient', 'decline', 'combined'].indexOf(state.mode) >= 0) G.PRiSM.mode = state.mode;
+        var tab = parseInt(state.tab, 10);
+        if (tab >= 1 && tab <= 7) G.PRiSM.tab = tab;
+        if (Array.isArray(state.multiRate)) G.PRiSM.multiRate = _clone(state.multiRate) || [];
+        var cs = G.PRiSM_cropState;
+        if (cs && typeof cs === 'object') {
+            var cr = (state.crop && typeof state.crop === 'object' && 't_start' in state.crop) ? state.crop : null;
+            cs.t_start = cr ? _numOrNull(cr.t_start) : null;
+            cs.t_end = cr ? _numOrNull(cr.t_end) : null;
+            cs.i_start = cr ? _numOrNull(cr.i_start) : null;
+            cs.i_end = cr ? _numOrNull(cr.i_end) : null;
+            cs.fullDataset = (cr && cr.fullDataset) ? _clone(cr.fullDataset) : null;
+        }
+    }
+
+    // New: analysis state back to the UI layer's defaults (model presets kept).
+    function _resetPRiSM() {
+        var st = G.PRiSM_state;
+        if (!st || typeof st !== 'object') st = G.PRiSM_state = {};
+        var tpl = _PRISM_TEMPLATE ? _clone(_PRISM_TEMPLATE) : null;
+        if (!tpl) {
+            var reg = G.PRiSM_MODELS || {};
+            tpl = { model: 'homogeneous', params: _clone(reg.homogeneous && reg.homogeneous.defaults) || {},
+                    paramFreeze: {}, activePlot: 'bourdet' };
+        }
+        var k;
+        for (k in st) if (_own(st, k) && k !== 'presets') delete st[k];
+        for (k in tpl) if (_own(tpl, k) && k !== 'presets') st[k] = tpl[k];
+        st.match = { timeShift: 0, pressShift: 0 };
+        st.lastFit = null;
+        st.interp = null;
+        ['semilog', 'tcMatch', 'autoMatch'].forEach(function (key) { if (key in st) st[key] = null; });
+        if ('activePeriod' in st) st.activePeriod = null;
+        if (G.PRiSM && typeof G.PRiSM === 'object') { G.PRiSM.mode = 'transient'; G.PRiSM.tab = 1; G.PRiSM.multiRate = []; }
+        var cs = G.PRiSM_cropState;
+        if (cs && typeof cs === 'object') { cs.t_start = cs.t_end = cs.i_start = cs.i_end = null; cs.fullDataset = null; }
+    }
+
+    // New: well & fluid inputs back to defaults, every input marked default.
+    function _resetPVT() {
+        if (typeof G.PRiSM_resetWell === 'function') {
+            try { G.PRiSM_resetWell({ source: 'default' }); return; } catch (e) { _warn('[WTS_project] resetWell failed', e); }
+        }
+        if (typeof G.PRiSM_pvt_compute !== 'function') return;
+        var old = G.PRiSM_pvt, fresh = null;
+        G.PRiSM_pvt = null;
+        try { G.PRiSM_pvt_compute(); fresh = G.PRiSM_pvt; } catch (e) { fresh = null; }
+        if (!fresh || typeof fresh !== 'object') { G.PRiSM_pvt = old; return; }
+        fresh.provenance = {};
+        G.PRiSM_pvt = old;
+        _replaceInPlace('PRiSM_pvt', fresh);
+        if (G.WTS_state && typeof G.WTS_state === 'object') G.WTS_state.pvt = null;
+    }
+
+    // After Open / New: persist the analysis state (C8) and tell the PRiSM
+    // layers that inputs and results changed.
+    function _prismSync(source) {
+        if (!G.PRiSM_state && !G.PRiSM_pvt) return;
+        try { if (typeof G.PRiSM_saveState === 'function') G.PRiSM_saveState(); } catch (e) {}
+        // The well store's own debounced save may not have run before the
+        // file was written: persist the restored store (same format as 16).
+        var ls = _ls(), pvt = G.PRiSM_pvt;
+        if (ls && pvt && typeof pvt === 'object') {
+            try {
+                var copy = {};
+                for (var k in pvt) if (_own(pvt, k) && k !== '_computed') copy[k] = pvt[k];
+                ls.setItem('wts_prism_pvt', JSON.stringify(copy));
+            } catch (e) {}
+        }
+        _emitWin('prism:well-changed', { source: source });
+        _emitWin('prism:fit-updated', { source: source, modelKey: G.PRiSM_state ? G.PRiSM_state.model : null });
+    }
+    function _emitWin(name, detail) {
+        try {
+            if (_hasWin && typeof G.dispatchEvent === 'function' && typeof CustomEvent === 'function') {
+                G.dispatchEvent(new CustomEvent(name, { detail: detail || {} }));
+            }
+        } catch (e) {}
+    }
+
     function _registerDefaults() {
         // wts — generic WTS flow profile state (top-level WTS_state minus the
         // per-module nested keys we register separately).
@@ -337,58 +568,51 @@
             }
         });
 
-        registerModule('prism', {
+        // PRiSM — three modules, applied in this order on Open (registry
+        // order, see _applyPayload): well & fluid inputs, then the dataset,
+        // then the analysis state (model, parameters, fit, match, …).
+        registerModule('pvt', {
             read: function () {
-                if (!G.PRiSM_state) return null;
-                var subset = {
-                    activeModel:    G.PRiSM_state.activeModel,
-                    params:         _clone(G.PRiSM_state.params),
-                    lastFit:        _clone(G.PRiSM_state.lastFit),
-                    autoMatchTopN:  _clone(G.PRiSM_state.autoMatchTopN),
-                    interp:         _clone(G.PRiSM_state.interp),
-                    pvt:            _clone(G.PRiSM_state.pvt),
-                    crop:           _clone(G.PRiSM_state.crop),
-                    project:        _clone(G.PRiSM_state.project)
-                };
-                return subset;
+                var src = G.PRiSM_pvt || (G.WTS_state && G.WTS_state.pvt) || null;
+                if (!src) return null;
+                var out = _clone(src);
+                if (out) delete out._computed;           // derived; recomputed on load
+                return out;
             },
             write: function (state) {
+                if (state === null) { _resetPVT(); return; }      // New
                 if (!state || typeof state !== 'object') return;
-                if (!G.PRiSM_state || typeof G.PRiSM_state !== 'object') G.PRiSM_state = {};
-                var s = G.PRiSM_state;
-                for (var k in state) {
-                    if (Object.prototype.hasOwnProperty.call(state, k)) {
-                        s[k] = _clone(state[k]);
-                    }
-                }
+                var fresh = _clone(state);
+                if (!fresh) return;
+                delete fresh._computed;
+                _replaceInPlace('PRiSM_pvt', fresh);
+                try { if (typeof G.PRiSM_pvt_compute === 'function') G.PRiSM_pvt_compute(); } catch (e) {}
+                var s = _ensureWTSState();
+                s.pvt = _clone(fresh);
             }
         });
 
         registerModule('prism_dataset', {
             read: function () {
-                // Datasets can be huge — only persist when explicitly opted in.
                 if (!G.PRiSM_dataset) return null;
+                // Opt-out kept for callers that set it (datasets can be large).
                 if (G.PRiSM_state && G.PRiSM_state.project &&
                     G.PRiSM_state.project.includeDataset === false) return null;
-                return _clone(G.PRiSM_dataset);
+                return _plainDataset(G.PRiSM_dataset);
             },
             write: function (state) {
-                if (!state) return;
+                if (state === null) { G.PRiSM_dataset = null; return; }   // New
+                if (!state || typeof state !== 'object') return;
                 G.PRiSM_dataset = _clone(state);
             }
         });
 
-        registerModule('pvt', {
-            read: function () {
-                if (G.PRiSM_pvt) return _clone(G.PRiSM_pvt);
-                if (G.WTS_state && G.WTS_state.pvt) return _clone(G.WTS_state.pvt);
-                return null;
-            },
+        registerModule('prism', {
+            read: _readPRiSM,
             write: function (state) {
-                if (!state) return;
-                G.PRiSM_pvt = _clone(state);
-                var s = _ensureWTSState();
-                s.pvt = _clone(state);
+                if (state === null) { _resetPRiSM(); return; }     // New
+                if (!state || typeof state !== 'object') return;
+                _applyPRiSM(state);
             }
         });
 
@@ -527,15 +751,22 @@
         // Drop pending debounced autosaves so they can't overwrite loaded keys.
         try { if (G.WTS_pageAutosave && G.WTS_pageAutosave.cancel) G.WTS_pageAutosave.cancel(); } catch (e) {}
         var mods = payload.modules || {};
-        for (var k in mods) {
-            if (!Object.prototype.hasOwnProperty.call(mods, k)) continue;
-            if (!MODULES[k]) { skipped.push(k); continue; }
+        // A project with PRiSM state but no dataset must not inherit the
+        // dataset that is open now (it is re-read from the restored inputs).
+        if (_own(mods, 'prism') && !_own(mods, 'prism_dataset')) G.PRiSM_dataset = null;
+        // Apply in registry order (inputs → dataset → analysis → storage), not
+        // in the file's key order, so dependent modules see their inputs.
+        var order = listModules();
+        for (var k in mods) if (_own(mods, k) && order.indexOf(k) === -1) skipped.push(k);
+        for (var i = 0; i < order.length; i++) {
+            var key = order[i];
+            if (!_own(mods, key)) continue;
             try {
-                MODULES[k].write(mods[k]);
-                loaded.push(k);
+                MODULES[key].write(mods[key]);
+                loaded.push(key);
             } catch (e) {
-                _warn('module write failed for ' + k, e);
-                skipped.push(k);
+                _warn('module write failed for ' + key, e);
+                skipped.push(key);
             }
         }
         return { loaded: loaded, skipped: skipped, error: null };
@@ -821,6 +1052,8 @@
     function loadFromObject(obj) {
         var res = _applyPayload(obj);
         if (res && !res.error && res.loaded.length) {
+            var touched = ['prism', 'prism_dataset', 'pvt', 'storage'].some(function (m) { return res.loaded.indexOf(m) !== -1; });
+            if (touched) _prismSync('project-load');
             _emit('wts:project-loaded', { loaded: res.loaded.slice(), skipped: res.skipped.slice() });
             _rerender();
         }
@@ -845,6 +1078,7 @@
         try { G.WTS_state = {}; } catch (e) {}
         // In-memory row models that outlive a page render.
         try { if (Array.isArray(G._genMotors)) G._genMotors = []; } catch (e) {}
+        _prismSync('project-new');
         _setCurrent(null, null);
         _emit('wts:project-new', { cleared: cleared.slice() });
         _rerender();
@@ -1185,6 +1419,51 @@
             checks.push({ n: 'unknown module skipped, known loaded',
                           ok: ur && ur.skipped.indexOf('__notRegistered__') !== -1 &&
                               ur.loaded.indexOf('esdhi') !== -1 });
+
+            // PRiSM analysis state: round-trip, legacy file, New
+            var keepP = { st: G.PRiSM_state, ds: G.PRiSM_dataset, pvt: G.PRiSM_pvt, P: G.PRiSM, M: G.PRiSM_MODELS };
+            try {
+                G.PRiSM_MODELS = { homogeneous: { defaults: { Cd: 100, S: 0 } },
+                                   radialComposite: { defaults: { Cd: 100, S: 0, M: 1, F: 1, R: 100 } } };
+                G.PRiSM = { mode: 'combined', tab: 6, multiRate: [{ t: 0, q: 850 }] };
+                G.PRiSM_dataset = { t: [1, 2], p: [10, 9], q: [5, 5] };
+                G.PRiSM_pvt = { p_res: 4321, provenance: { p_res: 'user' } };
+                G.PRiSM_state = { model: 'radialComposite', params: { Cd: 50, S: 1.2, M: 3, F: 0.5, R: 400 },
+                                  paramFreeze: { Cd: true }, tcMatch: { logPM: -2, logTM: 4.6, source: 'match' },
+                                  lastFit: { modelKey: 'radialComposite', r2: 0.99 }, match: { timeShift: 9, pressShift: 9 },
+                                  presets: ['keep'], fitWindow: { tmin: 0.1 } };
+                var pl = JSON.parse(JSON.stringify(G.WTS_project._buildPayload()));
+                checks.push({ n: 'prism module saves model, not legacy keys',
+                              ok: pl.modules.prism && pl.modules.prism.model === 'radialComposite' &&
+                                  !('activeModel' in pl.modules.prism) && !('match' in pl.modules.prism) &&
+                                  !('presets' in pl.modules.prism) });
+                G.PRiSM_state = { model: 'homogeneous', params: {}, presets: ['keep'] };
+                G.PRiSM = { mode: 'transient', tab: 1, multiRate: [] };
+                G.PRiSM_dataset = null;
+                G.PRiSM_pvt = { p_res: 1000 };
+                G.WTS_project.loadFromObject(pl);
+                var s2 = G.PRiSM_state;
+                checks.push({ n: 'prism round-trip: model, params, freeze, tcMatch',
+                              ok: s2.model === 'radialComposite' && s2.params.R === 400 && s2.paramFreeze.Cd === true &&
+                                  s2.tcMatch && s2.tcMatch.logTM === 4.6 && s2.lastFit && s2.lastFit.r2 === 0.99 });
+                checks.push({ n: 'prism round-trip: mode, well pi, dataset, extras',
+                              ok: G.PRiSM.mode === 'combined' && G.PRiSM_pvt.p_res === 4321 &&
+                                  G.PRiSM_dataset && G.PRiSM_dataset.t.length === 2 &&
+                                  s2.fitWindow && s2.fitWindow.tmin === 0.1 && s2.match.timeShift === 0 });
+                G.WTS_project.loadFromObject({ format: 'h2oilproj', modules: { prism: { activeModel: 'homogeneous', params: { Cd: 80, S: 2.5 } } } });
+                checks.push({ n: 'legacy activeModel file loads',
+                              ok: G.PRiSM_state.model === 'homogeneous' && G.PRiSM_state.params.S === 2.5 && G.PRiSM_dataset === null });
+                G.PRiSM_dataset = { t: [1] };
+                G.PRiSM_state.lastFit = { modelKey: 'homogeneous' };
+                G.WTS_project['new']();
+                checks.push({ n: 'New clears PRiSM dataset and fit, keeps presets',
+                              ok: G.PRiSM_dataset === null && G.PRiSM_state.lastFit === null &&
+                                  G.PRiSM_state.model === 'homogeneous' && G.PRiSM_state.presets[0] === 'keep' &&
+                                  G.PRiSM.mode === 'transient' });
+            } finally {
+                G.PRiSM_state = keepP.st; G.PRiSM_dataset = keepP.ds; G.PRiSM_pvt = keepP.pvt;
+                G.PRiSM = keepP.P; G.PRiSM_MODELS = keepP.M;
+            }
 
             // info() returns sensible shape
             var inf = G.WTS_project.info();

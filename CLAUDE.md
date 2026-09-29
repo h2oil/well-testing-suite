@@ -8,7 +8,7 @@
 
 ## TL;DR — What this project is
 
-- **Single-file vanilla-JS HTML web app** (`well-testing-app.html`, ~37k lines after PRiSM expansion). Zero external runtime deps; pure `Math.*` for all engineering modules. Deployed at `pb-handbook.com` historically — now standalone on `localhost:8080` via `npx http-server` for development.
+- **Single-file vanilla-JS HTML web app** (`well-testing-app.html`, ~65k lines after the PRiSM gap-closure work). Zero external runtime deps; pure `Math.*` for all engineering modules. Deployed at `pb-handbook.com` historically — now standalone on `localhost:8080` via `npx http-server` for development.
 - **iOS Capacitor wrapper** (`ios-app/`) — wraps the same HTML for App Store distribution. iOS builds via Xcode Cloud; Capacitor 8 (SPM). The iOS app is free — no in-app purchases / subscription SDK.
 - **PRiSM module** is the flagship advanced Well Test Analysis tab, ~32k LOC of its own (pressure-transient + decline-curve workshop with 45 type-curve models, LM regression, auto-match, deconvolution, PVT, tide analysis, multi-dataset project files, etc.). Built across 21 numbered source files in `prism-build/` then concatenated and injected into `well-testing-app.html`.
 
@@ -17,7 +17,7 @@
 ## Repo layout
 
 ```
-well-testing-app.html           ← single source of truth for the WEB app (~37k lines)
+well-testing-app.html           ← single source of truth for the WEB app (~65k lines)
 ios-app/
   www/index.html                ← derived from well-testing-app.html via sync-from-main.js
                                   (GA stripped, iOS additions injected)
@@ -25,18 +25,20 @@ ios-app/
   ios-additions/                ← iOS-only JS/CSS (Capacitor bridge, meta tags, bundled PDF libs)
   ci_scripts/ci_post_clone.sh   ← Xcode Cloud post-clone hook
   PrivacyInfo.xcprivacy
-prism-build/                    ← PRiSM module source (21 numbered files + tooling)
-  01-foundation.js              ← Stehfest engine + Bessel + Ei + #1 Homogeneous + 7-tab shell
-  02-plots.js                   ← 14 canvas plot fns (no IIFE — top-level so they hoist)
-  03-models.js                  ← 12 Phase 1+2 type-curve evaluators
-  04-ui-wiring.js               ← Tabs 2-7 render fns + plot/regress dispatch
-  05-regression.js              ← Levenberg-Marquardt + bootstrap CIs
+prism-build/                    ← PRiSM module source (numbered files + tooling)
+  01-foundation.js              ← Stehfest engine + Bessel + Ei + #1 Homogeneous + five-step shell (C9),
+                                  C7 panel/hook registries, dataset commit + demo sample
+  02-plots.js                   ← canvas plot fns incl. MDH (no IIFE — top-level so they hoist);
+                                  C6 _prismAxes, pointer zoom/pan
+  03-models.js                  ← 13 type-curve evaluators + WBS/skin fold (PRiSM_evalWbsSkin) + pseudo-skins
+  04-ui-wiring.js               ← Tabs 2-6 render fns, PRiSM_buildPlotData / drawActivePlot / evalModelCurve
+  05-regression.js              ← Levenberg-Marquardt + bootstrap CIs; fitPhysical / fitRate / runRegression
   06-decline-and-specialised.js ← Arps/Duong/SEPD/Fetkovich + double-pen + vertical pulse
   07-data-enhancements.js       ← Multi-format file parser + filters + col mapper
   08-composite-multilayer.js    ← Phase 5 (#6, #9, #11, #14, #15, #20, #21)
   09-interference-multilateral.js ← Phase 6 (#13, #19, #22-#37 — 16 models)
   10-specialised-solvers.js     ← Phase 7 (#18 user-defined, #38 water injection)
-  11-polish.js                  ← 14 SVG schematics + 20 click-on-plot analysis keys + PNG + GA4
+  11-polish.js                  ← 14 SVG schematics + 24 click-on-plot line tools + PNG + GA4
                                   (32 more schematics added 2026-04-26 — total 46)
   12-data-crop.js               ← Interactive Data-tab crop chart + numeric trim
   13-auto-match.js              ← Regime classifier + LM model race + top-N AIC ranking
@@ -48,12 +50,24 @@ prism-build/                    ← PRiSM module source (21 numbered files + too
   19-data-managers.js           ← Gauge-data + analysis-data + project file (.prism)
   20-plt-inverse.js             ← Synthetic PLT + inverse rate-from-pressure
   21-plot-utilities.js          ← Plot overlays + diff plot + XML export + clipboard
-  combined.js                   ← Phase 1+2 concat (built once, not regenerated)
+  22-30                         ← units layer, Test System Safety calcs, tooltips, project save, quick report
+  31-32, 38                     ← Well Test Simulator / 3D (Round-7 — separate workstream)
+  33-pta-core.js                ← C1 getWell, C2 getAnalysisData/rateHistory, C3 physicalModel, C4 lastFit,
+                                  C5 type-curve match, C8 save/restore state          (Round-8)
+  34-semilog-skin.js            ← MDH/Horner/superposition straight lines, skin summary + decomposition (Round-8)
+  35-rta-dca.js                 ← decline results (EUR, forecast, P10/50/90) + RTA plots/FMB   (Round-8)
+  36-report.js                  ← Tab 7 report, PDF/CSV, job-report fragment             (Round-8)
+  37-prism-workflow.js          ← results rail, ▶ Analyse, step ② flow periods, Tools drawer, undo/redo (Round-8)
+  combined.js                   ← historical Phase 1+2 concat (no longer used)
+  combined-phase1-2.js          ← Generated by concat-phase1-2.js (01 → 03 → 02)
   combined-phase3-4.js          ← Generated by concat-phase3-4.js (Tier 1)
   combined-round2.js            ← Generated by concat-round2.js (Tier 2)
   combined-round3.js            ← Generated by concat-round3.js (Tier 3)
-  concat-*.js, inject-*.js      ← Build pipeline scripts
-  smoke-test.js                 ← vm-sandboxed namespace check (89/89 currently)
+  combined-round8.js            ← Generated by concat-round8.js (33-37)
+  concat-*.js, inject-*.js      ← Build pipeline scripts (inject-lib.js = shared idempotent splicer)
+  smoke-test.js                 ← vm-sandboxed namespace + contract + no-perpetual-timer checks (199/199)
+  accept-test.js                ← numeric acceptance runner over tests/*.test.js (310 tests)
+  tests/_harness.js             ← loadApp(): DOM store, recording canvas, manual timers, shared storage
   .tmp/                         ← Extracted main script for syntax checks (gitignored)
 PRISM-PLAN.md                   ← Phasing plan + model catalogue + decisions
 PROJECT-NOTES.md                ← Running changelog (newest on top)
@@ -67,9 +81,10 @@ README.md                       ← Public-facing description
 The PRiSM source files are concatenated and injected into `well-testing-app.html`
 via numbered "rounds":
 
-1. **Phase 1+2 (`combined.js`)** — already injected at HTML lines ~7950-11786.
-   No regen script — if you need to modify Phase 1+2 (01/02/03), do it via
-   patch in 04-ui-wiring.js or hand-edit the HTML directly.
+1. **Phase 1+2 (`combined-phase1-2.js`)** — files 01 → 03 → 02, now regenerable:
+   `node prism-build/concat-phase1-2.js` + `node prism-build/inject-phase1-2.js`
+   (sentinels `// ── PRiSM Phase 1+2 injection START/END ──`; the legacy DCA/PTA
+   migration shim right after END is host code — leave it alone).
 
 2. **Phase 3+4 (`combined-phase3-4.js`)** — files 04, 05, 06, 07.
    - Modify any of these files
@@ -86,33 +101,80 @@ via numbered "rounds":
    Safety: ESD Hi/Lo-Pilot, Hydrate, Liquid Line, Pipe Service Life), **Round-6**
    (28 help tooltips, 29 project save/open, 30 quick report). Same concat/inject
    pattern (`concat-round4.js` … `inject-round6.js`). Round-7 (31-32, 3D Well Test
-   Simulator) scripts exist but only run once those source files exist.
+   Simulator) belongs to a separate workstream — never run it from PRiSM work.
+
+4c. **Round-8 (`combined-round8.js`)** — files 33-37 (PTA core, semilog/skin, RTA/DCA,
+   report, workflow). `concat-round8.js` + `inject-round8.js`; sentinels
+   `// ── PRiSM Round-8 injection START/END ──`, anchored after Round-7 END if present,
+   else after Round-6 END. Missing files are skipped with a warning.
 
 5. **Always then run** `node ios-app/scripts/sync-from-main.js` to regen www.
 
-6. **Verify** via `node prism-build/smoke-test.js` (89/89 must pass).
+6. **Verify**: `node --check prism-build/.tmp/wts-main.js`, `node prism-build/smoke-test.js`
+   (199/199 must pass) and `node prism-build/accept-test.js --html --integration` (310/310).
 
-The full rebuild incantation when you've touched something at any tier:
+The full rebuild incantation (N = the node.exe path below; rounds 4/5 only when 22-27 changed):
 
 ```bash
-node prism-build/concat-phase3-4.js && \
-node prism-build/inject-phase3-4.js && \
-node prism-build/concat-round2.js && \
-node prism-build/inject-round2.js && \
-node prism-build/concat-round3.js && \
-node prism-build/inject-round3.js && \
-node prism-build/concat-round4.js && node prism-build/inject-round4.js && \
-node prism-build/concat-round5.js && node prism-build/inject-round5.js && \
-node prism-build/concat-round6.js && node prism-build/inject-round6.js && \
-node ios-app/scripts/sync-from-main.js && \
-node -e "
+$N prism-build/concat-phase1-2.js && $N prism-build/inject-phase1-2.js && \
+$N prism-build/concat-phase3-4.js && $N prism-build/inject-phase3-4.js && \
+$N prism-build/concat-round2.js  && $N prism-build/inject-round2.js  && \
+$N prism-build/concat-round3.js  && $N prism-build/inject-round3.js  && \
+$N prism-build/concat-round6.js  && $N prism-build/inject-round6.js  && \
+$N prism-build/concat-round8.js  && $N prism-build/inject-round8.js  && \
+$N ios-app/scripts/sync-from-main.js && \
+$N -e "
 const fs = require('fs');
 const html = fs.readFileSync('well-testing-app.html', 'utf8');
 const m = html.match(/<script>\\s*\\/\\* ═+\\s*WELL TESTING SUITE([\\s\\S]+?)<\\/script>/);
 fs.writeFileSync('prism-build/.tmp/wts-main.js', '/* ═══ WELL TESTING SUITE' + m[1], 'utf8');
 " && \
-node prism-build/smoke-test.js | tail -5
+$N --check prism-build/.tmp/wts-main.js && $N prism-build/smoke-test.js | tail -3 && \
+$N prism-build/accept-test.js --html --integration | tail -3
 ```
+
+### Acceptance tests (`accept-test.js`)
+
+- Every `prism-build/tests/*.test.js` exports `[{name, wp, integration?, opts?, run(app, assert, ctx)}]`;
+  each test gets a fresh app from `tests/_harness.js` (`loadApp`), with manual timers, a DOM
+  store keyed by id, a recording 2D context and a shareable localStorage (reload tests).
+- `--sources` (default) builds the main script in memory from `prism-build/`; `--html` loads the
+  built `well-testing-app.html`. `--wp WP5`, `--file`, `--grep`, `--integration`, `--verbose`.
+- Tests that pass `opts.sourceOverrides` (pin/remove files) always build from sources.
+
+### Shared contracts (C1–C9) — code against these, never around them
+
+- **C1 well & test inputs**: store `window.PRiSM_pvt` (persisted `wts_prism_pvt`, per-field
+  `provenance`: default | user | sample | dataset | correlation | deconvolution). Write only with
+  `PRiSM_setWell(patch, {source})` (fires `prism:well-changed`); read resolved values with
+  `PRiSM_getWell()` → `{q,B,mu,ct,h,phi,rw,pi,testType,tp,…,missing[],defaulted[],complete}`.
+  A pi with provenance `default` resolves to **null**. Committing a user-loaded (paste/file)
+  dataset demotes `sample` inputs to `default`.
+- **C2 analysis data**: `PRiSM_getAnalysisData(ds?, {period, timeFn, L})` → sign-aware Δp from
+  pRef (pi → t≤0 row → extrapolation → first sample, flagged), time function, Bourdet derivative,
+  rate history/periods. `PRiSM_rateHistory(ds)` periods are the list `st.activePeriod` indexes.
+- **C3 physical model**: `PRiSM_physicalModel(key, well?, adata?)` → k, C, S, (xf|Lh), shape keys,
+  optional pi; categorical/array parameters (BC, layers…) are `fixedKeys`, never regressed.
+  Registry entries carry `kind`, `refLength`, `defaultFrozen`, `timeInput`, `scale:'log'`.
+- **C4 last fit**: `PRiSM_setLastFit(fit)` / `PRiSM_getLastFit()` (fires `prism:fit-updated`).
+  Fits carry `phys` (field units), `scales {A,B}`, `ci95`, `r2`, `converged`. Adopt
+  `st.params/phys/tcMatch` **before** storing the fit so listeners see a consistent state.
+- **C5 type-curve match**: `st.tcMatch {logPM, logTM}`; `PRiSM_matchToPhysical`. `st.match` is a
+  read-only `{0,0}` legacy stub.
+- **C6 plots**: `PRiSM_buildPlotData(key)` → `{data, opts}`; `data.dp` is always Δp; canvases carry
+  `_prismAxes {toX,toY,fromX,fromY,plot,plotKey}`; `PRiSM_drawActivePlot()` is the single redraw
+  entry point and runs `PRiSM_postDrawHooks` once per draw.
+- **C7 panels, hooks, events**: `PRiSM_registerTabPanel(n, {id, title, order, when, render})` —
+  cards mount in the sibling `#prism_tab_N_panels`. Events: `prism:dataset-loaded` (only via
+  `PRiSM_commitDataset`), `prism:well-changed`, `prism:fit-updated`, `prism:model-changed`,
+  `prism:period-changed`, `prism:step-changed`, `prism:tab-open`. **No polling / setInterval /
+  function wrapping** — the smoke test fails on pending timers after 5 s idle.
+- **C8 persistence**: `PRiSM_saveState()` / `PRiSM_restoreState()` (`wts_prism_state`, debounced
+  one-shot save on C7 events); project files via `WTS_project` modules `pvt`, `prism_dataset`, `prism`.
+- **C9 shell**: five steps (① Data ② Flow periods ③ Diagnose ④ Model & fit ⑤ Report) over tabs 1-7;
+  `PRiSM_gotoStep(n,{tab})`, `PRiSM_currentStep()`; header `#prism_analyse_btn` → `PRiSM_analyse()`,
+  `#prism_tools_btn` → `PRiSM_openTools()`, undo/redo; `#prism_rail` filled by `PRiSM_renderRail`
+  (class `prism-rail--sheet` below 1024 px).
 
 ---
 
@@ -134,9 +196,9 @@ node prism-build/smoke-test.js | tail -5
 
 ### Host file (well-testing-app.html)
 
-- Whole script wrapped in `(function () { 'use strict'; ... })()` from line 584 to line ~37629. Everything PRiSM-injected lives inside that IIFE.
+- Whole script wrapped in `(function () { 'use strict'; ... })()` from line ~584 to near the end of the file (~65k lines). Everything PRiSM-injected lives inside that IIFE.
 - Uses **CRLF line endings**. The injection scripts auto-detect (`html.includes('\r\n')`). Watch for git's "LF will be replaced by CRLF" warnings — they're harmless.
-- The legacy DCA + PTA modules redirect to PRiSM via `dca: renderPRiSM, pta: renderPRiSM` in the route table at line ~724.
+- The legacy DCA + PTA routes go to PRiSM: the route table (`const pages = {…}`, line ~1089) maps `prism`, `dca` and `pta` to `renderPRiSM` (the old duplicate `dca: renderDCA, pta: renderPTA` keys were removed; the dead `renderDCA` / `renderPTA` bodies are still in the host and can be deleted in a separate change).
 - **Node is not on PATH** in this Windows environment — use `/c/Users/User/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node.exe`. `gh` is not authenticated: merge Dev → master with a temporary `git worktree` + `git merge --no-ff` + push.
 - **Reports** (host, "UNIVERSAL PDF / PNG EXPORT"): `collectPageReport(root)` walks any page generically (`.card/.rbox` blocks → `.fg-item` pairs, input tables, loose row controls, `.rrow`, `.kpi` (`.kpi-l`/`.kpi-v`), tables, canvases, SVGs, ✓/✗ verdict banners, Rationale/Notes boxes) into one model; `renderReportBodyHTML` + `buildReportHTML` (PDF) and `exportPagePNG` render it. New pages get good exports for free if they use those classes. WebGL canvases should expose `canvas.__h2oilSnapshot()` → dataURL. The header Quick Report = `WTS_exportJobReport` (auto-captured per-page snapshots in `wts_report_snapshots`).
 - **Persistence**: every id'd control in `#pgBody` autosaves to `wts_page_<route>` (plus legacy per-calculator `wts_<key>` lists); project files (`29-project-save.js`) snapshot all `wts_*`/`h2oil_*` keys. Escape anything read from storage before putting it into HTML (`_rEsc`, `_safeImgSrc`).
@@ -174,6 +236,7 @@ node prism-build/smoke-test.js | tail -5
 - `Dev` — active development. Default for all session work.
 - `master` — stable, what the iOS sync workflow and Xcode Cloud ("Build Auto Sync") consume.
 - `git push origin Dev` after every commit, then **merge Dev → master automatically once a batch is verified** (user instruction — don't wait to be asked).
+- The `ios-sync.yml` action commits a regenerated `ios-app/www/index.html` to master after merges ("chore(ios): auto-sync www…"), so the next Dev → master merge usually conflicts on that generated file — resolve with Dev's copy (`git checkout --theirs ios-app/www/index.html`), since it was generated from the same HTML being merged.
 - Every shipped batch also updates the in-app Release Notes (`RELEASE_NOTES` array in the host) — engineering changes only; never mention competitor research or paywalls.
 
 ---
@@ -181,11 +244,13 @@ node prism-build/smoke-test.js | tail -5
 ## Known limitations (verified, not-yet-fixed)
 
 - **Foundation `PRiSM_Ei` returns NaN for negative arguments**. Phase 6 worked around with a local `_localE1` helper. Worth fixing in 01-foundation eventually.
-- **`02-plots.js` doesn't stash `_prismAxes` on canvas** — only `_prismOriginalScale`. Click-on-plot analysis keys back-calculate slope ratios correctly but absolute coordinate conversion is degraded. One-line addition for a future plots-layer patch.
-- **`07-data-enhancements.js` doesn't fire `prism:dataset-loaded` event**. Agent I (data crop) wires for it but works around via re-render. Cleaner to fire it eventually.
 - **Phase 6 multi-layer XF synthetic PLT** uses Warren-Root-style time-domain interpolation, not the rigorous Park-Horne 1989 NxN Laplace decomposition. Adequate for engineering work.
-- **Water injection model** uses piston-front displacement, not full Buckley-Leverett saturation fan. Documented in module header.
-- **Foundation does not call `window.PRiSM_renderUserCurveManager`** for Tab 3 when `userDefined` is the active model. Tab 3 falls back to the standard model picker — workaround works.
+- **Water injection model** uses piston-front displacement, not full Buckley-Leverett saturation fan, and has `timeInput:'days'`, so `PRiSM_physicalModel` refuses it (no physical-unit pressure fit).
+- **fogBoundary** is a constant partial-image approximation of a leaky fault; `partialPenFrac` is a Green's-function shortcut.
+- **Horizontal-family fits are slow** (≈40-90 ms per pd+pd′ evaluation): a physical LM fit of `horizontal` takes ~20 s.
+- **Gas**: deconvolution, inverse simulation and RTA FMB use liquid-equivalent Δp or warn; semilog p1hr / p* for gas are reported in Δm(p) units.
+- **Decline type-curve matching** (Blasingame / Agarwal-Gardner stems for k, S, re) is not implemented; the RTA panel gives FMB and √t linear-flow only.
+- Crop window, step ② selection and derived datasets (tide-corrected, deconvolved) are not persisted across a reload.
 
 ---
 
@@ -193,8 +258,10 @@ node prism-build/smoke-test.js | tail -5
 
 ```bash
 node prism-build/smoke-test.js
-# Expect: "[ok] all 89 smoke-test checks passed"
+# Expect: "[ok] all 199 smoke-test checks passed"
 # PRiSM_MODELS total: 45 entries
+node prism-build/accept-test.js --html --integration
+# Expect: "[ok] all 310 acceptance tests passed"
 ```
 
 If a check fails, the test prints which one. Common failures and fixes:
@@ -208,24 +275,23 @@ If a check fails, the test prints which one. Common failures and fixes:
 ## Common slash commands / agent dispatches
 
 - **Bug fix workflow**: identify file → edit → run the rebuild incantation above → smoke test → commit + push.
-- **New feature in PRiSM**: add a new numbered file `prism-build/NN-*.js`, follow the conventions, add to the next round's `concat-*.js` FILES list, add `inject-*.js` if a new round, extend `smoke-test.js` checks list. Or piggy-back on an existing round if the feature is small.
-- **Browser QA**: dispatch a general-purpose agent with Chrome MCP access (`mcp__Claude_in_Chrome__*` deferred tools). Tell it to navigate `http://localhost:8080/well-testing-app.html` and exercise specific flows.
+- **New feature in PRiSM**: add a new numbered file `prism-build/NN-*.js`, follow the conventions, add to the next round's `concat-*.js` FILES list, add `inject-*.js` if a new round, extend `smoke-test.js` checks list and add a `tests/*.test.js`. Or piggy-back on an existing round if the feature is small.
+- **Browser QA**: use the built-in browser tools (`mcp__Claude_Browser__*`) in your own tab (`tabs_create`, pass its tabId everywhere; never drive the tab named "seed"). Navigate `http://localhost:8080/well-testing-app.html` (add `?v=…` to bypass the http-server cache). localStorage is shared with other tabs on that origin: snapshot it first and restore it before closing your tab.
 
 ---
 
-## Cumulative PRiSM stats (as of 2026-04-26)
+## Cumulative PRiSM stats (as of 2026-09-29, gap-closure integration)
 
 ```
-Source files in prism-build/: 21 + tooling
-Cumulative LOC:               ~32,000 (PRiSM-specific)
-Type-curve models:            45 in PRiSM_MODELS
-Public window.PRiSM_* APIs:   ~50
+PRiSM source files:           01-21 + 33-37 (Round-8) + tooling
+Type-curve models:            45 in PRiSM_MODELS (41 transient + 4 decline)
 SVG schematics:               46 (covers all 45 models + generic placeholder)
-Click-on-plot analysis keys:  20
-Decline curve types with EUR: 4 (Arps, Duong, SEPD, Fetkovich)
+Click-on-plot line tools:     24
+Decline curve types with EUR: 4 (Arps, Duong, SEPD, Fetkovich) + P10/P50/P90
 PVT correlations:             17 (Standing, DAK, Lee-Gonzalez, Beggs-Robinson, etc.)
-Smoke-test checks:            89/89 pass
-Generated HTML size:          ~1.79 MB main script + ~1.99 MB www bundle
+Smoke-test checks:            199/199 pass
+Acceptance tests:             310/310 pass (accept-test.js --html --integration)
+Generated HTML:               ~65.4k lines; www bundle ~3.5 MB
 ```
 
 Last major shipment: `3f3a5d1` on `Dev` (Tab 6 rebuild + 32 schematics + reset-view).

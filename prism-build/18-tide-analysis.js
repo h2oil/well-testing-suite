@@ -27,9 +27,14 @@
 //
 // PUBLIC API (all on window.*)
 //   PRiSM_tideAnalysis(t, p, opts)         → result object
-//   PRiSM_applyTideCorrection()            → corrected dataset (or null)
+//   PRiSM_applyTideCorrection(opts)        → corrected dataset (or null)
 //   PRiSM_resetTideCorrection()            → restored dataset (or null)
-//   PRiSM_renderTidePanel(container)       → void   (UI host helper)
+//      Both replace window.PRiSM_dataset, dispatch 'prism:dataset-loaded'
+//      and redraw through window.PRiSM_drawActivePlot. A correction is
+//      always computed from the measured (uncorrected) pressures of the
+//      dataset it was applied to; loading other data starts afresh.
+//   PRiSM_renderTidePanel(container, opts) → void   (UI host helper;
+//      registered as the Tab 1 panel "Tide correction", C7)
 //   PRiSM_plot_tide_decomposition(canvas, data, opts) → void
 //   PRiSM_TIDE_CONSTITUENTS                → constant table (10 entries)
 //
@@ -91,6 +96,62 @@
         var a = Math.abs(v);
         if (a !== 0 && (a < 1e-3 || a >= 1e6)) return Number(v).toExponential(2);
         return Number(v).toFixed(d);
+    }
+
+
+    // ───────────────────────────────────────────────────────────────
+    // Shared-contract adapters (C1 well, C7 panels + events). Guarded,
+    // with local fallbacks, so the file also works on its own.
+    // ───────────────────────────────────────────────────────────────
+
+    // C1 total compressibility (user override, else correlations).
+    function _wellCt() {
+        if (typeof G.PRiSM_getWell === 'function') {
+            try {
+                var w = G.PRiSM_getWell();
+                if (w && isFinite(w.ct) && w.ct > 0) return w.ct;
+            } catch (e) { /* fall through */ }
+        }
+        var pvt = G.PRiSM_pvt;
+        if (pvt && isFinite(pvt.ct) && pvt.ct > 0) return pvt.ct;
+        var c = pvt && pvt._computed && pvt._computed.ct;
+        return (isFinite(c) && c > 0) ? c : null;
+    }
+
+    function _dispatch(name, detail) {
+        try {
+            if (_hasWin && typeof G.dispatchEvent === 'function' && typeof CustomEvent === 'function') {
+                G.dispatchEvent(new CustomEvent(name, { detail: detail || {} }));
+            }
+        } catch (e) { /* ignore */ }
+    }
+
+    // Every dataset mutation: publish, announce, redraw — through the single
+    // commit path (PRiSM_commitDataset) when it is loaded, so the demo-input
+    // release and the event contract (C7) apply to this module too.
+    function _commitDataset(ds, source) {
+        if (ds && ds.t && ds.t.length && typeof G.PRiSM_commitDataset === 'function') {
+            G.PRiSM_commitDataset(ds, { source: source });
+        } else {
+            G.PRiSM_dataset = ds;
+            _dispatch('prism:dataset-loaded', { source: source, n: (ds && ds.t) ? ds.t.length : 0 });
+        }
+        if (typeof G.PRiSM_drawActivePlot === 'function') {
+            try { G.PRiSM_drawActivePlot(); } catch (e) { /* ignore */ }
+        }
+    }
+
+    // C7 — tab panel registry (merge; replace an entry with the same id).
+    function _registerPanel(n, spec) {
+        if (typeof G.PRiSM_registerTabPanel === 'function') {
+            try { G.PRiSM_registerTabPanel(n, spec); return; } catch (e) { /* fall through */ }
+        }
+        G.PRiSM_tabPanels = G.PRiSM_tabPanels || {};
+        var list = G.PRiSM_tabPanels[n] = G.PRiSM_tabPanels[n] || [];
+        for (var i = 0; i < list.length; i++) {
+            if (list[i] && list[i].id === spec.id) { list[i] = spec; return; }
+        }
+        list.push(spec);
     }
 
 
@@ -589,14 +650,14 @@
             }
         }
 
-        // Compare against PVT-derived ct (Layer 16) when available.
+        // Compare against the well's ct (C1: user value or PVT correlations).
         var pvtComparison = '';
         try {
-            var pvt_ct = G.PRiSM_pvt && G.PRiSM_pvt._computed && G.PRiSM_pvt._computed.ct;
+            var pvt_ct = _wellCt();
             if (ct != null && isFinite(pvt_ct) && pvt_ct > 0) {
                 var pct = Math.abs(ct - pvt_ct) / pvt_ct * 100;
                 pvtComparison = ' Tide-derived ct = ' + ct.toExponential(2)
-                              + ' 1/psi vs PVT ct = ' + pvt_ct.toExponential(2)
+                              + ' 1/psi vs well ct = ' + pvt_ct.toExponential(2)
                               + ' 1/psi (Δ = ' + pct.toFixed(0) + '%).';
             }
         } catch (e) { /* swallow */ }
@@ -659,24 +720,43 @@
     // ═══════════════════════════════════════════════════════════════
     // SECTION 6 — APPLY / RESET CORRECTION ON window.PRiSM_dataset
     // ═══════════════════════════════════════════════════════════════
-    // We snapshot the pre-correction dataset once, then replace .p
-    // with the corrected series. PRiSM_resetTideCorrection restores
-    // from the snapshot. The snapshot is held on
+    // We snapshot the pre-correction dataset, then replace .p with the
+    // corrected series. PRiSM_resetTideCorrection restores from the
+    // snapshot. The snapshot is held on
     //     window.PRiSM_tideCorrectionState
-    // so it survives across module-internal calls without leaking
-    // a private closure variable.
+    //       { snapshot, sourceDs, appliedDs, applied, lastResult, lastOpts }
+    // sourceDs / appliedDs are the dataset objects the snapshot came
+    // from / the correction produced. If window.PRiSM_dataset is neither
+    // (new data were loaded), the snapshot is stale and is retaken —
+    // a re-apply must never bring back an older dataset.
     // ═══════════════════════════════════════════════════════════════
 
     function _ensureTideState() {
         if (!G.PRiSM_tideCorrectionState) {
             G.PRiSM_tideCorrectionState = {
                 snapshot:        null,
+                sourceDs:        null,
+                appliedDs:       null,
                 lastResult:      null,
                 lastOpts:        null,
                 applied:         false
             };
         }
         return G.PRiSM_tideCorrectionState;
+    }
+
+    // Does the snapshot still describe the working dataset?
+    function _snapshotCurrent(st, ds) {
+        return !!(st.snapshot && ds && (ds === st.sourceDs || ds === st.appliedDs));
+    }
+
+    // Measured (uncorrected) t / p of the working dataset.
+    function _measuredSeries(ds) {
+        var st = _ensureTideState();
+        if (st.applied && _snapshotCurrent(st, ds) && ds === st.appliedDs) {
+            return { t: st.snapshot.t, p: st.snapshot.p };
+        }
+        return { t: ds.t, p: ds.p };
     }
 
     function _snapshotForTide(ds) {
@@ -701,7 +781,14 @@
             return null;
         }
         var st = _ensureTideState();
-        if (!st.snapshot) st.snapshot = _snapshotForTide(ds);
+        if (!_snapshotCurrent(st, ds)) {
+            // New working data since the last snapshot → start afresh.
+            st.snapshot   = _snapshotForTide(ds);
+            st.sourceDs   = ds;
+            st.appliedDs  = null;
+            st.applied    = false;
+            st.lastResult = null;
+        }
 
         // Always run analysis on the snapshot pressures (so re-applies
         // are idempotent) — never on the already-corrected series.
@@ -710,7 +797,7 @@
         st.lastResult = res;
         st.lastOpts   = opts || st.lastOpts;
 
-        if (!res || !Array.isArray(res.p_corrected) || !res.p_corrected.length) {
+        if (!res || !Array.isArray(res.p_corrected) || !res.p_corrected.length || !res.constituents.length) {
             return null;
         }
 
@@ -721,8 +808,9 @@
         newDs.tideOriginalP = snap.p.slice();
         newDs.tideFitted    = res.p_tide.slice();
 
-        G.PRiSM_dataset = newDs;
-        st.applied = true;
+        st.applied   = true;
+        st.appliedDs = newDs;
+        _commitDataset(newDs, 'tide-correction');
 
         try {
             _ga4('prism_tide_correction_applied', {
@@ -732,42 +820,45 @@
             });
         } catch (e) { /* swallow */ }
 
-        if (typeof G.PRiSM_drawActivePlot === 'function') {
-            try { G.PRiSM_drawActivePlot(); } catch (e) { /* ignore */ }
-        }
-
         return newDs;
     };
 
     G.PRiSM_resetTideCorrection = function PRiSM_resetTideCorrection() {
         var st = _ensureTideState();
-        if (!st.snapshot) return null;
+        if (!st.snapshot || !st.applied) return null;
+        if (G.PRiSM_dataset !== st.appliedDs) {
+            // Other data were loaded after the correction: nothing to undo.
+            st.snapshot = null; st.sourceDs = null; st.appliedDs = null;
+            st.applied = false; st.lastResult = null;
+            return null;
+        }
         var restored = _snapshotForTide(st.snapshot);
-        // Keep snapshot around in case the user wants to re-apply.
-        G.PRiSM_dataset = restored;
-        st.applied = false;
+        // Keep the snapshot so the user can re-apply.
+        st.applied   = false;
+        st.appliedDs = null;
+        st.sourceDs  = restored;
+        _commitDataset(restored, 'tide-reset');
 
         try { _ga4('prism_tide_correction_reset', {}); } catch (e) { /* swallow */ }
-
-        if (typeof G.PRiSM_drawActivePlot === 'function') {
-            try { G.PRiSM_drawActivePlot(); } catch (e) { /* ignore */ }
-        }
         return restored;
     };
 
 
     // ═══════════════════════════════════════════════════════════════
-    // SECTION 7 — UI: PRiSM_renderTidePanel(container)
+    // SECTION 7 — UI: PRiSM_renderTidePanel(container, opts)
     // ═══════════════════════════════════════════════════════════════
-    // Paints a self-contained tide-analysis panel into `container`
-    // (a DOM element). Mirrors the style of PRiSM_renderCropTool /
-    // PRiSM_renderInterpretationPanel.
+    // Paints a self-contained tide-analysis panel into `container`.
+    // Registered as the Tab 1 panel "Tide correction" (C7); opts.embedded
+    // drops the outer frame + title (the panel card provides them).
+    // Host theme (CSS variables); works at 375 px. All elements are
+    // looked up inside the container, so the panel can be mounted in
+    // more than one place (tab panel, tools drawer).
     //
     // Sections:
     //   - Inputs: depth_ft, theoreticalM2_psi, constituent checklist,
     //             minDuration_h.
-    //   - "Run tide analysis" button → calls PRiSM_tideAnalysis on
-    //             the live dataset and paints results.
+    //   - "Run tide analysis" → PRiSM_tideAnalysis on the measured
+    //             pressures of the working dataset.
     //   - Constituent table (name, period, amplitude, phase°).
     //   - Decomposition canvas (raw / fitted-tide / corrected).
     //   - Apply / Reset correction buttons.
@@ -775,17 +866,26 @@
     //   - Rationale block.
     // ═══════════════════════════════════════════════════════════════
 
-    var _PANEL_STYLE   = 'background:#0d1117; border:1px solid #30363d; border-radius:6px; padding:14px; color:#c9d1d9; font-size:13px; line-height:1.5;';
-    var _HEADING_STYLE = 'font-weight:600; font-size:12px; color:#8b949e; margin-bottom:6px; text-transform:uppercase; letter-spacing:0.5px;';
-    var _CARD_STYLE    = 'background:#161b22; border:1px solid #30363d; border-radius:6px; padding:12px; margin-bottom:12px;';
-    var _INPUT_STYLE   = 'width:120px; padding:4px 6px; background:#0d1117; color:#c9d1d9; border:1px solid #30363d; border-radius:4px; font-family:monospace; font-size:12px;';
-    var _LABEL_STYLE   = 'display:flex; flex-direction:column; font-size:11px; color:#8b949e; gap:2px;';
-    var _BTN_PRIMARY   = 'padding:6px 14px; background:#238636; color:#fff; border:1px solid #2ea043; border-radius:4px; cursor:pointer; font-size:12px; font-weight:600;';
-    var _BTN_SECONDARY = 'padding:6px 14px; background:#21262d; color:#c9d1d9; border:1px solid #30363d; border-radius:4px; cursor:pointer; font-size:12px;';
-    var _BTN_BLUE      = 'padding:6px 14px; background:#1f6feb; color:#fff; border:1px solid #388bfd; border-radius:4px; cursor:pointer; font-size:12px; font-weight:600;';
+    var T = {
+        bg: 'var(--bg1,#0d1117)', panel: 'var(--bg2,#161b22)', border: 'var(--border,#30363d)',
+        text: 'var(--text,#e6edf3)', text2: 'var(--text2,#8b949e)', text3: 'var(--text3,#6e7681)',
+        accent: 'var(--accent,#f0883e)', green: 'var(--green,#3fb950)', red: 'var(--red,#f85149)',
+        yellow: 'var(--yellow,#d29922)', blue: 'var(--blue,#58a6ff)'
+    };
+    var _HEADING_STYLE = 'font-weight:600; font-size:11px; color:' + T.text2 + '; margin-bottom:6px; text-transform:uppercase; letter-spacing:0.5px;';
+    var _CARD_STYLE    = 'background:' + T.panel + '; border:1px solid ' + T.border + '; border-radius:6px; padding:10px; margin-bottom:10px; max-width:100%; box-sizing:border-box;';
+    var _INPUT_STYLE   = 'width:120px; max-width:100%; box-sizing:border-box; padding:5px 6px; background:' + T.bg + '; color:' + T.text + '; border:1px solid ' + T.border + '; border-radius:4px; font-family:monospace; font-size:12px;';
+    var _LABEL_STYLE   = 'display:flex; flex-direction:column; font-size:11px; color:' + T.text2 + '; gap:2px; min-width:0;';
 
-    function _byId(id) {
-        return _hasDoc ? document.getElementById(id) : null;
+    function _btnStyle(kind) {
+        var primary = (kind === 'primary');
+        return 'padding:6px 12px; min-height:32px; border-radius:4px; cursor:pointer; font-size:12px; font-weight:600;'
+             + ' border:1px solid ' + (primary ? T.accent : T.border) + '; background:' + (primary ? T.accent : T.panel)
+             + '; color:' + (primary ? '#0d1117' : T.text) + ';';
+    }
+
+    function _el(container, id) {
+        return (container && container.querySelector) ? container.querySelector('#' + id) : null;
     }
 
     function _selectedConstituents(container) {
@@ -801,20 +901,38 @@
         return sel;
     }
 
-    function _readNumberInput(id, fallback) {
-        var el = _byId(id);
+    function _readNumberInput(container, id, fallback) {
+        var el = _el(container, id);
         if (!el) return fallback;
         var v = parseFloat(el.value);
         return isFinite(v) ? v : fallback;
     }
 
+    // Current panel inputs → PRiSM_tideAnalysis options (and remember them
+    // so a re-render shows the same values).
+    function _readOpts(container) {
+        var o = {
+            constituents:      _selectedConstituents(container),
+            detrend:           true,
+            depth_ft:          _readNumberInput(container, 'prism_tide_depth', null),
+            theoreticalM2_psi: _readNumberInput(container, 'prism_tide_theom2', 1.0),
+            minDuration_h:     _readNumberInput(container, 'prism_tide_minDur', 48)
+        };
+        _ensureTideState().inputs = {
+            depth_ft: o.depth_ft, theoreticalM2_psi: o.theoreticalM2_psi,
+            minDuration_h: o.minDuration_h, constituents: o.constituents.slice()
+        };
+        return o;
+    }
+
     function _renderResultTable(constArr) {
         if (!constArr || !constArr.length) {
-            return '<div style="font-style:italic; color:#8b949e;">No constituents fitted.</div>';
+            return '<div style="font-style:italic; color:' + T.text2 + ';">No constituents fitted.</div>';
         }
         var h = [];
+        h.push('<div style="overflow-x:auto; max-width:100%;">');
         h.push('<table style="width:100%; border-collapse:collapse; font-size:12px;">');
-        h.push('<thead><tr style="border-bottom:1px solid #30363d; color:#8b949e; text-align:left;">');
+        h.push('<thead><tr style="border-bottom:1px solid ' + T.border + '; color:' + T.text2 + '; text-align:left;">');
         h.push('<th style="padding:6px 8px;">Constituent</th>');
         h.push('<th style="padding:6px 8px;">Period (h)</th>');
         h.push('<th style="padding:6px 8px;">Amplitude (psi)</th>');
@@ -824,98 +942,91 @@
         for (var i = 0; i < constArr.length; i++) {
             var c = constArr[i];
             var phaseDeg = c.phase * 180 / Math.PI;
-            h.push('<tr style="border-bottom:1px solid #21262d;">'
-                + '<td style="padding:6px 8px; font-weight:600; color:#58a6ff;">' + _esc(c.name) + '</td>'
+            h.push('<tr style="border-bottom:1px solid ' + T.border + ';">'
+                + '<td style="padding:6px 8px; font-weight:600; color:' + T.blue + ';">' + _esc(c.name) + '</td>'
                 + '<td style="padding:6px 8px; font-family:monospace;">' + c.period.toFixed(4) + '</td>'
                 + '<td style="padding:6px 8px; font-family:monospace;">' + _fmt(c.amplitude, 3) + '</td>'
                 + '<td style="padding:6px 8px; font-family:monospace;">' + _fmt(phaseDeg, 1) + '</td>'
-                + '<td style="padding:6px 8px; color:#8b949e;">' + _esc(c.desc) + '</td>'
+                + '<td style="padding:6px 8px; color:' + T.text2 + ';">' + _esc(c.desc) + '</td>'
                 + '</tr>');
         }
-        h.push('</tbody></table>');
+        h.push('</tbody></table></div>');
         return h.join('');
     }
 
     function _renderCtBlock(ct, depth_ft, theoreticalM2_psi) {
         if (ct == null || !isFinite(ct)) {
-            return '<div style="padding:10px; background:#161b22; border-radius:4px; color:#8b949e; font-style:italic;">'
-                 + 'ct estimate not available — supply depth_ft &amp; theoreticalM2_psi (both &gt; 0) and ensure M2 is fitted.</div>';
+            return '<div style="padding:10px; background:' + T.bg + '; border-radius:4px; color:' + T.text2 + '; font-style:italic;">'
+                 + 'c<sub>t</sub> estimate not available — enter the depth and the theoretical M2 amplitude (both &gt; 0) and keep M2 in the fit.</div>';
         }
-        return '<div style="padding:10px; background:#161b22; border-left:3px solid #3fb950; border-radius:4px;">'
-             +    '<div style="font-size:11px; color:#8b949e; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.5px;">'
+        return '<div style="padding:10px; background:' + T.bg + '; border-left:3px solid ' + T.green + '; border-radius:4px;">'
+             +    '<div style="font-size:11px; color:' + T.text2 + '; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.5px;">'
              +      'Total compressibility (Bredehoeft 1967)'
              +    '</div>'
-             +    '<div style="font-size:18px; font-weight:600; color:#3fb950; font-family:monospace;">'
+             +    '<div style="font-size:18px; font-weight:600; color:' + T.green + '; font-family:monospace;">'
              +      'c<sub>t</sub> ≈ ' + ct.toExponential(3) + ' psi<sup>−1</sup>'
              +    '</div>'
-             +    '<div style="font-size:11px; color:#8b949e; margin-top:6px; line-height:1.4;">'
+             +    '<div style="font-size:11px; color:' + T.text2 + '; margin-top:6px; line-height:1.4;">'
              +      'Formula: c<sub>t</sub> = R<sub>obs</sub> / (R<sub>th</sub> · ρ<sub>w</sub>g · h · ξ)<br>'
              +      'where R<sub>th</sub>=' + _esc(theoreticalM2_psi) + ' psi, h=' + _esc(depth_ft) + ' ft, '
              +      'ρ<sub>w</sub>g=' + FRESH_WATER_GRADIENT_PSI_PER_FT + ' psi/ft, ξ=' + BREDEHOEFT_LOVE_FACTOR
              +      ' (Love factor h₂−1.16·k₂).<br>'
-             +      'For confined saturated formations; treat as a sanity bound on PVT-derived c<sub>t</sub> in oil/gas zones.'
+             +      'For confined saturated formations; treat as a sanity bound on the well c<sub>t</sub> in oil/gas zones.'
              +    '</div>'
              + '</div>';
     }
 
     function _renderResults(container, res, opts) {
-        var host = container.querySelector
-                 ? container.querySelector('.prism-tide-results')
-                 : null;
+        var host = container.querySelector ? container.querySelector('.prism-tide-results') : null;
         if (!host) return;
         if (!res) {
-            host.innerHTML = '<div style="color:#8b949e; font-style:italic;">No results yet.</div>';
+            host.innerHTML = '<div style="color:' + T.text2 + '; font-style:italic;">No results yet.</div>';
             return;
         }
         var h = [];
 
-        // Constituent table.
         h.push('<div style="' + _CARD_STYLE + '">');
         h.push('<div style="' + _HEADING_STYLE + '">Fitted constituents</div>');
         h.push(_renderResultTable(res.constituents));
         h.push('</div>');
 
-        // Decomposition canvas.
         h.push('<div style="' + _CARD_STYLE + '">');
         h.push('<div style="' + _HEADING_STYLE + '">Decomposition (raw → fitted tide → corrected)</div>');
-        h.push('<canvas id="prism_tide_canvas" width="800" height="380" '
-            +  'style="display:block; background:#0d1117; border:1px solid #30363d; '
-            +  'border-radius:6px; max-width:100%;"></canvas>');
+        h.push('<canvas class="prism-tide-canvas" id="prism_tide_canvas" width="800" height="380" '
+            +  'style="display:block; width:100%; max-width:100%; height:auto; background:' + T.bg + '; border:1px solid ' + T.border + '; '
+            +  'border-radius:6px;"></canvas>');
         h.push('</div>');
 
-        // Diagnostics + ct.
         h.push('<div style="' + _CARD_STYLE + '">');
         h.push('<div style="' + _HEADING_STYLE + '">Diagnostics</div>');
-        h.push('<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:8px; margin-bottom:12px;">');
-        h.push('<div><span style="color:#8b949e; font-size:11px;">Residual RMS</span><div style="font-family:monospace; color:#c9d1d9;">'
+        h.push('<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(130px, 1fr)); gap:8px; margin-bottom:12px;">');
+        h.push('<div><span style="color:' + T.text2 + '; font-size:11px;">Residual RMS</span><div style="font-family:monospace;">'
               + _fmt(res.residual_rms, 3) + ' psi</div></div>');
-        h.push('<div><span style="color:#8b949e; font-size:11px;">M2 SNR</span><div style="font-family:monospace; color:#c9d1d9;">'
+        h.push('<div><span style="color:' + T.text2 + '; font-size:11px;">M2 SNR</span><div style="font-family:monospace;">'
               + _fmt(res.snr, 2) + '</div></div>');
-        h.push('<div><span style="color:#8b949e; font-size:11px;">Variance reduction</span><div style="font-family:monospace; color:#c9d1d9;">'
+        h.push('<div><span style="color:' + T.text2 + '; font-size:11px;">Variance reduction</span><div style="font-family:monospace;">'
               + _fmt(res.variance_reduction_pct, 1) + ' %</div></div>');
-        h.push('<div><span style="color:#8b949e; font-size:11px;">Duration</span><div style="font-family:monospace; color:#c9d1d9;">'
+        h.push('<div><span style="color:' + T.text2 + '; font-size:11px;">Duration</span><div style="font-family:monospace;">'
               + _fmt(res.duration_h, 1) + ' h</div></div>');
-        h.push('<div><span style="color:#8b949e; font-size:11px;">Samples</span><div style="font-family:monospace; color:#c9d1d9;">'
+        h.push('<div><span style="color:' + T.text2 + '; font-size:11px;">Samples</span><div style="font-family:monospace;">'
               + (res.n_samples || 0) + '</div></div>');
         h.push('</div>');
         h.push(_renderCtBlock(res.ct_estimate, opts.depth_ft, opts.theoreticalM2_psi));
         h.push('</div>');
 
-        // Rationale.
         h.push('<div style="' + _CARD_STYLE + '">');
         h.push('<div style="' + _HEADING_STYLE + '">Rationale</div>');
-        h.push('<div style="color:#c9d1d9; line-height:1.55;">' + _esc(res.rationale || '') + '</div>');
+        h.push('<div style="line-height:1.55;">' + _esc(res.rationale || '') + '</div>');
         h.push('</div>');
 
         host.innerHTML = h.join('');
 
-        // Paint the decomposition plot.
-        var canvas = _byId('prism_tide_canvas');
+        var canvas = host.querySelector('.prism-tide-canvas');
         if (canvas && canvas.getContext) {
             try {
                 G.PRiSM_plot_tide_decomposition(canvas, {
-                    t:           opts._lastT || (G.PRiSM_dataset ? G.PRiSM_dataset.t : []),
-                    p_raw:       opts._lastP || (G.PRiSM_dataset ? G.PRiSM_dataset.p : []),
+                    t:           opts._lastT || [],
+                    p_raw:       opts._lastP || [],
                     p_tide:      res.p_tide,
                     p_corrected: res.p_corrected
                 });
@@ -923,164 +1034,171 @@
         }
     }
 
-    function _runFromUI(container) {
-        var ds = G.PRiSM_dataset;
+    function _setMsg(container, html) {
         var msg = container.querySelector ? container.querySelector('.prism-tide-msg') : null;
-        if (!ds || !Array.isArray(ds.t) || !Array.isArray(ds.p) || !ds.t.length) {
-            if (msg) msg.innerHTML = '<span style="color:#f85149;">No dataset loaded — go to the Data tab and load a pressure history first.</span>';
-            return;
-        }
-        // If a tide correction is already applied, run the analysis on
-        // the *original* snapshot (not the already-cleaned series).
-        var st = _ensureTideState();
-        var srcT = ds.t, srcP = ds.p;
-        if (st.applied && st.snapshot) {
-            srcT = st.snapshot.t; srcP = st.snapshot.p;
-        }
-
-        var depth = _readNumberInput('prism_tide_depth', null);
-        var theo  = _readNumberInput('prism_tide_theom2', 1.0);
-        var minD  = _readNumberInput('prism_tide_minDur', 48);
-        var sel   = _selectedConstituents(container);
-
-        var opts = {
-            constituents:      sel,
-            detrend:           true,
-            depth_ft:          depth,
-            theoreticalM2_psi: theo,
-            minDuration_h:     minD
-        };
-
-        var res;
-        try {
-            res = G.PRiSM_tideAnalysis(srcT, srcP, opts);
-        } catch (e) {
-            if (msg) msg.innerHTML = '<span style="color:#f85149;">Analysis failed: ' + _esc(e && e.message) + '</span>';
-            return;
-        }
-        st.lastResult = res;
-        st.lastOpts   = opts;
-        opts._lastT = srcT; opts._lastP = srcP;
-        if (msg) msg.innerHTML = '<span style="color:#3fb950;">Analysis complete (' + (res.constituents.length) + ' constituents fitted).</span>';
-        _renderResults(container, res, opts);
+        if (msg) msg.innerHTML = html;
     }
 
-    G.PRiSM_renderTidePanel = function PRiSM_renderTidePanel(container) {
+    function _repaintLast(container) {
+        var st = _ensureTideState();
+        if (!st.lastResult || !st.lastSeries) return;
+        var o = {};
+        for (var k in (st.lastOpts || {})) o[k] = st.lastOpts[k];
+        o._lastT = st.lastSeries.t;
+        o._lastP = st.lastSeries.p;
+        _renderResults(container, st.lastResult, o);
+    }
+
+    function _runFromUI(container) {
+        var ds = G.PRiSM_dataset;
+        if (!ds || !Array.isArray(ds.t) || !Array.isArray(ds.p) || !ds.t.length) {
+            _setMsg(container, '<span style="color:' + T.red + ';">No dataset loaded — load a pressure history on the Data step first.</span>');
+            return;
+        }
+        // Analyse the MEASURED pressures (the snapshot when a correction
+        // is applied to this dataset), never the already-cleaned series.
+        var src = _measuredSeries(ds);
+        var opts = _readOpts(container);
+        var res;
+        try {
+            res = G.PRiSM_tideAnalysis(src.t, src.p, opts);
+        } catch (e) {
+            _setMsg(container, '<span style="color:' + T.red + ';">Analysis failed: ' + _esc(e && e.message) + '</span>');
+            return;
+        }
+        var st = _ensureTideState();
+        st.lastResult = res;
+        st.lastOpts   = opts;
+        st.lastSeries = { t: src.t, p: src.p };
+        st.lastDs     = ds;
+        _setMsg(container, res.constituents.length
+            ? '<span style="color:' + T.green + ';">Analysis complete (' + res.constituents.length + ' constituents fitted).</span>'
+            : '<span style="color:' + T.yellow + ';">No constituent could be fitted — see the rationale.</span>');
+        _repaintLast(container);
+    }
+
+    G.PRiSM_renderTidePanel = function PRiSM_renderTidePanel(container, panelOpts) {
         if (!_hasDoc || !container) return;
+        panelOpts = panelOpts || {};
 
         var st = _ensureTideState();
+        var inp = st.inputs || {};
+        var selNames = {};
+        if (Array.isArray(inp.constituents) && inp.constituents.length) {
+            for (var s = 0; s < inp.constituents.length; s++) selNames[inp.constituents[s]] = true;
+        }
 
         var html = [];
-        html.push('<div class="prism-tide-panel" style="' + _PANEL_STYLE + '">');
+        html.push('<div class="prism-tide-panel" style="color:' + T.text + '; font-size:13px; line-height:1.5; max-width:100%; box-sizing:border-box;'
+            + (panelOpts.embedded ? '' : ' background:' + T.bg + '; border:1px solid ' + T.border + '; border-radius:6px; padding:12px;') + '">');
 
-        // Header.
-        html.push('<div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; gap:12px; flex-wrap:wrap;">');
-        html.push('<div style="font-weight:700; font-size:14px; color:#c9d1d9;">Tide Analysis (offshore wells)</div>');
-        html.push('<div style="font-size:11px; color:#8b949e;">Bredehoeft 1967 · Van der Kamp 1990</div>');
-        html.push('</div>');
+        if (!panelOpts.embedded) {
+            html.push('<div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; gap:12px; flex-wrap:wrap;">');
+            html.push('<div style="font-weight:700; font-size:14px;">Tide correction</div>');
+            html.push('<div style="font-size:11px; color:' + T.text2 + ';">Bredehoeft 1967 · Van der Kamp 1990</div>');
+            html.push('</div>');
+        }
 
-        // Description.
-        html.push('<div style="margin-bottom:12px; padding:10px; background:#161b22; border-left:3px solid #58a6ff; border-radius:4px; font-size:12px; color:#8b949e; line-height:1.55;">'
-              +     'Detects astronomical tide harmonics in your pressure-gauge data, fits their amplitudes / phases by linear least-squares, '
-              +     'and produces a corrected pressure record cleaned of the periodic tidal signal. From the M2 amplitude an in-situ estimate of '
-              +     'formation total compressibility c<sub>t</sub> is computed.'
+        html.push('<div style="margin-bottom:10px; padding:10px; background:' + T.panel + '; border-left:3px solid ' + T.blue + '; border-radius:4px; font-size:12px; color:' + T.text2 + '; line-height:1.55;">'
+              +     'Finds the astronomical tide in offshore gauge pressures, fits amplitude and phase by least squares, '
+              +     'and can replace the pressures with the tide-cleaned record. The M2 amplitude also gives an in-situ estimate of '
+              +     'total compressibility c<sub>t</sub>. Works best on long, steady records (observation gauges, late buildups); '
+              +     'the drift is removed with a straight line.'
               +   '</div>');
 
-        // Inputs card.
         html.push('<div style="' + _CARD_STYLE + '">');
         html.push('<div style="' + _HEADING_STYLE + '">Inputs</div>');
-        html.push('<div style="display:flex; flex-wrap:wrap; gap:14px; margin-bottom:10px;">');
+        html.push('<div style="display:flex; flex-wrap:wrap; gap:12px; margin-bottom:10px;">');
         html.push('<label style="' + _LABEL_STYLE + '">Depth (ft)'
-              +     '<input type="number" id="prism_tide_depth" step="any" min="0" placeholder="e.g. 10000" '
-              +       'style="' + _INPUT_STYLE + '"></label>');
+              +     '<input type="number" id="prism_tide_depth" step="any" min="0" placeholder="e.g. 10000"'
+              +       (isFinite(inp.depth_ft) && inp.depth_ft > 0 ? ' value="' + inp.depth_ft + '"' : '')
+              +       ' style="' + _INPUT_STYLE + '"></label>');
         html.push('<label style="' + _LABEL_STYLE + '">Theoretical M2 amplitude (psi)'
-              +     '<input type="number" id="prism_tide_theom2" step="0.05" min="0" value="1.0" '
-              +       'style="' + _INPUT_STYLE + '"></label>');
+              +     '<input type="number" id="prism_tide_theom2" step="0.05" min="0" value="'
+              +       (isFinite(inp.theoreticalM2_psi) ? inp.theoreticalM2_psi : 1.0) + '"'
+              +       ' style="' + _INPUT_STYLE + '"></label>');
         html.push('<label style="' + _LABEL_STYLE + '">Min duration (h)'
-              +     '<input type="number" id="prism_tide_minDur" step="1" min="1" value="48" '
-              +       'style="' + _INPUT_STYLE + '"></label>');
+              +     '<input type="number" id="prism_tide_minDur" step="1" min="1" value="'
+              +       (isFinite(inp.minDuration_h) ? inp.minDuration_h : 48) + '"'
+              +       ' style="' + _INPUT_STYLE + '"></label>');
         html.push('</div>');
-        // Constituent checklist.
-        html.push('<div style="' + _HEADING_STYLE + '; margin-top:6px;">Constituents</div>');
-        html.push('<div style="display:flex; flex-wrap:wrap; gap:10px; font-size:12px;">');
+        html.push('<div style="' + _HEADING_STYLE + ' margin-top:6px;">Constituents</div>');
+        html.push('<div style="display:flex; flex-wrap:wrap; gap:8px; font-size:12px;">');
+        var anySel = false;
+        for (var k0 in selNames) { if (selNames[k0]) { anySel = true; break; } }
         for (var i = 0; i < PRiSM_TIDE_CONSTITUENTS.length; i++) {
             var c = PRiSM_TIDE_CONSTITUENTS[i];
-            var checked = c.isMajor ? ' checked' : '';
-            html.push('<label style="display:inline-flex; align-items:center; gap:4px; cursor:pointer; padding:3px 8px; background:#0d1117; border:1px solid #30363d; border-radius:14px;" title="' + _esc(c.desc) + ' (period ' + c.period.toFixed(2) + ' h)">'
+            var checked = (anySel ? selNames[c.name] : c.isMajor) ? ' checked' : '';
+            html.push('<label style="display:inline-flex; align-items:center; gap:4px; cursor:pointer; padding:3px 8px; background:' + T.bg + '; border:1px solid ' + T.border + '; border-radius:14px;" title="' + _esc(c.desc) + ' (period ' + c.period.toFixed(2) + ' h)">'
                   +     '<input type="checkbox" data-prism-tide-c="' + _esc(c.name) + '"' + checked + ' style="margin:0;">'
-                  +     '<span style="color:#c9d1d9; font-weight:600;">' + _esc(c.name) + '</span>'
-                  +     '<span style="color:#6e7681; font-size:10px;">' + c.period.toFixed(1) + ' h</span>'
+                  +     '<span style="font-weight:600;">' + _esc(c.name) + '</span>'
+                  +     '<span style="color:' + T.text3 + '; font-size:10px;">' + c.period.toFixed(1) + ' h</span>'
                   +   '</label>');
         }
         html.push('</div>');
-        // Action buttons.
         html.push('<div style="display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; align-items:center;">');
-        html.push('<button id="prism_tide_run"   type="button" style="' + _BTN_BLUE + '">Run tide analysis</button>');
-        html.push('<button id="prism_tide_apply" type="button" style="' + _BTN_PRIMARY + '">Apply correction</button>');
-        html.push('<button id="prism_tide_reset" type="button" style="' + _BTN_SECONDARY + '">Reset</button>');
-        html.push('<span class="prism-tide-msg" style="font-size:12px; color:#8b949e; margin-left:6px;"></span>');
+        html.push('<button id="prism_tide_run"   type="button" class="btn btn-primary" style="' + _btnStyle('primary') + '">Run tide analysis</button>');
+        html.push('<button id="prism_tide_apply" type="button" class="btn btn-secondary" style="' + _btnStyle() + '">Apply correction</button>');
+        html.push('<button id="prism_tide_reset" type="button" class="btn btn-secondary" style="' + _btnStyle() + '">Reset</button>');
         html.push('</div>');
+        html.push('<div class="prism-tide-msg" style="font-size:12px; color:' + T.text2 + '; margin-top:6px; min-height:14px;">'
+              + (st.applied && G.PRiSM_dataset === st.appliedDs
+                 ? '<span style="color:' + T.green + ';">A tide correction is applied to the working data.</span>' : '')
+              + '</div>');
         html.push('</div>');
 
-        // Results region (filled after run).
         html.push('<div class="prism-tide-results"></div>');
-
         html.push('</div>');
         container.innerHTML = html.join('');
 
-        // Wire buttons. Use direct DOM properties — addEventListener is
-        // also fine but we mirror the simpler PRiSM_renderCropTool style.
-        var btnRun   = _byId('prism_tide_run');
-        var btnApply = _byId('prism_tide_apply');
-        var btnReset = _byId('prism_tide_reset');
-        if (btnRun)   btnRun.onclick   = function () { _runFromUI(container); };
+        var btnRun   = _el(container, 'prism_tide_run');
+        var btnApply = _el(container, 'prism_tide_apply');
+        var btnReset = _el(container, 'prism_tide_reset');
+        if (btnRun) btnRun.onclick = function () { _runFromUI(container); };
         if (btnApply) btnApply.onclick = function () {
-            var depth = _readNumberInput('prism_tide_depth', null);
-            var theo  = _readNumberInput('prism_tide_theom2', 1.0);
-            var minD  = _readNumberInput('prism_tide_minDur', 48);
-            var sel   = _selectedConstituents(container);
-            var ds = G.PRiSM_applyTideCorrection({
-                constituents: sel, depth_ft: depth,
-                theoreticalM2_psi: theo, minDuration_h: minD,
-                detrend: true
-            });
-            var msg = container.querySelector('.prism-tide-msg');
-            if (msg) {
-                if (ds) msg.innerHTML = '<span style="color:#3fb950;">Correction applied — pressure series replaced with tide-cleaned values.</span>';
-                else    msg.innerHTML = '<span style="color:#f85149;">Could not apply — no dataset loaded.</span>';
-            }
-            // Repaint results so the diagnostics reflect the new state.
-            var s = _ensureTideState();
-            if (s.lastResult) {
-                var optsCopy = {};
-                for (var k in s.lastOpts) optsCopy[k] = s.lastOpts[k];
-                optsCopy._lastT = s.snapshot ? s.snapshot.t : (G.PRiSM_dataset ? G.PRiSM_dataset.t : []);
-                optsCopy._lastP = s.snapshot ? s.snapshot.p : (G.PRiSM_dataset ? G.PRiSM_dataset.p : []);
-                _renderResults(container, s.lastResult, optsCopy);
+            var opts = _readOpts(container);
+            var had = !!G.PRiSM_dataset;
+            var ds = G.PRiSM_applyTideCorrection(opts);
+            var s2 = _ensureTideState();
+            if (ds) {
+                s2.lastSeries = { t: s2.snapshot.t, p: s2.snapshot.p };
+                _setMsg(container, '<span style="color:' + T.green + ';">Correction applied — the working pressures are now tide-cleaned.</span>');
+                _repaintLast(container);
+            } else {
+                _setMsg(container, '<span style="color:' + T.red + ';">'
+                    + (had ? 'Could not apply — no constituent could be fitted (see the rationale).'
+                           : 'Could not apply — no dataset loaded.') + '</span>');
+                if (had && s2.lastResult) {
+                    s2.lastSeries = s2.snapshot ? { t: s2.snapshot.t, p: s2.snapshot.p } : s2.lastSeries;
+                    _repaintLast(container);
+                }
             }
         };
         if (btnReset) btnReset.onclick = function () {
             var ds = G.PRiSM_resetTideCorrection();
-            var msg = container.querySelector('.prism-tide-msg');
-            if (msg) {
-                if (ds) msg.innerHTML = '<span style="color:#3fb950;">Reset — original pressure series restored.</span>';
-                else    msg.innerHTML = '<span style="color:#8b949e;">Nothing to reset (no prior correction).</span>';
-            }
+            _setMsg(container, ds
+                ? '<span style="color:' + T.green + ';">Reset — measured pressures restored.</span>'
+                : '<span style="color:' + T.text2 + ';">Nothing to reset (no correction applied to the working data).</span>');
         };
 
-        // If we've already run an analysis this session, repaint it.
-        if (st.lastResult) {
-            var optsCopy2 = {};
-            for (var k2 in (st.lastOpts || {})) optsCopy2[k2] = st.lastOpts[k2];
-            if (!optsCopy2.depth_ft) optsCopy2.depth_ft = null;
-            if (!optsCopy2.theoreticalM2_psi) optsCopy2.theoreticalM2_psi = 1.0;
-            optsCopy2._lastT = st.snapshot ? st.snapshot.t : (G.PRiSM_dataset ? G.PRiSM_dataset.t : []);
-            optsCopy2._lastP = st.snapshot ? st.snapshot.p : (G.PRiSM_dataset ? G.PRiSM_dataset.p : []);
-            _renderResults(container, st.lastResult, optsCopy2);
+        // Repaint the last analysis when it belongs to the working data.
+        if (st.lastResult && st.lastSeries && G.PRiSM_dataset &&
+            (st.lastDs === G.PRiSM_dataset || _snapshotCurrent(st, G.PRiSM_dataset))) {
+            _repaintLast(container);
         }
 
         try { _ga4('prism_tide_panel_open', {}); } catch (e) { /* swallow */ }
     };
+
+    _registerPanel(1, {
+        id: 'prism_tide',
+        title: 'Tide correction',
+        order: 40,
+        collapsed: true,
+        tool: true,
+        description: 'Remove the ocean-tide signal from offshore gauge pressures; in-situ c_t estimate',
+        render: function (hostEl) { G.PRiSM_renderTidePanel(hostEl, { embedded: true }); }
+    });
 
 
     // ═══════════════════════════════════════════════════════════════
@@ -1101,11 +1219,16 @@
     function _setupCanvas(canvas, opts) {
         opts = opts || {};
         var dpr = (typeof window !== 'undefined' && window.devicePixelRatio) ? window.devicePixelRatio : 1;
-        var cssW = opts.width  || canvas.clientWidth  || canvas.width  || 800;
+        var parentW = (canvas.parentNode && canvas.parentNode.clientWidth) || 0;
+        var cssW = opts.width  || canvas.clientWidth  || parentW || canvas.width  || 800;
         var cssH = opts.height || canvas.clientHeight || canvas.height || 380;
         if (canvas.style) {
-            canvas.style.width  = cssW + 'px';
-            canvas.style.height = cssH + 'px';
+            // Width capped by the container (no horizontal page scroll at
+            // 375 px even when the canvas was measured while hidden);
+            // height follows the drawing-buffer aspect ratio.
+            canvas.style.width    = cssW + 'px';
+            canvas.style.maxWidth = '100%';
+            canvas.style.height   = 'auto';
         }
         canvas.width  = Math.round(cssW * dpr);
         canvas.height = Math.round(cssH * dpr);
@@ -1421,6 +1544,27 @@
             G.PRiSM_tideCorrectionState = prevSt;
             return { ok: ok1 && ok2 && ok3,
                      msg: 'apply.ok=' + ok1 + ' diffsSeen=' + ok2 + ' resetOk=' + ok3 };
+        });
+
+        // --- Test 8b: new data after a correction → re-apply uses the NEW data.
+        _check('Apply after loading other data corrects the new data (no stale snapshot)', function () {
+            var a = _synthTide(720, 168, 0.5, 0.2, 0.05, 11);
+            var b = _synthTide(720, 168, 0.3, 0.1, 0.05, 12);
+            for (var i = 0; i < b.p.length; i++) b.p[i] += 500;          // clearly different level
+            var prevDs = G.PRiSM_dataset, prevSt = G.PRiSM_tideCorrectionState;
+            G.PRiSM_tideCorrectionState = null;
+            var o = { constituents: ['M2', 'S2'], detrend: true, minDuration_h: 24 };
+            G.PRiSM_dataset = { t: a.t.slice(), p: a.p.slice() };
+            G.PRiSM_applyTideCorrection(o);
+            G.PRiSM_dataset = { t: b.t.slice(), p: b.p.slice() };      // user loads other data
+            var nothing = G.PRiSM_resetTideCorrection();              // must not bring A back
+            var ok1 = nothing === null && G.PRiSM_dataset.p[0] > 3400;
+            var corrected = G.PRiSM_applyTideCorrection(o);
+            var ok2 = corrected && Math.abs(corrected.p[0] - b.p[0]) < 1.0 && corrected.p[0] > 3400;
+            var restored = G.PRiSM_resetTideCorrection();
+            var ok3 = restored && Math.abs(restored.p[0] - b.p[0]) < 1e-9;
+            G.PRiSM_dataset = prevDs; G.PRiSM_tideCorrectionState = prevSt;
+            return { ok: !!(ok1 && ok2 && ok3), msg: 'resetNoop=' + ok1 + ' applyNew=' + !!ok2 + ' resetNew=' + !!ok3 };
         });
 
         // --- Test 9: PRiSM_renderTidePanel doesn't throw on a stub container.

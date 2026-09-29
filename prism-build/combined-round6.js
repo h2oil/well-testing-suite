@@ -89,12 +89,23 @@
         if (!inputId || typeof inputId !== 'string') return false;
         meta = meta || {};
         REGISTRY[inputId] = {
+            title:        String(meta.title || ''),
             description:  String(meta.description || ''),
             typicalRange: String(meta.typicalRange || ''),
             units:        String(meta.units || ''),
             references:   Array.isArray(meta.references) ? meta.references.slice() : []
         };
         return true;
+    }
+
+    // Plain-language heading for a tooltip: the entry's title, else the id
+    // turned into words ("prism_well_pi" → "Well pi").
+    function _titleFor(id) {
+        var m = REGISTRY[id];
+        if (m && m.title) return m.title;
+        var s = String(id || '').replace(/^(PRiSM|prism|wts)_+/i, '').replace(/^(help|well|sl|match|reg)_+/i, '')
+            .replace(/_/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2').trim();
+        return s ? s.charAt(0).toUpperCase() + s.slice(1) : 'Help';
     }
 
     function defineMany(manifest) {
@@ -324,10 +335,12 @@
             references: ['SPE Tex. Vol. 1']
         },
         'wellboreStorage': {
-            description: 'Wellbore storage coefficient (PRiSM uses dimensionless Cd). Surface ' +
-                         'shut-ins typically 1,000-10,000; downhole shut-ins 1-100.',
-            typicalRange: '1 – 100,000 (dimensionless)',
-            units: 'dimensionless',
+            title: 'Wellbore storage',
+            description: 'Volume the wellbore stores or releases per psi, which delays the reservoir response ' +
+                         'at early time. PRiSM reports C in bbl/psi and the dimensionless CD = 0.8936·C/(φ·ct·h·rw²). ' +
+                         'Shut-in at surface gives large storage; a downhole shut-in valve gives small storage.',
+            typicalRange: 'C 1e-4 – 0.1 bbl/psi (CD 1 – 100,000)',
+            units: 'bbl/psi (C) · dimensionless (CD)',
             references: ['Bourdet, 2002 Ch. 2']
         },
         'permeability': {
@@ -374,10 +387,12 @@
             references: ['Beggs & Robinson 1975']
         },
         'formationVolumeFactor': {
-            description: 'Bo (oil) or Bg (gas). Bo: 1.05-2.5 rb/STB; Bg: 0.003-0.02 rb/scf. ' +
-                         'Use Standing or DAK correlations at reservoir P,T.',
-            typicalRange: 'See description',
-            units: 'rb/STB or rb/scf',
+            title: 'Formation volume factor',
+            description: 'Reservoir volume per surface volume. Oil Bo: 1.05–2.5 RB/STB. Gas Bg: about ' +
+                         '0.4–5 RB/Mscf (0.75 RB/Mscf at 4,000 psia and 180 °F). Use Standing or DAK correlations ' +
+                         'at reservoir pressure and temperature.',
+            typicalRange: 'Bo 1.05 – 2.5 RB/STB · Bg 0.4 – 5 RB/Mscf',
+            units: 'RB/STB (oil) or RB/Mscf (gas)',
             references: ['Standing 1947', 'GPSA']
         },
 
@@ -482,34 +497,40 @@
             units: 'ft'
         },
 
-        // ─── PRiSM-specific ────────────────────────────────────────
+        // ─── PRiSM-specific (legacy ids kept; the live inputs use prism_* ids below) ───
         'PRiSM_kh': {
-            description: 'Permeability-thickness product (kh) from semi-log slope. ' +
-                         'kh = 162.6·q·B·μ / m  (oil); kh = 1637·qg·μ·Z·T / m  (gas).',
-            typicalRange: '1 – 100,000 mD-ft',
-            units: 'mD-ft'
+            title: 'Permeability-thickness kh',
+            description: 'How easily the whole pay interval lets fluid flow. From the semilog slope m: ' +
+                         'kh = 162.6·q·B·μ/m (oil). Gas with pseudo-pressure: kh = 1637·q·T/m.',
+            typicalRange: '1 – 100,000 md·ft',
+            units: 'md·ft'
         },
         'PRiSM_pInitial': {
-            description: 'Initial reservoir pressure used as the upper-bound of buildup ' +
-                         'extrapolation (Horner / MDH p*).',
+            title: 'Initial reservoir pressure',
+            description: 'Reservoir pressure before the test disturbed it. In a drawdown the pressure drop ' +
+                         'is measured from this value, so skin depends on it directly. In a buildup the ' +
+                         'straight line extrapolates to p*, which equals pi when no boundary has been felt.',
             typicalRange: '500 – 15,000 psia',
             units: 'psia'
         },
         'PRiSM_skin': {
-            description: 'Apparent skin S from Δp at 1 hr. Negative indicates stimulation; ' +
-                         'positive indicates damage or partial penetration.',
+            title: 'Skin',
+            description: 'Extra pressure drop near the wellbore, in dimensionless form. Negative means ' +
+                         'stimulated (acidised or fractured); positive means damage or restricted entry.',
             typicalRange: '-5 to +30',
             units: 'dimensionless'
         },
         'PRiSM_xf': {
-            description: 'Hydraulic-fracture half-length. Driven by Bourdet derivative ' +
-                         'half-slope onset time during linear-flow regime.',
+            title: 'Fracture half-length',
+            description: 'Length of one wing of a hydraulic fracture. Seen as a half-slope derivative ' +
+                         '(linear flow) before radial flow.',
             typicalRange: '20 – 800 ft',
             units: 'ft'
         },
         'PRiSM_FcD': {
-            description: 'Dimensionless fracture conductivity FcD = kf·w / (k·xf). ' +
-                         'FcD < 10 = finite conductivity; FcD > 30 = infinite.',
+            title: 'Fracture conductivity (dimensionless)',
+            description: 'How easily the fracture carries flow compared with the rock: FcD = kf·w/(k·xf). ' +
+                         'Below about 10 the fracture itself restricts flow; above 30 it behaves as infinite.',
             typicalRange: '0.5 – 1000',
             units: 'dimensionless',
             references: ['Cinco-Ley & Samaniego 1981']
@@ -543,6 +564,224 @@
     defineMany(MANIFEST);
 
     // ───────────────────────────────────────────────────────────────
+    // PRiSM manifest — ids used by the live PRiSM inputs:
+    //   prism_well_*   Well & Test card (16-pvt.js)
+    //   prism_sl_*     straight-line (semilog) panel (34-semilog-skin.js)
+    //   prism_match_*  type-curve match readouts (Tab 5)
+    //   prism_reg_* / prism_regress_*  regression controls (Tab 6)
+    //   prism_help_*   result quantities, bound through data-wts-help="…"
+    //                  or the TEXT_BINDINGS below (report, results tables)
+    // Plain language first; the formula, when useful, comes last.
+    // ───────────────────────────────────────────────────────────────
+    function _entry(title, description, typicalRange, units) {
+        return { title: title, description: description, typicalRange: typicalRange || '', units: units || '' };
+    }
+    var H_PI = _entry('Initial reservoir pressure',
+        'Reservoir pressure before this test disturbed it. In a drawdown the pressure drop is measured from this ' +
+        'value, so skin depends on it directly. If it is left blank the first data point is used instead and ' +
+        'skin will be wrong.', '500 – 15,000 psia', 'psia');
+    var H_K = _entry('Permeability',
+        'How easily the rock lets fluid flow. It comes from the flat part of the derivative (radial flow) or ' +
+        'from the semilog slope: k = kh / h.', '0.01 – 5,000 md', 'md');
+    var H_KH = _entry('Permeability-thickness',
+        'Permeability times net pay: the flow capacity of the whole interval. kh = 162.6·q·B·μ/m from the ' +
+        'semilog slope m, or 70.6·q·B·μ/Δp′ from the derivative plateau.', '1 – 100,000 md·ft', 'md·ft');
+    var H_S = _entry('Skin',
+        'Extra pressure drop close to the well, as a number. Negative means the well is stimulated (acid or ' +
+        'fracture); zero means undamaged; positive means damage, restricted entry or partial penetration.',
+        '-5 to +30', 'dimensionless');
+    var H_C = _entry('Wellbore storage',
+        'Volume the wellbore stores or gives back per psi. It hides the reservoir at early time (the unit-slope ' +
+        'part of the log-log plot). C = q·B·Δt/(24·Δp) on the unit slope.', '1e-4 – 0.1', 'bbl/psi');
+    var H_CD = _entry('Dimensionless storage',
+        'Wellbore storage in dimensionless form: CD = 0.8936·C/(φ·ct·h·rw²).', '1 – 100,000', 'dimensionless');
+    var H_RINV = _entry('Radius of investigation',
+        'How far into the reservoir the pressure disturbance has travelled by the end of the data: ' +
+        'rinv = √(k·t/(948·φ·μ·ct)). Features further away than this cannot be seen in the test.', '', 'ft');
+    var H_DPS = _entry('Pressure drop due to skin',
+        'Part of the drawdown that is lost near the wellbore because of skin: ΔpS = 141.2·q·B·μ·S/kh ' +
+        '(= 0.869·m·S). Removing the skin would recover this pressure.', '', 'psi');
+    var H_FE = _entry('Flow efficiency',
+        'Share of the drawdown that does useful work in the reservoir: FE = (p̄ − pwf − ΔpS)/(p̄ − pwf). ' +
+        '1 = undamaged; 0.76 means the well produces 76 % of its undamaged rate at the same drawdown.',
+        '0.2 – 1.5', 'fraction');
+    var H_DR = _entry('Damage ratio', 'The inverse of flow efficiency (DR = 1/FE). Above 1 the well is damaged.',
+        '0.7 – 5', 'dimensionless');
+    var H_J = _entry('Productivity index', 'Rate per psi of drawdown at the time of the test: J = q/(p̄ − pwf).',
+        '', 'STB/d/psi (oil) · Mscf/d/psi (gas)');
+    var H_JI = _entry('Productivity index without skin',
+        'Rate per psi the well would give if the skin were removed: J_ideal = q/(p̄ − pwf − ΔpS).',
+        '', 'STB/d/psi (oil) · Mscf/d/psi (gas)');
+    var H_RWA = _entry('Effective wellbore radius',
+        'Radius of an undamaged well that would behave like this one: rw′ = rw·e^(−S). Larger than rw for a ' +
+        'stimulated well, smaller for a damaged one.', '', 'ft');
+    var H_M = _entry('Semilog slope',
+        'Pressure change per log cycle of time on the straight line through the radial-flow data. ' +
+        'A steeper line means lower kh: kh = 162.6·q·B·μ/m.', '', 'psi/cycle');
+    var H_P1 = _entry('Pressure at 1 hour on the line',
+        'Pressure read from the straight line (extended if needed) at 1 hour. Skin is calculated from it, ' +
+        'not from the measured pressure at 1 hour.', '', 'psia');
+    var H_PSTAR = _entry('Extrapolated pressure p*',
+        'Pressure the buildup straight line reaches at infinite shut-in time. With no boundary felt it equals ' +
+        'the initial reservoir pressure; later in the life of a field it is used to estimate average pressure.',
+        '', 'psia');
+    var H_XF = _entry('Fracture half-length',
+        'Length of one wing of a hydraulic fracture, seen as a half-slope derivative before radial flow.',
+        '20 – 800 ft', 'ft');
+    var H_LH = _entry('Horizontal length', 'Producing length of a horizontal well.', '500 – 10,000 ft', 'ft');
+    var H_PM = _entry('Pressure match (log PM)',
+        'Vertical position of the model type curve on the log-log plot. It sets kh: kh = 141.2·q·B·μ·PM.',
+        '', 'log10(1/psi)');
+    var H_TM = _entry('Time match (log TM)',
+        'Horizontal position of the model type curve on the log-log plot. With kh known it sets storage ' +
+        'and skin.', '', 'log10(1/h)');
+    var H_R2 = _entry('R²', 'Share of the variation in the data that the model explains. 1 is a perfect fit; ' +
+        'a good pressure match is usually above 0.999.', '0 – 1', '');
+    var H_RMSE = _entry('RMSE', 'Typical size of the misfit between the data and the model, in the data units ' +
+        '(psi for pressure). Compare it with the gauge resolution.', '', 'psi');
+    var H_AIC = _entry('AIC', 'Fit score that rewards a close fit and penalises extra parameters. Lower is ' +
+        'better; only differences between models matter.', '', '');
+    var H_DAIC = _entry('ΔAIC', 'Difference in AIC from the best model. Below 2 the data cannot tell the models ' +
+        'apart; above 10 the best model is strongly preferred.', '', '');
+
+    var PRISM_MANIFEST = {
+        // Well & Test card (16-pvt.js)
+        'prism_well_testType': _entry('Test type',
+            'What the well was doing while the gauge recorded: flowing (drawdown), shut in after flowing (buildup), ' +
+            'injecting, or shut in after injecting (falloff). Auto-detect reads it from the rate column.',
+            'Auto / Drawdown / Buildup / Injection / Falloff', ''),
+        'prism_well_pi': H_PI,
+        'prism_well_tp': _entry('Producing time before shut-in',
+            'How long the well flowed before it was shut in, as an equivalent constant-rate time (cumulative ' +
+            'volume ÷ last rate). Needed for Horner and superposition plots of a buildup. Leave blank to work ' +
+            'it out from the rate history.', '', 'h'),
+        'prism_well_tShut': _entry('Shut-in time',
+            'Clock time, in hours from the start of the data, when the well was closed. Leave blank to detect it ' +
+            'from the rate column.', '', 'h'),
+        'prism_well_pwf0': _entry('Flowing pressure at shut-in',
+            'Bottom-hole pressure at the moment the well was closed. In a buildup the pressure rise is measured ' +
+            'from this value. Leave blank to read it from the data.', '', 'psia'),
+        'prism_well_q': _entry('Rate',
+            'Surface rate during the analysed flow period; for a buildup, the rate just before shut-in. ' +
+            'Oil and water in STB/d, gas in Mscf/d.', '', 'STB/d or Mscf/d'),
+        'prism_well_q_fromdata': _entry('Rate from the data',
+            'Tick to use the loaded rate column instead of the number typed in the rate box.', '', ''),
+        'prism_well_rw': _entry('Wellbore radius',
+            'Radius of the hole or casing at the producing interval: half the bit or casing diameter.',
+            '0.25 – 0.5 ft (0.354 ft for an 8½-in hole)', 'ft'),
+        'prism_well_h': _entry('Net pay',
+            'Thickness of the rock that actually flows into the well. Permeability is kh divided by this value.',
+            '5 – 500 ft', 'ft'),
+        'prism_well_phi': _entry('Porosity',
+            'Fraction of the rock volume that is pore space (0.18 = 18 %). It affects storage, skin and radius ' +
+            'of investigation, not permeability.', '0.05 – 0.35', 'fraction'),
+        'prism_well_fluidType': _entry('Fluid',
+            'Main fluid flowing into the well. Gas switches the analysis to pseudo-pressure and rates to Mscf/d.',
+            'Oil / Gas / Water', ''),
+        'prism_well_B': _entry('Formation volume factor',
+            'Reservoir barrels per surface barrel (oil) or per Mscf (gas). Leave blank to use the PVT estimate.',
+            'Oil 1.05 – 2.0 RB/STB · gas 0.4 – 5 RB/Mscf', 'RB/STB or RB/Mscf'),
+        'prism_well_mu': _entry('Viscosity',
+            'Viscosity of the flowing fluid at reservoir conditions. Leave blank to use the PVT estimate.',
+            'Oil 0.3 – 100 cp · gas 0.01 – 0.04 cp', 'cp'),
+        'prism_well_ct': _entry('Total compressibility',
+            'How much the rock and fluids compress per psi of pressure change. Oil wells are about 1e-5 1/psi; ' +
+            'gas wells are close to 1/p. Leave blank to use the PVT estimate.', '1e-6 – 1e-3', '1/psi'),
+        'prism_well_pvt_btn': _entry('Estimate from PVT',
+            'Opens correlations that estimate B, μ and ct from oil and gas gravity, temperature and pressure.', '', ''),
+        'prism_well_accept_all': _entry('Accept all defaults',
+            'Confirms every value still marked "default" so the report lists them as checked.', '', ''),
+
+        // Straight-line (semilog) panel (34-semilog-skin.js)
+        'prism_sl_method': _entry('Straight-line method',
+            'MDH for a drawdown, Horner for a buildup after one rate, superposition for several rates. ' +
+            'Auto picks the method from the test type.', '', ''),
+        'prism_sl_t0': _entry('Start of the straight-line window',
+            'First time (hours) of the stretch where the derivative is flat (radial flow).', '', 'h'),
+        'prism_sl_t1': _entry('End of the straight-line window',
+            'Last time (hours) of the stretch where the derivative is flat (radial flow).', '', 'h'),
+        'prism_sl_auto': _entry('Auto window',
+            'Finds the longest flat stretch of the derivative and fits the line there.', '', ''),
+        'prism_sl_run': _entry('Analyse straight line',
+            'Fits the line in the window and recalculates permeability, skin and the skin results.', '', ''),
+        'prism_sl_seed': _entry('Use as start values',
+            'Copies k and S from the straight line into the model as the starting point for regression.', '', ''),
+        'prism_sl_report': _entry('Store in report', 'Keeps this straight-line result in the report.', '', ''),
+        'prism_sl_hp': _entry('Open interval',
+            'Length of the perforated (open) interval. Used to split skin into damage and partial-penetration parts.',
+            '', 'ft'),
+        'prism_sl_kvkh': _entry('Vertical to horizontal permeability',
+            'kv/kh ratio. Low values make the partial-penetration and slant skins larger.', '0.01 – 1', 'fraction'),
+        'prism_sl_theta': _entry('Well deviation',
+            'Angle of the well from vertical. A slanted well has a negative geometric skin.', '0 – 75°', 'deg'),
+        'prism_sl_xf': H_XF,
+        'prism_sl_dtable': _entry('Skin at several rates',
+            'Skin found at each flow rate. A straight line through them separates rate-dependent (turbulent) ' +
+            'skin D·q from mechanical skin.', '', ''),
+
+        // Type-curve match readouts (Tab 5) and regression controls (Tab 6)
+        'prism_match_logPM': H_PM, 'prism_match_logTM': H_TM,
+        'prism_match_kh': H_KH, 'prism_match_k': H_K, 'prism_match_C': H_C, 'prism_match_S': H_S,
+        'prism_match_rmse': _entry('Match misfit',
+            'Typical misfit between the data and the moved type curve on the log-log plot, in log cycles. ' +
+            'Below about 0.01 the curves lie on top of each other.', '', 'log10'),
+        'prism_match_apply': _entry('Apply match',
+            'Turns the curve position into permeability, storage and skin and makes them the current result.', '', ''),
+        'prism_match_auto': _entry('Auto-align',
+            'Moves the type curve to sit on the data automatically; the model shape is kept.', '', ''),
+        'prism_reg_tmin': _entry('Fit window start', 'Earliest time (hours) used by the regression.', '', 'h'),
+        'prism_reg_tmax': _entry('Fit window end', 'Latest time (hours) used by the regression.', '', 'h'),
+        'prism_reg_floatPi': _entry('Fit the initial pressure',
+            'Let the regression adjust pi as well. Use it when pi is uncertain; it needs data well into radial flow.',
+            '', ''),
+        'prism_reg_objective': _entry('What to match',
+            'Pressure change only, or pressure change and its derivative together on the log-log plot (the ' +
+            'derivative carries most of the information about the reservoir).', '', ''),
+        'prism_regress_run': _entry('Run regression',
+            'Adjusts the free parameters until the model best matches the data, and reports 95 % ranges.', '', ''),
+        'prism_regress_auto': _entry('Model race',
+            'Fits several candidate models and ranks them by AIC so you can compare them.', '', ''),
+        'prism_bourdet_L': _entry('Derivative smoothing',
+            'Width (in log cycles of time) used to smooth the pressure derivative. Larger values give a smoother ' +
+            'curve but can blur short features. 0.1–0.2 is usual.', '0 – 0.5', ''),
+        'prism_timefn': _entry('Time function',
+            'How elapsed time is measured for the derivative. Superposition time accounts for earlier rates and ' +
+            'is right for buildups; plain Δt suits a single drawdown.', '', ''),
+
+        // Result quantities (bound by data-wts-help or TEXT_BINDINGS)
+        'prism_help_k': H_K, 'prism_help_kh': H_KH, 'prism_help_S': H_S, 'prism_help_C': H_C, 'prism_help_Cd': H_CD,
+        'prism_help_pi': H_PI, 'prism_help_rinv': H_RINV, 'prism_help_dpS': H_DPS, 'prism_help_FE': H_FE,
+        'prism_help_DR': H_DR, 'prism_help_J': H_J, 'prism_help_Jideal': H_JI, 'prism_help_rwa': H_RWA,
+        'prism_help_m': H_M, 'prism_help_p1hr': H_P1, 'prism_help_pstar': H_PSTAR, 'prism_help_xf': H_XF,
+        'prism_help_Lh': H_LH, 'prism_help_logPM': H_PM, 'prism_help_logTM': H_TM, 'prism_help_r2': H_R2,
+        'prism_help_rmse': H_RMSE, 'prism_help_aic': H_AIC, 'prism_help_dAIC': H_DAIC,
+        'prism_report_notes': _entry('Analyst comments', 'Free text printed with the report (kept with the project).', '', '')
+    };
+    defineMany(PRISM_MANIFEST);
+
+    // Row labels without ids (results tables written by other layers) are
+    // matched by their text: [container selector, cell selector, [[regex, id], …]].
+    var RESULT_ROWS = [
+        [/^semilog slope|^slope m/i, 'prism_help_m'], [/^kh\b|permeability-thickness/i, 'prism_help_kh'],
+        [/^permeability k|^k\b/i, 'prism_help_k'], [/^p at 1 h/i, 'prism_help_p1hr'],
+        [/^extrapolated pressure/i, 'prism_help_pstar'], [/skin pressure drop|pressure drop due to skin/i, 'prism_help_dpS'],
+        [/^flow efficiency/i, 'prism_help_FE'], [/^damage ratio/i, 'prism_help_DR'],
+        [/^undamaged j|without skin/i, 'prism_help_Jideal'], [/^productivity index/i, 'prism_help_J'],
+        [/effective wellbore radius/i, 'prism_help_rwa'], [/radius of investigation/i, 'prism_help_rinv'],
+        [/^storage c|^wellbore storage c/i, 'prism_help_C'], [/dimensionless storage/i, 'prism_help_Cd'],
+        [/^skin s\b|^skin\b/i, 'prism_help_S'], [/log pm|pressure match/i, 'prism_help_logPM'],
+        [/log tm|time match/i, 'prism_help_logTM'], [/^r²|^r2\b/i, 'prism_help_r2'], [/^rmse/i, 'prism_help_rmse'],
+        [/^Δaic|^daic/i, 'prism_help_dAIC'], [/^aic/i, 'prism_help_aic'], [/initial (reservoir )?pressure/i, 'prism_help_pi'],
+        [/fracture half-length/i, 'prism_help_xf'], [/horizontal length/i, 'prism_help_Lh']
+    ];
+    var TEXT_BINDINGS = [
+        { sel: '#prism_sl_table td.prism-sl-l', rules: RESULT_ROWS },
+        { sel: '#prism_tab_5 .rl', rules: RESULT_ROWS },
+        { sel: '#prism_tab_6 .rl', rules: RESULT_ROWS },
+        { sel: '#prism_report_root .prism-rpt-kvr > span', rules: RESULT_ROWS }
+    ];
+
+    // ───────────────────────────────────────────────────────────────
     // DOM injection — ⓘ icon + tooltip layer
     // ───────────────────────────────────────────────────────────────
     var TOOLTIP_ID    = 'wts-tooltip-layer';
@@ -562,7 +801,7 @@
             'user-select:none;vertical-align:middle}' +
             '.' + ICON_CLASS + ':hover,.' + ICON_CLASS + ':focus{color:#58a6ff;opacity:1;' +
             'border-color:#58a6ff;outline:none}' +
-            '#' + TOOLTIP_ID + '{position:fixed;z-index:99999;max-width:340px;padding:10px 12px;' +
+            '#' + TOOLTIP_ID + '{position:fixed;z-index:99999;max-width:min(340px,calc(100vw - 16px));padding:10px 12px;' +
             'background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;' +
             'font-family:Segoe UI,sans-serif;font-size:12px;line-height:1.45;' +
             'box-shadow:0 6px 24px rgba(0,0,0,.55);pointer-events:auto;opacity:0;' +
@@ -668,7 +907,7 @@
         }
         var titleMeta = {};
         for (var k in meta) titleMeta[k] = meta[k];
-        titleMeta._title = inputId;
+        titleMeta._title = _titleFor(inputId);
         _injectStyles();
         var layer = _ensureLayer();
         if (!layer) return false;
@@ -749,19 +988,43 @@
         return false;
     }
 
+    // Where the icon goes: an explicit <label for=id>; the caption of a
+    // wrapping <label> (the input sits inside the label); else the single
+    // <label> that shares the input's parent. null -> right after the input.
     function _findLabelFor(inputEl) {
         if (!inputEl || !inputEl.id) return null;
         if (!_hasDoc) return null;
-        // Look for an explicit <label for=...> first
-        var lbl = document.querySelector('label[for="' + inputEl.id + '"]');
+        var lbl = null;
+        try { lbl = document.querySelector('label[for="' + inputEl.id + '"]'); } catch (e) { lbl = null; }
         if (lbl) return lbl;
-        // Fallback: the immediately preceding sibling <label>
+        var wrap = (typeof inputEl.closest === 'function') ? inputEl.closest('label') : null;
+        if (wrap) {
+            var cap = wrap.firstElementChild || null;
+            if (cap && cap !== inputEl && /^(SPAN|DIV|B|STRONG)$/i.test(cap.tagName || '') &&
+                !(cap.querySelector && cap.querySelector('input,select,textarea'))) return cap;
+            return null;   // the input is the label's first child: icon goes after the input
+        }
         var p = inputEl.parentNode;
-        if (p && p.querySelector) {
-            var sib = p.querySelector('label');
-            if (sib) return sib;
+        if (p && p.querySelectorAll) {
+            var labels = p.querySelectorAll('label');
+            var inputs = p.querySelectorAll('input,select,textarea');
+            if (labels.length === 1 && inputs.length <= 1 && labels[0].parentNode === p) return labels[0];
         }
         return null;
+    }
+
+    function _makeIcon(id) {
+        var icon = document.createElement('span');
+        icon.className = ICON_CLASS;
+        icon.setAttribute('role', 'button');
+        icon.setAttribute('tabindex', '0');
+        icon.setAttribute('aria-label', 'Help: ' + _titleFor(id));
+        icon.setAttribute('data-wts-id', id);
+        icon.setAttribute('data-wts-tooltip-anchor', id);
+        icon.title = (REGISTRY[id] && REGISTRY[id].description) || 'Help';
+        icon.innerHTML = 'i';
+        _bindIcon(icon, id);
+        return icon;
     }
 
     function _injectIconForId(inputId) {
@@ -769,15 +1032,7 @@
         var el = _$(inputId);
         if (!el) return false;
         if (_alreadyHasIcon(el)) return false;
-        var icon = document.createElement('span');
-        icon.className = ICON_CLASS;
-        icon.setAttribute('role', 'button');
-        icon.setAttribute('tabindex', '0');
-        icon.setAttribute('aria-label', 'Help for ' + inputId);
-        icon.setAttribute('data-wts-id', inputId);
-        icon.setAttribute('data-wts-tooltip-anchor', inputId);
-        icon.title = (REGISTRY[inputId] && REGISTRY[inputId].description) || 'Help';
-        icon.innerHTML = 'i';
+        var icon = _makeIcon(inputId);
         // Mount the icon next to the label (preferred) or just after the input
         var anchorEl = _findLabelFor(el);
         if (anchorEl && anchorEl.appendChild) {
@@ -793,8 +1048,47 @@
             } catch (e) {}
         }
         try { el.setAttribute(INJECTED_ATTR, '1'); } catch (e) {}
-        _bindIcon(icon, inputId);
         return true;
+    }
+
+    // Any element can ask for help with data-wts-help="<registry id>"; the
+    // icon is appended inside it.
+    var BOUND_ATTR = 'data-wts-help-bound';
+    function _appendIcon(el, id) {
+        if (!el || !REGISTRY[id]) return false;
+        if (el.getAttribute && el.getAttribute(BOUND_ATTR) === id) return false;
+        try {
+            el.appendChild(document.createTextNode(' '));
+            el.appendChild(_makeIcon(id));
+            el.setAttribute(BOUND_ATTR, id);
+        } catch (e) { return false; }
+        return true;
+    }
+    function _bindAttributes() {
+        var n = 0, els;
+        try { els = document.querySelectorAll('[data-wts-help]'); } catch (e) { return 0; }
+        for (var i = 0; i < els.length; i++) {
+            if (_appendIcon(els[i], els[i].getAttribute('data-wts-help'))) n++;
+        }
+        return n;
+    }
+    // Row labels written by other layers without ids, matched by their text.
+    function _bindText() {
+        var n = 0;
+        for (var b = 0; b < TEXT_BINDINGS.length; b++) {
+            var els;
+            try { els = document.querySelectorAll(TEXT_BINDINGS[b].sel); } catch (e) { continue; }
+            for (var i = 0; i < els.length; i++) {
+                var el = els[i];
+                if (el.getAttribute && el.getAttribute(BOUND_ATTR)) continue;
+                var txt = String(el.textContent || '').trim();
+                var rules = TEXT_BINDINGS[b].rules;
+                for (var r = 0; r < rules.length; r++) {
+                    if (rules[r][0].test(txt)) { if (_appendIcon(el, rules[r][1])) n++; break; }
+                }
+            }
+        }
+        return n;
     }
 
     function refresh() {
@@ -807,6 +1101,8 @@
                 if (_injectIconForId(id)) n++;
             }
         }
+        n += _bindAttributes();
+        n += _bindText();
         return n;
     }
 
@@ -907,6 +1203,23 @@
         } catch (e) { _warn('tooltip auto-init failed', e); }
     });
 
+    // PRiSM re-renders tabs, panels and steps in place: re-scan right after
+    // each render (C7 tab hook, merge pattern) and on the shared events.
+    function _safeRefresh() { try { refresh(); } catch (e) { _warn('tooltip refresh failed', e); } }
+    (function _hookPRiSM() {
+        if (!_hasWin) return;
+        try {
+            G.PRiSM_tabHooks = G.PRiSM_tabHooks || {};
+            var any = G.PRiSM_tabHooks.any = G.PRiSM_tabHooks.any || [];
+            if (any.indexOf(_safeRefresh) === -1) any.push(_safeRefresh);
+        } catch (e) {}
+        if (typeof G.addEventListener === 'function') {
+            ['prism:tab-open', 'prism:step-changed', 'prism:well-changed', 'prism:fit-updated'].forEach(function (ev) {
+                try { G.addEventListener(ev, _scheduleRefresh); } catch (e) {}
+            });
+        }
+    })();
+
     // ───────────────────────────────────────────────────────────────
     // Publish public API
     // ───────────────────────────────────────────────────────────────
@@ -940,7 +1253,10 @@
 //
 //   Default registrations cover WTS, ESD Hi-Pilot, ESD Lo-Pilot,
 //   Hydrate Management, Liquid Line, Pipe Service Life, PRiSM, PVT,
-//   the global units toggle, and — the one that carries almost all of
+//   the global units toggle (PRiSM is three modules applied in the order
+//   pvt → prism_dataset → prism: well & fluid inputs with provenance, the
+//   dataset, then model / params / freeze / fit / type-curve match /
+//   straight-line / mode / crop; New resets all three), and — the one that carries almost all of
 //   the user's typed values — `storage`: a raw snapshot of every
 //   localStorage key starting with `wts_` or `h2oil_` (legacy per-
 //   calculator keys, the host's universal wts_page_<page> autosave
@@ -1189,6 +1505,234 @@
         return G.WTS_state;
     }
 
+    // ───────────────────────────────────────────────────────────────
+    // PRiSM state helpers (analysis state, dataset, well store)
+    //
+    // Saved from window.PRiSM_state: the persisted analysis fields (C8)
+    // plus interpretation, model race, saved fits, rail pins and period
+    // flags; other plain JSON fields ride along under `extra`. Derived or
+    // library fields (model curves, presets) and the legacy `match` are not
+    // saved. Shell state: PRiSM.mode / tab / multiRate. Crop window from
+    // window.PRiSM_cropState. Legacy files (`activeModel`) still load.
+    // ───────────────────────────────────────────────────────────────
+    var PRISM_KEYS = ['model', 'params', 'paramFreeze', 'phys', 'tcMatch', 'activePlot', 'activePeriod',
+                      'bourdetL', 'timeFn', 'lastFit', 'semilog', 'analysisKeyResults', 'interp',
+                      'autoMatch', 'fits', 'reportPins', 'periodFlags'];
+    var PRISM_SKIP = { presets: 1, match: 1, modelCurve: 1, modelCurveData: 1, autoMatchStatus: 1,
+                       project: 1, activeModel: 1, autoMatchTopN: 1, pvt: 1, crop: 1 };
+    var EXTRA_MAX_CHARS = 200000;
+    // Fresh analysis state as the UI layer created it (captured when this
+    // layer loads, before any restore) — used by New.
+    var _PRISM_TEMPLATE = (G.PRiSM_state && typeof G.PRiSM_state === 'object') ? _clone(G.PRiSM_state) : null;
+
+    function _own(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
+    function _isPlain(v) {
+        if (v === null || typeof v !== 'object') return true;
+        if (Array.isArray(v)) return true;
+        var pr = Object.getPrototypeOf(v);
+        return pr === Object.prototype || pr === null;
+    }
+    function _numOrNull(v) { return (typeof v === 'number' && isFinite(v)) ? v : null; }
+
+    // Dataset copy with typed arrays turned into plain arrays (JSON-safe).
+    function _plainDataset(ds) {
+        if (!ds || typeof ds !== 'object') return null;
+        function plain(v) {
+            if (v && typeof v === 'object' && typeof v.length === 'number' && !Array.isArray(v) &&
+                typeof ArrayBuffer !== 'undefined' && ArrayBuffer.isView && ArrayBuffer.isView(v)) {
+                return Array.prototype.slice.call(v);
+            }
+            return v;
+        }
+        var out = {};
+        for (var k in ds) {
+            if (!_own(ds, k)) continue;
+            var v = plain(ds[k]);
+            if (v && typeof v === 'object' && !Array.isArray(v) && _isPlain(v)) {
+                var o = {};
+                for (var j in v) if (_own(v, j)) o[j] = plain(v[j]);
+                v = o;
+            }
+            out[k] = v;
+        }
+        return _clone(out);
+    }
+
+    // Replace the contents of a window object in place (other layers keep
+    // references to it).
+    function _replaceInPlace(name, fresh) {
+        var cur = G[name];
+        if (!cur || typeof cur !== 'object' || cur === fresh) { G[name] = fresh; return; }
+        var k;
+        for (k in cur) if (_own(cur, k)) delete cur[k];
+        for (k in fresh) if (_own(fresh, k)) cur[k] = fresh[k];
+    }
+
+    function _readPRiSM() {
+        var st = G.PRiSM_state;
+        if (!st || typeof st !== 'object') return null;
+        var out = { schema: 2 };
+        for (var i = 0; i < PRISM_KEYS.length; i++) {
+            var key = PRISM_KEYS[i];
+            if (st[key] === undefined) continue;
+            out[key] = (st[key] === null) ? null : _clone(st[key]);
+        }
+        var extra = {}, nExtra = 0;
+        for (var k in st) {
+            if (!_own(st, k) || PRISM_KEYS.indexOf(k) >= 0 || PRISM_SKIP[k] || k.charAt(0) === '_') continue;
+            var v = st[k];
+            if (v === undefined || typeof v === 'function' || !_isPlain(v)) continue;
+            var txt;
+            try { txt = JSON.stringify(v); } catch (e) { continue; }
+            if (txt == null || txt.length > EXTRA_MAX_CHARS) continue;
+            extra[k] = JSON.parse(txt);
+            nExtra++;
+        }
+        if (nExtra) out.extra = extra;
+        var P = G.PRiSM;
+        if (P && typeof P === 'object') {
+            if (P.mode != null) out.mode = P.mode;
+            if (P.tab != null) out.tab = P.tab;
+            if (Array.isArray(P.multiRate)) out.multiRate = _clone(P.multiRate);
+        }
+        var cs = G.PRiSM_cropState;
+        if (cs && typeof cs === 'object' && (cs.t_start != null || cs.t_end != null || cs.fullDataset)) {
+            out.crop = { t_start: _numOrNull(cs.t_start), t_end: _numOrNull(cs.t_end),
+                         i_start: _numOrNull(cs.i_start), i_end: _numOrNull(cs.i_end),
+                         fullDataset: cs.fullDataset ? _plainDataset(cs.fullDataset) : null };
+        }
+        var ds = G.PRiSM_dataset;
+        out.hasDataset = !!(ds && ds.t && ds.t.length);
+        return out;
+    }
+
+    // Load: model first (through the UI layer's setter when present), then
+    // parameters, then everything else; the fit is restored last.
+    function _applyPRiSM(state) {
+        var st = G.PRiSM_state;
+        if (!st || typeof st !== 'object') st = G.PRiSM_state = {};
+        var reg = G.PRiSM_MODELS || {};
+        var model = (typeof state.model === 'string' && state.model) ||
+                    (typeof state.activeModel === 'string' && state.activeModel) || null;
+        var hasParams = !!(state.params && typeof state.params === 'object');
+        if (model) {
+            var viaSetter = false;
+            if (reg[model] && typeof G.PRiSM_setModel === 'function') {
+                try { G.PRiSM_setModel(model, { source: 'project' }); viaSetter = true; }
+                catch (e) { _warn('[WTS_project] PRiSM_setModel failed', e); }
+            }
+            if (st.model !== model) st.model = model;
+            if (!viaSetter && reg[model] && reg[model].defaults && !hasParams) {
+                st.params = _clone(reg[model].defaults) || {};
+            }
+        }
+        if (hasParams) {
+            var base = (st.params && typeof st.params === 'object') ? st.params : {};
+            var merged = {}, p;
+            for (p in base) if (_own(base, p)) merged[p] = base[p];
+            for (p in state.params) if (_own(state.params, p)) merged[p] = _clone(state.params[p]);
+            st.params = merged;
+        }
+        if (state.paramFreeze && typeof state.paramFreeze === 'object') st.paramFreeze = _clone(state.paramFreeze);
+        var later = { model: 1, params: 1, paramFreeze: 1, lastFit: 1, interp: 1 };
+        for (var i = 0; i < PRISM_KEYS.length; i++) {
+            var key = PRISM_KEYS[i];
+            if (later[key] || !_own(state, key)) continue;
+            st[key] = (state[key] === null) ? null : _clone(state[key]);
+        }
+        if (state.extra && typeof state.extra === 'object') {
+            for (var x in state.extra) if (_own(state.extra, x) && !PRISM_SKIP[x] && PRISM_KEYS.indexOf(x) < 0) st[x] = _clone(state.extra[x]);
+        }
+        st.match = { timeShift: 0, pressShift: 0 };     // legacy field: never holds a fit
+        if ('modelCurve' in st) st.modelCurve = null;   // derived; rebuilt by the UI
+        st.lastFit = state.lastFit ? _clone(state.lastFit) : null;
+        st.interp = null;
+        if (st.lastFit && typeof G.PRiSM_interpretCurrentFit === 'function') {
+            try { st.interp = G.PRiSM_interpretCurrentFit() || null; } catch (e) { st.interp = null; }
+        }
+        if (!st.interp && state.interp) st.interp = _clone(state.interp);
+        // Shell state
+        if (!G.PRiSM || typeof G.PRiSM !== 'object') G.PRiSM = { mode: 'transient', tab: 1, multiRate: [] };
+        if (['transient', 'decline', 'combined'].indexOf(state.mode) >= 0) G.PRiSM.mode = state.mode;
+        var tab = parseInt(state.tab, 10);
+        if (tab >= 1 && tab <= 7) G.PRiSM.tab = tab;
+        if (Array.isArray(state.multiRate)) G.PRiSM.multiRate = _clone(state.multiRate) || [];
+        var cs = G.PRiSM_cropState;
+        if (cs && typeof cs === 'object') {
+            var cr = (state.crop && typeof state.crop === 'object' && 't_start' in state.crop) ? state.crop : null;
+            cs.t_start = cr ? _numOrNull(cr.t_start) : null;
+            cs.t_end = cr ? _numOrNull(cr.t_end) : null;
+            cs.i_start = cr ? _numOrNull(cr.i_start) : null;
+            cs.i_end = cr ? _numOrNull(cr.i_end) : null;
+            cs.fullDataset = (cr && cr.fullDataset) ? _clone(cr.fullDataset) : null;
+        }
+    }
+
+    // New: analysis state back to the UI layer's defaults (model presets kept).
+    function _resetPRiSM() {
+        var st = G.PRiSM_state;
+        if (!st || typeof st !== 'object') st = G.PRiSM_state = {};
+        var tpl = _PRISM_TEMPLATE ? _clone(_PRISM_TEMPLATE) : null;
+        if (!tpl) {
+            var reg = G.PRiSM_MODELS || {};
+            tpl = { model: 'homogeneous', params: _clone(reg.homogeneous && reg.homogeneous.defaults) || {},
+                    paramFreeze: {}, activePlot: 'bourdet' };
+        }
+        var k;
+        for (k in st) if (_own(st, k) && k !== 'presets') delete st[k];
+        for (k in tpl) if (_own(tpl, k) && k !== 'presets') st[k] = tpl[k];
+        st.match = { timeShift: 0, pressShift: 0 };
+        st.lastFit = null;
+        st.interp = null;
+        ['semilog', 'tcMatch', 'autoMatch'].forEach(function (key) { if (key in st) st[key] = null; });
+        if ('activePeriod' in st) st.activePeriod = null;
+        if (G.PRiSM && typeof G.PRiSM === 'object') { G.PRiSM.mode = 'transient'; G.PRiSM.tab = 1; G.PRiSM.multiRate = []; }
+        var cs = G.PRiSM_cropState;
+        if (cs && typeof cs === 'object') { cs.t_start = cs.t_end = cs.i_start = cs.i_end = null; cs.fullDataset = null; }
+    }
+
+    // New: well & fluid inputs back to defaults, every input marked default.
+    function _resetPVT() {
+        if (typeof G.PRiSM_resetWell === 'function') {
+            try { G.PRiSM_resetWell({ source: 'default' }); return; } catch (e) { _warn('[WTS_project] resetWell failed', e); }
+        }
+        if (typeof G.PRiSM_pvt_compute !== 'function') return;
+        var old = G.PRiSM_pvt, fresh = null;
+        G.PRiSM_pvt = null;
+        try { G.PRiSM_pvt_compute(); fresh = G.PRiSM_pvt; } catch (e) { fresh = null; }
+        if (!fresh || typeof fresh !== 'object') { G.PRiSM_pvt = old; return; }
+        fresh.provenance = {};
+        G.PRiSM_pvt = old;
+        _replaceInPlace('PRiSM_pvt', fresh);
+        if (G.WTS_state && typeof G.WTS_state === 'object') G.WTS_state.pvt = null;
+    }
+
+    // After Open / New: persist the analysis state (C8) and tell the PRiSM
+    // layers that inputs and results changed.
+    function _prismSync(source) {
+        if (!G.PRiSM_state && !G.PRiSM_pvt) return;
+        try { if (typeof G.PRiSM_saveState === 'function') G.PRiSM_saveState(); } catch (e) {}
+        // The well store's own debounced save may not have run before the
+        // file was written: persist the restored store (same format as 16).
+        var ls = _ls(), pvt = G.PRiSM_pvt;
+        if (ls && pvt && typeof pvt === 'object') {
+            try {
+                var copy = {};
+                for (var k in pvt) if (_own(pvt, k) && k !== '_computed') copy[k] = pvt[k];
+                ls.setItem('wts_prism_pvt', JSON.stringify(copy));
+            } catch (e) {}
+        }
+        _emitWin('prism:well-changed', { source: source });
+        _emitWin('prism:fit-updated', { source: source, modelKey: G.PRiSM_state ? G.PRiSM_state.model : null });
+    }
+    function _emitWin(name, detail) {
+        try {
+            if (_hasWin && typeof G.dispatchEvent === 'function' && typeof CustomEvent === 'function') {
+                G.dispatchEvent(new CustomEvent(name, { detail: detail || {} }));
+            }
+        } catch (e) {}
+    }
+
     function _registerDefaults() {
         // wts — generic WTS flow profile state (top-level WTS_state minus the
         // per-module nested keys we register separately).
@@ -1267,58 +1811,51 @@
             }
         });
 
-        registerModule('prism', {
+        // PRiSM — three modules, applied in this order on Open (registry
+        // order, see _applyPayload): well & fluid inputs, then the dataset,
+        // then the analysis state (model, parameters, fit, match, …).
+        registerModule('pvt', {
             read: function () {
-                if (!G.PRiSM_state) return null;
-                var subset = {
-                    activeModel:    G.PRiSM_state.activeModel,
-                    params:         _clone(G.PRiSM_state.params),
-                    lastFit:        _clone(G.PRiSM_state.lastFit),
-                    autoMatchTopN:  _clone(G.PRiSM_state.autoMatchTopN),
-                    interp:         _clone(G.PRiSM_state.interp),
-                    pvt:            _clone(G.PRiSM_state.pvt),
-                    crop:           _clone(G.PRiSM_state.crop),
-                    project:        _clone(G.PRiSM_state.project)
-                };
-                return subset;
+                var src = G.PRiSM_pvt || (G.WTS_state && G.WTS_state.pvt) || null;
+                if (!src) return null;
+                var out = _clone(src);
+                if (out) delete out._computed;           // derived; recomputed on load
+                return out;
             },
             write: function (state) {
+                if (state === null) { _resetPVT(); return; }      // New
                 if (!state || typeof state !== 'object') return;
-                if (!G.PRiSM_state || typeof G.PRiSM_state !== 'object') G.PRiSM_state = {};
-                var s = G.PRiSM_state;
-                for (var k in state) {
-                    if (Object.prototype.hasOwnProperty.call(state, k)) {
-                        s[k] = _clone(state[k]);
-                    }
-                }
+                var fresh = _clone(state);
+                if (!fresh) return;
+                delete fresh._computed;
+                _replaceInPlace('PRiSM_pvt', fresh);
+                try { if (typeof G.PRiSM_pvt_compute === 'function') G.PRiSM_pvt_compute(); } catch (e) {}
+                var s = _ensureWTSState();
+                s.pvt = _clone(fresh);
             }
         });
 
         registerModule('prism_dataset', {
             read: function () {
-                // Datasets can be huge — only persist when explicitly opted in.
                 if (!G.PRiSM_dataset) return null;
+                // Opt-out kept for callers that set it (datasets can be large).
                 if (G.PRiSM_state && G.PRiSM_state.project &&
                     G.PRiSM_state.project.includeDataset === false) return null;
-                return _clone(G.PRiSM_dataset);
+                return _plainDataset(G.PRiSM_dataset);
             },
             write: function (state) {
-                if (!state) return;
+                if (state === null) { G.PRiSM_dataset = null; return; }   // New
+                if (!state || typeof state !== 'object') return;
                 G.PRiSM_dataset = _clone(state);
             }
         });
 
-        registerModule('pvt', {
-            read: function () {
-                if (G.PRiSM_pvt) return _clone(G.PRiSM_pvt);
-                if (G.WTS_state && G.WTS_state.pvt) return _clone(G.WTS_state.pvt);
-                return null;
-            },
+        registerModule('prism', {
+            read: _readPRiSM,
             write: function (state) {
-                if (!state) return;
-                G.PRiSM_pvt = _clone(state);
-                var s = _ensureWTSState();
-                s.pvt = _clone(state);
+                if (state === null) { _resetPRiSM(); return; }     // New
+                if (!state || typeof state !== 'object') return;
+                _applyPRiSM(state);
             }
         });
 
@@ -1457,15 +1994,22 @@
         // Drop pending debounced autosaves so they can't overwrite loaded keys.
         try { if (G.WTS_pageAutosave && G.WTS_pageAutosave.cancel) G.WTS_pageAutosave.cancel(); } catch (e) {}
         var mods = payload.modules || {};
-        for (var k in mods) {
-            if (!Object.prototype.hasOwnProperty.call(mods, k)) continue;
-            if (!MODULES[k]) { skipped.push(k); continue; }
+        // A project with PRiSM state but no dataset must not inherit the
+        // dataset that is open now (it is re-read from the restored inputs).
+        if (_own(mods, 'prism') && !_own(mods, 'prism_dataset')) G.PRiSM_dataset = null;
+        // Apply in registry order (inputs → dataset → analysis → storage), not
+        // in the file's key order, so dependent modules see their inputs.
+        var order = listModules();
+        for (var k in mods) if (_own(mods, k) && order.indexOf(k) === -1) skipped.push(k);
+        for (var i = 0; i < order.length; i++) {
+            var key = order[i];
+            if (!_own(mods, key)) continue;
             try {
-                MODULES[k].write(mods[k]);
-                loaded.push(k);
+                MODULES[key].write(mods[key]);
+                loaded.push(key);
             } catch (e) {
-                _warn('module write failed for ' + k, e);
-                skipped.push(k);
+                _warn('module write failed for ' + key, e);
+                skipped.push(key);
             }
         }
         return { loaded: loaded, skipped: skipped, error: null };
@@ -1751,6 +2295,8 @@
     function loadFromObject(obj) {
         var res = _applyPayload(obj);
         if (res && !res.error && res.loaded.length) {
+            var touched = ['prism', 'prism_dataset', 'pvt', 'storage'].some(function (m) { return res.loaded.indexOf(m) !== -1; });
+            if (touched) _prismSync('project-load');
             _emit('wts:project-loaded', { loaded: res.loaded.slice(), skipped: res.skipped.slice() });
             _rerender();
         }
@@ -1775,6 +2321,7 @@
         try { G.WTS_state = {}; } catch (e) {}
         // In-memory row models that outlive a page render.
         try { if (Array.isArray(G._genMotors)) G._genMotors = []; } catch (e) {}
+        _prismSync('project-new');
         _setCurrent(null, null);
         _emit('wts:project-new', { cleared: cleared.slice() });
         _rerender();
@@ -2033,7 +2580,8 @@
 //     • Hydrate Management Summary   (per-node risk + MeOH duty)
 //     • Liquid Line / RO Sizing      (PROTECTED / UNDERSIZED)
 //     • Pipe Service Life            (limiting segment, remaining days)
-//     • PRiSM Type-Curve Fit         (model, params, R², notes)
+//     • PRiSM Well Test Analysis     (model, R², RMSE, AIC, k, kh, S, C,
+//                                     ΔpS, FE, parameters, interpretation)
 //
 // PUBLIC API
 //   window.WTS_quickReport = {
@@ -2109,7 +2657,7 @@
         { key: 'hydrate',    label: 'Hydrate Management' },
         { key: 'liquidline', label: 'Liquid Line / RO Sizing' },
         { key: 'pipelife',   label: 'Pipe Service Life' },
-        { key: 'prism',      label: 'PRiSM Type-Curve Fit' }
+        { key: 'prism',      label: 'PRiSM Well Test Analysis' }
     ];
 
     var SELECTED = null;   // null = all; otherwise array of keys
@@ -2144,9 +2692,67 @@
             case 'hydrate':    return !!(G.WTS_state && G.WTS_state.hydrate);
             case 'liquidline': return !!(G.WTS_state && G.WTS_state.liquidline);
             case 'pipelife':   return !!(G.WTS_state && G.WTS_state.pipelife);
-            case 'prism':      return !!(G.PRiSM_state && (G.PRiSM_state.lastFit || G.PRiSM_state.activeModel));
+            case 'prism': {
+                // A fit exists, or a model is chosen and data is loaded.
+                if (_prismFit()) return true;
+                var st = G.PRiSM_state, ds = G.PRiSM_dataset;
+                return !!(st && st.model && ds && ds.t && ds.t.length);
+            }
             default:           return false;
         }
+    }
+
+    // ─── PRiSM helpers ────────────────────────────────────────────
+    // Last fit through the C4 getter (normalised keys), else the raw state
+    // with both key spellings accepted (R2/r2, RMSE/rmse, AIC/aic, model/modelKey).
+    function _num() {
+        for (var i = 0; i < arguments.length; i++) if (_isNum(arguments[i])) return arguments[i];
+        return NaN;
+    }
+    function _prismFit() {
+        var f = null;
+        if (typeof G.PRiSM_getLastFit === 'function') {
+            try { f = G.PRiSM_getLastFit(); } catch (e) { f = null; }
+        }
+        if (!f && G.PRiSM_state && G.PRiSM_state.lastFit && typeof G.PRiSM_state.lastFit === 'object') f = G.PRiSM_state.lastFit;
+        if (!f) return null;
+        return {
+            modelKey: f.modelKey || f.model || (G.PRiSM_state && G.PRiSM_state.model) || null,
+            source: f.source || '', kind: f.kind || 'pressure',
+            r2: _num(f.r2, f.R2), rmse: _num(f.rmse, f.RMSE), aic: _num(f.aic, f.AIC),
+            ci95: f.ci95 || f.CI95 || {}, params: f.params || {}, phys: f.phys || {},
+            converged: f.converged, iterations: f.iterations, stale: !!f.stale
+        };
+    }
+    function _prismModelLabel(key) {
+        var e = key && G.PRiSM_MODELS ? G.PRiSM_MODELS[key] : null;
+        var lbl = (e && (e.label || e.name)) || '';
+        if (!lbl && key) lbl = String(key).replace(/([a-z])([A-Z])/g, '$1 $2').replace(/^./, function (c) { return c.toUpperCase(); });
+        return lbl;
+    }
+    // Key results: the report layer's summary when present, else computed
+    // here from lastFit.phys and the well inputs (field units).
+    function _prismResults(fit) {
+        if (typeof G.PRiSM_reportResults === 'function') {
+            try { var r = G.PRiSM_reportResults(); if (r) return r; } catch (e) { _warn('reportResults failed', e); }
+        }
+        var ph = (fit && fit.phys) || {};
+        var w = null;
+        if (typeof G.PRiSM_getWell === 'function') { try { w = G.PRiSM_getWell(); } catch (e) { w = null; } }
+        if (!w) {
+            var s = G.PRiSM_pvt || {}, c = s._computed || {};
+            w = { q: s.q, B: _num(s.Bo, c.B), mu: _num(s.mu_o, c.mu), h: s.h, rw: s.rw,
+                  pi: (s.provenance && s.provenance.p_res && s.provenance.p_res !== 'default') ? s.p_res : null, fluid: s.fluidType };
+        }
+        var k = _num(ph.k), kh = _num(ph.kh, k * w.h), S = _num(ph.S, fit && fit.params ? fit.params.S : NaN);
+        var out = { k: k, kh: kh, S: S, C: _num(ph.C), Cd: _num(ph.Cd, fit && fit.params ? fit.params.Cd : NaN), dpS: NaN, FE: NaN };
+        if (w.fluid !== 'gas') out.dpS = 141.2 * w.q * w.B * w.mu * S / kh;
+        var ds = G.PRiSM_dataset, pi = _num(ph.pi, w.pi);
+        if (_isNum(out.dpS) && _isNum(pi) && ds && ds.p && ds.p.length) {
+            var pwf = ds.p[ds.p.length - 1], dd = pi - pwf;
+            if (_isNum(pwf) && dd > 0) out.FE = (dd - out.dpS) / dd;
+        }
+        return out;
     }
 
     // ───────────────────────────────────────────────────────────────
@@ -2386,34 +2992,64 @@
             '<table class="qr-kv">' + rows + '</table>' + segTbl);
     }
 
-    // ─── PRiSM Type-Curve Fit ──────────────────────────────────────
+    // ─── PRiSM Well Test Analysis ──────────────────────────────────
+    var PRISM_SOURCES = { regression: 'Regression', automatch: 'Auto-match', match: 'Type-curve match', semilog: 'Straight line' };
+    function _sig(v, n) {
+        if (!_isNum(v)) return '—';
+        var a = Math.abs(v);
+        if (a === 0) return '0';
+        if (a >= 1e5 || a < 1e-3) return v.toExponential(n - 1).replace('e+', 'e');
+        return v.toFixed(Math.max(0, n - 1 - Math.floor(Math.log(a) / Math.LN10 + 1e-12)));
+    }
+    function _pm(ci, key, dp) {
+        var c = ci && ci[key];
+        if (!c || c.length !== 2 || !_isNum(c[0]) || !_isNum(c[1])) return '';
+        return ' ± ' + (Math.abs(c[1] - c[0]) / 2).toFixed(dp);
+    }
     function _renderPRiSM() {
-        if (!_hasState('prism')) return _placeholder('PRiSM Type-Curve Fit');
+        if (!_hasState('prism')) return _placeholder('PRiSM Well Test Analysis');
         var ps = G.PRiSM_state || {};
-        var fit = ps.lastFit || {};
+        var fit = _prismFit();
+        var key = (fit && fit.modelKey) || ps.model || '';
+        var res = fit ? (_prismResults(fit) || {}) : {};
         var rows = '';
-        rows += _row('Active Model', ps.activeModel || fit.model || '—');
-        rows += _row('R²', _fmt(fit.r2 || fit.R2, 4));
-        rows += _row('RMSE', _fmt(fit.rmse, 3));
-        rows += _row('AIC',  _fmt(fit.aic, 2));
-        var params = fit.params || ps.params || {};
+        rows += _row('Model', key ? (res.modelLabel || _prismModelLabel(key)) + ' (' + key + ')' : '—');
+        if (!fit) {
+            rows += _row('Result', 'No fit yet — model chosen and data loaded');
+            return _section('PRiSM Well Test Analysis', '<table class="qr-kv">' + rows + '</table>');
+        }
+        var ci = res.ci || fit.ci95 || {};
+        rows += _row('Result from', PRISM_SOURCES[fit.source] || fit.source || '—');
+        rows += _row('R²', _isNum(fit.r2) ? fit.r2.toFixed(5) : '—');
+        rows += _row('RMSE', _sig(fit.rmse, 3), fit.kind === 'rate' ? 'rate units' : 'psi');
+        rows += _row('AIC', _isNum(fit.aic) ? fit.aic.toFixed(1) : '—');
+        if (fit.kind !== 'rate') {
+            rows += _row('Permeability k', _isNum(res.k) ? _sig(res.k, 3) + _pm(ci, 'k', res.k >= 10 ? 1 : 2) : '—', 'md');
+            rows += _row('Permeability-thickness kh', _sig(res.kh, 4), 'md·ft');
+            rows += _row('Skin S', _isNum(res.S) ? res.S.toFixed(2) + _pm(ci, 'S', 2) : '—');
+            rows += _row('Wellbore storage C', _sig(res.C, 3), 'bbl/psi');
+            rows += _row('Pressure drop due to skin ΔpS', _sig(res.dpS, 3), 'psi');
+            rows += _row('Flow efficiency FE', _sig(res.FE, 3));
+        }
+        if (fit.stale) rows += _row('Note', 'The fit was made on different data or a different model — re-run it.');
+        var params = fit.params || {};
         var paramRows = '';
         var paramKeys = [];
-        for (var k in params) if (Object.prototype.hasOwnProperty.call(params, k)) paramKeys.push(k);
+        for (var k in params) if (Object.prototype.hasOwnProperty.call(params, k) && k.indexOf('__') !== 0) paramKeys.push(k);
         if (paramKeys.length) {
-            paramRows = '<h3 class="qr-h3">Fitted Parameters</h3>' +
+            paramRows = '<h3 class="qr-h3">Model Parameters</h3>' +
                 '<table class="qr-table"><thead><tr><th>Parameter</th><th>Value</th></tr></thead><tbody>';
             for (var pi = 0; pi < paramKeys.length; pi++) {
                 var pk = paramKeys[pi];
                 var pv = params[pk];
                 paramRows += '<tr><td>' + _esc(pk) + '</td><td>' +
-                             (_isNum(pv) ? _fmt(pv, 4) : _esc(pv)) + '</td></tr>';
+                             (_isNum(pv) ? _fmt(pv, 4) : _esc(Array.isArray(pv) ? '(' + pv.length + ' items)' : pv)) + '</td></tr>';
             }
             paramRows += '</tbody></table>';
         }
-        var interp = (ps.interp && ps.interp.narrative) ?
-            ('<p class="qr-rationale">' + _esc(ps.interp.narrative) + '</p>') : '';
-        return _section('PRiSM Type-Curve Fit',
+        var narrative = (ps.interp && ps.interp.narrative) || '';
+        var interp = narrative ? ('<p class="qr-rationale">' + _esc(narrative) + '</p>') : '';
+        return _section('PRiSM Well Test Analysis',
             '<table class="qr-kv">' + rows + '</table>' + paramRows + interp);
     }
 

@@ -25,7 +25,8 @@ const FILES = [
 
 const ROOT = __dirname;
 
-function stripSelfTest(src, fileLabel) {
+function stripSelfTest(src, fileLabel, logger) {
+  const log = logger || console;
   const lines = src.split(/\r?\n/);
   // Find the LAST self-test marker (some files have multiple "SELF-TEST"
   // mentions in earlier comments — the executable one is always last).
@@ -39,7 +40,7 @@ function stripSelfTest(src, fileLabel) {
     }
   }
   if (selfTestStart === -1) {
-    console.warn(`[WARN] ${fileLabel}: no self-test marker found, leaving unchanged`);
+    log.warn(`[WARN] ${fileLabel}: no self-test marker found, leaving unchanged`);
     return src;
   }
   // Walk back over the comment header (=== separator lines and blank lines)
@@ -60,7 +61,7 @@ function stripSelfTest(src, fileLabel) {
     }
   }
   if (outerClose === -1) {
-    console.warn(`[WARN] ${fileLabel}: no outer IIFE close found`);
+    log.warn(`[WARN] ${fileLabel}: no outer IIFE close found`);
   }
   const head = lines.slice(0, cutAt);
   // Re-append the closing `})();` of the OUTER IIFE.
@@ -69,7 +70,7 @@ function stripSelfTest(src, fileLabel) {
   head.push('');
   const before = lines.length;
   const after = head.length;
-  console.log(`[strip] ${fileLabel}: ${before} → ${after} lines (cut self-test starting at line ${selfTestStart + 1})`);
+  log.log(`[strip] ${fileLabel}: ${before} → ${after} lines (cut self-test starting at line ${selfTestStart + 1})`);
   return head.join('\n');
 }
 
@@ -82,23 +83,39 @@ const banner = (label) =>
 const footer = (label) =>
   '\n// ─── END ' + label + ' ─────────────────────────────────────────────\n\n';
 
-let combined =
-  '\n// ═══════════════════════════════════════════════════════════════════════\n' +
-  '// PRiSM Phase 3 + 4 expansion — auto-injected from prism-build/\n' +
-  '//   • 04-ui-wiring         (Tabs 2-7 render fns + state seed + plot registry)\n' +
-  '//   • 05-regression        (Levenberg-Marquardt + bootstrap + sandface conv)\n' +
-  '//   • 06-decline-and-specialised (Arps/Duong/SEPD/Fetkovich + 3 PTA models)\n' +
-  '//   • 07-data-enhancements (multi-format file parser + filters + col-mapper)\n' +
-  '// ═══════════════════════════════════════════════════════════════════════\n';
-
-for (const f of FILES) {
-  const p = path.join(ROOT, f);
-  const src = fs.readFileSync(p, 'utf8');
-  const stripped = stripSelfTest(src, f);
-  const label = f.replace(/\.js$/, '');
-  combined += banner(label) + stripped + footer(label);
+// opts.read(fileName) → source text, or null to skip the file
+//   (default: read prism-build/<fileName>; a missing file throws, as before).
+// opts.log → { log, warn } (default: console).
+function build(opts) {
+  opts = opts || {};
+  const log = opts.log || console;
+  const read = opts.read || ((f) => fs.readFileSync(path.join(ROOT, f), 'utf8'));
+  let combined =
+    '\n// ═══════════════════════════════════════════════════════════════════════\n' +
+    '// PRiSM Phase 3 + 4 expansion — auto-injected from prism-build/\n' +
+    '//   • 04-ui-wiring         (Tabs 2-7 render fns + state seed + plot registry)\n' +
+    '//   • 05-regression        (Levenberg-Marquardt + bootstrap + sandface conv)\n' +
+    '//   • 06-decline-and-specialised (Arps/Duong/SEPD/Fetkovich + 3 PTA models)\n' +
+    '//   • 07-data-enhancements (multi-format file parser + filters + col-mapper)\n' +
+    '// ═══════════════════════════════════════════════════════════════════════\n';
+  for (const f of FILES) {
+    const src = read(f);
+    if (src == null) { log.warn(`[WARN] ${f}: not available — skipped`); continue; }
+    const stripped = stripSelfTest(src, f, log);
+    const label = f.replace(/\.js$/, '');
+    combined += banner(label) + stripped + footer(label);
+  }
+  return combined;
 }
 
-const outPath = path.join(ROOT, 'combined-phase3-4.js');
-fs.writeFileSync(outPath, combined, 'utf8');
-console.log(`\n[ok] wrote ${outPath} (${combined.split('\n').length} lines)`);
+const OUT = path.join(ROOT, 'combined-phase3-4.js');
+
+function main() {
+  const combined = build();
+  const outPath = OUT;
+  fs.writeFileSync(outPath, combined, 'utf8');
+  console.log(`\n[ok] wrote ${outPath} (${combined.split('\n').length} lines)`);
+}
+
+module.exports = { FILES, OUT, build, stripSelfTest, main };
+if (require.main === module) main();

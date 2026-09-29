@@ -6,15 +6,26 @@
 // ════════════════════════════════════════════════════════════════════
 //
 // PUBLIC API (all on window.*)
-//   window.PRiSM_syntheticPLT(modelKey, params, t, q_total)
+//   window.PRiSM_syntheticPLT(modelKey, params, t, q_total, opts?)
 //                                         → { layers, totalRate, cumulative,
 //                                             diagnostics }
-//   window.PRiSM_renderPLTPanel(container) → void
-//   window.PRiSM_inverseSim(modelKey, params, t, p)
+//        opts.khTotal  — scale layer kh to the fitted kh (md·ft)
+//        opts.tdFactor — td = tdFactor·t for the cross-flow transition
+//   window.PRiSM_renderPLTPanel(container, opts?) → void
+//   window.PRiSM_inverseSim(modelKey, params, t, p, opts?)
 //                                         → { q, converged, iterations,
-//                                             rmse, diagnostics }
-//   window.PRiSM_renderInverseSimPanel(container) → void
-//   window.PRiSM_unitRateResponse(modelKey, params, tEval) → number[]
+//                                             rmse, pRef, pRefSource, ... }
+//        opts.pRef / pRefSource  reference (initial) pressure; default the
+//                                well's pi (C1), else extrapolated to tStart
+//        opts.tStart             time the flow started (default 0 when the
+//                                data start near 0)
+//        opts.injector           Δp = p − pRef (injection) instead of pRef − p
+//        opts.k                  permeability override (md)
+//   window.PRiSM_inverseSimDataset(ds?, opts?) → same, inputs from C1/C2/C4
+//   window.PRiSM_renderInverseSimPanel(container, opts?) → void
+//   window.PRiSM_renderPLTInversePanel(container, opts?) → Tab 6 panel
+//        "PLT & inverse simulation" (C7)
+//   window.PRiSM_unitRateResponse(modelKey, params, tEval, opts?) → number[]
 //
 // CONVENTIONS
 //   • Single outer IIFE, 'use strict'.
@@ -23,18 +34,18 @@
 //   • Defensive: degenerate inputs return a clearly-flagged result instead
 //     of throwing. Inverse sim returns {converged:false, ...} on failure
 //     rather than throwing.
-//   • PVT-aware: if window.PRiSM_pvt._computed is filled, the unit-rate
-//     response is dimensionalised to real pressure (psi per STB/d) so the
-//     recovered q from inverse sim is in real units (STB/d or MSCF/d).
-//     Otherwise the result is in dimensionless td/pd.
+//   • Real units when possible: with the well inputs (C1: μ, B, ct, h, φ, rw)
+//     and a fitted permeability (C4: lastFit.phys.k, else phys.kh / h) the
+//     unit-rate response is in psi per STB/d (Mscf/d gas) and the recovered
+//     q is in rate units. Otherwise it falls back to dimensionless td/pd.
 //
 // FOUNDATION PRIMITIVES IN SCOPE
 //   PRiSM_MODELS[modelKey].pd(td, params)            forward pressure
 //   PRiSM_logspace(min, max, n)                      log spaced grid
 //   PRiSM_compute_bourdet(t, dp, L)                  Bourdet derivative
-//   PRiSM_lm(modelFn, data, p0, bounds, freeze, opts)  LM solver
-//   PRiSM_state.lastFit / .model / .params           live UI state
-//   PRiSM_pvt._computed                              PVT block (Layer 16)
+//   PRiSM_getWell() (C1) / PRiSM_getAnalysisData() (C2) / PRiSM_getLastFit() (C4)
+//   PRiSM_state.lastFit / .model / .params           fallbacks
+//   PRiSM_pvt                                        fallback well inputs
 //   PRiSM_dataset                                    active dataset {t,p,q}
 //
 // REFERENCES
@@ -144,19 +155,129 @@ function _model(modelKey) {
     return reg[modelKey] || null;
 }
 
-// Get current PVT computed state (or null).
-function _pvtComputed() {
-    var pvt = G.PRiSM_pvt;
-    if (!pvt || !pvt._computed) return null;
-    var c = pvt._computed;
-    if (!_isNum(c.ct) || !_isNum(c.mu) || !_isNum(c.B)) return null;
-    if (!_isNum(pvt.h) || !_isNum(pvt.rw) || pvt.h <= 0 || pvt.rw <= 0) return null;
+// ───────────────────────────────────────────────────────────────
+// Shared-contract adapters (C1 well, C2 analysis data, C4 fit, C7
+// panels). Every cross-module call is guarded with a local fallback.
+// ───────────────────────────────────────────────────────────────
+function _num(v) { return _isNum(v) ? v : null; }
+
+// C1 well & fluid inputs → { mu, B, ct, h, phi, rw, q, pi, fluid, testType }.
+function _wellDims() {
+    var w = null;
+    if (typeof G.PRiSM_getWell === 'function') {
+        try { w = G.PRiSM_getWell(); } catch (e) { w = null; }
+    }
+    if (w && typeof w === 'object') {
+        return {
+            mu: _num(w.mu), B: _num(w.B), ct: _num(w.ct), h: _num(w.h), phi: _num(w.phi),
+            rw: _num(w.rw), q: _num(w.q), pi: _num(w.pi), fluid: w.fluid || 'oil',
+            testType: w.testType || 'auto', source: 'well'
+        };
+    }
+    var pvt = G.PRiSM_pvt || {}, c = pvt._computed || {};
+    var fluid = pvt.fluidType || 'oil';
+    var B  = _num(fluid === 'gas' ? pvt.Bg : (fluid === 'water' ? pvt.Bw : pvt.Bo));
+    var mu = _num(fluid === 'gas' ? pvt.mu_g : (fluid === 'water' ? pvt.mu_w : pvt.mu_o));
+    var ct = _num(pvt.ct);
+    if (B === null) B = _num(c.B);
+    if (mu === null) mu = _num(c.mu);
+    if (ct === null) ct = _num(c.ct);
+    var prov = pvt.provenance || {};
+    var piOk = (prov.p_res === 'user' || prov.p_res === 'sample' || prov.p_res === 'deconvolution');
     return {
-        h:   pvt.h, rw: pvt.rw, phi: pvt.phi,
-        ct:  c.ct, mu: c.mu,   B:   c.B,
-        q:   pvt.q,
-        fluidType: pvt.fluidType
+        mu: mu, B: B, ct: ct, h: _num(pvt.h), phi: _num(pvt.phi), rw: _num(pvt.rw),
+        q: _num(pvt.q), pi: piOk ? _num(pvt.p_res) : null, fluid: fluid,
+        testType: pvt.testType || 'auto', source: 'pvt'
     };
+}
+function _dimsOK(w) {
+    return !!(w && w.mu > 0 && w.B > 0 && w.ct > 0 && w.h > 0 && w.phi > 0 && w.rw > 0);
+}
+function _rateUnit(w) {
+    var f = w && w.fluid;
+    return f === 'gas' ? 'Mscf/d' : (f === 'water' ? 'BWPD' : 'STB/d');
+}
+
+// C4 last fit (normalised copy when the setter/getter exists).
+function _getLastFit() {
+    var lf = null;
+    if (typeof G.PRiSM_getLastFit === 'function') {
+        try { lf = G.PRiSM_getLastFit(); } catch (e) { lf = null; }
+    }
+    if (!lf) {
+        var st = G.PRiSM_state;
+        lf = (st && st.lastFit && typeof st.lastFit === 'object') ? st.lastFit : null;
+    }
+    return lf;
+}
+
+// Fitted model + physical results: { modelKey, params, phys, k, kh, kSource }.
+// k comes from lastFit.phys.k, else phys.kh / h (legacy k_md / kh_md_ft last).
+function _fitInfo(w) {
+    var st = G.PRiSM_state || {};
+    var lf = _getLastFit();
+    var modelKey = (lf && (lf.modelKey || lf.model)) || st.model || null;
+    var params = (lf && lf.params) || st.params || {};
+    var phys = (lf && lf.phys && typeof lf.phys === 'object') ? lf.phys : null;
+    var h = w ? w.h : null;
+    var k = null, kh = null, kSource = null;
+    if (phys) {
+        if (_num(phys.k) > 0) { k = phys.k; kSource = 'fit'; }
+        if (_num(phys.kh) > 0) kh = phys.kh;
+        if (k === null && kh !== null && h > 0) { k = kh / h; kSource = 'fit (kh / h)'; }
+    }
+    if (k === null && lf) {
+        if (_num(lf.k_md) > 0) { k = lf.k_md; kSource = 'fit'; }
+        else if (_num(lf.kh_md_ft) > 0 && h > 0) { k = lf.kh_md_ft / h; kSource = 'fit (kh / h)'; }
+    }
+    if (kh === null && k !== null && h > 0) kh = k * h;
+    return { modelKey: modelKey, params: params, phys: phys, k: k, kh: kh, kSource: kSource,
+             source: lf ? (lf.source || 'fit') : null };
+}
+
+// C2 analysis data (test type, reference pressure, periods).
+function _getAnalysisData(ds) {
+    if (typeof G.PRiSM_getAnalysisData !== 'function') return null;
+    try {
+        var a = G.PRiSM_getAnalysisData(ds);
+        return (a && a.ok !== false) ? a : null;
+    } catch (e) { return null; }
+}
+
+// C7 — tab panel registry (merge; replace an entry with the same id).
+function _registerPanel(n, spec) {
+    if (typeof G.PRiSM_registerTabPanel === 'function') {
+        try { G.PRiSM_registerTabPanel(n, spec); return; } catch (e) { /* fall through */ }
+    }
+    G.PRiSM_tabPanels = G.PRiSM_tabPanels || {};
+    var list = G.PRiSM_tabPanels[n] = G.PRiSM_tabPanels[n] || [];
+    for (var i = 0; i < list.length; i++) {
+        if (list[i] && list[i].id === spec.id) { list[i] = spec; return; }
+    }
+    list.push(spec);
+}
+
+// Dimensionless time per hour for the fitted model: 0.0002637·k/(φμct·Lref²),
+// Lref = rw, or xf / Lh when the model is referenced to those (C3 metadata).
+function _tdFactor(modelKey, w, fit) {
+    if (!_dimsOK(w) || !(fit && fit.k > 0)) return null;
+    var Lref = w.rw;
+    var spec = _model(modelKey);
+    var ref = spec && spec.refLength;
+    if (fit.phys && (ref === 'xf' || ref === 'Lh')) {
+        var L = _num(fit.phys[ref]);
+        if (L > 0) Lref = L;
+    }
+    return 0.0002637 * fit.k / (w.phi * w.mu * w.ct * Lref * Lref);
+}
+
+// Production start when nothing better is known: test data normally count
+// hours from the start of flow, so a first sample near zero means tStart = 0.
+function _autoStart(t) {
+    var n = t.length;
+    if (!n) return 0;
+    var t0 = t[0], span = t[n - 1] - t0;
+    return (t0 > 0 && span > 0 && t0 <= 0.1 * span) ? 0 : t0;
 }
 
 // Solve a small dense linear system A·x = b in-place via Gaussian
@@ -234,9 +355,9 @@ function _layersFromNoXF(params) {
     }
     if (sum <= 0) sum = 1;
     for (var m = 0; m < N; m++) khFracs[m] = khFracs[m] / sum;
-    // kh per layer = perm × thickness × kh-fraction (proxy units).
-    var pvt = _pvtComputed();
-    var hTot = pvt ? pvt.h : 1.0;
+    // kh per layer = perm × kh-fraction (relative units; PRiSM_syntheticPLT
+    // scales them to the fitted kh when opts.khTotal is given).
+    var hTot = 1.0;
     var khArr = new Array(N);
     for (var n2 = 0; n2 < N; n2++) {
         // Use perm ratio × kh-fraction × total-h as a relative kh number.
@@ -338,7 +459,7 @@ function _xfFractionAt(td, layers) {
 // ════════════════════════════════════════════════════════════════════
 
 /**
- * PRiSM_syntheticPLT(modelKey, params, t, q_total)
+ * PRiSM_syntheticPLT(modelKey, params, t, q_total, opts)
  *
  * Reconstruct per-layer rate contribution as a function of time.
  *
@@ -347,9 +468,14 @@ function _xfFractionAt(td, layers) {
  * @param {object}   params     fitted parameter set
  * @param {number[]} t          time array (hours, monotonically increasing)
  * @param {number[]} q_total    total wellbore rate at each t (same length)
+ * @param {object}   [opts]     { khTotal: fitted kh (md·ft) → layer kh in md·ft,
+ *                                tdFactor: td per hour for the cross-flow
+ *                                transition (default: t is used as td) }
  * @return {object}             { layers, totalRate, cumulative, diagnostics }
  */
-G.PRiSM_syntheticPLT = function PRiSM_syntheticPLT(modelKey, params, t, q_total) {
+G.PRiSM_syntheticPLT = function PRiSM_syntheticPLT(modelKey, params, t, q_total, opts) {
+    opts = opts || {};
+    var tdF = (_isNum(opts.tdFactor) && opts.tdFactor > 0) ? opts.tdFactor : 1;
     if (!Array.isArray(t) || !Array.isArray(q_total)) {
         return _degeneratePLT(modelKey, 'invalid t / q_total arrays');
     }
@@ -408,7 +534,7 @@ G.PRiSM_syntheticPLT = function PRiSM_syntheticPLT(modelKey, params, t, q_total)
             fractionsT.push(new Array(t.length));
         }
         for (var ix = 0; ix < t.length; ix++) {
-            var f = _xfFractionAt(t[ix], lyrX);
+            var f = _xfFractionAt(tdF * t[ix], lyrX);
             // Renormalise (defensive — interpolation should already sum to 1).
             var fSum = 0;
             for (var fk = 0; fk < nLayers; fk++) fSum += f[fk];
@@ -446,7 +572,7 @@ G.PRiSM_syntheticPLT = function PRiSM_syntheticPLT(modelKey, params, t, q_total)
             fractionsT.push(new Array(t.length));
         }
         for (var i2 = 0; i2 < t.length; i2++) {
-            var f2 = _xfFractionAt(t[i2], lyr2);
+            var f2 = _xfFractionAt(tdF * t[i2], lyr2);
             var f2S = f2[0] + f2[1];
             if (f2S <= 0) f2S = 1;
             for (var lk = 0; lk < 2; lk++) {
@@ -497,6 +623,14 @@ G.PRiSM_syntheticPLT = function PRiSM_syntheticPLT(modelKey, params, t, q_total)
     // the supplied time span).
     var totalKh = 0;
     for (var tk = 0; tk < nLayers; tk++) totalKh += khArr[tk];
+    // Fitted kh → per-layer kh in md·ft (same split, real units).
+    var khUnits = 'relative';
+    if (_isNum(opts.khTotal) && opts.khTotal > 0 && totalKh > 0) {
+        var khScale = opts.khTotal / totalKh;
+        for (var tk2 = 0; tk2 < nLayers; tk2++) khArr[tk2] *= khScale;
+        totalKh = opts.khTotal;
+        khUnits = 'md·ft';
+    }
     var layerObjs = [];
     for (var iL = 0; iL < nLayers; iL++) {
         // Mean rate fraction over the dataset (used as the headline number).
@@ -540,6 +674,8 @@ G.PRiSM_syntheticPLT = function PRiSM_syntheticPLT(modelKey, params, t, q_total)
             modelType:  modelType,
             nLayers:    nLayers,
             totalKh:    totalKh,
+            khUnits:    khUnits,
+            tdFactor:   tdF,
             rateCheck:  rateCheck,
             notes:      notes
         }
@@ -579,178 +715,162 @@ function _degeneratePLT(modelKey, reason) {
 
 
 // ════════════════════════════════════════════════════════════════════
-// SECTION 3 — Convolution matrix builder + unit-rate response
+// SECTION 3 — Unit-rate response + convolution matrix
 // ════════════════════════════════════════════════════════════════════
 //
-// Forward simulation in a constant-rate test:
-//   Δp(t) = q · g_unit(t)             where g_unit(t) = pwd(td(t)) × kh-conv
-// Multi-rate convolution (Duhamel superposition):
-//   Δp(t_n) = Σ_{i=1}^{n} (q_i - q_{i-1}) · g_unit(t_n - t_{i-1})
-// In matrix form for a strictly piecewise-constant rate q with q_0 := 0:
-//   p(t_n) - p_initial = Σ_{i=1}^{n} g_unit(t_n - t_{i-1}) · (q_i - q_{i-1})
-// or (after re-arranging into a direct rate decomposition):
-//   p(t_n) - p_initial = Σ_{i=1}^{n} A_{n,i} · q_i
-//   where A_{n,i} = g_unit(t_n - t_{i-1}) - g_unit(t_n - t_i)
-//                                          (with g_unit(0) := 0 by convention)
-// A is lower-triangular.
+// Constant-rate response: Δp(t) = q · g(t), g = unit-rate response
+//   g(t) = 141.2·μ·B/(k·h) · pd(td),  td = 0.0002637·k·t/(φ·μ·ct·Lref²)
+// (psi per STB/d, or per Mscf/d with B in RB/Mscf — liquid-equivalent Δp).
+//
+// Piecewise-constant rates, one rate per sample interval (backward form):
+//   q_k acts on (t_{k−1}, t_k],  t_{−1} = tStart (start of flow)
+//   Δp(t_n) = Σ_{k=0..n} q_k · [ g(t_n − t_{k−1}) − g(t_n − t_k) ],  g(0) = 0
+// so A is lower-triangular with A[n][n] = g(t_n − t_{n−1}) > 0 and every
+// sample carries its own rate. Δp is measured from the reference pressure
+// (pi), never from the first sample.
 
 /**
- * PRiSM_unitRateResponse(modelKey, params, tEval) → number[]
+ * PRiSM_unitRateResponse(modelKey, params, tEval, opts) → number[]
  *
- * Compute the dimensional unit-rate pressure response g_unit(t) = pd(td(t))
- * scaled by the dimensional factor 141.2·μ·B/(k·h) (psi per STB/d) when
- * PVT is available, or returns the dimensionless pd(td(t)) when not.
+ * Dimensional unit-rate pressure response (psi per rate unit) when the well
+ * inputs (C1) and a permeability are available — opts.k, else the fit
+ * (C4: lastFit.phys.k or phys.kh / h), else legacy params.k_md — otherwise
+ * the dimensionless pd(td) with td = t.
  *
  * @param {string}   modelKey  registry key
- * @param {object}   params    parameter set
+ * @param {object}   params    dimensionless model parameters
  * @param {number[]} tEval     time grid (hours)
+ * @param {object}   [opts]    { k, info: {} (filled with dimensional, k, kSource, tdFactor, A) }
  * @return {number[]}          unit-rate response, same length as tEval
  */
-G.PRiSM_unitRateResponse = function PRiSM_unitRateResponse(modelKey, params, tEval) {
+G.PRiSM_unitRateResponse = function PRiSM_unitRateResponse(modelKey, params, tEval, opts) {
     if (!Array.isArray(tEval)) throw new Error('PRiSM_unitRateResponse: tEval must be an array');
+    opts = opts || {};
     var spec = _model(modelKey);
     if (!spec || typeof spec.pd !== 'function') {
         throw new Error('PRiSM_unitRateResponse: unknown model "' + modelKey + '"');
     }
-    var pvt = _pvtComputed();
-    // Dimensionless: td = 0.000264 · k · t / (φ · μ · ct · rw²)
-    // We need k to non-dimensionalise. Try param.k_md → state.lastFit → fallback.
-    var k_md = null;
-    if (params && _isNum(params.k_md)) k_md = params.k_md;
-    var st = G.PRiSM_state;
-    if (!_isNum(k_md) && st && st.lastFit && _isNum(st.lastFit.k_md)) k_md = st.lastFit.k_md;
-    if (!_isNum(k_md) && st && st.lastFit && _isNum(st.lastFit.kh_md_ft) && pvt) {
-        k_md = st.lastFit.kh_md_ft / pvt.h;
-    }
-    var dimensional = !!pvt && _isNum(k_md) && k_md > 0;
-    // td factor (1/hr): td = factor · t   (when t is in hours)
-    var tdFactor;
-    if (dimensional) {
-        tdFactor = 0.000264 * k_md / (pvt.phi * pvt.mu * pvt.ct * pvt.rw * pvt.rw);
-    } else {
-        // Use t directly as td (caller-supplied dimensionless time grid).
-        tdFactor = 1;
-    }
-    // Build td array, skipping non-positive entries (we'll pad with 0).
-    var td = new Array(tEval.length);
-    for (var i = 0; i < tEval.length; i++) {
-        var tv = tEval[i];
-        if (!_isNum(tv) || tv <= 0) {
-            td[i] = null;
-        } else {
-            td[i] = tdFactor * tv;
-        }
-    }
+    var w = _wellDims();
+    var fit = _fitInfo(w);
+    var k = null, kSource = null;
+    if (_num(opts.k) > 0) { k = opts.k; kSource = 'given'; }
+    else if (params && _num(params.k_md) > 0) { k = params.k_md; kSource = 'params'; }
+    else if (fit.k > 0) { k = fit.k; kSource = fit.kSource; }
+    var fitK = { k: k, phys: fit.phys };
+    var tdF = _tdFactor(modelKey, w, fitK);
+    var dimensional = tdF !== null;
+    var A = dimensional ? 141.2 * w.mu * w.B / (k * w.h) : 1;
+    if (!dimensional) tdF = 1;                // caller-supplied dimensionless grid
+    var P = {};
+    for (var pk in (params || {})) if (Object.prototype.hasOwnProperty.call(params, pk)) P[pk] = params[pk];
+    if (dimensional && P.__h_rw == null) P.__h_rw = w.h / w.rw;   // C3 injected geometry
+
     // Evaluate pd at every td > 0 in one pass (some models accept arrays).
+    var validIdx = [], validTd = [];
+    for (var j = 0; j < tEval.length; j++) {
+        var tv = tEval[j];
+        if (_isNum(tv) && tv > 0) { validIdx.push(j); validTd.push(tdF * tv); }
+    }
+    var out = new Array(tEval.length);
+    for (var z = 0; z < tEval.length; z++) out[z] = 0;
+    if (opts.info && typeof opts.info === 'object') {
+        opts.info.dimensional = dimensional; opts.info.k = k; opts.info.kSource = kSource;
+        opts.info.tdFactor = tdF; opts.info.A = A; opts.info.rateUnit = dimensional ? _rateUnit(w) : null;
+    }
+    if (!validTd.length) return out;
     var pdArr;
-    var validIdx = [];
-    var validTd = [];
-    for (var j = 0; j < td.length; j++) {
-        if (td[j] !== null) {
-            validIdx.push(j);
-            validTd.push(td[j]);
-        }
-    }
-    if (validTd.length === 0) {
-        return new Array(tEval.length).fill(0);
-    }
     try {
-        pdArr = spec.pd(validTd, params);
-        if (!Array.isArray(pdArr)) {
-            // If single-value returned, wrap.
-            pdArr = [pdArr];
-        }
+        pdArr = spec.pd(validTd, P);
+        if (!Array.isArray(pdArr) && !(pdArr && typeof pdArr.length === 'number')) pdArr = [pdArr];
     } catch (e) {
-        // Fallback: evaluate point-by-point so a single bad td doesn't kill
-        // the whole batch.
+        // Point-by-point so a single bad td doesn't kill the whole batch.
         pdArr = new Array(validTd.length);
         for (var p = 0; p < validTd.length; p++) {
-            try { pdArr[p] = spec.pd([validTd[p]], params)[0]; }
+            try { pdArr[p] = spec.pd([validTd[p]], P)[0]; }
             catch (e2) { pdArr[p] = NaN; }
         }
     }
-    // Reassemble a same-length output, dimensionalising.
-    var out = new Array(tEval.length);
-    for (var z = 0; z < tEval.length; z++) out[z] = 0;
-    var dimFactor = 1;
-    if (dimensional) {
-        // psi per STB/d at unit rate q=1: 141.2·μ·B / (k·h)
-        dimFactor = 141.2 * pvt.mu * pvt.B / (k_md * pvt.h);
+    // Very small td can make the Laplace inversion fail (NaN): extend the
+    // first finite value linearly to zero (storage-dominated start).
+    var firstK = -1;
+    for (var f0 = 0; f0 < validTd.length; f0++) {
+        if (_isNum(pdArr[f0]) && pdArr[f0] > 0) { firstK = f0; break; }
     }
     for (var v = 0; v < validIdx.length; v++) {
-        var idx = validIdx[v];
         var pdv = pdArr[v];
-        if (!_isNum(pdv)) pdv = 0;
-        out[idx] = dimFactor * pdv;
+        if (!_isNum(pdv)) {
+            pdv = (firstK >= 0 && validTd[v] < validTd[firstK])
+                ? pdArr[firstK] * validTd[v] / validTd[firstK] : 0;
+        }
+        out[validIdx[v]] = A * pdv;
     }
     return out;
 };
 
-// Build the lower-triangular convolution matrix A[n][i] from the unit-rate
-// response g_unit:
-//   A[n][i] = g_unit(t_n - t_{i-1}) - g_unit(t_n - t_i)
-//   with g_unit(0) := 0.
-// Returns { A: Array<Array<number>>, gUnit: number[] } where gUnit is the
-// raw unit-rate response evaluated at the difference times.
-function _buildConvMatrix(modelKey, params, t) {
+// Unit response on a log grid spanning [tauMin, tauMax], interpolated
+// log-log (exact for power laws) → gAt(τ), with g(τ ≤ 0) = 0 and a linear
+// start below the grid.
+function _responseInterp(modelKey, params, tauMin, tauMax, uopts) {
+    var lo = Math.log10(Math.max(tauMin * 0.999, 1e-9));
+    var hi = Math.log10(Math.max(tauMax * 1.001, tauMin * 1.01));
+    var n = Math.max(40, Math.min(400, Math.ceil(30 * (hi - lo)) + 1));
+    var grid = new Array(n);
+    for (var i = 0; i < n; i++) grid[i] = Math.pow(10, lo + (hi - lo) * i / (n - 1));
+    var g = G.PRiSM_unitRateResponse(modelKey, params, grid, uopts);
+    var lnT0 = Math.log(grid[0]), dLn = (Math.log(grid[n - 1]) - lnT0) / (n - 1);
+    var lnG = g.map(function (v) { return v > 0 ? Math.log(v) : NaN; });
+    return function gAt(tau) {
+        if (!(tau > 0)) return 0;
+        if (tau <= grid[0]) return g[0] * tau / grid[0];
+        if (tau >= grid[n - 1]) return g[n - 1];
+        var u = (Math.log(tau) - lnT0) / dLn;
+        var j = Math.floor(u);
+        if (j < 0) j = 0;
+        if (j > n - 2) j = n - 2;
+        var f = u - j;
+        if (_isNum(lnG[j]) && _isNum(lnG[j + 1])) return Math.exp(lnG[j] + f * (lnG[j + 1] - lnG[j]));
+        return g[j] + f * (g[j + 1] - g[j]);
+    };
+}
+
+// Lower-triangular convolution matrix (backward form, see the header).
+function _buildConvMatrix(modelKey, params, t, tStart, uopts) {
     var n = t.length;
-    if (n === 0) return { A: [], gUnit: [] };
-    // We need g_unit at all unique time-difference values (t_n - t_{i-1}).
-    // For an arbitrary irregular grid, the cheapest approach is to compute
-    // the full upper-triangular set of (t_n - t_i) values and evaluate
-    // g_unit at the union. We just compute A directly: for each row n,
-    // we evaluate g_unit at (t_n - t_0), (t_n - t_1), ..., (t_n - t_{n-1}).
-    // This is O(n^2) evaluations of the model. For n up to a few hundred
-    // this is fine (each pd call is a Stehfest sum of 12 terms).
-    var A = new Array(n);
-    for (var i = 0; i < n; i++) A[i] = new Array(n).fill(0);
-    // Pre-compute g_unit at each unique difference. We collect them per row
-    // and do a batched call. Simpler: evaluate row-by-row.
-    for (var nRow = 0; nRow < n; nRow++) {
-        // Build array of differences t_nRow - t_k for k = 0..nRow.
-        var diffs = new Array(nRow + 1);
-        var diffIdx = new Array(nRow + 1);  // map back to original "lag" index
-        for (var k = 0; k <= nRow; k++) {
-            diffs[k] = t[nRow] - t[k];
-            diffIdx[k] = k;
-        }
-        // diffs[nRow] = 0 (last entry). We need g_unit at strictly positive
-        // arguments; we set g_unit(0) := 0.
-        var gAtDiff;
-        try {
-            gAtDiff = G.PRiSM_unitRateResponse(modelKey, params, diffs);
-        } catch (e) {
-            // Bubble up — the inverse-sim caller will trap and report.
-            throw e;
-        }
-        // gAtDiff[k] = g_unit(t_n - t_k). For the matrix A[n][i] (i = 1..n)
-        // we want g_unit(t_n - t_{i-1}) - g_unit(t_n - t_i). With i ∈ [1,n]
-        // running over the SAMPLES, the "sample index" in our 0-based grid
-        // is i' = i - 1 ∈ [0, n-1]. We allow rate updates AT every sample,
-        // so q_i defines the rate from t_{i-1} to t_i. The convolution
-        // contribution of q_i to row n is:
-        //   A[n][i'] = g_unit(t_n - t_{i-1}) - g_unit(t_n - t_i)
-        //            = gAtDiff[i-1] - gAtDiff[i]  for i = 1..n
-        // (gAtDiff[i] is only defined for i ≤ nRow; for i > nRow the rate
-        // hasn't started yet — A[n][i'] = 0 by causality).
-        for (var iCol = 0; iCol < n; iCol++) {
-            if (iCol > nRow) {
-                A[nRow][iCol] = 0;
-                continue;
-            }
-            // i = iCol + 1, i-1 = iCol  (sample indices are 0-based)
-            var lagPrev = iCol;        // i - 1
-            var lagCurr = iCol + 1;    // i
-            var gPrev = (lagPrev <= nRow) ? gAtDiff[lagPrev] : 0;
-            var gCurr = (lagCurr <= nRow) ? gAtDiff[lagCurr] : 0;
-            // gAtDiff was sized to nRow+1, so lagCurr can equal nRow+1 only
-            // when iCol == nRow → lagCurr > nRow.length-1; in that case gCurr = 0.
-            if (!_isNum(gPrev)) gPrev = 0;
-            if (!_isNum(gCurr)) gCurr = 0;
-            A[nRow][iCol] = gPrev - gCurr;
-        }
+    if (n === 0) return { A: [] };
+    var minD = Infinity, maxD = t[n - 1] - tStart;
+    for (var i = 0; i < n; i++) {
+        var d = t[i] - (i === 0 ? tStart : t[i - 1]);
+        if (d > 0 && d < minD) minD = d;
     }
-    return { A: A, gUnit: null };
+    if (!(maxD > 0) || !isFinite(minD)) throw new Error('time must increase after the start of flow');
+    var gAt = _responseInterp(modelKey, params, minD, maxD, uopts);
+    var A = new Array(n);
+    for (var r = 0; r < n; r++) {
+        var row = new Array(n);
+        for (var c = 0; c < n; c++) {
+            if (c > r) { row[c] = 0; continue; }
+            var tPrev = (c === 0) ? tStart : t[c - 1];
+            var gA = gAt(t[r] - tPrev);
+            var gB = (c < r) ? gAt(t[r] - t[c]) : 0;
+            var a = gA - gB;
+            row[c] = _isNum(a) ? a : 0;
+        }
+        A[r] = row;
+    }
+    return { A: A };
+}
+
+// Straight line through the first samples, evaluated at the start of flow
+// (used only when no initial pressure is known — flagged in the result).
+function _extrapolateRef(t, p, t0) {
+    var m = Math.min(3, t.length);
+    if (m < 2) return p.length ? p[p.length - 1] : NaN;
+    var sx = 0, sy = 0, sxx = 0, sxy = 0;
+    for (var i = 0; i < m; i++) { sx += t[i]; sy += p[i]; sxx += t[i] * t[i]; sxy += t[i] * p[i]; }
+    var den = m * sxx - sx * sx;
+    if (Math.abs(den) < 1e-30) return sy / m;
+    var b = (m * sxy - sx * sy) / den, a = (sy - b * sx) / m;
+    return a + b * t0;
 }
 
 
@@ -758,36 +878,30 @@ function _buildConvMatrix(modelKey, params, t) {
 // SECTION 4 — Inverse simulation
 // ════════════════════════════════════════════════════════════════════
 //
-// Given p(t) and a model + params, recover q(t) by solving the linear
-// system A · q = (p_initial - p) where A is the lower-triangular Duhamel
-// convolution matrix from SECTION 3.
+// Given p(t), a model + params and a reference pressure pRef (pi), recover
+// q(t) from   A · q = Δp,   Δp = pRef − p   (producer)  or  p − pRef (injector).
 //
 // Algorithm:
-//   1. Build A and the RHS = (p[0] - p[i]).
-//   2. Solve (Aᵀ A + α I) q = Aᵀ RHS  (Tikhonov-regularised normal eqn).
-//      The α regularisation kills the high-frequency oscillation that a
-//      naive direct solve develops at the late-time tail.
-//   3. Clip negative q values to zero (NNLS-light enforcement; for a
-//      production well sustained negative rate is non-physical and almost
-//      always a numerical artefact of the late-time tail).
-//   4. Forward-simulate p_predicted from the recovered q and report RMSE.
+//   1. Build A (SECTION 3) and Δp from pRef.
+//   2. Solve (Aᵀ A + α I) q = Aᵀ Δp  (Tikhonov-regularised normal equations);
+//      α damps the high-frequency oscillation of a naive solve.
+//   3. Clip negative q values to zero (NNLS-light) unless allowNegative.
+//   4. Forward-simulate p_predicted = pRef ∓ A·q and report RMSE.
 
 /**
- * PRiSM_inverseSim(modelKey, params, t, p) → result
+ * PRiSM_inverseSim(modelKey, params, t, p, opts) → result
  *
  * @param {string}   modelKey
- * @param {object}   params
- * @param {number[]} t        time array (hours)
- * @param {number[]} p        pressure array (psi or dimensionless), same length
- * @return {object}           {
- *     q: number[],         recovered rate at each t
- *     converged: boolean,
- *     iterations: number,
- *     rmse: number,
- *     diagnostics: { method, regularisation, notes }
- * }
+ * @param {object}   params     dimensionless model parameters
+ * @param {number[]} t          time array (hours)
+ * @param {number[]} p          pressure array (psia), same length
+ * @param {object}   [opts]     { pRef, pRefSource, tStart, injector, k, allowNegative, alpha }
+ * @return {object}  { q, converged, iterations, rmse, pPredicted, pRef, pRefSource,
+ *                     tStart, injector, dimensional, k, kSource, rateUnit, warnings,
+ *                     diagnostics }
  */
-G.PRiSM_inverseSim = function PRiSM_inverseSim(modelKey, params, t, p) {
+G.PRiSM_inverseSim = function PRiSM_inverseSim(modelKey, params, t, p, opts) {
+    opts = opts || {};
     if (!Array.isArray(t) || !Array.isArray(p)) {
         return _inverseFail('t and p must be arrays', t ? t.length : 0);
     }
@@ -801,50 +915,61 @@ G.PRiSM_inverseSim = function PRiSM_inverseSim(modelKey, params, t, p) {
     if (!spec || typeof spec.pd !== 'function') {
         return _inverseFail('unknown model "' + modelKey + '"', t.length);
     }
-    // Build convolution matrix.
+    var warnings = [];
+    var n = t.length;
+    var tStart = _isNum(opts.tStart) ? opts.tStart : _autoStart(t);
+    if (tStart > t[0]) tStart = t[0];
+    var injector = !!opts.injector;
+
+    // Reference pressure: given → well pi (C1) → extrapolated (flagged).
+    var pRef = _num(opts.pRef), pRefSource = opts.pRefSource || (pRef !== null ? 'given' : null);
+    if (pRef === null) {
+        var w = _wellDims();
+        if (w.pi !== null) { pRef = w.pi; pRefSource = 'pi'; }
+    }
+    if (pRef === null) {
+        pRef = _extrapolateRef(t, p, tStart);
+        pRefSource = 'extrapolated';
+    }
+    if (pRefSource === 'extrapolated' || pRefSource === 'first-sample') {
+        warnings.push('No initial pressure is set: Δp is measured from '
+            + (pRefSource === 'first-sample' ? 'the first sample' : 'the early data extrapolated to the start of flow')
+            + ', so the rates may be biased. Enter pi on the Well & Test inputs.');
+    }
+    if (!_isNum(pRef)) return _inverseFail('no usable reference pressure', n);
+
+    var info = {};
     var A;
     try {
-        var built = _buildConvMatrix(modelKey, params, t);
-        A = built.A;
+        A = _buildConvMatrix(modelKey, params, t, tStart, { k: opts.k, info: info }).A;
     } catch (e) {
-        return _inverseFail('build convolution matrix failed: ' + (e && e.message), t.length);
+        return _inverseFail('build convolution matrix failed: ' + (e && e.message), n);
     }
-    var n = t.length;
-    // RHS = (p[0] - p[i]); for a producing well (drawdown), p decreases so
-    // the RHS is non-negative.
+    var sgn = injector ? -1 : 1;
     var rhs = new Array(n);
-    for (var i = 0; i < n; i++) rhs[i] = (p[0] - p[i]);
+    for (var i = 0; i < n; i++) rhs[i] = sgn * (pRef - p[i]);
 
-    // Tikhonov α — choose ~1e-8 of the matrix scale. Compute the matrix
-    // norm squared (Frobenius²) as a proxy.
+    // Tikhonov α relative to the matrix scale (Frobenius² / n).
     var fro2 = 0;
     for (var ri = 0; ri < n; ri++) {
-        for (var rj = 0; rj <= ri; rj++) {
-            fro2 += A[ri][rj] * A[ri][rj];
-        }
+        for (var rj = 0; rj <= ri; rj++) fro2 += A[ri][rj] * A[ri][rj];
     }
-    var alpha = 1e-8 * Math.max(1e-30, fro2);
+    var alpha = _isNum(opts.alpha) ? opts.alpha : 1e-8 * Math.max(1e-30, fro2) / n;
 
-    // Solve normal equations (AᵀA + αI) q = Aᵀ rhs.
-    // We assemble M = AᵀA + αI and v = Aᵀ rhs explicitly.
+    // Normal equations (AᵀA + αI) q = Aᵀ rhs.
     var M = new Array(n);
     for (var mi = 0; mi < n; mi++) M[mi] = new Array(n).fill(0);
     var v = new Array(n).fill(0);
     for (var col = 0; col < n; col++) {
         for (var col2 = col; col2 < n; col2++) {
             var dot = 0;
-            // A[r][col] is non-zero only for r >= col (lower-tri).
-            for (var r = Math.max(col, col2); r < n; r++) {
-                dot += A[r][col] * A[r][col2];
-            }
+            for (var r = Math.max(col, col2); r < n; r++) dot += A[r][col] * A[r][col2];
             M[col][col2] = dot;
             if (col !== col2) M[col2][col] = dot;
         }
-        // v[col] = Σ_r A[r][col] · rhs[r]
         var dotV = 0;
         for (var rr = col; rr < n; rr++) dotV += A[rr][col] * rhs[rr];
         v[col] = dotV;
-        // Tikhonov diagonal.
         M[col][col] += alpha;
     }
     var q;
@@ -853,47 +978,38 @@ G.PRiSM_inverseSim = function PRiSM_inverseSim(modelKey, params, t, p) {
     } catch (e) {
         return _inverseFail('linear solve failed: ' + (e && e.message), n);
     }
-    // Non-negativity clip (NNLS-light). Most physically meaningful for
-    // single-rate drawdown; for a buildup the user can disable this by
-    // setting params.allowNegative = true (advanced).
-    var allowNeg = !!(params && params.allowNegative);
+    // Non-negativity clip (rates are magnitudes here; producer or injector).
+    var allowNeg = !!(opts.allowNegative || (params && params.allowNegative));
     var clippedCount = 0;
     if (!allowNeg) {
         for (var iC = 0; iC < n; iC++) {
-            if (q[iC] < 0) {
-                q[iC] = 0;
-                clippedCount++;
-            }
+            if (q[iC] < 0) { q[iC] = 0; clippedCount++; }
         }
     }
-    // Forward-simulate p_predicted = A · q + p[0] and compute RMSE.
     var pPred = new Array(n);
+    var sse = 0;
     for (var rR = 0; rR < n; rR++) {
         var s2 = 0;
         for (var cC = 0; cC <= rR; cC++) s2 += A[rR][cC] * q[cC];
-        pPred[rR] = p[0] - s2;
-    }
-    var sse = 0;
-    for (var iR = 0; iR < n; iR++) {
-        var d = (p[iR] - pPred[iR]);
+        pPred[rR] = pRef - sgn * s2;
+        var d = p[rR] - pPred[rR];
         sse += d * d;
     }
     var rmse = Math.sqrt(sse / n);
     var converged = isFinite(rmse);
 
-    var notes = 'Tikhonov-regularised linear deconvolution (α = '
-              + _fmtSig(alpha, 3) + '). ';
+    var notes = 'Tikhonov-regularised linear deconvolution (α = ' + _fmtSig(alpha, 3) + '). '
+              + 'Δp measured from ' + (pRefSource === 'pi' ? 'the initial pressure pi' : pRefSource === 'extrapolated'
+                  ? 'an extrapolated start pressure' : 'the reference pressure') + ' = ' + _fmtSig(pRef, 6) + ' psia. ';
     if (clippedCount > 0) {
-        notes += clippedCount + ' negative q value' +
-                 (clippedCount === 1 ? '' : 's') + ' clipped to zero. ';
+        notes += clippedCount + ' negative q value' + (clippedCount === 1 ? '' : 's') + ' clipped to zero. ';
     }
-    var pvt = _pvtComputed();
-    if (pvt) {
-        notes += 'Recovered q in real units (' +
-                 (pvt.fluidType === 'gas' ? 'MSCF/d' :
-                  pvt.fluidType === 'water' ? 'BWPD' : 'STB/d') + '). ';
+    if (info.dimensional) {
+        notes += 'Rates in ' + info.rateUnit + ' (k = ' + _fmtSig(info.k, 4) + ' md from the ' + info.kSource + '). ';
     } else {
-        notes += 'PVT not computed — recovered q in dimensionless units. ';
+        notes += 'No fitted permeability or incomplete well inputs — rates are dimensionless (td = t). ';
+        warnings.push('Rates are dimensionless: fit a model (regression or auto-match) and complete the '
+            + 'well inputs to get rates in field units.');
     }
 
     return {
@@ -902,15 +1018,78 @@ G.PRiSM_inverseSim = function PRiSM_inverseSim(modelKey, params, t, p) {
         iterations:  1,
         rmse:        rmse,
         pPredicted:  pPred,
+        pRef:        pRef,
+        pRefSource:  pRefSource,
+        tStart:      tStart,
+        injector:    injector,
+        dimensional: !!info.dimensional,
+        k:           info.k,
+        kSource:     info.kSource,
+        rateUnit:    info.dimensional ? info.rateUnit : 'dimensionless',
+        warnings:    warnings,
         diagnostics: {
             method:         'linear-deconvolution',
             regularisation: 'tikhonov',
             alpha:          alpha,
             clipped:        clippedCount,
-            dimensional:    !!pvt,
+            dimensional:    !!info.dimensional,
             notes:          notes
         }
     };
+};
+
+/**
+ * PRiSM_inverseSimDataset(ds?, opts?) — inverse simulation of the working
+ * dataset with the fitted model (C4), the well pi (C1) and the test type /
+ * flow start (C2). Long records are thinned (log-spaced) to ≤ opts.maxPoints
+ * (default 300) to keep the O(n²) matrix small.
+ */
+G.PRiSM_inverseSimDataset = function PRiSM_inverseSimDataset(ds, opts) {
+    opts = opts || {};
+    ds = ds || G.PRiSM_dataset;
+    if (!ds || !Array.isArray(ds.t) || !Array.isArray(ds.p)) return _inverseFail('no dataset with t and p', 0);
+    var w = _wellDims();
+    var fit = _fitInfo(w);
+    var modelKey = opts.modelKey || fit.modelKey;
+    var params = opts.params || fit.params || {};
+    if (!modelKey || !_model(modelKey)) return _inverseFail('no fitted model', 0);
+    var t = [], p = [];
+    for (var i = 0; i < ds.t.length; i++) {
+        var ti = +ds.t[i], pi = +ds.p[i];
+        if (!isFinite(ti) || !isFinite(pi)) continue;
+        if (t.length && ti <= t[t.length - 1]) continue;
+        t.push(ti); p.push(pi);
+    }
+    var maxPts = opts.maxPoints || 300;
+    if (t.length > maxPts) {
+        var keep = [0], lo = Math.log(Math.max(t[0] - _autoStart(t), 1e-9) || 1e-9);
+        var hi = Math.log(Math.max(t[t.length - 1] - _autoStart(t), 1e-9));
+        var step = (hi - lo) / (maxPts - 1), last = lo;
+        for (var k = 1; k < t.length - 1; k++) {
+            var l = Math.log(Math.max(t[k] - _autoStart(t), 1e-9));
+            if (l - last >= step) { keep.push(k); last = l; }
+        }
+        keep.push(t.length - 1);
+        t = keep.map(function (j) { return t[j]; });
+        p = keep.map(function (j) { return p[j]; });
+    }
+    var ad = _getAnalysisData(ds);
+    var testType = (w.testType && w.testType !== 'auto') ? w.testType : (ad && ad.testType) || 'auto';
+    var o = {};
+    for (var key in opts) if (Object.prototype.hasOwnProperty.call(opts, key)) o[key] = opts[key];
+    if (o.injector == null) o.injector = (testType === 'injection' || testType === 'falloff');
+    if (o.pRef == null && w.pi === null && ad && _isNum(ad.pRef) &&
+        (ad.testType === 'drawdown' || ad.testType === 'injection')) {
+        o.pRef = ad.pRef; o.pRefSource = ad.pRefSource || 'analysis data';
+    }
+    if (o.tStart == null && ad) {
+        var per = (ad.periods && ad.periods[0]) || (ad.rateHistory && ad.rateHistory[0]);
+        var ts = per ? (_num(per.t0) !== null ? per.t0 : _num(per.t)) : null;
+        if (ts !== null && ts <= t[0]) o.tStart = ts;
+    }
+    var res = G.PRiSM_inverseSim(modelKey, params, t, p, o);
+    res.t = t; res.p = p; res.modelKey = modelKey; res.testType = testType;
+    return res;
 };
 
 function _inverseFail(reason, n) {
@@ -920,6 +1099,7 @@ function _inverseFail(reason, n) {
         iterations: 0,
         rmse:       NaN,
         pPredicted: [],
+        warnings:   [],
         diagnostics: {
             method:         'linear-deconvolution',
             regularisation: 'tikhonov',
@@ -934,138 +1114,144 @@ function _inverseFail(reason, n) {
 // SECTION 5 — UI: synthetic PLT panel
 // ════════════════════════════════════════════════════════════════════
 //
-// Layout (top-to-bottom):
-//   1. Header + status line (model + N layers detected)
+// Host theme (CSS variables), usable at 375 px. All elements are looked
+// up inside the container (the panel can be mounted in the Tab 6 panel
+// area and in a tools drawer at the same time).
+//   1. Status line (model + layers)
 //   2. Stacked-area canvas (per-layer rate vs time)
-//   3. Per-layer table (label | kh | initial frac | final frac | EUR)
-//   4. Action row: Compute | Export CSV
+//   3. Per-layer table (label | kh | initial / final / mean fraction | cum.)
+//   4. Actions: Compute | Export CSV
 // ════════════════════════════════════════════════════════════════════
 
-var _PLT_CANVAS_ID = 'prism_plt_canvas';
-var _PLT_TABLE_ID  = 'prism_plt_table';
-var _PLT_MSG_ID    = 'prism_plt_msg';
-var _PLT_NOTE_ID   = 'prism_plt_note';
-var _pltLastResult = null;
-
-G.PRiSM_renderPLTPanel = function PRiSM_renderPLTPanel(container) {
-    if (!_hasDoc || !container) return;
-    var T = _theme();
-    container.innerHTML =
-          '<div class="prism-plt-card" style="background:' + T.panel + '; border:1px solid ' + T.border + '; border-radius:6px; padding:14px;">'
-        +   '<div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:8px;">'
-        +     '<div style="font-weight:600; color:' + T.text + '; font-size:14px;">Synthetic PLT — per-layer rate</div>'
-        +     '<div style="display:flex; gap:8px;">'
-        +       '<button id="prism_plt_compute" type="button" '
-        +         'style="padding:6px 14px; background:#238636; color:#fff; border:1px solid #2ea043; '
-        +         'border-radius:4px; cursor:pointer; font-size:12px; font-weight:600;">Compute</button>'
-        +       '<button id="prism_plt_export" type="button" '
-        +         'style="padding:6px 14px; background:#21262d; color:' + T.text + '; border:1px solid ' + T.border + '; '
-        +         'border-radius:4px; cursor:pointer; font-size:12px;">Export CSV</button>'
-        +     '</div>'
-        +   '</div>'
-        +   '<div id="' + _PLT_MSG_ID + '" style="font-size:12px; color:' + T.text2 + '; margin-bottom:10px;">'
-        +     'Click <b>Compute</b> to derive per-layer rate contributions from the active fit.'
-        +   '</div>'
-        +   '<canvas id="' + _PLT_CANVAS_ID + '" width="800" height="320" '
-        +     'style="display:block; background:' + T.bg + '; border:1px solid ' + T.border + '; border-radius:6px; max-width:100%;"></canvas>'
-        +   '<div id="' + _PLT_TABLE_ID + '" style="margin-top:12px; overflow-x:auto;">'
-        +     '<div style="color:' + T.text3 + '; font-size:12px;">No layer data yet.</div>'
-        +   '</div>'
-        +   '<div id="' + _PLT_NOTE_ID + '" style="margin-top:8px; font-size:11px; color:' + T.text3 + '; line-height:1.5;"></div>'
-        + '</div>';
-    var btnC = document.getElementById('prism_plt_compute');
-    var btnE = document.getElementById('prism_plt_export');
-    if (btnC) btnC.onclick = _pltCompute;
-    if (btnE) btnE.onclick = _pltExport;
+var TV = {
+    bg: 'var(--bg1,#0d1117)', panel: 'var(--bg2,#161b22)', border: 'var(--border,#30363d)',
+    text: 'var(--text,#e6edf3)', text2: 'var(--text2,#8b949e)', text3: 'var(--text3,#6e7681)',
+    accent: 'var(--accent,#f0883e)', green: 'var(--green,#3fb950)', red: 'var(--red,#f85149)',
+    yellow: 'var(--yellow,#d29922)', blue: 'var(--blue,#58a6ff)'
 };
 
-function _pltCompute() {
-    var T = _theme();
-    var msg = document.getElementById(_PLT_MSG_ID);
-    var st = G.PRiSM_state || {};
+function _q(container, id) {
+    return (container && container.querySelector) ? container.querySelector('#' + id) : null;
+}
+function _btnHTML(id, label, primary) {
+    return '<button id="' + id + '" type="button" class="btn ' + (primary ? 'btn-primary' : 'btn-secondary') + '" '
+        + 'style="padding:6px 12px; min-height:32px; border-radius:4px; cursor:pointer; font-size:12px; font-weight:600;'
+        + ' border:1px solid ' + (primary ? TV.accent : TV.border) + '; background:' + (primary ? TV.accent : TV.panel)
+        + '; color:' + (primary ? '#0d1117' : TV.text) + ';">' + _esc(label) + '</button>';
+}
+function _say(container, id, html) {
+    var el = _q(container, id);
+    if (el) el.innerHTML = html;
+}
+
+var _PLT_MULTI = { multiLayerNoXF: 1, multiLayerXF: 1, twoLayerXF: 1 };
+var _pltLastResult = null;
+
+G.PRiSM_renderPLTPanel = function PRiSM_renderPLTPanel(container, opts) {
+    if (!_hasDoc || !container) return;
+    opts = opts || {};
+    container.innerHTML =
+          '<div class="prism-plt-card" style="max-width:100%; box-sizing:border-box; color:' + TV.text + '; font-size:12px;'
+        +   (opts.embedded ? '' : ' background:' + TV.panel + '; border:1px solid ' + TV.border + '; border-radius:6px; padding:12px;') + '">'
+        +   '<div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:6px;">'
+        +     '<div style="font-weight:600; font-size:13px;">Layer contributions (synthetic PLT)</div>'
+        +     '<div style="display:flex; gap:8px; flex-wrap:wrap;">'
+        +       _btnHTML('prism_plt_compute', 'Compute', true)
+        +       _btnHTML('prism_plt_export', 'Export CSV', false)
+        +     '</div>'
+        +   '</div>'
+        +   '<div id="prism_plt_msg" style="color:' + TV.text2 + '; margin-bottom:8px;">'
+        +     'Splits the well rate between layers using the fitted multi-layer model.'
+        +   '</div>'
+        +   '<canvas id="prism_plt_canvas" width="800" height="320" '
+        +     'style="display:block; width:100%; max-width:100%; height:auto; background:' + TV.bg + '; border:1px solid ' + TV.border + '; border-radius:6px;"></canvas>'
+        +   '<div id="prism_plt_table" style="margin-top:10px; overflow-x:auto; max-width:100%;">'
+        +     '<div style="color:' + TV.text3 + ';">No layer data yet.</div>'
+        +   '</div>'
+        +   '<div id="prism_plt_note" style="margin-top:6px; font-size:11px; color:' + TV.text3 + '; line-height:1.5;"></div>'
+        + '</div>';
+    var btnC = _q(container, 'prism_plt_compute');
+    var btnE = _q(container, 'prism_plt_export');
+    if (btnC) btnC.onclick = function () { _pltCompute(container); };
+    if (btnE) btnE.onclick = function () { _pltExport(container); };
+    if (_pltLastResult) _pltPaint(container, _pltLastResult);
+    else _drawPLTChart(_q(container, 'prism_plt_canvas'), [], []);
+};
+
+function _pltPaint(container, last) {
+    _drawPLTChart(_q(container, 'prism_plt_canvas'), last.result.layers, last.t);
+    _renderPLTTable(_q(container, 'prism_plt_table'), last);
+    var noteEl = _q(container, 'prism_plt_note');
+    if (noteEl) noteEl.textContent = last.result.diagnostics.notes || '';
+}
+
+function _pltCompute(container) {
+    var w = _wellDims();
+    var fit = _fitInfo(w);
     var ds = G.PRiSM_dataset || null;
-    var lf = st.lastFit || null;
-    var modelKey = (lf && lf.modelKey) || st.model;
-    var params = (lf && lf.params) || st.params || {};
-    var multiKeys = { multiLayerNoXF: 1, multiLayerXF: 1, twoLayerXF: 1,
-                      mlHorizontalXF: 1, mlHorizontalNoXF: 1,
-                      multiLatMLXF: 1, multiLatMLNoXF: 1 };
-    if (!modelKey || !multiKeys[modelKey]) {
-        if (msg) msg.innerHTML = '<span style="color:' + T.yellow + ';">PLT requires a multi-layer model. Active model: <b>'
-            + _esc(modelKey || 'none') + '</b>. Switch to multiLayerXF / multiLayerNoXF / twoLayerXF and re-fit.</span>';
+    if (!fit.modelKey || !_PLT_MULTI[fit.modelKey]) {
+        _say(container, 'prism_plt_msg', '<span style="color:' + TV.yellow + ';">Layer contributions need a fitted multi-layer model '
+            + '(two-layer or multi-layer, with or without cross-flow). Current model: <b>' + _esc(fit.modelKey || 'none') + '</b>.</span>');
         _pltLastResult = null;
-        _drawPLTChart([]);
-        _renderPLTTable(null);
+        _drawPLTChart(_q(container, 'prism_plt_canvas'), [], []);
+        _renderPLTTable(_q(container, 'prism_plt_table'), null);
         return;
     }
     if (!ds || !Array.isArray(ds.t) || ds.t.length < 2) {
-        if (msg) msg.innerHTML = '<span style="color:' + T.yellow + ';">No active dataset — load data on the Data tab first.</span>';
+        _say(container, 'prism_plt_msg', '<span style="color:' + TV.yellow + ';">No working data — load data on the Data step first.</span>');
         return;
     }
-    // Derive q_total from dataset rate column if present, else assume the
-    // user-entered PVT q is the constant well rate.
     var t = ds.t.slice();
-    var qTot;
+    var qTot, qNote = '';
     if (Array.isArray(ds.q) && ds.q.length === t.length) {
-        qTot = ds.q.slice();
+        qTot = ds.q.map(function (v) { return _isNum(+v) ? +v : 0; });
     } else {
-        var pvt = G.PRiSM_pvt;
-        var qConst = (pvt && _isNum(pvt.q)) ? pvt.q : 1000;
-        qTot = new Array(t.length);
-        for (var i = 0; i < t.length; i++) qTot[i] = qConst;
+        var qc = (w.q > 0) ? w.q : 1;
+        if (!(w.q > 0)) qNote = ' No rate is known — fractions only (unit total rate).';
+        qTot = t.map(function () { return qc; });
     }
+    var o = {};
+    if (fit.kh > 0) o.khTotal = fit.kh;
+    var tdF = _tdFactor(fit.modelKey, w, fit);
+    if (tdF) o.tdFactor = tdF;
     var result;
     try {
-        result = G.PRiSM_syntheticPLT(modelKey, params, t, qTot);
+        result = G.PRiSM_syntheticPLT(fit.modelKey, fit.params, t, qTot, o);
     } catch (e) {
-        if (msg) msg.innerHTML = '<span style="color:' + T.red + ';">PLT computation failed: '
-            + _esc(e && e.message) + '</span>';
+        _say(container, 'prism_plt_msg', '<span style="color:' + TV.red + ';">Layer split failed: ' + _esc(e && e.message) + '</span>');
         return;
     }
-    _pltLastResult = { result: result, t: t };
-    if (msg) {
-        msg.innerHTML = '<span style="color:' + T.green + ';">'
-            + result.diagnostics.nLayers + ' layer'
-            + (result.diagnostics.nLayers === 1 ? '' : 's') + ' over '
-            + t.length + ' time samples. Total kh (proxy units): '
-            + _fmtSig(result.diagnostics.totalKh, 3)
-            + '. Rate-balance residual: ' + _fmtSig(result.diagnostics.rateCheck, 3) + '.</span>';
-    }
-    _drawPLTChart(result.layers, t);
-    _renderPLTTable(result);
-    var noteEl = document.getElementById(_PLT_NOTE_ID);
-    if (noteEl) noteEl.textContent = result.diagnostics.notes || '';
+    _pltLastResult = { result: result, t: t, rateUnit: _rateUnit(w), modelKey: fit.modelKey };
+    var d = result.diagnostics;
+    _say(container, 'prism_plt_msg', '<span style="color:' + TV.green + ';">' + d.nLayers + ' layer' + (d.nLayers === 1 ? '' : 's')
+        + ' over ' + t.length + ' samples. Total kh ' + _fmtSig(d.totalKh, 4) + ' ' + (d.khUnits === 'md·ft' ? 'md·ft (from the fit)' : '(relative — no fitted kh yet)')
+        + '.' + _esc(qNote) + '</span>');
+    _pltPaint(container, _pltLastResult);
     if (typeof G.gtag === 'function') {
-        try { G.gtag('event', 'prism_plt_compute', { model: modelKey, n_layers: result.diagnostics.nLayers }); }
+        try { G.gtag('event', 'prism_plt_compute', { model: fit.modelKey, n_layers: d.nLayers }); }
         catch (e) { /* swallow */ }
     }
 }
 
 // Stacked-area chart of per-layer rate contribution vs time.
-function _drawPLTChart(layers, t) {
-    if (!_hasDoc) return;
-    var canvas = document.getElementById(_PLT_CANVAS_ID);
-    if (!canvas) return;
+function _drawPLTChart(canvas, layers, t) {
+    if (!_hasDoc || !canvas || !canvas.getContext) return;
     var ctx = canvas.getContext('2d');
+    if (!ctx) return;
     var T = _theme();
     var w = canvas.width, h = canvas.height;
     ctx.clearRect(0, 0, w, h);
-    // Background.
     ctx.fillStyle = T.bg; ctx.fillRect(0, 0, w, h);
-    var pad = { top: 24, right: 90, bottom: 38, left: 60 };
+    var pad = { top: 24, right: 110, bottom: 38, left: 60 };
     if (!Array.isArray(layers) || !layers.length || !Array.isArray(t) || !t.length) {
         ctx.fillStyle = T.text3;
         ctx.font = '12px ui-sans-serif, system-ui, sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillText('No PLT data yet.', w / 2, h / 2);
+        ctx.fillText('No layer data yet.', w / 2, h / 2);
         return;
     }
-    // Plot area.
-    var plotX = pad.left;
-    var plotY = pad.top;
-    var plotW = w - pad.left - pad.right;
-    var plotH = h - pad.top - pad.bottom;
-    // X scale — log if t spans more than a decade, else linear.
+    var plotX = pad.left, plotY = pad.top;
+    var plotW = w - pad.left - pad.right, plotH = h - pad.top - pad.bottom;
     var tMin = Infinity, tMax = -Infinity;
     for (var i = 0; i < t.length; i++) {
         if (t[i] > 0) {
@@ -1088,163 +1274,125 @@ function _drawPLTChart(layers, t) {
         }
         return plotX + plotW * (tv - tMin) / (tMax - tMin);
     }
-    // Y scale = total rate at every sample.
     var yMax = 0;
     for (var ti = 0; ti < t.length; ti++) {
         var s = 0;
-        for (var li = 0; li < layers.length; li++) {
-            s += (layers[li].rate[ti] || 0);
-        }
+        for (var li = 0; li < layers.length; li++) s += (layers[li].rate[ti] || 0);
         if (s > yMax) yMax = s;
     }
     if (yMax <= 0) yMax = 1;
-    function yMap(qv) {
-        return plotY + plotH * (1 - qv / yMax);
-    }
-    // Grid + axes.
+    function yMap(qv) { return plotY + plotH * (1 - qv / yMax); }
     ctx.strokeStyle = T.grid;
     ctx.lineWidth = 1;
     ctx.font = '10px ui-sans-serif, system-ui, sans-serif';
     ctx.fillStyle = T.text2;
     ctx.textAlign = 'right';
     ctx.textBaseline = 'middle';
-    // Y-grid + labels (5 lines).
     for (var g = 0; g <= 5; g++) {
         var yp = plotY + plotH * g / 5;
         ctx.beginPath(); ctx.moveTo(plotX, yp); ctx.lineTo(plotX + plotW, yp); ctx.stroke();
-        var qLabel = yMax * (1 - g / 5);
-        ctx.fillText(_fmtSig(qLabel, 3), plotX - 6, yp);
+        ctx.fillText(_fmtSig(yMax * (1 - g / 5), 3), plotX - 6, yp);
     }
-    // X-grid + labels.
     ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-    var nXTicks = 5;
-    for (var xt = 0; xt <= nXTicks; xt++) {
-        var frac = xt / nXTicks;
-        var tv;
-        if (useLog) {
-            var lo = Math.log10(tMin), hi = Math.log10(tMax);
-            tv = Math.pow(10, lo + frac * (hi - lo));
-        } else {
-            tv = tMin + frac * (tMax - tMin);
-        }
+    for (var xt = 0; xt <= 5; xt++) {
+        var frac = xt / 5;
+        var tv = useLog ? Math.pow(10, Math.log10(tMin) + frac * (Math.log10(tMax) - Math.log10(tMin)))
+                        : tMin + frac * (tMax - tMin);
         var xp = xMap(tv);
         ctx.beginPath(); ctx.moveTo(xp, plotY); ctx.lineTo(xp, plotY + plotH); ctx.stroke();
         ctx.fillText(_fmtSig(tv, 3), xp, plotY + plotH + 4);
     }
-    // Axis labels.
     ctx.fillStyle = T.text;
     ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
     ctx.font = '11px ui-sans-serif, system-ui, sans-serif';
-    ctx.fillText('time (hr)', plotX + plotW / 2, h - 6);
+    ctx.fillText('time (h)', plotX + plotW / 2, h - 6);
     ctx.save();
     ctx.translate(14, plotY + plotH / 2);
     ctx.rotate(-Math.PI / 2);
     ctx.textAlign = 'center'; ctx.textBaseline = 'top';
     ctx.fillText('rate', 0, 0);
     ctx.restore();
-    // Plot stacked areas. Build cumulative arrays bottom-up.
     var cum = new Array(t.length).fill(0);
     for (var lk = 0; lk < layers.length; lk++) {
         var lyr = layers[lk];
         var color = _LAYER_COLORS[lk % _LAYER_COLORS.length];
-        // Build polygon: (t, cum[i] + r[i]) along the top, (t, cum[i]) along
-        // the bottom (in reverse).
         ctx.beginPath();
-        // Top edge (left → right).
         for (var jj = 0; jj < t.length; jj++) {
             var top = cum[jj] + (lyr.rate[jj] || 0);
-            var xp2 = xMap(t[jj]);
-            var yp2 = yMap(top);
-            if (jj === 0) ctx.moveTo(xp2, yp2);
-            else ctx.lineTo(xp2, yp2);
+            if (jj === 0) ctx.moveTo(xMap(t[jj]), yMap(top));
+            else ctx.lineTo(xMap(t[jj]), yMap(top));
         }
-        // Bottom edge (right → left).
-        for (var kk = t.length - 1; kk >= 0; kk--) {
-            ctx.lineTo(xMap(t[kk]), yMap(cum[kk]));
-        }
+        for (var kk = t.length - 1; kk >= 0; kk--) ctx.lineTo(xMap(t[kk]), yMap(cum[kk]));
         ctx.closePath();
-        ctx.fillStyle = color + '99';     // 60 % opacity
+        ctx.fillStyle = color + '99';
         ctx.fill();
         ctx.strokeStyle = color;
         ctx.lineWidth = 1;
         ctx.stroke();
-        // Update cumulative.
         for (var ic = 0; ic < t.length; ic++) cum[ic] += (lyr.rate[ic] || 0);
     }
-    // Legend.
-    var lx = plotX + plotW + 14;
-    var ly = plotY + 4;
+    var lx = plotX + plotW + 14, ly = plotY + 4;
     ctx.font = '11px ui-sans-serif, system-ui, sans-serif';
     ctx.textAlign = 'left'; ctx.textBaseline = 'top';
     for (var le = 0; le < layers.length; le++) {
-        var c2 = _LAYER_COLORS[le % _LAYER_COLORS.length];
-        ctx.fillStyle = c2;
+        ctx.fillStyle = _LAYER_COLORS[le % _LAYER_COLORS.length];
         ctx.fillRect(lx, ly + le * 16 + 2, 10, 10);
         ctx.fillStyle = T.text;
         var lbl = layers[le].label;
-        if (lbl.length > 12) lbl = lbl.slice(0, 11) + '…';
+        if (lbl.length > 14) lbl = lbl.slice(0, 13) + '…';
         ctx.fillText(lbl, lx + 14, ly + le * 16);
     }
 }
 
-function _renderPLTTable(result) {
-    if (!_hasDoc) return;
-    var host = document.getElementById(_PLT_TABLE_ID);
-    if (!host) return;
-    if (!result || !result.layers || !result.layers.length) {
-        host.innerHTML = '<div style="color:#6e7681; font-size:12px;">No layer data yet.</div>';
+function _renderPLTTable(host, last) {
+    if (!_hasDoc || !host) return;
+    if (!last || !last.result || !last.result.layers || !last.result.layers.length) {
+        host.innerHTML = '<div style="color:' + TV.text3 + ';">No layer data yet.</div>';
         return;
     }
-    var T = _theme();
-    var pvt = _pvtComputed();
-    var rateUnit = pvt ? (pvt.fluidType === 'gas' ? 'MSCF/d' : pvt.fluidType === 'water' ? 'BWPD' : 'STB/d') : '(rel.)';
-    var khUnit = pvt ? 'md·ft' : '(rel.)';
-    var h = '<table style="width:100%; border-collapse:collapse; font-size:12px; color:' + T.text + ';">';
-    h += '<thead><tr style="background:' + T.bg + '; border-bottom:1px solid ' + T.border + ';">'
+    var result = last.result;
+    var khUnit = result.diagnostics.khUnits === 'md·ft' ? 'md·ft' : 'relative';
+    var volUnit = last.rateUnit === 'Mscf/d' ? 'Mscf' : (last.rateUnit === 'BWPD' ? 'bbl water' : 'STB');
+    var h = '<table style="width:100%; border-collapse:collapse; font-size:12px; color:' + TV.text + ';">';
+    h += '<thead><tr style="background:' + TV.bg + '; border-bottom:1px solid ' + TV.border + ';">'
        + '<th style="text-align:left; padding:6px 8px;">Layer</th>'
        + '<th style="text-align:right; padding:6px 8px;">kh (' + khUnit + ')</th>'
-       + '<th style="text-align:right; padding:6px 8px;">Initial frac</th>'
-       + '<th style="text-align:right; padding:6px 8px;">Final frac</th>'
-       + '<th style="text-align:right; padding:6px 8px;">Mean frac</th>'
-       + '<th style="text-align:right; padding:6px 8px;">EUR (cum, ' + rateUnit + '·hr)</th>'
+       + '<th style="text-align:right; padding:6px 8px;">Initial</th>'
+       + '<th style="text-align:right; padding:6px 8px;">Final</th>'
+       + '<th style="text-align:right; padding:6px 8px;">Mean</th>'
+       + '<th style="text-align:right; padding:6px 8px;">Cum. (' + volUnit + ')</th>'
        + '</tr></thead><tbody>';
     for (var i = 0; i < result.layers.length; i++) {
         var L = result.layers[i];
         var swatch = _LAYER_COLORS[i % _LAYER_COLORS.length];
-        h += '<tr style="border-bottom:1px solid ' + T.border + ';">'
-           + '<td style="padding:6px 8px;"><span style="display:inline-block; width:10px; height:10px; '
-           + 'background:' + swatch + '; vertical-align:middle; margin-right:6px;"></span>'
-           + _esc(L.label) + '</td>'
-           + '<td style="text-align:right; padding:6px 8px; font-family:monospace;">' + _fmtSig(L.kh, 3) + '</td>'
+        h += '<tr style="border-bottom:1px solid ' + TV.border + ';">'
+           + '<td style="padding:6px 8px; white-space:nowrap;"><span style="display:inline-block; width:10px; height:10px; '
+           + 'background:' + swatch + '; vertical-align:middle; margin-right:6px;"></span>' + _esc(L.label) + '</td>'
+           + '<td style="text-align:right; padding:6px 8px; font-family:monospace;">' + _fmtSig(L.kh, 4) + '</td>'
            + '<td style="text-align:right; padding:6px 8px; font-family:monospace;">' + _fmt(L.initialFraction, 3) + '</td>'
            + '<td style="text-align:right; padding:6px 8px; font-family:monospace;">' + _fmt(L.finalFraction, 3) + '</td>'
            + '<td style="text-align:right; padding:6px 8px; font-family:monospace;">' + _fmt(L.rateFraction, 3) + '</td>'
-           + '<td style="text-align:right; padding:6px 8px; font-family:monospace;">' + _fmtSig(L.cumulative, 4) + '</td>'
+           + '<td style="text-align:right; padding:6px 8px; font-family:monospace;">' + _fmtSig(L.cumulative / 24, 4) + '</td>'
            + '</tr>';
     }
     h += '</tbody></table>';
     host.innerHTML = h;
 }
 
-function _pltExport() {
+function _pltExport(container) {
     if (!_pltLastResult || !_pltLastResult.result) {
-        var msg = document.getElementById(_PLT_MSG_ID);
-        if (msg) {
-            var T = _theme();
-            msg.innerHTML = '<span style="color:' + T.yellow + ';">Compute first, then export.</span>';
-        }
+        _say(container, 'prism_plt_msg', '<span style="color:' + TV.yellow + ';">Compute first, then export.</span>');
         return;
     }
     var t = _pltLastResult.t;
     var layers = _pltLastResult.result.layers;
     var lines = [];
     var hdr = ['t_hr'];
-    for (var k = 0; k < layers.length; k++) hdr.push('q_layer_' + (k + 1) + ' (' + layers[k].label + ')');
+    for (var k = 0; k < layers.length; k++) hdr.push('q_layer_' + (k + 1));
     hdr.push('q_total');
     lines.push(hdr.join(','));
     for (var i = 0; i < t.length; i++) {
-        var row = [t[i]];
-        var sum = 0;
+        var row = [t[i]], sum = 0;
         for (var lk = 0; lk < layers.length; lk++) {
             var rv = layers[lk].rate[i] || 0;
             row.push(rv);
@@ -1253,34 +1401,27 @@ function _pltExport() {
         row.push(sum);
         lines.push(row.join(','));
     }
-    var csv = lines.join('\n');
-    if (typeof Blob === 'function' && _hasDoc) {
-        try {
-            var blob = new Blob([csv], { type: 'text/csv' });
-            var url = URL.createObjectURL(blob);
-            var a = document.createElement('a');
-            a.href = url;
-            a.download = 'prism-synthetic-plt.csv';
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            setTimeout(function () { URL.revokeObjectURL(url); }, 5000);
-        } catch (e) {
-            // Fallback: dump to a textarea.
-            var ta = document.createElement('textarea');
-            ta.value = csv;
-            ta.style.cssText = 'width:100%; height:200px;';
-            var host = document.getElementById(_PLT_TABLE_ID);
-            if (host) {
-                host.appendChild(ta);
-                ta.select();
-            }
-        }
-    }
+    _download('prism-layer-rates.csv', lines.join('\n'), 'text/csv');
     if (typeof G.gtag === 'function') {
         try { G.gtag('event', 'prism_plt_export', { n_rows: t.length, n_layers: layers.length }); }
         catch (e) { /* swallow */ }
     }
+}
+
+function _download(name, text, type) {
+    if (!_hasDoc || typeof Blob !== 'function' || typeof URL === 'undefined' || !URL.createObjectURL) return false;
+    try {
+        var url = URL.createObjectURL(new Blob([text], { type: type || 'text/plain' }));
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = name;
+        a.style.display = 'none';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(function () { try { URL.revokeObjectURL(url); } catch (e) { /* ignore */ } }, 5000);
+        return true;
+    } catch (e) { return false; }
 }
 
 
@@ -1288,250 +1429,208 @@ function _pltExport() {
 // SECTION 6 — UI: inverse-simulation panel
 // ════════════════════════════════════════════════════════════════════
 //
-// Layout:
-//   1. Header + status line (model + dataset summary)
-//   2. "Run inverse simulation" button + "Save as analysis-data" button
-//   3. Two stacked canvases (top: input p(t); bottom: recovered q(t))
-//   4. Status / RMSE line
+//   1. Inputs line (fitted model, k and its source, reference pressure)
+//   2. "Run" + "Save as analysis set"
+//   3. Two stacked canvases (top: p(t) observed vs predicted; bottom: q(t))
+//   4. Notes / warnings
 // ════════════════════════════════════════════════════════════════════
 
-var _INV_CANVAS_P_ID = 'prism_inv_canvas_p';
-var _INV_CANVAS_Q_ID = 'prism_inv_canvas_q';
-var _INV_MSG_ID      = 'prism_inv_msg';
-var _INV_NOTE_ID     = 'prism_inv_note';
-var _invLastResult   = null;
+var _invLastResult = null;
 
-G.PRiSM_renderInverseSimPanel = function PRiSM_renderInverseSimPanel(container) {
+function _invInputsLine() {
+    var w = _wellDims();
+    var fit = _fitInfo(w);
+    var parts = [];
+    parts.push('Model: <b>' + _esc(fit.modelKey || 'none') + '</b>');
+    parts.push(fit.k > 0 ? 'k = <b>' + _fmtSig(fit.k, 4) + ' md</b> (' + _esc(fit.kSource) + ')'
+                         : '<span style="color:' + TV.yellow + ';">no fitted k — dimensionless rates</span>');
+    parts.push(w.pi !== null ? 'Δp from p<sub>i</sub> = ' + _fmtSig(w.pi, 6) + ' psia'
+                             : '<span style="color:' + TV.yellow + ';">p<sub>i</sub> not set — extrapolated</span>');
+    if (!_dimsOK(w)) parts.push('<span style="color:' + TV.yellow + ';">well inputs incomplete</span>');
+    return parts.join(' · ');
+}
+
+G.PRiSM_renderInverseSimPanel = function PRiSM_renderInverseSimPanel(container, opts) {
     if (!_hasDoc || !container) return;
-    var T = _theme();
+    opts = opts || {};
     container.innerHTML =
-          '<div class="prism-inv-card" style="background:' + T.panel + '; border:1px solid ' + T.border + '; border-radius:6px; padding:14px;">'
-        +   '<div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:8px;">'
-        +     '<div style="font-weight:600; color:' + T.text + '; font-size:14px;">Inverse simulation — recover q(t) from p(t)</div>'
-        +     '<div style="display:flex; gap:8px;">'
-        +       '<button id="prism_inv_run" type="button" '
-        +         'style="padding:6px 14px; background:#238636; color:#fff; border:1px solid #2ea043; '
-        +         'border-radius:4px; cursor:pointer; font-size:12px; font-weight:600;">Run inverse simulation</button>'
-        +       '<button id="prism_inv_save" type="button" '
-        +         'style="padding:6px 14px; background:#21262d; color:' + T.text + '; border:1px solid ' + T.border + '; '
-        +         'border-radius:4px; cursor:pointer; font-size:12px;">Save as analysis-data</button>'
+          '<div class="prism-inv-card" style="max-width:100%; box-sizing:border-box; color:' + TV.text + '; font-size:12px;'
+        +   (opts.embedded ? '' : ' background:' + TV.panel + '; border:1px solid ' + TV.border + '; border-radius:6px; padding:12px;') + '">'
+        +   '<div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:6px;">'
+        +     '<div style="font-weight:600; font-size:13px;">Rate from pressure (inverse simulation)</div>'
+        +     '<div style="display:flex; gap:8px; flex-wrap:wrap;">'
+        +       _btnHTML('prism_inv_run', 'Run', true)
+        +       _btnHTML('prism_inv_save', 'Save as analysis set', false)
         +     '</div>'
         +   '</div>'
-        +   '<div id="' + _INV_MSG_ID + '" style="font-size:12px; color:' + T.text2 + '; margin-bottom:10px;">'
-        +     'Click <b>Run</b> to deconvolve the rate history from the active dataset using the active model.'
+        +   '<div class="prism-inv-inputs" style="color:' + TV.text2 + '; margin-bottom:4px; line-height:1.5;">' + _invInputsLine() + '</div>'
+        +   '<div id="prism_inv_msg" style="color:' + TV.text2 + '; margin-bottom:8px; min-height:14px;">'
+        +     'Recovers the rate history implied by the pressures and the fitted model.'
         +   '</div>'
         +   '<div style="display:flex; flex-direction:column; gap:8px;">'
-        +     '<canvas id="' + _INV_CANVAS_P_ID + '" width="800" height="180" '
-        +       'style="display:block; background:' + T.bg + '; border:1px solid ' + T.border + '; border-radius:6px; max-width:100%;"></canvas>'
-        +     '<canvas id="' + _INV_CANVAS_Q_ID + '" width="800" height="180" '
-        +       'style="display:block; background:' + T.bg + '; border:1px solid ' + T.border + '; border-radius:6px; max-width:100%;"></canvas>'
+        +     '<canvas id="prism_inv_canvas_p" width="800" height="180" '
+        +       'style="display:block; width:100%; max-width:100%; height:auto; background:' + TV.bg + '; border:1px solid ' + TV.border + '; border-radius:6px;"></canvas>'
+        +     '<canvas id="prism_inv_canvas_q" width="800" height="180" '
+        +       'style="display:block; width:100%; max-width:100%; height:auto; background:' + TV.bg + '; border:1px solid ' + TV.border + '; border-radius:6px;"></canvas>'
         +   '</div>'
-        +   '<div id="' + _INV_NOTE_ID + '" style="margin-top:8px; font-size:11px; color:' + T.text3 + '; line-height:1.5;"></div>'
+        +   '<div id="prism_inv_note" style="margin-top:6px; font-size:11px; color:' + TV.text3 + '; line-height:1.5;"></div>'
         + '</div>';
-    var btnR = document.getElementById('prism_inv_run');
-    var btnS = document.getElementById('prism_inv_save');
-    if (btnR) btnR.onclick = _invRun;
-    if (btnS) btnS.onclick = _invSave;
+    var btnR = _q(container, 'prism_inv_run');
+    var btnS = _q(container, 'prism_inv_save');
+    if (btnR) btnR.onclick = function () { _invRun(container); };
+    if (btnS) btnS.onclick = function () { _invSave(container); };
+    if (_invLastResult) _invPaint(container, _invLastResult);
 };
 
-function _invRun() {
-    var T = _theme();
-    var msg = document.getElementById(_INV_MSG_ID);
-    var st = G.PRiSM_state || {};
+function _median(a) {
+    var v = a.filter(_isNum).slice().sort(function (x, y) { return x - y; });
+    return v.length ? v[v.length >> 1] : NaN;
+}
+
+function _invPaint(container, last) {
+    var r = last.result;
+    var cp = _q(container, 'prism_inv_canvas_p'), cq = _q(container, 'prism_inv_canvas_q');
+    if (cp) _drawInvSeries(cp, last.t, last.p, r.pPredicted, 'pressure', 'p (psia)');
+    if (cq) _drawInvSeries(cq, last.t, r.q, null, 'rate', 'q (' + (r.rateUnit || 'rate') + ')');
+    var noteEl = _q(container, 'prism_inv_note');
+    if (noteEl) {
+        noteEl.textContent = (r.diagnostics && r.diagnostics.notes) || '';
+        (r.warnings || []).forEach(function (wtxt) {
+            var d = document.createElement('div');
+            d.style.color = 'var(--yellow,#d29922)';
+            d.textContent = '⚠ ' + wtxt;
+            noteEl.appendChild(d);
+        });
+    }
+}
+
+function _invRun(container) {
     var ds = G.PRiSM_dataset || null;
-    var lf = st.lastFit || null;
-    var modelKey = (lf && lf.modelKey) || st.model;
-    var params = (lf && lf.params) || st.params || {};
-    if (!modelKey || !_model(modelKey)) {
-        if (msg) msg.innerHTML = '<span style="color:' + T.yellow + ';">No active model — pick one on the Model tab and re-fit.</span>';
+    var inputs = container.querySelector ? container.querySelector('.prism-inv-inputs') : null;
+    if (inputs) inputs.innerHTML = _invInputsLine();
+    var fit = _fitInfo(_wellDims());
+    if (!fit.modelKey || !_model(fit.modelKey)) {
+        _say(container, 'prism_inv_msg', '<span style="color:' + TV.yellow + ';">No model yet — choose and fit a model first.</span>');
         return;
     }
     if (!ds || !Array.isArray(ds.t) || !Array.isArray(ds.p) || ds.t.length < 4) {
-        if (msg) msg.innerHTML = '<span style="color:' + T.yellow + ';">No active dataset (need ≥ 4 (t, p) samples).</span>';
+        _say(container, 'prism_inv_msg', '<span style="color:' + TV.yellow + ';">No working data (need at least 4 time / pressure samples).</span>');
         return;
     }
-    var t = ds.t.slice();
-    var p = ds.p.slice();
     var result;
     try {
-        result = G.PRiSM_inverseSim(modelKey, params, t, p);
+        result = G.PRiSM_inverseSimDataset(ds);
     } catch (e) {
-        if (msg) msg.innerHTML = '<span style="color:' + T.red + ';">Inverse-sim threw: ' + _esc(e && e.message) + '</span>';
+        _say(container, 'prism_inv_msg', '<span style="color:' + TV.red + ';">Inverse simulation failed: ' + _esc(e && e.message) + '</span>');
         return;
     }
-    _invLastResult = { result: result, t: t, p: p, modelKey: modelKey };
     if (!result.converged) {
-        if (msg) msg.innerHTML = '<span style="color:' + T.red + ';">Inverse simulation did NOT converge: '
-            + _esc(result.diagnostics.error || 'unknown reason') + '</span>';
-    } else {
-        if (msg) msg.innerHTML = '<span style="color:' + T.green + ';">Recovered q(t) for '
-            + t.length + ' samples. RMSE(p) = ' + _fmtSig(result.rmse, 4) + '.</span>';
-    }
-    _drawInvCharts(t, p, result);
-    var noteEl = document.getElementById(_INV_NOTE_ID);
-    if (noteEl) noteEl.textContent = result.diagnostics.notes || '';
-    if (typeof G.gtag === 'function') {
-        try { G.gtag('event', 'prism_inverse_sim_run', { model: modelKey, n: t.length, rmse: result.rmse }); }
-        catch (e) { /* swallow */ }
-    }
-}
-
-function _invSave() {
-    var T = _theme();
-    var msg = document.getElementById(_INV_MSG_ID);
-    if (!_invLastResult || !_invLastResult.result || !_invLastResult.result.converged) {
-        if (msg) msg.innerHTML = '<span style="color:' + T.yellow + ';">Run inverse simulation first.</span>';
+        _say(container, 'prism_inv_msg', '<span style="color:' + TV.red + ';">Inverse simulation failed: '
+            + _esc((result.diagnostics && result.diagnostics.error) || 'unknown reason') + '</span>');
         return;
     }
-    var t = _invLastResult.t;
-    var q = _invLastResult.result.q;
-    var p = _invLastResult.p;
-    // Save as a new analysis-data entry. Different host integrations expose
-    // analysis-data differently — try the documented options in order.
-    var saved = false;
-    var modelKey = _invLastResult.modelKey;
-    if (G.PRiSM_analysisData && typeof G.PRiSM_analysisData.add === 'function') {
-        try {
-            G.PRiSM_analysisData.add({
-                kind:    'rate-recovered',
-                modelKey: modelKey,
-                t:       t.slice(),
-                q:       q.slice(),
-                p:       p.slice(),
-                rmse:    _invLastResult.result.rmse,
-                source:  'PRiSM_inverseSim',
-                created: new Date().toISOString()
-            });
-            saved = true;
-        } catch (e) { /* fall through to next strategy */ }
-    }
-    if (!saved && Array.isArray(G.PRiSM_analysisData)) {
-        try {
-            G.PRiSM_analysisData.push({
-                kind:    'rate-recovered',
-                modelKey: modelKey,
-                t:       t.slice(),
-                q:       q.slice(),
-                rmse:    _invLastResult.result.rmse,
-                created: new Date().toISOString()
-            });
-            saved = true;
-        } catch (e) { /* fall through */ }
-    }
-    if (!saved) {
-        // Fallback: stash on the dataset.
-        if (G.PRiSM_dataset) {
-            G.PRiSM_dataset.q_recovered = q.slice();
-            G.PRiSM_dataset.q_recovered_meta = {
-                modelKey: modelKey,
-                rmse: _invLastResult.result.rmse,
-                created: new Date().toISOString()
-            };
-            saved = true;
-        }
-    }
-    if (msg) {
-        if (saved) {
-            msg.innerHTML = '<span style="color:' + T.green + ';">Recovered q saved as analysis-data ('
-                + t.length + ' points).</span>';
-        } else {
-            msg.innerHTML = '<span style="color:' + T.yellow + ';">Could not locate an analysis-data sink. Recovered q is still available on _invLastResult for export.</span>';
-        }
-    }
+    _invLastResult = { result: result, t: result.t, p: result.p, modelKey: result.modelKey };
+    _say(container, 'prism_inv_msg', '<span style="color:' + TV.green + ';">Recovered rates for ' + result.t.length
+        + ' samples · median q = ' + _fmtSig(_median(result.q), 4) + ' ' + _esc(result.rateUnit)
+        + ' · RMSE(p) = ' + _fmtSig(result.rmse, 3) + ' psi.</span>');
+    _invPaint(container, _invLastResult);
     if (typeof G.gtag === 'function') {
-        try { G.gtag('event', 'prism_inverse_sim_save', { model: modelKey, n: t.length, saved: saved }); }
+        try { G.gtag('event', 'prism_inverse_sim_run', { model: result.modelKey, n: result.t.length, rmse: result.rmse }); }
         catch (e) { /* swallow */ }
     }
 }
 
-function _drawInvCharts(t, p, result) {
-    if (!_hasDoc) return;
-    var canvasP = document.getElementById(_INV_CANVAS_P_ID);
-    var canvasQ = document.getElementById(_INV_CANVAS_Q_ID);
-    if (canvasP) _drawInvSeries(canvasP, t, p, result.pPredicted, 'pressure', 'p (psi or dimensionless)');
-    if (canvasQ) _drawInvSeries(canvasQ, t, result.q, null, 'rate', 'q (rate units)');
+function _invSave(container) {
+    var last = _invLastResult;
+    if (!last || !last.result || !last.result.converged) {
+        _say(container, 'prism_inv_msg', '<span style="color:' + TV.yellow + ';">Run the inverse simulation first.</span>');
+        return;
+    }
+    var AD = G.PRiSM_analysisData;
+    if (AD && typeof AD.add === 'function') {
+        var r = last.result;
+        AD.add({
+            name: 'Recovered rate (' + last.modelKey + ')',
+            source: 'inverse simulation',
+            notes: 'Rates recovered from pressure with the ' + last.modelKey + ' model; RMSE ' + _fmtSig(r.rmse, 3)
+                 + ' psi; rates in ' + r.rateUnit + '.'
+        }, [], last.t.slice(), last.p.slice(), r.q.slice()).then(function () {
+            _say(container, 'prism_inv_msg', '<span style="color:' + TV.green + ';">Saved as an analysis set ('
+                + last.t.length + ' points) — see "Gauges &amp; analysis datasets" on the Data step.</span>');
+        }).catch(function (e) {
+            _say(container, 'prism_inv_msg', '<span style="color:' + TV.red + ';">Could not save: ' + _esc(e && e.message) + '</span>');
+        });
+    } else {
+        _say(container, 'prism_inv_msg', '<span style="color:' + TV.yellow + ';">Analysis-set storage is not available in this build.</span>');
+    }
+    if (typeof G.gtag === 'function') {
+        try { G.gtag('event', 'prism_inverse_sim_save', { model: last.modelKey, n: last.t.length }); }
+        catch (e) { /* swallow */ }
+    }
 }
 
 // Draw a single (t, y) series — optionally with a model overlay.
 function _drawInvSeries(canvas, t, y, overlay, kind, ylabel) {
+    if (!canvas || !canvas.getContext) return;
     var ctx = canvas.getContext('2d');
+    if (!ctx) return;
     var T = _theme();
     var w = canvas.width, h = canvas.height;
     ctx.clearRect(0, 0, w, h);
     ctx.fillStyle = T.bg; ctx.fillRect(0, 0, w, h);
-    var pad = { top: 22, right: 60, bottom: 32, left: 60 };
+    var pad = { top: 22, right: 20, bottom: 32, left: 64 };
     var plotX = pad.left, plotY = pad.top;
-    var plotW = w - pad.left - pad.right;
-    var plotH = h - pad.top - pad.bottom;
-    if (!t.length || !y.length) {
+    var plotW = w - pad.left - pad.right, plotH = h - pad.top - pad.bottom;
+    if (!t || !y || !t.length || !y.length) {
         ctx.fillStyle = T.text3;
         ctx.font = '12px ui-sans-serif, system-ui, sans-serif';
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         ctx.fillText('No data', w / 2, h / 2);
         return;
     }
-    var tMin = Infinity, tMax = -Infinity;
-    var yMin = Infinity, yMax = -Infinity;
+    var tMin = Infinity, tMax = -Infinity, yMin = Infinity, yMax = -Infinity;
     for (var i = 0; i < t.length; i++) {
-        var tv = t[i], yv = y[i];
-        if (_isNum(tv)) {
-            if (tv < tMin) tMin = tv;
-            if (tv > tMax) tMax = tv;
-        }
-        if (_isNum(yv)) {
-            if (yv < yMin) yMin = yv;
-            if (yv > yMax) yMax = yv;
-        }
+        if (_isNum(t[i])) { if (t[i] < tMin) tMin = t[i]; if (t[i] > tMax) tMax = t[i]; }
+        if (_isNum(y[i])) { if (y[i] < yMin) yMin = y[i]; if (y[i] > yMax) yMax = y[i]; }
     }
     if (overlay && overlay.length) {
         for (var j = 0; j < overlay.length; j++) {
-            var ov = overlay[j];
-            if (_isNum(ov)) {
-                if (ov < yMin) yMin = ov;
-                if (ov > yMax) yMax = ov;
-            }
+            if (_isNum(overlay[j])) { if (overlay[j] < yMin) yMin = overlay[j]; if (overlay[j] > yMax) yMax = overlay[j]; }
         }
     }
     if (!isFinite(tMin) || tMin >= tMax) { tMin = 0; tMax = 1; }
-    if (!isFinite(yMin) || yMin >= yMax) { yMin = -1; yMax = 1; }
+    if (!isFinite(yMin) || yMin >= yMax) { yMin = (isFinite(yMin) ? yMin : 0) - 1; yMax = (isFinite(yMax) ? yMax : 0) + 1; }
     var span = yMax - yMin;
     yMin -= 0.05 * span; yMax += 0.05 * span;
     function xMap(tv) { return plotX + plotW * (tv - tMin) / (tMax - tMin); }
     function yMap(yv) { return plotY + plotH * (1 - (yv - yMin) / (yMax - yMin)); }
-    // Grid + axes.
     ctx.strokeStyle = T.grid;
     ctx.lineWidth = 1;
     ctx.font = '10px ui-sans-serif, system-ui, sans-serif';
     ctx.fillStyle = T.text2;
-    // Y axis.
     ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
     for (var g = 0; g <= 4; g++) {
         var yp = plotY + plotH * g / 4;
         ctx.beginPath(); ctx.moveTo(plotX, yp); ctx.lineTo(plotX + plotW, yp); ctx.stroke();
-        var yLabel = yMax - g * (yMax - yMin) / 4;
-        ctx.fillText(_fmtSig(yLabel, 3), plotX - 6, yp);
+        ctx.fillText(_fmtSig(yMax - g * (yMax - yMin) / 4, 4), plotX - 6, yp);
     }
-    // X axis.
     ctx.textAlign = 'center'; ctx.textBaseline = 'top';
     for (var x = 0; x <= 5; x++) {
-        var frac = x / 5;
-        var tv2 = tMin + frac * (tMax - tMin);
+        var tv2 = tMin + (x / 5) * (tMax - tMin);
         var xp = xMap(tv2);
         ctx.beginPath(); ctx.moveTo(xp, plotY); ctx.lineTo(xp, plotY + plotH); ctx.stroke();
         ctx.fillText(_fmtSig(tv2, 3), xp, plotY + plotH + 4);
     }
-    // Axis labels.
     ctx.fillStyle = T.text;
     ctx.font = '11px ui-sans-serif, system-ui, sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-    ctx.fillText('time (hr)', plotX + plotW / 2, h - 4);
+    ctx.fillText('time (h)', plotX + plotW / 2, h - 4);
     ctx.save();
-    ctx.translate(14, plotY + plotH / 2);
+    ctx.translate(12, plotY + plotH / 2);
     ctx.rotate(-Math.PI / 2);
     ctx.textAlign = 'center'; ctx.textBaseline = 'top';
     ctx.fillText(ylabel, 0, 0);
     ctx.restore();
-    // Data series.
     var color = (kind === 'pressure') ? T.blue : T.accent;
     ctx.strokeStyle = color;
     ctx.lineWidth = 1.5;
@@ -1539,38 +1638,30 @@ function _drawInvSeries(canvas, t, y, overlay, kind, ylabel) {
     var started = false;
     for (var k = 0; k < t.length; k++) {
         if (!_isNum(t[k]) || !_isNum(y[k])) continue;
-        var xp2 = xMap(t[k]);
-        var yp2 = yMap(y[k]);
-        if (!started) { ctx.moveTo(xp2, yp2); started = true; }
-        else ctx.lineTo(xp2, yp2);
+        if (!started) { ctx.moveTo(xMap(t[k]), yMap(y[k])); started = true; }
+        else ctx.lineTo(xMap(t[k]), yMap(y[k]));
     }
     ctx.stroke();
-    // Markers.
     ctx.fillStyle = color;
     for (var m = 0; m < t.length; m++) {
         if (!_isNum(t[m]) || !_isNum(y[m])) continue;
-        var xpm = xMap(t[m]), ypm = yMap(y[m]);
         ctx.beginPath();
-        ctx.arc(xpm, ypm, 1.6, 0, 2 * Math.PI);
+        ctx.arc(xMap(t[m]), yMap(y[m]), 1.6, 0, 2 * Math.PI);
         ctx.fill();
     }
-    // Overlay (predicted) — dashed.
     if (overlay && overlay.length) {
         ctx.strokeStyle = T.green;
         ctx.lineWidth = 1.2;
         if (ctx.setLineDash) ctx.setLineDash([4, 3]);
         ctx.beginPath();
         var started2 = false;
-        for (var ov2 = 0; ov2 < overlay.length; ov2++) {
-            if (!_isNum(t[ov2]) || !_isNum(overlay[ov2])) continue;
-            var xpv = xMap(t[ov2]);
-            var ypv = yMap(overlay[ov2]);
-            if (!started2) { ctx.moveTo(xpv, ypv); started2 = true; }
-            else ctx.lineTo(xpv, ypv);
+        for (var ov = 0; ov < overlay.length; ov++) {
+            if (!_isNum(t[ov]) || !_isNum(overlay[ov])) continue;
+            if (!started2) { ctx.moveTo(xMap(t[ov]), yMap(overlay[ov])); started2 = true; }
+            else ctx.lineTo(xMap(t[ov]), yMap(overlay[ov]));
         }
         ctx.stroke();
         if (ctx.setLineDash) ctx.setLineDash([]);
-        // Legend.
         ctx.font = '10px ui-sans-serif, system-ui, sans-serif';
         ctx.fillStyle = color;
         ctx.fillRect(plotX + plotW - 90, plotY + 6, 10, 4);
@@ -1583,6 +1674,38 @@ function _drawInvSeries(canvas, t, y, overlay, kind, ylabel) {
         ctx.fillText('predicted', plotX + plotW - 76, plotY + 20);
     }
 }
+
+
+// ════════════════════════════════════════════════════════════════════
+// SECTION 6B — Tab 6 panel "PLT & inverse simulation" (C7)
+// ════════════════════════════════════════════════════════════════════
+
+G.PRiSM_renderPLTInversePanel = function PRiSM_renderPLTInversePanel(container, opts) {
+    if (!_hasDoc || !container) return;
+    opts = opts || {};
+    container.innerHTML =
+          '<div class="prism-pltinv" style="max-width:100%; box-sizing:border-box; color:' + TV.text + '; font-size:12px;'
+        +   (opts.embedded ? '' : ' background:' + TV.panel + '; border:1px solid ' + TV.border + '; border-radius:6px; padding:12px;') + '">'
+        +   (opts.embedded ? '' : '<div style="font-weight:700; font-size:14px; margin-bottom:6px;">PLT &amp; inverse simulation</div>')
+        +   '<div style="color:' + TV.text2 + '; margin-bottom:10px; line-height:1.5;">Uses the current fit: the rate split between '
+        +     'layers of a multi-layer model, and the rate history implied by the pressures. Results are in field units when the '
+        +     'well inputs are complete and the fit gives a permeability.</div>'
+        +   '<div class="prism-plt-host"></div>'
+        +   '<div class="prism-inv-host" style="margin-top:16px; padding-top:12px; border-top:1px solid ' + TV.border + ';"></div>'
+        + '</div>';
+    G.PRiSM_renderPLTPanel(container.querySelector('.prism-plt-host'), { embedded: true });
+    G.PRiSM_renderInverseSimPanel(container.querySelector('.prism-inv-host'), { embedded: true });
+};
+
+_registerPanel(6, {
+    id: 'prism_plt_inverse',
+    title: 'PLT & inverse simulation',
+    order: 80,
+    collapsed: true,
+    tool: true,
+    description: 'Layer rate split from a multi-layer fit; rate history recovered from pressure',
+    render: function (hostEl) { G.PRiSM_renderPLTInversePanel(hostEl, { embedded: true }); }
+});
 
 
 // ════════════════════════════════════════════════════════════════════
@@ -1724,7 +1847,8 @@ function _drawInvSeries(canvas, t, y, overlay, kind, ylabel) {
             // pwd(td) directly.
             var paramsH = { Cd: 100, S: 0 };
             // 30 logarithmically spaced points.
-            var tArr = G.PRiSM_logspace(-2, 3, 30);
+            var tArr = [];
+            for (var il = 0; il < 30; il++) tArr.push(Math.pow(10, -2 + 5 * il / 29));
             var qInput = 50.0;          // arbitrary constant rate
             var gUnit = G.PRiSM_unitRateResponse('homogeneous', paramsH, tArr);
             // Build p(t) = p_init - q_input · (g_unit cumulatively folded).
@@ -1736,15 +1860,17 @@ function _drawInvSeries(canvas, t, y, overlay, kind, ylabel) {
             for (var ip = 0; ip < tArr.length; ip++) {
                 pSeries[ip] = pInit - qInput * gUnit[ip];
             }
-            var inv = G.PRiSM_inverseSim('homogeneous', paramsH, tArr, pSeries);
+            // Reference = the known initial pressure (never the first sample).
+            var inv = G.PRiSM_inverseSim('homogeneous', paramsH, tArr, pSeries, { pRef: pInit, tStart: 0 });
+            _check('Test 3: reference pressure is the given pi', inv.pRef === pInit && inv.pRefSource === 'given');
             _check('Test 3: inverse sim converged', inv.converged);
             _check('Test 3: inverse sim produced same-length q',
                 inv.q.length === tArr.length,
                 'q.length=' + inv.q.length + ' vs t.length=' + tArr.length);
-            // Compute mean recovered q over the BODY of the dataset
-            // (skip first 2 and last 2 to avoid edge effects).
+            // Mean recovered q over every sample (the backward-rate form has
+            // no unconstrained end points).
             var totalQ = 0, count = 0;
-            for (var jq = 2; jq < tArr.length - 2; jq++) {
+            for (var jq = 0; jq < tArr.length; jq++) {
                 if (_isNum(inv.q[jq])) {
                     totalQ += inv.q[jq];
                     count++;
