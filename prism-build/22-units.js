@@ -323,7 +323,40 @@
         time:     { imperial: { unit: 'hr',   label: 'hr',   factor: 1, offset: 0 }, metric: { unit: 'hr',   label: 'hr',   factor: 1, offset: 0 } },
         timeMin:  { imperial: { unit: 'min',  label: 'min',  factor: 1, offset: 0 }, metric: { unit: 'min',  label: 'min',  factor: 1, offset: 0 } },
         // Mass-flow specific to compressors (SCFM): no conversion (pure rate).
-        airFlow:  { imperial: { unit: 'SCFM', label: 'SCFM', factor: 1, offset: 0 }, metric: { unit: 'SCFM', label: 'SCFM', factor: 1, offset: 0 } }
+        airFlow:  { imperial: { unit: 'SCFM', label: 'SCFM', factor: 1, offset: 0 }, metric: { unit: 'SCFM', label: 'SCFM', factor: 1, offset: 0 } },
+        // ── Round-5 pages (ESD, hydrate, liquid line, pipe life) ──
+        // Section / vessel volume in cubic feet.
+        volumeFt3: {
+            imperial: { unit: 'ft3', label: 'ft³', factor: 0.028316846592, offset: 0 },
+            metric:   { unit: 'm3',  label: 'm³',  factor: 1,              offset: 0 }
+        },
+        // Standard gas volume: scf <-> Sm³ at the SAME base conditions
+        // (pure volume factor; see WTS_baseConditions for the basis).
+        gasVolumeStd: {
+            imperial: { unit: 'scf', label: 'scf', factor: 0.028316846592, offset: 0 },
+            metric:   { unit: 'Sm3', label: 'Sm³', factor: 1,              offset: 0 }
+        },
+        // Temperature DIFFERENCE (safety margins, depressions): no offset.
+        tempDelta: {
+            imperial: { unit: 'dF', label: '°F', factor: 5 / 9, offset: 0 },
+            metric:   { unit: 'dC', label: '°C', factor: 1,     offset: 0 }
+        },
+        // Wind speed.
+        windSpeed: {
+            imperial: { unit: 'mph', label: 'mph', factor: 0.44704, offset: 0 },
+            metric:   { unit: 'm/s', label: 'm/s', factor: 1,       offset: 0 }
+        },
+        // Wall-loss rate: mils per year <-> mm per year.
+        erosionRate: {
+            imperial: { unit: 'mpy',  label: 'mpy',  factor: 0.0254, offset: 0 },
+            metric:   { unit: 'mm/y', label: 'mm/y', factor: 1,      offset: 0 }
+        },
+        // Sand loading per standard gas volume: lb/MMscf <-> kg/10⁶ Sm³
+        // (0.45359237 kg / 0.0283168466 10⁶ m³ = 16.0185).
+        sandLoading: {
+            imperial: { unit: 'lb/MMscf',  label: 'lb/MMscf',   factor: 0.45359237 / 0.028316846592, offset: 0 },
+            metric:   { unit: 'kg/1e6Sm3', label: 'kg/10⁶ Sm³', factor: 1,                            offset: 0 }
+        }
     };
 
     // ───────────────────────────────────────────────────────────────
@@ -868,8 +901,89 @@
                 // vd_l (m) is SI in the calc — untagged.
             },
             outputs: {}
+        },
+        // ── Round-5 pages (prism-build/23-27). Their calcs run from click /
+        // input / change events inside #pgBody (canonical context) or through
+        // WTS_units.runCanonical, and format results with WTS_units.format.
+        esdhi: {
+            inputs: {
+                wts_esdhi_volume: 'volumeFt3',
+                wts_esdhi_temp:   'temperature',
+                wts_esdhi_q:      'gasRate',
+                wts_esdhi_sg:     'sg',
+                wts_esdhi_hp:     'pressureG',
+                wts_esdhi_rd:     'pressureG',
+                wts_esdhi_mawp:   'pressureG'
+                // wts_esdhi_tresp is seconds in both systems — untagged.
+            },
+            outputs: {}
+        },
+        esdlo: {
+            inputs: {
+                wts_esdlo_volume: 'volumeFt3',
+                wts_esdlo_pflow:  'pressureG',
+                wts_esdlo_qleak:  'gasRate',
+                wts_esdlo_whsip:  'pressureG',
+                wts_esdlo_margin: 'pressure'     // a pressure difference (psi)
+                // wts_esdlo_tresp is seconds — untagged.
+            },
+            outputs: {}
+        },
+        hydrate: {
+            inputs: {
+                wts_hydrate_q:      'gasRate',
+                wts_hydrate_qw:     'liquidRate',
+                wts_hydrate_sg:     'sg',
+                wts_hydrate_safety: 'tempDelta'
+                // hy_*_<i> segment fields are added below; the local injection
+                // rates wts_hydrate_inj_<i> are cc/min (already metric) — untagged.
+            },
+            outputs: {}
+        },
+        liquidline: {
+            inputs: {
+                wts_ll_sep_p:    'pressureG',
+                wts_ll_qoil:     'liquidRate',
+                wts_ll_t_oil:    'temperature',
+                wts_ll_sg_oil:   'sg',
+                wts_ll_sg_gas:   'sg',
+                wts_ll_q_gas:    'gasRate',
+                wts_ll_gor:      'gor',          // read-only, derived
+                wts_ll_tank_p:   'pressureG',
+                wts_ll_vent_len: 'length',
+                wts_ll_wind:     'windSpeed'
+                // RO size (64ths) and the NPS / LCV selects are nominal — untagged.
+            },
+            outputs: {}
+        },
+        pipelife: {
+            inputs: {
+                wts_pl_sand: 'sandLoading',
+                wts_pl_qg:   'gasRate',
+                wts_pl_qo:   'liquidRate',
+                wts_pl_qw:   'liquidRate',
+                wts_pl_sg:   'sg'
+                // wts_pl_c (Salama "c", field-unit empirical constant) — untagged.
+                // wts_pl_seg<i>_* segment fields are added below.
+            },
+            outputs: {}
         }
     };
+    (function () {
+        var i;
+        for (i = 0; i < 4; i++) {           // 25-hydrate.js DEFAULT_NODES
+            MANIFEST.hydrate.inputs['hy_up_P_' + i] = 'pressureG';
+            MANIFEST.hydrate.inputs['hy_up_T_' + i] = 'temperature';
+            MANIFEST.hydrate.inputs['hy_dn_P_' + i] = 'pressureG';
+            MANIFEST.hydrate.inputs['hy_dn_T_' + i] = 'temperature';
+            MANIFEST.hydrate.inputs['hy_tgt_' + i]  = 'temperature';
+        }
+        var segCats = { len: 'length', pseg: 'pressureG', tseg: 'temperature', meas: 'lengthSmall',
+                        minspec: 'lengthSmall', fail: 'lengthSmall', dp: 'pressureG', dt: 'temperature' };
+        for (i = 0; i < 6; i++) {           // 27-pipelife.js DEFAULT_SEGMENTS
+            for (var f in segCats) MANIFEST.pipelife.inputs['wts_pl_seg' + i + '_' + f] = segCats[f];
+        }
+    })();
 
     // ───────────────────────────────────────────────────────────────
     // STATE
@@ -1592,11 +1706,12 @@
         if (existing) {
             _wireToggleButtons();
             _refreshToggleVisuals();
+            _renderBaseSelect(existing);
             return existing;
         }
         var wrap = document.createElement('div');
         wrap.id = _toggleId;
-        wrap.style.cssText = 'display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--text2,#8b949e);margin-left:12px;';
+        wrap.style.cssText = 'display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:11px;color:var(--text2,#8b949e);margin-left:12px;';
         wrap.innerHTML =
             '<span>Units:</span>' +
             '<button type="button" id="wts_units_imperial" class="btn btn-secondary" ' +
@@ -1606,6 +1721,7 @@
         try { container.appendChild(wrap); } catch (e) { return null; }
         _wireToggleButtons();
         _refreshToggleVisuals();
+        _renderBaseSelect(wrap);
         return wrap;
     }
 
@@ -1632,6 +1748,7 @@
         if (existing) {
             _wireToggleButtons();
             _refreshToggleVisuals();
+            _renderBaseSelect(existing);
             return;
         }
         // 2. Dedicated host container (preferred).
@@ -1681,15 +1798,250 @@
                 // route now, and once more after any deferred rendering.
                 _installCalculateWrapper();
                 _applyForCurrentPage();
+                _applyBaseFields(_currentRoute, true);
                 if (typeof setTimeout === 'function') {
                     setTimeout(function () {
                         _installCalculateWrapper();
                         _applyForCurrentPage();
+                        _applyBaseFields(_currentRoute, true);
                     }, 30);
                 }
             });
         } catch (e) {}
     }
+
+    // ───────────────────────────────────────────────────────────────
+    // STANDARD (BASE) CONDITIONS — one app-wide setting for the
+    // reference state of standard gas volumes (scf / Sm³).
+    //
+    //   WTS_baseConditions.get()            → current selection
+    //       {key, label, short, Tb_F, Tb_R, Tb_C, Pb_psia, Pb_kPa, perCalc}
+    //   WTS_baseConditions.set(key)         → persists 'wts_base_conditions',
+    //       fires document 'wts:base-conditions-changed' {key, previous, basis}
+    //   WTS_baseConditions.resolve(defTb_F, defPb_psia)
+    //       → the basis a calculator should use: the app setting, or (for the
+    //         'calc' selection) the calculator's own default — {Tb_F, Tb_R,
+    //         Pb_psia, key, label, fromSetting}
+    //   WTS_baseConditions.volumeFactor(from, to)  scf@from → scf@to
+    //   WTS_baseConditions.molarVolume(basis)      ideal-gas scf / lb-mol
+    //   WTS_baseConditions.text(basis) / note(basis)  display strings
+    //   WTS_baseConditions.OPTIONS
+    //
+    // 'calc' (the default) keeps every calculator on the basis it has
+    // always used (AGA-3 60 °F / 14.696 psia, Oil & Gas orifice 14.73 psia,
+    // gas FVF 14.73 psia, …), so existing results are unchanged until the
+    // user picks a basis. The key travels in project files (wts_* key).
+    // ───────────────────────────────────────────────────────────────
+    var BASE_KEY = 'wts_base_conditions';
+    var BASE_MARK_KEY = 'wts_base_auto';           // last auto-filled base fields per route
+    var PSIA_PER_KPA = 1 / 6.894757293168;
+    var ATM_PSIA = 101.325 * PSIA_PER_KPA;         // 14.6959488 psia
+    var BASE_OPTIONS = [
+        { key: 'calc',        short: 'Std: calc default', label: 'Calculator default', perCalc: true },
+        { key: '60F_14.696',  short: '60 °F · 14.696 psia', label: '60 °F / 14.696 psia', Tb_F: 60, Pb_psia: 14.696 },
+        { key: '60F_14.65',   short: '60 °F · 14.65 psia',  label: '60 °F / 14.65 psia',  Tb_F: 60, Pb_psia: 14.65 },
+        { key: '60F_14.73',   short: '60 °F · 14.73 psia',  label: '60 °F / 14.73 psia',  Tb_F: 60, Pb_psia: 14.73 },
+        { key: '15C_101.325', short: '15 °C · 101.325 kPa', label: '15 °C / 101.325 kPa', Tb_F: 59, Pb_psia: ATM_PSIA },
+        { key: '0C_101.325',  short: '0 °C · 101.325 kPa',  label: '0 °C / 101.325 kPa (normal)', Tb_F: 32, Pb_psia: ATM_PSIA }
+    ];
+    function _baseOpt(key) {
+        for (var i = 0; i < BASE_OPTIONS.length; i++) if (BASE_OPTIONS[i].key === key) return BASE_OPTIONS[i];
+        return null;
+    }
+    function _lsGet(k) {
+        try { if (typeof localStorage !== 'undefined' && localStorage.getItem) return localStorage.getItem(k); } catch (e) {}
+        return null;
+    }
+    function _lsSet(k, v) {
+        try {
+            if (typeof localStorage === 'undefined') return;
+            if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v);
+        } catch (e) {}
+    }
+    function _baseKey() {
+        var k = _lsGet(BASE_KEY);
+        return _baseOpt(k) ? k : 'calc';
+    }
+    function _describe(o) {
+        var out = { key: o.key, label: o.label, short: o.short, perCalc: !!o.perCalc,
+                    Tb_F: null, Tb_R: null, Tb_C: null, Pb_psia: null, Pb_kPa: null };
+        if (!o.perCalc) {
+            out.Tb_F = o.Tb_F; out.Tb_R = _rankine(o.Tb_F); out.Tb_C = (o.Tb_F - 32) * 5 / 9;
+            out.Pb_psia = o.Pb_psia; out.Pb_kPa = o.Pb_psia / PSIA_PER_KPA;
+        }
+        return out;
+    }
+    function _rankine(F) { return Number((F + 459.67).toFixed(6)); }   // 60 °F -> exactly 519.67
+    function baseGet() { return _describe(_baseOpt(_baseKey())); }
+    var _baseLast = null;
+    function _fireBase(prev) {
+        var cur = _baseKey();
+        _baseLast = cur;
+        try { _refreshBaseSelect(); } catch (e) {}
+        try {
+            if (_hasDoc && typeof document.dispatchEvent === 'function' && typeof CustomEvent === 'function') {
+                document.dispatchEvent(new CustomEvent('wts:base-conditions-changed', {
+                    detail: { key: cur, previous: prev, basis: baseGet() }
+                }));
+            }
+        } catch (e) {}
+        try { _applyBaseFields(_currentRoute || _detectRoute(), true); } catch (e) {}
+        try { _recalcForBase(_currentRoute || _detectRoute()); } catch (e) {}
+    }
+    function baseSet(key) {
+        if (key && typeof key === 'object') key = key.key;
+        var o = _baseOpt(key);
+        if (!o) { _warn('[WTS_baseConditions] unknown basis:', key); return false; }
+        var prev = _baseKey();
+        if (o.perCalc) _lsSet(BASE_KEY, null); else _lsSet(BASE_KEY, o.key);
+        if (prev !== o.key) _fireBase(prev);
+        else _refreshBaseSelect();
+        return true;
+    }
+    function _near(a, b, rel) { return isFinite(a) && isFinite(b) && Math.abs(a - b) <= (rel || 1e-9) * Math.max(1, Math.abs(b)); }
+    // Display text for any basis: a preset keeps its own label; otherwise
+    // the numbers in the active unit system.
+    function baseText(b) {
+        if (!b || !isFinite(b.Tb_F) || !isFinite(b.Pb_psia)) return 'calculator default';
+        for (var i = 1; i < BASE_OPTIONS.length; i++) {
+            var o = BASE_OPTIONS[i];
+            if (_near(o.Tb_F, b.Tb_F, 1e-6) && _near(o.Pb_psia, b.Pb_psia, 1e-6)) return o.label.replace(' (normal)', '');
+        }
+        var r = function (v, d) { return String(Number(v.toFixed(d))); };
+        if (_state.system === 'metric') return r((b.Tb_F - 32) * 5 / 9, 2) + ' °C / ' + r(b.Pb_psia / PSIA_PER_KPA, 3) + ' kPa';
+        return r(b.Tb_F, 2) + ' °F / ' + r(b.Pb_psia, 3) + ' psia';
+    }
+    function baseResolve(defTb_F, defPb_psia) {
+        var s = baseGet();
+        if (!s.perCalc) {
+            return { Tb_F: s.Tb_F, Tb_R: s.Tb_R, Pb_psia: s.Pb_psia, key: s.key, label: baseText(s), fromSetting: true };
+        }
+        var T = isFinite(+defTb_F) ? +defTb_F : 60, P = isFinite(+defPb_psia) ? +defPb_psia : 14.696;
+        return { Tb_F: T, Tb_R: _rankine(T), Pb_psia: P, key: 'calc', label: baseText({ Tb_F: T, Pb_psia: P }), fromSetting: false };
+    }
+    // Standard volume referred to basis `from` → the same gas at basis `to`.
+    function baseVolumeFactor(from, to) {
+        return (from.Pb_psia / to.Pb_psia) * ((to.Tb_F + 459.67) / (from.Tb_F + 459.67));
+    }
+    function baseMolarVolume(b) { return 10.73159 * (b.Tb_F + 459.67) / b.Pb_psia; }
+    function baseNote(b) {
+        return 'Standard volumes (scf' + (_state.system === 'metric' ? ', Sm³' : '') + ') are at ' + baseText(b) +
+            (b && b.fromSetting ? ' (app setting)' : ' (this calculator\'s default; change it with the "Std" selector in the header)') + '.';
+    }
+
+    // Base / contract condition INPUT fields that follow the setting while the
+    // user has not typed their own values (canonical imperial: °F, psia).
+    var BASE_FIELDS = {
+        aga3:     { T: 'a_Tb',  P: 'a_Pb',     def: { Tb_F: 60, Pb_psia: 14.696 } },
+        flareghg: { T: 'fe_tb', P: 'fe_pbase', def: { Tb_F: 60, Pb_psia: 14.696 } }
+    };
+    // Pages whose shown results depend on the basis: re-run when it changes
+    // (only when a result is already on screen).
+    var BASE_RECALC = {
+        aga3: ['calcAGA3', 'a_res'], oilgas: ['calcOilGas', 'og_res'], gascalc: ['calcGasVel', 'gv_res'],
+        choke: ['calcChoke', 'c_res']
+    };
+    function _readMarks() {
+        try { var m = JSON.parse(_lsGet(BASE_MARK_KEY) || '{}'); return (m && typeof m === 'object') ? m : {}; }
+        catch (e) { return {}; }
+    }
+    function _applyBaseFields(route, fire) {
+        var spec = route && BASE_FIELDS[route];
+        if (!spec || !_hasDoc) return false;
+        var eT = _byId(spec.T), eP = _byId(spec.P);
+        if (!eT || !eP) return false;
+        var changed = false;
+        runCanonical(function () {
+            var curT = parseFloat(eT.value), curP = parseFloat(eP.value);
+            var marks = _readMarks(), m = marks[route] || { T: spec.def.Tb_F, P: spec.def.Pb_psia };
+            if (!_near(curT, +m.T, 1e-7) || !_near(curP, +m.P, 1e-7)) return;   // user override
+            var b = baseResolve(spec.def.Tb_F, spec.def.Pb_psia);
+            var tT = Number(b.Tb_F.toPrecision(9)), tP = Number(b.Pb_psia.toPrecision(9));
+            if (!_near(curT, tT, 1e-9) || !_near(curP, tP, 1e-9)) {
+                eT.value = String(tT); eP.value = String(tP);
+                changed = true;
+            }
+            marks[route] = { T: tT, P: tP };
+            _lsSet(BASE_MARK_KEY, JSON.stringify(marks));
+        });
+        if (changed && fire) {
+            try {
+                [eT, eP].forEach(function (el) {
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                });
+            } catch (e) {}
+        }
+        return changed;
+    }
+    function _recalcForBase(route) {
+        var r = route && BASE_RECALC[route];
+        if (!r || !_hasDoc) return;
+        var res = _byId(r[1]);
+        if (!res || !String(res.innerHTML || '').trim() || !res.querySelector || !res.querySelector('.rrow')) return;
+        if (typeof G[r[0]] === 'function') { try { G[r[0]](); } catch (e) { _warn('[WTS_baseConditions] recalc failed', e); } }
+    }
+    // Header selector (lives inside the unit toggle; compact for 375 px).
+    function _renderBaseSelect(container) {
+        if (!_hasDoc || !container || typeof container.appendChild !== 'function') return null;
+        var sel = _byId('wts_base_select');
+        if (!sel) {
+            sel = document.createElement('select');
+            sel.id = 'wts_base_select';
+            sel.setAttribute('title', 'Standard (base) conditions for gas volumes (scf / Sm³)');
+            sel.setAttribute('aria-label', 'Standard conditions for gas volumes');
+            sel.style.cssText = 'font-size:11px;padding:2px 4px;max-width:124px;border-radius:4px;' +
+                'border:1px solid var(--border,#30363d);background:var(--bg2,#161b22);color:var(--text2,#8b949e);cursor:pointer;';
+            var h = '';
+            for (var i = 0; i < BASE_OPTIONS.length; i++) {
+                h += '<option value="' + BASE_OPTIONS[i].key + '">' + BASE_OPTIONS[i].short + '</option>';
+            }
+            sel.innerHTML = h;
+            try { container.appendChild(sel); } catch (e) { return null; }
+        }
+        if (!sel.__wts_wired) {
+            sel.__wts_wired = true;
+            sel.addEventListener('change', function () { baseSet(sel.value); });
+        }
+        _refreshBaseSelect();
+        return sel;
+    }
+    function _refreshBaseSelect() {
+        var sel = _byId('wts_base_select');
+        if (!sel) return;
+        var k = _baseKey();
+        if (sel.value !== k) sel.value = k;
+        var o = _baseOpt(k);
+        sel.setAttribute('title', 'Standard (base) conditions for gas volumes: ' + (o.perCalc ? 'each calculator\'s own default' : o.label));
+    }
+    // A project Open / New replaces localStorage — pick the new basis up.
+    if (_hasDoc && typeof document.addEventListener === 'function') {
+        try {
+            document.addEventListener('wts:project-loaded', function () {
+                var cur = _baseKey();
+                if (_baseLast !== null && cur !== _baseLast) _fireBase(_baseLast); else _refreshBaseSelect();
+                _baseLast = cur;
+            });
+        } catch (e) {}
+    }
+    _baseLast = _baseKey();
+
+    var WTS_baseConditions = {
+        get: baseGet,
+        set: baseSet,
+        resolve: baseResolve,
+        isSet: function () { return _baseKey() !== 'calc'; },
+        volumeFactor: baseVolumeFactor,
+        molarVolume: baseMolarVolume,
+        text: baseText,
+        note: baseNote,
+        OPTIONS: BASE_OPTIONS,
+        STORAGE_KEY: BASE_KEY,
+        FIELDS: BASE_FIELDS,
+        applyFields: function (route) { return _applyBaseFields(route || _currentRoute || _detectRoute(), true); },
+        renderSelect: _renderBaseSelect
+    };
+    G.WTS_baseConditions = WTS_baseConditions;
 
     // (Fresh-node flipping now happens inside tagInput(), atomically
     // with tagging, so a node is never tagged-but-unflipped.)
@@ -1760,6 +2112,7 @@
 
         CATEGORIES: CATEGORIES,
         MANIFEST: MANIFEST,
+        baseConditions: WTS_baseConditions,
 
         // Test-friendly internals (not in the public contract but
         // useful for the self-test below).
@@ -1838,6 +2191,24 @@
             near(convertCategory(1.58, 'radiation', 'imperial', 'metric'), 1.58 * 0.003154, 1e-6));
         check('100 BTU/hr/F -> 52.75 W/K',
             near(convertCategory(100, 'heatTransfer', 'imperial', 'metric'), 52.75, 1e-2));
+
+        check('10 ft3 -> 0.283168 m3 (volumeFt3)',
+            near(convertCategory(10, 'volumeFt3', 'imperial', 'metric'), 0.28316847, 1e-7));
+        check('9 F difference -> 5 C difference (tempDelta)',
+            near(convertCategory(9, 'tempDelta', 'imperial', 'metric'), 5, 1e-9));
+        check('20 mph -> 8.9408 m/s', near(convertCategory(20, 'windSpeed', 'imperial', 'metric'), 8.9408, 1e-6));
+        check('10 mpy -> 0.254 mm/y', near(convertCategory(10, 'erosionRate', 'imperial', 'metric'), 0.254, 1e-9));
+        check('1 lb/MMscf -> 16.0185 kg/1e6 Sm3', near(convertCategory(1, 'sandLoading', 'imperial', 'metric'), 16.0185, 1e-4));
+        // Base conditions: 1 scf at 60 F / 14.73 psia = 1.002314 scf at 60 F / 14.696 psia.
+        check('base volumeFactor 14.73 -> 14.696 psia',
+            near(baseVolumeFactor({ Tb_F: 60, Pb_psia: 14.73 }, { Tb_F: 60, Pb_psia: 14.696 }), 14.73 / 14.696, 1e-12));
+        check('base volumeFactor 60 F -> 15 C (59 F) at the same pressure',
+            near(baseVolumeFactor({ Tb_F: 60, Pb_psia: 14.696 }, { Tb_F: 59, Pb_psia: 14.696 }), 518.67 / 519.67, 1e-12));
+        check('molar volume at 60 F / 14.696 psia = 379.48 scf/lbmol',
+            near(baseMolarVolume({ Tb_F: 60, Pb_psia: 14.696 }), 379.48, 0.01));
+        check('resolve() without a setting keeps the calculator default',
+            (function () { var b = baseResolve(60, 14.73); return b.Pb_psia === 14.73 && near(b.Tb_R, 519.67, 1e-9) && !b.fromSetting; })() || _baseKey() !== 'calc');
+        check('101.325 kPa = 14.6959 psia', near(ATM_PSIA, 14.69595, 1e-5));
 
         // Round-trip / identity.
         check('round-trip pressure',

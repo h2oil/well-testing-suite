@@ -91,6 +91,24 @@
                        .replace(/(\.\d*?)0+$/, '$1')
                        .replace(/\.$/, '');
     }
+    // Display in the active unit system (22-units.js); calcs stay imperial.
+    function _metric() {
+        var U = G.WTS_units;
+        return !!(U && U.getSystem && U.getSystem() === 'metric' && U.format);
+    }
+    function _u(v, cat, dp, impLabel, dpMet) {
+        if (!_isNum(v)) return '—';
+        if (_metric()) { var f = G.WTS_units.format(v, cat); return _fmt(f.value, dpMet == null ? dp : dpMet) + ' ' + f.label; }
+        return _fmt(v, dp) + ' ' + impLabel;
+    }
+    function _ulab(cat, impLabel) { return _metric() ? G.WTS_units.format(0, cat).label : impLabel; }
+    // Standard pressure of the scf: the standard-conditions setting when one
+    // is chosen (the leak rate is entered on that basis), else 14.7 psia.
+    function _basis() {
+        var B = G.WTS_baseConditions;
+        if (B && B.resolve) return B.resolve(60, 14.7);
+        return { Tb_F: 60, Tb_R: 519.67, Pb_psia: 14.7, label: '60 °F / 14.7 psia', fromSetting: false };
+    }
     function _esc(s) {
         if (s == null) return '';
         return String(s)
@@ -138,11 +156,11 @@
         // Input validation — report problems instead of silently computing
         // with substitutes (a blank volume used to be replaced by 1 ft³).
         var problems = [];
-        if (!_isNum(V) || V <= 0) problems.push('Section volume must be > 0 ft³.');
-        if (!_isNum(Pflow) || Pflow <= 0) problems.push('Section flowing pressure must be > 0 psig.');
-        if (!_isNum(Qleak_mmscfd) || Qleak_mmscfd <= 0) problems.push('Detectable leak rate must be > 0 MMscfd.');
+        if (!_isNum(V) || V <= 0) problems.push('Section volume must be > 0 ' + _ulab('volumeFt3', 'ft³') + '.');
+        if (!_isNum(Pflow) || Pflow <= 0) problems.push('Section flowing pressure must be > 0 ' + _ulab('pressureG', 'psig') + '.');
+        if (!_isNum(Qleak_mmscfd) || Qleak_mmscfd <= 0) problems.push('Detectable leak rate must be > 0 ' + _ulab('gasRate', 'MMscfd') + '.');
         if (!_isNum(tresp) || tresp <= 0) problems.push('ESD response time must be > 0 s.');
-        if (!_isNum(WHSIP)) problems.push('WHSIP is required (psig).');
+        if (!_isNum(WHSIP)) problems.push('WHSIP is required (' + _ulab('pressureG', 'psig') + ').');
 
         // Defensive defaults (keep the numeric outputs finite)
         if (!_isNum(V) || V <= 0)               V = 1;
@@ -155,8 +173,10 @@
         // Gas released during ESD response window  (scf)
         var gasReleased_scf = (Qleak_mmscfd * 1e6 / 86400) * tresp;
 
-        // Pressure drop  (psi) — isothermal ideal-gas, surface ref 14.7 psia
-        var dP_psi = (gasReleased_scf * 14.7) / V;
+        // Pressure drop  (psi) — isothermal ideal-gas; the scf is referred to the
+        // standard pressure (14.7 psia, or the standard-conditions setting).
+        var bc = _basis();
+        var dP_psi = (gasReleased_scf * bc.Pb_psia) / V;
 
         // After-drop section pressure  (psig)
         var Pafter_psig = Pflow - dP_psi;
@@ -176,27 +196,27 @@
         var rationale;
         if (!reachable) {
             rationale =
-                'Calculated drawdown pressure (' + _fmt(Pafter_psig, 1) + ' psig) is BELOW WHSIP (' +
-                _fmt(WHSIP, 0) + ' psig). The well will repressurise the section before the lo-pilot ' +
+                'Calculated drawdown pressure (' + _u(Pafter_psig, 'pressureG', 1, 'psig') + ') is BELOW WHSIP (' +
+                _u(WHSIP, 'pressureG', 0, 'psig') + '). The well will repressurise the section before the lo-pilot ' +
                 'can detect the leak — PSL will never reach setpoint at this leak rate. Either choose a ' +
                 'lo-pilot location with a smaller trapped volume, accept a larger detectable leak rate, ' +
                 'or shorten the ESD response time.';
         } else if (lowSensitivity) {
             rationale =
-                'PSL is reachable but the predicted drawdown is only ' + _fmt(dP_psi, 2) +
-                ' psi over ' + _fmt(tresp, 1) + ' s — comparable to normal operating pressure ' +
+                'PSL is reachable but the predicted drawdown is only ' + _u(dP_psi, 'pressure', 2, 'psi') +
+                ' over ' + _fmt(tresp, 1) + ' s — comparable to normal operating pressure ' +
                 'fluctuation. PSL set this close to P_flow risks frequent false trips. Consider ' +
                 'increasing the detectable leak rate, lengthening the response window, or using ' +
                 'rate-of-change detection in addition to absolute PSL.';
         } else {
             rationale =
-                'A ' + _fmt(Qleak_mmscfd, 0) + ' MMscfd leak releases ' +
-                _fmt(gasReleased_scf, 0) + ' scf over the ' + _fmt(tresp, 1) +
-                ' s response window, producing a ' + _fmt(dP_psi, 1) +
-                ' psi drop in the ' + _fmt(V, 2) + ' ft³ section. Setting PSL at ' +
-                _fmt(psl_target_psig, 0) + ' psig (drawdown pressure ' +
-                _fmt(Pafter_psig, 0) + ' psig less ' + _fmt(margin, 0) +
-                ' psig safety margin) gives a deterministic ESD trip on this leak signature.';
+                'A ' + _u(Qleak_mmscfd, 'gasRate', 0, 'MMscfd', 1) + ' leak releases ' +
+                _u(gasReleased_scf, 'gasVolumeStd', 0, 'scf', 1) + ' over the ' + _fmt(tresp, 1) +
+                ' s response window, producing a ' + _u(dP_psi, 'pressure', 1, 'psi') +
+                ' drop in the ' + _u(V, 'volumeFt3', 2, 'ft³', 3) + ' section. Setting PSL at ' +
+                _u(psl_target_psig, 'pressureG', 0, 'psig') + ' (drawdown pressure ' +
+                _u(Pafter_psig, 'pressureG', 0, 'psig') + ' less ' + _u(margin, 'pressure', 0, 'psig') +
+                ' safety margin) gives a deterministic ESD trip on this leak signature.';
         }
 
         var result = {
@@ -207,6 +227,7 @@
             reachable: reachable,
             lowSensitivity: lowSensitivity,
             rationale: rationale,
+            basis: bc,
             error: problems.length ? problems.join(' ') : null
         };
 
@@ -500,19 +521,22 @@
               '<tbody>' +
                 '<tr><td>Gas released during response window</td>' +
                     '<td style="text-align:right;font-family:Courier New,monospace;">' +
-                    _fmt(r.gasReleasedDuringResponse_scf, 1) + ' scf</td></tr>' +
+                    _u(r.gasReleasedDuringResponse_scf, 'gasVolumeStd', 1, 'scf', 2) + '</td></tr>' +
                 '<tr><td>Pressure drop during response window</td>' +
                     '<td style="text-align:right;font-family:Courier New,monospace;">' +
-                    _fmt(r.pressureDrop_psi, 2) + ' psi</td></tr>' +
+                    _u(r.pressureDrop_psi, 'pressure', 2, 'psi') + '</td></tr>' +
                 '<tr><td>Leak drawdown pressure</td>' +
                     '<td style="text-align:right;font-family:Courier New,monospace;">' +
-                    _fmt(r.leakDrawdownPressure_psig, 1) + ' psig</td></tr>' +
+                    _u(r.leakDrawdownPressure_psig, 'pressureG', 1, 'psig') + '</td></tr>' +
                 '<tr><td>WHSIP (reference)</td>' +
                     '<td style="text-align:right;font-family:Courier New,monospace;color:#8b949e;">' +
-                    _fmt(inputs.whsip_psig, 0) + ' psig</td></tr>' +
+                    _u(inputs.whsip_psig, 'pressureG', 0, 'psig') + '</td></tr>' +
                 '<tr><td>Safety margin</td>' +
                     '<td style="text-align:right;font-family:Courier New,monospace;color:#8b949e;">' +
-                    _fmt(inputs.safetyMargin_psig, 0) + ' psig</td></tr>' +
+                    _u(inputs.safetyMargin_psig, 'pressure', 0, 'psig') + '</td></tr>' +
+                '<tr><td>Standard-volume basis</td>' +
+                    '<td style="text-align:right;color:#8b949e;">' +
+                    _esc(r.basis.label + (r.basis.fromSetting ? ' (app setting)' : ' (calculator default)')) + '</td></tr>' +
               '</tbody>' +
             '</table>' +
             // Headline: PSL target
@@ -521,13 +545,13 @@
               '<div class="rrow">' +
                 '<span class="rl">Recommended PSL setpoint</span>' +
                 '<span class="rv" style="font-size:20px;">' +
-                  _fmt(r.psl_target_psig, 0) + ' psig' +
+                  _u(r.psl_target_psig, 'pressureG', 0, 'psig') +
                 '</span>' +
               '</div>' +
               '<div class="rrow">' +
                 '<span class="rl">Drawdown from P_flow</span>' +
                 '<span class="rv">' +
-                  _fmt(inputs.sectionFlowingPressure_psig - r.psl_target_psig, 1) + ' psi' +
+                  _u(inputs.sectionFlowingPressure_psig - r.psl_target_psig, 'pressure', 1, 'psi') +
                 '</span>' +
               '</div>' +
             '</div>';
@@ -560,7 +584,7 @@
             badgeColor  = '#3fb950';
             badgeIcon   = '✓';   // ✓
             badgeText   = 'PSL reachable — leak would drop section by ' +
-                          _fmt(r.pressureDrop_psi, 1) + ' psi in ' +
+                          _u(r.pressureDrop_psi, 'pressure', 1, 'psi') + ' in ' +
                           _fmt(inputs.esdResponseTime_s, 1) + ' s.';
         }
 
@@ -585,6 +609,21 @@
     // Module-level export marker so smoke-test can detect this layer.
     // ───────────────────────────────────────────────────────────────
     G.WTS_esdLoPilot_DEFAULTS = DEFAULTS;
+
+    // Unit flip / standard-conditions change: repaint shown results in the
+    // active system (canonical context → tagged inputs read imperial).
+    function _rerun() {
+        if (!_hasDoc) return;
+        var rc = document.getElementById('wts_esdlo_resultcard');
+        if (!rc || rc.style.display === 'none') return;
+        var U = G.WTS_units;
+        if (U && U.runCanonical) U.runCanonical(_runCalc); else _runCalc();
+    }
+    if (_hasDoc && typeof document.addEventListener === 'function') {
+        document.addEventListener('wts:unit-system-changed', _rerun);
+        document.addEventListener('wts:base-conditions-changed', _rerun);
+    }
+
 
 })();
 

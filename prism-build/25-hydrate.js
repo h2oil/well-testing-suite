@@ -389,6 +389,16 @@
         return fixed;
     }
 
+    // Display in the active unit system (22-units.js); calcs stay °F / psig.
+    function _metric() {
+        var U = G.WTS_units;
+        return !!(U && U.getSystem && U.getSystem() === 'metric' && U.format);
+    }
+    function _uval(v, cat) { return _metric() ? G.WTS_units.format(v, cat).value : v; }
+    function _tl() { return _metric() ? '°C' : '°F'; }
+    function _uT(v, d)  { return _fmt(_uval(v, 'temperature'), d) + ' ' + _tl(); }   // temperature
+    function _uDT(v, d) { return _fmt(_uval(v, 'tempDelta'), d) + ' ' + _tl(); }     // temperature difference
+
     // Build one segment card HTML.
     function _segCardHTML(seg, idx) {
         return ''
@@ -411,7 +421,7 @@
             +   '<div style="margin-top:8px;padding:8px;border-radius:6px;background:rgba(140,150,160,0.06)">'
             +     '<div style="display:flex;justify-content:space-between;align-items:center;font-size:11px">'
             +       '<span>T<sub>hyd</sub> (no inhibitor)</span>'
-            +       '<span id="hy_thyd_' + idx + '" style="font-weight:700">— &deg;F</span>'
+            +       '<span id="hy_thyd_' + idx + '" style="font-weight:700">— ' + _tl() + '</span>'
             +     '</div>'
             +     '<div id="hy_riskBadge_' + idx + '" '
             +          'style="margin-top:6px;padding:4px 8px;border-radius:4px;font-size:11px;font-weight:600;text-align:center;'
@@ -426,7 +436,7 @@
             +   '<div style="margin-top:6px;padding:8px;border-radius:6px;background:rgba(140,150,160,0.06)">'
             +     '<div style="display:flex;justify-content:space-between;align-items:center;font-size:11px">'
             +       '<span>T<sub>hyd</sub> WITH inhibitor</span>'
-            +       '<span id="hy_thydInj_' + idx + '" style="font-weight:700">— &deg;F</span>'
+            +       '<span id="hy_thydInj_' + idx + '" style="font-weight:700">— ' + _tl() + '</span>'
             +     '</div>'
             +     '<div id="hy_status_' + idx + '" '
             +          'style="margin-top:6px;padding:4px 8px;border-radius:4px;font-size:11px;font-weight:600;text-align:center;'
@@ -551,14 +561,14 @@
 
         var injBox    = _byId('hy_thydInj_' + idx);
         var statusBox = _byId('hy_status_'  + idx);
-        if (injBox)    injBox.textContent = _fmt(T_hyd_inj, 1) + ' °F';
+        if (injBox)    injBox.textContent = _uT(T_hyd_inj, 1);
         if (statusBox) {
             statusBox.style.background = _riskBg(depressed_risk);
             statusBox.style.color      = _riskColor(depressed_risk);
             if (depressed_risk === 'green') {
                 statusBox.textContent = 'NO INHIBITOR SHORTFALL';
             } else if (depressed_risk === 'yellow') {
-                statusBox.textContent = 'MARGINAL — within 5 °F';
+                statusBox.textContent = 'MARGINAL — within ' + _uDT(5, _metric() ? 1 : 0);
             } else {
                 statusBox.textContent = 'MORE INHIBITOR HAS TO BE ADDED';
             }
@@ -648,14 +658,14 @@
             var badgeEl = _byId('hy_riskBadge_' + c);
             var injEl   = _byId('wts_hydrate_inj_' + c);
 
-            if (thydEl)  thydEl.textContent = _fmt(nd.T_hyd_no_inhibitor_F, 1) + ' °F';
+            if (thydEl)  thydEl.textContent = _uT(nd.T_hyd_no_inhibitor_F, 1);
             if (badgeEl) {
                 badgeEl.style.background = _riskBg(nd.hydrate_risk);
                 badgeEl.style.color      = _riskColor(nd.hydrate_risk);
                 if (nd.hydrate_risk === 'green') {
-                    badgeEl.textContent = 'NO HYDRATE RISK (T_op > T_hyd + 5°F)';
+                    badgeEl.textContent = 'NO HYDRATE RISK (T_op > T_hyd + ' + _uDT(5, _metric() ? 1 : 0).replace(' ', '') + ')';
                 } else if (nd.hydrate_risk === 'yellow') {
-                    badgeEl.textContent = 'MARGINAL — within 5 °F of hydrate locus';
+                    badgeEl.textContent = 'MARGINAL — within ' + _uDT(5, _metric() ? 1 : 0) + ' of hydrate locus';
                 } else {
                     badgeEl.textContent = 'HYDRATE RISK — T_op below T_hyd';
                 }
@@ -685,9 +695,9 @@
                 rows += ''
                     + '<tr>'
                     +   '<td style="font-weight:600">' + rn2.label + '</td>'
-                    +   '<td>' + _fmt(rn2.T_hyd_no_inhibitor_F, 1) + '</td>'
-                    +   '<td>' + _fmt(rn2.T_downstream_F, 1)       + '</td>'
-                    +   '<td>' + _fmt(rn2.depression_required_F, 1) + '</td>'
+                    +   '<td>' + _fmt(_uval(rn2.T_hyd_no_inhibitor_F, 'temperature'), 1) + '</td>'
+                    +   '<td>' + _fmt(_uval(rn2.T_downstream_F, 'temperature'), 1)       + '</td>'
+                    +   '<td>' + _fmt(_uval(rn2.depression_required_F, 'tempDelta'), 1) + '</td>'
                     +   '<td>' + _fmt(rn2.wt_pct_needed, 1)         + '</td>'
                     +   '<td>' + _fmt(rn2.injection_rate_cc_min, 1) + '</td>'
                     +   '<td>' + _fmt(local, 1)                     + '</td>'
@@ -696,8 +706,8 @@
             }
             var tableHTML = ''
                 + '<table class="dtable" style="font-size:11px">'
-                +   '<tr><th>Segment</th><th>T<sub>hyd</sub> (°F)</th><th>T<sub>op</sub> (°F)</th>'
-                +       '<th>&Delta;T req (°F)</th><th>wt% needed</th>'
+                +   '<tr><th>Segment</th><th>T<sub>hyd</sub> (' + _tl() + ')</th><th>T<sub>op</sub> (' + _tl() + ')</th>'
+                +       '<th>&Delta;T req (' + _tl() + ')</th><th>wt% needed</th>'
                 +       '<th>Recommended (cc/min)</th><th>Currently set (cc/min)</th><th>Risk</th></tr>'
                 +   rows
                 + '</table>'
@@ -706,7 +716,7 @@
                 +   '(' + INHIB[inhibKey].label + ', incl. ' + _fmt((INHIB[inhibKey].vapAllow - 1) * 100, 0) + '% vapour-phase allowance)'
                 + '</div>'
                 + '<div style="margin-top:6px;font-size:11px;opacity:0.75">'
-                +   'Recommended rates target a 5°F (or user-set) safety margin below the hydrate locus. '
+                +   'Recommended rates target a ' + _uDT(5, _metric() ? 1 : 0) + ' (or user-set) safety margin below the hydrate locus. '
                 +   'Inject upstream of the coldest point in each pipework segment. '
                 +   'For multi-stage cooling (choke + JT separator), the largest single recommendation generally '
                 +   'protects the entire downstream system.'
@@ -724,6 +734,17 @@
     G.WTS_hydrate_injection_rate    = WTS_hydrate_injection_rate;
     G.WTS_hydrate_compute           = WTS_hydrate_compute;
     G.renderHydrateManagement       = renderHydrateManagement;
+
+    // Unit flip / standard-conditions change: repaint the node cards and the
+    // summary in the active system (canonical context → inputs read °F / psig).
+    if (_hasDoc && typeof document.addEventListener === 'function') {
+        document.addEventListener('wts:unit-system-changed', function () {
+            if (!_byId('wts_hydrate_summary') || !_byId('wts_hydrate_run')) return;
+            var U = G.WTS_units;
+            if (U && U.runCanonical) U.runCanonical(_runHydrateUI); else _runHydrateUI();
+        });
+    }
+
 
     // === SELF-TEST ===
     (function () {

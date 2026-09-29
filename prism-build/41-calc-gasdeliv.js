@@ -416,8 +416,17 @@
         h += '<div class="chart-wrap"><canvas id="gd_chart" width="600" height="340"></canvas></div>';
         // 6 — notes
         h += '<div><b>Notes</b> AOF is the rate at a sandface back-pressure of ' + _u(r.pb, 'pressure', 2, 'psia') +
-            '. Pressures are squared (p² method), which is adequate below about 2,000 psia or where μZ is nearly constant; use pseudo-pressure analysis in PRiSM for high-pressure gas.</div>';
+            '. Pressures are squared (p² method), which is adequate below about 2,000 psia or where μZ is nearly constant; use pseudo-pressure analysis in PRiSM for high-pressure gas. ' +
+            _basisNote() + '</div>';
         return h;
+    }
+
+    // The analysis is basis-neutral: C, a, b and the AOF come out in the same
+    // standard-volume basis as the entered rates — say which basis that is.
+    function _basisNote() {
+        var B = G.WTS_baseConditions, b = B && B.get ? B.get() : null;
+        if (!b || b.perCalc) return 'Rates (and the AOF) are in the standard-volume basis of the entered test rates; no base-condition conversion is applied.';
+        return 'Rates (and the AOF) are standard volumes at ' + B.text(b) + ' (app setting) — enter the test rates on that basis.';
     }
 
     function _drawChart(r) {
@@ -478,6 +487,10 @@
     // Unit flip → recalc (results are formatted in the display system).
     if (typeof document !== 'undefined' && document.addEventListener) {
         document.addEventListener('wts:unit-system-changed', function () {
+            var r = _byId('gd_res');
+            if (r && r.getAttribute && r.getAttribute('data-done') === '1') G.calcGasDeliv();
+        });
+        document.addEventListener('wts:base-conditions-changed', function () {
             var r = _byId('gd_res');
             if (r && r.getAttribute && r.getAttribute('data-done') === '1') G.calcGasDeliv();
         });

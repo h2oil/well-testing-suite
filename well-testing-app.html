@@ -828,6 +828,18 @@ function _uFmt(v, cat, dp, impLabel, dpMet) {
     const U = window.WTS_units;
     return fmt(v, dp) + ' ' + (impLabel != null ? impLabel : (U && U.CATEGORIES && U.CATEGORIES[cat] ? U.CATEGORIES[cat].imperial.label : ''));
 }
+// Standard (base) conditions of gas volumes: the app-wide setting
+// (22-units.js WTS_baseConditions) or, when it is left on "calculator
+// default", this calculator's own basis (defTbF °F, defPb psia).
+function _baseCond(defTbF, defPb) {
+    const B = window.WTS_baseConditions;
+    if(B && typeof B.resolve === 'function') return B.resolve(defTbF, defPb);
+    return { Tb_F: defTbF, Tb_R: Number((defTbF + 459.67).toFixed(6)), Pb_psia: defPb, label: defTbF + ' °F / ' + defPb + ' psia', fromSetting: false };
+}
+function _baseNote(b) {
+    const B = window.WTS_baseConditions;
+    return (B && typeof B.note === 'function') ? B.note(b) : 'Standard volumes are at ' + b.label + '.';
+}
 function __unitCat(el) {
     return (el.dataset && el.dataset.wtsUnitCat) || (el.getAttribute && el.getAttribute('data-wts-unit-cat')) || null;
 }
@@ -3097,6 +3109,9 @@ window.calcChoke = function(){
     const deq=Math.sqrt(4*Aeq/Math.PI), deq64=deq*64;
     // Pressures are gauge (psig); every ratio / quadratic balance below uses absolute.
     const PATM=14.696, P1a=P1+PATM, P3a=P3+PATM;
+    // Thornhill-Craver standard rates are referred to 60 °F / 14.7 psia; re-refer them
+    // to the standard-conditions setting when one is chosen.
+    const _bcCk=_baseCond(60,14.7), ckBF=(14.7/_bcCk.Pb_psia)*(_bcCk.Tb_R/519.67);
     let P2a, Qgas=0, Qliq=0, Qoil=0, GLR=0, crit=0.546;
     if(ft==='gas'){
         // Gas: Thornhill-Craver nozzle equation on BOTH chokes, solved for the P2 that
@@ -3119,7 +3134,7 @@ window.calcChoke = function(){
         let lo=P3a, hi=P1a;
         for(let i=0;i<80;i++){const m=(lo+hi)/2; if(TC(CA1,P1a,m)>TC(CA2,m,P3a)) lo=m; else hi=m;}
         P2a=(lo+hi)/2;
-        Qgas=TC(CA1,P1a,P2a); // MSCF/D
+        Qgas=TC(CA1,P1a,P2a)*ckBF; // MSCF/D at the base conditions
     } else {
         // Multiphase: subcritical equal-flow balance CA1²(P1²−P2²) = CA2²(P2²−P3²)
         // in ABSOLUTE pressure → P2² = (CA1²·P1² + CA2²·P3²)/(CA1² + CA2²).
@@ -3162,7 +3177,7 @@ window.calcChoke = function(){
       </div>
     </div>
     <div class="info-bar" style="margin-top:12px">${ft==='gas'
-        ?'Gas: Thornhill-Craver nozzle equation (k = 1.28, Papay Z) balanced across both chokes; critical ratio '+fmt(crit,3)+'.'
+        ?'Gas: Thornhill-Craver nozzle equation (k = 1.28, Papay Z) balanced across both chokes; critical ratio '+fmt(crit,3)+'. '+_baseNote(_bcCk)
         :'Multiphase: P2 from a subcritical equal-flow balance; Gilbert rate (GLR = GOR &times; (1 &minus; WC)) assumes critical flow through the equivalent bean.'}</div>
     <div class="export-bar">
       <button class="btn-export" onclick="chokeExportCSV()">&#128196; Export CSV</button>
@@ -6165,7 +6180,8 @@ window.calcGasVel=function(){
     if(!showErrors('gv_res',errs))return;
     const Z=parseFloat($('gv_z').value),T=parseFloat($('gv_t').value)+460,P=parseFloat($('gv_p').value);
     const Q=parseFloat($('gv_q').value),D=parseFloat($('gv_d').value);
-    const Bg=0.02833*(Z*T/P);          // ft³/scf (14.73 psia, 520 °R base)
+    // ft³/scf; base 14.73 psia / 520 °R unless a standard-conditions setting is chosen
+    const _bcGV=_baseCond(60,14.73), Bg=(_bcGV.fromSetting?_bcGV.Pb_psia/_bcGV.Tb_R:0.02833)*(Z*T/P);
     // G1 audit fix: V[ft/s] = Q[scf/d]·Bg/86400 / (π/4·(D/12)²) = 2.122·Bg·Q[MSCF/D]/D²[in].
     // The constant was 2122 (valid for Q in MMSCF/D) while the input is MSCF/D —
     // velocities were 1000× too high (38,875 ft/s at the defaults instead of 38.9).
@@ -6174,6 +6190,7 @@ window.calcGasVel=function(){
     $('gv_res').innerHTML=`<div class="rbox" style="margin-top:12px"><div class="rbox-title">Results</div>
         <div class="rrow"><span class="rl">Bg (gas FVF)</span><span class="rv">${fmt(Bg,6)}</span></div>
         <div class="rrow"><span class="rl">Gas Velocity</span><span class="rv">${fmt(V,2)} ft/sec</span></div>
+        <div class="rrow"><span class="rl">Gas volume basis</span><span class="rv">${_bcGV.label}</span></div>
     </div>`;
 };
 window.calcGasQuick=function(){
@@ -7054,7 +7071,7 @@ window.calcOilGas=function(){
     const x_y=diffP/(27.707*Pabs);   // AGA-3: x1 = hw/(N3·Pf1), 27.707 inH2O(60 °F) per psi
     const Y1=1-(0.41+0.35*beta4)*x_y/1.3;
     // AGA-3 correction factors
-    const Tb=519.67,Pb=14.73;
+    const _bcOG=_baseCond(60,14.73), Tb=_bcOG.Tb_R, Pb=_bcOG.Pb_psia;   // base conditions (setting or 60 °F / 14.73 psia)
     const Fpb=14.73/Pb, Ftb=Tb/519.67, Ftf=Math.sqrt(519.67/Tf);
     const Fg=1/Math.sqrt(gasGrav);
     // Z-factor via Papay for supercompressibility
@@ -7099,6 +7116,7 @@ window.calcOilGas=function(){
         <div class="rrow"><span class="rl">Discharge Coeff (Cd)</span><span class="rv">${fmt(Cd,5)}</span></div>
         <div class="rrow"><span class="rl">GOR</span><span class="rv">${gorTxt}</span></div>
         <div class="rrow"><span class="rl">CGR</span><span class="rv">${cgrTxt}</span></div>
+        <div class="rrow"><span class="rl">Gas volume basis</span><span class="rv">${_bcOG.label}</span></div>
     </div>`;
 };
 
@@ -47231,7 +47249,40 @@ _registerPanel(6, {
         time:     { imperial: { unit: 'hr',   label: 'hr',   factor: 1, offset: 0 }, metric: { unit: 'hr',   label: 'hr',   factor: 1, offset: 0 } },
         timeMin:  { imperial: { unit: 'min',  label: 'min',  factor: 1, offset: 0 }, metric: { unit: 'min',  label: 'min',  factor: 1, offset: 0 } },
         // Mass-flow specific to compressors (SCFM): no conversion (pure rate).
-        airFlow:  { imperial: { unit: 'SCFM', label: 'SCFM', factor: 1, offset: 0 }, metric: { unit: 'SCFM', label: 'SCFM', factor: 1, offset: 0 } }
+        airFlow:  { imperial: { unit: 'SCFM', label: 'SCFM', factor: 1, offset: 0 }, metric: { unit: 'SCFM', label: 'SCFM', factor: 1, offset: 0 } },
+        // ── Round-5 pages (ESD, hydrate, liquid line, pipe life) ──
+        // Section / vessel volume in cubic feet.
+        volumeFt3: {
+            imperial: { unit: 'ft3', label: 'ft³', factor: 0.028316846592, offset: 0 },
+            metric:   { unit: 'm3',  label: 'm³',  factor: 1,              offset: 0 }
+        },
+        // Standard gas volume: scf <-> Sm³ at the SAME base conditions
+        // (pure volume factor; see WTS_baseConditions for the basis).
+        gasVolumeStd: {
+            imperial: { unit: 'scf', label: 'scf', factor: 0.028316846592, offset: 0 },
+            metric:   { unit: 'Sm3', label: 'Sm³', factor: 1,              offset: 0 }
+        },
+        // Temperature DIFFERENCE (safety margins, depressions): no offset.
+        tempDelta: {
+            imperial: { unit: 'dF', label: '°F', factor: 5 / 9, offset: 0 },
+            metric:   { unit: 'dC', label: '°C', factor: 1,     offset: 0 }
+        },
+        // Wind speed.
+        windSpeed: {
+            imperial: { unit: 'mph', label: 'mph', factor: 0.44704, offset: 0 },
+            metric:   { unit: 'm/s', label: 'm/s', factor: 1,       offset: 0 }
+        },
+        // Wall-loss rate: mils per year <-> mm per year.
+        erosionRate: {
+            imperial: { unit: 'mpy',  label: 'mpy',  factor: 0.0254, offset: 0 },
+            metric:   { unit: 'mm/y', label: 'mm/y', factor: 1,      offset: 0 }
+        },
+        // Sand loading per standard gas volume: lb/MMscf <-> kg/10⁶ Sm³
+        // (0.45359237 kg / 0.0283168466 10⁶ m³ = 16.0185).
+        sandLoading: {
+            imperial: { unit: 'lb/MMscf',  label: 'lb/MMscf',   factor: 0.45359237 / 0.028316846592, offset: 0 },
+            metric:   { unit: 'kg/1e6Sm3', label: 'kg/10⁶ Sm³', factor: 1,                            offset: 0 }
+        }
     };
 
     // ───────────────────────────────────────────────────────────────
@@ -47776,8 +47827,89 @@ _registerPanel(6, {
                 // vd_l (m) is SI in the calc — untagged.
             },
             outputs: {}
+        },
+        // ── Round-5 pages (prism-build/23-27). Their calcs run from click /
+        // input / change events inside #pgBody (canonical context) or through
+        // WTS_units.runCanonical, and format results with WTS_units.format.
+        esdhi: {
+            inputs: {
+                wts_esdhi_volume: 'volumeFt3',
+                wts_esdhi_temp:   'temperature',
+                wts_esdhi_q:      'gasRate',
+                wts_esdhi_sg:     'sg',
+                wts_esdhi_hp:     'pressureG',
+                wts_esdhi_rd:     'pressureG',
+                wts_esdhi_mawp:   'pressureG'
+                // wts_esdhi_tresp is seconds in both systems — untagged.
+            },
+            outputs: {}
+        },
+        esdlo: {
+            inputs: {
+                wts_esdlo_volume: 'volumeFt3',
+                wts_esdlo_pflow:  'pressureG',
+                wts_esdlo_qleak:  'gasRate',
+                wts_esdlo_whsip:  'pressureG',
+                wts_esdlo_margin: 'pressure'     // a pressure difference (psi)
+                // wts_esdlo_tresp is seconds — untagged.
+            },
+            outputs: {}
+        },
+        hydrate: {
+            inputs: {
+                wts_hydrate_q:      'gasRate',
+                wts_hydrate_qw:     'liquidRate',
+                wts_hydrate_sg:     'sg',
+                wts_hydrate_safety: 'tempDelta'
+                // hy_*_<i> segment fields are added below; the local injection
+                // rates wts_hydrate_inj_<i> are cc/min (already metric) — untagged.
+            },
+            outputs: {}
+        },
+        liquidline: {
+            inputs: {
+                wts_ll_sep_p:    'pressureG',
+                wts_ll_qoil:     'liquidRate',
+                wts_ll_t_oil:    'temperature',
+                wts_ll_sg_oil:   'sg',
+                wts_ll_sg_gas:   'sg',
+                wts_ll_q_gas:    'gasRate',
+                wts_ll_gor:      'gor',          // read-only, derived
+                wts_ll_tank_p:   'pressureG',
+                wts_ll_vent_len: 'length',
+                wts_ll_wind:     'windSpeed'
+                // RO size (64ths) and the NPS / LCV selects are nominal — untagged.
+            },
+            outputs: {}
+        },
+        pipelife: {
+            inputs: {
+                wts_pl_sand: 'sandLoading',
+                wts_pl_qg:   'gasRate',
+                wts_pl_qo:   'liquidRate',
+                wts_pl_qw:   'liquidRate',
+                wts_pl_sg:   'sg'
+                // wts_pl_c (Salama "c", field-unit empirical constant) — untagged.
+                // wts_pl_seg<i>_* segment fields are added below.
+            },
+            outputs: {}
         }
     };
+    (function () {
+        var i;
+        for (i = 0; i < 4; i++) {           // 25-hydrate.js DEFAULT_NODES
+            MANIFEST.hydrate.inputs['hy_up_P_' + i] = 'pressureG';
+            MANIFEST.hydrate.inputs['hy_up_T_' + i] = 'temperature';
+            MANIFEST.hydrate.inputs['hy_dn_P_' + i] = 'pressureG';
+            MANIFEST.hydrate.inputs['hy_dn_T_' + i] = 'temperature';
+            MANIFEST.hydrate.inputs['hy_tgt_' + i]  = 'temperature';
+        }
+        var segCats = { len: 'length', pseg: 'pressureG', tseg: 'temperature', meas: 'lengthSmall',
+                        minspec: 'lengthSmall', fail: 'lengthSmall', dp: 'pressureG', dt: 'temperature' };
+        for (i = 0; i < 6; i++) {           // 27-pipelife.js DEFAULT_SEGMENTS
+            for (var f in segCats) MANIFEST.pipelife.inputs['wts_pl_seg' + i + '_' + f] = segCats[f];
+        }
+    })();
 
     // ───────────────────────────────────────────────────────────────
     // STATE
@@ -48500,11 +48632,12 @@ _registerPanel(6, {
         if (existing) {
             _wireToggleButtons();
             _refreshToggleVisuals();
+            _renderBaseSelect(existing);
             return existing;
         }
         var wrap = document.createElement('div');
         wrap.id = _toggleId;
-        wrap.style.cssText = 'display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--text2,#8b949e);margin-left:12px;';
+        wrap.style.cssText = 'display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:11px;color:var(--text2,#8b949e);margin-left:12px;';
         wrap.innerHTML =
             '<span>Units:</span>' +
             '<button type="button" id="wts_units_imperial" class="btn btn-secondary" ' +
@@ -48514,6 +48647,7 @@ _registerPanel(6, {
         try { container.appendChild(wrap); } catch (e) { return null; }
         _wireToggleButtons();
         _refreshToggleVisuals();
+        _renderBaseSelect(wrap);
         return wrap;
     }
 
@@ -48540,6 +48674,7 @@ _registerPanel(6, {
         if (existing) {
             _wireToggleButtons();
             _refreshToggleVisuals();
+            _renderBaseSelect(existing);
             return;
         }
         // 2. Dedicated host container (preferred).
@@ -48589,15 +48724,250 @@ _registerPanel(6, {
                 // route now, and once more after any deferred rendering.
                 _installCalculateWrapper();
                 _applyForCurrentPage();
+                _applyBaseFields(_currentRoute, true);
                 if (typeof setTimeout === 'function') {
                     setTimeout(function () {
                         _installCalculateWrapper();
                         _applyForCurrentPage();
+                        _applyBaseFields(_currentRoute, true);
                     }, 30);
                 }
             });
         } catch (e) {}
     }
+
+    // ───────────────────────────────────────────────────────────────
+    // STANDARD (BASE) CONDITIONS — one app-wide setting for the
+    // reference state of standard gas volumes (scf / Sm³).
+    //
+    //   WTS_baseConditions.get()            → current selection
+    //       {key, label, short, Tb_F, Tb_R, Tb_C, Pb_psia, Pb_kPa, perCalc}
+    //   WTS_baseConditions.set(key)         → persists 'wts_base_conditions',
+    //       fires document 'wts:base-conditions-changed' {key, previous, basis}
+    //   WTS_baseConditions.resolve(defTb_F, defPb_psia)
+    //       → the basis a calculator should use: the app setting, or (for the
+    //         'calc' selection) the calculator's own default — {Tb_F, Tb_R,
+    //         Pb_psia, key, label, fromSetting}
+    //   WTS_baseConditions.volumeFactor(from, to)  scf@from → scf@to
+    //   WTS_baseConditions.molarVolume(basis)      ideal-gas scf / lb-mol
+    //   WTS_baseConditions.text(basis) / note(basis)  display strings
+    //   WTS_baseConditions.OPTIONS
+    //
+    // 'calc' (the default) keeps every calculator on the basis it has
+    // always used (AGA-3 60 °F / 14.696 psia, Oil & Gas orifice 14.73 psia,
+    // gas FVF 14.73 psia, …), so existing results are unchanged until the
+    // user picks a basis. The key travels in project files (wts_* key).
+    // ───────────────────────────────────────────────────────────────
+    var BASE_KEY = 'wts_base_conditions';
+    var BASE_MARK_KEY = 'wts_base_auto';           // last auto-filled base fields per route
+    var PSIA_PER_KPA = 1 / 6.894757293168;
+    var ATM_PSIA = 101.325 * PSIA_PER_KPA;         // 14.6959488 psia
+    var BASE_OPTIONS = [
+        { key: 'calc',        short: 'Std: calc default', label: 'Calculator default', perCalc: true },
+        { key: '60F_14.696',  short: '60 °F · 14.696 psia', label: '60 °F / 14.696 psia', Tb_F: 60, Pb_psia: 14.696 },
+        { key: '60F_14.65',   short: '60 °F · 14.65 psia',  label: '60 °F / 14.65 psia',  Tb_F: 60, Pb_psia: 14.65 },
+        { key: '60F_14.73',   short: '60 °F · 14.73 psia',  label: '60 °F / 14.73 psia',  Tb_F: 60, Pb_psia: 14.73 },
+        { key: '15C_101.325', short: '15 °C · 101.325 kPa', label: '15 °C / 101.325 kPa', Tb_F: 59, Pb_psia: ATM_PSIA },
+        { key: '0C_101.325',  short: '0 °C · 101.325 kPa',  label: '0 °C / 101.325 kPa (normal)', Tb_F: 32, Pb_psia: ATM_PSIA }
+    ];
+    function _baseOpt(key) {
+        for (var i = 0; i < BASE_OPTIONS.length; i++) if (BASE_OPTIONS[i].key === key) return BASE_OPTIONS[i];
+        return null;
+    }
+    function _lsGet(k) {
+        try { if (typeof localStorage !== 'undefined' && localStorage.getItem) return localStorage.getItem(k); } catch (e) {}
+        return null;
+    }
+    function _lsSet(k, v) {
+        try {
+            if (typeof localStorage === 'undefined') return;
+            if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v);
+        } catch (e) {}
+    }
+    function _baseKey() {
+        var k = _lsGet(BASE_KEY);
+        return _baseOpt(k) ? k : 'calc';
+    }
+    function _describe(o) {
+        var out = { key: o.key, label: o.label, short: o.short, perCalc: !!o.perCalc,
+                    Tb_F: null, Tb_R: null, Tb_C: null, Pb_psia: null, Pb_kPa: null };
+        if (!o.perCalc) {
+            out.Tb_F = o.Tb_F; out.Tb_R = _rankine(o.Tb_F); out.Tb_C = (o.Tb_F - 32) * 5 / 9;
+            out.Pb_psia = o.Pb_psia; out.Pb_kPa = o.Pb_psia / PSIA_PER_KPA;
+        }
+        return out;
+    }
+    function _rankine(F) { return Number((F + 459.67).toFixed(6)); }   // 60 °F -> exactly 519.67
+    function baseGet() { return _describe(_baseOpt(_baseKey())); }
+    var _baseLast = null;
+    function _fireBase(prev) {
+        var cur = _baseKey();
+        _baseLast = cur;
+        try { _refreshBaseSelect(); } catch (e) {}
+        try {
+            if (_hasDoc && typeof document.dispatchEvent === 'function' && typeof CustomEvent === 'function') {
+                document.dispatchEvent(new CustomEvent('wts:base-conditions-changed', {
+                    detail: { key: cur, previous: prev, basis: baseGet() }
+                }));
+            }
+        } catch (e) {}
+        try { _applyBaseFields(_currentRoute || _detectRoute(), true); } catch (e) {}
+        try { _recalcForBase(_currentRoute || _detectRoute()); } catch (e) {}
+    }
+    function baseSet(key) {
+        if (key && typeof key === 'object') key = key.key;
+        var o = _baseOpt(key);
+        if (!o) { _warn('[WTS_baseConditions] unknown basis:', key); return false; }
+        var prev = _baseKey();
+        if (o.perCalc) _lsSet(BASE_KEY, null); else _lsSet(BASE_KEY, o.key);
+        if (prev !== o.key) _fireBase(prev);
+        else _refreshBaseSelect();
+        return true;
+    }
+    function _near(a, b, rel) { return isFinite(a) && isFinite(b) && Math.abs(a - b) <= (rel || 1e-9) * Math.max(1, Math.abs(b)); }
+    // Display text for any basis: a preset keeps its own label; otherwise
+    // the numbers in the active unit system.
+    function baseText(b) {
+        if (!b || !isFinite(b.Tb_F) || !isFinite(b.Pb_psia)) return 'calculator default';
+        for (var i = 1; i < BASE_OPTIONS.length; i++) {
+            var o = BASE_OPTIONS[i];
+            if (_near(o.Tb_F, b.Tb_F, 1e-6) && _near(o.Pb_psia, b.Pb_psia, 1e-6)) return o.label.replace(' (normal)', '');
+        }
+        var r = function (v, d) { return String(Number(v.toFixed(d))); };
+        if (_state.system === 'metric') return r((b.Tb_F - 32) * 5 / 9, 2) + ' °C / ' + r(b.Pb_psia / PSIA_PER_KPA, 3) + ' kPa';
+        return r(b.Tb_F, 2) + ' °F / ' + r(b.Pb_psia, 3) + ' psia';
+    }
+    function baseResolve(defTb_F, defPb_psia) {
+        var s = baseGet();
+        if (!s.perCalc) {
+            return { Tb_F: s.Tb_F, Tb_R: s.Tb_R, Pb_psia: s.Pb_psia, key: s.key, label: baseText(s), fromSetting: true };
+        }
+        var T = isFinite(+defTb_F) ? +defTb_F : 60, P = isFinite(+defPb_psia) ? +defPb_psia : 14.696;
+        return { Tb_F: T, Tb_R: _rankine(T), Pb_psia: P, key: 'calc', label: baseText({ Tb_F: T, Pb_psia: P }), fromSetting: false };
+    }
+    // Standard volume referred to basis `from` → the same gas at basis `to`.
+    function baseVolumeFactor(from, to) {
+        return (from.Pb_psia / to.Pb_psia) * ((to.Tb_F + 459.67) / (from.Tb_F + 459.67));
+    }
+    function baseMolarVolume(b) { return 10.73159 * (b.Tb_F + 459.67) / b.Pb_psia; }
+    function baseNote(b) {
+        return 'Standard volumes (scf' + (_state.system === 'metric' ? ', Sm³' : '') + ') are at ' + baseText(b) +
+            (b && b.fromSetting ? ' (app setting)' : ' (this calculator\'s default; change it with the "Std" selector in the header)') + '.';
+    }
+
+    // Base / contract condition INPUT fields that follow the setting while the
+    // user has not typed their own values (canonical imperial: °F, psia).
+    var BASE_FIELDS = {
+        aga3:     { T: 'a_Tb',  P: 'a_Pb',     def: { Tb_F: 60, Pb_psia: 14.696 } },
+        flareghg: { T: 'fe_tb', P: 'fe_pbase', def: { Tb_F: 60, Pb_psia: 14.696 } }
+    };
+    // Pages whose shown results depend on the basis: re-run when it changes
+    // (only when a result is already on screen).
+    var BASE_RECALC = {
+        aga3: ['calcAGA3', 'a_res'], oilgas: ['calcOilGas', 'og_res'], gascalc: ['calcGasVel', 'gv_res'],
+        choke: ['calcChoke', 'c_res']
+    };
+    function _readMarks() {
+        try { var m = JSON.parse(_lsGet(BASE_MARK_KEY) || '{}'); return (m && typeof m === 'object') ? m : {}; }
+        catch (e) { return {}; }
+    }
+    function _applyBaseFields(route, fire) {
+        var spec = route && BASE_FIELDS[route];
+        if (!spec || !_hasDoc) return false;
+        var eT = _byId(spec.T), eP = _byId(spec.P);
+        if (!eT || !eP) return false;
+        var changed = false;
+        runCanonical(function () {
+            var curT = parseFloat(eT.value), curP = parseFloat(eP.value);
+            var marks = _readMarks(), m = marks[route] || { T: spec.def.Tb_F, P: spec.def.Pb_psia };
+            if (!_near(curT, +m.T, 1e-7) || !_near(curP, +m.P, 1e-7)) return;   // user override
+            var b = baseResolve(spec.def.Tb_F, spec.def.Pb_psia);
+            var tT = Number(b.Tb_F.toPrecision(9)), tP = Number(b.Pb_psia.toPrecision(9));
+            if (!_near(curT, tT, 1e-9) || !_near(curP, tP, 1e-9)) {
+                eT.value = String(tT); eP.value = String(tP);
+                changed = true;
+            }
+            marks[route] = { T: tT, P: tP };
+            _lsSet(BASE_MARK_KEY, JSON.stringify(marks));
+        });
+        if (changed && fire) {
+            try {
+                [eT, eP].forEach(function (el) {
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                });
+            } catch (e) {}
+        }
+        return changed;
+    }
+    function _recalcForBase(route) {
+        var r = route && BASE_RECALC[route];
+        if (!r || !_hasDoc) return;
+        var res = _byId(r[1]);
+        if (!res || !String(res.innerHTML || '').trim() || !res.querySelector || !res.querySelector('.rrow')) return;
+        if (typeof G[r[0]] === 'function') { try { G[r[0]](); } catch (e) { _warn('[WTS_baseConditions] recalc failed', e); } }
+    }
+    // Header selector (lives inside the unit toggle; compact for 375 px).
+    function _renderBaseSelect(container) {
+        if (!_hasDoc || !container || typeof container.appendChild !== 'function') return null;
+        var sel = _byId('wts_base_select');
+        if (!sel) {
+            sel = document.createElement('select');
+            sel.id = 'wts_base_select';
+            sel.setAttribute('title', 'Standard (base) conditions for gas volumes (scf / Sm³)');
+            sel.setAttribute('aria-label', 'Standard conditions for gas volumes');
+            sel.style.cssText = 'font-size:11px;padding:2px 4px;max-width:124px;border-radius:4px;' +
+                'border:1px solid var(--border,#30363d);background:var(--bg2,#161b22);color:var(--text2,#8b949e);cursor:pointer;';
+            var h = '';
+            for (var i = 0; i < BASE_OPTIONS.length; i++) {
+                h += '<option value="' + BASE_OPTIONS[i].key + '">' + BASE_OPTIONS[i].short + '</option>';
+            }
+            sel.innerHTML = h;
+            try { container.appendChild(sel); } catch (e) { return null; }
+        }
+        if (!sel.__wts_wired) {
+            sel.__wts_wired = true;
+            sel.addEventListener('change', function () { baseSet(sel.value); });
+        }
+        _refreshBaseSelect();
+        return sel;
+    }
+    function _refreshBaseSelect() {
+        var sel = _byId('wts_base_select');
+        if (!sel) return;
+        var k = _baseKey();
+        if (sel.value !== k) sel.value = k;
+        var o = _baseOpt(k);
+        sel.setAttribute('title', 'Standard (base) conditions for gas volumes: ' + (o.perCalc ? 'each calculator\'s own default' : o.label));
+    }
+    // A project Open / New replaces localStorage — pick the new basis up.
+    if (_hasDoc && typeof document.addEventListener === 'function') {
+        try {
+            document.addEventListener('wts:project-loaded', function () {
+                var cur = _baseKey();
+                if (_baseLast !== null && cur !== _baseLast) _fireBase(_baseLast); else _refreshBaseSelect();
+                _baseLast = cur;
+            });
+        } catch (e) {}
+    }
+    _baseLast = _baseKey();
+
+    var WTS_baseConditions = {
+        get: baseGet,
+        set: baseSet,
+        resolve: baseResolve,
+        isSet: function () { return _baseKey() !== 'calc'; },
+        volumeFactor: baseVolumeFactor,
+        molarVolume: baseMolarVolume,
+        text: baseText,
+        note: baseNote,
+        OPTIONS: BASE_OPTIONS,
+        STORAGE_KEY: BASE_KEY,
+        FIELDS: BASE_FIELDS,
+        applyFields: function (route) { return _applyBaseFields(route || _currentRoute || _detectRoute(), true); },
+        renderSelect: _renderBaseSelect
+    };
+    G.WTS_baseConditions = WTS_baseConditions;
 
     // (Fresh-node flipping now happens inside tagInput(), atomically
     // with tagging, so a node is never tagged-but-unflipped.)
@@ -48668,6 +49038,7 @@ _registerPanel(6, {
 
         CATEGORIES: CATEGORIES,
         MANIFEST: MANIFEST,
+        baseConditions: WTS_baseConditions,
 
         // Test-friendly internals (not in the public contract but
         // useful for the self-test below).
@@ -48806,6 +49177,30 @@ _registerPanel(6, {
         if (!_isNum(v)) return '—';
         return Math.round(v).toLocaleString('en-US');
     }
+    // Display in the active unit system (22-units.js). Calcs stay imperial;
+    // _u(v, cat, dp, impLabel) formats a canonical value for the screen.
+    function _metric() {
+        var U = G.WTS_units;
+        return !!(U && U.getSystem && U.getSystem() === 'metric' && U.format);
+    }
+    function _u(v, cat, dp, impLabel, dpMet) {
+        if (!_isNum(v)) return '—';
+        if (_metric()) { var f = G.WTS_units.format(v, cat); return _fmt(f.value, dpMet == null ? dp : dpMet) + ' ' + f.label; }
+        return _fmt(v, dp) + ' ' + impLabel;
+    }
+    function _uInt(v, cat, impLabel) {
+        if (!_isNum(v)) return '—';
+        if (_metric()) { var f = G.WTS_units.format(v, cat); return _fmtInt(f.value) + ' ' + f.label; }
+        return _fmtInt(v) + ' ' + impLabel;
+    }
+    function _ulab(cat, impLabel) { return _metric() ? G.WTS_units.format(0, cat).label : impLabel; }
+    // Standard (base) conditions of the scf inventory: the app setting, or
+    // this page's own 60 °F / 14.7 psia when the setting is "calculator default".
+    function _basis() {
+        var B = G.WTS_baseConditions;
+        if (B && B.resolve) return B.resolve(60, 14.7);
+        return { Tb_F: 60, Tb_R: 519.67, Pb_psia: 14.7, label: '60 °F / 14.7 psia', fromSetting: false };
+    }
     function _log() {
         if (typeof console !== 'undefined' && console.log) {
             try { console.log.apply(console, arguments); } catch (e) { /* noop */ }
@@ -48921,11 +49316,11 @@ _registerPanel(6, {
         var MAWP    = +inputs.mawp_psig;
 
         var problems = [];
-        if (!_isNum(V)       || V       <= 0) problems.push('Section volume must be > 0 ft³.');
-        if (!_isNum(Q_MMscf) || Q_MMscf <= 0) problems.push('Gas backflow rate must be > 0 MMSCFD.');
+        if (!_isNum(V)       || V       <= 0) problems.push('Section volume must be > 0 ' + _ulab('volumeFt3', 'ft³') + '.');
+        if (!_isNum(Q_MMscf) || Q_MMscf <= 0) problems.push('Gas backflow rate must be > 0 ' + _ulab('gasRate', 'MMSCFD') + '.');
         if (!_isNum(tResp)   || tResp   <= 0) problems.push('ESD response time must be > 0 s.');
-        if (!_isNum(HP)) problems.push('Hi-pilot setting required (psig).');
-        if (!_isNum(RD)) problems.push('Rupture disc / RV setting required (psig).');
+        if (!_isNum(HP)) problems.push('Hi-pilot setting required (' + _ulab('pressureG', 'psig') + ').');
+        if (!_isNum(RD)) problems.push('Rupture disc / RV setting required (' + _ulab('pressureG', 'psig') + ').');
         if (_isNum(HP) && _isNum(RD) && HP >= RD) {
             problems.push('Hi-pilot must be set BELOW the RV/RD (currently HP ≥ RD).');
         }
@@ -48940,10 +49335,13 @@ _registerPanel(6, {
         // definition):  V_inv(P) = V · (P + 14.7)/14.7 · 519.67/(T + 459.67).
         // The temperature ratio was previously omitted, overstating fill time
         // by ~7 % at 100 °F (non-conservative) and understating it when cold.
+        // Base conditions: the standard-conditions setting when chosen (the
+        // backflow rate is entered on that basis), else 14.7 psia / 60 °F.
+        var bc = _basis(), P_STD = bc.Pb_psia;
         var T_use = (_isNum(T_F) && T_F > -459.67) ? T_F : 60;
-        var V_std = V * T_STD_R / (T_use + 459.67);   // ft³ at section T → scf basis
-        var inv_HP = V_std * (HP + P_ATM) / P_ATM;
-        var inv_RD = V_std * (RD + P_ATM) / P_ATM;
+        var V_std = V * bc.Tb_R / (T_use + 459.67);   // ft³ at section T → scf basis
+        var inv_HP = V_std * (HP + P_ATM) / P_STD;
+        var inv_RD = V_std * (RD + P_ATM) / P_STD;
 
         // Backflow in scf/s (1 MMSCFD = 1e6 scf / 86400 s).
         var qScfS = Q_MMscf * 1e6 / 86400;
@@ -48964,34 +49362,35 @@ _registerPanel(6, {
         result.gasReleasedToAtmosphere_scf  = Vrel;
         result.pass                         = pass;
         result.marginSeconds                = margin;
+        result.basis                        = bc;
 
         // Build rationale narrative.
         var rationale = '';
         if (pass) {
-            rationale = 'PASS — at the chosen Hi-Pilot of ' + HP.toFixed(0) + ' psig, '
+            rationale = 'PASS — at the chosen Hi-Pilot of ' + _u(HP, 'pressureG', 0, 'psig') + ', '
                 + 'the section reaches the RV setting in ' + tFill.toFixed(2)
                 + ' s, leaving a margin of ' + margin.toFixed(2) + ' s above the ESD '
                 + 'response time of ' + tResp.toFixed(1) + ' s. '
-                + 'Up to ' + Math.round(Vrel).toLocaleString() + ' scf will vent to '
+                + 'Up to ' + _uInt(Vrel, 'gasVolumeStd', 'scf') + ' will vent to '
                 + 'atmosphere through the open RV during ESD response.';
         } else {
             // Suggest by how much HP must drop, OR how much tResp must shrink.
             // Solve for HP* such that t_fill_at_HPstar == tResp:
             //   V·(RD+14.7)/14.7 − V·(HPstar+14.7)/14.7 == qScfS · tResp
             //   HPstar = RD − qScfS·tResp·14.7 / V
-            var HPstar = RD - (qScfS * tResp * P_ATM) / V_std;
+            var HPstar = RD - (qScfS * tResp * P_STD) / V_std;
             // Also solve for RD* such that t_fill at the existing HP gives tResp:
-            var RDstar = HP + (qScfS * tResp * P_ATM) / V_std;
+            var RDstar = HP + (qScfS * tResp * P_STD) / V_std;
 
-            var rd_relief = (RD <= MAWP) ? (' Note also that the RV setting (' + RD.toFixed(0)
-                + ' psig) is below MAWP+10 % (' + (MAWP * 1.10).toFixed(0)
-                + ' psig); raising the RV may be permissible.') : '';
+            var rd_relief = (RD <= MAWP) ? (' Note also that the RV setting (' + _u(RD, 'pressureG', 0, 'psig')
+                + ') is below MAWP+10 % (' + _u(MAWP * 1.10, 'pressureG', 0, 'psig')
+                + '); raising the RV may be permissible.') : '';
 
-            rationale = 'FAIL — at the chosen Hi-Pilot of ' + HP.toFixed(0) + ' psig, '
+            rationale = 'FAIL — at the chosen Hi-Pilot of ' + _u(HP, 'pressureG', 0, 'psig') + ', '
                 + 'the section reaches the RV in only ' + tFill.toFixed(2)
                 + ' s, which is shorter than the ' + tResp.toFixed(1) + ' s ESD response. '
-                + 'To pass: drop the Hi-Pilot to ≤ ' + Math.max(0, HPstar).toFixed(0)
-                + ' psig, OR raise the RV to ≥ ' + RDstar.toFixed(0) + ' psig (only if MAWP allows), '
+                + 'To pass: drop the Hi-Pilot to ≤ ' + _u(Math.max(0, HPstar), 'pressureG', 0, 'psig')
+                + ', OR raise the RV to ≥ ' + _u(RDstar, 'pressureG', 0, 'psig') + ' (only if MAWP allows), '
                 + 'OR reduce the ESD response time below ' + tFill.toFixed(2) + ' s.'
                 + rd_relief;
         }
@@ -48999,20 +49398,20 @@ _registerPanel(6, {
 
         // Engineering notes.
         if (_isNum(MAWP) && RD > MAWP * 1.10 + 0.5) {
-            result.notes.push('Caution — RV setting (' + RD.toFixed(0)
-                + ' psig) exceeds MAWP+10 % (' + (MAWP * 1.10).toFixed(0)
-                + ' psig). Verify RV sizing per ASME / API 521.');
+            result.notes.push('Caution — RV setting (' + _u(RD, 'pressureG', 0, 'psig')
+                + ') exceeds MAWP+10 % (' + _u(MAWP * 1.10, 'pressureG', 0, 'psig')
+                + '). Verify RV sizing per ASME / API 521.');
         }
         if (_isNum(HP) && _isNum(MAWP) && HP > MAWP) {
             result.notes.push('Caution — Hi-Pilot setting is ABOVE MAWP. Lower the Hi-Pilot '
                 + 'or re-rate the section.');
         }
         if (Math.abs(RD - HP) < 5) {
-            result.notes.push('Hi-Pilot is within 5 psi of the RV setting; small instrument '
+            result.notes.push('Hi-Pilot is within ' + _u(5, 'pressure', 0, 'psi') + ' of the RV setting; small instrument '
                 + 'drift could trigger spurious RV lifts. Increase the gap.');
         }
         if (_isNum(T_F) && T_F < -40) {
-            result.notes.push('Section temperature below −40 °F — verify metallurgy and PSV trim.');
+            result.notes.push('Section temperature below ' + (_metric() ? '−40 °C' : '−40 °F') + ' — verify metallurgy and PSV trim.');
         }
         if (_isNum(SG) && (SG < 0.55 || SG > 1.20)) {
             result.notes.push('Gas specific gravity ' + SG.toFixed(2)
@@ -49117,8 +49516,8 @@ _registerPanel(6, {
                     + 'fill="#8b949e" text-anchor="middle" '
                     + 'font-family="Segoe UI, sans-serif" '
                     + 'text-transform="uppercase">Hi-Pilot</text>');
-                var hpTxt = hpPsig.toFixed(0) + ' psig';
-                if (_isNum(rdPsig)) hpTxt += '  /  RV ' + rdPsig.toFixed(0);
+                var hpTxt = _u(hpPsig, 'pressureG', 0, 'psig');
+                if (_isNum(rdPsig)) hpTxt += '  /  RV ' + (_metric() ? _fmt(G.WTS_units.format(rdPsig, 'pressureG').value, 0) : rdPsig.toFixed(0));
                 lines.push('<text x="' + bcx + '" y="42" font-size="11" font-weight="700" '
                     + 'fill="' + badgeColor + '" text-anchor="middle" '
                     + 'font-family="Courier New, monospace">' + _esc(hpTxt) + '</text>');
@@ -49319,6 +49718,22 @@ _registerPanel(6, {
     }
     G.renderESDHiPilot = renderESDHiPilot;
 
+    // Unit flip / standard-conditions change: repaint in the active system
+    // (canonical context → tagged inputs read imperial).
+    function _rerun() {
+        if (!_hasDoc) return;
+        var box = document.getElementById('wts_esdhi_results');
+        if (!box) return;
+        var U = G.WTS_units;
+        var fn = (box.querySelector && box.querySelector('table, .val-error')) ? _onCalculate : _redrawSVG;
+        if (U && U.runCanonical) U.runCanonical(fn); else fn();
+    }
+    if (_hasDoc && typeof document.addEventListener === 'function') {
+        document.addEventListener('wts:unit-system-changed', _rerun);
+        document.addEventListener('wts:base-conditions-changed', _rerun);
+    }
+
+
     // ───────────────────────────────────────────────────────────────
     // Helpers — DOM read/write
     // ───────────────────────────────────────────────────────────────
@@ -49421,32 +49836,35 @@ _registerPanel(6, {
         // Inputs + results table — picked up by host PDF/PNG export.
         var inputsRows = ''
             + '<tr><td>Section Volume</td><td>'
-            + _fmt(inputs.sectionVolume_ft3, 2) + ' ft³</td></tr>'
+            + _u(inputs.sectionVolume_ft3, 'volumeFt3', 2, 'ft³', 3) + '</td></tr>'
             + '<tr><td>Section Gas Temp</td><td>'
-            + _fmt(inputs.sectionGasTemp_F, 0) + ' °F</td></tr>'
+            + _u(inputs.sectionGasTemp_F, 'temperature', 0, '°F', 1) + '</td></tr>'
             + '<tr><td>Gas Backflow Rate</td><td>'
-            + _fmt(inputs.gasFlowRate_MMscfd, 2) + ' MMSCFD</td></tr>'
+            + _u(inputs.gasFlowRate_MMscfd, 'gasRate', 2, 'MMSCFD', 1) + '</td></tr>'
             + '<tr><td>Gas SG</td><td>' + _fmt(inputs.gasSG, 2) + '</td></tr>'
             + '<tr><td>Hi-Pilot Setting</td><td>'
-            + _fmt(inputs.hiPilotSetting_psig, 0) + ' psig</td></tr>'
+            + _u(inputs.hiPilotSetting_psig, 'pressureG', 0, 'psig') + '</td></tr>'
             + '<tr><td>RV / RD Setting</td><td>'
-            + _fmt(inputs.rdSetting_psig, 0) + ' psig</td></tr>'
+            + _u(inputs.rdSetting_psig, 'pressureG', 0, 'psig') + '</td></tr>'
             + '<tr><td>Section MAWP</td><td>'
-            + _fmt(inputs.mawp_psig, 0) + ' psig</td></tr>'
+            + _u(inputs.mawp_psig, 'pressureG', 0, 'psig') + '</td></tr>'
             + '<tr><td>ESD Response Time</td><td>'
             + _fmt(inputs.esdResponseTime_s, 1) + ' s</td></tr>';
 
         var resultsRows = ''
             + '<tr><td>Inventory @ Hi-Pilot</td><td>'
-            + _fmtInt(r.inventoryAtHiPilot_scf) + ' scf</td></tr>'
+            + _uInt(r.inventoryAtHiPilot_scf, 'gasVolumeStd', 'scf') + '</td></tr>'
             + '<tr><td>Inventory @ RD/RV</td><td>'
-            + _fmtInt(r.inventoryAtRD_scf) + ' scf</td></tr>'
+            + _uInt(r.inventoryAtRD_scf, 'gasVolumeStd', 'scf') + '</td></tr>'
             + '<tr><td>Time to reach RV</td><td>'
             + _fmt(r.timeToReachRV_s, 2) + ' s</td></tr>'
             + '<tr><td>Gas released to atmos. during ESD</td><td>'
-            + _fmtInt(r.gasReleasedToAtmosphere_scf) + ' scf</td></tr>'
+            + _uInt(r.gasReleasedToAtmosphere_scf, 'gasVolumeStd', 'scf') + '</td></tr>'
             + '<tr><td>Margin (t_fill − t_resp)</td><td>'
-            + _fmt(r.marginSeconds, 2) + ' s</td></tr>';
+            + _fmt(r.marginSeconds, 2) + ' s</td></tr>'
+            + '<tr><td>Standard-volume basis</td><td>'
+            + _esc(r.basis ? r.basis.label + (r.basis.fromSetting ? ' (app setting)' : ' (calculator default)') : '—') + '</td></tr>';
+
 
         return ''
             + '<div style="padding:10px 14px;border-radius:6px;font-weight:700;'
@@ -49570,6 +49988,24 @@ _registerPanel(6, {
                        .replace(/(\.\d*?)0+$/, '$1')
                        .replace(/\.$/, '');
     }
+    // Display in the active unit system (22-units.js); calcs stay imperial.
+    function _metric() {
+        var U = G.WTS_units;
+        return !!(U && U.getSystem && U.getSystem() === 'metric' && U.format);
+    }
+    function _u(v, cat, dp, impLabel, dpMet) {
+        if (!_isNum(v)) return '—';
+        if (_metric()) { var f = G.WTS_units.format(v, cat); return _fmt(f.value, dpMet == null ? dp : dpMet) + ' ' + f.label; }
+        return _fmt(v, dp) + ' ' + impLabel;
+    }
+    function _ulab(cat, impLabel) { return _metric() ? G.WTS_units.format(0, cat).label : impLabel; }
+    // Standard pressure of the scf: the standard-conditions setting when one
+    // is chosen (the leak rate is entered on that basis), else 14.7 psia.
+    function _basis() {
+        var B = G.WTS_baseConditions;
+        if (B && B.resolve) return B.resolve(60, 14.7);
+        return { Tb_F: 60, Tb_R: 519.67, Pb_psia: 14.7, label: '60 °F / 14.7 psia', fromSetting: false };
+    }
     function _esc(s) {
         if (s == null) return '';
         return String(s)
@@ -49617,11 +50053,11 @@ _registerPanel(6, {
         // Input validation — report problems instead of silently computing
         // with substitutes (a blank volume used to be replaced by 1 ft³).
         var problems = [];
-        if (!_isNum(V) || V <= 0) problems.push('Section volume must be > 0 ft³.');
-        if (!_isNum(Pflow) || Pflow <= 0) problems.push('Section flowing pressure must be > 0 psig.');
-        if (!_isNum(Qleak_mmscfd) || Qleak_mmscfd <= 0) problems.push('Detectable leak rate must be > 0 MMscfd.');
+        if (!_isNum(V) || V <= 0) problems.push('Section volume must be > 0 ' + _ulab('volumeFt3', 'ft³') + '.');
+        if (!_isNum(Pflow) || Pflow <= 0) problems.push('Section flowing pressure must be > 0 ' + _ulab('pressureG', 'psig') + '.');
+        if (!_isNum(Qleak_mmscfd) || Qleak_mmscfd <= 0) problems.push('Detectable leak rate must be > 0 ' + _ulab('gasRate', 'MMscfd') + '.');
         if (!_isNum(tresp) || tresp <= 0) problems.push('ESD response time must be > 0 s.');
-        if (!_isNum(WHSIP)) problems.push('WHSIP is required (psig).');
+        if (!_isNum(WHSIP)) problems.push('WHSIP is required (' + _ulab('pressureG', 'psig') + ').');
 
         // Defensive defaults (keep the numeric outputs finite)
         if (!_isNum(V) || V <= 0)               V = 1;
@@ -49634,8 +50070,10 @@ _registerPanel(6, {
         // Gas released during ESD response window  (scf)
         var gasReleased_scf = (Qleak_mmscfd * 1e6 / 86400) * tresp;
 
-        // Pressure drop  (psi) — isothermal ideal-gas, surface ref 14.7 psia
-        var dP_psi = (gasReleased_scf * 14.7) / V;
+        // Pressure drop  (psi) — isothermal ideal-gas; the scf is referred to the
+        // standard pressure (14.7 psia, or the standard-conditions setting).
+        var bc = _basis();
+        var dP_psi = (gasReleased_scf * bc.Pb_psia) / V;
 
         // After-drop section pressure  (psig)
         var Pafter_psig = Pflow - dP_psi;
@@ -49655,27 +50093,27 @@ _registerPanel(6, {
         var rationale;
         if (!reachable) {
             rationale =
-                'Calculated drawdown pressure (' + _fmt(Pafter_psig, 1) + ' psig) is BELOW WHSIP (' +
-                _fmt(WHSIP, 0) + ' psig). The well will repressurise the section before the lo-pilot ' +
+                'Calculated drawdown pressure (' + _u(Pafter_psig, 'pressureG', 1, 'psig') + ') is BELOW WHSIP (' +
+                _u(WHSIP, 'pressureG', 0, 'psig') + '). The well will repressurise the section before the lo-pilot ' +
                 'can detect the leak — PSL will never reach setpoint at this leak rate. Either choose a ' +
                 'lo-pilot location with a smaller trapped volume, accept a larger detectable leak rate, ' +
                 'or shorten the ESD response time.';
         } else if (lowSensitivity) {
             rationale =
-                'PSL is reachable but the predicted drawdown is only ' + _fmt(dP_psi, 2) +
-                ' psi over ' + _fmt(tresp, 1) + ' s — comparable to normal operating pressure ' +
+                'PSL is reachable but the predicted drawdown is only ' + _u(dP_psi, 'pressure', 2, 'psi') +
+                ' over ' + _fmt(tresp, 1) + ' s — comparable to normal operating pressure ' +
                 'fluctuation. PSL set this close to P_flow risks frequent false trips. Consider ' +
                 'increasing the detectable leak rate, lengthening the response window, or using ' +
                 'rate-of-change detection in addition to absolute PSL.';
         } else {
             rationale =
-                'A ' + _fmt(Qleak_mmscfd, 0) + ' MMscfd leak releases ' +
-                _fmt(gasReleased_scf, 0) + ' scf over the ' + _fmt(tresp, 1) +
-                ' s response window, producing a ' + _fmt(dP_psi, 1) +
-                ' psi drop in the ' + _fmt(V, 2) + ' ft³ section. Setting PSL at ' +
-                _fmt(psl_target_psig, 0) + ' psig (drawdown pressure ' +
-                _fmt(Pafter_psig, 0) + ' psig less ' + _fmt(margin, 0) +
-                ' psig safety margin) gives a deterministic ESD trip on this leak signature.';
+                'A ' + _u(Qleak_mmscfd, 'gasRate', 0, 'MMscfd', 1) + ' leak releases ' +
+                _u(gasReleased_scf, 'gasVolumeStd', 0, 'scf', 1) + ' over the ' + _fmt(tresp, 1) +
+                ' s response window, producing a ' + _u(dP_psi, 'pressure', 1, 'psi') +
+                ' drop in the ' + _u(V, 'volumeFt3', 2, 'ft³', 3) + ' section. Setting PSL at ' +
+                _u(psl_target_psig, 'pressureG', 0, 'psig') + ' (drawdown pressure ' +
+                _u(Pafter_psig, 'pressureG', 0, 'psig') + ' less ' + _u(margin, 'pressure', 0, 'psig') +
+                ' safety margin) gives a deterministic ESD trip on this leak signature.';
         }
 
         var result = {
@@ -49686,6 +50124,7 @@ _registerPanel(6, {
             reachable: reachable,
             lowSensitivity: lowSensitivity,
             rationale: rationale,
+            basis: bc,
             error: problems.length ? problems.join(' ') : null
         };
 
@@ -49979,19 +50418,22 @@ _registerPanel(6, {
               '<tbody>' +
                 '<tr><td>Gas released during response window</td>' +
                     '<td style="text-align:right;font-family:Courier New,monospace;">' +
-                    _fmt(r.gasReleasedDuringResponse_scf, 1) + ' scf</td></tr>' +
+                    _u(r.gasReleasedDuringResponse_scf, 'gasVolumeStd', 1, 'scf', 2) + '</td></tr>' +
                 '<tr><td>Pressure drop during response window</td>' +
                     '<td style="text-align:right;font-family:Courier New,monospace;">' +
-                    _fmt(r.pressureDrop_psi, 2) + ' psi</td></tr>' +
+                    _u(r.pressureDrop_psi, 'pressure', 2, 'psi') + '</td></tr>' +
                 '<tr><td>Leak drawdown pressure</td>' +
                     '<td style="text-align:right;font-family:Courier New,monospace;">' +
-                    _fmt(r.leakDrawdownPressure_psig, 1) + ' psig</td></tr>' +
+                    _u(r.leakDrawdownPressure_psig, 'pressureG', 1, 'psig') + '</td></tr>' +
                 '<tr><td>WHSIP (reference)</td>' +
                     '<td style="text-align:right;font-family:Courier New,monospace;color:#8b949e;">' +
-                    _fmt(inputs.whsip_psig, 0) + ' psig</td></tr>' +
+                    _u(inputs.whsip_psig, 'pressureG', 0, 'psig') + '</td></tr>' +
                 '<tr><td>Safety margin</td>' +
                     '<td style="text-align:right;font-family:Courier New,monospace;color:#8b949e;">' +
-                    _fmt(inputs.safetyMargin_psig, 0) + ' psig</td></tr>' +
+                    _u(inputs.safetyMargin_psig, 'pressure', 0, 'psig') + '</td></tr>' +
+                '<tr><td>Standard-volume basis</td>' +
+                    '<td style="text-align:right;color:#8b949e;">' +
+                    _esc(r.basis.label + (r.basis.fromSetting ? ' (app setting)' : ' (calculator default)')) + '</td></tr>' +
               '</tbody>' +
             '</table>' +
             // Headline: PSL target
@@ -50000,13 +50442,13 @@ _registerPanel(6, {
               '<div class="rrow">' +
                 '<span class="rl">Recommended PSL setpoint</span>' +
                 '<span class="rv" style="font-size:20px;">' +
-                  _fmt(r.psl_target_psig, 0) + ' psig' +
+                  _u(r.psl_target_psig, 'pressureG', 0, 'psig') +
                 '</span>' +
               '</div>' +
               '<div class="rrow">' +
                 '<span class="rl">Drawdown from P_flow</span>' +
                 '<span class="rv">' +
-                  _fmt(inputs.sectionFlowingPressure_psig - r.psl_target_psig, 1) + ' psi' +
+                  _u(inputs.sectionFlowingPressure_psig - r.psl_target_psig, 'pressure', 1, 'psi') +
                 '</span>' +
               '</div>' +
             '</div>';
@@ -50039,7 +50481,7 @@ _registerPanel(6, {
             badgeColor  = '#3fb950';
             badgeIcon   = '✓';   // ✓
             badgeText   = 'PSL reachable — leak would drop section by ' +
-                          _fmt(r.pressureDrop_psi, 1) + ' psi in ' +
+                          _u(r.pressureDrop_psi, 'pressure', 1, 'psi') + ' in ' +
                           _fmt(inputs.esdResponseTime_s, 1) + ' s.';
         }
 
@@ -50064,6 +50506,21 @@ _registerPanel(6, {
     // Module-level export marker so smoke-test can detect this layer.
     // ───────────────────────────────────────────────────────────────
     G.WTS_esdLoPilot_DEFAULTS = DEFAULTS;
+
+    // Unit flip / standard-conditions change: repaint shown results in the
+    // active system (canonical context → tagged inputs read imperial).
+    function _rerun() {
+        if (!_hasDoc) return;
+        var rc = document.getElementById('wts_esdlo_resultcard');
+        if (!rc || rc.style.display === 'none') return;
+        var U = G.WTS_units;
+        if (U && U.runCanonical) U.runCanonical(_runCalc); else _runCalc();
+    }
+    if (_hasDoc && typeof document.addEventListener === 'function') {
+        document.addEventListener('wts:unit-system-changed', _rerun);
+        document.addEventListener('wts:base-conditions-changed', _rerun);
+    }
+
 
 })();
 
@@ -50464,6 +50921,16 @@ _registerPanel(6, {
         return fixed;
     }
 
+    // Display in the active unit system (22-units.js); calcs stay °F / psig.
+    function _metric() {
+        var U = G.WTS_units;
+        return !!(U && U.getSystem && U.getSystem() === 'metric' && U.format);
+    }
+    function _uval(v, cat) { return _metric() ? G.WTS_units.format(v, cat).value : v; }
+    function _tl() { return _metric() ? '°C' : '°F'; }
+    function _uT(v, d)  { return _fmt(_uval(v, 'temperature'), d) + ' ' + _tl(); }   // temperature
+    function _uDT(v, d) { return _fmt(_uval(v, 'tempDelta'), d) + ' ' + _tl(); }     // temperature difference
+
     // Build one segment card HTML.
     function _segCardHTML(seg, idx) {
         return ''
@@ -50486,7 +50953,7 @@ _registerPanel(6, {
             +   '<div style="margin-top:8px;padding:8px;border-radius:6px;background:rgba(140,150,160,0.06)">'
             +     '<div style="display:flex;justify-content:space-between;align-items:center;font-size:11px">'
             +       '<span>T<sub>hyd</sub> (no inhibitor)</span>'
-            +       '<span id="hy_thyd_' + idx + '" style="font-weight:700">— &deg;F</span>'
+            +       '<span id="hy_thyd_' + idx + '" style="font-weight:700">— ' + _tl() + '</span>'
             +     '</div>'
             +     '<div id="hy_riskBadge_' + idx + '" '
             +          'style="margin-top:6px;padding:4px 8px;border-radius:4px;font-size:11px;font-weight:600;text-align:center;'
@@ -50501,7 +50968,7 @@ _registerPanel(6, {
             +   '<div style="margin-top:6px;padding:8px;border-radius:6px;background:rgba(140,150,160,0.06)">'
             +     '<div style="display:flex;justify-content:space-between;align-items:center;font-size:11px">'
             +       '<span>T<sub>hyd</sub> WITH inhibitor</span>'
-            +       '<span id="hy_thydInj_' + idx + '" style="font-weight:700">— &deg;F</span>'
+            +       '<span id="hy_thydInj_' + idx + '" style="font-weight:700">— ' + _tl() + '</span>'
             +     '</div>'
             +     '<div id="hy_status_' + idx + '" '
             +          'style="margin-top:6px;padding:4px 8px;border-radius:4px;font-size:11px;font-weight:600;text-align:center;'
@@ -50626,14 +51093,14 @@ _registerPanel(6, {
 
         var injBox    = _byId('hy_thydInj_' + idx);
         var statusBox = _byId('hy_status_'  + idx);
-        if (injBox)    injBox.textContent = _fmt(T_hyd_inj, 1) + ' °F';
+        if (injBox)    injBox.textContent = _uT(T_hyd_inj, 1);
         if (statusBox) {
             statusBox.style.background = _riskBg(depressed_risk);
             statusBox.style.color      = _riskColor(depressed_risk);
             if (depressed_risk === 'green') {
                 statusBox.textContent = 'NO INHIBITOR SHORTFALL';
             } else if (depressed_risk === 'yellow') {
-                statusBox.textContent = 'MARGINAL — within 5 °F';
+                statusBox.textContent = 'MARGINAL — within ' + _uDT(5, _metric() ? 1 : 0);
             } else {
                 statusBox.textContent = 'MORE INHIBITOR HAS TO BE ADDED';
             }
@@ -50723,14 +51190,14 @@ _registerPanel(6, {
             var badgeEl = _byId('hy_riskBadge_' + c);
             var injEl   = _byId('wts_hydrate_inj_' + c);
 
-            if (thydEl)  thydEl.textContent = _fmt(nd.T_hyd_no_inhibitor_F, 1) + ' °F';
+            if (thydEl)  thydEl.textContent = _uT(nd.T_hyd_no_inhibitor_F, 1);
             if (badgeEl) {
                 badgeEl.style.background = _riskBg(nd.hydrate_risk);
                 badgeEl.style.color      = _riskColor(nd.hydrate_risk);
                 if (nd.hydrate_risk === 'green') {
-                    badgeEl.textContent = 'NO HYDRATE RISK (T_op > T_hyd + 5°F)';
+                    badgeEl.textContent = 'NO HYDRATE RISK (T_op > T_hyd + ' + _uDT(5, _metric() ? 1 : 0).replace(' ', '') + ')';
                 } else if (nd.hydrate_risk === 'yellow') {
-                    badgeEl.textContent = 'MARGINAL — within 5 °F of hydrate locus';
+                    badgeEl.textContent = 'MARGINAL — within ' + _uDT(5, _metric() ? 1 : 0) + ' of hydrate locus';
                 } else {
                     badgeEl.textContent = 'HYDRATE RISK — T_op below T_hyd';
                 }
@@ -50760,9 +51227,9 @@ _registerPanel(6, {
                 rows += ''
                     + '<tr>'
                     +   '<td style="font-weight:600">' + rn2.label + '</td>'
-                    +   '<td>' + _fmt(rn2.T_hyd_no_inhibitor_F, 1) + '</td>'
-                    +   '<td>' + _fmt(rn2.T_downstream_F, 1)       + '</td>'
-                    +   '<td>' + _fmt(rn2.depression_required_F, 1) + '</td>'
+                    +   '<td>' + _fmt(_uval(rn2.T_hyd_no_inhibitor_F, 'temperature'), 1) + '</td>'
+                    +   '<td>' + _fmt(_uval(rn2.T_downstream_F, 'temperature'), 1)       + '</td>'
+                    +   '<td>' + _fmt(_uval(rn2.depression_required_F, 'tempDelta'), 1) + '</td>'
                     +   '<td>' + _fmt(rn2.wt_pct_needed, 1)         + '</td>'
                     +   '<td>' + _fmt(rn2.injection_rate_cc_min, 1) + '</td>'
                     +   '<td>' + _fmt(local, 1)                     + '</td>'
@@ -50771,8 +51238,8 @@ _registerPanel(6, {
             }
             var tableHTML = ''
                 + '<table class="dtable" style="font-size:11px">'
-                +   '<tr><th>Segment</th><th>T<sub>hyd</sub> (°F)</th><th>T<sub>op</sub> (°F)</th>'
-                +       '<th>&Delta;T req (°F)</th><th>wt% needed</th>'
+                +   '<tr><th>Segment</th><th>T<sub>hyd</sub> (' + _tl() + ')</th><th>T<sub>op</sub> (' + _tl() + ')</th>'
+                +       '<th>&Delta;T req (' + _tl() + ')</th><th>wt% needed</th>'
                 +       '<th>Recommended (cc/min)</th><th>Currently set (cc/min)</th><th>Risk</th></tr>'
                 +   rows
                 + '</table>'
@@ -50781,7 +51248,7 @@ _registerPanel(6, {
                 +   '(' + INHIB[inhibKey].label + ', incl. ' + _fmt((INHIB[inhibKey].vapAllow - 1) * 100, 0) + '% vapour-phase allowance)'
                 + '</div>'
                 + '<div style="margin-top:6px;font-size:11px;opacity:0.75">'
-                +   'Recommended rates target a 5°F (or user-set) safety margin below the hydrate locus. '
+                +   'Recommended rates target a ' + _uDT(5, _metric() ? 1 : 0) + ' (or user-set) safety margin below the hydrate locus. '
                 +   'Inject upstream of the coldest point in each pipework segment. '
                 +   'For multi-stage cooling (choke + JT separator), the largest single recommendation generally '
                 +   'protects the entire downstream system.'
@@ -50799,6 +51266,16 @@ _registerPanel(6, {
     G.WTS_hydrate_injection_rate    = WTS_hydrate_injection_rate;
     G.WTS_hydrate_compute           = WTS_hydrate_compute;
     G.renderHydrateManagement       = renderHydrateManagement;
+
+    // Unit flip / standard-conditions change: repaint the node cards and the
+    // summary in the active system (canonical context → inputs read °F / psig).
+    if (_hasDoc && typeof document.addEventListener === 'function') {
+        document.addEventListener('wts:unit-system-changed', function () {
+            if (!_byId('wts_hydrate_summary') || !_byId('wts_hydrate_run')) return;
+            var U = G.WTS_units;
+            if (U && U.runCanonical) U.runCanonical(_runHydrateUI); else _runHydrateUI();
+        });
+    }
 
 })();
 
@@ -51173,29 +51650,30 @@ _registerPanel(6, {
         // 7. Protection status
         var protection_status = 'green';
         var rationale = '';
+        var q_ = function (v) { return _u(v, 'gasRate', 2, 'MMscfd', 1); };
         if (Q_lcv <= Q_vent) {
-            rationale = 'LCV blowby (' + Q_lcv.toFixed(2) +
-                ' MMscfd) is below vent capacity (' + Q_vent.toFixed(2) +
-                ' MMscfd). No RO required for tank protection.';
+            rationale = 'LCV blowby (' + q_(Q_lcv) +
+                ') is below vent capacity (' + q_(Q_vent) +
+                '). No RO required for tank protection.';
         } else if (isFinite(Q_ro_installed) && Q_ro_installed <= Q_vent) {
-            rationale = 'LCV blowby (' + Q_lcv.toFixed(2) +
-                ' MMscfd) exceeds vent capacity but the installed ' +
+            rationale = 'LCV blowby (' + q_(Q_lcv) +
+                ') exceeds vent capacity but the installed ' +
                 ro_size_64.toFixed(0) + '/64" RO throttles flow to ' +
-                Q_ro_installed.toFixed(2) + ' MMscfd, below the ' +
-                Q_vent.toFixed(2) + ' MMscfd vent limit. Adequate.';
+                q_(Q_ro_installed) + ', below the ' +
+                q_(Q_vent) + ' vent limit. Adequate.';
         } else if (isFinite(Q_ro_installed) && Q_ro_installed > Q_vent) {
             protection_status = 'red';
             rationale = 'RO is undersized: ' + ro_size_64.toFixed(0) +
-                '/64" passes ' + Q_ro_installed.toFixed(2) +
-                ' MMscfd > vent ' + Q_vent.toFixed(2) +
-                ' MMscfd. Reduce RO bore to ≈ ' +
+                '/64" passes ' + q_(Q_ro_installed) +
+                ' > vent ' + q_(Q_vent) +
+                '. Reduce RO bore to ≈ ' +
                 (isFinite(ro_target_size) ? ro_target_size.toFixed(1) : '?') +
                 '/64".';
         } else {
             protection_status = 'red';
-            rationale = 'LCV blowby (' + Q_lcv.toFixed(2) +
-                ' MMscfd) exceeds vent capacity (' + Q_vent.toFixed(2) +
-                ' MMscfd). Install RO of bore ≈ ' +
+            rationale = 'LCV blowby (' + q_(Q_lcv) +
+                ') exceeds vent capacity (' + q_(Q_vent) +
+                '). Install RO of bore ≈ ' +
                 (isFinite(ro_target_size) ? ro_target_size.toFixed(1) : '?') +
                 '/64" to protect tank.';
         }
@@ -51236,6 +51714,16 @@ _registerPanel(6, {
         var el = _$(id);
         if (!el) return fallback;
         return el.value;
+    }
+    // Display in the active unit system (22-units.js); calcs stay imperial.
+    function _metric() {
+        var U = G.WTS_units;
+        return !!(U && U.getSystem && U.getSystem() === 'metric' && U.format);
+    }
+    function _u(v, cat, dp, impLabel, dpMet) {
+        if (v == null || !isFinite(v)) return 'n/a';
+        if (_metric()) { var f = G.WTS_units.format(v, cat); return Number(f.value).toFixed(dpMet == null ? dp : dpMet) + ' ' + f.label; }
+        return Number(v).toFixed(dp) + ' ' + impLabel;
     }
     function _setText(id, txt) {
         var el = _$(id);
@@ -51452,8 +51940,9 @@ _registerPanel(6, {
             ? inputs.ro_size_64ths.toFixed(0) + '/64"'
             : 'n/a';
         var roTPut = (r.ro_max_throughput_MMscfd != null)
-            ? r.ro_max_throughput_MMscfd.toFixed(2) + ' MMscfd'
+            ? _u(r.ro_max_throughput_MMscfd, 'gasRate', 2, 'MMscfd', 1)
             : 'n/a';
+        var lenU = function (ft) { return _u(ft, 'length', 1, 'ft'); };
         var roOk = (r.ro_max_throughput_MMscfd != null && r.ro_max_throughput_MMscfd <= r.vent_max_capacity_MMscfd)
             ? '<span style="color:#3fb950;font-weight:700">RO adequate</span>'
             : (r.ro_max_throughput_MMscfd != null
@@ -51473,9 +51962,9 @@ _registerPanel(6, {
             + '<polygon points="45,110 ' + (45 + Math.min(220, fl.x_ft * 4)) + ',' + (120 - Math.min(80, fl.y_ft * 3)) + ' '
             +    (45 + Math.min(220, fl.x_ft * 4)) + ',' + (120 - Math.min(80, fl.y_ft * 3) + 20) + ' 45,118" '
             +    'fill="rgba(248,81,73,0.25)" stroke="#f85149" stroke-width="1"/>'
-            + '<text x="60"  y="135" fill="#8b949e" font-size="9">x = '  + fl.x_ft.toFixed(1) + ' ft</text>'
-            + '<text x="170" y="40"  fill="#8b949e" font-size="9">y = '  + fl.y_ft.toFixed(1) + ' ft</text>'
-            + '<text x="170" y="55"  fill="#8b949e" font-size="9">s = '  + fl.s_ft.toFixed(1) + ' ft</text>'
+            + '<text x="60"  y="135" fill="#8b949e" font-size="9">x = '  + lenU(fl.x_ft) + '</text>'
+            + '<text x="170" y="40"  fill="#8b949e" font-size="9">y = '  + lenU(fl.y_ft) + '</text>'
+            + '<text x="170" y="55"  fill="#8b949e" font-size="9">s = '  + lenU(fl.s_ft) + '</text>'
             + '</svg>';
 
         var html = ''
@@ -51483,10 +51972,10 @@ _registerPanel(6, {
         + '<table style="width:100%;font-size:12px;border-collapse:collapse">'
         + '  <tr><td style="padding:4px 6px;color:var(--text2,#8b949e)">Max Gas Rate Through LCV</td>'
         + '      <td style="padding:4px 6px;text-align:right;' + lcvHi + '">'
-        +         r.max_gas_through_lcv_MMscfd.toFixed(2) + ' MMscfd</td></tr>'
+        +         _u(r.max_gas_through_lcv_MMscfd, 'gasRate', 2, 'MMscfd', 1) + '</td></tr>'
         + '  <tr><td style="padding:4px 6px;color:var(--text2,#8b949e)">Vent Line Max Capacity</td>'
         + '      <td style="padding:4px 6px;text-align:right;color:#3fb950;font-weight:700">'
-        +         r.vent_max_capacity_MMscfd.toFixed(2) + ' MMscfd</td></tr>'
+        +         _u(r.vent_max_capacity_MMscfd, 'gasRate', 2, 'MMscfd', 1) + '</td></tr>'
         + '  <tr><td style="padding:4px 6px;color:var(--text2,#8b949e)">RO Required?</td>'
         + '      <td style="padding:4px 6px;text-align:right">' + roPill + '</td></tr>'
         + '  <tr><td style="padding:4px 6px;color:var(--text2,#8b949e)">Required RO Bore</td>'
@@ -51497,8 +51986,10 @@ _registerPanel(6, {
         + '      <td style="padding:4px 6px;text-align:right">' + roTPut + '</td></tr>'
         + '  <tr><td style="padding:4px 6px;color:var(--text2,#8b949e)">RO Adequacy</td>'
         + '      <td style="padding:4px 6px;text-align:right">' + roOk + '</td></tr>'
-        + '  <tr><td style="padding:4px 6px;color:var(--text2,#8b949e)">P downstream of RO (psig)</td>'
-        + '      <td style="padding:4px 6px;text-align:right">' + r.p_downstream_ro_psig.toFixed(0) + '</td></tr>'
+        + '  <tr><td style="padding:4px 6px;color:var(--text2,#8b949e)">P downstream of RO</td>'
+        + '      <td style="padding:4px 6px;text-align:right">' + _u(r.p_downstream_ro_psig, 'pressureG', 0, 'psig') + '</td></tr>'
+        + '  <tr><td style="padding:4px 6px;color:var(--text2,#8b949e)">Standard-volume basis</td>'
+        + '      <td style="padding:4px 6px;text-align:right">60 °F / 14.7 psia (Cv and orifice equations)</td></tr>'
         + '</table>'
         + '<div style="margin-top:8px;padding:8px;border-radius:4px;font-size:11px;'
         +   'background:rgba(88,166,255,0.06);border:1px solid rgba(88,166,255,0.18);color:var(--text2,#c9d1d9)">'
@@ -51511,11 +52002,11 @@ _registerPanel(6, {
         + '  <div style="flex:1;min-width:200px;font-size:12px">'
         + '    <table style="width:100%;border-collapse:collapse">'
         + '      <tr><td style="padding:4px 6px;color:var(--text2,#8b949e)">Vertical (y)</td>'
-        + '          <td style="padding:4px 6px;text-align:right;font-weight:700">' + fl.y_ft.toFixed(1) + ' ft</td></tr>'
+        + '          <td style="padding:4px 6px;text-align:right;font-weight:700">' + lenU(fl.y_ft) + '</td></tr>'
         + '      <tr><td style="padding:4px 6px;color:var(--text2,#8b949e)">Horizontal (x, downwind)</td>'
-        + '          <td style="padding:4px 6px;text-align:right;font-weight:700">' + fl.x_ft.toFixed(1) + ' ft</td></tr>'
+        + '          <td style="padding:4px 6px;text-align:right;font-weight:700">' + lenU(fl.x_ft) + '</td></tr>'
         + '      <tr><td style="padding:4px 6px;color:var(--text2,#8b949e)">Axial (s)</td>'
-        + '          <td style="padding:4px 6px;text-align:right;font-weight:700">' + fl.s_ft.toFixed(1) + ' ft</td></tr>'
+        + '          <td style="padding:4px 6px;text-align:right;font-weight:700">' + lenU(fl.s_ft) + '</td></tr>'
         + '    </table>'
         + '    <div style="margin-top:8px;font-size:10px;color:var(--text3,#8b949e)">'
         + '      Simplified jet-flame envelope scaled by √(Q/25) with wind tilt. '
@@ -51540,6 +52031,17 @@ _registerPanel(6, {
     G.WTS_flammability_radii   = WTS_flammability_radii;
     G.WTS_liquidline_compute   = WTS_liquidline_compute;
     G.renderLiquidLine         = renderLiquidLine;
+
+    // Unit flip: repaint results in the active system (canonical context →
+    // tagged inputs read imperial).
+    if (typeof document !== 'undefined' && document.addEventListener) {
+        document.addEventListener('wts:unit-system-changed', function () {
+            if (!_$('wts_ll_results') || !_$('wts_ll_calc_btn')) return;
+            var U = G.WTS_units;
+            if (U && U.runCanonical) U.runCanonical(_renderResults); else _renderResults();
+        });
+    }
+
 
 })();
 
@@ -51639,6 +52141,25 @@ _registerPanel(6, {
         if (Math.abs(n) >= 10000) return n.toFixed(0);
         if (Math.abs(n) >= 100)   return n.toFixed(Math.min(d, 1));
         return n.toFixed(d);
+    }
+    // Display in the active unit system (22-units.js); calcs stay imperial.
+    function _metric() {
+        var U = G.WTS_units;
+        return !!(U && U.getSystem && U.getSystem() === 'metric' && U.format);
+    }
+    function _uval(v, cat) { return _metric() ? G.WTS_units.format(v, cat).value : v; }
+    function _ulab(cat, impLabel) { return _metric() ? G.WTS_units.format(0, cat).label : impLabel; }
+    function _u(v, cat, dp, impLabel, dpMet) {
+        if (!isFinite(v)) return '—';
+        return _fmt(_uval(v, cat), _metric() && dpMet != null ? dpMet : dp) + ' ' + _ulab(cat, impLabel);
+    }
+    function _canon(fn) { var U = G.WTS_units; return (U && U.runCanonical) ? U.runCanonical(fn) : fn(); }
+    // Standard conditions of the gas rate: the standard-conditions setting
+    // when one is chosen, else 14.696 psia / 60 °F.
+    function _basis() {
+        var B = G.WTS_baseConditions;
+        if (B && B.resolve) return B.resolve(60, 14.696);
+        return { Tb_F: 60, Tb_R: 519.67, Pb_psia: 14.696, label: '60 °F / 14.696 psia', fromSetting: false };
     }
     function _esc(s) {
         return String(s == null ? '' : s)
@@ -51835,8 +52356,8 @@ _registerPanel(6, {
         var Tseg = _num(seg.t_seg_F, 70);
         var P_abs = Pseg + 14.696;
         var T_abs = Tseg + 459.67;
-        var T_std = 519.67;
-        var Qg_acfs = Qg * 1e6 / 86400 * (14.696 / Math.max(P_abs, 14.696)) * (T_abs / T_std);
+        var bc = _basis();                      // standard conditions of Qg
+        var Qg_acfs = Qg * 1e6 / 86400 * (bc.Pb_psia / Math.max(P_abs, 14.696)) * (T_abs / bc.Tb_R);
         var Qliq_cfs = (Qo + Qw) * 5.615 / 86400;
         var ID = getInnerDiameter(seg.nps_in, seg.sch, seg.measured_WT_in);
         var Dft = ID / 12;
@@ -51902,8 +52423,8 @@ _registerPanel(6, {
             out.ok_to_operate = false;
         }
         if (out.max_allowable_pressure_psig < design_p) {
-            warnings.push('Max allowable pressure (' + _fmt(out.max_allowable_pressure_psig, 0) +
-                          ' psig) is below design ' + _fmt(design_p, 0) + ' psig.');
+            warnings.push('Max allowable pressure (' + _u(out.max_allowable_pressure_psig, 'pressureG', 0, 'psig') +
+                          ') is below design ' + _u(design_p, 'pressureG', 0, 'psig') + '.');
             out.ok_to_operate = false;
         }
 
@@ -51936,7 +52457,7 @@ _registerPanel(6, {
             warnings.push('Remaining service life < 90 days — schedule mitigation.');
         }
         if (W_sand > 100) {
-            warnings.push('Sand poundage > 100 lb/MMscf — verify desander efficiency.');
+            warnings.push('Sand poundage > ' + _u(100, 'sandLoading', 0, 'lb/MMscf') + ' — verify desander efficiency.');
         }
 
         return out;
@@ -52163,8 +52684,12 @@ _registerPanel(6, {
             inRows  += _segmentInputRow(DEFAULT_SEGMENTS[i], i);
             resRows += _segmentResultRow(DEFAULT_SEGMENTS[i], i);
         }
+        // sub = [imperial caption, units category] → shown in the active system
+        // (re-labelled on a unit flip via data-pl-unit).
         var th = function (t, sub) {
-            return '<th style="white-space:nowrap">' + t + (sub ? '<div style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--text3)">' + sub + '</div>' : '') + '</th>';
+            var cap = sub, attr = '';
+            if (sub && typeof sub === 'object') { cap = _ulab(sub[1], sub[0]); attr = ' data-pl-unit="' + sub[1] + '" data-pl-imp="' + _esc(sub[0]) + '"'; }
+            return '<th style="white-space:nowrap">' + t + (cap ? '<div' + attr + ' style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--text3)">' + cap + '</div>' : '') + '</th>';
         };
 
         body.innerHTML = '' +
@@ -52206,9 +52731,10 @@ _registerPanel(6, {
                 '<div class="card-title">Pipe Segments — Inputs</div>' +
                 '<div style="overflow-x:auto;-webkit-overflow-scrolling:touch">' +
                     '<table class="dtable" style="min-width:1080px">' +
-                        '<thead><tr>' + th('Segment') + th('Material') + th('NPS') + th('Schedule') + th('Length', 'ft') +
-                            th('Flowing P', 'psig') + th('Flowing T', '°F') + th('Measured WT', 'in') + th('Min-spec WT', 'in') +
-                            th('Failure WT', 'in') + th('Design P', 'psig') + th('Design T', '°F') + '</tr></thead>' +
+                        '<thead><tr>' + th('Segment') + th('Material') + th('NPS') + th('Schedule') + th('Length', ['ft', 'length']) +
+                            th('Flowing P', ['psig', 'pressureG']) + th('Flowing T', ['°F', 'temperature']) + th('Measured WT', ['in', 'lengthSmall']) +
+                            th('Min-spec WT', ['in', 'lengthSmall']) +
+                            th('Failure WT', ['in', 'lengthSmall']) + th('Design P', ['psig', 'pressureG']) + th('Design T', ['°F', 'temperature']) + '</tr></thead>' +
                         '<tbody>' + inRows + '</tbody>' +
                     '</table>' +
                 '</div>' +
@@ -52223,8 +52749,8 @@ _registerPanel(6, {
                 '</div>' +
                 '<div style="overflow-x:auto;-webkit-overflow-scrolling:touch">' +
                     '<table class="dtable" style="min-width:820px">' +
-                        '<thead><tr>' + th('Segment') + th('Pipe', 'NPS / SCH · ID') + th('Velocity', 'ft/s') + th('Erosion', 'mpy') +
-                            th('Remaining life', 'to min-spec WT') + th('Time to failure', 'to failure WT') + th('MAWP', 'psig · B31.3') + th('Status') + '</tr></thead>' +
+                        '<thead><tr>' + th('Segment') + th('Pipe', 'NPS / SCH · ID') + th('Velocity', ['ft/s', 'velocity']) + th('Erosion', ['mpy', 'erosionRate']) +
+                            th('Remaining life', 'to min-spec WT') + th('Time to failure', 'to failure WT') + th('MAWP', ['psig', 'pressureG']) + th('Status') + '</tr></thead>' +
                         '<tbody>' + resRows + '</tbody>' +
                     '</table>' +
                 '</div>' +
@@ -52234,7 +52760,8 @@ _registerPanel(6, {
             '<div class="card" style="padding:10px 14px;border-left:3px solid var(--blue, #58a6ff)">' +
                 '<div style="font-size:12px;color:var(--text2);line-height:1.55">' +
                     '<strong style="color:var(--text)">Separator note:</strong> residual sand fines are assumed to drop out in the separator, ' +
-                    'so sand rate has no effect on the Separator → Flare line unless the separator is bypassed.' +
+                    'so sand rate has no effect on the Separator → Flare line unless the separator is bypassed. ' +
+                    'MAWP is per ASME B31.3. Gas rates are standard volumes at <span id="wts_pl_basis">' + _esc(_basis().label) + '</span>.' +
                 '</div>' +
             '</div>' +
         '</div>';
@@ -52321,7 +52848,9 @@ _registerPanel(6, {
         var t = null;
         var fire = function () {
             if (t) clearTimeout(t);
-            t = setTimeout(_calcPipeLife, 150);
+            // Timer callbacks run outside any canonical context — open one so
+            // tagged inputs read (and _savePipeLifeState stores) imperial values.
+            t = setTimeout(function () { t = null; _canon(_calcPipeLife); }, 150);
         };
         for (var k = 0; k < ids.length; k++) {
             var el = _$(ids[k]);
@@ -52408,16 +52937,16 @@ _registerPanel(6, {
         var set = function (id, txt, color) { var el = _$(id); if (!el) return; el.textContent = txt; if (color !== undefined) el.style.color = color; };
         for (var i = 0; i < report.segments.length; i++) {
             var r = report.segments[i], p = 'wts_pl_seg' + i + '_';
-            set(p + 'pipe', r.nps_in + '" SCH ' + r.sch + ' · ' + _fmt(r.ID_in, 3) + '"');
-            set(p + 'mawp', _fmt(r.max_allowable_pressure_psig, 0));
+            set(p + 'pipe', r.nps_in + '" SCH ' + r.sch + ' · ' + (_metric() ? _fmt(_uval(r.ID_in, 'lengthSmall'), 1) + ' mm' : _fmt(r.ID_in, 3) + '"'));
+            set(p + 'mawp', _fmt(_uval(r.max_allowable_pressure_psig, 'pressureG'), 0));
             if (!r.applicable) {
                 set(p + 'vel', '—'); set(p + 'ero', '—');
                 set(p + 'rsl', 'N/A (hose)', 'var(--text3)'); set(p + 'ttf', '—');
                 set(p + 'stat', 'HOSE', 'var(--text3)');
                 continue;
             }
-            set(p + 'vel', _fmt(r.mixture_velocity_fps, 1));
-            set(p + 'ero', r.erosion_rate_mils_yr > 0 ? _fmt(r.erosion_rate_mils_yr, 1) : '0');
+            set(p + 'vel', _fmt(_uval(r.mixture_velocity_fps, 'velocity'), 1));
+            set(p + 'ero', r.erosion_rate_mils_yr > 0 ? _fmt(_uval(r.erosion_rate_mils_yr, 'erosionRate'), _metric() ? 3 : 1) : '0');
             set(p + 'rsl', _formatDays(r.remaining_service_life_days), _lifeColor(r.remaining_service_life_days));
             set(p + 'ttf', _formatDays(r.time_to_failure_at_current_days), _lifeColor(r.time_to_failure_at_current_days));
             var st = !r.ok_to_operate ? ['INSPECT NOW', 'var(--red, #f85149)']
@@ -52444,6 +52973,23 @@ _registerPanel(6, {
             if (report.segments[s].applicable && !report.segments[s].ok_to_operate) { ok = false; break; }
         }
         set('wts_pl_status', ok ? 'OK' : 'ATTENTION', ok ? 'var(--green, #3fb950)' : 'var(--red, #f85149)');
+    }
+
+    // Unit flip / standard-conditions change: re-label the unit captions and
+    // repaint the results (canonical context → tagged inputs read imperial).
+    function _onUnitsOrBasis() {
+        if (typeof document === 'undefined' || !_$('wts_pl_sand')) return;
+        var caps = document.querySelectorAll ? document.querySelectorAll('[data-pl-unit]') : [];
+        for (var i = 0; i < caps.length; i++) {
+            caps[i].textContent = _ulab(caps[i].getAttribute('data-pl-unit'), caps[i].getAttribute('data-pl-imp'));
+        }
+        var b = _$('wts_pl_basis');
+        if (b) b.textContent = _basis().label;
+        _canon(_calcPipeLife);
+    }
+    if (typeof document !== 'undefined' && document.addEventListener) {
+        document.addEventListener('wts:unit-system-changed', _onUnitsOrBasis);
+        document.addEventListener('wts:base-conditions-changed', _onUnitsOrBasis);
     }
 
 })();
@@ -74144,8 +74690,17 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         h += '<div class="chart-wrap"><canvas id="gd_chart" width="600" height="340"></canvas></div>';
         // 6 — notes
         h += '<div><b>Notes</b> AOF is the rate at a sandface back-pressure of ' + _u(r.pb, 'pressure', 2, 'psia') +
-            '. Pressures are squared (p² method), which is adequate below about 2,000 psia or where μZ is nearly constant; use pseudo-pressure analysis in PRiSM for high-pressure gas.</div>';
+            '. Pressures are squared (p² method), which is adequate below about 2,000 psia or where μZ is nearly constant; use pseudo-pressure analysis in PRiSM for high-pressure gas. ' +
+            _basisNote() + '</div>';
         return h;
+    }
+
+    // The analysis is basis-neutral: C, a, b and the AOF come out in the same
+    // standard-volume basis as the entered rates — say which basis that is.
+    function _basisNote() {
+        var B = G.WTS_baseConditions, b = B && B.get ? B.get() : null;
+        if (!b || b.perCalc) return 'Rates (and the AOF) are in the standard-volume basis of the entered test rates; no base-condition conversion is applied.';
+        return 'Rates (and the AOF) are standard volumes at ' + B.text(b) + ' (app setting) — enter the test rates on that basis.';
     }
 
     function _drawChart(r) {
@@ -74206,6 +74761,10 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
     // Unit flip → recalc (results are formatted in the display system).
     if (typeof document !== 'undefined' && document.addEventListener) {
         document.addEventListener('wts:unit-system-changed', function () {
+            var r = _byId('gd_res');
+            if (r && r.getAttribute && r.getAttribute('data-done') === '1') G.calcGasDeliv();
+        });
+        document.addEventListener('wts:base-conditions-changed', function () {
             var r = _byId('gd_res');
             if (r && r.getAttribute && r.getAttribute('data-done') === '1') G.calcGasDeliv();
         });
@@ -75028,7 +75587,13 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         var sym = v.level === 'ok' ? '✓' : v.level === 'bad' ? '✗' : '⚠';
         return '<div style="color:' + col + ';font-size:13px;margin:6px 0">' + sym + ' ' + v.text + '</div>';
     }
-    function _resultsHtml(r) {
+    // Base-condition text for the Notes (the header "Std" selector fills the
+    // base fields while they hold the value it last wrote — 22-units.js).
+    function _basisText(inp) {
+        var B = G.WTS_baseConditions, b = { Tb_F: +inp.tb, Pb_psia: +inp.pbase };
+        return (B && B.text) ? B.text(b) : (_fmt(b.Tb_F, 2) + ' °F / ' + _fmt(b.Pb_psia, 3) + ' psia');
+    }
+    function _resultsHtml(r, inp) {
         var h = '<div class="rbox"><div class="rbox-title">Flared Gas</div>' +
             _row('Volume flared', _u(r.Vscf / 1e6, 'gasVolume', 4, 'MMSCF')) +
             _row('Normal volume (0 °C, 101.325 kPa)', _fmt(r.Nm3, 1) + ' Nm³') +
@@ -75058,7 +75623,9 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         h += r.verdicts.map(_verdictHtml).join('');
         h += '<div style="font-size:12px;color:var(--text2);line-height:1.6;margin-top:10px"><b>Notes</b> ' +
             'Emission factors and combustion efficiency follow common reporting practice (98 % default). ' +
-            'Check the method your consent, permit or trading scheme requires before submitting figures.</div>';
+            'Check the method your consent, permit or trading scheme requires before submitting figures. ' +
+            'Standard volumes (scf' + ((G.WTS_units && G.WTS_units.getSystem && G.WTS_units.getSystem() === 'metric') ? ', 10³ Sm³' : '') +
+            ') are at the entered base conditions, ' + _basisText(inp || {}) + '; the header standard-conditions selector sets them.</div>';
         return h;
     }
     function _clearErrs() {
@@ -75081,7 +75648,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             res.removeAttribute('data-done');
             return r;
         }
-        res.innerHTML = _resultsHtml(r);
+        res.innerHTML = _resultsHtml(r, inp);
         G.WTS_state = G.WTS_state || {};
         G.WTS_state.flareghg = {
             V_scf: r.Vscf, E_MMBtu: r.E_MMBtu, co2_t: r.co2_t, ch4_t: r.ch4_t, n2o_kg: r.n2o_kg,
@@ -75110,6 +75677,10 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
     // Recalculate on a unit-system flip (results already shown only).
     if (typeof document !== 'undefined' && document.addEventListener) {
         document.addEventListener('wts:unit-system-changed', function () {
+            var r = _byId('fe_res');
+            if (r && r.getAttribute('data-done') === '1') G.calcFlareGHG();
+        });
+        document.addEventListener('wts:base-conditions-changed', function () {
             var r = _byId('fe_res');
             if (r && r.getAttribute('data-done') === '1') G.calcFlareGHG();
         });
@@ -75204,6 +75775,23 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
     function _canon(fn) { var U = G.WTS_units; return (U && U.runCanonical) ? U.runCanonical(fn) : fn(); }
     function _fin(x) { return typeof x === 'number' && isFinite(x); }
 
+    // ── Standard (base) conditions ───────────────────────────────────
+    // Entered gas rates are standard volumes at the app's standard-conditions
+    // setting (22-units.js WTS_baseConditions). With the setting left on
+    // "calculator default" the page keeps its original basis: 60 °F /
+    // 14.696 psia (379.48 scf/lb-mol) and the rule's own 14.65 psia for the
+    // escape rate. With a setting chosen, moles use that basis's molar volume
+    // and the escape rate is re-referred to the rule's 14.65 psia / 60 °F.
+    var RULE_BASIS = { Tb_F: 60, Pb_psia: 14.65 };
+    function _basis() {
+        var B = G.WTS_baseConditions;
+        var b = (B && B.resolve) ? B.resolve(60, 14.696) : { Tb_F: 60, Pb_psia: 14.696, fromSetting: false, label: '60 °F / 14.696 psia' };
+        b.vm = (b.fromSetting && B.molarVolume) ? B.molarVolume(b) : SCF_PER_LBMOL;
+        b.toRule = (b.fromSetting && B.volumeFactor) ? B.volumeFactor(b, RULE_BASIS) : 1;
+        b.gr100 = b.fromSetting ? 100 * 1e-6 / b.vm * MW_H2S * 7000 : GR100_PER_PPM;
+        return b;
+    }
+
     // ── Pure compute (field units in and out, no DOM) ───────────────
 
     // Radius of exposure — 16 TAC §3.36(c)(1) (Texas Statewide Rule 36),
@@ -75217,12 +75805,13 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         if (!(_fin(q) && q > 0 && q <= 10000)) { errors.push('Maximum escape rate must be above 0 and no more than 10,000 MMSCFD.'); bad.push('q'); }
         if (!(_fin(c) && c > 0 && c <= 1e6)) { errors.push('H2S in gas must be above 0 and no more than 1,000,000 ppm.'); bad.push('ppm'); }
         if (errors.length) return { ok: false, errors: errors, bad: bad };
-        var mf = c / 1e6, Q = q * 1e6;
+        var bc = _basis();
+        var mf = c / 1e6, Q = q * 1e6 * bc.toRule;       // scf/d at the rule's 14.65 psia / 60 °F
         var x100 = Math.pow(ROE_K100 * mf * Q, ROE_EXP);
         var x500 = Math.pow(ROE_K500 * mf * Q, ROE_EXP);
-        var lbd = Q * mf / SCF_PER_LBMOL * MW_H2S;
+        var lbd = q * 1e6 * mf / bc.vm * MW_H2S;
         return {
-            ok: true, mf: mf, Q: Q,
+            ok: true, mf: mf, Q: Q, basis: bc,
             x100_ft: x100, x500_ft: x500, x100_m: x100 * FT_TO_M, x500_m: x500 * FT_TO_M,
             h2s_lbd: lbd, h2s_kgd: lbd * LB_TO_KG
         };
@@ -75238,11 +75827,12 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         if (!(_fin(c) && c >= 0 && c <= 1e6)) { errors.push('H2S in flared gas must be between 0 and 1,000,000 ppm.'); bad.push('ppm'); }
         if (!(_fin(ce) && ce >= 50 && ce <= 100)) { errors.push('Combustion efficiency must be between 50 and 100 %.'); bad.push('ce'); }
         if (errors.length) return { ok: false, errors: errors, bad: bad };
-        var mf = c / 1e6, n = q * 1e6 / SCF_PER_LBMOL / 24, f = ce / 100;
+        var bc = _basis();
+        var mf = c / 1e6, n = q * 1e6 / bc.vm / 24, f = ce / 100;
         var so2lb = n * mf * f * MW_SO2;
         var h2slb = n * mf * (1 - f) * MW_H2S;
         return {
-            ok: true, mf: mf, lbmol_hr: n,
+            ok: true, mf: mf, lbmol_hr: n, basis: bc,
             so2_lbhr: so2lb, so2_kghr: so2lb * LB_TO_KG, so2_td: so2lb * 24 * LB_TO_KG / 1000,
             h2s_lbhr: h2slb, h2s_kghr: h2slb * LB_TO_KG
         };
@@ -75260,12 +75850,13 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         if (!(_fin(co) && co >= 0 && (!ciOk || co < ci))) { errors.push('Target outlet H2S must be 0 ppm or more and below the inlet H2S.'); bad.push('cout'); }
         if (!(_fin(r) && r >= 0.1 && r <= 10)) { errors.push('Product consumption must be between 0.1 and 10 US gal per lb H2S.'); bad.push('ratio'); }
         if (errors.length) return { ok: false, errors: errors, bad: bad };
-        var lbd = q * 1e6 * (ci - co) * 1e-6 / SCF_PER_LBMOL * MW_H2S;
+        var bc = _basis();
+        var lbd = q * 1e6 * (ci - co) * 1e-6 / bc.vm * MW_H2S;
         var gal = lbd * r, L = gal * GAL_TO_L;
         return {
-            ok: true, lb_d: lbd, kg_d: lbd * LB_TO_KG,
+            ok: true, lb_d: lbd, kg_d: lbd * LB_TO_KG, basis: bc,
             gal_d: gal, L_d: L, L_hr: L / 24, gal_hr: gal / 24,
-            gr_in: ci * GR100_PER_PPM, gr_out: co * GR100_PER_PPM, meetsSales: co <= SALES_LIMIT_PPM
+            gr_in: ci * bc.gr100, gr_out: co * bc.gr100, meetsSales: co <= SALES_LIMIT_PPM
         };
     }
 
@@ -75339,6 +75930,14 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         }
     }
 
+    function _basisNote(b, rule) {
+        if (!b) return '';
+        if (!b.fromSetting) return 'Gas rates are standard volumes at 60 °F / 14.696 psia (379.48 scf per lb-mol)' +
+            (rule ? '; the escape rate is used as entered.' : '.');
+        return 'Gas rates are standard volumes at ' + b.label + ' (app setting, ' + _fmt(b.vm, 2) + ' scf per lb-mol)' +
+            (rule ? '; the escape rate is re-referred to 14.65 psia / 60 °F (× ' + _fmt(b.toRule, 5) + ') for the formula.' : '.');
+    }
+
     function _paintRoe(r) {
         var res = _byId('hs_roe_res');
         if (!res) return;
@@ -75358,7 +75957,8 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             v +
             _note('Screening formula from Texas Statewide Rule 36 (also used in US federal onshore H2S rules). ' +
                 'Escape rate = maximum volume available for escape, for a producing well the current adjusted ' +
-                'open-flow rate, at 14.65 psia and 60 °F. Local regulations and site dispersion studies take precedence.') +
+                'open-flow rate, at 14.65 psia and 60 °F. Local regulations and site dispersion studies take precedence. ' +
+                _basisNote(r.basis, true)) +
             '</div>';
         res.setAttribute('data-done', '1');
     }
@@ -75373,7 +75973,8 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             _row('SO2 per day', _fa(r.so2_td) + ' t/d') +
             _row('Unburned H2S', _fa(r.h2s_lbhr) + ' lb/hr (' + _fa(r.h2s_kghr) + ' kg/hr)') +
             _note('Ground-level SO2 concentration depends on flare height, plume rise and weather; a dispersion ' +
-                'screening tool is planned (roadmap item 11). Use Flare Emissions for full-period reporting.') +
+                'screening tool is planned (roadmap item 11). Use Flare Emissions for full-period reporting. ' +
+                _basisNote(r.basis)) +
             '</div>';
         res.setAttribute('data-done', '1');
     }
@@ -75395,7 +75996,8 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             v +
             _note('Consumption depends on product strength, contact time, temperature and injection design. ' +
                 'Use the supplier\'s figure; published field trials of triazine products report about 1.2 to 1.9 ' +
-                'US gal per lb H2S removed. Stoichiometric use is lower. Watch for solids from spent product.') +
+                'US gal per lb H2S removed. Stoichiometric use is lower. Watch for solids from spent product. ' +
+                _basisNote(r.basis)) +
             '</div>';
         res.setAttribute('data-done', '1');
     }
@@ -75525,6 +76127,10 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
                 var r = _byId(ids[i]);
                 if (r && r.getAttribute && r.getAttribute('data-done') === '1') { G.calcH2S(); return; }
             }
+        });
+        document.addEventListener('wts:base-conditions-changed', function () {
+            var r = _byId('hs_roe_res');
+            if (r && r.getAttribute && r.getAttribute('data-done') === '1') G.calcH2S();
         });
     }
 })();

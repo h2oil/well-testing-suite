@@ -97,6 +97,30 @@
         if (!_isNum(v)) return '—';
         return Math.round(v).toLocaleString('en-US');
     }
+    // Display in the active unit system (22-units.js). Calcs stay imperial;
+    // _u(v, cat, dp, impLabel) formats a canonical value for the screen.
+    function _metric() {
+        var U = G.WTS_units;
+        return !!(U && U.getSystem && U.getSystem() === 'metric' && U.format);
+    }
+    function _u(v, cat, dp, impLabel, dpMet) {
+        if (!_isNum(v)) return '—';
+        if (_metric()) { var f = G.WTS_units.format(v, cat); return _fmt(f.value, dpMet == null ? dp : dpMet) + ' ' + f.label; }
+        return _fmt(v, dp) + ' ' + impLabel;
+    }
+    function _uInt(v, cat, impLabel) {
+        if (!_isNum(v)) return '—';
+        if (_metric()) { var f = G.WTS_units.format(v, cat); return _fmtInt(f.value) + ' ' + f.label; }
+        return _fmtInt(v) + ' ' + impLabel;
+    }
+    function _ulab(cat, impLabel) { return _metric() ? G.WTS_units.format(0, cat).label : impLabel; }
+    // Standard (base) conditions of the scf inventory: the app setting, or
+    // this page's own 60 °F / 14.7 psia when the setting is "calculator default".
+    function _basis() {
+        var B = G.WTS_baseConditions;
+        if (B && B.resolve) return B.resolve(60, 14.7);
+        return { Tb_F: 60, Tb_R: 519.67, Pb_psia: 14.7, label: '60 °F / 14.7 psia', fromSetting: false };
+    }
     function _log() {
         if (typeof console !== 'undefined' && console.log) {
             try { console.log.apply(console, arguments); } catch (e) { /* noop */ }
@@ -212,11 +236,11 @@
         var MAWP    = +inputs.mawp_psig;
 
         var problems = [];
-        if (!_isNum(V)       || V       <= 0) problems.push('Section volume must be > 0 ft³.');
-        if (!_isNum(Q_MMscf) || Q_MMscf <= 0) problems.push('Gas backflow rate must be > 0 MMSCFD.');
+        if (!_isNum(V)       || V       <= 0) problems.push('Section volume must be > 0 ' + _ulab('volumeFt3', 'ft³') + '.');
+        if (!_isNum(Q_MMscf) || Q_MMscf <= 0) problems.push('Gas backflow rate must be > 0 ' + _ulab('gasRate', 'MMSCFD') + '.');
         if (!_isNum(tResp)   || tResp   <= 0) problems.push('ESD response time must be > 0 s.');
-        if (!_isNum(HP)) problems.push('Hi-pilot setting required (psig).');
-        if (!_isNum(RD)) problems.push('Rupture disc / RV setting required (psig).');
+        if (!_isNum(HP)) problems.push('Hi-pilot setting required (' + _ulab('pressureG', 'psig') + ').');
+        if (!_isNum(RD)) problems.push('Rupture disc / RV setting required (' + _ulab('pressureG', 'psig') + ').');
         if (_isNum(HP) && _isNum(RD) && HP >= RD) {
             problems.push('Hi-pilot must be set BELOW the RV/RD (currently HP ≥ RD).');
         }
@@ -231,10 +255,13 @@
         // definition):  V_inv(P) = V · (P + 14.7)/14.7 · 519.67/(T + 459.67).
         // The temperature ratio was previously omitted, overstating fill time
         // by ~7 % at 100 °F (non-conservative) and understating it when cold.
+        // Base conditions: the standard-conditions setting when chosen (the
+        // backflow rate is entered on that basis), else 14.7 psia / 60 °F.
+        var bc = _basis(), P_STD = bc.Pb_psia;
         var T_use = (_isNum(T_F) && T_F > -459.67) ? T_F : 60;
-        var V_std = V * T_STD_R / (T_use + 459.67);   // ft³ at section T → scf basis
-        var inv_HP = V_std * (HP + P_ATM) / P_ATM;
-        var inv_RD = V_std * (RD + P_ATM) / P_ATM;
+        var V_std = V * bc.Tb_R / (T_use + 459.67);   // ft³ at section T → scf basis
+        var inv_HP = V_std * (HP + P_ATM) / P_STD;
+        var inv_RD = V_std * (RD + P_ATM) / P_STD;
 
         // Backflow in scf/s (1 MMSCFD = 1e6 scf / 86400 s).
         var qScfS = Q_MMscf * 1e6 / 86400;
@@ -255,34 +282,35 @@
         result.gasReleasedToAtmosphere_scf  = Vrel;
         result.pass                         = pass;
         result.marginSeconds                = margin;
+        result.basis                        = bc;
 
         // Build rationale narrative.
         var rationale = '';
         if (pass) {
-            rationale = 'PASS — at the chosen Hi-Pilot of ' + HP.toFixed(0) + ' psig, '
+            rationale = 'PASS — at the chosen Hi-Pilot of ' + _u(HP, 'pressureG', 0, 'psig') + ', '
                 + 'the section reaches the RV setting in ' + tFill.toFixed(2)
                 + ' s, leaving a margin of ' + margin.toFixed(2) + ' s above the ESD '
                 + 'response time of ' + tResp.toFixed(1) + ' s. '
-                + 'Up to ' + Math.round(Vrel).toLocaleString() + ' scf will vent to '
+                + 'Up to ' + _uInt(Vrel, 'gasVolumeStd', 'scf') + ' will vent to '
                 + 'atmosphere through the open RV during ESD response.';
         } else {
             // Suggest by how much HP must drop, OR how much tResp must shrink.
             // Solve for HP* such that t_fill_at_HPstar == tResp:
             //   V·(RD+14.7)/14.7 − V·(HPstar+14.7)/14.7 == qScfS · tResp
             //   HPstar = RD − qScfS·tResp·14.7 / V
-            var HPstar = RD - (qScfS * tResp * P_ATM) / V_std;
+            var HPstar = RD - (qScfS * tResp * P_STD) / V_std;
             // Also solve for RD* such that t_fill at the existing HP gives tResp:
-            var RDstar = HP + (qScfS * tResp * P_ATM) / V_std;
+            var RDstar = HP + (qScfS * tResp * P_STD) / V_std;
 
-            var rd_relief = (RD <= MAWP) ? (' Note also that the RV setting (' + RD.toFixed(0)
-                + ' psig) is below MAWP+10 % (' + (MAWP * 1.10).toFixed(0)
-                + ' psig); raising the RV may be permissible.') : '';
+            var rd_relief = (RD <= MAWP) ? (' Note also that the RV setting (' + _u(RD, 'pressureG', 0, 'psig')
+                + ') is below MAWP+10 % (' + _u(MAWP * 1.10, 'pressureG', 0, 'psig')
+                + '); raising the RV may be permissible.') : '';
 
-            rationale = 'FAIL — at the chosen Hi-Pilot of ' + HP.toFixed(0) + ' psig, '
+            rationale = 'FAIL — at the chosen Hi-Pilot of ' + _u(HP, 'pressureG', 0, 'psig') + ', '
                 + 'the section reaches the RV in only ' + tFill.toFixed(2)
                 + ' s, which is shorter than the ' + tResp.toFixed(1) + ' s ESD response. '
-                + 'To pass: drop the Hi-Pilot to ≤ ' + Math.max(0, HPstar).toFixed(0)
-                + ' psig, OR raise the RV to ≥ ' + RDstar.toFixed(0) + ' psig (only if MAWP allows), '
+                + 'To pass: drop the Hi-Pilot to ≤ ' + _u(Math.max(0, HPstar), 'pressureG', 0, 'psig')
+                + ', OR raise the RV to ≥ ' + _u(RDstar, 'pressureG', 0, 'psig') + ' (only if MAWP allows), '
                 + 'OR reduce the ESD response time below ' + tFill.toFixed(2) + ' s.'
                 + rd_relief;
         }
@@ -290,20 +318,20 @@
 
         // Engineering notes.
         if (_isNum(MAWP) && RD > MAWP * 1.10 + 0.5) {
-            result.notes.push('Caution — RV setting (' + RD.toFixed(0)
-                + ' psig) exceeds MAWP+10 % (' + (MAWP * 1.10).toFixed(0)
-                + ' psig). Verify RV sizing per ASME / API 521.');
+            result.notes.push('Caution — RV setting (' + _u(RD, 'pressureG', 0, 'psig')
+                + ') exceeds MAWP+10 % (' + _u(MAWP * 1.10, 'pressureG', 0, 'psig')
+                + '). Verify RV sizing per ASME / API 521.');
         }
         if (_isNum(HP) && _isNum(MAWP) && HP > MAWP) {
             result.notes.push('Caution — Hi-Pilot setting is ABOVE MAWP. Lower the Hi-Pilot '
                 + 'or re-rate the section.');
         }
         if (Math.abs(RD - HP) < 5) {
-            result.notes.push('Hi-Pilot is within 5 psi of the RV setting; small instrument '
+            result.notes.push('Hi-Pilot is within ' + _u(5, 'pressure', 0, 'psi') + ' of the RV setting; small instrument '
                 + 'drift could trigger spurious RV lifts. Increase the gap.');
         }
         if (_isNum(T_F) && T_F < -40) {
-            result.notes.push('Section temperature below −40 °F — verify metallurgy and PSV trim.');
+            result.notes.push('Section temperature below ' + (_metric() ? '−40 °C' : '−40 °F') + ' — verify metallurgy and PSV trim.');
         }
         if (_isNum(SG) && (SG < 0.55 || SG > 1.20)) {
             result.notes.push('Gas specific gravity ' + SG.toFixed(2)
@@ -408,8 +436,8 @@
                     + 'fill="#8b949e" text-anchor="middle" '
                     + 'font-family="Segoe UI, sans-serif" '
                     + 'text-transform="uppercase">Hi-Pilot</text>');
-                var hpTxt = hpPsig.toFixed(0) + ' psig';
-                if (_isNum(rdPsig)) hpTxt += '  /  RV ' + rdPsig.toFixed(0);
+                var hpTxt = _u(hpPsig, 'pressureG', 0, 'psig');
+                if (_isNum(rdPsig)) hpTxt += '  /  RV ' + (_metric() ? _fmt(G.WTS_units.format(rdPsig, 'pressureG').value, 0) : rdPsig.toFixed(0));
                 lines.push('<text x="' + bcx + '" y="42" font-size="11" font-weight="700" '
                     + 'fill="' + badgeColor + '" text-anchor="middle" '
                     + 'font-family="Courier New, monospace">' + _esc(hpTxt) + '</text>');
@@ -610,6 +638,22 @@
     }
     G.renderESDHiPilot = renderESDHiPilot;
 
+    // Unit flip / standard-conditions change: repaint in the active system
+    // (canonical context → tagged inputs read imperial).
+    function _rerun() {
+        if (!_hasDoc) return;
+        var box = document.getElementById('wts_esdhi_results');
+        if (!box) return;
+        var U = G.WTS_units;
+        var fn = (box.querySelector && box.querySelector('table, .val-error')) ? _onCalculate : _redrawSVG;
+        if (U && U.runCanonical) U.runCanonical(fn); else fn();
+    }
+    if (_hasDoc && typeof document.addEventListener === 'function') {
+        document.addEventListener('wts:unit-system-changed', _rerun);
+        document.addEventListener('wts:base-conditions-changed', _rerun);
+    }
+
+
     // ───────────────────────────────────────────────────────────────
     // Helpers — DOM read/write
     // ───────────────────────────────────────────────────────────────
@@ -712,32 +756,35 @@
         // Inputs + results table — picked up by host PDF/PNG export.
         var inputsRows = ''
             + '<tr><td>Section Volume</td><td>'
-            + _fmt(inputs.sectionVolume_ft3, 2) + ' ft³</td></tr>'
+            + _u(inputs.sectionVolume_ft3, 'volumeFt3', 2, 'ft³', 3) + '</td></tr>'
             + '<tr><td>Section Gas Temp</td><td>'
-            + _fmt(inputs.sectionGasTemp_F, 0) + ' °F</td></tr>'
+            + _u(inputs.sectionGasTemp_F, 'temperature', 0, '°F', 1) + '</td></tr>'
             + '<tr><td>Gas Backflow Rate</td><td>'
-            + _fmt(inputs.gasFlowRate_MMscfd, 2) + ' MMSCFD</td></tr>'
+            + _u(inputs.gasFlowRate_MMscfd, 'gasRate', 2, 'MMSCFD', 1) + '</td></tr>'
             + '<tr><td>Gas SG</td><td>' + _fmt(inputs.gasSG, 2) + '</td></tr>'
             + '<tr><td>Hi-Pilot Setting</td><td>'
-            + _fmt(inputs.hiPilotSetting_psig, 0) + ' psig</td></tr>'
+            + _u(inputs.hiPilotSetting_psig, 'pressureG', 0, 'psig') + '</td></tr>'
             + '<tr><td>RV / RD Setting</td><td>'
-            + _fmt(inputs.rdSetting_psig, 0) + ' psig</td></tr>'
+            + _u(inputs.rdSetting_psig, 'pressureG', 0, 'psig') + '</td></tr>'
             + '<tr><td>Section MAWP</td><td>'
-            + _fmt(inputs.mawp_psig, 0) + ' psig</td></tr>'
+            + _u(inputs.mawp_psig, 'pressureG', 0, 'psig') + '</td></tr>'
             + '<tr><td>ESD Response Time</td><td>'
             + _fmt(inputs.esdResponseTime_s, 1) + ' s</td></tr>';
 
         var resultsRows = ''
             + '<tr><td>Inventory @ Hi-Pilot</td><td>'
-            + _fmtInt(r.inventoryAtHiPilot_scf) + ' scf</td></tr>'
+            + _uInt(r.inventoryAtHiPilot_scf, 'gasVolumeStd', 'scf') + '</td></tr>'
             + '<tr><td>Inventory @ RD/RV</td><td>'
-            + _fmtInt(r.inventoryAtRD_scf) + ' scf</td></tr>'
+            + _uInt(r.inventoryAtRD_scf, 'gasVolumeStd', 'scf') + '</td></tr>'
             + '<tr><td>Time to reach RV</td><td>'
             + _fmt(r.timeToReachRV_s, 2) + ' s</td></tr>'
             + '<tr><td>Gas released to atmos. during ESD</td><td>'
-            + _fmtInt(r.gasReleasedToAtmosphere_scf) + ' scf</td></tr>'
+            + _uInt(r.gasReleasedToAtmosphere_scf, 'gasVolumeStd', 'scf') + '</td></tr>'
             + '<tr><td>Margin (t_fill − t_resp)</td><td>'
-            + _fmt(r.marginSeconds, 2) + ' s</td></tr>';
+            + _fmt(r.marginSeconds, 2) + ' s</td></tr>'
+            + '<tr><td>Standard-volume basis</td><td>'
+            + _esc(r.basis ? r.basis.label + (r.basis.fromSetting ? ' (app setting)' : ' (calculator default)') : '—') + '</td></tr>';
+
 
         return ''
             + '<div style="padding:10px 14px;border-radius:6px;font-weight:700;'

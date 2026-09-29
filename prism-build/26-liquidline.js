@@ -363,29 +363,30 @@
         // 7. Protection status
         var protection_status = 'green';
         var rationale = '';
+        var q_ = function (v) { return _u(v, 'gasRate', 2, 'MMscfd', 1); };
         if (Q_lcv <= Q_vent) {
-            rationale = 'LCV blowby (' + Q_lcv.toFixed(2) +
-                ' MMscfd) is below vent capacity (' + Q_vent.toFixed(2) +
-                ' MMscfd). No RO required for tank protection.';
+            rationale = 'LCV blowby (' + q_(Q_lcv) +
+                ') is below vent capacity (' + q_(Q_vent) +
+                '). No RO required for tank protection.';
         } else if (isFinite(Q_ro_installed) && Q_ro_installed <= Q_vent) {
-            rationale = 'LCV blowby (' + Q_lcv.toFixed(2) +
-                ' MMscfd) exceeds vent capacity but the installed ' +
+            rationale = 'LCV blowby (' + q_(Q_lcv) +
+                ') exceeds vent capacity but the installed ' +
                 ro_size_64.toFixed(0) + '/64" RO throttles flow to ' +
-                Q_ro_installed.toFixed(2) + ' MMscfd, below the ' +
-                Q_vent.toFixed(2) + ' MMscfd vent limit. Adequate.';
+                q_(Q_ro_installed) + ', below the ' +
+                q_(Q_vent) + ' vent limit. Adequate.';
         } else if (isFinite(Q_ro_installed) && Q_ro_installed > Q_vent) {
             protection_status = 'red';
             rationale = 'RO is undersized: ' + ro_size_64.toFixed(0) +
-                '/64" passes ' + Q_ro_installed.toFixed(2) +
-                ' MMscfd > vent ' + Q_vent.toFixed(2) +
-                ' MMscfd. Reduce RO bore to ≈ ' +
+                '/64" passes ' + q_(Q_ro_installed) +
+                ' > vent ' + q_(Q_vent) +
+                '. Reduce RO bore to ≈ ' +
                 (isFinite(ro_target_size) ? ro_target_size.toFixed(1) : '?') +
                 '/64".';
         } else {
             protection_status = 'red';
-            rationale = 'LCV blowby (' + Q_lcv.toFixed(2) +
-                ' MMscfd) exceeds vent capacity (' + Q_vent.toFixed(2) +
-                ' MMscfd). Install RO of bore ≈ ' +
+            rationale = 'LCV blowby (' + q_(Q_lcv) +
+                ') exceeds vent capacity (' + q_(Q_vent) +
+                '). Install RO of bore ≈ ' +
                 (isFinite(ro_target_size) ? ro_target_size.toFixed(1) : '?') +
                 '/64" to protect tank.';
         }
@@ -426,6 +427,16 @@
         var el = _$(id);
         if (!el) return fallback;
         return el.value;
+    }
+    // Display in the active unit system (22-units.js); calcs stay imperial.
+    function _metric() {
+        var U = G.WTS_units;
+        return !!(U && U.getSystem && U.getSystem() === 'metric' && U.format);
+    }
+    function _u(v, cat, dp, impLabel, dpMet) {
+        if (v == null || !isFinite(v)) return 'n/a';
+        if (_metric()) { var f = G.WTS_units.format(v, cat); return Number(f.value).toFixed(dpMet == null ? dp : dpMet) + ' ' + f.label; }
+        return Number(v).toFixed(dp) + ' ' + impLabel;
     }
     function _setText(id, txt) {
         var el = _$(id);
@@ -642,8 +653,9 @@
             ? inputs.ro_size_64ths.toFixed(0) + '/64"'
             : 'n/a';
         var roTPut = (r.ro_max_throughput_MMscfd != null)
-            ? r.ro_max_throughput_MMscfd.toFixed(2) + ' MMscfd'
+            ? _u(r.ro_max_throughput_MMscfd, 'gasRate', 2, 'MMscfd', 1)
             : 'n/a';
+        var lenU = function (ft) { return _u(ft, 'length', 1, 'ft'); };
         var roOk = (r.ro_max_throughput_MMscfd != null && r.ro_max_throughput_MMscfd <= r.vent_max_capacity_MMscfd)
             ? '<span style="color:#3fb950;font-weight:700">RO adequate</span>'
             : (r.ro_max_throughput_MMscfd != null
@@ -663,9 +675,9 @@
             + '<polygon points="45,110 ' + (45 + Math.min(220, fl.x_ft * 4)) + ',' + (120 - Math.min(80, fl.y_ft * 3)) + ' '
             +    (45 + Math.min(220, fl.x_ft * 4)) + ',' + (120 - Math.min(80, fl.y_ft * 3) + 20) + ' 45,118" '
             +    'fill="rgba(248,81,73,0.25)" stroke="#f85149" stroke-width="1"/>'
-            + '<text x="60"  y="135" fill="#8b949e" font-size="9">x = '  + fl.x_ft.toFixed(1) + ' ft</text>'
-            + '<text x="170" y="40"  fill="#8b949e" font-size="9">y = '  + fl.y_ft.toFixed(1) + ' ft</text>'
-            + '<text x="170" y="55"  fill="#8b949e" font-size="9">s = '  + fl.s_ft.toFixed(1) + ' ft</text>'
+            + '<text x="60"  y="135" fill="#8b949e" font-size="9">x = '  + lenU(fl.x_ft) + '</text>'
+            + '<text x="170" y="40"  fill="#8b949e" font-size="9">y = '  + lenU(fl.y_ft) + '</text>'
+            + '<text x="170" y="55"  fill="#8b949e" font-size="9">s = '  + lenU(fl.s_ft) + '</text>'
             + '</svg>';
 
         var html = ''
@@ -673,10 +685,10 @@
         + '<table style="width:100%;font-size:12px;border-collapse:collapse">'
         + '  <tr><td style="padding:4px 6px;color:var(--text2,#8b949e)">Max Gas Rate Through LCV</td>'
         + '      <td style="padding:4px 6px;text-align:right;' + lcvHi + '">'
-        +         r.max_gas_through_lcv_MMscfd.toFixed(2) + ' MMscfd</td></tr>'
+        +         _u(r.max_gas_through_lcv_MMscfd, 'gasRate', 2, 'MMscfd', 1) + '</td></tr>'
         + '  <tr><td style="padding:4px 6px;color:var(--text2,#8b949e)">Vent Line Max Capacity</td>'
         + '      <td style="padding:4px 6px;text-align:right;color:#3fb950;font-weight:700">'
-        +         r.vent_max_capacity_MMscfd.toFixed(2) + ' MMscfd</td></tr>'
+        +         _u(r.vent_max_capacity_MMscfd, 'gasRate', 2, 'MMscfd', 1) + '</td></tr>'
         + '  <tr><td style="padding:4px 6px;color:var(--text2,#8b949e)">RO Required?</td>'
         + '      <td style="padding:4px 6px;text-align:right">' + roPill + '</td></tr>'
         + '  <tr><td style="padding:4px 6px;color:var(--text2,#8b949e)">Required RO Bore</td>'
@@ -687,8 +699,10 @@
         + '      <td style="padding:4px 6px;text-align:right">' + roTPut + '</td></tr>'
         + '  <tr><td style="padding:4px 6px;color:var(--text2,#8b949e)">RO Adequacy</td>'
         + '      <td style="padding:4px 6px;text-align:right">' + roOk + '</td></tr>'
-        + '  <tr><td style="padding:4px 6px;color:var(--text2,#8b949e)">P downstream of RO (psig)</td>'
-        + '      <td style="padding:4px 6px;text-align:right">' + r.p_downstream_ro_psig.toFixed(0) + '</td></tr>'
+        + '  <tr><td style="padding:4px 6px;color:var(--text2,#8b949e)">P downstream of RO</td>'
+        + '      <td style="padding:4px 6px;text-align:right">' + _u(r.p_downstream_ro_psig, 'pressureG', 0, 'psig') + '</td></tr>'
+        + '  <tr><td style="padding:4px 6px;color:var(--text2,#8b949e)">Standard-volume basis</td>'
+        + '      <td style="padding:4px 6px;text-align:right">60 °F / 14.7 psia (Cv and orifice equations)</td></tr>'
         + '</table>'
         + '<div style="margin-top:8px;padding:8px;border-radius:4px;font-size:11px;'
         +   'background:rgba(88,166,255,0.06);border:1px solid rgba(88,166,255,0.18);color:var(--text2,#c9d1d9)">'
@@ -701,11 +715,11 @@
         + '  <div style="flex:1;min-width:200px;font-size:12px">'
         + '    <table style="width:100%;border-collapse:collapse">'
         + '      <tr><td style="padding:4px 6px;color:var(--text2,#8b949e)">Vertical (y)</td>'
-        + '          <td style="padding:4px 6px;text-align:right;font-weight:700">' + fl.y_ft.toFixed(1) + ' ft</td></tr>'
+        + '          <td style="padding:4px 6px;text-align:right;font-weight:700">' + lenU(fl.y_ft) + '</td></tr>'
         + '      <tr><td style="padding:4px 6px;color:var(--text2,#8b949e)">Horizontal (x, downwind)</td>'
-        + '          <td style="padding:4px 6px;text-align:right;font-weight:700">' + fl.x_ft.toFixed(1) + ' ft</td></tr>'
+        + '          <td style="padding:4px 6px;text-align:right;font-weight:700">' + lenU(fl.x_ft) + '</td></tr>'
         + '      <tr><td style="padding:4px 6px;color:var(--text2,#8b949e)">Axial (s)</td>'
-        + '          <td style="padding:4px 6px;text-align:right;font-weight:700">' + fl.s_ft.toFixed(1) + ' ft</td></tr>'
+        + '          <td style="padding:4px 6px;text-align:right;font-weight:700">' + lenU(fl.s_ft) + '</td></tr>'
         + '    </table>'
         + '    <div style="margin-top:8px;font-size:10px;color:var(--text3,#8b949e)">'
         + '      Simplified jet-flame envelope scaled by √(Q/25) with wind tilt. '
@@ -730,6 +744,17 @@
     G.WTS_flammability_radii   = WTS_flammability_radii;
     G.WTS_liquidline_compute   = WTS_liquidline_compute;
     G.renderLiquidLine         = renderLiquidLine;
+
+    // Unit flip: repaint results in the active system (canonical context →
+    // tagged inputs read imperial).
+    if (typeof document !== 'undefined' && document.addEventListener) {
+        document.addEventListener('wts:unit-system-changed', function () {
+            if (!_$('wts_ll_results') || !_$('wts_ll_calc_btn')) return;
+            var U = G.WTS_units;
+            if (U && U.runCanonical) U.runCanonical(_renderResults); else _renderResults();
+        });
+    }
+
 
 })();
 
