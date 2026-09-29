@@ -3,12 +3,176 @@
 // Round-9 (calculators) — auto-injected from prism-build/4N-calc-*.js
 //   Each file registers window.WTS_calcRegistry[key] = { key, title, sub, group, icon, render(body) };
 //   the host render() / sidebar / dashboard pick the entries up (no route-table edit).
+//   • 40-calc-tubulars
 //   • 41-calc-gasdeliv
 //   • 42-calc-oilipr
 //   • 43-calc-flareghg
 //   • 44-calc-h2sroe
+//   • 45-calc-orifice
 //   • 46-calc-gaspvt
+//   • 48-calc-wellkill
 // ═══════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════
+// ─── BEGIN 40-calc-tubulars ───────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════
+// WTS — Round-9 shared data module — tubular table (tubulars)
+//
+// PURPOSE
+//   One table of API 5CT casing and tubing, common API 5DP drill pipe and
+//   liners, with capacity / annular-capacity / displacement helpers. Shared
+//   by the plug-in calculators (Well Kill & Bullhead first; DST recovery and
+//   bottoms-up later). It is a data module: it deliberately does NOT add a
+//   page to window.WTS_calcRegistry, so it has no sidebar button or tile.
+//   The file lives in the 4N-calc- namespace only so concat-round9.js picks
+//   it up ahead of the calculators (40 sorts first).
+//
+// DATA
+//   Every entry: {key, type, od, wt, id, wall, drift, label}
+//     od, id, wall, drift in inches; wt = nominal weight, lb/ft.
+//     wall = (od − id) / 2 (API 5CT: ID = OD − 2·wall).
+//     drift = API 5CT drift mandrel diameter:
+//       casing   ID − 1/8"  (OD ≤ 9-5/8"), ID − 5/32" (10-3/4" to 13-3/8"),
+//                ID − 3/16" (16" and larger)
+//       tubing   ID − 3/32" (OD ≤ 2-7/8"), ID − 1/8" (3-1/2" and larger)
+//       drill pipe: no API drift → null.
+//   Casing and tubing include every row of the host Casing & Tubing page
+//   (`casingData` / `tubingData`) with identical IDs; the extra rows follow
+//   API 5CT / API TR 5C3 nominal weights and wall thicknesses.
+//   Liners are the casing rows commonly run as liners (OD 4-1/2" to 9-5/8"),
+//   with type 'liner'. Drill pipe IDs are API 5DP plain-pipe body IDs; the
+//   displacement helpers work on the plain body (tool joints excluded).
+//
+// PUBLIC API (window.WTS_tubulars)
+//   casing, tubing, drillpipe, liners       arrays of entries (read-only by convention)
+//   all()                                   every entry
+//   list(type)                              'casing' | 'tubing' | 'drillpipe' | 'liner'
+//   find(key)                               entry by key, or null
+//   hostCasingKeys, hostTubingKeys          keys matching the host casingData / tubingData order
+//   BBL_PER_FT_PER_IN2                      π/4 · 12 in / 9702 in³ per bbl = 0.000971413
+//   capacity(idIn)                          bbl/ft inside a pipe
+//   annularCapacity(holeIdIn, pipeOdIn)     bbl/ft of annulus (NaN if the pipe does not fit)
+//   displacement(odIn, idIn)                bbl/ft open-end (steel) displacement
+//   closedEndDisplacement(odIn)             bbl/ft closed-end displacement
+//   bblFtToM3m(x)                           bbl/ft → m³/m (× 0.521612)
+// ════════════════════════════════════════════════════════════════════
+(function () {
+    'use strict';
+
+    var G = (typeof window !== 'undefined') ? window : globalThis;
+
+    // 1 bbl = 9702 in³ (42 US gal × 231 in³); a 1 in bore, 1 ft long = π/4 · 12 in³.
+    var K = Math.PI / 4 * 12 / 9702;          // 0.000971413 bbl/ft per in²
+    var BBLFT_TO_M3M = 0.158987294928 / 0.3048;
+
+    function _r(x, d) { var f = Math.pow(10, d); return Math.round(x * f) / f; }
+    function _frac(od) {
+        var whole = Math.floor(od + 1e-9), rem = od - whole;
+        var n = Math.round(rem * 64);
+        if (n === 0) return String(whole);
+        var d = 64;
+        while (n % 2 === 0 && d > 1) { n /= 2; d /= 2; }
+        if (Math.abs(rem * 64 - Math.round(rem * 64)) > 1e-6) return String(od);
+        return (whole ? whole + '-' : '') + n + '/' + d;
+    }
+    function _casingDrift(od, id) { return id - (od <= 9.625 + 1e-9 ? 0.125 : od < 16 - 1e-9 ? 0.15625 : 0.1875); }
+    function _tubingDrift(od, id) { return id - (od <= 2.875 + 1e-9 ? 0.09375 : 0.125); }
+
+    function _mk(type, od, wt, id, note) {
+        var drift = type === 'casing' || type === 'liner' ? _casingDrift(od, id) : type === 'tubing' ? _tubingDrift(od, id) : null;
+        var key = type + '-' + od + '-' + wt;
+        var name = { casing: 'casing', liner: 'liner', tubing: 'tubing', drillpipe: 'drill pipe' }[type];
+        return {
+            key: key, type: type, od: od, wt: wt, id: id,
+            wall: _r((od - id) / 2, 4),
+            drift: drift == null ? null : _r(drift, 3),
+            label: _frac(od) + '" ' + wt.toFixed(2) + ' lb/ft ' + name + ' (ID ' + id.toFixed(3) + '")' + (note ? ' ' + note : '')
+        };
+    }
+
+    // [od, wt, id] — API 5CT casing (wall per API TR 5C3). Rows marked * are the host casingData.
+    var CASING = [
+        [4.5, 9.5, 4.09], [4.5, 10.5, 4.052], [4.5, 11.6, 4.0], [4.5, 13.5, 3.92], [4.5, 15.1, 3.826],
+        [5, 11.5, 4.56], [5, 13, 4.494], [5, 15, 4.408], [5, 18, 4.276], [5, 21.4, 4.126], [5, 23.2, 4.044],
+        [5.5, 14, 5.012], [5.5, 15.5, 4.95], [5.5, 17, 4.892], [5.5, 20, 4.778], [5.5, 23, 4.67], [5.5, 26, 4.548],
+        [6.625, 20, 6.049], [6.625, 24, 5.921], [6.625, 28, 5.791], [6.625, 32, 5.675],
+        [7, 17, 6.538], [7, 20, 6.456], [7, 23, 6.366], [7, 26, 6.276], [7, 29, 6.184], [7, 32, 6.094], [7, 35, 6.004], [7, 38, 5.92],
+        [7.625, 20, 7.125], [7.625, 24, 7.025], [7.625, 26.4, 6.969], [7.625, 29.7, 6.875], [7.625, 33.7, 6.765], [7.625, 39, 6.625],
+        [8.625, 24, 8.097], [8.625, 28, 8.017], [8.625, 32, 7.921], [8.625, 36, 7.825], [8.625, 40, 7.725], [8.625, 44, 7.625], [8.625, 49, 7.511],
+        [9.625, 32.3, 9.001], [9.625, 36, 8.921], [9.625, 40, 8.835], [9.625, 43.5, 8.755], [9.625, 47, 8.681], [9.625, 53.5, 8.535],
+        [10.75, 32.75, 10.192], [10.75, 40.5, 10.05], [10.75, 45.5, 9.95], [10.75, 51, 9.85], [10.75, 55.5, 9.76],
+        [13.375, 48, 12.715], [13.375, 54.5, 12.615], [13.375, 61, 12.515], [13.375, 68, 12.415], [13.375, 72, 12.347],
+        [16, 65, 15.25], [16, 75, 15.124], [16, 84, 15.01],
+        [20, 94, 19.124], [20, 106.5, 19.0], [20, 133, 18.73]
+    ];
+    // [od, wt, id] — API 5CT tubing. The host tubingData has 4-1/2" 9.50 lb/ft (ID 4.090") too.
+    var TUBING = [
+        [1.9, 2.9, 1.61],
+        [2.375, 4.7, 1.995], [2.375, 5.95, 1.867],
+        [2.875, 6.5, 2.441], [2.875, 8.7, 2.259],
+        [3.5, 7.7, 3.068], [3.5, 9.3, 2.992], [3.5, 10.3, 2.922], [3.5, 12.95, 2.75],
+        [4, 9.5, 3.548], [4, 11, 3.476],
+        [4.5, 9.5, 4.09], [4.5, 12.75, 3.958]
+    ];
+    // [od, wt, id] — API 5DP drill pipe, nominal weight, plain-pipe body ID.
+    var DRILLPIPE = [
+        [2.375, 6.65, 1.815], [2.875, 10.4, 2.151], [3.5, 13.3, 2.764], [3.5, 15.5, 2.602],
+        [4, 14, 3.34], [4.5, 16.6, 3.826], [4.5, 20, 3.64], [5, 19.5, 4.276], [5, 25.6, 4],
+        [5.5, 21.9, 4.778], [5.5, 24.7, 4.67], [6.625, 25.2, 5.965]
+    ];
+    // Host page order (well-testing-app.html, Casing & Tubing Size) — identical IDs.
+    var HOST_CASING = [
+        [4.5, 9.5], [4.5, 11.6], [4.5, 13.5], [5, 11.5], [5, 15], [5, 18], [5.5, 14], [5.5, 17], [5.5, 20], [5.5, 23],
+        [7, 17], [7, 20], [7, 23], [7, 26], [7, 29], [7, 32], [7.625, 20], [7.625, 24], [7.625, 26.4], [7.625, 29.7],
+        [9.625, 32.3], [9.625, 36], [9.625, 40], [9.625, 43.5], [9.625, 47], [10.75, 32.75], [10.75, 40.5], [10.75, 45.5],
+        [13.375, 48], [13.375, 54.5], [13.375, 61], [13.375, 68]
+    ];
+    var HOST_TUBING = [[2.375, 4.7], [2.375, 5.95], [2.875, 6.5], [2.875, 8.7], [3.5, 7.7], [3.5, 9.3], [3.5, 12.95], [4.5, 9.5], [4.5, 12.75]];
+
+    var casing = CASING.map(function (r) { return _mk('casing', r[0], r[1], r[2]); });
+    var tubing = TUBING.map(function (r) { return _mk('tubing', r[0], r[1], r[2]); });
+    var drillpipe = DRILLPIPE.map(function (r) { return _mk('drillpipe', r[0], r[1], r[2]); });
+    var liners = CASING.filter(function (r) { return r[0] <= 9.625; }).map(function (r) { return _mk('liner', r[0], r[1], r[2]); });
+    var ALL = casing.concat(tubing, drillpipe, liners);
+    var BY_KEY = {};
+    ALL.forEach(function (e) { BY_KEY[e.key] = e; });
+
+    function _fin(x) { return typeof x === 'number' && isFinite(x); }
+    function capacity(idIn) { var d = Number(idIn); return _fin(d) && d > 0 ? d * d * K : NaN; }
+    function annularCapacity(holeIdIn, pipeOdIn) {
+        var D = Number(holeIdIn), d = Number(pipeOdIn);
+        if (!(_fin(D) && _fin(d) && D > 0 && d >= 0 && d < D)) return NaN;
+        return (D * D - d * d) * K;
+    }
+    function displacement(odIn, idIn) {
+        var D = Number(odIn), d = Number(idIn);
+        if (!(_fin(D) && _fin(d) && D > 0 && d >= 0 && d < D)) return NaN;
+        return (D * D - d * d) * K;
+    }
+    function closedEndDisplacement(odIn) { return capacity(odIn); }
+
+    G.WTS_tubulars = {
+        casing: casing, tubing: tubing, drillpipe: drillpipe, liners: liners,
+        hostCasingKeys: HOST_CASING.map(function (r) { return 'casing-' + r[0] + '-' + r[1]; }),
+        hostTubingKeys: HOST_TUBING.map(function (r) { return 'tubing-' + r[0] + '-' + r[1]; }),
+        BBL_PER_FT_PER_IN2: K,
+        all: function () { return ALL.slice(); },
+        list: function (type) {
+            return type === 'casing' ? casing.slice() : type === 'tubing' ? tubing.slice() :
+                type === 'drillpipe' ? drillpipe.slice() : type === 'liner' ? liners.slice() : [];
+        },
+        find: function (key) { return Object.prototype.hasOwnProperty.call(BY_KEY, key) ? BY_KEY[key] : null; },
+        capacity: capacity,
+        annularCapacity: annularCapacity,
+        displacement: displacement,
+        closedEndDisplacement: closedEndDisplacement,
+        bblFtToM3m: function (x) { return Number(x) * BBLFT_TO_M3M; }
+    };
+})();
+
+// ─── END 40-calc-tubulars ─────────────────────────────────────────────
+
 
 // ═══════════════════════════════════════════════════════════════════════
 // ─── BEGIN 41-calc-gasdeliv ───────────────────────────────────────────
@@ -1820,6 +1984,442 @@
 
 
 // ═══════════════════════════════════════════════════════════════════════
+// ─── BEGIN 45-calc-orifice ───────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════
+// WTS ─ Round-9 plug-in calculator 45 — Orifice Plate Selection
+//
+// PURPOSE
+//   Inverse AGA-3 (roadmap #6). For a target gas rate, meter run ID, line
+//   pressure/temperature, gas gravity (+ CO2 / N2 / H2S) and the DP
+//   transmitter range, pick the orifice bore that keeps the differential
+//   between the low and high % of range (default 20–80 %) at the target
+//   rate, with β = d/D inside the AGA-3 RG limits 0.10–0.75. Shows the next
+//   plate up and down and the plate-change points (the rates at which each
+//   plate reaches the low / high % of range).
+//
+// METHOD
+//   Every rate comes from the host's pure AGA-3 engine
+//   window.WTS_aga3_compute (API MPMS 14.3.1 RG flange-tap Cd with Re
+//   iteration, Y1 upstream expansion factor, Standing + Wichert-Aziz
+//   pseudo-criticals, Dranchuk-Abou-Kassem Z) — the same numbers as the
+//   AGA-3 Gas Metering page. Z does not depend on bore or differential, so
+//   it is solved once and passed back in (identical value, faster).
+//     • Exact bore d*: bisection on d in [0.10·D, 0.75·D] so that the rate
+//       at the design differential (default 50 % of range) equals the target.
+//     • Differential at the target for a given plate: bisection on hw.
+//     • Plate-change points: forward rate at low % and high % of range.
+//   Plate list: every 0.125" bore from 0.125" up to the largest bore with
+//   β ≤ 0.75 (bores below β 0.10 are dropped). The chosen plate is d*
+//   rounded to the nearest 0.125" when that plate keeps the differential
+//   inside the window; otherwise the plate inside the window closest to the
+//   design %; otherwise (none inside) the nearest plate, flagged ✗.
+//   Plate sizes are always shown as decimal inches (1.875", 2.000") — in
+//   Metric mode with the mm conversion alongside (1.875" (47.63 mm)).
+//
+// REFERENCES
+//   • AGA Report No. 3 / API MPMS Ch. 14.3.1–14.3.3 (1992+, 2012/2013):
+//     orifice equation, RG Cd, β 0.10–0.75, D ≥ 2 in, x1 = hw/(N3·Pf1).
+//   • ISO 5167-1/-2 (2003) — flow measurement practice: keep the working
+//     differential in the upper part of the transmitter span (the 20–80 %
+//     window is common field practice, not a standard requirement).
+//
+// FIELD UNITS (canonical): rate MSCFD, lengths in, pressure psig / psia,
+//   differential inH2O @ 60 °F, temperature °F.
+//
+// PUBLIC API (window.*)
+//   renderOrificeSelect(body)      paint the page into #pgBody
+//   calcOrificeSelect()            read DOM → validate → compute → render
+//   WTS_orifice_compute(input)     pure; field units in and out, no DOM
+//       input  {q, D, Ps, TfF, SG, co2, n2, h2s, urv, lo, hi, des, TbF, Pb}
+//              (a legacy `mode` from an earlier build is accepted and ignored)
+//       output {ok, errors[], errorIds[], dStar, betaStar, dStarFlag, candidates[],
+//               chosen, up, down, table[], verdicts[], warnings[], Z, ...}
+//   WTS_state.orifice              last result (in memory only)
+//   WTS_calcRegistry.orifice       Round-9 registration
+//
+// CONVENTIONS: single outer IIFE, 'use strict', no dependencies, no timers,
+//   loads without document / WTS_units / drawLineChart / WTS_aga3_compute.
+//   Self-test block at the end is stripped by concat-round9.
+// ════════════════════════════════════════════════════════════════════
+(function () {
+    'use strict';
+
+    var G = (typeof window !== 'undefined') ? window : globalThis;
+    var P = 'op_';
+
+    // ── Page helpers (shared calculator pattern) ─────────────────────
+    function _byId(id) { return (typeof document !== 'undefined' && document.getElementById) ? document.getElementById(id) : null; }
+    function _num(id) { var e = _byId(id); if (!e) return NaN; var s = String(e.value).trim(); return s === '' ? NaN : parseFloat(s); }
+    function _fmt(v, d) {
+        if (v == null || !isFinite(v)) return '—';
+        return Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) });
+    }
+    function _metric() { var U = G.WTS_units; return !!(U && U.getSystem && U.getSystem() === 'metric' && U.format); }
+    function _u(v, cat, d, impLabel, dMet) {
+        if (v == null || !isFinite(v)) return '—';
+        if (_metric()) { var f = G.WTS_units.format(v, cat); return _fmt(f.value, dMet == null ? d : dMet) + ' ' + f.label; }
+        return _fmt(v, d) + ' ' + impLabel;
+    }
+    function _dv(v, cat) { return _metric() ? G.WTS_units.format(v, cat).value : v; }
+    function _lab(cat, impLabel) { return _metric() ? G.WTS_units.format(1, cat).label : impLabel; }
+    function _tag(map) { var U = G.WTS_units; if (!U || !U.tagInput) return; for (var id in map) U.tagInput(id, map[id]); }
+    function _canon(fn) { var U = G.WTS_units; return (U && U.runCanonical) ? U.runCanonical(fn) : fn(); }
+    function _nv(v) { return (v === null || v === undefined || v === '') ? NaN : Number(v); }
+    function _opt(v, def) { return (v === null || v === undefined || v === '' || (typeof v === 'number' && isNaN(v))) ? def : Number(v); }
+    var STEP = 0.125;   // plate bores in 0.125" increments over the whole range
+    // Plate size text: always decimal inches; Metric mode adds the mm conversion.
+    function _boreTxt(d, dp) {
+        if (d == null || !isFinite(d)) return '—';
+        var t = d.toFixed(dp == null ? 3 : dp) + '"';
+        return _metric() ? t + ' (' + (d * 25.4).toFixed(dp == null ? 2 : 3) + ' mm)' : t;
+    }
+
+    var BETA_MIN = 0.1, BETA_MAX = 0.75;
+    var N3 = 27.707;   // inH2O (60 °F) per psi — same constant as the AGA-3 engine
+
+    // ═════════════════════════════════════════════════════════════════
+    // PURE COMPUTE — field units
+    // ═════════════════════════════════════════════════════════════════
+    function compute(inp) {
+        inp = inp || {};
+        var errors = [], errorIds = [];
+        function err(msg, id) { errors.push(msg); errorIds.push(id || null); }
+        function fail() { return { ok: false, errors: errors, errorIds: errorIds, verdicts: [], warnings: [], candidates: [], table: [] }; }
+
+        var aga = G.WTS_aga3_compute;
+        if (typeof aga !== 'function') { err('The AGA-3 engine (WTS_aga3_compute) is not loaded.', null); return fail(); }
+
+        var q = _nv(inp.q), D = _nv(inp.D), Ps = _nv(inp.Ps), TfF = _nv(inp.TfF), SG = _nv(inp.SG);
+        var co2 = _opt(inp.co2, 0), n2 = _opt(inp.n2, 0), h2s = _opt(inp.h2s, 0);
+        var urv = _nv(inp.urv), lo = _opt(inp.lo, 20), hi = _opt(inp.hi, 80), des = _opt(inp.des, 50);
+        var TbF = _opt(inp.TbF, 60), Pb = _opt(inp.Pb, 14.696);
+
+        if (!(q > 0)) err('Target gas rate must be greater than zero.', P + 'q');
+        if (!(D > 0)) err('Meter run internal diameter must be greater than zero.', P + 'D');
+        else if (D > 48) err('Meter run internal diameter must not exceed ' + _u(48, 'lengthSmall', 3, 'in', 0) + '.', P + 'D');
+        if (!isFinite(Ps) || Ps + 14.696 <= 0) err('Enter a valid static (line) pressure.', P + 'P');
+        if (!(TfF > -459.67)) err('Flowing temperature must be above absolute zero.', P + 'T');
+        if (!(SG >= 0.5 && SG <= 1.8)) err('Gas specific gravity must be between 0.5 and 1.8.', P + 'SG');
+        if (!(co2 >= 0 && co2 <= 100)) err('CO2 must be between 0 and 100 %.', P + 'CO2');
+        if (!(n2 >= 0 && n2 <= 100)) err('N2 must be between 0 and 100 %.', P + 'N2');
+        if (!(h2s >= 0 && h2s <= 100)) err('H2S must be between 0 and 100 %.', P + 'H2S');
+        if (co2 >= 0 && h2s >= 0 && n2 >= 0 && co2 + h2s + n2 > 100) err('CO2 + N2 + H2S must not exceed 100 %.', P + 'CO2');
+        if (!(urv > 0)) err('DP transmitter range must be greater than zero.', P + 'urv');
+        if (!(lo > 0 && lo < 100)) err('Low limit must be between 0 and 100 % of range.', P + 'lo');
+        if (!(hi > 0 && hi <= 100)) err('High limit must be above 0 and at most 100 % of range.', P + 'hi');
+        else if (lo > 0 && lo < 100 && !(hi > lo)) err('High limit must be above the low limit.', P + 'hi');
+        if (!(des >= lo && des <= hi)) err('Design differential must lie between the low and high limits.', P + 'des');
+        if (!(TbF > -459.67)) err('Base temperature must be above absolute zero.', P + 'Tb');
+        if (!(Pb > 0)) err('Base pressure must be greater than zero.', P + 'Pb');
+        if (errors.length) return fail();
+
+        var base = { D: D, Ps: Ps, TfF: TfF, SG: SG, co2: co2, h2s: h2s, n2: n2, TbF: TbF, Pb: Pb, tap: 'flange' };
+        var probe = aga(Object.assign({}, base, { d: D / 2, hw: urv * des / 100 }));
+        if (!probe.ok) { probe.errors.forEach(function (m) { err(m, null); }); return fail(); }
+        base.Z = probe.Z;   // Z is independent of bore and differential
+        var Pf1 = probe.Pf1, hwCap = 0.5 * N3 * Pf1;   // x1 = 0.5: far beyond the Y1 validity (0.2)
+
+        function run(d, hw) { return aga(Object.assign({}, base, { d: d, hw: hw })); }
+        function qAt(d, hw) { return run(d, hw).Qmscfd; }
+        // Differential that passes q through bore d (bisection on hw; q rises with hw below x1 ≈ 0.57).
+        function hwFor(d, qq) {
+            if (qAt(d, hwCap) < qq) return Infinity;
+            var a = 0, b = hwCap;
+            for (var i = 0; i < 100; i++) { var m = (a + b) / 2; if (qAt(d, m) < qq) a = m; else b = m; }
+            return (a + b) / 2;
+        }
+
+        // Exact bore at the design differential (bisection on d; q rises with d).
+        var hwDes = urv * des / 100, dMin = BETA_MIN * D, dMax = BETA_MAX * D;
+        var dStar = null, dStarFlag = '';
+        if (qAt(dMin, hwDes) > q) dStarFlag = 'low';
+        else if (qAt(dMax, hwDes) < q) dStarFlag = 'high';
+        else {
+            var a = dMin, b = dMax;
+            for (var i = 0; i < 100; i++) { var m = (a + b) / 2; if (qAt(m, hwDes) < q) a = m; else b = m; }
+            dStar = (a + b) / 2;
+        }
+
+        // Candidate plates: every 0.125" bore with β in 0.10–0.75.
+        var list = [], tolB = 1e-9;
+        for (var k = 1; k * STEP <= BETA_MAX * D * (1 + tolB); k++) if (k * STEP >= BETA_MIN * D * (1 - tolB)) list.push(k * STEP);
+        if (!list.length) { err('No 0.125" bore gives β between 0.10 and 0.75 in this meter run.', P + 'D'); return fail(); }
+
+        var hwLo = urv * lo / 100, hwHi = urv * hi / 100;
+        var candidates = list.map(function (d) {
+            var hw = hwFor(d, q);
+            var at = isFinite(hw) ? run(d, hw) : null;
+            var pct = hw / urv * 100;
+            return {
+                d: d, bore: d.toFixed(3), beta: d / D, hw: hw, pct: pct,
+                inWindow: isFinite(pct) && pct >= lo - 1e-9 && pct <= hi + 1e-9,
+                qLo: qAt(d, hwLo), qHi: qAt(d, hwHi),
+                Cd: at ? at.Cd : null, Y1: at ? at.Y1 : null, x1: at ? at.x1 : null, Re: at ? at.Re_D : null
+            };
+        });
+
+        // Choose.
+        var idx = -1, rule = '';
+        if (dStar != null) {
+            var r8 = Math.round(dStar / STEP) * STEP;
+            for (var j = 0; j < candidates.length; j++) if (Math.abs(candidates[j].d - r8) < 1e-9 && candidates[j].inWindow) { idx = j; rule = 'rounded'; }
+        }
+        if (idx < 0) {
+            var best = Infinity;
+            candidates.forEach(function (c, j) { if (c.inWindow && Math.abs(c.pct - des) < best) { best = Math.abs(c.pct - des); idx = j; rule = 'window'; } });
+        }
+        var inWin = idx >= 0;
+        if (!inWin) {
+            // No plate keeps the differential in the window: take the nearest (in % of range).
+            var bestD = Infinity;
+            candidates.forEach(function (c, j) {
+                var dist = !isFinite(c.pct) ? 1e12 : (c.pct < lo ? lo - c.pct : c.pct - hi);
+                if (dist < bestD) { bestD = dist; idx = j; }
+            });
+            rule = 'nearest';
+        }
+        var chosen = candidates[idx];
+        var up = idx + 1 < candidates.length ? candidates[idx + 1] : null;     // larger bore → lower DP
+        var down = idx > 0 ? candidates[idx - 1] : null;                        // smaller bore → higher DP
+        var t0 = Math.max(0, idx - 3), t1 = Math.min(candidates.length, idx + 4);
+        // Exact DP-vs-rate curves (5 … 100 % of range) for the chart.
+        [chosen, up, down].forEach(function (c) {
+            if (!c) return;
+            c.curve = [];
+            for (var k = 1; k <= 20; k++) c.curve.push({ pct: k * 5, q: qAt(c.d, urv * k * 5 / 100) });
+        });
+        var table = candidates.slice(t0, t1).map(function (c) { return Object.assign({ role: c === chosen ? 'chosen' : (c === up ? 'up' : (c === down ? 'down' : '')) }, c); });
+
+        // Verdicts.
+        var verdicts = [];
+        function v(level, text) { verdicts.push({ level: level, text: text }); }
+        var bTxt = _boreTxt(chosen.d);
+        if (inWin) v('ok', '✓ ' + bTxt + ' plate (β ' + chosen.beta.toFixed(3) + ') reads ' + _fmt(chosen.pct, 1) + ' % of range at the target rate — inside ' + _fmt(lo, 0) + '–' + _fmt(hi, 0) + ' %.');
+        else if (dStarFlag === 'high' || (isFinite(chosen.pct) === false) || chosen.pct > hi)
+            v('bad', '✗ No plate with β ≤ 0.75 keeps the differential below ' + _fmt(hi, 0) + ' % of range at the target rate — use a larger meter run or a higher-range transmitter.');
+        else
+            v('bad', '✗ No plate with β ≥ 0.10 lifts the differential above ' + _fmt(lo, 0) + ' % of range at the target rate — use a smaller meter run or a lower-range transmitter.');
+        if (inWin && chosen.x1 > 0.2) v('warn', '⚠ x1 = hw/(N3·Pf1) is ' + chosen.x1.toFixed(3) + ' at the target rate — above 0.2 the Y1 expansion factor is outside its validated range.');
+        else if (hwHi / (N3 * Pf1) > 0.2) v('warn', '⚠ At ' + _fmt(hi, 0) + ' % of range x1 exceeds 0.2 — line pressure is low for this transmitter range.');
+        if (D < 2) v('warn', '⚠ Meter run ID is below the AGA-3 minimum of 2 in.');
+        if (chosen.beta > 0.6 && inWin) v('warn', '⚠ β above 0.6 needs longer upstream straight lengths (AGA-3 Part 2).');
+
+        return {
+            ok: true, errors: [], errorIds: [], step: STEP, rule: rule,
+            q: q, D: D, Ps: Ps, TfF: TfF, SG: SG, co2: co2, n2: n2, h2s: h2s, urv: urv, lo: lo, hi: hi, des: des, TbF: TbF, Pb: Pb,
+            Z: probe.Z, Pf1: Pf1, Tpr: probe.Tpr, Ppr: probe.Ppr,
+            hwDes: hwDes, dStar: dStar, betaStar: dStar != null ? dStar / D : null, dStarFlag: dStarFlag,
+            candidates: candidates, chosen: chosen, up: up, down: down, inWindow: inWin, table: table,
+            verdicts: verdicts,
+            warnings: verdicts.filter(function (x) { return x.level !== 'ok'; }).map(function (x) { return x.text; })
+        };
+    }
+    G.WTS_orifice_compute = compute;
+
+    // ═════════════════════════════════════════════════════════════════
+    // PAGE
+    // ═════════════════════════════════════════════════════════════════
+    var TITLE = 'Orifice Plate Selection';
+    var SUB = 'Pick the orifice bore that keeps the differential inside the transmitter range at a target gas rate (inverse AGA-3)';
+    var UNITS = { op_q: 'gasRateSmall', op_D: 'lengthSmall', op_P: 'pressureG', op_T: 'temperature', op_urv: 'pressureSmall60', op_Tb: 'temperature', op_Pb: 'pressure' };
+
+    function _field(id, label, value, extra) {
+        return '<div class="fg-item"><label for="' + id + '">' + label + '</label>' +
+            '<input type="number" step="any" id="' + id + '" value="' + value + '"' + (extra || '') + '></div>';
+    }
+    function _pageHtml() {
+        var h = '<div id="op_root"><div class="cols-2"><div style="min-width:0">';
+        h += '<div class="card"><div class="card-title">Target Flow &amp; Meter Run</div><div class="fg">';
+        h += _field('op_q', 'Target gas rate (MSCFD)', 5000);
+        h += _field('op_D', 'Meter run internal diameter (in)', 4.026);
+        h += '</div></div>';
+        h += '<div class="card"><div class="card-title">Operating Conditions</div><div class="fg">';
+        h += _field('op_P', 'Static (line) pressure (psig)', 500);
+        h += _field('op_T', 'Flowing temperature (°F)', 80);
+        h += '</div></div>';
+        h += '<div class="card"><div class="card-title">Gas Composition</div><div class="fg">';
+        h += _field('op_SG', 'Gas specific gravity (air = 1)', 0.65, ' min="0.5" max="1.8"');
+        h += _field('op_CO2', 'CO2 (%)', 0.5);
+        h += _field('op_N2', 'N2 (%)', 1.0);
+        h += _field('op_H2S', 'H2S (%)', 0);
+        h += '</div></div>';
+        h += '<div class="card"><div class="card-title">DP Transmitter</div><div class="fg">';
+        h += _field('op_urv', 'Transmitter range, 0 to (inH2O)', 200);
+        h += _field('op_lo', 'Low limit (% of range)', 20);
+        h += _field('op_hi', 'High limit (% of range)', 80);
+        h += _field('op_des', 'Design differential (% of range)', 50);
+        h += '</div></div>';
+        h += '<div class="card"><div class="card-title">Base Conditions</div><div class="fg">';
+        h += _field('op_Tb', 'Base temperature (°F)', 60);
+        h += _field('op_Pb', 'Base pressure, absolute (psia)', 14.696);
+        h += '</div>';
+        h += '<div class="btn-row"><button class="btn btn-primary" id="op_calc" onclick="calcOrificeSelect()">Select Plate</button></div>';
+        h += '</div>';
+        h += '</div><div style="min-width:0"><div id="op_res"></div></div></div></div>';
+        return h;
+    }
+
+    function renderOrificeSelect(body) {
+        body = body || _byId('pgBody');
+        if (!body) return;
+        var t = _byId('pgTitle'), s = _byId('pgSub');
+        if (t) t.textContent = TITLE;
+        if (s) s.textContent = SUB;
+        body.innerHTML = _pageHtml();
+        _tag(UNITS);
+        var root = _byId('op_root');
+        if (root && root.addEventListener) {
+            root.addEventListener('change', function (e) {
+                var id = e && e.target && e.target.id;
+                if (id && id.indexOf(P) === 0) G.calcOrificeSelect();
+            });
+        }
+        G.calcOrificeSelect();
+    }
+    G.renderOrificeSelect = renderOrificeSelect;
+
+    function _readInputs() {
+        return {
+            q: _num('op_q'), D: _num('op_D'), Ps: _num('op_P'), TfF: _num('op_T'), SG: _num('op_SG'),
+            co2: _num('op_CO2'), n2: _num('op_N2'), h2s: _num('op_H2S'),
+            urv: _num('op_urv'), lo: _num('op_lo'), hi: _num('op_hi'), des: _num('op_des'),
+            TbF: _num('op_Tb'), Pb: _num('op_Pb')
+        };
+    }
+
+    function _row(l, v) { return '<div class="rrow"><span class="rl">' + l + '</span><span class="rv">' + v + '</span></div>'; }
+    function _bore(c) { return _boreTxt(c.d); }
+    function _dp(c) { return isFinite(c.hw) ? _u(c.hw, 'pressureSmall60', 1, 'inH2O', 1) + ' — ' + _fmt(c.pct, 1) + ' % of range' : 'above x1 = 0.5 (off scale)'; }
+    var VCOL = { ok: 'var(--green)', warn: 'var(--yellow)', bad: 'var(--red)' };
+
+    function _resultsHtml(r) {
+        var c = r.chosen, h = '';
+        r.verdicts.forEach(function (x) {
+            h += '<div style="color:' + (VCOL[x.level] || 'var(--yellow)') + ';margin:6px 0;font-size:13px">' + x.text + '</div>';
+        });
+        h += '<div class="rbox"><div class="rbox-title">Selected Plate</div>';
+        h += _row('Orifice bore', _bore(c));
+        h += _row('Beta ratio (d/D)', c.beta.toFixed(4));
+        h += _row('Differential at target rate', _dp(c));
+        h += _row('Rate at ' + _fmt(r.lo, 0) + ' % of range (change down below)', _u(c.qLo, 'gasRateSmall', 1, 'MSCFD', 0));
+        h += _row('Rate at ' + _fmt(r.hi, 0) + ' % of range (change up above)', _u(c.qHi, 'gasRateSmall', 1, 'MSCFD', 0));
+        h += _row('Discharge coefficient (Cd)', c.Cd != null ? c.Cd.toFixed(5) : '—');
+        h += _row('Expansion factor (Y1)', c.Y1 != null ? c.Y1.toFixed(5) : '—');
+        h += _row('Pipe Reynolds number', c.Re != null ? _fmt(c.Re, 0) : '—');
+        h += '</div>';
+        h += '<div class="rbox"><div class="rbox-title">Exact Bore &amp; Neighbours</div>';
+        h += _row('Exact bore at ' + _fmt(r.des, 0) + ' % of range', r.dStar != null ? _boreTxt(r.dStar, 4) + ' (β ' + r.betaStar.toFixed(4) + ')' :
+            (r.dStarFlag === 'high' ? 'above β 0.75' : 'below β 0.10'));
+        h += _row('Next plate up (larger bore)', r.up ? _bore(r.up) + ' — ' + (isFinite(r.up.pct) ? _fmt(r.up.pct, 1) + ' % of range' : 'off scale') : 'none within β 0.75');
+        h += _row('Next plate down (smaller bore)', r.down ? _bore(r.down) + ' — ' + (isFinite(r.down.pct) ? _fmt(r.down.pct, 1) + ' % of range' : 'off scale') : 'none within β 0.10');
+        h += _row('Z-factor (DAK)', r.Z.toFixed(4));
+        h += _row('Flowing pressure Pf1', _u(r.Pf1, 'pressure', 1, 'psia', 0));
+        h += '</div>';
+        // Plate-change table (values written already converted)
+        var ql = _lab('gasRateSmall', 'MSCFD'), dl = _lab('pressureSmall60', 'inH2O'), bl = _metric() ? 'in (mm)' : 'in';
+        h += '<div class="rbox"><div class="rbox-title">Plate-Change Points</div><div style="overflow-x:auto"><table class="dtable"><thead><tr>' +
+            '<th>Plate</th><th>Bore, ' + bl + '</th><th>β</th>' +
+            '<th data-wts-unit-label="pressureSmall60">DP at target (' + dl + ')</th><th>% of range</th>' +
+            '<th data-wts-unit-label="gasRateSmall">Rate at ' + _fmt(r.lo, 0) + ' % (' + ql + ')</th>' +
+            '<th data-wts-unit-label="gasRateSmall">Rate at ' + _fmt(r.hi, 0) + ' % (' + ql + ')</th></tr></thead><tbody>';
+        var ROLE = { chosen: 'Selected', up: 'Next up', down: 'Next down' };
+        r.table.forEach(function (t) {
+            var bd = t.d.toFixed(3) + (_metric() ? ' (' + (t.d * 25.4).toFixed(2) + ')' : '');
+            h += '<tr' + (t.role === 'chosen' ? ' style="font-weight:600"' : '') + '><td>' + (ROLE[t.role] || '') + '</td><td>' + bd + '</td><td>' + t.beta.toFixed(3) + '</td><td>' +
+                (isFinite(t.hw) ? _fmt(_dv(t.hw, 'pressureSmall60'), 1) : '&gt; scale') + '</td><td>' + (isFinite(t.pct) ? _fmt(t.pct, 1) : '—') + '</td><td>' +
+                _fmt(_dv(t.qLo, 'gasRateSmall'), 0) + '</td><td>' + _fmt(_dv(t.qHi, 'gasRateSmall'), 0) + '</td></tr>';
+        });
+        h += '</tbody></table></div></div>';
+        h += '<div class="chart-wrap"><canvas id="op_chart" width="600" height="320"></canvas></div>';
+        h += '<div><b>Notes</b> Rates use the AGA-3 page engine (flange taps, RG Cd, DAK Z with Standing + Wichert-Aziz pseudo-criticals; N2 is recorded but not in the Z correction). ' +
+            'Plate list: every 0.125" bore from 0.125" to the largest bore with β ≤ 0.75; the exact bore is rounded to the nearest 0.125" — confirm the plates on site.' +
+            ' The 20–80 % window is field practice. Standard volumes are at the entered base conditions.</div>';
+        return h;
+    }
+
+    function _drawChart(r) {
+        var cv = _byId('op_chart');
+        if (!cv || typeof drawLineChart !== 'function') return;
+        var colors = { down: '#58a6ff', chosen: '#f0883e', up: '#3fb950' };
+        var ds = [], qMax = 0;
+        [['down', r.down], ['chosen', r.chosen], ['up', r.up]].forEach(function (p) {
+            var c = p[1]; if (!c) return;
+            var pts = (c.curve || []).map(function (pt) { qMax = Math.max(qMax, pt.q); return { x: _dv(pt.q, 'gasRateSmall'), y: pt.pct }; });
+            pts.sort(function (a, b) { return a.x - b.x; });
+            ds.push({ label: (p[0] === 'chosen' ? 'Selected ' : p[0] === 'up' ? 'Next up ' : 'Next down ') + _boreTxt(c.d), color: colors[p[0]], data: pts, points: false, width: 2 });
+        });
+        var xm = _dv(qMax, 'gasRateSmall');
+        ds.push({ label: _fmt(r.lo, 0) + ' % limit', color: '#8b949e', data: [{ x: 0, y: r.lo }, { x: xm, y: r.lo }], points: false, dash: [6, 4], width: 1 });
+        ds.push({ label: _fmt(r.hi, 0) + ' % limit', color: '#8b949e', data: [{ x: 0, y: r.hi }, { x: xm, y: r.hi }], points: false, dash: [6, 4], width: 1 });
+        ds.push({ label: 'Target rate', color: '#d2a8ff', data: [{ x: _dv(r.q, 'gasRateSmall'), y: 0 }, { x: _dv(r.q, 'gasRateSmall'), y: 100 }], points: false, dash: [3, 3], width: 1 });
+        try {
+            drawLineChart(cv, ds, { xLabel: 'Gas rate (' + _lab('gasRateSmall', 'MSCFD') + ')', yLabel: 'DP (% of range)', xMin: 0, yMin: 0, yMax: 100, xDec: 0, yDec: 0 });
+        } catch (e) { /* chart is cosmetic */ }
+    }
+
+    function _calcImpl() {
+        var res = _byId('op_res'), root = _byId('op_root');
+        if (root && root.querySelectorAll) {
+            var all = root.querySelectorAll('input, select');
+            for (var i = 0; i < all.length; i++) if (all[i].classList) all[i].classList.remove('input-err');
+        }
+        var inp = _readInputs();
+        var r = compute(inp);
+        G.WTS_state = G.WTS_state || {};
+        if (!r.ok) {
+            G.WTS_state.orifice = { ok: false, errors: r.errors.slice(), d: null, ts: Date.now() };
+            if (res) {
+                res.innerHTML = '<div class="val-error"><strong>Please fix the following:</strong><ul>' +
+                    r.errors.map(function (m) { return '<li>' + m + '</li>'; }).join('') + '</ul></div>';
+                res.setAttribute('data-done', '1');
+            }
+            r.errorIds.forEach(function (id) { var e = id && _byId(id); if (e && e.classList) e.classList.add('input-err'); });
+            return r;
+        }
+        var c = r.chosen;
+        function brief(x) { return x ? { d: x.d, bore: x.bore, beta: x.beta, hw: x.hw, pct: x.pct, qLo: x.qLo, qHi: x.qHi } : null; }
+        G.WTS_state.orifice = {
+            ok: true, inWindow: r.inWindow, q: r.q, D: r.D, urv: r.urv, lo: r.lo, hi: r.hi,
+            d: c.d, bore: c.bore, beta: c.beta, hw: c.hw, pct: c.pct, qLo: c.qLo, qHi: c.qHi, Cd: c.Cd,
+            dStar: r.dStar, Z: r.Z, up: brief(r.up), down: brief(r.down), ts: Date.now()
+        };
+        if (res) {
+            res.innerHTML = _resultsHtml(r);
+            _drawChart(r);
+            res.setAttribute('data-done', '1');
+        }
+        return r;
+    }
+    G.calcOrificeSelect = function () { return _canon(_calcImpl); };
+
+    if (typeof document !== 'undefined' && document.addEventListener) {
+        document.addEventListener('wts:unit-system-changed', function () {
+            var r = _byId('op_res');
+            if (r && r.getAttribute && r.getAttribute('data-done') === '1') G.calcOrificeSelect();
+        });
+    }
+
+    // ── Round-9 registration (merge, never replace) ──────────────────
+    G.WTS_calcRegistry = G.WTS_calcRegistry || {};
+    G.WTS_calcRegistry.orifice = {
+        key: 'orifice',
+        title: TITLE,
+        navTitle: 'Orifice Plate Selection',
+        sub: SUB,
+        group: 'Well Testing',
+        icon: '&#9678;',
+        badge: 'Metering',
+        bc: 'dc-b-blue',
+        desc: 'Inverse AGA-3: the plate bore that keeps DP between 20 % and 80 % of the transmitter range at a target rate, with plate-change points.',
+        render: function (body) { G.renderOrificeSelect(body); }
+    };
+})();
+
+// ─── END 45-calc-orifice ─────────────────────────────────────────────
+
+
+// ═══════════════════════════════════════════════════════════════════════
 // ─── BEGIN 46-calc-gaspvt ───────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════
 // ════════════════════════════════════════════════════════════════════
@@ -2312,4 +2912,686 @@
 })();
 
 // ─── END 46-calc-gaspvt ─────────────────────────────────────────────
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// ─── BEGIN 48-calc-wellkill ───────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════
+// WTS — Round-9 plug-in calculator — Well Kill & Bullhead (wellkill)
+//
+// PURPOSE
+//   A. Kill-weight fluid from reservoir pressure and top-perforation TVD
+//      with an overbalance (ppg, SG, kg/m³, gradient).
+//   B. Bullhead volume per string section (tubing to the packer, casing or
+//      liner below the packer to the top perforation, perforated interval,
+//      rathole to PBTD) from the shared tubular table (40-calc-tubulars.js,
+//      window.WTS_tubulars), plus over-displacement, pump strokes and time,
+//      and a static pumping schedule.
+//   C. Maximum static surface pressure against the fracture gradient at the
+//      perforations (and at the casing shoe when entered), at the start and
+//      the end of the bullhead, with verdicts.
+//   D. U-tube check at the packer / circulating point and the static fluid
+//      level if the formation takes fluid.
+//   E. Clear-brine selection guide (guidance values).
+//   F. Liquid / mixed gradient card: static liquid column, gas cap with an
+//      average-Z gas gradient and a mixed gas/liquid column, surface ↔
+//      bottomhole conversion (window.WTS_gradient_compute).
+//
+// UNITS
+//   Field units throughout: psi, ft (MD / TVD), ppg, bbl, bbl/stroke, °F.
+//   Hydrostatic constant 0.052 psi/ft per ppg (API well-control convention);
+//   SG = ppg / 8.33; kg/m³ = ppg × 119.826. The units layer converts tagged
+//   inputs, so the calc always reads imperial values.
+//
+// PUBLIC API (window.*)
+//   renderWellKill(body)          paints the page into #pgBody
+//   calcWellKill()                reads the DOM, validates, computes, renders (both cards)
+//   WTS_wellkill_compute(input)   → {ok, kill, bullhead, limits, utube, brines, …} or {ok:false, errors, bad}
+//   WTS_gradient_compute(input)   → {ok, pSurf, pBot, sections[], avgGrad, …} or {ok:false, errors, bad}
+//   WTS_wellkill_brines           the brine guide rows
+//
+// STATE
+//   WTS_state.wellkill = {kwf, kwfUsed, bullheadVol, pumpedVol, strokes, maspStart, maspEnd, ts, result}
+//   WTS_state.gradient = {pSurf, pBot, avgGrad, ts, result}
+//
+// Registers window.WTS_calcRegistry.wellkill (group "Test System Safety").
+// ════════════════════════════════════════════════════════════════════
+(function () {
+    'use strict';
+
+    var G = (typeof window !== 'undefined') ? window : globalThis;
+
+    // ── Constants ────────────────────────────────────────────────────
+    var HYD = 0.052;                  // psi/ft per ppg
+    var PPG_PER_SG = 8.33;            // fresh water, ppg
+    var KGM3_PER_PPG = 119.826;       // kg/m³ per ppg
+    var PSIFT_TO_KPAM = 6.894757 / 0.3048;   // 22.6206 kPa/m per psi/ft
+    var PATM = 14.696;                // psia
+    // Gas gradient: dp/dh = P·M/(Z·R·T)/144, M = 28.9647·SG, R = 10.7316 → 0.018743·SG·P/(Z·T)
+    var GAS_C = 28.9647 / (10.7316 * 144);
+    var K_CAP = Math.PI / 4 * 12 / 9702;       // bbl/ft per in² (fallback if WTS_tubulars is absent)
+    var WINDOW_FRAC = 0.10;           // ⚠ when the start bullhead window is below 10 % of fracture pressure
+
+    // Clear-brine guide: typical maximum density at surface temperature (about 70 °F),
+    // conservative published values. Guidance only.
+    var BRINES = [
+        { name: 'Fresh water', short: 'fresh water', ppg: 8.33, note: 'Freezes at 32 °F. Clay swelling without an inhibitor.' },
+        { name: 'Seawater', short: 'seawater', ppg: 8.55, note: 'Filter it. Sulphate scale risk with some formation waters.' },
+        { name: 'Potassium chloride, KCl', short: 'KCl', ppg: 9.7, note: 'Clay and shale inhibition. Salt crystallises out as it cools near saturation.' },
+        { name: 'Sodium chloride, NaCl', short: 'NaCl', ppg: 10.0, note: 'Low cost. Check the crystallisation temperature near saturation.' },
+        { name: 'Sodium formate', short: 'Na formate', ppg: 11.0, note: 'Low corrosion, biodegradable. Higher cost.' },
+        { name: 'Calcium chloride, CaCl2', short: 'CaCl2', ppg: 11.6, note: 'Heats up when mixed. Scale risk with sulphate or carbonate formation water.' },
+        { name: 'Sodium bromide, NaBr', short: 'NaBr', ppg: 12.5, note: 'Use where calcium is incompatible with the formation water.' },
+        { name: 'Potassium formate', short: 'K formate', ppg: 13.1, note: 'Low corrosion, good elastomer compatibility. High cost.' },
+        { name: 'Calcium bromide, CaBr2', short: 'CaBr2', ppg: 14.2, note: 'Standard stock fluid. Heavier blends raise the crystallisation temperature.' },
+        { name: 'CaCl2 / CaBr2 blend', short: 'CaCl2/CaBr2', ppg: 15.1, note: 'Crystallisation temperature set by the blend ratio. Confirm with the supplier.' },
+        { name: 'Cesium formate', short: 'Cs formate', ppg: 19.2, note: 'Very high cost, often rented. Low corrosion.' },
+        { name: 'ZnBr2 / CaBr2 blend', short: 'ZnBr2/CaBr2', ppg: 19.2, note: 'Corrosive and acidic. Handling hazard. Zinc discharge restricted. Check elastomers.' }
+    ];
+    BRINES.forEach(function (b) { b.sg = b.ppg / PPG_PER_SG; b.kgm3 = b.ppg * KGM3_PER_PPG; });
+
+    // ── Helpers ─────────────────────────────────────────────────────
+    function _byId(id) { return (typeof document !== 'undefined') ? document.getElementById(id) : null; }
+    function _num(id) { var e = _byId(id); if (!e) return NaN; var s = String(e.value).trim(); return s === '' ? NaN : parseFloat(s); }
+    function _str(id) { var e = _byId(id); return e ? String(e.value) : ''; }
+    function _fmt(v, d) {
+        if (v == null || !isFinite(v)) return '—';
+        return Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) });
+    }
+    function _fixed(v, d) {
+        if (v == null || !isFinite(v)) return '—';
+        return Number(v).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
+    }
+    function _metric() { var U = G.WTS_units; return !!(U && U.getSystem && U.getSystem() === 'metric'); }
+    // value in the display system; impLabel is the imperial text
+    function _u(v, cat, d, impLabel, dMet) {
+        var U = G.WTS_units;
+        if (_metric() && U.format) {
+            var f = U.format(v, cat);
+            return _fmt(f.value, dMet == null ? d : dMet) + ' ' + f.label;
+        }
+        return _fmt(v, d) + ' ' + impLabel;
+    }
+    function _grad(psiFt) { return _metric() ? _fmt(psiFt * PSIFT_TO_KPAM, 3) + ' kPa/m' : _fmt(psiFt, 4) + ' psi/ft'; }
+    function _tag(map) { var U = G.WTS_units; if (!U || !U.tagInput) return; for (var id in map) U.tagInput(id, map[id]); }
+    function _canon(fn) { var U = G.WTS_units; return (U && U.runCanonical) ? U.runCanonical(fn) : fn(); }
+    function _fin(x) { return typeof x === 'number' && isFinite(x); }
+    function _blank(x) { return x == null || x === '' || (typeof x === 'number' && (isNaN(x) || x === 0)); }
+    function _tub(key) {
+        var T = G.WTS_tubulars;
+        return (T && T.find) ? T.find(String(key)) : null;
+    }
+    function _cap(idIn) {
+        var T = G.WTS_tubulars;
+        return (T && T.capacity) ? T.capacity(idIn) : idIn * idIn * K_CAP;
+    }
+
+    // ── Pure compute: kill & bullhead ───────────────────────────────
+    // input = {pres, tvd, ob, kwo, fg, wf, ann, stvd, sfg, tub, cas, pmd, ptvd, tmd, bmd, pbtd, to, od, pump, spm}
+    //   pres psi at top perfs; tvd = top-perforation TVD ft; ob psi; kwo ppg (blank/0 → calculated
+    //   kill weight rounded up to 0.1 ppg); fg, sfg fracture gradient EMW ppg; wf = well fluid EMW ppg
+    //   before the kill; ann = annulus fluid ppg; stvd shoe TVD ft (blank/0 → no shoe check);
+    //   tub / cas = WTS_tubulars keys; pmd/ptvd packer MD/TVD; tmd/bmd top/bottom perf MD; pbtd MD;
+    //   to = 'top' | 'bot' | 'pbtd' (displace to); od over-displacement %; pump bbl/stroke; spm (blank → no time).
+    function wellkill(input) {
+        var i = input || {}, errors = [], bad = [];
+        function need(ok, key, msg) { if (!ok) { errors.push(msg); bad.push(key); } return ok; }
+        var pres = Number(i.pres), tvd = Number(i.tvd), ob = Number(i.ob), fg = Number(i.fg), wf = Number(i.wf), ann = Number(i.ann);
+        var kwo = _blank(i.kwo) ? null : Number(i.kwo);
+        var stvd = _blank(i.stvd) ? null : Number(i.stvd);
+        var sfg = _blank(i.sfg) ? null : Number(i.sfg);
+        var pmd = Number(i.pmd), ptvd = Number(i.ptvd), tmd = Number(i.tmd), bmd = Number(i.bmd), pbtd = Number(i.pbtd);
+        var od = Number(i.od), pump = Number(i.pump);
+        var spm = _blank(i.spm) ? null : Number(i.spm);
+        var to = (i.to === 'bot' || i.to === 'pbtd') ? i.to : 'top';
+        var tub = _tub(i.tub), cas = _tub(i.cas);
+
+        need(_fin(pres) && pres > 0 && pres <= 30000, 'pres', 'Reservoir pressure must be above 0 and no more than 30,000 psi.');
+        var tvdOk = need(_fin(tvd) && tvd > 0 && tvd <= 40000, 'tvd', 'Top perforation TVD must be above 0 and no more than 40,000 ft.');
+        need(_fin(ob) && ob >= 0 && ob <= 5000, 'ob', 'Overbalance must be between 0 and 5,000 psi.');
+        if (kwo != null) need(_fin(kwo) && kwo >= 6 && kwo <= 25, 'kwo', 'Kill fluid density to use must be between 6 and 25 ppg, or blank.');
+        var wfOk = need(_fin(wf) && wf >= 0 && wf < 25, 'wf', 'Well fluid density must be 0 ppg or more and below 25 ppg.');
+        need(_fin(fg) && fg >= 6 && fg <= 25 && (!wfOk || fg > wf), 'fg', 'Fracture gradient must be between 6 and 25 ppg EMW and above the well fluid density.');
+        need(_fin(ann) && ann > 0 && ann <= 25, 'ann', 'Annulus fluid density must be above 0 and no more than 25 ppg.');
+        if (stvd != null) need(_fin(stvd) && stvd > 0 && (!tvdOk || stvd <= tvd), 'stvd', 'Casing shoe TVD must be above 0 and no deeper than the top perforation TVD, or blank.');
+        if (stvd != null) need(sfg != null && _fin(sfg) && sfg >= 6 && sfg <= 25 && (!wfOk || sfg > wf), 'sfg', 'Shoe fracture gradient must be between 6 and 25 ppg EMW and above the well fluid density.');
+        var tubOk = need(!!tub, 'tub', 'Select a tubing size.');
+        var casOk = need(!!cas, 'cas', 'Select a casing or liner size.');
+        if (tubOk && casOk) need(tub.od < cas.id, 'tub', 'Tubing OD does not fit inside the casing / liner ID.');
+        var pmdOk = need(_fin(pmd) && pmd > 0 && pmd <= 50000, 'pmd', 'Packer MD must be above 0 and no more than 50,000 ft.');
+        need(_fin(ptvd) && ptvd > 0 && (!pmdOk || ptvd <= pmd + 1e-6) && (!tvdOk || ptvd <= tvd + 1e-6), 'ptvd', 'Packer TVD must be above 0, no more than the packer MD and no deeper than the top perforation TVD.');
+        var tmdOk = need(_fin(tmd) && (!pmdOk || tmd >= pmd) && (!tvdOk || tmd >= tvd - 1e-6) && tmd <= 50000, 'tmd', 'Top perforation MD must be at or below the packer MD and not less than the top perforation TVD.');
+        var bmdOk = need(_fin(bmd) && (!tmdOk || bmd >= tmd) && bmd <= 50000, 'bmd', 'Bottom perforation MD must be at or below the top perforation MD.');
+        need(_fin(pbtd) && (!bmdOk || pbtd >= bmd) && pbtd <= 50000, 'pbtd', 'PBTD must be at or below the bottom perforation MD.');
+        need(_fin(od) && od >= 0 && od <= 100, 'od', 'Over-displacement must be between 0 and 100 %.');
+        need(_fin(pump) && pump >= 0.001 && pump <= 2, 'pump', 'Pump output must be between 0.001 and 2 bbl per stroke.');
+        if (spm != null) need(_fin(spm) && spm >= 1 && spm <= 300, 'spm', 'Pump speed must be between 1 and 300 strokes per minute, or blank.');
+        if (errors.length) return { ok: false, errors: errors, bad: bad };
+
+        // A. Kill fluid
+        var balance = pres / (HYD * tvd);
+        var obPpg = ob / (HYD * tvd);
+        var kwf = (pres + ob) / (HYD * tvd);
+        var auto = kwo == null;
+        var used = auto ? Math.ceil(kwf * 10 - 1e-9) / 10 : kwo;
+        var grad = HYD * used;
+        var hyd = grad * tvd;
+        var kill = {
+            balance: balance, obPpg: obPpg, kwf: kwf, used: used, auto: auto,
+            sg: used / PPG_PER_SG, kgm3: used * KGM3_PER_PPG, grad: grad, gradKpaM: grad * PSIFT_TO_KPAM,
+            kwfSg: kwf / PPG_PER_SG, kwfKgm3: kwf * KGM3_PER_PPG,
+            hyd: hyd, obActual: hyd - pres,
+            belowKwf: used < kwf - 1e-9, belowBalance: used < balance - 1e-9
+        };
+
+        // B. Bullhead volumes
+        var tubCap = _cap(tub.id), casCap = _cap(cas.id);
+        var sections = [
+            { key: 'tubing', name: 'Tubing', from: 0, to: pmd, idIn: tub.id, cap: tubCap },
+            { key: 'casing', name: 'Casing below packer', from: pmd, to: tmd, idIn: cas.id, cap: casCap },
+            { key: 'perfs', name: 'Perforated interval', from: tmd, to: bmd, idIn: cas.id, cap: casCap },
+            { key: 'rathole', name: 'Rathole', from: bmd, to: pbtd, idIn: cas.id, cap: casCap }
+        ];
+        var nIn = to === 'top' ? 2 : to === 'bot' ? 3 : 4;
+        var vol = 0;
+        sections.forEach(function (s, k) {
+            s.len = s.to - s.from; s.vol = s.len * s.cap; s.included = k < nIn;
+            if (s.included) vol += s.vol;
+        });
+        var pumped = vol * (1 + od / 100);
+        var strokes = pumped / pump;
+        var bullhead = {
+            sections: sections, to: to, vol: vol, extra: pumped - vol, pumped: pumped,
+            strokes: strokes, minutes: spm ? strokes / spm : null, tubCap: tubCap, casCap: casCap,
+            annCap: (cas.id * cas.id - tub.od * tub.od) * K_CAP
+        };
+
+        // C. Surface pressure limits (static, no friction)
+        var pFrac = HYD * fg * tvd;
+        var hydWf = HYD * wf * tvd;
+        var sithp = Math.max(0, pres - hydWf);
+        var perfStart = pFrac - hydWf, perfEnd = pFrac - hyd;
+        var shoe = null;
+        if (stvd != null) {
+            var pFs = HYD * sfg * stvd;
+            shoe = { tvd: stvd, fg: sfg, pFrac: pFs, start: pFs - HYD * wf * stvd, end: pFs - grad * stvd };
+        }
+        var maspStart = shoe ? Math.min(perfStart, shoe.start) : perfStart;
+        var maspEnd = shoe ? Math.min(perfEnd, shoe.end) : perfEnd;
+        var endReq = Math.max(0, pres - hyd);
+        var limits = {
+            pFrac: pFrac, fgGrad: HYD * fg, sithp: sithp, hydWf: hydWf,
+            perfStart: perfStart, perfEnd: perfEnd, shoe: shoe,
+            maspStart: maspStart, maspEnd: maspEnd, endReq: endReq,
+            windowStart: maspStart - sithp,
+            governs: shoe && (shoe.start < perfStart || shoe.end < perfEnd) ? 'shoe' : 'perfs',
+            killFracs: used >= fg - 1e-9
+        };
+
+        // Static pumping schedule, 0 → 100 % of the bullhead volume (MD → TVD linear between
+        // surface, packer and top perforation; below the top perforation the front is at the perfs).
+        function tvdAt(md) {
+            if (md <= pmd) return pmd > 0 ? md / pmd * ptvd : 0;
+            if (md <= tmd) return tmd > pmd ? ptvd + (md - pmd) / (tmd - pmd) * (tvd - ptvd) : tvd;
+            return tvd;
+        }
+        function frontMd(v) {
+            var left = v, md = 0;
+            for (var k = 0; k < nIn; k++) {
+                var s = sections[k];
+                if (left <= s.vol || k === nIn - 1) { md = s.from + (s.cap > 0 ? Math.min(left, s.vol) / s.cap : 0); break; }
+                left -= s.vol;
+            }
+            return md;
+        }
+        var schedule = [];
+        for (var n = 0; n <= 10; n++) {
+            var v = vol * n / 10, fmd = frontMd(v), ftvd = Math.min(tvd, tvdAt(fmd));
+            var h = HYD * (used * ftvd + wf * (tvd - ftvd));
+            var sf = shoe ? Math.min(stvd, ftvd) : 0;
+            var mShoe = shoe ? shoe.pFrac - HYD * (used * sf + wf * (stvd - sf)) : Infinity;
+            schedule.push({
+                pct: n * 10, vol: v, strokes: v / pump, frontMd: fmd, frontTvd: ftvd,
+                sitp: Math.max(0, pres - h), masp: Math.min(pFrac - h, mShoe)
+            });
+        }
+        bullhead.schedule = schedule;
+
+        // D. U-tube and fluid level
+        var dU = HYD * (used - ann) * ptvd;
+        var level = tvd - pres / grad;
+        var utube = {
+            dp: dU, heavier: dU > 1e-9 ? 'tubing' : dU < -1e-9 ? 'annulus' : 'none',
+            level: level > 0 ? level : 0, onVacuum: level > 0
+        };
+
+        // E. Brine guide
+        var brines = BRINES.map(function (b) {
+            return { name: b.name, short: b.short, ppg: b.ppg, sg: b.sg, kgm3: b.kgm3, note: b.note, reaches: b.ppg >= used - 1e-9 };
+        });
+        var reach = brines.filter(function (b) { return b.reaches && b.ppg > 8.6; });
+        return {
+            ok: true, kill: kill, bullhead: bullhead, limits: limits, utube: utube,
+            brines: brines, brineOk: brines.some(function (b) { return b.reaches; }),
+            brineList: (used <= 8.55 ? brines.filter(function (b) { return b.reaches; }) : reach).slice(0, 4).map(function (b) { return b.short; }),
+            tubing: tub, casing: cas
+        };
+    }
+
+    // ── Pure compute: liquid / mixed gradient ───────────────────────
+    // input = {dir:'s2b'|'b2s', p psig (known pressure), tvd ft, gasLen ft, mixLen ft, hl % (liquid
+    //          holdup in the mixed column), rho ppg, sg (gas), t °F (average), z (average)}
+    // Column from surface: gas cap [0, gasLen], mixed [gasLen, gasLen+mixLen], liquid to tvd.
+    // Each section solves dp/dh = a + b·P (P psia): a = liquid part, b = gas part (average Z, T):
+    //   P(h) = (P0 + a/b)·e^(b·h) − a/b   (b > 0);   P(h) = P0 + a·h   (b = 0).
+    function gradient(input) {
+        var i = input || {}, errors = [], bad = [];
+        function need(ok, key, msg) { if (!ok) { errors.push(msg); bad.push(key); } return ok; }
+        var dir = i.dir === 'b2s' ? 'b2s' : 's2b';
+        var p = Number(i.p), tvd = Number(i.tvd), lg = _blank(i.gasLen) ? 0 : Number(i.gasLen), lm = _blank(i.mixLen) ? 0 : Number(i.mixLen);
+        var hl = Number(i.hl), rho = Number(i.rho), sg = Number(i.sg), t = Number(i.t), z = Number(i.z);
+        need(_fin(p) && p >= 0 && p <= 30000, 'p', 'Known pressure must be between 0 and 30,000 psig.');
+        var tvdOk = need(_fin(tvd) && tvd > 0 && tvd <= 40000, 'tvd', 'Column TVD must be above 0 and no more than 40,000 ft.');
+        var lgOk = need(_fin(lg) && lg >= 0 && (!tvdOk || lg <= tvd), 'gasLen', 'Gas cap length must be 0 or more and no longer than the column.');
+        need(_fin(lm) && lm >= 0 && (!tvdOk || !lgOk || lg + lm <= tvd + 1e-9), 'mixLen', 'Mixed column length must be 0 or more; gas cap plus mixed column cannot exceed the column TVD.');
+        need(_fin(hl) && hl >= 0 && hl <= 100, 'hl', 'Liquid holdup must be between 0 and 100 %.');
+        need(_fin(rho) && rho > 0 && rho <= 25, 'rho', 'Liquid density must be above 0 and no more than 25 ppg.');
+        need(_fin(sg) && sg >= 0.55 && sg <= 3, 'sg', 'Gas gravity must be between 0.55 and 3.');
+        need(_fin(t) && t >= -40 && t <= 500, 't', 'Average temperature must be between -40 and 500 °F.');
+        need(_fin(z) && z >= 0.2 && z <= 2, 'z', 'Average Z-factor must be between 0.2 and 2.');
+        if (errors.length) return { ok: false, errors: errors, bad: bad };
+
+        var TR = t + 459.67, gL = HYD * rho, bg = GAS_C * sg / (z * TR), H = hl / 100;
+        var ll = Math.max(0, tvd - lg - lm);
+        var secs = [
+            { key: 'gas', name: 'Gas cap', len: lg, a: 0, b: bg },
+            { key: 'mixed', name: 'Mixed column', len: lm, a: H * gL, b: (1 - H) * bg },
+            { key: 'liquid', name: 'Liquid column', len: ll, a: gL, b: 0 }
+        ];
+        function down(P0, s) { return s.b > 0 ? (P0 + s.a / s.b) * Math.exp(s.b * s.len) - s.a / s.b : P0 + s.a * s.len; }
+        function up(P1, s) { return s.b > 0 ? (P1 + s.a / s.b) * Math.exp(-s.b * s.len) - s.a / s.b : P1 - s.a * s.len; }
+        var top = 0;
+        secs.forEach(function (s) { s.top = top; s.bottom = top + s.len; top = s.bottom; });
+        if (dir === 's2b') {
+            var P = p + PATM;
+            secs.forEach(function (s) { s.pTop = P; P = down(P, s); s.pBot = P; });
+        } else {
+            var Q = p + PATM;
+            for (var k = secs.length - 1; k >= 0; k--) {
+                secs[k].pBot = Q; Q = up(Q, secs[k]); secs[k].pTop = Q;
+                if (!(Q > 0)) return { ok: false, errors: ['Bottomhole pressure is too low to hold this column to surface; the liquid level would stand below surface.'], bad: ['p'] };
+            }
+        }
+        var pSurfA = secs[0].pTop, pBotA = secs[2].pBot;
+        secs.forEach(function (s) {
+            s.pTop -= PATM; s.pBot -= PATM;
+            s.grad = s.len > 0 ? (s.pBot - s.pTop) / s.len : null;
+            delete s.a; delete s.b;
+        });
+        return {
+            ok: true, dir: dir, pSurf: pSurfA - PATM, pBot: pBotA - PATM, tvd: tvd,
+            avgGrad: (pBotA - pSurfA) / tvd, liqGrad: gL, liqLen: ll,
+            gasGradSurf: bg * pSurfA, gasGradBot: bg * pBotA, sections: secs
+        };
+    }
+
+    G.WTS_wellkill_compute = wellkill;
+    G.WTS_gradient_compute = gradient;
+    G.WTS_wellkill_brines = BRINES.map(function (b) { return { name: b.name, ppg: b.ppg, sg: b.sg, kgm3: b.kgm3, note: b.note }; });
+
+    // ── Page ─────────────────────────────────────────────────────────
+    var TITLE = 'Well Kill & Bullhead';
+    var SUB = 'Kill-weight fluid, bullhead volumes and strokes, surface pressure limits against fracture gradient, U-tube check, brine guide and liquid / gas gradients';
+    var UNITS = {
+        wk_pres: 'pressure', wk_tvd: 'length', wk_ob: 'pressure', wk_kwo: 'densityLiquid', wk_fg: 'densityLiquid',
+        wk_wf: 'densityLiquid', wk_ann: 'densityLiquid', wk_stvd: 'length', wk_sfg: 'densityLiquid',
+        wk_pmd: 'length', wk_ptvd: 'length', wk_tmd: 'length', wk_bmd: 'length', wk_pbtd: 'length',
+        wk_od: 'percent', wk_pump: 'volume', wk_spm: 'count',
+        wk_gp: 'pressureG', wk_gtvd: 'length', wk_glen: 'length', wk_gmix: 'length', wk_ghl: 'percent',
+        wk_grho: 'densityLiquid', wk_gsg: 'sg', wk_gt: 'temperature', wk_gz: 'dimensionless'
+    };
+    var KILL_IDS = {
+        pres: 'wk_pres', tvd: 'wk_tvd', ob: 'wk_ob', kwo: 'wk_kwo', fg: 'wk_fg', wf: 'wk_wf', ann: 'wk_ann',
+        stvd: 'wk_stvd', sfg: 'wk_sfg', tub: 'wk_tub', cas: 'wk_cas', pmd: 'wk_pmd', ptvd: 'wk_ptvd',
+        tmd: 'wk_tmd', bmd: 'wk_bmd', pbtd: 'wk_pbtd', od: 'wk_od', pump: 'wk_pump', spm: 'wk_spm'
+    };
+    var GRAD_IDS = { p: 'wk_gp', tvd: 'wk_gtvd', gasLen: 'wk_glen', mixLen: 'wk_gmix', hl: 'wk_ghl', rho: 'wk_grho', sg: 'wk_gsg', t: 'wk_gt', z: 'wk_gz' };
+
+    // Validation messages in the display system (limits are imperial).
+    function _den(v) { return _u(v, 'densityLiquid', 2, 'ppg', 3); }
+    var MSG = {
+        pres: function () { return 'Reservoir pressure must be above 0 and no more than ' + _u(30000, 'pressure', 0, 'psi') + '.'; },
+        tvd: function () { return 'Top perforation TVD must be above 0 and no more than ' + _u(40000, 'length', 0, 'ft') + '.'; },
+        ob: function () { return 'Overbalance must be between 0 and ' + _u(5000, 'pressure', 0, 'psi') + '.'; },
+        kwo: function () { return 'Kill fluid density to use must be between ' + _den(6) + ' and ' + _den(25) + ', or blank.'; },
+        wf: function () { return 'Well fluid density must be 0 or more and below ' + _den(25) + '.'; },
+        fg: function () { return 'Fracture gradient must be between ' + _den(6) + ' and ' + _den(25) + ' EMW and above the well fluid density.'; },
+        ann: function () { return 'Annulus fluid density must be above 0 and no more than ' + _den(25) + '.'; },
+        stvd: function () { return 'Casing shoe TVD must be above 0 and no deeper than the top perforation TVD, or blank.'; },
+        sfg: function () { return 'Shoe fracture gradient must be between ' + _den(6) + ' and ' + _den(25) + ' EMW and above the well fluid density.'; },
+        pmd: function () { return 'Packer MD must be above 0 and no more than ' + _u(50000, 'length', 0, 'ft') + '.'; },
+        od: function () { return 'Over-displacement must be between 0 and 100 %.'; },
+        pump: function () { return 'Pump output must be between ' + _u(0.001, 'volume', 3, 'bbl', 5) + ' and ' + _u(2, 'volume', 0, 'bbl', 3) + ' per stroke.'; },
+        spm: function () { return 'Pump speed must be between 1 and 300 strokes per minute, or blank.'; },
+        p: function () { return 'Known pressure must be between 0 and ' + _u(30000, 'pressureG', 0, 'psig') + '.'; },
+        gtvd: function () { return 'Column TVD must be above 0 and no more than ' + _u(40000, 'length', 0, 'ft') + '.'; },
+        rho: function () { return 'Liquid density must be above 0 and no more than ' + _den(25) + '.'; },
+        t: function () { return 'Average temperature must be between ' + _u(-40, 'temperature', 0, '°F') + ' and ' + _u(500, 'temperature', 0, '°F') + '.'; }
+    };
+
+    function _fg(id, label, val, extra) {
+        return '<div class="fg-item"><label for="' + id + '">' + label + '</label>' +
+            '<input type="number" id="' + id + '" value="' + val + '" step="any"' + (extra || '') + '></div>';
+    }
+    function _sel(id, label, opts, val) {
+        var h = '<div class="fg-item"><label for="' + id + '">' + label + '</label><select id="' + id + '">';
+        opts.forEach(function (o) {
+            if (o.group != null) { h += (o.group ? '<optgroup label="' + o.group + '">' : '</optgroup>'); return; }
+            h += '<option value="' + o.v + '"' + (o.v === val ? ' selected' : '') + '>' + o.t + '</option>';
+        });
+        return h + '</select></div>';
+    }
+    function _row(l, v) { return '<div class="rrow"><span class="rl">' + l + '</span><span class="rv">' + v + '</span></div>'; }
+    function _ok(t) { return '<div style="color:var(--green)">✓ ' + t + '</div>'; }
+    function _warn(t) { return '<div style="color:var(--yellow)">⚠ ' + t + '</div>'; }
+    function _bad(t) { return '<div style="color:var(--red)">✗ ' + t + '</div>'; }
+    function _note(t) { return '<div style="margin-top:10px;font-size:12px;color:var(--text2)"><b>Notes</b> ' + t + '</div>'; }
+    function _tbl(head, rows) {
+        return '<div style="overflow-x:auto"><table class="dtable"><thead><tr>' + head.map(function (h) { return '<th>' + h + '</th>'; }).join('') +
+            '</tr></thead><tbody>' + rows.map(function (r) { return '<tr>' + r.map(function (c) { return '<td>' + c + '</td>'; }).join('') + '</tr>'; }).join('') +
+            '</tbody></table></div>';
+    }
+    function _ppgTriple(ppg) {
+        return _fixed(ppg, 2) + ' ppg · SG ' + _fixed(ppg / PPG_PER_SG, 3) + ' · ' + _fmt(ppg * KGM3_PER_PPG, 0) + ' kg/m³';
+    }
+
+    function _errors(resId, ids, bad, errs) {
+        var res = _byId(resId), items = '', seen = {};
+        for (var k = 0; k < bad.length; k++) {
+            var key = bad[k], el = _byId(ids[key]);
+            if (el && el.classList) el.classList.add('input-err');
+            if (seen[key]) continue;
+            seen[key] = 1;
+            var mk = (resId === 'wk_gres' && key === 'tvd') ? 'gtvd' : key;
+            items += '<li>' + (MSG[mk] ? MSG[mk]() : errs[k]) + '</li>';
+        }
+        if (res) {
+            res.innerHTML = '<div class="val-error"><strong>Please fix the following:</strong><ul>' + items + '</ul></div>';
+            res.setAttribute('data-done', '1');
+        }
+    }
+
+    function _paintKill(r) {
+        var res = _byId('wk_res');
+        if (!res) return;
+        if (!r.ok) { _errors('wk_res', KILL_IDS, r.bad, r.errors); return; }
+        var k = r.kill, b = r.bullhead, L = r.limits, U = r.utube;
+        var P = function (v) { return _u(v, 'pressure', 0, 'psi'); };
+        var V = function (v) { return _u(v, 'volume', 1, 'bbl', 2); };
+        var ft = function (v) { return _u(v, 'length', 0, 'ft', 1); };
+        var h = '';
+
+        // Kill fluid
+        var kv = '';
+        if (k.belowBalance) kv += _bad('Selected kill fluid is below the balance density; it will not kill the well.');
+        else if (k.belowKwf) kv += _warn('Selected kill fluid is below the calculated kill weight; overbalance is ' + P(k.obActual) + '.');
+        else kv += _ok('Kill fluid gives ' + P(k.obActual) + ' overbalance at the top perforation.');
+        h += '<div class="rbox"><div class="rbox-title">Kill Fluid</div>' +
+            _row('Balance density', _ppgTriple(k.balance)) +
+            _row('Overbalance as density', _fixed(k.obPpg, 2) + ' ppg') +
+            _row('Kill weight', _ppgTriple(k.kwf)) +
+            _row('Kill fluid used', _ppgTriple(k.used) + (k.auto ? ' (rounded up)' : ' (selected)')) +
+            _row('Kill fluid gradient', _grad(k.grad)) +
+            _row('Hydrostatic at top perforation', P(k.hyd)) +
+            _row('Overbalance at top perforation', P(k.obActual)) +
+            kv + '</div>';
+
+        // Bullhead
+        var toTxt = { top: 'top perforation', bot: 'bottom perforation', pbtd: 'PBTD' }[b.to];
+        h += '<div class="rbox"><div class="rbox-title">Bullhead Volume</div>' +
+            _tbl(['Section', 'From', 'To', 'ID', 'Capacity', 'Volume', 'Pumped'], b.sections.map(function (s) {
+                return [s.name, ft(s.from), ft(s.to), _metric() ? _u(s.idIn, 'lengthSmall', 3, 'in', 1) : _fixed(s.idIn, 3) + ' in',
+                    _u(s.cap, 'capacity', 5, 'bbl/ft', 5), V(s.vol), s.included ? 'yes' : 'no'];
+            })) +
+            _row('Tubing', r.tubing.label) +
+            _row('Casing / liner below packer', r.casing.label) +
+            _row('Bullhead volume to ' + toTxt, V(b.vol)) +
+            _row('Over-displacement', V(b.extra)) +
+            _row('Total to pump', V(b.pumped)) +
+            _row('Pump strokes', _fmt(Math.ceil(b.strokes - 1e-9), 0) + ' strokes') +
+            (b.minutes != null ? _row('Pumping time', _fmt(b.minutes, 1) + ' min') : '') +
+            _row('Tubing x casing annular capacity', _u(b.annCap, 'capacity', 5, 'bbl/ft', 5)) +
+            '</div>';
+
+        // Pressure limits
+        var pv = '';
+        if (L.killFracs) pv += _bad('Kill fluid gradient is at or above the fracture gradient. Expect losses; use a lighter fluid with back-pressure or a loss plan.');
+        if (L.windowStart <= 0) pv += _bad('Shut-in tubing pressure is at or above the maximum surface pressure: bullheading would fracture the formation.');
+        else if (L.windowStart < WINDOW_FRAC * L.pFrac) pv += _warn('Narrow bullhead window at the start: ' + P(L.windowStart) + ' between shut-in pressure and the fracture limit.');
+        else pv += _ok('Bullhead window at the start is ' + P(L.windowStart) + ' above the shut-in tubing pressure.');
+        if (L.maspEnd <= 0 && !L.killFracs) pv += _bad('Maximum surface pressure reaches zero before the kill fluid reaches the perforations.');
+        h += '<div class="rbox"><div class="rbox-title">Surface Pressure Limits</div>' +
+            _row('Fracture pressure at top perforation', P(L.pFrac)) +
+            _row('Fracture gradient', _grad(L.fgGrad)) +
+            _row('Shut-in tubing pressure, estimated', P(L.sithp)) +
+            _row('Max surface pressure at start', P(L.maspStart)) +
+            _row('Max surface pressure at end', P(L.maspEnd)) +
+            _row('Surface pressure needed at end', P(L.endReq)) +
+            (L.shoe ? _row('Shoe: fracture pressure', P(L.shoe.pFrac)) +
+                _row('Shoe: max surface pressure start / end', P(L.shoe.start) + ' / ' + P(L.shoe.end)) +
+                _row('Governing limit', L.governs === 'shoe' ? 'casing shoe' : 'top perforation') : '') +
+            pv +
+            '<div class="rbox-title" style="margin-top:10px">Static Pumping Schedule</div>' +
+            _tbl(['Pumped', 'Volume', 'Strokes', 'Front MD', 'Shut-in pressure', 'Max surface pressure'], b.schedule.map(function (s) {
+                return [s.pct + ' %', V(s.vol), _fmt(Math.round(s.strokes), 0), ft(s.frontMd), P(s.sitp), P(s.masp)];
+            })) +
+            _note('Static values: no pipe friction, no gas migration, and fluids are assumed incompressible. Pipe friction at ' +
+                'the pump rate adds to the surface pressure. Keep the pump pressure below the maximum surface pressure and the ' +
+                'wellhead / treating-iron rating. The shoe limit applies where the casing sees the pressure, e.g. no packer or a leak.') +
+            '</div>';
+
+        // U-tube
+        var uv = '';
+        if (U.heavier === 'tubing') uv += _warn('Kill fluid is heavier than the annulus fluid: if tubing and annulus communicate, the tubing will U-tube with up to ' + P(U.dp) + ' difference at the packer.');
+        else if (U.heavier === 'annulus') uv += _warn('Annulus fluid is heavier: on communication the annulus will U-tube into the tubing, up to ' + P(-U.dp) + ' difference at the packer.');
+        else uv += _ok('Tubing and annulus fluids balance at the packer.');
+        if (U.onVacuum) uv += _warn('If the formation takes fluid, the tubing will go on vacuum with a static fluid level at about ' + ft(U.level) + ' TVD.');
+        else uv += _ok('Kill fluid column does not exceed reservoir pressure; the tubing stays full.');
+        h += '<div class="rbox"><div class="rbox-title">U-tube Check</div>' +
+            _row('Pressure difference at packer, tubing minus annulus', P(U.dp)) +
+            _row('Static fluid level if the formation takes fluid', U.onVacuum ? ft(U.level) + ' TVD' : 'surface') +
+            uv + '</div>';
+
+        // Brines
+        var bv = '';
+        if (!r.brineOk) bv = _bad('No clear brine in the guide reaches ' + _fixed(k.used, 2) + ' ppg. Use a weighted fluid.');
+        else bv = _ok('Clear brines that reach ' + _fixed(k.used, 2) + ' ppg: ' + r.brineList.join(', ') + '.');
+        h += '<div class="rbox"><div class="rbox-title">Brine Selection Guide</div>' +
+            _tbl(['Brine', 'Max ppg', 'Max SG', 'Max kg/m³', 'Reaches kill fluid', 'Crystallisation / notes'], r.brines.map(function (x) {
+                return [x.name, _fixed(x.ppg, 2), _fixed(x.sg, 2), _fmt(x.kgm3, 0), x.reaches ? 'yes' : 'no', x.note];
+            })) +
+            bv +
+            _note('Guidance only. Maximum densities are typical values at about 70 °F. Crystallisation temperature rises steeply ' +
+                'near the maximum density, and pressure raises it further. Brine density falls as temperature rises. Confirm ' +
+                'density at well temperature, crystallisation temperature and compatibility with the fluid supplier.') +
+            '</div>';
+
+        res.innerHTML = h;
+        res.setAttribute('data-done', '1');
+    }
+
+    function _paintGrad(r) {
+        var res = _byId('wk_gres');
+        if (!res) return;
+        if (!r.ok) { _errors('wk_gres', GRAD_IDS, r.bad, r.errors); return; }
+        var P = function (v) { return _u(v, 'pressureG', 1, 'psig', 0); };
+        var ft = function (v) { return _u(v, 'length', 0, 'ft', 1); };
+        var h = '<div class="rbox"><div class="rbox-title">Column Pressures</div>' +
+            _row('Surface pressure', P(r.pSurf)) +
+            _row('Bottomhole pressure', P(r.pBot)) +
+            _row('Average gradient', _grad(r.avgGrad)) +
+            _row('Liquid gradient', _grad(r.liqGrad)) +
+            _row('Gas gradient at surface', _grad(r.gasGradSurf)) +
+            _tbl(['Section', 'Top', 'Bottom', 'Pressure at top', 'Pressure at bottom', 'Gradient'], r.sections.map(function (s) {
+                return [s.name, ft(s.top), ft(s.bottom), P(s.pTop), P(s.pBot), s.grad == null ? '—' : _grad(s.grad)];
+            })) +
+            (r.pSurf < 0 ? _warn('Surface pressure is below atmospheric: the column would not stand to surface.') : '') +
+            _note('Static column, top to bottom: gas cap, mixed gas/liquid column, liquid. The gas gradient uses one average Z ' +
+                'and temperature for the column. The mixed column uses a fixed liquid holdup with no slip or friction. ' +
+                'Liquid gradient = 0.052 × density.') +
+            '</div>';
+        res.innerHTML = h;
+        res.setAttribute('data-done', '1');
+    }
+
+    function _readKill() {
+        return {
+            pres: _num('wk_pres'), tvd: _num('wk_tvd'), ob: _num('wk_ob'), kwo: _num('wk_kwo'), fg: _num('wk_fg'),
+            wf: _num('wk_wf'), ann: _num('wk_ann'), stvd: _num('wk_stvd'), sfg: _num('wk_sfg'),
+            tub: _str('wk_tub'), cas: _str('wk_cas'), pmd: _num('wk_pmd'), ptvd: _num('wk_ptvd'),
+            tmd: _num('wk_tmd'), bmd: _num('wk_bmd'), pbtd: _num('wk_pbtd'), to: _str('wk_to'),
+            od: _num('wk_od'), pump: _num('wk_pump'), spm: _num('wk_spm')
+        };
+    }
+    function _readGrad() {
+        return {
+            dir: _str('wk_gdir'), p: _num('wk_gp'), tvd: _num('wk_gtvd'), gasLen: _num('wk_glen'), mixLen: _num('wk_gmix'),
+            hl: _num('wk_ghl'), rho: _num('wk_grho'), sg: _num('wk_gsg'), t: _num('wk_gt'), z: _num('wk_gz')
+        };
+    }
+
+    function _calcImpl() {
+        var root = _byId('wk_root');
+        if (!root) return null;
+        var ins = root.querySelectorAll ? root.querySelectorAll('input,select') : [];
+        for (var n = 0; n < ins.length; n++) if (ins[n].classList) ins[n].classList.remove('input-err');
+        var a = wellkill(_readKill());
+        var g = gradient(_readGrad());
+        _paintKill(a);
+        _paintGrad(g);
+        G.WTS_state = G.WTS_state || {};
+        G.WTS_state.wellkill = {
+            kwf: a.ok ? a.kill.kwf : null, kwfUsed: a.ok ? a.kill.used : null,
+            bullheadVol: a.ok ? a.bullhead.vol : null, pumpedVol: a.ok ? a.bullhead.pumped : null,
+            strokes: a.ok ? a.bullhead.strokes : null,
+            maspStart: a.ok ? a.limits.maspStart : null, maspEnd: a.ok ? a.limits.maspEnd : null,
+            ts: Date.now(), result: a
+        };
+        G.WTS_state.gradient = {
+            pSurf: g.ok ? g.pSurf : null, pBot: g.ok ? g.pBot : null, avgGrad: g.ok ? g.avgGrad : null,
+            ts: Date.now(), result: g
+        };
+        return { kill: a, gradient: g };
+    }
+    G.calcWellKill = function () { return _canon(_calcImpl); };
+
+    function _tubOpts() {
+        var T = G.WTS_tubulars, o = [];
+        if (!T) return o;
+        o.push({ group: 'Tubing' });
+        T.tubing.forEach(function (e) { o.push({ v: e.key, t: e.label }); });
+        o.push({ group: '' }, { group: 'Casing sizes used as tubing' });
+        T.casing.filter(function (e) { return e.od <= 7.625; }).forEach(function (e) { o.push({ v: e.key, t: e.label }); });
+        o.push({ group: '' });
+        return o;
+    }
+    function _casOpts() {
+        var T = G.WTS_tubulars, o = [];
+        if (!T) return o;
+        o.push({ group: 'Casing' });
+        T.casing.forEach(function (e) { o.push({ v: e.key, t: e.label }); });
+        o.push({ group: '' }, { group: 'Liner' });
+        T.liners.forEach(function (e) { o.push({ v: e.key, t: e.label }); });
+        o.push({ group: '' });
+        return o;
+    }
+
+    function render(body) {
+        if (!body) return;
+        var t = _byId('pgTitle'), s = _byId('pgSub');
+        if (t) t.textContent = TITLE;
+        if (s) s.textContent = SUB;
+        var btn = function (id) { return '<div class="btn-row"><button class="btn btn-primary" id="' + id + '" onclick="calcWellKill()">Calculate</button></div>'; };
+        body.innerHTML =
+            '<div id="wk_root"><div class="cols-2">' +
+            '<div>' +
+            '<div class="card"><div class="card-title">Well &amp; Kill Fluid</div><div class="fg">' +
+            _fg('wk_pres', 'Reservoir pressure at top perforation (psi)', '5400', ' min="0"') +
+            _fg('wk_tvd', 'Top perforation TVD (ft)', '10000', ' min="0"') +
+            _fg('wk_ob', 'Overbalance (psi)', '200', ' min="0"') +
+            _fg('wk_kwo', 'Kill fluid density to use, blank = calculated (ppg)', '', ' min="0"') +
+            _fg('wk_fg', 'Fracture gradient at top perforation, EMW (ppg)', '15', ' min="0"') +
+            _fg('wk_wf', 'Well fluid density before the kill, EMW (ppg)', '1.9', ' min="0"') +
+            _fg('wk_ann', 'Annulus / packer fluid density (ppg)', '8.6', ' min="0"') +
+            _fg('wk_stvd', 'Casing shoe TVD, optional (ft)', '', ' min="0"') +
+            _fg('wk_sfg', 'Fracture gradient at shoe, EMW (ppg)', '', ' min="0"') +
+            '</div></div>' +
+            '<div class="card"><div class="card-title">Completion &amp; Pumping</div><div class="fg">' +
+            _sel('wk_tub', 'Tubing', _tubOpts(), 'tubing-2.875-6.5') +
+            _sel('wk_cas', 'Casing / liner below packer', _casOpts(), 'casing-7-29') +
+            _fg('wk_pmd', 'Packer MD (ft)', '9800', ' min="0"') +
+            _fg('wk_ptvd', 'Packer TVD (ft)', '9620', ' min="0"') +
+            _fg('wk_tmd', 'Top perforation MD (ft)', '10150', ' min="0"') +
+            _fg('wk_bmd', 'Bottom perforation MD (ft)', '10250', ' min="0"') +
+            _fg('wk_pbtd', 'PBTD, MD (ft)', '10400', ' min="0"') +
+            _sel('wk_to', 'Displace to', [{ v: 'top', t: 'Top perforation' }, { v: 'bot', t: 'Bottom perforation' }, { v: 'pbtd', t: 'PBTD, rathole included' }], 'top') +
+            _fg('wk_od', 'Over-displacement (%)', '10', ' min="0" max="100"') +
+            _fg('wk_pump', 'Pump output per stroke (bbl)', '0.1', ' min="0"') +
+            _fg('wk_spm', 'Pump speed, strokes per minute', '40', ' min="0"') +
+            '</div>' + btn('wk_calc') + '</div>' +
+            '<div class="card"><div class="card-title">Liquid / Mixed Gradient</div><div class="fg">' +
+            _sel('wk_gdir', 'Pressure given at', [{ v: 's2b', t: 'Surface, find bottomhole' }, { v: 'b2s', t: 'Bottomhole, find surface' }], 's2b') +
+            _fg('wk_gp', 'Known pressure (psig)', '1500', ' min="0"') +
+            _fg('wk_gtvd', 'Column TVD (ft)', '10000', ' min="0"') +
+            _fg('wk_glen', 'Gas cap length (ft)', '2000', ' min="0"') +
+            _fg('wk_gmix', 'Mixed column length (ft)', '1000', ' min="0"') +
+            _fg('wk_ghl', 'Liquid holdup in mixed column (%)', '40', ' min="0" max="100"') +
+            _fg('wk_grho', 'Liquid density (ppg)', '8.6', ' min="0"') +
+            _fg('wk_gsg', 'Gas gravity, air = 1', '0.65', ' min="0"') +
+            _fg('wk_gt', 'Average temperature (°F)', '150') +
+            _fg('wk_gz', 'Average Z-factor', '0.9', ' min="0"') +
+            '</div>' + btn('wk_gcalc') +
+            '<div id="wk_gres" style="margin-top:14px"></div></div>' +
+            '</div>' +
+            '<div><div id="wk_res"></div></div>' +
+            '</div></div>';
+        _tag(UNITS);
+        var root = _byId('wk_root');
+        if (root && root.addEventListener) {
+            root.addEventListener('change', function (e) {
+                if (e && e.target && /^wk_/.test(e.target.id || '')) G.calcWellKill();
+            });
+        }
+        G.calcWellKill();
+    }
+    G.renderWellKill = render;
+
+    // ── Registry (merge, never replace) ──────────────────────────────
+    G.WTS_calcRegistry = G.WTS_calcRegistry || {};
+    G.WTS_calcRegistry.wellkill = {
+        key: 'wellkill',
+        title: TITLE,
+        sub: SUB,
+        group: 'Test System Safety',
+        icon: '&#9660;',
+        badge: 'Well control',
+        bc: 'dc-b-orange',
+        desc: 'Kill-weight fluid, bullhead volumes and strokes, fracture-limited surface pressure, U-tube check, brine guide and gradients.',
+        render: function (body) { return G.renderWellKill(body); }
+    };
+
+    // Unit flip: recalculate a page that has already shown results.
+    if (typeof document !== 'undefined' && document.addEventListener) {
+        document.addEventListener('wts:unit-system-changed', function () {
+            var ids = ['wk_res', 'wk_gres'];
+            for (var n = 0; n < ids.length; n++) {
+                var r = _byId(ids[n]);
+                if (r && r.getAttribute && r.getAttribute('data-done') === '1') { G.calcWellKill(); return; }
+            }
+        });
+    }
+})();
+
+// ─── END 48-calc-wellkill ─────────────────────────────────────────────
 

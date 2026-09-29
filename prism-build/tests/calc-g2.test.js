@@ -8,7 +8,7 @@
 //     VCF = exp[−α60·Δt·(1 + 0.8·α60·Δt)], hydrometer glass correction
 //     1 − 1.278e-5·Δt − 6.2e-9·Δt², water 999.012 kg/m³.
 //   • Standing (1947) Rs / Pb / Bo; Vasquez & Beggs (1980) Rs and γg normalisation.
-//   • ISO 5167-2:2003 Reader-Harris/Gallagher orifice Cd with flange taps, solved
+//   • AGA-3 / API MPMS 14.3.1 RG flange-tap orifice Cd (oilgas uses the shared AGA-3 engine), solved
 //     independently in SI mass-flow form (qm = C/√(1−β⁴)·ε·πd²/4·√(2Δp·ρ)).
 //   • API 5CT casing/tubing IDs; capacity = ID²·π/4·12/9702 bbl/ft.
 // Metric-mode tests enter the same physical case in metric units and expect the
@@ -64,6 +64,41 @@ function reportHas(app, assert, needles) {
 }
 
 // ── Independent references ───────────────────────────────────────────────
+// AGA-3 / API MPMS 14.3.1 RG flange-tap Cd + DAK Z (Standing pseudo-criticals), solved in
+// SI mass-flow form — independent of the page's field-unit code (same as calc-g1 agaRef).
+// Oil & Gas Rate uses the shared WTS_aga3_compute engine at 60 °F / 14.73 psia.
+function ogDakZ(Tpr, Ppr) {
+  const A = [0, 0.3265, -1.07, -0.5339, 0.01569, -0.05165, 0.5475, -0.7361, 0.1844, 0.1056, 0.6134, 0.7210];
+  const Zof = (r) => 1 + (A[1] + A[2] / Tpr + A[3] / Tpr ** 3 + A[4] / Tpr ** 4 + A[5] / Tpr ** 5) * r
+    + (A[6] + A[7] / Tpr + A[8] / Tpr ** 2) * r * r - A[9] * (A[7] / Tpr + A[8] / Tpr ** 2) * r ** 5
+    + A[10] * (1 + A[11] * r * r) * (r * r / Tpr ** 3) * Math.exp(-A[11] * r * r);
+  let lo = 1e-9, hi = 3;
+  for (let i = 0; i < 200; i++) { const m = (lo + hi) / 2; if (Zof(m) - 0.27 * Ppr / (m * Tpr) > 0) hi = m; else lo = m; }
+  return 0.27 * Ppr / (((lo + hi) / 2) * Tpr);
+}
+function ogAgaRef(D, d, hw, Ps, TfF, SG) {
+  const TbF = 60, Pb = 14.73, mu = 0.012;
+  const beta = d / D, b4 = beta ** 4, Ev = 1 / Math.sqrt(1 - b4);
+  const Pf = Ps + 14.696, Tf = TfF + 459.67, Tb = TbF + 459.67;
+  const Tpc = 168 + 325 * SG - 12.5 * SG * SG, Ppc = 677 + 15 * SG - 37.5 * SG * SG;
+  const Z = ogDakZ(Tf / Tpc, Pf / Ppc);
+  const Y = 1 - (0.41 + 0.35 * b4) * hw / (27.707 * Pf) / 1.3;
+  const dm = d * 0.0254, Dm = D * 0.0254, dP = hw * 248.84, M = 28.9625e-3 * SG, R = 8.314462;
+  const rho = Pf * 6894.757 * M / (Z * R * Tf * 5 / 9), rhob = Pb * 6894.757 * M / (R * Tb * 5 / 9);
+  const L = 1 / D, M2 = 2 * L / (1 - beta), M1 = Math.max(2.8 - D, 0);
+  let Re = 1e6, Cd = 0.6, qm = 0;
+  for (let i = 0; i < 60; i++) {
+    const Aa = (19000 * beta / Re) ** 0.8, C = (1e6 / Re) ** 0.35;
+    Cd = 0.5961 + 0.0291 * beta ** 2 - 0.2290 * beta ** 8 + 0.003 * (1 - beta) * M1
+      + (0.0433 + 0.0712 * Math.exp(-8.5 * L) - 0.1145 * Math.exp(-6 * L)) * (1 - 0.23 * Aa) * b4 / (1 - b4)
+      - 0.0116 * (M2 - 0.52 * M2 ** 1.3) * beta ** 1.1 * (1 - 0.14 * Aa)
+      + 0.000511 * (1e6 * beta / Re) ** 0.7 + (0.0210 + 0.0049 * Aa) * b4 * C;
+    qm = Cd * Ev * Y * Math.PI / 4 * dm * dm * Math.sqrt(2 * rho * dP);
+    Re = 4 * qm / (Math.PI * mu * 1e-3 * Dm);
+  }
+  return { Z, Cd, mscfd: qm / rhob / 0.0283168466 * 3600 * 24 / 1000 };
+}
+const OG_DEF = ogAgaRef(4, 2, 50, 500, 100, 0.75);
 const RW = 999.012;
 function refApi60(api, t) {
   const d = t - 60;
@@ -174,7 +209,7 @@ module.exports = [
 
   // ── Oil & gas rate ─────────────────────────────────────────────────────
   {
-    name: 'G2 oilgas: API 35 @ 80°F hydrometer → 33.49 API@60; VCF(120°F) 0.97190; oil 97.72 BPD; AGA-3 gas 3800.8 MSCFD (DAK Z)',
+    name: 'G2 oilgas: API 35 @ 80°F hydrometer → 33.49 API@60; VCF(120°F) 0.97190; oil 97.72 BPD; AGA-3 gas (shared engine, DAK Z) matches an independent RG + DAK solve',
     wp: WP,
     run(app, assert) {
       app.hook.nav('oilgas');
@@ -187,19 +222,24 @@ module.exports = [
       assert.near(rv(app, 'og_res', 'API @ 60'), api60, 0.051);
       assert.near(rv(app, 'og_res', 'VCF'), vcf, 2e-6);
       assert.near(rv(app, 'og_res', 'Oil Rate'), oil, 0.051);
-      // Independent SI solution of ISO 5167-2 (flange taps, μ 0.012 cP) with a DAK Z solved by Newton on ρr and
-      // Standing (1977) pseudo-criticals (Tpc 404.7 °R, Ppc 667.2 psia → Tpr 1.383, Ppr 0.7715, Z 0.89999):
-      // 3800.75 MSCFD, C 0.60301 (was 3792.68 with Papay Z 0.90381)
+      // Independent SI solve of the AGA-3 RG flange-tap Cd (μ 0.012 cP) with DAK Z and Standing (1977)
+      // pseudo-criticals (Tpc 404.7 °R, Ppc 667.2 psia → Tpr 1.383, Ppr 0.7715, Z 0.89999).
+      // (ISO 5167-2 Cd gave 3800.75 MSCFD / C 0.60301; Papay Z gave 3792.68.)
       const gas = rv(app, 'og_res', 'Gas Rate');
-      assert.rel(gas, 3800.75, 1e-3);
+      assert.rel(gas, OG_DEF.mscfd, 5e-4);
+      assert.rel(gas, 3800.75, 3e-3, 'within 0.3 % of the former ISO 5167-2 figure');
       assert.near(rv(app, 'og_res', 'Z-Factor'), 0.89999, 2e-4);
-      assert.near(rv(app, 'og_res', 'Discharge Coeff'), 0.60301, 2e-5);
+      assert.near(rv(app, 'og_res', 'Discharge Coeff'), OG_DEF.Cd, 2e-5);
+      // Same engine as the AGA-3 page: identical rate from WTS_aga3_compute
+      const eng = app.win.WTS_aga3_compute({ D: 4, d: 2, hw: 50, Ps: 500, TfF: 100, SG: 0.75, TbF: 60, Pb: 14.73 });
+      assert.rel(gas, eng.Qmscfd, 2e-6);
       assert.rel(rv(app, 'og_res', 'GOR'), gas * 1000 / oil, 2e-3);
       assert.rel(rv(app, 'og_res', 'CGR'), oil / (gas / 1000), 2e-3);
-      // β = 0.7 (2.8" plate in a 4" run): independent 8292.98 MSCFD, C 0.60447
+      // β = 0.7 (2.8" plate in a 4" run)
+      const b7 = ogAgaRef(4, 2.8, 50, 500, 100, 0.75);
       set(app, { og_plate: 2.8 }); app.win.calcOilGas();
-      assert.rel(rv(app, 'og_res', 'Gas Rate'), 8292.98, 1.5e-3);
-      assert.near(rv(app, 'og_res', 'Discharge Coeff'), 0.60447, 3e-5);
+      assert.rel(rv(app, 'og_res', 'Gas Rate'), b7.mscfd, 5e-4);
+      assert.near(rv(app, 'og_res', 'Discharge Coeff'), b7.Cd, 3e-5);
       // hydrometer at 60°F and oil line at 60°F → no correction at all
       set(app, { og_plate: 2, og_ht: 60, og_olt: 60 }); app.win.calcOilGas();
       assert.near(rv(app, 'og_res', 'VCF'), 1, 1e-9);
@@ -215,9 +255,10 @@ module.exports = [
       set(app, { og_int: 60, og_api: 35, og_ht: 60, og_m0: 0, og_m1: 10, og_olt: 60, og_bsw: 0, og_mf: 1, og_sf: 1,
         og_run: 2.067, og_plate: 1.0, og_sp: 100, og_dp: 25, og_gg: 0.65, og_gt: 80 });
       app.win.calcOilGas();
-      // independent SI solution incl. ISO small-pipe term (D < 71.12 mm), DAK Z 0.98087: 332.29 MSCFD, C 0.60626
-      assert.rel(rv(app, 'og_res', 'Gas Rate'), 332.29, 1.5e-3);
-      assert.near(rv(app, 'og_res', 'Discharge Coeff'), 0.60626, 3e-5);
+      // independent AGA-3 RG solve incl. the small-pipe M1 term (D < 2.8 in), DAK Z
+      const sm = ogAgaRef(2.067, 1.0, 25, 100, 80, 0.65);
+      assert.rel(rv(app, 'og_res', 'Gas Rate'), sm.mscfd, 5e-4);
+      assert.near(rv(app, 'og_res', 'Discharge Coeff'), sm.Cd, 3e-5);
       assert.near(rv(app, 'og_res', 'Oil Rate'), 240, 1e-9);                 // 10 bbl/h × 24
       set(app, { og_dp: 0 }); app.win.calcOilGas();
       assert.equal(rv(app, 'og_res', 'Gas Rate'), 0);
@@ -249,8 +290,8 @@ module.exports = [
       // Results in metric: oil m³/d, gas m³/d, GOR sm³/sm³, CGR m³/10⁶ m³.
       const oilBpd = 4.5 * 24 * 0.95 * 0.98 * vcf;
       assert.rel(rv(app, 'og_res', 'Oil Rate'), oilBpd * 0.158987, 2e-3);
-      assert.rel(rv(app, 'og_res', 'Gas Rate'), 3800.75 * 28.3168466, 1.5e-3);
-      assert.rel(rv(app, 'og_res', 'GOR'), 3800.75e3 / oilBpd * 0.178108, 2e-3);
+      assert.rel(rv(app, 'og_res', 'Gas Rate'), OG_DEF.mscfd * 28.3168466, 1.5e-3);
+      assert.rel(rv(app, 'og_res', 'GOR'), OG_DEF.mscfd * 1e3 / oilBpd * 0.178108, 2e-3);
       assert.rel(rv(app, 'og_res', 'CGR'), oilBpd / 3.80075 * 5.61458, 2e-3);
       const t = String(app.el('og_res').textContent);
       assert.ok(!/BPD|MSCFD|scf|bbl/.test(t), 'no field units in metric results: ' + t);
@@ -267,7 +308,7 @@ module.exports = [
         og_run: 4, og_plate: 2, og_sp: 500, og_dp: 50, og_gg: 0.75, og_gt: 100 });
       app.win.calcOilGas();
       assert.equal(rv(app, 'og_res', 'Oil Rate'), 0);
-      assert.rel(rv(app, 'og_res', 'Gas Rate'), 3800.75, 1e-3);
+      assert.rel(rv(app, 'og_res', 'Gas Rate'), OG_DEF.mscfd, 1e-3);
       assert.match(rvText(app, 'og_res', 'GOR'), /^—/, 'GOR with no oil is —');
       assert.ok(!/\d/.test(rvText(app, 'og_res', 'GOR')), 'GOR shows no number: ' + rvText(app, 'og_res', 'GOR'));
       assert.equal(rv(app, 'og_res', 'CGR'), 0);                       // 0 bbl/MMscf is real here
@@ -281,12 +322,15 @@ module.exports = [
     },
   },
   {
-    name: 'G2 oilgas (fix): How It Works names the ISO 5167-2 Cd and DAK Z actually used (not plain AGA-3 / Papay)',
+    name: 'G2 oilgas (fix): How It Works names the shared AGA-3 engine and DAK Z actually used (not ISO 5167-2 / Papay)',
     wp: WP,
     run(app, assert) {
       app.hook.nav('oilgas');
       const t = String(app.el('pgBody').textContent || '');
-      assert.includes(t, 'ISO 5167-2');
+      assert.includes(t, 'same AGA-3 engine');
+      assert.includes(t, 'API MPMS 14.3.1');
+      assert.ok(!/ISO 5167-2/.test(t), 'ISO 5167-2 Cd no longer used');
+      assert.ok(!/can differ by a fraction/.test(t), 'pages no longer differ');
       assert.includes(t, 'Dranchuk');
       assert.ok(!/Papay/.test(t), 'Papay no longer named on the page');
       assert.includes(t, 'inH2O at 60°F');
@@ -326,10 +370,12 @@ module.exports = [
       app.win.calcOilGas();
       // Standing pseudo-criticals: Ppr = 3014.696/667.16 = 4.519, Tpr = 559.67/404.72 = 1.383.
       // Independent Newton-on-ρr DAK: Z = 0.73182 (Standing-Katz chart ≈ 0.73). Independent SI
-      // ISO 5167-2 solve: 10,201.3 MSCFD, C 0.60246 (Papay's 0.75943 under-read the rate by 1.8 %).
+      // AGA-3 RG solve (ISO 5167-2 gave 10,201.3 MSCFD; Papay's 0.75943 under-read the rate by 1.8 %).
+      const hp = ogAgaRef(4, 2, 50, 3000, 100, 0.75);
+      assert.near(hp.Z, 0.7318, 2e-4, 'reference Z');
       assert.near(rv(app, 'og_res', 'Z-Factor'), 0.7318, 2e-4);
-      assert.rel(rv(app, 'og_res', 'Gas Rate'), 10201.31, 1.5e-3);
-      assert.near(rv(app, 'og_res', 'Discharge Coeff'), 0.60246, 3e-5);
+      assert.rel(rv(app, 'og_res', 'Gas Rate'), hp.mscfd, 5e-4);
+      assert.near(rv(app, 'og_res', 'Discharge Coeff'), hp.Cd, 3e-5);
       assert.ok(!/outside the Dranchuk/.test(app.el('og_res').textContent), 'inside the DAK range: no caution');
       // Very cold gas: SG 0.75 at −80 °F → Tpr 0.94 < 1.0 → range caution, still a finite rate
       set(app, { og_sp: 500, og_gt: -80 }); app.win.calcOilGas();
