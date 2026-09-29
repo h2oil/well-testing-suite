@@ -68,15 +68,15 @@ echo "CapApp-SPM package dependencies after cap sync:"
 grep -E '\.package\(' ios/App/CapApp-SPM/Package.swift || true
 
 # ── Auto-stamp version + build number from Xcode Cloud's build index ──
-# Versioning scheme (H2Oil v1.3.x line):
-#   MARKETING_VERSION       = 1.3.${CI_BUILD_NUMBER}    # e.g. 1.3.42
+# Versioning scheme (H2Oil v3.0.x line):
+#   MARKETING_VERSION       = 3.0.${CI_BUILD_NUMBER}    # e.g. 3.0.42
 #   CURRENT_PROJECT_VERSION = ${CI_BUILD_NUMBER}        # e.g. 42
 # Each Xcode Cloud run gets a fresh, monotonically increasing
 # CI_BUILD_NUMBER from Apple. Since MARKETING_VERSION changes on every
 # build, every upload is its own "version train" and Apple won't reject
 # with ITMS-90186 or ITMS-90062 even if prior build numbers were higher.
 # No manual version bumps required — every commit → push → fresh upload.
-VERSION_BASE="1.3"
+VERSION_BASE="3.0"
 PBXPROJ="$CI_PRIMARY_REPOSITORY_PATH/ios-app/ios/App/App.xcodeproj/project.pbxproj"
 if [ -n "${CI_BUILD_NUMBER:-}" ] && [ -f "$PBXPROJ" ]; then
     FULL_VERSION="${VERSION_BASE}.${CI_BUILD_NUMBER}"
