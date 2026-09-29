@@ -2358,7 +2358,9 @@
             lastFit: s.lastFit || null,
             tcMatch: s.tcMatch || null,
             activePeriod: activePeriod(),
-            well: well
+            well: well,
+            // Multi-rate table (rate history): seeded from the events log (39).
+            multiRate: (G.PRiSM && Array.isArray(G.PRiSM.multiRate)) ? G.PRiSM.multiRate : []
         };
     }
     function snapString() {
@@ -2399,6 +2401,12 @@
             s.tcMatch = o.tcMatch || null;
             s.activePeriod = o.activePeriod == null ? null : o.activePeriod;
             s.modelCurve = null;
+            if (isArr(o.multiRate)) {
+                if (!G.PRiSM || typeof G.PRiSM !== 'object') G.PRiSM = { mode: 'transient', tab: 1, multiRate: [] };
+                G.PRiSM.multiRate = clone(o.multiRate) || [];
+                try { if (G.localStorage) G.localStorage.setItem('wts_prism_mrate', JSON.stringify(G.PRiSM.multiRate)); } catch (e) {}
+                try { if (typeof PRiSM_renderMultiRateRows === 'function') PRiSM_renderMultiRateRows(); } catch (e) {}   // eslint-disable-line no-undef
+            }
             if (o.well && typeof o.well === 'object') {
                 var pvt = G.PRiSM_pvt || (G.PRiSM_pvt = {});
                 Object.keys(pvt).forEach(function (k) { if (k !== '_computed' && !(k in o.well)) delete pvt[k]; });
