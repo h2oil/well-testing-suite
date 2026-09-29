@@ -161,6 +161,32 @@ module.exports = [
     },
   },
 
+  {
+    name: 'G4 flare (v3.0): fl_flow / fl_nhv stay native field units (untagged); Metric mode shows SI companions (10³ m³/d, MJ/m³)',
+    wp: WP,
+    run(app, assert) {
+      // Imperial: no companion text
+      app.hook.nav('flare'); app.flush(300);
+      assert.strictEqual(String(app.el('fl_flow_si').textContent), '', 'no companion in Imperial');
+      setMetric(app, true);
+      try {
+        app.hook.nav('flare'); app.flush(300);
+        set(app, { fl_flow: 10, fl_nhv: 1000 });
+        // 1 MMSCF = 10⁶·0.0283168466 m³ = 28.3168 10³ m³; 1 Btu/scf = 1055.056 J / 0.0283168466 m³ = 0.0372589 MJ/m³
+        const qt = String(app.el('fl_flow_si').textContent), ht = String(app.el('fl_nhv_si').textContent);
+        assert.includes(qt, '10³ m³/d'); assert.includes(ht, 'MJ/m³');
+        assert.near(num(qt.replace('= ', '')), 10 * 28.3168466, 0.06, 'flow companion');
+        assert.near(num(ht.replace('= ', '')), 1000 * 1055.05585 / 0.0283168466 / 1e6, 0.006, 'NHV companion');
+        // The inputs themselves are not converted (the page is natively mixed-unit)
+        assert.strictEqual(String(app.el('fl_flow').value), '10');
+        app.win.calcFlare();
+        const Qb = 10e6 / 24 * 1000 * 0.98;
+        assert.near(rv(app, 'fl_res', 'Heat Release (MW)'), Qb * W_PER_BTUH / 1e6, 0.01, 'same physical result in Metric');
+      } finally { setMetric(app, false); }
+      noBadNumbers(assert, app, 'flare companions');
+    },
+  },
+
   // ── PRV (API 520 / 526) ────────────────────────────────────────────────
   {
     name: 'G4 prv gas: conventional default A = 2.546 in² (L); Kb = 1 for conventional; balanced 40 % BP → Kb 0.845',

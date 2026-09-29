@@ -23,6 +23,45 @@ const labelOf = (app, id) => { const e = app.el(id); const it = e && e.parentNod
 const S = (app) => app.win.WTS_state.orifice;
 const canon = (app, id) => app.win.WTS_units.runCanonical(() => parseFloat(app.el(id).value));
 
+// Independent AGA-3 reference in SI mass-flow form (same method as calc-g1 agaRef): Standing +
+// Wichert–Aziz pseudo-criticals on the ideal gravity, DAK Z by bisection, RG flange-tap Cd with Re
+// iteration; v3.0 real base density ρb = Pb·M/(Zb·R·Tb) with Zb = DAK at the base, and the entered
+// gravity taken as real: Gi = Gr·Zb/0.99959 (AGA-3 Part 3, Zb_air = 0.99959).
+function dakZ(Tpr, Ppr) {
+  const A = [0, 0.3265, -1.07, -0.5339, 0.01569, -0.05165, 0.5475, -0.7361, 0.1844, 0.1056, 0.6134, 0.7210];
+  const Zof = (r) => 1 + (A[1] + A[2] / Tpr + A[3] / Tpr ** 3 + A[4] / Tpr ** 4 + A[5] / Tpr ** 5) * r
+    + (A[6] + A[7] / Tpr + A[8] / Tpr ** 2) * r * r - A[9] * (A[7] / Tpr + A[8] / Tpr ** 2) * r ** 5
+    + A[10] * (1 + A[11] * r * r) * (r * r / Tpr ** 3) * Math.exp(-A[11] * r * r);
+  let lo = 1e-9, hi = 3;
+  for (let i = 0; i < 200; i++) { const m = (lo + hi) / 2; if (Zof(m) - 0.27 * Ppr / (m * Tpr) > 0) hi = m; else lo = m; }
+  return 0.27 * Ppr / (((lo + hi) / 2) * Tpr);
+}
+function agaRef(o) {
+  const { D, d, hw, Ps, TfF, SG, co2 = 0, h2s = 0, TbF = 60, Pb = 14.696, mu = 0.012 } = o;
+  const beta = d / D, b4 = beta ** 4, Ev = 1 / Math.sqrt(1 - b4);
+  const Pf = Ps + 14.696, Tf = TfF + 459.67, Tb = TbF + 459.67;
+  const A = (co2 + h2s) / 100, B2 = h2s / 100, eps = 120 * (A ** 0.9 - A ** 1.6) + 15 * (B2 ** 0.5 - B2 ** 4);
+  const crit = (g) => { const Tpc = 168 + 325 * g - 12.5 * g * g, Ppc = 677 + 15 * g - 37.5 * g * g, T2 = Tpc - eps; return { T: T2, P: Ppc * T2 / (Tpc + B2 * (1 - B2) * eps) }; };
+  let Gi = SG, c = crit(Gi), Zb = dakZ(Tb / c.T, Pb / c.P);
+  for (let i = 0; i < 60; i++) { Gi = SG * Zb / 0.99959; c = crit(Gi); Zb = dakZ(Tb / c.T, Pb / c.P); }
+  const Z = dakZ(Tf / c.T, Pf / c.P);
+  const Y = 1 - (0.41 + 0.35 * b4) * hw / (27.707 * Pf) / 1.3;
+  const dm = d * 0.0254, Dm = D * 0.0254, dP = hw * 248.84, M = 28.9625e-3 * Gi, R = 8.314462;
+  const rho = Pf * 6894.757 * M / (Z * R * Tf * 5 / 9), rhob = Pb * 6894.757 * M / (Zb * R * Tb * 5 / 9);
+  const L = 1 / D, M2 = 2 * L / (1 - beta), M1 = Math.max(2.8 - D, 0);
+  let Re = 1e6, qm = 0;
+  for (let i = 0; i < 60; i++) {
+    const Aa = (19000 * beta / Re) ** 0.8, C = (1e6 / Re) ** 0.35;
+    const Cd = 0.5961 + 0.0291 * beta ** 2 - 0.2290 * beta ** 8 + 0.003 * (1 - beta) * M1
+      + (0.0433 + 0.0712 * Math.exp(-8.5 * L) - 0.1145 * Math.exp(-6 * L)) * (1 - 0.23 * Aa) * b4 / (1 - b4)
+      - 0.0116 * (M2 - 0.52 * M2 ** 1.3) * beta ** 1.1 * (1 - 0.14 * Aa)
+      + 0.000511 * (1e6 * beta / Re) ** 0.7 + (0.0210 + 0.0049 * Aa) * b4 * C;
+    qm = Cd * Ev * Y * Math.PI / 4 * dm * dm * Math.sqrt(2 * rho * dP);
+    Re = 4 * qm / (Math.PI * mu * 1e-3 * Dm);
+  }
+  return { Zb, mscfd: qm / rhob / 0.0283168466 * 3600 * 24 / 1000 };
+}
+
 module.exports = [
   {
     name: 'REVIEW esdlo: ΔP = V_std·Pb/V·(519.67/Tb) — default unchanged, 15 °C and 0 °C bases scale by the mole ratio',
@@ -93,13 +132,16 @@ module.exports = [
       assert.rel(canon(app, 'op_Pb'), ATM, 1e-7);
       const r1 = S(app);
       assert.ok(r1.ts !== undefined && r1.qLo !== r0.qLo, 're-ran on the new basis');
-      // Standard volume at basis b ∝ Tb/Pb for the same mass (Re_D depends on Qv·Pb/Tb only).
+      // Standard volume at basis b = mass / ρb, ρb = Pb·M/(Zb·R·Tb): the ideal-gas Pb/Tb scaling times
+      // the real-gas Zb effect (v3.0: was exactly Pb/Tb with Zb = 1). Ratio from the independent reference.
       const vf = (14.696 / ATM) * (518.67 / 519.67);
-      // (the base field holds Pb to 9 significant digits: 14.6959488 psia)
-      assert.rel(r1.qLo / r0.qLo, vf, 1e-8, 'rate at low % scales by Pb/Tb');
-      assert.rel(r1.qHi / r0.qHi, vf, 1e-8, 'rate at high % scales by Pb/Tb');
+      const g0 = { D: 4.026, d: r0.d, Ps: 500, TfF: 80, SG: 0.65, co2: 0.5 };
+      const refRatio = (hw) => agaRef(Object.assign({ hw, TbF: 59, Pb: canon(app, 'op_Pb') }, g0)).mscfd / agaRef(Object.assign({ hw, TbF: 60, Pb: 14.696 }, g0)).mscfd;
+      assert.rel(r1.qLo / r0.qLo, refRatio(40), 2e-5, 'rate at low % scales by the real-gas base ratio');
+      assert.rel(r1.qHi / r0.qHi, refRatio(160), 2e-5, 'rate at high % scales by the real-gas base ratio');
+      assert.ok(Math.abs(r1.qLo / r0.qLo / vf - 1) < 2e-4, 'within 0.02 % of the ideal-gas Pb/Tb ratio');
       // Same basis → same rate as the AGA-3 page engine at that plate and differential.
-      const aga = app.win.WTS_aga3_compute(app.toWin({ D: 4.026, d: r1.d, hw: 200 * 0.2, Ps: 500, TfF: 80, SG: 0.65, co2: 0.5, h2s: 0, TbF: 59, Pb: canon(app, 'op_Pb') }));
+      const aga = app.win.WTS_aga3_compute(app.toWin({ D: 4.026, d: r1.d, hw: 200 * 0.2, Ps: 500, TfF: 80, SG: 0.65, sgBasis: 'real', co2: 0.5, h2s: 0, TbF: 59, Pb: canon(app, 'op_Pb') }));
       assert.rel(r1.qLo, aga.Qmscfd, 1e-9, 'orifice = AGA-3 engine on the 15 °C basis');
       // A typed contract basis is the user's.
       app.input('op_Pb', '15.025'); app.click('op_calc');
@@ -140,6 +182,8 @@ module.exports = [
       const q = parseFloat(String(row.querySelector('.rv').textContent).replace(/,/g, ''));
       const g = app.win.WTS_aga3_compute(app.toWin({ D: 4, d: 2, hw: 50, Ps: 500, TfF: 100, SG: 0.75, co2: 0, h2s: 0, TbF: 60, Pb: 14.73, tap: 'flange' }));
       assert.near(q, g.Qmscfd, 0.0006, 'default basis 60 °F / 14.73 psia');
+      // v3.0: Fpv = √(Zb/Zf) — independent reference 3,792.6 MSCFD (was 3,800.65 with Zb = 1)
+      assert.rel(q, agaRef({ D: 4, d: 2, hw: 50, Ps: 500, TfF: 100, SG: 0.75, TbF: 60, Pb: 14.73 }).mscfd, 5e-4, 'reference with Zb');
     },
   },
 ];

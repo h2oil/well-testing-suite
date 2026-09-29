@@ -50,6 +50,31 @@ const label = (app, id) => { const e = app.el(id); const it = e && e.parentNode;
 const ATM = 101.325 / 6.894757293168;          // 14.6959488 psia
 // scf at basis a → scf at basis b
 const vf = (a, b) => (a.P / b.P) * ((b.T + 459.67) / (a.T + 459.67));
+// v3.0 AGA-3 (Fpv = √(Zb/Zf), real gravity): the orifice passes the same MASS at a given hw, so the
+// standard volume is m/ρb, ρb = Pb·M/(Zb·R·Tb), and m ∝ √(ρf) ∝ √(Gi/Zf). With a real gravity Gr entered,
+// Gi = Gr·Zb/0.99959 (AGA-3 Part 3) depends on the base, so Qb ∝ Zb·Tb/(Pb·√(Gi·Zf)). Independent DAK
+// (bisection) on Standing + Wichert–Aziz pseudo-criticals.
+function dakZ(Tpr, Ppr) {
+  const A = [0, 0.3265, -1.07, -0.5339, 0.01569, -0.05165, 0.5475, -0.7361, 0.1844, 0.1056, 0.6134, 0.7210];
+  const Zof = (r) => 1 + (A[1] + A[2] / Tpr + A[3] / Tpr ** 3 + A[4] / Tpr ** 4 + A[5] / Tpr ** 5) * r
+    + (A[6] + A[7] / Tpr + A[8] / Tpr ** 2) * r * r - A[9] * (A[7] / Tpr + A[8] / Tpr ** 2) * r ** 5
+    + A[10] * (1 + A[11] * r * r) * (r * r / Tpr ** 3) * Math.exp(-A[11] * r * r);
+  let lo = 1e-9, hi = 3;
+  for (let i = 0; i < 200; i++) { const m = (lo + hi) / 2; if (Zof(m) - 0.27 * Ppr / (m * Tpr) > 0) hi = m; else lo = m; }
+  return 0.27 * Ppr / (((lo + hi) / 2) * Tpr);
+}
+function qbRel(b, g) {   // relative standard volume at basis b for gas g {SG, co2, h2s, Pf, TfF}
+  const A = (g.co2 + g.h2s) / 100, Bh = g.h2s / 100, eps = 120 * (A ** 0.9 - A ** 1.6) + 15 * (Bh ** 0.5 - Bh ** 4);
+  const crit = (s) => { const T = 168 + 325 * s - 12.5 * s * s, P = 677 + 15 * s - 37.5 * s * s, T2 = T - eps; return { T: T2, P: P * T2 / (T + Bh * (1 - Bh) * eps) }; };
+  const Tb = b.T + 459.67;
+  let Gi = g.SG, c = crit(Gi), Zb = dakZ(Tb / c.T, b.P / c.P);
+  for (let i = 0; i < 60; i++) { Gi = g.SG * Zb / 0.99959; c = crit(Gi); Zb = dakZ(Tb / c.T, b.P / c.P); }
+  const Zf = dakZ((g.TfF + 459.67) / c.T, g.Pf / c.P);
+  return Zb * Tb / (b.P * Math.sqrt(Gi * Zf));
+}
+const vfReal = (a, b, g) => qbRel(b, g) / qbRel(a, g);
+const GAS_AGA = { SG: 0.65, co2: 0.5, h2s: 0, Pf: 514.696, TfF: 80 };   // AGA-3 page defaults
+const GAS_OG = { SG: 0.75, co2: 0, h2s: 0, Pf: 514.696, TfF: 100 };     // Oil & Gas page defaults
 
 module.exports = [
   // ── The setting itself ───────────────────────────────────────────────
@@ -99,7 +124,7 @@ module.exports = [
 
   // ── AGA-3: base fields follow the setting unless overridden ──────────
   {
-    name: 'P7 aga3: Tb/Pb default from the setting; rate scales by exactly Pb/Tb; user override kept; shown result re-runs',
+    name: 'P7 aga3: Tb/Pb default from the setting; rate scales by the real-gas base ratio (Pb/Tb × Zb, v3.0); user override kept; shown result re-runs',
     wp: WP,
     run(app, assert) {
       app.hook.nav('aga3'); app.flush(50);
@@ -111,13 +136,14 @@ module.exports = [
       assert.near(parseFloat(app.el('a_Tb').value), 60, 1e-12);
       app.win.calcAGA3();
       const q1 = rv(app, 'a_res', 'Gas Rate (SCF/hr)');
-      assert.rel(q1 / q0, 14.696 / 14.73, 2e-6, '14.73 psia basis');
+      assert.rel(q1 / q0, vfReal({ T: 60, P: 14.696 }, { T: 60, P: 14.73 }, GAS_AGA), 2e-6, '14.73 psia basis');
+      assert.rel(q1 / q0, 14.696 / 14.73, 1e-5, 'within 0.001 % of the ideal-gas ratio');
       // Setting changed while the result is on screen: fields follow and it re-runs.
       setBase(app, '15C_101.325');
       assert.near(parseFloat(app.el('a_Tb').value), 59, 1e-9);
       assert.near(parseFloat(app.el('a_Pb').value), ATM, 1e-6);
       const q2 = rv(app, 'a_res', 'Gas Rate (SCF/hr)');
-      assert.rel(q2 / q0, vf({ T: 60, P: 14.696 }, { T: 59, P: ATM }), 2e-6, '15 °C / 101.325 kPa basis');
+      assert.rel(q2 / q0, vfReal({ T: 60, P: 14.696 }, { T: 59, P: ATM }, GAS_AGA), 2e-6, '15 °C / 101.325 kPa basis');
       // A typed contract basis is the user's: the setting no longer moves it.
       app.input('a_Pb', '15.025');
       setBase(app, '60F_14.65');
@@ -157,11 +183,12 @@ module.exports = [
       assert.includes(rvText(app, 'og_res', 'Gas volume basis'), '60 °F / 14.73 psia');
       setBase(app, '60F_14.65');                     // re-runs the shown result
       const g1 = rv(app, 'og_res', 'Gas Rate'), gor1 = rv(app, 'og_res', 'GOR');
-      assert.rel(g1 / g0, 14.73 / 14.65, 2e-4);
+      assert.rel(g1 / g0, vfReal({ T: 60, P: 14.73 }, { T: 60, P: 14.65 }, GAS_OG), 2e-4);
+      assert.rel(g1 / g0, 14.73 / 14.65, 2e-4, 'still ≈ ×14.73/14.65');
       assert.rel(gor1 / gor0, 14.73 / 14.65, 2e-3);
       assert.includes(rvText(app, 'og_res', 'Gas volume basis'), '60 °F / 14.65 psia');
       setBase(app, '0C_101.325');
-      assert.rel(rv(app, 'og_res', 'Gas Rate') / g0, vf({ T: 60, P: 14.73 }, { T: 32, P: ATM }), 2e-4);
+      assert.rel(rv(app, 'og_res', 'Gas Rate') / g0, vfReal({ T: 60, P: 14.73 }, { T: 32, P: ATM }, GAS_OG), 2e-4);
     },
   },
   {

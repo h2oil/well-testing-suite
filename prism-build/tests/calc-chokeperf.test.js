@@ -73,8 +73,13 @@ function guoSonic(s64, cd, p1a, TR, sg, k, Z) {
   const A = Math.PI / 4 * Math.pow(s64 / 64, 2);
   return 879 * cd * A * p1a * Math.sqrt(k / (sg * TR * Z) * Math.pow(2 / (k + 1), (k + 1) / (k - 1)));
 }
-const CORR = { gilbert: [10, 1.89, 0.546], ros: [17.4, 2, 0.5], baxendell: [9.56, 1.93, 0.546], achong: [3.82, 1.88, 0.65] };
-const bean = (key, p, s, glr) => { const [a, b, c] = CORR[key]; return p * Math.pow(s, b) / (a * Math.pow(glr, c)); };
+// v3.0: Gilbert in his published form q = p1·S^1.89/(435·R^0.546), R in Mscf/bbl (GLR/1000);
+// the others as tabulated with GLR in scf/STB.
+const CORR = { ros: [17.4, 2, 0.5], baxendell: [9.56, 1.93, 0.546], achong: [3.82, 1.88, 0.65] };
+const bean = (key, p, s, glr) => {
+  if (key === 'gilbert') return p * Math.pow(s, 1.89) / (435 * Math.pow(glr / 1000, 0.546));
+  const [a, b, c] = CORR[key]; return p * Math.pow(s, b) / (a * Math.pow(glr, c));
+};
 
 const GAS = { ck_fluid: 'gas', ck_size: 32, ck_sunit: '64', ck_p1: 1000, ck_p2: 200, ck_t: 100, ck_sg: 0.65, ck_cd: 0.85,
   ck_co2: 0, ck_h2s: 0, ck_n2: 0, ck_k: 1.3, ck_z: 0.88, ck_pws: '', ck_qmg: '', ck_n: 1 };
@@ -110,7 +115,8 @@ module.exports = [
       const q2 = W.WTS_chokeperf_gasRate({ s64: 20, cd: 0.8, p1a: 2000, p2a: 500, tR: 600, sg: 0.7, k: 1.27, z: 0.85, Tb_R: 518.67, Pb: 14.65 });
       assert.rel(q2 / q1, (518.67 / 519.67) * (14.696 / 14.65), 1e-9, 'base-condition scaling (q_sc ∝ Tb/Pb)');
       // Multiphase: literal hand values at 1500 psig, 32/64", GLR 1000
-      const lit = { gilbert: 2414.49, ros: 2791.53, baxendell: 2901.17, achong: 2976.53 };
+      // Gilbert 1500·32^1.89/435 = 2411.77 (was 2414.49 with the rounded a = 10.00)
+      const lit = { gilbert: 2411.77, ros: 2791.53, baxendell: 2901.17, achong: 2976.53 };
       for (const k of Object.keys(lit)) {
         assert.rel(W.WTS_chokeperf_multiphaseRate(k, 1500, 32, 1000), lit[k], 2e-6, k);
         assert.rel(W.WTS_chokeperf_multiphaseRate(k, 1500, 32, 1000), bean(k, 1500, 32, 1000), 1e-12, k + ' formula');
@@ -121,7 +127,7 @@ module.exports = [
       assert.rel(m.qOil, 2791.53 * 0.8, 2e-6, 'oil = liquid × (1 − WC)');
       assert.near(m.ratio, 314.696 / 1514.696, 1e-9, 'p2/p1 abs');
       assert.ok(m.critical === true, '0.208 ≤ 0.588');
-      assert.rel(m.spreadPct, 100 * (2976.53 / 2414.49 - 1), 1e-4, 'spread');
+      assert.rel(m.spreadPct, 100 * (2976.53 / 2411.77 - 1), 1e-4, 'spread');
     },
   },
   {
@@ -187,24 +193,24 @@ module.exports = [
       set(app, Object.assign({}, LIQ, { ck_pws: 2400 })); calc(app);
       const s = S(app);
       assert.ok(s.ok && s.fluid === 'liquid', 'liquid');
-      assert.rel(s.rates.gilbert, 2414.49, 2e-6); assert.rel(s.rates.ros, 2791.53, 2e-6);
+      assert.rel(s.rates.gilbert, 2411.77, 2e-6); assert.rel(s.rates.ros, 2791.53, 2e-6);
       assert.rel(s.rates.baxendell, 2901.17, 2e-6); assert.rel(s.rates.achong, 2976.53, 2e-6);
       assert.rel(rv(app, 'ck_res', 'Liquid rate (selected)'), 2414, 1e-3);
-      assert.rel(rv(app, 'ck_res', 'Oil rate (selected)'), 2414.49 * 0.8, 1e-3);
+      assert.rel(rv(app, 'ck_res', 'Oil rate (selected)'), 2411.77 * 0.8, 1e-3);
       assert.strictEqual(app.findAll('#ck_res table.dtable')[0].querySelectorAll('tbody tr').length, 4, 'correlation table');
       // bean-up closed form with Gilbert
-      const K = (sz) => Math.pow(sz, 1.89) / (10 * Math.pow(1000, 0.546));
-      const q0 = bean('gilbert', 1500, 32, 1000);   // 2414.49
+      const K = (sz) => Math.pow(sz, 1.89) / (435 * Math.pow(1000 / 1000, 0.546));
+      const q0 = bean('gilbert', 1500, 32, 1000);   // 2411.77
       s.beanUp.forEach((row) => {
         const pwh = q0 * 2400 / (K(row.s64) * (2400 - 1500) + q0);
         assert.rel(row.pwh, pwh, 1e-6, row.s64 + ' WHP'); assert.rel(row.q, K(row.s64) * pwh, 1e-6, row.s64 + ' rate');
       });
-      // host Choke Flow Rates: Gilbert 435·(GLR/1000)^0.546 (≈ 0.1 % lower constant), Ros identical
+      // host Choke Flow Rates: same Gilbert form 435·(GLR/1000)^0.546 (v3.0), Ros identical
       app.hook.nav('chokeflow');
       set(app, { cf_op: 1500, cf_ocs: 32, cf_gor: 1000 }); app.win.calcChokeOil();
       const hostG = parseFloat(rows(app, 'cf_ores').find((r) => r.l === 'Gilbert Equation').v.replace(/,/g, ''));
       const hostR = parseFloat(rows(app, 'cf_ores').find((r) => r.l === 'Ros Equation').v.replace(/,/g, ''));
-      assert.rel(hostG, s.rates.gilbert, 2e-3, 'Gilbert agrees with the host page');
+      assert.rel(hostG, s.rates.gilbert, 5e-5, 'Gilbert identical to the host page (display rounding only)');
       assert.rel(hostR, s.rates.ros, 1e-4, 'Ros agrees with the host page');
       // Not critical: p2 1000 psig on 1500 psig
       open(app);
@@ -278,10 +284,10 @@ module.exports = [
         assert.rel(S(app).beanUp[0].q, imp.beanUp[0].q, 1e-4, 'metric entry → same bean-up');
         // liquid GLR in sm³/sm³: 1000 scf/STB = 178.108 sm³/sm³
         set(app, { ck_fluid: 'liquid', ck_glr: 1000 * 0.0283168466 / 0.158987294928, ck_p1: 1500 * 6.89476, ck_p2: 300 * 6.89476, ck_wc: 20, ck_corr: 'gilbert', ck_pws: '' }); calc(app);
-        assert.rel(S(app).rates.gilbert, 2414.49, 1e-4, 'metric GLR');
+        assert.rel(S(app).rates.gilbert, 2411.77, 1e-4, 'metric GLR');
         assert.includes(rtext(app, 'ck_res', 'Liquid rate (selected)'), 'm³/d');
       } finally { U.setSystem('imperial'); }
-      assert.rel(S(app).rates.gilbert, 2414.49, 1e-4, 'recalc after flip');
+      assert.rel(S(app).rates.gilbert, 2411.77, 1e-4, 'recalc after flip');
       assert.includes(rtext(app, 'ck_res', 'Liquid rate (selected)'), 'BPD');
     },
   },

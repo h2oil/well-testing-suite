@@ -591,6 +591,21 @@
     }
 
     function _row(l, v) { return '<div class="rrow"><span class="rl">' + l + '</span><span class="rv">' + v + '</span></div>'; }
+    // Metric companions of the field-unit coefficients (v3.0). The equations are
+    // unit-specific, so C, a and b stay in field units and Metric mode adds the same
+    // equation written in m³/d (at the same base) and kPa:
+    //   q[m³/d] = C_SI·(p̄r² − pwf²)[kPa²]ⁿ,  C_SI = C·Kq/Kp^(2n)
+    //   Δp²[kPa²] = a_SI·q[m³/d] + b_SI·q²,   a_SI = a·Kp²/Kq,  b_SI = b·Kp²/Kq²
+    //   Kq = 28.3168466 m³ per Mscf, Kp = 6.894757293 kPa per psi (exact definitions).
+    var KQ = 28.3168466, KP = 6.894757293168;
+    function coeffSI(n, C, a, b) {
+        return {
+            C: (C != null && isFinite(C) && isFinite(n)) ? C * KQ / Math.pow(KP, 2 * n) : null,
+            a: (a != null && isFinite(a)) ? a * KP * KP / KQ : null,
+            b: (b != null && isFinite(b)) ? b * KP * KP / (KQ * KQ) : null
+        };
+    }
+    G.WTS_gasdeliv_coeffSI = coeffSI;
     function _aofText(q) {
         if (q == null || !isFinite(q)) return '—';
         return _u(q, 'gasRateSmall', 1, 'MSCFD') + ' (' + _u(q / 1000, 'gasRate', 3, 'MMSCFD') + ')';
@@ -606,6 +621,7 @@
         h += _row('Points used', _fmt(r.type === 'single' ? 1 : r.points.length, 0) + ' (' + TYPE_SHORT[r.type] + ')');
         h += _row('Exponent n', cn.n.toFixed(4));
         h += _row('Coefficient C', cn.C.toExponential(4) + ' MSCFD/psia²ⁿ');
+        if (_metric()) h += _row('Coefficient C (metric: q in m³/d, p in kPa)', coeffSI(cn.n, cn.C).C.toExponential(4) + ' (m³/d)/kPa²ⁿ');
         if (cn.r2 != null) h += _row('Fit R² (log–log)', cn.r2.toFixed(4));
         h += _row('AOF', _aofText(cn.aof));
         if (r.pwfDesign != null) h += _row('Rate at pwf = ' + pwfdTxt, _u(cn.qAtPwf, 'gasRateSmall', 1, 'MSCFD'));
@@ -618,6 +634,11 @@
         } else {
             h += _row('a', lit.a != null ? lit.a.toFixed(2) + ' psia²/MSCFD' : '—');
             h += _row('b', lit.b != null ? lit.b.toExponential(4) + ' psia²/(MSCFD)²' : '—');
+            if (_metric() && lit.a != null && lit.b != null) {
+                var si = coeffSI(null, null, lit.a, lit.b);
+                h += _row('a (metric: kPa², m³/d)', _fmt(si.a, 4) + ' kPa²/(m³/d)');
+                h += _row('b (metric: kPa², m³/d)', si.b.toExponential(4) + ' kPa²/(m³/d)²');
+            }
             h += _row('AOF', lit.ok ? _aofText(lit.aof) : '—');
             if (r.pwfDesign != null) h += _row('Rate at pwf = ' + pwfdTxt, lit.ok ? _u(lit.qAtPwf, 'gasRateSmall', 1, 'MSCFD') : '—');
             if (r.qTarget != null) h += _row('pwf at q = ' + qtTxt, !lit.ok ? '—' : (lit.qAboveAof ? 'above AOF' : _u(lit.pwfAtQ, 'pressure', 1, 'psia')));
@@ -1599,13 +1620,17 @@
         var B = G.WTS_baseConditions, b = { Tb_F: +inp.tb, Pb_psia: +inp.pbase };
         return (B && B.text) ? B.text(b) : (_fmt(b.Tb_F, 2) + ' °F / ' + _fmt(b.Pb_psia, 3) + ' psia');
     }
+    // Metric (v3.0): molar volume m³/kmol (1 scf/lbmol = 0.0283168466/0.45359237),
+    // molar mass kg/kmol (same number), intensity per 10³ Sm³ (1 MMSCF = 28.3168466 10³ Sm³).
+    function _isMet() { return !!(G.WTS_units && G.WTS_units.getSystem && G.WTS_units.getSystem() === 'metric'); }
     function _resultsHtml(r, inp) {
+        var met = _isMet();
         var h = '<div class="rbox"><div class="rbox-title">Flared Gas</div>' +
             _row('Volume flared', _u(r.Vscf / 1e6, 'gasVolume', 4, 'MMSCF')) +
             _row('Normal volume (0 °C, 101.325 kPa)', _fmt(r.Nm3, 1) + ' Nm³') +
-            _row('Molar volume at base', _fmt(r.Vm, 2) + ' scf/lbmol') +
+            _row('Molar volume at base', met ? _fmt(r.Vm * 0.0283168466 / LB_KG, 3) + ' Sm³/kmol' : _fmt(r.Vm, 2) + ' scf/lbmol') +
             _row('Moles flared', _fmt(r.nmol, 1) + ' lbmol (' + _fmt(r.nmol * LB_KG, 1) + ' kmol)') +
-            _row('Molar mass', _fmt(r.MW, 3) + ' lb/lbmol') +
+            _row('Molar mass', _fmt(r.MW, 3) + (met ? ' kg/kmol' : ' lb/lbmol')) +
             _row('Gas gravity (air = 1)', _fmt(r.SG, 4)) +
             _row('Heating value HHV', _u(r.HHV, 'heatingValue', 1, 'Btu/scf')) +
             _row('Heat released', _fmt(r.E_MMBtu, 1) + ' MMBtu (' + _fmt(r.E_GJ, 1) + ' GJ)') +
@@ -1623,7 +1648,7 @@
             _row('Unburned H2S', _fmt(r.h2sUnburned_kg, 2) + ' kg') +
             _row('Total CO2e (' + r.gwpLabel + ')', _t(r.co2e_t) + ' t') +
             _row('CO2e per day', _t(r.co2ePerDay_t) + ' t/d') +
-            _row('Intensity (gas CO2e)', (r.intensity == null ? '—' : _fmt(r.intensity, 2) + ' t CO2e per MMSCF')) +
+            _row('Intensity (gas CO2e)', (r.intensity == null ? '—' : met ? _fmt(r.intensity / 28.3168466, 4) + ' t CO2e per 10³ Sm³' : _fmt(r.intensity, 2) + ' t CO2e per MMSCF')) +
             _row('Tier-1 reference CO2 (ethane proxy)', _t(r.tier1_t) + ' t') +
             '</div>';
         h += r.verdicts.map(_verdictHtml).join('');
@@ -2164,7 +2189,8 @@
 //   Every rate comes from the host's pure AGA-3 engine
 //   window.WTS_aga3_compute (API MPMS 14.3.1 RG flange-tap Cd with Re
 //   iteration, Y1 upstream expansion factor, Standing + Wichert-Aziz
-//   pseudo-criticals, Dranchuk-Abou-Kassem Z) — the same numbers as the
+//   pseudo-criticals, Dranchuk-Abou-Kassem Z, v3.0 Fpv = √(Zb/Zf) with the
+//   base Z, real/ideal gravity basis Gr = Gi·0.99959/Zb) — the same numbers as the
 //   AGA-3 Gas Metering page. Z does not depend on bore or differential, so
 //   it is solved once and passed back in (identical value, faster).
 //     • Exact bore d*: bisection on d in [0.10·D, 0.75·D] so that the rate
@@ -2193,7 +2219,7 @@
 //   renderOrificeSelect(body)      paint the page into #pgBody
 //   calcOrificeSelect()            read DOM → validate → compute → render
 //   WTS_orifice_compute(input)     pure; field units in and out, no DOM
-//       input  {q, D, Ps, TfF, SG, co2, n2, h2s, urv, lo, hi, des, TbF, Pb}
+//       input  {q, D, Ps, TfF, SG, sgBasis ('real' default | 'ideal'), co2, n2, h2s, urv, lo, hi, des, TbF, Pb}
 //              (a legacy `mode` from an earlier build is accepted and ignored)
 //       output {ok, errors[], errorIds[], dStar, betaStar, dStarFlag, candidates[],
 //               chosen, up, down, table[], verdicts[], warnings[], Z, ...}
@@ -2256,6 +2282,7 @@
         var co2 = _opt(inp.co2, 0), n2 = _opt(inp.n2, 0), h2s = _opt(inp.h2s, 0);
         var urv = _nv(inp.urv), lo = _opt(inp.lo, 20), hi = _opt(inp.hi, 80), des = _opt(inp.des, 50);
         var TbF = _opt(inp.TbF, 60), Pb = _opt(inp.Pb, 14.696);
+        var sgBasis = inp.sgBasis === 'ideal' ? 'ideal' : 'real';
 
         if (!(q > 0)) err('Target gas rate must be greater than zero.', P + 'q');
         if (!(D > 0)) err('Meter run internal diameter must be greater than zero.', P + 'D');
@@ -2276,7 +2303,7 @@
         if (!(Pb > 0)) err('Base pressure must be greater than zero.', P + 'Pb');
         if (errors.length) return fail();
 
-        var base = { D: D, Ps: Ps, TfF: TfF, SG: SG, co2: co2, h2s: h2s, n2: n2, TbF: TbF, Pb: Pb, tap: 'flange' };
+        var base = { D: D, Ps: Ps, TfF: TfF, SG: SG, sgBasis: sgBasis, co2: co2, h2s: h2s, n2: n2, TbF: TbF, Pb: Pb, tap: 'flange' };
         var probe = aga(Object.assign({}, base, { d: D / 2, hw: urv * des / 100 }));
         if (!probe.ok) { probe.errors.forEach(function (m) { err(m, null); }); return fail(); }
         base.Z = probe.Z;   // Z is independent of bore and differential
@@ -2374,8 +2401,8 @@
 
         return {
             ok: true, errors: [], errorIds: [], step: STEP, rule: rule,
-            q: q, D: D, Ps: Ps, TfF: TfF, SG: SG, co2: co2, n2: n2, h2s: h2s, urv: urv, lo: lo, hi: hi, des: des, TbF: TbF, Pb: Pb,
-            Z: probe.Z, Pf1: Pf1, Tpr: probe.Tpr, Ppr: probe.Ppr,
+            q: q, D: D, Ps: Ps, TfF: TfF, SG: SG, sgBasis: sgBasis, co2: co2, n2: n2, h2s: h2s, urv: urv, lo: lo, hi: hi, des: des, TbF: TbF, Pb: Pb,
+            Z: probe.Z, Zb: probe.Zb, Fpv: probe.Fpv, Gr: probe.Gr, Gi: probe.Gi, Pf1: Pf1, Tpr: probe.Tpr, Ppr: probe.Ppr,
             hwDes: hwDes, dStar: dStar, betaStar: dStar != null ? dStar / D : null, dStarFlag: dStarFlag,
             candidates: candidates, chosen: chosen, up: up, down: down, inWindow: inWin, table: table,
             verdicts: verdicts,
@@ -2407,6 +2434,8 @@
         h += '</div></div>';
         h += '<div class="card"><div class="card-title">Gas Composition</div><div class="fg">';
         h += _field('op_SG', 'Gas specific gravity (air = 1)', 0.65, ' min="0.5" max="1.8"');
+        h += '<div class="fg-item"><label for="op_sgb">Gas gravity basis</label><select id="op_sgb">' +
+            '<option value="real" selected>Real (ρgas/ρair at base)</option><option value="ideal">Ideal (M/M_air)</option></select></div>';
         h += _field('op_CO2', 'CO2 (%)', 0.5);
         h += _field('op_N2', 'N2 (%)', 1.0);
         h += _field('op_H2S', 'H2S (%)', 0);
@@ -2449,6 +2478,7 @@
     function _readInputs() {
         return {
             q: _num('op_q'), D: _num('op_D'), Ps: _num('op_P'), TfF: _num('op_T'), SG: _num('op_SG'),
+            sgBasis: (_byId('op_sgb') && _byId('op_sgb').value === 'ideal') ? 'ideal' : 'real',
             co2: _num('op_CO2'), n2: _num('op_N2'), h2s: _num('op_H2S'),
             urv: _num('op_urv'), lo: _num('op_lo'), hi: _num('op_hi'), des: _num('op_des'),
             TbF: _num('op_Tb'), Pb: _num('op_Pb')
@@ -2481,6 +2511,8 @@
         h += _row('Next plate up (larger bore)', r.up ? _bore(r.up) + ' — ' + (isFinite(r.up.pct) ? _fmt(r.up.pct, 1) + ' % of range' : 'off scale') : 'none within β 0.75');
         h += _row('Next plate down (smaller bore)', r.down ? _bore(r.down) + ' — ' + (isFinite(r.down.pct) ? _fmt(r.down.pct, 1) + ' % of range' : 'off scale') : 'none within β 0.10');
         h += _row('Z-factor (DAK)', r.Z.toFixed(4));
+        h += _row('Base Z-factor (Zb) / Fpv = √(Zb/Zf)', r.Zb.toFixed(5) + ' / ' + r.Fpv.toFixed(5));
+        h += _row('Gas gravity real Gr / ideal Gi', r.Gr.toFixed(4) + ' / ' + r.Gi.toFixed(4));
         h += _row('Flowing pressure Pf1', _u(r.Pf1, 'pressure', 1, 'psia', 0));
         h += '</div>';
         // Plate-change table (values written already converted)
@@ -2500,6 +2532,7 @@
         h += '</tbody></table></div></div>';
         h += '<div class="chart-wrap"><canvas id="op_chart" width="600" height="320"></canvas></div>';
         h += '<div><b>Notes</b> Rates use the AGA-3 page engine (flange taps, RG Cd, DAK Z with Standing + Wichert-Aziz pseudo-criticals; N2 is recorded but not in the Z correction). ' +
+            'Fpv = √(Zb/Zf) with the base Z (v3.0; was 1/√Zf, ≈ 0.1–0.3 % high); ' + (r.sgBasis === 'ideal' ? 'ideal gravity converted to real. ' : 'real gravity. ') +
             'Plate list: every 0.125" bore from 0.125" to the largest bore with β ≤ 0.75; the exact bore is rounded to the nearest 0.125" — confirm the plates on site.' +
             ' The 20–80 % window is field practice. Standard volumes are at the entered base conditions (they follow the header "Std" setting until you type your own).</div>';
         return h;
@@ -2750,7 +2783,10 @@
             mu: L.mu_g_leeGonzalezEakin(sg, tF, Z, p)
         };
         s.E = 1 / s.Bg_ft3scf;
-        s.Fpv = 1 / Math.sqrt(Z);
+        // AGA-3 / API MPMS 14.3.3 supercompressibility Fpv = √(Zb/Zf) (v3.0, as the AGA-3 engine;
+        // was 1/√Z with Zb = 1): Zb = DAK Z at the standard conditions on the same pseudo-criticals.
+        s.Zb = L.Z_dranchukAbouKassem(T_SC / pc.Tpc, P_SC / pc.Ppc);
+        s.Fpv = Math.sqrt(s.Zb / Z);
         if (full) {
             // cg = 1/p − (1/Z)·dZ/dp, dZ/dp from DAK by central difference in Ppr.
             var h = Math.max(1e-4 * Ppr, 1e-5);
@@ -2888,7 +2924,7 @@
         var h = '';
         // 1 — pseudo-criticals
         h += '<div class="rbox"><div class="rbox-title">Pseudo-critical Properties</div>' +
-            _row('Apparent molecular weight', _fmt(r.M, 2) + ' lb/lb-mol') +
+            _row('Apparent molecular weight', _fmt(r.M, 2) + (_metric() ? ' kg/kmol' : ' lb/lb-mol')) +   // same number in both
             _row('Hydrocarbon gas gravity', _fmt(r.sgHc, 4)) +
             _row('Tpc, hydrocarbon (Sutton)', _u(r.TpcHc, 'tempAbsolute', 1, '°R')) +
             _row('Ppc, hydrocarbon (Sutton)', _u(r.PpcHc, 'pressure', 1, 'psia')) +
@@ -2930,7 +2966,7 @@
                 _row('Bg', met ? _sig(s.Bg_ft3scf, 4) + ' rm³/sm³' : _sig(s.Bg_ft3scf, 4) + ' ft³/scf') +
                 _row('Gas density', _us(s.rho, 'density', 4, 'lb/ft³')) +
                 _row('Viscosity (Lee–Gonzalez–Eakin)', _us(s.mu, 'viscosity', 4, 'cp')) +
-                _row('Supercompressibility Fpv = √(1/Z)', _fmt(s.Fpv, 4)) +
+                _row('Supercompressibility Fpv = √(Zb/Z)', _fmt(s.Fpv, 4) + ' (Zb ' + _fmt(s.Zb, 5) + ')') +
                 '</div>';
         }
         // 5 — verdicts
@@ -2957,7 +2993,7 @@
             'impurity correction). k is the ideal-gas Cp°/Cv° at the flowing temperature: Cp° of a paraffin gas of the ' +
             'hydrocarbon molecular weight (interpolated between methane, ethane and propane) mixed with N2, CO2 and H2S ' +
             '(Reid–Prausnitz–Poling heat capacities). Speed of sound c = √(k·Z·R·T/M); the real-gas departure of k is ' +
-            'neglected, which is usual for engineering use but understates c at high pressure. Fpv takes base Z as 1.</div>';
+            'neglected, which is usual for engineering use but understates c at high pressure. Fpv = √(Zb/Z) with the DAK base Z at 14.696 psia / 60 °F (AGA-3; v3.0, was 1/√Z).</div>';
         return h;
     }
 
@@ -3816,7 +3852,11 @@
 //   GLR scf/STB, q gross liquid STB/d — constants as tabulated by Guo et al.
 //   (2007) Table 5.1 and Brown & Beggs, The Technology of Artificial Lift
 //   Methods, Vol. 1 (1977):
-//       Gilbert (1954)   a = 10.00  b = 1.89  c = 0.546
+//       Gilbert (1954)   a = 10.01  b = 1.89  c = 0.546   (v3.0: exactly Gilbert's
+//                        published q = p1·S^1.89/(435·R^0.546), R in Mscf/bbl, i.e.
+//                        a = 435/1000^0.546 = 10.0113 with GLR in scf/STB — the same
+//                        form as the host Choke Flow Rates and Dual Choke pages; the
+//                        rounded a = 10.00 of the tabulations read 0.11 % high)
 //       Ros (1960)       a = 17.40  b = 2.00  c = 0.500
 //       Baxendell (1958) a =  9.56  b = 1.93  c = 0.546
 //       Achong (1961)    a =  3.82  b = 1.88  c = 0.650
@@ -3870,7 +3910,7 @@
     var MW_AIR = 28.9647;              // lb/lb-mol
     var GILBERT_CRIT = 0.588;          // p2/p1 (absolute) for critical multiphase flow — Gilbert (1954): p1 ≥ 1.7·p2
     var CORR = {
-        gilbert:   { key: 'gilbert',   name: 'Gilbert (1954)',   a: 10.00, b: 1.89, c: 0.546 },
+        gilbert:   { key: 'gilbert',   name: 'Gilbert (1954)',   a: 435 / Math.pow(1000, 0.546), b: 1.89, c: 0.546 },   // = 435·(GLR/1000)^0.546
         ros:       { key: 'ros',       name: 'Ros (1960)',       a: 17.40, b: 2.00, c: 0.500 },
         baxendell: { key: 'baxendell', name: 'Baxendell (1958)', a: 9.56,  b: 1.93, c: 0.546 },
         achong:    { key: 'achong',    name: 'Achong (1961)',    a: 3.82,  b: 1.88, c: 0.650 }
@@ -4196,6 +4236,7 @@
               'Bean-up: wellhead back-pressure curve q = Cw·(pws² − pwh²)^n (absolute pressures, n = ' + _fmt(r.n, 2) + ') through the current point. '
             : 'Multiphase: Gilbert (1954), Ros (1960), Baxendell (1958) and Achong (1961) bean correlations, q = p1·S^b/(a·GLR^c), valid for critical flow (p1 ≥ 1.7·p2). ' +
               'They give gross liquid; oil = liquid × (1 − water cut). Upstream pressure is gauge, as in Gilbert\'s original chart. ' +
+              'Gilbert uses his published form q = p1·S^1.89/(435·R^0.546), R in Mscf/bbl (a = 10.01 with GLR in scf/STB; v3.0, was the rounded 10.00 — rates 0.11 % lower), the same as the Choke Flow Rates and Dual Choke pages. ' +
               'Bean-up: straight wellhead performance line from the shut-in WHP through the current point. ') +
             'A measured current rate tunes the bean equation and is carried to the next beans. Bean-up is a planning screen — the real wellhead performance ' +
             'bends with GLR and reservoir drawdown; step up one bean at a time and re-test.</div>';
@@ -7719,7 +7760,8 @@
         }
         if (typeof G.WTS_aga3_compute === 'function') {
             // Only Z is used; the orifice geometry is a placeholder the Z does not depend on.
-            var a = G.WTS_aga3_compute({ D: 4, d: 2, hw: 50, Ps: pPsia - P_ATM, TfF: tF, SG: sg, co2: co2, h2s: h2s, n2: n2 });
+            // sgBasis 'ideal': the gravity here is the same M/M_air gravity Gas PVT takes.
+            var a = G.WTS_aga3_compute({ D: 4, d: 2, hw: 50, Ps: pPsia - P_ATM, TfF: tF, SG: sg, sgBasis: 'ideal', co2: co2, h2s: h2s, n2: n2 });
             if (a && a.ok) return { z: a.Z, src: 'Standing + DAK (AGA-3)' };
         }
         return { z: NaN, err: 'No Z-factor engine is loaded; type the Z-factors.' };
