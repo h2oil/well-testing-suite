@@ -51,11 +51,10 @@
 // MODEL (screening-grade)
 //
 //   Section volume V          (ft³, user input or sum of pipe segments)
-//   Inventory at pressure P:  V_inv(P) = V · (P + 14.7) / 14.7   [scf]
-//      (ideal gas at constant T; the section is at uniform T_section,
-//       and the standard reference is 14.7 psia — the standard scf
-//       definition.  This is the same simplification used in the
-//       hand-calc spreadsheets that operators carry in the field.)
+//   Inventory at pressure P:
+//      V_inv(P) = V · (P + 14.7)/14.7 · 519.67/(T_section + 459.67)   [scf]
+//      (ideal gas, Z = 1, at the uniform section temperature, referred to
+//       the scf standard of 14.7 psia / 60 °F.)
 //
 //   Time to fill from HiPilot setting up to RD setting at backflow Q:
 //      t_fill = [V_inv(RD) − V_inv(HP)] / (Q · 1e6 / 86400)        [s]
@@ -111,6 +110,7 @@
 
     // Standard atmospheric reference for scf definition.
     var P_ATM = 14.7; // psia
+    var T_STD_R = 519.67; // 60 °F in °R — standard temperature of the scf
 
     // ───────────────────────────────────────────────────────────────
     // Preset locations (typical CATS workbook values)
@@ -174,8 +174,8 @@
     //
     //   Inputs unit-of-measure:
     //     sectionVolume_ft3       ft³
-    //     sectionGasTemp_F        °F  (informational; not used in the
-    //                                  ideal-gas screening calc)
+    //     sectionGasTemp_F        °F  (converts section ft³ to scf;
+    //                                  60 °F assumed when blank)
     //     gasFlowRate_MMscfd      MMSCFD  (backflow rate)
     //     gasSG                   air = 1 (informational)
     //     esdResponseTime_s       s
@@ -203,7 +203,7 @@
         }
 
         var V       = +inputs.sectionVolume_ft3;
-        var T_F     = +inputs.sectionGasTemp_F;     // informational
+        var T_F     = +inputs.sectionGasTemp_F;     // °F → scf conversion
         var Q_MMscf = +inputs.gasFlowRate_MMscfd;
         var SG      = +inputs.gasSG;                 // informational
         var tResp   = +inputs.esdResponseTime_s;
@@ -226,9 +226,15 @@
             return result;
         }
 
-        // Inventory model: V_inv(P) = V · (P + 14.7) / 14.7   [scf]
-        var inv_HP = V * (HP + P_ATM) / P_ATM;
-        var inv_RD = V * (RD + P_ATM) / P_ATM;
+        // Inventory model (ideal gas, Z = 1): standard volume of gas held in
+        // V ft³ at P psig and T °F, referred to 14.7 psia / 60 °F (the scf
+        // definition):  V_inv(P) = V · (P + 14.7)/14.7 · 519.67/(T + 459.67).
+        // The temperature ratio was previously omitted, overstating fill time
+        // by ~7 % at 100 °F (non-conservative) and understating it when cold.
+        var T_use = (_isNum(T_F) && T_F > -459.67) ? T_F : 60;
+        var V_std = V * T_STD_R / (T_use + 459.67);   // ft³ at section T → scf basis
+        var inv_HP = V_std * (HP + P_ATM) / P_ATM;
+        var inv_RD = V_std * (RD + P_ATM) / P_ATM;
 
         // Backflow in scf/s (1 MMSCFD = 1e6 scf / 86400 s).
         var qScfS = Q_MMscf * 1e6 / 86400;
@@ -264,9 +270,9 @@
             // Solve for HP* such that t_fill_at_HPstar == tResp:
             //   V·(RD+14.7)/14.7 − V·(HPstar+14.7)/14.7 == qScfS · tResp
             //   HPstar = RD − qScfS·tResp·14.7 / V
-            var HPstar = RD - (qScfS * tResp * P_ATM) / V;
+            var HPstar = RD - (qScfS * tResp * P_ATM) / V_std;
             // Also solve for RD* such that t_fill at the existing HP gives tResp:
-            var RDstar = HP + (qScfS * tResp * P_ATM) / V;
+            var RDstar = HP + (qScfS * tResp * P_ATM) / V_std;
 
             var rd_relief = (RD <= MAWP) ? (' Note also that the RV setting (' + RD.toFixed(0)
                 + ' psig) is below MAWP+10 % (' + (MAWP * 1.10).toFixed(0)
@@ -825,7 +831,8 @@
     //   numerator   = 292 · 5 / 14.7 = 99.31972789... scf
     //   denominator = 39.28·1e6/86400 = 454.6296296... scf/s
     //   t_fill      = 0.21849...     s
-    var expected = (292 * (135 - 130) / 14.7) / (39.28e6 / 86400);
+    //   (× 519.67/(23+459.67) = 1.0767 for the 23 °F section temperature)
+    var expected = (292 * (135 - 130) / 14.7 * 519.67 / (23 + 459.67)) / (39.28e6 / 86400);
     _check('analytic t_fill matches default case',
         Math.abs(r1.timeToReachRV_s - expected) < 1e-6,
         'expected=' + expected.toFixed(6) + ', got=' + r1.timeToReachRV_s.toFixed(6));

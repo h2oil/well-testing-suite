@@ -220,6 +220,21 @@ checks.push(['PRiSM_MODELS count >= 45', modelCount >= 45]);
 checks.push(['window.WTS_project',                   typeof win.WTS_project === 'object']);
 checks.push(['window.WTS_pageAutosave.flush',        !!(win.WTS_pageAutosave && typeof win.WTS_pageAutosave.flush === 'function')]);
 checks.push(['window.WTS_rerender',                  typeof win.WTS_rerender === 'function']);
+// Round-9 — plug-in calculator registry (host); prism-build/4N-calc-*.js register into it
+checks.push(['window.WTS_calcRegistry (object)',     !!win.WTS_calcRegistry && typeof win.WTS_calcRegistry === 'object']);
+checks.push(['WTS_calcRegistry entries well-formed', Object.keys(win.WTS_calcRegistry || {}).every((k) => {
+  const e = win.WTS_calcRegistry[k];
+  const ok = !!e && /^[a-z][a-z0-9_]{1,31}$/.test(k) && (e.key == null || e.key === k) && typeof e.render === 'function' &&
+             typeof e.title === 'string' && !!e.title && typeof e.group === 'string' && !!e.group;
+  if (!ok) console.error('malformed WTS_calcRegistry entry:', k);
+  return ok;
+})]);
+// Round-9 v1.7 calculators (41-44-calc-*.js): registered + pure compute functions
+[['gasdeliv', 'WTS_gasdeliv_compute'], ['oilipr', 'WTS_oilipr_compute'],
+ ['flareghg', 'WTS_flareghg_compute'], ['h2sroe', 'WTS_h2sroe_compute']].forEach(([k, fn]) => {
+  checks.push(['WTS_calcRegistry.' + k + ' registered',  !!(win.WTS_calcRegistry && win.WTS_calcRegistry[k])]);
+  checks.push(['window.' + fn + ' (function)',          typeof win[fn] === 'function']);
+});
 checks.push(['WTS_project has storage module',       !!(win.WTS_project && win.WTS_project.listModules().indexOf('storage') !== -1)]);
 (function storageRoundTrip() {
   let ok = false;

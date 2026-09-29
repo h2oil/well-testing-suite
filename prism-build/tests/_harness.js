@@ -8,7 +8,8 @@
 // loadApp(opts) options (all optional):
 //   fromSources  true (default) — rebuild the main script IN MEMORY from the
 //                current prism-build/ sources (phase1-2, phase3-4, round2..6,
-//                round8; round 7 is left as it is in the HTML). A source that
+//                round8, round9 = every 4N-calc-*.js plus any such name in
+//                sourceOverrides; round 7 is left as it is in the HTML). A source that
 //                fails a syntax check falls back to its git HEAD version (with
 //                a warning naming the file). false — use well-testing-app.html
 //                exactly as it is on disk.
@@ -91,6 +92,7 @@ const PIPELINE = [
   ['concat-round5', 'inject-round5'],
   ['concat-round6', 'inject-round6'],
   ['concat-round8', 'inject-round8'],
+  ['concat-round9', 'inject-round9'],   // plug-in calculators: every prism-build/4N-calc-*.js
 ];
 
 const MAIN_RE = /<script>\s*\/\* ═+\s*WELL TESTING SUITE([\s\S]+?)<\/script>/;
@@ -170,10 +172,13 @@ function buildFromSources(opts) {
   };
   let html = fs.readFileSync(HTML_PATH, 'utf8');
   const quiet = { log() {}, warn(m) { if (!/not present — skipped|not available — skipped/.test(m)) warn('[harness] ' + m); } };
+  // Round 9 lists its files from the directory; override names let a test add
+  // an in-memory calculator (e.g. '49-calc-probe.js') that is not on disk.
+  const extraFiles = opts.overrides ? Object.keys(opts.overrides).filter((f) => opts.overrides[f] != null) : [];
   for (const [c, i] of PIPELINE) {
     const concat = require(path.join(BUILD_DIR, c + '.js'));
     const inject = require(path.join(BUILD_DIR, i + '.js'));
-    const blob = concat.build({ read, log: quiet });
+    const blob = concat.build({ read, log: quiet, extraFiles });
     try { html = inject.inject(html, blob).out; }
     catch (e) { throw new Error('[harness] ' + i + ' failed in memory: ' + (e.lines || [e.message]).join(' ')); }
   }

@@ -135,7 +135,16 @@
         var margin     = (inputs.safetyMargin_psig != null)
                        ? +inputs.safetyMargin_psig : 5;
 
-        // Defensive defaults
+        // Input validation — report problems instead of silently computing
+        // with substitutes (a blank volume used to be replaced by 1 ft³).
+        var problems = [];
+        if (!_isNum(V) || V <= 0) problems.push('Section volume must be > 0 ft³.');
+        if (!_isNum(Pflow) || Pflow <= 0) problems.push('Section flowing pressure must be > 0 psig.');
+        if (!_isNum(Qleak_mmscfd) || Qleak_mmscfd <= 0) problems.push('Detectable leak rate must be > 0 MMscfd.');
+        if (!_isNum(tresp) || tresp <= 0) problems.push('ESD response time must be > 0 s.');
+        if (!_isNum(WHSIP)) problems.push('WHSIP is required (psig).');
+
+        // Defensive defaults (keep the numeric outputs finite)
         if (!_isNum(V) || V <= 0)               V = 1;
         if (!_isNum(Pflow))                      Pflow = 0;
         if (!_isNum(Qleak_mmscfd) || Qleak_mmscfd < 0) Qleak_mmscfd = 0;
@@ -197,7 +206,8 @@
             leakDrawdownPressure_psig: Pafter_psig,
             reachable: reachable,
             lowSensitivity: lowSensitivity,
-            rationale: rationale
+            rationale: rationale,
+            error: problems.length ? problems.join(' ') : null
         };
 
         // Persist into shared state for downstream tools / PDF export.
@@ -463,15 +473,26 @@
     function _runCalc() {
         if (!_hasDoc) return;
         var inputs = {
-            sectionVolume_ft3:           _num('wts_esdlo_volume', 0),
-            sectionFlowingPressure_psig: _num('wts_esdlo_pflow',  0),
-            detectableLeakRate_MMscfd:   _num('wts_esdlo_qleak', 25),
-            whsip_psig:                  _num('wts_esdlo_whsip', 2100),
-            esdResponseTime_s:           _num('wts_esdlo_tresp',  5),
+            // Blank required fields → NaN so compute() reports them (no silent defaults).
+            sectionVolume_ft3:           _num('wts_esdlo_volume', NaN),
+            sectionFlowingPressure_psig: _num('wts_esdlo_pflow',  NaN),
+            detectableLeakRate_MMscfd:   _num('wts_esdlo_qleak',  NaN),
+            whsip_psig:                  _num('wts_esdlo_whsip',  NaN),
+            esdResponseTime_s:           _num('wts_esdlo_tresp',  NaN),
             safetyMargin_psig:           _num('wts_esdlo_margin', 5)
         };
 
         var r = G.WTS_esdLoPilot_compute(inputs);
+
+        if (r.error) {
+            var rcE = document.getElementById('wts_esdlo_resultcard');
+            var rdE = document.getElementById('wts_esdlo_results');
+            if (rdE) rdE.innerHTML = '<div class="val-error"><strong>Please fix the following:</strong> ' + _esc(r.error) + '</div>';
+            if (rcE) rcE.style.display = '';
+            var stE = document.getElementById('wts_esdlo_status');
+            if (stE) stE.innerHTML = '<div style="color:#8b949e;font-size:12px;">Cannot evaluate — inputs incomplete.</div>';
+            return;
+        }
 
         // ── Results table ──
         var tbl = '' +
@@ -523,7 +544,8 @@
             badgeBorder = 'rgba(248,81,73,.45)';
             badgeColor  = '#f85149';
             badgeIcon   = '✖';   // ✗
-            badgeText   = 'Calculated drawdown pressure greater than flowing pressure — ' +
+            // Text now matches the tested condition (P_after < WHSIP).
+            badgeText   = 'Leak drawdown pressure is below WHSIP — ' +
                           'PSL CANNOT detect this leak rate at this location.';
         } else if (r.lowSensitivity) {
             badgeBg     = 'rgba(210,153,34,.10)';

@@ -9,7 +9,7 @@
 //     1. Erosion rate              (mils/year)
 //     2. Remaining Service Life    (days, measured WT -> minimum-spec WT)
 //     3. Time-to-failure           (days, measured WT -> failure WT)
-//     4. Maximum allowable working pressure based on yield + measured WT
+//     4. Maximum allowable working pressure (ASME B31.3 Eq. 3a, measured WT)
 //
 //   Coflex flexible hoses are tagged "NOT APPLICABLE" because their wall
 //   architecture does not erode in the same way as rigid line pipe.
@@ -106,8 +106,8 @@
     // ───────────────────────────────────────────────────────────────
     // Material database — typical test-pipework grades.
     //   density_lbft3   — for mass / specific-weight calcs (informational)
-    //   tensile_psi     — UTS, used as an upper bound on MAWP
-    //   yield_psi       — Sy, used in Barlow MAWP (factor 0.875 for mill tol.)
+    //   tensile_psi     — UTS  } B31.3 allowable S = min(UTS/3, 2·Sy/3)
+    //   yield_psi       — Sy   }
     //   erodes          — false for hose / non-metallic
     //   notes           — short note for tooltip / UI
     var MATERIALS = {
@@ -127,8 +127,9 @@
     var SCHEDULES = {
         '2': { '40': 0.154, '80': 0.218, '160': 0.344, '180': 0.436, 'XXH': 0.436 },
         '3': { '40': 0.216, '80': 0.300, '160': 0.438, '180': 0.552, 'XXH': 0.600 },
-        '4': { '40': 0.237, '80': 0.337, '160': 0.531, '180': 0.674, 'XXH': 0.812 },
-        '6': { '40': 0.280, '80': 0.432, '160': 0.719, '180': 0.864, 'XXH': 0.875 },
+        // XXH (XXS) per B36.10: 4" = 0.674 in, 6" = 0.864 in (were 0.812 / 0.875).
+        '4': { '40': 0.237, '80': 0.337, '160': 0.531, '180': 0.674, 'XXH': 0.674 },
+        '6': { '40': 0.280, '80': 0.432, '160': 0.719, '180': 0.864, 'XXH': 0.864 },
         '8': { '40': 0.322, '80': 0.500, '160': 0.906, '180': 1.000, 'XXH': 0.875 }
     };
 
@@ -241,23 +242,28 @@
     G.WTS_erosion_rate_salama = erosion_rate_salama;
 
     // ───────────────────────────────────────────────────────────────
-    // Maximum allowable working pressure (Barlow + 0.875 mill-tolerance)
+    // Maximum allowable working pressure — ASME B31.3 §304.1.2 Eq. (3a)
+    // solved for P with the MEASURED wall (no mill tolerance / corrosion
+    // allowance — the UT reading is the actual wall):
     //
-    //   P_allow = 2 * Sy * 0.875 * t_measured / OD     (psig)
+    //   P = 2·S·E·W·t / (D − 2·Y·t),   E = W = 1, Y = 0.4
+    //   S = min(UTS/3, 2·Sy/3)   (B31.3 §302.3.2 basis; e.g. A106-B /
+    //                             A333-6 → 20 ksi, X52 → 22.2 ksi)
     //
-    //   * Cap at material UTS / 2 to keep clearly outside fracture range.
+    // The previous form (2·Sy·0.875·t/OD) used the full YIELD stress with no
+    // design factor — a yield-onset pressure, ~1.5× higher than an allowable.
+    // Temperature derating above ~400 °F is not applied (screening).
     //   * For Coflex hose return the typical 5000 psi WP rating.
     // ───────────────────────────────────────────────────────────────
     function maxAllowablePressure(material_key, measured_WT_in, nps_in) {
         var m = MATERIALS[material_key] || MATERIALS['A333gr6'];
         if (!m.erodes) return 5000; // hose rated WP (typical)
         var od = getOD(nps_in);
-        var Sy = m.yield_psi;
-        var Sut = m.tensile_psi;
+        var S = Math.min(m.tensile_psi / 3, 2 * m.yield_psi / 3);
         var t = Math.max(_num(measured_WT_in, 0), 0);
-        var p = 2 * Sy * 0.875 * t / od;
-        var cap = Sut / 2;
-        return Math.min(p, cap);
+        var den = od - 2 * 0.4 * t;
+        if (!(den > 0)) return 0;
+        return 2 * S * t / den;
     }
 
     // ───────────────────────────────────────────────────────────────
@@ -667,7 +673,7 @@
                 '<div style="overflow-x:auto;-webkit-overflow-scrolling:touch">' +
                     '<table class="dtable" style="min-width:820px">' +
                         '<thead><tr>' + th('Segment') + th('Pipe', 'NPS / SCH · ID') + th('Velocity', 'ft/s') + th('Erosion', 'mpy') +
-                            th('Remaining life', 'to min-spec WT') + th('Time to failure', 'to failure WT') + th('MAWP', 'psig') + th('Status') + '</tr></thead>' +
+                            th('Remaining life', 'to min-spec WT') + th('Time to failure', 'to failure WT') + th('MAWP', 'psig · B31.3') + th('Status') + '</tr></thead>' +
                         '<tbody>' + resRows + '</tbody>' +
                     '</table>' +
                 '</div>' +

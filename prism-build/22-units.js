@@ -132,6 +132,13 @@
             imperial: { unit: 'inH2O', label: 'inH2O', factor: 2.49089, offset: 0 },
             metric:   { unit: 'mbar',  label: 'mbar',  factor: 1,       offset: 0 }
         },
+        // Orifice-meter differential: inH2O at 60 °F (AGA-3 N3 = 27.707
+        // inH2O/psi -> 68.94757/27.707 = 2.48845 mbar), not the 39.2 °F
+        // column of pressureSmall (G2 verifier: -0.05 %).
+        pressureSmall60: {
+            imperial: { unit: 'inH2O', label: 'inH2O', factor: 2.48845, offset: 0 },
+            metric:   { unit: 'mbar',  label: 'mbar',  factor: 1,       offset: 0 }
+        },
         // Temperature with offset.
         temperature: {
             imperial: { unit: 'F',  label: '°F', factor: 5/9, offset: 32 },
@@ -435,8 +442,8 @@
         },
         choke: {
             inputs: {
-                c_P1:   'pressure',
-                c_P3:   'pressure',
+                c_P1:   'pressureG',   // dual choke inputs are gauge (G1 audit)
+                c_P3:   'pressureG',
                 c_T:    'temperature',
                 c_s1:   'count',
                 c_cd1:  'dimensionless',
@@ -601,7 +608,8 @@
                 mp_d:   'lengthSmall',
                 mp_sl:  'lengthSmall',
                 mp_eff: 'percent',
-                mp_spm: 'frequency',
+                // strokes/min — unit-free count ('frequency' appended "(Hz)").
+                mp_spm: 'count',
                 mp_n:   'count'
             },
             outputs: {}
@@ -655,7 +663,7 @@
                 og_run:   'lengthSmall',
                 og_plate: 'lengthSmall',
                 og_sp:    'pressureG',
-                og_dp:    'pressureSmall',
+                og_dp:    'pressureSmall60',  // inH2O @ 60 °F (N3 = 27.707)
                 og_gg:    'sg',
                 og_gt:    'temperature'
             },
