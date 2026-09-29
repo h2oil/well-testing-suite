@@ -263,8 +263,8 @@ module.exports = [
       const model = W.collectPageReport(app.el('pgBody'), { charts: false });
       const js = JSON.stringify(model);
       assert.ok(model.inputs.length > 0 && model.results.length > 0, 'inputs + results sections');
-      // (The harness DOM has no table.rows, so table capture — test points and the
-      // deliverability table — is checked in a real browser; here .fg-item/.rrow/notes.)
+      // (Table capture — test points and the deliverability table — is covered by
+      // tests/calc-report-tables.test.js; here .fg-item/.rrow/notes.)
       ['Average reservoir pressure', 'Test type', 'Exponent n', 'Non-Darcy share', 'Exponent n = 0.870', 'sandface back-pressure'].forEach((n) => assert.includes(js, n));
       assert.ok(js.indexOf('"verdict":true') !== -1, 'verdict captured as a callout');
       const n0 = app.opened.length;
