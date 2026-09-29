@@ -57254,7 +57254,7 @@ function create(flowIn, opts) {
     else if (!a && b) {
       tanks[1].Vo = tanks[0].Vo; tanks[1].Vw = tanks[0].Vw; tanks[1].T = tanks[0].T; tanks[0].Vo = 0; tanks[0].Vw = 0;
       tanks[0].state = 'ready'; tanks[0].win = null; tanks[1].state = 'filling'; openWindow(1); active = 1;
-    } else if (!a && !b) { closeWindow(0); tanks[0].state = 'settling'; }
+    } else if (!a && !b) { tanks[0].win = null; tanks[0].pend = null; tanks[0].state = 'settling'; }   // no fill window at t = 0 → no (empty, zero-length) batch record
   }
   function doSwitch(forced) {
     var a = active, b = 1 - a;
@@ -57649,7 +57649,8 @@ function create(flowIn, opts) {
     qFlash = (oO + wO) * mmax(0, RsE(PsepA, Tsep) - RsE(PuA, Tu));
 
     // 5 explicit update: every flux leaves its source and enters its sink in this block
-    n_s += (qInG - qPcv - qPsv - qBlk - qBlowO - qBlowW) * h;
+    var VW0 = Vw1;                                  // pre-update water inventory: F.rW1 must be the true rate over this step (event location)
+    n_s +=(qInG - qPcv - qPsv - qBlk - qBlowO - qBlowW) * h;
     Vo1 += (qInO - weirO - wO) * h;
     Vw1 += (qInW - weirW - wW) * h;
     Vo2 += (weirO - oO) * h;
@@ -57703,7 +57704,7 @@ function create(flowIn, opts) {
     cum.drainedOil += (drO0 + drO1) * h; cum.drainedWater += (drW0 + drW1) * h;
 
     // 6 algebraic P + exact-exponential filters
-    var VB0 = VB, VW0 = Vw1;
+    var VB0 = VB;
     // ESD travel slew
     esdTravel = trNew; lcvO.x = xOnew; lcvW.x = xWnew;
     if (N.on) {
