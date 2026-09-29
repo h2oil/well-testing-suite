@@ -9,7 +9,8 @@
 //   fromSources  true (default) — rebuild the main script IN MEMORY from the
 //                current prism-build/ sources (phase1-2, phase3-4, round2..6,
 //                round8, round9 = every 4N-calc-*.js plus any such name in
-//                sourceOverrides; round 7 is left as it is in the HTML). A source that
+//                sourceOverrides, round10 = every 5N-*.js live-data file;
+//                round 7 is left as it is in the HTML). A source that
 //                fails a syntax check falls back to its git HEAD version (with
 //                a warning naming the file). false — use well-testing-app.html
 //                exactly as it is on disk.
@@ -93,6 +94,7 @@ const PIPELINE = [
   ['concat-round6', 'inject-round6'],
   ['concat-round8', 'inject-round8'],
   ['concat-round9', 'inject-round9'],   // plug-in calculators: every prism-build/4N-calc-*.js
+  ['concat-round10', 'inject-round10'], // live data: every prism-build/5N-*.js (Modbus, Mini WellOS)
 ];
 
 const MAIN_RE = /<script>\s*\/\* ═+\s*WELL TESTING SUITE([\s\S]+?)<\/script>/;
