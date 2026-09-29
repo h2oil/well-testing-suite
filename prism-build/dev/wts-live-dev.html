@@ -1,0 +1,183 @@
+<!doctype html>
+<!-- Dev-only harness for the Round-7 live controller (38-wts-live.js) with the
+     sim (31) and the 3D scene (32). Not injected, not shipped.
+     1. node prism-build/dev/build-host-shim.js      (patched host WTS section → prism-build/.tmp/)
+     2. npx http-server -p 8080  (repo root) → http://localhost:8080/prism-build/dev/wts-live-dev.html
+     Query: ?test=1 runs the DOM checks · ?units=1 loads 22-units (metric toggle) · ?mode=2d|3d forces the pref
+            ?w=1380 fixes the page-body width (look-dev frame) · ?nothree=1 hides WTS_3d (fallback path) -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WTS Live — dev harness</title>
+<link rel="stylesheet" href="../.tmp/wts-host.css">
+<style>
+  .devbar{position:fixed;right:10px;bottom:10px;z-index:2000;display:flex;gap:6px;flex-wrap:wrap;max-width:420px;padding:6px;border-radius:8px;
+    background:rgba(13,17,23,.92);border:1px solid #30363d;font:11px system-ui,sans-serif;color:#8b949e}
+  .devbar button{height:24px;padding:0 8px;border-radius:5px;border:1px solid #30363d;background:#161b22;color:#e6edf3;cursor:pointer;font-size:11px}
+  #devout{position:fixed;left:10px;bottom:10px;z-index:2000;max-width:min(560px,calc(100% - 20px));max-height:40vh;overflow:auto;margin:0;padding:8px 10px;border-radius:8px;
+    background:rgba(1,4,9,.94);border:1px solid #30363d;font:11px/1.45 ui-monospace,Menlo,monospace;color:#c9d1d9;white-space:pre-wrap;display:none}
+  #devout .ok{color:#56d364}#devout .bad{color:#ff7b72}
+</style>
+</head>
+<body>
+<div class="main">
+  <div class="page-header"><h2 id="pgTitle">Well Test Simulator</h2><p id="pgSub"></p></div>
+  <div class="page-body" id="pgBody"></div>
+</div>
+<div class="devbar" id="devbar">
+  <span>dev</span>
+  <button type="button" id="dvRemount" title="Simulate navigating away and back">Remount</button>
+  <button type="button" id="dvAway" title="Navigate away (dispose)">Away</button>
+  <button type="button" id="dvUnits" title="Toggle imperial / metric (needs ?units=1)">Units</button>
+  <button type="button" id="dvTest" title="Run the DOM checks">Tests</button>
+</div>
+<pre id="devout"></pre>
+<script>
+  (function () {
+    var p = new URLSearchParams(location.search);
+    window.__dev = { params: p };
+    // ?forcevis=1 — automation panes report the page hidden; pretend it is visible so the
+    // controller's watchdog drives the loop (rAF itself may still be withheld).
+    if (p.get('forcevis')) {
+      try {
+        Object.defineProperty(Document.prototype, 'hidden', { configurable: true, get: function () { return false; } });
+        Object.defineProperty(Document.prototype, 'visibilityState', { configurable: true, get: function () { return 'visible'; } });
+      } catch (e) {}
+    }
+    if (p.get('mode') === '2d' || p.get('mode') === '3d') {
+      try { var o = JSON.parse(localStorage.getItem('h2viz3d_prefs') || '{}'); o.mode = p.get('mode'); localStorage.setItem('h2viz3d_prefs', JSON.stringify(o)); } catch (e) {}
+    }
+    if (p.get('w')) document.write('<style>.page-body{width:' + (+p.get('w') + 64) + 'px;flex:none}</style>');
+    if (p.get('units')) document.write('<script src="../22-units.js"><\/script>');
+  })();
+</script>
+<script src="../31-wts-sim.js"></script>
+<script src="../32-wts-3d.js" onerror="console.info('[dev] 32-wts-3d.js not present — 2D only')"></script>
+<script>if (window.__dev.params.get('nothree')) { window.__dev.W3 = window.WTS_3d; window.WTS_3d = undefined; }</script>
+<script src="../38-wts-live.js"></script>
+<script src="../.tmp/wts-host-shim.js"></script>
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var errors = [];
+  window.addEventListener('error', function (e) { errors.push(String(e.message)); });
+  window.__dev.errors = errors;
+  function render() {
+    var body = $('pgBody');
+    body.innerHTML = '';
+    window.renderWTS(body);
+    document.dispatchEvent(new CustomEvent('h2oil:pagechange', { detail: { page: 'wts' } }));
+  }
+  function away() {
+    $('pgBody').innerHTML = '<div class="card" style="padding:30px">Another page</div>';
+    document.dispatchEvent(new CustomEvent('h2oil:pagechange', { detail: { page: 'other' } }));
+  }
+  window.__dev.render = render; window.__dev.away = away;
+  $('dvRemount').onclick = function () { away(); setTimeout(render, 200); };
+  $('dvAway').onclick = away;
+  $('dvUnits').onclick = function () {
+    var U = window.WTS_units; if (!U) { alert('Load with ?units=1'); return; }
+    U.setSystem(U.getSystem() === 'metric' ? 'imperial' : 'metric');
+  };
+  render();
+
+  // ── DOM checks (?test=1 or the Tests button) ──────────────────────
+  function out(line, ok) {
+    var o = $('devout'); o.style.display = 'block';
+    var s = document.createElement('div'); s.className = ok === true ? 'ok' : ok === false ? 'bad' : '';
+    s.textContent = line; o.appendChild(s); console.log('[dev-test] ' + line);
+  }
+  function wait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+  async function runTests() {
+    $('devout').innerHTML = '';
+    var pass = 0, fail = 0;
+    function check(name, cond, info) { if (cond) pass++; else fail++; out((cond ? 'ok   ' : 'FAIL ') + name + (info ? ' — ' + info : ''), !!cond); }
+    try { localStorage.removeItem('h2viz3d_prefs'); } catch (e) {}
+    render();
+    await wait(400);
+    var viz = $('wts_viz'), L = window.WTS_live, sim = L.getSim();
+    window.__tl = window.__tl || [];
+    if (sim && !sim.__devHooked) { sim.__devHooked = 1; sim.on('trip', function (p) { window.__tl.push('trip manual=' + p.manual + ' t=' + p.t.toFixed(1) + ' ' + p.msg); }); sim.on('esdReset', function (p) { window.__tl.push('esdReset t=' + p.t.toFixed(1)); }); }
+    if (sim) { ['pcvStuckClosed','pcvStuckOpen','oilDumpStuckOpen','oilDumpStuckClosed','waterDumpStuckClosed','surgePumpFail','slugging'].forEach(function (f) { sim.setFault(f, false); }); sim.reset('steady'); sim.setSpeed(10); sim.play(); }
+    check('controller mounted (toolbar, HUD, stage)', !!(viz && viz.querySelector('#wtsl_tb') && viz.querySelector('#wtsl_hud') && viz.querySelector('#wtsl_stage')));
+    check('sim created from the calc flow and running', !!(sim && sim.getState().running));
+    check('host card went edge-to-edge', viz.parentElement.classList.contains('wtsl-card--live') && viz.parentElement.style.padding === '0px');
+    check('#wts_view2d moved into the stage', !!viz.querySelector('#wtsl_stage #wts_view2d'));
+    check('default mode is 3D (pref absent)', viz.getAttribute('data-mode') === '3d' || !!(viz.querySelector('#wtsl_notice') && !viz.querySelector('#wtsl_notice').hidden), viz.getAttribute('data-mode'));
+    var hud = viz.querySelector('[data-h=pWh]');
+    await wait(700);
+    check('HUD shows live WHP', hud && /\d/.test(hud.textContent), hud && hud.textContent);
+    check('HUD clock ticks', /\d\d:\d\d:\d\d/.test(viz.querySelector('[data-h=clock]').textContent));
+    // mode toggle keeps the height
+    var h3d = viz.getBoundingClientRect().height;
+    viz.querySelector('[data-act=mode2d]').click(); await wait(250);
+    var h2d = viz.getBoundingClientRect().height;
+    check('2D toggle: same viz height', Math.abs(h3d - h2d) < 1.5, h3d.toFixed(1) + ' vs ' + h2d.toFixed(1));
+    check('2D pref persisted', JSON.parse(localStorage.getItem('h2viz3d_prefs') || '{}').mode === '2d');
+    var cv = $('wts_cv');
+    check('2D canvas backing store is CSS width × DPR', cv.width === Math.round(cv.clientWidth * (window.devicePixelRatio || 1)), cv.width + ' vs ' + cv.clientWidth);
+    // card via 2D pick on the separator
+    var r = cv.getBoundingClientRect(), Lx = window.WTS_DIAG_LAYOUT;
+    cv.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: r.left + Lx.tx[4] / Lx.W * r.width, clientY: r.top + Lx.cy / Lx.H * r.height }));
+    await wait(300);
+    var card = viz.querySelector('#wtsl_card');
+    check('2D click on V-101 opens the info card', card && !card.hidden && /V-101/.test(card.textContent));
+    var spBefore = parseFloat($('wts_Psep').value);
+    card.querySelector('[data-act=sp][data-v="5"]').click(); await wait(20);
+    card.querySelector('[data-act=sp][data-v="5"]').click(); await wait(500);
+    check('PCV SP +5 twice (base from host input, K65)', parseFloat($('wts_Psep').value) === spBefore + 10, $('wts_Psep').value);
+    await wait(400);
+    check('sim follows the new SP target', Math.abs(sim.getState().sep.SP - (spBefore + 10)) < 1e-6, sim.getState().sep.SP);
+    $('wts_Psep').value = String(spBefore); $('wts_Psep').dispatchEvent(new Event('input', { bubbles: true }));
+    card.querySelector('[data-act=card-close]').click(); await wait(50);
+    check('card closes', card.hidden);
+    // ESD manual trip via toolbar confirm
+    viz.querySelector('[data-act=esd]').click(); await wait(50);
+    var yes = viz.querySelector('[data-act=confirm-yes]');
+    check('ESD asks for confirmation', !!yes);
+    if (yes) yes.click();
+    await wait(350);
+    var al = viz.querySelector('#wtsl_alarm');
+    check('manual ESD → amber banner', !al.hidden && al.classList.contains('manual') && /ESD CLOSED/.test(al.textContent), al.className);
+    check('toolbar shows Reset ESD', /Reset ESD/.test(viz.querySelector('[data-act=esd]').textContent));
+    viz.querySelector('[data-act=esd]').click(); await wait(350);
+    check('Reset ESD reopens (no banner)', al.hidden && !sim.getState().esd.tripped);
+    // fault → trip banner red
+    sim.setFault('pcvStuckClosed', true); sim.advance(30);
+    await wait(300);
+    check('pcvStuckClosed → red trip banner', al.classList.contains('trip') && /ESD TRIPPED/.test(al.textContent), al.textContent.slice(0, 80));
+    var rb = al.querySelector('[data-act=esd-reset]');
+    check('Reset ESD blocked while the fault holds PSHH', rb && rb.disabled);
+    sim.setFault('pcvStuckClosed', false); sim.advance(60); await wait(1200);
+    var rb2 = al.querySelector('[data-act=esd-reset]');
+    check('Reset ESD enabled once the trip condition clears', rb2 && !rb2.disabled);
+    if (rb2) rb2.click();
+    await wait(400);
+    check('ESD reset after clearing the fault', !sim.getState().esd.tripped);
+    // alarms drawer + ack all
+    viz.querySelector('[data-act=alarms]').click(); await wait(100);
+    var dr = viz.querySelector('#wtsl_drawer');
+    check('Alarms drawer opens', !dr.hidden && /Alarms \(/.test(dr.textContent));
+    dr.querySelector('[data-act=ackall]').click(); await wait(100);
+    var m = L._internals && window.WTS_live;
+    viz.querySelector('[data-act=alarms]').click(); await wait(50);
+    // back to 3D, then navigation away and back → resume toast, same sim
+    viz.querySelector('[data-act=mode3d]').click(); await wait(200);
+    away(); await wait(150);
+    check('navigation away disposes (no body.wtsl-max, no loop)', !document.body.classList.contains('wtsl-max'));
+    render(); await wait(700);
+    check('remount reuses the same sim (clock continuous)', window.WTS_live.getSim() === sim);
+    check('resume toast shown', /Resumed at T\+/.test($('wts_viz').textContent));
+    check('no uncaught errors', errors.length === 0, errors.join(' | '));
+    out('[dev-test] ' + pass + '/' + (pass + fail) + ' passed', fail === 0);
+    window.__dev.result = { pass: pass, fail: fail };
+    return window.__dev.result;
+  }
+  window.__dev.runTests = runTests;
+  $('dvTest').onclick = runTests;
+  if (window.__dev.params.get('test')) setTimeout(runTests, 600);
+})();
+</script>
+</body>
+</html>

@@ -135,6 +135,10 @@ function buildFromSources(opts) {
     const rel = 'prism-build/' + file;
     const p = path.join(BUILD_DIR, file);
     const ov = opts.overrides && Object.prototype.hasOwnProperty.call(opts.overrides, file) ? opts.overrides[file] : undefined;
+    // An explicit null override means "this file is absent" — never fall back
+    // to its git HEAD copy (that would silently undo the override once the
+    // file is committed).
+    if (ov === null) { skipped.push({ file, error: 'override: absent' }); resolved.set(file, null); return null; }
     let src = ov !== undefined ? ov : (fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : null);
     let out = null;
     if (src != null) {

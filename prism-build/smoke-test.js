@@ -199,6 +199,23 @@ const checks = [
 let modelCount = win.PRiSM_MODELS ? Object.keys(win.PRiSM_MODELS).length : 0;
 checks.push(['PRiSM_MODELS count >= 45', modelCount >= 45]);
 
+// Round-7 — live 3D Well Test Simulator (31 sim, 32 scene, 38 controller)
+[
+  ['window.WTS_sim',                 typeof win.WTS_sim === 'object'],
+  ['WTS_sim.create',                 typeof (win.WTS_sim||{}).create === 'function'],
+  ['WTS_sim.SAMPLE_FLOW.inputs',     !!(win.WTS_sim && win.WTS_sim.SAMPLE_FLOW && win.WTS_sim.SAMPLE_FLOW.inputs)],
+  ['WTS_sim 1h steady finite+balanced', (() => { try { const S = win.WTS_sim, s = S.create(S.SAMPLE_FLOW, {seed:7});
+      for (let i = 0; i < 360; i++) s.advance(10); const st = s.getState();
+      return isFinite(st.sep.P) && Math.abs(st.sep.P - 150) < 15 && Math.abs(st.health.massErr.oil) < 1e-6; } catch (e) { return false; } })()],
+  ['window.WTS_3d',                  typeof win.WTS_3d === 'object'],
+  ['WTS_3d.mount',                   typeof (win.WTS_3d||{}).mount === 'function'],
+  ['WTS_3d.isSupported() false in node', !!win.WTS_3d && win.WTS_3d.isSupported() === false],
+  ['window.WTS_live',                typeof win.WTS_live === 'object'],
+  ['WTS_live.mount',                 typeof (win.WTS_live||{}).mount === 'function'],
+  ['window.wtsDrawDiag bridge',      typeof win.wtsDrawDiag === 'function'],
+  ['window.WTS_DIAG_LAYOUT',         !!(win.WTS_DIAG_LAYOUT && win.WTS_DIAG_LAYOUT.tx && win.WTS_DIAG_LAYOUT.tx.length === 6 && win.WTS_DIAG_LAYOUT.W === 1200)],
+].forEach((c) => checks.push(c));
+
 // Round-6 — project file (.h2oilproj) + host universal autosave hooks
 checks.push(['window.WTS_project',                   typeof win.WTS_project === 'object']);
 checks.push(['window.WTS_pageAutosave.flush',        !!(win.WTS_pageAutosave && typeof win.WTS_pageAutosave.flush === 'function')]);

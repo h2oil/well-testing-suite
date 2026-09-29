@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WTS 3D Dev Harness</title>
+<!-- Dev-only harness for prism-build/32-wts-3d.js (not injected, not shipped). Serve the repo root:
+     npx http-server -p 8080  →  http://localhost:8080/prism-build/dev/wts-3d-dev.html
+     Query: ?q=high|medium|low|auto  ?view=process  ?w=1380&h=700  ?mocks=0  ?sim=0 (force fake) ?intro=1 -->
+<style>
+  :root {
+    --bg0: #0a0e14; --bg1: #0d1117; --bg2: #161b22; --bg3: #1c2128; --bg4: #21262d;
+    --border: #30363d; --border-light: #3d444d;
+    --text: #e6edf3; --text2: #8b949e; --text3: #6e7681;
+    --accent: #f0883e; --accent2: #d17a2f;
+    --green: #3fb950; --blue: #58a6ff; --purple: #bc8cff; --red: #f85149; --yellow: #d29922;
+  }
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg1); color: var(--text); padding: 12px 16px 40px; }
+  h1 { font-size: 14px; color: var(--accent); letter-spacing: 1px; text-transform: uppercase; margin-bottom: 8px; }
+  .card { background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 0; margin-bottom: 12px; overflow: hidden; }
+  #wts_viz { position: relative; width: 100%; height: 700px; background: var(--bg0); }
+  #wtsl_view3d { position: absolute; inset: 0; }
+  .mock-tb { position: absolute; left: 8px; right: 8px; top: 8px; height: 40px; border-radius: 8px; background: rgba(13,17,23,.72);
+             border: 1px solid rgba(48,54,61,.9); z-index: 10; display: flex; align-items: center; gap: 8px; padding: 0 10px; font-size: 12px; color: var(--text2); pointer-events: none; }
+  .mock-tb b { color: var(--text); } .mock-tb .seg { background: var(--bg4); padding: 4px 9px; border-radius: 6px; } .mock-tb .seg.on { background: var(--accent); color: #111; font-weight: 700; }
+  .mock-hud { position: absolute; left: 8px; right: 8px; bottom: 8px; height: 60px; border-radius: 8px; background: rgba(13,17,23,.78);
+              border: 1px solid rgba(48,54,61,.9); z-index: 10; display: grid; grid-template-columns: 180px 1.2fr 1fr 1fr 170px; gap: 10px; padding: 8px 12px; font-size: 11px; color: var(--text2); pointer-events: none; }
+  .mock-hud div b { display: block; font: 600 14px/1.3 ui-monospace, Menlo, Consolas, monospace; color: var(--text); }
+  .mock-hud .p { color: #f0883e; }
+  .ctl { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 6px 0; }
+  .ctl button, .ctl select { background: var(--bg2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 9px; font-size: 12px; cursor: pointer; }
+  .ctl button:hover { border-color: var(--accent); }
+  .ctl label { font-size: 11px; color: var(--text2); text-transform: uppercase; letter-spacing: .4px; margin-left: 6px; }
+  #stats { font: 12px ui-monospace, Menlo, Consolas, monospace; color: var(--text2); white-space: pre; margin-top: 6px; }
+  #log { font: 11px ui-monospace, Menlo, Consolas, monospace; color: var(--text3); white-space: pre-wrap; max-height: 140px; overflow: auto; margin-top: 6px; }
+  .note { font-size: 11px; color: var(--text3); }
+</style>
+</head>
+<body>
+<h1>WTS live 3D — dev harness <span class="note">(32-wts-3d.js · not shipped)</span></h1>
+<div class="card" id="stageCard">
+  <div id="wts_viz">
+    <div id="wtsl_view3d"></div>
+    <div class="mock-tb" id="mockTb"><span class="seg on">3D</span><span class="seg">2D</span><b>&nbsp;▶ 10×</b><span>Reset ▾</span><span>ESD</span><span>View ▾</span><span>Colour ▾</span><span>Labels</span><span id="clk" style="margin-left:auto">T+00:00:00</span></div>
+    <div class="mock-hud" id="mockHud">
+      <div>Clock<b id="hClk">00:00:00</b></div>
+      <div>Pressures<b><span class="p" id="hWhp">3,000</span> · <span class="p" id="hSep">150</span> · <span class="p" id="hSurge">25</span> psig</b></div>
+      <div>Live rates<b id="hRates">10 MMSCFD</b></div>
+      <div>Cumulative<b id="hCum">0 STB</b></div>
+      <div>Tanks<b id="hTanks">A 30% · B 0%</b></div>
+    </div>
+  </div>
+</div>
+<div class="ctl">
+  <label>View</label><button data-v="overview">0 Overview</button><button data-v="wellhead">1 Wellhead</button><button data-v="separator">2 Separator</button><button data-v="tanks">3 Tanks</button><button data-v="flare">4 Flare</button><button data-v="process">5 Process</button><button id="bReset">Reset view</button>
+  <label>Colour</label><select id="sOv"><option>phase</option><option>pressure</option><option>temperature</option><option>erosion</option></select>
+  <label>Quality</label><select id="sQ"><option>auto</option><option>high</option><option>medium</option><option>low</option></select>
+  <label>Labels</label><select id="sL"><option>all</option><option>equip</option><option>off</option></select>
+</div>
+<div class="ctl">
+  <button id="bPause">❚❚ Pause</button><label>Speed</label><select id="sSpd"><option>1</option><option selected>10</option><option>60</option><option>600</option></select>
+  <button id="bTrip">ESD trip (auto)</button><button id="bMan">ESD close (manual)</button><button id="bResetEsd">Reset ESD</button>
+  <button id="bByp">Heater bypass</button><button id="bBeanM">Bean −2</button><button id="bBeanP">Bean +2</button>
+  <label>API</label><input id="rApi" type="range" min="10" max="55" value="35">
+  <button id="bOrbit">Auto-orbit</button><button id="bMocks">Toggle mocks</button><button id="bLose">Lose context</button><button id="bSnap">Snapshot</button>
+</div>
+<div id="stats">loading…</div>
+<div id="log"></div>
+<script>
+  window.__devLog = function (m) { var el = document.getElementById('log'); el.textContent = new Date().toISOString().slice(11, 19) + '  ' + m + '\n' + el.textContent.slice(0, 4000); };
+  (function () { var q = new URLSearchParams(location.search); if (q.get('h')) document.getElementById('wts_viz').style.height = q.get('h') + 'px';
+    if (q.get('w')) { document.getElementById('stageCard').style.width = q.get('w') + 'px'; } if (q.get('mocks') === '0') { document.getElementById('mockTb').style.display = 'none'; document.getElementById('mockHud').style.display = 'none'; } })();
+</script>
+<script src="../31-wts-sim.js" onerror="window.__noSim=true"></script>
+<script src="../32-wts-3d.js"></script>
+<script>
+(function () {
+  var q = new URLSearchParams(location.search), W3 = window.WTS_3d, I = W3._internals, h = null;
+  var useSim = q.get('sim') !== '0' && window.WTS_sim && typeof window.WTS_sim.create === 'function' && window.WTS_sim.SAMPLE_FLOW;
+  var resetPending = false, sim = null, fakeT = 0, fakeO = { esd:'open', bean:32, bypass:false, API:35, running:true }, speed = 10, running = true;
+  if (useSim) { try { sim = window.WTS_sim.create(window.WTS_sim.SAMPLE_FLOW, { mode:'steady' }); sim.play(); sim.setSpeed(10); __devLog('driving with WTS_sim ' + (window.WTS_sim.VERSION || '')); } catch (e) { sim = null; __devLog('WTS_sim.create failed: ' + e.message); } }
+  if (!sim) __devLog('driving with WTS_3d._internals.fakeSnapshot');
+  function getState() { if (sim) return sim.getState(); fakeO.running = running; return I.fakeSnapshot(fakeT, fakeO); }
+  var IMP = { pressureG:'psig', pressureTank:'psig', temperature:'°F', gasRate:'MMSCFD', liquidRate:'BPD', volume:'bbl', gasVolume:'MMSCF', velocity:'ft/s', length:'ft', lengthSmall:'in', percent:'%', gor:'scf/STB', powerLarge:'MMBtu/hr' };
+  function fmtParts(v, cat, dp) { if (cat === 'pressureTank' && Math.abs(v) < 0.5) return { v:'ATM', u:'' };
+    return { v:isFinite(v) ? (+v).toLocaleString('en-US', { minimumFractionDigits:dp || 0, maximumFractionDigits:dp || 0 }) : '—', u:IMP[cat] || '' }; }
+  function fmt(v, cat, dp) { var p = fmtParts(v, cat, dp); return p.u ? p.v + ' ' + p.u : p.v; }
+  var mocksOn = q.get('mocks') !== '0';
+  function insets() { return mocksOn ? { top:98, bottom:76, left:0, right:0, card:null } : { top:0, bottom:0, left:0, right:0, card:null }; }
+  var t0 = performance.now();
+  W3.mount(document.getElementById('wtsl_view3d'), {
+    fmt:fmt, fmtParts:fmtParts, units:{ system:'imperial', conv:function (v, cat) { return { value:v, unit:IMP[cat] || '' }; } },
+    quality:q.get('q') || 'auto', labels:'all', overlay:'phase', insets:insets(), intro:q.get('intro') === '1',
+    onPick:function (id) { __devLog('pick ' + id); h && h.select(id); },
+    onAction:function (a) { __devLog('action ' + JSON.stringify(a)); trip('tripped'); },
+    onError:function (e, fatal) { __devLog('error ' + (e && e.code || '') + ' ' + (e && e.message) + (fatal ? ' (fatal)' : '')); console.error(e); },
+    onStats:function (s) { document.getElementById('stats').textContent = 'fps ' + s.fps + '  cpu ' + s.cpuMs.toFixed(2) + ' ms  gpu ' + (s.gpuMs == null ? '—' : s.gpuMs.toFixed(2) + ' ms') +
+      '  draws ' + s.drawCalls + '  tris ' + s.triangles + '  tier ' + s.quality + '  dpr ' + s.dpr.toFixed(2) + '  lowPerf ' + s.lowPerf + '  vsyncCapped ' + s.vsyncCapped +
+      '  programs ' + (h && h._debug.renderer().info.programs ? h._debug.renderer().info.programs.length : '?'); }
+  }).then(function (handle) {
+    h = window.__h = handle;
+    window.__devStep = function (n, dt) { dt = dt || 1 / 60; h._debug.noCap = true; for (var i = 0; i < n; i++) { if (sim) sim.step(dt); else if (running) fakeT += dt * speed; h.frame(getState(), dt); } h._debug.noCap = false; return getState().clock; }; __devLog('mounted in ' + Math.round(performance.now() - t0) + ' ms');
+    if (q.get('view')) h.view(q.get('view'));
+    var last = performance.now();
+    function loop() {
+      if (h.disposed) return;
+      var t = performance.now(), dt = Math.min((t - last) / 1000, 0.1); last = t;
+      if (sim) sim.step(dt); else if (running) fakeT += dt * speed;
+      if (sim && resetPending && sim.getState().esd.canReset) { var rr = sim.resetESD(); resetPending = !rr.ok; __devLog('resetESD ' + JSON.stringify(rr)); }
+      h.frame(getState(), dt); hud(); requestAnimationFrame(loop);
+    }
+    requestAnimationFrame(loop);
+  }, function (e) { __devLog('mount failed: ' + (e && e.code) + ' ' + (e && e.message)); document.getElementById('stats').textContent = 'mount failed: ' + (e && e.code); });
+  var hudT = 0;
+  function hud() {
+    var tn = performance.now(); if (tn - hudT < 250) return; hudT = tn; var s = getState();
+    document.getElementById('hClk').textContent = s.clock; document.getElementById('clk').textContent = 'T+' + s.clock;
+    document.getElementById('hWhp').textContent = Math.round(s.nodes.wellhead.P).toLocaleString(); document.getElementById('hSep').textContent = s.sep.P.toFixed(1);
+    document.getElementById('hSurge').textContent = s.surge.P.toFixed(1);
+    document.getElementById('hRates').textContent = s.rates.gas_mmscfd.toFixed(2) + ' MMSCFD · ' + Math.round(s.rates.oil_stbd) + ' STB/d';
+    document.getElementById('hCum').textContent = s.cum.oilIn_stb.toFixed(1) + ' STB · ' + s.cum.gasIn_mmscf.toFixed(3) + ' MMSCF';
+    document.getElementById('hTanks').textContent = 'A ' + Math.round(s.gauge.tanks[0].frac * 100) + '% · B ' + Math.round(s.gauge.tanks[1].frac * 100) + '%';
+  }
+  function trip(mode) {
+    if (sim) { if (mode === 'manual') sim.tripESD('manual'); else { try { sim.setFault('pcvStuckClosed', true); } catch (e) {} } return; }
+    fakeO.esd = mode; fakeO.tEsd = fakeT; delete fakeO.tReset;
+  }
+  function $(id) { return document.getElementById(id); }
+  document.querySelectorAll('[data-v]').forEach(function (b) { b.onclick = function () { h && h.view(b.getAttribute('data-v')); }; });
+  $('bReset').onclick = function () { h && h.resetView(); };
+  $('sOv').onchange = function () { h && h.setOverlay(this.value); __devLog('legend ' + JSON.stringify(h.legend())); };
+  $('sQ').onchange = function () { h && h.setQuality(this.value); };
+  $('sL').onchange = function () { h && h.setLabels(this.value); };
+  $('bPause').onclick = function () { running = !running; if (sim) running ? sim.play() : sim.pause(); this.textContent = running ? '❚❚ Pause' : '▶ Play'; };
+  $('sSpd').onchange = function () { speed = +this.value; if (sim) sim.setSpeed(speed); };
+  $('bTrip').onclick = function () { trip('tripped'); }; $('bMan').onclick = function () { trip('manual'); };
+  $('bResetEsd').onclick = function () { if (sim) { try { sim.setFault('pcvStuckClosed', false); } catch (e) {} var rr = sim.resetESD(); resetPending = !rr.ok; __devLog('resetESD ' + JSON.stringify(rr) + (resetPending ? ' (will retry when clear)' : '')); } else { fakeO.esd = 'open'; fakeO.tReset = fakeT; } };
+  $('bByp').onclick = function () { fakeO.bypass = !fakeO.bypass; fakeO.flowSeq = (fakeO.flowSeq || 1) + 1; };
+  $('bBeanM').onclick = function () { fakeO.bean = Math.max(4, fakeO.bean - 2); fakeO.flowSeq = (fakeO.flowSeq || 1) + 1; };
+  $('bBeanP').onclick = function () { fakeO.bean = Math.min(128, fakeO.bean + 2); fakeO.flowSeq = (fakeO.flowSeq || 1) + 1; };
+  $('rApi').oninput = function () { fakeO.API = +this.value; };
+  var orb = false; $('bOrbit').onclick = function () { orb = !orb; h && h.setAutoOrbit(orb); };
+  $('bMocks').onclick = function () { mocksOn = !mocksOn; $('mockTb').style.display = $('mockHud').style.display = mocksOn ? '' : 'none'; h && h.setInsets(insets()); };
+  $('bLose').onclick = function () { var gl = h && h._debug.renderer().getContext(), ext = gl && gl.getExtension('WEBGL_lose_context'); if (ext) ext.loseContext(); };
+  $('bSnap').onclick = function () { var c = document.querySelector('.wts3d-canvas'), u = c && c.__h2oilSnapshot && c.__h2oilSnapshot(); __devLog('snapshot ' + (u ? u.length + ' chars' : 'null')); if (u) { var w = window.open(); if (w) w.document.write('<img src="' + u + '" style="max-width:100%">'); } };
+  // look-dev helper: __zoom(x,y,w,h) renders a frame and shows that CSS-px crop of the 3D canvas full-window (labels excluded); __unzoom()
+  window.__zoom = function (x, y, w, h) {
+    var c = document.querySelector('.wts3d-canvas'), u = c.__h2oilSnapshot(), img = new Image();
+    return new Promise(function (res) { img.onload = function () {
+      var o = document.getElementById('__zo'); if (!o) { o = document.createElement('canvas'); o.id = '__zo'; o.style.cssText = 'position:fixed;left:0;top:0;width:100vw;height:100vh;z-index:99999;background:#000'; o.onclick = function () { o.remove(); }; document.body.appendChild(o); }
+      o.width = innerWidth; o.height = innerHeight; var k = c.width / c.clientWidth, g = o.getContext('2d'), sc = Math.min(o.width / w, o.height / h);
+      g.fillStyle = '#000'; g.fillRect(0, 0, o.width, o.height); g.drawImage(img, x * k, y * k, w * k, h * k, 0, 0, w * sc, h * sc); res(true); }; img.src = u; });
+  };
+  window.__unzoom = function () { var o = document.getElementById('__zo'); if (o) o.remove(); };
+  // print the SHA-384 of the three.js bytes once (to pin WTS_3d.THREE_SHA384)
+  fetch(W3.THREE_URLS[0]).then(function (r) { return r.arrayBuffer(); }).then(function (b) { return crypto.subtle.digest('SHA-384', b); }).then(function (d) {
+    var s = '', u = new Uint8Array(d); for (var i = 0; i < u.length; i++) s += String.fromCharCode(u[i]); var hsh = btoa(s);
+    console.info('[wts-3d-dev] three r170 SHA-384 = ' + hsh + (hsh === W3.THREE_SHA384 ? ' (matches pinned)' : ' (DIFFERS from pinned!)')); }).catch(function () {});
+  document.addEventListener('keydown', function (e) { var m = { '0':'overview', 'h':'overview', 'H':'overview', '1':'wellhead', '2':'separator', '3':'tanks', '4':'flare', '5':'process' }; if (m[e.key] && h) h.view(m[e.key]); });
+})();
+</script>
+</body>
+</html>

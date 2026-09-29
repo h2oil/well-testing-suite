@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WTS Sim Trends</title>
+<!-- Dev harness for 31-wts-sim.js (Engineer A). Not injected, not shipped. -->
+<style>
+  :root { --bg0:#0d1117; --bg1:#161b22; --bg2:#21262d; --border:#30363d; --text:#e6edf3; --text2:#8b949e; --text3:#6e7681;
+          --accent:#f0883e; --blue:#58a6ff; --green:#3fb950; --yellow:#d29922; --red:#f85149; --purple:#bc8cff; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg0); color: var(--text); font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--border); background: var(--bg1); }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  .clock { font: 600 14px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--accent); }
+  button { background: var(--bg2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 10px; font: inherit; cursor: pointer; }
+  button.on { border-color: var(--accent); color: var(--accent); }
+  select { background: var(--bg2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; font: inherit; }
+  main { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 12px; padding: 12px 16px; }
+  .card { background: var(--bg1); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; min-width: 0; }
+  .card h2 { font-size: 12px; margin: 0 0 6px; color: var(--text2); font-weight: 600; letter-spacing: .02em; }
+  .vals { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-bottom: 6px; font-variant-numeric: tabular-nums; }
+  .vals b { color: var(--text); font-weight: 600; }
+  .vals span { color: var(--text2); }
+  canvas { width: 100%; height: 150px; display: block; }
+  #alarms { grid-column: 1 / -1; }
+  #alarms ul { margin: 0; padding-left: 18px; color: var(--text2); max-height: 120px; overflow: auto; }
+  .sev-trip, .sev-alarm { color: var(--red); } .sev-warn { color: var(--yellow); } .sev-hyd { color: var(--blue); } .sev-info { color: var(--purple); }
+</style>
+</head>
+<body>
+<header>
+  <h1>WTS dynamic sim — trends</h1>
+  <span class="clock" id="clock">T+00:00:00</span>
+  <button id="play" class="on">❚❚ Pause</button>
+  <span>Speed <select id="speed"><option>1</option><option selected>10</option><option>60</option><option>600</option></select>×</span>
+  <select id="fault"><option value="">Scenario…</option></select>
+  <button id="esd">Trip ESD</button>
+  <button id="rst">Reset (steady)</button>
+  <button id="rste">Start from empty</button>
+</header>
+<main>
+  <section class="card"><h2>Separator pressure vs SP_eff (psig)</h2><div class="vals" id="vP"></div><canvas id="cP"></canvas></section>
+  <section class="card"><h2>V-101 levels (% of ID): bucket · interface · C1 total</h2><div class="vals" id="vL"></div><canvas id="cL"></canvas></section>
+  <section class="card"><h2>T-201 surge level (%) and pressure (psig)</h2><div class="vals" id="vU"></div><canvas id="cU"></canvas></section>
+  <section class="card"><h2>T-301 gauge compartments A / B (%)</h2><div class="vals" id="vG"></div><canvas id="cG"></canvas></section>
+  <section class="card"><h2>Wellhead and choke outlet pressure (psig)</h2><div class="vals" id="vW"></div><canvas id="cW"></canvas></section>
+  <section class="card"><h2>Rates: flare gas (MMSCFD) and oil meter (STB/d)</h2><div class="vals" id="vR"></div><canvas id="cR"></canvas></section>
+  <section class="card" id="alarms"><h2>Active alarms · recent log</h2><ul id="al"></ul></section>
+</main>
+<script src="../31-wts-sim.js"></script>
+<script>
+(function () {
+  'use strict';
+  var S = window.WTS_sim, sim = S.create(S.SAMPLE_FLOW, { seed: 7 });
+  var $ = function (id) { return document.getElementById(id); };
+  var css = getComputedStyle(document.documentElement), C = function (n) { return css.getPropertyValue(n).trim(); };
+  S.FAULTS.forEach(function (f) { var o = document.createElement('option'); o.value = f.id; o.textContent = f.label; $('fault').appendChild(o); });
+  $('play').onclick = function () { if (sim.isRunning()) sim.pause(); else sim.play(); this.textContent = sim.isRunning() ? '❚❚ Pause' : '▶ Play'; this.classList.toggle('on', sim.isRunning()); };
+  $('speed').onchange = function () { sim.setSpeed(+this.value); };
+  $('fault').onchange = function () { if (this.value) { var st = sim.getState(); sim.setFault(this.value, !st.faults[this.value]); } this.value = ''; };
+  $('esd').onclick = function () { var st = sim.getState(); if (st.esd.tripped) { var r = sim.resetESD(); if (!r.ok) alert('Blocked: ' + r.blocking.join(', ')); } else sim.tripESD('manual'); };
+  $('rst').onclick = function () { sim.reset('steady'); };
+  $('rste').onclick = function () { sim.reset('empty'); };
+  function plot(cv, series, opt) {
+    var dpr = window.devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight;
+    if (cv.width !== Math.round(w * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+    var g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
+    var lo = Infinity, hi = -Infinity, t0 = Infinity, t1 = -Infinity;
+    series.forEach(function (s) { s.d.y.forEach(function (v) { lo = Math.min(lo, v); hi = Math.max(hi, v); }); if (s.d.t.length) { t0 = Math.min(t0, s.d.t[0]); t1 = Math.max(t1, s.d.t[s.d.t.length - 1]); } });
+    if (opt && opt.lo != null) lo = Math.min(lo, opt.lo); if (opt && opt.hi != null) hi = Math.max(hi, opt.hi);
+    if (!isFinite(lo)) return; if (hi - lo < 1e-6) { hi += 1; lo -= 1; } var pad = (hi - lo) * 0.08; lo -= pad; hi += pad;
+    if (t1 - t0 < 1) t1 = t0 + 1;
+    var L = 38, R = 6, T = 6, B = 16, X = function (t) { return L + (t - t0) / (t1 - t0) * (w - L - R); }, Y = function (v) { return T + (1 - (v - lo) / (hi - lo)) * (h - T - B); };
+    g.strokeStyle = C('--border'); g.lineWidth = 1; g.fillStyle = C('--text3'); g.font = '10px ui-monospace, monospace';
+    for (var k = 0; k <= 3; k++) { var v = lo + (hi - lo) * k / 3, y = Y(v); g.beginPath(); g.moveTo(L, y); g.lineTo(w - R, y); g.stroke(); g.fillText(v.toFixed(Math.abs(hi - lo) < 10 ? 1 : 0), 2, y + 3); }
+    g.fillText(S.fmtClock(t0), L, h - 3); var te = S.fmtClock(t1); g.fillText(te, w - R - g.measureText(te).width, h - 3);
+    (opt && opt.lines || []).forEach(function (ln) { g.strokeStyle = ln.c; g.setLineDash([4, 3]); g.beginPath(); g.moveTo(L, Y(ln.v)); g.lineTo(w - R, Y(ln.v)); g.stroke(); g.setLineDash([]); });
+    series.forEach(function (s) {
+      g.strokeStyle = s.c; g.lineWidth = s.w || 1.5; g.beginPath();
+      for (var i = 0; i < s.d.t.length; i++) { var px = X(s.d.t[i]), py = Y(s.d.y[i]); if (i) g.lineTo(px, py); else g.moveTo(px, py); }
+      g.stroke();
+    });
+  }
+  function H(k, n, sc) { var d = sim.getHistory(k, n || 600); if (sc) d.y = d.y.map(function (v) { return v * sc; }); return d; }
+  function kv(el, pairs) { el.innerHTML = pairs.map(function (p) { return '<span>' + p[0] + ' <b>' + p[1] + '</b></span>'; }).join(''); }
+  var last = performance.now(), acc = 0;
+  function frame(now) {
+    var dt = Math.min(0.1, (now - last) / 1000); last = now;
+    sim.step(dt);
+    acc += dt;
+    if (acc >= 0.25) {
+      acc = 0;
+      var st = sim.getState(), N = 900;
+      $('clock').textContent = 'T+' + st.clock + (st.running ? '' : ' (paused)') + (st.esd.tripped ? (st.esd.manual ? ' · ESD CLOSED (manual)' : ' · ESD TRIPPED') : '');
+      kv($('vP'), [['P', st.sep.P.toFixed(1)], ['SP', st.sep.SP.toFixed(0)], ['PCV u', (st.sep.pcv.u * 100).toFixed(0) + '%'], ['PAH', st.sep.psh.toFixed(0)], ['PSHH', st.sep.pshh.toFixed(0)]]);
+      plot($('cP'), [{ d: H('PsepSP', N), c: C('--text3'), w: 1 }, { d: H('Psep', N), c: C('--accent') }], { lines: [{ v: st.sep.psh, c: C('--yellow') }] });
+      kv($('vL'), [['bucket', (st.sep.bucket.frac * 100).toFixed(1) + '%'], ['interface', (st.sep.c1.fracW * 100).toFixed(1) + '%'], ['C1', (st.sep.c1.fracL * 100).toFixed(1) + '%'], ['LCV-102', st.sep.oilDump.cmd ? 'OPEN' : 'shut'], ['weir head', st.sep.weirHead_in.toFixed(2) + ' in']]);
+      plot($('cL'), [{ d: H('c1Frac', N, 100), c: C('--text2'), w: 1 }, { d: H('ifaceFrac', N, 100), c: C('--blue') }, { d: H('bucketFrac', N, 100), c: C('--accent') }],
+        { lo: 0, hi: 60, lines: [{ v: st.sep.oilDump.lsl * 100, c: C('--text3') }, { v: st.sep.oilDump.lsh * 100, c: C('--text3') }, { v: st.sep.hWeirFrac * 100, c: C('--purple') }] });
+      kv($('vU'), [['level', (st.surge.frac * 100).toFixed(1) + '%'], ['P', st.surge.P.toFixed(1)], ['P-201', st.surge.pump.q_bpd > 0 ? st.surge.pump.q_bpd.toFixed(0) + ' BPD' : 'off'], ['flash', st.surge.flash_mscfd.toFixed(1) + ' MSCFD']]);
+      plot($('cU'), [{ d: H('surgeFrac', N, 100), c: C('--green') }, { d: H('surgeP', N), c: C('--accent') }], { lo: 0, hi: 100 });
+      var A = st.gauge.tanks[0], B2 = st.gauge.tanks[1];
+      kv($('vG'), [['A', (A.frac * 100).toFixed(1) + '% ' + A.state], ['B', (B2.frac * 100).toFixed(1) + '% ' + B2.state], ['batches', st.gauge.batches.length],
+        ['last', st.gauge.batches.length ? st.gauge.batches[st.gauge.batches.length - 1].oilRate_stbd.toFixed(0) + ' STB/d' : '—']]);
+      plot($('cG'), [{ d: H('gaugeFracA', N, 100), c: C('--accent') }, { d: H('gaugeFracB', N, 100), c: C('--blue') }], { lo: 0, hi: 100, lines: [{ v: 90, c: C('--text3') }] });
+      kv($('vW'), [['WHP', st.nodes.wellhead.P.toFixed(0)], ['choke in', st.nodes.choke.Pin.toFixed(0)], ['choke out', st.nodes.choke.P.toFixed(1)], ['regime', st.nodes.choke.regime], ['ESD travel', (st.esd.travel * 100).toFixed(0) + '%']]);
+      plot($('cW'), [{ d: H('Pwh', N), c: C('--accent') }]);
+      kv($('vR'), [['flare', st.nodes.flare.qMMscfd.toFixed(2)], ['oil meter', st.rates.oilMeter_stbd.toFixed(0)], ['GOR', st.rates.gor_scf_stb == null ? '—' : st.rates.gor_scf_stb.toFixed(0)], ['BS&W', st.rates.bsw_pct == null ? '—' : st.rates.bsw_pct.toFixed(1) + '%']]);
+      plot($('cR'), [{ d: H('qgFlare', N), c: C('--accent') }]);
+      var items = st.alarms.map(function (a) { return '<li class="sev-' + a.sev + '">' + a.sev.toUpperCase() + ' · ' + a.msg + '</li>'; });
+      st.alarmLog.slice(-6).reverse().forEach(function (e) { items.push('<li>T+' + S.fmtClock(e.t) + ' ' + e.type + ' — ' + e.msg + '</li>'); });
+      $('al').innerHTML = items.join('') || '<li>No alarms</li>';
+    }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+  window.__sim = sim;
+})();
+</script>
+</body>
+</html>
