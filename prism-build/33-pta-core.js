@@ -756,6 +756,29 @@ G.PRiSM_getAnalysisData = function PRiSM_getAnalysisData(ds, opts) {
     }
     if (t.length < 3) return _fail('Fewer than 3 points with Δp > 0 in the analysed period.', warnings);
 
+    // Gas: normalised pseudo-time t_a = (μ ct)_ref ∫ dt/(μ ct) (Agarwal 1979;
+    // Lee & Holditch 1982) replaces the elapsed Δt when requested
+    // (opts.pseudoTime, else st.gasOpts.pseudoTime). 52-prism-gas.js integrates it.
+    var ptReq = (opts.pseudoTime != null) ? !!opts.pseudoTime : !!(st.gasOpts && st.gasOpts.pseudoTime);
+    var pseudoTime = false, tReal = null, ptInfo = null;
+    if (ptReq) {
+        if (pseudo && well.fluid === 'gas' && typeof G.PRiSM_gasPseudoTime === 'function') {
+            var ptr = null;
+            try {
+                ptr = G.PRiSM_gasPseudoTime(t, pp2, { p0: pRefPressure, T_F: well.T_F, SG_g: well.sg, ct: well.ct,
+                                                      pNorm: _pos(well.piStored) ? well.piStored : pRefPressure });
+            } catch (ePT) { ptr = { ok: false, reason: 'Pseudo-time failed: ' + (ePT && ePT.message) }; }
+            if (ptr && ptr.ok) {
+                tReal = t; t = ptr.ta; pseudoTime = true; ptInfo = ptr.info || null;
+                if (nIdx > 0 || isShut) {
+                    warnings.push('Pseudo-time replaces the elapsed time of the analysed period only; earlier rate steps (tp and the superposition offsets) stay in real time.');
+                }
+            } else warnings.push((ptr && ptr.reason) || 'Pseudo-time is unavailable: real time is used.');
+        } else {
+            warnings.push('Pseudo-time applies to gas analysed with pseudo-pressure m(p): real time is used.');
+        }
+    }
+
     // Time function.
     var tfReq = opts.timeFn || st.timeFn || 'auto';
     var tf = tfReq;
@@ -810,6 +833,7 @@ G.PRiSM_getAnalysisData = function PRiSM_getAnalysisData(ds, opts) {
         }),
         periodIndex: ri.periodIndex,
         fluid: well.fluid, pseudo: pseudo, dpUnit: dpUnit, mpSpec: mpSpec,
+        pseudoTime: pseudoTime, tReal: tReal, pseudoTimeInfo: ptInfo,
         hash: _dsHash(ds),
         warnings: warnings
     };
@@ -1375,8 +1399,11 @@ G.PRiSM_matchToPhysical = function PRiSM_matchToPhysical(tc, modelKey, params, w
 // SECTION 9 — C8 PERSISTENCE: wts_prism_state
 // ═══════════════════════════════════════════════════════════════
 
+// fits / fitWorkspace / branches: model & fit workspace (51-prism-workspace.js);
+// gasOpts / rateSkin / deliverability: gas & deliverability (52-prism-gas.js).
 var STATE_FIELDS = ['model', 'params', 'paramFreeze', 'phys', 'tcMatch', 'activePlot', 'activePeriod',
-                    'bourdetL', 'timeFn', 'lastFit', 'semilog', 'analysisKeyResults', 'fieldTools'];
+                    'bourdetL', 'timeFn', 'lastFit', 'semilog', 'analysisKeyResults', 'fieldTools',
+                    'fits', 'fitWorkspace', 'branches', 'gasOpts', 'rateSkin', 'deliverability'];
 
 G.PRiSM_saveState = function PRiSM_saveState() {
     var st = G.PRiSM_state;
@@ -1426,6 +1453,12 @@ G.PRiSM_restoreState = function PRiSM_restoreState(obj) {
     if (snap.analysisKeyResults && typeof snap.analysisKeyResults === 'object') st.analysisKeyResults = snap.analysisKeyResults;
     // Gauge register, sequence of events, ct builder (39-prism-fieldtools.js).
     if (snap.fieldTools && typeof snap.fieldTools === 'object') st.fieldTools = snap.fieldTools;
+    // Saved fits, compare selection and named branches (51); gas options,
+    // rate-dependent skin and deliverability inputs (52).
+    if (Array.isArray(snap.fits)) st.fits = snap.fits;
+    ['fitWorkspace', 'branches', 'gasOpts', 'rateSkin', 'deliverability'].forEach(function (k) {
+        if (snap[k] && typeof snap[k] === 'object' && !Array.isArray(snap[k])) st[k] = snap[k];
+    });
     // Legacy field stays neutral: fits never live in st.match.
     st.match = { timeShift: 0, pressShift: 0 };
     if (snap.mode != null || snap.tab != null) {

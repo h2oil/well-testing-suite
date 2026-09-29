@@ -49,6 +49,9 @@
 //   PRiSM_renderRTAPanel(host)             → Tab 2 panel (C7)
 //   PRiSM_PLOT_REGISTRY += rnp, blasingame, ag, fmb, sqrtRnp  (mode 'decline')
 //   PRiSM_plot_rta_rnp / _blasingame / _ag / _fmb / _sqrt (canvas, data, opts)
+//   PRiSM_declineDiagnostics(ds?, {L}) → {t (days), q, D (1/day), b, bLate}
+//   PRiSM_PLOT_REGISTRY += declineD, declineB (D(t) and b(t) diagnostics, rate only)
+//   PRiSM_plot_decline_D / PRiSM_plot_decline_b (canvas, data, opts)
 //
 // Cross-WP calls are all guarded (PRiSM_getWell, PRiSM_getLastFit,
 // PRiSM_setLastFit, PRiSM_fitRate, PRiSM_bootstrap, PRiSM_registerTabPanel,
@@ -1866,6 +1869,127 @@ function _drawChart(canvas, spec, opts) {
 
 
 // ─────────────────────────────────────────────────────────────────────────────
+// SECTION 9b — DECLINE DIAGNOSTICS: D(t) AND b(t)  (ROADMAP N8)
+// ─────────────────────────────────────────────────────────────────────────────
+// Loss-ratio definitions (Arps 1945; Johnson & Bollens 1927 "loss ratio"):
+//   D(t) = −(dq/dt)/q = −d ln q/dt            (nominal decline rate, 1/day)
+//   b(t) = d(1/D)/dt                           (derivative of the loss ratio)
+// For an Arps hyperbolic q = qi/(1+b·Di·t)^(1/b): D = Di/(1+b·Di·t) and b(t) = b
+// exactly; exponential b = 0, harmonic b = 1. Both derivatives use the
+// weighted 3-point central difference in t (exact for a quadratic, so exact
+// for the linear 1/D of an Arps decline) with the neighbours at least L apart
+// in ln t (smoothing window, default 0.2). Noise is amplified twice for b(t):
+// read its trend, not single points.
+function PRiSM_declineDiagnostics(ds, opts) {
+    opts = opts || {};
+    if (ds == null) ds = G.PRiSM_dataset;
+    var s = _rateSeries(ds, { positiveT: true, tminDays: opts.tminDays, tmaxDays: opts.tmaxDays });
+    if (!s || s.t.length < 5) return { ok: false, reason: 'D(t) and b(t) need at least 5 samples with t > 0 and q > 0.' };
+    var L = _pos(opts.L) ? opts.L : 0.2;
+    return _declineDiag(s.t, s.q, L, opts);
+}
+// dy/dt with the weighted 3-point central difference in t (exact for a
+// quadratic), the neighbours chosen at least L apart in ln t (smoothing
+// window as for the Bourdet derivative); one-sided at the ends.
+function _tDeriv(t, y, L) {
+    var n = t.length, d = new Array(n);
+    for (var i = 0; i < n; i++) {
+        var i1 = i - 1, i2 = i + 1, li = Math.log(t[i]);
+        while (i1 > 0 && li - Math.log(t[i1]) < L) i1--;
+        while (i2 < n - 1 && Math.log(t[i2]) - li < L) i2++;
+        var v = NaN;
+        if (i1 >= 0 && i2 < n && _num(y[i1]) && _num(y[i2]) && _num(y[i])) {
+            var h1 = t[i] - t[i1], h2 = t[i2] - t[i];
+            v = ((y[i] - y[i1]) / h1) * h2 / (h1 + h2) + ((y[i2] - y[i]) / h2) * h1 / (h1 + h2);
+        } else if (i1 < 0 && i2 < n && _num(y[i2]) && _num(y[i])) v = (y[i2] - y[i]) / (t[i2] - t[i]);
+        else if (i2 >= n && i1 >= 0 && _num(y[i1]) && _num(y[i])) v = (y[i] - y[i1]) / (t[i] - t[i1]);
+        d[i] = v;
+    }
+    return d;
+}
+function _declineDiag(tDays, q, L, opts) {
+    opts = opts || {};
+    var n = tDays.length, lq = [], i;
+    for (i = 0; i < n; i++) lq.push(Math.log(q[i]));
+    var dlnq = _tDeriv(tDays, lq, L);
+    var D = [], invD = [];
+    for (i = 0; i < n; i++) {
+        var d = -dlnq[i];
+        D.push(_num(d) ? d : NaN);
+        invD.push(_num(d) && d > 0 ? 1 / d : NaN);
+    }
+    // 1/D is only differentiated where it is defined on both sides.
+    var bArr = _tDeriv(tDays, invD, L);
+    for (i = 0; i < n; i++) if (!_num(invD[i])) bArr[i] = NaN;
+    var late = [];
+    for (i = Math.floor(n / 2); i < n; i++) if (_num(bArr[i])) late.push(bArr[i]);
+    var warnings = [];
+    var nNeg = D.filter(function (v) { return _num(v) && v <= 0; }).length;
+    if (nNeg > 0.2 * n) warnings.push('The rate rises over ' + nNeg + ' of ' + n + ' points: D(t) ≤ 0 there (no decline), so b(t) is undefined.');
+    var bMed = _median(late);
+    if (_num(bMed) && bMed > 1) warnings.push('Late b(t) ≈ ' + bMed.toFixed(2) + ' > 1: transient (linear or bilinear) flow — an Arps b > 1 forecast needs a terminal decline.');
+    return {
+        ok: true, n: n, t: tDays.slice(), q: q.slice(), D: D, b: bArr, invD: invD, L: L,
+        bLate: bMed, Dlast: D[n - 1], units: { t: 'days', D: '1/day' }, warnings: warnings
+    };
+}
+// Model D(t), b(t) for the current rate fit, on the data's time grid.
+function _declineDiagModel(tDays, L) {
+    var fit = _currentRateFit();
+    if (!fit) return null;
+    var lo = tDays[0], hi = tDays[tDays.length - 1];
+    if (!(lo > 0) || !(hi > lo)) return null;
+    var grid = [];
+    for (var i = 0; i <= 80; i++) grid.push(lo * Math.pow(hi / lo, i / 80));
+    var qm = PRiSM_declineRate(fit.modelKey, fit.params, grid);
+    var ok = qm.every(function (v) { return _pos(v); });
+    if (!ok) return null;
+    var d = _declineDiag(grid, qm, Math.min(L, 0.1), {});
+    d.modelKey = fit.modelKey;
+    return d;
+}
+function _declineDiagPlot(canvas, key, data, opts) {
+    var T = _theme();
+    var diag = (data && data.diag) || PRiSM_declineDiagnostics(G.PRiSM_dataset, {});
+    var isB = key === 'declineB';
+    var spec = {
+        title: isB ? 'b(t) = d(1/D)/dt — decline exponent diagnostic' : 'D(t) = −d ln q/dt — loss-ratio diagnostic',
+        shortTitle: isB ? 'b(t)' : 'D(t)', plotKey: key
+    };
+    if (!diag || !diag.ok) { spec.message = (diag && diag.reason) || 'No rate data.'; return _drawChart(canvas, spec, opts || {}); }
+    var mod = (data && data.model !== undefined) ? data.model : _declineDiagModel(diag.t, diag.L);
+    spec.xKind = 'log'; spec.xLabel = 'Time (days)';
+    if (isB) {
+        spec.yKind = 'lin'; spec.yLabel = 'b(t) (–)';
+        var bClip = diag.b.map(function (v) { return _num(v) && v > -2 && v < 4 ? v : NaN; });
+        spec.series = [{ x: diag.t, y: bClip, color: T.accent, label: 'b(t) from data' }];
+        spec.extraY = [0, 1];
+        spec.series.push({ x: [diag.t[0], diag.t[diag.n - 1]], y: [1, 1], color: T.text3, type: 'line', dash: [3, 4], width: 1, label: 'b = 1 (harmonic)', range: false });
+        spec.series.push({ x: [diag.t[0], diag.t[diag.n - 1]], y: [0, 0], color: T.text3, type: 'line', dash: [1, 3], width: 1, label: 'b = 0 (exponential)', range: false });
+        if (mod && mod.ok) spec.series.push({ x: mod.t, y: mod.b, color: T.purple, type: 'line', dash: [6, 4], width: 1.5, label: 'Model b(t) (' + _modelName(mod.modelKey) + ')', range: false });
+        spec.notes = [_num(diag.bLate) ? 'Late-time median b ≈ ' + _fmt(diag.bLate, 3) : 'b(t) undefined (no decline)'];
+    } else {
+        spec.yKind = 'log'; spec.yLabel = 'D(t), 1/day';
+        spec.series = [{ x: diag.t, y: diag.D, color: T.accent, label: 'D(t) from data' }];
+        if (mod && mod.ok) spec.series.push({ x: mod.t, y: mod.D, color: T.purple, type: 'line', dash: [6, 4], width: 1.5, label: 'Model D(t) (' + _modelName(mod.modelKey) + ')', range: false });
+        spec.notes = ['Straight line of slope −1: harmonic-like decline; flat: exponential.'];
+    }
+    return _drawChart(canvas, spec, opts || {});
+}
+function _buildDeclineDiag(key, dsIn) {
+    var ds = (dsIn && _isArr(dsIn.t)) ? dsIn : (G.PRiSM_dataset || null);
+    var diag = PRiSM_declineDiagnostics(ds, {});
+    var data = { diag: diag, plotKey: key };
+    if (diag.ok) { data.t = diag.t.slice(); data.q = diag.q.slice(); }
+    return { data: data, opts: { timeUnit: 'd', xLabel: 'Time (days)', plotKey: key } };
+}
+var DECLINE_DIAG_DEFS = {
+    declineD: { label: 'D(t) loss-ratio diagnostic', fn: 'PRiSM_plot_decline_D' },
+    declineB: { label: 'b(t) decline-exponent diagnostic', fn: 'PRiSM_plot_decline_b' }
+};
+
+
+// ─────────────────────────────────────────────────────────────────────────────
 // SECTION 10 — RTA PLOTS + PLOT REGISTRY (C6 / C7)
 // ─────────────────────────────────────────────────────────────────────────────
 var PLOT_DEFS = {
@@ -2481,6 +2605,9 @@ G.PRiSM_plot_rta_blasingame = _plotEntry('blasingame');
 G.PRiSM_plot_rta_ag = _plotEntry('ag');
 G.PRiSM_plot_rta_fmb = _plotEntry('fmb');
 G.PRiSM_plot_rta_sqrt = _plotEntry('sqrtRnp');
+G.PRiSM_declineDiagnostics = PRiSM_declineDiagnostics;
+G.PRiSM_plot_decline_D = function (canvas, data, opts) { return _declineDiagPlot(canvas, 'declineD', data, opts); };
+G.PRiSM_plot_decline_b = function (canvas, data, opts) { return _declineDiagPlot(canvas, 'declineB', data, opts); };
 G.PRiSM_drawRtaPlot = function (canvas, key, ds, well) {
     return _drawRtaPlot(canvas, key, PRiSM_rtaData(ds, well, {}), null, {});
 };
@@ -2498,6 +2625,14 @@ Object.keys(PLOT_DEFS).forEach(function (k) {
     G.PRiSM_PLOT_REGISTRY[k] = {
         fn: d.fn, label: d.label, mode: 'decline', title: d.title, needs: ['p', 'q'],
         build: (function (key) { return function (ctx) { return _buildPlot(key, ctx && ctx.ds); }; })(k)
+    };
+});
+// Decline diagnostics D(t), b(t) — rate data only (N8).
+Object.keys(DECLINE_DIAG_DEFS).forEach(function (k) {
+    var d = DECLINE_DIAG_DEFS[k];
+    G.PRiSM_PLOT_REGISTRY[k] = {
+        fn: d.fn, label: d.label, mode: 'decline', title: d.label, needs: ['q'],
+        build: (function (key) { return function (ctx) { return _buildDeclineDiag(key, ctx && ctx.ds); }; })(k)
     };
 });
 

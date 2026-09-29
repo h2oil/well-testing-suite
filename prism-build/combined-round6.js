@@ -1528,7 +1528,10 @@
     // ───────────────────────────────────────────────────────────────
     var PRISM_KEYS = ['model', 'params', 'paramFreeze', 'phys', 'tcMatch', 'activePlot', 'activePeriod',
                       'bourdetL', 'timeFn', 'lastFit', 'semilog', 'analysisKeyResults', 'interp',
-                      'autoMatch', 'fits', 'reportPins', 'periodFlags'];
+                      'autoMatch', 'fits', 'reportPins', 'periodFlags',
+                      // fit workspace (51) and gas / deliverability (52): listed so
+                      // they are never dropped by the EXTRA_MAX_CHARS limit.
+                      'fitWorkspace', 'branches', 'gasOpts', 'rateSkin', 'deliverability'];
     var PRISM_SKIP = { presets: 1, match: 1, modelCurve: 1, modelCurveData: 1, autoMatchStatus: 1,
                        project: 1, activeModel: 1, autoMatchTopN: 1, pvt: 1, crop: 1 };
     var EXTRA_MAX_CHARS = 200000;
