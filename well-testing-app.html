@@ -2788,27 +2788,34 @@ function renderAGA3(body) {
     const agaIds=['a_pD','a_oD','a_dP','a_Ps','a_Tf','a_SG','a_CO2','a_H2S','a_Tb','a_Pb','a_tap'];
     loadInputs('aga3',agaIds);
 }
-window.calcAGA3 = function(){
-    const errs = validate([
-        ['a_pD','Pipe Internal Diameter',['required','positive']],
-        ['a_oD','Orifice Diameter',['required','positive']],
-        ['a_dP','Differential Pressure',['required','positive']],
-        ['a_Ps','Static Pressure',['required','non-negative']],
-        ['a_Tf','Flowing Temperature',['required',{min:-459}]],
-        ['a_SG','Gas Specific Gravity',['required','positive',{min:0.5,max:1.8}]],
-        ['a_CO2','CO2 %',['required','non-negative',{max:100}]],
-        ['a_H2S','H2S %',['required','non-negative',{max:100}]],
-        ['a_Tb','Base Temperature',['required',{min:-459}]],
-        ['a_Pb','Base Pressure',['required','positive']],
-    ]);
-    if(!showErrors('a_res',errs)) return;
-    const agaIds=['a_pD','a_oD','a_dP','a_Ps','a_Tf','a_SG','a_CO2','a_H2S','a_Tb','a_Pb','a_tap'];
-    saveInputs('aga3',agaIds);
-
-    const v=k=>parseFloat($(k).value);
-    const D=v('a_pD'), d=v('a_oD'), hw=v('a_dP'), Ps=v('a_Ps'), Tf_F=v('a_Tf');
-    const SG=v('a_SG'), co2=v('a_CO2'), h2s=v('a_H2S'), Tb_F=v('a_Tb'), Pb=v('a_Pb');
-    if(d>=D){showErrors('a_res',['Orifice diameter must be smaller than pipe diameter']);return;}
+// Pure AGA-3 orifice compute (roadmap #6). Field units in, object out; no DOM.
+// Shared by the AGA-3 page (calcAGA3) and the Orifice Plate Selection page.
+//   inp: { D pipe ID in, d bore in, hw inH2O @ 60 °F, Ps static psig, TfF °F, SG,
+//          co2 %, h2s %, n2 % (recorded only), TbF base °F (60), Pb base psia (14.696),
+//          tap 'flange'|'pipe', mu cP (0.012), Z (optional override; DAK when absent) }
+//   out: { ok, errors[], Qv SCF/hr, Qmscfd, Qmmscfd, Cd, Ev, Y1, x1, Z, zSource, Fpv, Fpb,
+//          Ftb, Ftf, Fgr, beta, beta4, Pf1, Tf, Tb, Tpr, Ppr, Re_D, rho_f, notes[] }
+window.WTS_aga3_compute = function(inp){
+    inp = inp || {};
+    const num = x => (x===null||x===undefined||x==='') ? NaN : Number(x);
+    const opt = (x,def) => (x===null||x===undefined||x==='') ? def : Number(x);
+    const D=num(inp.D), d=num(inp.d), hw=num(inp.hw), Ps=num(inp.Ps), Tf_F=num(inp.TfF);
+    const SG=num(inp.SG), co2=opt(inp.co2,0), h2s=opt(inp.h2s,0), n2=opt(inp.n2,0);
+    const Tb_F=opt(inp.TbF,60), Pb=opt(inp.Pb,14.696);
+    const tap = inp.tap==='pipe' ? 'pipe' : 'flange';
+    const mu_gas = (Number(inp.mu)>0) ? Number(inp.mu) : 0.012; // gas viscosity cP (typical natural gas)
+    const errors=[];
+    if(!(D>0)) errors.push('Pipe internal diameter must be greater than zero');
+    if(!(d>0)) errors.push('Orifice diameter must be greater than zero');
+    else if(D>0 && d>=D) errors.push('Orifice diameter must be smaller than pipe diameter');
+    if(!(hw>=0)) errors.push('Differential pressure must be zero or more');
+    if(!isFinite(Ps)||Ps+14.696<=0) errors.push('Static pressure must be above vacuum');
+    if(!(Tf_F>-459.67)) errors.push('Flowing temperature must be above absolute zero');
+    if(!(SG>0)) errors.push('Gas specific gravity must be greater than zero');
+    if(!(co2>=0&&co2<=100)||!(h2s>=0&&h2s<=100)||!(co2+h2s<=100)) errors.push('CO2 and H2S must be between 0 and 100 % in total');
+    if(!(Tb_F>-459.67)) errors.push('Base temperature must be above absolute zero');
+    if(!(Pb>0)) errors.push('Base pressure must be greater than zero');
+    if(errors.length) return {ok:false, errors};
 
     const beta=d/D, beta4=Math.pow(beta,4);
     const Pf1=Ps+14.696, Tf=Tf_F+459.67, Tb=Tb_F+459.67;
@@ -2839,8 +2846,10 @@ window.calcAGA3 = function(){
         for(let i=0;i<100;i++){ const m=(lo+hi)/2; if(Zr(m)-0.27*pr/(m*tr)>0) hi=m; else lo=m; }
         return 0.27*pr/(((lo+hi)/2)*tr);
     };
-    let Z=dakZ(Tpr,Ppr);
-    if(!isFinite(Z)||Z<=0){showErrors('a_res',['Z-factor could not be solved for these conditions (check temperature and pressure)']);return;}
+    const zIn=Number(inp.Z);
+    const zSource=(zIn>0&&isFinite(zIn))?'input':'dak';
+    let Z=zSource==='input'?zIn:dakZ(Tpr,Ppr);
+    if(!isFinite(Z)||Z<=0) return {ok:false, errors:['Z-factor could not be solved for these conditions (check temperature and pressure)']};
 
     // Discharge coefficient (Reader-Harris/Gallagher with Re_D iteration)
     const Ev=1/Math.sqrt(1-beta4);
@@ -2853,7 +2862,6 @@ window.calcAGA3 = function(){
     // standard rate the wrong way (100 °F base read −13.8 %; 15 °C base −0.36 %).
     const Fpb=14.73/Pb, Ftb=Tb/519.67, Ftf=1/Math.sqrt(Tf/519.67);
     const Fgr=1/Math.sqrt(SG), Fpv=1/Math.sqrt(Z);
-    const mu_gas=0.012; // gas viscosity cP (typical natural gas)
     let Re_D=1e6, Cd=0.606;
     // Audit fix (G1): AGA-3 / API MPMS 14.3.1 (1992+) RG flange-tap equation.
     // The old code used the ISO 5167 corner-tap body with NO tap term, so the
@@ -2878,11 +2886,38 @@ window.calcAGA3 = function(){
     const Qmscfd=Qv*24/1000, Qmmscfd=Qmscfd/1000;
     const rho_f=Pf1*28.97*SG/(Z*10.73*Tf);
     // Applicability notes (AGA-3 / API 14.3.1 limits) — shown, not blocking.
-    const agaNotes=[];
-    if($('a_tap').value==='pipe') agaNotes.push('AGA-3 (1992+) defines the RG coefficient for flange taps only; the pipe-tap result uses the flange-tap Cd and is approximate.');
-    if(beta<0.1||beta>0.75) agaNotes.push('Beta ratio '+fmt(beta,3)+' is outside the AGA-3 RG range 0.10–0.75.');
-    if(D<2) agaNotes.push('Pipe ID below the AGA-3 minimum of 2 in.');
-    if(x_y>0.2) agaNotes.push('hw/Pf1 is high (x1 = '+fmt(x_y,3)+' > 0.2): the Y1 expansion-factor equation is outside its validated range.');
+    const notes=[];
+    if(tap==='pipe') notes.push('AGA-3 (1992+) defines the RG coefficient for flange taps only; the pipe-tap result uses the flange-tap Cd and is approximate.');
+    if(beta<0.1||beta>0.75) notes.push('Beta ratio '+fmt(beta,3)+' is outside the AGA-3 RG range 0.10–0.75.');
+    if(D<2) notes.push('Pipe ID below the AGA-3 minimum of 2 in.');
+    if(x_y>0.2) notes.push('hw/Pf1 is high (x1 = '+fmt(x_y,3)+' > 0.2): the Y1 expansion-factor equation is outside its validated range.');
+    return {ok:true, errors:[], D, d, hw, Ps, TfF:Tf_F, SG, co2, h2s, n2, TbF:Tb_F, Pb, tap, mu:mu_gas,
+        beta, beta4, Pf1, Tf, Tb, Tpc, Ppc, Tpc_a, Ppc_a, Tpr, Ppr, Z, zSource,
+        Ev, x1:x_y, Y1, Fpb, Ftb, Ftf, Fgr, Fpv, Cd, Re_D, Fb, Qv, Qmscfd, Qmmscfd, rho_f, notes};
+};
+window.calcAGA3 = function(){
+    const errs = validate([
+        ['a_pD','Pipe Internal Diameter',['required','positive']],
+        ['a_oD','Orifice Diameter',['required','positive']],
+        ['a_dP','Differential Pressure',['required','positive']],
+        ['a_Ps','Static Pressure',['required','non-negative']],
+        ['a_Tf','Flowing Temperature',['required',{min:-459}]],
+        ['a_SG','Gas Specific Gravity',['required','positive',{min:0.5,max:1.8}]],
+        ['a_CO2','CO2 %',['required','non-negative',{max:100}]],
+        ['a_H2S','H2S %',['required','non-negative',{max:100}]],
+        ['a_Tb','Base Temperature',['required',{min:-459}]],
+        ['a_Pb','Base Pressure',['required','positive']],
+    ]);
+    if(!showErrors('a_res',errs)) return;
+    const agaIds=['a_pD','a_oD','a_dP','a_Ps','a_Tf','a_SG','a_CO2','a_H2S','a_Tb','a_Pb','a_tap'];
+    saveInputs('aga3',agaIds);
+
+    const v=k=>parseFloat($(k).value);
+    const r=window.WTS_aga3_compute({D:v('a_pD'), d:v('a_oD'), hw:v('a_dP'), Ps:v('a_Ps'), TfF:v('a_Tf'),
+        SG:v('a_SG'), co2:v('a_CO2'), h2s:v('a_H2S'), n2:($('a_N2')?v('a_N2'):0), TbF:v('a_Tb'), Pb:v('a_Pb'), tap:$('a_tap').value});
+    if(!r.ok){showErrors('a_res',r.errors);return;}
+    const {D,d,beta,Cd,Ev,Y1,Z,Tpr,Ppr,Re_D,rho_f,Qv,Qmscfd,Qmmscfd,Ps,SG,co2,h2s,hw}=r, Tf_F=r.TfF;
+    const agaNotes=r.notes.slice();
     // Metric mode: also report the rate in standard m³ (at the entered base conditions)
     // and the flowing density in kg/m³ — field-unit rows stay for continuity.
     let agaMetric=false;
