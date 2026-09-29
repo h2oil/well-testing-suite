@@ -626,6 +626,14 @@ var CSS = [
 '.wtsl-actr>.wtsl-hl{min-width:74px}',
 '.wtsl-b.vopen{border-color:#3fb950;color:#3fb950;background:rgba(63,185,80,.14)}',
 '.wtsl-b.vshut{border-color:#f85149;color:#f85149}',
+'.wtsl-b.vmove{border-color:#d29922;color:#d29922;background:rgba(210,153,34,.14)}',
+'.wtsl-b.trip{border-color:#f85149;color:#fff;background:rgba(248,81,73,.3)}',
+/* zoomed tank valve inset (phones / coarse pointers): every control ≥ 44 × 44 CSS px (WCAG 2.5.5, Apple HIG) */
+'.wtsl-vin{position:absolute;z-index:22;left:50%;bottom:10px;transform:translateX(-50%);width:min(380px,calc(100% - 16px));max-height:calc(100% - 20px);overflow:auto;',
+' padding:10px 12px;border-radius:12px;background:rgba(13,17,23,.97);border:1px solid var(--hmi-line);box-shadow:0 18px 44px rgba(0,0,0,.6)}',
+'.wtsl-vin h4{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:0 0 6px;font:700 11px/1.2 system-ui;letter-spacing:.8px;text-transform:uppercase;color:#8b949e}',
+'.wtsl-vin .wtsl-actr{margin:6px 0}.wtsl-vin .val{font:600 13px/1.2 var(--hmi-mono)}',
+'.wtsl-viz .wtsl-vin .wtsl-b{min-height:44px;height:44px;min-width:44px;padding:0 12px;font-size:13px}',
 '.wtsl-bt{width:100%;border-collapse:collapse;font:11px/1.3 var(--hmi-mono)}',
 '.wtsl-bt th{font:600 9px/1.2 system-ui;letter-spacing:.5px;text-transform:uppercase;color:#6e7681;text-align:right;padding:2px 3px}',
 '.wtsl-bt td{text-align:right;padding:2px 3px;border-top:1px solid rgba(48,54,61,.5)}.wtsl-bt th:first-child,.wtsl-bt td:first-child{text-align:left}',
@@ -960,7 +968,10 @@ function createController(vizEl, mopts) {
             toast(p && p.manual ? 'ESD closed manually' : 'ESD TRIPPED — ' + (p && p.msg ? p.msg : ''), p && p.manual ? '' : 'bad');
             poke(); refreshNow(s);
         });
-        h('esdReset', function (p, s) { toast('ESD reset — reopening', 'ok'); poke(); refreshNow(s); });
+        h('esdReset', function (p, s) {
+            var C = s && s.surge && s.surge.comps, shut = !!(C && C[0] && !C[0].inlet && !C[1].inlet);
+            toast('ESD reset — reopening' + (shut ? ' · XV-201A/B still shut: open a T-201 inlet' : ''), shut ? 'bad' : 'ok'); poke(); refreshNow(s);
+        });
         h('switch', function (p) { toast('Gauge tank switched to ' + (p && p.tag ? p.tag : '') + (p && p.forced ? ' (manual)' : '')); poke(); });
         h('batch', function (p) {
             if (!p) return;
@@ -977,12 +988,16 @@ function createController(vizEl, mopts) {
         // lineup changes (manual or automatic) persist in the prefs; automatic diverts are announced
         h('control', function () { saveCtl(); poke(); if (cardRefs && cardRefs.act) cardRefs.act.__sig = ''; });
         h('divert', function (p) { if (p && p.msg) toast(p.msg.replace(/^T-[23]01 /, '')); });
+        h('suction', function (p) { if (p && p.msg) toast(p.msg, 'bad'); poke(); });
+        h('pumpTrip', function (p) { toast('P-201 TRIPPED — ' + (p && p.msg ? p.msg : ''), 'bad'); poke(); resig(); });
+        h('pumpReset', function (p) { toast(p && p.msg ? p.msg : 'P-201 trip reset', 'ok'); poke(); resig(); });
     }
     function unhookSim() {
         if (_sim) simHooks.forEach(function (x) { try { _sim.off(x[0], x[1]); } catch (e) {} });
         simHooks = [];
     }
     function poke() { dirty2d = true; tHud = 0; }
+    function resig() { if (cardRefs && cardRefs.act) cardRefs.act.__sig = ''; if (E.vin) E.vin.__sig = ''; }
     function saveCtl() {
         if (!_sim || typeof _sim.getControls !== 'function') return;
         try { prefs.ctl = _sim.getControls(); writePrefs(prefs); } catch (e) {}
@@ -993,10 +1008,17 @@ function createController(vizEl, mopts) {
         var st = state(); if (!_sim || !st || typeof _sim.setValve !== 'function') return;
         var open = eq === 'surge' ? !!(st.surge.comps && st.surge.comps[i] && st.surge.comps[i].inlet) : !!(st.gauge.tanks && st.gauge.tanks[i] && st.gauge.tanks[i].inlet);
         var ok = false; try { ok = _sim.setValve(eq, i, !open); } catch (e) {}
-        if (!ok) return;
-        var s2 = state(), both = eq === 'surge' ? s2.surge.blocked : s2.gauge.blocked;
-        toast(valveTag(eq, i) + (open ? ' closed' : ' opened') + (both ? (eq === 'surge' ? ' — both T-201 inlets shut: separator dumps blocked' : ' — both T-301 inlets shut: P-201 discharge blocked') : ''), both ? 'bad' : '');
-        poke();
+        if (!ok) {                                // refused by the open permissive (compartment at high-high / latched trip)
+            var lg = state().alarmLog || [], le = lg[lg.length - 1];
+            if (le && le.id === 'VALVE' && /refused/.test(le.msg)) toast(le.msg, 'bad');
+            return;
+        }
+        var s2 = state(), both = eq === 'surge' ? !!(s2.surge.comps[0] && !s2.surge.comps[0].inlet && !s2.surge.comps[1].inlet) : !!(s2.gauge.tanks[0] && !s2.gauge.tanks[0].inlet && !s2.gauge.tanks[1].inlet);
+        var c2 = eq === 'surge' ? s2.surge.comps[i] : s2.gauge.tanks[i], moving = !!(c2 && c2.moving);
+        toast(valveTag(eq, i) + (open ? (moving ? ' closing' : ' closed') : (moving ? ' opening' : ' opened')) +
+            (c2 && c2.hold ? ' — held open until ' + valveTag(eq, 1 - i) + ' is fully open' : '') +
+            (both ? (eq === 'surge' ? ' — both T-201 inlets shut: separator dumps blocked' : ' — both T-301 inlets shut: P-201 discharge blocked') : ''), both ? 'bad' : '');
+        poke(); resig();
     }
     function toggleSuction(i) {
         var st = state(); if (!_sim || !st || typeof _sim.setSuction !== 'function') return;
@@ -1005,7 +1027,21 @@ function createController(vizEl, mopts) {
         var ok = false; try { ok = _sim.setSuction(next); } catch (e) {}
         if (ok) { toast('P-201 suction ' + (next === 'both' ? 'A + B' : next)); poke(); }
     }
-    function setSuction(v) { if (_sim && typeof _sim.setSuction === 'function') { try { _sim.setSuction(v); } catch (e) {} poke(); } }
+    function setSuction(v) { if (_sim && typeof _sim.setSuction === 'function') { try { _sim.setSuction(v); } catch (e) {} poke(); resig(); } }
+    // latched P-201 trips (LSHH-301, dry-run): operator reset once the permissive is met
+    function resetPump() {
+        if (!_sim || typeof _sim.resetTrip !== 'function') return;
+        var r = null; try { r = _sim.resetTrip(); } catch (e) {}
+        if (r && !r.ok) toast('Cannot reset P-201 — ' + (r.blocking || []).join('; ').replace(/LSHH_GT: |PUMP_DRYRUN: /g, ''), 'bad');
+        poke(); resig();
+    }
+    function valveOpt(eq, o) { if (_sim && typeof _sim.setValveOptions === 'function') { try { _sim.setValveOptions(eq, o); } catch (e) {} poke(); resig(); } }
+    function stepStroke(eq, d) { var st = state(), o = st && (eq === 'surge' ? st.surge : st.gauge); if (o) valveOpt(eq, { strokeS: Math.max(0, Math.min(60, num(o.strokeS, 6) + d)) }); }
+    function toggleInterrupt() {
+        var st = state(), on = !(st && st.gauge && st.gauge.allowInterrupt);
+        valveOpt('gauge', { allowInterrupt: on });
+        toast(on ? 'Auto-divert MAY interrupt a settling / draining batch' : 'Batches protected — auto-divert waits for a ready compartment', on ? 'bad' : '');
+    }
     function toggleAuto(eq) {
         var st = state(); if (!_sim || !st || typeof _sim.setAutoDivert !== 'function') return;
         var a = eq === 'surge' ? st.surge.auto : st.gauge.auto, on = !(a && a.on);
@@ -1401,7 +1437,7 @@ function createController(vizEl, mopts) {
         }
         var dpr = num(G.devicePixelRatio, 1);
         if (mode === '2d' && lastDpr && Math.abs(dpr - lastDpr) > 0.01) size2d();
-        updateToolbar(st); updateHud(st); updatePill(st); updateCard(st, false);
+        updateToolbar(st); updateHud(st); updatePill(st); updateCard(st, false); if (E.vin) renderVin(st);
         if (popGroup) updatePop(st);
         show(E.paused, !!(st && !st.running));
     }
@@ -1777,17 +1813,40 @@ function createController(vizEl, mopts) {
     function surgeRow(s, i) {
         var c = s && s.surge && s.surge.comps && s.surge.comps[i];
         if (!c) return '—';
-        return pctStr(c.frac) + ' · inlet ' + (c.inlet ? 'OPEN' : 'CLOSED') + (c.suction ? ' · suction' : '');
+        return pctStr(c.frac) + (isNum(c.T) ? ' · ' + fmtU(c.T, 'temperature') : '') + ' · inlet ' + vState(c) + (c.suction ? ' · suction' : '');
+    }
+    // valve state text: commanded position, or travel with the actual opening while the valve strokes
+    function vState(c) {
+        if (!c) return '—';
+        if (c.hold) return 'CLOSE HELD';
+        if (c.moving) return (c.inlet ? 'OPENING ' : 'CLOSING ') + Math.round(num(c.pos, 0) * 100) + '%';
+        return c.inlet ? 'OPEN' : 'CLOSED';
     }
     function pumpTxt(s) {
         var p = s && s.surge && s.surge.pump;
-        return !p ? '—' : p.failed ? 'FAILED' : p.tripped ? 'TRIPPED' : p.blocked ? 'BLOCKED' : p.on ? 'ON' : 'OFF';
+        return !p ? '—' : p.failed ? 'FAILED' : p.tripped ? 'TRIPPED' + tripTag(p.trip) : p.blocked ? 'BLOCKED' : p.on ? (p.starved ? 'ON · STARVED' : 'ON') : 'OFF';
+    }
+    function tripTag(id) { return id === 'LSHH_GT' ? ' (LSHH-301)' : id === 'PUMP_DRYRUN' ? ' (DRY-RUN)' : ''; }
+    function pumpSig(st) { var p = st && st.surge && st.surge.pump; return p ? (p.trip || '') + (p.canReset ? 'r' : '') : ''; }
+    function pumpResetRow(st) {
+        var p = st && st.surge && st.surge.pump;
+        if (!p || !p.trip) return '';
+        return '<div class="wtsl-actr"><span class="wtsl-hl">P-201 trip</span><button type="button" data-wts-ui class="wtsl-b trip" data-act="pump-reset"' +
+            (p.canReset ? ' title="Reset the latched P-201 trip"' : ' disabled title="' + esc(p.resetBlock || 'permissive not met') + '"') + '>Reset P-201' + tripTag(p.trip) + '</button></div>';
+    }
+    function strokeRow(eq, o) {
+        var v = Math.round(num(o && o.strokeS, 6));
+        return '<div class="wtsl-actr"><span class="wtsl-hl">Valve stroke</span>' +
+            '<button type="button" data-wts-ui class="wtsl-b" data-act="stroke" data-v="' + eq + ':-1" aria-label="Stroke time minus 1 s" title="Stroke − 1 s">−</button>' +
+            '<span class="val" title="Divert valve full-stroke time">' + v + ' s</span>' +
+            '<button type="button" data-wts-ui class="wtsl-b" data-act="stroke" data-v="' + eq + ':1" aria-label="Stroke time plus 1 s" title="Stroke + 1 s">+</button></div>';
     }
     function autoTxt(a) { return !a ? '—' : a.on ? 'ON · SP ' + Math.round(num(a.sp, 0) * 100) + '%' : 'OFF'; }
     function gtRow(s, i) {
         var t = s && s.gauge && s.gauge.tanks && s.gauge.tanks[i];
         if (!t) return '—';
-        return fmtU(num(t.Vo_bbl, 0) + num(t.Vw_bbl, 0), 'volume', 1) + ' · ' + String(t.state || '').toUpperCase();
+        return fmtU(num(t.Vo_bbl, 0) + num(t.Vw_bbl, 0), 'volume', 1) + ' · ' + String(t.state || '').toUpperCase() + (t.hh ? ' · LSHH TRIP' : '') +
+            (t.moving || t.hold ? ' · inlet ' + vState(t) : '');
     }
     function onPick(id) {
         if (id && EQ_IDS.indexOf(id) >= 0) openCard(id); else closeCard();
@@ -1855,28 +1914,35 @@ function createController(vizEl, mopts) {
         } else if (a === 'swap') {
             var g = st && st.gauge, other = g && g.tanks && g.tanks[1 - num(g.active, 0)];
             var ready = other && other.state === 'ready', gT = (g && g.tanks) || [];
-            sig = 'swap' + ready + lineupSig(gT[0], gT[1], g && g.auto);
-            h = '<div class="wtsl-actr"><span class="wtsl-hl">Inlet</span>' + valveBtns('gauge', gT[0], gT[1]) +
+            var intr = !!(g && g.allowInterrupt);
+            sig = 'swap' + ready + lineupSig(gT[0], gT[1], g && g.auto) + pumpSig(st) + intr + (g && g.strokeS);
+            h = pumpResetRow(st) + '<div class="wtsl-actr"><span class="wtsl-hl">Inlet</span>' + valveBtns('gauge', gT[0], gT[1]) +
                 '<button type="button" data-wts-ui class="wtsl-b" data-act="swap"' + (ready ? '' : ' disabled title="Standby compartment not ready"') + '>Swap tank</button></div>' +
-                autoRow('gauge', g && g.auto);
+                autoRow('gauge', g && g.auto) +
+                '<div class="wtsl-actr"><span class="wtsl-hl">Batches</span><button type="button" data-wts-ui class="wtsl-b' + (intr ? ' on' : '') + '" data-act="interrupt" aria-pressed="' + intr +
+                '" title="Allow auto-divert to open a compartment that is settling or draining (interrupts its batch)">' + (intr ? 'Interrupt ALLOWED' : 'Protected') + '</button></div>' +
+                strokeRow('gauge', g);
         } else if (a === 'surge') {
             var su2 = (st && st.surge) || {}, C2 = su2.comps || [];
-            sig = 'surge' + lineupSig(C2[0], C2[1], su2.auto) + su2.suction;
+            sig = 'surge' + lineupSig(C2[0], C2[1], su2.auto) + su2.suction + pumpSig(st) + su2.strokeS;
             h = '<div class="wtsl-actr"><span class="wtsl-hl">Inlet</span>' + valveBtns('surge', C2[0], C2[1]) + '</div>' +
-                suctionRow(su2.suction) + autoRow('surge', su2.auto);
+                suctionRow(su2.suction) + autoRow('surge', su2.auto) + strokeRow('surge', su2) + pumpResetRow(st);
         } else if (a === 'suction') {
             var sx = st && st.surge && st.surge.suction;
-            sig = 'suc' + sx;
-            h = suctionRow(sx);
+            sig = 'suc' + sx + pumpSig(st);
+            h = pumpResetRow(st) + suctionRow(sx);
         }
         if (cardRefs.act.__sig !== sig) { cardRefs.act.__sig = sig; cardRefs.act.innerHTML = h; }
     }
-    function lineupSig(a, b, au) { return (a && a.inlet ? 1 : 0) + '' + (b && b.inlet ? 1 : 0) + (au ? (au.on ? 'on' : 'off') + au.sp : ''); }
+    function lineupSig(a, b, au) {
+        var mv = function (c) { return c && (c.moving || c.hold) ? 'm' + Math.round(num(c.pos, 0) * 20) + (c.hold ? 'h' : '') : ''; };
+        return (a && a.inlet ? 1 : 0) + '' + (b && b.inlet ? 1 : 0) + mv(a) + mv(b) + (au ? (au.on ? 'on' : 'off') + au.sp : '');
+    }
     function valveBtns(eq, a, b) {
         return [a, b].map(function (c, i) {
-            var open = !!(c && c.inlet), tag = valveTag(eq, i);
-            return '<button type="button" data-wts-ui class="wtsl-b ' + (open ? 'vopen' : 'vshut') + '" data-act="valve" data-v="' + eq + ':' + i + '" aria-pressed="' + open +
-                '" title="' + tag + ' — click to ' + (open ? 'close' : 'open') + '">' + (i ? 'B' : 'A') + ' ' + (open ? 'OPEN' : 'SHUT') + '</button>';
+            var open = !!(c && c.inlet), tag = valveTag(eq, i), mvg = !!(c && (c.moving || c.hold));
+            return '<button type="button" data-wts-ui class="wtsl-b ' + (mvg ? 'vmove' : open ? 'vopen' : 'vshut') + '" data-act="valve" data-v="' + eq + ':' + i + '" aria-pressed="' + open +
+                '" title="' + tag + ' — click to ' + (open ? 'close' : 'open') + '">' + (i ? 'B' : 'A') + ' ' + (mvg ? vState(c) : open ? 'OPEN' : 'SHUT') + '</button>';
         }).join('');
     }
     function suctionRow(x) {
@@ -2193,19 +2259,24 @@ function createController(vizEl, mopts) {
             ctx.strokeStyle = '#8b949e'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(bx[1] - 26, by); ctx.lineTo(bx[1] - 26, by - 40); ctx.stroke();
         }
         valves2d(L).forEach(function (vz) {
-            var open = vz.kind === 'valve' ? (vz.eq === 'surge' ? !!(SC[vz.i] && SC[vz.i].inlet) : !!(T[vz.i] && T[vz.i].inlet)) : !!(SC[vz.i] && SC[vz.i].suction);
+            var vc = vz.kind === 'valve' ? (vz.eq === 'surge' ? SC[vz.i] : T[vz.i]) : null;
+            var open = vz.kind === 'valve' ? !!(vc && vc.inlet) : !!(SC[vz.i] && SC[vz.i].suction), trav = !!(vc && (vc.moving || vc.hold));
             var cx = vz.x + vz.w / 2, cyv = vz.y + vz.h / 2;
             ctx.strokeStyle = '#8b949e'; ctx.lineWidth = 1.2; ctx.beginPath();
             if (vz.kind === 'valve') { ctx.moveTo(vz.hx, vz.hy); ctx.lineTo(cx, vz.hy); ctx.lineTo(cx, cyv - 5); ctx.moveTo(cx, cyv + 5); ctx.lineTo(cx, vz.ty); }
             else { ctx.moveTo(cx, vz.ty); ctx.lineTo(cx, cyv - 4); }
             ctx.stroke();
-            ctx.fillStyle = open ? '#3fb950' : 'rgba(13,17,23,.9)'; ctx.strokeStyle = open ? '#3fb950' : '#f85149'; ctx.lineWidth = 1.4;
+            ctx.fillStyle = trav ? '#d29922' : open ? '#3fb950' : 'rgba(13,17,23,.9)'; ctx.strokeStyle = trav ? '#d29922' : open ? '#3fb950' : '#f85149'; ctx.lineWidth = 1.4;
             ctx.beginPath();
             if (vz.kind === 'valve') { ctx.moveTo(cx - 4, cyv - 5); ctx.lineTo(cx + 4, cyv - 5); ctx.lineTo(cx - 4, cyv + 5); ctx.lineTo(cx + 4, cyv + 5); ctx.closePath(); }
             else { ctx.moveTo(cx - 4, cyv - 3); ctx.lineTo(cx + 4, cyv - 3); ctx.lineTo(cx, cyv + 4); ctx.closePath(); }
             ctx.fill(); ctx.stroke();
         });
         if (su.auto && su.auto.on) { ctx.fillStyle = '#58a6ff'; ctx.font = 'bold 7px sans-serif'; ctx.fillText('AUTO', bx[0] + 26, by - 26); }
+        if (su.pump && su.pump.tripped) {                // latched P-201 trip flag on the transfer line
+            ctx.fillStyle = '#f85149'; ctx.font = 'bold 8px sans-serif'; ctx.textAlign = 'center';
+            ctx.fillText('P-201 TRIP' + tripTag(su.pump.trip), (bx[0] + bx[1]) / 2, by + 14);
+        }
         if (ga.auto && ga.auto.on) { ctx.fillStyle = '#58a6ff'; ctx.font = 'bold 7px sans-serif'; ctx.fillText('AUTO', bx[1] + 28, by - 26); }
         // ESD ball: green open, amber moving/manual, red tripped
         (function () {
@@ -2380,6 +2451,42 @@ function createController(vizEl, mopts) {
         for (var k = 0; k < 4; k++) z.push({ id: rd[k], x: S.x + 306 + (k % 2) * 140, y: S.y + 12 + Math.floor(k / 2) * 44, w: 136, h: 42, strip: true });
         if (_sim && _sim.getState().surge.comps) valves2d(L).forEach(function (v) { z.push({ id: v.id, x: v.x - 2, y: v.y - 2, w: v.w + 4, h: v.h + 4, strip: true }); });
         return z;
+    }
+    // Touch targets on phones: the 2D valve glyphs are ~12 logical units (≈ 4 CSS px on a 375 px screen). On a small or
+    // coarse-pointer view a tap within 22 CSS px of any valve glyph (a 44 px target, WCAG 2.5.5 / Apple HIG) opens a
+    // zoomed inset of that tank with 44 × 44 px valve buttons instead of toggling a glyph directly.
+    function coarse2d() { return bp === 'sm' || !!(G.matchMedia && G.matchMedia('(pointer:coarse)').matches); }
+    function nearValve(ev) {
+        var L = G.WTS_DIAG_LAYOUT, cv = E.cv; if (!L || !cv || !_sim) return null;
+        var r = cv.getBoundingClientRect(); if (!r.width || !r.height) return null;
+        var sx = r.width / L.W, sy = r.height / L.H, best = null, bd = 1e9;
+        valves2d(L).forEach(function (v) {
+            var dx = (ev.clientX - r.left) - (v.x + v.w / 2) * sx, dy = (ev.clientY - r.top) - (v.y + v.h / 2) * sy, d = Math.sqrt(dx * dx + dy * dy);
+            if (d < bd) { bd = d; best = v.eq; }
+        });
+        return bd <= 22 ? best : null;
+    }
+    var vinEq = null;
+    function openVin(eq) {
+        closeMenu(); closePop(); closeCard();
+        if (!E.vin) { E.vin = mk('div', 'wtsl-vin rp-skip'); E.vin.id = 'wtsl_vin'; E.vin.setAttribute('data-wts-ui', ''); E.vin.setAttribute('role', 'dialog'); vizEl.appendChild(E.vin); }
+        vinEq = eq; E.vin.__sig = ''; E.vin.setAttribute('aria-label', eq === 'surge' ? 'T-201 valves' : 'T-301 valves');
+        renderVin(state());
+    }
+    function closeVin() { if (E.vin && E.vin.parentNode) E.vin.parentNode.removeChild(E.vin); E.vin = null; vinEq = null; }
+    function renderVin(st) {
+        if (!E.vin || !vinEq || !st) return;
+        var eq = vinEq, su = st.surge || {}, g = st.gauge || {}, C = (eq === 'surge' ? su.comps : g.tanks) || [];
+        if (C.length < 2) return;
+        var sig = eq + lineupSig(C[0], C[1], eq === 'surge' ? su.auto : g.auto) + (eq === 'surge' ? su.suction : '') + pumpSig(st) + Math.round(num(C[0].frac, 0) * 100) + '/' + Math.round(num(C[1].frac, 0) * 100);
+        if (E.vin.__sig === sig) return;
+        E.vin.__sig = sig;
+        E.vin.innerHTML = '<h4><span>' + (eq === 'surge' ? 'T-201 surge tank · inlet &amp; suction' : 'T-301 gauge tank · inlet valves') + '</span>' +
+            '<button type="button" data-wts-ui class="wtsl-b ic" data-act="vin-close" aria-label="Close" title="Close">' + ICON.x + '</button></h4>' +
+            '<div class="wtsl-actr"><span class="wtsl-hl">Level</span><span class="val">A ' + pctStr(C[0].frac) + ' · B ' + pctStr(C[1].frac) + '</span></div>' +
+            '<div class="wtsl-actr"><span class="wtsl-hl">Inlet</span>' + valveBtns(eq, C[0], C[1]) + '</div>' +
+            (eq === 'surge' ? suctionRow(su.suction) : '') + pumpResetRow(st) +
+            '<div class="wtsl-actr"><button type="button" data-wts-ui class="wtsl-b" data-act="focus" data-v="' + eq + '">Details ›</button></div>';
     }
     function hit2d(ev) {
         var L = G.WTS_DIAG_LAYOUT, cv = E.cv;
@@ -2635,7 +2742,7 @@ function createController(vizEl, mopts) {
             case 'ackall': ackAll(); break;
             case 'dtab': drawerTab = v; renderDrawer(st, true); break;
             case 'drawer-close': toggleDrawer(false); break;
-            case 'focus': if (v && EQ_IDS.indexOf(v) >= 0) { if (h3) { try { h3.focus(v); } catch (e) {} } openCard(v); } break;
+            case 'focus': if (v && EQ_IDS.indexOf(v) >= 0) { closeVin(); if (h3) { try { h3.focus(v); } catch (e) {} } openCard(v); } break;
             case 'card-close': closeCard(); break;
             case 'card-edit': editInputs(cardId); break;
             case 'bean': { var b = readHost('wts_bean'); if (isNum(b)) { setHostInput('wts_bean', clamp(b + (+v), 4, 128), null, 'input'); } later(function () { renderCardActions(state()); }, 0); break; }
@@ -2644,6 +2751,10 @@ function createController(vizEl, mopts) {
             case 'swap': if (_sim) { var ok = false; try { ok = _sim.switchGaugeTank(true); } catch (e) {} if (!ok) toast('Standby compartment not ready'); poke(); } break;
             case 'valve': { var vv = String(v || '').split(':'); toggleValve(vv[0] === 'surge' ? 'surge' : 'gauge', vv[1] === '1' ? 1 : 0); break; }
             case 'suction': setSuction(v); break;
+            case 'pump-reset': resetPump(); break;
+            case 'stroke': { var sv = String(v || '').split(':'); stepStroke(sv[0] === 'surge' ? 'surge' : 'gauge', +sv[1] || 0); break; }
+            case 'interrupt': toggleInterrupt(); break;
+            case 'vin-close': closeVin(); break;
             case 'auto': toggleAuto(v === 'surge' ? 'surge' : 'gauge'); break;
             case 'autosp': { var av = String(v || '').split(':'); stepAutoSp(av[0] === 'surge' ? 'surge' : 'gauge', +av[1] || 0); break; }
             case 'tile': openPop(v, el); break;
@@ -2672,6 +2783,8 @@ function createController(vizEl, mopts) {
             return;
         }
         if (mode === '2d' && E.cv && (t === E.cv)) {
+            var vq = coarse2d() ? nearValve(ev) : null;
+            if (vq) { openVin(vq); return; }             // phone / touch: ≥ 44 px target → zoomed inset with 44 px buttons
             var id = hit2d(ev), vm2 = /^(valve|suction):(surge|gauge):([01])$/.exec(id || '');
             if (vm2) { if (vm2[1] === 'valve') toggleValve(vm2[2], +vm2[3]); else toggleSuction(+vm2[3]); }
             else if (id) openCard(id); else closeCard();
@@ -2693,6 +2806,7 @@ function createController(vizEl, mopts) {
             if (keysOpen) showKeys(false);
             else if (menu) closeMenu();
             else if (E.pop) closePop();
+            else if (E.vin) closeVin();
             else if (drawerOpen) toggleDrawer(false);
             else if (cardId) closeCard();
             else if (isMax) toggleMax(false);
