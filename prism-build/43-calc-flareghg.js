@@ -100,7 +100,7 @@
 
     // Unit map (input id → WTS_units category). fe_c7n, fe_ox1, fe_gwp untagged.
     var UNITS = {
-        fe_qg: 'gasRate', fe_hrs: 'time', fe_ce: 'percent', fe_tb: 'temperature', fe_pbase: 'pressure',
+        fe_qg: 'gasRate', fe_hrs: 'time', fe_ce: 'percent', fe_tb: 'temperature', fe_pbase: 'pressureBase',
         fe_qo: 'liquidRate', fe_api: 'api', fe_wc: 'percent'
     };
     COMP.forEach(function (c) { UNITS[P + c.k] = 'percent'; });

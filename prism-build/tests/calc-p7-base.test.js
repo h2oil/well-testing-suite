@@ -136,7 +136,7 @@ module.exports = [
       setMetric(app, true); setBase(app, '15C_101.325');
       app.hook.nav('aga3'); app.flush(50);
       assert.near(shown(app, 'a_Tb'), 15, 1e-3);
-      assert.near(shown(app, 'a_Pb'), 101.3, 0.06);
+      assert.near(shown(app, 'a_Pb'), 101.325, 1e-9);
       app.win.WTS_units.runCanonical(() => {
         assert.near(parseFloat(app.el('a_Tb').value), 59, 1e-9);
         assert.near(parseFloat(app.el('a_Pb').value), ATM, 1e-6);
@@ -272,7 +272,9 @@ module.exports = [
         whsip_psig: 1500, esdResponseTime_s: 5, safetyMargin_psig: 5 };
       const ref = app.win.WTS_esdLoPilot_compute(app.toWin(IN));
       setBase(app, '0C_101.325');
-      assert.rel(app.win.WTS_esdLoPilot_compute(app.toWin(IN)).pressureDrop_psi / ref.pressureDrop_psi, ATM / 14.7, 1e-12);
+      // Ideal gas: moles per scf ∝ Pb/Tb, so ΔP scales by (Pb/Tb)/(14.7/519.67)
+      // (review-metering fix: Tb was ignored).
+      assert.rel(app.win.WTS_esdLoPilot_compute(app.toWin(IN)).pressureDrop_psi / ref.pressureDrop_psi, (ATM / 491.67) / (14.7 / 519.67), 1e-12);
       setBase(app, 'calc');
       setMetric(app, true); app.hook.nav('esdlo'); app.flush(20);
       set(app, { wts_esdlo_volume: met(app, 4.36, 'volumeFt3'), wts_esdlo_pflow: met(app, 1971, 'pressureG'),
