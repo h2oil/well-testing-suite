@@ -3,7 +3,9 @@
 // Round-6 (feature layer) — auto-injected
 //   • 28-help-tooltips   (ⓘ hover-help on every tagged input + 61 entries)
 //   • 29-project-save    (.h2oilproj project file save/load across modules)
+//   • 29-multiwell       (multi-well projects, well switcher, comparison, read-only snapshots)
 //   • 30-quick-report    (one-click cross-suite PDF report)
+//   • 50-a11y            (keyboard navigation, ARIA names, live regions, decimal comma)
 // ═══════════════════════════════════════════════════════════════════════
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -227,9 +229,10 @@
             references: ['API 14C']
         },
         'loPilotSetting': {
-            description: 'Low-pressure ESD pilot setpoint. Catches leaks / line breaks on ' +
-                         'the downstream side. Set above hydrate / wax dropout pressure.',
-            typicalRange: 'Operating × (0.50 – 0.75)',
+            description: 'Low-pressure ESD pilot setpoint. Catches leaks / line breaks: set a false-trip ' +
+                         'margin below the lowest flowing pressure, high enough that the target leak ' +
+                         'takes the section through it within the required detection time.',
+            typicalRange: 'P_flow − margin (≥ 5 psi)',
             units: 'psig',
             references: ['API 14C']
         },
@@ -420,11 +423,11 @@
             references: ['SPE 30435']
         },
         'salamaConstant': {
-            description: 'Salama c-factor for sand-erosion screening. 200 = piggable Cushion-tee ' +
-                         'spool; 300 = baseline carbon steel; 400+ = standard LR elbow.',
-            typicalRange: '200 – 600 (300 typical)',
+            description: 'Constant "c" of the legacy calibrated erosion fit (v1.8 default; used only when ' +
+                         'the Legacy model is selected). The default model is DNV-RP-O501 (pipe bend).',
+            typicalRange: '200 – 600 (300 = v1.8 default)',
             units: 'dimensionless',
-            references: ['Salama 2000']
+            references: ['DNVGL-RP-O501 (2015)']
         },
         'mixtureVelocity': {
             description: 'Multiphase mixture velocity. API RP 14E erosion velocity Ve = C / √ρm ' +
@@ -465,10 +468,10 @@
         },
         'pipeSchedule': {
             description: 'Pipe wall schedule. SCH 80 = 1,500-class flowline; SCH 160 = 5K hot-tap; ' +
-                         'SCH 180 / XXH = 10K-15K choke manifold.',
-            typicalRange: '40 / 80 / 160 / 180 / XXH',
+                         'XXS (double extra strong) = 10K-15K choke manifold. "Sch 180" is not an ASME B36.10M schedule (loads as XXS).',
+            typicalRange: '40 / 80 / 160 / XXS',
             units: '',
-            references: ['ANSI B36.10']
+            references: ['ASME B36.10M']
         },
         'measuredWT': {
             description: 'Latest UT-measured wall thickness. Compare to mill-tolerance minimum ' +
@@ -1312,6 +1315,9 @@
 //   }
 //   Files written before the `storage` module existed still load (the
 //   other modules apply; nothing in localStorage is cleared).
+//   Multi-well projects (29-multiwell.js) add a `wells` module: the well list
+//   and one blob per inactive well; `storage` and the other modules hold the
+//   active well. A file with `storage` but no `wells` opens as one well.
 //
 // CONVENTIONS
 //   • Single outer IIFE, 'use strict'
@@ -1387,7 +1393,8 @@
         'wts_prism_sample_suppress': 1,  // PRiSM "don't re-seed sample data"
         'wts_prism_migrated': 1          // one-shot DCA/PTA → PRiSM migration flag
     };
-    var PREF_RE = /consent|analytics|tracking|(^|_)ga(_|$)|subscri|entitle|purchase/i;
+    // wts_ui_*: navigation preferences (favourites, recently used, collapsed sidebar groups).
+    var PREF_RE = /consent|analytics|tracking|(^|_)ga(_|$)|subscri|entitle|purchase|^wts_ui_/i;
     // Cross-project libraries: saved in the file, restored on Open only
     // when missing locally, kept on New.
     var LIBRARY_RE = /^wts_prism_(user_curves|presets|mapping_)/;
@@ -1420,6 +1427,10 @@
     function _isPrefKey(k)    { return !!PREF_KEYS[k] || PREF_RE.test(String(k)); }
     function _isLibraryKey(k) { return LIBRARY_RE.test(String(k)); }
     function _isProjectKey(k) { return _hasPrefix(k) && !_isPrefKey(k); }
+    // Multi-well store (29-multiwell.js): the well list 'wts_wells' and one
+    // blob per INACTIVE well 'wts_well_<id>'. They travel in the file's
+    // `wells` module, never in `storage`, and only the wells module clears them.
+    function _isWellsKey(k) { return /^wts_wells$|^wts_well_/.test(String(k)); }
 
     function _readClientInfo() {
         var ls = _ls();
@@ -1437,7 +1448,7 @@
         var keys = _lsKeys(ls);
         for (var i = 0; i < keys.length; i++) {
             var k = keys[i];
-            if (!_isProjectKey(k) || _isLibraryKey(k)) continue;
+            if (!_isProjectKey(k) || _isLibraryKey(k) || _isWellsKey(k)) continue;
             try { ls.removeItem(k); removed.push(k); } catch (e) {}
         }
         var keep = {}, any = false;
@@ -1517,7 +1528,10 @@
     // ───────────────────────────────────────────────────────────────
     var PRISM_KEYS = ['model', 'params', 'paramFreeze', 'phys', 'tcMatch', 'activePlot', 'activePeriod',
                       'bourdetL', 'timeFn', 'lastFit', 'semilog', 'analysisKeyResults', 'interp',
-                      'autoMatch', 'fits', 'reportPins', 'periodFlags'];
+                      'autoMatch', 'fits', 'reportPins', 'periodFlags',
+                      // fit workspace (51) and gas / deliverability (52): listed so
+                      // they are never dropped by the EXTRA_MAX_CHARS limit.
+                      'fitWorkspace', 'branches', 'gasOpts', 'rateSkin', 'deliverability'];
     var PRISM_SKIP = { presets: 1, match: 1, modelCurve: 1, modelCurveData: 1, autoMatchStatus: 1,
                        project: 1, activeModel: 1, autoMatchTopN: 1, pvt: 1, crop: 1 };
     var EXTRA_MAX_CHARS = 200000;
@@ -1899,7 +1913,7 @@
                 _flushAutosave();
                 var ls = _ls();
                 if (!ls) return null;
-                var keys = _lsKeys(ls).filter(_isProjectKey).sort();
+                var keys = _lsKeys(ls).filter(function (k) { return _isProjectKey(k) && !_isWellsKey(k); }).sort();
                 var out = {}, skipped = [], n = 0;
                 for (var i = 0; i < keys.length; i++) {
                     var v = null;
@@ -1928,7 +1942,7 @@
                 var keys = state.keys;
                 for (var k in keys) {
                     if (!Object.prototype.hasOwnProperty.call(keys, k)) continue;
-                    if (!_isProjectKey(k) || typeof keys[k] !== 'string') continue;
+                    if (!_isProjectKey(k) || _isWellsKey(k) || typeof keys[k] !== 'string') continue;
                     if (_isLibraryKey(k) && ls.getItem(k) != null) continue;  // keep local library
                     try { ls.setItem(k, keys[k]); }
                     catch (e) { _warn('[WTS_project] storage: could not write ' + k, e); }
@@ -1997,6 +2011,11 @@
         // A project with PRiSM state but no dataset must not inherit the
         // dataset that is open now (it is re-read from the restored inputs).
         if (_own(mods, 'prism') && !_own(mods, 'prism_dataset')) G.PRiSM_dataset = null;
+        // A project saved before multi-well projects (or with a single well)
+        // replaces the well list too: it opens as one well.
+        if (_own(mods, 'storage') && !_own(mods, 'wells') && MODULES.wells) {
+            try { MODULES.wells.write(null); } catch (e) { _warn('[WTS_project] wells reset failed', e); }
+        }
         // Apply in registry order (inputs → dataset → analysis → storage), not
         // in the file's key order, so dependent modules see their inputs.
         var order = listModules();
@@ -2458,7 +2477,7 @@
         if (btnNew) btnNew.addEventListener('click', function () {
             var ok = true;
             if (typeof G.confirm === 'function') {
-                ok = G.confirm('Start a new project?\n\nAll calculator inputs on every page will be cleared ' +
+                ok = G.confirm('Start a new project?\n\nAll calculator inputs on every page (and every well) will be cleared ' +
                                '(unit system and "Report prepared by" details are kept). ' +
                                'Save first if you want to keep the current project.');
             }
@@ -2530,7 +2549,17 @@
         unregisterModule: unregisterModule,
         listModules:      listModules,
         // Synchronous payload builder — primarily for QA / unit tests
-        _buildPayload:    _buildPayload
+        _buildPayload:    _buildPayload,
+        // Shared with 29-multiwell.js (well switching reuses the module
+        // registry: a well is a project without the job-level parts).
+        _internals: {
+            modules: function () { return MODULES; },
+            applyPayload: _applyPayload,
+            ls: _ls, lsKeys: _lsKeys,
+            isProjectKey: _isProjectKey, isLibraryKey: _isLibraryKey, isWellsKey: _isWellsKey,
+            flushAutosave: _flushAutosave, prismSync: _prismSync, emit: _emit, rerender: _rerender,
+            fileName: _fileName
+        }
     };
     G.WTS_renderProjectToolbar = renderProjectToolbar;
 
@@ -2556,6 +2585,954 @@
 })();
 
 // ─── END 29-project-save ─────────────────────────────────────────────
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// ─── BEGIN 29-multiwell ───────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════
+// WTS — Layer 29b — Multi-well projects (ROADMAP §3 P3) and read-only
+// snapshots (ROADMAP §3 P5a)
+//
+// STORAGE DESIGN
+//   Every page keeps reading and writing exactly the keys it uses today —
+//   those keys always belong to the ACTIVE well. The other wells are parked:
+//
+//     localStorage 'wts_wells'        { v:1, active:'w2', wells:[{id,name,created,modified}] }
+//     localStorage 'wts_well_<id>'    one JSON blob per INACTIVE well:
+//         { v:1, savedAt, keys:{ <well-scoped key>: <raw string> },
+//           modules:{ wts, esdhi, esdlo, hydrate, liquidline, pipelife,
+//                     clientinfo, pvt, prism_dataset, prism } }
+//
+//   Well-scoped keys = the project keys of 29-project-save.js (wts_ / h2oil_
+//   minus preferences) that are not libraries (PRiSM curves / presets /
+//   column mappings), not the multi-well store itself and not job-level
+//   settings (report templates, standard conditions). That covers the
+//   wts_page_<route> autosaves, the legacy wts_<key> lists, Client & Well
+//   Info (h2oil_client_info), the report snapshots, the simulator page
+//   inputs and the PRiSM keys (wts_prism_state, wts_prism_pvt, wts_prism,
+//   wts_prism_mrate …). `modules` holds the in-memory state (WTS_state,
+//   PRiSM state / well / dataset) through the project file's own module
+//   readers, so a switch restores exactly what Open would.
+//
+//   Switch A → B: flush the page autosave and PRiSM, write A's blob
+//   (quota-safe WTS_lsSet — nothing is removed if that fails), take B's
+//   blob out, remove A's keys, write B's keys, reset + re-apply the modules,
+//   then 'wts:project-loaded' {source:'well'} (layers re-read their caches)
+//   and a re-render. The one-well case never writes anything: without
+//   'wts_wells' the project is a single well named after Client & Well Info.
+//
+//   Project files: the `wells` module carries the list and the inactive
+//   blobs; `storage` and the other modules carry the active well as before.
+//   A file without `wells` (older files, single-well projects) opens as one
+//   well (29-project-save.js resets the list).
+//
+//   Key results per well for the comparison page are pulled from WTS_state
+//   (live for the active well, the parked `wts` module for the others) and
+//   from a small per-well cache 'wts_mw_results' refreshed on every
+//   autosave, so values survive a reload without revisiting every page.
+//
+// PUBLIC API
+//   window.WTS_wells = {
+//     list() → [{id, name, active, created, modified}]     active() → id
+//     switchTo(id) · create(name?, {duplicate}) · rename(id, name) · remove(id)
+//     copyPage(fromId, route?)   copy one page's inputs into the active well
+//     results(id?) → {gasdeliv, oilipr, rates, flareghg, h2sroe, wellkill, fit}
+//     table() → {rows:[{key,label,unit}], wells:[…], cells:[[text]]}
+//     renderPage(body)  (route 'wells')   renderSwitcher(host)
+//   }
+//   window.WTS_snapshot = { build(kind) → {filename, html} | null,
+//                           share(kind) → Promise, sanitize(html) }
+//     kind: 'page' (visible page report) | 'job' (Quick Report) | 'wells'
+//
+// No timers, polling or function wrapping (one-shot mount only).
+// ════════════════════════════════════════════════════════════════════
+
+(function () {
+    'use strict';
+
+    var _hasDoc = (typeof document !== 'undefined');
+    var G = (typeof window !== 'undefined') ? window : (typeof globalThis !== 'undefined' ? globalThis : {});
+
+    function _warn() { if (typeof console !== 'undefined' && console.warn) try { console.warn.apply(console, arguments); } catch (e) {} }
+
+    var REG_KEY = 'wts_wells';
+    var BLOB_PREFIX = 'wts_well_';
+    var RESULTS_KEY = 'wts_mw_results';
+    // Job-level settings shared by every well of the project.
+    var JOB_KEYS = { wts_report_templates: 1, wts_base_conditions: 1 };
+    // Project-file modules that hold a well's in-memory state (registry order
+    // is kept by applyPayload: inputs → dataset → analysis).
+    var WELL_MODULES = ['wts', 'esdhi', 'esdlo', 'hydrate', 'liquidline', 'pipelife', 'clientinfo',
+                        'pvt', 'prism_dataset', 'prism'];
+    // Client & Well Info fields a NEW well does not inherit.
+    var CI_OWN = { well: 1, notes: 1 };
+    var ID_RE = /^w[0-9]{1,6}$/;
+    var NAME_MAX = 60;
+
+    function _esc(s) {
+        return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+            return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+        });
+    }
+    function _own(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
+    function _num(v) { return (typeof v === 'number' && isFinite(v)) ? v : null; }
+    function _parse(raw) { if (raw == null) return null; try { return JSON.parse(raw); } catch (e) { return null; } }
+    function _nowISO() { return new Date().toISOString(); }
+    function _I() { return (G.WTS_project && G.WTS_project._internals) || null; }
+    function _ls() {
+        var I = _I();
+        if (I) return I.ls();
+        try { return (typeof localStorage !== 'undefined') ? localStorage : null; } catch (e) { return null; }
+    }
+    function _keys(ls) {
+        var I = _I();
+        if (I) return I.lsKeys(ls);
+        var out = [];
+        try { for (var i = 0; i < ls.length; i++) out.push(ls.key(i)); } catch (e) {}
+        return out;
+    }
+    // Quota-safe write (host __lsSet: evicts old report snapshots, warns once).
+    function _set(k, v) {
+        if (typeof G.WTS_lsSet === 'function') return G.WTS_lsSet(k, v) !== false;
+        var ls = _ls();
+        try { ls.setItem(k, v); return true; } catch (e) { return false; }
+    }
+    // Plain write used mid-switch (no snapshot eviction into the half-swapped store).
+    function _rawSet(ls, k, v) { try { ls.setItem(k, v); return true; } catch (e) { return false; } }
+    function _isWellKey(k) {
+        var I = _I();
+        if (!I) return false;
+        return I.isProjectKey(k) && !I.isLibraryKey(k) && !I.isWellsKey(k) && !JOB_KEYS[k];
+    }
+    function _emit(name, detail) {
+        try {
+            if (_hasDoc && typeof CustomEvent === 'function') document.dispatchEvent(new CustomEvent(name, { detail: detail || {} }));
+        } catch (e) {}
+    }
+    function _cleanName(s) {
+        return String(s == null ? '' : s).replace(/[\u0000-\u001f<>]/g, '').replace(/\s+/g, ' ').trim().substring(0, NAME_MAX);
+    }
+    function _ciOf(raw) { var o = _parse(raw); return (o && typeof o === 'object' && !Array.isArray(o)) ? o : {}; }
+    function _ciActive() { var ls = _ls(); return ls ? _ciOf(ls.getItem('h2oil_client_info')) : {}; }
+
+    // ───────────────────────────────────────────────────────────────
+    // Well list
+    // ───────────────────────────────────────────────────────────────
+    function _virtualReg() {
+        var nm = _cleanName(_ciActive().well) || 'Well 1';
+        return { v: 1, active: 'w1', wells: [{ id: 'w1', name: nm, created: null, modified: null }], virtual: true };
+    }
+    function _readReg() {
+        var ls = _ls();
+        var o = ls ? _parse(ls.getItem(REG_KEY)) : null;
+        if (!o || typeof o !== 'object' || !Array.isArray(o.wells)) return _virtualReg();
+        var seen = {}, wells = [];
+        o.wells.forEach(function (w) {
+            if (!w || typeof w !== 'object' || !ID_RE.test(String(w.id)) || seen[w.id]) return;
+            seen[w.id] = 1;
+            wells.push({ id: String(w.id), name: _cleanName(w.name) || String(w.id),
+                         created: typeof w.created === 'string' ? w.created : null,
+                         modified: typeof w.modified === 'string' ? w.modified : null });
+        });
+        if (!wells.length) return _virtualReg();
+        var active = seen[o.active] ? String(o.active) : wells[0].id;
+        return { v: 1, active: active, wells: wells };
+    }
+    function _writeReg(reg) {
+        return _set(REG_KEY, JSON.stringify({ v: 1, active: reg.active, wells: reg.wells.map(function (w) {
+            return { id: w.id, name: w.name, created: w.created, modified: w.modified };
+        }) }));
+    }
+    function _find(reg, id) { for (var i = 0; i < reg.wells.length; i++) if (reg.wells[i].id === id) return reg.wells[i]; return null; }
+    function _newId(reg) {
+        var n = 0;
+        reg.wells.forEach(function (w) { var m = /^w(\d+)$/.exec(w.id); if (m) n = Math.max(n, +m[1]); });
+        return 'w' + (n + 1);
+    }
+    function _uniqueName(reg, name, skipId) {
+        var base = _cleanName(name) || ('Well ' + (reg.wells.length + 1));
+        var taken = {};
+        reg.wells.forEach(function (w) { if (w.id !== skipId) taken[w.name.toLowerCase()] = 1; });
+        if (!taken[base.toLowerCase()]) return base;
+        for (var i = 2; i < 1000; i++) { var c = (base.substring(0, NAME_MAX - 6) + ' (' + i + ')'); if (!taken[c.toLowerCase()]) return c; }
+        return base;
+    }
+    function _blob(id) {
+        var ls = _ls();
+        var b = ls ? _parse(ls.getItem(BLOB_PREFIX + id)) : null;
+        if (!b || typeof b !== 'object') return null;
+        if (!b.keys || typeof b.keys !== 'object') b.keys = {};
+        if (!b.modules || typeof b.modules !== 'object') b.modules = {};
+        return b;
+    }
+
+    // ───────────────────────────────────────────────────────────────
+    // Key results (comparison page)
+    // ───────────────────────────────────────────────────────────────
+    function _ok(o) { return !!(o && typeof o === 'object' && o.ok !== false); }
+    // One group per source page; a group that is present but failed is null
+    // (so a newer failed calculation hides an older cached value).
+    function _extract(st) {
+        var r = {};
+        if (!st || typeof st !== 'object') return r;
+        if (st.gasdeliv) r.gasdeliv = _ok(st.gasdeliv) ? { aof: _num(st.gasdeliv.aofCn), aofLit: _num(st.gasdeliv.aofLit), n: _num(st.gasdeliv.n) } : null;
+        if (st.oilipr) r.oilipr = _ok(st.oilipr) ? { J: _num(st.oilipr.J), qmax: _num(st.oilipr.qmax) } : null;
+        if (st.oilgas) r.oilgas = _ok(st.oilgas) ? { oil: _num(st.oilgas.oil_stbd), gas: _num(st.oilgas.gas_mscfd), gor: _num(st.oilgas.gor) } : null;
+        if (st.sepqc) r.sepqc = _ok(st.sepqc) ? { oil: _num(st.sepqc.qOilST), gas: _num(st.sepqc.qGasCorr), gor: _num(st.sepqc.gorSTCorr) } : null;
+        if (st.aga3) r.aga3 = _ok(st.aga3) ? { gas: _num(st.aga3.gas_mscfd) } : null;
+        if (st.flareghg) r.flareghg = { co2e_t: _num(st.flareghg.co2e_t), co2_t: _num(st.flareghg.co2_t), so2_t: _num(st.flareghg.so2_t) };
+        if (st.h2sroe) r.h2sroe = { x100: _num(st.h2sroe.x100_ft), x500: _num(st.h2sroe.x500_ft) };
+        if (st.wellkill) r.wellkill = { kwf: _num(st.wellkill.kwf) };
+        return r;
+    }
+    function _fitOf(fit) {
+        if (!fit || typeof fit !== 'object' || !fit.phys || typeof fit.phys !== 'object') return null;
+        var k = _num(fit.phys.k), S = _num(fit.phys.S);
+        if (k == null && S == null) return null;
+        return { k: k, S: S, model: fit.modelKey || fit.model || null, r2: _num(fit.r2 != null ? fit.r2 : fit.R2) };
+    }
+    function _merge(cached, live) {
+        var out = {}, k;
+        if (cached && typeof cached === 'object') for (k in cached) if (_own(cached, k)) out[k] = cached[k];
+        for (k in live) if (_own(live, k)) out[k] = live[k];
+        return out;
+    }
+    function _cacheOf(raw) { var c = _parse(raw); return (c && c.r && typeof c.r === 'object') ? c.r : {}; }
+    var _lastCache = null;
+    function _writeResultsCache() {
+        var ls = _ls();
+        if (!ls || !G.WTS_state) return;
+        var merged = _merge(_cacheOf(ls.getItem(RESULTS_KEY)), _extract(G.WTS_state));
+        var txt = JSON.stringify({ v: 1, r: merged });
+        if (txt === _lastCache && ls.getItem(RESULTS_KEY) === txt) return;
+        if (_set(RESULTS_KEY, txt)) _lastCache = txt;
+    }
+    function _pickRates(r) {
+        var src = (r.oilgas && (r.oilgas.oil != null || r.oilgas.gas != null)) ? ['oilgas', 'Oil & Gas Rate'] :
+                  (r.sepqc && (r.sepqc.oil != null || r.sepqc.gas != null)) ? ['sepqc', 'Separator QC'] :
+                  (r.aga3 && r.aga3.gas != null) ? ['aga3', 'AGA-3'] : null;
+        if (!src) return null;
+        var g = r[src[0]];
+        return { oil: _num(g.oil), gas: _num(g.gas), gor: _num(g.gor), source: src[1] };
+    }
+    function results(id) {
+        var reg = _readReg();
+        id = id || reg.active;
+        if (!_find(reg, id)) return null;
+        var ls = _ls(), r, fit = null;
+        if (id === reg.active) {
+            r = _merge(_cacheOf(ls && ls.getItem(RESULTS_KEY)), _extract(G.WTS_state));
+            var st = G.PRiSM_state;
+            fit = _fitOf(st && st.lastFit) || _fitOf((_parse(ls && ls.getItem('wts_prism_state')) || {}).lastFit);
+        } else {
+            var b = _blob(id) || { keys: {}, modules: {} }, m = b.modules;
+            r = _merge(_cacheOf(b.keys[RESULTS_KEY]), _extract(m.wts || {}));
+            fit = _fitOf(m.prism && m.prism.lastFit) || _fitOf((_parse(b.keys.wts_prism_state) || {}).lastFit);
+        }
+        return { gasdeliv: r.gasdeliv || null, oilipr: r.oilipr || null, rates: _pickRates(r),
+                 flareghg: r.flareghg || null, h2sroe: r.h2sroe || null, wellkill: r.wellkill || null, fit: fit };
+    }
+
+    // Display: canonical field units → active unit system (22-units.js).
+    function _fmt(v, d) {
+        if (v == null || !isFinite(v)) return '—';
+        return Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: d });
+    }
+    function _uv(v, cat, dp, impLabel) {
+        if (v == null || !isFinite(v)) return '—';
+        var U = G.WTS_units;
+        if (cat && U && typeof U.getSystem === 'function' && U.getSystem() === 'metric' && typeof U.format === 'function') {
+            var f = U.format(v, cat);
+            return _fmt(f.value, dp) + (f.label ? ' ' + f.label : '');
+        }
+        return _fmt(v, dp) + (impLabel ? ' ' + impLabel : '');
+    }
+    var ROWS = [
+        { key: 'aof',  label: 'Gas AOF (C & n)',         src: 'Gas Deliverability', get: function (r) { return r.gasdeliv && r.gasdeliv.aof; }, cat: 'gasRateSmall', dp: 0, imp: 'MSCFD' },
+        { key: 'J',    label: 'Oil productivity index J', src: 'Oil IPR',          get: function (r) { return r.oilipr && r.oilipr.J; }, cat: 'productivityIndex', dp: 3, imp: 'STB/d/psi' },
+        { key: 'qmax', label: 'Oil qmax (AOF)',          src: 'Oil IPR',            get: function (r) { return r.oilipr && r.oilipr.qmax; }, cat: 'liquidRate', dp: 0, imp: 'STB/d' },
+        { key: 'k',    label: 'Permeability k (PRiSM fit)', src: 'PRiSM',           get: function (r) { return r.fit && r.fit.k; }, cat: 'permeability', dp: 2, imp: 'md' },
+        { key: 'S',    label: 'Skin S (PRiSM fit)',      src: 'PRiSM',              get: function (r) { return r.fit && r.fit.S; }, cat: null, dp: 2, imp: '' },
+        { key: 'oil',  label: 'Oil rate',                src: 'rates',              get: function (r) { return r.rates && r.rates.oil; }, cat: 'liquidRate', dp: 0, imp: 'STB/d' },
+        { key: 'gas',  label: 'Gas rate',                src: 'rates',              get: function (r) { return r.rates && r.rates.gas; }, cat: 'gasRateSmall', dp: 0, imp: 'MSCFD' },
+        { key: 'gor',  label: 'GOR',                     src: 'rates',              get: function (r) { return r.rates && r.rates.gor; }, cat: 'gor', dp: 0, imp: 'SCF/STB' },
+        { key: 'co2e', label: 'Flare emissions CO₂e',    src: 'Flare Emissions',    get: function (r) { return r.flareghg && r.flareghg.co2e_t; }, cat: null, dp: 2, imp: 't' },
+        { key: 'roe100', label: 'H₂S ROE 100 ppm',        src: 'H₂S ROE',           get: function (r) { return r.h2sroe && r.h2sroe.x100; }, cat: 'length', dp: 0, imp: 'ft' },
+        { key: 'roe500', label: 'H₂S ROE 500 ppm',        src: 'H₂S ROE',           get: function (r) { return r.h2sroe && r.h2sroe.x500; }, cat: 'length', dp: 0, imp: 'ft' },
+        { key: 'kwf',  label: 'Kill fluid weight',       src: 'Well Kill',          get: function (r) { return r.wellkill && r.wellkill.kwf; }, cat: 'densityLiquid', dp: 2, imp: 'ppg' }
+    ];
+    // Comparison table: one row per result, one column per well.
+    function table() {
+        var reg = _readReg();
+        var wells = reg.wells.map(function (w) { return { id: w.id, name: w.name, active: w.id === reg.active, r: results(w.id) || {} }; });
+        var cells = ROWS.map(function (row) {
+            return wells.map(function (w) { var v = row.get(w.r); return _uv(v == null ? null : v, row.cat, row.dp, row.imp); });
+        });
+        var srcRow = wells.map(function (w) { return (w.r.rates && w.r.rates.source) || '—'; });
+        return { rows: ROWS.map(function (r) { return { key: r.key, label: r.label, src: r.src }; }), wells: wells, cells: cells, rateSource: srcRow };
+    }
+
+    // ───────────────────────────────────────────────────────────────
+    // Capture / restore the active well
+    // ───────────────────────────────────────────────────────────────
+    function _persistPrism() {
+        try { if (typeof G.PRiSM_saveState === 'function' && G.PRiSM_state) G.PRiSM_saveState(); } catch (e) {}
+        var pvt = G.PRiSM_pvt, ls = _ls();
+        if (ls && pvt && typeof pvt === 'object') {
+            var copy = {};
+            for (var k in pvt) if (_own(pvt, k) && k !== '_computed') copy[k] = pvt[k];
+            try { ls.setItem('wts_prism_pvt', JSON.stringify(copy)); } catch (e) {}
+        }
+    }
+    function _capture() {
+        var I = _I(), ls = _ls();
+        I.flushAutosave();
+        _persistPrism();
+        _writeResultsCache();
+        var keys = {}, all = _keys(ls);
+        for (var i = 0; i < all.length; i++) {
+            if (!_isWellKey(all[i])) continue;
+            var v = null;
+            try { v = ls.getItem(all[i]); } catch (e) {}
+            if (v != null) keys[all[i]] = String(v);
+        }
+        var M = I.modules(), mods = {};
+        WELL_MODULES.forEach(function (name) {
+            if (!M[name]) return;
+            try { var st = M[name].read(); if (st != null) mods[name] = st; }
+            catch (e) { _warn('[WTS_wells] could not read ' + name, e); }
+        });
+        return { v: 1, savedAt: _nowISO(), keys: keys, modules: mods };
+    }
+    function _clearActive(ls) {
+        _keys(ls).filter(_isWellKey).forEach(function (k) { try { ls.removeItem(k); } catch (e) {} });
+    }
+    // In-memory state back to "no well loaded" (keeps the unit system).
+    function _resetMemory() {
+        var M = _I().modules();
+        var s = G.WTS_state;
+        if (s && typeof s === 'object') { for (var k in s) if (_own(s, k) && k !== 'units') delete s[k]; }
+        else G.WTS_state = {};
+        try { if (Array.isArray(G._genMotors)) G._genMotors = []; } catch (e) {}
+        ['pvt', 'prism_dataset', 'prism'].forEach(function (name) {
+            if (M[name]) try { M[name].write(null); } catch (e) { _warn('[WTS_wells] reset ' + name, e); }
+        });
+    }
+    function _writeKeys(ls, keys) {
+        var failed = [];
+        for (var k in keys) {
+            if (!_own(keys, k) || typeof keys[k] !== 'string' || !_isWellKey(k)) continue;
+            if (!_rawSet(ls, k, keys[k])) failed.push(k);
+        }
+        return failed;
+    }
+    function _applyModules(mods) {
+        var I = _I();
+        I.applyPayload({ format: 'h2oilproj', modules: mods || {} });
+    }
+    function _after(source, id) {
+        var I = _I();
+        _lastCache = null;
+        try { I.prismSync(source); } catch (e) {}
+        I.emit('wts:project-loaded', { loaded: WELL_MODULES.slice(), skipped: [], source: 'well', well: id });
+        _emit('wts:well-changed', { id: id, list: list() });
+        I.rerender();
+    }
+    function _cancelAutosave() {
+        try { if (G.WTS_pageAutosave && G.WTS_pageAutosave.cancel) G.WTS_pageAutosave.cancel(); } catch (e) {}
+    }
+    function _quotaMsg() {
+        return 'Device storage is full, so the current well could not be parked. Nothing was changed. ' +
+               'Use File → Save to keep a copy, then delete a well or unused data.';
+    }
+    // Park the active well in its blob (quota-safe). Returns the capture or null.
+    function _park(reg) {
+        var cur = _capture();
+        var w = _find(reg, reg.active);
+        if (w) w.modified = cur.savedAt;
+        if (!_set(BLOB_PREFIX + reg.active, JSON.stringify(cur))) return null;
+        return cur;
+    }
+
+    function list() {
+        var reg = _readReg();
+        return reg.wells.map(function (w) {
+            return { id: w.id, name: w.name, active: w.id === reg.active, created: w.created, modified: w.modified };
+        });
+    }
+    function active() { return _readReg().active; }
+
+    function switchTo(id) {
+        if (!_I()) return { ok: false, error: 'unavailable' };
+        var reg = _readReg(), ls = _ls();
+        id = String(id);
+        if (!_find(reg, id)) return { ok: false, error: 'no such well' };
+        if (id === reg.active) return { ok: true, unchanged: true };
+        var targetRaw = ls.getItem(BLOB_PREFIX + id);
+        var target = _parse(targetRaw) || {};
+        if (!target.keys || typeof target.keys !== 'object') target.keys = {};
+        if (!target.modules || typeof target.modules !== 'object') target.modules = {};
+        var from = reg.active;
+        var cur = _park(reg);
+        if (!cur) return { ok: false, error: 'quota', message: _quotaMsg() };
+        _cancelAutosave();
+        try { ls.removeItem(BLOB_PREFIX + id); } catch (e) {}
+        _clearActive(ls);
+        _resetMemory();
+        var failed = _writeKeys(ls, target.keys);
+        if (failed.length) {
+            // Roll back: the target stays parked, the previous well comes back.
+            _clearActive(ls);
+            if (targetRaw != null) _rawSet(ls, BLOB_PREFIX + id, targetRaw);
+            _writeKeys(ls, cur.keys);
+            try { ls.removeItem(BLOB_PREFIX + from); } catch (e) {}
+            _resetMemory();
+            _applyModules(cur.modules);
+            _after('well-switch', from);
+            return { ok: false, error: 'quota', message: 'Device storage is full — could not open that well. Nothing was lost.' };
+        }
+        reg.active = id;
+        delete reg.virtual;
+        _writeReg(reg);
+        _applyModules(target.modules);
+        _after('well-switch', id);
+        return { ok: true, id: id };
+    }
+
+    function create(name, opts) {
+        if (!_I()) return { ok: false, error: 'unavailable' };
+        opts = opts || {};
+        var reg = _readReg(), ls = _ls();
+        var nm = _uniqueName(reg, name || ((opts.duplicate ? _find(reg, reg.active).name + ' copy' : 'Well ' + (reg.wells.length + 1))));
+        var cur = _park(reg);
+        if (!cur) return { ok: false, error: 'quota', message: _quotaMsg() };
+        var id = _newId(reg), now = _nowISO();
+        reg.wells.forEach(function (w) { if (!w.created) w.created = now; });
+        _cancelAutosave();
+        if (opts.duplicate) {
+            var ci = _ciActive();
+            ci.well = nm;
+            _rawSet(ls, 'h2oil_client_info', JSON.stringify(ci));
+            if (G.WTS_state && G.WTS_state.clientInfo && typeof G.WTS_state.clientInfo === 'object') G.WTS_state.clientInfo.wellName = nm;
+        } else {
+            _clearActive(ls);
+            _resetMemory();
+            var ciPrev = _ciOf(cur.keys.h2oil_client_info), keep = {};
+            for (var k in ciPrev) if (_own(ciPrev, k) && !CI_OWN[k]) keep[k] = ciPrev[k];
+            keep.well = nm;
+            _rawSet(ls, 'h2oil_client_info', JSON.stringify(keep));
+        }
+        reg.wells.push({ id: id, name: nm, created: now, modified: now });
+        reg.active = id;
+        delete reg.virtual;
+        if (!_writeReg(reg)) _warn('[WTS_wells] could not write the well list');
+        _after(opts.duplicate ? 'well-duplicate' : 'well-new', id);
+        return { ok: true, id: id, name: nm };
+    }
+
+    function rename(id, name) {
+        var reg = _readReg();
+        id = String(id || reg.active);
+        var w = _find(reg, id);
+        if (!w) return { ok: false, error: 'no such well' };
+        var nm = _uniqueName(reg, name, id);
+        if (!_cleanName(name)) return { ok: false, error: 'empty name' };
+        var old = w.name, ls = _ls();
+        w.name = nm;
+        w.modified = _nowISO();
+        delete reg.virtual;
+        // Client & Well Info follows when it still shows the old name.
+        if (id === reg.active) {
+            try { if (G.WTS_pageAutosave && G.WTS_pageAutosave.flush) G.WTS_pageAutosave.flush(); } catch (e) {}
+            var ci = _ciActive();
+            if (!ci.well || ci.well === old) {
+                ci.well = nm;
+                _set('h2oil_client_info', JSON.stringify(ci));
+                var pg = G.WTS_pageAutosave && G.WTS_pageAutosave.page ? G.WTS_pageAutosave.page() : null;
+                if (pg === 'clientinfo' || pg === 'wells') _I() && _I().rerender();
+            }
+        } else {
+            var b = _blob(id);
+            if (b) {
+                var bci = _ciOf(b.keys.h2oil_client_info);
+                if (!bci.well || bci.well === old) { bci.well = nm; b.keys.h2oil_client_info = JSON.stringify(bci); _set(BLOB_PREFIX + id, JSON.stringify(b)); }
+            }
+        }
+        _writeReg(reg);
+        _emit('wts:well-changed', { id: reg.active, list: list() });
+        return { ok: true, id: id, name: nm };
+    }
+
+    function remove(id) {
+        if (!_I()) return { ok: false, error: 'unavailable' };
+        var reg = _readReg();
+        id = String(id || reg.active);
+        if (!_find(reg, id)) return { ok: false, error: 'no such well' };
+        if (reg.wells.length < 2) return { ok: false, error: 'last well', message: 'A project always has at least one well. Use File → New to clear it.' };
+        if (id === reg.active) {
+            var idx = 0;
+            for (var i = 0; i < reg.wells.length; i++) if (reg.wells[i].id === id) idx = i;
+            var next = reg.wells[idx === 0 ? 1 : idx - 1].id;
+            var sw = switchTo(next);
+            if (!sw.ok) return sw;
+            reg = _readReg();
+        }
+        try { _ls().removeItem(BLOB_PREFIX + id); } catch (e) {}
+        reg.wells = reg.wells.filter(function (w) { return w.id !== id; });
+        _writeReg(reg);
+        _emit('wts:well-changed', { id: reg.active, list: list() });
+        if (G.WTS_pageAutosave && G.WTS_pageAutosave.page && G.WTS_pageAutosave.page() === 'wells') _I().rerender();
+        return { ok: true, id: id, active: reg.active };
+    }
+
+    // Keys holding one page's inputs: the universal autosave record plus the
+    // legacy per-calculator lists of that page.
+    var LEGACY_PREFIX = { fluid: ['wts_fluid_'], prv: ['wts_prv_'], liquidline: ['wts_ll_'], pipelife: ['wts_pl_', 'wts_pipelife'] };
+    var NO_COPY = { home: 1, wells: 1, releasenotes: 1, gaevents: 1, privacy: 1 };
+    function _isPrismRoute(r) { return r === 'prism' || r === 'dca' || r === 'pta'; }
+    function _pageKeyMatch(route, k) {
+        if (k === 'wts_page_' + route || k === 'wts_' + route || k.indexOf('wts_' + route + '_') === 0) return true;
+        var extra = LEGACY_PREFIX[route] || [];
+        for (var i = 0; i < extra.length; i++) if (k === extra[i] || k.indexOf(extra[i]) === 0) return true;
+        return false;
+    }
+    function copyPage(fromId, route) {
+        if (!_I()) return { ok: false, error: 'unavailable' };
+        var reg = _readReg(), ls = _ls();
+        route = String(route || (G.WTS_pageAutosave && G.WTS_pageAutosave.page ? G.WTS_pageAutosave.page() : '') || '');
+        if (!route || NO_COPY[route]) return { ok: false, error: 'no inputs on this page' };
+        if (!_find(reg, fromId) || fromId === reg.active) return { ok: false, error: 'choose another well' };
+        var b = _blob(fromId);
+        if (!b) return { ok: false, error: 'that well has no saved inputs' };
+        _cancelAutosave();
+        var copied = [];
+        if (route === 'clientinfo') {
+            var src = _ciOf(b.keys.h2oil_client_info), dst = _ciActive();
+            for (var k in src) if (_own(src, k) && k !== 'well') dst[k] = src[k];
+            if (_set('h2oil_client_info', JSON.stringify(dst))) copied.push('h2oil_client_info');
+        } else if (_isPrismRoute(route)) {
+            var pv = _parse(b.keys.wts_prism_pvt) || b.modules.pvt;
+            var M = _I().modules();
+            if (pv && typeof pv === 'object' && M.pvt) {
+                M.pvt.write(pv);
+                _persistPrism();
+                copied.push('wts_prism_pvt');
+                try { _I().prismSync('well-copy'); } catch (e) {}
+            }
+        } else {
+            for (var key in b.keys) {
+                if (!_own(b.keys, key) || !_pageKeyMatch(route, key) || !_isWellKey(key)) continue;
+                if (_set(key, b.keys[key])) copied.push(key);
+            }
+        }
+        if (copied.length) _I().rerender();
+        return { ok: copied.length > 0, copied: copied, error: copied.length ? null : 'that well has no inputs for this page' };
+    }
+
+    // ───────────────────────────────────────────────────────────────
+    // Project-file module `wells`
+    // ───────────────────────────────────────────────────────────────
+    var _loadWarnings = [];
+    function _removeWellsKeys(ls) {
+        _keys(ls).forEach(function (k) { if (k === REG_KEY || k.indexOf(BLOB_PREFIX) === 0) try { ls.removeItem(k); } catch (e) {} });
+    }
+    function _registerModule() {
+        if (!G.WTS_project || typeof G.WTS_project.registerModule !== 'function') return;
+        G.WTS_project.registerModule('wells', {
+            read: function () {
+                var ls = _ls();
+                if (!ls || ls.getItem(REG_KEY) == null) return null;       // single well: nothing extra
+                var reg = _readReg();
+                if (reg.virtual) return null;
+                return { v: 1, active: reg.active, wells: reg.wells.map(function (w) {
+                    return { id: w.id, name: w.name, created: w.created, modified: w.modified,
+                             data: w.id === reg.active ? null : _blob(w.id) };
+                }) };
+            },
+            write: function (state) {
+                var ls = _ls();
+                if (!ls) return;
+                _removeWellsKeys(ls);
+                _lastCache = null;
+                _loadWarnings = [];
+                if (state === null || !state || typeof state !== 'object' || !Array.isArray(state.wells)) return;
+                var wells = [], seen = {};
+                state.wells.forEach(function (w) {
+                    if (!w || !ID_RE.test(String(w.id)) || seen[w.id]) return;
+                    seen[w.id] = 1;
+                    wells.push({ id: String(w.id), name: _cleanName(w.name) || String(w.id),
+                                 created: typeof w.created === 'string' ? w.created : null,
+                                 modified: typeof w.modified === 'string' ? w.modified : null, data: w.data });
+                });
+                if (!wells.length) return;
+                var act = seen[state.active] ? String(state.active) : wells[0].id;
+                var keepWells = [];
+                wells.forEach(function (w) {
+                    if (w.id !== act) {
+                        var d = (w.data && typeof w.data === 'object') ? w.data : { v: 1, keys: {}, modules: {} };
+                        // Plain write: a quota eviction here would mix report snapshots of two sessions.
+                        if (!_rawSet(ls, BLOB_PREFIX + w.id, JSON.stringify(d))) { _loadWarnings.push(w.name); return; }
+                    }
+                    keepWells.push({ id: w.id, name: w.name, created: w.created, modified: w.modified });
+                });
+                if (_loadWarnings.length) _warn('[WTS_wells] storage full — not loaded: ' + _loadWarnings.join(', '));
+                _writeReg({ active: act, wells: keepWells });
+            }
+        });
+    }
+    _registerModule();
+
+    // ───────────────────────────────────────────────────────────────
+    // Read-only snapshot (P5a)
+    // ───────────────────────────────────────────────────────────────
+    var CSP = "default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:; base-uri 'none'; form-action 'none'";
+    // Static HTML only: no scripts, event handlers, forms, frames or
+    // script URLs; a Content-Security-Policy that forbids scripts anyway.
+    function sanitize(html) {
+        var s = String(html == null ? '' : html);
+        s = s.replace(/<script\b[\s\S]*?<\/script\s*>/gi, '').replace(/<\/?script\b[^>]*>/gi, '');
+        s = s.replace(/<(iframe|object|embed|form|textarea|select|button|noscript|template)\b[\s\S]*?<\/\1\s*>/gi, '');
+        s = s.replace(/<\/?(iframe|object|embed|form|input|button|textarea|select|option|base|link|meta|noscript|template|frame|frameset|applet)\b[^>]*>/gi, '');
+        s = s.replace(/<[a-zA-Z][^>]*>/g, function (tag) {
+            return tag
+                .replace(/\s(on[a-z]+|srcdoc|formaction)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+                .replace(/\s(href|src|xlink:href|action|background|poster)\s*=\s*("|')\s*(?:javascript|vbscript|data:(?!image\/(?:png|jpe?g|gif|webp)))[^"']*\2/gi, '')
+                .replace(/\s(href|src|xlink:href)\s*=\s*(?:javascript|vbscript):[^\s>]*/gi, '');
+        });
+        return s;
+    }
+    function _stamp() {
+        var d = new Date(), p = function (n) { return (n < 10 ? '0' : '') + n; };
+        return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes());
+    }
+    function _wrapDoc(title, bodyHtml, sub) {
+        if (typeof G.buildReportHTML === 'function') {
+            try { return G.buildReportHTML(title, bodyHtml, sub); } catch (e) { _warn('[WTS_snapshot] report builder failed', e); }
+        }
+        return '<!DOCTYPE html><html><head><title>' + _esc(title) + '</title><style>body{font-family:Arial,sans-serif;color:#1f2328;max-width:860px;margin:0 auto;padding:24px}' +
+               'table{border-collapse:collapse;width:100%}th,td{border:1px solid #d0d7de;padding:5px 8px;text-align:left}</style></head><body><h1>' +
+               _esc(title) + '</h1><p>' + _esc(sub || '') + '</p>' + bodyHtml + '</body></html>';
+    }
+    function _wellsBody() {
+        var t = table();
+        var h = '<section class="rp-sec rp-out"><h2>Key results per well</h2><div class="rp-tblwrap"><table class="rp-tbl"><thead><tr><th>Result</th>' +
+            t.wells.map(function (w) { return '<th>' + _esc(w.name) + (w.active ? ' (active)' : '') + '</th>'; }).join('') + '</tr></thead><tbody>';
+        t.rows.forEach(function (r, i) {
+            h += '<tr><td class="b">' + _esc(r.label) + '</td>' + t.cells[i].map(function (c) { return '<td>' + _esc(c) + '</td>'; }).join('') + '</tr>';
+        });
+        h += '<tr><td class="b">Rate source</td>' + t.rateSource.map(function (c) { return '<td>' + _esc(c) + '</td>'; }).join('') + '</tr>';
+        h += '</tbody></table></div></section>';
+        h += '<div class="rp-note n-blue"><b>Notes</b>Each value is the last calculation saved for that well (Gas Deliverability, Oil IPR, PRiSM last fit, ' +
+             'Oil &amp; Gas Rate / Separator QC / AGA-3, Flare Emissions, H₂S ROE, Well Kill). “—” = not calculated for that well.</div>';
+        return { html: h, n: t.wells.length };
+    }
+    function build(kind) {
+        kind = kind || 'job';
+        var parts = null, name;
+        var ci = _ciActive();
+        var R = G.WTS_reportParts || {};
+        if (kind === 'wells') {
+            var wb = _wellsBody();
+            var who = [ci.client, ci.field].filter(Boolean).join(' · ');
+            parts = { title: 'Well Comparison', html: wb.html, subtitle: (who ? who + ' · ' : '') + wb.n + ' well' + (wb.n === 1 ? '' : 's') };
+            name = (ci.field || ci.client || 'project') + '-wells';
+        } else if (kind === 'page') {
+            parts = (typeof R.page === 'function') ? R.page() : null;
+            name = (ci.well || 'well') + '-' + (parts ? parts.title : 'page');
+        } else {
+            parts = (typeof R.job === 'function') ? R.job() : null;
+            name = (ci.well || 'well') + '-report';
+        }
+        if (!parts || !parts.html) return null;
+        var doc = sanitize(_wrapDoc(parts.title, parts.html, parts.subtitle));
+        var head = '<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">' +
+                   '<meta http-equiv="Content-Security-Policy" content="' + CSP + '">' +
+                   '<meta name="generator" content="H2Oil Well Testing Suite — read-only snapshot">';
+        doc = /<head[^>]*>/i.test(doc) ? doc.replace(/<head[^>]*>/i, function (m) { return m + head; }) : '<head>' + head + '</head>' + doc;
+        var banner = '<div style="margin:0 0 14px;padding:8px 12px;border:1px solid #d0d7de;border-radius:8px;background:#f6f8fa;color:#57606a;font-size:12px">' +
+                     'Read-only snapshot · ' + _esc(new Date().toLocaleString()) + ' · values are fixed and cannot be edited.</div>';
+        doc = /<body[^>]*>/i.test(doc) ? doc.replace(/<body[^>]*>/i, function (m) { return m + banner; }) : doc + banner;
+        var fname = String(name).replace(/[\\\/:*?"<>|\u0000-\u001f]+/g, '-').replace(/\s+/g, ' ').trim().substring(0, 80) || 'snapshot';
+        return { filename: fname + '-snapshot-' + _stamp() + '.html', html: doc, kind: kind, title: parts.title };
+    }
+    function _download(filename, text) {
+        if (!_hasDoc) return false;
+        try {
+            var blob = (typeof G.Blob === 'function') ? new G.Blob([text], { type: 'text/html' }) : null;
+            var url = (blob && G.URL && typeof G.URL.createObjectURL === 'function') ? G.URL.createObjectURL(blob) : null;
+            var a = document.createElement('a');
+            a.href = url || ('data:text/html;charset=utf-8,' + encodeURIComponent(text));
+            a.download = filename;
+            a.style.display = 'none';
+            document.body.appendChild(a);
+            a.click();
+            try { document.body.removeChild(a); } catch (e) {}
+            return true;
+        } catch (e) { _warn('[WTS_snapshot] download failed', e); return false; }
+    }
+    // Delivery: iOS share sheet (ios-bridge.js window.iosSaveFile) or a download.
+    function share(kind) {
+        var P = G.Promise;
+        var snap = build(kind);
+        if (!snap) return P.resolve({ ok: false, error: 'nothing to export' });
+        if (typeof G.iosSaveFile === 'function') {
+            return P.resolve().then(function () { return G.iosSaveFile(snap.filename, snap.html, false); })
+                .then(function (ok) {
+                    if (ok === false) return { ok: _download(snap.filename, snap.html), method: 'download', filename: snap.filename };
+                    return { ok: true, method: 'share', filename: snap.filename };
+                }, function () { return { ok: _download(snap.filename, snap.html), method: 'download', filename: snap.filename }; });
+        }
+        return P.resolve({ ok: _download(snap.filename, snap.html), method: 'download', filename: snap.filename });
+    }
+
+    // ───────────────────────────────────────────────────────────────
+    // Comparison page (route 'wells')
+    // ───────────────────────────────────────────────────────────────
+    function renderPage(body) {
+        if (!body) return;
+        var byId = function (id) { return _hasDoc ? document.getElementById(id) : null; };
+        if (byId('pgTitle')) byId('pgTitle').textContent = 'Well Comparison';
+        if (byId('pgSub')) byId('pgSub').textContent = 'Key results of every well in this project';
+        var t = table();
+        var h = '<div id="mw_root" data-no-persist="1">';
+        h += '<div class="card"><div class="card-title">Key results per well</div>' +
+             '<div style="overflow-x:auto"><table class="dtable" id="mw_table"><thead><tr><th>Result</th>' +
+             t.wells.map(function (w) { return '<th>' + _esc(w.name) + (w.active ? ' ✓' : '') + '</th>'; }).join('') + '</tr></thead><tbody>';
+        t.rows.forEach(function (r, i) {
+            h += '<tr data-row="' + r.key + '"><td>' + _esc(r.label) + '</td>' + t.cells[i].map(function (c) { return '<td>' + _esc(c) + '</td>'; }).join('') + '</tr>';
+        });
+        h += '<tr data-row="src"><td>Rate source</td>' + t.rateSource.map(function (c) { return '<td>' + _esc(c) + '</td>'; }).join('') + '</tr>';
+        h += '</tbody></table></div>';
+        h += '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px">' +
+             t.wells.filter(function (w) { return !w.active; }).map(function (w) {
+                 return '<button type="button" class="btn btn-secondary" data-mw-open="' + _esc(w.id) + '">Open ' + _esc(w.name) + '</button>';
+             }).join('') +
+             '<button type="button" class="btn btn-secondary" data-mw-act="new">New well</button>' +
+             '<button type="button" class="btn btn-primary" data-mw-act="snap">Share snapshot</button></div>' +
+             '<div id="mw_msg" role="status" style="min-height:16px;margin-top:6px;font-size:12px;color:var(--text2)"></div></div>';
+        h += '<div class="card"><div><b>Notes</b> ✓ marks the active well. Values are each well\'s last saved calculation — ' +
+             'open a well and its calculator page to refresh them. The active well\'s values update as you calculate. ' +
+             'k and skin come from the PRiSM last fit; rates from Oil &amp; Gas Rate, else Separator QC, else AGA-3. ' +
+             '“Share snapshot” saves this table as a read-only HTML file (no scripts).</div></div>';
+        h += '</div>';
+        body.innerHTML = h;
+        var root = byId('mw_root');
+        if (!root || !root.addEventListener) return;
+        root.addEventListener('click', function (e) {
+            var b = e.target && e.target.closest ? e.target.closest('button') : null;
+            if (!b) return;
+            var msg = byId('mw_msg');
+            var open = b.getAttribute('data-mw-open'), act = b.getAttribute('data-mw-act');
+            if (open) { var r = switchTo(open); if (!r.ok && msg) msg.textContent = r.message || r.error; }
+            else if (act === 'new') _uiNew();
+            else if (act === 'snap') share('wells').then(function (r) { var m = byId('mw_msg'); if (m) m.textContent = r.ok ? 'Snapshot saved: ' + r.filename : 'Snapshot failed.'; });
+        });
+    }
+
+    // ───────────────────────────────────────────────────────────────
+    // Header well switcher
+    // ───────────────────────────────────────────────────────────────
+    var CSS = '.wts-mw{display:inline-flex;align-items:center;gap:4px;position:relative;padding:4px 6px;background:var(--bg2,#161b22);' +
+        'border:1px solid var(--border,#30363d);border-radius:6px;font-size:12px;color:var(--text2,#8b949e);max-width:100%}' +
+        '.wts-mw>label{font-weight:600}' +
+        '.wts-mw select,.wts-mw-menu select{max-width:min(160px,40vw);min-width:0;padding:3px 4px;background:var(--bg4,#21262d);color:var(--text,#e6edf3);' +
+        'border:1px solid var(--border,#30363d);border-radius:4px;font-size:12px;font-family:inherit}' +
+        '.wts-mw button{padding:3px 8px;background:var(--bg4,#21262d);border:1px solid var(--border,#30363d);border-radius:4px;' +
+        'color:var(--text,#e6edf3);font-size:12px;cursor:pointer;font-family:inherit;line-height:1.4}' +
+        '.wts-mw-menu{position:absolute;right:0;top:calc(100% + 4px);z-index:10040;width:min(280px,calc(100vw - 32px));box-sizing:border-box;' +
+        'background:var(--bg2,#161b22);border:1px solid var(--border,#30363d);border-radius:8px;padding:6px;display:flex;flex-direction:column;gap:4px;' +
+        'box-shadow:0 8px 24px rgba(1,4,9,.5)}' +
+        '.wts-mw-menu[hidden]{display:none}.wts-mw-menu button{text-align:left;width:100%}' +
+        '.wts-mw-menu .wts-mw-sep{height:1px;background:var(--border,#30363d);margin:2px 0}' +
+        '.wts-mw-menu .wts-mw-row{display:flex;gap:4px;align-items:center;flex-wrap:wrap}.wts-mw-menu .wts-mw-row button{width:auto}' +
+        '.wts-mw-menu .wts-mw-h{font-size:11px;color:var(--text3,#6e7681);padding:2px 2px 0}' +
+        '.wts-mw-msg{font-size:11px;color:var(--text2,#8b949e);min-height:0}' +
+        '@media (max-width:600px){.wts-mw-menu{position:fixed;left:16px;right:16px;top:auto;width:auto}}';
+    function _ensureCss() {
+        if (!_hasDoc || document.getElementById('wts-mw-css')) return;
+        try {
+            var st = document.createElement('style');
+            st.id = 'wts-mw-css';
+            st.textContent = CSS;
+            (document.head || document.body).appendChild(st);
+        } catch (e) {}
+    }
+    var _host = null;
+    function _optHtml(wells, sel) {
+        return wells.map(function (w) {
+            return '<option value="' + _esc(w.id) + '"' + (w.id === sel ? ' selected' : '') + '>' + _esc(w.name) + '</option>';
+        }).join('');
+    }
+    function _paintSwitcher() {
+        if (!_host || !_hasDoc) return;
+        var reg = _readReg(), sel = _host.querySelector('#wts_well_select'), cp = _host.querySelector('#wts_well_copy_from');
+        if (sel) { sel.innerHTML = _optHtml(reg.wells, reg.active); sel.value = reg.active; }
+        if (cp) {
+            var others = reg.wells.filter(function (w) { return w.id !== reg.active; });
+            cp.innerHTML = others.length ? _optHtml(others, null) : '<option value="">(no other well)</option>';
+            cp.disabled = !others.length;
+        }
+        var del = _host.querySelector('[data-mw="delete"]');
+        if (del) del.disabled = reg.wells.length < 2;
+    }
+    function _say(t) { var m = _host && _host.querySelector('[data-role="mw-msg"]'); if (m) m.textContent = String(t || ''); }
+    function _menu(open) {
+        var m = _host && _host.querySelector('#wts_well_menu'), b = _host && _host.querySelector('#wts_well_menu_btn');
+        if (!m) return;
+        var show = (open === undefined) ? m.hasAttribute('hidden') : !!open;
+        if (show) { m.removeAttribute('hidden'); _say(''); _paintSwitcher(); } else m.setAttribute('hidden', '');
+        if (b) b.setAttribute('aria-expanded', show ? 'true' : 'false');
+    }
+    function _ask(q, def) { return (typeof G.prompt === 'function') ? G.prompt(q, def == null ? '' : def) : null; }
+    function _uiNew() {
+        var nm = _ask('Name of the new well:', 'Well ' + (_readReg().wells.length + 1));
+        if (nm == null) return;
+        var r = create(nm);
+        _say(r.ok ? 'Created ' + r.name : (r.message || r.error));
+        if (!r.ok && typeof G.alert === 'function' && r.message) G.alert(r.message);
+    }
+    function _onMenu(act) {
+        var reg = _readReg(), cur = _find(reg, reg.active), r;
+        if (act === 'new') { _menu(false); _uiNew(); return; }
+        if (act === 'dup') {
+            var dn = _ask('Name of the copy:', cur.name + ' copy');
+            if (dn == null) return;
+            r = create(dn, { duplicate: true });
+            _say(r.ok ? 'Duplicated as ' + r.name : (r.error === 'quota' ? r.message : ''));
+            if (r.ok) _menu(false);
+            return;
+        }
+        if (act === 'rename') {
+            var nm = _ask('Rename well:', cur.name);
+            if (nm == null) return;
+            r = rename(reg.active, nm);
+            _say(r.ok ? 'Renamed to ' + r.name : r.error);
+            return;
+        }
+        if (act === 'delete') {
+            if (reg.wells.length < 2) { _say('A project always has at least one well.'); return; }
+            if (typeof G.confirm === 'function' && !G.confirm('Delete well "' + cur.name + '" and all its inputs and results?\n\nThis cannot be undone (unless you saved a project file).')) return;
+            r = remove(reg.active);
+            _say(r.ok ? 'Deleted.' : (r.message || r.error));
+            return;
+        }
+        if (act === 'copy') {
+            var from = _host.querySelector('#wts_well_copy_from');
+            var pg = G.WTS_pageAutosave && G.WTS_pageAutosave.page ? G.WTS_pageAutosave.page() : '';
+            r = copyPage(from ? from.value : '', pg);
+            _say(r.ok ? 'Copied this page\'s inputs.' : r.error);
+            return;
+        }
+        if (act === 'compare') { _menu(false); if (typeof G.WTS_nav === 'function') G.WTS_nav('wells'); return; }
+        if (act === 'snap-page' || act === 'snap-job' || act === 'snap-wells') {
+            share(act.slice(5)).then(function (res) {
+                _say(res.ok ? 'Snapshot saved: ' + res.filename : (res.error === 'nothing to export' ? 'Nothing to export yet — run a calculation first.' : 'Snapshot failed.'));
+            });
+        }
+    }
+    function renderSwitcher(host) {
+        if (!_hasDoc || !host || !('innerHTML' in host)) return;
+        _ensureCss();
+        _host = host;
+        host.innerHTML =
+            '<div class="wts-mw" data-wts-well-switcher="1">' +
+              '<label for="wts_well_select">Well</label>' +
+              '<select id="wts_well_select" title="Active well — each well keeps its own inputs and results"></select>' +
+              '<button type="button" id="wts_well_menu_btn" aria-haspopup="true" aria-expanded="false" aria-controls="wts_well_menu" ' +
+                  'title="Well actions" aria-label="Well actions">&#8943;</button>' +
+              '<div class="wts-mw-menu" id="wts_well_menu" role="menu" hidden>' +
+                '<button type="button" role="menuitem" data-mw="new">New well…</button>' +
+                '<button type="button" role="menuitem" data-mw="dup">Duplicate this well…</button>' +
+                '<button type="button" role="menuitem" data-mw="rename">Rename…</button>' +
+                '<button type="button" role="menuitem" data-mw="delete">Delete this well…</button>' +
+                '<div class="wts-mw-sep"></div>' +
+                '<div class="wts-mw-h">Copy this page\'s inputs from</div>' +
+                '<div class="wts-mw-row"><select id="wts_well_copy_from" aria-label="Copy inputs from well"></select>' +
+                  '<button type="button" role="menuitem" data-mw="copy">Copy</button></div>' +
+                '<button type="button" role="menuitem" data-mw="compare">Compare wells</button>' +
+                '<div class="wts-mw-sep"></div>' +
+                '<div class="wts-mw-h">Share read-only snapshot (HTML)</div>' +
+                '<button type="button" role="menuitem" data-mw="snap-page">This page</button>' +
+                '<button type="button" role="menuitem" data-mw="snap-job">Job report (this well)</button>' +
+                '<button type="button" role="menuitem" data-mw="snap-wells">All wells comparison</button>' +
+                '<div class="wts-mw-msg" data-role="mw-msg" role="status"></div>' +
+              '</div>' +
+            '</div>';
+        _paintSwitcher();
+        var sel = host.querySelector('#wts_well_select');
+        if (sel) sel.addEventListener('change', function () {
+            var r = switchTo(sel.value);
+            if (!r.ok) {
+                _paintSwitcher();
+                if (typeof G.alert === 'function') G.alert(r.message || ('Could not switch well: ' + r.error));
+            }
+        });
+        var btn = host.querySelector('#wts_well_menu_btn');
+        if (btn) btn.addEventListener('click', function (e) { if (e && e.stopPropagation) e.stopPropagation(); _menu(); });
+        var menu = host.querySelector('#wts_well_menu');
+        if (menu) {
+            menu.addEventListener('click', function (e) {
+                if (e && e.stopPropagation) e.stopPropagation();
+                var b = e.target && e.target.closest ? e.target.closest('[data-mw]') : null;
+                if (b) _onMenu(b.getAttribute('data-mw'));
+            });
+            menu.addEventListener('keydown', function (e) { if (e.key === 'Escape') { _menu(false); if (btn && btn.focus) btn.focus(); } });
+        }
+    }
+
+    // ───────────────────────────────────────────────────────────────
+    // Events (no timers): results cache, auto-name, switcher refresh
+    // ───────────────────────────────────────────────────────────────
+    if (_hasDoc && typeof document.addEventListener === 'function') {
+        document.addEventListener('wts:autosaved', function (e) {
+            _writeResultsCache();
+            // A well still named "Well N" takes the name typed in Client & Well Info.
+            if (e && e.detail && e.detail.page === 'clientinfo') {
+                var reg = _readReg(), w = _find(reg, reg.active), ciw = _cleanName(_ciActive().well);
+                if (!reg.virtual && w && ciw && /^Well \d+$/.test(w.name) && ciw !== w.name) {
+                    w.name = _uniqueName(reg, ciw, w.id);
+                    _writeReg(reg);
+                }
+                _paintSwitcher();
+            }
+        });
+        ['wts:well-changed', 'wts:project-loaded', 'wts:project-new'].forEach(function (t) {
+            document.addEventListener(t, function () { _lastCache = null; _paintSwitcher(); });
+        });
+        document.addEventListener('click', function (e) {
+            var m = _host && _host.querySelector('#wts_well_menu');
+            if (m && !m.hasAttribute('hidden') && !(_host.contains && _host.contains(e.target))) _menu(false);
+        });
+    }
+    if (typeof G.addEventListener === 'function') {
+        try { G.addEventListener('pagehide', _writeResultsCache); } catch (e) {}
+    }
+
+    G.WTS_wells = {
+        list: list, active: active, switchTo: switchTo, create: create, rename: rename, remove: remove,
+        copyPage: copyPage, results: results, table: table, renderPage: renderPage, renderSwitcher: renderSwitcher,
+        loadWarnings: function () { return _loadWarnings.slice(); },
+        _isWellKey: _isWellKey
+    };
+    G.WTS_snapshot = { build: build, share: share, sanitize: sanitize };
+
+    // ── Auto-mount into the page-header host (#wts_well_host) ──
+    (function () {
+        if (!_hasDoc) return;
+        function mount() {
+            try {
+                var host = document.getElementById('wts_well_host');
+                if (host && !host.getAttribute('data-mounted')) { renderSwitcher(host); host.setAttribute('data-mounted', '1'); }
+            } catch (e) {}
+        }
+        if (document.readyState === 'loading' && document.addEventListener) document.addEventListener('DOMContentLoaded', mount);
+        else (G.setTimeout || setTimeout)(mount, 0);
+    })();
+
+})();
+
+// ─── END 29-multiwell ─────────────────────────────────────────────
 
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -2968,7 +3945,7 @@
         rows += _row('Time-to-Failure (current WT)', _fmt(lim.time_to_failure_at_current_days, 1), 'days');
         rows += _row('Erosion Rate', _fmt(lim.erosion_rate_mils_yr, 1), 'mils/year');
         rows += _row('Sand Rate', _fmt(p.sand_rate_lbMMscf, 1), 'lb/MMscf');
-        rows += _row('Salama c-factor', _fmt(p.c_constant, 0), '');
+        rows += _row('Erosion Model', p.erosion_model_label || '—', '');
 
         var segs = Array.isArray(p.segments) ? p.segments : [];
         var segTbl = '';
@@ -3270,4 +4247,584 @@
 })();
 
 // ─── END 30-quick-report ─────────────────────────────────────────────
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// ─── BEGIN 50-a11y ───────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════
+// prism-build/50-a11y.js — accessibility layer + decimal-comma input (ROADMAP P10).
+//
+// Loaded in Round-6 (feature layer). Everything here is additive: it only adds
+// ARIA attributes, tabindex values and keyboard handlers, and — when the user
+// turns the setting on — rewrites a typed decimal comma to a point. It never
+// changes a calculation.
+//
+// What it does (idempotent; re-run on page change, PRiSM tab/step change, unit
+// switch, focus and — in a browser — DOM mutations under #pgBody):
+//   • sidebar: role=button + roving tabindex (one Tab stop; ↑/↓/Home/End move,
+//     Enter/Space open), aria-current="page" on the active page;
+//   • tab strips (.tabs > .tab-btn, role=tablist): role=tab, aria-selected,
+//     roving tabindex, ←/→/Home/End move and activate (WAI-ARIA APG "Tabs");
+//   • click-only elements (dashboard tiles, [onclick] divs/spans): role=button,
+//     tabindex=0, Enter/Space activate; icon-only buttons get an aria-label;
+//   • form controls without an accessible name: the .fg-item label, or for a
+//     table cell the column header + row label ("Choke → Heater, Length (ft)");
+//     generated labels carry data-a11y-auto so reports ignore them and the next
+//     pass refreshes them (unit labels change with the unit system);
+//   • result containers (id …_res / …_result / …_results) get aria-live=polite;
+//   • canvases / SVG diagrams without a label get role=img + a label from their
+//     card heading (drawLineChart and the PRiSM plots add a data summary);
+//   • decimal comma (setting, default off; localStorage 'wtspref_decimal_comma'
+//     — deliberately not a wts_* key, so it is a device preference that does not
+//     travel in project files): "12,5" typed or pasted into a numeric field is
+//     read as 12.5. Only a single comma with digits after it and no point is
+//     converted, so "1,500" becomes 1.5 while the setting is on (stated in the
+//     toggle's tooltip).
+//
+// Public API: window.WTS_a11y = { apply(root?), name(el), decimalComma(on?),
+//   parseNumber(str) }, window.WTS_parseNumber(str).
+// References: WAI-ARIA Authoring Practices 1.2 (Tabs, Button, roving tabindex);
+//   W3C Accessible Name and Description Computation 1.2; WCAG 2.2 SC 1.1.1,
+//   1.3.1, 2.1.1, 2.4.1, 2.4.3, 2.4.7, 4.1.2, 4.1.3.
+
+(function () {
+    'use strict';
+    var G = (typeof window !== 'undefined') ? window : globalThis;
+    var _hasDoc = typeof document !== 'undefined' && !!document && typeof document.querySelectorAll === 'function';
+
+    var AUTO = 'data-a11y-auto';
+    var PREF_KEY = 'wtspref_decimal_comma';
+    var CONTROL_SEL = 'input, select, textarea';
+    var SKIP_TYPES = { hidden: 1, button: 1, submit: 1, reset: 1, image: 1 };
+    var DEC_COMMA_RE = /^\s*([-+]?\d*),(\d+(?:[eE][-+]?\d+)?)\s*$/;
+
+    // ── text helpers ─────────────────────────────────────────────────────
+    function _clean(el) {
+        if (!el) return '';
+        var c;
+        try { c = el.cloneNode(true); } catch (e) { return ''; }
+        try {
+            var rm = c.querySelectorAll('button, input, select, textarea, script, style, svg, .wts-help-icon, [aria-hidden="true"]');
+            for (var i = 0; i < rm.length; i++) if (rm[i].parentNode) rm[i].parentNode.removeChild(rm[i]);
+        } catch (e) { /* ignore */ }
+        return String(c.textContent || '').replace(/\s+/g, ' ').trim();
+    }
+    function _short(s, n) { s = String(s || ''); return s.length > n ? s.slice(0, n - 1) + '…' : s; }
+    function _attr(el, a) { return (el && el.getAttribute) ? (el.getAttribute(a) || '') : ''; }
+    function _byId(id) { return _hasDoc ? document.getElementById(id) : null; }
+
+    var _forMap = null;          // id → <label for> during a pass (one document scan, not one per control)
+    // Accessible name, following the accname algorithm closely enough for our
+    // markup: aria-labelledby → aria-label → <label for> / wrapping <label> →
+    // content (buttons, links, role=button/tab) → title → placeholder / alt.
+    function name(el) {
+        if (!el || el.nodeType !== 1) return '';
+        var lb = _attr(el, 'aria-labelledby');
+        if (lb) {
+            var s = lb.split(/\s+/).map(function (id) { var r = _byId(id); return r ? _clean(r) : ''; }).join(' ').trim();
+            if (s) return s;
+        }
+        var al = _attr(el, 'aria-label').trim();
+        if (al) return al;
+        var tag = String(el.localName || el.tagName || '').toLowerCase();
+        if (tag === 'input' || tag === 'select' || tag === 'textarea' || tag === 'meter' || tag === 'progress') {
+            if (el.id) {
+                var lf = null;
+                if (_forMap) lf = _forMap[el.id] || null;
+                else try { lf = document.querySelector('label[for="' + String(el.id).replace(/"/g, '\\"') + '"]'); } catch (e) { lf = null; }
+                if (lf) { var t = _clean(lf); if (t) return t; }
+            }
+            var wrap = el.closest && el.closest('label');
+            if (wrap) { var tw = _clean(wrap); if (tw) return tw; }
+            if (tag === 'input' && /^(button|submit|reset)$/i.test(el.type || '')) { if (el.value) return String(el.value); }
+        } else if (tag === 'img') {
+            var alt = _attr(el, 'alt').trim(); if (alt) return alt;
+        } else if (tag === 'button' || tag === 'a' || /^(button|tab|link|menuitem|option)$/.test(_attr(el, 'role'))) {
+            var tc = String(el.textContent || '').replace(/\s+/g, ' ').trim();
+            if (/[A-Za-z0-9À-ɏͰ-Ͽ]/.test(tc)) return tc;
+        }
+        var ti = _attr(el, 'title').trim(); if (ti) return ti;
+        var ph = _attr(el, 'placeholder').trim(); if (ph) return ph;
+        return '';
+    }
+    // Name from author markup only (ignores a label this layer generated earlier).
+    function _authorName(el) {
+        if (el.hasAttribute && el.hasAttribute(AUTO)) {
+            var keep = el.getAttribute('aria-label');
+            el.removeAttribute('aria-label');
+            var n = name(el);
+            if (keep != null) el.setAttribute('aria-label', keep);
+            return n;
+        }
+        return name(el);
+    }
+    function _setAuto(el, attr, value) {
+        if (!value) return;
+        if (el.getAttribute(attr) !== value) el.setAttribute(attr, value);
+        if (!el.hasAttribute(AUTO)) el.setAttribute(AUTO, '1');
+    }
+
+    // ── table cell → "row label, column header" ─────────────────────────
+    function _colIndex(cell) {
+        var row = cell.parentNode, idx = 0;
+        var cells = row && row.children ? row.children : [];
+        for (var i = 0; i < cells.length && cells[i] !== cell; i++) idx += Math.max(1, +cells[i].colSpan || 1);
+        return idx;
+    }
+    function _cellAt(row, idx) {
+        var cells = row.children || [], at = 0;
+        for (var i = 0; i < cells.length; i++) {
+            var span = Math.max(1, +cells[i].colSpan || 1);
+            if (idx >= at && idx < at + span) return cells[i];
+            at += span;
+        }
+        return null;
+    }
+    function _headerRow(table, ownRow) {
+        var rows = table.rows || table.querySelectorAll('tr');
+        if (table.tHead && table.tHead.rows && table.tHead.rows.length) return table.tHead.rows[table.tHead.rows.length - 1];
+        for (var i = 0; i < rows.length; i++) {
+            var r = rows[i];
+            if (r === ownRow) return null;
+            var ths = 0, all = 0;
+            for (var k = 0; k < r.children.length; k++) { var t = String(r.children[k].localName || '').toLowerCase(); if (t === 'th') ths++; if (t === 'th' || t === 'td') all++; }
+            if (all && ths === all) return r;
+            if (i >= 2) return null;
+        }
+        return null;
+    }
+    function _tableName(ctl) {
+        var cell = ctl.closest && ctl.closest('td, th');
+        var table = cell && cell.closest('table');
+        if (!cell || !table) return '';
+        var row = cell.parentNode;
+        var idx = _colIndex(cell);
+        var col = '';
+        var hr = _headerRow(table, row);
+        if (hr && hr !== row) { var hc = _cellAt(hr, idx); if (hc) col = _clean(hc); }
+        var rowLabel = '';
+        var cells = row.children || [];
+        for (var i = 0; i < cells.length; i++) {
+            var c = cells[i];
+            if (c === cell) break;
+            if (c.querySelector && c.querySelector(CONTROL_SEL)) {
+                // a select naming the row (e.g. a segment picker) labels the row
+                var sel = c.querySelector('select');
+                if (sel && i === 0 && sel.options && sel.selectedIndex >= 0 && sel.options[sel.selectedIndex]) {
+                    rowLabel = String(sel.options[sel.selectedIndex].text || '').trim();
+                    break;
+                }
+                continue;
+            }
+            var t = _clean(c);
+            if (t) { rowLabel = t; break; }
+        }
+        // several controls in one cell (value + unit select): number them
+        var inCell = cell.querySelectorAll(CONTROL_SEL), nth = '';
+        if (inCell.length > 1) {
+            for (var j = 0; j < inCell.length; j++) if (inCell[j] === ctl) nth = String(ctl.localName).toLowerCase() === 'select' ? ' (unit / option)' : (j ? ' (' + (j + 1) + ')' : '');
+        }
+        if (!rowLabel) {
+            var ri = typeof row.rowIndex === 'number' && row.rowIndex >= 0 ? row.rowIndex : -1;
+            if (hr && ri >= 0) { var hri = hr.rowIndex; if (typeof hri === 'number' && hri >= 0 && ri > hri) ri -= hri; }
+            if (ri >= 0) rowLabel = 'Row ' + (ri + (hr ? 0 : 1));
+        }
+        if (!col) col = 'column ' + (idx + 1);
+        return _short((rowLabel ? rowLabel + ', ' : '') + col + nth, 160);
+    }
+
+    function _contextHeading(el) {
+        var box = el.closest && el.closest('.card, .rbox, .chart-wrap, section, [data-rp-block]');
+        var guard = 0;
+        while (box && guard++ < 6) {
+            var h = box.querySelector && box.querySelector('.card-title, .rbox-title, h1, h2, h3, h4, h5, legend');
+            if (h) { var t = _clean(h); if (t) return _short(t, 90); }
+            box = box.parentNode && box.parentNode.closest ? box.parentNode.closest('.card, .rbox, .chart-wrap, section') : null;
+        }
+        var pt = _byId('pgTitle');
+        return pt ? _short(_clean(pt), 90) : '';
+    }
+    function _humanId(id) {
+        id = String(id || '').replace(/^[a-z0-9]{1,6}_/i, '');
+        return id.replace(/[_-]+/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2').trim();
+    }
+
+    function _labelControl(ctl) {
+        var type = String(ctl.type || '').toLowerCase();
+        if (SKIP_TYPES[type] && String(ctl.localName).toLowerCase() === 'input') return;
+        if (_authorName(ctl)) { if (ctl.hasAttribute(AUTO)) { ctl.removeAttribute('aria-label'); ctl.removeAttribute(AUTO); } return; }
+        var label = '';
+        var fg = ctl.closest && ctl.closest('.fg-item');
+        if (fg && !(ctl.closest('table') && fg.contains(ctl.closest('table')))) {
+            var l = fg.querySelector('label');
+            var lt = l ? _clean(l) : '';
+            if (lt) {
+                var ctls = fg.querySelectorAll(CONTROL_SEL), k = 0;
+                for (var i = 0; i < ctls.length; i++) if (ctls[i] === ctl) k = i;
+                label = k === 0 ? lt : lt + (String(ctl.localName).toLowerCase() === 'select' ? ' — unit / option' : ' (' + (k + 1) + ')');
+            }
+        }
+        if (!label && ctl.closest && ctl.closest('td, th')) label = _tableName(ctl);
+        if (!label) {
+            var prev = ctl.previousElementSibling;
+            if (prev && /^(label|span|b|strong|small|div)$/i.test(prev.localName || '') && !prev.querySelector(CONTROL_SEL)) {
+                var pt = _clean(prev); if (pt && pt.length <= 80) label = pt;
+            }
+        }
+        if (!label && type === 'file') label = 'Choose file';
+        if (!label) {
+            var ctx = _contextHeading(ctl), hid = _humanId(ctl.id);
+            label = (ctx && hid) ? ctx + ' — ' + hid : (hid || ctx || '');
+        }
+        _setAuto(ctl, 'aria-label', _short(label, 160));
+    }
+
+    // Icon-only native buttons: fall back to their title, then a symbol map.
+    var ICONS = { '×': 'Remove', '✕': 'Close', '✖': 'Close', '☰': 'Menu', '↶': 'Undo', '↷': 'Redo',
+        '↑': 'Move up', '↓': 'Move down', '▲': 'Move up', '▼': 'Move down', '+': 'Add', '−': 'Remove', '-': 'Remove',
+        '⤢': 'Expand', '⛶': 'Full screen', '⟲': 'Reset', '↺': 'Reset', '⚙': 'Settings', '?': 'Help', 'i': 'Help',
+        '▶': 'Play', '⏸': 'Pause', '■': 'Stop', '⏹': 'Stop', '‹': 'Back', '›': 'Next', '«': 'First', '»': 'Last' };
+    function _labelButton(b) {
+        if (_authorName(b)) return;
+        var tc = String(b.textContent || '').replace(/\s+/g, '').trim();
+        var lab = ICONS[tc] || '';
+        if (!lab) { var ctx = _contextHeading(b); lab = ctx ? ctx + ' — button' : ''; }
+        if (lab) _setAuto(b, 'aria-label', lab);
+    }
+
+    // ── roving tabindex helpers ──────────────────────────────────────────
+    function _rove(items, current) {
+        for (var i = 0; i < items.length; i++) {
+            var want = items[i] === current ? '0' : '-1';
+            if (items[i].getAttribute('tabindex') !== want) items[i].setAttribute('tabindex', want);
+        }
+    }
+    function _navButtons() { return _hasDoc ? Array.prototype.slice.call(document.querySelectorAll('#sidebar .nav-btn')) : []; }
+    function _syncSidebar() {
+        var btns = _navButtons();
+        if (!btns.length) return;
+        var active = null;
+        for (var i = 0; i < btns.length; i++) {
+            var b = btns[i];
+            if (b.getAttribute('role') !== 'button' && String(b.localName).toLowerCase() !== 'button') b.setAttribute('role', 'button');
+            var on = b.classList && b.classList.contains('active');
+            if (on) { active = active || b; if (b.getAttribute('aria-current') !== 'page') b.setAttribute('aria-current', 'page'); }
+            else if (b.hasAttribute('aria-current')) b.removeAttribute('aria-current');
+        }
+        var focused = document.activeElement;
+        _rove(btns, btns.indexOf(focused) !== -1 ? focused : (active || btns[0]));
+    }
+    function _tabsOf(list) {
+        var out = [], ch = list.children || [];
+        for (var i = 0; i < ch.length; i++) {
+            var c = ch[i];
+            if ((c.classList && c.classList.contains('tab-btn')) || c.getAttribute('role') === 'tab') out.push(c);
+        }
+        return out;
+    }
+    function _syncTablist(list) {
+        var tabs = _tabsOf(list);
+        if (tabs.length < 2) return;
+        if (!list.getAttribute('role')) list.setAttribute('role', 'tablist');
+        var sel = null, byClass = false;
+        for (var a = 0; a < tabs.length; a++) if (tabs[a].classList && tabs[a].classList.contains('active')) byClass = true;
+        for (var i = 0; i < tabs.length; i++) {
+            var t = tabs[i];
+            if (t.getAttribute('role') !== 'tab') t.setAttribute('role', 'tab');
+            // the .active class is the source of truth where the strip uses it, else aria-selected
+            var on = byClass ? t.classList.contains('active') : t.getAttribute('aria-selected') === 'true';
+            if (on && !sel) sel = t;
+            var want = on ? 'true' : 'false';
+            if (t.getAttribute('aria-selected') !== want) t.setAttribute('aria-selected', want);
+        }
+        var focused = _hasDoc ? document.activeElement : null;
+        _rove(tabs, tabs.indexOf(focused) !== -1 ? focused : (sel || tabs[0]));
+    }
+    function _syncTabs(root) {
+        var lists = (root || document).querySelectorAll('.tabs, [role="tablist"]');
+        for (var i = 0; i < lists.length; i++) _syncTablist(lists[i]);
+    }
+
+    // ── the pass ─────────────────────────────────────────────────────────
+    function apply(root) {
+        if (!_hasDoc) return 0;
+        var n = 0;
+        try {
+            _forMap = {};
+            var fl = document.querySelectorAll('label[for]');
+            for (var f = fl.length - 1; f >= 0; f--) _forMap[fl[f].getAttribute('for')] = fl[f];   // first label wins
+            var sb = _byId('sidebar');
+            if (sb && !sb.getAttribute('role')) { sb.setAttribute('role', 'navigation'); sb.setAttribute('aria-label', 'Calculators'); }
+            _syncSidebar();
+            var pg = _byId('pgBody');
+            if (pg && !pg.hasAttribute('tabindex')) pg.setAttribute('tabindex', '-1');   // skip-link target
+            var sf = _byId('saveFlash');
+            if (sf && !sf.getAttribute('role')) { sf.setAttribute('role', 'status'); sf.setAttribute('aria-live', 'polite'); }
+            var hdr = document.querySelector('.page-header');   // header controls live outside #pgBody
+            if (hdr && root) _labelArea(hdr);
+            root = root || document.body || document;
+            _syncTabs(root);
+
+            // click-only elements → buttons
+            var clickables = root.querySelectorAll('.dash-card, [data-dc], [onclick]');
+            for (var i = 0; i < clickables.length; i++) {
+                var el = clickables[i], tag = String(el.localName || '').toLowerCase();
+                if (/^(button|a|input|select|textarea|label|option|body|html|summary|tr|td|th|table|tbody|thead)$/.test(tag)) continue;
+                if (el.id === 'sidebarOverlay' || (el.classList && el.classList.contains('sidebar-overlay'))) continue;
+                if (el.querySelector && el.querySelector('button, a[href], input, select, textarea')) continue;   // a container, not a control
+                if (!el.getAttribute('role')) el.setAttribute('role', 'button');
+                if (!el.hasAttribute('tabindex')) el.setAttribute('tabindex', '0');
+                if (el.classList && el.classList.contains('dash-card') && !_authorName(el)) {
+                    var h = el.querySelector('h3, .dc-title');
+                    if (h) _setAuto(el, 'aria-label', _clean(h));
+                }
+                n++;
+            }
+            // native buttons without a name
+            var btns = root.querySelectorAll('button, [role="button"]');
+            for (var b = 0; b < btns.length; b++) _labelButton(btns[b]);
+            // form controls
+            var ctls = root.querySelectorAll(CONTROL_SEL);
+            for (var c = 0; c < ctls.length; c++) { _labelControl(ctls[c]); n++; }
+            // result areas → polite live regions (WCAG 4.1.3 status messages)
+            var res = root.querySelectorAll('[id$="_res"], [id$="_result"], [id$="_results"], [data-wts-project-toolbar] [data-role="msg"]');
+            for (var r = 0; r < res.length; r++) {
+                var re = res[r], rt = String(re.localName || '').toLowerCase();
+                if (rt === 'input' || rt === 'select' || rt === 'textarea' || rt === 'canvas') continue;
+                if (!re.hasAttribute('aria-live')) re.setAttribute('aria-live', 'polite');
+            }
+            // canvases and diagrams → images with a name
+            var imgs = root.querySelectorAll('canvas, svg');
+            for (var m = 0; m < imgs.length; m++) {
+                var im = imgs[m];
+                if (im.getAttribute('aria-hidden') === 'true' || /^(presentation|none)$/.test(im.getAttribute('role') || '')) continue;
+                if (String(im.localName).toLowerCase() === 'svg' && im.parentNode && im.parentNode.closest && im.parentNode.closest('button, a, svg, .nav-icon, [role="button"]')) continue;
+                if (im.getAttribute('aria-label') || im.getAttribute('aria-labelledby')) continue;
+                var ttl = '';
+                if (String(im.localName).toLowerCase() === 'svg') { var te = im.querySelector('title'); ttl = te ? _clean(te) : ''; }
+                var ctxh = _contextHeading(im);
+                var kind = String(im.localName).toLowerCase() === 'svg' ? 'diagram' : 'chart';
+                if (!im.getAttribute('role')) im.setAttribute('role', 'img');
+                _setAuto(im, 'aria-label', ttl || (ctxh ? ctxh + ' ' + kind : kind.charAt(0).toUpperCase() + kind.slice(1)));
+            }
+            _renderDecimalToggle();
+        } catch (e) {
+            try { console.warn('[a11y] pass failed', e); } catch (_) { /* ignore */ }
+        }
+        _forMap = null;
+        return n;
+    }
+
+    function _labelArea(area) {
+        var c = area.querySelectorAll(CONTROL_SEL);
+        for (var i = 0; i < c.length; i++) _labelControl(c[i]);
+        var b = area.querySelectorAll('button');
+        for (var j = 0; j < b.length; j++) _labelButton(b[j]);
+    }
+    function _applyPage() { apply(_byId('pgBody') || undefined); }
+
+    // ── keyboard ─────────────────────────────────────────────────────────
+    function _isNative(el) { return /^(button|a|input|select|textarea|summary)$/i.test(el.localName || ''); }
+    function _move(list, cur, key) {
+        var i = list.indexOf(cur);
+        if (i === -1) return null;
+        if (key === 'Home') return list[0];
+        if (key === 'End') return list[list.length - 1];
+        var d = (key === 'ArrowDown' || key === 'ArrowRight') ? 1 : -1;
+        return list[(i + d + list.length) % list.length];
+    }
+    function _onKey(ev) {
+        var t = ev.target;
+        if (!t || t.nodeType !== 1 || ev.defaultPrevented || ev.altKey || ev.ctrlKey || ev.metaKey) return;
+        var key = ev.key;
+        // sidebar: ↑/↓/Home/End move the single tab stop
+        if (t.classList && t.classList.contains('nav-btn') && t.closest && t.closest('#sidebar')) {
+            if (key === 'ArrowDown' || key === 'ArrowUp' || key === 'Home' || key === 'End') {
+                var nb = _move(_navButtons(), t, key);
+                if (nb) { ev.preventDefault(); _rove(_navButtons(), nb); try { nb.focus(); } catch (e) { /* ignore */ } }
+                return;
+            }
+        }
+        // tabs: ←/→/Home/End move and activate (automatic activation)
+        if (t.getAttribute('role') === 'tab' && (key === 'ArrowLeft' || key === 'ArrowRight' || key === 'Home' || key === 'End')) {
+            var list = t.parentNode ? _tabsOf(t.parentNode) : [];
+            var nt = _move(list, t, key);
+            if (nt) {
+                ev.preventDefault();
+                _rove(list, nt);
+                try { nt.focus(); } catch (e) { /* ignore */ }
+                try { nt.click(); } catch (e) { /* ignore */ }
+                var nf = nt.id ? _byId(nt.id) : null;            // tab strip may have been re-rendered
+                if (nf && nf !== nt) try { nf.focus(); } catch (e) { /* ignore */ }
+            }
+            return;
+        }
+        // Enter / Space on a non-native button
+        if ((key === 'Enter' || key === ' ' || key === 'Spacebar') && !_isNative(t) && /^(button|tab|link|menuitem)$/.test(t.getAttribute('role') || '')) {
+            if (t.isContentEditable) return;
+            ev.preventDefault();
+            try { t.click(); } catch (e) { /* ignore */ }
+            return;
+        }
+        if (key === 'Escape') {
+            var sb = _byId('sidebar'), ov = _byId('sidebarOverlay');
+            if (ov && ov.classList && ov.classList.contains('show') && typeof G.closeMobileSidebar === 'function') {
+                G.closeMobileSidebar();
+                var burger = _byId('mobBurger'); if (burger) try { burger.focus(); } catch (e) { /* ignore */ }
+            } else if (sb && sb.contains && sb.contains(t)) { /* nothing */ }
+        }
+    }
+
+    // ── decimal comma ────────────────────────────────────────────────────
+    function _prefGet() { try { return G.localStorage && G.localStorage.getItem(PREF_KEY) === '1'; } catch (e) { return false; } }
+    function decimalComma(on) {
+        if (on === undefined) return _prefGet();
+        try { if (on) G.localStorage.setItem(PREF_KEY, '1'); else G.localStorage.removeItem(PREF_KEY); } catch (e) { /* storage blocked */ }
+        _renderDecimalToggle();
+        return !!on;
+    }
+    function parseNumber(s) {
+        if (typeof s === 'number') return s;
+        s = String(s == null ? '' : s);
+        if (_prefGet()) { var m = DEC_COMMA_RE.exec(s); if (m) s = m[1] + '.' + m[2]; }
+        return parseFloat(s);
+    }
+    function _numericField(t) {
+        if (!t || String(t.localName || '').toLowerCase() !== 'input') return false;
+        if (t.hasAttribute && t.hasAttribute('data-no-decimal-comma')) return false;
+        var ty = String(t.getAttribute('type') || 'text').toLowerCase();
+        return ty === 'number' || ty === 'text' || ty === 'tel' || ty === '' || (ty === 'search' && t.getAttribute('inputmode') === 'decimal');
+    }
+    function _onValue(ev) {
+        var t = ev.target;
+        if (!_numericField(t) || !_prefGet()) return;
+        var v = String(t.value == null ? '' : t.value), m = DEC_COMMA_RE.exec(v);
+        if (m) { try { t.value = m[1] + '.' + m[2]; } catch (e) { /* ignore */ } }
+    }
+    function _insert(text) {
+        try { return !!(document.execCommand && document.execCommand('insertText', false, text)); } catch (e) { return false; }
+    }
+    function _onKeyComma(ev) {
+        if (ev.key !== ',' || ev.ctrlKey || ev.metaKey || ev.altKey) return;
+        var t = ev.target;
+        if (!t || String(t.getAttribute && t.getAttribute('type') || '').toLowerCase() !== 'number' || !_prefGet()) return;
+        if (_insert('.')) ev.preventDefault();          // a number field would otherwise drop "12,5" to ""
+    }
+    function _onPaste(ev) {
+        var t = ev.target;
+        if (!_numericField(t) || !_prefGet()) return;
+        var d = ev.clipboardData || G.clipboardData, s = '';
+        try { s = d ? d.getData('text') : ''; } catch (e) { s = ''; }
+        var m = DEC_COMMA_RE.exec(String(s || ''));
+        if (m && _insert(m[1] + '.' + m[2])) ev.preventDefault();
+    }
+    function _renderDecimalToggle() {
+        if (!_hasDoc) return;
+        var host = _byId('wts_unit_toggle_host');
+        if (!host) return;
+        var b = _byId('wts_dec_comma');
+        if (!b) {
+            b = document.createElement('button');
+            b.type = 'button';
+            b.id = 'wts_dec_comma';
+            b.className = 'btn btn-secondary';
+            b.textContent = '1,5';
+            b.setAttribute('title', 'Decimal comma: when on, 12,5 typed or pasted into a number field is read as 12.5 ' +
+                '(a single comma with digits after it and no point; 1,500 then means 1.5)');
+            b.style.cssText = 'padding:3px 8px;font-size:11px;border-radius:4px;border:1px solid var(--border,#30363d);' +
+                'cursor:pointer;background:transparent;color:var(--text2,#8b949e);margin-left:6px;';
+            b.addEventListener('click', function () { decimalComma(!_prefGet()); });
+            try { host.appendChild(b); } catch (e) { return; }
+        }
+        var on = _prefGet();
+        b.setAttribute('aria-pressed', on ? 'true' : 'false');
+        b.setAttribute('aria-label', 'Accept decimal comma in number fields');
+        b.style.background = on ? 'var(--accent, #f0883e)' : 'transparent';
+        b.style.color = on ? 'var(--on-accent, #0d1117)' : 'var(--text2, #8b949e)';
+    }
+
+    // ── wiring ───────────────────────────────────────────────────────────
+    // One-shot, coalescing scheduler (not polling): a full #pgBody pass after PRiSM
+    // events, or — for DOM mutations — a pass over just the added subtrees.
+    var _moTimer = null, _full = false, _roots = [];
+    function _scheduleApply(roots) {
+        if (Array.isArray(roots)) { for (var i = 0; i < roots.length && _roots.length < 200; i++) _roots.push(roots[i]); }
+        else _full = true;
+        if (_moTimer) return;
+        _moTimer = setTimeout(function () {
+            _moTimer = null;
+            var full = _full || _roots.length >= 200, list = _roots;
+            _full = false; _roots = [];
+            if (full) { _applyPage(); return; }
+            for (var k = 0; k < list.length; k++) {
+                var r = list[k];
+                if (!r || !r.isConnected && r.isConnected !== undefined) continue;
+                if (r.matches && r.matches(CONTROL_SEL)) _labelControl(r);
+                else if (r.querySelectorAll) apply(r);
+            }
+        }, 0);
+    }
+    function _labelOne(ev) {
+        var t = ev.target;
+        if (!t || t.nodeType !== 1) return;
+        try {
+            if (t.matches && t.matches(CONTROL_SEL)) _labelControl(t);
+            else if (String(t.localName).toLowerCase() === 'button') _labelButton(t);
+        } catch (e) { /* ignore */ }
+    }
+    function _init() {
+        if (!_hasDoc || G.__wtsA11yWired) return;
+        G.__wtsA11yWired = true;
+        document.addEventListener('keydown', _onKey);
+        document.addEventListener('keydown', _onKeyComma, true);
+        document.addEventListener('paste', _onPaste, true);
+        document.addEventListener('input', _onValue, true);
+        document.addEventListener('change', _onValue, true);
+        document.addEventListener('focusin', _labelOne);
+        // after any click the tab strips / sidebar may have changed state
+        document.addEventListener('click', function (ev) {
+            var t = ev.target;
+            if (!t || !t.closest) return;
+            var list = t.closest('.tabs, [role="tablist"]');
+            if (list) _syncTablist(list);
+            if (t.closest('#wts_skip_link')) {
+                ev.preventDefault();
+                var pg = _byId('pgBody');
+                if (pg) { if (!pg.hasAttribute('tabindex')) pg.setAttribute('tabindex', '-1'); try { pg.focus(); } catch (e) { /* ignore */ } }
+            }
+        });
+        // end of every host render(): label the new page now (synchronously)
+        document.addEventListener('h2oil:pagechange', _applyPage);
+        document.addEventListener('wts:unit-system-changed', _applyPage);
+        // PRiSM re-renders tabs / panels in place: one coalesced pass after the burst
+        if (typeof G.addEventListener === 'function') {
+            ['prism:tab-open', 'prism:step-changed', 'prism:fit-updated', 'prism:dataset-loaded'].forEach(function (e) {
+                G.addEventListener(e, function () { _scheduleApply(); });
+            });
+        }
+        if (G.MutationObserver) {
+            try {
+                var pg = _byId('pgBody');
+                if (pg) new G.MutationObserver(function (muts) {
+                    var add = [];
+                    for (var i = 0; i < muts.length; i++) {
+                        var an = muts[i].addedNodes || [];
+                        for (var j = 0; j < an.length; j++) if (an[j].nodeType === 1) add.push(an[j]);
+                    }
+                    if (add.length) _scheduleApply(add);
+                }).observe(pg, { childList: true, subtree: true });
+            } catch (e) { /* ignore */ }
+        }
+        apply();
+    }
+    if (_hasDoc) {
+        if (document.readyState === 'loading' && typeof document.addEventListener === 'function') document.addEventListener('DOMContentLoaded', _init);
+        else _init();
+    }
+
+    G.WTS_a11y = { apply: apply, name: name, decimalComma: decimalComma, parseNumber: parseNumber };
+    G.WTS_parseNumber = parseNumber;
+})();
+
+// ─── END 50-a11y ─────────────────────────────────────────────
 

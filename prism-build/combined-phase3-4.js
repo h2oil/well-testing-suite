@@ -1958,7 +1958,12 @@ function PRiSM_renderModelTab(hostEl, ropts) {
             var e = M[m.key] || {};
             var sel = m.key === st.model;
             var params = (e.paramSpec || []).map(function (s) { return s && s.key; }).filter(Boolean).join(', ');
-            var hay = [m.key, m.name, _catTitle(c), e.description || '', e.reference || '', params].join(' ').toLowerCase();
+            // Plain-language terms from the model browser (51-prism-workspace.js):
+            // what the model is, what its derivative looks like, synonyms.
+            var plainTerms = '', sig = '';
+            if (typeof G.PRiSM_modelSearchTerms === 'function') { try { plainTerms = G.PRiSM_modelSearchTerms(m.key) || ''; } catch (eP) { plainTerms = ''; } }
+            if (typeof G.PRiSM_modelPlainInfo === 'function') { try { var pinf = G.PRiSM_modelPlainInfo(m.key); sig = (pinf && pinf.signature) || ''; } catch (eI) { sig = ''; } }
+            var hay = [m.key, m.name, _catTitle(c), e.description || '', e.reference || '', params, plainTerms].join(' ').toLowerCase();
             var thumb = _thumbSVG(m.key);
             return '<div class="prism-model-card' + (sel ? ' is-selected' : '') + '" data-prism-model="' + _esc(m.key) + '" data-prism-cat="' + _esc(c) + '"' +
                 ' data-prism-search="' + _esc(hay) + '" role="button" tabindex="0" aria-pressed="' + (sel ? 'true' : 'false') + '">' +
@@ -1967,6 +1972,7 @@ function PRiSM_renderModelTab(hostEl, ropts) {
                   (sel ? '<span class="prism-badge prism-badge--accent">Selected</span>' : '') + '</div>' +
                 '<div class="prism-card-meta">' + _esc(m.key) + ' · ' + (m.kind === 'rate' ? 'rate model' : 'pressure model') + '</div>' +
                 '<div class="prism-card-desc">' + _esc(e.description || '') + '</div>' +
+                (sig ? '<div class="prism-card-desc prism-card-sig" style="opacity:.8;font-style:italic;">Looks like: ' + _esc(sig) + '</div>' : '') +
               '</div>';
         }).join('');
         return '<section class="prism-lib-sec" data-prism-sec="' + _esc(c) + '"><div class="prism-lib-sec-title">' + _esc(_catTitle(c)) + '</div>' +

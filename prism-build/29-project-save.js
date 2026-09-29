@@ -69,6 +69,9 @@
 //   }
 //   Files written before the `storage` module existed still load (the
 //   other modules apply; nothing in localStorage is cleared).
+//   Multi-well projects (29-multiwell.js) add a `wells` module: the well list
+//   and one blob per inactive well; `storage` and the other modules hold the
+//   active well. A file with `storage` but no `wells` opens as one well.
 //
 // CONVENTIONS
 //   • Single outer IIFE, 'use strict'
@@ -144,7 +147,8 @@
         'wts_prism_sample_suppress': 1,  // PRiSM "don't re-seed sample data"
         'wts_prism_migrated': 1          // one-shot DCA/PTA → PRiSM migration flag
     };
-    var PREF_RE = /consent|analytics|tracking|(^|_)ga(_|$)|subscri|entitle|purchase/i;
+    // wts_ui_*: navigation preferences (favourites, recently used, collapsed sidebar groups).
+    var PREF_RE = /consent|analytics|tracking|(^|_)ga(_|$)|subscri|entitle|purchase|^wts_ui_/i;
     // Cross-project libraries: saved in the file, restored on Open only
     // when missing locally, kept on New.
     var LIBRARY_RE = /^wts_prism_(user_curves|presets|mapping_)/;
@@ -177,6 +181,10 @@
     function _isPrefKey(k)    { return !!PREF_KEYS[k] || PREF_RE.test(String(k)); }
     function _isLibraryKey(k) { return LIBRARY_RE.test(String(k)); }
     function _isProjectKey(k) { return _hasPrefix(k) && !_isPrefKey(k); }
+    // Multi-well store (29-multiwell.js): the well list 'wts_wells' and one
+    // blob per INACTIVE well 'wts_well_<id>'. They travel in the file's
+    // `wells` module, never in `storage`, and only the wells module clears them.
+    function _isWellsKey(k) { return /^wts_wells$|^wts_well_/.test(String(k)); }
 
     function _readClientInfo() {
         var ls = _ls();
@@ -194,7 +202,7 @@
         var keys = _lsKeys(ls);
         for (var i = 0; i < keys.length; i++) {
             var k = keys[i];
-            if (!_isProjectKey(k) || _isLibraryKey(k)) continue;
+            if (!_isProjectKey(k) || _isLibraryKey(k) || _isWellsKey(k)) continue;
             try { ls.removeItem(k); removed.push(k); } catch (e) {}
         }
         var keep = {}, any = false;
@@ -274,7 +282,10 @@
     // ───────────────────────────────────────────────────────────────
     var PRISM_KEYS = ['model', 'params', 'paramFreeze', 'phys', 'tcMatch', 'activePlot', 'activePeriod',
                       'bourdetL', 'timeFn', 'lastFit', 'semilog', 'analysisKeyResults', 'interp',
-                      'autoMatch', 'fits', 'reportPins', 'periodFlags'];
+                      'autoMatch', 'fits', 'reportPins', 'periodFlags',
+                      // fit workspace (51) and gas / deliverability (52): listed so
+                      // they are never dropped by the EXTRA_MAX_CHARS limit.
+                      'fitWorkspace', 'branches', 'gasOpts', 'rateSkin', 'deliverability'];
     var PRISM_SKIP = { presets: 1, match: 1, modelCurve: 1, modelCurveData: 1, autoMatchStatus: 1,
                        project: 1, activeModel: 1, autoMatchTopN: 1, pvt: 1, crop: 1 };
     var EXTRA_MAX_CHARS = 200000;
@@ -656,7 +667,7 @@
                 _flushAutosave();
                 var ls = _ls();
                 if (!ls) return null;
-                var keys = _lsKeys(ls).filter(_isProjectKey).sort();
+                var keys = _lsKeys(ls).filter(function (k) { return _isProjectKey(k) && !_isWellsKey(k); }).sort();
                 var out = {}, skipped = [], n = 0;
                 for (var i = 0; i < keys.length; i++) {
                     var v = null;
@@ -685,7 +696,7 @@
                 var keys = state.keys;
                 for (var k in keys) {
                     if (!Object.prototype.hasOwnProperty.call(keys, k)) continue;
-                    if (!_isProjectKey(k) || typeof keys[k] !== 'string') continue;
+                    if (!_isProjectKey(k) || _isWellsKey(k) || typeof keys[k] !== 'string') continue;
                     if (_isLibraryKey(k) && ls.getItem(k) != null) continue;  // keep local library
                     try { ls.setItem(k, keys[k]); }
                     catch (e) { _warn('[WTS_project] storage: could not write ' + k, e); }
@@ -754,6 +765,11 @@
         // A project with PRiSM state but no dataset must not inherit the
         // dataset that is open now (it is re-read from the restored inputs).
         if (_own(mods, 'prism') && !_own(mods, 'prism_dataset')) G.PRiSM_dataset = null;
+        // A project saved before multi-well projects (or with a single well)
+        // replaces the well list too: it opens as one well.
+        if (_own(mods, 'storage') && !_own(mods, 'wells') && MODULES.wells) {
+            try { MODULES.wells.write(null); } catch (e) { _warn('[WTS_project] wells reset failed', e); }
+        }
         // Apply in registry order (inputs → dataset → analysis → storage), not
         // in the file's key order, so dependent modules see their inputs.
         var order = listModules();
@@ -1215,7 +1231,7 @@
         if (btnNew) btnNew.addEventListener('click', function () {
             var ok = true;
             if (typeof G.confirm === 'function') {
-                ok = G.confirm('Start a new project?\n\nAll calculator inputs on every page will be cleared ' +
+                ok = G.confirm('Start a new project?\n\nAll calculator inputs on every page (and every well) will be cleared ' +
                                '(unit system and "Report prepared by" details are kept). ' +
                                'Save first if you want to keep the current project.');
             }
@@ -1287,7 +1303,17 @@
         unregisterModule: unregisterModule,
         listModules:      listModules,
         // Synchronous payload builder — primarily for QA / unit tests
-        _buildPayload:    _buildPayload
+        _buildPayload:    _buildPayload,
+        // Shared with 29-multiwell.js (well switching reuses the module
+        // registry: a well is a project without the job-level parts).
+        _internals: {
+            modules: function () { return MODULES; },
+            applyPayload: _applyPayload,
+            ls: _ls, lsKeys: _lsKeys,
+            isProjectKey: _isProjectKey, isLibraryKey: _isLibraryKey, isWellsKey: _isWellsKey,
+            flushAutosave: _flushAutosave, prismSync: _prismSync, emit: _emit, rerender: _rerender,
+            fileName: _fileName
+        }
     };
     G.WTS_renderProjectToolbar = renderProjectToolbar;
 

@@ -52,6 +52,8 @@ const calc = (app) => app.click('op_calc');
 const S = (app) => app.win.WTS_state.orifice;
 
 // Independent AGA-3 RG flange-tap + DAK reference in SI mass-flow form (copy of calc-g1 agaRef).
+// v3.0: real base density ρb = Pb·M/(Zb·R·Tb), Zb = DAK at Tb/Pb; entered SG is real unless
+// basis 'ideal' — M = 28.9625·Gi, Gi = Gr·Zb/0.99959 (AGA-3 Part 3, Zb_air = 0.99959).
 function dakZ(Tpr, Ppr) {
   const A = [0, 0.3265, -1.07, -0.5339, 0.01569, -0.05165, 0.5475, -0.7361, 0.1844, 0.1056, 0.6134, 0.7210];
   const Zof = (r) => 1 + (A[1] + A[2] / Tpr + A[3] / Tpr ** 3 + A[4] / Tpr ** 4 + A[5] / Tpr ** 5) * r
@@ -62,16 +64,20 @@ function dakZ(Tpr, Ppr) {
   return 0.27 * Ppr / (((lo + hi) / 2) * Tpr);
 }
 function agaRef(o) {
-  const { D, d, hw, Ps, TfF, SG, co2 = 0, h2s = 0, TbF = 60, Pb = 14.696, mu = 0.012 } = o;
+  const { D, d, hw, Ps, TfF, SG, co2 = 0, h2s = 0, TbF = 60, Pb = 14.696, mu = 0.012, basis = 'real' } = o;
   const beta = d / D, b4 = beta ** 4, Ev = 1 / Math.sqrt(1 - b4);
   const Pf = Ps + 14.696, Tf = TfF + 459.67, Tb = TbF + 459.67;
-  const Tpc = 168 + 325 * SG - 12.5 * SG * SG, Ppc = 677 + 15 * SG - 37.5 * SG * SG;
   const A = (co2 + h2s) / 100, B = h2s / 100, eps = 120 * (A ** 0.9 - A ** 1.6) + 15 * (B ** 0.5 - B ** 4);
-  const Tpc2 = Tpc - eps, Ppc2 = Ppc * Tpc2 / (Tpc + B * (1 - B) * eps);
-  const Z = dakZ(Tf / Tpc2, Pf / Ppc2);
+  const crit = (g) => {
+    const Tpc = 168 + 325 * g - 12.5 * g * g, Ppc = 677 + 15 * g - 37.5 * g * g, Tpc2 = Tpc - eps;
+    return { T: Tpc2, P: Ppc * Tpc2 / (Tpc + B * (1 - B) * eps) };
+  };
+  let Gi = SG, c = crit(Gi), Zb = dakZ(Tb / c.T, Pb / c.P);
+  if (basis !== 'ideal') for (let i = 0; i < 60; i++) { Gi = SG * Zb / 0.99959; c = crit(Gi); Zb = dakZ(Tb / c.T, Pb / c.P); }
+  const Z = dakZ(Tf / c.T, Pf / c.P);
   const Y = 1 - (0.41 + 0.35 * b4) * hw / (27.707 * Pf) / 1.3;
-  const dm = d * 0.0254, Dm = D * 0.0254, dP = hw * 248.84, M = 28.9625e-3 * SG, R = 8.314462;
-  const rho = Pf * 6894.757 * M / (Z * R * Tf * 5 / 9), rhob = Pb * 6894.757 * M / (R * Tb * 5 / 9);
+  const dm = d * 0.0254, Dm = D * 0.0254, dP = hw * 248.84, M = 28.9625e-3 * Gi, R = 8.314462;
+  const rho = Pf * 6894.757 * M / (Z * R * Tf * 5 / 9), rhob = Pb * 6894.757 * M / (Zb * R * Tb * 5 / 9);
   const L = 1 / D, M2 = 2 * L / (1 - beta), M1 = Math.max(2.8 - D, 0);
   let Re = 1e6, Cd = 0.6, qm = 0;
   for (let i = 0; i < 60; i++) {
@@ -83,7 +89,7 @@ function agaRef(o) {
     qm = Cd * Ev * Y * Math.PI / 4 * dm * dm * Math.sqrt(2 * rho * dP);
     Re = 4 * qm / (Math.PI * mu * 1e-3 * Dm);
   }
-  return { Z, Cd, Qv: qm / rhob / 0.0283168466 * 3600 };
+  return { Z, Zb, Gi, Cd, Qv: qm / rhob / 0.0283168466 * 3600 };
 }
 
 const AGA_CASES = [
@@ -121,13 +127,21 @@ module.exports = [
       });
       // note set: pipe taps + β 0.815 (case 3), β 0.121 ok, D ≥ 2
       assert.strictEqual(W.WTS_aga3_compute(toCompute(AGA_CASES[3])).notes.length, 2, 'pipe-tap + β notes');
-      // Z override is honoured and flows through Fpv = 1/√Z
+      // Z override is honoured and flows through Fpv = √(Zb/Zf) (Zb stays the DAK base Z)
       const base = W.WTS_aga3_compute(toCompute(AGA_CASES[0]));
       const zo = W.WTS_aga3_compute(Object.assign(toCompute(AGA_CASES[0]), { Z: base.Z }));
       assert.strictEqual(zo.zSource, 'input');
       assert.strictEqual(zo.Qv, base.Qv, 'same Z → same rate');
       const z2 = W.WTS_aga3_compute(Object.assign(toCompute(AGA_CASES[0]), { Z: base.Z * 1.02 }));
-      assert.rel(z2.Qv / base.Qv, 1 / Math.sqrt(1.02), 2e-4, 'Fpv = 1/√Z');
+      assert.rel(z2.Qv / base.Qv, 1 / Math.sqrt(1.02), 2e-4, 'Fpv = √(Zb/Zf)');
+      assert.strictEqual(z2.Zb, base.Zb, 'Zb independent of the flowing-Z override');
+      assert.rel(base.Fpv, Math.sqrt(agaRef(toCompute(AGA_CASES[0])).Zb / base.Z), 1e-5, 'Fpv uses the reference Zb');
+      // ideal-gravity basis: independent reference with Gi = SG
+      AGA_CASES.forEach((c, i) => {
+        const ri = W.WTS_aga3_compute(Object.assign(toCompute(c), { sgBasis: 'ideal' }));
+        assert.rel(ri.Qv, agaRef(Object.assign(toCompute(c), { basis: 'ideal' })).Qv, 1e-3, 'case ' + i + ' ideal basis vs reference');
+        assert.rel(ri.Gr, c.a_SG * 0.99959 / ri.Zb, 1e-12, 'case ' + i + ' Gr = Gi·Zb_air/Zb');
+      });
       // hw = 0 → zero flow, no NaN
       const z0 = W.WTS_aga3_compute(Object.assign(toCompute(AGA_CASES[0]), { hw: 0 }));
       assert.ok(z0.ok && z0.Qv === 0, 'hw 0 → 0');
@@ -230,12 +244,24 @@ module.exports = [
       assert.near(rv(app, 'op_res', 'Differential at target rate'), S(app).hw, 0.06, 'DP row');
       assert.near(rv(app, 'op_res', 'Beta ratio'), 1.875 / 4.026, 1e-4, 'β row');
       const t = txt(app, 'op_res');
-      assert.includes(t, '✓ 1.875" plate (β 0.466) reads 48.4 % of range');
+      // v3.0 (Fpv = √(Zb/Zf)): independent reference (agaRef, bisection on hw at 5000 MSCFD) gives
+      // 48.58 % (1.875"), 36.83 % (2.000"), 65.07 % (1.750"), d* = 1.8623" (app 1.8624, ≤ 0.005 % apart) — were 48.4 / 36.7 / 64.9 / 1.8610 with Zb = 1.
+      assert.includes(t, '✓ 1.875" plate (β 0.466) reads 48.6 % of range');
       assert.strictEqual(rows(app, 'op_res').find((x) => x.l === 'Orifice bore').v, '1.875"');
-      assert.match(rows(app, 'op_res').find((x) => x.l.indexOf('Next plate up') === 0).v, /^2\.000" — 36\.7 % of range$/);
-      assert.match(rows(app, 'op_res').find((x) => x.l.indexOf('Next plate down') === 0).v, /^1\.750" — 64\.9 % of range$/);
-      assert.match(rows(app, 'op_res').find((x) => x.l.indexOf('Exact bore') === 0).v, /^1\.8610" \(β/);
+      assert.match(rows(app, 'op_res').find((x) => x.l.indexOf('Next plate up') === 0).v, /^2\.000" — 36\.8 % of range$/);
+      assert.match(rows(app, 'op_res').find((x) => x.l.indexOf('Next plate down') === 0).v, /^1\.750" — 65\.1 % of range$/);
+      assert.match(rows(app, 'op_res').find((x) => x.l.indexOf('Exact bore') === 0).v, /^1\.862[34]" \(β/);
       assert.ok(!FRACTION.test(txt(app, 'pgBody')), 'no fractional plate sizes on the page');
+      // Gravity basis select (v3.0): real by default; ideal → Gr = Gi·0.99959/Zb, exact bore from the ideal reference
+      assert.strictEqual(app.el('op_sgb').value, 'real', 'real gravity by default');
+      const zbRef = agaRef({ D: 4.026, d: 2, hw: 50, Ps: 500, TfF: 80, SG: 0.65, co2: 0.5 }).Zb;
+      assert.near(parseFloat(rows(app, 'op_res').find((x) => x.l.indexOf('Base Z-factor') === 0).v), zbRef, 2e-5, 'Zb row');
+      set(app, { op_sgb: 'ideal' }); calc(app);
+      const zbI = agaRef({ D: 4.026, d: 2, hw: 50, Ps: 500, TfF: 80, SG: 0.65, co2: 0.5, basis: 'ideal' }).Zb;
+      assert.near(parseFloat(rows(app, 'op_res').find((x) => x.l.indexOf('Gas gravity real Gr') === 0).v), 0.65 * 0.99959 / zbI, 1e-4, 'Gr from Gi');
+      const rI = agaRef({ D: 4.026, d: S(app).d, hw: S(app).hw, Ps: 500, TfF: 80, SG: 0.65, co2: 0.5, basis: 'ideal' });
+      assert.rel(rI.Qv * 24 / 1000, 5000, 1e-3, 'ideal basis: reference rate at the chosen DP = target');
+      set(app, { op_sgb: 'real' }); calc(app);
       const trs = app.findAll('#op_res table.dtable tbody tr');
       assert.strictEqual(trs.length, 7, 'plate-change table rows');
       const bores = trs.map((tr) => String(tr.querySelectorAll('td')[1].textContent).trim());

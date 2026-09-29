@@ -67,7 +67,7 @@
     function _blank(x) { return x === '' || x == null || (typeof x === 'number' && isNaN(x)); }
     function _fmt(v, d) {
         if (v == null || !isFinite(v)) return '—';
-        return Number(v).toLocaleString(undefined, { minimumFractionDigits: (d == null ? 2 : d), maximumFractionDigits: (d == null ? 2 : d) });
+        return (G.WTS_fmtNum ? G.WTS_fmtNum(v, (d == null ? 2 : d), (d == null ? 2 : d)) : Number(v).toLocaleString(undefined, { minimumFractionDigits: (d == null ? 2 : d), maximumFractionDigits: (d == null ? 2 : d) }));
     }
     function _esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
     function _metric() { var U = G.WTS_units; return !!(U && U.getSystem && U.getSystem() === 'metric' && U.format); }
@@ -101,7 +101,8 @@
         }
         if (typeof G.WTS_aga3_compute === 'function') {
             // Only Z is used; the orifice geometry is a placeholder the Z does not depend on.
-            var a = G.WTS_aga3_compute({ D: 4, d: 2, hw: 50, Ps: pPsia - P_ATM, TfF: tF, SG: sg, co2: co2, h2s: h2s, n2: n2 });
+            // sgBasis 'ideal': the gravity here is the same M/M_air gravity Gas PVT takes.
+            var a = G.WTS_aga3_compute({ D: 4, d: 2, hw: 50, Ps: pPsia - P_ATM, TfF: tF, SG: sg, sgBasis: 'ideal', co2: co2, h2s: h2s, n2: n2 });
             if (a && a.ok) return { z: a.Z, src: 'Standing + DAK (AGA-3)' };
         }
         return { z: NaN, err: 'No Z-factor engine is loaded; type the Z-factors.' };

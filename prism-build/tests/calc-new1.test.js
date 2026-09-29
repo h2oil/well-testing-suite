@@ -342,7 +342,20 @@ module.exports = [
         assert.includes(rvText(app, 'AOF', 0), 'm³/d');
         const ths = app.findAll('#gd_res table.dtable th').map((t) => String(t.textContent));
         assert.ok(/kPa/.test(ths[0]), 'table pwf header in kPa: ' + ths[0]);
+        // The field-unit row stays (the equation is unit-specific); v3.0 adds a metric companion row:
+        // q[m³/d] = C_SI·Δ(p²)[kPa²]ⁿ → C_SI = C·28.3168466/6.894757²ⁿ; a_SI = a·6.894757²/28.3168466;
+        // b_SI = b·6.894757²/28.3168466² (1 Mscf = 28.3168466 m³, 1 psi = 6.894757 kPa).
         assert.includes(rvText(app, 'Coefficient C'), 'MSCFD/psia²ⁿ', 'C stays in field units');
+        const cSI = rvText(app, 'Coefficient C (metric');
+        assert.ok(cSI && /\(m³\/d\)\/kPa²ⁿ/.test(cSI), 'metric C row: ' + cSI);
+        assert.rel(parseFloat(cSI), imp.C * 28.3168466 / Math.pow(6.894757, 2 * imp.n), 2e-4, 'C in m³/d and kPa');
+        const aSI = rvText(app, 'a (metric'), bSI = rvText(app, 'b (metric');
+        assert.rel(parseFloat(aSI.replace(/,/g, '')), imp.a * 6.894757 ** 2 / 28.3168466, 2e-4, 'a in kPa²/(m³/d)');
+        assert.rel(parseFloat(bSI), imp.b * 6.894757 ** 2 / 28.3168466 ** 2, 2e-4, 'b in kPa²/(m³/d)²');
+        // Independent check of C_SI: it reproduces the AOF in m³/d from p̄r in kPa
+        const prK = imp.pr * 6.894757;
+        assert.rel(parseFloat(cSI) * Math.pow(prK * prK - 14.696 ** 2 * 6.894757 ** 2, imp.n), imp.aofCn * 28.3168466, 2e-3, 'C_SI·(p̄r² − pa²)ⁿ = AOF');
+        assert.includes(rvText(app, 'a'), 'psia²/MSCFD', 'a stays in field units');
         // Enter a metric value: 13,000 kPa ≈ 1885.5 psia
         set(app, { gd_pr: 13000 });
         assert.rel(st(app).pr, 13000 / 6.894757, 1e-4, 'metric entry converted to psia');

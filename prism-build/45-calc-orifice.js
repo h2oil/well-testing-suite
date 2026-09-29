@@ -14,7 +14,8 @@
 //   Every rate comes from the host's pure AGA-3 engine
 //   window.WTS_aga3_compute (API MPMS 14.3.1 RG flange-tap Cd with Re
 //   iteration, Y1 upstream expansion factor, Standing + Wichert-Aziz
-//   pseudo-criticals, Dranchuk-Abou-Kassem Z) — the same numbers as the
+//   pseudo-criticals, Dranchuk-Abou-Kassem Z, v3.0 Fpv = √(Zb/Zf) with the
+//   base Z, real/ideal gravity basis Gr = Gi·0.99959/Zb) — the same numbers as the
 //   AGA-3 Gas Metering page. Z does not depend on bore or differential, so
 //   it is solved once and passed back in (identical value, faster).
 //     • Exact bore d*: bisection on d in [0.10·D, 0.75·D] so that the rate
@@ -43,7 +44,7 @@
 //   renderOrificeSelect(body)      paint the page into #pgBody
 //   calcOrificeSelect()            read DOM → validate → compute → render
 //   WTS_orifice_compute(input)     pure; field units in and out, no DOM
-//       input  {q, D, Ps, TfF, SG, co2, n2, h2s, urv, lo, hi, des, TbF, Pb}
+//       input  {q, D, Ps, TfF, SG, sgBasis ('real' default | 'ideal'), co2, n2, h2s, urv, lo, hi, des, TbF, Pb}
 //              (a legacy `mode` from an earlier build is accepted and ignored)
 //       output {ok, errors[], errorIds[], dStar, betaStar, dStarFlag, candidates[],
 //               chosen, up, down, table[], verdicts[], warnings[], Z, ...}
@@ -65,7 +66,7 @@
     function _num(id) { var e = _byId(id); if (!e) return NaN; var s = String(e.value).trim(); return s === '' ? NaN : parseFloat(s); }
     function _fmt(v, d) {
         if (v == null || !isFinite(v)) return '—';
-        return Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) });
+        return (G.WTS_fmtNum ? G.WTS_fmtNum(v, 0, (d == null ? 2 : d)) : Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) }));
     }
     function _metric() { var U = G.WTS_units; return !!(U && U.getSystem && U.getSystem() === 'metric' && U.format); }
     function _u(v, cat, d, impLabel, dMet) {
@@ -106,6 +107,7 @@
         var co2 = _opt(inp.co2, 0), n2 = _opt(inp.n2, 0), h2s = _opt(inp.h2s, 0);
         var urv = _nv(inp.urv), lo = _opt(inp.lo, 20), hi = _opt(inp.hi, 80), des = _opt(inp.des, 50);
         var TbF = _opt(inp.TbF, 60), Pb = _opt(inp.Pb, 14.696);
+        var sgBasis = inp.sgBasis === 'ideal' ? 'ideal' : 'real';
 
         if (!(q > 0)) err('Target gas rate must be greater than zero.', P + 'q');
         if (!(D > 0)) err('Meter run internal diameter must be greater than zero.', P + 'D');
@@ -126,7 +128,7 @@
         if (!(Pb > 0)) err('Base pressure must be greater than zero.', P + 'Pb');
         if (errors.length) return fail();
 
-        var base = { D: D, Ps: Ps, TfF: TfF, SG: SG, co2: co2, h2s: h2s, n2: n2, TbF: TbF, Pb: Pb, tap: 'flange' };
+        var base = { D: D, Ps: Ps, TfF: TfF, SG: SG, sgBasis: sgBasis, co2: co2, h2s: h2s, n2: n2, TbF: TbF, Pb: Pb, tap: 'flange' };
         var probe = aga(Object.assign({}, base, { d: D / 2, hw: urv * des / 100 }));
         if (!probe.ok) { probe.errors.forEach(function (m) { err(m, null); }); return fail(); }
         base.Z = probe.Z;   // Z is independent of bore and differential
@@ -224,8 +226,8 @@
 
         return {
             ok: true, errors: [], errorIds: [], step: STEP, rule: rule,
-            q: q, D: D, Ps: Ps, TfF: TfF, SG: SG, co2: co2, n2: n2, h2s: h2s, urv: urv, lo: lo, hi: hi, des: des, TbF: TbF, Pb: Pb,
-            Z: probe.Z, Pf1: Pf1, Tpr: probe.Tpr, Ppr: probe.Ppr,
+            q: q, D: D, Ps: Ps, TfF: TfF, SG: SG, sgBasis: sgBasis, co2: co2, n2: n2, h2s: h2s, urv: urv, lo: lo, hi: hi, des: des, TbF: TbF, Pb: Pb,
+            Z: probe.Z, Zb: probe.Zb, Fpv: probe.Fpv, Gr: probe.Gr, Gi: probe.Gi, Pf1: Pf1, Tpr: probe.Tpr, Ppr: probe.Ppr,
             hwDes: hwDes, dStar: dStar, betaStar: dStar != null ? dStar / D : null, dStarFlag: dStarFlag,
             candidates: candidates, chosen: chosen, up: up, down: down, inWindow: inWin, table: table,
             verdicts: verdicts,
@@ -257,6 +259,8 @@
         h += '</div></div>';
         h += '<div class="card"><div class="card-title">Gas Composition</div><div class="fg">';
         h += _field('op_SG', 'Gas specific gravity (air = 1)', 0.65, ' min="0.5" max="1.8"');
+        h += '<div class="fg-item"><label for="op_sgb">Gas gravity basis</label><select id="op_sgb">' +
+            '<option value="real" selected>Real (ρgas/ρair at base)</option><option value="ideal">Ideal (M/M_air)</option></select></div>';
         h += _field('op_CO2', 'CO2 (%)', 0.5);
         h += _field('op_N2', 'N2 (%)', 1.0);
         h += _field('op_H2S', 'H2S (%)', 0);
@@ -299,6 +303,7 @@
     function _readInputs() {
         return {
             q: _num('op_q'), D: _num('op_D'), Ps: _num('op_P'), TfF: _num('op_T'), SG: _num('op_SG'),
+            sgBasis: (_byId('op_sgb') && _byId('op_sgb').value === 'ideal') ? 'ideal' : 'real',
             co2: _num('op_CO2'), n2: _num('op_N2'), h2s: _num('op_H2S'),
             urv: _num('op_urv'), lo: _num('op_lo'), hi: _num('op_hi'), des: _num('op_des'),
             TbF: _num('op_Tb'), Pb: _num('op_Pb')
@@ -331,6 +336,8 @@
         h += _row('Next plate up (larger bore)', r.up ? _bore(r.up) + ' — ' + (isFinite(r.up.pct) ? _fmt(r.up.pct, 1) + ' % of range' : 'off scale') : 'none within β 0.75');
         h += _row('Next plate down (smaller bore)', r.down ? _bore(r.down) + ' — ' + (isFinite(r.down.pct) ? _fmt(r.down.pct, 1) + ' % of range' : 'off scale') : 'none within β 0.10');
         h += _row('Z-factor (DAK)', r.Z.toFixed(4));
+        h += _row('Base Z-factor (Zb) / Fpv = √(Zb/Zf)', r.Zb.toFixed(5) + ' / ' + r.Fpv.toFixed(5));
+        h += _row('Gas gravity real Gr / ideal Gi', r.Gr.toFixed(4) + ' / ' + r.Gi.toFixed(4));
         h += _row('Flowing pressure Pf1', _u(r.Pf1, 'pressure', 1, 'psia', 0));
         h += '</div>';
         // Plate-change table (values written already converted)
@@ -350,6 +357,7 @@
         h += '</tbody></table></div></div>';
         h += '<div class="chart-wrap"><canvas id="op_chart" width="600" height="320"></canvas></div>';
         h += '<div><b>Notes</b> Rates use the AGA-3 page engine (flange taps, RG Cd, DAK Z with Standing + Wichert-Aziz pseudo-criticals; N2 is recorded but not in the Z correction). ' +
+            'Fpv = √(Zb/Zf) with the base Z (v3.0; was 1/√Zf, ≈ 0.1–0.3 % high); ' + (r.sgBasis === 'ideal' ? 'ideal gravity converted to real. ' : 'real gravity. ') +
             'Plate list: every 0.125" bore from 0.125" to the largest bore with β ≤ 0.75; the exact bore is rounded to the nearest 0.125" — confirm the plates on site.' +
             ' The 20–80 % window is field practice. Standard volumes are at the entered base conditions (they follow the header "Std" setting until you type your own).</div>';
         return h;

@@ -21,7 +21,10 @@
 //   Pinned results (rail "Pin to report": PRiSM_getReportPins / st.reportPins)
 //   Straight-line results (semilog analysis + plot-key results) with the
 //               cross-check against the model fit (Δk %, ΔS)
-//   Skin        summary + decomposition
+//   Skin        summary + decomposition (gas in m(p): ΔpS / FE via
+//               PRiSM_gasSkinSummary, 52)
+//   Extra       sections from window.PRiSM_reportSections (saved-fit
+//               comparison 51; gas basis, rate-dependent skin, AOF / IPR 52)
 //   Flow regimes, data summary (n, Δt range, reference pressure + source)
 //   Decline block (qi, Di, b, EUR, P10/P50/P90) when the fit is a rate fit
 //   Appendix    every input with its provenance; defaults flagged
@@ -585,12 +588,28 @@ function _skinBlock(c, res) {
     var a = c.adata, tt = (a && a.testType) || w.testType;
     var buildup = tt === 'buildup' || tt === 'falloff';
     var pbar = NaN, pwf = NaN;
+    // Pressure-space reference: with gas pseudo-pressure a.pRef is in m(p)
+    // units and the pressure is a.pRefPressure (C2).
+    var aRefP = a ? _num(a.pRefPressure, a.pseudo ? NaN : a.pRef) : NaN;
     if (buildup) {
         pbar = _num(sl ? _pickNum(sl, SL.pStar) : NaN, res.pi);
-        pwf = _num(w.pwf0, a && a.pRefSource === 'pwf0' ? a.pRef : NaN, a ? a.pRef : NaN);
+        pwf = _num(w.pwf0, a && a.pRefSource === 'pwf0' ? aRefP : NaN, aRefP);
     } else {
-        pbar = _num(res.pi, a && a.pRefSource === 'pi' ? a.pRef : NaN, w.pi);
+        pbar = _num(res.pi, a && a.pRefSource === 'pi' ? aRefP : NaN, w.pi);
         if (a && a.p && a.p.length) pwf = a.p[a.p.length - 1];
+    }
+    // Gas analysed in m(p): ΔpS and FE through the m(p) table (52-prism-gas.js).
+    if (w.fluid === 'gas' && a && a.pseudo && a.mpSpec && typeof G.PRiSM_gasSkinSummary === 'function' &&
+        typeof G.PRiSM_mpTable === 'function') {
+        try {
+            var gs = G.PRiSM_gasSkinSummary({ S: S, kh: kh, q: w.q, T_R: w.T_R, rw: w.rw, CD: res.Cd, pbar: pbar, pwf: pwf,
+                                              table: G.PRiSM_mpTable(a.mpSpec) });
+            if (gs && _isNum(gs.dpS)) {
+                var go = { dpS: gs.dpS, FE: gs.FE, DR: gs.DR, rwa: gs.rwEff, CDe2S: gs.CDe2S, dmS: gs.dmS };
+                go.S = S; go.pbar = pbar; go.pwf = pwf; go.pbarLabel = buildup ? 'p*' : 'pi'; go.gas = true;
+                return go;
+            }
+        } catch (eG) { _warn('[report] gas skin summary failed', eG); }
     }
     var inp = {
         S: S, kh: kh, k: k, m: sl ? _pickNum(sl, SL.m) : NaN, q: w.q, B: w.B, mu: w.mu, rw: w.rw,
@@ -646,19 +665,22 @@ function _comparison(c) {
     function fresh(o) { return !(curHash && o && o.datasetHash && o.datasetHash !== curHash); }
     if (am && !Array.isArray(am) && !fresh(am)) am = null;
     var ranked = Array.isArray(am) ? am : (am && Array.isArray(am.ranked) ? am.ranked : []);
-    function add(r, origin) {
+    // meta: a saved-fit record of the fit workspace (51) — its own name and id.
+    function add(r, origin, meta) {
         if (!r || !fresh(r)) return;
         var key = r.modelKey || r.model || r.key;
-        if (!key || seen[key + '|' + origin]) return;
-        seen[key + '|' + origin] = true;
+        var dk = key + '|' + origin + (meta && meta.id ? '|' + meta.id : '');
+        if (!key || seen[dk]) return;
+        seen[dk] = true;
+        var label = (meta && meta.name) ? meta.name + ' — ' + _modelLabel(key) : (r.modelName || _modelLabel(key));
         rows.push({
-            key: key, label: r.modelName || _modelLabel(key), aic: _num(r.aic, r.AIC), r2: _num(r.r2, r.R2),
+            key: key, label: label, aic: _num(r.aic, r.AIC), r2: _num(r.r2, r.R2),
             rmse: _num(r.rmse, r.RMSE), converged: r.converged, bestEffort: !!r.bestEffort, origin: origin,
             k: r.phys ? _num(r.phys.k) : NaN, S: r.phys ? _num(r.phys.S, r.phys.S_total) : NaN
         });
     }
     ranked.forEach(function (r) { add(r, 'race'); });
-    if (Array.isArray(st.fits)) st.fits.forEach(function (f) { add(f && (f.fit || f), 'saved'); });
+    if (Array.isArray(st.fits)) st.fits.forEach(function (f) { add(f && (f.fit || f), 'saved', f && f.fit ? f : null); });
     var best = Infinity;
     rows.forEach(function (r) { if (_isNum(r.aic) && r.aic < best) best = r.aic; });
     rows.forEach(function (r) { r.dAIC = (_isNum(r.aic) && _isNum(best)) ? r.aic - best : NaN; });
@@ -930,15 +952,57 @@ function reportData() {
     model.keys = _keyResults(st.analysisKeyResults);
     model.decline = _decline(c);
     model.data = a ? {
-        n: a.n || a.t.length, t0: a.t[0], t1: a.t[a.t.length - 1], pRef: a.pRef, pRefSource: a.pRefSource,
+        // Gas m(p): a.pRef is in psi²/cp; the report quotes the pressure.
+        n: a.n || a.t.length, t0: a.t[0], t1: a.t[a.t.length - 1], pRef: (a.pseudo && _isNum(a.pRefPressure)) ? a.pRefPressure : a.pRef,
+        mRef: a.pseudo ? a.pRef : NaN, pseudoTime: !!a.pseudoTime, pRefSource: a.pRefSource,
         pRefLabel: PREF_LABELS[a.pRefSource] || a.pRefSource || '', testType: a.testType, tp: _num(a.tp),
         timeFn: a.timeFn || '', L: _num(a.L), fluid: a.fluid || w.fluid, local: !!a.local
     } : null;
     model.inputs = _inputRows(c);
+    model.extra = _extraSections(model);
     model.results = _resultRows(model, c);
     model.notes = _notes();
     model.ctx = c;
     return model;
+}
+
+// Sections contributed by other layers (fit workspace 51, gas 52):
+// window.PRiSM_reportSections = [fn(model) → null | {id, title, order,
+// kv:[[label, text]], table:{head:[], rows:[[text]]}, notes:[text]}].
+// Every string is plain text (escaped here).
+function _extraSections(model) {
+    var reg = Array.isArray(G.PRiSM_reportSections) ? G.PRiSM_reportSections : [];
+    var out = [];
+    reg.forEach(function (fn) {
+        if (typeof fn !== 'function') return;
+        var s = null;
+        try { s = fn(model); } catch (e) { _warn('[report] extra section failed', e); s = null; }
+        if (!s || typeof s !== 'object' || !s.title) return;
+        out.push({
+            id: String(s.id || ''), title: String(s.title), order: _isNum(s.order) ? s.order : 100,
+            kv: Array.isArray(s.kv) ? s.kv.filter(function (p) { return Array.isArray(p) && p.length >= 2; }).map(function (p) { return [String(p[0]), String(p[1])]; }) : [],
+            table: (s.table && Array.isArray(s.table.head) && Array.isArray(s.table.rows)) ? {
+                head: s.table.head.map(String),
+                rows: s.table.rows.map(function (r) { return (Array.isArray(r) ? r : []).map(function (c) { return String(c == null ? '' : c); }); })
+            } : null,
+            notes: Array.isArray(s.notes) ? s.notes.map(String) : []
+        });
+    });
+    out.sort(function (a, b) { return a.order - b.order; });
+    return out;
+}
+function _extraHTML(m, pdf) {
+    return (m.extra || []).map(function (s) {
+        var body = '';
+        if (s.kv.length) body += pdf ? _rpKV(s.kv) : _kvHTML(s.kv);
+        if (s.table && s.table.rows.length) {
+            var rows = s.table.rows.map(function (r) { return r.map(_esc); });
+            body += pdf ? _rpTable(s.table.head, rows) : _tableHTML(s.table.head, rows);
+        }
+        s.notes.forEach(function (n) { body += pdf ? '<p class="rp-modsub">' + _esc(n) + '</p>' : '<div class="prism-rpt-note">' + _esc(n) + '</div>'; });
+        return pdf ? '<section class="rp-sec"><h2>' + _esc(s.title) + '</h2>' + body + '</section>'
+                   : _card(s.title, body, 'prism_report_x_' + String(s.id).replace(/[^A-Za-z0-9_-]/g, '_'));
+    }).join('');
 }
 
 function _paramRows(c) {
@@ -1426,6 +1490,8 @@ function buildReportHTML(opts) {
     if (m.semilog || m.keys.length) h += _straightLineHTML(m, true);
     // Skin
     if (m.skin || m.decomp) h += _skinHTML(m, true);
+    // Saved-fit comparison, gas basis, rate-dependent skin, deliverability (51 / 52)
+    h += _extraHTML(m, true);
     // Flow regimes
     if (m.regimes && m.regimes.list.length) {
         h += '<section class="rp-sec"><h2>Flow regimes seen in the derivative</h2>' + _rpTable(['Regime', 'From (h)', 'To (h)'],
@@ -1690,6 +1756,7 @@ function _tabHTML(m) {
     }
     if (m.semilog || m.keys.length) h += _straightLineHTML(m, false);
     if (m.skin || m.decomp) h += _skinHTML(m, false);
+    h += _extraHTML(m, false);
     if (m.regimes && m.regimes.list.length) {
         h += _card('Flow regimes', _tableHTML(['Regime', 'From (h)', 'To (h)'], m.regimes.list.map(function (g) {
             return [_esc(g.label), _fmt(g.t0, 3), _fmt(g.t1, 3)];

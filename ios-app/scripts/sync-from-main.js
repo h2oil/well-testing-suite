@@ -106,15 +106,15 @@ fs.writeFileSync(path.join(WWW, 'capacitor.js'), capStub, 'utf8');
 //   jsPDF + html2canvas  — iOS-offline PDF export
 //   three.module.min.js  — three.js r170 for the offline 3D view (ios-bridge.js sets
 //                          window.WTS3D_LOCAL_URL to it; 32-wts-3d.js still checks its SHA-384)
+//   sqlite3.mjs + sqlite3.wasm   — official SQLite WASM build (historian, 47-calc-historian.js)
+//   sql-wasm.js + sql-wasm.wasm  — sql.js (historian fallback engine; also reads .sqlite backups)
 const LIBS_DIR = path.join(IOS_ADDITIONS, 'libs');
+const LIB_RE = /\.(js|mjs|wasm)$/;
 if (fs.existsSync(LIBS_DIR)) {
     const libsOutDir = WWW;
-    fs.readdirSync(LIBS_DIR).forEach(f => {
-        if (f.endsWith('.js')) {
-            fs.copyFileSync(path.join(LIBS_DIR, f), path.join(libsOutDir, f));
-        }
-    });
-    console.log(`[sync] Copied libs/ → www/ (${fs.readdirSync(LIBS_DIR).filter(f => f.endsWith('.js')).length} files)`);
+    const libFiles = fs.readdirSync(LIBS_DIR).filter(f => LIB_RE.test(f));
+    libFiles.forEach(f => fs.copyFileSync(path.join(LIBS_DIR, f), path.join(libsOutDir, f)));
+    console.log(`[sync] Copied libs/ → www/ (${libFiles.length} files)`);
 }
 
 // ── 6. three.js integrity: the bundled copy must match the SHA-384 pinned in 32-wts-3d.js.
@@ -129,6 +129,22 @@ if (fs.existsSync(THREE_LIB) && pin) {
                       ' — the app will reject it and the 3D view needs the network. Re-bundle ios-additions/libs/three.module.min.js.');
 } else if (!fs.existsSync(THREE_LIB)) {
     console.warn('[sync] WARNING: three.module.min.js not bundled — the 3D view will need the network on first use.');
+}
+
+// ── 7. Historian SQLite libraries: every file pinned in HIST_SHA384 (47-calc-historian.js)
+// must be bundled with exactly that hash, or the app falls back to the CDN / IndexedDB.
+const histPins = /HIST_SHA384\s*=\s*\{([\s\S]*?)\}/.exec(html);
+if (histPins) {
+    const re = /'([\w.-]+)':\s*'([A-Za-z0-9+/=]+)'/g;
+    let m, ok = 0, bad = 0;
+    while ((m = re.exec(histPins[1]))) {
+        const f = path.join(WWW, m[1]);
+        if (!fs.existsSync(f)) { bad++; console.warn('[sync] WARNING: historian library ' + m[1] + ' is not bundled — the app will need the network (or use IndexedDB).'); continue; }
+        const got = crypto.createHash('sha384').update(fs.readFileSync(f)).digest('base64');
+        if (got === m[2]) ok++;
+        else { bad++; console.warn('[sync] WARNING: www/' + m[1] + ' SHA-384 ' + got + ' does not match the pinned ' + m[2] + ' — re-bundle ios-additions/libs/' + m[1] + '.'); }
+    }
+    if (ok && !bad) console.log('[sync] historian SQLite libraries: ' + ok + ' files match their pinned SHA-384 (offline SQLite ready)');
 }
 
 const size = (fs.statSync(OUTPUT).size / 1024).toFixed(1);

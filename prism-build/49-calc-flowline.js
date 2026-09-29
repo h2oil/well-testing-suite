@@ -51,6 +51,14 @@
 //   Optimization Using Nodal Analysis"); water after Hough et al. (1951) as
 //   fitted by Beggs (1991): σw74 = 75 − 1.108 p^0.349, σw280 = 53 − 0.1048 p^0.637.
 //   Liquid properties are in-situ volume-fraction averages (no emulsion).
+//
+// TEMPERATURE (v3.0 option "coupled")
+//   Linear from the inlet to the arrival temperature (default), or a coupled
+//   pressure–temperature march: each step loses heat by the Line Heat Loss model
+//   (49-calc-lineheat.js WTS_lineheat_ua, bare / insulated pipe in air, inside film
+//   neglected): T_out = Ta + (T_in − Ta)·exp(−UA′·dx/(ṁ·cp)) (Holman §10; Incropera
+//   §3.3), minus μJT·Δp_step (isenthalpic throttling), and the step's pressure
+//   gradient is evaluated at the step's mean temperature (3 fixed-point passes).
 //   Gas rate = separator gas at standard conditions (22-units WTS_baseConditions,
 //   default 60 °F / 14.696 psia). Free gas = qg − qo·Rs.
 //
@@ -58,6 +66,7 @@
 //   WTS_flowline_bb(input)        Beggs & Brill gradient at one point (no PVT)
 //   WTS_flowline_props(fluid, p, t)  in-situ fluid properties
 //   WTS_flowline_compute(input)   full routes → {ok, routes[], …} or {ok:false, errors, bad}
+//   WTS_flowline_march(segments, fluid, p0, t0, t1, opt)  pressure traverse (opt.reverse = against the flow)
 //   renderFlowline(body), calcFlowline(), WTS_flowlineUseHeat()
 //
 // STATE  WTS_state.flowline = {pArr, dpSep, pFlare, dpFlare, ok, ts, result}
@@ -84,7 +93,7 @@
     function _str(id) { var e = _byId(id); return e ? String(e.value) : ''; }
     function _fmt(v, d) {
         if (v == null || !isFinite(v)) return '—';
-        return Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) });
+        return (G.WTS_fmtNum ? G.WTS_fmtNum(v, 0, (d == null ? 2 : d)) : Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) }));
     }
     function _metric() { var U = G.WTS_units; return !!(U && U.getSystem && U.getSystem() === 'metric'); }
     function _u(v, cat, d, impLabel, dMet) {
@@ -292,12 +301,26 @@
 
     // ── Route marching ───────────────────────────────────────────────
     function _steps(len) { return Math.min(400, Math.max(10, Math.ceil(len / 50))); }
+    // Coupled temperature step (opt.heat): the line-heat model of 49-calc-lineheat.js over dx at the
+    // step's inlet temperature, T_out = Ta + (T_in − Ta)·exp(−UA'·dx/(ṁ·cp)), then Joule–Thomson
+    // cooling μJT·Δp for the step's pressure drop (enthalpy balance of a throttled stream, as the
+    // line-heat page applies at chokes; potential/kinetic energy terms neglected).
+    function _heatStep(h, s, T, dx, dp) {
+        var seg = _thermSeg(h, s), u = G.WTS_lineheat_ua(seg, T, h.env);
+        return u.ta + (T - u.ta) * Math.exp(-u.ua * dx / h.mcp) - h.jt * dp;
+    }
+    function _thermSeg(h, s) {
+        if (s._therm) return s._therm;
+        var od = s.id + 2 * h.wall;
+        s._therm = { di: s.id, od: od, ds: od + 2 * h.ins, type: h.ins > 0 ? 'ins' : 'bare', depth: NaN };
+        return s._therm;
+    }
     function march(route, fluid, p0g, t0, t1, opt) {
         var segs = route.segments, total = 0;
         segs.forEach(function (s) { total += s.len; });
         var P = p0g + PATM, x = 0, out = [], profile = [], lost = null;
-        var first = null;
-        function pt(xx) { return total > 0 ? t0 + (t1 - t0) * xx / total : t0; }
+        var first = null, heat = opt.heat || null, Tc = t0, sgn = opt.reverse ? -1 : 1;
+        function pt(xx) { return heat ? Tc : (total > 0 ? t0 + (t1 - t0) * xx / total : t0); }
         function gAt(pp, tt, s) {
             var pr = props(fluid, pp, tt), A = Math.PI * Math.pow(s.id / 12, 2) / 4;
             var g = bb({
@@ -315,15 +338,17 @@
             var r = { name: s.name, len: s.len, id: s.id, dz: s.dz, theta: s.theta, pIn: P - PATM, tIn: pt(x),
                 dpEl: 0, dpF: 0, dpAcc: 0, patterns: [], hlIn: null, hlOut: null, vmMax: 0, eroMax: 0 };
             for (var j = 0; j < n; j++) {
-                var ta = pt(x), tb = pt(x + dx), tm = (ta + tb) / 2;
+                var ta = pt(x), tb = heat ? _heatStep(heat, s, ta, dx, 0) : pt(x + dx), tm = (ta + tb) / 2;
                 var g = gAt(P, ta, s);
                 if (j === 0) { r.hlIn = g.hl; r.in = g; if (!first) first = g; }
-                var P2 = P - g.grad * dx;
+                var P2 = P - sgn * g.grad * dx;
                 for (var it = 0; it < 3; it++) {
+                    if (heat && _fin(P2)) { tb = _heatStep(heat, s, ta, dx, sgn * (P - Math.max(P2, PATM))); tm = (ta + tb) / 2; }
                     var pm = (P + Math.max(P2, 1)) / 2;
                     g = gAt(pm, tm, s);
-                    P2 = P - g.grad * dx;
+                    P2 = P - sgn * g.grad * dx;
                 }
+                if (heat && _fin(P2)) tb = _heatStep(heat, s, ta, dx, sgn * (P - Math.max(P2, PATM)));
                 if (!_fin(P2) || P2 < PATM || g.Ek >= 0.95) {
                     lost = { seg: k, x: x, reason: g.Ek >= 0.95 ? 'critical' : 'pressure' };
                     break;
@@ -334,7 +359,7 @@
                 if (g.vm > r.vmMax) r.vmMax = g.vm;
                 var ve = g.rhoN > 0 ? 100 / Math.sqrt(g.rhoN) : Infinity;       // API RP 14E, C = 100
                 if (g.vm / ve > r.eroMax) r.eroMax = g.vm / ve;
-                P = P2; x += dx;
+                P = P2; x += dx; Tc = tb;
                 profile.push({ x: x, p: P - PATM, t: tb, hl: g.hl, pattern: g.pattern });
             }
             r.pOut = lost ? null : P - PATM;
@@ -343,14 +368,17 @@
             out.push(r);
         }
         return { segments: out, profile: profile, pIn: p0g, pOut: lost ? null : P - PATM, dp: lost ? null : p0g - (P - PATM),
-            length: total, lost: lost, inlet: first };
+            length: total, lost: lost, inlet: first, tIn: t0, tOut: lost ? null : pt(x), coupled: !!heat };
     }
 
     var PAT_NAME = { segregated: 'Segregated', transition: 'Transition', intermittent: 'Intermittent', distributed: 'Distributed',
         gas: 'Single-phase gas', liquid: 'Single-phase liquid', none: 'No flow' };
 
     // input = {qo, qw, qg, api, sgg, sgw, pwh psig, t0, t1 °F, psep psig, rough in, payne, accel,
-    //          well: [{name,len,id,dz}], flare: [{name,len,id,dz}]}
+    //          well: [{name,len,id,dz}], flare: [{name,len,id,dz}],
+    //          tmode 'linear' (default: T linear t0 → t1) | 'heat' (coupled P–T march; t1 ignored) with
+    //          tair °F, wind mph, eps, wall in, ins in (0 = bare), kp, kins Btu/hr·ft·°F, cpo, cpw, cpg Btu/lb·°F,
+    //          jt °F/psi}
     function compute(input) {
         var i = input || {}, errors = [], bad = [];
         function need(ok, key, msg) { if (!ok) { errors.push(msg); bad.push(key); } return ok; }
@@ -365,7 +393,7 @@
         need(_fin(sgw) && sgw >= 0.95 && sgw <= 1.3, 'sgw', 'Water specific gravity must be between 0.95 and 1.3.');
         need(_fin(pwh) && pwh > 0 && pwh <= 15000, 'pwh', 'Line inlet pressure must be above 0 and no more than 15,000 psig.');
         need(_fin(t0) && t0 >= 0 && t0 <= 400, 't0', 'Inlet temperature must be between 0 and 400 °F.');
-        need(_fin(t1) && t1 >= 0 && t1 <= 400, 't1', 'Arrival temperature must be between 0 and 400 °F.');
+        need(i.tmode === 'heat' || (_fin(t1) && t1 >= 0 && t1 <= 400), 't1', 'Arrival temperature must be between 0 and 400 °F.');
         need(_fin(psep) && psep >= 0 && psep <= 15000, 'psep', 'Separator pressure must be between 0 and 15,000 psig.');
         need(_fin(rough) && rough >= 0 && rough <= 0.1, 'rough', 'Pipe roughness must be between 0 and 0.1 in.');
         function segs(list, pre, max, req) {
@@ -384,18 +412,46 @@
             return o;
         }
         var well = segs(i.well, 'w', NSEG_W, true), flare = segs(i.flare, 'f', NSEG_F, false);
+        var coupled = i.tmode === 'heat', H = null;
+        if (coupled) {
+            var hv = function (k, d) { var v = i[k]; return (v === '' || v == null || (typeof v === 'number' && isNaN(v))) ? d : +v; };
+            H = { tair: hv('tair', NaN), wind: hv('wind', NaN), eps: hv('eps', NaN), wall: hv('wall', NaN), ins: hv('ins', 0),
+                kp: hv('kp', NaN), kins: hv('kins', NaN), cpo: hv('cpo', NaN), cpw: hv('cpw', NaN), cpg: hv('cpg', NaN), jt: hv('jt', 0) };
+            need(_fin(H.tair) && H.tair >= -60 && H.tair <= 140, 'tair', 'Air temperature must be between -60 and 140 °F.');
+            need(_fin(H.wind) && H.wind >= 0 && H.wind <= 150, 'wind', 'Wind speed must be between 0 and 150 mph.');
+            need(_fin(H.eps) && H.eps >= 0 && H.eps <= 1, 'eps', 'Surface emissivity must be between 0 and 1.');
+            need(_fin(H.wall) && H.wall > 0 && H.wall <= 3, 'wall', 'Wall thickness must be above 0 and no more than 3 in.');
+            need(_fin(H.ins) && H.ins >= 0 && H.ins <= 12, 'ins', 'Insulation thickness must be between 0 and 12 in.');
+            need(_fin(H.kp) && H.kp > 0 && H.kp <= 250, 'kp', 'Pipe wall conductivity must be above 0 and no more than 250 Btu/hr·ft·°F.');
+            need(_fin(H.kins) && H.kins > 0 && H.kins <= 5, 'kins', 'Insulation conductivity must be above 0 and no more than 5 Btu/hr·ft·°F.');
+            need(_fin(H.cpo) && H.cpo >= 0.2 && H.cpo <= 1.2, 'cpo', 'Oil heat capacity must be between 0.2 and 1.2 Btu/lb·°F.');
+            need(_fin(H.cpw) && H.cpw >= 0.5 && H.cpw <= 1.2, 'cpw', 'Water heat capacity must be between 0.5 and 1.2 Btu/lb·°F.');
+            need(_fin(H.cpg) && H.cpg >= 0.2 && H.cpg <= 1.5, 'cpg', 'Gas heat capacity must be between 0.2 and 1.5 Btu/lb·°F.');
+            need(_fin(H.jt) && H.jt >= -0.1 && H.jt <= 0.2, 'jt', 'Joule–Thomson coefficient must be between -0.1 and 0.2 °F/psi.');
+            if (typeof G.WTS_lineheat_ua !== 'function' || typeof G.WTS_lineheat_massFlow !== 'function') {
+                errors.push('The Line Heat Loss engine is not loaded: use the linear temperature model.'); bad.push('tmode');
+            }
+        }
         if (!_lib()) { errors.push('The PVT correlation library (PRiSM) is not loaded.'); bad.push('lib'); }
         if (errors.length) return { ok: false, errors: errors, bad: bad };
 
         var opt = { rough: rough, payne: !!i.payne, accel: !!i.accel };
+        function heatFor(f) {
+            if (!coupled) return null;
+            var mf = G.WTS_lineheat_massFlow({ qo: f.qo, qw: f.qw, qg: f.qg, api: api, sgg: sgg, sgw: sgw, cpo: H.cpo, cpw: H.cpw, cpg: H.cpg });
+            // Inside film neglected (hi blank on the Line Heat Loss page): conservative, more heat lost.
+            return { mcp: mf.mcp, m: mf.m, jt: H.jt, wall: H.wall, ins: H.ins,
+                env: { hi: 0, kp: H.kp, kins: H.kins, eps: H.eps, tair: H.tair, wind: H.wind, tsoil: H.tair, ksoil: 1 } };
+        }
         var fluid = { qo: qo, qw: qw, qg: qg, api: api, sgg: sgg, sgw: sgw };
-        var r1 = march({ segments: well }, fluid, pwh, t0, t1, opt);
+        var r1 = march({ segments: well }, fluid, pwh, t0, t1, Object.assign({ heat: heatFor(fluid) }, opt));
         r1.key = 'well'; r1.name = 'Wellhead to separator';
         r1.reaches = r1.pOut != null && r1.pOut >= psep - 1e-9;
         r1.margin = r1.pOut != null ? r1.pOut - psep : null;
         var r2 = null;
         if (flare.length && qg > 0) {
-            r2 = march({ segments: flare }, { qo: 0, qw: 0, qg: qg, api: api, sgg: sgg, sgw: sgw }, psep, t1, t1, opt);
+            var gasOnly = { qo: 0, qw: 0, qg: qg, api: api, sgg: sgg, sgw: sgw }, tSep = coupled && r1.tOut != null ? r1.tOut : t1;
+            r2 = march({ segments: flare }, gasOnly, psep, tSep, tSep, Object.assign({ heat: heatFor(gasOnly) }, opt));
             r2.key = 'flare'; r2.name = 'Separator to flare';
             r2.reaches = r2.pOut != null && r2.pOut > 0;
         }
@@ -409,13 +465,26 @@
         return {
             ok: true, routes: [r1].concat(r2 ? [r2] : []), well: r1, flare: r2, psep: psep,
             inlet: r1.inlet ? r1.inlet.props : null, inletBB: r1.inlet, fluid: fluid, opt: opt, warnings: warnings,
-            flareSkipped: flare.length && !(qg > 0)
+            flareSkipped: flare.length && !(qg > 0), coupled: coupled, heat: H,
+            tArr: r1.tOut != null ? r1.tOut : null
         };
     }
 
     G.WTS_flowline_bb = bb;
     G.WTS_flowline_props = function (fluid, p, t) { return _lib() ? props(fluid, p, t) : null; };
     G.WTS_flowline_compute = compute;
+    // Pressure traverse along a list of segments (used by the gas-lift design page, 49-calc-gaslift.js):
+    //   segments [{name, len ft, id in, dz ft (+ = flow goes up)}], fluid {qo, qw, qg MMSCFD, api, sgg, sgw},
+    //   p0 psig at the start of the march, t0 → t1 °F linear along the march, opt {rough in, payne, accel,
+    //   reverse: march against the flow direction (e.g. down a producing tubing from the wellhead)}.
+    //   → {profile [{x, p psig, t, hl, pattern}], segments[], pOut, lost, …}, or null without the PVT library.
+    G.WTS_flowline_march = function (segments, fluid, p0, t0, t1, opt) {
+        if (!_lib()) return null;
+        var segs = (segments || []).map(function (q) { return { name: q.name || '', len: +q.len, id: +q.id, dz: +q.dz || 0 }; });
+        var o = opt || {};
+        return march({ segments: segs }, fluid, +p0, +t0, (t1 == null ? +t0 : +t1),
+            { rough: o.rough == null ? 0.0018 : +o.rough, payne: o.payne !== false, accel: !!o.accel, reverse: !!o.reverse });
+    };
     G.WTS_flowline_friction = { smooth: fSmooth, colebrook: fColebrook };
     G.WTS_flowline_sigma = { oil: sigmaOil, water: sigmaWater };
 
@@ -424,7 +493,10 @@
     var SUB = 'Beggs & Brill with Payne corrections: flow pattern, holdup, elevation, friction and acceleration, segment by segment from the wellhead to the separator and the flare';
     var UNITS = {
         fl_qo: 'liquidRate', fl_qw: 'liquidRate', fl_qg: 'gasRate', fl_api: 'api', fl_sgg: 'sg', fl_sgw: 'sg',
-        fl_pwh: 'pressureG', fl_t0: 'temperature', fl_t1: 'temperature', fl_psep: 'pressureG', fl_rough: 'lengthSmall'
+        fl_pwh: 'pressureG', fl_t0: 'temperature', fl_t1: 'temperature', fl_psep: 'pressureG', fl_rough: 'lengthSmall',
+        fl_tair: 'temperature', fl_wind: 'windSpeed', fl_wall: 'lengthSmall', fl_ins: 'lengthSmall',
+        fl_kp: 'thermalConductivity', fl_kins: 'thermalConductivity', fl_cpo: 'specificHeat', fl_cpw: 'specificHeat',
+        fl_cpg: 'specificHeat', fl_jt: 'jtCoefficient'
     };
     function _segIds(pre, n) {
         var o = [];
@@ -488,7 +560,10 @@
             qo: _num('fl_qo'), qw: _num('fl_qw'), qg: _num('fl_qg'), api: _num('fl_api'), sgg: _num('fl_sgg'), sgw: _num('fl_sgw'),
             pwh: _num('fl_pwh'), t0: _num('fl_t0'), t1: _num('fl_t1'), psep: _num('fl_psep'), rough: _num('fl_rough'),
             payne: _str('fl_payne') !== 'no', accel: _str('fl_accel') !== 'no',
-            well: rd(WELL_IDS), flare: rd(FLARE_IDS)
+            well: rd(WELL_IDS), flare: rd(FLARE_IDS),
+            tmode: _str('fl_tmode') === 'heat' ? 'heat' : 'linear',
+            tair: _num('fl_tair'), wind: _num('fl_wind'), eps: _num('fl_eps'), wall: _num('fl_wall'), ins: _num('fl_ins'),
+            kp: _num('fl_kp'), kins: _num('fl_kins'), cpo: _num('fl_cpo'), cpw: _num('fl_cpw'), cpg: _num('fl_cpg'), jt: _num('fl_jt')
         };
     }
     function _idFor(key) {
@@ -501,7 +576,8 @@
         psep: function () { return 'Separator pressure must be between 0 and ' + _u(15000, 'pressureG', 0, 'psig') + '.'; },
         t0: function () { return 'Inlet temperature must be between ' + _u(0, 'temperature', 0, '°F') + ' and ' + _u(400, 'temperature', 0, '°F') + '.'; },
         t1: function () { return 'Arrival temperature must be between ' + _u(0, 'temperature', 0, '°F') + ' and ' + _u(400, 'temperature', 0, '°F') + '.'; },
-        rough: function () { return 'Pipe roughness must be between 0 and ' + _u(0.1, 'lengthSmall', 1, 'in', 2) + '.'; }
+        rough: function () { return 'Pipe roughness must be between 0 and ' + _u(0.1, 'lengthSmall', 1, 'in', 2) + '.'; },
+        tair: function () { return 'Air temperature must be between ' + _u(-60, 'temperature', 0, '°F') + ' and ' + _u(140, 'temperature', 0, '°F') + '.'; }
     };
 
     function _paint(r) {
@@ -544,6 +620,8 @@
             _row('Arrival pressure at separator', w.pOut == null ? '—' : P(w.pOut)) +
             _row('Pressure drop, wellhead to separator', w.dp == null ? '—' : dP(w.dp)) +
             _row('Line length, wellhead to separator', ft(w.length)) +
+            _row('Temperature model', r.coupled ? 'Coupled pressure–temperature march (line heat loss)' : 'Linear, inlet to arrival') +
+            (r.coupled ? _row('Arrival temperature at separator, calculated', w.tOut == null ? '—' : T(w.tOut)) : '') +
             (r.flare ? _row('Pressure drop, separator to flare tip', r.flare.dp == null ? '—' : dP(r.flare.dp)) +
                 _row('Flare tip pressure', r.flare.pOut == null ? '—' : P(r.flare.pOut)) : '') +
             v + '</div>';
@@ -572,11 +650,12 @@
         r.routes.forEach(function (rt) {
             h += '<div class="rbox"><div class="rbox-title">Segments: ' + rt.name + '</div>' +
                 _tbl(['Segment', 'Length', 'ID', 'Angle', 'Flow pattern', 'Holdup in → out', 'Inlet pressure', 'Outlet pressure',
-                    'Elevation', 'Friction', 'Acceleration', 'Total drop', 'Max velocity', 'Erosional ratio'], rt.segments.map(function (s) {
+                    'Elevation', 'Friction', 'Acceleration', 'Total drop', 'Max velocity', 'Erosional ratio', 'Temperature in → out'], rt.segments.map(function (s) {
                     return [s.name, ft(s.len), inch(s.id), _fmt(s.theta, 1) + '°',
                         s.patterns.map(function (p) { return PAT_NAME[p] || p; }).join(' → ') || '—',
                         _fmt(s.hlIn, 3) + ' → ' + _fmt(s.hlOut, 3), P(s.pIn), s.pOut == null ? '—' : P(s.pOut),
-                        dP(s.dpEl), dP(s.dpF), dP(s.dpAcc), s.dp == null ? '—' : dP(s.dp), vel(s.vmMax), _fmt(s.eroMax, 2)];
+                        dP(s.dpEl), dP(s.dpF), dP(s.dpAcc), s.dp == null ? '—' : dP(s.dp), vel(s.vmMax), _fmt(s.eroMax, 2),
+                        T(s.tIn) + ' → ' + T(s.tOut)];
                 })) + '</div>';
         });
 
@@ -586,8 +665,11 @@
                 'multiplied by 0.924 uphill and 0.685 downhill (horizontal unchanged) and the no-slip friction factor is the rough-pipe ' +
                 'Colebrook value; without it the original smooth-pipe factor is used. Holdup is held at or above the no-slip value in ' +
                 'horizontal and uphill flow. Fluid properties at each step: Standing Rs and Bo, Beggs-Robinson oil viscosity, DAK Z, ' +
-                'Lee-Gonzalez-Eakin gas viscosity, Baker-Swerdloff and Hough surface tensions. Temperature is linear from the inlet to the ' +
-                'arrival temperature (use Line Heat Loss for it). The flare line carries the separator gas at the separator temperature. ' +
+                'Lee-Gonzalez-Eakin gas viscosity, Baker-Swerdloff and Hough surface tensions. Temperature: linear from the inlet to the ' +
+                'arrival temperature, or (v3.0 option) a coupled march: each step loses heat by the Line Heat Loss model ' +
+                '(T = Ta + (T − Ta)·e^(−UA′·dx/ṁcp), bare or insulated pipe in air, inside film neglected) and cools by μJT × the ' +
+                'step pressure drop, and the step pressure drop uses the fluid properties at the step temperature. The flare line ' +
+                'carries the separator gas from the separator temperature. ' +
                 'Steady state: slugging and terrain surges are not modelled. Erosional ratio = mixture velocity over the API RP 14E ' +
                 'velocity with C = 100.') +
             '</div>';
@@ -678,9 +760,23 @@
             _fg('fl_rough', 'Pipe roughness (in)', '0.0018', ' min="0"') +
             _sel('fl_payne', 'Payne et al. corrections', [{ v: 'yes', t: 'Yes: holdup factors and rough-pipe friction' }, { v: 'no', t: 'No: original Beggs & Brill' }], 'yes') +
             _sel('fl_accel', 'Acceleration term', [{ v: 'yes', t: 'Include' }, { v: 'no', t: 'Neglect' }], 'yes') +
+            _sel('fl_tmode', 'Temperature model', [{ v: 'linear', t: 'Linear, inlet to arrival temperature' }, { v: 'heat', t: 'Coupled P–T march with line heat loss' }], 'linear') +
             '</div><div class="btn-row"><button class="btn btn-primary" id="fl_calc" onclick="calcFlowline()">Calculate</button>' +
             '<button class="btn btn-secondary" id="fl_useheat" onclick="WTS_flowlineUseHeat()">Use temperatures from Line Heat Loss</button></div>' +
             '<div id="fl_heatmsg"></div></div>' +
+            '<div class="card"><div class="card-title">Heat Loss (coupled temperature model only)</div><div class="fg">' +
+            _fg('fl_tair', 'Air temperature (°F)', '60') +
+            _fg('fl_wind', 'Wind speed (mph)', '10', ' min="0"') +
+            _fg('fl_eps', 'Outer surface emissivity', '0.9', ' min="0" max="1"') +
+            _fg('fl_wall', 'Pipe wall thickness (in)', '0.3', ' min="0"') +
+            _fg('fl_ins', 'Insulation thickness, 0 = bare (in)', '0', ' min="0"') +
+            _fg('fl_kp', 'Pipe wall conductivity (Btu/hr·ft·°F)', '26') +
+            _fg('fl_kins', 'Insulation conductivity (Btu/hr·ft·°F)', '0.025') +
+            _fg('fl_cpo', 'Oil heat capacity (Btu/lb·°F)', '0.5') +
+            _fg('fl_cpw', 'Water heat capacity (Btu/lb·°F)', '1.0') +
+            _fg('fl_cpg', 'Gas heat capacity (Btu/lb·°F)', '0.55') +
+            _fg('fl_jt', 'Joule–Thomson coefficient along the line (°F/psi)', '0.07') +
+            '</div></div>' +
             '<div class="card"><div class="card-title">Segments: Wellhead to Separator</div>' + _segTable('w', WELL_IDS, DEF_W) + '</div>' +
             '<div class="card"><div class="card-title">Segments: Separator to Flare</div>' + _segTable('f', FLARE_IDS, DEF_F) + '</div>' +
             '<div id="fl_res"></div>' +

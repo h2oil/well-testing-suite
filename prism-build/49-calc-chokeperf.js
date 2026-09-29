@@ -32,7 +32,11 @@
 //   GLR scf/STB, q gross liquid STB/d — constants as tabulated by Guo et al.
 //   (2007) Table 5.1 and Brown & Beggs, The Technology of Artificial Lift
 //   Methods, Vol. 1 (1977):
-//       Gilbert (1954)   a = 10.00  b = 1.89  c = 0.546
+//       Gilbert (1954)   a = 10.01  b = 1.89  c = 0.546   (v3.0: exactly Gilbert's
+//                        published q = p1·S^1.89/(435·R^0.546), R in Mscf/bbl, i.e.
+//                        a = 435/1000^0.546 = 10.0113 with GLR in scf/STB — the same
+//                        form as the host Choke Flow Rates and Dual Choke pages; the
+//                        rounded a = 10.00 of the tabulations read 0.11 % high)
 //       Ros (1960)       a = 17.40  b = 2.00  c = 0.500
 //       Baxendell (1958) a =  9.56  b = 1.93  c = 0.546
 //       Achong (1961)    a =  3.82  b = 1.88  c = 0.650
@@ -86,7 +90,7 @@
     var MW_AIR = 28.9647;              // lb/lb-mol
     var GILBERT_CRIT = 0.588;          // p2/p1 (absolute) for critical multiphase flow — Gilbert (1954): p1 ≥ 1.7·p2
     var CORR = {
-        gilbert:   { key: 'gilbert',   name: 'Gilbert (1954)',   a: 10.00, b: 1.89, c: 0.546 },
+        gilbert:   { key: 'gilbert',   name: 'Gilbert (1954)',   a: 435 / Math.pow(1000, 0.546), b: 1.89, c: 0.546 },   // = 435·(GLR/1000)^0.546
         ros:       { key: 'ros',       name: 'Ros (1960)',       a: 17.40, b: 2.00, c: 0.500 },
         baxendell: { key: 'baxendell', name: 'Baxendell (1958)', a: 9.56,  b: 1.93, c: 0.546 },
         achong:    { key: 'achong',    name: 'Achong (1961)',    a: 3.82,  b: 1.88, c: 0.650 }
@@ -104,7 +108,7 @@
     function _opt(x) { return (x === '' || x == null) ? NaN : Number(x); }
     function _fmt(v, d) {
         if (v == null || !isFinite(v)) return '—';
-        return Number(v).toLocaleString(undefined, { minimumFractionDigits: (d == null ? 2 : d), maximumFractionDigits: (d == null ? 2 : d) });
+        return (G.WTS_fmtNum ? G.WTS_fmtNum(v, (d == null ? 2 : d), (d == null ? 2 : d)) : Number(v).toLocaleString(undefined, { minimumFractionDigits: (d == null ? 2 : d), maximumFractionDigits: (d == null ? 2 : d) }));
     }
     function _metric() { var U = G.WTS_units; return !!(U && U.getSystem && U.getSystem() === 'metric' && U.format); }
     function _u(v, cat, d, impLabel, dMet) {
@@ -412,6 +416,7 @@
               'Bean-up: wellhead back-pressure curve q = Cw·(pws² − pwh²)^n (absolute pressures, n = ' + _fmt(r.n, 2) + ') through the current point. '
             : 'Multiphase: Gilbert (1954), Ros (1960), Baxendell (1958) and Achong (1961) bean correlations, q = p1·S^b/(a·GLR^c), valid for critical flow (p1 ≥ 1.7·p2). ' +
               'They give gross liquid; oil = liquid × (1 − water cut). Upstream pressure is gauge, as in Gilbert\'s original chart. ' +
+              'Gilbert uses his published form q = p1·S^1.89/(435·R^0.546), R in Mscf/bbl (a = 10.01 with GLR in scf/STB; v3.0, was the rounded 10.00 — rates 0.11 % lower), the same as the Choke Flow Rates and Dual Choke pages. ' +
               'Bean-up: straight wellhead performance line from the shut-in WHP through the current point. ') +
             'A measured current rate tunes the bean equation and is carried to the next beans. Bean-up is a planning screen — the real wellhead performance ' +
             'bends with GLR and reservoir drawdown; step up one bean at a time and re-test.</div>';
@@ -593,8 +598,8 @@
     // Critical ratio: 0.5283 at k = 1.4, 0.5457 at k = 1.3 (textbook values)
     near(G.WTS_chokeperf_criticalRatio(1.4), 0.5283, 1e-4, 'rc 1.4');
     near(G.WTS_chokeperf_criticalRatio(1.3), 0.5457, 1e-4, 'rc 1.3');
-    // Gilbert, 1500 psig, 32/64, GLR 1000 scf/STB: 1500·32^1.89/(10·1000^0.546)
-    near(G.WTS_chokeperf_multiphaseRate('gilbert', 1500, 32, 1000), 1500 * Math.pow(32, 1.89) / (10 * Math.pow(1000, 0.546)), 1e-6, 'gilbert');
+    // Gilbert (1954), 1500 psig, 32/64, R = 1 Mscf/bbl: 1500·32^1.89/(435·1^0.546) = 2411.77
+    near(G.WTS_chokeperf_multiphaseRate('gilbert', 1500, 32, 1000), 1500 * Math.pow(32, 1.89) / 435, 1e-6, 'gilbert');
     if (fails.length) {
         if (typeof console !== 'undefined') console.error('[chokeperf self-test] ' + fails.length + '/' + n + ' FAILED:\n  ' + fails.join('\n  '));
         if (typeof window === 'undefined' && typeof process !== 'undefined') process.exitCode = 1;

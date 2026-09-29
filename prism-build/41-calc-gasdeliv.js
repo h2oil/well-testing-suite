@@ -61,7 +61,7 @@
     function _blank(id) { var e = _byId(id); return !e || String(e.value).trim() === ''; }
     function _fmt(v, d) {
         if (v == null || !isFinite(v)) return '—';
-        return Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) });
+        return (G.WTS_fmtNum ? G.WTS_fmtNum(v, 0, (d == null ? 2 : d)) : Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) }));
     }
     function _metric() { var U = G.WTS_units; return !!(U && U.getSystem && U.getSystem() === 'metric' && U.format); }
     // Value in the display system; impLabel is the imperial text shown in imperial.
@@ -401,6 +401,21 @@
     }
 
     function _row(l, v) { return '<div class="rrow"><span class="rl">' + l + '</span><span class="rv">' + v + '</span></div>'; }
+    // Metric companions of the field-unit coefficients (v3.0). The equations are
+    // unit-specific, so C, a and b stay in field units and Metric mode adds the same
+    // equation written in m³/d (at the same base) and kPa:
+    //   q[m³/d] = C_SI·(p̄r² − pwf²)[kPa²]ⁿ,  C_SI = C·Kq/Kp^(2n)
+    //   Δp²[kPa²] = a_SI·q[m³/d] + b_SI·q²,   a_SI = a·Kp²/Kq,  b_SI = b·Kp²/Kq²
+    //   Kq = 28.3168466 m³ per Mscf, Kp = 6.894757293 kPa per psi (exact definitions).
+    var KQ = 28.3168466, KP = 6.894757293168;
+    function coeffSI(n, C, a, b) {
+        return {
+            C: (C != null && isFinite(C) && isFinite(n)) ? C * KQ / Math.pow(KP, 2 * n) : null,
+            a: (a != null && isFinite(a)) ? a * KP * KP / KQ : null,
+            b: (b != null && isFinite(b)) ? b * KP * KP / (KQ * KQ) : null
+        };
+    }
+    G.WTS_gasdeliv_coeffSI = coeffSI;
     function _aofText(q) {
         if (q == null || !isFinite(q)) return '—';
         return _u(q, 'gasRateSmall', 1, 'MSCFD') + ' (' + _u(q / 1000, 'gasRate', 3, 'MMSCFD') + ')';
@@ -416,6 +431,7 @@
         h += _row('Points used', _fmt(r.type === 'single' ? 1 : r.points.length, 0) + ' (' + TYPE_SHORT[r.type] + ')');
         h += _row('Exponent n', cn.n.toFixed(4));
         h += _row('Coefficient C', cn.C.toExponential(4) + ' MSCFD/psia²ⁿ');
+        if (_metric()) h += _row('Coefficient C (metric: q in m³/d, p in kPa)', coeffSI(cn.n, cn.C).C.toExponential(4) + ' (m³/d)/kPa²ⁿ');
         if (cn.r2 != null) h += _row('Fit R² (log–log)', cn.r2.toFixed(4));
         h += _row('AOF', _aofText(cn.aof));
         if (r.pwfDesign != null) h += _row('Rate at pwf = ' + pwfdTxt, _u(cn.qAtPwf, 'gasRateSmall', 1, 'MSCFD'));
@@ -428,6 +444,11 @@
         } else {
             h += _row('a', lit.a != null ? lit.a.toFixed(2) + ' psia²/MSCFD' : '—');
             h += _row('b', lit.b != null ? lit.b.toExponential(4) + ' psia²/(MSCFD)²' : '—');
+            if (_metric() && lit.a != null && lit.b != null) {
+                var si = coeffSI(null, null, lit.a, lit.b);
+                h += _row('a (metric: kPa², m³/d)', _fmt(si.a, 4) + ' kPa²/(m³/d)');
+                h += _row('b (metric: kPa², m³/d)', si.b.toExponential(4) + ' kPa²/(m³/d)²');
+            }
             h += _row('AOF', lit.ok ? _aofText(lit.aof) : '—');
             if (r.pwfDesign != null) h += _row('Rate at pwf = ' + pwfdTxt, lit.ok ? _u(lit.qAtPwf, 'gasRateSmall', 1, 'MSCFD') : '—');
             if (r.qTarget != null) h += _row('pwf at q = ' + qtTxt, !lit.ok ? '—' : (lit.qAboveAof ? 'above AOF' : _u(lit.pwfAtQ, 'pressure', 1, 'psia')));

@@ -839,6 +839,19 @@
         var Y1 = a + s * X1;
         var p1hr = isNum(pRef) ? pRef + dir * Y1 : NaN;
         var pStar = (qn === 0 && isNum(pRef)) ? pRef + dir * a : NaN;
+        // Gas with pseudo-pressure: the line lives in m(p). m1hr = m_ref ± Δm(1 h)
+        // and m* = m_ref ± a are converted back to pressure with the same m(p)
+        // table (Al-Hussainy, Ramey & Crawford 1966; Lee, Rollins & Spivey 2003,
+        // SPE Textbook 9, §3 gas-well build-up: p* from m* by inverting m(p)).
+        var mTbl = null, yRef0 = firstNum(adata.pRef);
+        if (pseudo && fluid === 'gas' && adata.mpSpec && typeof G.PRiSM_mpTable === 'function') {
+            try { mTbl = G.PRiSM_mpTable(adata.mpSpec); } catch (eT) { mTbl = null; }
+        }
+        var pRefP = pseudo ? firstNum(adata.pRefPressure) : pRef;
+        if (mTbl && isNum(yRef0)) {
+            p1hr = mTbl.pOf(yRef0 + dir * Y1);
+            if (qn === 0) pStar = mTbl.pOf(yRef0 + dir * a);
+        }
 
         // ── Log-log cross-check ──────────────────────────────────
         var dW = deriv.slice(i0, i1 + 1);
@@ -878,7 +891,11 @@
             else if (u >= 2) break;         // storage must be at the start of the period
         }
         if (run.length >= 3 && pos(qU) && pos(B)) {
-            var cs = run.map(function (ix) { return qU * B * t[ix] / (24 * y[ix]); });
+            // Gas m(p): storage needs the real pressure change, not Δm.
+            var cs = run.map(function (ix) {
+                var dpu = (pseudo && isNum(pRefP) && isNum(p[ix])) ? Math.abs(p[ix] - pRefP) : y[ix];
+                return qU * B * t[ix] / (24 * dpu);
+            });
             us = { found: true, n: run.length, t0: t[run[0]], t1: t[run[run.length - 1]], C: median(cs) };
             if (pos(phi) && pos(ct) && pos(h) && pos(rw)) us.CD = 0.8936 * us.C / (phi * ct * h * rw * rw);
         } else {
@@ -896,17 +913,27 @@
 
         // ── Skin deliverables ─────────────────────────────────────
         var pbar = null, pwf = null;
-        if (isShut) { pbar = isNum(pStar) ? pStar : null; pwf = pRef; }
+        if (isShut) { pbar = isNum(pStar) ? pStar : null; pwf = pRefP; }
         else {
-            pbar = pRef;
+            pbar = pRefP;
             var lastP = null;
             for (var lp = p.length - 1; lp >= 0; lp--) if (isNum(p[lp])) { lastP = p[lp]; break; }
             pwf = isNum(lastP) ? lastP : (isNum(pRef) ? pRef + dir * y[y.length - 1] : null);
         }
-        var summary = (fluid === 'gas' && pseudo)
-            ? skinSummary({ S: S, m: mAbs, rw: rw, CD: us.CD })
-            : skinSummary({ S: S, kh: kh, m: mAbs, q: qU, B: B, mu: mu, rw: rw, pbar: pbar, pwf: pwf, CD: us.CD, testType: testType });
-        if (fluid === 'gas' && pseudo) res.warnings.push('Gas pseudo-pressure analysis: ΔpS is in Δm(p) units; FE and J are not computed.');
+        var summary;
+        if (fluid === 'gas' && pseudo) {
+            // Δm_S = 0.8686·|m|·S in m(p) units, converted to a pressure drop at pwf;
+            // FE from m(p) drawdowns (52-prism-gas.js PRiSM_gasSkinSummary).
+            summary = (typeof G.PRiSM_gasSkinSummary === 'function' && mTbl)
+                ? G.PRiSM_gasSkinSummary({ S: S, m: mAbs, rw: rw, CD: us.CD, pbar: pbar, pwf: pwf, table: mTbl })
+                : skinSummary({ S: S, m: mAbs, rw: rw, CD: us.CD });
+            if (!summary || !isNum(summary.dpS)) summary = skinSummary({ S: S, m: mAbs, rw: rw, CD: us.CD });
+            res.warnings.push(summary && summary.gas
+                ? 'Gas pseudo-pressure analysis: p1hr, p* and ΔpS are converted from m(p) back to pressure with the same m(p) table; FE uses m(p) drawdowns; J is not computed (use the deliverability panel for AOF).'
+                : 'Gas pseudo-pressure analysis: ΔpS is in Δm(p) units; FE and J are not computed.');
+        } else {
+            summary = skinSummary({ S: S, kh: kh, m: mAbs, q: qU, B: B, mu: mu, rw: rw, pbar: pbar, pwf: pwf, CD: us.CD, testType: testType });
+        }
 
         // ── Bias warnings (pRef) ─────────────────────────────────
         var src = adata.pRefSource;
@@ -962,7 +989,12 @@
         res.unitSlope = us; res.tIARF = tIARF;
         res.crossCheck = cross;
         res.pRef = pRef; res.yRef = firstNum(adata.pRef); res.pRefSource = src || null; res.pbar = pbar; res.pwf = pwf;
-        if (pseudo) { res.dm1hr = Y1; res.dmStar = (qn === 0) ? a : NaN; }
+        if (pseudo) {
+            res.dm1hr = Y1; res.dmStar = (qn === 0) ? a : NaN;
+            res.pRefPressure = pRefP; res.gasConverted = !!mTbl;
+            res.dmS = summary.dmS; res.m1hr = isNum(yRef0) ? yRef0 + dir * Y1 : NaN;
+            res.mStar = (qn === 0 && isNum(yRef0)) ? yRef0 + dir * a : NaN;
+        }
         res.tp = tp; res.qRef = qU; res.dq = dqn; res.steps = steps; res.refMode = refMode;
         res.inputs = { q: qU, B: B, mu: mu, h: h, phi: phi, ct: ct, rw: rw, T_R: TR };
         res.datasetHash = dsHash(G.PRiSM_dataset);
@@ -1179,16 +1211,18 @@
     function _resultsHTML(r) {
         if (!r) return '<div class="prism-sl-note">Press “Analyse straight line” to compute.</div>';
         if (!r.ok) return '<div class="prism-sl-warn">' + _esc(r.reason || 'Analysis not possible') + '</div>';
+        var gas = !!(r.pseudo && r.fluid === 'gas');
         var rows = [
-            ['Method', _esc(r.methodLabel || r.method)],
+            ['Method', _esc(r.methodLabel || r.method) + (gas ? ' — on m(p)' : '')],
             ['Window Δt (h)', _fmt(r.window.t0, 3) + ' – ' + _fmt(r.window.t1, 4) + ' (' + r.window.n + ' pts' + (r.window.auto ? ', auto' : ', manual') + ')'],
-            ['Semilog slope m (psi/cycle)', _fmt(r.m, 4)],
+            [gas ? 'Semilog slope m (psi²/cp per cycle)' : 'Semilog slope m (psi/cycle)', _fmt(r.m, 4)],
             ['kh (md·ft)', _fmt(r.kh, 4)],
             ['Permeability k (md)', _fmt(r.k, 4)],
-            ['p at 1 h on the line, p1hr (psia)', _fmt(r.p1hr, 5)],
+            ['p at 1 h on the line, p1hr (psia)' + (gas ? ' — from m(p)' : ''), _fmt(r.p1hr, 5)],
             ['Skin S', _fmt(r.S, 3)]
         ];
-        if (isNum(r.pStar)) rows.push(['Extrapolated pressure p* (psia)', _fmt(r.pStar, 5)]);
+        if (isNum(r.pStar)) rows.push(['Extrapolated pressure p* (psia)' + (gas ? ' — from m*' : ''), _fmt(r.pStar, 5)]);
+        if (gas && isNum(r.dmS)) rows.push(['Skin Δm(p)S (psi²/cp)', _fmt(r.dmS, 4)]);
         rows.push(['Skin pressure drop ΔpS (psi)', _fmt(r.dpS, 4)]);
         rows.push(['Flow efficiency FE', _fmt(r.FE, 3)]);
         rows.push(['Damage ratio DR', _fmt(r.DR, 3)]);

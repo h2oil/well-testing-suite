@@ -405,7 +405,7 @@
         rows += _row('Time-to-Failure (current WT)', _fmt(lim.time_to_failure_at_current_days, 1), 'days');
         rows += _row('Erosion Rate', _fmt(lim.erosion_rate_mils_yr, 1), 'mils/year');
         rows += _row('Sand Rate', _fmt(p.sand_rate_lbMMscf, 1), 'lb/MMscf');
-        rows += _row('Salama c-factor', _fmt(p.c_constant, 0), '');
+        rows += _row('Erosion Model', p.erosion_model_label || '—', '');
 
         var segs = Array.isArray(p.segments) ? p.segments : [];
         var segTbl = '';

@@ -67,6 +67,8 @@ function reportHas(app, assert, needles) {
 // AGA-3 / API MPMS 14.3.1 RG flange-tap Cd + DAK Z (Standing pseudo-criticals), solved in
 // SI mass-flow form — independent of the page's field-unit code (same as calc-g1 agaRef).
 // Oil & Gas Rate uses the shared WTS_aga3_compute engine at 60 °F / 14.73 psia.
+// v3.0: real base density ρb = Pb·M/(Zb·R·Tb) with Zb = DAK at the base (AGA-3 Fpv = √(Zb/Zf));
+// the page's gravity is a REAL gravity, so M = 28.9625·Gi with Gi = Gr·Zb/0.99959 (AGA-3 Part 3).
 function ogDakZ(Tpr, Ppr) {
   const A = [0, 0.3265, -1.07, -0.5339, 0.01569, -0.05165, 0.5475, -0.7361, 0.1844, 0.1056, 0.6134, 0.7210];
   const Zof = (r) => 1 + (A[1] + A[2] / Tpr + A[3] / Tpr ** 3 + A[4] / Tpr ** 4 + A[5] / Tpr ** 5) * r
@@ -80,11 +82,13 @@ function ogAgaRef(D, d, hw, Ps, TfF, SG) {
   const TbF = 60, Pb = 14.73, mu = 0.012;
   const beta = d / D, b4 = beta ** 4, Ev = 1 / Math.sqrt(1 - b4);
   const Pf = Ps + 14.696, Tf = TfF + 459.67, Tb = TbF + 459.67;
-  const Tpc = 168 + 325 * SG - 12.5 * SG * SG, Ppc = 677 + 15 * SG - 37.5 * SG * SG;
-  const Z = ogDakZ(Tf / Tpc, Pf / Ppc);
+  const crit = (g) => ({ T: 168 + 325 * g - 12.5 * g * g, P: 677 + 15 * g - 37.5 * g * g });
+  let Gi = SG, c = crit(Gi), Zb = ogDakZ(Tb / c.T, Pb / c.P);
+  for (let i = 0; i < 60; i++) { Gi = SG * Zb / 0.99959; c = crit(Gi); Zb = ogDakZ(Tb / c.T, Pb / c.P); }
+  const Z = ogDakZ(Tf / c.T, Pf / c.P);
   const Y = 1 - (0.41 + 0.35 * b4) * hw / (27.707 * Pf) / 1.3;
-  const dm = d * 0.0254, Dm = D * 0.0254, dP = hw * 248.84, M = 28.9625e-3 * SG, R = 8.314462;
-  const rho = Pf * 6894.757 * M / (Z * R * Tf * 5 / 9), rhob = Pb * 6894.757 * M / (R * Tb * 5 / 9);
+  const dm = d * 0.0254, Dm = D * 0.0254, dP = hw * 248.84, M = 28.9625e-3 * Gi, R = 8.314462;
+  const rho = Pf * 6894.757 * M / (Z * R * Tf * 5 / 9), rhob = Pb * 6894.757 * M / (Zb * R * Tb * 5 / 9);
   const L = 1 / D, M2 = 2 * L / (1 - beta), M1 = Math.max(2.8 - D, 0);
   let Re = 1e6, Cd = 0.6, qm = 0;
   for (let i = 0; i < 60; i++) {
@@ -96,7 +100,7 @@ function ogAgaRef(D, d, hw, Ps, TfF, SG) {
     qm = Cd * Ev * Y * Math.PI / 4 * dm * dm * Math.sqrt(2 * rho * dP);
     Re = 4 * qm / (Math.PI * mu * 1e-3 * Dm);
   }
-  return { Z, Cd, mscfd: qm / rhob / 0.0283168466 * 3600 * 24 / 1000 };
+  return { Z, Zb, Cd, mscfd: qm / rhob / 0.0283168466 * 3600 * 24 / 1000 };
 }
 const OG_DEF = ogAgaRef(4, 2, 50, 500, 100, 0.75);
 const RW = 999.012;
@@ -261,12 +265,13 @@ module.exports = [
       assert.near(rv(app, 'og_res', 'VCF'), vcf, 2e-6);
       assert.near(rv(app, 'og_res', 'Oil Rate'), oil, 0.051);
       // Independent SI solve of the AGA-3 RG flange-tap Cd (μ 0.012 cP) with DAK Z and Standing (1977)
-      // pseudo-criticals (Tpc 404.7 °R, Ppc 667.2 psia → Tpr 1.383, Ppr 0.7715, Z 0.89999).
-      // (ISO 5167-2 Cd gave 3800.75 MSCFD / C 0.60301; Papay Z gave 3792.68.)
+      // pseudo-criticals on the ideal gravity Gi = 0.75·Zb/0.99959 = 0.7476 (Z 0.9006; was 0.89999 on 0.75).
+      // v3.0 Fpv = √(Zb/Zf), Zb ≈ 0.9965: 3,792.6 MSCFD (was 3,800.65 with Zb = 1; ISO 5167-2 Cd gave 3800.75).
       const gas = rv(app, 'og_res', 'Gas Rate');
       assert.rel(gas, OG_DEF.mscfd, 5e-4);
       assert.rel(gas, 3800.75, 3e-3, 'within 0.3 % of the former ISO 5167-2 figure');
-      assert.near(rv(app, 'og_res', 'Z-Factor'), 0.89999, 2e-4);
+      assert.near(rv(app, 'og_res', 'Z-Factor'), OG_DEF.Z, 2e-4);
+      assert.near(rv(app, 'og_res', 'Supercompressibility'), Math.sqrt(OG_DEF.Zb / OG_DEF.Z), 2e-5, 'Fpv = √(Zb/Zf)');
       assert.near(rv(app, 'og_res', 'Discharge Coeff'), OG_DEF.Cd, 2e-5);
       // Same engine as the AGA-3 page: identical rate from WTS_aga3_compute
       const eng = app.win.WTS_aga3_compute({ D: 4, d: 2, hw: 50, Ps: 500, TfF: 100, SG: 0.75, TbF: 60, Pb: 14.73 });
@@ -330,7 +335,7 @@ module.exports = [
       assert.rel(rv(app, 'og_res', 'Oil Rate'), oilBpd * 0.158987, 2e-3);
       assert.rel(rv(app, 'og_res', 'Gas Rate'), OG_DEF.mscfd * 28.3168466, 1.5e-3);
       assert.rel(rv(app, 'og_res', 'GOR'), OG_DEF.mscfd * 1e3 / oilBpd * 0.178108, 2e-3);
-      assert.rel(rv(app, 'og_res', 'CGR'), oilBpd / 3.80075 * 5.61458, 2e-3);
+      assert.rel(rv(app, 'og_res', 'CGR'), oilBpd / (OG_DEF.mscfd / 1000) * 5.61458, 2e-3);
       const t = String(app.el('og_res').textContent);
       assert.ok(!/BPD|MSCFD|scf|bbl/.test(t), 'no field units in metric results: ' + t);
       assert.includes(t, 'm³/d'); assert.includes(t, 'sm³/sm³'); assert.includes(t, 'm³/10⁶ m³');
@@ -399,7 +404,7 @@ module.exports = [
   },
 
   {
-    name: 'G2 oilgas (ROADMAP 1.5): DAK Z above Ppr 3 — 3000 psig gives Z 0.7318 (Papay read 0.7594) and 10,201 MSCFD',
+    name: 'G2 oilgas (ROADMAP 1.5): DAK Z above Ppr 3 — 3000 psig gives Z 0.7330 (v3.0 ideal-gravity basis; 0.7318 on the raw SG; Papay read 0.7594)',
     wp: WP,
     run(app, assert) {
       app.hook.nav('oilgas');
@@ -409,9 +414,11 @@ module.exports = [
       // Standing pseudo-criticals: Ppr = 3014.696/667.16 = 4.519, Tpr = 559.67/404.72 = 1.383.
       // Independent Newton-on-ρr DAK: Z = 0.73182 (Standing-Katz chart ≈ 0.73). Independent SI
       // AGA-3 RG solve (ISO 5167-2 gave 10,201.3 MSCFD; Papay's 0.75943 under-read the rate by 1.8 %).
+      // v3.0: the pseudo-criticals take the ideal gravity Gi = 0.75·Zb/0.99959 = 0.7476 → Z 0.7330.
       const hp = ogAgaRef(4, 2, 50, 3000, 100, 0.75);
-      assert.near(hp.Z, 0.7318, 2e-4, 'reference Z');
-      assert.near(rv(app, 'og_res', 'Z-Factor'), 0.7318, 2e-4);
+      assert.near(hp.Z, 0.7330, 2e-4, 'reference Z');
+      assert.near(ogDakZ(559.67 / 404.72, 3014.696 / 667.16), 0.7318, 2e-4, 'raw-SG DAK Z (Standing-Katz chart ≈ 0.73)');
+      assert.near(rv(app, 'og_res', 'Z-Factor'), hp.Z, 2e-4);
       assert.rel(rv(app, 'og_res', 'Gas Rate'), hp.mscfd, 5e-4);
       assert.near(rv(app, 'og_res', 'Discharge Coeff'), hp.Cd, 3e-5);
       assert.ok(!/outside the Dranchuk/.test(app.el('og_res').textContent), 'inside the DAK range: no caution');

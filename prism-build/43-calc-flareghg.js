@@ -54,7 +54,7 @@
     function _blank(id) { var e = _byId(id); return !e || String(e.value).trim() === ''; }
     function _fmt(v, d) {
         if (v == null || !isFinite(v)) return '—';
-        return Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) });
+        return (G.WTS_fmtNum ? G.WTS_fmtNum(v, 0, (d == null ? 2 : d)) : Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) }));
     }
     // value in the display system; impLabel is the imperial text
     function _u(v, cat, d, impLabel) {
@@ -328,13 +328,17 @@
         var B = G.WTS_baseConditions, b = { Tb_F: +inp.tb, Pb_psia: +inp.pbase };
         return (B && B.text) ? B.text(b) : (_fmt(b.Tb_F, 2) + ' °F / ' + _fmt(b.Pb_psia, 3) + ' psia');
     }
+    // Metric (v3.0): molar volume m³/kmol (1 scf/lbmol = 0.0283168466/0.45359237),
+    // molar mass kg/kmol (same number), intensity per 10³ Sm³ (1 MMSCF = 28.3168466 10³ Sm³).
+    function _isMet() { return !!(G.WTS_units && G.WTS_units.getSystem && G.WTS_units.getSystem() === 'metric'); }
     function _resultsHtml(r, inp) {
+        var met = _isMet();
         var h = '<div class="rbox"><div class="rbox-title">Flared Gas</div>' +
             _row('Volume flared', _u(r.Vscf / 1e6, 'gasVolume', 4, 'MMSCF')) +
             _row('Normal volume (0 °C, 101.325 kPa)', _fmt(r.Nm3, 1) + ' Nm³') +
-            _row('Molar volume at base', _fmt(r.Vm, 2) + ' scf/lbmol') +
+            _row('Molar volume at base', met ? _fmt(r.Vm * 0.0283168466 / LB_KG, 3) + ' Sm³/kmol' : _fmt(r.Vm, 2) + ' scf/lbmol') +
             _row('Moles flared', _fmt(r.nmol, 1) + ' lbmol (' + _fmt(r.nmol * LB_KG, 1) + ' kmol)') +
-            _row('Molar mass', _fmt(r.MW, 3) + ' lb/lbmol') +
+            _row('Molar mass', _fmt(r.MW, 3) + (met ? ' kg/kmol' : ' lb/lbmol')) +
             _row('Gas gravity (air = 1)', _fmt(r.SG, 4)) +
             _row('Heating value HHV', _u(r.HHV, 'heatingValue', 1, 'Btu/scf')) +
             _row('Heat released', _fmt(r.E_MMBtu, 1) + ' MMBtu (' + _fmt(r.E_GJ, 1) + ' GJ)') +
@@ -352,7 +356,7 @@
             _row('Unburned H2S', _fmt(r.h2sUnburned_kg, 2) + ' kg') +
             _row('Total CO2e (' + r.gwpLabel + ')', _t(r.co2e_t) + ' t') +
             _row('CO2e per day', _t(r.co2ePerDay_t) + ' t/d') +
-            _row('Intensity (gas CO2e)', (r.intensity == null ? '—' : _fmt(r.intensity, 2) + ' t CO2e per MMSCF')) +
+            _row('Intensity (gas CO2e)', (r.intensity == null ? '—' : met ? _fmt(r.intensity / 28.3168466, 4) + ' t CO2e per 10³ Sm³' : _fmt(r.intensity, 2) + ' t CO2e per MMSCF')) +
             _row('Tier-1 reference CO2 (ethane proxy)', _t(r.tier1_t) + ' t') +
             '</div>';
         h += r.verdicts.map(_verdictHtml).join('');

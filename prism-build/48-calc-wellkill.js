@@ -78,11 +78,11 @@
     function _str(id) { var e = _byId(id); return e ? String(e.value) : ''; }
     function _fmt(v, d) {
         if (v == null || !isFinite(v)) return '—';
-        return Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) });
+        return (G.WTS_fmtNum ? G.WTS_fmtNum(v, 0, (d == null ? 2 : d)) : Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) }));
     }
     function _fixed(v, d) {
         if (v == null || !isFinite(v)) return '—';
-        return Number(v).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
+        return (G.WTS_fmtNum ? G.WTS_fmtNum(v, d, d) : Number(v).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d }));
     }
     function _metric() { var U = G.WTS_units; return !!(U && U.getSystem && U.getSystem() === 'metric'); }
     // value in the display system; impLabel is the imperial text
@@ -125,6 +125,8 @@
         var pmd = Number(i.pmd), ptvd = Number(i.ptvd), tmd = Number(i.tmd), bmd = Number(i.bmd), pbtd = Number(i.pbtd);
         var od = Number(i.od), pump = Number(i.pump);
         var spm = _blank(i.spm) ? null : Number(i.spm);
+        var tpmd = _blank(i.tpmd) ? null : Number(i.tpmd);             // tailpipe (WLEG) MD, blank = none
+        var mu = _blank(i.mu) ? 2 : Number(i.mu), rough = (i.rough === '' || i.rough == null || (typeof i.rough === 'number' && isNaN(i.rough))) ? 0.0018 : Number(i.rough);
         var to = (i.to === 'bot' || i.to === 'pbtd') ? i.to : 'top';
         var tub = _tub(i.tub), cas = _tub(i.cas);
 
@@ -148,6 +150,9 @@
         need(_fin(od) && od >= 0 && od <= 100, 'od', 'Over-displacement must be between 0 and 100 %.');
         need(_fin(pump) && pump >= 0.001 && pump <= 2, 'pump', 'Pump output must be between 0.001 and 2 bbl per stroke.');
         if (spm != null) need(_fin(spm) && spm >= 1 && spm <= 300, 'spm', 'Pump speed must be between 1 and 300 strokes per minute, or blank.');
+        if (tpmd != null) need(_fin(tpmd) && (!pmdOk || tpmd > pmd) && (!tmdOk || tpmd <= tmd), 'tpmd', 'Tailpipe end MD must be below the packer MD and no deeper than the top perforation MD, or blank.');
+        need(_fin(mu) && mu >= 0.3 && mu <= 100, 'mu', 'Kill fluid viscosity must be between 0.3 and 100 cp.');
+        need(_fin(rough) && rough >= 0 && rough <= 0.01, 'rough', 'Pipe roughness must be between 0 and 0.01 in.');
         if (errors.length) return { ok: false, errors: errors, bad: bad };
 
         // A. Kill fluid
@@ -168,13 +173,17 @@
 
         // B. Bullhead volumes
         var tubCap = _cap(tub.id), casCap = _cap(cas.id);
-        var sections = [
-            { key: 'tubing', name: 'Tubing', from: 0, to: pmd, idIn: tub.id, cap: tubCap },
-            { key: 'casing', name: 'Casing below packer', from: pmd, to: tmd, idIn: cas.id, cap: casCap },
+        // With a tailpipe the fluid path below the packer is the tailpipe bore (tubing ID) down to
+        // its end (WLEG), then the casing. The casing × tailpipe annulus below the packer is a dead
+        // volume the bullhead does not sweep.
+        var tpEnd = tpmd != null ? tpmd : pmd;
+        var sections = [{ key: 'tubing', name: 'Tubing', from: 0, to: pmd, idIn: tub.id, cap: tubCap }];
+        if (tpmd != null) sections.push({ key: 'tailpipe', name: 'Tailpipe below packer', from: pmd, to: tpEnd, idIn: tub.id, cap: tubCap });
+        sections.push(
+            { key: 'casing', name: tpmd != null ? 'Casing below tailpipe' : 'Casing below packer', from: tpEnd, to: tmd, idIn: cas.id, cap: casCap },
             { key: 'perfs', name: 'Perforated interval', from: tmd, to: bmd, idIn: cas.id, cap: casCap },
-            { key: 'rathole', name: 'Rathole', from: bmd, to: pbtd, idIn: cas.id, cap: casCap }
-        ];
-        var nIn = to === 'top' ? 2 : to === 'bot' ? 3 : 4;
+            { key: 'rathole', name: 'Rathole', from: bmd, to: pbtd, idIn: cas.id, cap: casCap });
+        var nIn = (tpmd != null ? 1 : 0) + (to === 'top' ? 2 : to === 'bot' ? 3 : 4);
         var vol = 0;
         sections.forEach(function (s, k) {
             s.len = s.to - s.from; s.vol = s.len * s.cap; s.included = k < nIn;
@@ -185,8 +194,40 @@
         var bullhead = {
             sections: sections, to: to, vol: vol, extra: pumped - vol, pumped: pumped,
             strokes: strokes, minutes: spm ? strokes / spm : null, tubCap: tubCap, casCap: casCap,
-            annCap: (cas.id * cas.id - tub.od * tub.od) * K_CAP
+            annCap: (cas.id * cas.id - tub.od * tub.od) * K_CAP,
+            tailpipe: tpmd != null ? { md: tpmd, len: tpmd - pmd, vol: (tpmd - pmd) * tubCap,
+                deadVol: (tpmd - pmd) * (cas.id * cas.id - tub.od * tub.od) * K_CAP } : null
         };
+
+        // Friction at the pump rate, kill fluid in the flow path (Newtonian, user viscosity).
+        // Bourgoyne et al., "Applied Drilling Engineering" (SPE Textbook 2, 1986), §4.6 pipe flow,
+        // field units (ρ ppg, v ft/s, d in, μ cp, q gal/min, L ft):
+        //   v = q / (2.448·d²),  NRe = 928·ρ·v·d/μ
+        //   laminar (NRe < 2100): Fanning f = 16/NRe;  turbulent: Colebrook (1939) in Fanning form,
+        //   1/√f = −4·log10(ε/(3.7·d) + 1.255/(NRe·√f))
+        //   dp/dL = f·ρ·v² / (25.8·d)   (eq. 4.66a)
+        var rate = spm ? pump * spm : null;                      // bbl/min
+        var fric = null;
+        function _fanning(nre, rr) {
+            if (nre < 2100) return 16 / nre;
+            var x = -4 * Math.log(rr / 3.7 + 5.74 / Math.pow(nre, 0.9)) / Math.LN10;   // 1/√f, Swamee–Jain start
+            for (var k = 0; k < 60; k++) {
+                var xn = -4 * Math.log(rr / 3.7 + 1.255 * x / nre) / Math.LN10;
+                if (Math.abs(xn - x) < 1e-12) { x = xn; break; }
+                x = xn;
+            }
+            return 1 / (x * x);
+        }
+        function _pipe(dIn, L) {
+            var qg = rate * 42, v = qg / (2.448 * dIn * dIn), nre = 928 * used * v * dIn / mu;
+            var f = _fanning(nre, rough / dIn), g = f * used * v * v / (25.8 * dIn);
+            return { d: dIn, len: L, v: v, nre: nre, regime: nre < 2100 ? 'laminar' : 'turbulent', f: f, grad: g, dp: g * L };
+        }
+        if (rate) {
+            var pTub = _pipe(tub.id, tpEnd), pCas = _pipe(cas.id, Math.max(0, tmd - tpEnd));
+            fric = { rate: rate, mu: mu, rough: rough, tubing: pTub, casing: pCas, total: pTub.dp + pCas.dp };
+        }
+        bullhead.friction = fric;
 
         // C. Surface pressure limits (static, no friction)
         var pFrac = HYD * fg * tvd;
@@ -209,12 +250,21 @@
             governs: shoe && (shoe.start < perfStart || shoe.end < perfEnd) ? 'shoe' : 'perfs',
             killFracs: used >= fg - 1e-9
         };
+        if (fric) {
+            // While pumping, BHP = p_surface + hydrostatic − friction, so at the pump rate the surface
+            // pressure that just reaches the fracture pressure is MASP + friction, and the pressure
+            // needed to keep injecting at the end is (p_res − hydrostatic) + friction.
+            limits.pumpEnd = endReq + fric.total;
+            // Friction credit applies to the perforation limit only (the shoe sees casing pressure).
+            limits.maxPumpEnd = shoe ? Math.min(perfEnd + fric.total, shoe.end) : perfEnd + fric.total;
+            limits.pumpOverStatic = limits.pumpEnd > maspEnd + 1e-9;
+        }
 
         // Static pumping schedule, 0 → 100 % of the bullhead volume (MD → TVD linear between
         // surface, packer and top perforation; below the top perforation the front is at the perfs).
         function tvdAt(md) {
             if (md <= pmd) return pmd > 0 ? md / pmd * ptvd : 0;
-            if (md <= tmd) return tmd > pmd ? ptvd + (md - pmd) / (tmd - pmd) * (tvd - ptvd) : tvd;
+            if (md <= tmd) return tmd > pmd ? ptvd + (md - pmd) / (tmd - pmd) * (tvd - ptvd) : tvd;   // tailpipe inside this span
             return tvd;
         }
         function frontMd(v) {
@@ -232,9 +282,15 @@
             var h = HYD * (used * ftvd + wf * (tvd - ftvd));
             var sf = shoe ? Math.min(stvd, ftvd) : 0;
             var mShoe = shoe ? shoe.pFrac - HYD * (used * sf + wf * (stvd - sf)) : Infinity;
+            var fAt = null;
+            if (fric) {                                          // kill fluid only; friction of the well fluid ahead of it is not credited
+                var mdT = Math.min(fmd, tpEnd), mdC = Math.max(0, Math.min(fmd, tmd) - tpEnd);
+                fAt = fric.tubing.grad * mdT + fric.casing.grad * mdC;
+            }
             schedule.push({
                 pct: n * 10, vol: v, strokes: v / pump, frontMd: fmd, frontTvd: ftvd,
-                sitp: Math.max(0, pres - h), masp: Math.min(pFrac - h, mShoe)
+                sitp: Math.max(0, pres - h), masp: Math.min(pFrac - h, mShoe),
+                friction: fAt, maspPump: fAt == null ? null : Math.min(pFrac - h + fAt, mShoe)
             });
         }
         bullhead.schedule = schedule;
@@ -328,14 +384,15 @@
         wk_pres: 'pressure', wk_tvd: 'length', wk_ob: 'pressure', wk_kwo: 'densityLiquid', wk_fg: 'densityLiquid',
         wk_wf: 'densityLiquid', wk_ann: 'densityLiquid', wk_stvd: 'length', wk_sfg: 'densityLiquid',
         wk_pmd: 'length', wk_ptvd: 'length', wk_tmd: 'length', wk_bmd: 'length', wk_pbtd: 'length',
-        wk_od: 'percent', wk_pump: 'volume', wk_spm: 'count',
+        wk_od: 'percent', wk_pump: 'volume', wk_spm: 'count', wk_tpmd: 'length', wk_mu: 'viscosity', wk_rough: 'lengthSmall',
         wk_gp: 'pressureG', wk_gtvd: 'length', wk_glen: 'length', wk_gmix: 'length', wk_ghl: 'percent',
         wk_grho: 'densityLiquid', wk_gsg: 'sg', wk_gt: 'temperature', wk_gz: 'dimensionless'
     };
     var KILL_IDS = {
         pres: 'wk_pres', tvd: 'wk_tvd', ob: 'wk_ob', kwo: 'wk_kwo', fg: 'wk_fg', wf: 'wk_wf', ann: 'wk_ann',
         stvd: 'wk_stvd', sfg: 'wk_sfg', tub: 'wk_tub', cas: 'wk_cas', pmd: 'wk_pmd', ptvd: 'wk_ptvd',
-        tmd: 'wk_tmd', bmd: 'wk_bmd', pbtd: 'wk_pbtd', od: 'wk_od', pump: 'wk_pump', spm: 'wk_spm'
+        tmd: 'wk_tmd', bmd: 'wk_bmd', pbtd: 'wk_pbtd', od: 'wk_od', pump: 'wk_pump', spm: 'wk_spm',
+        tpmd: 'wk_tpmd', mu: 'wk_mu', rough: 'wk_rough'
     };
     var GRAD_IDS = { p: 'wk_gp', tvd: 'wk_gtvd', gasLen: 'wk_glen', mixLen: 'wk_gmix', hl: 'wk_ghl', rho: 'wk_grho', sg: 'wk_gsg', t: 'wk_gt', z: 'wk_gz' };
 
@@ -355,6 +412,7 @@
         od: function () { return 'Over-displacement must be between 0 and 100 %.'; },
         pump: function () { return 'Pump output must be between ' + _u(0.001, 'volume', 3, 'bbl', 5) + ' and ' + _u(2, 'volume', 0, 'bbl', 3) + ' per stroke.'; },
         spm: function () { return 'Pump speed must be between 1 and 300 strokes per minute, or blank.'; },
+        rough: function () { return 'Pipe roughness must be between 0 and ' + _u(0.01, 'lengthSmall', 2, 'in', 3) + '.'; },
         p: function () { return 'Known pressure must be between 0 and ' + _u(30000, 'pressureG', 0, 'psig') + '.'; },
         gtvd: function () { return 'Column TVD must be above 0 and no more than ' + _u(40000, 'length', 0, 'ft') + '.'; },
         rho: function () { return 'Liquid density must be above 0 and no more than ' + _den(25) + '.'; },
@@ -448,6 +506,9 @@
             _row('Pump strokes', _fmt(Math.ceil(b.strokes - 1e-9), 0) + ' strokes') +
             (b.minutes != null ? _row('Pumping time', _fmt(b.minutes, 1) + ' min') : '') +
             _row('Tubing x casing annular capacity', _u(b.annCap, 'capacity', 5, 'bbl/ft', 5)) +
+            (b.tailpipe ? _row('Tailpipe volume below the packer (included)', V(b.tailpipe.vol)) +
+                _row('Casing x tailpipe annulus below the packer (not swept)', V(b.tailpipe.deadVol)) +
+                _warn('Gas in the casing x tailpipe annulus below the packer (' + V(b.tailpipe.deadVol) + ') is not displaced by the bullhead and can migrate after the kill.') : '') +
             '</div>';
 
         // Pressure limits
@@ -457,6 +518,8 @@
         else if (L.windowStart < WINDOW_FRAC * L.pFrac) pv += _warn('Narrow bullhead window at the start: ' + P(L.windowStart) + ' between shut-in pressure and the fracture limit.');
         else pv += _ok('Bullhead window at the start is ' + P(L.windowStart) + ' above the shut-in tubing pressure.');
         if (L.maspEnd <= 0 && !L.killFracs) pv += _bad('Maximum surface pressure reaches zero before the kill fluid reaches the perforations.');
+        if (b.friction && L.pumpOverStatic) pv += _warn('At this pump rate the pump pressure at the end (' + P(L.pumpEnd) + ') exceeds the static maximum surface pressure; only the friction loss keeps the perforations below fracture pressure. Slow the pump near the end.');
+        else if (b.friction) pv += _ok('Pump pressure at the end (' + P(L.pumpEnd) + ', with ' + P(b.friction.total) + ' friction) stays below the static maximum surface pressure.');
         h += '<div class="rbox"><div class="rbox-title">Surface Pressure Limits</div>' +
             _row('Fracture pressure at top perforation', P(L.pFrac)) +
             _row('Fracture gradient', _grad(L.fgGrad)) +
@@ -464,17 +527,30 @@
             _row('Max surface pressure at start', P(L.maspStart)) +
             _row('Max surface pressure at end', P(L.maspEnd)) +
             _row('Surface pressure needed at end', P(L.endReq)) +
+            (b.friction ? _row('Pump rate', _u(b.friction.rate, 'volume', 2, 'bbl', 3) + '/min') +
+                _row('Tubing: velocity / Reynolds number / regime', _u(b.friction.tubing.v, 'velocity', 2, 'ft/s') + ' / ' + _fmt(b.friction.tubing.nre, 0) + ' / ' + b.friction.tubing.regime) +
+                _row('Tubing: Fanning friction factor', _fixed(b.friction.tubing.f, 5)) +
+                _row('Friction pressure, tubing' + (b.tailpipe ? ' and tailpipe' : ''), P(b.friction.tubing.dp)) +
+                _row('Friction pressure, casing to top perforation', P(b.friction.casing.dp)) +
+                _row('Friction pressure at pump rate, kill fluid', P(b.friction.total)) +
+                _row('Pump pressure to keep injecting at end (needed + friction)', P(L.pumpEnd)) +
+                _row('Max pump pressure at end at this rate (limit + friction)', P(L.maxPumpEnd)) : '') +
             (L.shoe ? _row('Shoe: fracture pressure', P(L.shoe.pFrac)) +
                 _row('Shoe: max surface pressure start / end', P(L.shoe.start) + ' / ' + P(L.shoe.end)) +
                 _row('Governing limit', L.governs === 'shoe' ? 'casing shoe' : 'top perforation') : '') +
             pv +
             '<div class="rbox-title" style="margin-top:10px">Static Pumping Schedule</div>' +
-            _tbl(['Pumped', 'Volume', 'Strokes', 'Front MD', 'Shut-in pressure', 'Max surface pressure'], b.schedule.map(function (s) {
-                return [s.pct + ' %', V(s.vol), _fmt(Math.round(s.strokes), 0), ft(s.frontMd), P(s.sitp), P(s.masp)];
+            _tbl(['Pumped', 'Volume', 'Strokes', 'Front MD', 'Shut-in pressure', 'Max surface pressure'].concat(b.friction ? ['Kill-fluid friction', 'Max pump pressure at rate'] : []), b.schedule.map(function (s) {
+                return [s.pct + ' %', V(s.vol), _fmt(Math.round(s.strokes), 0), ft(s.frontMd), P(s.sitp), P(s.masp)].concat(b.friction ? [P(s.friction), P(s.maspPump)] : []);
             })) +
-            _note('Static values: no pipe friction, no gas migration, and fluids are assumed incompressible. Pipe friction at ' +
-                'the pump rate adds to the surface pressure. Keep the pump pressure below the maximum surface pressure and the ' +
-                'wellhead / treating-iron rating. The shoe limit applies where the casing sees the pressure, e.g. no packer or a leak.') +
+            _note('Shut-in and maximum surface pressures are static: no gas migration, incompressible fluids. Friction (v3.0) is ' +
+                'for the kill fluid as a Newtonian fluid of the entered viscosity at pump output × speed: Fanning f = 16/Re laminar ' +
+                '(Re < 2,100), Colebrook turbulent, dp/dL = f·ρ·v²/(25.8·d) (Bourgoyne et al., Applied Drilling Engineering, §4.6). ' +
+                'While pumping, BHP = surface + hydrostatic − friction, so friction is credited to the perforation limit only as the ' +
+                'kill fluid fills the string; friction of the well fluid ahead of it is not credited, and none is credited at the shoe. ' +
+                'Keep the pump pressure below the wellhead / treating-iron rating. The shoe limit applies where the casing sees the ' +
+                'pressure, e.g. no packer or a leak. With a tailpipe the bullhead path is the tailpipe bore; the casing x tailpipe ' +
+                'annulus below the packer is not swept.') +
             '</div>';
 
         // U-tube
@@ -537,7 +613,8 @@
             wf: _num('wk_wf'), ann: _num('wk_ann'), stvd: _num('wk_stvd'), sfg: _num('wk_sfg'),
             tub: _str('wk_tub'), cas: _str('wk_cas'), pmd: _num('wk_pmd'), ptvd: _num('wk_ptvd'),
             tmd: _num('wk_tmd'), bmd: _num('wk_bmd'), pbtd: _num('wk_pbtd'), to: _str('wk_to'),
-            od: _num('wk_od'), pump: _num('wk_pump'), spm: _num('wk_spm')
+            od: _num('wk_od'), pump: _num('wk_pump'), spm: _num('wk_spm'),
+            tpmd: _num('wk_tpmd'), mu: _num('wk_mu'), rough: _num('wk_rough')
         };
     }
     function _readGrad() {
@@ -621,10 +698,13 @@
             _fg('wk_tmd', 'Top perforation MD (ft)', '10150', ' min="0"') +
             _fg('wk_bmd', 'Bottom perforation MD (ft)', '10250', ' min="0"') +
             _fg('wk_pbtd', 'PBTD, MD (ft)', '10400', ' min="0"') +
+            _fg('wk_tpmd', 'Tailpipe end (WLEG) MD below the packer, blank = none (ft)', '', ' min="0"') +
             _sel('wk_to', 'Displace to', [{ v: 'top', t: 'Top perforation' }, { v: 'bot', t: 'Bottom perforation' }, { v: 'pbtd', t: 'PBTD, rathole included' }], 'top') +
             _fg('wk_od', 'Over-displacement (%)', '10', ' min="0" max="100"') +
             _fg('wk_pump', 'Pump output per stroke (bbl)', '0.1', ' min="0"') +
             _fg('wk_spm', 'Pump speed, strokes per minute', '40', ' min="0"') +
+            _fg('wk_mu', 'Kill fluid viscosity, Newtonian (cp)', '2', ' min="0"') +
+            _fg('wk_rough', 'Pipe roughness (in)', '0.0018', ' min="0"') +
             '</div>' + btn('wk_calc') + '</div>' +
             '<div class="card"><div class="card-title">Liquid / Mixed Gradient</div><div class="fg">' +
             _sel('wk_gdir', 'Pressure given at', [{ v: 's2b', t: 'Surface, find bottomhole' }, { v: 'b2s', t: 'Bottomhole, find surface' }], 's2b') +

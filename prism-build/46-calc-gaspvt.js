@@ -10,7 +10,8 @@
 //     • Z by Dranchuk–Abou-Kassem (1975) AND Hall–Yarborough (1973), with
 //       the difference;
 //     • Bg (ft³/scf and rb/Mscf), gas density, viscosity (Lee–Gonzalez–Eakin
-//       1966), gas compressibility cg, heat-capacity ratio k and speed of sound;
+//       1966, with the Standing N2/CO2/H2S correction), gas compressibility cg,
+//       heat-capacity ratio k (ideal and real gas) and the real-gas speed of sound;
 //     • a Z-vs-pressure table and chart at the given temperature.
 //
 // REUSE
@@ -33,6 +34,8 @@
 //                               → {ok, …} or {ok:false, errors[], bad[]}
 //   WTS_gaspvt_pseudoCriticals(sg, co2, h2s, n2)   (mole fractions)
 //   WTS_gaspvt_k(sg, tF, co2, h2s, n2)            ideal-gas Cp/Cv
+//   WTS_gaspvt_viscosity(sg, tF, Z, p, yco2, yh2s, yn2)  LGE + Standing impurity correction
+//   (compute() also returns kReal, cpReal, cvReal: real-gas values from the DAK departure functions)
 //
 // STATE
 //   WTS_state.gaspvt = {ok, z, zDAK, zHY, Tpc, Ppc, Bg_ft3scf, rho, mu, cg, c, k, ts}
@@ -74,7 +77,7 @@
     function _fin(x) { return typeof x === 'number' && isFinite(x); }
     function _fmt(v, d) {
         if (v == null || !isFinite(v)) return '—';
-        return Number(v).toLocaleString(undefined, { minimumFractionDigits: (d == null ? 2 : d), maximumFractionDigits: (d == null ? 2 : d) });
+        return (G.WTS_fmtNum ? G.WTS_fmtNum(v, (d == null ? 2 : d), (d == null ? 2 : d)) : Number(v).toLocaleString(undefined, { minimumFractionDigits: (d == null ? 2 : d), maximumFractionDigits: (d == null ? 2 : d) }));
     }
     function _sig(v, s) {   // significant figures, no grouping ambiguity for small numbers
         if (v == null || !isFinite(v)) return '—';
@@ -144,11 +147,78 @@
         return { dak: L.Z_dranchukAbouKassem(Tpr, Ppr), hy: L.Z_hallYarborough(Tpr, Ppr) };
     }
 
+    // ── Gas viscosity with the Standing impurity correction ──────────
+    // Standing, M.B. (1977, SPE reprint 1981), "Volumetric and Phase Behavior of
+    // Oil Field Hydrocarbon Systems", fits of the Carr–Kobayashi–Burrows (1954)
+    // chart inserts: the 1-atm viscosity read at the gravity of the whole gas is
+    // raised by (cp, log = log10)
+    //   Δμ_N2  = y_N2 ·(8.48e-3·log γg + 9.59e-3)
+    //   Δμ_CO2 = y_CO2·(9.08e-3·log γg + 6.24e-3)
+    //   Δμ_H2S = y_H2S·(8.49e-3·log γg + 3.73e-3)
+    // (also Ahmed, "Reservoir Engineering Handbook", eqs. 2-54…2-57).
+    // Lee–Gonzalez–Eakin (1966) writes μg = 1e-4·K·exp(X·ρ^Y), where 1e-4·K is the
+    // dilute-gas (low-pressure) viscosity and exp(X·ρ^Y) the dense-gas ratio. The
+    // correction is added to the dilute term and carried by the same ratio:
+    //   μg = (1e-4·K + ΣΔμ)·exp(X·ρ^Y),   K, X, Y, ρ at the total gravity and the
+    // Wichert–Aziz-corrected Z. With no N2/CO2/H2S it is plain LGE.
+    function standingDelta(sg, yco2, yh2s, yn2) {
+        var lg = Math.log(sg) / Math.LN10;
+        var dn2 = yn2 * (8.48e-3 * lg + 9.59e-3), dco2 = yco2 * (9.08e-3 * lg + 6.24e-3), dh2s = yh2s * (8.49e-3 * lg + 3.73e-3);
+        return { n2: dn2, co2: dco2, h2s: dh2s, total: dn2 + dco2 + dh2s };
+    }
+    function viscosity(L, sg, tF, Z, p, yco2, yh2s, yn2) {
+        var mu0 = L.mu_g_leeGonzalezEakin(sg, tF, Z, p);             // plain LGE
+        var M = MW_AIR * sg, TR = tF + RANKINE;
+        var K = (9.4 + 0.02 * M) * Math.pow(TR, 1.5) / (209 + 19 * M + TR);
+        var mu1 = 1e-4 * K, ratio = mu0 / mu1;
+        var d = standingDelta(sg, yco2 || 0, yh2s || 0, yn2 || 0);
+        return { mu: (mu1 + d.total) * ratio, muLGE: mu0, mu1: mu1, ratio: ratio, delta: d };
+    }
+
+    // ── Real-gas heat capacities and speed of sound ─────────────────
+    // Residual (departure) functions from the DAK Z(Tpr, Ppr) by numerical
+    // differentiation and integration (Smith, Van Ness & Abbott, "Introduction to
+    // Chemical Engineering Thermodynamics", 7th ed., §6.3, eqs. 6.46–6.49;
+    // Poling, Prausnitz & O'Connell, 5th ed., §6-4):
+    //   Cp − Cp° = −R·∫0^Ppr [2·Tpr·(∂Z/∂Tpr) + Tpr²·(∂²Z/∂Tpr²)]_Ppr dPpr/Ppr
+    //   Cp − Cv  =  R·[Z + Tpr·(∂Z/∂Tpr)]² / [Z − Ppr·(∂Z/∂Ppr)]
+    //   (∂p/∂ρ)_T = Z·R·T / (M·[1 − (Ppr/Z)(∂Z/∂Ppr)])
+    //   c = √(k·g_c·(∂p/∂ρ)_T),   k = Cp/Cv (real gas)
+    // Derivatives by central differences (h = 1e-3·Tpr, 1e-4·Ppr), integral by
+    // composite Simpson on 120 panels. At low pressure k → Cp°/Cv° and
+    // c → √(k°·R·T/M).
+    function realGas(L, Tpr, Ppr, cpIdeal) {
+        var Zf = function (t, q) { return L.Z_dranchukAbouKassem(t, q); };
+        var ht = 1e-3 * Tpr;
+        function g(q) {                                // integrand 2T·Z_T + T²·Z_TT at Ppr = q, divided by q
+            var zp = Zf(Tpr + ht, q), z0 = Zf(Tpr, q), zm = Zf(Tpr - ht, q);
+            var zt = (zp - zm) / (2 * ht), ztt = (zp - 2 * z0 + zm) / (ht * ht);
+            return (2 * Tpr * zt + Tpr * Tpr * ztt) / q;
+        }
+        var N = 120, hq = Ppr / N, s = 0;
+        for (var j = 0; j <= N; j++) {
+            var q = j === 0 ? 1e-6 * Ppr : j * hq;          // integrand is finite at 0 (second virial)
+            var w = (j === 0 || j === N) ? 1 : (j % 2 ? 4 : 2);
+            s += w * g(q);
+        }
+        var cpRes = -R_J * s * hq / 3;
+        var Z = Zf(Tpr, Ppr);
+        var zT = (Zf(Tpr + ht, Ppr) - Zf(Tpr - ht, Ppr)) / (2 * ht);
+        var hp = Math.max(1e-4 * Ppr, 1e-7);
+        var zP = (Zf(Tpr, Ppr + hp) - Zf(Tpr, Math.max(1e-9, Ppr - hp))) / (Ppr + hp - Math.max(1e-9, Ppr - hp));
+        var cp = cpIdeal + cpRes;
+        var cpMinusCv = R_J * Math.pow(Z + Tpr * zT, 2) / (Z - Ppr * zP);
+        var cv = cp - cpMinusCv;
+        return { cp: cp, cv: cv, k: cp / cv, cpRes: cpRes, dZdT: zT, dZdP: zP, Z: Z, compFactor: 1 - Ppr * zP / Z };
+    }
+
     // Properties at one (p, T) given the pseudo-criticals.
-    function _state(L, pc, sg, p, tF, full) {
+    function _state(L, pc, sg, p, tF, full, imp) {
         var TR = tF + RANKINE, Tpr = TR / pc.Tpc, Ppr = p / pc.Ppc;
         var z = _zBoth(L, Tpr, Ppr), Z = z.dak;
         var M = MW_AIR * sg;
+        var y = imp || {};
+        var vis = viscosity(L, sg, tF, Z, p, y.co2, y.h2s, y.n2);
         var s = {
             p: p, t: tF, Tpr: Tpr, Ppr: Ppr, zDAK: z.dak, zHY: z.hy,
             zDiff: z.hy - z.dak, zDiffPct: 100 * (z.hy - z.dak) / z.dak, z: Z,
@@ -156,10 +226,13 @@
             // rb/Mscf from the same standard conditions (PRiSM Bg() rounds the constant to 5.035).
             Bg_rbMscf: 1000 * P_SC * Z * TR / (T_SC * p) / FT3_PER_BBL,
             rho: p * M / (Z * R_GAS * TR),
-            mu: L.mu_g_leeGonzalezEakin(sg, tF, Z, p)
+            mu: vis.mu, muLGE: vis.muLGE, muDelta: vis.delta.total * vis.ratio
         };
         s.E = 1 / s.Bg_ft3scf;
-        s.Fpv = 1 / Math.sqrt(Z);
+        // AGA-3 / API MPMS 14.3.3 supercompressibility Fpv = √(Zb/Zf) (v3.0, as the AGA-3 engine;
+        // was 1/√Z with Zb = 1): Zb = DAK Z at the standard conditions on the same pseudo-criticals.
+        s.Zb = L.Z_dranchukAbouKassem(T_SC / pc.Tpc, P_SC / pc.Ppc);
+        s.Fpv = Math.sqrt(s.Zb / Z);
         if (full) {
             // cg = 1/p − (1/Z)·dZ/dp, dZ/dp from DAK by central difference in Ppr.
             var h = Math.max(1e-4 * Ppr, 1e-5);
@@ -209,14 +282,18 @@
             return { ok: false, bad: ['sg'], keys: ['sghc'], errors: ['Gas gravity ' + _fmt(sg, 3) + ' is too low for the stated CO2/H2S/N2: the hydrocarbon part would be lighter than methane (gravity ' + _fmt(pc.sgHc, 3) + ').'] };
         }
         var TR = t + RANKINE;
-        var st = _state(L, pc, sg, p, t, true);
+        var imp = { co2: yco2, h2s: yh2s, n2: yn2 };
+        var st = _state(L, pc, sg, p, t, true, imp);
         if (!(_fin(st.zDAK) && _fin(st.zHY) && pc.Tpc > 0 && TR / pc.Tpc >= 1.0)) {
             return { ok: false, bad: ['t'], keys: ['tpc'], tpcF: pc.Tpc - RANKINE, errors: ['Temperature is below the pseudo-critical temperature (' + _fmt(pc.Tpc - RANKINE, 1) + ' °F); the gas correlations do not apply (Tpr must be at least 1.0).'] };
         }
         var hc = heatCapacity(pc.sgHc, t, yco2, yh2s, yn2);
         var M = MW_AIR * sg;
-        // Speed of sound: c = √(k·Z·g_c·R·T / M), k = ideal-gas Cp°/Cv° at T.
-        var c = Math.sqrt(hc.k * st.z * GC * R_FT_LBF * TR / M);
+        // Real-gas Cp, Cv, k and speed of sound from the DAK departure functions.
+        var rg = realGas(L, st.Tpr, st.Ppr, hc.cp);
+        var c = Math.sqrt(rg.k * GC * st.z * R_FT_LBF * TR / (M * rg.compFactor));
+        // Before v3.0: c = √(k°·Z·g_c·R·T/M) with the ideal-gas k° (kept for comparison).
+        var cIdealK = Math.sqrt(hc.k * st.z * GC * R_FT_LBF * TR / M);
 
         var warnings = [];
         if (st.Tpr < 1.05 || st.Tpr > 3.0) warnings.push('Tpr = ' + _fmt(st.Tpr, 3) + ' is outside 1.05–3.0, the range the Z correlations were fitted over.');
@@ -240,7 +317,7 @@
         // −40 °F: Tpr 0.87, Z 0.25, 31 lb/ft³), plus the same range warnings.
         var sep = null;
         if (sepGiven) {
-            sep = _state(L, pc, sg, psep, tsep, false);
+            sep = _state(L, pc, sg, psep, tsep, false, imp);
             if (!(_fin(sep.zDAK) && _fin(sep.zHY) && sep.Tpr >= 1.0)) {
                 return { ok: false, bad: ['tsep'], keys: ['tsepTpc'], tpcF: pc.Tpc - RANKINE, errors: ['Separator temperature is below the pseudo-critical temperature (' + _fmt(pc.Tpc - RANKINE, 1) + ' °F); the gas correlations do not apply (Tpr must be at least 1.0).'] };
             }
@@ -254,13 +331,17 @@
             eps: pc.eps, Tpc: pc.Tpc, Ppc: pc.Ppc, sour: (yco2 + yh2s) > 0,
             Tpr: st.Tpr, Ppr: st.Ppr, zDAK: st.zDAK, zHY: st.zHY, zDiff: st.zDiff, zDiffPct: st.zDiffPct, z: st.z,
             Bg_ft3scf: st.Bg_ft3scf, Bg_rbMscf: st.Bg_rbMscf, E: st.E, rho: st.rho, mu: st.mu,
-            cg: st.cg, cpr: st.cpr, cp: hc.cp, cv: hc.cv, k: hc.k, c: c,
+            cg: st.cg, cpr: st.cpr, cp: hc.cp, cv: hc.cv, k: hc.k, c: c, cIdealK: cIdealK,
+            cpReal: rg.cp, cvReal: rg.cv, kReal: rg.k, cpRes: rg.cpRes,
+            muLGE: st.muLGE, muDelta: st.muDelta,
             sep: sep, table: table, curve: curve, pMax: pMax, warnings: warnings
         };
     }
 
     G.WTS_gaspvt_compute = compute;
     G.WTS_gaspvt_pseudoCriticals = pseudoCriticals;
+    G.WTS_gaspvt_viscosity = function (sg, tF, Z, p, yco2, yh2s, yn2) { var L = _lib(); return L ? viscosity(L, sg, tF, Z, p, yco2, yh2s, yn2) : null; };
+    G.WTS_gaspvt_standingDelta = standingDelta;
     G.WTS_gaspvt_k = function (sg, tF, yco2, yh2s, yn2) {
         var pc = pseudoCriticals(sg, yco2 || 0, yh2s || 0, yn2 || 0);
         return pc ? heatCapacity(pc.sgHc, tF, yco2 || 0, yh2s || 0, yn2 || 0).k : NaN;
@@ -297,7 +378,7 @@
         var h = '';
         // 1 — pseudo-criticals
         h += '<div class="rbox"><div class="rbox-title">Pseudo-critical Properties</div>' +
-            _row('Apparent molecular weight', _fmt(r.M, 2) + ' lb/lb-mol') +
+            _row('Apparent molecular weight', _fmt(r.M, 2) + (_metric() ? ' kg/kmol' : ' lb/lb-mol')) +   // same number in both
             _row('Hydrocarbon gas gravity', _fmt(r.sgHc, 4)) +
             _row('Tpc, hydrocarbon (Sutton)', _u(r.TpcHc, 'tempAbsolute', 1, '°R')) +
             _row('Ppc, hydrocarbon (Sutton)', _u(r.PpcHc, 'pressure', 1, 'psia')) +
@@ -323,10 +404,13 @@
             _row('Expansion factor E', _sig(r.E, 4) + (met ? ' sm³/rm³' : ' scf/ft³')) +
             _row('Gas density', _us(r.rho, 'density', 4, 'lb/ft³')) +
             _row('Viscosity (Lee–Gonzalez–Eakin)', _us(r.mu, 'viscosity', 4, 'cp')) +
+            ((r.co2 + r.h2s + r.n2) > 0 ? _row('Standing N2/CO2/H2S viscosity correction (included)', (r.muDelta >= 0 ? '+' : '') + _us(r.muDelta, 'viscosity', 3, 'cp')) : '') +
             _row('Gas compressibility cg', _us(r.cg, 'compressibility', 4, '1/psi')) +
             _row('Pseudo-reduced compressibility cpr', _sig(r.cpr, 4)) +
             _row('Cp/Cv (k), ideal gas', _fmt(r.k, 4)) +
+            _row('Cp/Cv (k), real gas at p and T', _fmt(r.kReal, 4)) +
             _row('Speed of sound', _u(r.c, 'velocity', 1, 'ft/s')) +
+            _row('Speed of sound with ideal-gas k (pre-v3.0 method)', _u(r.cIdealK, 'velocity', 1, 'ft/s')) +
             '</div>';
         // 4 — separator
         if (r.sep) {
@@ -339,7 +423,7 @@
                 _row('Bg', met ? _sig(s.Bg_ft3scf, 4) + ' rm³/sm³' : _sig(s.Bg_ft3scf, 4) + ' ft³/scf') +
                 _row('Gas density', _us(s.rho, 'density', 4, 'lb/ft³')) +
                 _row('Viscosity (Lee–Gonzalez–Eakin)', _us(s.mu, 'viscosity', 4, 'cp')) +
-                _row('Supercompressibility Fpv = √(1/Z)', _fmt(s.Fpv, 4)) +
+                _row('Supercompressibility Fpv = √(Zb/Z)', _fmt(s.Fpv, 4) + ' (Zb ' + _fmt(s.Zb, 5) + ')') +
                 '</div>';
         }
         // 5 — verdicts
@@ -362,11 +446,15 @@
         // 7 — notes
         h += '<div><b>Notes</b> Pseudo-criticals: Sutton (1985) for the hydrocarbon part, Kay mixing for N2, CO2 and H2S, ' +
             'then the Wichert–Aziz (1972) correction. Bg, density, viscosity, cg and the speed of sound use the DAK Z. ' +
-            'Standard conditions 14.696 psia and 60 °F. Viscosity is Lee–Gonzalez–Eakin with the total gas gravity (no ' +
-            'impurity correction). k is the ideal-gas Cp°/Cv° at the flowing temperature: Cp° of a paraffin gas of the ' +
-            'hydrocarbon molecular weight (interpolated between methane, ethane and propane) mixed with N2, CO2 and H2S ' +
-            '(Reid–Prausnitz–Poling heat capacities). Speed of sound c = √(k·Z·R·T/M); the real-gas departure of k is ' +
-            'neglected, which is usual for engineering use but understates c at high pressure. Fpv takes base Z as 1.</div>';
+            'Standard conditions 14.696 psia and 60 °F. Viscosity is Lee–Gonzalez–Eakin at the total gas gravity; with N2, CO2 or ' +
+            'H2S the Standing (1981) corrections (Carr–Kobayashi–Burrows chart inserts) are added to the low-pressure term and ' +
+            'scaled by the same dense-gas ratio (v3.0; before, no impurity correction). Ideal k is Cp°/Cv° at the flowing ' +
+            'temperature: Cp° of a paraffin gas of the hydrocarbon molecular weight (interpolated between methane, ethane and ' +
+            'propane) mixed with N2, CO2 and H2S (Reid–Prausnitz–Poling heat capacities). Real-gas k adds the departure ' +
+            'functions of the DAK Z (numerical derivatives and integration: Cp − Cp° = −R∫[2T·Z_T + T²·Z_TT]dp/p, ' +
+            'Cp − Cv = R(Z + T·Z_T)²/(Z − p·Z_p)). Speed of sound c = √(k·(∂p/∂ρ)_T) with the real-gas k (v3.0; the ' +
+            'pre-v3.0 √(k°·Z·R·T/M) understated c by up to ≈ 10 % at high pressure; methane at 100 °F, 2,015 psia: NIST ' +
+            '1,552 ft/s). Fpv = √(Zb/Z) with the DAK base Z at 14.696 psia / 60 °F (AGA-3; v3.0, was 1/√Z).</div>';
         return h;
     }
 
@@ -423,7 +511,7 @@
         }
         G.WTS_state.gaspvt = {
             ok: true, z: r.z, zDAK: r.zDAK, zHY: r.zHY, Tpc: r.Tpc, Ppc: r.Ppc, Tpr: r.Tpr, Ppr: r.Ppr,
-            Bg_ft3scf: r.Bg_ft3scf, Bg_rbMscf: r.Bg_rbMscf, rho: r.rho, mu: r.mu, cg: r.cg, k: r.k, c: r.c,
+            Bg_ft3scf: r.Bg_ft3scf, Bg_rbMscf: r.Bg_rbMscf, rho: r.rho, mu: r.mu, cg: r.cg, k: r.k, kReal: r.kReal, c: r.c,
             sep: r.sep ? { z: r.sep.z, zDAK: r.sep.zDAK, zHY: r.sep.zHY, Bg_ft3scf: r.sep.Bg_ft3scf, rho: r.sep.rho, mu: r.sep.mu } : null,
             ts: Date.now()
         };

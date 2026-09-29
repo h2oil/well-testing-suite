@@ -139,7 +139,15 @@ module.exports = [
       const g = navBtn(app, 'zzgroup');
       assert.strictEqual(groupLabel(g), 'Probe Group', 'missing group created');
       const grp = g.closest('.nav-group');
-      assert(grp.nextElementSibling && grp.nextElementSibling.classList.contains('sidebar-footer'), 'new group sits before the footer');
+      // new groups go before the footer, after every built-in group (other registry-created groups,
+      // e.g. Round-10 "Live Data" / "Mini WellOS", may follow it)
+      const regKeys = Object.keys(W.WTS_calcRegistry);
+      let nx = grp.nextElementSibling;
+      while (nx && !nx.classList.contains('sidebar-footer')) {
+        assert(nx.classList.contains('nav-group') && Array.from(nx.querySelectorAll('.nav-btn[data-p]')).every((x) => regKeys.includes(x.getAttribute('data-p'))), 'only registry-created groups between the new group and the footer');
+        nx = nx.nextElementSibling;
+      }
+      assert(nx && nx.classList.contains('sidebar-footer'), 'new group sits before the footer');
       assert.strictEqual(text(g.querySelector('.nav-icon')), '◆', 'unsafe icon replaced by the default');
       assert.strictEqual(app.findAll('.nav-btn[data-p="aga3"]').length, 1, 'built-in key not duplicated');
       ['zzmismatch', 'zznorender', 'other', 'Bad-Key'].forEach((k) => assert(!navBtn(app, k), 'no button for ' + k));
@@ -170,7 +178,8 @@ module.exports = [
       assert(i > titles.indexOf('PRiSM — Well Test Analysis') && i < titles.indexOf('Separator Retention'), 'tile in sidebar order: ' + titles.slice(i - 1, i + 2).join(' | '));
       assert.strictEqual(text(cards[i].querySelector('.dc-badge')), 'Production');
       assert(cards[i].querySelector('.dc-badge').classList.contains('dc-b-green'));
-      assert(titles.indexOf('Group Probe') === titles.length - 2 || titles.indexOf('Group Probe') === titles.length - 1, 'new-group tiles last');
+      const regTitles = Object.keys(W.WTS_calcRegistry).map((k) => W.WTS_calcRegistry[k].title);
+      assert(titles.slice(titles.indexOf('Group Probe')).every((t) => regTitles.includes(t)), 'new-group tiles last (after every built-in tile)');
       app.click(cards[i]);
       assert.strictEqual(app.hook.page(), 'zzprobe', 'tile navigates');
     },

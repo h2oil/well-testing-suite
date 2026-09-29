@@ -220,6 +220,14 @@ checks.push(['PRiSM_MODELS count >= 45', modelCount >= 45]);
 checks.push(['window.WTS_project',                   typeof win.WTS_project === 'object']);
 checks.push(['window.WTS_pageAutosave.flush',        !!(win.WTS_pageAutosave && typeof win.WTS_pageAutosave.flush === 'function')]);
 checks.push(['window.WTS_rerender',                  typeof win.WTS_rerender === 'function']);
+// Round-6 — multi-well projects + read-only snapshots (29-multiwell.js)
+checks.push(['window.WTS_wells + wells module',       !!(win.WTS_wells && typeof win.WTS_wells.switchTo === 'function' && win.WTS_project && win.WTS_project.listModules().indexOf('wells') !== -1)]);
+checks.push(['window.WTS_snapshot.sanitize strips scripts', !!(win.WTS_snapshot && !/<script|onerror/i.test(win.WTS_snapshot.sanitize('<img src=x onerror=a()><script>b()</script>')))]);
+// v3.0 P10 accessibility layer (50-a11y.js) + P6 cached number formatter (host)
+checks.push(['window.WTS_a11y.apply / name',         !!(win.WTS_a11y && typeof win.WTS_a11y.apply === 'function' && typeof win.WTS_a11y.name === 'function')]);
+checks.push(['WTS_parseNumber default is plain parseFloat', typeof win.WTS_parseNumber === 'function' && win.WTS_parseNumber('12,5') === 12 && win.WTS_parseNumber('2.5') === 2.5]);
+checks.push(['WTS_fmtNum ≡ toLocaleString',          typeof win.WTS_fmtNum === 'function' &&
+  win.WTS_fmtNum(1234.5678, 0, 2) === (1234.5678).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })]);
 // Round-9 — plug-in calculator registry (host); prism-build/4N-calc-*.js register into it
 checks.push(['window.WTS_calcRegistry (object)',     !!win.WTS_calcRegistry && typeof win.WTS_calcRegistry === 'object']);
 checks.push(['WTS_calcRegistry entries well-formed', Object.keys(win.WTS_calcRegistry || {}).every((k) => {
@@ -235,6 +243,18 @@ checks.push(['WTS_calcRegistry entries well-formed', Object.keys(win.WTS_calcReg
   checks.push(['WTS_calcRegistry.' + k + ' registered',  !!(win.WTS_calcRegistry && win.WTS_calcRegistry[k])]);
   checks.push(['window.' + fn + ' (function)',          typeof win[fn] === 'function']);
 });
+// Round-10 — live data (6N-*.js): Modbus core + station, Modbus page, Mini WellOS
+checks.push(['window.WTS_modbus (object)',            !!win.WTS_modbus && typeof win.WTS_modbus === 'object']);
+checks.push(['WTS_modbus.createClient / createStation', !!win.WTS_modbus && typeof win.WTS_modbus.createClient === 'function' && typeof win.WTS_modbus.createStation === 'function']);
+checks.push(['WTS_modbus.crc16("123456789") = 0x4B37', (() => { try { return win.WTS_modbus.crc16([49, 50, 51, 52, 53, 54, 55, 56, 57]) === 0x4B37; } catch (e) { return false; } })()]);
+checks.push(['WTS_modbus.getTags (function)',        !!win.WTS_modbus && typeof win.WTS_modbus.getTags === 'function']);
+checks.push(['WTS_calcRegistry.modbus + wellos registered', !!(win.WTS_calcRegistry && win.WTS_calcRegistry.modbus && win.WTS_calcRegistry.wellos)]);
+checks.push(['WTS_modbus idle: no station at load',  !!win.WTS_modbus && win.WTS_modbus.station() === null]);
+// v3.0 historian (47-calc-historian.js): Mini WellOS page + record/query API, nothing opened at load
+checks.push(['window.WTS_historian API (record/query/exportDb/importFile)', !!win.WTS_historian &&
+  ['record', 'query', 'listTags', 'stats', 'exportCSV', 'exportXLSX', 'exportDb', 'importFile', 'purge', 'setRetention'].every((f) => typeof win.WTS_historian[f] === 'function')]);
+checks.push(['WTS_calcRegistry.historian in "Mini WellOS"', !!(win.WTS_calcRegistry && win.WTS_calcRegistry.historian && win.WTS_calcRegistry.historian.group === 'Mini WellOS')]);
+checks.push(['historian store not opened at load', !!win.WTS_historian && win.WTS_historian.status().ready === false]);
 checks.push(['WTS_project has storage module',       !!(win.WTS_project && win.WTS_project.listModules().indexOf('storage') !== -1)]);
 (function storageRoundTrip() {
   let ok = false;
@@ -281,6 +301,15 @@ const CONTRACT_FNS = {
          'PRiSM_clearEvents', 'PRiSM_setEventClock', 'PRiSM_eventsToRateSchedule', 'PRiSM_seedPeriodsFromEvents',
          'PRiSM_rockCompressibility', 'PRiSM_ctBuild', 'PRiSM_ctApply', 'PRiSM_renderGaugeRegister', 'PRiSM_renderEventsLog',
          'PRiSM_renderCtBuilder', 'PRiSM_renderGaugeCheckPanel'],
+  WP15: ['PRiSM_saveFit', 'PRiSM_listFits', 'PRiSM_getFit', 'PRiSM_removeFit', 'PRiSM_renameFit', 'PRiSM_adoptFit',
+         'PRiSM_setFitCompare', 'PRiSM_getFitCompare', 'PRiSM_toggleFitCompare', 'PRiSM_setFitOverlay', 'PRiSM_fitCompareTable',
+         'PRiSM_fitOverlayCurve', 'PRiSM_createBranch', 'PRiSM_switchBranch', 'PRiSM_renameBranch', 'PRiSM_deleteBranch',
+         'PRiSM_listBranches', 'PRiSM_activeBranch', 'PRiSM_modelPlainInfo', 'PRiSM_searchModels', 'PRiSM_modelSearchTerms',
+         'PRiSM_renderFitWorkspacePanel', 'PRiSM_renderModelBrowserPanel',
+         'PRiSM_gasPseudoTime', 'PRiSM_gasSkinSummary', 'PRiSM_gasBasis', 'PRiSM_setGasOption', 'PRiSM_skinVsRate',
+         'PRiSM_deliverabilityPoints', 'PRiSM_gasDeliverability', 'PRiSM_oilDeliverability', 'PRiSM_deliverability',
+         'PRiSM_renderGasPanel', 'PRiSM_renderRateSkinPanel', 'PRiSM_renderDeliverabilityPanel',
+         'PRiSM_declineDiagnostics', 'PRiSM_plot_decline_D', 'PRiSM_plot_decline_b'],
 };
 Object.keys(CONTRACT_FNS).forEach((c) => CONTRACT_FNS[c].forEach((fn) => checks.push([c + ' window.' + fn, typeof win[fn] === 'function'])));
 checks.push(['C3 window.PRiSM_convert (object)', !!win.PRiSM_convert && typeof win.PRiSM_convert.kh === 'function']);
@@ -292,11 +321,25 @@ checks.push(['C7 registries (tabPanels, tabHooks, postDrawHooks, stepViews)',
 (function panelIds() {
   const ids = (n) => { const p = win.PRiSM_tabPanels && win.PRiSM_tabPanels[n]; return (Array.isArray(p) ? p : []).map((x) => x && x.id); };
   const want = { 1: ['prism_well_test', 'crop', 'prism_ct_builder', 'prism_gauge_register', 'prism_events_log'],
-                 2: ['semilog', 'linetools', 'regimes', 'prism_gauge_resolution'], 6: ['prism_interp_panel', 'dcaResults'] };
+                 2: ['semilog', 'linetools', 'regimes', 'prism_gauge_resolution', 'prism_gas_basis', 'prism_rate_skin', 'prism_deliverability', 'prism_fit_compare'],
+                 3: ['prism_model_browser'], 6: ['prism_interp_panel', 'dcaResults', 'prism_fit_workspace'] };
   Object.keys(want).forEach((n) => want[n].forEach((id) => checks.push(['C7 Tab ' + n + ' panel "' + id + '"', ids(n).indexOf(id) !== -1])));
 })();
 checks.push(['WP14 field-tools post-draw hook registered once',
   Array.isArray(win.PRiSM_postDrawHooks) && win.PRiSM_postDrawHooks.filter((f) => f && f._prismId === 'fieldtools-markers').length === 1]);
+['workspace-fit-overlays', 'gas-pseudotime-label'].forEach((id) => checks.push(['WP15 post-draw hook "' + id + '" registered once',
+  Array.isArray(win.PRiSM_postDrawHooks) && win.PRiSM_postDrawHooks.filter((f) => f && f._prismId === id).length === 1]));
+checks.push(['WP15 report sections registry (workspace + gas)', Array.isArray(win.PRiSM_reportSections) && win.PRiSM_reportSections.length >= 4]);
+checks.push(['WP15 plot registry declineD / declineB', !!(win.PRiSM_PLOT_REGISTRY && win.PRiSM_PLOT_REGISTRY.declineD && win.PRiSM_PLOT_REGISTRY.declineB)]);
+(function wp15Numbers() {
+  // Hand values: linear m(p) = 2p → ΔpS = 0.8686·100·2/2 = 86.86 psi at pwf 1000; Arps b = 0.5, Di = 0.01: D(100 d) = 0.01/1.5.
+  let ok = false;
+  try {
+    const g = win.PRiSM_gasSkinSummary({ S: 2, m: 100, pbar: 2000, pwf: 1000, table: { mOf: (p) => 2 * p, pOf: (m) => m / 2 } });
+    ok = Math.abs(g.dpS - 86.86) < 1e-9 && win.PRiSM_searchModels('valley')[0].key === 'doublePorosity';
+  } catch (e) { ok = false; }
+  checks.push(['WP15 gas skin summary + model search', ok]);
+})();
 (function fieldToolsNumbers() {
   // Hand value: Hall (1953) φ = 0.2 → 1.782e-6 / 0.2^0.438 = 3.6063e-6 1/psi.
   let ok = false;
@@ -325,6 +368,26 @@ checks.push(['WP14 field-tools post-draw hook registered once',
   } catch (e) { detail = e.message; }
   if (detail) console.error('pending timers after 5 s idle:', detail);
   checks.push(['no perpetual timers after 5 s idle (PRiSM open)', ok]);
+})();
+// Round-10: Mini WellOS polling Modbus (built-in simulator) stops when the page closes.
+(function noModbusTimersAfterLeaving() {
+  let ok = false, detail = '';
+  try {
+    const harness = require('./tests/_harness');
+    const app = harness.loadApp({ fromSources: false, timers: 'manual', console: 'capture' });
+    const M = app.win.WTS_modbus;
+    M.saveConfig(M.demoConfig());
+    app.storage.setItem('wts_wellos_ui', JSON.stringify({ source: 'modbus', view: '2d' }));
+    app.hook.nav('wellos');
+    app.flush(2500);
+    const polling = !!(M.station() && M.station().isRunning());
+    app.hook.nav('home');
+    app.flush(5000);
+    ok = polling && app.pendingTimers() === 0 && M.station() === null;
+    if (!ok) detail = 'polling=' + polling + ' pending=' + app.pendingTimers() + ' ' + (typeof app.timers === 'function' ? JSON.stringify(app.timers()).slice(0, 400) : '');
+  } catch (e) { detail = e.message; }
+  if (detail) console.error('Mini WellOS timers:', detail);
+  checks.push(['no timers after leaving Mini WellOS (Modbus polling stopped)', ok]);
 })();
 
 console.log('\nNamespace checks:');

@@ -14,16 +14,27 @@
 //   Ionic strength I = ½ Σ cᵢ·zᵢ² (mol/L).                         [Standard Methods 1030 / USBR MS-2016 eq. 1]
 //   Charge balance % = (Σcat − Σan)/(Σcat + Σan)·100 in meq/L;
 //     ≤ 5 % acceptable, 5–10 % questionable, > 10 % poor.           [Standard Methods 1030 E; USBR MS-2016 eq. 3]
-//   Langelier (Carrier 1965 form):                                   [ASTM D3739; Carrier (1965)]
+//   Langelier (v3.0: ASTM D3739 chart fit, the value shown and used):  [USBR MS-2016 eqs. 9–11; DuPont (1992)]
+//     pHs = pCa + pAlk + C,  pCa = −log10[Ca] (mol/L), pAlk = −log10(total alkalinity, eq/L),
+//     C(TDS, T) = 3.26·e^(−0.005·T) − 0.0116·log10(TDS³) + 0.0905·log10(TDS²) − 0.133·log10(TDS) − 0.02,
+//     T in °F; LSI = pH − pHs. Reproduces the USBR worked example (0.184 vs 0.18 published).
+//   Langelier, Carrier (1965) form (shown for comparison; the pre-v3.0 value): [Carrier (1965)]
 //     pHs = (9.3 + A + B) − (C + D); A = (log10 TDS − 1)/10,
 //     B = −13.12·log10(T_K) + 34.55, C = log10(Ca as CaCO3, mg/L) − 0.4,
-//     D = log10(total alkalinity as CaCO3, mg/L); LSI = pH − pHs.
-//     Valid for TDS ≤ 10,000 mg/L.
+//     D = log10(total alkalinity as CaCO3, mg/L). USBR example: 0.13.
+//     Both valid for TDS ≤ 10,000 mg/L.
 //   Stiff–Davis: S&DSI = pH − pCa − pAlk − K, pCa = −log10[Ca] (mol/L),
 //     pAlk = −log10(total alkalinity, eq/L); K from the ASTM D4582 chart
-//     curve fit (USBR MS-2016 eqs. 13–14, T in °C):
+//     curve fit (USBR MS-2016 eqs. 13–14, T in °C; transcription checked
+//     against the published document in v3.0):
 //       I < 1.2: K = 2.022·exp((ln I + 7.544)²/102.6) − 0.0002·T² + 0.00097·T + 0.262
 //       I ≥ 1.2: K = −0.1·I − 0.0002·T² − 0.00097·T + 3.887
+//     On the USBR example (I 0.0433, 15 °C) this gives K 2.674 and S&DSI −0.04; the
+//     worksheet prints 0.12 (K ≈ 2.515), which no reading of eq. 13 reproduces (°F,
+//     log10 I, sign of the 0.00097·T term: 0.57, −0.66, −0.01). The thermodynamic
+//     form K = pK2 − pKsp − log γCa − log γHCO3 (Plummer & Busenberg 1982, Davies
+//     activities, no ion pairs) gives K ≈ 2.40, S&DSI ≈ +0.24. The fit is kept; the
+//     published value lies between the fit and the theory (±0.15).
 //   Oddo–Tomson (1994), SPE Production & Facilities 9(1) 47–54; T in °F,
 //   P in psia, concentrations and I in mol/L:
 //     calcite (pH known):
@@ -133,10 +144,14 @@
         // Alkalinity: HCO3 + 2·CO3 in eq/L; as CaCO3 mg/L = eq/L × 50,043.5
         var alkEq = c.hco3 + 2 * c.co3;
         var caCaCO3 = c.ca * CACO3 * 1000, alkCaCO3 = alkEq * CACO3 / 2 * 1000;
-        // Langelier (Carrier)
+        // Langelier, Carrier (1965) form (comparison)
         var A = (Math.log10(tds) - 1) / 10, B = -13.12 * Math.log10(tK) + 34.55;
         var C = Math.log10(caCaCO3) - 0.4, D = Math.log10(alkCaCO3);
-        var pHsL = 9.3 + A + B - (C + D);
+        var pHsCarrier = 9.3 + A + B - (C + D);
+        // Langelier, ASTM D3739 chart fit (USBR MS-2016 eq. 9, T °F): pHs = pCa + pAlk + C(TDS, T)
+        var lt = Math.log10(tds);
+        var Cchart = 3.26 * Math.exp(-0.005 * t) - 0.0116 * 3 * lt + 0.0905 * 2 * lt - 0.133 * lt - 0.02;
+        var pHsL = -Math.log10(c.ca) - Math.log10(alkEq) + Cchart;
         // Stiff–Davis (ASTM D4582 fit, T °C)
         var K = I < 1.2 ? 2.022 * Math.exp(Math.pow(Math.log(I) + 7.544, 2) / 102.6) - 0.0002 * tC * tC + 0.00097 * tC + 0.262
             : -0.1 * I - 0.0002 * tC * tC - 0.00097 * tC + 3.887;
@@ -167,7 +182,8 @@
             cb: Math.abs(cbPct) <= 5 ? 'ok' : Math.abs(cbPct) <= 10 ? 'warn' : 'bad',
             sumIons: sum, tds: tds, tdsMeasured: tdsIn != null, I: I, t: t, p: p, ph: ph, tC: tC,
             alkEq: alkEq, caCaCO3: caCaCO3, alkCaCO3: alkCaCO3,
-            lsi: { A: A, B: B, C: C, D: D, pHs: pHsL, value: ph - pHsL, valid: tds <= 10000, band: band(ph - pHsL) },
+            lsi: { Cchart: Cchart, pHs: pHsL, value: ph - pHsL, valid: tds <= 10000, band: band(ph - pHsL), tempOk: t <= 212,
+                carrier: { A: A, B: B, C: C, D: D, pHs: pHsCarrier, value: ph - pHsCarrier } },
             sdi: { K: K, pCa: pCa, pAlk: pAlk, pHs: pHsS, value: ph - pHsS, band: band(ph - pHsS), tempOk: tC >= 0 && tC <= 90 },
             si: si, verdicts: verdicts, curve: curve, table: table
         };
@@ -184,11 +200,11 @@
     function _num(id) { var e = _byId(id); if (!e) return NaN; var s = String(e.value).trim(); return s === '' ? NaN : parseFloat(s); }
     function _fmt(v, d) {
         if (v == null || !isFinite(v)) return '—';
-        return Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) });
+        return (G.WTS_fmtNum ? G.WTS_fmtNum(v, 0, (d == null ? 2 : d)) : Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) }));
     }
     function _fx(v, d) {
         if (v == null || !isFinite(v)) return '—';
-        return Number(v).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
+        return (G.WTS_fmtNum ? G.WTS_fmtNum(v, d, d) : Number(v).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d }));
     }
     function _sci(v) { return (v == null || !isFinite(v)) ? '—' : v === 0 ? '0' : Number(v).toExponential(3); }
     function _metric() { var U = G.WTS_units; return !!(U && U.getSystem && U.getSystem() === 'metric'); }
@@ -261,15 +277,20 @@
         h += '<div class="rbox"><div class="rbox-title">Calcium Carbonate Indices</div>' +
             _row('Langelier saturation pH, pHs', _fx(L.pHs, 2)) +
             _row('Langelier index, LSI', _fx(L.value, 2)) +
+            _row('Langelier index, Carrier (1965) form (pre-v3.0 value)', _fx(L.carrier.value, 2)) +
             _row('Stiff–Davis K', _fx(S.K, 3)) +
             _row('Stiff–Davis saturation pH', _fx(S.pHs, 2)) +
             _row('Stiff–Davis index, S&DSI', _fx(S.value, 2)) +
             (L.valid ? _verdict('Langelier', L.value, L.band) : _warn('TDS is above 10,000 mg/L: the Langelier index is outside its range. Use Stiff–Davis or Oddo–Tomson.')) +
             _verdict('Stiff–Davis', S.value, S.band) +
             (S.tempOk ? '' : _warn('Temperature is outside the 0 to 90 °C range of the Stiff–Davis chart; K is extrapolated.')) +
-            _note('Both indices use the measured pH and the analysis temperature. LSI by the Carrier (1965) form of ASTM D3739; ' +
-                'Stiff–Davis K from the ASTM D4582 chart fit. Positive values mean calcium carbonate tends to deposit; ' +
-                'values below −0.5 mean the water is aggressive to carbonate films.') +
+            (L.valid && !L.tempOk ? _warn('Temperature is above 212 °F: the Langelier chart fit is extrapolated. Use Oddo–Tomson.') : '') +
+            _note('Both indices use the measured pH and the analysis temperature. From v3.0 the LSI uses the ASTM D3739 ' +
+                'chart fit (DuPont 1992, USBR 2016 eq. 9: pHs = pCa + pAlk + C(TDS, T)), which reproduces the USBR worked ' +
+                'example (0.18); the Carrier (1965) form used before is shown for comparison (typically 0.02 to 0.06 lower). ' +
+                'Stiff–Davis K from the ASTM D4582 chart fit (USBR 2016 eqs. 13–14); on the USBR example it gives −0.04 against ' +
+                'the worksheet\'s 0.12, so treat |S&DSI| below about 0.2 as neutral. Positive values mean calcium carbonate ' +
+                'tends to deposit; values below −0.5 mean the water is aggressive to carbonate films.') +
             '</div>';
         // Oddo–Tomson
         var v = '';

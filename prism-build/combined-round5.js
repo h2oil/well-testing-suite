@@ -832,33 +832,28 @@
 // WTS — Layer 24 — ESD Lo-Pilot (Leak Detection) Analysis
 //
 // PURPOSE
-//   Sizes the LOW-pressure pilot setpoint that fires the Emergency Shut-
-//   Down (ESD) valve when a gas leak develops downstream of the lo-pilot
-//   sensing tap. After well shut-in, the section trapped between two
-//   isolations is at the section flowing pressure P_flow. If a leak of
-//   size Q_leak (MMscfd) appears for the duration of one ESD response
-//   cycle (t_resp seconds), the section pressure must drop low enough
-//   for the lo-pilot setting (PSL) to actuate. The PSL must:
-//     • be ABOVE the WHSIP (otherwise the well itself repressures the
-//       section and PSL would never trigger), and
-//     • be BELOW P_flow by enough margin that the target leak rate
-//       reaches it within the response window.
+//   Checks the LOW-pressure pilot (PSL) that fires the Emergency Shut-Down
+//   (ESD) valve when a gas leak depressures the section the pilot senses.
+//   The PSL set point must sit a false-trip margin below the flowing
+//   pressure P_flow (so normal swings do not trip it) and must be crossed by
+//   the target leak within the required detection time.
 //
-// ENGINEERING MODEL  (isothermal, ideal-gas, single trapped section)
-//   ΔV_leak  = Q_leak·1e6 / 86400 · t_resp                 [scf released]
-//   ΔP       = ΔV_leak · 14.7 / V_section                  [psi drop]
-//   P_after  = P_flow − ΔP                                  [psia]
-//   PSL      = P_after − safety_margin                      [psig target]
-//
-//   Reachability check:
-//     if  P_after < WHSIP  → unreachable  (well repressures section)
+// ENGINEERING MODEL  (isothermal ideal gas, single section, v3.0)
+//   dP/dt    = (Q_leak·1e6/86400)·Pb/V · T/Tb             [psi/s]
+//   ΔP       = dP/dt · t_req                               [psi in t_req]
+//   P_after  = P_flow − ΔP                                  [psig]
+//   PSL_rec  = P_flow − margin                              [psig]
+//   t_trip   = (P_flow − PSL)/(dP/dt)                       [s]
+//   PASS  ⇔  PSL ≤ P_flow − margin  ∧  PSL > 0 psig  ∧  t_trip ≤ t_req
+//   T = section gas temperature (input, default 60 °F); Pb/Tb = the scf
+//   basis of Q_leak. WHSIP is shown for reference only (v1.0-v1.8 failed the
+//   case when P_after < WHSIP — true for every flowing well).
 //
 //   APPROXIMATIONS:
-//     • Ideal-gas at 14.7 psia / 60 °F surface conditions; no Z; section
-//       gas taken at 60 °F (ΔP scales by Pb/Tb of the chosen scf basis).
-//       Adequate for sizing PSL margins (engineering tolerance ~5%).
-//     • Constant leak rate over response window (no choking, no decay).
-//     • Adiabatic effects neglected — small ΔP, short t_resp.
+//     • Ideal gas (no Z): the leak's moles are a fixed standard volume.
+//     • Constant leak rate; well inflow and downstream outflow held at their
+//       pre-leak rates (both change to slow a real drawdown).
+//     • Isothermal — small ΔP over a short window.
 //
 // PUBLIC API (window.*)
 //   window.renderESDLoPilot(body)            paints the calculator into body
@@ -979,10 +974,14 @@
         var V          = +inputs.sectionVolume_ft3;
         var Pflow      = +inputs.sectionFlowingPressure_psig;
         var Qleak_mmscfd = +inputs.detectableLeakRate_MMscfd;
-        var WHSIP      = +inputs.whsip_psig;
+        var WHSIP      = (inputs.whsip_psig == null || inputs.whsip_psig === '') ? NaN : +inputs.whsip_psig;
         var tresp      = +inputs.esdResponseTime_s;
-        var margin     = (inputs.safetyMargin_psig != null)
+        var margin     = (inputs.safetyMargin_psig != null && inputs.safetyMargin_psig !== '')
                        ? +inputs.safetyMargin_psig : 5;
+        var T_F        = (inputs.sectionTemp_F != null && inputs.sectionTemp_F !== '')
+                       ? +inputs.sectionTemp_F : 60;
+        var pslIn      = (inputs.pslSetpoint_psig != null && inputs.pslSetpoint_psig !== '' && isFinite(+inputs.pslSetpoint_psig))
+                       ? +inputs.pslSetpoint_psig : null;
 
         // Input validation — report problems instead of silently computing
         // with substitutes (a blank volume used to be replaced by 1 ft³).
@@ -990,78 +989,92 @@
         if (!_isNum(V) || V <= 0) problems.push('Section volume must be > 0 ' + _ulab('volumeFt3', 'ft³') + '.');
         if (!_isNum(Pflow) || Pflow <= 0) problems.push('Section flowing pressure must be > 0 ' + _ulab('pressureG', 'psig') + '.');
         if (!_isNum(Qleak_mmscfd) || Qleak_mmscfd <= 0) problems.push('Detectable leak rate must be > 0 ' + _ulab('gasRate', 'MMscfd') + '.');
-        if (!_isNum(tresp) || tresp <= 0) problems.push('ESD response time must be > 0 s.');
-        if (!_isNum(WHSIP)) problems.push('WHSIP is required (' + _ulab('pressureG', 'psig') + ').');
+        if (!_isNum(tresp) || tresp <= 0) problems.push('Required detection time must be > 0 s.');
+        if (!(T_F > -459.67 && T_F <= 1000)) problems.push('Section temperature must be above absolute zero and no more than ' + _u(1000, 'temperature', 0, '°F') + '.');
+        if (!_isNum(margin) || margin < 0) problems.push('False-trip margin must be ≥ 0.');
 
         // Defensive defaults (keep the numeric outputs finite)
         if (!_isNum(V) || V <= 0)               V = 1;
         if (!_isNum(Pflow))                      Pflow = 0;
         if (!_isNum(Qleak_mmscfd) || Qleak_mmscfd < 0) Qleak_mmscfd = 0;
-        if (!_isNum(WHSIP))                      WHSIP = 0;
         if (!_isNum(tresp) || tresp < 0)         tresp = 0;
         if (!_isNum(margin) || margin < 0)       margin = 0;
+        if (!(T_F > -459.67 && T_F <= 1000))     T_F = 60;
 
-        // Gas released during ESD response window  (scf)
+        // Gas released during the required detection window  (scf)
         var gasReleased_scf = (Qleak_mmscfd * 1e6 / 86400) * tresp;
 
-        // Pressure drop  (psi) — isothermal ideal-gas; the scf is referred to the
-        // standard pressure (14.7 psia, or the standard-conditions setting).
-        // Ideal gas (pV = nRT): n = Pb·V_std/(R·Tb), ΔP = n·R·T/V = V_std·Pb/V · T/Tb.
-        // The section gas is taken at 60 °F (the page has no temperature input,
-        // and 60 °F is the scf temperature of its default basis), so T/Tb = 1 on
-        // the default basis and the leak moles follow the chosen basis exactly:
-        // a 0 °C (normal) basis holds 519.67/491.67 = 1.057× the moles per unit
-        // volume of a 60 °F one (review fix — Tb was ignored, ΔP 5.4 % low).
+        // Isothermal ideal-gas mole balance on the section (pV = nRT):
+        //   n_leak = Pb·V_std/(R·Tb)   →   ΔP = n_leak·R·T/V = V_std·Pb/V · T/Tb,
+        // with T the section gas temperature (input, default 60 °F) and Pb/Tb the
+        // standard conditions of the leak rate (14.7 psia / 60 °F, or the
+        // standard-conditions setting). On the default basis at 60 °F, T/Tb = 1.
+        // The well inflow and the downstream outflow are taken to stay at their
+        // pre-leak values, so the section loses gas at the leak rate
+        // (dP/dt constant — valid while ΔP is small relative to P_flow).
         var bc = _basis();
-        var dP_psi = (gasReleased_scf * bc.Pb_psia) / V * (519.67 / bc.Tb_R);
+        var T_R = T_F + 459.67;
+        var rate_psi_s = (Qleak_mmscfd * 1e6 / 86400) * bc.Pb_psia / V * (T_R / bc.Tb_R);
+        var dP_psi = rate_psi_s * tresp;
 
-        // After-drop section pressure  (psig)
+        // Section pressure at the end of the required detection time  (psig)
         var Pafter_psig = Pflow - dP_psi;
 
-        // PSL target  (psig)
-        var psl_target_psig = Pafter_psig - margin;
+        // Trip criterion (v3.0). A PSL detects the leak when the section pressure
+        // falls THROUGH its set point, so the set point must lie in the window
+        //   P_after ≤ PSL ≤ P_flow − false-trip margin:
+        //   • a margin below P_flow, so normal pressure swings do not trip it
+        //     (API RP 14C sets PSLs a margin below the lowest operating pressure);
+        //   • at or above P_after, so the leak takes the pressure through it
+        //     within the required time: t_trip = (P_flow − PSL)/(dP/dt) ≤ t_req;
+        //   • above 0 psig — a leak to atmosphere cannot take the section lower.
+        // Recommended PSL = P_flow − margin (the highest non-nuisance setting,
+        // fastest trip). v1.0-v1.8 recommended P_after − margin — a setting the
+        // leak does NOT reach within the window — and failed the case when
+        // P_after < WHSIP, which holds for every flowing well (P_flow < WHSIP),
+        // so the check essentially never passed. WHSIP is now reference only.
+        var psl_rec = Pflow - margin;
+        var psl = (pslIn != null) ? pslIn : psl_rec;
+        var t_trip_s = rate_psi_s > 0 ? Math.max(Pflow - psl, 0) / rate_psi_s : Infinity;
+        var nuisanceOk = psl <= psl_rec + 1e-9;
+        var aboveAtm = psl > 0;
+        var inTime = t_trip_s <= tresp + 1e-9;
+        var pass = nuisanceOk && aboveAtm && inTime && problems.length === 0;
+        var lowSensitivity = dP_psi < 2.0;
 
-        // Reachability — well repressures section once it falls below WHSIP.
-        var reachable = Pafter_psig >= WHSIP;
-
-        // Severity flag for UI: yellow if drawdown is so small relative to
-        // operating noise (<2 psi) that PSL would risk false trips, even
-        // though formally reachable.
-        var lowSensitivity = reachable && (dP_psi < 2.0);
-
-        // Rationale
         var rationale;
-        if (!reachable) {
-            rationale =
-                'Calculated drawdown pressure (' + _u(Pafter_psig, 'pressureG', 1, 'psig') + ') is BELOW WHSIP (' +
-                _u(WHSIP, 'pressureG', 0, 'psig') + '). The well will repressurise the section before the lo-pilot ' +
-                'can detect the leak — PSL will never reach setpoint at this leak rate. Either choose a ' +
-                'lo-pilot location with a smaller trapped volume, accept a larger detectable leak rate, ' +
-                'or shorten the ESD response time.';
-        } else if (lowSensitivity) {
-            rationale =
-                'PSL is reachable but the predicted drawdown is only ' + _u(dP_psi, 'pressure', 2, 'psi') +
-                ' over ' + _fmt(tresp, 1) + ' s — comparable to normal operating pressure ' +
-                'fluctuation. PSL set this close to P_flow risks frequent false trips. Consider ' +
-                'increasing the detectable leak rate, lengthening the response window, or using ' +
-                'rate-of-change detection in addition to absolute PSL.';
+        if (!nuisanceOk) {
+            rationale = 'The PSL set point (' + _u(psl, 'pressureG', 1, 'psig') + ') is inside the ' + _u(margin, 'pressure', 1, 'psi') +
+                ' false-trip margin below the flowing pressure (' + _u(Pflow, 'pressureG', 0, 'psig') + '): normal pressure swings would trip the ESD. ' +
+                'Set it at or below ' + _u(psl_rec, 'pressureG', 1, 'psig') + '.';
+        } else if (!aboveAtm) {
+            rationale = 'A PSL at or below 0 ' + _ulab('pressureG', 'psig') + ' can never trip: a leak to atmosphere cannot take the section below atmospheric pressure.';
+        } else if (!inTime) {
+            rationale = 'A ' + _u(Qleak_mmscfd, 'gasRate', 2, 'MMscfd', 1) + ' leak depressures the ' + _u(V, 'volumeFt3', 2, 'ft³', 3) +
+                ' section by only ' + _u(dP_psi, 'pressure', 2, 'psi') + ' in ' + _fmt(tresp, 1) +
+                ' s; it takes ' + _fmt(t_trip_s, 1) + ' s to fall to the PSL. Detect this leak with a smaller trapped volume (a PSL closer to the leak), ' +
+                'a smaller false-trip margin (if the operating pressure is steady), a larger detectable leak rate, or rate-of-change detection.';
         } else {
-            rationale =
-                'A ' + _u(Qleak_mmscfd, 'gasRate', 0, 'MMscfd', 1) + ' leak releases ' +
-                _u(gasReleased_scf, 'gasVolumeStd', 0, 'scf', 1) + ' over the ' + _fmt(tresp, 1) +
-                ' s response window, producing a ' + _u(dP_psi, 'pressure', 1, 'psi') +
-                ' drop in the ' + _u(V, 'volumeFt3', 2, 'ft³', 3) + ' section. Setting PSL at ' +
-                _u(psl_target_psig, 'pressureG', 0, 'psig') + ' (drawdown pressure ' +
-                _u(Pafter_psig, 'pressureG', 0, 'psig') + ' less ' + _u(margin, 'pressure', 0, 'psig') +
-                ' safety margin) gives a deterministic ESD trip on this leak signature.';
+            rationale = 'A ' + _u(Qleak_mmscfd, 'gasRate', 2, 'MMscfd', 1) + ' leak releases ' + _u(gasReleased_scf, 'gasVolumeStd', 0, 'scf', 1) +
+                ' in ' + _fmt(tresp, 1) + ' s and depressures the ' + _u(V, 'volumeFt3', 2, 'ft³', 3) + ' section by ' + _u(dP_psi, 'pressure', 1, 'psi') +
+                ' (to ' + _u(Pafter_psig, 'pressureG', 1, 'psig') + '). A PSL at ' + _u(psl, 'pressureG', 1, 'psig') + ' trips after ' + _fmt(t_trip_s, 2) +
+                ' s, within the required ' + _fmt(tresp, 1) + ' s, and sits ' + _u(Pflow - psl, 'pressure', 1, 'psi') + ' below the flowing pressure.';
         }
 
         var result = {
             gasReleasedDuringResponse_scf: gasReleased_scf,
             pressureDrop_psi: dP_psi,
-            psl_target_psig: psl_target_psig,
+            depressurisationRate_psi_s: rate_psi_s,
+            psl_target_psig: psl_rec,
+            psl_used_psig: psl,
+            psl_from_input: pslIn != null,
+            timeToTrip_s: t_trip_s,
             leakDrawdownPressure_psig: Pafter_psig,
-            reachable: reachable,
+            sectionTemp_F: T_F,
+            whsip_psig: _isNum(WHSIP) ? WHSIP : null,
+            nuisanceOk: nuisanceOk, inTime: inTime, aboveAtm: aboveAtm,
+            reachable: pass,
+            pass: pass,
             lowSensitivity: lowSensitivity,
             rationale: rationale,
             basis: bc,
@@ -1207,8 +1220,8 @@
               '<div>' +
                 '<div class="card">' +
                   '<div class="card-title">Inputs — Trapped Section &amp; Leak Target</div>' +
-                  '<div class="info-bar">After ESD, the section between two isolations sits at P_flow. A downstream leak depressures it. ' +
-                    'PSL must be reachable within the response window without dropping below WHSIP.</div>' +
+                  '<div class="info-bar">A leak depressures the section the lo-pilot senses. The PSL set point must sit a false-trip margin ' +
+                    'below the flowing pressure and be reached by the leak within the required detection time.</div>' +
 
                   '<div class="fg-grid" style="grid-template-columns:1fr;">' +
                     '<div class="fg-item">' +
@@ -1236,16 +1249,24 @@
                       '<input type="number" id="wts_esdlo_qleak" step="0.5" value="25">' +
                     '</div>' +
                     '<div class="fg-item">' +
-                      '<label>WHSIP (psig)</label>' +
+                      '<label>Section Gas Temperature (°F)</label>' +
+                      '<input type="number" id="wts_esdlo_temp" step="1" value="60">' +
+                    '</div>' +
+                    '<div class="fg-item">' +
+                      '<label>WHSIP (psig, reference)</label>' +
                       '<input type="number" id="wts_esdlo_whsip" step="1" value="' + d.whsip + '">' +
                     '</div>' +
                     '<div class="fg-item">' +
-                      '<label>ESD Response Time (sec)</label>' +
+                      '<label>Required Detection Time (sec)</label>' +
                       '<input type="number" id="wts_esdlo_tresp" step="0.1" value="5">' +
                     '</div>' +
                     '<div class="fg-item">' +
-                      '<label>Safety Margin (psig)</label>' +
+                      '<label>False-Trip Margin below P_flow (psi)</label>' +
                       '<input type="number" id="wts_esdlo_margin" step="1" value="5">' +
+                    '</div>' +
+                    '<div class="fg-item">' +
+                      '<label>PSL Set Point to Check (psig, blank = recommended)</label>' +
+                      '<input type="number" id="wts_esdlo_psl" step="1" value="" placeholder="blank = P_flow − margin">' +
                     '</div>' +
                   '</div>' +
 
@@ -1311,6 +1332,10 @@
             if (ql) ql.value = 25;
             if (tr) tr.value = 5;
             if (mg) mg.value = 5;
+            var tt = document.getElementById('wts_esdlo_temp');
+            var ps = document.getElementById('wts_esdlo_psl');
+            if (tt) tt.value = 60;
+            if (ps) ps.value = '';
             _applyLocationDefaults();
             // Hide result card on reset
             var rc = document.getElementById('wts_esdlo_resultcard');
@@ -1337,7 +1362,9 @@
             detectableLeakRate_MMscfd:   _num('wts_esdlo_qleak',  NaN),
             whsip_psig:                  _num('wts_esdlo_whsip',  NaN),
             esdResponseTime_s:           _num('wts_esdlo_tresp',  NaN),
-            safetyMargin_psig:           _num('wts_esdlo_margin', 5)
+            safetyMargin_psig:           _num('wts_esdlo_margin', 5),
+            sectionTemp_F:               _num('wts_esdlo_temp',   60),
+            pslSetpoint_psig:            _num('wts_esdlo_psl',    '')
         };
 
         var r = G.WTS_esdLoPilot_compute(inputs);
@@ -1353,24 +1380,20 @@
         }
 
         // ── Results table ──
+        var td = function (v, dim) {
+            return '<td style="text-align:right;font-family:Courier New,monospace;' + (dim ? 'color:#8b949e;' : '') + '">' + v + '</td>';
+        };
         var tbl = '' +
             '<table class="dtable">' +
               '<tbody>' +
-                '<tr><td>Gas released during response window</td>' +
-                    '<td style="text-align:right;font-family:Courier New,monospace;">' +
-                    _u(r.gasReleasedDuringResponse_scf, 'gasVolumeStd', 1, 'scf', 2) + '</td></tr>' +
-                '<tr><td>Pressure drop during response window</td>' +
-                    '<td style="text-align:right;font-family:Courier New,monospace;">' +
-                    _u(r.pressureDrop_psi, 'pressure', 2, 'psi') + '</td></tr>' +
-                '<tr><td>Leak drawdown pressure</td>' +
-                    '<td style="text-align:right;font-family:Courier New,monospace;">' +
-                    _u(r.leakDrawdownPressure_psig, 'pressureG', 1, 'psig') + '</td></tr>' +
-                '<tr><td>WHSIP (reference)</td>' +
-                    '<td style="text-align:right;font-family:Courier New,monospace;color:#8b949e;">' +
-                    _u(inputs.whsip_psig, 'pressureG', 0, 'psig') + '</td></tr>' +
-                '<tr><td>Safety margin</td>' +
-                    '<td style="text-align:right;font-family:Courier New,monospace;color:#8b949e;">' +
-                    _u(inputs.safetyMargin_psig, 'pressure', 0, 'psig') + '</td></tr>' +
+                '<tr><td>Gas released during detection time</td>' + td(_u(r.gasReleasedDuringResponse_scf, 'gasVolumeStd', 1, 'scf', 2)) + '</tr>' +
+                '<tr><td>Pressure drop during detection time</td>' + td(_u(r.pressureDrop_psi, 'pressure', 2, 'psi')) + '</tr>' +
+                '<tr><td>Depressurisation rate</td>' + td(_u(r.depressurisationRate_psi_s, 'pressure', 3, 'psi', 3) + '/s') + '</tr>' +
+                '<tr><td>Section pressure at end of detection time</td>' + td(_u(r.leakDrawdownPressure_psig, 'pressureG', 1, 'psig')) + '</tr>' +
+                '<tr><td>Time to reach PSL</td>' + td(isFinite(r.timeToTrip_s) ? _fmt(r.timeToTrip_s, 2) + ' s' : '—') + '</tr>' +
+                '<tr><td>Section gas temperature</td>' + td(_u(r.sectionTemp_F, 'temperature', 0, '°F'), true) + '</tr>' +
+                '<tr><td>False-trip margin</td>' + td(_u(inputs.safetyMargin_psig, 'pressure', 0, 'psi'), true) + '</tr>' +
+                '<tr><td>WHSIP (reference)</td>' + td(r.whsip_psig == null ? '—' : _u(r.whsip_psig, 'pressureG', 0, 'psig'), true) + '</tr>' +
                 '<tr><td>Standard-volume basis</td>' +
                     '<td style="text-align:right;color:#8b949e;">' +
                     _esc(r.basis.label + (r.basis.fromSetting ? ' (app setting)' : ' (calculator default)')) + '</td></tr>' +
@@ -1378,20 +1401,28 @@
             '</table>' +
             // Headline: PSL target
             '<div class="rbox" style="margin-top:14px;">' +
-              '<div class="rbox-title">PSL Setting Target</div>' +
+              '<div class="rbox-title">PSL Setting</div>' +
               '<div class="rrow">' +
                 '<span class="rl">Recommended PSL setpoint</span>' +
-                '<span class="rv" style="font-size:20px;">' +
-                  _u(r.psl_target_psig, 'pressureG', 0, 'psig') +
-                '</span>' +
+                '<span class="rv" style="font-size:20px;">' + _u(r.psl_target_psig, 'pressureG', 0, 'psig') + '</span>' +
+              '</div>' +
+              (r.psl_from_input ?
+              '<div class="rrow"><span class="rl">PSL set point checked</span><span class="rv">' + _u(r.psl_used_psig, 'pressureG', 1, 'psig') + '</span></div>' : '') +
+              '<div class="rrow">' +
+                '<span class="rl">Trip window (reached in time … clear of false trips)</span>' +
+                '<span class="rv">' + _u(r.leakDrawdownPressure_psig, 'pressureG', 1, 'psig') + ' … ' + _u(r.psl_target_psig, 'pressureG', 1, 'psig') + '</span>' +
               '</div>' +
               '<div class="rrow">' +
                 '<span class="rl">Drawdown from P_flow</span>' +
-                '<span class="rv">' +
-                  _u(inputs.sectionFlowingPressure_psig - r.psl_target_psig, 'pressure', 1, 'psi') +
-                '</span>' +
+                '<span class="rv">' + _u(inputs.sectionFlowingPressure_psig - r.psl_used_psig, 'pressure', 1, 'psi') + '</span>' +
               '</div>' +
-            '</div>';
+            '</div>' +
+            '<div style="font-size:11px;color:#8b949e;margin-top:8px;line-height:1.5"><b>Notes</b> ' +
+              'Ideal-gas mole balance: dP/dt = q<sub>leak</sub>·P<sub>b</sub>·T/(T<sub>b</sub>·V). Pass when the set point is at least the false-trip margin ' +
+              'below P_flow, above 0 psig, and reached within the required detection time: (P_flow − PSL)/(dP/dt) ≤ t. ' +
+              'Well inflow and choke outflow are held at their pre-leak rates; both rise/fall to slow a real drawdown, so allow margin on the time. ' +
+              'v3.0: the check was "drawdown pressure ≥ WHSIP", which a flowing well (P_flow &lt; WHSIP) can never meet, and the old PSL ' +
+              '(end-of-window pressure less the margin) was not reached within the window.</div>';
 
         var rc = document.getElementById('wts_esdlo_resultcard');
         var rd = document.getElementById('wts_esdlo_results');
@@ -1400,29 +1431,28 @@
 
         // ── Status badge + rationale ──
         var badgeBg, badgeBorder, badgeColor, badgeIcon, badgeText;
-        if (!r.reachable) {
+        if (!r.pass) {
             badgeBg     = 'rgba(248,81,73,.10)';
             badgeBorder = 'rgba(248,81,73,.45)';
             badgeColor  = '#f85149';
-            badgeIcon   = '✖';   // ✗
-            // Text now matches the tested condition (P_after < WHSIP).
-            badgeText   = 'Leak drawdown pressure is below WHSIP — ' +
-                          'PSL CANNOT detect this leak rate at this location.';
+            badgeIcon   = '✗';
+            badgeText   = !r.nuisanceOk ? 'FAIL — PSL set point is inside the false-trip margin.'
+                        : !r.aboveAtm  ? 'FAIL — PSL at or below atmospheric pressure never trips.'
+                        : 'FAIL — the leak takes ' + _fmt(r.timeToTrip_s, 1) + ' s to reach the PSL (required ' + _fmt(inputs.esdResponseTime_s, 1) + ' s).';
         } else if (r.lowSensitivity) {
             badgeBg     = 'rgba(210,153,34,.10)';
             badgeBorder = 'rgba(210,153,34,.45)';
             badgeColor  = '#d29922';
-            badgeIcon   = '⚠';   // ⚠
-            badgeText   = 'Detectable leak too small — PSL unlikely to trigger before ' +
-                          'well shut-in propagates.';
+            badgeIcon   = '⚠';
+            badgeText   = 'PASS, but the drawdown in the detection time is under ' + _u(2, 'pressure', 0, 'psi') +
+                          ' — comparable to gauge noise; confirm the pilot can resolve it.';
         } else {
             badgeBg     = 'rgba(63,185,80,.10)';
             badgeBorder = 'rgba(63,185,80,.45)';
             badgeColor  = '#3fb950';
-            badgeIcon   = '✓';   // ✓
-            badgeText   = 'PSL reachable — leak would drop section by ' +
-                          _u(r.pressureDrop_psi, 'pressure', 1, 'psi') + ' in ' +
-                          _fmt(inputs.esdResponseTime_s, 1) + ' s.';
+            badgeIcon   = '✓';
+            badgeText   = 'PASS — PSL trips ' + _fmt(r.timeToTrip_s, 2) + ' s after the leak starts (required ' +
+                          _fmt(inputs.esdResponseTime_s, 1) + ' s).';
         }
 
         var statusHTML = '' +
@@ -2929,7 +2959,7 @@
         + '  <tr><td style="padding:4px 6px;color:var(--text2,#8b949e)">P downstream of RO</td>'
         + '      <td style="padding:4px 6px;text-align:right">' + _u(r.p_downstream_ro_psig, 'pressureG', 0, 'psig') + '</td></tr>'
         + '  <tr><td style="padding:4px 6px;color:var(--text2,#8b949e)">Standard-volume basis</td>'
-        + '      <td style="padding:4px 6px;text-align:right">60 °F / 14.7 psia (Cv and orifice equations)</td></tr>'
+        + '      <td style="padding:4px 6px;text-align:right">' + (_metric() ? '15.6 °C / 101.35 kPa' : '60 °F / 14.7 psia') + ' (Cv and orifice equations)</td></tr>'
         + '</table>'
         + '<div style="margin-top:8px;padding:8px;border-radius:4px;font-size:11px;'
         +   'background:rgba(88,166,255,0.06);border:1px solid rgba(88,166,255,0.18);color:var(--text2,#c9d1d9)">'
@@ -2995,7 +3025,7 @@
 // WTS — Layer 27 — Pipe Remaining Service Life (Sand-Erosion)
 //
 // PURPOSE
-//   Salama (2000) sand-erosion screening calculator for the H2Oil Well
+//   Sand-erosion screening calculator (DNV-RP-O501 / Salama 2000) for the H2Oil Well
 //   Testing Suite. For each pipe segment between the wellhead and the
 //   flare tip the layer estimates:
 //
@@ -3012,12 +3042,19 @@
 //   renderPipeLife(body)
 //        — paints the calculator into the supplied container.
 //
-//   WTS_erosion_rate_salama(W_sand_lbMMscf, v_fps, D_in, c)
-//        — returns erosion rate in mils/year.
+//   WTS_sandErosion_compute(input)
+//        — sand erosion rate (mm/y and mpy): DNV-RP-O501 pipe bend (default),
+//          DNV-RP-O501 straight pipe, Salama (2000) elbow, or the legacy
+//          calibrated fit. See "SAND-EROSION MODELS" below.
+//   WTS_erosion_rate_legacy(W_sand_lbMMscf, v_fps, D_in, c)
+//        — the v1.8 calibrated fit in mils/year (WTS_erosion_rate_salama is
+//          a deprecated alias with the same numbers).
 //
 //   WTS_pipelife_segment(input)
 //        — single-segment compute:
-//            input  = { material, schedule_in, nps_in,
+//            input  = { material, schedule_in, nps_in, erosion_model,
+//                       gas_rate_MMscfd | sand_lb_d, rho_m_lbft3, mu_m_cp,
+//                       particle_um, bend_RD, GF,
 //                       measured_WT_in, min_spec_WT_in, failure_WT_in,
 //                       design_pressure_psig, design_temp_F,
 //                       sand_rate_lbMMscf, c_constant,
@@ -3033,7 +3070,7 @@
 //          limiting_segment, sand_rate_lbMMscf, c_constant }.
 //
 //   WTS_PIPELIFE_MATERIALS, WTS_PIPELIFE_SCHEDULES
-//        — read-only reference data (materials + ANSI B36.10 wall table).
+//        — read-only reference data (materials + ASME B36.10M wall table).
 //
 // IMPORTANT NOTES (also surfaced in UI)
 //   * Estimations assume Cushion Tees and/or Machined Block Elbows are
@@ -3133,17 +3170,28 @@
         'Coflex':   { label: 'Coflex hose', density_lbft3: 96,  tensile_psi: 50000,  yield_psi: 30000, erodes: false, notes: 'flexible — no erosion calc' }
     };
 
-    // ANSI B36.10 — wall thickness in inches by NPS + schedule.
-    // Covers the common test-pipework sizes (2" through 8") and schedules
-    // including the heavy 180/XXH grades commonly seen on choke manifolds.
+    // ASME B36.10M — wall thickness in inches by NPS + schedule / weight class
+    // for the common test-pipework sizes (2" through 8"): Sch 40, 80, 160 and
+    // XXS (double extra strong, the heavy wall used on choke manifolds).
+    // "Schedule 180" is NOT a B36.10M designation. v1.0-v1.8 listed it with
+    // 2"/4"/6" walls equal to XXS and two values that are in no table
+    // (3" 0.552 in, 8" 1.000 in); saved "180" (and the old "XXH" label)
+    // now load as XXS — see normSchedule() and the page note.
     var SCHEDULES = {
-        '2': { '40': 0.154, '80': 0.218, '160': 0.344, '180': 0.436, 'XXH': 0.436 },
-        '3': { '40': 0.216, '80': 0.300, '160': 0.438, '180': 0.552, 'XXH': 0.600 },
-        // XXH (XXS) per B36.10: 4" = 0.674 in, 6" = 0.864 in (were 0.812 / 0.875).
-        '4': { '40': 0.237, '80': 0.337, '160': 0.531, '180': 0.674, 'XXH': 0.674 },
-        '6': { '40': 0.280, '80': 0.432, '160': 0.719, '180': 0.864, 'XXH': 0.864 },
-        '8': { '40': 0.322, '80': 0.500, '160': 0.906, '180': 1.000, 'XXH': 0.875 }
+        '2': { '40': 0.154, '80': 0.218, '160': 0.344, 'XXS': 0.436 },
+        '3': { '40': 0.216, '80': 0.300, '160': 0.438, 'XXS': 0.600 },
+        '4': { '40': 0.237, '80': 0.337, '160': 0.531, 'XXS': 0.674 },
+        '6': { '40': 0.280, '80': 0.432, '160': 0.719, 'XXS': 0.864 },
+        '8': { '40': 0.322, '80': 0.500, '160': 0.906, 'XXS': 0.875 }
     };
+    var SCHEDULE_KEYS = ['40', '80', '160', 'XXS'];
+    // Saved / imported schedule → a B36.10M key. Returns { sch, migrated }.
+    function normSchedule(s) {
+        var k = String(s == null ? '' : s).trim().toUpperCase().replace(/^SCH\s*/, '');
+        if (k === '180' || k === 'XXH') return { sch: 'XXS', migrated: k === '180' ? '180' : null };
+        return { sch: k, migrated: null };
+    }
+    G.WTS_pipelife_normSchedule = normSchedule;
 
     // Outside diameter (NPS -> OD inches), ANSI B36.10.
     var ODS = { '2': 2.375, '3': 3.500, '4': 4.500, '6': 6.625, '8': 8.625 };
@@ -3159,11 +3207,13 @@
         { key: 'hose_ssv',  label: 'Hose -> SSV',             material: 'A333gr6', nps_in: 4, sch: 80,
           length_ft: 30,  measured_WT_in: 0.337, min_spec_WT_in: 0.295, failure_WT_in: 0.067,
           design_p_psig: 5000, design_T_F: 250, p_seg_psig: 2950, t_seg_F: 175 },
-        { key: 'ssv_choke', label: 'SSV -> Choke',            material: '5L-X52',  nps_in: 4, sch: 180,
+        { key: 'ssv_choke', label: 'SSV -> Choke',            material: '5L-X52',  nps_in: 4, sch: 'XXS',
           length_ft: 50,  measured_WT_in: 0.674, min_spec_WT_in: 0.590, failure_WT_in: 0.067,
           design_p_psig: 10000,design_T_F: 250, p_seg_psig: 2900, t_seg_F: 170 },
-        { key: 'choke_htr', label: 'Choke -> Heater',         material: 'A333gr6', nps_in: 3, sch: 180,
-          length_ft: 100, measured_WT_in: 0.552, min_spec_WT_in: 0.483, failure_WT_in: 0.067,
+        // Was "SCH 180" 0.552 / 0.483 in (not a B36.10M wall): 3" XXS = 0.600 in,
+        // min-spec 87.5 % = 0.525 in.
+        { key: 'choke_htr', label: 'Choke -> Heater',         material: 'A333gr6', nps_in: 3, sch: 'XXS',
+          length_ft: 100, measured_WT_in: 0.600, min_spec_WT_in: 0.525, failure_WT_in: 0.067,
           design_p_psig: 5000, design_T_F: 250, p_seg_psig: 500, t_seg_F: 100 },
         { key: 'htr_sep',   label: 'Heater -> Separator',     material: 'A333gr6', nps_in: 4, sch: 80,
           length_ft: 100, measured_WT_in: 0.337, min_spec_WT_in: 0.295, failure_WT_in: 0.067,
@@ -3181,7 +3231,7 @@
         return ODS[key] || (Math.max(0.5, _num(nps_in, 4)) + 0.5);
     }
     function getNominalWT(nps_in, sch) {
-        var nKey = String(nps_in), sKey = String(sch);
+        var nKey = String(nps_in), sKey = normSchedule(sch).sch;
         if (SCHEDULES[nKey] && SCHEDULES[nKey][sKey] != null) {
             return SCHEDULES[nKey][sKey];
         }
@@ -3197,52 +3247,52 @@
     }
 
     // ───────────────────────────────────────────────────────────────
-    // Salama (2000) erosion-rate model — CALIBRATED FORM
+    // SAND-EROSION MODELS
     //
-    //   E_mils_per_year = K_eff * W_sand * v^2 / D^2
+    // Default: DNV-RP-O501 (DNVGL-RP-O501, Aug 2015, §4.7 "Pipe bends";
+    // the same steps are DNV-RP-O501 Rev 4.2 (2007) §8.4, eqs 8.15-8.21):
     //
-    //   where:
-    //     W_sand  = sand concentration (lb sand / MMscf gas)
-    //     v       = mixture velocity (ft/s)
-    //     D       = inner pipe diameter (inches)
-    //     K_eff   = effective material/geometry constant in
-    //               (mpy)·(in^2)/((lb/MMscf)·(ft/s)^2)
+    //   α   = arctan( 1 / (2·R) )            R = bend radius / pipe ID   (4.28)
+    //   A   = ρm²·tan α·Up·D / (ρp·μm)                                      (4.29)
+    //   γc  = ρm / (ρp·[1.88·ln A − 6.04])   if 0 < γc < 0.1, else 0.1      (4.30)
+    //   G   = γ/γc if γ < γc, else 1         γ = dp / D                     (4.31)
+    //   F(α)= 0.6·[sin α + 7.2(sin α − sin²α)]^0.6·[1 − exp(−20α)]  ductile (3.3)
+    //   EL  = K·F(α)·Up^n·sin α·G·C1·GF·ṁp·Cunit / (ρt·Apipe)   [mm/year]
+    //   K = 2.0e-9 (m/s)^-n, n = 2.6, ρt = 7800 kg/m³ (steel grades: 2015
+    //   Table 3-1, 2007 Table 7-2), C1 = 2.5, Cunit = 3.15e10 (m/s → mm/y),
+    //   ρp = 2650 kg/m³ (quartz sand), GF = 1 (≥ 10 D of straight pipe
+    //   upstream) or 2 (components < 10 D apart, 2015 §4.3 example).
     //
-    //   The user-facing input c is a DIMENSIONLESS scale in the screening-
-    //   sheet notation where c = 300 corresponds to "typical carbon steel
-    //   + cushion-tee / machined elbow geometry". We calibrate the c=300
-    //   case to give field-typical service-life values:
+    // Straight pipe (2015 eq 4.22 / 2007 eq 8.9):  EL = 2.5e-5·Up^2.6·D^-2·ṁp
+    //   [mm/y, D in m, ṁp in kg/s]; the 2015 relative form 8.0e-10·Up^2.6·D^-2
+    //   [mm/ton] is the same law (1 t/y = 3.171e-5 kg/s).
     //
-    //     reference case  : 4" SCH 80 (WT=0.39, fail WT=0.067),
-    //                       W=50 lb/MMscf, v=30 ft/s, c=300
-    //     allowable loss  : 0.323 in = 323 mils
-    //     reference RSL   : ~15 days
-    //     => required E   : 323 mils / (15 / 365) ≈ 7860 mpy
-    //     dimensional grp : W·v^2/D^2 = 50·900/16 ≈ 2812
-    //     => K_eff(c=300) : ~2.8
+    // Salama (2000), "An alternative to API 14E erosional velocity limits for
+    //   sand-laden fluids", J. Energy Resour. Technol. 122(2):71-77:
+    //   ER = W·V²·d / (Sm·D²·ρm)   [mm/y]; W kg/day, V m/s, d µm, D mm,
+    //   ρm kg/m³, Sm = 5.5 (elbows).
     //
-    //   The "raw" Salama c=300 used directly produced ~840,000 mpy
-    //   (i.e. wall would erode through in hours), which is physically
-    //   impossible. The calibration constant absorbs the unit conversions
-    //   and material-density factors that the raw textbook form does not
-    //   carry through to mils/year.
+    // All three scale LINEARLY with the sand mass rate, and as V^2.6 (DNV) or
+    // V² (Salama). Up = mixture velocity (2015 eq 4.6). The DNV constants are
+    // for steel grades (carbon steel and CRAs agree within ~10-20 %, 2007 §7);
+    // the page applies them to every rigid segment.
     //
-    //   For higher-impingement geometry (regular LR elbow vs cushion-tee)
-    //   the user should bump c upward by ~3-5x.
+    // Legacy calibrated fit (the v1.0-v1.8 default, kept selectable so saved
+    // projects reproduce): E [mpy] = 2.8·(c/300)·W·v²/D², W lb/MMscf, v ft/s,
+    // D in. It was calibrated to a "~15 day" reference life, not to a
+    // published model, and reads two to three orders of magnitude above DNV.
     // ───────────────────────────────────────────────────────────────
+    var DNV = { K: 2.0e-9, n: 2.6, rhoT: 7800, C1: 2.5, Cunit: 3.15e10, rhoP: 2650 };
+    var EROSION_MODELS = {
+        dnv_bend:     'DNV-RP-O501 pipe bend',
+        dnv_straight: 'DNV-RP-O501 straight pipe',
+        salama:       'Salama (2000) elbow',
+        legacy:       'Legacy calibrated fit (v1.8)'
+    };
+    var LB_TO_KG = 0.45359237, FT_TO_M = 0.3048, IN_TO_M = 0.0254, LBFT3_TO_KGM3 = 16.018463;
 
-    // Calibration: c = 300 in the screening-sheet convention maps to
-    // K ≈ 2.8 in real mpy units. Derivation:
-    //   reference TTF ~15 days, allowable loss 323 mils (measured →
-    //   failure WT) for default 4" SCH80 segment;
-    //   E_required = 323 / (15/365.25) ≈ 7866 mpy;
-    //   dimensional_grp = W·v²/D² = 50·900/16 ≈ 2812;
-    //   K_eff(c=300) = 7866 / 2812 ≈ 2.8 ✓
-    // (Earlier draft used K=7.5 which contradicted its own derivation
-    // and produced TTF/RSL values 2.7× too short. Fixed 2026-04-28.)
     var SALAMA_K_AT_C300 = 2.8;
-
-    function erosion_rate_salama(W_sand_lbMMscf, v_fps, D_in, c) {
+    function erosion_rate_legacy(W_sand_lbMMscf, v_fps, D_in, c) {
         var W = Math.max(_num(W_sand_lbMMscf, 0), 0);
         var v = Math.max(_num(v_fps, 0), 0);
         var D = Math.max(_num(D_in, 0.5), 0.1);
@@ -3251,7 +3301,73 @@
         var K_eff = (cc / 300) * SALAMA_K_AT_C300;
         return K_eff * W * v * v / (D * D);
     }
-    G.WTS_erosion_rate_salama = erosion_rate_salama;
+    G.WTS_erosion_rate_legacy = erosion_rate_legacy;
+    // Deprecated alias: the v1.8 name of the calibrated fit (same numbers, same
+    // signature). New code calls WTS_sandErosion_compute.
+    G.WTS_erosion_rate_salama = erosion_rate_legacy;
+
+    // DNV ductile impact-angle function (2015 eq 3.3), α in radians.
+    function dnvF(alpha) {
+        var s = Math.sin(alpha);
+        var b = s + 7.2 * (s - s * s);
+        if (!(b > 0)) return 0;
+        return 0.6 * Math.pow(b, 0.6) * (1 - Math.exp(-20 * alpha));
+    }
+    G.WTS_dnv_F = dnvF;
+
+    // input (field units): { model, sand_lb_d | sand_kg_s, v_fps, D_in,
+    //   rho_m_lbft3, mu_m_cp, particle_um, bend_RD, GF,
+    //   sand_lbMMscf + c (legacy only) }
+    // → { model, label, E_mm_y, E_mpy, …intermediates }
+    function sandErosion_compute(input) {
+        input = input || {};
+        var model = Object.prototype.hasOwnProperty.call(EROSION_MODELS, input.model) ? input.model : 'dnv_bend';
+        var out = { model: model, label: EROSION_MODELS[model], E_mm_y: 0, E_mpy: 0 };
+        var v = Math.max(_num(input.v_fps, 0), 0), Up = v * FT_TO_M;
+        var Din = Math.max(_num(input.D_in, 0), 0), D = Din * IN_TO_M;
+        if (model === 'legacy') {
+            out.E_mpy = erosion_rate_legacy(input.sand_lbMMscf, v, Din, input.c);
+            out.E_mm_y = out.E_mpy * 0.0254;
+            return out;
+        }
+        var mp = (input.sand_kg_s != null && isFinite(input.sand_kg_s)) ? Math.max(+input.sand_kg_s, 0)
+               : Math.max(_num(input.sand_lb_d, 0), 0) * LB_TO_KG / 86400;        // kg/s
+        out.sand_kg_s = mp;
+        if (!(mp > 0) || !(Up > 0) || !(D > 0)) return out;
+        var E;
+        if (model === 'dnv_straight') {
+            E = 2.5e-5 * Math.pow(Up, 2.6) * Math.pow(D, -2) * mp;
+        } else {
+            var rhoM = Math.max(_num(input.rho_m_lbft3, 0), 1e-6) * LBFT3_TO_KGM3;   // kg/m³
+            var dp_um = Math.max(_num(input.particle_um, 250), 0);
+            out.rho_m_kgm3 = rhoM;
+            if (model === 'salama') {
+                out.Sm = 5.5;
+                E = (mp * 86400) * Up * Up * dp_um / (out.Sm * Math.pow(D * 1000, 2) * rhoM);
+            } else {
+                var R = Math.max(_num(input.bend_RD, 1.5), 0.5);
+                var GF = Math.max(_num(input.GF, 1), 1);
+                var muM = Math.max(_num(input.mu_m_cp, 0.012), 1e-6) * 1e-3;          // Pa·s
+                var alpha = Math.atan(1 / (2 * R));
+                var A = rhoM * rhoM * Math.tan(alpha) * Up * D / (DNV.rhoP * muM);
+                var den = 1.88 * Math.log(A) - 6.04;
+                var gc = den > 0 ? rhoM / (DNV.rhoP * den) : 0.1;
+                if (!(gc > 0 && gc < 0.1)) gc = 0.1;
+                var gam = dp_um * 1e-6 / D;
+                var Gc = gam < gc ? gam / gc : 1;
+                var F = dnvF(alpha);
+                var Apipe = Math.PI / 4 * D * D;
+                E = DNV.K * F * Math.pow(Up, DNV.n) * Math.sin(alpha) * Gc * DNV.C1 * GF * mp * DNV.Cunit / (DNV.rhoT * Apipe);
+                out.alpha_deg = alpha * 180 / Math.PI; out.A = A; out.gammaC = gc; out.gamma = gam;
+                out.G = Gc; out.F = F; out.GF = GF; out.R = R; out.mu_m_Pas = muM;
+            }
+        }
+        out.E_mm_y = E;
+        out.E_mpy = E / 0.0254;
+        return out;
+    }
+    G.WTS_sandErosion_compute = sandErosion_compute;
+    G.WTS_EROSION_MODELS = EROSION_MODELS;
 
     // ───────────────────────────────────────────────────────────────
     // Maximum allowable working pressure — ASME B31.3 §304.1.2 Eq. (3a)
@@ -3307,6 +3423,34 @@
     }
     G.WTS_pipelife_mixture_velocity = mixtureVelocity;
 
+    // In-situ mixture density / viscosity for the erosion models, weighted by
+    // superficial velocity (DNVGL-RP-O501 2015 eqs 4.9-4.10). Same ideal-gas
+    // in-situ volume as mixtureVelocity (Z = 1): ρg = P·28.9647·SG/(10.7316·T).
+    // Liquids: water 62.37 lb/ft³ × SG (oil SG input, water SG 1.0).
+    // Screening viscosities (the page has no viscosity inputs): gas 0.012 cP,
+    // oil 1 cP, water 1 cP — low values are conservative in the DNV bend model
+    // (a larger A gives a smaller critical particle size, so G → 1).
+    var MU_GAS_CP = 0.012, MU_OIL_CP = 1.0, MU_WATER_CP = 1.0;
+    function mixtureProps(seg, sys) {
+        var Qg = _num(sys.gas_rate_MMscfd, 0), Qo = _num(sys.oil_rate_bpd, 0), Qw = _num(sys.water_rate_bpd, 0);
+        var SGg = _num(sys.gasSG, 0.65), SGo = _num(sys.oilSG, 0.80);
+        var P_abs = Math.max(Math.max(_num(seg.p_seg_psig, 100), 0) + 14.696, 14.696);
+        var T_R = _num(seg.t_seg_F, 70) + 459.67;
+        var bc = _basis();
+        var qg = Qg * 1e6 / 86400 * (bc.Pb_psia / P_abs) * (T_R / bc.Tb_R);    // acf/s
+        var qo = Qo * 5.615 / 86400, qw = Qw * 5.615 / 86400;                   // ft³/s
+        var q = qg + qo + qw;
+        var rhoG = P_abs * 28.9647 * SGg / (10.7316 * T_R);
+        var rhoO = 62.37 * SGo, rhoW = 62.37;
+        var out = { qg_acfs: qg, ql_cfs: qo + qw, rho_g_lbft3: rhoG, rho_m_lbft3: 0, mu_m_cp: 0 };
+        if (q > 0) {
+            out.rho_m_lbft3 = (rhoG * qg + rhoO * qo + rhoW * qw) / q;
+            out.mu_m_cp = (MU_GAS_CP * qg + MU_OIL_CP * qo + MU_WATER_CP * qw) / q;
+        }
+        return out;
+    }
+    G.WTS_pipelife_mixture_props = mixtureProps;
+
     // ───────────────────────────────────────────────────────────────
     // Single-segment compute
     // ───────────────────────────────────────────────────────────────
@@ -3315,7 +3459,8 @@
         var matKey = input.material || 'A333gr6';
         var mat = MATERIALS[matKey] || MATERIALS['A333gr6'];
         var nps  = _num(input.nps_in, 4);
-        var sch  = input.schedule_in || input.sch || 80;
+        var schN = normSchedule(input.schedule_in || input.sch || 80);
+        var sch  = schN.sch;
         var measured = Math.max(_num(input.measured_WT_in, getNominalWT(nps, sch)), 0);
         var minspec  = Math.max(_num(input.min_spec_WT_in, getNominalWT(nps, sch) * 0.875), 0);
         var failWT   = Math.max(_num(input.failure_WT_in, Math.max(measured - 0.05, 0.024)), 0);
@@ -3324,6 +3469,9 @@
         var W_sand   = Math.max(_num(input.sand_rate_lbMMscf, 0), 0);
         var c        = Math.max(_num(input.c_constant, 300), 0);
         var v_fps    = Math.max(_num(input.mixture_velocity_fps, 0), 0);
+        var model    = Object.prototype.hasOwnProperty.call(EROSION_MODELS, input.erosion_model) ? input.erosion_model : 'dnv_bend';
+        var Qg       = Math.max(_num(input.gas_rate_MMscfd, 0), 0);
+        var sand_lb_d = (input.sand_lb_d != null && isFinite(input.sand_lb_d)) ? Math.max(+input.sand_lb_d, 0) : W_sand * Qg;
 
         var warnings = [];
         var ID = getInnerDiameter(nps, sch, measured);
@@ -3335,7 +3483,9 @@
             nps_in: nps, sch: sch, OD_in: getOD(nps), ID_in: ID,
             measured_WT_in: measured, min_spec_WT_in: minspec, failure_WT_in: failWT,
             mixture_velocity_fps: v_fps,
-            sand_rate_lbMMscf: W_sand, c_constant: c,
+            sand_rate_lbMMscf: W_sand, c_constant: c, sand_lb_d: sand_lb_d,
+            erosion_model: model, erosion_model_label: EROSION_MODELS[model], erosion: null,
+            schedule_migrated_from: schN.migrated,
             design_pressure_psig: design_p, design_temp_F: design_T,
             erosion_rate_mils_yr: 0,
             remaining_service_life_days: Infinity,
@@ -3369,8 +3519,16 @@
         }
 
         // Erosion rate.
-        var E_mpy = erosion_rate_salama(W_sand, v_fps, ID, c);
+        var ero = sandErosion_compute({
+            model: model, v_fps: v_fps, D_in: ID,
+            sand_lb_d: sand_lb_d, sand_lbMMscf: W_sand, c: c,
+            rho_m_lbft3: input.rho_m_lbft3, mu_m_cp: input.mu_m_cp,
+            particle_um: input.particle_um, bend_RD: input.bend_RD, GF: input.GF
+        });
+        out.erosion = ero;
+        var E_mpy = ero.E_mpy;
         out.erosion_rate_mils_yr = E_mpy;
+        out.erosion_rate_mm_yr = ero.E_mm_y;
 
         // Remaining service life: measured -> minspec (conservative).
         if (E_mpy > 0) {
@@ -3424,7 +3582,14 @@
             gas_rate_MMscfd: _num(inputs.gas_rate_MMscfd, 0),
             oil_rate_bpd:    _num(inputs.oil_rate_bpd, 0),
             water_rate_bpd:  _num(inputs.water_rate_bpd, 0),
-            gasSG:           _num(inputs.gasSG, 0.65)
+            gasSG:           _num(inputs.gasSG, 0.65),
+            oilSG:           _num(inputs.oilSG, 0.80)
+        };
+        var model = Object.prototype.hasOwnProperty.call(EROSION_MODELS, inputs.erosion_model) ? inputs.erosion_model : 'dnv_bend';
+        var ero = {
+            particle_um: _num(inputs.particle_um, 250),
+            bend_RD:     _num(inputs.bend_RD, 1.5),
+            GF:          _num(inputs.GF, 1)
         };
 
         // Find the index of the FIRST segment that starts AFTER the separator —
@@ -3450,6 +3615,7 @@
             var v = (s.mixture_velocity_fps != null && isFinite(s.mixture_velocity_fps))
                 ? _num(s.mixture_velocity_fps, 0) : mixtureVelocity(s, sysQ);
 
+            var mix = mixtureProps(s, sysQ);
             var r = pipelife_segment({
                 material: s.material,
                 schedule_in: s.sch || s.schedule_in,
@@ -3461,8 +3627,13 @@
                 design_temp_F: s.design_T_F || s.design_temp_F,
                 sand_rate_lbMMscf: W_eff,
                 c_constant: c,
-                mixture_velocity_fps: v
+                mixture_velocity_fps: v,
+                erosion_model: model,
+                gas_rate_MMscfd: sysQ.gas_rate_MMscfd,
+                rho_m_lbft3: mix.rho_m_lbft3, mu_m_cp: mix.mu_m_cp,
+                particle_um: ero.particle_um, bend_RD: ero.bend_RD, GF: ero.GF
             });
+            r.rho_m_lbft3 = mix.rho_m_lbft3; r.mu_m_cp = mix.mu_m_cp;
 
             r.label = s.label || s.key || ('Segment ' + (j + 1));
             r.key = s.key || ('seg_' + j);
@@ -3483,6 +3654,9 @@
             limiting_segment: minSeg,
             sand_rate_lbMMscf: W_sand,
             c_constant: c,
+            erosion_model: model,
+            erosion_model_label: EROSION_MODELS[model],
+            particle_um: ero.particle_um, bend_RD: ero.bend_RD, GF: ero.GF,
             separator_bypassed: bypassSep
         };
     }
@@ -3507,7 +3681,8 @@
     // so they survive navigation and are captured by project Save.
     // ───────────────────────────────────────────────────────────────
     var PL_LS_KEY = 'wts_pipelife';
-    var PL_OP_IDS = ['wts_pl_sand','wts_pl_c','wts_pl_qg','wts_pl_qo','wts_pl_qw','wts_pl_sg','wts_pl_bypass'];
+    var PL_OP_IDS = ['wts_pl_sand','wts_pl_c','wts_pl_qg','wts_pl_qo','wts_pl_qw','wts_pl_sg','wts_pl_bypass',
+                     'wts_pl_model','wts_pl_dp','wts_pl_rd','wts_pl_gf','wts_pl_osg'];
     var PL_SEG_FIELDS = ['mat','nps','sch','len','pseg','tseg','meas','minspec','fail','dp','dt'];
 
     function _allInputIds() {
@@ -3548,12 +3723,15 @@
     }
 
     function _scheduleOptions(selected) {
-        var schs = ['40', '80', '160', '180', 'XXH'];
+        var schs = SCHEDULE_KEYS, sel = normSchedule(selected).sch;
         var html = '';
         for (var i = 0; i < schs.length; i++) {
             html += '<option value="' + schs[i] + '"' +
-                    (String(schs[i]) === String(selected) ? ' selected' : '') + '>SCH ' + schs[i] + '</option>';
+                    (schs[i] === sel ? ' selected' : '') + '>' + (schs[i] === 'XXS' ? 'XXS' : 'SCH ' + schs[i]) + '</option>';
         }
+        // Hidden legacy values so a restored v1.8 value ('180', 'XXH') still
+        // lands in the select; _migrateSchedules() then maps it to XXS.
+        html += '<option value="180" hidden>SCH 180 (legacy)</option><option value="XXH" hidden>XXH (legacy)</option>';
         return html;
     }
 
@@ -3617,7 +3795,7 @@
         var titleEl = (typeof document !== 'undefined') ? document.getElementById('pgTitle') : null;
         var subEl   = (typeof document !== 'undefined') ? document.getElementById('pgSub')   : null;
         if (titleEl) titleEl.textContent = 'Pipe Remaining Service Life';
-        if (subEl)   subEl.textContent   = 'Sand erosion-based time-to-failure (Salama 2000) per pipe segment.';
+        if (subEl)   subEl.textContent   = 'Sand-erosion remaining life per pipe segment (DNV-RP-O501 / Salama 2000).';
 
         var inRows = '', resRows = '';
         for (var i = 0; i < DEFAULT_SEGMENTS.length; i++) {
@@ -3636,9 +3814,12 @@
         '<div style="display:flex;flex-direction:column;gap:14px">' +
             '<div class="card" style="padding:10px 14px;border-left:3px solid var(--yellow, #d29922)">' +
                 '<div style="font-size:12px;color:var(--text2);line-height:1.55">' +
-                    '<strong style="color:var(--text)">Geometry assumption:</strong> estimates assume <em>cushion tees</em> and/or ' +
-                    '<em>machined block elbows</em> with <em>full-port</em> valves. Long/short-radius elbows concentrate sand on the ' +
-                    'outer radius and reduced-port valves raise local velocity; both increase local erosion (raise "c" 3–5×).' +
+                    '<strong style="color:var(--text)">Geometry assumption:</strong> the default model is the DNV-RP-O501 <em>pipe bend</em> ' +
+                    '(the most erosion-prone component of a spread) at the bend radius entered below, applied to every rigid segment. ' +
+                    'Cushion (blind) tees and machined block elbows erode less than bends; reduced-port valves and closely spaced bends ' +
+                    '(&lt; 10 D apart: geometry factor 2) erode more. <strong style="color:var(--text)">v3.0:</strong> the default changed from the ' +
+                    'v1.8 calibrated fit to DNV-RP-O501, which gives erosion rates about two orders of magnitude lower on the default case; ' +
+                    'select "Legacy calibrated fit" to reproduce v1.8 results.' +
                 '</div>' +
             '</div>' +
 
@@ -3651,7 +3832,21 @@
                 '<div class="fg">' +
                     '<div class="fg-item"><label>Sand Production (lb/MMscf)</label>' +
                         '<input type="number" id="wts_pl_sand" step="1" min="0" value="50"></div>' +
-                    '<div class="fg-item"><label>Empirical Constant "c"</label>' +
+                    '<div class="fg-item"><label>Erosion Model</label>' +
+                        '<select id="wts_pl_model">' +
+                            '<option value="dnv_bend" selected>DNV-RP-O501 pipe bend (default)</option>' +
+                            '<option value="dnv_straight">DNV-RP-O501 straight pipe</option>' +
+                            '<option value="salama">Salama (2000) elbow</option>' +
+                            '<option value="legacy">Legacy calibrated fit (v1.8)</option>' +
+                        '</select></div>' +
+                    '<div class="fg-item"><label>Sand Particle Size (µm)</label>' +
+                        '<input type="number" id="wts_pl_dp" step="10" min="1" value="250"></div>' +
+                    '<div class="fg-item"><label>Bend Radius R/D (pipe diameters)</label>' +
+                        '<input type="number" id="wts_pl_rd" step="0.5" min="0.5" value="1.5"></div>' +
+                    '<div class="fg-item"><label>Geometry Factor GF</label>' +
+                        '<select id="wts_pl_gf"><option value="1" selected>1 — ≥ 10 D straight pipe upstream</option>' +
+                        '<option value="2">2 — bends / components &lt; 10 D apart</option></select></div>' +
+                    '<div class="fg-item"><label>Legacy Fit Constant "c" (legacy model only)</label>' +
                         '<input type="number" id="wts_pl_c" step="10" min="50" max="2000" value="300"></div>' +
                     '<div class="fg-item"><label>Gas Rate (MMscfd)</label>' +
                         '<input type="number" id="wts_pl_qg" step="0.5" min="0" value="10"></div>' +
@@ -3661,10 +3856,13 @@
                         '<input type="number" id="wts_pl_qw" step="50" min="0" value="200"></div>' +
                     '<div class="fg-item"><label>Gas SG (air = 1)</label>' +
                         '<input type="number" id="wts_pl_sg" step="0.01" min="0.55" max="1.20" value="0.65"></div>' +
+                    '<div class="fg-item"><label>Oil / Condensate SG (water = 1)</label>' +
+                        '<input type="number" id="wts_pl_osg" step="0.01" min="0.5" max="1.1" value="0.80"></div>' +
                     '<div class="fg-item"><label>Separator Bypass</label>' +
                         '<select id="wts_pl_bypass"><option value="0" selected>No</option><option value="1">Yes (sand to flare)</option></select></div>' +
                 '</div>' +
                 '<div id="wts_pl_import_msg" style="font-size:11px;color:var(--text3);margin-top:6px"></div>' +
+                '<div id="wts_pl_schnote" style="font-size:11px;color:var(--yellow, #d29922);margin-top:6px"></div>' +
             '</div>' +
 
             '<div class="card">' +
@@ -3694,6 +3892,7 @@
                         '<tbody>' + resRows + '</tbody>' +
                     '</table>' +
                 '</div>' +
+                '<div id="wts_pl_model_line" style="font-size:11px;color:var(--text3);margin-top:8px"></div>' +
                 '<div id="wts_pl_warns" style="margin-top:10px"></div>' +
             '</div>' +
 
@@ -3702,6 +3901,14 @@
                     '<strong style="color:var(--text)">Separator note:</strong> residual sand fines are assumed to drop out in the separator, ' +
                     'so sand rate has no effect on the Separator → Flare line unless the separator is bypassed. ' +
                     'MAWP is per ASME B31.3. Gas rates are standard volumes at <span id="wts_pl_basis">' + _esc(_basis().label) + '</span>.' +
+                '</div>' +
+                '<div style="font-size:12px;color:var(--text2);line-height:1.55;margin-top:6px"><b>Notes</b> ' +
+                    'DNV-RP-O501 (2015) bend: E = K·F(α)·U<sup>2.6</sup>·sin α·G·C1·GF·ṁ<sub>p</sub>·3.15e10/(ρ<sub>t</sub>·A<sub>pipe</sub>) mm/y, ' +
+                    'α = arctan(1/(2R)), K = 2.0e-9, ρ<sub>t</sub> = 7800 kg/m³ (steel), C1 = 2.5, sand 2650 kg/m³, G from the critical particle size. ' +
+                    'Straight pipe: E = 2.5e-5·U<sup>2.6</sup>·D<sup>−2</sup>·ṁ<sub>p</sub>. Salama (2000): E = W·V²·d/(5.5·D²·ρ<sub>m</sub>). ' +
+                    'Sand mass rate = sand production × gas rate; U = mixture velocity; ρ<sub>m</sub>, μ<sub>m</sub> are velocity-weighted ' +
+                    '(screening viscosities gas 0.012 cP, liquids 1 cP). Schedules and walls per ASME B36.10M (Sch 40 / 80 / 160, XXS); ' +
+                    '"Sch 180" is not a B36.10M schedule and loads as XXS.' +
                 '</div>' +
             '</div>' +
         '</div>';
@@ -3822,6 +4029,33 @@
     // ───────────────────────────────────────────────────────────────
     // Read DOM -> compute -> paint results
     // ───────────────────────────────────────────────────────────────
+    // v1.8 saves may hold schedule '180' (not an ASME B36.10M schedule) or the
+    // old 'XXH' label: map both to XXS and say so on the page (measured and
+    // min-spec walls are the user's values and are left as entered).
+    function _migrateSchedules() {
+        var notes = [];
+        for (var i = 0; i < DEFAULT_SEGMENTS.length; i++) {
+            var el = _$('wts_pl_seg' + i + '_sch');
+            if (!el) continue;
+            var n = normSchedule(el.value);
+            if (n.sch !== el.value && SCHEDULES['4'][n.sch] != null) {
+                el.value = n.sch;
+                if (n.migrated === '180') {
+                    var npsEl = _$('wts_pl_seg' + i + '_nps');
+                    var nom = getNominalWT(npsEl ? npsEl.value : 4, 'XXS');
+                    notes.push(DEFAULT_SEGMENTS[i].label.replace('->', '→') + ' (XXS nominal ' +
+                        _u(nom, 'lengthSmall', 3, 'in', 2) + ', 87.5 % = ' + _u(nom * 0.875, 'lengthSmall', 3, 'in', 2) + ')');
+                }
+            }
+        }
+        if (notes.length) {
+            var box = _$('wts_pl_schnote');
+            if (box) box.textContent = '⚠ Schedule 180 is not an ASME B36.10M schedule: loaded as XXS on ' + notes.join('; ') +
+                '. Check the min-spec wall against the XXS nominal.';
+        }
+        return notes.length;
+    }
+
     function _readSegmentInputs() {
         var segs = [];
         for (var i = 0; i < DEFAULT_SEGMENTS.length; i++) {
@@ -3856,6 +4090,12 @@
         var qo     = _num((_$('wts_pl_qo') || {}).value, 1000);
         var qw     = _num((_$('wts_pl_qw') || {}).value, 200);
         var sg     = _num((_$('wts_pl_sg') || {}).value, 0.65);
+        var osg    = _num((_$('wts_pl_osg') || {}).value, 0.80);
+        var model  = ((_$('wts_pl_model') || {}).value) || 'dnv_bend';
+        var dpum   = _num((_$('wts_pl_dp') || {}).value, 250);
+        var rd     = _num((_$('wts_pl_rd') || {}).value, 1.5);
+        var gf     = _num((_$('wts_pl_gf') || {}).value, 1);
+        _migrateSchedules();
         var bypEl  = _$('wts_pl_bypass');
         var bypass = bypEl ? (bypEl.value === '1' || bypEl.value === 'true') : false;
 
@@ -3867,17 +4107,34 @@
             oil_rate_bpd: qo,
             water_rate_bpd: qw,
             gasSG: sg,
+            oilSG: osg,
+            erosion_model: model,
+            particle_um: dpum, bend_RD: rd, GF: gf,
             bypass_separator: bypass,
             segments: segIn
         });
         G.WTS_pipelife_lastReport = report;
         _savePipeLifeState();
+        // Result summary for the Quick Report / project file (values stay the inputs).
+        if (G.WTS_state && G.WTS_state.pipelife) {
+            var st = G.WTS_state.pipelife, limSeg = null;
+            for (var q = 0; q < report.segments.length; q++) if (report.limiting_segment && report.segments[q].key === report.limiting_segment.key) limSeg = report.segments[q];
+            st.erosion_model = report.erosion_model; st.erosion_model_label = report.erosion_model_label;
+            st.overall_min_life_days = report.overall_min_life_days; st.sand_rate_lbMMscf = report.sand_rate_lbMMscf;
+            st.c_constant = report.c_constant;
+            st.limiting_segment = limSeg ? { key: limSeg.key, label: limSeg.label, erosion_rate_mils_yr: limSeg.erosion_rate_mils_yr,
+                time_to_failure_at_current_days: limSeg.time_to_failure_at_current_days } : null;
+            st.segments = report.segments.map(function (x) { return { label: x.label, erosion_rate_mils_yr: x.applicable ? x.erosion_rate_mils_yr : null,
+                remaining_service_life_days: x.applicable ? x.remaining_service_life_days : null,
+                time_to_failure_at_current_days: x.applicable ? x.time_to_failure_at_current_days : null,
+                max_allowable_pressure_psig: x.max_allowable_pressure_psig }; });
+        }
 
         var warnHtml = [];
         var set = function (id, txt, color) { var el = _$(id); if (!el) return; el.textContent = txt; if (color !== undefined) el.style.color = color; };
         for (var i = 0; i < report.segments.length; i++) {
             var r = report.segments[i], p = 'wts_pl_seg' + i + '_';
-            set(p + 'pipe', r.nps_in + '" SCH ' + r.sch + ' · ' + (_metric() ? _fmt(_uval(r.ID_in, 'lengthSmall'), 1) + ' mm' : _fmt(r.ID_in, 3) + '"'));
+            set(p + 'pipe', r.nps_in + '" ' + (r.sch === 'XXS' ? 'XXS' : 'SCH ' + r.sch) + ' · ' + (_metric() ? _fmt(_uval(r.ID_in, 'lengthSmall'), 1) + ' mm' : _fmt(r.ID_in, 3) + '"'));
             set(p + 'mawp', _fmt(_uval(r.max_allowable_pressure_psig, 'pressureG'), 0));
             if (!r.applicable) {
                 set(p + 'vel', '—'); set(p + 'ero', '—');
@@ -3886,7 +4143,8 @@
                 continue;
             }
             set(p + 'vel', _fmt(_uval(r.mixture_velocity_fps, 'velocity'), 1));
-            set(p + 'ero', r.erosion_rate_mils_yr > 0 ? _fmt(_uval(r.erosion_rate_mils_yr, 'erosionRate'), _metric() ? 3 : 1) : '0');
+            var eShown = _uval(r.erosion_rate_mils_yr, 'erosionRate');
+            set(p + 'ero', r.erosion_rate_mils_yr > 0 ? (eShown < 0.001 ? eShown.toExponential(2) : _fmt(eShown, eShown < 1 ? 3 : (_metric() ? 3 : 1))) : '0');
             set(p + 'rsl', _formatDays(r.remaining_service_life_days), _lifeColor(r.remaining_service_life_days));
             set(p + 'ttf', _formatDays(r.time_to_failure_at_current_days), _lifeColor(r.time_to_failure_at_current_days));
             var st = !r.ok_to_operate ? ['INSPECT NOW', 'var(--red, #f85149)']
@@ -3901,6 +4159,12 @@
                 }
             }
         }
+        var ml = _$('wts_pl_model_line');
+        if (ml) ml.textContent = 'Erosion model: ' + report.erosion_model_label +
+            (report.erosion_model === 'dnv_bend' ? ' — R/D ' + _fmt(report.bend_RD, 1) + ', GF ' + _fmt(report.GF, 0) + ', particles ' + _fmt(report.particle_um, 0) + ' µm'
+             : report.erosion_model === 'salama' ? ' — particles ' + _fmt(report.particle_um, 0) + ' µm, Sm 5.5'
+             : report.erosion_model === 'legacy' ? ' — c = ' + _fmt(report.c_constant, 0) + ' (v1.8 screening fit, not a published model)' : '') +
+            '; sand ' + _u(sand, 'sandLoading', 1, 'lb/MMscf') + ' × gas rate.';
         var wEl = _$('wts_pl_warns');
         if (wEl) wEl.innerHTML = warnHtml.join('');
 

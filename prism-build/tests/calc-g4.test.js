@@ -161,6 +161,32 @@ module.exports = [
     },
   },
 
+  {
+    name: 'G4 flare (v3.0): fl_flow / fl_nhv stay native field units (untagged); Metric mode shows SI companions (10³ m³/d, MJ/m³)',
+    wp: WP,
+    run(app, assert) {
+      // Imperial: no companion text
+      app.hook.nav('flare'); app.flush(300);
+      assert.strictEqual(String(app.el('fl_flow_si').textContent), '', 'no companion in Imperial');
+      setMetric(app, true);
+      try {
+        app.hook.nav('flare'); app.flush(300);
+        set(app, { fl_flow: 10, fl_nhv: 1000 });
+        // 1 MMSCF = 10⁶·0.0283168466 m³ = 28.3168 10³ m³; 1 Btu/scf = 1055.056 J / 0.0283168466 m³ = 0.0372589 MJ/m³
+        const qt = String(app.el('fl_flow_si').textContent), ht = String(app.el('fl_nhv_si').textContent);
+        assert.includes(qt, '10³ m³/d'); assert.includes(ht, 'MJ/m³');
+        assert.near(num(qt.replace('= ', '')), 10 * 28.3168466, 0.06, 'flow companion');
+        assert.near(num(ht.replace('= ', '')), 1000 * 1055.05585 / 0.0283168466 / 1e6, 0.006, 'NHV companion');
+        // The inputs themselves are not converted (the page is natively mixed-unit)
+        assert.strictEqual(String(app.el('fl_flow').value), '10');
+        app.win.calcFlare();
+        const Qb = 10e6 / 24 * 1000 * 0.98;
+        assert.near(rv(app, 'fl_res', 'Heat Release (MW)'), Qb * W_PER_BTUH / 1e6, 0.01, 'same physical result in Metric');
+      } finally { setMetric(app, false); }
+      noBadNumbers(assert, app, 'flare companions');
+    },
+  },
+
   // ── PRV (API 520 / 526) ────────────────────────────────────────────────
   {
     name: 'G4 prv gas: conventional default A = 2.546 in² (L); Kb = 1 for conventional; balanced 40 % BP → Kb 0.845',
@@ -407,7 +433,16 @@ module.exports = [
       app.hook.nav('home'); setMetric(app, true); app.hook.nav('arc');
       set(app, { av_qn: 5000 * 0.158987, av_qmin: 500 * 0.158987, av_pso: 500 * 6.894757, av_pdn: 350 * 6.894757, av_ret: 50 * 6.894757 });
       app.win.calcARC();
-      assert.near(rv(app, 'av_res', 'Bypass'), 390, 0.2);
+      // v3.0: results follow the unit system (v1.8 showed 390 psi / 440 psig in Metric too).
+      assert.near(rv(app, 'av_res', 'Bypass'), 390 * 6.894757, 1);                 // 2689 kPa
+      assert.includes(rvText(app, 'av_res', 'Bypass'), 'kPa');
+      assert.near(rv(app, 'av_res', 'discharge'), 440 * 6.894757, 1);              // 3034 kPa(g)
+      assert.includes(rvText(app, 'av_res', 'discharge'), 'kPa(g)');
+      assert.includes(rvText(app, 'av_res', 'Recirc Flow'), 'm³/d');
+      // Unit flip re-runs the shown result: back to psi.
+      setMetric(app, false); app.flush(10);
+      assert.near(rv(app, 'av_res', 'Bypass'), 390, 0.06);
+      assert.includes(rvText(app, 'av_res', 'Bypass'), 'psi');
     },
   },
 
@@ -441,21 +476,42 @@ module.exports = [
 
   // ── ESD Lo-Pilot (prism-build/24) ──────────────────────────────────────
   {
-    name: 'G4 esdlo: 4.36 ft³, 0.05 MMscfd, 5 s → ΔP 9.76 psi, PSL 1956 psig; blanks rejected',
+    name: 'G4 esdlo (v3.0 trip criterion): 4.36 ft³, 0.05 MMscfd, 5 s → ΔP 9.76 psi, PSL 1966 psig trips in 2.56 s; slow / nuisance cases fail',
     wp: WP, opts: SRC,
     run(app, assert) {
       app.hook.nav('esdlo');
       set(app, { wts_esdlo_volume: 4.36, wts_esdlo_pflow: 1971, wts_esdlo_qleak: 0.05, wts_esdlo_whsip: 1500, wts_esdlo_tresp: 5, wts_esdlo_margin: 5 });
       app.click('wts_esdlo_calc_btn');
-      const dP = 0.05e6 / 86400 * 5 * 14.7 / 4.36;
+      // Hand calc: 0.05e6/86400·5 = 2.8935 scf; ΔP = 2.8935·14.7/4.36 = 9.7557 psi; dP/dt = 1.9511 psi/s.
+      const dP = 0.05e6 / 86400 * 5 * 14.7 / 4.36, rate = dP / 5;
       assert.near(num(trow(app, 'wts_esdlo_results', 'Pressure drop')[1]), dP, 0.01);
-      assert.near(rv(app, 'wts_esdlo_results', 'Recommended PSL setpoint'), 1971 - dP - 5, 0.51);
-      assert.includes(app.el('wts_esdlo_status').textContent, 'PSL reachable');
+      // Before (v1.8): PSL = 1971 − 9.76 − 5 = 1956 psig, status 'PSL reachable' only because WHSIP 1500 < P_after.
+      assert.near(rv(app, 'wts_esdlo_results', 'Recommended PSL setpoint'), 1966, 0.51);
+      assert.near(num(trow(app, 'wts_esdlo_results', 'Time to reach PSL')[1]), 5 / rate, 0.006);   // 2.56 s
+      assert.includes(app.el('wts_esdlo_status').textContent, 'PASS');
+      // WHSIP above the flowing pressure (every flowing well) no longer fails the case (v1.8: 'below WHSIP').
       set(app, { wts_esdlo_whsip: 2100 }); app.click('wts_esdlo_calc_btn');
-      assert.includes(app.el('wts_esdlo_status').textContent, 'below WHSIP');
+      assert.includes(app.el('wts_esdlo_status').textContent, 'PASS');
+      // Section at 160 °F: ΔP × 619.67/519.67.
+      set(app, { wts_esdlo_temp: 160 }); app.click('wts_esdlo_calc_btn');
+      assert.near(num(trow(app, 'wts_esdlo_results', 'Pressure drop')[1]), dP * 619.67 / 519.67, 0.01);
+      // Too slow: 2 s required → reaches only 1971 − 2·rate·(619.67/519.67) = 1966.35 > PSL 1966 → FAIL.
+      set(app, { wts_esdlo_tresp: 2 }); app.click('wts_esdlo_calc_btn');
+      assert.includes(app.el('wts_esdlo_status').textContent, 'FAIL');
+      assert.ok(app.win.WTS_state.esdLoPilot.inTime === false, 'not in time');
+      // A set point inside the false-trip margin fails.
+      set(app, { wts_esdlo_tresp: 5, wts_esdlo_temp: 60, wts_esdlo_psl: 1968 }); app.click('wts_esdlo_calc_btn');
+      assert.includes(app.el('wts_esdlo_status').textContent, 'false-trip margin');
+      // A checked set point below the window: 1950 psig needs 21/1.9511 = 10.8 s > 5 s → FAIL.
+      set(app, { wts_esdlo_psl: 1950 }); app.click('wts_esdlo_calc_btn');
+      assert.near(app.win.WTS_state.esdLoPilot.timeToTrip_s, 21 / rate, 1e-6);
+      assert.includes(app.el('wts_esdlo_status').textContent, 'FAIL');
       set(app, { wts_esdlo_volume: '' }); app.click('wts_esdlo_calc_btn');
       assert.match(app.el('wts_esdlo_results').textContent, /Section volume must be > 0/);
       noBadNumbers(assert, app, 'esdlo');
+      set(app, { wts_esdlo_volume: 4.36, wts_esdlo_psl: '' }); app.click('wts_esdlo_calc_btn');
+      reportHas(app, assert, ['Section Gas Temperature', 'Recommended PSL', 'PASS']);
+      assert.deepEqual(app.consoleErrors(), []);
     },
   },
 
@@ -523,12 +579,17 @@ module.exports = [
       const mawp = (S, t, od) => 2 * S * t / (od - 0.8 * t);
       assert.near(num(app.el('wts_pl_seg1_mawp').textContent), mawp(20000, 0.337, 4.5), 1);          // 3186
       assert.near(num(app.el('wts_pl_seg2_mawp').textContent), mawp(66700 / 3, 0.674, 4.5), 1);      // 7566 (X52)
-      // Choke → Heater: 10 MMscfd at 500 psig / 100 °F + 1200 bpd liquid in 3" (ID 2.396")
+      // Choke → Heater: 10 MMscfd at 500 psig / 100 °F + 1200 bpd liquid in 3" XXS
+      // (v3.0 default: ID 3.500 − 2·0.600 = 2.300"; v1.8 'SCH 180' 0.552" wall gave ID 2.396", 116.2 ft/s)
       const acfs = 10e6 / 86400 * (14.696 / 514.696) * (559.67 / 519.67) + 1200 * 5.615 / 86400;
-      const v = acfs / (Math.PI / 4 * Math.pow(2.396 / 12, 2));
-      assert.near(num(app.el('wts_pl_seg3_vel').textContent), v, 0.06);                            // 116.2 ft/s
-      assert.near(app.win.WTS_PIPELIFE_SCHEDULES['4'].XXH, 0.674, 1e-9);
-      assert.near(app.win.WTS_PIPELIFE_SCHEDULES['6'].XXH, 0.864, 1e-9);
+      const v = acfs / (Math.PI / 4 * Math.pow(2.300 / 12, 2));
+      assert.near(num(app.el('wts_pl_seg3_vel').textContent), v, 0.06);                            // 126.1 ft/s
+      // ASME B36.10M XXS walls (Sch 180 is not a B36.10M schedule and is gone from the table)
+      const S = app.win.WTS_PIPELIFE_SCHEDULES;
+      [['2', 0.436], ['3', 0.600], ['4', 0.674], ['6', 0.864], ['8', 0.875]].forEach(([n, t]) => assert.near(S[n].XXS, t, 1e-9, n + '" XXS'));
+      [['2', 0.344], ['3', 0.438], ['4', 0.531], ['6', 0.719], ['8', 0.906]].forEach(([n, t]) => assert.near(S[n]['160'], t, 1e-9, n + '" Sch 160'));
+      assert.ok(!Object.keys(S).some((n) => S[n]['180'] != null), 'no Sch 180 entries');
+      assert.includes(app.el('wts_pl_seg3_pipe').textContent, 'XXS');
       noBadNumbers(assert, app, 'pipelife');
       reportHas(app, assert, ['Sand Production', 'Overall min RSL']);
       assert.deepEqual(app.consoleErrors(), []);

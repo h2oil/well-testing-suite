@@ -564,7 +564,14 @@
                 pl_pb:  'pressureG',
                 pl_q:   'liquidRateSmall', // gpm
                 pl_sg:  'sg',
-                pl_mu:  'viscosity'
+                pl_mu:  'viscosity',
+                // Inlet Line Check tab (v3.0: was untagged, so Metric typed kPa as psi)
+                pi_ps:  'pressureG',
+                pi_id:  'lengthSmall',
+                pi_len: 'length',
+                pi_w:   'massRate',
+                pi_rho: 'density'
+                // pi_f (Darcy f), pi_el / pi_gv (counts) are unit-free.
             },
             outputs: {}
         },
@@ -937,7 +944,9 @@
                 wts_esdlo_pflow:  'pressureG',
                 wts_esdlo_qleak:  'gasRate',
                 wts_esdlo_whsip:  'pressureG',
-                wts_esdlo_margin: 'pressure'     // a pressure difference (psi)
+                wts_esdlo_margin: 'pressure',    // a pressure difference (psi)
+                wts_esdlo_temp:   'temperature',
+                wts_esdlo_psl:    'pressureG'
                 // wts_esdlo_tresp is seconds — untagged.
             },
             outputs: {}
@@ -975,8 +984,9 @@
                 wts_pl_qg:   'gasRate',
                 wts_pl_qo:   'liquidRate',
                 wts_pl_qw:   'liquidRate',
-                wts_pl_sg:   'sg'
-                // wts_pl_c (Salama "c", field-unit empirical constant) — untagged.
+                wts_pl_sg:   'sg',
+                wts_pl_osg:  'sg'
+                // wts_pl_c (legacy-fit "c"), wts_pl_dp (µm), wts_pl_rd (R/D) — unit-free / SI in both systems.
                 // wts_pl_seg<i>_* segment fields are added below.
             },
             outputs: {}
@@ -1734,6 +1744,9 @@
             imp.style.color      = (active === 'imperial') ? '#0d1117' : 'var(--text2, #8b949e)';
             imp.style.fontWeight = (active === 'imperial') ? '700' : '500';
         }
+        // P10: a two-button toggle — the pressed state is announced, not just coloured.
+        if (imp && imp.setAttribute) imp.setAttribute('aria-pressed', active === 'imperial' ? 'true' : 'false');
+        if (met && met.setAttribute) met.setAttribute('aria-pressed', active === 'metric' ? 'true' : 'false');
         if (met && met.style) {
             met.style.background = (active === 'metric') ? 'var(--accent, #f0883e)' : 'transparent';
             met.style.color      = (active === 'metric') ? '#0d1117' : 'var(--text2, #8b949e)';
@@ -1755,9 +1768,11 @@
         }
         var wrap = document.createElement('div');
         wrap.id = _toggleId;
+        wrap.setAttribute('role', 'group');                       // P10
+        wrap.setAttribute('aria-label', 'Unit system and standard conditions');
         wrap.style.cssText = 'display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:11px;color:var(--text2,#8b949e);margin-left:12px;';
         wrap.innerHTML =
-            '<span>Units:</span>' +
+            '<span aria-hidden="true">Units:</span>' +
             '<button type="button" id="wts_units_imperial" class="btn btn-secondary" ' +
                 'style="padding:3px 8px;font-size:11px;border-radius:4px;border:1px solid var(--border,#30363d);cursor:pointer;background:transparent;color:var(--text2,#8b949e);">Imperial</button>' +
             '<button type="button" id="wts_units_metric" class="btn btn-secondary" ' +

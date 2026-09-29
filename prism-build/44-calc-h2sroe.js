@@ -59,7 +59,7 @@
     function _num(id) { var e = _byId(id); if (!e) return NaN; var s = String(e.value).trim(); return s === '' ? NaN : parseFloat(s); }
     function _fmt(v, d) {
         if (v == null || !isFinite(v)) return '—';
-        return Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) });
+        return (G.WTS_fmtNum ? G.WTS_fmtNum(v, 0, (d == null ? 2 : d)) : Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) }));
     }
     // Auto decimals: about 4-5 significant figures without trailing zeros.
     function _fa(v) {
@@ -249,9 +249,9 @@
         if (!r.ok) { _errors('hs_roe_res', 'roe', r.bad); return; }
         var v = '';
         if (r.x100_ft < 50) v += _ok('100 ppm radius of exposure is under 50 ft.');
-        else v += _warn('100 ppm radius of exposure is ' + _fa(r.x100_ft) + ' ft — check for public areas inside it; a contingency plan may be required.');
+        else v += _warn('100 ppm radius of exposure is ' + _fa(r.x100_ft) + ' ft (' + _fa(r.x100_ft * 0.3048) + ' m) — check for public areas inside it; a contingency plan may be required.');
         if (r.x100_ft > 3000) v += _warn('100 ppm radius of exposure exceeds 3,000 ft.');
-        if (r.x500_ft >= 50) v += _warn('500 ppm radius of exposure is ' + _fa(r.x500_ft) + ' ft — check for public roads inside it.');
+        if (r.x500_ft >= 50) v += _warn('500 ppm radius of exposure is ' + _fa(r.x500_ft) + ' ft (' + _fa(r.x500_ft * 0.3048) + ' m) — check for public roads inside it.');
         res.innerHTML =
             '<div class="rbox"><div class="rbox-title">Radius of Exposure</div>' +
             _row('H2S mole fraction', _fmt(r.mf, 6)) +
@@ -277,8 +277,8 @@
             _row('SO2', _fa(r.so2_lbhr) + ' lb/hr (' + _fa(r.so2_kghr) + ' kg/hr)') +
             _row('SO2 per day', _fa(r.so2_td) + ' t/d') +
             _row('Unburned H2S', _fa(r.h2s_lbhr) + ' lb/hr (' + _fa(r.h2s_kghr) + ' kg/hr)') +
-            _note('Ground-level SO2 concentration depends on flare height, plume rise and weather; a dispersion ' +
-                'screening tool is planned (roadmap item 11). Use Flare Emissions for full-period reporting. ' +
+            _note('Ground-level SO2 concentration depends on flare height, plume rise and weather: screen it on the ' +
+                'SO2 / H2S Dispersion Screening page. Use Flare Emissions for full-period reporting. ' +
                 _basisNote(r.basis)) +
             '</div>';
         res.setAttribute('data-done', '1');

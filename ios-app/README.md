@@ -268,6 +268,33 @@ Suggested screens to capture:
 - [ ] Dark mode support (already native — app is dark-themed)
 - [ ] Device rotation handled (portrait + landscape)
 - [ ] Status bar text readable on all screens
+- [ ] Modbus page → device transport "Modbus TCP (iOS app, native)" → **Test** against a PLC /
+      gateway on the same Wi-Fi: the Local Network prompt appears once, then values read
+
+---
+
+## Native Modbus TCP plugin (Mini WellOS)
+
+`ios/App/App/ModbusTcpPlugin.swift` is a small Capacitor plugin (JS name `ModbusTcp`) that opens
+raw TCP sockets with Network.framework (`NWConnection`) so the Modbus page and Mini WellOS can talk
+Modbus TCP to PLCs / RTUs on the local network without the WebSocket bridge the web build needs.
+
+- **App-local plugin, no Swift package.** It lives in the App target and is registered by
+  `ios/App/App/MainViewController.swift` (`capacitorDidLoad()` →
+  `bridge?.registerPluginInstance(ModbusTcpPlugin())`). `Main.storyboard`'s view controller uses
+  that class (`customClass="MainViewController" customModule="App"`). `CapApp-SPM/Package.swift`
+  and `Package.resolved` are unchanged, so Xcode Cloud needs no re-resolve for this plugin.
+- **Xcode:** both Swift files are already in the App target (Sources build phase) in
+  `project.pbxproj`. If Xcode ever drops them (e.g. after regenerating the project), add them back
+  with *File → Add Files to "App"…* (target: App) and set the storyboard view controller's custom
+  class to `MainViewController`, module `App`.
+- **Privacy:** `Info.plist` carries `NSLocalNetworkUsageDescription`; iOS shows the Local Network
+  prompt on the first connection. While the prompt is open the first connect attempt fails
+  ("waiting") and the page retries automatically. No Bonjour services are browsed, so
+  `NSBonjourServices` is not needed. Raw TCP is not subject to App Transport Security.
+- JS side: `prism-build/60-modbus-core.js` → `WTS_modbus.transports.nativeTcp`
+  (`connect({host, port, timeoutMs}) → {id}`, `send({id, data: base64})`, `disconnect({id})`,
+  events `data` / `closed`).
 
 ---
 

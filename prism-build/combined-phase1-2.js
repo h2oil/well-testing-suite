@@ -205,32 +205,31 @@ function PRiSM_besselK1(x) {
            y * (0.00325614 + y * -0.00068245))))));
 }
 
-// ── Exponential integral E1(x) and convenience Ei(x) form ──
-// E1(x) = ∫_x^∞ e^{-t}/t dt for x > 0. We expose two related routines:
+// ── Exponential integral E1(x) and the exponential integral Ei(x) ──
+// Definitions (Abramowitz & Stegun 1964, §5.1.1-5.1.2):
+//   E1(x) = ∫_x^∞ e^{-t}/t dt,           x > 0   (the Theis well function W(u))
+//   Ei(x) = −PV∫_{−x}^∞ e^{-t}/t dt,     x ≠ 0,  so  Ei(−x) = −E1(x)  (A&S 5.1.7)
 //
-//   PRiSM_E1(x)  — true E1(x), x > 0
-//   PRiSM_Ei(x)  — petroleum-engineering convention. For Theis-style line-
-//                  source solutions we want the well function W(u)=E1(u);
-//                  PE textbooks often write this as Ei(u) where u>0. For
-//                  callers using the strict mathematical convention with
-//                  negative arguments we return -E1(-x) so the standard
-//                  identity  Ei(x<0) = -E1(-x)  is honoured. Ei(0) = -∞.
-//
-// Implementation: A&S 5.1.53 (rational polynomial) for 0 < x ≤ 1 and the
-// Cody-Thacher continued-fraction expansion for x > 1.
+//   PRiSM_E1(x)  — E1(x), x > 0. A&S 5.1.11 power series for 0 < x ≤ 1 and
+//                  the continued fraction (A&S 5.1.22, Lentz) for x > 1.
+//   PRiSM_Ei(x)  — the true exponential integral for every real x ≠ 0:
+//                  x < 0 → −E1(−x) (the line-source form pD = −½Ei(−rD²/4tD));
+//                  x > 0 → γ + ln x + Σ xⁿ/(n·n!) (A&S 5.1.10) for x ≤ 40,
+//                  asymptotic eˣ/x·Σ k!/xᵏ (A&S 5.1.51) above; Ei(0) = −∞.
+//   (Before v3.0 PRiSM_Ei(x > 0) returned E1(x), which is neither convention;
+//   nothing in the app called it with a positive argument.)
 
 function PRiSM_E1(x) {
     if (!(x > 0) || !isFinite(x)) throw new Error('PRiSM_E1: x must be > 0 and finite (got ' + x + ')');
     if (x <= 1.0) {
-        // A&S 5.1.53: -ln(x) - γ + Σ ((-1)^(n+1) x^n / (n·n!)). Series
-        // converges fast for x ≤ 1.
+        // A&S 5.1.11: -ln(x) - γ - Σ ((-x)^n / (n·n!)). Converges fast for x ≤ 1.
         let sum = 0;
         let term = 1;
-        for (let n = 1; n <= 50; n++) {
+        for (let n = 1; n <= 60; n++) {
             term *= -x / n;
             const add = -term / n;
             sum += add;
-            if (Math.abs(add) < 1e-15 * Math.abs(sum)) break;
+            if (Math.abs(add) < 1e-16 * Math.abs(sum)) break;
         }
         return -Math.log(x) - 0.5772156649015329 + sum;
     }
@@ -240,30 +239,47 @@ function PRiSM_E1(x) {
     let c = 1.0 / TINY;
     let d = 1.0 / b;
     let h = d;
-    for (let i = 1; i <= 100; i++) {
+    for (let i = 1; i <= 200; i++) {
         const a = -i * i;
         b += 2.0;
         d = 1.0 / (a * d + b); if (d === 0) d = TINY;
         c = b + a / c;          if (c === 0) c = TINY;
         const delta = c * d;
         h *= delta;
-        if (Math.abs(delta - 1.0) < 1e-12) break;
+        if (Math.abs(delta - 1.0) < 1e-14) break;
     }
     return h * Math.exp(-x);
 }
 
-// For decline-curve / Theis-style usage. Supports both the petroleum-eng
-// convention (Ei(x>0) = E1(x), well function W(u)) and the strict math
-// convention (Ei(x<0) = -E1(-x)). Ei(0) = -∞.
+// Exponential integral Ei(x) for all real x (see the block comment above).
 function PRiSM_Ei(x) {
-    if (!isFinite(x)) return NaN;
-    if (x > 0) return PRiSM_E1(x);          // pet-eng: Ei(x>0) = E1(x)
-    if (x < 0) return -PRiSM_E1(-x);        // math:    Ei(x<0) = -E1(-x)
-    return -Infinity;                        //          Ei(0)   = -∞
+    if (typeof x !== 'number' || x !== x) return NaN;
+    if (x === 0) return -Infinity;
+    if (x === -Infinity) return 0;
+    if (x === Infinity) return Infinity;
+    if (x < 0) return -PRiSM_E1(-x);                 // A&S 5.1.7
+    if (x <= 40) {                                   // A&S 5.1.10
+        let sum = 0, term = 1;
+        for (let n = 1; n <= 200; n++) {
+            term *= x / n;
+            const add = term / n;
+            sum += add;
+            if (add < 1e-17 * sum) break;
+        }
+        return 0.5772156649015329 + Math.log(x) + sum;
+    }
+    let s = 1, t = 1;                                // A&S 5.1.51 asymptotic
+    for (let k = 1; k <= 40; k++) {
+        const tn = t * k / x;
+        if (tn > t) break;
+        t = tn; s += t;
+        if (t < 1e-17) break;
+    }
+    return Math.exp(x) / x * s;
 }
 
-// Expose foundation versions on window so downstream modules (e.g.
-// 09-interference-multilateral) can drop their local _localE1 workarounds.
+// Expose foundation versions on window; 09-interference-multilateral uses
+// window.PRiSM_E1 for its line-source (Theis) well function.
 if (typeof window !== 'undefined') {
     if (typeof window.PRiSM_E1 !== 'function') window.PRiSM_E1 = PRiSM_E1;
     if (typeof window.PRiSM_Ei !== 'function') window.PRiSM_Ei = PRiSM_Ei;
@@ -3472,7 +3488,7 @@ const PRiSM_THEME = {
     gridMajor: '#30363d',
     text:      '#c9d1d9',
     text2:     '#8b949e',
-    text3:     '#6e7681',
+    text3:     '#848d97',   // P10 contrast (was #6e7681); synced from --text3
     accent:    '#f0883e', // orange — primary series
     blue:      '#58a6ff', // overlay / model curve
     green:     '#3fb950', // derivative / good fit
@@ -4052,6 +4068,40 @@ function PRiSM_plot_legend(ctx, items, plot, opts) {
 // ─────────────────────────────────────────────────────────────────────
 // SHARED — line series, scatter series
 // ─────────────────────────────────────────────────────────────────────
+// P6 plot decimation (drawing only — data, fits and _prismAxes are untouched).
+// A series longer than PRiSM_PLOT_DECIMATE_MIN points is drawn with the M4 rule:
+// per pixel column keep the first, lowest, highest and last vertex in their
+// original order, which rasterises to the same polyline (Jugel et al., "M4: A
+// Visualization-Oriented Time Series Data Aggregation", PVLDB 7(10), 2014).
+// Markers keep one dot per half-pixel cell.
+const PRiSM_PLOT_DECIMATE_MIN = 1500;
+function PRiSM_plot_pathM4(ctx, pts, toX, toY) {
+    let started = false, col = null, b = null;
+    const flush = function () {
+        if (!b) return;
+        let last = -1;
+        [b.f, b.mn, b.mx, b.l].sort(function (a, c) { return a.i - c.i; }).forEach(function (q) {
+            if (q.i === last) return;
+            last = q.i;
+            if (!started) { ctx.moveTo(q.x, q.y); started = true; } else ctx.lineTo(q.x, q.y);
+        });
+        b = null;
+    };
+    for (let i = 0; i < pts.length; i++) {
+        const p = pts[i];
+        const x = (p && isFinite(p[0]) && isFinite(p[1])) ? toX(p[0]) : NaN;
+        const y = isFinite(x) ? toY(p[1]) : NaN;
+        if (!isFinite(x) || !isFinite(y)) { flush(); started = false; col = null; continue; }
+        const c = Math.floor(x);
+        if (b && c !== col) flush();
+        col = c;
+        const q = { i: i, x: x, y: y };
+        if (!b) b = { f: q, mn: q, mx: q, l: q };
+        else { if (y < b.mn.y) b.mn = q; if (y > b.mx.y) b.mx = q; b.l = q; }
+    }
+    flush();
+}
+
 function PRiSM_plot_line(ctx, pts, toX, toY, color, opts) {
     if (!pts || !pts.length) return;
     opts = opts || {};
@@ -4060,6 +4110,12 @@ function PRiSM_plot_line(ctx, pts, toX, toY, color, opts) {
     ctx.lineWidth = opts.width || 2;
     if (opts.dash) ctx.setLineDash(opts.dash);
     ctx.beginPath();
+    if (pts.length > PRiSM_PLOT_DECIMATE_MIN) {
+        PRiSM_plot_pathM4(ctx, pts, toX, toY);
+        ctx.stroke();
+        ctx.restore();
+        return;
+    }
     let started = false;
     for (let i = 0; i < pts.length; i++) {
         const p = pts[i];
@@ -4078,10 +4134,16 @@ function PRiSM_plot_dots(ctx, pts, toX, toY, color, r) {
     r = r || 2.5;
     ctx.save();
     ctx.fillStyle = color;
+    const seen = pts.length > PRiSM_PLOT_DECIMATE_MIN ? new Set() : null;
     pts.forEach(function (p) {
         if (!p || !isFinite(p[0]) || !isFinite(p[1])) return;
         const x = toX(p[0]), y = toY(p[1]);
         if (!isFinite(x) || !isFinite(y)) return;
+        if (seen) {
+            const k = Math.round(x * 2) + ',' + Math.round(y * 2);
+            if (seen.has(k)) return;
+            seen.add(k);
+        }
         ctx.beginPath();
         ctx.arc(x, y, r, 0, Math.PI * 2);
         ctx.fill();
@@ -4262,6 +4324,7 @@ function PRiSM_plot_finish(setup, render, cfg) {
     }
     try { canvas._prismOriginalScale = { x: PRiSM_plot_copyScale(auto.x), y: PRiSM_plot_copyScale(auto.y) }; }
     catch (_) { /* detached */ }
+    PRiSM_plot_ariaSummary(canvas, opts, cfg, plotKey);
     S.cur = {
         canvas: canvas, ctx: setup.ctx, plot: setup.plot, render: render, opts: opts, extra: setup.extra,
         data: cfg.data || null, plotKey: plotKey, scaleX: sx, scaleY: sy, auto: auto, zoomed: zoomed,
@@ -4270,6 +4333,31 @@ function PRiSM_plot_finish(setup, render, cfg) {
     };
     PRiSM_plot_paint(S, 'initial');
     PRiSM_plot_install(canvas, S);
+}
+
+// P10: the plot is an image to assistive technology — role="img" plus a text
+// summary (plot, axes, point count and data ranges). An author-set label wins.
+function PRiSM_plot_ariaSummary(canvas, opts, cfg, plotKey) {
+    try {
+        if (!canvas || typeof canvas.setAttribute !== 'function') return;
+        if (canvas.hasAttribute && canvas.hasAttribute('aria-label') && !canvas.hasAttribute('data-a11y-auto')) return;
+        const pts = cfg.sigPoints || cfg.points || [];   // the measured series (Bourdet: Δp, not Δp + derivative)
+        let n = 0, x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+        for (let i = 0; i < pts.length; i++) {
+            const p = pts[i];
+            if (!p || !isFinite(p[0]) || !isFinite(p[1])) continue;
+            n++;
+            if (p[0] < x0) x0 = p[0]; if (p[0] > x1) x1 = p[0];
+            if (p[1] < y0) y0 = p[1]; if (p[1] > y1) y1 = p[1];
+        }
+        const name = String(opts.title || plotKey || 'PRiSM') + ' plot';
+        const xn = String(cfg.xName || 'x'), yn = String(cfg.yName || 'y');
+        const f = function (v) { return PRiSM_plot_format_eng(v, 3); };
+        canvas.setAttribute('role', 'img');
+        canvas.setAttribute('data-a11y-auto', '1');
+        canvas.setAttribute('aria-label', name + ': ' + yn + ' against ' + xn + '. ' +
+            (n ? n + ' points; ' + xn + ' ' + f(x0) + ' to ' + f(x1) + ', ' + yn + ' ' + f(y0) + ' to ' + f(y1) + '.' : 'No data points.'));
+    } catch (_) { /* a label is a nicety — never break a plot */ }
 }
 
 function PRiSM_plot_decorate(S) {

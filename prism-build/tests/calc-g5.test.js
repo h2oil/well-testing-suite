@@ -75,6 +75,26 @@ function gasLine(mmscfd, psig, sg, idM, lenFt) {
   return { V, rho, dP: f * (lenFt * FT / idM) * rho * V * V / 2 / PSI };
 }
 
+// DNV-RP-O501 (2015) §4.7 pipe bend, written out independently from the RP steps:
+//   α = atan(1/(2R)); A = ρm²·tanα·Up·D/(ρp·μm); γc = ρm/(ρp·(1.88 lnA − 6.04)) (0.1 if ≤ 0 or ≥ 0.1);
+//   G = min(1, γ/γc); F = 0.6·(sinα + 7.2(sinα − sin²α))^0.6·(1 − e^(−20α));
+//   E [mm/y] = 2e-9·F·Up^2.6·sinα·G·2.5·ṁp·3.15e10/(7800·πD²/4).
+function dnvBendRef({ lbPerDay, vFps, dIn, rhoLbFt3, muCp, dpUm, RD }) {
+  const mp = lbPerDay * 0.45359237 / 86400, Up = vFps * 0.3048, D = dIn * 0.0254;
+  const rm = rhoLbFt3 * 16.018463, mu = muCp / 1000;
+  const a = Math.atan(1 / (2 * RD));
+  const A = rm * rm * Math.tan(a) * Up * D / (2650 * mu);
+  let gc = rm / (2650 * (1.88 * Math.log(A) - 6.04));
+  if (!(gc > 0) || gc >= 0.1) gc = 0.1;
+  const G = Math.min(1, dpUm * 1e-6 / D / gc);
+  const sa = Math.sin(a);
+  const F = 0.6 * Math.pow(sa + 7.2 * (sa - sa * sa), 0.6) * (1 - Math.exp(-20 * a));
+  const mmy = 2e-9 * F * Math.pow(Up, 2.6) * sa * G * 2.5 * mp * 3.15e10 / (7800 * Math.PI * D * D / 4);
+  return { mmy, mpy: mmy / 0.0254, F, G, A, gc, alphaDeg: a * 180 / Math.PI };
+}
+// velocity-weighted mixture viscosity (gas 0.012 cP, liquid 1 cP) from the RP 14E volume terms
+function muMixRef(Z, R, T, P) { const g = Z * R * T / (21.25 * P), fg = g / (9.35 + g); return 0.012 * fg + 1 * (1 - fg); }
+
 module.exports = [
   // ── PIPE SIZING ─────────────────────────────────────────────────────────────
   {
@@ -122,7 +142,9 @@ module.exports = [
       setv(app, { pp_p: 3447.38, pp_l: 304.8, pp_qg: 283.168, pp_sg: 0.65 });
       calc(app, 'calcPipeSz');
       const met = read();
-      met.forEach((r, i) => { assert.rel(r[1], imp[i][1], 0.002, r[0] + ' V metric=imperial'); assert.rel(r[2] || 1e-9, imp[i][2] || 1e-9, 0.01, r[0] + ' ΔP metric=imperial'); });
+      // v3.0: the ΔP column follows the unit system (kPa in Metric; v1.8 showed psi in both).
+      met.forEach((r, i) => { assert.rel(r[1], imp[i][1], 0.002, r[0] + ' V metric=imperial'); assert.rel(r[2] || 1e-9, (imp[i][2] * 6.894757) || 1e-9, 0.01, r[0] + ' ΔP metric = imperial × 6.894757 kPa/psi'); });
+      assert.ok(app.findAll('#pp_res th').some((t) => /ΔP \(kPa\)/.test(String(t.textContent))), 'ΔP header in kPa');
       clean(app, assert, 'pipesz gas metric');
     },
   },
@@ -484,7 +506,10 @@ module.exports = [
       go(app, 'elec', 'metric');
       setv(app, { mp_d: 158.75, mp_sl: 304.8, mp_eff: 96, mp_spm: 54, mp_n: 2 });
       calc(app, 'calcMudPump');
-      assert.near(num(row(app, 'mp_res', 'Flow Rate (GPM)')), gpm, 0.06, 'metric = imperial');
+      // v3.0: Metric shows L/min, m³/min, L per stroke (v1.8 showed gpm / bpm in Metric too).
+      assert.near(num(row(app, 'mp_res', 'Flow Rate (L/min)')), gpm * 3.785411784, 0.06, 'metric L/min = gpm × 3.785411784');
+      assert.near(num(row(app, 'mp_res', 'Flow Rate (m³/min)')), gpm / 42 * 0.158987295, 0.0006);
+      assert.near(num(row(app, 'mp_res', 'Displacement/Stroke')), gal * 3.785411784, 0.0006, 'L per stroke');
       assert.ok(!/Hz/.test(app.el('mp_spm').closest('.fg-item').querySelector('label').textContent));
       clean(app, assert, 'mud pump metric');
     },
@@ -518,13 +543,32 @@ module.exports = [
       assert.near(num(row(app, 'ev_res', 'Minimum ID')), Math.round(dMin * 1000) / 1000, 1e-9, 'min ID row');
       assert.includes(row(app, 'ev_res', 'Sand erosion screen'), 'No sand rate entered');
       assert.includes(app.el('ev_res').textContent, '✓ Mixture velocity is below the erosional velocity');
-      // Sand: 2 lb/MMscf → Pipe Service Life fit E = 2.8·(c/300)·W·V²/D² mpy (c = 300)
+      // Sand: 2 lb/MMscf × 5 MMscf/d = 10 lb/d. v3.0: DNV-RP-O501 (2015) pipe bend, hand calc from the RP
+      // steps (R/D 1.5, 250 µm, GF 1, steel K 2e-9, n 2.6, ρt 7800, C1 2.5, sand 2650 kg/m³, Cunit 3.15e10).
+      // v1.8 used the calibrated fit 2.8·W·V²/D² = 222.1 mpy (5.64 mm/y → ⚠ at any sand rate).
       setv(app, { ev_sand: 2 }); calc(app, 'calcPipeErosion');
-      const E = 2.8 * 2 * Vm * Vm / (D * D);
-      assert.rel(app.win.WTS_state.pipeErosion.E, E, 1e-9, 'sand erosion (screening fit)');
+      const Eref = dnvBendRef({ lbPerDay: 2 * 5, vFps: Vm, dIn: D, rhoLbFt3: rho, muCp: muMixRef(Z, R, T, P), dpUm: 250, RD: 1.5 });
+      assert.rel(app.win.WTS_state.pipeErosion.E, Eref.mpy, 1e-6, 'DNV bend erosion vs hand calc (mpy)');
+      assert.ok(Eref.mmy > 1e-4 && Eref.mmy < 0.1, 'well below 0.1 mm/y: ' + Eref.mmy);
+      assert.ok(222 / Eref.mpy > 100, 'v1.8 fit read > 100× higher');
       const sl = row(app, 'ev_res', 'Sand erosion screen');
-      assert.rel(num(sl), E, 1e-3, 'mpy on the one line'); assert.includes(sl, 'mm/y'); assert.includes(sl, 'lb/MMscf');
+      assert.near(num(sl), Eref.mpy, 0.0006, 'mpy on the one line (3 dp)'); assert.includes(sl, 'mm/y'); assert.includes(sl, 'lb/MMscf'); assert.includes(sl, 'DNV');
+      assert.includes(app.el('ev_res').textContent, '✓ Sand erosion is within 0.1 mm/y');
+      // Linear in sand rate: the 0.1 mm/y threshold is crossed at W = 2·0.1/E(2) lb/MMscf.
+      const Wcrit = 2 * 0.1 / Eref.mmy;
+      setv(app, { ev_sand: Wcrit * 1.02 }); calc(app, 'calcPipeErosion');
+      assert.rel(app.win.WTS_state.pipeErosion.E, Eref.mpy * Wcrit * 1.02 / 2, 1e-6, 'linear in sand');
       assert.includes(app.el('ev_res').textContent, '⚠ Sand erosion exceeds 0.1 mm/y');
+      setv(app, { ev_sand: Wcrit * 0.98 }); calc(app, 'calcPipeErosion');
+      assert.includes(app.el('ev_res').textContent, '✓ Sand erosion is within 0.1 mm/y');
+      // A tighter bend (R/D 1 → α 26.6°) erodes more than a 5D bend (α 5.7°).
+      setv(app, { ev_sand: 2, ev_rd: 1 }); calc(app, 'calcPipeErosion'); const E1 = app.win.WTS_state.pipeErosion.E;
+      setv(app, { ev_rd: 5 }); calc(app, 'calcPipeErosion'); const E5 = app.win.WTS_state.pipeErosion.E;
+      assert.rel(E1, dnvBendRef({ lbPerDay: 10, vFps: Vm, dIn: D, rhoLbFt3: rho, muCp: muMixRef(Z, R, T, P), dpUm: 250, RD: 1 }).mpy, 1e-6);
+      assert.ok(E1 > E5, 'R/D 1 > R/D 5');
+      setv(app, { ev_rd: 1.5, ev_dp: 0 }); calc(app, 'calcPipeErosion');
+      assert.includes(errText(app, 'ev_res'), 'particle size');
+      setv(app, { ev_dp: 250, ev_sand: 2 });
       // C selection: intermittent / sand / override
       const Cof = (svc, sol) => { setv(app, { ev_svc: svc, ev_sol: sol, ev_c: '' }); calc(app, 'calcPipeErosion'); return app.win.WTS_state.pipeErosion.C; };
       assert.strictEqual(Cof('int', 'free'), 125, 'RP 14E intermittent');

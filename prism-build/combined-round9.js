@@ -10,11 +10,13 @@
 //   • 44-calc-h2sroe
 //   • 45-calc-orifice
 //   • 46-calc-gaspvt
+//   • 47-calc-historian
 //   • 48-calc-wellkill
 //   • 49-calc-chokeperf
 //   • 49-calc-dispersion
 //   • 49-calc-flowline
 //   • 49-calc-fluids
+//   • 49-calc-gaslift
 //   • 49-calc-lineheat
 //   • 49-calc-proving
 //   • 49-calc-scale
@@ -251,7 +253,7 @@
     function _blank(id) { var e = _byId(id); return !e || String(e.value).trim() === ''; }
     function _fmt(v, d) {
         if (v == null || !isFinite(v)) return '—';
-        return Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) });
+        return (G.WTS_fmtNum ? G.WTS_fmtNum(v, 0, (d == null ? 2 : d)) : Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) }));
     }
     function _metric() { var U = G.WTS_units; return !!(U && U.getSystem && U.getSystem() === 'metric' && U.format); }
     // Value in the display system; impLabel is the imperial text shown in imperial.
@@ -591,6 +593,21 @@
     }
 
     function _row(l, v) { return '<div class="rrow"><span class="rl">' + l + '</span><span class="rv">' + v + '</span></div>'; }
+    // Metric companions of the field-unit coefficients (v3.0). The equations are
+    // unit-specific, so C, a and b stay in field units and Metric mode adds the same
+    // equation written in m³/d (at the same base) and kPa:
+    //   q[m³/d] = C_SI·(p̄r² − pwf²)[kPa²]ⁿ,  C_SI = C·Kq/Kp^(2n)
+    //   Δp²[kPa²] = a_SI·q[m³/d] + b_SI·q²,   a_SI = a·Kp²/Kq,  b_SI = b·Kp²/Kq²
+    //   Kq = 28.3168466 m³ per Mscf, Kp = 6.894757293 kPa per psi (exact definitions).
+    var KQ = 28.3168466, KP = 6.894757293168;
+    function coeffSI(n, C, a, b) {
+        return {
+            C: (C != null && isFinite(C) && isFinite(n)) ? C * KQ / Math.pow(KP, 2 * n) : null,
+            a: (a != null && isFinite(a)) ? a * KP * KP / KQ : null,
+            b: (b != null && isFinite(b)) ? b * KP * KP / (KQ * KQ) : null
+        };
+    }
+    G.WTS_gasdeliv_coeffSI = coeffSI;
     function _aofText(q) {
         if (q == null || !isFinite(q)) return '—';
         return _u(q, 'gasRateSmall', 1, 'MSCFD') + ' (' + _u(q / 1000, 'gasRate', 3, 'MMSCFD') + ')';
@@ -606,6 +623,7 @@
         h += _row('Points used', _fmt(r.type === 'single' ? 1 : r.points.length, 0) + ' (' + TYPE_SHORT[r.type] + ')');
         h += _row('Exponent n', cn.n.toFixed(4));
         h += _row('Coefficient C', cn.C.toExponential(4) + ' MSCFD/psia²ⁿ');
+        if (_metric()) h += _row('Coefficient C (metric: q in m³/d, p in kPa)', coeffSI(cn.n, cn.C).C.toExponential(4) + ' (m³/d)/kPa²ⁿ');
         if (cn.r2 != null) h += _row('Fit R² (log–log)', cn.r2.toFixed(4));
         h += _row('AOF', _aofText(cn.aof));
         if (r.pwfDesign != null) h += _row('Rate at pwf = ' + pwfdTxt, _u(cn.qAtPwf, 'gasRateSmall', 1, 'MSCFD'));
@@ -618,6 +636,11 @@
         } else {
             h += _row('a', lit.a != null ? lit.a.toFixed(2) + ' psia²/MSCFD' : '—');
             h += _row('b', lit.b != null ? lit.b.toExponential(4) + ' psia²/(MSCFD)²' : '—');
+            if (_metric() && lit.a != null && lit.b != null) {
+                var si = coeffSI(null, null, lit.a, lit.b);
+                h += _row('a (metric: kPa², m³/d)', _fmt(si.a, 4) + ' kPa²/(m³/d)');
+                h += _row('b (metric: kPa², m³/d)', si.b.toExponential(4) + ' kPa²/(m³/d)²');
+            }
             h += _row('AOF', lit.ok ? _aofText(lit.aof) : '—');
             if (r.pwfDesign != null) h += _row('Rate at pwf = ' + pwfdTxt, lit.ok ? _u(lit.qAtPwf, 'gasRateSmall', 1, 'MSCFD') : '—');
             if (r.qTarget != null) h += _row('pwf at q = ' + qtTxt, !lit.ok ? '—' : (lit.qAboveAof ? 'above AOF' : _u(lit.pwfAtQ, 'pressure', 1, 'psia')));
@@ -800,7 +823,7 @@
     // ── Page helpers (shared calculator pattern) ─────────────────────────
     function _byId(id) { return (typeof document !== 'undefined' && document.getElementById) ? document.getElementById(id) : null; }
     function _num(id) { var e = _byId(id); if (!e) return NaN; var s = String(e.value).trim(); return s === '' ? NaN : parseFloat(s); }
-    function _fmt(v, d) { if (v == null || !isFinite(v)) return '—'; return Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) }); }
+    function _fmt(v, d) { if (v == null || !isFinite(v)) return '—'; return (G.WTS_fmtNum ? G.WTS_fmtNum(v, 0, (d == null ? 2 : d)) : Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) })); }
     function _fix(v, d) { if (v == null || !isFinite(v)) return '—'; return Number(v).toFixed(d); }
     function _metric() { var U = G.WTS_units; return !!(U && U.getSystem && U.getSystem() === 'metric' && U.format); }
     // value in the display system; impLabel is the imperial text ('psia' where the category says 'psi')
@@ -1325,7 +1348,7 @@
     function _blank(id) { var e = _byId(id); return !e || String(e.value).trim() === ''; }
     function _fmt(v, d) {
         if (v == null || !isFinite(v)) return '—';
-        return Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) });
+        return (G.WTS_fmtNum ? G.WTS_fmtNum(v, 0, (d == null ? 2 : d)) : Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) }));
     }
     // value in the display system; impLabel is the imperial text
     function _u(v, cat, d, impLabel) {
@@ -1599,13 +1622,17 @@
         var B = G.WTS_baseConditions, b = { Tb_F: +inp.tb, Pb_psia: +inp.pbase };
         return (B && B.text) ? B.text(b) : (_fmt(b.Tb_F, 2) + ' °F / ' + _fmt(b.Pb_psia, 3) + ' psia');
     }
+    // Metric (v3.0): molar volume m³/kmol (1 scf/lbmol = 0.0283168466/0.45359237),
+    // molar mass kg/kmol (same number), intensity per 10³ Sm³ (1 MMSCF = 28.3168466 10³ Sm³).
+    function _isMet() { return !!(G.WTS_units && G.WTS_units.getSystem && G.WTS_units.getSystem() === 'metric'); }
     function _resultsHtml(r, inp) {
+        var met = _isMet();
         var h = '<div class="rbox"><div class="rbox-title">Flared Gas</div>' +
             _row('Volume flared', _u(r.Vscf / 1e6, 'gasVolume', 4, 'MMSCF')) +
             _row('Normal volume (0 °C, 101.325 kPa)', _fmt(r.Nm3, 1) + ' Nm³') +
-            _row('Molar volume at base', _fmt(r.Vm, 2) + ' scf/lbmol') +
+            _row('Molar volume at base', met ? _fmt(r.Vm * 0.0283168466 / LB_KG, 3) + ' Sm³/kmol' : _fmt(r.Vm, 2) + ' scf/lbmol') +
             _row('Moles flared', _fmt(r.nmol, 1) + ' lbmol (' + _fmt(r.nmol * LB_KG, 1) + ' kmol)') +
-            _row('Molar mass', _fmt(r.MW, 3) + ' lb/lbmol') +
+            _row('Molar mass', _fmt(r.MW, 3) + (met ? ' kg/kmol' : ' lb/lbmol')) +
             _row('Gas gravity (air = 1)', _fmt(r.SG, 4)) +
             _row('Heating value HHV', _u(r.HHV, 'heatingValue', 1, 'Btu/scf')) +
             _row('Heat released', _fmt(r.E_MMBtu, 1) + ' MMBtu (' + _fmt(r.E_GJ, 1) + ' GJ)') +
@@ -1623,7 +1650,7 @@
             _row('Unburned H2S', _fmt(r.h2sUnburned_kg, 2) + ' kg') +
             _row('Total CO2e (' + r.gwpLabel + ')', _t(r.co2e_t) + ' t') +
             _row('CO2e per day', _t(r.co2ePerDay_t) + ' t/d') +
-            _row('Intensity (gas CO2e)', (r.intensity == null ? '—' : _fmt(r.intensity, 2) + ' t CO2e per MMSCF')) +
+            _row('Intensity (gas CO2e)', (r.intensity == null ? '—' : met ? _fmt(r.intensity / 28.3168466, 4) + ' t CO2e per 10³ Sm³' : _fmt(r.intensity, 2) + ' t CO2e per MMSCF')) +
             _row('Tier-1 reference CO2 (ethane proxy)', _t(r.tier1_t) + ' t') +
             '</div>';
         h += r.verdicts.map(_verdictHtml).join('');
@@ -1761,7 +1788,7 @@
     function _num(id) { var e = _byId(id); if (!e) return NaN; var s = String(e.value).trim(); return s === '' ? NaN : parseFloat(s); }
     function _fmt(v, d) {
         if (v == null || !isFinite(v)) return '—';
-        return Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) });
+        return (G.WTS_fmtNum ? G.WTS_fmtNum(v, 0, (d == null ? 2 : d)) : Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) }));
     }
     // Auto decimals: about 4-5 significant figures without trailing zeros.
     function _fa(v) {
@@ -1951,9 +1978,9 @@
         if (!r.ok) { _errors('hs_roe_res', 'roe', r.bad); return; }
         var v = '';
         if (r.x100_ft < 50) v += _ok('100 ppm radius of exposure is under 50 ft.');
-        else v += _warn('100 ppm radius of exposure is ' + _fa(r.x100_ft) + ' ft — check for public areas inside it; a contingency plan may be required.');
+        else v += _warn('100 ppm radius of exposure is ' + _fa(r.x100_ft) + ' ft (' + _fa(r.x100_ft * 0.3048) + ' m) — check for public areas inside it; a contingency plan may be required.');
         if (r.x100_ft > 3000) v += _warn('100 ppm radius of exposure exceeds 3,000 ft.');
-        if (r.x500_ft >= 50) v += _warn('500 ppm radius of exposure is ' + _fa(r.x500_ft) + ' ft — check for public roads inside it.');
+        if (r.x500_ft >= 50) v += _warn('500 ppm radius of exposure is ' + _fa(r.x500_ft) + ' ft (' + _fa(r.x500_ft * 0.3048) + ' m) — check for public roads inside it.');
         res.innerHTML =
             '<div class="rbox"><div class="rbox-title">Radius of Exposure</div>' +
             _row('H2S mole fraction', _fmt(r.mf, 6)) +
@@ -1979,8 +2006,8 @@
             _row('SO2', _fa(r.so2_lbhr) + ' lb/hr (' + _fa(r.so2_kghr) + ' kg/hr)') +
             _row('SO2 per day', _fa(r.so2_td) + ' t/d') +
             _row('Unburned H2S', _fa(r.h2s_lbhr) + ' lb/hr (' + _fa(r.h2s_kghr) + ' kg/hr)') +
-            _note('Ground-level SO2 concentration depends on flare height, plume rise and weather; a dispersion ' +
-                'screening tool is planned (roadmap item 11). Use Flare Emissions for full-period reporting. ' +
+            _note('Ground-level SO2 concentration depends on flare height, plume rise and weather: screen it on the ' +
+                'SO2 / H2S Dispersion Screening page. Use Flare Emissions for full-period reporting. ' +
                 _basisNote(r.basis)) +
             '</div>';
         res.setAttribute('data-done', '1');
@@ -2164,7 +2191,8 @@
 //   Every rate comes from the host's pure AGA-3 engine
 //   window.WTS_aga3_compute (API MPMS 14.3.1 RG flange-tap Cd with Re
 //   iteration, Y1 upstream expansion factor, Standing + Wichert-Aziz
-//   pseudo-criticals, Dranchuk-Abou-Kassem Z) — the same numbers as the
+//   pseudo-criticals, Dranchuk-Abou-Kassem Z, v3.0 Fpv = √(Zb/Zf) with the
+//   base Z, real/ideal gravity basis Gr = Gi·0.99959/Zb) — the same numbers as the
 //   AGA-3 Gas Metering page. Z does not depend on bore or differential, so
 //   it is solved once and passed back in (identical value, faster).
 //     • Exact bore d*: bisection on d in [0.10·D, 0.75·D] so that the rate
@@ -2193,7 +2221,7 @@
 //   renderOrificeSelect(body)      paint the page into #pgBody
 //   calcOrificeSelect()            read DOM → validate → compute → render
 //   WTS_orifice_compute(input)     pure; field units in and out, no DOM
-//       input  {q, D, Ps, TfF, SG, co2, n2, h2s, urv, lo, hi, des, TbF, Pb}
+//       input  {q, D, Ps, TfF, SG, sgBasis ('real' default | 'ideal'), co2, n2, h2s, urv, lo, hi, des, TbF, Pb}
 //              (a legacy `mode` from an earlier build is accepted and ignored)
 //       output {ok, errors[], errorIds[], dStar, betaStar, dStarFlag, candidates[],
 //               chosen, up, down, table[], verdicts[], warnings[], Z, ...}
@@ -2215,7 +2243,7 @@
     function _num(id) { var e = _byId(id); if (!e) return NaN; var s = String(e.value).trim(); return s === '' ? NaN : parseFloat(s); }
     function _fmt(v, d) {
         if (v == null || !isFinite(v)) return '—';
-        return Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) });
+        return (G.WTS_fmtNum ? G.WTS_fmtNum(v, 0, (d == null ? 2 : d)) : Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) }));
     }
     function _metric() { var U = G.WTS_units; return !!(U && U.getSystem && U.getSystem() === 'metric' && U.format); }
     function _u(v, cat, d, impLabel, dMet) {
@@ -2256,6 +2284,7 @@
         var co2 = _opt(inp.co2, 0), n2 = _opt(inp.n2, 0), h2s = _opt(inp.h2s, 0);
         var urv = _nv(inp.urv), lo = _opt(inp.lo, 20), hi = _opt(inp.hi, 80), des = _opt(inp.des, 50);
         var TbF = _opt(inp.TbF, 60), Pb = _opt(inp.Pb, 14.696);
+        var sgBasis = inp.sgBasis === 'ideal' ? 'ideal' : 'real';
 
         if (!(q > 0)) err('Target gas rate must be greater than zero.', P + 'q');
         if (!(D > 0)) err('Meter run internal diameter must be greater than zero.', P + 'D');
@@ -2276,7 +2305,7 @@
         if (!(Pb > 0)) err('Base pressure must be greater than zero.', P + 'Pb');
         if (errors.length) return fail();
 
-        var base = { D: D, Ps: Ps, TfF: TfF, SG: SG, co2: co2, h2s: h2s, n2: n2, TbF: TbF, Pb: Pb, tap: 'flange' };
+        var base = { D: D, Ps: Ps, TfF: TfF, SG: SG, sgBasis: sgBasis, co2: co2, h2s: h2s, n2: n2, TbF: TbF, Pb: Pb, tap: 'flange' };
         var probe = aga(Object.assign({}, base, { d: D / 2, hw: urv * des / 100 }));
         if (!probe.ok) { probe.errors.forEach(function (m) { err(m, null); }); return fail(); }
         base.Z = probe.Z;   // Z is independent of bore and differential
@@ -2374,8 +2403,8 @@
 
         return {
             ok: true, errors: [], errorIds: [], step: STEP, rule: rule,
-            q: q, D: D, Ps: Ps, TfF: TfF, SG: SG, co2: co2, n2: n2, h2s: h2s, urv: urv, lo: lo, hi: hi, des: des, TbF: TbF, Pb: Pb,
-            Z: probe.Z, Pf1: Pf1, Tpr: probe.Tpr, Ppr: probe.Ppr,
+            q: q, D: D, Ps: Ps, TfF: TfF, SG: SG, sgBasis: sgBasis, co2: co2, n2: n2, h2s: h2s, urv: urv, lo: lo, hi: hi, des: des, TbF: TbF, Pb: Pb,
+            Z: probe.Z, Zb: probe.Zb, Fpv: probe.Fpv, Gr: probe.Gr, Gi: probe.Gi, Pf1: Pf1, Tpr: probe.Tpr, Ppr: probe.Ppr,
             hwDes: hwDes, dStar: dStar, betaStar: dStar != null ? dStar / D : null, dStarFlag: dStarFlag,
             candidates: candidates, chosen: chosen, up: up, down: down, inWindow: inWin, table: table,
             verdicts: verdicts,
@@ -2407,6 +2436,8 @@
         h += '</div></div>';
         h += '<div class="card"><div class="card-title">Gas Composition</div><div class="fg">';
         h += _field('op_SG', 'Gas specific gravity (air = 1)', 0.65, ' min="0.5" max="1.8"');
+        h += '<div class="fg-item"><label for="op_sgb">Gas gravity basis</label><select id="op_sgb">' +
+            '<option value="real" selected>Real (ρgas/ρair at base)</option><option value="ideal">Ideal (M/M_air)</option></select></div>';
         h += _field('op_CO2', 'CO2 (%)', 0.5);
         h += _field('op_N2', 'N2 (%)', 1.0);
         h += _field('op_H2S', 'H2S (%)', 0);
@@ -2449,6 +2480,7 @@
     function _readInputs() {
         return {
             q: _num('op_q'), D: _num('op_D'), Ps: _num('op_P'), TfF: _num('op_T'), SG: _num('op_SG'),
+            sgBasis: (_byId('op_sgb') && _byId('op_sgb').value === 'ideal') ? 'ideal' : 'real',
             co2: _num('op_CO2'), n2: _num('op_N2'), h2s: _num('op_H2S'),
             urv: _num('op_urv'), lo: _num('op_lo'), hi: _num('op_hi'), des: _num('op_des'),
             TbF: _num('op_Tb'), Pb: _num('op_Pb')
@@ -2481,6 +2513,8 @@
         h += _row('Next plate up (larger bore)', r.up ? _bore(r.up) + ' — ' + (isFinite(r.up.pct) ? _fmt(r.up.pct, 1) + ' % of range' : 'off scale') : 'none within β 0.75');
         h += _row('Next plate down (smaller bore)', r.down ? _bore(r.down) + ' — ' + (isFinite(r.down.pct) ? _fmt(r.down.pct, 1) + ' % of range' : 'off scale') : 'none within β 0.10');
         h += _row('Z-factor (DAK)', r.Z.toFixed(4));
+        h += _row('Base Z-factor (Zb) / Fpv = √(Zb/Zf)', r.Zb.toFixed(5) + ' / ' + r.Fpv.toFixed(5));
+        h += _row('Gas gravity real Gr / ideal Gi', r.Gr.toFixed(4) + ' / ' + r.Gi.toFixed(4));
         h += _row('Flowing pressure Pf1', _u(r.Pf1, 'pressure', 1, 'psia', 0));
         h += '</div>';
         // Plate-change table (values written already converted)
@@ -2500,6 +2534,7 @@
         h += '</tbody></table></div></div>';
         h += '<div class="chart-wrap"><canvas id="op_chart" width="600" height="320"></canvas></div>';
         h += '<div><b>Notes</b> Rates use the AGA-3 page engine (flange taps, RG Cd, DAK Z with Standing + Wichert-Aziz pseudo-criticals; N2 is recorded but not in the Z correction). ' +
+            'Fpv = √(Zb/Zf) with the base Z (v3.0; was 1/√Zf, ≈ 0.1–0.3 % high); ' + (r.sgBasis === 'ideal' ? 'ideal gravity converted to real. ' : 'real gravity. ') +
             'Plate list: every 0.125" bore from 0.125" to the largest bore with β ≤ 0.75; the exact bore is rounded to the nearest 0.125" — confirm the plates on site.' +
             ' The 20–80 % window is field practice. Standard volumes are at the entered base conditions (they follow the header "Std" setting until you type your own).</div>';
         return h;
@@ -2601,7 +2636,8 @@
 //     • Z by Dranchuk–Abou-Kassem (1975) AND Hall–Yarborough (1973), with
 //       the difference;
 //     • Bg (ft³/scf and rb/Mscf), gas density, viscosity (Lee–Gonzalez–Eakin
-//       1966), gas compressibility cg, heat-capacity ratio k and speed of sound;
+//       1966, with the Standing N2/CO2/H2S correction), gas compressibility cg,
+//       heat-capacity ratio k (ideal and real gas) and the real-gas speed of sound;
 //     • a Z-vs-pressure table and chart at the given temperature.
 //
 // REUSE
@@ -2624,6 +2660,8 @@
 //                               → {ok, …} or {ok:false, errors[], bad[]}
 //   WTS_gaspvt_pseudoCriticals(sg, co2, h2s, n2)   (mole fractions)
 //   WTS_gaspvt_k(sg, tF, co2, h2s, n2)            ideal-gas Cp/Cv
+//   WTS_gaspvt_viscosity(sg, tF, Z, p, yco2, yh2s, yn2)  LGE + Standing impurity correction
+//   (compute() also returns kReal, cpReal, cvReal: real-gas values from the DAK departure functions)
 //
 // STATE
 //   WTS_state.gaspvt = {ok, z, zDAK, zHY, Tpc, Ppc, Bg_ft3scf, rho, mu, cg, c, k, ts}
@@ -2665,7 +2703,7 @@
     function _fin(x) { return typeof x === 'number' && isFinite(x); }
     function _fmt(v, d) {
         if (v == null || !isFinite(v)) return '—';
-        return Number(v).toLocaleString(undefined, { minimumFractionDigits: (d == null ? 2 : d), maximumFractionDigits: (d == null ? 2 : d) });
+        return (G.WTS_fmtNum ? G.WTS_fmtNum(v, (d == null ? 2 : d), (d == null ? 2 : d)) : Number(v).toLocaleString(undefined, { minimumFractionDigits: (d == null ? 2 : d), maximumFractionDigits: (d == null ? 2 : d) }));
     }
     function _sig(v, s) {   // significant figures, no grouping ambiguity for small numbers
         if (v == null || !isFinite(v)) return '—';
@@ -2735,11 +2773,78 @@
         return { dak: L.Z_dranchukAbouKassem(Tpr, Ppr), hy: L.Z_hallYarborough(Tpr, Ppr) };
     }
 
+    // ── Gas viscosity with the Standing impurity correction ──────────
+    // Standing, M.B. (1977, SPE reprint 1981), "Volumetric and Phase Behavior of
+    // Oil Field Hydrocarbon Systems", fits of the Carr–Kobayashi–Burrows (1954)
+    // chart inserts: the 1-atm viscosity read at the gravity of the whole gas is
+    // raised by (cp, log = log10)
+    //   Δμ_N2  = y_N2 ·(8.48e-3·log γg + 9.59e-3)
+    //   Δμ_CO2 = y_CO2·(9.08e-3·log γg + 6.24e-3)
+    //   Δμ_H2S = y_H2S·(8.49e-3·log γg + 3.73e-3)
+    // (also Ahmed, "Reservoir Engineering Handbook", eqs. 2-54…2-57).
+    // Lee–Gonzalez–Eakin (1966) writes μg = 1e-4·K·exp(X·ρ^Y), where 1e-4·K is the
+    // dilute-gas (low-pressure) viscosity and exp(X·ρ^Y) the dense-gas ratio. The
+    // correction is added to the dilute term and carried by the same ratio:
+    //   μg = (1e-4·K + ΣΔμ)·exp(X·ρ^Y),   K, X, Y, ρ at the total gravity and the
+    // Wichert–Aziz-corrected Z. With no N2/CO2/H2S it is plain LGE.
+    function standingDelta(sg, yco2, yh2s, yn2) {
+        var lg = Math.log(sg) / Math.LN10;
+        var dn2 = yn2 * (8.48e-3 * lg + 9.59e-3), dco2 = yco2 * (9.08e-3 * lg + 6.24e-3), dh2s = yh2s * (8.49e-3 * lg + 3.73e-3);
+        return { n2: dn2, co2: dco2, h2s: dh2s, total: dn2 + dco2 + dh2s };
+    }
+    function viscosity(L, sg, tF, Z, p, yco2, yh2s, yn2) {
+        var mu0 = L.mu_g_leeGonzalezEakin(sg, tF, Z, p);             // plain LGE
+        var M = MW_AIR * sg, TR = tF + RANKINE;
+        var K = (9.4 + 0.02 * M) * Math.pow(TR, 1.5) / (209 + 19 * M + TR);
+        var mu1 = 1e-4 * K, ratio = mu0 / mu1;
+        var d = standingDelta(sg, yco2 || 0, yh2s || 0, yn2 || 0);
+        return { mu: (mu1 + d.total) * ratio, muLGE: mu0, mu1: mu1, ratio: ratio, delta: d };
+    }
+
+    // ── Real-gas heat capacities and speed of sound ─────────────────
+    // Residual (departure) functions from the DAK Z(Tpr, Ppr) by numerical
+    // differentiation and integration (Smith, Van Ness & Abbott, "Introduction to
+    // Chemical Engineering Thermodynamics", 7th ed., §6.3, eqs. 6.46–6.49;
+    // Poling, Prausnitz & O'Connell, 5th ed., §6-4):
+    //   Cp − Cp° = −R·∫0^Ppr [2·Tpr·(∂Z/∂Tpr) + Tpr²·(∂²Z/∂Tpr²)]_Ppr dPpr/Ppr
+    //   Cp − Cv  =  R·[Z + Tpr·(∂Z/∂Tpr)]² / [Z − Ppr·(∂Z/∂Ppr)]
+    //   (∂p/∂ρ)_T = Z·R·T / (M·[1 − (Ppr/Z)(∂Z/∂Ppr)])
+    //   c = √(k·g_c·(∂p/∂ρ)_T),   k = Cp/Cv (real gas)
+    // Derivatives by central differences (h = 1e-3·Tpr, 1e-4·Ppr), integral by
+    // composite Simpson on 120 panels. At low pressure k → Cp°/Cv° and
+    // c → √(k°·R·T/M).
+    function realGas(L, Tpr, Ppr, cpIdeal) {
+        var Zf = function (t, q) { return L.Z_dranchukAbouKassem(t, q); };
+        var ht = 1e-3 * Tpr;
+        function g(q) {                                // integrand 2T·Z_T + T²·Z_TT at Ppr = q, divided by q
+            var zp = Zf(Tpr + ht, q), z0 = Zf(Tpr, q), zm = Zf(Tpr - ht, q);
+            var zt = (zp - zm) / (2 * ht), ztt = (zp - 2 * z0 + zm) / (ht * ht);
+            return (2 * Tpr * zt + Tpr * Tpr * ztt) / q;
+        }
+        var N = 120, hq = Ppr / N, s = 0;
+        for (var j = 0; j <= N; j++) {
+            var q = j === 0 ? 1e-6 * Ppr : j * hq;          // integrand is finite at 0 (second virial)
+            var w = (j === 0 || j === N) ? 1 : (j % 2 ? 4 : 2);
+            s += w * g(q);
+        }
+        var cpRes = -R_J * s * hq / 3;
+        var Z = Zf(Tpr, Ppr);
+        var zT = (Zf(Tpr + ht, Ppr) - Zf(Tpr - ht, Ppr)) / (2 * ht);
+        var hp = Math.max(1e-4 * Ppr, 1e-7);
+        var zP = (Zf(Tpr, Ppr + hp) - Zf(Tpr, Math.max(1e-9, Ppr - hp))) / (Ppr + hp - Math.max(1e-9, Ppr - hp));
+        var cp = cpIdeal + cpRes;
+        var cpMinusCv = R_J * Math.pow(Z + Tpr * zT, 2) / (Z - Ppr * zP);
+        var cv = cp - cpMinusCv;
+        return { cp: cp, cv: cv, k: cp / cv, cpRes: cpRes, dZdT: zT, dZdP: zP, Z: Z, compFactor: 1 - Ppr * zP / Z };
+    }
+
     // Properties at one (p, T) given the pseudo-criticals.
-    function _state(L, pc, sg, p, tF, full) {
+    function _state(L, pc, sg, p, tF, full, imp) {
         var TR = tF + RANKINE, Tpr = TR / pc.Tpc, Ppr = p / pc.Ppc;
         var z = _zBoth(L, Tpr, Ppr), Z = z.dak;
         var M = MW_AIR * sg;
+        var y = imp || {};
+        var vis = viscosity(L, sg, tF, Z, p, y.co2, y.h2s, y.n2);
         var s = {
             p: p, t: tF, Tpr: Tpr, Ppr: Ppr, zDAK: z.dak, zHY: z.hy,
             zDiff: z.hy - z.dak, zDiffPct: 100 * (z.hy - z.dak) / z.dak, z: Z,
@@ -2747,10 +2852,13 @@
             // rb/Mscf from the same standard conditions (PRiSM Bg() rounds the constant to 5.035).
             Bg_rbMscf: 1000 * P_SC * Z * TR / (T_SC * p) / FT3_PER_BBL,
             rho: p * M / (Z * R_GAS * TR),
-            mu: L.mu_g_leeGonzalezEakin(sg, tF, Z, p)
+            mu: vis.mu, muLGE: vis.muLGE, muDelta: vis.delta.total * vis.ratio
         };
         s.E = 1 / s.Bg_ft3scf;
-        s.Fpv = 1 / Math.sqrt(Z);
+        // AGA-3 / API MPMS 14.3.3 supercompressibility Fpv = √(Zb/Zf) (v3.0, as the AGA-3 engine;
+        // was 1/√Z with Zb = 1): Zb = DAK Z at the standard conditions on the same pseudo-criticals.
+        s.Zb = L.Z_dranchukAbouKassem(T_SC / pc.Tpc, P_SC / pc.Ppc);
+        s.Fpv = Math.sqrt(s.Zb / Z);
         if (full) {
             // cg = 1/p − (1/Z)·dZ/dp, dZ/dp from DAK by central difference in Ppr.
             var h = Math.max(1e-4 * Ppr, 1e-5);
@@ -2800,14 +2908,18 @@
             return { ok: false, bad: ['sg'], keys: ['sghc'], errors: ['Gas gravity ' + _fmt(sg, 3) + ' is too low for the stated CO2/H2S/N2: the hydrocarbon part would be lighter than methane (gravity ' + _fmt(pc.sgHc, 3) + ').'] };
         }
         var TR = t + RANKINE;
-        var st = _state(L, pc, sg, p, t, true);
+        var imp = { co2: yco2, h2s: yh2s, n2: yn2 };
+        var st = _state(L, pc, sg, p, t, true, imp);
         if (!(_fin(st.zDAK) && _fin(st.zHY) && pc.Tpc > 0 && TR / pc.Tpc >= 1.0)) {
             return { ok: false, bad: ['t'], keys: ['tpc'], tpcF: pc.Tpc - RANKINE, errors: ['Temperature is below the pseudo-critical temperature (' + _fmt(pc.Tpc - RANKINE, 1) + ' °F); the gas correlations do not apply (Tpr must be at least 1.0).'] };
         }
         var hc = heatCapacity(pc.sgHc, t, yco2, yh2s, yn2);
         var M = MW_AIR * sg;
-        // Speed of sound: c = √(k·Z·g_c·R·T / M), k = ideal-gas Cp°/Cv° at T.
-        var c = Math.sqrt(hc.k * st.z * GC * R_FT_LBF * TR / M);
+        // Real-gas Cp, Cv, k and speed of sound from the DAK departure functions.
+        var rg = realGas(L, st.Tpr, st.Ppr, hc.cp);
+        var c = Math.sqrt(rg.k * GC * st.z * R_FT_LBF * TR / (M * rg.compFactor));
+        // Before v3.0: c = √(k°·Z·g_c·R·T/M) with the ideal-gas k° (kept for comparison).
+        var cIdealK = Math.sqrt(hc.k * st.z * GC * R_FT_LBF * TR / M);
 
         var warnings = [];
         if (st.Tpr < 1.05 || st.Tpr > 3.0) warnings.push('Tpr = ' + _fmt(st.Tpr, 3) + ' is outside 1.05–3.0, the range the Z correlations were fitted over.');
@@ -2831,7 +2943,7 @@
         // −40 °F: Tpr 0.87, Z 0.25, 31 lb/ft³), plus the same range warnings.
         var sep = null;
         if (sepGiven) {
-            sep = _state(L, pc, sg, psep, tsep, false);
+            sep = _state(L, pc, sg, psep, tsep, false, imp);
             if (!(_fin(sep.zDAK) && _fin(sep.zHY) && sep.Tpr >= 1.0)) {
                 return { ok: false, bad: ['tsep'], keys: ['tsepTpc'], tpcF: pc.Tpc - RANKINE, errors: ['Separator temperature is below the pseudo-critical temperature (' + _fmt(pc.Tpc - RANKINE, 1) + ' °F); the gas correlations do not apply (Tpr must be at least 1.0).'] };
             }
@@ -2845,13 +2957,17 @@
             eps: pc.eps, Tpc: pc.Tpc, Ppc: pc.Ppc, sour: (yco2 + yh2s) > 0,
             Tpr: st.Tpr, Ppr: st.Ppr, zDAK: st.zDAK, zHY: st.zHY, zDiff: st.zDiff, zDiffPct: st.zDiffPct, z: st.z,
             Bg_ft3scf: st.Bg_ft3scf, Bg_rbMscf: st.Bg_rbMscf, E: st.E, rho: st.rho, mu: st.mu,
-            cg: st.cg, cpr: st.cpr, cp: hc.cp, cv: hc.cv, k: hc.k, c: c,
+            cg: st.cg, cpr: st.cpr, cp: hc.cp, cv: hc.cv, k: hc.k, c: c, cIdealK: cIdealK,
+            cpReal: rg.cp, cvReal: rg.cv, kReal: rg.k, cpRes: rg.cpRes,
+            muLGE: st.muLGE, muDelta: st.muDelta,
             sep: sep, table: table, curve: curve, pMax: pMax, warnings: warnings
         };
     }
 
     G.WTS_gaspvt_compute = compute;
     G.WTS_gaspvt_pseudoCriticals = pseudoCriticals;
+    G.WTS_gaspvt_viscosity = function (sg, tF, Z, p, yco2, yh2s, yn2) { var L = _lib(); return L ? viscosity(L, sg, tF, Z, p, yco2, yh2s, yn2) : null; };
+    G.WTS_gaspvt_standingDelta = standingDelta;
     G.WTS_gaspvt_k = function (sg, tF, yco2, yh2s, yn2) {
         var pc = pseudoCriticals(sg, yco2 || 0, yh2s || 0, yn2 || 0);
         return pc ? heatCapacity(pc.sgHc, tF, yco2 || 0, yh2s || 0, yn2 || 0).k : NaN;
@@ -2888,7 +3004,7 @@
         var h = '';
         // 1 — pseudo-criticals
         h += '<div class="rbox"><div class="rbox-title">Pseudo-critical Properties</div>' +
-            _row('Apparent molecular weight', _fmt(r.M, 2) + ' lb/lb-mol') +
+            _row('Apparent molecular weight', _fmt(r.M, 2) + (_metric() ? ' kg/kmol' : ' lb/lb-mol')) +   // same number in both
             _row('Hydrocarbon gas gravity', _fmt(r.sgHc, 4)) +
             _row('Tpc, hydrocarbon (Sutton)', _u(r.TpcHc, 'tempAbsolute', 1, '°R')) +
             _row('Ppc, hydrocarbon (Sutton)', _u(r.PpcHc, 'pressure', 1, 'psia')) +
@@ -2914,10 +3030,13 @@
             _row('Expansion factor E', _sig(r.E, 4) + (met ? ' sm³/rm³' : ' scf/ft³')) +
             _row('Gas density', _us(r.rho, 'density', 4, 'lb/ft³')) +
             _row('Viscosity (Lee–Gonzalez–Eakin)', _us(r.mu, 'viscosity', 4, 'cp')) +
+            ((r.co2 + r.h2s + r.n2) > 0 ? _row('Standing N2/CO2/H2S viscosity correction (included)', (r.muDelta >= 0 ? '+' : '') + _us(r.muDelta, 'viscosity', 3, 'cp')) : '') +
             _row('Gas compressibility cg', _us(r.cg, 'compressibility', 4, '1/psi')) +
             _row('Pseudo-reduced compressibility cpr', _sig(r.cpr, 4)) +
             _row('Cp/Cv (k), ideal gas', _fmt(r.k, 4)) +
+            _row('Cp/Cv (k), real gas at p and T', _fmt(r.kReal, 4)) +
             _row('Speed of sound', _u(r.c, 'velocity', 1, 'ft/s')) +
+            _row('Speed of sound with ideal-gas k (pre-v3.0 method)', _u(r.cIdealK, 'velocity', 1, 'ft/s')) +
             '</div>';
         // 4 — separator
         if (r.sep) {
@@ -2930,7 +3049,7 @@
                 _row('Bg', met ? _sig(s.Bg_ft3scf, 4) + ' rm³/sm³' : _sig(s.Bg_ft3scf, 4) + ' ft³/scf') +
                 _row('Gas density', _us(s.rho, 'density', 4, 'lb/ft³')) +
                 _row('Viscosity (Lee–Gonzalez–Eakin)', _us(s.mu, 'viscosity', 4, 'cp')) +
-                _row('Supercompressibility Fpv = √(1/Z)', _fmt(s.Fpv, 4)) +
+                _row('Supercompressibility Fpv = √(Zb/Z)', _fmt(s.Fpv, 4) + ' (Zb ' + _fmt(s.Zb, 5) + ')') +
                 '</div>';
         }
         // 5 — verdicts
@@ -2953,11 +3072,15 @@
         // 7 — notes
         h += '<div><b>Notes</b> Pseudo-criticals: Sutton (1985) for the hydrocarbon part, Kay mixing for N2, CO2 and H2S, ' +
             'then the Wichert–Aziz (1972) correction. Bg, density, viscosity, cg and the speed of sound use the DAK Z. ' +
-            'Standard conditions 14.696 psia and 60 °F. Viscosity is Lee–Gonzalez–Eakin with the total gas gravity (no ' +
-            'impurity correction). k is the ideal-gas Cp°/Cv° at the flowing temperature: Cp° of a paraffin gas of the ' +
-            'hydrocarbon molecular weight (interpolated between methane, ethane and propane) mixed with N2, CO2 and H2S ' +
-            '(Reid–Prausnitz–Poling heat capacities). Speed of sound c = √(k·Z·R·T/M); the real-gas departure of k is ' +
-            'neglected, which is usual for engineering use but understates c at high pressure. Fpv takes base Z as 1.</div>';
+            'Standard conditions 14.696 psia and 60 °F. Viscosity is Lee–Gonzalez–Eakin at the total gas gravity; with N2, CO2 or ' +
+            'H2S the Standing (1981) corrections (Carr–Kobayashi–Burrows chart inserts) are added to the low-pressure term and ' +
+            'scaled by the same dense-gas ratio (v3.0; before, no impurity correction). Ideal k is Cp°/Cv° at the flowing ' +
+            'temperature: Cp° of a paraffin gas of the hydrocarbon molecular weight (interpolated between methane, ethane and ' +
+            'propane) mixed with N2, CO2 and H2S (Reid–Prausnitz–Poling heat capacities). Real-gas k adds the departure ' +
+            'functions of the DAK Z (numerical derivatives and integration: Cp − Cp° = −R∫[2T·Z_T + T²·Z_TT]dp/p, ' +
+            'Cp − Cv = R(Z + T·Z_T)²/(Z − p·Z_p)). Speed of sound c = √(k·(∂p/∂ρ)_T) with the real-gas k (v3.0; the ' +
+            'pre-v3.0 √(k°·Z·R·T/M) understated c by up to ≈ 10 % at high pressure; methane at 100 °F, 2,015 psia: NIST ' +
+            '1,552 ft/s). Fpv = √(Zb/Z) with the DAK base Z at 14.696 psia / 60 °F (AGA-3; v3.0, was 1/√Z).</div>';
         return h;
     }
 
@@ -3014,7 +3137,7 @@
         }
         G.WTS_state.gaspvt = {
             ok: true, z: r.z, zDAK: r.zDAK, zHY: r.zHY, Tpc: r.Tpc, Ppc: r.Ppc, Tpr: r.Tpr, Ppr: r.Ppr,
-            Bg_ft3scf: r.Bg_ft3scf, Bg_rbMscf: r.Bg_rbMscf, rho: r.rho, mu: r.mu, cg: r.cg, k: r.k, c: r.c,
+            Bg_ft3scf: r.Bg_ft3scf, Bg_rbMscf: r.Bg_rbMscf, rho: r.rho, mu: r.mu, cg: r.cg, k: r.k, kReal: r.kReal, c: r.c,
             sep: r.sep ? { z: r.sep.z, zDAK: r.sep.zDAK, zHY: r.sep.zHY, Bg_ft3scf: r.sep.Bg_ft3scf, rho: r.sep.rho, mu: r.sep.mu } : null,
             ts: Date.now()
         };
@@ -3090,6 +3213,3132 @@
 })();
 
 // ─── END 46-calc-gaspvt ─────────────────────────────────────────────
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// ─── BEGIN 47-calc-historian ───────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════
+// 47-calc-historian.js — Mini WellOS historian (v3.0, Round-9 plug-in)
+//
+// A small process historian that runs entirely in the browser:
+//   • record()  — cheap in-memory buffer, flushed in batches on a short
+//                 one-shot debounce (2 s) or at once when 2000 samples wait.
+//                 No timer exists while the buffer is empty.
+//   • storage   — auto-selected, shown on the page:
+//        1. opfs    official SQLite WASM build (@sqlite.org/sqlite-wasm 3.53.4)
+//                   in a dedicated Worker on the OPFS "opfs-sahpool" VFS
+//                   (sync access handles are Worker-only; no COOP/COEP needed).
+//        2. sqljs   sql.js 1.14.2 (SQLite compiled to WASM) in memory, the
+//                   whole database file snapshotted to IndexedDB.
+//        3. idb     plain IndexedDB object stores with the same API.
+//        4. memory  volatile (private windows / tests); never persisted.
+//      The engine that first holds data becomes "home"; if it is unavailable
+//      later (another tab holds the OPFS files, offline without the library)
+//      the samples are spooled to IndexedDB and merged into home next time.
+//   • schema    tags(id, name, device, unit, descr, created)
+//               samples(tag_id, t, v, q) — clustered PRIMARY KEY (tag_id, t)
+//                 (WITHOUT ROWID: the key IS the (tag_id, t) index)
+//               rollups(tag_id, t, dt, n, avg, min, max, last, lt, q, nall)
+//      t = epoch ms (UTC), v = REAL or NULL, q = 0 good / 1 stale / 2 bad.
+//   • retention days / maxRows / downsampleAfterDays; raw samples older than
+//     downsampleAfterDays become 60-s rollups. The job runs after a flush (at
+//     most every 10 min, or at once when over the row cap) — never on a timer.
+//   • libraries load only on first use: web → pinned CDN URL, SHA-384 checked
+//     before use (bytes that fail the check are never executed); iOS → the copy
+//     bundled next to index.html (ios-app/ios-additions/libs, copied by
+//     sync-from-main.js). sw.js precaches the pinned URLs for offline use.
+//
+// Public API (window.WTS_historian) — contract with the Modbus page:
+//   record(samples)  samples = [{tag, device, t, v, q, raw, unit}]  → count accepted
+//   query({tags, from, to, maxPoints, agg:'raw'|'avg'|'min'|'max'|'last', bucketMs})
+//   listTags() stats() exportCSV(o) exportXLSX(o) exportDb(o) importFile(file, o)
+//   purge({before, tags}) setRetention({days, maxRows, downsampleAfterDays})
+//   flush() ready() engine() status() switchEngine(name)
+// Inputs also accepted as document event 'wts:modbus-samples' (detail = batch).
+// Tag metadata from window.WTS_modbus.getTags() when present.
+// Fires document event 'wts:historian-updated' after every write.
+//
+// Aggregation rule (documented on the page): a bucket's avg/min/max/last use
+// its GOOD samples; if it has none, its STALE samples (bucket flagged stale);
+// with neither the bucket is a gap (bad). Averages are arithmetic means of the
+// samples, not time-weighted. Buckets start at multiples of bucketMs since the
+// Unix epoch (UTC). LTTB = Steinarsson (2013), "Downsampling Time Series for
+// Visual Representation", MSc thesis, University of Iceland, §4.2.
+// ════════════════════════════════════════════════════════════════════
+(function () {
+'use strict';
+var G = (typeof window !== 'undefined') ? window : globalThis;
+function hasDoc() { return typeof document !== 'undefined' && !!document && typeof document.getElementById === 'function'; }
+function $(id) { return hasDoc() ? document.getElementById(id) : null; }
+
+// ─── §0 constants ────────────────────────────────────────────────────
+var QN = ['good', 'stale', 'bad'];
+var ROLLUP_MS = 60000, DAY = 86400000, MAXT = 8640000000000000;
+var FLUSH_MS = 2000, FLUSH_MAX = 2000, BUFFER_CAP = 200000, CHUNK = 20000;
+var RETENTION_EVERY_MS = 600000;
+var LS_SETTINGS = 'wts_historian_settings', LS_VIEW = 'wts_historian_view';
+var LS_HOME = 'wtshist_home', LS_SPOOL = 'wtshist_spool';      // not wts_* → never copied into project files
+var IDB_NAME = 'wts-historian', SNAP_DB = 'wts-historian-sqljs', SNAP_STORE = 'files', SNAP_KEY = 'historian.sqlite';
+var OPFS_VFS = 'wts-historian', OPFS_DIR = '.wts-historian', OPFS_FILE = '/historian.sqlite3';
+var ENGINES = ['opfs', 'sqljs', 'idb', 'memory'];
+// Raw-sample caps per engine (0 = only the user's maxRows applies). sql.js keeps the
+// whole file in memory and re-writes it to IndexedDB, IndexedDB costs ~100+ bytes a row.
+var ENGINE_CAPS = { opfs: 0, sqljs: 1000000, idb: 2000000, memory: 200000 };
+var ENGINE_LABEL = {
+    opfs: 'SQLite (OPFS, worker)', sqljs: 'SQLite (sql.js) in IndexedDB',
+    idb: 'IndexedDB', memory: 'Memory only (not saved)'
+};
+var DEFAULTS = { days: 30, maxRows: 5000000, downsampleAfterDays: 7 };
+
+// Pinned libraries. base64 SHA-384 of the exact published files (identical on
+// jsDelivr, unpkg and the npm tarballs; checked 2026-09-29). The iOS bundle ships
+// the same bytes under the key names; ios-app/scripts/sync-from-main.js re-checks them.
+var CDN = 'https://cdn.jsdelivr.net/npm/', UNPKG = 'https://unpkg.com/';
+var SQLITE_PKG = '@sqlite.org/sqlite-wasm@3.53.4-build1/dist/', SQLJS_PKG = 'sql.js@1.14.2/dist/';
+var HIST_SHA384 = {
+    'sqlite3.mjs': 'j+gbV/w2zeGv9WgmsnVPrKK5J4gE96kxDRDMpGJTnRgI68fZrprxhjFdcuoaGIdC',
+    'sqlite3.wasm': 'zML1l9maR5lcyboDPcoNcYzQnFUv0o9WvMB8Pn16kfu9F+YX+62NQVuTzV0f3/07',
+    'sql-wasm.js': '7Zym2PlgXfg8ap8cqJUwlZrLl+VEwt0NVbzYfhH28IWLnSpAgQOnSCY2+EXo5MtM',
+    'sql-wasm.wasm': 'x0YkuPkDHnKTZcB1JO4eb6j5+eU36aka+jBA6tOKTFaTz98b9V7fPT0QgZ9qyQW2'
+};
+var LIBS = {
+    'sqlite3.mjs': { urls: [CDN + SQLITE_PKG + 'index.mjs', UNPKG + SQLITE_PKG + 'index.mjs'], bytes: 642742 },
+    'sqlite3.wasm': { urls: [CDN + SQLITE_PKG + 'sqlite3.wasm', UNPKG + SQLITE_PKG + 'sqlite3.wasm'], bytes: 868907 },
+    'sql-wasm.js': { urls: [CDN + SQLJS_PKG + 'sql-wasm.js', UNPKG + SQLJS_PKG + 'sql-wasm.js'], bytes: 46535 },
+    'sql-wasm.wasm': { urls: [CDN + SQLJS_PKG + 'sql-wasm.wasm', UNPKG + SQLJS_PKG + 'sql-wasm.wasm'], bytes: 658410 }
+};
+
+// Test hooks (tests/historian.test.js): fetchBytes(url) → ArrayBuffer, workerMemory → ':memory:' in the worker.
+var T = { fetchBytes: null, workerMemory: false, noEstimate: false };
+
+// ─── §1 small utilities ──────────────────────────────────────────────
+function isNum(x) { return typeof x === 'number' && isFinite(x); }
+function numOr(x, d) { var n = +x; return (x === null || x === undefined || x === '' || !isFinite(n)) ? d : n; }
+function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+}
+function errMsg(e) { return String((e && e.message) || e || 'error'); }
+function lsGet(k) { try { return G.localStorage ? G.localStorage.getItem(k) : null; } catch (e) { return null; } }
+function lsSet(k, v) { try { if (G.localStorage) G.localStorage.setItem(k, v); } catch (e) { /* quota / private mode */ } }
+function lsJSON(k) { try { var s = lsGet(k); return s ? JSON.parse(s) : null; } catch (e) { return null; } }
+function pad2(n) { return (n < 10 ? '0' : '') + n; }
+function pad3(n) { return n < 10 ? '00' + n : n < 100 ? '0' + n : '' + n; }
+function fmtLocal(t, ms) {
+    if (!isNum(t)) return '—';
+    var d = new Date(t);
+    return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) + ' ' + pad2(d.getHours()) + ':' +
+        pad2(d.getMinutes()) + ':' + pad2(d.getSeconds()) + (ms ? '.' + pad3(d.getMilliseconds()) : '');
+}
+function isoUTC(t) { return new Date(t).toISOString(); }
+function fmtVal(v) {
+    if (v === null || v === undefined || !isFinite(v)) return '';
+    var a = Math.abs(v);
+    if (a !== 0 && (a >= 1e9 || a < 1e-4)) return v.toExponential(4);
+    return String(+v.toPrecision(7));
+}
+function fmtCount(n) { return isNum(n) ? String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ',') : '—'; }
+function fmtBytes(n) {
+    if (!isNum(n)) return '—';
+    var u = ['B', 'kB', 'MB', 'GB', 'TB'], i = 0;
+    while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+    return (i ? n.toFixed(n < 10 ? 2 : 1) : String(Math.round(n))) + ' ' + u[i];
+}
+function fmtDur(ms) {
+    if (!isNum(ms)) return '—';
+    var s = Math.abs(ms) / 1000;
+    if (s < 60) return Math.round(s) + ' s';
+    if (s < 3600) return Math.round(s / 60) + ' min';
+    if (s < 172800) return (s / 3600).toFixed(s < 36000 ? 1 : 0) + ' h';
+    return (s / 86400).toFixed(1) + ' d';
+}
+function stamp(t) { var d = new Date(t); return d.getFullYear() + pad2(d.getMonth() + 1) + pad2(d.getDate()) + '-' + pad2(d.getHours()) + pad2(d.getMinutes()); }
+function uniq(a) { var s = {}, o = []; for (var i = 0; i < a.length; i++) if (!s[a[i]]) { s[a[i]] = 1; o.push(a[i]); } return o; }
+function repeat(x, n) { var a = new Array(n); for (var i = 0; i < n; i++) a[i] = x; return a; }
+function isDateObj(x) { return Object.prototype.toString.call(x) === '[object Date]'; }
+
+// Quality: 0 good, 1 stale (held / uncertain), 2 bad. A missing value is never "good".
+function qCode(q, v) {
+    var c = -1;
+    if (q === 0 || q === 1 || q === 2) c = q;
+    else if (typeof q === 'string') {
+        var s = q.trim().toLowerCase();
+        if (s === 'good' || s === 'g' || s === 'ok' || s === '0') c = 0;
+        else if (s === 'stale' || s === 's' || s === 'uncertain' || s === 'u' || s === 'held' || s === '1') c = 1;
+        else if (s === 'bad' || s === 'b' || s === 'error' || s === 'fault' || s === '2') c = 2;
+    }
+    if (c < 0) c = (v === null) ? 2 : 0;
+    if (v === null && c === 0) c = 2;
+    return c;
+}
+function cleanStr(x, max) { if (x === null || x === undefined) return null; var s = String(x).trim(); return s ? s.slice(0, max || 64) : null; }
+
+// One sample from record(): {tag, device, t, v, q, raw, unit} → normalised or null.
+function normSample(s, tNow) {
+    if (!s || typeof s !== 'object') return null;
+    var tag = cleanStr(s.tag != null ? s.tag : s.name, 128);
+    if (!tag) return null;
+    var t = isDateObj(s.t) ? s.t.getTime() : +s.t;
+    if (s.t === null || s.t === undefined || s.t === '' || !isFinite(t)) t = tNow;
+    t = Math.round(t);
+    if (!(t >= 0 && t <= MAXT)) return null;
+    var v = s.v;
+    v = (v === null || v === undefined || v === '') ? null : +v;
+    if (v !== null && !isFinite(v)) v = null;
+    return { tag: tag, device: cleanStr(s.device), t: t, v: v, q: qCode(s.q, v), raw: s.raw, unit: cleanStr(s.unit, 32) };
+}
+
+// ─── §2 pure algorithms ──────────────────────────────────────────────
+// Streaming bucket aggregator (reference implementation; the SQL store computes
+// the same numbers in SQL). Rows must arrive in ascending t.
+function Agg(b) { this.b = b; this.out = []; this.cur = null; }
+function _cat() { return { n: 0, sum: 0, min: Infinity, max: -Infinity, last: null, lt: -Infinity }; }
+function _fin(c) {
+    var x = c.g.n ? c.g : c.s.n ? c.s : null, q = c.g.n ? 0 : c.s.n ? 1 : 2;
+    if (!x) return { t: c.k, n: 0, avg: null, min: null, max: null, last: null, lt: null, q: 2, nall: c.nall };
+    return { t: c.k, n: x.n, avg: x.sum / x.n, min: x.min, max: x.max, last: x.last, lt: x.lt, q: q, nall: c.nall };
+}
+Agg.prototype.push = function (t, v, q) {
+    var k = t - (t % this.b), c = this.cur;
+    if (!c || c.k !== k) {
+        if (c) this.out.push(_fin(c));
+        c = this.cur = { k: k, nall: 0, g: _cat(), s: _cat() };
+    }
+    c.nall++;
+    if (v === null || v === undefined || !isFinite(v)) return;
+    var x = q === 0 ? c.g : q === 1 ? c.s : null;
+    if (!x) return;
+    x.n++; x.sum += v;
+    if (v < x.min) x.min = v;
+    if (v > x.max) x.max = v;
+    if (t >= x.lt) { x.lt = t; x.last = v; }
+};
+Agg.prototype.result = function () { if (this.cur) { this.out.push(_fin(this.cur)); this.cur = null; } return this.out; };
+function aggArrays(t, v, q, b) { var a = new Agg(b); for (var i = 0; i < t.length; i++) a.push(t[i], v[i], q[i]); return a.result(); }
+
+// Combine bucket partials {t,n,avg,min,max,last,lt,q,nall} into buckets of b ms
+// (b = 0 → by exact t). Same rule as Agg: good partials if any, else stale, else a gap.
+// Merging partials chosen that way gives the same result as re-aggregating the samples.
+function _combine(k, src, q, nall) {
+    if (!src.length) return { t: k, n: 0, avg: null, min: null, max: null, last: null, lt: null, q: 2, nall: nall };
+    if (src.length === 1) { var o = src[0]; return { t: k, n: o.n, avg: o.avg, min: o.min, max: o.max, last: o.last, lt: o.lt, q: q, nall: nall }; }
+    var n = 0, sum = 0, mn = Infinity, mx = -Infinity, last = null, lt = -Infinity;
+    for (var i = 0; i < src.length; i++) {
+        var p = src[i];
+        n += p.n; sum += p.avg * p.n;
+        if (p.min < mn) mn = p.min;
+        if (p.max > mx) mx = p.max;
+        if (p.lt > lt) { lt = p.lt; last = p.last; }
+    }
+    return { t: k, n: n, avg: sum / n, min: mn, max: mx, last: last, lt: lt, q: q, nall: nall };
+}
+function mergePartials(list, b) {
+    var map = {}, keys = [];
+    for (var i = 0; i < list.length; i++) {
+        var p = list[i], k = b ? p.t - (p.t % b) : p.t, m = map[k];
+        if (!m) { m = map[k] = { g: [], s: [], nall: 0 }; keys.push(k); }
+        m.nall += (p.nall || 0);
+        if (p.q === 0 && p.n > 0) m.g.push(p); else if (p.q === 1 && p.n > 0) m.s.push(p);
+    }
+    keys.sort(function (a, c) { return a - c; });
+    return keys.map(function (k) {
+        var m = map[k];
+        return _combine(k, m.g.length ? m.g : m.s, m.g.length ? 0 : m.s.length ? 1 : 2, m.nall);
+    });
+}
+
+// Largest-Triangle-Three-Buckets over indices [i0, i1): returns kept indices.
+// Transcribed from Steinarsson (2013) §4.2 / his reference implementation: first and
+// last points kept; the rest split into (threshold−2) equal buckets; in each bucket the
+// point forming the largest triangle with the previously kept point and the average
+// of the next bucket is kept.
+function lttbIdx(x, y, i0, i1, threshold) {
+    var len = i1 - i0, out = [], j;
+    if (threshold >= len || threshold < 3) { for (j = i0; j < i1; j++) out.push(j); return out; }
+    var every = (len - 2) / (threshold - 2), a = i0;
+    out.push(i0);
+    for (var i = 0; i < threshold - 2; i++) {
+        var s = i0 + Math.floor((i + 1) * every) + 1, e = i0 + Math.floor((i + 2) * every) + 1;
+        if (e > i1) e = i1;
+        var ax2 = 0, ay2 = 0, cnt = e - s;
+        for (j = s; j < e; j++) { ax2 += x[j]; ay2 += y[j]; }
+        ax2 /= cnt; ay2 /= cnt;
+        var r0 = i0 + Math.floor(i * every) + 1, r1 = i0 + Math.floor((i + 1) * every) + 1;
+        var ax = x[a], ay = y[a], best = -1, next = r0;
+        for (j = r0; j < r1; j++) {
+            var area = Math.abs((ax - ax2) * (y[j] - ay) - (ax - x[j]) * (ay2 - ay)) * 0.5;
+            if (area > best) { best = area; next = j; }
+        }
+        out.push(next); a = next;
+    }
+    out.push(i1 - 1);
+    return out;
+}
+// LTTB that respects gaps: points with no value or bad quality split the series
+// into runs; each gap keeps one marker point, each run gets a share of the budget
+// proportional to its length (at least its two end points). Returns kept indices
+// (ascending) or null when nothing needs dropping.
+function decimate(t, v, q, maxPoints) {
+    var n = t.length;
+    if (!(maxPoints > 0) || n <= maxPoints) return null;
+    var ok = function (i) { return v[i] !== null && v[i] !== undefined && isFinite(v[i]) && q[i] !== 2; };
+    var runs = [], keep = [], i = 0, total = 0;
+    while (i < n) {
+        if (ok(i)) { var s = i; while (i < n && ok(i)) i++; runs.push([s, i]); total += i - s; }
+        else { keep.push(i); while (i < n && !ok(i)) i++; }
+    }
+    var budget = Math.max(maxPoints - keep.length, runs.length * 2);
+    runs.forEach(function (r) {
+        var len = r[1] - r[0], alloc = Math.max(Math.min(len, 2), Math.round(budget * len / Math.max(1, total)));
+        var idx = alloc >= len ? null : alloc < 3 ? (len === 1 ? [r[0]] : [r[0], r[1] - 1]) : lttbIdx(t, v, r[0], r[1], alloc);
+        if (!idx) { for (var j = r[0]; j < r[1]; j++) keep.push(j); } else keep.push.apply(keep, idx);
+    });
+    keep.sort(function (a, b) { return a - b; });
+    return keep;
+}
+
+var BUCKETS = [100, 200, 500, 1e3, 2e3, 5e3, 1e4, 15e3, 3e4, 6e4, 12e4, 3e5, 6e5, 9e5, 18e5, 36e5, 72e5, 108e5, 216e5, 432e5, 864e5, 1728e5, 6048e5];
+function niceBucket(ms) { for (var i = 0; i < BUCKETS.length; i++) if (BUCKETS[i] >= ms) return BUCKETS[i]; return Math.ceil(ms / 864e5) * 864e5; }
+function bucketLabel(ms) {
+    if (ms < 1000) return ms + ' ms';
+    if (ms < 60000) return (ms / 1000) + ' s';
+    if (ms < 3600000) return (ms / 60000) + ' min';
+    if (ms < DAY) return (ms / 3600000) + ' h';
+    return (ms / DAY) + ' d';
+}
+// "Nice" axis ticks (Heckbert, "Nice numbers for graph labels", Graphics Gems, 1990).
+function niceNum(x, round) {
+    var e = Math.floor(Math.log(x) / Math.LN10), f = x / Math.pow(10, e), nf;
+    if (round) nf = f < 1.5 ? 1 : f < 3 ? 2 : f < 7 ? 5 : 10; else nf = f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10;
+    return nf * Math.pow(10, e);
+}
+function niceTicks(lo, hi, n) {
+    if (!(hi > lo)) { var d0 = Math.abs(lo) * 0.05 || 1; lo -= d0; hi += d0; }
+    var range = niceNum(hi - lo, false), step = niceNum(range / Math.max(1, n - 1), true);
+    var a = Math.floor(lo / step) * step, b = Math.ceil(hi / step) * step, ticks = [];
+    for (var x = a; x <= b + step * 0.5 && ticks.length < 50; x += step) ticks.push(+x.toPrecision(12));
+    return { lo: a, hi: b, step: step, ticks: ticks };
+}
+var TSTEPS = [1e3, 2e3, 5e3, 1e4, 15e3, 3e4, 6e4, 12e4, 3e5, 6e5, 9e5, 18e5, 36e5, 72e5, 108e5, 216e5, 432e5, 864e5, 1728e5, 6048e5, 2592e6];
+function timeTicks(from, to, maxTicks) {
+    var span = to - from, step = TSTEPS[TSTEPS.length - 1];
+    for (var i = 0; i < TSTEPS.length; i++) if (span / TSTEPS[i] <= Math.max(2, maxTicks)) { step = TSTEPS[i]; break; }
+    var tz = -new Date(from).getTimezoneOffset() * 60000;            // align hour/day ticks to local time
+    var off = step >= 36e5 ? tz : 0, out = [];
+    for (var t = Math.ceil((from + off) / step) * step - off; t <= to && out.length < 60; t += step) out.push(t);
+    return { step: step, ticks: out };
+}
+function tickLabel(t, step, span) {
+    var d = new Date(t);
+    if (step >= DAY) return pad2(d.getDate()) + ' ' + ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getMonth()];
+    var hm = pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+    if (step < 60000) return hm + ':' + pad2(d.getSeconds());
+    if (span > DAY && d.getHours() === 0 && d.getMinutes() === 0) return pad2(d.getDate()) + '/' + pad2(d.getMonth() + 1);
+    return hm;
+}
+
+// ─── §3 CSV / time parsing ───────────────────────────────────────────
+function csvCell(s) { s = (s === null || s === undefined) ? '' : String(s); return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }
+function csvLine(row) { return row.map(csvCell).join(',') + '\r\n'; }
+function parseDelimited(text) {
+    text = String(text == null ? '' : text);
+    if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+    var nl = text.indexOf('\n'), first = nl < 0 ? text : text.slice(0, nl);
+    var cnt = function (ch) { return first.split(ch).length - 1; };
+    var d = ',', nc = cnt(','), ns = cnt(';'), nt = cnt('\t');
+    if (nt > nc && nt >= ns) d = '\t'; else if (ns > nc) d = ';';
+    var rows = [], row = [], cell = '', i = 0, n = text.length, inQ = false;
+    while (i < n) {
+        var c = text[i];
+        if (inQ) {
+            if (c === '"') { if (text[i + 1] === '"') { cell += '"'; i += 2; continue; } inQ = false; i++; continue; }
+            cell += c; i++; continue;
+        }
+        if (c === '"' && cell === '') { inQ = true; i++; continue; }
+        if (c === d) { row.push(cell); cell = ''; i++; continue; }
+        if (c === '\r' || c === '\n') {
+            row.push(cell); cell = '';
+            if (!(row.length === 1 && row[0] === '')) rows.push(row);
+            row = [];
+            i += (c === '\r' && text[i + 1] === '\n') ? 2 : 1;
+            continue;
+        }
+        cell += c; i++;
+    }
+    if (cell !== '' || row.length) { row.push(cell); if (!(row.length === 1 && row[0] === '')) rows.push(row); }
+    return rows;
+}
+// Time cell → epoch ms. ISO strings with Z/offset → exact; "YYYY-MM-DD HH:MM[:SS[.mmm]]"
+// without a zone → local time; numbers: > 1e11 epoch ms, > 1e9 epoch s, else an Excel
+// serial day number (read as UTC, the way this page writes times).
+function epochFromNumber(n) {
+    if (n > 1e11) return Math.round(n);
+    if (n > 1e9) return Math.round(n * 1000);
+    if (n > 0 && n < 2958466) return Math.round((n - 25569) * DAY);
+    return NaN;
+}
+function parseTime(x) {
+    if (x === null || x === undefined || x === '') return NaN;
+    if (typeof x === 'number') return epochFromNumber(x);
+    if (isDateObj(x)) return x.getTime();
+    var s = String(x).trim();
+    if (/^-?\d+(\.\d+)?$/.test(s)) return epochFromNumber(+s);
+    if (/(?:[zZ]|[+-]\d\d:?\d\d)$/.test(s) && /^\d{4}-\d/.test(s)) return Date.parse(s.replace(' ', 'T'));
+    var m = /^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?)?$/.exec(s);
+    if (m) return new Date(+m[1], +m[2] - 1, +m[3], +(m[4] || 0), +(m[5] || 0), +(m[6] || 0), +((m[7] || '0') + '00').slice(0, 3)).getTime();
+    var p = Date.parse(s);
+    return isFinite(p) ? p : NaN;
+}
+var LONG_HEAD = ['time_utc', 'epoch_ms', 'tag', 'value', 'quality', 'unit', 'device', 'source', 'n', 'min', 'max'];
+// Spreadsheet rows (array of arrays) → {format, tags:{name:{unit,device}}, samples:{tag:{t,v,q}}, rollups:{tag:[…]}, invalid}
+// Long layout: columns tag + value (+ time_utc / epoch_ms, quality, unit, device, source, n, min, max).
+// Wide layout: a time column then one column per tag, headed "TAG [unit]".
+function rowsToImport(aoa) {
+    var hi = -1, i, j;
+    for (i = 0; i < Math.min(aoa.length, 25); i++) {
+        var r = aoa[i] || [], filled = 0, text = false;
+        for (j = 0; j < r.length; j++) {
+            var c = r[j];
+            if (c === null || c === undefined || String(c).trim() === '') continue;
+            filled++;
+            if (typeof c === 'string' && !isFinite(+c)) text = true;
+        }
+        if (filled >= 2 && text) { hi = i; break; }
+    }
+    if (hi < 0) throw new Error('No header row found — expected columns such as time_utc, tag, value.');
+    var H = aoa[hi].map(function (c) { return String(c == null ? '' : c).trim(); }), h = H.map(function (x) { return x.toLowerCase(); });
+    var col = function (names) { for (var k = 0; k < names.length; k++) { var ix = h.indexOf(names[k]); if (ix >= 0) return ix; } return -1; };
+    var cT = col(['time_utc', 'time', 'timestamp', 'datetime', 'date_time', 'date', 'time (utc)', 'local_time', 'bucket_start']);
+    var cE = col(['epoch_ms', 'epoch', 't_ms', 'unix_ms', 't']);
+    var out = { format: '', tags: {}, samples: {}, rollups: {}, invalid: 0, rows: 0 };
+    var timeOf = function (row) { var t = cE >= 0 ? parseTime(row[cE]) : NaN; if (!isFinite(t) && cT >= 0) t = parseTime(row[cT]); return t; };
+    var ser = function (tag) { return out.samples[tag] || (out.samples[tag] = { t: [], v: [], q: [] }); };
+    var numCell = function (c) { if (c === null || c === undefined || String(c).trim() === '') return null; var x = +c; return isFinite(x) ? x : NaN; };
+    if (cE < 0 && cT < 0) throw new Error('No time column found — expected time_utc, epoch_ms or timestamp.');
+    var cTag = col(['tag', 'tag_name', 'name', 'tagname']), cV = col(['value', 'v', 'val', 'avg']);
+    if (cTag >= 0 && cV >= 0) {
+        out.format = 'long';
+        var cQ = col(['quality', 'q']), cU = col(['unit', 'units']), cD = col(['device']), cS = col(['source']),
+            cN = col(['n', 'count']), cMin = col(['min']), cMax = col(['max']);
+        for (i = hi + 1; i < aoa.length; i++) {
+            var row = aoa[i] || [];
+            if (!row.length || row.every(function (c) { return c === null || c === undefined || String(c).trim() === ''; })) continue;
+            out.rows++;
+            var tag = cleanStr(row[cTag], 128), t = timeOf(row), v = numCell(row[cV]);
+            if (!tag || !isFinite(t) || t < 0 || (typeof v === 'number' && !isFinite(v))) { out.invalid++; continue; }
+            var q = qCode(cQ >= 0 ? row[cQ] : undefined, v);
+            if (!out.tags[tag]) out.tags[tag] = { unit: cU >= 0 ? cleanStr(row[cU], 32) : null, device: cD >= 0 ? cleanStr(row[cD]) : null };
+            var src = cS >= 0 ? String(row[cS] || '').toLowerCase() : '';
+            if (/^rollup/.test(src)) {
+                var nn = numCell(cN >= 0 ? row[cN] : null), mn = numCell(cMin >= 0 ? row[cMin] : null), mx = numCell(cMax >= 0 ? row[cMax] : null);
+                if (v === null || !isNum(nn) || nn < 1) { out.invalid++; continue; }
+                (out.rollups[tag] || (out.rollups[tag] = [])).push({ t: Math.round(t), n: Math.round(nn), avg: v, min: isNum(mn) ? mn : v, max: isNum(mx) ? mx : v,
+                    last: v, lt: Math.round(t), q: q === 2 ? 2 : q, nall: Math.round(nn), dt: ROLLUP_MS });
+                continue;
+            }
+            var s = ser(tag); s.t.push(Math.round(t)); s.v.push(v); s.q.push(q);
+        }
+        return out;
+    }
+    out.format = 'wide';
+    var cols = [];
+    for (j = 0; j < H.length; j++) {
+        if (j === cT || j === cE || !H[j]) continue;
+        if (/^(local_time|n|quality)$/i.test(H[j])) continue;
+        var m = /^(.*?)\s*\[(.*)\]\s*$/.exec(H[j]), tg = cleanStr(m ? m[1] : H[j], 128);
+        if (!tg) continue;
+        cols.push({ j: j, tag: tg });
+        if (!out.tags[tg]) out.tags[tg] = { unit: m ? cleanStr(m[2], 32) : null, device: null };
+    }
+    if (!cols.length) throw new Error('No value columns found next to the time column.');
+    for (i = hi + 1; i < aoa.length; i++) {
+        var rw = aoa[i] || [];
+        if (!rw.length) continue;
+        out.rows++;
+        var tt = timeOf(rw);
+        if (!isFinite(tt) || tt < 0) { out.invalid++; continue; }
+        for (var k = 0; k < cols.length; k++) {
+            var val = numCell(rw[cols[k].j]);
+            if (val === null) continue;
+            if (!isFinite(val)) { out.invalid++; continue; }
+            var sw = ser(cols[k].tag); sw.t.push(Math.round(tt)); sw.v.push(val); sw.q.push(0);
+        }
+    }
+    return out;
+}
+
+// ─── §4 stores ───────────────────────────────────────────────────────
+// Every store exposes the same (async on the outside) methods:
+//   init() info() getTags() putTags(list) putSamples(ids,ts,vs,qs,mode) getSamples(id,from,to,limit,desc)
+//   countSamples(id,from,to) deleteSamples(id,from,to) aggSamples(id,from,to,b) statsAll()
+//   putRollups(id,parts) getRollups(id,from,to) countRollups(id,from,to) deleteRollups(id,from,to)
+//   totals() clear() vacuum() close() [+ exportBytes() on the SQL stores]
+// mode: 'ignore' keeps an existing (tag_id, t) row, 'replace' overwrites it.
+
+// SQL store over a tiny adapter A {all(sql,p) → rows[], run(sql,p) → changes, prep(sql) → {run, all, free},
+// exportBytes(), close(), version}. Self-contained (no outer references): its source is
+// also shipped into the storage Worker with Function.prototype.toString.
+function HistSqlStore(A) {
+    var SCHEMA = [
+        'CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT)',
+        'CREATE TABLE IF NOT EXISTS tags (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, device TEXT, unit TEXT, descr TEXT, created INTEGER)',
+        // Clustered primary key (tag_id, t): the table is its own (tag_id, t) index.
+        'CREATE TABLE IF NOT EXISTS samples (tag_id INTEGER NOT NULL, t INTEGER NOT NULL, v REAL, q INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (tag_id, t)) WITHOUT ROWID',
+        'CREATE TABLE IF NOT EXISTS rollups (tag_id INTEGER NOT NULL, t INTEGER NOT NULL, dt INTEGER NOT NULL, n INTEGER NOT NULL, avg REAL, min REAL, max REAL, last REAL, lt INTEGER, q INTEGER NOT NULL, nall INTEGER NOT NULL, PRIMARY KEY (tag_id, t)) WITHOUT ROWID'
+    ];
+    // Bucket start = t − (t mod b): SQLite's % casts both sides to INTEGER, so the bucket
+    // is exact whatever type the driver binds b as. Per bucket: the good and the stale
+    // statistics side by side; the last value of each is looked up by its time.
+    var AGG = 'SELECT g.k, g.nall, g.ng, g.ag, g.ming, g.maxg, g.ltg, (SELECT v FROM samples WHERE tag_id=?2 AND t=g.ltg), ' +
+        'g.ns, g.as1, g.mins, g.maxs, g.lts, (SELECT v FROM samples WHERE tag_id=?2 AND t=g.lts) FROM (' +
+        'SELECT t - (t % ?1) AS k, count(*) AS nall, ' +
+        'sum(CASE WHEN q=0 AND v IS NOT NULL THEN 1 ELSE 0 END) AS ng, avg(CASE WHEN q=0 THEN v END) AS ag, ' +
+        'min(CASE WHEN q=0 THEN v END) AS ming, max(CASE WHEN q=0 THEN v END) AS maxg, max(CASE WHEN q=0 AND v IS NOT NULL THEN t END) AS ltg, ' +
+        'sum(CASE WHEN q=1 AND v IS NOT NULL THEN 1 ELSE 0 END) AS ns, avg(CASE WHEN q=1 THEN v END) AS as1, ' +
+        'min(CASE WHEN q=1 THEN v END) AS mins, max(CASE WHEN q=1 THEN v END) AS maxs, max(CASE WHEN q=1 AND v IS NOT NULL THEN t END) AS lts ' +
+        'FROM samples WHERE tag_id=?2 AND t>=?3 AND t<=?4 GROUP BY k) g ORDER BY g.k';
+    function N(x) { return (x === null || x === undefined) ? null : Number(x); }
+    function rows(sql, p) { return A.all(sql, p || []); }
+    function one(sql, p) { var r = rows(sql, p); return r.length ? r[0] : null; }
+    function tx(fn) {
+        A.run('BEGIN');
+        try { var r = fn(); A.run('COMMIT'); return r; }
+        catch (e) { try { A.run('ROLLBACK'); } catch (e2) { /* already rolled back */ } throw e; }
+    }
+    function part(k, n, avg, mn, mx, last, lt, q, nall) {
+        return { t: N(k), n: N(n), avg: N(avg), min: N(mn), max: N(mx), last: N(last), lt: N(lt), q: q, nall: N(nall) };
+    }
+    function tagRow(r) { return { id: N(r[0]), name: String(r[1]), device: r[2] == null ? null : String(r[2]), unit: r[3] == null ? null : String(r[3]), descr: r[4] == null ? null : String(r[4]), created: N(r[5]) }; }
+    function rollRow(r) { return { t: N(r[0]), dt: N(r[1]), n: N(r[2]), avg: N(r[3]), min: N(r[4]), max: N(r[5]), last: N(r[6]), lt: N(r[7]), q: N(r[8]), nall: N(r[9]) }; }
+    function putR(id, parts) {                                         // caller holds a transaction
+        var st = A.prep('INSERT OR REPLACE INTO rollups (tag_id, t, dt, n, avg, min, max, last, lt, q, nall) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+        try {
+            for (var i = 0; i < parts.length; i++) {
+                var p = parts[i];
+                st.run([id, p.t, p.dt || 60000, p.n, p.avg, p.min, p.max, p.last, p.lt, p.q, p.nall == null ? p.n : p.nall]);
+            }
+        } finally { st.free(); }
+    }
+    var S = {
+        kind: 'sql',
+        init: function () {
+            var tables = N(one("SELECT count(*) FROM sqlite_master WHERE type='table'")[0]);
+            if (!tables) A.run('PRAGMA auto_vacuum=INCREMENTAL');        // only effective before the first table
+            SCHEMA.forEach(function (s) { A.run(s); });
+            A.run("INSERT OR IGNORE INTO meta(k, v) VALUES ('schema', '1')");
+            A.run("INSERT OR IGNORE INTO meta(k, v) VALUES ('created', ?)", [String(Date.now())]);
+            return S.info();
+        },
+        info: function () {
+            var pc = N(one('PRAGMA page_count')[0]), ps = N(one('PRAGMA page_size')[0]), fl = N(one('PRAGMA freelist_count')[0]);
+            return { version: String(one('SELECT sqlite_version()')[0]), bytes: pc * ps, freeBytes: fl * ps, pageSize: ps };
+        },
+        getTags: function () { return rows('SELECT id, name, device, unit, descr, created FROM tags ORDER BY id').map(tagRow); },
+        putTags: function (list) {
+            var st = A.prep('INSERT INTO tags (name, device, unit, descr, created) VALUES (?, ?, ?, ?, ?) ON CONFLICT(name) DO UPDATE SET ' +
+                'device = coalesce(excluded.device, tags.device), unit = coalesce(excluded.unit, tags.unit), descr = coalesce(excluded.descr, tags.descr)');
+            try {
+                tx(function () {
+                    for (var i = 0; i < list.length; i++) {
+                        var x = list[i];
+                        st.run([String(x.name), x.device == null ? null : String(x.device), x.unit == null ? null : String(x.unit),
+                            x.descr == null ? null : String(x.descr), x.created == null ? Date.now() : Number(x.created)]);
+                    }
+                });
+            } finally { st.free(); }
+            return S.getTags();
+        },
+        putSamples: function (ids, ts, vs, qs, mode) {
+            var ins = A.prep('INSERT OR IGNORE INTO samples (tag_id, t, v, q) VALUES (?, ?, ?, ?)');
+            var upd = mode === 'replace' ? A.prep('UPDATE samples SET v = ?, q = ? WHERE tag_id = ? AND t = ?') : null;
+            var r = { inserted: 0, updated: 0, skipped: 0, byTag: {} };
+            try {
+                tx(function () {
+                    for (var i = 0; i < ids.length; i++) {
+                        var v = (vs[i] === null || vs[i] === undefined) ? null : Number(vs[i]);
+                        if (ins.run([ids[i], ts[i], v, qs[i]])) { r.inserted++; r.byTag[ids[i]] = (r.byTag[ids[i]] || 0) + 1; }
+                        else if (upd) { upd.run([v, qs[i], ids[i], ts[i]]); r.updated++; }
+                        else r.skipped++;
+                    }
+                });
+            } finally { ins.free(); if (upd) upd.free(); }
+            return r;
+        },
+        getSamples: function (id, from, to, limit, desc) {
+            var sql = 'SELECT t, v, q FROM samples WHERE tag_id = ? AND t >= ? AND t <= ? ORDER BY t ' + (desc ? 'DESC' : 'ASC') +
+                (limit > 0 ? ' LIMIT ' + Math.floor(limit) : '');
+            var rs = rows(sql, [id, from, to]), o = { t: new Array(rs.length), v: new Array(rs.length), q: new Array(rs.length) };
+            for (var i = 0; i < rs.length; i++) { o.t[i] = N(rs[i][0]); o.v[i] = N(rs[i][1]); o.q[i] = N(rs[i][2]); }
+            return o;
+        },
+        countSamples: function (id, from, to) { return N(one('SELECT count(*) FROM samples WHERE tag_id = ? AND t >= ? AND t <= ?', [id, from, to])[0]); },
+        deleteSamples: function (id, from, to) { return A.run('DELETE FROM samples WHERE tag_id = ? AND t >= ? AND t <= ?', [id, from, to]); },
+        aggSamples: function (id, from, to, b) {
+            return rows(AGG, [Math.max(1, Math.round(b)), id, from, to]).map(function (r) {
+                var ng = N(r[2]), ns = N(r[8]);
+                if (ng > 0) return part(r[0], ng, r[3], r[4], r[5], r[7], r[6], 0, r[1]);
+                if (ns > 0) return part(r[0], ns, r[9], r[10], r[11], r[13], r[12], 1, r[1]);
+                return part(r[0], 0, null, null, null, null, null, 2, r[1]);
+            });
+        },
+        statsAll: function () {
+            var o = {};
+            rows('SELECT tag_id, count(*), min(t), max(t) FROM samples GROUP BY tag_id').forEach(function (r) { o[N(r[0])] = { n: N(r[1]), first: N(r[2]), last: N(r[3]), rn: 0, rfirst: null, rlast: null }; });
+            rows('SELECT tag_id, count(*), min(t), max(t) FROM rollups GROUP BY tag_id').forEach(function (r) {
+                var x = o[N(r[0])] || (o[N(r[0])] = { n: 0, first: null, last: null });
+                x.rn = N(r[1]); x.rfirst = N(r[2]); x.rlast = N(r[3]);
+            });
+            rows('SELECT s.tag_id, s.t, s.v, s.q FROM samples s JOIN (SELECT tag_id, max(t) AS mt FROM samples GROUP BY tag_id) m ON s.tag_id = m.tag_id AND s.t = m.mt')
+                .forEach(function (r) { var x = o[N(r[0])]; if (x) { x.lastV = N(r[2]); x.lastQ = N(r[3]); } });
+            return o;
+        },
+        putRollups: function (id, parts) { tx(function () { putR(id, parts); }); return parts.length; },
+        // Rollups in, the raw rows they replace out — one transaction, so a snapshot or a crash
+        // never sees both (which would count those samples twice) or neither.
+        rollupWrite: function (id, parts, cut) {
+            return tx(function () { putR(id, parts); return A.run('DELETE FROM samples WHERE tag_id = ? AND t >= 0 AND t <= ?', [id, cut - 1]); });
+        },
+        getRollups: function (id, from, to) {
+            return rows('SELECT t, dt, n, avg, min, max, last, lt, q, nall FROM rollups WHERE tag_id = ? AND t >= ? AND t <= ? ORDER BY t', [id, from, to]).map(rollRow);
+        },
+        countRollups: function (id, from, to) { return N(one('SELECT count(*) FROM rollups WHERE tag_id = ? AND t >= ? AND t <= ?', [id, from, to])[0]); },
+        deleteRollups: function (id, from, to) { return A.run('DELETE FROM rollups WHERE tag_id = ? AND t >= ? AND t <= ?', [id, from, to]); },
+        totals: function () {
+            return { samples: N(one('SELECT count(*) FROM samples')[0]), rollups: N(one('SELECT count(*) FROM rollups')[0]), tags: N(one('SELECT count(*) FROM tags')[0]) };
+        },
+        clear: function () {
+            tx(function () { A.run('DELETE FROM samples'); A.run('DELETE FROM rollups'); A.run('DELETE FROM tags'); });
+            S.vacuum();
+            return true;
+        },
+        vacuum: function () { try { A.all('PRAGMA incremental_vacuum', []); } catch (e) { /* not in auto-vacuum mode */ } return true; },
+        exportBytes: function () { return A.exportBytes(); },
+        close: function () { A.close(); return true; }
+    };
+    return S;
+}
+
+// sql.js adapter (main thread).
+function histSqlJsAdapter(db) {
+    function bindArgs(p) { return p && p.length ? p : undefined; }
+    return {
+        all: function (sql, p) {
+            var st = db.prepare(sql), out = [];
+            try { if (p && p.length) st.bind(p); while (st.step()) out.push(st.get()); } finally { st.free(); }
+            return out;
+        },
+        run: function (sql, p) { db.run(sql, bindArgs(p)); return db.getRowsModified(); },
+        prep: function (sql) {
+            var st = db.prepare(sql);
+            return { run: function (p) { st.run(p); return db.getRowsModified(); }, free: function () { st.free(); } };
+        },
+        exportBytes: function () { return db.export(); },
+        close: function () { db.close(); }
+    };
+}
+// Official SQLite WASM (oo1 API) adapter — runs inside the storage Worker. Self-contained.
+function histWasmAdapter(sqlite3, db) {
+    function bind(p) { return (p && p.length) ? p : undefined; }
+    return {
+        all: function (sql, p) { return db.exec({ sql: sql, bind: bind(p), rowMode: 'array', returnValue: 'resultRows' }); },
+        run: function (sql, p) { db.exec({ sql: sql, bind: bind(p) }); return db.changes(); },
+        prep: function (sql) {
+            var st = db.prepare(sql);
+            return { run: function (p) { st.bind(p); st.stepReset(); return db.changes(); }, free: function () { st.finalize(); } };
+        },
+        exportBytes: function () { return sqlite3.capi.sqlite3_js_db_export(db); },
+        close: function () { db.close(); }
+    };
+}
+
+// Wrap a synchronous store so every method returns a Promise.
+function asyncStore(sync, kind, extra) {
+    var o = { kind: kind };
+    Object.keys(sync).forEach(function (k) {
+        if (typeof sync[k] !== 'function') return;
+        o[k] = function () { try { return Promise.resolve(sync[k].apply(sync, arguments)); } catch (e) { return Promise.reject(e); } };
+    });
+    if (extra) Object.keys(extra).forEach(function (k) { o[k] = extra[k]; });
+    return o;
+}
+
+// Partial ↔ compact array (IndexedDB / memory values).
+function rollToArr(p) { return [p.t, p.dt || ROLLUP_MS, p.n, p.avg, p.min, p.max, p.last, p.lt, p.q, p.nall == null ? p.n : p.nall]; }
+function arrToRoll(a) { return { t: a[0], dt: a[1], n: a[2], avg: a[3], min: a[4], max: a[5], last: a[6], lt: a[7], q: a[8], nall: a[9] }; }
+
+// IndexedDB store: object stores meta / tags (keyPath id, unique index name) /
+// samples (key [tag_id, t] → [t, v, q]) / rollups (key [tag_id, t] → rollup array).
+function idbReq(r) {
+    return new Promise(function (res, rej) {
+        r.onsuccess = function () { res(r.result); };
+        r.onerror = function () { rej(r.error || new Error('IndexedDB request failed')); };
+    });
+}
+function idbDone(tx) {
+    return new Promise(function (res, rej) {
+        tx.oncomplete = function () { res(); };
+        tx.onabort = function () { rej(tx.error || new Error('IndexedDB transaction aborted')); };
+    });
+}
+function idbOpen(idb, name, upgrade) {
+    return new Promise(function (res, rej) {
+        var r;
+        try { r = idb.open(name, 1); } catch (e) { rej(e); return; }
+        r.onupgradeneeded = function () { try { upgrade(r.result); } catch (e) { rej(e); } };
+        r.onsuccess = function () { var d = r.result; d.onversionchange = function () { try { d.close(); } catch (e) {} }; res(d); };
+        r.onerror = function () { rej(r.error || new Error('IndexedDB open failed')); };
+    });
+}
+function IdbStore(idb, KR) {
+    var db = null;
+    function has(d, n) { return d.objectStoreNames && (typeof d.objectStoreNames.contains === 'function' ? d.objectStoreNames.contains(n) : Array.prototype.indexOf.call(d.objectStoreNames, n) >= 0); }
+    function rng(id, from, to) { return KR.bound([id, from], [id, to]); }
+    function ro(names) { return db.transaction(names, 'readonly'); }
+    function rw(names) { return db.transaction(names, 'readwrite'); }
+    function readChunks(store, id, from, to, onChunk) {
+        var lo = from;
+        function step() {
+            if (lo > to) return Promise.resolve();
+            return idbReq(ro(store).objectStore(store).getAll(rng(id, lo, to), CHUNK)).then(function (arr) {
+                if (!arr.length) return;
+                onChunk(arr);
+                if (arr.length < CHUNK) return;
+                lo = arr[arr.length - 1][0] + 1;
+                return step();
+            });
+        }
+        return step();
+    }
+    function countIn(store, id, from, to) { return idbReq(ro(store).objectStore(store).count(rng(id, from, to))); }
+    function deleteIn(store, id, from, to) {
+        var tx = rw(store), st = tx.objectStore(store), r = rng(id, from, to), n = 0;
+        idbReq(st.count(r)).then(function (c) { n = c; });
+        st.delete(r);
+        return idbDone(tx).then(function () { return n; });
+    }
+    var S = {
+        kind: 'idb',
+        init: function () {
+            return idbOpen(idb, IDB_NAME, function (d) {
+                if (!has(d, 'meta')) d.createObjectStore('meta');
+                if (!has(d, 'tags')) d.createObjectStore('tags', { keyPath: 'id' }).createIndex('name', 'name', { unique: true });
+                if (!has(d, 'samples')) d.createObjectStore('samples');
+                if (!has(d, 'rollups')) d.createObjectStore('rollups');
+            }).then(function (d) { db = d; return S.info(); });
+        },
+        info: function () { return Promise.resolve({ version: 'IndexedDB', bytes: null }); },
+        getTags: function () {
+            return idbReq(ro('tags').objectStore('tags').getAll()).then(function (a) { return a.slice().sort(function (x, y) { return x.id - y.id; }); });
+        },
+        putTags: function (list) {
+            return S.getTags().then(function (cur) {
+                var byName = {}, maxId = 0;
+                cur.forEach(function (t) { byName[t.name] = t; if (t.id > maxId) maxId = t.id; });
+                var tx = rw('tags'), st = tx.objectStore('tags');
+                list.forEach(function (x) {
+                    var name = String(x.name), old = byName[name];
+                    var rec = old ? { id: old.id, name: name, device: x.device != null ? String(x.device) : old.device, unit: x.unit != null ? String(x.unit) : old.unit,
+                        descr: x.descr != null ? String(x.descr) : old.descr, created: old.created }
+                        : { id: ++maxId, name: name, device: x.device != null ? String(x.device) : null, unit: x.unit != null ? String(x.unit) : null,
+                            descr: x.descr != null ? String(x.descr) : null, created: x.created != null ? +x.created : Date.now() };
+                    byName[name] = rec;
+                    st.put(rec);
+                });
+                return idbDone(tx);
+            }).then(S.getTags);
+        },
+        putSamples: function (ids, ts, vs, qs, mode) {
+            var r = { inserted: 0, updated: 0, skipped: 0, byTag: {} };
+            if (!ids.length) return Promise.resolve(r);
+            var tx = rw('samples'), st = tx.objectStore('samples');
+            ids.forEach(function (id, i) {
+                var key = [id, ts[i]], val = [ts[i], (vs[i] === undefined ? null : vs[i]), qs[i]];
+                var q = st.add(val, key);
+                q.onsuccess = function () { r.inserted++; r.byTag[id] = (r.byTag[id] || 0) + 1; };
+                q.onerror = function (ev) {
+                    // Existing (tag, t): keep the transaction alive and skip or overwrite.
+                    // Any other error (quota, bad key) is left to abort the transaction.
+                    if (!q.error || q.error.name !== 'ConstraintError') return;
+                    if (ev && ev.preventDefault) ev.preventDefault();
+                    if (ev && ev.stopPropagation) ev.stopPropagation();
+                    if (mode === 'replace') st.put(val, key).onsuccess = function () { r.updated++; };
+                    else r.skipped++;
+                };
+            });
+            return idbDone(tx).then(function () { return r; });
+        },
+        getSamples: function (id, from, to, limit, desc) {
+            var o = { t: [], v: [], q: [] };
+            var push = function (a) { o.t.push(a[0]); o.v.push(a[1]); o.q.push(a[2]); };
+            if (!desc && !(limit > 0)) return readChunks('samples', id, from, to, function (arr) { arr.forEach(push); }).then(function () { return o; });
+            if (!desc) return idbReq(ro('samples').objectStore('samples').getAll(rng(id, from, to), limit)).then(function (arr) { arr.forEach(push); return o; });
+            return new Promise(function (res, rej) {
+                var c = ro('samples').objectStore('samples').openCursor(rng(id, from, to), 'prev');
+                c.onsuccess = function () {
+                    var cur = c.result;
+                    if (!cur || (limit > 0 && o.t.length >= limit)) { res(o); return; }
+                    push(cur.value); cur.continue();
+                };
+                c.onerror = function () { rej(c.error); };
+            });
+        },
+        countSamples: function (id, from, to) { return countIn('samples', id, from, to); },
+        deleteSamples: function (id, from, to) { return deleteIn('samples', id, from, to); },
+        aggSamples: function (id, from, to, b) {
+            var a = new Agg(Math.max(1, Math.round(b)));
+            return readChunks('samples', id, from, to, function (arr) { for (var i = 0; i < arr.length; i++) a.push(arr[i][0], arr[i][1], arr[i][2]); })
+                .then(function () { return a.result(); });
+        },
+        statsAll: function () {
+            return S.getTags().then(function (tags) {
+                var o = {};
+                return tags.reduce(function (p, tg) {
+                    return p.then(function () {
+                        var x = o[tg.id] = { n: 0, first: null, last: null, rn: 0, rfirst: null, rlast: null };
+                        var tx = ro(['samples', 'rollups']), s = tx.objectStore('samples'), rr = tx.objectStore('rollups'), all = rng(tg.id, 0, MAXT);
+                        idbReq(s.count(all)).then(function (n) { x.n = n; });
+                        idbReq(s.getAll(all, 1)).then(function (a) { if (a.length) x.first = a[0][0]; });
+                        var c = s.openCursor(all, 'prev');
+                        c.onsuccess = function () { if (c.result) { x.last = c.result.value[0]; x.lastV = c.result.value[1]; x.lastQ = c.result.value[2]; } };
+                        idbReq(rr.count(all)).then(function (n) { x.rn = n; });
+                        idbReq(rr.getAll(all, 1)).then(function (a) { if (a.length) x.rfirst = a[0][0]; });
+                        var c2 = rr.openCursor(all, 'prev');
+                        c2.onsuccess = function () { if (c2.result) x.rlast = c2.result.value[0]; };
+                        return idbDone(tx);
+                    });
+                }, Promise.resolve()).then(function () { return o; });
+            });
+        },
+        putRollups: function (id, parts) {
+            if (!parts.length) return Promise.resolve(0);
+            var tx = rw('rollups'), st = tx.objectStore('rollups');
+            parts.forEach(function (p) { st.put(rollToArr(p), [id, p.t]); });
+            return idbDone(tx).then(function () { return parts.length; });
+        },
+        rollupWrite: function (id, parts, cut) {                       // one transaction: rollups in, raw rows out
+            var tx = rw(['samples', 'rollups']), rs = tx.objectStore('rollups'), ss = tx.objectStore('samples'), r = rng(id, 0, cut - 1), n = 0;
+            parts.forEach(function (p) { rs.put(rollToArr(p), [id, p.t]); });
+            idbReq(ss.count(r)).then(function (c) { n = c; });
+            ss.delete(r);
+            return idbDone(tx).then(function () { return n; });
+        },
+        getRollups: function (id, from, to) {
+            var out = [];
+            return readChunks('rollups', id, from, to, function (arr) { arr.forEach(function (a) { out.push(arrToRoll(a)); }); }).then(function () { return out; });
+        },
+        countRollups: function (id, from, to) { return countIn('rollups', id, from, to); },
+        deleteRollups: function (id, from, to) { return deleteIn('rollups', id, from, to); },
+        totals: function () {
+            var tx = ro(['samples', 'rollups', 'tags']), o = {};
+            idbReq(tx.objectStore('samples').count()).then(function (n) { o.samples = n; });
+            idbReq(tx.objectStore('rollups').count()).then(function (n) { o.rollups = n; });
+            idbReq(tx.objectStore('tags').count()).then(function (n) { o.tags = n; });
+            return idbDone(tx).then(function () { return o; });
+        },
+        clear: function () {
+            var tx = rw(['samples', 'rollups', 'tags']);
+            tx.objectStore('samples').clear(); tx.objectStore('rollups').clear(); tx.objectStore('tags').clear();
+            return idbDone(tx).then(function () { return true; });
+        },
+        vacuum: function () { return Promise.resolve(true); },
+        close: function () { try { if (db) db.close(); } catch (e) {} db = null; return Promise.resolve(true); }
+    };
+    return S;
+}
+
+// Volatile store (no IndexedDB, or explicitly chosen). Sorted parallel arrays per tag.
+function MemStore() {
+    var tags = [], S = {}, R = {};
+    function lb(a, x) { var lo = 0, hi = a.length; while (lo < hi) { var m = (lo + hi) >>> 1; if (a[m] < x) lo = m + 1; else hi = m; } return lo; }
+    function ub(a, x) { var lo = 0, hi = a.length; while (lo < hi) { var m = (lo + hi) >>> 1; if (a[m] <= x) lo = m + 1; else hi = m; } return lo; }
+    function ser(map, id) { return map[id] || (map[id] = { t: [], x: [] }); }
+    function span(map, id, from, to) { var s = map[id]; if (!s) return [0, 0, null]; return [lb(s.t, from), ub(s.t, to), s]; }
+    function del(map, id, from, to) { var p = span(map, id, from, to); if (!p[2] || p[1] <= p[0]) return 0; p[2].t.splice(p[0], p[1] - p[0]); p[2].x.splice(p[0], p[1] - p[0]); return p[1] - p[0]; }
+    var M = {
+        kind: 'memory',
+        init: function () { return M.info(); },
+        info: function () { return { version: 'memory', bytes: null }; },
+        getTags: function () { return tags.map(function (t) { return Object.assign({}, t); }); },
+        putTags: function (list) {
+            list.forEach(function (x) {
+                var name = String(x.name), old = null;
+                for (var i = 0; i < tags.length; i++) if (tags[i].name === name) old = tags[i];
+                if (old) {
+                    if (x.device != null) old.device = String(x.device);
+                    if (x.unit != null) old.unit = String(x.unit);
+                    if (x.descr != null) old.descr = String(x.descr);
+                } else tags.push({ id: tags.length ? tags[tags.length - 1].id + 1 : 1, name: name, device: x.device != null ? String(x.device) : null,
+                    unit: x.unit != null ? String(x.unit) : null, descr: x.descr != null ? String(x.descr) : null, created: x.created != null ? +x.created : Date.now() });
+            });
+            return M.getTags();
+        },
+        putSamples: function (ids, ts, vs, qs, mode) {
+            var r = { inserted: 0, updated: 0, skipped: 0, byTag: {} };
+            for (var i = 0; i < ids.length; i++) {
+                var s = ser(S, ids[i]), t = ts[i], val = [(vs[i] === undefined ? null : vs[i]), qs[i]], n = s.t.length;
+                if (!n || s.t[n - 1] < t) { s.t.push(t); s.x.push(val); }
+                else {
+                    var k = lb(s.t, t);
+                    if (s.t[k] === t) { if (mode === 'replace') { s.x[k] = val; r.updated++; } else r.skipped++; continue; }
+                    s.t.splice(k, 0, t); s.x.splice(k, 0, val);
+                }
+                r.inserted++; r.byTag[ids[i]] = (r.byTag[ids[i]] || 0) + 1;
+            }
+            return r;
+        },
+        getSamples: function (id, from, to, limit, desc) {
+            var p = span(S, id, from, to), o = { t: [], v: [], q: [] };
+            if (!p[2]) return o;
+            var a = p[0], b = p[1];
+            if (limit > 0 && b - a > limit) { if (desc) a = b - limit; else b = a + limit; }
+            for (var i = a; i < b; i++) { o.t.push(p[2].t[i]); o.v.push(p[2].x[i][0]); o.q.push(p[2].x[i][1]); }
+            if (desc) { o.t.reverse(); o.v.reverse(); o.q.reverse(); }
+            return o;
+        },
+        countSamples: function (id, from, to) { var p = span(S, id, from, to); return Math.max(0, p[1] - p[0]); },
+        deleteSamples: function (id, from, to) { return del(S, id, from, to); },
+        aggSamples: function (id, from, to, b) {
+            var p = span(S, id, from, to), a = new Agg(Math.max(1, Math.round(b)));
+            if (p[2]) for (var i = p[0]; i < p[1]; i++) a.push(p[2].t[i], p[2].x[i][0], p[2].x[i][1]);
+            return a.result();
+        },
+        statsAll: function () {
+            var o = {};
+            tags.forEach(function (tg) {
+                var s = S[tg.id], r = R[tg.id], x = o[tg.id] = { n: 0, first: null, last: null, rn: 0, rfirst: null, rlast: null };
+                if (s && s.t.length) { x.n = s.t.length; x.first = s.t[0]; x.last = s.t[s.t.length - 1]; x.lastV = s.x[s.x.length - 1][0]; x.lastQ = s.x[s.x.length - 1][1]; }
+                if (r && r.t.length) { x.rn = r.t.length; x.rfirst = r.t[0]; x.rlast = r.t[r.t.length - 1]; }
+            });
+            return o;
+        },
+        putRollups: function (id, parts) {
+            var s = ser(R, id);
+            parts.forEach(function (p) {
+                var k = lb(s.t, p.t), a = rollToArr(p);
+                if (s.t[k] === p.t) s.x[k] = a; else { s.t.splice(k, 0, p.t); s.x.splice(k, 0, a); }
+            });
+            return parts.length;
+        },
+        rollupWrite: function (id, parts, cut) { M.putRollups(id, parts); return del(S, id, 0, cut - 1); },
+        getRollups: function (id, from, to) {
+            var p = span(R, id, from, to), out = [];
+            if (p[2]) for (var i = p[0]; i < p[1]; i++) out.push(arrToRoll(p[2].x[i]));
+            return out;
+        },
+        countRollups: function (id, from, to) { var p = span(R, id, from, to); return Math.max(0, p[1] - p[0]); },
+        deleteRollups: function (id, from, to) { return del(R, id, from, to); },
+        totals: function () {
+            var n = 0, nr = 0, k;
+            for (k in S) n += S[k].t.length;
+            for (k in R) nr += R[k].t.length;
+            return { samples: n, rollups: nr, tags: tags.length };
+        },
+        clear: function () { tags = []; S = {}; R = {}; return true; },
+        vacuum: function () { return true; },
+        close: function () { return true; }
+    };
+    return M;
+}
+
+// ─── §5 storage Worker (official SQLite WASM on OPFS) ────────────────
+// Runs inside a classic Worker built from a Blob. The verified sqlite3.mjs text is
+// evaluated with Function after two exact rewrites (checked, else the load fails):
+// every `import.meta.url` → a base URL argument, and the final `export {…}` → return.
+// That keeps the SHA-384-checked bytes as the code that runs, and avoids module
+// Workers and blob-URL module imports (not reliable in every WebView).
+function histWorkerMain(S) {
+    var store = null, sqlite3 = null, db = null, meta = null;
+    var EXPORT = 'export { sqlite3InitModule as default, sqlite3Worker1Promiser$1 as sqlite3Worker1Promiser };';
+    function probe() {
+        var nav = S.navigator, FH = S.FileSystemFileHandle;
+        var ok = !!(nav && nav.storage && typeof nav.storage.getDirectory === 'function' && FH && FH.prototype &&
+            typeof FH.prototype.createSyncAccessHandle === 'function');
+        return { opfs: ok };
+    }
+    function factoryFrom(js, base) {
+        if (js.split('import.meta.url').length - 1 !== 4 || js.lastIndexOf(EXPORT) < 0) throw new Error('unexpected sqlite3.mjs layout (version mismatch)');
+        var body = js.split('import.meta.url').join('__wtsBase').replace(EXPORT, 'return sqlite3InitModule;');
+        return (new Function('__wtsBase', '"use strict";\n' + body))(base);
+    }
+    function open(m) {
+        var quiet = function () {};
+        S.sqlite3ApiConfig = { debug: quiet, log: quiet, warn: quiet, error: function () { try { console.error.apply(console, arguments); } catch (e) {} },
+            disable: { vfs: { opfs: true, 'opfs-vfs': true, 'opfs-wl': true, kvvfs: true } } };
+        var init = factoryFrom(m.js, m.base);
+        return init({ wasmBinary: new Uint8Array(m.wasm), locateFile: function (p) { return p; }, print: quiet, printErr: quiet }).then(function (s3) {
+            sqlite3 = s3;
+            if (m.mode === 'memory') { db = new sqlite3.oo1.DB(':memory:', 'c'); return 'memory'; }
+            return sqlite3.installOpfsSAHPoolVfs({ name: m.vfs, directory: m.dir, initialCapacity: 6 }).then(function (pool) {
+                db = new pool.OpfsSAHPoolDb(m.file);
+                return 'opfs-sahpool';
+            });
+        }).then(function (vfs) {
+            store = HistSqlStore(histWasmAdapter(sqlite3, db));
+            var info = store.init();
+            meta = { version: sqlite3.version.libVersion, vfs: vfs, info: info };
+            return meta;
+        });
+    }
+    S.onmessage = function (ev) {
+        var m = (ev && ev.data) || {}, p;
+        try {
+            if (m.op === 'probe') p = probe();
+            else if (m.op === 'open') p = open(m);
+            else if (m.op === 'call') {
+                if (!store || typeof store[m.method] !== 'function') throw new Error('storage worker: no method ' + m.method);
+                p = store[m.method].apply(store, m.args || []);
+            } else if (m.op === 'close') { if (db) db.close(); db = null; store = null; p = true; }
+            else throw new Error('storage worker: bad op ' + m.op);
+        } catch (e) { p = Promise.reject(e); }
+        Promise.resolve(p).then(function (r) {
+            var tr = [];
+            if (r && typeof r.byteLength === 'number' && r.buffer && r.byteLength === r.buffer.byteLength) tr.push(r.buffer);   // exported file (a copy)
+            S.postMessage({ id: m.id, ok: true, result: r }, tr);
+        }, function (e) { S.postMessage({ id: m.id, ok: false, error: String((e && e.message) || e) }); });
+    };
+}
+function workerSource() {
+    return '"use strict";\n/* H2Oil Well Testing Suite — historian storage worker */\n' +
+        'var HistSqlStore = ' + HistSqlStore.toString() + ';\n' +
+        'var histWasmAdapter = ' + histWasmAdapter.toString() + ';\n' +
+        '(' + histWorkerMain.toString() + ')(self);\n';
+}
+var STORE_METHODS = ['info', 'getTags', 'putTags', 'putSamples', 'getSamples', 'countSamples', 'deleteSamples', 'aggSamples', 'statsAll',
+    'putRollups', 'rollupWrite', 'getRollups', 'countRollups', 'deleteRollups', 'totals', 'clear', 'vacuum', 'exportBytes'];
+// Main-thread proxy: one Promise per request, matched by id.
+function WorkerStore(w) {
+    var seq = 0, pend = {}, dead = null;
+    function failAll(e) { dead = e; Object.keys(pend).forEach(function (k) { var p = pend[k]; delete pend[k]; if (p.timer) clearTimeout(p.timer); p.rej(e); }); }
+    w.onmessage = function (ev) {
+        var m = ev && ev.data, p = m && pend[m.id];
+        if (!p) return;
+        delete pend[m.id];
+        if (p.timer) clearTimeout(p.timer);
+        if (m.ok) p.res(m.result); else p.rej(new Error(m.error));
+    };
+    w.onerror = function (e) { if (e && e.preventDefault) e.preventDefault(); failAll(new Error('storage worker error: ' + ((e && e.message) || 'unknown'))); };
+    function send(msg, transfer, timeoutMs) {
+        if (dead) return Promise.reject(dead);
+        return new Promise(function (res, rej) {
+            msg.id = ++seq;
+            var p = pend[msg.id] = { res: res, rej: rej, timer: null };
+            if (timeoutMs) p.timer = setTimeout(function () { if (pend[msg.id]) { delete pend[msg.id]; rej(new Error('storage worker did not answer "' + msg.op + '" in ' + (timeoutMs / 1000) + ' s')); } }, timeoutMs);
+            try { w.postMessage(msg, transfer || []); } catch (e) { delete pend[msg.id]; if (p.timer) clearTimeout(p.timer); rej(e); }
+        });
+    }
+    var api = { kind: 'opfs', _send: send, isDead: function () { return !!dead; },
+        terminate: function () { failAll(new Error('storage worker closed')); try { w.terminate(); } catch (e) {} } };
+    STORE_METHODS.forEach(function (name) {
+        api[name] = function () { return send({ op: 'call', method: name, args: Array.prototype.slice.call(arguments) }); };
+    });
+    api.close = function () { return send({ op: 'close' }).then(function () { api.terminate(); return true; }, function () { api.terminate(); return true; }); };
+    return api;
+}
+
+// ─── §6 library loader (lazy, integrity-checked) ─────────────────────
+function noop() {}
+function isNativeShell() {
+    try {
+        if (G.location && G.location.protocol === 'capacitor:') return true;
+        var C = G.Capacitor;
+        return !!(C && typeof C.isNativePlatform === 'function' && C.isNativePlatform());
+    } catch (e) { return false; }
+}
+function absUrl(u) { try { return new URL(u, G.location && G.location.href).href; } catch (e) { return u; } }
+function asBuf(x) {
+    if (x && typeof x.byteLength === 'number' && x.buffer && typeof x.byteOffset === 'number') return x.buffer.slice(x.byteOffset, x.byteOffset + x.byteLength);
+    return x;
+}
+function toU8(x) { return (x && x.buffer && typeof x.byteOffset === 'number') ? new Uint8Array(x.buffer, x.byteOffset, x.byteLength) : new Uint8Array(x); }
+function utf8(buf) { return new TextDecoder('utf-8').decode(toU8(buf)); }
+function b64(ab) {
+    var b = new Uint8Array(ab), s = '', CH = 0x8000;
+    for (var i = 0; i < b.length; i += CH) s += String.fromCharCode.apply(null, b.subarray(i, i + CH));
+    return G.btoa(s);
+}
+function fetchBytes(url) {
+    if (typeof T.fetchBytes === 'function') return Promise.resolve().then(function () { return T.fetchBytes(url); });
+    if (typeof G.fetch !== 'function') return Promise.reject(new Error('fetch is not available'));
+    var ac = typeof G.AbortController === 'function' ? new G.AbortController() : null;
+    var timer = setTimeout(function () { if (ac) ac.abort(); }, 30000);
+    var cross = /^https?:/i.test(url) && (!G.location || url.indexOf(G.location.origin + '/') !== 0);
+    var init = cross ? { mode: 'cors', credentials: 'omit' } : { credentials: 'same-origin' };
+    if (ac) init.signal = ac.signal;
+    return G.fetch(url, init).then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); })
+        .then(function (b) { clearTimeout(timer); return b; }, function (e) { clearTimeout(timer); throw e; });
+}
+// Sources in order: a local copy (iOS app bundle, or window.WTS_HIST_LIB_BASE for a self-hosted
+// intranet copy), then the pinned CDN URLs. CDN bytes are used only after their SHA-384 matches;
+// without WebCrypto (plain http) only the local copy is accepted, unverified — like the 3D loader.
+function libSources(name) {
+    var src = [], base = G.WTS_HIST_LIB_BASE != null ? String(G.WTS_HIST_LIB_BASE) : (isNativeShell() ? '' : null);
+    if (base !== null) src.push({ url: absUrl(base + name), local: true });
+    LIBS[name].urls.forEach(function (u) { src.push({ url: u, local: false }); });
+    return src;
+}
+function fetchVerified(name) {
+    var want = HIST_SHA384[name], subtle = (G.crypto && G.crypto.subtle && typeof G.crypto.subtle.digest === 'function') ? G.crypto.subtle : null;
+    var srcs = libSources(name), tried = [], i = 0;
+    function next() {
+        if (i >= srcs.length) {
+            var e = new Error(name + ' could not be loaded — ' + tried.join('; '));
+            e.code = tried.some(function (x) { return /SHA-384/.test(x); }) ? 'integrity' : 'offline';
+            return Promise.reject(e);
+        }
+        var s = srcs[i++];
+        if (!s.local && !subtle) { tried.push(s.url + ' (skipped: no WebCrypto to check its SHA-384)'); return next(); }
+        return fetchBytes(s.url).then(function (buf) {
+            buf = asBuf(buf);
+            if (!subtle) return { buf: buf, url: s.url, verified: false, local: true };
+            return subtle.digest('SHA-384', buf).then(function (d) {
+                if (b64(d) !== want) { tried.push(s.url + ' (SHA-384 mismatch — not used)'); return next(); }
+                return { buf: buf, url: s.url, verified: true, local: s.local };
+            });
+        }, function (e) { tried.push(s.url + ' (' + errMsg(e) + ')'); return next(); });
+    }
+    return next();
+}
+var _sqljsP = null;
+function loadSqlJs() {
+    if (_sqljsP) return _sqljsP;
+    _sqljsP = Promise.all([fetchVerified('sql-wasm.js'), fetchVerified('sql-wasm.wasm')]).then(function (r) {
+        var init = (new Function(utf8(r[0].buf) + '\n;return initSqlJs;'))();
+        return init({ wasmBinary: new Uint8Array(r[1].buf), locateFile: function (p) { return p; } }).then(function (SQL) {
+            var d = new SQL.Database(), ver = String(d.exec('SELECT sqlite_version()')[0].values[0][0]);
+            d.close();
+            E.lib.sqljs = { name: 'sql.js 1.14.2', version: ver, url: r[0].url, verified: !!(r[0].verified && r[1].verified) };
+            return SQL;
+        });
+    });
+    _sqljsP.catch(function () { _sqljsP = null; });
+    return _sqljsP;
+}
+
+// ─── §7 engine ───────────────────────────────────────────────────────
+var E = {
+    store: null, engine: null, home: null, spoolFor: null, reasons: [], notes: [], initP: null, info: null, lib: {},
+    chain: Promise.resolve(), buf: [], timer: null, timerMs: -1,
+    byName: {}, byId: {}, stat: {}, live: {}, tot: { samples: 0, rollups: 0, tags: 0 },
+    lastFlush: 0, lastFlushMs: 0, flushes: 0, written: 0, dropped: 0, rejected: 0, errors: 0, lastError: '',
+    lastRetention: 0, lastRetentionResult: null, dirty: false, persistTimer: null, lastPersist: 0
+};
+function lock(fn) { var p = E.chain.then(fn, fn); E.chain = p.then(noop, noop); return p; }
+function perfNow() { try { return G.performance && G.performance.now ? G.performance.now() : Date.now(); } catch (e) { return Date.now(); } }
+function isSqlEngine() { return E.engine === 'opfs' || E.engine === 'sqljs'; }
+function floorTo(t, b) { return t - (((t % b) + b) % b); }
+function firstDef() { for (var i = 0; i < arguments.length; i++) if (arguments[i] !== undefined && arguments[i] !== null) return arguments[i]; return null; }
+
+function getSettings() {
+    var s = lsJSON(LS_SETTINGS) || {};
+    var ci = function (x, d, lo, hi) { x = Math.round(numOr(x, d)); return Math.min(hi, Math.max(lo, x)); };
+    return {
+        days: ci(s.days, DEFAULTS.days, 0, 36500), maxRows: ci(s.maxRows, DEFAULTS.maxRows, 0, 1e10),
+        downsampleAfterDays: ci(s.downsampleAfterDays, DEFAULTS.downsampleAfterDays, 0, 36500),
+        engine: ENGINES.indexOf(s.engine) >= 0 ? s.engine : 'auto'
+    };
+}
+function saveSettings(s) { lsSet(LS_SETTINGS, JSON.stringify({ days: s.days, maxRows: s.maxRows, downsampleAfterDays: s.downsampleAfterDays, engine: s.engine })); }
+function effCap(engine) {
+    var s = getSettings(), c = ENGINE_CAPS[engine || E.engine] || 0, u = s.maxRows || 0;
+    if (!c) return u || Infinity;
+    return u ? Math.min(c, u) : c;
+}
+function hasStore(d, n) { return !!d.objectStoreNames && (typeof d.objectStoreNames.contains === 'function' ? d.objectStoreNames.contains(n) : Array.prototype.indexOf.call(d.objectStoreNames, n) >= 0); }
+
+// Engine openers — each resolves to an initialised async store.
+function openOpfs() {
+    if (typeof G.Worker !== 'function') return Promise.reject(new Error('Web Workers are not available'));
+    if (!G.Blob || !G.URL || typeof G.URL.createObjectURL !== 'function') return Promise.reject(new Error('Blob URLs are not available'));
+    var w;
+    try { w = new G.Worker(G.URL.createObjectURL(new G.Blob([workerSource()], { type: 'text/javascript' }))); }
+    catch (e) { return Promise.reject(new Error('the storage worker could not start (' + errMsg(e) + ')')); }
+    var ws = WorkerStore(w);
+    return ws._send({ op: 'probe' }, null, 10000).then(function (pr) {
+        if (!(pr && pr.opfs) && !T.workerMemory) throw new Error('OPFS sync access handles are not available in workers');
+        return Promise.all([fetchVerified('sqlite3.mjs'), fetchVerified('sqlite3.wasm')]);
+    }).then(function (r) {
+        var base = /^https?:|^capacitor:/i.test(r[0].url) ? r[0].url : absUrl('sqlite3.mjs');
+        return ws._send({ op: 'open', js: utf8(r[0].buf), wasm: r[1].buf, base: base, mode: T.workerMemory ? 'memory' : 'opfs',
+            vfs: OPFS_VFS, dir: OPFS_DIR, file: OPFS_FILE }, [r[1].buf], 60000).then(function (m) {
+            E.lib.sqlite = { name: 'SQLite WASM (official build) 3.53.4', version: m.version, vfs: m.vfs, url: r[0].url, verified: !!(r[0].verified && r[1].verified) };
+            return ws;
+        });
+    }).catch(function (e) {
+        ws.terminate();
+        var m = errMsg(e);
+        if (/NoModificationAllowed|locked|Access Handles cannot be created/i.test(m)) m = 'the SQLite files are in use by another tab of this app (' + m + ')';
+        throw new Error(m);
+    });
+}
+function openSqlJs() {
+    var idb = G.indexedDB;
+    if (!idb) return Promise.reject(new Error('IndexedDB is not available (needed to keep the SQLite file)'));
+    var SQL, snapDb, release = null;
+    return holdLock('wts-historian-sqljs').then(function (rel) {
+        if (!rel) throw new Error('the SQLite file is open in another tab of this app');
+        release = rel;
+        return loadSqlJs();
+    }).then(function (S) {
+        SQL = S;
+        return idbOpen(idb, SNAP_DB, function (d) { if (!hasStore(d, SNAP_STORE)) d.createObjectStore(SNAP_STORE); });
+    }).then(function (d) {
+        snapDb = d;
+        return idbReq(snapDb.transaction(SNAP_STORE, 'readonly').objectStore(SNAP_STORE).get(SNAP_KEY));
+    }).then(function (bytes) {
+        var db = null;
+        if (bytes) {
+            try { db = new SQL.Database(toU8(bytes)); db.exec('SELECT count(*) FROM sqlite_master'); }
+            catch (e) {
+                // Keep the unreadable file aside (never silently discarded) and start a new one.
+                try { if (db) db.close(); } catch (e2) {}
+                db = null;
+                try { var tx0 = snapDb.transaction(SNAP_STORE, 'readwrite'); tx0.objectStore(SNAP_STORE).put(bytes, SNAP_KEY + '.unreadable-' + Date.now()); } catch (e3) {}
+                E.notes.push('The saved SQLite file could not be opened (' + errMsg(e) + '); it was kept aside and a new file started.');
+            }
+        }
+        if (!db) db = new SQL.Database();
+        var sync = HistSqlStore(histSqlJsAdapter(db));
+        sync.init();
+        return asyncStore(sync, 'sqljs', {
+            persist: function () {
+                var b = db.export(), tx = snapDb.transaction(SNAP_STORE, 'readwrite');
+                tx.objectStore(SNAP_STORE).put(b, SNAP_KEY);
+                return idbDone(tx);
+            },
+            close: function () { try { db.close(); } catch (e) {} try { snapDb.close(); } catch (e) {} if (release) release(); release = null; return Promise.resolve(true); }
+        });
+    }).catch(function (e) { if (release) release(); throw e; });
+}
+function openIdb() {
+    if (!G.indexedDB || !G.IDBKeyRange) return Promise.reject(new Error('IndexedDB is not available'));
+    var st = IdbStore(G.indexedDB, G.IDBKeyRange);
+    return st.init().then(function () { return st; });
+}
+function openMemory() { var st = asyncStore(MemStore(), 'memory'); return st.init().then(function () { return st; }); }
+var OPEN = { opfs: openOpfs, sqljs: openSqlJs, idb: openIdb, memory: openMemory };
+
+function engineOrder() {
+    var s = getSettings(), home = lsGet(LS_HOME);
+    var first = s.engine !== 'auto' ? s.engine : (ENGINES.indexOf(home) >= 0 ? home : null);
+    if (first === 'memory') return ['memory'];
+    if (first) return uniq([first, 'idb', 'memory']);      // home unavailable → spool to IndexedDB, merged later
+    return ENGINES.slice();
+}
+function openBest() {
+    var order = engineOrder(), i = 0;
+    E.reasons = [];
+    function next() {
+        if (i >= order.length) return Promise.reject(new Error('no storage engine available: ' + E.reasons.join('; ')));
+        var name = order[i++];
+        return OPEN[name]().then(function (st) { return { name: name, store: st }; },
+            function (e) { E.reasons.push(ENGINE_LABEL[name] + ' — ' + errMsg(e)); return next(); });
+    }
+    return next();
+}
+function indexTag(t) { E.byName[t.name] = t; E.byId[t.id] = t; }
+function reloadMeta() {
+    return E.store.getTags().then(function (tags) {
+        E.byName = {}; E.byId = {};
+        tags.forEach(indexTag);
+        return refreshStats();
+    }).then(function () { return E.store.info().then(function (i) { E.info = i; }, noop); });
+}
+function refreshStats() {
+    return E.store.statsAll().then(function (s) { E.stat = s || {}; return E.store.totals(); }).then(function (t) { E.tot = t; });
+}
+function afterOpen(r) {
+    E.store = r.store; E.engine = r.name;
+    var home = lsGet(LS_HOME);
+    if (!home && r.name !== 'memory') { lsSet(LS_HOME, r.name); home = r.name; }
+    E.home = home || r.name;
+    E.spoolFor = (home && home !== r.name && ENGINES.indexOf(home) >= 0 && r.name !== 'memory') ? home : null;
+    if (E.spoolFor) lsSet(LS_SPOOL, '1');
+    return reloadMeta().then(function () {
+        if (E.spoolFor || r.name === 'idb' || r.name === 'memory' || lsGet(LS_SPOOL) !== '1') return null;
+        return drainSpool().catch(function (e) { E.notes.push('Merging the IndexedDB spool failed: ' + errMsg(e)); });
+    }).then(function () { publishState(); return E.store; });
+}
+function ensureStore() {
+    if (E.store) return Promise.resolve(E.store);
+    if (!E.initP) E.initP = openBest().then(afterOpen).then(function (s) { E.initP = null; return s; }, function (e) { E.initP = null; throw e; });
+    return E.initP;
+}
+// Samples written to IndexedDB while the home engine was unavailable → home. Only what was
+// copied is deleted from the spool (per tag, up to the latest copied time), so samples another
+// tab is still spooling meanwhile are kept for the next merge.
+function drainSpool() {
+    if (!G.indexedDB || !G.IDBKeyRange) return Promise.resolve();
+    var sp = IdbStore(G.indexedDB, G.IDBKeyRange), left = 0;
+    return sp.init().then(function () { return sp.totals(); }).then(function (t) {
+        if (!t.samples && !t.rollups) return null;
+        return copyStore(sp, E.store, 'ignore').then(function (r) {
+            E.notes.push('Merged ' + fmtCount(r.samples) + ' samples recorded while the ' + ENGINE_LABEL[E.engine] + ' store was unavailable.');
+            return Object.keys(r.upTo).reduce(function (p, id) {
+                return p.then(function () { return sp.deleteSamples(+id, 0, r.upTo[id]); }).then(function () { return sp.deleteRollups(+id, 0, r.upTo[id]); });
+            }, Promise.resolve());
+        }).then(function () { return sp.totals(); }).then(function (t2) { left = t2.samples + t2.rollups; markDirty(); return reloadMeta(); });
+    }).then(function () { lsSet(LS_SPOOL, left ? '1' : '0'); return sp.close(); });
+}
+// Copy every tag, sample and rollup from one store into another (dup: 'ignore' | 'replace').
+function copyStore(src, dst, dup) {
+    var res = { samples: 0, rollups: 0, tags: 0, upTo: {} };        // upTo: source tag id → latest time copied
+    return src.getTags().then(function (tags) {
+        if (!tags.length) return res;
+        res.tags = tags.length;
+        return dst.putTags(tags.map(function (t) { return { name: t.name, device: t.device, unit: t.unit, descr: t.descr, created: t.created }; })).then(function (dt) {
+            var map = {};
+            dt.forEach(function (t) { map[t.name] = t.id; });
+            return tags.reduce(function (p, tg) {
+                return p.then(function () {
+                    var did = map[tg.name], lo = 0;
+                    function more() {
+                        return src.getSamples(tg.id, lo, MAXT, CHUNK).then(function (c) {
+                            if (!c.t.length) return null;
+                            res.upTo[tg.id] = Math.max(res.upTo[tg.id] || 0, c.t[c.t.length - 1]);
+                            return dst.putSamples(repeat(did, c.t.length), c.t, c.v, c.q, dup).then(function (r) {
+                                res.samples += r.inserted + r.updated;
+                                if (c.t.length < CHUNK) return null;
+                                lo = c.t[c.t.length - 1] + 1;
+                                return more();
+                            });
+                        });
+                    }
+                    return more().then(function () { return src.getRollups(tg.id, 0, MAXT); }).then(function (rs) {
+                        if (!rs.length) return null;
+                        res.upTo[tg.id] = Math.max(res.upTo[tg.id] || 0, rs[rs.length - 1].t);
+                        return dst.putRollups(did, rs).then(function (n) { res.rollups += n; });
+                    });
+                });
+            }, Promise.resolve()).then(function () { return res; });
+        });
+    });
+}
+
+// sql.js keeps the file in memory: save it to IndexedDB 1–8 s after a write, and at once
+// when the page is hidden. Every store call is atomic (the rollup swap is one transaction), so a
+// snapshot taken between two calls is always consistent; the urgent path skips the queue.
+function markDirty() {
+    if (E.engine !== 'sqljs' || !E.store || !E.store.persist) return;
+    E.dirty = true;
+    // A small file (< 100k rows ≈ 2.5 MB) is cheap to re-write: save within 1 s; larger ones every 8 s.
+    if (E.persistTimer === null) E.persistTimer = setTimeout(function () { E.persistTimer = null; persistNow(); }, E.tot.samples < 100000 ? 1000 : 8000);
+}
+function persistNow(urgent) {
+    if (E.persistTimer !== null) { clearTimeout(E.persistTimer); E.persistTimer = null; }
+    var run = function () {
+        if (!E.dirty || !E.store || !E.store.persist) return Promise.resolve(false);
+        E.dirty = false;
+        return E.store.persist().then(function () { E.lastPersist = Date.now(); return true; },
+            function (e) { E.dirty = true; E.lastError = 'Saving the SQLite file failed: ' + errMsg(e); return false; });
+    };
+    return urgent ? run() : lock(run);
+}
+// One tab at a time may own the sql.js file (two in-memory copies would overwrite each
+// other's snapshot). Web Locks: resolves to a release function, or null when another tab holds it.
+function holdLock(name) {
+    var L = G.navigator && G.navigator.locks;
+    if (!L || typeof L.request !== 'function') return Promise.resolve(noop);   // no Web Locks (older browsers): single-tab use
+    return new Promise(function (res) {
+        var p;
+        try {
+            p = L.request(name, { ifAvailable: true }, function (lk) {
+                if (!lk) { res(null); return null; }
+                return new Promise(function (release) { res(release); });       // held until released (no timer involved)
+            });
+        } catch (e) { res(noop); return; }
+        if (p && typeof p.catch === 'function') p.catch(function () { res(noop); });
+    });
+}
+function emit(detail) {
+    if (!hasDoc() || typeof document.dispatchEvent !== 'function' || typeof G.CustomEvent !== 'function') return;
+    detail.engine = E.engine;
+    try { document.dispatchEvent(new G.CustomEvent('wts:historian-updated', { detail: detail })); } catch (e) { /* listeners' errors stay theirs */ }
+}
+function publishState() {
+    try {
+        G.WTS_state = G.WTS_state || {};
+        G.WTS_state.historian = { engine: E.engine, label: E.engine ? ENGINE_LABEL[E.engine] : null, samples: E.tot.samples, rollups: E.tot.rollups,
+            tags: Object.keys(E.byId).length, buffer: E.buf.length, lastFlush: E.lastFlush || null, lastError: E.lastError || null };
+    } catch (e) { /* read-only WTS_state */ }
+}
+
+// Modbus tag metadata (the Modbus page owns polling; we only read its configuration).
+function modbusTagMap() {
+    var M = G.WTS_modbus, out = {}, list;
+    if (!M || typeof M.getTags !== 'function') return out;
+    try { list = M.getTags(); } catch (e) { return out; }
+    if (list && !Array.isArray(list) && typeof list === 'object') list = Object.keys(list).map(function (k) { return Object.assign({ tag: k }, list[k]); });
+    (Array.isArray(list) ? list : []).forEach(function (x) {
+        if (!x || typeof x !== 'object') return;
+        var name = cleanStr(firstDef(x.tag, x.name, x.id), 128);
+        if (!name) return;
+        var poll = +firstDef(x.pollMs, x.intervalMs, x.pollRateMs, x.rateMs, x.pollIntervalMs);
+        out[name] = { device: cleanStr(firstDef(x.device, x.deviceName)), unit: cleanStr(firstDef(x.unit, x.units, x.engUnit), 32),
+            desc: cleanStr(firstDef(x.desc, x.description), 200), pollMs: isNum(poll) && poll > 0 ? poll : null,
+            enabled: (x.enabled === false || x.log === false || x.logged === false || x.historian === false) ? false : true };
+    });
+    return out;
+}
+
+// ── record / flush ──
+function record(samples) {
+    if (!samples) return 0;
+    var list = Array.isArray(samples) ? samples : (Array.isArray(samples.samples) ? samples.samples : [samples]);
+    var tNow = Date.now(), n = 0;
+    for (var i = 0; i < list.length; i++) {
+        var s = normSample(list[i], tNow);
+        if (!s) { E.rejected++; continue; }
+        E.buf.push(s); n++;
+        var L = E.live[s.tag];
+        if (!L || s.t >= L.t) E.live[s.tag] = { t: s.t, v: s.v, q: s.q, raw: s.raw, device: s.device, unit: s.unit };
+    }
+    if (E.buf.length > BUFFER_CAP) { var d = E.buf.length - BUFFER_CAP; E.buf.splice(0, d); E.dropped += d; }
+    if (n) scheduleFlush();
+    return n;
+}
+function scheduleFlush() {
+    var ms = E.buf.length >= FLUSH_MAX ? 0 : FLUSH_MS;
+    if (E.timer !== null) {
+        if (ms === 0 && E.timerMs !== 0) { clearTimeout(E.timer); E.timer = null; } else return;
+    }
+    E.timerMs = ms;
+    E.timer = setTimeout(function () { E.timer = null; flush().catch(noop); }, ms);
+}
+function flush() {
+    if (E.timer !== null) { clearTimeout(E.timer); E.timer = null; }
+    return lock(doFlush);
+}
+function doFlush() {
+    if (!E.buf.length) return Promise.resolve({ count: 0, inserted: 0, updated: 0 });
+    var batch = E.buf, t0 = perfNow(), want = {}, names;
+    E.buf = [];
+    return ensureStore().then(function () {
+        var mb = modbusTagMap(), list = [];
+        batch.forEach(function (s) {
+            var w = want[s.tag] || (want[s.tag] = { name: s.tag, device: null, unit: null, descr: null });
+            if (s.device) w.device = s.device;
+            if (s.unit) w.unit = s.unit;
+        });
+        names = Object.keys(want);
+        names.forEach(function (name) {
+            var w = want[name], cur = E.byName[name], m = mb[name];
+            if (m) { if (!w.unit) w.unit = m.unit; if (!w.device) w.device = m.device; if (m.desc) w.descr = m.desc; }
+            if (!cur || (w.unit && w.unit !== cur.unit) || (w.device && w.device !== cur.device) || (w.descr && w.descr !== cur.descr)) list.push(w);
+        });
+        return list.length ? E.store.putTags(list).then(function (all) { all.forEach(indexTag); E.tot.tags = all.length; }) : null;
+    }).then(function () {
+        batch.sort(function (a, b) { return a.t - b.t; });                    // stable: a later record of the same (tag, t) wins
+        var ids = [], ts = [], vs = [], qs = [];
+        batch.forEach(function (s) { ids.push(E.byName[s.tag].id); ts.push(s.t); vs.push(s.v); qs.push(s.q); });
+        return E.store.putSamples(ids, ts, vs, qs, 'replace');
+    }).then(function (r) {
+        batch.forEach(function (s) {
+            var id = E.byName[s.tag].id, x = E.stat[id] || (E.stat[id] = { n: 0, first: null, last: null, rn: 0, rfirst: null, rlast: null });
+            if (x.first === null || s.t < x.first) x.first = s.t;
+            if (x.last === null || s.t >= x.last) { x.last = s.t; x.lastV = s.v; x.lastQ = s.q; }
+        });
+        Object.keys(r.byTag || {}).forEach(function (id) { if (E.stat[id]) E.stat[id].n += r.byTag[id]; });
+        E.tot.samples += r.inserted;
+        E.written += r.inserted + r.updated; E.flushes++; E.lastFlush = Date.now(); E.lastFlushMs = perfNow() - t0; E.lastError = '';
+        if (E.spoolFor) lsSet(LS_SPOOL, '1');
+        markDirty();
+        var due = Date.now() - E.lastRetention >= RETENTION_EVERY_MS || E.tot.samples > effCap();
+        return (due ? runRetention() : Promise.resolve(null)).then(function () {
+            publishState();
+            emit({ reason: 'flush', count: batch.length, inserted: r.inserted, updated: r.updated, tags: names, from: batch[0].t, to: batch[batch.length - 1].t });
+            return { count: batch.length, inserted: r.inserted, updated: r.updated };
+        });
+    }).catch(function (e) {
+        // Keep the samples (bounded) for the next attempt; the next record() schedules it.
+        E.buf = batch.concat(E.buf);
+        if (E.buf.length > BUFFER_CAP) { var d = E.buf.length - BUFFER_CAP; E.buf.splice(0, d); E.dropped += d; }
+        E.errors++; E.lastError = errMsg(e);
+        // A crashed storage worker is reopened by the next write (never in a loop: only record() schedules it).
+        if (E.store && typeof E.store.isDead === 'function' && E.store.isDead()) { E.store = null; E.initP = null; }
+        publishState();
+        throw e;
+    });
+}
+
+// ── retention / downsampling (runs inside the lock) ──
+function eachId(fn) {
+    var ids = Object.keys(E.byId).map(Number);
+    return ids.reduce(function (p, id) { return p.then(function () { return fn(id); }); }, Promise.resolve());
+}
+// Raw samples of one tag before `cut` (a minute boundary) → 60-s rollups (merged with any
+// rollup already stored for the same minute), then the raw rows are removed.
+function rollupBefore(id, cut, out) {
+    return E.store.countSamples(id, 0, cut - 1).then(function (n) {
+        if (!n) return 0;
+        return E.store.aggSamples(id, 0, cut - 1, ROLLUP_MS).then(function (parts) {
+            if (!parts.length) return parts;
+            return E.store.getRollups(id, parts[0].t, parts[parts.length - 1].t).then(function (old) {
+                if (old.length) parts = mergePartials(old.concat(parts), ROLLUP_MS);
+                parts.forEach(function (p) { p.dt = ROLLUP_MS; });
+                return parts;
+            });
+        }).then(function (parts) { out.rollups += parts.length; return E.store.rollupWrite(id, parts, cut); }).then(function () { return n; });
+    });
+}
+function runRetention() {
+    var s = getSettings(), now = Date.now(), out = { deleted: 0, deletedRollups: 0, rolledUp: 0, rollups: 0, capped: 0 };
+    E.lastRetention = now;
+    var p = Promise.resolve();
+    if (s.days > 0) {
+        var cut = now - s.days * DAY;
+        p = p.then(function () {
+            return eachId(function (id) {
+                return E.store.deleteSamples(id, 0, cut - 1).then(function (n) { out.deleted += n; return E.store.deleteRollups(id, 0, cut - 1); })
+                    .then(function (n) { out.deletedRollups += n; });
+            });
+        });
+    }
+    if (s.downsampleAfterDays > 0) {
+        var cut2 = floorTo(now - s.downsampleAfterDays * DAY, ROLLUP_MS);
+        p = p.then(function () { return eachId(function (id) { return rollupBefore(id, cut2, out).then(function (n) { out.rolledUp += n; }); }); });
+    }
+    var cap = effCap();
+    if (isFinite(cap)) {
+        // Row cap: move the cut forward in proportion to the excess (aiming 10 % below the cap)
+        // and roll up (or, with downsampling off, delete) the oldest raw samples. ≤ 4 passes.
+        var pass = 0;
+        var capStep = function () {
+            return E.store.totals().then(function (t) {
+                if (t.samples <= cap || pass++ >= 4) return null;
+                return E.store.statsAll().then(function (st) {
+                    var lo = Infinity, hi = -Infinity;
+                    Object.keys(st).forEach(function (k) { var x = st[k]; if (x.n > 0) { if (x.first < lo) lo = x.first; if (x.last > hi) hi = x.last; } });
+                    if (!isFinite(lo)) return null;
+                    var excess = t.samples - Math.floor(cap * 0.9);
+                    var T = floorTo(lo + (hi - lo) * Math.min(1, excess / t.samples), ROLLUP_MS);
+                    T = Math.max(T, floorTo(lo, ROLLUP_MS) + ROLLUP_MS);
+                    return eachId(function (id) {
+                        if (s.downsampleAfterDays > 0) return rollupBefore(id, T, out).then(function (n) { out.capped += n; });
+                        return E.store.deleteSamples(id, 0, T - 1).then(function (n) { out.capped += n; });
+                    }).then(capStep);
+                });
+            });
+        };
+        p = p.then(capStep);
+    }
+    return p.then(function () { return E.store.vacuum(); }).then(refreshStats).then(function () {
+        E.lastRetentionResult = out;
+        if (out.deleted || out.deletedRollups || out.rolledUp || out.capped) {
+            markDirty();
+            emit({ reason: 'retention', deleted: out.deleted, deletedRollups: out.deletedRollups, rolledUp: out.rolledUp, capped: out.capped });
+        }
+        return out;
+    });
+}
+
+// ── query ──
+var AGGS = ['raw', 'avg', 'min', 'max', 'last'];
+function resolveTagNames(tags) {
+    if (tags === undefined || tags === null) return Object.keys(E.byName).sort();
+    var a = Array.isArray(tags) ? tags : [tags];
+    return uniq(a.map(function (x) { return x && typeof x === 'object' ? String(firstDef(x.tag, x.name, '')) : String(x == null ? '' : x); }).filter(Boolean));
+}
+function timeArg(x, d) {
+    if (x === undefined || x === null || x === '') return d;
+    var n = isDateObj(x) ? x.getTime() : +x;
+    return isFinite(n) ? Math.round(n) : d;
+}
+function seriesFor(tag, from, to, agg, o) {
+    var meta = E.byName[tag];
+    var base = { tag: tag, unit: meta ? meta.unit : null, device: meta ? meta.device : null, t: [], v: [], q: [] };
+    if (!meta) { base.missing = true; return Promise.resolve(base); }
+    var id = meta.id;
+    if (agg === 'raw') {
+        return Promise.all([E.store.getSamples(id, from, to), E.store.getRollups(id, from, to)]).then(function (r) {
+            var raw = r[0], roll = r[1], t = raw.t, v = raw.v, q = raw.q, src = null;
+            if (roll.length) {                                  // rolled-up minutes appear as their mean, flagged in .rollup
+                var mt = [], mv = [], mq = [], ms = [], i = 0, j = 0;
+                while (i < t.length || j < roll.length) {
+                    if (j >= roll.length || (i < t.length && t[i] <= roll[j].t)) { mt.push(t[i]); mv.push(v[i]); mq.push(q[i]); ms.push(0); i++; }
+                    else { var x = roll[j++]; mt.push(x.t); mv.push(x.avg); mq.push(x.q); ms.push(1); }
+                }
+                t = mt; v = mv; q = mq; src = ms;
+            }
+            base.count = raw.t.length + roll.length;
+            var keep = o.maxPoints > 0 ? decimate(t, v, q, o.maxPoints) : null;
+            if (keep) {
+                base.t = keep.map(function (k) { return t[k]; }); base.v = keep.map(function (k) { return v[k]; }); base.q = keep.map(function (k) { return q[k]; });
+                if (src) base.rollup = keep.map(function (k) { return src[k]; });
+                base.decimated = true;
+            } else { base.t = t; base.v = v; base.q = q; if (src) base.rollup = src; }
+            return base;
+        });
+    }
+    var b = o.bucketMs;
+    return Promise.all([E.store.aggSamples(id, from, to, b), E.store.getRollups(id, from, to)]).then(function (r) {
+        var parts = r[0], roll = r[1];
+        if (roll.length) parts = mergePartials(parts.concat(b >= ROLLUP_MS ? mergePartials(roll, b) : roll), 0);
+        var pick = agg === 'min' ? 'min' : agg === 'max' ? 'max' : agg === 'last' ? 'last' : 'avg';
+        base.bucketMs = b;
+        base.t = parts.map(function (p) { return p.t; });
+        base.v = parts.map(function (p) { return p[pick]; });
+        base.q = parts.map(function (p) { return p.q; });
+        base.n = parts.map(function (p) { return p.n; });
+        base.min = parts.map(function (p) { return p.min; });
+        base.max = parts.map(function (p) { return p.max; });
+        return base;
+    });
+}
+function dataSpan(names) {
+    var lo = Infinity, hi = -Infinity;
+    names.forEach(function (n) {
+        var m = E.byName[n], x = m && E.stat[m.id];
+        if (!x) return;
+        [x.first, x.rfirst].forEach(function (v) { if (isNum(v) && v < lo) lo = v; });
+        [x.last, x.rlast].forEach(function (v) { if (isNum(v) && v > hi) hi = v; });
+    });
+    return isFinite(lo) ? [lo, hi] : [Date.now() - 3600000, Date.now()];
+}
+function query(o) {
+    o = o || {};
+    return flush().catch(noop).then(ensureStore).then(function () {
+        var tags = resolveTagNames(o.tags), agg = AGGS.indexOf(o.agg) >= 0 ? o.agg : 'raw';
+        var from = Math.max(0, timeArg(o.from, 0)), to = timeArg(o.to, MAXT), b = null, mp = Math.max(0, Math.floor(+o.maxPoints || 0));
+        if (agg !== 'raw') {
+            if (isNum(+o.bucketMs) && +o.bucketMs >= 1) b = Math.round(+o.bucketMs);
+            else {
+                var sp = dataSpan(tags), lo = Math.max(from, sp[0]), hi = Math.min(to, sp[1]);
+                b = niceBucket(Math.max(1, hi - lo) / Math.max(1, mp || 1000));
+            }
+        }
+        var series = [];
+        return tags.reduce(function (p, tag) {
+            return p.then(function () { return seriesFor(tag, from, to, agg, { maxPoints: mp, bucketMs: b }).then(function (s) { series.push(s); }); });
+        }, Promise.resolve()).then(function () { return { from: from, to: to, agg: agg, bucketMs: b, engine: E.engine, series: series }; });
+    });
+}
+// Trend data for the page: per tag, raw points when they fit (LTTB above 2 px⁻¹),
+// else bucket means with the min/max envelope.
+function trendData(o) {
+    return flush().catch(noop).then(ensureStore).then(function () {
+        var span = Math.max(1000, o.to - o.from), margin = span * 0.02, from = Math.max(0, Math.floor(o.from - margin)), to = Math.ceil(o.to + margin);
+        var px = Math.max(50, Math.floor(o.px || 600)), out = [];
+        return resolveTagNames(o.tags).reduce(function (p, tag) {
+            return p.then(function () {
+                var m = E.byName[tag];
+                if (!m) { out.push({ tag: tag, t: [], v: [], q: [], unit: null, mode: 'raw', count: 0 }); return null; }
+                return Promise.all([E.store.countSamples(m.id, from, to), E.store.countRollups(m.id, from, to)]).then(function (c) {
+                    var n = c[0] + c[1], mode = o.agg && o.agg !== 'auto' ? o.agg : (n <= 3 * px ? 'raw' : 'avg');
+                    var b = mode === 'raw' ? null : niceBucket(span / px);
+                    return seriesFor(tag, from, to, mode, { maxPoints: mode === 'raw' ? 2 * px : 0, bucketMs: b }).then(function (s) {
+                        s.mode = mode; s.count = n; out.push(s);
+                    });
+                });
+            });
+        }, Promise.resolve()).then(function () { return { from: o.from, to: o.to, series: out }; });
+    });
+}
+
+function tagStatus(m, lastT, lastQ, now) {
+    if (m && m.enabled === false) return { code: 'disabled', label: 'Not logged (disabled on the Modbus page)' };
+    if (!isNum(lastT)) return { code: 'nodata', label: m ? 'Configured — no data yet' : 'No data' };
+    var age = now - lastT, lim = (m && m.pollMs) ? Math.max(3 * m.pollMs, 10000) : 60000;
+    if (age > lim) return { code: 'idle', label: 'Idle — last sample ' + fmtDur(age) + ' ago' };
+    if (lastQ === 2) return { code: 'bad', label: 'Logging — bad quality' };
+    if (lastQ === 1) return { code: 'stale', label: 'Logging — stale value' };
+    return { code: 'logging', label: 'Logging' };
+}
+function listTags() {
+    return flush().catch(noop).then(ensureStore).then(function () {
+        var mb = modbusTagMap(), now = Date.now();
+        var names = uniq(Object.keys(E.byName).concat(Object.keys(mb)).concat(Object.keys(E.live))).sort();
+        return names.map(function (name) {
+            var t = E.byName[name], x = (t && E.stat[t.id]) || {}, m = mb[name] || null, L = E.live[name];
+            var lastT = L ? Math.max(L.t, isNum(x.last) ? x.last : -Infinity) : firstDef(x.last, x.rlast);
+            var useLive = L && (!isNum(x.last) || L.t >= x.last);
+            var lastQ = useLive ? L.q : firstDef(x.lastQ, null), lastV = useLive ? L.v : firstDef(x.lastV, null);
+            var first = [x.first, x.rfirst].filter(isNum);
+            return {
+                tag: name, id: t ? t.id : null, device: firstDef(t && t.device, m && m.device, L && L.device), unit: firstDef(t && t.unit, m && m.unit, L && L.unit),
+                desc: firstDef(t && t.descr, m && m.desc), count: x.n || 0, rollups: x.rn || 0, first: first.length ? Math.min.apply(null, first) : null,
+                last: isNum(lastT) ? lastT : null, lastValue: lastV, lastQuality: lastQ === null || lastQ === undefined ? null : QN[lastQ],
+                configured: !!m, enabled: m ? m.enabled : null, pollMs: m ? m.pollMs : null, source: /^FORM\.|^SIM\./.test(name) ? 'form' : /^DEMO\./.test(name) ? 'demo' : (m ? 'modbus' : 'recorded'),
+                status: tagStatus(m, isNum(lastT) ? lastT : null, lastQ, now)
+            };
+        });
+    });
+}
+function storageEstimate() {
+    var st = G.navigator && G.navigator.storage, o = { usage: null, quota: null, persisted: null, canPersist: !!(st && typeof st.persist === 'function') };
+    if (!st || T.noEstimate) return Promise.resolve(o);
+    var est = typeof st.estimate === 'function' ? st.estimate().catch(noop) : null, per = typeof st.persisted === 'function' ? st.persisted().catch(noop) : null;
+    return Promise.all([est, per]).then(function (r) {
+        if (r[0]) { o.usage = isNum(r[0].usage) ? r[0].usage : null; o.quota = isNum(r[0].quota) ? r[0].quota : null; }
+        if (typeof r[1] === 'boolean') o.persisted = r[1];
+        return o;
+    });
+}
+function status() {
+    return {
+        ready: !!E.store, engine: E.engine, label: E.engine ? ENGINE_LABEL[E.engine] : null, home: E.home, spoolFor: E.spoolFor,
+        reasons: E.reasons.slice(), notes: E.notes.slice(), buffer: E.buf.length, dropped: E.dropped, rejected: E.rejected,
+        flushes: E.flushes, written: E.written, lastFlush: E.lastFlush || null, lastFlushMs: E.lastFlushMs, lastError: E.lastError || null,
+        samples: E.tot.samples, rollups: E.tot.rollups, tags: Object.keys(E.byId).length, lib: JSON.parse(JSON.stringify(E.lib))
+    };
+}
+function stats() {
+    return ensureStore().then(function () {
+        return E.store.info().then(function (i) { E.info = i; }, noop);
+    }).then(storageEstimate).then(function (est) {
+        var s = status(), set = getSettings(), lo = Infinity, hi = -Infinity;
+        Object.keys(E.stat).forEach(function (k) {
+            var x = E.stat[k];
+            [x.first, x.rfirst].forEach(function (v) { if (isNum(v) && v < lo) lo = v; });
+            [x.last, x.rlast].forEach(function (v) { if (isNum(v) && v > hi) hi = v; });
+        });
+        s.first = isFinite(lo) ? lo : null; s.last = isFinite(hi) ? hi : null;
+        s.version = E.info ? E.info.version : null; s.dbBytes = E.info && isNum(E.info.bytes) ? E.info.bytes : null;
+        s.retention = { days: set.days, maxRows: set.maxRows, downsampleAfterDays: set.downsampleAfterDays };
+        s.enginePref = set.engine; s.effectiveMaxRows = isFinite(effCap()) ? effCap() : null;
+        s.lastRetention = E.lastRetention || null; s.lastRetentionResult = E.lastRetentionResult;
+        s.storage = est; s.lastPersist = E.lastPersist || null;
+        return s;
+    });
+}
+
+// ── retention settings / purge / engine switch ──
+function setRetention(o) {
+    o = o || {};
+    var s = getSettings(), errs = [];
+    var chk = function (k, lo, hi, label) {
+        if (o[k] === undefined || o[k] === null || o[k] === '') return;
+        var n = +o[k];
+        if (!isFinite(n) || n < lo || n > hi || Math.round(n) !== n) errs.push(label + ' must be a whole number from ' + lo + ' to ' + fmtCount(hi));
+        else s[k] = n;
+    };
+    chk('days', 0, 36500, 'Retention (days)');
+    chk('downsampleAfterDays', 0, 36500, 'Downsample after (days)');
+    chk('maxRows', 0, 1e10, 'Max raw rows');
+    if (s.maxRows > 0 && s.maxRows < 1000) errs.push('Max raw rows must be 0 (no limit) or at least 1,000');
+    if (errs.length) return Promise.reject(new Error(errs.join('; ')));
+    saveSettings(s);
+    return lock(function () { return ensureStore().then(runRetention); }).then(function (res) {
+        publishState();
+        return { days: s.days, maxRows: s.maxRows, downsampleAfterDays: s.downsampleAfterDays, effectiveMaxRows: isFinite(effCap()) ? effCap() : null, result: res };
+    });
+}
+function purge(o) {
+    o = o || {};
+    var before = o.before === undefined || o.before === null || o.before === '' ? null : timeArg(o.before, null);
+    if (before === null && !o.tags && o.all !== true) return Promise.reject(new Error('purge() needs {before}, {tags} or {all: true}'));
+    return flush().catch(noop).then(function () {
+        return lock(function () {
+            return ensureStore().then(function () {
+                var out = { samples: 0, rollups: 0 };
+                if (o.all === true && before === null && !o.tags) {
+                    out.samples = E.tot.samples; out.rollups = E.tot.rollups;
+                    return E.store.clear().then(function () { return reloadMeta(); }).then(function () { return out; });
+                }
+                var names = o.tags ? resolveTagNames(o.tags) : Object.keys(E.byName), to = before === null ? MAXT : before - 1;
+                return names.reduce(function (p, n) {
+                    var m = E.byName[n];
+                    if (!m) return p;
+                    return p.then(function () { return E.store.deleteSamples(m.id, 0, to); }).then(function (k) { out.samples += k; return E.store.deleteRollups(m.id, 0, to); })
+                        .then(function (k) { out.rollups += k; });
+                }, Promise.resolve()).then(function () { return E.store.vacuum(); }).then(refreshStats).then(function () { return out; });
+            }).then(function (out) {
+                markDirty(); publishState();
+                emit({ reason: 'purge', samples: out.samples, rollups: out.rollups });
+                return out;
+            });
+        });
+    });
+}
+function switchEngine(name, opts) {
+    if (name !== 'auto' && ENGINES.indexOf(name) < 0) return Promise.reject(new Error('Unknown storage engine "' + name + '"'));
+    opts = opts || {};
+    return flush().catch(noop).then(function () {
+        return lock(function () {
+            return ensureStore().then(function () {
+                var s = getSettings();
+                if (name === 'auto' || name === E.engine) {
+                    s.engine = name; saveSettings(s);
+                    if (name !== 'auto') { lsSet(LS_HOME, name); E.home = name; E.spoolFor = null; }
+                    return { engine: E.engine, from: E.engine, moved: 0, rollups: 0 };
+                }
+                var old = E.store, oldName = E.engine, dst, res;
+                return OPEN[name]().then(function (st) { dst = st; return copyStore(old, dst, 'ignore'); }).then(function (r) {
+                    res = r;
+                    if (oldName === 'sqljs') { E.dirty = false; if (E.persistTimer !== null) { clearTimeout(E.persistTimer); E.persistTimer = null; } }
+                    var clearOld = opts.clearOld === false ? Promise.resolve() : old.clear().then(function () { return old.persist ? old.persist() : null; }).catch(noop);
+                    return clearOld.then(function () { return old.close ? old.close() : null; }).catch(noop);
+                }).then(function () {
+                    E.store = dst; E.engine = name; E.home = name; E.spoolFor = null;
+                    lsSet(LS_HOME, name); s.engine = name; saveSettings(s);
+                    return reloadMeta();
+                }).then(function () {
+                    markDirty(); publishState();
+                    emit({ reason: 'engine', from: oldName, samples: res.samples });
+                    return { engine: name, from: oldName, moved: res.samples, rollups: res.rollups };
+                });
+            });
+        });
+    });
+}
+
+// ── export ──
+function fileStamp(ext, pre) { return (pre || 'historian') + '-' + stamp(Date.now()) + '.' + ext; }
+function download(parts, filename, type) {
+    if (!hasDoc() || !G.Blob || !G.URL || typeof G.URL.createObjectURL !== 'function') return false;
+    var a = document.createElement('a');
+    a.href = G.URL.createObjectURL(new G.Blob(parts, { type: type }));
+    a.download = filename;
+    a.style.display = 'none';
+    (document.body || document.documentElement).appendChild(a);
+    a.click();
+    setTimeout(function () { try { G.URL.revokeObjectURL(a.href); if (a.parentNode) a.parentNode.removeChild(a); } catch (e) {} }, 1500);
+    return true;
+}
+function rawWithRollups(id, from, to, withRoll) {
+    var lo = from, o = { t: [], v: [], q: [], roll: [] };
+    function more() {
+        return E.store.getSamples(id, lo, to, CHUNK).then(function (c) {
+            for (var i = 0; i < c.t.length; i++) { o.t.push(c.t[i]); o.v.push(c.v[i]); o.q.push(c.q[i]); }
+            if (c.t.length < CHUNK) return null;
+            lo = c.t[c.t.length - 1] + 1;
+            return more();
+        });
+    }
+    return more().then(function () { return withRoll ? E.store.getRollups(id, from, to) : []; }).then(function (r) { o.roll = r; return o; });
+}
+// → {head, rows, layout, agg, bucketMs, tags, from, to}; empty cells are null.
+function exportRows(o) {
+    o = o || {};
+    return flush().catch(noop).then(ensureStore).then(function () {
+        var tags = resolveTagNames(o.tags).filter(function (n) { return !!E.byName[n]; });
+        var from = Math.max(0, timeArg(o.from, 0)), to = timeArg(o.to, MAXT), agg = AGGS.indexOf(o.agg) >= 0 ? o.agg : 'raw';
+        var layout = o.layout === 'wide' ? 'wide' : 'long', withRoll = o.rollups !== false, b = null;
+        if (agg !== 'raw') {
+            if (isNum(+o.bucketMs) && +o.bucketMs >= 1) b = Math.round(+o.bucketMs);
+            else { var sp = dataSpan(tags); b = niceBucket(Math.max(1, Math.min(to, sp[1]) - Math.max(from, sp[0])) / 1000); }
+        }
+        var X = { head: null, rows: [], layout: layout, agg: agg, bucketMs: b, tags: tags, from: from, to: to };
+        var per = {};
+        return tags.reduce(function (p, name) {
+            return p.then(function () {
+                var m = E.byName[name];
+                if (agg === 'raw') return rawWithRollups(m.id, from, to, withRoll).then(function (r) { per[name] = r; });
+                return seriesFor(name, from, to, agg, { bucketMs: b }).then(function (s) { per[name] = s; });
+            });
+        }, Promise.resolve()).then(function () {
+            if (layout === 'long') {
+                X.head = LONG_HEAD.slice();
+                var srcLabel = agg === 'raw' ? 'raw' : agg + ' ' + bucketLabel(b);
+                tags.forEach(function (name) {
+                    var m = E.byName[name], s = per[name], unit = m.unit || null, dev = m.device || null, i = 0, j = 0;
+                    var roll = agg === 'raw' ? s.roll : [];
+                    while (i < s.t.length || j < roll.length) {
+                        if (j >= roll.length || (i < s.t.length && s.t[i] <= roll[j].t)) {
+                            var v = s.v[i];
+                            X.rows.push([isoUTC(s.t[i]), s.t[i], name, v === null || v === undefined ? null : v, QN[s.q[i]] || 'bad', unit, dev, srcLabel,
+                                agg === 'raw' ? null : s.n[i], agg === 'raw' ? null : s.min[i], agg === 'raw' ? null : s.max[i]]);
+                            i++;
+                        } else {
+                            var r = roll[j++];
+                            X.rows.push([isoUTC(r.t), r.t, name, r.avg, QN[r.q] || 'bad', unit, dev, 'rollup ' + bucketLabel(r.dt || ROLLUP_MS), r.n, r.min, r.max]);
+                        }
+                    }
+                });
+                return X;
+            }
+            // Wide: one row per distinct time, one column per tag (value only; bad → empty).
+            X.head = ['time_utc', 'epoch_ms'].concat(tags.map(function (n) { var u = E.byName[n].unit; return u ? n + ' [' + u + ']' : n; }));
+            var cols = tags.map(function (name) {
+                var s = per[name], mp = {};
+                if (agg === 'raw') { s.roll.forEach(function (r) { if (r.q !== 2) mp[r.t] = r.avg; }); }
+                for (var i = 0; i < s.t.length; i++) if (s.q[i] !== 2 && s.v[i] !== null && s.v[i] !== undefined) mp[s.t[i]] = s.v[i];
+                return mp;
+            });
+            var times = {};
+            tags.forEach(function (name) { var s = per[name]; s.t.forEach(function (t) { times[t] = 1; }); if (agg === 'raw') s.roll.forEach(function (r) { times[r.t] = 1; }); });
+            Object.keys(times).map(Number).sort(function (a, c) { return a - c; }).forEach(function (t) {
+                var row = [isoUTC(t), t], any = false;
+                cols.forEach(function (mp) { var v = Object.prototype.hasOwnProperty.call(mp, t) ? mp[t] : null; if (v !== null) any = true; row.push(v); });
+                if (any) X.rows.push(row);
+            });
+            return X;
+        });
+    });
+}
+function exportCSV(o) {
+    o = o || {};
+    return exportRows(o).then(function (X) {
+        var parts = [csvLine(X.head)];
+        for (var i = 0; i < X.rows.length; i += 5000) {
+            var chunk = '';
+            for (var j = i; j < Math.min(X.rows.length, i + 5000); j++) chunk += csvLine(X.rows[j]);
+            parts.push(chunk);
+        }
+        var text = parts.join(''), filename = o.filename || fileStamp('csv');
+        if (o.download !== false) download([text], filename, 'text/csv;charset=utf-8');
+        return { filename: filename, rows: X.rows.length, layout: X.layout, agg: X.agg, bucketMs: X.bucketMs, text: text };
+    });
+}
+function loadXLSX() {
+    if (G.XLSX && G.XLSX.utils && typeof G.XLSX.write === 'function') return Promise.resolve(G.XLSX);
+    if (typeof G.PRiSM_loadXLSX === 'function') return G.PRiSM_loadXLSX();          // the app's lazy SheetJS loader (07-data-enhancements.js)
+    return Promise.reject(new Error('Excel support (SheetJS) is not available'));
+}
+function tagSheet(names) {
+    var rows = [['tag', 'device', 'unit', 'description', 'samples', 'downsampled_rows', 'first_utc', 'last_utc']];
+    names.forEach(function (n) {
+        var m = E.byName[n], x = (m && E.stat[m.id]) || {}, f = [x.first, x.rfirst].filter(isNum), l = [x.last, x.rlast].filter(isNum);
+        rows.push([n, m && m.device || null, m && m.unit || null, m && m.descr || null, x.n || 0, x.rn || 0,
+            f.length ? isoUTC(Math.min.apply(null, f)) : null, l.length ? isoUTC(Math.max.apply(null, l)) : null]);
+    });
+    return rows;
+}
+function exportXLSX(o) {
+    o = o || {};
+    var X;
+    return exportRows(o).then(function (x) {
+        X = x;
+        if (X.rows.length > 1048575) throw new Error('Too many rows for one Excel sheet (' + fmtCount(X.rows.length) + ' > 1,048,575) — narrow the range, aggregate, or export CSV.');
+        return loadXLSX();
+    }).then(function (XL) {
+        var wb = XL.utils.book_new(), sheet = X.layout === 'wide' ? 'Data' : 'Samples';
+        XL.utils.book_append_sheet(wb, XL.utils.aoa_to_sheet([X.head].concat(X.rows)), sheet);
+        XL.utils.book_append_sheet(wb, XL.utils.aoa_to_sheet(tagSheet(X.tags)), 'Tags');
+        XL.utils.book_append_sheet(wb, XL.utils.aoa_to_sheet([
+            ['H2Oil Well Testing Suite — historian export'], ['exported_utc', isoUTC(Date.now())], ['engine', ENGINE_LABEL[E.engine]],
+            ['from_utc', X.from > 0 ? isoUTC(X.from) : 'start'], ['to_utc', X.to < MAXT ? isoUTC(X.to) : 'end'],
+            ['aggregation', X.agg === 'raw' ? 'raw samples (+ 60-s rollups of older data)' : X.agg + ' per ' + bucketLabel(X.bucketMs)],
+            ['layout', X.layout], ['rows', X.rows.length],
+            ['note', 'Times are UTC (ISO 8601); epoch_ms = milliseconds since 1970-01-01 UTC. Quality: good / stale / bad.']
+        ]), 'Info');
+        var bytes = XL.write(wb, { bookType: 'xlsx', type: 'array' }), filename = o.filename || fileStamp('xlsx');
+        if (o.download !== false) download([bytes], filename, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        return { filename: filename, rows: X.rows.length, layout: X.layout, sheets: [sheet, 'Tags', 'Info'], bytes: bytes };
+    });
+}
+function jsonBackup() {
+    var out = { format: 'wts-historian', version: 1, exported: isoUTC(Date.now()), engine: E.engine, tags: [], samples: {}, rollups: {}, settings: getSettings() };
+    var tags = Object.keys(E.byId).map(function (k) { return E.byId[k]; }).sort(function (a, b) { return a.id - b.id; });
+    return tags.reduce(function (p, t) {
+        return p.then(function () {
+            out.tags.push({ name: t.name, device: t.device, unit: t.unit, descr: t.descr, created: t.created });
+            return rawWithRollups(t.id, 0, MAXT, true).then(function (r) {
+                if (r.t.length) out.samples[t.name] = { t: r.t, v: r.v, q: r.q };
+                if (r.roll.length) out.rollups[t.name] = r.roll.map(rollToArr);
+            });
+        });
+    }, Promise.resolve()).then(function () { return out; });
+}
+function sqliteFromStore(src) {
+    return loadSqlJs().then(function (SQL) {
+        var db = new SQL.Database(), tmp = asyncStore(HistSqlStore(histSqlJsAdapter(db)), 'sqljs');
+        return tmp.init().then(function () { return copyStore(src, tmp, 'ignore'); })
+            .then(function () { var b = db.export(); db.close(); return b; }, function (e) { try { db.close(); } catch (e2) {} throw e; });
+    });
+}
+function exportDb(o) {
+    o = o || {};
+    return flush().catch(noop).then(ensureStore).then(function () {
+        var fmt = o.format === 'json' ? 'json' : o.format === 'sqlite' ? 'sqlite' : (isSqlEngine() ? 'sqlite' : 'json');
+        var filename = o.filename || fileStamp(fmt === 'json' ? 'json' : 'sqlite', 'historian-backup');
+        if (fmt === 'json') {
+            return jsonBackup().then(function (obj) {
+                var text = JSON.stringify(obj);
+                if (o.download !== false) download([text], filename, 'application/json');
+                return { format: 'json', filename: filename, text: text, size: text.length, tags: obj.tags.length };
+            });
+        }
+        return (isSqlEngine() ? E.store.exportBytes() : sqliteFromStore(E.store)).then(function (bytes) {
+            bytes = toU8(bytes);
+            if (o.download !== false) download([bytes], filename, 'application/vnd.sqlite3');
+            return { format: 'sqlite', filename: filename, bytes: bytes, size: bytes.byteLength };
+        });
+    });
+}
+
+// ── import / restore ──
+function readInput(input) {
+    if (input === null || input === undefined) return Promise.reject(new Error('No file'));
+    if (typeof input === 'string') return Promise.resolve(input);
+    if (input && typeof input === 'object' && 'data' in input && !(typeof input.arrayBuffer === 'function')) return readInput(input.data);
+    if (typeof input.byteLength === 'number') return Promise.resolve(asBuf(input));
+    if (typeof input.arrayBuffer === 'function') return input.arrayBuffer();
+    if (typeof G.FileReader === 'function') {
+        return new Promise(function (res, rej) {
+            var fr = new G.FileReader();
+            fr.onload = function () { res(fr.result); };
+            fr.onerror = function () { rej(fr.error || new Error('The file could not be read')); };
+            fr.readAsArrayBuffer(input);
+        });
+    }
+    return Promise.reject(new Error('Unsupported input'));
+}
+function detectKind(name, data) {
+    var head = '';
+    if (typeof data === 'string') head = data.slice(0, 16);
+    else { var u = new Uint8Array(data, 0, Math.min(16, data.byteLength)); for (var i = 0; i < u.length; i++) head += String.fromCharCode(u[i]); }
+    if (head.indexOf('SQLite format 3') === 0) return 'sqlite';
+    if (head.indexOf('PK\u0003\u0004') === 0) return 'xlsx';
+    if (/\.(sqlite3?|db)$/i.test(name)) return 'sqlite';
+    if (/\.xlsx?$/i.test(name)) return 'xlsx';
+    if (/^\s*\{/.test(head) || /\.json$/i.test(name)) return 'json';
+    return 'csv';
+}
+function readSqliteBackup(bytes) {
+    return loadSqlJs().then(function (SQL) {
+        var db;
+        try { db = new SQL.Database(toU8(bytes)); } catch (e) { throw new Error('Not a readable SQLite file (' + errMsg(e) + ')'); }
+        try {
+            var names = {};
+            (db.exec("SELECT name FROM sqlite_master WHERE type='table'")[0] || { values: [] }).values.forEach(function (r) { names[r[0]] = 1; });
+            if (!names.tags || !names.samples) throw new Error('This SQLite file is not a historian backup (no tags / samples tables).');
+            var st = HistSqlStore(histSqlJsAdapter(db)), d = { format: 'sqlite', tags: {}, samples: {}, rollups: {}, invalid: 0, rows: 0 };
+            st.getTags().forEach(function (t) {
+                d.tags[t.name] = { unit: t.unit, device: t.device, descr: t.descr };
+                var s = st.getSamples(t.id, 0, MAXT);
+                if (s.t.length) { d.samples[t.name] = s; d.rows += s.t.length; }
+                if (names.rollups) { var r = st.getRollups(t.id, 0, MAXT); if (r.length) { d.rollups[t.name] = r; d.rows += r.length; } }
+            });
+            return d;
+        } finally { db.close(); }
+    });
+}
+function readJsonBackup(text) {
+    var o;
+    try { o = JSON.parse(text); } catch (e) { throw new Error('Not valid JSON (' + errMsg(e) + ')'); }
+    if (!o || o.format !== 'wts-historian') throw new Error('Not a historian JSON backup (format is not "wts-historian").');
+    var d = { format: 'json', tags: {}, samples: {}, rollups: {}, invalid: 0, rows: 0 };
+    (Array.isArray(o.tags) ? o.tags : []).forEach(function (t) { var n = cleanStr(t && t.name, 128); if (n) d.tags[n] = { unit: cleanStr(t.unit, 32), device: cleanStr(t.device), descr: cleanStr(t.descr, 200) }; });
+    Object.keys(o.samples || {}).forEach(function (name) {
+        var s = o.samples[name], n = cleanStr(name, 128);
+        if (!n || !s || !Array.isArray(s.t)) return;
+        var out = { t: [], v: [], q: [] };
+        for (var i = 0; i < s.t.length; i++) {
+            d.rows++;
+            var t = +s.t[i], v = s.v && s.v[i] !== undefined ? s.v[i] : null;
+            v = v === null ? null : +v;
+            if (!isFinite(t) || t < 0 || (v !== null && !isFinite(v))) { d.invalid++; continue; }
+            out.t.push(Math.round(t)); out.v.push(v); out.q.push(qCode(s.q ? s.q[i] : undefined, v));
+        }
+        d.samples[n] = out;
+        if (!d.tags[n]) d.tags[n] = { unit: null, device: null };
+    });
+    Object.keys(o.rollups || {}).forEach(function (name) {
+        var n = cleanStr(name, 128), a = o.rollups[name];
+        if (!n || !Array.isArray(a)) return;
+        d.rollups[n] = a.filter(function (r) { d.rows++; var ok = Array.isArray(r) && isNum(+r[0]) && isNum(+r[2]); if (!ok) d.invalid++; return ok; }).map(arrToRoll);
+        if (!d.tags[n]) d.tags[n] = { unit: null, device: null };
+    });
+    return d;
+}
+function readXlsx(buf) {
+    return loadXLSX().then(function (XL) {
+        var wb = XL.read(new Uint8Array(buf), { type: 'array' }), sn = wb.SheetNames || [];
+        var name = sn.indexOf('Samples') >= 0 ? 'Samples' : sn.indexOf('Data') >= 0 ? 'Data' : sn[0];
+        if (!name) throw new Error('The workbook has no sheets');
+        var d = rowsToImport(XL.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: true, defval: '' }));
+        if (wb.Sheets.Tags) {
+            var ta = XL.utils.sheet_to_json(wb.Sheets.Tags, { header: 1, raw: true, defval: '' }), h = (ta[0] || []).map(function (x) { return String(x).toLowerCase(); });
+            var ci = function (k) { return h.indexOf(k); };
+            ta.slice(1).forEach(function (r) {
+                var n = cleanStr(r[ci('tag')], 128);
+                if (!n) return;
+                var cur = d.tags[n] || (d.tags[n] = { unit: null, device: null });
+                if (ci('unit') >= 0 && cleanStr(r[ci('unit')], 32)) cur.unit = cleanStr(r[ci('unit')], 32);
+                if (ci('device') >= 0 && cleanStr(r[ci('device')])) cur.device = cleanStr(r[ci('device')]);
+                if (ci('description') >= 0 && cleanStr(r[ci('description')], 200)) cur.descr = cleanStr(r[ci('description')], 200);
+            });
+        }
+        d.format = 'xlsx (' + d.format + ')';
+        return d;
+    });
+}
+function importData(d, o) {
+    var dup = o.dup === 'overwrite' ? 'replace' : 'ignore', mode = o.mode === 'replace' ? 'replace' : 'merge';
+    var names = uniq(Object.keys(d.tags).concat(Object.keys(d.samples)).concat(Object.keys(d.rollups)));
+    var res = { format: d.format, mode: mode, duplicates: dup === 'replace' ? 'overwrite' : 'skip', rows: d.rows || 0, invalid: d.invalid || 0,
+        tags: names.length, tagsCreated: 0, inserted: 0, updated: 0, skipped: 0, rollups: 0, rollupsSkipped: 0, from: null, to: null, olderThanRetention: 0 };
+    var set = getSettings(), cutRet = set.days > 0 ? Date.now() - set.days * DAY : -Infinity;
+    return ensureStore().then(function () {
+        return mode === 'replace' ? E.store.clear().then(reloadMeta) : null;
+    }).then(function () {
+        res.tagsCreated = names.filter(function (n) { return !E.byName[n]; }).length;
+        if (!names.length) return null;
+        return E.store.putTags(names.map(function (n) { var t = d.tags[n] || {}; return { name: n, device: t.device || null, unit: t.unit || null, descr: t.descr || null }; }))
+            .then(function (all) { all.forEach(indexTag); });
+    }).then(function () {
+        return names.reduce(function (p, n) {
+            return p.then(function () {
+                var id = E.byName[n].id, S = d.samples[n], R = d.rollups[n] || [];
+                var span = function (t) { if (res.from === null || t < res.from) res.from = t; if (res.to === null || t > res.to) res.to = t; if (t < cutRet) res.olderThanRetention++; };
+                var chunkAt = function (off) {
+                    if (!S || off >= S.t.length) return Promise.resolve();
+                    var end = Math.min(S.t.length, off + CHUNK), t = S.t.slice(off, end);
+                    t.forEach(span);
+                    return E.store.putSamples(repeat(id, t.length), t, S.v.slice(off, end), S.q.slice(off, end), dup).then(function (r) {
+                        res.inserted += r.inserted; res.updated += r.updated; res.skipped += r.skipped;
+                        return chunkAt(end);
+                    });
+                };
+                return chunkAt(0).then(function () {
+                    if (!R.length) return null;
+                    var lo = Infinity, hi = -Infinity;
+                    R.forEach(function (r) { if (r.t < lo) lo = r.t; if (r.t > hi) hi = r.t; span(r.t); });
+                    return (dup === 'ignore' ? E.store.getRollups(id, lo, hi) : Promise.resolve([])).then(function (old) {
+                        var have = {};
+                        old.forEach(function (r) { have[r.t] = 1; });
+                        var put = R.filter(function (r) { return !have[r.t]; });
+                        res.rollupsSkipped += R.length - put.length;
+                        return E.store.putRollups(id, put).then(function (k) { res.rollups += k; });
+                    });
+                });
+            });
+        }, Promise.resolve());
+    }).then(refreshStats).then(function () {
+        markDirty(); publishState();
+        emit({ reason: 'import', inserted: res.inserted, updated: res.updated, rollups: res.rollups, tags: names });
+        return res;
+    });
+}
+function importFile(input, o) {
+    o = o || {};
+    var name = String(o.name || (input && input.name) || 'import.csv');
+    return readInput(input).then(function (data) {
+        var kind = o.kind || detectKind(name, data);
+        if (kind === 'sqlite') return readSqliteBackup(typeof data === 'string' ? new TextEncoder().encode(data) : data);
+        if (kind === 'xlsx') return readXlsx(data);
+        var text = typeof data === 'string' ? data : utf8(data);
+        if (kind === 'json') return readJsonBackup(text);
+        var d = rowsToImport(parseDelimited(text));
+        d.format = 'csv (' + d.format + ')';
+        return d;
+    }).then(function (d) {
+        return flush().catch(noop).then(function () { return lock(function () { return importData(d, o); }); });
+    }).then(function (res) { res.file = name; return res; });
+}
+
+// ─── §8 demo data and form logging (work without Modbus) ─────────────
+var DEMO = [
+    { tag: 'DEMO.WHP', unit: 'psig', base: 2850, amp: 60, per: 1800e3 },
+    { tag: 'DEMO.WHT', unit: 'degF', base: 176, amp: 3, per: 3600e3 },
+    { tag: 'DEMO.QG', unit: 'MMscf/d', base: 9.6, amp: 0.5, per: 2400e3 },
+    { tag: 'DEMO.PSEP', unit: 'psig', base: 150, amp: 4, per: 600e3 }
+];
+function lcg(seed) { var s = (seed >>> 0) || 1; return function () { s = (Math.imul(1664525, s) + 1013904223) >>> 0; return s / 4294967296; }; }
+// Synthetic samples: a slow sine per tag plus ±10 % noise; every 97th sample stale, every 331st bad.
+function demoBatch(t, rnd, k) {
+    return DEMO.map(function (d, i) {
+        var v = d.base + d.amp * Math.sin(2 * Math.PI * (t % d.per) / d.per + i) + d.amp * 0.1 * (rnd() * 2 - 1), q = 'good';
+        if ((k + i * 7) % 331 === 0) { v = null; q = 'bad'; } else if ((k + i * 5) % 97 === 0) q = 'stale';
+        return { tag: d.tag, device: 'demo', unit: d.unit, t: t, v: v === null ? null : +v.toFixed(4), q: q };
+    });
+}
+function demoHistory(hours, stepMs) {
+    hours = hours || 24; stepMs = stepMs || 10000;
+    var now = Date.now(), rnd = lcg(12345), k = 0, all = [];
+    for (var t = floorTo(now - hours * 3600000, stepMs); t <= now; t += stepMs) all.push.apply(all, demoBatch(t, rnd, k++));
+    record(all);
+    return flush().then(function () { return all.length; });
+}
+var DEMOLIVE = { timer: null, until: 0, rnd: null, k: 0 };
+function demoStart() {
+    if (DEMOLIVE.timer !== null) return true;
+    DEMOLIVE.rnd = lcg(Date.now() & 0xffff); DEMOLIVE.until = Date.now() + 3600000;      // stops by itself after 1 h
+    DEMOLIVE.timer = setInterval(function () {
+        var t = Date.now();
+        if (t > DEMOLIVE.until) { demoStop(); return; }
+        record(demoBatch(t - (t % 1000), DEMOLIVE.rnd, DEMOLIVE.k++));
+    }, 1000);
+    updateButtons();
+    return true;
+}
+function demoStop() { if (DEMOLIVE.timer !== null) { clearInterval(DEMOLIVE.timer); DEMOLIVE.timer = null; } updateButtons(); return false; }
+
+// "Log form data": the Well Test form's solved flow path (event 'wts:calc', WTS_lastCalc — imperial,
+// as calcWTS publishes it) and, while the live simulator runs, its rate/cumulative summary
+// (WTS_state.sim) every 5 s. Session only: it is never restarted automatically after a reload.
+var FORM = { on: false, timer: null };
+function formSamples(d, t) {
+    if (!d || typeof d !== 'object') return [];
+    var I = d.inputs || {}, C = d.choke || {}, H = d.heater || {}, out = [];
+    var add = function (tag, v, unit) { if (v !== null && v !== undefined && v !== '' && isFinite(+v)) out.push({ tag: tag, device: 'form', unit: unit, t: t, v: +v, q: 'good' }); };
+    add('FORM.WHP', I.Pwh, 'psig'); add('FORM.WHT', I.Twh, 'degF'); add('FORM.QG', I.Qg, 'MMscf/d');
+    add('FORM.QO', I.Qo, 'bbl/d'); add('FORM.QW', I.Qw, 'bbl/d'); add('FORM.CHOKE', I.bean, '1/64 in'); add('FORM.PSEP', I.Psep, 'psig');
+    if (isNum(C.Pin) && isNum(C.Pout)) add('FORM.CHOKE_DP', C.Pin - C.Pout, 'psi');
+    add('FORM.HTR_OUT', H.Tout, 'degF');
+    return out;
+}
+function simSamples(t) {
+    var s = G.WTS_state && G.WTS_state.sim, out = [];
+    if (!s || !s.running) return out;
+    var R = s.rates || {}, C = s.cum || {};
+    var add = function (tag, v, unit) { if (v !== null && v !== undefined && isFinite(+v)) out.push({ tag: tag, device: 'simulator', unit: unit, t: t, v: +v, q: 'good' }); };
+    add('SIM.QG', R.gas_mmscfd, 'MMscf/d'); add('SIM.QO', R.oil_stbd, 'STB/d'); add('SIM.QW', R.water_bpd, 'bbl/d');
+    add('SIM.GOR', R.gor, 'scf/STB'); add('SIM.BSW', R.bsw_pct, '%'); add('SIM.CUM_OIL', C.oil_stb, 'STB'); add('SIM.CUM_GAS', C.gas_mmscf, 'MMscf');
+    return out;
+}
+function setFormLogging(on) {
+    on = !!on;
+    if (FORM.on === on) return on;
+    FORM.on = on;
+    if (on) {
+        if (G.WTS_lastCalc) record(formSamples(G.WTS_lastCalc, Date.now()));
+        FORM.timer = setInterval(function () { var s = simSamples(Date.now()); if (s.length) record(s); }, 5000);
+    } else if (FORM.timer !== null) { clearInterval(FORM.timer); FORM.timer = null; }
+    var cb = pageEl('[data-h="logform"]');
+    if (cb) cb.checked = on;
+    return on;
+}
+
+// ─── §9 page ─────────────────────────────────────────────────────────
+// Categorical series colours (dark surface; checked with a CVD / contrast validator against
+// #0d1117: adjacent-pair CVD ΔE ≥ 8.4, all ≥ 3:1). Assigned to tags by selection slot, never cycled.
+var COLORS = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#008300', '#9085e9', '#e66767'];
+var INK = { bg: '#0d1117', text: '#e6edf3', text2: '#8b949e', muted: '#8b949e', grid: '#21262d', axis: '#30363d', bad: '#f85149', stale: '#fab219', good: '#0ca30c' };
+var PRESETS = [['5m', 300000, '5 min'], ['1h', 3600000, '1 h'], ['8h', 28800000, '8 h'], ['24h', 86400000, '24 h'], ['7d', 604800000, '7 d']];
+var MAX_TREND_TAGS = COLORS.length;
+var V = {
+    preset: '1h', lastPreset: '1h', from: 0, to: 0, live: true, tags: null, slots: {}, agg: 'auto', layout: 'stacked',
+    data: null, seq: 0, fetchTimer: null, liveTimer: null, raf: null, cursorX: null, ptr: {}, drag: null, pinch: null, geo: null,
+    tagList: [], tbl: { page: 0, size: 100, desc: true, mode: 'raw', bucket: 0, qf: 'all', rows: null, series: null, bucketMs: null, seq: 0, timer: null }
+};
+function presetMs(p) { for (var i = 0; i < PRESETS.length; i++) if (PRESETS[i][0] === p) return PRESETS[i][1]; return 3600000; }
+function pageMounted() { return !!$('hist_root'); }
+function pageEl(sel) { var r = $('hist_root'); return r && typeof r.querySelector === 'function' ? r.querySelector(sel) : null; }
+function loadView() {
+    var s = lsJSON(LS_VIEW) || {};
+    if (PRESETS.some(function (p) { return p[0] === s.preset; })) { V.preset = s.preset; V.lastPreset = s.preset; }
+    V.live = s.live !== false;
+    if (!V.live && isNum(s.from) && isNum(s.to) && s.to > s.from) { V.from = s.from; V.to = s.to; V.preset = 'custom'; }
+    if (Array.isArray(s.tags)) V.tags = s.tags.filter(function (x) { return typeof x === 'string'; }).slice(0, MAX_TREND_TAGS);
+    if (s.slots && typeof s.slots === 'object') V.slots = s.slots;
+    if (['auto', 'raw', 'avg', 'min', 'max', 'last'].indexOf(s.agg) >= 0) V.agg = s.agg;
+    if (s.layout === 'overlay' || s.layout === 'stacked') V.layout = s.layout;
+    var t = s.tbl || {};
+    if (AGGS.indexOf(t.mode) >= 0) V.tbl.mode = t.mode;
+    if ([50, 100, 500].indexOf(t.size) >= 0) V.tbl.size = t.size;
+    if (['all', 'good', 'issues'].indexOf(t.qf) >= 0) V.tbl.qf = t.qf;
+    if (isNum(t.bucket)) V.tbl.bucket = t.bucket;
+    V.tbl.desc = t.desc !== false;
+}
+function saveView() {
+    lsSet(LS_VIEW, JSON.stringify({ preset: V.preset === 'custom' || V.preset === 'zoom' ? V.lastPreset : V.preset, live: V.live,
+        from: V.live ? null : V.from, to: V.live ? null : V.to, tags: V.tags, slots: V.slots, agg: V.agg, layout: V.layout,
+        tbl: { mode: V.tbl.mode, size: V.tbl.size, qf: V.tbl.qf, bucket: V.tbl.bucket, desc: V.tbl.desc } }));
+}
+function colorOf(tag) { var k = V.slots[tag]; return COLORS[isNum(k) ? k : 0]; }
+function assignSlot(tag) {
+    if (isNum(V.slots[tag])) return;
+    var used = {};
+    (V.tags || []).forEach(function (t) { if (t !== tag && isNum(V.slots[t])) used[V.slots[t]] = 1; });
+    for (var i = 0; i < COLORS.length; i++) if (!used[i]) { V.slots[tag] = i; return; }
+}
+function hexA(hex, a) { var n = parseInt(hex.slice(1), 16); return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')'; }
+
+var CSS = [
+    '.hist .hist-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:10px 0 0}',
+    '.hist .btn-sm{padding:7px 12px;font-size:12px;min-height:34px}',
+    '.hist .hist-seg{display:inline-flex;flex-wrap:wrap;gap:2px;background:var(--bg1);border:1px solid var(--border);border-radius:8px;padding:2px}',
+    '.hist .hist-seg button{background:transparent;border:0;color:var(--text2);font-size:12px;font-weight:600;padding:7px 10px;border-radius:6px;cursor:pointer;min-height:32px}',
+    '.hist .hist-seg button.on{background:var(--accent);color:#fff}',
+    '.hist .hist-chips{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 0}',
+    '.hist .hist-chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:999px;padding:5px 10px;font-size:12px;cursor:pointer;background:var(--bg1);color:var(--text2);min-height:30px}',
+    '.hist .hist-chip.on{color:var(--text);border-color:var(--border-light);background:var(--bg4)}',
+    '.hist .hist-sw{display:inline-block;width:10px;height:10px;border-radius:3px;flex:0 0 10px;vertical-align:-1px}',
+    '.hist .chart-wrap{position:relative;padding:6px}',
+    '.hist canvas.hist-cv{height:340px;touch-action:pan-y;cursor:crosshair;border-radius:6px;outline:none}',
+    '.hist canvas.hist-cv:focus-visible{box-shadow:0 0 0 2px var(--accent)}',
+    '.hist .hist-cursor{position:absolute;top:10px;left:0;pointer-events:none;background:rgba(13,17,23,.95);border:1px solid var(--border);border-radius:8px;padding:6px 9px;font-size:11.5px;color:var(--text);max-width:260px;z-index:2;font-variant-numeric:tabular-nums}',
+    '.hist .hist-cursor div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+    '.hist .hist-legend{display:flex;flex-wrap:wrap;gap:4px 16px;font-size:12px;color:var(--text2);margin-top:8px}',
+    '.hist .hist-legend b{color:var(--text);font-weight:600}',
+    '.hist .hist-tblwrap{overflow-x:auto;max-width:100%;margin-top:8px}',
+    '.hist .hist-tblwrap .dtable td,.hist .hist-tblwrap .dtable th{white-space:nowrap;font-variant-numeric:tabular-nums}',
+    '.hist .hist-sort{background:none;border:0;color:inherit;font:inherit;cursor:pointer;padding:0;text-transform:inherit;letter-spacing:inherit}',
+    '.hist .hist-badge{display:inline-block;padding:3px 9px;border-radius:999px;font-size:11.5px;font-weight:700;background:rgba(88,166,255,.12);color:var(--blue);margin-right:6px}',
+    '.hist .hist-status{font-size:12.5px;color:var(--text2);line-height:1.7}',
+    '.hist .hist-banner{margin-top:10px;padding:8px 12px;border-radius:8px;font-size:12.5px;border-left:3px solid var(--yellow);background:rgba(210,153,34,.08);color:var(--text)}',
+    '.hist .hist-muted{color:var(--text3);font-size:12px;margin-top:6px}',
+    '.hist .hist-chk{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--text);cursor:pointer;min-height:34px}',
+    '.hist .hist-msg{margin-top:10px;font-size:12.5px}',
+    '.hist .q-good{color:#0ca30c}.hist .q-stale{color:#fab219}.hist .q-bad{color:#f85149}.hist .q-idle{color:var(--text3)}',
+    '.hist .hist-notes{margin-top:16px;font-size:12px;color:var(--text2);line-height:1.55;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:12px 14px}',
+    '.hist .hist-custom label{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--text2)}',
+    '.hist .fg-item{min-width:0;overflow:hidden}.hist .fg-item input,.hist .fg-item select,.hist .hist-custom input{min-width:0;max-width:100%}',
+    '.hist input[type=file]{width:100%;overflow:hidden}',
+    '@media (max-width:600px){.hist canvas.hist-cv{height:260px}.hist .fg{grid-template-columns:1fr}.hist .hist-seg button{padding:7px 8px}}'
+].join('\n');
+function ensureCss() {
+    if (!hasDoc() || $('hist_css') || typeof document.createElement !== 'function') return;
+    var st = document.createElement('style');
+    st.id = 'hist_css';
+    st.textContent = CSS;
+    (document.head || document.documentElement).appendChild(st);
+}
+function seg(name, items, cur) {
+    return '<div class="hist-seg" role="group" aria-label="' + esc(name) + '" data-seg="' + esc(name) + '">' + items.map(function (it) {
+        var on = it[0] === cur;
+        return '<button type="button" data-v="' + esc(it[0]) + '"' + (on ? ' class="on"' : '') + ' aria-pressed="' + on + '">' + esc(it[it.length - 1]) + '</button>';
+    }).join('') + '</div>';
+}
+function opts(list, cur) { return list.map(function (o) { return '<option value="' + esc(o[0]) + '"' + (String(o[0]) === String(cur) ? ' selected' : '') + '>' + esc(o[1]) + '</option>'; }).join(''); }
+var AGG_OPTS = [['avg', 'Average per bucket'], ['min', 'Minimum per bucket'], ['max', 'Maximum per bucket'], ['last', 'Last value per bucket']];
+function pageHtml() {
+    var ranges = PRESETS.map(function (p) { return [p[0], p[2]]; }).concat([['custom', 'Custom']]);
+    return '<div id="hist_root" class="hist">' +
+        '<div class="card"><div class="card-title">Historian status</div>' +
+        '<div id="hist_status" class="hist-status">Opening the historian store…</div>' +
+        '<div id="hist_banner" class="hist-banner" style="display:none"></div>' +
+        '<div class="hist-row rp-skip">' +
+        '<button type="button" class="btn btn-secondary btn-sm" id="hist_modbus_btn" style="display:none">Modbus configuration &#8594;</button>' +
+        '<label class="hist-chk"><input type="checkbox" data-h="logform"' + (FORM.on ? ' checked' : '') + '> Log form data (Well Test form + live simulator)</label>' +
+        '<button type="button" class="btn btn-secondary btn-sm" id="hist_demo_btn">' + (DEMOLIVE.timer !== null ? '&#9632; Stop demo data' : '&#9654; Start demo data') + '</button>' +
+        '<button type="button" class="btn btn-secondary btn-sm" id="hist_demohist_btn">Add 24 h of demo history</button>' +
+        '<button type="button" class="btn btn-secondary btn-sm" id="hist_refresh_btn">Refresh</button></div>' +
+        '<div class="hist-muted rp-skip">Tags and polling rates are set on the Modbus page; this page records, trends, tabulates and exports what it receives.</div></div>' +
+
+        '<div class="card"><div class="card-title">Trend</div>' +
+        '<div class="hist-row rp-skip">' + seg('Time range', ranges, V.preset) +
+        '<button type="button" class="btn btn-secondary btn-sm" id="hist_live_btn" aria-pressed="' + V.live + '">' + (V.live ? '&#9679; Live' : '&#9675; Live off') + '</button></div>' +
+        '<div class="hist-row hist-custom rp-skip" id="hist_custom" style="display:' + (V.preset === 'custom' ? 'flex' : 'none') + '">' +
+        '<label>From <input type="datetime-local" step="1" data-h="from"></label><label>To <input type="datetime-local" step="1" data-h="to"></label>' +
+        '<button type="button" class="btn btn-secondary btn-sm" id="hist_custom_apply">Apply range</button></div>' +
+        '<div class="fg" style="margin-top:12px">' +
+        '<div class="fg-item"><label>Values</label><select data-h="agg">' + opts([['auto', 'Auto (raw or bucket means)'], ['raw', 'Raw samples (LTTB)']].concat(AGG_OPTS), V.agg) + '</select></div>' +
+        '<div class="fg-item"><label>Layout</label><select data-h="layout">' + opts([['stacked', 'One lane per unit'], ['overlay', 'Overlay, one axis per unit']], V.layout) + '</select></div></div>' +
+        '<div class="hist-chips rp-skip" id="hist_tagpick" role="group" aria-label="Tags on the trend"></div>' +
+        '<div class="chart-wrap"><canvas id="hist_cv" class="hist-cv" tabindex="0" role="img" aria-label="Historian trend"></canvas>' +
+        '<div id="hist_cursor" class="hist-cursor" style="display:none"></div></div>' +
+        '<div id="hist_legend" class="hist-legend"></div>' +
+        '<div class="hist-row rp-skip"><button type="button" class="btn btn-secondary btn-sm" id="hist_reset_btn">Reset zoom</button>' +
+        '<button type="button" class="btn btn-secondary btn-sm" id="hist_png_btn">Export PNG</button><span class="hist-muted" id="hist_trend_info"></span></div>' +
+        '<div class="hist-muted rp-skip">Drag to pan, mouse wheel or pinch to zoom, double-click to reset. Keyboard on the chart: &#8592; &#8594; pan, + &#8722; zoom, 0 reset.</div></div>' +
+
+        '<div class="card"><div class="card-title">Data table</div>' +
+        '<div class="fg">' +
+        '<div class="fg-item"><label>Table rows</label><select data-h="tmode">' + opts([['raw', 'Raw samples, time-aligned']].concat(AGG_OPTS), V.tbl.mode) + '</select></div>' +
+        '<div class="fg-item"><label>Bucket</label><select data-h="tbucket">' + opts([[0, 'Auto'], [1000, '1 s'], [10000, '10 s'], [60000, '1 min'], [300000, '5 min'], [900000, '15 min'], [3600000, '1 h'], [86400000, '1 day']], V.tbl.bucket) + '</select></div>' +
+        '<div class="fg-item"><label>Quality filter</label><select data-h="tq">' + opts([['all', 'All values'], ['good', 'Good values only'], ['issues', 'Rows with stale or bad values']], V.tbl.qf) + '</select></div>' +
+        '<div class="fg-item"><label>Rows per page</label><select data-h="tps">' + opts([[50, '50'], [100, '100'], [500, '500']], V.tbl.size) + '</select></div></div>' +
+        '<div class="hist-muted">Time range and tags: as on the trend above. &#9676; = stale value, &#10007; = bad / no value, &#8224; = 1-minute mean of downsampled data.</div>' +
+        '<div class="hist-tblwrap" id="hist_table_wrap"></div>' +
+        '<div class="hist-row rp-skip"><button type="button" class="btn btn-secondary btn-sm" id="hist_prev_btn">&#8249; Prev</button>' +
+        '<span id="hist_pageinfo" class="hist-muted" style="margin:0"></span>' +
+        '<button type="button" class="btn btn-secondary btn-sm" id="hist_next_btn">Next &#8250;</button>' +
+        '<button type="button" class="btn btn-secondary btn-sm" id="hist_copy_btn">Copy (tab-separated)</button></div>' +
+        '<div id="hist_tbl_msg" class="hist-msg rp-skip"></div></div>' +
+
+        '<div class="card"><div class="card-title">Export and restore</div>' +
+        '<div class="fg">' +
+        '<div class="fg-item"><label>Export format</label><select data-h="xfmt">' + opts([['csv', 'CSV, one row per sample'], ['csvwide', 'CSV, one column per tag'],
+            ['xlsx', 'Excel workbook (.xlsx)'], ['sqlite', 'Database backup (.sqlite)'], ['json', 'Database backup (.json)']], 'csv') + '</select></div>' +
+        '<div class="fg-item"><label>Export range</label><select data-h="xrange">' + opts([['view', 'Trend time range'], ['all', 'All data']], 'view') + '</select></div>' +
+        '<div class="fg-item"><label>Export tags</label><select data-h="xtags">' + opts([['sel', 'Tags on the trend'], ['all', 'All tags']], 'sel') + '</select></div>' +
+        '<div class="fg-item"><label>Export values</label><select data-h="xagg">' + opts([['raw', 'Raw samples']].concat(AGG_OPTS), 'raw') + '</select></div></div>' +
+        '<div class="hist-row rp-skip"><button type="button" class="btn btn-primary btn-sm" id="hist_export_btn">Export</button>' +
+        '<span class="hist-muted" style="margin:0">Raw exports include the 1-min rollups of downsampled history (source “rollup”); database backups hold every tag and all data.</span></div>' +
+        '<div class="fg rp-skip" style="margin-top:14px">' +
+        '<div class="fg-item"><label>Restore from a file</label><input type="file" data-h="file" accept=".csv,.txt,.tsv,.xlsx,.xls,.sqlite,.sqlite3,.db,.json"></div>' +
+        '<div class="fg-item"><label>Restore mode</label><select data-h="imode">' + opts([['merge', 'Merge into the current data'], ['replace', 'Replace all current data']], 'merge') + '</select></div>' +
+        '<div class="fg-item"><label>Same tag and time already stored</label><select data-h="idup">' + opts([['skip', 'Keep the stored value'], ['overwrite', 'Overwrite with the file value']], 'skip') + '</select></div></div>' +
+        '<div class="hist-row rp-skip"><button type="button" class="btn btn-primary btn-sm" id="hist_import_btn">Restore</button>' +
+        '<span class="hist-muted" style="margin:0">Accepts this page’s CSV / Excel exports and .sqlite / .json backups.</span></div>' +
+        '<div id="hist_io_res" class="hist-msg"></div></div>' +
+
+        '<div class="card"><div class="card-title">Storage and retention</div>' +
+        '<div class="fg">' +
+        '<div class="fg-item"><label>Keep data for (days, 0 = forever)</label><input type="number" min="0" step="1" data-h="days"></div>' +
+        '<div class="fg-item"><label>Downsample raw data older than (days, 0 = never)</label><input type="number" min="0" step="1" data-h="dsdays"></div>' +
+        '<div class="fg-item"><label>Max raw rows (0 = no limit)</label><input type="number" min="0" step="1000" data-h="maxrows"></div>' +
+        '<div class="fg-item"><label>Storage engine</label><select data-h="engine">' + opts([['auto', 'Automatic (best available)'], ['opfs', ENGINE_LABEL.opfs], ['sqljs', ENGINE_LABEL.sqljs],
+            ['idb', ENGINE_LABEL.idb], ['memory', ENGINE_LABEL.memory]], getSettings().engine) + '</select></div></div>' +
+        '<div class="hist-row rp-skip"><button type="button" class="btn btn-secondary btn-sm" id="hist_ret_btn">Apply retention</button>' +
+        '<button type="button" class="btn btn-secondary btn-sm" id="hist_engine_btn">Switch engine (moves the data)</button>' +
+        '<button type="button" class="btn btn-secondary btn-sm" id="hist_persist_btn">Request persistent storage</button></div>' +
+        '<div id="hist_set_msg" class="hist-msg"></div>' +
+        '<div class="fg rp-skip" style="margin-top:14px">' +
+        '<div class="fg-item"><label>Purge data older than</label><input type="datetime-local" step="1" data-h="pbefore"></div>' +
+        '<div class="fg-item"><label>Purge which tags</label><select data-h="ptags">' + opts([['sel', 'Tags on the trend'], ['all', 'All tags']], 'sel') + '</select></div></div>' +
+        '<div class="hist-row rp-skip"><button type="button" class="btn btn-secondary btn-sm" id="hist_purge_btn">Purge</button>' +
+        '<button type="button" class="btn btn-secondary btn-sm" id="hist_clear_btn">Delete all historian data</button></div></div>' +
+
+        '<div id="hist_res">' +
+        '<div class="rbox"><div class="rbox-title">Historian summary</div><div id="hist_summary"></div></div>' +
+        '<div class="rbox"><div class="rbox-title">Tag logging status</div><div class="hist-tblwrap" id="hist_tags_wrap"></div>' +
+        '<div class="hist-row rp-skip"><button type="button" class="btn btn-secondary btn-sm" id="hist_modbus_btn2" style="display:none">Configure tags and polling on the Modbus page &#8594;</button></div></div></div>' +
+
+        '<div class="hist-notes"><b>Notes</b> Times are stored in UTC and shown in local time. Bucket average, minimum, maximum and last use the good samples; ' +
+        'a bucket with only stale samples uses those and is marked stale; with neither it is a gap. Averages are sample means, not time-weighted. ' +
+        'Raw samples older than the downsample age become 1-minute rollups; data older than the retention age is deleted (checked after a write, at most every 10 min). ' +
+        'Browsers may clear site data when storage is short: request persistent storage and export backups.</div>' +
+        '</div>';
+}
+function setMsg(id, ok, text) {
+    var el = $(id);
+    if (!el) return;
+    el.innerHTML = text ? '<div style="color:var(' + (ok === true ? '--green' : ok === false ? '--red' : '--yellow') + ')">' +
+        (ok === true ? '&#10003; ' : ok === false ? '&#10007; ' : '&#9888; ') + esc(text) + '</div>' : '';
+}
+function updateButtons() {
+    var b = $('hist_demo_btn');
+    if (b) b.innerHTML = DEMOLIVE.timer !== null ? '&#9632; Stop demo data' : '&#9654; Start demo data';
+    var lv = $('hist_live_btn');
+    if (lv) { lv.innerHTML = V.live ? '&#9679; Live' : '&#9675; Live off'; lv.setAttribute('aria-pressed', String(V.live)); }
+    var r = pageEl('[data-seg="Time range"]');
+    if (r) Array.prototype.forEach.call(r.querySelectorAll('button'), function (x) {
+        var on = x.getAttribute('data-v') === V.preset;
+        x.classList.toggle('on', on); x.setAttribute('aria-pressed', String(on));
+    });
+    var c = $('hist_custom');
+    if (c) c.style.display = V.preset === 'custom' ? 'flex' : 'none';
+    var hasModbus = !!(G.WTS_calcRegistry && G.WTS_calcRegistry.modbus) || !!(hasDoc() && document.querySelector && document.querySelector('.nav-btn[data-p="modbus"]'));
+    ['hist_modbus_btn', 'hist_modbus_btn2'].forEach(function (id) { var e = $(id); if (e) e.style.display = hasModbus ? '' : 'none'; });
+}
+function goModbus() {
+    var b = hasDoc() && document.querySelector ? document.querySelector('.nav-btn[data-p="modbus"]') : null;
+    if (b) b.click();
+}
+
+// ── status / summary / tag table ──
+function refreshStatus() {
+    return stats().then(function (s) {
+        if (!pageMounted()) return s;
+        var lib = s.engine === 'opfs' ? s.lib.sqlite : s.engine === 'sqljs' ? s.lib.sqljs : null, st = $('hist_status');
+        if (st) {
+            st.innerHTML = '<span class="hist-badge">' + esc(s.label) + '</span> ' +
+                (lib ? esc(lib.name) + (lib.vfs ? ' · VFS ' + esc(lib.vfs) : '') + ' · ' + (lib.verified ? 'SHA-384 verified' : 'bundled copy (not hash-checked)') + ' · ' : '') +
+                fmtCount(s.samples) + ' samples · ' + s.tags + ' tags' + (s.buffer ? ' · ' + fmtCount(s.buffer) + ' waiting to be written' : '');
+        }
+        var warn = [];
+        if (s.spoolFor) warn.push('&#9888; The ' + esc(ENGINE_LABEL[s.spoolFor]) + ' store is not available in this session (' + esc(s.reasons[0] || 'unavailable') +
+            '). New samples go to IndexedDB and are merged into it automatically next time it opens.');
+        else if (s.reasons.length && s.engine !== 'opfs' && s.enginePref === 'auto') warn.push('&#9888; Using ' + esc(s.label) + ' — ' + esc(s.reasons.join('; ')) + '.');
+        if (s.engine === 'memory') warn.push('&#9888; Memory only: the data is lost when the page closes. Export a backup to keep it.');
+        s.notes.forEach(function (n) { warn.push('&#9432; ' + esc(n)); });
+        if (s.lastError) warn.push('&#10007; Last write failed: ' + esc(s.lastError));
+        var bn = $('hist_banner');
+        if (bn) { bn.innerHTML = warn.join('<br>'); bn.style.display = warn.length ? '' : 'none'; }
+        var R = s.retention, rr = function (l, v) { return '<div class="rrow"><span class="rl">' + esc(l) + '</span><span class="rv">' + esc(v) + '</span></div>'; };
+        var use = s.storage || {};
+        var sm = $('hist_summary');
+        if (sm) sm.innerHTML =
+            rr('Storage engine', s.label + (s.home && s.home !== s.engine ? ' (home: ' + ENGINE_LABEL[s.home] + ')' : '')) +
+            rr('Library', lib ? lib.name + ' — ' + (lib.verified ? 'SHA-384 verified' : 'bundled copy') : (s.engine === 'idb' ? 'none (IndexedDB)' : s.engine === 'memory' ? 'none' : '—')) +
+            rr('Raw samples', fmtCount(s.samples)) + rr('Downsampled 1-min rows', fmtCount(s.rollups)) + rr('Tags', fmtCount(s.tags)) +
+            rr('First sample', s.first ? fmtLocal(s.first) : '—') + rr('Last sample', s.last ? fmtLocal(s.last) : '—') +
+            rr('Database file size', s.dbBytes !== null ? fmtBytes(s.dbBytes) : '—') +
+            rr('Site storage used / quota', use.usage !== null && use.usage !== undefined ? fmtBytes(use.usage) + ' / ' + fmtBytes(use.quota) : 'not reported by this browser') +
+            rr('Persistent storage', use.persisted === true ? 'granted' : use.persisted === false ? 'not granted (the browser may evict)' : 'not reported') +
+            rr('Retention', (R.days ? R.days + ' days' : 'forever') + '; raw kept ' + (R.downsampleAfterDays ? R.downsampleAfterDays + ' days, then 1-min rollups' : 'until deleted') +
+                '; raw row cap ' + (s.effectiveMaxRows ? fmtCount(s.effectiveMaxRows) : 'none')) +
+            rr('Last write', s.lastFlush ? fmtLocal(s.lastFlush) + ' (' + fmtCount(s.written) + ' samples written this session)' : '—');
+        var setIf = function (sel, v) { var el = pageEl(sel); if (el && (!hasDoc() || document.activeElement !== el)) el.value = String(v); };
+        setIf('[data-h="days"]', R.days); setIf('[data-h="dsdays"]', R.downsampleAfterDays); setIf('[data-h="maxrows"]', R.maxRows); setIf('[data-h="engine"]', s.enginePref);
+        updateButtons();
+        return s;
+    });
+}
+function refreshTags() {
+    return listTags().then(function (list) {
+        V.tagList = list;
+        var recorded = list.filter(function (x) { return x.count > 0 || x.rollups > 0 || x.last !== null; }).map(function (x) { return x.tag; });
+        if (V.tags === null) {
+            var pref = recorded.filter(function (n) { return !/^DEMO\./.test(n); });
+            V.tags = (pref.length ? pref : recorded).slice(0, 4);
+        }
+        V.tags = V.tags.filter(function (n) { return recorded.indexOf(n) >= 0 || list.some(function (x) { return x.tag === n; }); }).slice(0, MAX_TREND_TAGS);
+        V.tags.forEach(assignSlot);
+        if (!pageMounted()) return list;
+        var pick = $('hist_tagpick');
+        if (pick) {
+            pick.innerHTML = recorded.length ? recorded.map(function (n) {
+                var on = V.tags.indexOf(n) >= 0, x = list.filter(function (y) { return y.tag === n; })[0] || {};
+                return '<button type="button" class="hist-chip' + (on ? ' on' : '') + '" data-tag="' + esc(n) + '" aria-pressed="' + on + '">' +
+                    '<span class="hist-sw" style="background:' + (on ? colorOf(n) : 'transparent') + ';border:1px solid ' + (on ? colorOf(n) : 'var(--border-light)') + '"></span>' +
+                    esc(n) + (x.unit ? ' <span style="color:var(--text3)">' + esc(x.unit) + '</span>' : '') + '</button>';
+            }).join('') : '<span class="hist-muted" style="margin:0">No data recorded yet — start Modbus polling, tick “Log form data”, or add demo data.</span>';
+        }
+        renderTagTable(list);
+        saveView();
+        return list;
+    });
+}
+function renderTagTable(list) {
+    var w = $('hist_tags_wrap');
+    if (!w) return;
+    if (!list.length) { w.innerHTML = '<div class="hist-muted">No tags yet.</div>'; return; }
+    var sym = { logging: ['&#9679;', 'q-good'], stale: ['&#9888;', 'q-stale'], bad: ['&#10007;', 'q-bad'], idle: ['&#9675;', 'q-idle'], nodata: ['&#9675;', 'q-idle'], disabled: ['&#8856;', 'q-idle'] };
+    w.innerHTML = '<table class="dtable" id="hist_tags_table"><thead><tr><th>Tag</th><th>Device</th><th>Unit</th><th>Samples</th><th>Last sample</th><th>Last value</th><th>Quality</th><th>Status</th></tr></thead><tbody>' +
+        list.map(function (x) {
+            var s = sym[x.status.code] || sym.idle;
+            return '<tr><td>' + esc(x.tag) + '</td><td>' + esc(x.device || '') + '</td><td>' + esc(x.unit || '') + '</td><td>' + fmtCount(x.count + x.rollups) + '</td>' +
+                '<td>' + esc(x.last !== null ? fmtLocal(x.last) : '—') + '</td><td>' + esc(fmtVal(x.lastValue)) + '</td>' +
+                '<td class="' + (x.lastQuality === 'good' ? 'q-good' : x.lastQuality === 'stale' ? 'q-stale' : x.lastQuality === 'bad' ? 'q-bad' : '') + '">' + esc(x.lastQuality || '—') + '</td>' +
+                '<td class="' + s[1] + '">' + s[0] + ' ' + esc(x.status.label) + '</td></tr>';
+        }).join('') + '</tbody></table>';
+}
+function refreshAll() {
+    if (!pageMounted()) return Promise.resolve();
+    return ensureStore().then(function () { return refreshStatus(); }).then(function () { return refreshTags(); }).then(function () {
+        if (V.live) { var span = (V.to - V.from) || presetMs(V.preset); V.to = Date.now(); V.from = V.to - span; }
+        scheduleTrend(0); scheduleTable(0);
+    }).catch(function (e) { var bn = $('hist_banner'); if (bn) { bn.innerHTML = '&#10007; ' + esc(errMsg(e)); bn.style.display = ''; } });
+}
+
+// ── trend ──
+function scheduleTrend(ms) {
+    if (V.fetchTimer !== null) clearTimeout(V.fetchTimer);
+    V.fetchTimer = setTimeout(function () { V.fetchTimer = null; fetchTrend(); }, ms || 0);
+}
+function plotPx() { var g = V.geo; return g ? Math.max(100, Math.round(g.plot.w)) : 600; }
+function fetchTrend() {
+    if (!pageMounted()) return Promise.resolve();
+    var seq = ++V.seq, tags = (V.tags || []).slice();
+    if (!tags.length) { V.data = { from: V.from, to: V.to, series: [] }; drawTrend(); return Promise.resolve(); }
+    return trendData({ tags: tags, from: V.from, to: V.to, px: plotPx(), agg: V.agg }).then(function (d) {
+        if (seq !== V.seq || !pageMounted()) return;
+        V.data = d;
+        var info = $('hist_trend_info');
+        if (info) {
+            var modes = uniq(d.series.map(function (s) { return s.mode === 'raw' ? (s.decimated ? 'raw, LTTB-decimated' : 'raw') : s.mode + ' per ' + bucketLabel(s.bucketMs); }));
+            info.textContent = fmtLocal(V.from) + ' → ' + fmtLocal(V.to) + ' · ' + modes.join(', ');
+        }
+        drawTrend();
+    }).catch(function (e) { var info = $('hist_trend_info'); if (info) info.textContent = '✗ ' + errMsg(e); });
+}
+function requestDraw() {
+    if (V.raf !== null) return;
+    if (typeof G.requestAnimationFrame === 'function') V.raf = G.requestAnimationFrame(function () { V.raf = null; drawTrend(); });
+    else drawTrend();
+}
+function cvSize(cv) {
+    var dpr = Math.max(1, Math.min(3, G.devicePixelRatio || 1));
+    // The canvas is width:100% of .chart-wrap's content box (6-px padding each side).
+    var pw = cv.parentNode && cv.parentNode.clientWidth ? cv.parentNode.clientWidth - 12 : 0;
+    var w = Math.max(220, Math.round(pw > 0 ? pw : (cv.clientWidth || 600)));
+    var narrow = w < 560, h = narrow ? 260 : 340;
+    if (cv.width !== Math.round(w * dpr)) cv.width = Math.round(w * dpr);
+    if (cv.height !== Math.round(h * dpr)) cv.height = Math.round(h * dpr);
+    return { w: w, h: h, dpr: dpr, narrow: narrow };
+}
+function trendSeries() {
+    var d = V.data;
+    if (!d) return [];
+    return d.series.filter(function (s) { return (V.tags || []).indexOf(s.tag) >= 0; });
+}
+function geometry(series, sz) {
+    var units = [];
+    series.forEach(function (s) { var u = s.unit || '(no unit)'; if (units.indexOf(u) < 0) units.push(u); });
+    if (!units.length) units.push('');
+    var AW = sz.narrow ? 44 : 56, top = 20, bottom = 24, gap = 16, lanes = [], plot;
+    if (V.layout === 'overlay') {
+        var nL = Math.ceil(units.length / 2), nR = Math.floor(units.length / 2), x0 = 6 + nL * AW, x1 = sz.w - 8 - nR * AW;
+        plot = { x: x0, y: top, w: Math.max(40, x1 - x0), h: sz.h - top - bottom };
+        units.forEach(function (u, i) {
+            var left = i % 2 === 0, k = Math.floor(i / 2);
+            lanes.push({ unit: u, y0: plot.y, y1: plot.y + plot.h, side: left ? 'L' : 'R', axisX: left ? x0 - k * AW : x1 + k * AW });
+        });
+    } else {
+        var xs = 6 + AW;
+        plot = { x: xs, y: top, w: Math.max(40, sz.w - xs - 12), h: sz.h - top - bottom };
+        var n = units.length, lh = (plot.h - gap * (n - 1)) / n;
+        units.forEach(function (u, i) { var y0 = plot.y + i * (lh + gap); lanes.push({ unit: u, y0: y0, y1: y0 + lh, side: 'L', axisX: xs }); });
+    }
+    return { plot: plot, lanes: lanes, sz: sz };
+}
+function laneOf(g, s) { var u = s.unit || '(no unit)'; for (var i = 0; i < g.lanes.length; i++) if (g.lanes[i].unit === u) return g.lanes[i]; return g.lanes[0]; }
+function laneScale(g, lane, series, from, to) {
+    var lo = Infinity, hi = -Infinity;
+    series.forEach(function (s) {
+        if (laneOf(g, s) !== lane) return;
+        for (var i = 0; i < s.t.length; i++) {
+            if (s.t[i] < from || s.t[i] > to) continue;
+            [s.v[i], s.min ? s.min[i] : null, s.max ? s.max[i] : null].forEach(function (x) { if (x !== null && x !== undefined && isFinite(x)) { if (x < lo) lo = x; if (x > hi) hi = x; } });
+        }
+    });
+    if (!isFinite(lo)) { lo = 0; hi = 1; }
+    var tk = niceTicks(lo, hi, Math.max(2, Math.min(6, Math.floor((lane.y1 - lane.y0) / 26))));
+    lane.lo = tk.lo; lane.hi = tk.hi; lane.ticks = tk.ticks; lane.step = tk.step;
+    lane.toY = function (v) { return lane.y1 - (v - lane.lo) / ((lane.hi - lane.lo) || 1) * (lane.y1 - lane.y0); };
+}
+function fmtTick(v, step) {
+    var d = step >= 1 ? 0 : Math.min(6, Math.ceil(-Math.log(step) / Math.LN10));
+    var a = Math.abs(v);
+    if (a >= 1e6 || (a > 0 && a < 1e-4)) return v.toExponential(1);
+    return v.toFixed(d);
+}
+function median(a) { if (!a.length) return 0; var b = a.slice().sort(function (x, y) { return x - y; }); return b[Math.floor(b.length / 2)]; }
+function drawSeries(ctx, g, s, col, from, to) {
+    var lane = laneOf(g, s), n = s.t.length;
+    if (!lane || !n) return;
+    var P = g.plot, span = to - from;
+    var X = function (i) { return P.x + (s.t[i] - from) / span * P.w; }, Y = function (v) { return lane.toY(v); };
+    var ok = function (i) { var v = s.v[i]; return v !== null && v !== undefined && isFinite(v) && s.q[i] !== 2; };
+    var dts = [], stride = Math.max(1, Math.floor(n / 400));
+    for (var i0 = stride; i0 < n; i0 += stride) dts.push(s.t[i0] - s.t[i0 - stride]);
+    var gapT = s.bucketMs ? s.bucketMs * 1.5 + 1 : Math.max(median(dts) / stride * 5, 1);
+    if (s.decimated) gapT = Math.max(gapT, span / 40);
+    // min–max envelope of bucket statistics
+    if (s.min && s.max && (V.agg === 'auto' || V.agg === 'avg')) {
+        ctx.fillStyle = hexA(col, 0.16);
+        var a = 0;
+        while (a < n) {
+            if (!ok(a) || s.min[a] === null) { a++; continue; }
+            var b = a;
+            while (b + 1 < n && ok(b + 1) && s.min[b + 1] !== null && s.t[b + 1] - s.t[b] <= gapT) b++;
+            ctx.beginPath();
+            for (var k = a; k <= b; k++) { if (k === a) ctx.moveTo(X(k), Y(s.max[k])); else ctx.lineTo(X(k), Y(s.max[k])); }
+            for (k = b; k >= a; k--) ctx.lineTo(X(k), Y(s.min[k]));
+            ctx.closePath(); ctx.fill();
+            a = b + 1;
+        }
+    }
+    ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    ['solid', 'dashed'].forEach(function (want) {
+        if (typeof ctx.setLineDash === 'function') ctx.setLineDash(want === 'dashed' ? [4, 4] : []);
+        ctx.beginPath();
+        var pen = false;
+        for (var i = 1; i < n; i++) {
+            var seg = ok(i - 1) && ok(i) && (s.t[i] - s.t[i - 1]) <= gapT;
+            var st = seg && (s.q[i - 1] === 1 || s.q[i] === 1) ? 'dashed' : 'solid';
+            if (seg && st === want) { if (!pen) { ctx.moveTo(X(i - 1), Y(s.v[i - 1])); pen = true; } ctx.lineTo(X(i), Y(s.v[i])); }
+            else pen = false;
+        }
+        ctx.stroke();
+    });
+    if (typeof ctx.setLineDash === 'function') ctx.setLineDash([]);
+    // points: every point when sparse, else only isolated ones; bad / no-value ticks on the lane floor
+    var sparse = n < P.w / 10;
+    ctx.fillStyle = col;
+    for (var j = 0; j < n; j++) {
+        if (!ok(j)) { continue; }
+        var iso = !((j > 0 && ok(j - 1) && s.t[j] - s.t[j - 1] <= gapT) || (j < n - 1 && ok(j + 1) && s.t[j + 1] - s.t[j] <= gapT));
+        if (sparse || iso) { ctx.beginPath(); ctx.arc(X(j), Y(s.v[j]), 3, 0, 2 * Math.PI); ctx.fill(); }
+    }
+    ctx.fillStyle = INK.bad;
+    for (var m = 0; m < n; m++) if (!ok(m) && s.t[m] >= from && s.t[m] <= to) ctx.fillRect(X(m) - 1, lane.y1 - 5, 2, 5);
+}
+function nearest(ts, t) {
+    if (!ts.length) return -1;
+    var lo = 0, hi = ts.length - 1;
+    while (hi - lo > 1) { var m = (lo + hi) >> 1; if (ts[m] < t) lo = m; else hi = m; }
+    return Math.abs(ts[lo] - t) <= Math.abs(ts[hi] - t) ? lo : hi;
+}
+function drawTrend() {
+    var cv = $('hist_cv');
+    if (!cv || typeof cv.getContext !== 'function') return;
+    var ctx = cv.getContext('2d');
+    if (!ctx) return;
+    var sz = cvSize(cv), series = trendSeries(), from = V.from, to = V.to > V.from ? V.to : V.from + 1;
+    if (typeof ctx.setTransform === 'function') ctx.setTransform(sz.dpr, 0, 0, sz.dpr, 0, 0);
+    ctx.fillStyle = INK.bg; ctx.fillRect(0, 0, sz.w, sz.h);
+    var g = geometry(series, sz), P = g.plot;
+    V.geo = g;
+    g.fromX = function (x) { return from + (x - P.x) / P.w * (to - from); };
+    g.toX = function (t) { return P.x + (t - from) / (to - from) * P.w; };
+    ctx.font = '11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+    ctx.lineWidth = 1;
+    // time grid and labels
+    var tt = timeTicks(from, to, Math.max(2, Math.floor(P.w / 90)));
+    ctx.strokeStyle = INK.grid; ctx.fillStyle = INK.muted; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    tt.ticks.forEach(function (t) {
+        var x = Math.round(g.toX(t)) + 0.5;
+        ctx.beginPath(); g.lanes.forEach(function (l) { ctx.moveTo(x, l.y0); ctx.lineTo(x, l.y1); }); ctx.stroke();
+        ctx.fillText(tickLabel(t, tt.step, to - from), x, P.y + P.h + 6);
+    });
+    // lanes: value grid, axis, unit
+    g.lanes.forEach(function (lane, li) {
+        laneScale(g, lane, series, from, to);
+        ctx.textBaseline = 'middle'; ctx.textAlign = lane.side === 'L' ? 'right' : 'left';
+        lane.ticks.forEach(function (v) {
+            var y = Math.round(lane.toY(v)) + 0.5;
+            if (y < lane.y0 - 1 || y > lane.y1 + 1) return;
+            if (V.layout !== 'overlay' || li === 0) { ctx.strokeStyle = INK.grid; ctx.beginPath(); ctx.moveTo(P.x, y); ctx.lineTo(P.x + P.w, y); ctx.stroke(); }
+            ctx.fillStyle = INK.muted;
+            ctx.fillText(fmtTick(v, lane.step), lane.side === 'L' ? lane.axisX - 6 : lane.axisX + 6, y);
+        });
+        ctx.strokeStyle = INK.axis; ctx.beginPath(); ctx.moveTo(Math.round(lane.axisX) + 0.5, lane.y0); ctx.lineTo(Math.round(lane.axisX) + 0.5, lane.y1); ctx.stroke();
+        ctx.fillStyle = INK.text2; ctx.textBaseline = 'bottom';
+        ctx.textAlign = V.layout === 'overlay' ? (lane.side === 'L' ? 'right' : 'left') : 'left';
+        ctx.fillText(lane.unit, V.layout === 'overlay' ? (lane.side === 'L' ? lane.axisX - 4 : lane.axisX + 4) : P.x + 4, lane.y0 - 3);
+    });
+    ctx.strokeStyle = INK.axis; ctx.beginPath(); ctx.moveTo(P.x, P.y + P.h + 0.5); ctx.lineTo(P.x + P.w, P.y + P.h + 0.5); ctx.stroke();
+    if (typeof ctx.save === 'function') ctx.save();
+    ctx.beginPath(); ctx.rect(P.x, P.y - 3, P.w, P.h + 6); if (typeof ctx.clip === 'function') ctx.clip();
+    series.forEach(function (s) { drawSeries(ctx, g, s, colorOf(s.tag), from, to); });
+    if (typeof ctx.restore === 'function') ctx.restore();
+    var empty = !series.length || series.every(function (s) { return !s.t.some(function (t) { return t >= from && t <= to; }); });
+    if (empty) {
+        ctx.fillStyle = INK.muted; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText((V.tags || []).length ? 'No data in this time range' : 'Select tags to trend', P.x + P.w / 2, P.y + P.h / 2);
+    }
+    drawCursor(ctx, g, series);
+    renderLegend(series);
+    try { cv.setAttribute('aria-label', 'Historian trend of ' + series.map(function (s) { return s.tag; }).join(', ') + ' from ' + fmtLocal(from) + ' to ' + fmtLocal(to)); } catch (e) {}
+}
+function drawCursor(ctx, g, series) {
+    var box = $('hist_cursor'), P = g.plot;
+    if (V.cursorX === null || V.cursorX < P.x || V.cursorX > P.x + P.w || !series.length) { if (box) box.style.display = 'none'; return; }
+    var t = g.fromX(V.cursorX), x = Math.round(V.cursorX) + 0.5, rows = [];
+    ctx.strokeStyle = INK.text2;
+    if (typeof ctx.setLineDash === 'function') ctx.setLineDash([3, 3]);
+    ctx.beginPath(); ctx.moveTo(x, P.y); ctx.lineTo(x, P.y + P.h); ctx.stroke();
+    if (typeof ctx.setLineDash === 'function') ctx.setLineDash([]);
+    series.forEach(function (s) {
+        var k = nearest(s.t, t);
+        if (k < 0) return;
+        var v = s.v[k], lane = laneOf(g, s), col = colorOf(s.tag);
+        if (v !== null && v !== undefined && isFinite(v) && s.q[k] !== 2) {
+            ctx.fillStyle = INK.bg; ctx.beginPath(); ctx.arc(g.toX(s.t[k]), lane.toY(v), 5, 0, 2 * Math.PI); ctx.fill();
+            ctx.fillStyle = col; ctx.beginPath(); ctx.arc(g.toX(s.t[k]), lane.toY(v), 3.5, 0, 2 * Math.PI); ctx.fill();
+        }
+        rows.push({ tag: s.tag, unit: s.unit, v: v, q: s.q[k], t: s.t[k], col: col, roll: s.rollup ? s.rollup[k] : 0, mode: s.mode, b: s.bucketMs });
+    });
+    if (!box) return;
+    box.innerHTML = '<div style="color:var(--text2)">' + esc(fmtLocal(t)) + '</div>' + rows.map(function (r) {
+        var val = (r.v === null || r.v === undefined || r.q === 2) ? '<span class="q-bad">&#10007; bad / no value</span>' : '<b>' + esc(fmtVal(r.v)) + '</b> ' + esc(r.unit || '');
+        return '<div><span class="hist-sw" style="background:' + r.col + '"></span> ' + esc(r.tag) + ': ' + val +
+            (r.q === 1 ? ' <span class="q-stale">&#9676; stale</span>' : '') + (r.roll ? ' <span style="color:var(--text3)">(1-min mean)</span>' : '') +
+            (r.mode && r.mode !== 'raw' ? ' <span style="color:var(--text3)">(' + esc(r.mode) + ' ' + esc(bucketLabel(r.b)) + ')</span>' : '') + '</div>';
+    }).join('');
+    box.style.display = 'block';
+    var w = g.sz.w, left = V.cursorX + 20;                     // box is placed in .chart-wrap (canvas at 6 px)
+    if (left > w - 200) left = Math.max(4, V.cursorX - 208);
+    box.style.left = Math.round(left) + 'px';
+}
+function renderLegend(series) {
+    var el = $('hist_legend');
+    if (!el) return;
+    var parts = series.map(function (s) {
+        var last = null;
+        for (var i = s.t.length - 1; i >= 0; i--) if (s.t[i] <= V.to && s.v[i] !== null && s.q[i] !== 2) { last = s.v[i]; break; }
+        return '<span><span class="hist-sw" style="background:' + colorOf(s.tag) + '"></span> <b>' + esc(s.tag) + '</b>' + (s.unit ? ' (' + esc(s.unit) + ')' : '') +
+            (last !== null ? ' — ' + esc(fmtVal(last)) : '') + '</span>';
+    });
+    if (series.length) parts.push('<span style="color:var(--text3)">dashed = stale · red ticks = bad / no value' + (series.some(function (s) { return !!s.min; }) ? ' · band = min–max per bucket' : '') + '</span>');
+    el.innerHTML = parts.join('');
+}
+function setView(from, to, live, keepPreset) {
+    var span = Math.min(400 * DAY, Math.max(1000, to - from));
+    if (to - from !== span) { var c = (from + to) / 2; from = c - span / 2; to = c + span / 2; }
+    if (from < 0) { to -= from; from = 0; }
+    V.from = Math.round(from); V.to = Math.round(to); V.live = !!live;
+    if (!keepPreset) V.preset = live ? V.preset : 'zoom';
+    updateButtons(); requestDraw(); scheduleTrend(150); scheduleTable(300); saveView();
+}
+function onRange(p) {
+    if (p === 'custom') {
+        V.preset = 'custom'; V.live = false;
+        var f = pageEl('[data-h="from"]'), t = pageEl('[data-h="to"]');
+        var loc = function (ms) { var d = new Date(ms); return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) + 'T' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds()); };
+        if (f && !f.value) f.value = loc(V.from);
+        if (t && !t.value) t.value = loc(V.to);
+        updateButtons(); saveView();
+        return;
+    }
+    V.preset = p; V.lastPreset = p;
+    var now = Date.now();
+    setView(now - presetMs(p), now, true, true);
+}
+function applyCustom() {
+    var f = pageEl('[data-h="from"]'), t = pageEl('[data-h="to"]');
+    var a = parseTime(f && f.value), b = parseTime(t && t.value);
+    if (!isFinite(a) || !isFinite(b) || b <= a) { setMsg('hist_tbl_msg', false, 'Enter a custom range with “To” after “From”.'); return; }
+    V.preset = 'custom';
+    setView(a, b, false, true);
+}
+function zoomAt(x, f) {
+    var g = V.geo;
+    if (!g) return;
+    var span = V.to - V.from, ns = Math.min(400 * DAY, Math.max(1000, span * f));
+    if (V.live) { setView(V.to - ns, V.to, true, true); return; }            // live: keep the right edge on "now"
+    var t = g.fromX(Math.min(g.plot.x + g.plot.w, Math.max(g.plot.x, x)));
+    var from = t - (t - V.from) * ns / span;
+    setView(from, from + ns, false);
+}
+function resetZoom() { onRange(V.lastPreset || '1h'); }
+function localX(e, cv) {
+    var r = cv.getBoundingClientRect ? cv.getBoundingClientRect() : { left: 0 };
+    return (isNum(e.clientX) ? e.clientX : 0) - (r.left || 0);
+}
+function wireCanvas(cv) {
+    if (!cv || typeof cv.addEventListener !== 'function') return;
+    var end = function (e) {
+        delete V.ptr[e.pointerId];
+        if (Object.keys(V.ptr).length < 2) V.pinch = null;
+        if (!Object.keys(V.ptr).length) V.drag = null;
+    };
+    cv.addEventListener('pointerdown', function (e) {
+        if (e.button !== undefined && e.button !== 0) return;
+        V.ptr[e.pointerId] = { x: localX(e, cv) };
+        try { cv.setPointerCapture(e.pointerId); } catch (x) {}
+        var ids = Object.keys(V.ptr);
+        if (ids.length === 1) V.drag = { x0: V.ptr[ids[0]].x, from: V.from, to: V.to, moved: false };
+        else if (ids.length === 2) {
+            var a = V.ptr[ids[0]].x, b = V.ptr[ids[1]].x;
+            V.drag = null;
+            V.pinch = { d0: Math.max(10, Math.abs(a - b)), mid0: (a + b) / 2, from: V.from, to: V.to };
+        }
+    });
+    cv.addEventListener('pointermove', function (e) {
+        var x = localX(e, cv);
+        if (V.ptr[e.pointerId]) V.ptr[e.pointerId].x = x;
+        var ids = Object.keys(V.ptr), g = V.geo;
+        if (V.pinch && ids.length >= 2 && g) {
+            var a = V.ptr[ids[0]].x, b = V.ptr[ids[1]].x, span0 = V.pinch.to - V.pinch.from;
+            var ns = Math.min(400 * DAY, Math.max(1000, span0 * V.pinch.d0 / Math.max(10, Math.abs(a - b))));
+            var tc = V.pinch.from + (V.pinch.mid0 - g.plot.x) / g.plot.w * span0, mid = (a + b) / 2;
+            var from = tc - (mid - g.plot.x) / g.plot.w * ns;
+            setView(from, from + ns, false);
+            return;
+        }
+        if (V.drag && g) {
+            var dx = x - V.drag.x0;
+            if (Math.abs(dx) > 3) V.drag.moved = true;
+            if (V.drag.moved) {
+                var dt = -dx / g.plot.w * (V.drag.to - V.drag.from);
+                setView(V.drag.from + dt, V.drag.to + dt, false);
+            }
+            return;
+        }
+        V.cursorX = x; requestDraw();
+    });
+    cv.addEventListener('pointerup', end);
+    cv.addEventListener('pointercancel', end);
+    cv.addEventListener('pointerleave', function () { if (!V.drag && !V.pinch) { V.cursorX = null; requestDraw(); } });
+    cv.addEventListener('wheel', function (e) {
+        if (e.preventDefault) e.preventDefault();
+        var dy = isNum(e.deltaY) ? e.deltaY : 0;
+        if (e.deltaMode === 1) dy *= 16;
+        zoomAt(localX(e, cv), Math.exp(Math.max(-300, Math.min(300, dy)) * 0.0015));
+    }, { passive: false });
+    cv.addEventListener('dblclick', resetZoom);
+    cv.addEventListener('keydown', function (e) {
+        var k = e.key, span = V.to - V.from, g = V.geo;
+        if (k === 'ArrowLeft' || k === 'ArrowRight') { var d = (k === 'ArrowLeft' ? -0.1 : 0.1) * span; setView(V.from + d, V.to + d, false); }
+        else if (k === '+' || k === '=') zoomAt(g ? g.plot.x + g.plot.w / 2 : 0, 0.8);
+        else if (k === '-' || k === '_') zoomAt(g ? g.plot.x + g.plot.w / 2 : 0, 1.25);
+        else if (k === '0' || k === 'Home') resetZoom();
+        else return;
+        if (e.preventDefault) e.preventDefault();
+    });
+}
+function exportPNG() {
+    var cv = $('hist_cv');
+    if (!cv || !hasDoc()) return false;
+    var sz = cvSize(cv), out = document.createElement('canvas'), dpr = sz.dpr, H = sz.h + 44;
+    out.width = Math.round(sz.w * dpr); out.height = Math.round(H * dpr);
+    var ctx = out.getContext && out.getContext('2d');
+    if (!ctx) return false;
+    if (typeof ctx.setTransform === 'function') ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = INK.bg; ctx.fillRect(0, 0, sz.w, H);
+    ctx.fillStyle = INK.text; ctx.font = '600 13px -apple-system, "Segoe UI", Roboto, sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+    ctx.fillText('Historian trend — ' + fmtLocal(V.from) + ' to ' + fmtLocal(V.to), 8, 6);
+    ctx.font = '11px -apple-system, "Segoe UI", Roboto, sans-serif';
+    var x = 8;
+    trendSeries().forEach(function (s) {
+        ctx.fillStyle = colorOf(s.tag); ctx.fillRect(x, 26, 10, 10);
+        ctx.fillStyle = INK.text2;
+        var label = s.tag + (s.unit ? ' (' + s.unit + ')' : '');
+        ctx.fillText(label, x + 14, 25);
+        x += 24 + (ctx.measureText ? ctx.measureText(label).width : label.length * 6);
+    });
+    ctx.drawImage(cv, 0, 44, sz.w, sz.h);
+    var url = out.toDataURL('image/png'), a = document.createElement('a');
+    a.href = url; a.download = fileStamp('png', 'historian-trend'); a.style.display = 'none';
+    (document.body || document.documentElement).appendChild(a); a.click();
+    if (a.parentNode) a.parentNode.removeChild(a);
+    return true;
+}
+function toggleTag(tag) {
+    var i = V.tags.indexOf(tag);
+    if (i >= 0) { V.tags.splice(i, 1); delete V.slots[tag]; }
+    else {
+        if (V.tags.length >= MAX_TREND_TAGS) { setMsg('hist_tbl_msg', null, 'Up to ' + MAX_TREND_TAGS + ' tags on the trend — use the table or an export for more.'); return; }
+        V.tags.push(tag); assignSlot(tag);
+    }
+    saveView();
+    refreshTags().then(function () { requestDraw(); scheduleTrend(0); scheduleTable(0); });
+}
+
+// ── table ──
+function scheduleTable(ms) {
+    if (V.tbl.timer !== null) clearTimeout(V.tbl.timer);
+    V.tbl.timer = setTimeout(function () { V.tbl.timer = null; buildTable(); }, ms || 0);
+}
+var TABLE_MAX = 200000;
+function buildTable() {
+    var wrap = $('hist_table_wrap');
+    if (!wrap) return Promise.resolve();
+    var seq = ++V.tbl.seq, tags = (V.tags || []).slice(), mode = V.tbl.mode;
+    if (!tags.length) { wrap.innerHTML = '<div class="hist-muted">Select tags on the trend to list their values.</div>'; var pi0 = $('hist_pageinfo'); if (pi0) pi0.textContent = ''; return Promise.resolve(); }
+    var o = { tags: tags, from: V.from, to: V.to, agg: mode };
+    if (mode !== 'raw') o.bucketMs = V.tbl.bucket > 0 ? V.tbl.bucket : niceBucket(Math.max(1, V.to - V.from) / 500);
+    return query(o).then(function (res) {
+        if (seq !== V.tbl.seq || !$('hist_table_wrap')) return;
+        var total = 0;
+        res.series.forEach(function (s) { total += s.t.length; });
+        if (total > TABLE_MAX) {
+            V.tbl.rows = []; V.tbl.series = res.series;
+            $('hist_table_wrap').innerHTML = '<div style="color:var(--yellow)">&#9888; ' + fmtCount(total) + ' samples in this range — choose a bucketed table, a shorter range, or export the data.</div>';
+            return;
+        }
+        var map = {}, times = [];
+        res.series.forEach(function (s, k) {
+            for (var i = 0; i < s.t.length; i++) {
+                var t = s.t[i], r = map[t];
+                if (!r) { r = map[t] = { t: t, c: new Array(tags.length) }; times.push(t); }
+                r.c[k] = { v: s.v[i], q: s.q[i], roll: s.rollup ? s.rollup[i] : 0 };
+            }
+        });
+        var rows = times.map(function (t) { return map[t]; });
+        if (V.tbl.qf === 'good') {
+            rows.forEach(function (r) { for (var k = 0; k < r.c.length; k++) { var c = r.c[k]; if (c && (c.q !== 0 || c.v === null)) r.c[k] = undefined; } });
+            rows = rows.filter(function (r) { return r.c.some(Boolean); });
+        } else if (V.tbl.qf === 'issues') rows = rows.filter(function (r) { return r.c.some(function (c) { return c && (c.q !== 0 || c.v === null); }); });
+        rows.sort(function (a, b) { return V.tbl.desc ? b.t - a.t : a.t - b.t; });
+        V.tbl.rows = rows; V.tbl.series = res.series; V.tbl.bucketMs = res.bucketMs;
+        V.tbl.page = Math.max(0, Math.min(V.tbl.page, Math.ceil(rows.length / V.tbl.size) - 1));
+        renderTablePage();
+    }).catch(function (e) { var w = $('hist_table_wrap'); if (w) w.innerHTML = '<div style="color:var(--red)">&#10007; ' + esc(errMsg(e)) + '</div>'; });
+}
+function cellHtml(c) {
+    if (!c) return '<td></td>';
+    if (c.v === null || c.v === undefined || c.q === 2) return '<td class="q-bad" title="bad / no value">&#10007;</td>';
+    return '<td' + (c.q === 1 ? ' class="q-stale" title="stale value"' : '') + '>' + esc(fmtVal(c.v)) + (c.q === 1 ? ' &#9676;' : '') + (c.roll ? ' &#8224;' : '') + '</td>';
+}
+function renderTablePage() {
+    var wrap = $('hist_table_wrap');
+    if (!wrap) return;
+    var rows = V.tbl.rows || [], series = V.tbl.series || [], a = V.tbl.page * V.tbl.size, b = Math.min(rows.length, a + V.tbl.size);
+    var h = '<table class="dtable" id="hist_table"><thead><tr><th><button type="button" class="hist-sort" id="hist_sort_btn" aria-label="Sort by time">Time ' +
+        (V.tbl.desc ? '&#8595;' : '&#8593;') + '</button></th>' + series.map(function (s) { return '<th>' + esc(s.tag) + (s.unit ? ' (' + esc(s.unit) + ')' : '') + '</th>'; }).join('') + '</tr></thead><tbody>';
+    for (var i = a; i < b; i++) {
+        var r = rows[i], cells = '';
+        for (var k = 0; k < series.length; k++) cells += cellHtml(r.c[k]);
+        h += '<tr><td>' + esc(fmtLocal(r.t, V.tbl.mode === 'raw')) + '</td>' + cells + '</tr>';
+    }
+    if (!rows.length) h += '<tr><td colspan="' + (series.length + 1) + '">No rows in this time range.</td></tr>';
+    wrap.innerHTML = h + '</tbody></table>';
+    var pi = $('hist_pageinfo');
+    if (pi) pi.textContent = rows.length ? 'Rows ' + fmtCount(a + 1) + '–' + fmtCount(b) + ' of ' + fmtCount(rows.length) +
+        (V.tbl.mode !== 'raw' ? ' · ' + V.tbl.mode + ' per ' + bucketLabel(V.tbl.bucketMs) : '') : '';
+}
+function tableTSV(limit) {
+    var rows = V.tbl.rows || [], series = V.tbl.series || [], n = Math.min(rows.length, limit || 50000);
+    var lines = [['time_local'].concat(series.map(function (s) { return s.tag + (s.unit ? ' [' + s.unit + ']' : ''); })).join('\t')];
+    for (var i = 0; i < n; i++) {
+        var r = rows[i];
+        lines.push([fmtLocal(r.t, true)].concat(series.map(function (s, k) { var c = r.c[k]; return c && c.v !== null && c.q !== 2 ? String(c.v) : ''; })).join('\t'));
+    }
+    return { text: lines.join('\n') + '\n', rows: n, total: rows.length };
+}
+function copyTable() {
+    var x = tableTSV(50000), nav = G.navigator;
+    var done = function (ok) { setMsg('hist_tbl_msg', ok, ok ? 'Copied ' + fmtCount(x.rows) + ' rows' + (x.total > x.rows ? ' (of ' + fmtCount(x.total) + ')' : '') + ' to the clipboard.' : 'The clipboard is not available here.'); };
+    if (nav && nav.clipboard && typeof nav.clipboard.writeText === 'function') return nav.clipboard.writeText(x.text).then(function () { done(true); }, function () { done(false); });
+    done(false);
+    return Promise.resolve();
+}
+
+// ── export / restore / settings actions ──
+function val(sel) { var e = pageEl(sel); return e ? e.value : ''; }
+function doExport() {
+    var fmt = val('[data-h="xfmt"]') || 'csv', range = val('[data-h="xrange"]'), tagsSel = val('[data-h="xtags"]'), agg = val('[data-h="xagg"]') || 'raw';
+    var o = { tags: tagsSel === 'all' ? undefined : (V.tags || []).slice(), agg: agg };
+    if (range !== 'all') { o.from = V.from; o.to = V.to; }
+    if (o.tags && !o.tags.length) { setMsg('hist_io_res', false, 'No tags selected on the trend — choose “All tags” or select tags.'); return Promise.resolve(); }
+    setMsg('hist_io_res', null, 'Exporting…');
+    var p = fmt === 'csv' ? exportCSV(o) : fmt === 'csvwide' ? exportCSV(Object.assign(o, { layout: 'wide' })) : fmt === 'xlsx' ? exportXLSX(o)
+        : exportDb({ format: fmt === 'json' ? 'json' : 'sqlite' });
+    return p.then(function (r) {
+        setMsg('hist_io_res', true, 'Exported ' + (r.rows !== undefined ? fmtCount(r.rows) + ' rows' : fmtBytes(r.size)) + ' to ' + r.filename + '.');
+    }, function (e) { setMsg('hist_io_res', false, errMsg(e)); });
+}
+function doImport() {
+    var inp = pageEl('[data-h="file"]'), f = inp && inp.files && inp.files[0];
+    if (!f) { setMsg('hist_io_res', false, 'Choose a file to restore first.'); return Promise.resolve(); }
+    var mode = val('[data-h="imode"]') === 'replace' ? 'replace' : 'merge', dup = val('[data-h="idup"]') === 'overwrite' ? 'overwrite' : 'skip';
+    if (mode === 'replace' && typeof G.confirm === 'function' && !G.confirm('Replace ALL historian data with the contents of ' + f.name + '? Export a backup first if you may need the current data.')) return Promise.resolve();
+    setMsg('hist_io_res', null, 'Restoring ' + f.name + '…');
+    return importFile(f, { mode: mode, dup: dup }).then(function (r) {
+        var t = 'Restored ' + r.file + ' (' + r.format + '): ' + fmtCount(r.inserted) + ' new samples' + (r.updated ? ', ' + fmtCount(r.updated) + ' overwritten' : '') +
+            (r.skipped ? ', ' + fmtCount(r.skipped) + ' already stored (kept)' : '') + (r.rollups ? ', ' + fmtCount(r.rollups) + ' 1-min rollups' : '') +
+            '; ' + r.tags + ' tags (' + r.tagsCreated + ' new)' + (r.invalid ? '; ' + fmtCount(r.invalid) + ' rows skipped as invalid' : '') +
+            (r.from !== null ? '; ' + fmtLocal(r.from) + ' to ' + fmtLocal(r.to) : '') + '.';
+        setMsg('hist_io_res', true, t);
+        if (r.olderThanRetention) {
+            var el = $('hist_io_res');
+            if (el) el.innerHTML += '<div style="color:var(--yellow)">&#9888; ' + fmtCount(r.olderThanRetention) + ' restored samples are older than the retention period and will be deleted at the next retention run — raise “Keep data for” first to keep them.</div>';
+        }
+        if (inp) try { inp.value = ''; } catch (e) {}
+        return refreshAll();
+    }, function (e) { setMsg('hist_io_res', false, errMsg(e)); });
+}
+function applyRetention() {
+    var o = { days: val('[data-h="days"]'), downsampleAfterDays: val('[data-h="dsdays"]'), maxRows: val('[data-h="maxrows"]') };
+    return setRetention(o).then(function (r) {
+        var x = r.result || {};
+        setMsg('hist_set_msg', true, 'Retention saved. This run: ' + fmtCount(x.deleted + x.deletedRollups) + ' old rows deleted, ' + fmtCount(x.rolledUp + x.capped) + ' raw samples downsampled or capped.');
+        return refreshAll();
+    }, function (e) { setMsg('hist_set_msg', false, errMsg(e)); });
+}
+function doSwitchEngine() {
+    var to = val('[data-h="engine"]') || 'auto';
+    if (to !== 'auto' && to !== E.engine && typeof G.confirm === 'function' && !G.confirm('Move all historian data from ' + ENGINE_LABEL[E.engine] + ' to ' + ENGINE_LABEL[to] + '?')) return Promise.resolve();
+    setMsg('hist_set_msg', null, 'Switching the storage engine…');
+    return switchEngine(to).then(function (r) {
+        setMsg('hist_set_msg', true, to === 'auto' ? 'Engine choice set to automatic (current: ' + ENGINE_LABEL[r.engine] + ').' :
+            'Now using ' + ENGINE_LABEL[r.engine] + (r.moved ? '; moved ' + fmtCount(r.moved) + ' samples and ' + fmtCount(r.rollups) + ' rollups.' : '.'));
+        return refreshAll();
+    }, function (e) { setMsg('hist_set_msg', false, 'Could not switch: ' + errMsg(e)); });
+}
+function requestPersist() {
+    var st = G.navigator && G.navigator.storage;
+    if (!st || typeof st.persist !== 'function') { setMsg('hist_set_msg', false, 'This browser does not offer persistent storage.'); return Promise.resolve(false); }
+    return st.persist().then(function (ok) {
+        setMsg('hist_set_msg', ok, ok ? 'Persistent storage granted — the browser will not clear this data under storage pressure.' : 'The browser declined persistent storage (it may grant it later, e.g. after the site is installed or bookmarked).');
+        refreshStatus();
+        return ok;
+    }, function (e) { setMsg('hist_set_msg', false, errMsg(e)); return false; });
+}
+function doPurge(all) {
+    var before = all ? null : parseTime(val('[data-h="pbefore"]')), which = val('[data-h="ptags"]');
+    if (!all && !isFinite(before)) { setMsg('hist_set_msg', false, 'Enter the “Purge data older than” date first.'); return Promise.resolve(); }
+    var tags = all || which === 'all' ? undefined : (V.tags || []).slice();
+    if (!all && tags && !tags.length) { setMsg('hist_set_msg', false, 'No tags selected on the trend.'); return Promise.resolve(); }
+    var q = all ? 'Delete ALL historian data (every tag, sample and rollup)? This cannot be undone.' :
+        'Delete ' + (tags ? tags.length + ' selected tag(s)' : 'all tags') + ' data older than ' + fmtLocal(before) + '?';
+    if (typeof G.confirm === 'function' && !G.confirm(q)) return Promise.resolve();
+    return purge(all ? { all: true } : { before: before, tags: tags }).then(function (r) {
+        setMsg('hist_set_msg', true, 'Deleted ' + fmtCount(r.samples) + ' samples and ' + fmtCount(r.rollups) + ' rollups.');
+        return refreshAll();
+    }, function (e) { setMsg('hist_set_msg', false, errMsg(e)); });
+}
+function wire(root) {
+    root.addEventListener('click', function (e) {
+        var b = e.target && e.target.closest ? e.target.closest('button') : null;
+        if (!b || !root.contains(b)) return;
+        var sg = b.parentNode && b.parentNode.getAttribute ? b.parentNode.getAttribute('data-seg') : null;
+        if (sg) { onRange(b.getAttribute('data-v')); return; }
+        if (b.hasAttribute('data-tag')) { toggleTag(b.getAttribute('data-tag')); return; }
+        switch (b.id) {
+            case 'hist_modbus_btn': case 'hist_modbus_btn2': goModbus(); break;
+            case 'hist_demo_btn': if (DEMOLIVE.timer !== null) demoStop(); else { demoStart(); if (V.tags && !V.tags.length) V.tags = null; } break;
+            case 'hist_demohist_btn': b.disabled = true; demoHistory(24, 10000).then(function (n) { b.disabled = false; if (V.tags && !V.tags.length) V.tags = null; setMsg('hist_set_msg', true, 'Added ' + fmtCount(n) + ' demo samples (24 h at 10 s, tags DEMO.*).'); return refreshAll(); }, function (er) { b.disabled = false; setMsg('hist_set_msg', false, errMsg(er)); }); break;
+            case 'hist_refresh_btn': G.calcHistorian(); break;
+            case 'hist_live_btn': if (V.live) { V.live = false; updateButtons(); saveView(); } else { var sp = V.to - V.from; var n = Date.now(); setView(n - sp, n, true, true); } break;
+            case 'hist_custom_apply': applyCustom(); break;
+            case 'hist_reset_btn': resetZoom(); break;
+            case 'hist_png_btn': exportPNG(); break;
+            case 'hist_prev_btn': if (V.tbl.page > 0) { V.tbl.page--; renderTablePage(); } break;
+            case 'hist_next_btn': if ((V.tbl.page + 1) * V.tbl.size < (V.tbl.rows || []).length) { V.tbl.page++; renderTablePage(); } break;
+            case 'hist_sort_btn': V.tbl.desc = !V.tbl.desc; (V.tbl.rows || []).reverse(); V.tbl.page = 0; renderTablePage(); saveView(); break;
+            case 'hist_copy_btn': copyTable(); break;
+            case 'hist_export_btn': doExport(); break;
+            case 'hist_import_btn': doImport(); break;
+            case 'hist_ret_btn': applyRetention(); break;
+            case 'hist_engine_btn': doSwitchEngine(); break;
+            case 'hist_persist_btn': requestPersist(); break;
+            case 'hist_purge_btn': doPurge(false); break;
+            case 'hist_clear_btn': doPurge(true); break;
+            default: break;
+        }
+    });
+    root.addEventListener('change', function (e) {
+        var el = e.target, h = el && el.getAttribute ? el.getAttribute('data-h') : null;
+        if (!h) return;
+        if (h === 'logform') setFormLogging(!!el.checked);
+        else if (h === 'agg') { V.agg = el.value; saveView(); scheduleTrend(0); }
+        else if (h === 'layout') { V.layout = el.value === 'overlay' ? 'overlay' : 'stacked'; saveView(); requestDraw(); }
+        else if (h === 'tmode') { V.tbl.mode = AGGS.indexOf(el.value) >= 0 ? el.value : 'raw'; V.tbl.page = 0; saveView(); scheduleTable(0); }
+        else if (h === 'tbucket') { V.tbl.bucket = Math.max(0, +el.value || 0); V.tbl.page = 0; saveView(); scheduleTable(0); }
+        else if (h === 'tq') { V.tbl.qf = el.value; V.tbl.page = 0; saveView(); scheduleTable(0); }
+        else if (h === 'tps') { V.tbl.size = [50, 100, 500].indexOf(+el.value) >= 0 ? +el.value : 100; V.tbl.page = 0; saveView(); renderTablePage(); }
+    });
+    wireCanvas($('hist_cv'));
+}
+function render(body) {
+    ensureCss();
+    loadView();
+    body.innerHTML = pageHtml();
+    var root = $('hist_root');
+    if (root) wire(root);
+    if (V.live || !(V.to > V.from)) { var now = Date.now(); V.to = now; V.from = now - presetMs(V.preset === 'custom' || V.preset === 'zoom' ? V.lastPreset : V.preset); }
+    updateButtons();
+    drawTrend();
+    G.calcHistorian();
+}
+G.calcHistorian = function () { return refreshAll(); };
+
+// ─── §10 events, API, registry ───────────────────────────────────────
+function onHide() {
+    if (E.dirty) persistNow(true);                                     // what is written already, at once
+    if (E.buf.length) flush().then(function () { return E.dirty ? persistNow(true) : null; }).catch(noop);   // then the last buffered samples
+}
+function onUpdated() {
+    if (!pageMounted() || V.liveTimer !== null) return;
+    V.liveTimer = setTimeout(function () {                   // at most one refresh a second, only while data arrives
+        V.liveTimer = null;
+        if (!pageMounted()) return;
+        if (V.live) { var span = V.to - V.from; V.to = Date.now(); V.from = V.to - span; }
+        fetchTrend(); refreshTags(); refreshStatus().catch(noop);
+        scheduleTable(0);
+    }, 1000);
+}
+if (hasDoc() && typeof document.addEventListener === 'function') {
+    document.addEventListener('wts:modbus-samples', function (e) { var d = e && e.detail; if (d) record(d); });
+    document.addEventListener('wts:calc', function (e) { if (FORM.on) record(formSamples(e && e.detail, Date.now())); });
+    document.addEventListener('wts:historian-updated', onUpdated);
+    document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden') onHide(); });
+    document.addEventListener('app-backgrounded', onHide);
+}
+if (typeof G.addEventListener === 'function') {
+    G.addEventListener('pagehide', onHide);
+    G.addEventListener('resize', function () { if (pageMounted()) requestDraw(); });
+}
+
+var API = {
+    version: '1.0.0',
+    record: record,
+    flush: function () { return flush(); },
+    ready: function () { return ensureStore().then(status); },
+    query: query, listTags: listTags, stats: stats, status: status,
+    exportCSV: exportCSV, exportXLSX: exportXLSX, exportDb: exportDb, importFile: importFile,
+    purge: purge, setRetention: setRetention,
+    getRetention: function () { var s = getSettings(); return { days: s.days, maxRows: s.maxRows, downsampleAfterDays: s.downsampleAfterDays }; },
+    engine: function () { return { engine: E.engine, label: E.engine ? ENGINE_LABEL[E.engine] : null, home: E.home, spoolFor: E.spoolFor, preference: getSettings().engine, reasons: E.reasons.slice() }; },
+    switchEngine: switchEngine,
+    persist: function () { return persistNow(); },
+    demo: { start: demoStart, stop: demoStop, history: demoHistory, running: function () { return DEMOLIVE.timer !== null; } },
+    logForm: setFormLogging,
+    util: { aggregate: aggArrays, mergePartials: mergePartials, lttb: lttbIdx, decimate: decimate, niceBucket: niceBucket, parseDelimited: parseDelimited,
+        rowsToImport: rowsToImport, parseTime: parseTime, csvLine: csvLine, qCode: qCode, normSample: normSample, formSamples: formSamples, demoBatch: demoBatch, lcg: lcg },
+    LIBS: LIBS, SHA384: HIST_SHA384, ENGINES: ENGINES.slice(), ENGINE_LABEL: ENGINE_LABEL, ROLLUP_MS: ROLLUP_MS,
+    _test: T,
+    _internal: { E: E, V: V, workerSource: workerSource, HistSqlStore: HistSqlStore, histSqlJsAdapter: histSqlJsAdapter, histWasmAdapter: histWasmAdapter,
+        histWorkerMain: histWorkerMain, IdbStore: IdbStore, MemStore: MemStore, WorkerStore: WorkerStore, asyncStore: asyncStore, copyStore: copyStore,
+        fetchVerified: fetchVerified, loadSqlJs: loadSqlJs, trendData: trendData, drawTrend: drawTrend, buildTable: buildTable, fetchTrend: fetchTrend,
+        refreshAll: refreshAll, runRetention: function () { return lock(runRetention); }, tableTSV: tableTSV, exportPNG: exportPNG, setView: setView, zoomAt: zoomAt }
+};
+var prevApi = G.WTS_historian;
+G.WTS_historian = API;
+if (prevApi && Array.isArray(prevApi._queue) && prevApi._queue.length) record(prevApi._queue);   // samples an early caller queued before this file loaded
+publishState();
+
+G.WTS_calcRegistry = G.WTS_calcRegistry || {};
+G.WTS_calcRegistry.historian = {
+    key: 'historian', title: 'Historian', navTitle: 'Historian',
+    sub: 'Record, trend, tabulate and export tag data — SQLite in the browser',
+    group: 'Mini WellOS', icon: '&#128200;', badge: 'WellOS', bc: 'dc-b-blue',
+    desc: 'Trends and tables of Modbus, form and simulator data with retention, CSV / Excel export and database backup / restore.',
+    render: render
+};
+})();
+
+// ─── END 47-calc-historian ─────────────────────────────────────────────
 
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -3175,11 +6424,11 @@
     function _str(id) { var e = _byId(id); return e ? String(e.value) : ''; }
     function _fmt(v, d) {
         if (v == null || !isFinite(v)) return '—';
-        return Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) });
+        return (G.WTS_fmtNum ? G.WTS_fmtNum(v, 0, (d == null ? 2 : d)) : Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) }));
     }
     function _fixed(v, d) {
         if (v == null || !isFinite(v)) return '—';
-        return Number(v).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
+        return (G.WTS_fmtNum ? G.WTS_fmtNum(v, d, d) : Number(v).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d }));
     }
     function _metric() { var U = G.WTS_units; return !!(U && U.getSystem && U.getSystem() === 'metric'); }
     // value in the display system; impLabel is the imperial text
@@ -3222,6 +6471,8 @@
         var pmd = Number(i.pmd), ptvd = Number(i.ptvd), tmd = Number(i.tmd), bmd = Number(i.bmd), pbtd = Number(i.pbtd);
         var od = Number(i.od), pump = Number(i.pump);
         var spm = _blank(i.spm) ? null : Number(i.spm);
+        var tpmd = _blank(i.tpmd) ? null : Number(i.tpmd);             // tailpipe (WLEG) MD, blank = none
+        var mu = _blank(i.mu) ? 2 : Number(i.mu), rough = (i.rough === '' || i.rough == null || (typeof i.rough === 'number' && isNaN(i.rough))) ? 0.0018 : Number(i.rough);
         var to = (i.to === 'bot' || i.to === 'pbtd') ? i.to : 'top';
         var tub = _tub(i.tub), cas = _tub(i.cas);
 
@@ -3245,6 +6496,9 @@
         need(_fin(od) && od >= 0 && od <= 100, 'od', 'Over-displacement must be between 0 and 100 %.');
         need(_fin(pump) && pump >= 0.001 && pump <= 2, 'pump', 'Pump output must be between 0.001 and 2 bbl per stroke.');
         if (spm != null) need(_fin(spm) && spm >= 1 && spm <= 300, 'spm', 'Pump speed must be between 1 and 300 strokes per minute, or blank.');
+        if (tpmd != null) need(_fin(tpmd) && (!pmdOk || tpmd > pmd) && (!tmdOk || tpmd <= tmd), 'tpmd', 'Tailpipe end MD must be below the packer MD and no deeper than the top perforation MD, or blank.');
+        need(_fin(mu) && mu >= 0.3 && mu <= 100, 'mu', 'Kill fluid viscosity must be between 0.3 and 100 cp.');
+        need(_fin(rough) && rough >= 0 && rough <= 0.01, 'rough', 'Pipe roughness must be between 0 and 0.01 in.');
         if (errors.length) return { ok: false, errors: errors, bad: bad };
 
         // A. Kill fluid
@@ -3265,13 +6519,17 @@
 
         // B. Bullhead volumes
         var tubCap = _cap(tub.id), casCap = _cap(cas.id);
-        var sections = [
-            { key: 'tubing', name: 'Tubing', from: 0, to: pmd, idIn: tub.id, cap: tubCap },
-            { key: 'casing', name: 'Casing below packer', from: pmd, to: tmd, idIn: cas.id, cap: casCap },
+        // With a tailpipe the fluid path below the packer is the tailpipe bore (tubing ID) down to
+        // its end (WLEG), then the casing. The casing × tailpipe annulus below the packer is a dead
+        // volume the bullhead does not sweep.
+        var tpEnd = tpmd != null ? tpmd : pmd;
+        var sections = [{ key: 'tubing', name: 'Tubing', from: 0, to: pmd, idIn: tub.id, cap: tubCap }];
+        if (tpmd != null) sections.push({ key: 'tailpipe', name: 'Tailpipe below packer', from: pmd, to: tpEnd, idIn: tub.id, cap: tubCap });
+        sections.push(
+            { key: 'casing', name: tpmd != null ? 'Casing below tailpipe' : 'Casing below packer', from: tpEnd, to: tmd, idIn: cas.id, cap: casCap },
             { key: 'perfs', name: 'Perforated interval', from: tmd, to: bmd, idIn: cas.id, cap: casCap },
-            { key: 'rathole', name: 'Rathole', from: bmd, to: pbtd, idIn: cas.id, cap: casCap }
-        ];
-        var nIn = to === 'top' ? 2 : to === 'bot' ? 3 : 4;
+            { key: 'rathole', name: 'Rathole', from: bmd, to: pbtd, idIn: cas.id, cap: casCap });
+        var nIn = (tpmd != null ? 1 : 0) + (to === 'top' ? 2 : to === 'bot' ? 3 : 4);
         var vol = 0;
         sections.forEach(function (s, k) {
             s.len = s.to - s.from; s.vol = s.len * s.cap; s.included = k < nIn;
@@ -3282,8 +6540,40 @@
         var bullhead = {
             sections: sections, to: to, vol: vol, extra: pumped - vol, pumped: pumped,
             strokes: strokes, minutes: spm ? strokes / spm : null, tubCap: tubCap, casCap: casCap,
-            annCap: (cas.id * cas.id - tub.od * tub.od) * K_CAP
+            annCap: (cas.id * cas.id - tub.od * tub.od) * K_CAP,
+            tailpipe: tpmd != null ? { md: tpmd, len: tpmd - pmd, vol: (tpmd - pmd) * tubCap,
+                deadVol: (tpmd - pmd) * (cas.id * cas.id - tub.od * tub.od) * K_CAP } : null
         };
+
+        // Friction at the pump rate, kill fluid in the flow path (Newtonian, user viscosity).
+        // Bourgoyne et al., "Applied Drilling Engineering" (SPE Textbook 2, 1986), §4.6 pipe flow,
+        // field units (ρ ppg, v ft/s, d in, μ cp, q gal/min, L ft):
+        //   v = q / (2.448·d²),  NRe = 928·ρ·v·d/μ
+        //   laminar (NRe < 2100): Fanning f = 16/NRe;  turbulent: Colebrook (1939) in Fanning form,
+        //   1/√f = −4·log10(ε/(3.7·d) + 1.255/(NRe·√f))
+        //   dp/dL = f·ρ·v² / (25.8·d)   (eq. 4.66a)
+        var rate = spm ? pump * spm : null;                      // bbl/min
+        var fric = null;
+        function _fanning(nre, rr) {
+            if (nre < 2100) return 16 / nre;
+            var x = -4 * Math.log(rr / 3.7 + 5.74 / Math.pow(nre, 0.9)) / Math.LN10;   // 1/√f, Swamee–Jain start
+            for (var k = 0; k < 60; k++) {
+                var xn = -4 * Math.log(rr / 3.7 + 1.255 * x / nre) / Math.LN10;
+                if (Math.abs(xn - x) < 1e-12) { x = xn; break; }
+                x = xn;
+            }
+            return 1 / (x * x);
+        }
+        function _pipe(dIn, L) {
+            var qg = rate * 42, v = qg / (2.448 * dIn * dIn), nre = 928 * used * v * dIn / mu;
+            var f = _fanning(nre, rough / dIn), g = f * used * v * v / (25.8 * dIn);
+            return { d: dIn, len: L, v: v, nre: nre, regime: nre < 2100 ? 'laminar' : 'turbulent', f: f, grad: g, dp: g * L };
+        }
+        if (rate) {
+            var pTub = _pipe(tub.id, tpEnd), pCas = _pipe(cas.id, Math.max(0, tmd - tpEnd));
+            fric = { rate: rate, mu: mu, rough: rough, tubing: pTub, casing: pCas, total: pTub.dp + pCas.dp };
+        }
+        bullhead.friction = fric;
 
         // C. Surface pressure limits (static, no friction)
         var pFrac = HYD * fg * tvd;
@@ -3306,12 +6596,21 @@
             governs: shoe && (shoe.start < perfStart || shoe.end < perfEnd) ? 'shoe' : 'perfs',
             killFracs: used >= fg - 1e-9
         };
+        if (fric) {
+            // While pumping, BHP = p_surface + hydrostatic − friction, so at the pump rate the surface
+            // pressure that just reaches the fracture pressure is MASP + friction, and the pressure
+            // needed to keep injecting at the end is (p_res − hydrostatic) + friction.
+            limits.pumpEnd = endReq + fric.total;
+            // Friction credit applies to the perforation limit only (the shoe sees casing pressure).
+            limits.maxPumpEnd = shoe ? Math.min(perfEnd + fric.total, shoe.end) : perfEnd + fric.total;
+            limits.pumpOverStatic = limits.pumpEnd > maspEnd + 1e-9;
+        }
 
         // Static pumping schedule, 0 → 100 % of the bullhead volume (MD → TVD linear between
         // surface, packer and top perforation; below the top perforation the front is at the perfs).
         function tvdAt(md) {
             if (md <= pmd) return pmd > 0 ? md / pmd * ptvd : 0;
-            if (md <= tmd) return tmd > pmd ? ptvd + (md - pmd) / (tmd - pmd) * (tvd - ptvd) : tvd;
+            if (md <= tmd) return tmd > pmd ? ptvd + (md - pmd) / (tmd - pmd) * (tvd - ptvd) : tvd;   // tailpipe inside this span
             return tvd;
         }
         function frontMd(v) {
@@ -3329,9 +6628,15 @@
             var h = HYD * (used * ftvd + wf * (tvd - ftvd));
             var sf = shoe ? Math.min(stvd, ftvd) : 0;
             var mShoe = shoe ? shoe.pFrac - HYD * (used * sf + wf * (stvd - sf)) : Infinity;
+            var fAt = null;
+            if (fric) {                                          // kill fluid only; friction of the well fluid ahead of it is not credited
+                var mdT = Math.min(fmd, tpEnd), mdC = Math.max(0, Math.min(fmd, tmd) - tpEnd);
+                fAt = fric.tubing.grad * mdT + fric.casing.grad * mdC;
+            }
             schedule.push({
                 pct: n * 10, vol: v, strokes: v / pump, frontMd: fmd, frontTvd: ftvd,
-                sitp: Math.max(0, pres - h), masp: Math.min(pFrac - h, mShoe)
+                sitp: Math.max(0, pres - h), masp: Math.min(pFrac - h, mShoe),
+                friction: fAt, maspPump: fAt == null ? null : Math.min(pFrac - h + fAt, mShoe)
             });
         }
         bullhead.schedule = schedule;
@@ -3425,14 +6730,15 @@
         wk_pres: 'pressure', wk_tvd: 'length', wk_ob: 'pressure', wk_kwo: 'densityLiquid', wk_fg: 'densityLiquid',
         wk_wf: 'densityLiquid', wk_ann: 'densityLiquid', wk_stvd: 'length', wk_sfg: 'densityLiquid',
         wk_pmd: 'length', wk_ptvd: 'length', wk_tmd: 'length', wk_bmd: 'length', wk_pbtd: 'length',
-        wk_od: 'percent', wk_pump: 'volume', wk_spm: 'count',
+        wk_od: 'percent', wk_pump: 'volume', wk_spm: 'count', wk_tpmd: 'length', wk_mu: 'viscosity', wk_rough: 'lengthSmall',
         wk_gp: 'pressureG', wk_gtvd: 'length', wk_glen: 'length', wk_gmix: 'length', wk_ghl: 'percent',
         wk_grho: 'densityLiquid', wk_gsg: 'sg', wk_gt: 'temperature', wk_gz: 'dimensionless'
     };
     var KILL_IDS = {
         pres: 'wk_pres', tvd: 'wk_tvd', ob: 'wk_ob', kwo: 'wk_kwo', fg: 'wk_fg', wf: 'wk_wf', ann: 'wk_ann',
         stvd: 'wk_stvd', sfg: 'wk_sfg', tub: 'wk_tub', cas: 'wk_cas', pmd: 'wk_pmd', ptvd: 'wk_ptvd',
-        tmd: 'wk_tmd', bmd: 'wk_bmd', pbtd: 'wk_pbtd', od: 'wk_od', pump: 'wk_pump', spm: 'wk_spm'
+        tmd: 'wk_tmd', bmd: 'wk_bmd', pbtd: 'wk_pbtd', od: 'wk_od', pump: 'wk_pump', spm: 'wk_spm',
+        tpmd: 'wk_tpmd', mu: 'wk_mu', rough: 'wk_rough'
     };
     var GRAD_IDS = { p: 'wk_gp', tvd: 'wk_gtvd', gasLen: 'wk_glen', mixLen: 'wk_gmix', hl: 'wk_ghl', rho: 'wk_grho', sg: 'wk_gsg', t: 'wk_gt', z: 'wk_gz' };
 
@@ -3452,6 +6758,7 @@
         od: function () { return 'Over-displacement must be between 0 and 100 %.'; },
         pump: function () { return 'Pump output must be between ' + _u(0.001, 'volume', 3, 'bbl', 5) + ' and ' + _u(2, 'volume', 0, 'bbl', 3) + ' per stroke.'; },
         spm: function () { return 'Pump speed must be between 1 and 300 strokes per minute, or blank.'; },
+        rough: function () { return 'Pipe roughness must be between 0 and ' + _u(0.01, 'lengthSmall', 2, 'in', 3) + '.'; },
         p: function () { return 'Known pressure must be between 0 and ' + _u(30000, 'pressureG', 0, 'psig') + '.'; },
         gtvd: function () { return 'Column TVD must be above 0 and no more than ' + _u(40000, 'length', 0, 'ft') + '.'; },
         rho: function () { return 'Liquid density must be above 0 and no more than ' + _den(25) + '.'; },
@@ -3545,6 +6852,9 @@
             _row('Pump strokes', _fmt(Math.ceil(b.strokes - 1e-9), 0) + ' strokes') +
             (b.minutes != null ? _row('Pumping time', _fmt(b.minutes, 1) + ' min') : '') +
             _row('Tubing x casing annular capacity', _u(b.annCap, 'capacity', 5, 'bbl/ft', 5)) +
+            (b.tailpipe ? _row('Tailpipe volume below the packer (included)', V(b.tailpipe.vol)) +
+                _row('Casing x tailpipe annulus below the packer (not swept)', V(b.tailpipe.deadVol)) +
+                _warn('Gas in the casing x tailpipe annulus below the packer (' + V(b.tailpipe.deadVol) + ') is not displaced by the bullhead and can migrate after the kill.') : '') +
             '</div>';
 
         // Pressure limits
@@ -3554,6 +6864,8 @@
         else if (L.windowStart < WINDOW_FRAC * L.pFrac) pv += _warn('Narrow bullhead window at the start: ' + P(L.windowStart) + ' between shut-in pressure and the fracture limit.');
         else pv += _ok('Bullhead window at the start is ' + P(L.windowStart) + ' above the shut-in tubing pressure.');
         if (L.maspEnd <= 0 && !L.killFracs) pv += _bad('Maximum surface pressure reaches zero before the kill fluid reaches the perforations.');
+        if (b.friction && L.pumpOverStatic) pv += _warn('At this pump rate the pump pressure at the end (' + P(L.pumpEnd) + ') exceeds the static maximum surface pressure; only the friction loss keeps the perforations below fracture pressure. Slow the pump near the end.');
+        else if (b.friction) pv += _ok('Pump pressure at the end (' + P(L.pumpEnd) + ', with ' + P(b.friction.total) + ' friction) stays below the static maximum surface pressure.');
         h += '<div class="rbox"><div class="rbox-title">Surface Pressure Limits</div>' +
             _row('Fracture pressure at top perforation', P(L.pFrac)) +
             _row('Fracture gradient', _grad(L.fgGrad)) +
@@ -3561,17 +6873,30 @@
             _row('Max surface pressure at start', P(L.maspStart)) +
             _row('Max surface pressure at end', P(L.maspEnd)) +
             _row('Surface pressure needed at end', P(L.endReq)) +
+            (b.friction ? _row('Pump rate', _u(b.friction.rate, 'volume', 2, 'bbl', 3) + '/min') +
+                _row('Tubing: velocity / Reynolds number / regime', _u(b.friction.tubing.v, 'velocity', 2, 'ft/s') + ' / ' + _fmt(b.friction.tubing.nre, 0) + ' / ' + b.friction.tubing.regime) +
+                _row('Tubing: Fanning friction factor', _fixed(b.friction.tubing.f, 5)) +
+                _row('Friction pressure, tubing' + (b.tailpipe ? ' and tailpipe' : ''), P(b.friction.tubing.dp)) +
+                _row('Friction pressure, casing to top perforation', P(b.friction.casing.dp)) +
+                _row('Friction pressure at pump rate, kill fluid', P(b.friction.total)) +
+                _row('Pump pressure to keep injecting at end (needed + friction)', P(L.pumpEnd)) +
+                _row('Max pump pressure at end at this rate (limit + friction)', P(L.maxPumpEnd)) : '') +
             (L.shoe ? _row('Shoe: fracture pressure', P(L.shoe.pFrac)) +
                 _row('Shoe: max surface pressure start / end', P(L.shoe.start) + ' / ' + P(L.shoe.end)) +
                 _row('Governing limit', L.governs === 'shoe' ? 'casing shoe' : 'top perforation') : '') +
             pv +
             '<div class="rbox-title" style="margin-top:10px">Static Pumping Schedule</div>' +
-            _tbl(['Pumped', 'Volume', 'Strokes', 'Front MD', 'Shut-in pressure', 'Max surface pressure'], b.schedule.map(function (s) {
-                return [s.pct + ' %', V(s.vol), _fmt(Math.round(s.strokes), 0), ft(s.frontMd), P(s.sitp), P(s.masp)];
+            _tbl(['Pumped', 'Volume', 'Strokes', 'Front MD', 'Shut-in pressure', 'Max surface pressure'].concat(b.friction ? ['Kill-fluid friction', 'Max pump pressure at rate'] : []), b.schedule.map(function (s) {
+                return [s.pct + ' %', V(s.vol), _fmt(Math.round(s.strokes), 0), ft(s.frontMd), P(s.sitp), P(s.masp)].concat(b.friction ? [P(s.friction), P(s.maspPump)] : []);
             })) +
-            _note('Static values: no pipe friction, no gas migration, and fluids are assumed incompressible. Pipe friction at ' +
-                'the pump rate adds to the surface pressure. Keep the pump pressure below the maximum surface pressure and the ' +
-                'wellhead / treating-iron rating. The shoe limit applies where the casing sees the pressure, e.g. no packer or a leak.') +
+            _note('Shut-in and maximum surface pressures are static: no gas migration, incompressible fluids. Friction (v3.0) is ' +
+                'for the kill fluid as a Newtonian fluid of the entered viscosity at pump output × speed: Fanning f = 16/Re laminar ' +
+                '(Re < 2,100), Colebrook turbulent, dp/dL = f·ρ·v²/(25.8·d) (Bourgoyne et al., Applied Drilling Engineering, §4.6). ' +
+                'While pumping, BHP = surface + hydrostatic − friction, so friction is credited to the perforation limit only as the ' +
+                'kill fluid fills the string; friction of the well fluid ahead of it is not credited, and none is credited at the shoe. ' +
+                'Keep the pump pressure below the wellhead / treating-iron rating. The shoe limit applies where the casing sees the ' +
+                'pressure, e.g. no packer or a leak. With a tailpipe the bullhead path is the tailpipe bore; the casing x tailpipe ' +
+                'annulus below the packer is not swept.') +
             '</div>';
 
         // U-tube
@@ -3634,7 +6959,8 @@
             wf: _num('wk_wf'), ann: _num('wk_ann'), stvd: _num('wk_stvd'), sfg: _num('wk_sfg'),
             tub: _str('wk_tub'), cas: _str('wk_cas'), pmd: _num('wk_pmd'), ptvd: _num('wk_ptvd'),
             tmd: _num('wk_tmd'), bmd: _num('wk_bmd'), pbtd: _num('wk_pbtd'), to: _str('wk_to'),
-            od: _num('wk_od'), pump: _num('wk_pump'), spm: _num('wk_spm')
+            od: _num('wk_od'), pump: _num('wk_pump'), spm: _num('wk_spm'),
+            tpmd: _num('wk_tpmd'), mu: _num('wk_mu'), rough: _num('wk_rough')
         };
     }
     function _readGrad() {
@@ -3718,10 +7044,13 @@
             _fg('wk_tmd', 'Top perforation MD (ft)', '10150', ' min="0"') +
             _fg('wk_bmd', 'Bottom perforation MD (ft)', '10250', ' min="0"') +
             _fg('wk_pbtd', 'PBTD, MD (ft)', '10400', ' min="0"') +
+            _fg('wk_tpmd', 'Tailpipe end (WLEG) MD below the packer, blank = none (ft)', '', ' min="0"') +
             _sel('wk_to', 'Displace to', [{ v: 'top', t: 'Top perforation' }, { v: 'bot', t: 'Bottom perforation' }, { v: 'pbtd', t: 'PBTD, rathole included' }], 'top') +
             _fg('wk_od', 'Over-displacement (%)', '10', ' min="0" max="100"') +
             _fg('wk_pump', 'Pump output per stroke (bbl)', '0.1', ' min="0"') +
             _fg('wk_spm', 'Pump speed, strokes per minute', '40', ' min="0"') +
+            _fg('wk_mu', 'Kill fluid viscosity, Newtonian (cp)', '2', ' min="0"') +
+            _fg('wk_rough', 'Pipe roughness (in)', '0.0018', ' min="0"') +
             '</div>' + btn('wk_calc') + '</div>' +
             '<div class="card"><div class="card-title">Liquid / Mixed Gradient</div><div class="fg">' +
             _sel('wk_gdir', 'Pressure given at', [{ v: 's2b', t: 'Surface, find bottomhole' }, { v: 'b2s', t: 'Bottomhole, find surface' }], 's2b') +
@@ -3816,7 +7145,11 @@
 //   GLR scf/STB, q gross liquid STB/d — constants as tabulated by Guo et al.
 //   (2007) Table 5.1 and Brown & Beggs, The Technology of Artificial Lift
 //   Methods, Vol. 1 (1977):
-//       Gilbert (1954)   a = 10.00  b = 1.89  c = 0.546
+//       Gilbert (1954)   a = 10.01  b = 1.89  c = 0.546   (v3.0: exactly Gilbert's
+//                        published q = p1·S^1.89/(435·R^0.546), R in Mscf/bbl, i.e.
+//                        a = 435/1000^0.546 = 10.0113 with GLR in scf/STB — the same
+//                        form as the host Choke Flow Rates and Dual Choke pages; the
+//                        rounded a = 10.00 of the tabulations read 0.11 % high)
 //       Ros (1960)       a = 17.40  b = 2.00  c = 0.500
 //       Baxendell (1958) a =  9.56  b = 1.93  c = 0.546
 //       Achong (1961)    a =  3.82  b = 1.88  c = 0.650
@@ -3870,7 +7203,7 @@
     var MW_AIR = 28.9647;              // lb/lb-mol
     var GILBERT_CRIT = 0.588;          // p2/p1 (absolute) for critical multiphase flow — Gilbert (1954): p1 ≥ 1.7·p2
     var CORR = {
-        gilbert:   { key: 'gilbert',   name: 'Gilbert (1954)',   a: 10.00, b: 1.89, c: 0.546 },
+        gilbert:   { key: 'gilbert',   name: 'Gilbert (1954)',   a: 435 / Math.pow(1000, 0.546), b: 1.89, c: 0.546 },   // = 435·(GLR/1000)^0.546
         ros:       { key: 'ros',       name: 'Ros (1960)',       a: 17.40, b: 2.00, c: 0.500 },
         baxendell: { key: 'baxendell', name: 'Baxendell (1958)', a: 9.56,  b: 1.93, c: 0.546 },
         achong:    { key: 'achong',    name: 'Achong (1961)',    a: 3.82,  b: 1.88, c: 0.650 }
@@ -3888,7 +7221,7 @@
     function _opt(x) { return (x === '' || x == null) ? NaN : Number(x); }
     function _fmt(v, d) {
         if (v == null || !isFinite(v)) return '—';
-        return Number(v).toLocaleString(undefined, { minimumFractionDigits: (d == null ? 2 : d), maximumFractionDigits: (d == null ? 2 : d) });
+        return (G.WTS_fmtNum ? G.WTS_fmtNum(v, (d == null ? 2 : d), (d == null ? 2 : d)) : Number(v).toLocaleString(undefined, { minimumFractionDigits: (d == null ? 2 : d), maximumFractionDigits: (d == null ? 2 : d) }));
     }
     function _metric() { var U = G.WTS_units; return !!(U && U.getSystem && U.getSystem() === 'metric' && U.format); }
     function _u(v, cat, d, impLabel, dMet) {
@@ -4196,6 +7529,7 @@
               'Bean-up: wellhead back-pressure curve q = Cw·(pws² − pwh²)^n (absolute pressures, n = ' + _fmt(r.n, 2) + ') through the current point. '
             : 'Multiphase: Gilbert (1954), Ros (1960), Baxendell (1958) and Achong (1961) bean correlations, q = p1·S^b/(a·GLR^c), valid for critical flow (p1 ≥ 1.7·p2). ' +
               'They give gross liquid; oil = liquid × (1 − water cut). Upstream pressure is gauge, as in Gilbert\'s original chart. ' +
+              'Gilbert uses his published form q = p1·S^1.89/(435·R^0.546), R in Mscf/bbl (a = 10.01 with GLR in scf/STB; v3.0, was the rounded 10.00 — rates 0.11 % lower), the same as the Choke Flow Rates and Dual Choke pages. ' +
               'Bean-up: straight wellhead performance line from the shut-in WHP through the current point. ') +
             'A measured current rate tunes the bean equation and is carried to the next beans. Bean-up is a planning screen — the real wellhead performance ' +
             'bends with GLR and reservoir drawdown; step up one bean at a time and re-test.</div>';
@@ -4477,7 +7811,7 @@
     function _str(id) { var e = _byId(id); return e ? String(e.value) : ''; }
     function _fmt(v, d) {
         if (v == null || !isFinite(v)) return '—';
-        return Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) });
+        return (G.WTS_fmtNum ? G.WTS_fmtNum(v, 0, (d == null ? 2 : d)) : Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) }));
     }
     function _sig(v) {   // 3 significant figures for concentrations spanning decades
         if (v == null || !isFinite(v)) return '—';
@@ -4977,6 +8311,14 @@
 //   Optimization Using Nodal Analysis"); water after Hough et al. (1951) as
 //   fitted by Beggs (1991): σw74 = 75 − 1.108 p^0.349, σw280 = 53 − 0.1048 p^0.637.
 //   Liquid properties are in-situ volume-fraction averages (no emulsion).
+//
+// TEMPERATURE (v3.0 option "coupled")
+//   Linear from the inlet to the arrival temperature (default), or a coupled
+//   pressure–temperature march: each step loses heat by the Line Heat Loss model
+//   (49-calc-lineheat.js WTS_lineheat_ua, bare / insulated pipe in air, inside film
+//   neglected): T_out = Ta + (T_in − Ta)·exp(−UA′·dx/(ṁ·cp)) (Holman §10; Incropera
+//   §3.3), minus μJT·Δp_step (isenthalpic throttling), and the step's pressure
+//   gradient is evaluated at the step's mean temperature (3 fixed-point passes).
 //   Gas rate = separator gas at standard conditions (22-units WTS_baseConditions,
 //   default 60 °F / 14.696 psia). Free gas = qg − qo·Rs.
 //
@@ -4984,6 +8326,7 @@
 //   WTS_flowline_bb(input)        Beggs & Brill gradient at one point (no PVT)
 //   WTS_flowline_props(fluid, p, t)  in-situ fluid properties
 //   WTS_flowline_compute(input)   full routes → {ok, routes[], …} or {ok:false, errors, bad}
+//   WTS_flowline_march(segments, fluid, p0, t0, t1, opt)  pressure traverse (opt.reverse = against the flow)
 //   renderFlowline(body), calcFlowline(), WTS_flowlineUseHeat()
 //
 // STATE  WTS_state.flowline = {pArr, dpSep, pFlare, dpFlare, ok, ts, result}
@@ -5010,7 +8353,7 @@
     function _str(id) { var e = _byId(id); return e ? String(e.value) : ''; }
     function _fmt(v, d) {
         if (v == null || !isFinite(v)) return '—';
-        return Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) });
+        return (G.WTS_fmtNum ? G.WTS_fmtNum(v, 0, (d == null ? 2 : d)) : Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) }));
     }
     function _metric() { var U = G.WTS_units; return !!(U && U.getSystem && U.getSystem() === 'metric'); }
     function _u(v, cat, d, impLabel, dMet) {
@@ -5218,12 +8561,26 @@
 
     // ── Route marching ───────────────────────────────────────────────
     function _steps(len) { return Math.min(400, Math.max(10, Math.ceil(len / 50))); }
+    // Coupled temperature step (opt.heat): the line-heat model of 49-calc-lineheat.js over dx at the
+    // step's inlet temperature, T_out = Ta + (T_in − Ta)·exp(−UA'·dx/(ṁ·cp)), then Joule–Thomson
+    // cooling μJT·Δp for the step's pressure drop (enthalpy balance of a throttled stream, as the
+    // line-heat page applies at chokes; potential/kinetic energy terms neglected).
+    function _heatStep(h, s, T, dx, dp) {
+        var seg = _thermSeg(h, s), u = G.WTS_lineheat_ua(seg, T, h.env);
+        return u.ta + (T - u.ta) * Math.exp(-u.ua * dx / h.mcp) - h.jt * dp;
+    }
+    function _thermSeg(h, s) {
+        if (s._therm) return s._therm;
+        var od = s.id + 2 * h.wall;
+        s._therm = { di: s.id, od: od, ds: od + 2 * h.ins, type: h.ins > 0 ? 'ins' : 'bare', depth: NaN };
+        return s._therm;
+    }
     function march(route, fluid, p0g, t0, t1, opt) {
         var segs = route.segments, total = 0;
         segs.forEach(function (s) { total += s.len; });
         var P = p0g + PATM, x = 0, out = [], profile = [], lost = null;
-        var first = null;
-        function pt(xx) { return total > 0 ? t0 + (t1 - t0) * xx / total : t0; }
+        var first = null, heat = opt.heat || null, Tc = t0, sgn = opt.reverse ? -1 : 1;
+        function pt(xx) { return heat ? Tc : (total > 0 ? t0 + (t1 - t0) * xx / total : t0); }
         function gAt(pp, tt, s) {
             var pr = props(fluid, pp, tt), A = Math.PI * Math.pow(s.id / 12, 2) / 4;
             var g = bb({
@@ -5241,15 +8598,17 @@
             var r = { name: s.name, len: s.len, id: s.id, dz: s.dz, theta: s.theta, pIn: P - PATM, tIn: pt(x),
                 dpEl: 0, dpF: 0, dpAcc: 0, patterns: [], hlIn: null, hlOut: null, vmMax: 0, eroMax: 0 };
             for (var j = 0; j < n; j++) {
-                var ta = pt(x), tb = pt(x + dx), tm = (ta + tb) / 2;
+                var ta = pt(x), tb = heat ? _heatStep(heat, s, ta, dx, 0) : pt(x + dx), tm = (ta + tb) / 2;
                 var g = gAt(P, ta, s);
                 if (j === 0) { r.hlIn = g.hl; r.in = g; if (!first) first = g; }
-                var P2 = P - g.grad * dx;
+                var P2 = P - sgn * g.grad * dx;
                 for (var it = 0; it < 3; it++) {
+                    if (heat && _fin(P2)) { tb = _heatStep(heat, s, ta, dx, sgn * (P - Math.max(P2, PATM))); tm = (ta + tb) / 2; }
                     var pm = (P + Math.max(P2, 1)) / 2;
                     g = gAt(pm, tm, s);
-                    P2 = P - g.grad * dx;
+                    P2 = P - sgn * g.grad * dx;
                 }
+                if (heat && _fin(P2)) tb = _heatStep(heat, s, ta, dx, sgn * (P - Math.max(P2, PATM)));
                 if (!_fin(P2) || P2 < PATM || g.Ek >= 0.95) {
                     lost = { seg: k, x: x, reason: g.Ek >= 0.95 ? 'critical' : 'pressure' };
                     break;
@@ -5260,7 +8619,7 @@
                 if (g.vm > r.vmMax) r.vmMax = g.vm;
                 var ve = g.rhoN > 0 ? 100 / Math.sqrt(g.rhoN) : Infinity;       // API RP 14E, C = 100
                 if (g.vm / ve > r.eroMax) r.eroMax = g.vm / ve;
-                P = P2; x += dx;
+                P = P2; x += dx; Tc = tb;
                 profile.push({ x: x, p: P - PATM, t: tb, hl: g.hl, pattern: g.pattern });
             }
             r.pOut = lost ? null : P - PATM;
@@ -5269,14 +8628,17 @@
             out.push(r);
         }
         return { segments: out, profile: profile, pIn: p0g, pOut: lost ? null : P - PATM, dp: lost ? null : p0g - (P - PATM),
-            length: total, lost: lost, inlet: first };
+            length: total, lost: lost, inlet: first, tIn: t0, tOut: lost ? null : pt(x), coupled: !!heat };
     }
 
     var PAT_NAME = { segregated: 'Segregated', transition: 'Transition', intermittent: 'Intermittent', distributed: 'Distributed',
         gas: 'Single-phase gas', liquid: 'Single-phase liquid', none: 'No flow' };
 
     // input = {qo, qw, qg, api, sgg, sgw, pwh psig, t0, t1 °F, psep psig, rough in, payne, accel,
-    //          well: [{name,len,id,dz}], flare: [{name,len,id,dz}]}
+    //          well: [{name,len,id,dz}], flare: [{name,len,id,dz}],
+    //          tmode 'linear' (default: T linear t0 → t1) | 'heat' (coupled P–T march; t1 ignored) with
+    //          tair °F, wind mph, eps, wall in, ins in (0 = bare), kp, kins Btu/hr·ft·°F, cpo, cpw, cpg Btu/lb·°F,
+    //          jt °F/psi}
     function compute(input) {
         var i = input || {}, errors = [], bad = [];
         function need(ok, key, msg) { if (!ok) { errors.push(msg); bad.push(key); } return ok; }
@@ -5291,7 +8653,7 @@
         need(_fin(sgw) && sgw >= 0.95 && sgw <= 1.3, 'sgw', 'Water specific gravity must be between 0.95 and 1.3.');
         need(_fin(pwh) && pwh > 0 && pwh <= 15000, 'pwh', 'Line inlet pressure must be above 0 and no more than 15,000 psig.');
         need(_fin(t0) && t0 >= 0 && t0 <= 400, 't0', 'Inlet temperature must be between 0 and 400 °F.');
-        need(_fin(t1) && t1 >= 0 && t1 <= 400, 't1', 'Arrival temperature must be between 0 and 400 °F.');
+        need(i.tmode === 'heat' || (_fin(t1) && t1 >= 0 && t1 <= 400), 't1', 'Arrival temperature must be between 0 and 400 °F.');
         need(_fin(psep) && psep >= 0 && psep <= 15000, 'psep', 'Separator pressure must be between 0 and 15,000 psig.');
         need(_fin(rough) && rough >= 0 && rough <= 0.1, 'rough', 'Pipe roughness must be between 0 and 0.1 in.');
         function segs(list, pre, max, req) {
@@ -5310,18 +8672,46 @@
             return o;
         }
         var well = segs(i.well, 'w', NSEG_W, true), flare = segs(i.flare, 'f', NSEG_F, false);
+        var coupled = i.tmode === 'heat', H = null;
+        if (coupled) {
+            var hv = function (k, d) { var v = i[k]; return (v === '' || v == null || (typeof v === 'number' && isNaN(v))) ? d : +v; };
+            H = { tair: hv('tair', NaN), wind: hv('wind', NaN), eps: hv('eps', NaN), wall: hv('wall', NaN), ins: hv('ins', 0),
+                kp: hv('kp', NaN), kins: hv('kins', NaN), cpo: hv('cpo', NaN), cpw: hv('cpw', NaN), cpg: hv('cpg', NaN), jt: hv('jt', 0) };
+            need(_fin(H.tair) && H.tair >= -60 && H.tair <= 140, 'tair', 'Air temperature must be between -60 and 140 °F.');
+            need(_fin(H.wind) && H.wind >= 0 && H.wind <= 150, 'wind', 'Wind speed must be between 0 and 150 mph.');
+            need(_fin(H.eps) && H.eps >= 0 && H.eps <= 1, 'eps', 'Surface emissivity must be between 0 and 1.');
+            need(_fin(H.wall) && H.wall > 0 && H.wall <= 3, 'wall', 'Wall thickness must be above 0 and no more than 3 in.');
+            need(_fin(H.ins) && H.ins >= 0 && H.ins <= 12, 'ins', 'Insulation thickness must be between 0 and 12 in.');
+            need(_fin(H.kp) && H.kp > 0 && H.kp <= 250, 'kp', 'Pipe wall conductivity must be above 0 and no more than 250 Btu/hr·ft·°F.');
+            need(_fin(H.kins) && H.kins > 0 && H.kins <= 5, 'kins', 'Insulation conductivity must be above 0 and no more than 5 Btu/hr·ft·°F.');
+            need(_fin(H.cpo) && H.cpo >= 0.2 && H.cpo <= 1.2, 'cpo', 'Oil heat capacity must be between 0.2 and 1.2 Btu/lb·°F.');
+            need(_fin(H.cpw) && H.cpw >= 0.5 && H.cpw <= 1.2, 'cpw', 'Water heat capacity must be between 0.5 and 1.2 Btu/lb·°F.');
+            need(_fin(H.cpg) && H.cpg >= 0.2 && H.cpg <= 1.5, 'cpg', 'Gas heat capacity must be between 0.2 and 1.5 Btu/lb·°F.');
+            need(_fin(H.jt) && H.jt >= -0.1 && H.jt <= 0.2, 'jt', 'Joule–Thomson coefficient must be between -0.1 and 0.2 °F/psi.');
+            if (typeof G.WTS_lineheat_ua !== 'function' || typeof G.WTS_lineheat_massFlow !== 'function') {
+                errors.push('The Line Heat Loss engine is not loaded: use the linear temperature model.'); bad.push('tmode');
+            }
+        }
         if (!_lib()) { errors.push('The PVT correlation library (PRiSM) is not loaded.'); bad.push('lib'); }
         if (errors.length) return { ok: false, errors: errors, bad: bad };
 
         var opt = { rough: rough, payne: !!i.payne, accel: !!i.accel };
+        function heatFor(f) {
+            if (!coupled) return null;
+            var mf = G.WTS_lineheat_massFlow({ qo: f.qo, qw: f.qw, qg: f.qg, api: api, sgg: sgg, sgw: sgw, cpo: H.cpo, cpw: H.cpw, cpg: H.cpg });
+            // Inside film neglected (hi blank on the Line Heat Loss page): conservative, more heat lost.
+            return { mcp: mf.mcp, m: mf.m, jt: H.jt, wall: H.wall, ins: H.ins,
+                env: { hi: 0, kp: H.kp, kins: H.kins, eps: H.eps, tair: H.tair, wind: H.wind, tsoil: H.tair, ksoil: 1 } };
+        }
         var fluid = { qo: qo, qw: qw, qg: qg, api: api, sgg: sgg, sgw: sgw };
-        var r1 = march({ segments: well }, fluid, pwh, t0, t1, opt);
+        var r1 = march({ segments: well }, fluid, pwh, t0, t1, Object.assign({ heat: heatFor(fluid) }, opt));
         r1.key = 'well'; r1.name = 'Wellhead to separator';
         r1.reaches = r1.pOut != null && r1.pOut >= psep - 1e-9;
         r1.margin = r1.pOut != null ? r1.pOut - psep : null;
         var r2 = null;
         if (flare.length && qg > 0) {
-            r2 = march({ segments: flare }, { qo: 0, qw: 0, qg: qg, api: api, sgg: sgg, sgw: sgw }, psep, t1, t1, opt);
+            var gasOnly = { qo: 0, qw: 0, qg: qg, api: api, sgg: sgg, sgw: sgw }, tSep = coupled && r1.tOut != null ? r1.tOut : t1;
+            r2 = march({ segments: flare }, gasOnly, psep, tSep, tSep, Object.assign({ heat: heatFor(gasOnly) }, opt));
             r2.key = 'flare'; r2.name = 'Separator to flare';
             r2.reaches = r2.pOut != null && r2.pOut > 0;
         }
@@ -5335,13 +8725,26 @@
         return {
             ok: true, routes: [r1].concat(r2 ? [r2] : []), well: r1, flare: r2, psep: psep,
             inlet: r1.inlet ? r1.inlet.props : null, inletBB: r1.inlet, fluid: fluid, opt: opt, warnings: warnings,
-            flareSkipped: flare.length && !(qg > 0)
+            flareSkipped: flare.length && !(qg > 0), coupled: coupled, heat: H,
+            tArr: r1.tOut != null ? r1.tOut : null
         };
     }
 
     G.WTS_flowline_bb = bb;
     G.WTS_flowline_props = function (fluid, p, t) { return _lib() ? props(fluid, p, t) : null; };
     G.WTS_flowline_compute = compute;
+    // Pressure traverse along a list of segments (used by the gas-lift design page, 49-calc-gaslift.js):
+    //   segments [{name, len ft, id in, dz ft (+ = flow goes up)}], fluid {qo, qw, qg MMSCFD, api, sgg, sgw},
+    //   p0 psig at the start of the march, t0 → t1 °F linear along the march, opt {rough in, payne, accel,
+    //   reverse: march against the flow direction (e.g. down a producing tubing from the wellhead)}.
+    //   → {profile [{x, p psig, t, hl, pattern}], segments[], pOut, lost, …}, or null without the PVT library.
+    G.WTS_flowline_march = function (segments, fluid, p0, t0, t1, opt) {
+        if (!_lib()) return null;
+        var segs = (segments || []).map(function (q) { return { name: q.name || '', len: +q.len, id: +q.id, dz: +q.dz || 0 }; });
+        var o = opt || {};
+        return march({ segments: segs }, fluid, +p0, +t0, (t1 == null ? +t0 : +t1),
+            { rough: o.rough == null ? 0.0018 : +o.rough, payne: o.payne !== false, accel: !!o.accel, reverse: !!o.reverse });
+    };
     G.WTS_flowline_friction = { smooth: fSmooth, colebrook: fColebrook };
     G.WTS_flowline_sigma = { oil: sigmaOil, water: sigmaWater };
 
@@ -5350,7 +8753,10 @@
     var SUB = 'Beggs & Brill with Payne corrections: flow pattern, holdup, elevation, friction and acceleration, segment by segment from the wellhead to the separator and the flare';
     var UNITS = {
         fl_qo: 'liquidRate', fl_qw: 'liquidRate', fl_qg: 'gasRate', fl_api: 'api', fl_sgg: 'sg', fl_sgw: 'sg',
-        fl_pwh: 'pressureG', fl_t0: 'temperature', fl_t1: 'temperature', fl_psep: 'pressureG', fl_rough: 'lengthSmall'
+        fl_pwh: 'pressureG', fl_t0: 'temperature', fl_t1: 'temperature', fl_psep: 'pressureG', fl_rough: 'lengthSmall',
+        fl_tair: 'temperature', fl_wind: 'windSpeed', fl_wall: 'lengthSmall', fl_ins: 'lengthSmall',
+        fl_kp: 'thermalConductivity', fl_kins: 'thermalConductivity', fl_cpo: 'specificHeat', fl_cpw: 'specificHeat',
+        fl_cpg: 'specificHeat', fl_jt: 'jtCoefficient'
     };
     function _segIds(pre, n) {
         var o = [];
@@ -5414,7 +8820,10 @@
             qo: _num('fl_qo'), qw: _num('fl_qw'), qg: _num('fl_qg'), api: _num('fl_api'), sgg: _num('fl_sgg'), sgw: _num('fl_sgw'),
             pwh: _num('fl_pwh'), t0: _num('fl_t0'), t1: _num('fl_t1'), psep: _num('fl_psep'), rough: _num('fl_rough'),
             payne: _str('fl_payne') !== 'no', accel: _str('fl_accel') !== 'no',
-            well: rd(WELL_IDS), flare: rd(FLARE_IDS)
+            well: rd(WELL_IDS), flare: rd(FLARE_IDS),
+            tmode: _str('fl_tmode') === 'heat' ? 'heat' : 'linear',
+            tair: _num('fl_tair'), wind: _num('fl_wind'), eps: _num('fl_eps'), wall: _num('fl_wall'), ins: _num('fl_ins'),
+            kp: _num('fl_kp'), kins: _num('fl_kins'), cpo: _num('fl_cpo'), cpw: _num('fl_cpw'), cpg: _num('fl_cpg'), jt: _num('fl_jt')
         };
     }
     function _idFor(key) {
@@ -5427,7 +8836,8 @@
         psep: function () { return 'Separator pressure must be between 0 and ' + _u(15000, 'pressureG', 0, 'psig') + '.'; },
         t0: function () { return 'Inlet temperature must be between ' + _u(0, 'temperature', 0, '°F') + ' and ' + _u(400, 'temperature', 0, '°F') + '.'; },
         t1: function () { return 'Arrival temperature must be between ' + _u(0, 'temperature', 0, '°F') + ' and ' + _u(400, 'temperature', 0, '°F') + '.'; },
-        rough: function () { return 'Pipe roughness must be between 0 and ' + _u(0.1, 'lengthSmall', 1, 'in', 2) + '.'; }
+        rough: function () { return 'Pipe roughness must be between 0 and ' + _u(0.1, 'lengthSmall', 1, 'in', 2) + '.'; },
+        tair: function () { return 'Air temperature must be between ' + _u(-60, 'temperature', 0, '°F') + ' and ' + _u(140, 'temperature', 0, '°F') + '.'; }
     };
 
     function _paint(r) {
@@ -5470,6 +8880,8 @@
             _row('Arrival pressure at separator', w.pOut == null ? '—' : P(w.pOut)) +
             _row('Pressure drop, wellhead to separator', w.dp == null ? '—' : dP(w.dp)) +
             _row('Line length, wellhead to separator', ft(w.length)) +
+            _row('Temperature model', r.coupled ? 'Coupled pressure–temperature march (line heat loss)' : 'Linear, inlet to arrival') +
+            (r.coupled ? _row('Arrival temperature at separator, calculated', w.tOut == null ? '—' : T(w.tOut)) : '') +
             (r.flare ? _row('Pressure drop, separator to flare tip', r.flare.dp == null ? '—' : dP(r.flare.dp)) +
                 _row('Flare tip pressure', r.flare.pOut == null ? '—' : P(r.flare.pOut)) : '') +
             v + '</div>';
@@ -5498,11 +8910,12 @@
         r.routes.forEach(function (rt) {
             h += '<div class="rbox"><div class="rbox-title">Segments: ' + rt.name + '</div>' +
                 _tbl(['Segment', 'Length', 'ID', 'Angle', 'Flow pattern', 'Holdup in → out', 'Inlet pressure', 'Outlet pressure',
-                    'Elevation', 'Friction', 'Acceleration', 'Total drop', 'Max velocity', 'Erosional ratio'], rt.segments.map(function (s) {
+                    'Elevation', 'Friction', 'Acceleration', 'Total drop', 'Max velocity', 'Erosional ratio', 'Temperature in → out'], rt.segments.map(function (s) {
                     return [s.name, ft(s.len), inch(s.id), _fmt(s.theta, 1) + '°',
                         s.patterns.map(function (p) { return PAT_NAME[p] || p; }).join(' → ') || '—',
                         _fmt(s.hlIn, 3) + ' → ' + _fmt(s.hlOut, 3), P(s.pIn), s.pOut == null ? '—' : P(s.pOut),
-                        dP(s.dpEl), dP(s.dpF), dP(s.dpAcc), s.dp == null ? '—' : dP(s.dp), vel(s.vmMax), _fmt(s.eroMax, 2)];
+                        dP(s.dpEl), dP(s.dpF), dP(s.dpAcc), s.dp == null ? '—' : dP(s.dp), vel(s.vmMax), _fmt(s.eroMax, 2),
+                        T(s.tIn) + ' → ' + T(s.tOut)];
                 })) + '</div>';
         });
 
@@ -5512,8 +8925,11 @@
                 'multiplied by 0.924 uphill and 0.685 downhill (horizontal unchanged) and the no-slip friction factor is the rough-pipe ' +
                 'Colebrook value; without it the original smooth-pipe factor is used. Holdup is held at or above the no-slip value in ' +
                 'horizontal and uphill flow. Fluid properties at each step: Standing Rs and Bo, Beggs-Robinson oil viscosity, DAK Z, ' +
-                'Lee-Gonzalez-Eakin gas viscosity, Baker-Swerdloff and Hough surface tensions. Temperature is linear from the inlet to the ' +
-                'arrival temperature (use Line Heat Loss for it). The flare line carries the separator gas at the separator temperature. ' +
+                'Lee-Gonzalez-Eakin gas viscosity, Baker-Swerdloff and Hough surface tensions. Temperature: linear from the inlet to the ' +
+                'arrival temperature, or (v3.0 option) a coupled march: each step loses heat by the Line Heat Loss model ' +
+                '(T = Ta + (T − Ta)·e^(−UA′·dx/ṁcp), bare or insulated pipe in air, inside film neglected) and cools by μJT × the ' +
+                'step pressure drop, and the step pressure drop uses the fluid properties at the step temperature. The flare line ' +
+                'carries the separator gas from the separator temperature. ' +
                 'Steady state: slugging and terrain surges are not modelled. Erosional ratio = mixture velocity over the API RP 14E ' +
                 'velocity with C = 100.') +
             '</div>';
@@ -5604,9 +9020,23 @@
             _fg('fl_rough', 'Pipe roughness (in)', '0.0018', ' min="0"') +
             _sel('fl_payne', 'Payne et al. corrections', [{ v: 'yes', t: 'Yes: holdup factors and rough-pipe friction' }, { v: 'no', t: 'No: original Beggs & Brill' }], 'yes') +
             _sel('fl_accel', 'Acceleration term', [{ v: 'yes', t: 'Include' }, { v: 'no', t: 'Neglect' }], 'yes') +
+            _sel('fl_tmode', 'Temperature model', [{ v: 'linear', t: 'Linear, inlet to arrival temperature' }, { v: 'heat', t: 'Coupled P–T march with line heat loss' }], 'linear') +
             '</div><div class="btn-row"><button class="btn btn-primary" id="fl_calc" onclick="calcFlowline()">Calculate</button>' +
             '<button class="btn btn-secondary" id="fl_useheat" onclick="WTS_flowlineUseHeat()">Use temperatures from Line Heat Loss</button></div>' +
             '<div id="fl_heatmsg"></div></div>' +
+            '<div class="card"><div class="card-title">Heat Loss (coupled temperature model only)</div><div class="fg">' +
+            _fg('fl_tair', 'Air temperature (°F)', '60') +
+            _fg('fl_wind', 'Wind speed (mph)', '10', ' min="0"') +
+            _fg('fl_eps', 'Outer surface emissivity', '0.9', ' min="0" max="1"') +
+            _fg('fl_wall', 'Pipe wall thickness (in)', '0.3', ' min="0"') +
+            _fg('fl_ins', 'Insulation thickness, 0 = bare (in)', '0', ' min="0"') +
+            _fg('fl_kp', 'Pipe wall conductivity (Btu/hr·ft·°F)', '26') +
+            _fg('fl_kins', 'Insulation conductivity (Btu/hr·ft·°F)', '0.025') +
+            _fg('fl_cpo', 'Oil heat capacity (Btu/lb·°F)', '0.5') +
+            _fg('fl_cpw', 'Water heat capacity (Btu/lb·°F)', '1.0') +
+            _fg('fl_cpg', 'Gas heat capacity (Btu/lb·°F)', '0.55') +
+            _fg('fl_jt', 'Joule–Thomson coefficient along the line (°F/psi)', '0.07') +
+            '</div></div>' +
             '<div class="card"><div class="card-title">Segments: Wellhead to Separator</div>' + _segTable('w', WELL_IDS, DEF_W) + '</div>' +
             '<div class="card"><div class="card-title">Segments: Separator to Flare</div>' + _segTable('f', FLARE_IDS, DEF_F) + '</div>' +
             '<div id="fl_res"></div>' +
@@ -5820,11 +9250,11 @@
     function _str(id) { var e = _byId(id); return e ? String(e.value) : ''; }
     function _fmt(v, d) {
         if (v == null || !isFinite(v)) return '—';
-        return Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) });
+        return (G.WTS_fmtNum ? G.WTS_fmtNum(v, 0, (d == null ? 2 : d)) : Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) }));
     }
     function _fx(v, d) {
         if (v == null || !isFinite(v)) return '—';
-        return Number(v).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
+        return (G.WTS_fmtNum ? G.WTS_fmtNum(v, d, d) : Number(v).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d }));
     }
     function _metric() { var U = G.WTS_units; return !!(U && U.getSystem && U.getSystem() === 'metric'); }
     function _u(v, cat, d, impLabel, dMet) {
@@ -6040,6 +9470,663 @@
 
 
 // ═══════════════════════════════════════════════════════════════════════
+// ─── BEGIN 49-calc-gaslift ───────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════
+// WTS — Round-9 plug-in calculator — Gas Lift Quick Design (gaslift)
+//
+// PURPOSE
+//   Continuous-flow gas lift with injection-pressure-operated (IPO) valves,
+//   one vertical well (MD = TVD):
+//     • injection-gas pressure in the annulus vs depth;
+//     • point of injection (POI) from the flowing traverse below it;
+//     • gas requirement: injection rate for a target total GLR, and the
+//       minimum total GLR that lifts the target rate at the wellhead pressure;
+//     • unloading-valve spacing (kill-fluid gradient, kickoff and operating
+//       pressures, design tubing line, pressure drop per valve, bottom valve);
+//     • valve schedule with dome and test-rack opening pressures;
+//     • pressure–depth chart.
+//
+// METHOD (field units: psig, ft, °F, STB/d, scf/STB, MMSCFD)
+//   Design procedure: API RP 11V6 (1999), "Design of Continuous Flow Gas Lift
+//   Installations Using Injection Pressure Operated Valves", §5–6, and Brown,
+//   K.E. (1980), "The Technology of Artificial Lift Methods", Vol. 2a, Ch. 3
+//   (graphical IPO design with a pressure drop per valve), written numerically:
+//   1. Injection gas at depth (static gas column), in layers of ≤ 500 ft each with
+//      its own average T and Z:
+//        p_bot = (p_top + 14.7)·exp(0.018743·γg·Δz/(Z̄·T̄)) − 14.7
+//      via WTS_gradient_compute (48-calc-wellkill.js); Z̄ at the layer's mean
+//      pressure and temperature from DAK with the Sutton pseudo-criticals of
+//      WTS_gaspvt_pseudoCriticals (46-calc-gaspvt.js), iterated to convergence.
+//      The annulus gas is taken at the flowing temperature, linear from the
+//      wellhead to the bottomhole temperature.
+//   2. Flowing bottomhole pressure from a straight-line PI: p_wf = p_r − q_L/J.
+//   3. Traverse below the POI: formation GLR, from p_wf at the perforations
+//      upward (Beggs & Brill with the Payne corrections, 49-calc-flowline.js
+//      WTS_flowline_march). POI = the deepest depth where
+//        p_c(D) − Δp_valve ≥ p_below(D)      (point of balance less the valve
+//      differential, RP 11V6 §5), limited to the deepest mandrel.
+//   4. Traverse above the POI: total GLR (formation + injection gas, gas gravity
+//      mixed by rate), from the wellhead pressure downward. Lift is achieved at
+//      the target rate when p_above(POI) ≤ p_below(POI). Injection rate
+//        q_inj = (GLR_total − GLR_formation)·q_L; the minimum total GLR is found
+//      by bisection on p_above(POI) = p_below(POI).
+//   5. Design tubing line (transfer line): straight from
+//        p_wh + f·(p_so − p_wh) at surface (f = design tubing effect, 20 % in
+//        Brown) to the flowing tubing pressure at the POI.
+//   6. Spacing: top valve where the kickoff casing line meets the kill-fluid
+//      column from the unloading wellhead pressure,
+//        p_c(D₁; p_ko) = p_wh + g_s·D₁ ;
+//      valve k+1 where the casing line of valve k+1 (surface pressure
+//      p_so − k·Δp_drop) meets the kill-fluid gradient from the design tubing
+//      pressure at valve k,
+//        p_c(D_{k+1}; p_so − k·Δp_drop) = p_td(D_k) + g_s·(D_{k+1} − D_k),
+//      at least the minimum spacing apart; the last (operating) valve is at the
+//      POI. The POI is re-found with the operating valve's casing pressure until
+//      the valve count is stable.
+//   7. Valve setting (IPO, nitrogen-charged bellows, force balance):
+//        p_d = p_vo·(1 − R) + p_t·R,   R = A_port/A_bellows,
+//        p_d(60 °F) = C_t·p_d with C_t from the real-gas nitrogen dome at constant
+//        volume (DAK Z, Tc 227.16 °R, Pc 493.1 psia; absolute pressures),
+//        p_tro = p_d(60 °F)/(1 − R)   (test-rack opening pressure, API RP 11V2);
+//      the Winkler approximation C_t ≈ 1/(1 + 0.00215·(T − 60)) is shown for
+//      comparison. Surface closing pressure = surface casing pressure whose gas
+//      column gives p_d at the valve.
+//
+// PUBLIC API (window.*)
+//   WTS_gaslift_compute(input) → {ok, poi, valves[], qinj, glrMin, …} or {ok:false, errors, bad}
+//   WTS_gaslift_casingP(psurf psig, D ft, sg, tTop, tBot °F) → {p psig, z}
+//   WTS_gaslift_ct(pdPsia, tF) → {ct, winkler}
+//   renderGasLift(body), calcGasLift()
+//
+// STATE  WTS_state.gaslift = {ok, poi, poiValve, nValves, qinj, glrMin, ts, result}
+// Registers window.WTS_calcRegistry.gaslift (group "Production & Reservoir").
+// ════════════════════════════════════════════════════════════════════
+(function () {
+    'use strict';
+
+    var G = (typeof window !== 'undefined') ? window : globalThis;
+    var PATM = 14.696, RANK = 459.67;
+    var N2 = { Tc: 227.16, Pc: 493.1 };            // nitrogen, °R / psia (GPSA; as 46-calc-gaspvt.js)
+    var MAXV = 20;
+    var PSIFT_KPAM = 6.894757 / 0.3048;
+
+    (function _cats() {
+        var U = G.WTS_units, C = U && U.CATEGORIES;
+        if (!C) return;
+        if (!C.pressureGradient) C.pressureGradient = { imperial: { unit: 'psi/ft', label: 'psi/ft', factor: PSIFT_KPAM, offset: 0 }, metric: { unit: 'kPa/m', label: 'kPa/m', factor: 1, offset: 0 } };
+    })();
+
+    // ── Helpers ─────────────────────────────────────────────────────
+    function _byId(id) { return (typeof document !== 'undefined' && document.getElementById) ? document.getElementById(id) : null; }
+    function _num(id) { var e = _byId(id); if (!e) return NaN; var s = String(e.value).trim(); return s === '' ? NaN : parseFloat(s); }
+    function _str(id) { var e = _byId(id); return e ? String(e.value) : ''; }
+    function _fin(x) { return typeof x === 'number' && isFinite(x); }
+    function _fmt(v, d) {
+        if (v == null || !isFinite(v)) return '—';
+        return Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) });
+    }
+    function _metric() { var U = G.WTS_units; return !!(U && U.getSystem && U.getSystem() === 'metric'); }
+    function _u(v, cat, d, impLabel, dMet) {
+        var U = G.WTS_units;
+        if (v == null || !isFinite(v)) return '—';
+        if (_metric() && U.format && U.CATEGORIES && U.CATEGORIES[cat]) { var f = U.format(v, cat); return _fmt(f.value, dMet == null ? d : dMet) + ' ' + f.label; }
+        return _fmt(v, d) + ' ' + impLabel;
+    }
+    function _dv(v, cat) { var U = G.WTS_units; return (_metric() && U && U.format && U.CATEGORIES && U.CATEGORIES[cat]) ? U.format(v, cat).value : v; }
+    function _lab(cat, imp) { var U = G.WTS_units; return (_metric() && U && U.CATEGORIES && U.CATEGORIES[cat]) ? U.CATEGORIES[cat].metric.label : imp; }
+    function _tag(map) { var U = G.WTS_units; if (!U || !U.tagInput) return; for (var id in map) U.tagInput(id, map[id]); }
+    function _canon(fn) { var U = G.WTS_units; return (U && U.runCanonical) ? U.runCanonical(fn) : fn(); }
+    function _lib() { return G.PRiSM_pvt_correlations || null; }
+    function _bisect(f, a, b, n) {             // f(a) > 0 ≥ f(b) assumed
+        var fa = f(a);
+        for (var k = 0; k < (n || 60); k++) {
+            var m = (a + b) / 2, fm = f(m);
+            if ((fm > 0) === (fa > 0)) { a = m; fa = fm; } else b = m;
+            if (b - a < 1e-3) break;
+        }
+        return (a + b) / 2;
+    }
+
+    // ── Injection gas column ────────────────────────────────────────
+    var _pcCache = {};
+    function _pcFor(sg) {
+        if (_pcCache[sg]) return _pcCache[sg];
+        var p = (typeof G.WTS_gaspvt_pseudoCriticals === 'function') ? G.WTS_gaspvt_pseudoCriticals(sg, 0, 0, 0) : null;
+        if (!(p && p.Tpc > 0)) { var L = _lib(); p = { Tpc: L.Tpc_sutton(sg), Ppc: L.Ppc_sutton(sg) }; }
+        _pcCache[sg] = { Tpc: p.Tpc, Ppc: p.Ppc };
+        return _pcCache[sg];
+    }
+    // Layers of at most 500 ft, each with its own average T and Z (iterated), so the
+    // temperature profile and Z(p, T) are followed (a single average over 10,000 ft with
+    // 80 → 250 °F is ≈ 3 % low on the pressure gain).
+    function _layer(L, pc, ps, dz, sg, tAvg) {
+        var TR = tAvg + RANK, z = L.Z_dranchukAbouKassem(TR / pc.Tpc, (ps + PATM) / pc.Ppc), pb = ps;
+        for (var k = 0; k < 8; k++) {
+            var r = G.WTS_gradient_compute({ dir: 's2b', p: ps, tvd: dz, gasLen: dz, mixLen: 0, hl: 0, rho: 8.33, sg: sg, t: tAvg, z: z });
+            if (!r || !r.ok) return { p: NaN, z: z };
+            var zn = L.Z_dranchukAbouKassem(TR / pc.Tpc, ((ps + r.pBot) / 2 + PATM) / pc.Ppc);
+            pb = r.pBot;
+            if (Math.abs(zn - z) < 1e-7) { z = zn; break; }
+            z = zn;
+        }
+        return { p: pb, z: z };
+    }
+    function casingP(psurf, D, sg, tTop, tBot) {
+        if (!(D > 0)) return { p: psurf, z: null };
+        var L = _lib(), pc = _pcFor(sg), n = Math.max(1, Math.ceil(D / 500)), dz = D / n, p = psurf, zs = 0, lay = null;
+        for (var k = 0; k < n; k++) {
+            var tMid = tTop + (tBot - tTop) * (k + 0.5) / n;
+            lay = _layer(L, pc, p, dz, sg, tMid);
+            p = lay.p; zs += lay.z;
+        }
+        return { p: p, z: zs / n };
+    }
+
+    // ── Nitrogen dome temperature correction ────────────────────────
+    // Constant dome volume: p/(Z·T) constant → p60 = pT·(T60/T)·(Z60/ZT), fixed point on Z60.
+    function ct(pdPsia, tF) {
+        var L = _lib(), T = tF + RANK, T60 = 60 + RANK;
+        var zT = L.Z_dranchukAbouKassem(T / N2.Tc, pdPsia / N2.Pc), p60 = pdPsia * T60 / T;
+        for (var k = 0; k < 50; k++) {
+            var z60 = L.Z_dranchukAbouKassem(T60 / N2.Tc, p60 / N2.Pc);
+            var pn = pdPsia * (T60 / T) * (z60 / zT);
+            if (Math.abs(pn - p60) < 1e-9 * pn) { p60 = pn; break; }
+            p60 = pn;
+        }
+        return { ct: p60 / pdPsia, winkler: 1 / (1 + 0.00215 * (tF - 60)), p60: p60 };
+    }
+
+    // ── Pure compute ────────────────────────────────────────────────
+    // input = {qo, qw STB/d, gor scf/STB, api, sgg, sgw, sginj, pr psig, pi STB/d/psi, dperf ft, dmax ft,
+    //          tub (WTS_tubulars key) | tubId in, rough in, pwh psig, twh °F, bht °F,
+    //          pko, pso psig, glr scf/STB (target total), dpv psi, dpdrop psi, gs psi/ft, ftub %, minsp ft, R}
+    function compute(input) {
+        var i = input || {}, errors = [], bad = [];
+        function need(ok, key, msg) { if (!ok) { errors.push(msg); bad.push(key); } return ok; }
+        var n = function (k) { var v = i[k]; return (v === '' || v == null) ? NaN : Number(v); };
+        var qo = n('qo'), qw = n('qw'), gor = n('gor'), api = n('api'), sgg = n('sgg'), sgw = n('sgw'), sginj = n('sginj');
+        var pr = n('pr'), pi = n('pi'), dperf = n('dperf'), dmax = n('dmax'), rough = _fin(n('rough')) ? n('rough') : 0.0018;
+        var pwh = n('pwh'), twh = n('twh'), bht = n('bht'), pko = n('pko'), pso = n('pso'), glr = n('glr');
+        var dpv = n('dpv'), dpdrop = n('dpdrop'), gs = n('gs'), ftub = n('ftub'), minsp = n('minsp'), R = n('R');
+        var T = G.WTS_tubulars, tub = (i.tub && T && T.find) ? T.find(String(i.tub)) : null;
+        var tid = tub ? tub.id : n('tubId');
+        need(_fin(qo) && qo >= 0 && qo <= 50000, 'qo', 'Oil rate must be between 0 and 50,000 STB/d.');
+        need(_fin(qw) && qw >= 0 && qw <= 50000, 'qw', 'Water rate must be between 0 and 50,000 BWPD.');
+        if (_fin(qo) && _fin(qw)) need(qo + qw >= 10, 'qo', 'Liquid rate (oil + water) must be at least 10 STB/d.');
+        need(_fin(gor) && gor >= 0 && gor <= 20000, 'gor', 'Formation GOR must be between 0 and 20,000 scf/STB.');
+        need(_fin(api) && api >= 10 && api <= 60, 'api', 'Oil gravity must be between 10 and 60 °API.');
+        need(_fin(sgg) && sgg >= 0.55 && sgg <= 1.2, 'sgg', 'Formation gas gravity must be between 0.55 and 1.2.');
+        need(_fin(sgw) && sgw >= 0.95 && sgw <= 1.3, 'sgw', 'Water specific gravity must be between 0.95 and 1.3.');
+        need(_fin(sginj) && sginj >= 0.55 && sginj <= 1.0, 'sginj', 'Injection gas gravity must be between 0.55 and 1.0.');
+        need(_fin(pr) && pr > 0 && pr <= 15000, 'pr', 'Reservoir pressure must be above 0 and no more than 15,000 psig.');
+        need(_fin(pi) && pi > 0 && pi <= 1000, 'pi', 'Productivity index must be above 0 and no more than 1,000 STB/d/psi.');
+        var dOk = need(_fin(dperf) && dperf >= 500 && dperf <= 20000, 'dperf', 'Mid-perforation depth must be between 500 and 20,000 ft.');
+        need(_fin(dmax) && dmax >= 200 && (!dOk || dmax < dperf), 'dmax', 'Deepest mandrel depth must be at least 200 ft and above the perforations.');
+        need(_fin(tid) && tid >= 1 && tid <= 7, 'tub', 'Select a tubing size.');
+        need(_fin(rough) && rough >= 0 && rough <= 0.01, 'rough', 'Pipe roughness must be between 0 and 0.01 in.');
+        need(_fin(pwh) && pwh >= 0 && pwh <= 3000, 'pwh', 'Flowing wellhead pressure must be between 0 and 3,000 psig.');
+        need(_fin(twh) && twh >= 32 && twh <= 300, 'twh', 'Wellhead temperature must be between 32 and 300 °F.');
+        need(_fin(bht) && bht >= 32 && bht <= 400 && (!_fin(twh) || bht >= twh), 'bht', 'Bottomhole temperature must be between 32 and 400 °F and not below the wellhead temperature.');
+        var psoOk = need(_fin(pso) && pso > 0 && pso <= 5000 && (!_fin(pwh) || pso > pwh), 'pso', 'Surface operating injection pressure must be above the wellhead pressure and no more than 5,000 psig.');
+        need(_fin(pko) && pko <= 5000 && (!psoOk || pko >= pso), 'pko', 'Kickoff pressure must be at least the operating pressure and no more than 5,000 psig.');
+        need(_fin(glr) && glr > 0 && glr <= 20000, 'glr', 'Target total GLR must be above 0 and no more than 20,000 scf/STB.');
+        need(_fin(dpv) && dpv >= 0 && dpv <= 500, 'dpv', 'Valve differential at the point of injection must be between 0 and 500 psi.');
+        need(_fin(dpdrop) && dpdrop >= 0 && dpdrop <= 100, 'dpdrop', 'Pressure drop per valve must be between 0 and 100 psi.');
+        need(_fin(gs) && gs >= 0.3 && gs <= 0.8, 'gs', 'Kill-fluid gradient must be between 0.3 and 0.8 psi/ft.');
+        need(_fin(ftub) && ftub >= 0 && ftub <= 100, 'ftub', 'Design tubing effect at surface must be between 0 and 100 %.');
+        need(_fin(minsp) && minsp >= 0 && minsp <= 2000, 'minsp', 'Minimum valve spacing must be between 0 and 2,000 ft.');
+        need(_fin(R) && R >= 0 && R < 0.5, 'R', 'Valve port-to-bellows area ratio R must be 0 or more and below 0.5.');
+        if (!errors.length && (typeof G.WTS_flowline_march !== 'function' || typeof G.WTS_gradient_compute !== 'function' || !_lib())) {
+            errors.push('The flowline, gradient or PVT engines are not loaded.'); bad.push('lib');
+        }
+        if (errors.length) return { ok: false, errors: errors, bad: bad };
+
+        var qL = qo + qw, glrF = qo * gor / qL, qgF = qo * gor / 1e6;
+        var pwf = pr - qL / pi;
+        if (!(pwf > 0)) return { ok: false, errors: ['The target liquid rate needs a flowing bottomhole pressure below zero (p_r − q_L/J): lower the rate or check the PI.'], bad: ['pi'] };
+        var tAt = function (D) { return twh + (bht - twh) * D / dperf; };
+        var seg = function (L) { return [{ name: 'Tubing', len: L, id: tid, dz: L }]; };
+        var opt = { rough: rough, payne: true, accel: false };
+        var fluidF = { qo: qo, qw: qw, qg: qgF, api: api, sgg: sgg, sgw: sgw };
+
+        // 3. Traverse below the POI: from the perforations upward, formation GLR.
+        var below = G.WTS_flowline_march(seg(dperf), fluidF, pwf, bht, twh, opt);
+        var bp = below.profile.map(function (q) { return { d: dperf - q.x, p: q.p }; }).reverse();   // shallow → deep
+        function pBelow(D) {
+            if (D >= bp[bp.length - 1].d) return bp[bp.length - 1].p;
+            if (D <= bp[0].d) return bp[0].d > 0 ? -Infinity : bp[0].p;              // traverse died above: no support
+            for (var k = 1; k < bp.length; k++) {
+                if (bp[k].d >= D) { var a = bp[k - 1], b = bp[k]; return a.p + (b.p - a.p) * (D - a.d) / (b.d - a.d); }
+            }
+            return bp[bp.length - 1].p;
+        }
+        var naturalWh = below.lost ? null : below.pOut;
+        var pc = function (ps, D) { return casingP(ps, D, sginj, twh, tAt(D)).p; };
+
+        function findPoi(psoOp) {
+            var f = function (D) { return pc(psoOp, D) - dpv - pBelow(D); };
+            if (f(dperf) >= 0) return { poi: dperf, balance: dperf, atPerfs: true };
+            // scan upward on the traverse points, then bisect
+            var prev = dperf;
+            for (var k = bp.length - 1; k >= 0; k--) {
+                var D = bp[k].d;
+                if (f(D) >= 0) {
+                    var x = _bisect(function (z) { return f(z); }, D, prev, 60);
+                    return { poi: x, atPerfs: false };
+                }
+                prev = D;
+            }
+            return null;
+        }
+
+        var sgMix = function (glrT) {
+            var qi = Math.max(0, glrT - glrF) * qL / 1e6;
+            return (qgF + qi) > 0 ? (qgF * sgg + qi * sginj) / (qgF + qi) : sgg;
+        };
+        function above(glrT, D) {
+            var fl = { qo: qo, qw: qw, qg: Math.max(glrT, glrF) * qL / 1e6, api: api, sgg: sgMix(glrT), sgw: sgw };
+            return G.WTS_flowline_march(seg(D), fl, pwh, twh, tAt(D), Object.assign({ reverse: true }, opt));
+        }
+
+        // Iterate POI ↔ valve count (the operating valve opens at p_so − (n−1)·Δp_drop).
+        var nPrev = 1, P = null, valves = null, spacingFail = null, it;
+        for (it = 0; it < 6; it++) {
+            var psoOp = pso - (nPrev - 1) * dpdrop;
+            var fp = findPoi(psoOp);
+            if (!fp) return { ok: false, errors: ['The injection gas cannot reach the flowing tubing pressure at any depth: raise the injection pressure or lower the valve differential.'], bad: ['pso'] };
+            var poi = fp.poi, poiV = Math.min(poi, dmax);
+            var ab = above(glr, poiV);
+            var pAbove = ab.pOut, pBel = pBelow(poiV);
+            var pts = pwh + ftub / 100 * (pso - pwh), ptPoi = pAbove;
+            var ptd = function (D) { return pts + (ptPoi - pts) * D / poiV; };
+            // 6. Spacing
+            valves = []; spacingFail = null;
+            var fTop = function (D) { return pc(pko, D) - (pwh + gs * D); };
+            var D1 = fTop(poiV) > 0 ? poiV : _bisect(fTop, 0, poiV, 80);
+            valves.push({ n: 1, d: D1, pso: pso, kick: true });
+            while (valves[valves.length - 1].d < poiV - 1e-6 && valves.length < MAXV) {
+                var k = valves.length, Dk = valves[k - 1].d, psoK = pso - k * dpdrop, ptk = ptd(Dk);
+                var h = function (D) { return pc(psoK, D) - (ptk + gs * (D - Dk)); };
+                if (!(h(Dk) > 0)) { spacingFail = { after: k, d: Dk }; break; }
+                var Dn = h(poiV) > 0 ? poiV : _bisect(h, Dk, poiV, 80);
+                if (Dn - Dk < minsp) Dn = Math.min(poiV, Dk + minsp);
+                if (poiV - Dn < 1e-6 || poiV - Dn < 0.5 * minsp) Dn = poiV;
+                valves.push({ n: k + 1, d: Dn, pso: psoK });
+            }
+            P = { psoOp: psoOp, poi: poi, poiV: poiV, atPerfs: fp.atPerfs, ab: ab, pAbove: pAbove, pBelow: pBel, pts: pts, ptPoi: ptPoi, ptd: ptd };
+            if (valves.length === nPrev) break;
+            nPrev = valves.length;
+        }
+        var last = valves[valves.length - 1];
+        var reachesPoi = !spacingFail && last.d >= P.poiV - 1e-6;
+        valves.forEach(function (v, k) {
+            v.role = (k === valves.length - 1 && reachesPoi) ? 'Operating' : 'Unloading';
+            v.t = tAt(v.d);
+            v.pvo = pc(v.pso, v.d);
+            v.pt = P.ptd(v.d);
+            v.spacing = k === 0 ? v.d : v.d - valves[k - 1].d;
+            v.pd = v.pvo * (1 - R) + v.pt * R;
+            var c = ct(v.pd + PATM, v.t);
+            v.ct = c.ct; v.ctW = c.winkler;
+            v.pd60 = c.ct * (v.pd + PATM) - PATM;
+            v.ptro = v.pd60 / (1 - R);
+            var pdAt = v.pd;
+            v.pvcs = _bisect(function (ps) { return pdAt - pc(ps, v.d); }, 0, v.pso, 60);
+        });
+
+        // 4. Gas requirement: target and minimum total GLR.
+        var qinj = Math.max(0, glr - glrF) * qL / 1e6;
+        var lifts = P.pAbove != null && P.pAbove <= P.pBelow + 1e-6;
+        function excess(g) { var a = above(g, P.poiV); return (a.pOut == null ? Infinity : a.pOut) - P.pBelow; }
+        var glrMin = null, glrMinNote = null;
+        if (excess(glrF) <= 0) { glrMin = glrF; glrMinNote = 'natural'; }
+        else {
+            var lo = glrF, hi = null, grid = 16, gMax = 12000;
+            for (var s = 1; s <= grid; s++) {
+                var g = glrF + (gMax - glrF) * (s / grid) * (s / grid);
+                if (excess(g) <= 0) { hi = g; break; }
+                lo = g;
+            }
+            if (hi != null) {
+                for (var b = 0; b < 30 && hi - lo > 0.5; b++) {
+                    var m = (lo + hi) / 2;
+                    if (excess(m) <= 0) hi = m; else lo = m;
+                }
+                glrMin = hi;
+            } else glrMinNote = 'none';
+        }
+        var qinjMin = glrMin != null ? Math.max(0, glrMin - glrF) * qL / 1e6 : null;
+        // Gas gradient at surface (psi/ft) for display
+        var gGrad = (pc(pso, 1000) - pso) / 1000;
+
+        // Curves for the chart (depth, pressure)
+        var N = 24, curves = { pko: [], pso: [], psoOp: [], ptd: [], above: [], below: [], load: [] };
+        for (var q = 0; q <= N; q++) {
+            var D = dperf * q / N;
+            curves.pko.push({ d: D, p: pc(pko, D) });
+            curves.pso.push({ d: D, p: pc(pso, D) });
+        }
+        curves.ptd = [{ d: 0, p: P.pts }, { d: P.poiV, p: P.ptPoi }];
+        curves.above = P.ab.profile.map(function (x) { return { d: x.x, p: x.p }; });
+        curves.below = bp.slice();
+        curves.load.push({ d: 0, p: pwh }, { d: valves[0].d, p: pwh + gs * valves[0].d });
+        for (var v2 = 1; v2 < valves.length; v2++) {
+            curves.load.push(null, { d: valves[v2 - 1].d, p: P.ptd(valves[v2 - 1].d) }, { d: valves[v2].d, p: P.ptd(valves[v2 - 1].d) + gs * (valves[v2].d - valves[v2 - 1].d) });
+        }
+
+        var warnings = [];
+        if (naturalWh != null && naturalWh >= pwh) warnings.push('The well flows naturally at this rate: the formation-GLR traverse reaches surface at ' + _fmt(naturalWh, 0) + ' psig, above the wellhead pressure.');
+        if (P.poi > dmax + 1e-6) warnings.push('The point of balance (' + _fmt(P.poi, 0) + ' ft) is below the deepest mandrel: the operating valve is at the deepest mandrel, ' + _fmt(dmax, 0) + ' ft.');
+        if (glr <= glrF) warnings.push('Target total GLR is not above the formation GLR (' + _fmt(glrF, 0) + ' scf/STB): no injection gas is needed for it.');
+        if (P.ab.lost) warnings.push('The traverse above the point of injection fails (pressure or critical flow): check the rate and tubing size.');
+        return {
+            ok: true, pwh: pwh, pko: pko, pso: pso, qL: qL, glrF: glrF, qgF: qgF, pwf: pwf, glr: glr, qinj: qinj, injGlr: Math.max(0, glr - glrF),
+            glrMin: glrMin, glrMinNote: glrMinNote, qinjMin: qinjMin, lifts: lifts,
+            poi: P.poi, poiValve: P.poiV, poiAtPerfs: P.atPerfs, psoOp: P.psoOp,
+            pAbove: P.pAbove, pBelow: P.pBelow, pcPoi: pc(P.psoOp, P.poiV), tPoi: tAt(P.poiV),
+            dpPoi: pc(P.psoOp, P.poiV) - P.pAbove,
+            pts: P.pts, ptPoi: P.ptPoi, valves: valves, spacingFail: spacingFail, reachesPoi: reachesPoi,
+            gasGrad: gGrad, sgMix: sgMix(glr), naturalWh: naturalWh, curves: curves, dperf: dperf, dmax: dmax,
+            tubing: tub ? tub.label : null, tid: tid, warnings: warnings, iterations: it + 1
+        };
+    }
+
+    G.WTS_gaslift_compute = compute;
+    G.WTS_gaslift_casingP = function (ps, D, sg, tTop, tBot) { return _lib() && G.WTS_gradient_compute ? casingP(ps, D, sg, tTop, tBot == null ? tTop : tBot) : null; };
+    G.WTS_gaslift_ct = function (pdPsia, tF) { return _lib() ? ct(pdPsia, tF) : null; };
+
+    // ── Page ─────────────────────────────────────────────────────────
+    var TITLE = 'Gas Lift Quick Design';
+    var SUB = 'Continuous gas lift with IPO valves: injection-gas gradient, point of injection, gas requirement, unloading-valve spacing, valve schedule and pressure–depth chart (API RP 11V6)';
+    var UNITS = {
+        gl_qo: 'liquidRate', gl_qw: 'liquidRate', gl_gor: 'gor', gl_api: 'api', gl_sgg: 'sg', gl_sgw: 'sg', gl_sginj: 'sg',
+        gl_pr: 'pressureG', gl_pi: 'productivityIndex', gl_dperf: 'length', gl_dmax: 'length', gl_rough: 'lengthSmall',
+        gl_pwh: 'pressureG', gl_twh: 'temperature', gl_bht: 'temperature', gl_pko: 'pressureG', gl_pso: 'pressureG',
+        gl_glr: 'gor', gl_dpv: 'pressure', gl_dpdrop: 'pressure', gl_gs: 'pressureGradient', gl_ftub: 'percent', gl_minsp: 'length'
+    };
+    var IDS = ['qo', 'qw', 'gor', 'api', 'sgg', 'sgw', 'sginj', 'pr', 'pi', 'dperf', 'dmax', 'rough', 'pwh', 'twh', 'bht',
+        'pko', 'pso', 'glr', 'dpv', 'dpdrop', 'gs', 'ftub', 'minsp', 'R'];
+    var MSG = {
+        pwh: function () { return 'Flowing wellhead pressure must be between 0 and ' + _u(3000, 'pressureG', 0, 'psig') + '.'; },
+        pr: function () { return 'Reservoir pressure must be above 0 and no more than ' + _u(15000, 'pressureG', 0, 'psig') + '.'; },
+        dperf: function () { return 'Mid-perforation depth must be between ' + _u(500, 'length', 0, 'ft') + ' and ' + _u(20000, 'length', 0, 'ft') + '.'; },
+        gs: function () { return 'Kill-fluid gradient must be between ' + _u(0.3, 'pressureGradient', 2, 'psi/ft') + ' and ' + _u(0.8, 'pressureGradient', 2, 'psi/ft') + '.'; }
+    };
+
+    function _fg(id, label, val, extra) {
+        return '<div class="fg-item"><label for="' + id + '">' + label + '</label>' +
+            '<input type="number" id="' + id + '" value="' + val + '" step="any"' + (extra || '') + '></div>';
+    }
+    function _sel(id, label, opts, val) {
+        var h = '<div class="fg-item"><label for="' + id + '">' + label + '</label><select id="' + id + '">';
+        opts.forEach(function (o) { h += '<option value="' + o.v + '"' + (o.v === val ? ' selected' : '') + '>' + o.t + '</option>'; });
+        return h + '</select></div>';
+    }
+    function _row(l, v) { return '<div class="rrow"><span class="rl">' + l + '</span><span class="rv">' + v + '</span></div>'; }
+    function _ok(t) { return '<div style="color:var(--green)">✓ ' + t + '</div>'; }
+    function _warn(t) { return '<div style="color:var(--yellow)">⚠ ' + t + '</div>'; }
+    function _bad(t) { return '<div style="color:var(--red)">✗ ' + t + '</div>'; }
+    function _note(t) { return '<div style="margin-top:10px;font-size:12px;color:var(--text2)"><b>Notes</b> ' + t + '</div>'; }
+    function _tbl(head, rows) {
+        return '<div style="overflow-x:auto"><table class="dtable"><thead><tr>' + head.map(function (h) { return '<th>' + h + '</th>'; }).join('') +
+            '</tr></thead><tbody>' + rows.map(function (r) { return '<tr>' + r.map(function (c) { return '<td>' + c + '</td>'; }).join('') + '</tr>'; }).join('') +
+            '</tbody></table></div>';
+    }
+    function _tubOpts() {
+        var T = G.WTS_tubulars;
+        if (!T || !T.tubing) return [{ v: 'tubing-2.875-6.5', t: '2-7/8 in 6.5 lb/ft' }];
+        return T.tubing.map(function (e) { return { v: e.key, t: e.label }; });
+    }
+
+    function _paint(r) {
+        var res = _byId('gl_res');
+        if (!res) return;
+        if (!r.ok) {
+            var items = '', seen = {};
+            r.bad.forEach(function (k, n) {
+                var el = _byId('gl_' + k);
+                if (el && el.classList) el.classList.add('input-err');
+                if (seen[k]) return; seen[k] = 1;
+                items += '<li>' + (MSG[k] ? MSG[k]() : r.errors[n]) + '</li>';
+            });
+            res.innerHTML = '<div class="val-error"><strong>Please fix the following:</strong><ul>' + items + '</ul></div>';
+            res.setAttribute('data-done', '1');
+            return;
+        }
+        var P = function (v) { return _u(v, 'pressureG', 0, 'psig', 0); };
+        var dP = function (v) { return _u(v, 'pressure', 0, 'psi', 0); };
+        var ft = function (v) { return _u(v, 'length', 0, 'ft', 1); };
+        var T = function (v) { return _u(v, 'temperature', 0, '°F'); };
+        var glrU = function (v) { return _u(v, 'gor', 0, 'scf/STB', 1); };
+        var gas = function (v) { return _u(v, 'gasRate', 3, 'MMSCFD'); };
+        var grad = function (v) { return _metric() ? _fmt(v * PSIFT_KPAM, 4) + ' kPa/m' : _fmt(v, 4) + ' psi/ft'; };
+        var h = '';
+
+        // Point of injection and gas requirement
+        var v = '';
+        if (r.lifts) v += _ok('The target GLR lifts ' + _u(r.qL, 'liquidRate', 0, 'STB/d') + ' against ' + P(r.pwh) + ' at the wellhead: tubing pressure at the point of injection ' + P(r.pAbove) + ', the well supports ' + P(r.pBelow) + '.');
+        else v += _bad('The target GLR does not lift the target rate: tubing pressure at the point of injection would be ' + P(r.pAbove) + ', above the ' + P(r.pBelow) + ' the well can support. Use at least the minimum GLR.');
+        if (r.glrMinNote === 'none') v += _bad('No total GLR up to 12,000 scf/STB lifts this rate: friction dominates. Check the rate, tubing size and injection depth.');
+        r.warnings.forEach(function (x) { v += _warn(x); });
+        h += '<div class="rbox"><div class="rbox-title">Point of Injection and Gas Requirement</div>' +
+            _row('Liquid rate', _u(r.qL, 'liquidRate', 0, 'STB/d')) +
+            _row('Flowing bottomhole pressure, p_r − q/J', P(r.pwf)) +
+            _row('Formation GLR', glrU(r.glrF)) +
+            _row('Target total GLR', glrU(r.glr)) +
+            _row('Injection GLR', glrU(r.injGlr)) +
+            _row('Injection gas rate at target GLR', gas(r.qinj)) +
+            _row('Minimum total GLR to lift the target rate', r.glrMin == null ? '—' : glrU(r.glrMin) + (r.glrMinNote === 'natural' ? ' (flows naturally)' : '')) +
+            _row('Minimum injection gas rate', r.qinjMin == null ? '—' : gas(r.qinjMin)) +
+            _row('Point of balance less valve differential', ft(r.poi) + (r.poiAtPerfs ? ' (at the perforations)' : '')) +
+            _row('Point of injection (operating valve)', ft(r.poiValve)) +
+            _row('Temperature at the point of injection', T(r.tPoi)) +
+            _row('Casing pressure at the point of injection', P(r.pcPoi)) +
+            _row('Tubing pressure at the point of injection, above (total GLR)', P(r.pAbove)) +
+            _row('Tubing pressure the well supports at the point of injection (formation GLR)', P(r.pBelow)) +
+            _row('Casing − tubing differential at the operating valve', dP(r.dpPoi)) +
+            _row('Injection gas gradient near surface', grad(r.gasGrad)) +
+            v + '</div>';
+
+        // Valve schedule
+        var sv = '';
+        if (r.spacingFail) sv += _bad('Unloading stops after valve ' + r.spacingFail.after + ' at ' + ft(r.spacingFail.d) + ': the casing pressure less the drop per valve no longer exceeds the design tubing pressure. Raise the injection pressure or lower the drop per valve.');
+        else if (r.valves.length >= MAXV && !r.reachesPoi) sv += _bad('More than ' + MAXV + ' valves would be needed.');
+        else sv += _ok(r.valves.length + ' valve' + (r.valves.length > 1 ? 's' : '') + ' unload the well to the point of injection at ' + ft(r.poiValve) + '.');
+        h += '<div class="rbox"><div class="rbox-title">Valve Schedule</div>' +
+            _tbl(['Valve', 'Role', 'Depth', 'Spacing', 'Temperature', 'Surface opening', 'Casing opening at depth', 'Design tubing', 'Dome at T',
+                'Ct (N2)', 'Test-rack opening, 60 °F', 'Surface closing'], r.valves.map(function (x) {
+                return [String(x.n), x.role, ft(x.d), ft(x.spacing), T(x.t), P(x.pso) + (x.kick ? ' (kickoff ' + P(r.pko) + ')' : ''), P(x.pvo), P(x.pt), P(x.pd),
+                    _fmt(x.ct, 4), P(x.ptro), P(x.pvcs)];
+            })) +
+            _row('Design tubing pressure at surface', P(r.pts)) +
+            _row('Design tubing pressure at the point of injection', P(r.ptPoi)) +
+            sv +
+            _note('Spacing: top valve where the kickoff casing pressure meets the kill fluid from the wellhead pressure; each ' +
+                'next valve where the next valve\'s casing line (surface pressure less the drop per valve) meets the kill-fluid ' +
+                'gradient from the design tubing pressure at the valve above (API RP 11V6; Brown 1980, Vol. 2a). The well is taken ' +
+                'full of kill fluid to surface (conservative). Valves: injection-pressure operated, p_d = p_vo·(1 − R) + p_t·R, ' +
+                'test-rack opening p_d(60 °F)/(1 − R) with the real-gas nitrogen correction Ct (Winkler 1/(1 + 0.00215(T − 60)) ' +
+                'agrees within about 1 % up to about 1,200 psi dome pressure). Valve temperature = flowing temperature, linear from wellhead to bottomhole. Screening ' +
+                'design: confirm with the valve maker\'s data, the casing / tubing ratings and a full nodal analysis.') +
+            '</div>';
+
+        // Chart
+        h += '<div class="rbox"><div class="rbox-title">Pressure vs Depth</div>' +
+            '<div class="chart-wrap"><canvas id="gl_chart" width="600" height="420"></canvas></div>' +
+            _note('Injection gas: static gas column with average Z (DAK, Sutton pseudo-criticals) and temperature. Flowing ' +
+                'traverses: Beggs &amp; Brill with the Payne corrections (Flowline page engine), linear flowing temperature; ' +
+                'below the point of injection at the formation GLR from p_wf, above it at the total GLR from the wellhead pressure. ' +
+                'Straight-line PI. Vertical well (depth = TVD).') +
+            '</div>';
+        res.innerHTML = h;
+        res.setAttribute('data-done', '1');
+        _chart(r);
+    }
+
+    // Own pressure–depth plot: pressure across, depth down (drawLineChart has no inverted axis).
+    function _chart(r) {
+        var cv = _byId('gl_chart');
+        if (!cv || !cv.getContext) return;
+        var ctx = cv.getContext('2d');
+        if (!ctx) return;
+        try {
+            var W = cv.width, H = cv.height, pad = { t: 36, r: 16, b: 20, l: 64 };
+            var pw = W - pad.l - pad.r, ph = H - pad.t - pad.b;
+            var C = r.curves, series = [
+                { k: 'pko', c: '#d29922', label: 'Kickoff casing', dash: [6, 4] },
+                { k: 'pso', c: '#f0883e', label: 'Operating casing' },
+                { k: 'ptd', c: '#a371f7', label: 'Design tubing', dash: [3, 3] },
+                { k: 'above', c: '#58a6ff', label: 'Flowing, total GLR' },
+                { k: 'below', c: '#3fb950', label: 'Flowing, formation GLR' },
+                { k: 'load', c: '#8b949e', label: 'Kill fluid' }
+            ];
+            var pMax = 0;
+            series.forEach(function (s) { (C[s.k] || []).forEach(function (q) { if (q && q.p > pMax) pMax = q.p; }); });
+            pMax = pMax * 1.05 || 1;
+            var dMax = r.dperf;
+            var toX = function (p) { return pad.l + Math.max(0, p) / pMax * pw; };
+            var toY = function (d) { return pad.t + d / dMax * ph; };
+            ctx.fillStyle = '#0d1117'; ctx.fillRect(0, 0, W, H);
+            ctx.strokeStyle = '#21262d'; ctx.lineWidth = 1; ctx.fillStyle = '#6e7681'; ctx.font = '11px sans-serif';
+            for (var i = 0; i <= 5; i++) {
+                var y = pad.t + ph * i / 5, x = pad.l + pw * i / 5;
+                ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(W - pad.r, y); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(x, pad.t); ctx.lineTo(x, pad.t + ph); ctx.stroke();
+                ctx.textAlign = 'right'; ctx.fillText(_fmt(_dv(dMax * i / 5, 'length'), 0), pad.l - 6, y + 4);
+                ctx.textAlign = 'center'; ctx.fillText(_fmt(_dv(pMax * i / 5, 'pressureG'), 0), x, pad.t - 8);
+            }
+            ctx.fillStyle = '#8b949e'; ctx.font = '12px sans-serif'; ctx.textAlign = 'center';
+            ctx.fillText('Pressure (' + _lab('pressureG', 'psig') + ')', pad.l + pw / 2, 14);
+            ctx.save(); ctx.translate(14, pad.t + ph / 2); ctx.rotate(-Math.PI / 2); ctx.fillText('Depth (' + _lab('length', 'ft') + ')', 0, 0); ctx.restore();
+            series.forEach(function (s) {
+                var pts = C[s.k] || [];
+                ctx.strokeStyle = s.c; ctx.lineWidth = 2; ctx.setLineDash(s.dash || []);
+                ctx.beginPath();
+                var pen = false;
+                pts.forEach(function (q) {
+                    if (!q) { pen = false; return; }
+                    var X = toX(q.p), Y = toY(q.d);
+                    if (!pen) { ctx.moveTo(X, Y); pen = true; } else ctx.lineTo(X, Y);
+                });
+                ctx.stroke(); ctx.setLineDash([]);
+            });
+            // valves
+            ctx.fillStyle = '#e6edf3';
+            r.valves.forEach(function (v) {
+                var Y = toY(v.d);
+                ctx.fillRect(toX(v.pvo) - 4, Y - 1.5, 8, 3);
+                ctx.textAlign = 'left'; ctx.fillText(String(v.n), toX(v.pvo) + 6, Y + 4);
+            });
+            // legend
+            var ly = pad.t + ph - 6 * 15;
+            series.forEach(function (s, k) {
+                ctx.fillStyle = s.c; ctx.fillRect(pad.l + 8, ly + k * 15, 12, 3);
+                ctx.fillStyle = '#8b949e'; ctx.font = '11px sans-serif'; ctx.textAlign = 'left';
+                ctx.fillText(s.label, pad.l + 24, ly + k * 15 + 4);
+            });
+        } catch (e) { /* chart is cosmetic */ }
+    }
+
+    function _read() {
+        var o = {};
+        IDS.forEach(function (k) { o[k] = _num('gl_' + k); });
+        o.tub = _str('gl_tub');
+        return o;
+    }
+    function _calcImpl() {
+        var root = _byId('gl_root');
+        if (!root) return null;
+        var ins = root.querySelectorAll ? root.querySelectorAll('input,select') : [];
+        for (var n = 0; n < ins.length; n++) if (ins[n].classList) ins[n].classList.remove('input-err');
+        var inp = _read();
+        var r = compute(inp);
+        _paint(r);
+        G.WTS_state = G.WTS_state || {};
+        G.WTS_state.gaslift = {
+            ok: !!r.ok, poi: r.ok ? r.poi : null, poiValve: r.ok ? r.poiValve : null, nValves: r.ok ? r.valves.length : null,
+            qinj: r.ok ? r.qinj : null, glrMin: r.ok ? r.glrMin : null, ts: Date.now(), result: r
+        };
+        return r;
+    }
+    G.calcGasLift = function () { return _canon(_calcImpl); };
+
+    function render(body) {
+        if (!body) return;
+        var t = _byId('pgTitle'), s = _byId('pgSub');
+        if (t) t.textContent = TITLE;
+        if (s) s.textContent = SUB;
+        body.innerHTML =
+            '<div id="gl_root">' +
+            '<div class="card"><div class="card-title">Well, Fluids &amp; Inflow</div><div class="fg">' +
+            _fg('gl_qo', 'Target oil rate (STB/d)', '800', ' min="0"') +
+            _fg('gl_qw', 'Water rate (BWPD)', '400', ' min="0"') +
+            _fg('gl_gor', 'Formation GOR (scf/STB)', '300', ' min="0"') +
+            _fg('gl_api', 'Oil gravity (°API)', '35') +
+            _fg('gl_sgg', 'Formation gas gravity, air = 1', '0.7') +
+            _fg('gl_sgw', 'Water specific gravity', '1.07') +
+            _fg('gl_pr', 'Static reservoir pressure (psig)', '3000', ' min="0"') +
+            _fg('gl_pi', 'Productivity index, liquid (STB/d/psi)', '2', ' min="0"') +
+            _fg('gl_dperf', 'Mid-perforation depth, TVD (ft)', '8000', ' min="0"') +
+            _fg('gl_dmax', 'Deepest mandrel depth, above the packer (ft)', '7700', ' min="0"') +
+            _sel('gl_tub', 'Tubing', _tubOpts(), 'tubing-2.875-6.5') +
+            _fg('gl_rough', 'Tubing roughness (in)', '0.0018', ' min="0"') +
+            _fg('gl_pwh', 'Flowing wellhead pressure (psig)', '120', ' min="0"') +
+            _fg('gl_twh', 'Flowing wellhead temperature (°F)', '110') +
+            _fg('gl_bht', 'Bottomhole temperature (°F)', '190') +
+            '</div></div>' +
+            '<div class="card"><div class="card-title">Gas Lift System</div><div class="fg">' +
+            _fg('gl_sginj', 'Injection gas gravity, air = 1', '0.65') +
+            _fg('gl_pko', 'Kickoff injection pressure at surface (psig)', '1100', ' min="0"') +
+            _fg('gl_pso', 'Operating injection pressure at surface (psig)', '1000', ' min="0"') +
+            _fg('gl_glr', 'Target total GLR (scf/STB of liquid)', '800', ' min="0"') +
+            _fg('gl_dpv', 'Casing − tubing differential at the operating valve (psi)', '100', ' min="0"') +
+            _fg('gl_dpdrop', 'Surface pressure drop per valve (psi)', '25', ' min="0"') +
+            _fg('gl_gs', 'Kill-fluid gradient (psi/ft)', '0.465', ' min="0"') +
+            _fg('gl_ftub', 'Design tubing effect at surface, share of p_so − p_wh (%)', '20', ' min="0" max="100"') +
+            _fg('gl_minsp', 'Minimum valve spacing (ft)', '250', ' min="0"') +
+            _fg('gl_R', 'Valve port / bellows area ratio R (e.g. 1½-in valve, ¼-in port 0.067)', '0.067', ' min="0" max="0.5"') +
+            '</div><div class="btn-row"><button class="btn btn-primary" id="gl_calc" onclick="calcGasLift()">Calculate</button></div></div>' +
+            '<div id="gl_res"></div>' +
+            '</div>';
+        _tag(UNITS);
+        var root = _byId('gl_root');
+        if (root && root.addEventListener) {
+            root.addEventListener('change', function (e) {
+                if (e && e.target && /^gl_/.test(e.target.id || '')) G.calcGasLift();
+            });
+        }
+        G.calcGasLift();
+    }
+    G.renderGasLift = render;
+
+    // ── Registry (merge, never replace) ──────────────────────────────
+    G.WTS_calcRegistry = G.WTS_calcRegistry || {};
+    G.WTS_calcRegistry.gaslift = {
+        key: 'gaslift',
+        title: TITLE,
+        navTitle: 'Gas Lift Design',
+        sub: SUB,
+        group: 'Production & Reservoir',
+        icon: '&#8593;',
+        badge: 'Artificial lift',
+        bc: 'dc-b-green',
+        desc: 'Injection-gas gradient, point of injection, gas requirement, unloading-valve spacing and valve schedule with a pressure–depth chart.',
+        render: function (body) { return G.renderGasLift(body); }
+    };
+
+    if (typeof document !== 'undefined' && document.addEventListener) {
+        document.addEventListener('wts:unit-system-changed', function () {
+            var r = _byId('gl_res');
+            if (r && r.getAttribute && r.getAttribute('data-done') === '1') G.calcGasLift();
+        });
+    }
+})();
+
+// ─── END 49-calc-gaslift ─────────────────────────────────────────────
+
+
+// ═══════════════════════════════════════════════════════════════════════
 // ─── BEGIN 49-calc-lineheat ───────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════
 // ════════════════════════════════════════════════════════════════════
@@ -6089,6 +10176,8 @@
 //   WTS_lineheat_compute(input)   → {ok, segments[], profile[], …} or {ok:false, errors, bad}
 //   WTS_lineheat_outsideH(o)      outside film coefficient for a pipe in air
 //   WTS_lineheat_air(TK)          air properties (Incropera Table A.4)
+//   WTS_lineheat_ua(seg, T, env)  overall UA' per foot (used by the flowline coupled P–T march)
+//   WTS_lineheat_massFlow(f)      stream mass flows and ṁ·cp
 //   renderLineHeat(body), calcLineHeat()
 //
 // STATE  WTS_state.lineheat = {ok, tIn, tArr, hydrateRisk, ts, result}
@@ -6132,7 +10221,7 @@
     function _str(id) { var e = _byId(id); return e ? String(e.value) : ''; }
     function _fmt(v, d) {
         if (v == null || !isFinite(v)) return '—';
-        return Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) });
+        return (G.WTS_fmtNum ? G.WTS_fmtNum(v, 0, (d == null ? 2 : d)) : Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) }));
     }
     function _metric() { var U = G.WTS_units; return !!(U && U.getSystem && U.getSystem() === 'metric'); }
     function _u(v, cat, d, impLabel, dMet) {
@@ -6215,6 +10304,18 @@
         return { ua: 1 / R, R: R, Ri: Ri, Rw: Rw, Rins: Rins, Ro: Ro, ta: ta, ho: ho, ts: ts, U: 1 / R / (Math.PI * Ds) };
     }
 
+    // Mass flows (lb/hr) and ṁ·cp (Btu/hr·°F) of the stream; gas from the ideal-gas molar
+    // volume at the standard conditions (22-units WTS_baseConditions, default 60 °F / 14.696 psia).
+    function massFlow(f) {
+        var B = G.WTS_baseConditions, b = (B && B.resolve) ? B.resolve(60, 14.696) : null;
+        if (!(b && _fin(b.Tb_F) && _fin(b.Pb_psia))) b = { Tb_F: 60, Pb_psia: 14.696 };
+        var vm = R_GAS * (b.Tb_F + RANK) / b.Pb_psia;              // scf/lb-mol
+        var go = 141.5 / (131.5 + (+f.api));
+        var mo = (+f.qo || 0) * FT3_BBL * RHO_W * go / 24, mw = (+f.qw || 0) * FT3_BBL * RHO_W * (+f.sgw) / 24;
+        var mg = (+f.qg || 0) * 1e6 / vm * MW_AIR * (+f.sgg) / 24;
+        return { mo: mo, mw: mw, mg: mg, m: mo + mw + mg, mcp: mo * (+f.cpo) + mw * (+f.cpw) + mg * (+f.cpg), molarVolume: vm };
+    }
+
     // ── Pure compute ─────────────────────────────────────────────────
     // input = {qo, qw, qg, api, sgg, sgw, cpo, cpw, cpg, p0 psig, t0 °F, hi (blank = neglected), kp, kins,
     //          eps, tair, wind mph, tsoil, ksoil, jt °F/psi,
@@ -6273,13 +10374,8 @@
         if (pAt < 0) return { ok: false, errors: ['The choke pressure drops add up to more than the inlet pressure.'], bad: ['chokes'] };
 
         // Mass flows (lb/hr) and ṁ·cp (Btu/hr·°F)
-        var B = G.WTS_baseConditions, b = (B && B.resolve) ? B.resolve(60, 14.696) : null;
-        if (!(b && _fin(b.Tb_F) && _fin(b.Pb_psia))) b = { Tb_F: 60, Pb_psia: 14.696 };
-        var vm = R_GAS * (b.Tb_F + RANK) / b.Pb_psia;              // scf/lb-mol
-        var go = 141.5 / (131.5 + api);
-        var mo = qo * FT3_BBL * RHO_W * go / 24, mw = qw * FT3_BBL * RHO_W * sgw / 24;
-        var mg = qg * 1e6 / vm * MW_AIR * sgg / 24;
-        var m = mo + mw + mg, mcp = mo * cpo + mw * cpw + mg * cpg;
+        var mf = massFlow({ qo: qo, qw: qw, qg: qg, api: api, sgg: sgg, sgw: sgw, cpo: cpo, cpw: cpw, cpg: cpg });
+        var vm = mf.molarVolume, mo = mf.mo, mw = mf.mw, mg = mf.mg, m = mf.m, mcp = mf.mcp;
         var env = { hi: hi, kp: kp, kins: kins, eps: eps, tair: tair, wind: wind, tsoil: tsoil, ksoil: ksoil };
         var hyd = typeof G.WTS_hydrate_temp === 'function' ? G.WTS_hydrate_temp : null;
 
@@ -6327,6 +10423,11 @@
     G.WTS_lineheat_compute = compute;
     G.WTS_lineheat_outsideH = outsideH;
     G.WTS_lineheat_air = air;
+    // For the coupled pressure–temperature march of the flowline page (49-calc-flowline.js):
+    //   WTS_lineheat_ua(seg {di, od, ds in, type 'bare'|'ins'|'buried', depth ft}, T °F, env) → {ua Btu/hr·ft·°F, ta, …}
+    //   WTS_lineheat_massFlow({qo, qw, qg, api, sgg, sgw, cpo, cpw, cpg}) → {mo, mw, mg, m lb/hr, mcp Btu/hr·°F}
+    G.WTS_lineheat_ua = ua;
+    G.WTS_lineheat_massFlow = massFlow;
 
     // ── Page ─────────────────────────────────────────────────────────
     var TITLE = 'Line Heat Loss & Arrival Temperature';
@@ -6669,7 +10770,7 @@
     function _blank(x) { return x === '' || x == null || (typeof x === 'number' && isNaN(x)); }
     function _fmt(v, d) {
         if (v == null || !isFinite(v)) return '—';
-        return Number(v).toLocaleString(undefined, { minimumFractionDigits: (d == null ? 2 : d), maximumFractionDigits: (d == null ? 2 : d) });
+        return (G.WTS_fmtNum ? G.WTS_fmtNum(v, (d == null ? 2 : d), (d == null ? 2 : d)) : Number(v).toLocaleString(undefined, { minimumFractionDigits: (d == null ? 2 : d), maximumFractionDigits: (d == null ? 2 : d) }));
     }
     function _fx(v, d) { return (v == null || !isFinite(v)) ? '—' : Number(v).toFixed(d); }
     function _metric() { var U = G.WTS_units; return !!(U && U.getSystem && U.getSystem() === 'metric' && U.format); }
@@ -7233,16 +11334,27 @@
 //   Ionic strength I = ½ Σ cᵢ·zᵢ² (mol/L).                         [Standard Methods 1030 / USBR MS-2016 eq. 1]
 //   Charge balance % = (Σcat − Σan)/(Σcat + Σan)·100 in meq/L;
 //     ≤ 5 % acceptable, 5–10 % questionable, > 10 % poor.           [Standard Methods 1030 E; USBR MS-2016 eq. 3]
-//   Langelier (Carrier 1965 form):                                   [ASTM D3739; Carrier (1965)]
+//   Langelier (v3.0: ASTM D3739 chart fit, the value shown and used):  [USBR MS-2016 eqs. 9–11; DuPont (1992)]
+//     pHs = pCa + pAlk + C,  pCa = −log10[Ca] (mol/L), pAlk = −log10(total alkalinity, eq/L),
+//     C(TDS, T) = 3.26·e^(−0.005·T) − 0.0116·log10(TDS³) + 0.0905·log10(TDS²) − 0.133·log10(TDS) − 0.02,
+//     T in °F; LSI = pH − pHs. Reproduces the USBR worked example (0.184 vs 0.18 published).
+//   Langelier, Carrier (1965) form (shown for comparison; the pre-v3.0 value): [Carrier (1965)]
 //     pHs = (9.3 + A + B) − (C + D); A = (log10 TDS − 1)/10,
 //     B = −13.12·log10(T_K) + 34.55, C = log10(Ca as CaCO3, mg/L) − 0.4,
-//     D = log10(total alkalinity as CaCO3, mg/L); LSI = pH − pHs.
-//     Valid for TDS ≤ 10,000 mg/L.
+//     D = log10(total alkalinity as CaCO3, mg/L). USBR example: 0.13.
+//     Both valid for TDS ≤ 10,000 mg/L.
 //   Stiff–Davis: S&DSI = pH − pCa − pAlk − K, pCa = −log10[Ca] (mol/L),
 //     pAlk = −log10(total alkalinity, eq/L); K from the ASTM D4582 chart
-//     curve fit (USBR MS-2016 eqs. 13–14, T in °C):
+//     curve fit (USBR MS-2016 eqs. 13–14, T in °C; transcription checked
+//     against the published document in v3.0):
 //       I < 1.2: K = 2.022·exp((ln I + 7.544)²/102.6) − 0.0002·T² + 0.00097·T + 0.262
 //       I ≥ 1.2: K = −0.1·I − 0.0002·T² − 0.00097·T + 3.887
+//     On the USBR example (I 0.0433, 15 °C) this gives K 2.674 and S&DSI −0.04; the
+//     worksheet prints 0.12 (K ≈ 2.515), which no reading of eq. 13 reproduces (°F,
+//     log10 I, sign of the 0.00097·T term: 0.57, −0.66, −0.01). The thermodynamic
+//     form K = pK2 − pKsp − log γCa − log γHCO3 (Plummer & Busenberg 1982, Davies
+//     activities, no ion pairs) gives K ≈ 2.40, S&DSI ≈ +0.24. The fit is kept; the
+//     published value lies between the fit and the theory (±0.15).
 //   Oddo–Tomson (1994), SPE Production & Facilities 9(1) 47–54; T in °F,
 //   P in psia, concentrations and I in mol/L:
 //     calcite (pH known):
@@ -7352,10 +11464,14 @@
         // Alkalinity: HCO3 + 2·CO3 in eq/L; as CaCO3 mg/L = eq/L × 50,043.5
         var alkEq = c.hco3 + 2 * c.co3;
         var caCaCO3 = c.ca * CACO3 * 1000, alkCaCO3 = alkEq * CACO3 / 2 * 1000;
-        // Langelier (Carrier)
+        // Langelier, Carrier (1965) form (comparison)
         var A = (Math.log10(tds) - 1) / 10, B = -13.12 * Math.log10(tK) + 34.55;
         var C = Math.log10(caCaCO3) - 0.4, D = Math.log10(alkCaCO3);
-        var pHsL = 9.3 + A + B - (C + D);
+        var pHsCarrier = 9.3 + A + B - (C + D);
+        // Langelier, ASTM D3739 chart fit (USBR MS-2016 eq. 9, T °F): pHs = pCa + pAlk + C(TDS, T)
+        var lt = Math.log10(tds);
+        var Cchart = 3.26 * Math.exp(-0.005 * t) - 0.0116 * 3 * lt + 0.0905 * 2 * lt - 0.133 * lt - 0.02;
+        var pHsL = -Math.log10(c.ca) - Math.log10(alkEq) + Cchart;
         // Stiff–Davis (ASTM D4582 fit, T °C)
         var K = I < 1.2 ? 2.022 * Math.exp(Math.pow(Math.log(I) + 7.544, 2) / 102.6) - 0.0002 * tC * tC + 0.00097 * tC + 0.262
             : -0.1 * I - 0.0002 * tC * tC - 0.00097 * tC + 3.887;
@@ -7386,7 +11502,8 @@
             cb: Math.abs(cbPct) <= 5 ? 'ok' : Math.abs(cbPct) <= 10 ? 'warn' : 'bad',
             sumIons: sum, tds: tds, tdsMeasured: tdsIn != null, I: I, t: t, p: p, ph: ph, tC: tC,
             alkEq: alkEq, caCaCO3: caCaCO3, alkCaCO3: alkCaCO3,
-            lsi: { A: A, B: B, C: C, D: D, pHs: pHsL, value: ph - pHsL, valid: tds <= 10000, band: band(ph - pHsL) },
+            lsi: { Cchart: Cchart, pHs: pHsL, value: ph - pHsL, valid: tds <= 10000, band: band(ph - pHsL), tempOk: t <= 212,
+                carrier: { A: A, B: B, C: C, D: D, pHs: pHsCarrier, value: ph - pHsCarrier } },
             sdi: { K: K, pCa: pCa, pAlk: pAlk, pHs: pHsS, value: ph - pHsS, band: band(ph - pHsS), tempOk: tC >= 0 && tC <= 90 },
             si: si, verdicts: verdicts, curve: curve, table: table
         };
@@ -7403,11 +11520,11 @@
     function _num(id) { var e = _byId(id); if (!e) return NaN; var s = String(e.value).trim(); return s === '' ? NaN : parseFloat(s); }
     function _fmt(v, d) {
         if (v == null || !isFinite(v)) return '—';
-        return Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) });
+        return (G.WTS_fmtNum ? G.WTS_fmtNum(v, 0, (d == null ? 2 : d)) : Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: (d == null ? 2 : d) }));
     }
     function _fx(v, d) {
         if (v == null || !isFinite(v)) return '—';
-        return Number(v).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
+        return (G.WTS_fmtNum ? G.WTS_fmtNum(v, d, d) : Number(v).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d }));
     }
     function _sci(v) { return (v == null || !isFinite(v)) ? '—' : v === 0 ? '0' : Number(v).toExponential(3); }
     function _metric() { var U = G.WTS_units; return !!(U && U.getSystem && U.getSystem() === 'metric'); }
@@ -7480,15 +11597,20 @@
         h += '<div class="rbox"><div class="rbox-title">Calcium Carbonate Indices</div>' +
             _row('Langelier saturation pH, pHs', _fx(L.pHs, 2)) +
             _row('Langelier index, LSI', _fx(L.value, 2)) +
+            _row('Langelier index, Carrier (1965) form (pre-v3.0 value)', _fx(L.carrier.value, 2)) +
             _row('Stiff–Davis K', _fx(S.K, 3)) +
             _row('Stiff–Davis saturation pH', _fx(S.pHs, 2)) +
             _row('Stiff–Davis index, S&DSI', _fx(S.value, 2)) +
             (L.valid ? _verdict('Langelier', L.value, L.band) : _warn('TDS is above 10,000 mg/L: the Langelier index is outside its range. Use Stiff–Davis or Oddo–Tomson.')) +
             _verdict('Stiff–Davis', S.value, S.band) +
             (S.tempOk ? '' : _warn('Temperature is outside the 0 to 90 °C range of the Stiff–Davis chart; K is extrapolated.')) +
-            _note('Both indices use the measured pH and the analysis temperature. LSI by the Carrier (1965) form of ASTM D3739; ' +
-                'Stiff–Davis K from the ASTM D4582 chart fit. Positive values mean calcium carbonate tends to deposit; ' +
-                'values below −0.5 mean the water is aggressive to carbonate films.') +
+            (L.valid && !L.tempOk ? _warn('Temperature is above 212 °F: the Langelier chart fit is extrapolated. Use Oddo–Tomson.') : '') +
+            _note('Both indices use the measured pH and the analysis temperature. From v3.0 the LSI uses the ASTM D3739 ' +
+                'chart fit (DuPont 1992, USBR 2016 eq. 9: pHs = pCa + pAlk + C(TDS, T)), which reproduces the USBR worked ' +
+                'example (0.18); the Carrier (1965) form used before is shown for comparison (typically 0.02 to 0.06 lower). ' +
+                'Stiff–Davis K from the ASTM D4582 chart fit (USBR 2016 eqs. 13–14); on the USBR example it gives −0.04 against ' +
+                'the worksheet\'s 0.12, so treat |S&DSI| below about 0.2 as neutral. Positive values mean calcium carbonate ' +
+                'tends to deposit; values below −0.5 mean the water is aggressive to carbonate films.') +
             '</div>';
         // Oddo–Tomson
         var v = '';
@@ -7685,7 +11807,7 @@
     function _blank(x) { return x === '' || x == null || (typeof x === 'number' && isNaN(x)); }
     function _fmt(v, d) {
         if (v == null || !isFinite(v)) return '—';
-        return Number(v).toLocaleString(undefined, { minimumFractionDigits: (d == null ? 2 : d), maximumFractionDigits: (d == null ? 2 : d) });
+        return (G.WTS_fmtNum ? G.WTS_fmtNum(v, (d == null ? 2 : d), (d == null ? 2 : d)) : Number(v).toLocaleString(undefined, { minimumFractionDigits: (d == null ? 2 : d), maximumFractionDigits: (d == null ? 2 : d) }));
     }
     function _esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
     function _metric() { var U = G.WTS_units; return !!(U && U.getSystem && U.getSystem() === 'metric' && U.format); }
@@ -7719,7 +11841,8 @@
         }
         if (typeof G.WTS_aga3_compute === 'function') {
             // Only Z is used; the orifice geometry is a placeholder the Z does not depend on.
-            var a = G.WTS_aga3_compute({ D: 4, d: 2, hw: 50, Ps: pPsia - P_ATM, TfF: tF, SG: sg, co2: co2, h2s: h2s, n2: n2 });
+            // sgBasis 'ideal': the gravity here is the same M/M_air gravity Gas PVT takes.
+            var a = G.WTS_aga3_compute({ D: 4, d: 2, hw: 50, Ps: pPsia - P_ATM, TfF: tF, SG: sg, sgBasis: 'ideal', co2: co2, h2s: h2s, n2: n2 });
             if (a && a.ok) return { z: a.Z, src: 'Standing + DAK (AGA-3)' };
         }
         return { z: NaN, err: 'No Z-factor engine is loaded; type the Z-factors.' };
