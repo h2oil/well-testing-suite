@@ -45,6 +45,16 @@ if (html.length !== gaBefore) {
     console.log(`[sync] Stripped Google Analytics block (${gaBefore - html.length} chars)`);
 }
 
+// ── 0b. Strip the offline service-worker registration (web only). The iOS app
+// loads from capacitor://localhost and already ships every file locally; a
+// service worker there would only cache stale copies. The host code also
+// refuses to register outside http(s) or inside a native Capacitor shell.
+const swBefore = html.length;
+html = html.replace(/\/\/ ── SW:START[\s\S]*?\/\/ ── SW:END ──/g, '// (offline service worker: web only — stripped from the iOS bundle)');
+if (html.length !== swBefore) {
+    console.log(`[sync] Stripped the web service-worker block (${swBefore - html.length} chars)`);
+}
+
 // (The in-app Release Notes are engineering-only and identical on web and
 // iOS, so no release-note filtering is needed here.)
 
