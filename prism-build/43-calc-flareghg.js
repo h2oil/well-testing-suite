@@ -7,7 +7,8 @@
 //               window.calcFlareGHG()            — reads the DOM, validates, renders
 //               window.WTS_flareghg_compute(inp) — pure, field units in/out, no DOM
 //   State     : window.WTS_state.flareghg = {V_scf, E_MMBtu, co2_t, ch4_t, n2o_kg,
-//                                            so2_t, co2e_t, co2oil_t, gwp, ts}
+//                                            so2_t, co2e_t, co2oil_t, gwp, hrs,
+//                                            h2sUnburned_kg, ts}
 //
 // Flared gas volume, heat released and CO2 / CH4 / N2O / CO2e / SO2 for well
 // test flaring, plus CO2 from an oil / condensate burner. Field units inside
@@ -100,7 +101,7 @@
 
     // Unit map (input id → WTS_units category). fe_c7n, fe_ox1, fe_gwp untagged.
     var UNITS = {
-        fe_qg: 'gasRate', fe_hrs: 'time', fe_ce: 'percent', fe_tb: 'temperature', fe_pbase: 'pressure',
+        fe_qg: 'gasRate', fe_hrs: 'time', fe_ce: 'percent', fe_tb: 'temperature', fe_pbase: 'pressureBase',
         fe_qo: 'liquidRate', fe_api: 'api', fe_wc: 'percent'
     };
     COMP.forEach(function (c) { UNITS[P + c.k] = 'percent'; });
@@ -321,7 +322,13 @@
         var sym = v.level === 'ok' ? '✓' : v.level === 'bad' ? '✗' : '⚠';
         return '<div style="color:' + col + ';font-size:13px;margin:6px 0">' + sym + ' ' + v.text + '</div>';
     }
-    function _resultsHtml(r) {
+    // Base-condition text for the Notes (the header "Std" selector fills the
+    // base fields while they hold the value it last wrote — 22-units.js).
+    function _basisText(inp) {
+        var B = G.WTS_baseConditions, b = { Tb_F: +inp.tb, Pb_psia: +inp.pbase };
+        return (B && B.text) ? B.text(b) : (_fmt(b.Tb_F, 2) + ' °F / ' + _fmt(b.Pb_psia, 3) + ' psia');
+    }
+    function _resultsHtml(r, inp) {
         var h = '<div class="rbox"><div class="rbox-title">Flared Gas</div>' +
             _row('Volume flared', _u(r.Vscf / 1e6, 'gasVolume', 4, 'MMSCF')) +
             _row('Normal volume (0 °C, 101.325 kPa)', _fmt(r.Nm3, 1) + ' Nm³') +
@@ -351,7 +358,9 @@
         h += r.verdicts.map(_verdictHtml).join('');
         h += '<div style="font-size:12px;color:var(--text2);line-height:1.6;margin-top:10px"><b>Notes</b> ' +
             'Emission factors and combustion efficiency follow common reporting practice (98 % default). ' +
-            'Check the method your consent, permit or trading scheme requires before submitting figures.</div>';
+            'Check the method your consent, permit or trading scheme requires before submitting figures. ' +
+            'Standard volumes (scf' + ((G.WTS_units && G.WTS_units.getSystem && G.WTS_units.getSystem() === 'metric') ? ', 10³ Sm³' : '') +
+            ') are at the entered base conditions, ' + _basisText(inp || {}) + '; the header standard-conditions selector sets them.</div>';
         return h;
     }
     function _clearErrs() {
@@ -374,11 +383,12 @@
             res.removeAttribute('data-done');
             return r;
         }
-        res.innerHTML = _resultsHtml(r);
+        res.innerHTML = _resultsHtml(r, inp);
         G.WTS_state = G.WTS_state || {};
         G.WTS_state.flareghg = {
             V_scf: r.Vscf, E_MMBtu: r.E_MMBtu, co2_t: r.co2_t, ch4_t: r.ch4_t, n2o_kg: r.n2o_kg,
-            so2_t: r.so2_t, co2e_t: r.co2e_t, co2oil_t: r.co2oil_t, gwp: r.gwp, ts: Date.now()
+            so2_t: r.so2_t, co2e_t: r.co2e_t, co2oil_t: r.co2oil_t, gwp: r.gwp,
+            hrs: r.hrs, h2sUnburned_kg: r.h2sUnburned_kg, ts: Date.now()
         };
         res.setAttribute('data-done', '1');
         return r;
@@ -403,6 +413,10 @@
     // Recalculate on a unit-system flip (results already shown only).
     if (typeof document !== 'undefined' && document.addEventListener) {
         document.addEventListener('wts:unit-system-changed', function () {
+            var r = _byId('fe_res');
+            if (r && r.getAttribute('data-done') === '1') G.calcFlareGHG();
+        });
+        document.addEventListener('wts:base-conditions-changed', function () {
             var r = _byId('fe_res');
             if (r && r.getAttribute('data-done') === '1') G.calcFlareGHG();
         });

@@ -688,15 +688,7 @@
         }
 
         try {
-            _ga4('prism_tide_analysis', {
-                n_samples:          nIn,
-                duration_h:         Math.round(duration_h * 10) / 10,
-                fitted_count:       fitList.length,
-                m2_amp_psi:         m2 ? Math.round(m2.amplitude * 1000) / 1000 : null,
-                snr:                Math.round(snr * 10) / 10,
-                ct_estimate:        ct,
-                has_depth:          isFinite(o.depth_ft) && o.depth_ft > 0
-            });
+            _ga4('prism_tide_analysis', {});   // no amplitudes / ct / sample counts (privacy)
         } catch (e) { /* swallow */ }
 
         return {
@@ -813,11 +805,7 @@
         _commitDataset(newDs, 'tide-correction');
 
         try {
-            _ga4('prism_tide_correction_applied', {
-                n_samples: snap.t.length,
-                m2_amp_psi: (res.constituents && res.constituents[0] && res.constituents[0].name === 'M2')
-                            ? Math.round(res.constituents[0].amplitude * 1000) / 1000 : null
-            });
+            _ga4('prism_tide_correction_applied', {});
         } catch (e) { /* swallow */ }
 
         return newDs;

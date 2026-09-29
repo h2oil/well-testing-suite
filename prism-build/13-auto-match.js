@@ -1626,8 +1626,7 @@ function _finish(ctx, pRows, rRows) {
     _dispatch('prism:automatch-updated', { bestKey: result.bestKey, kind: result.kind });
     try {
         if (typeof G.gtag === 'function') {
-            G.gtag('event', 'prism_auto_match_run', { event_category: 'PRiSM', best_model: result.bestKey || 'none',
-                   elapsed_ms: result.elapsedMs, n_candidates: ranked.length });
+            G.gtag('event', 'prism_auto_match_run', { event_category: 'PRiSM', best_model: result.bestKey || 'none' });
         }
     } catch (e) { /* silent */ }
     if (opts.apply && result.ok) {

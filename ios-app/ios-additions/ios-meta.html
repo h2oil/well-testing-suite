@@ -4,4 +4,17 @@
     <meta name="format-detection" content="telephone=no">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="theme-color" content="#0d1117">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <script>(function () {
+    /* iOS app only (runs before first paint): html.ios-app scopes the phone/tablet layout rules in
+       ios-styles.css, and the bundled three.js URL is known before any page can open the 3D view.
+       Keep code before this comment: sync-from-main.js anchors the capacitor.js tag on the first
+       script element whose body starts with a comment, which must stay the main app script. */
+    try {
+        var C = window.Capacitor;
+        if (location.protocol === 'capacitor:' || (C && typeof C.isNativePlatform === 'function' && C.isNativePlatform())) {
+            document.documentElement.classList.add('ios-app');
+        }
+        window.WTS3D_LOCAL_URL = window.WTS3D_LOCAL_URL || 'three.module.min.js';
+    } catch (e) {} })();
+    </script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">

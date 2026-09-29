@@ -89,6 +89,25 @@
         if (Math.abs(n) >= 100)   return n.toFixed(Math.min(d, 1));
         return n.toFixed(d);
     }
+    // Display in the active unit system (22-units.js); calcs stay imperial.
+    function _metric() {
+        var U = G.WTS_units;
+        return !!(U && U.getSystem && U.getSystem() === 'metric' && U.format);
+    }
+    function _uval(v, cat) { return _metric() ? G.WTS_units.format(v, cat).value : v; }
+    function _ulab(cat, impLabel) { return _metric() ? G.WTS_units.format(0, cat).label : impLabel; }
+    function _u(v, cat, dp, impLabel, dpMet) {
+        if (!isFinite(v)) return '—';
+        return _fmt(_uval(v, cat), _metric() && dpMet != null ? dpMet : dp) + ' ' + _ulab(cat, impLabel);
+    }
+    function _canon(fn) { var U = G.WTS_units; return (U && U.runCanonical) ? U.runCanonical(fn) : fn(); }
+    // Standard conditions of the gas rate: the standard-conditions setting
+    // when one is chosen, else 14.696 psia / 60 °F.
+    function _basis() {
+        var B = G.WTS_baseConditions;
+        if (B && B.resolve) return B.resolve(60, 14.696);
+        return { Tb_F: 60, Tb_R: 519.67, Pb_psia: 14.696, label: '60 °F / 14.696 psia', fromSetting: false };
+    }
     function _esc(s) {
         return String(s == null ? '' : s)
             .replace(/&/g, '&amp;')
@@ -284,8 +303,8 @@
         var Tseg = _num(seg.t_seg_F, 70);
         var P_abs = Pseg + 14.696;
         var T_abs = Tseg + 459.67;
-        var T_std = 519.67;
-        var Qg_acfs = Qg * 1e6 / 86400 * (14.696 / Math.max(P_abs, 14.696)) * (T_abs / T_std);
+        var bc = _basis();                      // standard conditions of Qg
+        var Qg_acfs = Qg * 1e6 / 86400 * (bc.Pb_psia / Math.max(P_abs, 14.696)) * (T_abs / bc.Tb_R);
         var Qliq_cfs = (Qo + Qw) * 5.615 / 86400;
         var ID = getInnerDiameter(seg.nps_in, seg.sch, seg.measured_WT_in);
         var Dft = ID / 12;
@@ -351,8 +370,8 @@
             out.ok_to_operate = false;
         }
         if (out.max_allowable_pressure_psig < design_p) {
-            warnings.push('Max allowable pressure (' + _fmt(out.max_allowable_pressure_psig, 0) +
-                          ' psig) is below design ' + _fmt(design_p, 0) + ' psig.');
+            warnings.push('Max allowable pressure (' + _u(out.max_allowable_pressure_psig, 'pressureG', 0, 'psig') +
+                          ') is below design ' + _u(design_p, 'pressureG', 0, 'psig') + '.');
             out.ok_to_operate = false;
         }
 
@@ -385,7 +404,7 @@
             warnings.push('Remaining service life < 90 days — schedule mitigation.');
         }
         if (W_sand > 100) {
-            warnings.push('Sand poundage > 100 lb/MMscf — verify desander efficiency.');
+            warnings.push('Sand poundage > ' + _u(100, 'sandLoading', 0, 'lb/MMscf') + ' — verify desander efficiency.');
         }
 
         return out;
@@ -612,8 +631,12 @@
             inRows  += _segmentInputRow(DEFAULT_SEGMENTS[i], i);
             resRows += _segmentResultRow(DEFAULT_SEGMENTS[i], i);
         }
+        // sub = [imperial caption, units category] → shown in the active system
+        // (re-labelled on a unit flip via data-pl-unit).
         var th = function (t, sub) {
-            return '<th style="white-space:nowrap">' + t + (sub ? '<div style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--text3)">' + sub + '</div>' : '') + '</th>';
+            var cap = sub, attr = '';
+            if (sub && typeof sub === 'object') { cap = _ulab(sub[1], sub[0]); attr = ' data-pl-unit="' + sub[1] + '" data-pl-imp="' + _esc(sub[0]) + '"'; }
+            return '<th style="white-space:nowrap">' + t + (cap ? '<div' + attr + ' style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--text3)">' + cap + '</div>' : '') + '</th>';
         };
 
         body.innerHTML = '' +
@@ -655,9 +678,10 @@
                 '<div class="card-title">Pipe Segments — Inputs</div>' +
                 '<div style="overflow-x:auto;-webkit-overflow-scrolling:touch">' +
                     '<table class="dtable" style="min-width:1080px">' +
-                        '<thead><tr>' + th('Segment') + th('Material') + th('NPS') + th('Schedule') + th('Length', 'ft') +
-                            th('Flowing P', 'psig') + th('Flowing T', '°F') + th('Measured WT', 'in') + th('Min-spec WT', 'in') +
-                            th('Failure WT', 'in') + th('Design P', 'psig') + th('Design T', '°F') + '</tr></thead>' +
+                        '<thead><tr>' + th('Segment') + th('Material') + th('NPS') + th('Schedule') + th('Length', ['ft', 'length']) +
+                            th('Flowing P', ['psig', 'pressureG']) + th('Flowing T', ['°F', 'temperature']) + th('Measured WT', ['in', 'lengthSmall']) +
+                            th('Min-spec WT', ['in', 'lengthSmall']) +
+                            th('Failure WT', ['in', 'lengthSmall']) + th('Design P', ['psig', 'pressureG']) + th('Design T', ['°F', 'temperature']) + '</tr></thead>' +
                         '<tbody>' + inRows + '</tbody>' +
                     '</table>' +
                 '</div>' +
@@ -672,8 +696,8 @@
                 '</div>' +
                 '<div style="overflow-x:auto;-webkit-overflow-scrolling:touch">' +
                     '<table class="dtable" style="min-width:820px">' +
-                        '<thead><tr>' + th('Segment') + th('Pipe', 'NPS / SCH · ID') + th('Velocity', 'ft/s') + th('Erosion', 'mpy') +
-                            th('Remaining life', 'to min-spec WT') + th('Time to failure', 'to failure WT') + th('MAWP', 'psig · B31.3') + th('Status') + '</tr></thead>' +
+                        '<thead><tr>' + th('Segment') + th('Pipe', 'NPS / SCH · ID') + th('Velocity', ['ft/s', 'velocity']) + th('Erosion', ['mpy', 'erosionRate']) +
+                            th('Remaining life', 'to min-spec WT') + th('Time to failure', 'to failure WT') + th('MAWP', ['psig', 'pressureG']) + th('Status') + '</tr></thead>' +
                         '<tbody>' + resRows + '</tbody>' +
                     '</table>' +
                 '</div>' +
@@ -683,7 +707,8 @@
             '<div class="card" style="padding:10px 14px;border-left:3px solid var(--blue, #58a6ff)">' +
                 '<div style="font-size:12px;color:var(--text2);line-height:1.55">' +
                     '<strong style="color:var(--text)">Separator note:</strong> residual sand fines are assumed to drop out in the separator, ' +
-                    'so sand rate has no effect on the Separator → Flare line unless the separator is bypassed.' +
+                    'so sand rate has no effect on the Separator → Flare line unless the separator is bypassed. ' +
+                    'MAWP is per ASME B31.3. Gas rates are standard volumes at <span id="wts_pl_basis">' + _esc(_basis().label) + '</span>.' +
                 '</div>' +
             '</div>' +
         '</div>';
@@ -770,7 +795,9 @@
         var t = null;
         var fire = function () {
             if (t) clearTimeout(t);
-            t = setTimeout(_calcPipeLife, 150);
+            // Timer callbacks run outside any canonical context — open one so
+            // tagged inputs read (and _savePipeLifeState stores) imperial values.
+            t = setTimeout(function () { t = null; _canon(_calcPipeLife); }, 150);
         };
         for (var k = 0; k < ids.length; k++) {
             var el = _$(ids[k]);
@@ -857,16 +884,16 @@
         var set = function (id, txt, color) { var el = _$(id); if (!el) return; el.textContent = txt; if (color !== undefined) el.style.color = color; };
         for (var i = 0; i < report.segments.length; i++) {
             var r = report.segments[i], p = 'wts_pl_seg' + i + '_';
-            set(p + 'pipe', r.nps_in + '" SCH ' + r.sch + ' · ' + _fmt(r.ID_in, 3) + '"');
-            set(p + 'mawp', _fmt(r.max_allowable_pressure_psig, 0));
+            set(p + 'pipe', r.nps_in + '" SCH ' + r.sch + ' · ' + (_metric() ? _fmt(_uval(r.ID_in, 'lengthSmall'), 1) + ' mm' : _fmt(r.ID_in, 3) + '"'));
+            set(p + 'mawp', _fmt(_uval(r.max_allowable_pressure_psig, 'pressureG'), 0));
             if (!r.applicable) {
                 set(p + 'vel', '—'); set(p + 'ero', '—');
                 set(p + 'rsl', 'N/A (hose)', 'var(--text3)'); set(p + 'ttf', '—');
                 set(p + 'stat', 'HOSE', 'var(--text3)');
                 continue;
             }
-            set(p + 'vel', _fmt(r.mixture_velocity_fps, 1));
-            set(p + 'ero', r.erosion_rate_mils_yr > 0 ? _fmt(r.erosion_rate_mils_yr, 1) : '0');
+            set(p + 'vel', _fmt(_uval(r.mixture_velocity_fps, 'velocity'), 1));
+            set(p + 'ero', r.erosion_rate_mils_yr > 0 ? _fmt(_uval(r.erosion_rate_mils_yr, 'erosionRate'), _metric() ? 3 : 1) : '0');
             set(p + 'rsl', _formatDays(r.remaining_service_life_days), _lifeColor(r.remaining_service_life_days));
             set(p + 'ttf', _formatDays(r.time_to_failure_at_current_days), _lifeColor(r.time_to_failure_at_current_days));
             var st = !r.ok_to_operate ? ['INSPECT NOW', 'var(--red, #f85149)']
@@ -895,7 +922,25 @@
         set('wts_pl_status', ok ? 'OK' : 'ATTENTION', ok ? 'var(--green, #3fb950)' : 'var(--red, #f85149)');
     }
 
+    // Unit flip / standard-conditions change: re-label the unit captions and
+    // repaint the results (canonical context → tagged inputs read imperial).
+    function _onUnitsOrBasis() {
+        if (typeof document === 'undefined' || !_$('wts_pl_sand')) return;
+        var caps = document.querySelectorAll ? document.querySelectorAll('[data-pl-unit]') : [];
+        for (var i = 0; i < caps.length; i++) {
+            caps[i].textContent = _ulab(caps[i].getAttribute('data-pl-unit'), caps[i].getAttribute('data-pl-imp'));
+        }
+        var b = _$('wts_pl_basis');
+        if (b) b.textContent = _basis().label;
+        _canon(_calcPipeLife);
+    }
+    if (typeof document !== 'undefined' && document.addEventListener) {
+        document.addEventListener('wts:unit-system-changed', _onUnitsOrBasis);
+        document.addEventListener('wts:base-conditions-changed', _onUnitsOrBasis);
+    }
+
     // === SELF-TEST ===
+
     (function () {
         try {
             var checks = [];

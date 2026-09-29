@@ -652,6 +652,25 @@
             catch (e) { _err('Quick Report button click failed', e); }
         });
         try { container.appendChild(btn); } catch (e) {}
+        // Template picker (host WTS_reportTemplates: daily / final / user templates).
+        var tpl = document.createElement('button');
+        tpl.setAttribute('type', 'button');
+        tpl.setAttribute('data-wts-qr-tpl', '1');
+        tpl.setAttribute('aria-label', 'Report templates');
+        tpl.setAttribute('aria-haspopup', 'dialog');
+        tpl.className = 'btn btn-primary';
+        tpl.style.cssText =
+            'padding:6px 9px;margin-left:2px;background:#1f6feb;border:1px solid #1f6feb;border-radius:4px;' +
+            'color:#fff;font-size:12px;font-weight:600;cursor:pointer;font-family:Segoe UI,sans-serif';
+        tpl.innerHTML = '&#9662;';
+        tpl.title = 'Report templates — daily or final well-test report, or your own template.';
+        tpl.addEventListener('click', function () {
+            try {
+                if (G.WTS_reportTemplates && typeof G.WTS_reportTemplates.openPicker === 'function') G.WTS_reportTemplates.openPicker();
+                else generate();
+            } catch (e) { _err('Report templates button click failed', e); }
+        });
+        try { container.appendChild(tpl); } catch (e) {}
     }
 
     // ───────────────────────────────────────────────────────────────

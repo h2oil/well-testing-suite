@@ -210,8 +210,11 @@ module.exports = [
         sr_qo: 3000 * BBL_M3, sr_qg: 5 * 28.316847, sr_api: 35, sr_gsg: 0.75, sr_bsw: 5, sr_foam: 'low' });
       press(app, 'calcSepRate');
       const r = sepRateRef({ orient: 'H', id: 36, len: 10, nll: 0.5, p: 500, t: 100, qo: 3000, qg: 5, api: 35, gsg: 0.75, bsw: 0.05, foam: 'low' });
-      assert.near(rowNum(app, 'sr_res', 'Actual Gas Velocity'), r.vGas, 0.006);
+      assert.near(rowNum(app, 'sr_res', 'Actual Gas Velocity'), r.vGas * 0.3048, 0.002);   // m/s
       assert.near(rowNum(app, 'sr_res', 'Retention Time'), r.ret, 0.006);
+      const t = String(app.el('sr_res').textContent);
+      assert.ok(!/ft\/s|lb\/ft|bbls/.test(t), 'no field units in metric results: ' + t);
+      assert.ok(/m\/s/.test(t) && /kg\/m³/.test(t) && /m³/.test(t), 'metric units shown');
       clean(assert, app, 'sr_res');
     },
   },

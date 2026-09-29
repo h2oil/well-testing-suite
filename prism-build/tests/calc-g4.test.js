@@ -43,8 +43,8 @@ function rvText(app, resId, label) {
   return r ? r.v : null;
 }
 // Table row whose first cell STARTS WITH `first` → array of cell texts.
-// (The harness DOM has no table.rows, so collectPageReport table capture is
-// verified in a real browser; reportHas() below checks .fg-item/.rrow/notes.)
+// (reportHas() below checks .fg-item/.rrow/notes; the harness DOM models
+// table.rows / tr.cells, so collectPageReport captures tables here too.)
 function trow(app, rootId, first) {
   const tr = app.findAll('#' + rootId + ' tr').find((r) => {
     const c = r.querySelector('td'); return c && String(c.textContent).trim().indexOf(first) === 0;
@@ -204,7 +204,11 @@ module.exports = [
       app.hook.nav('home'); setMetric(app, true); app.hook.nav('prv');
       set(app, { pg_ps: 250 * 6.894757, pg_pb: 30 * 6.894757, pg_t: (300 - 32) / 1.8, pg_w: 50000 * 0.45359237, pg_k: 1.4 });
       app.win.calcPRVgas();
-      assert.near(rv(app, 'pg_res', 'Required Area A'), 2.5464, 2e-3);
+      // Metric results: area in mm² (1 in² = 645.16 mm²), P1 = 289.7 psia = 1,997 kPa(a)
+      assert.near(rv(app, 'pg_res', 'Required Area A'), 2.5464 * 645.16, 1.5);
+      assert.includes(rvText(app, 'pg_res', 'Required Area A'), 'mm²');
+      assert.near(rv(app, 'pg_res', 'Relieving Pressure P₁'), 289.7 * 6.894757, 1);
+      assert.includes(rvText(app, 'pg_res', 'Relieving Pressure P₁'), 'kPa(a)');
     },
   },
   {
@@ -291,7 +295,7 @@ module.exports = [
       assert.near(shown('pg_ps'), 250 * 6.89476, 0.2);
       assert.near(shown('pg_t'), (300 - 32) / 1.8, 0.06);                  // 148.9 °C (1 dp display)
       app.win.calcPRVgas();
-      assert.near(rv(app, 'pg_res', 'Required Area A'), 2.5464, 2e-3);
+      assert.near(rv(app, 'pg_res', 'Required Area A'), 2.5464 * 645.16, 1.5);   // mm² in Metric
       // Round trip back to imperial restores the canonical values.
       app.hook.nav('home'); setMetric(app, false); app.hook.nav('prv'); app.flush(100);
       app.click('prvt3'); app.click('prvt1'); app.flush(10);

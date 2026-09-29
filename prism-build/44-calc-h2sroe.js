@@ -80,6 +80,23 @@
     function _canon(fn) { var U = G.WTS_units; return (U && U.runCanonical) ? U.runCanonical(fn) : fn(); }
     function _fin(x) { return typeof x === 'number' && isFinite(x); }
 
+    // ── Standard (base) conditions ───────────────────────────────────
+    // Entered gas rates are standard volumes at the app's standard-conditions
+    // setting (22-units.js WTS_baseConditions). With the setting left on
+    // "calculator default" the page keeps its original basis: 60 °F /
+    // 14.696 psia (379.48 scf/lb-mol) and the rule's own 14.65 psia for the
+    // escape rate. With a setting chosen, moles use that basis's molar volume
+    // and the escape rate is re-referred to the rule's 14.65 psia / 60 °F.
+    var RULE_BASIS = { Tb_F: 60, Pb_psia: 14.65 };
+    function _basis() {
+        var B = G.WTS_baseConditions;
+        var b = (B && B.resolve) ? B.resolve(60, 14.696) : { Tb_F: 60, Pb_psia: 14.696, fromSetting: false, label: '60 °F / 14.696 psia' };
+        b.vm = (b.fromSetting && B.molarVolume) ? B.molarVolume(b) : SCF_PER_LBMOL;
+        b.toRule = (b.fromSetting && B.volumeFactor) ? B.volumeFactor(b, RULE_BASIS) : 1;
+        b.gr100 = b.fromSetting ? 100 * 1e-6 / b.vm * MW_H2S * 7000 : GR100_PER_PPM;
+        return b;
+    }
+
     // ── Pure compute (field units in and out, no DOM) ───────────────
 
     // Radius of exposure — 16 TAC §3.36(c)(1) (Texas Statewide Rule 36),
@@ -93,12 +110,13 @@
         if (!(_fin(q) && q > 0 && q <= 10000)) { errors.push('Maximum escape rate must be above 0 and no more than 10,000 MMSCFD.'); bad.push('q'); }
         if (!(_fin(c) && c > 0 && c <= 1e6)) { errors.push('H2S in gas must be above 0 and no more than 1,000,000 ppm.'); bad.push('ppm'); }
         if (errors.length) return { ok: false, errors: errors, bad: bad };
-        var mf = c / 1e6, Q = q * 1e6;
+        var bc = _basis();
+        var mf = c / 1e6, Q = q * 1e6 * bc.toRule;       // scf/d at the rule's 14.65 psia / 60 °F
         var x100 = Math.pow(ROE_K100 * mf * Q, ROE_EXP);
         var x500 = Math.pow(ROE_K500 * mf * Q, ROE_EXP);
-        var lbd = Q * mf / SCF_PER_LBMOL * MW_H2S;
+        var lbd = q * 1e6 * mf / bc.vm * MW_H2S;
         return {
-            ok: true, mf: mf, Q: Q,
+            ok: true, mf: mf, Q: Q, basis: bc,
             x100_ft: x100, x500_ft: x500, x100_m: x100 * FT_TO_M, x500_m: x500 * FT_TO_M,
             h2s_lbd: lbd, h2s_kgd: lbd * LB_TO_KG
         };
@@ -114,11 +132,12 @@
         if (!(_fin(c) && c >= 0 && c <= 1e6)) { errors.push('H2S in flared gas must be between 0 and 1,000,000 ppm.'); bad.push('ppm'); }
         if (!(_fin(ce) && ce >= 50 && ce <= 100)) { errors.push('Combustion efficiency must be between 50 and 100 %.'); bad.push('ce'); }
         if (errors.length) return { ok: false, errors: errors, bad: bad };
-        var mf = c / 1e6, n = q * 1e6 / SCF_PER_LBMOL / 24, f = ce / 100;
+        var bc = _basis();
+        var mf = c / 1e6, n = q * 1e6 / bc.vm / 24, f = ce / 100;
         var so2lb = n * mf * f * MW_SO2;
         var h2slb = n * mf * (1 - f) * MW_H2S;
         return {
-            ok: true, mf: mf, lbmol_hr: n,
+            ok: true, mf: mf, lbmol_hr: n, basis: bc,
             so2_lbhr: so2lb, so2_kghr: so2lb * LB_TO_KG, so2_td: so2lb * 24 * LB_TO_KG / 1000,
             h2s_lbhr: h2slb, h2s_kghr: h2slb * LB_TO_KG
         };
@@ -136,12 +155,13 @@
         if (!(_fin(co) && co >= 0 && (!ciOk || co < ci))) { errors.push('Target outlet H2S must be 0 ppm or more and below the inlet H2S.'); bad.push('cout'); }
         if (!(_fin(r) && r >= 0.1 && r <= 10)) { errors.push('Product consumption must be between 0.1 and 10 US gal per lb H2S.'); bad.push('ratio'); }
         if (errors.length) return { ok: false, errors: errors, bad: bad };
-        var lbd = q * 1e6 * (ci - co) * 1e-6 / SCF_PER_LBMOL * MW_H2S;
+        var bc = _basis();
+        var lbd = q * 1e6 * (ci - co) * 1e-6 / bc.vm * MW_H2S;
         var gal = lbd * r, L = gal * GAL_TO_L;
         return {
-            ok: true, lb_d: lbd, kg_d: lbd * LB_TO_KG,
+            ok: true, lb_d: lbd, kg_d: lbd * LB_TO_KG, basis: bc,
             gal_d: gal, L_d: L, L_hr: L / 24, gal_hr: gal / 24,
-            gr_in: ci * GR100_PER_PPM, gr_out: co * GR100_PER_PPM, meetsSales: co <= SALES_LIMIT_PPM
+            gr_in: ci * bc.gr100, gr_out: co * bc.gr100, meetsSales: co <= SALES_LIMIT_PPM
         };
     }
 
@@ -215,6 +235,14 @@
         }
     }
 
+    function _basisNote(b, rule) {
+        if (!b) return '';
+        if (!b.fromSetting) return 'Gas rates are standard volumes at 60 °F / 14.696 psia (379.48 scf per lb-mol)' +
+            (rule ? '; the escape rate is used as entered.' : '.');
+        return 'Gas rates are standard volumes at ' + b.label + ' (app setting, ' + _fmt(b.vm, 2) + ' scf per lb-mol)' +
+            (rule ? '; the escape rate is re-referred to 14.65 psia / 60 °F (× ' + _fmt(b.toRule, 5) + ') for the formula.' : '.');
+    }
+
     function _paintRoe(r) {
         var res = _byId('hs_roe_res');
         if (!res) return;
@@ -234,7 +262,8 @@
             v +
             _note('Screening formula from Texas Statewide Rule 36 (also used in US federal onshore H2S rules). ' +
                 'Escape rate = maximum volume available for escape, for a producing well the current adjusted ' +
-                'open-flow rate, at 14.65 psia and 60 °F. Local regulations and site dispersion studies take precedence.') +
+                'open-flow rate, at 14.65 psia and 60 °F. Local regulations and site dispersion studies take precedence. ' +
+                _basisNote(r.basis, true)) +
             '</div>';
         res.setAttribute('data-done', '1');
     }
@@ -249,7 +278,8 @@
             _row('SO2 per day', _fa(r.so2_td) + ' t/d') +
             _row('Unburned H2S', _fa(r.h2s_lbhr) + ' lb/hr (' + _fa(r.h2s_kghr) + ' kg/hr)') +
             _note('Ground-level SO2 concentration depends on flare height, plume rise and weather; a dispersion ' +
-                'screening tool is planned (roadmap item 11). Use Flare Emissions for full-period reporting.') +
+                'screening tool is planned (roadmap item 11). Use Flare Emissions for full-period reporting. ' +
+                _basisNote(r.basis)) +
             '</div>';
         res.setAttribute('data-done', '1');
     }
@@ -271,7 +301,8 @@
             v +
             _note('Consumption depends on product strength, contact time, temperature and injection design. ' +
                 'Use the supplier\'s figure; published field trials of triazine products report about 1.2 to 1.9 ' +
-                'US gal per lb H2S removed. Stoichiometric use is lower. Watch for solids from spent product.') +
+                'US gal per lb H2S removed. Stoichiometric use is lower. Watch for solids from spent product. ' +
+                _basisNote(r.basis)) +
             '</div>';
         res.setAttribute('data-done', '1');
     }
@@ -401,6 +432,10 @@
                 var r = _byId(ids[i]);
                 if (r && r.getAttribute && r.getAttribute('data-done') === '1') { G.calcH2S(); return; }
             }
+        });
+        document.addEventListener('wts:base-conditions-changed', function () {
+            var r = _byId('hs_roe_res');
+            if (r && r.getAttribute && r.getAttribute('data-done') === '1') G.calcH2S();
         });
     }
 })();

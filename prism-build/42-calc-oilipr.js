@@ -30,7 +30,8 @@
 //   WTS_oilipr_compute(input[, fmt])  pure, field units in and out, no DOM
 //   renderOilIPR(body)                paints the page into body
 //   calcOilIPR()                      read DOM → validate → compute → render
-//   WTS_state.oilipr                  last result {ok, mode, J, qb, qmax, …}
+//   WTS_oilipr_fetkCMetric(C, n)      Fetkovich C (BPD/psia²ⁿ) → m³/d/kPa²ⁿ (shown in Metric mode)
+//   WTS_state.oilipr                  last result {ok, mode, J, qb, qmax, C, CMetric, …}
 // ═══════════════════════════════════════════════════════════════════════
 (function () {
     'use strict';
@@ -267,9 +268,53 @@
     }
     G.WTS_oilipr_compute = compute;
 
+    // Fetkovich C in metric. q = C·(p̄r² − pwf²)ⁿ holds in any consistent units, so
+    // with q_m = fq·q (m³/d per BPD) and p_m = fp·p (kPa per psi):
+    //   q_m = fq·C·((p̄r_m² − pwf_m²)/fp²)ⁿ  →  C_m = fq·C / fp^(2n)   [m³/d/kPa²ⁿ].
+    // fq and fp are the units layer's own factors (liquidRate, pressure) so C_m is
+    // consistent with the metric pressures and rates shown on the page.
+    function fetkCMetric(C, n) {
+        var U = G.WTS_units, fq = 0.158987294928, fp = 6.894757;
+        if (U && U.CATEGORIES && U.CATEGORIES.liquidRate && U.CATEGORIES.pressure) {
+            fq = U.CATEGORIES.liquidRate.imperial.factor / U.CATEGORIES.liquidRate.metric.factor;
+            fp = U.CATEGORIES.pressure.imperial.factor / U.CATEGORIES.pressure.metric.factor;
+        }
+        return fq * C / Math.pow(fp, 2 * n);
+    }
+    G.WTS_oilipr_fetkCMetric = fetkCMetric;
+
     // ── Page ─────────────────────────────────────────────────────────────
     var UNITS = { oi_pr: 'pressure', oi_pb: 'pressure', oi_pwfd: 'pressure', oi_prf: 'pressure', oi_qt: 'liquidRate' };
     for (var ui = 1; ui <= NPTS; ui++) { UNITS['oi_q' + ui] = 'liquidRate'; UNITS['oi_pwf' + ui] = 'pressure'; }
+
+    // CSV paste / file import of the test points (host WTS_csv, P9): q and pwf,
+    // converted to BPD / psia; values without a unit are in the page's units.
+    var CSV_SPEC = {
+        maxRows: NPTS, positional: ['q', 'pwf'], aria: 'Test points as CSV',
+        columns: [
+            { key: 'q', label: 'Rate q', kind: 'liquidRate', cat: 'liquidRate', required: true, positive: true,
+              names: ['q', 'qo', 'ql', 'rate', 'rate q', 'oil rate', 'liquid rate', 'flow rate', 'q oil', 'test rate'] },
+            { key: 'pwf', label: 'pwf', kind: 'pressure', cat: 'pressure', required: true, positive: true,
+              names: ['pwf', 'p wf', 'pwf abs', 'flowing pressure', 'bottomhole flowing pressure', 'bhfp', 'fbhp'] }
+        ],
+        hint: 'One row per test point (up to ' + NPTS + '). Header names q and pwf in any order, units in brackets, e.g. <b>q (STB/d)</b>, <b>q [m3/d]</b>, ' +
+            '<b>pwf (psig)</b>, <b>bar</b>, <b>kPa(a)</b>. Without a header the order is q, pwf. Comma, semicolon or tab separated. ' +
+            'Values without a unit are read in the units shown in the table. Gauge pressures are made absolute with 1 atm.',
+        example: 'q (BPD),pwf (psia)\n100,1800\n160,1400'
+    };
+    function _applyCsv(res) {
+        var n = res.rows.length;
+        _canon(function () {
+            for (var i = 1; i <= NPTS; i++) {
+                var r = res.rows[i - 1];
+                var eq = _byId('oi_q' + i), ep = _byId('oi_pwf' + i);
+                if (eq) eq.value = (r && isFinite(r.q)) ? String(r.q) : '';
+                if (ep) ep.value = (r && isFinite(r.pwf)) ? String(r.pwf) : '';
+            }
+        });
+        G.calcOilIPR();
+        return 'Imported ' + n + ' test point' + (n === 1 ? '' : 's') + (n < NPTS ? '; rows ' + (n + 1) + '–' + NPTS + ' cleared.' : '.');
+    }
 
     function _field(id, label, val, extra) {
         return '<div class="fg-item"><label for="' + id + '">' + label + '</label>' +
@@ -306,12 +351,14 @@
             '<th data-wts-unit-label="liquidRate">Rate q (' + _lab('liquidRate', 'BPD') + ')</th>' +
             '<th data-wts-unit-label="pressure">pwf, abs (' + _lab('pressure', 'psia') + ')</th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
             '<div style="font-size:12px;color:var(--text2);margin-top:6px">Vogel and straight-line PI use test point 1; Fetkovich fits every filled row.</div>' +
+            '<div id="oi_csv_host"></div>' +
             '<div class="btn-row"><button class="btn btn-primary" id="oi_go" onclick="calcOilIPR()">Calculate</button></div>' +
             '</div>' +
             '</div>' +
             '<div><div id="oi_res"></div></div>' +
             '</div></div>';
         _tag(UNITS);
+        if (G.WTS_csv && typeof G.WTS_csv.mountImporter === 'function') G.WTS_csv.mountImporter(_byId('oi_csv_host'), CSV_SPEC, _applyCsv);
         var root = _byId('oi_root');
         if (root && root.addEventListener) {
             root.addEventListener('change', function (e) {
@@ -366,6 +413,7 @@
 
         G.WTS_state.oilipr = {
             ok: true, mode: r.mode, J: r.J, qb: r.qb, qmax: r.qmax, qmaxFE1: r.qmaxFE1, n: r.n, C: r.C, r2: r.r2,
+            CMetric: r.C != null ? fetkCMetric(r.C, r.n) : null,
             qAtPwf: r.qAtPwf, pwfAtQ: r.pwfAtQ, qmaxFuture: r.future ? r.future.qmax : null,
             qAtPwfFuture: r.future ? r.future.qAtPwf : null, ts: Date.now()
         };
@@ -373,13 +421,17 @@
 
         var fe = isFinite(inp.fe) ? inp.fe : 1;
         var h = '<div class="rbox"><div class="rbox-title">IPR Result — ' + MODE_LABEL[r.mode] + '</div>';
-        if (r.J != null) h += _row('Productivity index J', _metric() ? _u(r.J, 'liquidRate', 4, 'BPD') + '/psi' : _fix(r.J, 4) + ' BPD/psi');
+        if (r.J != null) h += _row('Productivity index J', _metric() ? _u(r.J, 'productivityIndex', 5, 'BPD/psi') : _fix(r.J, 4) + ' BPD/psi');
         if (r.qb != null) h += _row('Rate at bubble point q_b', fmtUI.q(r.qb));
         h += _row('Maximum rate qmax (AOF)', fmtUI.q(r.qmax));
         if (r.mode === 'vogel-sat' && fe !== 1) h += _row('qmax at FE = 1', fmtUI.q(r.qmaxFE1));
         if (r.pwfLimitFE != null) h += _row('FE validity limit pwf', fmtUI.p(r.pwfLimitFE));
         if (r.n != null) h += _row('Fetkovich n', _fix(r.n, 4));
-        if (r.C != null) h += _row('Fetkovich C', Number(r.C).toExponential(4) + ' BPD/psia²ⁿ');
+        // Metric C: q[m³/d] = C_m·(p̄r² − pwf²)ⁿ with p in kPa (absolute) →
+        //   C_m = C·0.158987 / 6.894757^(2n)   [m³/d/kPa²ⁿ] (the exponent n is unit-free).
+        if (r.C != null) h += _row('Fetkovich C', _metric()
+            ? Number(fetkCMetric(r.C, r.n)).toExponential(4) + ' m³/d/kPa²ⁿ (n = ' + _fix(r.n, 4) + ')'
+            : Number(r.C).toExponential(4) + ' BPD/psia²ⁿ');
         if (r.r2 != null) h += _row('Fit R²', _fix(r.r2, 4));
         if (isFinite(inp.pwfDesign)) h += _row('Rate at pwf = ' + fmtUI.p(inp.pwfDesign), fmtUI.q(r.qAtPwf));
         if (isFinite(inp.qTarget)) h += _row('pwf at q = ' + fmtUI.q(inp.qTarget), r.pwfAtQ == null ? '—' : fmtUI.p(r.pwfAtQ));

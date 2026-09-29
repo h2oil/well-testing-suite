@@ -14,11 +14,14 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const MAIN_HTML = path.join(ROOT, 'well-testing-app.html');
 const IOS_ADDITIONS = path.join(__dirname, '..', 'ios-additions');
-const OUTPUT = path.join(__dirname, '..', 'www', 'index.html');
+// WTS_SYNC_OUT_DIR lets tests write the bundle to a scratch folder instead of ios-app/www.
+const WWW = process.env.WTS_SYNC_OUT_DIR ? path.resolve(process.env.WTS_SYNC_OUT_DIR) : path.join(__dirname, '..', 'www');
+const OUTPUT = path.join(WWW, 'index.html');
 
 function read(p) {
     if (!fs.existsSync(p)) {
@@ -40,6 +43,16 @@ const gaBefore = html.length;
 html = html.replace(/<!--\s*GA:START[\s\S]*?GA:END\s*-->/g, '<!-- GA stripped from iOS bundle -->');
 if (html.length !== gaBefore) {
     console.log(`[sync] Stripped Google Analytics block (${gaBefore - html.length} chars)`);
+}
+
+// ── 0b. Strip the offline service-worker registration (web only). The iOS app
+// loads from capacitor://localhost and already ships every file locally; a
+// service worker there would only cache stale copies. The host code also
+// refuses to register outside http(s) or inside a native Capacitor shell.
+const swBefore = html.length;
+html = html.replace(/\/\/ ── SW:START[\s\S]*?\/\/ ── SW:END ──/g, '// (offline service worker: web only — stripped from the iOS bundle)');
+if (html.length !== swBefore) {
+    console.log(`[sync] Stripped the web service-worker block (${swBefore - html.length} chars)`);
 }
 
 // (The in-app Release Notes are engineering-only and identical on web and
@@ -87,18 +100,35 @@ const capStub = `// Capacitor runtime bridge — replaced by Capacitor at build 
 // In browser (non-native) preview this is a no-op.
 window.Capacitor = window.Capacitor || { isNativePlatform: () => false, Plugins: {} };
 `;
-fs.writeFileSync(path.join(__dirname, '..', 'www', 'capacitor.js'), capStub, 'utf8');
+fs.writeFileSync(path.join(WWW, 'capacitor.js'), capStub, 'utf8');
 
-// Copy bundled libraries (jsPDF, html2canvas) into www/ for iOS-offline PDF export.
+// Copy bundled libraries into www/ next to index.html (served at capacitor://localhost/<file>):
+//   jsPDF + html2canvas  — iOS-offline PDF export
+//   three.module.min.js  — three.js r170 for the offline 3D view (ios-bridge.js sets
+//                          window.WTS3D_LOCAL_URL to it; 32-wts-3d.js still checks its SHA-384)
 const LIBS_DIR = path.join(IOS_ADDITIONS, 'libs');
 if (fs.existsSync(LIBS_DIR)) {
-    const libsOutDir = path.join(__dirname, '..', 'www');
+    const libsOutDir = WWW;
     fs.readdirSync(LIBS_DIR).forEach(f => {
         if (f.endsWith('.js')) {
             fs.copyFileSync(path.join(LIBS_DIR, f), path.join(libsOutDir, f));
         }
     });
     console.log(`[sync] Copied libs/ → www/ (${fs.readdirSync(LIBS_DIR).filter(f => f.endsWith('.js')).length} files)`);
+}
+
+// ── 6. three.js integrity: the bundled copy must match the SHA-384 pinned in 32-wts-3d.js.
+// A mismatch is not fatal (the app then falls back to the CDN / 2D) but is loud, so a
+// three.js bump without re-bundling is caught here rather than on a device.
+const THREE_LIB = path.join(WWW, 'three.module.min.js');
+const pin = /THREE_SHA384\s*=\s*'([A-Za-z0-9+/=]+)'/.exec(html);
+if (fs.existsSync(THREE_LIB) && pin) {
+    const got = crypto.createHash('sha384').update(fs.readFileSync(THREE_LIB)).digest('base64');
+    if (got === pin[1]) console.log('[sync] three.module.min.js SHA-384 matches the pinned hash (offline 3D ready)');
+    else console.warn('[sync] WARNING: www/three.module.min.js SHA-384 ' + got + ' does not match the pinned ' + pin[1] +
+                      ' — the app will reject it and the 3D view needs the network. Re-bundle ios-additions/libs/three.module.min.js.');
+} else if (!fs.existsSync(THREE_LIB)) {
+    console.warn('[sync] WARNING: three.module.min.js not bundled — the 3D view will need the network on first use.');
 }
 
 const size = (fs.statSync(OUTPUT).size / 1024).toFixed(1);

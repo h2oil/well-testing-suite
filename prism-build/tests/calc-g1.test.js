@@ -85,7 +85,7 @@ function agaRef(o) {
   const Tpc = 168 + 325 * SG - 12.5 * SG * SG, Ppc = 677 + 15 * SG - 37.5 * SG * SG;
   const A = (co2 + h2s) / 100, B = h2s / 100, eps = 120 * (A ** 0.9 - A ** 1.6) + 15 * (B ** 0.5 - B ** 4);
   const Tpc2 = Tpc - eps, Ppc2 = Ppc * Tpc2 / (Tpc + B * (1 - B) * eps);
-  const Z = dakZ(Tf / Tpc2, Pf / Ppc2);
+  const Z = o.Z > 0 ? o.Z : dakZ(Tf / Tpc2, Pf / Ppc2);   // o.Z: an entered override
   const Y = 1 - (0.41 + 0.35 * b4) * hw / (27.707 * Pf) / 1.3;
   const dm = d * 0.0254, Dm = D * 0.0254, dP = hw * 248.84, M = 28.9625e-3 * SG, R = 8.314462;
   const rho = Pf * 6894.757 * M / (Z * R * Tf * 5 / 9), rhob = Pb * 6894.757 * M / (R * Tb * 5 / 9);
@@ -101,6 +101,17 @@ function agaRef(o) {
     Re = 4 * qm / (Math.PI * mu * 1e-3 * Dm);
   }
   return { Z, Cd, Qv: qm / rhob / 0.0283168466 * 3600 };
+}
+// Gas PVT basis (independent): Sutton (1985) on the hydrocarbon gravity, Kay mixing with
+// N2 (227.16 °R, 493.1 psia), CO2 (547.58, 1071.0), H2S (672.12, 1300.0), Wichert–Aziz, DAK.
+function pvtZ(SG, pPsia, TF, co2, h2s, n2) {
+  const yc = co2 / 100, yh = h2s / 100, yn = n2 / 100, yhc = 1 - yc - yh - yn;
+  const ghc = (SG - (yn * 28.0134 + yc * 44.010 + yh * 34.082) / 28.9647) / yhc;
+  const Tm = yhc * (169.2 + 349.5 * ghc - 74.0 * ghc * ghc) + yn * 227.16 + yc * 547.58 + yh * 672.12;
+  const Pm = yhc * (756.8 - 131.0 * ghc - 3.6 * ghc * ghc) + yn * 493.1 + yc * 1071.0 + yh * 1300.0;
+  const A = yc + yh, B = yh, eps = 120 * (A ** 0.9 - A ** 1.6) + 15 * (B ** 0.5 - B ** 4);
+  const Tpc = Tm - eps, Ppc = Pm * Tpc / (Tm + B * (1 - B) * eps);
+  return dakZ((TF + 459.67) / Tpc, pPsia / Ppc);
 }
 function papay(p, SG, TR) {
   const Ppc = 756.8 - 131 * SG - 3.6 * SG * SG, Tpc = 169.2 + 349.5 * SG - 74 * SG * SG, pr = p / Ppc, tr = TR / Tpc;
@@ -222,6 +233,55 @@ module.exports = [
       app.hook.nav('aga3');
       app.win.calcAGA3();
       assert.ok(!rows(app, 'a_res').some((r) => r.l.indexOf('Sm³') !== -1), 'no Sm³ rows in Imperial');
+    },
+  },
+  {
+    name: 'G1 aga3: "Use calculated Z" fills the Z override from Gas PVT (Sutton + Kay incl. N2 + Wichert–Aziz, DAK); the page says when Z is overridden',
+    wp: WP,
+    run(app, assert) {
+      app.hook.nav('aga3');
+      const base = { a_pD: 4.026, a_oD: 2.0, a_tap: 'flange', a_dP: 50, a_Ps: 500, a_Tf: 80, a_SG: 0.65, a_CO2: 0.5, a_H2S: 0, a_N2: 1, a_Tb: 60, a_Pb: 14.696, a_Z: '' };
+      set(app, base);
+      app.win.calcAGA3();
+      assert.includes(rvText(app, 'a_res', 'Z Source'), 'Built-in DAK', 'DAK by default');
+      const qDak = rv(app, 'a_res', 'Gas Rate (SCF/hr)');
+      assert.ok(app.el('a_usez'), 'button present');
+      app.click('a_usez');
+      const zHand = pvtZ(0.65, 514.696, 80, 0.5, 0, 1);                       // ≈ 0.9237 (N2 counted; Standing basis gives 0.9150)
+      assert.near(parseFloat(app.el('a_Z').value), zHand, 1.5e-4, 'a_Z filled with the Gas PVT Z');
+      assert.strictEqual(app.el('a_Z').value, app.win.WTS_gaspvt_compute({ sg: 0.65, p: 514.696, t: 80, co2: 0.5, h2s: 0, n2: 1 }).z.toFixed(4), '4 dp');
+      const zUsed = parseFloat(app.el('a_Z').value);
+      assert.near(rv(app, 'a_res', 'Z-Factor'), zUsed, 1e-9, 'rate uses the override');
+      assert.includes(rvText(app, 'a_res', 'Z Source'), 'Override — calculated Z (Gas PVT');
+      const ref = agaRef({ D: 4.026, d: 2, hw: 50, Ps: 500, TfF: 80, SG: 0.65, co2: 0.5, Z: zUsed });
+      assert.rel(rv(app, 'a_res', 'Gas Rate (SCF/hr)'), ref.Qv, 1e-3, 'rate with the override vs mass-flow reference');
+      assert.rel(rv(app, 'a_res', 'Gas Rate (SCF/hr)') / qDak, Math.sqrt(agaRef({ D: 4.026, d: 2, hw: 50, Ps: 500, TfF: 80, SG: 0.65, co2: 0.5 }).Z / zUsed), 2e-4, 'rate ∝ 1/√Z');
+      assert.near(rv(app, 'a_res', 'Built-in DAK Z (not used)'), agaRef({ D: 4.026, d: 2, hw: 50, Ps: 500, TfF: 80, SG: 0.65, co2: 0.5 }).Z, 2e-4, 'DAK shown for comparison');
+      const notes = String(app.el('a_notes').textContent);
+      assert.includes(notes, 'Z is overridden');
+      // Conditions change after filling: the page says the override is stale
+      set(app, { a_Ps: 1200 }); app.win.calcAGA3();
+      assert.includes(String(app.el('a_notes').textContent), 'differs from the Gas PVT Z at the current pressure');
+      // A typed value is reported as entered; clearing the field returns to DAK
+      set(app, { a_Z: 0.95 }); app.win.calcAGA3();
+      assert.strictEqual(rvText(app, 'a_res', 'Z Source'), 'Override — entered value');
+      set(app, { a_Z: '' }); app.win.calcAGA3();
+      assert.includes(rvText(app, 'a_res', 'Z Source'), 'Built-in DAK');
+      assert.strictEqual(rows(app, 'a_res').filter((r) => r.l.indexOf('not used') !== -1).length, 0, 'no DAK comparison row without override');
+      // Bad override → validation message
+      set(app, { a_Z: 5 }); app.win.calcAGA3();
+      assert.includes(errText(app, 'a_res'), 'Z-factor override must be at most 2');
+      set(app, { a_Z: '' });
+      // Metric: the button reads canonical imperial values → same Z
+      setMetric(app, true);
+      try {
+        app.hook.nav('aga3');
+        set(app, { a_Ps: 500 * 6.89476, a_Tf: (80 - 32) * 5 / 9, a_SG: 0.65, a_CO2: 0.5, a_H2S: 0, a_N2: 1 });
+        app.click('a_usez');
+        assert.near(parseFloat(app.el('a_Z').value), zHand, 1.5e-4, 'metric: same Z');
+      } finally { setMetric(app, false); }
+      noBadNumbers(assert, app, 'aga3 use Z');
+      reportHas(app, assert, ['Z Source', 'Z-factor override']);
     },
   },
   // ── Dual choke ─────────────────────────────────────────────────────────
@@ -491,6 +551,82 @@ module.exports = [
       const A = Math.PI * 0.0779 * 0.0779 / 4, Vmin = 500 * 0.158987 / 86400 / A;
       assert.rel(rv(app, 'tm_res', 'Re @ Q'), rho * Vmin * 0.0779 / 0.005, 3e-3);
       assert.includes(app.el('tm_res').textContent, 'Selected Meter: 3"');
+    },
+  },
+  {
+    name: 'G1 turbmeter (ROADMAP 1.5): vapour pressure is an input — blank = per-liquid default, entered TVP drives the margin',
+    wp: WP,
+    run(app, assert) {
+      app.hook.nav('turbmeter');
+      set(app, { tm_liq: 'oil', tm_api: 35, tm_t: 40, tm_mu: 5, tm_qmin: 500, tm_qmax: 8000, tm_p: 500, tm_pv: '' });
+      app.win.calcTurbMeter();
+      // default stabilised-crude screening value 0.3 psia → margin 514.7 − 0.3 = 514.4 psi, with the live-crude note
+      assert.near(rv(app, 'tm_res', 'Vapour Pressure'), 0.3, 1e-9);
+      assert.near(rv(app, 'tm_res', 'Cavitation Margin'), 514.4, 0.06);
+      assert.includes(app.el('tm_res').textContent, 'bubble point');
+      // live crude off a 500 psig separator: TVP ≈ 514.7 psia; meter at 510 psig → margin 524.7 − 514.7 = 10.0 psi
+      set(app, { tm_pv: 514.7, tm_p: 510 }); app.win.calcTurbMeter();
+      assert.near(rv(app, 'tm_res', 'Vapour Pressure'), 514.7, 1e-9);
+      assert.near(rv(app, 'tm_res', 'Cavitation Margin'), 10.0, 0.051);
+      assert.includes(rvText(app, 'tm_res', 'Cavitation Margin'), 'OK');
+      assert.ok(!/bubble point/.test(app.el('tm_res').textContent), 'no default-TVP note once a TVP is entered');
+      // 2 psi above TVP → below the 3 psi hard stop
+      set(app, { tm_p: 502 }); app.win.calcTurbMeter();
+      assert.near(rv(app, 'tm_res', 'Cavitation Margin'), 2.0, 0.051);
+      assert.includes(rvText(app, 'tm_res', 'Cavitation Margin'), 'LOW');
+      // diesel default 0.05 psia; water default Antoine at 40 °C (1.070 psia)
+      set(app, { tm_liq: 'diesel', tm_pv: '', tm_p: 500 }); app.win.calcTurbMeter();
+      assert.near(rv(app, 'tm_res', 'Vapour Pressure'), 0.05, 1e-9);
+      set(app, { tm_liq: 'water' }); app.win.calcTurbMeter();
+      assert.near(rv(app, 'tm_res', 'Vapour Pressure'), Math.pow(10, 8.07131 - 1730.63 / 273.426) / 51.7149, 0.006);
+      assert.includes(rvText(app, 'tm_res', 'Vapour Pressure') === null ? '' : rows(app, 'tm_res').find((r) => r.l.indexOf('Vapour') !== -1).l, 'Antoine');
+      set(app, { tm_pv: -1 }); app.win.calcTurbMeter();
+      assert.includes(errText(app, 'tm_res'), 'Vapour pressure');
+      assert.includes(String(app.el('pgBody').textContent), 'Vapour Pressure Basis');
+      noBadNumbers(assert, app, 'turbmeter pv');
+      assert.deepEqual(app.consoleErrors(), []);
+    },
+  },
+  {
+    name: 'G1 turbmeter (ROADMAP 1.5): metric vapour pressure in kPa gives the same margin',
+    wp: WP,
+    run(app, assert) {
+      setMetric(app, true);
+      app.hook.nav('turbmeter');
+      set(app, { tm_liq: 'oil', tm_api: 35, tm_t: 40, tm_mu: 5, tm_qmin: 500 * 0.158987, tm_qmax: 8000 * 0.158987,
+        tm_p: 510 * 6.89476, tm_pv: 514.7 * 6.89476 });
+      app.win.calcTurbMeter();
+      assert.near(rv(app, 'tm_res', 'Vapour Pressure'), 514.7 * 6.89476, 0.6);   // kPa
+      // Margin shown in kPa too (was the psi number next to kPa inputs): 10.0 psi = 68.95 kPa
+      assert.near(rv(app, 'tm_res', 'Cavitation Margin'), 10.0 * 6.894757, 0.4);
+      assert.includes(rvText(app, 'tm_res', 'Cavitation Margin'), 'kPa');
+      // Meter range in m³/d: 3" meter 600 – 8,000 BPD × 0.158987 = 95 – 1,272 m³/d
+      assert.includes(rvText(app, 'tm_res', 'Meter Range'), '95 – 1,272 m³/d');
+      assert.includes(app.el('tm_pv').parentNode.querySelector('label').textContent, 'kPa');
+    },
+  },
+  {
+    name: 'G1 chokeflow (ROADMAP 1.5): 7/64 and 20/64 coefficients flagged as out of line (values unchanged, caution shown)',
+    wp: WP,
+    run(app, assert) {
+      app.hook.nav('chokeflow');
+      const t = String(app.el('pgBody').textContent);
+      assert.includes(t, 'out of line with their neighbours');
+      assert.includes(t, '43.64 *');
+      assert.includes(t, '5.166 *');
+      // values kept as tabulated: 20/64, 3000 psig, 120 °F, SG 0.7 → 43.64·3014.7/√(0.7·580)
+      set(app, { cf_cs: 20, cf_whp: 3000, cf_wht: 120, cf_sg: 0.7 });
+      app.win.calcChokeGas();
+      assert.rel(rv(app, 'cf_gres', 'Gas Rate'), 43.64 * 3014.7 / Math.sqrt(0.7 * 580), 1e-4);
+      assert.includes(app.el('cf_gres').textContent, '20/64 table coefficient');
+      // neighbour-consistent C/S² at 20/64 ≈ 0.10568 → C ≈ 42.27; the tabulated value is 3.2 % higher
+      const cs2 = (37.98 / 361 + 46.818 / 441) / 2;
+      assert.near(cs2 * 400, 42.27, 0.01);
+      set(app, { cf_cs: 7 }); app.win.calcChokeGas();
+      assert.includes(app.el('cf_gres').textContent, '7/64 table coefficient');
+      set(app, { cf_cs: 32 }); app.win.calcChokeGas();
+      assert.ok(!/table coefficient/.test(app.el('cf_gres').textContent), 'no caution at 32/64');
+      noBadNumbers(assert, app, 'chokeflow suspect');
     },
   },
   // ── Console hygiene over every G1 page ─────────────────────────────────

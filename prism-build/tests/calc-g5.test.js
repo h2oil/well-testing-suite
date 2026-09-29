@@ -116,7 +116,7 @@ module.exports = [
       assert.match(title(app, 'pp_res'), /Recommended: 3"/);
       clean(app, assert, 'pipesz gas imperial');
 
-      // Metric: 10 MMSCFD = 283.168 Mm³/d, 500 psig = 3447.38 kPa(g), 1000 ft = 304.8 m
+      // Metric: 10 MMSCFD = 283.168 × 10³ m³/d, 500 psig = 3447.38 kPa(g), 1000 ft = 304.8 m
       go(app, 'pipesz', 'metric');
       app.el('pp_fluid').value = 'gas';
       setv(app, { pp_p: 3447.38, pp_l: 304.8, pp_qg: 283.168, pp_sg: 0.65 });
@@ -490,13 +490,79 @@ module.exports = [
     },
   },
 
+  // ── EROSIONAL VELOCITY & SAND QUICK CHECK (roadmap #15, card on pipesz) ─────
+  {
+    name: 'G5 pipesz erosion card: RP 14E ρm, Ve = C/√ρm, Vm and minimum ID vs hand calc and first principles; C table; sand screen on one line',
+    wp: 'G5',
+    run(app, assert) {
+      go(app, 'pipesz');
+      assert.ok(app.el('ev_res'), 'card present');
+      setv(app, { ev_svc: 'cont', ev_sol: 'free', ev_c: '', ev_p: 500, ev_t: 100, ev_ql: 5000, ev_glr: 1000, ev_sl: 0.85, ev_sg: 0.7, ev_z: 0.9, ev_id: 3.826, ev_sand: '' });
+      calc(app, 'calcPipeErosion');
+      const P = 514.696, T = 559.67, QL = 5000, R = 1000, S1 = 0.85, Sg = 0.7, Z = 0.9, D = 3.826;
+      // API RP 14E eq. (2.2) and (2.3), written out here
+      const rho = (12409 * S1 * P + 2.7 * R * Sg * P) / (198.7 * P + R * T * Z);
+      // first principles per barrel of liquid: mass (water 62.37 lb/ft³, 379.5 scf/lb-mol) / in-situ volume
+      const mass = S1 * 62.37 * 5.6146 + R * Sg * 28.9647 / 379.5, vol = 5.6146 + R * (14.696 / P) * (T / 519.67) * Z;
+      assert.rel(rho, mass / vol, 5e-3, 'RP 14E ρm vs first principles');
+      const st = app.win.WTS_state.pipeErosion;
+      assert.rel(st.rho, rho, 1e-9, 'ρm'); assert.strictEqual(st.C, 100, 'continuous solids-free C = 100');
+      const Ve = 100 / Math.sqrt(rho);
+      assert.rel(st.Ve, Ve, 1e-9, 'Ve');
+      const A = Math.PI / 4 * D * D, Vm = QL / 1000 * (9.35 + Z * R * T / (21.25 * P)) / A;
+      assert.rel(st.Vm, Vm, 1e-9, 'Vm (RP 14E area form)');
+      assert.rel(st.Vm, QL * vol / 86400 / (A / 144), 5e-3, 'Vm vs first principles');
+      const dMin = Math.sqrt(4 / Math.PI * QL / 1000 * (9.35 + Z * R * T / (21.25 * P)) / Ve);
+      assert.rel(st.dMin, dMin, 1e-9, 'minimum ID');
+      assert.near(num(row(app, 'ev_res', 'Erosional velocity')), Math.round(Ve * 10) / 10, 1e-9, 'Ve row (ft/s)');
+      assert.near(num(row(app, 'ev_res', 'Minimum ID')), Math.round(dMin * 1000) / 1000, 1e-9, 'min ID row');
+      assert.includes(row(app, 'ev_res', 'Sand erosion screen'), 'No sand rate entered');
+      assert.includes(app.el('ev_res').textContent, '✓ Mixture velocity is below the erosional velocity');
+      // Sand: 2 lb/MMscf → Pipe Service Life fit E = 2.8·(c/300)·W·V²/D² mpy (c = 300)
+      setv(app, { ev_sand: 2 }); calc(app, 'calcPipeErosion');
+      const E = 2.8 * 2 * Vm * Vm / (D * D);
+      assert.rel(app.win.WTS_state.pipeErosion.E, E, 1e-9, 'sand erosion (screening fit)');
+      const sl = row(app, 'ev_res', 'Sand erosion screen');
+      assert.rel(num(sl), E, 1e-3, 'mpy on the one line'); assert.includes(sl, 'mm/y'); assert.includes(sl, 'lb/MMscf');
+      assert.includes(app.el('ev_res').textContent, '⚠ Sand erosion exceeds 0.1 mm/y');
+      // C selection: intermittent / sand / override
+      const Cof = (svc, sol) => { setv(app, { ev_svc: svc, ev_sol: sol, ev_c: '' }); calc(app, 'calcPipeErosion'); return app.win.WTS_state.pipeErosion.C; };
+      assert.strictEqual(Cof('int', 'free'), 125, 'RP 14E intermittent');
+      assert.strictEqual(Cof('cont', 'sand'), 70, 'sand continuous (conservative choice)');
+      assert.strictEqual(Cof('int', 'sand'), 100, 'sand intermittent (conservative choice)');
+      setv(app, { ev_c: 150 }); calc(app, 'calcPipeErosion');
+      assert.strictEqual(app.win.WTS_state.pipeErosion.C, 150); assert.includes(row(app, 'ev_res', 'C-factor'), 'entered');
+      // Too small a line → ✗ and the minimum ID
+      setv(app, { ev_svc: 'cont', ev_sol: 'free', ev_c: '', ev_id: 2.9, ev_sand: '' }); calc(app, 'calcPipeErosion');
+      assert.ok(!app.win.WTS_state.pipeErosion.velOk, 'Vm > Ve');
+      assert.includes(app.el('ev_res').textContent, '✗ Mixture velocity exceeds the erosional velocity');
+      // Validation
+      setv(app, { ev_ql: 0, ev_z: 5 }); calc(app, 'calcPipeErosion');
+      assert.includes(errText(app, 'ev_res'), 'Liquid rate must be greater than zero');
+      assert.includes(errText(app, 'ev_res'), 'Z-factor must be between');
+      setv(app, { ev_ql: 5000, ev_z: 0.9, ev_id: 3.826 }); calc(app, 'calcPipeErosion');
+      clean(app, assert, 'pipesz erosion');
+      // Metric: same physical case entered in SI, same state
+      go(app, 'pipesz', 'metric');
+      setv(app, { ev_p: 500 * 6.89476, ev_t: (100 - 32) / 1.8, ev_ql: 5000 * 0.158987, ev_glr: 1000 * 0.0283168466 / 0.158987294928, ev_id: 3.826 * 25.4 });
+      calc(app, 'calcPipeErosion');
+      assert.rel(app.win.WTS_state.pipeErosion.Ve, Ve, 1e-5, 'metric Ve');
+      assert.rel(app.win.WTS_state.pipeErosion.Vm, Vm, 1e-5, 'metric Vm');
+      assert.includes(row(app, 'ev_res', 'Erosional velocity'), 'm/s');
+      assert.includes(row(app, 'ev_res', 'Mixture density'), 'kg/m³');
+      assert.includes(row(app, 'ev_res', 'Minimum ID'), 'mm');
+      app.win.WTS_units.setSystem('imperial');
+      clean(app, assert, 'pipesz erosion metric');
+    },
+  },
+
   // ── EXPORT ──────────────────────────────────────────────────────────────────
   {
     name: 'G5 report export: collectPageReport captures inputs and results for every G5 page',
     wp: 'G5',
     run(app, assert) {
-      // pipesz / cablesz results are <table>s: the harness DOM has no HTMLTableElement.rows,
-      // so _tableItem sees no rows here — their table export was checked in the browser.
+      // pipesz / cablesz results are <table>s (captured through table.rows / tr.cells,
+      // which the harness DOM models); the labels below are checked on the kv items.
       const pages = { pipesz: ['calcPipeSz', 'Liquid Rate', null], pumpsz: ['calcPumpSz', 'Flow Rate', 'Total Dynamic Head'],
         aircomp: ['calcAirComp', 'Air Flow', 'Selected Capacity'], gensz: ['calcGenSz', 'Power Factor', 'Standard Size'],
         cablesz: ['calcCableSz', 'Load Current', null], vdrop: ['calcVDrop', 'Load Current', 'Receiving End Voltage'],

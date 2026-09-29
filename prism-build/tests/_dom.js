@@ -11,7 +11,9 @@
 //     pseudo-classes :checked :disabled :enabled :first-child :last-child
 //     :nth-child(n) :not(...) :scope (other pseudo-classes match everything);
 //   • classList, dataset, style (+ cssText), attribute reflection,
-//     form-control value / checked / selected / options;
+//     form-control value / checked / selected / options / defaultSelected;
+//   • table.rows / tHead / tBodies / tFoot, tr.cells, rowIndex / cellIndex
+//     (recomputed on each access);
 //   • EventTarget with capture / target / bubble phases, on<event> props and
 //     inline on<event>="…" attributes (compiled in the app realm);
 //   • a recording CanvasRenderingContext2D (every call / property set is
@@ -742,6 +744,56 @@ function createDOM(env) {
       configurable: true,
     });
   }
+
+  // ── HTMLTableElement / section / row collections ──
+  // Recomputed on every access (live-ish): table.rows = thead rows, then tbody /
+  // direct <tr> children in document order, then tfoot rows; section.rows = its
+  // own <tr> children; tr.cells = its <td>/<th> children. `rows` stays the
+  // reflected number on <textarea>.
+  const kids = (el, names) => el.children.filter((c) => names.indexOf(c.localName) !== -1);
+  const TSECT = ['thead', 'tbody', 'tfoot'];
+  const rowsDesc = Object.getOwnPropertyDescriptor(Element.prototype, 'rows');
+  Object.defineProperty(Element.prototype, 'rows', {
+    get() {
+      const t = this.localName;
+      if (t === 'table') {
+        const head = kids(this, ['thead']).slice(0, 1), foot = kids(this, ['tfoot']).slice(0, 1);
+        const out = [];
+        head.forEach((s) => out.push(...kids(s, ['tr'])));
+        for (const c of this.children) {
+          if (c.localName === 'tr') out.push(c);
+          else if (c.localName === 'tbody' || (c.localName === 'thead' && c !== head[0]) || (c.localName === 'tfoot' && c !== foot[0])) out.push(...kids(c, ['tr']));
+        }
+        foot.forEach((s) => out.push(...kids(s, ['tr'])));
+        return nodeList(out);
+      }
+      if (TSECT.indexOf(t) !== -1) return nodeList(kids(this, ['tr']));
+      return rowsDesc.get.call(this);
+    },
+    set(v) { rowsDesc.set.call(this, v); },
+    configurable: true,
+  });
+  const tableOnly = (name, fn) => Object.defineProperty(Element.prototype, name, {
+    get() { return this.localName === 'table' ? fn(this) : undefined; }, configurable: true,
+  });
+  tableOnly('tHead', (t) => kids(t, ['thead'])[0] || null);
+  tableOnly('tFoot', (t) => kids(t, ['tfoot'])[0] || null);
+  tableOnly('tBodies', (t) => nodeList(kids(t, ['tbody'])));
+  tableOnly('caption', (t) => kids(t, ['caption'])[0] || null);
+  Object.defineProperty(Element.prototype, 'cells', {
+    get() { return this.localName === 'tr' ? nodeList(kids(this, ['td', 'th'])) : undefined; }, configurable: true,
+  });
+  Object.defineProperty(Element.prototype, 'rowIndex', {
+    get() { const t = this.localName === 'tr' ? this.closest('table') : null; return t ? t.rows.indexOf(this) : -1; }, configurable: true,
+  });
+  Object.defineProperty(Element.prototype, 'cellIndex', {
+    get() { const r = this.parentElement; return r && r.localName === 'tr' ? r.cells.indexOf(this) : -1; }, configurable: true,
+  });
+  Object.defineProperty(Element.prototype, 'defaultSelected', {
+    get() { return this.hasAttribute('selected'); },
+    set(v) { if (v) this.setAttribute('selected', ''); else this.removeAttribute('selected'); },
+    configurable: true,
+  });
 
   function createElementNS(ns, name) { return new Element(name, ns || HTML_NS); }
 
