@@ -75594,12 +75594,13 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
 //       at the design differential (default 50 % of range) equals the target.
 //     • Differential at the target for a given plate: bisection on hw.
 //     • Plate-change points: forward rate at low % and high % of range.
-//   Plate lists: "standard" = a typical test-crew plate set (1/8" steps to
-//   3", 1/4" steps to 6", 1/2" steps above); "eighth" = d* rounded to the
-//   nearest 1/8" (every 1/8" multiple is a candidate). Among candidates in
-//   the β range the chosen plate is the one inside the DP window closest to
-//   the design %, except in "eighth" mode where the rounded d* is kept when
-//   it is inside the window.
+//   Plate list: every 0.125" bore from 0.125" up to the largest bore with
+//   β ≤ 0.75 (bores below β 0.10 are dropped). The chosen plate is d*
+//   rounded to the nearest 0.125" when that plate keeps the differential
+//   inside the window; otherwise the plate inside the window closest to the
+//   design %; otherwise (none inside) the nearest plate, flagged ✗.
+//   Plate sizes are always shown as decimal inches (1.875", 2.000") — in
+//   Metric mode with the mm conversion alongside (1.875" (47.63 mm)).
 //
 // REFERENCES
 //   • AGA Report No. 3 / API MPMS Ch. 14.3.1–14.3.3 (1992+, 2012/2013):
@@ -75615,7 +75616,8 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
 //   renderOrificeSelect(body)      paint the page into #pgBody
 //   calcOrificeSelect()            read DOM → validate → compute → render
 //   WTS_orifice_compute(input)     pure; field units in and out, no DOM
-//       input  {q, D, Ps, TfF, SG, co2, n2, h2s, urv, lo, hi, des, TbF, Pb, mode}
+//       input  {q, D, Ps, TfF, SG, co2, n2, h2s, urv, lo, hi, des, TbF, Pb}
+//              (a legacy `mode` from an earlier build is accepted and ignored)
 //       output {ok, errors[], errorIds[], dStar, betaStar, dStarFlag, candidates[],
 //               chosen, up, down, table[], verdicts[], warnings[], Z, ...}
 //   WTS_state.orifice              last result (in memory only)
@@ -75650,25 +75652,14 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
     function _canon(fn) { var U = G.WTS_units; return (U && U.runCanonical) ? U.runCanonical(fn) : fn(); }
     function _nv(v) { return (v === null || v === undefined || v === '') ? NaN : Number(v); }
     function _opt(v, def) { return (v === null || v === undefined || v === '' || (typeof v === 'number' && isNaN(v))) ? def : Number(v); }
-    function _frac(d) {
-        // bore as a fraction of an inch in 1/8" (or 1/16") steps, when exact
-        var n16 = Math.round(d * 16);
-        if (Math.abs(d * 16 - n16) > 1e-6) return '';
-        var w = Math.floor(n16 / 16), r = n16 % 16, num = r, den = 16;
-        while (num && num % 2 === 0) { num /= 2; den /= 2; }
-        if (!r) return w + '"';
-        return (w ? w + ' ' : '') + num + '/' + den + '"';
+    var STEP = 0.125;   // plate bores in 0.125" increments over the whole range
+    // Plate size text: always decimal inches; Metric mode adds the mm conversion.
+    function _boreTxt(d, dp) {
+        if (d == null || !isFinite(d)) return '—';
+        var t = d.toFixed(dp == null ? 3 : dp) + '"';
+        return _metric() ? t + ' (' + (d * 25.4).toFixed(dp == null ? 2 : 3) + ' mm)' : t;
     }
 
-    // Standard plate set: 1/8" steps to 3", 1/4" steps to 6", 1/2" steps to 24".
-    var STD = (function () {
-        var a = [], x;
-        for (x = 1; x <= 24; x++) a.push(x * 0.125);
-        for (x = 13; x <= 24; x++) a.push(x * 0.25);
-        for (x = 13; x <= 48; x++) a.push(x * 0.5);
-        return a;
-    })();
-    var MODES = { standard: 'Standard plate set (1/8" to 3", 1/4" to 6", 1/2" above)', eighth: 'Exact bore rounded to 1/8"' };
     var BETA_MIN = 0.1, BETA_MAX = 0.75;
     var N3 = 27.707;   // inH2O (60 °F) per psi — same constant as the AGA-3 engine
 
@@ -75688,7 +75679,6 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         var co2 = _opt(inp.co2, 0), n2 = _opt(inp.n2, 0), h2s = _opt(inp.h2s, 0);
         var urv = _nv(inp.urv), lo = _opt(inp.lo, 20), hi = _opt(inp.hi, 80), des = _opt(inp.des, 50);
         var TbF = _opt(inp.TbF, 60), Pb = _opt(inp.Pb, 14.696);
-        var mode = (inp.mode === 'eighth') ? 'eighth' : 'standard';
 
         if (!(q > 0)) err('Target gas rate must be greater than zero.', P + 'q');
         if (!(D > 0)) err('Meter run internal diameter must be greater than zero.', P + 'D');
@@ -75736,13 +75726,10 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             dStar = (a + b) / 2;
         }
 
-        // Candidate plates in the β range.
-        var list = [];
-        if (mode === 'standard') list = STD.slice();
-        else for (var k = 1; k * 0.125 < D; k++) list.push(k * 0.125);
-        var tolB = 1e-9;
-        list = list.filter(function (d) { return d / D >= BETA_MIN - tolB && d / D <= BETA_MAX + tolB; });
-        if (!list.length) { err('No plate in the ' + (mode === 'standard' ? 'standard set' : '1/8" series') + ' gives β between 0.10 and 0.75 in this meter run.', P + 'D'); return fail(); }
+        // Candidate plates: every 0.125" bore with β in 0.10–0.75.
+        var list = [], tolB = 1e-9;
+        for (var k = 1; k * STEP <= BETA_MAX * D * (1 + tolB); k++) if (k * STEP >= BETA_MIN * D * (1 - tolB)) list.push(k * STEP);
+        if (!list.length) { err('No 0.125" bore gives β between 0.10 and 0.75 in this meter run.', P + 'D'); return fail(); }
 
         var hwLo = urv * lo / 100, hwHi = urv * hi / 100;
         var candidates = list.map(function (d) {
@@ -75750,7 +75737,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             var at = isFinite(hw) ? run(d, hw) : null;
             var pct = hw / urv * 100;
             return {
-                d: d, frac: _frac(d), beta: d / D, hw: hw, pct: pct,
+                d: d, bore: d.toFixed(3), beta: d / D, hw: hw, pct: pct,
                 inWindow: isFinite(pct) && pct >= lo - 1e-9 && pct <= hi + 1e-9,
                 qLo: qAt(d, hwLo), qHi: qAt(d, hwHi),
                 Cd: at ? at.Cd : null, Y1: at ? at.Y1 : null, x1: at ? at.x1 : null, Re: at ? at.Re_D : null
@@ -75759,8 +75746,8 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
 
         // Choose.
         var idx = -1, rule = '';
-        if (mode === 'eighth' && dStar != null) {
-            var r8 = Math.round(dStar / 0.125) * 0.125;
+        if (dStar != null) {
+            var r8 = Math.round(dStar / STEP) * STEP;
             for (var j = 0; j < candidates.length; j++) if (Math.abs(candidates[j].d - r8) < 1e-9 && candidates[j].inWindow) { idx = j; rule = 'rounded'; }
         }
         if (idx < 0) {
@@ -75792,7 +75779,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         // Verdicts.
         var verdicts = [];
         function v(level, text) { verdicts.push({ level: level, text: text }); }
-        var bTxt = _u(chosen.d, 'lengthSmall', 3, 'in', 1) + (chosen.frac && !_metric() ? ' (' + chosen.frac + ')' : '');
+        var bTxt = _boreTxt(chosen.d);
         if (inWin) v('ok', '✓ ' + bTxt + ' plate (β ' + chosen.beta.toFixed(3) + ') reads ' + _fmt(chosen.pct, 1) + ' % of range at the target rate — inside ' + _fmt(lo, 0) + '–' + _fmt(hi, 0) + ' %.');
         else if (dStarFlag === 'high' || (isFinite(chosen.pct) === false) || chosen.pct > hi)
             v('bad', '✗ No plate with β ≤ 0.75 keeps the differential below ' + _fmt(hi, 0) + ' % of range at the target rate — use a larger meter run or a higher-range transmitter.');
@@ -75804,7 +75791,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         if (chosen.beta > 0.6 && inWin) v('warn', '⚠ β above 0.6 needs longer upstream straight lengths (AGA-3 Part 2).');
 
         return {
-            ok: true, errors: [], errorIds: [], mode: mode, rule: rule,
+            ok: true, errors: [], errorIds: [], step: STEP, rule: rule,
             q: q, D: D, Ps: Ps, TfF: TfF, SG: SG, co2: co2, n2: n2, h2s: h2s, urv: urv, lo: lo, hi: hi, des: des, TbF: TbF, Pb: Pb,
             Z: probe.Z, Pf1: Pf1, Tpr: probe.Tpr, Ppr: probe.Ppr,
             hwDes: hwDes, dStar: dStar, betaStar: dStar != null ? dStar / D : null, dStarFlag: dStarFlag,
@@ -75831,9 +75818,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         h += '<div class="card"><div class="card-title">Target Flow &amp; Meter Run</div><div class="fg">';
         h += _field('op_q', 'Target gas rate (MSCFD)', 5000);
         h += _field('op_D', 'Meter run internal diameter (in)', 4.026);
-        h += '<div class="fg-item"><label for="op_mode">Plate list</label><select id="op_mode">';
-        for (var k in MODES) h += '<option value="' + k + '"' + (k === 'standard' ? ' selected' : '') + '>' + MODES[k] + '</option>';
-        h += '</select></div></div></div>';
+        h += '</div></div>';
         h += '<div class="card"><div class="card-title">Operating Conditions</div><div class="fg">';
         h += _field('op_P', 'Static (line) pressure (psig)', 500);
         h += _field('op_T', 'Flowing temperature (°F)', 80);
@@ -75880,17 +75865,16 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
     G.renderOrificeSelect = renderOrificeSelect;
 
     function _readInputs() {
-        var m = _byId('op_mode');
         return {
             q: _num('op_q'), D: _num('op_D'), Ps: _num('op_P'), TfF: _num('op_T'), SG: _num('op_SG'),
             co2: _num('op_CO2'), n2: _num('op_N2'), h2s: _num('op_H2S'),
             urv: _num('op_urv'), lo: _num('op_lo'), hi: _num('op_hi'), des: _num('op_des'),
-            TbF: _num('op_Tb'), Pb: _num('op_Pb'), mode: m ? String(m.value) : 'standard'
+            TbF: _num('op_Tb'), Pb: _num('op_Pb')
         };
     }
 
     function _row(l, v) { return '<div class="rrow"><span class="rl">' + l + '</span><span class="rv">' + v + '</span></div>'; }
-    function _bore(c) { return _u(c.d, 'lengthSmall', 3, 'in', 1) + (c.frac && !_metric() ? ' (' + c.frac + ')' : ''); }
+    function _bore(c) { return _boreTxt(c.d); }
     function _dp(c) { return isFinite(c.hw) ? _u(c.hw, 'pressureSmall60', 1, 'inH2O', 1) + ' — ' + _fmt(c.pct, 1) + ' % of range' : 'above x1 = 0.5 (off scale)'; }
     var VCOL = { ok: 'var(--green)', warn: 'var(--yellow)', bad: 'var(--red)' };
 
@@ -75910,7 +75894,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         h += _row('Pipe Reynolds number', c.Re != null ? _fmt(c.Re, 0) : '—');
         h += '</div>';
         h += '<div class="rbox"><div class="rbox-title">Exact Bore &amp; Neighbours</div>';
-        h += _row('Exact bore at ' + _fmt(r.des, 0) + ' % of range', r.dStar != null ? _u(r.dStar, 'lengthSmall', 4, 'in', 2) + ' (β ' + r.betaStar.toFixed(4) + ')' :
+        h += _row('Exact bore at ' + _fmt(r.des, 0) + ' % of range', r.dStar != null ? _boreTxt(r.dStar, 4) + ' (β ' + r.betaStar.toFixed(4) + ')' :
             (r.dStarFlag === 'high' ? 'above β 0.75' : 'below β 0.10'));
         h += _row('Next plate up (larger bore)', r.up ? _bore(r.up) + ' — ' + (isFinite(r.up.pct) ? _fmt(r.up.pct, 1) + ' % of range' : 'off scale') : 'none within β 0.75');
         h += _row('Next plate down (smaller bore)', r.down ? _bore(r.down) + ' — ' + (isFinite(r.down.pct) ? _fmt(r.down.pct, 1) + ' % of range' : 'off scale') : 'none within β 0.10');
@@ -75918,15 +75902,15 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         h += _row('Flowing pressure Pf1', _u(r.Pf1, 'pressure', 1, 'psia', 0));
         h += '</div>';
         // Plate-change table (values written already converted)
-        var ql = _lab('gasRateSmall', 'MSCFD'), dl = _lab('pressureSmall60', 'inH2O'), bl = _lab('lengthSmall', 'in');
+        var ql = _lab('gasRateSmall', 'MSCFD'), dl = _lab('pressureSmall60', 'inH2O'), bl = _metric() ? 'in (mm)' : 'in';
         h += '<div class="rbox"><div class="rbox-title">Plate-Change Points</div><div style="overflow-x:auto"><table class="dtable"><thead><tr>' +
-            '<th>Plate</th><th data-wts-unit-label="lengthSmall">Bore (' + bl + ')</th><th>β</th>' +
+            '<th>Plate</th><th>Bore, ' + bl + '</th><th>β</th>' +
             '<th data-wts-unit-label="pressureSmall60">DP at target (' + dl + ')</th><th>% of range</th>' +
             '<th data-wts-unit-label="gasRateSmall">Rate at ' + _fmt(r.lo, 0) + ' % (' + ql + ')</th>' +
             '<th data-wts-unit-label="gasRateSmall">Rate at ' + _fmt(r.hi, 0) + ' % (' + ql + ')</th></tr></thead><tbody>';
         var ROLE = { chosen: 'Selected', up: 'Next up', down: 'Next down' };
         r.table.forEach(function (t) {
-            var bd = _metric() ? _fmt(_dv(t.d, 'lengthSmall'), 1) : (t.frac ? t.frac.replace('"', '') : _fmt(t.d, 3));
+            var bd = t.d.toFixed(3) + (_metric() ? ' (' + (t.d * 25.4).toFixed(2) + ')' : '');
             h += '<tr' + (t.role === 'chosen' ? ' style="font-weight:600"' : '') + '><td>' + (ROLE[t.role] || '') + '</td><td>' + bd + '</td><td>' + t.beta.toFixed(3) + '</td><td>' +
                 (isFinite(t.hw) ? _fmt(_dv(t.hw, 'pressureSmall60'), 1) : '&gt; scale') + '</td><td>' + (isFinite(t.pct) ? _fmt(t.pct, 1) : '—') + '</td><td>' +
                 _fmt(_dv(t.qLo, 'gasRateSmall'), 0) + '</td><td>' + _fmt(_dv(t.qHi, 'gasRateSmall'), 0) + '</td></tr>';
@@ -75934,7 +75918,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         h += '</tbody></table></div></div>';
         h += '<div class="chart-wrap"><canvas id="op_chart" width="600" height="320"></canvas></div>';
         h += '<div><b>Notes</b> Rates use the AGA-3 page engine (flange taps, RG Cd, DAK Z with Standing + Wichert-Aziz pseudo-criticals; N2 is recorded but not in the Z correction). ' +
-            'Plate list: ' + (r.mode === 'standard' ? 'a typical test-crew set (1/8" to 3", 1/4" to 6", 1/2" above) — confirm the plates on site.' : 'every 1/8" bore; the exact bore is rounded to the nearest 1/8".') +
+            'Plate list: every 0.125" bore from 0.125" to the largest bore with β ≤ 0.75; the exact bore is rounded to the nearest 0.125" — confirm the plates on site.' +
             ' The 20–80 % window is field practice. Standard volumes are at the entered base conditions.</div>';
         return h;
     }
@@ -75948,7 +75932,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             var c = p[1]; if (!c) return;
             var pts = (c.curve || []).map(function (pt) { qMax = Math.max(qMax, pt.q); return { x: _dv(pt.q, 'gasRateSmall'), y: pt.pct }; });
             pts.sort(function (a, b) { return a.x - b.x; });
-            ds.push({ label: (p[0] === 'chosen' ? 'Selected ' : p[0] === 'up' ? 'Next up ' : 'Next down ') + (_metric() ? _fmt(_dv(c.d, 'lengthSmall'), 1) + ' mm' : (c.frac || _fmt(c.d, 3) + '"')), color: colors[p[0]], data: pts, points: false, width: 2 });
+            ds.push({ label: (p[0] === 'chosen' ? 'Selected ' : p[0] === 'up' ? 'Next up ' : 'Next down ') + _boreTxt(c.d), color: colors[p[0]], data: pts, points: false, width: 2 });
         });
         var xm = _dv(qMax, 'gasRateSmall');
         ds.push({ label: _fmt(r.lo, 0) + ' % limit', color: '#8b949e', data: [{ x: 0, y: r.lo }, { x: xm, y: r.lo }], points: false, dash: [6, 4], width: 1 });
@@ -75979,10 +75963,10 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             return r;
         }
         var c = r.chosen;
-        function brief(x) { return x ? { d: x.d, beta: x.beta, hw: x.hw, pct: x.pct, qLo: x.qLo, qHi: x.qHi } : null; }
+        function brief(x) { return x ? { d: x.d, bore: x.bore, beta: x.beta, hw: x.hw, pct: x.pct, qLo: x.qLo, qHi: x.qHi } : null; }
         G.WTS_state.orifice = {
-            ok: true, inWindow: r.inWindow, mode: r.mode, q: r.q, D: r.D, urv: r.urv, lo: r.lo, hi: r.hi,
-            d: c.d, beta: c.beta, hw: c.hw, pct: c.pct, qLo: c.qLo, qHi: c.qHi, Cd: c.Cd,
+            ok: true, inWindow: r.inWindow, q: r.q, D: r.D, urv: r.urv, lo: r.lo, hi: r.hi,
+            d: c.d, bore: c.bore, beta: c.beta, hw: c.hw, pct: c.pct, qLo: c.qLo, qHi: c.qHi, Cd: c.Cd,
             dStar: r.dStar, Z: r.Z, up: brief(r.up), down: brief(r.down), ts: Date.now()
         };
         if (res) {

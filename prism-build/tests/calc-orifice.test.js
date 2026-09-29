@@ -9,7 +9,8 @@
 //     20–80 % of range, and the rate through that bore at that differential,
 //     recomputed with an independent AGA-3 RG + DAK mass-flow reference (same as
 //     calc-g1), equals the target. Plate-change points are the forward rates at
-//     20 % / 80 % of range.
+//     20 % / 80 % of range. Plates are every 0.125" bore within β 0.10–0.75 and
+//     are always shown in decimal inches (1.875", never 1 7/8").
 //   • Metric parity, registry contract, report/persistence.
 'use strict';
 
@@ -94,6 +95,7 @@ const AGA_CASES = [
 ];
 const toCompute = (c) => ({ D: c.a_pD, d: c.a_oD, hw: c.a_dP, Ps: c.a_Ps, TfF: c.a_Tf, SG: c.a_SG, co2: c.a_CO2, h2s: c.a_H2S, TbF: c.a_Tb, Pb: c.a_Pb, tap: c.a_tap });
 const DEF = { q: 5000, D: 4.026, Ps: 500, TfF: 80, SG: 0.65, co2: 0.5, n2: 1, h2s: 0, urv: 200 };
+const FRACTION = /\b\d+\/\d+"|\d \d+\/\d+/;   // e.g. 7/8" or 1 7/8 — must never appear
 
 module.exports = [
   {
@@ -144,10 +146,11 @@ module.exports = [
       const W = app.win, A = W.WTS_aga3_compute;
       const cases = [
         [DEF, 1.875],
-        [Object.assign({}, DEF, { mode: 'eighth' }), 1.875],
-        [{ q: 40000, D: 12, Ps: 1200, TfF: 100, SG: 0.7, co2: 2, h2s: 1, urv: 400 }, 3.5],
+        [Object.assign({}, DEF, { mode: 'standard' }), 1.875],     // legacy mode value is ignored
+        [{ q: 40000, D: 12, Ps: 1200, TfF: 100, SG: 0.7, co2: 2, h2s: 1, urv: 400 }, 3.625],   // 0.125" steps above 3" too
         [{ q: 800, D: 2.067, Ps: 150, TfF: 60, SG: 0.8, urv: 100, lo: 25, hi: 75, des: 60 }, null],
         [{ q: 15000, D: 6.065, Ps: 1000, TfF: 120, SG: 0.62, urv: 250, TbF: 59, Pb: 14.73, mode: 'eighth' }, null],
+        [{ q: 90000, D: 11.938, Ps: 1400, TfF: 90, SG: 0.66, urv: 400 }, null],
       ];
       cases.forEach(([inp, expD], i) => {
         const r = W.WTS_orifice_compute(inp);
@@ -169,15 +172,27 @@ module.exports = [
         // exact bore reproduces the target at the design DP
         const des = inp.des || 50;
         assert.rel(A(Object.assign({}, g, { d: r.dStar, hw: inp.urv * des / 100 })).Qmscfd, inp.q, 1e-8, 'd* at design DP');
-        if (inp.mode === 'eighth') {
-          assert.near(c.d / 0.125, Math.round(c.d / 0.125), 1e-9, '1/8" multiple');
-          assert.near(c.d, Math.round(r.dStar / 0.125) * 0.125, 1e-9, 'rounded exact bore');
-        }
+        // single 0.125" list over the whole β range: 0.125" multiples, consecutive, first ≥ 0.10·D, last ≤ 0.75·D < last + 0.125"
+        const ds = r.candidates.map((x) => x.d);
+        ds.forEach((d, j) => {
+          assert.near(d / 0.125, Math.round(d / 0.125), 1e-9, 'case ' + i + ' 0.125" multiple ' + d);
+          if (j) assert.near(d - ds[j - 1], 0.125, 1e-9, 'case ' + i + ' 0.125" step at ' + d);
+          assert.strictEqual(r.candidates[j].bore, d.toFixed(3), 'decimal bore text');
+        });
+        assert.ok(ds[0] >= 0.1 * inp.D - 1e-9 && ds[0] - 0.125 < 0.1 * inp.D, 'case ' + i + ' first plate');
+        assert.ok(ds[ds.length - 1] <= 0.75 * inp.D + 1e-9 && ds[ds.length - 1] + 0.125 > 0.75 * inp.D, 'case ' + i + ' last plate');
+        assert.near(c.d, Math.round(r.dStar / 0.125) * 0.125, 1e-9, 'case ' + i + ' exact bore rounded to 0.125"');
+        assert.strictEqual(r.mode, undefined, 'no plate-list mode');
+        r.verdicts.forEach((v) => assert.ok(!FRACTION.test(v.text), 'no fraction in verdict: ' + v.text));
         // neighbours: next up = larger bore, lower DP; next down = smaller bore, higher DP
-        if (r.up) { assert.ok(r.up.d > c.d && r.up.pct < c.pct, 'up'); assert.ok(r.up.beta <= 0.75 + 1e-9, 'up β'); }
-        if (r.down) { assert.ok(r.down.d < c.d && r.down.pct > c.pct, 'down'); assert.ok(r.down.beta >= 0.1 - 1e-9, 'down β'); }
+        if (r.up) { assert.near(r.up.d - c.d, 0.125, 1e-9, 'next up = +0.125"'); assert.ok(r.up.pct < c.pct, 'up'); assert.ok(r.up.beta <= 0.75 + 1e-9, 'up β'); }
+        if (r.down) { assert.near(c.d - r.down.d, 0.125, 1e-9, 'next down = −0.125"'); assert.ok(r.down.pct > c.pct, 'down'); assert.ok(r.down.beta >= 0.1 - 1e-9, 'down β'); }
         assert.ok(r.up || r.down, 'at least one neighbour');
       });
+      const big = W.WTS_orifice_compute({ q: 40000, D: 12, Ps: 1200, TfF: 100, SG: 0.7, co2: 2, h2s: 1, urv: 400 });
+      assert.strictEqual(big.chosen.bore, '3.625', '12" run picks 3.625"');
+      assert.strictEqual(big.candidates[big.candidates.length - 1].bore, '9.000', 'largest plate 9.000" (β 0.75)');
+      assert.strictEqual(big.candidates[0].bore, '1.250', 'smallest plate 1.250" (β ≥ 0.10)');
       // out of range: too much gas for the run → ✗ with the largest β plate; too little → ✗ smallest
       const hiQ = W.WTS_orifice_compute(Object.assign({}, DEF, { q: 60000 }));
       assert.ok(hiQ.ok && !hiQ.inWindow && hiQ.dStarFlag === 'high', 'too high');
@@ -194,7 +209,7 @@ module.exports = [
     },
   },
   {
-    name: 'ORF page: registry entry and sidebar button in Well Testing; defaults select 1 7/8" with ✓, table, chart, next up/down',
+    name: 'ORF page: registry entry and sidebar button in Well Testing; defaults select 1.875" with ✓, decimal plate sizes everywhere, no mode control',
     wp: WP,
     run(app, assert) {
       const W = app.win, e = W.WTS_calcRegistry && W.WTS_calcRegistry.orifice;
@@ -215,11 +230,21 @@ module.exports = [
       assert.near(rv(app, 'op_res', 'Differential at target rate'), S(app).hw, 0.06, 'DP row');
       assert.near(rv(app, 'op_res', 'Beta ratio'), 1.875 / 4.026, 1e-4, 'β row');
       const t = txt(app, 'op_res');
-      assert.includes(t, '✓ 1.875 in (1 7/8") plate');
-      assert.includes(t, 'Next plate up');
-      assert.ok(app.findAll('#op_res table.dtable tbody tr').length >= 3, 'plate-change table rows');
+      assert.includes(t, '✓ 1.875" plate (β 0.466) reads 48.4 % of range');
+      assert.strictEqual(rows(app, 'op_res').find((x) => x.l === 'Orifice bore').v, '1.875"');
+      assert.match(rows(app, 'op_res').find((x) => x.l.indexOf('Next plate up') === 0).v, /^2\.000" — 36\.7 % of range$/);
+      assert.match(rows(app, 'op_res').find((x) => x.l.indexOf('Next plate down') === 0).v, /^1\.750" — 64\.9 % of range$/);
+      assert.match(rows(app, 'op_res').find((x) => x.l.indexOf('Exact bore') === 0).v, /^1\.8610" \(β/);
+      assert.ok(!FRACTION.test(txt(app, 'pgBody')), 'no fractional plate sizes on the page');
+      const trs = app.findAll('#op_res table.dtable tbody tr');
+      assert.strictEqual(trs.length, 7, 'plate-change table rows');
+      const bores = trs.map((tr) => String(tr.querySelectorAll('td')[1].textContent).trim());
+      assert.deepStrictEqual(bores, ['1.500', '1.625', '1.750', '1.875', '2.000', '2.125', '2.250'], 'decimal bores in 0.125" steps');
+      assert.strictEqual(String(trs[3].querySelectorAll('td')[0].textContent).trim(), 'Selected');
       assert.ok(app.el('op_chart'), 'chart canvas');
-      assert.near(S(app).up.d, 2, 1e-9, 'next up 2"'); assert.near(S(app).down.d, 1.75, 1e-9, 'next down 1 3/4"');
+      assert.ok(!app.el('op_mode'), 'plate-list mode control removed');
+      assert.near(S(app).up.d, 2, 1e-9, 'next up 2.000"'); assert.near(S(app).down.d, 1.75, 1e-9, 'next down 1.750"');
+      assert.strictEqual(S(app).bore, '1.875'); assert.strictEqual(S(app).up.bore, '2.000'); assert.strictEqual(S(app).down.bore, '1.750');
       noBadNumbers(assert, app, 'defaults');
       // validation through the DOM
       set(app, { op_q: 0 }); calc(app);
@@ -229,9 +254,9 @@ module.exports = [
       assert.includes(txt(app, 'op_res'), '✗ No plate with β ≤ 0.75');
       assert.strictEqual(app.findAll('#op_root .input-err').length, 0, 'flags cleared');
       noBadNumbers(assert, app, 'out of range');
-      // mode switch (select change event recalculates)
-      set(app, { op_q: 5000, op_mode: 'eighth' }); calc(app);
-      assert.strictEqual(S(app).mode, 'eighth');
+      // a field change event recalculates
+      set(app, { op_q: 5000 });
+      assert.near(S(app).d, 1.875, 1e-9, 'recalculated on change');
       app.hook.nav('home');
       const titles = app.findAll('.dash-card').map((c) => String(c.querySelector('h3').textContent).trim());
       assert.ok(titles.indexOf('Orifice Plate Selection') !== -1, 'dashboard tile');
@@ -258,6 +283,13 @@ module.exports = [
         assert.near(S(app).d, imp.d, 1e-9, 'same plate');
         ['hw', 'pct', 'qLo', 'qHi', 'dStar'].forEach((k) => assert.rel(S(app)[k], imp[k], 1e-6, 'metric ' + k));
         assert.includes(txt(app, 'op_res'), 'mbar', 'DP shown in mbar');
+        const mm = (d) => d.toFixed(3) + '" (' + (d * 25.4).toFixed(2) + ' mm)';
+        assert.strictEqual(rows(app, 'op_res').find((x) => x.l === 'Orifice bore').v, mm(imp.d), 'decimal inches + mm');
+        assert.includes(txt(app, 'op_res'), '✓ ' + mm(imp.d) + ' plate');
+        assert.includes(rows(app, 'op_res').find((x) => x.l.indexOf('Next plate up') === 0).v, mm(imp.up.d));
+        const tr = app.findAll('#op_res table.dtable tbody tr').find((x) => String(x.querySelectorAll('td')[0].textContent).trim() === 'Selected');
+        assert.strictEqual(String(tr.querySelectorAll('td')[1].textContent).trim(), imp.d.toFixed(3) + ' (' + (imp.d * 25.4).toFixed(2) + ')', 'table: in (mm)');
+        assert.ok(!FRACTION.test(txt(app, 'pgBody')), 'no fractions in metric');
         assert.includes(txt(app, 'op_res'), 'm³/d', 'rate shown in m³/d');
       } finally { U.setSystem('imperial'); }
       assert.rel(S(app).hw, imp.hw, 1e-6, 'recalc after flip keeps the physical value');
@@ -270,15 +302,16 @@ module.exports = [
     run(app, assert) {
       open(app);
       set(app, { op_q: 40000, op_D: 12, op_P: 1200, op_T: 100, op_SG: 0.7, op_CO2: 2, op_H2S: 1, op_urv: 400 }); calc(app);
-      assert.near(S(app).d, 3.5, 1e-9);
+      assert.near(S(app).d, 3.625, 1e-9);
       const model = app.win.collectPageReport(app.el('pgBody'), { charts: false });
       const s = JSON.stringify(model);
       assert.ok(model.inputs.length >= 4, 'input sections: ' + model.inputs.map((x) => x.title).join(' | '));
       const rt = model.results.map((x) => x.title);
       // (the DOM stub has no table.rows, so the Plate-Change Points table is checked in the DOM, not the report)
       ['Selected Plate', 'Exact Bore & Neighbours'].forEach((t) => assert.ok(rt.indexOf(t) !== -1, 'results section ' + t + ': ' + rt.join(' | ')));
-      ['Target gas rate', 'Transmitter range', '3 1/2', 'Notes'].forEach((n) => assert.includes(s, n));
-      assert.ok(/✓ 3.5 in/.test(s), 'verdict captured');
+      ['Target gas rate', 'Transmitter range', '3.625\\"', '3.750\\"', '3.500\\"', 'Notes'].forEach((n) => assert.includes(s, n));
+      assert.ok(s.indexOf('✓ 3.625\\" plate') !== -1, 'verdict captured with decimal bore');
+      assert.ok(!FRACTION.test(s), 'no fractions in the report');
       app.flush(1200);
       const rec = JSON.parse(app.storage.getItem('wts_page_orifice') || 'null');
       assert.ok(rec && rec.f && rec.f.op_q === '40000' && rec.f.op_D === '12', 'autosaved: ' + JSON.stringify(rec));
@@ -288,10 +321,23 @@ module.exports = [
       try {
         open(app2);
         assert.strictEqual(app2.el('op_q').value, '40000', 'restored');
-        assert.near(app2.win.WTS_state.orifice.d, 3.5, 1e-9, 'recalculated on restore');
+        assert.near(app2.win.WTS_state.orifice.d, 3.625, 1e-9, 'recalculated on restore');
         app2.flushUntilIdle(10000);
         assert.strictEqual(app2.pendingTimers(), 0, 'no timers after reload');
       } finally { app2.dispose(); }
+      // a record saved by the earlier build (with the old op_mode select) still loads
+      app.storage.setItem('wts_page_orifice', JSON.stringify({ f: { op_q: '15000', op_D: '6.065', op_P: '1000', op_urv: '250', op_mode: 'standard' } }));
+      const app3 = app.reload();
+      try {
+        open(app3);
+        const st = app3.win.WTS_state.orifice;
+        assert.ok(st && st.ok && st.inWindow, 'legacy record computes');
+        assert.strictEqual(app3.el('op_q').value, '15000', 'legacy values restored');
+        assert.ok(!app3.el('op_mode'), 'no mode control');
+        assert.strictEqual(app3.findAll('#op_res .val-error').length, 0, 'no errors');
+        app3.flushUntilIdle(10000);
+        assert.strictEqual(app3.pendingTimers(), 0, 'no timers after legacy reload');
+      } finally { app3.dispose(); }
     },
   },
 ];
