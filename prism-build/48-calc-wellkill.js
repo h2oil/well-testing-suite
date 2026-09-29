@@ -387,6 +387,11 @@
         return _fixed(ppg, 2) + ' ppg · SG ' + _fixed(ppg / PPG_PER_SG, 3) + ' · ' + _fmt(ppg * KGM3_PER_PPG, 0) + ' kg/m³';
     }
 
+    // A single density in ppg, with its kg/m³ companion in Metric mode (imperial text unchanged).
+    function _ppgMet(ppg) {
+        return _fixed(ppg, 2) + ' ppg' + (_metric() ? ' (' + _fmt(ppg * KGM3_PER_PPG, 0) + ' kg/m³)' : '');
+    }
+
     function _errors(resId, ids, bad, errs) {
         var res = _byId(resId), items = '', seen = {};
         for (var k = 0; k < bad.length; k++) {
@@ -486,8 +491,8 @@
 
         // Brines
         var bv = '';
-        if (!r.brineOk) bv = _bad('No clear brine in the guide reaches ' + _fixed(k.used, 2) + ' ppg. Use a weighted fluid.');
-        else bv = _ok('Clear brines that reach ' + _fixed(k.used, 2) + ' ppg: ' + r.brineList.join(', ') + '.');
+        if (!r.brineOk) bv = _bad('No clear brine in the guide reaches ' + _ppgMet(k.used) + '. Use a weighted fluid.');
+        else bv = _ok('Clear brines that reach ' + _ppgMet(k.used) + ': ' + r.brineList.join(', ') + '.');
         h += '<div class="rbox"><div class="rbox-title">Brine Selection Guide</div>' +
             _tbl(['Brine', 'Max ppg', 'Max SG', 'Max kg/m³', 'Reaches kill fluid', 'Crystallisation / notes'], r.brines.map(function (x) {
                 return [x.name, _fixed(x.ppg, 2), _fixed(x.sg, 2), _fmt(x.kgm3, 0), x.reaches ? 'yes' : 'no', x.note];

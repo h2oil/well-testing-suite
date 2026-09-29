@@ -868,6 +868,11 @@ function _uFmt(v, cat, dp, impLabel, dpMet) {
 // Standard (base) conditions of gas volumes: the app-wide setting
 // (22-units.js WTS_baseConditions) or, when it is left on "calculator
 // default", this calculator's own basis (defTbF °F, defPb psia).
+// PRV results (API 520 is field-unit): absolute / gauge pressures and orifice
+// areas in the active system; imperial text unchanged. 1 psi = 6.894757 kPa,
+// 1 in² = 645.16 mm² (exact).
+function _prvP(v, gauge) { return _uMetric() ? fmt(v*6.894757293168,0) + (gauge ? ' kPa(g)' : ' kPa(a)') : fmt(v,1) + (gauge ? ' psig' : ' psia'); }
+function _prvA(in2, dp) { return _uMetric() ? fmt(in2*645.16,0) + ' mm²' : (dp == null ? in2 : fmt(in2,dp)) + ' in²'; }
 function _baseCond(defTbF, defPb) {
     const B = window.WTS_baseConditions;
     if(B && typeof B.resolve === 'function') return B.resolve(defTbF, defPb);
@@ -1291,6 +1296,28 @@ let page = 'clientinfo';
 const navBtns = document.querySelectorAll('.nav-btn');
 navBtns.forEach(b => b.addEventListener('click', () => nav(b.dataset.p)));
 { const pl = $('sbPrivacyLink'); if(pl) pl.addEventListener('click', ev => { ev.preventDefault(); nav('privacy'); }); }
+// Host pages whose results are formatted with _uFmt()/_uMetric(): re-run the
+// shown result when the unit system flips, so a result computed in one
+// system is never left on screen next to inputs converted to the other
+// (the plug-in and Round-5 pages do the same from their own listeners).
+// Only results already on screen (.rrow inside the result box) are re-run.
+const __UNIT_RECALC = {
+    fluid:     [['calcBubblePoint','bp_res'], ['calcShrinkage','sf_res']],
+    solgor:    [['calcSolGOR','sg_res']],
+    oilgas:    [['calcOilGas','og_res']],
+    casing:    [['calcCasing','ct_res']],
+    bottomsup: [['calcBottomsUp','bu_res']],
+    seprate:   [['calcSepRate','sr_res']],
+    turbmeter: [['calcTurbMeter','tm_res']],
+    prv:       [['calcPRVgas','pg_res'], ['calcPRVsteam','ps_res'], ['calcPRVliquid','pl_res']]
+};
+document.addEventListener('wts:unit-system-changed', () => {
+    (__UNIT_RECALC[page] || []).forEach(([fn, resId]) => {
+        const res = $(resId);
+        if(!res || !res.querySelector || !res.querySelector('.rrow') || typeof window[fn] !== 'function') return;
+        try { window[fn](); } catch(e) { console.warn('[units] recalc ' + fn + ' failed', e); }
+    });
+});
 
 function nav(p) {
     // Persist pending edits of the page we are leaving (universal autosave)
@@ -5895,17 +5922,17 @@ window.calcPRVgas = function() {
 
     $('pg_res').innerHTML = `
     <div class="rbox"><div class="rbox-title">Gas / Vapour PRV Sizing Results</div>
-      <div class="rrow"><span class="rl">Relieving Pressure P₁</span><span class="rv">${fmt(P1,1)} psia</span></div>
-      <div class="rrow"><span class="rl">Back Pressure P₂</span><span class="rv">${fmt(P2,1)} psia</span></div>
-      <div class="rrow"><span class="rl">Critical Flow Pressure Pcf</span><span class="rv">${fmt(Pcf,1)} psia</span></div>
+      <div class="rrow"><span class="rl">Relieving Pressure P₁</span><span class="rv">${_prvP(P1)}</span></div>
+      <div class="rrow"><span class="rl">Back Pressure P₂</span><span class="rv">${_prvP(P2)}</span></div>
+      <div class="rrow"><span class="rl">Critical Flow Pressure Pcf</span><span class="rv">${_prvP(Pcf)}</span></div>
       <div class="rrow"><span class="rl">Flow Regime</span><span class="rv" style="color:${isCritical?'var(--green)':'var(--yellow)'}">${flowNote}</span></div>
       <div class="rrow"><span class="rl">Gas Coefficient C</span><span class="rv">${fmt(C,1)}</span></div>
       <div class="rrow"><span class="rl">Kd</span><span class="rv">${Kd}</span></div>
       <div class="rrow"><span class="rl">Kb ${vtype==='balanced'?'(≈ API 520 Fig. 30)':'(1.0 — conventional / pilot)'}</span><span class="rv">${fmt(Kb,3)}</span></div>
       <div class="rrow"><span class="rl">Kc</span><span class="rv">${Kc}</span></div>
       <hr style="border-color:rgba(240,136,62,.15);margin:8px 0">
-      <div class="rrow"><span class="rl">Required Area A</span><span class="rv">${fmt(A_in2,4)} in²</span></div>
-      <div class="rrow"><span class="rl">Selected API 526 Orifice</span><span class="rv" style="color:${warn?'var(--red)':'var(--accent)'};font-size:18px">${orifice.id} (${orifice.area_in2} in²)</span></div>
+      <div class="rrow"><span class="rl">Required Area A</span><span class="rv">${_prvA(A_in2,4)}</span></div>
+      <div class="rrow"><span class="rl">Selected API 526 Orifice</span><span class="rv" style="color:${warn?'var(--red)':'var(--accent)'};font-size:18px">${orifice.id} (${_prvA(orifice.area_in2)})</span></div>
       ${warn?'<div class="val-error">Required area exceeds largest standard T orifice — multiple valves or custom sizing required.</div>':''}
     </div>
     <div class="export-bar"><button class="btn-export" onclick="prvExportPDF('gas')">&#128424; Print Report</button></div>`;
@@ -5947,7 +5974,7 @@ window.calcPRVsteam = function() {
 
     $('ps_res').innerHTML = `
     <div class="rbox"><div class="rbox-title">Steam PRV Sizing Results</div>
-      <div class="rrow"><span class="rl">Relieving Pressure P₁</span><span class="rv">${fmt(P1,1)} psia</span></div>
+      <div class="rrow"><span class="rl">Relieving Pressure P₁</span><span class="rv">${_prvP(P1)}</span></div>
       <div class="rrow"><span class="rl">Steam Condition</span><span class="rv">${stype==='sat'?'Saturated':'Superheated at '+T_F+'°F'}</span></div>
       <div class="rrow"><span class="rl">KSH (superheat factor)</span><span class="rv">${fmt(KSH,4)}</span></div>
       <div class="rrow"><span class="rl">KN (Napier correction)</span><span class="rv">${fmt(KN,4)}${P1<=1500?' (not applicable, P₁ ≤ 1500 psia)':''}</span></div>
@@ -5955,8 +5982,8 @@ window.calcPRVsteam = function() {
       <div class="rrow"><span class="rl">Kb (estimated)</span><span class="rv">${fmt(Kb,3)}</span></div>
       <div class="rrow"><span class="rl">Kc</span><span class="rv">${Kc}</span></div>
       <hr style="border-color:rgba(240,136,62,.15);margin:8px 0">
-      <div class="rrow"><span class="rl">Required Area A</span><span class="rv">${fmt(A_in2,4)} in²</span></div>
-      <div class="rrow"><span class="rl">Selected API 526 Orifice</span><span class="rv" style="color:var(--accent);font-size:18px">${orifice.id} (${orifice.area_in2} in²)</span></div>
+      <div class="rrow"><span class="rl">Required Area A</span><span class="rv">${_prvA(A_in2,4)}</span></div>
+      <div class="rrow"><span class="rl">Selected API 526 Orifice</span><span class="rv" style="color:var(--accent);font-size:18px">${orifice.id} (${_prvA(orifice.area_in2)})</span></div>
     </div>
     <div class="export-bar"><button class="btn-export" onclick="prvExportPDF('steam')">&#128424; Print Report</button></div>`;
 
@@ -6023,18 +6050,18 @@ window.calcPRVliquid = function() {
 
     $('pl_res').innerHTML = `
     <div class="rbox"><div class="rbox-title">Liquid PRV Sizing Results</div>
-      <div class="rrow"><span class="rl">Relieving Pressure (P₁)</span><span class="rv">${fmt(P1_g,1)} psig</span></div>
-      <div class="rrow"><span class="rl">Back Pressure (P₂)</span><span class="rv">${fmt(P2_g,1)} psig</span></div>
+      <div class="rrow"><span class="rl">Relieving Pressure (P₁)</span><span class="rv">${_prvP(P1_g,true)}</span></div>
+      <div class="rrow"><span class="rl">Back Pressure (P₂)</span><span class="rv">${_prvP(P2_g,true)}</span></div>
       <div class="rrow"><span class="rl">Equation Used</span><span class="rv">${cert==='yes'?`Eq. 28 (certified, ${fmt(op*100,0)}% OP)`:`Eq. 38 (non-certified, Kp at ${fmt(op*100,0)}% OP)`}</span></div>
-      ${cert==='yes'?'':`<div class="rrow"><span class="rl">Sizing Basis (1.25·Ps − Pb)</span><span class="rv">${fmt(1.25*Ps,1)} − ${fmt(P2_g,1)} = ${fmt(dpLiq,1)} psi</span></div>
+      ${cert==='yes'?'':`<div class="rrow"><span class="rl">Sizing Basis (1.25·Ps − Pb)</span><span class="rv">${_uMetric()?fmt(1.25*Ps*6.894757293168,0)+' − '+fmt(P2_g*6.894757293168,0)+' = '+fmt(dpLiq*6.894757293168,0)+' kPa':fmt(1.25*Ps,1)+' − '+fmt(P2_g,1)+' = '+fmt(dpLiq,1)+' psi'}</span></div>
       <div class="rrow"><span class="rl">Kp (≈ API 520 Fig. 37)</span><span class="rv">${fmt(Kp,3)}</span></div>`}
       <div class="rrow"><span class="rl">Kd</span><span class="rv">${Kd}</span></div>
       <div class="rrow"><span class="rl">Kw</span><span class="rv">${fmt(Kw,3)}${vtype==='balanced'?' (balanced bellows)':' (1.0)'}</span></div>
       <div class="rrow"><span class="rl">Kc</span><span class="rv">${Kc}</span></div>
       <div class="rrow"><span class="rl">Kv (viscosity, iterated)</span><span class="rv">${fmt(Kv,4)}</span></div>
       <hr style="border-color:rgba(240,136,62,.15);margin:8px 0">
-      <div class="rrow"><span class="rl">Required Area A</span><span class="rv">${fmt(A_prelim,4)} in²</span></div>
-      <div class="rrow"><span class="rl">Selected API 526 Orifice</span><span class="rv" style="color:var(--accent);font-size:18px">${orifice.id} (${orifice.area_in2} in²)</span></div>
+      <div class="rrow"><span class="rl">Required Area A</span><span class="rv">${_prvA(A_prelim,4)}</span></div>
+      <div class="rrow"><span class="rl">Selected API 526 Orifice</span><span class="rv" style="color:var(--accent);font-size:18px">${orifice.id} (${_prvA(orifice.area_in2)})</span></div>
     </div>
     <div class="export-bar"><button class="btn-export" onclick="prvExportPDF('liquid')">&#128424; Print Report</button></div>`;
 
@@ -8636,13 +8663,13 @@ window.calcTurbMeter=function(){
     const reOK=Re_min>=10000;
     const cavOK=cavMargin>=3;
     $('tm_res').innerHTML=`<div class="rbox" style="margin-top:12px"><div class="rbox-title">Selected Meter: ${rec.bore}</div>
-        <div class="rrow"><span class="rl">Meter Range</span><span class="rv">${fmt(rec.qmin,0)} – ${fmt(rec.qmax,0)} BPD</span></div>
+        <div class="rrow"><span class="rl">Meter Range</span><span class="rv">${_uMetric()?fmt(window.WTS_units.format(rec.qmin,'liquidRate').value,0)+' – '+_uFmt(rec.qmax,'liquidRate',0):fmt(rec.qmin,0)+' – '+fmt(rec.qmax,0)+' BPD'}</span></div>
         <div class="rrow"><span class="rl">Velocity @ Q<sub>min</sub></span><span class="rv">${fmt(Vmin,3)} m/s</span></div>
         <div class="rrow"><span class="rl">Velocity @ Q<sub>max</sub></span><span class="rv">${fmt(Vmax,2)} m/s</span></div>
         <div class="rrow"><span class="rl">Re @ Q<sub>min</sub></span><span class="rv" style="color:${reOK?'var(--green)':'var(--red)'}">${fmt(Re_min,0)} ${reOK?'OK':'LOW'}</span></div>
         <div class="rrow"><span class="rl">Density @ ${T}&deg;C</span><span class="rv">${fmt(rho,1)} kg/m&sup3;</span></div>
         <div class="rrow"><span class="rl">Vapour Pressure (${pvBasis})</span><span class="rv">${_uFmt(Pvap,'pressure',2,'psia')}</span></div>
-        <div class="rrow"><span class="rl">Cavitation Margin</span><span class="rv" style="color:${cavOK?'var(--green)':'var(--red)'}">${fmt(cavMargin,1)} psi ${cavOK?'OK':'LOW — Risk!'}</span></div>
+        <div class="rrow"><span class="rl">Cavitation Margin</span><span class="rv" style="color:${cavOK?'var(--green)':'var(--red)'}">${_uFmt(cavMargin,'pressure',1,'psi')} ${cavOK?'OK':'LOW — Risk!'}</span></div>
     </div>
     ${tmNotes.length?`<div class="info-bar" style="margin-top:12px"><b>Notes:</b> ${tmNotes.join(' ')}</div>`:''}`;
 };
@@ -9236,7 +9263,7 @@ const GA_EVENTS = [
     { name:'wts_esd',             trigger:'Live simulation ESD tripped or reset by the user',
       params:'action (trip | reset)' },
     { name:'wts_alarm_ack',       trigger:'Live simulation alarms acknowledged',
-      params:'(none \u2014 the count is dropped by the privacy filter)' },
+      params:'(none)' },
     { name:'wts_fault',           trigger:'Live simulation scenario fault toggled',
       params:'id, on' },
 ];
@@ -48406,12 +48433,43 @@ _registerPanel(6, {
 
     // Update a label text to reflect the active unit. Two modes:
     //   - If text contains a parenthesised unit ("Pressure (psig)")
-    //     replace the inside of the FIRST () with the new unit.
+    //     replace that () group with the new unit: the group that holds
+    //     one of this category's unit labels, else the first group that
+    //     holds any known unit label, else the FIRST group.
     //   - Otherwise append " (<unit>)".
+    // Groups may nest one level, so the metric gauge label "(kPa(g))" is
+    // one group: flipping back to imperial gives "(psig)", not "(kPa(psig))",
+    // and "Static (line) pressure (psig)" keeps "(line)".
     //
     // For dimensionless/empty-unit categories, we do NOTHING (no
     // suffix, no rewrite) so the text stays as the author wrote it.
-    var _UNIT_PAREN_RE = /\(([^()]*)\)/;
+    var _UNIT_PAREN_RE = /\(((?:[^()]|\([^()]*\))*)\)/g;
+    var _allUnitTexts = null;
+    function _unitTexts(cat, into) {
+        var out = into || {};
+        if (!cat) return out;
+        ['imperial', 'metric'].forEach(function (s) {
+            var c = cat[s];
+            if (!c) return;
+            if (c.label) out[String(c.label).trim().toLowerCase()] = true;
+            if (c.unit) out[String(c.unit).trim().toLowerCase()] = true;
+        });
+        return out;
+    }
+    function _unitParenGroup(text, category) {
+        var groups = [], m;
+        _UNIT_PAREN_RE.lastIndex = 0;
+        while ((m = _UNIT_PAREN_RE.exec(text))) groups.push({ at: m.index, len: m[0].length, txt: m[1].trim().toLowerCase() });
+        if (!groups.length) return null;
+        var own = _unitTexts(CATEGORIES[category]), i;
+        for (i = 0; i < groups.length; i++) if (own[groups[i].txt]) return groups[i];
+        if (!_allUnitTexts) {
+            _allUnitTexts = {};
+            for (var k in CATEGORIES) if (Object.prototype.hasOwnProperty.call(CATEGORIES, k)) _unitTexts(CATEGORIES[k], _allUnitTexts);
+        }
+        for (i = 0; i < groups.length; i++) if (_allUnitTexts[groups[i].txt]) return groups[i];
+        return groups[0];
+    }
     function _updateLabelText(labelEl, category) {
         if (!labelEl) return;
         var lbl = _label(category);
@@ -48419,9 +48477,9 @@ _registerPanel(6, {
         var current = labelEl.textContent || labelEl.innerText || '';
         // Skip if label already shows the active unit.
         if (current.indexOf('(' + lbl + ')') !== -1) return;
-        var next;
-        if (_UNIT_PAREN_RE.test(current)) {
-            next = current.replace(_UNIT_PAREN_RE, '(' + lbl + ')');
+        var next, g = _unitParenGroup(current, category);
+        if (g) {
+            next = current.slice(0, g.at) + '(' + lbl + ')' + current.slice(g.at + g.len);
         } else {
             // Append with a single leading space.
             next = current.replace(/\s+$/, '') + ' (' + lbl + ')';
@@ -63670,7 +63728,7 @@ function createController(vizEl, mopts) {
         var st = state();
         if (!ids || !ids.length) return;
         _alarmMap = alarmReduce(_alarmMap, (st && st.alarms) || [], st ? st.t : 0, ids);
-        track('wts_alarm_ack', { count: ids.length });
+        track('wts_alarm_ack', {});   // no payload: how many alarms were acknowledged is simulation data
         if (E.alarm) E.alarm.__sig = '';
         updatePill(st);
         if (drawerOpen) renderDrawer(st, true);
@@ -78372,6 +78430,11 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         return _fixed(ppg, 2) + ' ppg · SG ' + _fixed(ppg / PPG_PER_SG, 3) + ' · ' + _fmt(ppg * KGM3_PER_PPG, 0) + ' kg/m³';
     }
 
+    // A single density in ppg, with its kg/m³ companion in Metric mode (imperial text unchanged).
+    function _ppgMet(ppg) {
+        return _fixed(ppg, 2) + ' ppg' + (_metric() ? ' (' + _fmt(ppg * KGM3_PER_PPG, 0) + ' kg/m³)' : '');
+    }
+
     function _errors(resId, ids, bad, errs) {
         var res = _byId(resId), items = '', seen = {};
         for (var k = 0; k < bad.length; k++) {
@@ -78471,8 +78534,8 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
 
         // Brines
         var bv = '';
-        if (!r.brineOk) bv = _bad('No clear brine in the guide reaches ' + _fixed(k.used, 2) + ' ppg. Use a weighted fluid.');
-        else bv = _ok('Clear brines that reach ' + _fixed(k.used, 2) + ' ppg: ' + r.brineList.join(', ') + '.');
+        if (!r.brineOk) bv = _bad('No clear brine in the guide reaches ' + _ppgMet(k.used) + '. Use a weighted fluid.');
+        else bv = _ok('Clear brines that reach ' + _ppgMet(k.used) + ': ' + r.brineList.join(', ') + '.');
         h += '<div class="rbox"><div class="rbox-title">Brine Selection Guide</div>' +
             _tbl(['Brine', 'Max ppg', 'Max SG', 'Max kg/m³', 'Reaches kill fluid', 'Crystallisation / notes'], r.brines.map(function (x) {
                 return [x.name, _fixed(x.ppg, 2), _fixed(x.sg, 2), _fmt(x.kgm3, 0), x.reaches ? 'yes' : 'no', x.note];
