@@ -564,7 +564,14 @@
                 pl_pb:  'pressureG',
                 pl_q:   'liquidRateSmall', // gpm
                 pl_sg:  'sg',
-                pl_mu:  'viscosity'
+                pl_mu:  'viscosity',
+                // Inlet Line Check tab (v3.0: was untagged, so Metric typed kPa as psi)
+                pi_ps:  'pressureG',
+                pi_id:  'lengthSmall',
+                pi_len: 'length',
+                pi_w:   'massRate',
+                pi_rho: 'density'
+                // pi_f (Darcy f), pi_el / pi_gv (counts) are unit-free.
             },
             outputs: {}
         },
@@ -937,7 +944,9 @@
                 wts_esdlo_pflow:  'pressureG',
                 wts_esdlo_qleak:  'gasRate',
                 wts_esdlo_whsip:  'pressureG',
-                wts_esdlo_margin: 'pressure'     // a pressure difference (psi)
+                wts_esdlo_margin: 'pressure',    // a pressure difference (psi)
+                wts_esdlo_temp:   'temperature',
+                wts_esdlo_psl:    'pressureG'
                 // wts_esdlo_tresp is seconds — untagged.
             },
             outputs: {}
@@ -975,8 +984,9 @@
                 wts_pl_qg:   'gasRate',
                 wts_pl_qo:   'liquidRate',
                 wts_pl_qw:   'liquidRate',
-                wts_pl_sg:   'sg'
-                // wts_pl_c (Salama "c", field-unit empirical constant) — untagged.
+                wts_pl_sg:   'sg',
+                wts_pl_osg:  'sg'
+                // wts_pl_c (legacy-fit "c"), wts_pl_dp (µm), wts_pl_rd (R/D) — unit-free / SI in both systems.
                 // wts_pl_seg<i>_* segment fields are added below.
             },
             outputs: {}

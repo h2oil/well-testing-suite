@@ -2,33 +2,28 @@
 // WTS — Layer 24 — ESD Lo-Pilot (Leak Detection) Analysis
 //
 // PURPOSE
-//   Sizes the LOW-pressure pilot setpoint that fires the Emergency Shut-
-//   Down (ESD) valve when a gas leak develops downstream of the lo-pilot
-//   sensing tap. After well shut-in, the section trapped between two
-//   isolations is at the section flowing pressure P_flow. If a leak of
-//   size Q_leak (MMscfd) appears for the duration of one ESD response
-//   cycle (t_resp seconds), the section pressure must drop low enough
-//   for the lo-pilot setting (PSL) to actuate. The PSL must:
-//     • be ABOVE the WHSIP (otherwise the well itself repressures the
-//       section and PSL would never trigger), and
-//     • be BELOW P_flow by enough margin that the target leak rate
-//       reaches it within the response window.
+//   Checks the LOW-pressure pilot (PSL) that fires the Emergency Shut-Down
+//   (ESD) valve when a gas leak depressures the section the pilot senses.
+//   The PSL set point must sit a false-trip margin below the flowing
+//   pressure P_flow (so normal swings do not trip it) and must be crossed by
+//   the target leak within the required detection time.
 //
-// ENGINEERING MODEL  (isothermal, ideal-gas, single trapped section)
-//   ΔV_leak  = Q_leak·1e6 / 86400 · t_resp                 [scf released]
-//   ΔP       = ΔV_leak · 14.7 / V_section                  [psi drop]
-//   P_after  = P_flow − ΔP                                  [psia]
-//   PSL      = P_after − safety_margin                      [psig target]
-//
-//   Reachability check:
-//     if  P_after < WHSIP  → unreachable  (well repressures section)
+// ENGINEERING MODEL  (isothermal ideal gas, single section, v3.0)
+//   dP/dt    = (Q_leak·1e6/86400)·Pb/V · T/Tb             [psi/s]
+//   ΔP       = dP/dt · t_req                               [psi in t_req]
+//   P_after  = P_flow − ΔP                                  [psig]
+//   PSL_rec  = P_flow − margin                              [psig]
+//   t_trip   = (P_flow − PSL)/(dP/dt)                       [s]
+//   PASS  ⇔  PSL ≤ P_flow − margin  ∧  PSL > 0 psig  ∧  t_trip ≤ t_req
+//   T = section gas temperature (input, default 60 °F); Pb/Tb = the scf
+//   basis of Q_leak. WHSIP is shown for reference only (v1.0-v1.8 failed the
+//   case when P_after < WHSIP — true for every flowing well).
 //
 //   APPROXIMATIONS:
-//     • Ideal-gas at 14.7 psia / 60 °F surface conditions; no Z; section
-//       gas taken at 60 °F (ΔP scales by Pb/Tb of the chosen scf basis).
-//       Adequate for sizing PSL margins (engineering tolerance ~5%).
-//     • Constant leak rate over response window (no choking, no decay).
-//     • Adiabatic effects neglected — small ΔP, short t_resp.
+//     • Ideal gas (no Z): the leak's moles are a fixed standard volume.
+//     • Constant leak rate; well inflow and downstream outflow held at their
+//       pre-leak rates (both change to slow a real drawdown).
+//     • Isothermal — small ΔP over a short window.
 //
 // PUBLIC API (window.*)
 //   window.renderESDLoPilot(body)            paints the calculator into body
@@ -149,10 +144,14 @@
         var V          = +inputs.sectionVolume_ft3;
         var Pflow      = +inputs.sectionFlowingPressure_psig;
         var Qleak_mmscfd = +inputs.detectableLeakRate_MMscfd;
-        var WHSIP      = +inputs.whsip_psig;
+        var WHSIP      = (inputs.whsip_psig == null || inputs.whsip_psig === '') ? NaN : +inputs.whsip_psig;
         var tresp      = +inputs.esdResponseTime_s;
-        var margin     = (inputs.safetyMargin_psig != null)
+        var margin     = (inputs.safetyMargin_psig != null && inputs.safetyMargin_psig !== '')
                        ? +inputs.safetyMargin_psig : 5;
+        var T_F        = (inputs.sectionTemp_F != null && inputs.sectionTemp_F !== '')
+                       ? +inputs.sectionTemp_F : 60;
+        var pslIn      = (inputs.pslSetpoint_psig != null && inputs.pslSetpoint_psig !== '' && isFinite(+inputs.pslSetpoint_psig))
+                       ? +inputs.pslSetpoint_psig : null;
 
         // Input validation — report problems instead of silently computing
         // with substitutes (a blank volume used to be replaced by 1 ft³).
@@ -160,78 +159,92 @@
         if (!_isNum(V) || V <= 0) problems.push('Section volume must be > 0 ' + _ulab('volumeFt3', 'ft³') + '.');
         if (!_isNum(Pflow) || Pflow <= 0) problems.push('Section flowing pressure must be > 0 ' + _ulab('pressureG', 'psig') + '.');
         if (!_isNum(Qleak_mmscfd) || Qleak_mmscfd <= 0) problems.push('Detectable leak rate must be > 0 ' + _ulab('gasRate', 'MMscfd') + '.');
-        if (!_isNum(tresp) || tresp <= 0) problems.push('ESD response time must be > 0 s.');
-        if (!_isNum(WHSIP)) problems.push('WHSIP is required (' + _ulab('pressureG', 'psig') + ').');
+        if (!_isNum(tresp) || tresp <= 0) problems.push('Required detection time must be > 0 s.');
+        if (!(T_F > -459.67 && T_F <= 1000)) problems.push('Section temperature must be above absolute zero and no more than ' + _u(1000, 'temperature', 0, '°F') + '.');
+        if (!_isNum(margin) || margin < 0) problems.push('False-trip margin must be ≥ 0.');
 
         // Defensive defaults (keep the numeric outputs finite)
         if (!_isNum(V) || V <= 0)               V = 1;
         if (!_isNum(Pflow))                      Pflow = 0;
         if (!_isNum(Qleak_mmscfd) || Qleak_mmscfd < 0) Qleak_mmscfd = 0;
-        if (!_isNum(WHSIP))                      WHSIP = 0;
         if (!_isNum(tresp) || tresp < 0)         tresp = 0;
         if (!_isNum(margin) || margin < 0)       margin = 0;
+        if (!(T_F > -459.67 && T_F <= 1000))     T_F = 60;
 
-        // Gas released during ESD response window  (scf)
+        // Gas released during the required detection window  (scf)
         var gasReleased_scf = (Qleak_mmscfd * 1e6 / 86400) * tresp;
 
-        // Pressure drop  (psi) — isothermal ideal-gas; the scf is referred to the
-        // standard pressure (14.7 psia, or the standard-conditions setting).
-        // Ideal gas (pV = nRT): n = Pb·V_std/(R·Tb), ΔP = n·R·T/V = V_std·Pb/V · T/Tb.
-        // The section gas is taken at 60 °F (the page has no temperature input,
-        // and 60 °F is the scf temperature of its default basis), so T/Tb = 1 on
-        // the default basis and the leak moles follow the chosen basis exactly:
-        // a 0 °C (normal) basis holds 519.67/491.67 = 1.057× the moles per unit
-        // volume of a 60 °F one (review fix — Tb was ignored, ΔP 5.4 % low).
+        // Isothermal ideal-gas mole balance on the section (pV = nRT):
+        //   n_leak = Pb·V_std/(R·Tb)   →   ΔP = n_leak·R·T/V = V_std·Pb/V · T/Tb,
+        // with T the section gas temperature (input, default 60 °F) and Pb/Tb the
+        // standard conditions of the leak rate (14.7 psia / 60 °F, or the
+        // standard-conditions setting). On the default basis at 60 °F, T/Tb = 1.
+        // The well inflow and the downstream outflow are taken to stay at their
+        // pre-leak values, so the section loses gas at the leak rate
+        // (dP/dt constant — valid while ΔP is small relative to P_flow).
         var bc = _basis();
-        var dP_psi = (gasReleased_scf * bc.Pb_psia) / V * (519.67 / bc.Tb_R);
+        var T_R = T_F + 459.67;
+        var rate_psi_s = (Qleak_mmscfd * 1e6 / 86400) * bc.Pb_psia / V * (T_R / bc.Tb_R);
+        var dP_psi = rate_psi_s * tresp;
 
-        // After-drop section pressure  (psig)
+        // Section pressure at the end of the required detection time  (psig)
         var Pafter_psig = Pflow - dP_psi;
 
-        // PSL target  (psig)
-        var psl_target_psig = Pafter_psig - margin;
+        // Trip criterion (v3.0). A PSL detects the leak when the section pressure
+        // falls THROUGH its set point, so the set point must lie in the window
+        //   P_after ≤ PSL ≤ P_flow − false-trip margin:
+        //   • a margin below P_flow, so normal pressure swings do not trip it
+        //     (API RP 14C sets PSLs a margin below the lowest operating pressure);
+        //   • at or above P_after, so the leak takes the pressure through it
+        //     within the required time: t_trip = (P_flow − PSL)/(dP/dt) ≤ t_req;
+        //   • above 0 psig — a leak to atmosphere cannot take the section lower.
+        // Recommended PSL = P_flow − margin (the highest non-nuisance setting,
+        // fastest trip). v1.0-v1.8 recommended P_after − margin — a setting the
+        // leak does NOT reach within the window — and failed the case when
+        // P_after < WHSIP, which holds for every flowing well (P_flow < WHSIP),
+        // so the check essentially never passed. WHSIP is now reference only.
+        var psl_rec = Pflow - margin;
+        var psl = (pslIn != null) ? pslIn : psl_rec;
+        var t_trip_s = rate_psi_s > 0 ? Math.max(Pflow - psl, 0) / rate_psi_s : Infinity;
+        var nuisanceOk = psl <= psl_rec + 1e-9;
+        var aboveAtm = psl > 0;
+        var inTime = t_trip_s <= tresp + 1e-9;
+        var pass = nuisanceOk && aboveAtm && inTime && problems.length === 0;
+        var lowSensitivity = dP_psi < 2.0;
 
-        // Reachability — well repressures section once it falls below WHSIP.
-        var reachable = Pafter_psig >= WHSIP;
-
-        // Severity flag for UI: yellow if drawdown is so small relative to
-        // operating noise (<2 psi) that PSL would risk false trips, even
-        // though formally reachable.
-        var lowSensitivity = reachable && (dP_psi < 2.0);
-
-        // Rationale
         var rationale;
-        if (!reachable) {
-            rationale =
-                'Calculated drawdown pressure (' + _u(Pafter_psig, 'pressureG', 1, 'psig') + ') is BELOW WHSIP (' +
-                _u(WHSIP, 'pressureG', 0, 'psig') + '). The well will repressurise the section before the lo-pilot ' +
-                'can detect the leak — PSL will never reach setpoint at this leak rate. Either choose a ' +
-                'lo-pilot location with a smaller trapped volume, accept a larger detectable leak rate, ' +
-                'or shorten the ESD response time.';
-        } else if (lowSensitivity) {
-            rationale =
-                'PSL is reachable but the predicted drawdown is only ' + _u(dP_psi, 'pressure', 2, 'psi') +
-                ' over ' + _fmt(tresp, 1) + ' s — comparable to normal operating pressure ' +
-                'fluctuation. PSL set this close to P_flow risks frequent false trips. Consider ' +
-                'increasing the detectable leak rate, lengthening the response window, or using ' +
-                'rate-of-change detection in addition to absolute PSL.';
+        if (!nuisanceOk) {
+            rationale = 'The PSL set point (' + _u(psl, 'pressureG', 1, 'psig') + ') is inside the ' + _u(margin, 'pressure', 1, 'psi') +
+                ' false-trip margin below the flowing pressure (' + _u(Pflow, 'pressureG', 0, 'psig') + '): normal pressure swings would trip the ESD. ' +
+                'Set it at or below ' + _u(psl_rec, 'pressureG', 1, 'psig') + '.';
+        } else if (!aboveAtm) {
+            rationale = 'A PSL at or below 0 ' + _ulab('pressureG', 'psig') + ' can never trip: a leak to atmosphere cannot take the section below atmospheric pressure.';
+        } else if (!inTime) {
+            rationale = 'A ' + _u(Qleak_mmscfd, 'gasRate', 2, 'MMscfd', 1) + ' leak depressures the ' + _u(V, 'volumeFt3', 2, 'ft³', 3) +
+                ' section by only ' + _u(dP_psi, 'pressure', 2, 'psi') + ' in ' + _fmt(tresp, 1) +
+                ' s; it takes ' + _fmt(t_trip_s, 1) + ' s to fall to the PSL. Detect this leak with a smaller trapped volume (a PSL closer to the leak), ' +
+                'a smaller false-trip margin (if the operating pressure is steady), a larger detectable leak rate, or rate-of-change detection.';
         } else {
-            rationale =
-                'A ' + _u(Qleak_mmscfd, 'gasRate', 0, 'MMscfd', 1) + ' leak releases ' +
-                _u(gasReleased_scf, 'gasVolumeStd', 0, 'scf', 1) + ' over the ' + _fmt(tresp, 1) +
-                ' s response window, producing a ' + _u(dP_psi, 'pressure', 1, 'psi') +
-                ' drop in the ' + _u(V, 'volumeFt3', 2, 'ft³', 3) + ' section. Setting PSL at ' +
-                _u(psl_target_psig, 'pressureG', 0, 'psig') + ' (drawdown pressure ' +
-                _u(Pafter_psig, 'pressureG', 0, 'psig') + ' less ' + _u(margin, 'pressure', 0, 'psig') +
-                ' safety margin) gives a deterministic ESD trip on this leak signature.';
+            rationale = 'A ' + _u(Qleak_mmscfd, 'gasRate', 2, 'MMscfd', 1) + ' leak releases ' + _u(gasReleased_scf, 'gasVolumeStd', 0, 'scf', 1) +
+                ' in ' + _fmt(tresp, 1) + ' s and depressures the ' + _u(V, 'volumeFt3', 2, 'ft³', 3) + ' section by ' + _u(dP_psi, 'pressure', 1, 'psi') +
+                ' (to ' + _u(Pafter_psig, 'pressureG', 1, 'psig') + '). A PSL at ' + _u(psl, 'pressureG', 1, 'psig') + ' trips after ' + _fmt(t_trip_s, 2) +
+                ' s, within the required ' + _fmt(tresp, 1) + ' s, and sits ' + _u(Pflow - psl, 'pressure', 1, 'psi') + ' below the flowing pressure.';
         }
 
         var result = {
             gasReleasedDuringResponse_scf: gasReleased_scf,
             pressureDrop_psi: dP_psi,
-            psl_target_psig: psl_target_psig,
+            depressurisationRate_psi_s: rate_psi_s,
+            psl_target_psig: psl_rec,
+            psl_used_psig: psl,
+            psl_from_input: pslIn != null,
+            timeToTrip_s: t_trip_s,
             leakDrawdownPressure_psig: Pafter_psig,
-            reachable: reachable,
+            sectionTemp_F: T_F,
+            whsip_psig: _isNum(WHSIP) ? WHSIP : null,
+            nuisanceOk: nuisanceOk, inTime: inTime, aboveAtm: aboveAtm,
+            reachable: pass,
+            pass: pass,
             lowSensitivity: lowSensitivity,
             rationale: rationale,
             basis: bc,
@@ -377,8 +390,8 @@
               '<div>' +
                 '<div class="card">' +
                   '<div class="card-title">Inputs — Trapped Section &amp; Leak Target</div>' +
-                  '<div class="info-bar">After ESD, the section between two isolations sits at P_flow. A downstream leak depressures it. ' +
-                    'PSL must be reachable within the response window without dropping below WHSIP.</div>' +
+                  '<div class="info-bar">A leak depressures the section the lo-pilot senses. The PSL set point must sit a false-trip margin ' +
+                    'below the flowing pressure and be reached by the leak within the required detection time.</div>' +
 
                   '<div class="fg-grid" style="grid-template-columns:1fr;">' +
                     '<div class="fg-item">' +
@@ -406,16 +419,24 @@
                       '<input type="number" id="wts_esdlo_qleak" step="0.5" value="25">' +
                     '</div>' +
                     '<div class="fg-item">' +
-                      '<label>WHSIP (psig)</label>' +
+                      '<label>Section Gas Temperature (°F)</label>' +
+                      '<input type="number" id="wts_esdlo_temp" step="1" value="60">' +
+                    '</div>' +
+                    '<div class="fg-item">' +
+                      '<label>WHSIP (psig, reference)</label>' +
                       '<input type="number" id="wts_esdlo_whsip" step="1" value="' + d.whsip + '">' +
                     '</div>' +
                     '<div class="fg-item">' +
-                      '<label>ESD Response Time (sec)</label>' +
+                      '<label>Required Detection Time (sec)</label>' +
                       '<input type="number" id="wts_esdlo_tresp" step="0.1" value="5">' +
                     '</div>' +
                     '<div class="fg-item">' +
-                      '<label>Safety Margin (psig)</label>' +
+                      '<label>False-Trip Margin below P_flow (psi)</label>' +
                       '<input type="number" id="wts_esdlo_margin" step="1" value="5">' +
+                    '</div>' +
+                    '<div class="fg-item">' +
+                      '<label>PSL Set Point to Check (psig, blank = recommended)</label>' +
+                      '<input type="number" id="wts_esdlo_psl" step="1" value="" placeholder="blank = P_flow − margin">' +
                     '</div>' +
                   '</div>' +
 
@@ -481,6 +502,10 @@
             if (ql) ql.value = 25;
             if (tr) tr.value = 5;
             if (mg) mg.value = 5;
+            var tt = document.getElementById('wts_esdlo_temp');
+            var ps = document.getElementById('wts_esdlo_psl');
+            if (tt) tt.value = 60;
+            if (ps) ps.value = '';
             _applyLocationDefaults();
             // Hide result card on reset
             var rc = document.getElementById('wts_esdlo_resultcard');
@@ -507,7 +532,9 @@
             detectableLeakRate_MMscfd:   _num('wts_esdlo_qleak',  NaN),
             whsip_psig:                  _num('wts_esdlo_whsip',  NaN),
             esdResponseTime_s:           _num('wts_esdlo_tresp',  NaN),
-            safetyMargin_psig:           _num('wts_esdlo_margin', 5)
+            safetyMargin_psig:           _num('wts_esdlo_margin', 5),
+            sectionTemp_F:               _num('wts_esdlo_temp',   60),
+            pslSetpoint_psig:            _num('wts_esdlo_psl',    '')
         };
 
         var r = G.WTS_esdLoPilot_compute(inputs);
@@ -523,24 +550,20 @@
         }
 
         // ── Results table ──
+        var td = function (v, dim) {
+            return '<td style="text-align:right;font-family:Courier New,monospace;' + (dim ? 'color:#8b949e;' : '') + '">' + v + '</td>';
+        };
         var tbl = '' +
             '<table class="dtable">' +
               '<tbody>' +
-                '<tr><td>Gas released during response window</td>' +
-                    '<td style="text-align:right;font-family:Courier New,monospace;">' +
-                    _u(r.gasReleasedDuringResponse_scf, 'gasVolumeStd', 1, 'scf', 2) + '</td></tr>' +
-                '<tr><td>Pressure drop during response window</td>' +
-                    '<td style="text-align:right;font-family:Courier New,monospace;">' +
-                    _u(r.pressureDrop_psi, 'pressure', 2, 'psi') + '</td></tr>' +
-                '<tr><td>Leak drawdown pressure</td>' +
-                    '<td style="text-align:right;font-family:Courier New,monospace;">' +
-                    _u(r.leakDrawdownPressure_psig, 'pressureG', 1, 'psig') + '</td></tr>' +
-                '<tr><td>WHSIP (reference)</td>' +
-                    '<td style="text-align:right;font-family:Courier New,monospace;color:#8b949e;">' +
-                    _u(inputs.whsip_psig, 'pressureG', 0, 'psig') + '</td></tr>' +
-                '<tr><td>Safety margin</td>' +
-                    '<td style="text-align:right;font-family:Courier New,monospace;color:#8b949e;">' +
-                    _u(inputs.safetyMargin_psig, 'pressure', 0, 'psig') + '</td></tr>' +
+                '<tr><td>Gas released during detection time</td>' + td(_u(r.gasReleasedDuringResponse_scf, 'gasVolumeStd', 1, 'scf', 2)) + '</tr>' +
+                '<tr><td>Pressure drop during detection time</td>' + td(_u(r.pressureDrop_psi, 'pressure', 2, 'psi')) + '</tr>' +
+                '<tr><td>Depressurisation rate</td>' + td(_u(r.depressurisationRate_psi_s, 'pressure', 3, 'psi', 3) + '/s') + '</tr>' +
+                '<tr><td>Section pressure at end of detection time</td>' + td(_u(r.leakDrawdownPressure_psig, 'pressureG', 1, 'psig')) + '</tr>' +
+                '<tr><td>Time to reach PSL</td>' + td(isFinite(r.timeToTrip_s) ? _fmt(r.timeToTrip_s, 2) + ' s' : '—') + '</tr>' +
+                '<tr><td>Section gas temperature</td>' + td(_u(r.sectionTemp_F, 'temperature', 0, '°F'), true) + '</tr>' +
+                '<tr><td>False-trip margin</td>' + td(_u(inputs.safetyMargin_psig, 'pressure', 0, 'psi'), true) + '</tr>' +
+                '<tr><td>WHSIP (reference)</td>' + td(r.whsip_psig == null ? '—' : _u(r.whsip_psig, 'pressureG', 0, 'psig'), true) + '</tr>' +
                 '<tr><td>Standard-volume basis</td>' +
                     '<td style="text-align:right;color:#8b949e;">' +
                     _esc(r.basis.label + (r.basis.fromSetting ? ' (app setting)' : ' (calculator default)')) + '</td></tr>' +
@@ -548,20 +571,28 @@
             '</table>' +
             // Headline: PSL target
             '<div class="rbox" style="margin-top:14px;">' +
-              '<div class="rbox-title">PSL Setting Target</div>' +
+              '<div class="rbox-title">PSL Setting</div>' +
               '<div class="rrow">' +
                 '<span class="rl">Recommended PSL setpoint</span>' +
-                '<span class="rv" style="font-size:20px;">' +
-                  _u(r.psl_target_psig, 'pressureG', 0, 'psig') +
-                '</span>' +
+                '<span class="rv" style="font-size:20px;">' + _u(r.psl_target_psig, 'pressureG', 0, 'psig') + '</span>' +
+              '</div>' +
+              (r.psl_from_input ?
+              '<div class="rrow"><span class="rl">PSL set point checked</span><span class="rv">' + _u(r.psl_used_psig, 'pressureG', 1, 'psig') + '</span></div>' : '') +
+              '<div class="rrow">' +
+                '<span class="rl">Trip window (reached in time … clear of false trips)</span>' +
+                '<span class="rv">' + _u(r.leakDrawdownPressure_psig, 'pressureG', 1, 'psig') + ' … ' + _u(r.psl_target_psig, 'pressureG', 1, 'psig') + '</span>' +
               '</div>' +
               '<div class="rrow">' +
                 '<span class="rl">Drawdown from P_flow</span>' +
-                '<span class="rv">' +
-                  _u(inputs.sectionFlowingPressure_psig - r.psl_target_psig, 'pressure', 1, 'psi') +
-                '</span>' +
+                '<span class="rv">' + _u(inputs.sectionFlowingPressure_psig - r.psl_used_psig, 'pressure', 1, 'psi') + '</span>' +
               '</div>' +
-            '</div>';
+            '</div>' +
+            '<div style="font-size:11px;color:#8b949e;margin-top:8px;line-height:1.5"><b>Notes</b> ' +
+              'Ideal-gas mole balance: dP/dt = q<sub>leak</sub>·P<sub>b</sub>·T/(T<sub>b</sub>·V). Pass when the set point is at least the false-trip margin ' +
+              'below P_flow, above 0 psig, and reached within the required detection time: (P_flow − PSL)/(dP/dt) ≤ t. ' +
+              'Well inflow and choke outflow are held at their pre-leak rates; both rise/fall to slow a real drawdown, so allow margin on the time. ' +
+              'v3.0: the check was "drawdown pressure ≥ WHSIP", which a flowing well (P_flow &lt; WHSIP) can never meet, and the old PSL ' +
+              '(end-of-window pressure less the margin) was not reached within the window.</div>';
 
         var rc = document.getElementById('wts_esdlo_resultcard');
         var rd = document.getElementById('wts_esdlo_results');
@@ -570,29 +601,28 @@
 
         // ── Status badge + rationale ──
         var badgeBg, badgeBorder, badgeColor, badgeIcon, badgeText;
-        if (!r.reachable) {
+        if (!r.pass) {
             badgeBg     = 'rgba(248,81,73,.10)';
             badgeBorder = 'rgba(248,81,73,.45)';
             badgeColor  = '#f85149';
-            badgeIcon   = '✖';   // ✗
-            // Text now matches the tested condition (P_after < WHSIP).
-            badgeText   = 'Leak drawdown pressure is below WHSIP — ' +
-                          'PSL CANNOT detect this leak rate at this location.';
+            badgeIcon   = '✗';
+            badgeText   = !r.nuisanceOk ? 'FAIL — PSL set point is inside the false-trip margin.'
+                        : !r.aboveAtm  ? 'FAIL — PSL at or below atmospheric pressure never trips.'
+                        : 'FAIL — the leak takes ' + _fmt(r.timeToTrip_s, 1) + ' s to reach the PSL (required ' + _fmt(inputs.esdResponseTime_s, 1) + ' s).';
         } else if (r.lowSensitivity) {
             badgeBg     = 'rgba(210,153,34,.10)';
             badgeBorder = 'rgba(210,153,34,.45)';
             badgeColor  = '#d29922';
-            badgeIcon   = '⚠';   // ⚠
-            badgeText   = 'Detectable leak too small — PSL unlikely to trigger before ' +
-                          'well shut-in propagates.';
+            badgeIcon   = '⚠';
+            badgeText   = 'PASS, but the drawdown in the detection time is under ' + _u(2, 'pressure', 0, 'psi') +
+                          ' — comparable to gauge noise; confirm the pilot can resolve it.';
         } else {
             badgeBg     = 'rgba(63,185,80,.10)';
             badgeBorder = 'rgba(63,185,80,.45)';
             badgeColor  = '#3fb950';
-            badgeIcon   = '✓';   // ✓
-            badgeText   = 'PSL reachable — leak would drop section by ' +
-                          _u(r.pressureDrop_psi, 'pressure', 1, 'psi') + ' in ' +
-                          _fmt(inputs.esdResponseTime_s, 1) + ' s.';
+            badgeIcon   = '✓';
+            badgeText   = 'PASS — PSL trips ' + _fmt(r.timeToTrip_s, 2) + ' s after the leak starts (required ' +
+                          _fmt(inputs.esdResponseTime_s, 1) + ' s).';
         }
 
         var statusHTML = '' +
@@ -648,64 +678,42 @@
                   (typeof globalThis !== 'undefined' && globalThis.WTS_esdLoPilot_compute);
     var checks = [];
 
-    // Case 1 — default Upstream of Heater Choke (large volume → small drop)
+    // Case 1 — default Upstream of Heater Choke: 662 ft³ at 662 psig, 25 MMscfd, 5 s.
+    // ΔP = 1446.76·14.7/662 = 32.13 psi ≥ 5 psi margin → PSL 657 psig trips in 0.78 s.
     var r1 = compute({
         sectionVolume_ft3: 662, sectionFlowingPressure_psig: 662,
         detectableLeakRate_MMscfd: 25, whsip_psig: 2100,
         esdResponseTime_s: 5, safetyMargin_psig: 5
     });
     var expectedGas = 25e6 / 86400 * 5;   // 1446.759… scf
-    checks.push({
-        n: 'gas released = Q · t',
-        ok: Math.abs(r1.gasReleasedDuringResponse_scf - expectedGas) < 1
-    });
-    checks.push({
-        n: 'pressure drop > 0',
-        ok: r1.pressureDrop_psi > 0
-    });
-    checks.push({
-        n: 'PSL target < flowing',
-        ok: r1.psl_target_psig < 662
-    });
-    // P_after = 662 − ΔP. With ΔP = 1446.759 · 14.7 / 662 ≈ 32.13 psi → 629.87 psig.
-    // 629.87 < WHSIP 2100, so reachable should be FALSE for default heater-choke case.
-    // But spec says default case is the "happy path" example — meaning the user's
-    // intent for the GREEN path is the small-volume locations (SSV, Choke). The
-    // 662-ft³ heater-choke case naturally falls below WHSIP, which is a real
-    // engineering finding, not a bug. Self-test acknowledges this.
-    checks.push({
-        n: 'Heater-choke case correctly flags as unreachable (P_after < WHSIP)',
-        ok: r1.reachable === false
-    });
+    checks.push({ n: 'gas released = Q · t', ok: Math.abs(r1.gasReleasedDuringResponse_scf - expectedGas) < 1 });
+    checks.push({ n: 'ΔP = Vstd·Pb/V', ok: Math.abs(r1.pressureDrop_psi - expectedGas * 14.7 / 662) < 1e-6 });
+    checks.push({ n: 'PSL = P_flow − margin', ok: Math.abs(r1.psl_target_psig - 657) < 1e-9 });
+    checks.push({ n: 'default case passes (WHSIP no longer a criterion)', ok: r1.pass === true });
+    checks.push({ n: 'time to trip = margin / rate', ok: Math.abs(r1.timeToTrip_s - 5 / (r1.pressureDrop_psi / 5)) < 1e-9 });
 
-    // Case 2 — explicit unreachable (tiny volume, low P_flow)
+    // Case 2 — too slow: 0.05 MMscfd into 662 ft³ → ΔP 0.11 psi in 5 s < 5 psi margin.
     var r2 = compute({
-        sectionVolume_ft3: 0.5, sectionFlowingPressure_psig: 100,
-        detectableLeakRate_MMscfd: 25, whsip_psig: 2100,
+        sectionVolume_ft3: 662, sectionFlowingPressure_psig: 662,
+        detectableLeakRate_MMscfd: 0.05, whsip_psig: 2100,
         esdResponseTime_s: 5, safetyMargin_psig: 5
     });
-    checks.push({
-        n: 'unreachable PSL flagged',
-        ok: r2.reachable === false
-    });
+    checks.push({ n: 'slow leak fails', ok: r2.pass === false && r2.inTime === false });
 
-    // Case 3 — small-volume Downstream-of-SSV style: high P_flow, tiny volume.
-    // Volume 4.36, P_flow 1971, WHSIP 2100, Q=0.05 MMscfd, t=5s. Gas = 2.894 scf.
-    // ΔP = 2.894·14.7/4.36 ≈ 9.76 psi  → P_after = 1961.2 psig (still < WHSIP).
-    // For a fully reachable result we need P_after >= WHSIP. Pick low WHSIP.
+    // Case 3 — hotter section drops faster (ΔP ∝ T).
     var r3 = compute({
+        sectionVolume_ft3: 4.36, sectionFlowingPressure_psig: 1971,
+        detectableLeakRate_MMscfd: 0.05, whsip_psig: 1500,
+        esdResponseTime_s: 5, safetyMargin_psig: 5, sectionTemp_F: 160
+    });
+    var r3b = compute({
         sectionVolume_ft3: 4.36, sectionFlowingPressure_psig: 1971,
         detectableLeakRate_MMscfd: 0.05, whsip_psig: 1500,
         esdResponseTime_s: 5, safetyMargin_psig: 5
     });
-    checks.push({
-        n: 'reachable case flagged true',
-        ok: r3.reachable === true
-    });
-    checks.push({
-        n: 'PSL target = drawdown − margin',
-        ok: Math.abs(r3.psl_target_psig - (r3.leakDrawdownPressure_psig - 5)) < 1e-9
-    });
+    checks.push({ n: 'ΔP ∝ T', ok: Math.abs(r3.pressureDrop_psi / r3b.pressureDrop_psi - 619.67 / 519.67) < 1e-9 });
+    checks.push({ n: 'PSL inside the margin fails', ok: compute({ sectionVolume_ft3: 4.36, sectionFlowingPressure_psig: 1971,
+        detectableLeakRate_MMscfd: 0.05, esdResponseTime_s: 5, safetyMargin_psig: 5, pslSetpoint_psig: 1968 }).nuisanceOk === false });
 
     // Case 4 — defensive: all-zero / missing inputs returns finite numbers.
     var r4 = compute({});

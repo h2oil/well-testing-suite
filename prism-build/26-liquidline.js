@@ -702,7 +702,7 @@
         + '  <tr><td style="padding:4px 6px;color:var(--text2,#8b949e)">P downstream of RO</td>'
         + '      <td style="padding:4px 6px;text-align:right">' + _u(r.p_downstream_ro_psig, 'pressureG', 0, 'psig') + '</td></tr>'
         + '  <tr><td style="padding:4px 6px;color:var(--text2,#8b949e)">Standard-volume basis</td>'
-        + '      <td style="padding:4px 6px;text-align:right">60 °F / 14.7 psia (Cv and orifice equations)</td></tr>'
+        + '      <td style="padding:4px 6px;text-align:right">' + (_metric() ? '15.6 °C / 101.35 kPa' : '60 °F / 14.7 psia') + ' (Cv and orifice equations)</td></tr>'
         + '</table>'
         + '<div style="margin-top:8px;padding:8px;border-radius:4px;font-size:11px;'
         +   'background:rgba(88,166,255,0.06);border:1px solid rgba(88,166,255,0.18);color:var(--text2,#c9d1d9)">'
