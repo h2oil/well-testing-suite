@@ -158,7 +158,7 @@ var TIERS = {
 };
 
 // Snapshot paths that may be null (copy of WTS_sim.NULLABLE; §3.3)
-var NULLABLE = ['esd.cause','esd.tripT','surge.tFull_s','rates.gor_scf_stb','rates.bsw_pct','rates.tank_stbd',
+var NULLABLE = ['esd.cause','esd.tripT','surge.tFull_s','surge.pump.trip','rates.gor_scf_stb','rates.bsw_pct','rates.tank_stbd',
   'rates.shrink_pct','alarms[*].value','alarms[*].limit','alarmLog[*].sev','gauge.batches[*].gor_scf_stb','gauge.batches[*].bsw_pct'];
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -526,10 +526,10 @@ function makeNorm() {
           gasIn_mmscfd:10, gasOut_mmscfd:10, liqIn_bpd:1200, tRes_min:0, pcvU:0.5, psvLifting:false },
     surge:{ P:25, SP:25, SPeff:25, T:150, psh:32, pshh:40, frac:0.55, fracW:0.15, cap_bbl:100, Vo_bbl:0, Vw_bbl:0, tFull_s:-1,
             flash_mscfd:0, pumpOn:false, pumpTripped:false, pumpFailed:false, pump_q:0, pump_design:0, lsll:0.05, lsl:0.25, lsh:0.7, lshh:0.9, psvLifting:false,
-            comps:[{ frac:0.55, fracW:0.15, inlet:true, suction:true }, { frac:0.55, fracW:0.15, inlet:true, suction:true }],
-            suction:'both', blocked:false, autoOn:false, pumpBlocked:false },
-    gauge:{ active:0, tanks:[{ frac:0.3, fracW:0.06, cap_bbl:100, state:'filling', Vo_bbl:0, Vw_bbl:0, Vo_stb:0, drain_bpd:0, fill_bpd:0, inlet:true },
-                              { frac:0, fracW:0, cap_bbl:100, state:'ready', Vo_bbl:0, Vw_bbl:0, Vo_stb:0, drain_bpd:0, fill_bpd:0, inlet:false }],
+            comps:[{ frac:0.55, fracW:0.15, inlet:true, suction:true, pos:1, moving:false }, { frac:0.55, fracW:0.15, inlet:true, suction:true, pos:1, moving:false }],
+            suction:'both', blocked:false, autoOn:false, pumpBlocked:false, pumpTrip:'' },
+    gauge:{ active:0, tanks:[{ frac:0.3, fracW:0.06, cap_bbl:100, state:'filling', Vo_bbl:0, Vw_bbl:0, Vo_stb:0, drain_bpd:0, fill_bpd:0, inlet:true, pos:1, moving:false },
+                              { frac:0, fracW:0, cap_bbl:100, state:'ready', Vo_bbl:0, Vw_bbl:0, Vo_stb:0, drain_bpd:0, fill_bpd:0, inlet:false, pos:0, moving:false }],
             nb:0, lastOil:-1, lastRate:-1, lastBsw:-1, lastTag:'', autoOn:false, blocked:false },
     rates:{ gas_mmscfd:0, oil_stbd:0, water_bpd:0, gor:-1, bsw:-1 },
     cum:{ flare_mmscf:0, oilIn_stb:0, gasIn_mmscf:0 },
@@ -608,8 +608,9 @@ function normalize(state, out) {
   for (i = 0; i < 2; i++) {
     var cs = CP[i] || {}, dc = su.comps[i];
     dc.frac = clamp(num(cs.frac, su.frac), 0, 1); dc.fracW = clamp(num(cs.fracW, su.fracW), 0, 1); dc.inlet = nb(cs.inlet, true); dc.suction = nb(cs.suction, true);
+    dc.pos = clamp(num(cs.pos, dc.inlet ? 1 : 0), 0, 1); dc.moving = !!cs.moving;           // divert valve travel (v3.0 snapshots)
   }
-  su.suction = nstr(SU.suction, 'both'); su.blocked = !!SU.blocked; su.autoOn = !!(SU.auto && SU.auto.on); su.pumpBlocked = !!PU.blocked;
+  su.suction = nstr(SU.suction, 'both'); su.blocked = !!SU.blocked; su.autoOn = !!(SU.auto && SU.auto.on); su.pumpBlocked = !!PU.blocked; su.pumpTrip = nstr(PU.trip, '');
   var GA = S.gauge || {}, ga = N.gauge, TK = GA.tanks || EMPTY_ARR;
   ga.active = num(GA.active, 0) ? 1 : 0;
   for (i = 0; i < 2; i++) {
@@ -617,6 +618,7 @@ function normalize(state, out) {
     dt.frac = clamp(num(ts.frac, i ? 0 : 0.3), 0, 1.05); dt.fracW = clamp(num(ts.fracW, i ? 0 : 0.06), 0, 1.05); dt.cap_bbl = Math.max(num(ts.cap_bbl, 100), 1);
     dt.state = nstr(ts.state, i ? 'ready' : 'filling'); dt.Vo_bbl = num(ts.Vo_bbl, dt.cap_bbl * (dt.frac - dt.fracW)); dt.Vw_bbl = num(ts.Vw_bbl, dt.cap_bbl * dt.fracW);
     dt.Vo_stb = num(ts.Vo_stb, dt.Vo_bbl); dt.drain_bpd = num(ts.drain_bpd, 0); dt.fill_bpd = num(ts.fill_bpd, 0); dt.inlet = nb(ts.inlet, i === ga.active);
+    dt.pos = clamp(num(ts.pos, dt.inlet ? 1 : 0), 0, 1); dt.moving = !!ts.moving;
   }
   ga.autoOn = !!(GA.auto && GA.auto.on); ga.blocked = !!GA.blocked;
   var BT = GA.batches || EMPTY_ARR, lb = BT.length ? BT[BT.length - 1] : null;
@@ -2530,6 +2532,8 @@ function createHandle(THREE, container, opts) {
     setCls(ch.s1, ch.txt, 's1c', ub === 'T' ? 't' : ub === 'L' ? 'l' : 'p');
   }
   function inletTxt(a, b) { return a && b ? 'A+B' : a ? 'A' : b ? 'B' : '—'; }
+  function tripTxt(id) { return id === 'LSHH_GT' ? ' (LSHH-301)' : id === 'PUMP_DRYRUN' ? ' (DRY-RUN)' : ''; }
+  function vTxt(t) { return t.moving ? (t.inlet ? ' · inlet OPENING ' : ' · inlet CLOSING ') + Math.round(t.pos * 100) + '%' : t.inlet ? ' · inlet open' : ''; }
   function updateLabelText() {
     var n = N, i;
     for (i = 0; i < chips.length; i++) {
@@ -2576,18 +2580,18 @@ function createHandle(THREE, container, opts) {
           slot(ch, su.frac * 100, 'percent', 'L', su.P, 'pressureTank', 'P', ' · ', su.blocked ? 'IN BLOCKED' : 'IN ' + inletTxt(su.comps[0].inlet, su.comps[1].inlet), su.blocked ? 'l' : 's');
           if (t2) { var fill = n.lines.sep_oil.q + n.lines.sep_water.q - su.pump_q;
             rows(ch, ['A · B', Math.round(su.comps[0].frac * 100) + ' % · ' + Math.round(su.comps[1].frac * 100) + ' %', 'Volume', FV(su.Vo_bbl + su.Vw_bbl, 'volume'),
-              'Pump', su.pumpFailed ? 'FAILED' : su.pumpTripped ? 'TRIPPED' : su.pumpBlocked ? 'BLOCKED' : su.pumpOn ? 'ON' : 'OFF',
+              'Pump', su.pumpFailed ? 'FAILED' : su.pumpTripped ? 'TRIPPED' + tripTxt(su.pumpTrip) : su.pumpBlocked ? 'BLOCKED' : su.pumpOn ? 'ON' : 'OFF',
               'Suction', su.suction === 'both' ? 'A + B' : su.suction, 'Auto-divert', su.autoOn ? 'ON' : 'OFF', 'Net fill', FV(fill, 'liquidRate'),
               'Time to HH', su.tFull_s >= 0 ? fmtNum(su.tFull_s / 60, 0) + ' min' : '—']); }
           break;
         case 'pump': {
-          var pst = su.pumpFailed ? 'FAILED' : su.pumpTripped ? 'TRIPPED' : su.pumpOn ? 'ON' : 'OFF';
+          var pst = su.pumpFailed ? 'FAILED' : su.pumpTripped ? 'TRIPPED' + tripTxt(su.pumpTrip) : su.pumpOn ? 'ON' : 'OFF';
           slot(ch, null, null, null, su.pump_q, 'liquidRate', 'L', '', pst, su.pumpOn && !su.pumpFailed && !su.pumpTripped ? 'g' : (su.pumpFailed || su.pumpTripped ? 'l' : 's'));
           break; }
         case 'gauge':
           slot(ch, ga.tanks[0].Vo_bbl + ga.tanks[0].Vw_bbl, 'volume', 'L', ga.tanks[1].Vo_bbl + ga.tanks[1].Vw_bbl, 'volume', 'L', ' · ',
             ga.blocked ? 'IN BLOCKED' : inletTxt(ga.tanks[0].inlet, ga.tanks[1].inlet) + ' FILLING', ga.blocked ? 'l' : 's');
-          if (t2) rows(ch, ['A', ga.tanks[0].state + (ga.tanks[0].inlet ? ' · inlet open' : ''), 'B', ga.tanks[1].state + (ga.tanks[1].inlet ? ' · inlet open' : ''),
+          if (t2) rows(ch, ['A', ga.tanks[0].state + vTxt(ga.tanks[0]), 'B', ga.tanks[1].state + vTxt(ga.tanks[1]),
             'Auto-divert', ga.autoOn ? 'ON' : 'OFF', 'Last batch', ga.lastRate >= 0 ? FV(ga.lastRate, 'liquidRate') + ' (STB/d)' : '—',
             'BS&W', ga.lastBsw >= 0 ? fmtNum(ga.lastBsw, 1) + ' %' : '—']);
           break;
@@ -2715,7 +2719,7 @@ function createHandle(THREE, container, opts) {
   var pRange = { min:0, max:3000 }, tRange = { min:0, max:200 };
   var K = { jet:new THREE.Color('#cfe8ff'), watT:new THREE.Color(PALETTE.waterTracer), mist:new THREE.Color(PALETTE.mist), watS:new THREE.Color(PALETTE.waterSurface),
     ok:new THREE.Color(PALETTE.ok), warn:new THREE.Color(PALETTE.warn), alarm:new THREE.Color(PALETTE.alarm), accent:new THREE.Color(PALETTE.accent), hyd:new THREE.Color('#a5d6ff'),
-    lampF:new THREE.Color('#ff3b30'), lampOn:new THREE.Color('#3fb950'), lampOff:new THREE.Color('#2b1a1a'), flagO:new THREE.Color('#f0883e'), flagW:new THREE.Color('#dfe6ee'),
+    lampF:new THREE.Color('#ff3b30'), lampOn:new THREE.Color('#3fb950'), lampT:new THREE.Color('#d29922'), lampOff:new THREE.Color('#2b1a1a'), flagO:new THREE.Color('#f0883e'), flagW:new THREE.Color('#dfe6ee'),
     pour:new THREE.Color('#c08a3a'), pourKey:-1, phaseSeg:[] };
   for (var kq = 0; kq < 14; kq++) K.phaseSeg.push(new THREE.Color());
   var HALO_OPT = { forHalo:true }, FLOAT_X = [15.45, 17.35], FLOAT_F = [0, 0], FLAME_L = [null, null], GV = [null, null, null, null];
@@ -3114,12 +3118,14 @@ function createHandle(THREE, container, opts) {
     D.pump.lampM.color.copy(n.surge.pumpFailed || n.surge.pumpTripped ? K.lampF : (n.surge.pumpOn ? K.lampOn : K.lampOff)).multiplyScalar(n.surge.pumpFailed || n.surge.pumpTripped ? 1.6 + 0.6 * Math.sin(tNow * 0.012) : 1.2);
     // gauge valves
     var gv = D.gaugeValves, gt = n.gauge.tanks, uc = n.surge.comps;
-    gv.xvA.rotation.x = spring('xvA', gt[0].inlet ? 0 : Math.PI * 3, dt, 0.3, snap); gv.xvB.rotation.x = spring('xvB', gt[1].inlet ? 0 : Math.PI * 3, dt, 0.3, snap);
-    gv.sxA.rotation.y = spring('sxA', uc[0].inlet ? 0 : Math.PI * 3, dt, 0.3, snap); gv.sxB.rotation.y = spring('sxB', uc[1].inlet ? 0 : Math.PI * 3, dt, 0.3, snap);
-    var lsig = (gt[0].inlet ? 1 : 0) + (gt[1].inlet ? 2 : 0) + (uc[0].inlet ? 4 : 0) + (uc[1].inlet ? 8 : 0) + (uc[0].suction ? 16 : 0) + (uc[1].suction ? 32 : 0);
+    // handwheels follow the actual valve position (the sim strokes XV-201/301 over their travel time)
+    gv.xvA.rotation.x = spring('xvA', (1 - gt[0].pos) * Math.PI * 3, dt, 0.15, snap); gv.xvB.rotation.x = spring('xvB', (1 - gt[1].pos) * Math.PI * 3, dt, 0.15, snap);
+    gv.sxA.rotation.y = spring('sxA', (1 - uc[0].pos) * Math.PI * 3, dt, 0.15, snap); gv.sxB.rotation.y = spring('sxB', (1 - uc[1].pos) * Math.PI * 3, dt, 0.15, snap);
+    var lsig = (gt[0].inlet ? 1 : 0) + (gt[1].inlet ? 2 : 0) + (uc[0].inlet ? 4 : 0) + (uc[1].inlet ? 8 : 0) + (uc[0].suction ? 16 : 0) + (uc[1].suction ? 32 : 0) +
+      (gt[0].moving ? 64 : 0) + (gt[1].moving ? 128 : 0) + (uc[0].moving ? 256 : 0) + (uc[1].moving ? 512 : 0);
     if (gv.lampSig !== lsig) {
       gv.lampSig = lsig;
-      for (i = 0; i < 6; i++) gv.lamps.setColorAt(i, (lsig >> i) & 1 ? K.lampOn : (i < 4 ? K.lampF : K.lampOff));   // inlet shut = red, suction out of service = dark
+      for (i = 0; i < 6; i++) gv.lamps.setColorAt(i, i < 4 && (lsig >> (i + 6)) & 1 ? K.lampT : (lsig >> i) & 1 ? K.lampOn : (i < 4 ? K.lampF : K.lampOff));   // travelling = amber, inlet shut = red, suction out of service = dark
       if (gv.lamps.instanceColor) gv.lamps.instanceColor.needsUpdate = true;
     }
     gv.dvA.rotation.y = spring('dvA', n.gauge.tanks[0].state === 'draining' ? Math.PI * 3 : 0, dt, 0.3, snap); gv.dvB.rotation.y = spring('dvB', n.gauge.tanks[1].state === 'draining' ? Math.PI * 3 : 0, dt, 0.3, snap);

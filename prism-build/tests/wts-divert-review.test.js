@@ -57,7 +57,9 @@ function checkDirections(assert, a, b, lineup, where) {
       for (let p = 0; p < 2; p++) { const d = b.g[k][p] - a.g[k][p]; if (Math.abs(d) > tol * Math.max(1, Math.abs(a.g[k][p]))) assert.fail(where + ': T-301' + 'AB'[k] + ' (inlet shut, ' + b.g[k][3] + ') changed by ' + d); }
   }
 }
-function lineupOf(st) { return { uIn: st.surge.comps.map((c) => !!c.inlet), suc: st.surge.suction, gIn: st.gauge.tanks.map((t) => !!t.inlet) }; }
+// v3.0: divert valves travel — a compartment can receive flow while its valve is commanded shut but not yet at its closed
+// limit (or held open by the open-new-before-close-old interlock), so "inlet" = commanded open OR valve not shut.
+function lineupOf(st) { return { uIn: st.surge.comps.map((c) => !!c.inlet || c.pos > 0), suc: st.surge.suction, gIn: st.gauge.tanks.map((t) => !!t.inlet || t.pos > 0) }; }
 
 module.exports = [
   {
@@ -114,7 +116,9 @@ module.exports = [
       assert.strictEqual(st.gauge.batches.length, 1, 'one batch');
       const b = st.gauge.batches[0];
       assert.strictEqual(b.tag, 'T-301B');
-      assert.near(b.tOpen, tOpenB, 1e-9, 'window opened with XV-301B'); assert.near(b.tClose, tClose, 1e-9, 'window closed with XV-301B');
+      assert.near(b.tOpen, tOpenB, 1e-9, 'window opened with XV-301B'); // v3.0: XV-301B is held open until XV-301A reaches its open limit (one stroke), then strokes shut (one stroke):
+      // B's window closes at its closed limit, 2 strokes after the command
+      assert.near(b.tClose, tClose + 2 * app.win.WTS_sim.DEFAULTS.gauge.xvStrokeS, 1e-6, 'window closed at XV-301B closed limit');
       assert.ok(b.oil_stb > 0 && b.settled === true, 'settled batch with oil ' + b.oil_stb);
       assert.ok(alarmIds(st).indexOf('PUMP_BLOCKED') < 0, 'PUMP_BLOCKED cleared');
     }
@@ -161,7 +165,8 @@ module.exports = [
       const s = sim(app, { config: NOISE_OFF, seed: 71 }, S.flowFromInputs(app.toWin({ Qo: 2500, Qw: 800 })));
       s.setValve('surge', 1, false); s.setSuction('B'); s.setAutoDivert('surge', true); s.setAutoDivert('gauge', true);
       const ev = [];
-      s.on('divert', (p, st) => { const last = st.alarmLog[st.alarmLog.length - 1]; ev.push({ t: p.t, eq: p.eq, from: p.from, logged: !!last && last.id === 'AUTO_DIVERT' && last.t === p.t && last.msg === p.msg }); });
+      // (handlers run at the end of advance(): later entries of the same step — e.g. a batch record — may follow the divert)
+      s.on('divert', (p, st) => { ev.push({ t: p.t, eq: p.eq, from: p.from, logged: st.alarmLog.some((e) => e.id === 'AUTO_DIVERT' && e.t === p.t && e.msg === p.msg) }); });
       for (let i = 0; i < 8 * 360; i++) { s.advance(10); checkStep(assert, s.getState(), 'auto t=' + s.getState().t); }
       const su = ev.filter((e) => e.eq === 'surge');
       assert.ok(su.length >= 4, 'surge diverts ' + su.length);
@@ -177,7 +182,8 @@ module.exports = [
       const b = sim(app, { config: NOISE_OFF, seed: 72 });
       b.advance(200);                                                   // past the start-up grace
       b.setValve('surge', 0, false); b.setValve('surge', 1, false); b.setValve('gauge', 0, false);
-      b.advance(D.onDelay + 1);
+      // v3.0: P-201 is blocked once XV-301A reaches its closed limit (one stroke), then the on-delay applies
+      b.advance(S.DEFAULTS.gauge.xvStrokeS + D.onDelay + 1);
       let st = b.getState();
       assert.ok(alarmIds(st).indexOf('SURGE_BLOCKED') >= 0 && alarmIds(st).indexOf('PUMP_BLOCKED') >= 0, 'both blocked alarms: ' + alarmIds(st));
       b.setValve('surge', 1, true); b.setValve('gauge', 1, true);
@@ -214,14 +220,24 @@ module.exports = [
       // glyph centres from the layout (above each compartment for the inlets, below T-201 for the suctions)
       const g = { surge: [[L.bx[0] - 8, L.by - 26], [L.bx[0] + 8, L.by - 26]], gauge: [[L.bx[1] - 9, L.by - 26], [L.bx[1] + 9, L.by - 26]] };
       const inletOf = (eq, i) => { const st = live.getState(); return eq === 'surge' ? st.surge.comps[i].inlet : st.gauge.tanks[i].inlet; };
+      // v3.0: on a phone the glyphs are ~4 CSS px apart, so a tap near a tank's valves opens a zoomed inset of that tank
+      // whose valve buttons are 44 × 44 px; the inset's button then toggles exactly the valve it names.
+      const inset = () => app.el('wtsl_vin');
       [['gauge', 1], ['gauge', 0], ['surge', 1], ['surge', 1], ['gauge', 0]].forEach(([eq, i]) => {
         const before = inletOf(eq, i), other = inletOf(eq, 1 - i);
         click(g[eq][i][0], g[eq][i][1]);
-        assert.strictEqual(inletOf(eq, i), !before, eq + ' ' + 'AB'[i] + ' toggled from the 375 px schematic');
+        assert.strictEqual(inletOf(eq, i), before, 'a phone tap alone does not operate a valve');
+        const vin = inset(); assert.ok(vin, eq + ': zoomed inset opened');
+        app.click(vin.querySelector('[data-act="valve"][data-v="' + eq + ':' + i + '"]'));
+        assert.strictEqual(inletOf(eq, i), !before, eq + ' ' + 'AB'[i] + ' toggled from the 375 px inset');
         assert.strictEqual(inletOf(eq, 1 - i), other, 'other side untouched');
+        app.click(inset().querySelector('[data-act="vin-close"]'));
+        assert.ok(!inset(), 'inset closed');
       });
-      click(L.bx[0] + 8, L.by + 23);                                  // SV-201B out of service → suction A
-      assert.strictEqual(live.getState().surge.suction, 'A', 'suction marker on the phone layout');
+      click(L.bx[0] + 8, L.by + 23);                                  // suction marker → T-201 inset → suction A
+      app.click(inset().querySelector('[data-act="suction"][data-v="A"]'));
+      assert.strictEqual(live.getState().surge.suction, 'A', 'suction from the phone inset');
+      app.click(inset().querySelector('[data-act="vin-close"]'));
       // lineup now: surge A+B inlets, suction A; gauge A+B open. Make an automatic divert happen in the live sim.
       live.setValve('surge', 1, false); live.setSuction('B'); live.setAutoDivert('surge', true, app.toWin({ sp: 0.6 }));
       let n = 0; live.on('divert', () => { n++; });

@@ -106,7 +106,7 @@ var TAGS = deepFreeze({ wellhead: 'WH-101', esd: 'SDV-101', choke: 'CK-101', hea
   surgeA: 'T-201A', surgeB: 'T-201B', xvSurgeA: 'XV-201A', xvSurgeB: 'XV-201B', xvGaugeA: 'XV-301A', xvGaugeB: 'XV-301B' });
 var NAMES = deepFreeze({ wellhead: 'Wellhead', esd: 'ESD Valve (SSV)', choke: 'Choke Manifold', heater: 'Line Heater',
   separator: 'Test Separator', flare: 'Flare Stack', surge: 'Surge Tank', pump: 'Transfer Pump', gauge: 'Gauge Tank' });
-var NULLABLE = deepFreeze(['esd.cause', 'esd.tripT', 'surge.tFull_s', 'rates.gor_scf_stb', 'rates.bsw_pct', 'rates.tank_stbd',
+var NULLABLE = deepFreeze(['esd.cause', 'esd.tripT', 'surge.tFull_s', 'surge.pump.trip', 'rates.gor_scf_stb', 'rates.bsw_pct', 'rates.tank_stbd',
   'rates.shrink_pct', 'alarms[*].value', 'alarms[*].limit', 'alarmLog[*].sev',
   'gauge.batches[*].gor_scf_stb', 'gauge.batches[*].bsw_pct']);
 var FAULT_IDS = ['pcvStuckClosed', 'pcvStuckOpen', 'oilDumpStuckOpen', 'oilDumpStuckClosed', 'waterDumpStuckClosed', 'surgePumpFail', 'slugging'];
@@ -136,9 +136,12 @@ var DEFAULTS = deepFreeze({ seed: 12345, speed: 10, speeds: [1, 10, 60, 600], hM
     pumpBpd: null, pumpMinBpd: 500, pumpVelFrac: 0.7, psvMinMscfd: 50,
     bpv: { tauCl: 10, Ti: 30 }, blanket: { on: true, deadband: 1, band: 2 },
     // twin compartments A | B (half of cap_bbl each, common gas space); auto-divert defaults (overfill protection)
-    autoSp: 0.80, autoHyst: 0.10 },
+    // xvStrokeS: full-stroke time of the inlet divert valves XV-201A/B (on/off actuated ball valves, 5-10 s typical)
+    autoSp: 0.80, autoHyst: 0.10, xvStrokeS: 6 },
+  // lshhReset: LSHH-301 trip reset point — the tripped compartment must fall below it before P-201 can be reset
+  // allowInterrupt: auto-divert may open a compartment that is settling / draining (batch in progress) — off by default
   gauge: { count: 2, cap_bbl: 100, D_ft: 8, switchFrac: 0.90, lahh: 0.97, heelFrac: 0.02, settleS: 600, drainBpd: null,
-    autoSp: 0.90, autoHyst: 0.10 } });
+    autoSp: 0.90, autoHyst: 0.10, xvStrokeS: 6, lshhReset: 0.90, allowInterrupt: false } });
 
 // ─── SAMPLE_FLOW (Appendix A: calcWTS defaults after H8; flow v1) ────────────
 var SAMPLE_FLOW = deepFreeze({v:1,seq:1,ts:0,wellheadPressure:3000,wellheadTemp:180,gasRate:10,oilRate:1000,waterRate:200,chokeBean:32,separatorPressure:150,
@@ -358,9 +361,17 @@ function create(flowIn, opts) {
   // gauge
   var tanks, active, batches, batchN;
   // operator lineup (persists across reset): inlet divert valves, pump suction, auto-divert
-  var ctl = { surge: { inlet: [true, true], suction: 'both', auto: false, sp: num(cfg.surge.autoSp, 0.8), hyst: num(cfg.surge.autoHyst, 0.1) },
-    gauge: { inlet: [true, false], auto: false, sp: num(cfg.gauge.autoSp, 0.9), hyst: num(cfg.gauge.autoHyst, 0.1) } };
-  var uv = ctl.surge.inlet, gv = ctl.gauge.inlet;   // live aliases (arrays mutated in place)
+  var ctl = { surge: { inlet: [true, true], suction: 'both', auto: false, sp: num(cfg.surge.autoSp, 0.8), hyst: num(cfg.surge.autoHyst, 0.1),
+      strokeS: clamp(num(cfg.surge.xvStrokeS, 6), 0, 60) },
+    gauge: { inlet: [true, false], auto: false, sp: num(cfg.gauge.autoSp, 0.9), hyst: num(cfg.gauge.autoHyst, 0.1),
+      strokeS: clamp(num(cfg.gauge.xvStrokeS, 6), 0, 60), allowInterrupt: !!cfg.gauge.allowInterrupt } };
+  var uv = ctl.surge.inlet, gv = ctl.gauge.inlet;   // live aliases (arrays mutated in place): COMMANDED valve states
+  // Divert valve travel: uv / gv are the commands, upos / gpos the actual positions (0 shut … 1 open) moving at
+  // 1/strokeS per second. Flow splits follow the positions; a compartment's fill window closes when its valve is
+  // fully shut (limit switch), and open-new-before-close-old sequences wait for the new valve's open limit.
+  var upos = [1, 1], gpos = [1, 0];
+  var Tuk = [80, 80];                           // per-compartment surge liquid temperature (°F); Tu = volume-weighted mean
+  var ptrip = { LSHH_GT: false, PUMP_DRYRUN: false }, hhK = [false, false], dryMsg = '', lastDraw = 0, lastQp = 0, Tpump = 80;
   // accumulators (base units) + meters
   var cum, ref, emaOil, emaWater, emaGas, emaFlash, oilCycles, waterCycles, graceUntil;
   // instantaneous fluxes (last substep)
@@ -565,6 +576,7 @@ function create(flowIn, opts) {
     xiG = 0; xiL = 0; xiW = 0; spare = null;
     lcvO = { cmd: 0, x: 0, I: 0 }; lcvW = { cmd: 0, x: 0, I: 0 };
     psvLift = false; psvULift = false; pumpTrip = false;
+    ptrip.LSHH_GT = false; ptrip.PUMP_DRYRUN = false; hhK[0] = hhK[1] = false; dryMsg = ''; lastDraw = 0; lastQp = 0;
     Zs = 0; Zu = 0;
     tanks = [newTank(0), newTank(1)]; active = 0; batches = []; batchN = 0;
     oilCycles = 0; waterCycles = 0;
@@ -607,9 +619,11 @@ function create(flowIn, opts) {
       pumpOn = false;
       emaOil = 0; emaWater = 0; emaGas = 0; emaFlash = 0;
     }
+    Tuk[0] = Tuk[1] = Tu; Tpump = Tu;
     tanks[0].state = 'filling'; tanks[0].since = 0; tanks[1].state = 'ready'; tanks[1].since = 0;
     openWindow(0);
     initGaugeLineup();
+    for (var v = 0; v < 2; v++) { upos[v] = uv[v] ? 1 : 0; gpos[v] = gv[v] ? 1 : 0; }   // t = 0: valves at their commanded positions
     pumpBlocked = !gv[0] && !gv[1];
     esdS.tripped = false; esdS.manual = false; esdS.cause = null; esdS.causeMsg = ''; esdS.tripT = null;
     AL = {}; alarmOrder = []; alarmLog = [];
@@ -642,7 +656,7 @@ function create(flowIn, opts) {
     F.bpvCap = gq(Cv_bpv, PuA, P2aU, Tu + RANK, Zu); F.bpv = ubpv * F.bpvCap;
     var Hw = hL1 - mmax(hWeir, h2);
     F.qOver = Hw > 0 ? 3.33 * Lw * mpow(Hw, 1.5) / BBL : 0; F.weirO = F.qOver / Bs; F.weirW = 0;
-    F.pumpBpd = (pumpOn && !pumpTrip && !pumpBlocked && !faults.surgePumpFail) ? pumpDesign : 0;
+    F.pumpBpd = (pumpOn && !pumpLatched() && !pumpBlocked && !faults.surgePumpFail) ? pumpDesign : 0;
     var Qp = F.pumpBpd / 86400, VS = suctionV(), k;
     F.pw = 0; F.po = 0;
     for (k = 0; k < 2; k++) {
@@ -652,9 +666,9 @@ function create(flowIn, opts) {
       F.rUk[k] = -(F.poK[k] * Bu + F.pwK[k]);
     }
     F.gvent = F.po * RsE(PuA, Tu);
-    var nG = (gv[0] ? 1 : 0) + (gv[1] ? 1 : 0);
+    var nG = gpos[0] + gpos[1];
     F.rB = F.qOver; F.rW1 = F.inW; F.rU = -Qp;
-    for (k = 0; k < 2; k++) { F.fillG[k] = nG && gv[k] ? 1 / nG : 0; F.rG[k] = (F.po * Bu + F.pw) * F.fillG[k]; F.inU[k] = 0; }
+    for (k = 0; k < 2; k++) { F.fillG[k] = nG > 0 ? gpos[k] / nG : 0; F.rG[k] = (F.po * Bu + F.pw) * F.fillG[k]; F.inU[k] = 0; }
   }
 
   // ── controllers helpers ──
@@ -723,12 +737,13 @@ function create(flowIn, opts) {
   }
 
   // ── gauge tank state machine helpers ──
-  // Inlet divert valves XV-301A/B drive the batch cycle: opening a compartment's inlet starts a fill window
-  // (a settling compartment first records its batch as unsettled; a draining one stops draining); closing the
-  // inlet of a filling compartment closes its window and starts settling. 'active' is the primary filling side.
+  // Inlet divert valves XV-301A/B drive the batch cycle: commanding a compartment's inlet open starts a fill window
+  // (a settling compartment first records its batch as unsettled; a draining one stops draining); a filling
+  // compartment whose inlet is commanded shut keeps filling while its valve travels and closes its window (and
+  // starts settling) when the valve reaches its closed limit — see valveEnds(). 'active' is the primary filling side.
   function gaugeOpen(k) {
     if (gv[k]) return false;
-    gv[k] = true;
+    gv[k] = true; hold.gauge[k] = false;
     var tk = tanks[k];
     if (tk.state === 'settling') recordBatch(k, true);
     if (tk.state !== 'filling') { tk.state = 'filling'; tk.since = t; openWindow(k); }
@@ -738,10 +753,54 @@ function create(flowIn, opts) {
   function gaugeClose(k) {
     if (!gv[k]) return false;
     gv[k] = false;
-    var tk = tanks[k];
-    if (tk.state === 'filling') { closeWindow(k); tk.state = 'settling'; tk.since = t; }
+    armClose('gauge', k);
     if (active === k && gv[1 - k]) active = 1 - k;
     return true;
+  }
+  // ── divert valve travel + open-new-before-close-old interlock ──
+  // A valve commanded shut while the other compartment's valve is commanded open but not yet fully open is held
+  // open (no dead-heading of P-201 / no blocked separator dumps during a changeover); the hold releases at the
+  // other valve's open limit. Positions move at 1/strokeS per second; strokeS = 0 → instantaneous.
+  var hold = { surge: [false, false], gauge: [false, false] };
+  function cmdArr(eq) { return eq === 'surge' ? uv : gv; }
+  function posArr(eq) { return eq === 'surge' ? upos : gpos; }
+  function vTarget(eq, k) { return (cmdArr(eq)[k] || hold[eq][k]) ? 1 : 0; }
+  function armClose(eq, k) {
+    var c = cmdArr(eq), p = posArr(eq);
+    hold[eq][k] = !!c[1 - k] && p[1 - k] < 1 && p[k] > 0;
+    snapValves();
+  }
+  function moving(eq, k) { return posArr(eq)[k] !== vTarget(eq, k) || hold[eq][k]; }
+  // hot-path guard: any divert valve travelling / held, or a shut gauge compartment still marked filling
+  function valveAct() {
+    var hs = hold.surge, hg = hold.gauge;
+    return upos[0] !== ((uv[0] || hs[0]) ? 1 : 0) || upos[1] !== ((uv[1] || hs[1]) ? 1 : 0) ||
+      gpos[0] !== ((gv[0] || hg[0]) ? 1 : 0) || gpos[1] !== ((gv[1] || hg[1]) ? 1 : 0) || hs[0] || hs[1] || hg[0] || hg[1] ||
+      (!gv[0] && tanks[0].state === 'filling') || (!gv[1] && tanks[1].state === 'filling');
+  }
+  // stroke 0: valves jump to their targets at once (hold releases cascade in the same instant)
+  function snapValves() {
+    for (var pass = 0; pass < 3; pass++) {
+      if (ctl.surge.strokeS <= 0) { upos[0] = vTarget('surge', 0); upos[1] = vTarget('surge', 1); }
+      if (ctl.gauge.strokeS <= 0) { gpos[0] = vTarget('gauge', 0); gpos[1] = vTarget('gauge', 1); }
+      valveEnds();
+    }
+  }
+  // limit-switch logic: release holds at the other valve's open limit; a gauge compartment commanded shut stops
+  // filling (window closes, settling starts) at its closed limit
+  function valveEnds() {
+    if (!valveAct()) { pumpBlocked = !gv[0] && !gv[1] && gpos[0] <= 0 && gpos[1] <= 0; return; }
+    var k, eq, c, p, hd, tg;
+    for (var e = 0; e < 2; e++) {
+      eq = e ? 'gauge' : 'surge'; c = cmdArr(eq); p = posArr(eq); hd = hold[eq];
+      for (k = 0; k < 2; k++) { tg = vTarget(eq, k); if (p[k] !== tg && mabs(p[k] - tg) < 1e-9) p[k] = tg; }   // round-off at the limit switch
+      for (k = 0; k < 2; k++) if (hd[k] && (!c[1 - k] || p[1 - k] >= 1 || c[k])) hd[k] = false;
+    }
+    for (k = 0; k < 2; k++) {
+      var tk = tanks[k];
+      if (!gv[k] && !hold.gauge[k] && gpos[k] <= 0 && tk.state === 'filling') { closeWindow(k); tk.state = 'settling'; tk.since = t; }
+    }
+    pumpBlocked = gpos[0] <= 0 && gpos[1] <= 0 && !gv[0] && !gv[1];
   }
   // t = 0 (create / reset): put the initial fill in the lineup's open compartment(s) with no batch side effects
   function initGaugeLineup() {
@@ -752,10 +811,11 @@ function create(flowIn, opts) {
       tanks[1].Vo = tanks[0].Vo; tanks[1].Vw = tanks[0].Vw; tanks[1].T = tanks[0].T; tanks[0].Vo = 0; tanks[0].Vw = 0;
       tanks[0].state = 'ready'; tanks[0].win = null; tanks[1].state = 'filling'; openWindow(1); active = 1;
     } else if (!a && !b) { tanks[0].win = null; tanks[0].pend = null; tanks[0].state = 'settling'; }   // no fill window at t = 0 → no (empty, zero-length) batch record
+    hold.surge[0] = hold.surge[1] = hold.gauge[0] = hold.gauge[1] = false;
   }
   function doSwitch(forced) {
     var a = active, b = 1 - a;
-    gaugeOpen(b);                                // open the new side before closing the old (no dead-heading)
+    gaugeOpen(b);                                // open the new side; the old one is held open until the new one is fully open
     gaugeClose(a);
     active = b;
     var tag = tanks[b].tag;
@@ -766,21 +826,31 @@ function create(flowIn, opts) {
   // ── auto-divert (overfill protection, per tank, off by default) ──
   // A filling compartment at or above its set point diverts to the other compartment when that one has room
   // (below set point − hysteresis): open the new inlet, then close the old one. With no room anywhere nothing
-  // switches (LAH-201 / LAH-301 both-high alarm instead) — the hysteresis band stops back-and-forth switching.
+  // switches (LAH-201 / LAH-301 alarm instead) — the hysteresis band stops back-and-forth switching.
+  // Gauge tank: a compartment that is settling or draining holds a batch in progress and is not available unless
+  // the operator allows interrupting batches (a tank batch must stand undisturbed until it has settled and been
+  // gauged — API MPMS Ch. 18.1 / Ch. 3.1A); with nothing available the filling side rises to LAH-301 and P-201
+  // trips at LSHH-301.
   function sideTag(eq, k) { return eq === 'surge' ? (k ? TAGS.surgeB : TAGS.surgeA) : (k ? TAGS.gaugeB : TAGS.gaugeA); }
   function valveTag(eq, k) { return eq === 'surge' ? (k ? TAGS.xvSurgeB : TAGS.xvSurgeA) : (k ? TAGS.xvGaugeB : TAGS.xvGaugeA); }
   function letter(k) { return k ? 'B' : 'A'; }
   function noteControl(eq, what, isAuto, msg) {
     emit('control', { type: 'control', t: t, eq: eq, what: what, auto: !!isAuto, msg: msg });
   }
+  // can gauge compartment o take the P-201 discharge now? (inlet already open, or ready, or batches may be interrupted)
+  function gaugeAvail(o) {
+    if (hhK[o] || tankVliq(o) >= cfg.gauge.lahh * capG) return false;
+    var s = tanks[o].state;
+    return !!gv[o] || s === 'ready' || s === 'filling' || !!ctl.gauge.allowInterrupt;
+  }
   function autoDivert() {
     var C = ctl.surge, k, o, msg;
-    if (C.auto) {
+    if (C.auto && !hold.surge[0] && !hold.surge[1]) {
       for (k = 0; k < 2; k++) {
         o = 1 - k;
         if (!uv[k] || compVliq(k) < C.sp * capK - 1e-9) continue;
         if (!(compVliq(o) < (C.sp - C.hyst) * capK)) continue;
-        uv[o] = true; uv[k] = false;
+        uv[o] = true; hold.surge[o] = false; uv[k] = false; armClose('surge', k);
         var sucMoved = C.suction === letter(o);
         if (sucMoved) C.suction = letter(k);             // pump the full compartment down while the other fills
         msg = TAGS.surge + ' auto-divert: ' + sideTag('surge', k) + ' at ' + rnd0(compVliq(k) / capK * 100) + '% → inlet to ' + sideTag('surge', o) +
@@ -792,15 +862,15 @@ function create(flowIn, opts) {
       }
     }
     var Cg = ctl.gauge;
-    if (Cg.auto) {
+    if (Cg.auto && !hold.gauge[0] && !hold.gauge[1]) {
       for (k = 0; k < 2; k++) {
         o = 1 - k;
         if (!gv[k] || tankVliq(k) < Cg.sp * capG - 1e-9) continue;
-        if (!(tankVliq(o) < (Cg.sp - Cg.hyst) * capG)) continue;
+        if (!(tankVliq(o) < (Cg.sp - Cg.hyst) * capG) || !gaugeAvail(o)) continue;
         var was = tanks[o].state;
         gaugeOpen(o); gaugeClose(k); active = o;
         msg = TAGS.gauge + ' auto-divert: ' + sideTag('gauge', k) + ' at ' + rnd0(tankVliq(k) / capG * 100) + '% → inlet to ' + sideTag('gauge', o) +
-          ' (' + valveTag('gauge', o) + ' open, ' + valveTag('gauge', k) + ' closed)' + (was !== 'ready' ? ' — ' + was + ' interrupted' : '');
+          ' (' + valveTag('gauge', o) + ' open, ' + valveTag('gauge', k) + ' closed)' + (was === 'settling' || was === 'draining' ? ' — ' + was + ' batch interrupted (allowed)' : '');
         logEntry('switch', 'AUTO_DIVERT', null, TAGS.gauge, msg);
         emit('divert', { type: 'divert', t: t, eq: 'gauge', from: k, to: o, auto: true, tag: sideTag('gauge', o), msg: msg });
         noteControl('gauge', 'inlet', true, msg);
@@ -865,7 +935,16 @@ function create(flowIn, opts) {
     A.active = true; A.since = t; A.value = isNum(value) ? value : null; A.limit = isNum(limit) ? limit : null; A.msg = msg; A.offT = -1;
     emit('alarm', alarmPayload('alarm', A));
     logEntry('raise', A.id, A.sev, A.tag, msg);
-    if (A.sev === 'trip' && A.id !== 'ESD_TRIPPED') autoTrip(A);
+    // trip actions — a high-high on a vessel stops what fills it:
+    //   LSHH-301 (gauge tank)  → P-201 trip (latched) + fail-safe close of the high-high compartment's XV-301 (no ESD)
+    //   PUMP_DRYRUN (LSLL-201 on the running pump's suction) → P-201 trip (latched)
+    //   LSHH-201 (surge tank)  → fail-safe close of the high-high compartment's XV-201 + ESD (SDV-101 shuts in the well)
+    //   every other trip       → ESD
+    if (A.act === 'pump') pumpTripNow(A);
+    else if (A.sev === 'trip' && A.id !== 'ESD_TRIPPED') {
+      if (A.id === 'LSHH_SURGE') surgeHHClose();
+      autoTrip(A);
+    }
   }
   function clearA(A) {
     if (!A.active) return;
@@ -906,16 +985,58 @@ function create(flowIn, opts) {
     PSHH_SURGE: mHi('PSHH-201', 'surge tank', ' psig'), PSH_SURGE: mHi('PAH-201', 'surge tank pressure high', ' psig'),
     PSV_SURGE: function (v, l) { return 'PSV-201 lifting — surge tank ' + rnd(v) + ' psig (set ' + rnd(l) + ')'; },
     LSHH_SURGE: function (v, l) { return 'LSHH-201 surge tank ' + sideTag('surge', surgeHiK) + ' level ' + rnd(v) + '% ≥ ' + rnd(l) + '%'; },
-    LSLL_SURGE: function (v, l) { return 'LSLL-201 surge tank level ' + rnd(v) + '% ≤ ' + rnd(l) + '% — P-201 tripped'; },
+    LSLL_SURGE: function (v, l) { return 'LSLL-201 P-201 suction level ' + rnd(v) + '% ≤ ' + rnd(l) + '%'; },
+    PUMP_DRYRUN: function (v, l) { return 'P-201 dry-run trip — suction ' + dryMsg + ' level ' + rnd(v) + '% ≤ LSLL ' + rnd(l) + '% (reset required)'; },
+    PUMP_STARVED: function (v) { return 'P-201 suction starved — drawing ' + rnd0(v) + '% of design'; },
     PUMP_FAIL: function () { return 'P-201 transfer pump failed'; },
     SURGE_BLOCKED: function () { return TAGS.xvSurgeA + ' and ' + TAGS.xvSurgeB + ' closed — separator dumps blocked (no route to ' + TAGS.surge + ')'; },
     PUMP_BLOCKED: function () { return 'P-201 discharge blocked — ' + TAGS.xvGaugeA + ' and ' + TAGS.xvGaugeB + ' closed (pump stopped)'; },
     LAH_SURGE_BOTH: function (v, l) { return 'LAH-201 both surge compartments high (' + rnd(v) + '% ≥ ' + rnd(l) + '%) — auto-divert has no room'; },
-    LAH_GT_BOTH: function (v, l) { return 'LAH-301 both gauge compartments high (' + rnd(v) + '% ≥ ' + rnd(l) + '%) — auto-divert has no room'; },
+    LAH_GT_BOTH: function (v, l) { return 'LAH-301 ' + tanks[gaugeLahK].tag + ' at ' + rnd(v) + '% ≥ SP ' + rnd(l) + '% — auto-divert has no compartment to take the flow' + gtWhy(1 - gaugeLahK); },
     LAH_GT: function (v) { return 'LAH-301 ' + tanks[active].tag + ' ' + rnd(v) + '% full — no standby compartment ready'; },
-    LSHH_GT: function (v, l) { return 'LSHH-301 ' + tanks[gaugeHiK].tag + ' level ' + rnd(v) + '% ≥ ' + rnd(l) + '%'; }
+    LSHH_GT: function (v, l) { return 'LSHH-301 ' + tanks[gaugeHiK].tag + ' level ' + rnd(v) + '% ≥ ' + rnd(l) + '% — P-201 tripped, ' + valveTag('gauge', gaugeHiK) + ' closed'; }
   };
-  var surgeHiK = 0, gaugeHiK = 0;
+  function gtWhy(o) { var s = tanks[o].state; return ' (' + tanks[o].tag + ' ' + (s === 'settling' || s === 'draining' ? s + ' — batch in progress' : rnd0(tankVliq(o) / capG * 100) + '% full') + ')'; }
+  function pumpLatched() { return ptrip.LSHH_GT || ptrip.PUMP_DRYRUN; }
+  // P-201 protective trip (latched until resetTrip): LSHH-301 also closes the high-high compartment's inlet (fail-safe)
+  function pumpTripNow(A) {
+    var was = pumpLatched(), extra = '';
+    ptrip[A.id] = true;
+    if (A.id === 'LSHH_GT') {
+      for (var k = 0; k < 2; k++) if (hhK[k] && gv[k]) { gaugeClose(k); extra += ' · ' + valveTag('gauge', k) + ' closing (fail-safe)'; }
+    }
+    emit('pumpTrip', { type: 'pumpTrip', t: t, cause: A.id, tag: TAGS.pump, msg: A.msg, value: A.value, limit: A.limit });
+    logEntry('trip', A.id, 'trip', TAGS.pump, 'P-201 tripped — ' + A.msg + extra + (was ? '' : ' · reset required'));
+    noteControl('pump', 'trip', true, 'P-201 tripped — ' + A.msg);
+  }
+  // LSHH-201: close the inlet of every surge compartment at or above LSHH (stop what fills it); the ESD follows
+  function surgeHHClose() {
+    for (var k = 0; k < 2; k++) {
+      if (uv[k] && compVliq(k) >= cfg.surge.lshh * capK - 1e-9) {
+        uv[k] = false; armClose('surge', k); hold.surge[k] = false;
+        logEntry('event', 'VALVE', null, valveTag('surge', k), valveTag('surge', k) + ' closed (LSHH-201 trip, fail-safe) — ' + lineupText('surge'));
+        noteControl('surge', 'inlet', true, valveTag('surge', k) + ' closed by LSHH-201');
+      }
+    }
+  }
+  // reset permissives of the latched P-201 trips (null = may be reset now)
+  function tripBlock(id) {
+    if (id === 'LSHH_GT') {
+      var lim = num(cfg.gauge.lshhReset, 0.9);
+      for (var k = 0; k < 2; k++) {
+        var f = tankVliq(k) / capG;
+        if (hhK[k] && f >= lim) return tanks[k].tag + ' ' + rnd0(f * 100) + '% ≥ reset ' + rnd0(lim * 100) + '%';
+        if ((gv[k] || gpos[k] > 0) && f >= cfg.gauge.lahh) return tanks[k].tag + ' still at LSHH';
+      }
+      return null;
+    }
+    if (id === 'PUMP_DRYRUN') {
+      var fs = suctionV() / suctionCap();
+      return fs > cfg.surge.lsl ? null : 'suction ' + rnd0(fs * 100) + '% ≤ LSL ' + rnd0(cfg.surge.lsl * 100) + '%';
+    }
+    return null;
+  }
+  var surgeHiK = 0, gaugeHiK = 0, gaugeLahK = 0, FG2 = [0, 0];
   // both-high (auto-divert on): a filling side at/above SP while the other side has no room (≥ SP − hysteresis)
   function bothHigh(C, open, fA, fB, db) {
     if (!C.auto) return false;
@@ -965,6 +1086,13 @@ function create(flowIn, opts) {
     evalA(A, fracHiU >= U.lshh, fracHiU < U.lshh - dbLu, fracHiU * 100, U.lshh * 100, MSG.LSHH_SURGE, false);
     A = aDef('LSLL_SURGE', 'LSLL-201', 'warn', 'pump', 'l', true);
     evalA(A, fracS <= U.lsll, fracS > U.lsll + dbLu, fracS * 100, U.lsll * 100, MSG.LSLL_SURGE, true);
+    // P-201 dry-run protection: latched trip set by the discrete logic (running pump, suction at LSLL, nothing to switch to)
+    A = aDef('PUMP_DRYRUN', 'P-201', 'trip', 'pump', 'l'); A.act = 'pump';
+    if (ptrip.PUMP_DRYRUN && !A.active) raise(A, fracS * 100, U.lsll * 100, MSG.PUMP_DRYRUN(fracS * 100, U.lsll * 100));
+    else if (A.active) A.value = fracS * 100;
+    var runP = lastQp > 0, starved = runP && lastDraw < 0.98 * lastQp;
+    A = aDef('PUMP_STARVED', 'P-201', 'warn', 'pump', 'b');
+    evalA(A, starved, !starved, lastQp > 0 ? lastDraw / lastQp * 100 : 0, 98, MSG.PUMP_STARVED, true);
     A = aDef('PUMP_FAIL', 'P-201', 'alarm', 'pump', 'b');
     evalA(A, faults.surgePumpFail, !faults.surgePumpFail, null, null, MSG.PUMP_FAIL, false);
     var blkU = !uv[0] && !uv[1];
@@ -976,15 +1104,30 @@ function create(flowIn, opts) {
     A = aDef('LAH_SURGE_BOTH', 'LAH-201', 'alarm', 'surge', 'l');
     evalA(A, bU, bUc, fracHiU * 100, ctl.surge.sp * 100, MSG.LAH_SURGE_BOTH, true);
     var Gc = cfg.gauge, fa = tankVliq(active) / capG, noStandby = tanks[1 - active].state !== 'ready';
-    var fGA = tankVliq(0) / capG, fGB = tankVliq(1) / capG, fGhi = mmax(fGA, fGB);
-    gaugeHiK = fGB > fGA ? 1 : 0;
+    var fGA = tankVliq(0) / capG, fGB = tankVliq(1) / capG, fG = FG2; FG2[0] = fGA; FG2[1] = fGB;
     A = aDef('LAH_GT', 'LAH-301', 'alarm', 'gauge', 'l');
     evalA(A, fa >= Gc.switchFrac && noStandby, fa < Gc.switchFrac - 0.02 || !noStandby, fa * 100, Gc.switchFrac * 100, MSG.LAH_GT, true);
-    A = aDef('LSHH_GT', 'LSHH-301', 'trip', 'gauge', 'l');
-    evalA(A, fGhi >= Gc.lahh, fGhi < Gc.lahh - 0.02, fGhi * 100, Gc.lahh * 100, MSG.LSHH_GT, false);
-    var bG = bothHigh(ctl.gauge, gv, fGA, fGB, 0), bGc = !bothHigh(ctl.gauge, gv, fGA, fGB, 0.02);
+    // LSHH-301: a compartment that is lined up (inlet commanded open or valve still passing) at high-high trips
+    // P-201 and closes that compartment's inlet; latched until the operator resets it below the reset point
+    A = aDef('LSHH_GT', 'LSHH-301', 'trip', 'gauge', 'l'); A.act = 'pump';
+    var hi0 = (gv[0] || gpos[0] > 0) && fGA >= Gc.lahh - 1e-9, hi1 = (gv[1] || gpos[1] > 0) && fGB >= Gc.lahh - 1e-9;
+    if (!A.active) {
+      if (hi0 || hi1) {
+        hhK[0] = hi0; hhK[1] = hi1; gaugeHiK = hi1 && (!hi0 || fGB > fGA) ? 1 : 0;
+        raise(A, fG[gaugeHiK] * 100, Gc.lahh * 100, MSG.LSHH_GT(fG[gaugeHiK] * 100, Gc.lahh * 100));
+      }
+    } else { A.value = fG[gaugeHiK] * 100; if (hi0) hhK[0] = true; if (hi1) hhK[1] = true; }
+    // LAH-301 (auto-divert on): the filling compartment is at its set point and the other one cannot take the flow —
+    // no room (≥ SP − hysteresis), or a batch in progress that may not be interrupted, or latched at LSHH
+    var gC = ctl.gauge, bG = false, bGc = true;
+    for (var gk = 0; gk < 2; gk++) {
+      if (!gC.auto || !gv[gk]) continue;
+      var og = 1 - gk, avO = gaugeAvail(og), noRoom = !(fG[og] < gC.sp - gC.hyst) || !avO, noRoomC = !(fG[og] < gC.sp - gC.hyst - 0.02) || !avO;
+      if (fG[gk] >= gC.sp && noRoom) { bG = true; gaugeLahK = gk; }
+      if (fG[gk] >= gC.sp - 0.02 && noRoomC) bGc = false;
+    }
     A = aDef('LAH_GT_BOTH', 'LAH-301', 'alarm', 'gauge', 'l');
-    evalA(A, bG, bGc, fGhi * 100, ctl.gauge.sp * 100, MSG.LAH_GT_BOTH, true);
+    evalA(A, bG, bGc, fG[gaugeLahK] * 100, gC.sp * 100, MSG.LAH_GT_BOTH, true);
   }
   function autoTrip(A) {
     if (esdS.tripped && !esdS.manual) return;
@@ -1035,8 +1178,24 @@ function create(flowIn, opts) {
     else if (Vw1 >= VW_hi - 1e-12) { if (lcvW.cmd < 0.5) waterCycles++; lcvW.cmd = 1; }
     else if (Vw1 <= VW_lo + 1e-12) lcvW.cmd = 0;
     var fracU = suctionV() / suctionCap();          // P-201 level control on the selected suction compartment(s)
-    if (pumpTrip && fracU > U.lsl) pumpTrip = false;
-    if (fracU <= U.lsll) pumpTrip = true;
+    // dry-run protection: a RUNNING pump whose suction is at LSLL either moves its suction to the other compartment
+    // (auto-divert on and that compartment above LSL) or trips (latched, reset required). Below LSLL a stopped pump
+    // is simply not started (LSL/LSH level control): a start permissive, not a trip.
+    if (pumpOn && !pumpLatched() && !pumpBlocked && !faults.surgePumpFail && fracU <= U.lsll + 1e-12) {
+      var sx = ctl.surge.suction, so = sx === 'A' ? 1 : sx === 'B' ? 0 : -1;
+      if (ctl.surge.auto && so >= 0 && compVliq(so) / capK > U.lsl) {
+        ctl.surge.suction = letter(so);
+        var smsg = 'P-201 suction auto-switched ' + sideTag('surge', 1 - so) + ' (' + rnd0(fracU * 100) + '% ≤ LSLL) → ' + sideTag('surge', so) +
+          ' (' + rnd0(compVliq(so) / capK * 100) + '%) — dry-run protection';
+        logEntry('switch', 'AUTO_SUCTION', null, TAGS.pump, smsg);
+        emit('suction', { type: 'suction', t: t, from: 1 - so, to: so, auto: true, tag: TAGS.pump, msg: smsg });
+        noteControl('surge', 'suction', true, smsg);
+        fracU = suctionV() / suctionCap();
+      } else {
+        ptrip.PUMP_DRYRUN = true;
+        dryMsg = sx === 'both' ? TAGS.surgeA + ' + ' + TAGS.surgeB : sideTag('surge', sx === 'B' ? 1 : 0);
+      }
+    }
     if (fracU >= U.lsh - 1e-12) pumpOn = true; else if (fracU <= U.lsl + 1e-12) pumpOn = false;
     for (i = 0; i < 2; i++) {
       var tk = tanks[i];
@@ -1045,7 +1204,6 @@ function create(flowIn, opts) {
     }
     if (gv[active] && tankVliq(active) >= Gc.switchFrac * capG - 1e-9 && tanks[1 - active].state === 'ready') doSwitch(false);
     autoDivert();
-    pumpBlocked = !gv[0] && !gv[1];
     if (!psvLift && Psep >= mawpE) psvLift = true; else if (psvLift && Psep <= 0.93 * mawpE) psvLift = false;
     if (!psvULift && Pu >= mawpU) psvULift = true; else if (psvULift && Pu <= 0.93 * mawpU) psvULift = false;
 
@@ -1054,6 +1212,13 @@ function create(flowIn, opts) {
     slew(lcvO.x, lcvO.cmd, h, S.oil.strokeS, S.oil.strokeS); var xOav = SLEW.avg, xOnew = SLEW.x;
     slew(lcvW.x, lcvW.cmd, h, S.water.strokeS, S.water.strokeS); var xWav = SLEW.avg, xWnew = SLEW.x;
     slew(esdTravel, esdS.tripped ? 0 : 1, h, Rr.esdOpenS, Rr.esdCloseS); var trAv = SLEW.avg, trNew = SLEW.x;
+    // inlet divert valves XV-201A/B, XV-301A/B: linear travel at 1/strokeS; flow splits follow the time-averaged positions
+    var sU = ctl.surge.strokeS, sG = ctl.gauge.strokeS;
+    slew(upos[0], vTarget('surge', 0), h, sU, sU); var uA_av = SLEW.avg, uA_n = SLEW.x;
+    slew(upos[1], vTarget('surge', 1), h, sU, sU); var uB_av = SLEW.avg, uB_n = SLEW.x;
+    slew(gpos[0], vTarget('gauge', 0), h, sG, sG); var gA_av = SLEW.avg, gA_n = SLEW.x;
+    slew(gpos[1], vTarget('gauge', 1), h, sG, sG); var gB_av = SLEW.avg, gB_n = SLEW.x;
+    var uSum = uA_av + uB_av, gSum = gA_av + gB_av;
     fE = clamp(trAv / 0.25, 0, 1);
     var slug = 0;
     if (faults.slugging || N.slug.on) {
@@ -1081,7 +1246,7 @@ function create(flowIn, opts) {
     var VLB = Vw2 + Vo2 * Bs;
     var SGB = VLB > 1e-12 ? (Vw2 + Vo2 * Bs * SGo) / VLB : SGo;
     var dPo = (Psep - Pu) + WGRAD * SGB * h2;
-    var blkU = !uv[0] && !uv[1];                    // both T-201 inlet valves shut: the dump valves discharge against a closed line
+    var blkU = !(uSum > 0);                         // both T-201 inlet valves shut: the dump valves discharge against a closed line
     var capO = (blkU ? 0 : xOav) * liqQ(Cv_o, dPo, SGB);
     var phiL = clamp(VLB / 0.02, 0, 1);
     var qLo = capO * phiL;
@@ -1114,7 +1279,7 @@ function create(flowIn, opts) {
     if ((uRawU > 0 && uRawU < 1) || (uRawU >= 1 && eU < 0) || (uRawU <= 0 && eU > 0)) Ibpv += eU * h;
     var qBpv = ubpv * qCapBpv;
     var qPsvU = psvULift ? gq(Cv_psvU, PuA, P2a, TRu, Zu) : 0;
-    var pumpBpd = (faults.surgePumpFail || pumpTrip || !pumpOn || pumpBlocked) ? 0 : pumpDesign;
+    var pumpBpd = (faults.surgePumpFail || pumpLatched() || !pumpOn || !(gSum > 0)) ? 0 : pumpDesign;   // no path (both XV-301 shut): stopped
     var Qp = pumpBpd / 86400, po = 0, pw = 0, poA = 0, poB = 0, pwA = 0, pwB = 0;
     var VuA0 = compVliq(0), VuB0 = compVliq(1), VS0 = (sucSel(0) ? VuA0 : 0) + (sucSel(1) ? VuB0 : 0);
     if (Qp > 0 && VS0 > 1e-9) {                     // draw each phase in proportion to its share of the suction inventory
@@ -1122,8 +1287,12 @@ function create(flowIn, opts) {
       if (sucSel(1)) { pwB = mmin(Qp * (uw[1] / VS0), uw[1] / h); poB = mmin(Qp * (uo[1] * Bu / VS0) / Bu, uo[1] / h); }
       pw = pwA + pwB; po = poA + poB;
     }
-    var nU = (uv[0] ? 1 : 0) + (uv[1] ? 1 : 0), suA = uv[0] ? 1 / mmax(nU, 1) : 0, suB = uv[1] ? 1 / mmax(nU, 1) : 0;
-    var nG = (gv[0] ? 1 : 0) + (gv[1] ? 1 : 0), sgA = gv[0] ? 1 / mmax(nG, 1) : 0, sgB = gv[1] ? 1 / mmax(nG, 1) : 0;
+    // split by valve position (isolation ball valves in parallel branches of equal line resistance: flow ∝ opening)
+    var suA = uSum > 0 ? uA_av / uSum : 0, suB = uSum > 0 ? uB_av / uSum : 0;
+    var sgA = gSum > 0 ? gA_av / gSum : 0, sgB = gSum > 0 ? gB_av / gSum : 0;
+    lastQp = Qp; lastDraw = po * Bu + pw;
+    var qDA = poA * Bu + pwA, qDB = poB * Bu + pwB;
+    Tpump = (qDA + qDB) > 1e-12 ? (qDA * Tuk[0] + qDB * Tuk[1]) / (qDA + qDB) : Tu;   // P-201 discharge: draw-weighted mix of the suction compartments
     var VG0a = tankVliq(0), VG0b = tankVliq(1);
     var gvent = po * RsE(PuA, Tu);
     // gauge drains
@@ -1204,6 +1373,7 @@ function create(flowIn, opts) {
     var VB0 = VB;
     // ESD travel slew
     esdTravel = trNew; lcvO.x = xOnew; lcvW.x = xWnew;
+    upos[0] = uA_n; upos[1] = uB_n; gpos[0] = gA_n; gpos[1] = gB_n;
     if (N.on) {
       var aG = mexp(-h / N.tau), aW = mexp(-h / N.whpTau), sg = msqrt(1 - aG * aG);
       xiG = aG * xiG + sg * randn(); xiL = aG * xiL + sg * randn(); xiW = aW * xiW + msqrt(1 - aW * aW) * randn();
@@ -1233,11 +1403,18 @@ function create(flowIn, opts) {
     var aM = 1 - mexp(-h / 600);
     emaOil += (oO + wO - emaOil) * aM; emaWater += (oW + wW - emaWater) * aM; emaGas += (qPcv - emaGas) * aM; emaFlash += (qFlash - emaFlash) * aM;
     // temperatures (exact exponential mixing + ambient loss)
-    var qInU = (oO + wO) * Bs + oW + wW;
-    Tu = mixT(Tu, qInU / mmax(VliqU, 1), Tsep, h);
+    // per-compartment surge temperatures: each mixes its share of the separator liquids (Tsep) with ambient loss;
+    // Tu (flash, Bo, gas space) is their volume-weighted mean. Baffle overflow carries no enthalpy (small, rare).
+    var qInU = (oO + wO) * Bs + oW + wW, vKs = 0, vTs = 0;
+    for (i = 0; i < 2; i++) {
+      var vK = uo[i] * Bu + uw[i];
+      Tuk[i] = mixT(Tuk[i], qInU * (i ? suB : suA) / mmax(vK, 0.5), Tsep, h);
+      vKs += vK; vTs += vK * Tuk[i];
+    }
+    Tu = vKs > 1e-9 ? vTs / vKs : mixT(Tu, 0, Tsep, h);
     for (i = 0; i < 2; i++) {
       var qi = (po * Bu + pw) * (i ? sgB : sgA);
-      tanks[i].T = mixT(tanks[i].T, qi / mmax(tankVliq(i), 1), Tu, h);
+      tanks[i].T = mixT(tanks[i].T, qi / mmax(tankVliq(i), 1), Tpump, h);
       if (tanks[i].win) { tanks[i].win.Tint += tanks[i].T * h; tanks[i].win.tInt += h; }
     }
     algebraic();
@@ -1253,6 +1430,7 @@ function create(flowIn, opts) {
     F.poK[0] = poA; F.poK[1] = poB; F.pwK[0] = pwA; F.pwK[1] = pwB;
     F.inU[0] = suA * ((oO + wO) * Bs + oW + wW); F.inU[1] = suB * ((oO + wO) * Bs + oW + wW); F.fillG[0] = sgA; F.fillG[1] = sgB;
     t += h;
+    valveEnds();                                   // limit switches at the end-of-step positions (fill windows, holds)
     histSample(false);
     // 8 alarms
     processAlarms();
@@ -1308,6 +1486,11 @@ function create(flowIn, opts) {
       if (tanks[i].state === 'draining') { var r = F.drO[i] * tankBo(i) + F.drW[i]; if (r > 1e-12) { x = (tankVliq(i) - c.gauge.heelFrac * capG) / r; if (x >= 0 && x < te) te = x; } }
       if (tanks[i].state === 'settling') { x = c.gauge.settleS - (t - tanks[i].since); if (x >= 0 && x < te) te = x; }
     }
+    if (valveAct()) for (i = 0; i < 2; i++) {        // divert valve limit switches (end of travel: fill windows close, holds release)
+      var dU = mabs(vTarget('surge', i) - upos[i]), dG = mabs(vTarget('gauge', i) - gpos[i]);
+      if (dU > 0 && ctl.surge.strokeS > 0) { x = dU * ctl.surge.strokeS; if (x < te) te = x; }
+      if (dG > 0 && ctl.gauge.strokeS > 0) { x = dG * ctl.gauge.strokeS; if (x < te) te = x; }
+    }
     if (te < h) h = te + 1e-7;
     if (h < c.hMin) h = c.hMin;
     if (h > rem) h = rem;
@@ -1351,9 +1534,11 @@ function create(flowIn, opts) {
     surge: { tag: TAGS.surge, D: 0, H: 0, cap_bbl: 0, P: 0, SP: 0, SPeff: 0, T: 0, psh: 0, pshh: 0, mawp: 0,
       h: 0, frac: 0, hW: 0, fracW: 0, Vo_bbl: 0, Vo_stb: 0, Vw_bbl: 0, flash_mscfd: 0, tFull_s: null, gas_scf: 0,
       bpv: { tag: TAGS.bpv, u: 0 }, blanket: { tag: TAGS.blanket, u: 0 }, psv: { tag: TAGS.psvSurge, lifting: false },
-      pump: { tag: TAGS.pump, on: false, tripped: false, failed: false, blocked: false, q_bpd: 0, design_bpd: 0, suction: 'both' }, lsll: 0, lsl: 0, lsh: 0, lshh: 0,
-      comps: [], suction: 'both', blocked: false, auto: { on: false, sp: 0, hyst: 0 } },
-    gauge: { tag: TAGS.gauge, active: 0, count: 2, tanks: [], batches: [], blocked: false, auto: { on: false, sp: 0, hyst: 0 } },
+      pump: { tag: TAGS.pump, on: false, tripped: false, failed: false, blocked: false, q_bpd: 0, design_bpd: 0, suction: 'both',
+        trip: null, tripMsg: '', canReset: false, resetBlock: '', starved: false, T: 0 }, lsll: 0, lsl: 0, lsh: 0, lshh: 0,
+      comps: [], suction: 'both', blocked: false, auto: { on: false, sp: 0, hyst: 0 }, strokeS: 0 },
+    gauge: { tag: TAGS.gauge, active: 0, count: 2, tanks: [], batches: [], blocked: false, auto: { on: false, sp: 0, hyst: 0 }, strokeS: 0,
+      allowInterrupt: false, lshhReset: 0 },
     cum: { oilIn_stb: 0, waterIn_bbl: 0, gasIn_mmscf: 0, flare_mmscf: 0, flash_mscf: 0, gaugeFlash_mscf: 0, gaugeVent_mscf: 0, vacBreak_scf: 0,
       gaugeOil_stb: 0, gaugeWater_bbl: 0, drainedOil_stb: 0, drainedWater_bbl: 0,
       liquidToFlareOil_stb: 0, liquidToFlareWater_bbl: 0, spillOil_stb: 0, spillWater_bbl: 0 },
@@ -1366,9 +1551,9 @@ function create(flowIn, opts) {
     dP: 0, P0: 0, Pout: 0, T0: 0, Tout: 0, hydR: false, flowing: false });
   for (var ti = 0; ti < 2; ti++) snap.gauge.tanks.push({ tag: ti ? TAGS.gaugeB : TAGS.gaugeA, D: 0, H: 0, cap_bbl: 0, h: 0, frac: 0, hW: 0, fracW: 0,
     Vo_bbl: 0, Vo_stb: 0, Vw_bbl: 0, T: 0, state: 'ready', stateSince: 0, inlet: false, drain_bpd: 0, switchFrac: 0, lahh: 0, fill_bpd: 0,
-    valveTag: ti ? TAGS.xvGaugeB : TAGS.xvGaugeA });
+    valveTag: ti ? TAGS.xvGaugeB : TAGS.xvGaugeA, pos: 0, moving: false, hold: false, hh: false, avail: false });
   for (var ci = 0; ci < 2; ci++) snap.surge.comps.push({ tag: ci ? TAGS.surgeB : TAGS.surgeA, valveTag: ci ? TAGS.xvSurgeB : TAGS.xvSurgeA, cap_bbl: 0,
-    h: 0, frac: 0, hW: 0, fracW: 0, Vo_bbl: 0, Vo_stb: 0, Vw_bbl: 0, inlet: false, suction: false, fill_bpd: 0, draw_bpd: 0 });
+    h: 0, frac: 0, hW: 0, fracW: 0, Vo_bbl: 0, Vo_stb: 0, Vw_bbl: 0, inlet: false, suction: false, fill_bpd: 0, draw_bpd: 0, T: 0, pos: 0, moving: false, hold: false });
   FAULT_IDS.forEach(function (k) { snap.faults[k] = false; });
 
   function gasVel(qscfs, Pa, TR, Z, IDin) {
@@ -1501,23 +1686,30 @@ function create(flowIn, opts) {
       cp.cap_bbl = capK; cp.frac = vk / capK; cp.h = cp.frac * Hu; cp.fracW = uw[i] / capK; cp.hW = cp.fracW * Hu;
       cp.Vo_bbl = uo[i] * Bu; cp.Vo_stb = uo[i]; cp.Vw_bbl = uw[i]; cp.inlet = !!uv[i]; cp.suction = sucSel(i);
       cp.fill_bpd = F.inU[i] * 86400; cp.draw_bpd = drw * 86400;
+      cp.T = Tuk[i]; cp.pos = upos[i]; cp.moving = moving('surge', i); cp.hold = hold.surge[i];
       if (netK > 1e-9) { var tk0 = mmax(0, (U.lshh * capK - vk) / netK); if (tF === null || tk0 < tF) tF = tk0; }
     }
     su.tFull_s = tF;
     su.suction = ctl.surge.suction; su.blocked = !uv[0] && !uv[1]; su.auto.on = ctl.surge.auto; su.auto.sp = ctl.surge.sp; su.auto.hyst = ctl.surge.hyst;
     su.bpv.u = ubpv; su.blanket.u = ublk; su.psv.lifting = psvULift;
+    pumpTrip = pumpLatched();
     su.pump.on = pumpOn && !pumpTrip && !pumpBlocked && !faults.surgePumpFail; su.pump.tripped = pumpTrip; su.pump.failed = faults.surgePumpFail; su.pump.q_bpd = F.pumpBpd; su.pump.design_bpd = pumpDesign;
     su.pump.blocked = pumpBlocked; su.pump.suction = ctl.surge.suction;
+    var ptId = ptrip.LSHH_GT ? 'LSHH_GT' : ptrip.PUMP_DRYRUN ? 'PUMP_DRYRUN' : null, ptA = ptId ? AL[ptId] : null, rb = ptId ? tripBlock(ptId) : null;
+    su.pump.trip = ptId; su.pump.tripMsg = ptA ? ptA.msg : ''; su.pump.canReset = !!ptId && !rb; su.pump.resetBlock = rb || '';
+    su.pump.starved = !!(AL.PUMP_STARVED && AL.PUMP_STARVED.active); su.pump.T = Tpump; su.strokeS = ctl.surge.strokeS;
     su.lsll = U.lsll; su.lsl = U.lsl; su.lsh = U.lsh; su.lshh = U.lshh;
     // gauge
     var g = s.gauge; g.active = active; g.count = 2;
     g.blocked = pumpBlocked; g.auto.on = ctl.gauge.auto; g.auto.sp = ctl.gauge.sp; g.auto.hyst = ctl.gauge.hyst;
+    g.strokeS = ctl.gauge.strokeS; g.allowInterrupt = !!ctl.gauge.allowInterrupt; g.lshhReset = num(Gc.lshhReset, 0.9);
     for (i = 0; i < 2; i++) {
       var tk = tanks[i], o2 = g.tanks[i], bg = tankBo(i), vl = tk.Vo * bg + tk.Vw;
       o2.tag = tk.tag; o2.D = Dg; o2.H = Hg; o2.cap_bbl = capG; o2.frac = vl / capG; o2.h = o2.frac * Hg; o2.hW = tk.Vw * BBL / Atg; o2.fracW = o2.hW / Hg;
       o2.Vo_bbl = tk.Vo * bg; o2.Vo_stb = tk.Vo; o2.Vw_bbl = tk.Vw; o2.T = tk.T; o2.state = tk.state; o2.stateSince = tk.since;
       o2.inlet = !!gv[i]; o2.drain_bpd = (F.drO[i] * bg + F.drW[i]) * 86400; o2.switchFrac = Gc.switchFrac; o2.lahh = Gc.lahh;
       o2.fill_bpd = (F.po * Bu + F.pw) * F.fillG[i] * 86400;
+      o2.pos = gpos[i]; o2.moving = moving('gauge', i); o2.hold = hold.gauge[i]; o2.hh = hhK[i] && !!ptrip.LSHH_GT; o2.avail = gaugeAvail(i);
     }
     if (g.batches.length !== batches.length || (batches.length && g.batches[g.batches.length - 1].n !== batches[batches.length - 1].n)) {
       g.batches = batches.map(function (b) { var c = {}; for (var k in b) c[k] = b[k]; return c; });
@@ -1551,7 +1743,7 @@ function create(flowIn, opts) {
       s.alarms.length = 0;
       for (i = 0; i < alarmOrder.length; i++) s.alarms.push(AL[alarmOrder[i]].pub);
       var blocking = [];
-      for (i = 0; i < alarmOrder.length; i++) { A = AL[alarmOrder[i]]; if (A.sev === 'trip' && A.id !== 'ESD_TRIPPED') blocking.push(A.id); }
+      for (i = 0; i < alarmOrder.length; i++) { A = AL[alarmOrder[i]]; if (A.sev === 'trip' && A.id !== 'ESD_TRIPPED' && A.act !== 'pump') blocking.push(A.id); }   // P-201 trips do not hold the ESD
       s.esd.blocking = blocking.sort();
     }
     for (i = 0; i < alarmOrder.length; i++) {
@@ -1684,7 +1876,7 @@ function create(flowIn, opts) {
       if (AL.ESD_MANUAL) clearA(AL.ESD_MANUAL);
       tFlow = 0; graceUntil = t + cfg.startupGrace;
       emit('esdReset', { type: 'esdReset', t: t });
-      logEntry('reset', 'ESD', null, TAGS.esd, 'ESD reset — reopening');
+      logEntry('reset', 'ESD', null, TAGS.esd, 'ESD reset — reopening' + (!uv[0] && !uv[1] ? ' · ' + TAGS.xvSurgeA + '/B still shut: open a T-201 inlet to restore the separator dump route' : ''));
       return { ok: true, blocking: [] };
     }, function () { var b = blockingNow(); return { ok: !esdS.tripped || b.length === 0, blocking: b }; }),
     setFault: mut(function (id, on) {
@@ -1715,6 +1907,10 @@ function create(flowIn, opts) {
       return true;
     }),
     setAutoDivert: mut(function (eq, on, o) { return setAutoNow(eq, on, o); }),
+    // divert valve stroke time (s, 0-60) per tank; gauge: allow auto-divert to interrupt a settling / draining batch
+    setValveOptions: mut(function (eq, o) { return setOptsNow(eq, o); }),
+    // reset a latched P-201 trip ('LSHH_GT' | 'PUMP_DRYRUN'; none = every latched one) once its permissive is met
+    resetTrip: mut(function (id) { return resetTripNow(id); }, function (id) { return tripPeek(id); }),
     getControls: function () { var c = deepClone(ctl); c.v = 1; return c; },
     setControls: mut(function (c, o) {
       if (!isPlainObj(c)) return false;
@@ -1724,7 +1920,7 @@ function create(flowIn, opts) {
         if (Array.isArray(su.inlet) && su.inlet.length === 2) { uv[0] = !!su.inlet[0]; uv[1] = !!su.inlet[1]; }
         if (Array.isArray(ga.inlet) && ga.inlet.length === 2) { gv[0] = !!ga.inlet[0]; gv[1] = !!ga.inlet[1]; }
         if (SUCTIONS.indexOf(su.suction) >= 0) ctl.surge.suction = su.suction;
-        autoFields(ctl.surge, su, 'surge'); autoFields(ctl.gauge, ga, 'gauge');
+        autoFields(ctl.surge, su, 'surge'); autoFields(ctl.gauge, ga, 'gauge'); optFields(ctl.surge, su); optFields(ctl.gauge, ga);
         initState(mode);
         return true;
       }
@@ -1734,6 +1930,7 @@ function create(flowIn, opts) {
       if (SUCTIONS.indexOf(su.suction) >= 0) ctl.surge.suction = su.suction;
       if (typeof su.auto === 'boolean' || isNum(su.sp) || isNum(su.hyst)) setAutoNow('surge', typeof su.auto === 'boolean' ? su.auto : ctl.surge.auto, su);
       if (typeof ga.auto === 'boolean' || isNum(ga.sp) || isNum(ga.hyst)) setAutoNow('gauge', typeof ga.auto === 'boolean' ? ga.auto : ctl.gauge.auto, ga);
+      setOptsNow('surge', su); setOptsNow('gauge', ga);
       return true;
     }),
     logEvent: mut(function (msg, tag) {
@@ -1751,13 +1948,60 @@ function create(flowIn, opts) {
   }
   function setValveNow(eq, idx, open, isAuto) {
     idx = (idx === 1 || idx === 'B' || idx === 'b') ? 1 : 0; open = !!open;
-    if (eq === 'surge') { if (!!uv[idx] === open) return false; uv[idx] = open; }
-    else if (eq === 'gauge') { if (!(open ? gaugeOpen(idx) : gaugeClose(idx))) return false; pumpBlocked = !gv[0] && !gv[1]; }
-    else return false;
+    if (eq !== 'surge' && eq !== 'gauge') return false;
+    if (open && !cmdArr(eq)[idx]) {             // open permissive: never line up into a compartment at high-high
+      var why = eq === 'surge' ? (compVliq(idx) >= cfg.surge.lshh * capK - 1e-9 ? sideTag('surge', idx) + ' at LSHH-201' : '')
+        : (hhK[idx] && ptrip.LSHH_GT) ? sideTag('gauge', idx) + ' tripped at LSHH-301 — reset P-201 first'
+        : tankVliq(idx) >= cfg.gauge.lahh * capG - 1e-9 ? sideTag('gauge', idx) + ' at LSHH-301' : '';
+      if (why) { logEntry('event', 'VALVE', null, valveTag(eq, idx), valveTag(eq, idx) + ' open refused — ' + why); return false; }
+    }
+    if (eq === 'surge') { if (!!uv[idx] === open) return false; uv[idx] = open; if (open) { hold.surge[idx] = false; snapValves(); } else armClose('surge', idx); }
+    else { if (!(open ? gaugeOpen(idx) : gaugeClose(idx))) return false; snapValves(); }
     var tag = valveTag(eq, idx), msg = tag + (open ? ' opened' : ' closed') + (isAuto ? ' (auto)' : ' (manual)') + ' — ' + lineupText(eq);
     logEntry('event', 'VALVE', null, tag, msg);
     noteControl(eq, 'inlet', isAuto, msg);
     return true;
+  }
+  function optFields(C, src) {
+    if (!isPlainObj(src)) return;
+    if (isNum(src.strokeS)) C.strokeS = clamp(src.strokeS, 0, 60);
+    if (C === ctl.gauge && typeof src.allowInterrupt === 'boolean') C.allowInterrupt = src.allowInterrupt;
+  }
+  function setOptsNow(eq, o) {
+    var C = eq === 'surge' ? ctl.surge : eq === 'gauge' ? ctl.gauge : null;
+    if (!C || !isPlainObj(o)) return false;
+    var s0 = C.strokeS, i0 = C.allowInterrupt;
+    optFields(C, o);
+    if (C.strokeS === s0 && C.allowInterrupt === i0) return false;
+    snapValves();
+    var msg = (eq === 'surge' ? TAGS.xvSurgeA + '/B' : TAGS.xvGaugeA + '/B') + ' stroke ' + rnd0(C.strokeS) + ' s' +
+      (eq === 'gauge' ? ' · auto-divert ' + (C.allowInterrupt ? 'MAY' : 'may NOT') + ' interrupt settling/draining batches' : '');
+    logEntry('event', 'VALVE_OPT', null, eq === 'surge' ? TAGS.surge : TAGS.gauge, msg);
+    noteControl(eq, 'options', false, msg);
+    return true;
+  }
+  function tripPeek(id) {
+    var ids = id ? [id] : ['LSHH_GT', 'PUMP_DRYRUN'], b = [];
+    ids.forEach(function (k) { if (ptrip[k]) { var w = tripBlock(k); if (w) b.push(k + ': ' + w); } });
+    return { ok: b.length === 0, reset: [], blocking: b };
+  }
+  function resetTripNow(id) {
+    if (id != null && !hasOwn(ptrip, id)) return { ok: false, reset: [], blocking: ['unknown trip ' + String(id)] };
+    var ids = id ? [id] : ['LSHH_GT', 'PUMP_DRYRUN'], done = [], b = [];
+    ids.forEach(function (k) {
+      if (!ptrip[k]) return;
+      var w = tripBlock(k);
+      if (w) { b.push(k + ': ' + w); return; }
+      ptrip[k] = false; if (k === 'LSHH_GT') { hhK[0] = false; hhK[1] = false; }
+      if (AL[k] && AL[k].active) clearA(AL[k]);
+      var msg = 'P-201 trip reset (' + (k === 'LSHH_GT' ? 'LSHH-301' : 'dry-run') + ')' + (pumpLatched() ? '' : ' — P-201 back on level control');
+      logEntry('reset', k, null, TAGS.pump, msg);
+      emit('pumpReset', { type: 'pumpReset', t: t, cause: k, tag: TAGS.pump, msg: msg });
+      noteControl('pump', 'reset', false, msg);
+      done.push(k);
+    });
+    if (b.length) logEntry('event', 'PUMP', null, TAGS.pump, 'P-201 reset refused — ' + b.join('; '));
+    return { ok: b.length === 0, reset: done, blocking: b };
   }
   function autoFields(C, src, eq) {
     if (!isPlainObj(src)) return;
@@ -1782,7 +2026,7 @@ function create(flowIn, opts) {
   }
   function blockingNow() {
     var b = [];
-    for (var k in AL) { var A = AL[k]; if (A.active && A.sev === 'trip' && k !== 'ESD_TRIPPED') b.push(k); }
+    for (var k in AL) { var A = AL[k]; if (A.active && A.sev === 'trip' && k !== 'ESD_TRIPPED' && A.act !== 'pump') b.push(k); }
     return b.sort();
   }
   Object.defineProperty(api, 'disposed', { get: function () { return disposed; } });
@@ -1802,7 +2046,7 @@ function create(flowIn, opts) {
 
 // =============================================================================
 G.WTS_sim = {
-  VERSION: '1.1.0',
+  VERSION: '1.2.0',
   TAGS: TAGS,
   NAMES: NAMES,
   NULLABLE: NULLABLE,
@@ -2040,7 +2284,9 @@ test('14 performance', function () {
 test('15 batch accuracy', function () {
   // handlers run at the end of advance(); reconstruct cum at the switch instant: the newly active
   // compartment was 'ready' (static) before the switch, so everything it gained since is post-switch oil.
-  var sim = S.create(F0, { seed: 15 }), atSwitch = { 0: 0 }, bs = [], before = [0, 0];
+  // instantaneous divert valves (stroke 0): the fill windows open and close at the switch instant; with travel
+  // they overlap by the stroke (see 25)
+  var sim = S.create(F0, { seed: 15, config: { gauge: { xvStrokeS: 0 } } }), atSwitch = { 0: 0 }, bs = [], before = [0, 0];
   sim.on('switch', function (p, st) { atSwitch[p.t] = st.cum.gaugeOil_stb - (st.gauge.tanks[p.to].Vo_stb - before[p.to]); });
   sim.on('batch', function (p) { bs.push(p); });
   for (var i = 0; i < 5 * 3600 / 5; i++) { var s0 = sim.getState(); before[0] = s0.gauge.tanks[0].Vo_stb; before[1] = s0.gauge.tanks[1].Vo_stb; sim.advance(5); }
@@ -2165,6 +2411,19 @@ test('24 upstream dynamics', function () {
   run(sim, 1800, 2);
   var sit = 1.2 * 3000, P1 = sim.getState().nodes.wellhead.P;
   assert(P1 - P0 > 0.75 * (sit - P0), 'build-up ' + P0.toFixed(0) + ' → ' + P1.toFixed(0));
+});
+// 25 Divert valve travel: open-new-before-close-old, the old window closes one stroke after the new valve is open
+test('25 divert valve travel', function () {
+  var sim = S.create(F0, { seed: 25, config: { noise: { on: false } } }), sw = [], bs = [];
+  var stroke = S.DEFAULTS.gauge.xvStrokeS;
+  sim.on('switch', function (p) { sw.push(p.t); }); sim.on('batch', function (p) { bs.push(p); });
+  var minSum = 2;
+  run(sim, 4 * 3600, 1, function (st) { var T = st.gauge.tanks; if (st.surge.pump.q_bpd > 0) minSum = Math.min(minSum, T[0].pos + T[1].pos); });
+  assert(sw.length >= 1 && bs.length >= 1, 'switches ' + sw.length + ' batches ' + bs.length);
+  assert(minSum >= 1 - 1e-9, 'a flow path is always fully open while P-201 runs (min Σpos ' + minSum + ')');
+  var b = bs[0];
+  near(b.tClose - sw[0], 2 * stroke, 1e-6, 'window closes 2 strokes after the switch command (new opens, then old closes)');
+  near(b.closeOil_stb - b.openOil_stb, b.oil_stb, 1e-6, 'tank Δ = batch oil');
 });
 
 var pass = results.filter(function (r) { return r.ok; }).length;

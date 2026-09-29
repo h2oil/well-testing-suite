@@ -47,6 +47,13 @@ module.exports = [
       assert.strictEqual(s.setValve('gauge', 0, false), true, 'close XV-301A');
       st = s.getState();
       assert.strictEqual(st.gauge.active, 1, 'B is the active compartment');
+      // v3.0: divert valves travel (stroke from the DEFAULTS). XV-301A is held open until XV-301B reaches its open
+      // limit (open-new-before-close-old), then strokes shut — A keeps filling until then.
+      const stroke = app.win.WTS_sim.DEFAULTS.gauge.xvStrokeS;
+      assert.ok(stroke > 0 && st.gauge.tanks[0].hold === true && st.gauge.tanks[0].state === 'filling', 'A held open while B opens');
+      run(s, 2 * stroke, 1);
+      st = s.getState();
+      assert.ok(st.gauge.tanks[0].pos === 0 && st.gauge.tanks[1].pos === 1 && !st.gauge.tanks[0].moving, 'both valves at their limits after 2 strokes');
       assert.strictEqual(st.gauge.tanks[0].state, 'settling', 'A settles after its inlet closes');
       assert.strictEqual(st.gauge.tanks[1].state, 'filling', 'B fills');
       const aAt = st.gauge.tanks[0].Vo_stb + st.gauge.tanks[0].Vw_bbl, bAt = st.gauge.tanks[1].Vo_stb;
@@ -97,6 +104,7 @@ module.exports = [
       // route the separator liquids to A only and pump from A: B is isolated (no fill, no draw)
       assert.strictEqual(s.setValve('surge', 1, false), true, 'close XV-201B');
       assert.strictEqual(s.setSuction('A'), true, 'suction A');
+      run(s, app.win.WTS_sim.DEFAULTS.surge.xvStrokeS, 1);        // v3.0: XV-201B strokes shut before B is isolated
       st = s.getState();
       assert.strictEqual(st.surge.suction, 'A'); assert.strictEqual(st.surge.pump.suction, 'A');
       assert.deepStrictEqual(plain(st.surge.comps.map((c) => c.suction)), [true, false]);
@@ -227,8 +235,11 @@ module.exports = [
       const s = sim(app, { seed: 41 });
       s.setValve('surge', 0, false); s.setSuction('A'); s.setAutoDivert('surge', true, { sp: 0.75, hyst: 0.15 });
       s.setValve('gauge', 1, true); s.setValve('gauge', 0, false); s.setAutoDivert('gauge', true);
+      assert.strictEqual(s.setValveOptions('gauge', app.toWin({ strokeS: 8, allowInterrupt: true })), true, 'gauge valve options');
       const c = JSON.parse(JSON.stringify(s.getControls()));
-      assert.deepStrictEqual(c, { surge: { inlet: [false, true], suction: 'A', auto: true, sp: 0.75, hyst: 0.15 }, gauge: { inlet: [false, true], auto: true, sp: 0.9, hyst: 0.1 }, v: 1 });
+      // v3.0 adds the valve stroke (both tanks) and the gauge "allow interrupting batches" option to the lineup
+      assert.deepStrictEqual(c, { surge: { inlet: [false, true], suction: 'A', auto: true, sp: 0.75, hyst: 0.15, strokeS: 6 },
+        gauge: { inlet: [false, true], auto: true, sp: 0.9, hyst: 0.1, strokeS: 8, allowInterrupt: true }, v: 1 });
       // a fresh sim restored at t = 0: same lineup, the initial gauge fill sits in B (no batch side effects)
       const s2 = sim(app, { seed: 41 });
       assert.strictEqual(s2.setControls(app.toWin(c), app.toWin({ initial: true })), true);

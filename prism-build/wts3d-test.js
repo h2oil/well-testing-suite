@@ -178,7 +178,8 @@ const SECTION_A = (G, src) => {
       const s = S.create(F, { seed: 5, config: { noise: { on: false } } }); const st = s.getState(), bad = [];
       if (!['setValve', 'setSuction', 'setAutoDivert', 'getControls', 'setControls'].every(k => typeof s[k] === 'function')) return 'api';
       const c0 = JSON.stringify(s.getControls());
-      if (c0 !== JSON.stringify({ surge: { inlet: [true, true], suction: 'both', auto: false, sp: 0.8, hyst: 0.1 }, gauge: { inlet: [true, false], auto: false, sp: 0.9, hyst: 0.1 }, v: 1 })) bad.push('defaults ' + c0);
+      // v3.0: the lineup also carries the divert valve stroke (s) and the gauge 'allow interrupting batches' option
+      if (c0 !== JSON.stringify({ surge: { inlet: [true, true], suction: 'both', auto: false, sp: 0.8, hyst: 0.1, strokeS: 6 }, gauge: { inlet: [true, false], auto: false, sp: 0.9, hyst: 0.1, strokeS: 6, allowInterrupt: false }, v: 1 })) bad.push('defaults ' + c0);
       if (st.surge.comps.length !== 2 || st.surge.comps[0].tag !== 'T-201A' || st.gauge.tanks[1].valveTag !== 'XV-301B' || st.surge.auto.on !== false) bad.push('snapshot');
       s.setValve('gauge', 1, true); s.setValve('gauge', 0, false); s.setValve('surge', 1, false); s.setSuction('B'); s.setAutoDivert('surge', true, { sp: 0.85 });
       for (let i = 0; i < 60; i++) s.advance(10);
