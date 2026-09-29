@@ -226,6 +226,9 @@
         /* ── Validation errors ── */
         .val-error { background: rgba(248,81,73,.08); border: 1px solid rgba(248,81,73,.25); border-radius: 8px; padding: 10px 14px; font-size: 12px; color: var(--red); margin-bottom: 12px; }
         .val-error ul { margin: 4px 0 0 16px; }
+        /* Result shown for inputs that have since been edited (Calculate-button pages) */
+        .wts-stale { opacity: .45; }
+        [id$="_res"] > .wts-stale:first-child::before { content: 'Inputs changed \2014  press Calculate to update'; display: block; font-size: 11px; font-weight: 600; color: var(--yellow); margin-bottom: 6px; }
         .fg-item input.input-err { border-color: var(--red); background: rgba(248,81,73,.06); }
 
         /* ── Export bar ── */
@@ -2474,6 +2477,29 @@ document.addEventListener('h2oil:pagechange', e => { _snapPage = e.detail && e.d
     clearTimeout(_snapTimer);
     _snapTimer = setTimeout(_snapshotPage, 900);  // after debounced live recalcs settle
 }, true));
+// Stale results on Calculate-button pages (v3 logic audit). A host page that
+// recalculates only on its Calculate button kept the previous result on screen
+// after an input was edited, and the Quick Report snapshot / PDF then paired the
+// NEW input with the OLD result (e.g. Tank: height 96 in next to the capacity of
+// a 48 in tank). An edit now marks the current result of that calculator (the
+// nearest block holding a *_res box and a calc…() button) as stale: dimmed, with
+// a hint, and left out of reports (.rp-skip). Any re-render of the result box by
+// the calc function replaces the marked nodes, so the mark clears itself.
+// Live-recalculating pages (plug-in calculators, simulator, PRiSM) are exempt.
+const _STALE_CALC_BTN = 'button[onclick^="calc"], button[onclick^="window.calc"]';
+function _markStaleResult(tg) {
+    const body = $('pgBody');
+    if(!body || !tg || !body.contains(tg) || !tg.matches || !tg.matches('input, select, textarea')) return;
+    if(page === 'wts' || page === 'prism' || page === 'dca' || page === 'pta' || (window.WTS_calcRegistry && window.WTS_calcRegistry[page])) return;
+    for(let n = tg.parentElement; n && n !== body; n = n.parentElement) {
+        const res = n.querySelectorAll('[id$="_res"]');
+        if(!res.length) continue;
+        if(!n.querySelector(_STALE_CALC_BTN)) return;
+        res.forEach(r => [...r.children].forEach(c => { if(!c.classList.contains('val-error')) c.classList.add('wts-stale', 'rp-skip'); }));
+        return;
+    }
+}
+['input', 'change'].forEach(t => document.addEventListener(t, e => _markStaleResult(e.target), true));
 
 // ── Report templates (P4) ──
 // A template is an ordered list of sections under the shared report cover
@@ -2694,6 +2720,9 @@ function _rtBuild(tpl) {
     const when = iso => { try { return new Date(iso).toLocaleString(undefined, { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' }); } catch(e) { return ''; } };
     const keyResult = s => {
         for(const sec of s.results) for(const it of sec.items) if(it.type === 'note' && it.verdict) return it.text;
+        // A verdict carried in a result-box title ("Separator Rating — FAIL") — v3 logic
+        // audit: the summary used to show the first row (gas density) and hide the FAIL.
+        for(const sec of s.results) if(/[—–-]\s*(FAIL|PASS|OK)\b/.test(sec.title || '')) return sec.title;
         for(const sec of s.results) for(const it of sec.items) if(it.type === 'kv') return it.label + ': ' + it.value;
         for(const sec of s.results) for(const it of sec.items) if(it.type === 'table' && it.rows[0]) {
             return it.rows[0].map(c => c.t).filter(Boolean).slice(0, 2).join(': ');
@@ -7472,6 +7501,9 @@ function renderTank(body){
     </div>`;
     loadInputs('tank',TANK_IDS);
 }
+// The tank results follow the unit system (_tankMetric), so re-run the ones on
+// screen when it flips (v3 logic audit: they stayed in bbl next to cm inputs).
+__UNIT_RECALC.tank=[['calcRectTank','tr_res'],['calcVertTank','tv_res'],['calcCylTank','tc_res'],['calcTankRate','tk_res'],['calcTankWeight','tw_res']];
 window.calcRectTank=function(){
     const H=parseFloat($('tr_h').value),L=parseFloat($('tr_l').value),W=parseFloat($('tr_w').value),fl=parseFloat($('tr_fl').value);
     saveInputs('tank',TANK_IDS);
@@ -7980,8 +8012,8 @@ window.calcSolGOR=function(){
     const Rs_vb=C1*ggs*Math.pow(P+14.7,C2)*Math.exp(C3*API/(T+460));
     const sepDefault=psepTxt===''&&tsepTxt==='';
     $('sg_res').innerHTML=`<div class="rbox" style="margin-top:12px"><div class="rbox-title">Solution GOR Results</div>
-        <div class="rrow"><span class="rl">Rs (Standing)</span><span class="rv">${_uFmt(Rs_standing,'gor',1,'scf/stbbl',2)}</span></div>
-        <div class="rrow"><span class="rl">Rs (Vasquez & Beggs)</span><span class="rv">${_uFmt(Rs_vb,'gor',1,'scf/stbbl',2)}</span></div>
+        <div class="rrow"><span class="rl">Rs (Standing)</span><span class="rv">${_uFmt(Rs_standing,'gor',1,'scf/STB',2)}</span></div>
+        <div class="rrow"><span class="rl">Rs (Vasquez & Beggs)</span><span class="rv">${_uFmt(Rs_vb,'gor',1,'scf/STB',2)}</span></div>
         <div class="rrow"><span class="rl">Gas Gravity (Standing)</span><span class="rv">${fmt(gg,4)} (as entered)</span></div>
         <div class="rrow"><span class="rl">Gas Gravity (V&amp;B, 100 psig)</span><span class="rv">${fmt(ggs,4)}</span></div>
         <div class="rrow"><span class="rl">API Bracket</span><span class="rv">${API<=30?'&le; 30 (Heavy/Medium)':'&gt; 30 (Light)'}</span></div>
@@ -8109,6 +8141,7 @@ function renderMCFShr(body){
     </div></div></div>`;
     loadInputs('mcfshr',['ms_ti','ms_tf','ms_si','ms_sf','ms_ss']);
 }
+__UNIT_RECALC.mcfshr=[['calcMCFShr','ms_res']];   // volumes follow the unit system (v3 logic audit)
 window.calcMCFShr=function(){
     saveInputs('mcfshr',['ms_ti','ms_tf','ms_si','ms_sf','ms_ss']);
     const ti=parseFloat($('ms_ti').value),tf=parseFloat($('ms_tf').value);
@@ -8249,7 +8282,10 @@ window.calcChokeCnv=function(src){
     if(src==='64') inches=parseFloat($('cc_64').value)/64;
     else if(src==='in') inches=parseFloat($('cc_in').value);
     else inches=parseFloat($('cc_mm').value)/25.4;
-    if(!isFinite(inches)||inches<0) return;   // G1 audit: ignore blank / negative sizes
+    // G1 audit: ignore blank / negative sizes. v3 logic audit: a cleared field also
+    // clears the other two, which otherwise kept showing the previous size.
+    if(!isFinite(inches)){['64','in','mm'].forEach(k=>{if(k!==src&&$('cc_'+k)) $('cc_'+k).value='';});return;}
+    if(inches<0) return;
     if(src!=='64') $('cc_64').value=(inches*64).toFixed(2);
     if(src!=='in') $('cc_in').value=inches.toFixed(4);
     if(src!=='mm') $('cc_mm').value=(inches*25.4).toFixed(2);
@@ -8288,9 +8324,13 @@ window.calcAnalogSig=function(){
     else if(type==='V'){pct=val/10;PV=lo+pct*(hi-lo);mA=4+pct*16;V=val;}
     else{PV=val;pct=(val-lo)/(hi-lo);mA=4+pct*16;V=pct*10;}
     // NAMUR NE 43: 3.8–20.5 mA is the measuring range; ≤ 3.6 or ≥ 21 mA signals a fault.
-    const warn = (mA<=3.6||mA>=21) ? `<div class="val-error">${fmt(mA,2)} mA is in the NAMUR NE 43 failure band (≤ 3.6 or ≥ 21 mA) — check the loop/transmitter.</div>`
+    // The bands diagnose a MEASURED loop current, so they apply to a mA input only
+    // (v3 logic audit: a process value of 110 % was reported as a transmitter fault).
+    const span = (pct<0||pct>1) ? `<div class="info-bar" style="margin-top:8px">Signal is outside the calibrated 0–100 % span (${pct<0?'under':'over'}-range, ${fmt(pct*100,1)} %).</div>` : '';
+    const warn = type!=='mA' ? span
+               : (mA<=3.6||mA>=21) ? `<div class="val-error">${fmt(mA,2)} mA is in the NAMUR NE 43 failure band (≤ 3.6 or ≥ 21 mA) — check the loop/transmitter.</div>`
                : (mA<3.8||mA>20.5) ? `<div class="val-error">${fmt(mA,2)} mA is outside the NAMUR NE 43 measuring range (3.8–20.5 mA).</div>`
-               : (pct<0||pct>1) ? '<div class="info-bar" style="margin-top:8px">Signal is outside the calibrated 0–100 % span (under/over-range).</div>' : '';
+               : span;
     $('as_res').innerHTML=warn+`<div class="rbox" style="margin-top:12px"><div class="rbox-title">Conversion Results</div>
         <div class="rrow"><span class="rl">Current (mA)</span><span class="rv">${fmt(mA,3)} mA</span></div>
         <div class="rrow"><span class="rl">Voltage</span><span class="rv">${fmt(V,3)} V</span></div>
@@ -9557,11 +9597,16 @@ window.calcTurbMeter=function(){
     const meters=[{bore:'2"',id:0.0525,qmin:300,qmax:3000},{bore:'3"',id:0.0779,qmin:600,qmax:8000},{bore:'4"',id:0.1023,qmin:1000,qmax:15000},{bore:'6"',id:0.1541,qmin:2500,qmax:35000},{bore:'8"',id:0.2027,qmin:5000,qmax:65000}];
     let rec=null;
     meters.forEach(m=>{if(!rec&&Qmin>=m.qmin*0.5&&Qmax<=m.qmax) rec=m;});
-    const overRange=!rec;
-    if(!rec) rec=meters[meters.length-1];
+    // v3 logic audit: "no meter fits" also happens when the Qmin–Qmax range is wider
+    // than one meter's turndown (e.g. 100–8,000 BPD). That used to select the 8"
+    // meter and say Qmax exceeds it. Only a Qmax above the 8" rating is over-range;
+    // otherwise take the smallest meter that passes Qmax (the Qmin note flags the
+    // low end, where a second, smaller meter run is needed).
+    const overRange=Qmax>meters[meters.length-1].qmax;
+    if(!rec) rec=meters.find(m=>Qmax<=m.qmax)||meters[meters.length-1];
     const tmNotes=[];
     if(overRange) tmNotes.push('Qmax exceeds the largest meter in the table (8" — '+fmt(meters[meters.length-1].qmax,0)+' BPD): use parallel meter runs.');
-    if(Qmin<rec.qmin) tmNotes.push('Qmin is below the '+rec.bore+' meter\'s rated minimum ('+fmt(rec.qmin,0)+' BPD) — outside the linear range; expect a larger meter-factor error at low flow.');
+    if(Qmin<rec.qmin) tmNotes.push('Qmin is below the '+rec.bore+' meter\'s rated minimum ('+fmt(rec.qmin,0)+' BPD) — outside the linear range; expect a larger meter-factor error at low flow'+(Qmin<rec.qmin*0.5?' (the flow range is wider than one meter covers: use a smaller parallel meter run for the low rates)':'')+'.');
     const Q_m3s_min=Qmin*0.158987/86400,Q_m3s_max=Qmax*0.158987/86400;
     const A=Math.PI*rec.id*rec.id/4;
     const Vmin=Q_m3s_min/A,Vmax=Q_m3s_max/A;
@@ -76602,7 +76647,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         var unplaced = list.length - placed.length;
         if (unplaced > 0) warnings.push(unplaced + ' event' + (unplaced > 1 ? 's have' : ' has') + ' no time on the dataset clock and ' + (unplaced > 1 ? 'were' : 'was') + ' ignored: set the clock zero or enter t.');
         placed.sort(function (a, b) { return a.t - b.t; });
-        var rows = [], open = false, qCur = 0, used = 0;
+        var rows = [], open = false, everOpen = false, qCur = 0, used = 0;
         function push(t, q) {
             if (rows.length && Math.abs(rows[rows.length - 1].t - t) < 1e-9) rows.pop();
             if (rows.length ? rows[rows.length - 1].q === q : q === 0) { qCur = q; return; }
@@ -76619,15 +76664,17 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
                         if ((placed[j].type === 'rate' || placed[j].type === 'choke') && placed[j].q != null) { q = placed[j].q; break; }
                     }
                 }
-                open = true;
+                open = true; everOpen = true;
                 if (q == null) { warnings.push('Open at t = ' + fmt(e.t, 4) + ' h has no rate and no later rate before the next close: add a rate to seed this period.'); continue; }
                 push(e.t, q); used++;
             } else if (e.type === 'choke' || e.type === 'rate') {
                 if (e.q == null) continue;
                 if (!open) {
                     if (e.q === 0) continue;
-                    warnings.push('A rate at t = ' + fmt(e.t, 4) + ' h comes before any open event: it is taken as the flow start.');
-                    open = true;
+                    // v3 logic audit: after a close the old text wrongly said "before any open event".
+                    warnings.push('A rate at t = ' + fmt(e.t, 4) + ' h comes ' + (everOpen ? 'after a close with no new open event' : 'before any open event') +
+                                  ': it is taken as the flow start.');
+                    open = true; everOpen = true;
                 }
                 push(e.t, e.q); used++;
             } else if (e.type === 'close') {
@@ -79243,9 +79290,9 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         if (!r.ok) { _errors('hs_roe_res', 'roe', r.bad); return; }
         var v = '';
         if (r.x100_ft < 50) v += _ok('100 ppm radius of exposure is under 50 ft.');
-        else v += _warn('100 ppm radius of exposure is ' + _fa(r.x100_ft) + ' ft — check for public areas inside it; a contingency plan may be required.');
+        else v += _warn('100 ppm radius of exposure is ' + _fa(r.x100_ft) + ' ft (' + _fa(r.x100_ft * 0.3048) + ' m) — check for public areas inside it; a contingency plan may be required.');
         if (r.x100_ft > 3000) v += _warn('100 ppm radius of exposure exceeds 3,000 ft.');
-        if (r.x500_ft >= 50) v += _warn('500 ppm radius of exposure is ' + _fa(r.x500_ft) + ' ft — check for public roads inside it.');
+        if (r.x500_ft >= 50) v += _warn('500 ppm radius of exposure is ' + _fa(r.x500_ft) + ' ft (' + _fa(r.x500_ft * 0.3048) + ' m) — check for public roads inside it.');
         res.innerHTML =
             '<div class="rbox"><div class="rbox-title">Radius of Exposure</div>' +
             _row('H2S mole fraction', _fmt(r.mf, 6)) +
@@ -79271,8 +79318,8 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             _row('SO2', _fa(r.so2_lbhr) + ' lb/hr (' + _fa(r.so2_kghr) + ' kg/hr)') +
             _row('SO2 per day', _fa(r.so2_td) + ' t/d') +
             _row('Unburned H2S', _fa(r.h2s_lbhr) + ' lb/hr (' + _fa(r.h2s_kghr) + ' kg/hr)') +
-            _note('Ground-level SO2 concentration depends on flare height, plume rise and weather; a dispersion ' +
-                'screening tool is planned (roadmap item 11). Use Flare Emissions for full-period reporting. ' +
+            _note('Ground-level SO2 concentration depends on flare height, plume rise and weather: screen it on the ' +
+                'SO2 / H2S Dispersion Screening page. Use Flare Emissions for full-period reporting. ' +
                 _basisNote(r.basis)) +
             '</div>';
         res.setAttribute('data-done', '1');
