@@ -824,9 +824,76 @@ function _fetchBytes(u) { var ac = G.AbortController ? new AbortController() : n
     .then(function (r) { if (!r.ok) throw new Error('http ' + r.status); return r.arrayBuffer(); })
     .then(function (b) { clearTimeout(t); return b; }, function (e) { clearTimeout(t); throw e; }); }
 function _ok(m) { return !!(m && m.WebGLRenderer && m.PMREMGenerator && m.WebGLRenderTarget); }
+// ── Native iOS shell (Capacitor, capacitor://localhost) ──────────────────
+// WKWebView serves the bundled www/ through a custom-scheme handler. Module imports of a
+// capacitor:// URL are the path Capacitor apps use for every ES-module bundle, whereas importing
+// a blob: URL minted on a custom-scheme origin is not something WebKit documents or Capacitor
+// tests, so inside the shell the bundled three.js is imported directly by its absolute URL.
+// The pinned SHA-384 is still checked first when WebCrypto exists (it catches a three.js bump
+// that was not re-bundled); without WebCrypto only the LOCAL file (part of the code-signed app
+// bundle) is accepted unverified — CDN bytes are never imported unverified. The web version never
+// takes this branch (it keeps fetch → SHA-384 → IndexedDB → blob import).
+function _isNativeShell() {
+  try {
+    if (G.location && G.location.protocol === 'capacitor:') return true;
+    var C = G.Capacitor;
+    return !!(C && typeof C.isNativePlatform === 'function' && C.isNativePlatform());
+  } catch (e) { return false; }
+}
+function _absUrl(u) { try { return new URL(u, G.location && G.location.href).href; } catch (e) { return u; } }
+// Pure decision table (exported for tests / Web Inspector diagnostics).
+function loaderPolicy(env) {
+  env = env || {};
+  var subtle = !!env.subtle, canBlob = !!env.canBlob, pinned = !!env.pinned;
+  if (env.native && env.localUrl) {
+    return { route:'native-direct', idbCache:false,
+             local:{ url:env.localUrl, importBy:'url', hash:(pinned && subtle && env.canFetch) ? 'verify' : 'skip' },
+             cdn:(pinned && subtle && canBlob) ? 'blob-verified' : 'none' };
+  }
+  // Web: describes the unchanged fetch → SHA-384 → IndexedDB → blob-import path below.
+  return { route:'web', idbCache:canBlob,
+           local:env.localUrl ? { url:env.localUrl, importBy:canBlob ? 'blob' : 'url', hash:(pinned && canBlob) ? (subtle ? 'verify' : 'skip') : 'none' } : null,
+           cdn:canBlob ? (pinned && subtle ? 'blob-verified' : 'blob') : 'url' };
+}
+function _policyEnv() {
+  return { native:_isNativeShell(), localUrl:G.WTS3D_LOCAL_URL ? _absUrl(G.WTS3D_LOCAL_URL) : null,
+           subtle:!!(G.crypto && G.crypto.subtle), pinned:!!WTS_3d.THREE_SHA384, canFetch:typeof fetch === 'function',
+           canBlob:typeof fetch === 'function' && !!G.Blob && !!G.URL && typeof URL.createObjectURL === 'function',
+           secure:G.isSecureContext !== false };
+}
+var _loadInfo = null;      // last loader outcome (route, url, hash) — WTS_3d.loadInfo() in Web Inspector
+async function _loadNative(pol, n) {
+  var last = null, badHash = false, L = pol.local, hash = L.hash;
+  if (hash === 'verify') {
+    try { var lb = await _fetchBytes(L.url); if (!(await _verify(lb))) { badHash = true; hash = 'mismatch'; } else hash = 'verified'; }
+    catch (e) { hash = 'unreadable'; }          // fetch refused by the scheme handler: the signed bundle is imported anyway
+  }
+  if (!badHash) {
+    try { var m = await _withTimeout(_dynImport(n > 1 ? L.url + (L.url.indexOf('?') < 0 ? '?r=' : '&r=') + n : L.url), 8000);
+          if (_ok(m)) { _loadInfo = { route:'native-direct', url:L.url, hash:hash }; return m; } }
+    catch (e) { if (e && e.code === 'csp') throw e; last = e; }
+  }
+  if (pol.cdn === 'blob-verified') {
+    for (var i = 0; i < WTS_3d.THREE_URLS.length; i++) {
+      try { var buf = await _fetchBytes(WTS_3d.THREE_URLS[i]);
+            if (!(await _verify(buf))) { badHash = true; continue; }
+            var mc = await _importBytes(buf);
+            if (_ok(mc)) { _loadInfo = { route:'native-cdn-blob', url:WTS_3d.THREE_URLS[i], hash:'verified' }; return mc; } }
+      catch (e) { if (e && e.code === 'csp') throw e; last = e; } }
+  }
+  _loadInfo = { route:'native-failed', url:L.url, hash:hash, error:String(last && last.message || last || '') };
+  var err = new Error(badHash ? 'three-integrity-failed' : 'three-load-failed');
+  err.code = badHash ? 'integrity' : 'offline'; err.cause = last; throw err;
+}
 function loadThree() {
   if (G.__WTS3D_THREE) return G.__WTS3D_THREE;
   var n = ++_attempt;
+  var pol = loaderPolicy(_policyEnv());
+  if (pol.route === 'native-direct') {
+    var pn = _visibleBudget(_loadNative(pol, n), 20000, 'offline');
+    G.__WTS3D_THREE = pn; pn.catch(function () { if (G.__WTS3D_THREE === pn) G.__WTS3D_THREE = null; });
+    return pn;
+  }
   var p = _visibleBudget((async function () {
     var last = null, badHash = false;
     var canBlob = typeof fetch === 'function' && G.Blob && G.URL && typeof URL.createObjectURL === 'function';
@@ -3710,6 +3777,8 @@ WTS_3d.THREE_SHA384 = 'IDC7sAMAIMB/TZ6dgKKPPAKZ2bXXXP8+FBMBC8cU319eBhKITx+Paalhf
 WTS_3d.isSupported = isSupported;
 WTS_3d.loadThree = loadThree;
 WTS_3d.hasLocalCopy = hasLocalCopy;
+WTS_3d.loaderPolicy = function (env) { return loaderPolicy(env || _policyEnv()); };
+WTS_3d.loadInfo = function () { return _loadInfo ? Object.assign({}, _loadInfo) : null; };
 WTS_3d.mount = mount;
 WTS_3d.palette = PALETTE;
 WTS_3d.oilColor = oilColor;

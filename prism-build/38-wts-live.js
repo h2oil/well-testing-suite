@@ -1201,18 +1201,19 @@ function createController(vizEl, mopts) {
         loading = false;
         var t = nowMs();
         fails = fails.filter(function (x) { return t - x < 60000; });
-        fails.push(t);
+        var lifecycle = !!(err && (err.code === 'context-lost' || err.message === 'context-lost') && appLifecycleLoss());
+        if (!lifecycle) fails.push(t);
         if (fails.length >= 2) { fallback('3D stopped after repeated graphics errors'); return; }
         if (err && (err.code === 'context-lost' || err.message === 'context-lost')) {
             showNotice('3D paused — restoring graphics…', false);
             pendingRemount = true;
-            if (!document.hidden) remountSoon();
+            if (!document.hidden && !appInBg) remountSoon();
         } else if (mode === '3d') setMode('3d', 'recover');
     }
     function remountSoon() {
         if (!pendingRemount) return;
         var go = function () {
-            if (ctl.disposed || !pendingRemount || document.hidden) return;
+            if (ctl.disposed || !pendingRemount || document.hidden || appInBg) return;
             pendingRemount = false;
             hideNotice();
             if (mode === '3d' && !h3) setMode('3d', 'recover');
@@ -2761,6 +2762,14 @@ function createController(vizEl, mopts) {
         if (pendingRemount) remountSoon();
     }
     function onBackground() { bgStopped = true; stopLoop(); }
+    // Native iOS shell only (ios-bridge.js fires these from Capacitor App.appStateChange; a browser
+    // never does). WKWebView may not deliver visibilitychange/pageshow on an app resume, so the
+    // foreground event is what restarts the loop, and iOS drops WebGL contexts of a backgrounded app:
+    // a context loss while backgrounded or just after resuming is expected, not a graphics fault.
+    var appFgAt = 0, appInBg = false;
+    function onAppBackground() { appInBg = true; onBackground(); }
+    function onAppForeground() { appInBg = false; appFgAt = nowMs(); onVisibility(); }
+    function appLifecycleLoss() { return appInBg || (appFgAt > 0 && nowMs() - appFgAt < 10000); }
     function onPageShow() { bgStopped = false; if (!document.hidden) startLoop(); }
     function onUnits() {
         unitsOpt();
@@ -2835,7 +2844,8 @@ function createController(vizEl, mopts) {
         on(document, 'wts:unit-system-changed', onUnits);
         on(document, 'h2oil:pagechange', onPageChange);
         on(document, 'visibilitychange', onVisibility);
-        on(document, 'app-backgrounded', onBackground);
+        on(document, 'app-backgrounded', onAppBackground);
+        on(document, 'app-foregrounded', onAppForeground);
         on(G, 'pagehide', onBackground);
         on(G, 'pageshow', onPageShow);
         on(G, 'focus', function () { if (!document.hidden) { bgStopped = false; startLoop(); if (pendingRemount) remountSoon(); } });

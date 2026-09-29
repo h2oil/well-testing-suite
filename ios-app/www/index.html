@@ -16,7 +16,20 @@
     <meta name="format-detection" content="telephone=no">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="theme-color" content="#0d1117">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <script>(function () {
+    /* iOS app only (runs before first paint): html.ios-app scopes the phone/tablet layout rules in
+       ios-styles.css, and the bundled three.js URL is known before any page can open the 3D view.
+       Keep code before this comment: sync-from-main.js anchors the capacitor.js tag on the first
+       script element whose body starts with a comment, which must stay the main app script. */
+    try {
+        var C = window.Capacitor;
+        if (location.protocol === 'capacitor:' || (C && typeof C.isNativePlatform === 'function' && C.isNativePlatform())) {
+            document.documentElement.classList.add('ios-app');
+        }
+        window.WTS3D_LOCAL_URL = window.WTS3D_LOCAL_URL || 'three.module.min.js';
+    } catch (e) {} })();
+    </script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Well Testing Suite — H2Oil</title>
     <style>
         :root {
@@ -388,6 +401,63 @@
         /* Hide native scrollbars (they appear only while scrolling on iOS) */
         ::-webkit-scrollbar {
             display: none;
+        }
+
+        /* ══════════════════════════════════════════════════════════
+           iOS app layout — scoped to html.ios-app, which only the native
+           shell sets (ios-meta.html <head> script + ios-bridge.js), so the
+           web version and a desktop preview of www/ keep their layout.
+           Found by a WebKit sweep of every route at 320/375/390/430/744/820 px:
+           .cols-2/.cols-3/.fg grids drop to one 1fr column on phones, but a
+           1fr track is minmax(auto,1fr) — it grows to its widest child's
+           min-content, so whole cards became 300-600 px wider than the
+           screen and their text boxes could only be reached by scrolling
+           the page sideways.
+           ══════════════════════════════════════════════════════════ */
+
+        /* 1. No focus auto-zoom: WebKit zooms into any focused text control whose
+              computed font-size is under 16 px (host inputs are 12-13 px, often set
+              inline, hence !important). Pinch-zoom stays available (viewport has no
+              maximum-scale), double-tap zoom is off. */
+        html.ios-app input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]):not([type=color]):not([type=button]):not([type=submit]):not([type=reset]):not([type=image]):not([type=hidden]),
+        html.ios-app select,
+        html.ios-app textarea {
+            font-size: 16px !important;
+        }
+        html.ios-app { touch-action: manipulation; }
+        /* The header standard-conditions picker is capped at 124 px inline for 11 px text; at 16 px
+           its label would be cut ("Std: calc de…"). */
+        html.ios-app #wts_base_select { max-width: 180px !important; }
+
+        /* 2. Grid and flex children may shrink to the screen instead of pushing it wider. */
+        html.ios-app .cols-2 > *, html.ios-app .cols-3 > *,
+        html.ios-app .fg > *, html.ios-app .fg-grid > *, html.ios-app .dash-grid > *,
+        html.ios-app .fg-item, html.ios-app .card, html.ios-app .rbox {
+            min-width: 0;
+        }
+        html.ios-app .fg-item input, html.ios-app .fg-item select, html.ios-app .fg-item textarea {
+            max-width: 100%;
+            min-width: 0;
+            box-sizing: border-box;
+        }
+        /* WebKit lets the text of a long selected <option> spill out of a narrow
+           <select> as scrollable overflow (the page then pans sideways although every
+           box fits); paint containment keeps it inside the control. Long unbroken
+           formula text in Notes boxes wraps instead of widening the page. */
+        html.ios-app #pgBody select { contain: paint; }
+        html.ios-app #pgBody { overflow-wrap: break-word; }
+        html.ios-app #pgBody pre { max-width: 100%; overflow-x: auto; }
+        html.ios-app #pgBody img { max-width: 100%; height: auto; }
+
+        /* 3. Wide tables and tab strips scroll inside their own box, never the page. */
+        html.ios-app .tabs { max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; }
+        /* iPad widths (sidebar visible): input tables such as the WTS pipe segments. */
+        html.ios-app #pgBody table:has(input, select) { display: block; max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; }
+        /* …and wide result tables (WTS segment table) scroll inside their result box. */
+        html.ios-app #pgBody .rbox { overflow-x: auto; overscroll-behavior-x: contain; }
+        @media (max-width: 768px) {
+            html.ios-app #pgBody table { display: block; max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; }
+            html.ios-app .dtable th, html.ios-app .dtable td { padding-left: 6px; padding-right: 6px; }
         }
 
     </style>
@@ -60105,9 +60175,76 @@ function _fetchBytes(u) { var ac = G.AbortController ? new AbortController() : n
     .then(function (r) { if (!r.ok) throw new Error('http ' + r.status); return r.arrayBuffer(); })
     .then(function (b) { clearTimeout(t); return b; }, function (e) { clearTimeout(t); throw e; }); }
 function _ok(m) { return !!(m && m.WebGLRenderer && m.PMREMGenerator && m.WebGLRenderTarget); }
+// ── Native iOS shell (Capacitor, capacitor://localhost) ──────────────────
+// WKWebView serves the bundled www/ through a custom-scheme handler. Module imports of a
+// capacitor:// URL are the path Capacitor apps use for every ES-module bundle, whereas importing
+// a blob: URL minted on a custom-scheme origin is not something WebKit documents or Capacitor
+// tests, so inside the shell the bundled three.js is imported directly by its absolute URL.
+// The pinned SHA-384 is still checked first when WebCrypto exists (it catches a three.js bump
+// that was not re-bundled); without WebCrypto only the LOCAL file (part of the code-signed app
+// bundle) is accepted unverified — CDN bytes are never imported unverified. The web version never
+// takes this branch (it keeps fetch → SHA-384 → IndexedDB → blob import).
+function _isNativeShell() {
+  try {
+    if (G.location && G.location.protocol === 'capacitor:') return true;
+    var C = G.Capacitor;
+    return !!(C && typeof C.isNativePlatform === 'function' && C.isNativePlatform());
+  } catch (e) { return false; }
+}
+function _absUrl(u) { try { return new URL(u, G.location && G.location.href).href; } catch (e) { return u; } }
+// Pure decision table (exported for tests / Web Inspector diagnostics).
+function loaderPolicy(env) {
+  env = env || {};
+  var subtle = !!env.subtle, canBlob = !!env.canBlob, pinned = !!env.pinned;
+  if (env.native && env.localUrl) {
+    return { route:'native-direct', idbCache:false,
+             local:{ url:env.localUrl, importBy:'url', hash:(pinned && subtle && env.canFetch) ? 'verify' : 'skip' },
+             cdn:(pinned && subtle && canBlob) ? 'blob-verified' : 'none' };
+  }
+  // Web: describes the unchanged fetch → SHA-384 → IndexedDB → blob-import path below.
+  return { route:'web', idbCache:canBlob,
+           local:env.localUrl ? { url:env.localUrl, importBy:canBlob ? 'blob' : 'url', hash:(pinned && canBlob) ? (subtle ? 'verify' : 'skip') : 'none' } : null,
+           cdn:canBlob ? (pinned && subtle ? 'blob-verified' : 'blob') : 'url' };
+}
+function _policyEnv() {
+  return { native:_isNativeShell(), localUrl:G.WTS3D_LOCAL_URL ? _absUrl(G.WTS3D_LOCAL_URL) : null,
+           subtle:!!(G.crypto && G.crypto.subtle), pinned:!!WTS_3d.THREE_SHA384, canFetch:typeof fetch === 'function',
+           canBlob:typeof fetch === 'function' && !!G.Blob && !!G.URL && typeof URL.createObjectURL === 'function',
+           secure:G.isSecureContext !== false };
+}
+var _loadInfo = null;      // last loader outcome (route, url, hash) — WTS_3d.loadInfo() in Web Inspector
+async function _loadNative(pol, n) {
+  var last = null, badHash = false, L = pol.local, hash = L.hash;
+  if (hash === 'verify') {
+    try { var lb = await _fetchBytes(L.url); if (!(await _verify(lb))) { badHash = true; hash = 'mismatch'; } else hash = 'verified'; }
+    catch (e) { hash = 'unreadable'; }          // fetch refused by the scheme handler: the signed bundle is imported anyway
+  }
+  if (!badHash) {
+    try { var m = await _withTimeout(_dynImport(n > 1 ? L.url + (L.url.indexOf('?') < 0 ? '?r=' : '&r=') + n : L.url), 8000);
+          if (_ok(m)) { _loadInfo = { route:'native-direct', url:L.url, hash:hash }; return m; } }
+    catch (e) { if (e && e.code === 'csp') throw e; last = e; }
+  }
+  if (pol.cdn === 'blob-verified') {
+    for (var i = 0; i < WTS_3d.THREE_URLS.length; i++) {
+      try { var buf = await _fetchBytes(WTS_3d.THREE_URLS[i]);
+            if (!(await _verify(buf))) { badHash = true; continue; }
+            var mc = await _importBytes(buf);
+            if (_ok(mc)) { _loadInfo = { route:'native-cdn-blob', url:WTS_3d.THREE_URLS[i], hash:'verified' }; return mc; } }
+      catch (e) { if (e && e.code === 'csp') throw e; last = e; } }
+  }
+  _loadInfo = { route:'native-failed', url:L.url, hash:hash, error:String(last && last.message || last || '') };
+  var err = new Error(badHash ? 'three-integrity-failed' : 'three-load-failed');
+  err.code = badHash ? 'integrity' : 'offline'; err.cause = last; throw err;
+}
 function loadThree() {
   if (G.__WTS3D_THREE) return G.__WTS3D_THREE;
   var n = ++_attempt;
+  var pol = loaderPolicy(_policyEnv());
+  if (pol.route === 'native-direct') {
+    var pn = _visibleBudget(_loadNative(pol, n), 20000, 'offline');
+    G.__WTS3D_THREE = pn; pn.catch(function () { if (G.__WTS3D_THREE === pn) G.__WTS3D_THREE = null; });
+    return pn;
+  }
   var p = _visibleBudget((async function () {
     var last = null, badHash = false;
     var canBlob = typeof fetch === 'function' && G.Blob && G.URL && typeof URL.createObjectURL === 'function';
@@ -62991,6 +63128,8 @@ WTS_3d.THREE_SHA384 = 'IDC7sAMAIMB/TZ6dgKKPPAKZ2bXXXP8+FBMBC8cU319eBhKITx+Paalhf
 WTS_3d.isSupported = isSupported;
 WTS_3d.loadThree = loadThree;
 WTS_3d.hasLocalCopy = hasLocalCopy;
+WTS_3d.loaderPolicy = function (env) { return loaderPolicy(env || _policyEnv()); };
+WTS_3d.loadInfo = function () { return _loadInfo ? Object.assign({}, _loadInfo) : null; };
 WTS_3d.mount = mount;
 WTS_3d.palette = PALETTE;
 WTS_3d.oilColor = oilColor;
@@ -64208,18 +64347,19 @@ function createController(vizEl, mopts) {
         loading = false;
         var t = nowMs();
         fails = fails.filter(function (x) { return t - x < 60000; });
-        fails.push(t);
+        var lifecycle = !!(err && (err.code === 'context-lost' || err.message === 'context-lost') && appLifecycleLoss());
+        if (!lifecycle) fails.push(t);
         if (fails.length >= 2) { fallback('3D stopped after repeated graphics errors'); return; }
         if (err && (err.code === 'context-lost' || err.message === 'context-lost')) {
             showNotice('3D paused — restoring graphics…', false);
             pendingRemount = true;
-            if (!document.hidden) remountSoon();
+            if (!document.hidden && !appInBg) remountSoon();
         } else if (mode === '3d') setMode('3d', 'recover');
     }
     function remountSoon() {
         if (!pendingRemount) return;
         var go = function () {
-            if (ctl.disposed || !pendingRemount || document.hidden) return;
+            if (ctl.disposed || !pendingRemount || document.hidden || appInBg) return;
             pendingRemount = false;
             hideNotice();
             if (mode === '3d' && !h3) setMode('3d', 'recover');
@@ -65768,6 +65908,14 @@ function createController(vizEl, mopts) {
         if (pendingRemount) remountSoon();
     }
     function onBackground() { bgStopped = true; stopLoop(); }
+    // Native iOS shell only (ios-bridge.js fires these from Capacitor App.appStateChange; a browser
+    // never does). WKWebView may not deliver visibilitychange/pageshow on an app resume, so the
+    // foreground event is what restarts the loop, and iOS drops WebGL contexts of a backgrounded app:
+    // a context loss while backgrounded or just after resuming is expected, not a graphics fault.
+    var appFgAt = 0, appInBg = false;
+    function onAppBackground() { appInBg = true; onBackground(); }
+    function onAppForeground() { appInBg = false; appFgAt = nowMs(); onVisibility(); }
+    function appLifecycleLoss() { return appInBg || (appFgAt > 0 && nowMs() - appFgAt < 10000); }
     function onPageShow() { bgStopped = false; if (!document.hidden) startLoop(); }
     function onUnits() {
         unitsOpt();
@@ -65842,7 +65990,8 @@ function createController(vizEl, mopts) {
         on(document, 'wts:unit-system-changed', onUnits);
         on(document, 'h2oil:pagechange', onPageChange);
         on(document, 'visibilitychange', onVisibility);
-        on(document, 'app-backgrounded', onBackground);
+        on(document, 'app-backgrounded', onAppBackground);
+        on(document, 'app-foregrounded', onAppForeground);
         on(G, 'pagehide', onBackground);
         on(G, 'pageshow', onPageShow);
         on(G, 'focus', function () { if (!document.hidden) { bgStopped = false; startLoop(); if (pendingRemount) remountSoon(); } });
@@ -85885,6 +86034,9 @@ if (typeof window !== 'undefined' && !window.WTS3D_LOCAL_URL) {
   }
 
   window.isIOSApp = true;
+  // Scope for the iOS-only layout rules in ios-styles.css (also set by the <head> script in
+  // ios-meta.html, before first paint). The web version never gets this class.
+  try { document.documentElement.classList.add('ios-app'); } catch (e) {}
   const P = window.Capacitor.Plugins || {};
   const { Haptics, Share, Filesystem, StatusBar, App, Preferences } = P;
 
@@ -86136,11 +86288,32 @@ if (typeof window !== 'undefined' && !window.WTS3D_LOCAL_URL) {
   // ── App lifecycle ─────────────────────────────────────────────
   if (App) {
     App.addListener('appStateChange', (state) => {
-      if (!state.isActive) {
-        try { document.dispatchEvent(new Event('app-backgrounded')); } catch (e) {}
-      }
+      // app-foregrounded restarts the live views: WKWebView does not reliably fire
+      // visibilitychange / pageshow when the app returns from the background.
+      try { document.dispatchEvent(new Event(state.isActive ? 'app-foregrounded' : 'app-backgrounded')); } catch (e) {}
     });
   }
+
+  // ── Keep the focused field visible above the keyboard ─────────
+  // The app scrolls inside .main / .page-body, not the document, so WKWebView's own
+  // "scroll the caret into view" can leave a field behind the keyboard. When the visual
+  // viewport shrinks (keyboard shown) and the focused control's box sits below it,
+  // scroll that control to the middle of what is still visible. Event-driven only.
+  const isField = (el) => !!(el && el.matches && el.matches('input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=button]):not([type=submit]), select, textarea, [contenteditable="true"]'));
+  function revealFocused() {
+    const el = document.activeElement;
+    if (!isField(el) || typeof el.getBoundingClientRect !== 'function') return;
+    const vv = window.visualViewport;
+    const visTop = vv ? vv.offsetTop : 0;
+    const visBottom = vv ? vv.offsetTop + vv.height : window.innerHeight;
+    const r = el.getBoundingClientRect();
+    if (r.top >= visTop + 8 && r.bottom <= visBottom - 8) return;
+    try { el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' }); }
+    catch (e) { try { el.scrollIntoView(false); } catch (e2) {} }
+  }
+  if (window.visualViewport) window.visualViewport.addEventListener('resize', revealFocused);
+  // A field focused while the keyboard is already up gets no viewport resize.
+  document.addEventListener('focusin', (e) => { if (isField(e.target)) requestAnimationFrame(revealFocused); });
 
   // ── Sanity check: the main app must expose buildReportHTML so the
   // PDF override can generate the branded cover page. If this assignment
@@ -86162,8 +86335,10 @@ if (typeof window !== 'undefined' && !window.WTS3D_LOCAL_URL) {
     };
   }
 
-  // ── Prevent pinch-zoom (iOS PWA quirk) ────────────────────────
-  document.addEventListener('gesturestart', e => e.preventDefault());
+  // Pinch-zoom is allowed again (accessibility): the viewport no longer sets
+  // maximum-scale=1 / user-scalable=no and gesturestart is not cancelled. Focus
+  // auto-zoom is prevented instead by the 16 px minimum on form controls
+  // (ios-styles.css) and double-tap zoom by touch-action: manipulation.
 
   console.log('[H2Oil iOS] Native bridge active');
 })();
