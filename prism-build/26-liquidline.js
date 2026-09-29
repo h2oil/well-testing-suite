@@ -56,13 +56,13 @@
 //
 // APPROXIMATIONS
 //   • LCV gas blowby uses Fisher-style choked Cv form
-//       Q [SCFD] = 1360·Cv·P1·sqrt(1 / (SG·T_R))
+//       Q [SCFH] = 816·Cv·P1 / sqrt(SG·T_R)   (critical-flow Cv form)
 //     adequate for screening at critical pressure ratio (~0.5).
 //   • RO sizing assumes critical flow:
-//       Q [MMscfd] = 0.0001875·d²·P1 / sqrt(SG·T_R)   d in 64ths
+//       Q [MMscfd] = 1.12e-4·d²·P1 / sqrt(SG·T_R)   d in 64ths (Cd = 1)
 //   • Vent capacity is a simplified incompressible-equivalent
-//       Q [MMscfd] = 1.10 · K · A_pipe · sqrt(2·ΔP_tank / ρ_gas)
-//     in lieu of full TP-410 Fanning compressible integration.
+//       Crane TP-410 w = 0.525·Y·d²·sqrt(ΔP·ρ1/K), K = f_T·L/D + 1.5,
+//     Y and the sonic ΔP/P1 limit from Crane Fig. A-22 (k = 1.3).
 //   • Flammability radii are scaled from a baseline footprint
 //       y0=20, x0=36, s0=45 ft   at Q=25 MMscfd, wind=20 mph
 //     using sqrt(Q) and small wind-tilt correction.
@@ -100,6 +100,20 @@
         '12-40': 11.938, '12-80': 11.374, '12-160': 10.126
     };
 
+    // Choked (critical) flow of an ideal gas through a round bore of d/64 in,
+    // discharge coefficient 1 (ideal nozzle — an upper bound on RO throughput,
+    // hence conservative for tank protection). API 520 Eq. 2 with Kd = 1:
+    //   W [lb/h] = C·A·P1·sqrt(M/T),  C = 520·sqrt(k·(2/(k+1))^((k+1)/(k−1)))
+    //   Q [scf/d] = 24·379.49·W/M,    M = 28.9647·SG,  k = 1.27 (natural gas)
+    // → Q [MMscfd] = RO_K · d² · P1 / sqrt(SG·T_R),  RO_K ≈ 1.12e-4.
+    // (The old constant 1.875e-4 implied a discharge coefficient of ~1.7.)
+    var RO_K = (function () {
+        var k = 1.27;
+        var C = 520 * Math.sqrt(k * Math.pow(2 / (k + 1), (k + 1) / (k - 1)));
+        var A_per_d2 = Math.PI / 4 / (64 * 64);          // in² per (64ths)²
+        return 24 * 379.49 * C * A_per_d2 / Math.sqrt(28.9647) * 1e-6;
+    })();
+
     function _pipeID(nps, sch) {
         var key = String(nps) + '-' + String(sch);
         if (PIPE_ID_TABLE[key]) return PIPE_ID_TABLE[key];
@@ -116,7 +130,7 @@
      * Gas blowby through a control valve at choked conditions.
      * Uses a simplified Fisher Cv-based form for critical flow.
      *
-     *   Q [SCFD] = 1360·Cv·P1·sqrt(1 / (SG·T_R))
+     *   Q [SCFH] = 816·Cv·P1 / sqrt(SG·T_R)
      *   Q [MMscfd] = Q[SCFD] · 1e-6
      *
      * @param {number} Cv      valve flow coefficient (gpm @ 1 psi for liquid)
@@ -131,16 +145,20 @@
         gasSG   = Number(gasSG);
         T_R     = Number(T_R);
         if (!(Cv > 0) || !(P1_psia > 0) || !(gasSG > 0) || !(T_R > 0)) return 0;
-        // Critical-flow simplified Fisher form
-        var Q_scfd = 1360 * Cv * P1_psia * Math.sqrt(1 / (gasSG * T_R));
-        return Q_scfd * 1e-6; // MMscfd
+        // Critical-flow Cv gas equation (P2 ≤ ~0.5·P1):
+        //   Q [SCFH] = 816·Cv·P1 / sqrt(SG·T_R)
+        // (equivalently ISA 1360·Cv·P1·Y·sqrt(x/(G·T)) with Y = 0.667,
+        // x = xT ≈ 0.72). The old code used 1360·Cv·P1/sqrt(SG·T) as SCF/DAY,
+        // understating blowby ~14×.
+        var Q_scfh = 816 * Cv * P1_psia / Math.sqrt(gasSG * T_R);
+        return Q_scfh * 24 * 1e-6; // MMscfd
     }
 
     /**
      * Restrictive Orifice sizing — find bore diameter that passes Q_target
      * at choked flow.
      *
-     *   Q [MMscfd] = 0.0001875 · d² · P1 / sqrt(SG·T_R)    (d in 64ths)
+     *   Q [MMscfd] = RO_K · d² · P1 / sqrt(SG·T_R)    (d in 64ths, RO_K ≈ 1.12e-4)
      *
      * @param {number} Q_target_MMscfd  target gas rate
      * @param {number} P1_psia          upstream absolute pressure
@@ -156,8 +174,7 @@
         if (!(Q_target_MMscfd > 0) || !(P1_psia > 0) || !(gasSG > 0) || !(T_R > 0)) {
             return { d_64ths: 0, d_inch: 0, regime: 'critical' };
         }
-        var K = 0.0001875;
-        var d_sq = Q_target_MMscfd * Math.sqrt(gasSG * T_R) / (K * P1_psia);
+        var d_sq = Q_target_MMscfd * Math.sqrt(gasSG * T_R) / (RO_K * P1_psia);
         var d_64 = Math.sqrt(Math.max(0, d_sq));
         return {
             d_64ths: d_64,
@@ -175,15 +192,15 @@
         gasSG   = Number(gasSG);
         T_R     = Number(T_R);
         if (!(d_64ths > 0) || !(P1_psia > 0) || !(gasSG > 0) || !(T_R > 0)) return 0;
-        return 0.0001875 * d_64ths * d_64ths * P1_psia / Math.sqrt(gasSG * T_R);
+        return RO_K * d_64ths * d_64ths * P1_psia / Math.sqrt(gasSG * T_R);
     }
 
     /**
      * Vent line max allowable capacity — simplified screening.
      *
-     *   Q [MMscfd] = 1.10 · K · A_pipe · sqrt(2 · ΔP_tank / ρ_gas)
+     *   Crane TP-410: w = 0.525·Y·d²·sqrt(ΔP·ρ1/K)  (see body)
      *
-     * with K = 0.6, A in ft², ΔP_tank in psi, ρ_gas at tank conditions.
+     * with ΔP = tank rating (psig) to atmosphere, ρ1 at tank conditions.
      *
      * @param {number} line_NPS       nominal pipe size (in)
      * @param {number} line_sch       schedule (40, 80, 160)
@@ -200,43 +217,52 @@
         T_F           = Number(T_F);
         if (!(line_NPS > 0) || !(tank_max_psig > 0) || !(gasSG > 0)) return 0;
 
-        var ID_in   = _pipeID(line_NPS, line_sch || 40);
-        var ID_ft   = ID_in / 12;
-        var A_ft2   = Math.PI * 0.25 * ID_ft * ID_ft;
+        // Crane TP-410 compressible discharge through a line to atmosphere
+        // (Eq. 3-20 with Fig. A-22 net expansion factor, k ≈ 1.3):
+        //   w [lb/s] = 0.525 · Y · d² · sqrt(ΔP · ρ1 / K)
+        //   K = f_T·L/D + 0.5 (entrance) + 1.0 (exit),  f_T fully-turbulent
+        //   Darcy factor for commercial steel (ε = 0.0018 in).
+        //   ΔP/P1 is capped at the sonic limit for that K (choked line).
+        // Replaces the earlier ad-hoc form (K = 0.6 × 1.10 "margin", density at
+        // mean pressure, 5 %/100 ft length penalty), which over-predicted
+        // capacity ~1.7× for the default 6" × 100 ft line — non-conservative.
+        var ID_in = _pipeID(line_NPS, line_sch || 40);
+        var L_ft  = (isFinite(line_length_ft) && line_length_ft > 0) ? Number(line_length_ft) : 0;
+        var T_R   = (isFinite(T_F) ? T_F : 100) + 459.67;
+        var MW    = gasSG * 28.9647;
+        var P1    = tank_max_psig + 14.7;                 // tank at its rating, psia
+        var rho1  = P1 * MW / (10.732 * T_R);             // lb/ft³ at tank
+        if (!(rho1 > 0)) return 0;
 
-        // Gas density at tank conditions (atmospheric + ΔP_tank, T_F)
-        // ρ [lb/ft³] = P_psia · MW / (10.732 · T_R)
-        var T_R     = (isFinite(T_F) ? T_F : 100) + 459.67;
-        var MW      = gasSG * 28.96;
-        var P_psia  = 14.7 + tank_max_psig * 0.5; // mean across vent
-        var rho_lbpft3 = P_psia * MW / (10.732 * T_R);
-        if (!(rho_lbpft3 > 0)) return 0;
+        var relRough = 0.0018 / (3.7 * ID_in);
+        var fT = 0.25 / Math.pow(Math.log10(relRough), 2);
+        var K  = fT * L_ft / (ID_in / 12) + 1.5;
 
-        // Convert pressure drop to consistent units
-        // ΔP [lbf/ft²] = tank_max_psig · 144
-        var dP_lbpft2 = tank_max_psig * 144;
-        var K = 0.6;
-
-        // Volumetric flow at tank conditions (ft³/s)
-        // q = K · A · sqrt(2·ΔP / ρ)
-        var v_fps  = Math.sqrt(2 * dP_lbpft2 * 32.174 / rho_lbpft3); // gc included
-        var q_acfs = K * A_ft2 * v_fps;
-
-        // Convert to standard m³/d → MMscfd
-        // q_std = q_actual · (P_actual / P_std) · (T_std / T_actual)
-        var P_std = 14.7;
-        var T_std = 519.67; // 60 °F
-        var q_scfs = q_acfs * (P_psia / P_std) * (T_std / T_R);
-        var q_scfd = q_scfs * 86400;
-        var Q_MMscfd = 1.10 * q_scfd * 1e-6; // 10% margin per simplified TP-410
-
-        // Mild length penalty (long lines reduce throughput).
-        // Reduces ~5% per 100 ft beyond first 50 ft, capped at 30%.
-        if (isFinite(line_length_ft) && line_length_ft > 50) {
-            var penalty = Math.min(0.30, 0.05 * (line_length_ft - 50) / 100);
-            Q_MMscfd *= (1 - penalty);
+        // Crane A-22 limiting ΔP/P1 and Y at sonic velocity, k = 1.3.
+        var KT = [1.2, 1.5, 2, 3, 4, 6, 8, 10, 15, 20, 40, 100];
+        var XT = [0.525, 0.550, 0.593, 0.642, 0.678, 0.722, 0.750, 0.773, 0.807, 0.831, 0.877, 0.920];
+        var YT = [0.612, 0.631, 0.635, 0.658, 0.670, 0.685, 0.698, 0.705, 0.718, 0.718, 0.718, 0.718];
+        var xLim, yLim;
+        if (K <= KT[0]) { xLim = XT[0]; yLim = YT[0]; }
+        else if (K >= KT[KT.length - 1]) { xLim = XT[XT.length - 1]; yLim = YT[YT.length - 1]; }
+        else {
+            for (var i = 0; i < KT.length - 1; i++) {
+                if (K >= KT[i] && K <= KT[i + 1]) {
+                    var fr = (Math.log(K) - Math.log(KT[i])) / (Math.log(KT[i + 1]) - Math.log(KT[i]));
+                    xLim = XT[i] + fr * (XT[i + 1] - XT[i]);
+                    yLim = YT[i] + fr * (YT[i + 1] - YT[i]);
+                    break;
+                }
+            }
         }
-        return Q_MMscfd;
+        var x = tank_max_psig / P1;
+        var Y;
+        if (x >= xLim) { x = xLim; Y = yLim; }
+        else Y = 1 - (1 - yLim) * x / xLim;                // Fig. A-22 lines ≈ straight
+        var dP = x * P1;
+
+        var w_lbs = 0.525 * Y * ID_in * ID_in * Math.sqrt(dP * rho1 / K);
+        return w_lbs * 86400 / MW * 379.49 * 1e-6;         // MMscfd (60 °F, 14.696 psia)
     }
 
     /**
@@ -724,9 +750,7 @@
     var checks = [];
 
     // 4" LCV at 1440 psig with SG=0.78, T=560 °R — significant blowby per the
-    // simplified Fisher Cv form Q[SCFD]=1360·Cv·P1·sqrt(1/(SG·T_R)).
-    // At Cv=230 the formula yields ≈21.8 MMscfd; range is intentionally wide
-    // because production Fisher Cg-form (Cg≈30·Cv) gives larger numbers.
+    // critical-flow Cv form Q[SCFH]=816·Cv·P1/sqrt(SG·T_R) → ≈314 MMscfd.
     var Q_lcv = W.WTS_lcv_blowby(230, 1454.7, 0.78, 560);
     checks.push({ n: '4" LCV blowby in expected range', ok: Q_lcv > 5 && Q_lcv < 1000 });
 

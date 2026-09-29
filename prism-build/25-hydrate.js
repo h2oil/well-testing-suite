@@ -33,14 +33,12 @@
 //
 // ENGINEERING APPROXIMATIONS (documented up-front)
 //
-//   • T_hyd correlation:    screening curve fit to standard sweet-gas
-//                           hydrate chart. Form:
-//                             T_hyd_F = 5·ln(P_psia) + 35
-//                                       − 30·(SG − 0.6)
-//                           Calibrated against textbook charts for
-//                           SG = 0.6 to 0.8, P = 100 to 4000 psia.
-//                           Sensible to within ±3 °F for typical
-//                           sweet gas. Real-design work should use
+//   • T_hyd correlation:    Towler & Mokhatab (2005) fit to the Katz
+//                           gas-gravity hydrate chart:
+//                             T_hyd_F = 13.47·ln P + 34.27·ln SG
+//                                       − 1.675·ln P·ln SG − 20.35
+//                           (P psia, SG 0.555-1.0). Sweet gas
+//                           screening only. Real-design work should use
 //                           a full thermodynamic flash. Acid-gas
 //                           components (H2S, CO2) and high N2 are
 //                           NOT corrected for.
@@ -119,11 +117,7 @@
     //   Returns T_hyd in °F (the first temperature at which hydrate
     //   forms at this pressure with no inhibitor in the water phase).
     //
-    // Screening correlation:
-    //   T_hyd_F = 5·ln(P) + 35 − 30·(SG − 0.6)
-    //
-    // Calibrated against textbook hydrate-locus charts for sweet gas;
-    // ±3 °F over 100-4000 psia, SG 0.60-0.80.
+    // Correlation: Towler & Mokhatab (2005) — see body.
     function WTS_hydrate_temp(P_psia, gasSG) {
         var P = (typeof P_psia === 'number' && isFinite(P_psia)) ? P_psia : 0;
         if (P <= 0) P = 1; // guard log domain
@@ -131,7 +125,14 @@
         if (SG < 0.55) SG = 0.55;
         if (SG > 1.00) SG = 1.00;
 
-        var T = 5 * Math.log(P) + 35 - 30 * (SG - 0.6);
+        // Towler & Mokhatab (Hydrocarbon Processing, 2005), T °F, P psia:
+        //   T = 13.47·ln P + 34.27·ln SG − 1.675·ln P·ln SG − 20.35
+        // Reproduces the Katz gas-gravity chart (e.g. SG 0.6 @ 1000 psia ≈ 61 °F,
+        // SG 0.7 @ 1000 psia ≈ 65 °F). The previous screening fit
+        // (5·ln P + 35 − 30·(SG − 0.6)) had the SG trend reversed (heavier gas
+        // forms hydrate at HIGHER T) and was ~15-20 °F high below ~300 psia.
+        var lnP = Math.log(P), lnG = Math.log(SG);
+        var T = 13.47 * lnP + 34.27 * lnG - 1.675 * lnP * lnG - 20.35;
         return T;
     }
 
@@ -450,7 +451,9 @@
             +   'Hydrate temperature uses a sweet-gas screening correlation; inhibitor depression uses Hammerschmidt.'
             + '</div>';
 
-        var segGrid = '<div class="cols-4" style="display:grid;grid-template-columns:repeat(4, minmax(0, 1fr));gap:10px">';
+        // auto-fit: 4 columns on desktop, 1 column at 375 px (fixed repeat(4)
+        // squeezed each segment card to ~78 px on phones).
+        var segGrid = '<div class="cols-4" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));gap:10px">';
         for (var i = 0; i < DEFAULT_NODES.length; i++) {
             segGrid += _segCardHTML(DEFAULT_NODES[i], i);
         }
@@ -767,11 +770,11 @@
             WTS_hydrate_temp(2000, 0.65) > WTS_hydrate_temp(500, 0.65),
             'd=' + (WTS_hydrate_temp(2000, 0.65) - WTS_hydrate_temp(500, 0.65)).toFixed(2));
 
-        // ── T_hyd lower for richer (heavier) gas at same P ──────────
+        // ── T_hyd higher for richer (heavier) gas at same P ─────────
         var Th07 = WTS_hydrate_temp(1000, 0.70);
         var Th06 = WTS_hydrate_temp(1000, 0.60);
-        check('Heavier gas (SG=0.7) lower T_hyd than SG=0.6 at 1000 psia',
-            Th07 < Th06,
+        check('Heavier gas (SG=0.7) higher T_hyd than SG=0.6 at 1000 psia (Katz chart)',
+            Th07 > Th06,
             'Th07=' + Th07.toFixed(2) + ', Th06=' + Th06.toFixed(2));
 
         // ── 4-node compute returns array of right length ───────────

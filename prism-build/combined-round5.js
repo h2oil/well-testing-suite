@@ -64,11 +64,10 @@
 // MODEL (screening-grade)
 //
 //   Section volume V          (ft³, user input or sum of pipe segments)
-//   Inventory at pressure P:  V_inv(P) = V · (P + 14.7) / 14.7   [scf]
-//      (ideal gas at constant T; the section is at uniform T_section,
-//       and the standard reference is 14.7 psia — the standard scf
-//       definition.  This is the same simplification used in the
-//       hand-calc spreadsheets that operators carry in the field.)
+//   Inventory at pressure P:
+//      V_inv(P) = V · (P + 14.7)/14.7 · 519.67/(T_section + 459.67)   [scf]
+//      (ideal gas, Z = 1, at the uniform section temperature, referred to
+//       the scf standard of 14.7 psia / 60 °F.)
 //
 //   Time to fill from HiPilot setting up to RD setting at backflow Q:
 //      t_fill = [V_inv(RD) − V_inv(HP)] / (Q · 1e6 / 86400)        [s]
@@ -124,6 +123,7 @@
 
     // Standard atmospheric reference for scf definition.
     var P_ATM = 14.7; // psia
+    var T_STD_R = 519.67; // 60 °F in °R — standard temperature of the scf
 
     // ───────────────────────────────────────────────────────────────
     // Preset locations (typical CATS workbook values)
@@ -187,8 +187,8 @@
     //
     //   Inputs unit-of-measure:
     //     sectionVolume_ft3       ft³
-    //     sectionGasTemp_F        °F  (informational; not used in the
-    //                                  ideal-gas screening calc)
+    //     sectionGasTemp_F        °F  (converts section ft³ to scf;
+    //                                  60 °F assumed when blank)
     //     gasFlowRate_MMscfd      MMSCFD  (backflow rate)
     //     gasSG                   air = 1 (informational)
     //     esdResponseTime_s       s
@@ -216,7 +216,7 @@
         }
 
         var V       = +inputs.sectionVolume_ft3;
-        var T_F     = +inputs.sectionGasTemp_F;     // informational
+        var T_F     = +inputs.sectionGasTemp_F;     // °F → scf conversion
         var Q_MMscf = +inputs.gasFlowRate_MMscfd;
         var SG      = +inputs.gasSG;                 // informational
         var tResp   = +inputs.esdResponseTime_s;
@@ -239,9 +239,15 @@
             return result;
         }
 
-        // Inventory model: V_inv(P) = V · (P + 14.7) / 14.7   [scf]
-        var inv_HP = V * (HP + P_ATM) / P_ATM;
-        var inv_RD = V * (RD + P_ATM) / P_ATM;
+        // Inventory model (ideal gas, Z = 1): standard volume of gas held in
+        // V ft³ at P psig and T °F, referred to 14.7 psia / 60 °F (the scf
+        // definition):  V_inv(P) = V · (P + 14.7)/14.7 · 519.67/(T + 459.67).
+        // The temperature ratio was previously omitted, overstating fill time
+        // by ~7 % at 100 °F (non-conservative) and understating it when cold.
+        var T_use = (_isNum(T_F) && T_F > -459.67) ? T_F : 60;
+        var V_std = V * T_STD_R / (T_use + 459.67);   // ft³ at section T → scf basis
+        var inv_HP = V_std * (HP + P_ATM) / P_ATM;
+        var inv_RD = V_std * (RD + P_ATM) / P_ATM;
 
         // Backflow in scf/s (1 MMSCFD = 1e6 scf / 86400 s).
         var qScfS = Q_MMscf * 1e6 / 86400;
@@ -277,9 +283,9 @@
             // Solve for HP* such that t_fill_at_HPstar == tResp:
             //   V·(RD+14.7)/14.7 − V·(HPstar+14.7)/14.7 == qScfS · tResp
             //   HPstar = RD − qScfS·tResp·14.7 / V
-            var HPstar = RD - (qScfS * tResp * P_ATM) / V;
+            var HPstar = RD - (qScfS * tResp * P_ATM) / V_std;
             // Also solve for RD* such that t_fill at the existing HP gives tResp:
-            var RDstar = HP + (qScfS * tResp * P_ATM) / V;
+            var RDstar = HP + (qScfS * tResp * P_ATM) / V_std;
 
             var rd_relief = (RD <= MAWP) ? (' Note also that the RV setting (' + RD.toFixed(0)
                 + ' psig) is below MAWP+10 % (' + (MAWP * 1.10).toFixed(0)
@@ -912,7 +918,16 @@
         var margin     = (inputs.safetyMargin_psig != null)
                        ? +inputs.safetyMargin_psig : 5;
 
-        // Defensive defaults
+        // Input validation — report problems instead of silently computing
+        // with substitutes (a blank volume used to be replaced by 1 ft³).
+        var problems = [];
+        if (!_isNum(V) || V <= 0) problems.push('Section volume must be > 0 ft³.');
+        if (!_isNum(Pflow) || Pflow <= 0) problems.push('Section flowing pressure must be > 0 psig.');
+        if (!_isNum(Qleak_mmscfd) || Qleak_mmscfd <= 0) problems.push('Detectable leak rate must be > 0 MMscfd.');
+        if (!_isNum(tresp) || tresp <= 0) problems.push('ESD response time must be > 0 s.');
+        if (!_isNum(WHSIP)) problems.push('WHSIP is required (psig).');
+
+        // Defensive defaults (keep the numeric outputs finite)
         if (!_isNum(V) || V <= 0)               V = 1;
         if (!_isNum(Pflow))                      Pflow = 0;
         if (!_isNum(Qleak_mmscfd) || Qleak_mmscfd < 0) Qleak_mmscfd = 0;
@@ -974,7 +989,8 @@
             leakDrawdownPressure_psig: Pafter_psig,
             reachable: reachable,
             lowSensitivity: lowSensitivity,
-            rationale: rationale
+            rationale: rationale,
+            error: problems.length ? problems.join(' ') : null
         };
 
         // Persist into shared state for downstream tools / PDF export.
@@ -1240,15 +1256,26 @@
     function _runCalc() {
         if (!_hasDoc) return;
         var inputs = {
-            sectionVolume_ft3:           _num('wts_esdlo_volume', 0),
-            sectionFlowingPressure_psig: _num('wts_esdlo_pflow',  0),
-            detectableLeakRate_MMscfd:   _num('wts_esdlo_qleak', 25),
-            whsip_psig:                  _num('wts_esdlo_whsip', 2100),
-            esdResponseTime_s:           _num('wts_esdlo_tresp',  5),
+            // Blank required fields → NaN so compute() reports them (no silent defaults).
+            sectionVolume_ft3:           _num('wts_esdlo_volume', NaN),
+            sectionFlowingPressure_psig: _num('wts_esdlo_pflow',  NaN),
+            detectableLeakRate_MMscfd:   _num('wts_esdlo_qleak',  NaN),
+            whsip_psig:                  _num('wts_esdlo_whsip',  NaN),
+            esdResponseTime_s:           _num('wts_esdlo_tresp',  NaN),
             safetyMargin_psig:           _num('wts_esdlo_margin', 5)
         };
 
         var r = G.WTS_esdLoPilot_compute(inputs);
+
+        if (r.error) {
+            var rcE = document.getElementById('wts_esdlo_resultcard');
+            var rdE = document.getElementById('wts_esdlo_results');
+            if (rdE) rdE.innerHTML = '<div class="val-error"><strong>Please fix the following:</strong> ' + _esc(r.error) + '</div>';
+            if (rcE) rcE.style.display = '';
+            var stE = document.getElementById('wts_esdlo_status');
+            if (stE) stE.innerHTML = '<div style="color:#8b949e;font-size:12px;">Cannot evaluate — inputs incomplete.</div>';
+            return;
+        }
 
         // ── Results table ──
         var tbl = '' +
@@ -1300,7 +1327,8 @@
             badgeBorder = 'rgba(248,81,73,.45)';
             badgeColor  = '#f85149';
             badgeIcon   = '✖';   // ✗
-            badgeText   = 'Calculated drawdown pressure greater than flowing pressure — ' +
+            // Text now matches the tested condition (P_after < WHSIP).
+            badgeText   = 'Leak drawdown pressure is below WHSIP — ' +
                           'PSL CANNOT detect this leak rate at this location.';
         } else if (r.lowSensitivity) {
             badgeBg     = 'rgba(210,153,34,.10)';
@@ -1384,14 +1412,12 @@
 //
 // ENGINEERING APPROXIMATIONS (documented up-front)
 //
-//   • T_hyd correlation:    screening curve fit to standard sweet-gas
-//                           hydrate chart. Form:
-//                             T_hyd_F = 5·ln(P_psia) + 35
-//                                       − 30·(SG − 0.6)
-//                           Calibrated against textbook charts for
-//                           SG = 0.6 to 0.8, P = 100 to 4000 psia.
-//                           Sensible to within ±3 °F for typical
-//                           sweet gas. Real-design work should use
+//   • T_hyd correlation:    Towler & Mokhatab (2005) fit to the Katz
+//                           gas-gravity hydrate chart:
+//                             T_hyd_F = 13.47·ln P + 34.27·ln SG
+//                                       − 1.675·ln P·ln SG − 20.35
+//                           (P psia, SG 0.555-1.0). Sweet gas
+//                           screening only. Real-design work should use
 //                           a full thermodynamic flash. Acid-gas
 //                           components (H2S, CO2) and high N2 are
 //                           NOT corrected for.
@@ -1470,11 +1496,7 @@
     //   Returns T_hyd in °F (the first temperature at which hydrate
     //   forms at this pressure with no inhibitor in the water phase).
     //
-    // Screening correlation:
-    //   T_hyd_F = 5·ln(P) + 35 − 30·(SG − 0.6)
-    //
-    // Calibrated against textbook hydrate-locus charts for sweet gas;
-    // ±3 °F over 100-4000 psia, SG 0.60-0.80.
+    // Correlation: Towler & Mokhatab (2005) — see body.
     function WTS_hydrate_temp(P_psia, gasSG) {
         var P = (typeof P_psia === 'number' && isFinite(P_psia)) ? P_psia : 0;
         if (P <= 0) P = 1; // guard log domain
@@ -1482,7 +1504,14 @@
         if (SG < 0.55) SG = 0.55;
         if (SG > 1.00) SG = 1.00;
 
-        var T = 5 * Math.log(P) + 35 - 30 * (SG - 0.6);
+        // Towler & Mokhatab (Hydrocarbon Processing, 2005), T °F, P psia:
+        //   T = 13.47·ln P + 34.27·ln SG − 1.675·ln P·ln SG − 20.35
+        // Reproduces the Katz gas-gravity chart (e.g. SG 0.6 @ 1000 psia ≈ 61 °F,
+        // SG 0.7 @ 1000 psia ≈ 65 °F). The previous screening fit
+        // (5·ln P + 35 − 30·(SG − 0.6)) had the SG trend reversed (heavier gas
+        // forms hydrate at HIGHER T) and was ~15-20 °F high below ~300 psia.
+        var lnP = Math.log(P), lnG = Math.log(SG);
+        var T = 13.47 * lnP + 34.27 * lnG - 1.675 * lnP * lnG - 20.35;
         return T;
     }
 
@@ -1801,7 +1830,9 @@
             +   'Hydrate temperature uses a sweet-gas screening correlation; inhibitor depression uses Hammerschmidt.'
             + '</div>';
 
-        var segGrid = '<div class="cols-4" style="display:grid;grid-template-columns:repeat(4, minmax(0, 1fr));gap:10px">';
+        // auto-fit: 4 columns on desktop, 1 column at 375 px (fixed repeat(4)
+        // squeezed each segment card to ~78 px on phones).
+        var segGrid = '<div class="cols-4" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));gap:10px">';
         for (var i = 0; i < DEFAULT_NODES.length; i++) {
             segGrid += _segCardHTML(DEFAULT_NODES[i], i);
         }
@@ -2139,13 +2170,13 @@
 //
 // APPROXIMATIONS
 //   • LCV gas blowby uses Fisher-style choked Cv form
-//       Q [SCFD] = 1360·Cv·P1·sqrt(1 / (SG·T_R))
+//       Q [SCFH] = 816·Cv·P1 / sqrt(SG·T_R)   (critical-flow Cv form)
 //     adequate for screening at critical pressure ratio (~0.5).
 //   • RO sizing assumes critical flow:
-//       Q [MMscfd] = 0.0001875·d²·P1 / sqrt(SG·T_R)   d in 64ths
+//       Q [MMscfd] = 1.12e-4·d²·P1 / sqrt(SG·T_R)   d in 64ths (Cd = 1)
 //   • Vent capacity is a simplified incompressible-equivalent
-//       Q [MMscfd] = 1.10 · K · A_pipe · sqrt(2·ΔP_tank / ρ_gas)
-//     in lieu of full TP-410 Fanning compressible integration.
+//       Crane TP-410 w = 0.525·Y·d²·sqrt(ΔP·ρ1/K), K = f_T·L/D + 1.5,
+//     Y and the sonic ΔP/P1 limit from Crane Fig. A-22 (k = 1.3).
 //   • Flammability radii are scaled from a baseline footprint
 //       y0=20, x0=36, s0=45 ft   at Q=25 MMscfd, wind=20 mph
 //     using sqrt(Q) and small wind-tilt correction.
@@ -2183,6 +2214,20 @@
         '12-40': 11.938, '12-80': 11.374, '12-160': 10.126
     };
 
+    // Choked (critical) flow of an ideal gas through a round bore of d/64 in,
+    // discharge coefficient 1 (ideal nozzle — an upper bound on RO throughput,
+    // hence conservative for tank protection). API 520 Eq. 2 with Kd = 1:
+    //   W [lb/h] = C·A·P1·sqrt(M/T),  C = 520·sqrt(k·(2/(k+1))^((k+1)/(k−1)))
+    //   Q [scf/d] = 24·379.49·W/M,    M = 28.9647·SG,  k = 1.27 (natural gas)
+    // → Q [MMscfd] = RO_K · d² · P1 / sqrt(SG·T_R),  RO_K ≈ 1.12e-4.
+    // (The old constant 1.875e-4 implied a discharge coefficient of ~1.7.)
+    var RO_K = (function () {
+        var k = 1.27;
+        var C = 520 * Math.sqrt(k * Math.pow(2 / (k + 1), (k + 1) / (k - 1)));
+        var A_per_d2 = Math.PI / 4 / (64 * 64);          // in² per (64ths)²
+        return 24 * 379.49 * C * A_per_d2 / Math.sqrt(28.9647) * 1e-6;
+    })();
+
     function _pipeID(nps, sch) {
         var key = String(nps) + '-' + String(sch);
         if (PIPE_ID_TABLE[key]) return PIPE_ID_TABLE[key];
@@ -2199,7 +2244,7 @@
      * Gas blowby through a control valve at choked conditions.
      * Uses a simplified Fisher Cv-based form for critical flow.
      *
-     *   Q [SCFD] = 1360·Cv·P1·sqrt(1 / (SG·T_R))
+     *   Q [SCFH] = 816·Cv·P1 / sqrt(SG·T_R)
      *   Q [MMscfd] = Q[SCFD] · 1e-6
      *
      * @param {number} Cv      valve flow coefficient (gpm @ 1 psi for liquid)
@@ -2214,16 +2259,20 @@
         gasSG   = Number(gasSG);
         T_R     = Number(T_R);
         if (!(Cv > 0) || !(P1_psia > 0) || !(gasSG > 0) || !(T_R > 0)) return 0;
-        // Critical-flow simplified Fisher form
-        var Q_scfd = 1360 * Cv * P1_psia * Math.sqrt(1 / (gasSG * T_R));
-        return Q_scfd * 1e-6; // MMscfd
+        // Critical-flow Cv gas equation (P2 ≤ ~0.5·P1):
+        //   Q [SCFH] = 816·Cv·P1 / sqrt(SG·T_R)
+        // (equivalently ISA 1360·Cv·P1·Y·sqrt(x/(G·T)) with Y = 0.667,
+        // x = xT ≈ 0.72). The old code used 1360·Cv·P1/sqrt(SG·T) as SCF/DAY,
+        // understating blowby ~14×.
+        var Q_scfh = 816 * Cv * P1_psia / Math.sqrt(gasSG * T_R);
+        return Q_scfh * 24 * 1e-6; // MMscfd
     }
 
     /**
      * Restrictive Orifice sizing — find bore diameter that passes Q_target
      * at choked flow.
      *
-     *   Q [MMscfd] = 0.0001875 · d² · P1 / sqrt(SG·T_R)    (d in 64ths)
+     *   Q [MMscfd] = RO_K · d² · P1 / sqrt(SG·T_R)    (d in 64ths, RO_K ≈ 1.12e-4)
      *
      * @param {number} Q_target_MMscfd  target gas rate
      * @param {number} P1_psia          upstream absolute pressure
@@ -2239,8 +2288,7 @@
         if (!(Q_target_MMscfd > 0) || !(P1_psia > 0) || !(gasSG > 0) || !(T_R > 0)) {
             return { d_64ths: 0, d_inch: 0, regime: 'critical' };
         }
-        var K = 0.0001875;
-        var d_sq = Q_target_MMscfd * Math.sqrt(gasSG * T_R) / (K * P1_psia);
+        var d_sq = Q_target_MMscfd * Math.sqrt(gasSG * T_R) / (RO_K * P1_psia);
         var d_64 = Math.sqrt(Math.max(0, d_sq));
         return {
             d_64ths: d_64,
@@ -2258,15 +2306,15 @@
         gasSG   = Number(gasSG);
         T_R     = Number(T_R);
         if (!(d_64ths > 0) || !(P1_psia > 0) || !(gasSG > 0) || !(T_R > 0)) return 0;
-        return 0.0001875 * d_64ths * d_64ths * P1_psia / Math.sqrt(gasSG * T_R);
+        return RO_K * d_64ths * d_64ths * P1_psia / Math.sqrt(gasSG * T_R);
     }
 
     /**
      * Vent line max allowable capacity — simplified screening.
      *
-     *   Q [MMscfd] = 1.10 · K · A_pipe · sqrt(2 · ΔP_tank / ρ_gas)
+     *   Crane TP-410: w = 0.525·Y·d²·sqrt(ΔP·ρ1/K)  (see body)
      *
-     * with K = 0.6, A in ft², ΔP_tank in psi, ρ_gas at tank conditions.
+     * with ΔP = tank rating (psig) to atmosphere, ρ1 at tank conditions.
      *
      * @param {number} line_NPS       nominal pipe size (in)
      * @param {number} line_sch       schedule (40, 80, 160)
@@ -2283,43 +2331,52 @@
         T_F           = Number(T_F);
         if (!(line_NPS > 0) || !(tank_max_psig > 0) || !(gasSG > 0)) return 0;
 
-        var ID_in   = _pipeID(line_NPS, line_sch || 40);
-        var ID_ft   = ID_in / 12;
-        var A_ft2   = Math.PI * 0.25 * ID_ft * ID_ft;
+        // Crane TP-410 compressible discharge through a line to atmosphere
+        // (Eq. 3-20 with Fig. A-22 net expansion factor, k ≈ 1.3):
+        //   w [lb/s] = 0.525 · Y · d² · sqrt(ΔP · ρ1 / K)
+        //   K = f_T·L/D + 0.5 (entrance) + 1.0 (exit),  f_T fully-turbulent
+        //   Darcy factor for commercial steel (ε = 0.0018 in).
+        //   ΔP/P1 is capped at the sonic limit for that K (choked line).
+        // Replaces the earlier ad-hoc form (K = 0.6 × 1.10 "margin", density at
+        // mean pressure, 5 %/100 ft length penalty), which over-predicted
+        // capacity ~1.7× for the default 6" × 100 ft line — non-conservative.
+        var ID_in = _pipeID(line_NPS, line_sch || 40);
+        var L_ft  = (isFinite(line_length_ft) && line_length_ft > 0) ? Number(line_length_ft) : 0;
+        var T_R   = (isFinite(T_F) ? T_F : 100) + 459.67;
+        var MW    = gasSG * 28.9647;
+        var P1    = tank_max_psig + 14.7;                 // tank at its rating, psia
+        var rho1  = P1 * MW / (10.732 * T_R);             // lb/ft³ at tank
+        if (!(rho1 > 0)) return 0;
 
-        // Gas density at tank conditions (atmospheric + ΔP_tank, T_F)
-        // ρ [lb/ft³] = P_psia · MW / (10.732 · T_R)
-        var T_R     = (isFinite(T_F) ? T_F : 100) + 459.67;
-        var MW      = gasSG * 28.96;
-        var P_psia  = 14.7 + tank_max_psig * 0.5; // mean across vent
-        var rho_lbpft3 = P_psia * MW / (10.732 * T_R);
-        if (!(rho_lbpft3 > 0)) return 0;
+        var relRough = 0.0018 / (3.7 * ID_in);
+        var fT = 0.25 / Math.pow(Math.log10(relRough), 2);
+        var K  = fT * L_ft / (ID_in / 12) + 1.5;
 
-        // Convert pressure drop to consistent units
-        // ΔP [lbf/ft²] = tank_max_psig · 144
-        var dP_lbpft2 = tank_max_psig * 144;
-        var K = 0.6;
-
-        // Volumetric flow at tank conditions (ft³/s)
-        // q = K · A · sqrt(2·ΔP / ρ)
-        var v_fps  = Math.sqrt(2 * dP_lbpft2 * 32.174 / rho_lbpft3); // gc included
-        var q_acfs = K * A_ft2 * v_fps;
-
-        // Convert to standard m³/d → MMscfd
-        // q_std = q_actual · (P_actual / P_std) · (T_std / T_actual)
-        var P_std = 14.7;
-        var T_std = 519.67; // 60 °F
-        var q_scfs = q_acfs * (P_psia / P_std) * (T_std / T_R);
-        var q_scfd = q_scfs * 86400;
-        var Q_MMscfd = 1.10 * q_scfd * 1e-6; // 10% margin per simplified TP-410
-
-        // Mild length penalty (long lines reduce throughput).
-        // Reduces ~5% per 100 ft beyond first 50 ft, capped at 30%.
-        if (isFinite(line_length_ft) && line_length_ft > 50) {
-            var penalty = Math.min(0.30, 0.05 * (line_length_ft - 50) / 100);
-            Q_MMscfd *= (1 - penalty);
+        // Crane A-22 limiting ΔP/P1 and Y at sonic velocity, k = 1.3.
+        var KT = [1.2, 1.5, 2, 3, 4, 6, 8, 10, 15, 20, 40, 100];
+        var XT = [0.525, 0.550, 0.593, 0.642, 0.678, 0.722, 0.750, 0.773, 0.807, 0.831, 0.877, 0.920];
+        var YT = [0.612, 0.631, 0.635, 0.658, 0.670, 0.685, 0.698, 0.705, 0.718, 0.718, 0.718, 0.718];
+        var xLim, yLim;
+        if (K <= KT[0]) { xLim = XT[0]; yLim = YT[0]; }
+        else if (K >= KT[KT.length - 1]) { xLim = XT[XT.length - 1]; yLim = YT[YT.length - 1]; }
+        else {
+            for (var i = 0; i < KT.length - 1; i++) {
+                if (K >= KT[i] && K <= KT[i + 1]) {
+                    var fr = (Math.log(K) - Math.log(KT[i])) / (Math.log(KT[i + 1]) - Math.log(KT[i]));
+                    xLim = XT[i] + fr * (XT[i + 1] - XT[i]);
+                    yLim = YT[i] + fr * (YT[i + 1] - YT[i]);
+                    break;
+                }
+            }
         }
-        return Q_MMscfd;
+        var x = tank_max_psig / P1;
+        var Y;
+        if (x >= xLim) { x = xLim; Y = yLim; }
+        else Y = 1 - (1 - yLim) * x / xLim;                // Fig. A-22 lines ≈ straight
+        var dP = x * P1;
+
+        var w_lbs = 0.525 * Y * ID_in * ID_in * Math.sqrt(dP * rho1 / K);
+        return w_lbs * 86400 / MW * 379.49 * 1e-6;         // MMscfd (60 °F, 14.696 psia)
     }
 
     /**
@@ -2807,7 +2864,7 @@
 //     1. Erosion rate              (mils/year)
 //     2. Remaining Service Life    (days, measured WT -> minimum-spec WT)
 //     3. Time-to-failure           (days, measured WT -> failure WT)
-//     4. Maximum allowable working pressure based on yield + measured WT
+//     4. Maximum allowable working pressure (ASME B31.3 Eq. 3a, measured WT)
 //
 //   Coflex flexible hoses are tagged "NOT APPLICABLE" because their wall
 //   architecture does not erode in the same way as rigid line pipe.
@@ -2904,8 +2961,8 @@
     // ───────────────────────────────────────────────────────────────
     // Material database — typical test-pipework grades.
     //   density_lbft3   — for mass / specific-weight calcs (informational)
-    //   tensile_psi     — UTS, used as an upper bound on MAWP
-    //   yield_psi       — Sy, used in Barlow MAWP (factor 0.875 for mill tol.)
+    //   tensile_psi     — UTS  } B31.3 allowable S = min(UTS/3, 2·Sy/3)
+    //   yield_psi       — Sy   }
     //   erodes          — false for hose / non-metallic
     //   notes           — short note for tooltip / UI
     var MATERIALS = {
@@ -2925,8 +2982,9 @@
     var SCHEDULES = {
         '2': { '40': 0.154, '80': 0.218, '160': 0.344, '180': 0.436, 'XXH': 0.436 },
         '3': { '40': 0.216, '80': 0.300, '160': 0.438, '180': 0.552, 'XXH': 0.600 },
-        '4': { '40': 0.237, '80': 0.337, '160': 0.531, '180': 0.674, 'XXH': 0.812 },
-        '6': { '40': 0.280, '80': 0.432, '160': 0.719, '180': 0.864, 'XXH': 0.875 },
+        // XXH (XXS) per B36.10: 4" = 0.674 in, 6" = 0.864 in (were 0.812 / 0.875).
+        '4': { '40': 0.237, '80': 0.337, '160': 0.531, '180': 0.674, 'XXH': 0.674 },
+        '6': { '40': 0.280, '80': 0.432, '160': 0.719, '180': 0.864, 'XXH': 0.864 },
         '8': { '40': 0.322, '80': 0.500, '160': 0.906, '180': 1.000, 'XXH': 0.875 }
     };
 
@@ -3039,23 +3097,28 @@
     G.WTS_erosion_rate_salama = erosion_rate_salama;
 
     // ───────────────────────────────────────────────────────────────
-    // Maximum allowable working pressure (Barlow + 0.875 mill-tolerance)
+    // Maximum allowable working pressure — ASME B31.3 §304.1.2 Eq. (3a)
+    // solved for P with the MEASURED wall (no mill tolerance / corrosion
+    // allowance — the UT reading is the actual wall):
     //
-    //   P_allow = 2 * Sy * 0.875 * t_measured / OD     (psig)
+    //   P = 2·S·E·W·t / (D − 2·Y·t),   E = W = 1, Y = 0.4
+    //   S = min(UTS/3, 2·Sy/3)   (B31.3 §302.3.2 basis; e.g. A106-B /
+    //                             A333-6 → 20 ksi, X52 → 22.2 ksi)
     //
-    //   * Cap at material UTS / 2 to keep clearly outside fracture range.
+    // The previous form (2·Sy·0.875·t/OD) used the full YIELD stress with no
+    // design factor — a yield-onset pressure, ~1.5× higher than an allowable.
+    // Temperature derating above ~400 °F is not applied (screening).
     //   * For Coflex hose return the typical 5000 psi WP rating.
     // ───────────────────────────────────────────────────────────────
     function maxAllowablePressure(material_key, measured_WT_in, nps_in) {
         var m = MATERIALS[material_key] || MATERIALS['A333gr6'];
         if (!m.erodes) return 5000; // hose rated WP (typical)
         var od = getOD(nps_in);
-        var Sy = m.yield_psi;
-        var Sut = m.tensile_psi;
+        var S = Math.min(m.tensile_psi / 3, 2 * m.yield_psi / 3);
         var t = Math.max(_num(measured_WT_in, 0), 0);
-        var p = 2 * Sy * 0.875 * t / od;
-        var cap = Sut / 2;
-        return Math.min(p, cap);
+        var den = od - 2 * 0.4 * t;
+        if (!(den > 0)) return 0;
+        return 2 * S * t / den;
     }
 
     // ───────────────────────────────────────────────────────────────
@@ -3465,7 +3528,7 @@
                 '<div style="overflow-x:auto;-webkit-overflow-scrolling:touch">' +
                     '<table class="dtable" style="min-width:820px">' +
                         '<thead><tr>' + th('Segment') + th('Pipe', 'NPS / SCH · ID') + th('Velocity', 'ft/s') + th('Erosion', 'mpy') +
-                            th('Remaining life', 'to min-spec WT') + th('Time to failure', 'to failure WT') + th('MAWP', 'psig') + th('Status') + '</tr></thead>' +
+                            th('Remaining life', 'to min-spec WT') + th('Time to failure', 'to failure WT') + th('MAWP', 'psig · B31.3') + th('Status') + '</tr></thead>' +
                         '<tbody>' + resRows + '</tbody>' +
                     '</table>' +
                 '</div>' +
