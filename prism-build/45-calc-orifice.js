@@ -208,6 +208,11 @@
         function v(level, text) { verdicts.push({ level: level, text: text }); }
         var bTxt = _boreTxt(chosen.d);
         if (inWin) v('ok', '✓ ' + bTxt + ' plate (β ' + chosen.beta.toFixed(3) + ') reads ' + _fmt(chosen.pct, 1) + ' % of range at the target rate — inside ' + _fmt(lo, 0) + '–' + _fmt(hi, 0) + ' %.');
+        // Review fix: an exact bore exists inside β 0.10–0.75, so the miss is the
+        // 0.125" plate step against a narrow window — not the meter run size.
+        else if (dStar != null)
+            v('bad', '✗ No 0.125" plate lands inside ' + _fmt(lo, 0) + '–' + _fmt(hi, 0) + ' % of range at the target rate (exact bore ' + _boreTxt(dStar, 4) +
+                '; nearest plate ' + bTxt + ' reads ' + (isFinite(chosen.pct) ? _fmt(chosen.pct, 1) + ' %' : 'off scale') + ') — widen the window or change the transmitter range.');
         else if (dStarFlag === 'high' || (isFinite(chosen.pct) === false) || chosen.pct > hi)
             v('bad', '✗ No plate with β ≤ 0.75 keeps the differential below ' + _fmt(hi, 0) + ' % of range at the target rate — use a larger meter run or a higher-range transmitter.');
         else
@@ -234,7 +239,7 @@
     // ═════════════════════════════════════════════════════════════════
     var TITLE = 'Orifice Plate Selection';
     var SUB = 'Pick the orifice bore that keeps the differential inside the transmitter range at a target gas rate (inverse AGA-3)';
-    var UNITS = { op_q: 'gasRateSmall', op_D: 'lengthSmall', op_P: 'pressureG', op_T: 'temperature', op_urv: 'pressureSmall60', op_Tb: 'temperature', op_Pb: 'pressure' };
+    var UNITS = { op_q: 'gasRateSmall', op_D: 'lengthSmall', op_P: 'pressureG', op_T: 'temperature', op_urv: 'pressureSmall60', op_Tb: 'temperature', op_Pb: 'pressureBase' };
 
     function _field(id, label, value, extra) {
         return '<div class="fg-item"><label for="' + id + '">' + label + '</label>' +
@@ -346,7 +351,7 @@
         h += '<div class="chart-wrap"><canvas id="op_chart" width="600" height="320"></canvas></div>';
         h += '<div><b>Notes</b> Rates use the AGA-3 page engine (flange taps, RG Cd, DAK Z with Standing + Wichert-Aziz pseudo-criticals; N2 is recorded but not in the Z correction). ' +
             'Plate list: every 0.125" bore from 0.125" to the largest bore with β ≤ 0.75; the exact bore is rounded to the nearest 0.125" — confirm the plates on site.' +
-            ' The 20–80 % window is field practice. Standard volumes are at the entered base conditions.</div>';
+            ' The 20–80 % window is field practice. Standard volumes are at the entered base conditions (they follow the header "Std" setting until you type your own).</div>';
         return h;
     }
 

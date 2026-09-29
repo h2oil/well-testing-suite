@@ -7183,7 +7183,7 @@ function renderOilGas(body){
       <div id="og_res"></div>
     </div><div>
       <div class="card"><div class="card-title">How It Works</div>
-        <div class="info-bar">Oil rate: the hydrometer API is corrected to 60°F at the hydrometer temperature (API MPMS 11.1 / ASTM D1250 Table 5A) and the meter volume is corrected from oil line temperature to 60°F with the Table 6A VCF. Gas rate uses the same AGA-3 engine as the AGA-3 and Orifice Plate Selection pages: the AGA-3 / API MPMS 14.3.1 flange-tap discharge coefficient (iterated on Reynolds number), the expansion factor, and supercompressibility Fpv = 1/&radic;Z from the Dranchuk &amp; Abou-Kassem (1975) Z-factor with Standing (1977) pseudo-critical properties (valid 1.0 &lt; Tpr &le; 3.0, 0.2 &le; Ppr &lt; 30; a note is shown outside that range). Base conditions 60°F / 14.73 psia. Differential pressure is inH2O at 60°F (27.707 inH2O per psi). GOR = Gas Rate / Oil Rate; CGR = Oil Rate / Gas Rate; either shows — when its denominator is zero.</div>
+        <div class="info-bar">Oil rate: the hydrometer API is corrected to 60°F at the hydrometer temperature (API MPMS 11.1 / ASTM D1250 Table 5A) and the meter volume is corrected from oil line temperature to 60°F with the Table 6A VCF. Gas rate uses the same AGA-3 engine as the AGA-3 and Orifice Plate Selection pages: the AGA-3 / API MPMS 14.3.1 flange-tap discharge coefficient (iterated on Reynolds number), the expansion factor, and supercompressibility Fpv = 1/&radic;Z from the Dranchuk &amp; Abou-Kassem (1975) Z-factor with Standing (1977) pseudo-critical properties (valid 1.0 &lt; Tpr &le; 3.0, 0.2 &le; Ppr &lt; 30; a note is shown outside that range). Base conditions: the header &quot;Std&quot; setting, or 60°F / 14.73 psia while it is on &quot;calculator default&quot; (the Gas volume basis row shows the one used). Differential pressure is inH2O at 60°F (27.707 inH2O per psi). GOR = Gas Rate / Oil Rate; CGR = Oil Rate / Gas Rate; either shows — when its denominator is zero.</div>
       </div>
     </div></div>`;
     loadInputs('oilgas',['og_int','og_api','og_ht','og_m0','og_m1','og_olt','og_bsw','og_mf','og_sf','og_run','og_plate','og_sp','og_dp','og_gg','og_gt']);
@@ -47274,6 +47274,14 @@ _registerPanel(6, {
             imperial: { unit: 'inH2O', label: 'inH2O', factor: 2.48845, offset: 0 },
             metric:   { unit: 'mbar',  label: 'mbar',  factor: 1,       offset: 0 }
         },
+        // Absolute base (standard / contract) pressure of gas volumes. Same
+        // factor as `pressure`, but shown to 3 decimals in kPa so the standard
+        // atmosphere reads 101.325 kPa (the generic ≥ 100 rule gave 101.3,
+        // which re-typed is 14.692 psia) and the label keeps "psia".
+        pressureBase: {
+            imperial: { unit: 'psia', label: 'psia', factor: 6.89476, offset: 0, dp: 4 },
+            metric:   { unit: 'kPa',  label: 'kPa',  factor: 1,       offset: 0, dp: 3 }
+        },
         // Temperature with offset.
         temperature: {
             imperial: { unit: 'F',  label: '°F', factor: 5/9, offset: 32 },
@@ -47615,7 +47623,7 @@ _registerPanel(6, {
                 a_H2S:  'percent',
                 a_N2:   'percent',
                 a_Tb:   'temperature',
-                a_Pb:   'pressure'
+                a_Pb:   'pressureBase'
             },
             outputs: {}
         },
@@ -49073,7 +49081,10 @@ _registerPanel(6, {
     // user has not typed their own values (canonical imperial: °F, psia).
     var BASE_FIELDS = {
         aga3:     { T: 'a_Tb',  P: 'a_Pb',     def: { Tb_F: 60, Pb_psia: 14.696 } },
-        flareghg: { T: 'fe_tb', P: 'fe_pbase', def: { Tb_F: 60, Pb_psia: 14.696 } }
+        flareghg: { T: 'fe_tb', P: 'fe_pbase', def: { Tb_F: 60, Pb_psia: 14.696 } },
+        // Orifice Plate Selection runs the AGA-3 engine: same basis as the AGA-3 page
+        // (its change listener re-runs the page when the fields move).
+        orifice:  { T: 'op_Tb', P: 'op_Pb',    def: { Tb_F: 60, Pb_psia: 14.696 } }
     };
     // Pages whose shown results depend on the basis: re-run when it changes
     // (only when a result is already on screen).
@@ -50135,7 +50146,8 @@ _registerPanel(6, {
 //     if  P_after < WHSIP  → unreachable  (well repressures section)
 //
 //   APPROXIMATIONS:
-//     • Ideal-gas at 14.7 psia surface conditions; no Z, no T.
+//     • Ideal-gas at 14.7 psia / 60 °F surface conditions; no Z; section
+//       gas taken at 60 °F (ΔP scales by Pb/Tb of the chosen scf basis).
 //       Adequate for sizing PSL margins (engineering tolerance ~5%).
 //     • Constant leak rate over response window (no choking, no decay).
 //     • Adiabatic effects neglected — small ΔP, short t_resp.
@@ -50286,8 +50298,14 @@ _registerPanel(6, {
 
         // Pressure drop  (psi) — isothermal ideal-gas; the scf is referred to the
         // standard pressure (14.7 psia, or the standard-conditions setting).
+        // Ideal gas (pV = nRT): n = Pb·V_std/(R·Tb), ΔP = n·R·T/V = V_std·Pb/V · T/Tb.
+        // The section gas is taken at 60 °F (the page has no temperature input,
+        // and 60 °F is the scf temperature of its default basis), so T/Tb = 1 on
+        // the default basis and the leak moles follow the chosen basis exactly:
+        // a 0 °C (normal) basis holds 519.67/491.67 = 1.057× the moles per unit
+        // volume of a 60 °F one (review fix — Tb was ignored, ΔP 5.4 % low).
         var bc = _basis();
-        var dP_psi = (gasReleased_scf * bc.Pb_psia) / V;
+        var dP_psi = (gasReleased_scf * bc.Pb_psia) / V * (519.67 / bc.Tb_R);
 
         // After-drop section pressure  (psig)
         var Pafter_psig = Pflow - dP_psi;
@@ -76239,7 +76257,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
 
     // Unit map (input id → WTS_units category). fe_c7n, fe_ox1, fe_gwp untagged.
     var UNITS = {
-        fe_qg: 'gasRate', fe_hrs: 'time', fe_ce: 'percent', fe_tb: 'temperature', fe_pbase: 'pressure',
+        fe_qg: 'gasRate', fe_hrs: 'time', fe_ce: 'percent', fe_tb: 'temperature', fe_pbase: 'pressureBase',
         fe_qo: 'liquidRate', fe_api: 'api', fe_wc: 'percent'
     };
     COMP.forEach(function (c) { UNITS[P + c.k] = 'percent'; });
@@ -77224,6 +77242,11 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         function v(level, text) { verdicts.push({ level: level, text: text }); }
         var bTxt = _boreTxt(chosen.d);
         if (inWin) v('ok', '✓ ' + bTxt + ' plate (β ' + chosen.beta.toFixed(3) + ') reads ' + _fmt(chosen.pct, 1) + ' % of range at the target rate — inside ' + _fmt(lo, 0) + '–' + _fmt(hi, 0) + ' %.');
+        // Review fix: an exact bore exists inside β 0.10–0.75, so the miss is the
+        // 0.125" plate step against a narrow window — not the meter run size.
+        else if (dStar != null)
+            v('bad', '✗ No 0.125" plate lands inside ' + _fmt(lo, 0) + '–' + _fmt(hi, 0) + ' % of range at the target rate (exact bore ' + _boreTxt(dStar, 4) +
+                '; nearest plate ' + bTxt + ' reads ' + (isFinite(chosen.pct) ? _fmt(chosen.pct, 1) + ' %' : 'off scale') + ') — widen the window or change the transmitter range.');
         else if (dStarFlag === 'high' || (isFinite(chosen.pct) === false) || chosen.pct > hi)
             v('bad', '✗ No plate with β ≤ 0.75 keeps the differential below ' + _fmt(hi, 0) + ' % of range at the target rate — use a larger meter run or a higher-range transmitter.');
         else
@@ -77250,7 +77273,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
     // ═════════════════════════════════════════════════════════════════
     var TITLE = 'Orifice Plate Selection';
     var SUB = 'Pick the orifice bore that keeps the differential inside the transmitter range at a target gas rate (inverse AGA-3)';
-    var UNITS = { op_q: 'gasRateSmall', op_D: 'lengthSmall', op_P: 'pressureG', op_T: 'temperature', op_urv: 'pressureSmall60', op_Tb: 'temperature', op_Pb: 'pressure' };
+    var UNITS = { op_q: 'gasRateSmall', op_D: 'lengthSmall', op_P: 'pressureG', op_T: 'temperature', op_urv: 'pressureSmall60', op_Tb: 'temperature', op_Pb: 'pressureBase' };
 
     function _field(id, label, value, extra) {
         return '<div class="fg-item"><label for="' + id + '">' + label + '</label>' +
@@ -77362,7 +77385,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         h += '<div class="chart-wrap"><canvas id="op_chart" width="600" height="320"></canvas></div>';
         h += '<div><b>Notes</b> Rates use the AGA-3 page engine (flange taps, RG Cd, DAK Z with Standing + Wichert-Aziz pseudo-criticals; N2 is recorded but not in the Z correction). ' +
             'Plate list: every 0.125" bore from 0.125" to the largest bore with β ≤ 0.75; the exact bore is rounded to the nearest 0.125" — confirm the plates on site.' +
-            ' The 20–80 % window is field practice. Standard volumes are at the entered base conditions.</div>';
+            ' The 20–80 % window is field practice. Standard volumes are at the entered base conditions (they follow the header "Std" setting until you type your own).</div>';
         return h;
     }
 

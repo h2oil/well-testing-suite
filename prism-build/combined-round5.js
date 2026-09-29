@@ -854,7 +854,8 @@
 //     if  P_after < WHSIP  → unreachable  (well repressures section)
 //
 //   APPROXIMATIONS:
-//     • Ideal-gas at 14.7 psia surface conditions; no Z, no T.
+//     • Ideal-gas at 14.7 psia / 60 °F surface conditions; no Z; section
+//       gas taken at 60 °F (ΔP scales by Pb/Tb of the chosen scf basis).
 //       Adequate for sizing PSL margins (engineering tolerance ~5%).
 //     • Constant leak rate over response window (no choking, no decay).
 //     • Adiabatic effects neglected — small ΔP, short t_resp.
@@ -1005,8 +1006,14 @@
 
         // Pressure drop  (psi) — isothermal ideal-gas; the scf is referred to the
         // standard pressure (14.7 psia, or the standard-conditions setting).
+        // Ideal gas (pV = nRT): n = Pb·V_std/(R·Tb), ΔP = n·R·T/V = V_std·Pb/V · T/Tb.
+        // The section gas is taken at 60 °F (the page has no temperature input,
+        // and 60 °F is the scf temperature of its default basis), so T/Tb = 1 on
+        // the default basis and the leak moles follow the chosen basis exactly:
+        // a 0 °C (normal) basis holds 519.67/491.67 = 1.057× the moles per unit
+        // volume of a 60 °F one (review fix — Tb was ignored, ΔP 5.4 % low).
         var bc = _basis();
-        var dP_psi = (gasReleased_scf * bc.Pb_psia) / V;
+        var dP_psi = (gasReleased_scf * bc.Pb_psia) / V * (519.67 / bc.Tb_R);
 
         // After-drop section pressure  (psig)
         var Pafter_psig = Pflow - dP_psi;

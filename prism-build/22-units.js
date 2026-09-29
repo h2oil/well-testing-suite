@@ -139,6 +139,14 @@
             imperial: { unit: 'inH2O', label: 'inH2O', factor: 2.48845, offset: 0 },
             metric:   { unit: 'mbar',  label: 'mbar',  factor: 1,       offset: 0 }
         },
+        // Absolute base (standard / contract) pressure of gas volumes. Same
+        // factor as `pressure`, but shown to 3 decimals in kPa so the standard
+        // atmosphere reads 101.325 kPa (the generic ≥ 100 rule gave 101.3,
+        // which re-typed is 14.692 psia) and the label keeps "psia".
+        pressureBase: {
+            imperial: { unit: 'psia', label: 'psia', factor: 6.89476, offset: 0, dp: 4 },
+            metric:   { unit: 'kPa',  label: 'kPa',  factor: 1,       offset: 0, dp: 3 }
+        },
         // Temperature with offset.
         temperature: {
             imperial: { unit: 'F',  label: '°F', factor: 5/9, offset: 32 },
@@ -480,7 +488,7 @@
                 a_H2S:  'percent',
                 a_N2:   'percent',
                 a_Tb:   'temperature',
-                a_Pb:   'pressure'
+                a_Pb:   'pressureBase'
             },
             outputs: {}
         },
@@ -1938,7 +1946,10 @@
     // user has not typed their own values (canonical imperial: °F, psia).
     var BASE_FIELDS = {
         aga3:     { T: 'a_Tb',  P: 'a_Pb',     def: { Tb_F: 60, Pb_psia: 14.696 } },
-        flareghg: { T: 'fe_tb', P: 'fe_pbase', def: { Tb_F: 60, Pb_psia: 14.696 } }
+        flareghg: { T: 'fe_tb', P: 'fe_pbase', def: { Tb_F: 60, Pb_psia: 14.696 } },
+        // Orifice Plate Selection runs the AGA-3 engine: same basis as the AGA-3 page
+        // (its change listener re-runs the page when the fields move).
+        orifice:  { T: 'op_Tb', P: 'op_Pb',    def: { Tb_F: 60, Pb_psia: 14.696 } }
     };
     // Pages whose shown results depend on the basis: re-run when it changes
     // (only when a result is already on screen).
