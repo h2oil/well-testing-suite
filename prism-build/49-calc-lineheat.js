@@ -45,6 +45,8 @@
 //   WTS_lineheat_compute(input)   → {ok, segments[], profile[], …} or {ok:false, errors, bad}
 //   WTS_lineheat_outsideH(o)      outside film coefficient for a pipe in air
 //   WTS_lineheat_air(TK)          air properties (Incropera Table A.4)
+//   WTS_lineheat_ua(seg, T, env)  overall UA' per foot (used by the flowline coupled P–T march)
+//   WTS_lineheat_massFlow(f)      stream mass flows and ṁ·cp
 //   renderLineHeat(body), calcLineHeat()
 //
 // STATE  WTS_state.lineheat = {ok, tIn, tArr, hydrateRisk, ts, result}
@@ -171,6 +173,18 @@
         return { ua: 1 / R, R: R, Ri: Ri, Rw: Rw, Rins: Rins, Ro: Ro, ta: ta, ho: ho, ts: ts, U: 1 / R / (Math.PI * Ds) };
     }
 
+    // Mass flows (lb/hr) and ṁ·cp (Btu/hr·°F) of the stream; gas from the ideal-gas molar
+    // volume at the standard conditions (22-units WTS_baseConditions, default 60 °F / 14.696 psia).
+    function massFlow(f) {
+        var B = G.WTS_baseConditions, b = (B && B.resolve) ? B.resolve(60, 14.696) : null;
+        if (!(b && _fin(b.Tb_F) && _fin(b.Pb_psia))) b = { Tb_F: 60, Pb_psia: 14.696 };
+        var vm = R_GAS * (b.Tb_F + RANK) / b.Pb_psia;              // scf/lb-mol
+        var go = 141.5 / (131.5 + (+f.api));
+        var mo = (+f.qo || 0) * FT3_BBL * RHO_W * go / 24, mw = (+f.qw || 0) * FT3_BBL * RHO_W * (+f.sgw) / 24;
+        var mg = (+f.qg || 0) * 1e6 / vm * MW_AIR * (+f.sgg) / 24;
+        return { mo: mo, mw: mw, mg: mg, m: mo + mw + mg, mcp: mo * (+f.cpo) + mw * (+f.cpw) + mg * (+f.cpg), molarVolume: vm };
+    }
+
     // ── Pure compute ─────────────────────────────────────────────────
     // input = {qo, qw, qg, api, sgg, sgw, cpo, cpw, cpg, p0 psig, t0 °F, hi (blank = neglected), kp, kins,
     //          eps, tair, wind mph, tsoil, ksoil, jt °F/psi,
@@ -229,13 +243,8 @@
         if (pAt < 0) return { ok: false, errors: ['The choke pressure drops add up to more than the inlet pressure.'], bad: ['chokes'] };
 
         // Mass flows (lb/hr) and ṁ·cp (Btu/hr·°F)
-        var B = G.WTS_baseConditions, b = (B && B.resolve) ? B.resolve(60, 14.696) : null;
-        if (!(b && _fin(b.Tb_F) && _fin(b.Pb_psia))) b = { Tb_F: 60, Pb_psia: 14.696 };
-        var vm = R_GAS * (b.Tb_F + RANK) / b.Pb_psia;              // scf/lb-mol
-        var go = 141.5 / (131.5 + api);
-        var mo = qo * FT3_BBL * RHO_W * go / 24, mw = qw * FT3_BBL * RHO_W * sgw / 24;
-        var mg = qg * 1e6 / vm * MW_AIR * sgg / 24;
-        var m = mo + mw + mg, mcp = mo * cpo + mw * cpw + mg * cpg;
+        var mf = massFlow({ qo: qo, qw: qw, qg: qg, api: api, sgg: sgg, sgw: sgw, cpo: cpo, cpw: cpw, cpg: cpg });
+        var vm = mf.molarVolume, mo = mf.mo, mw = mf.mw, mg = mf.mg, m = mf.m, mcp = mf.mcp;
         var env = { hi: hi, kp: kp, kins: kins, eps: eps, tair: tair, wind: wind, tsoil: tsoil, ksoil: ksoil };
         var hyd = typeof G.WTS_hydrate_temp === 'function' ? G.WTS_hydrate_temp : null;
 
@@ -283,6 +292,11 @@
     G.WTS_lineheat_compute = compute;
     G.WTS_lineheat_outsideH = outsideH;
     G.WTS_lineheat_air = air;
+    // For the coupled pressure–temperature march of the flowline page (49-calc-flowline.js):
+    //   WTS_lineheat_ua(seg {di, od, ds in, type 'bare'|'ins'|'buried', depth ft}, T °F, env) → {ua Btu/hr·ft·°F, ta, …}
+    //   WTS_lineheat_massFlow({qo, qw, qg, api, sgg, sgw, cpo, cpw, cpg}) → {mo, mw, mg, m lb/hr, mcp Btu/hr·°F}
+    G.WTS_lineheat_ua = ua;
+    G.WTS_lineheat_massFlow = massFlow;
 
     // ── Page ─────────────────────────────────────────────────────────
     var TITLE = 'Line Heat Loss & Arrival Temperature';

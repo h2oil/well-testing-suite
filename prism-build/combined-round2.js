@@ -1416,9 +1416,17 @@ function _KicAsym(z) {   // ∫_z^∞ K0, z > 12
 function _Ki(z)  { if (!(z > 0)) return 0; return z <= 12 ? _KiSeries(z) : Math.PI / 2 - _KicAsym(z); }
 function _Kic(z) { if (!(z > 0)) return Math.PI / 2; return z <= 12 ? Math.PI / 2 - _KiSeries(z) : _KicAsym(z); }
 
-// E1(x), x > 0 (series ≤ 1, continued fraction above).
+// E1(x), x > 0. Uses the foundation PRiSM_E1 (01-foundation.js, A&S 5.1.11 /
+// 5.1.22) when it is loaded; the local copy below is the same algorithm and is
+// kept only so this file still runs standalone (smoke-test stub, convention 6).
+var _e1Impl;
 function _E1(x) {
     if (!(x > 0) || !isFinite(x)) return (x === Infinity) ? 0 : NaN;
+    if (_e1Impl === undefined) _e1Impl = _foundation('PRiSM_E1') || null;
+    if (_e1Impl) return _e1Impl(x);
+    return _E1local(x);
+}
+function _E1local(x) {
     if (x <= 1.0) {
         var sum = 0, term = 1;
         for (var n = 1; n <= 60; n++) {

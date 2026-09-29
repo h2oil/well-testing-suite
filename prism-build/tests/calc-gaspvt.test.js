@@ -136,7 +136,10 @@ module.exports = [
       // cg equals PRiSM's own real-gas cg for a sweet gas (same Sutton + DAK)
       assert.rel(a.cg, W.PRiSM_pvt_correlations.cg_realGas(3000, 200, Z, 0.7), 5e-3, 'cg vs PRiSM cg_realGas');
       assert.rel(a.cpr, a.cg * a.Ppc, 1e-9, 'cpr = cg·Ppc');
-      assert.rel(a.c, Math.sqrt(a.k * Z * 32.174 * 1545.35 * T / M), 1e-12, 'speed of sound formula');
+      // v3.0: c uses the real-gas k and (∂p/∂ρ)_T (calc-v3-followups.test.js checks it against NIST);
+      // the pre-v3.0 ideal-k value is kept as cIdealK.
+      assert.rel(a.cIdealK, Math.sqrt(a.k * Z * 32.174 * 1545.35 * T / M), 1e-12, 'pre-v3.0 speed of sound formula');
+      assert.ok(a.c > a.cIdealK && a.kReal > a.k, 'real-gas c and k above the ideal-k values at 3,000 psia');
       // Near-ideal gas: cg → 1/p, Z → 1
       const lo = F({ sg: 0.65, p: 15, t: 100 });
       assert.rel(lo.cg, 1 / 15, 5e-3, 'cg ≈ 1/p at 15 psia');
