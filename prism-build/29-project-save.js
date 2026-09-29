@@ -147,7 +147,8 @@
         'wts_prism_sample_suppress': 1,  // PRiSM "don't re-seed sample data"
         'wts_prism_migrated': 1          // one-shot DCA/PTA → PRiSM migration flag
     };
-    var PREF_RE = /consent|analytics|tracking|(^|_)ga(_|$)|subscri|entitle|purchase/i;
+    // wts_ui_*: navigation preferences (favourites, recently used, collapsed sidebar groups).
+    var PREF_RE = /consent|analytics|tracking|(^|_)ga(_|$)|subscri|entitle|purchase|^wts_ui_/i;
     // Cross-project libraries: saved in the file, restored on Open only
     // when missing locally, kept on New.
     var LIBRARY_RE = /^wts_prism_(user_curves|presets|mapping_)/;

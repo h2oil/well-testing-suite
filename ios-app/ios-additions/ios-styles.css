@@ -152,3 +152,13 @@
             html.ios-app #pgBody table { display: block; max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; }
             html.ios-app .dtable th, html.ios-app .dtable td { padding-left: 6px; padding-right: 6px; }
         }
+
+        /* 4. v3.0 navigation + stacked input tables. Below 600 px the host turns multi-column
+              input tables (.wts-stack) into one card per row; such a table must not become its
+              own sideways scroller (rule 3), and its cells lose the narrow-table side padding.
+              Sidebar group headings (tap to collapse) get the 44 pt touch target. */
+        html.ios-app .nav-group-label { min-height: 44px; padding-top: 0; padding-bottom: 0; }
+        @media (max-width: 600px) {
+            html.ios-app #pgBody table.wts-stack { display: block; max-width: 100%; overflow: visible; }
+            html.ios-app #pgBody table.wts-stack tr > td, html.ios-app #pgBody table.wts-stack tr > th { padding-left: 0; padding-right: 0; }
+        }
