@@ -10739,6 +10739,16 @@ window.calcVDrop=function(){
 // so write &amp; for a literal ampersand. Scope: engineering, usability and
 // platform changes only; aim for 3-10 items per release.
 const RELEASE_NOTES = [
+    { ver:'v3.0.1', date:'2026-09-30', title:'Modbus bridge installers &amp; setup guide',
+      note:'One-command installers for the web Modbus bridge, a step-by-step setup guide on the Modbus Config page, and a fix for the well menu.',
+      items:[
+        ['calc', 'Modbus bridge installers', 'Windows (PowerShell), macOS and Linux installers for the Modbus bridge: no admin rights, optional start at login (Scheduled Task / LaunchAgent / systemd user service), uninstall, and a bridge-config.json that re-running keeps (new targets are added). Node.js is only installed through the OS package manager after you confirm.'],
+        ['calc', 'Bridge setup guide', 'Modbus Config has a setup guide: install Node.js, download the bridge package (works offline), generate an installer already filled in with your devices, and Check bridge (running, version, read-only, and whether each device is in the bridge allow-list, with specific hints when it is not).'],
+        ['fix', 'Bridge security', 'Bridge 1.1.0 refuses pages with a null origin (sandboxed pages or saved file copies) unless you opt in, answers a health check only to accepted pages, and blocks DNS-rebinding requests. It stays read-only and bound to this PC by default.'],
+        ['fix', 'Well menu', 'The ⋯ well menu in the header now opens fully on screen; it used to run under the sidebar on desktop and off the edge on tablets and phones.'],
+        ['fix', 'Modbus Config', 'The Devices, Tags and Simulator cards are filled in as soon as the page opens.'],
+        // <!-- v3.0.1 more items -->
+      ] },
     { ver:'v3.0', date:'2026-09-30', title:'Mini WellOS live data, multi-well projects &amp; engineering review',
       note:'Live Modbus data with a SCADA view (Mini WellOS), multi-well projects, a PRiSM fit workspace and gas deliverability, gas lift design, and a standards review of metering, erosion, ESD and simulator safety logic. Some results change where the review corrected a method; each change is noted on its page.',
       items:[
