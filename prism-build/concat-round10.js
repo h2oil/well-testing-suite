@@ -10,6 +10,9 @@
 //   61-modbus-station.js  configuration, polling station, alarms, variables, historian hook, simulator driver
 //   62-modbus-page.js     route `modbus` (WTS_calcRegistry, group "Live Data")
 //   63-wellos.js          route `wellos` (WTS_calcRegistry, group "Mini WellOS")
+//   64-modbus-bridge-pack.js  GENERATED from tools/modbus-bridge/ by pack-modbus-bridge.js
+//                         (window.WTS_modbusBridgePack) — main() below regenerates it first
+//   65-modbus-bridge-setup.js  bridge setup helpers for the Modbus page guide (WTS_modbusBridgeSetup)
 // Self-tests are stripped exactly like Round-8 / Round-9.
 //
 // require()-able: module.exports = { PATTERN, FILES, OUT, listFiles, build, stripSelfTest, main }.
@@ -73,6 +76,8 @@ function build(opts) {
 }
 
 function main() {
+  // keep the bundled bridge files in step with tools/modbus-bridge/ (no-op when unchanged)
+  try { require('./pack-modbus-bridge').main(); } catch (e) { console.warn('[WARN] pack-modbus-bridge: ' + e.message); }
   const combined = build();
   fs.writeFileSync(OUT, combined, 'utf8');
   console.log(`\n[ok] wrote ${OUT} (${combined.split('\n').length} lines)`);

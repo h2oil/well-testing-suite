@@ -425,4 +425,40 @@ module.exports = [
       } finally { app.dispose && app.dispose(); }
     },
   },
+  {
+    name: 'well menu is placed on screen from the switcher (v3.0.1: was right-aligned to the ⋯ button and ran under the sidebar / off screen)',
+    wp: WP,
+    opts: { viewport: { width: 1280, height: 800 } },
+    run(app, assert) {
+      app.flush(20);
+      const css = app.el('wts-mw-css').textContent;
+      assert.ok(/\.wts-mw-menu\{position:fixed/.test(css), 'menu is viewport-positioned (escapes overflow clipping)');
+      assert.ok(!/\.wts-mw-menu\{position:absolute;right:0/.test(css), 'no longer right-aligned to the button');
+      const anchor = app.find('.wts-mw'), menu = app.el('wts_well_menu');
+      const place = (l, t, w, h) => { anchor.getBoundingClientRect = () => ({ left: l, top: t, right: l + w, bottom: t + h, width: w, height: h }); };
+      const px = (v) => parseFloat(String(v || '').replace('px', ''));
+      // Desktop: switcher at the left of the page header (just right of a 250 px sidebar)
+      place(290, 90, 180, 28);
+      app.click('wts_well_menu_btn');
+      assert.ok(!menu.hasAttribute('hidden'));
+      assert.strictEqual(px(menu.style.left), 290, 'left-aligned to the switcher, not extended leftwards under the sidebar');
+      assert.strictEqual(px(menu.style.top), 122, '4 px below the switcher');
+      assert.strictEqual(px(menu.style.width), 280);
+      app.click('wts_well_menu_btn');
+      assert.ok(menu.hasAttribute('hidden'));
+      // Switcher near the right edge: clamped inside the viewport (1280 − 280 − 8)
+      place(1150, 90, 120, 28);
+      app.click('wts_well_menu_btn');
+      assert.strictEqual(px(menu.style.left), 992, 'clamped to the right edge');
+      app.click('wts_well_menu_btn');
+      // Phone: full width with 16 px gutters
+      app.resize(375, 812);
+      place(10, 150, 200, 28);
+      app.click('wts_well_menu_btn');
+      assert.strictEqual(px(menu.style.left), 16);
+      assert.strictEqual(px(menu.style.width), 375 - 32);
+      assert.ok(px(menu.style.top) >= 0, 'never above the top of the screen');
+      assert.deepEqual(app.consoleErrors(), []);
+    },
+  },
 ];
