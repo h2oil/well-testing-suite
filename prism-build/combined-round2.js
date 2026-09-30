@@ -8122,6 +8122,7 @@ if (typeof G.PRiSM_setModel !== 'function') {
         var from = G.PRiSM_dataset || snap;
         var cropped = _sliceDataset(snap, cropState.i_start, cropState.i_end);
         _commit(cropped);
+        _persistCrop(snap);
         _syncInputs();
         _drawCropChart();
         _renderPreviewBlock();
@@ -8144,6 +8145,7 @@ if (typeof G.PRiSM_setModel !== 'function') {
         cropState.i_start = 0;
         cropState.i_end   = t.length;
         _commit(restored);
+        _clearPersistedCrop();
         _syncInputs();
         _drawCropChart();
         _renderPreviewBlock();
@@ -8153,6 +8155,52 @@ if (typeof G.PRiSM_setModel !== 'function') {
         }
         return restored;
     };
+
+    // ── Persistence across a reload ─────────────────────────────────────
+    // The Data-tab text (C8) restores the FULL record after a reload, so the
+    // crop window is kept under 'wts_prism_crop' with the hash of the full
+    // record it applies to. PRiSM_restorePersistedCrop() re-applies it when the
+    // restored record is that same record (called by the dataset restore
+    // paths in 01 / 07 right after they commit {source:'restored'}).
+    var CROP_KEY = 'wts_prism_crop';
+    function _ls() {
+        try { if (typeof localStorage !== 'undefined' && localStorage) return localStorage; } catch (e) { /* denied */ }
+        return null;
+    }
+    function _hashOf(ds) {
+        if (typeof G.PRiSM_datasetHash !== 'function' || !ds) return null;
+        try { return G.PRiSM_datasetHash(ds); } catch (e) { return null; }
+    }
+    function _persistCrop(snap) {
+        var ls = _ls(), h = _hashOf(snap);
+        if (!ls || !h || !snap || !snap.t) return;
+        var n = snap.t.length;
+        // A window covering the whole record is no crop.
+        if (cropState.i_start <= 0 && cropState.i_end >= n) { _clearPersistedCrop(); return; }
+        try {
+            ls.setItem(CROP_KEY, JSON.stringify({ v: 1, hash: h, n: n, t_start: cropState.t_start, t_end: cropState.t_end }));
+        } catch (e) { /* quota / private mode */ }
+    }
+    function _clearPersistedCrop() {
+        var ls = _ls();
+        if (ls) { try { ls.removeItem(CROP_KEY); } catch (e) { /* ignore */ } }
+    }
+    function _readPersistedCrop() {
+        var ls = _ls();
+        if (!ls) return null;
+        try {
+            var o = JSON.parse(ls.getItem(CROP_KEY) || 'null');
+            return (o && typeof o === 'object' && typeof o.hash === 'string' && isFinite(o.t_start) && isFinite(o.t_end)) ? o : null;
+        } catch (e) { return null; }
+    }
+    G.PRiSM_restorePersistedCrop = function PRiSM_restorePersistedCrop() {
+        var o = _readPersistedCrop(), ds = G.PRiSM_dataset;
+        if (!o || !ds || !ds.t || ds.t.length !== o.n) return null;
+        if (_hashOf(ds) !== o.hash) return null;
+        _forgetSnapshot();
+        return G.PRiSM_applyCrop(o.t_start, o.t_end);
+    };
+    G.PRiSM_persistedCrop = _readPersistedCrop;
 
     // Return preview details — used by other modules / tests.
     G.PRiSM_getCropPreview = function PRiSM_getCropPreview() {

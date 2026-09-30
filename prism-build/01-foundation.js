@@ -1477,6 +1477,10 @@ const PRiSM_SHELL = (function () {
             if (built) {
                 if (isSample) { built.name = 'Demo data'; built.source = 'sample'; }
                 PRiSM_commitDataset(built, { source: 'restored' });
+                // Re-apply a crop window saved for this record (12-data-crop.js).
+                if (typeof window.PRiSM_restorePersistedCrop === 'function') {
+                    try { window.PRiSM_restorePersistedCrop(); } catch (e) { /* optional */ }
+                }
                 return true;
             }
             return false;

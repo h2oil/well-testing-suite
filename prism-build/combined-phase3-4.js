@@ -7670,6 +7670,9 @@ var REGISTRY_ADDITIONS = {
                     ds.name = st.fileName || 'Pasted data';
                     ds.source = st.fileName ? 'file' : 'paste';
                     _commit(ds, 'restored');
+                    if (typeof W.PRiSM_restorePersistedCrop === 'function') {
+                        try { W.PRiSM_restorePersistedCrop(); } catch (e) { /* optional */ }
+                    }
                 }
                 _renderPreview();
                 _setMsg(_activeStatusHTML());
