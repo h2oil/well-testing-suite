@@ -31,6 +31,8 @@
 #           IPv4 (192.168.1.10:502), IPv4 subnet (10.0.0.0/24:502), host name
 #           (plc-1.local:502) or IPv6 in brackets ([fd00::10]:502); port 1-65535 or * (any
 #           port). Quote values with * or [ ] ('plc.local:*') - zsh refuses an unmatched glob.
+#           With no --allow at all the bridge allows any device IP / port (default).
+# --allow-any  allow any device IP / port (same as --allow '*:*').
 # --port    WebSocket port of the bridge (default 8502; the app's bridge URL is ws://127.0.0.1:<port>).
 # --listen  interface to listen on (default 127.0.0.1 = this computer only).
 # --allow-writes  forward Modbus write requests (FC 05/06/15/16); --read-only refuses them (default).
@@ -108,6 +110,7 @@ valid_port() {
 valid_target() {
     local t="$1"
     [[ "$t" == *:* ]] || return 1
+    if [ "${t%:*}" = "*" ]; then [ "${t##*:}" = "*" ] || valid_port "${t##*:}"; return; fi
     valid_host "${t%:*}" || return 1
     [ "${t##*:}" = "*" ] || valid_port "${t##*:}"
 }
@@ -181,6 +184,7 @@ while [ $# -gt 0 ]; do
         --port=*)       CLI_PORT="${1#*=}"; shift ;;
         --listen)       [ $# -ge 2 ] || die "--listen needs an address"; CLI_LISTEN="$2"; shift 2 ;;
         --listen=*)     CLI_LISTEN="${1#*=}"; shift ;;
+        --allow-any)    add_allow '*:*'; shift ;;
         --allow-writes) CLI_WRITES=1; shift ;;
         --read-only)    CLI_WRITES=0; shift ;;
         --autostart)    AUTOSTART=1; shift ;;
@@ -497,7 +501,8 @@ if [ "$HAVE_OLD" = 1 ]; then
     say "Keeping the settings of the existing $INSTALL_DIR/bridge-config.json (${#OLD_ALLOW[@]} target(s); new targets are added - --reset starts a new list)."
 fi
 if [ ${#ALLOW_LIST[@]} -eq 0 ]; then
-    warn "no --allow targets: the bridge will refuse every device until you add one (run the installer again with --allow <ip>:<port>, or edit bridge-config.json)."
+    ALLOW_LIST=('*:*')
+    say "No --allow targets given: the bridge will allow any device IP / port (default). Give --allow <ip>:<port> (with --reset) to restrict it."
 fi
 
 install_files() {

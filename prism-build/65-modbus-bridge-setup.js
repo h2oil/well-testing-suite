@@ -59,6 +59,10 @@ function validateTarget(s) {
     var t = String(s == null ? '' : s).trim(), i = t.lastIndexOf(':');
     if (i <= 0) return { ok: false, value: t, error: '"' + t + '" is not host:port' };
     var h = t.slice(0, i), p = t.slice(i + 1);
+    if (h === '*') {   // any device (bridge ≥ 1.2.0)
+        if (p !== '*' && !validPort(p)) return { ok: false, value: t, error: 'port "' + p + '" must be 1-65535 or *' };
+        return { ok: true, value: '*:' + (p === '*' ? '*' : String(+p)), host: '*', port: p === '*' ? '*' : +p };
+    }
     if (!validHost(h)) {
         if (isIPv6(h)) return { ok: false, value: t, error: 'put the IPv6 address "' + h + '" in brackets: [' + h + ']:' + p };
         return { ok: false, value: t, error: '"' + h + '" is not an IPv4 address, IPv4 subnet (a.b.c.d/nn), host name or [IPv6] address' };
@@ -297,8 +301,9 @@ function originNote() {
 function installerFromConfig(cfg, os, o) {
     o = o || {};
     var t = targetsFromConfig(cfg, o.extra);
+    if (o.anyIp) t.errors = [];     // any device IP / port (*:*): the per-device targets are not needed
     if (t.errors.length) return { ok: false, errors: t.errors, warnings: t.warnings, targets: t.targets };
-    var r = buildInstaller(os, { allow: t.targets.map(function (x) { return x.target; }), port: t.port, listen: t.listen, allowWrites: o.allowWrites, autostart: o.autostart,
+    var r = buildInstaller(os, { allow: o.anyIp ? ['*:*'] : t.targets.map(function (x) { return x.target; }), port: t.port, listen: t.listen, allowWrites: o.allowWrites, autostart: o.autostart,
         origins: o.origins != null ? o.origins : autoOrigins() });
     r.warnings = t.warnings.concat(r.warnings || []);
     r.targets = t.targets;
@@ -365,6 +370,7 @@ function allowedBy(specs, host, port) {
         if (i <= 0) return false;
         var h = s.slice(0, i).replace(/^\[|\]$/g, '').toLowerCase(), p = s.slice(i + 1);
         if (p !== '*' && +p !== port) return false;
+        if (h === '*') return true;
         var m = /^([0-9.]+)\/([0-9]+)$/.exec(h);
         if (m) {
             var ip = ip4num(host), base = ip4num(m[1]), bits = +m[2];

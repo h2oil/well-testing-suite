@@ -23,14 +23,15 @@
 //     bridge"; nothing else is in that body). Host names other than localhost / an IP literal /
 //     --listen are refused (DNS rebinding) unless the request carries an accepted Origin.
 //
-// Security defaults: listens on 127.0.0.1 only; no target is reachable until allowed
-// with --allow; browser origins limited to http(s)://localhost / 127.0.0.1 / [::1], the app's
+// Security defaults: listens on 127.0.0.1 only; any device IP / port is reachable unless you
+// restrict it with --allow targets (v1.2.0; before, nothing was reachable until allowed); browser origins limited to http(s)://localhost / 127.0.0.1 / [::1], the app's
 // capacitor origin and the app's web origin (pb-handbook.com) unless --origin or --any-origin
 // is given. "Origin: null" (sandboxed iframes, data: URLs, saved file:// copies) is refused
 // unless allowed explicitly with --origin null, because any web site can send it. Requests
 // without an Origin header (curl, scripts; never a browser page) are accepted. ADU ≤ 260 bytes.
 //
-// Usage:  node modbus-bridge.js --allow 192.168.1.10:502 [--allow 10.0.0.0/24:502] [--allow 'host:*']
+// Usage:  node modbus-bridge.js                (any device)
+//         node modbus-bridge.js --allow 192.168.1.10:502 [--allow 10.0.0.0/24:502] [--allow 'host:*'] [--allow-any]
 //                               [--listen 127.0.0.1] [--port 8502] [--origin https://example.com]
 //                               [--any-origin] [--allow-writes] [--verbose]
 //                               [--config bridge-config.json] [--version] [--help]
@@ -49,7 +50,7 @@ const net = require('net');
 const crypto = require('crypto');
 const fs = require('fs');
 
-const BRIDGE_VERSION = '1.1.0';
+const BRIDGE_VERSION = '1.2.0';
 const BRIDGE_NAME = 'wts-modbus-bridge';
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';     // RFC 6455 §1.3
 const MAX_ADU = 260;
@@ -61,12 +62,19 @@ const DEFAULT_ORIGINS = [/^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i
   /^capacitor:\/\/localhost$/i];
 
 // ─── allow-list ──────────────────────────────────────────────────────────────
-// entry: "host:port" | "host:*" | "a.b.c.d/nn:port" (IPv4 CIDR)
+// entry: "host:port" | "host:*" | "a.b.c.d/nn:port" (IPv4 CIDR) | "*:port" | "*:*" (any device).
+// An empty allow-list means "*:*" — any device IP / port (the default since v1.2.0). List
+// specific targets to lock the bridge down to them.
 function parseAllow(spec) {
   const s = String(spec).trim();
   const i = s.lastIndexOf(':');
   if (i <= 0) throw new Error('--allow needs host:port, got ' + spec);
   const host = s.slice(0, i).replace(/^\[|\]$/g, ''), port = s.slice(i + 1);
+  if (host === '*') {
+    if (port !== '*' && !(/^\d{1,5}$/.test(port) && +port >= 1 && +port <= 65535)) throw new Error('bad port in --allow ' + spec);
+    const p = port === '*' ? '*' : +port;
+    return { host: '*', port: p, cidr: null, spec: '*:' + p };
+  }
   if (port !== '*' && !(/^\d{1,5}$/.test(port) && +port >= 1 && +port <= 65535)) throw new Error('bad port in --allow ' + spec);
   if (!/^[A-Za-z0-9._-]+(\/\d{1,2})?$/.test(host) && !/^[0-9A-Fa-f:.]+$/.test(host)) throw new Error('bad host in --allow ' + spec + ' (IPv4, IPv4/nn, IPv6 or a host name)');
   const m = /^(\d+\.\d+\.\d+\.\d+)\/(\d+)$/.exec(host);
@@ -79,6 +87,7 @@ function allowed(list, host, port) {
   host = String(host || '').toLowerCase(); port = +port;
   return list.some((a) => {
     if (a.port !== '*' && a.port !== port) return false;
+    if (a.host === '*') return true;
     if (a.cidr) {
       const ip = ip4(host); if (ip == null || a.cidr.base == null) return false;
       const mask = a.cidr.bits === 0 ? 0 : (0xFFFFFFFF << (32 - a.cidr.bits)) >>> 0;
@@ -176,7 +185,7 @@ function exceptionAdu(req, code) {
 function createBridge(opts) {
   opts = Object.assign({ listen: '127.0.0.1', port: 8502, allow: [], origins: [], anyOrigin: false, allowWrites: false, verbose: false, connectTimeoutMs: 5000 }, opts || {});
   opts.listen = normListen(opts.listen) || '127.0.0.1';
-  const allowList = opts.allow.map((a) => (typeof a === 'string' ? parseAllow(a) : a));
+  const allowList = (opts.allow && opts.allow.length ? opts.allow : ['*:*']).map((a) => (typeof a === 'string' ? parseAllow(a) : a));
   const log = (...a) => { if (opts.verbose) console.log('[bridge]', ...a); };
   const sessions = new Set(), upgraded = new Set();
   const stats = { sessions: 0, refused: 0, adusIn: 0, adusOut: 0, writesBlocked: 0 };
@@ -332,6 +341,7 @@ function parseArgs(argv) {
     else if (a === '--port') o.port = +v();
     else if (a === '--origin') o.origins.push(v());
     else if (a === '--any-origin') o.anyOrigin = true;
+    else if (a === '--allow-any') o.allow.push('*:*');
     else if (a === '--allow-writes') o.allowWrites = true;
     else if (a === '--verbose' || a === '-v') o.verbose = true;
     else if (a === '--config' || a === '-c') o.config = v();
@@ -407,14 +417,14 @@ function main(argv) {
   try { r = resolveOptions(cli); } catch (e) { console.error('[bridge] ' + e.message); process.exit(2); }
   const o = r.options;
   r.warnings.forEach((w) => console.warn('[bridge] WARNING: ' + w));
-  if (!o.allow.length) console.warn('[bridge] WARNING: no --allow targets — every connection will be refused. Example: --allow 192.168.1.10:502');
+  if (!o.allow.length || o.allow.some((a) => /^\*:/.test(String(a).trim()))) console.log('[bridge] any device IP is allowed' + (o.allow.length ? '' : ' (default; list --allow <ip>:<port> targets to restrict)') + '. The bridge still listens on this PC only' + (o.allowWrites ? '' : ' and refuses writes') + '.');
   if ((o.origins || []).some((x) => String(x).toLowerCase() === 'null') || o.anyOrigin) console.warn('[bridge] WARNING: ' + (o.anyOrigin ? 'any page origin is accepted' : 'pages with "Origin: null" (saved copies, but also sandboxed frames of any web site) are accepted') + ' — only do this on a PC that is not used for general web browsing.');
   if (o.listen && o.listen !== '127.0.0.1' && o.listen !== '::1') console.warn('[bridge] WARNING: listening on ' + o.listen + ' — other machines on the network can use this bridge.');
   const b = createBridge(o);
   const listenHost = o.listen || '127.0.0.1';
   b.listen().then((port) => {
     console.log('[bridge] WTS Modbus bridge v' + BRIDGE_VERSION + ' listening on ws://' + listenHost + ':' + port + '/modbus  (' + (o.allowWrites ? 'writes ALLOWED' : 'read-only') + ')');
-    console.log('[bridge] allowed targets: ' + (o.allow.join(', ') || '(none)'));
+    console.log('[bridge] allowed targets: ' + (o.allow.join(', ') || '*:* (any device)'));
     console.log('[bridge] health check: http://' + (listenHost === '0.0.0.0' || listenHost === '::' ? '127.0.0.1' : listenHost) + ':' + port + '/health' + (cli.config ? '   (config: ' + cli.config + ')' : ''));
   }, (e) => {
     console.error('[bridge] cannot listen on ' + listenHost + ':' + (o.port || 8502) + ': ' + e.message + (e.code === 'EADDRINUSE' ? ' — another bridge (or program) already uses this port.' : ''));

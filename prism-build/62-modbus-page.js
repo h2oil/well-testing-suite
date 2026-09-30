@@ -249,12 +249,13 @@ function guideHtml(ios) {
 // a click that blurs the Extra targets field lands on the same button.
 function guideParts(cfg, g, ios) {
     var S = G.WTS_modbusBridgeSetup;
-    var os = g.os, t = S.targetsFromConfig(cfg, g.extra), allow = t.targets.map(function (x) { return x.target; });
+    var os = g.os, t = S.targetsFromConfig(cfg, g.extra), allow = g.anyIp ? ['*:*'] : t.targets.map(function (x) { return x.target; });
+    if (g.anyIp) t.errors = [];
     var cmds = S.commandsFor(os, { allow: allow, port: t.port, listen: t.listen, allowWrites: g.writes, autostart: g.autostart, origins: S.autoOrigins ? S.autoOrigins() : [] });
     var ready = !!(allow.length && !t.errors.length);
     var note = S.originNote ? S.originNote() : '';
-    var tlist = t.targets.map(function (x) { return '<li class="mb-q-good">✓ ' + esc(x.name) + ' — ' + esc(x.target) + '</li>'; }).join('') +
-        t.errors.map(function (e) { return '<li class="mb-q-bad">✗ ' + esc(e) + '</li>'; }).join('');
+    var tlist = g.anyIp ? '<li class="mb-q-good">✓ Any device IP / port (*:*) — the bridge still listens on this PC only' + (g.writes ? '' : ' and stays read-only') + '</li>' : t.targets.map(function (x) { return '<li class="mb-q-good">✓ ' + esc(x.name) + ' — ' + esc(x.target) + '</li>'; }).join('') +
+        (g.anyIp ? '' : t.errors.map(function (e) { return '<li class="mb-q-bad">✗ ' + esc(e) + '</li>'; }).join(''));
     var targets = (tlist ? '<ul class="mb-targets">' + tlist + '</ul>' : '<p class="mb-q-stale">No bridge devices yet — add a device above with transport "Modbus TCP via WebSocket bridge" (host / IP and port), or enter a target here.</p>') +
         listHtml(t.warnings.concat(note ? [note] : []));
     var run = '';
@@ -296,6 +297,7 @@ function guideStepsHtml(cfg, g, ios) {
     var inst = '<p>Targets the bridge will be allowed to reach (from your "Modbus TCP via WebSocket bridge" devices):</p>' +
         '<div id="mbc_guide_targets">' + parts.targets + '</div>' +
         '<label class="mb-inl">Extra targets (optional, comma separated — ip:port, subnet a.b.c.d/nn:port, host:port or [IPv6]:port)<input type="text" data-k="guide" data-f="extra" value="' + esc(g.extra) + '" placeholder="10.0.0.0/24:502, plc-2.local:502" autocomplete="off" spellcheck="false"></label>' +
+        '<label class="mb-chk"><input type="checkbox" data-k="guide" data-f="anyIp"' + (g.anyIp ? ' checked' : '') + '> Allow any device IP / port (default — untick to allow only the targets listed)</label>' +
         '<label class="mb-chk"><input type="checkbox" data-k="guide" data-f="autostart"' + (g.autostart ? ' checked' : '') + '> Start the bridge automatically at login</label>' +
         '<label class="mb-chk"><input type="checkbox" data-k="guide" data-f="writes"' + (g.writes ? ' checked' : '') + '> Allow Modbus writes through the bridge (only if you need to write set points)</label>' +
         (ios ? '' : '<div class="btn-row"><button type="button" class="btn btn-primary" data-act="guide-installer"' + (parts.ready ? '' : ' disabled') + '>⬇ Generate installer for my devices</button></div>') +
@@ -394,7 +396,7 @@ function render(body) {
 function createController(root, n0) {
     var cfg = n0.config, tagErrors = n0.tagErrors, errors = n0.errors, disposed = false, monitor = null, pendingImport = null;
     var C = { root: root };
-    var guide = { os: guessOs(), extra: '', autostart: false, writes: false, genHtml: '', checkHtml: '', ios: isIosApp() };
+    var guide = { os: guessOs(), extra: '', anyIp: true, autostart: true, writes: false, genHtml: '', checkHtml: '', ios: isIosApp() };
     C.guide = guide;
     function q(sel) { return root.querySelector(sel); }
     // Full re-render of the steps (device list or OS changed); keyboard focus goes back to the
@@ -462,7 +464,7 @@ function createController(root, n0) {
                 if (nv === guide.extra) return;             // Check / Copy that blurred the field is not lost
                 guide.extra = nv;
             } else if (ev.type !== 'change') return;
-            else if (f === 'autostart' || f === 'writes') guide[f] = !!v;
+            else if (f === 'autostart' || f === 'writes' || f === 'anyIp') guide[f] = !!v;
             else return;
             guide.genHtml = '';
             updateGuide();
@@ -629,7 +631,7 @@ function createController(root, n0) {
     C.generateInstaller = function () {
         var S = G.WTS_modbusBridgeSetup;
         if (!S) return null;
-        var r = S.installerFromConfig(cfg, guide.os, { extra: guide.extra, allowWrites: guide.writes, autostart: guide.autostart });
+        var r = S.installerFromConfig(cfg, guide.os, { extra: guide.extra, anyIp: guide.anyIp, allowWrites: guide.writes, autostart: guide.autostart });
         C.lastInstaller = r;
         if (!r.ok) {
             guide.genHtml = '<div class="mb-q-bad">✗ No installer generated:</div>' + listHtml(r.errors);
