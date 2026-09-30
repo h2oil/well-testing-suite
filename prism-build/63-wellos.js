@@ -55,7 +55,8 @@ function readUi() {
 function writeUi(u) { try { if (G.localStorage) G.localStorage.setItem(UI_KEY, JSON.stringify(u)); } catch (e) {} }
 
 // ─── display formatting (field units in, WTS_units display out) ─────────────
-var BOOL_TXT = { esd_open: ['OPEN', 'CLOSED'], esd_tripped: ['TRIPPED', 'NORMAL'], pump_running: ['OPEN', 'SHUT'], heater_bypass: ['OPEN', 'SHUT'] };
+// pump_running = LCV-201 transfer valve (legacy key); p201_running = the gauge tank pump P-201
+var BOOL_TXT = { esd_open: ['OPEN', 'CLOSED'], esd_tripped: ['TRIPPED', 'NORMAL'], pump_running: ['OPEN', 'SHUT'], heater_bypass: ['OPEN', 'SHUT'], p201_running: ['RUNNING', 'STOPPED'] };
 function unitLabel(V) {
     if (!V) return '';
     if (V.key === 'oil_rate') return 'STB/d';
@@ -257,7 +258,8 @@ function createController(root) {
         Object.keys(formPrev).forEach(function (id) { if (!seen[id]) formAlarms.update('sim:' + id, null, { t: t }); });
         formPrev = seen;
         var batch = [];
-        M.VARS.forEach(function (V) { var x = fv[V.key]; if (x == null) return; batch.push({ tag: V.key, device: 'form', t: t, v: x, q: 'good', raw: null, unit: unitLabel(V) }); });
+        // tag = the variable key (kept for historian continuity); desc = what it is (e.g. pump_running = LCV-201 open)
+        M.VARS.forEach(function (V) { var x = fv[V.key]; if (x == null) return; batch.push({ tag: V.key, device: 'form', t: t, v: x, q: 'good', raw: null, unit: unitLabel(V), desc: V.label + ' — Mini WellOS form data' }); });
         M.publishSamples(batch);
         if (logger.on) logRow();
     }
@@ -467,8 +469,15 @@ function createController(root) {
         ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px, py - 20); ctx.stroke(); ctx.beginPath(); ctx.arc(px, py - 24, 7, Math.PI, 0); ctx.closePath(); ctx.stroke();
         ctx.fillStyle = '#e6edf3'; ctx.font = 'bold 11px sans-serif'; ctx.fillText('LCV-201', px - 24, py + 30);
         ctx.font = '10px sans-serif'; ctx.fillText(pr == null ? '—' : pr ? 'OPEN' : 'SHUT', px - 12, py + 44);
+        // P-201 gauge tank pump (T-301 → export / burner): circle + discharge triangle, green when running
+        var gr = v.p201_running, gx = 945, gy = 110, gc = gr == null ? '#6e7681' : gr ? '#3fb950' : '#8b949e';
+        ctx.fillStyle = gc; ctx.strokeStyle = '#e6edf3'; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(gx, gy, 11, 0, 2 * Math.PI); ctx.fill(); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(gx - 5, gy - 6); ctx.lineTo(gx + 7, gy); ctx.lineTo(gx - 5, gy + 6); ctx.closePath(); ctx.fillStyle = '#0b111a'; ctx.fill();
+        ctx.fillStyle = '#e6edf3'; ctx.font = 'bold 11px sans-serif'; ctx.fillText('P-201', gx - 16, gy + 26);
+        ctx.font = '10px sans-serif'; ctx.fillText(gr == null ? (Q.p201_running === 'unmapped' ? 'not linked' : '—') : gr ? 'RUNNING' : 'STOPPED', gx - 20, gy + 38);
         // status column
-        var sx = 950, lines = [
+        var sx = 1000, lines = [
             ['ESD', v.esd_tripped ? 'TRIPPED' : v.esd_tripped === 0 ? 'NORMAL' : '—', v.esd_tripped ? '#f85149' : '#3fb950'],
             ['WHP', disp(v.whp, M.VAR_BY_KEY.whp).v + ' ' + disp(v.whp, M.VAR_BY_KEY.whp).u, '#e6edf3'],
             ['Sep P', disp(v.sep_p, M.VAR_BY_KEY.sep_p).v + ' ' + disp(v.sep_p, M.VAR_BY_KEY.sep_p).u, '#e6edf3'],
@@ -577,7 +586,13 @@ function createController(root) {
             case 'speed': u.speed = +b.getAttribute('data-speed') || 1; writeUi(u); renderHead(); break;
             case 'pause': M.setPaused(!M.getConfig().paused); renderHead(); renderComms(); break;
             case 'goto': gotoPage(b.getAttribute('data-p')); break;
-            case 'demo': M.saveConfig(M.demoConfig()); if (!M.station()) M.acquire(OWNER); bindStation(); renderBanner(); renderHead(); break;
+            case 'demo': {
+                // the banner shows when no tag is linked, but devices / tags may exist: never replace them silently
+                var cur0 = M.getConfig();
+                if ((cur0.devices.length || cur0.tags.length) && typeof G.confirm === 'function' &&
+                    !G.confirm('Replace the current Modbus configuration (' + cur0.devices.length + ' device(s), ' + cur0.tags.length + ' tag(s)) with the simulator demo?')) break;
+                M.saveConfig(M.demoConfig()); if (!M.station()) M.acquire(OWNER); bindStation(); renderBanner(); renderHead(); break;
+            }
             case 'ack': { var A = alarmsMgr(); if (A) A.ack(b.getAttribute('data-id')); renderAlarms(true); break; }
             case 'ackall': { var A2 = alarmsMgr(); if (A2) A2.ackAll(); renderAlarms(true); break; }
             case 'toalarms': { var c = q('#wos_alcard'); if (c && c.scrollIntoView) c.scrollIntoView({ behavior: 'smooth', block: 'start' }); break; }

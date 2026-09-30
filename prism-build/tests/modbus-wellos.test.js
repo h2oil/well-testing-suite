@@ -55,15 +55,15 @@ module.exports = [
       app.document.addEventListener('wts:modbus-config-changed', (e) => evs.push(e.detail));
       const M = await demo(app);
       const cfg = JSON.parse(app.storage.getItem('wts_modbus_config'));
-      assert.strictEqual(cfg.tags.length, 36); assert.strictEqual(cfg.devices[0].transport, 'sim'); assert.strictEqual(cfg.writesEnabled, false);
-      assert.ok(evs.length >= 1 && evs[evs.length - 1].config.tags.length === 36, 'wts:modbus-config-changed fired');
+      assert.strictEqual(cfg.tags.length, 37); assert.strictEqual(cfg.devices[0].transport, 'sim'); assert.strictEqual(cfg.writesEnabled, false);
+      assert.ok(evs.length >= 1 && evs[evs.length - 1].config.tags.length === 37, 'wts:modbus-config-changed fired');
       const tags = M.getTags();
-      assert.strictEqual(tags.length, 36);
+      assert.strictEqual(tags.length, 37);
       const whp = tags.find((t) => t.name === 'WHP');
       assert.deepStrictEqual(Object.keys(whp).sort(), ['desc', 'device', 'engMax', 'engMin', 'linkedVar', 'name', 'unit']);
       assert.strictEqual(whp.device, 'Virtual slave'); assert.strictEqual(whp.linkedVar, 'whp'); assert.strictEqual(whp.unit, 'psig');
       const lvl = tags.find((t) => t.name === 'SURGE_LVL_A'); assert.strictEqual(lvl.engMin, 0); assert.strictEqual(lvl.engMax, 100);
-      assert.strictEqual(app.findAll('#mbc_tagtable tbody tr').length, 36);
+      assert.strictEqual(app.findAll('#mbc_tagtable tbody tr').length, 37);
       assert.ok(/✓ Configuration is valid/.test(text(app.el('mbc_res'))));
       // Test read of SEP_P (FLOAT32 CDAB at input 40) and a device test
       const ctl = M.page.controller();
@@ -74,7 +74,7 @@ module.exports = [
       assert.match(text(app.find('[data-live="tag_demo_15"]')), /psig/);
       app.click(app.find('[data-act="dev-test"][data-id="dev_virtual"]'));
       await app.flushAsync(50);
-      assert.ok(ctl.lastDevTest && ctl.lastDevTest.ok && ctl.lastDevTest.tags === 36, JSON.stringify(ctl.lastDevTest));
+      assert.ok(ctl.lastDevTest && ctl.lastDevTest.ok && ctl.lastDevTest.tags === 37, JSON.stringify(ctl.lastDevTest));
       app.flush(2000);   // host autosave / report-snapshot debounces after the clicks
       assert.strictEqual(app.pendingTimers(), 0, 'no timers after one-off reads');
     },
@@ -100,8 +100,8 @@ module.exports = [
       // BHP: canonical psig → barg on the wire (float32) → psig again
       assert.near(st.getVar('bhp').value, drv.bhp, Math.abs(drv.bhp) * 2e-7, 'bhp through barg');
       assert.near(M.toCanonical(10, 'barg', 'pressureG'), 145.0377377, 1e-6);
-      ['esd_open', 'esd_tripped', 'pump_running', 'xv201a', 'xv201b', 'xv301a', 'xv301b', 'heater_bypass'].forEach((k) => assert.strictEqual(st.getVar(k).value, drv[k] ? 1 : 0, k));
-      // 7 block reads cover 36 tags (float block at input 0-29, levels 110-116, …)
+      ['esd_open', 'esd_tripped', 'pump_running', 'xv201a', 'xv201b', 'xv301a', 'xv301b', 'heater_bypass', 'p201_running'].forEach((k) => assert.strictEqual(st.getVar(k).value, drv[k] ? 1 : 0, k));
+      // 7 block reads cover 37 tags (float block at input 0-29, levels 110-116, …)
       assert.strictEqual(st.blocks('dev_virtual').length, 7);
       M.release('test');
       assert.strictEqual(M.station(), null);
@@ -255,13 +255,13 @@ module.exports = [
       app.click(app.find('[data-act="src"][data-src="modbus"]'));
       const payload = app.win.WTS_project._buildPayload();
       const keys = payload.modules.storage.keys;
-      assert.ok(keys.wts_modbus_config && JSON.parse(keys.wts_modbus_config).tags.length === 36, 'config in the project file');
+      assert.ok(keys.wts_modbus_config && JSON.parse(keys.wts_modbus_config).tags.length === 37, 'config in the project file');
       assert.strictEqual(JSON.parse(keys.wts_wellos_ui).source, 'modbus');
       app.hook.nav('home');
       // reload: same storage
       const app2 = app.reload();
       const M2 = app2.win.WTS_modbus;
-      assert.strictEqual(M2.getConfig().tags.length, 36);
+      assert.strictEqual(M2.getConfig().tags.length, 37);
       app2.click(navBtn(app2, 'wellos'));
       assert.strictEqual(M2.wellos.controller().ui().source, 'modbus', 'source restored');
       assert.ok(M2.station() && M2.station().isRunning());
@@ -271,7 +271,7 @@ module.exports = [
       assert.strictEqual(app3.win.WTS_modbus.getConfig().tags.length, 0);
       const res = app3.win.WTS_project.loadFromObject(app3.toWin(JSON.parse(JSON.stringify(payload))));
       assert.ok(!res.error, JSON.stringify(res));
-      assert.strictEqual(app3.win.WTS_modbus.getConfig().tags.length, 36, 'restored from the project file');
+      assert.strictEqual(app3.win.WTS_modbus.getConfig().tags.length, 37, 'restored from the project file');
       // JSON / CSV import through the page controller
       app3.click(navBtn(app3, 'modbus'));
       const C3 = app3.win.WTS_modbus.page.controller();

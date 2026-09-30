@@ -3387,7 +3387,9 @@ function normSample(s, tNow) {
     var v = s.v;
     v = (v === null || v === undefined || v === '') ? null : +v;
     if (v !== null && !isFinite(v)) v = null;
-    return { tag: tag, device: cleanStr(s.device), t: t, v: v, q: qCode(s.q, v), raw: s.raw, unit: cleanStr(s.unit, 32) };
+    var o = { tag: tag, device: cleanStr(s.device), t: t, v: v, q: qCode(s.q, v), raw: s.raw, unit: cleanStr(s.unit, 32) };
+    if (s.desc != null && s.desc !== '') o.desc = cleanStr(s.desc, 200);          // optional description (Mini WellOS form values)
+    return o;
 }
 
 // ─── §2 pure algorithms ──────────────────────────────────────────────
@@ -4620,6 +4622,7 @@ function doFlush() {
             var w = want[s.tag] || (want[s.tag] = { name: s.tag, device: null, unit: null, descr: null });
             if (s.device) w.device = s.device;
             if (s.unit) w.unit = s.unit;
+            if (s.desc) w.descr = s.desc;
         });
         names = Object.keys(want);
         names.forEach(function (name) {
@@ -4859,7 +4862,7 @@ function listTags() {
                 tag: name, id: t ? t.id : null, device: firstDef(t && t.device, m && m.device, L && L.device), unit: firstDef(t && t.unit, m && m.unit, L && L.unit),
                 desc: firstDef(t && t.descr, m && m.desc), count: x.n || 0, rollups: x.rn || 0, first: first.length ? Math.min.apply(null, first) : null,
                 last: isNum(lastT) ? lastT : null, lastValue: lastV, lastQuality: lastQ === null || lastQ === undefined ? null : QN[lastQ],
-                configured: !!m, enabled: m ? m.enabled : null, pollMs: m ? m.pollMs : null, source: /^FORM\.|^SIM\./.test(name) ? 'form' : /^DEMO\./.test(name) ? 'demo' : (m ? 'modbus' : 'recorded'),
+                configured: !!m, enabled: m ? m.enabled : null, pollMs: m ? m.pollMs : null, source: /^FORM\.|^SIM\./.test(name) || firstDef(t && t.device, L && L.device) === 'form' ? 'form' : /^DEMO\./.test(name) ? 'demo' : (m ? 'modbus' : 'recorded'),
                 status: tagStatus(m, isNum(lastT) ? lastT : null, lastQ, now)
             };
         });
