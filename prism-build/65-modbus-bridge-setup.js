@@ -1,0 +1,401 @@
+// =============================================================================
+// 65-modbus-bridge-setup.js — WebSocket-bridge setup helpers for the Modbus page guide
+// -----------------------------------------------------------------------------
+// window.WTS_modbusBridgeSetup (pure functions + one fetch; no timers except the one-shot
+// timeout of checkBridge, cleared when it settles):
+//   validateTarget(s)        → {ok, value, error}  host:port, host = IPv4 | IPv4/nn | host name
+//                              ([A-Za-z0-9.-]), port 1-65535 or * — the same rules as the
+//                              installers, so nothing reaches a script that a shell could run
+//   validateListen(s)        → bool (IPv4 or localhost)
+//   parseBridgeUrl(url)      → {ok, host, port, secure, loopback, healthUrl, error}
+//   targetsFromConfig(cfg, extra) → {targets:[{name, host, port, target, url}], errors, urls, port, listen, warnings}
+//   buildInstaller(os, {allow, port, listen, allowWrites, autostart}) → {ok, filename, text, errors, warnings, commands}
+//   installerFromConfig(cfg, os, {extra, allowWrites, autostart}) → same, targets from the
+//                              "Modbus TCP via WebSocket bridge" devices (+ extra host:port list)
+//   commandsFor(os, o)       → {node, installer, packaged, direct, uninstall}
+//   zip(entries, date)       → Uint8Array (stored ZIP, CRC-32; Unix modes for install.sh)
+//   packageZip(date)         → {filename, bytes, files}
+//   allowedBy(specs, host, port) → bool (the bridge's allow-list rules)
+//   checkBridge(cfg, {fetch, timeoutMs, url}) → Promise<{ok, results:[…]}>  (GET <bridge>/health)
+// The bridge files come from window.WTS_modbusBridgePack (64-modbus-bridge-pack.js).
+// =============================================================================
+(function () {
+'use strict';
+var G = (typeof window !== 'undefined') ? window : globalThis;
+
+var DEFAULT_URL = 'ws://127.0.0.1:8502';
+var BRIDGE_NAME = 'wts-modbus-bridge';
+var SH_FILES = ['modbus-bridge.js', 'fake-slave.js', 'README.md'];
+
+function pack() { var P = G.WTS_modbusBridgePack; return (P && P.files && P.files['modbus-bridge.js']) ? P : null; }
+
+// ─── validation ──────────────────────────────────────────────────────────────
+function isIPv4(s) {
+    var m = /^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$/.exec(String(s));
+    if (!m) return false;
+    for (var i = 1; i <= 4; i++) if (+m[i] > 255) return false;
+    return true;
+}
+function validHost(h) {
+    h = String(h == null ? '' : h);
+    if (h.length < 1 || h.length > 253) return false;
+    if (h.indexOf('/') >= 0) { var p = h.split('/'); return p.length === 2 && isIPv4(p[0]) && /^[0-9]{1,2}$/.test(p[1]) && +p[1] <= 32; }
+    if (/^[0-9.]+$/.test(h)) return isIPv4(h);
+    return /^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$/.test(h) && h.indexOf('..') < 0;
+}
+function validPort(p) { p = String(p == null ? '' : p); return /^[0-9]{1,5}$/.test(p) && +p >= 1 && +p <= 65535; }
+function validateTarget(s) {
+    var t = String(s == null ? '' : s).trim(), i = t.lastIndexOf(':');
+    if (i <= 0) return { ok: false, value: t, error: '"' + t + '" is not host:port' };
+    var h = t.slice(0, i), p = t.slice(i + 1);
+    if (!validHost(h)) return { ok: false, value: t, error: '"' + h + '" is not an IPv4 address, IPv4 subnet (a.b.c.d/nn) or host name' };
+    if (p !== '*' && !validPort(p)) return { ok: false, value: t, error: 'port "' + p + '" of ' + h + ' must be 1-65535 or *' };
+    return { ok: true, value: h.toLowerCase() + ':' + (p === '*' ? '*' : String(+p)), host: h.toLowerCase(), port: p === '*' ? '*' : +p };
+}
+function validateListen(s) { return s === 'localhost' || isIPv4(s); }
+function splitList(s) { return String(s == null ? '' : s).split(/[\s,]+/).filter(Boolean); }
+
+function parseBridgeUrl(u) {
+    var s = String(u == null ? '' : u).trim() || DEFAULT_URL;
+    var m = /^(wss?|https?):\/\/(\[[0-9A-Fa-f:.]+\]|[^\/:?#\s@]+)(?::([0-9]{1,5}))?(?:[\/?#][^\s]*)?$/i.exec(s);
+    if (!m) return { ok: false, url: s, error: 'bridge URL "' + s + '" is not of the form ws://host:port' };
+    var scheme = m[1].toLowerCase(), secure = scheme === 'wss' || scheme === 'https', host = m[2].toLowerCase();
+    var port = m[3] ? +m[3] : (secure ? 443 : 80);
+    if (!(port >= 1 && port <= 65535)) return { ok: false, url: s, error: 'bridge URL "' + s + '": port must be 1-65535' };
+    if (host[0] !== '[' && !validHost(host)) return { ok: false, url: s, error: 'bridge URL "' + s + '": bad host name' };
+    var loopback = /^(127\.[0-9]+\.[0-9]+\.[0-9]+|localhost|\[::1\])$/.test(host);
+    return { ok: true, url: s, host: host, port: port, secure: secure, loopback: loopback,
+        healthUrl: (secure ? 'https' : 'http') + '://' + host + ':' + port + '/health' };
+}
+
+// ─── targets from the Modbus configuration ───────────────────────────────────
+function targetsFromConfig(cfg, extra) {
+    var out = { targets: [], errors: [], urls: [], warnings: [], port: 8502, listen: '' }, seen = {}, seenUrl = {};
+    ((cfg && cfg.devices) || []).forEach(function (d) {
+        if (!d || d.transport !== 'ws') return;
+        var name = String(d.name || d.id || 'device');
+        var v = validateTarget(String(d.host == null ? '' : d.host).trim() + ':' + (d.port == null || d.port === '' ? 502 : d.port));
+        var u = parseBridgeUrl(d.url);
+        if (!u.ok) out.errors.push('Device "' + name + '": ' + u.error);
+        else if (!seenUrl[u.healthUrl]) { seenUrl[u.healthUrl] = 1; out.urls.push(u); }
+        if (!v.ok) { out.errors.push('Device "' + name + '": ' + v.error); return; }
+        out.targets.push({ name: name, host: v.host, port: v.port, target: v.value, url: u.ok ? u.healthUrl : null });
+        seen[v.value] = 1;
+    });
+    splitList(extra).forEach(function (x) {
+        var v = validateTarget(x);
+        if (!v.ok) { out.errors.push('Extra target: ' + v.error); return; }
+        if (!seen[v.value]) { seen[v.value] = 1; out.targets.push({ name: '(extra)', host: v.host, port: v.port, target: v.value, url: null, extra: true }); }
+    });
+    if (out.urls.length) {
+        var u0 = out.urls[0];
+        out.port = u0.port;
+        if (out.urls.length > 1) out.warnings.push('Your devices use ' + out.urls.length + ' different bridge URLs; the installer is for ' + u0.url + ' (port ' + u0.port + ').');
+        if (!u0.loopback) {
+            if (isIPv4(u0.host)) {
+                out.listen = u0.host;
+                out.warnings.push('The bridge URL points at ' + u0.host + ', not this computer: run the installer on that PC. The bridge will then listen on ' + u0.host + ', so other machines on that network can use it.');
+            } else out.warnings.push('The bridge URL points at ' + u0.host + ': run the installer on that PC and set "listen" in its bridge-config.json to that PC\'s IP address.');
+        }
+        if (u0.secure) out.warnings.push('The bridge speaks plain ws:// — use ws:// (not wss://) in the bridge URL.');
+    }
+    return out;
+}
+
+// ─── installers ──────────────────────────────────────────────────────────────
+function replaceBlock(text, tag, lines) {
+    var b = '# @@WTS-' + tag + '-BEGIN@@', e = '# @@WTS-' + tag + '-END@@';
+    var i = text.indexOf(b), j = text.indexOf(e);
+    if (i < 0 || j < i) return null;
+    var lineEnd = text.indexOf('\n', j); if (lineEnd < 0) lineEnd = text.length;
+    return text.slice(0, i) + lines.join('\n') + text.slice(lineEnd);
+}
+function utf8(s) {
+    s = String(s);
+    if (typeof TextEncoder !== 'undefined') return new TextEncoder().encode(s);
+    var bin = unescape(encodeURIComponent(s)), a = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i);
+    return a;
+}
+var B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+function base64(bytes) {
+    var out = '', i, n = bytes.length;
+    for (i = 0; i + 2 < n; i += 3) {
+        var v = (bytes[i] << 16) | (bytes[i + 1] << 8) | bytes[i + 2];
+        out += B64[(v >> 18) & 63] + B64[(v >> 12) & 63] + B64[(v >> 6) & 63] + B64[v & 63];
+    }
+    if (n - i === 1) { var a = bytes[i] << 16; out += B64[(a >> 18) & 63] + B64[(a >> 12) & 63] + '=='; }
+    else if (n - i === 2) { var c = (bytes[i] << 16) | (bytes[i + 1] << 8); out += B64[(c >> 18) & 63] + B64[(c >> 12) & 63] + B64[(c >> 6) & 63] + '='; }
+    return out;
+}
+function chunks(s, n) { var out = []; for (var i = 0; i < s.length; i += n) out.push(s.slice(i, i + n)); return out; }
+
+function shInstaller(P, o) {
+    var tpl = P.files['install.sh'];
+    var preset = [
+        '# @@WTS-PRESET-BEGIN@@ (generated by the Well Testing Suite for your devices; bridge v' + P.version + ')',
+        'PRESET_ALLOW="' + o.allow.join(',') + '"',
+        'PRESET_PORT="' + o.port + '"',
+        'PRESET_LISTEN="' + (o.listen || '') + '"',
+        'PRESET_ALLOW_WRITES="' + (o.allowWrites ? 1 : 0) + '"',
+        'PRESET_AUTOSTART="' + (o.autostart ? 1 : 0) + '"',
+        '# @@WTS-PRESET-END@@'];
+    var sums = [], bodies = [];
+    SH_FILES.forEach(function (f) {
+        if (typeof P.files[f] !== 'string') return;
+        sums.push('        ' + f + ") printf '%s' '" + P.sha256[f] + "' ;;");
+        bodies.push('        ' + f + ')', "            cat <<'WTS_PAYLOAD_EOF'");
+        Array.prototype.push.apply(bodies, chunks(base64(utf8(P.files[f])), 76));
+        bodies.push('WTS_PAYLOAD_EOF', '            ;;');
+    });
+    var payload = ['# @@WTS-PAYLOAD-BEGIN@@ (bridge v' + P.version + ' embedded by the Well Testing Suite; SHA-256 checked when unpacked)',
+        'EMBEDDED_FILES="' + SH_FILES.filter(function (f) { return typeof P.files[f] === 'string'; }).join(' ') + '"',
+        'EMBEDDED_VERSION="' + P.version + '"',
+        'embedded_sha256() {', '    case "$1" in'].concat(sums, ['        *) return 1 ;;', '    esac', '}',
+        'embedded_b64() {', '    case "$1" in'], bodies, ['        *) return 1 ;;', '    esac', '}', '# @@WTS-PAYLOAD-END@@']);
+    var t = replaceBlock(tpl, 'PRESET', preset);
+    t = t && replaceBlock(t, 'PAYLOAD', payload);
+    return t;
+}
+function psInstaller(P, o) {
+    var tpl = P.files['install-windows.ps1'];
+    var preset = [
+        '# @@WTS-PRESET-BEGIN@@ (generated by the Well Testing Suite for your devices; bridge v' + P.version + ')',
+        "$PresetAllow = '" + o.allow.join(',') + "'",
+        '$PresetPort = ' + o.port,
+        "$PresetListen = '" + (o.listen || '') + "'",
+        '$PresetAllowWrites = ' + (o.allowWrites ? '$true' : '$false'),
+        '$PresetAutoStart = ' + (o.autostart ? '$true' : '$false'),
+        '# @@WTS-PRESET-END@@'];
+    var payload = ['# @@WTS-PAYLOAD-BEGIN@@ (bridge v' + P.version + ' embedded by the Well Testing Suite; SHA-256 checked when unpacked)',
+        "$EmbeddedVersion = '" + P.version + "'", '$Embedded = @{}'];
+    SH_FILES.forEach(function (f) {
+        if (typeof P.files[f] !== 'string') return;
+        var lines = chunks(base64(utf8(P.files[f])), 76).map(function (c) { return "'" + c + "'"; });
+        payload.push("$Embedded['" + f + "'] = @{ Sha256 = '" + P.sha256[f] + "'; B64 = (@(");
+        payload.push(lines.join(',\n'));
+        payload.push(") -join '') }");
+    });
+    payload.push('# @@WTS-PAYLOAD-END@@');
+    var t = replaceBlock(tpl, 'PRESET', preset);
+    t = t && replaceBlock(t, 'PAYLOAD', payload);
+    return t && t.replace(/\r?\n/g, '\r\n');          // Windows line endings for Notepad users
+}
+
+function normOs(os) { os = String(os || '').toLowerCase(); return os === 'mac' || os === 'macos' || os === 'darwin' ? 'macos' : os === 'linux' ? 'linux' : 'windows'; }
+function commandsFor(os, o) {
+    os = normOs(os); o = o || {};
+    var allow = (o.allow || []).filter(function (a) { return validateTarget(a).ok; });
+    var port = validPort(o.port) ? +o.port : 8502, listen = o.listen && validateListen(o.listen) ? o.listen : '';
+    var direct = 'node modbus-bridge.js' + allow.map(function (a) { return ' --allow ' + a; }).join('') + (port !== 8502 ? ' --port ' + port : '') +
+        (listen ? ' --listen ' + listen : '') + (o.allowWrites ? ' --allow-writes' : '');
+    if (os === 'windows') {
+        return {
+            node: 'winget install OpenJS.NodeJS.LTS',
+            installer: 'powershell -NoProfile -ExecutionPolicy Bypass -File "$HOME\\Downloads\\wts-modbus-bridge-install.ps1"',
+            packaged: 'powershell -NoProfile -ExecutionPolicy Bypass -File .\\install-windows.ps1 -Allow "' + allow.join(',') + '"' + (port !== 8502 ? ' -Port ' + port : '') +
+                (listen ? ' -Listen ' + listen : '') + (o.allowWrites ? ' -AllowWrites' : '') + (o.autostart ? ' -AutoStart' : ''),
+            direct: direct,
+            uninstall: 'powershell -NoProfile -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\\WTS Modbus Bridge\\install-windows.ps1" -Uninstall'
+        };
+    }
+    return {
+        node: os === 'macos' ? 'brew install node' : 'sudo apt-get install nodejs      # or: sudo dnf install nodejs',
+        installer: 'bash ~/Downloads/wts-modbus-bridge-install.sh',
+        packaged: 'bash install.sh --allow ' + (allow.join(',') || '<ip>:502') + (port !== 8502 ? ' --port ' + port : '') + (listen ? ' --listen ' + listen : '') +
+            (o.allowWrites ? ' --allow-writes' : '') + (o.autostart ? ' --autostart' : ''),
+        direct: direct,
+        uninstall: os === 'macos' ? 'bash "$HOME/Library/Application Support/WTS Modbus Bridge/install.sh" --uninstall'
+            : 'bash "${XDG_DATA_HOME:-$HOME/.local/share}/wts-modbus-bridge/install.sh" --uninstall'
+    };
+}
+function buildInstaller(os, o) {
+    os = normOs(os); o = o || {};
+    var P = pack(), errors = [], warnings = [], allow = [];
+    if (!P) return { ok: false, errors: ['The bridge package is not bundled in this build.'], warnings: warnings };
+    (o.allow || []).forEach(function (a) {
+        var v = validateTarget(a);
+        if (!v.ok) errors.push(v.error); else if (allow.indexOf(v.value) < 0) allow.push(v.value);
+    });
+    var port = (o.port == null || o.port === '') ? 8502 : o.port;
+    if (!validPort(port)) errors.push('bridge port "' + port + '" must be 1-65535'); else port = +port;
+    var listen = o.listen ? String(o.listen) : '';
+    if (listen && !validateListen(listen)) errors.push('listen address "' + listen + '" must be an IPv4 address or localhost');
+    if (!allow.length && !errors.length) errors.push('No targets yet: add a device with transport "Modbus TCP via WebSocket bridge" (its host / IP and port), or enter a target.');
+    if (errors.length) return { ok: false, errors: errors, warnings: warnings };
+    var opts = { allow: allow, port: port, listen: listen, allowWrites: !!o.allowWrites, autostart: !!o.autostart };
+    var text = os === 'windows' ? psInstaller(P, opts) : shInstaller(P, opts);
+    if (!text) return { ok: false, errors: ['The bundled installer template has no preset / payload block.'], warnings: warnings };
+    return { ok: true, os: os, filename: os === 'windows' ? 'wts-modbus-bridge-install.ps1' : 'wts-modbus-bridge-install.sh',
+        type: os === 'windows' ? 'text/plain' : 'application/x-sh', text: text, allow: allow, port: port, listen: listen,
+        version: P.version, errors: [], warnings: warnings, commands: commandsFor(os, opts) };
+}
+function installerFromConfig(cfg, os, o) {
+    o = o || {};
+    var t = targetsFromConfig(cfg, o.extra);
+    if (t.errors.length) return { ok: false, errors: t.errors, warnings: t.warnings, targets: t.targets };
+    var r = buildInstaller(os, { allow: t.targets.map(function (x) { return x.target; }), port: t.port, listen: t.listen, allowWrites: o.allowWrites, autostart: o.autostart });
+    r.warnings = t.warnings.concat(r.warnings || []);
+    r.targets = t.targets;
+    return r;
+}
+
+// ─── ZIP (stored) ────────────────────────────────────────────────────────────
+var CRC = null;
+function crc32(bytes) {
+    if (!CRC) { CRC = []; for (var n = 0; n < 256; n++) { var c = n; for (var k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1); CRC[n] = c >>> 0; } }
+    var x = 0xFFFFFFFF;
+    for (var i = 0; i < bytes.length; i++) x = CRC[(x ^ bytes[i]) & 0xFF] ^ (x >>> 8);
+    return (x ^ 0xFFFFFFFF) >>> 0;
+}
+// entries: [{name, data: string | byte array, mode: 0o755 | 0o644}] → Uint8Array
+function zip(entries, date) {
+    var d = date || new Date(), yr = Math.max(1980, d.getFullYear());
+    var dosTime = (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1);
+    var dosDate = ((yr - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
+    var files = entries.map(function (e) {
+        var data = typeof e.data === 'string' ? utf8(e.data) : e.data, name = utf8(e.name);
+        return { name: name, data: data, crc: crc32(data), mode: e.mode || 420 };
+    });
+    var size = 22;
+    files.forEach(function (f) { size += 30 + f.name.length + f.data.length + 46 + f.name.length; });
+    var buf = new Uint8Array(size), dv = new DataView(buf.buffer), p = 0, cd = [];
+    function u16(v) { dv.setUint16(p, v, true); p += 2; }
+    function u32(v) { dv.setUint32(p, v >>> 0, true); p += 4; }
+    function bytes(b) { buf.set(b, p); p += b.length; }
+    files.forEach(function (f) {
+        f.offset = p;
+        u32(0x04034b50); u16(20); u16(0x0800); u16(0); u16(dosTime); u16(dosDate);
+        u32(f.crc); u32(f.data.length); u32(f.data.length); u16(f.name.length); u16(0);
+        bytes(f.name); bytes(f.data);
+    });
+    var cdStart = p;
+    files.forEach(function (f) {
+        u32(0x02014b50); u16((3 << 8) | 20); u16(20); u16(0x0800); u16(0); u16(dosTime); u16(dosDate);
+        u32(f.crc); u32(f.data.length); u32(f.data.length); u16(f.name.length); u16(0); u16(0); u16(0); u16(0);
+        u32((0x8000 | f.mode) * 65536); u32(f.offset);
+        bytes(f.name);
+        cd.push(f);
+    });
+    var cdSize = p - cdStart;
+    u32(0x06054b50); u16(0); u16(0); u16(files.length); u16(files.length); u32(cdSize); u32(cdStart); u16(0);
+    return buf;
+}
+function packageZip(date) {
+    var P = pack();
+    if (!P) return null;
+    var dir = 'wts-modbus-bridge/';
+    var entries = P.order.filter(function (f) { return typeof P.files[f] === 'string'; }).map(function (f) {
+        return { name: dir + f, data: P.files[f], mode: /\.sh$/.test(f) ? 493 : 420 };
+    });
+    return { filename: 'wts-modbus-bridge-' + P.version + '.zip', bytes: zip(entries, date), files: entries.map(function (e) { return e.name; }), version: P.version };
+}
+
+// ─── allow-list rules (mirror of modbus-bridge.js parseAllow / allowed) ─────
+function ip4num(s) { if (!isIPv4(s)) return null; var p = s.split('.').map(Number); return ((p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3]) >>> 0; }
+function allowedBy(specs, host, port) {
+    host = String(host || '').toLowerCase(); port = +port;
+    return (specs || []).some(function (spec) {
+        var s = String(spec).trim(), i = s.lastIndexOf(':');
+        if (i <= 0) return false;
+        var h = s.slice(0, i).replace(/^\[|\]$/g, '').toLowerCase(), p = s.slice(i + 1);
+        if (p !== '*' && +p !== port) return false;
+        var m = /^([0-9.]+)\/([0-9]+)$/.exec(h);
+        if (m) {
+            var ip = ip4num(host), base = ip4num(m[1]), bits = +m[2];
+            if (ip == null || base == null || !(bits >= 0 && bits <= 32)) return false;
+            var mask = bits === 0 ? 0 : (0xFFFFFFFF << (32 - bits)) >>> 0;
+            return ((ip & mask) >>> 0) === ((base & mask) >>> 0);
+        }
+        return h === host;
+    });
+}
+function versionLess(a, b) {
+    var x = String(a).split('.').map(Number), y = String(b).split('.').map(Number);
+    for (var i = 0; i < 3; i++) { var p = x[i] || 0, q = y[i] || 0; if (p !== q) return p < q; }
+    return false;
+}
+
+// ─── Check bridge (GET /health) ──────────────────────────────────────────────
+function originText() { try { return String((G.location && G.location.origin) || ''); } catch (e) { return ''; } }
+function failHints(u, kind) {
+    var h = [];
+    if (kind === 'forbidden') {
+        h.push('The bridge refused this page\'s origin (' + (originText() || 'unknown') + '). Add it to "origins" in bridge-config.json (or start the bridge with --origin ' + (originText() || '<origin>') + ') and restart the bridge.');
+        return h;
+    }
+    h.push('Is the bridge running? Windows: Start menu → "WTS Modbus Bridge". macOS / Linux: run start-bridge.sh from the install folder (or install with --autostart).');
+    h.push('Is the port right? The bridge URL of your devices must match the bridge (' + u.url + ').');
+    h.push('A bridge older than v1.1 has no health check — download the package again and re-run the installer.');
+    if (!u.loopback) h.push('The bridge is on another computer: it must listen on that PC\'s network address (listen in bridge-config.json) and the firewall must allow TCP ' + u.port + '.');
+    h.push('Chrome / Edge may ask to allow this site to access apps or devices on your local network — choose Allow. Other browsers may block an https page from reaching http://127.0.0.1: use Chrome / Edge, or open the app from http://localhost or a saved copy.');
+    return h;
+}
+function checkOne(u, devices, f, opts) {
+    var base = { url: u.url, healthUrl: u.healthUrl, devices: [], hints: [] };
+    if (!u.ok) return Promise.resolve(Object.assign(base, { ok: false, error: u.error }));
+    if (typeof f !== 'function') return Promise.resolve(Object.assign(base, { ok: false, error: 'This browser cannot run the check (no fetch).' }));
+    var ms = opts.timeoutMs || 4000, timer = null, timedOut = false, ctl = null;
+    try { if (typeof AbortController !== 'undefined') ctl = new AbortController(); } catch (e) { ctl = null; }
+    var timeout = new Promise(function (resolve, reject) {
+        timer = setTimeout(function () { timedOut = true; if (ctl) { try { ctl.abort(); } catch (e) { /* ignore */ } } reject(new Error('timeout')); }, ms);
+    });
+    var init = { method: 'GET', mode: 'cors', cache: 'no-store', credentials: 'omit' };
+    if (ctl) init.signal = ctl.signal;
+    var req = Promise.resolve().then(function () { return f(u.healthUrl, init); });
+    function done() { if (timer != null) { clearTimeout(timer); timer = null; } }
+    return Promise.race([req, timeout]).then(function (res) {
+        done();
+        if (res && res.status === 403) return Object.assign(base, { ok: false, reachable: true, error: 'The bridge at ' + u.healthUrl + ' answered 403 Forbidden.', hints: failHints(u, 'forbidden') });
+        if (!res || !res.ok) return Object.assign(base, { ok: false, reachable: true, error: 'Something answered at ' + u.healthUrl + ' with HTTP ' + (res ? res.status : '?') + ' — not the WTS Modbus bridge (or an older version).', hints: failHints(u) });
+        return Promise.resolve().then(function () { return res.json(); }).then(function (h) {
+            if (!h || h.name !== BRIDGE_NAME || typeof h.version !== 'string') {
+                return Object.assign(base, { ok: false, reachable: true, error: 'Something answered at ' + u.healthUrl + ' but it is not the WTS Modbus bridge.', hints: failHints(u) });
+            }
+            var allow = Array.isArray(h.allow) ? h.allow.map(String) : [];
+            var devs = devices.map(function (d) { return { name: d.name, target: d.target, allowed: allowedBy(allow, d.host, d.port === '*' ? 502 : d.port) }; });
+            var P = pack(), warnings = [];
+            if (P && versionLess(h.version, P.version)) warnings.push('Bridge v' + h.version + ' is older than v' + P.version + ' bundled with this app — download the package again and re-run the installer to update.');
+            var missing = devs.filter(function (d) { return !d.allowed; });
+            if (missing.length) warnings.push('Not in the bridge allow-list: ' + missing.map(function (d) { return d.target; }).join(', ') + ' — re-run the installer (step 3) or add them to "allow" in bridge-config.json, then restart the bridge.');
+            if (!devices.length) warnings.push('No "Modbus TCP via WebSocket bridge" devices use this bridge yet.');
+            return Object.assign(base, { ok: !missing.length, reachable: true, running: true, version: h.version, readOnly: h.readOnly !== false,
+                port: h.port, uptimeS: h.uptimeS, allow: allow, devices: devs, warnings: warnings });
+        }, function () {
+            return Object.assign(base, { ok: false, reachable: true, error: 'Something answered at ' + u.healthUrl + ' but not with the bridge\'s health data.', hints: failHints(u) });
+        });
+    }, function () {
+        done();
+        return Object.assign(base, { ok: false, reachable: false, timedOut: timedOut,
+            error: timedOut ? 'No answer from ' + u.healthUrl + ' within ' + Math.round(ms / 1000) + ' s.' : 'No bridge answered at ' + u.healthUrl + '.', hints: failHints(u) });
+    });
+}
+function checkBridge(cfg, opts) {
+    opts = opts || {};
+    var f = opts.fetch || (typeof G.fetch === 'function' ? function (a, b) { return G.fetch(a, b); } : null);
+    var t = targetsFromConfig(cfg, '');
+    var urls = t.urls.length ? t.urls : [parseBridgeUrl(opts.url || DEFAULT_URL)];
+    return Promise.all(urls.map(function (u) {
+        var devs = t.targets.filter(function (d) { return !d.extra && (d.url === u.healthUrl || (!d.url && urls.length === 1)); });
+        return checkOne(u, devs, f, opts);
+    })).then(function (results) {
+        return { ok: results.every(function (r) { return r.ok; }), results: results, configErrors: t.errors };
+    });
+}
+
+G.WTS_modbusBridgeSetup = {
+    DEFAULT_URL: DEFAULT_URL, validateTarget: validateTarget, validateListen: validateListen, validHost: validHost, isIPv4: isIPv4,
+    parseBridgeUrl: parseBridgeUrl, targetsFromConfig: targetsFromConfig, buildInstaller: buildInstaller,
+    installerFromConfig: installerFromConfig, commandsFor: commandsFor, zip: zip, crc32: crc32, base64: base64,
+    packageZip: packageZip, allowedBy: allowedBy, checkBridge: checkBridge, versionLess: versionLess, pack: pack
+};
+})();
+
+// === SELF-TEST ===
+(function () {
+    var G = (typeof window !== 'undefined') ? window : globalThis, S = G.WTS_modbusBridgeSetup;
+    var ok = !!S && S.validateTarget('192.168.1.10:502').ok && !S.validateTarget('1.2.3.4;rm -rf ~:502').ok && !S.validateTarget('$(calc):502').ok &&
+        S.validateTarget('10.0.0.0/24:*').ok && !S.validateTarget('1.2.3.999:502').ok && S.crc32([49, 50, 51, 52, 53, 54, 55, 56, 57]) === 0xCBF43926 &&
+        S.base64([77, 97, 110]) === 'TWFu' && S.allowedBy(['10.0.0.0/24:502'], '10.0.0.9', 502) && !S.allowedBy(['10.0.0.0/24:502'], '10.0.1.9', 502);
+    if (typeof console !== 'undefined') console[ok ? 'log' : 'warn']('[65-modbus-bridge-setup] self-test ' + (ok ? 'passed' : 'FAILED'));
+})();

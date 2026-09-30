@@ -6,11 +6,15 @@
 // scaling, units, alarm limits, deadband, link to a well-test variable, historian
 // logging), "Test read" per tag, live monitor, global pause, JSON / CSV import and
 // export, write protection ("Enable writes" + confirmation), the built-in virtual
-// slave (WTS_sim / waveform / manual) and connection guides (WebSocket bridge,
-// Web Serial RTU, iOS native TCP).
+// slave (WTS_sim / waveform / manual) and the connection guide: WebSocket-bridge setup
+// (install Node → download the bundled bridge package → generate an installer for the
+// configured bridge devices → "Check bridge" via GET /health), Web Serial RTU, iOS native
+// TCP, troubleshooting. The guide card is .rp-skip (kept out of PDF / Quick Report).
 //
 // The page state lives in localStorage 'wts_modbus_config' (WTS_modbus.saveConfig);
 // the root carries data-no-persist so the host page autosave leaves it alone.
+// Bridge helpers: window.WTS_modbusBridgeSetup (65-modbus-bridge-setup.js), bridge files:
+// window.WTS_modbusBridgePack (64-modbus-bridge-pack.js, generated from tools/modbus-bridge/).
 // Registers itself in window.WTS_calcRegistry (host plug-in registry).
 // =============================================================================
 (function () {
@@ -30,8 +34,20 @@ function fmtTime(t) { if (!t) return '—'; var d = new Date(t), p = function (x
 function fmtVal(v) { return M.fmtNum ? M.fmtNum(v) : String(v); }
 
 var lastUrl = null;
+function bytesB64(b) {
+    var S = G.WTS_modbusBridgeSetup;
+    if (S && S.base64) return S.base64(b);
+    var s = ''; for (var i = 0; i < b.length; i++) s += String.fromCharCode(b[i]);
+    return G.btoa(s);
+}
+// text or bytes (Uint8Array) → a download; in the iOS app the share sheet (ios-bridge.js).
 function download(name, text, type) {
     try {
+        var bin = typeof text !== 'string';
+        if (typeof G.iosSaveFile === 'function') {
+            Promise.resolve(G.iosSaveFile(name, bin ? bytesB64(text) : text, bin)).catch(function (e) { console.warn('[modbus] share failed', e); });
+            return true;
+        }
         var blob = new Blob([text], { type: type || 'text/plain' });
         var a = document.createElement('a');
         if (lastUrl && typeof URL !== 'undefined' && URL.revokeObjectURL) { try { URL.revokeObjectURL(lastUrl); } catch (e) {} }
@@ -66,7 +82,20 @@ function injectCss() {
         '.mb-guide h4{margin:10px 0 4px;font-size:13px;color:var(--text)}.mb-guide p,.mb-guide li{font-size:12px;color:var(--text2);line-height:1.5}',
         '.mb-guide code{background:var(--bg1);padding:1px 5px;border-radius:4px;font-size:11px}',
         '.mb-slider{display:grid;grid-template-columns:minmax(160px,1fr) 2fr 90px;gap:8px;align-items:center;font-size:12px;margin:4px 0}',
-        '@media (max-width:700px){.mb-slider{grid-template-columns:1fr}}'
+        '@media (max-width:700px){.mb-slider{grid-template-columns:1fr}}',
+        '.mb-guide details.mb-sec{border:1px solid var(--border);border-radius:8px;padding:6px 12px;margin:8px 0;background:var(--bg1);min-width:0}',
+        '.mb-guide details.mb-sec>summary{cursor:pointer;font-weight:600;font-size:13px;color:var(--text);padding:4px 0}',
+        '.mb-guide .btn-row{flex-wrap:wrap}',
+        '.mb-steps{margin:8px 0 0;padding-left:20px}.mb-steps>li{margin:0 0 14px;font-size:12px;color:var(--text2)}.mb-steps>li>b{color:var(--text);font-size:13px}',
+        '.mb-cmd{margin:6px 0;min-width:0}.mb-cmd-l{font-size:11px;color:var(--text3);margin-bottom:2px}.mb-cmd-r{display:flex;gap:6px;align-items:flex-start;min-width:0}',
+        '.mb-cmd pre{flex:1 1 auto;min-width:0;margin:0;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg2,var(--bg1));white-space:pre-wrap;word-break:break-all;overflow-wrap:anywhere;font-size:11px;line-height:1.45}',
+        '.mb-guide .mb-cmd pre code{background:none;padding:0;font-size:11px}',
+        '.mb-os{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 10px}',
+        '.mb-targets,.mb-hints{margin:6px 0;padding-left:18px}.mb-hints li{margin:2px 0}',
+        '.mb-inl{display:flex;flex-direction:column;gap:4px;font-size:12px;margin:8px 0}.mb-inl input{width:100%;max-width:420px;box-sizing:border-box}',
+        '.mb-chk{display:flex;gap:8px;align-items:center;font-size:12px;margin:4px 0}',
+        '.mb-verdict{font-size:13px;font-weight:600;margin:8px 0 4px;overflow-wrap:anywhere}.mb-hint{font-size:11px;color:var(--text3);margin-top:4px;overflow-wrap:anywhere}',
+        '.mb-note{border-left:3px solid var(--green);padding:6px 10px;margin:6px 0 10px;font-size:12px;color:var(--text2);background:var(--bg1);border-radius:0 6px 6px 0}'
     ].join('\n');
     (document.head || document.documentElement).appendChild(s);
 }
@@ -170,15 +199,133 @@ function slaveHtml(c) {
         '<div style="margin-top:12px">' + sliders + '</div>' +
         '<details style="margin-top:10px"><summary style="cursor:pointer;font-size:12px;color:var(--text2)">Virtual slave register map (unit id 1)</summary><div class="mb-scroll"><table class="dtable" style="min-width:760px"><thead><tr><th>Tag</th><th>Table</th><th>Protocol address</th><th>PLC address</th><th>Type</th><th>Order</th><th>Units</th><th>Variable</th></tr></thead><tbody>' + map + '</tbody></table></div></details>';
 }
-function guideHtml() {
+// ─── connection guide (bridge setup) ─────────────────────────────────────────
+var OS_LABEL = { windows: 'Windows', macos: 'macOS', linux: 'Linux' };
+function isIosApp() {
+    try {
+        if (typeof document !== 'undefined' && document.documentElement && document.documentElement.classList.contains('ios-app')) return true;
+        var C = G.Capacitor;
+        return !!(C && typeof C.isNativePlatform === 'function' && C.isNativePlatform());
+    } catch (e) { return false; }
+}
+function guessOs() {
+    var n = G.navigator || {}, s = String(n.userAgent || '') + ' ' + String(n.platform || '');
+    if (/Win/i.test(s)) return 'windows';
+    if (/Mac|iPhone|iPad/i.test(s)) return 'macos';
+    if (/Linux|X11|CrOS/i.test(s)) return 'linux';
+    return 'windows';
+}
+function cmdBox(text, label) {
+    return '<div class="mb-cmd">' + (label ? '<div class="mb-cmd-l">' + esc(label) + '</div>' : '') +
+        '<div class="mb-cmd-r"><pre><code>' + esc(text) + '</code></pre>' +
+        '<button type="button" class="btn btn-secondary mb-btn-s" data-act="guide-copy" data-copy="' + esc(text) + '" aria-label="Copy: ' + esc(label || text) + '">Copy</button></div></div>';
+}
+function listHtml(items, cls) { return items.length ? '<ul class="' + (cls || 'mb-hints') + '">' + items.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>' : ''; }
+// The guide's outer frame (rendered once per page view); the bridge steps live in #mbc_guide_steps.
+function guideHtml(ios) {
     return '<div class="mb-guide">' +
-        '<h4>Web browser → Modbus TCP (WebSocket bridge)</h4><p>Browsers cannot open raw TCP sockets, so a small bridge runs on a PC on the same network as the PLC / RTU. It ships in the repository as <code>tools/modbus-bridge/</code> (Node.js ≥ 18, no dependencies):</p>' +
-        '<ul><li>Windows / macOS / Linux: <code>node tools/modbus-bridge/modbus-bridge.js --allow 192.168.1.10:502</code></li>' +
-        '<li>It listens on <code>ws://127.0.0.1:8502</code> (localhost only by default), connects only to the allow-listed host:port pairs, and refuses Modbus writes unless started with <code>--allow-writes</code>.</li>' +
-        '<li>Set the device transport to "Modbus TCP via WebSocket bridge", the host / IP and port of the PLC, and the bridge URL.</li></ul>' +
-        '<h4>Modbus RTU (RS-485) — Web Serial</h4><p>Chrome or Edge on a desktop, page served over https or localhost. Plug in a USB–RS-485 adapter, choose "Modbus RTU via Web Serial", set baud / parity / unit id, then press <b>Test</b> — the browser asks which serial port to use (once).</p>' +
-        '<h4>iOS app — native TCP</h4><p>In the iOS app, choose "Modbus TCP (iOS app, native)". The app connects directly to the PLC over Wi-Fi (Network framework); iOS asks once for Local Network permission.</p>' +
-        '<h4>No hardware?</h4><p>"Load simulator demo" configures one device on the built-in virtual slave: 36 tags covering pressures, temperatures, rates, levels and valve states, fed by the Well Test Simulator model. Mini WellOS then animates from those tags when its data source is set to "Modbus data".</p></div>';
+        (ios ? '<div class="mb-note"><b>iOS app: no bridge needed.</b> Choose the transport "Modbus TCP (iOS app, native)" — the app talks to the PLC directly over Wi-Fi. The bridge below is only for the web version in a desktop browser.</div>' : '') +
+        '<details class="mb-sec" id="mbc_guide_web"' + (ios ? '' : ' open') + '><summary>Web browser → Modbus TCP: bridge setup (Windows / macOS / Linux)</summary>' +
+        '<p>Browsers cannot open raw TCP sockets, so a small bridge program (Node.js, no other software) runs on a PC on the same network as the PLC / RTU. It listens on <code>ws://127.0.0.1:8502</code> (this computer only), connects only to the device addresses you allow, and refuses Modbus writes unless you allow them.</p>' +
+        '<div id="mbc_guide_steps"></div></details>' +
+        '<details class="mb-sec"><summary>Modbus RTU (RS-485) — Web Serial</summary><p>Chrome or Edge on a desktop, page served over https or localhost (no bridge needed). Plug in a USB–RS-485 adapter, choose "Modbus RTU via Web Serial", set baud / parity / unit id, then press <b>Test</b> — the browser asks which serial port to use (once).</p></details>' +
+        '<details class="mb-sec"' + (ios ? ' open' : '') + '><summary>iOS app — native TCP (no bridge)</summary><p>In the iOS app, choose "Modbus TCP (iOS app, native)" and enter the PLC\'s IP address and port. The app connects directly over Wi-Fi (Network framework); iOS asks once for Local Network permission. The WebSocket bridge is not used.</p></details>' +
+        '<details class="mb-sec"><summary>No hardware? Built-in simulator</summary><p>"Load simulator demo" configures one device on the built-in virtual slave: 36 tags covering pressures, temperatures, rates, levels and valve states, fed by the Well Test Simulator model. Mini WellOS then animates from those tags when its data source is set to "Modbus data". To try the bridge itself, the package includes <code>fake-slave.js</code>: run <code>node fake-slave.js --port 5020</code>, allow <code>127.0.0.1:5020</code> in the bridge and add a bridge device with host 127.0.0.1, port 5020.</p></details>' +
+        '<details class="mb-sec"><summary>Troubleshooting</summary><ul class="mb-hints">' +
+        '<li><b>"Cannot reach the Modbus bridge"</b> — the bridge is not running, or the bridge URL / port differs. Press <b>Check bridge</b>.</li>' +
+        '<li><b>"not in the bridge allow-list"</b> — re-run the installer (step 3) with that device, or add its host:port to <code>allow</code> in bridge-config.json and restart the bridge.</li>' +
+        '<li><b>HTTP 403 / origin refused</b> — the page is served from an origin the bridge does not accept: add it to <code>origins</code> in bridge-config.json (or <code>--origin</code>).</li>' +
+        '<li><b>Timeouts</b> — check the unit id (many gateways need the RS-485 slave address here), the IP / port, and that no firewall blocks TCP 502 between the PC and the device.</li>' +
+        '<li><b>Exception 01 on writes</b> — the bridge is read-only: re-run the installer with "Allow Modbus writes" (<code>--allow-writes</code>).</li>' +
+        '<li><b>Chrome / Edge asks about local network or apps on this device</b> — choose Allow, so this page may reach the bridge on 127.0.0.1.</li>' +
+        '<li><b>Windows: "running scripts is disabled on this system"</b> — use the <code>powershell -NoProfile -ExecutionPolicy Bypass -File …</code> command exactly as shown (it changes no system setting).</li>' +
+        '<li><b>macOS / Linux: "permission denied"</b> — start the installer with <code>bash install.sh …</code>.</li>' +
+        '<li><b>Port 8502 already in use</b> — install with another port (<code>--port</code> / <code>-Port</code>) and change the device bridge URL to match.</li>' +
+        '</ul></details></div>';
+}
+function guideStepsHtml(cfg, g, ios) {
+    var S = G.WTS_modbusBridgeSetup, P = G.WTS_modbusBridgePack;
+    if (!S || !P) return '<p>Run <code>node modbus-bridge.js --allow 192.168.1.10:502</code> from the <code>tools/modbus-bridge</code> folder of the repository (Node.js 18 or newer), then set the device bridge URL to <code>ws://127.0.0.1:8502</code>.</p>';
+    var os = g.os, t = S.targetsFromConfig(cfg, g.extra), allow = t.targets.map(function (x) { return x.target; });
+    var cmds = S.commandsFor(os, { allow: allow, port: t.port, listen: t.listen, allowWrites: g.writes, autostart: g.autostart });
+    var ready = allow.length && !t.errors.length;
+    var osBtns = '<div class="mb-os" role="group" aria-label="Operating system of the PC that runs the bridge">' + ['windows', 'macos', 'linux'].map(function (o) {
+        return '<button type="button" class="btn mb-btn-s ' + (o === os ? 'btn-primary' : 'btn-secondary') + '" data-act="guide-os" data-os="' + o + '" aria-pressed="' + (o === os) + '">' + OS_LABEL[o] + '</button>';
+    }).join('') + '</div>';
+    var node = os === 'windows'
+        ? '<p>Install the LTS version from <b>nodejs.org</b> (Windows Installer), or in PowerShell:</p>' + cmdBox(cmds.node, 'PowerShell')
+        : os === 'macos'
+            ? '<p>With Homebrew (or the macOS installer from <b>nodejs.org</b>):</p>' + cmdBox(cmds.node, 'Terminal')
+            : '<p>Your distribution\'s package if it is version 18 or newer, otherwise the packages on <b>nodejs.org</b>:</p>' + cmdBox('sudo apt-get install nodejs', 'Debian / Ubuntu') + cmdBox('sudo dnf install nodejs', 'Fedora / RHEL');
+    node += '<p>Check with <code>node --version</code> (v18 or newer). The installer in step 3 offers to install Node.js itself when it is missing (after asking you).</p>';
+    var shaShort = String((P.sha256 || {})['modbus-bridge.js'] || '').slice(0, 16);
+    var pkg = ios ? '<p>Open the web version of the app on the PC to download the bridge package.</p>'
+        : '<p>The bridge ships inside this app, so this works offline: <code>modbus-bridge.js</code>, the installers for Windows / macOS / Linux, a test slave and the README.</p>' +
+          '<div class="btn-row"><button type="button" class="btn btn-secondary" data-act="guide-pack">⬇ Download bridge package (.zip)</button></div>' +
+          '<div class="mb-hint">Bridge v' + esc(P.version) + ' · SHA-256 of modbus-bridge.js ' + esc(shaShort) + '… · unzip it (Windows: right-click → Extract All).</div>';
+    var tlist = t.targets.map(function (x) { return '<li class="mb-q-good">✓ ' + esc(x.name) + ' — ' + esc(x.target) + '</li>'; }).join('') +
+        t.errors.map(function (e) { return '<li class="mb-q-bad">✗ ' + esc(e) + '</li>'; }).join('');
+    var inst = '<p>Targets the bridge will be allowed to reach (from your "Modbus TCP via WebSocket bridge" devices):</p>' +
+        (tlist ? '<ul class="mb-targets">' + tlist + '</ul>' : '<p class="mb-q-stale">No bridge devices yet — add a device above with transport "Modbus TCP via WebSocket bridge" (host / IP and port), or enter a target here.</p>') +
+        '<label class="mb-inl">Extra targets (optional, comma separated — ip:port, subnet a.b.c.d/nn:port or host:port)<input type="text" data-k="guide" data-f="extra" value="' + esc(g.extra) + '" placeholder="10.0.0.0/24:502, plc-2.local:502" autocomplete="off" spellcheck="false"></label>' +
+        '<label class="mb-chk"><input type="checkbox" data-k="guide" data-f="autostart"' + (g.autostart ? ' checked' : '') + '> Start the bridge automatically at login</label>' +
+        '<label class="mb-chk"><input type="checkbox" data-k="guide" data-f="writes"' + (g.writes ? ' checked' : '') + '> Allow Modbus writes through the bridge (only if you need to write set points)</label>' +
+        listHtml(t.warnings) +
+        (ios ? '' : '<div class="btn-row"><button type="button" class="btn btn-primary" data-act="guide-installer"' + (ready ? '' : ' disabled') + '>⬇ Generate installer for my devices</button></div>') +
+        '<div class="mb-msgs" id="mbc_guide_gen" aria-live="polite">' + (g.genHtml || '') + '</div>';
+    if (ready) {
+        inst += (os === 'windows'
+            ? '<p>Then run it in PowerShell (Start menu → type PowerShell). Change the path if your browser saved it elsewhere:</p>' + cmdBox(cmds.installer, 'PowerShell — generated installer')
+            : '<p>Then run it in a Terminal (change the path if your browser saved it elsewhere):</p>' + cmdBox(cmds.installer, 'Terminal — generated installer')) +
+            cmdBox(cmds.packaged, 'or, in the unzipped package folder') +
+            cmdBox(cmds.direct, 'or run the bridge without installing (stops when the window closes)') +
+            (os === 'windows'
+                ? '<p>No administrator rights needed; <code>-ExecutionPolicy Bypass</code> applies to this one run. It installs to <code>%LOCALAPPDATA%\\WTS Modbus Bridge</code>, writes <code>bridge-config.json</code>, adds a Start-menu shortcut "WTS Modbus Bridge" (and a logon task with auto-start), starts the bridge and checks it.</p>'
+                : '<p>No sudo needed. It installs to <code>' + (os === 'macos' ? '~/Library/Application Support/WTS Modbus Bridge' : '~/.local/share/wts-modbus-bridge') + '</code>, writes <code>bridge-config.json</code> and <code>start-bridge.sh</code>' +
+                  (os === 'macos' ? ' (auto-start: a LaunchAgent)' : ' (auto-start: a systemd --user service)') + ', starts the bridge and checks it. Without auto-start the bridge runs in that Terminal window — leave it open.</p>') +
+            cmdBox(cmds.uninstall, 'uninstall');
+    }
+    var check = '<p>With the bridge running, check it from here, then press <b>Test</b> on each device row.</p>' +
+        '<div class="btn-row"><button type="button" class="btn btn-primary" data-act="guide-check">Check bridge</button></div>' +
+        '<div id="mbc_guide_check" aria-live="polite">' + (g.checkHtml || '') + '</div>';
+    return osBtns + '<ol class="mb-steps">' +
+        '<li><b>Install Node.js 18 or newer</b> (' + OS_LABEL[os] + ')' + node + '</li>' +
+        '<li><b>Get the bridge</b>' + pkg + '</li>' +
+        '<li><b>Install it for your devices</b>' + inst + '</li>' +
+        '<li><b>Check the bridge</b>' + check + '</li></ol>';
+}
+function checkResultHtml(r, cfg) {
+    var h = r.results.map(function (x) {
+        if (x.running) {
+            var w = (x.warnings || []).slice();
+            if (cfg && cfg.writesEnabled && x.readOnly) w.push('Writes are enabled on this page but the bridge is read-only — writes will be refused (exception 01). Re-run the installer with "Allow Modbus writes" if you need them.');
+            return '<div class="mb-verdict mb-q-' + (x.ok ? 'good' : 'stale') + '">' + (x.ok ? '✓' : '⚠') + ' Bridge v' + esc(x.version) + ' is running at ' + esc(x.healthUrl.replace(/\/health$/, '')) + ' — ' + (x.readOnly ? 'read-only' : 'writes allowed') + ', port ' + esc(x.port) + '</div>' +
+                (x.devices.length ? '<ul class="mb-targets">' + x.devices.map(function (d) {
+                    return '<li class="mb-q-' + (d.allowed ? 'good' : 'bad') + '">' + (d.allowed ? '✓ ' : '✗ ') + esc(d.name) + ' — ' + esc(d.target) + (d.allowed ? ' is in the allow-list' : ' is NOT in the allow-list') + '</li>';
+                }).join('') + '</ul>' : '') +
+                '<div class="mb-hint">Bridge allow-list: ' + esc((x.allow || []).join(', ') || '(empty)') + '</div>' + listHtml(w);
+        }
+        return '<div class="mb-verdict mb-q-bad">✗ ' + esc(x.error) + '</div>' + listHtml(x.hints || []);
+    }).join('');
+    return h + (r.configErrors && r.configErrors.length ? listHtml(r.configErrors) : '');
+}
+function copyText(text, btn) {
+    var done = function (ok) { if (btn) btn.textContent = ok ? 'Copied ✓' : 'Select the text to copy'; };
+    function fallback() {
+        try {
+            var ta = document.createElement('textarea');
+            ta.value = text; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.opacity = '0';
+            (document.body || document.documentElement).appendChild(ta); ta.select();
+            var ok = typeof document.execCommand === 'function' && document.execCommand('copy');
+            if (ta.parentNode) ta.parentNode.removeChild(ta);
+            return !!ok;
+        } catch (e) { return false; }
+    }
+    try {
+        var cb = G.navigator && G.navigator.clipboard;
+        if (cb && typeof cb.writeText === 'function') { return Promise.resolve(cb.writeText(text)).then(function () { done(true); return true; }, function () { var ok = fallback(); done(ok); return ok; }); }
+    } catch (e) { /* fall back */ }
+    var ok2 = fallback(); done(ok2); return Promise.resolve(ok2);
 }
 function summaryHtml(c, errors) {
     var linked = {}; c.tags.forEach(function (t) { if (t.link) linked[t.link] = 1; });
@@ -221,7 +368,7 @@ function render(body) {
         '<input type="file" accept=".json,.csv,.txt,application/json,text/csv" data-role="file" style="display:none">' +
         '<div class="mb-msgs" id="mbc_imsg"></div><div style="font-size:12px;color:var(--text2);margin-top:8px">The configuration is saved as <code>wts_modbus_config</code> and travels in project files.</div></div></div>' +
         '<div class="card"><div class="card-title">Built-in Modbus simulator (virtual slave)</div><div id="mbc_slave"></div></div>' +
-        '<div class="card"><div class="card-title">Connecting to real equipment</div>' + guideHtml() + '</div>' +
+        '<div class="card rp-skip" id="mbc_guide"><div class="card-title">Connecting to real equipment — setup guide</div>' + guideHtml(isIosApp()) + '</div>' +
         '<div id="mbc_res"></div></div>';
     var root = byId('mbc_root');
     ctl = createController(root, n);
@@ -231,11 +378,15 @@ function render(body) {
 function createController(root, n0) {
     var cfg = n0.config, tagErrors = n0.tagErrors, errors = n0.errors, disposed = false, monitor = null, pendingImport = null;
     var C = { root: root };
+    var guide = { os: guessOs(), extra: '', autostart: false, writes: false, genHtml: '', checkHtml: '', ios: isIosApp() };
+    C.guide = guide;
     function q(sel) { return root.querySelector(sel); }
+    function renderGuide() { var g = q('#mbc_guide_steps'); if (g) g.innerHTML = guideStepsHtml(cfg, guide, guide.ios); }
     function refresh(which) {
         if (!which || which.dev) { var d = q('#mbc_devs'); if (d) d.innerHTML = devicesHtml(cfg); }
         if (!which || which.tag) { var t = q('#mbc_tags'); if (t) t.innerHTML = tagsHtml(cfg, tagErrors); }
         if (!which || which.slave) { var s = q('#mbc_slave'); if (s) s.innerHTML = slaveHtml(cfg); }
+        if (!which || which.dev || which.guide) renderGuide();
         var ws = q('#mbc_wtag_sel'), keep = ws ? ws.value : '';
         if (ws) ws.innerHTML = cfg.tags.filter(function (t) { return !M.TABLES[t.table].readOnly; }).map(function (t) { return opt(t.id, t.name + ' (' + M.TABLES[t.table].label + ' ' + t.address + ')', ''); }).join('') || opt('', '— no writable tags (coil / holding) —', '');
         if (ws && keep && cfg.tags.some(function (t) { return t.id === keep && !M.TABLES[t.table].readOnly; })) ws.value = keep;
@@ -262,6 +413,13 @@ function createController(root, n0) {
         var v = el.type === 'checkbox' ? !!el.checked : el.value;
         var isManual = k === 'sim' && f.indexOf('manual.') === 0;
         if (ev.type !== 'change' && !isManual) return;      // text edits commit on change; sliders preview on input
+        if (k === 'guide') {                                // bridge setup options (not part of the Modbus config)
+            if (f === 'extra') guide.extra = String(v).slice(0, 2000);
+            else if (f === 'autostart' || f === 'writes') guide[f] = !!v;
+            guide.genHtml = '';
+            renderGuide();
+            return;
+        }
         if (k === 'cfg') {
             if (f === 'base') {
                 var nb = +v === 1 ? 1 : 0;
@@ -368,6 +526,11 @@ function createController(root, n0) {
             case 'exp-csv': download('modbus-tags.csv', M.tagsToCsv(cfg), 'text/csv'); break;
             case 'imp-json': case 'imp-csv': { pendingImport = act; var f = q('[data-role="file"]'); if (f) { f.value = ''; f.click(); } break; }
             case 'write': doWrite(); break;
+            case 'guide-os': guide.os = /^(windows|macos|linux)$/.test(b.getAttribute('data-os')) ? b.getAttribute('data-os') : guide.os; guide.genHtml = ''; renderGuide(); break;
+            case 'guide-copy': C.lastCopy = copyText(b.getAttribute('data-copy') || '', b); break;
+            case 'guide-pack': C.downloadPackage(); break;
+            case 'guide-installer': C.generateInstaller(); break;
+            case 'guide-check': C.checkBridge(); break;
             case 'monitor': if (monitor) detachMonitor(); else attachMonitor(); bar(); break;
             case 'pause': M.setPaused(!M.getConfig().paused); cfg.paused = M.getConfig().paused; bar(); refresh({}); break;
             case 'pollnow': { var s = M.station(); if (s) s.pollNow().then(live); break; }
@@ -405,6 +568,42 @@ function createController(root, n0) {
             function (e) { msg('mbc_wmsg', '✗ ' + esc(e.message), 'bad'); return false; });
     }
     C.doWrite = doWrite;
+    // ── bridge setup guide actions ──
+    function guideMsg(id, html) { var m = q('#' + id); if (m) m.innerHTML = html; }
+    C.downloadPackage = function () {
+        var S = G.WTS_modbusBridgeSetup, z = S && S.packageZip();
+        if (!z) { guideMsg('mbc_guide_gen', '<span class="mb-q-bad">✗ The bridge package is not bundled in this build.</span>'); return null; }
+        download(z.filename, z.bytes, 'application/zip');
+        C.lastPackage = z;
+        return z;
+    };
+    C.generateInstaller = function () {
+        var S = G.WTS_modbusBridgeSetup;
+        if (!S) return null;
+        var r = S.installerFromConfig(cfg, guide.os, { extra: guide.extra, allowWrites: guide.writes, autostart: guide.autostart });
+        C.lastInstaller = r;
+        if (!r.ok) {
+            guide.genHtml = '<div class="mb-q-bad">✗ No installer generated:</div>' + listHtml(r.errors);
+        } else {
+            download(r.filename, r.text, r.type);
+            guide.genHtml = '<div class="mb-q-good">✓ Downloaded ' + esc(r.filename) + ' — bridge v' + esc(r.version) + ', ' + r.allow.length + ' target' + (r.allow.length === 1 ? '' : 's') +
+                ' (' + esc(r.allow.join(', ')) + '), port ' + r.port + (guide.autostart ? ', auto-start' : '') + (guide.writes ? ', writes allowed' : ', read-only') + '. Run it with the command below.</div>';
+        }
+        guideMsg('mbc_guide_gen', guide.genHtml);
+        return r;
+    };
+    C.checkBridge = function () {
+        var S = G.WTS_modbusBridgeSetup;
+        if (!S) return Promise.resolve(null);
+        guide.checkHtml = '<div class="mb-q-init">Checking…</div>';
+        guideMsg('mbc_guide_check', guide.checkHtml);
+        return S.checkBridge(cfg, {}).then(function (r) {
+            C.lastCheck = r;
+            guide.checkHtml = checkResultHtml(r, cfg);
+            if (!disposed) guideMsg('mbc_guide_check', guide.checkHtml);
+            return r;
+        });
+    };
     function bar() {
         var b = q('#mbc_bar'); if (!b) return;
         var s = M.station(), paused = M.getConfig().paused, devs = s ? s.devices() : [];
@@ -442,7 +641,7 @@ function createController(root, n0) {
     C.startMonitor = attachMonitor; C.stopMonitor = detachMonitor;
     C.config = function () { return cfg; };
     function onPage(e) { if (!root.isConnected || (e && e.detail && e.detail.page !== 'modbus')) C.dispose(); }
-    function onProject() { if (root.isConnected && typeof G.WTS_rerender !== 'function') { cfg = M.getConfig(); refresh({}); } }
+    function onProject() { if (root.isConnected && typeof G.WTS_rerender !== 'function') { cfg = M.getConfig(); refresh(); } }
     root.addEventListener('change', onChange);
     root.addEventListener('input', onChange);
     root.addEventListener('click', onClick);
@@ -457,7 +656,7 @@ function createController(root, n0) {
         document.removeEventListener('wts:project-loaded', onProject);
         if (ctl === C) ctl = null;
     };
-    refresh({});
+    refresh();          // everything: devices, tags, simulator, guide, summary (refresh({}) left the tables empty)
     G.WTS_state = G.WTS_state || {};
     G.WTS_state.modbus = { devices: cfg.devices.length, tags: cfg.tags.length, writesEnabled: cfg.writesEnabled, errors: errors.length };
     return C;
