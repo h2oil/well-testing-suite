@@ -7,7 +7,7 @@ packaged as a free iOS app, **H2Oil Well Testing**.
 
 - **Web app:** <https://pb-handbook.com>, or open `well-testing-app.html` from this repository
 - **iOS app:** free, with no in-app purchases, no account and no analytics (see [ios-app/README.md](ios-app/README.md))
-- **Current release:** v3.0.1 (2026-09-30)
+- **Current release:** v3.0.2 (2026-09-30)
 - **Contact:** software@h2oil.co.uk
 
 ---
@@ -479,6 +479,7 @@ and Quick Report capture; no host edits are needed. Test it with
 
 | Version | Date | Highlights |
 |---|---|---|
+| v3.0.2 | 2026-09-30 | Modbus bridge allows any device by default; one-click Windows installer (WTS-Modbus-Bridge-Setup.exe, auto-start at login) and one-line macOS/Linux install; version label follows the release |
 | v3.0.1 | 2026-09-30 | Modbus bridge installers for Windows, macOS and Linux; bridge setup guide and Check bridge on Modbus Config; bridge security (null origin refused, DNS-rebinding protection); well-menu fix |
 | v3.0 | 2026-09-30 | Mini WellOS, Modbus TCP/RTU and the historian; multi-well projects, Well Comparison and Share snapshot; PRiSM fit workspace and gas m(p); Gas Lift Quick Design; standards review of metering, erosion (DNV-RP-O501), ESD and simulator safety logic; dashboard search and favourites; accessibility and decimal comma |
 | v1.8 | 2026-09-29 | Thirteen new calculators (orifice selection, gas PVT, well kill, choke performance, sampling QC, meter proving, flowline, line heat loss, dispersion, scale, cement and brines, PRiSM field tools); simulator divert valves; standard-conditions selector; report templates; offline web app |
