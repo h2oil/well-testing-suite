@@ -346,7 +346,7 @@ table. `renderHome()` adds a tile in sidebar order. `nav()` sets the active stat
 - `master` — stable, what the iOS sync workflow and Xcode Cloud ("Build Auto Sync") consume.
 - `git push origin Dev` after every commit, then **merge Dev → master automatically once a batch is verified** (user instruction — don't wait to be asked).
 - The `ios-sync.yml` action commits a regenerated `ios-app/www/index.html` to master after merges ("chore(ios): auto-sync www…"), so the next Dev → master merge usually conflicts on that generated file — resolve with Dev's copy (`git checkout --theirs ios-app/www/index.html`), since it was generated from the same HTML being merged.
-- Every shipped batch also updates the in-app Release Notes (`RELEASE_NOTES` array in the host) — engineering changes only; never mention competitor research or paywalls.
+- Every shipped batch also updates the in-app Release Notes (`RELEASE_NOTES` array in the host; the version under the logo, #appVersionLabel, is set from RELEASE_NOTES[0].ver — never hard-code it) — engineering changes only; never mention competitor research or paywalls.
 
 ---
 
@@ -405,6 +405,6 @@ Acceptance tests:             776/776 pass (accept-test.js --html --integration 
 Generated HTML:               ~76.1k lines (4.24 MB); www bundle ~4.27 MB
 ```
 
-Latest release: v3.0.1 (bridge installers + setup guide, well-menu fix) on top of v3.0 (Mini WellOS + Modbus, multi-well projects, PRiSM workspace + gas, gas lift, standards review of metering/erosion/ESD/simulator safety, a11y/perf, UX), integrated 2026-09-30. iOS marketing version is stamped 3.0.<CI_BUILD_NUMBER> by ci_post_clone.sh (VERSION_BASE).
+Latest release: v3.0.2 (bridge 1.2.0 allows any device by default, one-click Windows installer) on top of v3.0.1 (bridge installers + setup guide, well-menu fix) and v3.0 (Mini WellOS + Modbus, multi-well projects, PRiSM workspace + gas, gas lift, standards review of metering/erosion/ESD/simulator safety, a11y/perf, UX), integrated 2026-09-30. iOS marketing version is stamped 3.0.<CI_BUILD_NUMBER> by ci_post_clone.sh (VERSION_BASE).
 
 **Shared engines (reuse, never duplicate):** `WTS_aga3_compute` (host; AGA-3 page, Oil & Gas, Orifice; Fpv = √(Zb/Zf), `gravityBasis` real|ideal), `WTS_flowline_march`, `WTS_modbus` (tags, polling; feeds `WTS_historian.record`; tag names are unique), `WTS_historian`, `WTS_wells` (multi-well; active well's keys stay where pages read them), `WTS_gaspvt_compute`, `WTS_tubulars`, `WTS_wellkill_compute` / `WTS_gradient_compute`, `WTS_baseConditions` + host `_baseCond(defTbF, defPb)` (Std selector; "calculator default" keeps each page's legacy basis), host `_uFmt`. Open engineering decisions: docs/ROADMAP.md §1.7.
