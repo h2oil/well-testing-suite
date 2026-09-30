@@ -51,8 +51,10 @@ https://github.com/h2oil/well-testing-suite/releases/latest/download/WTS-Modbus-
   (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, value "WTS Modbus Bridge"), adds the
   Start-menu shortcuts **WTS Modbus Bridge — status** and **Uninstall WTS Modbus Bridge** and an
   entry in Settings → Apps, starts the bridge and opens its status page `http://127.0.0.1:8502/`.
-- The exe is **not code-signed** yet: when SmartScreen says "Windows protected your PC", click
-  **More info** → **Run anyway**.
+- The exe is **code-signed** by H2Oil Engineering (release workflow; see the signing secrets at the
+  top of `.github/workflows/modbus-bridge-release.yml`). While a new certificate builds reputation,
+  SmartScreen may still say "Windows protected your PC": click **More info**, check the publisher,
+  then **Run anyway**.
 - Uninstall: Settings → Apps → Installed apps → **WTS Modbus Bridge** → Uninstall (or the
   Start-menu shortcut).
 - Command line (`WTS-Modbus-Bridge.exe` in the install folder, or the setup exe): `--run` (what the
@@ -340,8 +342,9 @@ demo** on the Modbus page) that needs neither the bridge nor Node.
 - *"Cannot reach the Modbus bridge"* — the bridge is not running, the URL / port differs, or the
   bridge refused the page (a browser reports all three the same way). Press **Check bridge** on the
   Modbus page: it says which.
-- *Windows: "Windows protected your PC"* — SmartScreen on the unsigned
-  `WTS-Modbus-Bridge-Setup.exe`: click **More info** → **Run anyway**.
+- *Windows: "Windows protected your PC"* — SmartScreen, while the signing
+  certificate of `WTS-Modbus-Bridge-Setup.exe` builds reputation: click **More info**, check the
+  publisher is H2Oil Engineering, then **Run anyway**.
 - *"not in the bridge allow-list"* — the bridge was restricted to a list of targets (an empty
   list allows any device): run the installer again with that device
   (`--allow <host>:<port>` / `-Allow`): it is added to the targets already allowed. Or add it to

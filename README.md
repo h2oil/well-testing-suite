@@ -499,7 +499,12 @@ Full notes for every release are on the in-app **Release Notes** page (the `RELE
 
 ## Licence and contact
 
-There is no LICENSE file in this repository. Contact H2Oil before reusing or redistributing the
-code.
+Copyright (c) H2Oil Engineering. All rights reserved.
+
+This is **proprietary software** — not open source. See [LICENSE](LICENSE). The source code being
+visible here grants no right to copy, modify, redistribute, host, reuse or build on it. End users
+may use the official published applications (the H2Oil web app, the iOS app and the signed WTS
+Modbus Bridge installers on the Releases page) for their own engineering work. For any other use,
+ask for written permission.
 
 **H2Oil Engineering**: software@h2oil.co.uk

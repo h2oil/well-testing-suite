@@ -1,0 +1,67 @@
+H2Oil Well Testing Suite — Proprietary Software Licence
+
+Copyright (c) H2Oil Engineering. All rights reserved.
+
+This repository and everything in it — including the source code, the built web application
+(well-testing-app.html), the iOS application, the PRiSM module, the calculators, the Modbus
+bridge and its installers, documentation, graphics and data (together, the "Software") — is the
+confidential and proprietary property of H2Oil Engineering ("H2Oil") and is protected by
+copyright and other intellectual-property laws.
+
+1. NO LICENCE GRANTED
+   The Software is not open source. Access to the source code, including where it is publicly
+   visible on GitHub or elsewhere, does not grant any licence or right to use it. No right,
+   title or interest in the Software is transferred to you. All rights not expressly granted in
+   writing by H2Oil are reserved.
+
+2. PROHIBITED
+   Without the prior written permission of H2Oil you may not, in whole or in part:
+   (a) copy, reproduce, download for reuse, mirror or host the Software;
+   (b) modify, translate, adapt, or create derivative works from the Software;
+   (c) distribute, publish, sublicense, sell, rent, lease, lend or otherwise make the Software
+       available to any third party;
+   (d) incorporate the Software, or any portion of it, into any other software, product or
+       service, whether commercial or not;
+   (e) reverse engineer, decompile or disassemble any compiled or packaged form of the Software,
+       except to the extent that applicable law expressly permits this despite this limitation;
+   (f) use the Software, its source code, algorithms, structure or documentation to develop,
+       train or improve a competing product, service or model;
+   (g) remove, alter or obscure any copyright, trademark or proprietary notice.
+
+3. PERMITTED USE OF THE PUBLISHED APPLICATIONS
+   End users may use the official applications published by H2Oil (the H2Oil web application as
+   served by H2Oil, the H2Oil iOS app as distributed through the Apple App Store, and the WTS
+   Modbus Bridge installers published on this repository's official Releases page) solely for
+   their own internal engineering work, and in accordance with any terms of use that accompany
+   them. This permission does not extend to the source code and may be withdrawn at any time.
+
+4. CONTRIBUTIONS
+   Any feedback, suggestion or contribution you provide may be used by H2Oil without restriction
+   or obligation, and becomes part of the Software owned by H2Oil.
+
+5. THIRD-PARTY COMPONENTS
+   Third-party libraries bundled with or loaded by the Software (for example three.js, SQLite /
+   sql.js, SheetJS, Capacitor and PDF libraries) remain subject to their own licences, which
+   prevail for those components only.
+
+6. NO WARRANTY
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING
+   BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+   NON-INFRINGEMENT. ENGINEERING RESULTS MUST BE VERIFIED BY A COMPETENT PERSON BEFORE THEY ARE
+   RELIED ON FOR OPERATIONAL, SAFETY OR DESIGN DECISIONS.
+
+7. LIMITATION OF LIABILITY
+   TO THE MAXIMUM EXTENT PERMITTED BY LAW, H2OIL SHALL NOT BE LIABLE FOR ANY DIRECT, INDIRECT,
+   INCIDENTAL, SPECIAL, CONSEQUENTIAL OR EXEMPLARY DAMAGES, OR FOR ANY LOSS OF PROFIT, PRODUCTION,
+   DATA OR BUSINESS, ARISING OUT OF OR IN CONNECTION WITH THE SOFTWARE OR ITS USE.
+
+8. TERMINATION
+   Any use of the Software in breach of this licence is unauthorised and infringes H2Oil's
+   rights. H2Oil may pursue all remedies available at law or in equity, including injunctive
+   relief.
+
+9. GOVERNING LAW
+   This licence is governed by the laws of England and Wales, and the courts of England and
+   Wales have exclusive jurisdiction over any dispute arising from it.
+
+Licensing enquiries and permission requests: software@h2oil.co.uk

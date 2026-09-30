@@ -7,6 +7,13 @@ name: Modbus bridge release
 #
 # Cut a release (the tag must match BRIDGE_VERSION in tools/modbus-bridge/modbus-bridge.js):
 #   git tag modbus-bridge-v1.2.0 && git push origin modbus-bridge-v1.2.0
+# Code signing (Windows exe) — set ONE of these as repository secrets (Settings → Secrets and variables → Actions):
+#   Azure Trusted Signing (recommended): AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET,
+#     TRUSTED_SIGNING_ENDPOINT (e.g. https://weu.codesigning.azure.net/), TRUSTED_SIGNING_ACCOUNT,
+#     TRUSTED_SIGNING_PROFILE
+#   or a code-signing certificate (.pfx from a CA, OV or EV): WINDOWS_CERT_PFX_BASE64, WINDOWS_CERT_PASSWORD
+# Without them the exe is built unsigned (a warning is shown). A published release refuses an
+# unsigned exe unless the dispatch input allow_unsigned is ticked.
 # workflow_dispatch builds and tests only (the assets are kept as workflow artifacts); dispatched on master
 # with publish = true it also creates the modbus-bridge-v<BRIDGE_VERSION> tag and the release.
 
@@ -18,6 +25,10 @@ on:
     inputs:
       publish:
         description: 'Publish the release (tag modbus-bridge-v<BRIDGE_VERSION>; master only)'
+        type: boolean
+        default: false
+      allow_unsigned:
+        description: 'Allow publishing an unsigned exe (no signing secrets set)'
         type: boolean
         default: false
 
@@ -33,6 +44,11 @@ jobs:
     name: Windows installer (.exe)
     runs-on: windows-latest
     timeout-minutes: 30
+    env:
+      HAS_TRUSTED_SIGNING: ${{ secrets.TRUSTED_SIGNING_ACCOUNT != '' }}
+      HAS_PFX: ${{ secrets.WINDOWS_CERT_PFX_BASE64 != '' }}
+      PUBLISHING: ${{ startsWith(github.ref, 'refs/tags/modbus-bridge-v') || (github.event_name == 'workflow_dispatch' && inputs.publish) }}
+      ALLOW_UNSIGNED: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_unsigned }}
     steps:
       - uses: actions/checkout@v4
 
@@ -49,6 +65,51 @@ jobs:
 
       - name: Build WTS-Modbus-Bridge-Setup.exe (Node SEA + postject, GUI subsystem)
         run: node tools/modbus-bridge/exe/build-exe.js --out dist
+
+      - name: Sign the exe (Azure Trusted Signing)
+        if: env.HAS_TRUSTED_SIGNING == 'true'
+        uses: azure/trusted-signing-action@v0
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.TRUSTED_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ secrets.TRUSTED_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.TRUSTED_SIGNING_PROFILE }}
+          files-folder: ${{ github.workspace }}\dist
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+          description: WTS Modbus Bridge
+          description-url: https://github.com/h2oil/well-testing-suite
+
+      - name: Sign the exe (code-signing certificate .pfx)
+        if: env.HAS_TRUSTED_SIGNING != 'true' && env.HAS_PFX == 'true'
+        shell: pwsh
+        env:
+          PFX_B64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          PFX_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP 'codesign.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:PFX_B64))
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter signtool.exe |
+            Where-Object { $_.FullName -match '\\x64\\' } | Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $signtool) { throw 'signtool.exe not found' }
+          & $signtool.FullName sign /f $pfx /p $env:PFX_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /d "WTS Modbus Bridge" /du "https://github.com/h2oil/well-testing-suite" dist\WTS-Modbus-Bridge-Setup.exe
+          $code = $LASTEXITCODE
+          Remove-Item $pfx -Force
+          if ($code -ne 0) { throw "signtool failed ($code)" }
+
+      - name: Verify the signature
+        shell: pwsh
+        run: |
+          $sig = Get-AuthenticodeSignature dist\WTS-Modbus-Bridge-Setup.exe
+          Write-Host "Signature: $($sig.Status) — $($sig.SignerCertificate.Subject)"
+          if ($sig.Status -eq 'Valid') { exit 0 }
+          if ($env:HAS_TRUSTED_SIGNING -eq 'true' -or $env:HAS_PFX -eq 'true') { throw "the exe was signed but the signature is $($sig.Status)" }
+          if ($env:PUBLISHING -eq 'true' -and $env:ALLOW_UNSIGNED -ne 'true') { throw 'refusing to publish an unsigned exe: set the signing secrets (see the top of this workflow) or tick allow_unsigned' }
+          Write-Host '::warning::WTS-Modbus-Bridge-Setup.exe is NOT code-signed (no signing secrets set) — SmartScreen will warn users'
 
       - name: Smoke-test the exe (version, install --no-browser, /health, status page, Run key, single instance, settings, uninstall)
         run: node tools/modbus-bridge/exe/ci-smoke-exe.js dist/WTS-Modbus-Bridge-Setup.exe
@@ -133,7 +194,7 @@ jobs:
           body: |
             One-click installers of the WTS Modbus bridge (WebSocket to Modbus TCP) for the Well Testing Suite web app.
 
-            **Windows:** download `WTS-Modbus-Bridge-Setup.exe` and double-click it. No administrator rights and no Node.js needed. It installs for the current user, starts the bridge now and at every login, and opens its status page. The exe is not code-signed yet: if SmartScreen says "Windows protected your PC", click **More info**, then **Run anyway**.
+            **Windows:** download `WTS-Modbus-Bridge-Setup.exe` and double-click it. No administrator rights and no Node.js needed. It installs for the current user, starts the bridge now and at every login, and opens its status page. The exe is code-signed by H2Oil Engineering. While a new certificate builds reputation, SmartScreen may still say "Windows protected your PC" for a while: click **More info**, check the publisher, then **Run anyway**.
 
             **macOS / Linux:** in a Terminal run
             ```
