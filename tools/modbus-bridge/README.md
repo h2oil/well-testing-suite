@@ -11,7 +11,8 @@ Modbus page / Mini WellOS ──ws://127.0.0.1:8502──► modbus-bridge.js �
 
 - Zero dependencies, one file: `modbus-bridge.js` (Node.js 18 or newer).
 - Listens on **127.0.0.1 only** by default.
-- Connects **only** to the host:port pairs you allow.
+- Reaches **any device IP address / port** by default (since v1.2.0: an empty allow-list means
+  `*:*`); list `--allow host:port` targets to restrict it to those.
 - **Read-only by default:** Modbus write requests (function codes 05, 06, 15, 16) are answered
   by the bridge with exception 01 (Illegal function) and never reach the device, unless you start
   it with `--allow-writes`. Writes also have to be enabled on the Modbus page and confirmed there.
@@ -30,7 +31,74 @@ The app's **Modbus Config** page has the same steps as a guide (Connecting to re
 bridge setup): it downloads this folder as a zip (bundled in the app, works offline), generates an
 installer pre-filled with your configured bridge devices, and checks the running bridge.
 
-## Quick install (recommended)
+## One-click install (recommended)
+
+The GitHub releases of this repository carry ready-made installers
+(built and tested by `.github/workflows/modbus-bridge-release.yml`):
+
+**Windows** — download and double-click
+[WTS-Modbus-Bridge-Setup.exe](https://github.com/h2oil/well-testing-suite/releases/latest/download/WTS-Modbus-Bridge-Setup.exe):
+
+```
+https://github.com/h2oil/well-testing-suite/releases/latest/download/WTS-Modbus-Bridge-Setup.exe
+```
+
+- No administrator rights and no Node.js needed (the exe carries Node.js; a Node.js single
+  executable application with no console window).
+- It copies itself to `%LOCALAPPDATA%\WTS Modbus Bridge\WTS-Modbus-Bridge.exe`, keeps an existing
+  `bridge-config.json` there (or writes the default: any device IP / port, read-only, port 8502),
+  stops an earlier copy, registers auto-start at login for the current user
+  (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, value "WTS Modbus Bridge"), adds the
+  Start-menu shortcuts **WTS Modbus Bridge — status** and **Uninstall WTS Modbus Bridge** and an
+  entry in Settings → Apps, starts the bridge and opens its status page `http://127.0.0.1:8502/`.
+- The exe is **not code-signed** yet: when SmartScreen says "Windows protected your PC", click
+  **More info** → **Run anyway**.
+- Uninstall: Settings → Apps → Installed apps → **WTS Modbus Bridge** → Uninstall (or the
+  Start-menu shortcut).
+- Command line (`WTS-Modbus-Bridge.exe` in the install folder, or the setup exe): `--run` (what the
+  login entry starts; single instance), `--open` (start if needed, open the status page),
+  `--status` (JSON), `--uninstall`, `--version`, and the settings `--allow host:port`,
+  `--allow-any`, `--allow-writes`, `--read-only`, `--port N`, `--no-autostart` (the bridge is
+  restarted with them), `--no-browser` / `--quiet` (no browser page, no message boxes). The exe
+  is a GUI program, so its console output is only seen when redirected
+  (`WTS-Modbus-Bridge.exe --status > status.txt`). Log: `bridge.log` in the install folder.
+
+**macOS / Linux** — in a Terminal:
+
+```
+curl -fsSL https://github.com/h2oil/well-testing-suite/releases/latest/download/wts-modbus-bridge-install.sh | bash -s -- --autostart --yes
+```
+
+This is `install.sh` with the bridge files built in (SHA-256 checked when unpacked). `--autostart`
+starts the bridge now and at every login (a LaunchAgent / a systemd `--user` service); `--yes`
+lets it install Node.js 18+ with Homebrew or the package manager when it is missing. Add
+`--port N`, `--allow-writes` or `--allow host:port` as for `install.sh` below.
+
+Then press **Check bridge** on the app's Modbus Config page.
+
+### Cutting a release (maintainers)
+
+The tag must match `BRIDGE_VERSION` in `modbus-bridge.js`:
+
+```
+git tag modbus-bridge-v1.2.0 && git push origin modbus-bridge-v1.2.0
+```
+
+The workflow builds `WTS-Modbus-Bridge-Setup.exe` on `windows-latest` (Node 22,
+`tools/modbus-bridge/exe/build-exe.js`: bundle → SEA blob → `postject` into a copy of `node.exe`
+with its signature stripped → PE subsystem patched to WINDOWS_GUI) and smoke-tests it
+(`exe/ci-smoke-exe.js`: install with `--no-browser` into a temp `LOCALAPPDATA`, `/health`, the Run
+value, single instance, settings, `--uninstall`); on `ubuntu-latest` it builds
+`wts-modbus-bridge-install.sh` and `wts-modbus-bridge-<version>.zip`
+(`exe/build-release-scripts.js`, the same generator as the app) and runs the installer piped into
+bash end to end (`exe/test-release-sh.js`). The release job attaches the three files and
+`SHA256SUMS.txt` to the GitHub Release for the tag and marks it **latest**, which is what the
+`/releases/latest/download/…` links resolve to. "Run workflow" (workflow_dispatch) builds and
+tests without releasing. Locally: `node tools/modbus-bridge/exe/build-exe.js --download` builds the
+exe on any OS (it downloads `node.exe` of the running Node version from nodejs.org, SHA-256
+checked); it can only be run on Windows.
+
+## Script install
 
 The installers need **no administrator rights** for the bridge. They check for Node.js 18+ and, if
 it is missing, offer to install it with the system package manager — only after you confirm.
@@ -272,7 +340,10 @@ demo** on the Modbus page) that needs neither the bridge nor Node.
 - *"Cannot reach the Modbus bridge"* — the bridge is not running, the URL / port differs, or the
   bridge refused the page (a browser reports all three the same way). Press **Check bridge** on the
   Modbus page: it says which.
-- *"not in the bridge allow-list"* — run the installer again with that device
+- *Windows: "Windows protected your PC"* — SmartScreen on the unsigned
+  `WTS-Modbus-Bridge-Setup.exe`: click **More info** → **Run anyway**.
+- *"not in the bridge allow-list"* — the bridge was restricted to a list of targets (an empty
+  list allows any device): run the installer again with that device
   (`--allow <host>:<port>` / `-Allow`): it is added to the targets already allowed. Or add it to
   `allow` in `bridge-config.json` and restart the bridge.
 - *"the bridge refused this page" / origin not accepted* — the page is served from an origin the
