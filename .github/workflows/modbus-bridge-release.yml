@@ -6,7 +6,7 @@ name: Modbus bridge release
 #   https://github.com/h2oil/well-testing-suite/releases/latest/download/wts-modbus-bridge-install.sh
 #
 # Cut a release (the tag must match BRIDGE_VERSION in tools/modbus-bridge/modbus-bridge.js):
-#   git tag modbus-bridge-v1.2.0 && git push origin modbus-bridge-v1.2.0
+#   git tag modbus-bridge-v1.2.1 && git push origin modbus-bridge-v1.2.1
 # Code signing (Windows exe) — set ONE of these as repository secrets (Settings → Secrets and variables → Actions):
 #   Azure Trusted Signing (recommended): AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET,
 #     TRUSTED_SIGNING_ENDPOINT (e.g. https://weu.codesigning.azure.net/), TRUSTED_SIGNING_ACCOUNT,

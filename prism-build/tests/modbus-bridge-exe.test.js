@@ -180,7 +180,7 @@ module.exports = [
         assert.strictEqual(P.dir, path.join(S.env.LOCALAPPDATA, 'WTS Modbus Bridge'));
         assert.strictEqual(fs.readFileSync(P.exe, 'utf8'), fs.readFileSync(S.setup, 'utf8'), 'the setup exe copied to the install folder');
         const c = S.cfg();
-        assert.deepStrictEqual([c.allow, c.port, c.listen, c.allowWrites, c.anyOrigin, c.origins], [[], 8502, '127.0.0.1', false, false, []], 'default config');
+        assert.deepStrictEqual([c.allow, c.allowMode, c.port, c.listen, c.allowWrites, c.anyOrigin, c.origins], [[], 'any', 8502, '127.0.0.1', false, false, []], 'default config');
         assert.deepStrictEqual(BR.parseConfig(fs.readFileSync(P.config, 'utf8')).warnings, [], 'the bridge reads it without warnings');
         // registry: one reg import (UTF-16LE + BOM) with the Run value and the Uninstall key
         assert.strictEqual(S.regFiles.length, 1); assert.ok(S.regFiles[0].bom, 'BOM');
@@ -232,7 +232,7 @@ module.exports = [
       const S = fakeWin();
       try {
         fs.mkdirSync(S.P.dir, { recursive: true });
-        const mine = { _comment: 'mine', allow: ['10.0.0.5:502'], port: 8600, listen: '127.0.0.1', origins: ['https://my.site'], anyOrigin: false, allowWrites: true, verbose: true };
+        const mine = { _comment: 'mine', allow: ['10.0.0.5:502'], allowMode: 'list', port: 8600, listen: '127.0.0.1', origins: ['https://my.site'], anyOrigin: false, allowWrites: true, verbose: true };
         fs.writeFileSync(S.P.config, JSON.stringify(mine));
         assert.strictEqual(await S.app.main(['--quiet']), 0);
         assert.deepStrictEqual(S.cfg(), mine, 'kept as it is');
@@ -243,9 +243,13 @@ module.exports = [
         assert.deepStrictEqual([c.allow, c.allowWrites, c.port, c.origins, c.verbose, c._comment], [['10.0.0.5:502', '10.0.0.6:502'], false, 8600, ['https://my.site'], true, 'mine']);
         await S.app.main(['--allow-any', '--allow-writes', '--port', '8700', '--quiet']);
         c = S.cfg();
-        assert.deepStrictEqual([c.allow, c.allowWrites, c.port], [[], true, 8700], '--allow-any empties the list (any device)');
+        assert.deepStrictEqual([c.allow, c.allowMode, c.allowWrites, c.port], [[], 'any', true, 8700], '--allow-any empties the list (any device)');
+        await S.app.main(['--allow', '10.0.0.9:502', '--quiet']);
+        assert.deepStrictEqual([S.cfg().allow, S.cfg().allowMode], [['10.0.0.9:502'], 'list'], 'an explicit --allow restricts an "any device" list');
+        await S.app.main(['--quiet']);
+        assert.deepStrictEqual(S.cfg().allow, ['10.0.0.9:502'], 'a list chosen with --allow (allowMode "list") survives a plain re-install');
         await S.app.main(['--allow', '*:*', '--quiet']);
-        assert.deepStrictEqual(S.cfg().allow, [], '"*:*" is the empty list');
+        assert.deepStrictEqual([S.cfg().allow, S.cfg().allowMode], [[], 'any'], '"*:*" is the empty list');
         // a broken file: backed up, defaults written, install goes on
         fs.writeFileSync(S.P.config, '{"allow": [');
         assert.strictEqual(await S.app.main(['--quiet']), 0);
@@ -255,6 +259,75 @@ module.exports = [
         await S.app.main(['--quiet']);
         assert.deepStrictEqual(S.cfg().allow, [], 'a config with a bad allow entry is replaced, never passed on');
       } finally { S.cleanup(); }
+    },
+  },
+  {
+    name: 'exe launcher: an older installer\'s allow list (no allowMode) → any device on a plain re-install (note); --keep-allow keeps it; --allow merges; --run keeps the file as it is',
+    wp: WP, opts: false,
+    async run(app, assert) {
+      // what the user had: install-windows.ps1 / an older exe wrote a restricted list into bridge-config.json
+      const OLD = { _comment: 'WTS Modbus bridge settings.', allow: ['192.168.1.10:502'], port: 8502, listen: '127.0.0.1', origins: [], anyOrigin: false, allowWrites: true, verbose: false };
+      const seed = (S, cfg) => { fs.mkdirSync(S.P.dir, { recursive: true }); fs.writeFileSync(S.P.config, JSON.stringify(cfg || OLD, null, 2)); };
+      const NOTE = 'Allow-list 192.168.1.10:502 replaced by any device (default since 1.2). Use --keep-allow to keep it.';
+      // 1. double-click (no arguments): any device, the rest kept, a note in the output and the log
+      let S = fakeWin();
+      try {
+        seed(S);
+        assert.strictEqual(await S.app.main([]), 0, S.out.join('\n'));
+        const c = S.cfg();
+        assert.deepStrictEqual([c.allow, c.allowMode, c.allowWrites, c.port, c._comment], [[], 'any', true, 8502, OLD._comment], 'any device; writes / port / comment kept');
+        assert.deepStrictEqual(Object.keys(c).slice(0, 3), ['_comment', 'allow', 'allowMode'], 'allowMode written next to allow');
+        assert.ok(S.out.includes(NOTE), S.out.join('\n')); assert.ok(S.logs.includes(NOTE), 'logged');
+        assert.ok(S.out.some((l) => /^Updated .*bridge-config\.json \(allow: any device, writes allowed, port 8502\)/.test(l)), S.out.join('\n'));
+        assert.deepStrictEqual(BR.parseConfig(fs.readFileSync(S.P.config, 'utf8')).warnings, [], 'the bridge reads allowMode without warnings');
+        assert.deepStrictEqual(BR.parseConfig(fs.readFileSync(S.P.config, 'utf8')).options.allow, [], 'the bridge sees an empty list = any device');
+        // run again: nothing to migrate, the file stays as it is
+        S.out.length = 0; S.app = APP.createApp(S.deps);          // a new process (the steps list is per run)
+        assert.strictEqual(await S.app.main(['--quiet']), 0);
+        assert.ok(!S.out.some((l) => /replaced by any device/.test(l)) && S.out.some((l) => /^Kept /.test(l)), S.out.join('\n'));
+      } finally { S.cleanup(); }
+      // 2. only a settings flag (the guide's "--allow-writes" fix): still migrated
+      S = fakeWin();
+      try { seed(S); await S.app.main(['--read-only', '--quiet']); assert.deepStrictEqual([S.cfg().allow, S.cfg().allowWrites], [[], false]); assert.ok(S.out.includes(NOTE)); } finally { S.cleanup(); }
+      // 3. --keep-allow: the list stays, now marked as a chosen list (later plain re-installs keep it)
+      S = fakeWin();
+      try {
+        seed(S);
+        assert.strictEqual(await S.app.main(['--keep-allow', '--quiet']), 0);
+        assert.deepStrictEqual([S.cfg().allow, S.cfg().allowMode], [['192.168.1.10:502'], 'list']);
+        assert.ok(!S.out.some((l) => /replaced by any device/.test(l)));
+        await S.app.main(['--quiet']);
+        assert.deepStrictEqual(S.cfg().allow, ['192.168.1.10:502'], 'marked list kept');
+      } finally { S.cleanup(); }
+      // 4. explicit --allow: added to the old list (restricts)
+      S = fakeWin();
+      try {
+        seed(S);
+        await S.app.main(['--allow', '192.168.1.11:502', '--quiet']);
+        assert.deepStrictEqual([S.cfg().allow, S.cfg().allowMode], [['192.168.1.10:502', '192.168.1.11:502'], 'list']);
+      } finally { S.cleanup(); }
+      // 5. an older "any" file (install-windows.ps1 wrote ["*:*"]) or an empty list: any device, no note
+      S = fakeWin();
+      try {
+        seed(S, Object.assign({}, OLD, { allow: ['*:*'] }));
+        await S.app.main(['--quiet']);
+        assert.deepStrictEqual([S.cfg().allow, S.cfg().allowMode], [[], 'any']); assert.ok(!S.out.some((l) => /replaced by any device/.test(l)));
+      } finally { S.cleanup(); }
+      // 6. --run never rewrites the allow list (only an install does)
+      S = fakeWin();
+      try {
+        seed(S);
+        await S.app.main(['--run']);
+        assert.deepStrictEqual(S.runs[0].allow, ['192.168.1.10:502']);
+        assert.deepStrictEqual(S.cfg(), OLD);
+      } finally { S.cleanup(); }
+      // pure helper
+      const info = {};
+      assert.deepStrictEqual(APP.applyOptions(OLD, { allow: [] }, info).allow, []); assert.deepStrictEqual(info.migrated, ['192.168.1.10:502']);
+      assert.deepStrictEqual(APP.applyOptions(OLD, { allow: [], allowAny: true, keepAllow: true }).allow, [], '--allow-any wins');
+      assert.throws(() => APP.parseArgs(['--run', '--keep-allow']));
+      assert.ok(APP.parseArgs(['--keep-allow']).keepAllow);
+      assert.throws(() => BR.parseConfig('{"allowMode":"some"}'), /allowMode/);
     },
   },
   {
