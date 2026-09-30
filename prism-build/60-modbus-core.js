@@ -392,7 +392,9 @@ function makeEmitter(target) {
 // TCP connection is up, {"type":"error","message"} on failure.
 function webSocketTransport(o) {
     o = o || {};
-    var T = makeEmitter({ kind: 'ws', framing: 'tcp' }), ws = null, open = false;
+    var T = makeEmitter({ kind: 'ws', framing: 'tcp' }), ws = null, open = false, otimer = null;
+    var setT = o.setTimeout || function (f, ms) { return G.setTimeout(f, ms); }, clrT = o.clearTimeout || function (id) { G.clearTimeout(id); };
+    function done() { if (otimer !== null) { clrT(otimer); otimer = null; } }
     T.url = function () {
         var base = String(o.url || 'ws://127.0.0.1:8502').replace(/\/+$/, '');
         return base + '/modbus?host=' + encodeURIComponent(o.host || '') + '&port=' + encodeURIComponent(o.port || 502);
@@ -402,14 +404,27 @@ function webSocketTransport(o) {
             var WS = o.WebSocket || G.WebSocket;
             if (typeof WS !== 'function') { reject(ModbusError('transport', 'WebSocket is not available in this browser')); return; }
             var settled = false;
-            function fail(msg) { if (!settled) { settled = true; reject(ModbusError('transport', msg)); } }
+            done();
+            function fail(msg) { done(); if (!settled) { settled = true; reject(ModbusError('transport', msg)); } }
             try { ws = new WS(T.url()); } catch (e) { fail('Bridge URL rejected: ' + (e && e.message)); return; }
+            // The bridge confirms with {"type":"open"} once its TCP connection to the device is up. A socket that never
+            // confirms (a program that is not the bridge on that port, or a device that neither answers nor refuses)
+            // must not leave the device "connecting" for ever: give up after openTimeoutMs (the station then retries).
+            var oms = Math.max(1000, +o.openTimeoutMs || 10000);
+            otimer = setT(function () {
+                otimer = null;
+                if (settled) return;
+                fail('No answer through the bridge from ' + (o.host || '?') + ':' + (o.port || 502) + ' within ' + Math.round(oms / 1000) + ' s — check the device IP / port, and that ' +
+                    (o.url || 'ws://127.0.0.1:8502') + ' is the WTS Modbus bridge');
+                try { ws.onclose = null; ws.close(1000, 'open timeout'); } catch (e) {}
+                ws = null;
+            }, oms);
             ws.binaryType = 'arraybuffer';
             ws.onmessage = function (ev) {
                 var d = ev.data;
                 if (typeof d === 'string') {
                     var m = null; try { m = JSON.parse(d); } catch (e) {}
-                    if (m && m.type === 'open') { open = true; if (!settled) { settled = true; resolve(T); } }
+                    if (m && m.type === 'open') { open = true; done(); if (!settled) { settled = true; resolve(T); } }
                     else if (m && m.type === 'error') { fail('Bridge: ' + (m.message || 'error')); T.emit('error', m.message); }
                     return;
                 }
@@ -425,7 +440,7 @@ function webSocketTransport(o) {
         });
     };
     T.send = function (bytes) { if (!ws || !open) throw ModbusError('closed', 'Bridge connection is not open'); ws.send(u8(bytes)); };
-    T.close = function () { open = false; if (ws) { try { ws.onclose = null; ws.close(1000, 'client close'); } catch (e) {} } ws = null; };
+    T.close = function () { done(); open = false; if (ws) { try { ws.onclose = null; ws.close(1000, 'client close'); } catch (e) {} } ws = null; };
     T.isOpen = function () { return open; };
     return T;
 }

@@ -389,7 +389,7 @@ module.exports = [
       // demo config validates cleanly, every linked variable is linked at most once, BHP in barg
       const nd = M.normalizeConfig(demo);
       deq(assert, nd.errors, []);
-      assert.strictEqual(demo.tags.length, 36);
+      assert.strictEqual(demo.tags.length, 37);
       const linked = demo.tags.filter((t) => t.link).map((t) => t.link);
       assert.strictEqual(new Set(linked).size, linked.length);
       assert.strictEqual(linked.length, M.VARS.length, 'every app variable has a demo tag');
