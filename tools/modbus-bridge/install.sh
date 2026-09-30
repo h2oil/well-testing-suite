@@ -3,10 +3,13 @@
 # install.sh - installs the WTS Modbus bridge (WebSocket <-> Modbus TCP) for the
 # current user on macOS or Linux. No sudo / admin rights are needed for the bridge.
 #
-#   bash install.sh --allow 192.168.1.10:502 [--allow '10.0.0.0/24:502,plc.local:*']
+#   bash install.sh [--allow 192.168.1.10:502] [--allow '10.0.0.0/24:502,plc.local:*']
 #                   [--port 8502] [--listen 127.0.0.1] [--allow-writes | --read-only]
 #                   [--origin https://my.site] [--autostart] [--reset]
 #                   [--yes] [--no-start] [--uninstall] [--help]
+#
+# One line, from the GitHub release (the release installer carries the bridge files):
+#   curl -fsSL https://github.com/h2oil/well-testing-suite/releases/latest/download/wts-modbus-bridge-install.sh | bash -s -- --autostart --yes
 #
 # What it does
 #   1. Checks for Node.js 18 or newer. If it is missing it offers to install it with the
@@ -31,6 +34,8 @@
 #           IPv4 (192.168.1.10:502), IPv4 subnet (10.0.0.0/24:502), host name
 #           (plc-1.local:502) or IPv6 in brackets ([fd00::10]:502); port 1-65535 or * (any
 #           port). Quote values with * or [ ] ('plc.local:*') - zsh refuses an unmatched glob.
+#           With no --allow at all the bridge allows any device IP / port (default).
+# --allow-any  allow any device IP / port (same as --allow '*:*').
 # --port    WebSocket port of the bridge (default 8502; the app's bridge URL is ws://127.0.0.1:<port>).
 # --listen  interface to listen on (default 127.0.0.1 = this computer only).
 # --allow-writes  forward Modbus write requests (FC 05/06/15/16); --read-only refuses them (default).
@@ -41,6 +46,10 @@
 # --uninstall     stop and remove the auto-start entry and the installed files.
 # =============================================================================
 set -euo pipefail
+# The whole script is one { ... } group, so bash reads all of it before running anything: it can
+# be piped into bash (curl ... | bash -s -- ...) without a command reading the rest of the script.
+{
+SELF="${BASH_SOURCE[0]:-}"          # empty when the script is piped into bash
 
 # @@WTS-PRESET-BEGIN@@ (the app's "Generate installer for my devices" fills in this block)
 PRESET_ALLOW=""
@@ -68,7 +77,12 @@ warn() { printf 'WARNING: %s\n' "$*" >&2; }
 die()  { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
 usage() {
-    sed -n '2,/^# =====/p' "${BASH_SOURCE[0]}" 2>/dev/null | sed -e 's/^# \{0,1\}//' -e '/^=====/d' || true
+    if [ -n "$SELF" ] && [ -f "$SELF" ]; then
+        sed -n '2,/^# =====/p' "$SELF" 2>/dev/null | sed -e 's/^# \{0,1\}//' -e '/^=====/d' || true
+    else
+        say "Options: --allow host:port, --allow-any, --port N, --listen IP, --allow-writes, --read-only, --origin URL,"
+        say "         --autostart, --no-start, --reset, --yes, --uninstall (see the README of the WTS Modbus bridge)."
+    fi
 }
 
 # ---- validation (no shell metacharacters can get through) -------------------
@@ -108,6 +122,7 @@ valid_port() {
 valid_target() {
     local t="$1"
     [[ "$t" == *:* ]] || return 1
+    if [ "${t%:*}" = "*" ]; then [ "${t##*:}" = "*" ] || valid_port "${t##*:}"; return; fi
     valid_host "${t%:*}" || return 1
     [ "${t##*:}" = "*" ] || valid_port "${t##*:}"
 }
@@ -181,6 +196,7 @@ while [ $# -gt 0 ]; do
         --port=*)       CLI_PORT="${1#*=}"; shift ;;
         --listen)       [ $# -ge 2 ] || die "--listen needs an address"; CLI_LISTEN="$2"; shift 2 ;;
         --listen=*)     CLI_LISTEN="${1#*=}"; shift ;;
+        --allow-any)    add_allow '*:*'; shift ;;
         --allow-writes) CLI_WRITES=1; shift ;;
         --read-only)    CLI_WRITES=0; shift ;;
         --autostart)    AUTOSTART=1; shift ;;
@@ -230,7 +246,8 @@ case "$(uname -s)" in
     *)
         die "unsupported system '$(uname -s)' - on Windows use install-windows.ps1" ;;
 esac
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)" || SCRIPT_DIR="."
+SCRIPT_DIR=""
+if [ -n "$SELF" ]; then SCRIPT_DIR="$(cd "$(dirname "$SELF")" 2>/dev/null && pwd)" || SCRIPT_DIR="."; fi
 NODE_BIN=""
 HEALTH_HOST=""
 set_health_host() {
@@ -497,7 +514,8 @@ if [ "$HAVE_OLD" = 1 ]; then
     say "Keeping the settings of the existing $INSTALL_DIR/bridge-config.json (${#OLD_ALLOW[@]} target(s); new targets are added - --reset starts a new list)."
 fi
 if [ ${#ALLOW_LIST[@]} -eq 0 ]; then
-    warn "no --allow targets: the bridge will refuse every device until you add one (run the installer again with --allow <ip>:<port>, or edit bridge-config.json)."
+    ALLOW_LIST=('*:*')
+    say "No --allow targets given: the bridge will allow any device IP / port (default). Give --allow <ip>:<port> (with --reset) to restrict it."
 fi
 
 install_files() {
@@ -513,6 +531,7 @@ install_files() {
         done
         say "Unpacked bridge v$EMBEDDED_VERSION (SHA-256 verified)"
     else
+        [ -n "$SCRIPT_DIR" ] || die "this installer has no bridge files built in - piped into bash, use the release installer: curl -fsSL https://github.com/h2oil/well-testing-suite/releases/latest/download/wts-modbus-bridge-install.sh | bash -s -- --autostart --yes"
         [ -f "$SCRIPT_DIR/modbus-bridge.js" ] || die "modbus-bridge.js was not found next to this installer ($SCRIPT_DIR). Download the bridge package from the app's Modbus page, unzip it and run install.sh from that folder."
         for f in modbus-bridge.js fake-slave.js README.md; do
             if [ -f "$SCRIPT_DIR/$f" ] && ! [ "$SCRIPT_DIR/$f" -ef "$INSTALL_DIR/$f" ]; then
@@ -520,8 +539,8 @@ install_files() {
             fi
         done
     fi
-    if [ -f "${BASH_SOURCE[0]}" ] && ! [ "${BASH_SOURCE[0]}" -ef "$INSTALL_DIR/install.sh" ]; then
-        cp "${BASH_SOURCE[0]}" "$INSTALL_DIR/install.sh"
+    if [ -n "$SELF" ] && [ -f "$SELF" ] && ! [ "$SELF" -ef "$INSTALL_DIR/install.sh" ]; then
+        cp "$SELF" "$INSTALL_DIR/install.sh"
     fi
     chmod 644 "$INSTALL_DIR/modbus-bridge.js"
     if [ -f "$INSTALL_DIR/install.sh" ]; then chmod 755 "$INSTALL_DIR/install.sh"; fi
@@ -757,3 +776,4 @@ trap - INT TERM HUP
 say ""
 say "The bridge stopped (exit code $code) - it was stopped from outside this window, or a new install replaced it."
 exit "$code"
+}

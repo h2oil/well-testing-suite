@@ -273,8 +273,11 @@ module.exports = [
         for (const host of ['localhost:' + P, '127.0.0.1:' + P, '[::1]:' + P, 'app.localhost:' + P]) assert.strictEqual((await httpReq(P, { headers: { Host: host } })).status, 200, host);
         assert.ok(hostHeaderOk({ listen: 'bridge-pc' }, 'BRIDGE-PC:8502') && !hostHeaderOk({}, 'bridge-pc:8502') && !hostHeaderOk({}, '[evil]:1'));
         assert.strictEqual((await httpReq(P, { method: 'POST', headers: { Origin: 'http://localhost:8080' } })).status, 405);
-        r = await httpReq(P, { path: '/' });
+        r = await httpReq(P, { path: '/modbus' });                  // a plain GET (no upgrade): the short text
         assert.strictEqual(r.status, 200); assert.match(r.body, new RegExp('v' + BRIDGE_VERSION.replace(/\./g, '\\.') + ' \\(read-only\\)'));
+        r = await httpReq(P, { path: '/' });                        // the status page for people (modbus-bridge-exe.test.js)
+        assert.strictEqual(r.status, 200); assert.match(r.body, new RegExp('WTS Modbus Bridge v' + BRIDGE_VERSION.replace(/\./g, '\\.') + ' is running on this PC'));
+        assert.match(r.body, /Refused — read-only/);
         assert.strictEqual(R.bridge.health().version, BRIDGE_VERSION);
       } finally { await R.close(); }
       const R2 = await rig({ allowWrites: true, allow: ['10.0.0.0/24:502', 'PLC.local:*'] });

@@ -1,0 +1,133 @@
+name: Modbus bridge release
+
+# Builds and tests the one-click installers of the WTS Modbus bridge and publishes them as a GitHub
+# Release, so the app can link to
+#   https://github.com/h2oil/well-testing-suite/releases/latest/download/WTS-Modbus-Bridge-Setup.exe
+#   https://github.com/h2oil/well-testing-suite/releases/latest/download/wts-modbus-bridge-install.sh
+#
+# Cut a release (the tag must match BRIDGE_VERSION in tools/modbus-bridge/modbus-bridge.js):
+#   git tag modbus-bridge-v1.2.0 && git push origin modbus-bridge-v1.2.0
+# workflow_dispatch builds and tests only (the assets are kept as workflow artifacts).
+
+on:
+  push:
+    tags:
+      - 'modbus-bridge-v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: modbus-bridge-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows-exe:
+    name: Windows installer (.exe)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Check the tag matches the bridge version
+        if: startsWith(github.ref, 'refs/tags/modbus-bridge-v')
+        shell: bash
+        run: |
+          v="$(node -p "require('./tools/modbus-bridge/modbus-bridge.js').BRIDGE_VERSION")"
+          test "modbus-bridge-v$v" = "${GITHUB_REF_NAME}" || { echo "::error::tag ${GITHUB_REF_NAME} does not match BRIDGE_VERSION $v"; exit 1; }
+
+      - name: Build WTS-Modbus-Bridge-Setup.exe (Node SEA + postject, GUI subsystem)
+        run: node tools/modbus-bridge/exe/build-exe.js --out dist
+
+      - name: Smoke-test the exe (version, install --no-browser, /health, status page, Run key, single instance, settings, uninstall)
+        run: node tools/modbus-bridge/exe/ci-smoke-exe.js dist/WTS-Modbus-Bridge-Setup.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-exe
+          path: dist/WTS-Modbus-Bridge-Setup.exe
+          if-no-files-found: error
+
+  unix-scripts:
+    name: macOS / Linux installer (.sh) + package (.zip)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build wts-modbus-bridge-install.sh and the package zip
+        run: node tools/modbus-bridge/exe/build-release-scripts.js --out dist
+
+      - name: bash -n
+        run: bash -n dist/wts-modbus-bridge-install.sh
+
+      - name: Test the release installer end to end (piped into bash, temp HOME, /health, auto-start, uninstall)
+        run: node tools/modbus-bridge/exe/test-release-sh.js dist/wts-modbus-bridge-install.sh
+
+      - name: Unit tests of the launcher, release scripts and installers
+        run: |
+          node prism-build/accept-test.js --file modbus-bridge-exe
+          node prism-build/accept-test.js --file modbus-bridge-install
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unix-scripts
+          path: |
+            dist/wts-modbus-bridge-install.sh
+            dist/wts-modbus-bridge-*.zip
+          if-no-files-found: error
+
+  release:
+    name: GitHub Release
+    if: startsWith(github.ref, 'refs/tags/modbus-bridge-v')
+    needs: [windows-exe, unix-scripts]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+
+      - name: SHA256SUMS.txt
+        working-directory: assets
+        run: |
+          sha256sum WTS-Modbus-Bridge-Setup.exe wts-modbus-bridge-install.sh wts-modbus-bridge-*.zip > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create / update the release (marked latest)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: WTS Modbus Bridge ${{ github.ref_name }}
+          make_latest: 'true'
+          fail_on_unmatched_files: true
+          body: |
+            One-click installers of the WTS Modbus bridge (WebSocket to Modbus TCP) for the Well Testing Suite web app.
+
+            **Windows:** download `WTS-Modbus-Bridge-Setup.exe` and double-click it. No administrator rights and no Node.js needed. It installs for the current user, starts the bridge now and at every login, and opens its status page. The exe is not code-signed yet: if SmartScreen says "Windows protected your PC", click **More info**, then **Run anyway**.
+
+            **macOS / Linux:** in a Terminal run
+            ```
+            curl -fsSL https://github.com/h2oil/well-testing-suite/releases/latest/download/wts-modbus-bridge-install.sh | bash -s -- --autostart --yes
+            ```
+            (it needs Node.js 18 or newer and offers to install it with Homebrew or your package manager).
+
+            Then press **Check bridge** on the Modbus Config page. The bridge listens on 127.0.0.1:8502 only, allows any device IP address by default and refuses Modbus writes unless you allow them.
+
+            Checksums: `SHA256SUMS.txt`.
+          files: |
+            assets/WTS-Modbus-Bridge-Setup.exe
+            assets/wts-modbus-bridge-install.sh
+            assets/wts-modbus-bridge-*.zip
+            assets/SHA256SUMS.txt

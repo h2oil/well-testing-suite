@@ -22,15 +22,18 @@
 //     (with Access-Control-Allow-Origin echoed, so the page can tell a refusal from "no
 //     bridge"; nothing else is in that body). Host names other than localhost / an IP literal /
 //     --listen are refused (DNS rebinding) unless the request carries an accepted Origin.
+//   • GET / → a small HTML status page for people (version, allowed devices, read-only state,
+//     how to uninstall); same Origin / Host rules as /health, no scripts.
 //
-// Security defaults: listens on 127.0.0.1 only; no target is reachable until allowed
-// with --allow; browser origins limited to http(s)://localhost / 127.0.0.1 / [::1], the app's
+// Security defaults: listens on 127.0.0.1 only; any device IP / port is reachable unless you
+// restrict it with --allow targets (v1.2.0; before, nothing was reachable until allowed); browser origins limited to http(s)://localhost / 127.0.0.1 / [::1], the app's
 // capacitor origin and the app's web origin (pb-handbook.com) unless --origin or --any-origin
 // is given. "Origin: null" (sandboxed iframes, data: URLs, saved file:// copies) is refused
 // unless allowed explicitly with --origin null, because any web site can send it. Requests
 // without an Origin header (curl, scripts; never a browser page) are accepted. ADU ≤ 260 bytes.
 //
-// Usage:  node modbus-bridge.js --allow 192.168.1.10:502 [--allow 10.0.0.0/24:502] [--allow 'host:*']
+// Usage:  node modbus-bridge.js                (any device)
+//         node modbus-bridge.js --allow 192.168.1.10:502 [--allow 10.0.0.0/24:502] [--allow 'host:*'] [--allow-any]
 //                               [--listen 127.0.0.1] [--port 8502] [--origin https://example.com]
 //                               [--any-origin] [--allow-writes] [--verbose]
 //                               [--config bridge-config.json] [--version] [--help]
@@ -49,7 +52,7 @@ const net = require('net');
 const crypto = require('crypto');
 const fs = require('fs');
 
-const BRIDGE_VERSION = '1.1.0';
+const BRIDGE_VERSION = '1.2.0';
 const BRIDGE_NAME = 'wts-modbus-bridge';
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';     // RFC 6455 §1.3
 const MAX_ADU = 260;
@@ -61,12 +64,19 @@ const DEFAULT_ORIGINS = [/^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i
   /^capacitor:\/\/localhost$/i];
 
 // ─── allow-list ──────────────────────────────────────────────────────────────
-// entry: "host:port" | "host:*" | "a.b.c.d/nn:port" (IPv4 CIDR)
+// entry: "host:port" | "host:*" | "a.b.c.d/nn:port" (IPv4 CIDR) | "*:port" | "*:*" (any device).
+// An empty allow-list means "*:*" — any device IP / port (the default since v1.2.0). List
+// specific targets to lock the bridge down to them.
 function parseAllow(spec) {
   const s = String(spec).trim();
   const i = s.lastIndexOf(':');
   if (i <= 0) throw new Error('--allow needs host:port, got ' + spec);
   const host = s.slice(0, i).replace(/^\[|\]$/g, ''), port = s.slice(i + 1);
+  if (host === '*') {
+    if (port !== '*' && !(/^\d{1,5}$/.test(port) && +port >= 1 && +port <= 65535)) throw new Error('bad port in --allow ' + spec);
+    const p = port === '*' ? '*' : +port;
+    return { host: '*', port: p, cidr: null, spec: '*:' + p };
+  }
   if (port !== '*' && !(/^\d{1,5}$/.test(port) && +port >= 1 && +port <= 65535)) throw new Error('bad port in --allow ' + spec);
   if (!/^[A-Za-z0-9._-]+(\/\d{1,2})?$/.test(host) && !/^[0-9A-Fa-f:.]+$/.test(host)) throw new Error('bad host in --allow ' + spec + ' (IPv4, IPv4/nn, IPv6 or a host name)');
   const m = /^(\d+\.\d+\.\d+\.\d+)\/(\d+)$/.exec(host);
@@ -79,6 +89,7 @@ function allowed(list, host, port) {
   host = String(host || '').toLowerCase(); port = +port;
   return list.some((a) => {
     if (a.port !== '*' && a.port !== port) return false;
+    if (a.host === '*') return true;
     if (a.cidr) {
       const ip = ip4(host); if (ip == null || a.cidr.base == null) return false;
       const mask = a.cidr.bits === 0 ? 0 : (0xFFFFFFFF << (32 - a.cidr.bits)) >>> 0;
@@ -119,6 +130,52 @@ function healthRefusal(opts, origin, hostHeader) {
 // "localhost" can resolve to ::1 first (macOS, Windows; Node ≥ 17 keeps the resolver order),
 // while the installers and the app use 127.0.0.1 — so listen on 127.0.0.1.
 function normListen(listen) { return typeof listen === 'string' && listen.toLowerCase() === 'localhost' ? '127.0.0.1' : listen; }
+
+// ─── status page (GET /) ─────────────────────────────────────────────────────
+function htmlEsc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+function uptimeText(s) {
+  s = Math.max(0, Math.round(+s || 0));
+  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+  return d ? d + ' d ' + h + ' h' : h ? h + ' h ' + m + ' min' : m ? m + ' min' : s + ' s';
+}
+const DEFAULT_UNINSTALL = [
+  'Windows (installed with WTS-Modbus-Bridge-Setup.exe): Settings → Apps → Installed apps → "WTS Modbus Bridge" → Uninstall, or Start menu → "Uninstall WTS Modbus Bridge".',
+  'Windows (installed with install-windows.ps1): powershell -NoProfile -ExecutionPolicy Bypass -File "%LOCALAPPDATA%\\WTS Modbus Bridge\\install-windows.ps1" -Uninstall',
+  'macOS: bash "$HOME/Library/Application Support/WTS Modbus Bridge/install.sh" --uninstall',
+  'Linux: bash "${XDG_DATA_HOME:-$HOME/.local/share}/wts-modbus-bridge/install.sh" --uninstall'];
+// info = the /health object; o = { listen, configFile, uninstall: string | [strings] }
+function statusPageHtml(info, o) {
+  info = info || {}; o = o || {};
+  const allow = Array.isArray(info.allow) ? info.allow.map(String) : [];
+  const any = !allow.length || allow.some((a) => /^\*:\*$/.test(a.trim()));
+  const host = !o.listen || o.listen === '0.0.0.0' ? '127.0.0.1' : String(o.listen);
+  const url = 'ws://' + (host.indexOf(':') >= 0 ? '[' + host + ']' : host) + ':' + info.port;
+  const uninstall = o.uninstall ? [].concat(o.uninstall) : DEFAULT_UNINSTALL;
+  const row = (k, v) => '<tr><th>' + htmlEsc(k) + '</th><td>' + v + '</td></tr>';
+  return '<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">' +
+    '<meta name="color-scheme" content="light dark"><title>WTS Modbus Bridge — running</title><style>' +
+    'body{font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;max-width:720px;margin:32px auto;padding:0 16px;color:#1f2328;background:#fff}' +
+    '@media (prefers-color-scheme:dark){body{color:#e6edf3;background:#0d1117}th{color:#9198a1!important}code{background:#161b22!important}}' +
+    'h1{font-size:22px;color:#1a7f37;margin:0 0 8px}p{margin:8px 0}table{border-collapse:collapse;margin:12px 0;width:100%}' +
+    'th,td{text-align:left;vertical-align:top;padding:6px 8px;border-bottom:1px solid rgba(127,127,127,.25)}th{width:34%;font-weight:600;color:#59636e}' +
+    'code{font:13px ui-monospace,Consolas,monospace;background:#f6f8fa;padding:1px 5px;border-radius:4px;overflow-wrap:anywhere}' +
+    '.next{border-left:4px solid #1a7f37;padding:8px 12px;margin:14px 0;background:rgba(26,127,55,.08)}ul{padding-left:20px}li{margin:4px 0}small{color:#8b949e}' +
+    '</style></head><body>' +
+    '<h1>✓ WTS Modbus Bridge v' + htmlEsc(info.version) + ' is running on this PC</h1>' +
+    '<div class="next"><b>Next:</b> go back to the Well Testing Suite (Modbus Config page) and press <b>Check bridge</b>. ' +
+    'Devices use the transport "Modbus TCP via WebSocket bridge" with the bridge URL <code>' + htmlEsc(url) + '</code>.</div>' +
+    '<table>' +
+    row('Bridge URL', '<code>' + htmlEsc(url) + '</code>' + (host === '127.0.0.1' || host === '::1' ? ' (this computer only)' : ' (other computers on the network can use it)')) +
+    row('Allowed devices', any ? 'Any device IP address / port' + (allow.length > 1 ? ' (' + htmlEsc(allow.join(', ')) + ')' : '') : htmlEsc(allow.join(', '))) +
+    row('Modbus writes', info.readOnly === false ? '<b>Allowed</b> (FC 05 / 06 / 15 / 16 are forwarded)' : 'Refused — read-only (the bridge answers write requests with exception 01)') +
+    row('Running for', htmlEsc(uptimeText(info.uptimeS))) +
+    (o.configFile ? row('Settings', '<code>' + htmlEsc(o.configFile) + '</code> (restart the bridge after editing)') : '') +
+    row('Health check', '<code>http://' + htmlEsc(host.indexOf(':') >= 0 ? '[' + host + ']' : host) + ':' + htmlEsc(info.port) + '/health</code>') +
+    '</table>' +
+    '<p><b>Uninstall</b></p><ul>' + uninstall.map((u) => '<li>' + htmlEsc(u) + '</li>').join('') + '</ul>' +
+    '<p><small>' + htmlEsc(info.name) + ' — WebSocket ↔ Modbus TCP bridge for the Well Testing Suite. This page refreshes when you reload it.</small></p>' +
+    '</body></html>\n';
+}
 
 // ─── WebSocket framing (server side, RFC 6455 §5) ────────────────────────────
 function encodeFrame(opcode, payload) {
@@ -176,7 +233,7 @@ function exceptionAdu(req, code) {
 function createBridge(opts) {
   opts = Object.assign({ listen: '127.0.0.1', port: 8502, allow: [], origins: [], anyOrigin: false, allowWrites: false, verbose: false, connectTimeoutMs: 5000 }, opts || {});
   opts.listen = normListen(opts.listen) || '127.0.0.1';
-  const allowList = opts.allow.map((a) => (typeof a === 'string' ? parseAllow(a) : a));
+  const allowList = (opts.allow && opts.allow.length ? opts.allow : ['*:*']).map((a) => (typeof a === 'string' ? parseAllow(a) : a));
   const log = (...a) => { if (opts.verbose) console.log('[bridge]', ...a); };
   const sessions = new Set(), upgraded = new Set();
   const stats = { sessions: 0, refused: 0, adusIn: 0, adusOut: 0, writesBlocked: 0 };
@@ -186,6 +243,7 @@ function createBridge(opts) {
     let pathname = '/';
     try { pathname = new URL(req.url, 'http://x').pathname; } catch (e) { /* keep '/' */ }
     if (pathname === '/health' || pathname === '/health/') { health(req, res); return; }
+    if (pathname === '/' || pathname === '/status' || pathname === '/index.html') { statusPage(req, res); return; }
     res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
     res.end('WTS Modbus bridge v' + BRIDGE_VERSION + ' ' + (opts.allowWrites ? '(writes ALLOWED)' : '(read-only)') + '\nConnect with ws://' + opts.listen + ':' + (server.address() || {}).port + '/modbus?host=<ip>&port=502\nHealth check: /health\n');
   });
@@ -221,6 +279,20 @@ function createBridge(opts) {
     if (req.method !== 'GET' && req.method !== 'HEAD') { head.Allow = 'GET, OPTIONS'; res.writeHead(405, head); res.end(); return; }
     const body = JSON.stringify(healthInfo());
     head['Content-Type'] = 'application/json; charset=utf-8';
+    head['Content-Length'] = Buffer.byteLength(body);
+    res.writeHead(200, head);
+    res.end(req.method === 'HEAD' ? undefined : body);
+  }
+  // GET / → a small HTML status page for people (the Windows installer opens it in the browser).
+  // Same Origin / Host rules as /health; no scripts (CSP), everything escaped.
+  function statusPage(req, res) {
+    const why = healthRefusal(opts, req.headers.origin, req.headers.host);
+    const head = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY' };
+    if (why) { head['Content-Type'] = 'text/plain; charset=utf-8'; res.writeHead(403, head); res.end('Forbidden (' + why + ')\n'); stats.refused++; return; }
+    if (req.method !== 'GET' && req.method !== 'HEAD') { head.Allow = 'GET'; res.writeHead(405, head); res.end(); return; }
+    const body = statusPageHtml(healthInfo(), { listen: opts.listen, configFile: opts.configFile, uninstall: opts.uninstallHint });
+    head['Content-Type'] = 'text/html; charset=utf-8';
+    head['Content-Security-Policy'] = "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
     head['Content-Length'] = Buffer.byteLength(body);
     res.writeHead(200, head);
     res.end(req.method === 'HEAD' ? undefined : body);
@@ -332,6 +404,7 @@ function parseArgs(argv) {
     else if (a === '--port') o.port = +v();
     else if (a === '--origin') o.origins.push(v());
     else if (a === '--any-origin') o.anyOrigin = true;
+    else if (a === '--allow-any') o.allow.push('*:*');
     else if (a === '--allow-writes') o.allowWrites = true;
     else if (a === '--verbose' || a === '-v') o.verbose = true;
     else if (a === '--config' || a === '-c') o.config = v();
@@ -407,14 +480,14 @@ function main(argv) {
   try { r = resolveOptions(cli); } catch (e) { console.error('[bridge] ' + e.message); process.exit(2); }
   const o = r.options;
   r.warnings.forEach((w) => console.warn('[bridge] WARNING: ' + w));
-  if (!o.allow.length) console.warn('[bridge] WARNING: no --allow targets — every connection will be refused. Example: --allow 192.168.1.10:502');
+  if (!o.allow.length || o.allow.some((a) => /^\*:/.test(String(a).trim()))) console.log('[bridge] any device IP is allowed' + (o.allow.length ? '' : ' (default; list --allow <ip>:<port> targets to restrict)') + '. The bridge still listens on this PC only' + (o.allowWrites ? '' : ' and refuses writes') + '.');
   if ((o.origins || []).some((x) => String(x).toLowerCase() === 'null') || o.anyOrigin) console.warn('[bridge] WARNING: ' + (o.anyOrigin ? 'any page origin is accepted' : 'pages with "Origin: null" (saved copies, but also sandboxed frames of any web site) are accepted') + ' — only do this on a PC that is not used for general web browsing.');
   if (o.listen && o.listen !== '127.0.0.1' && o.listen !== '::1') console.warn('[bridge] WARNING: listening on ' + o.listen + ' — other machines on the network can use this bridge.');
-  const b = createBridge(o);
+  const b = createBridge(Object.assign({}, o, { configFile: cli.config ? require('path').resolve(cli.config) : undefined }));
   const listenHost = o.listen || '127.0.0.1';
   b.listen().then((port) => {
     console.log('[bridge] WTS Modbus bridge v' + BRIDGE_VERSION + ' listening on ws://' + listenHost + ':' + port + '/modbus  (' + (o.allowWrites ? 'writes ALLOWED' : 'read-only') + ')');
-    console.log('[bridge] allowed targets: ' + (o.allow.join(', ') || '(none)'));
+    console.log('[bridge] allowed targets: ' + (o.allow.join(', ') || '*:* (any device)'));
     console.log('[bridge] health check: http://' + (listenHost === '0.0.0.0' || listenHost === '::' ? '127.0.0.1' : listenHost) + ':' + port + '/health' + (cli.config ? '   (config: ' + cli.config + ')' : ''));
   }, (e) => {
     console.error('[bridge] cannot listen on ' + listenHost + ':' + (o.port || 8502) + ': ' + e.message + (e.code === 'EADDRINUSE' ? ' — another bridge (or program) already uses this port.' : ''));
@@ -425,6 +498,6 @@ function main(argv) {
   process.on('SIGTERM', stop);     // launchd / systemd stop
 }
 
-module.exports = { BRIDGE_VERSION, createBridge, parseAllow, allowed, originOk, hostHeaderOk, healthRefusal, normListen, encodeFrame, decodeFrames, takeAdus, exceptionAdu,
+module.exports = { BRIDGE_VERSION, BRIDGE_NAME, createBridge, statusPageHtml, htmlEsc, parseAllow, allowed, originOk, hostHeaderOk, healthRefusal, normListen, encodeFrame, decodeFrames, takeAdus, exceptionAdu,
   parseArgs, parseConfig, loadConfigFile, resolveOptions, main };
 if (require.main === module) main();

@@ -7,7 +7,9 @@
 //   • WTS_modbusBridgeSetup: host:port validation rejects shell / PowerShell injection, generated
 //     installers carry the configured bridge devices and the pack files (base64 + SHA-256), the
 //     stored ZIP is valid (CRC-32 per PKWARE APPNOTE 4.4.7, Unix mode for install.sh);
-//   • page: guide steps, downloads, OS switch, copy, 375 px, excluded from reports, iOS note,
+//   • page: one-click steps (Windows exe link / macOS-Linux one-liner, then Check bridge), the
+//     "Advanced / manual setup" steps with "Allow any device IP / port" on by default (*:*) and the
+//     per-device path when it is unticked, downloads, OS switch, copy, 375 px, excluded from reports, iOS note,
 //     "Check bridge" against a stubbed fetch (running / allow-list / 403 / down / timeout) and
 //     against a real bridge;
 //   • install.sh end to end in a sandbox HOME (path with a space): install → config → the
@@ -36,6 +38,16 @@ const { BRIDGE_VERSION } = require(path.join(TOOLS, 'modbus-bridge.js'));
 const { createSlave } = require(path.join(TOOLS, 'fake-slave.js'));
 const text = (el) => String(el ? el.textContent : '').trim();
 const navBtn = (app, key) => app.find('.nav-btn[data-p="' + key + '"]');
+const EXE_URL = 'https://github.com/h2oil/well-testing-suite/releases/latest/download/WTS-Modbus-Bridge-Setup.exe';
+const ONE_LINER = 'curl -fsSL https://github.com/h2oil/well-testing-suite/releases/latest/download/wts-modbus-bridge-install.sh | bash -s -- --autostart --yes';
+const quickSteps = (app) => app.findAll('#mbc_guide_steps .mb-quick > li');
+const advSteps = (app) => app.findAll('#mbc_guide_steps .mb-adv > li');
+// the per-device path: untick "Allow any device IP / port" (on by default since bridge v1.2.0)
+function perDevice(app) {
+  const cb = app.find('[data-k="guide"][data-f="anyIp"]');
+  if (cb.checked) app.check(cb, false);
+  return cb;
+}
 
 const hasBash = (() => { try { return spawnSync('bash', ['-c', 'exit 0']).status === 0; } catch (e) { return false; } })();
 const hasZsh = (() => { try { return spawnSync('zsh', ['-f', '-c', 'exit 0']).status === 0; } catch (e) { return false; } })();
@@ -343,7 +355,7 @@ module.exports = [
     },
   },
   {
-    name: 'Modbus page guide: devices shown on open, 4 steps, package / installer downloads, OS switch, copy, 375 px, not in PDF / Quick Report',
+    name: 'Modbus page guide: devices shown on open, one-click steps + advanced steps (any device by default, per device when unticked), downloads, OS switch, copy, 375 px, not in PDF / Quick Report',
     wp: WP, opts: { viewport: { width: 375, height: 812 } },
     async run(app, assert) {
       const ctl = openGuide(app, BRIDGE_CFG);
@@ -352,28 +364,56 @@ module.exports = [
       const card = app.el('mbc_guide');
       assert.ok(card && card.classList.contains('rp-skip') && card.classList.contains('card'), 'guide card excluded from reports (.rp-skip)');
       assert.ok(app.el('mbc_guide_web').hasAttribute('open'), 'bridge setup open on the web');
-      const steps = app.findAll('#mbc_guide_steps .mb-steps > li');
-      assert.strictEqual(steps.length, 4);
+      // one-click path (Windows): the exe from the GitHub release, then Check bridge
+      const quick = quickSteps(app);
+      assert.strictEqual(quick.length, 2);
+      assert.match(text(quick[0]), /Install the bridge \(Windows\)/);
+      assert.includes(text(quick[0]), '⬇ Download WTS Modbus Bridge for Windows (.exe)');
+      assert.includes(text(quick[0]), 'More info → Run anyway'); assert.includes(text(quick[0]), 'starts the bridge now and at every login');
+      assert.match(text(quick[1]), /Check bridge/);
+      const a = app.el('mbc_guide_exe');
+      assert.strictEqual(a.tagName, 'A'); assert.strictEqual(a.getAttribute('href'), EXE_URL);
+      assert.strictEqual(a.getAttribute('target'), '_blank'); assert.match(a.getAttribute('rel'), /noopener/);
+      assert.ok(!app.el('mbc_guide_adv').hasAttribute('open'), '"Advanced / manual setup" collapsed');
+      // advanced: Node, package, installer — any device IP / port by default
+      let steps = advSteps(app);
+      assert.strictEqual(steps.length, 3);
       assert.match(text(steps[0]), /Install Node\.js 18 or newer \(Windows\)/); assert.includes(text(steps[0]), 'winget install OpenJS.NodeJS.LTS');
       assert.match(text(steps[1]), /Download bridge package/); assert.includes(text(steps[1]), 'Bridge v' + BRIDGE_VERSION);
-      assert.includes(text(steps[2]), '✓ PLC-1 — 192.168.1.10:502'); assert.includes(text(steps[2]), '✓ Gateway — gw-1.local:5020');
-      assert.includes(text(steps[2]), '-Allow "192.168.1.10:502,10.0.0.7:5020,gw-1.local:5020" -Port 8600');
-      assert.match(text(steps[3]), /Check bridge/);
+      assert.ok(app.find('[data-k="guide"][data-f="anyIp"]').checked, '"Allow any device IP / port" ticked by default');
+      assert.includes(text(steps[2]), '✓ Any device IP / port (*:*)'); assert.ok(!/✓ PLC-1/.test(text(steps[2])), 'no per-device list by default');
+      assert.includes(text(steps[2]), '-Allow "*:*" -Port 8600');
       assert.strictEqual(app.find('[data-act="guide-os"][aria-pressed="true"]').getAttribute('data-os'), 'windows', 'OS guessed from the platform');
       // package download
       app.click(app.find('[data-act="guide-pack"]'));
       let d = app.downloads[app.downloads.length - 1];
       assert.strictEqual(d.filename, 'wts-modbus-bridge-' + BRIDGE_VERSION + '.zip'); assert.ok(d.content.startsWith('PK'), 'zip bytes');
       assert.strictEqual(ctl.lastPackage.files.length, 5);
-      // installer download (Windows), then Linux after switching OS
+      // installer download (Windows): the default allows any device
       app.check(app.find('[data-k="guide"][data-f="autostart"]'), true);
       app.click(app.find('[data-act="guide-installer"]'));
       d = app.downloads[app.downloads.length - 1];
       assert.strictEqual(d.filename, 'wts-modbus-bridge-install.ps1');
+      assert.includes(d.content, "$PresetAllow = '*:*'"); assert.includes(d.content, '$PresetAutoStart = $true');
+      assert.match(text(app.el('mbc_guide_gen')), /✓ Downloaded wts-modbus-bridge-install\.ps1 — bridge v[\d.]+, 1 target \(\*:\*\), port 8600, auto-start, read-only/);
+      // per device: untick → the WebSocket-bridge devices are listed and become the targets
+      perDevice(app);
+      steps = advSteps(app);
+      assert.includes(text(steps[2]), '✓ PLC-1 — 192.168.1.10:502'); assert.includes(text(steps[2]), '✓ Gateway — gw-1.local:5020');
+      assert.includes(text(steps[2]), '-Allow "192.168.1.10:502,10.0.0.7:5020,gw-1.local:5020" -Port 8600');
+      app.click(app.find('[data-act="guide-installer"]'));
+      d = app.downloads[app.downloads.length - 1];
       assert.includes(d.content, "$PresetAllow = '192.168.1.10:502,10.0.0.7:5020,gw-1.local:5020'"); assert.includes(d.content, '$PresetAutoStart = $true');
       assert.match(text(app.el('mbc_guide_gen')), /✓ Downloaded wts-modbus-bridge-install\.ps1 — bridge v[\d.]+, 3 targets .*port 8600, auto-start, read-only/);
+      // Linux: the one-liner (with the devices' bridge port); the advanced steps keep "per device"
+      app.el('mbc_guide_adv').setAttribute('open', '');
       app.click(app.find('[data-act="guide-os"][data-os="linux"]'));
-      assert.match(text(app.find('#mbc_guide_steps .mb-steps > li')), /\(Linux\)/);
+      assert.ok(app.el('mbc_guide_adv').hasAttribute('open'), '"Advanced" stays open when the OS changes');
+      assert.match(text(quickSteps(app)[0]), /Install the bridge \(Linux\)/);
+      assert.ok(!app.el('mbc_guide_exe'), 'no exe link for Linux');
+      const oneLiner = app.findAll('[data-act="guide-copy"]').map((b) => b.getAttribute('data-copy')).find((c) => /^curl /.test(c));
+      assert.strictEqual(oneLiner, ONE_LINER + ' --port 8600', 'one-liner with the bridge port of the devices');
+      assert.match(text(advSteps(app)[0]), /\(Linux\)/);
       assert.includes(text(app.el('mbc_guide_steps')), 'bash install.sh --allow 192.168.1.10:502,10.0.0.7:5020,gw-1.local:5020 --port 8600 --autostart');
       app.click(app.find('[data-act="guide-installer"]'));
       d = app.downloads[app.downloads.length - 1];
@@ -398,7 +438,7 @@ module.exports = [
       app.click(app.find('[data-act="guide-check"]')); await app.flushAsync(20);
       assert.includes(text(app.el('mbc_guide_check')), 'Bridge v' + BRIDGE_VERSION + ' is running');
       const model = JSON.stringify(app.win.collectPageReport(app.el('pgBody'), { charts: false }));
-      for (const s of ['Bridge v' + BRIDGE_VERSION, 'Extra targets', 'Start the bridge automatically', 'rm -rf', 'winget', 'Troubleshooting']) assert.ok(model.indexOf(s) < 0, 'report must not contain "' + s + '"');
+      for (const s of ['Bridge v' + BRIDGE_VERSION, 'Extra targets', 'Start the bridge automatically', 'rm -rf', 'winget', 'Troubleshooting', 'Download WTS Modbus Bridge', 'curl -fsSL']) assert.ok(model.indexOf(s) < 0, 'report must not contain "' + s + '"');
       assert.includes(model, 'Configuration summary');
       card.classList.remove('rp-skip');
       assert.includes(JSON.stringify(app.win.collectPageReport(app.el('pgBody'), { charts: false })), 'Bridge v' + BRIDGE_VERSION, 'control: without .rp-skip the verdict would be reported');
@@ -492,9 +532,16 @@ module.exports = [
       assert.match(text(app.find('#mbc_guide .mb-note')), /iOS app: no bridge needed/);
       assert.ok(!app.el('mbc_guide_web').hasAttribute('open'), 'bridge section collapsed in the app');
       assert.ok(!app.find('[data-act="guide-pack"]') && !app.find('[data-act="guide-installer"]'), 'no downloads of desktop scripts in the app');
-      const step3 = text(app.findAll('#mbc_guide_steps .mb-steps > li')[2]);
+      // one-click step: the exe link as copyable text (a link would navigate the app's web view away)
+      assert.ok(!app.el('mbc_guide_exe'), 'no download link in the app');
+      assert.includes(text(quickSteps(app)[0]), 'On the Windows PC, open this link');
+      assert.ok(app.findAll('[data-act="guide-copy"]').some((b) => b.getAttribute('data-copy') === EXE_URL), 'exe URL copyable');
+      let step3 = text(advSteps(app)[2]);
       assert.ok(!/Then run it|wts-modbus-bridge-install\.(sh|ps1)|generated installer/.test(step3), 'no "run the generated installer" in the app, which cannot generate it: ' + step3.slice(0, 300));
       assert.includes(step3, 'open the web version of the app on the PC and press "Generate installer for my devices" there');
+      assert.includes(step3, 'install-windows.ps1 -Allow "*:*"', 'package commands for any device by default');
+      perDevice(app);
+      step3 = text(advSteps(app)[2]);
       assert.includes(step3, 'install-windows.ps1 -Allow "192.168.1.10:502,10.0.0.7:5020,gw-1.local:5020"', 'package commands kept for reference');
       const z = ctl.downloadPackage();
       assert.strictEqual(shares[0].name, z.filename); assert.strictEqual(shares[0].isB64, true);
@@ -595,9 +642,15 @@ module.exports = [
       // the page's copy buttons carry the quoted form
       openGuide(app, BRIDGE_CFG);
       app.click(app.find('[data-act="guide-os"][data-os="macos"]'));
+      // default (any device): *:* is quoted too
+      let copies = app.findAll('[data-act="guide-copy"]').map((b) => b.getAttribute('data-copy'));
+      assert.ok(copies.includes("bash install.sh --allow '*:*' --port 8600 --autostart"), copies.join('\n'));
+      assert.ok(copies.includes("node modbus-bridge.js --allow '*:*' --port 8600"), 'direct command quoted');
+      assert.ok(copies.includes(ONE_LINER + ' --port 8600'), 'the one-liner');
+      perDevice(app);
       app.input(app.find('[data-k="guide"][data-f="extra"]'), '10.0.0.0/24:502, plc-2.local:*');
-      const copies = app.findAll('[data-act="guide-copy"]').map((b) => b.getAttribute('data-copy'));
-      assert.ok(copies.includes("bash install.sh --allow '192.168.1.10:502,10.0.0.7:5020,gw-1.local:5020,10.0.0.0/24:502,plc-2.local:*' --port 8600"), copies.join('\n'));
+      copies = app.findAll('[data-act="guide-copy"]').map((b) => b.getAttribute('data-copy'));
+      assert.ok(copies.includes("bash install.sh --allow '192.168.1.10:502,10.0.0.7:5020,gw-1.local:5020,10.0.0.0/24:502,plc-2.local:*' --port 8600 --autostart"), copies.join('\n'));
       assert.ok(copies.some((c) => c.includes("--allow 'plc-2.local:*'")), 'direct command quoted');
       assert.ok(!copies.some((c) => / --allow [^'" ]*\*/.test(c)), 'no unquoted * anywhere');
     },
@@ -614,7 +667,8 @@ module.exports = [
       openGuide(app, cfg);
       const kept = app.win.WTS_modbus.getConfig().devices.map((d) => d.host);
       assert.deepStrictEqual(Array.from(kept), ['192.168.1.10', 'fd00::10', 'plc_2'], 'the Modbus core keeps them');
-      const t = text(app.findAll('#mbc_guide_steps .mb-steps > li')[2]);
+      perDevice(app);
+      const t = text(advSteps(app)[2]);
       assert.includes(t, '✓ V6 — [fd00::10]:502'); assert.includes(t, '✓ Under — plc_2:502'); assert.ok(!/✗/.test(t), t.slice(0, 400));
       const gen = app.find('[data-act="guide-installer"]');
       assert.ok(!gen.hasAttribute('disabled'), 'Generate enabled');
@@ -709,7 +763,11 @@ module.exports = [
     async run(app, assert) {
       openGuide(app, { devices: [], tags: [] });
       const extra = app.find('[data-k="guide"][data-f="extra"]'), gen = app.find('[data-act="guide-installer"]');
-      assert.ok(gen.hasAttribute('disabled'), 'no targets yet');
+      assert.ok(!gen.hasAttribute('disabled'), 'any device by default: an installer without devices is fine');
+      const any = perDevice(app);
+      assert.strictEqual(app.find('[data-act="guide-installer"]'), gen, 'the check box updates in place');
+      assert.strictEqual(app.find('[data-k="guide"][data-f="anyIp"]'), any);
+      assert.ok(gen.hasAttribute('disabled'), 'per device: no targets yet');
       extra.focus();
       app.input(extra, '192.168.1.10:502', { change: false });              // typing
       assert.strictEqual(app.find('[data-k="guide"][data-f="extra"]'), extra, 'the field is not replaced while typing');

@@ -31,6 +31,9 @@
   WebSocket port of the bridge (default 8502; the app's bridge URL is ws://127.0.0.1:<port>).
 .PARAMETER Listen
   Interface to listen on (default 127.0.0.1 = this computer only).
+.PARAMETER AllowAny
+  Allow any device IP / port (same as -Allow "*:*"). This is also what you get when no -Allow
+  target is given at all (the default since bridge v1.2.0).
 .PARAMETER AllowWrites
   Forward Modbus write requests (FC 05/06/15/16). Read-only otherwise.
 .PARAMETER ReadOnly
@@ -60,6 +63,7 @@ param(
     [string[]]$Allow = @(),
     [int]$Port = 0,
     [string]$Listen = '',
+    [switch]$AllowAny,
     [switch]$AllowWrites,
     [switch]$ReadOnly,
     [string[]]$Origin = @(),
@@ -132,6 +136,7 @@ function Test-PortText([string]$p) {
 function Test-Target([string]$t) {
     $i = $t.LastIndexOf(':')
     if ($i -le 0) { return $false }
+    if ($t.Substring(0, $i) -ceq '*') { $p = $t.Substring($i + 1); return ($p -eq '*' -or (Test-PortText $p)) }
     if (-not (Test-HostName ($t.Substring(0, $i)))) { return $false }
     $p = $t.Substring($i + 1)
     return ($p -eq '*' -or (Test-PortText $p))
@@ -558,6 +563,7 @@ function Show-NextSteps([string]$hostName, [int]$port) {
 function Invoke-Install {
     Add-Allow @($PresetAllow)
     Add-Allow $Allow
+    if ($AllowAny) { Add-Allow @('*:*') }
     Add-Origin @($PresetOrigins)
     Add-Origin $Origin
     if ($AllowWrites -and $ReadOnly) { throw 'Use either -AllowWrites or -ReadOnly, not both.' }
@@ -589,7 +595,8 @@ function Invoke-Install {
 
     if ($old.Have) { Say ('Keeping the settings of the existing ' + $ConfigPath + ' (' + @($old.Allow).Count + ' target(s); new targets are added - -Reset starts a new list).') }
     if ($AllowList.Count -eq 0) {
-        Warn 'no -Allow targets: the bridge will refuse every device until you add one (run the installer again with -Allow <ip>:<port>, or edit bridge-config.json).'
+        $script:AllowList.Add('*:*')
+        Say 'No -Allow targets given: the bridge will allow any device IP / port (default). Give -Allow <ip>:<port> (with -Reset) to restrict it.'
     }
     # Before anything is written: stop the bridges of an earlier install, then the port must be free
     # (otherwise the new bridge could not start, and the settings on disk would not match the bridge
