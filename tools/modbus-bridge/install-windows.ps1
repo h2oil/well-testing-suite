@@ -19,6 +19,10 @@
   unless you give -Port / -Listen / -AllowWrites / -ReadOnly. -Reset starts from a new, empty
   configuration (the old file is kept as bridge-config.json.bak).
 
+  Allow list of an older installer: a bridge-config.json written before v1.2.1 has no
+  "allowMode". Its allow list is replaced by any device (the default since v1.2) unless you
+  give -Allow targets (added to it) or -KeepAllow (kept as it is); a note says so.
+
   Run it from PowerShell (Start menu > type PowerShell) in the folder that holds it:
     powershell -NoProfile -ExecutionPolicy Bypass -File .\install-windows.ps1 -Allow "192.168.1.10:502"
   "-ExecutionPolicy Bypass" applies to this one run only; it changes no system setting.
@@ -33,7 +37,10 @@
   Interface to listen on (default 127.0.0.1 = this computer only).
 .PARAMETER AllowAny
   Allow any device IP / port (same as -Allow "*:*"). This is also what you get when no -Allow
-  target is given at all (the default since bridge v1.2.0).
+  target is given at all (the default since bridge v1.2.0). Replaces an existing list.
+.PARAMETER KeepAllow
+  Keep the allow list of an existing bridge-config.json written by an older installer (without
+  it, that list is replaced by any device).
 .PARAMETER AllowWrites
   Forward Modbus write requests (FC 05/06/15/16). Read-only otherwise.
 .PARAMETER ReadOnly
@@ -64,6 +71,7 @@ param(
     [int]$Port = 0,
     [string]$Listen = '',
     [switch]$AllowAny,
+    [switch]$KeepAllow,
     [switch]$AllowWrites,
     [switch]$ReadOnly,
     [string[]]$Origin = @(),
@@ -97,7 +105,7 @@ $StartCmd = Join-Path $InstallDir 'start-bridge.cmd'
 $ConfigPath = Join-Path $InstallDir 'bridge-config.json'
 $InstalledFiles = @('modbus-bridge.js', 'fake-slave.js', 'README.md', 'bridge-config.json', 'bridge-config.json.bak',
     'start-bridge.cmd', 'install-windows.ps1', 'bridge.log')
-$ConfigComment = 'WTS Modbus bridge settings. allow = the host:port targets the bridge may connect to. Running the installer again keeps these settings and adds new targets (-Reset starts over). Restart the bridge after editing.'
+$ConfigComment = 'WTS Modbus bridge settings. allow = the host:port targets the bridge may connect to (*:* = any device; allowMode any or list). Running the installer again keeps these settings and adds new -Allow targets (-AllowAny = any device, -Reset starts over). Restart the bridge after editing.'
 
 function Say([string]$text) { Write-Host $text }
 function Warn([string]$text) { Write-Host ('WARNING: ' + $text) -ForegroundColor Yellow }
@@ -486,7 +494,7 @@ function Install-Files {
 }
 function Read-OldConfig {
     # the bridge-config.json of an earlier install: its settings are the defaults of this run
-    $r = @{ Have = $false; Allow = @(); Port = 0; Listen = ''; Writes = $null; Origins = @(); AnyOrigin = $false; Verbose = $false }
+    $r = @{ Have = $false; Allow = @(); Mode = ''; Port = 0; Listen = ''; Writes = $null; Origins = @(); AnyOrigin = $false; Verbose = $false }
     if ($Reset -or -not (Test-Path -LiteralPath $ConfigPath)) { return $r }
     try { $c = [IO.File]::ReadAllText($ConfigPath) | ConvertFrom-Json } catch { $c = $null }
     if ($null -eq $c -or $c -is [array] -or $c -is [string] -or $c -is [ValueType]) {
@@ -507,6 +515,8 @@ function Read-OldConfig {
         else { Warn ("the existing listen address '" + $c.listen + "' is not an IPv4 address or localhost - not kept") }
     }
     if ($c.allowWrites -is [bool]) { $r.Writes = [bool]$c.allowWrites }
+    # "allowMode" is written by v1.2.1+ installers; without it the allow list is an older installer's
+    if (($c.allowMode -is [string]) -and ($c.allowMode -ceq 'any' -or $c.allowMode -ceq 'list')) { $r.Mode = $c.allowMode }
     foreach ($o in @($c.origins)) { if ($o -is [string] -and $o.Trim()) { $r.Origins += $o.Trim() } }
     $r.AnyOrigin = (($c.anyOrigin -is [bool]) -and $c.anyOrigin)
     $r.Verbose = (($c.verbose -is [bool]) -and $c.verbose)
@@ -519,9 +529,11 @@ function Write-Config([int]$port, [string]$listen, [bool]$writes, [string[]]$ori
     if ($writes) { $w = 'true' } else { $w = 'false' }
     if ($anyOrigin) { $any = 'true' } else { $any = 'false' }
     if ($verbose) { $verb = 'true' } else { $verb = 'false' }
+    if ($AllowList.Contains('*:*')) { $mode = 'any' } else { $mode = 'list' }
     $json = "{`n" +
         "  ""_comment"": " + (ConvertTo-JsonText $ConfigComment) + ",`n" +
         "  ""allow"": [" + $allowJson + "],`n" +
+        "  ""allowMode"": " + (ConvertTo-JsonText $mode) + ",`n" +
         "  ""port"": " + $port + ",`n" +
         "  ""listen"": " + (ConvertTo-JsonText $listen) + ",`n" +
         "  ""origins"": [" + $originsJson + "],`n" +
@@ -556,7 +568,7 @@ function Show-NextSteps([string]$hostName, [int]$port) {
     Say ('Installed in:  ' + $InstallDir)
     Say ('Settings:      ' + $ConfigPath + ' (restart the bridge after editing)')
     Say ('Start:         Start menu > ' + $AppName + '   (or "' + $StartCmd + '")')
-    Say ('Add a device:  powershell -NoProfile -ExecutionPolicy Bypass -File "' + (Join-Path $InstallDir 'install-windows.ps1') + '" -Allow <ip>:<port>   (keeps the other settings)')
+    Say ('Allow list:    powershell -NoProfile -ExecutionPolicy Bypass -File "' + (Join-Path $InstallDir 'install-windows.ps1') + '" -Allow <ip>:<port>   (only listed devices; adds to the list)  or  -AllowAny')
     Say ('Uninstall:     powershell -NoProfile -ExecutionPolicy Bypass -File "' + (Join-Path $InstallDir 'install-windows.ps1') + '" -Uninstall')
 }
 
@@ -576,7 +588,22 @@ function Invoke-Install {
     # The existing bridge-config.json supplies the defaults, so running the installer again (for one
     # more device, or -AllowWrites) never drops the other targets or changes the port.
     $old = Read-OldConfig
-    foreach ($e in (@($old.Allow) + @($NewAllow))) { if ($e -and -not $script:AllowList.Contains($e)) { $script:AllowList.Add($e) } }
+    # The allow list: -AllowAny (or '*:*') = any device; -Allow targets are added to the old list
+    # (an "any" list starts empty); -KeepAllow or a file with "allowMode" (v1.2.1+) keeps the old
+    # list; the list of an older installer (no "allowMode") is replaced by any device.
+    $oldAny = ((@($old.Allow).Count -eq 0) -or (@($old.Allow) -contains '*:*'))
+    $migrated = ''
+    if ($NewAllow.Contains('*:*')) { $script:AllowList.Add('*:*') }
+    elseif ($NewAllow.Count -gt 0) {
+        $base = @()
+        if (-not $oldAny) { $base = @($old.Allow) }
+        foreach ($e in ($base + @($NewAllow))) { if ($e -and -not $script:AllowList.Contains($e)) { $script:AllowList.Add($e) } }
+    }
+    elseif ($oldAny) { }
+    elseif ($KeepAllow -or $old.Mode) {
+        foreach ($e in @($old.Allow)) { if ($e -and -not $script:AllowList.Contains($e)) { $script:AllowList.Add($e) } }
+    }
+    else { $migrated = (@($old.Allow) -join ', ') }
     $origins = @()
     foreach ($o in (@($old.Origins) + @($NewOrigins))) { if ($o -and ($origins -notcontains $o)) { $origins += $o } }
     $port = 8502
@@ -593,10 +620,17 @@ function Invoke-Install {
     $healthHost = $listen
     if ($healthHost -eq '0.0.0.0') { $healthHost = '127.0.0.1' }
 
-    if ($old.Have) { Say ('Keeping the settings of the existing ' + $ConfigPath + ' (' + @($old.Allow).Count + ' target(s); new targets are added - -Reset starts a new list).') }
+    if ($migrated) {
+        Say ('Keeping the settings of the existing ' + $ConfigPath + ' (port, listen address, writes, origins).')
+        Say ('Allow-list ' + $migrated + ' replaced by any device (default since 1.2). Use -KeepAllow to keep it.')
+    } elseif ($old.Have -and $oldAny) {
+        Say ('Keeping the settings of the existing ' + $ConfigPath + ' (any device; -Allow <ip>:<port> restricts it, -Reset starts a new file).')
+    } elseif ($old.Have) {
+        Say ('Keeping the settings of the existing ' + $ConfigPath + ' (' + @($old.Allow).Count + ' target(s); new targets are added - -Reset starts a new list).')
+    }
     if ($AllowList.Count -eq 0) {
         $script:AllowList.Add('*:*')
-        Say 'No -Allow targets given: the bridge will allow any device IP / port (default). Give -Allow <ip>:<port> (with -Reset) to restrict it.'
+        Say 'No -Allow targets given: the bridge will allow any device IP / port (default). Give -Allow <ip>:<port> to restrict it.'
     }
     # Before anything is written: stop the bridges of an earlier install, then the port must be free
     # (otherwise the new bridge could not start, and the settings on disk would not match the bridge
