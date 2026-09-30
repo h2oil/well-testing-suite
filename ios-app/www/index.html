@@ -5314,6 +5314,14 @@ function renderFlare(body) {
             t.dist = r2>0 ? Math.sqrt(r2) : 0;
         });
 
+        // v3.1: the point-source radius D is measured from the flame centre (API 521). People
+        // stand at grade, so also give the furthest grade distance from the STACK BASE where the
+        // level is reached: downwind, the flame centre sits flameCX off the stack axis at height
+        // flameCY, so X = flameCX + √(D² − flameCY²); null when the sphere never reaches grade.
+        allThresh.forEach(t=>{
+            t.gradeDist = t.dist > flameCY ? flameCX + Math.sqrt(t.dist*t.dist - flameCY*flameCY) : null;
+        });
+
         // Sort ascending
         allThresh.sort((a,b)=>a.dist-b.dist);
 
@@ -6842,15 +6850,18 @@ const flareIds=['fl_flow','fl_nhv','fl_mw','fl_eff','fl_H','fl_D','fl_F','fl_tau
           </div>
           <div style="min-width:0;overflow-x:auto">
             <table class="dtable">
-              <tr><th>Threshold</th><th>kW/m&sup2;</th><th>BTU/hr/ft&sup2;</th><th>Radius (m)</th><th>Radius (ft)</th></tr>
+              <tr><th>Threshold</th><th>kW/m&sup2;</th><th>BTU/hr/ft&sup2;</th><th>Radius from flame centre (m)</th><th>Radius (ft)</th><th>At grade from stack base, downwind (m)</th><th>At grade (ft)</th></tr>
               ${fp.allThresh.map(t=>`<tr>
                 <td style="color:${t.col};font-weight:600;font-size:11px">${t.lbl}</td>
                 <td>${fmt(t.lev,2)}</td>
                 <td>${fmt(t.lev*316.998,0)}</td>
                 <td style="font-weight:700;color:${t.col}">${fmt(t.dist,1)}</td>
                 <td style="color:${t.col}">${fmt(t.dist*3.28084,0)}</td>
+                <td style="font-weight:700;color:${t.col}">${t.gradeDist==null?'not reached':fmt(t.gradeDist,1)}</td>
+                <td style="color:${t.col}">${t.gradeDist==null?'—':fmt(t.gradeDist*3.28084,0)}</td>
               </tr>`).join('')}
             </table>
+            <div style="font-size:11px;color:var(--text3);margin-top:6px"><b>Notes</b> API 521 point-source radius D = &radic;(&tau;&middot;F&middot;Q/(4&pi;K)) is measured from the flame centre (${fmt(fp.flameCY,1)} m above grade, ${fmt(fp.flameCX,1)} m downwind of the stack). At grade the level is reached out to flame offset + &radic;(D&sup2; &minus; h<sub>c</sub>&sup2;) from the stack base; &ldquo;not reached&rdquo; means the level never occurs at grade.</div>
           </div>
         </div></div>`;
 
@@ -6936,7 +6947,7 @@ const flareIds=['fl_flow','fl_nhv','fl_mw','fl_eff','fl_H','fl_D','fl_F','fl_tau
             ['Fraction Radiated',fp.F,''],
             ['Transmissivity',fp.tau,''],
         ];
-        fp.allThresh.forEach(t=>rows.push(['Radiation: '+t.lbl,t.dist.toFixed(1),'m']));
+        fp.allThresh.forEach(t=>{ rows.push(['Radiation: '+t.lbl+' (radius from flame centre)',t.dist.toFixed(1),'m']); rows.push(['Radiation: '+t.lbl+' (at grade from stack base, downwind)',t.gradeDist==null?'not reached':t.gradeDist.toFixed(1),t.gradeDist==null?'':'m']); });
         rows.push(['','','']);
         rows.push(['Exit Mach Number',fp.Ma.toFixed(4),'']);
         rows.push(['Noise Adjustment',fp.noiseAdj,'dB']);
@@ -6949,9 +6960,9 @@ const flareIds=['fl_flow','fl_nhv','fl_mw','fl_eff','fl_H','fl_D','fl_F','fl_tau
     window.flareExportPDF=function(){
         const fp=getFlameParams();
         const pair=(l,v)=>`<div class="pair"><span class="lbl">${l}</span><span class="val">${v}</span></div>`;
-        let threshHTML='<table><tr><th>Threshold</th><th>kW/m²</th><th>BTU/hr/ft²</th><th>Radius (m)</th><th>Radius (ft)</th></tr>';
+        let threshHTML='<table><tr><th>Threshold</th><th>kW/m²</th><th>BTU/hr/ft²</th><th>Radius from flame centre (m)</th><th>Radius (ft)</th><th>At grade from stack base (m)</th></tr>';
         fp.allThresh.forEach(t=>{
-            threshHTML+=`<tr><td>${t.lbl}</td><td>${fmt(t.lev,2)}</td><td>${fmt(t.lev*316.998,0)}</td><td style="font-weight:700">${fmt(t.dist,1)}</td><td>${fmt(t.dist*3.28084,0)}</td></tr>`;
+            threshHTML+=`<tr><td>${t.lbl}</td><td>${fmt(t.lev,2)}</td><td>${fmt(t.lev*316.998,0)}</td><td style="font-weight:700">${fmt(t.dist,1)}</td><td>${fmt(t.dist*3.28084,0)}</td><td>${t.gradeDist==null?'not reached':fmt(t.gradeDist,1)}</td></tr>`;
         });
         threshHTML+='</table>';
         exportReport('Flare Radiation Analysis — API 521',`
@@ -7275,6 +7286,7 @@ function renderPRV(body) {
                     <div class="fg-item"><label>Pipe Schedule / Friction f</label><input type="number" id="pi_f" value="0.018" step="0.001"></div>
                     <div class="fg-item"><label>Number of 90° Elbows</label><input type="number" id="pi_el" value="2" min="0"></div>
                     <div class="fg-item"><label>Number of Gate Valves</label><input type="number" id="pi_gv" value="1" min="0"></div>
+                    <div class="fg-item"><label>Rupture Disk in Inlet Line?</label><select id="pi_rd"><option value="no">No</option><option value="yes">Yes (K = 1.5)</option></select></div>
                     <div class="fg-item"><label>Gas Flowrate (lb/h)</label><input type="number" id="pi_w" value="50000"></div>
                     <div class="fg-item"><label>Gas Density at Inlet (lb/ft³)</label><input type="number" id="pi_rho" value="1.2" step="0.01"></div>
                   </div>
@@ -7297,7 +7309,7 @@ function renderPRV(body) {
                 </div>
               </div>
             </div>`;
-            loadInputs('prv_inlet', ['pi_ps','pi_id','pi_len','pi_f','pi_el','pi_gv','pi_w','pi_rho']);
+            loadInputs('prv_inlet', ['pi_ps','pi_id','pi_len','pi_f','pi_el','pi_gv','pi_rd','pi_w','pi_rho']);
         }
         // The tab body is rebuilt on every tab switch — re-tag the fresh inputs so
         // Metric mode keeps its labels/values (the units layer only tags on navigation).
@@ -7572,7 +7584,12 @@ window.calcPRVinlet = function() {
     const K_entrance = 0.5;               // sharp-edged entrance
     const K_elbow = nEl * 30 * f;        // 90° standard elbows
     const K_gate  = nGV * 8 * f;         // gate valves fully open
-    const K_total = K_pipe + K_entrance + K_elbow + K_gate;
+    // v3.1: a rupture disk upstream of the PRV (offered on the sizing tabs) sits in this inlet
+    // line and adds its resistance (K ≈ 1.5, the table value; use the certified KR when known).
+    const hasRD = !!($('pi_rd') && $('pi_rd').value === 'yes');
+    const K_rd = hasRD ? 1.5 : 0;
+    const K_total = K_pipe + K_entrance + K_elbow + K_gate + K_rd;
+    saveInputs('prv_inlet', ['pi_ps','pi_id','pi_len','pi_f','pi_el','pi_gv','pi_rd','pi_w','pi_rho']);
 
     // Crane TP-410: ΔP = K·ρ·V²/(2·gc), gc = 32.174 lbm·ft/(lbf·s²); /144 → psi.
     // (gc was missing, overstating ΔP 32×.)
@@ -7588,6 +7605,7 @@ window.calcPRVinlet = function() {
       <div class="rrow"><span class="rl">K (entrance)</span><span class="rv">${fmt(K_entrance,3)}</span></div>
       <div class="rrow"><span class="rl">K (${nEl} elbows)</span><span class="rv">${fmt(K_elbow,3)}</span></div>
       <div class="rrow"><span class="rl">K (${nGV} gate valves)</span><span class="rv">${fmt(K_gate,3)}</span></div>
+      ${hasRD?`<div class="rrow"><span class="rl">K (rupture disk)</span><span class="rv">${fmt(K_rd,3)}</span></div>`:''}
       <div class="rrow"><span class="rl">K Total</span><span class="rv">${fmt(K_total,3)}</span></div>
       <hr style="border-color:rgba(240,136,62,.15);margin:8px 0">
       <div class="rrow"><span class="rl">Inlet ΔP</span><span class="rv">${_uFmt(dP_psi,'pressure',2,'psi')} (${fmt(pct,2)}% of set)</span></div>
@@ -8527,6 +8545,7 @@ function renderSep(body){
           <div class="fg">
             <div class="fg-item"><label>Separator Capacity (bbls)</label><input type="number" id="sp_cap" value="17.4" step="0.1"></div>
             <div class="fg-item"><label>Fluid Level (%)</label><input type="number" id="sp_lvl" value="50" min="0" max="100"></div>
+            <div class="fg-item"><label>Level Basis</label><select id="sp_basis"><option value="vol" selected>% of vessel volume</option><option value="hh">% of ID height (horizontal vessel)</option></select><span style="font-size:10px;color:var(--text3)">A level gauge on a horizontal vessel reads height, not volume: 25 % of the ID holds 19.6 % of the volume.</span></div>
             <div class="fg-item"><label>Flow Rate (BPD)</label><input type="number" id="sp_q" value="6600"></div>
           </div>
           <div class="btn-row"><button class="btn btn-primary" onclick="calcSepRetention()">Calculate</button></div>
@@ -8546,23 +8565,28 @@ function renderSep(body){
         </div>
       </div>
     </div>`;
-    loadInputs('sep',['sp_cap','sp_lvl','sp_q']);
+    loadInputs('sep',['sp_cap','sp_lvl','sp_basis','sp_q']);
 }
 window.calcSepRetention=function(){
     const cap=parseFloat($('sp_cap').value),lvl=parseFloat($('sp_lvl').value),Q=parseFloat($('sp_q').value);
-    saveInputs('sep',['sp_cap','sp_lvl','sp_q']);
+    saveInputs('sep',['sp_cap','sp_lvl','sp_basis','sp_q']);
     // Input validation (NaN / out-of-range inputs used to print "NaN:NaN").
     const spErr=[];
     if(!isFinite(cap)||cap<=0) spErr.push('Separator capacity must be > 0');
     if(!isFinite(lvl)||lvl<0||lvl>100) spErr.push('Fluid level must be between 0 and 100 %');
     if(!isFinite(Q)||Q<=0) spErr.push('Flow rate must be > 0');
     if(spErr.length){$('sp_res').innerHTML=spErr.map(e=>'<div class="val-error">'+e+'</div>').join('');return;}
-    const fluidVol=cap*(lvl/100);
+    // v3.1: a horizontal vessel's level is a height fraction h of the ID; the liquid holds the
+    // circular-segment share of the volume, (θ − sin θ)/(2π) with θ = 2·acos(1 − 2h) (flat ends).
+    const hh=$('sp_basis')&&$('sp_basis').value==='hh';
+    const volFrac=hh?(t=>(t-Math.sin(t))/(2*Math.PI))(2*Math.acos(1-2*lvl/100)):lvl/100;
+    const fluidVol=cap*volFrac;
     const retMin=fluidVol/(Q/1440);            // t = V / q  (bbl ÷ bbl/min)
     // Round to whole seconds first so 1.995 min shows 2:00, not 1:60.
     const totSec=Math.round(retMin*60),mins=Math.floor(totSec/60),secs=totSec%60;
     const warn=retMin<1?'var(--red)':retMin<3?'var(--yellow)':'var(--green)';
     $('sp_res').innerHTML=`<div class="rbox" style="margin-top:12px"><div class="rbox-title">Retention Time</div>
+        ${hh?`<div class="rrow"><span class="rl">Liquid share of vessel volume (${fmt(lvl,1)} % of ID height)</span><span class="rv">${fmt(volFrac*100,1)} %</span></div>`:''}
         <div class="rrow"><span class="rl">Fluid Volume in Sep.</span><span class="rv">${fmt(fluidVol,2)} bbls (${fmt(fluidVol*0.158987,3)} m³)</span></div>
         <div class="rrow"><span class="rl">Retention Time</span><span class="rv" style="color:${warn}">${mins}:${secs.toString().padStart(2,'0')} (mm:ss)</span></div>
         <div class="rrow"><span class="rl">Retention Time</span><span class="rv" style="color:${warn}">${fmt(retMin,2)} minutes</span></div>
@@ -8704,7 +8728,7 @@ function renderOilGas(body){
       <div id="og_prism_host"></div>
     </div><div>
       <div class="card"><div class="card-title">How It Works</div>
-        <div class="info-bar">Oil rate: the hydrometer API is corrected to 60°F at the hydrometer temperature (API MPMS 11.1 / ASTM D1250 Table 5A) and the meter volume is corrected from oil line temperature to 60°F with the Table 6A VCF. Gas rate uses the same AGA-3 engine as the AGA-3 and Orifice Plate Selection pages: the AGA-3 / API MPMS 14.3.1 flange-tap discharge coefficient (iterated on Reynolds number), the expansion factor, and supercompressibility Fpv = 1/&radic;Z from the Dranchuk &amp; Abou-Kassem (1975) Z-factor with Standing (1977) pseudo-critical properties (valid 1.0 &lt; Tpr &le; 3.0, 0.2 &le; Ppr &lt; 30; a note is shown outside that range). Base conditions: the header &quot;Std&quot; setting, or 60°F / 14.73 psia while it is on &quot;calculator default&quot; (the Gas volume basis row shows the one used). Differential pressure is inH2O at 60°F (27.707 inH2O per psi). GOR = Gas Rate / Oil Rate; CGR = Oil Rate / Gas Rate; either shows — when its denominator is zero.</div>
+        <div class="info-bar">Oil rate: the hydrometer API is corrected to 60°F at the hydrometer temperature (API MPMS 11.1 / ASTM D1250 Table 5A) and the meter volume is corrected from oil line temperature to 60°F with the Table 6A VCF. Gas rate uses the same AGA-3 engine as the AGA-3 and Orifice Plate Selection pages: the AGA-3 / API MPMS 14.3.1 flange-tap discharge coefficient (iterated on Reynolds number), the expansion factor, and supercompressibility Fpv = &radic;(Zb/Zf) (AGA-3 Part 3; the gas gravity is taken as a real gravity) from the Dranchuk &amp; Abou-Kassem (1975) Z-factor with Standing (1977) pseudo-critical properties (valid 1.0 &lt; Tpr &le; 3.0, 0.2 &le; Ppr &lt; 30; a note is shown outside that range). Base conditions: the header &quot;Std&quot; setting, or 60°F / 14.73 psia while it is on &quot;calculator default&quot; (the Gas volume basis row shows the one used). Differential pressure is inH2O at 60°F (27.707 inH2O per psi). GOR = Gas Rate / Oil Rate; CGR = Oil Rate / Gas Rate; either shows — when its denominator is zero.</div>
       </div>
     </div></div>`;
     loadInputs('oilgas',['og_int','og_api','og_ht','og_m0','og_m1','og_olt','og_bsw','og_mf','og_sf','og_run','og_plate','og_sp','og_dp','og_gg','og_gt']);
@@ -51300,7 +51324,8 @@ _registerPanel(6, {
 //
 //   A test system is split into sections separated by valves
 //   (wellhead → SSV → choke → heater → separator → flare). Each section
-//   has a rupture disc / relief valve set at MAWP + 10 % AND a hi-pilot
+//   has a rupture disc / relief valve set at or below MAWP (ASME VIII-1
+//   UG-134; 110 % of MAWP is the allowable accumulation) AND a hi-pilot
 //   set BELOW the RV that fires the ESD when section pressure rises
 //   toward the RV setting. When a downstream block fails or the choke
 //   plugs (catastrophic backflow), gas accumulates inside the section.
@@ -51594,25 +51619,40 @@ _registerPanel(6, {
             // Also solve for RD* such that t_fill at the existing HP gives tResp:
             var RDstar = HP + (qScfS * tResp * P_STD) / V_std;
 
-            var rd_relief = (RD <= MAWP) ? (' Note also that the RV setting (' + _u(RD, 'pressureG', 0, 'psig')
-                + ') is below MAWP+10 % (' + _u(MAWP * 1.10, 'pressureG', 0, 'psig')
-                + '); raising the RV may be permissible.') : '';
+            // v3.1: relief set pressure per ASME VIII-1 UG-134(a) / API 520 Part I §5 — a single
+            // relief device is set at or below MAWP; 110 % of MAWP is the allowable
+            // ACCUMULATION while relieving, not a set pressure (only a supplemental device of a
+            // multiple-device installation may be set up to 105 % of MAWP). The old text
+            // suggested raising the RV up to MAWP + 10 %, which is non-conservative.
+            var hasMawp = _isNum(MAWP) && MAWP > 0;
+            var rd_relief = (hasMawp && RD < MAWP - 0.5) ? (' Note also that the RV setting (' + _u(RD, 'pressureG', 0, 'psig')
+                + ') is below the section MAWP (' + _u(MAWP, 'pressureG', 0, 'psig')
+                + '); raising a single RV up to MAWP is permissible (ASME VIII-1 UG-134).') : '';
+            var rdRaise = (!hasMawp || RDstar <= MAWP + 0.5)
+                ? ', OR raise the RV to ≥ ' + _u(RDstar, 'pressureG', 0, 'psig') + (hasMawp ? ' (at or below MAWP)' : ' (only if MAWP allows)')
+                : ' (raising the RV to ' + _u(RDstar, 'pressureG', 0, 'psig') + ' would put its set pressure above MAWP — not permitted for a single relief device)';
 
             rationale = 'FAIL — at the chosen Hi-Pilot of ' + _u(HP, 'pressureG', 0, 'psig') + ', '
                 + 'the section reaches the RV in only ' + tFill.toFixed(2)
                 + ' s, which is shorter than the ' + tResp.toFixed(1) + ' s ESD response. '
                 + 'To pass: drop the Hi-Pilot to ≤ ' + _u(Math.max(0, HPstar), 'pressureG', 0, 'psig')
-                + ', OR raise the RV to ≥ ' + _u(RDstar, 'pressureG', 0, 'psig') + ' (only if MAWP allows), '
+                + rdRaise + ', '
                 + 'OR reduce the ESD response time below ' + tFill.toFixed(2) + ' s.'
                 + rd_relief;
         }
         result.rationale = rationale;
 
         // Engineering notes.
-        if (_isNum(MAWP) && RD > MAWP * 1.10 + 0.5) {
-            result.notes.push('Caution — RV setting (' + _u(RD, 'pressureG', 0, 'psig')
-                + ') exceeds MAWP+10 % (' + _u(MAWP * 1.10, 'pressureG', 0, 'psig')
-                + '). Verify RV sizing per ASME / API 521.');
+        if (_isNum(MAWP) && MAWP > 0 && RD > MAWP * 1.05 + 0.5) {
+            result.notes.push('Caution — RV set pressure (' + _u(RD, 'pressureG', 0, 'psig')
+                + ') is above 105 % of MAWP (' + _u(MAWP * 1.05, 'pressureG', 0, 'psig')
+                + '), the highest set pressure ASME VIII-1 UG-134 allows even for a supplemental device. '
+                + 'Set a single RV at or below MAWP (110 % of MAWP is the allowable accumulation while relieving, not a set pressure).');
+        } else if (_isNum(MAWP) && MAWP > 0 && RD > MAWP + 0.5) {
+            result.notes.push('Caution — RV set pressure (' + _u(RD, 'pressureG', 0, 'psig')
+                + ') is above MAWP (' + _u(MAWP, 'pressureG', 0, 'psig')
+                + '). ASME VIII-1 UG-134 allows this only for a supplemental device of a multiple-device installation '
+                + '(up to 105 % of MAWP); a single relief device must be set at or below MAWP.');
         }
         if (_isNum(HP) && _isNum(MAWP) && HP > MAWP) {
             result.notes.push('Caution — Hi-Pilot setting is ABOVE MAWP. Lower the Hi-Pilot '
