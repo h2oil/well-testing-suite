@@ -1091,8 +1091,10 @@ function createController(vizEl, mopts) {
             poke(); refreshNow(s);
         });
         h('esdReset', function (p, s) {
-            var C = s && s.surge && s.surge.comps, shut = !!(C && C[0] && !C[0].inlet && !C[1].inlet);
-            toast('ESD reset — reopening' + (shut ? ' · XV-201A/B still shut: open a T-201 inlet' : ''), shut ? 'bad' : 'ok'); poke(); refreshNow(s);
+            // the separator dump route: T-201 inlets, or (no surge tank in the rig-up) the T-301 inlets
+            var noSep = rigOut(s, 'separator'), noSurge = rigOut(s, 'surge'), C = s && s.surge && s.surge.comps, T = s && s.gauge && s.gauge.tanks;
+            var shutU = !noSep && !noSurge && !!(C && C[0] && !C[0].inlet && !C[1].inlet), shutG = !noSep && noSurge && !rigOut(s, 'gauge') && !!(T && T[0] && !T[0].inlet && !T[1].inlet);
+            toast('ESD reset — reopening' + (shutU ? ' · XV-201A/B still shut: open a T-201 inlet' : shutG ? ' · XV-301A/B still shut: open a T-301 inlet' : ''), shutU || shutG ? 'bad' : 'ok'); poke(); refreshNow(s);
         });
         h('switch', function (p) { toast('Gauge tank switched to ' + (p && p.tag ? p.tag : '') + (p && p.forced ? ' (manual)' : '')); poke(); });
         h('batch', function (p) {
@@ -1111,7 +1113,7 @@ function createController(vizEl, mopts) {
         h('control', function () { saveCtl(); poke(); if (cardRefs && cardRefs.act) cardRefs.act.__sig = ''; });
         h('divert', function (p) { if (p && p.msg) toast(p.msg.replace(/^T-[23]01 /, '')); });
         h('suction', function (p) { if (p && p.msg) toast(p.msg, 'bad'); poke(); });
-        h('pumpTrip', function (p) { toast('LCV-201 transfer SHUT (trip) — ' + (p && p.msg ? p.msg : ''), 'bad'); poke(); resig(); });
+        h('pumpTrip', function (p) { toast((p && p.action ? p.action.replace(/transfer shut$/, 'transfer SHUT') : 'LCV-201 transfer SHUT') + ' (trip) — ' + (p && p.msg ? p.msg : ''), 'bad'); poke(); resig(); });
         h('pumpReset', function (p) { toast(p && p.msg ? p.msg : 'LCV-201 trip reset', 'ok'); poke(); resig(); });
         h('rigup', function (p) { if (p && p.rig && typeof _sim.getRigup === 'function') { try { writeRig(_sim.getRigup()); } catch (e) {} }
             if (p && p.msg) toast(p.msg.replace(/^Rig-up: /, 'Rig-up — ')); poke(); resig(); renderRig(state(), true); });
@@ -1156,7 +1158,7 @@ function createController(vizEl, mopts) {
     function resetXfer() {
         if (!_sim || typeof _sim.resetTrip !== 'function') return;
         var r = null; try { r = _sim.resetTrip(); } catch (e) {}
-        if (r && !r.ok) toast('Cannot reset LCV-201 — ' + (r.blocking || []).join('; ').replace(/LSHH_GT: |PUMP_DRYRUN: /g, ''), 'bad');
+        if (r && !r.ok) toast('Cannot reset ' + (rigOut(state(), 'surge') ? 'the LSHH-301 trip' : 'LCV-201') + ' — ' + (r.blocking || []).join('; ').replace(/LSHH_GT: |PUMP_DRYRUN: /g, ''), 'bad');
         poke(); resig();
     }
     // rig-up toggles (Rig-up card): out-of-rig equipment is bypassed in the sim, the 2D schematic and the 3D view
@@ -1984,8 +1986,11 @@ function createController(vizEl, mopts) {
     function pumpResetRow(st) {
         var p = xferOf(st);
         if (!p || !p.trip) return '';
-        return '<div class="wtsl-actr"><span class="wtsl-hl">LCV-201 trip</span><button type="button" data-wts-ui class="wtsl-b trip" data-act="xfer-reset"' +
-            (p.canReset ? ' title="Reset the latched LCV-201 transfer trip"' : ' disabled title="' + esc(p.resetBlock || 'permissive not met') + '"') + '>Reset LCV-201' + tripTag(p.trip) + '</button></div>';
+        // no surge tank in the rig-up: LSHH-301 latched the T-301 inlet only (there is no LCV-201 in line)
+        var nx = rigOut(st, 'surge');
+        return '<div class="wtsl-actr"><span class="wtsl-hl">' + (nx ? 'LSHH-301 trip' : 'LCV-201 trip') + '</span><button type="button" data-wts-ui class="wtsl-b trip" data-act="xfer-reset"' +
+            (p.canReset ? ' title="' + (nx ? 'Reset the latched LSHH-301 trip' : 'Reset the latched LCV-201 transfer trip') + '"' : ' disabled title="' + esc(p.resetBlock || 'permissive not met') + '"') + '>' +
+            (nx ? 'Reset LSHH-301' : 'Reset LCV-201' + tripTag(p.trip)) + '</button></div>';
     }
     function strokeRow(eq, o) {
         var v = Math.round(num(o && o.strokeS, 6));
