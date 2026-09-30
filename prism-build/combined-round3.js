@@ -268,6 +268,25 @@
         return num / (1e5 * P);
     }
 
+    // Undersaturated oil FVF (P > Pb): co = A/(1e5·P) (Vasquez-Beggs) integrated
+    // from Pb to P, ln(Bo/Bob) = −∫co dP = −(A/1e5)·ln(P/Pb), so
+    //   Bo = Bob · (P/Pb)^(−A/1e5).
+    // At or below Pb it returns Bob unchanged.
+    function Bo_undersaturated(Bob, API, SG_g, Rs, P, T_F, Pb) {
+        if (!_isFiniteNum(Bob) || !_isFiniteNum(P) || !_isFiniteNum(Pb) || !(Pb > 0) || P <= Pb) return Bob;
+        var A = -1433 + 5 * Rs + 17.2 * T_F - 1180 * SG_g + 12.61 * API;
+        if (!_isFiniteNum(A) || A <= 0) return Bob;
+        return Bob * Math.pow(P / Pb, -A / 1e5);
+    }
+
+    // Undersaturated oil viscosity (Vasquez-Beggs 1980):
+    //   μo = μob · (P/Pb)^m,  m = 2.6·P^1.187·exp(−11.513 − 8.98e−5·P).
+    function mu_o_vasquezBeggs(mu_ob, P, Pb) {
+        if (!_isFiniteNum(mu_ob) || !_isFiniteNum(P) || !_isFiniteNum(Pb) || !(Pb > 0) || P <= Pb) return mu_ob;
+        var m = 2.6 * Math.pow(P, 1.187) * Math.exp(-11.513 - 8.98e-5 * P);
+        return mu_ob * Math.pow(P / Pb, m);
+    }
+
 
     // ═══════════════════════════════════════════════════════════════
     // SECTION 3 — CORRELATIONS (GAS)
@@ -448,8 +467,15 @@
         return (1 + dVwT) * (1 + dVwP);
     }
 
-    // McCain water viscosity, with salinity correction.
-    function mu_w_meehan(T_F, salinity_ppm) {
+    // McCain water viscosity, with salinity correction; with a pressure P (psia)
+    // the McCain (1991) pressure factor 0.9994 + 4.0295e−5·P + 3.1062e−9·P² is
+    // applied (atmospheric value when P is omitted).
+    function mu_w_meehan(T_F, salinity_ppm, P) {
+        var mu1 = _mu_w_atm(T_F, salinity_ppm);
+        if (!_isFiniteNum(mu1) || !_isFiniteNum(P) || P <= 0) return mu1;
+        return mu1 * (0.9994 + 4.0295e-5 * P + 3.1062e-9 * P * P);
+    }
+    function _mu_w_atm(T_F, salinity_ppm) {
         if (!_isFiniteNum(T_F)) return NaN;
         var S = (_isFiniteNum(salinity_ppm) ? salinity_ppm : 0) / 1e4;  // wt %
         // Reference fresh-water viscosity from McCain (1991) approximation:
@@ -542,6 +568,8 @@
         mu_oD_beggsRobinson:  mu_oD_beggsRobinson,
         mu_o_beggsRobinson:   mu_o_beggsRobinson,
         co_vasquezBeggs:      co_vasquezBeggs,
+        Bo_undersaturated:    Bo_undersaturated,
+        mu_o_vasquezBeggs:    mu_o_vasquezBeggs,
         // Gas
         Tpc_sutton:           Tpc_sutton,
         Ppc_sutton:           Ppc_sutton,
@@ -600,17 +628,21 @@
                     Rs = Rs_standing(s.API, s.SG_g, P, T);
                 }
             }
-            // 3. Bo.
-            var Bo = _isFiniteNum(s.Bo) ? s.Bo : Bo_standing(s.API, s.SG_g, Rs, T);
-            // 4. Dead + live oil viscosity.
+            // 3. Bo (Standing at saturation; above Pb shrunk by the integrated
+            //    Vasquez-Beggs compressibility).
+            var Bo = _isFiniteNum(s.Bo) ? s.Bo
+                : Bo_undersaturated(Bo_standing(s.API, s.SG_g, Rs, T), s.API, s.SG_g, Rs, P, T, Pb);
+            // 4. Dead + live oil viscosity (Beggs-Robinson at saturation;
+            //    Vasquez-Beggs above Pb).
             var mu_oD = mu_oD_beggsRobinson(s.API, T);
-            var mu_o  = _isFiniteNum(s.mu_o) ? s.mu_o : mu_o_beggsRobinson(mu_oD, Rs);
+            var mu_o  = _isFiniteNum(s.mu_o) ? s.mu_o
+                : mu_o_vasquezBeggs(mu_o_beggsRobinson(mu_oD, Rs), P, Pb);
             // 5. Oil compressibility.
             var co_   = _isFiniteNum(s.co) ? s.co : co_vasquezBeggs(s.API, s.SG_g, Rs, P, T);
             if (!_isFiniteNum(co_) || co_ <= 0) co_ = 10e-6;
             // 6. Water properties (always needed for ct).
             var Bw  = _isFiniteNum(s.Bw)   ? s.Bw   : Bw_meehan(P, T);
-            var mu_w_ = _isFiniteNum(s.mu_w)? s.mu_w : mu_w_meehan(T, s.salinity_ppm);
+            var mu_w_ = _isFiniteNum(s.mu_w)? s.mu_w : mu_w_meehan(T, s.salinity_ppm, P);
             var cw_   = _isFiniteNum(s.cw) ? s.cw   : cw_dodson(P, T, s.Rsw);
             // 7. Phase saturations.
             // Above bubble point — no free gas.
@@ -671,7 +703,7 @@
         } else if (s.fluidType === 'water') {
             // Water producer / injector — single-phase water.
             var Bw_w = _isFiniteNum(s.Bw)  ? s.Bw  : Bw_meehan(P, T);
-            var mu_w = _isFiniteNum(s.mu_w)? s.mu_w: mu_w_meehan(T, s.salinity_ppm);
+            var mu_w = _isFiniteNum(s.mu_w)? s.mu_w: mu_w_meehan(T, s.salinity_ppm, P);
             var cw_w = _isFiniteNum(s.cw)  ? s.cw  : cw_dodson(P, T, s.Rsw);
             // ct for full water: cw + cf
             var ct_total = ct(0, 0, 1, cw_w, 0, 0, s.cf);
@@ -10649,7 +10681,7 @@ _registerPanel(6, {
         if (!w || typeof w !== 'object') return b('Well', { available: 'false' }, null, 1);
         var gas = w.fluid === 'gas';
         var units = { q: gas ? 'Mscf/d' : 'STB/d', B: gas ? 'RB/Mscf' : 'RB/STB', mu: 'cp', ct: '1/psi', h: 'ft',
-                      phi: 'fraction', rw: 'ft', pi: 'psia', T_R: 'degF', tp: 'hr', tShut: 'hr', pwf0: 'psia' };
+                      phi: 'fraction', rw: 'ft', pi: 'psia', T_R: 'degR', tp: 'hr', tShut: 'hr', pwf0: 'psia' };   // T_R is Rankine (°F + 459.67)
         var keys = ['fluid', 'testType', 'q', 'B', 'mu', 'ct', 'h', 'phi', 'rw', 'pi', 'T_R', 'sg', 'tp', 'tShut', 'pwf0'];
         var dflt = Array.isArray(w.defaulted) ? w.defaulted : [];
         var children = [];
