@@ -55,7 +55,7 @@ function readUi() {
 function writeUi(u) { try { if (G.localStorage) G.localStorage.setItem(UI_KEY, JSON.stringify(u)); } catch (e) {} }
 
 // ─── display formatting (field units in, WTS_units display out) ─────────────
-var BOOL_TXT = { esd_open: ['OPEN', 'CLOSED'], esd_tripped: ['TRIPPED', 'NORMAL'], pump_running: ['RUNNING', 'STOPPED'], heater_bypass: ['OPEN', 'SHUT'] };
+var BOOL_TXT = { esd_open: ['OPEN', 'CLOSED'], esd_tripped: ['TRIPPED', 'NORMAL'], pump_running: ['OPEN', 'SHUT'], heater_bypass: ['OPEN', 'SHUT'] };
 function unitLabel(V) {
     if (!V) return '';
     if (V.key === 'oil_rate') return 'STB/d';
@@ -458,11 +458,15 @@ function createController(root) {
         tank(440, 90, 'T-201B Surge', v.surge_lvl_b, null, 'surge_lvl_b', 'xv201b', 'XV-201B');
         tank(700, 90, 'T-301A Gauge', v.gauge_lvl_a, null, 'gauge_lvl_a', 'xv301a', 'XV-301A');
         tank(810, 90, 'T-301B Gauge', v.gauge_lvl_b, null, 'gauge_lvl_b', 'xv301b', 'XV-301B');
-        // pump
-        var pr = v.pump_running, px = 610, py = 120;
-        ctx.strokeStyle = pr == null ? '#6e7681' : pr ? '#3fb950' : '#8b949e'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(px, py, 22, 0, Math.PI * 2); ctx.stroke();
-        ctx.fillStyle = '#e6edf3'; ctx.font = 'bold 11px sans-serif'; ctx.fillText('P-201', px - 16, py + 4);
-        ctx.font = '10px sans-serif'; ctx.fillText(pr == null ? '—' : pr ? 'RUNNING' : 'STOPPED', px - 22, py + 40);
+        // surge → gauge transfer: LCV-201, driven by the surge tank pressure (no pump; the pump_running variable is
+        // the transfer state, snapshot surge.pump.on). P-201 sits downstream of the gauge tank.
+        var pr = v.pump_running, px = 610, py = 120, pc = pr == null ? '#6e7681' : pr ? '#3fb950' : '#8b949e';
+        ctx.fillStyle = pc; ctx.strokeStyle = '#e6edf3'; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.moveTo(px - 18, py - 12); ctx.lineTo(px, py); ctx.lineTo(px - 18, py + 12); ctx.closePath(); ctx.fill(); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(px + 18, py - 12); ctx.lineTo(px, py); ctx.lineTo(px + 18, py + 12); ctx.closePath(); ctx.fill(); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px, py - 20); ctx.stroke(); ctx.beginPath(); ctx.arc(px, py - 24, 7, Math.PI, 0); ctx.closePath(); ctx.stroke();
+        ctx.fillStyle = '#e6edf3'; ctx.font = 'bold 11px sans-serif'; ctx.fillText('LCV-201', px - 24, py + 30);
+        ctx.font = '10px sans-serif'; ctx.fillText(pr == null ? '—' : pr ? 'OPEN' : 'SHUT', px - 12, py + 44);
         // status column
         var sx = 950, lines = [
             ['ESD', v.esd_tripped ? 'TRIPPED' : v.esd_tripped === 0 ? 'NORMAL' : '—', v.esd_tripped ? '#f85149' : '#3fb950'],

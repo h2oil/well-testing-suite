@@ -130,7 +130,7 @@ module.exports = [
     run(app, assert) {
       const S = app.win.WTS_sim;
       const flows = [['base', S.SAMPLE_FLOW], ['high', S.flowFromInputs(app.toWin({ Qo: 6000, Qw: 3000, Qg: 12 }))], ['low', S.flowFromInputs(app.toWin({ Qo: 30, Qw: 3, Qg: 0.3 }))]];
-      const faults = ['surgePumpFail', 'oilDumpStuckOpen', 'waterDumpStuckClosed', 'slugging', 'pcvStuckOpen'];
+      const faults = ['surgePumpFail', 'xferStuckClosed', 'oilDumpStuckOpen', 'waterDumpStuckClosed', 'slugging', 'pcvStuckOpen'];
       let steps = 0, dirChecks = 0, ops = 0;
       flows.forEach(([name, flow], fi) => {
         const s = sim(app, { seed: 60 + fi }, flow), rnd = lcg(1000 + fi);
@@ -193,7 +193,7 @@ module.exports = [
       assert.ok(!st.esd.tripped, 'short block does not trip');
       // LAH-201 both-high clears when auto-divert is switched off (the alarm belongs to the auto-divert function)
       const h = sim(app, { config: NOISE_OFF, seed: 73 });
-      h.setValve('surge', 1, false); h.setAutoDivert('surge', true); h.setFault('surgePumpFail', true);
+      h.setValve('surge', 1, false); h.setAutoDivert('surge', true); h.setFault('xferStuckClosed', true);   // no transfer out of T-201
       let seen = false;
       for (let i = 0; i < 3 * 720 && !seen; i++) { h.advance(5); seen = alarmIds(h.getState()).indexOf('LAH_SURGE_BOTH') >= 0; }
       assert.ok(seen, 'LAH_SURGE_BOTH raised');

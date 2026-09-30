@@ -43,7 +43,7 @@ var ST_RANK = { ok: 0, evt: 1, hyd: 2, warn: 3, alarm: 4 };
 var SEV_RANK = { info: 1, hyd: 2, warn: 3, alarm: 4, trip: 5 };
 var EQ_IDS = ['wellhead', 'esd', 'choke', 'heater', 'separator', 'flare', 'surge', 'pump', 'gauge'];
 var STEP = { wellhead: '①', esd: '②', choke: '③', heater: '④', separator: '⑤',
-    flare: '⑥', surge: '⑦', pump: '⑧', gauge: '⑨' };
+    flare: '⑥', surge: '⑦', gauge: '⑧', pump: '⑨' };          // P-201 is downstream of the gauge tank (T-301 → export)
 var TAG = { wellhead: 'WH-101', esd: 'SDV-101', choke: 'CK-101', heater: 'H-101', separator: 'V-101',
     flare: 'FS-401', surge: 'T-201', pump: 'P-201', gauge: 'T-301' };
 var NAME = { wellhead: 'Wellhead', esd: 'ESD Valve (SSV)', choke: 'Choke Manifold', heater: 'Line Heater',
@@ -56,7 +56,14 @@ var SEG_DEF = [['4', 'multi', 4.026], ['4', 'multi', 4.026], ['6', 'multi', 6.06
     ['6', 'gas', 6.065], ['3', 'liquid', 3.068]];
 var FAULTS = [['pcvStuckClosed', 'PCV-101 stuck closed'], ['pcvStuckOpen', 'PCV-101 stuck open'],
     ['oilDumpStuckOpen', 'LCV-102 stuck open'], ['oilDumpStuckClosed', 'LCV-102 stuck closed'],
-    ['waterDumpStuckClosed', 'LCV-101 stuck closed'], ['surgePumpFail', 'P-201 failed'], ['slugging', 'Slug flow']];
+    ['waterDumpStuckClosed', 'LCV-101 stuck closed'], ['xferStuckClosed', 'LCV-201 stuck closed (surge transfer)'],
+    ['surgePumpFail', 'P-201 failed (gauge tank pump)'], ['slugging', 'Slug flow']];
+// Rig-up (which equipment is in the spread) — persisted in localStorage 'wts_sim_rigup' (a wts_* key, so it travels in
+// project files); the list and the rules come from WTS_sim.RIGUP / normRigup, this is the fallback.
+var RIG_KEY = 'wts_sim_rigup';
+var RIG_FALLBACK = [['esd', 'SDV-101', 'ESD valve (SSV)', 1], ['choke', 'CK-101', 'Choke manifold / data header', 1], ['heater', 'H-101', 'Line heater (steam exchanger)'],
+    ['separator', 'V-101', 'Test separator'], ['surge', 'T-201', 'Surge tank'], ['gauge', 'T-301', 'Gauge tank'],
+    ['pump', 'P-201', 'Transfer pump (gauge tank → export / burner)'], ['flare', 'FS-401', 'Flare / burner']];
 var VIEWS = [['overview', 'Overview', '0'], ['wellhead', 'Wellhead & Choke', '1'], ['separator', 'Separator', '2'],
     ['tanks', 'Tanks', '3'], ['flare', 'Flare', '4'], ['process', 'Process', '5']];
 var OVERLAYS = [['phase', 'Phase'], ['pressure', 'Pressure'], ['temperature', 'Temperature'], ['erosion', 'Erosion']];
@@ -345,7 +352,9 @@ function summaryOf(st) {
             gor: isNum(R.gor_scf_stb) ? R.gor_scf_stb : null, bsw_pct: isNum(R.bsw_pct) ? R.bsw_pct : null },
         shrink_pct: isNum(R.shrink_pct) ? R.shrink_pct : null,
         batches: B.slice(Math.max(0, B.length - 10)),
-        alarms: ids
+        alarms: ids,
+        rigup: st.rigup ? { full: !!st.rigup.full, sig: String(st.rigup.sig || ''), notes: (st.rigup.notes || []).slice(),
+            out: rigItems().filter(function (it) { return st.rigup[it.key] === false; }).map(function (it) { return it.tag; }) } : null
     });
 }
 function bpOf(w) { return w >= 1000 ? 'lg' : w >= 768 ? 'md' : 'sm'; }
@@ -685,6 +694,28 @@ var CSS = [
 '.wtsl-viz.is-max .wtsl-stage{height:auto;flex:1 1 0;min-height:0}',
 '@media (orientation:landscape) and (max-height:500px){.wtsl-viz.is-max[data-bp=sm] .wtsl-hud{height:44px}.wtsl-viz.is-max[data-bp=sm] .wtsl-tiles{grid-template-columns:repeat(6,1fr);grid-template-rows:44px;height:44px}',
 ' .wtsl-viz.is-max[data-bp=sm] .wtsl-tile{border-top:0!important;border-left:1px solid var(--hmi-line)!important;padding:4px 7px}.wtsl-viz.is-max[data-bp=sm] .wtsl-tile .v2{display:none}}',
+/* Rig-up card (a page card below the live view, host theme; report-friendly .rrow rows + Note boxes) */
+'.wtsl-rig-intro{font-size:12px;color:var(--text2,#8b949e);margin:-2px 0 8px;line-height:1.4}',
+'.wtsl-rig-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:28px}',
+'@media (max-width:760px){.wtsl-rig-list{grid-template-columns:minmax(0,1fr)}}',
+'.wtsl-rig .rrow.wtsl-rig-row{gap:10px;padding:6px 0}',
+'.wtsl-rig .wtsl-rig-row .rl{flex:1 1 auto;min-width:0;font-size:13px}',
+'.wtsl-rig .wtsl-rig-row .rv{font-size:12px;font-weight:600;white-space:nowrap;color:var(--green,#3fb950)}',
+'.wtsl-rig .wtsl-rig-row.off .rv{color:var(--yellow,#d29922)}.wtsl-rig .wtsl-rig-row.info .rv{color:var(--text2,#8b949e);white-space:normal;text-align:right}',
+'.wtsl-rig .wtsl-rig-row.off .rl{color:var(--text2,#8b949e)}',
+'.wtsl-sw{position:relative;flex:none;box-sizing:border-box;width:42px;height:24px;margin:0;padding:0;border-radius:12px;border:1px solid var(--border,#30363d);',
+' background:var(--bg3,#21262d);cursor:pointer;transition:background .15s,border-color .15s}',
+'.wtsl-sw i{position:absolute;top:50%;left:3px;width:16px;height:16px;margin-top:-8px;border-radius:50%;background:var(--text3,#6e7681);transition:left .15s,background .15s}',
+'.wtsl-sw[aria-checked=true]{background:rgba(63,185,80,.22);border-color:var(--green,#3fb950)}',
+'.wtsl-sw[aria-checked=true] i{left:21px;background:var(--green,#3fb950)}',
+'.wtsl-sw:disabled{opacity:.5;cursor:not-allowed}',
+'.wtsl-sw:focus-visible,.wtsl-rig-all:focus-visible{outline:2px solid var(--accent,#f0883e);outline-offset:2px}',
+'.wtsl-rig-note{margin-top:8px;padding:7px 10px;border-left:3px solid var(--yellow,#d29922);background:rgba(210,153,34,.08);border-radius:4px;font-size:12px;line-height:1.45;color:var(--text,#e6edf3)}',
+'.wtsl-rig-note b{margin-right:6px;color:var(--yellow,#d29922)}',
+'.wtsl-rig-foot{margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}',
+'.wtsl-rig-all{height:28px;padding:0 12px;border-radius:6px;border:1px solid var(--border,#30363d);background:var(--bg2,#161b22);color:var(--text,#e6edf3);font:inherit;font-size:12px;cursor:pointer}',
+'.wtsl-rig-all:disabled{opacity:.5;cursor:default}',
+'.wtsl-rigout{font-size:11.5px;color:#e3b341;background:rgba(210,153,34,.12);border-radius:6px;padding:6px 8px}',
 '@keyframes wtsl-pulse{0%,100%{opacity:1}50%{opacity:.35}}',
 '@keyframes wtsl-flash{0%{opacity:1}50%{opacity:.55}}',
 '@keyframes wtsl-shim{0%{left:-40%}100%{left:100%}}',
@@ -703,11 +734,12 @@ var _resetPending = false;  // project Open/New → reset on the next applied fl
 var _alarmMap = {};         // operator lifecycle map (UNACK/ACK/RTN)
 var _ctl = null;            // current controller
 var _sessionHooked = false;
+var _rigPending = false;     // project Open/New → re-apply the saved rig-up on the next applied flow
 
 function hookSession() {
     if (_sessionHooked || typeof document === 'undefined' || !document.addEventListener) return;
     _sessionHooked = true;
-    var onProj = function () { _resetPending = true; _alarmMap = {}; };
+    var onProj = function () { _resetPending = true; _alarmMap = {}; _rigPending = true; };
     document.addEventListener('wts:project-loaded', onProj);
     document.addEventListener('wts:project-new', onProj);
 }
@@ -732,6 +764,48 @@ function readPrefs() {
     return p;
 }
 function writePrefs(p) { try { if (G.localStorage) G.localStorage.setItem(PREFS_KEY, JSON.stringify(p)); } catch (e) {} }
+// Rig-up items [{key, tag, name, locked, why}] from WTS_sim (fallback: local list)
+function rigItems() {
+    var S = G.WTS_sim;
+    if (S && Array.isArray(S.RIGUP) && S.RIGUP.length) return S.RIGUP;
+    return RIG_FALLBACK.map(function (r) { return { key: r[0], tag: r[1], name: r[2], locked: !!r[3], why: '' }; });
+}
+// saved rig-up request {key: bool} (only booleans for known keys; anything else → null = full rig-up)
+function readRig() {
+    try {
+        var raw = G.localStorage && G.localStorage.getItem(RIG_KEY);
+        var o = raw ? JSON.parse(raw) : null;
+        if (!o || typeof o !== 'object' || Array.isArray(o)) return null;
+        var out = {}, n = 0;
+        rigItems().forEach(function (it) { if (typeof o[it.key] === 'boolean') { out[it.key] = o[it.key]; n++; } });
+        return n ? out : null;
+    } catch (e) { return null; }
+}
+function writeRig(r) {
+    try {
+        if (!G.localStorage) return;
+        var full = true; for (var k in r) if (Object.prototype.hasOwnProperty.call(r, k) && r[k] === false) full = false;
+        if (full) G.localStorage.removeItem(RIG_KEY); else G.localStorage.setItem(RIG_KEY, JSON.stringify(r));
+    } catch (e) {}
+}
+// equipment out of the rig-up (snapshot st.rigup; older snapshots: everything in)
+function rigOut(st, id) { var r = st && st.rigup; return !!(r && r[id] === false); }
+// surge outlet transfer LCV-201 (no pump; snapshot surge.transfer, legacy surge.pump) — short state text
+function xferOf(st) { var su = st && st.surge; return su ? (su.transfer || su.pump || null) : null; }
+function xferShort(st) {
+    var p = xferOf(st);
+    if (!p) return '—';
+    if (rigOut(st, 'surge')) return 'OUT';
+    return p.failed ? 'STUCK SHUT' : p.tripped ? 'TRIP' : p.blocked ? 'BLOCKED' : p.on ? (p.lowDP ? 'OPEN · LOW ΔP' : 'OPEN') : 'SHUT';
+}
+// P-201 (gauge tank → export / burner) — state text
+function pumpShort(st) {
+    var p = st && st.gauge && st.gauge.pump;
+    if (!p) return '—';
+    if (p.mode === 'none') return 'OUT (no gauge tank)';
+    if (p.mode === 'gravity') return 'NOT IN RIG-UP · gravity drain';
+    return p.failed ? 'FAILED' : p.on ? 'RUNNING' : 'STANDBY';
+}
 function ssGet(k) { try { return G.sessionStorage ? G.sessionStorage.getItem(k) : null; } catch (e) { return null; } }
 function ssSet(k, v) { try { if (G.sessionStorage) G.sessionStorage.setItem(k, v); } catch (e) {} }
 function track(name, params) { try { if (typeof G.h2oilTrack === 'function') G.h2oilTrack(name, params || {}); } catch (e) {} }
@@ -902,6 +976,54 @@ function createController(vizEl, mopts) {
         E.speedBtns = Array.prototype.slice.call(tb.querySelectorAll('.wtsl-speeds [data-act=speed]'));
         E.h = {};
         Array.prototype.forEach.call(hud.querySelectorAll('[data-h]'), function (e) { E.h[e.getAttribute('data-h')] = e; });
+        buildRig(hostCard);
+    }
+    // ── Rig-up card: a page card right below the live view (outside the HMI) with one switch per item ──
+    function buildRig(hostCard) {
+        var parent = hostCard && hostCard.parentNode;
+        if (!parent || !parent.insertBefore) return;
+        var old = hostEl('wtsl_rigup'); if (old && old.parentNode) old.parentNode.removeChild(old);
+        var c = mk('div', 'card wtsl-rig'); c.id = 'wtsl_rigup'; c.setAttribute('data-wts-ui', '');
+        c.innerHTML = '<div class="card-title">Rig-up</div>' +
+            '<div class="wtsl-rig-intro">Switch equipment in or out of the surface well-test spread. The flow path, pressures, temperatures, levels, rates, alarms and trips, ' +
+            'the 2D schematic and the 3D view all follow. There is no pump between the surge tank and the gauge tank: LCV-201 transfers on the surge tank pressure.</div>' +
+            '<div class="wtsl-rig-list"></div><div class="wtsl-rig-notes"></div>' +
+            '<div class="wtsl-rig-foot"><button type="button" class="wtsl-rig-all" data-rig-act="all">Restore full rig-up</button></div>';
+        parent.insertBefore(c, hostCard.nextSibling);
+        E.rig = c; injected.push(c);
+        on(c, 'click', onRigClick);
+    }
+    function onRigClick(ev) {
+        var t = ev.target, b = t && t.closest ? t.closest('[data-rig],[data-rig-act]') : null;
+        if (!b || b.disabled) return;
+        if (b.getAttribute('data-rig-act') === 'all') { fullRig(); return; }
+        setRig(b.getAttribute('data-rig'), b.getAttribute('aria-checked') !== 'true');
+    }
+    function renderRig(st, force) {
+        var c = E.rig; if (!c) return;
+        var ru = (st && st.rigup) || null, req = (_sim && typeof _sim.getRigup === 'function') ? _sim.getRigup() : null;
+        var xp = xferOf(st), items = rigItems();
+        var tr = !xp ? '—' : rigOut(st, 'surge') ? 'not in use (no surge tank)' :
+            'LCV-201 ' + xferShort(st) + (isNum(xp.dP_psi) ? ' · ΔP ' + xp.dP_psi.toFixed(1) + ' psi' : '') + ' (surge tank pressure, no pump)';
+        var sig = (ru ? ru.sig + '|' + (ru.notes || []).join('|') : '-') + '|' + JSON.stringify(req) + '|' + tr + '|' + !!_sim;
+        if (!force && c.__sig === sig) return;
+        c.__sig = sig;
+        var nOut = 0;
+        var rows = items.map(function (it) {
+            var inRig = !ru || ru[it.key] !== false, asked = !req || req[it.key] !== false;
+            if (!inRig) nOut++;
+            var txt = it.locked ? 'In service (required)' : inRig ? (asked ? 'In service' : 'In service (kept, see note)')
+                : asked ? 'Out of line (see note)' : (it.key === 'heater' || it.key === 'separator') ? 'Bypassed' : 'Out of rig-up';
+            var tip = it.locked ? (it.why || 'Required') : (asked ? 'Take ' + it.tag + ' out of the rig-up' : 'Put ' + it.tag + ' back in the rig-up');
+            return '<div class="rrow wtsl-rig-row' + (inRig ? '' : ' off') + '" data-k="' + esc(it.key) + '"><span class="rl">' + esc(it.tag) + ' · ' + esc(it.name) + '</span>' +
+                '<span class="rv">' + esc(txt) + '</span><button type="button" class="wtsl-sw" role="switch" data-rig="' + esc(it.key) + '" aria-checked="' + (it.locked || asked) + '"' +
+                ' aria-label="' + esc(it.tag + ' ' + it.name + ' in the rig-up') + '" title="' + esc(tip) + '"' + (it.locked || !_sim ? ' disabled' : '') + '><i></i></button></div>';
+        });
+        rows.push('<div class="rrow wtsl-rig-row info"><span class="rl">Configuration</span><span class="rv">' + (nOut ? nOut + ' item' + (nOut > 1 ? 's' : '') + ' out of the rig-up' : 'Full rig-up') + '</span></div>');
+        rows.push('<div class="rrow wtsl-rig-row info"><span class="rl">T-201 → T-301 transfer</span><span class="rv">' + esc(tr) + '</span></div>');
+        setHTML(q('.wtsl-rig-list', c), rows.join(''));
+        setHTML(q('.wtsl-rig-notes', c), ((ru && ru.notes) || []).map(function (n) { return '<div class="wtsl-rig-note"><b>Note</b>' + esc(n) + '</div>'; }).join(''));
+        var all = q('.wtsl-rig-all', c); if (all) all.disabled = !_sim || !!(ru && ru.full && (!req || items.every(function (it) { return req[it.key] !== false; })));
     }
     function hudHtml() {
         function item(k, label, cls) {
@@ -989,8 +1111,10 @@ function createController(vizEl, mopts) {
         h('control', function () { saveCtl(); poke(); if (cardRefs && cardRefs.act) cardRefs.act.__sig = ''; });
         h('divert', function (p) { if (p && p.msg) toast(p.msg.replace(/^T-[23]01 /, '')); });
         h('suction', function (p) { if (p && p.msg) toast(p.msg, 'bad'); poke(); });
-        h('pumpTrip', function (p) { toast('P-201 TRIPPED — ' + (p && p.msg ? p.msg : ''), 'bad'); poke(); resig(); });
-        h('pumpReset', function (p) { toast(p && p.msg ? p.msg : 'P-201 trip reset', 'ok'); poke(); resig(); });
+        h('pumpTrip', function (p) { toast('LCV-201 transfer SHUT (trip) — ' + (p && p.msg ? p.msg : ''), 'bad'); poke(); resig(); });
+        h('pumpReset', function (p) { toast(p && p.msg ? p.msg : 'LCV-201 trip reset', 'ok'); poke(); resig(); });
+        h('rigup', function (p) { if (p && p.rig && typeof _sim.getRigup === 'function') { try { writeRig(_sim.getRigup()); } catch (e) {} }
+            if (p && p.msg) toast(p.msg.replace(/^Rig-up: /, 'Rig-up — ')); poke(); resig(); renderRig(state(), true); });
     }
     function unhookSim() {
         if (_sim) simHooks.forEach(function (x) { try { _sim.off(x[0], x[1]); } catch (e) {} });
@@ -1017,23 +1141,36 @@ function createController(vizEl, mopts) {
         var c2 = eq === 'surge' ? s2.surge.comps[i] : s2.gauge.tanks[i], moving = !!(c2 && c2.moving);
         toast(valveTag(eq, i) + (open ? (moving ? ' closing' : ' closed') : (moving ? ' opening' : ' opened')) +
             (c2 && c2.hold ? ' — held open until ' + valveTag(eq, 1 - i) + ' is fully open' : '') +
-            (both ? (eq === 'surge' ? ' — both T-201 inlets shut: separator dumps blocked' : ' — both T-301 inlets shut: P-201 discharge blocked') : ''), both ? 'bad' : '');
+            (both ? (eq === 'surge' ? ' — both T-201 inlets shut: separator dumps blocked' : ' — both T-301 inlets shut: ' + (rigOut(s2, 'surge') ? 'separator dumps blocked' : 'LCV-201 transfer blocked')) : ''), both ? 'bad' : '');
         poke(); resig();
     }
     function toggleSuction(i) {
         var st = state(); if (!_sim || !st || typeof _sim.setSuction !== 'function') return;
         var cur = st.surge.suction || 'both', me = i ? 'B' : 'A', other = i ? 'A' : 'B', next;
-        if (cur === 'both') next = other; else if (cur === me) { toast('P-201 needs one suction open — open SV-201' + other + ' first'); return; } else next = 'both';
+        if (cur === 'both') next = other; else if (cur === me) { toast('LCV-201 needs one outlet open — open SV-201' + other + ' first'); return; } else next = 'both';
         var ok = false; try { ok = _sim.setSuction(next); } catch (e) {}
-        if (ok) { toast('P-201 suction ' + (next === 'both' ? 'A + B' : next)); poke(); }
+        if (ok) { toast('LCV-201 suction ' + (next === 'both' ? 'A + B' : next)); poke(); }
     }
     function setSuction(v) { if (_sim && typeof _sim.setSuction === 'function') { try { _sim.setSuction(v); } catch (e) {} poke(); resig(); } }
-    // latched P-201 trips (LSHH-301, dry-run): operator reset once the permissive is met
-    function resetPump() {
+    // latched LCV-201 transfer trips (LSHH-301, low-low): operator reset once the permissive is met
+    function resetXfer() {
         if (!_sim || typeof _sim.resetTrip !== 'function') return;
         var r = null; try { r = _sim.resetTrip(); } catch (e) {}
-        if (r && !r.ok) toast('Cannot reset P-201 — ' + (r.blocking || []).join('; ').replace(/LSHH_GT: |PUMP_DRYRUN: /g, ''), 'bad');
+        if (r && !r.ok) toast('Cannot reset LCV-201 — ' + (r.blocking || []).join('; ').replace(/LSHH_GT: |PUMP_DRYRUN: /g, ''), 'bad');
         poke(); resig();
+    }
+    // rig-up toggles (Rig-up card): out-of-rig equipment is bypassed in the sim, the 2D schematic and the 3D view
+    function setRig(key, on) {
+        if (!_sim || typeof _sim.setRigup !== 'function') return;
+        var o = {}; o[key] = !!on;
+        try { _sim.setRigup(o); } catch (e) {}
+        poke(); renderRig(state(), true);
+    }
+    function fullRig() {
+        if (!_sim || typeof _sim.setRigup !== 'function') return;
+        var o = {}; rigItems().forEach(function (it) { o[it.key] = true; });
+        try { _sim.setRigup(o); } catch (e) {}
+        poke(); renderRig(state(), true);
     }
     function valveOpt(eq, o) { if (_sim && typeof _sim.setValveOptions === 'function') { try { _sim.setValveOptions(eq, o); } catch (e) {} poke(); resig(); } }
     function stepStroke(eq, d) { var st = state(), o = st && (eq === 'surge' ? st.surge : st.gauge); if (o) valveOpt(eq, { strokeS: Math.max(0, Math.min(60, num(o.strokeS, 6) + d)) }); }
@@ -1059,7 +1196,8 @@ function createController(vizEl, mopts) {
     function createSim(flow) {
         var S = G.WTS_sim;
         if (!S || typeof S.create !== 'function') return;
-        _sim = S.create(flow, { mode: 'steady', seed: (Date.now() & 0x7fffffff), speed: SPEEDS.indexOf(prefs.speed) >= 0 ? prefs.speed : 10 });
+        _sim = S.create(flow, { mode: 'steady', seed: (Date.now() & 0x7fffffff), speed: SPEEDS.indexOf(prefs.speed) >= 0 ? prefs.speed : 10, rigup: readRig() });
+        _rigPending = false;
         if (prefs.ctl && typeof _sim.setControls === 'function') { try { _sim.setControls(prefs.ctl, { initial: true }); } catch (e) {} }
         _lastFlowObj = flow;
         _resetPending = false;
@@ -1077,6 +1215,12 @@ function createController(vizEl, mopts) {
             _sim.setFlow(flow);
             var d = inputsDiff(prev, flow);
             for (var i = 0; i < d.length; i++) { try { _sim.logEvent(d[i][0], d[i][1]); } catch (e) {} }
+        }
+        if (_rigPending && typeof _sim.setRigup === 'function') {      // project Open / New: the saved rig-up (none = full)
+            _rigPending = false;
+            var rq = readRig() || {}, all = {};
+            rigItems().forEach(function (it) { all[it.key] = rq[it.key] !== false; });
+            try { _sim.setRigup(all); } catch (e) {}
         }
         if (_resetPending) { _resetPending = false; _alarmMap = {}; _sim.reset('steady'); }
         poke();
@@ -1442,6 +1586,7 @@ function createController(vizEl, mopts) {
         show(E.paused, !!(st && !st.running));
     }
     function updateSlow(st) {
+        renderRig(st, false);
         if (drawerOpen) renderDrawer(st, false);
         if (!E.trends.hidden) drawTrends(st);
         if (cardId) updateCard(st, true);
@@ -1530,6 +1675,7 @@ function createController(vizEl, mopts) {
         hv('pSu', su.P, 'pressureTank');
         // Rates
         var Qg = num(I.Qg, 10), Qo = num(I.Qo, 1000), Qw = num(I.Qw, 200);
+        if (R.separated === false) R = { gas_mmscfd: NaN, oilMeter_stbd: NaN, waterMeter_bpd: NaN, gor_scf_stb: null, bsw_pct: null };   // V-101 bypassed: no meters
         hv('rG', R.gas_mmscfd, 'gasRate'); setText(E.h.rGA, trendArrow('gas', R.gas_mmscfd, 1.5 * Qg));
         var oil = num(R.oilMeter_stbd, R.oil_stbd), wat = num(R.waterMeter_bpd, R.water_bpd);
         hv('rO', oil, 'oilRate'); setText(E.h.rOA, trendArrow('oil', oil, 1.5 * Qo));
@@ -1539,12 +1685,11 @@ function createController(vizEl, mopts) {
         // Cumulative
         hv('cO', C.oilIn_stb, 'oilVolume'); hv('cW', C.waterIn_bbl, 'volume'); hv('cG', C.gasIn_mmscf, 'gasVolume'); hv('cF', C.flare_mmscf, 'gasVolume');
         // Tanks and quality
-        var pump = su.pump || {};
-        var ps = pump.failed ? 'FAILED' : pump.tripped ? 'TRIPPED' : pump.on ? 'ON' : 'OFF';
-        var ps2 = pump.blocked ? 'BLOCKED' : ps, SC = su.comps || [];
-        setHTML(E.h.tSu, SC.length === 2 ? 'Surge ' + [0, 1].map(function (i) {
+        var ps2 = xferShort(st), SC = su.comps || [];
+        if (rigOut(st, 'surge')) setHTML(E.h.tSu, 'Surge tank <b>out of rig-up</b>');
+        else setHTML(E.h.tSu, SC.length === 2 ? 'Surge ' + [0, 1].map(function (i) {
             return (SC[i].inlet ? '<span class="a">▸' : '<span>') + (i ? 'B ' : 'A ') + '</span><b>' + pctStr(SC[i].frac) + '</b>';
-        }).join(' · ') + ' · P-201 ' + ps2 : 'Surge <b>' + pctStr(su.frac) + '</b> · P-201 ' + ps2);
+        }).join(' · ') + ' · LCV-201 ' + esc(ps2) : 'Surge <b>' + pctStr(su.frac) + '</b> · LCV-201 ' + esc(ps2));
         var T = ga.tanks || [], act = num(ga.active, 0);
         var gtxt = [0, 1].map(function (i) {
             var t = T[i] || {}, v = num(t.Vo_bbl, 0) + num(t.Vw_bbl, 0);
@@ -1552,7 +1697,8 @@ function createController(vizEl, mopts) {
             return ((t.inlet != null ? t.inlet : i === act) ? '<span class="a">▸' : '<span>') + (i ? 'B ' : 'A ') + '</span><b>' + p.v + '</b>';
         }).join(' · ') + ' ' + fmtParts(0, 'volume').u;
         var sh = R.shrink_pct;
-        setHTML(E.h.tGt, gtxt + (isNum(sh) ? ' · shr ' + sh.toFixed(1) + '%' : ''));
+        if (rigOut(st, 'gauge')) setHTML(E.h.tGt, 'Gauge tank <b>out of rig-up</b>');
+        else setHTML(E.h.tGt, gtxt + (isNum(sh) ? ' · shr ' + sh.toFixed(1) + '%' : ''));
         var c = alarmCount(st && st.alarms);
         setAttr(E.h.tAl, 'data-l', c.n ? c.level : 'ok');
         setText(E.h.tAl, c.n ? '⚠ ' + c.n + ' active' : '● No active alarms');
@@ -1777,18 +1923,21 @@ function createController(vizEl, mopts) {
                 ['Pressure', function (s) { return fmtU(s && s.surge && s.surge.P, 'pressureTank'); }, 'p', function (s, f) { return isNum(F(f, ['sim', 'surgeP_psig'])) ? 'SP ' + fmtU(f.sim.surgeP_psig, 'pressureTank') : null; }],
                 ['Liquid', function (s) { var u = s && s.surge; return u ? fmtU(num(u.Vo_bbl, 0) + num(u.Vw_bbl, 0), 'volume') : '—'; }, '', function (s) { return s && s.surge && isNum(s.surge.cap_bbl) ? 'of ' + fmtU(s.surge.cap_bbl, 'volume') : null; }],
                 ['Water cut', function (s) { var u = s && s.surge; return u && isNum(u.frac) && u.frac > 0.001 ? pctStr(num(u.fracW, 0) / u.frac) : '—'; }, ''],
-                ['Pump', function (s) { return pumpTxt(s); }, ''],
+                ['Transfer', function (s) { return xferTxt(s); }, '', function (s) { var p = xferOf(s); return p && isNum(p.q_bpd) && p.q_bpd > 0 ? fmtU(p.q_bpd, 'liquidRate') : null; }],
+                ['Transfer ΔP', function (s) { var p = xferOf(s); return p && isNum(p.dP_psi) ? p.dP_psi.toFixed(1) + ' psi' : '—'; }, 'p',
+                    function (s) { var p = xferOf(s); return p ? 'LCV-201 by vessel pressure (no pump)' + (isNum(p.dPdesign_psi) ? ' · design ' + p.dPdesign_psi.toFixed(1) + ' psi' : '') : null; }],
                 ['Time to HH', function (s) { var v = s && s.surge && s.surge.tFull_s; return isNum(v) ? fmtClockLocal(v) : '—'; }, ''],
                 ['Flash gas', function (s) { var v = s && s.surge && s.surge.flash_mscfd; return isNum(v) ? v.toFixed(1) + ' MSCFD' : '—'; }, ''],
                 ['Auto-divert', function (s) { return autoTxt(s && s.surge && s.surge.auto); }, '']],
                 spark: [{ keys: ['surgeFracA', 'surgeFracB'], label: 'A · B level', cat: 'frac', lim: 'surgeL' }, { keys: ['surgeP'], label: 'Pressure', cat: 'pressureG' }],
                 widget: 'strap', actions: 'surge' };
+            // P-201: downstream of the gauge tank (T-301 → export / burner); T-201 → T-301 runs on the surge tank pressure
             case 'pump': return { rows: [
-                ['State', function (s) { return pumpTxt(s); }, ''],
-                ['Suction', function (s) { var x = s && s.surge && s.surge.suction; return x === 'both' ? 'T-201A + B' : x ? 'T-201' + x : '—'; }, ''],
-                ['Rate', function (s) { var p = s && s.surge && s.surge.pump; return fmtU(p && p.q_bpd, 'liquidRate'); }, '', function (s) { var p = s && s.surge && s.surge.pump; return p && isNum(p.design_bpd) ? 'design ' + fmtU(p.design_bpd, 'liquidRate') : null; }],
-                ['Line vel', function (s) { var g = s && s.segs && s.segs[5]; return g ? fmtU(g.vel, 'velocity') + ' · ' + Math.round(num(g.vPct, 0)) + '%' : '—'; }, ''],
-                ['Surge level', function (s) { return pctStr(s && s.surge && s.surge.frac); }, '']], actions: 'suction' };
+                ['State', function (s) { return pumpShort(s); }, ''],
+                ['Service', function () { return 'T-301 → export / burner'; }, ''],
+                ['Rate', function (s) { var p = s && s.gauge && s.gauge.pump; return fmtU(p && p.q_bpd, 'liquidRate'); }, '', function (s) { var p = s && s.gauge && s.gauge.pump; return p && isNum(p.design_bpd) ? 'design ' + fmtU(p.design_bpd, 'liquidRate') : null; }],
+                ['Draining', function (s) { var T = s && s.gauge && s.gauge.tanks; if (!T || !T[0]) return '—'; var d = [0, 1].filter(function (i) { return T[i].state === 'draining'; }).map(function (i) { return T[i].tag; }); return d.length ? d.join(' + ') : 'none'; }, ''],
+                ['Surge transfer', function (s) { return 'LCV-201 ' + xferShort(s) + ' (no pump)'; }, '']] };
             case 'gauge': return { rows: [
                 ['Inlet', function (s) { var g = s && s.gauge, T = g && g.tanks; if (!T || !T[0]) return '—'; if (T[0].inlet == null) return T[num(g.active, 0)].tag;
                     return g.blocked ? 'BLOCKED (both closed)' : [0, 1].filter(function (i) { return T[i].inlet; }).map(function (i) { return T[i].tag; }).join(' + '); }, ''],
@@ -1822,17 +1971,21 @@ function createController(vizEl, mopts) {
         if (c.moving) return (c.inlet ? 'OPENING ' : 'CLOSING ') + Math.round(num(c.pos, 0) * 100) + '%';
         return c.inlet ? 'OPEN' : 'CLOSED';
     }
-    function pumpTxt(s) {
-        var p = s && s.surge && s.surge.pump;
-        return !p ? '—' : p.failed ? 'FAILED' : p.tripped ? 'TRIPPED' + tripTag(p.trip) : p.blocked ? 'BLOCKED' : p.on ? (p.starved ? 'ON · STARVED' : 'ON') : 'OFF';
+    // LCV-201 surge → gauge transfer (no pump: the surge tank pressure drives the liquid)
+    function xferTxt(s) {
+        var p = xferOf(s);
+        if (!p) return '—';
+        if (rigOut(s, 'surge')) return 'OUT OF RIG-UP';
+        return p.failed ? 'STUCK SHUT' : p.tripped ? 'TRIPPED' + tripTag(p.trip) : p.blocked ? 'BLOCKED' :
+            p.on ? (p.lowDP ? 'OPEN · ΔP TOO LOW' : p.starved ? 'OPEN · STARVED' : 'OPEN') + (p.dest === 'export' ? ' → export' : '') : 'SHUT';
     }
-    function tripTag(id) { return id === 'LSHH_GT' ? ' (LSHH-301)' : id === 'PUMP_DRYRUN' ? ' (DRY-RUN)' : ''; }
-    function pumpSig(st) { var p = st && st.surge && st.surge.pump; return p ? (p.trip || '') + (p.canReset ? 'r' : '') : ''; }
+    function tripTag(id) { return id === 'LSHH_GT' ? ' (LSHH-301)' : id === 'PUMP_DRYRUN' ? ' (LOW-LOW)' : ''; }
+    function pumpSig(st) { var p = xferOf(st); return p ? (p.trip || '') + (p.canReset ? 'r' : '') : ''; }
     function pumpResetRow(st) {
-        var p = st && st.surge && st.surge.pump;
+        var p = xferOf(st);
         if (!p || !p.trip) return '';
-        return '<div class="wtsl-actr"><span class="wtsl-hl">P-201 trip</span><button type="button" data-wts-ui class="wtsl-b trip" data-act="pump-reset"' +
-            (p.canReset ? ' title="Reset the latched P-201 trip"' : ' disabled title="' + esc(p.resetBlock || 'permissive not met') + '"') + '>Reset P-201' + tripTag(p.trip) + '</button></div>';
+        return '<div class="wtsl-actr"><span class="wtsl-hl">LCV-201 trip</span><button type="button" data-wts-ui class="wtsl-b trip" data-act="xfer-reset"' +
+            (p.canReset ? ' title="Reset the latched LCV-201 transfer trip"' : ' disabled title="' + esc(p.resetBlock || 'permissive not met') + '"') + '>Reset LCV-201' + tripTag(p.trip) + '</button></div>';
     }
     function strokeRow(eq, o) {
         var v = Math.round(num(o && o.strokeS, 6));
@@ -1868,6 +2021,7 @@ function createController(vizEl, mopts) {
         });
         if (spec.widget) h += '<div data-cref="wg"></div>';
         if (spec.actions) h += '<div class="wtsl-act" data-cref="act"></div>';
+        h += '<div class="wtsl-rigout" data-cref="rigout" hidden></div>';
         h += '</div><div class="wtsl-cf"><button type="button" data-wts-ui class="wtsl-link" data-act="card-edit">Edit inputs ↓</button></div>';
         E.card.innerHTML = h;
         cardRefs = { spec: spec };
@@ -1927,10 +2081,6 @@ function createController(vizEl, mopts) {
             sig = 'surge' + lineupSig(C2[0], C2[1], su2.auto) + su2.suction + pumpSig(st) + su2.strokeS;
             h = '<div class="wtsl-actr"><span class="wtsl-hl">Inlet</span>' + valveBtns('surge', C2[0], C2[1]) + '</div>' +
                 suctionRow(su2.suction) + autoRow('surge', su2.auto) + strokeRow('surge', su2) + pumpResetRow(st);
-        } else if (a === 'suction') {
-            var sx = st && st.surge && st.surge.suction;
-            sig = 'suc' + sx + pumpSig(st);
-            h = pumpResetRow(st) + suctionRow(sx);
         }
         if (cardRefs.act.__sig !== sig) { cardRefs.act.__sig = sig; cardRefs.act.innerHTML = h; }
     }
@@ -1946,7 +2096,7 @@ function createController(vizEl, mopts) {
         }).join('');
     }
     function suctionRow(x) {
-        return '<div class="wtsl-actr"><span class="wtsl-hl">P-201 suction</span>' + [['A', 'A'], ['B', 'B'], ['both', 'A+B']].map(function (o) {
+        return '<div class="wtsl-actr"><span class="wtsl-hl">LCV-201 suction</span>' + [['A', 'A'], ['B', 'B'], ['both', 'A+B']].map(function (o) {
             return '<button type="button" data-wts-ui class="wtsl-b' + (x === o[0] ? ' on' : '') + '" data-act="suction" data-v="' + o[0] + '" aria-pressed="' + (x === o[0]) + '">' + o[1] + '</button>';
         }).join('') + '</div>';
     }
@@ -1969,8 +2119,14 @@ function createController(vizEl, mopts) {
         }
         var stt = st ? statusOf(cardId, st.alarms) : 'ok';
         if (cardId === 'esd' && st && st.esd && st.esd.manual && stt === 'evt') stt = 'warn';
-        setAttr(cardRefs.chip, 'data-s', stt);
-        setText(cardRefs.chip, stt === 'ok' ? 'Normal' : stt === 'evt' ? 'Info' : stt === 'hyd' ? 'Hydrate' : stt);
+        var out = rigOut(st, cardId);
+        setAttr(cardRefs.chip, 'data-s', out ? 'evt' : stt);
+        setText(cardRefs.chip, out ? 'Out of rig-up' : stt === 'ok' ? 'Normal' : stt === 'evt' ? 'Info' : stt === 'hyd' ? 'Hydrate' : stt);
+        if (cardRefs.rigout) {
+            show(cardRefs.rigout, out);
+            if (out) setText(cardRefs.rigout, (cardId === 'heater' ? 'Bypassed' : cardId === 'separator' ? 'Bypassed — the well stream goes to the flare / burner' :
+                'Not in the rig-up') + ' — change it in the Rig-up card below the view.');
+        }
         renderCardActions(st);
         if (slow) {
             (spec.spark || []).forEach(function (sp, i) { drawCardSpark(cardRefs['sk' + i], cardRefs['skt' + i], sp, st); });
@@ -2273,9 +2429,10 @@ function createController(vizEl, mopts) {
             ctx.fill(); ctx.stroke();
         });
         if (su.auto && su.auto.on) { ctx.fillStyle = '#58a6ff'; ctx.font = 'bold 7px sans-serif'; ctx.fillText('AUTO', bx[0] + 26, by - 26); }
-        if (su.pump && su.pump.tripped) {                // latched P-201 trip flag on the transfer line
+        var xp = xferOf(st);
+        if (xp && xp.tripped && !rigOut(st, 'surge')) {   // latched LCV-201 transfer trip flag on the transfer line
             ctx.fillStyle = '#f85149'; ctx.font = 'bold 8px sans-serif'; ctx.textAlign = 'center';
-            ctx.fillText('P-201 TRIP' + tripTag(su.pump.trip), (bx[0] + bx[1]) / 2, by + 14);
+            ctx.fillText('LCV-201 TRIP' + tripTag(xp.trip), (bx[0] + bx[1]) / 2, by + 14);
         }
         if (ga.auto && ga.auto.on) { ctx.fillStyle = '#58a6ff'; ctx.font = 'bold 7px sans-serif'; ctx.fillText('AUTO', bx[1] + 28, by - 26); }
         // ESD ball: green open, amber moving/manual, red tripped
@@ -2351,6 +2508,7 @@ function createController(vizEl, mopts) {
                 ctx.fillStyle = '#58a6ff'; ctx.font = '12px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('❄', Z.x + Z.w - 6, Z.y + 12);
             }
         }
+        drawRig2d(ctx, L, st, OIL);
         // Sim clock (top right)
         ctx.textAlign = 'right'; ctx.font = 'bold 10px sans-serif'; ctx.fillStyle = '#8b949e';
         ctx.fillText('SIM T+' + (st.clock || fmtClockLocal(st.t)) + ' · ×' + num(st.speed, 10) + (st.running ? '' : ' · PAUSED'), L.W - 14, 22);
@@ -2361,6 +2519,88 @@ function createController(vizEl, mopts) {
         ctx.fillStyle = WATER; ctx.fillRect(820, ly - 10, 10, 8); ctx.fillStyle = '#8b949e'; ctx.fillText('Water', 834, ly - 2);
         drawStrip(ctx, L.strip || { x: 20, y: 215, w: 600, h: 103 }, st, OIL, WATER);
         ctx.restore();
+    }
+    // Rig-up on the 2D schematic (logical units). Always: the surge → gauge transfer valve LCV-201 (no pump — the
+    // surge tank pressure drives it) on the transfer line and P-201 downstream of the gauge tank (→ export / burner).
+    // Equipment out of the rig-up is greyed with its bypass drawn as an amber dashed line.
+    var RIG2D = { lcvX: 758, pumpX: 1082, outX: 1188 };
+    function drawRig2d(ctx, L, st, OIL) {
+        var tx = L.tx, cy = L.cy, bx = L.bx, by = L.by, ru = st.rigup || {};
+        var off = function (k) { return ru[k] === false; };
+        var AMB = '#d29922', GREY = '#6e7681';
+        function mask(x, y, w, h, label, ly) {
+            ctx.save();
+            ctx.fillStyle = 'rgba(13,17,23,.9)'; ctx.fillRect(x, y, w, h);
+            ctx.setLineDash([3, 3]); ctx.strokeStyle = GREY; ctx.lineWidth = 1; ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1); ctx.setLineDash([]);
+            if (label) { ctx.fillStyle = AMB; ctx.font = 'bold 7.5px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(label, x + w / 2, ly != null ? ly : y + h / 2 + 3); }
+            ctx.restore();
+        }
+        function bypass(pts, label, lx, ly, arrow) {
+            ctx.save(); ctx.setLineDash([6, 4]); ctx.strokeStyle = AMB; ctx.lineWidth = 2; ctx.beginPath();
+            ctx.moveTo(pts[0][0], pts[0][1]); for (var i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]); ctx.stroke(); ctx.setLineDash([]);
+            if (arrow) { var p = pts[pts.length - 1]; ctx.fillStyle = AMB; ctx.beginPath(); ctx.moveTo(p[0] + 4, p[1]); ctx.lineTo(p[0] - 5, p[1] - 5); ctx.lineTo(p[0] - 5, p[1] + 5); ctx.closePath(); ctx.fill(); }
+            if (label) { ctx.fillStyle = AMB; ctx.font = 'bold 8px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(label, lx, ly); }
+            ctx.restore();
+        }
+        var xp = xferOf(st) || {}, gp = (st.gauge && st.gauge.pump) || {};
+        // LCV-201 on the T-201 → T-301 line: control valve (bow-tie + actuator); green open, grey shut, red tripped / stuck
+        if (!off('surge')) {
+            var vx = RIG2D.lcvX, col = xp.failed || xp.tripped ? '#f85149' : xp.on ? (xp.lowDP ? AMB : '#3fb950') : GREY;
+            ctx.save();
+            ctx.fillStyle = 'rgba(13,17,23,.95)'; ctx.fillRect(vx - 9, by - 7, 18, 14);
+            ctx.fillStyle = col; ctx.strokeStyle = '#e6edf3'; ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.moveTo(vx - 8, by - 6); ctx.lineTo(vx, by); ctx.lineTo(vx - 8, by + 6); ctx.closePath(); ctx.fill(); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(vx + 8, by - 6); ctx.lineTo(vx, by); ctx.lineTo(vx + 8, by + 6); ctx.closePath(); ctx.fill(); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(vx, by); ctx.lineTo(vx, by - 11); ctx.stroke();
+            ctx.beginPath(); ctx.arc(vx, by - 13, 4, Math.PI, 0); ctx.closePath(); ctx.stroke();
+            ctx.font = 'bold 8px sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = '#c9d1d9';
+            ctx.fillText('LCV-201', vx, by - 20);
+            ctx.font = '7.5px sans-serif'; ctx.fillStyle = GREY;
+            ctx.fillText(isNum(xp.dP_psi) ? 'ΔP ' + xp.dP_psi.toFixed(1) + ' psi' : 'no pump', vx, by + 16);
+            ctx.restore();
+        }
+        // P-201 downstream of T-301 → export / burner
+        if (!off('gauge')) {
+            var px = RIG2D.pumpX, py = by + 12, gravity = gp.mode === 'gravity';
+            ctx.save();
+            ctx.strokeStyle = GREY; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(bx[1] + 19, py); ctx.lineTo(px - 9, py); ctx.moveTo(px + 9, py); ctx.lineTo(RIG2D.outX - 6, py); ctx.stroke();
+            ctx.fillStyle = GREY; ctx.beginPath(); ctx.moveTo(RIG2D.outX, py); ctx.lineTo(RIG2D.outX - 7, py - 4); ctx.lineTo(RIG2D.outX - 7, py + 4); ctx.closePath(); ctx.fill();
+            if (gravity) {
+                ctx.setLineDash([2, 2]); ctx.strokeStyle = GREY; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(px, py, 8, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+                ctx.fillStyle = AMB; ctx.font = 'bold 7.5px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('GRAVITY DRAIN', px, py - 12);
+            } else {
+                var pc = gp.failed ? '#f85149' : gp.on ? '#3fb950' : '#8b949e';
+                ctx.fillStyle = '#30363d'; ctx.strokeStyle = pc; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(px, py, 8, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+                ctx.fillStyle = pc; ctx.beginPath(); ctx.moveTo(px - 4, py - 5); ctx.lineTo(px + 6, py); ctx.lineTo(px - 4, py + 5); ctx.closePath(); ctx.fill();
+                ctx.fillStyle = '#c9d1d9'; ctx.font = 'bold 8px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('P-201', px, py - 12);
+            }
+            ctx.fillStyle = GREY; ctx.font = '7.5px sans-serif'; ctx.textAlign = 'center';
+            ctx.fillText('EXPORT / BURNER', (px + RIG2D.outX) / 2 + 6, py + 12);
+            ctx.restore();
+        }
+        // equipment out of the rig-up
+        if (off('heater')) { mask(tx[3] - 26, cy - 20, 52, 40, ''); bypass([[tx[3] - 30, cy], [tx[3] + 30, cy]], 'NOT IN RIG-UP', tx[3], cy + 30); }
+        if (off('separator')) {
+            mask(tx[4] - 30, cy - 17, 60, 34, '');
+            mask(tx[4] - 7, cy + 18, 14, by - 13 - (cy + 18), '');
+            bypass([[tx[4] - 34, cy], [tx[4] + 34, cy]], 'BYPASSED → FLARE', tx[4], cy + 27);
+        }
+        if (off('flare')) {
+            mask(tx[5] - 18, cy - 44, 36, 68, '');
+            bypass([[tx[5] - 20, cy], [tx[5] + 70, cy]], 'GAS → EXPORT LINE', tx[5] + 64, cy - 8, true);
+        }
+        if (off('surge')) {
+            mask(bx[0] - 30, by - 42, 60, 80, 'NOT IN RIG-UP');
+            mask(bx[0] + 31, by - 24, bx[1] - bx[0] - 62, 44, '');            // the T-201 → T-301 line is not in use
+            if (!off('separator')) {
+                if (!off('gauge')) bypass([[tx[4] + 6, by - 30], [bx[1] - 26, by - 30], [bx[1] - 26, by - 40]], 'DUMPS → T-301 (no surge tank)', (tx[4] + bx[1]) / 2, by - 35);
+                else bypass([[tx[4] + 6, by - 30], [RIG2D.outX, by - 30]], 'DUMPS → EXPORT / BURNER', (tx[4] + bx[1]) / 2, by - 35, true);
+            }
+        }
+        if (off('gauge')) {
+            mask(bx[1] - 32, by - 44, 64, 82, 'NOT IN RIG-UP', by - 30);
+            if (!off('surge')) bypass([[bx[1] - 34, by], [RIG2D.outX, by]], 'T-201 → EXPORT / BURNER', RIG2D.pumpX - 10, by - 8, true);
+        }
     }
     function rrect(c, x, y, w, h, r) {
         c.beginPath(); c.moveTo(x + r, y); c.lineTo(x + w - r, y); c.quadraticCurveTo(x + w, y, x + w, y + r); c.lineTo(x + w, y + h - r);
@@ -2382,7 +2622,9 @@ function createController(vizEl, mopts) {
             { x: S.x + 185, fW: T[0] && T[0].fracW, fL: T[0] && T[0].frac, ticks: T[0] ? [[T[0].switchFrac, A], [T[0].lahh, R]] : [], val: gv(T[0]), tag: 'T-301A', acc: act === 0 },
             { x: S.x + 240, fW: T[1] && T[1].fracW, fL: T[1] && T[1].frac, ticks: T[1] ? [[T[1].switchFrac, A], [T[1].lahh, R]] : [], val: gv(T[1]), tag: 'T-301B', acc: act === 1 }
         ];
-        bars.forEach(function (b) {
+        var ofs = [rigOut(st, 'separator'), rigOut(st, 'separator'), rigOut(st, 'surge'), rigOut(st, 'gauge'), rigOut(st, 'gauge')];
+        bars.forEach(function (b, bi) {
+            ctx.save(); if (ofs[bi]) { ctx.globalAlpha = 0.3; b.acc = false; }
             ctx.fillStyle = '#161b22'; ctx.fillRect(b.x, top, bw, bh);
             var fL = clamp(num(b.fL, 0), 0, 1), fW = clamp(num(b.fW, 0), 0, fL);
             ctx.fillStyle = OIL; ctx.fillRect(b.x, top + bh * (1 - fL), bw, bh * (fL - fW));
@@ -2398,6 +2640,8 @@ function createController(vizEl, mopts) {
             ctx.fillText(b.val, b.x + bw / 2, top + bh + 11);
             ctx.fillStyle = b.acc ? '#f0883e' : '#8b949e'; ctx.font = '8.5px sans-serif';
             ctx.fillText(b.tag, b.x + bw / 2, top + bh + 21);
+            ctx.restore();
+            if (ofs[bi]) { ctx.fillStyle = '#d29922'; ctx.font = 'bold 8px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('OUT', b.x + bw / 2, top + bh / 2 + 3); }
         });
         ctx.fillStyle = '#6e7681'; ctx.font = '8px sans-serif'; ctx.textAlign = 'center';
         ctx.fillText('(' + fmtParts(0, 'volume').u + ')', S.x + 219, S.y + 12);
@@ -2444,6 +2688,8 @@ function createController(vizEl, mopts) {
         for (var i = 0; i < 6; i++) z.push({ id: ids[i], x: L.tx[i] - 36, y: L.cy - 44, w: 72, h: 76 });
         z.push({ id: 'surge', x: L.bx[0] - 28, y: L.by - 30, w: 56, h: 58 });
         z.push({ id: 'gauge', x: L.bx[1] - 30, y: L.by - 30, w: 60, h: 58 });
+        z.push({ id: 'pump', x: RIG2D.pumpX - 14, y: L.by - 4, w: 28, h: 30 });            // P-201 (downstream of T-301)
+        z.push({ id: 'surge', x: RIG2D.lcvX - 12, y: L.by - 26, w: 24, h: 34 });            // LCV-201 → the surge card (its controls)
         var S = L.strip || { x: 20, y: 215, w: 600, h: 103 };
         var sb = ['separator', 'separator', 'surge', 'gauge', 'gauge'];
         for (var j = 0; j < 5; j++) z.push({ id: sb[j], x: S.x + 12 + 55 * j, y: S.y + 16, w: 32, h: 86, strip: true });
@@ -2606,9 +2852,9 @@ function createController(vizEl, mopts) {
         else if (popGroup === 'tanks') {
             var T = (st && st.gauge && st.gauge.tanks) || [];
             rows = [['Surge level', pctStr(su.frac)], ['T-201A · B', su.comps ? surgeRow(st, 0) + ' · ' + surgeRow(st, 1) : '—'],
-                ['Pump P-201', su.pump ? (su.pump.failed ? 'FAILED' : su.pump.tripped ? 'TRIPPED' : su.pump.blocked ? 'BLOCKED' : su.pump.on ? 'ON' : 'OFF') : '—'],
+                ['LCV-201 transfer', xferShort(st)], ['P-201 (T-301 → export)', pumpShort(st)],
                 ['T-301A', gtRow(st, 0)], ['T-301B', gtRow(st, 1)], ['Shrinkage', fmtU(R.shrink_pct, 'percent', 1)]];
-            if (!T.length) rows.length = 3;
+            if (!T.length) rows.length = 4;
         }
         setHTML(E.pop, rows.map(function (r) { return '<div class="r"><span>' + esc(r[0]) + '</span><span>' + esc(r[1]) + '</span></div>'; }).join(''));
     }
@@ -2751,7 +2997,7 @@ function createController(vizEl, mopts) {
             case 'swap': if (_sim) { var ok = false; try { ok = _sim.switchGaugeTank(true); } catch (e) {} if (!ok) toast('Standby compartment not ready'); poke(); } break;
             case 'valve': { var vv = String(v || '').split(':'); toggleValve(vv[0] === 'surge' ? 'surge' : 'gauge', vv[1] === '1' ? 1 : 0); break; }
             case 'suction': setSuction(v); break;
-            case 'pump-reset': resetPump(); break;
+            case 'xfer-reset': resetXfer(); break;
             case 'stroke': { var sv = String(v || '').split(':'); stepStroke(sv[0] === 'surge' ? 'surge' : 'gauge', +sv[1] || 0); break; }
             case 'interrupt': toggleInterrupt(); break;
             case 'vin-close': closeVin(); break;
@@ -2977,6 +3223,7 @@ function createController(vizEl, mopts) {
         if (mode === '3d') setMode('3d', 'init'); else { size2d(); dirty2d = true; }
         onResize();
         updateAll(state());
+        renderRig(state(), true);
         startWatchdog();
         if (!document.hidden) startLoop();
     } catch (err) {
@@ -3016,6 +3263,7 @@ G.WTS_live = {
     _internals: { ctl: function () { return _ctl; }, alarmCount: alarmCount, alarmText: alarmText, inputsDiff: inputsDiff, summaryOf: summaryOf, flowValid: flowValid,
         bpOf: bpOf, dpFor: dpFor, readPrefs: readPrefs, PREFS_KEY: PREFS_KEY, CSS: CSS, miniSnapshot: miniSnapshot,
         setHostInput: setHostInput, readHost: readHost, fmtClock: fmtClockLocal,
+        RIG_KEY: RIG_KEY, readRig: readRig, writeRig: writeRig, rigItems: rigItems, rigOut: rigOut, xferShort: xferShort, pumpShort: pumpShort,
         _reset: function () { if (_ctl) { try { _ctl.dispose(); } catch (e) {} } _ctl = null; if (_sim) { try { _sim.dispose(); } catch (e) {} } _sim = null; _lastFlowObj = null; _resetPending = false; _alarmMap = {}; } }
 };
 

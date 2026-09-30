@@ -1,11 +1,12 @@
 // Well Test Simulator — v3.0 tank-farm process safety (Round-7: 31-wts-sim, 32-wts-3d, 38-wts-live).
-//   • LSHH-301 (gauge tank, downstream of P-201) trips P-201 and fail-safe closes the high-high compartment's
+//   • LSHH-301 (gauge tank, fed by the pressure-driven surge transfer LCV-201) shuts LCV-201 and fail-safe closes the high-high compartment's
 //     XV-301 — no ESD; latched until the operator resets it below the reset point. The surge tank then fills and
 //     LSHH-201 closes its inlet(s) and trips the ESD (a high-high on a vessel stops what fills it).
 //   • Auto-divert never opens a compartment holding a batch (settling / draining) unless "allow interrupting
 //     batches" is on; with nowhere to go it raises LAH-301 instead.
-//   • P-201 dry-run protection: a running pump whose suction reaches LSLL moves its suction to the other
-//     compartment (auto-divert on) or trips (latched, reset once the suction is above LSL).
+//   • LCV-201 low-low (gas blow-by / dry-run) protection: an open transfer whose suction reaches LSLL moves its suction to
+//     the other compartment (auto-divert on) or trips (latched, reset once the suction is above LSL).
+//   (surge.pump is the legacy snapshot key of the surge outlet transfer; P-201 now sits downstream of the gauge tank)
 //   • Divert valve travel: open-new-before-close-old respects the stroke time; "in transit" state in the snapshot.
 //   • Per-compartment surge temperatures (an isolated compartment cools as Newton's law with the model's stated
 //     ambient-loss time constant, 14 400 s — hand calculation below).
@@ -35,7 +36,7 @@ function openWts(app) {
 
 module.exports = [
   {
-    name: 'WTSDV-S LSHH-301 trips P-201 (no ESD) and closes the gauge inlet; latched until reset below the reset point; surge LSHH-201 then closes its inlets and trips the ESD',
+    name: 'WTSDV-S LSHH-301 shuts the LCV-201 transfer (no ESD) and closes the gauge inlet; latched until reset below the reset point; surge LSHH-201 then closes its inlets and trips the ESD',
     wp: WP,
     run(app, assert) {
       const D = app.win.WTS_sim.DEFAULTS;
@@ -55,7 +56,7 @@ module.exports = [
       assert.strictEqual(st.esd.tripped, false, 'well still flowing');
       assert.ok(st.esd.blocking.indexOf('LSHH_GT') < 0, 'a P-201 trip does not hold the ESD reset');
       const tripLog = st.alarmLog.filter((e) => e.type === 'trip' && e.id === 'LSHH_GT');
-      assert.ok(tripLog.length === 1 && tripLog[0].tag === 'P-201' && /XV-301B closing \(fail-safe\)/.test(tripLog[0].msg), 'event log: ' + JSON.stringify(tripLog));
+      assert.ok(tripLog.length === 1 && tripLog[0].tag === 'LCV-201' && /XV-301B closing \(fail-safe\)/.test(tripLog[0].msg), 'event log: ' + JSON.stringify(tripLog));
       s.advance(D.gauge.xvStrokeS + 1);
       st = s.getState();
       assert.strictEqual(st.gauge.tanks[k].pos, 0, 'XV-301B at its closed limit');
@@ -119,7 +120,7 @@ module.exports = [
     }
   },
   {
-    name: 'WTSDV-S P-201 dry-run protection: LSLL on the running suction trips the pump (latched), or auto-switches the suction when auto-divert is on',
+    name: 'WTSDV-S LCV-201 low-low protection: LSLL on the open transfer suction trips it (latched), or auto-switches the suction when auto-divert is on',
     wp: WP,
     run(app, assert) {
       const D = app.win.WTS_sim.DEFAULTS;
@@ -128,7 +129,8 @@ module.exports = [
         const s = sim(app, { config: NOISE_OFF, seed });
         s.setValve('surge', 1, false); s.setSuction('B'); s.setConfig(app.toWin({ surge: { lsl: 0.06 } }));
         assert.ok(runUntil(s, 3600, 5, (x) => x.surge.pump.q_bpd === 0), 'B pumped down to its LSL');
-        assert.near(s.getState().surge.comps[1].frac, 0.06, 1e-6, 'stopped at LSL 6 %');
+        // (the valve flow follows the vessel pressure within a step, so the LSL crossing is located to ~1e-5 of the level)
+        assert.near(s.getState().surge.comps[1].frac, 0.06, 1e-4, 'stopped at LSL 6 %');
         s.setConfig(app.toWin({ surge: { lsl: 0.25, lsll: 0.08 } }));
         s.setSuction('A');
         assert.ok(runUntil(s, 3600, 5, (x) => x.surge.pump.q_bpd > 0), 'P-201 running on A');
@@ -236,7 +238,7 @@ module.exports = [
     }
   },
   {
-    name: 'WTSDV-S live view: phone inset (≥ 44 px targets, 22 px tap radius), P-201 trip reset from the card, options persist across reload',
+    name: 'WTSDV-S live view: phone inset (≥ 44 px targets, 22 px tap radius), LCV-201 transfer trip reset from the card, options persist across reload',
     wp: WP,
     integration: true,
     opts: { viewport: { width: 375, height: 812 } },
@@ -256,19 +258,19 @@ module.exports = [
       assert.ok(vin && /T-301 gauge tank/.test(vin.textContent), 'gauge inset opened by a near tap');
       assert.ok(vin.querySelectorAll('[data-act="valve"]').length === 2, 'two 44 px valve buttons');
       app.click(vin.querySelector('[data-act="vin-close"]'));
-      // latch a P-201 trip in the live sim, then reset it from the pump card
+      // latch an LCV-201 transfer trip (LSHH-301) in the live sim, then reset it from the surge tank card
       live.setConfig(app.toWin({ gauge: { settleS: 14400 } }));
       let n = 0; for (; n < 3000 && !live.getState().surge.pump.tripped; n++) live.advance(10);
       assert.ok(live.getState().surge.pump.trip === 'LSHH_GT', 'tripped in the live view');
       app.flush(300);
       live.setConfig(app.toWin({ gauge: { settleS: 600 } }));
       for (let i = 0; i < 360 && live.getState().gauge.tanks[1].frac >= 0.9; i++) live.advance(5);
-      // open the pump card through the focus action (same path as the 3D pick) and press Reset P-201
-      const b = app.win.document.createElement('button'); b.setAttribute('data-act', 'focus'); b.setAttribute('data-v', 'pump'); viz.appendChild(b); app.click(b); b.remove();
+      // open the surge tank card through the focus action (same path as the 3D pick) and press Reset LCV-201
+      const b = app.win.document.createElement('button'); b.setAttribute('data-act', 'focus'); b.setAttribute('data-v', 'surge'); viz.appendChild(b); app.click(b); b.remove();
       app.flush(300);
       const card = app.el('wtsl_card');
-      const rb = card && card.querySelector('[data-act="pump-reset"]');
-      assert.ok(rb && !rb.disabled, 'Reset P-201 button enabled below the reset point');
+      const rb = card && card.querySelector('[data-act="xfer-reset"]');
+      assert.ok(rb && !rb.disabled, 'Reset LCV-201 button enabled below the reset point');
       app.click(rb); app.flush(50);
       assert.strictEqual(live.getState().surge.pump.trip, null, 'reset from the card');
       // options persist in the prefs and are restored after a reload
