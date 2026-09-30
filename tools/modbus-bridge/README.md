@@ -12,7 +12,9 @@ Modbus page / Mini WellOS ──ws://127.0.0.1:8502──► modbus-bridge.js �
 - Zero dependencies, one file: `modbus-bridge.js` (Node.js 18 or newer).
 - Listens on **127.0.0.1 only** by default.
 - Reaches **any device IP address / port** by default (since v1.2.0: an empty allow-list means
-  `*:*`); list `--allow host:port` targets to restrict it to those.
+  `*:*`); list `--allow host:port` targets to restrict it to those. Since v1.2.1 running an
+  installer again also switches a device list written by an older installer to any device (see
+  [Running the installer again](#running-the-installer-again)).
 - **Read-only by default:** Modbus write requests (function codes 05, 06, 15, 16) are answered
   by the bridge with exception 01 (Illegal function) and never reach the device, unless you start
   it with `--allow-writes`. Writes also have to be enabled on the Modbus page and confirmed there.
@@ -46,19 +48,22 @@ https://github.com/h2oil/well-testing-suite/releases/latest/download/WTS-Modbus-
 - No administrator rights and no Node.js needed (the exe carries Node.js; a Node.js single
   executable application with no console window).
 - It copies itself to `%LOCALAPPDATA%\WTS Modbus Bridge\WTS-Modbus-Bridge.exe`, keeps an existing
-  `bridge-config.json` there (or writes the default: any device IP / port, read-only, port 8502),
+  `bridge-config.json` there (or writes the default: any device IP / port, read-only, port 8502;
+  a device list written by an older installer is replaced by any device — `--keep-allow` keeps it),
   stops an earlier copy, registers auto-start at login for the current user
   (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, value "WTS Modbus Bridge"), adds the
   Start-menu shortcuts **WTS Modbus Bridge — status** and **Uninstall WTS Modbus Bridge** and an
   entry in Settings → Apps, starts the bridge and opens its status page `http://127.0.0.1:8502/`.
-- The exe is **not code-signed** yet: when SmartScreen says "Windows protected your PC", click
-  **More info** → **Run anyway**.
+- The exe is **code-signed** by H2Oil Engineering (release workflow; see the signing secrets at the
+  top of `.github/workflows/modbus-bridge-release.yml`). While a new certificate builds reputation,
+  SmartScreen may still say "Windows protected your PC": click **More info**, check the publisher,
+  then **Run anyway**.
 - Uninstall: Settings → Apps → Installed apps → **WTS Modbus Bridge** → Uninstall (or the
   Start-menu shortcut).
 - Command line (`WTS-Modbus-Bridge.exe` in the install folder, or the setup exe): `--run` (what the
   login entry starts; single instance), `--open` (start if needed, open the status page),
   `--status` (JSON), `--uninstall`, `--version`, and the settings `--allow host:port`,
-  `--allow-any`, `--allow-writes`, `--read-only`, `--port N`, `--no-autostart` (the bridge is
+  `--allow-any`, `--keep-allow`, `--allow-writes`, `--read-only`, `--port N`, `--no-autostart` (the bridge is
   restarted with them), `--no-browser` / `--quiet` (no browser page, no message boxes). The exe
   is a GUI program, so its console output is only seen when redirected
   (`WTS-Modbus-Bridge.exe --status > status.txt`). Log: `bridge.log` in the install folder.
@@ -81,7 +86,7 @@ Then press **Check bridge** on the app's Modbus Config page.
 The tag must match `BRIDGE_VERSION` in `modbus-bridge.js`:
 
 ```
-git tag modbus-bridge-v1.2.0 && git push origin modbus-bridge-v1.2.0
+git tag modbus-bridge-v1.2.1 && git push origin modbus-bridge-v1.2.1
 ```
 
 The workflow builds `WTS-Modbus-Bridge-Setup.exe` on `windows-latest` (Node 22,
@@ -124,7 +129,7 @@ lets a downloaded script run). The installer:
 - starts the bridge in its own window (leave it open), checks `http://127.0.0.1:8502/health` and
   prints the next steps.
 
-Options: `-Port 8502`, `-Listen 127.0.0.1`, `-AllowWrites` / `-ReadOnly`, `-Origin https://my.site`,
+Options: `-AllowAny`, `-KeepAllow`, `-Port 8502`, `-Listen 127.0.0.1`, `-AllowWrites` / `-ReadOnly`, `-Origin https://my.site`,
 `-AutoStart` (start at every logon: a user-level Scheduled Task, or a Startup-folder shortcut when
 Task Scheduler refuses), `-NoStart`, `-Reset`, `-Yes` (answer yes to the Node.js question),
 `-Uninstall`.
@@ -149,7 +154,7 @@ The installer:
 - starts the bridge **in that Terminal window** (leave it open; Ctrl+C stops it), checks
   `/health` and prints the next steps.
 
-Options: `--port 8502`, `--listen 127.0.0.1`, `--allow-writes` / `--read-only`,
+Options: `--allow-any`, `--keep-allow`, `--port 8502`, `--listen 127.0.0.1`, `--allow-writes` / `--read-only`,
 `--origin https://my.site`, `--autostart`, `--no-start`, `--reset`, `--yes`, `--uninstall`.
 
 `--autostart` starts the bridge now and at every login instead of in the Terminal (with
@@ -177,6 +182,21 @@ bash "$HOME/Library/Application Support/WTS Modbus Bridge/install.sh" --allow 19
 bash "${XDG_DATA_HOME:-$HOME/.local/share}/wts-modbus-bridge/install.sh" --allow 192.168.1.12:502 # Linux
 powershell -NoProfile -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\WTS Modbus Bridge\install-windows.ps1" -Allow "192.168.1.12:502"
 ```
+
+The allow list follows one rule in every installer (the setup exe, `install.sh`, the release
+one-liner, `install-windows.ps1` and the installers generated by the app):
+
+| You give | The allow list becomes |
+|---|---|
+| `--allow-any` / `-AllowAny` (or `--allow '*:*'`) | any device IP / port |
+| `--allow host:port` / `-Allow` | the existing list plus these targets (an "any device" list starts empty, so this restricts the bridge) |
+| `--keep-allow` / `-KeepAllow` | the existing list, unchanged |
+| none of these | the existing list if it was written by v1.2.1 or newer (`"allowMode"` in the file); **a list written by an older installer is replaced by any device** (the default since v1.2) |
+
+So double-clicking `WTS-Modbus-Bridge-Setup.exe` or running the one-line command again over an older
+install that was restricted to, say, `192.168.1.10:502` prints
+`Allow-list 192.168.1.10:502 replaced by any device (default since 1.2). Use --keep-allow to keep it.`
+and the bridge then reaches any device. The port, listen address, write setting and origins are kept.
 
 `--reset` / `-Reset` starts from a new, empty configuration instead. The previous file is kept as
 `bridge-config.json.bak`. Before writing anything the installer stops the bridge it started earlier
@@ -220,6 +240,7 @@ The installers write `bridge-config.json`; the bridge reads it with `--config`:
 {
   "_comment": "keys starting with _ are ignored",
   "allow": ["192.168.1.10:502", "10.0.0.0/24:502", "plc-2.local:*", "[fd00::10]:502"],
+  "allowMode": "list",
   "port": 8502,
   "listen": "127.0.0.1",
   "origins": [],
@@ -229,10 +250,17 @@ The installers write `bridge-config.json`; the bridge reads it with `--config`:
 }
 ```
 
-All keys are optional. Command-line flags override `port` / `listen` and add to the `allow` /
+All keys are optional. `"allow": []` (or `["*:*"]`) = any device IP / port. `allowMode`
+(`"any"` or `"list"`) is written by the v1.2.1+ installers so that a re-install can tell a list you
+chose from one an older installer wrote (see "Running the installer again"); the bridge itself only
+reads `allow`. The file is in `%LOCALAPPDATA%\WTS Modbus Bridge\` (Windows, setup exe or
+`install-windows.ps1`), `~/Library/Application Support/WTS Modbus Bridge/` (macOS) or
+`${XDG_DATA_HOME:-~/.local/share}/wts-modbus-bridge/` (Linux). Command-line flags override `port` / `listen` and add to the `allow` /
 `origins` lists; `--allow-writes`, `--any-origin` and `--verbose` switch those on. Restart the
-bridge after editing (Windows: close its window and use the Start-menu shortcut; macOS / Linux:
-Ctrl+C and `start-bridge.sh`, or re-run the installer for an auto-start bridge).
+bridge after editing (Windows, setup exe: end `WTS-Modbus-Bridge.exe` in Task Manager, then
+Start menu → **WTS Modbus Bridge — status**; Windows, `install-windows.ps1`: close its window and
+use the Start-menu shortcut; macOS / Linux: Ctrl+C and `start-bridge.sh`, or
+`systemctl --user restart wts-modbus-bridge` / log out and in for an auto-start bridge).
 
 ## Run it by hand
 
@@ -340,12 +368,17 @@ demo** on the Modbus page) that needs neither the bridge nor Node.
 - *"Cannot reach the Modbus bridge"* — the bridge is not running, the URL / port differs, or the
   bridge refused the page (a browser reports all three the same way). Press **Check bridge** on the
   Modbus page: it says which.
-- *Windows: "Windows protected your PC"* — SmartScreen on the unsigned
-  `WTS-Modbus-Bridge-Setup.exe`: click **More info** → **Run anyway**.
-- *"not in the bridge allow-list"* — the bridge was restricted to a list of targets (an empty
-  list allows any device): run the installer again with that device
-  (`--allow <host>:<port>` / `-Allow`): it is added to the targets already allowed. Or add it to
-  `allow` in `bridge-config.json` and restart the bridge.
+- *Windows: "Windows protected your PC"* — SmartScreen, while the signing
+  certificate of `WTS-Modbus-Bridge-Setup.exe` builds reputation: click **More info**, check the
+  publisher is H2Oil Engineering, then **Run anyway**.
+- *"not in the bridge allow-list"* — the bridge was restricted to a list of targets (older
+  installers wrote one; an empty list allows any device). Run the installer again
+  (`WTS-Modbus-Bridge-Setup.exe`, or the one-line command): from v1.2.1 it switches the bridge to
+  any device. On Windows without reinstalling: Win+R →
+  `"%LOCALAPPDATA%\WTS Modbus Bridge\WTS-Modbus-Bridge.exe" --allow-any` (rewrites the settings and
+  restarts the bridge). Or set `"allow": []` in `bridge-config.json` (locations above) and restart
+  the bridge. To keep a list instead, run the installer with that device
+  (`--allow <host>:<port>` / `-Allow`): it is added to the targets already allowed.
 - *"the bridge refused this page" / origin not accepted* — the page is served from an origin the
   bridge does not accept: run the installer again with `--origin <that origin>` (`-Origin`), or add
   it to `origins` in `bridge-config.json`. A saved `file://` copy sends `null` (see the top of

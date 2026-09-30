@@ -41,7 +41,10 @@
 //          --origin null accepts a saved file:// copy of the app)
 // --config file.json: {"allow":["192.168.1.10:502"], "port":8502, "listen":"127.0.0.1",
 //   "origins":[], "anyOrigin":false, "allowWrites":false, "verbose":false} (all keys optional;
-//   keys starting with "_" are comments). Command-line flags override the file's port / listen
+//   keys starting with "_" are comments). "allowMode": "any" | "list" is written next to "allow" by
+//   the v1.2.1+ installers (the bridge itself only reads "allow": an empty list = any device); a file
+//   without it comes from an older installer, whose allow list a re-install replaces by any device
+//   unless --keep-allow (-KeepAllow) or an explicit --allow is given. Command-line flags override the file's port / listen
 //   and add to its allow / origins lists; --allow-writes, --any-origin, --verbose switch those on.
 // RFC 6455 (WebSocket) framing; MODBUS Messaging on TCP/IP Implementation Guide V1.0b (MBAP).
 // =============================================================================
@@ -52,7 +55,7 @@ const net = require('net');
 const crypto = require('crypto');
 const fs = require('fs');
 
-const BRIDGE_VERSION = '1.2.0';
+const BRIDGE_VERSION = '1.2.1';
 const BRIDGE_NAME = 'wts-modbus-bridge';
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';     // RFC 6455 §1.3
 const MAX_ADU = 260;
@@ -331,7 +334,7 @@ function createBridge(opts) {
     S.close = close;
     if (!host || !(port >= 1 && port <= 65535) || !allowed(allowList, host, port)) {
       stats.refused++;
-      sendText({ type: 'error', message: 'target ' + host + ':' + port + ' is not in the bridge allow-list (start the bridge with --allow ' + (host || '<ip>') + ':' + (port || 502) + ')' });
+      sendText({ type: 'error', message: 'target ' + host + ':' + port + ' is not in the bridge allow-list (this bridge is restricted to a list of devices: run its installer again for any device, or set "allow": [] in bridge-config.json — or add --allow ' + (host || '<ip>') + ':' + (port || 502) + ' — and restart the bridge)' });
       close(1008, 'target not allowed');
       return;
     }
@@ -416,7 +419,7 @@ function parseArgs(argv) {
 }
 
 // ─── config file ─────────────────────────────────────────────────────────────
-const CONFIG_KEYS = { allow: 'array', port: 'port', listen: 'string', origins: 'array', anyOrigin: 'boolean', allowWrites: 'boolean', verbose: 'boolean' };
+const CONFIG_KEYS = { allow: 'array', allowMode: 'mode', port: 'port', listen: 'string', origins: 'array', anyOrigin: 'boolean', allowWrites: 'boolean', verbose: 'boolean' };
 function validPort(p) { return typeof p === 'number' && Number.isInteger(p) && p >= 0 && p <= 65535; }   // 0 = any free port (tests)
 // JSON text of a config file → { options, warnings }. Keys starting with "_" are comments;
 // other unknown keys are ignored with a warning (a newer file read by an older bridge).
@@ -432,6 +435,9 @@ function parseConfig(text, label) {
     if (t === 'array') {
       if (!Array.isArray(v) || v.some((x) => typeof x !== 'string')) throw new Error(label + ': "' + k + '" must be a list of strings');
       options[k] = v.map((x) => x.trim()).filter(Boolean);
+    } else if (t === 'mode') {                  // installer bookkeeping (see --config above)
+      if (v !== 'any' && v !== 'list') throw new Error(label + ': "allowMode" must be "any" or "list"');
+      options[k] = v;
     } else if (t === 'port') {
       if (!validPort(v)) throw new Error(label + ': "port" must be a whole number 1-65535');
       options[k] = v;

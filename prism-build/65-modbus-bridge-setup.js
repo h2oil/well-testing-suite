@@ -18,7 +18,8 @@
 //                              origins default to this page's origin when the bridge would refuse it
 //                              (a custom http(s) site — never "null")
 //   commandsFor(os, o)       → {node, installer, packaged, direct, uninstall} (values with * or [ ]
-//                              single-quoted for sh / zsh, double-quoted for PowerShell / cmd)
+//                              single-quoted for sh / zsh, double-quoted for PowerShell / cmd; *:* in
+//                              allow = --allow-any / -AllowAny, which replaces an older installer's list)
 //   quickSetup(os, {port})   → {os, exeUrl, shUrl, oneLiner, releasesUrl}: the one-click paths from the GitHub
 //                              release (Windows: WTS-Modbus-Bridge-Setup.exe; macOS / Linux: curl … | bash)
 //   releaseInstaller()       → {ok, filename, text, version, files}: the self-contained install.sh of the GitHub
@@ -267,13 +268,17 @@ function commandsFor(os, o) {
     var port = validPort(o.port) ? +o.port : 8502, listen = o.listen && validateListen(o.listen) ? normListen(o.listen) : '';
     if (listen === '127.0.0.1') listen = '';                                    // the default
     var q = os === 'windows' ? winArg : shArg;
-    var direct = 'node modbus-bridge.js' + allow.map(function (a) { return ' --allow ' + q(a); }).join('') + (port !== 8502 ? ' --port ' + port : '') +
+    // any device (*:*): --allow-any / -AllowAny, which also replaces the allow list of an existing
+    // bridge-config.json (an older installer's list would otherwise be kept and added to)
+    var any = allow.some(function (a) { return validateTarget(a).value === '*:*'; });
+    if (any) allow = [];
+    var direct = 'node modbus-bridge.js' + (any ? ' --allow-any' : '') + allow.map(function (a) { return ' --allow ' + q(a); }).join('') + (port !== 8502 ? ' --port ' + port : '') +
         (listen ? ' --listen ' + listen : '') + origins.map(function (x) { return ' --origin ' + x; }).join('') + (o.allowWrites ? ' --allow-writes' : '');
     if (os === 'windows') {
         return {
             node: 'winget install OpenJS.NodeJS.LTS',
             installer: 'powershell -NoProfile -ExecutionPolicy Bypass -File "$HOME\\Downloads\\wts-modbus-bridge-install.ps1"',
-            packaged: 'powershell -NoProfile -ExecutionPolicy Bypass -File .\\install-windows.ps1 -Allow "' + allow.join(',') + '"' + (port !== 8502 ? ' -Port ' + port : '') +
+            packaged: 'powershell -NoProfile -ExecutionPolicy Bypass -File .\\install-windows.ps1' + (any ? ' -AllowAny' : ' -Allow "' + allow.join(',') + '"') + (port !== 8502 ? ' -Port ' + port : '') +
                 (listen ? ' -Listen ' + listen : '') + (origins.length ? ' -Origin "' + origins.join(',') + '"' : '') + (o.allowWrites ? ' -AllowWrites' : '') + (o.autostart ? ' -AutoStart' : ''),
             direct: direct,
             uninstall: 'powershell -NoProfile -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\\WTS Modbus Bridge\\install-windows.ps1" -Uninstall'
@@ -282,7 +287,7 @@ function commandsFor(os, o) {
     return {
         node: os === 'macos' ? 'brew install node' : 'sudo apt-get install nodejs      # or: sudo dnf install nodejs',
         installer: 'bash ~/Downloads/wts-modbus-bridge-install.sh',
-        packaged: 'bash install.sh --allow ' + (allow.length ? shArg(allow.join(',')) : '<ip>:502') + (port !== 8502 ? ' --port ' + port : '') + (listen ? ' --listen ' + listen : '') +
+        packaged: 'bash install.sh ' + (any ? '--allow-any' : '--allow ' + (allow.length ? shArg(allow.join(',')) : '<ip>:502')) + (port !== 8502 ? ' --port ' + port : '') + (listen ? ' --listen ' + listen : '') +
             origins.map(function (x) { return ' --origin ' + x; }).join('') + (o.allowWrites ? ' --allow-writes' : '') + (o.autostart ? ' --autostart' : ''),
         direct: direct,
         uninstall: os === 'macos' ? 'bash "$HOME/Library/Application Support/WTS Modbus Bridge/install.sh" --uninstall'
@@ -418,6 +423,13 @@ function versionLess(a, b) {
 }
 
 // ─── Check bridge (GET /health) ──────────────────────────────────────────────
+// How to switch a restricted bridge to any device (plain text; the config paths are the installers').
+var ALLOW_FIX = [
+    'Fix: run the installer again — ' + EXE_FILE + ' on Windows, or the one-line command on macOS / Linux (step 1 above). From bridge v1.2.1 on it switches the bridge to any device.',
+    'Windows, without reinstalling: press Win+R, run  "%LOCALAPPDATA%\\WTS Modbus Bridge\\WTS-Modbus-Bridge.exe" --allow-any  — it rewrites the settings and restarts the bridge (setup-exe install).',
+    'Or by hand: in bridge-config.json set "allow": [] (an empty list = any device), save, then restart the bridge. The file is in %LOCALAPPDATA%\\WTS Modbus Bridge\\ (Windows, setup exe or install-windows.ps1), ~/Library/Application Support/WTS Modbus Bridge/ (macOS) or ~/.local/share/wts-modbus-bridge/ (Linux).',
+    'Restart it: Windows (setup exe) — end WTS-Modbus-Bridge.exe in Task Manager, then Start menu → "WTS Modbus Bridge — status"; Windows (install-windows.ps1) — close the "WTS Modbus Bridge" window, then Start menu → "WTS Modbus Bridge"; macOS / Linux — Ctrl+C in its Terminal and run start-bridge.sh from that folder (auto-start: systemctl --user restart wts-modbus-bridge, or log out and in on macOS).'
+];
 function originText() { return pageOrigin(); }
 function originHint() {
     var o = originText() || '<origin>';
@@ -499,7 +511,7 @@ function checkOne(u, devices, f, opts) {
             var P = pack(), warnings = [];
             if (P && versionLess(h.version, P.version)) warnings.push('Bridge v' + h.version + ' is older than v' + P.version + ' bundled with this app — download the package again and re-run the installer to update.');
             var missing = devs.filter(function (d) { return !d.allowed; });
-            if (missing.length) warnings.push('Not in the bridge allow-list: ' + missing.map(function (d) { return d.target; }).join(', ') + ' — re-run the installer (step 3) or add them to "allow" in bridge-config.json, then restart the bridge.');
+            if (missing.length) warnings = warnings.concat(['Not in the bridge allow-list: ' + missing.map(function (d) { return d.target; }).join(', ') + ' — this bridge is restricted to a list of devices (an older installer wrote one).'], ALLOW_FIX);
             if (!devices.length) warnings.push('No "Modbus TCP via WebSocket bridge" devices use this bridge yet.');
             return Object.assign(base, { ok: !missing.length, reachable: true, running: true, version: h.version, readOnly: h.readOnly !== false,
                 port: h.port, uptimeS: h.uptimeS, allow: allow, devices: devs, warnings: warnings });

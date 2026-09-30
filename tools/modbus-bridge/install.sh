@@ -5,7 +5,7 @@
 #
 #   bash install.sh [--allow 192.168.1.10:502] [--allow '10.0.0.0/24:502,plc.local:*']
 #                   [--port 8502] [--listen 127.0.0.1] [--allow-writes | --read-only]
-#                   [--origin https://my.site] [--autostart] [--reset]
+#                   [--origin https://my.site] [--autostart] [--keep-allow] [--reset]
 #                   [--yes] [--no-start] [--uninstall] [--help]
 #
 # One line, from the GitHub release (the release installer carries the bridge files):
@@ -29,13 +29,17 @@
 # are ADDED to its allow list, and its port / listen address / write setting / origins stay
 # unless you give --port / --listen / --allow-writes / --read-only. --reset starts from a new,
 # empty configuration (the old file is kept as bridge-config.json.bak).
+# Allow list of an older installer: a bridge-config.json written before v1.2.1 has no
+# "allowMode". Its allow list is replaced by any device (the default since v1.2) unless you
+# give --allow targets (added to it) or --keep-allow (kept as it is); a note says so.
 #
 # --allow   host:port the bridge may connect to (repeat it, or give a comma list):
 #           IPv4 (192.168.1.10:502), IPv4 subnet (10.0.0.0/24:502), host name
 #           (plc-1.local:502) or IPv6 in brackets ([fd00::10]:502); port 1-65535 or * (any
 #           port). Quote values with * or [ ] ('plc.local:*') - zsh refuses an unmatched glob.
 #           With no --allow at all the bridge allows any device IP / port (default).
-# --allow-any  allow any device IP / port (same as --allow '*:*').
+# --allow-any  allow any device IP / port (same as --allow '*:*'); replaces an existing list.
+# --keep-allow keep the allow list of an existing bridge-config.json from an older installer.
 # --port    WebSocket port of the bridge (default 8502; the app's bridge URL is ws://127.0.0.1:<port>).
 # --listen  interface to listen on (default 127.0.0.1 = this computer only).
 # --allow-writes  forward Modbus write requests (FC 05/06/15/16); --read-only refuses them (default).
@@ -80,7 +84,7 @@ usage() {
     if [ -n "$SELF" ] && [ -f "$SELF" ]; then
         sed -n '2,/^# =====/p' "$SELF" 2>/dev/null | sed -e 's/^# \{0,1\}//' -e '/^=====/d' || true
     else
-        say "Options: --allow host:port, --allow-any, --port N, --listen IP, --allow-writes, --read-only, --origin URL,"
+        say "Options: --allow host:port, --allow-any, --keep-allow, --port N, --listen IP, --allow-writes, --read-only, --origin URL,"
         say "         --autostart, --no-start, --reset, --yes, --uninstall (see the README of the WTS Modbus bridge)."
     fi
 }
@@ -182,7 +186,7 @@ add_origin() {                      # $1 = one origin or a comma-separated list
 }
 
 # ---- arguments ----------------------------------------------------------------
-CLI_PORT=""; CLI_LISTEN=""; CLI_WRITES=""; AUTOSTART=0; UNINSTALL=0; ASSUME_YES=0; NO_START=0; RESET=0
+CLI_PORT=""; CLI_LISTEN=""; CLI_WRITES=""; KEEP_ALLOW=0; AUTOSTART=0; UNINSTALL=0; ASSUME_YES=0; NO_START=0; RESET=0
 if [ -n "$PRESET_ALLOW" ]; then add_allow "$PRESET_ALLOW"; fi
 if [ -n "$PRESET_ORIGINS" ]; then add_origin "$PRESET_ORIGINS"; fi
 if [ "$PRESET_AUTOSTART" = "1" ]; then AUTOSTART=1; fi
@@ -197,6 +201,7 @@ while [ $# -gt 0 ]; do
         --listen)       [ $# -ge 2 ] || die "--listen needs an address"; CLI_LISTEN="$2"; shift 2 ;;
         --listen=*)     CLI_LISTEN="${1#*=}"; shift ;;
         --allow-any)    add_allow '*:*'; shift ;;
+        --keep-allow)   KEEP_ALLOW=1; shift ;;
         --allow-writes) CLI_WRITES=1; shift ;;
         --read-only)    CLI_WRITES=0; shift ;;
         --autostart)    AUTOSTART=1; shift ;;
@@ -470,7 +475,7 @@ ensure_node
 
 # The existing bridge-config.json supplies the defaults, so running the installer again (for
 # one more device, or --allow-writes) never drops the other targets or changes the port.
-OLD_ALLOW=(); OLD_PORT=""; OLD_LISTEN=""; OLD_WRITES=""; HAVE_OLD=0
+OLD_ALLOW=(); OLD_PORT=""; OLD_LISTEN=""; OLD_WRITES=""; OLD_MODE=""; HAVE_OLD=0
 read_existing_config() {
     local f="$INSTALL_DIR/bridge-config.json" out key val re='^[][A-Za-z0-9._:/*-]+$'
     [ -f "$f" ] || return 0
@@ -482,7 +487,8 @@ const safe=(s)=>typeof s==="string"&&/^[\x21-\x7e]{1,300}$/.test(s.trim());
 (Array.isArray(c.allow)?c.allow:[]).forEach((x)=>console.log(safe(x)?"allow "+x.trim():"bad "+JSON.stringify(x).slice(0,60).replace(/[^\x20-\x7e]/g,"?")));
 if(Number.isInteger(c.port))console.log("port "+c.port);
 if(safe(c.listen))console.log("listen "+c.listen.trim());
-if(typeof c.allowWrites==="boolean")console.log("writes "+(c.allowWrites?1:0));' "$f")"; then
+if(typeof c.allowWrites==="boolean")console.log("writes "+(c.allowWrites?1:0));
+if(c.allowMode==="any"||c.allowMode==="list")console.log("mode "+c.allowMode);' "$f")"; then
         warn "$f could not be read (not valid JSON?) - writing a new one (the old file is kept as bridge-config.json.bak)."
         return 0
     fi
@@ -497,25 +503,53 @@ if(typeof c.allowWrites==="boolean")console.log("writes "+(c.allowWrites?1:0));'
             port)   if valid_port "$val"; then OLD_PORT=$((10#$val)); fi ;;
             listen) if valid_listen "$val"; then OLD_LISTEN="$(norm_listen "$val")"; else warn "the existing listen address '$val' is not an IPv4 address or localhost - not kept"; fi ;;
             writes) OLD_WRITES="$val" ;;
+            mode)   OLD_MODE="$val" ;;
         esac
     done <<< "$out"
     return 0
 }
 if [ "$RESET" != 1 ]; then read_existing_config; fi
-ALLOW_LIST=()
-for e in ${OLD_ALLOW[@]+"${OLD_ALLOW[@]}"} ${NEW_ALLOW[@]+"${NEW_ALLOW[@]}"}; do
-    in_list "$e" ${ALLOW_LIST[@]+"${ALLOW_LIST[@]}"} || ALLOW_LIST+=("$e")
-done
+# The allow list: --allow-any (or '*:*') = any device; --allow targets are added to the old list
+# (an "any" list starts empty); --keep-allow or a file with "allowMode" (v1.2.1+) keeps the old
+# list; the list of an older installer (no "allowMode") is replaced by any device.
+ALLOW_LIST=(); MIGRATED=""
+old_is_any() { [ ${#OLD_ALLOW[@]} -eq 0 ] || in_list '*:*' "${OLD_ALLOW[@]}"; }
+add_to_list() {
+    local e
+    for e in "$@"; do in_list "$e" ${ALLOW_LIST[@]+"${ALLOW_LIST[@]}"} || ALLOW_LIST+=("$e"); done
+    return 0
+}
+if in_list '*:*' ${NEW_ALLOW[@]+"${NEW_ALLOW[@]}"}; then
+    ALLOW_LIST=('*:*')
+elif [ ${#NEW_ALLOW[@]} -gt 0 ]; then
+    if ! old_is_any; then add_to_list "${OLD_ALLOW[@]}"; fi
+    add_to_list "${NEW_ALLOW[@]}"
+elif old_is_any; then
+    :
+elif [ "$KEEP_ALLOW" = 1 ] || [ -n "$OLD_MODE" ]; then
+    add_to_list "${OLD_ALLOW[@]}"
+else
+    for e in "${OLD_ALLOW[@]}"; do MIGRATED="${MIGRATED:+$MIGRATED, }$e"; done
+fi
 PORT="${CLI_PORT:-${PRESET_PORT:-${OLD_PORT:-$DEFAULT_PORT}}}"
 LISTEN="${CLI_LISTEN:-${PRESET_LISTEN:-${OLD_LISTEN:-127.0.0.1}}}"
 ALLOW_WRITES="${CLI_WRITES:-${PRESET_ALLOW_WRITES:-${OLD_WRITES:-0}}}"
 set_health_host
-if [ "$HAVE_OLD" = 1 ]; then
+if [ -n "$MIGRATED" ]; then
+    say "Keeping the settings of the existing $INSTALL_DIR/bridge-config.json (port, listen address, writes, origins)."
+    say "Allow-list $MIGRATED replaced by any device (default since 1.2). Use --keep-allow to keep it."
+elif [ "$HAVE_OLD" = 1 ] && old_is_any; then
+    say "Keeping the settings of the existing $INSTALL_DIR/bridge-config.json (any device; --allow <ip>:<port> restricts it, --reset starts a new file)."
+elif [ "$HAVE_OLD" = 1 ]; then
     say "Keeping the settings of the existing $INSTALL_DIR/bridge-config.json (${#OLD_ALLOW[@]} target(s); new targets are added - --reset starts a new list)."
 fi
-if [ ${#ALLOW_LIST[@]} -eq 0 ]; then
-    ALLOW_LIST=('*:*')
-    say "No --allow targets given: the bridge will allow any device IP / port (default). Give --allow <ip>:<port> (with --reset) to restrict it."
+if [ ${#ALLOW_LIST[@]} -eq 0 ] || in_list '*:*' "${ALLOW_LIST[@]}"; then
+    ALLOW_LIST=('*:*'); ALLOW_MODE=any
+    if [ ${#NEW_ALLOW[@]} -eq 0 ]; then
+        say "No --allow targets given: the bridge will allow any device IP / port (default). Give --allow <ip>:<port> to restrict it."
+    fi
+else
+    ALLOW_MODE=list
 fi
 
 install_files() {
@@ -550,15 +584,15 @@ write_config() {                    # JSON written by node; origins / anyOrigin 
     local f="$INSTALL_DIR/bridge-config.json" tmp="$INSTALL_DIR/bridge-config.json.tmp"
     "$NODE_BIN" -e '
 const fs=require("fs");const a=process.argv.slice(1);
-const f=a[0],tmp=a[1],reset=a[2]==="1",port=+a[3],listen=a[4],writes=a[5]==="1",n=+a[6];
-const allow=a.slice(7,7+n),newOrigins=a.slice(7+n);let old={};
+const f=a[0],tmp=a[1],reset=a[2]==="1",port=+a[3],listen=a[4],writes=a[5]==="1",mode=a[6],n=+a[7];
+const allow=a.slice(8,8+n),newOrigins=a.slice(8+n);let old={};
 if(!reset){try{const o=JSON.parse(fs.readFileSync(f,"utf8").replace(/^\uFEFF/,""));if(o&&typeof o==="object"&&!Array.isArray(o))old=o;}catch(e){}}
 const seen=new Set(),origins=[];
 (Array.isArray(old.origins)?old.origins:[]).concat(newOrigins).forEach((o)=>{if(typeof o!=="string"||!o.trim())return;const k=o.trim().toLowerCase();if(!seen.has(k)){seen.add(k);origins.push(o.trim());}});
-const out={_comment:"WTS Modbus bridge settings. allow = the host:port targets the bridge may connect to. Running the installer again keeps these settings and adds new targets (--reset starts over). Restart the bridge after editing.",
-  allow:allow,port:port,listen:listen,origins:origins,anyOrigin:old.anyOrigin===true,allowWrites:writes,verbose:old.verbose===true};
+const out={_comment:"WTS Modbus bridge settings. allow = the host:port targets the bridge may connect to (*:* = any device; allowMode any or list). Running the installer again keeps these settings and adds new --allow targets (--allow-any = any device, --reset starts over). Restart the bridge after editing.",
+  allow:allow,allowMode:mode,port:port,listen:listen,origins:origins,anyOrigin:old.anyOrigin===true,allowWrites:writes,verbose:old.verbose===true};
 fs.writeFileSync(tmp,JSON.stringify(out,null,2)+"\n");' \
-        "$f" "$tmp" "$RESET" "$PORT" "$LISTEN" "$ALLOW_WRITES" "${#ALLOW_LIST[@]}" \
+        "$f" "$tmp" "$RESET" "$PORT" "$LISTEN" "$ALLOW_WRITES" "$ALLOW_MODE" "${#ALLOW_LIST[@]}" \
         ${ALLOW_LIST[@]+"${ALLOW_LIST[@]}"} ${NEW_ORIGINS[@]+"${NEW_ORIGINS[@]}"}
     if [ -f "$f" ] && ! cmp -s "$f" "$tmp"; then cp "$f" "$f.bak"; fi
     mv "$tmp" "$f"
@@ -672,7 +706,7 @@ next_steps() {
     say ""
     say "Installed in:  $INSTALL_DIR"
     say "Settings:      $INSTALL_DIR/bridge-config.json (restart the bridge after editing)"
-    say "Add a device:  bash \"$INSTALL_DIR/install.sh\" --allow <ip>:<port>   (keeps the other settings)"
+    say "Allow list:    bash \"$INSTALL_DIR/install.sh\" --allow <ip>:<port>   (only listed devices; adds to the list)  or  --allow-any"
     say "Start by hand: \"$INSTALL_DIR/start-bridge.sh\""
     say "Uninstall:     bash \"$INSTALL_DIR/install.sh\" --uninstall"
 }

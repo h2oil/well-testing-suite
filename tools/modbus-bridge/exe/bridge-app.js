@@ -25,6 +25,10 @@
 //   Options (install, or on their own to change an installed bridge — it is restarted):
 //   --allow host:port   add a target (an empty list = any device; listing targets restricts it)
 //   --allow-any         empty the list again (any device IP / port)
+//   --keep-allow        keep the allow list of an older installer (see below)
+//   Allow list on a re-install: bridge-config.json carries "allowMode": "any" | "list" (v1.2.1+). A file
+//   without it comes from an older installer: with no --allow / --allow-any / --keep-allow its list is
+//   replaced by any device (the default since v1.2) and a note says so. A marked file is kept as it is.
 //   --allow-writes / --read-only    forward / refuse Modbus writes (FC 05/06/15/16)
 //   --port N            bridge port (default 8502)
 //   --no-autostart      do not start the bridge at login (removes the Run value)
@@ -57,7 +61,7 @@ const STATUS_LNK = APP_NAME + ' — status.lnk';
 const UNINSTALL_LNK = 'Uninstall ' + APP_NAME + '.lnk';
 const LOG_MAX = 1024 * 1024;
 const DEFAULT_PORT = 8502;
-const CONFIG_COMMENT = 'WTS Modbus bridge settings (written by WTS-Modbus-Bridge-Setup.exe). allow = the host:port targets the bridge may connect to; an empty list = any device IP / port. Restart the bridge after editing (Start menu: WTS Modbus Bridge — status, or run the setup exe again).';
+const CONFIG_COMMENT = 'WTS Modbus bridge settings (written by WTS-Modbus-Bridge-Setup.exe). allow = the host:port targets the bridge may connect to; an empty list = any device IP / port (allowMode "any"; "list" = only the targets in allow, kept when the installer runs again). Restart the bridge after editing (Start menu: WTS Modbus Bridge — status, or run the setup exe again).';
 const WIN_UNINSTALL_HINT = ['Settings → Apps → Installed apps → "WTS Modbus Bridge" → Uninstall, or Start menu → "Uninstall WTS Modbus Bridge".'];
 
 function usage() {
@@ -69,13 +73,13 @@ function usage() {
     '  ' + EXE_NAME + ' --open         start it if needed and open the status page',
     '  ' + EXE_NAME + ' --status       print the status as JSON',
     '  ' + EXE_NAME + ' --uninstall    remove it',
-    '  --version, --allow host:port, --allow-any, --allow-writes, --read-only, --port N, --no-autostart, --no-browser (--quiet)',
+    '  --version, --allow host:port, --allow-any, --keep-allow, --allow-writes, --read-only, --port N, --no-autostart, --no-browser (--quiet)',
   ].join('\n');
 }
 
 // ─── arguments ────────────────────────────────────────────────────────────────
 function parseArgs(argv) {
-  const o = { cmd: 'install', allow: [], allowAny: false, allowWrites: undefined, port: undefined, quiet: false, noAutostart: false, verbose: false, changes: false };
+  const o = { cmd: 'install', allow: [], allowAny: false, keepAllow: false, allowWrites: undefined, port: undefined, quiet: false, noAutostart: false, verbose: false, changes: false };
   const cmds = { '--run': 'run', '--open': 'open', '--uninstall': 'uninstall', '--status': 'status', '--version': 'version', '-V': 'version', '--help': 'help', '-h': 'help', '/?': 'help' };
   let cmdSeen = null;
   for (let i = 0; i < argv.length; i++) {
@@ -86,6 +90,7 @@ function parseArgs(argv) {
       cmdSeen = o.cmd = cmds[a];
     } else if (a === '--allow') { const t = v(); B.parseAllow(t); o.allow.push(t.trim()); o.changes = true; }
     else if (a === '--allow-any') { o.allowAny = true; o.changes = true; }
+    else if (a === '--keep-allow') { o.keepAllow = true; o.changes = true; }
     else if (a === '--allow-writes') { o.allowWrites = true; o.changes = true; }
     else if (a === '--read-only') { o.allowWrites = false; o.changes = true; }
     else if (a === '--port') {
@@ -130,7 +135,7 @@ function insideDir(deps, file, dir) {
 
 // ─── config ───────────────────────────────────────────────────────────────────
 function defaultConfig() {
-  return { _comment: CONFIG_COMMENT, allow: [], port: DEFAULT_PORT, listen: '127.0.0.1', origins: [], anyOrigin: false, allowWrites: false, verbose: false };
+  return { _comment: CONFIG_COMMENT, allow: [], allowMode: 'any', port: DEFAULT_PORT, listen: '127.0.0.1', origins: [], anyOrigin: false, allowWrites: false, verbose: false };
 }
 // → { config, state: 'new' | 'kept' | 'replaced', warning }
 function loadConfig(deps, file) {
@@ -144,16 +149,31 @@ function loadConfig(deps, file) {
     return { config: defaultConfig(), state: 'replaced', warning: e.message };
   }
 }
-function applyOptions(cfg, o) {
-  const c = JSON.parse(JSON.stringify(cfg));
+function anyDevice(list) { return !list.length || list.some((x) => String(x).trim() === '*:*'); }
+// The allow list of this install (see "Allow list on a re-install" at the top):
+//   --allow-any (or --allow '*:*')  → any device;
+//   --allow host:port               → added to the existing list (restricts it; an "any" list starts empty);
+//   --keep-allow, or a file with "allowMode" (v1.2.1+) → the list as it is;
+//   otherwise (a file of an older installer) → any device; info.migrated = the replaced list.
+// allowMode is then set from the result ("any" for an empty list, else "list"), next to "allow".
+function applyOptions(cfg, o, info) {
+  const src = JSON.parse(JSON.stringify(cfg)), c = {};
+  if (!Object.prototype.hasOwnProperty.call(src, 'allow')) c.allow = [];
+  Object.keys(src).forEach((k) => { if (k !== 'allowMode') c[k] = src[k]; if (k === 'allow') c.allowMode = null; });
   if (!Array.isArray(c.allow)) c.allow = [];
-  if (o.allowAny) c.allow = [];
-  const seen = new Set(c.allow.map((x) => B.parseAllow(x).spec.toLowerCase()));
-  (o.allow || []).forEach((a) => {
-    const spec = B.parseAllow(a).spec;
-    if (spec === '*:*') { c.allow = []; seen.clear(); return; }
-    if (!seen.has(spec.toLowerCase())) { seen.add(spec.toLowerCase()); c.allow.push(spec); }
-  });
+  const marked = src.allowMode === 'any' || src.allowMode === 'list';
+  const explicit = (o.allow || []).map((a) => B.parseAllow(a).spec);
+  if (o.allowAny || explicit.indexOf('*:*') >= 0) c.allow = [];
+  else if (explicit.length) {
+    if (anyDevice(c.allow)) c.allow = [];
+    const seen = new Set(c.allow.map((x) => B.parseAllow(x).spec.toLowerCase()));
+    explicit.forEach((spec) => { if (!seen.has(spec.toLowerCase())) { seen.add(spec.toLowerCase()); c.allow.push(spec); } });
+  } else if (!o.keepAllow && !marked && !anyDevice(c.allow)) {
+    if (info) info.migrated = c.allow.slice();
+    c.allow = [];
+  }
+  if (anyDevice(c.allow)) c.allow = [];
+  c.allowMode = c.allow.length ? 'list' : 'any';
   if (o.allowWrites !== undefined) c.allowWrites = !!o.allowWrites;
   if (o.port !== undefined) c.port = o.port;
   if (c.port === undefined) c.port = DEFAULT_PORT;
@@ -296,7 +316,8 @@ function createApp(deps) {
       try { fs.copyFileSync(P.config, P.config + '.bak'); } catch (e) { /* ignore */ }
       note('WARNING: ' + loaded.warning + ' — kept as bridge-config.json.bak, writing a new one');
     }
-    const cfg = applyOptions(loaded.config, o);
+    const info = {}, cfg = applyOptions(loaded.config, o, info);
+    if (info.migrated) note('Allow-list ' + info.migrated.join(', ') + ' replaced by any device (default since 1.2). Use --keep-allow to keep it.');
     const stopped = stopBridge();
     if (stopped) note('Stopped the running copy of the bridge');
     // anything that still answers on the port is not ours (install-windows.ps1 / started by hand)
@@ -506,5 +527,5 @@ function main(argv) {
 }
 
 module.exports = { APP_NAME, EXE_NAME, SETUP_NAME, RUN_KEY, RUN_VALUE, UNINSTALL_KEY, STATUS_LNK, UNINSTALL_LNK, DEFAULT_PORT, WIN_UNINSTALL_HINT,
-  parseArgs, paths, defaultConfig, loadConfig, applyOptions, configText, regFileText, regFileBytes, createApp, createLogger, getHealthHttp, usage, main, bridge: B };
+  parseArgs, paths, defaultConfig, loadConfig, applyOptions, anyDevice, configText, regFileText, regFileBytes, createApp, createLogger, getHealthHttp, usage, main, bridge: B };
 if (require.main === module) main(process.argv.slice(2));

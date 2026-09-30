@@ -3,7 +3,10 @@
  * ─────────────────────────────────────────────────────────────────────────
  * window.WTS_3d  — Three.js r170 "industrial digital twin at blue hour":
  *   WH-101 → SDV-101 (ESD) → CK-101 → H-101 → V-101 → gas → FS-401
- *                                             └→ liquids → T-201 → P-201 → T-301A|B
+ *                                             └→ liquids → T-201 → LCV-201 → T-301A|B → P-201 → export
+ *   (no pump between T-201 and T-301: LCV-201 transfers on the surge tank pressure)
+ *   · rig-up: equipment out of the spread (snapshot rigup) is shown as a ghost with its bypass
+ *     spool (amber); the scene is rebuilt when the rig-up changes
  *   · Fresnel glass vessels with phase-banded, luminous fluids and animated
  *     interfaces (water / emulsion / oil / gas cap), weir cascade, bubbles
  *   · glass pipes with flow tracers walking an edge graph (real-time clock)
@@ -45,17 +48,17 @@ var STATUS_RANK = { ok:0, evt:1, hyd:2, warn:3, alarm:4 };
 
 var EQ_IDS = ['wellhead','esd','choke','heater','separator','flare','surge','pump','gauge'];
 var STEP = { wellhead:'①', esd:'②', choke:'③', heater:'④', separator:'⑤',
-             flare:'⑥', surge:'⑦', pump:'⑧', gauge:'⑨' };
+             flare:'⑥', surge:'⑦', gauge:'⑧', pump:'⑨' };   // P-201 sits downstream of the gauge tank
 var TAGS = { wellhead:'WH-101', esd:'SDV-101', choke:'CK-101', heater:'H-101', separator:'V-101',
              flare:'FS-401', surge:'T-201', pump:'P-201', gauge:'T-301' };
 var TITLES = { wellhead:'WELLHEAD', esd:'ESD VALVE', choke:'CHOKE', heater:'LINE HEATER', separator:'SEPARATOR',
                flare:'FLARE', surge:'SURGE TANK', pump:'TRANSFER PUMP', gauge:'GAUGE TANK' };
-var PREF_SIDE = { wellhead:'nw', esd:'n', choke:'ne', heater:'n', separator:'n', flare:'e', surge:'nw', pump:'s', gauge:'ne' };
+var PREF_SIDE = { wellhead:'nw', esd:'n', choke:'ne', heater:'n', separator:'n', flare:'e', surge:'nw', pump:'se', gauge:'ne' };
 
 // Label anchors (top of equipment + 0.3 m)
 var ANCHORS = {
   wellhead:[-15.0,2.75,0], esd:[-11.6,3.6,0], choke:[-7.2,2.25,0], heater:[-1.4,2.75,0], separator:[5.6,3.2,0],
-  flare:[19.5,8.1,-4.5], surge:[10.2,6.0,4.0], pump:[12.6,1.15,4.0], gauge:[16.4,3.2,4.0]
+  flare:[19.5,8.1,-4.5], surge:[10.2,6.0,4.0], pump:[20.4,1.35,6.3], gauge:[16.4,3.2,4.0]
 };
 
 // Overview auto-fit box (process equipment + pipes only, capped at y 7) — §5.2
@@ -78,7 +81,7 @@ var PROXIES = [
   ['heater',[-1.4,1.6,0],[3.4,1.7,1.7]], ['heater',[0.55,3.5,0.28],[0.5,3.6,0.5]],
   ['separator',[5.6,2.0,0],[6.9,1.8,1.8]],
   ['surge',[10.2,3.3,4.0],[2.5,4.9,2.5]],
-  ['pump',[12.6,0.5,3.6],[0.9,1.0,1.6]],
+  ['pump',[20.35,0.55,5.95],[0.9,1.1,1.7]],
   ['gauge',[16.4,1.55,4.0],[5.0,2.6,2.6]],
   ['flare',[19.5,3.9,-4.5],[0.8,7.8,0.8]], ['flare',[19.5,0.2,-4.5],[1.6,0.4,1.6]]
 ];
@@ -95,7 +98,7 @@ var PAD_RECT = { x0:-20, x1:24, z0:-10, z1:8.5 };
 var EQ_BOX = {
   wellhead:[[-16.6,0,-1.6],[-13.4,2.6,1.9]], esd:[[-12.9,0,-0.6],[-11.0,3.4,1.8]], choke:[[-9.1,0,-1.2],[-5.3,2.0,1.2]],
   heater:[[-3.3,0,-0.9],[1.0,5.4,1.6]], separator:[[2.1,0,-0.9],[9.1,3.1,1.2]], flare:[[18.6,0,-5.3],[20.4,7.8,-3.7]],
-  surge:[[8.9,0,2.7],[11.5,6.2,5.3]], pump:[[12.0,0,2.8],[13.0,1.1,4.4]], gauge:[[13.8,0,1.9],[19.4,3.9,5.5]]
+  surge:[[8.9,0,2.7],[11.5,6.2,5.3]], pump:[[19.8,0,5.0],[22.3,1.4,6.8]], gauge:[[13.8,0,1.9],[19.4,3.9,5.5]]
 };
 var VIEWS = {
   overview:{ groups:null, az:-18, el:20, margin:1 },
@@ -107,7 +110,7 @@ var VIEWS = {
 };
 var FOCUS = {
   wellhead:[[-15,1.3,0],7], esd:[[-11.6,1.8,0],6], choke:[[-7.2,1.3,0],6], heater:[[-1.4,1.7,0.3],8],
-  separator:[[5.6,2.0,0],11], surge:[[10.2,3.2,4.0],11], pump:[[12.6,0.6,4.0],5], gauge:[[16.4,1.6,4.0],11],
+  separator:[[5.6,2.0,0],11], surge:[[10.2,3.2,4.0],11], pump:[[20.7,0.6,6.0],6], gauge:[[16.4,1.6,4.0],11],
   flare:[[19.5,5,-4.5],18]
 };
 
@@ -128,15 +131,25 @@ var ROUTES = [
   { id:'LM',  aSeg:8, seg:-1, nps:3, line:'LM',        phase:'liquid',pts:[[8.1,0.55,2.4],[8.1,0.55,4.0],[8.1,4.2,4.0],[9.0,4.2,4.0]] },
   { id:'BLK', aSeg:9, seg:-1, nps:2, line:'blanket',   phase:'gas',   pts:[[4.1,2.87,0],[4.1,4.9,0],[4.1,4.9,4.0],[9.0,4.9,4.0]] },
   { id:'VENT',aSeg:10, seg:-1, nps:2, line:'surge_vent', phase:'gas', pts:[[10.2,5.7,4.0],[10.2,6.1,4.0],[13.0,6.1,4.0],[13.0,6.1,0],[13.0,3.6,0]] },
+  // X1 → LCV-201 (control valve at x 12.5, no pump: the surge tank pressure drives the transfer) → X2
   { id:'X1',  aSeg:5, seg:5, line:'surge_gauge',  phase:'liquid', pts:[[10.65,0.95,4.0],[10.65,0.45,4.0],[12.2,0.45,4.0]] },
-  { id:'X2',  aSeg:5, seg:5, line:'surge_gauge',  phase:'liquid', pts:[[12.5,0.75,4.0],[12.5,1.1,4.0],[13.4,1.1,4.0],[13.4,3.4,4.0],[13.4,3.4,3.6],[15.2,3.4,3.6]] },
+  { id:'X2',  aSeg:5, seg:5, line:'surge_gauge',  phase:'liquid', pts:[[12.8,0.45,4.0],[13.4,0.45,4.0],[13.4,3.4,4.0],[13.4,3.4,3.6],[15.2,3.4,3.6]] },
   { id:'XA',  aSeg:11, seg:5, line:'surge_gauge', phase:'liquid', pts:[[15.2,3.4,3.6],[15.2,2.7,3.6]] },
   { id:'XB',  aSeg:11, seg:5, line:'surge_gauge', phase:'liquid', pts:[[15.2,3.4,3.6],[17.6,3.4,3.6],[17.6,2.7,3.6]] },
-  { id:'DRA', aSeg:13, seg:-1, nps:3, line:'gauge_drain', phase:'liquid', pts:[[15.4,0.35,5.4],[15.4,0.35,6.3],[20.0,0.35,6.3]] },
-  { id:'DRB', aSeg:13, seg:-1, nps:3, line:'gauge_drain', phase:'liquid', pts:[[17.9,0.35,5.4],[17.9,0.35,6.3]] }
+  // gauge tank drains → P-201 (downstream of the gauge tank) → export / burner
+  { id:'DRA', aSeg:13, seg:-1, nps:3, line:'gauge_drain', phase:'liquid', pts:[[15.4,0.45,5.4],[15.4,0.45,6.3],[20.0,0.45,6.3]] },
+  { id:'DRB', aSeg:13, seg:-1, nps:3, line:'gauge_drain', phase:'liquid', pts:[[17.9,0.45,5.4],[17.9,0.45,6.3]] }
 ];
 var PSV_ROUTE = [[5.2,2.87,0],[5.2,4.1,0],[12.4,4.1,0],[12.4,3.6,0]];
-var TEES = [[-4.3,1.2,0,6],[1.0,1.2,0,6],[15.2,3.4,3.6,3],[8.1,0.55,2.4,3],[17.9,0.35,6.3,3],[13.0,3.6,0,6],[12.4,3.6,0,6]];
+var TEES = [[-4.3,1.2,0,6],[1.0,1.2,0,6],[15.2,3.4,3.6,3],[8.1,0.55,2.4,3],[17.9,0.45,6.3,3],[13.0,3.6,0,6],[12.4,3.6,0,6]];
+// Rig-up bypass spools (amber), drawn only while the item is out of the rig-up
+var BYPASS_SPOOLS = {
+  separator:[[1.6,2.3,0],[1.6,2.3,-1.25],[1.6,3.6,-1.25],[8.1,3.6,-1.25],[8.1,3.6,0]],    // heater outlet → flare line (clean-up)
+  surge:[[8.1,0.55,4.0],[8.1,0.55,6.0],[12.95,0.55,6.0],[12.95,0.55,4.0]],                 // separator dumps → T-301 fill line
+  gauge:[[13.4,0.45,4.0],[13.4,0.45,6.6],[16.6,0.45,6.6],[16.6,0.45,6.3]],                 // LCV-201 → drain / export line
+  flare:[[18.6,1.0,-4.5],[18.6,1.0,-6.6],[22.4,1.0,-6.6]]                                  // gas → export / sales line
+};
+var RIG_GROUPS = ['heater', 'separator', 'surge', 'gauge', 'pump', 'flare'];
 
 // Segment chip anchors (pipe midpoints): 6 main + LW + LO
 var SEG_CHIPS = [
@@ -158,7 +171,7 @@ var TIERS = {
 };
 
 // Snapshot paths that may be null (copy of WTS_sim.NULLABLE; §3.3)
-var NULLABLE = ['esd.cause','esd.tripT','surge.tFull_s','surge.pump.trip','rates.gor_scf_stb','rates.bsw_pct','rates.tank_stbd',
+var NULLABLE = ['esd.cause','esd.tripT','surge.tFull_s','surge.pump.trip','surge.transfer.trip','rates.gor_scf_stb','rates.bsw_pct','rates.tank_stbd',
   'rates.shrink_pct','alarms[*].value','alarms[*].limit','alarmLog[*].sev','gauge.batches[*].gor_scf_stb','gauge.batches[*].bsw_pct'];
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -527,10 +540,12 @@ function makeNorm() {
     surge:{ P:25, SP:25, SPeff:25, T:150, psh:32, pshh:40, frac:0.55, fracW:0.15, cap_bbl:100, Vo_bbl:0, Vw_bbl:0, tFull_s:-1,
             flash_mscfd:0, pumpOn:false, pumpTripped:false, pumpFailed:false, pump_q:0, pump_design:0, lsll:0.05, lsl:0.25, lsh:0.7, lshh:0.9, psvLifting:false,
             comps:[{ frac:0.55, fracW:0.15, inlet:true, suction:true, pos:1, moving:false }, { frac:0.55, fracW:0.15, inlet:true, suction:true, pos:1, moving:false }],
-            suction:'both', blocked:false, autoOn:false, pumpBlocked:false, pumpTrip:'' },
+            suction:'both', blocked:false, autoOn:false, pumpBlocked:false, pumpTrip:'', xferLowDP:false },
     gauge:{ active:0, tanks:[{ frac:0.3, fracW:0.06, cap_bbl:100, state:'filling', Vo_bbl:0, Vw_bbl:0, Vo_stb:0, drain_bpd:0, fill_bpd:0, inlet:true, pos:1, moving:false },
                               { frac:0, fracW:0, cap_bbl:100, state:'ready', Vo_bbl:0, Vw_bbl:0, Vo_stb:0, drain_bpd:0, fill_bpd:0, inlet:false, pos:0, moving:false }],
-            nb:0, lastOil:-1, lastRate:-1, lastBsw:-1, lastTag:'', autoOn:false, blocked:false },
+            nb:0, lastOil:-1, lastRate:-1, lastBsw:-1, lastTag:'', autoOn:false, blocked:false,
+            pumpOn:false, pumpFailed:false, pump_q:0, pump_design:1, pumpMode:'pump' },
+    rig:{ heater:true, separator:true, surge:true, gauge:true, pump:true, flare:true }, rigSig:'111111',
     rates:{ gas_mmscfd:0, oil_stbd:0, water_bpd:0, gor:-1, bsw:-1 },
     cum:{ flare_mmscf:0, oilIn_stb:0, gasIn_mmscf:0 },
     alarms:[], hasState:false
@@ -543,6 +558,8 @@ function makeNorm() {
 var EMPTY_ARR = [];
 function nb(v, d) { return v === true || v === false ? v : d; }
 function nstr(v, d) { return typeof v === 'string' ? v : d; }
+// rig-up signature over the groups the scene can ghost ('1' = in the rig-up)
+function rigSigOf(rig) { return RIG_GROUPS.map(function (g) { return rig && rig[g] === false ? '0' : '1'; }).join(''); }
 function normalize(state, out) {
   var N = out || makeNorm(), S = (state && typeof state === 'object') ? state : {};
   N.hasState = !!(state && typeof state === 'object' && state.sep);
@@ -602,7 +619,10 @@ function normalize(state, out) {
   su.psh = num(SU.psh, 32); su.pshh = num(SU.pshh, 40); su.frac = clamp(num(SU.frac, 0.55), 0, 1); su.fracW = clamp(num(SU.fracW, 0.15), 0, 1);
   su.cap_bbl = Math.max(num(SU.cap_bbl, 100), 1); su.Vo_bbl = num(SU.Vo_bbl, 0); su.Vw_bbl = num(SU.Vw_bbl, 0);
   su.tFull_s = SU.tFull_s == null ? -1 : num(SU.tFull_s, -1); su.flash_mscfd = num(SU.flash_mscfd, 0);
+  // surge outlet transfer LCV-201 (surge.transfer; older snapshots: surge.pump — the pumped transfer of v3.0)
+  if (SU.transfer) PU = SU.transfer;
   su.pumpOn = !!PU.on; su.pumpTripped = !!PU.tripped; su.pumpFailed = !!PU.failed; su.pump_q = num(PU.q_bpd, 0); su.pump_design = Math.max(num(PU.design_bpd, 1), 1);
+  su.xferLowDP = !!PU.lowDP;
   su.lsll = num(SU.lsll, 0.05); su.lsl = num(SU.lsl, 0.25); su.lsh = num(SU.lsh, 0.7); su.lshh = num(SU.lshh, 0.9); su.psvLifting = !!(SU.psv && SU.psv.lifting);
   var CP = SU.comps || EMPTY_ARR;                // twin compartments A | B (older snapshots: both = the tank level)
   for (i = 0; i < 2; i++) {
@@ -621,6 +641,11 @@ function normalize(state, out) {
     dt.pos = clamp(num(ts.pos, dt.inlet ? 1 : 0), 0, 1); dt.moving = !!ts.moving;
   }
   ga.autoOn = !!(GA.auto && GA.auto.on); ga.blocked = !!GA.blocked;
+  var GP = GA.pump || {};                          // P-201 downstream of the gauge tank (v3.0.2 snapshots)
+  ga.pumpOn = !!GP.on; ga.pumpFailed = !!GP.failed; ga.pump_q = num(GP.q_bpd, 0); ga.pump_design = Math.max(num(GP.design_bpd, 1), 1); ga.pumpMode = nstr(GP.mode, 'pump');
+  var RU = S.rigup || {};
+  for (i = 0; i < RIG_GROUPS.length; i++) N.rig[RIG_GROUPS[i]] = RU[RIG_GROUPS[i]] !== false;
+  N.rigSig = rigSigOf(N.rig);
   var BT = GA.batches || EMPTY_ARR, lb = BT.length ? BT[BT.length - 1] : null;
   ga.nb = BT.length; ga.lastOil = lb ? num(lb.oil_stb, -1) : -1; ga.lastRate = lb ? num(lb.oilRate_stbd, -1) : -1;
   ga.lastBsw = lb && lb.bsw_pct != null ? num(lb.bsw_pct, -1) : -1; ga.lastTag = lb ? nstr(lb.tag, '') : '';
@@ -742,12 +767,14 @@ function fakeSnapshot(t, o) {
       h:surgeFrac * 19.86, frac:surgeFrac, hW:surgeFrac * 0.17 * 19.86, fracW:surgeFrac * 0.17, Vo_bbl:surgeFrac * 83, Vo_stb:surgeFrac * 79, Vw_bbl:surgeFrac * 17,
       flash_mscfd:18 * f, tFull_s:surgeCyc.up ? 1500 * 0.66 * (1 - surgeCyc.v) : null,
       bpv:{ tag:'PCV-201', u:0.5 }, blanket:{ tag:'PCV-202', u:pumpOn ? 0.4 : 0 }, psv:{ tag:'PSV-201', lifting:false },
-      pump:{ tag:'P-201', on:pumpOn, tripped:false, failed:false, blocked:false, q_bpd:qPump, design_bpd:3753, suction:'both' }, lsll:0.05, lsl:0.25, lsh:0.7, lshh:0.9,
+      pump:{ tag:'LCV-201', on:pumpOn, tripped:false, failed:false, blocked:false, q_bpd:qPump, design_bpd:3753, suction:'both', lowDP:false }, lsll:0.05, lsl:0.25, lsh:0.7, lshh:0.9,
       comps:[0, 1].map(function (i) { return { tag:i ? 'T-201B' : 'T-201A', valveTag:i ? 'XV-201B' : 'XV-201A', cap_bbl:50, h:surgeFrac * 19.86, frac:surgeFrac,
         hW:surgeFrac * 0.17 * 19.86, fracW:surgeFrac * 0.17, Vo_bbl:surgeFrac * 41.5, Vo_stb:surgeFrac * 39.5, Vw_bbl:surgeFrac * 8.5, inlet:true, suction:true,
         fill_bpd:(qOil + qWat) / 2, draw_bpd:qPump / 2 }; }),
       suction:'both', blocked:false, auto:{ on:false, sp:0.8, hyst:0.1 } },
+    rigup:{ esd:true, choke:true, heater:true, separator:true, surge:true, gauge:true, pump:true, flare:true, full:true, sig:'11111111', notes:[] },
     gauge:{ tag:'T-301', active:active, count:2, tanks:[tank(0), tank(1)], blocked:false, auto:{ on:false, sp:0.9, hyst:0.1 },
+      pump:{ tag:'P-201', inRig:true, mode:'pump', on:drainQ > 0, failed:false, q_bpd:drainQ, design_bpd:3000, dest:'export' },
       batches:t > cyc ? [{ n:1, tag:'T-301A', tOpen:0, tClose:cyc * 0.9, hours:1.8, openOil_stb:20, closeOil_stb:90, oil_stb:70.8, water_bbl:17.6,
         gov_bbl:88.4, bsw_pct:19.9, oilRate_stbd:944, waterRate_bpd:235, gas_mscf:750, gor_scf_stb:10593, avgT:122 }] : [] },
     cum:{ oilIn_stb:t * 1000 / 86400, waterIn_bbl:t * 200 / 86400, gasIn_mmscf:t * 10 / 86400, flare_mmscf:t * 10 / 86400, flash_mscf:t * 18 / 86400,
@@ -760,6 +787,7 @@ function fakeSnapshot(t, o) {
     faults:{ pcvStuckClosed:false, pcvStuckOpen:false, oilDumpStuckOpen:false, oilDumpStuckClosed:false, waterDumpStuckClosed:false, surgePumpFail:false, slugging:false },
     health:{ substeps:1, lagging:false, droppedSimSec:0, massErr:{ oil:0, water:0, gas:0 }, flowInvalid:false }
   };
+  st.surge.transfer = st.surge.pump;          // v3.0.2: the surge outlet transfer LCV-201 (surge.pump = legacy key, same object)
   return st;
 }
 
@@ -1331,10 +1359,20 @@ var CHAIN_DEF = [
   { id:'DR', entry:'DRA', phase:'liquid', edges:['DRA'] }
 ];
 
-function buildScene(F, renderer, tier, env) {
+function buildScene(F, renderer, tier, env, rig) {
   var THREE = F.THREE, T = TIERS[tier], V3 = THREE.Vector3, C = F.C;
   var scene = new THREE.Scene();
   var S = { tier:tier, T:T, scene:scene, textures:[], vessels:[], dyn:{}, proxies:null, lights:{}, disposeExtra:[] };
+  // rig-up: equipment groups out of the spread are built as ghosts (merged translucent geometry, glass shell kept)
+  var OFF = {}; RIG_GROUPS.forEach(function (g) { OFF[g] = !!(rig && rig[g] === false); });
+  S.off = OFF; S.rigSig = rigSigOf(rig); S.grpObjs = {}; S.detached = [];
+  var GRP = null, grpStart = 0, GH = [];
+  function beginGrp(g) { GRP = g; grpStart = scene.children.length; }
+  function endGrp() {
+    if (GRP) { var arr = S.grpObjs[GRP] || (S.grpObjs[GRP] = []); for (var i = grpStart; i < scene.children.length; i++) arr.push(scene.children[i]); }
+    GRP = null;
+  }
+  function ghosting() { return !!(GRP && OFF[GRP]); }
   function tex(t) { S.textures.push(t); return t; }
   var envTex = env.texture;
   scene.environment = envTex; scene.environmentIntensity = 0.9;
@@ -1393,12 +1431,12 @@ function buildScene(F, renderer, tier, env) {
   S.M = M;
 
   var B = {}; Object.keys(M).forEach(function (k) { B[k] = []; });
-  function add(k, g) { B[k].push(g); return g; }
+  function add(k, g) { if (ghosting()) GH.push(g); else B[k].push(g); return g; }
   var gl = tex(F.glowTexture());
   S.glowTex = gl;
   // glow / smoke billboards are batched into two Points objects (one draw each), flushed per frame
   S.glowItems = []; S.smokeItems = [];
-  function glowItem(list, hex, size, x, y, z, op) { var it = { position:new V3(x, y, z), scale:new V3(size, size, 1), material:{ color:C(hex), opacity:op == null ? 1 : op }, visible:true, renderOrder:970 }; list.push(it); return it; }
+  function glowItem(list, hex, size, x, y, z, op) { var it = { position:new V3(x, y, z), scale:new V3(size, size, 1), material:{ color:C(hex), opacity:op == null ? 1 : op }, visible:!ghosting(), renderOrder:970 }; list.push(it); return it; }
   function sprite(hex, size, x, y, z, op) { return glowItem(S.glowItems, hex, size, x, y, z, op); }
   function smokeSprite(hex, size, x, y, z, op) { return glowItem(S.smokeItems, hex, size, x, y, z, op); }
 
@@ -1484,7 +1522,7 @@ function buildScene(F, renderer, tier, env) {
 
   // dials (static faces merged; needles instanced)
   var DIALS = [];
-  function dial(x, y, z, face, key) { DIALS.push({ p:[x, y, z], face:face, key:key }); add('steelSatin', F.place(new THREE.TorusGeometry(0.13, 0.014, 6, 24), x, y, z, 0, -0.314, 0)); add('steelDark', F.place(new THREE.CylinderGeometry(0.14, 0.14, 0.05, 20).rotateX(Math.PI / 2), x - 0.025 * Math.sin(-0.314), y, z - 0.025 * Math.cos(0.314), 0, -0.314, 0)); }
+  function dial(x, y, z, face, key) { if (!ghosting()) DIALS.push({ p:[x, y, z], face:face, key:key }); add('steelSatin', F.place(new THREE.TorusGeometry(0.13, 0.014, 6, 24), x, y, z, 0, -0.314, 0)); add('steelDark', F.place(new THREE.CylinderGeometry(0.14, 0.14, 0.05, 20).rotateX(Math.PI / 2), x - 0.025 * Math.sin(-0.314), y, z - 0.025 * Math.cos(0.314), 0, -0.314, 0)); }
 
   // ═══ WH-101 christmas tree (−15,0,0) ═══════════════════════════════════
   (function () {
@@ -1568,6 +1606,7 @@ function buildScene(F, renderer, tier, env) {
 
   // ═══ H-101 line heater (−1.4,0,0) ══════════════════════════════════════
   var heater = {};
+  beginGrp('heater');
   (function () {
     add('plate', F.boxAt(4.4, 0.2, 2.4, -1.4, 0.1, 0.4));
     [-2.55, -0.25].forEach(function (x) { add('steelDark', saddleGeo(THREE, 0.81, 1.6, 1.3, 0.3).translate(x, 0, 0)); });
@@ -1600,6 +1639,7 @@ function buildScene(F, renderer, tier, env) {
     heater = { fire:fire, coil:coil, peep:peep, puffs:puffs };
     S.dyn.heater = heater;
   })();
+  endGrp();
 
   // ═══ vessels (glass + phase hull + caps + particles) ═══════════════════
   var normTexA = T.capNormals ? tex(F.rippleNormalTexture()) : null, normTexB = null;
@@ -1621,6 +1661,7 @@ function buildScene(F, renderer, tier, env) {
   function capMat() { return F.makeCap({ tier:tier, envTex:envTex, normal:normTexA, normal2:normTexB }); }
 
   // ── V-101 separator (hero) ─────────────────────────────────────────────
+  beginGrp('separator');
   var V101 = (function () {
     var R = 0.85, Ri = 0.835, Ltt = 6.0, hd = 0.425, hdi = hd - 0.015, H = Ltt + 2 * hdi, Hg = Ltt + 2 * hd;
     var glassGeo = latheH(THREE, vesselProfile(R, Ltt, hd, 16), T.radV, Hg, R);
@@ -1716,7 +1757,9 @@ function buildScene(F, renderer, tier, env) {
   var stemInst = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.018, 0.018, 0.16, 8), M.accent, lcvStems.length); stemInst.frustumCulled = false; scene.add(stemInst);
   S.dyn.lcv = { water:lcvW, oil:lcvO, pcv:lcvStems[0], list:lcvStems, inst:stemInst };
 
+  endGrp();
   // ── H-101 glass shell + bath hull ──────────────────────────────────────
+  beginGrp('heater');
   var H101 = (function () {
     var R = 0.8, Ri = 0.785, L = 3.4, Li = 3.37;
     var gG = latheH(THREE, [[1e-4, 0], [R, 0], [R, L], [1e-4, L]], T.radV, L, R);
@@ -1732,7 +1775,9 @@ function buildScene(F, renderer, tier, env) {
     return v;
   })();
 
+  endGrp();
   // ── T-201 surge tank (10.2,0,4) ───────────────────────────────────────
+  beginGrp('surge');
   var T201 = (function () {
     var R = 1.2, Ri = 1.185, Ls = 3.6, hd = 0.6, hdi = 0.585;
     var gG = new THREE.LatheGeometry(vesselProfile(R, Ls, hd, 16).map(function (p) { return new THREE.Vector2(p[0], p[1]); }), T.radV);
@@ -1793,23 +1838,48 @@ function buildScene(F, renderer, tier, env) {
     return v;
   })();
 
-  // ── P-201 transfer pump (12.6,0,4) ────────────────────────────────────
+  // ── LCV-201 surge → gauge transfer valve (12.5,0.45,4): no pump — the surge tank pressure drives the liquid ──
   (function () {
-    add('steelDark', F.boxAt(0.8, 0.1, 1.6, 12.5, 0.05, 3.45));
-    add('steelSatin', F.cylAB([12.5, 0.45, 3.9], [12.5, 0.45, 4.12], 0.3, 24)); add('steelSatin', F.cylAB([12.5, 0.45, 3.85], [12.5, 0.45, 3.9], 0.18, 16));
-    add('steelSatin', F.cylAB([12.2, 0.45, 4.0], [12.25, 0.45, 4.0], 0.18, 16));
-    add('steelSatin', F.cylAB([12.5, 0.72, 4.0], [12.5, 0.76, 4.0], 0.2, 16));
-    add('paintBlue', F.cylAB([12.5, 0.45, 3.52], [12.5, 0.45, 2.85], 0.22, 24)); add('paintBlue', F.boxAt(0.3, 0.2, 0.5, 12.5, 0.2, 3.2));
-    for (var k = 0; k < 6; k++) add('paintBlue', F.boxAt(0.02, 0.46, 0.6, 12.5 + Math.cos(k) * 0.0, 0.45, 3.18, 0, 0, k * Math.PI / 6));
-    add('accent', F.place(new THREE.CylinderGeometry(0.16, 0.16, 0.3, 20, 1, true, 0, Math.PI), 12.5, 0.45, 3.7, Math.PI / 2, 0, 0));
+    var X = 12.5, Y = 0.45, Z = 4.0, rP = pipeRadius(3);
+    add('steelSatin', F.cylAB([12.2, Y, Z], [12.26, Y, Z], rP * 1.55, 20)); add('steelSatin', F.cylAB([12.74, Y, Z], [12.8, Y, Z], rP * 1.55, 20));   // flanges
+    add('steelSatin', F.cylAB([12.26, Y, Z], [12.74, Y, Z], rP * 1.05, 16));
+    add('steelSatin', F.place(new THREE.SphereGeometry(rP * 1.6, 16, 12), X, Y, Z));                                                              // globe body
+    add('steelSatin', F.cylAB([X, Y + rP * 1.4, Z], [X, Y + 0.55, Z], 0.04, 8));                                                                  // yoke / stem
+    add('paintBlue', F.place(new THREE.SphereGeometry(0.21, 20, 12, 0, Math.PI * 2, 0, Math.PI / 2), X, Y + 0.57, Z));                          // diaphragm actuator
+    add('paintBlue', F.cylAB([X, Y + 0.55, Z], [X, Y + 0.58, Z], 0.21, 20));
+    add('steelDark', F.boxAt(0.12, 0.1, 0.1, X + 0.2, Y + 0.35, Z + 0.12));                                                                       // positioner
+    var lampM = new THREE.MeshBasicMaterial({ color:C('#2b1a1a') }); var lamp = mkMesh(new THREE.SphereGeometry(0.045, 12, 8), lampM); lamp.position.set(X, Y + 0.83, Z);
+    S.dyn.xfer = { lampM:lampM, sig:'' };
+  })();
+  endGrp();
+
+  // ── P-201 transfer pump (20.3,0,6.3): downstream of the gauge tank (T-301 drains → P-201 → export / burner) ──
+  beginGrp('pump');
+  (function () {
+    var dx = 7.8, dz = 2.3, Y = 0.45;
+    var P = function (x, y, z) { return [x + dx, y, z + dz]; };
+    add('steelDark', F.boxAt(0.8, 0.1, 1.6, 12.5 + dx, 0.05, 3.45 + dz));
+    add('steelSatin', F.cylAB(P(12.5, Y, 3.9), P(12.5, Y, 4.12), 0.3, 24)); add('steelSatin', F.cylAB(P(12.5, Y, 3.85), P(12.5, Y, 3.9), 0.18, 16));
+    add('steelSatin', F.cylAB(P(12.2, Y, 4.0), P(12.25, Y, 4.0), 0.18, 16));
+    add('steelSatin', F.cylAB(P(12.5, 0.72, 4.0), P(12.5, 0.76, 4.0), 0.2, 16));
+    add('paintBlue', F.cylAB(P(12.5, Y, 3.52), P(12.5, Y, 2.85), 0.22, 24)); add('paintBlue', F.boxAt(0.3, 0.2, 0.5, 12.5 + dx, 0.2, 3.2 + dz));
+    for (var k = 0; k < 6; k++) add('paintBlue', F.boxAt(0.02, 0.46, 0.6, 12.5 + dx, Y, 3.18 + dz, 0, 0, k * Math.PI / 6));
+    add('accent', F.place(new THREE.CylinderGeometry(0.16, 0.16, 0.3, 20, 1, true, 0, Math.PI), 12.5 + dx, Y, 3.7 + dz, Math.PI / 2, 0, 0));
     var coup = mkMesh(F.mergeGeos([new THREE.CylinderGeometry(0.075, 0.075, 0.26, 12).rotateX(Math.PI / 2), F.boxAt(0.17, 0.03, 0.1, 0, 0, 0)]), M.steelSatin);
-    coup.position.set(12.5, 0.45, 3.7);
-    var lampM = new THREE.MeshBasicMaterial({ color:C('#2b0f0f') }); var lamp = mkMesh(new THREE.SphereGeometry(0.05, 12, 8), lampM); lamp.position.set(12.95, 0.95, 3.2);
-    add('steelDark', F.cylAB([12.95, 0.1, 3.2], [12.95, 0.9, 3.2], 0.02, 6));
+    coup.position.set(12.5 + dx, Y, 3.7 + dz);
+    var lampM = new THREE.MeshBasicMaterial({ color:C('#2b0f0f') }); var lamp = mkMesh(new THREE.SphereGeometry(0.05, 12, 8), lampM); lamp.position.set(12.95 + dx, 0.95, 3.2 + dz);
+    add('steelDark', F.cylAB([12.95 + dx, 0.1, 3.2 + dz], [12.95 + dx, 0.9, 3.2 + dz], 0.02, 6));
+    // discharge → export / burner line (riser, run east, drop to a hose connection)
+    var rP = pipeRadius(3), dp = [P(12.5, 0.76, 4.0), P(12.5, 1.25, 4.0), [21.7, 1.25, 6.3], [21.7, 0.35, 6.3]];
+    for (var i = 0; i < dp.length - 1; i++) add('steelSatin', F.cylAB(dp[i], dp[i + 1], rP, 12));
+    for (i = 1; i < dp.length - 1; i++) add('steelSatin', F.place(new THREE.SphereGeometry(rP * 1.05, 12, 8), dp[i][0], dp[i][1], dp[i][2]));
+    add('steelSatin', F.cylAB([21.7, 0.35, 6.3], [21.82, 0.35, 6.3], 0.22, 16)); add('rubber', F.cylAB([21.82, 0.35, 6.3], [22.4, 0.2, 6.3], 0.1, 12));
     S.dyn.pump = { coup:coup, lampM:lampM, ang:0 };
   })();
+  endGrp();
 
   // ── T-301 gauge tank (16.4,0,4) ───────────────────────────────────────
+  beginGrp('gauge');
   var T301 = (function () {
     var x0 = 13.9, x1 = 18.9, y0 = 0.25, y1 = 2.85, z0 = 2.7, z1 = 5.3;
     var walls = [
@@ -1843,21 +1913,21 @@ function buildScene(F, renderer, tier, env) {
     add('steelSatin', F.boxAt(0.22, 0.22, 0.22, 15.2, 3.15, 3.6)); add('steelSatin', F.boxAt(0.22, 0.22, 0.22, 17.6, 3.15, 3.6));
     xvA.position.set(15.45, 3.15, 3.6); xvA.rotation.z = Math.PI / 2; xvB.position.set(17.85, 3.15, 3.6); xvB.rotation.z = Math.PI / 2;
     var dvA = new THREE.Mesh(xvA.geometry, M.accent), dvB = new THREE.Mesh(xvA.geometry, M.accent);
-    add('steelSatin', F.boxAt(0.22, 0.22, 0.22, 15.4, 0.35, 5.8)); add('steelSatin', F.boxAt(0.22, 0.22, 0.22, 17.9, 0.35, 5.8));
-    dvA.position.set(15.4, 0.62, 5.8); dvB.position.set(17.9, 0.62, 5.8);
+    add('steelSatin', F.boxAt(0.22, 0.22, 0.22, 15.4, 0.45, 5.8)); add('steelSatin', F.boxAt(0.22, 0.22, 0.22, 17.9, 0.45, 5.8));
+    dvA.position.set(15.4, 0.72, 5.8); dvB.position.set(17.9, 0.72, 5.8);
     // T-201 inlet valve handwheels (XV-201A faces +Z on the LM run, XV-201B sits on the B branch)
     var sxA = new THREE.Object3D(), sxB = new THREE.Object3D();
     sxA.position.set(8.8, 4.2, 4.35); sxA.rotation.x = Math.PI / 2; sxB.position.set(9.3, 6.26, 3.3);
     var vInst = new THREE.InstancedMesh(xvA.geometry, M.accent, 6); vInst.frustumCulled = false; if (T.shadow) vInst.castShadow = false; scene.add(vInst);
+    vInst.userData.keepOnGhost = true;            // also carries the T-201 inlet valve handwheels (kept when only T-301 is out)
     // valve status lamps: green = open / in service, red = inlet shut, dark = suction out of service  [XV-301A, XV-301B, XV-201A, XV-201B, SV-201A, SV-201B]
     var lamps = new THREE.InstancedMesh(new THREE.SphereGeometry(0.055, 12, 8), new THREE.MeshBasicMaterial({ color:C('#ffffff') }), 6);
-    lamps.frustumCulled = false; scene.add(lamps);
+    lamps.frustumCulled = false; scene.add(lamps); lamps.userData.keepOnGhost = true;
     [[15.2, 3.36, 3.36], [17.6, 3.36, 3.36], [8.8, 4.42, 4.0], [9.3, 5.95, 3.06], [10.1, 0.62, 4.22], [10.65, 0.89, 4.22]].forEach(function (p, i) {
       lamps.setMatrixAt(i, new THREE.Matrix4().makeTranslation(p[0], p[1], p[2])); lamps.setColorAt(i, C('#2b1a1a'));
     });
     lamps.instanceMatrix.needsUpdate = true; if (lamps.instanceColor) lamps.instanceColor.needsUpdate = true;
-    add('steelSatin', F.cylAB([15.4, 0.35, 5.8], [15.4, 0.6, 5.8], 0.03, 6)); add('steelSatin', F.cylAB([17.9, 0.35, 5.8], [17.9, 0.6, 5.8], 0.03, 6));
-    add('steelSatin', F.cylAB([20.0, 0.35, 6.3], [20.12, 0.35, 6.3], 0.22, 16)); add('rubber', F.cylAB([20.12, 0.35, 6.3], [20.6, 0.2, 6.3], 0.1, 12));
+    add('steelSatin', F.cylAB([15.4, 0.45, 5.8], [15.4, 0.7, 5.8], 0.03, 6)); add('steelSatin', F.cylAB([17.9, 0.45, 5.8], [17.9, 0.7, 5.8], 0.03, 6));
     S.dyn.gaugeValves = { xvA:xvA, xvB:xvB, dvA:dvA, dvB:dvB, sxA:sxA, sxB:sxB, aA:0, aB:0, inst:vInst, lamps:lamps, lampSig:'' };
     // gauge boards
     var boards = [];
@@ -1898,8 +1968,10 @@ function buildScene(F, renderer, tier, env) {
     v.caps = caps;
     return v;
   })();
+  endGrp();
 
   // ═══ FS-401 flare stack (19.5,0,−4.5) ══════════════════════════════════
+  beginGrp('flare');
   (function () {
     var X = 19.5, Z = -4.5;
     add('concrete', F.boxAt(1.6, 0.4, 1.6, X, 0.2, Z));
@@ -1914,6 +1986,20 @@ function buildScene(F, renderer, tier, env) {
       gp.push(X, 6.2, Z, ax, 0.05, az); add('concrete', F.boxAt(0.4, 0.2, 0.4, ax, 0.1, az)); });
     var gg = new THREE.BufferGeometry(); gg.setAttribute('position', new THREE.Float32BufferAttribute(gp, 3));
     scene.add(new THREE.LineSegments(gg, new THREE.LineBasicMaterial({ color:C('#3a4452'), transparent:true, opacity:0.6 })));
+  })();
+  endGrp();
+
+  // ═══ rig-up bypass spools (amber, static) for the items out of the spread ═══
+  (function () {
+    var rS = 0.12;
+    Object.keys(BYPASS_SPOOLS).forEach(function (g) {
+      if (!OFF[g]) return;
+      if (g === 'surge' && OFF.separator) return;                    // nothing reaches the tanks without the separator
+      if (g === 'gauge' && OFF.surge) return;                        // (no surge tank: the separator spool feeds the fill line)
+      var pts = BYPASS_SPOOLS[g];
+      for (var i = 0; i < pts.length - 1; i++) add('yellow', F.cylAB(pts[i], pts[i + 1], rS, 12));
+      for (i = 0; i < pts.length; i++) add('yellow', F.place(new THREE.SphereGeometry(rS * 1.25, 12, 8), pts[i][0], pts[i][1], pts[i][2]));
+    });
   })();
 
   // ═══ props: DAQ cabin, light towers, windsock, markings ════════════════
@@ -2004,7 +2090,7 @@ function buildScene(F, renderer, tier, env) {
 
   // ═══ halos + blob shadows ══════════════════════════════════════════════
   var HALO = { wellhead:[-15, 0, 1.7], esd:[-11.9, 0.5, 1.3], choke:[-7.2, 0, 2.3], heater:[-1.4, 0.3, 2.5], separator:[5.6, 0, 3.9],
-               flare:[19.5, -4.5, 1.4], surge:[10.2, 4.0, 1.8], pump:[12.6, 3.6, 1.0], gauge:[16.4, 4.0, 3.2] };
+               flare:[19.5, -4.5, 1.4], surge:[10.2, 4.0, 1.8], pump:[20.4, 5.9, 1.1], gauge:[16.4, 4.0, 3.2] };
   (function () {
     var hm = new THREE.InstancedMesh(new THREE.RingGeometry(1, 1.07, 64).rotateX(-Math.PI / 2),
       new THREE.MeshBasicMaterial({ color:0xffffff, transparent:true, blending:THREE.AdditiveBlending, depthWrite:false, polygonOffset:true, polygonOffsetFactor:-2, polygonOffsetUnits:-2, fog:false, toneMapped:false }), EQ_IDS.length);
@@ -2012,7 +2098,7 @@ function buildScene(F, renderer, tier, env) {
     var cc = new THREE.Color(0, 0, 0), m4 = new THREE.Matrix4();
     for (var i = 0; i < EQ_IDS.length; i++) { m4.makeScale(0.0001, 1, 0.0001); hm.setMatrixAt(i, m4); hm.setColorAt(i, cc); }
     S.dyn.halos = { mesh:hm, pos:HALO };
-    var BL = [[-7.2, 0, 4.4, 3.0], [-1.4, 0.4, 4.8, 3.0], [5.6, 0, 7.4, 2.4], [10.2, 4.0, 3.2, 3.2], [12.5, 3.5, 1.2, 2.0], [16.4, 4.0, 5.8, 3.4],
+    var BL = [[-7.2, 0, 4.4, 3.0], [-1.4, 0.4, 4.8, 3.0], [5.6, 0, 7.4, 2.4], [10.2, 4.0, 3.2, 3.2], [20.3, 5.8, 1.2, 2.0], [16.4, 4.0, 5.8, 3.4],
               [19.5, -4.5, 2.2, 2.2], [-8, -6.5, 7.0, 3.4], [-11.6, 0, 1.4, 1.4], [-18.5, 5.0, 2.0, 2.8], [22.0, 3.0, 2.0, 2.8]];
     var bm = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2),
       new THREE.MeshBasicMaterial({ map:tex(F.blobTexture()), transparent:true, depthWrite:false, polygonOffset:true, polygonOffsetFactor:-2, polygonOffsetUnits:-2, color:0xffffff }), BL.length);
@@ -2021,6 +2107,7 @@ function buildScene(F, renderer, tier, env) {
   })();
 
   // ═══ flare flame layers, halo, pilot, smoke, wet streak ═════════════════
+  beginGrp('flare');
   (function () {
     var core = new THREE.Mesh(new THREE.PlaneGeometry(1, 1, 1, 16), F.makeFlameMat(T.fbm, 0, 1)); core.frustumCulled = false; core.renderOrder = 961; scene.add(core);
     var outer = null;
@@ -2039,6 +2126,7 @@ function buildScene(F, renderer, tier, env) {
     }
     S.dyn.flame = { core:core, outer:outer, halo:halo, pilot:pilot, smoke:smoke, streak:streak, L:0, Lv:0, scroll:0, ph:0, fph:0 };
   })();
+  endGrp();
 
   // ═══ vessel particles (one Points per vessel, band b+5) ═════════════════
   function vesselPoints(v, n) {
@@ -2078,6 +2166,27 @@ function buildScene(F, renderer, tier, env) {
       b.pa.needsUpdate = b.ca.needsUpdate = b.za.needsUpdate = true;
     }
   };
+
+  // ═══ rig-up ghosts: detach the out-of-rig equipment, keep a translucent silhouette (glass shell + merged parts) ═══
+  var ghostShell = null, VES = [V101, H101, T201, T301];
+  RIG_GROUPS.forEach(function (g) {
+    if (!OFF[g]) return;
+    VES.forEach(function (v) { if (v.id === g && v.points) { scene.remove(v.points); S.detached.push(v.points); } });
+    (S.grpObjs[g] || []).forEach(function (o) {
+      var shell = null;
+      VES.forEach(function (v) { if (v.id === g && v.glassFront === o) shell = v; });
+      if (shell) {
+        if (!ghostShell) ghostShell = new THREE.MeshBasicMaterial({ color:C('#8b949e'), transparent:true, opacity:0.07, depthWrite:false, side:THREE.DoubleSide });
+        S.detached.push({ material:o.material }); o.material = ghostShell; o.renderOrder = 881; return;
+      }
+      if (o.userData && o.userData.keepOnGhost) return;
+      scene.remove(o); S.detached.push(o);
+    });
+  });
+  if (GH.length) {
+    var gm = new THREE.Mesh(F.mergeGeos(GH), new THREE.MeshBasicMaterial({ color:C('#8b949e'), transparent:true, opacity:0.14, depthWrite:false }));
+    gm.renderOrder = 880; scene.add(gm); S.ghost = gm;
+  }
 
   // ═══ merge static opaque buckets ═══════════════════════════════════════
   var colorB = { bands:true, emissive:true };
@@ -2532,7 +2641,7 @@ function createHandle(THREE, container, opts) {
     setCls(ch.s1, ch.txt, 's1c', ub === 'T' ? 't' : ub === 'L' ? 'l' : 'p');
   }
   function inletTxt(a, b) { return a && b ? 'A+B' : a ? 'A' : b ? 'B' : '—'; }
-  function tripTxt(id) { return id === 'LSHH_GT' ? ' (LSHH-301)' : id === 'PUMP_DRYRUN' ? ' (DRY-RUN)' : ''; }
+  function tripTxt(id) { return id === 'LSHH_GT' ? ' (LSHH-301)' : id === 'PUMP_DRYRUN' ? ' (LOW-LOW)' : ''; }
   function vTxt(t) { return t.moving ? (t.inlet ? ' · inlet OPENING ' : ' · inlet CLOSING ') + Math.round(t.pos * 100) + '%' : t.inlet ? ' · inlet open' : ''; }
   function updateLabelText() {
     var n = N, i;
@@ -2541,6 +2650,12 @@ function createHandle(THREE, container, opts) {
       if (st !== ch.st) { if (st === 'alarm' && ch.st !== 'alarm' && !reducedMotion) { ch.flashT = now(); ch.el.classList.add('flash'); } ch.st = st; ch.el.setAttribute('data-st', st); layoutDirty = true; }
       setTxt(ch, 'g', ch.g, st === 'alarm' ? '⚠' : st === 'warn' ? '▲' : st === 'hyd' ? '❄' : st === 'evt' ? '●' : '');
       var nd = n.nodes, sp = n.sep, su = n.surge, ga = n.gauge, t2 = ch.t2;
+      if (S && S.off && S.off[id]) {                  // out of the rig-up (ghosted in the scene)
+        slot(ch, null, null, null, null, null, null, '', id === 'heater' || id === 'separator' ? 'BYPASSED' : 'NOT IN RIG-UP', 'a');
+        if (t2) rows(ch, ['Rig-up', id === 'separator' ? 'well stream → flare / burner' : id === 'flare' ? 'gas → export line' : id === 'pump' ? 'gravity drain' :
+          id === 'surge' ? 'dumps → gauge tank / export' : id === 'gauge' ? 'transfer → export / burner' : 'bypass line in use']);
+        continue;
+      }
       switch (id) {
         case 'wellhead':
           slot(ch, nd.wellhead.P, 'pressureG', 'P', nd.wellhead.T, 'temperature', 'T');
@@ -2580,13 +2695,14 @@ function createHandle(THREE, container, opts) {
           slot(ch, su.frac * 100, 'percent', 'L', su.P, 'pressureTank', 'P', ' · ', su.blocked ? 'IN BLOCKED' : 'IN ' + inletTxt(su.comps[0].inlet, su.comps[1].inlet), su.blocked ? 'l' : 's');
           if (t2) { var fill = n.lines.sep_oil.q + n.lines.sep_water.q - su.pump_q;
             rows(ch, ['A · B', Math.round(su.comps[0].frac * 100) + ' % · ' + Math.round(su.comps[1].frac * 100) + ' %', 'Volume', FV(su.Vo_bbl + su.Vw_bbl, 'volume'),
-              'Pump', su.pumpFailed ? 'FAILED' : su.pumpTripped ? 'TRIPPED' + tripTxt(su.pumpTrip) : su.pumpBlocked ? 'BLOCKED' : su.pumpOn ? 'ON' : 'OFF',
+              'LCV-201', su.pumpFailed ? 'STUCK SHUT' : su.pumpTripped ? 'TRIPPED' + tripTxt(su.pumpTrip) : su.pumpBlocked ? 'BLOCKED' : su.pumpOn ? (su.xferLowDP ? 'OPEN · LOW ΔP' : 'OPEN') : 'SHUT',
               'Suction', su.suction === 'both' ? 'A + B' : su.suction, 'Auto-divert', su.autoOn ? 'ON' : 'OFF', 'Net fill', FV(fill, 'liquidRate'),
               'Time to HH', su.tFull_s >= 0 ? fmtNum(su.tFull_s / 60, 0) + ' min' : '—']); }
           break;
-        case 'pump': {
-          var pst = su.pumpFailed ? 'FAILED' : su.pumpTripped ? 'TRIPPED' + tripTxt(su.pumpTrip) : su.pumpOn ? 'ON' : 'OFF';
-          slot(ch, null, null, null, su.pump_q, 'liquidRate', 'L', '', pst, su.pumpOn && !su.pumpFailed && !su.pumpTripped ? 'g' : (su.pumpFailed || su.pumpTripped ? 'l' : 's'));
+        case 'pump': {                                  // P-201: gauge tank → export / burner
+          var pst = ga.pumpMode === 'none' ? 'OUT' : ga.pumpFailed ? 'FAILED' : ga.pumpOn ? 'RUNNING' : 'STANDBY';
+          slot(ch, null, null, null, ga.pump_q, 'liquidRate', 'L', '', pst, ga.pumpOn && !ga.pumpFailed ? 'g' : (ga.pumpFailed ? 'l' : 's'));
+          if (t2) rows(ch, ['Service', 'T-301 → export / burner', 'Surge transfer', 'LCV-201 (no pump)']);
           break; }
         case 'gauge':
           slot(ch, ga.tanks[0].Vo_bbl + ga.tanks[0].Vw_bbl, 'volume', 'L', ga.tanks[1].Vo_bbl + ga.tanks[1].Vw_bbl, 'volume', 'L', ' · ',
@@ -3112,10 +3228,14 @@ function createHandle(THREE, container, opts) {
     D.lcv.water.position.y = 0.55 + pipeRadius(3) + 0.6 - 0.08 * ease('lcvW', n.sep.wat.x, dt, 0.3, snap);
     D.lcv.oil.position.y = 0.55 + pipeRadius(3) + 0.6 - 0.08 * ease('lcvO', n.sep.oil.x, dt, 0.3, snap);
     D.lcv.pcv.position.y = 3.6 + pipeRadius(6) + 0.6 - 0.1 * ease('pcvU', n.sep.pcvU, dt, 0.3, snap);
-    // pump coupling + lamp
-    var qp = n.surge.pump_q, om = 30 * Math.min(1, qp / Math.max(n.surge.pump_design, 1));
+    // P-201 (T-301 → export) coupling + lamp; LCV-201 transfer lamp (green open, amber low ΔP, red tripped / stuck)
+    var ga0 = n.gauge, qp = ga0.pump_q, om = 30 * Math.min(1, qp / Math.max(ga0.pump_design, 1));
     D.pump.ang = (D.pump.ang + ease('pumpW', om, dt, 0.6, snap) * dt * (0.2 + 0.8 * flowGain)) % 6.2832; D.pump.coup.rotation.z = D.pump.ang;
-    D.pump.lampM.color.copy(n.surge.pumpFailed || n.surge.pumpTripped ? K.lampF : (n.surge.pumpOn ? K.lampOn : K.lampOff)).multiplyScalar(n.surge.pumpFailed || n.surge.pumpTripped ? 1.6 + 0.6 * Math.sin(tNow * 0.012) : 1.2);
+    D.pump.lampM.color.copy(ga0.pumpFailed ? K.lampF : (ga0.pumpOn ? K.lampOn : K.lampOff)).multiplyScalar(ga0.pumpFailed ? 1.6 + 0.6 * Math.sin(tNow * 0.012) : 1.2);
+    if (D.xfer) {
+      var xbad = n.surge.pumpFailed || n.surge.pumpTripped;
+      D.xfer.lampM.color.copy(xbad ? K.lampF : (n.surge.pumpOn ? (n.surge.xferLowDP ? K.lampT : K.lampOn) : K.lampOff)).multiplyScalar(xbad ? 1.6 + 0.6 * Math.sin(tNow * 0.012) : 1.2);
+    }
     // gauge valves
     var gv = D.gaugeValves, gt = n.gauge.tanks, uc = n.surge.comps;
     // handwheels follow the actual valve position (the sim strokes XV-201/301 over their travel time)
@@ -3524,6 +3644,11 @@ function createHandle(THREE, container, opts) {
       ms.forEach(function (m) { if (seen.has(m)) return; seen.add(m);
         ['map', 'alphaMap', 'normalMap', 'roughnessMap', 'emissiveMap', 'clearcoatNormalMap'].forEach(function (k) { if (m[k] && m[k].dispose) m[k].dispose(); }); m.dispose(); });
     });
+    (S.detached || []).forEach(function (o) {                 // rig-up ghosts: objects taken out of the scene
+      var dm = function (m) { if (m && !seen.has(m)) { seen.add(m); try { m.dispose(); } catch (e) {} } };
+      if (o && typeof o.traverse === 'function') o.traverse(function (c) { if (c.geometry && !seen.has(c.geometry)) { seen.add(c.geometry); c.geometry.dispose(); } (Array.isArray(c.material) ? c.material : [c.material]).forEach(dm); });
+      else if (o) dm(o.material);
+    });
     S.textures.forEach(function (t) { try { t.dispose(); } catch (e) {} });
     if (env) { env.dispose(); env = null; }
     if (bloom) { bloom.dispose(); bloom = null; }
@@ -3533,7 +3658,7 @@ function createHandle(THREE, container, opts) {
     tier = t; stats.quality = t;
     applyDpr();
     env = buildEnv();
-    S = buildScene(F, renderer, t, env);
+    S = buildScene(F, renderer, t, env, N.rig);
     S.renderer = renderer;
     lastNps = [N.segs[0].nps, N.segs[1].nps, N.segs[2].nps, N.segs[3].nps, N.segs[4].nps, N.segs[5].nps];
     buildPipes(F, S, lastNps);
@@ -3581,6 +3706,7 @@ function createHandle(THREE, container, opts) {
       var t0 = now(), gap = lastFrameTs >= 0 ? (t0 - lastFrameTs) / 1000 : 1; lastFrameTs = t0;
       var dt = clamp(num(dtReal, gap), 0, 0.1);
       normalize(state, N);
+      if (S && !rebuilding && !paused && !lost && N.rigSig !== S.rigSig) rebuildTier(tier);   // rig-up changed: rebuild with ghosts / bypasses
       if (paused || lost || !S || rebuilding) { errCount = 0; return; }
       frameNo++;
       var snap = snapNext || gap > 0.5; snapNext = false; snapNextLocal = snap; if (snap && frameNo > 1) gpuHoldOff();
@@ -3773,7 +3899,8 @@ var _internals = {
   flameLength:flameLength, phaseFractions:phaseFractions, niceRange:niceRange, pickTier:pickTier, lodForDistance:lodForDistance,
   layoutLabels:layoutLabels, statusForEq:statusForEq, normalize:normalize, makeNorm:makeNorm, fakeSnapshot:fakeSnapshot,
   colormap:colormap, colormapRGB:colormapRGB, fitRadius:fitRadius, fitView:fitView, project:project, camDir:camDir,
-  boxCorners:boxCorners, luminance:luminance, mixHex:mixHex, dpFor:dpFor, defFmtParts:defFmtParts
+  boxCorners:boxCorners, luminance:luminance, mixHex:mixHex, dpFor:dpFor, defFmtParts:defFmtParts,
+  RIG_GROUPS:RIG_GROUPS, BYPASS_SPOOLS:BYPASS_SPOOLS, rigSigOf:rigSigOf, EQ_BOX:EQ_BOX, TEES:TEES
 };
 WTS_3d.version = VERSION;
 WTS_3d.THREE_URLS = ['https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js',

@@ -187,7 +187,7 @@ var VARS = [
       get: function (s) { return bool(g(s, ['surge', 'comps', 0, 'inlet'])); }, set: function (s, v) { if (s.surge.comps[0]) s.surge.comps[0].inlet = !!v; } },
     { key: 'xv201b', label: 'Surge inlet valve XV-201B open', group: 'Surge tank', cat: 'bool', kind: 'bool',
       get: function (s) { return bool(g(s, ['surge', 'comps', 1, 'inlet'])); }, set: function (s, v) { if (s.surge.comps[1]) s.surge.comps[1].inlet = !!v; } },
-    { key: 'pump_running', label: 'Transfer pump P-201 running', group: 'Surge tank', cat: 'bool', kind: 'bool',
+    { key: 'pump_running', label: 'Transfer valve LCV-201 open (surge → gauge tank)', group: 'Surge tank', cat: 'bool', kind: 'bool',
       get: function (s) { return bool(g(s, ['surge', 'pump', 'on'])); },
       set: function (s, v) { s.surge.pump.on = !!v; lineSet(s, 'surge_gauge', null, !!v); if (!v && s.segs[5]) { s.segs[5].vel = 0; s.segs[5].flowing = false; } } },
     { key: 'gauge_lvl_a', label: 'Gauge tank level — T-301A', group: 'Gauge tank', cat: 'percent', min: 0, max: 100,

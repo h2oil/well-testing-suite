@@ -382,7 +382,8 @@ module.exports = [
       assert.match(text(steps[1]), /Download bridge package/); assert.includes(text(steps[1]), 'Bridge v' + BRIDGE_VERSION);
       assert.ok(app.find('[data-k="guide"][data-f="anyIp"]').checked, '"Allow any device IP / port" ticked by default');
       assert.includes(text(steps[2]), '✓ Any device IP / port (*:*)'); assert.ok(!/✓ PLC-1/.test(text(steps[2])), 'no per-device list by default');
-      assert.includes(text(steps[2]), '-Allow "*:*" -Port 8600');
+      assert.includes(text(steps[2]), 'install-windows.ps1 -AllowAny -Port 8600', '"any device" passes -AllowAny (replaces an older installer\'s list)');
+      assert.ok(!/-Allow "\*:\*"/.test(text(steps[2])), 'no -Allow "*:*"');
       assert.strictEqual(app.find('[data-act="guide-os"][aria-pressed="true"]').getAttribute('data-os'), 'windows', 'OS guessed from the platform');
       // package download
       app.click(app.find('[data-act="guide-pack"]'));
@@ -465,6 +466,14 @@ module.exports = [
       assert.includes(t, '✓ RTU-7 — 10.0.0.7:5020 is in the allow-list');
       assert.includes(t, '✗ Gateway — gw-1.local:5020 is NOT in the allow-list');
       assert.includes(t, 'Not in the bridge allow-list: gw-1.local:5020');
+      // the fix: re-run the installer (switches to any device), the exe's --allow-any, or "allow": [] by hand, per-OS file locations
+      assert.includes(t, 'run the installer again — WTS-Modbus-Bridge-Setup.exe on Windows, or the one-line command');
+      assert.includes(t, 'switches the bridge to any device');
+      assert.includes(t, '"%LOCALAPPDATA%\\WTS Modbus Bridge\\WTS-Modbus-Bridge.exe" --allow-any');
+      assert.includes(t, 'set "allow": [] (an empty list = any device)');
+      assert.includes(t, '%LOCALAPPDATA%\\WTS Modbus Bridge\\ (Windows'); assert.includes(t, '~/Library/Application Support/WTS Modbus Bridge/ (macOS)'); assert.includes(t, '~/.local/share/wts-modbus-bridge/ (Linux)');
+      assert.includes(t, 'end WTS-Modbus-Bridge.exe in Task Manager, then Start menu → "WTS Modbus Bridge — status"');
+      assert.ok(!/re-run the installer \(step 3\)/.test(t), 'old hint gone');
       assert.strictEqual(ctl.lastCheck.ok, false);
       app.flush(3000);                                            // host autosave / snapshot debounces; the 4 s check timeout would still be pending
       assert.strictEqual(app.pendingTimers(), 0, 'timeout timer cleared');
@@ -539,7 +548,7 @@ module.exports = [
       let step3 = text(advSteps(app)[2]);
       assert.ok(!/Then run it|wts-modbus-bridge-install\.(sh|ps1)|generated installer/.test(step3), 'no "run the generated installer" in the app, which cannot generate it: ' + step3.slice(0, 300));
       assert.includes(step3, 'open the web version of the app on the PC and press "Generate installer for my devices" there');
-      assert.includes(step3, 'install-windows.ps1 -Allow "*:*"', 'package commands for any device by default');
+      assert.includes(step3, 'install-windows.ps1 -AllowAny', 'package commands for any device by default');
       perDevice(app);
       step3 = text(advSteps(app)[2]);
       assert.includes(step3, 'install-windows.ps1 -Allow "192.168.1.10:502,10.0.0.7:5020,gw-1.local:5020"', 'package commands kept for reference');
@@ -642,10 +651,13 @@ module.exports = [
       // the page's copy buttons carry the quoted form
       openGuide(app, BRIDGE_CFG);
       app.click(app.find('[data-act="guide-os"][data-os="macos"]'));
-      // default (any device): *:* is quoted too
+      // default (any device): --allow-any, which also replaces an older installer's allow list
       let copies = app.findAll('[data-act="guide-copy"]').map((b) => b.getAttribute('data-copy'));
-      assert.ok(copies.includes("bash install.sh --allow '*:*' --port 8600 --autostart"), copies.join('\n'));
-      assert.ok(copies.includes("node modbus-bridge.js --allow '*:*' --port 8600"), 'direct command quoted');
+      assert.ok(copies.includes('bash install.sh --allow-any --port 8600 --autostart'), copies.join('\n'));
+      assert.ok(copies.includes('node modbus-bridge.js --allow-any --port 8600'), 'direct command');
+      assert.ok(!copies.some((c) => c.indexOf('*:*') >= 0), 'no *:* target in the "any device" commands');
+      assert.strictEqual(S.commandsFor('windows', { allow: app.toWin(['*:*']) }).packaged, 'powershell -NoProfile -ExecutionPolicy Bypass -File .\\install-windows.ps1 -AllowAny');
+      assert.strictEqual(S.commandsFor('linux', { allow: app.toWin(['*:*', '10.0.0.1:502']) }).packaged, 'bash install.sh --allow-any', '*:* wins over targets');
       assert.ok(copies.includes(ONE_LINER + ' --port 8600'), 'the one-liner');
       perDevice(app);
       app.input(app.find('[data-k="guide"][data-f="extra"]'), '10.0.0.0/24:502, plc-2.local:*');
@@ -852,6 +864,67 @@ module.exports = [
         assert.strictEqual(r.status, 0, r.stderr); assert.match(r.stderr, /could not be read/); assert.deepStrictEqual(readCfg(sb.dir).allow, ['10.1.1.1:502']);
         r = runSh(inst, ['--no-start', '--origin', 'https://x.example/"; touch pwned'], sb.env);
         assert.strictEqual(r.status, 1);
+      } finally { fs.rmSync(sb.home, { recursive: true, force: true }); }
+    },
+  },
+  {
+    name: 'install.sh over an older installer\'s allow list (no allowMode): no arguments / one-liner / "any device" installer → any device (note); --keep-allow keeps it; --allow merges; allowMode written',
+    wp: WP, opts: false, timeoutMs: 60000,
+    async run(app, assert) {
+      if (!unixInstall || process.platform !== 'linux') { console.log('      (skipped: needs Linux bash)'); return; }
+      const SH = path.join(TOOLS, 'install.sh');
+      const OLD = { _comment: 'old', allow: ['192.168.1.10:502'], port: 8531, listen: '127.0.0.1', origins: ['https://my.site'], anyOrigin: false, allowWrites: true, verbose: false };
+      const NOTE = 'Allow-list 192.168.1.10:502 replaced by any device (default since 1.2). Use --keep-allow to keep it.';
+      const sb = sandboxHome('migrate');
+      const seed = (cfg) => { fs.mkdirSync(sb.dir, { recursive: true }); fs.writeFileSync(path.join(sb.dir, 'bridge-config.json'), JSON.stringify(cfg || OLD, null, 2)); };
+      try {
+        // 1. plain re-run (no restriction arguments): any device; port / writes / origins kept; the bridge reads the file cleanly
+        seed();
+        let r = runSh(SH, ['--no-start'], sb.env);
+        assert.strictEqual(r.status, 0, r.stderr);
+        assert.includes(r.stdout, NOTE);
+        let c = readCfg(sb.dir);
+        assert.deepStrictEqual([c.allow, c.allowMode, c.port, c.allowWrites, c.origins], [['*:*'], 'any', 8531, true, ['https://my.site']]);
+        assert.deepStrictEqual(Object.keys(c).slice(0, 3), ['_comment', 'allow', 'allowMode']);
+        const { parseConfig } = require(path.join(TOOLS, 'modbus-bridge.js'));
+        assert.deepStrictEqual(parseConfig(fs.readFileSync(path.join(sb.dir, 'bridge-config.json'), 'utf8')).warnings, [], 'no unknown-key warning for allowMode');
+        // … and a second run has nothing to migrate
+        r = runSh(SH, ['--no-start'], sb.env);
+        assert.ok(!/replaced by any device/.test(r.stdout), r.stdout); assert.deepStrictEqual(readCfg(sb.dir).allow, ['*:*']);
+        // 2. --keep-allow: kept and marked, so a later plain run keeps it too
+        seed();
+        r = runSh(SH, ['--no-start', '--keep-allow'], sb.env);
+        assert.strictEqual(r.status, 0, r.stderr); assert.ok(!/replaced by any device/.test(r.stdout));
+        assert.deepStrictEqual([readCfg(sb.dir).allow, readCfg(sb.dir).allowMode], [['192.168.1.10:502'], 'list']);
+        r = runSh(SH, ['--no-start', '--allow-writes'], sb.env);
+        assert.deepStrictEqual(readCfg(sb.dir).allow, ['192.168.1.10:502'], 'a marked list survives a plain re-run');
+        // 3. explicit --allow: merged into the old list (restricts)
+        seed();
+        r = runSh(SH, ['--no-start', '--allow', '192.168.1.11:502'], sb.env);
+        assert.deepStrictEqual([readCfg(sb.dir).allow, readCfg(sb.dir).allowMode], [['192.168.1.10:502', '192.168.1.11:502'], 'list']);
+        // … --allow-any replaces a (marked) list, and a later --allow restricts again
+        r = runSh(SH, ['--no-start', '--allow-any'], sb.env);
+        assert.deepStrictEqual([readCfg(sb.dir).allow, readCfg(sb.dir).allowMode], [['*:*'], 'any']);
+        r = runSh(SH, ['--no-start', '--allow', '10.0.0.1:502'], sb.env);
+        assert.deepStrictEqual(readCfg(sb.dir).allow, ['10.0.0.1:502'], '--allow on an "any" list = only that target');
+        // 4. the app's generated installer with "Allow any device" ticked (PRESET_ALLOW="*:*") overrides a marked list
+        const S = loadSetup(), gen = S.installerFromConfig({ devices: [], tags: [] }, 'linux', { anyIp: true, origins: [] });
+        assert.ok(gen.ok, JSON.stringify(gen.errors)); assert.includes(gen.text, 'PRESET_ALLOW="*:*"'); assert.includes(gen.commands.packaged, 'bash install.sh --allow-any');
+        const gfile = path.join(sb.home, 'gen.sh'); fs.writeFileSync(gfile, gen.text);
+        r = runSh(gfile, ['--no-start'], sb.env);
+        assert.strictEqual(r.status, 0, r.stderr); assert.deepStrictEqual(readCfg(sb.dir).allow, ['*:*']);
+        // 5. the release one-liner (curl … | bash -s -- --autostart --yes, here with --no-start) over an older restricted file
+        seed();
+        const rel = S.releaseInstaller();
+        r = spawnSync('bash', ['-s', '--', '--no-start', '--yes'], { input: rel.text, env: sb.env, encoding: 'utf8', timeout: 30000 });
+        assert.strictEqual(r.status, 0, r.stderr); assert.includes(r.stdout, NOTE);
+        assert.deepStrictEqual([readCfg(sb.dir).allow, readCfg(sb.dir).allowMode, readCfg(sb.dir).port], [['*:*'], 'any', 8531]);
+        // 6. install-windows.ps1 has the same rule (checked statically: no PowerShell here)
+        const ps = fs.readFileSync(path.join(TOOLS, 'install-windows.ps1'), 'utf8');
+        assert.match(ps, /\[switch\]\$KeepAllow/); assert.match(ps, /\$r\.Mode = \$c\.allowMode/);
+        assert.includes(ps, "Say ('Allow-list ' + $migrated + ' replaced by any device (default since 1.2). Use -KeepAllow to keep it.')");
+        assert.match(ps, /elseif \(\$KeepAllow -or \$old\.Mode\)/); assert.match(ps, /""allowMode"": " \+ \(ConvertTo-JsonText \$mode\)/);
+        assert.ok(/^[\x00-\x7f]*$/.test(ps), 'install-windows.ps1 stays ASCII');
       } finally { fs.rmSync(sb.home, { recursive: true, force: true }); }
     },
   },

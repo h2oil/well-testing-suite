@@ -266,10 +266,12 @@ newer. The iOS app does not need it.
 Then add a device with transport "Modbus TCP via WebSocket bridge", the device IP, port and unit
 id, and bridge URL `ws://127.0.0.1:8502`.
 
-Security defaults (bridge v1.2.0):
+Security defaults (bridge v1.2.1):
 
 - **Listens on this PC only** (`127.0.0.1`). Other machines cannot use it unless you set `--listen`.
 - **Any device IP is allowed by default.** List `--allow <ip>:<port>` targets to restrict it.
+  Running an installer again switches a device list written by an older installer to any device
+  (`--keep-allow` keeps it).
 - **Read-only unless enabled:** write requests (function codes 05, 06, 15, 16) are refused unless the
   bridge is started with `--allow-writes`.
 - Accepts pages only from `localhost` / `127.0.0.1`, `https://pb-handbook.com` and the iOS app.
@@ -499,7 +501,12 @@ Full notes for every release are on the in-app **Release Notes** page (the `RELE
 
 ## Licence and contact
 
-There is no LICENSE file in this repository. Contact H2Oil before reusing or redistributing the
-code.
+Copyright (c) H2Oil Engineering. All rights reserved.
+
+This is **proprietary software** — not open source. See [LICENSE](LICENSE). The source code being
+visible here grants no right to copy, modify, redistribute, host, reuse or build on it. End users
+may use the official published applications (the H2Oil web app, the iOS app and the signed WTS
+Modbus Bridge installers on the Releases page) for their own engineering work. For any other use,
+ask for written permission.
 
 **H2Oil Engineering**: software@h2oil.co.uk
