@@ -408,7 +408,9 @@ function makeEmitter(target) {
 // TCP connection is up, {"type":"error","message"} on failure.
 function webSocketTransport(o) {
     o = o || {};
-    var T = makeEmitter({ kind: 'ws', framing: 'tcp' }), ws = null, open = false;
+    var T = makeEmitter({ kind: 'ws', framing: 'tcp' }), ws = null, open = false, otimer = null;
+    var setT = o.setTimeout || function (f, ms) { return G.setTimeout(f, ms); }, clrT = o.clearTimeout || function (id) { G.clearTimeout(id); };
+    function done() { if (otimer !== null) { clrT(otimer); otimer = null; } }
     T.url = function () {
         var base = String(o.url || 'ws://127.0.0.1:8502').replace(/\/+$/, '');
         return base + '/modbus?host=' + encodeURIComponent(o.host || '') + '&port=' + encodeURIComponent(o.port || 502);
@@ -418,14 +420,27 @@ function webSocketTransport(o) {
             var WS = o.WebSocket || G.WebSocket;
             if (typeof WS !== 'function') { reject(ModbusError('transport', 'WebSocket is not available in this browser')); return; }
             var settled = false;
-            function fail(msg) { if (!settled) { settled = true; reject(ModbusError('transport', msg)); } }
+            done();
+            function fail(msg) { done(); if (!settled) { settled = true; reject(ModbusError('transport', msg)); } }
             try { ws = new WS(T.url()); } catch (e) { fail('Bridge URL rejected: ' + (e && e.message)); return; }
+            // The bridge confirms with {"type":"open"} once its TCP connection to the device is up. A socket that never
+            // confirms (a program that is not the bridge on that port, or a device that neither answers nor refuses)
+            // must not leave the device "connecting" for ever: give up after openTimeoutMs (the station then retries).
+            var oms = Math.max(1000, +o.openTimeoutMs || 10000);
+            otimer = setT(function () {
+                otimer = null;
+                if (settled) return;
+                fail('No answer through the bridge from ' + (o.host || '?') + ':' + (o.port || 502) + ' within ' + Math.round(oms / 1000) + ' s — check the device IP / port, and that ' +
+                    (o.url || 'ws://127.0.0.1:8502') + ' is the WTS Modbus bridge');
+                try { ws.onclose = null; ws.close(1000, 'open timeout'); } catch (e) {}
+                ws = null;
+            }, oms);
             ws.binaryType = 'arraybuffer';
             ws.onmessage = function (ev) {
                 var d = ev.data;
                 if (typeof d === 'string') {
                     var m = null; try { m = JSON.parse(d); } catch (e) {}
-                    if (m && m.type === 'open') { open = true; if (!settled) { settled = true; resolve(T); } }
+                    if (m && m.type === 'open') { open = true; done(); if (!settled) { settled = true; resolve(T); } }
                     else if (m && m.type === 'error') { fail('Bridge: ' + (m.message || 'error')); T.emit('error', m.message); }
                     return;
                 }
@@ -441,7 +456,7 @@ function webSocketTransport(o) {
         });
     };
     T.send = function (bytes) { if (!ws || !open) throw ModbusError('closed', 'Bridge connection is not open'); ws.send(u8(bytes)); };
-    T.close = function () { open = false; if (ws) { try { ws.onclose = null; ws.close(1000, 'client close'); } catch (e) {} } ws = null; };
+    T.close = function () { done(); open = false; if (ws) { try { ws.onclose = null; ws.close(1000, 'client close'); } catch (e) {} } ws = null; };
     T.isOpen = function () { return open; };
     return T;
 }
@@ -1009,6 +1024,8 @@ var VARS = [
       get: function (s) { return bool(g(s, ['surge', 'comps', 0, 'inlet'])); }, set: function (s, v) { if (s.surge.comps[0]) s.surge.comps[0].inlet = !!v; } },
     { key: 'xv201b', label: 'Surge inlet valve XV-201B open', group: 'Surge tank', cat: 'bool', kind: 'bool',
       get: function (s) { return bool(g(s, ['surge', 'comps', 1, 'inlet'])); }, set: function (s, v) { if (s.surge.comps[1]) s.surge.comps[1].inlet = !!v; } },
+    // key 'pump_running' kept for saved mappings / projects: it is the LCV-201 transfer state (snapshot surge.transfer,
+    // legacy surge.pump) since the pump moved downstream of the gauge tank in v3.0.2
     { key: 'pump_running', label: 'Transfer valve LCV-201 open (surge → gauge tank)', group: 'Surge tank', cat: 'bool', kind: 'bool',
       get: function (s) { return bool(g(s, ['surge', 'pump', 'on'])); },
       set: function (s, v) { s.surge.pump.on = !!v; lineSet(s, 'surge_gauge', null, !!v); if (!v && s.segs[5]) { s.segs[5].vel = 0; s.segs[5].flowing = false; } } },
@@ -1019,7 +1036,11 @@ var VARS = [
     { key: 'xv301a', label: 'Gauge tank inlet XV-301A open', group: 'Gauge tank', cat: 'bool', kind: 'bool',
       get: function (s) { return bool(g(s, ['gauge', 'tanks', 0, 'inlet'])); }, set: function (s, v) { if (s.gauge.tanks[0]) s.gauge.tanks[0].inlet = !!v; } },
     { key: 'xv301b', label: 'Gauge tank inlet XV-301B open', group: 'Gauge tank', cat: 'bool', kind: 'bool',
-      get: function (s) { return bool(g(s, ['gauge', 'tanks', 1, 'inlet'])); }, set: function (s, v) { if (s.gauge.tanks[1]) s.gauge.tanks[1].inlet = !!v; } }
+      get: function (s) { return bool(g(s, ['gauge', 'tanks', 1, 'inlet'])); }, set: function (s, v) { if (s.gauge.tanks[1]) s.gauge.tanks[1].inlet = !!v; } },
+    // P-201 empties the gauge tank to the export / burner line (v3.0.2: downstream of T-301; snapshot gauge.pump)
+    { key: 'p201_running', label: 'Gauge tank pump P-201 running (T-301 → export)', group: 'Gauge tank', cat: 'bool', kind: 'bool',
+      get: function (s) { var p = g(s, ['gauge', 'pump']); return p && p.mode === 'none' ? null : bool(p ? p.on : undefined); },
+      set: function (s, v) { if (s.gauge.pump) s.gauge.pump.on = !!v; lineSet(s, 'gauge_drain', null, !!v); } }
 ];
 var VAR_BY_KEY = {};
 VARS.forEach(function (v) { VAR_BY_KEY[v.key] = v; v.unit = v.unitLabel || (UNITS[v.cat] ? UNITS[v.cat].canon : ''); });
@@ -1091,7 +1112,7 @@ var DEMO_MAP = [
     ['GAUGE_LVL_B', 'gauge_lvl_b', 'input', 116, 'int16', 'ABCD', { mode: 'linear', rawMin: 0, rawMax: 10000, engMin: 0, engMax: 100 }, '%', { hi: 90, hihi: 97 }, 0.5],
     ['SDV101_OPEN', 'esd_open', 'discrete', 0, 'bool', '', null, '', null, 0],
     ['ESD_TRIPPED', 'esd_tripped', 'discrete', 1, 'bool', '', null, '', null, 0],
-    ['P201_RUN', 'pump_running', 'discrete', 2, 'bool', '', null, '', null, 0],
+    ['LCV201_OPEN', 'pump_running', 'discrete', 2, 'bool', '', null, '', null, 0],
     ['XV201A_OPEN', 'xv201a', 'discrete', 3, 'bool', '', null, '', null, 0],
     ['XV201B_OPEN', 'xv201b', 'discrete', 4, 'bool', '', null, '', null, 0],
     ['XV301A_OPEN', 'xv301a', 'discrete', 5, 'bool', '', null, '', null, 0],
@@ -1099,7 +1120,9 @@ var DEMO_MAP = [
     ['HTR_BYPASS', 'heater_bypass', 'discrete', 7, 'bool', '', null, '', null, 0],
     ['ESD_TRIP_CMD', '', 'coil', 0, 'bool', '', null, '', null, 0],
     ['ESD_RESET_CMD', '', 'coil', 1, 'bool', '', null, '', null, 0],
-    ['SEP_P_SP', '', 'holding', 0, 'float32', 'ABCD', null, 'psig', null, 0]
+    ['SEP_P_SP', '', 'holding', 0, 'float32', 'ABCD', null, 'psig', null, 0],
+    // appended (v3.1) so the ids of the earlier demo tags ('tag_demo_<index>') stay as they were
+    ['P201_RUNNING', 'p201_running', 'discrete', 8, 'bool', '', null, '', null, 0]
 ];
 var DEMO_DESC = { ESD_TRIP_CMD: 'Momentary: 1 trips SDV-101 in the virtual slave', ESD_RESET_CMD: 'Momentary: 1 resets the ESD in the virtual slave',
     SEP_P_SP: 'Writable holding register (stored by the virtual slave only)', BHP_GAUGE: 'Demo BHP = WHP + 2,400 psi (fixed 0.30 psi/ft × 8,000 ft column; not a calculation)' };
@@ -1418,7 +1441,8 @@ function makeTransport(dev, env) {
     env = env || {};
     if (env.transportFor) { var tr = env.transportFor(dev); if (tr) return tr; }
     switch (dev.transport) {
-        case 'ws': return M.transports.webSocket({ url: dev.url, host: dev.host, port: dev.port });
+        case 'ws': return M.transports.webSocket({ url: dev.url, host: dev.host, port: dev.port, openTimeoutMs: Math.max(5000, 5 * dev.timeoutMs),
+            setTimeout: env.setTimeout, clearTimeout: env.clearTimeout });
         case 'serial': return M.transports.webSerial({ baud: dev.baud, parity: dev.parity, dataBits: dev.dataBits, stopBits: dev.stopBits, usbVendorId: dev.usbVendorId, usbProductId: dev.usbProductId });
         case 'ios': return M.transports.nativeTcp({ host: dev.host, port: dev.port, timeoutMs: dev.timeoutMs * 3 });
         default: return M.transports.sim({ slave: env.slave || virtualSlave, framing: dev.framing === 'rtu' ? 'rtu' : 'tcp' });
@@ -1531,6 +1555,18 @@ function createStation(cfgIn, env) {
         }
         hist[tg.id].push(t, r.value);
     }
+    // A register that decodes to NaN / ±Infinity (IEEE-754 sensor-fault patterns, or a scaling that cannot be
+    // applied) is bad quality with a BAD alarm — never a "good" non-number. The next valid value clears it.
+    function badValue(tg, raw, t) {
+        var r = vals[tg.id]; if (!r) return;
+        r.raw = isNum(raw) ? raw : null; r.ts = t; r.q = 'bad'; r.canon = null;
+        r.err = 'invalid value (' + (typeof raw === 'number' && isNaN(raw) ? 'NaN' : typeof raw === 'number' && !isFinite(raw) ? (raw > 0 ? '+Inf' : '-Inf') : 'cannot be scaled') + ') from the device';
+        if (r.level !== 'BAD') {
+            r.level = 'BAD';
+            alarms.update(tg.id, 'BAD', { t: t, tag: tg.name, device: (devs[tg.device] || {}).dev ? devs[tg.device].dev.name : '', value: null, limit: null, msg: r.err });
+        }
+        hist[tg.id].push(t, null);
+    }
     function decodeBlock(D, blk, data, t) {
         blk.items.forEach(function (it) {
             var tg = it.ref, raw, eng;
@@ -1539,7 +1575,8 @@ function createStation(cfgIn, env) {
                 else if (tg.type === 'bool') raw = data[it.offset] ? 1 : 0;
                 else raw = M.decodeValue(data.slice(it.offset, it.offset + it.count), tg.type, tg.order || D.dev.order);
                 eng = tg.type === 'bool' ? raw : M.scaleToEng(raw, tg.scale);
-                setValue(tg, raw, eng, t);
+                if (typeof eng !== 'number' || !isFinite(eng)) badValue(tg, raw, t);
+                else setValue(tg, raw, eng, t);
             } catch (e) { var r = vals[tg.id]; if (r) { r.q = 'bad'; r.err = e.message; } }
         });
     }
@@ -1813,7 +1850,7 @@ function nominalValues() {
     var v = varsFromState(st);
     var fb = { whp: 3000, wht: 180, choke_bean: 32, choke_dn_p: 157.7, heater_t: 150, sep_p: 150, sep_t: 150, sep_liq_lvl: 60, sep_int_lvl: 25, sep_oil_lvl: 32,
         gas_rate: 10, oil_rate: 1000, water_rate: 200, flare_rate: 10, flare_p: 5, surge_p: 25, surge_lvl_a: 55, surge_lvl_b: 55, gauge_lvl_a: 30, gauge_lvl_b: 0,
-        lcv_oil: 0, lcv_water: 0, pcv_sep: 50, esd_open: 1, esd_tripped: 0, pump_running: 0, xv201a: 1, xv201b: 1, xv301a: 1, xv301b: 0, heater_bypass: 0 };
+        lcv_oil: 0, lcv_water: 0, pcv_sep: 50, esd_open: 1, esd_tripped: 0, pump_running: 0, xv201a: 1, xv201b: 1, xv301a: 1, xv301b: 0, heater_bypass: 0, p201_running: 0 };
     Object.keys(fb).forEach(function (k) { if (v[k] == null) v[k] = fb[k]; });
     v.bhp = (v.whp || 0) + DEMO_BHP_COLUMN_PSI; v.bht = DEMO_BHT_F;
     return v;
@@ -1842,7 +1879,7 @@ function createVirtualSlave(o) {
                 var tri = function (per, lo, hi, ph) { var x = ((s / per + (ph || 0)) % 1 + 1) % 1; return lo + (hi - lo) * (x < 0.5 ? 2 * x : 2 - 2 * x); };
                 v.sep_liq_lvl = tri(180, 45, 70); v.sep_int_lvl = tri(240, 15, 35, 0.3); v.sep_oil_lvl = tri(90, 20, 45, 0.6);
                 v.surge_lvl_a = tri(600, 25, 75); v.surge_lvl_b = tri(600, 25, 75, 0.5); v.gauge_lvl_a = tri(1200, 5, 92); v.gauge_lvl_b = tri(1200, 5, 92, 0.5);
-                v.pump_running = sn(300) > 0 ? 1 : 0;
+                v.pump_running = sn(300) > 0 ? 1 : 0; v.p201_running = sn(900, 1) > 0.3 ? 1 : 0;
                 v.bhp = v.whp + DEMO_BHP_COLUMN_PSI;
             }
             var man = c.manual || {};
@@ -2138,7 +2175,7 @@ function guideHtml(ios) {
         '<div id="mbc_guide_steps"></div></details>' +
         '<details class="mb-sec"><summary>Modbus RTU (RS-485) — Web Serial</summary><p>Chrome or Edge on a desktop, page served over https or localhost (no bridge needed). Plug in a USB–RS-485 adapter, choose "Modbus RTU via Web Serial", set baud / parity / unit id, then press <b>Test</b> — the browser asks which serial port to use (once).</p></details>' +
         '<details class="mb-sec"' + (ios ? ' open' : '') + '><summary>iOS app — native TCP (no bridge)</summary><p>In the iOS app, choose "Modbus TCP (iOS app, native)" and enter the PLC\'s IP address and port. The app connects directly over Wi-Fi (Network framework); iOS asks once for Local Network permission. The WebSocket bridge is not used.</p></details>' +
-        '<details class="mb-sec"><summary>No hardware? Built-in simulator</summary><p>"Load simulator demo" configures one device on the built-in virtual slave: 36 tags covering pressures, temperatures, rates, levels and valve states, fed by the Well Test Simulator model. Mini WellOS then animates from those tags when its data source is set to "Modbus data". To try the bridge itself, the package includes <code>fake-slave.js</code>: run <code>node fake-slave.js --port 5020</code>, allow <code>127.0.0.1:5020</code> in the bridge and add a bridge device with host 127.0.0.1, port 5020.</p></details>' +
+        '<details class="mb-sec"><summary>No hardware? Built-in simulator</summary><p>"Load simulator demo" configures one device on the built-in virtual slave: ' + M.DEMO_MAP.length + ' tags covering pressures, temperatures, rates, levels and valve states, fed by the Well Test Simulator model. Mini WellOS then animates from those tags when its data source is set to "Modbus data". To try the bridge itself, the package includes <code>fake-slave.js</code>: run <code>node fake-slave.js --port 5020</code>, allow <code>127.0.0.1:5020</code> in the bridge and add a bridge device with host 127.0.0.1, port 5020.</p></details>' +
         '<details class="mb-sec"><summary>Troubleshooting</summary><ul class="mb-hints">' +
         '<li><b>"Cannot reach the Modbus bridge"</b> — the bridge is not running, the bridge URL / port differs, or the bridge refused this page (a browser cannot tell these apart). Press <b>Check bridge</b>: it says which.</li>' +
         '<li><b>Windows: "Windows protected your PC"</b> (SmartScreen) — the installer is code-signed by H2Oil Engineering, but SmartScreen can still warn while the certificate builds reputation: click <b>More info</b>, check the publisher, then <b>Run anyway</b>.</li>' +
@@ -2486,7 +2523,11 @@ function createController(root, n0) {
                 break;
             }
             case 'dev-test': {
-                var cellD = q('[data-devstat="' + id + '"]'); if (cellD) cellD.innerHTML = '<span class="mb-dot connecting"></span> testing…';
+                var cellD = q('[data-devstat="' + id + '"]'), dv = find('dev', id);
+                // nothing to poll: say why instead of "0 of 0 tags failed"
+                var why = !dv ? 'device not found' : !dv.enabled ? 'switched off — tick "On" to test it' : !cfg.tags.some(function (t) { return t.device === id; }) ? 'no tags on this device yet — add a tag, then test' : '';
+                if (why) { if (cellD) cellD.innerHTML = '<span class="mb-dot"></span> ' + esc(why); C.lastDevTest = { ok: false, info: {}, tags: 0, bad: 0, why: why }; break; }
+                if (cellD) cellD.innerHTML = '<span class="mb-dot connecting"></span> testing…';
                 var ts = tempStation(id);
                 ts.pollNow().then(function () {
                     var info = ts.devices()[0] || {}, v = ts.values(), n = 0, bad = 0;
@@ -2721,7 +2762,8 @@ function readUi() {
 function writeUi(u) { try { if (G.localStorage) G.localStorage.setItem(UI_KEY, JSON.stringify(u)); } catch (e) {} }
 
 // ─── display formatting (field units in, WTS_units display out) ─────────────
-var BOOL_TXT = { esd_open: ['OPEN', 'CLOSED'], esd_tripped: ['TRIPPED', 'NORMAL'], pump_running: ['OPEN', 'SHUT'], heater_bypass: ['OPEN', 'SHUT'] };
+// pump_running = LCV-201 transfer valve (legacy key); p201_running = the gauge tank pump P-201
+var BOOL_TXT = { esd_open: ['OPEN', 'CLOSED'], esd_tripped: ['TRIPPED', 'NORMAL'], pump_running: ['OPEN', 'SHUT'], heater_bypass: ['OPEN', 'SHUT'], p201_running: ['RUNNING', 'STOPPED'] };
 function unitLabel(V) {
     if (!V) return '';
     if (V.key === 'oil_rate') return 'STB/d';
@@ -2923,7 +2965,8 @@ function createController(root) {
         Object.keys(formPrev).forEach(function (id) { if (!seen[id]) formAlarms.update('sim:' + id, null, { t: t }); });
         formPrev = seen;
         var batch = [];
-        M.VARS.forEach(function (V) { var x = fv[V.key]; if (x == null) return; batch.push({ tag: V.key, device: 'form', t: t, v: x, q: 'good', raw: null, unit: unitLabel(V) }); });
+        // tag = the variable key (kept for historian continuity); desc = what it is (e.g. pump_running = LCV-201 open)
+        M.VARS.forEach(function (V) { var x = fv[V.key]; if (x == null) return; batch.push({ tag: V.key, device: 'form', t: t, v: x, q: 'good', raw: null, unit: unitLabel(V), desc: V.label + ' — Mini WellOS form data' }); });
         M.publishSamples(batch);
         if (logger.on) logRow();
     }
@@ -3133,8 +3176,15 @@ function createController(root) {
         ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px, py - 20); ctx.stroke(); ctx.beginPath(); ctx.arc(px, py - 24, 7, Math.PI, 0); ctx.closePath(); ctx.stroke();
         ctx.fillStyle = '#e6edf3'; ctx.font = 'bold 11px sans-serif'; ctx.fillText('LCV-201', px - 24, py + 30);
         ctx.font = '10px sans-serif'; ctx.fillText(pr == null ? '—' : pr ? 'OPEN' : 'SHUT', px - 12, py + 44);
+        // P-201 gauge tank pump (T-301 → export / burner): circle + discharge triangle, green when running
+        var gr = v.p201_running, gx = 945, gy = 110, gc = gr == null ? '#6e7681' : gr ? '#3fb950' : '#8b949e';
+        ctx.fillStyle = gc; ctx.strokeStyle = '#e6edf3'; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(gx, gy, 11, 0, 2 * Math.PI); ctx.fill(); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(gx - 5, gy - 6); ctx.lineTo(gx + 7, gy); ctx.lineTo(gx - 5, gy + 6); ctx.closePath(); ctx.fillStyle = '#0b111a'; ctx.fill();
+        ctx.fillStyle = '#e6edf3'; ctx.font = 'bold 11px sans-serif'; ctx.fillText('P-201', gx - 16, gy + 26);
+        ctx.font = '10px sans-serif'; ctx.fillText(gr == null ? (Q.p201_running === 'unmapped' ? 'not linked' : '—') : gr ? 'RUNNING' : 'STOPPED', gx - 20, gy + 38);
         // status column
-        var sx = 950, lines = [
+        var sx = 1000, lines = [
             ['ESD', v.esd_tripped ? 'TRIPPED' : v.esd_tripped === 0 ? 'NORMAL' : '—', v.esd_tripped ? '#f85149' : '#3fb950'],
             ['WHP', disp(v.whp, M.VAR_BY_KEY.whp).v + ' ' + disp(v.whp, M.VAR_BY_KEY.whp).u, '#e6edf3'],
             ['Sep P', disp(v.sep_p, M.VAR_BY_KEY.sep_p).v + ' ' + disp(v.sep_p, M.VAR_BY_KEY.sep_p).u, '#e6edf3'],
@@ -3243,7 +3293,13 @@ function createController(root) {
             case 'speed': u.speed = +b.getAttribute('data-speed') || 1; writeUi(u); renderHead(); break;
             case 'pause': M.setPaused(!M.getConfig().paused); renderHead(); renderComms(); break;
             case 'goto': gotoPage(b.getAttribute('data-p')); break;
-            case 'demo': M.saveConfig(M.demoConfig()); if (!M.station()) M.acquire(OWNER); bindStation(); renderBanner(); renderHead(); break;
+            case 'demo': {
+                // the banner shows when no tag is linked, but devices / tags may exist: never replace them silently
+                var cur0 = M.getConfig();
+                if ((cur0.devices.length || cur0.tags.length) && typeof G.confirm === 'function' &&
+                    !G.confirm('Replace the current Modbus configuration (' + cur0.devices.length + ' device(s), ' + cur0.tags.length + ' tag(s)) with the simulator demo?')) break;
+                M.saveConfig(M.demoConfig()); if (!M.station()) M.acquire(OWNER); bindStation(); renderBanner(); renderHead(); break;
+            }
             case 'ack': { var A = alarmsMgr(); if (A) A.ack(b.getAttribute('data-id')); renderAlarms(true); break; }
             case 'ackall': { var A2 = alarmsMgr(); if (A2) A2.ackAll(); renderAlarms(true); break; }
             case 'toalarms': { var c = q('#wos_alcard'); if (c && c.scrollIntoView) c.scrollIntoView({ behavior: 'smooth', block: 'start' }); break; }
