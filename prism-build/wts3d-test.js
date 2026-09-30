@@ -196,6 +196,31 @@ const SECTION_A = (G, src) => {
       s.setFlow({ inputs: { Qg: NaN } }); const a = s.getState().health.flowInvalid && s.getState().flowSeq === seq;
       s.setFlow(F); return a && !s.getState().health.flowInvalid && s.getState().flowSeq === seq + 1;
     }],
+    // ── v3.0.2 rig-up + pressure-driven surge → gauge transfer ──
+    ['31: rig-up API + snapshot (setRigup / getRigup, rigup notes, RIGUP / normRigup exports; default = full rig-up)', () => {
+      const bad = [];
+      if (typeof S.normRigup !== 'function' || !Array.isArray(S.RIGUP) || S.RIGUP.length !== 8 || !deepFrozen(S.RIGUP)) bad.push('exports');
+      const s = S.create(F, { seed: 2 }); let st = s.getState();
+      if (!(st.rigup.full && st.rigup.sig === '11111111' && st.rigup.notes.length === 0)) bad.push('default ' + st.rigup.sig);
+      if (typeof s.setRigup !== 'function' || typeof s.getRigup !== 'function') return 'api';
+      const ev = []; s.on('rigup', (p) => ev.push(p));
+      if (s.setRigup({ separator: false, flare: false }) !== true) bad.push('set');
+      st = s.getState();
+      if (st.rigup.separator !== false || st.rigup.flare !== true || !st.rigup.notes.some((n) => /nowhere to go/.test(n))) bad.push('rules');
+      if (ev.length !== 1 || ev[0].sig !== st.rigup.sig) bad.push('event');
+      if (JSON.stringify(s.getRigup()) !== JSON.stringify({ esd: true, choke: true, heater: true, separator: false, surge: true, gauge: true, pump: true, flare: false })) bad.push('request ' + JSON.stringify(s.getRigup()));
+      s.advance(600); const fw = []; finiteWalk(s.getState(), '', fw); if (fw.length) bad.push('finite ' + fw.slice(0, 3));
+      const m = s.getState().health.massErr; if (Math.abs(m.oil) > 1e-9 || Math.abs(m.gas) > 1e-9) bad.push('mass');
+      return bad.length === 0 || bad.join('; ');
+    }],
+    ['31: surge → gauge transfer has no pump — LCV-201 q = Cv·√(ΔP/SG) on the surge pressure; P-201 is downstream of the gauge tank', () => {
+      const s = S.create(F, { seed: 3, config: { noise: { on: false } } }); let p = null;
+      for (let i = 0; i < 720 && !p; i++) { s.advance(5); const x = s.getState().surge.transfer; if (x.q_bpd > 0) p = x; }
+      if (!p) return 'transfer never opened';
+      const st = s.getState(), q = p.Cv * Math.sqrt(p.dP_psi / p.sg) * 34.2857;
+      return (p === st.surge.pump && p.tag === 'LCV-201' && p.mode === 'pressure' && Math.abs(q - p.q_bpd) < 1e-6 * p.q_bpd &&
+        st.gauge.pump.tag === 'P-201' && st.gauge.pump.dest === 'export' && S.TAGS.xfer === 'LCV-201' && /LCV-201/.test(code)) || 'transfer ' + JSON.stringify(p);
+    }],
   ];
 };
 
@@ -219,6 +244,7 @@ const SECTION_B = (G /*, src */) => {
     'sep.waterDump.lshh', 'sep.pcv.u', 'sep.gasOut_mmscfd', 'sep.tRes_min',
     'surge.P', 'surge.frac', 'surge.fracW', 'surge.pshh', 'surge.cap_bbl', 'surge.Vo_bbl', 'surge.Vw_bbl', 'surge.pump.on', 'surge.pump.q_bpd', 'surge.pump.design_bpd',
     'gauge.active', 'gauge.tanks.0.frac', 'gauge.tanks.0.fracW', 'gauge.tanks.1.state', 'gauge.tanks.0.cap_bbl', 'gauge.batches',
+    'surge.transfer.on', 'surge.transfer.q_bpd', 'surge.transfer.lowDP', 'gauge.pump.on', 'gauge.pump.q_bpd', 'gauge.pump.mode', 'rigup.separator', 'rigup.gauge',
     'rates.gas_mmscfd', 'cum.flare_mmscf', 'alarms'];
   const finite = (o, bad, p) => { for (const k in o) { const v = o[k], q = p ? p + '.' + k : k; if (typeof v === 'number' && !isFinite(v)) bad.push(q); else if (v && typeof v === 'object') finite(v, bad, q); } return bad; };
   return [
@@ -267,6 +293,27 @@ const SECTION_B = (G /*, src */) => {
       return (n.surge.comps[0].inlet === false && n.surge.comps[1].inlet === true && n.surge.comps[0].suction === true && n.surge.comps[1].suction === false &&
         n.surge.comps[1].frac === st.surge.comps[1].frac && n.gauge.tanks[1].inlet === true && n.surge.suction === 'A' &&
         old.surge.comps[0].frac === 0.4 && old.surge.comps[1].inlet === true && old.gauge.tanks[1].inlet === true && old.gauge.tanks[0].inlet === false) || 'mapping';
+    }],
+    ['32: rig-up: normalize reads rigup / surge.transfer / gauge.pump; rigSig follows; bypass spools join existing routes; P-201 downstream of T-301', () => {
+      const bad = [], n0 = I.normalize(I.fakeSnapshot(100), I.makeNorm());
+      if (n0.rigSig !== '111111' || !I.RIG_GROUPS || I.RIG_GROUPS.join() !== 'heater,separator,surge,gauge,pump,flare') bad.push('default ' + n0.rigSig);
+      if (S && F) {
+        const s = S.create(F, { seed: 4, rigup: { surge: false, pump: false } }); s.advance(60);
+        const st = s.getState(), n = I.normalize(st, I.makeNorm());
+        if (n.rig.surge !== false || n.rig.pump !== false || n.rig.gauge !== true || n.rigSig !== '110101') bad.push('rig ' + n.rigSig);
+        if (n.gauge.pumpMode !== 'gravity' || n.surge.pump_q !== st.surge.transfer.q_bpd) bad.push('pump / transfer');
+      }
+      // every spool starts and ends on an existing pipe (within 0.2 m of a route segment), so the amber bypass meets the live pipework
+      const segs = []; I.ROUTES.forEach((r) => { for (let i = 0; i < r.pts.length - 1; i++) segs.push([r.pts[i], r.pts[i + 1]]); });
+      const dSeg = (p, a, b) => { const d = [0, 1, 2].map((i) => b[i] - a[i]), L2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+        const t = L2 > 0 ? Math.max(0, Math.min(1, ((p[0] - a[0]) * d[0] + (p[1] - a[1]) * d[1] + (p[2] - a[2]) * d[2]) / L2)) : 0;
+        return Math.hypot(p[0] - a[0] - t * d[0], p[1] - a[1] - t * d[1], p[2] - a[2] - t * d[2]); };
+      const near = (p) => segs.some((sg) => dSeg(p, sg[0], sg[1]) < 0.2);
+      Object.keys(I.BYPASS_SPOOLS).forEach((k) => { const sp = I.BYPASS_SPOOLS[k]; if (!near(sp[0])) bad.push('spool ' + k + ' start'); if (k !== 'flare' && !near(sp[sp.length - 1])) bad.push('spool ' + k + ' end'); });
+      const dra = I.ROUTES.filter((r) => r.id === 'DRA')[0], x2 = I.ROUTES.filter((r) => r.id === 'X2')[0];
+      if (!(I.ANCHORS.pump[0] > dra.pts[dra.pts.length - 1][0] - 0.5 && I.ANCHORS.pump[2] > 5)) bad.push('P-201 not at the gauge drain');
+      if (!(x2.pts[0][1] < 0.6 && I.STEP.gauge === '⑧' && I.STEP.pump === '⑨')) bad.push('LCV-201 / step order');
+      return bad.length === 0 || bad.join('; ');
     }],
     ['32: oilColor() hex strings, darker for heavy crude', () => { const h = W.oilColor(20), l = W.oilColor(45); return /^#[0-9a-f]{6}$/.test(h.body) && /^#[0-9a-f]{6}$/.test(l.tracer) && I.luminance(h.body) < I.luminance(l.body) && h.alphaFront > l.alphaFront; }],
     ['32: layoutLabels keeps chips out of the info-card rect and hides chips it cannot place over it', () => {
@@ -418,6 +465,25 @@ const SECTION_C = (G, src) => {
       } finally { G.localStorage = keep; }
     }],
     ['38: bpOf breakpoints', () => I.bpOf(1380) === 'lg' && I.bpOf(1000) === 'lg' && I.bpOf(999) === 'md' && I.bpOf(768) === 'md' && I.bpOf(767) === 'sm'],
+    ['38: rig-up persistence (wts_sim_rigup: shape-checked; full rig-up = no key) and transfer / pump texts', () => {
+      const keep = G.localStorage, store = {};
+      G.localStorage = { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); }, removeItem: (k) => { delete store[k]; } };
+      try {
+        const bad = [];
+        if (I.RIG_KEY !== 'wts_sim_rigup' || I.rigItems().length !== 8) bad.push('key / items');
+        I.writeRig({ heater: false, surge: true }); if (store.wts_sim_rigup !== '{"heater":false,"surge":true}') bad.push('write ' + store.wts_sim_rigup);
+        if (JSON.stringify(I.readRig()) !== '{"heater":false,"surge":true}') bad.push('read');
+        store.wts_sim_rigup = '{"heater":"no","bogus":false}'; if (I.readRig() !== null) bad.push('shape');
+        store.wts_sim_rigup = 'x'; if (I.readRig() !== null) bad.push('parse');
+        I.writeRig({ heater: true }); if ('wts_sim_rigup' in store) bad.push('full keeps no key');
+        const st = simAt(600), st0 = st.getState();
+        if (I.xferShort(st0) !== 'OPEN' && I.xferShort(st0) !== 'SHUT') bad.push('xfer ' + I.xferShort(st0));
+        if (!/RUNNING|STANDBY/.test(I.pumpShort(st0)) || I.rigOut(st0, 'heater')) bad.push('pump / rigOut');
+        const s2 = simAt(60, (x) => x.setRigup({ gauge: false })).getState();
+        if (I.pumpShort(s2) !== 'OUT (no gauge tank)' || !I.rigOut(s2, 'gauge') || !I.rigOut(s2, 'pump')) bad.push('out texts');
+        return bad.length === 0 || bad.join('; ');
+      } finally { G.localStorage = keep; }
+    }],
     ['38: CSS carries the iOS min-height neutraliser, z-stack and the blur budget', () =>
       /\.wtsl-viz button\{min-height:0/.test(I.CSS) && /\.wtsl-viz\.is-max\{position:fixed;inset:0;z-index:1000/.test(I.CSS) &&
       (I.CSS.match(/[^-]backdrop-filter:blur/g) || []).length === 1 && /@media \(pointer:fine\)/.test(I.CSS) || 'css'],

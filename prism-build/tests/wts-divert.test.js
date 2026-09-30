@@ -1,7 +1,8 @@
 // Well Test Simulator — tank inlet divert valves (Round-7: 31-wts-sim, 32-wts-3d, 38-wts-live).
-//   • Gauge tank T-301A/B inlet valves XV-301A/B route the P-201 discharge left / right.
+//   • Gauge tank T-301A/B inlet valves XV-301A/B route the surge transfer (LCV-201, driven by the surge tank
+//     pressure — no pump since the v3.0.2 rig-up change) left / right.
 //   • Surge tank T-201 is two compartments A | B (half of cap_bbl each, common gas space) with inlet valves
-//     XV-201A/B and a selectable P-201 suction (A, B or both).
+//     XV-201A/B and a selectable transfer suction (A, B or both).
 //   • Auto-divert (per tank, off by default): at the high-level set point the filling compartment diverts to
 //     the other one when it has room (below SP − hysteresis) — open the new inlet, then close the old one;
 //     with no room anywhere a both-high alarm is raised instead and nothing switches back and forth.
@@ -32,7 +33,7 @@ function openWts(app) {
 
 module.exports = [
   {
-    name: 'WTSDV gauge tank: XV-301A/B route the fill left or right; both closed blocks P-201 with an alarm',
+    name: 'WTSDV gauge tank: XV-301A/B route the fill left or right; both closed blocks the LCV-201 transfer with an alarm',
     wp: WP,
     run(app, assert) {
       const s = sim(app, { config: NOISE_OFF });
@@ -65,10 +66,11 @@ module.exports = [
       assert.strictEqual(st.gauge.batches.length, 1, 'A recorded its batch after settling');
       assert.strictEqual(st.gauge.batches[0].tag, 'T-301A');
       // both open: the discharge splits
-      s.setValve('gauge', 0, true); run(s, 3600, 5, (x) => !(x.surge.pump.q_bpd > 0)); st = s.getState();   // until P-201 runs
+      // XV-301A strokes open (one stroke), then run until the transfer passes (surge.pump = the LCV-201 transfer)
+      s.setValve('gauge', 0, true); run(s, stroke, 1); run(s, 3600, 5, (x) => !(x.surge.pump.q_bpd > 0)); st = s.getState();
       assert.ok(st.gauge.tanks[0].fill_bpd > 0 && st.gauge.tanks[1].fill_bpd > 0, 'both open → both fill');
       assert.near(st.gauge.tanks[0].fill_bpd, st.gauge.tanks[1].fill_bpd, 1e-6, 'even split');
-      // both closed: dead-head protection — P-201 stops, PUMP_BLOCKED, surge level rises
+      // both closed: no route — LCV-201 shuts, PUMP_BLOCKED, surge level rises
       s.setValve('gauge', 0, false); s.setValve('gauge', 1, false);
       const su0 = s.getState().surge.frac;
       run(s, 120, 5); st = s.getState();
@@ -87,7 +89,7 @@ module.exports = [
     }
   },
   {
-    name: 'WTSDV surge tank: two compartments with per-compartment level/inventory, divert + selectable P-201 suction',
+    name: 'WTSDV surge tank: two compartments with per-compartment level/inventory, divert + selectable transfer suction',
     wp: WP,
     run(app, assert) {
       const s = sim(app, { config: NOISE_OFF, seed: 11 });
@@ -199,9 +201,9 @@ module.exports = [
     name: 'WTSDV both compartments high: LAH alarm, no switching back and forth',
     wp: WP,
     run(app, assert) {
-      // surge: P-201 failed, inlet A only, auto on → one divert to B, then both high → LAH-201, no more switches
+      // surge: transfer LCV-201 stuck closed, inlet A only, auto on → one divert to B, then both high → LAH-201, no more switches
       const s = sim(app, { config: NOISE_OFF, seed: 31 });
-      s.setValve('surge', 1, false); s.setAutoDivert('surge', true); s.setFault('surgePumpFail', true);
+      s.setValve('surge', 1, false); s.setAutoDivert('surge', true); s.setFault('xferStuckClosed', true);
       const ev = [];
       s.on('divert', (p) => ev.push(p.t));
       let tBoth = null;
