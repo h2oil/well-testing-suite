@@ -4,19 +4,27 @@
 // window.WTS_modbusBridgeSetup (pure functions + one fetch; no timers except the one-shot
 // timeout of checkBridge, cleared when it settles):
 //   validateTarget(s)        → {ok, value, error}  host:port, host = IPv4 | IPv4/nn | host name
-//                              ([A-Za-z0-9.-]), port 1-65535 or * — the same rules as the
-//                              installers, so nothing reaches a script that a shell could run
-//   validateListen(s)        → bool (IPv4 or localhost)
+//                              ([A-Za-z0-9._-]) | [IPv6], port 1-65535 or * — the same rules as
+//                              the installers, so nothing reaches a script that a shell could run
+//   validateListen(s)        → bool (IPv4 or localhost; installers get localhost as 127.0.0.1)
+//   validateOrigin(s)        → bool (null | file:// | http(s)://host[:port])
+//   bridgeAcceptsOrigin(o)   → bool: one of the bridge's built-in page origins (mirror of DEFAULT_ORIGINS)
+//   pageOrigin()             → this page's origin ('null' for a saved file:// copy)
 //   parseBridgeUrl(url)      → {ok, host, port, secure, loopback, healthUrl, error}
 //   targetsFromConfig(cfg, extra) → {targets:[{name, host, port, target, url}], errors, urls, port, listen, warnings}
-//   buildInstaller(os, {allow, port, listen, allowWrites, autostart}) → {ok, filename, text, errors, warnings, commands}
-//   installerFromConfig(cfg, os, {extra, allowWrites, autostart}) → same, targets from the
-//                              "Modbus TCP via WebSocket bridge" devices (+ extra host:port list)
-//   commandsFor(os, o)       → {node, installer, packaged, direct, uninstall}
+//   buildInstaller(os, {allow, port, listen, allowWrites, autostart, origins}) → {ok, filename, text, errors, warnings, commands}
+//   installerFromConfig(cfg, os, {extra, allowWrites, autostart, origins}) → same, targets from the
+//                              "Modbus TCP via WebSocket bridge" devices (+ extra host:port list);
+//                              origins default to this page's origin when the bridge would refuse it
+//                              (a custom http(s) site — never "null")
+//   commandsFor(os, o)       → {node, installer, packaged, direct, uninstall} (values with * or [ ]
+//                              single-quoted for sh / zsh, double-quoted for PowerShell / cmd)
 //   zip(entries, date)       → Uint8Array (stored ZIP, CRC-32; Unix modes for install.sh)
 //   packageZip(date)         → {filename, bytes, files}
 //   allowedBy(specs, host, port) → bool (the bridge's allow-list rules)
-//   checkBridge(cfg, {fetch, timeoutMs, url}) → Promise<{ok, results:[…]}>  (GET <bridge>/health)
+//   checkBridge(cfg, {fetch, timeoutMs, url}) → Promise<{ok, results:[…]}>  (GET <bridge>/health; a
+//                              refusal is 403 {"error":"origin"|"host"}; when the CORS request fails a
+//                              no-cors probe tells "something answered" from "nothing listens")
 // The bridge files come from window.WTS_modbusBridgePack (64-modbus-bridge-pack.js).
 // =============================================================================
 (function () {
@@ -36,23 +44,50 @@ function isIPv4(s) {
     for (var i = 1; i <= 4; i++) if (+m[i] > 255) return false;
     return true;
 }
+// IPv6 (no zone id): hex digits, colons and dots, at least two colons — shell-safe characters
+function isIPv6(a) { a = String(a == null ? '' : a); return /^[0-9A-Fa-f:.]{2,45}$/.test(a) && a.split(':').length >= 3; }
 function validHost(h) {
     h = String(h == null ? '' : h);
     if (h.length < 1 || h.length > 253) return false;
+    if (h[0] === '[' && h[h.length - 1] === ']') return isIPv6(h.slice(1, -1));
     if (h.indexOf('/') >= 0) { var p = h.split('/'); return p.length === 2 && isIPv4(p[0]) && /^[0-9]{1,2}$/.test(p[1]) && +p[1] <= 32; }
     if (/^[0-9.]+$/.test(h)) return isIPv4(h);
-    return /^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$/.test(h) && h.indexOf('..') < 0;
+    return /^[A-Za-z0-9_](?:[A-Za-z0-9._-]*[A-Za-z0-9_])?$/.test(h) && h.indexOf('..') < 0;
 }
 function validPort(p) { p = String(p == null ? '' : p); return /^[0-9]{1,5}$/.test(p) && +p >= 1 && +p <= 65535; }
 function validateTarget(s) {
     var t = String(s == null ? '' : s).trim(), i = t.lastIndexOf(':');
     if (i <= 0) return { ok: false, value: t, error: '"' + t + '" is not host:port' };
     var h = t.slice(0, i), p = t.slice(i + 1);
-    if (!validHost(h)) return { ok: false, value: t, error: '"' + h + '" is not an IPv4 address, IPv4 subnet (a.b.c.d/nn) or host name' };
+    if (!validHost(h)) {
+        if (isIPv6(h)) return { ok: false, value: t, error: 'put the IPv6 address "' + h + '" in brackets: [' + h + ']:' + p };
+        return { ok: false, value: t, error: '"' + h + '" is not an IPv4 address, IPv4 subnet (a.b.c.d/nn), host name or [IPv6] address' };
+    }
     if (p !== '*' && !validPort(p)) return { ok: false, value: t, error: 'port "' + p + '" of ' + h + ' must be 1-65535 or *' };
     return { ok: true, value: h.toLowerCase() + ':' + (p === '*' ? '*' : String(+p)), host: h.toLowerCase(), port: p === '*' ? '*' : +p };
 }
 function validateListen(s) { return s === 'localhost' || isIPv4(s); }
+// "localhost" can resolve to ::1 only (macOS, Windows) while the app uses 127.0.0.1
+function normListen(s) { return s === 'localhost' ? '127.0.0.1' : s; }
+function validateOrigin(o) {
+    o = String(o == null ? '' : o);
+    if (o === 'null' || o === 'file://') return true;
+    var m = /^https?:\/\/([A-Za-z0-9._-]+|\[[0-9A-Fa-f:.]+\])(?::([0-9]{1,5}))?$/.exec(o);
+    return !!m && o.length <= 300 && (m[2] == null || validPort(m[2]));
+}
+// Mirror of modbus-bridge.js DEFAULT_ORIGINS: the page origins a bridge accepts without --origin.
+function bridgeAcceptsOrigin(o) {
+    o = String(o == null ? '' : o);
+    return /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i.test(o) || /^https:\/\/(www\.)?pb-handbook\.com$/i.test(o) || /^capacitor:\/\/localhost$/i.test(o);
+}
+function pageOrigin() {
+    try {
+        var L = G.location;
+        if (!L) return '';
+        if (L.protocol === 'file:') return 'null';          // browsers send "Origin: null" for file:// pages
+        return String(L.origin || '');
+    } catch (e) { return ''; }
+}
 function splitList(s) { return String(s == null ? '' : s).split(/[\s,]+/).filter(Boolean); }
 
 function parseBridgeUrl(u) {
@@ -73,8 +108,9 @@ function targetsFromConfig(cfg, extra) {
     var out = { targets: [], errors: [], urls: [], warnings: [], port: 8502, listen: '' }, seen = {}, seenUrl = {};
     ((cfg && cfg.devices) || []).forEach(function (d) {
         if (!d || d.transport !== 'ws') return;
-        var name = String(d.name || d.id || 'device');
-        var v = validateTarget(String(d.host == null ? '' : d.host).trim() + ':' + (d.port == null || d.port === '' ? 502 : d.port));
+        var name = String(d.name || d.id || 'device'), host = String(d.host == null ? '' : d.host).trim();
+        if (host.indexOf(':') >= 0 && host[0] !== '[') host = '[' + host + ']';       // IPv6 device address
+        var v = validateTarget(host + ':' + (d.port == null || d.port === '' ? 502 : d.port));
         var u = parseBridgeUrl(d.url);
         if (!u.ok) out.errors.push('Device "' + name + '": ' + u.error);
         else if (!seenUrl[u.healthUrl]) { seenUrl[u.healthUrl] = 1; out.urls.push(u); }
@@ -95,7 +131,7 @@ function targetsFromConfig(cfg, extra) {
             if (isIPv4(u0.host)) {
                 out.listen = u0.host;
                 out.warnings.push('The bridge URL points at ' + u0.host + ', not this computer: run the installer on that PC. The bridge will then listen on ' + u0.host + ', so other machines on that network can use it.');
-            } else out.warnings.push('The bridge URL points at ' + u0.host + ': run the installer on that PC and set "listen" in its bridge-config.json to that PC\'s IP address.');
+            } else out.warnings.push('The bridge URL points at ' + u0.host + ', not this computer: put that PC\'s IP address in the device bridge URL (ws://<its IP>:' + u0.port + ') and generate the installer again — it then listens on that address. (With the host name, run the installer on that PC with --listen <its IP address>.)');
         }
         if (u0.secure) out.warnings.push('The bridge speaks plain ws:// — use ws:// (not wss://) in the bridge URL.');
     }
@@ -136,9 +172,10 @@ function shInstaller(P, o) {
         '# @@WTS-PRESET-BEGIN@@ (generated by the Well Testing Suite for your devices; bridge v' + P.version + ')',
         'PRESET_ALLOW="' + o.allow.join(',') + '"',
         'PRESET_PORT="' + o.port + '"',
-        'PRESET_LISTEN="' + (o.listen || '') + '"',
+        'PRESET_LISTEN="' + (o.listen || '127.0.0.1') + '"',
         'PRESET_ALLOW_WRITES="' + (o.allowWrites ? 1 : 0) + '"',
         'PRESET_AUTOSTART="' + (o.autostart ? 1 : 0) + '"',
+        'PRESET_ORIGINS="' + (o.origins || []).join(',') + '"',
         '# @@WTS-PRESET-END@@'];
     var sums = [], bodies = [];
     SH_FILES.forEach(function (f) {
@@ -163,9 +200,10 @@ function psInstaller(P, o) {
         '# @@WTS-PRESET-BEGIN@@ (generated by the Well Testing Suite for your devices; bridge v' + P.version + ')',
         "$PresetAllow = '" + o.allow.join(',') + "'",
         '$PresetPort = ' + o.port,
-        "$PresetListen = '" + (o.listen || '') + "'",
+        "$PresetListen = '" + (o.listen || '127.0.0.1') + "'",
         '$PresetAllowWrites = ' + (o.allowWrites ? '$true' : '$false'),
         '$PresetAutoStart = ' + (o.autostart ? '$true' : '$false'),
+        "$PresetOrigins = '" + (o.origins || []).join(',') + "'",
         '# @@WTS-PRESET-END@@'];
     var payload = ['# @@WTS-PAYLOAD-BEGIN@@ (bridge v' + P.version + ' embedded by the Well Testing Suite; SHA-256 checked when unpacked)',
         "$EmbeddedVersion = '" + P.version + "'", '$Embedded = @{}'];
@@ -183,18 +221,26 @@ function psInstaller(P, o) {
 }
 
 function normOs(os) { os = String(os || '').toLowerCase(); return os === 'mac' || os === 'macos' || os === 'darwin' ? 'macos' : os === 'linux' ? 'linux' : 'windows'; }
+// Shell quoting for the copyable commands. Validated values only contain [A-Za-z0-9._:/*,[\]-],
+// so quotes never appear inside them; * and [ ] are globs in sh / zsh (zsh aborts on an
+// unmatched glob), PowerShell reads a leading [ as a type literal.
+function shArg(s) { s = String(s); return /[*?\[\]]/.test(s) ? "'" + s + "'" : s; }
+function winArg(s) { s = String(s); return /[*?\[\]]/.test(s) ? '"' + s + '"' : s; }
 function commandsFor(os, o) {
     os = normOs(os); o = o || {};
     var allow = (o.allow || []).filter(function (a) { return validateTarget(a).ok; });
-    var port = validPort(o.port) ? +o.port : 8502, listen = o.listen && validateListen(o.listen) ? o.listen : '';
-    var direct = 'node modbus-bridge.js' + allow.map(function (a) { return ' --allow ' + a; }).join('') + (port !== 8502 ? ' --port ' + port : '') +
-        (listen ? ' --listen ' + listen : '') + (o.allowWrites ? ' --allow-writes' : '');
+    var origins = (o.origins || []).filter(validateOrigin);
+    var port = validPort(o.port) ? +o.port : 8502, listen = o.listen && validateListen(o.listen) ? normListen(o.listen) : '';
+    if (listen === '127.0.0.1') listen = '';                                    // the default
+    var q = os === 'windows' ? winArg : shArg;
+    var direct = 'node modbus-bridge.js' + allow.map(function (a) { return ' --allow ' + q(a); }).join('') + (port !== 8502 ? ' --port ' + port : '') +
+        (listen ? ' --listen ' + listen : '') + origins.map(function (x) { return ' --origin ' + x; }).join('') + (o.allowWrites ? ' --allow-writes' : '');
     if (os === 'windows') {
         return {
             node: 'winget install OpenJS.NodeJS.LTS',
             installer: 'powershell -NoProfile -ExecutionPolicy Bypass -File "$HOME\\Downloads\\wts-modbus-bridge-install.ps1"',
             packaged: 'powershell -NoProfile -ExecutionPolicy Bypass -File .\\install-windows.ps1 -Allow "' + allow.join(',') + '"' + (port !== 8502 ? ' -Port ' + port : '') +
-                (listen ? ' -Listen ' + listen : '') + (o.allowWrites ? ' -AllowWrites' : '') + (o.autostart ? ' -AutoStart' : ''),
+                (listen ? ' -Listen ' + listen : '') + (origins.length ? ' -Origin "' + origins.join(',') + '"' : '') + (o.allowWrites ? ' -AllowWrites' : '') + (o.autostart ? ' -AutoStart' : ''),
             direct: direct,
             uninstall: 'powershell -NoProfile -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\\WTS Modbus Bridge\\install-windows.ps1" -Uninstall'
         };
@@ -202,8 +248,8 @@ function commandsFor(os, o) {
     return {
         node: os === 'macos' ? 'brew install node' : 'sudo apt-get install nodejs      # or: sudo dnf install nodejs',
         installer: 'bash ~/Downloads/wts-modbus-bridge-install.sh',
-        packaged: 'bash install.sh --allow ' + (allow.join(',') || '<ip>:502') + (port !== 8502 ? ' --port ' + port : '') + (listen ? ' --listen ' + listen : '') +
-            (o.allowWrites ? ' --allow-writes' : '') + (o.autostart ? ' --autostart' : ''),
+        packaged: 'bash install.sh --allow ' + (allow.length ? shArg(allow.join(',')) : '<ip>:502') + (port !== 8502 ? ' --port ' + port : '') + (listen ? ' --listen ' + listen : '') +
+            origins.map(function (x) { return ' --origin ' + x; }).join('') + (o.allowWrites ? ' --allow-writes' : '') + (o.autostart ? ' --autostart' : ''),
         direct: direct,
         uninstall: os === 'macos' ? 'bash "$HOME/Library/Application Support/WTS Modbus Bridge/install.sh" --uninstall'
             : 'bash "${XDG_DATA_HOME:-$HOME/.local/share}/wts-modbus-bridge/install.sh" --uninstall'
@@ -221,20 +267,39 @@ function buildInstaller(os, o) {
     if (!validPort(port)) errors.push('bridge port "' + port + '" must be 1-65535'); else port = +port;
     var listen = o.listen ? String(o.listen) : '';
     if (listen && !validateListen(listen)) errors.push('listen address "' + listen + '" must be an IPv4 address or localhost');
+    else listen = normListen(listen);
+    var origins = [];
+    (o.origins || []).forEach(function (x) {
+        x = String(x == null ? '' : x).trim();
+        if (!x) return;
+        if (!validateOrigin(x)) errors.push('page origin "' + x + '" must be https://host[:port], http://host[:port], null or file://');
+        else if (origins.indexOf(x) < 0) origins.push(x);
+    });
     if (!allow.length && !errors.length) errors.push('No targets yet: add a device with transport "Modbus TCP via WebSocket bridge" (its host / IP and port), or enter a target.');
     if (errors.length) return { ok: false, errors: errors, warnings: warnings };
-    var opts = { allow: allow, port: port, listen: listen, allowWrites: !!o.allowWrites, autostart: !!o.autostart };
+    var opts = { allow: allow, port: port, listen: listen, allowWrites: !!o.allowWrites, autostart: !!o.autostart, origins: origins };
     var text = os === 'windows' ? psInstaller(P, opts) : shInstaller(P, opts);
     if (!text) return { ok: false, errors: ['The bundled installer template has no preset / payload block.'], warnings: warnings };
     return { ok: true, os: os, filename: os === 'windows' ? 'wts-modbus-bridge-install.ps1' : 'wts-modbus-bridge-install.sh',
-        type: os === 'windows' ? 'text/plain' : 'application/x-sh', text: text, allow: allow, port: port, listen: listen,
+        type: os === 'windows' ? 'text/plain' : 'application/x-sh', text: text, allow: allow, port: port, listen: listen, origins: origins,
         version: P.version, errors: [], warnings: warnings, commands: commandsFor(os, opts) };
+}
+// The page's own origin when the bridge would refuse it (the app served from a custom site), so
+// the generated installer accepts it. Never "null": any web site can send that (saved copies
+// opt in with --origin null, see originNote()).
+function autoOrigins() { var o = pageOrigin(); return /^https?:\/\//i.test(o) && validateOrigin(o) && !bridgeAcceptsOrigin(o) ? [o] : []; }
+function originNote() {
+    var o = pageOrigin();
+    if (o === 'null') return 'This page is a saved copy (file://), so the browser sends "Origin: null" — which the bridge refuses by default, because any web site can send it too. Open the app from https://pb-handbook.com or http://localhost instead, or add --origin null (-Origin null on Windows) to the installer command — only on a PC that is not used for general web browsing.';
+    if (autoOrigins().length) return 'This page is served from ' + o + ', which the bridge does not accept by default: the generated installer adds it (--origin ' + o + ').';
+    return '';
 }
 function installerFromConfig(cfg, os, o) {
     o = o || {};
     var t = targetsFromConfig(cfg, o.extra);
     if (t.errors.length) return { ok: false, errors: t.errors, warnings: t.warnings, targets: t.targets };
-    var r = buildInstaller(os, { allow: t.targets.map(function (x) { return x.target; }), port: t.port, listen: t.listen, allowWrites: o.allowWrites, autostart: o.autostart });
+    var r = buildInstaller(os, { allow: t.targets.map(function (x) { return x.target; }), port: t.port, listen: t.listen, allowWrites: o.allowWrites, autostart: o.autostart,
+        origins: o.origins != null ? o.origins : autoOrigins() });
     r.warnings = t.warnings.concat(r.warnings || []);
     r.targets = t.targets;
     return r;
@@ -294,7 +359,7 @@ function packageZip(date) {
 // ─── allow-list rules (mirror of modbus-bridge.js parseAllow / allowed) ─────
 function ip4num(s) { if (!isIPv4(s)) return null; var p = s.split('.').map(Number); return ((p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3]) >>> 0; }
 function allowedBy(specs, host, port) {
-    host = String(host || '').toLowerCase(); port = +port;
+    host = String(host || '').toLowerCase().replace(/^\[|\]$/g, ''); port = +port;
     return (specs || []).some(function (spec) {
         var s = String(spec).trim(), i = s.lastIndexOf(':');
         if (i <= 0) return false;
@@ -317,14 +382,34 @@ function versionLess(a, b) {
 }
 
 // ─── Check bridge (GET /health) ──────────────────────────────────────────────
-function originText() { try { return String((G.location && G.location.origin) || ''); } catch (e) { return ''; } }
+function originText() { return pageOrigin(); }
+function originHint() {
+    var o = originText() || '<origin>';
+    if (o === 'null') return 'This page is a saved copy (file://): browsers send "Origin: null", which the bridge refuses by default because any web site can send it. Open the app from https://pb-handbook.com or http://localhost, or — only on a PC not used for general browsing — add "null" to "origins" in bridge-config.json (installer: --origin null / -Origin null) and restart the bridge.';
+    return 'Add this page\'s origin (' + o + ') to "origins" in bridge-config.json — or run the installer again with --origin ' + o + ' (Windows: -Origin ' + o + ') — and restart the bridge.';
+}
 function failHints(u, kind) {
-    var h = [];
-    if (kind === 'forbidden') {
-        h.push('The bridge refused this page\'s origin (' + (originText() || 'unknown') + '). Add it to "origins" in bridge-config.json (or start the bridge with --origin ' + (originText() || '<origin>') + ') and restart the bridge.');
+    var h = [], o = originText();
+    if (kind === 'origin') { h.push('The bridge refused this page\'s origin (' + (o || 'unknown') + ').'); h.push(originHint()); return h; }
+    if (kind === 'host') {
+        h.push('The bridge answers under a host name (' + u.host + ') only for pages from an accepted web origin; this page (' + (o || 'unknown') + ') is not one, so the name is refused (protection against DNS rebinding).');
+        h.push('Put the bridge PC\'s IP address in the device bridge URL (ws://<IP>:' + u.port + ')' + (o === 'null' ? ', or open the app from https://pb-handbook.com or http://localhost.' : '.'));
+        return h;
+    }
+    if (kind === 'forbidden') {           // an older v1.1.0 bridge: plain 403, reason unknown
+        h.push('Either this page\'s origin (' + (o || 'unknown') + ') is not accepted: ' + originHint());
+        h.push('Or the bridge URL uses a host name: put the bridge PC\'s IP address in the device bridge URL instead.');
+        return h;
+    }
+    if (kind === 'opaque') {
+        h.push('Something is listening at ' + u.healthUrl.replace(/\/health$/, '') + ', but the browser was not allowed to read its reply.');
+        if (o && !bridgeAcceptsOrigin(o)) h.push('The bridge probably refused this page\'s origin (' + o + '). ' + originHint());
+        h.push('A bridge older than v1.1 has no health check — download the package again and re-run the installer.');
+        h.push('Chrome / Edge may ask to allow this site to access apps or devices on your local network — choose Allow.');
         return h;
     }
     h.push('Is the bridge running? Windows: Start menu → "WTS Modbus Bridge". macOS / Linux: run start-bridge.sh from the install folder (or install with --autostart).');
+    if (o && !bridgeAcceptsOrigin(o)) h.push('The bridge accepts only pages from localhost, 127.0.0.1 and pb-handbook.com by default, and a browser cannot read its refusal from every site: ' + originHint());
     h.push('Is the port right? The bridge URL of your devices must match the bridge (' + u.url + ').');
     h.push('A bridge older than v1.1 has no health check — download the package again and re-run the installer.');
     if (!u.loopback) h.push('The bridge is on another computer: it must listen on that PC\'s network address (listen in bridge-config.json) and the firewall must allow TCP ' + u.port + '.');
@@ -342,11 +427,32 @@ function checkOne(u, devices, f, opts) {
     });
     var init = { method: 'GET', mode: 'cors', cache: 'no-store', credentials: 'omit' };
     if (ctl) init.signal = ctl.signal;
-    var req = Promise.resolve().then(function () { return f(u.healthUrl, init); });
+    // A CORS failure (a refusal without CORS headers, an older bridge, a blocked local-network
+    // request) and "nothing listens" both reject with a TypeError; a no-cors probe tells them
+    // apart: an opaque response means something answered.
+    var req = Promise.resolve().then(function () { return f(u.healthUrl, init); }).then(null, function (e) {
+        if (timedOut) throw e;
+        var init2 = { method: 'GET', mode: 'no-cors', cache: 'no-store', credentials: 'omit' };
+        if (ctl) init2.signal = ctl.signal;
+        return Promise.resolve().then(function () { return f(u.healthUrl, init2); }).then(function (r2) {
+            if (r2 && (r2.type === 'opaque' || r2.status === 0)) return { opaqueProbe: true };
+            throw e;
+        }, function () { throw e; });
+    });
     function done() { if (timer != null) { clearTimeout(timer); timer = null; } }
     return Promise.race([req, timeout]).then(function (res) {
         done();
-        if (res && res.status === 403) return Object.assign(base, { ok: false, reachable: true, error: 'The bridge at ' + u.healthUrl + ' answered 403 Forbidden.', hints: failHints(u, 'forbidden') });
+        if (res && res.opaqueProbe) return Object.assign(base, { ok: false, reachable: true, error: 'Something answered at ' + u.healthUrl + ', but the browser did not let this page read the reply.', hints: failHints(u, 'opaque') });
+        if (res && res.status === 403) {
+            return Promise.resolve().then(function () { return res.json(); }).then(null, function () { return null; }).then(function (b) {
+                var why = b && (b.error === 'origin' || b.error === 'host') ? b.error : '';
+                return Object.assign(base, { ok: false, reachable: true, refused: why || 'unknown',
+                    error: why === 'origin' ? 'The bridge at ' + u.healthUrl + ' is running but refused this page (origin not accepted).'
+                        : why === 'host' ? 'The bridge at ' + u.healthUrl + ' is running but refused the host name ' + u.host + '.'
+                        : 'The bridge at ' + u.healthUrl + ' answered 403 Forbidden.',
+                    hints: failHints(u, why || 'forbidden') });
+            });
+        }
         if (!res || !res.ok) return Object.assign(base, { ok: false, reachable: true, error: 'Something answered at ' + u.healthUrl + ' with HTTP ' + (res ? res.status : '?') + ' — not the WTS Modbus bridge (or an older version).', hints: failHints(u) });
         return Promise.resolve().then(function () { return res.json(); }).then(function (h) {
             if (!h || h.name !== BRIDGE_NAME || typeof h.version !== 'string') {
@@ -384,7 +490,8 @@ function checkBridge(cfg, opts) {
 }
 
 G.WTS_modbusBridgeSetup = {
-    DEFAULT_URL: DEFAULT_URL, validateTarget: validateTarget, validateListen: validateListen, validHost: validHost, isIPv4: isIPv4,
+    DEFAULT_URL: DEFAULT_URL, validateTarget: validateTarget, validateListen: validateListen, validHost: validHost, isIPv4: isIPv4, isIPv6: isIPv6,
+    validateOrigin: validateOrigin, bridgeAcceptsOrigin: bridgeAcceptsOrigin, pageOrigin: pageOrigin, originNote: originNote, autoOrigins: autoOrigins, shArg: shArg,
     parseBridgeUrl: parseBridgeUrl, targetsFromConfig: targetsFromConfig, buildInstaller: buildInstaller,
     installerFromConfig: installerFromConfig, commandsFor: commandsFor, zip: zip, crc32: crc32, base64: base64,
     packageZip: packageZip, allowedBy: allowedBy, checkBridge: checkBridge, versionLess: versionLess, pack: pack

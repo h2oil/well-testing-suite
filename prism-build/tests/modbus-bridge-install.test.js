@@ -11,7 +11,13 @@
 //     "Check bridge" against a stubbed fetch (running / allow-list / 403 / down / timeout) and
 //     against a real bridge;
 //   • install.sh end to end in a sandbox HOME (path with a space): install → config → the
-//     bridge answers /health and reads the fake slave → SIGTERM stops it → --uninstall.
+//     bridge answers /health and reads the fake slave → SIGTERM stops it → --uninstall;
+//     re-running keeps / merges bridge-config.json (--reset starts over), the port is checked
+//     before anything is written, its own earlier bridge is replaced, --autostart --no-start
+//     (stub systemctl), --listen localhost → 127.0.0.1;
+//   • review fixes: zsh-safe quoting of * / [ ] targets, IPv6 + underscore hosts, the refusal of
+//     /health readable through a CORS-enforcing fetch (origin / host), a click after typing in
+//     "Extra targets" is not lost, focus kept, iOS step 3, .gitattributes, Windows task action.
 'use strict';
 
 const fs = require('fs');
@@ -32,6 +38,8 @@ const text = (el) => String(el ? el.textContent : '').trim();
 const navBtn = (app, key) => app.find('.nav-btn[data-p="' + key + '"]');
 
 const hasBash = (() => { try { return spawnSync('bash', ['-c', 'exit 0']).status === 0; } catch (e) { return false; } })();
+const hasZsh = (() => { try { return spawnSync('zsh', ['-f', '-c', 'exit 0']).status === 0; } catch (e) { return false; } })();
+const unixInstall = process.platform !== 'win32' && hasBash;
 const sha = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
 
 // Independent CRC-32 (IEEE 802.3, reflected 0xEDB88320) for checking the app's ZIP writer.
@@ -137,6 +145,35 @@ const BRIDGE_CFG = {
   ],
   tags: [],
 };
+// A fetch that behaves like a browser's: CORS requests send Origin and reject with a TypeError
+// unless Access-Control-Allow-Origin matches (the status is then unreadable); no-cors requests
+// resolve with an opaque response when anything answered. resolveTo maps the URL host (DNS).
+function browserFetch(pageOrigin, resolveTo) {
+  return (url, init) => new Promise((resolve, reject) => {
+    const u = new URL(url), cors = !init || init.mode !== 'no-cors';
+    const headers = { Host: u.host };
+    if (cors && pageOrigin) headers.Origin = pageOrigin;
+    const req = http.request({ agent: false, host: resolveTo || u.hostname, port: +u.port, path: u.pathname, method: 'GET', headers }, (res) => {
+      let b = ''; res.setEncoding('utf8'); res.on('data', (d) => { b += d; });
+      res.on('end', () => {
+        if (!cors) { resolve({ type: 'opaque', status: 0, ok: false, json: () => Promise.reject(new TypeError('opaque')) }); return; }
+        const acao = res.headers['access-control-allow-origin'];
+        if (acao !== '*' && acao !== pageOrigin) { reject(new TypeError('Failed to fetch')); return; }
+        resolve({ type: 'cors', status: res.statusCode, ok: res.statusCode >= 200 && res.statusCode < 300, json: () => Promise.resolve().then(() => JSON.parse(b)) });
+      });
+    });
+    req.on('error', () => reject(new TypeError('Failed to fetch')));
+    req.end();
+  });
+}
+function sandboxHome(tag) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'wts bridge ' + tag + ' '));
+  const env = Object.assign({}, process.env, { HOME: home });
+  delete env.XDG_DATA_HOME; delete env.XDG_CONFIG_HOME;
+  return { home, env, dir: path.join(home, '.local', 'share', 'wts-modbus-bridge') };
+}
+const runSh = (script, args, env) => spawnSync('bash', [script].concat(args), { env, encoding: 'utf8', timeout: 30000 });
+const readCfg = (dir) => JSON.parse(fs.readFileSync(path.join(dir, 'bridge-config.json'), 'utf8'));
 const HEALTH_OK = { name: 'wts-modbus-bridge', version: BRIDGE_VERSION, readOnly: true, port: 8600, uptimeS: 12, allow: ['192.168.1.10:502', '10.0.0.0/24:*'] };
 const jsonRes = (status, body) => Promise.resolve({ ok: status >= 200 && status < 300, status, json: () => Promise.resolve(body) });
 function openGuide(app, cfg) {
@@ -203,14 +240,17 @@ module.exports = [
       const S = app.win.WTS_modbusBridgeSetup;
       assert.ok(S && S.pack(), 'WTS_modbusBridgeSetup + bundled pack');
       for (const [s, v] of [['192.168.1.10:502', '192.168.1.10:502'], ['10.0.0.0/24:502', '10.0.0.0/24:502'], ['plc-1.local:*', 'plc-1.local:*'],
-        ['PLC.Example.com:05020', 'plc.example.com:5020'], [' 127.0.0.1:5020 ', '127.0.0.1:5020'], ['localhost:1', 'localhost:1'], ['0.0.0.0/0:65535', '0.0.0.0/0:65535']]) {
+        ['PLC.Example.com:05020', 'plc.example.com:5020'], [' 127.0.0.1:5020 ', '127.0.0.1:5020'], ['localhost:1', 'localhost:1'], ['0.0.0.0/0:65535', '0.0.0.0/0:65535'],
+        ['[::1]:502', '[::1]:502'], ['[FD00::10]:*', '[fd00::10]:*'], ['plc_2:502', 'plc_2:502'], ['PLC_2.site_a.local:502', 'plc_2.site_a.local:502']]) {
         const r = S.validateTarget(s); assert.ok(r.ok, s + ': ' + r.error); assert.strictEqual(r.value, v);
       }
       for (const s of ['1.2.3.4;rm -rf ~', '1.2.3.4;rm -rf ~:502', '$(calc):502', '`calc`:502', '$env:TEMP:502', 'a b:502', '1.2.3.999:502', '1.2.3:502',
         '10.0.0.0/33:502', '"x":502', "x':502", 'host:0', 'host:65536', 'host:', ':502', 'host', '-rf:502', 'a..b:502', '1.2.3.4:502;calc', 'x&y:502',
-        'x|y:502', '%TEMP%:502', 'x\n:502', '[::1]:502', 'x/24:502', '1.2.3.4:5 02', 'a.b-:502', 'é.local:502', '1.2.3.4:*;x']) {
+        'x|y:502', '%TEMP%:502', 'x\n:502', 'x/24:502', '1.2.3.4:5 02', 'a.b-:502', 'é.local:502', '1.2.3.4:*;x',
+        '[fd00::10%eth0]:502', '[::1;calc]:502', '[]:502', '[:]:502', '[g::1]:502', '[::1]:x', '::1:502', '[$(x)]:502']) {
         assert.ok(!S.validateTarget(s).ok, JSON.stringify(s) + ' must be rejected');
       }
+      assert.match(S.validateTarget('fd00::10:502').error, /put the IPv6 address "fd00::10" in brackets: \[fd00::10\]:502/);
       assert.ok(S.validateListen('127.0.0.1') && S.validateListen('localhost') && !S.validateListen('0.0.0.0; calc') && !S.validateListen('evil.example'));
       let r = S.buildInstaller('windows', { allow: ['1.2.3.4;rm -rf ~'] });
       assert.ok(!r.ok && !r.text && /not host:port/.test(r.errors.join()), JSON.stringify(r.errors));
@@ -452,6 +492,10 @@ module.exports = [
       assert.match(text(app.find('#mbc_guide .mb-note')), /iOS app: no bridge needed/);
       assert.ok(!app.el('mbc_guide_web').hasAttribute('open'), 'bridge section collapsed in the app');
       assert.ok(!app.find('[data-act="guide-pack"]') && !app.find('[data-act="guide-installer"]'), 'no downloads of desktop scripts in the app');
+      const step3 = text(app.findAll('#mbc_guide_steps .mb-steps > li')[2]);
+      assert.ok(!/Then run it|wts-modbus-bridge-install\.(sh|ps1)|generated installer/.test(step3), 'no "run the generated installer" in the app, which cannot generate it: ' + step3.slice(0, 300));
+      assert.includes(step3, 'open the web version of the app on the PC and press "Generate installer for my devices" there');
+      assert.includes(step3, 'install-windows.ps1 -Allow "192.168.1.10:502,10.0.0.7:5020,gw-1.local:5020"', 'package commands kept for reference');
       const z = ctl.downloadPackage();
       assert.strictEqual(shares[0].name, z.filename); assert.strictEqual(shares[0].isB64, true);
       assert.strictEqual(Buffer.from(shares[0].data, 'base64').slice(0, 2).toString(), 'PK');
@@ -516,4 +560,340 @@ module.exports = [
       }
     },
   },
+
+  {
+    name: 'copyable commands quote * and [ ] targets: they run in zsh (macOS default shell) and PowerShell; the page copies the quoted form',
+    wp: WP, timeoutMs: 30000,
+    async run(app, assert) {
+      const S = app.win.WTS_modbusBridgeSetup;
+      const allow = ['127.0.0.1:5020', '10.0.0.0/24:*', 'plc-2.local:*', '[fd00::10]:502'];
+      const m = S.commandsFor('macos', { allow: app.toWin(allow), port: 8520 });
+      assert.strictEqual(m.packaged, "bash install.sh --allow '127.0.0.1:5020,10.0.0.0/24:*,plc-2.local:*,[fd00::10]:502' --port 8520");
+      assert.strictEqual(m.direct, "node modbus-bridge.js --allow 127.0.0.1:5020 --allow '10.0.0.0/24:*' --allow 'plc-2.local:*' --allow '[fd00::10]:502' --port 8520");
+      assert.strictEqual(S.commandsFor('linux', { allow: app.toWin(['192.168.1.10:502']) }).packaged, 'bash install.sh --allow 192.168.1.10:502', 'plain targets stay unquoted');
+      const w = S.commandsFor('windows', { allow: app.toWin(allow), port: 8520 });
+      assert.strictEqual(w.direct, 'node modbus-bridge.js --allow 127.0.0.1:5020 --allow "10.0.0.0/24:*" --allow "plc-2.local:*" --allow "[fd00::10]:502" --port 8520');
+      assert.includes(w.packaged, '-Allow "127.0.0.1:5020,10.0.0.0/24:*,plc-2.local:*,[fd00::10]:502"');
+      if (hasZsh) {
+        // run both commands in zsh against stand-ins that print their arguments
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-zsh-'));
+        try {
+          fs.writeFileSync(path.join(dir, 'install.sh'), 'printf "%s\\n" "$@"\n');
+          fs.writeFileSync(path.join(dir, 'modbus-bridge.js'), 'console.log(process.argv.slice(2).join("\\n"));\n');
+          for (const cmd of [m.packaged, m.direct]) {
+            const r = spawnSync('zsh', ['-f', '-c', cmd], { cwd: dir, encoding: 'utf8', env: process.env });
+            assert.strictEqual(r.status, 0, 'zsh: ' + cmd + ' → ' + r.stderr);
+            assert.ok(!/no matches found/.test(r.stderr));
+            if (cmd === m.packaged) assert.deepStrictEqual(r.stdout.trim().split('\n'), ['--allow', allow.join(','), '--port', '8520']);
+            else assert.deepStrictEqual(r.stdout.trim().split('\n').filter((x) => x !== '--allow'), allow.concat('--port', '8520'));
+          }
+          // control: the unquoted form is what zsh refuses
+          const bad = spawnSync('zsh', ['-f', '-c', 'bash install.sh --allow 127.0.0.1:5020,plc-2.local:*'], { cwd: dir, encoding: 'utf8' });
+          assert.notStrictEqual(bad.status, 0); assert.match(bad.stderr, /no matches found/);
+        } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+      }
+      // the page's copy buttons carry the quoted form
+      openGuide(app, BRIDGE_CFG);
+      app.click(app.find('[data-act="guide-os"][data-os="macos"]'));
+      app.input(app.find('[data-k="guide"][data-f="extra"]'), '10.0.0.0/24:502, plc-2.local:*');
+      const copies = app.findAll('[data-act="guide-copy"]').map((b) => b.getAttribute('data-copy'));
+      assert.ok(copies.includes("bash install.sh --allow '192.168.1.10:502,10.0.0.7:5020,gw-1.local:5020,10.0.0.0/24:502,plc-2.local:*' --port 8600"), copies.join('\n'));
+      assert.ok(copies.some((c) => c.includes("--allow 'plc-2.local:*'")), 'direct command quoted');
+      assert.ok(!copies.some((c) => / --allow [^'" ]*\*/.test(c)), 'no unquoted * anywhere');
+    },
+  },
+  {
+    name: 'IPv6 and underscore device hosts: listed, installer generated for all devices, allow-list check, install.sh accepts them',
+    wp: WP, timeoutMs: 30000,
+    async run(app, assert) {
+      const url = 'ws://127.0.0.1:8502';
+      const cfg = { devices: [
+        { id: 'a', name: 'V4', transport: 'ws', host: '192.168.1.10', port: 502, url, unit: 1 },
+        { id: 'b', name: 'V6', transport: 'ws', host: 'fd00::10', port: 502, url, unit: 1 },
+        { id: 'c', name: 'Under', transport: 'ws', host: 'plc_2', port: 502, url, unit: 1 }], tags: [] };
+      openGuide(app, cfg);
+      const kept = app.win.WTS_modbus.getConfig().devices.map((d) => d.host);
+      assert.deepStrictEqual(Array.from(kept), ['192.168.1.10', 'fd00::10', 'plc_2'], 'the Modbus core keeps them');
+      const t = text(app.findAll('#mbc_guide_steps .mb-steps > li')[2]);
+      assert.includes(t, '✓ V6 — [fd00::10]:502'); assert.includes(t, '✓ Under — plc_2:502'); assert.ok(!/✗/.test(t), t.slice(0, 400));
+      const gen = app.find('[data-act="guide-installer"]');
+      assert.ok(!gen.hasAttribute('disabled'), 'Generate enabled');
+      app.click(gen);
+      const d = app.downloads[app.downloads.length - 1];
+      assert.includes(d.content, "$PresetAllow = '192.168.1.10:502,[fd00::10]:502,plc_2:502'");
+      app.win.fetch = () => jsonRes(200, Object.assign({}, HEALTH_OK, { port: 8502, allow: ['192.168.1.10:502', '[fd00::10]:502', 'plc_2:502'] }));
+      app.click(app.find('[data-act="guide-check"]')); await app.flushAsync(20);
+      const c = text(app.el('mbc_guide_check'));
+      assert.includes(c, '✓ V6 — [fd00::10]:502 is in the allow-list'); assert.includes(c, '✓ Under — plc_2:502 is in the allow-list');
+      // the bridge reads the same spellings
+      const { parseAllow, allowed } = require(path.join(TOOLS, 'modbus-bridge.js'));
+      const L = ['[fd00::10]:502', 'plc_2:502'].map(parseAllow);
+      assert.ok(allowed(L, 'fd00::10', 502) && allowed(L, 'PLC_2', 502));
+      if (unixInstall) {
+        const sb = sandboxHome('v6');
+        try {
+          const r = runSh(path.join(TOOLS, 'install.sh'), ['--no-start', '--allow', '[FD00::10]:502,plc_2:*'], sb.env);
+          assert.strictEqual(r.status, 0, r.stderr);
+          assert.deepStrictEqual(readCfg(sb.dir).allow, ['[fd00::10]:502', 'plc_2:*']);
+          const bad = runSh(path.join(TOOLS, 'install.sh'), ['--no-start', '--allow', 'fd00::10:502'], sb.env);
+          assert.strictEqual(bad.status, 1); assert.match(bad.stderr, /\[ipv6\]:port/);
+        } finally { fs.rmSync(sb.home, { recursive: true, force: true }); }
+      }
+      assert.match(fs.readFileSync(path.join(TOOLS, 'install-windows.ps1'), 'utf8'), /StartsWith\('\['\) -and \$h\.EndsWith\('\]'\)[\s\S]*?\[A-Za-z0-9_\]\(\[A-Za-z0-9\._-\]\*\[A-Za-z0-9_\]\)\?/, 'Windows installer: [IPv6] and underscores');
+    },
+  },
+  {
+    name: 'Check bridge through a CORS-enforcing fetch: refused origin / host name / unreadable reply are diagnosed (not "no bridge"); installer adds a custom page origin',
+    wp: WP, timeoutMs: 30000,
+    async run(app, assert) {
+      const { createBridge } = require(path.join(TOOLS, 'modbus-bridge.js'));
+      const bridge = createBridge({ port: 0, allow: ['127.0.0.1:5020'] }), port = await bridge.listen();
+      const nullBridge = createBridge({ port: 0, allow: ['127.0.0.1:5020'], origins: ['null'] }), nport = await nullBridge.listen();
+      const L = app.win.location, dev = (u) => ({ devices: [{ id: 'b', name: 'Fake slave', transport: 'ws', host: '127.0.0.1', port: 5020, url: u }], tags: [] });
+      const check = async (ctl) => { ctl.lastCheck = null; app.click(app.find('[data-act="guide-check"]')); await until(async () => { await app.flushAsync(0); return ctl.lastCheck; }, 5000, 'check'); return ctl.lastCheck.results[0]; };
+      try {
+        // 1. the app served from a site the bridge does not accept (browser: 403 is readable now)
+        Object.assign(L, { origin: 'http://app.example.test:44613', protocol: 'http:', host: 'app.example.test:44613', hostname: 'app.example.test' });
+        let ctl = openGuide(app, dev('ws://127.0.0.1:' + port));
+        app.win.fetch = browserFetch('http://app.example.test:44613');
+        let r = await check(ctl), t = text(app.el('mbc_guide_check'));
+        assert.ok(r.reachable && r.refused === 'origin', JSON.stringify(r));
+        assert.includes(t, 'is running but refused this page (origin not accepted)'); assert.includes(t, '--origin http://app.example.test:44613');
+        assert.ok(!/No bridge answered|Is the bridge running/.test(t), 'not "is the bridge running?": ' + t);
+        // … and the generated installer accepts that origin
+        const g = app.win.WTS_modbusBridgeSetup.installerFromConfig(ctl.config(), 'linux', {});
+        assert.includes(g.text, 'PRESET_ORIGINS="http://app.example.test:44613"'); assert.includes(g.commands.packaged, '--origin http://app.example.test:44613');
+        assert.includes(text(app.el('mbc_guide_steps')), 'the generated installer adds it (--origin http://app.example.test:44613)');
+        // 2. an accepted page with a host-name bridge URL (bridge on another PC): works like the WebSocket
+        Object.assign(L, { origin: 'http://localhost:8080', protocol: 'http:', host: 'localhost:8080', hostname: 'localhost' });
+        ctl = openGuide(app, dev('ws://bridge-pc.local:' + port));
+        assert.match(text(app.el('mbc_guide_steps')), /put that PC's IP address in the device bridge URL/);
+        app.win.fetch = browserFetch('http://localhost:8080', '127.0.0.1');
+        r = await check(ctl);
+        assert.ok(r.running && r.ok, JSON.stringify(r));
+        // 3. a saved copy (Origin: null, allowed on this bridge) with a host-name URL: "host" refusal, host hint
+        Object.assign(L, { origin: 'null', protocol: 'file:', host: '', hostname: '' });
+        ctl = openGuide(app, dev('ws://bridge-pc.local:' + nport));
+        assert.match(text(app.el('mbc_guide_steps')), /saved copy \(file:\/\/\).*Origin: null/);
+        assert.ok(!/PRESET_ORIGINS="null"/.test(app.win.WTS_modbusBridgeSetup.installerFromConfig(ctl.config(), 'linux', {}).text), '"null" is never added automatically');
+        app.win.fetch = browserFetch('null', '127.0.0.1');
+        r = await check(ctl); t = text(app.el('mbc_guide_check'));
+        assert.strictEqual(r.refused, 'host'); assert.includes(t, 'refused the host name bridge-pc.local'); assert.includes(t, "IP address in the device bridge URL");
+        // 4. the same saved copy against a default bridge: "origin" refusal explains null
+        ctl = openGuide(app, dev('ws://127.0.0.1:' + port));
+        r = await check(ctl); t = text(app.el('mbc_guide_check'));
+        assert.strictEqual(r.refused, 'origin'); assert.includes(t, 'saved copy (file://)'); assert.includes(t, '--origin null');
+        // 5. a reply the page may not read at all (e.g. an older bridge, a blocked preflight): no-cors probe
+        Object.assign(L, { origin: 'http://localhost:8080', protocol: 'http:', host: 'localhost:8080', hostname: 'localhost' });
+        ctl = openGuide(app, dev('ws://127.0.0.1:' + port));
+        const modes = [];
+        app.win.fetch = (u, init) => { modes.push(init.mode); return init.mode === 'no-cors' ? Promise.resolve({ type: 'opaque', status: 0, ok: false }) : Promise.reject(new TypeError('Failed to fetch')); };
+        r = await check(ctl); t = text(app.el('mbc_guide_check'));
+        assert.deepStrictEqual(modes, ['cors', 'no-cors']);
+        assert.ok(r.reachable && !r.running); assert.includes(t, 'but the browser did not let this page read the reply');
+        // nothing listening at all → still "no bridge answered"
+        app.win.fetch = () => Promise.reject(new TypeError('Failed to fetch'));
+        r = await check(ctl);
+        assert.ok(!r.reachable); assert.includes(text(app.el('mbc_guide_check')), 'No bridge answered');
+        app.flush(3000);
+        assert.strictEqual(app.pendingTimers(), 0);
+      } finally {
+        Object.assign(L, { origin: 'http://localhost:8080', protocol: 'http:', host: 'localhost:8080', hostname: 'localhost' });
+        await bridge.close(); await nullBridge.close();
+      }
+    },
+  },
+  {
+    name: 'guide: a click that blurs "Extra targets" is not lost (controls updated in place), focus stays on checkboxes / OS buttons',
+    wp: WP,
+    async run(app, assert) {
+      openGuide(app, { devices: [], tags: [] });
+      const extra = app.find('[data-k="guide"][data-f="extra"]'), gen = app.find('[data-act="guide-installer"]');
+      assert.ok(gen.hasAttribute('disabled'), 'no targets yet');
+      extra.focus();
+      app.input(extra, '192.168.1.10:502', { change: false });              // typing
+      assert.strictEqual(app.find('[data-k="guide"][data-f="extra"]'), extra, 'the field is not replaced while typing');
+      assert.strictEqual(app.find('[data-act="guide-installer"]'), gen, 'nor the button');
+      assert.ok(!gen.hasAttribute('disabled'), 'enabled as soon as the target is valid');
+      assert.includes(text(app.el('mbc_guide_targets')), '✓ (extra) — 192.168.1.10:502');
+      // mousedown on Generate blurs the field → 'change' → then the click lands on the same node
+      app.change(extra);
+      assert.ok(gen.isConnected, 'Generate survives the blur');
+      const n0 = app.downloads.length;
+      app.click(gen);
+      assert.strictEqual(app.downloads.length, n0 + 1, 'first click downloads');
+      assert.includes(app.downloads[n0].content, "$PresetAllow = '192.168.1.10:502'");
+      // the same for Copy and Check bridge after another edit
+      app.input(extra, '192.168.1.10:502, 10.0.0.0/24:502', { change: false });
+      const copy = app.findAll('[data-act="guide-copy"]').find((b) => /install-windows\.ps1 -Allow/.test(b.getAttribute('data-copy')));
+      app.change(extra);
+      assert.ok(copy.isConnected);
+      app.click(copy); await app.flushAsync(10);
+      assert.includes(app.clipboard, '-Allow "192.168.1.10:502,10.0.0.0/24:502"');
+      // keyboard: Space on a checkbox / Enter on an OS button keeps focus on that control
+      const cb = app.find('[data-k="guide"][data-f="autostart"]');
+      cb.focus(); app.check(cb, true);
+      assert.strictEqual(app.document.activeElement, cb); assert.ok(cb.isConnected && cb.checked);
+      assert.includes(text(app.el('mbc_guide_run')), '-AutoStart');
+      const linux = app.find('[data-act="guide-os"][data-os="linux"]');
+      linux.focus(); app.click(linux);
+      const a = app.document.activeElement;
+      assert.ok(a && a.isConnected && a.getAttribute('data-os') === 'linux' && a.getAttribute('aria-pressed') === 'true', 'focus on the (new) Linux button');
+      assert.match(text(app.find('#mbc_guide_steps .mb-steps > li')), /\(Linux\)/);
+      assert.strictEqual(app.find('[data-k="guide"][data-f="extra"]').value, '192.168.1.10:502, 10.0.0.0/24:502', 'extra kept');
+      assert.strictEqual(app.errors.length, 0, app.errors.map((e) => e.message).join('; '));
+    },
+  },
+  {
+    name: 'install.sh run again keeps bridge-config.json (targets added, port / writes / listen / origins kept); --read-only, --reset, generated presets explicit',
+    wp: WP, opts: false, timeoutMs: 60000,
+    async run(app, assert) {
+      if (!unixInstall) { console.log('      (skipped: needs macOS / Linux bash)'); return; }
+      const sb = sandboxHome('merge'), SH = path.join(TOOLS, 'install.sh'), inst = path.join(sb.dir, 'install.sh');
+      try {
+        let r = runSh(SH, ['--no-start', '--allow', '127.0.0.1:5020', '--port', '8530'], sb.env);
+        assert.strictEqual(r.status, 0, r.stderr);
+        // the README / app fix for exception 01: --allow-writes — targets and port must survive
+        r = runSh(inst, ['--no-start', '--allow-writes'], sb.env);
+        assert.strictEqual(r.status, 0, r.stderr); assert.ok(!/no --allow targets/.test(r.stderr), r.stderr);
+        let c = readCfg(sb.dir);
+        assert.deepStrictEqual([c.allow, c.port, c.allowWrites], [['127.0.0.1:5020'], 8530, true]);
+        assert.match(r.stdout, /Keeping the settings of the existing .*bridge-config\.json \(1 target/);
+        // "not in the allow-list" fix: --allow one more device — added, nothing dropped
+        const hand = Object.assign(c, { origins: ['https://my.site'], verbose: true });
+        fs.writeFileSync(path.join(sb.dir, 'bridge-config.json'), JSON.stringify(hand, null, 2));
+        r = runSh(inst, ['--no-start', '--allow', '192.168.1.11:0502', '--origin', 'null', '--listen', 'localhost'], sb.env);
+        assert.strictEqual(r.status, 0, r.stderr);
+        c = readCfg(sb.dir);
+        assert.deepStrictEqual(c.allow, ['127.0.0.1:5020', '192.168.1.11:502']);
+        assert.deepStrictEqual([c.port, c.allowWrites, c.verbose, c.listen], [8530, true, true, '127.0.0.1'], 'port, writes, verbose kept; localhost → 127.0.0.1');
+        assert.deepStrictEqual(c.origins, ['https://my.site', 'null']);
+        assert.ok(fs.existsSync(path.join(sb.dir, 'bridge-config.json.bak')));
+        r = runSh(inst, ['--no-start', '--read-only'], sb.env);
+        assert.strictEqual(readCfg(sb.dir).allowWrites, false);
+        // a generated installer's explicit choices win over the old file; its targets are added
+        const S = loadSetup(), gen = S.buildInstaller('linux', { allow: ['10.0.0.7:5020'], port: 8531, allowWrites: false });
+        const gfile = path.join(sb.home, 'gen.sh'); fs.writeFileSync(gfile, gen.text);
+        runSh(inst, ['--no-start', '--allow-writes'], sb.env);
+        r = runSh(gfile, ['--no-start'], sb.env);
+        assert.strictEqual(r.status, 0, r.stderr);
+        c = readCfg(sb.dir);
+        assert.deepStrictEqual([c.allow, c.port, c.allowWrites, c.listen], [['127.0.0.1:5020', '192.168.1.11:502', '10.0.0.7:5020'], 8531, false, '127.0.0.1']);
+        // the copy kept in the install folder is that generated installer: its presets still apply
+        assert.includes(fs.readFileSync(inst, 'utf8'), 'PRESET_ALLOW="10.0.0.7:5020"');
+        r = runSh(inst, ['--no-start', '--reset', '--allow', '10.9.9.9:502'], sb.env);
+        c = readCfg(sb.dir);
+        assert.deepStrictEqual([c.allow, c.port, c.allowWrites, c.origins], [['10.0.0.7:5020', '10.9.9.9:502'], 8531, false, []]);
+        // --reset with the plain installer: a clean configuration
+        r = runSh(SH, ['--no-start', '--reset', '--allow', '10.9.9.9:502'], sb.env);
+        c = readCfg(sb.dir);
+        assert.deepStrictEqual([c.allow, c.port, c.allowWrites, c.origins, c.verbose], [['10.9.9.9:502'], 8502, false, [], false]);
+        // a broken old file is replaced (and backed up), not fatal; bad input still refused
+        fs.writeFileSync(path.join(sb.dir, 'bridge-config.json'), '{"allow": [');
+        r = runSh(inst, ['--no-start', '--allow', '10.1.1.1:502'], sb.env);
+        assert.strictEqual(r.status, 0, r.stderr); assert.match(r.stderr, /could not be read/); assert.deepStrictEqual(readCfg(sb.dir).allow, ['10.1.1.1:502']);
+        r = runSh(inst, ['--no-start', '--origin', 'https://x.example/"; touch pwned'], sb.env);
+        assert.strictEqual(r.status, 1);
+      } finally { fs.rmSync(sb.home, { recursive: true, force: true }); }
+    },
+  },
+  {
+    name: 'install.sh checks the port before writing, replaces its own earlier bridge, --autostart --no-start sets up auto-start (stub systemctl)',
+    wp: WP, opts: false, timeoutMs: 90000,
+    async run(app, assert) {
+      if (!unixInstall || process.platform !== 'linux') { console.log('      (skipped: needs Linux bash)'); return; }
+      const SH = path.join(TOOLS, 'install.sh');
+      const sb = sandboxHome('port'), bin = path.join(sb.home, 'bin'), log = path.join(sb.home, 'systemctl.log');
+      fs.mkdirSync(bin);
+      fs.writeFileSync(path.join(bin, 'systemctl'), '#!/usr/bin/env bash\nprintf \'%s\\n\' "$*" >> "$HOME/systemctl.log"\nexit 0\n', { mode: 0o755 });
+      const env = Object.assign({}, sb.env, { PATH: bin + path.delimiter + process.env.PATH });
+      const bport = await freePort();
+      // a bridge started by hand (its own process: spawnSync below blocks this event loop)
+      const foreign = spawn(process.execPath, [path.join(TOOLS, 'modbus-bridge.js'), '--allow', '9.9.9.9:502', '--port', String(bport)], { stdio: 'ignore' });
+      const foreignGone = new Promise((resolve) => foreign.on('exit', resolve));
+      let child = null, own = null;
+      try {
+        await until(() => getHealth(bport), 10000, 'the hand-started bridge');
+        // a bridge that is not ours holds the port: refused before anything is written
+        let r = runSh(SH, ['--allow', '127.0.0.1:5020', '--autostart', '--port', String(bport)], env);
+        assert.strictEqual(r.status, 1); assert.match(r.stderr, /another WTS Modbus bridge already answers .*9\.9\.9\.9:502.*Nothing was changed/);
+        assert.ok(!fs.existsSync(sb.dir), 'no files written'); assert.ok(!fs.existsSync(log) || !/enable|restart/.test(fs.readFileSync(log, 'utf8')), 'no service set up');
+        assert.ok(await getHealth(bport), 'the other bridge was left alone');
+        foreign.kill('SIGTERM'); await foreignGone;
+        // --autostart --no-start: the unit is written and enabled, not started
+        r = runSh(SH, ['--allow', '127.0.0.1:5020', '--autostart', '--no-start', '--port', String(bport)], env);
+        assert.strictEqual(r.status, 0, r.stderr);
+        const unit = path.join(sb.home, '.config', 'systemd', 'user', 'wts-modbus-bridge.service');
+        assert.ok(fs.existsSync(unit), 'unit written'); assert.match(fs.readFileSync(unit, 'utf8'), /ExecStart=.*--config/);
+        const calls = fs.readFileSync(log, 'utf8');
+        assert.match(calls, /--user daemon-reload/); assert.match(calls, /--user enable wts-modbus-bridge\.service/);
+        assert.ok(!/restart|start wts|--now/.test(calls), 'not started: ' + calls);
+        assert.match(r.stdout, /starts at the next login/);
+        fs.unlinkSync(unit);
+        // our own bridge from an earlier install is running (start-bridge.sh): a new foreground run replaces it
+        own = spawn(path.join(sb.dir, 'start-bridge.sh'), [], { env, stdio: 'ignore', detached: true });
+        await until(() => getHealth(bport), 10000, 'the earlier bridge');
+        child = spawn('bash', [SH, '--allow', '10.0.0.0/24:502'], { env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+        let out = '', err = '';
+        child.stdout.on('data', (d) => { out += d; }); child.stderr.on('data', (d) => { err += d; });
+        const exited = new Promise((resolve) => child.on('exit', (code) => resolve(code)));
+        await until(() => /OK: the WTS Modbus bridge is running/.test(out) || /ERROR/.test(err), 20000, 'installer (' + err + ')');
+        assert.ok(!/ERROR/.test(err), err);
+        assert.match(out, /Stopped 1 bridge process\(es\) started from/);
+        const h = await getHealth(bport);
+        assert.deepStrictEqual(h.allow, ['127.0.0.1:5020', '10.0.0.0/24:502'], 'the running bridge = the config on disk (merged)');
+        assert.deepStrictEqual(readCfg(sb.dir).allow, h.allow);
+        await until(async () => { try { process.kill(own.pid, 0); return false; } catch (e) { return true; } }, 5000, 'the earlier bridge to exit');
+        child.kill('SIGTERM');
+        assert.strictEqual(await exited, 0);
+        child = null;
+      } finally {
+        try { foreign.kill('SIGKILL'); } catch (e) { /* gone */ }
+        for (const c of [child, own]) if (c) { try { process.kill(-c.pid, 'SIGKILL'); } catch (e) { /* gone */ } }
+        fs.rmSync(sb.home, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'repo + Windows installer: .gitattributes keeps *.sh LF; -AutoStart task closes with the bridge; uninstall tolerates a busy folder; README package commands',
+    wp: WP, opts: false,
+    run(app, assert) {
+      const ga = fs.readFileSync(path.join(REPO, '.gitattributes'), 'utf8');
+      assert.match(ga, /^\*\.sh\s+text\s+eol=lf\s*$/m);
+      const g = spawnSync('git', ['check-attr', 'eol', '--', 'tools/modbus-bridge/install.sh'], { cwd: REPO, encoding: 'utf8' });
+      if (g.status === 0) assert.match(g.stdout, /eol: lf/);
+      const ps = fs.readFileSync(path.join(TOOLS, 'install-windows.ps1'), 'utf8');
+      // "start" runs a .cmd with cmd /K (window stays at a prompt in the install folder) → start a "cmd /c call" instead
+      assert.includes(ps, `-Argument ('/c start "' + $AppName + '" /min "' + $env:ComSpec + '" /c call "' + $StartCmd + '"')`);
+      assert.ok(!/\/min "' \+ \$StartCmd/.test(ps), 'no "start … file.cmd" action');
+      assert.match(ps, /Name = 'node\.exe' OR Name = 'cmd\.exe'/); assert.match(ps, /CommandLine\.IndexOf\(\$StartCmd/);
+      assert.match(ps, /try \{\s*Remove-Item -LiteralPath \$InstallDir -Force -ErrorAction Stop/);
+      // merge / reset / port check before writing, -NoStart after auto-start registration
+      assert.match(ps, /\$PresetAllowWrites = \$null/); assert.match(ps, /\$PresetOrigins = ''/);
+      for (const p of ['ReadOnly', 'Origin', 'Reset']) assert.match(ps, new RegExp('\\[(switch|string\\[\\])\\]\\$' + p + '\\b'));
+      const inv = ps.slice(ps.indexOf('function Invoke-Install'));
+      assert.ok(inv.indexOf('Read-OldConfig') < inv.indexOf('Install-Files') && inv.indexOf('Test-PortInUse') < inv.indexOf('Install-Files'), 'old config read and port checked before writing');
+      assert.ok(inv.indexOf('Register-AutoStart') < inv.indexOf('if ($NoStart)'), '-AutoStart -NoStart still registers');
+      assert.match(inv, /Test-HealthMatches \$h \$port \$writes/);
+      assert.match(inv, /Get-NormalListen/);
+      // README: package-folder commands exist in the zip; repository commands are labelled
+      const readme = fs.readFileSync(path.join(TOOLS, 'README.md'), 'utf8');
+      assert.match(readme, /unzipped package folder[\s\S]{0,120}```\nnode modbus-bridge\.js --allow 192\.168\.1\.10:502\n```/);
+      assert.match(readme, /```\nnode fake-slave\.js --port 5020\nnode modbus-bridge\.js --allow 127\.0\.0\.1:5020\n```/);
+      const zipped = new Set(PACK.FILES);
+      for (const m of readme.matchAll(/node ((?:tools[\\/]modbus-bridge[\\/])?[\w-]+\.js)/g)) {
+        assert.ok(/^tools[\\/]/.test(m[1]) || zipped.has(m[1]), m[1] + ' is in the package');
+      }
+      assert.match(readme, /keeps the existing `bridge-config\.json`/); assert.match(readme, /it is added to the targets already allowed/);
+      assert.match(readme, /--origin null/); assert.ok(!/`file:\/\/`,\n  `https:\/\/pb-handbook\.com`/.test(readme), 'file:// no longer listed as accepted');
+      assert.match(readme, /--allow 'plc-2\.local:\*'/);
+    },
+  },
 ];
+
+function loadSetup() {
+  const ctx = { console: { log() {}, warn() {} }, TextEncoder, Uint8Array, DataView, Promise, setTimeout, clearTimeout };
+  ctx.globalThis = ctx; ctx.window = ctx; vm.createContext(ctx);
+  for (const f of ['64-modbus-bridge-pack.js', '65-modbus-bridge-setup.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, '..', f), 'utf8'), ctx, { filename: f });
+  return ctx.WTS_modbusBridgeSetup;
+}

@@ -18,18 +18,24 @@
 //   • GET /health → {"name","version","readOnly","port","uptimeS","allow":[…]} for the app's
 //     "Check bridge" button. CORS headers only for accepted page origins (same rules as the
 //     WebSocket upgrade); the preflight answers Access-Control-Allow-Private-Network: true
-//     (Chrome Private Network Access). Other origins, and Host names other than localhost /
-//     an IP literal / --listen (DNS rebinding), get a plain 403.
+//     (Chrome Private Network Access). A refused request gets 403 {"error":"origin"|"host"}
+//     (with Access-Control-Allow-Origin echoed, so the page can tell a refusal from "no
+//     bridge"; nothing else is in that body). Host names other than localhost / an IP literal /
+//     --listen are refused (DNS rebinding) unless the request carries an accepted Origin.
 //
 // Security defaults: listens on 127.0.0.1 only; no target is reachable until allowed
-// with --allow; browser origins limited to localhost / 127.0.0.1 / file / the app's
+// with --allow; browser origins limited to http(s)://localhost / 127.0.0.1 / [::1], the app's
 // capacitor origin and the app's web origin (pb-handbook.com) unless --origin or --any-origin
-// is given; ADU ≤ 260 bytes.
+// is given. "Origin: null" (sandboxed iframes, data: URLs, saved file:// copies) is refused
+// unless allowed explicitly with --origin null, because any web site can send it. Requests
+// without an Origin header (curl, scripts; never a browser page) are accepted. ADU ≤ 260 bytes.
 //
-// Usage:  node modbus-bridge.js --allow 192.168.1.10:502 [--allow 10.0.0.0/24:502] [--allow host:*]
+// Usage:  node modbus-bridge.js --allow 192.168.1.10:502 [--allow 10.0.0.0/24:502] [--allow 'host:*']
 //                               [--listen 127.0.0.1] [--port 8502] [--origin https://example.com]
 //                               [--any-origin] [--allow-writes] [--verbose]
 //                               [--config bridge-config.json] [--version] [--help]
+//         (quote targets with * or [ ] — zsh refuses an unmatched glob; IPv6: '[fd00::10]:502';
+//          --origin null accepts a saved file:// copy of the app)
 // --config file.json: {"allow":["192.168.1.10:502"], "port":8502, "listen":"127.0.0.1",
 //   "origins":[], "anyOrigin":false, "allowWrites":false, "verbose":false} (all keys optional;
 //   keys starting with "_" are comments). Command-line flags override the file's port / listen
@@ -49,8 +55,10 @@ const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';     // RFC 6455 §1.3
 const MAX_ADU = 260;
 const READ_FCS = new Set([1, 2, 3, 4]);
 const WRITE_FCS = new Set([5, 6, 15, 16]);
+// "null" and file:// are deliberately NOT here: any web page can send "Origin: null" (a
+// sandboxed iframe or a data: URL), so a saved copy of the app needs --origin null.
 const DEFAULT_ORIGINS = [/^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i, /^https:\/\/(www\.)?pb-handbook\.com$/i,
-  /^capacitor:\/\/localhost$/i, /^null$/, /^file:\/\//i];
+  /^capacitor:\/\/localhost$/i];
 
 // ─── allow-list ──────────────────────────────────────────────────────────────
 // entry: "host:port" | "host:*" | "a.b.c.d/nn:port" (IPv4 CIDR)
@@ -79,14 +87,18 @@ function allowed(list, host, port) {
     return a.host === host;
   });
 }
+// origin = the Origin request header. undefined (no header) = not a browser page (curl, a
+// script, Node's WebSocket): accepted. "null" only with --origin null / --any-origin.
 function originOk(opts, origin) {
+  if (origin === undefined) return true;
   if (opts.anyOrigin) return true;
-  const o = origin == null ? 'null' : String(origin);
-  if ((opts.origins || []).some((x) => x.toLowerCase() === o.toLowerCase())) return true;
+  const o = String(origin);
+  if ((opts.origins || []).some((x) => String(x).toLowerCase() === o.toLowerCase())) return true;
   return DEFAULT_ORIGINS.some((re) => re.test(o));
 }
 // /health answers only requests addressed to localhost, an IP literal or the --listen name,
-// so a web page cannot read it through a DNS-rebound host name.
+// so a web page cannot read it through a DNS-rebound host name (such a page sends no Origin on
+// its same-origin GET, or its own origin, which is refused).
 function hostHeaderOk(opts, hostHeader) {
   if (hostHeader == null || hostHeader === '') return true;          // HTTP/1.0 client
   let h = String(hostHeader).trim().toLowerCase();
@@ -96,6 +108,17 @@ function hostHeaderOk(opts, hostHeader) {
   if (/^\d+\.\d+\.\d+\.\d+$/.test(h) && ip4(h) != null) return true;
   return !!(opts && opts.listen && h === String(opts.listen).toLowerCase());
 }
+// Why a /health request is refused: 'origin', 'host' or null (accepted). A request with an
+// accepted, non-null Origin may use any Host name (e.g. ws://bridge-pc.local:8502 from the
+// app): a DNS-rebinding page cannot send such an Origin.
+function healthRefusal(opts, origin, hostHeader) {
+  if (!originOk(opts, origin)) return 'origin';
+  if (hostHeaderOk(opts, hostHeader)) return null;
+  return origin !== undefined && String(origin) !== 'null' ? null : 'host';
+}
+// "localhost" can resolve to ::1 first (macOS, Windows; Node ≥ 17 keeps the resolver order),
+// while the installers and the app use 127.0.0.1 — so listen on 127.0.0.1.
+function normListen(listen) { return typeof listen === 'string' && listen.toLowerCase() === 'localhost' ? '127.0.0.1' : listen; }
 
 // ─── WebSocket framing (server side, RFC 6455 §5) ────────────────────────────
 function encodeFrame(opcode, payload) {
@@ -152,6 +175,7 @@ function exceptionAdu(req, code) {
 // ─── bridge ──────────────────────────────────────────────────────────────────
 function createBridge(opts) {
   opts = Object.assign({ listen: '127.0.0.1', port: 8502, allow: [], origins: [], anyOrigin: false, allowWrites: false, verbose: false, connectTimeoutMs: 5000 }, opts || {});
+  opts.listen = normListen(opts.listen) || '127.0.0.1';
   const allowList = opts.allow.map((a) => (typeof a === 'string' ? parseAllow(a) : a));
   const log = (...a) => { if (opts.verbose) console.log('[bridge]', ...a); };
   const sessions = new Set(), upgraded = new Set();
@@ -170,16 +194,23 @@ function createBridge(opts) {
       uptimeS: Math.round((Date.now() - startedAt) / 1000), allow: allowList.map((a) => a.spec || (a.host + ':' + a.port)) };
   }
   // GET /health (+ CORS preflight). Accepted origins get CORS headers; a request without an
-  // Origin header (curl, the installers) gets the JSON without them; anything else a bare 403.
+  // Origin header (curl, the installers) gets the JSON without them. A refused request gets
+  // 403 {"error":"origin"|"host"} — with Access-Control-Allow-Origin echoed so the app can show
+  // why (a browser turns a 403 without it into "network error" = "is the bridge running?").
+  // The refusal carries no version / allow-list, and a refused preflight is never approved
+  // (no Access-Control-Allow-Private-Network).
   function health(req, res) {
     const origin = req.headers.origin;
-    const deny = (why) => {
-      stats.refused++; log('health refused:', why);
-      res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store', Vary: 'Origin' });
-      res.end('Forbidden\n');
-    };
-    if (!hostHeaderOk(opts, req.headers.host)) { deny('host ' + req.headers.host); return; }
-    if (origin !== undefined && !originOk(opts, origin)) { deny('origin ' + origin); return; }
+    const why = healthRefusal(opts, origin, req.headers.host);
+    if (why) {
+      stats.refused++; log('health refused:', why, why === 'host' ? req.headers.host : origin);
+      const body = JSON.stringify({ error: why });
+      const h403 = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', Vary: 'Origin', 'Content-Length': Buffer.byteLength(body) };
+      if (origin !== undefined) h403['Access-Control-Allow-Origin'] = String(origin);
+      res.writeHead(403, h403);
+      res.end(req.method === 'HEAD' ? undefined : body);
+      return;
+    }
     const head = { 'Cache-Control': 'no-store', Vary: 'Origin' };
     if (origin !== undefined) head['Access-Control-Allow-Origin'] = String(origin);
     if (req.method === 'OPTIONS') {
@@ -355,6 +386,7 @@ function resolveOptions(cli, readConfig) {
   o.origins = uniq((base.origins || []).concat(cli.origins || []));
   if (cli.port !== undefined) o.port = cli.port;
   if (cli.listen !== undefined) o.listen = cli.listen;
+  if (o.listen !== undefined) o.listen = normListen(o.listen);
   ['anyOrigin', 'allowWrites', 'verbose'].forEach((k) => { if (cli[k]) o[k] = true; });
   if (o.port !== undefined && !validPort(o.port)) throw new Error('bad --port (1-65535)');
   if (o.listen !== undefined && (typeof o.listen !== 'string' || !o.listen)) throw new Error('bad --listen address');
@@ -376,7 +408,8 @@ function main(argv) {
   const o = r.options;
   r.warnings.forEach((w) => console.warn('[bridge] WARNING: ' + w));
   if (!o.allow.length) console.warn('[bridge] WARNING: no --allow targets — every connection will be refused. Example: --allow 192.168.1.10:502');
-  if (o.listen && o.listen !== '127.0.0.1' && o.listen !== 'localhost' && o.listen !== '::1') console.warn('[bridge] WARNING: listening on ' + o.listen + ' — other machines on the network can use this bridge.');
+  if ((o.origins || []).some((x) => String(x).toLowerCase() === 'null') || o.anyOrigin) console.warn('[bridge] WARNING: ' + (o.anyOrigin ? 'any page origin is accepted' : 'pages with "Origin: null" (saved copies, but also sandboxed frames of any web site) are accepted') + ' — only do this on a PC that is not used for general web browsing.');
+  if (o.listen && o.listen !== '127.0.0.1' && o.listen !== '::1') console.warn('[bridge] WARNING: listening on ' + o.listen + ' — other machines on the network can use this bridge.');
   const b = createBridge(o);
   const listenHost = o.listen || '127.0.0.1';
   b.listen().then((port) => {
@@ -392,6 +425,6 @@ function main(argv) {
   process.on('SIGTERM', stop);     // launchd / systemd stop
 }
 
-module.exports = { BRIDGE_VERSION, createBridge, parseAllow, allowed, originOk, hostHeaderOk, encodeFrame, decodeFrames, takeAdus, exceptionAdu,
+module.exports = { BRIDGE_VERSION, createBridge, parseAllow, allowed, originOk, hostHeaderOk, healthRefusal, normListen, encodeFrame, decodeFrames, takeAdus, exceptionAdu,
   parseArgs, parseConfig, loadConfigFile, resolveOptions, main };
 if (require.main === module) main();

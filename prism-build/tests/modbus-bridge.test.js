@@ -16,7 +16,8 @@ const { spawn, spawnSync } = require('child_process');
 const WP = 'MODBUS';
 const TOOLS = path.resolve(__dirname, '..', '..', 'tools', 'modbus-bridge');
 const BRIDGE_JS = path.join(TOOLS, 'modbus-bridge.js');
-const { createBridge, parseAllow, allowed, decodeFrames, encodeFrame, BRIDGE_VERSION, parseArgs, parseConfig, loadConfigFile, resolveOptions, hostHeaderOk } = require(BRIDGE_JS);
+const { createBridge, parseAllow, allowed, decodeFrames, encodeFrame, BRIDGE_VERSION, parseArgs, parseConfig, loadConfigFile, resolveOptions, hostHeaderOk,
+  originOk, healthRefusal, normListen } = require(BRIDGE_JS);
 const { createSlave } = require(path.join(TOOLS, 'fake-slave.js'));
 
 // Plain HTTP request to the bridge → {status, headers, body}. headers may override Host / Origin.
@@ -29,6 +30,17 @@ function httpReq(port, o) {
       res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body }));
     });
     req.on('error', reject); req.end();
+  });
+}
+
+// Raw WebSocket upgrade → HTTP status (101 = accepted). origin undefined = no Origin header.
+function wsUpgrade(port, sport, origin, host) {
+  return new Promise((resolve) => {
+    const headers = { Connection: 'Upgrade', Upgrade: 'websocket', 'Sec-WebSocket-Version': '13', 'Sec-WebSocket-Key': 'dGhlIHNhbXBsZSBub25jZQ==' };
+    if (origin !== undefined) headers.Origin = origin;
+    if (host !== undefined) headers.Host = host;
+    const req = http.request({ agent: false, host: '127.0.0.1', port, path: '/modbus?host=127.0.0.1&port=' + sport, headers });
+    req.on('response', (res) => { res.resume(); resolve(res.statusCode); }); req.on('upgrade', (res, sock) => { sock.destroy(); resolve(101); }); req.on('error', () => resolve(-1)); req.end();
   });
 }
 
@@ -222,14 +234,25 @@ module.exports = [
         assert.deepStrictEqual(h.allow, ['127.0.0.1:' + R.sport]);
         assert.strictEqual(r.headers['access-control-allow-origin'], undefined, 'no CORS without an Origin');
         assert.strictEqual(r.headers['cache-control'], 'no-store');
-        for (const o of ['http://localhost:8080', 'https://pb-handbook.com', 'null', 'https://my.site', 'capacitor://localhost']) {
+        for (const o of ['http://localhost:8080', 'https://pb-handbook.com', 'https://my.site', 'capacitor://localhost', 'http://[::1]:5173']) {
           r = await httpReq(P, { headers: { Origin: o } });
           assert.strictEqual(r.status, 200, o); assert.strictEqual(r.headers['access-control-allow-origin'], o); assert.match(r.headers.vary, /Origin/);
         }
-        // a foreign origin learns nothing
+        // a foreign origin learns nothing but "refused (origin)" — readable (ACAO echoed), so the app's
+        // "Check bridge" can say why instead of "no bridge answered" (a browser hides a 403 without ACAO)
         r = await httpReq(P, { headers: { Origin: 'https://evil.example' } });
-        assert.strictEqual(r.status, 403); assert.strictEqual(r.body, 'Forbidden\n');
-        assert.strictEqual(r.headers['access-control-allow-origin'], undefined);
+        assert.strictEqual(r.status, 403); assert.deepStrictEqual(JSON.parse(r.body), { error: 'origin' });
+        assert.strictEqual(r.headers['access-control-allow-origin'], 'https://evil.example'); assert.match(r.headers.vary, /Origin/);
+        assert.strictEqual(r.headers['access-control-allow-private-network'], undefined);
+        // "Origin: null" (sandboxed iframe / data: URL of ANY site, or a saved file:// copy) and file:// are refused by default:
+        // no allow-list (internal PLC addresses), no version, no Private-Network approval
+        for (const o of ['null', 'file://', 'NULL']) {
+          r = await httpReq(P, { headers: { Origin: o } });
+          assert.strictEqual(r.status, 403, o); assert.deepStrictEqual(JSON.parse(r.body), { error: 'origin' }, o);
+          assert.ok(!/allow|version|127\.0\.0\.1/.test(r.body), o + ': nothing leaks');
+        }
+        r = await httpReq(P, { method: 'OPTIONS', headers: { Origin: 'null', 'Access-Control-Request-Method': 'GET', 'Access-Control-Request-Private-Network': 'true' } });
+        assert.strictEqual(r.status, 403, 'null preflight refused'); assert.strictEqual(r.headers['access-control-allow-private-network'], undefined, 'no PNA approval for null');
         // CORS preflight with Chrome's Private Network Access request header
         r = await httpReq(P, { method: 'OPTIONS', headers: { Origin: 'https://pb-handbook.com', 'Access-Control-Request-Method': 'GET', 'Access-Control-Request-Private-Network': 'true' } });
         assert.strictEqual(r.status, 204); assert.strictEqual(r.headers['access-control-allow-origin'], 'https://pb-handbook.com');
@@ -238,7 +261,15 @@ module.exports = [
         assert.strictEqual(r.status, 403); assert.strictEqual(r.headers['access-control-allow-private-network'], undefined);
         // DNS rebinding: a page on evil.example rebound to 127.0.0.1 sends Host: evil.example (and no Origin on a same-origin GET)
         r = await httpReq(P, { headers: { Host: 'evil.example:' + P } });
-        assert.strictEqual(r.status, 403);
+        assert.strictEqual(r.status, 403); assert.deepStrictEqual(JSON.parse(r.body), { error: 'host' });
+        r = await httpReq(P, { headers: { Host: 'evil.example:' + P, Origin: 'http://evil.example:' + P } });
+        assert.strictEqual(r.status, 403, 'rebound page with its own origin'); assert.deepStrictEqual(JSON.parse(r.body), { error: 'origin' });
+        // a host-name bridge URL (ws://bridge-pc.local:8502) from an accepted page works — as the WebSocket does
+        r = await httpReq(P, { headers: { Host: 'bridge-pc.local:' + P, Origin: 'http://localhost:8080' } });
+        assert.strictEqual(r.status, 200, 'accepted Origin + host name'); assert.strictEqual(r.headers['access-control-allow-origin'], 'http://localhost:8080');
+        assert.strictEqual(JSON.parse(r.body).name, 'wts-modbus-bridge');
+        assert.strictEqual(healthRefusal({}, undefined, 'bridge-pc:1'), 'host'); assert.strictEqual(healthRefusal({ origins: ['null'] }, 'null', 'bridge-pc:1'), 'host', 'null never bypasses the Host rule');
+        assert.strictEqual(healthRefusal({}, 'https://pb-handbook.com', 'bridge-pc:1'), null); assert.strictEqual(healthRefusal({}, 'null', '127.0.0.1:1'), 'origin');
         for (const host of ['localhost:' + P, '127.0.0.1:' + P, '[::1]:' + P, 'app.localhost:' + P]) assert.strictEqual((await httpReq(P, { headers: { Host: host } })).status, 200, host);
         assert.ok(hostHeaderOk({ listen: 'bridge-pc' }, 'BRIDGE-PC:8502') && !hostHeaderOk({}, 'bridge-pc:8502') && !hostHeaderOk({}, '[evil]:1'));
         assert.strictEqual((await httpReq(P, { method: 'POST', headers: { Origin: 'http://localhost:8080' } })).status, 405);
@@ -254,6 +285,54 @@ module.exports = [
     },
   },
   {
+    name: 'bridge origins: "null" / file:// refused by default on /health and the WebSocket, opt-in with --origin null; no Origin header = not a browser (accepted)',
+    wp: WP, opts: false, timeoutMs: 20000,
+    async run(app, assert) {
+      assert.strictEqual(originOk({}, undefined), true, 'no Origin header (curl, scripts, Node WebSocket)');
+      for (const o of ['null', 'file://', 'file:///C:/wts.html', 'https://evil.example', 'http://localhost.evil.example']) assert.strictEqual(originOk({}, o), false, o);
+      assert.ok(originOk({ origins: ['null'] }, 'null') && originOk({ origins: ['file://'] }, 'file://') && originOk({ anyOrigin: true }, 'null'));
+      const R = await rig();
+      try {
+        assert.strictEqual(await wsUpgrade(R.bport, R.sport, 'null'), 403, 'WebSocket with Origin: null refused (any web site can send it)');
+        assert.strictEqual(await wsUpgrade(R.bport, R.sport, 'file://'), 403);
+        assert.strictEqual(await wsUpgrade(R.bport, R.sport, undefined), 101, 'no Origin header → accepted (non-browser client)');
+        assert.strictEqual(await wsUpgrade(R.bport, R.sport, 'http://127.0.0.1:8080'), 101);
+      } finally { await R.close(); }
+      const R2 = await rig({ origins: ['null'] });                    // a saved copy, explicitly allowed
+      try {
+        assert.strictEqual(await wsUpgrade(R2.bport, R2.sport, 'null'), 101);
+        const r = await httpReq(R2.bport, { headers: { Origin: 'null' } });
+        assert.strictEqual(r.status, 200); assert.strictEqual(r.headers['access-control-allow-origin'], 'null');
+      } finally { await R2.close(); }
+      // CLI: --origin null works and warns
+      const c = spawn(process.execPath, [BRIDGE_JS, '--port', '0', '--origin', 'null', '--allow', '127.0.0.1:5020'], { stdio: ['ignore', 'pipe', 'pipe'] });
+      let out = '', err = '';
+      c.stdout.on('data', (d) => { out += d; }); c.stderr.on('data', (d) => { err += d; });
+      try {
+        await wait(() => /listening on/.test(out) && /Origin: null/.test(err), 10000);   // stdout / stderr arrive independently
+        assert.match(err, /Origin: null.*accepted/);
+      } finally { c.kill('SIGTERM'); }
+    },
+  },
+  {
+    name: 'bridge --listen localhost binds 127.0.0.1 (localhost may resolve to ::1 only on macOS / Windows)',
+    wp: WP, opts: false, timeoutMs: 20000,
+    async run(app, assert) {
+      assert.strictEqual(normListen('localhost'), '127.0.0.1'); assert.strictEqual(normListen('LOCALHOST'), '127.0.0.1'); assert.strictEqual(normListen('10.0.0.5'), '10.0.0.5');
+      assert.strictEqual(resolveOptions(parseArgs(['--listen', 'localhost'])).options.listen, '127.0.0.1');
+      assert.strictEqual(resolveOptions(parseArgs(['--config', 'x.json']), () => ({ options: { listen: 'localhost' } })).options.listen, '127.0.0.1');
+      // make dns.lookup('localhost') answer ::1 first, as on macOS: the bridge must not ask it
+      const dns = require('dns'), orig = dns.lookup;
+      dns.lookup = function (host, o, cb) { if (String(host).toLowerCase() === 'localhost') { const f = typeof o === 'function' ? o : cb; return process.nextTick(() => f(null, '::1', 6)); } return orig.apply(this, arguments); };
+      const b = createBridge({ port: 0, listen: 'localhost', allow: [] });
+      try {
+        await b.listen();
+        assert.strictEqual(b.server.address().address, '127.0.0.1');
+        assert.strictEqual((await httpReq(b.server.address().port)).status, 200, 'reachable on 127.0.0.1');
+      } finally { dns.lookup = orig; await b.close(); }
+    },
+  },
+  {
     name: 'bridge CLI with --config (path with spaces): merges --allow, answers /health, stops on SIGTERM',
     wp: WP, opts: false, timeoutMs: 30000,
     async run(app, assert) {
@@ -263,7 +342,7 @@ module.exports = [
       let out = '', err = '';
       child.stdout.on('data', (d) => { out += d; }); child.stderr.on('data', (d) => { err += d; });
       try {
-        await wait(() => /listening on ws:\/\/127\.0\.0\.1:(\d+)/.test(out), 10000);
+        await wait(() => /health check: http:\/\/127\.0\.0\.1:\d+\/health/.test(out), 10000);   // the last of the three start-up lines (chunks may split)
         const port = +/listening on ws:\/\/127\.0\.0\.1:(\d+)/.exec(out)[1];
         assert.match(out, new RegExp('v' + BRIDGE_VERSION.replace(/\./g, '\\.')));
         assert.match(out, /health check: http:\/\/127\.0\.0\.1:\d+\/health/);

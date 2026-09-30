@@ -3,8 +3,9 @@
 # install.sh - installs the WTS Modbus bridge (WebSocket <-> Modbus TCP) for the
 # current user on macOS or Linux. No sudo / admin rights are needed for the bridge.
 #
-#   bash install.sh --allow 192.168.1.10:502 [--allow 10.0.0.0/24:502,plc.local:502]
-#                   [--port 8502] [--listen 127.0.0.1] [--allow-writes] [--autostart]
+#   bash install.sh --allow 192.168.1.10:502 [--allow '10.0.0.0/24:502,plc.local:*']
+#                   [--port 8502] [--listen 127.0.0.1] [--allow-writes | --read-only]
+#                   [--origin https://my.site] [--autostart] [--reset]
 #                   [--yes] [--no-start] [--uninstall] [--help]
 #
 # What it does
@@ -21,13 +22,22 @@
 #      (Ctrl+C stops it); an existing auto-start bridge is restarted with the new settings.
 #   4. Checks http://127.0.0.1:<port>/health and prints the next steps.
 #
+# Running it again keeps the settings of the existing bridge-config.json: new --allow targets
+# are ADDED to its allow list, and its port / listen address / write setting / origins stay
+# unless you give --port / --listen / --allow-writes / --read-only. --reset starts from a new,
+# empty configuration (the old file is kept as bridge-config.json.bak).
+#
 # --allow   host:port the bridge may connect to (repeat it, or give a comma list):
-#           IPv4 (192.168.1.10:502), IPv4 subnet (10.0.0.0/24:502) or host name
-#           (plc-1.local:502); port 1-65535 or * (any port).
+#           IPv4 (192.168.1.10:502), IPv4 subnet (10.0.0.0/24:502), host name
+#           (plc-1.local:502) or IPv6 in brackets ([fd00::10]:502); port 1-65535 or * (any
+#           port). Quote values with * or [ ] ('plc.local:*') - zsh refuses an unmatched glob.
 # --port    WebSocket port of the bridge (default 8502; the app's bridge URL is ws://127.0.0.1:<port>).
 # --listen  interface to listen on (default 127.0.0.1 = this computer only).
-# --allow-writes  forward Modbus write requests (FC 05/06/15/16); read-only otherwise.
-# --no-start      install only; do not start the bridge.
+# --allow-writes  forward Modbus write requests (FC 05/06/15/16); --read-only refuses them (default).
+# --origin  also accept pages from this origin (https://my.site, or null for a saved file:// copy
+#           of the app - any web site can send "null", so only on a PC not used for browsing).
+# --no-start      install only; do not start the bridge (with --autostart: it starts at the next login).
+# --reset         ignore the existing bridge-config.json and write a new one.
 # --uninstall     stop and remove the auto-start entry and the installed files.
 # =============================================================================
 set -euo pipefail
@@ -38,6 +48,7 @@ PRESET_PORT=""
 PRESET_LISTEN=""
 PRESET_ALLOW_WRITES=""
 PRESET_AUTOSTART=""
+PRESET_ORIGINS=""
 # @@WTS-PRESET-END@@
 
 # @@WTS-PAYLOAD-BEGIN@@ (a generated installer embeds the bridge files here)
@@ -50,7 +61,7 @@ LABEL="uk.co.h2oil.wts-modbus-bridge"
 UNIT_NAME="wts-modbus-bridge.service"
 DEFAULT_PORT=8502
 NODE_MIN=18
-INSTALLED_FILES=(modbus-bridge.js fake-slave.js README.md bridge-config.json bridge-config.json.bak start-bridge.sh install.sh bridge.log)
+INSTALLED_FILES=(modbus-bridge.js fake-slave.js README.md bridge-config.json bridge-config.json.bak bridge-config.json.tmp start-bridge.sh install.sh bridge.log)
 
 say()  { printf '%s\n' "$*"; }
 warn() { printf 'WARNING: %s\n' "$*" >&2; }
@@ -69,9 +80,16 @@ valid_ipv4() {
     done
     return 0
 }
+valid_ipv6() {                      # hex digits, colons and dots only (no zone id), 2+ colons
+    local a="$1" colons
+    [[ "$a" =~ ^[0-9A-Fa-f:.]{2,45}$ ]] || return 1
+    colons="${a//[^:]/}"
+    [ "${#colons}" -ge 2 ]
+}
 valid_host() {
     local h="$1" ip bits
     if [ "${#h}" -lt 1 ] || [ "${#h}" -gt 253 ]; then return 1; fi
+    if [[ "$h" == \[*\] ]]; then valid_ipv6 "${h:1:${#h}-2}"; return; fi
     if [[ "$h" == */* ]]; then
         ip="${h%/*}"; bits="${h##*/}"
         valid_ipv4 "$ip" || return 1
@@ -80,7 +98,7 @@ valid_host() {
         return 0
     fi
     if [[ "$h" =~ ^[0-9.]+$ ]]; then valid_ipv4 "$h"; return; fi
-    [[ "$h" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] || return 1
+    [[ "$h" =~ ^[A-Za-z0-9_]([A-Za-z0-9._-]*[A-Za-z0-9_])?$ ]] || return 1
     [[ "$h" != *..* ]]
 }
 valid_port() {
@@ -93,53 +111,107 @@ valid_target() {
     valid_host "${t%:*}" || return 1
     [ "${t##*:}" = "*" ] || valid_port "${t##*:}"
 }
+norm_target() {                     # a valid target -> lower case, port without leading zeros
+    local t h p
+    t="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+    h="${t%:*}"; p="${t##*:}"
+    if [ "$p" != "*" ]; then p=$((10#$p)); fi
+    printf '%s:%s' "$h" "$p"
+}
 valid_listen() {
     [ "$1" = "localhost" ] || valid_ipv4 "$1"
 }
+norm_listen() {                     # "localhost" may resolve to ::1 only - the app uses 127.0.0.1
+    if [ "$1" = "localhost" ]; then printf '127.0.0.1'; else printf '%s' "$1"; fi
+}
+valid_origin() {                    # null | file:// | http(s)://host[:port]
+    local o="$1" re='^https?://([A-Za-z0-9._-]+|\[[0-9A-Fa-f:.]+\])(:([0-9]{1,5}))?$'
+    case "$o" in null|file://) return 0 ;; esac
+    [ "${#o}" -le 300 ] || return 1
+    [[ "$o" =~ $re ]] || return 1
+    if [ -n "${BASH_REMATCH[3]:-}" ]; then valid_port "${BASH_REMATCH[3]}" || return 1; fi
+    return 0
+}
+in_list() {                         # $1 in the remaining arguments?
+    local x="$1" e
+    shift
+    for e in "$@"; do
+        if [ "$e" = "$x" ]; then return 0; fi
+    done
+    return 1
+}
 
-ALLOW_LIST=()
+NEW_ALLOW=(); NEW_ORIGINS=()
 add_allow() {                       # $1 = one entry or a comma-separated list
-    local item e parts=()
+    local item parts=()
     IFS=',' read -r -a parts <<< "$1"
     for item in ${parts[@]+"${parts[@]}"}; do
         item="${item//[[:space:]]/}"
         [ -n "$item" ] || continue
-        valid_target "$item" || die "invalid --allow entry '$item' (use ip:port, ip/bits:port or hostname:port; port 1-65535 or *)"
-        for e in ${ALLOW_LIST[@]+"${ALLOW_LIST[@]}"}; do
-            if [ "$e" = "$item" ]; then continue 2; fi
-        done
-        ALLOW_LIST+=("$item")
+        valid_target "$item" || die "invalid --allow entry '$item' (use ip:port, ip/bits:port, hostname:port or [ipv6]:port; port 1-65535 or *)"
+        item="$(norm_target "$item")"
+        in_list "$item" ${NEW_ALLOW[@]+"${NEW_ALLOW[@]}"} || NEW_ALLOW+=("$item")
+    done
+    return 0
+}
+add_origin() {                      # $1 = one origin or a comma-separated list
+    local item parts=()
+    IFS=',' read -r -a parts <<< "$1"
+    for item in ${parts[@]+"${parts[@]}"}; do
+        item="${item//[[:space:]]/}"
+        [ -n "$item" ] || continue
+        valid_origin "$item" || die "invalid --origin '$item' (use https://host[:port], http://host[:port], null or file://)"
+        in_list "$item" ${NEW_ORIGINS[@]+"${NEW_ORIGINS[@]}"} || NEW_ORIGINS+=("$item")
     done
     return 0
 }
 
 # ---- arguments ----------------------------------------------------------------
-PORT=""; LISTEN=""; ALLOW_WRITES=0; AUTOSTART=0; UNINSTALL=0; ASSUME_YES=0; NO_START=0
+CLI_PORT=""; CLI_LISTEN=""; CLI_WRITES=""; AUTOSTART=0; UNINSTALL=0; ASSUME_YES=0; NO_START=0; RESET=0
 if [ -n "$PRESET_ALLOW" ]; then add_allow "$PRESET_ALLOW"; fi
-if [ "$PRESET_ALLOW_WRITES" = "1" ]; then ALLOW_WRITES=1; fi
+if [ -n "$PRESET_ORIGINS" ]; then add_origin "$PRESET_ORIGINS"; fi
 if [ "$PRESET_AUTOSTART" = "1" ]; then AUTOSTART=1; fi
 while [ $# -gt 0 ]; do
     case "$1" in
         --allow)        [ $# -ge 2 ] || die "--allow needs host:port"; add_allow "$2"; shift 2 ;;
         --allow=*)      add_allow "${1#*=}"; shift ;;
-        --port)         [ $# -ge 2 ] || die "--port needs a number"; PORT="$2"; shift 2 ;;
-        --port=*)       PORT="${1#*=}"; shift ;;
-        --listen)       [ $# -ge 2 ] || die "--listen needs an address"; LISTEN="$2"; shift 2 ;;
-        --listen=*)     LISTEN="${1#*=}"; shift ;;
-        --allow-writes) ALLOW_WRITES=1; shift ;;
+        --origin)       [ $# -ge 2 ] || die "--origin needs an origin"; add_origin "$2"; shift 2 ;;
+        --origin=*)     add_origin "${1#*=}"; shift ;;
+        --port)         [ $# -ge 2 ] || die "--port needs a number"; CLI_PORT="$2"; shift 2 ;;
+        --port=*)       CLI_PORT="${1#*=}"; shift ;;
+        --listen)       [ $# -ge 2 ] || die "--listen needs an address"; CLI_LISTEN="$2"; shift 2 ;;
+        --listen=*)     CLI_LISTEN="${1#*=}"; shift ;;
+        --allow-writes) CLI_WRITES=1; shift ;;
+        --read-only)    CLI_WRITES=0; shift ;;
         --autostart)    AUTOSTART=1; shift ;;
         --no-start)     NO_START=1; shift ;;
+        --reset)        RESET=1; shift ;;
         --uninstall)    UNINSTALL=1; shift ;;
         -y|--yes)       ASSUME_YES=1; shift ;;
         -h|--help)      usage; exit 0 ;;
         *)              die "unknown option '$1' (see: bash install.sh --help)" ;;
     esac
 done
-if [ -z "$PORT" ]; then PORT="${PRESET_PORT:-$DEFAULT_PORT}"; fi
-valid_port "$PORT" || die "invalid --port '$PORT' (1-65535)"
-PORT=$((10#$PORT))
-if [ -z "$LISTEN" ]; then LISTEN="${PRESET_LISTEN:-127.0.0.1}"; fi
-valid_listen "$LISTEN" || die "invalid --listen '$LISTEN' (an IPv4 address or localhost)"
+if [ -n "$CLI_PORT" ]; then
+    valid_port "$CLI_PORT" || die "invalid --port '$CLI_PORT' (1-65535)"
+    CLI_PORT=$((10#$CLI_PORT))
+fi
+if [ -n "$PRESET_PORT" ]; then
+    valid_port "$PRESET_PORT" || die "invalid preset port '$PRESET_PORT' (1-65535)"
+    PRESET_PORT=$((10#$PRESET_PORT))
+fi
+if [ -n "$CLI_LISTEN" ]; then
+    valid_listen "$CLI_LISTEN" || die "invalid --listen '$CLI_LISTEN' (an IPv4 address or localhost)"
+    CLI_LISTEN="$(norm_listen "$CLI_LISTEN")"
+fi
+if [ -n "$PRESET_LISTEN" ]; then
+    valid_listen "$PRESET_LISTEN" || die "invalid preset listen address '$PRESET_LISTEN'"
+    PRESET_LISTEN="$(norm_listen "$PRESET_LISTEN")"
+fi
+case "$PRESET_ALLOW_WRITES" in ""|0|1) ;; *) die "invalid preset PRESET_ALLOW_WRITES '$PRESET_ALLOW_WRITES'" ;; esac
+# Until the existing configuration is read (install) - used as they are by --uninstall.
+PORT="${CLI_PORT:-${PRESET_PORT:-$DEFAULT_PORT}}"
+LISTEN="${CLI_LISTEN:-${PRESET_LISTEN:-127.0.0.1}}"
 
 # ---- where things go -----------------------------------------------------------
 [ -n "${HOME:-}" ] || die "HOME is not set"
@@ -159,9 +231,13 @@ case "$(uname -s)" in
         die "unsupported system '$(uname -s)' - on Windows use install-windows.ps1" ;;
 esac
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)" || SCRIPT_DIR="."
-HEALTH_HOST="$LISTEN"
-if [ "$HEALTH_HOST" = "0.0.0.0" ] || [ "$HEALTH_HOST" = "localhost" ]; then HEALTH_HOST=127.0.0.1; fi
 NODE_BIN=""
+HEALTH_HOST=""
+set_health_host() {
+    HEALTH_HOST="$LISTEN"
+    if [ "$HEALTH_HOST" = "0.0.0.0" ]; then HEALTH_HOST=127.0.0.1; fi
+}
+set_health_host
 
 # ---- helpers -------------------------------------------------------------------
 confirm() {                         # $1 = question; yes only with --yes or a typed y
@@ -247,8 +323,22 @@ fetch_health() {                    # prints the /health JSON; fails when nothin
         return 1
     fi
 }
+port_in_use() {                     # anything (a bridge or another program) listening on the port?
+    "$NODE_BIN" -e 'const s=require("net").connect({host:process.argv[1],port:+process.argv[2]});s.setTimeout(1500);s.on("connect",()=>{s.destroy();process.exit(0);});s.on("timeout",()=>{s.destroy();process.exit(1);});s.on("error",()=>process.exit(1));' "$HEALTH_HOST" "$PORT"
+}
 describe_health() {                 # stdin: /health JSON
     "$NODE_BIN" -e 'let s="";process.stdin.on("data",(d)=>{s+=d;});process.stdin.on("end",()=>{try{const h=JSON.parse(s);process.stdout.write("v"+h.version+", "+(h.readOnly?"read-only":"writes ALLOWED")+", port "+h.port+"; allowed targets: "+((h.allow||[]).join(", ")||"(none)"));}catch(e){process.stdout.write("(unexpected reply)");}});'
+}
+verify_health() {                   # is the bridge that answered the one just configured?
+    printf '%s' "$HEALTH_JSON" | "$NODE_BIN" -e '
+const a=process.argv.slice(1);const {parseAllow}=require(a[0]);const port=+a[1],readOnly=a[2]!=="1";
+const spec=(x)=>{try{return parseAllow(x).spec;}catch(e){return String(x).toLowerCase();}};
+const want=a.slice(3).map(spec).sort();let s="";
+process.stdin.on("data",(d)=>{s+=d;});
+process.stdin.on("end",()=>{let h;try{h=JSON.parse(s);}catch(e){process.exit(1);}
+const got=(Array.isArray(h.allow)?h.allow:[]).map((x)=>String(x).toLowerCase()).sort();
+process.exit(h.port===port&&h.readOnly===readOnly&&JSON.stringify(got)===JSON.stringify(want)?0:1);});' \
+        "$INSTALL_DIR/modbus-bridge.js" "$PORT" "$ALLOW_WRITES" ${ALLOW_LIST[@]+"${ALLOW_LIST[@]}"}
 }
 wait_health() {                     # $1 = seconds; $2 = pid to watch (optional)
     local tries=$(( $1 * 4 )) json
@@ -283,7 +373,39 @@ configured_port() {                 # port from an existing bridge-config.json (
     if [ -f "$f" ]; then
         p="$(sed -n 's/.*"port"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$f" | head -n 1)"
     fi
-    if valid_port "${p:-x}"; then printf '%s' "$p"; else printf '%s' "$PORT"; fi
+    if valid_port "${p:-x}"; then printf '%s' "$((10#$p))"; else printf '%s' "$PORT"; fi
+}
+our_bridge_pids() {                 # this user's bridges running from the install folder
+    local js="$INSTALL_DIR/modbus-bridge.js" me uid pid args
+    me="$(id -u)"
+    { ps -A -ww -o uid= -o pid= -o args= 2>/dev/null || true; } | while read -r uid pid args; do
+        if [ "$uid" = "$me" ] && [ "$pid" != "$$" ]; then
+            case "$args" in *"$js"*) printf '%s\n' "$pid" ;; esac
+        fi
+    done
+    return 0
+}
+stop_our_bridges() {                # an earlier foreground install, start-bridge.sh or the auto-start service
+    local pids pid n=0 i
+    if autostart_installed; then
+        if [ "$OS" = macos ]; then
+            launchctl bootout "gui/$(id -u)/$LABEL" >/dev/null 2>&1 || true
+        elif systemd_user_ok; then
+            systemctl --user stop "$UNIT_NAME" >/dev/null 2>&1 || true
+        fi
+    fi
+    pids="$(our_bridge_pids)"
+    for pid in $pids; do
+        if kill "$pid" 2>/dev/null; then n=$((n + 1)); fi
+    done
+    if [ "$n" -gt 0 ]; then
+        for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+            if [ -z "$(our_bridge_pids)" ]; then break; fi
+            sleep 0.25
+        done
+        say "Stopped $n bridge process(es) started from $INSTALL_DIR"
+    fi
+    return 0
 }
 
 # ---- uninstall -----------------------------------------------------------------
@@ -298,9 +420,10 @@ stop_autostart() {
     return 0
 }
 do_uninstall() {
-    local f removed=0
+    local f removed=0 pid
     PORT="$(configured_port)"
     stop_autostart
+    for pid in $(our_bridge_pids); do kill "$pid" 2>/dev/null || true; done
     if [ "$OS" = macos ] && [ -f "$PLIST" ]; then rm -f "$PLIST"; say "Removed the LaunchAgent $PLIST"; fi
     if [ "$OS" = linux ] && [ -f "$UNIT_FILE" ]; then
         rm -f "$UNIT_FILE"; say "Removed the systemd --user service $UNIT_FILE"
@@ -327,6 +450,52 @@ if [ "$UNINSTALL" = 1 ]; then do_uninstall; exit 0; fi
 
 # ---- install -------------------------------------------------------------------
 ensure_node
+
+# The existing bridge-config.json supplies the defaults, so running the installer again (for
+# one more device, or --allow-writes) never drops the other targets or changes the port.
+OLD_ALLOW=(); OLD_PORT=""; OLD_LISTEN=""; OLD_WRITES=""; HAVE_OLD=0
+read_existing_config() {
+    local f="$INSTALL_DIR/bridge-config.json" out key val re='^[][A-Za-z0-9._:/*-]+$'
+    [ -f "$f" ] || return 0
+    if ! out="$("$NODE_BIN" -e '
+const fs=require("fs");let c;
+try{c=JSON.parse(fs.readFileSync(process.argv[1],"utf8").replace(/^\uFEFF/,""));}catch(e){process.exit(3);}
+if(!c||typeof c!=="object"||Array.isArray(c))process.exit(3);
+const safe=(s)=>typeof s==="string"&&/^[\x21-\x7e]{1,300}$/.test(s.trim());
+(Array.isArray(c.allow)?c.allow:[]).forEach((x)=>console.log(safe(x)?"allow "+x.trim():"bad "+JSON.stringify(x).slice(0,60).replace(/[^\x20-\x7e]/g,"?")));
+if(Number.isInteger(c.port))console.log("port "+c.port);
+if(safe(c.listen))console.log("listen "+c.listen.trim());
+if(typeof c.allowWrites==="boolean")console.log("writes "+(c.allowWrites?1:0));' "$f")"; then
+        warn "$f could not be read (not valid JSON?) - writing a new one (the old file is kept as bridge-config.json.bak)."
+        return 0
+    fi
+    HAVE_OLD=1
+    while IFS=' ' read -r key val; do
+        case "$key" in
+            allow)
+                if valid_target "$val"; then val="$(norm_target "$val")"
+                elif ! [[ "$val" =~ $re ]]; then warn "left out '$val' from the existing allow list (not a host:port target)"; continue; fi
+                in_list "$val" ${OLD_ALLOW[@]+"${OLD_ALLOW[@]}"} || OLD_ALLOW+=("$val") ;;
+            bad)    warn "left out $val from the existing allow list (not a host:port target)" ;;
+            port)   if valid_port "$val"; then OLD_PORT=$((10#$val)); fi ;;
+            listen) if valid_listen "$val"; then OLD_LISTEN="$(norm_listen "$val")"; else warn "the existing listen address '$val' is not an IPv4 address or localhost - not kept"; fi ;;
+            writes) OLD_WRITES="$val" ;;
+        esac
+    done <<< "$out"
+    return 0
+}
+if [ "$RESET" != 1 ]; then read_existing_config; fi
+ALLOW_LIST=()
+for e in ${OLD_ALLOW[@]+"${OLD_ALLOW[@]}"} ${NEW_ALLOW[@]+"${NEW_ALLOW[@]}"}; do
+    in_list "$e" ${ALLOW_LIST[@]+"${ALLOW_LIST[@]}"} || ALLOW_LIST+=("$e")
+done
+PORT="${CLI_PORT:-${PRESET_PORT:-${OLD_PORT:-$DEFAULT_PORT}}}"
+LISTEN="${CLI_LISTEN:-${PRESET_LISTEN:-${OLD_LISTEN:-127.0.0.1}}}"
+ALLOW_WRITES="${CLI_WRITES:-${PRESET_ALLOW_WRITES:-${OLD_WRITES:-0}}}"
+set_health_host
+if [ "$HAVE_OLD" = 1 ]; then
+    say "Keeping the settings of the existing $INSTALL_DIR/bridge-config.json (${#OLD_ALLOW[@]} target(s); new targets are added - --reset starts a new list)."
+fi
 if [ ${#ALLOW_LIST[@]} -eq 0 ]; then
     warn "no --allow targets: the bridge will refuse every device until you add one (run the installer again with --allow <ip>:<port>, or edit bridge-config.json)."
 fi
@@ -358,23 +527,20 @@ install_files() {
     if [ -f "$INSTALL_DIR/install.sh" ]; then chmod 755 "$INSTALL_DIR/install.sh"; fi
     return 0
 }
-write_config() {
-    local f="$INSTALL_DIR/bridge-config.json" list="" e writes=false tmp
-    for e in ${ALLOW_LIST[@]+"${ALLOW_LIST[@]}"}; do list="$list${list:+, }\"$e\""; done
-    if [ "$ALLOW_WRITES" = 1 ]; then writes=true; fi
-    tmp="$f.tmp"
-    cat > "$tmp" <<EOF
-{
-  "_comment": "WTS Modbus bridge settings. allow = the host:port targets the bridge may connect to. Restart the bridge after editing (or run the installer again).",
-  "allow": [$list],
-  "port": $PORT,
-  "listen": "$LISTEN",
-  "origins": [],
-  "anyOrigin": false,
-  "allowWrites": $writes,
-  "verbose": false
-}
-EOF
+write_config() {                    # JSON written by node; origins / anyOrigin / verbose of the old file kept
+    local f="$INSTALL_DIR/bridge-config.json" tmp="$INSTALL_DIR/bridge-config.json.tmp"
+    "$NODE_BIN" -e '
+const fs=require("fs");const a=process.argv.slice(1);
+const f=a[0],tmp=a[1],reset=a[2]==="1",port=+a[3],listen=a[4],writes=a[5]==="1",n=+a[6];
+const allow=a.slice(7,7+n),newOrigins=a.slice(7+n);let old={};
+if(!reset){try{const o=JSON.parse(fs.readFileSync(f,"utf8").replace(/^\uFEFF/,""));if(o&&typeof o==="object"&&!Array.isArray(o))old=o;}catch(e){}}
+const seen=new Set(),origins=[];
+(Array.isArray(old.origins)?old.origins:[]).concat(newOrigins).forEach((o)=>{if(typeof o!=="string"||!o.trim())return;const k=o.trim().toLowerCase();if(!seen.has(k)){seen.add(k);origins.push(o.trim());}});
+const out={_comment:"WTS Modbus bridge settings. allow = the host:port targets the bridge may connect to. Running the installer again keeps these settings and adds new targets (--reset starts over). Restart the bridge after editing.",
+  allow:allow,port:port,listen:listen,origins:origins,anyOrigin:old.anyOrigin===true,allowWrites:writes,verbose:old.verbose===true};
+fs.writeFileSync(tmp,JSON.stringify(out,null,2)+"\n");' \
+        "$f" "$tmp" "$RESET" "$PORT" "$LISTEN" "$ALLOW_WRITES" "${#ALLOW_LIST[@]}" \
+        ${ALLOW_LIST[@]+"${ALLOW_LIST[@]}"} ${NEW_ORIGINS[@]+"${NEW_ORIGINS[@]}"}
     if [ -f "$f" ] && ! cmp -s "$f" "$tmp"; then cp "$f" "$f.bak"; fi
     mv "$tmp" "$f"
     return 0
@@ -394,10 +560,23 @@ write_start_script() {
     chmod 755 "$f"
     return 0
 }
-setup_launchagent() {
-    local dir uid i
-    dir="$(dirname "$PLIST")"
-    mkdir -p "$dir"
+launchagent_load() {                # (re)load the LaunchAgent - it starts the bridge now (RunAtLoad)
+    local uid i
+    uid="$(id -u)"
+    launchctl bootout "gui/$uid/$LABEL" >/dev/null 2>&1 || true
+    for i in 1 2 3 4 5; do
+        if launchctl bootstrap "gui/$uid" "$PLIST" >/dev/null 2>&1; then break; fi
+        if [ "$i" = 5 ]; then
+            launchctl unload "$PLIST" >/dev/null 2>&1 || true
+            launchctl load -w "$PLIST" >/dev/null 2>&1 || return 1
+        fi
+        sleep 1
+    done
+    launchctl kickstart -k "gui/$uid/$LABEL" >/dev/null 2>&1 || true
+    return 0
+}
+setup_launchagent() {               # $1 = 1: start it now as well
+    mkdir -p "$(dirname "$PLIST")"
     cat > "$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -421,21 +600,15 @@ setup_launchagent() {
 </dict>
 </plist>
 EOF
-    uid="$(id -u)"
-    launchctl bootout "gui/$uid/$LABEL" >/dev/null 2>&1 || true
-    for i in 1 2 3 4 5; do
-        if launchctl bootstrap "gui/$uid" "$PLIST" >/dev/null 2>&1; then break; fi
-        if [ "$i" = 5 ]; then
-            launchctl unload "$PLIST" >/dev/null 2>&1 || true
-            launchctl load -w "$PLIST" || die "launchctl could not load $PLIST"
-        fi
-        sleep 1
-    done
-    launchctl kickstart -k "gui/$uid/$LABEL" >/dev/null 2>&1 || true
-    say "LaunchAgent installed: $PLIST (starts at login; log: $INSTALL_DIR/bridge.log)"
+    if [ "${1:-1}" = 1 ]; then
+        launchagent_load || die "launchctl could not load $PLIST"
+        say "LaunchAgent installed: $PLIST (starts at login; log: $INSTALL_DIR/bridge.log)"
+    else
+        say "LaunchAgent installed: $PLIST - the bridge starts at the next login (log: $INSTALL_DIR/bridge.log)"
+    fi
     return 0
 }
-setup_systemd() {
+setup_systemd() {                   # $1 = 1: start it now as well
     mkdir -p "$(dirname "$UNIT_FILE")"
     cat > "$UNIT_FILE" <<EOF
 [Unit]
@@ -453,17 +626,20 @@ WantedBy=default.target
 EOF
     systemctl --user daemon-reload
     systemctl --user enable "$UNIT_NAME" >/dev/null 2>&1 || die "systemctl --user enable $UNIT_NAME failed"
-    systemctl --user restart "$UNIT_NAME" || die "systemctl --user restart $UNIT_NAME failed (see: journalctl --user -u $UNIT_NAME)"
-    say "systemd --user service installed: $UNIT_FILE (starts at login)"
+    if [ "${1:-1}" = 1 ]; then
+        systemctl --user restart "$UNIT_NAME" || die "systemctl --user restart $UNIT_NAME failed (see: journalctl --user -u $UNIT_NAME)"
+        say "systemd --user service installed: $UNIT_FILE (starts at login)"
+    else
+        say "systemd --user service installed and enabled: $UNIT_FILE - the bridge starts at the next login"
+        say "  (or now with: systemctl --user start $UNIT_NAME)"
+    fi
     say "  status: systemctl --user status $UNIT_NAME    log: journalctl --user -u $UNIT_NAME"
     say "  to keep it running while you are logged out: loginctl enable-linger \"\$USER\""
     return 0
 }
 restart_existing_autostart() {      # succeeds when the auto-start bridge was restarted
     if [ "$OS" = macos ]; then
-        if launchctl kickstart -k "gui/$(id -u)/$LABEL" >/dev/null 2>&1; then return 0; fi
-        launchctl unload "$PLIST" >/dev/null 2>&1 || true
-        launchctl load -w "$PLIST" >/dev/null 2>&1
+        launchagent_load
     else
         systemd_user_ok && systemctl --user restart "$UNIT_NAME"
     fi
@@ -477,6 +653,7 @@ next_steps() {
     say ""
     say "Installed in:  $INSTALL_DIR"
     say "Settings:      $INSTALL_DIR/bridge-config.json (restart the bridge after editing)"
+    say "Add a device:  bash \"$INSTALL_DIR/install.sh\" --allow <ip>:<port>   (keeps the other settings)"
     say "Start by hand: \"$INSTALL_DIR/start-bridge.sh\""
     say "Uninstall:     bash \"$INSTALL_DIR/install.sh\" --uninstall"
 }
@@ -485,8 +662,27 @@ report_running() {
     say "OK: the WTS Modbus bridge is running - $(printf '%s' "$HEALTH_JSON" | describe_health)"
     say "    health check: http://$HEALTH_HOST:$PORT/health"
 }
+check_running() {                   # after wait_health: the answer must come from the bridge just configured
+    if ! verify_health; then
+        if [ -n "${BRIDGE_PID:-}" ]; then kill "$BRIDGE_PID" 2>/dev/null || true; fi
+        die "the bridge answering on port $PORT is not the one just installed ($(printf '%s' "$HEALTH_JSON" | describe_health)). Another bridge may be running: stop it and run the installer again."
+    fi
+    report_running
+}
 
 HEALTH_JSON=""
+# Before anything is written: stop the bridges of an earlier install, then the port must be free
+# (otherwise the new bridge could not start, and the settings on disk would not match the bridge
+# that answers).
+if [ "$NO_START" != 1 ]; then
+    stop_our_bridges
+    if port_in_use; then
+        if HEALTH_JSON="$(fetch_health)"; then
+            die "another WTS Modbus bridge already answers on http://$HEALTH_HOST:$PORT ($(printf '%s' "$HEALTH_JSON" | describe_health)) - it was not started by this install (a bridge started by hand?). Stop it first (Ctrl+C in its window), or install with --port <other>. Nothing was changed."
+        fi
+        die "another program already uses port $PORT on $HEALTH_HOST. Stop it, or install with --port <other> (and use that port in the device bridge URL). Nothing was changed."
+    fi
+fi
 install_files
 write_config
 write_start_script
@@ -495,21 +691,21 @@ if [ "$ALLOW_WRITES" = 1 ]; then MODE="writes ALLOWED"; fi
 say "Installed the WTS Modbus bridge in $INSTALL_DIR"
 say "  allowed targets: ${ALLOW_LIST[*]:-(none)}   port: $PORT   $MODE"
 
-if [ "$NO_START" = 1 ]; then next_steps; exit 0; fi
-
 if [ "$AUTOSTART" = 1 ]; then
+    START_NOW=1
+    if [ "$NO_START" = 1 ]; then START_NOW=0; fi
     if [ "$OS" = macos ]; then
-        setup_launchagent
+        setup_launchagent "$START_NOW"
     elif systemd_user_ok; then
-        setup_systemd
+        setup_systemd "$START_NOW"
     else
         warn "systemd --user is not available here (no user session bus - e.g. WSL, a container or an SSH-only login), so auto-start was not set up."
         say "  Start the bridge yourself with \"$INSTALL_DIR/start-bridge.sh\", or add that command to your"
         say "  desktop's Startup Applications (or 'crontab -e' with: @reboot \"$INSTALL_DIR/start-bridge.sh\")."
-        say "  Starting it in this window now."
+        if [ "$NO_START" != 1 ]; then say "  Starting it in this window now."; fi
         AUTOSTART=0
     fi
-elif autostart_installed; then
+elif [ "$NO_START" != 1 ] && autostart_installed; then
     if restart_existing_autostart; then
         say "Restarted the auto-start bridge from an earlier install with the new settings."
         AUTOSTART=1
@@ -518,17 +714,16 @@ elif autostart_installed; then
     fi
 fi
 
+if [ "$NO_START" = 1 ]; then next_steps; exit 0; fi
+
 if [ "$AUTOSTART" = 1 ]; then
-    if wait_health 15; then report_running
+    if wait_health 15; then check_running
     else warn "the bridge did not answer on http://$HEALTH_HOST:$PORT/health within 15 s - check the log (see above)."; fi
     next_steps
     exit 0
 fi
 
 # Foreground: run the bridge from this terminal, check it, then wait until Ctrl+C.
-if fetch_health >/dev/null 2>&1; then
-    die "something already answers on port $PORT (another bridge?). Stop it first, or install with --port <other>."
-fi
 "$INSTALL_DIR/start-bridge.sh" &
 BRIDGE_PID=$!
 stop_bridge() {
@@ -541,7 +736,7 @@ stop_bridge() {
 }
 trap stop_bridge INT TERM HUP
 if wait_health 15 "$BRIDGE_PID"; then
-    report_running
+    check_running
     next_steps
     say ""
     say "The bridge runs in this window - leave it open while you use the app; Ctrl+C stops it."
@@ -558,4 +753,7 @@ set +e
 wait "$BRIDGE_PID"
 code=$?
 set -e
+trap - INT TERM HUP
+say ""
+say "The bridge stopped (exit code $code) - it was stopped from outside this window, or a new install replaced it."
 exit "$code"

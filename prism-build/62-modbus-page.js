@@ -232,23 +232,53 @@ function guideHtml(ios) {
         '<details class="mb-sec"' + (ios ? ' open' : '') + '><summary>iOS app — native TCP (no bridge)</summary><p>In the iOS app, choose "Modbus TCP (iOS app, native)" and enter the PLC\'s IP address and port. The app connects directly over Wi-Fi (Network framework); iOS asks once for Local Network permission. The WebSocket bridge is not used.</p></details>' +
         '<details class="mb-sec"><summary>No hardware? Built-in simulator</summary><p>"Load simulator demo" configures one device on the built-in virtual slave: 36 tags covering pressures, temperatures, rates, levels and valve states, fed by the Well Test Simulator model. Mini WellOS then animates from those tags when its data source is set to "Modbus data". To try the bridge itself, the package includes <code>fake-slave.js</code>: run <code>node fake-slave.js --port 5020</code>, allow <code>127.0.0.1:5020</code> in the bridge and add a bridge device with host 127.0.0.1, port 5020.</p></details>' +
         '<details class="mb-sec"><summary>Troubleshooting</summary><ul class="mb-hints">' +
-        '<li><b>"Cannot reach the Modbus bridge"</b> — the bridge is not running, or the bridge URL / port differs. Press <b>Check bridge</b>.</li>' +
-        '<li><b>"not in the bridge allow-list"</b> — re-run the installer (step 3) with that device, or add its host:port to <code>allow</code> in bridge-config.json and restart the bridge.</li>' +
-        '<li><b>HTTP 403 / origin refused</b> — the page is served from an origin the bridge does not accept: add it to <code>origins</code> in bridge-config.json (or <code>--origin</code>).</li>' +
+        '<li><b>"Cannot reach the Modbus bridge"</b> — the bridge is not running, the bridge URL / port differs, or the bridge refused this page (a browser cannot tell these apart). Press <b>Check bridge</b>: it says which.</li>' +
+        '<li><b>"not in the bridge allow-list"</b> — run the installer again (step 3) with that device: it adds the target and keeps the others, the port and the settings. Or add its host:port to <code>allow</code> in bridge-config.json and restart the bridge.</li>' +
+        '<li><b>"the bridge refused this page"</b> — the page is served from an origin the bridge does not accept: run the installer again with <code>--origin &lt;that origin&gt;</code> (<code>-Origin</code>), or add it to <code>origins</code> in bridge-config.json. A saved copy (file://) sends <code>null</code>, which the bridge refuses by default because any web site can send it: open the app from pb-handbook.com or http://localhost instead (or add <code>null</code> on a PC not used for general browsing).</li>' +
+        '<li><b>"refused the host name"</b> — use the bridge PC\'s IP address in the device bridge URL, not its name.</li>' +
         '<li><b>Timeouts</b> — check the unit id (many gateways need the RS-485 slave address here), the IP / port, and that no firewall blocks TCP 502 between the PC and the device.</li>' +
-        '<li><b>Exception 01 on writes</b> — the bridge is read-only: re-run the installer with "Allow Modbus writes" (<code>--allow-writes</code>).</li>' +
+        '<li><b>Exception 01 on writes</b> — the bridge is read-only: run the installer again with "Allow Modbus writes" (<code>--allow-writes</code> / <code>-AllowWrites</code>); it keeps the targets and the port.</li>' +
         '<li><b>Chrome / Edge asks about local network or apps on this device</b> — choose Allow, so this page may reach the bridge on 127.0.0.1.</li>' +
         '<li><b>Windows: "running scripts is disabled on this system"</b> — use the <code>powershell -NoProfile -ExecutionPolicy Bypass -File …</code> command exactly as shown (it changes no system setting).</li>' +
         '<li><b>macOS / Linux: "permission denied"</b> — start the installer with <code>bash install.sh …</code>.</li>' +
         '<li><b>Port 8502 already in use</b> — install with another port (<code>--port</code> / <code>-Port</code>) and change the device bridge URL to match.</li>' +
         '</ul></details></div>';
 }
+// The parts of step 3 that change with the Extra targets field and the two check boxes. They are
+// updated in place (updateGuide), so the controls the user is working with are never replaced —
+// a click that blurs the Extra targets field lands on the same button.
+function guideParts(cfg, g, ios) {
+    var S = G.WTS_modbusBridgeSetup;
+    var os = g.os, t = S.targetsFromConfig(cfg, g.extra), allow = t.targets.map(function (x) { return x.target; });
+    var cmds = S.commandsFor(os, { allow: allow, port: t.port, listen: t.listen, allowWrites: g.writes, autostart: g.autostart, origins: S.autoOrigins ? S.autoOrigins() : [] });
+    var ready = !!(allow.length && !t.errors.length);
+    var note = S.originNote ? S.originNote() : '';
+    var tlist = t.targets.map(function (x) { return '<li class="mb-q-good">✓ ' + esc(x.name) + ' — ' + esc(x.target) + '</li>'; }).join('') +
+        t.errors.map(function (e) { return '<li class="mb-q-bad">✗ ' + esc(e) + '</li>'; }).join('');
+    var targets = (tlist ? '<ul class="mb-targets">' + tlist + '</ul>' : '<p class="mb-q-stale">No bridge devices yet — add a device above with transport "Modbus TCP via WebSocket bridge" (host / IP and port), or enter a target here.</p>') +
+        listHtml(t.warnings.concat(note ? [note] : []));
+    var run = '';
+    if (ready) {
+        run = (ios
+            ? '<p>The iOS app cannot create the installer: open the web version of the app on the PC and press "Generate installer for my devices" there. For reference, the commands for the unzipped package folder:</p>'
+            : (os === 'windows'
+                ? '<p>Then run it in PowerShell (Start menu → type PowerShell). Change the path if your browser saved it elsewhere:</p>' + cmdBox(cmds.installer, 'PowerShell — generated installer')
+                : '<p>Then run it in a Terminal (change the path if your browser saved it elsewhere):</p>' + cmdBox(cmds.installer, 'Terminal — generated installer')) +
+              '<p class="mb-hint">Run again later (for another device, or with writes allowed), an installer keeps the targets, port and settings of the existing bridge-config.json and adds to them — <code>' + (os === 'windows' ? '-Reset' : '--reset') + '</code> starts a new list.</p>') +
+            cmdBox(cmds.packaged, 'or, in the unzipped package folder') +
+            cmdBox(cmds.direct, 'or run the bridge without installing (stops when the window closes)') +
+            (os === 'windows'
+                ? '<p>No administrator rights needed; <code>-ExecutionPolicy Bypass</code> applies to this one run. It installs to <code>%LOCALAPPDATA%\\WTS Modbus Bridge</code>, writes <code>bridge-config.json</code>, adds a Start-menu shortcut "WTS Modbus Bridge" (and a logon task with auto-start), starts the bridge and checks it.</p>'
+                : '<p>No sudo needed. It installs to <code>' + (os === 'macos' ? '~/Library/Application Support/WTS Modbus Bridge' : '~/.local/share/wts-modbus-bridge') + '</code>, writes <code>bridge-config.json</code> and <code>start-bridge.sh</code>' +
+                  (os === 'macos' ? ' (auto-start: a LaunchAgent)' : ' (auto-start: a systemd --user service)') + ', starts the bridge and checks it. Without auto-start the bridge runs in that Terminal window — leave it open.</p>') +
+            cmdBox(cmds.uninstall, 'uninstall');
+    }
+    return { targets: targets, run: run, ready: ready, cmds: cmds };
+}
 function guideStepsHtml(cfg, g, ios) {
     var S = G.WTS_modbusBridgeSetup, P = G.WTS_modbusBridgePack;
     if (!S || !P) return '<p>Run <code>node modbus-bridge.js --allow 192.168.1.10:502</code> from the <code>tools/modbus-bridge</code> folder of the repository (Node.js 18 or newer), then set the device bridge URL to <code>ws://127.0.0.1:8502</code>.</p>';
-    var os = g.os, t = S.targetsFromConfig(cfg, g.extra), allow = t.targets.map(function (x) { return x.target; });
-    var cmds = S.commandsFor(os, { allow: allow, port: t.port, listen: t.listen, allowWrites: g.writes, autostart: g.autostart });
-    var ready = allow.length && !t.errors.length;
+    var os = g.os, parts = guideParts(cfg, g, ios), cmds = parts.cmds;
     var osBtns = '<div class="mb-os" role="group" aria-label="Operating system of the PC that runs the bridge">' + ['windows', 'macos', 'linux'].map(function (o) {
         return '<button type="button" class="btn mb-btn-s ' + (o === os ? 'btn-primary' : 'btn-secondary') + '" data-act="guide-os" data-os="' + o + '" aria-pressed="' + (o === os) + '">' + OS_LABEL[o] + '</button>';
     }).join('') + '</div>';
@@ -263,28 +293,14 @@ function guideStepsHtml(cfg, g, ios) {
         : '<p>The bridge ships inside this app, so this works offline: <code>modbus-bridge.js</code>, the installers for Windows / macOS / Linux, a test slave and the README.</p>' +
           '<div class="btn-row"><button type="button" class="btn btn-secondary" data-act="guide-pack">⬇ Download bridge package (.zip)</button></div>' +
           '<div class="mb-hint">Bridge v' + esc(P.version) + ' · SHA-256 of modbus-bridge.js ' + esc(shaShort) + '… · unzip it (Windows: right-click → Extract All).</div>';
-    var tlist = t.targets.map(function (x) { return '<li class="mb-q-good">✓ ' + esc(x.name) + ' — ' + esc(x.target) + '</li>'; }).join('') +
-        t.errors.map(function (e) { return '<li class="mb-q-bad">✗ ' + esc(e) + '</li>'; }).join('');
     var inst = '<p>Targets the bridge will be allowed to reach (from your "Modbus TCP via WebSocket bridge" devices):</p>' +
-        (tlist ? '<ul class="mb-targets">' + tlist + '</ul>' : '<p class="mb-q-stale">No bridge devices yet — add a device above with transport "Modbus TCP via WebSocket bridge" (host / IP and port), or enter a target here.</p>') +
-        '<label class="mb-inl">Extra targets (optional, comma separated — ip:port, subnet a.b.c.d/nn:port or host:port)<input type="text" data-k="guide" data-f="extra" value="' + esc(g.extra) + '" placeholder="10.0.0.0/24:502, plc-2.local:502" autocomplete="off" spellcheck="false"></label>' +
+        '<div id="mbc_guide_targets">' + parts.targets + '</div>' +
+        '<label class="mb-inl">Extra targets (optional, comma separated — ip:port, subnet a.b.c.d/nn:port, host:port or [IPv6]:port)<input type="text" data-k="guide" data-f="extra" value="' + esc(g.extra) + '" placeholder="10.0.0.0/24:502, plc-2.local:502" autocomplete="off" spellcheck="false"></label>' +
         '<label class="mb-chk"><input type="checkbox" data-k="guide" data-f="autostart"' + (g.autostart ? ' checked' : '') + '> Start the bridge automatically at login</label>' +
         '<label class="mb-chk"><input type="checkbox" data-k="guide" data-f="writes"' + (g.writes ? ' checked' : '') + '> Allow Modbus writes through the bridge (only if you need to write set points)</label>' +
-        listHtml(t.warnings) +
-        (ios ? '' : '<div class="btn-row"><button type="button" class="btn btn-primary" data-act="guide-installer"' + (ready ? '' : ' disabled') + '>⬇ Generate installer for my devices</button></div>') +
-        '<div class="mb-msgs" id="mbc_guide_gen" aria-live="polite">' + (g.genHtml || '') + '</div>';
-    if (ready) {
-        inst += (os === 'windows'
-            ? '<p>Then run it in PowerShell (Start menu → type PowerShell). Change the path if your browser saved it elsewhere:</p>' + cmdBox(cmds.installer, 'PowerShell — generated installer')
-            : '<p>Then run it in a Terminal (change the path if your browser saved it elsewhere):</p>' + cmdBox(cmds.installer, 'Terminal — generated installer')) +
-            cmdBox(cmds.packaged, 'or, in the unzipped package folder') +
-            cmdBox(cmds.direct, 'or run the bridge without installing (stops when the window closes)') +
-            (os === 'windows'
-                ? '<p>No administrator rights needed; <code>-ExecutionPolicy Bypass</code> applies to this one run. It installs to <code>%LOCALAPPDATA%\\WTS Modbus Bridge</code>, writes <code>bridge-config.json</code>, adds a Start-menu shortcut "WTS Modbus Bridge" (and a logon task with auto-start), starts the bridge and checks it.</p>'
-                : '<p>No sudo needed. It installs to <code>' + (os === 'macos' ? '~/Library/Application Support/WTS Modbus Bridge' : '~/.local/share/wts-modbus-bridge') + '</code>, writes <code>bridge-config.json</code> and <code>start-bridge.sh</code>' +
-                  (os === 'macos' ? ' (auto-start: a LaunchAgent)' : ' (auto-start: a systemd --user service)') + ', starts the bridge and checks it. Without auto-start the bridge runs in that Terminal window — leave it open.</p>') +
-            cmdBox(cmds.uninstall, 'uninstall');
-    }
+        (ios ? '' : '<div class="btn-row"><button type="button" class="btn btn-primary" data-act="guide-installer"' + (parts.ready ? '' : ' disabled') + '>⬇ Generate installer for my devices</button></div>') +
+        '<div class="mb-msgs" id="mbc_guide_gen" aria-live="polite">' + (g.genHtml || '') + '</div>' +
+        '<div id="mbc_guide_run">' + parts.run + '</div>';
     var check = '<p>With the bridge running, check it from here, then press <b>Test</b> on each device row.</p>' +
         '<div class="btn-row"><button type="button" class="btn btn-primary" data-act="guide-check">Check bridge</button></div>' +
         '<div id="mbc_guide_check" aria-live="polite">' + (g.checkHtml || '') + '</div>';
@@ -381,7 +397,35 @@ function createController(root, n0) {
     var guide = { os: guessOs(), extra: '', autostart: false, writes: false, genHtml: '', checkHtml: '', ios: isIosApp() };
     C.guide = guide;
     function q(sel) { return root.querySelector(sel); }
-    function renderGuide() { var g = q('#mbc_guide_steps'); if (g) g.innerHTML = guideStepsHtml(cfg, guide, guide.ios); }
+    // Full re-render of the steps (device list or OS changed); keyboard focus goes back to the
+    // equivalent control, so a keyboard / screen-reader user is not dropped to <body>.
+    function focusSel(el) {
+        if (!el || !el.getAttribute) return null;
+        var act = el.getAttribute('data-act'), os = el.getAttribute('data-os'), k = el.getAttribute('data-k'), f = el.getAttribute('data-f');
+        if (act === 'guide-os' && /^(windows|macos|linux)$/.test(os || '')) return '[data-act="guide-os"][data-os="' + os + '"]';
+        if (act && /^guide-[a-z]+$/.test(act)) return '[data-act="' + act + '"]';
+        if (k === 'guide' && /^(extra|autostart|writes)$/.test(f || '')) return '[data-k="guide"][data-f="' + f + '"]';
+        return null;
+    }
+    function renderGuide() {
+        var g = q('#mbc_guide_steps'); if (!g) return;
+        var a = typeof document !== 'undefined' ? document.activeElement : null;
+        var sel = a && a !== g && g.contains(a) ? focusSel(a) : null;
+        g.innerHTML = guideStepsHtml(cfg, guide, guide.ios);
+        if (sel) { var n = g.querySelector(sel); if (n && typeof n.focus === 'function') n.focus(); }
+    }
+    // Partial update: targets, warnings, the installer button's state and the commands only.
+    function updateGuide() {
+        var S = G.WTS_modbusBridgeSetup;
+        if (!S || !G.WTS_modbusBridgePack || !q('#mbc_guide_targets')) { renderGuide(); return; }
+        var parts = guideParts(cfg, guide, guide.ios);
+        q('#mbc_guide_targets').innerHTML = parts.targets;
+        var run = q('#mbc_guide_run'); if (run) run.innerHTML = parts.run;
+        var b = q('[data-act="guide-installer"]');
+        if (b) { if (parts.ready) b.removeAttribute('disabled'); else b.setAttribute('disabled', ''); }
+        var gm = q('#mbc_guide_gen'); if (gm) gm.innerHTML = guide.genHtml || '';
+    }
+    C.updateGuide = updateGuide;
     function refresh(which) {
         if (!which || which.dev) { var d = q('#mbc_devs'); if (d) d.innerHTML = devicesHtml(cfg); }
         if (!which || which.tag) { var t = q('#mbc_tags'); if (t) t.innerHTML = tagsHtml(cfg, tagErrors); }
@@ -412,14 +456,19 @@ function createController(root, n0) {
         if (!k || !f) return;
         var v = el.type === 'checkbox' ? !!el.checked : el.value;
         var isManual = k === 'sim' && f.indexOf('manual.') === 0;
-        if (ev.type !== 'change' && !isManual) return;      // text edits commit on change; sliders preview on input
         if (k === 'guide') {                                // bridge setup options (not part of the Modbus config)
-            if (f === 'extra') guide.extra = String(v).slice(0, 2000);
+            if (f === 'extra') {                            // applied while typing ('input'); the 'change' on blur
+                var nv = String(v).slice(0, 2000);          // then finds nothing new, so a click on Generate /
+                if (nv === guide.extra) return;             // Check / Copy that blurred the field is not lost
+                guide.extra = nv;
+            } else if (ev.type !== 'change') return;
             else if (f === 'autostart' || f === 'writes') guide[f] = !!v;
+            else return;
             guide.genHtml = '';
-            renderGuide();
+            updateGuide();
             return;
         }
+        if (ev.type !== 'change' && !isManual) return;      // text edits commit on change; sliders preview on input
         if (k === 'cfg') {
             if (f === 'base') {
                 var nb = +v === 1 ? 1 : 0;
