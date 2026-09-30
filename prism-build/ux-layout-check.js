@@ -90,6 +90,16 @@ function reportModel() {
   delete m.date;
   return JSON.stringify(m);
 }
+// First differing leaf of two report models (for the failure message).
+function reportDiff(a, b) {
+  const out = [];
+  (function walk(x, y, p) {
+    if (out.length >= 3) return;
+    if (x && y && typeof x === 'object' && typeof y === 'object') { new Set(Object.keys(x).concat(Object.keys(y))).forEach((k) => walk(x[k], y[k], p + '.' + k)); return; }
+    if (JSON.stringify(x) !== JSON.stringify(y)) out.push(p + ': ' + JSON.stringify(x) + ' vs ' + JSON.stringify(y));
+  })(JSON.parse(a), JSON.parse(b), '');
+  return out.length ? ' (' + out.join('; ').slice(0, 600) + ')' : '';
+}
 function tableState() {
   const vw = document.documentElement.clientWidth;
   return Array.from(document.querySelectorAll('#pgBody table.wts-stack')).map((t) => {
@@ -178,7 +188,9 @@ function tableState() {
           await go(p, r); await p.waitForTimeout(r === 'wts' ? 900 : 200);
           const ts = await p.evaluate(tableState); summary.checks++;
           const rep = await p.evaluate(reportModel), key = t.name + ':' + r;
-          if (reports[key] != null) { summary.checks++; if (reports[key] !== rep) fail(t.name + ' ' + r + ': report model at 375 px differs from 1280 px'); }
+          // the simulator runs live: its numbers move between the two captures, so compare its structure only
+          const live = (x) => (r === 'wts' && x != null ? x.replace(/-?\d+(\.\d+)?/g, '#') : x);
+          if (reports[key] != null) { summary.checks++; if (live(reports[key]) !== live(rep)) fail(t.name + ' ' + r + ': report model at 375 px differs from 1280 px' + reportDiff(reports[key], rep)); }
           ts.forEach((x) => { if (x.display === 'block' && !t.ios || x.rowsBlock || !x.headVisible) fail(t.name + ' 1280px ' + r + ' table changed on desktop ' + JSON.stringify(x)); });
           if (t.ios) ts.forEach((x) => { if (x.rowsBlock || !x.headVisible) fail(t.name + ' 1280px ' + r + ' rows stacked on a wide screen'); });
         }
