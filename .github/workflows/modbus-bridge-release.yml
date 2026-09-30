@@ -7,13 +7,19 @@ name: Modbus bridge release
 #
 # Cut a release (the tag must match BRIDGE_VERSION in tools/modbus-bridge/modbus-bridge.js):
 #   git tag modbus-bridge-v1.2.0 && git push origin modbus-bridge-v1.2.0
-# workflow_dispatch builds and tests only (the assets are kept as workflow artifacts).
+# workflow_dispatch builds and tests only (the assets are kept as workflow artifacts); dispatched on master
+# with publish = true it also creates the modbus-bridge-v<BRIDGE_VERSION> tag and the release.
 
 on:
   push:
     tags:
       - 'modbus-bridge-v*'
   workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish the release (tag modbus-bridge-v<BRIDGE_VERSION>; master only)'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -88,12 +94,23 @@ jobs:
 
   release:
     name: GitHub Release
-    if: startsWith(github.ref, 'refs/tags/modbus-bridge-v')
+    if: startsWith(github.ref, 'refs/tags/modbus-bridge-v') || (github.event_name == 'workflow_dispatch' && inputs.publish && github.ref == 'refs/heads/master')
     needs: [windows-exe, unix-scripts]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          path: src
+
+      - name: Release tag
+        id: tag
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = tag ]; then t="${GITHUB_REF_NAME}"; else t="modbus-bridge-v$(node -p "require('./src/tools/modbus-bridge/modbus-bridge.js').BRIDGE_VERSION")"; fi
+          echo "name=$t" >> "$GITHUB_OUTPUT"
+          echo "Release tag: $t"
+
       - uses: actions/download-artifact@v4
         with:
           path: assets
@@ -108,8 +125,9 @@ jobs:
       - name: Create / update the release (marked latest)
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
-          name: WTS Modbus Bridge ${{ github.ref_name }}
+          tag_name: ${{ steps.tag.outputs.name }}
+          target_commitish: ${{ github.sha }}
+          name: WTS Modbus Bridge ${{ steps.tag.outputs.name }}
           make_latest: 'true'
           fail_on_unmatched_files: true
           body: |
