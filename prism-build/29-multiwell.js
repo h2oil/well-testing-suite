@@ -748,7 +748,7 @@
         'border:1px solid var(--border,#30363d);border-radius:4px;font-size:12px;font-family:inherit}' +
         '.wts-mw button{padding:3px 8px;background:var(--bg4,#21262d);border:1px solid var(--border,#30363d);border-radius:4px;' +
         'color:var(--text,#e6edf3);font-size:12px;cursor:pointer;font-family:inherit;line-height:1.4}' +
-        '.wts-mw-menu{position:absolute;right:0;top:calc(100% + 4px);z-index:10040;width:min(280px,calc(100vw - 32px));box-sizing:border-box;' +
+        '.wts-mw-menu{position:fixed;left:8px;top:8px;z-index:10040;width:min(280px,calc(100vw - 32px));max-height:calc(100vh - 16px);overflow:auto;box-sizing:border-box;' +
         'background:var(--bg2,#161b22);border:1px solid var(--border,#30363d);border-radius:8px;padding:6px;display:flex;flex-direction:column;gap:4px;' +
         'box-shadow:0 8px 24px rgba(1,4,9,.5)}' +
         '.wts-mw-menu[hidden]{display:none}.wts-mw-menu button{text-align:left;width:100%}' +
@@ -756,7 +756,7 @@
         '.wts-mw-menu .wts-mw-row{display:flex;gap:4px;align-items:center;flex-wrap:wrap}.wts-mw-menu .wts-mw-row button{width:auto}' +
         '.wts-mw-menu .wts-mw-h{font-size:11px;color:var(--text3,#6e7681);padding:2px 2px 0}' +
         '.wts-mw-msg{font-size:11px;color:var(--text2,#8b949e);min-height:0}' +
-        '@media (max-width:600px){.wts-mw-menu{position:fixed;left:16px;right:16px;top:auto;width:auto}}';
+        '@media (max-width:600px){.wts-mw-menu{width:auto}}';
     function _ensureCss() {
         if (!_hasDoc || document.getElementById('wts-mw-css')) return;
         try {
@@ -785,11 +785,35 @@
         if (del) del.disabled = reg.wells.length < 2;
     }
     function _say(t) { var m = _host && _host.querySelector('[data-role="mw-msg"]'); if (m) m.textContent = String(t || ''); }
+    // Place the open menu in viewport coordinates under the switcher, clamped so it never runs
+    // off screen or under the sidebar (it used to be right-aligned to the ⋯ button, so from a
+    // header at the left edge it extended leftwards and was clipped by the page area).
+    function _placeMenu() {
+        var m = _host && _host.querySelector('#wts_well_menu');
+        if (!m || m.hasAttribute('hidden') || typeof m.getBoundingClientRect !== 'function') return;
+        var anchor = _host.querySelector('.wts-mw') || _host, r = anchor.getBoundingClientRect();
+        var vw = G.innerWidth || (document.documentElement && document.documentElement.clientWidth) || 0;
+        var vh = G.innerHeight || (document.documentElement && document.documentElement.clientHeight) || 0;
+        if (!(vw > 0) || !(vh > 0)) return;
+        var pad = vw <= 600 ? 16 : 8;
+        var w = vw <= 600 ? vw - 2 * pad : Math.min(280, vw - 32);
+        var left = Math.max(pad, Math.min(r.left, vw - w - pad));
+        var top = r.bottom + 4, room = vh - top - 8;
+        var mh = m.scrollHeight || 0;
+        if (mh && room < Math.min(mh, 240) && r.top - 12 > room) {   // not enough room below → open above
+            room = r.top - 12;
+            top = Math.max(8, r.top - 4 - Math.min(mh, room));
+        }
+        m.style.left = Math.round(left) + 'px';
+        m.style.top = Math.round(top) + 'px';
+        m.style.width = Math.round(w) + 'px';
+        m.style.maxHeight = Math.max(120, Math.round(room)) + 'px';
+    }
     function _menu(open) {
         var m = _host && _host.querySelector('#wts_well_menu'), b = _host && _host.querySelector('#wts_well_menu_btn');
         if (!m) return;
         var show = (open === undefined) ? m.hasAttribute('hidden') : !!open;
-        if (show) { m.removeAttribute('hidden'); _say(''); _paintSwitcher(); } else m.setAttribute('hidden', '');
+        if (show) { m.removeAttribute('hidden'); _say(''); _paintSwitcher(); _placeMenu(); } else m.setAttribute('hidden', '');
         if (b) b.setAttribute('aria-expanded', show ? 'true' : 'false');
     }
     function _ask(q, def) { return (typeof G.prompt === 'function') ? G.prompt(q, def == null ? '' : def) : null; }
@@ -915,6 +939,7 @@
     }
     if (typeof G.addEventListener === 'function') {
         try { G.addEventListener('pagehide', _writeResultsCache); } catch (e) {}
+        try { G.addEventListener('resize', _placeMenu); G.addEventListener('scroll', _placeMenu, true); } catch (e) {}
     }
 
     G.WTS_wells = {
