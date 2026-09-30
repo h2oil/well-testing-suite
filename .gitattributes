@@ -1,0 +1,4 @@
+# Shell scripts must stay LF on every checkout (bash fails on CRLF: "set: pipefail: invalid
+# option name"), whatever core.autocrlf says - e.g. tools/modbus-bridge/install.sh run from WSL,
+# Git Bash or copied to a Mac / Linux PC.
+*.sh text eol=lf

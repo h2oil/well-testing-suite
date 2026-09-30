@@ -416,7 +416,7 @@ function webSocketTransport(o) {
                 var bytes = d instanceof ArrayBuffer ? new Uint8Array(d) : (d && d.buffer ? new Uint8Array(d.buffer, d.byteOffset || 0, d.byteLength) : null);
                 if (bytes) T.emit('data', bytes);
             };
-            ws.onerror = function () { fail('Cannot reach the Modbus bridge at ' + (o.url || 'ws://127.0.0.1:8502') + ' — is it running?'); };
+            ws.onerror = function () { fail('Cannot reach the Modbus bridge at ' + (o.url || 'ws://127.0.0.1:8502') + ' — is it running? (Or it refused this page: "Check bridge" in the setup guide tells which.)'); };
             ws.onclose = function (ev) {
                 var was = open; open = false;
                 fail('Bridge closed the connection' + (ev && ev.reason ? ': ' + ev.reason : (ev && ev.code ? ' (' + ev.code + ')' : '')));
