@@ -94,7 +94,7 @@ function validateOrigin(o) {
 // Mirror of modbus-bridge.js DEFAULT_ORIGINS: the page origins a bridge accepts without --origin.
 function bridgeAcceptsOrigin(o) {
     o = String(o == null ? '' : o);
-    return /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i.test(o) || /^capacitor:\/\/localhost$/i.test(o);
+    return /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i.test(o) || /^https:\/\/welltest\.h2oil\.co\.uk$/i.test(o) || /^capacitor:\/\/localhost$/i.test(o);
 }
 function pageOrigin() {
     try {
@@ -329,7 +329,7 @@ function buildInstaller(os, o) {
 function autoOrigins() { var o = pageOrigin(); return /^https?:\/\//i.test(o) && validateOrigin(o) && !bridgeAcceptsOrigin(o) ? [o] : []; }
 function originNote() {
     var o = pageOrigin();
-    if (o === 'null') return 'This page is a saved copy (file://), so the browser sends "Origin: null" — which the bridge refuses by default, because any web site can send it too. Open the app from http://localhost instead (or add your own https host with --origin), or add --origin null (-Origin null on Windows) to the installer command — only on a PC that is not used for general web browsing.';
+    if (o === 'null') return 'This page is a saved copy (file://), so the browser sends "Origin: null" — which the bridge refuses by default, because any web site can send it too. Open the app from https://welltest.h2oil.co.uk or http://localhost instead, or add --origin null (-Origin null on Windows) to the installer command — only on a PC that is not used for general web browsing.';
     if (autoOrigins().length) return 'This page is served from ' + o + ', which the bridge does not accept by default: the generated installer adds it (--origin ' + o + ').';
     return '';
 }
@@ -433,7 +433,7 @@ var ALLOW_FIX = [
 function originText() { return pageOrigin(); }
 function originHint() {
     var o = originText() || '<origin>';
-    if (o === 'null') return 'This page is a saved copy (file://): browsers send "Origin: null", which the bridge refuses by default because any web site can send it. Open the app from http://localhost (or your own https host, allowed with --origin), or — only on a PC not used for general browsing — add "null" to "origins" in bridge-config.json (installer: --origin null / -Origin null) and restart the bridge.';
+    if (o === 'null') return 'This page is a saved copy (file://): browsers send "Origin: null", which the bridge refuses by default because any web site can send it. Open the app from https://welltest.h2oil.co.uk or http://localhost, or — only on a PC not used for general browsing — add "null" to "origins" in bridge-config.json (installer: --origin null / -Origin null) and restart the bridge.';
     return 'Add this page\'s origin (' + o + ') to "origins" in bridge-config.json — or run the installer again with --origin ' + o + ' (Windows: -Origin ' + o + ') — and restart the bridge.';
 }
 function failHints(u, kind) {
@@ -441,7 +441,7 @@ function failHints(u, kind) {
     if (kind === 'origin') { h.push('The bridge refused this page\'s origin (' + (o || 'unknown') + ').'); h.push(originHint()); return h; }
     if (kind === 'host') {
         h.push('The bridge answers under a host name (' + u.host + ') only for pages from an accepted web origin; this page (' + (o || 'unknown') + ') is not one, so the name is refused (protection against DNS rebinding).');
-        h.push('Put the bridge PC\'s IP address in the device bridge URL (ws://<IP>:' + u.port + ')' + (o === 'null' ? ', or open the app from http://localhost.' : '.'));
+        h.push('Put the bridge PC\'s IP address in the device bridge URL (ws://<IP>:' + u.port + ')' + (o === 'null' ? ', or open the app from https://welltest.h2oil.co.uk or http://localhost.' : '.'));
         return h;
     }
     if (kind === 'forbidden') {           // an older v1.1.0 bridge: plain 403, reason unknown
@@ -457,7 +457,7 @@ function failHints(u, kind) {
         return h;
     }
     h.push('Is the bridge running? Windows: Start menu → "WTS Modbus Bridge — status" (starts it and opens its status page; after a script install: "WTS Modbus Bridge"), or run WTS-Modbus-Bridge-Setup.exe again. macOS / Linux: run the one-line installer again, or start-bridge.sh from the install folder.');
-    if (o && !bridgeAcceptsOrigin(o)) h.push('The bridge accepts only pages from localhost, 127.0.0.1 and the iOS app by default, and a browser cannot read its refusal from every site: ' + originHint());
+    if (o && !bridgeAcceptsOrigin(o)) h.push('The bridge accepts only pages from localhost, 127.0.0.1, welltest.h2oil.co.uk and the iOS app by default, and a browser cannot read its refusal from every site: ' + originHint());
     h.push('Is the port right? The bridge URL of your devices must match the bridge (' + u.url + ').');
     h.push('A bridge older than v1.1 has no health check — download the package again and re-run the installer.');
     if (!u.loopback) h.push('The bridge is on another computer: it must listen on that PC\'s network address (listen in bridge-config.json) and the firewall must allow TCP ' + u.port + '.');
