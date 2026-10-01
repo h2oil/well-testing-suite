@@ -5,7 +5,6 @@ and live Modbus data for surface well-testing engineers. The web app is one self
 file (`well-testing-app.html`) that runs in the browser and works offline. The same file is
 packaged as a free iOS app, **H2Oil Well Testing**.
 
-- **Web app:** <https://pb-handbook.com>, or open `well-testing-app.html` from this repository
 - **iOS app:** free, with no in-app purchases, no account and no analytics (see [ios-app/README.md](ios-app/README.md))
 - **Current release:** v3.1 (2026-10-01)
 - **Contact:** software@h2oil.co.uk
@@ -346,8 +345,6 @@ which refuses `file://` pages by default):
 npx http-server -p 8080
 # then open http://localhost:8080/well-testing-app.html
 ```
-
-Or use the hosted copy at <https://pb-handbook.com>.
 
 **Offline use:** when served over http(s), a service worker (`sw.js`) caches the app, so it opens
 without a connection and offers a reload when a new version is available. A few optional features
