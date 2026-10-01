@@ -27,7 +27,7 @@
 //
 // Security defaults: listens on 127.0.0.1 only; any device IP / port is reachable unless you
 // restrict it with --allow targets (v1.2.0; before, nothing was reachable until allowed); browser origins limited to http(s)://localhost / 127.0.0.1 / [::1], the app's
-// capacitor origin and the app's web origin (pb-handbook.com) unless --origin or --any-origin
+// capacitor origin unless --origin or --any-origin
 // is given. "Origin: null" (sandboxed iframes, data: URLs, saved file:// copies) is refused
 // unless allowed explicitly with --origin null, because any web site can send it. Requests
 // without an Origin header (curl, scripts; never a browser page) are accepted. ADU ≤ 260 bytes.
@@ -55,7 +55,7 @@ const net = require('net');
 const crypto = require('crypto');
 const fs = require('fs');
 
-const BRIDGE_VERSION = '1.2.1';
+const BRIDGE_VERSION = '1.2.2';
 const BRIDGE_NAME = 'wts-modbus-bridge';
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';     // RFC 6455 §1.3
 const MAX_ADU = 260;
@@ -63,8 +63,7 @@ const READ_FCS = new Set([1, 2, 3, 4]);
 const WRITE_FCS = new Set([5, 6, 15, 16]);
 // "null" and file:// are deliberately NOT here: any web page can send "Origin: null" (a
 // sandboxed iframe or a data: URL), so a saved copy of the app needs --origin null.
-const DEFAULT_ORIGINS = [/^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i, /^https:\/\/(www\.)?pb-handbook\.com$/i,
-  /^capacitor:\/\/localhost$/i];
+const DEFAULT_ORIGINS = [/^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i, /^capacitor:\/\/localhost$/i];
 
 // ─── allow-list ──────────────────────────────────────────────────────────────
 // entry: "host:port" | "host:*" | "a.b.c.d/nn:port" (IPv4 CIDR) | "*:port" | "*:*" (any device).

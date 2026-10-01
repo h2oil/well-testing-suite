@@ -18,13 +18,13 @@ Modbus page / Mini WellOS ──ws://127.0.0.1:8502──► modbus-bridge.js �
 - **Read-only by default:** Modbus write requests (function codes 05, 06, 15, 16) are answered
   by the bridge with exception 01 (Illegal function) and never reach the device, unless you start
   it with `--allow-writes`. Writes also have to be enabled on the Modbus page and confirmed there.
-- Accepts browser connections only from `http(s)://localhost`, `http(s)://127.0.0.1`,
-  `https://pb-handbook.com` and the iOS app origin, unless you add `--origin https://your-host`
+- Accepts browser connections only from `http(s)://localhost`, `http(s)://127.0.0.1`
+  and the iOS app origin, unless you add `--origin https://your-host`
   (or `--any-origin`). Browsers allow an https page to open `ws://127.0.0.1`, so the bridge URL
   stays `ws://127.0.0.1:8502` even when the app is served over https.
 - **Saved copies of the app** (opened from a `file://` path) send `Origin: null`. The bridge
   refuses that by default, because any web site can send `null` too (from a sandboxed frame).
-  Prefer opening the app from `https://pb-handbook.com` or `http://localhost`; if you must use a
+  Prefer opening the app from `http://localhost` (or your own https host, allowed with `--origin`); if you must use a
   saved copy, allow it explicitly with `--origin null` (installer: `--origin null` / `-Origin null`,
   or `"origins": ["null"]` in `bridge-config.json`) — only on a PC that is not used for general
   web browsing.
@@ -86,7 +86,7 @@ Then press **Check bridge** on the app's Modbus Config page.
 The tag must match `BRIDGE_VERSION` in `modbus-bridge.js`:
 
 ```
-git tag modbus-bridge-v1.2.1 && git push origin modbus-bridge-v1.2.1
+git tag modbus-bridge-v1.2.2 && git push origin modbus-bridge-v1.2.2
 ```
 
 The workflow builds `WTS-Modbus-Bridge-Setup.exe` on `windows-latest` (Node 22,

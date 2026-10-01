@@ -265,7 +265,7 @@ newer. The iOS app does not need it.
 Then add a device with transport "Modbus TCP via WebSocket bridge", the device IP, port and unit
 id, and bridge URL `ws://127.0.0.1:8502`.
 
-Security defaults (bridge v1.2.1):
+Security defaults (bridge v1.2.2):
 
 - **Listens on this PC only** (`127.0.0.1`). Other machines cannot use it unless you set `--listen`.
 - **Any device IP is allowed by default.** List `--allow <ip>:<port>` targets to restrict it.
@@ -273,7 +273,7 @@ Security defaults (bridge v1.2.1):
   (`--keep-allow` keeps it).
 - **Read-only unless enabled:** write requests (function codes 05, 06, 15, 16) are refused unless the
   bridge is started with `--allow-writes`.
-- Accepts pages only from `localhost` / `127.0.0.1`, `https://pb-handbook.com` and the iOS app.
+- Accepts pages only from `localhost` / `127.0.0.1` and the iOS app (add others with `--origin`).
   Saved `file://` copies of the app (Origin `null`) are refused unless you opt in with
   `--origin null`.
 

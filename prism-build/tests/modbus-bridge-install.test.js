@@ -1016,7 +1016,7 @@ module.exports = [
         assert.ok(/^tools[\\/]/.test(m[1]) || zipped.has(m[1]), m[1] + ' is in the package');
       }
       assert.match(readme, /keeps the existing `bridge-config\.json`/); assert.match(readme, /it is added to the targets already allowed/);
-      assert.match(readme, /--origin null/); assert.ok(!/`file:\/\/`,\n  `https:\/\/pb-handbook\.com`/.test(readme), 'file:// no longer listed as accepted');
+      assert.match(readme, /--origin null/); assert.ok(!/`file:\/\/` and the iOS app origin/.test(readme), 'file:// not listed as accepted');
       assert.match(readme, /--allow 'plc-2\.local:\*'/);
     },
   },
