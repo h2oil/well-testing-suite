@@ -137,4 +137,109 @@ module.exports = [
       W.PRiSM_closeTools();
     },
   },
+  {
+    name: 'GUI sweep: presets disabled with none saved, then load/delete give feedback',
+    wp: 'WP16',
+    run(app, assert) {
+      const W = app.win;
+      app.openPRiSM(); app.seedSample();
+      W.PRiSM_state.presets = app.toWin([]);
+      app.gotoTab(4); app.flush(100);
+      assert.ok(app.el('prism_preset_load').disabled && app.el('prism_preset_del').disabled, 'Load/Delete disabled');
+      assert.ok(/No saved presets/.test(app.el('prism_preset_picker').textContent));
+      app.input('prism_preset_name', 'base');
+      app.click('prism_preset_save');
+      assert.ok(!app.el('prism_preset_load').disabled, 'enabled once a preset exists');
+      app.click('prism_preset_load');
+      assert.ok(/Pick a saved preset first/.test(app.el('prism_params_msg').textContent), 'load without a pick explains');
+      app.select('prism_preset_picker', '0');
+      app.click('prism_preset_del');
+      assert.ok(/Deleted preset/.test(app.el('prism_params_msg').textContent));
+      assert.ok(app.el('prism_preset_load').disabled, 'disabled again after the last delete');
+    },
+  },
+  {
+    name: 'GUI sweep: Set clock / Detect again feedback; model chips carry aria-pressed',
+    wp: 'WP16',
+    run(app, assert) {
+      app.openPRiSM(); app.seedSample();
+      app.gotoTab(1); app.flush(100);
+      app.input('prism_ft_clock', '');
+      app.click('prism_ft_clock_set');
+      assert.ok(/Enter the clock time/.test(app.el('prism_ft_e_msg').textContent), 'empty clock warns');
+      app.input('prism_ft_clock', '2026-09-01 06:00');
+      app.click('prism_ft_clock_set');
+      assert.ok(/Clock at t = 0 set to 2026-09-01 06:00/.test(app.el('prism_ft_e_msg').textContent), 'clock set confirmed');
+      app.input('prism_ft_clock', 'nonsense');
+      app.click('prism_ft_clock_set');
+      assert.ok(/not recognised/.test(app.el('prism_ft_e_msg').textContent));
+      app.click('prism_map_reset');
+      assert.ok(/re-detected/.test(app.el('prism_data_msg').textContent), 'Detect again reports');
+      app.gotoTab(3); app.flush(100);
+      assert.equal(app.find('#prism_model_chips [data-prism-cat="all"]').getAttribute('aria-pressed'), 'true');
+      app.click(app.find('#prism_model_chips [data-prism-cat="boundary"]'));
+      assert.equal(app.find('#prism_model_chips [data-prism-cat="all"]').getAttribute('aria-pressed'), 'false');
+      assert.equal(app.find('#prism_model_chips [data-prism-cat="boundary"]').getAttribute('aria-pressed'), 'true');
+    },
+  },
+  {
+    name: 'GUI sweep: Reset view is disabled until the plot is zoomed (main plot and model preview)',
+    wp: 'WP16',
+    run(app, assert) {
+      app.openPRiSM(); app.seedSample();
+      for (const [tab, btn, cv] of [[2, 'prism_plot_reset', 'prism_plot_canvas'], [4, 'prism_params_reset_view', 'prism_params_canvas']]) {
+        app.gotoTab(tab); app.flush(100);
+        const b = app.el(btn);
+        assert.ok(b && b.disabled, btn + ' disabled before zoom');
+        assert.ok(/Zoom or pan/.test(b.title), 'tooltip explains');
+        app.fire(cv, 'prism:plot-view-changed', app.toWin({ zoomed: true }));
+        assert.ok(!app.el(btn).disabled, btn + ' enabled after a zoom');
+        app.click(btn);
+        assert.ok(app.el(btn).disabled, btn + ' disabled again after reset');
+      }
+    },
+  },
+  {
+    name: 'Metric mode: PRiSM states that it works in field units (prism, dca and pta routes)',
+    wp: 'WP16',
+    run(app, assert) {
+      const W = app.win;
+      app.openPRiSM();
+      assert.ok(app.el('prism_units_note').hasAttribute('hidden'), 'hidden in imperial');
+      W.WTS_units.setSystem('metric');
+      app.flush(50);
+      assert.ok(!app.el('prism_units_note').hasAttribute('hidden'), 'shown after switching to Metric');
+      assert.ok(/oilfield units/.test(app.el('prism_units_note').textContent));
+      for (const r of ['dca', 'pta', 'prism']) {
+        app.hook.nav(r); app.flush(50);
+        const n = app.el('prism_units_note');
+        assert.ok(n && !n.hasAttribute('hidden'), 'note on route ' + r);
+      }
+      W.WTS_units.setSystem('imperial');
+      app.flush(50);
+      assert.ok(app.el('prism_units_note').hasAttribute('hidden'), 'hidden again in imperial');
+    },
+  },
+  {
+    name: 'ranking: double porosity at its degenerate limit (ω ≥ 0.95) yields to homogeneous with the same k and S',
+    wp: 'WP16',
+    run(app, assert) {
+      const W = app.win;
+      // Clean-data race (gas build-up k 10, S 3): double porosity leads on AIC with ω = 0.992.
+      const rows = () => app.toWin([
+        { modelKey: 'doublePorosity', aic: -900, r2: 0.999999999998, converged: true, params: { omega: 0.992, lambda: 1.7e-5, S: 3 }, phys: { k: 10.0008, S: 3.0 } },
+        { modelKey: 'infiniteFrac', aic: -842, r2: 0.999999999996, converged: true, params: {}, phys: { k: 10.1, S: -1 } },
+        { modelKey: 'homogeneous', aic: -835, r2: 0.999999999996, converged: true, params: { S: 3 }, phys: { k: 10.0008, S: 3.0 } },
+      ]);
+      const r1 = W.PRiSM_rankCandidates(rows());
+      assert.equal(r1[0].modelKey, 'homogeneous', 'simpler model leads');
+      assert.ok(r1[0].parsimony && /ω = 0.992/.test(r1[0].parsimonyNote));
+      const x = rows(); x[0].params.omega = 0.1;          // a real dual-porosity signature keeps its lead
+      assert.equal(W.PRiSM_rankCandidates(x)[0].modelKey, 'doublePorosity');
+      const y = rows(); y[2].phys.k = 13;                 // different k: not the same description
+      assert.equal(W.PRiSM_rankCandidates(y)[0].modelKey, 'doublePorosity');
+      const z = rows(); z[2].r2 = 0.99;                   // homogeneous clearly worse
+      assert.equal(W.PRiSM_rankCandidates(z)[0].modelKey, 'doublePorosity');
+    },
+  },
 ];

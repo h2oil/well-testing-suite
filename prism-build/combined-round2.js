@@ -9767,6 +9767,33 @@ function _hasUndetermined(r) {
     for (var k in id) if (Object.prototype.hasOwnProperty.call(id, k) && id[k] === false) return true;
     return false;
 }
+function _rowParams(r) {
+    var o = {}, k;
+    var src = [r && r.params, r && r.phys];
+    for (var i = 0; i < src.length; i++) {
+        if (!src[i]) continue;
+        for (k in src[i]) if (Object.prototype.hasOwnProperty.call(src[i], k) && o[k] === undefined) o[k] = src[i][k];
+    }
+    return o;
+}
+function _degenerateNest(r) {
+    var key = r && (r.modelKey || r.model);
+    var p = _rowParams(r);
+    if (key === 'doublePorosity' && _num(p.omega) && p.omega >= 0.95) {
+        return { key: 'homogeneous', note: 'double porosity has ω = ' + p.omega.toFixed(3) +
+                 ' (≥ 0.95): its derivative dip is too shallow to detect, so the homogeneous model with the same k and S is preferred' };
+    }
+    return null;
+}
+function _sameKS(a, b) {
+    var pa = (a && a.phys) || {}, pb = (b && b.phys) || {};
+    var qa = _rowParams(a), qb = _rowParams(b);
+    var ka = _num(pa.k) ? pa.k : null, kb = _num(pb.k) ? pb.k : null;
+    if (ka != null && kb != null && Math.abs(ka - kb) > 0.1 * Math.max(Math.abs(ka), Math.abs(kb))) return false;
+    var sa = _num(pa.S) ? pa.S : qa.S, sb = _num(pb.S) ? pb.S : qb.S;
+    if (_num(sa) && _num(sb) && Math.abs(sa - sb) > 0.5) return false;
+    return true;
+}
 function PRiSM_rankCandidates(rows, aicOf) {
     aicOf = aicOf || function (r) { return r.aic; };
     rows.sort(function (a, b) {
@@ -9774,6 +9801,28 @@ function PRiSM_rankCandidates(rows, aicOf) {
         if (d !== 0 && !isNaN(d)) return d;
         return (b.r2 || -Infinity) - (a.r2 || -Infinity);
     });
+    // Physical significance: a nested model whose extra behaviour sits at its
+    // degenerate limit (double porosity with ω ≥ 0.95 has a derivative dip too
+    // shallow to see) reproduces the simpler model; its AIC lead then only
+    // reflects how it absorbs small systematic misfit (clean / synthetic data).
+    // When the simpler model is in the list, converged, fits as well (R² within
+    // 1e-3) and gives the same k (±10 %) and S (±0.5), the simpler model leads.
+    if (rows.length > 1) {
+        var lead = rows[0], simple = _degenerateNest(lead);
+        if (simple) {
+            for (var s2 = 1; s2 < rows.length; s2++) {
+                var r2s = rows[s2];
+                if ((r2s.modelKey || r2s.model) !== simple.key || r2s.converged === false) continue;
+                if (!_sameKS(lead, r2s)) break;
+                if (_num(lead.r2) && _num(r2s.r2) && lead.r2 - r2s.r2 > 1e-3) break;
+                var pk = rows.splice(s2, 1)[0];
+                pk.parsimony = true;
+                pk.parsimonyNote = simple.note;
+                rows.unshift(pk);
+                return rows;
+            }
+        }
+    }
     if (rows.length > 1 && _hasUndetermined(rows[0])) {
         for (var j = 1; j < rows.length; j++) {
             if (!(aicOf(rows[j]) - aicOf(rows[0]) < 2)) break;
