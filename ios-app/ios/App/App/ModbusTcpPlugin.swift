@@ -61,8 +61,10 @@ public class ModbusTcpPlugin: CAPPlugin, CAPBridgedPlugin {
                     call.reject(err ?? "connection failed")
                 }
             }
-            conn.stateUpdateHandler = { [weak self] state in
-                guard let self = self else { return }
+            // A separately named weak capture: `self` is already held strongly by this queue block
+            // (and by `settle`), so a plain [weak self] here would be inconsistent (compiler warning).
+            conn.stateUpdateHandler = { [weak plugin = self] state in
+                guard let plugin = plugin else { return }
                 switch state {
                 case .ready:
                     settle(true, nil)
@@ -70,10 +72,10 @@ public class ModbusTcpPlugin: CAPPlugin, CAPBridgedPlugin {
                     // e.g. no route, or Local Network permission not granted
                     settle(false, "cannot reach \(host):\(portNum) — \(error.localizedDescription)")
                 case .failed(let error):
-                    if settled { self.closed(id, reason: error.localizedDescription) }
+                    if settled { plugin.closed(id, reason: error.localizedDescription) }
                     else { settle(false, error.localizedDescription) }
                 case .cancelled:
-                    if settled { self.closed(id, reason: "closed") }
+                    if settled { plugin.closed(id, reason: "closed") }
                 default:
                     break
                 }
