@@ -1092,27 +1092,35 @@ function create(flowIn, opts) {
       else A.offT = -1;
     }
   }
-  function mHi(tagTxt, what, unit) { return function (v, l) { return tagTxt + ' ' + what + ' ' + rnd(v) + unit + ' ≥ ' + rnd(l) + unit; }; }
-  function mLo(tagTxt, what, unit) { return function (v, l) { return tagTxt + ' ' + what + ' ' + rnd(v) + unit + ' ≤ ' + rnd(l) + unit; }; }
+  // Alarm / log texts: values with their unit through uq(). Imperial by default (field units); a host may pass
+  // opts.fmt(v, cat, dp) → string (or call setFormatter) so the texts follow its unit system (38 passes WTS_live.fmtU).
+  var IMPU = { pressureG: ' psig', pressure: ' psi', temperature: ' °F', tempDelta: ' °F', gasRate: ' MMSCFD', velocity: ' ft/s', percent: '%' };
+  var fmtHook = typeof opts.fmt === 'function' ? opts.fmt : null;
+  function uq(v, cat, dp) {
+    if (fmtHook && cat !== 'percent' && isNum(v)) { try { var s = fmtHook(v, cat, dp); if (typeof s === 'string' && s) return s; } catch (e) { /* fall back */ } }
+    return (dp != null && isNum(v) ? v.toFixed(dp) : rnd(v)) + (IMPU[cat] || '');
+  }
+  function mHi(tagTxt, what, cat) { return function (v, l) { return tagTxt + ' ' + what + ' ' + uq(v, cat) + ' ≥ ' + uq(l, cat); }; }
+  function mLo(tagTxt, what, cat) { return function (v, l) { return tagTxt + ' ' + what + ' ' + uq(v, cat) + ' ≤ ' + uq(l, cat); }; }
   var MSG = {
-    PSHH_SEP: mHi('PSHH-101', 'separator', ' psig'), PSH_SEP: mHi('PAH-101', 'separator pressure high', ' psig'),
-    PSL_SEP: mLo('PAL-101', 'separator pressure low', ' psig'),
-    PSV_SEP: function (v, l) { return 'PSV-101 lifting — separator ' + rnd(v) + ' psig (set ' + rnd(l) + ')'; },
-    LSHH_SEP: mHi('LSHH-102', 'separator level high-high', '%'), LSH_SEP: mHi('LAH-102', 'oil bucket level high', '%'),
-    LSLL_SEP: mLo('LALL-102', 'oil bucket level low-low', '%'),
-    GAS_BLOWBY: function (v) { return 'LCV-102 gas blow-by to surge tank ' + (isNum(v) ? v.toFixed(2) : '—') + ' MMSCFD'; },
-    ISHH_SEP: mHi('LAHH-101', 'interface level high-high', '%'),
+    PSHH_SEP: mHi('PSHH-101', 'separator', 'pressureG'), PSH_SEP: mHi('PAH-101', 'separator pressure high', 'pressureG'),
+    PSL_SEP: mLo('PAL-101', 'separator pressure low', 'pressureG'),
+    PSV_SEP: function (v, l) { return 'PSV-101 lifting — separator ' + uq(v, 'pressureG') + ' (set ' + uq(l, 'pressureG') + ')'; },
+    LSHH_SEP: mHi('LSHH-102', 'separator level high-high', 'percent'), LSH_SEP: mHi('LAH-102', 'oil bucket level high', 'percent'),
+    LSLL_SEP: mLo('LALL-102', 'oil bucket level low-low', 'percent'),
+    GAS_BLOWBY: function (v) { return 'LCV-102 gas blow-by to surge tank ' + (isNum(v) ? uq(v, 'gasRate', 2) : '—'); },
+    ISHH_SEP: mHi('LAHH-101', 'interface level high-high', 'percent'),
     CARRYOVER: function (v) { return 'V-101 water carry-over at the weir (interface ' + rnd(v) + '%)'; },
     OIL_IN_WATER: function () { return 'LCV-101 passing oil — interface lost'; },
-    PSHH_SURGE: mHi('PSHH-201', 'surge tank', ' psig'), PSH_SURGE: mHi('PAH-201', 'surge tank pressure high', ' psig'),
-    PSV_SURGE: function (v, l) { return 'PSV-201 lifting — surge tank ' + rnd(v) + ' psig (set ' + rnd(l) + ')'; },
+    PSHH_SURGE: mHi('PSHH-201', 'surge tank', 'pressureG'), PSH_SURGE: mHi('PAH-201', 'surge tank pressure high', 'pressureG'),
+    PSV_SURGE: function (v, l) { return 'PSV-201 lifting — surge tank ' + uq(v, 'pressureG') + ' (set ' + uq(l, 'pressureG') + ')'; },
     LSHH_SURGE: function (v, l) { return 'LSHH-201 surge tank ' + sideTag('surge', surgeHiK) + ' level ' + rnd(v) + '% ≥ ' + rnd(l) + '%'; },
     LSLL_SURGE: function (v, l) { return 'LSLL-201 transfer suction level ' + rnd(v) + '% ≤ ' + rnd(l) + '%'; },
     PUMP_DRYRUN: function (v, l) { return 'LCV-201 low-low trip — suction ' + dryMsg + ' level ' + rnd(v) + '% ≤ LSLL ' + rnd(l) + '% (gas blow-by protection, reset required)'; },
     PUMP_STARVED: function (v) { return 'LCV-201 suction starved — passing ' + rnd0(v) + '% of the valve flow'; },
     PUMP_FAIL: function () { return 'P-201 transfer pump failed — the gauge tank cannot be emptied'; },
     XFER_FAIL: function () { return 'LCV-201 surge transfer valve stuck closed'; },
-    XFER_LOW_DP: function (v) { return 'LCV-201 open but ΔP only ' + rnd(v) + ' psi — T-201 pressure + head too low to ' + (rGauge ? 'lift to ' + TAGS.gauge : 'reach the export line'); },
+    XFER_LOW_DP: function (v) { return 'LCV-201 open but ΔP only ' + uq(v, 'pressure') + ' — T-201 pressure + head too low to ' + (rGauge ? 'lift to ' + TAGS.gauge : 'reach the export line'); },
     SURGE_BLOCKED: function () { return rSurge ? TAGS.xvSurgeA + ' and ' + TAGS.xvSurgeB + ' closed — separator dumps blocked (no route to ' + TAGS.surge + ')'
       : TAGS.xvGaugeA + ' and ' + TAGS.xvGaugeB + ' closed — separator dumps blocked (no route to ' + TAGS.gauge + ')'; },
     PUMP_BLOCKED: function () { return 'Surge transfer blocked — ' + TAGS.xvGaugeA + ' and ' + TAGS.xvGaugeB + ' closed (LCV-201 shut)'; },
@@ -1774,7 +1782,7 @@ function create(flowIn, opts) {
       var on = s.flowing && s.vPct >= 80;
       if (on && A.active && A.sev !== sev) { clearA(A); }
       if (A.sev !== sev) { A.sev = sev; A.pub.sev = sev; alarmsDirty = true; }
-      var m = s.label + ': velocity ' + rnd(s.vel) + ' ft/s is ' + rnd0(s.vPct) + '% of limit ' + rnd0(s.ve) + ' ft/s';
+      var m = s.label + ': velocity ' + uq(s.vel, 'velocity') + ' is ' + rnd0(s.vPct) + '% of limit ' + uq(s.ve, 'velocity', 0);
       if (on && !A.active) raise(A, s.vPct, sev === 'alarm' ? 100 : 80, m);
       else if (on) { A.value = s.vPct; }
       else if (!on && A.active) clearA(A);
@@ -1783,12 +1791,12 @@ function create(flowIn, opts) {
     for (i = 0; i < hn.length; i++) {
       var nd = snap.nodes[hn[i]];
       A = aDef('HYD_' + hn[i], TAGS[hn[i]], 'hyd', hn[i], 'd');
-      if (nd.hyd && !A.active) raise(A, nd.T, nd.th, NAMES[hn[i]] + ': ' + rnd(nd.T) + ' °F below hydrate ' + rnd(nd.th) + ' °F at ' + rnd(nd.P) + ' psig');
+      if (nd.hyd && !A.active) raise(A, nd.T, nd.th, NAMES[hn[i]] + ': ' + uq(nd.T, 'temperature') + ' below hydrate ' + uq(nd.th, 'temperature') + ' at ' + uq(nd.P, 'pressureG'));
       else if (nd.hyd) { A.value = nd.T; A.limit = nd.th; }
       else if (A.active) clearA(A);
     }
     A = aDef('CHOKE_LIMIT', TAGS.choke, 'alarm', 'choke', 'd');
-    if (chk.flowLimited && !A.active) raise(A, Qg, chk.QmaxMMscfd, 'CK-101 flow-limited — bean ' + bean + '/64″ passes ' + chk.QmaxMMscfd.toFixed(2) + ' MMSCFD of ' + Qg.toFixed(2) + ' requested');
+    if (chk.flowLimited && !A.active) raise(A, Qg, chk.QmaxMMscfd, 'CK-101 flow-limited — bean ' + bean + '/64″ passes ' + uq(chk.QmaxMMscfd, 'gasRate', 2) + ' of ' + uq(Qg, 'gasRate', 2) + ' requested');
     else if (!chk.flowLimited && A.active) clearA(A);
   }
 
@@ -2154,6 +2162,8 @@ function create(flowIn, opts) {
       setOptsNow('surge', su); setOptsNow('gauge', ga);
       return true;
     }),
+    // formatter for alarm / log texts (fn(v, cat, dp) → string; null = imperial field units); new texts only
+    setFormatter: function (fn) { fmtHook = typeof fn === 'function' ? fn : null; },
     logEvent: mut(function (msg, tag) {
       msg = String(msg == null ? '' : msg); tag = tag == null ? '' : String(tag);
       logEntry('event', 'EVENT', null, tag, msg);

@@ -498,6 +498,7 @@ function addFinding(f) {
   findings.set(key, Object.assign({ count: 1, routes: [f.route], controls: f.control && f.control.label ? [f.control.label] : [], source }, f));
 }
 
+const BRIDGE_HEALTH = /127\.0\.0\.1:\d+\/health\b/;     // bridge health probe (Modbus page "Check bridge")
 // Classify raw events captured during an action into findings.
 function eventsToFindings(evs, ctx) {
   for (const e of evs) {
@@ -507,9 +508,13 @@ function eventsToFindings(evs, ctx) {
     } else if (e.type === 'console') {
       const t = e.text;
       if (/Failed to load resource: net::ERR_(FAILED|BLOCKED_BY_CLIENT|NAME_NOT_RESOLVED|INTERNET_DISCONNECTED)|googletagmanager|service worker/i.test(t)) continue;   // blocked externals (reported separately)
+      // Modbus "Check bridge" with no bridge running: the browser itself logs the refused GET /health (a page cannot
+      // silence it); the page reports "No bridge answered" — expected, not a finding
+      if (BRIDGE_HEALTH.test(t) || (e.loc && BRIDGE_HEALTH.test(e.loc.url || ''))) continue;
       addFinding(Object.assign(base, { severity: /warn/.test(e.level) ? 'warning' : 'warning', kind: 'console-' + e.level, message: t.slice(0, 400),
         stack: e.stack ? frames(e.stack) : (e.loc && e.loc.url && /well-testing-app/.test(e.loc.url) ? ['console @ ' + SRC.mapLine(e.loc.lineNumber + 1)] : []) }));
     } else if (e.type === 'reqfail') {
+      if (BRIDGE_HEALTH.test(e.url)) continue;
       addFinding(Object.assign(base, { severity: 'warning', kind: 'request-failed', message: e.url + ' — ' + e.err }));
     }
   }

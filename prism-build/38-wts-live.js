@@ -35,9 +35,9 @@ var PREFS_KEY = 'h2viz3d_prefs';
 var SPEEDS = [1, 10, 60, 600];
 var IMP = { pressureG: 'psig', pressureTank: 'psig', temperature: '°F', gasRate: 'MMSCFD', liquidRate: 'BPD',
     oilRate: 'STB/d', volume: 'bbl', oilVolume: 'STB', gasVolume: 'MMSCF', velocity: 'ft/s', length: 'ft',
-    lengthSmall: 'in', percent: '%', gor: 'scf/STB', powerLarge: 'MMBtu/hr', count: '' };
+    lengthSmall: 'in', percent: '%', gor: 'scf/STB', powerLarge: 'MMBtu/hr', count: '', pressure: 'psi', tempDelta: '°F' };
 var CAT_BASE = { pressureTank: 'pressureG', oilRate: 'liquidRate', oilVolume: 'volume' };
-var UNITLESS = { percent: 1, gor: 1, count: 1 };
+var UNITLESS = { percent: 1, count: 1 };          // gor converts (scf/STB → sm³/sm³ in Metric)
 var STATUS_MAP_LOCAL = { trip: 'alarm', alarm: 'alarm', warn: 'warn', hyd: 'hyd', info: 'evt' };
 var ST_RANK = { ok: 0, evt: 1, hyd: 2, warn: 3, alarm: 4 };
 var SEV_RANK = { info: 1, hyd: 2, warn: 3, alarm: 4, trip: 5 };
@@ -332,7 +332,7 @@ function inputsDiff(prev, next) {
     if (!prev || !next || !prev.inputs || !next.inputs) return out;
     var a = prev.inputs, b = next.inputs;
     if (+a.bean !== +b.bean) out.push(['Choke bean ' + shortNum(a.bean) + '→' + shortNum(b.bean) + '/64″', 'CK-101']);
-    if (+a.Psep !== +b.Psep) out.push(['Separator SP ' + shortNum(a.Psep) + '→' + shortNum(b.Psep) + ' psig', 'PCV-101']);
+    if (+a.Psep !== +b.Psep) { var pa = fmtParts(+a.Psep, 'pressureG'), pb = fmtParts(+b.Psep, 'pressureG'); out.push(['Separator SP ' + pa.v + '→' + pb.v + ' ' + pb.u, 'PCV-101']); }
     if (!!a.bypass !== !!b.bypass) out.push(['Heater bypass ' + (b.bypass ? 'ON' : 'OFF'), 'H-101']);
     if (+a.Qg !== +b.Qg || +a.Qo !== +b.Qo || +a.Qw !== +b.Qw) out.push(['Well rates updated', 'WH-101']);
     return out;
@@ -924,7 +924,7 @@ function createController(vizEl, mopts) {
             '<span class="wtsl-sep wtsl-hide-sm wtsl-only3d"></span>' +
             btn('viewmenu', ICON.cam + '<span class="wtsl-txt-md">View</span>' + ICON.caret, { cls: 'wtsl-hide-sm wtsl-only3d', label: 'View', title: 'Camera views (0–5)', menu: 1 }) +
             btn('colour', ICON.drop + '<span class="wtsl-txt-md">Colour</span>' + ICON.caret, { cls: 'wtsl-hide-sm wtsl-only3d', label: 'Colour', title: 'Colour overlay', menu: 1 }) +
-            btn('labels', ICON.tag + '<span class="wtsl-txt-md">Labels</span> <small>All</small>', { cls: 'wtsl-hide-sm wtsl-only3d', label: 'Labels', title: 'Labels: All / Equipment / Off (L)' }) +
+            btn('labels', ICON.tag + '<span class="wtsl-txt-md">Labels</span> <small>All</small>' + ICON.caret, { cls: 'wtsl-hide-sm wtsl-only3d', label: 'Labels', title: 'Labels: All / Equipment / Off (L cycles)', menu: 1 }) +
             btn('legend', ICON.legend + '<span class="wtsl-txt-md">Legend</span>', { cls: 'wtsl-hide-sm', label: 'Legend', title: 'Legend', pressed: false }) +
             btn('trends', ICON.trends + '<span class="wtsl-txt-md">Trends</span>', { cls: 'wtsl-hide-sm', label: 'Trends', title: 'Trends', pressed: false }) +
             btn('quality', ICON.gem + '<span class="wtsl-txt-md">Quality</span>' + ICON.caret, { cls: 'wtsl-hide-sm wtsl-only3d', label: 'Quality', title: 'Rendering quality', menu: 1 }) +
@@ -1004,7 +1004,7 @@ function createController(vizEl, mopts) {
         var ru = (st && st.rigup) || null, req = (_sim && typeof _sim.getRigup === 'function') ? _sim.getRigup() : null;
         var xp = xferOf(st), items = rigItems();
         var tr = !xp ? '—' : rigOut(st, 'surge') ? 'not in use (no surge tank)' :
-            'LCV-201 ' + xferShort(st) + (isNum(xp.dP_psi) ? ' · ΔP ' + xp.dP_psi.toFixed(1) + ' psi' : '') + ' (surge tank pressure, no pump)';
+            'LCV-201 ' + xferShort(st) + (isNum(xp.dP_psi) ? ' · ΔP ' + fmtU(xp.dP_psi, 'pressure', 1) : '') + ' (surge tank pressure, no pump)';
         var sig = (ru ? ru.sig + '|' + (ru.notes || []).join('|') : '-') + '|' + JSON.stringify(req) + '|' + tr + '|' + !!_sim;
         if (!force && c.__sig === sig) return;
         c.__sig = sig;
@@ -1198,7 +1198,8 @@ function createController(vizEl, mopts) {
     function createSim(flow) {
         var S = G.WTS_sim;
         if (!S || typeof S.create !== 'function') return;
-        _sim = S.create(flow, { mode: 'steady', seed: (Date.now() & 0x7fffffff), speed: SPEEDS.indexOf(prefs.speed) >= 0 ? prefs.speed : 10, rigup: readRig() });
+        _sim = S.create(flow, { mode: 'steady', seed: (Date.now() & 0x7fffffff), speed: SPEEDS.indexOf(prefs.speed) >= 0 ? prefs.speed : 10, rigup: readRig(),
+            fmt: function (v, cat, dp) { return fmtU(v, cat, dp); } });      // alarm / log texts in the active unit system
         _rigPending = false;
         if (prefs.ctl && typeof _sim.setControls === 'function') { try { _sim.setControls(prefs.ctl, { initial: true }); } catch (e) {} }
         _lastFlowObj = flow;
@@ -1893,7 +1894,7 @@ function createController(vizEl, mopts) {
                 ['Bean', function (s) { var c = N(s, 'choke'); return isNum(c.bean) ? c.bean + '/64″' : '—'; }, ''],
                 ['ΔP', function (s) { var c = N(s, 'choke'); return fmtU(num(c.Pin, NaN) - num(c.P, NaN), 'pressureG'); }, 'p'],
                 ['Outlet T', function (s) { return T(N(s, 'choke').T); }, 't'],
-                ['J-T ΔT', function (s) { var v = N(s, 'choke').dTjt; return isNum(v) ? (unitsSys() === 'metric' ? (v * 5 / 9).toFixed(1) + ' °C' : v.toFixed(1) + ' °F') : '—'; }, 't'],
+                ['J-T ΔT', function (s) { var v = N(s, 'choke').dTjt; return isNum(v) ? fmtU(v, 'tempDelta', 1) : '—'; }, 't'],
                 ['Capacity', function (s) { return fmtU(N(s, 'choke').QmaxMMscfd, 'gasRate'); }, '']],
                 spark: [{ keys: ['Pchoke'], label: 'Choke outlet P', cat: 'pressureG' }], widget: 'capacity', actions: 'bean' };
             case 'heater': return { rows: [
@@ -1926,8 +1927,8 @@ function createController(vizEl, mopts) {
                 ['Liquid', function (s) { var u = s && s.surge; return u ? fmtU(num(u.Vo_bbl, 0) + num(u.Vw_bbl, 0), 'volume') : '—'; }, '', function (s) { return s && s.surge && isNum(s.surge.cap_bbl) ? 'of ' + fmtU(s.surge.cap_bbl, 'volume') : null; }],
                 ['Water cut', function (s) { var u = s && s.surge; return u && isNum(u.frac) && u.frac > 0.001 ? pctStr(num(u.fracW, 0) / u.frac) : '—'; }, ''],
                 ['Transfer', function (s) { return xferTxt(s); }, '', function (s) { var p = xferOf(s); return p && isNum(p.q_bpd) && p.q_bpd > 0 ? fmtU(p.q_bpd, 'liquidRate') : null; }],
-                ['Transfer ΔP', function (s) { var p = xferOf(s); return p && isNum(p.dP_psi) ? p.dP_psi.toFixed(1) + ' psi' : '—'; }, 'p',
-                    function (s) { var p = xferOf(s); return p ? 'LCV-201 by vessel pressure (no pump)' + (isNum(p.dPdesign_psi) ? ' · design ' + p.dPdesign_psi.toFixed(1) + ' psi' : '') : null; }],
+                ['Transfer ΔP', function (s) { var p = xferOf(s); return p && isNum(p.dP_psi) ? fmtU(p.dP_psi, 'pressure', 1) : '—'; }, 'p',
+                    function (s) { var p = xferOf(s); return p ? 'LCV-201 by vessel pressure (no pump)' + (isNum(p.dPdesign_psi) ? ' · design ' + fmtU(p.dPdesign_psi, 'pressure', 1) : '') : null; }],
                 ['Time to HH', function (s) { var v = s && s.surge && s.surge.tFull_s; return isNum(v) ? fmtClockLocal(v) : '—'; }, ''],
                 ['Flash gas', function (s) { var v = s && s.surge && s.surge.flash_mscfd; return isNum(v) ? v.toFixed(1) + ' MSCFD' : '—'; }, ''],
                 ['Auto-divert', function (s) { return autoTxt(s && s.surge && s.surge.auto); }, '']],
@@ -2561,7 +2562,7 @@ function createController(vizEl, mopts) {
             ctx.font = 'bold 8px sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = '#c9d1d9';
             ctx.fillText('LCV-201', vx, by - 20);
             ctx.font = '7.5px sans-serif'; ctx.fillStyle = GREY;
-            ctx.fillText(isNum(xp.dP_psi) ? 'ΔP ' + xp.dP_psi.toFixed(1) + ' psi' : 'no pump', vx, by + 16);
+            ctx.fillText(isNum(xp.dP_psi) ? 'ΔP ' + fmtU(xp.dP_psi, 'pressure', 1) : 'no pump', vx, by + 16);
             ctx.restore();
         }
         // P-201 downstream of T-301 → export / burner
@@ -2805,6 +2806,8 @@ function createController(vizEl, mopts) {
         } else if (kind === 'view') {
             VIEWS.forEach(function (v) { it.push({ act: 'view', v: v[0], label: v[1], key: v[2] }); });
             it.push({ act: 'orbit', label: 'Auto-rotate', check: !!prefs.orbit, key: 'O' });
+        } else if (kind === 'labels') {
+            LABEL_MODES.forEach(function (o) { it.push({ act: 'labelset', v: o[0], label: o[1], check: prefs.labels === o[0] }); });
         } else if (kind === 'colour') {
             OVERLAYS.forEach(function (o) { it.push({ act: 'overlay', v: o[0], label: o[1], check: prefs.overlay === o[0] }); });
         } else if (kind === 'quality') {
@@ -2977,7 +2980,7 @@ function createController(vizEl, mopts) {
             case 'orbit': closeMenu(); toggleOrbit(); break;
             case 'colour': openMenu(el, menuItems('colour', st), 'colour'); break;
             case 'overlay': closeMenu(); prefs.overlay = v; writePrefs(prefs); if (h3) { try { h3.setOverlay(v); } catch (e) {} } E.legend.__sig = ''; break;
-            case 'labels': cycleLabels(); break;
+            case 'labels': openMenu(el, menuItems('labels', st), 'labels'); break;     // a menu like View / Colour; the L key cycles
             case 'labelset': closeMenu(); setLabels(v); break;
             case 'legend': closeMenu(); setBool('legend'); break;
             case 'trends': closeMenu(); setBool('trends'); break;
