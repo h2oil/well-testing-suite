@@ -273,8 +273,8 @@ const EDITS = [
     done: 'Max Rate at this ratio' },
   { id: 'H4d-row-jt', spec: 'H4d/H8', region: regionCalc,
     find: '<span class="rl">J-T Cooling</span><span class="rv">${fmt(7*dPchk/1000,1)} &deg;F</span>',
-    replace: '<span class="rl">J-T Cooling</span><span class="rv">${fmt(dTjt,1)} &deg;F</span>',
-    done: '${fmt(dTjt,1)} &deg;F' },
+    replace: "<span class=\"rl\">J-T Cooling</span><span class=\"rv\">${uF(dTjt,'tempDelta',1,'°F')}</span>",   // v3.1: unit system aware
+    done: "${uF(dTjt,'tempDelta',1," },
 
   // §3.1 / L2 — extend the existing publish: WTS_state.flow v1 + WTS_lastCalc.flow (additive)
   { id: 'S3.1-publish', spec: '§3.1/D14/L2', region: regionCalc,

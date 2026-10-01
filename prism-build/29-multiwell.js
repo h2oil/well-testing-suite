@@ -649,7 +649,12 @@
             parts = (typeof R.page === 'function') ? R.page() : null;
             name = (ci.well || 'well') + '-' + (parts ? parts.title : 'page');
         } else {
+            // the job report of the default template; when that template has nothing captured (it lists other
+            // calculators) fall back to every captured calculator, then to the page on screen — so "Job report"
+            // exports whenever there are results to show
             parts = (typeof R.job === 'function') ? R.job() : null;
+            if (!parts && typeof R.job === 'function') parts = R.job({ template: 'all' });
+            if (!parts && typeof R.page === 'function') parts = R.page();
             name = (ci.well || 'well') + '-report';
         }
         if (!parts || !parts.html) return null;

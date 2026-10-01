@@ -1853,6 +1853,7 @@ function exportRows(o) {
 function exportCSV(o) {
     o = o || {};
     return exportRows(o).then(function (X) {
+        if (o.skipEmpty && !X.rows.length) return { filename: null, rows: 0, empty: true };       // page export: no empty file
         var parts = [csvLine(X.head)];
         for (var i = 0; i < X.rows.length; i += 5000) {
             var chunk = '';
@@ -1883,9 +1884,11 @@ function exportXLSX(o) {
     var X;
     return exportRows(o).then(function (x) {
         X = x;
+        if (o.skipEmpty && !X.rows.length) return null;
         if (X.rows.length > 1048575) throw new Error('Too many rows for one Excel sheet (' + fmtCount(X.rows.length) + ' > 1,048,575) — narrow the range, aggregate, or export CSV.');
         return loadXLSX();
     }).then(function (XL) {
+        if (!XL) return { filename: null, rows: 0, empty: true };
         var wb = XL.utils.book_new(), sheet = X.layout === 'wide' ? 'Data' : 'Samples';
         XL.utils.book_append_sheet(wb, XL.utils.aoa_to_sheet([X.head].concat(X.rows)), sheet);
         XL.utils.book_append_sheet(wb, XL.utils.aoa_to_sheet(tagSheet(X.tags)), 'Tags');
@@ -2930,13 +2933,14 @@ function copyTable() {
 function val(sel) { var e = pageEl(sel); return e ? e.value : ''; }
 function doExport() {
     var fmt = val('[data-h="xfmt"]') || 'csv', range = val('[data-h="xrange"]'), tagsSel = val('[data-h="xtags"]'), agg = val('[data-h="xagg"]') || 'raw';
-    var o = { tags: tagsSel === 'all' ? undefined : (V.tags || []).slice(), agg: agg };
+    var o = { tags: tagsSel === 'all' ? undefined : (V.tags || []).slice(), agg: agg, skipEmpty: true };
     if (range !== 'all') { o.from = V.from; o.to = V.to; }
     if (o.tags && !o.tags.length) { setMsg('hist_io_res', false, 'No tags selected on the trend — choose “All tags” or select tags.'); return Promise.resolve(); }
     setMsg('hist_io_res', null, 'Exporting…');
     var p = fmt === 'csv' ? exportCSV(o) : fmt === 'csvwide' ? exportCSV(Object.assign(o, { layout: 'wide' })) : fmt === 'xlsx' ? exportXLSX(o)
         : exportDb({ format: fmt === 'json' ? 'json' : 'sqlite' });
     return p.then(function (r) {
+        if (r && r.empty) { setMsg('hist_io_res', false, 'No samples to export' + (range !== 'all' ? ' in the time window shown' : '') + (o.tags ? ' for the selected tags' : '') + ' — nothing was downloaded.'); return; }
         setMsg('hist_io_res', true, 'Exported ' + (r.rows !== undefined ? fmtCount(r.rows) + ' rows' : fmtBytes(r.size)) + ' to ' + r.filename + '.');
     }, function (e) { setMsg('hist_io_res', false, errMsg(e)); });
 }
