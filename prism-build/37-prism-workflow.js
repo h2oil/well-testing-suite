@@ -1646,7 +1646,9 @@
                 else rows.sort(function (a, b) { return aicOf(a) - aicOf(b); });
                 var aics = rows.map(aicOf).filter(isNum);
                 var a0 = aics.length ? Math.min.apply(null, aics) : 0;
-                if (rows.length && rows[0].parsimony) {
+                if (rows.length && rows[0].parsimony && rows[0].parsimonyNote) {
+                    res.warnings.push(modelName(rows[0].modelKey || rows[0].model) + ' chosen: ' + rows[0].parsimonyNote + '.');
+                } else if (rows.length && rows[0].parsimony) {
                     res.warnings.push(modelName(rows[0].modelKey || rows[0].model) + ' chosen: statistically equivalent to ' +
                         modelName(rows[1].modelKey || rows[1].model).toLowerCase() + ' (ΔAIC < 2) with every parameter determined by the data.');
                 }
