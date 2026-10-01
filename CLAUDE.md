@@ -382,6 +382,47 @@ If a check fails, the test prints which one. Common failures and fixes:
 
 ---
 
+## GUI sweep (pre-release, `prism-build/gui-sweep.js`)
+
+A whole-app Playwright/Chromium sweep of the **built** `well-testing-app.html`. It is a report, not a gate: it
+always exits 0 (2 only if the tool crashes), and prints `[skip]` without Playwright. Never run `playwright install`.
+The tool loads Playwright from the global npm root, and Chromium from `/opt/pw-browsers` when that exists.
+
+```bash
+node prism-build/gui-sweep.js --out <scratch>/sweep          # full: ~15-20 min, 4 workers
+node prism-build/gui-sweep.js --route prism,wts --quick      # one or more routes; `_header` / `_sidebar` = chrome
+node prism-build/gui-sweep.js --mobile                       # click sweep at 390 px + phone screenshots
+# other flags: --workers n, --budget <sec per view> (default 300), --no-stub (block CDN libs too), --verbose
+```
+
+- **Routes** come from the app itself: sidebar `.nav-btn[data-p]` ∪ host `pages` table ∪ `WTS_calcRegistry`
+  (dashboard tiles are clicked on `home`). Each route is swept in "views":
+  - PRiSM: tabs 1-7, steps 1-5 and the Tools drawer;
+  - simulator: 2D and 3D (paused), plus every toolbar menu. A separate run job plays it at ×60 for 4 s and
+    toggles each fault, ESD and Reset;
+  - header: toolbar, well menu, Quick Report templates;
+  - plus the export buttons on every page.
+- **Per view**:
+  - numeric inputs get blank / 0 / -1 / 1e12, and every `<select>` option is tried; the page text is scanned
+    for NaN / undefined / Infinity / null / [object Object];
+  - then every visible, enabled control is clicked, with destructive ones (delete/clear/reset/new) last.
+    Dialogs are auto-answered; downloads, `window.open` popups, `print()` and clipboard writes are recorded.
+- **"No visible effect"** means no change in a structural DOM/canvas snapshot. Elements that change on their own
+  are calibrated out first, and each no-effect is re-checked in a fresh context before it is reported.
+- **Extra passes**: phone layout at 390 px, Metric mode (NaN and imperial unit labels), decimal comma.
+  Layout at 1440 px and on opened menus is checked too.
+- **External requests** are intercepted. GA gets an empty stub. three.js, sql.js, SQLite WASM, html2canvas and
+  jsPDF are served from `ios-app/ios-additions/libs` unless you pass `--no-stub`. Everything else is blocked
+  and listed in the report. The File System Access pickers are disabled, so the download and
+  `<input type=file>` fallbacks run. Open is fed the project written by Save; data loaders get a sample CSV.
+- **Output** in `--out` (default `$TMPDIR/wts-gui-sweep`): `sweep-report.json`, `sweep-report.md` and
+  `shots/desktop/*.png`. Findings are deduplicated and grouped by area → route. Each carries a severity
+  (error / warning / cosmetic / info), the control label and selector, the top stack frames and a likely
+  source file. Stack lines are mapped back to `prism-build/NN-*.js` by line content; ids and route keys map
+  to the file that defines them. Never commit the reports or screenshots.
+
+---
+
 ## Common slash commands / agent dispatches
 
 - **Bug fix workflow**: identify file → edit → run the rebuild incantation above → smoke test → commit + push.
