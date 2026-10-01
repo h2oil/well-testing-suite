@@ -234,7 +234,7 @@ module.exports = [
         assert.deepStrictEqual(h.allow, ['127.0.0.1:' + R.sport]);
         assert.strictEqual(r.headers['access-control-allow-origin'], undefined, 'no CORS without an Origin');
         assert.strictEqual(r.headers['cache-control'], 'no-store');
-        for (const o of ['http://localhost:8080', 'http://127.0.0.1:8080', 'https://my.site', 'capacitor://localhost', 'http://[::1]:5173']) {
+        for (const o of ['http://localhost:8080', 'https://welltest.h2oil.co.uk', 'https://my.site', 'capacitor://localhost', 'http://[::1]:5173']) {
           r = await httpReq(P, { headers: { Origin: o } });
           assert.strictEqual(r.status, 200, o); assert.strictEqual(r.headers['access-control-allow-origin'], o); assert.match(r.headers.vary, /Origin/);
         }
@@ -269,7 +269,7 @@ module.exports = [
         assert.strictEqual(r.status, 200, 'accepted Origin + host name'); assert.strictEqual(r.headers['access-control-allow-origin'], 'http://localhost:8080');
         assert.strictEqual(JSON.parse(r.body).name, 'wts-modbus-bridge');
         assert.strictEqual(healthRefusal({}, undefined, 'bridge-pc:1'), 'host'); assert.strictEqual(healthRefusal({ origins: ['null'] }, 'null', 'bridge-pc:1'), 'host', 'null never bypasses the Host rule');
-        assert.strictEqual(healthRefusal({}, 'http://localhost:8080', 'bridge-pc:1'), null); assert.strictEqual(healthRefusal({}, 'https://my.site', '127.0.0.1:1'), 'origin', 'a web host is accepted only with --origin'); assert.strictEqual(healthRefusal({}, 'null', '127.0.0.1:1'), 'origin');
+        assert.strictEqual(healthRefusal({}, 'http://localhost:8080', 'bridge-pc:1'), null); assert.strictEqual(healthRefusal({}, 'https://welltest.h2oil.co.uk', 'bridge-pc:1'), null, 'the hosted app is accepted by default'); assert.strictEqual(healthRefusal({}, 'https://my.site', '127.0.0.1:1'), 'origin', 'a web host is accepted only with --origin'); assert.strictEqual(healthRefusal({}, 'null', '127.0.0.1:1'), 'origin');
         for (const host of ['localhost:' + P, '127.0.0.1:' + P, '[::1]:' + P, 'app.localhost:' + P]) assert.strictEqual((await httpReq(P, { headers: { Host: host } })).status, 200, host);
         assert.ok(hostHeaderOk({ listen: 'bridge-pc' }, 'BRIDGE-PC:8502') && !hostHeaderOk({}, 'bridge-pc:8502') && !hostHeaderOk({}, '[evil]:1'));
         assert.strictEqual((await httpReq(P, { method: 'POST', headers: { Origin: 'http://localhost:8080' } })).status, 405);
