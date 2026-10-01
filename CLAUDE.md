@@ -8,7 +8,7 @@
 
 ## TL;DR — What this project is
 
-- **Single-file vanilla-JS HTML web app** (`well-testing-app.html`, ~76k lines as of v1.7). Zero external runtime deps; pure `Math.*` for all engineering modules. Hosted at `https://welltest.h2oil.co.uk`; runs on `localhost:8080` via `npx http-server` for development. **Never mention another company's site or domain anywhere** (code, docs, tests, commits) — the only web address for the app is welltest.h2oil.co.uk (user instruction).
+- **Single-file vanilla-JS HTML web app** (`well-testing-app.html`, ~76k lines as of v1.7). Zero external runtime deps; pure `Math.*` for all engineering modules. Hosted at `https://welltest.h2oil.co.uk`; runs on `localhost:8080` via `npx http-server` for development. **Never mention another company's name, site or domain anywhere** (code, docs, tests, commits, placeholders/examples — use neutral examples such as 'Operator Energy Ltd', 'name@company.example') — the only web address for the app is welltest.h2oil.co.uk (user instruction).
 - **iOS Capacitor wrapper** (`ios-app/`) — wraps the same HTML for App Store distribution. iOS builds via Xcode Cloud; Capacitor 8 (SPM). The iOS app is free — no in-app purchases / subscription SDK.
 - **PRiSM module** is the flagship advanced Well Test Analysis tab, ~32k LOC of its own (pressure-transient + decline-curve workshop with 45 type-curve models, LM regression, auto-match, deconvolution, PVT, tide analysis, multi-dataset project files, etc.). Built across 21 numbered source files in `prism-build/` then concatenated and injected into `well-testing-app.html`.
 
