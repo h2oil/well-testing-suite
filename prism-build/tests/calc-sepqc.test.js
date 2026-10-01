@@ -181,14 +181,14 @@ module.exports = [
     },
   },
   {
-    name: 'SEPQC page: registry nav in Well Testing, defaults compute, rows, sample table, verdicts, typed shrinkage',
+    name: 'SEPQC page: registry nav in Metering & Chokes, defaults compute, rows, sample table, verdicts, typed shrinkage',
     wp: WP,
     run(app, assert) {
       const R = app.win.WTS_calcRegistry.sepqc;
       assert.ok(R && R.key === 'sepqc' && typeof R.render === 'function' && R.title === 'Separator Sampling & GOR QC', 'registry entry');
       const b = app.find('.nav-btn[data-p="sepqc"]');
       assert.ok(b, 'sidebar button');
-      assert.strictEqual(String(b.closest('.nav-group').querySelector('.nav-group-label').textContent).trim(), 'Well Testing');
+      assert.strictEqual(String(b.closest('.nav-group').querySelector('.nav-group-label').textContent).trim(), 'Metering & Chokes');
       open(app);
       assert.strictEqual(txt(app, 'pgTitle'), 'Separator Sampling & GOR QC');
       assert.match(txt(app, 'pgSub'), /API RP 44/);

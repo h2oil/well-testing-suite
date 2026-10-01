@@ -3404,7 +3404,7 @@ G.WTS_calcRegistry = G.WTS_calcRegistry || {};
 G.WTS_calcRegistry.wellos = {
     key: 'wellos', title: 'Mini WellOS', navTitle: 'Mini WellOS',
     sub: 'Live SCADA view of the well-test spread — form data or live Modbus tags',
-    group: 'Mini WellOS', icon: '&#9673;', badge: 'Live Data', bc: 'dc-b-blue',
+    group: 'Live Data', icon: '&#9673;', badge: 'Live Data', bc: 'dc-b-blue',
     desc: 'P&ID, 3D view, trends, alarms and logging driven by the simulator model or live Modbus data.',
     render: render
 };

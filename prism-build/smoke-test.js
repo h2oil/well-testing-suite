@@ -253,7 +253,7 @@ checks.push(['WTS_modbus idle: no station at load',  !!win.WTS_modbus && win.WTS
 // v3.0 historian (47-calc-historian.js): Mini WellOS page + record/query API, nothing opened at load
 checks.push(['window.WTS_historian API (record/query/exportDb/importFile)', !!win.WTS_historian &&
   ['record', 'query', 'listTags', 'stats', 'exportCSV', 'exportXLSX', 'exportDb', 'importFile', 'purge', 'setRetention'].every((f) => typeof win.WTS_historian[f] === 'function')]);
-checks.push(['WTS_calcRegistry.historian in "Mini WellOS"', !!(win.WTS_calcRegistry && win.WTS_calcRegistry.historian && win.WTS_calcRegistry.historian.group === 'Mini WellOS')]);
+checks.push(['WTS_calcRegistry.historian in "Live Data"', !!(win.WTS_calcRegistry && win.WTS_calcRegistry.historian && win.WTS_calcRegistry.historian.group === 'Live Data')]);
 checks.push(['historian store not opened at load', !!win.WTS_historian && win.WTS_historian.status().ready === false]);
 checks.push(['WTS_project has storage module',       !!(win.WTS_project && win.WTS_project.listModules().indexOf('storage') !== -1)]);
 (function storageRoundTrip() {

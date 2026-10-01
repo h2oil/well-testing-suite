@@ -202,14 +202,14 @@ module.exports = [
     },
   },
   {
-    name: 'GASPVT page: registry nav in Fluid & Field Calcs, defaults compute, rows, table, chart, separator card, checks',
+    name: 'GASPVT page: registry nav in Fluids & Utilities, defaults compute, rows, table, chart, separator card, checks',
     wp: WP,
     run(app, assert) {
       const R = app.win.WTS_calcRegistry.gaspvt;
       assert.ok(R && R.key === 'gaspvt' && typeof R.render === 'function' && R.title === 'Gas PVT', 'registry entry');
       const b = app.find('.nav-btn[data-p="gaspvt"]');
       assert.ok(b, 'sidebar button');
-      assert.strictEqual(String(b.closest('.nav-group').querySelector('.nav-group-label').textContent).trim(), 'Fluid & Field Calcs');
+      assert.strictEqual(String(b.closest('.nav-group').querySelector('.nav-group-label').textContent).trim(), 'Fluids & Utilities');
       open(app);
       assert.strictEqual(txt(app, 'pgTitle'), 'Gas PVT');
       assert.match(txt(app, 'pgSub'), /Hall–Yarborough/);

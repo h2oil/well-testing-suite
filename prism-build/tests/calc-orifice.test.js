@@ -223,20 +223,20 @@ module.exports = [
     },
   },
   {
-    name: 'ORF page: registry entry and sidebar button in Well Testing; defaults select 1.875" with ✓, decimal plate sizes everywhere, no mode control',
+    name: 'ORF page: registry entry and sidebar button in Metering & Chokes; defaults select 1.875" with ✓, decimal plate sizes everywhere, no mode control',
     wp: WP,
     run(app, assert) {
       const W = app.win, e = W.WTS_calcRegistry && W.WTS_calcRegistry.orifice;
       assert.ok(e, 'registry entry');
       assert.strictEqual(e.key, 'orifice');
       assert.ok(/^[a-z][a-z0-9_]{1,31}$/.test(e.key), 'key pattern');
-      assert.strictEqual(e.group, 'Well Testing');
+      assert.strictEqual(e.group, 'Metering & Chokes');
       ['title', 'sub', 'icon'].forEach((k) => assert.ok(typeof e[k] === 'string' && e[k].length > 0, k));
       assert.strictEqual(typeof e.render, 'function');
       ['renderOrificeSelect', 'calcOrificeSelect', 'WTS_orifice_compute'].forEach((f) => assert.strictEqual(typeof W[f], 'function', f));
       const b = app.find('.nav-btn[data-p="orifice"]');
       assert.ok(b, 'sidebar button');
-      assert.strictEqual(String(b.closest('.nav-group').querySelector('.nav-group-label').textContent).trim(), 'Well Testing');
+      assert.strictEqual(String(b.closest('.nav-group').querySelector('.nav-group-label').textContent).trim(), 'Metering & Chokes');
       open(app);
       assert.strictEqual(txt(app, 'pgTitle'), 'Orifice Plate Selection');
       assert.near(S(app).d, 1.875, 1e-9, 'default plate');

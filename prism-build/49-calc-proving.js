@@ -606,7 +606,7 @@
         title: TITLE,
         navTitle: 'Meter Proving & NSV',
         sub: SUB,
-        group: 'Well Testing',
+        group: 'Metering & Chokes',
         icon: '&#9878;',
         badge: 'Metering',
         bc: 'dc-b-orange',

@@ -1296,7 +1296,7 @@
 // 43-calc-flareghg.js — Flare Emissions (plug-in calculator, Round-9)
 //
 //   Route key : flareghg          (window.WTS_calcRegistry.flareghg)
-//   Page      : Flare Emissions   (sidebar group "Safety & Process")
+//   Page      : Flare Emissions   (sidebar group "Flare & Relief")
 //   Public    : window.renderFlareEmissions(body)
 //               window.calcFlareGHG()            — reads the DOM, validates, renders
 //               window.WTS_flareghg_compute(inp) — pure, field units in/out, no DOM
@@ -1698,7 +1698,7 @@
         key: 'flareghg',
         title: 'Flare Emissions',
         sub: 'Flared gas volume, heat released and CO2 / CH4 / N2O / CO2e / SO2 emissions for well test flaring, with liquid-burner CO2',
-        group: 'Safety & Process',
+        group: 'Flare & Relief',
         icon: '&#127981;',
         badge: 'Safety',
         bc: 'dc-b-orange',
@@ -2612,7 +2612,7 @@
         title: TITLE,
         navTitle: 'Orifice Plate Selection',
         sub: SUB,
-        group: 'Well Testing',
+        group: 'Metering & Chokes',
         icon: '&#9678;',
         badge: 'Metering',
         bc: 'dc-b-blue',
@@ -3198,7 +3198,7 @@
         key: 'gaspvt',
         title: TITLE,
         sub: SUB,
-        group: 'Fluid & Field Calcs',
+        group: 'Fluids & Utilities',
         icon: '&#9679;',
         badge: 'PVT',
         bc: 'dc-b-blue',
@@ -6342,7 +6342,7 @@ G.WTS_calcRegistry = G.WTS_calcRegistry || {};
 G.WTS_calcRegistry.historian = {
     key: 'historian', title: 'Historian', navTitle: 'Historian',
     sub: 'Record, trend, tabulate and export tag data — SQLite in the browser',
-    group: 'Mini WellOS', icon: '&#128200;', badge: 'WellOS', bc: 'dc-b-blue',
+    group: 'Live Data', icon: '&#128200;', badge: 'WellOS', bc: 'dc-b-blue',
     desc: 'Trends and tables of Modbus, form and simulator data with retention, CSV / Excel export and database backup / restore.',
     render: render
 };
@@ -7699,9 +7699,9 @@ G.WTS_calcRegistry.historian = {
         title: TITLE,
         navTitle: 'Choke Performance',
         sub: SUB,
-        group: 'Well Testing',
+        group: 'Metering & Chokes',
         icon: '&#9678;',
-        badge: 'Well Testing',
+        badge: 'Chokes',
         bc: 'dc-b-green',
         desc: 'Critical ratio, gas rate through a bean (Cd), Gilbert/Ros/Baxendell/Achong multiphase beans, rate vs WHP chart and bean-up planning.',
         render: function (body) { return G.renderChokePerf(body); }
@@ -7785,7 +7785,7 @@ G.WTS_calcRegistry.historian = {
 // STATE
 //   WTS_state.dispersion = {maxSO2_ppm, maxH2S_ppm, xMax_ft, hEff_ft, rise_ft,
 //                           so2Idlh_ft, h2sIdlh_ft, ts, result}
-// Registers window.WTS_calcRegistry.dispersion (group "Safety & Process").
+// Registers window.WTS_calcRegistry.dispersion (group "Flare & Relief").
 // ════════════════════════════════════════════════════════════════════
 (function () {
     'use strict';
@@ -8250,7 +8250,7 @@ G.WTS_calcRegistry.historian = {
         title: TITLE,
         navTitle: 'SO2 / H2S Dispersion',
         sub: SUB,
-        group: 'Safety & Process',
+        group: 'Flare & Relief',
         icon: '&#9729;',
         badge: 'Screening',
         bc: 'dc-b-orange',
@@ -8344,7 +8344,7 @@ G.WTS_calcRegistry.historian = {
 //   renderFlowline(body), calcFlowline(), WTS_flowlineUseHeat()
 //
 // STATE  WTS_state.flowline = {pArr, dpSep, pFlare, dpFlare, ok, ts, result}
-// Registers window.WTS_calcRegistry.flowline (group "Well Testing").
+// Registers window.WTS_calcRegistry.flowline (group "Well Test & Flowlines").
 // ════════════════════════════════════════════════════════════════════
 (function () {
     'use strict';
@@ -9076,7 +9076,7 @@ G.WTS_calcRegistry.historian = {
         title: TITLE,
         navTitle: 'Flowline Pressure Drop',
         sub: SUB,
-        group: 'Well Testing',
+        group: 'Well Test & Flowlines',
         icon: '&#8652;',
         badge: 'Multiphase',
         bc: 'dc-b-blue',
@@ -10203,7 +10203,7 @@ G.WTS_calcRegistry.historian = {
 //   renderLineHeat(body), calcLineHeat()
 //
 // STATE  WTS_state.lineheat = {ok, tIn, tArr, hydrateRisk, ts, result}
-// Registers window.WTS_calcRegistry.lineheat (group "Well Testing").
+// Registers window.WTS_calcRegistry.lineheat (group "Well Test & Flowlines").
 // ════════════════════════════════════════════════════════════════════
 (function () {
     'use strict';
@@ -10693,7 +10693,7 @@ G.WTS_calcRegistry.historian = {
         title: TITLE,
         navTitle: 'Line Heat Loss',
         sub: SUB,
-        group: 'Well Testing',
+        group: 'Well Test & Flowlines',
         icon: '&#9832;',
         badge: 'Hydrates',
         bc: 'dc-b-orange',
@@ -11323,7 +11323,7 @@ G.WTS_calcRegistry.historian = {
         title: TITLE,
         navTitle: 'Meter Proving & NSV',
         sub: SUB,
-        group: 'Well Testing',
+        group: 'Metering & Chokes',
         icon: '&#9878;',
         badge: 'Metering',
         bc: 'dc-b-orange',
@@ -11404,7 +11404,7 @@ G.WTS_calcRegistry.historian = {
 //   WTS_scale_oddoTomson(mineral, {ca, sr, ba, so4, hco3 (mol/L), ph, t °F, p psia, I}) → SI
 //
 // STATE  WTS_state.scale = {I, tds, cbPct, lsi, sdi, si:{calcite,barite,celestite,gypsum,anhydrite}, ts, result}
-// Registers window.WTS_calcRegistry.scale (group "Fluid & Field Calcs").
+// Registers window.WTS_calcRegistry.scale (group "Fluids & Utilities").
 // ════════════════════════════════════════════════════════════════════
 (function () {
     'use strict';
@@ -11743,7 +11743,7 @@ G.WTS_calcRegistry.historian = {
         key: 'scale',
         title: TITLE,
         sub: SUB,
-        group: 'Fluid & Field Calcs',
+        group: 'Fluids & Utilities',
         icon: '&#9878;',
         badge: 'Chemistry',
         bc: 'dc-b-blue',
@@ -12265,7 +12265,7 @@ G.WTS_calcRegistry.historian = {
         title: TITLE,
         navTitle: 'Sampling & GOR QC',
         sub: SUB,
-        group: 'Well Testing',
+        group: 'Metering & Chokes',
         icon: '&#9878;',
         badge: 'Sampling',
         bc: 'dc-b-blue',

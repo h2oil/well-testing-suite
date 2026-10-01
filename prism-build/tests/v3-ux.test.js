@@ -92,7 +92,7 @@ module.exports = [
       assert.strictEqual(text(app.el('dash_count')), '1 of ' + app.findAll('.dash-card').length + ' calculators');
       assert.ok(app.el('dash_quick').classList.contains('hidden'), 'favourites / recent hidden while searching');
       app.input('dash_search', 'ELECTRICAL');                   // group label, case-insensitive
-      const elec = sidebarGroups(app).find((g) => g.label === 'Electrical').ids;
+      const elec = ['gensz', 'cablesz', 'vdrop', 'elec'];      // the Electrical hub (v3.1: one entry in Fluids & Utilities)
       elec.forEach((id) => assert.ok(visibleCards(app).includes(id), 'electrical tile ' + id));
       app.input('dash_search', 'gas   pvt');                    // both words, any order / spacing
       assert.ok(visibleCards(app).includes('gaspvt'));
@@ -184,7 +184,7 @@ module.exports = [
     run(app, assert) {
       app.storage.setItem('wts_ui_favs', '["aga3"]');
       app.storage.setItem('wts_ui_recent', '["proving"]');
-      app.storage.setItem('wts_ui_nav_collapsed', '["electrical"]');
+      app.storage.setItem('wts_ui_nav_open', 'fluids & utilities');
       app.hook.nav('aga3');
       const P = app.win.WTS_project;
       const pl = json(P._buildPayload());
@@ -193,42 +193,46 @@ module.exports = [
       assert.ok(!keys.some((k) => /^wts_ui_/.test(k)), 'no wts_ui_* key in the file: ' + keys.join(','));
       P['new']();
       assert.strictEqual(app.storage.getItem('wts_ui_favs'), '["aga3"]', 'New keeps favourites');
-      assert.strictEqual(app.storage.getItem('wts_ui_nav_collapsed'), '["electrical"]');
+      assert.strictEqual(app.storage.getItem('wts_ui_nav_open'), 'metering & chokes', 'open sidebar group kept (aga3 revealed its group)');
     },
   },
 
   // ── Sidebar ─────────────────────────────────────────────────────────────
   {
-    name: 'UX sidebar groups collapse (click / Enter / Space), persist in wts_ui_nav_collapsed and restore after a reload',
+    name: 'UX sidebar groups toggle (click / Enter / Space) as an accordion, persist in wts_ui_nav_open and restore after a reload',
     wp: WP,
     run(app, assert) {
+      // v3.1: one group open at a time (details in sidebar-nav.test.js); the open group is a device preference
       const grp = (a, label) => sidebarGroups(a).find((g) => g.label === label).el;
-      const elec = grp(app, 'Electrical'), lab = elec.querySelector('.nav-group-label');
+      const fu = grp(app, 'Fluids & Utilities'), lab = fu.querySelector('.nav-group-label');
       assert.strictEqual(lab.getAttribute('role'), 'button');
       assert.strictEqual(lab.getAttribute('tabindex'), '0');
-      assert.strictEqual(lab.getAttribute('aria-expanded'), 'true');
+      assert.strictEqual(lab.getAttribute('aria-expanded'), 'false', 'closed until opened');
       app.click(lab);
-      assert.ok(elec.classList.contains('collapsed'));
-      assert.strictEqual(lab.getAttribute('aria-expanded'), 'false');
-      assert.deepStrictEqual(JSON.parse(app.storage.getItem('wts_ui_nav_collapsed')), ['electrical']);
+      assert.ok(!fu.classList.contains('collapsed'));
+      assert.strictEqual(lab.getAttribute('aria-expanded'), 'true');
+      assert.strictEqual(app.storage.getItem('wts_ui_nav_open'), 'fluids & utilities');
       app.key(lab, 'Enter');
-      assert.ok(!elec.classList.contains('collapsed'), 'Enter expands');
+      assert.ok(fu.classList.contains('collapsed'), 'Enter closes');
       app.key(lab, ' ');
-      assert.ok(elec.classList.contains('collapsed'), 'Space collapses');
-      // a group created by the plug-in registry is collapsible too
-      const wt = grp(app, 'Well Testing');
-      app.click(wt.querySelector('.nav-group-label'));
-      assert.deepStrictEqual(JSON.parse(app.storage.getItem('wts_ui_nav_collapsed')).sort(), ['electrical', 'well testing']);
-      // the active page stays reachable: its button keeps .active inside the collapsed group
+      assert.ok(!fu.classList.contains('collapsed'), 'Space opens');
+      // a group filled by the plug-in registry toggles too, and closes the other one
+      const mc = grp(app, 'Metering & Chokes');
+      app.click(mc.querySelector('.nav-group-label'));
+      assert.ok(!mc.classList.contains('collapsed') && fu.classList.contains('collapsed'));
+      // the active page stays reachable: its button keeps .active inside a closed group
       app.hook.nav('proving');
-      assert.ok(wt.querySelector('.nav-btn[data-p="proving"]').classList.contains('active'));
+      app.click(mc.querySelector('.nav-group-label'));
+      assert.ok(mc.classList.contains('collapsed'));
+      assert.ok(mc.querySelector('.nav-btn[data-p="proving"]').classList.contains('active'));
       assert.ok(/\.nav-group\.collapsed \.nav-btn:not\(\.active\)\s*\{\s*display:\s*none/.test(app.html), 'CSS hides only the inactive buttons');
+      app.click(fu.querySelector('.nav-group-label'));
       const app2 = app.reload();
       try {
-        assert.ok(grp(app2, 'Electrical').classList.contains('collapsed'), 'restored after reload');
-        assert.ok(grp(app2, 'Well Testing').classList.contains('collapsed'));
-        assert.ok(!grp(app2, 'Separation & Vessels').classList.contains('collapsed'));
-        assert.strictEqual(grp(app2, 'Electrical').querySelector('.nav-group-label').getAttribute('aria-expanded'), 'false');
+        assert.ok(!grp(app2, 'Fluids & Utilities').classList.contains('collapsed'), 'restored after reload');
+        assert.ok(grp(app2, 'Metering & Chokes').classList.contains('collapsed'));
+        assert.ok(grp(app2, 'Overview').classList.contains('collapsed'));
+        assert.strictEqual(grp(app2, 'Overview').querySelector('.nav-group-label').getAttribute('aria-expanded'), 'false');
       } finally { app2.dispose(); }
     },
   },
@@ -237,7 +241,7 @@ module.exports = [
     wp: WP,
     run(app, assert) {
       const vis = () => app.findAll('#sidebar .nav-btn[data-p]:not(.sb-hide)').map((b) => b.getAttribute('data-p'));
-      app.click(sidebarGroups(app).find((g) => g.label === 'Well Testing').el.querySelector('.nav-group-label'));  // collapse
+      app.click(sidebarGroups(app).find((g) => g.label === 'Overview').el.querySelector('.nav-group-label'));  // close the open group
       app.input('sb_search', 'choke');
       const exp = app.findAll('#sidebar .nav-btn[data-p]').filter((b) => /choke/i.test(b.textContent)).map((b) => b.getAttribute('data-p'));
       exp.forEach((k) => assert.ok(vis().includes(k), 'match ' + k));
@@ -252,7 +256,7 @@ module.exports = [
       app.input('sb_search', 'beggs');
       assert.ok(vis().includes('flowline'), 'found by its subtitle');
       app.input('sb_search', 'electrical');
-      assert.deepStrictEqual(vis().sort(), sidebarGroups(app).find((g) => g.label === 'Electrical').ids.slice().sort(), 'group label matches its buttons');
+      assert.deepStrictEqual(vis().sort(), ['cablesz', 'elec', 'gensz', 'vdrop'], 'hub title (Electrical) matches its calculators');
       app.input('sb_search', 'qqzzxx');
       assert.deepStrictEqual(vis(), []);
       assert.ok(!app.el('sb_empty').classList.contains('hidden'), 'no-match message');

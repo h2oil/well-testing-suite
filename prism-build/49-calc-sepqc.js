@@ -498,7 +498,7 @@
         title: TITLE,
         navTitle: 'Sampling & GOR QC',
         sub: SUB,
-        group: 'Well Testing',
+        group: 'Metering & Chokes',
         icon: '&#9878;',
         badge: 'Sampling',
         bc: 'dc-b-blue',

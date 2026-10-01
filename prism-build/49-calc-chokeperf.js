@@ -572,9 +572,9 @@
         title: TITLE,
         navTitle: 'Choke Performance',
         sub: SUB,
-        group: 'Well Testing',
+        group: 'Metering & Chokes',
         icon: '&#9678;',
-        badge: 'Well Testing',
+        badge: 'Chokes',
         bc: 'dc-b-green',
         desc: 'Critical ratio, gas rate through a bean (Cd), Gilbert/Ros/Baxendell/Achong multiphase beans, rate vs WHP chart and bean-up planning.',
         render: function (body) { return G.renderChokePerf(body); }

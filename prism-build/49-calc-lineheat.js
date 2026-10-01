@@ -50,7 +50,7 @@
 //   renderLineHeat(body), calcLineHeat()
 //
 // STATE  WTS_state.lineheat = {ok, tIn, tArr, hydrateRisk, ts, result}
-// Registers window.WTS_calcRegistry.lineheat (group "Well Testing").
+// Registers window.WTS_calcRegistry.lineheat (group "Well Test & Flowlines").
 // ════════════════════════════════════════════════════════════════════
 (function () {
     'use strict';
@@ -540,7 +540,7 @@
         title: TITLE,
         navTitle: 'Line Heat Loss',
         sub: SUB,
-        group: 'Well Testing',
+        group: 'Well Test & Flowlines',
         icon: '&#9832;',
         badge: 'Hydrates',
         bc: 'dc-b-orange',
