@@ -198,7 +198,15 @@
             '</tbody></table></div>';
     }
     function _den(v) { return _u(v, 'densityLiquid', 2, 'ppg', 3); }
-    function _ppg3(v) { return _fx(v, 2) + ' ppg · SG ' + _fx(v / WATER_PPG, 3) + ' · ' + _fmt(v * 119.826, 0) + ' kg/m³'; }
+    // v3.1: Metric mode leads with kg/m³ (ppg follows), like the rest of the page.
+    function _ppg3(v) {
+        return _metric() ? _fmt(v * 119.826, 0) + ' kg/m³ · SG ' + _fx(v / WATER_PPG, 3) + ' · ' + _fx(v, 2) + ' ppg'
+                         : _fx(v, 2) + ' ppg · SG ' + _fx(v / WATER_PPG, 3) + ' · ' + _fmt(v * 119.826, 0) + ' kg/m³';
+    }
+    function _perSack(v, imp, f, met, dImp, dMet) {   // per-sack quantity: metric first in Metric mode
+        return _metric() ? _fx(v * f, dMet) + ' ' + met + ' (' + _fx(v, dImp) + ' ' + imp + ')' : _fx(v, dImp) + ' ' + imp + ' (' + _fx(v * f, dMet) + ' ' + met + ')';
+    }
+    function _ppgText(t) { return _metric() ? String(t).replace(/(\d+(?:\.\d+)?) ppg/g, function (m, x) { return _fmt(parseFloat(x) * 119.826, 0) + ' kg/m³'; }) : t; }
     var V = function (v) { return _u(v, 'volume', 1, 'bbl', 2); };
     var MSG = {
         od: function () { return 'Casing OD must be above 0 and no more than ' + _u(30, 'lengthSmall', 0, 'in') + '.'; },
@@ -231,9 +239,9 @@
         else v += _ok('Water-to-cement ratio ' + _fx(r.wcr, 2) + ' is in the normal neat-slurry range.');
         res.innerHTML =
             '<div class="rbox"><div class="rbox-title">Slurry Design</div>' +
-            _row('Water requirement', _fx(r.waterGalSk, 2) + ' gal/sack (' + _fx(r.waterGalSk * 3.78541, 1) + ' L/sack)') +
+            _row('Water requirement', _perSack(r.waterGalSk, 'gal/sack', 3.78541, 'L/sack', 2, 1)) +
             _row('Water-to-cement ratio', _fx(r.wcr * 100, 1) + ' % by mass') +
-            _row('Slurry yield', _fx(r.yieldFt3, 3) + ' ft³/sack (' + _fx(r.yieldFt3 * 28.3168, 1) + ' L/sack)') +
+            _row('Slurry yield', _perSack(r.yieldFt3, 'ft³/sack', 28.3168, 'L/sack', 3, 1)) +
             v + '</div>' +
             '<div class="rbox"><div class="rbox-title">Slurry Volume &amp; Sacks</div>' +
             _tbl(['Section', 'Length', 'Capacity', 'Volume'], [
@@ -241,7 +249,7 @@
                 ['Open-hole excess', '', '', V(r.excessBbl)],
                 ['Shoe track', '', _u(r.pipeCap, 'capacity', 5, 'bbl/ft', 5), V(r.trackBbl)]
             ]) +
-            _row('Total slurry', V(r.slurryBbl) + ' (' + _fmt(r.slurryFt3, 0) + ' ft³)') +
+            _row('Total slurry', V(r.slurryBbl) + (_metric() ? '' : ' (' + _fmt(r.slurryFt3, 0) + ' ft³)')) +
             _row('Cement', _fmt(r.sacksRounded, 0) + ' sacks') +
             _row('Mix water', V(r.mixWaterBbl)) +
             _row('Displacement to the float collar', V(r.dispBbl)) +
@@ -268,7 +276,7 @@
                 _row('Brine A for target', V(r.target.va) + ' (' + _fx(r.target.fa * 100, 1) + ' %)') +
                 _row('Brine B for target', V(r.target.vb));
         }
-        var v = r.cautions.map(function (c) { return c.lvl === 'bad' ? _bad(c.t) : _warn(c.t); }).join('');
+        var v = r.cautions.map(function (c) { return c.lvl === 'bad' ? _bad(_ppgText(c.t)) : _warn(_ppgText(c.t)); }).join('');
         if (!r.cautions.length) v = _ok('No crystallisation or compatibility flags for this pair.');
         h += v + _note('Densities at surface temperature (about 70 °F). Volumes are taken as additive; real blends can shrink by up to about 1 %. ' +
             'Brine density falls as temperature rises. The crystallisation temperature (TCT) rises steeply near the maximum density ' +

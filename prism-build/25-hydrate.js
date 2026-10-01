@@ -406,7 +406,7 @@
             +   '<div class="card-title" style="font-size:12px;letter-spacing:.05em;text-transform:uppercase">'
             +     seg.label
             +   '</div>'
-            +   '<div class="fg" style="grid-template-columns:1fr 1fr;gap:6px">'
+            +   '<div class="fg hy-seg-fg" style="grid-template-columns:repeat(2,minmax(0,1fr));gap:6px">'
             +     '<div class="fg-item"><label>Upstream P (psig)</label>'
             +       '<input type="number" id="hy_up_P_'  + idx + '" value="' + seg.P_up + '"></div>'
             +     '<div class="fg-item"><label>Upstream T (&deg;F)</label>'
@@ -463,7 +463,7 @@
 
         // auto-fit: 4 columns on desktop, 1 column at 375 px (fixed repeat(4)
         // squeezed each segment card to ~78 px on phones).
-        var segGrid = '<div class="cols-4" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));gap:10px">';
+        var segGrid = '<style>.hy-seg-fg .fg-item{min-width:0}.hy-seg-fg .fg-item input{min-width:0;width:100%;box-sizing:border-box}</style><div class="cols-4" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));gap:10px">';
         for (var i = 0; i < DEFAULT_NODES.length; i++) {
             segGrid += _segCardHTML(DEFAULT_NODES[i], i);
         }
@@ -705,12 +705,12 @@
                     + '</tr>';
             }
             var tableHTML = ''
-                + '<table class="dtable" style="font-size:11px">'
+                + '<div style="overflow-x:auto;max-width:100%"><table class="dtable" style="font-size:11px">'
                 +   '<tr><th>Segment</th><th>T<sub>hyd</sub> (' + _tl() + ')</th><th>T<sub>op</sub> (' + _tl() + ')</th>'
                 +       '<th>&Delta;T req (' + _tl() + ')</th><th>wt% needed</th>'
                 +       '<th>Recommended (cc/min)</th><th>Currently set (cc/min)</th><th>Risk</th></tr>'
                 +   rows
-                + '</table>'
+                + '</table></div>'
                 + '<div style="margin-top:10px;padding:8px;border-radius:6px;background:rgba(56,139,253,0.08);font-size:12px">'
                 +   '<b>Total currently set:</b> ' + _fmt(totalCcMin, 1) + ' cc/min '
                 +   '(' + INHIB[inhibKey].label + ', incl. ' + _fmt((INHIB[inhibKey].vapAllow - 1) * 100, 0) + '% vapour-phase allowance)'

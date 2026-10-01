@@ -631,7 +631,7 @@
             h += '<div class="rbox"><div class="rbox-title">Inlet Conditions and Fluid Properties</div>' +
                 _row('Producing GOR', _u(pr.gor, 'gor', 0, 'SCF/STB', 1)) +
                 _row('Solution GOR at inlet, Standing', _u(pr.rs, 'gor', 0, 'SCF/STB', 1)) +
-                _row('Oil FVF, Standing', _fmt(pr.bo, 4) + ' rb/STB') +
+                _row('Oil FVF, Standing', _fmt(pr.bo, 4) + (_metric() ? ' m³/Sm³ (rb/STB)' : ' rb/STB'))   /* v3.1: same number in both systems */ +
                 _row('Gas Z-factor, DAK', _fmt(pr.z, 4)) +
                 _row('Liquid density, in situ', dens(pr.rhoL)) +
                 _row('Gas density, in situ', dens(pr.rhoG)) +
