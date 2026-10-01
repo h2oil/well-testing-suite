@@ -138,7 +138,8 @@
     var T_STD_R = 519.67; // 60 °F in °R — standard temperature of the scf
 
     // ───────────────────────────────────────────────────────────────
-    // Preset locations (typical CATS workbook values)
+    // Preset locations (section volumes from the typical CATS workbook; Hi-Pilot at
+    // 90 % of MAWP — at least 10 % below it — and the RV at MAWP, ASME VIII-1 UG-134)
     //
     // Each preset only OVERRIDES defaults; user can edit any field
     // afterward in the UI.
@@ -148,48 +149,48 @@
             label: 'Choke US (between SSV and choke)',
             volume_ft3: 0.23,
             temp_F: 23,
-            hp_psig: 130,
-            rd_psig: 135,
+            hp_psig: 112,
+            rd_psig: 125,
             mawp_psig: 125
         },
         choke_ds: {
             label: 'Choke DS (between choke and heater)',
             volume_ft3: 0.23,
             temp_F: 23,
-            hp_psig: 130,
-            rd_psig: 135,
+            hp_psig: 112,
+            rd_psig: 125,
             mawp_psig: 125
         },
         heater_tubes: {
             label: 'Heater Tube Bundle',
             volume_ft3: 9.63,
             temp_F: 23,
-            hp_psig: 130,
-            rd_psig: 135,
+            hp_psig: 112,
+            rd_psig: 125,
             mawp_psig: 125
         },
         heater_shell: {
             label: 'Direct Steam Heater Shell',
             volume_ft3: 292,
             temp_F: 23,
-            hp_psig: 130,
-            rd_psig: 135,
+            hp_psig: 112,
+            rd_psig: 125,
             mawp_psig: 125
         },
         separator_inlet: {
             label: 'Separator Inlet (gas-phase volume)',
             volume_ft3: 77,
             temp_F: 100,
-            hp_psig: 1440,
-            rd_psig: 1485,
+            hp_psig: 1296,
+            rd_psig: 1440,
             mawp_psig: 1440
         },
         custom: {
             label: 'Custom...',
             volume_ft3: 100,
             temp_F: 60,
-            hp_psig: 130,
-            rd_psig: 135,
+            hp_psig: 112,
+            rd_psig: 125,
             mawp_psig: 125
         }
     };
@@ -338,9 +339,16 @@
                 + '). ASME VIII-1 UG-134 allows this only for a supplemental device of a multiple-device installation '
                 + '(up to 105 % of MAWP); a single relief device must be set at or below MAWP.');
         }
-        if (_isNum(HP) && _isNum(MAWP) && HP > MAWP) {
-            result.notes.push('Caution — Hi-Pilot setting is ABOVE MAWP. Lower the Hi-Pilot '
-                + 'or re-rate the section.');
+        // Hi-Pilot practice: set at least 10 % below MAWP (≤ 90 % of MAWP), so the pilot
+        // shuts the well in well before the relief device is challenged.
+        result.hiPilotMax_psig = (_isNum(MAWP) && MAWP > 0) ? 0.9 * MAWP : null;
+        if (_isNum(HP) && _isNum(MAWP) && MAWP > 0 && HP > MAWP) {
+            result.notes.push('Caution — Hi-Pilot setting is ABOVE MAWP. Set the Hi-Pilot at least 10 % below MAWP (≤ '
+                + _u(0.9 * MAWP, 'pressureG', 0, 'psig') + ') or re-rate the section.');
+        } else if (_isNum(HP) && _isNum(MAWP) && MAWP > 0 && HP > 0.9 * MAWP + 0.5) {
+            result.notes.push('Caution — Hi-Pilot (' + _u(HP, 'pressureG', 0, 'psig') + ') is less than 10 % below MAWP ('
+                + _u(MAWP, 'pressureG', 0, 'psig') + '). Set it at or below 90 % of MAWP (≤ '
+                + _u(0.9 * MAWP, 'pressureG', 0, 'psig') + ').');
         }
         if (Math.abs(RD - HP) < 5) {
             result.notes.push('Hi-Pilot is within ' + _u(5, 'pressure', 0, 'psi') + ' of the RV setting; small instrument '
@@ -565,7 +573,7 @@
           + '          </div>'
           + '          <div class="fg-item">'
           + '            <label>Hi-Pilot Setting (psig)</label>'
-          + '            <input type="number" id="wts_esdhi_hp" value="'
+          + '            <input type="number" id="wts_esdhi_hp" title="Set at least 10 % below MAWP (≤ 90 % of MAWP)" value="'
           +              defaultPreset.hp_psig + '" step="1" min="0">'
           + '          </div>'
           + '          <div class="fg-item">'
