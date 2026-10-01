@@ -1,7 +1,7 @@
 {
   "name": "h2oil-well-testing-ios",
   "license": "UNLICENSED",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "description": "H2Oil Well Testing Suite — native iOS wrapper (Capacitor 8)",
   "private": true,
   "scripts": {

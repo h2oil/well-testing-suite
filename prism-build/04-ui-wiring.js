@@ -1371,6 +1371,30 @@ function _drawCanvasMessage(canvas, msg, color) {
 }
 
 var _resetViewOnce = false;
+// "Reset view" buttons: enabled only while the plot is zoomed or panned
+// (C6 'prism:plot-view-changed' {zoomed} bubbles from the canvas; a view kept
+// across a redraw shows as canvas._prismAxes.userView).
+var RESET_VIEW_IDLE = 'Zoom or pan the plot first (mouse wheel, drag or pinch); this then restores the full range';
+function _syncResetView(btnId, canvasId, zoomed) {
+    var b = _el(btnId);
+    if (!b) return;
+    if (zoomed == null) {
+        var c = _el(canvasId), ax = c && c._prismAxes;
+        zoomed = !!(ax && ax.userView);
+    }
+    b.disabled = !zoomed;
+    b.title = zoomed ? 'Restore the full axis range' : RESET_VIEW_IDLE;
+}
+function _wireResetView(btnId, canvasId) {
+    var c = _el(canvasId);
+    _syncResetView(btnId, canvasId);
+    if (!c || c.__prismResetViewWired || typeof c.addEventListener !== 'function') return;
+    c.__prismResetViewWired = true;
+    c.addEventListener('prism:plot-view-changed', function (ev) {
+        var d = ev && ev.detail;
+        _syncResetView(btnId, canvasId, !!(d && d.zoomed));
+    });
+}
 function _resetCanvasView(c) {
     if (!c) return;
     try { delete c._prismAxes; } catch (e) { c._prismAxes = null; }
@@ -1733,7 +1757,7 @@ function PRiSM_renderPlotsTab(hostEl, ropts) {
             '<button type="button" class="btn btn-secondary prism-btn-sm" id="prism_plot_autoL">Auto L</button>' +
             '<label class="prism-field"><input type="checkbox" id="prism_plot_overlay"' + (st.showOverlay !== false ? ' checked' : '') + '><span>Model overlay</span></label>' +
             '<button type="button" class="btn btn-secondary prism-btn-sm" id="prism_plot_autofit">Auto-align overlay</button>' +
-            '<button type="button" class="btn btn-secondary prism-btn-sm" id="prism_plot_reset" title="Refit the axes to the data">Reset view</button>' +
+            '<button type="button" class="btn btn-secondary prism-btn-sm" id="prism_plot_reset" disabled title="' + RESET_VIEW_IDLE + '">Reset view</button>' +
           '</div>' +
           _canvasHTML('prism_plot_canvas', _plotH('main')) +
           '<div id="prism_plot_msg" class="prism-msg"></div>' +
@@ -1812,8 +1836,10 @@ function PRiSM_renderPlotsTab(hostEl, ropts) {
         _resetCanvasView(_el('prism_plot_canvas'));
         _resetViewOnce = true;
         _redraw();
+        _syncResetView('prism_plot_reset', 'prism_plot_canvas', false);
     };
     _redraw();
+    _wireResetView('prism_plot_reset', 'prism_plot_canvas');
 }
 
 
@@ -1935,10 +1961,10 @@ function PRiSM_renderModelTab(hostEl, ropts) {
     var ds = G.PRiSM_dataset;
     var modeNote = mode === 'decline' ? 'Decline mode shows rate models only.' : mode === 'transient' ? 'Pressure-transient mode shows pressure models.' : 'Combined mode shows every model.';
 
-    var chips = '<button type="button" class="prism-chip' + (_libState.cat === 'all' ? ' is-on' : '') + '" data-prism-cat="all">All <span class="prism-num">' + shown.length + '</span></button>' +
+    var chips = '<button type="button" class="prism-chip' + (_libState.cat === 'all' ? ' is-on' : '') + '" aria-pressed="' + (_libState.cat === 'all') + '" data-prism-cat="all">All <span class="prism-num">' + shown.length + '</span></button>' +
         cats.map(function (c) {
             var n = shown.filter(function (m) { return m.category === c; }).length;
-            return '<button type="button" class="prism-chip' + (_libState.cat === c ? ' is-on' : '') + '" data-prism-cat="' + _esc(c) + '">' + _esc(_catTitle(c)) + ' <span class="prism-num">' + n + '</span></button>';
+            return '<button type="button" class="prism-chip' + (_libState.cat === c ? ' is-on' : '') + '" aria-pressed="' + (_libState.cat === c) + '" data-prism-cat="' + _esc(c) + '">' + _esc(_catTitle(c)) + ' <span class="prism-num">' + n + '</span></button>';
         }).join('');
 
     var sections = cats.map(function (c) {
@@ -2019,7 +2045,7 @@ function PRiSM_renderModelTab(hostEl, ropts) {
     _forEach(host.querySelectorAll('.prism-chip[data-prism-cat]'), function (chip) {
         chip.onclick = function () {
             _libState.cat = chip.getAttribute('data-prism-cat') || 'all';
-            _forEach(host.querySelectorAll('.prism-chip[data-prism-cat]'), function (c) { c.classList.toggle('is-on', c === chip); });
+            _forEach(host.querySelectorAll('.prism-chip[data-prism-cat]'), function (c) { c.classList.toggle('is-on', c === chip); c.setAttribute('aria-pressed', c === chip ? 'true' : 'false'); });
             _applyLibFilter(host);
         };
     });
@@ -2114,7 +2140,9 @@ function PRiSM_renderParamsTab(hostEl, ropts) {
     }
     var units = _unitsMode();
     var rows = _paramRows(units);
-    var presetOpts = '<option value="">Saved presets…</option>' + (st.presets || []).map(function (p, i) {
+    var hasPresets = !!(st.presets && st.presets.length);
+    var noPre = hasPresets ? '' : ' disabled title="No saved presets yet: name the current parameters and press Save preset"';
+    var presetOpts = '<option value="">' + (hasPresets ? 'Saved presets…' : 'No saved presets') + '</option>' + (st.presets || []).map(function (p, i) {
         return '<option value="' + i + '">' + _esc((p.name || 'preset') + ' (' + PRiSM_modelDisplayName(p.model) + ')') + '</option>';
     }).join('');
     var unitNote = units.mode === 'physical' ? '<span class="prism-badge prism-badge--ok">physical units</span> Values use the well inputs from the Data step.'
@@ -2136,15 +2164,15 @@ function PRiSM_renderParamsTab(hostEl, ropts) {
             '<button type="button" class="btn btn-secondary prism-btn-sm" id="prism_params_reset">Reset to defaults</button>' +
             '<input type="text" id="prism_preset_name" placeholder="Preset name" style="width:140px;">' +
             '<button type="button" class="btn btn-secondary prism-btn-sm" id="prism_preset_save">Save preset</button>' +
-            '<select id="prism_preset_picker">' + presetOpts + '</select>' +
-            '<button type="button" class="btn btn-secondary prism-btn-sm" id="prism_preset_load">Load</button>' +
-            '<button type="button" class="btn btn-secondary prism-btn-sm" id="prism_preset_del">Delete</button>' +
+            '<select id="prism_preset_picker" aria-label="Saved presets"' + noPre + '>' + presetOpts + '</select>' +
+            '<button type="button" class="btn btn-secondary prism-btn-sm" id="prism_preset_load"' + noPre + '>Load</button>' +
+            '<button type="button" class="btn btn-secondary prism-btn-sm" id="prism_preset_del"' + noPre + '>Delete</button>' +
           '</div>' +
           '<div id="prism_params_msg" class="prism-msg"></div>' +
         '</div>' +
         '<div class="card prism-w7">' +
           '<div class="card-title" style="display:flex;align-items:center;justify-content:space-between;gap:8px;"><span>Model preview</span>' +
-            '<button type="button" class="btn btn-secondary prism-btn-sm" id="prism_params_reset_view">Reset view</button></div>' +
+            '<button type="button" class="btn btn-secondary prism-btn-sm" id="prism_params_reset_view" disabled title="' + RESET_VIEW_IDLE + '">Reset view</button></div>' +
           _canvasHTML('prism_params_canvas', _plotH('main')) +
           '<div id="prism_params_simmsg" class="prism-notes"></div>' +
         '</div>';
@@ -2184,7 +2212,7 @@ function PRiSM_renderParamsTab(hostEl, ropts) {
     if (pl) pl.onclick = function () {
         var idx = parseInt((_el('prism_preset_picker') || {}).value, 10);
         var p = (st.presets || [])[idx];
-        if (!p) return;
+        if (!p) { msg('<span class="prism-bad">' + ((st.presets || []).length ? 'Pick a saved preset first.' : 'No saved presets.') + '</span>'); return; }
         if (p.model && _MODELS()[p.model] && p.model !== st.model) _setModel(p.model);
         st.params = _clone(p.params || {});
         st.phys = _clone(p.phys || {});
@@ -2197,17 +2225,21 @@ function PRiSM_renderParamsTab(hostEl, ropts) {
     var pdl = _el('prism_preset_del');
     if (pdl) pdl.onclick = function () {
         var idx = parseInt((_el('prism_preset_picker') || {}).value, 10);
-        if (!(st.presets || [])[idx]) return;
+        var gone = (st.presets || [])[idx];
+        if (!gone) { msg('<span class="prism-bad">' + ((st.presets || []).length ? 'Pick a saved preset first.' : 'No saved presets.') + '</span>'); return; }
         st.presets.splice(idx, 1);
         _persistPresets();
         _rerender(4);
+        msg('<span class="prism-ok">Deleted preset “' + _esc(gone.name || 'preset') + '”.</span>');
     };
     var rv = _el('prism_params_reset_view');
     if (rv) rv.onclick = function () {
         _resetCanvasView(_el('prism_params_canvas'));
         _drawParamPreview(units);
+        _syncResetView('prism_params_reset_view', 'prism_params_canvas', false);
     };
     _drawParamPreview(units);
+    _wireResetView('prism_params_reset_view', 'prism_params_canvas');
 }
 function _persistPresets() {
     try { if (typeof localStorage !== 'undefined' && localStorage) localStorage.setItem('wts_prism_presets', JSON.stringify(_st().presets || [])); }

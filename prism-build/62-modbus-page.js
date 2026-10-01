@@ -234,7 +234,7 @@ function guideHtml(ios) {
         '<div id="mbc_guide_steps"></div></details>' +
         '<details class="mb-sec"><summary>Modbus RTU (RS-485) — Web Serial</summary><p>Chrome or Edge on a desktop, page served over https or localhost (no bridge needed). Plug in a USB–RS-485 adapter, choose "Modbus RTU via Web Serial", set baud / parity / unit id, then press <b>Test</b> — the browser asks which serial port to use (once).</p></details>' +
         '<details class="mb-sec"' + (ios ? ' open' : '') + '><summary>iOS app — native TCP (no bridge)</summary><p>In the iOS app, choose "Modbus TCP (iOS app, native)" and enter the PLC\'s IP address and port. The app connects directly over Wi-Fi (Network framework); iOS asks once for Local Network permission. The WebSocket bridge is not used.</p></details>' +
-        '<details class="mb-sec"><summary>No hardware? Built-in simulator</summary><p>"Load simulator demo" configures one device on the built-in virtual slave: 36 tags covering pressures, temperatures, rates, levels and valve states, fed by the Well Test Simulator model. Mini WellOS then animates from those tags when its data source is set to "Modbus data". To try the bridge itself, the package includes <code>fake-slave.js</code>: run <code>node fake-slave.js --port 5020</code>, allow <code>127.0.0.1:5020</code> in the bridge and add a bridge device with host 127.0.0.1, port 5020.</p></details>' +
+        '<details class="mb-sec"><summary>No hardware? Built-in simulator</summary><p>"Load simulator demo" configures one device on the built-in virtual slave: ' + M.DEMO_MAP.length + ' tags covering pressures, temperatures, rates, levels and valve states, fed by the Well Test Simulator model. Mini WellOS then animates from those tags when its data source is set to "Modbus data". To try the bridge itself, the package includes <code>fake-slave.js</code>: run <code>node fake-slave.js --port 5020</code>, allow <code>127.0.0.1:5020</code> in the bridge and add a bridge device with host 127.0.0.1, port 5020.</p></details>' +
         '<details class="mb-sec"><summary>Troubleshooting</summary><ul class="mb-hints">' +
         '<li><b>"Cannot reach the Modbus bridge"</b> — the bridge is not running, the bridge URL / port differs, or the bridge refused this page (a browser cannot tell these apart). Press <b>Check bridge</b>: it says which.</li>' +
         '<li><b>Windows: "Windows protected your PC"</b> (SmartScreen) — the installer is code-signed by H2Oil Engineering, but SmartScreen can still warn while the certificate builds reputation: click <b>More info</b>, check the publisher, then <b>Run anyway</b>.</li>' +
@@ -582,7 +582,11 @@ function createController(root, n0) {
                 break;
             }
             case 'dev-test': {
-                var cellD = q('[data-devstat="' + id + '"]'); if (cellD) cellD.innerHTML = '<span class="mb-dot connecting"></span> testing…';
+                var cellD = q('[data-devstat="' + id + '"]'), dv = find('dev', id);
+                // nothing to poll: say why instead of "0 of 0 tags failed"
+                var why = !dv ? 'device not found' : !dv.enabled ? 'switched off — tick "On" to test it' : !cfg.tags.some(function (t) { return t.device === id; }) ? 'no tags on this device yet — add a tag, then test' : '';
+                if (why) { if (cellD) cellD.innerHTML = '<span class="mb-dot"></span> ' + esc(why); C.lastDevTest = { ok: false, info: {}, tags: 0, bad: 0, why: why }; break; }
+                if (cellD) cellD.innerHTML = '<span class="mb-dot connecting"></span> testing…';
                 var ts = tempStation(id);
                 ts.pollNow().then(function () {
                     var info = ts.devices()[0] || {}, v = ts.values(), n = 0, bad = 0;

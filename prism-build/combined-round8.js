@@ -9398,7 +9398,9 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
                 else rows.sort(function (a, b) { return aicOf(a) - aicOf(b); });
                 var aics = rows.map(aicOf).filter(isNum);
                 var a0 = aics.length ? Math.min.apply(null, aics) : 0;
-                if (rows.length && rows[0].parsimony) {
+                if (rows.length && rows[0].parsimony && rows[0].parsimonyNote) {
+                    res.warnings.push(modelName(rows[0].modelKey || rows[0].model) + ' chosen: ' + rows[0].parsimonyNote + '.');
+                } else if (rows.length && rows[0].parsimony) {
                     res.warnings.push(modelName(rows[0].modelKey || rows[0].model) + ' chosen: statistically equivalent to ' +
                         modelName(rows[1].modelKey || rows[1].model).toLowerCase() + ' (ΔAIC < 2) with every parameter determined by the data.');
                 }
@@ -9906,7 +9908,20 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         { id: 'interp',      fn: 'PRiSM_renderInterpretationPanel', group: 'Model',    title: 'Interpretation',                   sub: 'Plain-language narrative of the fit', args: function () { return [st().interp || undefined]; } },
         { id: 'plt',         fn: 'PRiSM_renderPLTPanel',            group: 'Model',    title: 'Layer contributions',              sub: 'Synthetic production log by layer' },
         { id: 'inverse',     fn: 'PRiSM_renderInverseSimPanel',     group: 'Model',    title: 'Rate from pressure',               sub: 'Invert the rate history from gauge pressure' },
-        { id: 'decline',     fn: 'PRiSM_renderDeclineResultsPanel', group: 'Model',    title: 'Decline results & EUR',            sub: 'Forecast, EUR and P10/P50/P90' }
+        { id: 'decline',     fn: 'PRiSM_renderDeclineResultsPanel', group: 'Model',    title: 'Decline results & EUR',            sub: 'Forecast, EUR and P10/P50/P90' },
+        // Panels that are also mounted on the step tabs: listed here with their
+        // own titles (the step-tab copies then de-duplicate by title) instead of
+        // a machine-generated name under "More".
+        { id: 'gaugecheck',  fn: 'PRiSM_renderGaugeCheckPanel',     group: 'Data',     title: 'Gauge resolution check',           sub: 'Can the gauge resolve the late-time derivative?' },
+        { id: 'dsets',       fn: 'PRiSM_renderDatasetsPanel',       group: 'Data',     title: 'Gauges & analysis datasets',       sub: 'Store, sample and activate datasets' },
+        { id: 'gas',         fn: 'PRiSM_renderGasPanel',            group: 'Diagnose', title: 'Gas analysis: m(p) and pseudo-time', sub: 'Pseudo-pressure basis for gas tests' },
+        { id: 'rateskin',    fn: 'PRiSM_renderRateSkinPanel',       group: 'Diagnose', title: 'Rate-dependent skin (S′ vs rate)', sub: 'Separate mechanical skin S and D' },
+        { id: 'deliv',       fn: 'PRiSM_renderDeliverabilityPanel', group: 'Diagnose', title: 'Deliverability: AOF (gas) / IPR (oil)', sub: 'Flow-after-flow, isochronal, IPR' },
+        { id: 'rta',         fn: 'PRiSM_renderRTAPanel',            group: 'Diagnose', title: 'Rate-transient analysis',          sub: 'Normalised rate, FMB and linear flow' },
+        { id: 'plottools',   fn: 'PRiSM_renderPlotToolsPanel',      group: 'Plot',     title: 'Plot tools',                       sub: 'Overlays, difference plot, copy & export' },
+        { id: 'workspace',   fn: 'PRiSM_renderFitWorkspacePanel',   group: 'Model',    title: 'Fit workspace: saved fits, comparison, branches', sub: 'Save, compare and branch analyses' },
+        { id: 'browser',     fn: 'PRiSM_renderModelBrowserPanel',   group: 'Model',    title: 'Model browser: search by behaviour', sub: 'Find a model by what the derivative does' },
+        { id: 'pltinv',      fn: 'PRiSM_renderPLTInversePanel',     group: 'Model',    title: 'PLT & inverse simulation',         sub: 'Layer split and rate history together' }
     ];
     // Words that identify a C7 tab panel as one of the catalogue tools (no duplicates in the drawer).
     var PANEL_SYNONYMS = [
@@ -11326,7 +11341,17 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             if (rm) { removeEvent(rm); return; }
             var box = $('prism_ft_e_msg');
             if (t.id === 'prism_ft_clock_set') {
-                if (!setEventClock(val('prism_ft_clock')) && box) box.innerHTML = msg('bad', '✗ Clock not recognised: use YYYY-MM-DD HH:MM.');
+                var ctext = String(val('prism_ft_clock') == null ? '' : val('prism_ft_clock')).trim();
+                var hadClock = isNum(ft().clockZero);
+                if (!ctext && !hadClock) {
+                    if (box) box.innerHTML = msg('warn', '⚠ Enter the clock time at t = 0 first (UTC, YYYY-MM-DD HH:MM).');
+                } else if (!setEventClock(ctext)) {
+                    if (box) box.innerHTML = msg('bad', '✗ Clock not recognised: use YYYY-MM-DD HH:MM.');
+                } else {
+                    var b3 = $('prism_ft_e_msg');
+                    if (b3) b3.innerHTML = ctext ? msg('ok', '✓ Clock at t = 0 set to ' + esc(clockText(ft().clockZero)) + ' UTC.')
+                                                 : msg('ok', '✓ Clock cleared: events keep their t (h) values.');
+                }
             } else if (t.id === 'prism_ft_e_add') {
                 var r = addEvent({ type: val('prism_ft_e_type'), t: val('prism_ft_e_t'), time: val('prism_ft_e_time') || null,
                                    q: val('prism_ft_e_q'), choke: val('prism_ft_e_choke'), note: val('prism_ft_e_note'), source: 'user' });

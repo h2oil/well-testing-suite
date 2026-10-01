@@ -130,7 +130,7 @@
         if (!(_fin(co2) && co2 >= 0 && co2 < 100 && _fin(h2s) && h2s >= 0 && h2s < 100 && _fin(n2) && n2 >= 0 && n2 < 100 && co2 + h2s + n2 < 95)) err('co2', 'Laboratory CO2, H2S and N2 must each be 0–100 mol % and total below 95 %.');
         if (!_blank(i.zField) && !(_fin(zF) && zF > 0.2 && zF < 2)) err('zField', 'Field Z-factor must be between 0.2 and 2, or blank.');
         if (!_blank(i.zLab) && !(_fin(zL) && zL > 0.2 && zL < 2)) err('zLab', 'Laboratory Z-factor must be between 0.2 and 2, or blank.');
-        if (shrM === 'user' && !(_fin(shrU) && shrU > 0.3 && shrU <= 1)) err('shrUser', 'Shrinkage factor must be above 0.3 and no more than 1 (stock-tank bbl per separator bbl).');
+        if (shrM === 'user' && !(_fin(shrU) && shrU > 0.3 && shrU <= 1)) err('shrUser', 'Shrinkage factor must be above 0.3 and no more than 1 (stock-tank volume per separator volume).');
         if (!(_fin(tolOpen) && tolOpen > 0 && tolOpen <= 50)) err('tolOpen', 'Opening-pressure tolerance must be between 0 and 50 %.');
         if (!(_fin(tolSat) && tolSat > 0 && tolSat <= 50)) err('tolSat', 'Saturation-pressure tolerance must be between 0 and 50 %.');
         if (!(_fin(tolDup) && tolDup > 0 && tolDup <= 50)) err('tolDup', 'Duplicate-agreement tolerance must be between 0 and 50 %.');
@@ -328,8 +328,8 @@
             (r.shrMethod === 'standing' ?
                 _row('Solution GOR of separator oil (Standing)', _gor(st.Rs, 'st')) +
                 _row('Bo of separator oil (Standing)', _fmt(st.Bo, 4)) : '') +
-            _row('Shrinkage factor S (STB per separator bbl)', _fmt(r.S, 4) + (r.shrMethod === 'user' ? ' (typed)' : ' (Standing)')) +
-            _row('Separator volume factor 1/S (separator bbl per STB)', _fmt(r.Bsep, 4)) +
+            _row('Shrinkage factor S (' + (_metric() ? 'stock-tank m³ per separator m³' : 'STB per separator bbl') + ')', _fmt(r.S, 4) + (r.shrMethod === 'user' ? ' (typed)' : ' (Standing)')) +
+            _row('Separator volume factor 1/S (' + (_metric() ? 'separator m³ per stock-tank m³' : 'separator bbl per STB') + ')', _fmt(r.Bsep, 4)) +
             _row('Oil rate, separator conditions', L(r.qOilSep) + (r.oilBasis === 'sep' ? ' (entered)' : '')) +
             _row('Oil rate, stock tank', L(r.qOilST) + (r.oilBasis === 'st' ? ' (entered)' : '')) +
             _row('Field GOR, separator basis', _gor(r.gorSepField, 'sep')) +
@@ -441,7 +441,7 @@
         h += '<div class="card"><div class="card-title">Shrinkage and Tolerances</div><div class="fg">' +
             '<div class="fg-item"><label for="sq_shrm">Shrinkage source</label>' +
             _selHtml('sq_shrm', [['standing', 'Standing Bo at separator conditions'], ['user', 'Typed value (laboratory / meter)']], 'standing') + '</div>' +
-            _fg('sq_shr', 'Shrinkage factor, typed (STB per separator bbl)', '0.90') +
+            _fg('sq_shr', 'Shrinkage factor, typed (stock-tank / separator volume)', '0.90') +
             _fg('sq_tolo', 'Opening-pressure tolerance (%)', '5') +
             _fg('sq_tols', 'Saturation-pressure tolerance (%)', '5') +
             _fg('sq_told', 'Duplicate-agreement tolerance (%)', '2') +

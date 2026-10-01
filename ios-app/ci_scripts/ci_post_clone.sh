@@ -76,7 +76,7 @@ grep -E '\.package\(' ios/App/CapApp-SPM/Package.swift || true
 # build, every upload is its own "version train" and Apple won't reject
 # with ITMS-90186 or ITMS-90062 even if prior build numbers were higher.
 # No manual version bumps required — every commit → push → fresh upload.
-VERSION_BASE="3.0"
+VERSION_BASE="3.1"
 PBXPROJ="$CI_PRIMARY_REPOSITORY_PATH/ios-app/ios/App/App.xcodeproj/project.pbxproj"
 if [ -n "${CI_BUILD_NUMBER:-}" ] && [ -f "$PBXPROJ" ]; then
     FULL_VERSION="${VERSION_BASE}.${CI_BUILD_NUMBER}"

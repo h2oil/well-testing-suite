@@ -55,7 +55,8 @@ function readUi() {
 function writeUi(u) { try { if (G.localStorage) G.localStorage.setItem(UI_KEY, JSON.stringify(u)); } catch (e) {} }
 
 // ─── display formatting (field units in, WTS_units display out) ─────────────
-var BOOL_TXT = { esd_open: ['OPEN', 'CLOSED'], esd_tripped: ['TRIPPED', 'NORMAL'], pump_running: ['OPEN', 'SHUT'], heater_bypass: ['OPEN', 'SHUT'] };
+// pump_running = LCV-201 transfer valve (legacy key); p201_running = the gauge tank pump P-201
+var BOOL_TXT = { esd_open: ['OPEN', 'CLOSED'], esd_tripped: ['TRIPPED', 'NORMAL'], pump_running: ['OPEN', 'SHUT'], heater_bypass: ['OPEN', 'SHUT'], p201_running: ['RUNNING', 'STOPPED'] };
 function unitLabel(V) {
     if (!V) return '';
     if (V.key === 'oil_rate') return 'STB/d';
@@ -74,10 +75,19 @@ function disp(v, V) {
     return { v: isNum(v) ? fmtNumber(v) : '—', u: unitLabel(V) };
 }
 var DERIVED = {
-    gor: { key: 'gor', label: 'GOR', unit: 'scf/STB', calc: function (x) { return isNum(x.gas_rate) && isNum(x.oil_rate) && x.oil_rate > 0.5 ? x.gas_rate * 1e6 / x.oil_rate : null; } },
+    gor: { key: 'gor', label: 'GOR', unit: 'scf/STB', cat: 'gor', calc: function (x) { return isNum(x.gas_rate) && isNum(x.oil_rate) && x.oil_rate > 0.5 ? x.gas_rate * 1e6 / x.oil_rate : null; } },
     wcut: { key: 'wcut', label: 'Water cut', unit: '%', calc: function (x) { return isNum(x.water_rate) && isNum(x.oil_rate) && x.water_rate + x.oil_rate > 0 ? 100 * x.water_rate / (x.water_rate + x.oil_rate) : null; } }
 };
 
+// derived values (GOR, water cut): GOR scf/STB → sm³/sm³ in Metric (WTS_units 'gor'); water cut stays %
+function dispDerived(v, D) {
+    if (!isNum(v)) return { v: '—', u: D.unit };
+    var U = G.WTS_units;
+    if (D.cat && U && typeof U.getSystem === 'function' && U.getSystem() === 'metric' && typeof U.format === 'function') {
+        try { var f = U.format(v, D.cat); if (f && isNum(+f.value)) return { v: fmtNumber(+f.value, Math.abs(+f.value) >= 100 ? 0 : 1), u: f.label }; } catch (e) {}
+    }
+    return { v: fmtNumber(v, D.key === 'gor' ? 0 : 1), u: D.unit };
+}
 function injectCss() {
     if (typeof document === 'undefined' || byId('wts-wellos-css')) return;
     var s = document.createElement('style');
@@ -99,7 +109,7 @@ function injectCss() {
         '.wos .kpi{background:var(--wos-panel);border:1px solid var(--wos-line);border-radius:8px;padding:8px 10px;border-left:3px solid var(--green)}',
         '.wos .kpi.q-stale{border-left-color:var(--orange,#d29922)}.wos .kpi.q-bad{border-left-color:var(--red)}.wos .kpi.q-unmapped{border-left-color:var(--text3);opacity:.7}',
         '.wos .kpi-l{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text3)}',
-        '.wos .kpi-v{font-family:"Courier New",monospace;font-size:20px;font-weight:700;color:var(--text)}.wos .kpi-u{font-size:11px;color:var(--text2);margin-left:4px}',
+        '.wos .kpi-v{font-family:"Courier New",monospace;font-size:20px;font-weight:700;color:var(--text)}.wos .kpi-u{font-size:11px;color:var(--text2);margin-left:1px}',
         '.wos-grid{display:grid;grid-template-columns:minmax(0,2.2fr) minmax(260px,1fr);gap:12px}',
         '@media (max-width:1100px){.wos-grid{grid-template-columns:1fr}}',
         '.wos-stage{position:relative;background:var(--wos-panel);border:1px solid var(--wos-line);border-radius:8px;overflow:hidden}',
@@ -257,7 +267,8 @@ function createController(root) {
         Object.keys(formPrev).forEach(function (id) { if (!seen[id]) formAlarms.update('sim:' + id, null, { t: t }); });
         formPrev = seen;
         var batch = [];
-        M.VARS.forEach(function (V) { var x = fv[V.key]; if (x == null) return; batch.push({ tag: V.key, device: 'form', t: t, v: x, q: 'good', raw: null, unit: unitLabel(V) }); });
+        // tag = the variable key (kept for historian continuity); desc = what it is (e.g. pump_running = LCV-201 open)
+        M.VARS.forEach(function (V) { var x = fv[V.key]; if (x == null) return; batch.push({ tag: V.key, device: 'form', t: t, v: x, q: 'good', raw: null, unit: unitLabel(V), desc: V.label + ' — Mini WellOS form data' }); });
         M.publishSamples(batch);
         if (logger.on) logRow();
     }
@@ -296,9 +307,10 @@ function createController(root) {
     function renderKpis(cur) {
         var k = q('#wos_kpis'); if (!k) return;
         k.innerHTML = KPI_KEYS.map(function (key) {
-            var V = M.VAR_BY_KEY[key], D = DERIVED[key], d = D ? { v: isNum(cur.vals[key]) ? fmtNumber(cur.vals[key], key === 'gor' ? 0 : 1) : '—', u: D.unit } : disp(cur.vals[key], V);
+            var V = M.VAR_BY_KEY[key], D = DERIVED[key], d = D ? dispDerived(cur.vals[key], D) : disp(cur.vals[key], V);
             var lbl = D ? D.label : V.label.replace(/ \(.*\)$/, '');
-            return '<div class="kpi q-' + esc(cur.q[key]) + '" title="' + esc(cur.src[key] || '') + '"><div class="kpi-l">' + esc(lbl) + '</div><div class="kpi-v">' + esc(d.v) + '<span class="kpi-u">' + esc(d.u) + '</span></div></div>';
+            // a real space between value and unit (the text reads "10,012 scf/STB", not "10,012scf/STB")
+            return '<div class="kpi q-' + esc(cur.q[key]) + '" title="' + esc(cur.src[key] || '') + '"><div class="kpi-l">' + esc(lbl) + '</div><div class="kpi-v">' + esc(d.v) + (d.u ? ' <span class="kpi-u">' + esc(d.u) + '</span>' : '') + '</div></div>';
         }).join('');
     }
     function renderChips(cur) {
@@ -467,8 +479,15 @@ function createController(root) {
         ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px, py - 20); ctx.stroke(); ctx.beginPath(); ctx.arc(px, py - 24, 7, Math.PI, 0); ctx.closePath(); ctx.stroke();
         ctx.fillStyle = '#e6edf3'; ctx.font = 'bold 11px sans-serif'; ctx.fillText('LCV-201', px - 24, py + 30);
         ctx.font = '10px sans-serif'; ctx.fillText(pr == null ? '—' : pr ? 'OPEN' : 'SHUT', px - 12, py + 44);
+        // P-201 gauge tank pump (T-301 → export / burner): circle + discharge triangle, green when running
+        var gr = v.p201_running, gx = 945, gy = 110, gc = gr == null ? '#6e7681' : gr ? '#3fb950' : '#8b949e';
+        ctx.fillStyle = gc; ctx.strokeStyle = '#e6edf3'; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(gx, gy, 11, 0, 2 * Math.PI); ctx.fill(); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(gx - 5, gy - 6); ctx.lineTo(gx + 7, gy); ctx.lineTo(gx - 5, gy + 6); ctx.closePath(); ctx.fillStyle = '#0b111a'; ctx.fill();
+        ctx.fillStyle = '#e6edf3'; ctx.font = 'bold 11px sans-serif'; ctx.fillText('P-201', gx - 16, gy + 26);
+        ctx.font = '10px sans-serif'; ctx.fillText(gr == null ? (Q.p201_running === 'unmapped' ? 'not linked' : '—') : gr ? 'RUNNING' : 'STOPPED', gx - 20, gy + 38);
         // status column
-        var sx = 950, lines = [
+        var sx = 1000, lines = [
             ['ESD', v.esd_tripped ? 'TRIPPED' : v.esd_tripped === 0 ? 'NORMAL' : '—', v.esd_tripped ? '#f85149' : '#3fb950'],
             ['WHP', disp(v.whp, M.VAR_BY_KEY.whp).v + ' ' + disp(v.whp, M.VAR_BY_KEY.whp).u, '#e6edf3'],
             ['Sep P', disp(v.sep_p, M.VAR_BY_KEY.sep_p).v + ' ' + disp(v.sep_p, M.VAR_BY_KEY.sep_p).u, '#e6edf3'],
@@ -577,15 +596,26 @@ function createController(root) {
             case 'speed': u.speed = +b.getAttribute('data-speed') || 1; writeUi(u); renderHead(); break;
             case 'pause': M.setPaused(!M.getConfig().paused); renderHead(); renderComms(); break;
             case 'goto': gotoPage(b.getAttribute('data-p')); break;
-            case 'demo': M.saveConfig(M.demoConfig()); if (!M.station()) M.acquire(OWNER); bindStation(); renderBanner(); renderHead(); break;
+            case 'demo': {
+                // the banner shows when no tag is linked, but devices / tags may exist: never replace them silently
+                var cur0 = M.getConfig();
+                if ((cur0.devices.length || cur0.tags.length) && typeof G.confirm === 'function' &&
+                    !G.confirm('Replace the current Modbus configuration (' + cur0.devices.length + ' device(s), ' + cur0.tags.length + ' tag(s)) with the simulator demo?')) break;
+                M.saveConfig(M.demoConfig()); if (!M.station()) M.acquire(OWNER); bindStation(); renderBanner(); renderHead(); break;
+            }
             case 'ack': { var A = alarmsMgr(); if (A) A.ack(b.getAttribute('data-id')); renderAlarms(true); break; }
             case 'ackall': { var A2 = alarmsMgr(); if (A2) A2.ackAll(); renderAlarms(true); break; }
             case 'toalarms': { var c = q('#wos_alcard'); if (c && c.scrollIntoView) c.scrollIntoView({ behavior: 'smooth', block: 'start' }); break; }
             case 'win': u.win = +b.getAttribute('data-win') || 1800; writeUi(u); root.querySelectorAll('[data-act="win"]').forEach(function (x) { var on = +x.getAttribute('data-win') === u.win; x.style.borderColor = on ? 'var(--accent)' : ''; x.style.color = on ? 'var(--accent)' : ''; }); drawTrends(); break;
             case 'logstart': logger.on = true; logger.cols = logCols(); logger.rows = []; logger.note = ''; logRow(); renderLog(); break;
             case 'logstop': logger.on = false; renderLog(); break;
-            case 'logclear': logger.rows = []; logger.note = ''; if (!logger.on) logger.cols = null; renderLog(); break;
-            case 'logcsv': if (logger.rows.length && M.download) M.download('wellos-log-' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') + '.csv', csvText(), 'text/csv'); break;
+            case 'logclear': {
+                var had = logger.rows.length;
+                logger.rows = []; logger.note = had ? 'Cleared ' + had + ' row(s).' : 'Log already empty — nothing to clear.';
+                if (!logger.on) logger.cols = null; renderLog(); break;
+            }
+            case 'logcsv': if (!logger.rows.length) { logger.note = 'No rows logged yet — start logging first.'; renderLog(); break; }
+                if (M.download) M.download('wellos-log-' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') + '.csv', csvText(), 'text/csv'); break;
             case 'prism': sendToPrism(); break;
         }
     }
@@ -649,7 +679,7 @@ function render(body) {
 }
 // calc<X> naming convention (units wrapper): refresh the view on demand.
 G.calcWellOS = function () { if (ctl) { ctl.updateUi(true); return true; } return false; };
-M.wellos = { controller: function () { return ctl; }, DERIVED: DERIVED, disp: disp, UI_KEY: UI_KEY };
+M.wellos = { controller: function () { return ctl; }, DERIVED: DERIVED, disp: disp, dispDerived: dispDerived, UI_KEY: UI_KEY };
 
 G.WTS_calcRegistry = G.WTS_calcRegistry || {};
 G.WTS_calcRegistry.wellos = {

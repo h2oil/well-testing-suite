@@ -21,7 +21,8 @@
 //
 //   A test system is split into sections separated by valves
 //   (wellhead → SSV → choke → heater → separator → flare). Each section
-//   has a rupture disc / relief valve set at MAWP + 10 % AND a hi-pilot
+//   has a rupture disc / relief valve set at or below MAWP (ASME VIII-1
+//   UG-134; 110 % of MAWP is the allowable accumulation) AND a hi-pilot
 //   set BELOW the RV that fires the ESD when section pressure rises
 //   toward the RV setting. When a downstream block fails or the choke
 //   plugs (catastrophic backflow), gas accumulates inside the section.
@@ -315,25 +316,40 @@
             // Also solve for RD* such that t_fill at the existing HP gives tResp:
             var RDstar = HP + (qScfS * tResp * P_STD) / V_std;
 
-            var rd_relief = (RD <= MAWP) ? (' Note also that the RV setting (' + _u(RD, 'pressureG', 0, 'psig')
-                + ') is below MAWP+10 % (' + _u(MAWP * 1.10, 'pressureG', 0, 'psig')
-                + '); raising the RV may be permissible.') : '';
+            // v3.1: relief set pressure per ASME VIII-1 UG-134(a) / API 520 Part I §5 — a single
+            // relief device is set at or below MAWP; 110 % of MAWP is the allowable
+            // ACCUMULATION while relieving, not a set pressure (only a supplemental device of a
+            // multiple-device installation may be set up to 105 % of MAWP). The old text
+            // suggested raising the RV up to MAWP + 10 %, which is non-conservative.
+            var hasMawp = _isNum(MAWP) && MAWP > 0;
+            var rd_relief = (hasMawp && RD < MAWP - 0.5) ? (' Note also that the RV setting (' + _u(RD, 'pressureG', 0, 'psig')
+                + ') is below the section MAWP (' + _u(MAWP, 'pressureG', 0, 'psig')
+                + '); raising a single RV up to MAWP is permissible (ASME VIII-1 UG-134).') : '';
+            var rdRaise = (!hasMawp || RDstar <= MAWP + 0.5)
+                ? ', OR raise the RV to ≥ ' + _u(RDstar, 'pressureG', 0, 'psig') + (hasMawp ? ' (at or below MAWP)' : ' (only if MAWP allows)')
+                : ' (raising the RV to ' + _u(RDstar, 'pressureG', 0, 'psig') + ' would put its set pressure above MAWP — not permitted for a single relief device)';
 
             rationale = 'FAIL — at the chosen Hi-Pilot of ' + _u(HP, 'pressureG', 0, 'psig') + ', '
                 + 'the section reaches the RV in only ' + tFill.toFixed(2)
                 + ' s, which is shorter than the ' + tResp.toFixed(1) + ' s ESD response. '
                 + 'To pass: drop the Hi-Pilot to ≤ ' + _u(Math.max(0, HPstar), 'pressureG', 0, 'psig')
-                + ', OR raise the RV to ≥ ' + _u(RDstar, 'pressureG', 0, 'psig') + ' (only if MAWP allows), '
+                + rdRaise + ', '
                 + 'OR reduce the ESD response time below ' + tFill.toFixed(2) + ' s.'
                 + rd_relief;
         }
         result.rationale = rationale;
 
         // Engineering notes.
-        if (_isNum(MAWP) && RD > MAWP * 1.10 + 0.5) {
-            result.notes.push('Caution — RV setting (' + _u(RD, 'pressureG', 0, 'psig')
-                + ') exceeds MAWP+10 % (' + _u(MAWP * 1.10, 'pressureG', 0, 'psig')
-                + '). Verify RV sizing per ASME / API 521.');
+        if (_isNum(MAWP) && MAWP > 0 && RD > MAWP * 1.05 + 0.5) {
+            result.notes.push('Caution — RV set pressure (' + _u(RD, 'pressureG', 0, 'psig')
+                + ') is above 105 % of MAWP (' + _u(MAWP * 1.05, 'pressureG', 0, 'psig')
+                + '), the highest set pressure ASME VIII-1 UG-134 allows even for a supplemental device. '
+                + 'Set a single RV at or below MAWP (110 % of MAWP is the allowable accumulation while relieving, not a set pressure).');
+        } else if (_isNum(MAWP) && MAWP > 0 && RD > MAWP + 0.5) {
+            result.notes.push('Caution — RV set pressure (' + _u(RD, 'pressureG', 0, 'psig')
+                + ') is above MAWP (' + _u(MAWP, 'pressureG', 0, 'psig')
+                + '). ASME VIII-1 UG-134 allows this only for a supplemental device of a multiple-device installation '
+                + '(up to 105 % of MAWP); a single relief device must be set at or below MAWP.');
         }
         if (_isNum(HP) && _isNum(MAWP) && HP > MAWP) {
             result.notes.push('Caution — Hi-Pilot setting is ABOVE MAWP. Lower the Hi-Pilot '
@@ -1908,7 +1924,7 @@
             +   '<div class="card-title" style="font-size:12px;letter-spacing:.05em;text-transform:uppercase">'
             +     seg.label
             +   '</div>'
-            +   '<div class="fg" style="grid-template-columns:1fr 1fr;gap:6px">'
+            +   '<div class="fg hy-seg-fg" style="grid-template-columns:repeat(2,minmax(0,1fr));gap:6px">'
             +     '<div class="fg-item"><label>Upstream P (psig)</label>'
             +       '<input type="number" id="hy_up_P_'  + idx + '" value="' + seg.P_up + '"></div>'
             +     '<div class="fg-item"><label>Upstream T (&deg;F)</label>'
@@ -1965,7 +1981,7 @@
 
         // auto-fit: 4 columns on desktop, 1 column at 375 px (fixed repeat(4)
         // squeezed each segment card to ~78 px on phones).
-        var segGrid = '<div class="cols-4" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));gap:10px">';
+        var segGrid = '<style>.hy-seg-fg .fg-item{min-width:0}.hy-seg-fg .fg-item input{min-width:0;width:100%;box-sizing:border-box}</style><div class="cols-4" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));gap:10px">';
         for (var i = 0; i < DEFAULT_NODES.length; i++) {
             segGrid += _segCardHTML(DEFAULT_NODES[i], i);
         }
@@ -2207,12 +2223,12 @@
                     + '</tr>';
             }
             var tableHTML = ''
-                + '<table class="dtable" style="font-size:11px">'
+                + '<div style="overflow-x:auto;max-width:100%"><table class="dtable" style="font-size:11px">'
                 +   '<tr><th>Segment</th><th>T<sub>hyd</sub> (' + _tl() + ')</th><th>T<sub>op</sub> (' + _tl() + ')</th>'
                 +       '<th>&Delta;T req (' + _tl() + ')</th><th>wt% needed</th>'
                 +       '<th>Recommended (cc/min)</th><th>Currently set (cc/min)</th><th>Risk</th></tr>'
                 +   rows
-                + '</table>'
+                + '</table></div>'
                 + '<div style="margin-top:10px;padding:8px;border-radius:6px;background:rgba(56,139,253,0.08);font-size:12px">'
                 +   '<b>Total currently set:</b> ' + _fmt(totalCcMin, 1) + ' cc/min '
                 +   '(' + INHIB[inhibKey].label + ', incl. ' + _fmt((INHIB[inhibKey].vapAllow - 1) * 100, 0) + '% vapour-phase allowance)'

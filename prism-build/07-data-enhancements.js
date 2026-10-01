@@ -1155,6 +1155,9 @@
                     ds.name = st.fileName || 'Pasted data';
                     ds.source = st.fileName ? 'file' : 'paste';
                     _commit(ds, 'restored');
+                    if (typeof W.PRiSM_restorePersistedCrop === 'function') {
+                        try { W.PRiSM_restorePersistedCrop(); } catch (e) { /* optional */ }
+                    }
                 }
                 _renderPreview();
                 _setMsg(_activeStatusHTML());
@@ -1499,8 +1502,13 @@
             _recommit('Mapping applied.');
         };
         if (reset) reset.onclick = function () {
+            var before = JSON.stringify(st.mapping || []);
             st.mapping = PRiSM_autoMapColumns(st.headers, st.rawRows, st.dateCols);
+            var changed = JSON.stringify(st.mapping || []) !== before;
             PRiSM_renderColumnMapper();
+            _setMsg(changed
+                ? '<span style="color:var(--orange);">Columns re-detected: press Apply mapping to use them.</span>'
+                : '<span style="color:var(--text2);">Columns re-detected — no change to the mapping.</span>');
         };
     }
 

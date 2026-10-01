@@ -322,6 +322,11 @@
         opts.forEach(function (o) { h += '<option value="' + o[0] + '"' + (o[0] === val ? ' selected' : '') + '>' + o[1] + '</option>'; });
         return h + '</select></div>';
     }
+    // v3.1: Metric mode shows the coefficients per °C / per kPa and the standard basis in SI first.
+    // α per °C = α per °F × 1.8; F per kPa = F per psi ÷ 6.894757.
+    function _alphaTxt(aF) { return _metric() ? (aF * 1.8 * 1e6).toFixed(3) + ' ×10⁻⁶ /°C (' + (aF * 1e6).toFixed(3) + ' ×10⁻⁶ /°F)' : (aF * 1e6).toFixed(3) + ' ×10⁻⁶ /°F'; }
+    function _fTxt(fPsi) { return _metric() ? (fPsi / 6.894757 * 1e6).toFixed(4) + ' ×10⁻⁶ /kPa (' + (fPsi * 1e6).toFixed(3) + ' ×10⁻⁶ /psi)' : (fPsi * 1e6).toFixed(3) + ' ×10⁻⁶ /psi'; }
+    function _stdTxt() { return _metric() ? '15.56 °C (60 °F), 0 kPa(g)' : '60 °F, 0 psig'; }
     function _row(l, v) { return '<div class="rrow"><span class="rl">' + l + '</span><span class="rv">' + v + '</span></div>'; }
     function _ok(t) { return '<div style="color:var(--green)">✓ ' + t + '</div>'; }
     function _warn(t) { return '<div style="color:var(--yellow)">⚠ ' + t + '</div>'; }
@@ -343,8 +348,8 @@
             _row('Commodity group', GROUPS[L.group].name) +
             _row('API @ 60 °F', _fx(L.api60, 2)) +
             _row('Density @ 60 °F', _fmt(L.rho60, 1) + ' kg/m³') +
-            _row('Thermal expansion α60', (alpha60(L.rho60, L.group) * 1e6).toFixed(3) + ' ×10⁻⁶ /°F') +
-            _row('Compressibility F at 60 °F', (fpRho(L.rho60, 60) * 1e6).toFixed(3) + ' ×10⁻⁶ /psi') +
+            _row('Thermal expansion α60', _alphaTxt(alpha60(L.rho60, L.group))) +
+            _row('Compressibility F at ' + (_metric() ? '15.56 °C (60 °F)' : '60 °F'), _fTxt(fpRho(L.rho60, 60))) +
             L.warnings.map(_warn).join('') + '</div>';
         // Proving
         var pv = r.prove;
@@ -374,8 +379,8 @@
                 _row('CTLp · CPLp', _fx(fa.ctlp, f5) + ' · ' + _fx(fa.cplp, f5)) +
                 _row('CCFp', _fx(fa.ccfp, f5)) +
                 _row('CTLm · CPLm = CCFm', _fx(fa.ctlm, f5) + ' · ' + _fx(fa.cplm, f5) + ' = ' + _fx(fa.ccfm, f5)) +
-                _row('GSVp (prover at 60 °F, 0 psig)', V(fa.gsvp, 4)) +
-                _row('ISVm (meter at 60 °F, 0 psig)', V(fa.isvm, 4)) +
+                _row('GSVp (prover at ' + _stdTxt() + ')', V(fa.gsvp, 4)) +
+                _row('ISVm (meter at ' + _stdTxt() + ')', V(fa.isvm, 4)) +
                 _row('Meter factor (average data method)', _fx(pv.mf, f4)) +
                 _row('Meter factor (average meter factor method)', _fx(pv.mfAvgMethod, f4)) +
                 _row('Repeatability, run meter factors', _fx(pv.rangePct, 4) + ' %') +
@@ -392,7 +397,7 @@
                 _tbl(['Step', 'Factor / volume', 'Value'], [
                     ['1', 'Indicated volume IV = closing − opening', V(tk.iv)],
                     ['2', 'CTL at ' + T(tk.tm) + ' (MPMS 11.1)', _fx(tk.ctl, f4)],
-                    ['3', 'CPL at ' + P(tk.pm) + ' (F = ' + (tk.F * 1e6).toFixed(3) + ' ×10⁻⁶ /psi)', _fx(tk.cpl, f4)],
+                    ['3', 'CPL at ' + P(tk.pm) + ' (F = ' + _fTxt(tk.F) + ')', _fx(tk.cpl, f4)],
                     ['4', 'Meter factor MF (' + tk.mfSrc + ')', _fx(tk.mf, f4)],
                     ['5', 'CCF = CTL × CPL × MF', _fx(tk.ccf, f4)],
                     ['6', 'Gross standard volume GSV = IV × CCF', V(tk.gsv)],

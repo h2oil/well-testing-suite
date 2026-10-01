@@ -1805,6 +1805,9 @@
         }
         return _fmt(v, d) + ' ' + impLabel;
     }
+    // v3.1: Metric mode leads with the SI value, the field-unit value follows in brackets.
+    function _isMetric() { var U = G.WTS_units; return !!(U && U.getSystem && U.getSystem() === 'metric'); }
+    function _pair(vi, ui, vm, um) { return _isMetric() ? _fa(vm) + ' ' + um + ' (' + _fa(vi) + ' ' + ui + ')' : _fa(vi) + ' ' + ui + ' (' + _fa(vm) + ' ' + um + ')'; }
     function _tag(map) { var U = G.WTS_units; if (!U || !U.tagInput) return; for (var id in map) U.tagInput(id, map[id]); }
     function _canon(fn) { var U = G.WTS_units; return (U && U.runCanonical) ? U.runCanonical(fn) : fn(); }
     function _fin(x) { return typeof x === 'number' && isFinite(x); }
@@ -1908,7 +1911,7 @@
     // ── Page ─────────────────────────────────────────────────────────
     var UNITS = {
         hs_q: 'gasRate', hs_ppm: 'concentration', hs_fq: 'gasRate', hs_fppm: 'concentration', hs_fce: 'percent',
-        hs_sq: 'gasRate', hs_sin: 'concentration', hs_sout: 'concentration'
+        hs_sq: 'gasRate', hs_sin: 'concentration', hs_sout: 'concentration', hs_ratio: 'volPerMass'
     };
     var TITLE = 'H2S Exposure & Scavenger';
     var SUB = 'Radius of exposure for 100 and 500 ppm H2S, SO2 from flaring sour gas, and H2S scavenger dosing';
@@ -1928,7 +1931,7 @@
             q: function () { return 'Gas to treat must be above 0 and no more than ' + _u(500, 'gasRate', 0, 'MMSCFD') + '.'; },
             cin: function () { return 'Inlet H2S must be above 0 and no more than 100,000 ppm.'; },
             cout: function () { return 'Target outlet H2S must be 0 ppm or more and below the inlet H2S.'; },
-            ratio: function () { return 'Product consumption must be between 0.1 and 10 US gal per lb H2S.'; }
+            ratio: function () { return _isMetric() ? 'Product consumption must be between ' + _u(0.1, 'volPerMass', 2, 'US gal/lb') + ' and ' + _u(10, 'volPerMass', 1, 'US gal/lb') + ' of H2S removed.' : 'Product consumption must be between 0.1 and 10 US gal per lb H2S.'; }
         }
     };
     var IDS = {
@@ -1977,17 +1980,17 @@
         if (!res) return;
         if (!r.ok) { _errors('hs_roe_res', 'roe', r.bad); return; }
         var v = '';
-        if (r.x100_ft < 50) v += _ok('100 ppm radius of exposure is under 50 ft.');
-        else v += _warn('100 ppm radius of exposure is ' + _fa(r.x100_ft) + ' ft (' + _fa(r.x100_ft * 0.3048) + ' m) — check for public areas inside it; a contingency plan may be required.');
-        if (r.x100_ft > 3000) v += _warn('100 ppm radius of exposure exceeds 3,000 ft.');
-        if (r.x500_ft >= 50) v += _warn('500 ppm radius of exposure is ' + _fa(r.x500_ft) + ' ft (' + _fa(r.x500_ft * 0.3048) + ' m) — check for public roads inside it.');
+        if (r.x100_ft < 50) v += _ok(_isMetric() ? '100 ppm radius of exposure is under 15.2 m (50 ft).' : '100 ppm radius of exposure is under 50 ft.');
+        else v += _warn('100 ppm radius of exposure is ' + _pair(r.x100_ft, 'ft', r.x100_m, 'm') + ' — check for public areas inside it; a contingency plan may be required.');
+        if (r.x100_ft > 3000) v += _warn(_isMetric() ? '100 ppm radius of exposure exceeds 914 m (3,000 ft).' : '100 ppm radius of exposure exceeds 3,000 ft.');
+        if (r.x500_ft >= 50) v += _warn('500 ppm radius of exposure is ' + _pair(r.x500_ft, 'ft', r.x500_m, 'm') + ' — check for public roads inside it.');
         res.innerHTML =
             '<div class="rbox"><div class="rbox-title">Radius of Exposure</div>' +
             _row('H2S mole fraction', _fmt(r.mf, 6)) +
-            _row('Escape rate', _fmt(r.Q, 0) + ' scf/d (' + _fa(r.Q * SCF_TO_M3) + ' m³/d)') +
-            _row('100 ppm radius of exposure', _fa(r.x100_ft) + ' ft (' + _fa(r.x100_m) + ' m)') +
-            _row('500 ppm radius of exposure', _fa(r.x500_ft) + ' ft (' + _fa(r.x500_m) + ' m)') +
-            _row('H2S release', _fa(r.h2s_lbd) + ' lb/d (' + _fa(r.h2s_kgd) + ' kg/d)') +
+            _row('Escape rate', _pair(r.Q, 'scf/d', r.Q * SCF_TO_M3, 'm³/d')) +
+            _row('100 ppm radius of exposure', _pair(r.x100_ft, 'ft', r.x100_m, 'm')) +
+            _row('500 ppm radius of exposure', _pair(r.x500_ft, 'ft', r.x500_m, 'm')) +
+            _row('H2S release', _pair(r.h2s_lbd, 'lb/d', r.h2s_kgd, 'kg/d')) +
             v +
             _note('Screening formula from Texas Statewide Rule 36 (also used in US federal onshore H2S rules). ' +
                 'Escape rate = maximum volume available for escape, for a producing well the current adjusted ' +
@@ -2003,9 +2006,9 @@
         if (!r.ok) { _errors('hs_so2_res', 'so2', r.bad); return; }
         res.innerHTML =
             '<div class="rbox"><div class="rbox-title">SO2 Generation</div>' +
-            _row('SO2', _fa(r.so2_lbhr) + ' lb/hr (' + _fa(r.so2_kghr) + ' kg/hr)') +
+            _row('SO2', _pair(r.so2_lbhr, 'lb/hr', r.so2_kghr, 'kg/hr')) +
             _row('SO2 per day', _fa(r.so2_td) + ' t/d') +
-            _row('Unburned H2S', _fa(r.h2s_lbhr) + ' lb/hr (' + _fa(r.h2s_kghr) + ' kg/hr)') +
+            _row('Unburned H2S', _pair(r.h2s_lbhr, 'lb/hr', r.h2s_kghr, 'kg/hr')) +
             _note('Ground-level SO2 concentration depends on flare height, plume rise and weather: screen it on the ' +
                 'SO2 / H2S Dispersion Screening page. Use Flare Emissions for full-period reporting. ' +
                 _basisNote(r.basis)) +
@@ -2022,15 +2025,15 @@
             : _warn('Outlet target is above the common 4 ppm (0.25 gr/100 scf) sales-gas limit.');
         res.innerHTML =
             '<div class="rbox"><div class="rbox-title">Scavenger Requirement</div>' +
-            _row('H2S removed', _fa(r.lb_d) + ' lb/d (' + _fa(r.kg_d) + ' kg/d)') +
+            _row('H2S removed', _pair(r.lb_d, 'lb/d', r.kg_d, 'kg/d')) +
             _row('Inlet H2S', _fa(cin) + ' ppm = ' + _fa(r.gr_in) + ' gr/100 scf') +
             _row('Outlet H2S', _fa(cout) + ' ppm = ' + _fa(r.gr_out) + ' gr/100 scf') +
-            _row('Product', _fa(r.gal_d) + ' US gal/d (' + _fa(r.L_d) + ' L/d)') +
-            _row('Injection rate', _fa(r.L_hr) + ' L/hr (' + _fa(r.gal_hr) + ' US gal/hr)') +
+            _row('Product', _pair(r.gal_d, 'US gal/d', r.L_d, 'L/d')) +
+            _row('Injection rate', _fa(r.L_hr) + ' L/hr (' + _fa(r.gal_hr) + ' US gal/hr)')   /* dosing pumps are rated in L/hr: SI first in both systems */ +
             v +
             _note('Consumption depends on product strength, contact time, temperature and injection design. ' +
-                'Use the supplier\'s figure; published field trials of triazine products report about 1.2 to 1.9 ' +
-                'US gal per lb H2S removed. Stoichiometric use is lower. Watch for solids from spent product. ' +
+                'Use the supplier\'s figure; published field trials of triazine products report about ' +
+                (_isMetric() ? '10 to 16 L/kg (1.2 to 1.9 US gal per lb)' : '1.2 to 1.9 US gal per lb (10 to 16 L/kg)') + ' of H2S removed. Stoichiometric use is lower. Watch for solids from spent product. ' +
                 _basisNote(r.basis)) +
             '</div>';
         res.setAttribute('data-done', '1');
@@ -2122,7 +2125,7 @@
             _fg('hs_sq', 'Gas to treat (MMSCFD)', '5', ' min="0"') +
             _fg('hs_sin', 'Inlet H2S (ppm)', '50', ' min="0"') +
             _fg('hs_sout', 'Target outlet H2S (ppm)', '4', ' min="0"') +
-            _fg('hs_ratio', 'Product consumption, US gal per lb H2S', '1.5', ' min="0.1" max="10"') +
+            _fg('hs_ratio', 'Product consumption per H2S removed (US gal/lb)', '1.5', ' min="0"') +
             '</div>' +
             '<div class="btn-row">' + _calcBtn('hs_calc3') + '</div>' +
             '<div id="hs_scv_res" style="margin-top:14px"></div></div>' +
@@ -3387,7 +3390,9 @@ function normSample(s, tNow) {
     var v = s.v;
     v = (v === null || v === undefined || v === '') ? null : +v;
     if (v !== null && !isFinite(v)) v = null;
-    return { tag: tag, device: cleanStr(s.device), t: t, v: v, q: qCode(s.q, v), raw: s.raw, unit: cleanStr(s.unit, 32) };
+    var o = { tag: tag, device: cleanStr(s.device), t: t, v: v, q: qCode(s.q, v), raw: s.raw, unit: cleanStr(s.unit, 32) };
+    if (s.desc != null && s.desc !== '') o.desc = cleanStr(s.desc, 200);          // optional description (Mini WellOS form values)
+    return o;
 }
 
 // ─── §2 pure algorithms ──────────────────────────────────────────────
@@ -4620,6 +4625,7 @@ function doFlush() {
             var w = want[s.tag] || (want[s.tag] = { name: s.tag, device: null, unit: null, descr: null });
             if (s.device) w.device = s.device;
             if (s.unit) w.unit = s.unit;
+            if (s.desc) w.descr = s.desc;
         });
         names = Object.keys(want);
         names.forEach(function (name) {
@@ -4859,7 +4865,7 @@ function listTags() {
                 tag: name, id: t ? t.id : null, device: firstDef(t && t.device, m && m.device, L && L.device), unit: firstDef(t && t.unit, m && m.unit, L && L.unit),
                 desc: firstDef(t && t.descr, m && m.desc), count: x.n || 0, rollups: x.rn || 0, first: first.length ? Math.min.apply(null, first) : null,
                 last: isNum(lastT) ? lastT : null, lastValue: lastV, lastQuality: lastQ === null || lastQ === undefined ? null : QN[lastQ],
-                configured: !!m, enabled: m ? m.enabled : null, pollMs: m ? m.pollMs : null, source: /^FORM\.|^SIM\./.test(name) ? 'form' : /^DEMO\./.test(name) ? 'demo' : (m ? 'modbus' : 'recorded'),
+                configured: !!m, enabled: m ? m.enabled : null, pollMs: m ? m.pollMs : null, source: /^FORM\.|^SIM\./.test(name) || firstDef(t && t.device, L && L.device) === 'form' ? 'form' : /^DEMO\./.test(name) ? 'demo' : (m ? 'modbus' : 'recorded'),
                 status: tagStatus(m, isNum(lastT) ? lastT : null, lastQ, now)
             };
         });
@@ -5070,6 +5076,7 @@ function exportRows(o) {
 function exportCSV(o) {
     o = o || {};
     return exportRows(o).then(function (X) {
+        if (o.skipEmpty && !X.rows.length) return { filename: null, rows: 0, empty: true };       // page export: no empty file
         var parts = [csvLine(X.head)];
         for (var i = 0; i < X.rows.length; i += 5000) {
             var chunk = '';
@@ -5100,9 +5107,11 @@ function exportXLSX(o) {
     var X;
     return exportRows(o).then(function (x) {
         X = x;
+        if (o.skipEmpty && !X.rows.length) return null;
         if (X.rows.length > 1048575) throw new Error('Too many rows for one Excel sheet (' + fmtCount(X.rows.length) + ' > 1,048,575) — narrow the range, aggregate, or export CSV.');
         return loadXLSX();
     }).then(function (XL) {
+        if (!XL) return { filename: null, rows: 0, empty: true };
         var wb = XL.utils.book_new(), sheet = X.layout === 'wide' ? 'Data' : 'Samples';
         XL.utils.book_append_sheet(wb, XL.utils.aoa_to_sheet([X.head].concat(X.rows)), sheet);
         XL.utils.book_append_sheet(wb, XL.utils.aoa_to_sheet(tagSheet(X.tags)), 'Tags');
@@ -6147,13 +6156,14 @@ function copyTable() {
 function val(sel) { var e = pageEl(sel); return e ? e.value : ''; }
 function doExport() {
     var fmt = val('[data-h="xfmt"]') || 'csv', range = val('[data-h="xrange"]'), tagsSel = val('[data-h="xtags"]'), agg = val('[data-h="xagg"]') || 'raw';
-    var o = { tags: tagsSel === 'all' ? undefined : (V.tags || []).slice(), agg: agg };
+    var o = { tags: tagsSel === 'all' ? undefined : (V.tags || []).slice(), agg: agg, skipEmpty: true };
     if (range !== 'all') { o.from = V.from; o.to = V.to; }
     if (o.tags && !o.tags.length) { setMsg('hist_io_res', false, 'No tags selected on the trend — choose “All tags” or select tags.'); return Promise.resolve(); }
     setMsg('hist_io_res', null, 'Exporting…');
     var p = fmt === 'csv' ? exportCSV(o) : fmt === 'csvwide' ? exportCSV(Object.assign(o, { layout: 'wide' })) : fmt === 'xlsx' ? exportXLSX(o)
         : exportDb({ format: fmt === 'json' ? 'json' : 'sqlite' });
     return p.then(function (r) {
+        if (r && r.empty) { setMsg('hist_io_res', false, 'No samples to export' + (range !== 'all' ? ' in the time window shown' : '') + (o.tags ? ' for the selected tags' : '') + ' — nothing was downloaded.'); return; }
         setMsg('hist_io_res', true, 'Exported ' + (r.rows !== undefined ? fmtCount(r.rows) + ' rows' : fmtBytes(r.size)) + ' to ' + r.filename + '.');
     }, function (e) { setMsg('hist_io_res', false, errMsg(e)); });
 }
@@ -6787,13 +6797,15 @@ G.WTS_calcRegistry.historian = {
             '</tr></thead><tbody>' + rows.map(function (r) { return '<tr>' + r.map(function (c) { return '<td>' + c + '</td>'; }).join('') + '</tr>'; }).join('') +
             '</tbody></table></div>';
     }
+    // v3.1: Metric mode leads with kg/m³ (ppg follows); imperial text unchanged.
     function _ppgTriple(ppg) {
-        return _fixed(ppg, 2) + ' ppg · SG ' + _fixed(ppg / PPG_PER_SG, 3) + ' · ' + _fmt(ppg * KGM3_PER_PPG, 0) + ' kg/m³';
+        return _metric() ? _fmt(ppg * KGM3_PER_PPG, 0) + ' kg/m³ · SG ' + _fixed(ppg / PPG_PER_SG, 3) + ' · ' + _fixed(ppg, 2) + ' ppg'
+                         : _fixed(ppg, 2) + ' ppg · SG ' + _fixed(ppg / PPG_PER_SG, 3) + ' · ' + _fmt(ppg * KGM3_PER_PPG, 0) + ' kg/m³';
     }
 
-    // A single density in ppg, with its kg/m³ companion in Metric mode (imperial text unchanged).
+    // A single density: ppg in imperial; kg/m³ first (ppg in brackets) in Metric mode.
     function _ppgMet(ppg) {
-        return _fixed(ppg, 2) + ' ppg' + (_metric() ? ' (' + _fmt(ppg * KGM3_PER_PPG, 0) + ' kg/m³)' : '');
+        return _metric() ? _fmt(ppg * KGM3_PER_PPG, 0) + ' kg/m³ (' + _fixed(ppg, 2) + ' ppg)' : _fixed(ppg, 2) + ' ppg';
     }
 
     function _errors(resId, ids, bad, errs) {
@@ -6916,8 +6928,10 @@ G.WTS_calcRegistry.historian = {
         if (!r.brineOk) bv = _bad('No clear brine in the guide reaches ' + _ppgMet(k.used) + '. Use a weighted fluid.');
         else bv = _ok('Clear brines that reach ' + _ppgMet(k.used) + ': ' + r.brineList.join(', ') + '.');
         h += '<div class="rbox"><div class="rbox-title">Brine Selection Guide</div>' +
-            _tbl(['Brine', 'Max ppg', 'Max SG', 'Max kg/m³', 'Reaches kill fluid', 'Crystallisation / notes'], r.brines.map(function (x) {
-                return [x.name, _fixed(x.ppg, 2), _fixed(x.sg, 2), _fmt(x.kgm3, 0), x.reaches ? 'yes' : 'no', x.note];
+            _tbl(_metric() ? ['Brine', 'Max kg/m³', 'Max SG', 'Max ppg', 'Reaches kill fluid', 'Crystallisation / notes']
+                           : ['Brine', 'Max ppg', 'Max SG', 'Max kg/m³', 'Reaches kill fluid', 'Crystallisation / notes'], r.brines.map(function (x) {
+                return _metric() ? [x.name, _fmt(x.kgm3, 0), _fixed(x.sg, 2), _fixed(x.ppg, 2), x.reaches ? 'yes' : 'no', x.note]
+                                 : [x.name, _fixed(x.ppg, 2), _fixed(x.sg, 2), _fmt(x.kgm3, 0), x.reaches ? 'yes' : 'no', x.note];
             })) +
             bv +
             _note('Guidance only. Maximum densities are typical values at about 70 °F. Crystallisation temperature rises steeply ' +
@@ -8891,7 +8905,7 @@ G.WTS_calcRegistry.historian = {
             h += '<div class="rbox"><div class="rbox-title">Inlet Conditions and Fluid Properties</div>' +
                 _row('Producing GOR', _u(pr.gor, 'gor', 0, 'SCF/STB', 1)) +
                 _row('Solution GOR at inlet, Standing', _u(pr.rs, 'gor', 0, 'SCF/STB', 1)) +
-                _row('Oil FVF, Standing', _fmt(pr.bo, 4) + ' rb/STB') +
+                _row('Oil FVF, Standing', _fmt(pr.bo, 4) + (_metric() ? ' m³/Sm³ (rb/STB)' : ' rb/STB'))   /* v3.1: same number in both systems */ +
                 _row('Gas Z-factor, DAK', _fmt(pr.z, 4)) +
                 _row('Liquid density, in situ', dens(pr.rhoL)) +
                 _row('Gas density, in situ', dens(pr.rhoG)) +
@@ -9284,7 +9298,15 @@ G.WTS_calcRegistry.historian = {
             '</tbody></table></div>';
     }
     function _den(v) { return _u(v, 'densityLiquid', 2, 'ppg', 3); }
-    function _ppg3(v) { return _fx(v, 2) + ' ppg · SG ' + _fx(v / WATER_PPG, 3) + ' · ' + _fmt(v * 119.826, 0) + ' kg/m³'; }
+    // v3.1: Metric mode leads with kg/m³ (ppg follows), like the rest of the page.
+    function _ppg3(v) {
+        return _metric() ? _fmt(v * 119.826, 0) + ' kg/m³ · SG ' + _fx(v / WATER_PPG, 3) + ' · ' + _fx(v, 2) + ' ppg'
+                         : _fx(v, 2) + ' ppg · SG ' + _fx(v / WATER_PPG, 3) + ' · ' + _fmt(v * 119.826, 0) + ' kg/m³';
+    }
+    function _perSack(v, imp, f, met, dImp, dMet) {   // per-sack quantity: metric first in Metric mode
+        return _metric() ? _fx(v * f, dMet) + ' ' + met + ' (' + _fx(v, dImp) + ' ' + imp + ')' : _fx(v, dImp) + ' ' + imp + ' (' + _fx(v * f, dMet) + ' ' + met + ')';
+    }
+    function _ppgText(t) { return _metric() ? String(t).replace(/(\d+(?:\.\d+)?) ppg/g, function (m, x) { return _fmt(parseFloat(x) * 119.826, 0) + ' kg/m³'; }) : t; }
     var V = function (v) { return _u(v, 'volume', 1, 'bbl', 2); };
     var MSG = {
         od: function () { return 'Casing OD must be above 0 and no more than ' + _u(30, 'lengthSmall', 0, 'in') + '.'; },
@@ -9317,9 +9339,9 @@ G.WTS_calcRegistry.historian = {
         else v += _ok('Water-to-cement ratio ' + _fx(r.wcr, 2) + ' is in the normal neat-slurry range.');
         res.innerHTML =
             '<div class="rbox"><div class="rbox-title">Slurry Design</div>' +
-            _row('Water requirement', _fx(r.waterGalSk, 2) + ' gal/sack (' + _fx(r.waterGalSk * 3.78541, 1) + ' L/sack)') +
+            _row('Water requirement', _perSack(r.waterGalSk, 'gal/sack', 3.78541, 'L/sack', 2, 1)) +
             _row('Water-to-cement ratio', _fx(r.wcr * 100, 1) + ' % by mass') +
-            _row('Slurry yield', _fx(r.yieldFt3, 3) + ' ft³/sack (' + _fx(r.yieldFt3 * 28.3168, 1) + ' L/sack)') +
+            _row('Slurry yield', _perSack(r.yieldFt3, 'ft³/sack', 28.3168, 'L/sack', 3, 1)) +
             v + '</div>' +
             '<div class="rbox"><div class="rbox-title">Slurry Volume &amp; Sacks</div>' +
             _tbl(['Section', 'Length', 'Capacity', 'Volume'], [
@@ -9327,7 +9349,7 @@ G.WTS_calcRegistry.historian = {
                 ['Open-hole excess', '', '', V(r.excessBbl)],
                 ['Shoe track', '', _u(r.pipeCap, 'capacity', 5, 'bbl/ft', 5), V(r.trackBbl)]
             ]) +
-            _row('Total slurry', V(r.slurryBbl) + ' (' + _fmt(r.slurryFt3, 0) + ' ft³)') +
+            _row('Total slurry', V(r.slurryBbl) + (_metric() ? '' : ' (' + _fmt(r.slurryFt3, 0) + ' ft³)')) +
             _row('Cement', _fmt(r.sacksRounded, 0) + ' sacks') +
             _row('Mix water', V(r.mixWaterBbl)) +
             _row('Displacement to the float collar', V(r.dispBbl)) +
@@ -9354,7 +9376,7 @@ G.WTS_calcRegistry.historian = {
                 _row('Brine A for target', V(r.target.va) + ' (' + _fx(r.target.fa * 100, 1) + ' %)') +
                 _row('Brine B for target', V(r.target.vb));
         }
-        var v = r.cautions.map(function (c) { return c.lvl === 'bad' ? _bad(c.t) : _warn(c.t); }).join('');
+        var v = r.cautions.map(function (c) { return c.lvl === 'bad' ? _bad(_ppgText(c.t)) : _warn(_ppgText(c.t)); }).join('');
         if (!r.cautions.length) v = _ok('No crystallisation or compatibility flags for this pair.');
         h += v + _note('Densities at surface temperature (about 70 °F). Volumes are taken as additive; real blends can shrink by up to about 1 %. ' +
             'Brine density falls as temperature rises. The crystallisation temperature (TCT) rises steeply near the maximum density ' +
@@ -11017,6 +11039,11 @@ G.WTS_calcRegistry.historian = {
         opts.forEach(function (o) { h += '<option value="' + o[0] + '"' + (o[0] === val ? ' selected' : '') + '>' + o[1] + '</option>'; });
         return h + '</select></div>';
     }
+    // v3.1: Metric mode shows the coefficients per °C / per kPa and the standard basis in SI first.
+    // α per °C = α per °F × 1.8; F per kPa = F per psi ÷ 6.894757.
+    function _alphaTxt(aF) { return _metric() ? (aF * 1.8 * 1e6).toFixed(3) + ' ×10⁻⁶ /°C (' + (aF * 1e6).toFixed(3) + ' ×10⁻⁶ /°F)' : (aF * 1e6).toFixed(3) + ' ×10⁻⁶ /°F'; }
+    function _fTxt(fPsi) { return _metric() ? (fPsi / 6.894757 * 1e6).toFixed(4) + ' ×10⁻⁶ /kPa (' + (fPsi * 1e6).toFixed(3) + ' ×10⁻⁶ /psi)' : (fPsi * 1e6).toFixed(3) + ' ×10⁻⁶ /psi'; }
+    function _stdTxt() { return _metric() ? '15.56 °C (60 °F), 0 kPa(g)' : '60 °F, 0 psig'; }
     function _row(l, v) { return '<div class="rrow"><span class="rl">' + l + '</span><span class="rv">' + v + '</span></div>'; }
     function _ok(t) { return '<div style="color:var(--green)">✓ ' + t + '</div>'; }
     function _warn(t) { return '<div style="color:var(--yellow)">⚠ ' + t + '</div>'; }
@@ -11038,8 +11065,8 @@ G.WTS_calcRegistry.historian = {
             _row('Commodity group', GROUPS[L.group].name) +
             _row('API @ 60 °F', _fx(L.api60, 2)) +
             _row('Density @ 60 °F', _fmt(L.rho60, 1) + ' kg/m³') +
-            _row('Thermal expansion α60', (alpha60(L.rho60, L.group) * 1e6).toFixed(3) + ' ×10⁻⁶ /°F') +
-            _row('Compressibility F at 60 °F', (fpRho(L.rho60, 60) * 1e6).toFixed(3) + ' ×10⁻⁶ /psi') +
+            _row('Thermal expansion α60', _alphaTxt(alpha60(L.rho60, L.group))) +
+            _row('Compressibility F at ' + (_metric() ? '15.56 °C (60 °F)' : '60 °F'), _fTxt(fpRho(L.rho60, 60))) +
             L.warnings.map(_warn).join('') + '</div>';
         // Proving
         var pv = r.prove;
@@ -11069,8 +11096,8 @@ G.WTS_calcRegistry.historian = {
                 _row('CTLp · CPLp', _fx(fa.ctlp, f5) + ' · ' + _fx(fa.cplp, f5)) +
                 _row('CCFp', _fx(fa.ccfp, f5)) +
                 _row('CTLm · CPLm = CCFm', _fx(fa.ctlm, f5) + ' · ' + _fx(fa.cplm, f5) + ' = ' + _fx(fa.ccfm, f5)) +
-                _row('GSVp (prover at 60 °F, 0 psig)', V(fa.gsvp, 4)) +
-                _row('ISVm (meter at 60 °F, 0 psig)', V(fa.isvm, 4)) +
+                _row('GSVp (prover at ' + _stdTxt() + ')', V(fa.gsvp, 4)) +
+                _row('ISVm (meter at ' + _stdTxt() + ')', V(fa.isvm, 4)) +
                 _row('Meter factor (average data method)', _fx(pv.mf, f4)) +
                 _row('Meter factor (average meter factor method)', _fx(pv.mfAvgMethod, f4)) +
                 _row('Repeatability, run meter factors', _fx(pv.rangePct, 4) + ' %') +
@@ -11087,7 +11114,7 @@ G.WTS_calcRegistry.historian = {
                 _tbl(['Step', 'Factor / volume', 'Value'], [
                     ['1', 'Indicated volume IV = closing − opening', V(tk.iv)],
                     ['2', 'CTL at ' + T(tk.tm) + ' (MPMS 11.1)', _fx(tk.ctl, f4)],
-                    ['3', 'CPL at ' + P(tk.pm) + ' (F = ' + (tk.F * 1e6).toFixed(3) + ' ×10⁻⁶ /psi)', _fx(tk.cpl, f4)],
+                    ['3', 'CPL at ' + P(tk.pm) + ' (F = ' + _fTxt(tk.F) + ')', _fx(tk.cpl, f4)],
                     ['4', 'Meter factor MF (' + tk.mfSrc + ')', _fx(tk.mf, f4)],
                     ['5', 'CCF = CTL × CPL × MF', _fx(tk.ccf, f4)],
                     ['6', 'Gross standard volume GSV = IV × CCF', V(tk.gsv)],
@@ -11870,7 +11897,7 @@ G.WTS_calcRegistry.historian = {
         if (!(_fin(co2) && co2 >= 0 && co2 < 100 && _fin(h2s) && h2s >= 0 && h2s < 100 && _fin(n2) && n2 >= 0 && n2 < 100 && co2 + h2s + n2 < 95)) err('co2', 'Laboratory CO2, H2S and N2 must each be 0–100 mol % and total below 95 %.');
         if (!_blank(i.zField) && !(_fin(zF) && zF > 0.2 && zF < 2)) err('zField', 'Field Z-factor must be between 0.2 and 2, or blank.');
         if (!_blank(i.zLab) && !(_fin(zL) && zL > 0.2 && zL < 2)) err('zLab', 'Laboratory Z-factor must be between 0.2 and 2, or blank.');
-        if (shrM === 'user' && !(_fin(shrU) && shrU > 0.3 && shrU <= 1)) err('shrUser', 'Shrinkage factor must be above 0.3 and no more than 1 (stock-tank bbl per separator bbl).');
+        if (shrM === 'user' && !(_fin(shrU) && shrU > 0.3 && shrU <= 1)) err('shrUser', 'Shrinkage factor must be above 0.3 and no more than 1 (stock-tank volume per separator volume).');
         if (!(_fin(tolOpen) && tolOpen > 0 && tolOpen <= 50)) err('tolOpen', 'Opening-pressure tolerance must be between 0 and 50 %.');
         if (!(_fin(tolSat) && tolSat > 0 && tolSat <= 50)) err('tolSat', 'Saturation-pressure tolerance must be between 0 and 50 %.');
         if (!(_fin(tolDup) && tolDup > 0 && tolDup <= 50)) err('tolDup', 'Duplicate-agreement tolerance must be between 0 and 50 %.');
@@ -12068,8 +12095,8 @@ G.WTS_calcRegistry.historian = {
             (r.shrMethod === 'standing' ?
                 _row('Solution GOR of separator oil (Standing)', _gor(st.Rs, 'st')) +
                 _row('Bo of separator oil (Standing)', _fmt(st.Bo, 4)) : '') +
-            _row('Shrinkage factor S (STB per separator bbl)', _fmt(r.S, 4) + (r.shrMethod === 'user' ? ' (typed)' : ' (Standing)')) +
-            _row('Separator volume factor 1/S (separator bbl per STB)', _fmt(r.Bsep, 4)) +
+            _row('Shrinkage factor S (' + (_metric() ? 'stock-tank m³ per separator m³' : 'STB per separator bbl') + ')', _fmt(r.S, 4) + (r.shrMethod === 'user' ? ' (typed)' : ' (Standing)')) +
+            _row('Separator volume factor 1/S (' + (_metric() ? 'separator m³ per stock-tank m³' : 'separator bbl per STB') + ')', _fmt(r.Bsep, 4)) +
             _row('Oil rate, separator conditions', L(r.qOilSep) + (r.oilBasis === 'sep' ? ' (entered)' : '')) +
             _row('Oil rate, stock tank', L(r.qOilST) + (r.oilBasis === 'st' ? ' (entered)' : '')) +
             _row('Field GOR, separator basis', _gor(r.gorSepField, 'sep')) +
@@ -12181,7 +12208,7 @@ G.WTS_calcRegistry.historian = {
         h += '<div class="card"><div class="card-title">Shrinkage and Tolerances</div><div class="fg">' +
             '<div class="fg-item"><label for="sq_shrm">Shrinkage source</label>' +
             _selHtml('sq_shrm', [['standing', 'Standing Bo at separator conditions'], ['user', 'Typed value (laboratory / meter)']], 'standing') + '</div>' +
-            _fg('sq_shr', 'Shrinkage factor, typed (STB per separator bbl)', '0.90') +
+            _fg('sq_shr', 'Shrinkage factor, typed (stock-tank / separator volume)', '0.90') +
             _fg('sq_tolo', 'Opening-pressure tolerance (%)', '5') +
             _fg('sq_tols', 'Saturation-pressure tolerance (%)', '5') +
             _fg('sq_told', 'Duplicate-agreement tolerance (%)', '2') +

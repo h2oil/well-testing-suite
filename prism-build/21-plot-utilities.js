@@ -1324,7 +1324,7 @@
         if (!w || typeof w !== 'object') return b('Well', { available: 'false' }, null, 1);
         var gas = w.fluid === 'gas';
         var units = { q: gas ? 'Mscf/d' : 'STB/d', B: gas ? 'RB/Mscf' : 'RB/STB', mu: 'cp', ct: '1/psi', h: 'ft',
-                      phi: 'fraction', rw: 'ft', pi: 'psia', T_R: 'degF', tp: 'hr', tShut: 'hr', pwf0: 'psia' };
+                      phi: 'fraction', rw: 'ft', pi: 'psia', T_R: 'degR', tp: 'hr', tShut: 'hr', pwf0: 'psia' };   // T_R is Rankine (°F + 459.67)
         var keys = ['fluid', 'testType', 'q', 'B', 'mu', 'ct', 'h', 'phi', 'rw', 'pi', 'T_R', 'sg', 'tp', 'tShut', 'pwf0'];
         var dflt = Array.isArray(w.defaulted) ? w.defaulted : [];
         var children = [];
