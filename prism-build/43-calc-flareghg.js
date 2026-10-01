@@ -2,7 +2,7 @@
 // 43-calc-flareghg.js — Flare Emissions (plug-in calculator, Round-9)
 //
 //   Route key : flareghg          (window.WTS_calcRegistry.flareghg)
-//   Page      : Flare Emissions   (sidebar group "Safety & Process")
+//   Page      : Flare Emissions   (sidebar group "Flare & Relief")
 //   Public    : window.renderFlareEmissions(body)
 //               window.calcFlareGHG()            — reads the DOM, validates, renders
 //               window.WTS_flareghg_compute(inp) — pure, field units in/out, no DOM
@@ -404,7 +404,7 @@
         key: 'flareghg',
         title: 'Flare Emissions',
         sub: 'Flared gas volume, heat released and CO2 / CH4 / N2O / CO2e / SO2 emissions for well test flaring, with liquid-burner CO2',
-        group: 'Safety & Process',
+        group: 'Flare & Relief',
         icon: '&#127981;',
         badge: 'Safety',
         bc: 'dc-b-orange',

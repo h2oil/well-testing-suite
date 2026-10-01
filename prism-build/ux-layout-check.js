@@ -9,7 +9,9 @@
 //   2. stacked input tables at 375 px: every table.wts-stack is a block of row cards (each body row
 //      display:block, cells display:flex with a data-label ::before), its header row is clipped
 //      (still in the DOM), and every control sits inside the viewport;
-//   3. desktop (1280 px): the same tables keep display:table and a visible header (web layout
+//   3. desktop sidebar (web, 1280×800 and 1440×900): with each group opened in turn (accordion) the
+//      sidebar needs no scrolling (scrollHeight ≤ clientHeight);
+//   4. desktop (1280 px): the same tables keep display:table and a visible header (web layout
 //      unchanged above 600 px), and the page report model (collectPageReport) equals the one taken
 //      at 375 px — the card layout does not change what the PDF / PNG / CSV / Copy exports capture.
 // Engines: Chromium for the web page, WebKit with a native Capacitor stub (html.ios-app) for the iOS
@@ -57,8 +59,8 @@ function serve(dir, index) {
   });
 }
 
-async function open(browser, t, width, port) {
-  const ctx = await browser.newContext(Object.assign({ viewport: { width, height: 820 }, deviceScaleFactor: 1 },
+async function open(browser, t, width, port, height) {
+  const ctx = await browser.newContext(Object.assign({ viewport: { width, height: height || 820 }, deviceScaleFactor: 1 },
     width < 700 ? { isMobile: t.engine !== 'firefox', hasTouch: true } : {},
     t.ios ? { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148' } : {}));
   const p = await ctx.newPage();
@@ -180,6 +182,27 @@ function tableState() {
               if (SHOTS && ts.length) await p.locator('#pgBody table.wts-stack').first().screenshot({ path: path.join(SHOTS, t.name + '-' + w + '-' + r + '.png') });
             }
           }
+          await ctx.close();
+        }
+        // desktop sidebar: fits the window with any one group open (web layout; the iOS app is phone / iPad)
+        if (!t.ios) for (const [w, h] of [[1280, 800], [1440, 900]]) {
+          const { ctx, p } = await open(browser, t, w, port, h);
+          const fit = await p.evaluate(async () => {
+            const s = document.getElementById('sidebar'), out = [];
+            const labels = Array.from(s.querySelectorAll('.nav-group')).filter((g) => getComputedStyle(g).display !== 'none').map((g) => g.querySelector('.nav-group-label'));
+            for (const l of labels) {
+              if (l.parentElement.classList.contains('collapsed')) l.click();
+              await new Promise((r) => requestAnimationFrame(r));
+              out.push({ group: l.textContent.trim(), sh: s.scrollHeight, ch: s.clientHeight, content: Math.round(Array.from(s.children).reduce((a, c) => a + c.getBoundingClientRect().height, 0)), open: Array.from(s.querySelectorAll('.nav-group:not(.collapsed)')).length });
+            }
+            return out;
+          });
+          summary.sidebar = summary.sidebar || {};
+          summary.sidebar[w + 'x' + h] = fit;
+          fit.forEach((x) => { summary.checks++; if (x.sh > x.ch + 1 || x.content > x.ch + 1 || x.open !== 1) fail('web ' + w + 'x' + h + ' sidebar needs scrolling with "' + x.group + '" open ' + JSON.stringify(x)); });
+          const worst = fit.reduce((a, x) => (x.content > a.content ? x : a), fit[0] || { sh: 0, ch: 0, content: 0 });
+          say('[web] ' + w + 'x' + h + ' sidebar: ' + fit.length + ' groups, tallest open group "' + (worst.group || '') + '" scrollHeight ' + worst.sh + ' / clientHeight ' + worst.ch + ' (content ' + worst.content + ' px)');
+          if (SHOTS) await p.screenshot({ path: path.join(SHOTS, 'web-' + w + 'x' + h + '-sidebar.png') });
           await ctx.close();
         }
         // desktop: tables keep the table layout

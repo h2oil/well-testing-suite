@@ -29,14 +29,15 @@ async function demo(app) {
 
 module.exports = [
   {
-    name: 'registry: Modbus page in "Live Data", Mini WellOS in its own "Mini WellOS" group; titles, tiles, no WTS page change',
+    name: 'registry: Mini WellOS, Modbus and the historian in the "Live Data" group (Mini WellOS first); titles, tiles, no WTS page change',
     wp: WP, opts: OPTS,
     run(app, assert) {
       const W = app.win;
       assert.fn(W.WTS_modbus.createClient); assert.fn(W.WTS_modbus.getTags);
       const m = navBtn(app, 'modbus'), w = navBtn(app, 'wellos');
       assert.ok(m && w, 'nav buttons');
-      assert.strictEqual(groupLabel(m), 'Live Data'); assert.strictEqual(groupLabel(w), 'Mini WellOS');
+      assert.strictEqual(groupLabel(m), 'Live Data'); assert.strictEqual(groupLabel(w), 'Live Data');
+      assert.deepStrictEqual(Array.from(w.closest('.nav-group').querySelectorAll('.nav-btn[data-p]')).map((b) => b.getAttribute('data-p')), ['wellos', 'modbus', 'historian'], 'Mini WellOS first');
       assert.notStrictEqual(m.closest('.nav-group'), navBtn(app, 'wts') ? navBtn(app, 'wts').closest('.nav-group') : null, 'separate from the Well Test Simulator');
       app.click(w);
       assert.strictEqual(text(app.el('pgTitle')), 'Mini WellOS');

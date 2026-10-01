@@ -158,6 +158,8 @@
               own sideways scroller (rule 3), and its cells lose the narrow-table side padding.
               Sidebar group headings (tap to collapse) get the 44 pt touch target. */
         html.ios-app .nav-group-label { min-height: 44px; padding-top: 0; padding-bottom: 0; }
+        /* v3.1: the sidebar "What's new" link and the hub tab strip (Chokes, Separators…) too. */
+        html.ios-app .sb-relnotes, html.ios-app .hub-tab { min-height: 44px; }
         @media (max-width: 600px) {
             html.ios-app #pgBody table.wts-stack { display: block; max-width: 100%; overflow: visible; }
             html.ios-app #pgBody table.wts-stack tr > td, html.ios-app #pgBody table.wts-stack tr > th { padding-left: 0; padding-right: 0; }

@@ -569,7 +569,7 @@
         key: 'gaspvt',
         title: TITLE,
         sub: SUB,
-        group: 'Fluid & Field Calcs',
+        group: 'Fluids & Utilities',
         icon: '&#9679;',
         badge: 'PVT',
         bc: 'dc-b-blue',

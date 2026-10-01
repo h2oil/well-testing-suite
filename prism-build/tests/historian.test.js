@@ -115,16 +115,16 @@ async function checkAgg(app, assert, label) {
 
 module.exports = [
   {
-    name: 'HIST registry: "Mini WellOS" sidebar group + tile; nothing opened, loaded or scheduled at app start',
+    name: 'HIST registry: "Live Data" sidebar group + tile; nothing opened, loaded or scheduled at app start',
     wp: WP,
     run(app, assert) {
       const Hh = H(app), reg = app.win.WTS_calcRegistry.historian;
-      assert.ok(reg && reg.group === 'Mini WellOS' && reg.key === 'historian' && typeof reg.render === 'function', 'registry entry');
+      assert.ok(reg && reg.group === 'Live Data' && reg.key === 'historian' && typeof reg.render === 'function', 'registry entry');
       ['record', 'query', 'listTags', 'stats', 'exportCSV', 'exportXLSX', 'exportDb', 'importFile', 'purge', 'setRetention'].forEach((f) => assert.fn(Hh[f], f));
       const btn = app.find('.nav-btn[data-p="historian"]');
       assert.ok(btn, 'sidebar button');
       const grp = btn.closest('.nav-group'), lbl = grp && grp.querySelector('.nav-group-label');
-      assert.strictEqual(lbl && lbl.textContent.trim(), 'Mini WellOS', 'in the Mini WellOS group');
+      assert.strictEqual(lbl && lbl.textContent.trim(), 'Live Data', 'in the Live Data group');
       app.flush(5000);
       assert.strictEqual(app.pendingTimers(), 0, 'no timers after 5 s idle');
       const st = Hh.status();

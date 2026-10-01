@@ -138,7 +138,7 @@ module.exports = [
     },
   },
   {
-    name: 'page: sidebar button in Safety & Process, defaults calculate, F3 through the inputs + Calculate',
+    name: 'page: sidebar button in Flare & Relief, defaults calculate, F3 through the inputs + Calculate',
     wp: WP,
     run(app, assert) {
       const W = app.win;
@@ -148,7 +148,7 @@ module.exports = [
       const b = navBtn(app);
       assert(b, 'nav button');
       const lab = b.closest('.nav-group').querySelector('.nav-group-label');
-      assert.strictEqual(text(lab), 'Safety & Process');
+      assert.strictEqual(text(lab), 'Flare & Relief');
       go(app);
       assert.strictEqual(app.hook.page(), KEY);
       assert.strictEqual(text(app.el('pgTitle')), 'Flare Emissions');

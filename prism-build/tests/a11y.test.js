@@ -124,11 +124,16 @@ module.exports = [
       assert.equal(app.document.activeElement, next, 'ArrowDown moves focus to the next page');
       assert.equal(next.getAttribute('tabindex'), '0');
       assert.equal(active.getAttribute('tabindex'), '-1');
+      // v3.1 accordion + hubs: End / Home go to the last / first button the sidebar shows (closed
+      // groups show only their active button; hub members show only while searching)
+      const shown = () => btns().filter((b) => !b.classList.contains('sb-hide') && !b.classList.contains('nav-hub-member') &&
+        !(b.closest('.nav-group').classList.contains('collapsed') && !b.classList.contains('active')));
+      assert.ok(shown().length < btns().length, 'some buttons hidden by the accordion');
       app.key(next, 'End');
-      const last = btns()[btns().length - 1];
-      assert.equal(app.document.activeElement, last, 'End → last');
+      const last = shown()[shown().length - 1];
+      assert.equal(app.document.activeElement, last, 'End → last shown');
       app.key(last, 'Home');
-      assert.equal(app.document.activeElement, btns()[0], 'Home → first');
+      assert.equal(app.document.activeElement, shown()[0], 'Home → first shown');
       const target = btns().find((b) => b.getAttribute('data-p') === 'aga3');
       target.focus();
       app.key(target, 'Enter');

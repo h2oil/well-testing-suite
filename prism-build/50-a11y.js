@@ -246,6 +246,21 @@
         }
     }
     function _navButtons() { return _hasDoc ? Array.prototype.slice.call(document.querySelectorAll('#sidebar .nav-btn')) : []; }
+    // Buttons the sidebar shows right now (accordion + hubs, v3.1): search hits while searching;
+    // otherwise no hub members and, in a collapsed group, only the active button. ↑/↓ and the
+    // single tab stop move over these only, so the tab stop is never on a hidden button.
+    function _navShown(btns) {
+        var sb = _byId('sidebar'), searching = !!(sb && sb.classList && sb.classList.contains('sb-searching'));
+        return btns.filter(function (b) {
+            var c = b.classList;
+            if (!c) return true;
+            if (c.contains('sb-hide')) return false;
+            if (searching) return true;
+            if (c.contains('nav-hub-member')) return false;
+            var g = b.closest ? b.closest('.nav-group') : null;
+            return !(g && g.classList && g.classList.contains('collapsed') && !c.contains('active'));
+        });
+    }
     function _syncSidebar() {
         var btns = _navButtons();
         if (!btns.length) return;
@@ -257,8 +272,9 @@
             if (on) { active = active || b; if (b.getAttribute('aria-current') !== 'page') b.setAttribute('aria-current', 'page'); }
             else if (b.hasAttribute('aria-current')) b.removeAttribute('aria-current');
         }
-        var focused = document.activeElement;
-        _rove(btns, btns.indexOf(focused) !== -1 ? focused : (active || btns[0]));
+        var shown = _navShown(btns), focused = document.activeElement;
+        if (active && shown.indexOf(active) === -1) active = null;
+        _rove(btns, shown.indexOf(focused) !== -1 ? focused : (active || shown[0] || btns[0]));
     }
     function _tabsOf(list) {
         var out = [], ch = list.children || [];
@@ -386,7 +402,7 @@
         // sidebar: ↑/↓/Home/End move the single tab stop
         if (t.classList && t.classList.contains('nav-btn') && t.closest && t.closest('#sidebar')) {
             if (key === 'ArrowDown' || key === 'ArrowUp' || key === 'Home' || key === 'End') {
-                var nb = _move(_navButtons(), t, key);
+                var nb = _move(_navShown(_navButtons()), t, key);
                 if (nb) { ev.preventDefault(); _rove(_navButtons(), nb); try { nb.focus(); } catch (e) { /* ignore */ } }
                 return;
             }
@@ -533,6 +549,7 @@
             if (!t || !t.closest) return;
             var list = t.closest('.tabs, [role="tablist"]');
             if (list) _syncTablist(list);
+            if (t.closest('#sidebar .nav-group-label')) _syncSidebar();   // accordion: keep the tab stop on a shown button
             if (t.closest('#wts_skip_link')) {
                 ev.preventDefault();
                 var pg = _byId('pgBody');

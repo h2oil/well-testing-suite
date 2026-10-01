@@ -3119,7 +3119,7 @@ G.WTS_calcRegistry = G.WTS_calcRegistry || {};
 G.WTS_calcRegistry.historian = {
     key: 'historian', title: 'Historian', navTitle: 'Historian',
     sub: 'Record, trend, tabulate and export tag data — SQLite in the browser',
-    group: 'Mini WellOS', icon: '&#128200;', badge: 'WellOS', bc: 'dc-b-blue',
+    group: 'Live Data', icon: '&#128200;', badge: 'WellOS', bc: 'dc-b-blue',
     desc: 'Trends and tables of Modbus, form and simulator data with retention, CSV / Excel export and database backup / restore.',
     render: render
 };

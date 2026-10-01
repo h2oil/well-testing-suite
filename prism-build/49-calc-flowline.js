@@ -70,7 +70,7 @@
 //   renderFlowline(body), calcFlowline(), WTS_flowlineUseHeat()
 //
 // STATE  WTS_state.flowline = {pArr, dpSep, pFlare, dpFlare, ok, ts, result}
-// Registers window.WTS_calcRegistry.flowline (group "Well Testing").
+// Registers window.WTS_calcRegistry.flowline (group "Well Test & Flowlines").
 // ════════════════════════════════════════════════════════════════════
 (function () {
     'use strict';
@@ -802,7 +802,7 @@
         title: TITLE,
         navTitle: 'Flowline Pressure Drop',
         sub: SUB,
-        group: 'Well Testing',
+        group: 'Well Test & Flowlines',
         icon: '&#8652;',
         badge: 'Multiphase',
         bc: 'dc-b-blue',
