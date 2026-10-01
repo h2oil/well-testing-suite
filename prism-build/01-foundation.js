@@ -800,6 +800,8 @@ const PRiSM_SHELL = (function () {
         '.prism-hbtn:disabled{opacity:.4;cursor:not-allowed}',
         '.prism-status{flex:1 1 100%;font-size:12px;color:var(--text2);min-height:0}',
         '.prism-status:empty{display:none}',
+        '.prism-units-note{margin:0 0 10px;padding:7px 10px;border:1px solid var(--orange,#d29922);border-radius:6px;font-size:12px;color:var(--text2);background:var(--bg2)}',
+        '.prism-units-note[hidden]{display:none}',
         '.prism-menu{position:absolute;right:8px;top:calc(100% + 4px);z-index:60;min-width:210px;max-width:calc(100vw - 32px);background:var(--bg3);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.45);padding:4px}',
         '.prism-menu[hidden]{display:none}',
         '.prism-menu button{display:block;width:100%;text-align:left;background:transparent;border:0;color:var(--text);font-size:12.5px;padding:9px 10px;border-radius:6px;cursor:pointer}',
@@ -897,6 +899,8 @@ const PRiSM_SHELL = (function () {
             '<div class="prism-menu" id="prism_menu" role="menu" hidden></div>' +
           '</div>' +
           '<nav class="prism-steps" id="prism_steps" aria-label="Analysis steps">' + steps + '</nav>' +
+          '<div class="prism-units-note" id="prism_units_note" role="note"' + (isMetric() ? '' : ' hidden') + '>' +
+            PRiSM_escHTML(UNITS_NOTE) + '</div>' +
           '<div class="prism-body" id="prism_body">' +
             '<div class="prism-workspace" id="prism_workspace">' +
               '<div class="tabs prism-subtabs" id="prism_tabs" role="tablist" aria-label="Model and fit" style="display:none;">' + sub + '</div>' +
@@ -956,9 +960,27 @@ const PRiSM_SHELL = (function () {
 
     function onViewportChange() { applyViewport(); }
 
+    // PRiSM is deliberately field-unit only (psia, h, STB/d | Mscf/d, md, ft,
+    // cp, 1/psi): the units layer (22) does not convert it. In Metric mode the
+    // shell says so instead of showing field-unit labels without comment.
+    const UNITS_NOTE = 'PRiSM works in oilfield units (psia, hours, STB/d or Mscf/d, md, ft, cp, 1/psi). ' +
+        'The Metric setting does not convert PRiSM inputs or results — enter and read values in these units.';
+    function isMetric() {
+        try {
+            const U = hasWin() ? window.WTS_units : null;
+            if (U && typeof U.getSystem === 'function') return U.getSystem() === 'metric';
+            return hasWin() && window.WTS_unitsSystem === 'metric';
+        } catch (e) { return false; }
+    }
+    function syncUnitsNote() {
+        const el = byId('prism_units_note');
+        if (!el) return;
+        if (isMetric()) el.removeAttribute('hidden'); else el.setAttribute('hidden', '');
+    }
     function ensureListeners() {
         if (listenersOn || !hasWin()) return;
         listenersOn = true;
+        if (hasDoc() && typeof document.addEventListener === 'function') document.addEventListener('wts:unit-system-changed', syncUnitsNote);
         if (typeof window.addEventListener === 'function') {
             STATE_EVENTS.forEach(t => window.addEventListener(t, onStateEvent));
         }

@@ -1021,7 +1021,17 @@
             if (rm) { removeEvent(rm); return; }
             var box = $('prism_ft_e_msg');
             if (t.id === 'prism_ft_clock_set') {
-                if (!setEventClock(val('prism_ft_clock')) && box) box.innerHTML = msg('bad', '✗ Clock not recognised: use YYYY-MM-DD HH:MM.');
+                var ctext = String(val('prism_ft_clock') == null ? '' : val('prism_ft_clock')).trim();
+                var hadClock = isNum(ft().clockZero);
+                if (!ctext && !hadClock) {
+                    if (box) box.innerHTML = msg('warn', '⚠ Enter the clock time at t = 0 first (UTC, YYYY-MM-DD HH:MM).');
+                } else if (!setEventClock(ctext)) {
+                    if (box) box.innerHTML = msg('bad', '✗ Clock not recognised: use YYYY-MM-DD HH:MM.');
+                } else {
+                    var b3 = $('prism_ft_e_msg');
+                    if (b3) b3.innerHTML = ctext ? msg('ok', '✓ Clock at t = 0 set to ' + esc(clockText(ft().clockZero)) + ' UTC.')
+                                                 : msg('ok', '✓ Clock cleared: events keep their t (h) values.');
+                }
             } else if (t.id === 'prism_ft_e_add') {
                 var r = addEvent({ type: val('prism_ft_e_type'), t: val('prism_ft_e_t'), time: val('prism_ft_e_time') || null,
                                    q: val('prism_ft_e_q'), choke: val('prism_ft_e_choke'), note: val('prism_ft_e_note'), source: 'user' });
