@@ -360,7 +360,11 @@ table. `renderHome()` adds a tile in sidebar order. `nav()` sets the active stat
 - **Horizontal-family fits are slow** (≈40-90 ms per pd+pd′ evaluation): a physical LM fit of `horizontal` takes ~20 s.
 - **Gas**: deconvolution, inverse simulation and RTA FMB use liquid-equivalent Δp or warn (semilog p1hr / p* / ΔpS are converted back to psia since v3.0).
 - **Decline type-curve matching** (Blasingame / Agarwal-Gardner stems for k, S, re) is not implemented; the RTA panel gives FMB and √t linear-flow only.
-- Crop window, step ② selection and derived datasets (tide-corrected, deconvolved) are not persisted across a reload.
+- Derived datasets (tide-corrected, deconvolved) are not persisted across a reload. The crop window (`wts_prism_crop`,
+  keyed by the full record's hash, re-applied by `PRiSM_restorePersistedCrop` after the restore commit) and the step ②
+  selection (`st.activePeriod` in `wts_prism_state`) are kept since v3.1.
+- PRiSM is field-unit only (psia, h, STB/d | Mscf/d, md, ft, cp, 1/psi); in Metric mode the shell shows a
+  `#prism_units_note` saying so instead of converting.
 
 ---
 
