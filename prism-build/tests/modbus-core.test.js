@@ -419,4 +419,19 @@ module.exports = [
       sim.dispose();
     },
   },
+  {
+    name: 'bridge device errors are explained in plain English (ECONNREFUSED, timeout, unreachable, DNS, reset; others unchanged)',
+    wp: WP, opts: false,
+    run(app, assert) {
+      const M = load();
+      const raw = 'Bridge: TCP 127.0.0.1:502: connect ECONNREFUSED 127.0.0.1:502';
+      const t = M.explainBridgeError(raw, '127.0.0.1', 502);
+      assert.match(t, /^Nothing is listening at 127\.0\.0\.1:502/); assert.ok(t.endsWith('(' + raw + ')'), 'raw error kept');
+      assert.match(M.explainBridgeError('connect ETIMEDOUT 10.0.0.9:502', '10.0.0.9', 502), /^No answer from 10\.0\.0\.9:502/);
+      assert.match(M.explainBridgeError('connect EHOSTUNREACH', '10.0.0.9', 502), /^Cannot reach/);
+      assert.match(M.explainBridgeError('getaddrinfo ENOTFOUND plc1', 'plc1', 502), /could not be resolved/);
+      assert.match(M.explainBridgeError('read ECONNRESET', 'plc1', 502), /dropped the connection/);
+      assert.strictEqual(M.explainBridgeError('Bridge: not in the allow-list', 'h', 1), 'Bridge: not in the allow-list');
+    },
+  },
 ];
