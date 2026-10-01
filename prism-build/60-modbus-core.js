@@ -40,6 +40,18 @@
 var G = (typeof window !== 'undefined') ? window : globalThis;
 var M = G.WTS_modbus = G.WTS_modbus || {};
 
+// Plain-English reading of a socket error the bridge reports while connecting to a device
+// (Node error codes), so the device status says what to check instead of only 'ECONNREFUSED'.
+M.explainBridgeError = function (msg, host, port) {
+    var t = String(msg || ''), at = (host || '?') + ':' + (port || 502), why = null;
+    if (/ECONNREFUSED/.test(t)) why = 'Nothing is listening at ' + at + ' — start the Modbus device or simulator there, or check the IP address and port.';
+    else if (/ETIMEDOUT|ECONNABORTED/.test(t)) why = 'No answer from ' + at + ' — check the IP address, that the device is powered and on this network, and any firewall.';
+    else if (/EHOSTUNREACH|ENETUNREACH|EADDRNOTAVAIL/.test(t)) why = 'Cannot reach ' + at + ' from the bridge PC — check the IP address and network (cable, VLAN, VPN).';
+    else if (/ENOTFOUND|EAI_AGAIN/.test(t)) why = 'The device name ' + (host || '?') + ' could not be resolved — use its IP address.';
+    else if (/ECONNRESET|EPIPE/.test(t)) why = 'The device at ' + at + ' dropped the connection — it may allow only one Modbus client, or the unit ID / port is wrong.';
+    return why ? why + ' (' + t + ')' : t;
+};
+
 // ─── constants (Application Protocol V1.1b3) ────────────────────────────────
 var FC = { READ_COILS: 1, READ_DISCRETE: 2, READ_HOLDING: 3, READ_INPUT: 4,
     WRITE_COIL: 5, WRITE_REGISTER: 6, WRITE_COILS: 15, WRITE_REGISTERS: 16 };
@@ -425,7 +437,7 @@ function webSocketTransport(o) {
                 if (typeof d === 'string') {
                     var m = null; try { m = JSON.parse(d); } catch (e) {}
                     if (m && m.type === 'open') { open = true; done(); if (!settled) { settled = true; resolve(T); } }
-                    else if (m && m.type === 'error') { fail('Bridge: ' + (m.message || 'error')); T.emit('error', m.message); }
+                    else if (m && m.type === 'error') { fail(open ? 'Bridge: ' + (m.message || 'error') : M.explainBridgeError('Bridge: ' + (m.message || 'error'), o.host, o.port)); T.emit('error', m.message); }
                     return;
                 }
                 var bytes = d instanceof ArrayBuffer ? new Uint8Array(d) : (d && d.buffer ? new Uint8Array(d.buffer, d.byteOffset || 0, d.byteLength) : null);

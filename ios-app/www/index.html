@@ -10705,6 +10705,7 @@ const RELEASE_NOTES = [
         ['report', 'Job report (this well)', 'The well menu job report exports whenever results are showing, even if the default report template lists other calculators.'],
         ['platform', 'Modbus', 'Bad register values show as BAD with an alarm; a bridge that never answers times out instead of hanging; new P-201 variable; the Mini WellOS demo asks before replacing a configuration.'],
         ['fix', 'Fixes', 'Flare no longer breaks on zero, negative or blank inputs; Hydrate Management no longer scrolls sideways on wide screens; simulator messages for the no-surge-tank rig-up name the right trip; a broken example link on the analytics reference page was removed.'],
+        ['platform', 'Modbus connection errors', 'When the bridge cannot connect to a device, the status says what to check (nothing listening at that IP / port, no answer, unreachable network, unknown name, connection dropped) and keeps the original error.'],
         // <!-- v3.1 more items -->
       ] },
     { ver:'v3.0.2', date:'2026-09-30', title:'Modbus bridge: allow any device &amp; one-click Windows installer',
@@ -95976,6 +95977,18 @@ G.WTS_calcRegistry.historian = {
 var G = (typeof window !== 'undefined') ? window : globalThis;
 var M = G.WTS_modbus = G.WTS_modbus || {};
 
+// Plain-English reading of a socket error the bridge reports while connecting to a device
+// (Node error codes), so the device status says what to check instead of only 'ECONNREFUSED'.
+M.explainBridgeError = function (msg, host, port) {
+    var t = String(msg || ''), at = (host || '?') + ':' + (port || 502), why = null;
+    if (/ECONNREFUSED/.test(t)) why = 'Nothing is listening at ' + at + ' — start the Modbus device or simulator there, or check the IP address and port.';
+    else if (/ETIMEDOUT|ECONNABORTED/.test(t)) why = 'No answer from ' + at + ' — check the IP address, that the device is powered and on this network, and any firewall.';
+    else if (/EHOSTUNREACH|ENETUNREACH|EADDRNOTAVAIL/.test(t)) why = 'Cannot reach ' + at + ' from the bridge PC — check the IP address and network (cable, VLAN, VPN).';
+    else if (/ENOTFOUND|EAI_AGAIN/.test(t)) why = 'The device name ' + (host || '?') + ' could not be resolved — use its IP address.';
+    else if (/ECONNRESET|EPIPE/.test(t)) why = 'The device at ' + at + ' dropped the connection — it may allow only one Modbus client, or the unit ID / port is wrong.';
+    return why ? why + ' (' + t + ')' : t;
+};
+
 // ─── constants (Application Protocol V1.1b3) ────────────────────────────────
 var FC = { READ_COILS: 1, READ_DISCRETE: 2, READ_HOLDING: 3, READ_INPUT: 4,
     WRITE_COIL: 5, WRITE_REGISTER: 6, WRITE_COILS: 15, WRITE_REGISTERS: 16 };
@@ -96361,7 +96374,7 @@ function webSocketTransport(o) {
                 if (typeof d === 'string') {
                     var m = null; try { m = JSON.parse(d); } catch (e) {}
                     if (m && m.type === 'open') { open = true; done(); if (!settled) { settled = true; resolve(T); } }
-                    else if (m && m.type === 'error') { fail('Bridge: ' + (m.message || 'error')); T.emit('error', m.message); }
+                    else if (m && m.type === 'error') { fail(open ? 'Bridge: ' + (m.message || 'error') : M.explainBridgeError('Bridge: ' + (m.message || 'error'), o.host, o.port)); T.emit('error', m.message); }
                     return;
                 }
                 var bytes = d instanceof ArrayBuffer ? new Uint8Array(d) : (d && d.buffer ? new Uint8Array(d.buffer, d.byteOffset || 0, d.byteLength) : null);
