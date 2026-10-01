@@ -234,7 +234,7 @@ module.exports = [
         assert.deepStrictEqual(h.allow, ['127.0.0.1:' + R.sport]);
         assert.strictEqual(r.headers['access-control-allow-origin'], undefined, 'no CORS without an Origin');
         assert.strictEqual(r.headers['cache-control'], 'no-store');
-        for (const o of ['http://localhost:8080', 'https://pb-handbook.com', 'https://my.site', 'capacitor://localhost', 'http://[::1]:5173']) {
+        for (const o of ['http://localhost:8080', 'http://127.0.0.1:8080', 'https://my.site', 'capacitor://localhost', 'http://[::1]:5173']) {
           r = await httpReq(P, { headers: { Origin: o } });
           assert.strictEqual(r.status, 200, o); assert.strictEqual(r.headers['access-control-allow-origin'], o); assert.match(r.headers.vary, /Origin/);
         }
@@ -254,8 +254,8 @@ module.exports = [
         r = await httpReq(P, { method: 'OPTIONS', headers: { Origin: 'null', 'Access-Control-Request-Method': 'GET', 'Access-Control-Request-Private-Network': 'true' } });
         assert.strictEqual(r.status, 403, 'null preflight refused'); assert.strictEqual(r.headers['access-control-allow-private-network'], undefined, 'no PNA approval for null');
         // CORS preflight with Chrome's Private Network Access request header
-        r = await httpReq(P, { method: 'OPTIONS', headers: { Origin: 'https://pb-handbook.com', 'Access-Control-Request-Method': 'GET', 'Access-Control-Request-Private-Network': 'true' } });
-        assert.strictEqual(r.status, 204); assert.strictEqual(r.headers['access-control-allow-origin'], 'https://pb-handbook.com');
+        r = await httpReq(P, { method: 'OPTIONS', headers: { Origin: 'https://my.site', 'Access-Control-Request-Method': 'GET', 'Access-Control-Request-Private-Network': 'true' } });
+        assert.strictEqual(r.status, 204); assert.strictEqual(r.headers['access-control-allow-origin'], 'https://my.site');
         assert.strictEqual(r.headers['access-control-allow-private-network'], 'true'); assert.match(r.headers['access-control-allow-methods'], /GET/);
         r = await httpReq(P, { method: 'OPTIONS', headers: { Origin: 'https://evil.example', 'Access-Control-Request-Private-Network': 'true' } });
         assert.strictEqual(r.status, 403); assert.strictEqual(r.headers['access-control-allow-private-network'], undefined);
@@ -269,7 +269,7 @@ module.exports = [
         assert.strictEqual(r.status, 200, 'accepted Origin + host name'); assert.strictEqual(r.headers['access-control-allow-origin'], 'http://localhost:8080');
         assert.strictEqual(JSON.parse(r.body).name, 'wts-modbus-bridge');
         assert.strictEqual(healthRefusal({}, undefined, 'bridge-pc:1'), 'host'); assert.strictEqual(healthRefusal({ origins: ['null'] }, 'null', 'bridge-pc:1'), 'host', 'null never bypasses the Host rule');
-        assert.strictEqual(healthRefusal({}, 'https://pb-handbook.com', 'bridge-pc:1'), null); assert.strictEqual(healthRefusal({}, 'null', '127.0.0.1:1'), 'origin');
+        assert.strictEqual(healthRefusal({}, 'http://localhost:8080', 'bridge-pc:1'), null); assert.strictEqual(healthRefusal({}, 'https://my.site', '127.0.0.1:1'), 'origin', 'a web host is accepted only with --origin'); assert.strictEqual(healthRefusal({}, 'null', '127.0.0.1:1'), 'origin');
         for (const host of ['localhost:' + P, '127.0.0.1:' + P, '[::1]:' + P, 'app.localhost:' + P]) assert.strictEqual((await httpReq(P, { headers: { Host: host } })).status, 200, host);
         assert.ok(hostHeaderOk({ listen: 'bridge-pc' }, 'BRIDGE-PC:8502') && !hostHeaderOk({}, 'bridge-pc:8502') && !hostHeaderOk({}, '[evil]:1'));
         assert.strictEqual((await httpReq(P, { method: 'POST', headers: { Origin: 'http://localhost:8080' } })).status, 405);
