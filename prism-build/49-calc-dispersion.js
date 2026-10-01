@@ -61,7 +61,7 @@
 // STATE
 //   WTS_state.dispersion = {maxSO2_ppm, maxH2S_ppm, xMax_ft, hEff_ft, rise_ft,
 //                           so2Idlh_ft, h2sIdlh_ft, ts, result}
-// Registers window.WTS_calcRegistry.dispersion (group "Safety & Process").
+// Registers window.WTS_calcRegistry.dispersion (group "Flare & Relief").
 // ════════════════════════════════════════════════════════════════════
 (function () {
     'use strict';
@@ -526,7 +526,7 @@
         title: TITLE,
         navTitle: 'SO2 / H2S Dispersion',
         sub: SUB,
-        group: 'Safety & Process',
+        group: 'Flare & Relief',
         icon: '&#9729;',
         badge: 'Screening',
         bc: 'dc-b-orange',

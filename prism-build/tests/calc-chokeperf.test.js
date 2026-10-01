@@ -137,7 +137,7 @@ module.exports = [
       const W = app.win;
       const b = app.find('.nav-btn[data-p="chokeperf"]');
       assert.ok(b, 'sidebar button');
-      assert.strictEqual(String(b.closest('.nav-group').querySelector('.nav-group-label').textContent).trim(), 'Well Testing');
+      assert.strictEqual(String(b.closest('.nav-group').querySelector('.nav-group-label').textContent).trim(), 'Metering & Chokes');
       open(app);
       assert.strictEqual(txt(app, 'pgTitle'), 'Choke Performance & Critical Flow');
       // Defaults: 24/64", 1500 → 400 psig, 120 °F, 0.7, k and Z from Gas PVT

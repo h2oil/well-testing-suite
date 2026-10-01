@@ -57,7 +57,7 @@
 //   WTS_scale_oddoTomson(mineral, {ca, sr, ba, so4, hco3 (mol/L), ph, t °F, p psia, I}) → SI
 //
 // STATE  WTS_state.scale = {I, tds, cbPct, lsi, sdi, si:{calcite,barite,celestite,gypsum,anhydrite}, ts, result}
-// Registers window.WTS_calcRegistry.scale (group "Fluid & Field Calcs").
+// Registers window.WTS_calcRegistry.scale (group "Fluids & Utilities").
 // ════════════════════════════════════════════════════════════════════
 (function () {
     'use strict';
@@ -396,7 +396,7 @@
         key: 'scale',
         title: TITLE,
         sub: SUB,
-        group: 'Fluid & Field Calcs',
+        group: 'Fluids & Utilities',
         icon: '&#9878;',
         badge: 'Chemistry',
         bc: 'dc-b-blue',

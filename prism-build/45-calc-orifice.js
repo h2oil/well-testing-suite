@@ -432,7 +432,7 @@
         title: TITLE,
         navTitle: 'Orifice Plate Selection',
         sub: SUB,
-        group: 'Well Testing',
+        group: 'Metering & Chokes',
         icon: '&#9678;',
         badge: 'Metering',
         bc: 'dc-b-blue',

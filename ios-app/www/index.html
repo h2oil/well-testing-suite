@@ -268,6 +268,9 @@
                 overflow-y: auto; overflow-x: hidden;
                 flex-direction: column; align-items: stretch; z-index: 100;
             }
+            /* v3.1: the open drawer covers the top bar (z 110), so its brand block and the
+               "What's new" link are visible; the dimmed overlay to its right closes it. */
+            .sidebar { z-index: 120; }
             .sidebar-overlay {
                 display: none; position: fixed; inset: 0; background: rgba(0,0,0,.5);
                 z-index: 99;
@@ -325,6 +328,40 @@
         .sidebar.sb-searching .nav-group.collapsed .nav-btn { display: flex; }
         .sidebar .nav-btn.sb-hide, .sidebar .nav-group.sb-hide { display: none !important; }
         .sidebar.sb-searching .nav-group-label::after { visibility: hidden; }
+        /* Accordion sidebar (one group open) + hubs: a .nav-hub button stands for its .nav-hub-member
+           buttons, which only show as search results. Desktop rows are compact so the sidebar fits
+           a 1280×800 window without scrolling; phones keep the roomier rows (≤ 768 px block below). */
+        .sidebar .nav-btn.nav-hub-member { display: none; }
+        .sidebar.sb-searching .nav-group .nav-btn.nav-hub-member { display: flex; }
+        .nav-hub::after { content: '\203A'; margin-left: auto; color: var(--text3); font-size: 15px; line-height: 1; }
+        .sb-relnotes {
+            display: inline-flex; align-items: center; gap: 4px; margin: 4px 0 0; padding: 2px 0; border: 0; background: none;
+            color: var(--text3); font: inherit; font-size: 11px; cursor: pointer; text-decoration: underline; text-underline-offset: 2px;
+        }
+        .sb-relnotes:hover, .sb-relnotes:focus-visible { color: var(--accent); }
+        .sb-relnotes.active { color: var(--accent); font-weight: 600; text-decoration: none; }
+        @media (min-width: 769px) {
+            .sidebar-brand { padding: 12px 18px 10px; }
+            .sb-search { padding: 8px 14px 2px; }
+            .nav-group { padding: 6px 0 0; }
+            .nav-group-label { padding: 4px 18px; }
+            .nav-btn { padding: 6px 18px; }
+            .sidebar-footer { padding: 10px 18px; }
+        }
+        /* Hub tab strip (between the page header and the page body) */
+        .hub-tabs {
+            display: flex; align-items: center; gap: 6px; padding: 10px 32px 0; max-width: 100%; box-sizing: border-box;
+            overflow-x: auto; overscroll-behavior-x: contain; background: var(--bg1); border-bottom: 1px solid var(--border);
+        }
+        .hub-tabs-title { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; color: var(--text3); margin-right: 4px; white-space: nowrap; }
+        .hub-tab {
+            flex: none; padding: 8px 12px; border: 1px solid transparent; border-bottom: 0; border-radius: 6px 6px 0 0; background: none;
+            color: var(--text2); font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; margin-bottom: -1px;
+        }
+        .hub-tab:hover { color: var(--text); background: var(--bg2); }
+        .hub-tab.active { color: var(--accent); font-weight: 600; background: var(--bg3); border-color: var(--border); }
+        .hub-tab:focus-visible { outline-offset: -2px; }
+        @media (max-width: 768px) { .hub-tabs { padding: 8px 14px 0; } }
 
         /* ── v3.0 dashboard: search, favourites, recently used, group headings ── */
         .dash-tools { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
@@ -397,6 +434,7 @@
         }
         @media (max-width: 768px) {
             .nav-group-label { padding-top: 8px; padding-bottom: 10px; }
+            .nav-group { padding-top: 6px; }
             .dash-tools input { max-width: none; }
         }
 
@@ -578,6 +616,8 @@
               own sideways scroller (rule 3), and its cells lose the narrow-table side padding.
               Sidebar group headings (tap to collapse) get the 44 pt touch target. */
         html.ios-app .nav-group-label { min-height: 44px; padding-top: 0; padding-bottom: 0; }
+        /* v3.1: the sidebar "What's new" link and the hub tab strip (Chokes, Separators…) too. */
+        html.ios-app .sb-relnotes, html.ios-app .hub-tab { min-height: 44px; }
         @media (max-width: 600px) {
             html.ios-app #pgBody table.wts-stack { display: block; max-width: 100%; overflow: visible; }
             html.ios-app #pgBody table.wts-stack tr > td, html.ios-app #pgBody table.wts-stack tr > th { padding-left: 0; padding-right: 0; }
@@ -601,82 +641,90 @@
         <div class="sidebar-brand">
           <img src="data:image/png;base64,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" alt="H2Oil">
           <script>(function(){var s=document.querySelector('.sidebar-brand img'),m=document.getElementById('mobLogo');if(s&&m)m.src=s.src;})();</script>
-          <div><h1>H<sub style="font-size:9px;vertical-align:baseline;margin:0 1px">2</sub>Oil</h1><p id="appVersionLabel">Well Testing Suite v3.1</p></div>
+          <div><h1>H<sub style="font-size:9px;vertical-align:baseline;margin:0 1px">2</sub>Oil</h1><p id="appVersionLabel">Well Testing Suite v3.1</p><button type="button" class="sb-relnotes" id="sbReleaseNotes" data-nav="releasenotes" title="Release notes — what&#8217;s new in this version">&#128221; What&#8217;s new</button></div>
         </div>
         <div class="sb-search" role="search"><input type="search" id="sb_search" placeholder="Search calculators" aria-label="Search calculators" autocomplete="off" spellcheck="false" data-no-persist></div>
         <div class="sb-empty hidden" id="sb_empty">No calculator matches.</div>
+        <!-- Sidebar groups (accordion: one open at a time, see __sidebarEnhance). Plug-in calculators
+             join a group by its label (WTS_calcRegistry[key].group) at the place __NAV_ORDER gives them.
+             A .nav-hub button stands for the .nav-hub-member buttons after it (hidden unless searching):
+             it opens one of them and the hub tab strip (#hubTabs) links the others (__NAV_HUBS). -->
         <div class="nav-group">
             <div class="nav-group-label">Overview</div>
             <div class="nav-btn" data-p="home"><span class="nav-icon">&#9670;</span><span>Dashboard</span></div>
             <div class="nav-btn active" data-p="clientinfo"><span class="nav-icon">&#128188;</span><span>Client & Well Info</span></div>
             <div class="nav-btn" data-p="wells"><span class="nav-icon">&#9636;</span><span>Well Comparison</span></div>
-            <div class="nav-btn" data-p="releasenotes"><span class="nav-icon">&#128221;</span><span>Release Notes</span></div>
             <div class="nav-btn" data-p="privacy"><span class="nav-icon">&#128274;</span><span>Privacy</span></div>
             <!-- GA4 Events Reference is intentionally not in the nav. Reachable
                  by typing the page key into the SPA router (e.g. via console:
-                 nav('gaevents')) or by anyone you share a deep link with. -->
+                 nav('gaevents')) or by anyone you share a deep link with.
+                 Release Notes: the "What's new" link under the version label. -->
 
         </div>
         <div class="nav-group">
-            <div class="nav-group-label">Well Testing</div>
+            <div class="nav-group-label">Metering & Chokes</div>
             <div class="nav-btn" data-p="aga3"><span class="nav-icon">&#9881;</span><span>AGA-3 Gas Metering</span></div>
-            <div class="nav-btn" data-p="choke"><span class="nav-icon">&#9879;</span><span>Dual Choke</span></div>
-            <div class="nav-btn" data-p="chokeflow"><span class="nav-icon">&#9673;</span><span>Choke Flow Rates</span></div>
-            <div class="nav-btn" data-p="chokecnv"><span class="nav-icon">&#8646;</span><span>Choke Conversions</span></div>
-            <div class="nav-btn" data-p="bottomsup"><span class="nav-icon">&#8987;</span><span>Bottoms Up Time</span></div>
+            <div class="nav-btn nav-hub" data-hub="chokes"><span class="nav-icon">&#9879;</span><span>Chokes</span></div>
+            <div class="nav-btn nav-hub-member" data-p="choke"><span class="nav-icon">&#9879;</span><span>Dual Choke</span></div>
+            <div class="nav-btn nav-hub-member" data-p="chokeflow"><span class="nav-icon">&#9673;</span><span>Choke Flow Rates</span></div>
+            <div class="nav-btn nav-hub-member" data-p="chokecnv"><span class="nav-icon">&#8646;</span><span>Choke Conversions</span></div>
             <div class="nav-btn" data-p="mcfshr"><span class="nav-icon">&#9632;</span><span>MCF & Shrinkage %</span></div>
-            <div class="nav-btn" data-p="casing"><span class="nav-icon">&#9674;</span><span>Casing & Tubing</span></div>
+            <div class="nav-btn" data-p="turbmeter"><span class="nav-icon">&#9201;</span><span>Turbine Meter</span></div>
+        </div>
+        <div class="nav-group">
+            <div class="nav-group-label">Well Test & Flowlines</div>
             <div class="nav-btn" data-p="wts"><span class="nav-icon">&#9733;</span><span>Well Test Simulator</span></div>
+            <div class="nav-btn" data-p="bottomsup"><span class="nav-icon">&#8987;</span><span>Bottoms Up Time</span></div>
+            <div class="nav-btn" data-p="casing"><span class="nav-icon">&#9674;</span><span>Casing & Tubing</span></div>
+            <div class="nav-btn" data-p="pipesz"><span class="nav-icon">&#9472;</span><span>Pipe Sizing</span></div>
+        </div>
+        <div class="nav-group">
+            <div class="nav-group-label">Production & Reservoir</div>
+            <div class="nav-btn" data-p="prism"><span class="nav-icon">&#128302;</span><span>PRiSM — Well Test Analysis</span></div>
+            <div class="nav-btn" data-p="oilgas"><span class="nav-icon">&#9878;</span><span>Oil & Gas Rate</span></div>
+            <div class="nav-btn" data-p="solgor"><span class="nav-icon">&#9683;</span><span>Solution GOR</span></div>
+        </div>
+        <div class="nav-group">
+            <div class="nav-group-label">Live Data</div>
         </div>
         <div class="nav-group">
             <div class="nav-group-label">Test System Safety</div>
-            <div class="nav-btn" data-p="esdhi"><span class="nav-icon">&#9888;</span><span>ESD Hi-Pilot</span></div>
-            <div class="nav-btn" data-p="esdlo"><span class="nav-icon">&#9881;</span><span>ESD Lo-Pilot</span></div>
+            <div class="nav-btn nav-hub" data-hub="esd"><span class="nav-icon">&#9888;</span><span>ESD Pilots</span></div>
+            <div class="nav-btn nav-hub-member" data-p="esdhi"><span class="nav-icon">&#9888;</span><span>ESD Hi-Pilot</span></div>
+            <div class="nav-btn nav-hub-member" data-p="esdlo"><span class="nav-icon">&#9881;</span><span>ESD Lo-Pilot</span></div>
             <div class="nav-btn" data-p="hydrate"><span class="nav-icon">&#10052;</span><span>Hydrate Management</span></div>
             <div class="nav-btn" data-p="liquidline"><span class="nav-icon">&#9858;</span><span>Liquid Line / RO</span></div>
             <div class="nav-btn" data-p="pipelife"><span class="nav-icon">&#9201;</span><span>Pipe Service Life</span></div>
         </div>
         <div class="nav-group">
-            <div class="nav-group-label">Production & Reservoir</div>
-            <div class="nav-btn" data-p="oilgas"><span class="nav-icon">&#9878;</span><span>Oil & Gas Rate</span></div>
-            <div class="nav-btn" data-p="solgor"><span class="nav-icon">&#9683;</span><span>Solution GOR</span></div>
-            <div class="nav-btn" data-p="prism"><span class="nav-icon">&#128302;</span><span>PRiSM — Well Test Analysis</span></div>
-        </div>
-        <div class="nav-group">
-            <div class="nav-group-label">Separation & Vessels</div>
-            <div class="nav-btn" data-p="sep"><span class="nav-icon">&#9644;</span><span>Separator Retention</span></div>
-            <div class="nav-btn" data-p="seprate"><span class="nav-icon">&#9638;</span><span>Separator Rating</span></div>
-            <div class="nav-btn" data-p="sephand"><span class="nav-icon">&#9707;</span><span>Separator Handling</span></div>
-        </div>
-        <div class="nav-group">
-            <div class="nav-group-label">Safety & Process</div>
-            <div class="nav-btn" data-p="flare"><span class="nav-icon">&#128293;</span><span>Flare Simulation</span></div>
-            <div class="nav-btn" data-p="prv"><span class="nav-icon">&#9651;</span><span>PRV / Relief Sizing</span></div>
-            <div class="nav-btn" data-p="vessel"><span class="nav-icon">&#9641;</span><span>Vessel & Pipe</span></div>
-            <div class="nav-btn" data-p="flamearr"><span class="nav-icon">&#9650;</span><span>Flame Arrestor</span></div>
-            <div class="nav-btn" data-p="arc"><span class="nav-icon">&#8635;</span><span>ARC Valve Sizing</span></div>
-        </div>
-        <div class="nav-group">
-            <div class="nav-group-label">Process Equipment</div>
-            <div class="nav-btn" data-p="pipesz"><span class="nav-icon">&#9472;</span><span>Pipe Sizing</span></div>
-            <div class="nav-btn" data-p="pumpsz"><span class="nav-icon">&#9955;</span><span>Pump Sizing</span></div>
-            <div class="nav-btn" data-p="turbmeter"><span class="nav-icon">&#9201;</span><span>Turbine Meter</span></div>
+            <div class="nav-group-label">Separation & Process</div>
+            <div class="nav-btn nav-hub" data-hub="separators"><span class="nav-icon">&#9644;</span><span>Separators</span></div>
+            <div class="nav-btn nav-hub-member" data-p="sep"><span class="nav-icon">&#9644;</span><span>Separator Retention</span></div>
+            <div class="nav-btn nav-hub-member" data-p="seprate"><span class="nav-icon">&#9638;</span><span>Separator Rating</span></div>
+            <div class="nav-btn nav-hub-member" data-p="sephand"><span class="nav-icon">&#9707;</span><span>Separator Handling</span></div>
             <div class="nav-btn" data-p="heater"><span class="nav-icon">&#9832;</span><span>Indirect Heater</span></div>
+            <div class="nav-btn" data-p="vessel"><span class="nav-icon">&#9641;</span><span>Vessel & Pipe</span></div>
+            <div class="nav-btn" data-p="tank"><span class="nav-icon">&#9645;</span><span>Tank Calculator</span></div>
+            <div class="nav-btn" data-p="pumpsz"><span class="nav-icon">&#9955;</span><span>Pump Sizing</span></div>
+            <div class="nav-btn" data-p="arc"><span class="nav-icon">&#8635;</span><span>ARC Valve Sizing</span></div>
             <div class="nav-btn" data-p="aircomp"><span class="nav-icon">&#9729;</span><span>Air Compressor</span></div>
         </div>
         <div class="nav-group">
-            <div class="nav-group-label">Electrical</div>
-            <div class="nav-btn" data-p="gensz"><span class="nav-icon">&#9889;</span><span>Generator Sizing</span></div>
-            <div class="nav-btn" data-p="cablesz"><span class="nav-icon">&#9866;</span><span>Cable Sizing</span></div>
-            <div class="nav-btn" data-p="vdrop"><span class="nav-icon">&#8615;</span><span>Voltage Drop</span></div>
-            <div class="nav-btn" data-p="elec"><span class="nav-icon">&#9889;</span><span>Electrical & Pumps</span></div>
+            <div class="nav-group-label">Flare & Relief</div>
+            <div class="nav-btn" data-p="flare"><span class="nav-icon">&#128293;</span><span>Flare Simulation</span></div>
+            <div class="nav-btn" data-p="prv"><span class="nav-icon">&#9651;</span><span>PRV / Relief Sizing</span></div>
+            <div class="nav-btn" data-p="flamearr"><span class="nav-icon">&#9650;</span><span>Flame Arrestor</span></div>
         </div>
         <div class="nav-group">
-            <div class="nav-group-label">Fluid & Field Calcs</div>
+            <div class="nav-group-label">Fluids & Utilities</div>
             <div class="nav-btn" data-p="gascalc"><span class="nav-icon">&#9671;</span><span>Gas Calculations</span></div>
             <div class="nav-btn" data-p="fluid"><span class="nav-icon">&#9679;</span><span>Fluid Properties</span></div>
-            <div class="nav-btn" data-p="tank"><span class="nav-icon">&#9645;</span><span>Tank Calculator</span></div>
             <div class="nav-btn" data-p="chem"><span class="nav-icon">&#9883;</span><span>Chemical & Dosage</span></div>
+            <div class="nav-btn nav-hub" data-hub="electrical"><span class="nav-icon">&#9889;</span><span>Electrical</span></div>
+            <div class="nav-btn nav-hub-member" data-p="gensz"><span class="nav-icon">&#9889;</span><span>Generator Sizing</span></div>
+            <div class="nav-btn nav-hub-member" data-p="cablesz"><span class="nav-icon">&#9866;</span><span>Cable Sizing</span></div>
+            <div class="nav-btn nav-hub-member" data-p="vdrop"><span class="nav-icon">&#8615;</span><span>Voltage Drop</span></div>
+            <div class="nav-btn nav-hub-member" data-p="elec"><span class="nav-icon">&#9889;</span><span>Electrical & Pumps</span></div>
             <div class="nav-btn" data-p="units"><span class="nav-icon">&#8644;</span><span>Unit Conversions</span></div>
             <div class="nav-btn" data-p="analogsig"><span class="nav-icon">&#8766;</span><span>Analog Signal</span></div>
         </div>
@@ -708,6 +756,8 @@
             </div>
           </div>
         </div>
+        <!-- Hub tab strip: shown on pages that share one sidebar entry (Chokes, Separators…), filled by __hubTabsRender(). -->
+        <div class="hub-tabs hidden" id="hubTabs" role="tablist" aria-label="Related calculators"></div>
         <div class="page-body" id="pgBody"></div>
     </div>
 
@@ -1272,11 +1322,48 @@ function exportCSV(filename, headers, rows) {
 window.WTS_calcRegistry = window.WTS_calcRegistry || {};
 const __CALC_KEY_RE = /^[a-z][a-z0-9_]{1,31}$/;
 const __CALC_GROUP_TILE = {
-    'well testing': ['Well Testing', 'dc-b-green'], 'test system safety': ['Safety', 'dc-b-orange'],
-    'production & reservoir': ['Production', 'dc-b-green'], 'separation & vessels': ['Separation', 'dc-b-orange'],
-    'safety & process': ['Safety', 'dc-b-orange'], 'process equipment': ['Process', 'dc-b-orange'],
-    'electrical': ['Electrical', 'dc-b-blue'], 'fluid & field calcs': ['Field Calc', 'dc-b-blue']
+    'metering & chokes': ['Metering', 'dc-b-green'], 'well test & flowlines': ['Well Test', 'dc-b-green'],
+    'production & reservoir': ['Production', 'dc-b-green'], 'live data': ['Live Data', 'dc-b-blue'],
+    'test system safety': ['Safety', 'dc-b-orange'], 'separation & process': ['Process', 'dc-b-orange'],
+    'flare & relief': ['Flare & Relief', 'dc-b-orange'], 'fluids & utilities': ['Utilities', 'dc-b-blue']
 };
+// Sidebar group labels before v3.1 → the group that replaced them (plug-ins written against
+// the old labels land in the right place instead of creating a duplicate group).
+const __NAV_GROUP_ALIAS = {
+    'well testing': 'metering & chokes', 'separation & vessels': 'separation & process',
+    'process equipment': 'separation & process', 'safety & process': 'flare & relief',
+    'electrical': 'fluids & utilities', 'fluid & field calcs': 'fluids & utilities', 'mini wellos': 'live data'
+};
+// Sidebar order of every known route (built-in and plug-in). A plug-in button is inserted
+// before the first button of its group that comes later in this list; unknown keys go last.
+const __NAV_ORDER = [
+    'home', 'clientinfo', 'wells', 'privacy',
+    'aga3', 'orifice', 'choke', 'chokeflow', 'chokecnv', 'chokeperf', 'mcfshr', 'turbmeter', 'proving', 'sepqc',
+    'wts', 'bottomsup', 'casing', 'flowline', 'lineheat', 'pipesz',
+    'prism', 'oilgas', 'solgor', 'gasdeliv', 'oilipr', 'gaslift',
+    'wellos', 'modbus', 'historian',
+    'esdhi', 'esdlo', 'hydrate', 'liquidline', 'pipelife', 'h2sroe', 'wellkill', 'complfluids',
+    'sep', 'seprate', 'sephand', 'heater', 'vessel', 'tank', 'pumpsz', 'arc', 'aircomp',
+    'flare', 'flareghg', 'dispersion', 'prv', 'flamearr',
+    'gascalc', 'fluid', 'gaspvt', 'chem', 'scale', 'gensz', 'cablesz', 'vdrop', 'elec', 'units', 'analogsig'
+];
+// Hubs: one sidebar entry for closely related calculators. Every member keeps its own route,
+// autosave record (wts_page_<route>), report snapshot and export; the hub button opens the
+// member used last and #hubTabs links the others. Members missing from the sidebar are skipped.
+const __NAV_HUBS = {
+    chokes:     { title: 'Chokes',     members: ['choke', 'chokeflow', 'chokecnv', 'chokeperf'] },
+    esd:        { title: 'ESD Pilots', members: ['esdhi', 'esdlo'] },
+    separators: { title: 'Separators', members: ['sep', 'seprate', 'sephand'] },
+    electrical: { title: 'Electrical', members: ['gensz', 'cablesz', 'vdrop', 'elec'] }
+};
+const __navRank = k => { const i = __NAV_ORDER.indexOf(k); return i === -1 ? Infinity : i; };
+function __navBtnRank(b) {
+    const p = b.getAttribute('data-p');
+    if(p) return __navRank(p);
+    const h = __NAV_HUBS[b.getAttribute('data-hub') || ''];
+    return h ? __navRank(h.members[0]) - 0.5 : Infinity;
+}
+const __hubOf = p => Object.keys(__NAV_HUBS).find(h => __NAV_HUBS[h].members.indexOf(p) !== -1) || null;
 const __calcShadowed = {};   // registry keys that collide with a built-in route (ignored)
 const __calcEsc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[c]);
 // icon: one numeric HTML entity ('&#8599;') or up to 3 plain characters; anything else → ◆
@@ -1306,10 +1393,11 @@ function __mountCalcNav(builtins) {
         if(e.hooks && typeof e.hooks === 'object' && !PAGE_HOOKS[key]) PAGE_HOOKS[key] = e.hooks;
         if(sb.querySelector('.nav-btn[data-p="' + key + '"]')) return;
         const label = String(e.group || 'Calculators').trim();
-        let grp = Array.from(sb.querySelectorAll('.nav-group')).find(g => {
+        const findGrp = want => Array.from(sb.querySelectorAll('.nav-group')).find(g => {
             const l = g.querySelector('.nav-group-label');
-            return !!l && String(l.textContent).trim().toLowerCase() === label.toLowerCase();
+            return !!l && String(l.textContent).trim().toLowerCase() === want;
         });
+        let grp = findGrp(label.toLowerCase()) || (__NAV_GROUP_ALIAS[label.toLowerCase()] ? findGrp(__NAV_GROUP_ALIAS[label.toLowerCase()]) : null);
         if(!grp) {
             grp = document.createElement('div'); grp.className = 'nav-group';
             const l = document.createElement('div'); l.className = 'nav-group-label'; l.textContent = label;
@@ -1318,11 +1406,13 @@ function __mountCalcNav(builtins) {
             if(foot) sb.insertBefore(grp, foot); else sb.appendChild(grp);
         }
         const b = document.createElement('div');
-        b.className = 'nav-btn' + (page === key ? ' active' : '');
+        b.className = 'nav-btn' + (__hubOf(key) ? ' nav-hub-member' : '') + (page === key ? ' active' : '');
         b.setAttribute('data-p', key);
         b.innerHTML = '<span class="nav-icon">' + __calcIcon(e.icon) + '</span><span>' + __calcEsc(e.navTitle || e.title || key) + '</span>';
         b.addEventListener('click', () => nav(key));
-        grp.appendChild(b);
+        const r = __navRank(key);
+        const before = r === Infinity ? null : Array.from(grp.querySelectorAll('.nav-btn')).find(x => __navBtnRank(x) > r);
+        if(before) grp.insertBefore(b, before); else grp.appendChild(b);
         n++;
     });
     return n;
@@ -1367,7 +1457,7 @@ function __calcHomeTiles(mods) {
 // favourites / recently used, stacked input tables on phones. UI preferences
 // live in wts_ui_* keys (29-project-save.js treats them as device preferences:
 // never saved into project files). Event-driven only — no timers or polling.
-const __UI_FAV = 'wts_ui_favs', __UI_RECENT = 'wts_ui_recent', __UI_NAVC = 'wts_ui_nav_collapsed';
+const __UI_FAV = 'wts_ui_favs', __UI_RECENT = 'wts_ui_recent', __UI_NAVO = 'wts_ui_nav_open', __UI_HUB = 'wts_ui_hub_last';
 const __UI_RECENT_MAX = 8, __UI_RECENT_SHOW = 6;
 const __UI_NOT_TILE = { home:1, clientinfo:1, releasenotes:1, privacy:1, gaevents:1, dca:1, pta:1 };
 let __homeTilesNow = {};     // id → tile of the dashboard on screen (for the favourites / recent chips)
@@ -1398,23 +1488,67 @@ function __uiRegText(key) {
     return hit ? [hit.e.title, hit.e.sub, hit.e.desc].filter(Boolean).join(' ') : '';
 }
 
-// Sidebar: collapsible groups (persisted) + search filter.
+// Sidebar: accordion groups (one open at a time) + hubs + search filter.
+// The open group is remembered in wts_ui_nav_open ('' = all closed); navigating to a page
+// opens the group that holds it. While searching every matching calculator shows, hub
+// members included, whatever is collapsed; clearing the search restores the accordion.
 function __navGroupKey(g) {
     const l = g && g.querySelector ? g.querySelector('.nav-group-label') : null;
     return l ? String(l.textContent).trim().toLowerCase() : '';
 }
+const __NAV_ALIAS = { dca: 'prism', pta: 'prism' };   // routes shown by another sidebar entry
+function __navGroupOf(p) {
+    const sb = $('sidebar');
+    if(!sb || typeof sb.querySelector !== 'function' || !p) return null;
+    const b = sb.querySelector('.nav-group .nav-btn[data-p="' + (__NAV_ALIAS[p] || p) + '"]');
+    return b && typeof b.closest === 'function' ? b.closest('.nav-group') : null;
+}
+// Members of a hub that have a sidebar button, in hub order.
+function __hubMembers(h) {
+    const hub = __NAV_HUBS[h], sb = $('sidebar');
+    if(!hub || !sb || typeof sb.querySelector !== 'function') return [];
+    return hub.members.filter(m => !!sb.querySelector('.nav-btn[data-p="' + m + '"]'));
+}
+function __hubLabel(m) {
+    const sb = $('sidebar'), b = sb && typeof sb.querySelector === 'function' ? sb.querySelector('.nav-btn[data-p="' + m + '"]') : null;
+    if(!b) return m;
+    const t = Array.from(b.children || []).filter(c => !(c.classList && c.classList.contains('nav-icon'))).map(c => c.textContent).join(' ');
+    return String(t || b.textContent).replace(/\s+/g, ' ').trim() || m;
+}
+function __hubLast() {
+    try { const o = JSON.parse(localStorage.getItem(__UI_HUB) || '{}'); return (o && typeof o === 'object' && !Array.isArray(o)) ? o : {}; } catch(e) { return {}; }
+}
+function __hubTarget(h) {
+    const ms = __hubMembers(h), last = __hubLast()[h];
+    return ms.indexOf(last) !== -1 ? last : (ms[0] || null);
+}
+function __hubRemember(h, p) {
+    const o = __hubLast();
+    if(o[h] === p) return;
+    o[h] = p;
+    try { localStorage.setItem(__UI_HUB, JSON.stringify(o)); } catch(e) {}
+}
+function __hubOpen(h) { const t = __hubTarget(h); if(t) nav(t); }
 function __sidebarFilter() {
     const sb = $('sidebar'), inp = $('sb_search');
     if(!sb || typeof sb.querySelectorAll !== 'function') return 0;
     const q = __uiTokens(inp ? inp.value : '');
     if(sb.classList) sb.classList.toggle('sb-searching', q.length > 0);
+    // A calculator matches on its own name, key, hub and plug-in subtitle; the group label only
+    // counts when nothing matches that way (so "choke" lists the choke pages, "safety" a group).
+    const own = b => { const p = b.getAttribute('data-p'), h = __hubOf(p); return (h ? __NAV_HUBS[h].title + ' ' : '') + b.textContent + ' ' + p + ' ' + __uiRegText(p); };
+    const useGroup = q.length > 0 && !Array.from(sb.querySelectorAll('.nav-group .nav-btn[data-p]')).some(b => __uiMatch(q, own(b)));
     let n = 0;
     Array.from(sb.querySelectorAll('.nav-group')).forEach(g => {
         const gl = __navGroupKey(g);
         let m = 0;
         Array.from(g.querySelectorAll('.nav-btn')).forEach(b => {
             const p = b.getAttribute('data-p') || '';
-            const ok = !q.length || __uiMatch(q, gl + ' ' + b.textContent + ' ' + p + ' ' + __uiRegText(p));
+            if(!p) {                                   // hub button: replaced by its matching members while searching
+                b.classList.toggle('sb-hide', q.length > 0 || !__hubMembers(b.getAttribute('data-hub') || '').length);
+                return;
+            }
+            const ok = !q.length || __uiMatch(q, (useGroup ? gl + ' ' : '') + own(b));
             b.classList.toggle('sb-hide', !ok);
             if(ok) m++;
         });
@@ -1425,30 +1559,71 @@ function __sidebarFilter() {
     if(e && e.classList) e.classList.toggle('hidden', !(q.length && !n));
     return n;
 }
-function __sidebarEnhance() {
+let __navOpen = null;          // key of the open group ('' = none); null = not read from storage yet
+let __navShownFor = null;      // page whose group was last revealed
+function __navOpenRead() {
+    try { const v = localStorage.getItem(__UI_NAVO); return typeof v === 'string' && v.length <= 64 ? v : null; } catch(e) { return null; }
+}
+function __navOpenStore(k) { try { localStorage.setItem(__UI_NAVO, k); } catch(e) {} }
+// Collapse every group but the open one. A remembered group that no longer exists (renamed,
+// or a plug-in group not mounted yet) falls back to the active page's group.
+function __sidebarApply() {
     const sb = $('sidebar');
     if(!sb || typeof sb.querySelectorAll !== 'function') return;
-    const closed = __uiList(__UI_NAVC);
-    Array.from(sb.querySelectorAll('.nav-group')).forEach(g => {
+    const groups = Array.from(sb.querySelectorAll('.nav-group'));
+    let open = __navOpen || '';
+    if(open && !groups.some(g => __navGroupKey(g) === open)) { const ag = __navGroupOf(page); open = ag ? __navGroupKey(ag) : ''; }
+    groups.forEach(g => {
         const l = g.querySelector('.nav-group-label');
         if(!l) return;
         if(!l.getAttribute('role')) { l.setAttribute('role', 'button'); l.setAttribute('tabindex', '0'); }
-        const c = closed.indexOf(__navGroupKey(g)) !== -1;
+        const c = __navGroupKey(g) !== open;
         g.classList.toggle('collapsed', c);
         l.setAttribute('aria-expanded', c ? 'false' : 'true');
     });
+}
+// Active state of the hub buttons, alias routes and the "What's new" link
+// (plain .nav-btn[data-p] buttons are set by nav()).
+function __sidebarSyncActive() {
+    const sb = $('sidebar');
+    if(!sb || typeof sb.querySelectorAll !== 'function') return;
+    const h = __hubOf(page);
+    Array.from(sb.querySelectorAll('.nav-btn[data-hub]')).forEach(b => {
+        const k = b.getAttribute('data-hub');
+        b.classList.toggle('active', k === h);
+        b.setAttribute('title', __hubMembers(k).map(__hubLabel).join(' · '));
+    });
+    if(__NAV_ALIAS[page]) Array.from(sb.querySelectorAll('.nav-btn[data-p="' + __NAV_ALIAS[page] + '"]')).forEach(b => b.classList.add('active'));
+    const rn = $('sbReleaseNotes');
+    if(rn && rn.classList) {
+        rn.classList.toggle('active', page === 'releasenotes');
+        if(page === 'releasenotes') rn.setAttribute('aria-current', 'page'); else rn.removeAttribute('aria-current');
+    }
+}
+function __sidebarEnhance() {
+    const sb = $('sidebar');
+    if(!sb || typeof sb.querySelectorAll !== 'function') return;
+    if(__navOpen === null) __navOpen = __navOpenRead();            // first pass: the remembered group
+    if(__navShownFor !== page) {
+        const first = __navShownFor === null;
+        __navShownFor = page;
+        const ag = __navGroupOf(page);
+        // navigating always reveals the page's group; at start-up a remembered choice wins
+        if(ag && !(first && __navOpen !== null)) { __navOpen = __navGroupKey(ag); __navOpenStore(__navOpen); }
+    }
+    __sidebarApply();
+    __sidebarSyncActive();
     __sidebarFilter();
 }
+// Open (force false) or close (force true) a group; without force, toggle. Opening closes the others.
 function __sidebarToggle(g, force) {
     const k = __navGroupKey(g);
     if(!k) return false;
     const c = typeof force === 'boolean' ? force : !g.classList.contains('collapsed');
-    const a = __uiList(__UI_NAVC).filter(x => x !== k);
-    if(c) a.push(k);
-    __uiSetList(__UI_NAVC, a);
-    g.classList.toggle('collapsed', c);
-    const l = g.querySelector('.nav-group-label');
-    if(l) l.setAttribute('aria-expanded', c ? 'false' : 'true');
+    if(!c) __navOpen = k;
+    else if(!g.classList.contains('collapsed')) __navOpen = '';
+    __navOpenStore(__navOpen);
+    __sidebarApply();
     return c;
 }
 
@@ -1557,8 +1732,37 @@ window.WTS_stackTables = __wtsStackTables;
 // ── Navigation ──
 let page = 'clientinfo';
 const navBtns = document.querySelectorAll('.nav-btn');
-navBtns.forEach(b => b.addEventListener('click', () => nav(b.dataset.p)));
+navBtns.forEach(b => b.addEventListener('click', () => { if(b.dataset.p) nav(b.dataset.p); else if(b.dataset.hub) __hubOpen(b.dataset.hub); }));
 { const pl = $('sbPrivacyLink'); if(pl) pl.addEventListener('click', ev => { ev.preventDefault(); nav('privacy'); }); }
+{ const rn = $('sbReleaseNotes'); if(rn && typeof rn.addEventListener === 'function') rn.addEventListener('click', ev => { ev.preventDefault(); nav('releasenotes'); }); }
+// Hub tab strip: a tab opens that member's own route (←/→ via the a11y layer's tab handling).
+{
+    const ht = $('hubTabs');
+    if(ht && typeof ht.addEventListener === 'function') ht.addEventListener('click', e => {
+        const t = e.target && typeof e.target.closest === 'function' ? e.target.closest('[data-hub-go]') : null;
+        if(t && t.getAttribute('data-hub-go') !== page) nav(t.getAttribute('data-hub-go'));
+    });
+}
+// Fill #hubTabs for a hub member page (hidden elsewhere). It sits outside #pgBody, so page
+// autosave, reports and exports never see it.
+function __hubTabsRender() {
+    const ht = $('hubTabs');
+    if(!ht) return;
+    const h = __hubOf(page), ms = h ? __hubMembers(h) : [];
+    if(ms.length < 2 || ms.indexOf(page) === -1) {
+        if(ht.innerHTML) ht.innerHTML = '';
+        if(ht.classList) ht.classList.add('hidden');
+        return;
+    }
+    __hubRemember(h, page);
+    ht.setAttribute('aria-label', __NAV_HUBS[h].title);
+    ht.innerHTML = '<span class="hub-tabs-title" aria-hidden="true">' + __calcEsc(__NAV_HUBS[h].title) + '</span>' + ms.map(m => {
+        const on = m === page;
+        return '<button type="button" role="tab" class="hub-tab' + (on ? ' active' : '') + '" id="hubtab_' + m + '" data-hub-go="' + m +
+            '" aria-selected="' + on + '" tabindex="' + (on ? '0' : '-1') + '">' + __calcEsc(__hubLabel(m)) + '</button>';
+    }).join('');
+    if(ht.classList) ht.classList.remove('hidden');
+}
 // v3.0 sidebar: group labels toggle their group (click, Enter, Space); the search box
 // filters the buttons (Enter opens the first match, Escape clears).
 {
@@ -1664,7 +1868,8 @@ function render() {
     body.innerHTML = '';
     const pages = { home: renderHome, clientinfo: renderClientInfo, aga3: renderAGA3, units: renderUnits, choke: renderChoke, flare: renderFlare, prv: renderPRV, chokeflow: renderChokeFlow, gascalc: renderGasCalc, fluid: renderFluid, tank: renderTank, vessel: renderVessel, elec: renderElec, chem: renderChem, sep: renderSep, bottomsup: renderBottomsUp, solgor: renderSolGOR, oilgas: renderOilGas, mcfshr: renderMCFShr, casing: renderCasing, chokecnv: renderChokeCnv, analogsig: renderAnalogSig, pumpsz: renderPumpSz, seprate: renderSepRate, sephand: renderSepHandling, heater: renderHeater, pipesz: renderPipeSz, turbmeter: renderTurbMeter, aircomp: renderAirComp, gensz: renderGenSz, cablesz: renderCableSz, vdrop: renderVDrop, flamearr: renderFlameArr, arc: renderARC, wts: renderWTS, releasenotes: renderReleaseNotes, gaevents: renderGAEvents, privacy: renderPrivacy, prism: renderPRiSM, dca: renderPRiSM, pta: renderPRiSM, esdhi: window.renderESDHiPilot, esdlo: window.renderESDLoPilot, hydrate: window.renderHydrateManagement, liquidline: window.renderLiquidLine, pipelife: window.renderPipeLife, wells: __renderWells };
     __mountCalcNav(pages);                     // sidebar buttons for plug-in calculators (idempotent)
-    try { __sidebarEnhance(); } catch(e) {}    // collapsed state + search filter for new groups/buttons
+    try { __sidebarEnhance(); } catch(e) {}    // accordion state, hubs + search filter for new groups/buttons
+    try { __hubTabsRender(); } catch(e) {}     // hub tab strip (Chokes, Separators…) above the page
     if (pages[page]) pages[page](body);
     else __renderRegistryCalc(page, body);     // plug-in calculators (window.WTS_calcRegistry)
     // Re-apply every autosaved value / dynamic row for this page
@@ -1818,54 +2023,47 @@ function renderHome(body) {
     // dashboard reads like a visual table of contents. Badges = sidebar group names (colour
     // pills consistent with the group convention: green=well/production,
     // orange=safety/process, blue=electrical/utility).
+    // Order and grouping come from the sidebar (__homeGroups); badges are the group or hub short names.
     const mods = [
-        // ─── Well Testing ───
-        { id:'aga3',      icon:'&#9881;',  badge:'Well Testing', bc:'dc-b-green',  title:'AGA-3 Gas Rate Calculator', desc:'Orifice meter gas flow rate per AGA Report No.3 / API 14.3 with Z-factor and discharge coefficient.' },
-        { id:'choke',     icon:'&#9879;',  badge:'Well Testing', bc:'dc-b-green',  title:'Dual Choke Calculation', desc:'Intermediate pressure, equivalent choke sizing, critical flow check and Gilbert correlation.' },
-        { id:'chokeflow', icon:'&#9673;',  badge:'Well Testing', bc:'dc-b-green',  title:'Choke Flow Rates', desc:'Gas rate through fixed choke (coefficient method) and oil rate using Gilbert & Ros equations.' },
-        { id:'chokecnv',  icon:'&#8646;',  badge:'Well Testing', bc:'dc-b-green',  title:'Choke Conversions', desc:'Convert choke sizes between 64ths, decimal inches, and millimeters.' },
-        { id:'bottomsup', icon:'&#8987;',  badge:'Well Testing', bc:'dc-b-green',  title:'Bottoms Up Time', desc:'Calculate circulation time for fluid returns based on flow rate and tubing volume.' },
-        { id:'mcfshr',    icon:'&#9632;',  badge:'Well Testing', bc:'dc-b-green',  title:'MCF & Shrinkage %', desc:'Meter Correction Factor and shrinkage percentage from turbine meter and surge tank readings.' },
-        { id:'casing',    icon:'&#9674;',  badge:'Well Testing', bc:'dc-b-green',  title:'Casing & Tubing', desc:'Casing and tubing dimensions, annular capacity, and total volume calculations.' },
-        { id:'wts',       icon:'&#9733;',  badge:'Well Testing', bc:'dc-b-green',  title:'Well Test Simulator', desc:'Full surface flow tree: Wellhead → SSV → Choke → Heater → Separator → Flare with live P, T and velocity.' },
-        // ─── Test System Safety ───
-        { id:'esdhi',     icon:'&#9888;',  badge:'Safety',       bc:'dc-b-orange', title:'ESD Hi-Pilot', desc:'Hi-pilot (PSH) set point that fires the ESD before a blocked section reaches its relief setting during the ESD response time.' },
-        { id:'esdlo',     icon:'&#9881;',  badge:'Safety',       bc:'dc-b-orange', title:'ESD Lo-Pilot', desc:'Lo-pilot (PSL) set point that fires the ESD on a target detectable leak rate.' },
-        { id:'hydrate',   icon:'&#10052;', badge:'Safety',       bc:'dc-b-orange', title:'Hydrate Management', desc:'Per-segment hydrate-formation check and methanol / glycol inhibitor injection rate.' },
-        { id:'liquidline',icon:'&#9858;',  badge:'Safety',       bc:'dc-b-orange', title:'Liquid Line / RO', desc:'Gas blow-by protection from the separator to the atmospheric tank: LCV blow-by and restriction-orifice sizing.' },
-        { id:'pipelife',  icon:'&#9201;',  badge:'Safety',       bc:'dc-b-orange', title:'Pipe Service Life', desc:'Sand-erosion time to failure for each pipe segment of the test spread.' },
-        // ─── Production & Reservoir ───
-        { id:'oilgas',    icon:'&#9878;',  badge:'Production',   bc:'dc-b-green',  title:'Oil & Gas Rate + GOR', desc:'Combined oil and gas rate calculation with VCF correction, GOR, and condensate ratio.' },
-        { id:'solgor',    icon:'&#9683;',  badge:'Production',   bc:'dc-b-green',  title:'Solution GOR', desc:'Standing and Vasquez & Beggs correlations for solution gas-oil ratio estimation.' },
-        { id:'prism',     icon:'&#128302;', badge:'Reservoir',    bc:'dc-b-green',  title:'PRiSM — Well Test Analysis', desc:'Advanced PTA + DCA workshop. Type-curve library (homogeneous, fractures, horizontal, boundaries), Bourdet derivative, Stehfest Laplace inversion. Replaces DCA Quick Run + PTA Quick Look.' },
-        // ─── Separation & Vessels ───
-        { id:'sep',       icon:'&#9644;',  badge:'Separation',   bc:'dc-b-orange', title:'Separator Retention', desc:'Estimate retention time in separator based on capacity, fluid level, and flow rate.' },
-        { id:'seprate',   icon:'&#9638;',  badge:'Separation',   bc:'dc-b-orange', title:'Separator Rating', desc:'Souders-Brown gas capacity check and liquid retention time verification.' },
-        { id:'sephand',   icon:'&#9707;',  badge:'Separation',   bc:'dc-b-orange', title:'Separator Handling', desc:'Full handling check: Souders-Brown gas, retention by emulsion, oil/water split, plus PCV/LCV/line/turbine outlet velocity verdict.' },
-        // ─── Safety & Process ───
-        { id:'flare',     icon:'&#9632;',  badge:'Safety',       bc:'dc-b-orange', title:'Flare Simulation', desc:'Interactive flare model with thermal radiation zones per API 521. Import drawings as background.' },
-        { id:'prv',       icon:'&#9651;',  badge:'Safety',       bc:'dc-b-orange', title:'PRV / Relief Sizing', desc:'API 520 Part I orifice area sizing for gas/vapor, steam, and liquid service. API 526 orifice selection.' },
-        { id:'vessel',    icon:'&#9641;',  badge:'Safety',       bc:'dc-b-orange', title:'Vessel / Pipe', desc:'ASME pressure vessel minimum wall thickness for shells and 2:1 elliptical heads.' },
-        { id:'flamearr',  icon:'&#9650;',  badge:'Safety',       bc:'dc-b-orange', title:'Flame Arrestor', desc:'Flame arrestor NPS selection based on flow capacity and allowable pressure drop.' },
-        { id:'arc',       icon:'&#8635;',  badge:'Safety',       bc:'dc-b-orange', title:'ARC Valve Sizing', desc:'Automatic recirculation valve sizing for centrifugal pump minimum flow protection.' },
-        // ─── Process Equipment ───
-        { id:'pipesz',    icon:'&#9472;',  badge:'Process',      bc:'dc-b-orange', title:'Pipe Sizing', desc:'Pipe selection based on velocity criteria and Darcy-Weisbach pressure drop.' },
-        { id:'pumpsz',    icon:'&#9955;',  badge:'Process',      bc:'dc-b-orange', title:'Pump Sizing', desc:'Hydraulic pump sizing with TDH, NPSH analysis, power calculation, and pump type selection.' },
-        { id:'turbmeter', icon:'&#9201;',  badge:'Process',      bc:'dc-b-orange', title:'Turbine Meter', desc:'Liquid turbine meter sizing with Reynolds number and cavitation checks per API MPMS 5.3.' },
-        { id:'heater',    icon:'&#9832;',  badge:'Process',      bc:'dc-b-orange', title:'Indirect Heater', desc:'Water bath heater duty calculation, fuel consumption, and heater category selection.' },
-        { id:'aircomp',   icon:'&#9729;',  badge:'Process',      bc:'dc-b-orange', title:'Air Compressor', desc:'Compressor type selection and receiver sizing for instrument and utility air systems.' },
-        // ─── Electrical ───
-        { id:'gensz',     icon:'&#9889;',  badge:'Electrical',   bc:'dc-b-blue',   title:'Generator Sizing', desc:'Generator kVA rating based on running loads and worst-case motor starting scenarios.' },
-        { id:'cablesz',   icon:'&#9866;',  badge:'Electrical',   bc:'dc-b-blue',   title:'Cable Sizing', desc:'Copper cable selection based on ampacity derating and voltage drop limits.' },
-        { id:'vdrop',     icon:'&#8615;',  badge:'Electrical',   bc:'dc-b-blue',   title:'Voltage Drop', desc:'Verify voltage drop for copper or aluminium cable installations with status assessment.' },
-        { id:'elec',      icon:'&#9889;',  badge:'Electrical',   bc:'dc-b-blue',   title:'Electrical & Pumps', desc:'3-phase motor current, kW/HP conversion, and mud pump output calculations.' },
-        // ─── Fluid & Field Calcs ───
-        { id:'gascalc',   icon:'&#9671;',  badge:'Field Calc',   bc:'dc-b-blue',   title:'Gas Calculations', desc:'Gas velocity, gas volume, gas gradient and downhole pressure calculations.' },
-        { id:'fluid',     icon:'&#9679;',  badge:'Field Calc',   bc:'dc-b-blue',   title:'Fluid Properties', desc:'API gravity correction to 60°F, bubble point estimation, and shrinkage factor.' },
-        { id:'tank',      icon:'&#9645;',  badge:'Field Calc',   bc:'dc-b-blue',   title:'Tank Calculator', desc:'Rectangular & cylindrical tank volumes, fluid levels, and flow rate from tank readings.' },
-        { id:'chem',      icon:'&#9883;',  badge:'Field Calc',   bc:'dc-b-blue',   title:'Chemical & Dosage', desc:'Chemical injection rate calculator and argentometric chloride determination.' },
-        { id:'units',     icon:'&#8644;',  badge:'Field Calc',   bc:'dc-b-blue',   title:'Unit Conversions', desc:'10 categories: gas/liquid flow, pressure, temperature, length, density, viscosity, volume, energy, mass.' },
-        { id:'analogsig', icon:'&#8766;',  badge:'Field Calc',   bc:'dc-b-blue',   title:'Analog Signal', desc:'Convert between 4-20 mA, 0-10 V, and process values for instrumentation.' },
+        { id:'aga3',      icon:'&#9881;',  badge:'Metering', bc:'dc-b-green',  title:'AGA-3 Gas Rate Calculator', desc:'Orifice meter gas flow rate per AGA Report No.3 / API 14.3 with Z-factor and discharge coefficient.' },
+        { id:'choke',     icon:'&#9879;',  badge:'Chokes', bc:'dc-b-green',  title:'Dual Choke Calculation', desc:'Intermediate pressure, equivalent choke sizing, critical flow check and Gilbert correlation.' },
+        { id:'chokeflow', icon:'&#9673;',  badge:'Chokes', bc:'dc-b-green',  title:'Choke Flow Rates', desc:'Gas rate through fixed choke (coefficient method) and oil rate using Gilbert & Ros equations.' },
+        { id:'chokecnv',  icon:'&#8646;',  badge:'Chokes', bc:'dc-b-green',  title:'Choke Conversions', desc:'Convert choke sizes between 64ths, decimal inches, and millimeters.' },
+        { id:'bottomsup', icon:'&#8987;',  badge:'Well Test', bc:'dc-b-green',  title:'Bottoms Up Time', desc:'Calculate circulation time for fluid returns based on flow rate and tubing volume.' },
+        { id:'mcfshr',    icon:'&#9632;',  badge:'Metering', bc:'dc-b-green',  title:'MCF & Shrinkage %', desc:'Meter Correction Factor and shrinkage percentage from turbine meter and surge tank readings.' },
+        { id:'casing',    icon:'&#9674;',  badge:'Well Test', bc:'dc-b-green',  title:'Casing & Tubing', desc:'Casing and tubing dimensions, annular capacity, and total volume calculations.' },
+        { id:'wts',       icon:'&#9733;',  badge:'Well Test', bc:'dc-b-green',  title:'Well Test Simulator', desc:'Full surface flow tree: Wellhead → SSV → Choke → Heater → Separator → Flare with live P, T and velocity.' },
+        { id:'esdhi',     icon:'&#9888;',  badge:'Safety', bc:'dc-b-orange', title:'ESD Hi-Pilot', desc:'Hi-pilot (PSH) set point that fires the ESD before a blocked section reaches its relief setting during the ESD response time.' },
+        { id:'esdlo',     icon:'&#9881;',  badge:'Safety', bc:'dc-b-orange', title:'ESD Lo-Pilot', desc:'Lo-pilot (PSL) set point that fires the ESD on a target detectable leak rate.' },
+        { id:'hydrate',   icon:'&#10052;', badge:'Safety', bc:'dc-b-orange', title:'Hydrate Management', desc:'Per-segment hydrate-formation check and methanol / glycol inhibitor injection rate.' },
+        { id:'liquidline',icon:'&#9858;',  badge:'Safety', bc:'dc-b-orange', title:'Liquid Line / RO', desc:'Gas blow-by protection from the separator to the atmospheric tank: LCV blow-by and restriction-orifice sizing.' },
+        { id:'pipelife',  icon:'&#9201;',  badge:'Safety', bc:'dc-b-orange', title:'Pipe Service Life', desc:'Sand-erosion time to failure for each pipe segment of the test spread.' },
+        { id:'oilgas',    icon:'&#9878;',  badge:'Production', bc:'dc-b-green',  title:'Oil & Gas Rate + GOR', desc:'Combined oil and gas rate calculation with VCF correction, GOR, and condensate ratio.' },
+        { id:'solgor',    icon:'&#9683;',  badge:'Production', bc:'dc-b-green',  title:'Solution GOR', desc:'Standing and Vasquez & Beggs correlations for solution gas-oil ratio estimation.' },
+        { id:'prism',     icon:'&#128302;', badge:'Reservoir', bc:'dc-b-green',  title:'PRiSM — Well Test Analysis', desc:'Advanced PTA + DCA workshop. Type-curve library (homogeneous, fractures, horizontal, boundaries), Bourdet derivative, Stehfest Laplace inversion. Replaces DCA Quick Run + PTA Quick Look.' },
+        { id:'sep',       icon:'&#9644;',  badge:'Separators', bc:'dc-b-orange', title:'Separator Retention', desc:'Estimate retention time in separator based on capacity, fluid level, and flow rate.' },
+        { id:'seprate',   icon:'&#9638;',  badge:'Separators', bc:'dc-b-orange', title:'Separator Rating', desc:'Souders-Brown gas capacity check and liquid retention time verification.' },
+        { id:'sephand',   icon:'&#9707;',  badge:'Separators', bc:'dc-b-orange', title:'Separator Handling', desc:'Full handling check: Souders-Brown gas, retention by emulsion, oil/water split, plus PCV/LCV/line/turbine outlet velocity verdict.' },
+        { id:'flare',     icon:'&#9632;',  badge:'Flare &amp; Relief', bc:'dc-b-orange', title:'Flare Simulation', desc:'Interactive flare model with thermal radiation zones per API 521. Import drawings as background.' },
+        { id:'prv',       icon:'&#9651;',  badge:'Flare &amp; Relief', bc:'dc-b-orange', title:'PRV / Relief Sizing', desc:'API 520 Part I orifice area sizing for gas/vapor, steam, and liquid service. API 526 orifice selection.' },
+        { id:'vessel',    icon:'&#9641;',  badge:'Process', bc:'dc-b-orange', title:'Vessel / Pipe', desc:'ASME pressure vessel minimum wall thickness for shells and 2:1 elliptical heads.' },
+        { id:'flamearr',  icon:'&#9650;',  badge:'Flare &amp; Relief', bc:'dc-b-orange', title:'Flame Arrestor', desc:'Flame arrestor NPS selection based on flow capacity and allowable pressure drop.' },
+        { id:'arc',       icon:'&#8635;',  badge:'Process', bc:'dc-b-orange', title:'ARC Valve Sizing', desc:'Automatic recirculation valve sizing for centrifugal pump minimum flow protection.' },
+        { id:'pipesz',    icon:'&#9472;',  badge:'Flowlines', bc:'dc-b-green', title:'Pipe Sizing', desc:'Pipe selection based on velocity criteria and Darcy-Weisbach pressure drop.' },
+        { id:'pumpsz',    icon:'&#9955;',  badge:'Process', bc:'dc-b-orange', title:'Pump Sizing', desc:'Hydraulic pump sizing with TDH, NPSH analysis, power calculation, and pump type selection.' },
+        { id:'turbmeter', icon:'&#9201;',  badge:'Metering', bc:'dc-b-green', title:'Turbine Meter', desc:'Liquid turbine meter sizing with Reynolds number and cavitation checks per API MPMS 5.3.' },
+        { id:'heater',    icon:'&#9832;',  badge:'Process', bc:'dc-b-orange', title:'Indirect Heater', desc:'Water bath heater duty calculation, fuel consumption, and heater category selection.' },
+        { id:'aircomp',   icon:'&#9729;',  badge:'Process', bc:'dc-b-orange', title:'Air Compressor', desc:'Compressor type selection and receiver sizing for instrument and utility air systems.' },
+        { id:'gensz',     icon:'&#9889;',  badge:'Electrical', bc:'dc-b-blue',   title:'Generator Sizing', desc:'Generator kVA rating based on running loads and worst-case motor starting scenarios.' },
+        { id:'cablesz',   icon:'&#9866;',  badge:'Electrical', bc:'dc-b-blue',   title:'Cable Sizing', desc:'Copper cable selection based on ampacity derating and voltage drop limits.' },
+        { id:'vdrop',     icon:'&#8615;',  badge:'Electrical', bc:'dc-b-blue',   title:'Voltage Drop', desc:'Verify voltage drop for copper or aluminium cable installations with status assessment.' },
+        { id:'elec',      icon:'&#9889;',  badge:'Electrical', bc:'dc-b-blue',   title:'Electrical & Pumps', desc:'3-phase motor current, kW/HP conversion, and mud pump output calculations.' },
+        { id:'gascalc',   icon:'&#9671;',  badge:'Utilities', bc:'dc-b-blue',   title:'Gas Calculations', desc:'Gas velocity, gas volume, gas gradient and downhole pressure calculations.' },
+        { id:'fluid',     icon:'&#9679;',  badge:'Utilities', bc:'dc-b-blue',   title:'Fluid Properties', desc:'API gravity correction to 60°F, bubble point estimation, and shrinkage factor.' },
+        { id:'tank',      icon:'&#9645;',  badge:'Process', bc:'dc-b-orange',   title:'Tank Calculator', desc:'Rectangular & cylindrical tank volumes, fluid levels, and flow rate from tank readings.' },
+        { id:'chem',      icon:'&#9883;',  badge:'Utilities', bc:'dc-b-blue',   title:'Chemical & Dosage', desc:'Chemical injection rate calculator and argentometric chloride determination.' },
+        { id:'units',     icon:'&#8644;',  badge:'Utilities', bc:'dc-b-blue',   title:'Unit Conversions', desc:'10 categories: gas/liquid flow, pressure, temperature, length, density, viscosity, volume, energy, mass.' },
+        { id:'analogsig', icon:'&#8766;',  badge:'Utilities', bc:'dc-b-blue',   title:'Analog Signal', desc:'Convert between 4-20 mA, 0-10 V, and process values for instrumentation.' },
     ];
     __calcHomeTiles(mods);   // + plug-in calculators (window.WTS_calcRegistry), in sidebar order
     // v3.0: search box, favourites + recently used (compact chips, so every tile
@@ -1939,9 +2137,9 @@ function renderClientInfo(body) {
         <div class="card">
           <div class="card-title">Client Information</div>
           <div class="fg">
-            <div class="fg-item"><label>Client / Company Name</label><input type="text" id="ci_client" value="${_rEsc(ci.client||'')}" placeholder="e.g. Tullow Oil"></div>
+            <div class="fg-item"><label>Client / Company Name</label><input type="text" id="ci_client" value="${_rEsc(ci.client||'')}" placeholder="e.g. Client Energy Ltd"></div>
             <div class="fg-item"><label>Contact Person</label><input type="text" id="ci_contact" value="${_rEsc(ci.contact||'')}" placeholder="e.g. John Smith"></div>
-            <div class="fg-item"><label>Client Email</label><input type="email" id="ci_email" value="${_rEsc(ci.email||'')}" placeholder="e.g. john@tullow.com"></div>
+            <div class="fg-item"><label>Client Email</label><input type="email" id="ci_email" value="${_rEsc(ci.email||'')}" placeholder="e.g. name@company.example"></div>
             <div class="fg-item"><label>Client Reference / PO</label><input type="text" id="ci_ref" value="${_rEsc(ci.ref||'')}" placeholder="e.g. PO-2026-0042"></div>
           </div>
         </div>
@@ -1949,8 +2147,8 @@ function renderClientInfo(body) {
           <div class="card-title">Well & Field Information</div>
           <div class="fg">
             <div class="fg-item"><label>Well Name</label><input type="text" id="ci_well" value="${_rEsc(ci.well||'')}" placeholder="e.g. Well-7H"></div>
-            <div class="fg-item"><label>Field / Block</label><input type="text" id="ci_field" value="${_rEsc(ci.field||'')}" placeholder="e.g. Jubilee Field, Block DT-10"></div>
-            <div class="fg-item"><label>Operator</label><input type="text" id="ci_operator" value="${_rEsc(ci.operator||'')}" placeholder="e.g. Tullow Oil plc"></div>
+            <div class="fg-item"><label>Field / Block</label><input type="text" id="ci_field" value="${_rEsc(ci.field||'')}" placeholder="e.g. Alpha Field, Block 12"></div>
+            <div class="fg-item"><label>Operator</label><input type="text" id="ci_operator" value="${_rEsc(ci.operator||'')}" placeholder="e.g. Operator Energy Ltd"></div>
             <div class="fg-item"><label>Country / Region</label><input type="text" id="ci_country" value="${_rEsc(ci.country||'')}" placeholder="e.g. Ghana, West Africa"></div>
             <div class="fg-item"><label>Rig / Vessel</label><input type="text" id="ci_rig" value="${_rEsc(ci.rig||'')}" placeholder="e.g. Maersk Deliverer"></div>
           </div>
@@ -10706,6 +10904,7 @@ const RELEASE_NOTES = [
         ['platform', 'Modbus', 'Bad register values show as BAD with an alarm; a bridge that never answers times out instead of hanging; new P-201 variable; the Mini WellOS demo asks before replacing a configuration.'],
         ['fix', 'Fixes', 'Flare no longer breaks on zero, negative or blank inputs; Hydrate Management no longer scrolls sideways on wide screens; simulator messages for the no-surge-tank rig-up name the right trip; a broken example link on the analytics reference page was removed.'],
         ['platform', 'Modbus connection errors', 'When the bridge cannot connect to a device, the status says what to check (nothing listening at that IP / port, no answer, unreachable network, unknown name, connection dropped) and keeps the original error.'],
+        ['ux', 'Sidebar without scrolling', 'The sidebar fits the window: nine clearer groups (Metering &amp; Chokes, Well Test &amp; Flowlines, Production &amp; Reservoir, Live Data, Test System Safety, Separation &amp; Process, Flare &amp; Relief, Fluids &amp; Utilities), one open at a time — the group of the page you’re on opens by itself. Chokes, ESD Pilots, Separators and Electrical are one entry each with tabs for their calculators; search still finds every calculator. Release notes moved to the “What’s new” link under the version number.'],
         // <!-- v3.1 more items -->
       ] },
     { ver:'v3.0.2', date:'2026-09-30', title:'Modbus bridge: allow any device &amp; one-click Windows installer',
@@ -60262,6 +60461,21 @@ _registerPanel(6, {
         }
     }
     function _navButtons() { return _hasDoc ? Array.prototype.slice.call(document.querySelectorAll('#sidebar .nav-btn')) : []; }
+    // Buttons the sidebar shows right now (accordion + hubs, v3.1): search hits while searching;
+    // otherwise no hub members and, in a collapsed group, only the active button. ↑/↓ and the
+    // single tab stop move over these only, so the tab stop is never on a hidden button.
+    function _navShown(btns) {
+        var sb = _byId('sidebar'), searching = !!(sb && sb.classList && sb.classList.contains('sb-searching'));
+        return btns.filter(function (b) {
+            var c = b.classList;
+            if (!c) return true;
+            if (c.contains('sb-hide')) return false;
+            if (searching) return true;
+            if (c.contains('nav-hub-member')) return false;
+            var g = b.closest ? b.closest('.nav-group') : null;
+            return !(g && g.classList && g.classList.contains('collapsed') && !c.contains('active'));
+        });
+    }
     function _syncSidebar() {
         var btns = _navButtons();
         if (!btns.length) return;
@@ -60273,8 +60487,9 @@ _registerPanel(6, {
             if (on) { active = active || b; if (b.getAttribute('aria-current') !== 'page') b.setAttribute('aria-current', 'page'); }
             else if (b.hasAttribute('aria-current')) b.removeAttribute('aria-current');
         }
-        var focused = document.activeElement;
-        _rove(btns, btns.indexOf(focused) !== -1 ? focused : (active || btns[0]));
+        var shown = _navShown(btns), focused = document.activeElement;
+        if (active && shown.indexOf(active) === -1) active = null;
+        _rove(btns, shown.indexOf(focused) !== -1 ? focused : (active || shown[0] || btns[0]));
     }
     function _tabsOf(list) {
         var out = [], ch = list.children || [];
@@ -60402,7 +60617,7 @@ _registerPanel(6, {
         // sidebar: ↑/↓/Home/End move the single tab stop
         if (t.classList && t.classList.contains('nav-btn') && t.closest && t.closest('#sidebar')) {
             if (key === 'ArrowDown' || key === 'ArrowUp' || key === 'Home' || key === 'End') {
-                var nb = _move(_navButtons(), t, key);
+                var nb = _move(_navShown(_navButtons()), t, key);
                 if (nb) { ev.preventDefault(); _rove(_navButtons(), nb); try { nb.focus(); } catch (e) { /* ignore */ } }
                 return;
             }
@@ -60549,6 +60764,7 @@ _registerPanel(6, {
             if (!t || !t.closest) return;
             var list = t.closest('.tabs, [role="tablist"]');
             if (list) _syncTablist(list);
+            if (t.closest('#sidebar .nav-group-label')) _syncSidebar();   // accordion: keep the tab stop on a shown button
             if (t.closest('#wts_skip_link')) {
                 ev.preventDefault();
                 var pg = _byId('pgBody');
@@ -84928,7 +85144,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
 // 43-calc-flareghg.js — Flare Emissions (plug-in calculator, Round-9)
 //
 //   Route key : flareghg          (window.WTS_calcRegistry.flareghg)
-//   Page      : Flare Emissions   (sidebar group "Safety & Process")
+//   Page      : Flare Emissions   (sidebar group "Flare & Relief")
 //   Public    : window.renderFlareEmissions(body)
 //               window.calcFlareGHG()            — reads the DOM, validates, renders
 //               window.WTS_flareghg_compute(inp) — pure, field units in/out, no DOM
@@ -85330,7 +85546,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         key: 'flareghg',
         title: 'Flare Emissions',
         sub: 'Flared gas volume, heat released and CO2 / CH4 / N2O / CO2e / SO2 emissions for well test flaring, with liquid-burner CO2',
-        group: 'Safety & Process',
+        group: 'Flare & Relief',
         icon: '&#127981;',
         badge: 'Safety',
         bc: 'dc-b-orange',
@@ -86244,7 +86460,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         title: TITLE,
         navTitle: 'Orifice Plate Selection',
         sub: SUB,
-        group: 'Well Testing',
+        group: 'Metering & Chokes',
         icon: '&#9678;',
         badge: 'Metering',
         bc: 'dc-b-blue',
@@ -86830,7 +87046,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         key: 'gaspvt',
         title: TITLE,
         sub: SUB,
-        group: 'Fluid & Field Calcs',
+        group: 'Fluids & Utilities',
         icon: '&#9679;',
         badge: 'PVT',
         bc: 'dc-b-blue',
@@ -89974,7 +90190,7 @@ G.WTS_calcRegistry = G.WTS_calcRegistry || {};
 G.WTS_calcRegistry.historian = {
     key: 'historian', title: 'Historian', navTitle: 'Historian',
     sub: 'Record, trend, tabulate and export tag data — SQLite in the browser',
-    group: 'Mini WellOS', icon: '&#128200;', badge: 'WellOS', bc: 'dc-b-blue',
+    group: 'Live Data', icon: '&#128200;', badge: 'WellOS', bc: 'dc-b-blue',
     desc: 'Trends and tables of Modbus, form and simulator data with retention, CSV / Excel export and database backup / restore.',
     render: render
 };
@@ -91331,9 +91547,9 @@ G.WTS_calcRegistry.historian = {
         title: TITLE,
         navTitle: 'Choke Performance',
         sub: SUB,
-        group: 'Well Testing',
+        group: 'Metering & Chokes',
         icon: '&#9678;',
-        badge: 'Well Testing',
+        badge: 'Chokes',
         bc: 'dc-b-green',
         desc: 'Critical ratio, gas rate through a bean (Cd), Gilbert/Ros/Baxendell/Achong multiphase beans, rate vs WHP chart and bean-up planning.',
         render: function (body) { return G.renderChokePerf(body); }
@@ -91417,7 +91633,7 @@ G.WTS_calcRegistry.historian = {
 // STATE
 //   WTS_state.dispersion = {maxSO2_ppm, maxH2S_ppm, xMax_ft, hEff_ft, rise_ft,
 //                           so2Idlh_ft, h2sIdlh_ft, ts, result}
-// Registers window.WTS_calcRegistry.dispersion (group "Safety & Process").
+// Registers window.WTS_calcRegistry.dispersion (group "Flare & Relief").
 // ════════════════════════════════════════════════════════════════════
 (function () {
     'use strict';
@@ -91882,7 +92098,7 @@ G.WTS_calcRegistry.historian = {
         title: TITLE,
         navTitle: 'SO2 / H2S Dispersion',
         sub: SUB,
-        group: 'Safety & Process',
+        group: 'Flare & Relief',
         icon: '&#9729;',
         badge: 'Screening',
         bc: 'dc-b-orange',
@@ -91976,7 +92192,7 @@ G.WTS_calcRegistry.historian = {
 //   renderFlowline(body), calcFlowline(), WTS_flowlineUseHeat()
 //
 // STATE  WTS_state.flowline = {pArr, dpSep, pFlare, dpFlare, ok, ts, result}
-// Registers window.WTS_calcRegistry.flowline (group "Well Testing").
+// Registers window.WTS_calcRegistry.flowline (group "Well Test & Flowlines").
 // ════════════════════════════════════════════════════════════════════
 (function () {
     'use strict';
@@ -92708,7 +92924,7 @@ G.WTS_calcRegistry.historian = {
         title: TITLE,
         navTitle: 'Flowline Pressure Drop',
         sub: SUB,
-        group: 'Well Testing',
+        group: 'Well Test & Flowlines',
         icon: '&#8652;',
         badge: 'Multiphase',
         bc: 'dc-b-blue',
@@ -93835,7 +94051,7 @@ G.WTS_calcRegistry.historian = {
 //   renderLineHeat(body), calcLineHeat()
 //
 // STATE  WTS_state.lineheat = {ok, tIn, tArr, hydrateRisk, ts, result}
-// Registers window.WTS_calcRegistry.lineheat (group "Well Testing").
+// Registers window.WTS_calcRegistry.lineheat (group "Well Test & Flowlines").
 // ════════════════════════════════════════════════════════════════════
 (function () {
     'use strict';
@@ -94325,7 +94541,7 @@ G.WTS_calcRegistry.historian = {
         title: TITLE,
         navTitle: 'Line Heat Loss',
         sub: SUB,
-        group: 'Well Testing',
+        group: 'Well Test & Flowlines',
         icon: '&#9832;',
         badge: 'Hydrates',
         bc: 'dc-b-orange',
@@ -94955,7 +95171,7 @@ G.WTS_calcRegistry.historian = {
         title: TITLE,
         navTitle: 'Meter Proving & NSV',
         sub: SUB,
-        group: 'Well Testing',
+        group: 'Metering & Chokes',
         icon: '&#9878;',
         badge: 'Metering',
         bc: 'dc-b-orange',
@@ -95036,7 +95252,7 @@ G.WTS_calcRegistry.historian = {
 //   WTS_scale_oddoTomson(mineral, {ca, sr, ba, so4, hco3 (mol/L), ph, t °F, p psia, I}) → SI
 //
 // STATE  WTS_state.scale = {I, tds, cbPct, lsi, sdi, si:{calcite,barite,celestite,gypsum,anhydrite}, ts, result}
-// Registers window.WTS_calcRegistry.scale (group "Fluid & Field Calcs").
+// Registers window.WTS_calcRegistry.scale (group "Fluids & Utilities").
 // ════════════════════════════════════════════════════════════════════
 (function () {
     'use strict';
@@ -95375,7 +95591,7 @@ G.WTS_calcRegistry.historian = {
         key: 'scale',
         title: TITLE,
         sub: SUB,
-        group: 'Fluid & Field Calcs',
+        group: 'Fluids & Utilities',
         icon: '&#9878;',
         badge: 'Chemistry',
         bc: 'dc-b-blue',
@@ -95897,7 +96113,7 @@ G.WTS_calcRegistry.historian = {
         title: TITLE,
         navTitle: 'Sampling & GOR QC',
         sub: SUB,
-        group: 'Well Testing',
+        group: 'Metering & Chokes',
         icon: '&#9878;',
         badge: 'Sampling',
         bc: 'dc-b-blue',
@@ -99325,7 +99541,7 @@ G.WTS_calcRegistry = G.WTS_calcRegistry || {};
 G.WTS_calcRegistry.wellos = {
     key: 'wellos', title: 'Mini WellOS', navTitle: 'Mini WellOS',
     sub: 'Live SCADA view of the well-test spread — form data or live Modbus tags',
-    group: 'Mini WellOS', icon: '&#9673;', badge: 'Live Data', bc: 'dc-b-blue',
+    group: 'Live Data', icon: '&#9673;', badge: 'Live Data', bc: 'dc-b-blue',
     desc: 'P&ID, 3D view, trends, alarms and logging driven by the simulator model or live Modbus data.',
     render: render
 };

@@ -215,13 +215,13 @@ module.exports = [
     },
   },
   {
-    name: 'PROVE page: registry nav in Well Testing, defaults, run table, verdicts, rounding toggle, validation',
+    name: 'PROVE page: registry nav in Metering & Chokes, defaults, run table, verdicts, rounding toggle, validation',
     wp: WP,
     run(app, assert) {
       const R = app.win.WTS_calcRegistry.proving;
       assert.ok(R && R.key === 'proving' && typeof R.render === 'function' && R.title === 'Meter Proving & Net Standard Volume', 'registry');
       const b = app.find('.nav-btn[data-p="proving"]');
-      assert.strictEqual(String(b.closest('.nav-group').querySelector('.nav-group-label').textContent).trim(), 'Well Testing');
+      assert.strictEqual(String(b.closest('.nav-group').querySelector('.nav-group-label').textContent).trim(), 'Metering & Chokes');
       open(app);
       assert.strictEqual(txt(app, 'pgTitle'), 'Meter Proving & Net Standard Volume');
       assert.strictEqual(S(app).mf, 1.0012);
