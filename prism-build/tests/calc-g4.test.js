@@ -448,7 +448,7 @@ module.exports = [
 
   // ── ESD Hi-Pilot (prism-build/23) ──────────────────────────────────────
   {
-    name: 'G4 esdhi: heater shell 292 ft³ @ 23 °F — inventory referred to 60 °F; t_fill 0.235 s FAIL; 1 MMscfd PASS',
+    name: 'G4 esdhi: heater shell 292 ft³ @ 23 °F (Hi-Pilot 112 = 90 % of MAWP 125, RV 125) — inventory referred to 60 °F; t_fill 0.61 s FAIL; 1 MMscfd PASS; Hi-Pilot above 90 % of MAWP cautioned',
     wp: WP, opts: SRC,
     run(app, assert) {
       app.hook.nav('esdhi');
@@ -456,14 +456,19 @@ module.exports = [
       const Vstd = 292 * 519.67 / (23 + 459.67);
       const q = 39.28e6 / 86400;
       const cell = (lbl) => num(trow(app, 'wts_esdhi_results', lbl)[1]);
-      assert.near(cell('Inventory @ Hi-Pilot'), Vstd * 144.7 / 14.7, 1);          // 3,095 scf
-      assert.near(cell('Time to reach RV'), Vstd * 5 / 14.7 / q, 0.006);          // 0.235 s
+      assert.near(cell('Inventory @ Hi-Pilot'), Vstd * 126.7 / 14.7, 1);          // 2,710 scf
+      assert.near(cell('Time to reach RV'), Vstd * 13 / 14.7 / q, 0.006);         // 0.61 s
+      // defaults follow the 10 %-below-MAWP rule: no Hi-Pilot or RV caution
+      assert.ok(!/Caution/.test(app.el('wts_esdhi_results').textContent), 'no caution at the defaults');
       assert.near(cell('Gas released'), q * 5, 1);
       assert.includes(app.el('wts_esdhi_results').textContent, 'FAIL');
       set(app, { wts_esdhi_q: 1 });
       app.click('wts_esdhi_calc');
-      assert.near(cell('Time to reach RV'), Vstd * 5 / 14.7 / (1e6 / 86400), 0.006); // 9.24 s
+      assert.near(cell('Time to reach RV'), Vstd * 13 / 14.7 / (1e6 / 86400), 0.006); // 24.0 s
       assert.includes(app.el('wts_esdhi_results').textContent, 'PASS');
+      set(app, { wts_esdhi_hp: 120 }); app.click('wts_esdhi_calc');      // 96 % of MAWP
+      assert.match(app.el('wts_esdhi_results').textContent, /less than 10 % below MAWP.*≤ 113 psig/);
+      set(app, { wts_esdhi_hp: 112 });
       set(app, { wts_esdhi_volume: '' });
       app.click('wts_esdhi_calc');
       assert.match(app.el('wts_esdhi_results').textContent, /Section volume must be > 0/);
