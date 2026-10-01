@@ -76,6 +76,9 @@
         }
         return _fmt(v, d) + ' ' + impLabel;
     }
+    // v3.1: Metric mode leads with the SI value, the field-unit value follows in brackets.
+    function _isMetric() { var U = G.WTS_units; return !!(U && U.getSystem && U.getSystem() === 'metric'); }
+    function _pair(vi, ui, vm, um) { return _isMetric() ? _fa(vm) + ' ' + um + ' (' + _fa(vi) + ' ' + ui + ')' : _fa(vi) + ' ' + ui + ' (' + _fa(vm) + ' ' + um + ')'; }
     function _tag(map) { var U = G.WTS_units; if (!U || !U.tagInput) return; for (var id in map) U.tagInput(id, map[id]); }
     function _canon(fn) { var U = G.WTS_units; return (U && U.runCanonical) ? U.runCanonical(fn) : fn(); }
     function _fin(x) { return typeof x === 'number' && isFinite(x); }
@@ -179,7 +182,7 @@
     // ── Page ─────────────────────────────────────────────────────────
     var UNITS = {
         hs_q: 'gasRate', hs_ppm: 'concentration', hs_fq: 'gasRate', hs_fppm: 'concentration', hs_fce: 'percent',
-        hs_sq: 'gasRate', hs_sin: 'concentration', hs_sout: 'concentration'
+        hs_sq: 'gasRate', hs_sin: 'concentration', hs_sout: 'concentration', hs_ratio: 'volPerMass'
     };
     var TITLE = 'H2S Exposure & Scavenger';
     var SUB = 'Radius of exposure for 100 and 500 ppm H2S, SO2 from flaring sour gas, and H2S scavenger dosing';
@@ -199,7 +202,7 @@
             q: function () { return 'Gas to treat must be above 0 and no more than ' + _u(500, 'gasRate', 0, 'MMSCFD') + '.'; },
             cin: function () { return 'Inlet H2S must be above 0 and no more than 100,000 ppm.'; },
             cout: function () { return 'Target outlet H2S must be 0 ppm or more and below the inlet H2S.'; },
-            ratio: function () { return 'Product consumption must be between 0.1 and 10 US gal per lb H2S.'; }
+            ratio: function () { return _isMetric() ? 'Product consumption must be between ' + _u(0.1, 'volPerMass', 2, 'US gal/lb') + ' and ' + _u(10, 'volPerMass', 1, 'US gal/lb') + ' of H2S removed.' : 'Product consumption must be between 0.1 and 10 US gal per lb H2S.'; }
         }
     };
     var IDS = {
@@ -248,17 +251,17 @@
         if (!res) return;
         if (!r.ok) { _errors('hs_roe_res', 'roe', r.bad); return; }
         var v = '';
-        if (r.x100_ft < 50) v += _ok('100 ppm radius of exposure is under 50 ft.');
-        else v += _warn('100 ppm radius of exposure is ' + _fa(r.x100_ft) + ' ft (' + _fa(r.x100_ft * 0.3048) + ' m) — check for public areas inside it; a contingency plan may be required.');
-        if (r.x100_ft > 3000) v += _warn('100 ppm radius of exposure exceeds 3,000 ft.');
-        if (r.x500_ft >= 50) v += _warn('500 ppm radius of exposure is ' + _fa(r.x500_ft) + ' ft (' + _fa(r.x500_ft * 0.3048) + ' m) — check for public roads inside it.');
+        if (r.x100_ft < 50) v += _ok(_isMetric() ? '100 ppm radius of exposure is under 15.2 m (50 ft).' : '100 ppm radius of exposure is under 50 ft.');
+        else v += _warn('100 ppm radius of exposure is ' + _pair(r.x100_ft, 'ft', r.x100_m, 'm') + ' — check for public areas inside it; a contingency plan may be required.');
+        if (r.x100_ft > 3000) v += _warn(_isMetric() ? '100 ppm radius of exposure exceeds 914 m (3,000 ft).' : '100 ppm radius of exposure exceeds 3,000 ft.');
+        if (r.x500_ft >= 50) v += _warn('500 ppm radius of exposure is ' + _pair(r.x500_ft, 'ft', r.x500_m, 'm') + ' — check for public roads inside it.');
         res.innerHTML =
             '<div class="rbox"><div class="rbox-title">Radius of Exposure</div>' +
             _row('H2S mole fraction', _fmt(r.mf, 6)) +
-            _row('Escape rate', _fmt(r.Q, 0) + ' scf/d (' + _fa(r.Q * SCF_TO_M3) + ' m³/d)') +
-            _row('100 ppm radius of exposure', _fa(r.x100_ft) + ' ft (' + _fa(r.x100_m) + ' m)') +
-            _row('500 ppm radius of exposure', _fa(r.x500_ft) + ' ft (' + _fa(r.x500_m) + ' m)') +
-            _row('H2S release', _fa(r.h2s_lbd) + ' lb/d (' + _fa(r.h2s_kgd) + ' kg/d)') +
+            _row('Escape rate', _pair(r.Q, 'scf/d', r.Q * SCF_TO_M3, 'm³/d')) +
+            _row('100 ppm radius of exposure', _pair(r.x100_ft, 'ft', r.x100_m, 'm')) +
+            _row('500 ppm radius of exposure', _pair(r.x500_ft, 'ft', r.x500_m, 'm')) +
+            _row('H2S release', _pair(r.h2s_lbd, 'lb/d', r.h2s_kgd, 'kg/d')) +
             v +
             _note('Screening formula from Texas Statewide Rule 36 (also used in US federal onshore H2S rules). ' +
                 'Escape rate = maximum volume available for escape, for a producing well the current adjusted ' +
@@ -274,9 +277,9 @@
         if (!r.ok) { _errors('hs_so2_res', 'so2', r.bad); return; }
         res.innerHTML =
             '<div class="rbox"><div class="rbox-title">SO2 Generation</div>' +
-            _row('SO2', _fa(r.so2_lbhr) + ' lb/hr (' + _fa(r.so2_kghr) + ' kg/hr)') +
+            _row('SO2', _pair(r.so2_lbhr, 'lb/hr', r.so2_kghr, 'kg/hr')) +
             _row('SO2 per day', _fa(r.so2_td) + ' t/d') +
-            _row('Unburned H2S', _fa(r.h2s_lbhr) + ' lb/hr (' + _fa(r.h2s_kghr) + ' kg/hr)') +
+            _row('Unburned H2S', _pair(r.h2s_lbhr, 'lb/hr', r.h2s_kghr, 'kg/hr')) +
             _note('Ground-level SO2 concentration depends on flare height, plume rise and weather: screen it on the ' +
                 'SO2 / H2S Dispersion Screening page. Use Flare Emissions for full-period reporting. ' +
                 _basisNote(r.basis)) +
@@ -293,15 +296,15 @@
             : _warn('Outlet target is above the common 4 ppm (0.25 gr/100 scf) sales-gas limit.');
         res.innerHTML =
             '<div class="rbox"><div class="rbox-title">Scavenger Requirement</div>' +
-            _row('H2S removed', _fa(r.lb_d) + ' lb/d (' + _fa(r.kg_d) + ' kg/d)') +
+            _row('H2S removed', _pair(r.lb_d, 'lb/d', r.kg_d, 'kg/d')) +
             _row('Inlet H2S', _fa(cin) + ' ppm = ' + _fa(r.gr_in) + ' gr/100 scf') +
             _row('Outlet H2S', _fa(cout) + ' ppm = ' + _fa(r.gr_out) + ' gr/100 scf') +
-            _row('Product', _fa(r.gal_d) + ' US gal/d (' + _fa(r.L_d) + ' L/d)') +
-            _row('Injection rate', _fa(r.L_hr) + ' L/hr (' + _fa(r.gal_hr) + ' US gal/hr)') +
+            _row('Product', _pair(r.gal_d, 'US gal/d', r.L_d, 'L/d')) +
+            _row('Injection rate', _fa(r.L_hr) + ' L/hr (' + _fa(r.gal_hr) + ' US gal/hr)')   /* dosing pumps are rated in L/hr: SI first in both systems */ +
             v +
             _note('Consumption depends on product strength, contact time, temperature and injection design. ' +
-                'Use the supplier\'s figure; published field trials of triazine products report about 1.2 to 1.9 ' +
-                'US gal per lb H2S removed. Stoichiometric use is lower. Watch for solids from spent product. ' +
+                'Use the supplier\'s figure; published field trials of triazine products report about ' +
+                (_isMetric() ? '10 to 16 L/kg (1.2 to 1.9 US gal per lb)' : '1.2 to 1.9 US gal per lb (10 to 16 L/kg)') + ' of H2S removed. Stoichiometric use is lower. Watch for solids from spent product. ' +
                 _basisNote(r.basis)) +
             '</div>';
         res.setAttribute('data-done', '1');
@@ -393,7 +396,7 @@
             _fg('hs_sq', 'Gas to treat (MMSCFD)', '5', ' min="0"') +
             _fg('hs_sin', 'Inlet H2S (ppm)', '50', ' min="0"') +
             _fg('hs_sout', 'Target outlet H2S (ppm)', '4', ' min="0"') +
-            _fg('hs_ratio', 'Product consumption, US gal per lb H2S', '1.5', ' min="0.1" max="10"') +
+            _fg('hs_ratio', 'Product consumption per H2S removed (US gal/lb)', '1.5', ' min="0"') +
             '</div>' +
             '<div class="btn-row">' + _calcBtn('hs_calc3') + '</div>' +
             '<div id="hs_scv_res" style="margin-top:14px"></div></div>' +

@@ -225,7 +225,7 @@ module.exports = [
       const roeSec = model.results.find((x) => x.title === 'Radius of Exposure');
       assert.ok(roeSec.items.some((i) => i.verdict && /exceeds 3,000 ft/.test(i.text)), 'verdict captured in results');
       assert.ok(roeSec.items.some((i) => i.type === 'note' && i.title === 'Notes'), 'notes captured');
-      ['Maximum escape rate', 'Product consumption, US gal per lb H2S', '8,735.9'].forEach((n) => assert.includes(s, n));
+      ['Maximum escape rate', 'Product consumption per H2S removed (US gal/lb)', '8,735.9'].forEach((n) => assert.includes(s, n));
       const n0 = app.opened.length;
       app.win.exportPagePDF();
       const pdf = app.opened[n0] && app.opened[n0].html();

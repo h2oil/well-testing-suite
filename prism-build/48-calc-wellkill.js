@@ -441,13 +441,15 @@
             '</tr></thead><tbody>' + rows.map(function (r) { return '<tr>' + r.map(function (c) { return '<td>' + c + '</td>'; }).join('') + '</tr>'; }).join('') +
             '</tbody></table></div>';
     }
+    // v3.1: Metric mode leads with kg/m³ (ppg follows); imperial text unchanged.
     function _ppgTriple(ppg) {
-        return _fixed(ppg, 2) + ' ppg · SG ' + _fixed(ppg / PPG_PER_SG, 3) + ' · ' + _fmt(ppg * KGM3_PER_PPG, 0) + ' kg/m³';
+        return _metric() ? _fmt(ppg * KGM3_PER_PPG, 0) + ' kg/m³ · SG ' + _fixed(ppg / PPG_PER_SG, 3) + ' · ' + _fixed(ppg, 2) + ' ppg'
+                         : _fixed(ppg, 2) + ' ppg · SG ' + _fixed(ppg / PPG_PER_SG, 3) + ' · ' + _fmt(ppg * KGM3_PER_PPG, 0) + ' kg/m³';
     }
 
-    // A single density in ppg, with its kg/m³ companion in Metric mode (imperial text unchanged).
+    // A single density: ppg in imperial; kg/m³ first (ppg in brackets) in Metric mode.
     function _ppgMet(ppg) {
-        return _fixed(ppg, 2) + ' ppg' + (_metric() ? ' (' + _fmt(ppg * KGM3_PER_PPG, 0) + ' kg/m³)' : '');
+        return _metric() ? _fmt(ppg * KGM3_PER_PPG, 0) + ' kg/m³ (' + _fixed(ppg, 2) + ' ppg)' : _fixed(ppg, 2) + ' ppg';
     }
 
     function _errors(resId, ids, bad, errs) {
@@ -570,8 +572,10 @@
         if (!r.brineOk) bv = _bad('No clear brine in the guide reaches ' + _ppgMet(k.used) + '. Use a weighted fluid.');
         else bv = _ok('Clear brines that reach ' + _ppgMet(k.used) + ': ' + r.brineList.join(', ') + '.');
         h += '<div class="rbox"><div class="rbox-title">Brine Selection Guide</div>' +
-            _tbl(['Brine', 'Max ppg', 'Max SG', 'Max kg/m³', 'Reaches kill fluid', 'Crystallisation / notes'], r.brines.map(function (x) {
-                return [x.name, _fixed(x.ppg, 2), _fixed(x.sg, 2), _fmt(x.kgm3, 0), x.reaches ? 'yes' : 'no', x.note];
+            _tbl(_metric() ? ['Brine', 'Max kg/m³', 'Max SG', 'Max ppg', 'Reaches kill fluid', 'Crystallisation / notes']
+                           : ['Brine', 'Max ppg', 'Max SG', 'Max kg/m³', 'Reaches kill fluid', 'Crystallisation / notes'], r.brines.map(function (x) {
+                return _metric() ? [x.name, _fmt(x.kgm3, 0), _fixed(x.sg, 2), _fixed(x.ppg, 2), x.reaches ? 'yes' : 'no', x.note]
+                                 : [x.name, _fixed(x.ppg, 2), _fixed(x.sg, 2), _fmt(x.kgm3, 0), x.reaches ? 'yes' : 'no', x.note];
             })) +
             bv +
             _note('Guidance only. Maximum densities are typical values at about 70 °F. Crystallisation temperature rises steeply ' +

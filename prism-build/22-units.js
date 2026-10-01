@@ -307,6 +307,18 @@
             imperial: { unit: 'Btu/hr/F', label: 'Btu/hr/°F', factor: 0.5275, offset: 0 },
             metric:   { unit: 'W/K',      label: 'W/K',       factor: 1,      offset: 0 }
         },
+        // v3.1: solids loading of a gas stream (sand rate per standard gas volume):
+        // 1 lb/MMscf = 0.45359237 kg / 28,316.85 Sm³ = 16.0185 kg per 10⁶ Sm³ (= mg/Sm³).
+        sandLoading: {
+            imperial: { unit: 'lb/MMscf', label: 'lb/MMscf', factor: 16.0184634, offset: 0 },
+            metric:   { unit: 'kg/1e6m3', label: 'kg/10⁶ Sm³', factor: 1, offset: 0 }
+        },
+        // v3.1: liquid product volume per mass (e.g. H2S scavenger consumption):
+        // 1 US gal/lb = 3.785411784 L / 0.45359237 kg = 8.34540 L/kg.
+        volPerMass: {
+            imperial: { unit: 'gal/lb', label: 'US gal/lb', factor: 8.34540445, offset: 0 },
+            metric:   { unit: 'L/kg',   label: 'L/kg',      factor: 1,          offset: 0 }
+        },
         // Voltage / current / frequency / count — no conversion needed.
         voltage:    { imperial: { unit: 'V',   label: 'V',   factor: 1, offset: 0 }, metric: { unit: 'V',   label: 'V',   factor: 1, offset: 0 } },
         current:    { imperial: { unit: 'A',   label: 'A',   factor: 1, offset: 0 }, metric: { unit: 'A',   label: 'A',   factor: 1, offset: 0 } },

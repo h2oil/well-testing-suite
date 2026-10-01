@@ -189,7 +189,7 @@ module.exports = [
       assert.ok(/kg\/L/.test(obM) && !/ppg/.test(obM), 'metric overbalance: ' + obM);
       assert.near(parseFloat(obM), parseFloat(ob) * PPG_KGM3 / 1000, 0.002);
       const verdict = app.findAll('#wk_res *').map((e) => String(e.textContent)).find((t) => /Clear brines that reach|No clear brine/.test(t) && t.length < 300);
-      assert.ok(verdict && /ppg \([\d,]+ kg\/m³\)/.test(verdict), 'metric brine verdict: ' + verdict);
+      assert.ok(verdict && /[\d,]+ kg\/m³ \(\d+\.\d\d ppg\)/.test(verdict), 'metric brine verdict (v3.1: kg/m³ first): ' + verdict);
       sys(app, 'imperial');
       assert.deepEqual(app.consoleErrors(), []);
     },

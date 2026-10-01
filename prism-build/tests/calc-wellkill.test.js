@@ -331,7 +331,7 @@ module.exports = [
         assert.includes(rtext(app, 'wk_res', 'Max surface pressure at start'), 'kPa');
         assert.includes(rtext(app, 'wk_res', 'Total to pump'), 'm³');
         assert.includes(rtext(app, 'wk_res', 'Kill fluid gradient'), 'kPa/m');
-        assert.includes(rtext(app, 'wk_res', 'Kill weight'), 'ppg · SG');
+        assert.match(rtext(app, 'wk_res', 'Kill weight'), /kg\/m³ · SG .* ppg/);   // v3.1: SI first in Metric mode
         // Metric entry: 3048 m TVD, 37232 kPa reservoir pressure
         app.input('wk_tvd', '3048'); app.input('wk_pres', String(5400 * 6.89476)); calc(app);
         assert.rel(S(app).kwf, imp.kwf, 1e-4, 'metric entry converted');
