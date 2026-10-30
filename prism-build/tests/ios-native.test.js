@@ -80,17 +80,26 @@ module.exports = [
     },
   },
   {
-    name: 'App Store version: pbxproj MARKETING_VERSION = VERSION_BASE in both ci_post_clone.sh copies (stamped as-is, build = CI_BUILD_NUMBER)',
+    name: 'App Store version = in-app version: ci_post_clone.sh stamps RELEASE_NOTES[0].ver (build = CI_BUILD_NUMBER); committed MARKETING_VERSION and fallback match it',
     wp: WP, opts: false,
     run(app, assert) {
       const a = read('ios-app/ci_scripts/ci_post_clone.sh'), b = read('ios-app/ios/App/ci_scripts/ci_post_clone.sh');
       assert.strictEqual(a, b, 'both ci_post_clone.sh copies identical (Xcode Cloud runs the one under ios/App)');
-      const base = (a.match(/^VERSION_BASE="([0-9.]+)"/m) || [])[1];
-      assert.ok(base, 'VERSION_BASE set');
+      const html = read('well-testing-app.html');
+      const rn = html.slice(html.indexOf('const RELEASE_NOTES = ['));
+      const newest = (rn.match(/ver\s*:\s*'v?([0-9]+(?:\.[0-9]+){1,2})'/) || [])[1];
+      assert.ok(newest, 'RELEASE_NOTES[0].ver readable');
+      assert.ok(newest.split('.').length <= 3, 'App Store versions have at most three parts');
+      // run the script's own extraction exactly as Xcode Cloud does
+      const block = (a.match(/^VERSION_BASE="[^\n]*\n[\s\S]*?^fi$/m) || [])[0];
+      assert.ok(block, 'version block found');
+      const out = require('child_process').execFileSync('bash', ['-c', block + '\necho "VB=$VERSION_BASE"'], { env: Object.assign({}, process.env, { CI_PRIMARY_REPOSITORY_PATH: ROOT }), encoding: 'utf8' });
+      assert.match(out, new RegExp('VB=' + newest.replace(/\./g, '\\.') + '\\s*$'), 'stamped version = newest release notes version');
+      assert.strictEqual((a.match(/^VERSION_BASE="([0-9.]+)"/m) || [])[1], newest, 'fallback VERSION_BASE = newest release');
       assert.match(a, /FULL_VERSION="\$\{VERSION_BASE\}"/);
       assert.match(a, /CURRENT_PROJECT_VERSION = \$\{CI_BUILD_NUMBER\};/);
       const mv = [...read(PBX).matchAll(/MARKETING_VERSION = ([^;]+);/g)].map((m) => m[1]);
-      assert.ok(mv.length >= 2 && mv.every((v) => v === base), 'MARKETING_VERSION ' + mv.join(',') + ' = ' + base);
+      assert.ok(mv.length >= 2 && mv.every((v) => v === newest), 'committed MARKETING_VERSION ' + mv.join(',') + ' = ' + newest);
     },
   },
 ];
