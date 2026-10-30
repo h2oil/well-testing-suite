@@ -102,4 +102,33 @@ module.exports = [
       assert.ok(mv.length >= 2 && mv.every((v) => v === newest), 'committed MARKETING_VERSION ' + mv.join(',') + ' = ' + newest);
     },
   },
+  {
+    name: 'plugin warnings: @capacitor/app ≥ 8.1.2 pinned; ci_post_clone.sh runs scripts/patch-plugins.js after npm ci and before cap sync; the patch is exact and idempotent',
+    wp: WP, opts: false,
+    run(app, assert) {
+      const lock = JSON.parse(read('ios-app/package-lock.json'));
+      const v = lock.packages['node_modules/@capacitor/app'].version.split('.').map(Number);
+      assert.ok(v[0] > 8 || (v[0] === 8 && (v[1] > 1 || (v[1] === 1 && v[2] >= 2))), '@capacitor/app ' + v.join('.') + ' ≥ 8.1.2 (fixes the AppPlugin.swift:121 coercion warning)');
+      assert.strictEqual(JSON.parse(read('ios-app/package.json')).dependencies['@capacitor/app'], lock.packages[''].dependencies['@capacitor/app'], 'package.json and lock agree');
+      const ci = read('ios-app/ci_scripts/ci_post_clone.sh');
+      const iCi = ci.indexOf('npm ci '), iPatch = ci.indexOf('node scripts/patch-plugins.js'), iSync = ci.indexOf('npx cap sync ios');
+      assert.ok(iCi > 0 && iPatch > iCi && iSync > iPatch, 'npm ci → patch-plugins → cap sync');
+      const P = require(path.join(ROOT, 'ios-app', 'scripts', 'patch-plugins.js'));
+      assert.ok(P.PATCHES.length >= 1);
+      // exercise the patch on a temporary copy of the pinned plugin layout
+      const os = require('os');
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-patch-'));
+      const p = P.PATCHES[0];
+      const dir = path.join(tmp, 'node_modules', p.package, path.dirname(p.file));
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(tmp, 'node_modules', p.package, 'package.json'), JSON.stringify({ version: '8.1.2' }));
+      const file = path.join(tmp, 'node_modules', p.package, p.file);
+      fs.writeFileSync(file, 'func a() {\n' + p.from + '        let x = 1\n}\n');
+      assert.match(P.run(tmp)[0], /patched/);
+      assert.ok(!fs.readFileSync(file, 'utf8').includes(p.from), 'line removed');
+      assert.match(P.run(tmp)[0], /already patched/, 'idempotent');
+      assert.match(P.run(path.join(tmp, 'none'))[0], /not found — skipped/, 'missing plugin never fails the build');
+      fs.rmSync(tmp, { recursive: true, force: true });
+    },
+  },
 ];

@@ -7,7 +7,7 @@ packaged as a free iOS app, **H2Oil Well Testing**.
 
 - **Web app:** <https://welltest.h2oil.co.uk>, or open `well-testing-app.html` from this repository
 - **iOS app:** free, with no in-app purchases, no account and no analytics (see [ios-app/README.md](ios-app/README.md))
-- **Current release:** v3.1 (2026-10-01)
+- **Current release:** v3.1.1 (2026-10-30)
 - **Contact:** software@h2oil.co.uk
 
 ---
@@ -481,6 +481,7 @@ and Quick Report capture; no host edits are needed. Test it with
 
 | Version | Date | Highlights |
 |---|---|---|
+| v3.1.1 | 2026-10-30 | iOS app: iOS 27 launch fix (UIKit scene life cycle), App Store version matches the app, archive builds with no warnings |
 | v3.1 | 2026-10-01 | Module-by-module review of every page and button; metric mode across more calculators and the simulator; simulator rig-up switches and pump-free surge→gauge transfer (sim ~40 % faster); PRiSM undersaturated-oil PVT and crop persistence; Modbus bad-value and timeout handling; ESD Hi-Pilot relief advice per ASME VIII |
 | v3.0.2 | 2026-09-30 | Modbus bridge allows any device by default; one-click Windows installer (WTS-Modbus-Bridge-Setup.exe, auto-start at login) and one-line macOS/Linux install; version label follows the release |
 | v3.0.1 | 2026-09-30 | Modbus bridge installers for Windows, macOS and Linux; bridge setup guide and Check bridge on Modbus Config; bridge security (null origin refused, DNS-rebinding protection); well-menu fix |
