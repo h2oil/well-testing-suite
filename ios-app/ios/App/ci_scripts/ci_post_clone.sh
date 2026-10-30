@@ -68,16 +68,28 @@ echo "CapApp-SPM package dependencies after cap sync:"
 grep -E '\.package\(' ios/App/CapApp-SPM/Package.swift || true
 
 # ── Auto-stamp version + build number from Xcode Cloud's build index ──
-# Versioning scheme (App Store version 3.0):
-#   MARKETING_VERSION       = ${VERSION_BASE}           # App Store version, e.g. 3.0
+# Versioning scheme — the App Store version always matches the app:
+#   MARKETING_VERSION       = newest in-app release, RELEASE_NOTES[0].ver in
+#                             well-testing-app.html (the same value the label under
+#                             the logo shows), e.g. 'v3.1' → 3.1
 #   CURRENT_PROJECT_VERSION = ${CI_BUILD_NUMBER}        # build, e.g. 42
 # Each Xcode Cloud run gets a fresh, monotonically increasing CI_BUILD_NUMBER
-# from Apple, so every upload is a new build of the same App Store version
-# (App Store Connect accepts any number of builds of a version until that
-# version is released). After 3.0 is released, raise VERSION_BASE (3.0.1, 3.1 …)
-# before the next upload — Apple rejects a version that is not higher than the
-# released one (ITMS-90062).
-VERSION_BASE="3.0"
+# from Apple, so every upload is a new build of the current App Store version
+# (App Store Connect accepts any number of builds of a version until that version
+# is released). Every shipped batch adds a newer release-notes entry (v3.1.1, v3.2 …),
+# which raises the App Store version for the next release — Apple rejects a
+# version that is not higher than the released one (ITMS-90062).
+VERSION_BASE="3.1"   # fallback only, if the release notes cannot be read
+APP_HTML="$CI_PRIMARY_REPOSITORY_PATH/well-testing-app.html"
+if [ -f "$APP_HTML" ]; then
+    RN_VER=$(node -e "const s=require('fs').readFileSync(process.argv[1],'utf8');const i=s.indexOf('const RELEASE_NOTES = [');const m=i<0?null:s.slice(i).match(/ver\s*:\s*'v?([0-9]+(?:\.[0-9]+){1,2})'/);process.stdout.write(m?m[1]:'')" "$APP_HTML" 2>/dev/null || true)
+    if [ -n "${RN_VER:-}" ]; then
+        VERSION_BASE="$RN_VER"
+        echo "App Store version from the newest release notes entry: $VERSION_BASE"
+    else
+        echo "warning: could not read RELEASE_NOTES[0].ver — using fallback $VERSION_BASE"
+    fi
+fi
 PBXPROJ="$CI_PRIMARY_REPOSITORY_PATH/ios-app/ios/App/App.xcodeproj/project.pbxproj"
 if [ -n "${CI_BUILD_NUMBER:-}" ] && [ -f "$PBXPROJ" ]; then
     FULL_VERSION="${VERSION_BASE}"
