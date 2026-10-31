@@ -1445,7 +1445,7 @@ var MODEL_NAMES = {
     finiteFrac: 'Finite-conductivity fracture', finiteFracSkin: 'Finite-conductivity fracture with face skin',
     partialPenFrac: 'Partially penetrating fracture', inclined: 'Inclined (slanted) well', horizontal: 'Horizontal well',
     linearBoundary: 'Single fault or linear boundary', parallelChannel: 'Parallel faults (channel)',
-    closedChannel3: 'Channel closed at one end', closedRectangle: 'Closed rectangle', intersecting: 'Intersecting faults (wedge)',
+    closedChannel3: 'Channel closed at one end', closedRectangle: 'Closed rectangle', closedCircle: 'Closed circle', intersecting: 'Intersecting faults (wedge)',
     fogBoundary: 'Leaky fault', arps: 'Arps decline', duong: 'Duong decline', sepd: 'Stretched-exponential decline',
     fetkovich: 'Fetkovich type curve', doublePorosity: 'Dual porosity', partialPen: 'Partial penetration',
     verticalPulse: 'Vertical interference (partial penetration)', twoLayerXF: 'Two layers with crossflow',
@@ -2884,7 +2884,9 @@ G.PRiSM_ui04 = {
     G.addEventListener('prism:dataset-loaded', function () {
         var st = _st();
         var ds = G.PRiSM_dataset;
-        var n = (ds && ds.q) ? PRiSM_detectPeriods(ds.t, ds.q).length : 0;
+        // st.activePeriod indexes the C2 period list (PRiSM_rateHistory: the multi-rate table or the q column)
+        var rh = (typeof G.PRiSM_rateHistory === 'function' && ds) ? G.PRiSM_rateHistory(ds) : null;
+        var n = (rh && rh.ok && rh.periods) ? rh.periods.length : ((ds && ds.q) ? PRiSM_detectPeriods(ds.t, ds.q).length : 0);
         if (st.activePeriod != null && !(st.activePeriod >= 0 && st.activePeriod < n)) st.activePeriod = null;
         refresh();
     });
