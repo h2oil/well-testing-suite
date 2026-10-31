@@ -1074,6 +1074,9 @@
                 x: x, lnx: lnx, deriv: dd, L: Lln, timeFn: 'superposition', timeFnSpec: { kind: 'superposition', tp: tmx.tpEff, terms: tmx.c2terms },
                 sign: sign, pRef: y0, pRefPressure: y0, pRefSource: 'pwf0', dRef: 'start', pwf0: y0, testType: sign < 0 ? 'falloff' : 'buildup',
                 tStart: tc, tShut: tc, tp: tmx.tpEff, qRef: spec.Dq, qFlow: spec.Dq, rateHistory: rh, stepIndex: rh.length - 1, periods: [],
+                // Gas: the build-up is analysed in normalised pseudo-pressure p_n (psi, liquid form with μ_ref
+                // and Bg_ref), so pseudo stays false and mpSpec null on purpose: PRiSM must not apply its own
+                // m(p) coefficient or table to p_n (prep.gasTable converts p_n back to psia).
                 fluid: wellC1.fluid, pseudo: false, dpUnit: 'psi', mpSpec: null, warnings: []
             };
         }
@@ -1081,14 +1084,26 @@
         var adataLine = mkAdata(B20, B20.dp, tm, rhFull, dv.L_ln);
         adataLine.tp = singleRate ? (tc - stepsU[0].t) : tm.tpEff;
 
+        // Provisional derivative SNR and drift index from the last cycle of full-window bins (the late
+        // level stands in for m′); interpretJob replaces both with the IARF-window values of
+        // BuildupResult.quality once the window is known.
+        var q0 = (function () {
+            var lf = -1, lv = [], ls = [];
+            for (var i = dv.full.length - 1; i >= 0; i--) if (dv.full[i]) { lf = i; break; }
+            if (lf < 0) return { snrD: null, rDrift: null };
+            for (var j = 0; j <= lf; j++) if (dv.full[j] && dv.deriv[j] > 0 && B20.X[j] >= B20.X[lf] - LN10) { lv.push(dv.deriv[j]); ls.push(sigma_d[j]); }
+            var mp = _median(lv), sd = _median(ls);
+            if (!_pos(mp)) return { snrD: null, rDrift: null };
+            return { snrD: Math.min(1e6, _pos(sd) ? mp / sd : 1e6), rDrift: _fin(((_num(spec.driftPsiPerDay) ? spec.driftPsiPerDay : 0) / 24) * dtEnd / mp) };
+        })();
         var prep = {
-            ok: true, id: spec.id, sign: sign, spec: spec,
+            ok: true, id: _specId(spec), sign: sign, spec: spec,
             bins: { dt: B20.dt, dte: B20.X.map(Math.exp), X: B20.X, dp: B20.dp, n: B20.n, p: B20.p, pReal: pReal20, sigma_b: sigma_b, sigma_d: sigma_d },
             deriv: dv, fitSet: { dt: BF.dt, dp: BF.dp, n: BF.n, p: BF.p, sigma_b: sigma_bF, X: BF.X, idx: BF.dt.map(function (v, k) { return k; }) },
             adata: adata, adataLine: adataLine, well: wellC1, gasTable: gt,
             histFull: { steps: stepsU }, histFit: comp, time: tm, timeFit: tmFit, tpEff: tm.tpEff, singleRate: singleRate,
             dtEnd: dtEnd, dteEnd: Math.exp(tm.lnDte(dtEnd)), Lcyc: Lcyc, L_ln: dv.L_ln, qUnit: qUnit,
-            snrD: null, rDrift: null, rTide: _fin(rTide), tideRemoved: tideRemoved, tideFit: tideFit,
+            snrD: q0.snrD, rDrift: q0.rDrift, rTide: _fin(rTide), tideRemoved: tideRemoved, tideFit: tideFit,
             sigma: sig, sigmaLF: sigLF, warnings: warnings, raw: { dt: dtA, y: yA, p: pA }
         };
         return prep;
@@ -1131,8 +1146,18 @@
             C_us = _median(cs);
             if (!_pos(C_us)) { C_us = null; unitSlope = false; }
         }
+        // The derivative maximum (iH) gates the IARF scan; the hump is reported as present when
+        // max/m′ ≥ HUMP_RATIO, with m′ here the derivative minimum after the maximum (interpret refines
+        // it with the IARF level).
+        var hr = null;
+        if (iH >= 0) {
+            var mnA = null;
+            for (var ia = iH + 1; ia < n; ia++) if (prep.deriv.full[ia] && d[ia] > 0 && (mnA === null || d[ia] < mnA)) mnA = d[ia];
+            hr = _pos(mnA) ? d[iH] / mnA : null;
+        }
+        var present = iH >= 0 && _num(hr) && _rRatio(hr) >= HUMP_RATIO;
         return {
-            unitSlope: unitSlope, C_us: C_us, tHump_h: iH >= 0 ? b.dt[iH] : null, humpRatio: null, seed: null, humpConsistent: null,
+            unitSlope: unitSlope, C_us: C_us, tHump_h: present ? b.dt[iH] : null, humpRatio: _fin(hr), seed: null, humpConsistent: null,
             ev: ['W1', 'W2', 'W3'], _iHump: iH, _us: us
         };
     }
@@ -2071,6 +2096,30 @@
     // ─────────────────────────────────────────────────────────────────────
     // reach(prep, homFit) — numeric t_10 %, t_5 % and the IARF reach (W4, item 5b)
     // ─────────────────────────────────────────────────────────────────────
+    // Storage times of a fitted homogeneous model (one pd / pd′ scan, 20 per decade, as for the
+    // reach): tUs_h = the first Δt_e where the Δp log-slope pd′/pd falls below 0.9 (leaves unit
+    // slope); tHump_h = the pd′ maximum and humpRatio = max pd′ / 0.5 (the hump is present when
+    // humpRatio ≥ HUMP_RATIO). Used for the C-held trigger and the hump consistency (§4.6 items 2, 8);
+    // the Appendix A.1 correlation only seeds C.
+    var HUMP_RATIO = 1.2;
+    function _homStorageTimes(k, C, S, well) {
+        var out = { tUs_h: null, tHump_h: null, humpRatio: null };
+        if (!_pos(k) || !_pos(C) || !_num(S)) return out;
+        var Cd = C_CD * C / (well.phi * well.ct * well.h * well.rw * well.rw);
+        var Bt = C_B * k / (well.phi * well.mu * well.ct * well.rw * well.rw);
+        var per = 20, j0 = Math.floor(Math.log10(Math.max(1e-4, 1e-3 * Cd)) * per);   // t_D/C_D = 1e-3 (any S)
+        var jMax = -1, dMax = -Infinity, tUs = null, below = 0;
+        for (var j = j0; j < j0 + 14 * per; j++) {
+            var td = Math.pow(10, j / per), pr = _pair(_lapHom, td, Cd, S, true);
+            if (!_pos(pr[0]) || !_num(pr[1])) continue;
+            if (tUs === null && pr[1] / pr[0] < 0.9 && j > j0) tUs = td;
+            if (pr[1] > dMax) { dMax = pr[1]; jMax = j; }
+            if (tUs !== null && Math.abs(2 * pr[1] - 1) < 0.01 && ++below >= per) break;   // a cycle on the plateau
+        }
+        if (tUs !== null) out.tUs_h = tUs / Bt;
+        if (jMax >= 0 && dMax > 0) { out.humpRatio = 2 * dMax; out.tHump_h = Math.pow(10, jMax / per) / Bt; }
+        return out;
+    }
     function _tPct(k, C, S, well, frac) {   // last Δt_e (h) where |Δp′/m′ − 1| > frac (homogeneous drawdown)
         var Cd = C_CD * C / (well.phi * well.ct * well.h * well.rw * well.rw);
         var Bt = C_B * k / (well.phi * well.mu * well.ct * well.rw * well.rw);
@@ -2264,10 +2313,12 @@
     // ─────────────────────────────────────────────────────────────────────
     // cHeldJob(prep, fit, opts) — C-held refits (M§A13)
     // ─────────────────────────────────────────────────────────────────────
-    function _cheldTriggered(prep, st, mf) {
+    // Triggered when the unit slope was not sampled, or Δt_1 > t_us/2 with t_us from the fitted
+    // homogeneous model (numeric scan, not the A.1 correlation).
+    function _cheldTriggered(prep, st, mf, tUs) {
         if (!st.unitSlope) return true;
-        var pr = predictors(mf.phys.k, prep.well.h, prep.well.mu, mf.phys.C, mf.phys.S);
-        return prep.bins.dt[0] > pr.tUs_h / 2;
+        if (!_pos(tUs)) tUs = _homStorageTimes(mf.phys.k, mf.phys.C, mf.phys.S, prep.well).tUs_h;
+        return _pos(tUs) ? prep.bins.dte[0] > tUs / 2 : false;
     }
     function cHeldJob(prep, mf, opts) {
         opts = opts || {};
@@ -2277,7 +2328,7 @@
         var bt = opts.bicTable || null;
         var nEff = bt ? bt.nEff : null, nB = bt ? bt.n : null;
         var reject = DEFAULTS.cheld.reject;
-        var trig = mf && mf.ok ? _cheldTriggered(prep, st, mf) : false;
+        var trig = mf && mf.ok ? _cheldTriggered(prep, st, mf, opts.tUs_h) : false;
         var meaningful = !flags.some(function (fl) { return fl.code === 'humpDp' || fl.code === 'steepStorage'; });
         var refits = [], queue = [], cur = null, curF = null, side = null;
         var rejectedSide = { lo: false, hi: false };
@@ -2302,7 +2353,7 @@
             acc.forEach(function (r) { Cs.push(r.C); ks.push(r.k); Ss.push(r.S); });
             var rng = function (a) { return [Math.min.apply(null, a), Math.max.apply(null, a)]; };
             var sR = rng(Ss);
-            result = { triggered: trig, mode: (mode === 'extended' || refits.some(function (r) { return r._ext; })) ? 'extended' : 'pair',
+            result = { triggered: trig, mode: (trig && (mode === 'extended' || refits.some(function (r) { return r._ext; }))) ? 'extended' : 'pair',
                        refits: refits.map(function (r) { return { f: r.f, k: r.k, S: r.S, C: r.C, dBic: r.dBic, rejected: r.rejected }; }),
                        range: { C: rng(Cs), k: rng(ks), S: sR }, S_C: (sR[1] - sR[0]) / 2, meaningful: meaningful, ev: ['C1'],
                        _rejectedBoth: refits.filter(function (r) { return !r._ext && r.rejected; }).length === 2 };
@@ -2566,6 +2617,9 @@
         function finish() {
             var f0 = fits[0];
             var ok = f0 && f0.ok;
+            // n_eff from the k-held fit's own log residuals: inflates se by √(n/n_eff) and builds ci95
+            // once, as bic() does for free fits, so KHeld.fit.se.S is the value S_err uses (§3.1).
+            var bt = ok ? bic(prep, [f0]) : null;
             var refits = fits.slice(1).map(function (f, i) { return { f: plan[i + 1], S: f && f.ok ? f.phys.S : null, C: f && f.ok ? f.phys.C : null }; });
             var Ss = refits.map(function (r) { return r.S; }).filter(_num);
             var Sk = Ss.length === 2 ? Math.abs(Ss[0] - Ss[1]) / 2 : null;
@@ -2577,7 +2631,8 @@
             result = {
                 k: k, delta: delta, fit: ok ? f0 : _failFit('homogeneous', null, 'k-held fit failed', null),
                 refits: refits.filter(function (r) { return _num(r.S); }), S_k: _fin(Sk), S_kAnalytic: Math.abs(delta * (pD - 0.5)),
-                corrCS: ok ? _fin(f0.corr.CS) : null, rmsRatio: _fin(rmsRatio), converged: !!(ok && f0.converged), ev: ['M8']
+                corrCS: ok ? _fin(f0.corr.CS) : null, rmsRatio: _fin(rmsRatio), converged: !!(ok && f0.converged),
+                n: bt ? bt.n : null, nEff: bt ? _fin(bt.nEff) : null, ev: ['M8']
             };
         }
         return {
@@ -2659,10 +2714,11 @@
             cancel: function () { if (sub && sub.cancel) sub.cancel(); sub = null; q = []; }
         };
     }
-    function _failResult(spec, code, errors) {
-        return { ok: false, id: spec && spec.id ? String(spec.id) : 'B?', version: AI.version, code: code || 'FAILED', errors: errors || [],
-                 bad: [], reason: code || 'FAILED', warnings: [] };
+    function _failResult(spec, code, errors, bad) {
+        return { ok: false, id: _specId(spec), version: AI.version, code: code || 'FAILED', errors: errors || [],
+                 bad: Array.isArray(bad) ? bad.slice() : [], reason: code || 'FAILED', warnings: [] };
     }
+    function _specId(spec) { return (spec && spec.id != null && spec.id !== '') ? String(spec.id) : 'B?'; }
 
     function interpretJob(spec, opts) {
         opts = opts || {};
@@ -2673,17 +2729,26 @@
         var ovr = (spec && spec.overrides) || {};
         var rivalsMode = opts.rivals || so.rivals || 'auto';
         var cheldMode = opts.cheld || so.cheld || 'auto';
-        var label0 = 'Build-up ' + (spec && spec.id ? spec.id : '');
+        var label0 = 'Build-up ' + _specId(spec);
         var inputHash = hash16(canon({ spec: spec, rivals: rivalsMode, cheld: cheldMode, engine: AI.version }, 'inputs'));
 
         R.add('prepare', function () {
             var p = prepare(spec);
-            if (!p.ok) { S.result = _failResult(spec, p.code, p.errors); R.cancel(); return; }
+            if (!p.ok) { S.result = _failResult(spec, p.code, p.errors, p.bad); R.cancel(); return; }
             S.prep = p;
             S.storage = storage(p);
             S.iarf = iarf(p, { storage: S.storage, window: ovr.window || null,
                                band: spec.opts && spec.opts.band, slope: spec.opts && spec.opts.slope });
             S.iarf._st = S.storage;
+            // The hump is present when max/m′ ≥ 1.2 (§4.6 item 2), m′ = the IARF level, else the derivative
+            // minimum after the maximum. A smaller maximum still gates the IARF scan (the derivative maximum).
+            if (S.storage._iHump >= 0) {
+                var dH = p.deriv.deriv, fH = p.deriv.full, lvH = S.iarf.found ? S.iarf.level_psi : null;
+                if (!lvH) { for (var ih = S.storage._iHump + 1; ih < dH.length; ih++) if (fH[ih] && dH[ih] > 0 && (lvH === null || dH[ih] < lvH)) lvH = dH[ih]; }
+                var hr = _pos(lvH) ? dH[S.storage._iHump] / lvH : null;
+                S.storage.humpRatio = _fin(hr);
+                S.storage.tHump_h = (_num(hr) && _rRatio(hr) >= HUMP_RATIO) ? p.bins.dt[S.storage._iHump] : null;
+            }
             S.line = line(p, S.iarf);
             S.flags = flagsFor(p, S.iarf, S.storage);
             // Seeds (item 5): k, S from the line, else the level and the point skin; C from C_us, else the hump correlation.
@@ -2722,13 +2787,13 @@
             S.trig = tg.triggers;
             S.bic0 = bic(p, [S.hom], { cal: cal });
             S.agreement = agreement(S.line, S.hom, p);
-            // storage consistency: observed hump vs the fitted model's hump within ×1.5
+            // storage consistency: the observed hump vs the fitted model's hump (numeric scan) within ×1.5
+            var hs = _homStorageTimes(S.hom.phys.k, S.hom.phys.C, S.hom.phys.S, p.well);
             if (_pos(S.storage.tHump_h)) {
-                var pr = predictors(S.hom.phys.k, p.well.h, p.well.mu, S.hom.phys.C, S.hom.phys.S);
-                S.storage.humpConsistent = Math.abs(Math.log(S.storage.tHump_h / pr.tHump_h)) <= Math.log(1.5);
+                S.storage.humpConsistent = !!(_pos(hs.tHump_h) && _num(hs.humpRatio) && hs.humpRatio >= HUMP_RATIO &&
+                    Math.abs(Math.log(p.bins.dte[S.storage._iHump] / hs.tHump_h)) <= Math.log(1.5));
             }
-            if (S.iarf.found && S.storage._iHump >= 0) S.storage.humpRatio = p.deriv.deriv[S.storage._iHump] / S.iarf.level_psi;
-            var cj = cHeldJob(p, S.hom, { mode: cheldMode, storage: S.storage, flags: S.flags, bicTable: S.bic0 });
+            var cj = cHeldJob(p, S.hom, { mode: cheldMode, storage: S.storage, flags: S.flags, bicTable: S.bic0, tUs_h: hs.tUs_h });
             R.sub(cj, function (ch) { S.cheld = ch; });
         });
         R.add('rivals', function () {
@@ -2889,6 +2954,7 @@
             var rDrift = ((spec.driftPsiPerDay || 0) / 24) * p.dtEnd / fin.mPrime;
             S.quality = { sigma_psi: p.sigma, sigmaFlow_psi: _num(spec.sigmaFlow_psi) ? spec.sigmaFlow_psi : 0, sigmaD_psi: _num(sdW) ? sdW : 0,
                           snrD: snr, rDrift: rDrift, rTide: p.rTide, tideRemoved: p.tideRemoved, tideFit: p.tideFit, ev: ['I5', 'Q5', 'Q6'] };
+            p.snrD = snr; p.rDrift = _fin(rDrift);   // Prep carries the window values from here on (§3.1)
             // evidence vector
             var codes = S.flags.map(function (fl) { return fl.code; });
             var distr = S.flags.some(function (fl) { return DISTRACTORS[fl.code] && (!ir.found || fl.dt0_h <= ir.dt1_h); });
@@ -2932,7 +2998,7 @@
             };
             var models = [S.hom].concat(S.rivals);
             var res = {
-                ok: true, id: String(spec.id), version: AI.version, inputHash: inputHash, testType: p.sign < 0 ? 'falloff' : 'buildup', reason: reason,
+                ok: true, id: _specId(spec), version: AI.version, inputHash: inputHash, testType: p.sign < 0 ? 'falloff' : 'buildup', reason: reason,
                 bins: { dt: p.bins.dt, dte: p.bins.dte, dp: p.bins.dp, n: p.bins.n, deriv: p.deriv.deriv, full: p.deriv.full, X: p.bins.X },
                 quality: S.quality, storage: S.storage, reach: S.reach, iarf: ir, line: S.line, triggers: S.trig, flags: S.flags,
                 models: models, bic: S.bic,

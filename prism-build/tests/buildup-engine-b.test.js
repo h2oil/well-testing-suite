@@ -300,6 +300,13 @@ module.exports = [
       const dS = Math.abs(k1.fit.phys.S - 5);
       assert.within(dS, 0.5, 0.6, '|ΔS| for a 5 % k offset');
       assert.ok(Math.abs(k1.S_k / k1.S_kAnalytic - 1) <= 0.2, 'S_k ' + k1.S_k + ' vs analytic ' + k1.S_kAnalytic);
+      // the k-held fit's se is inflated once by √(n/n_eff) and carries ci95 (the value S_err uses, §3.1)
+      assert.ok(k1.n > 0 && k1.nEff > 0 && k1.nEff <= k1.n, 'n and n_eff reported (' + k1.n + ', ' + k1.nEff + ')');
+      const seRaw = Math.abs(k1.fit._fr.stderr.S);
+      assert.rel(k1.fit.se.S, seRaw * Math.sqrt(k1.n / k1.nEff), 1e-9, 'se.S inflated by √(n/n_eff)');
+      assert.ok(k1.fit.ci95.S && k1.fit.ci95.S.length === 2, 'ci95.S set');
+      assert.near(k1.fit.ci95.S[1] - k1.fit.ci95.S[0], 2 * 1.96 * k1.fit.se.S, 1e-9, 'ci95.S = S ± 1.96·se');
+      assert.equal(k1.fit.ci95.k, null, 'k frozen: no ci95.k');
       const se = AI.sErr(app.toWin({ mode: 'kHeld', floor: 0.2, seS: k1.fit.se.S || 0, sK: k1.S_k, sTc: 0, sPwf: 0 }));
       assert.ok(se.value >= dS, 'S_err ' + se.value + ' ≥ |ΔS| ' + dS);
       assert.equal(se.driver, 'kHeld');
