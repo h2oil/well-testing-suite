@@ -21,15 +21,19 @@
 //     this rate into the separator.
 //   • Route 2 starts at the flare tip, 14.696 psia + the tip pressure drop (input), and is marched
 //     against the flow to the PCV outlet → the flare-header back-pressure. The PCV takes
-//     Psep − P_out; choked when P_out/Psep ≤ (2/(k+1))^(k/(k−1)) (ideal-gas k at the separator
-//     temperature, 46-calc-gaspvt.js WTS_gaspvt_k; a globe valve chokes at x ≥ Fk·xT, IEC 60534-2-1).
-//     The flare line always includes the acceleration term (isothermal compressible flow).
+//     Psep − P_out: choked when x = ΔP/p1 ≥ Fγ·xT (IEC 60534-2-1, Fγ = k/1.4, xT input, default 0.7
+//     for a globe valve); p2/p1 is also reported against the ideal-nozzle ratio (2/(k+1))^(k/(k−1))
+//     (ideal-gas k at the separator temperature, 46-calc-gaspvt.js WTS_gaspvt_k).
+//     The flare line always includes the acceleration term (compressible flow).
 //   Reverse march: the step pressure change is evaluated at the step's mid pressure (3 fixed-point
 //   passes) and, on these routes, a step whose predicted change exceeds 3 % of the pressure is split
-//   (≤ 200 sub-steps) — the gas density changes several-fold near the flare tip. When the B&B kinetic
-//   energy term Ek = ρs·vm·vSg/(gc·p) (≈ isothermal Mach²) reaches 0.9 at a segment outlet the line
-//   chokes there: the pressure at that outlet is raised until Ek = 0.9 (choked exit, a pressure step at
-//   the outlet) and the route is flagged ✗.
+//   (≤ 200 sub-steps) — the gas density changes several-fold near the flare tip. The B&B kinetic
+//   energy term Ek = ρs·vm·vSg/(gc·p) (= ρv²/p, the isothermal Mach² of a gas) makes dp/dx ∝ 1/(1 − Ek)
+//   singular at Ek = 1, the isothermal choked-flow limit (v = √(ZRT/M), Mach v/c ≈ 1/√k). Ek ≥ 1 at a
+//   segment outlet: the segment chokes, its outlet sits at the pressure where Ek = 1 (a pressure step down
+//   to the downstream pressure) and the route is flagged ✗. From Ek = 0.9 to the outlet (≈ 0.1 ft of
+//   pipe) the pressure change is taken in one step, booked as acceleration. The page routes stop above
+//   15,000 psig (lost, reason 'high': the well cannot deliver / the separator cannot vent the rate).
 //   Coupled temperature model: the temperature profile comes from a forward P–T march from the
 //   result, and the backward march is repeated until P2 changes by < 0.005 psi.
 //
@@ -37,8 +41,10 @@
 //   PCV outlet temperature: isenthalpic expansion dT/dp = μJT(p, T) integrated by Heun's method
 //   (3–10 steps) from the separator to the PCV outlet, μJT = R·T²·(∂Z/∂T)p/(p·Cp) from the DAK Z and
 //   the real-gas Cp (46-calc-gaspvt.js WTS_gaspvt_state; fallback 0.07 °F/psi, the GPSA "7 °F per
-//   100 psi" rule). ⚠ below the hydrate temperature at the PCV outlet pressure (25-hydrate.js
-//   WTS_hydrate_temp, Towler & Mokhatab 2005) or below the minimum design metal temperature (input).
+//   100 psi" rule). ⚠ when the gas anywhere in the flare line is below the hydrate temperature at its
+//   pressure (25-hydrate.js WTS_hydrate_temp, Towler & Mokhatab 2005), or the coldest gas (linear model:
+//   the isenthalpic temperature at the line exit) is below the minimum design metal temperature (input).
+//   With no flow through the PCV (back-pressure ≥ Psep) only that ✗ is shown.
 //   Mach = v/c at each segment's inlet and outlet, c = the real-gas speed of sound (WTS_gaspvt_state):
 //   API Std 521 practice — ⚠ above 0.5 (continuous flow, headers and long lines), ✗ above 0.7 and
 //   ✗ when the line chokes. ρv² ⚠ above 200,000 kg/m·s² (134,400 lb/ft·s²), a common screening limit
@@ -99,8 +105,11 @@
 //   §3.3), minus μJT·Δp_step (isenthalpic throttling), and the step's pressure
 //   gradient is evaluated at the step's mean temperature (3 fixed-point passes).
 //   The line inlet temperature is downstream of the choke, so the choke's own J-T cooling is not
-//   applied again. The flare line starts at the PCV outlet temperature: constant in the linear
-//   model, line heat loss + μJT along the line in the coupled model.
+//   applied again. The flare line starts at the PCV outlet temperature. Linear model: adiabatic, the gas
+//   keeps expanding isenthalpically to the tip, T(x) = T_h(p(x)) on the PCV's expansion curve. That is the
+//   stagnation-equivalent temperature: the static gas temperature is lower by v²/(2·cp) (≈ 3 % of the
+//   absolute temperature at Mach 0.5), while the pipe wall sees about the recovery temperature, ≈ 0.9 of
+//   the way back to it (recovery factor ≈ Pr^⅓). Coupled model: line heat loss + μJT along the line.
 //   Gas rate = separator gas at standard conditions (22-units WTS_baseConditions,
 //   default 60 °F / 14.696 psia). Free gas = qg − qo·Rs.
 //
@@ -115,7 +124,8 @@
 //
 // STATE  WTS_state.flowline = {ok, pArr (separator inlet, psig), dpSep (choke outlet → separator),
 //        pFlare (flare tip), dpFlare (PCV outlet → tip), pPcvOut, dpPcv, pcvChoked, tPcvOut,
-//        flareMachMax, p2Choke, dpChoke, chokeCritical, ts, result}
+//        flareMachMax, p2Choke, dpChoke, chokeCritical, ts, result}; dpPcv and tPcvOut are null when the PCV
+//        cannot pass the gas, dpChoke when WHP < P2 (pcvChoked / chokeCritical false); pcvChoked = x ≥ Fγ·xT.
 // Registers window.WTS_calcRegistry.flowline (group "Well Test & Flowlines").
 // ════════════════════════════════════════════════════════════════════
 (function () {
@@ -133,7 +143,9 @@
     var RHO_W = 62.366;                     // lb/ft³, fresh water at 60 °F
     var PSIFT_KPAM = 6.894757 / 0.3048;     // kPa/m per psi/ft
     var NSEG_W = 6, NSEG_F = 4;
-    var EK_LOST = 0.95, EK_CHOKE = 0.9;     // B&B kinetic-energy term: march fails / choked-exit pressure
+    var EK_LOST = 0.95;                     // B&B kinetic-energy term Ek at which a march step fails
+    var EK_CRIT = 1, EK_NEAR = 0.9;         // choked (isothermal limit, 1/(1 − Ek) singular) / near-exit margin
+    var P_CAP = 15000;                      // psig: page routes stop above the input limit (PVT range)
     var REFINE = 0.03, MAX_SUB = 200;       // sub-step when a step changes p by > 3 %
     var GILBERT_CRIT = 0.588;               // p2/p1 for critical multiphase choke flow (49-calc-chokeperf.js)
     var MUJT_RULE = 0.07;                   // °F/psi, GPSA rule when the Gas PVT engine is absent
@@ -142,7 +154,7 @@
     var RHOV2_LIM = 200000 / PA_LBFT;       // lb/ft·s² (200,000 kg/m·s²)
     var PSV_FRAC = 0.10;                    // conventional PSV built-up back-pressure limit (API Std 520 Part I)
     var DP_PCV_MIN = 5;                     // psi: below this the PCV runs nearly wide open
-    var DEF = { dptip: 1.5, mdmt: -20, psvset: 1440 };
+    var DEF = { dptip: 1.5, mdmt: -20, psvset: 1440, xt: 0.7 };   // xt: globe-valve pressure differential ratio factor
 
     // ρv² unit (merged into WTS_units when absent): lb/ft·s² ↔ kg/m·s² (= Pa).
     (function _cats() {
@@ -392,18 +404,24 @@
         g.props = pr;
         return g;
     }
-    // Pressure (psia) at which Ek falls to EK_CHOKE (Ek decreases with pressure: v ∝ 1/p, ρ ∝ p).
-    function _raiseEk(fluid, P, T, s, opt) {
+    // Pressure (psia) at which Ek falls to `target` (Ek decreases with pressure: v ∝ 1/p, ρ ∝ p).
+    // Infinity when it would lie above cap (psia), NaN when it cannot be bracketed.
+    function _raiseEk(fluid, P, T, s, opt, target, cap) {
         var lo = P, hi = P * 1.25, n = 0;
-        while (_gAt(fluid, hi, T, s, opt).Ek >= EK_CHOKE) { lo = hi; hi *= 1.25; if (++n > 80) return NaN; }
+        while (_gAt(fluid, hi, T, s, opt).Ek >= target) {
+            lo = hi; hi *= 1.25;
+            if (cap && lo > cap) return Infinity;
+            if (++n > 80) return NaN;
+        }
         for (var k = 0; k < 60 && hi / lo - 1 > 1e-9; k++) {
             var mid = Math.sqrt(lo * hi);
-            if (_gAt(fluid, mid, T, s, opt).Ek >= EK_CHOKE) lo = mid; else hi = mid;
+            if (_gAt(fluid, mid, T, s, opt).Ek >= target) lo = mid; else hi = mid;
         }
-        return hi;
+        return (cap && hi > cap) ? Infinity : hi;
     }
     // opt: {rough, payne, accel, reverse, heat (coupled P–T, forward only), tAt (x → °F along the march),
-    //       refine (split steps with > 3 % pressure change), chokeRaise (reverse only: choked-exit pressure)}
+    //       refine (split steps with > 3 % pressure change), chokeRaise (reverse only: choked-exit pressure),
+    //       pMax (psia: the march stops, lost 'high', when the pressure would pass it)}
     function march(route, fluid, p0g, t0, t1, opt) {
         var segs = route.segments, total = 0;
         segs.forEach(function (s) { total += s.len; });
@@ -425,8 +443,8 @@
                 if (opt.refine && !heat && it > 0 && Math.abs(P2 - Pp) < 1e-7 * P) break;   // converged (page routes only)
             }
             if (heat && _fin(P2)) tb = _heatStep(heat, s, ta, dx, sgn * (P - Math.max(P2, PATM)));
-            if (!_fin(P2) || P2 < PATM || g.Ek >= EK_LOST) {
-                lost = { seg: k, x: x, reason: g.Ek >= EK_LOST ? 'critical' : 'pressure' };
+            if (!_fin(P2) || P2 < PATM || g.Ek >= EK_LOST || (opt.pMax && P2 > opt.pMax)) {
+                lost = { seg: k, x: x, reason: g.Ek >= EK_LOST ? 'critical' : (opt.pMax && P2 > opt.pMax) ? 'high' : 'pressure' };
                 return false;
             }
             r.dpEl += g.gradEl * dx; r.dpF += g.gradF * dx; r.dpAcc += g.gradAcc * dx;
@@ -444,22 +462,32 @@
         for (var k = 0; k < segs.length && !lost; k++) {
             var s = segs[k];
             s.theta = s.len > 0 ? Math.asin(Math.max(-1, Math.min(1, s.dz / s.len))) * 180 / Math.PI : 0;
+            var pSegOut = P, dpNear = 0;
             if (opt.chokeRaise && sgn < 0) {
-                // Marching against the flow, P here is this segment's outlet pressure: if the segment
-                // would choke there, its outlet sits at the choked pressure (pressure step to P).
-                var gc0 = gAt(P, pt(x), s);
-                if (gc0.Ek >= EK_CHOKE) {
-                    var Pr = _raiseEk(fluid, P, pt(x), s, opt);
-                    if (_fin(Pr)) {
-                        chokes.push({ seg: k, x: x, pBefore: P - PATM, pAfter: Pr - PATM, ek: gc0.Ek });
-                        P = Pr;
-                        profile.push({ x: x, p: P - PATM, t: pt(x) });
+                // Marching against the flow, P here is this segment's outlet pressure. Ek ≥ 1 there: the
+                // segment chokes (isothermal limit, gas velocity √(ZRT/M)) and its outlet sits at the pressure
+                // where Ek = 1 (a pressure step down to P outside the segment). Ek ≥ 0.9: the last ~0.1 ft,
+                // where 1/(1 − Ek) is near-singular, is taken in one step to the pressure where Ek = 0.9
+                // (booked as acceleration; its length, ≈ D·[(1 − M²)/M² + ln M²]/f for M² = 0.9, is neglected).
+                var Tx = pt(x), gc0 = gAt(P, Tx, s), cap = opt.pMax || 0;
+                if (gc0.Ek >= EK_CRIT) {
+                    var Ps = _raiseEk(fluid, P, Tx, s, opt, EK_CRIT, cap);
+                    if (!_fin(Ps)) lost = { seg: k, x: x, reason: Ps === Infinity ? 'high' : 'critical' };
+                    else {
+                        chokes.push({ seg: k, x: x, pBefore: P - PATM, pAfter: Ps - PATM, ek: gc0.Ek });
+                        P = Ps; pSegOut = P;
+                        profile.push({ x: x, p: P - PATM, t: Tx });
                     }
+                }
+                if (!lost && gc0.Ek >= EK_NEAR) {
+                    var Pn = _raiseEk(fluid, P, Tx, s, opt, EK_NEAR, cap);
+                    if (!_fin(Pn)) lost = { seg: k, x: x, reason: Pn === Infinity ? 'high' : 'critical' };
+                    else if (Pn > P) { dpNear = Pn - P; P = Pn; profile.push({ x: x, p: P - PATM, t: Tx }); }
                 }
             }
             var n = _steps(s.len), dx = s.len / n;
-            var r = { name: s.name, len: s.len, id: s.id, dz: s.dz, theta: s.theta, pIn: P - PATM, tIn: pt(x),
-                dpEl: 0, dpF: 0, dpAcc: 0, patterns: [], hlIn: null, hlOut: null, vmMax: 0, eroMax: 0 };
+            var r = { name: s.name, len: s.len, id: s.id, dz: s.dz, theta: s.theta, pIn: pSegOut - PATM, tIn: pt(x),
+                dpEl: 0, dpF: 0, dpAcc: dpNear, patterns: [], hlIn: null, hlOut: null, vmMax: 0, eroMax: 0 };
             for (var j = 0; j < n && !lost; j++) {
                 var m = 1, gp = null;
                 if (opt.refine && !heat) {
@@ -481,9 +509,10 @@
     function _segCopy(list) { return list.map(function (q) { return { name: q.name, len: q.len, id: q.id, dz: q.dz }; }); }
     function _len(list) { var L = 0; list.forEach(function (s) { L += s.len; }); return L; }
     function _constT(t) { return function () { return t; }; }
-    // Temperature along a forward profile, linear between points (x ascending; repeated x allowed).
-    function _interpT(profile) {
-        var xs = profile.map(function (q) { return q.x; }), ts = profile.map(function (q) { return q.t; }), n = xs.length;
+    // Temperature (or, key 'p', pressure) along a forward profile, linear between points (x ascending;
+    // repeated x allowed).
+    function _interpT(profile, key) {
+        var xs = profile.map(function (q) { return q.x; }), ts = profile.map(function (q) { return q[key || 't']; }), n = xs.length;
         return function (x) {
             if (!(n > 1) || x <= xs[0]) return ts[0];
             if (x >= xs[n - 1]) return ts[n - 1];
@@ -492,6 +521,13 @@
             var d = xs[hi] - xs[lo];
             return d > 0 ? ts[lo] + (ts[hi] - ts[lo]) * (x - xs[lo]) / d : ts[hi];
         };
+    }
+    // Adiabatic flare line (linear model): T(x) = T_h(p(x)) on the isenthalpic curve from the separator,
+    // shifted to tOut at the PCV outlet, with p(x) from the backward-march result r (flow order; at and past
+    // the pipe exit the exit pressure, which is above the tip back-pressure when the line chokes).
+    function _tAlong(curve, r, tOut) {
+        var L = r.length, pExit = r.pOut, pOf = _interpT(r.profile, 'p'), base = curve(r.pIn + PATM);
+        return function (x) { return tOut + curve((x >= L ? pExit : pOf(x)) + PATM) - base; };
     }
     // March a route (segments in flow order) BACKWARDS from the known pressure at its outlet, pEndG psig,
     // with the temperature tFlow(x) at distance x from the route inlet; the result is presented in the
@@ -555,6 +591,24 @@
         }
         return { t: T, dT: t1 - T, mu: (t1 - T) / (p1a - p2a), real: real, n: n };
     }
+    // The same expansion tabulated from p1a down to p2a psia (Heun, ≤ 50 psi steps): pa → T °F, linear
+    // between nodes, extended along the end slopes (T = t1 at and above p1a).
+    function _isenthCurve(sgg, p1a, t1, p2a) {
+        if (!(p2a < p1a)) return function () { return t1; };
+        var n = Math.min(40, Math.max(6, Math.ceil((p1a - p2a) / 50))), h = (p2a - p1a) / n;
+        var ps = [p1a], ts = [t1], T = t1, p = p1a;
+        for (var k = 0; k < n; k++) {
+            var a = _jtAt(sgg, p, T), b = _jtAt(sgg, p + h, T + h * a.mu);
+            T += h * (a.mu + b.mu) / 2; p += h; ps.push(p); ts.push(T);
+        }
+        return function (pa) {
+            if (!(pa < ps[0])) return ts[0];
+            var lo = 0, hi = n;
+            if (pa <= ps[n]) lo = n - 1;
+            else while (hi - lo > 1) { var mid = (lo + hi) >> 1; if (ps[mid] > pa) lo = mid; else hi = mid; }
+            return ts[lo] + (ts[lo + 1] - ts[lo]) * (pa - ps[lo]) / (ps[lo + 1] - ps[lo]);
+        };
+    }
     // Gas velocity, speed of sound, Mach and ρv² at (pG psig, tF) in segment s.
     function _gasPoint(fluid, s, pG, tF) {
         var pA = pG + PATM, pr = props(fluid, pA, tF), A = Math.PI * Math.pow(s.id / 12, 2) / 4;
@@ -570,7 +624,7 @@
     //          downstream of the choke), t1 °F (arrival), psep psig (held by the gas PCV), rough in, payne, accel,
     //          well: [{name,len,id,dz}] (choke outlet → separator), flare: [{name,len,id,dz}] (PCV outlet → tip),
     //          dptip psi (flare tip drop, default 1.5), mdmt °F (default −20), psvset psig (default 1440;
-    //          '' / NaN = no PSV check),
+    //          '' / NaN = no PSV check), xt (gas PCV pressure differential ratio factor, default 0.7),
     //          tmode 'linear' (default: T linear t0 → t1) | 'heat' (coupled P–T march; t1 ignored) with
     //          tair °F, wind mph, eps, wall in, ins in (0 = bare), kp, kins Btu/hr·ft·°F, cpo, cpw, cpg Btu/lb·°F,
     //          jt °F/psi}
@@ -581,7 +635,7 @@
         function dflt(k) { var v = i[k]; return v === undefined ? DEF[k] : ((v === '' || v === null) ? NaN : +v); }
         var qo = +i.qo, qw = +i.qw, qg = +i.qg, api = +i.api, sgg = +i.sgg, sgw = +i.sgw;
         var pwh = +i.pwh, t0 = +i.t0, t1 = +i.t1, psep = +i.psep, rough = +i.rough;
-        var dptip = dflt('dptip'), mdmt = dflt('mdmt');
+        var dptip = dflt('dptip'), mdmt = dflt('mdmt'), xt = dflt('xt');
         var psvset = i.psvset === undefined ? DEF.psvset : ((i.psvset === '' || i.psvset === null || (typeof i.psvset === 'number' && isNaN(i.psvset))) ? null : +i.psvset);
         var rOk = need(_fin(qo) && qo >= 0 && qo <= 200000, 'qo', 'Oil rate must be between 0 and 200,000 STB/d.');
         rOk = need(_fin(qw) && qw >= 0 && qw <= 200000, 'qw', 'Water rate must be between 0 and 200,000 BWPD.') && rOk;
@@ -597,6 +651,7 @@
         need(_fin(rough) && rough >= 0 && rough <= 0.1, 'rough', 'Pipe roughness must be between 0 and 0.1 in.');
         need(_fin(dptip) && dptip >= 0 && dptip <= 50, 'dptip', 'Flare tip pressure drop must be between 0 and 50 psi.');
         need(_fin(mdmt) && mdmt >= -320 && mdmt <= 200, 'mdmt', 'Minimum design metal temperature must be between -320 and 200 °F.');
+        need(_fin(xt) && xt >= 0.05 && xt <= 1, 'xt', 'Gas PCV pressure differential ratio factor xT must be between 0.05 and 1.');
         need(psvset == null || (_fin(psvset) && psvset > 0 && psvset <= 15000), 'psvset', 'Separator PSV set pressure must be above 0 and no more than 15,000 psig (leave it blank to skip the check).');
         function segs(list, pre, max, req) {
             var o = [];
@@ -638,8 +693,9 @@
         if (errors.length) return { ok: false, errors: errors, bad: bad };
 
         var opt = { rough: rough, payne: !!i.payne, accel: !!i.accel };
-        var optW = Object.assign({}, opt, { refine: true, chokeRaise: true });
-        var optF = Object.assign({}, opt, { accel: true, refine: true, chokeRaise: true });   // isothermal compressible flow
+        var pMax = P_CAP + PATM;
+        var optW = Object.assign({}, opt, { refine: true, chokeRaise: true, pMax: pMax });
+        var optF = Object.assign({}, opt, { accel: true, refine: true, chokeRaise: true, pMax: pMax });   // compressible flow
         function heatFor(f) {
             if (!coupled) return null;
             var mf = G.WTS_lineheat_massFlow({ qo: f.qo, qw: f.qw, qg: f.qg, api: api, sgg: sgg, sgw: sgw, cpo: H.cpo, cpw: H.cpw, cpg: H.cpg });
@@ -668,9 +724,10 @@
         r1.key = 'well'; r1.name = 'Choke outlet to separator'; r1.iterations = iters;
         r1.chokedExit = r1.chokes.length > 0;
         r1.reaches = !r1.lost && !r1.chokedExit;
+        r1.high = !!(r1.lost && r1.lost.reason === 'high');
         r1.margin = r1.pIn != null ? pwh - r1.pIn : null;
 
-        // Choke: WHP upstream, P2 downstream.
+        // Choke: WHP upstream, P2 downstream (dp < 0 when WHP < P2: the shortfall; deliver false).
         var choke = null;
         if (r1.pIn != null) {
             var multi = (qo + qw) > 0, kc = multi ? null : _kIdeal(sgg, t0), rc = multi ? GILBERT_CRIT : _critRatio(kc);
@@ -683,9 +740,13 @@
         var r2 = null, pcv = null, fc = null, psv = null, tSep = coupled && r1.tOut != null ? r1.tOut : t1;
         if (flare.length && qg > 0) {
             var gasOnly = { qo: 0, qw: 0, qg: qg, api: api, sgg: sgg, sgw: sgw }, hg = heatFor(gasOnly), Lf = _len(flare);
-            // Pass 1 at the separator temperature, then passes at the PCV outlet temperature (and, coupled, the
-            // forward P–T profile from it) until P_out changes by < 0.01 psi. T_out(P_out) moves by μJT·ΔP_out
-            // between passes (≈ 0.06 °F/psi), so the expansion is integrated once and then shifted along it.
+            // Pass 1 at the separator temperature, then passes at the PCV outlet temperature until P_out changes
+            // by < 0.01 psi. T_out(P_out) moves by μJT·ΔP_out between passes (≈ 0.06 °F/psi), so the expansion
+            // is integrated once and then shifted along it. Along the line: linear model — adiabatic, the gas
+            // keeps expanding isenthalpically from the separator, T(x) = T_h(p(x)) from the previous pass's
+            // pressure profile (the isenthalpic curve shifted to T_out at the PCV outlet); coupled model — the
+            // forward P–T march from the PCV outlet (line heat loss + μJT).
+            var curve = (!coupled && psep > dptip) ? _isenthCurve(sgg, psep + PATM, tSep, dptip + PATM) : null;
             var tFnF = _constT(tSep), jt = null, jtP = null, pPrevF = null, tPcv = tSep;
             for (var itf = 0; itf < 6; itf++) {
                 r2 = _back(flare, gasOnly, dptip, tFnF, optF);
@@ -696,21 +757,25 @@
                 else { tPcv = jt.t + _jtAt(sgg, pNew + PATM, jt.t).mu * (pNew - jtP); }
                 if (pPrevF != null && Math.abs(pNew - pPrevF) < 0.01) break;
                 if (coupled) {
-                    var ff = march({ segments: _segCopy(flare) }, gasOnly, pNew, tPcv, tPcv, Object.assign({}, optF, { chokeRaise: false, refine: false, heat: hg }));
+                    var ff = march({ segments: _segCopy(flare) }, gasOnly, pNew, tPcv, tPcv, Object.assign({}, optF, { chokeRaise: false, refine: false, pMax: 0, heat: hg }));
                     tFnF = ff.profile.length > 1 ? _interpT(ff.profile) : _constT(tPcv);
-                } else tFnF = _constT(tPcv);
+                } else tFnF = (curve && pNew < psep) ? _tAlong(curve, r2, tPcv) : _constT(tPcv);
                 pPrevF = pNew;
             }
             r2.key = 'flare'; r2.name = 'PCV outlet to flare tip';
             r2.chokedExit = r2.chokes.length > 0;
             r2.reaches = !r2.lost;
+            r2.high = !!(r2.lost && r2.lost.reason === 'high');
             if (!r2.lost) {
                 var pSepA = psep + PATM, pOutA = r2.pIn + PATM, kp = _kIdeal(sgg, tSep), rcp = _critRatio(kp);
-                var passes = r2.pIn < psep;
+                var passes = r2.pIn < psep, xv = (psep - r2.pIn) / pSepA, fgam = kp / 1.4;
+                // choked: the valve (IEC 60534-2-1, x ≥ Fγ·xT); nozzleCritical: p2/p1 at or below the ideal-nozzle ratio.
                 pcv = { pIn: psep, pOut: r2.pIn, dp: psep - r2.pIn, ratio: pOutA / pSepA, rc: rcp, k: kp, passes: passes,
-                    choked: passes && pOutA / pSepA <= rcp, tIn: tSep, tOut: passes ? tPcv : tSep, dT: passes ? tSep - tPcv : 0,
+                    x: xv, xT: xt, fGamma: fgam, xChoke: fgam * xt,
+                    choked: passes && xv >= fgam * xt, nozzleCritical: passes && pOutA / pSepA <= rcp,
+                    tIn: tSep, tOut: passes ? tPcv : null, dT: passes ? tSep - tPcv : null,
                     muJT: passes && jt ? (tSep - tPcv) / (psep - r2.pIn) : null, jtReal: passes && jt ? jt.real : null };
-                var machMax = 0, machSeg = null, rv2Max = 0, rv2Seg = null, tMin = pcv.tOut;
+                var machMax = 0, machSeg = null, rv2Max = 0, rv2Seg = null, tMin = Infinity, hydW = null;
                 r2.segments.forEach(function (s) {
                     if (s.pIn == null || s.pOut == null) return;
                     var a = _gasPoint(gasOnly, s, s.pIn, s.tIn), b = _gasPoint(gasOnly, s, s.pOut, s.tOut);
@@ -719,13 +784,23 @@
                     if (s.mach > machMax) { machMax = s.mach; machSeg = s.name; }
                     if (s.rhoV2 > rv2Max) { rv2Max = s.rhoV2; rv2Seg = s.name; }
                 });
-                r2.profile.forEach(function (q) { if (_fin(q.t) && q.t < tMin) tMin = q.t; });
-                var hyd = typeof G.WTS_hydrate_temp === 'function' ? G.WTS_hydrate_temp(pOutA, sgg) : null;
+                // Coldest gas and hydrate margin point by point (the hydrate temperature falls with the pressure).
+                var hydFn = typeof G.WTS_hydrate_temp === 'function' ? G.WTS_hydrate_temp : null;
+                r2.profile.forEach(function (q) {
+                    if (!_fin(q.t)) return;
+                    if (q.t < tMin) tMin = q.t;
+                    var th = hydFn ? hydFn(q.p + PATM, sgg) : NaN;
+                    if (_fin(th) && (!hydW || q.t - th < hydW.margin)) hydW = { margin: q.t - th, t: q.t, tHyd: th, p: q.p, x: q.x };
+                });
+                if (!_fin(tMin)) tMin = passes ? tPcv : tSep;
+                var hyd = hydFn ? hydFn(pOutA, sgg) : null;
                 fc = { machMax: machMax, machSeg: machSeg, rhoV2Max: rv2Max, rhoV2Seg: rv2Seg, tMin: tMin,
-                    tHyd: _fin(hyd) ? hyd : null, hydrate: _fin(hyd) ? tMin < hyd : null, belowMdmt: tMin < mdmt,
+                    tHyd: _fin(hyd) ? hyd : null, hydAt: hydW, hydrate: passes && hydW ? hydW.margin < 0 : null,
+                    belowMdmt: passes ? tMin < mdmt : null,
                     pTip: dptip, length: Lf, machLevel: r2.chokedExit || machMax > MACH_BAD ? 'bad' : machMax > MACH_WARN ? 'warn' : 'ok',
                     rhoV2High: rv2Max > RHOV2_LIM };
-                if (psvset != null) psv = { set: psvset, valid: psvset > psep, bp: pcv.pOut, frac: pcv.pOut / psvset,
+                // No flow through the PCV: no PSV back-pressure check at this rate.
+                if (psvset != null && passes) psv = { set: psvset, valid: psvset > psep, bp: pcv.pOut, frac: pcv.pOut / psvset,
                     ok: pcv.pOut <= PSV_FRAC * psvset, nearSet: psep >= 0.9 * psvset };
             }
         }
@@ -735,7 +810,7 @@
         });
         return {
             ok: true, routes: [r1].concat(r2 ? [r2] : []), well: r1, flare: r2, psep: psep, pwh: pwh,
-            choke: choke, pcv: pcv, flareCheck: fc, psv: psv, dptip: dptip, mdmt: mdmt, psvset: psvset, tSep: tSep,
+            choke: choke, pcv: pcv, flareCheck: fc, psv: psv, dptip: dptip, mdmt: mdmt, psvset: psvset, xt: xt, tSep: tSep, pCap: P_CAP,
             inlet: r1.inlet ? r1.inlet.props : null, inletBB: r1.inlet, fluid: fluid, opt: opt, warnings: warnings,
             flareSkipped: flare.length && !(qg > 0), coupled: coupled, heat: H,
             tArr: r1.tOut != null ? r1.tOut : null
@@ -839,6 +914,7 @@
             dptip: _byId('fl_dptip') ? _num('fl_dptip') : undefined,
             mdmt: _byId('fl_mdmt') ? _num('fl_mdmt') : undefined,
             psvset: _byId('fl_psvset') ? _num('fl_psvset') : undefined,
+            xt: _byId('fl_xt') ? _num('fl_xt') : undefined,
             tmode: _str('fl_tmode') === 'heat' ? 'heat' : 'linear',
             tair: _num('fl_tair'), wind: _num('fl_wind'), eps: _num('fl_eps'), wall: _num('fl_wall'), ins: _num('fl_ins'),
             kp: _num('fl_kp'), kins: _num('fl_kins'), cpo: _num('fl_cpo'), cpw: _num('fl_cpw'), cpg: _num('fl_cpg'), jt: _num('fl_jt')
@@ -892,10 +968,12 @@
         var w = r.well, pr = r.inlet, bI = r.inletBB, ch = r.choke, f = r.flare, pc = r.pcv, fc = r.flareCheck;
 
         // ── Line summary: separator → choke ──
-        var v = '';
+        var v = '', cap = P(r.pCap);
         if (w.lost) {
             v += _bad(w.lost.reason === 'critical'
                 ? 'The line reaches critical (choked) flow in ' + nm(w.segments[w.lost.seg].name) + ': it cannot carry this rate to the separator.'
+                : w.lost.reason === 'high'
+                ? 'Marching back from the separator, more than ' + cap + ' would be needed in ' + nm(w.segments[w.lost.seg].name) + ': the well cannot deliver this rate into the separator through this line. Use a larger line or expect a lower rate.'
                 : 'Marching back from the separator, the pressure falls below atmospheric in ' + nm(w.segments[w.lost.seg].name) + ' (a downhill line running partly full): the steady model does not apply.');
         } else {
             if (w.chokedExit) {
@@ -905,16 +983,19 @@
             if (!ch.deliver) v += _bad('WHP ' + P(ch.whp) + ' is below the ' + P(ch.p2) + ' needed downstream of the choke: the well cannot deliver this rate into the separator at ' + P(r.psep) + '. Lower the separator pressure or use a larger line, or expect a lower rate.');
             else if (ch.critical) v += _ok('Choke: ' + P(ch.whp) + ' → ' + P(ch.p2) + ' (ΔP ' + dP(ch.dp) + '), p2/p1 = ' + _fmt(ch.ratio, 3) + ' ≤ ' + _fmt(ch.rc, 3) + ': critical flow, the well rate does not depend on the separator pressure.');
             else v += _warn('Choke: ' + P(ch.whp) + ' → ' + P(ch.p2) + ' (ΔP ' + dP(ch.dp) + '), p2/p1 = ' + _fmt(ch.ratio, 3) + ' > ' + _fmt(ch.rc, 3) + ': subcritical, separator pressure changes will change the well rate.');
-            v += _ok('Line: ' + dP(w.dp) + ' from the choke outlet to the separator at ' + P(r.psep) + '.');
+            // The line verdict only when it carries the rate to the separator pressure (a choked outlet or a
+            // WHP shortfall has its own ✗ above).
+            if (w.reaches && ch.deliver) v += _ok('Line: ' + dP(w.dp) + ' from the choke outlet to the separator at ' + P(r.psep) + '.');
         }
         r.warnings.forEach(function (x) { v += _warn(_esc(x)); });
         h += '<div class="rbox"><div class="rbox-title">Line Summary</div>' +
             _row('Wellhead pressure, upstream of the choke (WHP)', P(r.pwh)) +
-            _row('Required pressure downstream of the choke', ch ? P(ch.p2) : '—') +
+            _row('Required pressure downstream of the choke', ch ? P(ch.p2) : w.high ? 'More than ' + cap : '—') +
             _row('Choke pressure drop', ch && ch.deliver ? dP(ch.dp) : '—') +
             _row('Choke pressure ratio p2/p1, absolute', ch ? _fmt(ch.ratio, 3) + ' (critical at ≤ ' + _fmt(ch.rc, 3) + (ch.basis === 'gas' ? ', gas, k = ' + _fmt(ch.k, 3) : ', gas–liquid') + ')' : '—') +
-            _row('Choke flow', !ch ? '—' : !ch.deliver ? 'Cannot deliver: WHP below the required pressure' : ch.critical ? 'Critical' : 'Subcritical') +
-            _row('Pressure drop, choke outlet to separator', w.dp == null ? '—' : dP(w.dp)) +
+            _row('Choke flow', !ch ? (w.high ? 'Cannot deliver: more than ' + cap + ' needed downstream of the choke' : '—') : !ch.deliver ? 'Cannot deliver: WHP below the required pressure' : ch.critical ? 'Critical' : 'Subcritical') +
+            _row('Pressure drop, choke outlet to separator', w.dp == null ? '—' : dP(w.dp) + (w.chokedExit ? ', to the choked line outlet' : '')) +
+            (w.chokedExit && w.pOut != null ? _row('Line outlet pressure, choked (above the separator pressure)', P(w.pOut)) : '') +
             _row('Separator operating pressure, held by the gas PCV', P(r.psep)) +
             _row('Line length, choke outlet to separator', ft(w.length)) +
             _row('Temperature model', r.coupled ? 'Coupled pressure–temperature march (line heat loss)' : 'Linear, line inlet to arrival') +
@@ -924,24 +1005,34 @@
         // ── Gas PCV and flare line ──
         if (f) {
             var vf = '';
-            if (f.lost) vf += _bad('The flare line cannot carry ' + _u(r.fluid.qg, 'gasRate', 2, 'MMSCFD') + ' (the march back from the tip failed in ' + nm(f.segments[f.lost.seg].name) + '): use a larger line.');
+            if (f.lost) vf += _bad(f.lost.reason === 'high'
+                ? 'The flare line cannot carry ' + _u(r.fluid.qg, 'gasRate', 2, 'MMSCFD') + ': more than ' + cap + ' would be needed at the PCV outlet (passed in ' + nm(f.segments[f.lost.seg].name) + '). Use a larger line.'
+                : 'The flare line cannot carry ' + _u(r.fluid.qg, 'gasRate', 2, 'MMSCFD') + ' (the march back from the tip failed in ' + nm(f.segments[f.lost.seg].name) + '): use a larger line.');
             else {
-                if (!pc.passes) vf += _bad('Back-pressure at the PCV outlet ' + P(pc.pOut) + ' is not below the separator pressure ' + P(r.psep) + ': the separator cannot vent this gas through the flare line. Raise the separator pressure or enlarge the line.');
-                else {
-                    vf += _ok('Gas PCV: ' + P(r.psep) + ' → ' + P(pc.pOut) + ' (ΔP ' + dP(pc.dp) + '), p2/p1 = ' + _fmt(pc.ratio, 3) +
-                        (pc.choked ? ' ≤ ' + _fmt(pc.rc, 3) + ': critical (choked) flow, size the valve for choked flow and check its noise.' : ' > ' + _fmt(pc.rc, 3) + ': subcritical flow.'));
+                var cf = f.chokedExit ? f.chokes[f.chokes.length - 1] : null, cfs = cf ? f.segments[cf.seg] : null;
+                // Choked at the isothermal limit Ek = 1: v = √(ZRT/M), i.e. Mach (v/c) = 1/√k on the table.
+                var chokeTxt = cf ? 'The flare line chokes at the outlet of ' + nm(cfs.name) + ' (isothermal limit, gas velocity √(ZRT/M), Mach ' +
+                    mach(cfs.machOut) + '): the exit pressure rises to ' + P(cf.pUp) + ', above the ' + P(cf.pDown) + ' beyond it. Use a larger line.' : '';
+                if (!pc.passes) {
+                    // No flow: the checks below would be at a rate that cannot pass, so only the cause is shown.
+                    vf += _bad('Back-pressure at the PCV outlet ' + P(pc.pOut) + ' is not below the separator pressure ' + P(r.psep) + ': the separator cannot vent this gas through the flare line. Raise the separator pressure or enlarge the line.');
+                    if (cf) vf += _bad(chokeTxt);
+                } else {
+                    var pcvHead = 'Gas PCV: ' + P(r.psep) + ' → ' + P(pc.pOut) + ' (ΔP ' + dP(pc.dp) + '), x = ΔP/p1 = ' + _fmt(pc.x, 3);
+                    vf += _ok(pc.choked
+                        ? pcvHead + ' ≥ Fγ·xT = ' + _fmt(pc.xChoke, 3) + ': choked flow through the valve (IEC 60534-2-1); size it for choked flow and check its noise.'
+                        : pc.nozzleCritical
+                        ? pcvHead + ' < Fγ·xT = ' + _fmt(pc.xChoke, 3) + ': not choked (IEC 60534-2-1), subcritical flow through the valve, although p2/p1 = ' + _fmt(pc.ratio, 3) + ' is below the ideal-nozzle ratio ' + _fmt(pc.rc, 3) + '.'
+                        : pcvHead + ' < Fγ·xT = ' + _fmt(pc.xChoke, 3) + ': not choked, subcritical flow.');
                     if (pc.dp < DP_PCV_MIN) vf += _warn('Only ' + dP(pc.dp) + ' across the PCV: it runs nearly wide open with little margin to hold the separator pressure.');
+                    if (cf) vf += _bad(chokeTxt);
+                    if (fc.machLevel === 'bad' && !cf) vf += _bad('Mach ' + mach(fc.machMax) + ' in ' + nm(fc.machSeg) + ' is above 0.7 (API 521 upper limit, short-duration relief only): enlarge the flare line.');
+                    else if (fc.machLevel === 'warn') vf += _warn('Mach ' + mach(fc.machMax) + ' in ' + nm(fc.machSeg) + ' is above 0.5 (API 521 guidance for continuous flow in headers and long lines): noise and vibration; consider a larger line.');
+                    else if (fc.machLevel === 'ok') vf += _ok('Mach ≤ 0.5 in the flare line (highest ' + mach(fc.machMax) + ', ' + nm(fc.machSeg) + ').');
+                    if (fc.rhoV2High) vf += _warn('ρv² ' + rv2(fc.rhoV2Max) + ' in ' + nm(fc.rhoV2Seg) + ' is above ' + rv2(RHOV2_LIM) + ', a common screening limit for flare lines: noise and flow-induced vibration.');
+                    if (fc.hydrate) vf += _warn('Gas in the flare line reaches ' + T(fc.hydAt.t) + ' at ' + P(fc.hydAt.p) + ', below the hydrate temperature ' + T(fc.hydAt.tHyd) + ' there: hydrates can form. Heat the gas or inject inhibitor upstream of the PCV.');
+                    if (fc.belowMdmt) vf += _warn('Gas downstream of the PCV cools to ' + T(fc.tMin) + (r.coupled ? '' : ' (isenthalpic expansion to the line exit)') + ', below the minimum design metal temperature ' + T(r.mdmt) + ': check the PCV and flare line materials.');
                 }
-                if (f.chokedExit) {
-                    var cf = f.chokes[f.chokes.length - 1];
-                    vf += _bad('The flare line chokes (sonic) at the outlet of ' + nm(f.segments[cf.seg].name) + ': the pressure there rises to ' + P(cf.pUp) + '. Use a larger line.');
-                }
-                if (fc.machLevel === 'bad' && !f.chokedExit) vf += _bad('Mach ' + mach(fc.machMax) + ' in ' + nm(fc.machSeg) + ' is above 0.7 (API 521 upper limit, short-duration relief only): enlarge the flare line.');
-                else if (fc.machLevel === 'warn') vf += _warn('Mach ' + mach(fc.machMax) + ' in ' + nm(fc.machSeg) + ' is above 0.5 (API 521 guidance for continuous flow in headers and long lines): noise and vibration; consider a larger line.');
-                else if (fc.machLevel === 'ok') vf += _ok('Mach ≤ 0.5 in the flare line (highest ' + mach(fc.machMax) + ', ' + nm(fc.machSeg) + ').');
-                if (fc.rhoV2High) vf += _warn('ρv² ' + rv2(fc.rhoV2Max) + ' in ' + nm(fc.rhoV2Seg) + ' is above ' + rv2(RHOV2_LIM) + ', a common screening limit for flare lines: noise and flow-induced vibration.');
-                if (fc.hydrate) vf += _warn('Gas downstream of the PCV reaches ' + T(fc.tMin) + ', below the hydrate temperature ' + T(fc.tHyd) + ' at ' + P(pc.pOut) + ': hydrates can form. Heat the gas or inject inhibitor upstream of the PCV.');
-                if (fc.belowMdmt) vf += _warn('Gas downstream of the PCV reaches ' + T(fc.tMin) + ', below the minimum design metal temperature ' + T(r.mdmt) + ': check the PCV and flare line materials.');
                 if (r.psv) {
                     if (!r.psv.valid) vf += _warn('The PSV set pressure ' + P(r.psv.set) + ' is not above the separator pressure: check the input (back-pressure check skipped).');
                     else {
@@ -956,14 +1047,15 @@
                 _row('Separator gas to the flare', _u(r.fluid.qg, 'gasRate', 2, 'MMSCFD', 1)) +
                 _row('PCV inlet: separator pressure / temperature', P(r.psep) + ' / ' + T(r.tSep)) +
                 _row('Flare tip back-pressure, atmosphere + tip drop', P(r.dptip)) +
-                _row('Pressure at the PCV outlet (flare header back-pressure)', pc ? P(pc.pOut) : '—') +
+                _row('Pressure at the PCV outlet (flare header back-pressure)', pc ? P(pc.pOut) : f.high ? 'More than ' + cap : '—') +
                 _row('PCV pressure drop', pc && pc.passes ? dP(pc.dp) : '—') +
-                _row('PCV pressure ratio p2/p1, absolute', pc ? _fmt(pc.ratio, 3) + ' (choked at ≤ ' + _fmt(pc.rc, 3) + ', k = ' + _fmt(pc.k, 3) + ')' : '—') +
-                _row('PCV flow', !pc ? '—' : !pc.passes ? 'No flow: back-pressure at or above the separator pressure' : pc.choked ? 'Critical (choked)' : 'Subcritical') +
-                _row('Temperature downstream of the PCV, isenthalpic', pc ? T(pc.tOut) : '—') +
+                _row('PCV pressure ratio p2/p1, absolute', pc ? _fmt(pc.ratio, 3) + ' (ideal-nozzle critical ratio ' + _fmt(pc.rc, 3) + ', k = ' + _fmt(pc.k, 3) + ')' : '—') +
+                _row('PCV pressure differential ratio x = ΔP/p1', pc && pc.passes ? _fmt(pc.x, 3) + ' (choked at ≥ Fγ·xT = ' + _fmt(pc.xChoke, 3) + ', xT = ' + _fmt(pc.xT, 2) + ')' : '—') +
+                _row('PCV flow', !pc ? (f.high ? 'No flow: more than ' + cap + ' needed at the PCV outlet' : '—') : !pc.passes ? 'No flow: back-pressure at or above the separator pressure' : pc.choked ? 'Choked (IEC 60534-2-1)' : 'Not choked (subcritical)') +
+                _row('Temperature downstream of the PCV, isenthalpic', pc && pc.passes ? T(pc.tOut) : '—') +
                 _row('Joule–Thomson cooling across the PCV', pc && pc.passes ? dT(pc.dT) + ' (mean μJT ' + _u(pc.muJT, 'jtCoefficient', 4, '°F/psi', 4) + (pc.jtReal ? ', real gas' : ', 7 °F/100 psi rule') + ')' : '—') +
                 _row('Hydrate temperature at the PCV outlet pressure', fc && fc.tHyd != null ? T(fc.tHyd) : '—') +
-                _row('Coldest gas temperature in the flare line', fc ? T(fc.tMin) : '—') +
+                _row('Coldest gas temperature in the flare line', fc && pc.passes ? T(fc.tMin) : '—') +
                 _row('Minimum design metal temperature', T(r.mdmt)) +
                 _row('Pressure drop, PCV outlet to flare tip', f.dp == null ? '—' : dP(f.dp)) +
                 _row('Line length, PCV outlet to flare tip', ft(f.length)) +
@@ -1020,12 +1112,12 @@
         h += '<div class="rbox"><div class="rbox-title">Pressure vs Distance</div>' +
             '<div class="chart-wrap"><canvas id="fl_chart" width="600" height="320"></canvas></div>' +
             (f && !f.lost ? '<div class="chart-wrap"><canvas id="fl_chart2" width="600" height="260"></canvas></div>' : '') +
-            _note('Beggs &amp; Brill (Payne option) with Standing, DAK and Lee-Gonzalez-Eakin properties. The gas PCV holds the ' +
+            _note('Beggs &amp; Brill (Payne) with Standing, DAK and Lee-Gonzalez-Eakin properties. The gas PCV holds the ' +
                 'separator pressure: the well line is marched back from it to the choke outlet and the choke takes WHP − P2 ' +
-                '(critical at p2/p1 ≤ 0.588 gas–liquid). The flare line is marched back from the tip (1 atm + tip drop, ' +
-                'acceleration included) to the PCV outlet; the PCV takes the rest, isenthalpic with the real-gas μJT. ' +
-                'Mach ≤ 0.5 continuous, 0.7 maximum (API 521); ρv² ≤ 200,000 kg/m·s²; back-pressure ≤ 10 % of the PSV set ' +
-                'pressure (API 520). Steady state.') +
+                '(critical at p2/p1 ≤ 0.588 gas–liquid). The flare line is marched back from the tip (1 atm + tip drop) to ' +
+                'the PCV outlet; the PCV takes the rest (choked at x ≥ Fγ·xT, IEC 60534-2-1) and the gas cools ' +
+                'isenthalpically (real-gas μJT) on to the tip. Lines choke at v = √(ZRT/M). Mach ≤ 0.5 continuous, 0.7 ' +
+                'maximum (API 521); ρv² ≤ 200,000 kg/m·s²; back-pressure ≤ 10 % of PSV set (API 520).') +
             '</div>';
         res.innerHTML = h;
         res.setAttribute('data-done', '1');
@@ -1077,9 +1169,12 @@
             dpSep: ok ? r.well.dp : null,                        // choke outlet → separator
             pFlare: f && !f.lost ? f.pOut : null,                // flare tip (pipe exit)
             dpFlare: f && !f.lost ? f.dp : null,                 // PCV outlet → flare tip
-            pPcvOut: pc ? pc.pOut : null, dpPcv: pc ? pc.dp : null, pcvChoked: pc ? pc.choked : null, tPcvOut: pc ? pc.tOut : null,
+            // No flow through the PCV / choke: the pressure drop (and PCV outlet temperature) is null, as on
+            // the page; pcvChoked / chokeCritical are then false.
+            pPcvOut: pc ? pc.pOut : null, dpPcv: pc && pc.passes ? pc.dp : null, pcvChoked: pc ? pc.choked : null,
+            tPcvOut: pc && pc.passes ? pc.tOut : null,
             flareMachMax: ok && r.flareCheck ? r.flareCheck.machMax : null,
-            p2Choke: ch ? ch.p2 : null, dpChoke: ch ? ch.dp : null, chokeCritical: ch ? ch.critical : null,
+            p2Choke: ch ? ch.p2 : null, dpChoke: ch && ch.deliver ? ch.dp : null, chokeCritical: ch ? ch.critical : null,
             ts: Date.now(), result: r
         };
         return r;
@@ -1153,9 +1248,11 @@
             _fg('fl_dptip', 'Flare tip pressure drop (psi)', String(DEF.dptip), ' min="0"') +
             _fg('fl_mdmt', 'Minimum design metal temperature (°F)', String(DEF.mdmt)) +
             _fg('fl_psvset', 'Separator PSV set pressure, blank = no check (psig)', String(DEF.psvset), ' min="0"') +
+            _fg('fl_xt', 'Gas PCV pressure differential ratio factor xT (valve data)', String(DEF.xt), ' min="0" max="1"') +
             '</div><div style="font-size:12px;color:var(--text2);margin-top:6px">The flare line is calculated back from the tip ' +
             '(atmosphere + tip drop) to the PCV outlet. The default PSV set pressure (1,440 psig, 9,928 kPa(g)) is a common ' +
-            'well-test separator working pressure; enter the actual set pressure.</div></div>' +
+            'well-test separator working pressure; enter the actual set pressure. xT is on the valve data sheet ' +
+            '(IEC 60534-2-1; about 0.7 for a globe valve): the PCV chokes when ΔP/p1 ≥ (k/1.4)·xT.</div></div>' +
             '<div class="card"><div class="card-title">Segments: Gas PCV Outlet to Flare Tip</div>' + _segTable('f', FLARE_IDS, DEF_F) + '</div>' +
             '<div id="fl_res"></div>' +
             '</div>';
