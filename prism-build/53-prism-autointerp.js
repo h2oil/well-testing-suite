@@ -1224,11 +1224,19 @@
             reason: _txt(reason), ev: ['I1']
         }, extra || {});
     }
+    // The user's IARF tolerances travel in BuildupSpec.opts (band, slope: fractions; minCycles: cycles).
+    // An explicit opts value wins, then the spec's, then DEFAULTS.iarf, so every caller (interpretJob,
+    // kHeldJob, backgroundCheck, the Skin-check card) scans with the same settings.
+    var IARF_SPEC_KEYS = { band: 1, slope: 1, minCycles: 1 };
     function iarf(prep, opts) {
         opts = opts || {};
         var D = _copy(DEFAULTS.iarf);
+        var so = (prep && prep.spec && prep.spec.opts) || {};
         ['band', 'slope', 'bandCap', 'slopeCap', 'minCycles', 'goodCycles', 'goodSlope', 'goodSE', 'valleyDepth', 'mergeLevel', 'mergeGap']
-            .forEach(function (k) { if (_pos(opts[k])) D[k] = opts[k]; });
+            .forEach(function (k) {
+                if (_pos(opts[k])) D[k] = opts[k];
+                else if (IARF_SPEC_KEYS[k] && _pos(so[k])) D[k] = so[k];
+            });
         D.bandCap = Math.max(D.bandCap, D.band); D.slopeCap = Math.max(D.slopeCap, D.slope);
         var b = prep.bins, dv = prep.deriv, X = b.X, d = dv.deriv, full = dv.full, sd = b.sigma_d, n = X.length;
         var st = opts.storage || storage(prep);
@@ -2819,7 +2827,7 @@
             S.prep = p;
             S.storage = storage(p);
             S.iarf = iarf(p, { storage: S.storage, window: ovr.window || null,
-                               band: spec.opts && spec.opts.band, slope: spec.opts && spec.opts.slope });
+                               band: so.band, slope: so.slope, minCycles: so.minCycles });
             S.iarf._st = S.storage;
             // The hump is present when max/m′ ≥ 1.2 (§4.6 item 2), m′ = the IARF level, else the derivative
             // minimum after the maximum. A smaller maximum still gates the IARF scan (the derivative maximum).

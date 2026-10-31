@@ -176,6 +176,16 @@ module.exports = [
       assert.ok(ir.longest && ir.longest.cycles >= ir.cycles, 'longest qualifying window reported');
       assert.near(ir.X1 - ir.X0, ir.cycles, 1e-9, 'cycles = X1 − X0 (log10 Δt_e)');
       assert.includes(ir.reason, 'earliest plateau');
+      // The page's minimum span travels in spec.opts.minCycles (like band and slope): 0.7 cycle refuses the 0.53-cycle
+      // window in iarf() and in interpret(); an explicit iarf opts value still wins over the spec.
+      const spec7 = JSON.parse(JSON.stringify(spec)); spec7.opts.minCycles = 0.7;
+      const prep7 = prepOf(app, spec7);
+      const ir7 = AI.iarf(prep7);
+      assert.equal(ir7.found, false, 'spec.opts.minCycles 0.7 refuses the window');
+      assert.includes(ir7.reason, 'at least 0.7 cycle');
+      assert.equal(AI.iarf(prep7, app.toWin({ minCycles: 0.5 })).found, true, 'explicit opts.minCycles wins');
+      const r7 = run(app, spec7);
+      assert.equal(r7.iarf.found, false, 'interpret reads spec.opts.minCycles');
       // 400 h → good
       const g = run(app, synth(app.win, LONG({ k: 45, S: 5, C: 0.02, q: 800 })).spec);
       assert.equal(g.iarf.grade, 'good', 'long test is good');
