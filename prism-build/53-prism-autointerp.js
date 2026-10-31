@@ -367,9 +367,10 @@
 
     // ─────────────────────────────────────────────────────────────────────
     // Scaled modified Bessel functions (local to 53): I0e, I1e, K0e, K1e
-    //   Ke(x) = K(x)·e^x, Ie(x) = I(x)·e^-x. ~1e-15 relative (Stehfest
+    //   Ke(x) = K(x)·e^x, Ie(x) = I(x)·e^-x. ≤ ~1e-14 relative (Stehfest
     //   amplifies kernel error ~1e5, so polynomial fits are not used).
-    //   K: ascending series for x ≤ 2, trapezoid on ∫ e^{−x(cosh u − 1)} cosh(νu) du beyond.
+    //   K: ascending series for x ≤ 2, trapezoid on ∫ e^{−x(cosh u − 1)} cosh(νu) du for 2 < x ≤ 16
+    //   (the trapezoid error grows like e^{x−49}: 8e-15 at 16, 7e-11 at 25), asymptotic beyond (error ~e^{−2x}).
     //   I: ascending series for x ≤ 20, asymptotic expansion beyond (error ~e^{−2x}).
     // ─────────────────────────────────────────────────────────────────────
     var BH = 0.2, BCOSH = [];
@@ -385,7 +386,7 @@
         var I1 = (x / 2) * I1s;
         return [-lx * I0 + s0, 1 / x + lx * I1 - (x / 4) * s1];
     }
-    function _asymK(x, nu) {   // K_ν(x)·e^x ≈ √(π/2x) Σ a_k(ν)/x^k (x > 25: error ~e^{−2x})
+    function _asymK(x, nu) {   // K_ν(x)·e^x ≈ √(π/2x) Σ a_k(ν)/x^k (x > 16: error ~e^{−2x} ≤ 1.3e-14)
         var mu = 4 * nu * nu, sum = 1, term = 1, prev = Infinity;
         for (var k = 1; k < 60; k++) {
             term *= (mu - (2 * k - 1) * (2 * k - 1)) / (k * 8 * x);
@@ -398,7 +399,7 @@
     }
     function _kePair(x) {      // [K0e, K1e]
         if (x <= 2) { var k = _kSmall(x), e = Math.exp(x); return [k[0] * e, k[1] * e]; }
-        if (x > 25) return [_asymK(x, 0), _asymK(x, 1)];
+        if (x > 16) return [_asymK(x, 0), _asymK(x, 1)];
         var s0 = 0.5, s1 = 0.5;
         for (var j = 1; j < 400; j++) {
             var ch = BCOSH[j], ee = Math.exp(-x * (ch - 1));
@@ -433,17 +434,33 @@
         }
         return [asym(0), asym(1)];
     }
+    // Well-term values repeat across parameter sets: with S ≥ 0 the grid lattice fixes every
+    // Stehfest s, so a bounded memo keyed by √s returns the identical numbers without the
+    // series / trapezoid work (speed only; cleared when full; never used for S < 0).
+    var MEMO_MAX = 40000, _KMEMO = new Map(), _IMEMO = new Map();
+    function _kePairW(q, memo) {
+        if (!memo) return _kePair(q);
+        var v = _KMEMO.get(q);
+        if (v === undefined) { if (_KMEMO.size >= MEMO_MAX) _KMEMO.clear(); v = _kePair(q); _KMEMO.set(q, v); }
+        return v;
+    }
+    function _iePairW(q, memo) {
+        if (!memo) return _iePair(q);
+        var v = _IMEMO.get(q);
+        if (v === undefined) { if (_IMEMO.size >= MEMO_MAX) _IMEMO.clear(); v = _iePair(q); _IMEMO.set(q, v); }
+        return v;
+    }
     function K0e(x) { return _kePair(x)[0]; }
     function K1e(x) { return _kePair(x)[1]; }
     function I0e(x) { return _iePair(x)[0]; }
     function I1e(x) { return _iePair(x)[1]; }
 
     // ── Laplace reservoir kernels p̄(s) (no WBS / skin); d = distance scale ──
-    function _lapHom(s) { var q = Math.sqrt(s), k = _kePair(q); return k[0] / (s * q * k[1]); }
+    function _lapHom(s, d, memo) { var q = Math.sqrt(s), k = _kePairW(q, memo); return k[0] / (s * q * k[1]); }
     function _lapFault(dF, bc) {
         var sgn = (bc === 'constP') ? -1 : 1;
-        return function (s, d) {
-            var q = Math.sqrt(s), kw = _kePair(q), r = 2 * dF * (d || 1);
+        return function (s, d, memo) {
+            var q = Math.sqrt(s), kw = _kePairW(q, memo), r = 2 * dF * (d || 1);
             var img = 0;
             if (r > 1) { var e = q * (r - 1); if (e < 740) img = _kePair(q * r)[0] * Math.exp(-e); }
             return (kw[0] + sgn * img) / (s * q * kw[1]);
@@ -455,12 +472,12 @@
     // of the well term (ρ ≈ π e^g, I(q)e^{−q} ≤ 1) and are skipped.
     var G_SKIP = -40;
     function _lapClosedCircle(reD) {
-        return function (s, d) {
+        return function (s, d, memo) {
             var q = Math.sqrt(s), x = reD * (d || 1) * q;
-            var kq = _kePair(q);
+            var kq = _kePairW(q, memo);
             var g = 2 * q - 2 * x;
             if (g < G_SKIP) return kq[0] / (s * q * kq[1]);
-            var iq = _iePair(q), kx = _kePair(x), ix = _iePair(x);
+            var iq = _iePairW(q, memo), kx = _kePair(x), ix = _iePair(x);
             var rho = (kx[1] / ix[1]) * Math.exp(g);
             return (kq[0] + iq[0] * rho) / (s * q * (kq[1] - iq[1] * rho));
         };
@@ -469,13 +486,13 @@
     //   p̄1 = A I0(r√s) + B K0(r√s), p̄2 = Cc K0(r√(sM/F)); √s(B K1(√s) − A I1(√s)) = 1/s;
     //   p̄1 = p̄2 and dp̄1/dr = (1/M) dp̄2/dr at R. Solved in closed form (3×3 reduced), scaled.
     function _lapComposite2(M, F, R) {
-        return function (s, d) {
+        return function (s, d, memo) {
             var a = Math.sqrt(s), b = Math.sqrt(s * M / F);
             var RR = R * (d || 1); if (!(RR > 1.000001)) RR = 1.000001;
-            var ka = _kePair(a);
+            var ka = _kePairW(a, memo);
             var g = 2 * a - 2 * a * RR;
             if (g < G_SKIP - Math.log(Math.max(1, M))) return ka[0] / (s * a * ka[1]);
-            var ia = _iePair(a), kbR = _kePair(b * RR);
+            var ia = _iePairW(a, memo), kbR = _kePair(b * RR);
             var gam = (b / M) * kbR[1] / kbR[0];
             var kaR = _kePair(a * RR), iaR = _iePair(a * RR);
             var kap = (a * kaR[1] - gam * kaR[0]) / (a * iaR[1] + gam * iaR[0]) * Math.exp(g);
@@ -507,12 +524,12 @@
     // fold, negative-skin transform and pure-storage fast path as PRiSM_evalWbsSkin (03).
     function _pair(lap, t, Cd, S, scaleDist) {
         if (!(t > 0)) return [0, 0];
-        var C = (Cd > 0) ? Cd : 0, SS = S || 0, tt = t, dS = 1;
+        var C = (Cd > 0) ? Cd : 0, SS = S || 0, tt = t, dS = 1, memo = !(SS < 0);
         if (SS < 0) { var e2 = Math.exp(2 * SS); tt = t * e2; C = C * e2; dS = scaleDist === false ? 1 : Math.exp(SS); SS = 0; }
         if (C > 0 && tt < Math.min(1e-3 * C, 1e-12 * C * C)) return [tt / C, tt / C];
         var W = _stehW(), a = LN2 / tt, accP = 0, accD = 0;
         for (var i = 1; i <= 12; i++) {
-            var s = i * a, pbar = lap(s, dS), inner = s * pbar + SS;
+            var s = i * a, pbar = lap(s, dS, memo), inner = s * pbar + SS;
             var F = inner / (s * (1 + C * s * inner));
             accP += W[i - 1] * F; accD += W[i - 1] * s * F;
         }

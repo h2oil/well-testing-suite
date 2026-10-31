@@ -330,7 +330,7 @@ module.exports = [
     },
   },
   {
-    name: 'EN20 slicing: count-only budget (frozen vs advancing clock identical); sliced = unsliced within 1e-9; plateau counter carried across slices; evals per slice follow §4.8 (11 at 65 points, S ≥ 0)',
+    name: 'EN20 slicing: count-only budget (frozen vs advancing clock identical); sliced = unsliced within 1e-9 (parameters, iterations, stop reason, pauses inside the trial loop, lambda-max); plateau counter carried across slices; evals per slice follow §4.8 (11 at 65 points, S ≥ 0)',
     wp: 'WP1',
     run(app, assert) {
       const AI = AIof(app), W = app.win;
@@ -359,6 +359,26 @@ module.exports = [
       const ent = AI.gridEntry('homogeneous', prep);
       const fU = W.PRiSM_fitPhysical('homogeneous', prep.adata, prep.well, { entry: ent, isolated: true, mode: 'physical', dataset: { t: [], p: [] }, singleStart: true, start: app.toWin(start), maxIter: 40 });
       ['k', 'S', 'C'].forEach((k) => assert.rel(fA.phys[k], fU.phys[k], 1e-9, 'sliced = unsliced: ' + k));
+      assert.equal(fA.iterations, fU.iterations, 'sliced = unsliced: iterations (a pause is not an iteration)');
+      // a fit that pauses inside its trial loop and ends on lambda-max (a parameter-hash jitter of 1e-6 in pD spoils
+      // the forward-difference Jacobian near the optimum): the slices carry the normal equations, so the sliced
+      // path equals the unsliced one in parameters, iterations and stop reason, and λ > λmax ends it in either form
+      const jit = (p) => { const x = Math.sin(12345.678 * (Math.log(p.Cd) + 7 * p.S)) * 43758.5453; return 1e-6 * (x - Math.floor(x)); };
+      const ej = Object.assign({}, ent, { pd: (td, p) => { const v = ent.pd(td, p), j = jit(p); return typeof v === 'number' ? v + j : Array.from(v, (x) => x + j); } });
+      const bj = { entry: ej, isolated: true, mode: 'physical', dataset: { t: [], p: [] }, singleStart: true, start: app.toWin(start) };
+      const uJ = W.PRiSM_fitPhysical('homogeneous', prep.adata, prep.well, Object.assign({}, bj, { maxIter: 40 }));
+      assert.equal(uJ.stopReason, 'lambda-max', 'the jittered fit ends on lambda-max');
+      let lmJ = null, itJ = 0, slJ = 0, pausedJ = 0;
+      while (slJ < 100) {
+        const r = W.PRiSM_fitPhysical('homogeneous', prep.adata, prep.well, Object.assign({}, bj, { evalBudget: 5, lmState: lmJ || undefined, slice: true, maxIter: Math.max(1, 40 - itJ) }));
+        itJ += r.iterations; slJ++; lmJ = r.lmState; if (lmJ.jac) pausedJ++;
+        if (lmJ.done || itJ >= 40) break;
+      }
+      assert.ok(pausedJ >= 1, 'at least one slice paused inside the trial loop (' + pausedJ + ')');
+      assert.equal(lmJ.stopReason, 'lambda-max', 'sliced: λ past λmax stops (not another budget pause)');
+      assert.equal(itJ, uJ.iterations, 'sliced = unsliced: iterations');
+      const fJ = W.PRiSM_fitPhysical('homogeneous', prep.adata, prep.well, Object.assign({}, bj, { lmState: lmJ, maxIter: 1 }));
+      ['k', 'S', 'C'].forEach((k) => assert.rel(fJ.phys[k], uJ.phys[k], 1e-12, 'jittered sliced = unsliced: ' + k));
       // plateau counter: an objective whose accepted steps each change the SSR by < 1e-12 (relative)
       const fn = (t, p) => t.map((ti) => (ti === 0 ? 1e10 : Math.exp(p.a) - Math.exp(5)));
       const data = app.toWin({ t: [0, 1], p: [0, 0] }), bnd = app.toWin({ a: [0, 20] });

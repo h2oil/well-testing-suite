@@ -489,34 +489,59 @@ function PRiSM_lm(modelFn, data, params0, bounds, freeze, opts) {
         converged = !!O.done0.converged;
         ctx.stopReason = O.done0.stopReason || (converged ? 'tolerance' : 'maxIter');
     }
+    // O.trialStop(nEval) (sliced fits): the budget test between trial steps of
+    // one iteration (a trial costs one evaluation); O.shouldStop stays the test
+    // before an iteration starts. O.jac0 {JtWJ, JtWr, innerTries}: a slice that
+    // paused inside the trial loop hands over its normal equations, so the next
+    // slice continues the same iteration (no Jacobian at unchanged parameters,
+    // no extra iteration) and the path equals an unsliced run.
+    var trialOver = (typeof O.trialStop === 'function')
+        ? function () {
+            if (hasDeadline && Date.now() > O.deadline) return true;
+            try { return !!O.trialStop(nEval); } catch (e) { return false; }
+        }
+        : overBudget;
+    var jacIn = (O.jac0 && Array.isArray(O.jac0.JtWr) && O.jac0.JtWr.length === nf &&
+                 Array.isArray(O.jac0.JtWJ) && O.jac0.JtWJ.length === nf) ? O.jac0 : null;
     while (!done0 && iter < O.maxIter) {
         iter++;
         if (ssr <= exactSsr) { converged = true; ctx.stopReason = 'exact'; break; }
-        if (overBudget()) { ctx.stopReason = 'budget'; break; }
-
-        var J = PRiSM_jacobianForward(fInt, data.t, params, yMod, freeKeys, O.derivStep, boundArr);
-        var JtWJ = _zeros2D(nf, nf);
-        var JtWr = new Array(nf);
-        for (var jj = 0; jj < nf; jj++) JtWr[jj] = 0;
-        for (var i = 0; i < n; i++) {
-            var ri = data.p[i] - yMod[i];
-            var wi = W[i];
-            if (wi === 0) continue;
-            for (var a = 0; a < nf; a++) {
-                var Jia = J[i][a];
-                if (Jia === 0) continue;
-                JtWr[a] += wi * Jia * ri;
-                for (var bb = a; bb < nf; bb++) JtWJ[a][bb] += wi * Jia * J[i][bb];
-            }
+        if (!jacIn && overBudget()) {
+            if (O.budgetFirst) iter--;     // a sliced fit pauses before this iteration: not counted
+            ctx.stopReason = 'budget'; break;
         }
-        for (var a2 = 0; a2 < nf; a2++) for (var b2 = a2 + 1; b2 < nf; b2++) JtWJ[b2][a2] = JtWJ[a2][b2];
+
+        var JtWJ, JtWr, innerTries0 = 0;
+        if (jacIn) {
+            JtWJ = jacIn.JtWJ.map(function (r) { return r.slice(); });
+            JtWr = jacIn.JtWr.slice();
+            innerTries0 = Math.max(0, Math.min(39, Math.floor(jacIn.innerTries) || 0));
+            jacIn = null;
+        } else {
+            var J = PRiSM_jacobianForward(fInt, data.t, params, yMod, freeKeys, O.derivStep, boundArr);
+            JtWJ = _zeros2D(nf, nf);
+            JtWr = new Array(nf);
+            for (var jj = 0; jj < nf; jj++) JtWr[jj] = 0;
+            for (var i = 0; i < n; i++) {
+                var ri = data.p[i] - yMod[i];
+                var wi = W[i];
+                if (wi === 0) continue;
+                for (var a = 0; a < nf; a++) {
+                    var Jia = J[i][a];
+                    if (Jia === 0) continue;
+                    JtWr[a] += wi * Jia * ri;
+                    for (var bb = a; bb < nf; bb++) JtWJ[a][bb] += wi * Jia * J[i][bb];
+                }
+            }
+            for (var a2 = 0; a2 < nf; a2++) for (var b2 = a2 + 1; b2 < nf; b2++) JtWJ[b2][a2] = JtWJ[a2][b2];
+        }
         var diagJtWJ = new Array(nf);
         for (var d = 0; d < nf; d++) diagJtWJ[d] = Math.max(JtWJ[d][d], 1e-30);
 
-        var accepted = false, innerTries = 0;
+        var accepted = false, innerTries = innerTries0;
         var newSsr = ssr, newParams = params, newYMod = yMod;
         while (!accepted && innerTries < 40) {
-            if (innerTries > 0 && overBudget()) break;
+            if (innerTries > 0 && trialOver()) break;
             innerTries++;
             var A = _copy2D(JtWJ);
             for (var dd = 0; dd < nf; dd++) {
@@ -544,20 +569,28 @@ function PRiSM_lm(modelFn, data, params0, bounds, freeze, opts) {
         }
 
         if (!accepted) {
+            // Sliced fits (O.budgetFirst): a slice that runs out of evaluations
+            // inside the trial loop only pauses — it hands over the normal
+            // equations, the trial count and the raised λ, and the next slice
+            // continues this iteration exactly where an unsliced run would — so
+            // no stationarity verdict is taken and the iteration is not counted here.
+            if (O.budgetFirst && lambda <= O.lambdaMax && innerTries < 40 && trialOver()) {
+                ctx.stopReason = 'budget';
+                ctx.jacOut = { JtWJ: JtWJ.map(function (r) { return r.slice(); }), JtWr: JtWr.slice(), innerTries: innerTries };
+                iter--;
+                break;
+            }
             history.push(ssr);
             if (typeof O.onIter === 'function') { try { O.onIter(iter, toExt(params), ssr, lambda); } catch (_) {} }
-            // Sliced fits (O.budgetFirst): a slice that runs out of evaluations
-            // inside the trial loop only pauses — the next slice resumes with the
-            // same parameters and the raised λ, exactly where an unsliced run
-            // would continue — so no stationarity verdict is taken here.
-            if (O.budgetFirst && lambda <= O.lambdaMax && overBudget()) { ctx.stopReason = 'budget'; break; }
             var pred = _gnPredictedDecrease(JtWJ, JtWr, params, freeKeys, ib);
             if (ssr <= exactSsr) {
                 converged = true; ctx.stopReason = 'exact';
             } else if (isFinite(pred) && pred <= O.gtol * Math.max(ssr, 1e-300)) {
                 converged = true; ctx.stopReason = 'stationary';
             } else {
-                ctx.stopReason = overBudget() ? 'budget' : 'lambda-max';
+                // λ ran past λmax (or 40 trials): a sliced fit ends here just as an
+                // unsliced one does, whatever its remaining evaluation budget.
+                ctx.stopReason = (!O.budgetFirst && overBudget()) ? 'budget' : 'lambda-max';
             }
             break;
         }
@@ -589,7 +622,8 @@ function PRiSM_lm(modelFn, data, params0, bounds, freeze, opts) {
         return {
             params: toExt(params), pInt: pIntOut, y: yMod.slice(), ssr: ssr, iterations: iter,
             converged: !!converged, stopReason: ctx.stopReason, lambda: lambda, nEval: nEval,
-            stagnantSteps: stagnantSteps, residualHistory: history, freeKeys: freeKeys.slice(), sliced: true
+            stagnantSteps: stagnantSteps, residualHistory: history, freeKeys: freeKeys.slice(), sliced: true,
+            jac: ctx.jacOut || null
         };
     }
     var Jfinal = PRiSM_jacobianForward(fInt, data.t, params, yMod, freeKeys, O.derivStep, boundArr);
@@ -599,6 +633,7 @@ function PRiSM_lm(modelFn, data, params0, bounds, freeze, opts) {
     res.stagnantSteps = stagnantSteps;
     res.pInt = pIntOut;
     res.y = yMod.slice();
+    res.jac = ctx.jacOut || null;
     return res;
 }
 
@@ -1825,15 +1860,20 @@ function PRiSM_fitPhysical(modelKey, adata, well, opts) {
         if (_num(lmStateIn.ssr) && Array.isArray(lmStateIn.y)) { lmOpts.ssr0 = lmStateIn.ssr; lmOpts.y0 = lmStateIn.y; }
         if (lmStateIn.p && typeof lmStateIn.p === 'object') lmOpts.p0 = lmStateIn.p;
         if (_num(lmStateIn.stagnant)) lmOpts.stagnant0 = lmStateIn.stagnant;
+        if (lmStateIn.jac && !lmStateIn.done) lmOpts.jac0 = lmStateIn.jac;
         if (lmStateIn.done) lmOpts.done0 = { converged: !!lmStateIn.converged, stopReason: lmStateIn.stopReason };
     }
     if (evalBudget) {
         // Count-only: an LM iteration (nFree Jacobian columns + one trial) starts only when it
-        // fits in the budget; the first iteration of a slice always runs.
+        // fits in the budget; the first iteration of a slice always runs. Between trial steps
+        // of an iteration the budget is one evaluation per trial.
         var prevStop = lmOpts.shouldStop;
         var nFreeFit = keys.filter(function (k) { return !freeze[k]; }).length;
         lmOpts.shouldStop = function (n) {
             return (n > 1 && n + nFreeFit + 1 > evalBudget) || (prevStop ? !!prevStop(n) : false);
+        };
+        lmOpts.trialStop = function (n) {
+            return n >= evalBudget || (prevStop ? !!prevStop(n) : false);
         };
         lmOpts.budgetFirst = true;
     }
@@ -1854,7 +1894,7 @@ function PRiSM_fitPhysical(modelKey, adata, well, opts) {
         lambda: best.lambda, ssr: best.ssr, stagnant: best.stagnantSteps, iterations: best.iterations,
         converged: !!best.converged, stopReason: best.stopReason, done: best.stopReason !== 'budget'
     };
-    if (sliceMode) { lmStateOut.y = best.y; lmStateOut.p = best.pInt; }
+    if (sliceMode) { lmStateOut.y = best.y; lmStateOut.p = best.pInt; if (best.jac) lmStateOut.jac = best.jac; }
     if (opts.slice) {
         return { ok: true, sliced: true, modelKey: modelKey, model: modelKey, kind: 'pressure', phys: _copy(best.params),
                  lmState: lmStateOut, nEval: nEvalLM, iterations: best.iterations,
