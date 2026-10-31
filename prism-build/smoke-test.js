@@ -436,6 +436,63 @@ checks.push(['WP15 plot registry declineD / declineB', !!(win.PRiSM_PLOT_REGISTR
   checks.push(['no timers after leaving Mini WellOS (Modbus polling stopped)', ok]);
 })();
 
+// ── v3.3 Build-up Surveillance (docs/BUILDUP-SURVEILLANCE-PLAN.md §9 WP6: 9 checks, 317 → 326) ──
+// Each check names the file (and work package) that provides it, so a missing engine fails with a clear message.
+(function buildupChecks() {
+  const miss = (what, file) => console.error('[buildup] ' + what + ' — expected from ' + file);
+  const B = win.WTS_buildup || {};
+  const reg = win.WTS_calcRegistry && win.WTS_calcRegistry.buildup;
+  const okReg = !!reg && reg.key === 'buildup' && reg.group === 'Production & Reservoir' && !!reg.hooks && reg.hooks.silent === true &&
+    typeof reg.hooks.after === 'function' && typeof reg.render === 'function' && typeof win.renderBuildup === 'function' && typeof win.calcBuildup === 'function';
+  if (!okReg) miss('WTS_calcRegistry.buildup (group, hooks.silent, render)', 'prism-build/49-calc-buildup.js (WP6)');
+  checks.push(['WTS_calcRegistry.buildup in "Production & Reservoir" (hooks.silent) + renderBuildup / calcBuildup', okReg]);
+  let okCompute = false;
+  try { okCompute = typeof win.WTS_buildup_compute === 'function' && win.WTS_buildup_compute({}).ok === false; } catch (e) { okCompute = false; }
+  if (!okCompute) miss('window.WTS_buildup_compute({}) → {ok:false} without throwing', 'prism-build/49-calc-buildup-run.js (WP2)');
+  checks.push(['window.WTS_buildup_compute (function) and WTS_buildup_compute({}).ok === false', okCompute]);
+  const AI = win.PRiSM_autoInterp || {};
+  const okInterp = typeof AI.interpret === 'function';
+  if (!okInterp) miss('PRiSM_autoInterp.interpret', 'prism-build/53-prism-autointerp.js (WP1)');
+  checks.push(['PRiSM_autoInterp.interpret (function)', okInterp]);
+  let okCC = false;
+  try {
+    const cc = win.PRiSM_MODELS && win.PRiSM_MODELS.closedCircle;
+    const v = cc && cc.pd(1e4, { Cd: 100, S: 0, reD: 5000 });
+    const x = Array.isArray(v) ? v[0] : v;
+    okCC = !!cc && cc.kind === 'pressure' && typeof x === 'number' && isFinite(x);
+  } catch (e) { okCC = false; }
+  if (!okCC) miss('PRiSM_MODELS.closedCircle (pd(1e4) finite, kind pressure)', 'prism-build/53-prism-autointerp.js (WP1)');
+  checks.push(['PRiSM_MODELS.closedCircle.pd(1e4) finite, kind "pressure"', okCC]);
+  const okSkin = !!win.PRiSM_skinCheck && typeof win.PRiSM_skinCheck.mechanicalSkin === 'function';
+  if (!okSkin) miss('PRiSM_skinCheck.mechanicalSkin', 'prism-build/54-prism-skin.js (WP7)');
+  checks.push(['PRiSM_skinCheck.mechanicalSkin (function)', okSkin]);
+  const okCal = !!win.PRiSM_autoInterpCal && Array.isArray(win.PRiSM_autoInterpCal.table);
+  if (!okCal) miss('PRiSM_autoInterpCal.table (array)', 'prism-build/55-prism-autointerp-cal.js (WP4 placeholder, WP8 calibrated)');
+  checks.push(['PRiSM_autoInterpCal.table (array)', okCal]);
+  let okSha = false;
+  try { okSha = !!B.review && B.review.sha256('abc') === 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad'; } catch (e) { okSha = false; }
+  if (!okSha) miss('WTS_buildup.review.sha256("abc") = ba7816bf…', 'prism-build/49-calc-buildup-review.js (WP5)');
+  checks.push(['WTS_buildup.review.sha256("abc") = ba7816bf…15ad', okSha]);
+  let okHash = false;
+  try { okHash = typeof AI.hash16 === 'function' && AI.hash16('abc') === '1a47e90bb9de7311'; } catch (e) { okHash = false; }
+  if (!okHash) miss('PRiSM_autoInterp.hash16("abc") = 1a47e90bb9de7311', 'prism-build/53-prism-autointerp.js (WP0)');
+  checks.push(['PRiSM_autoInterp.hash16("abc") = 1a47e90bb9de7311', okHash]);
+  // No timers 5 s after opening the page (the page never starts an analysis on its own).
+  let okTimers = false, detail = '';
+  try {
+    const harness = require('./tests/_harness');
+    const app = harness.loadApp({ fromSources: false, timers: 'manual', console: 'capture' });
+    app.hook.nav('buildup');
+    const opened = !!app.el('bu_root');
+    app.flush(5000);
+    okTimers = opened && app.pendingTimers() === 0;
+    if (!opened) detail = 'the buildup page did not render (49-calc-buildup.js not injected?)';
+    else if (!okTimers) detail = JSON.stringify(app.timers()).slice(0, 600);
+  } catch (e) { detail = e.message; }
+  if (detail) console.error('[buildup] pending timers after opening the page:', detail);
+  checks.push(['no timers 5 s after opening Build-up Surveillance', okTimers]);
+})();
+
 console.log('\nNamespace checks:');
 let fails = 0;
 for (const [name, ok] of checks) {
