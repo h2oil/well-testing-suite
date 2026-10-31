@@ -601,7 +601,8 @@
         return true;
     }
     function _labelText(id) {
-        var l = (typeof document !== 'undefined' && document.querySelector) ? document.querySelector('label[for="' + id + '"]') : null;
+        var el = _byId(id), w = el && el.closest ? el.closest('.fg-item') : null;
+        var l = w && w.querySelector ? w.querySelector('label') : null;
         var t = l ? String(l.textContent || '') : (LABEL[id] || id);
         return t.replace(/\s*\([^()]*\)\s*$/, '').replace(/, blank = .*$/, '').trim();
     }
@@ -1535,7 +1536,8 @@
         if (!text || !String(text).trim()) { _status('bu_a_status', 'bad', 'No allocation data: choose a file or paste the data first.'); return; }
         var same = _mem.allocText === text, r = null;
         try {
-            r = D.parseAllocation(text, { cols: same ? _mapCols(AMAP) : null, gUnit: _val('bu_a_gunit') || 'Mscf', dayFirst: _checked('bu_a_dayfirst') });
+            r = D.parseAllocation(text, { cols: same ? _mapCols(AMAP) : null, gUnit: _val('bu_a_gunit') || 'Mscf', dayFirst: _checked('bu_a_dayfirst'),
+                waterCondensed: _val('bu_fluid') === 'gas' && _checked('bu_a_wcond') });
         } catch (e) { r = null; }
         _mem.allocText = text;
         var as = _byId('bu_a_status'); if (as) as.setAttribute('data-msg', '1');
@@ -1763,7 +1765,7 @@
         }
         _st.signoff = so;
         _st.lastStatus = 'SIGNED';
-        _audit({ kind: 'signoff', target: null, value: { hash: so.hash || null, name: form.name, role: form.role }, who: form.name, inputsHash: so.inputsHash, resultsHash: so.resultsHash });
+        _audit({ kind: 'signoff', target: null, value: { hash: so.hash || null, decisionsHash: so.decisionsHash || null, name: form.name, role: form.role }, who: form.name, inputsHash: so.inputsHash, resultsHash: so.resultsHash });
         var ok = _byId('bu_so_ok'); if (ok) ok.checked = false;
         _status('bu_so_status', 'ok', 'Signed off by ' + form.name + (form.role ? ' (' + form.role + ')' : '') + ' · hash ' + String(so.hash || '').slice(0, 16) + '.');
         _afterChange({});
@@ -1930,6 +1932,8 @@
         _syncUi();
         if (DISPLAY_ONLY[t.id]) return;
         if (_st) _st.touched[t.id] = 1;
+        // text and number fields were already compared on their 'input' event
+        if (t.localName === 'input' && /^(text|number|date|datetime-local|)$/.test(String(t.type || ''))) return;
         _checkStale();
     }
     function _onClick(e) {
