@@ -1,7 +1,7 @@
 // prism-build/tests/_buildup-shapes.js — Build-up Surveillance executable contract (WP0, FROZEN).
 //
-// Plan: docs/BUILDUP-SURVEILLANCE-PLAN.md §3 (interfaces) and §3.13. Changes only through the lead,
-// together with an update of §3.13.
+// Plan: docs/BUILDUP-SURVEILLANCE-PLAN.md §3 (interfaces), §3.1 "WP0 resolutions" and §3.13. Changes only through the
+// lead, together with an update of §3.13.
 //
 // Exports
 //   checkShape(name, obj) → { ok, errors: ['<path>: <reason>', …] }   (path first, e.g. 'tests[2].result.iarf.cycles')
@@ -11,24 +11,31 @@
 //       EvidenceVector, Confidence, Zone, ZoneResolved, WellInput, Completion, Depth, Settings, Override,
 //       AllocRow, Missed, Value, Block, Section, Signoff, EvidenceItem, EvidenceIndex, Iarf, Line.
 //   SHAPE_NAMES        the §3.13 names, in plan order
-//   FIX                lazy fixtures generated from closed-form values (Appendix A, §4.6):
+//   SHAPES             every checkable name (the §3.13 names plus the helper names)
+//   FIX                lazy fixtures generated from closed-form values (Appendix A, §4.6); every access returns a deep copy:
 //       FIX.result     reference-case BuildupResult (k 45 md, S 5, C 0.02 bbl/psi, h 50 ft, μ 1 cp, 72 h, single rate)
 //       FIX.analysis   6-test oil Analysis: confirmed delta alert (raised B5, confirmed B6), one excluded test (B4,
-//                      override O1) and one k-held test (B5, 12 h shut-in, no IARF)
-//       FIX.samples    one valid example for every other shape (BuildupSpec, GaugeRecord, AnalysisInput, TrendTest[],
-//                      Review, Finding, Answer, ReportModel, CaseSpec, SynthCase, Score, Signoff, EvidenceIndex)
+//                      override O1) and one k-held test (B5, 12 h shut-in, no IARF); record = FIX.samples.GaugeRecord
+//       FIX.samples    one valid example for every other shape (BuildupSpec, GaugeRecord, AnalysisInput, TrendTests[],
+//                      Review, Finding, Answer, ReportModel, CaseSpec, SynthCase, Score, Signoff, EvidenceIndex) plus
+//                      ModelFitFault (a linearBoundary rival with the categorical parameter BC)
 //       FIX.cal        a Cal-shaped table used by the fixtures only (version 'cal-fixture'; NOT file 55)
-//       FIX.inputs     the closed-form inputs the fixtures were generated from
+//       FIX.inputs     the closed-form inputs the fixtures were generated from (well, RES, settings, plan, sampling, …)
 //   FORMULAS           test-only table of derived quantities (each a function with .args and .text):
-//                      m, mPrime, dpSkin, X, piRatio, rateAtStake, extraDrawdown, dkPct, rinv, dte, shutOfDte,
-//                      reachFair, reachGood, sTc, sPwf, rDrift, sensDS, sensK, kStar, SStar
-//   autoInterp()       PRiSM_autoInterp loaded from 53-prism-autointerp.js in a bare vm context (canon, hash16)
+//                      m, mPrime, dpSkin, X, piRatio, rateAtStake, extraDrawdown, dkPct, rinv, dte, shutOfDte, xOfDte,
+//                      dteOfX, logTerm, pStar, p1hr, reachFair, reachGood, sTc, sPwf, rDrift, sensDS, sensK, sKAnalytic,
+//                      atStakeDay, jObs, jPred, modelFreeDS, kStar, SStar
+//   autoInterp()       PRiSM_autoInterp from 53-prism-autointerp.js with the self-test stripped exactly as Round 8 strips it
+//                      (concat-round8.stripSelfTest), evaluated in a bare vm context (canon, hash16)
 //   nearDisplay(key, a, b)  true when a and b agree at the display precision of `key` (canon 'display' rules)
 //
-// Conventions encoded here (§3.0)
+// Conventions encoded here (§3.0, §3.1 "WP0 resolutions")
 //   • Field units. Absolute pressures psia (> 0); Δp and noise psi; record/allocation times epoch ms UTC (plausible
 //     epoch: 1e11 ≤ t < 1e14); engine times hours on the history clock (may be negative before the record); Δt > 0 h;
 //     dates 'YYYY-MM-DD'; timestamps ISO 8601; hashes 16 lowercase hex (SHA-256 64 hex).
+//   • X axes. bins.X is ln Δt_e (the derivative's abscissa, D6). iarf.X0, iarf.X1 and line.shifts[].dX are log10 Δt_e
+//     (cycles): cycles = X1 − X0, a shifted window is [X0 + dX, X1 + dX], and dt0_h/dt1_h are the shut-in times of
+//     10^X0 / 10^X1 with the test's effective tp (Δt = Δt_e·tp/(tp − Δt_e)).
 //   • Null rule. In output shapes (everything an engine returns) every number is finite or null (§3.0), so plain
 //     numeric fields accept null; NaN, ±Infinity, undefined and strings never pass. Fields marked "!" below are
 //     finite numbers even in outputs (array samples, time anchors). In input shapes (BuildupSpec, AnalysisInput,
@@ -36,20 +43,52 @@
 //   • Keys listed in §3 are required; a trailing '?' marks a key that may be absent (§3 writes `key?`, or the stored
 //     copy drops it: bins.X, bins.dte, curves; `evidence` holds the EvidenceVector that §3.1 says is stored in the
 //     result). Extra keys are allowed. Enumerations are exact.
+//   • ModelFit.params and fitC4.params carry PRiSM model parameters: numbers, or the categorical values PRiSM keeps in
+//     params (strings such as BC 'noflow'|'constP', booleans). ModelFit.se and ci95 always carry k, S and C (each may be
+//     null); other keys are open. ModelFit.se.S is already inflated by √(n/n_eff) (§4.6 item 6), and sErr.seS is that
+//     value (never inflated again).
+//   • Settings: detect.partial is a boolean; interp.band and interp.slope are fractions in (0, 1] (band 0.10 = the
+//     10 % of bu_i_band); interp.kHeld 'auto'|'off'; trend.confirm 'next'|'immediate'.
+//   • Override.target is null only for kind 'event_add' (the new event gets its E id at the next Analyse).
 //   • Evidence ids (§8.1): test-level results carry ids relative to the test ('I1'), restricted to the ids §3 lists for
 //     that object; well-level and review objects carry 'T2' or 'B3·I1'. Text fields are plain, < 300 characters
-//     (notes, recommendations, limitations ≤ 600) and never contain 'null', 'undefined', 'NaN' or '[object Object]'.
+//     (notes, recommendations, limitations ≤ 600) and never contain 'null', 'undefined', 'NaN', 'Infinity' or
+//     '[object Object]'.
 //
 // Fixture conventions (closed form, homogeneous infinite-acting + WBS + skin; field units)
 //   m = 162.6·q·B·μ/(k·h); m′ = m/ln 10 (= 70.6·qBμ/kh); Δp_IARF(Δt_e) = m·[log10(k·Δt_e/(φμct·rw²)) − 3.2275 + 0.8686·S];
 //   Δt_e = tp·Δt/(tp + Δt) with tp the time since the previous reopening (production start for B1);
-//   p* = pwf0 + m·[log10(k·tp/(φμct·rw²)) − 3.2275 + 0.8686·S]; t5 %, t10 % and t_hump from Appendix A.1; IARF window
-//   from t5 % to the last full-window bin (Δt_e,end/10^Lcyc); reach.fair = 10^(0.5+Lcyc)·t5 %, reach.good = 10^(1+Lcyc)·t5 %;
-//   r_inv = 0.0325·√(kΔt/(φμct)); Δp_skin = 0.8686·m·S; sensitivity from Appendix A.2; S_tc, S_pwf, r_drift from §4.2/§4.6.
-//   Bin pressures use the smooth closed-form blend Δp = Δp_IARF·(1 − exp(−Δp_WBS/Δp_IARF)), Δp_WBS = qBΔt/(24C), only to
-//   give plausible arrays; every reported number comes from the closed forms above. The semilog line carries the
+//   p* = pwf0 + m·[log10(k·tp/(φμct·rw²)) − 3.2275 + 0.8686·S]; p1hr = p* − m·log10(tp + 1); t5 %, t10 % and t_hump from
+//   Appendix A.1; IARF window from t5 % to the last full-window bin (Δt_e,end/10^Lcyc); one earlier shifted line with
+//   dX = −min(0.25, 0.2·cycles); reach.fair = 10^(0.5+Lcyc)·t5 %, reach.good = 10^(1+Lcyc)·t5 %; r_inv = 0.0325·√(kΔt/(φμct));
+//   Δp_skin = 0.8686·m·S; sensitivity from Appendix A.2; S_tc, S_pwf, r_drift from §4.2/§4.6; dp/dt_flow at closing =
+//   −m/(ln 10·tp) (the slope of the infinite-acting drawdown); S_kAnalytic = δ·(ln 10·Δp_end/(2m) − 0.5).
+//   Bin and record pressures use the smooth closed-form blend Δp = Δp_IARF·(1 − exp(−Δp_WBS/Δp_IARF)), Δp_WBS = qBΔt/(24C),
+//   only to give plausible arrays; every reported number comes from the closed forms above. The semilog line carries the
 //   EN6 reference bias (fair window: k −2.6 %, S −0.33; good window: k −0.5 %, S −0.05) so line-vs-match numbers are
 //   not trivially zero. Calibration rates come from FIX.cal (fixture only).
+//   One gauge record (FIX.samples.GaugeRecord = AnalysisInput.record) carries the whole analysis: 15-min samples while
+//   flowing (drawdown from the last reopening at the closing test's rate and skin; E4 uses S = 2), 1-min samples in
+//   every shut-in starting Δt = 0.005 h after closing, pressures rounded to 0.001 psi, no noise. analysis.record.{n,
+//   origin_ms, end_ms, hash}, qc.n / dtMed_s / dtP05_s / dtP95_s, Event.j0/j1, spec.dtSample_h and days[].pwfMean_psia
+//   (mean flowing sample per day) are derived from it. The record hash is a fixture convention (hash16 of n, the first
+//   and last times and an FNV-1a digest of all samples); WP2 fixes the real one. The SynthCase has its own record (the reference case, 60 s samples).
+//   Trend (§4.7), computed from the stored inputs: baseline, alerts, T7, T8 (cumulative = Σ_days q_d·[(X + S(t_d))/(X +
+//   S_base) − 1] over days whose midpoint is at or after τ̂), T9, T10, T11 (Δt_ref over the used tests that have an IARF
+//   window; reference = the first of them; Δp read from the bins by linear interpolation in log Δt_e), T12, T13 (J_obs
+//   on clean flowing days between consecutive used tests, p_ref interpolated between the used tests' p_ext, J_pred with
+//   the baseline k; RJ = median J_obs/J_pred). S(t) for T8 and T13 is piecewise linear through the used tests'
+//   (tDays, S) with the onset knot (τ̂, S_base) inserted, constant outside. The recent trend needs n ≥ 3 tests after τ̂:
+//   the fixture has 2, so its slopes are null. Δp_skin (T7, 0.8686·m·S per test) and the T8 extra drawdown
+//   (141.2·q_now·Bμ·ΔS/kh) are different quantities and are never compared (plan §4.7).
+//   Placeholders (fixed values, not derived): onset τ̂ (midway between the last baseline-level test and the raising
+//   test; interval ±5 days; CUSUM ids), QC noise figures (σ, ρ1, resolution), Event detection numbers (rise_psi,
+//   riseScale_min, Ts_psi, alloc ratios, fhat) and the rate checks (R3/R4 ratios).
+//   NOT regression truth for the engine. The bins and Δt_e use single-rate Horner with tp since the last reopening,
+//   while spec.steps hold the full multi-rate history (line.method 'superposition' for B1–B6), and the bins are
+//   closed-form log bins, not binned from the record. An engine run on FIX specs therefore does not reproduce the FIX
+//   bins, p* or S exactly. FIX is a shape and self-consistency fixture until the lead refreshes it from engine output
+//   (§3.13).
 'use strict';
 
 const fs = require('fs');
@@ -59,15 +98,20 @@ const vm = require('vm');
 // ═════════════════════════════════════════════════════════════════════════════
 // 1. PRiSM_autoInterp (canon / hash16) from file 53, loaded without the app
 // ═════════════════════════════════════════════════════════════════════════════
+// The self-test is stripped with Round 8's own stripper, so the helper evaluates exactly what Round 8 ships and does not
+// depend on (or leak) anything the WP1 self-test may need from the app.
 let _ai = null;
 function autoInterp() {
   if (_ai) return _ai;
   const file = path.join(__dirname, '..', '53-prism-autointerp.js');
+  const { stripSelfTest } = require(path.join(__dirname, '..', 'concat-round8.js'));
+  const src = stripSelfTest(fs.readFileSync(file, 'utf8'), '53-prism-autointerp.js', { log() {}, warn() {} });
   const ctx = { console: { log() {}, warn() {}, error: (...a) => console.error(...a) } };
   ctx.window = ctx;
   vm.createContext(ctx);
-  vm.runInContext(fs.readFileSync(file, 'utf8'), ctx, { filename: file });
+  vm.runInContext(src, ctx, { filename: file });
   if (!ctx.PRiSM_autoInterp || typeof ctx.PRiSM_autoInterp.canon !== 'function') throw new Error('_buildup-shapes: 53-prism-autointerp.js did not define PRiSM_autoInterp.canon');
+  if (ctx.PRiSM_autoInterp_selfTest !== undefined) throw new Error('_buildup-shapes: the 53 self-test was not stripped');
   _ai = ctx.PRiSM_autoInterp;
   return _ai;
 }
@@ -82,7 +126,7 @@ function nearDisplay(key, a, b) {
 // ═════════════════════════════════════════════════════════════════════════════
 // 2. Schema engine
 // ═════════════════════════════════════════════════════════════════════════════
-const BANNED = /\b(null|undefined|NaN)\b|\[object Object\]/;
+const BANNED = /\b(null|undefined|NaN|Infinity)\b|\[object Object\]/;
 const EV_ANY = /^(B\d+·)?[QDRWILMACUKTVO]\d+$/;
 const EV_REL = /^[QDRWILMACUKTVO]\d+$/;
 const REF_RE = /^(B\d+·)?[QDRWILMACUKTVO]\d+(:[A-Za-z0-9_.[\]]+)?$/;
@@ -98,7 +142,7 @@ function validDate(s) {
 }
 
 // type name → predicate. Numeric types accept null in output shapes unless written with '!'.
-const NUMERIC = new Set(['num', 'int', 'count', 'pos', 'nonneg', 'frac', 'phi', 'psia', 'psi', 'h', 'dt', 'pct', 'ms']);
+const NUMERIC = new Set(['num', 'int', 'count', 'pos', 'nonneg', 'frac', 'pfrac', 'phi', 'psia', 'psi', 'h', 'dt', 'pct', 'ms']);
 const TYPES = {
   any: (v) => v !== undefined,
   num: isNum,
@@ -107,6 +151,7 @@ const TYPES = {
   pos: (v) => isNum(v) && v > 0,
   nonneg: (v) => isNum(v) && v >= 0,
   frac: (v) => isNum(v) && v >= 0 && v <= 1,
+  pfrac: (v) => isNum(v) && v > 0 && v <= 1,
   phi: (v) => isNum(v) && v > 0 && v <= 1,
   psia: (v) => isNum(v) && v > 0 && v < 1e5,
   psi: isNum,
@@ -143,7 +188,7 @@ const TYPES = {
 };
 const TYPE_TEXT = {
   num: 'a finite number', int: 'an integer', count: 'an integer ≥ 0', pos: 'a number > 0', nonneg: 'a number ≥ 0',
-  frac: 'a number in [0, 1]', phi: 'a porosity in (0, 1]', psia: 'an absolute pressure in psia (> 0)', psi: 'a pressure in psi',
+  frac: 'a number in [0, 1]', pfrac: 'a fraction in (0, 1] (not a percentage)', phi: 'a porosity in (0, 1]', psia: 'an absolute pressure in psia (> 0)', psi: 'a pressure in psi',
   h: 'hours', dt: 'a Δt in hours (> 0)', pct: 'a percentage', ms: 'epoch milliseconds UTC', str: 'a string', nestr: 'a non-empty string',
   text: 'plain text < 300 characters', text600: 'plain text ≤ 600 characters', tmpl: 'a template ≤ 600 characters', bool: 'a boolean',
   obj: 'an object', arr: 'an array', hex16: '16 lowercase hex characters', hex64: '64 lowercase hex characters', date: "a 'YYYY-MM-DD' date",
@@ -224,8 +269,11 @@ function checkArr(item, v, p, ctx, o) {
   if (o.len != null && v.length !== o.len) err(ctx, p, 'expected ' + o.len + ' items, got ' + v.length);
   if (o.min != null && v.length < o.min) err(ctx, p, 'expected at least ' + o.min + ' items, got ' + v.length);
   if (o.max != null && v.length > o.max) err(ctx, p, 'expected at most ' + o.max + ' items, got ' + v.length);
+  // fast path for plain one-type item specs (record samples): the predicate first, the full check only on a miss
+  const alts = typeof item === 'string' ? parseSpec(item) : null;
+  const pred = alts && alts.length === 1 && alts[0].type ? TYPES[alts[0].type] : null;
   for (let i = 0; i < v.length && ctx.errors.length < ctx.max; i++) {
-    check(item, v[i], p + '[' + i + ']', ctx);
+    if (!(pred && pred(v[i]))) check(item, v[i], p + '[' + i + ']', ctx);
     if (o.asc && i > 0 && isNum(v[i]) && isNum(v[i - 1]) && !(v[i] > v[i - 1])) err(ctx, p + '[' + i + ']', 'not strictly ascending');
   }
 }
@@ -355,7 +403,7 @@ const SPEC_BASE = {
   fRate: (v, p, ctx) => { if (!(isNum(v) && v >= 0.9 && v <= 1)) err(ctx, p, 'expected f̂ in [0.9, 1], got ' + describe(v)); },
   rateQC: { source: "'allocation'|'table'|'measured'", r3: 'num|null', r3Status: R_STATUS, r4: 'num|null', r4Status: R_STATUS, dqKnown: 'bool',
             dqSource: "'closingDay'|'previousDay'|'qref'|'table'", equalRateAssumed: 'bool', ignoresShutin: 'bool', allocAccPct: 'nonneg' },
-  well: { fluid: FLUID, h: 'pos', phi: 'phi', mu: 'pos', B: 'pos', ct: 'pos', rw: 'pos', T_R: 'num|null', re_ft: 'pos|null', defaulted: ['str'] },
+  well: { fluid: FLUID, h: 'pos', phi: 'phi', mu: 'pos', B: 'pos', ct: 'pos', rw: 'pos', T_R: 'num|null', re_ft: 'pos|null', defaulted: ['nestr'] },
   gas: orNull({ sg: 'pos', T_F: 'num', co2: 'nonneg', h2s: 'nonneg', n2: 'nonneg', pseudoTime: 'bool', pdew: 'psia|null' }),
   sigma_psi: 'nonneg', sigmaFlow_psi: 'nonneg', sigmaLF_psi: 'nonneg|null', dtSample_h: 'pos', driftPsiPerDay: 'nonneg',
   history: { estimated: 'bool', tPrepend_h: 'nonneg', source: "'data'|'date'|'cum'|'default'" },
@@ -386,10 +434,16 @@ def('BuildupSpecStored', false, all(
   })));
 
 // ── ModelFit, KHeld, Reach (§3.1; outputs) ──
+// PRiSM model parameters: numbers, or the categorical values PRiSM keeps in params (33 toModelParams copies the
+// registry's fixed keys, e.g. linearBoundary BC 'noflow'|'constP'), so a rival fit restores in PRiSM unchanged.
+const MODEL_PARAMS = rec('num|nestr|bool');
+// se / ci95: k, S and C always present (each may be null in an output); other keys open.
+const SE_MAP = all({ k: 'nonneg', S: 'nonneg', C: 'nonneg' }, rec('nonneg'));
+const CI_MAP = all({ k: orNull(pair('num')), S: orNull(pair('num')), C: orNull(pair('num')) }, rec(orNull(pair('num'))));
 def('ModelFit', true, {
   key: MODEL_KEY, base: 'nestr', ok: 'bool', converged: 'bool', stopReason: 'str', iterations: 'count', slices: 'count', nEval: 'count',
   phys: { k: 'pos', S: 'num', C: 'pos', 'M?': 'pos', 'F?': 'pos', 'R_ft?': 'pos', 'dF_ft?': 'pos', 're_ft?': 'pos' },
-  params: rec('num'), se: rec('nonneg'), ci95: rec(pair('num')), corr: { CS: 'num', kS: 'num' },
+  params: MODEL_PARAMS, se: SE_MAP, ci95: CI_MAP, corr: { CS: 'num', kS: 'num' },
   ssrLog: 'nonneg', nDp: 'count', rmseDp: 'nonneg', bic: 'num', p: 'count', eligible: 'bool', why: ['text'], fullySeen: '@FullySeen',
 });
 def('KHeld', true, {
@@ -401,6 +455,7 @@ def('Reach', true, {
 });
 
 // ── BuildupResult (§3.1; output) ──
+// X0, X1 are log10 Δt_e (cycles = X1 − X0); bins.X is ln Δt_e (D6).
 def('Iarf', true, {
   found: 'bool', grade: "'good'|'fair'|'none'", noiseWidened: 'bool', status: "'ok'|'tooShort'|'expectedNotFound'",
   dt0_h: 'dt', dt1_h: 'dt', X0: 'num', X1: 'num', cycles: 'nonneg', level_psi: 'psi', slope: 'num', slopeSE: 'nonneg', slopeLast: 'num', slopeLastSE: 'nonneg',
@@ -412,7 +467,7 @@ def('Iarf', true, {
 def('Line', true, {
   method: "'superposition'|'horner'", k: 'pos', kh: 'pos', S: 'num', m: 'num', pStar: 'psia', pStarRange: orNull({ lo: 'psia', hi: 'psia' }), p1hr: 'psia',
   r2: 'num', dt0_h: 'dt', dt1_h: 'dt', n: 'count',
-  shifts: arr({ dX: 'num', dt0_h: 'dt', dt1_h: 'dt', S: 'num', bS: 'num|null' }, { max: 2 }),
+  shifts: arr({ dX: 'num', dt0_h: 'dt', dt1_h: 'dt', S: 'num', bS: 'num|null' }, { max: 2 }),   // dX in log10 cycles (− = earlier)
   plateauCheck: { khDiffPct: 'pct', dS: 'num', pass: 'bool' }, ev: ev(['L1', 'L2', 'L3']),
 });
 def('Confidence', true, all({
@@ -485,7 +540,7 @@ def('BuildupResult', true, all({
   kHeld: orNull('@KHeld'),
   confidence: '@Confidence',
   'curves?': { dt: arr('dt!'), hom: { dp: arr('psi'), deriv: arr('psi') }, chosen: orNull({ dp: arr('psi'), deriv: arr('psi') }) },
-  fitC4: orNull({ modelKey: 'nestr', params: rec('num'), phys: rec('num'), 'r2?': 'num', 'converged?': 'bool', 'ci95?': 'obj' }),
+  fitC4: orNull({ modelKey: 'nestr', params: MODEL_PARAMS, phys: rec('num'), 'r2?': 'num', 'converged?': 'bool', 'ci95?': 'obj' }),
   warnings: arr('@Warning'),
   'evidence?': '@EvidenceVector',
 }, rule((v) => (Array.isArray(v.models) && v.models.length && v.models[0] && v.models[0].key !== 'homogeneous') ? [['models[0].key', 'homogeneous comes first in models']] : null)));
@@ -548,22 +603,24 @@ def('RateHistory', true, all({
 def('WellInput', false, {
   fluid: FLUID, h: 'pos', phi: 'phi', mu: 'pos', B: 'pos', ct: 'pos', rw: 'pos', re_ft: 'pos|null', Pb: 'psia|null', Rs: 'nonneg|null',
   gas: orNull({ sg: 'pos', T_F: 'num', co2: 'nonneg', h2s: 'nonneg', n2: 'nonneg', pseudoTime: 'bool', pdew: 'psia|null', apiCond: 'num|null', Mo: 'pos|null' }),
-  Bw: 'pos', muw: 'pos', allocAccPct: 'nonneg', driftPsiPerDay: 'nonneg', defaulted: ["'h'|'phi'|'mu'|'B'|'ct'|'rw'|'re_ft'|'Pb'|'Rs'|'Bw'|'muw'"],
+  Bw: 'pos', muw: 'pos', allocAccPct: 'nonneg', driftPsiPerDay: 'nonneg', defaulted: ['nestr'],   // any WellInput / gas key name
   sens: { h: 'nonneg', phi: 'nonneg', ct: 'nonneg', rw: 'nonneg', B: 'nonneg', mu: 'nonneg', q: 'nonneg' },
 });
 def('Completion', false, { hp_ft: 'pos', htop_ft: 'nonneg', theta_deg: 'nonneg', kvkh: pair('pos'), perf: orNull({ spf: 'pos', lp_in: 'pos', rp_in: 'pos', phase_deg: 'nonneg' }) });
 def('Depth', false, { gaugeTVD: 'num', datumTVD: 'num', grad: 'nonneg', gradFlow: 'nonneg|null' });
 def('Settings', false, {
-  detect: { winMin: 'pos', riseMin: 'pos', riseSig: 'pos', persistMin: 'pos', minDur_h: 'pos', gapN: 'pos', spike: "'off'|'flag'|'filter'", partial: 'any' },
-  interp: { Lcyc: 'pos', band: 'pos', slope: 'pos', minCycles: 'pos', rivals: "'auto'|'none'|'all'", cheld: "'auto'|'off'|'extended'", kHeld: 'any', tide: "'auto'|'off'" },
-  trend: { baseN: 'count', delta: 'pos', abs: 'num', basevar: 'bool', confirm: 'any', price: 'nonneg|null', enabled: "'auto'|'on'|'off'" },
+  detect: { winMin: 'pos', riseMin: 'pos', riseSig: 'pos', persistMin: 'pos', minDur_h: 'pos', gapN: 'pos', spike: "'off'|'flag'|'filter'", partial: 'bool' },
+  // band and slope are fractions (band 0.10 = the 10 % of bu_i_band; the page divides the % control by 100)
+  interp: { Lcyc: 'pos', band: 'pfrac', slope: 'pfrac', minCycles: 'pos', rivals: "'auto'|'none'|'all'", cheld: "'auto'|'off'|'extended'", kHeld: "'auto'|'off'", tide: "'auto'|'off'" },
+  trend: { baseN: 'count', delta: 'pos', abs: 'num', basevar: 'bool', confirm: "'next'|'immediate'", price: 'nonneg|null', enabled: "'auto'|'on'|'off'" },
   report: { detail: "'selected'|'all'" },
 });
-def('Override', false, {
-  id: 'ovId', kind: "'exclude'|'include'|'window'|'model'|'event_add'|'event_drop'|'tc'", target: 'targetId', value: 'any',
+// target is null only for kind 'event_add' (a typed time or a missed-list entry has no E id yet; the next Analyse assigns one).
+def('Override', false, all({
+  id: 'ovId', kind: "'exclude'|'include'|'window'|'model'|'event_add'|'event_drop'|'tc'", target: 'targetId|null', value: 'any',
   reason: (v, p, ctx) => { if (!(typeof v === 'string' && v.trim().length >= 5 && v.length < 300)) err(ctx, p, 'expected a reason of at least 5 characters'); },
   who: 'str', at: 'iso', appVersion: 'str',
-});
+}, rule((v) => (v.target === null && v.kind !== 'event_add') ? [['target', "only an 'event_add' override may have target null"]] : null)));
 const META = { wellName: 'str', engineer: 'str', appVersion: 'str' };
 def('AnalysisInput', false, {
   record: '@GaugeRecord|null',
@@ -723,7 +780,8 @@ def('CaseSpec', false, {
   given: { h: 'pos', phi: 'phi', ct: 'pos', rw: 'pos', B: 'pos', mu: 'pos' },
   history: { days: 'nonneg', variationPct: 'nonneg', earlierShutins: 'count', truncate: 'bool', intraDayChange: 'bool', flushPct: 'nonneg', flushDecay_h: 'nonneg' },
   test: { closeHour: 'nonneg', dtEnd_h: 'dt', dtSample_s: 'pos', sigma: 'nonneg', sigmaFlowFactor: 'nonneg', ar1Rho: 'frac|null', quant: 'nonneg', spikes: 'nonneg|bool',
-          drift_psi_d: 'nonneg', tide: { M2: 'nonneg', K1: 'nonneg' }, ramp_s: 'nonneg', partialBefore: 'frac|null' },
+          drift_psi_d: 'nonneg', tide: { M2: 'nonneg', K1: 'nonneg' }, ramp_s: 'nonneg',
+          partialBefore: 'frac|null' },   // rate fraction f cut before the closing (q_after = (1 − f)·q_before, M§A4)
   alloc: { errPct: 'nonneg', bias: 'num', ignoresShutin: 'bool', hoursConflict_h: 'nonneg', resolution: 'nonneg' },
 });
 def('SynthCase', true, {
@@ -773,6 +831,11 @@ const FORMULAS = {
   rinv: F(['k', 'dt', 'phi', 'mu', 'ct'], 'r_inv = 0.0325·√(k·Δt/(φ·μ·ct))  [ft]', (k, dt, phi, mu, ct) => 0.0325 * Math.sqrt(k * dt / (phi * mu * ct))),
   dte: F(['dt', 'tp'], 'Δt_e = tp·Δt/(tp + Δt)  [h]', (dt, tp) => tp * dt / (tp + dt)),
   shutOfDte: F(['dte', 'tp'], 'Δt = Δt_e·tp/(tp − Δt_e), null when Δt_e ≥ tp  [h]', (dte, tp) => (dte < tp ? dte * tp / (tp - dte) : null)),
+  xOfDte: F(['dte'], 'X = log10 Δt_e  [cycles; iarf.X0/X1, line.shifts[].dX]', (dte) => Math.log10(dte)),
+  dteOfX: F(['X'], 'Δt_e = 10^X  [h]', (X) => Math.pow(10, X)),
+  logTerm: F(['k', 'phi', 'mu', 'ct', 'rw'], 'log10(k/(φ·μ·ct·rw²)) − 3.2275', (k, phi, mu, ct, rw) => Math.log10(k / (phi * mu * ct * rw * rw)) - 3.2275),
+  pStar: F(['pwf0', 'm', 'tp', 'logTerm', 'S'], 'p* = pwf0 + m·[log10 tp + logTerm + 0.8686·S]  [psia]', (pwf0, m, tp, lt, S) => pwf0 + m * (Math.log10(tp) + lt + 0.8686 * S)),
+  p1hr: F(['pStar', 'm', 'tp'], 'p1hr = p* − m·log10((tp + 1)/1)  [psia; Horner at Δt = 1 h]', (pStar, m, tp) => pStar - m * Math.log10(tp + 1)),
   reachFair: F(['t5', 'Lcyc'], 'reach.fair = 10^(0.5 + Lcyc)·t_5%  [h]', (t5, L) => Math.pow(10, 0.5 + L) * t5),
   reachGood: F(['t5', 'Lcyc'], 'reach.good = 10^(1 + Lcyc)·t_5%  [h]', (t5, L) => Math.pow(10, 1 + L) * t5),
   sTc: F(['dpdt', 'dtc_h', 'm'], 'S_tc = 1.1513·|dp/dt_flow|·δt_c/m', (dpdt, dtc, m) => 1.1513 * Math.abs(dpdt) * dtc / m),
@@ -782,6 +845,13 @@ const FORMULAS = {
     (input, f) => SENS_COEF[input] * Math.log10(f)),
   sensK: F(['input', 'f', 'k'], 'k for input × f (Appendix A.2): k/f (h), k·f (B, μ, q), k (φ, ct, rw)',
     (input, f, k) => (input === 'h' ? k / f : (input === 'B' || input === 'mu' || input === 'q') ? k * f : k)),
+  sKAnalytic: F(['delta', 'dpEnd', 'm'], 'S_kAnalytic = δ·(p_D − 0.5), p_D = Δp_end/(2·m′) = ln 10·Δp_end/(2·m)  (§4.6 item 18)',
+    (delta, dpEnd, m) => delta * (Math.LN10 * dpEnd / (2 * m) - 0.5)),
+  atStakeDay: F(['q', 'X', 'S', 'Sbase'], 'one day of the T8 cumulative: q_d·[(X + S(t_d))/(X + S_base) − 1]  [volume]', (q, X, S, Sb) => q * ((X + S) / (X + Sb) - 1)),
+  jObs: F(['q', 'pRef', 'pwf'], 'J_obs = q_d/(p_ref,d − pwf_d)  (T13)', (q, pRef, pwf) => q / (pRef - pwf)),
+  jPred: F(['k', 'h', 'B', 'mu', 'X', 'S'], 'J_pred = k·h/(141.2·B·μ·(X + S))  (T13, pseudo-steady state)', (k, h, B, mu, X, S) => k * h / (141.2 * B * mu * (X + S))),
+  modelFreeDS: F(['dpj', 'qj', 'dpb', 'qb', 'mOverQb', 'dtej', 'dteb'], 'ΔS = 1.1513·[(Δp_j/q_j − Δp_b/q_b)/(m/q)_b − log10(Δt_e,j/Δt_e,b)]  (T11)',
+    (dpj, qj, dpb, qb, mq, dtej, dteb) => 1.1513 * ((dpj / qj - dpb / qb) / mq - Math.log10(dtej / dteb))),
   kStar: F(['truth', 'given', 'f'], "k* = f·k·(B′/B)·(μ′/μ)·(h/h′)  (§5.3)", (t, g, f) => f * t.k * (g.B / t.B) * (g.mu / t.mu) * (t.h / g.h)),
   SStar: F(['truth', 'given', 'f'], "S* = S + 1.1513·log10((h′/h)(φ′/φ)(ct′/ct)) + 2.3026·log10(rw′/rw) − 1.1513·log10((B′/B)·f)  (§5.3)",
     (t, g, f) => t.S + 1.1513 * Math.log10((g.h / t.h) * (g.phi / t.phi) * (g.ct / t.ct)) + 2.3026 * Math.log10(g.rw / t.rw) - 1.1513 * Math.log10((g.B / t.B) * f)),
@@ -790,7 +860,10 @@ const FORMULAS = {
 // ═════════════════════════════════════════════════════════════════════════════
 // 5. Closed-form generator → FIX
 // ═════════════════════════════════════════════════════════════════════════════
-const HOUR = 3600000, DAY = 86400000;
+const HOUR = 3600000, DAY = 86400000, MIN = 60000;
+const SHUT_SAMPLE_MS = MIN;          // record sampling inside shut-ins
+const FLOW_SAMPLE_MS = 15 * MIN;     // record sampling while flowing (historian-style)
+const P_RES_DP = 3;                  // record pressures rounded to 0.001 psi
 const LN10 = Math.LN10;
 const isoOf = (ms) => new Date(ms).toISOString().replace('.000Z', 'Z');
 const dateOf = (ms) => new Date(ms).toISOString().slice(0, 10);
@@ -801,9 +874,11 @@ const WELL = {
   Bw: 1.02, muw: 0.5, allocAccPct: 5, driftPsiPerDay: 0.01, defaulted: [],
   sens: { h: 0.2, phi: 0.1, ct: 0.3, rw: 0.05, B: 0.05, mu: 0.2, q: 0.1 },
 };
-const RES = { k: 45, C: 0.02, Lcyc: 0.1, sigma: 0.012, sigmaFlow: 0.08, sigmaLF: 0.02, pwf0SE: 0.11, dpdtFlow: -0.42, dtc_h: 0.0021, dtFirst: 0.005 };
+// dp/dt_flow is not a constant: it is the slope of the closed-form drawdown at closing, −m/(ln 10·tp) (CF.dpdtAt).
+const RES = { k: 45, C: 0.02, Lcyc: 0.1, sigma: 0.012, sigmaFlow: 0.08, sigmaLF: 0.02, pwf0SE: 0.11, dtc_h: 0.0021, dtFirst: 0.005 };
+const E4_S = 2.0;                    // skin used only for the record around E4 (too short, not interpreted)
 const SETTINGS = {
-  detect: { winMin: 5, riseMin: 5, riseSig: 10, persistMin: 30, minDur_h: 2, gapN: 5, spike: 'off', partial: 'auto' },
+  detect: { winMin: 5, riseMin: 5, riseSig: 10, persistMin: 30, minDur_h: 2, gapN: 5, spike: 'off', partial: true },
   interp: { Lcyc: 0.1, band: 0.10, slope: 0.03, minCycles: 0.5, rivals: 'auto', cheld: 'auto', kHeld: 'auto', tide: 'auto' },
   trend: { baseN: 3, delta: 2, abs: 5, basevar: false, confirm: 'next', price: null, enabled: 'auto' },
   report: { detail: 'selected' },
@@ -825,6 +900,11 @@ const CF = {
   CD: () => 0.8936 * RES.C / (WELL.phi * WELL.ct * WELL.h * WELL.rw * WELL.rw),
   rinv: (k, dt) => 0.0325 * Math.sqrt(k * dt / (WELL.phi * WELL.mu * WELL.ct)),
   Lmin: (k, dte, g) => Math.sqrt(0.0002637 * k * dte * Math.log(1 / g) / (WELL.phi * WELL.mu * WELL.ct)),
+  // smooth WBS blend (plausible arrays only): Δp = Δp_IARF·(1 − exp(−Δp_WBS/Δp_IARF))
+  blend: (a, w) => (a > 0 ? a * (1 - Math.exp(-w / a)) : w),
+  dpShut: (dt, tp, q, S) => CF.blend(CF.dpIarf(CF.dte(dt, tp), RES.k, S, CF.m(q, RES.k)), q * WELL.B * dt / (24 * RES.C)),   // build-up rise
+  dpDraw: (t, q, S) => CF.blend(CF.dpIarf(t, RES.k, S, CF.m(q, RES.k)), q * WELL.B * t / (24 * RES.C)),               // drawdown below p*
+  dpdtAt: (q, tp) => -CF.m(q, RES.k) / (LN10 * tp),    // psi/h, slope of the drawdown at closing
 };
 
 function bourdet(X, y, L) {
@@ -905,7 +985,7 @@ function sensitivityOf(k, S) {
            sSens, muNoEffectOnS: true, ev: ['U2', 'U3'] };
 }
 
-// One build-up, closed form. o = {id, q, S, dtEnd, tp, pStar, tc_h, tc_ms, stepTo, multiRate, kHeld, kBase, stage, delta}
+// One build-up, closed form. o = {id, q, S, dtEnd, tp, pStar, tc_h, tc_ms, stepTo, steps, multiRate, kHeld, kBase, stage, delta, dtSample_h}
 function genTest(o) {
   const k = RES.k, L = RES.Lcyc, Lln = 0.2303 * (L / 0.1);
   const m = CF.m(o.q, k), mp = m / LN10;
@@ -915,10 +995,8 @@ function genTest(o) {
   for (let i = 0; ; i++) { const x = RES.dtFirst * Math.pow(10, i / 20); if (x > o.dtEnd * (1 - 1e-9)) break; dt.push(x); }
   dt.push(o.dtEnd);
   const dte = dt.map((x) => CF.dte(x, o.tp));
-  const dp = dt.map((x, i) => {
-    const a = CF.dpIarf(dte[i], k, o.S, m), w = o.q * WELL.B * x / (24 * RES.C);
-    return a > 0 ? a * (1 - Math.exp(-w / a)) : w;
-  });
+  const dp = dt.map((x) => CF.dpShut(x, o.tp, o.q, o.S));
+  const dpdt = CF.dpdtAt(o.q, o.tp);
   const n = dt.map((x) => Math.max(1, Math.round(6.92 * x)));
   const X = dte.map((x) => Math.log(x));
   const bd = bourdet(X, dp, Lln);
@@ -966,7 +1044,7 @@ function genTest(o) {
   }
   const mF = CF.m(o.q, kFinal);
   // S_err (§4.6 item 15)
-  const sTc = 1.1513 * Math.abs(RES.dpdtFlow) * RES.dtc_h / mF, sPwf = 1.1513 * RES.pwf0SE / mF;
+  const sTc = 1.1513 * Math.abs(dpdt) * RES.dtc_h / mF, sPwf = 1.1513 * RES.pwf0SE / mF;
   const sens = sensitivityOf(kFinal, o.S);
   let sErr;
   if (o.kHeld) {
@@ -1018,7 +1096,7 @@ function genTest(o) {
     reach: { t10_h: t10, t5_h: t5, fair_h: fair, good_h: good, fairShut_h: fair < o.tp ? CF.dtOf(fair, o.tp) : null, goodShut_h: good < o.tp ? CF.dtOf(good, o.tp) : null,
              reachable: fair < o.tp, ev: ['W4'] },
     iarf: found ? {
-      found: true, grade, noiseWidened: false, status: 'ok', dt0_h: line.dt0_h, dt1_h: line.dt1_h, X0: Math.log(t5), X1: Math.log(dteLast), cycles,
+      found: true, grade, noiseWidened: false, status: 'ok', dt0_h: line.dt0_h, dt1_h: line.dt1_h, X0: Math.log10(t5), X1: Math.log10(dteLast), cycles,
       level_psi: mp, slope: 0, slopeSE: 0.002, slopeLast: 0, slopeLastSE: 0.002, band: 0.10, slopeTol: 0.03, noiseLimited: false,
       pointSkin: { spread: 0, min: o.S, max: o.S }, longest: { dt0_h: line.dt0_h, dt1_h: line.dt1_h, cycles }, secondLevel: null, laterPlateaus: [],
       forced: false, reason: 'Earliest plateau after the storage hump; the longest qualifying window inside it.', ev: ['I1', 'I2', 'I3', 'I4'],
@@ -1068,10 +1146,10 @@ function genTest(o) {
   const rateQC = { source: 'allocation', r3: 1.0, r3Status: 'pass', r4: 1.02, r4Status: 'pass', dqKnown: true, dqSource: 'closingDay',
                    equalRateAssumed: false, ignoresShutin: false, allocAccPct: WELL.allocAccPct };
   const specCommon = {
-    id: o.id, testType: 'buildup', tc_h: o.tc_h, dtc_h: RES.dtc_h, pwf0, pwf0SE: RES.pwf0SE, dpdt_flow: RES.dpdtFlow,
+    id: o.id, testType: 'buildup', tc_h: o.tc_h, dtc_h: RES.dtc_h, pwf0, pwf0SE: RES.pwf0SE, dpdt_flow: dpdt,
     qUnit: 'STB/d', Dq: o.q, fRate: 1, rateQC,
     well: { fluid: 'oil', h: WELL.h, phi: WELL.phi, mu: WELL.mu, B: WELL.B, ct: WELL.ct, rw: WELL.rw, T_R: null, re_ft: WELL.re_ft, defaulted: [] },
-    gas: null, sigma_psi: RES.sigma, sigmaFlow_psi: RES.sigmaFlow, sigmaLF_psi: RES.sigmaLF, dtSample_h: 1 / 60, driftPsiPerDay: WELL.driftPsiPerDay,
+    gas: null, sigma_psi: RES.sigma, sigmaFlow_psi: RES.sigmaFlow, sigmaLF_psi: RES.sigmaLF, dtSample_h: o.dtSample_h || SHUT_SAMPLE_MS / HOUR, driftPsiPerDay: WELL.driftPsiPerDay,
     history: { estimated: false, tPrepend_h: 0, source: 'date' },
     overrides: { window: null, model: null, excludeRivals: [] },
     opts: { Lcyc: L, binsPerCycle: 20, fitBinsPerCycle: 12, rivals: 'auto', cheld: 'auto', tide: 'auto' },
@@ -1080,12 +1158,14 @@ function genTest(o) {
   const specStored = Object.assign({}, specCommon, { dt: dt.map(sf6), p: p.map(sf6), n: n.slice(), stepRef: { from: 0, to: o.stepTo || 0 } });
   const AI = autoInterp();
   result.inputHash = AI.hash16(AI.canon(specStored, 'inputs'));
-  return { result, specMem, specStored, pwf0, m: mF, dteEnd, found, cycles, t5 };
+  return { result, specMem, specStored, pwf0, m: mF, dteEnd, found, cycles, t5, dpdt };
 }
 
+// Reference case (Appendix A.1, §4.6 item 5b): single rate, tp = 720 h from production start.
+const FIX_REF = { k: 45, S: 5, C: 0.02, h: 50, mu: 1, q: 800, B: 1.2, tp: 720, dtEnd: 72, pStar: 4000 };
 function genReference() {
-  const tc_ms = Date.UTC(2026, 2, 31, 9);
-  return genTest({ id: 'B1', q: 800, S: 5, dtEnd: 72, tp: 720, pStar: 4000, tc_h: 720, tc_ms, multiRate: false, stage: 'pass1' });
+  const R = FIX_REF;
+  return genTest({ id: 'B1', q: R.q, S: R.S, dtEnd: R.dtEnd, tp: R.tp, pStar: R.pStar, tc_h: R.tp, tc_ms: Date.UTC(2026, 2, 31, 9), multiRate: false, stage: 'pass1' });
 }
 
 // Schedule of the 6-test analysis (history clock origin = first gauge sample).
@@ -1103,6 +1183,60 @@ const PLAN = [
 const Q_AFTER = 805;            // rate after the last build-up
 const P_INIT = 4000, DEPL_PSI_PER_DAY = 0.01;
 
+// small numeric helpers (fixture only)
+const quantile = (a, q) => { const s = a.slice().sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(q * s.length))]; };
+// piecewise-linear interpolation through [[x, y], …] (x ascending), constant outside the knots
+function lin(knots, x) {
+  if (!knots.length) return null;
+  if (x <= knots[0][0]) return knots[0][1];
+  for (let i = 1; i < knots.length; i++) {
+    if (x <= knots[i][0]) return knots[i - 1][1] + (knots[i][1] - knots[i - 1][1]) * (x - knots[i - 1][0]) / (knots[i][0] - knots[i - 1][0]);
+  }
+  return knots[knots.length - 1][1];
+}
+// linear interpolation of y in log x (x ascending), null outside
+function logInterp(xs, ys, x) {
+  for (let i = 1; i < xs.length; i++) {
+    if (x >= xs[i - 1] && x <= xs[i]) return ys[i - 1] + (ys[i] - ys[i - 1]) * Math.log(x / xs[i - 1]) / Math.log(xs[i] / xs[i - 1]);
+  }
+  return null;
+}
+// Fixture record hash: hash16 over n, the first and last times and a 32-bit FNV-1a digest of every sample (time steps in
+// ms and pressures in units of 0.001 psi). A fixture convention only; WP2 defines the real record hash.
+function recordHash(t, p) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < t.length; i++) {
+    h = Math.imul(h ^ (i ? t[i] - t[i - 1] : 0), 16777619);
+    h = Math.imul(h ^ Math.round(p[i] * Math.pow(10, P_RES_DP)), 16777619);
+  }
+  return autoInterp().hash16(t.length + '|' + t[0] + '|' + t[t.length - 1] + '|' + (h >>> 0).toString(16));
+}
+const gaugeRecord = (t, p, name, source) => ({ ok: true, origin_ms: t[0], t, p, T: null, n: t.length, source, name, zone: { mode: 'utc' }, pUnitIn: 'psia',
+  patm: 14.696, elapsed: false, rollup: false, hash: recordHash(t, p), warnings: [] });
+const rnd = (x) => Math.round(x * 1000) / 1000;    // 0.001 psi (P_RES_DP = 3)
+
+// The one gauge record of the analysis: 15-min samples while flowing (closed-form drawdown from the last reopening at the
+// closing test's rate and skin), 1-min samples in every shut-in from Δt = dtFirst (closed-form build-up), 0.001 psi.
+function genAnalysisRecord(evs, endMs, pStarAt) {
+  const t = [], p = [], flowing = [];
+  const push = (ms, pv, fl) => { t.push(ms); p.push(rnd(pv)); flowing.push(fl); };
+  const first = Math.round(RES.dtFirst * HOUR);
+  const idx = [];
+  let g = ORIGIN_MS;                               // next flowing grid point
+  evs.forEach((e) => {
+    const pStar = pStarAt(e.tc);
+    for (; g <= e.tc; g += FLOW_SAMPLE_MS) push(g, pStar - CF.dpDraw((g - e.open) / HOUR, e.q, e.Srec), true);
+    const j0 = t.length - 1;                       // the sample at t_c (last flowing sample)
+    const pwf0 = pStar - CF.dpIarf(e.tp, RES.k, e.Srec, CF.m(e.q, RES.k));
+    for (let ms = e.tc + first; ms <= e.end; ms += SHUT_SAMPLE_MS) push(ms, pwf0 + CF.dpShut((ms - e.tc) / HOUR, e.tp, e.q, e.Srec), false);
+    idx.push({ j0, j1: j0 + 1, jEnd: t.length - 1, pwf0 });
+    while (g <= e.end) g += FLOW_SAMPLE_MS;        // first flowing grid point after the reopening
+  });
+  const last = evs[evs.length - 1], pStarL = pStarAt(last.end);
+  for (; g <= endMs; g += FLOW_SAMPLE_MS) push(g, pStarL - CF.dpDraw((g - last.end) / HOUR, Q_AFTER, last.Srec), true);
+  return { record: gaugeRecord(t, p, 'well-a-gauge.csv', 'csv'), idx, flowing };
+}
+
 function genAnalysis() {
   const AI = autoInterp();
   // steps (epoch ms) and per-event timing
@@ -1115,19 +1249,26 @@ function genAnalysis() {
     steps.push({ t_ms: tc, q: 0 });
     const stepTo = steps.length - 1;
     steps.push({ t_ms: end, q: i + 1 < PLAN.length ? PLAN[i + 1].q : Q_AFTER });
+    const open = prevOpen;
     prevOpen = end;
-    return Object.assign({}, e, { tc, end, tp, stepTo });
+    return Object.assign({}, e, { tc, end, tp, open, stepTo, Srec: e.S != null ? e.S : E4_S });
   });
   const endMs = evs[evs.length - 1].end + DAY;
   const pStarAt = (ms) => P_INIT - DEPL_PSI_PER_DAY * (ms - PROD_START_MS) / DAY;
   const tcH = (ms) => (ms - ORIGIN_MS) / HOUR;
   const memSteps = (upTo) => steps.slice(0, upTo + 1).map((s) => ({ t: tcH(s.t_ms), q: s.q }));
+  // the record
+  const R = genAnalysisRecord(evs, endMs, pStarAt), record = R.record;
+  const diffsS = (j1, j2) => { const d = []; for (let j = j1 + 1; j <= j2; j++) d.push((record.t[j] - record.t[j - 1]) / 1000); return d; };
   // tests
   const tests = [], gens = {};
   let kBase = null;
-  evs.filter((e) => e.id).forEach((e) => {
+  evs.forEach((e, i) => {
+    if (!e.id) return;
+    const ix = R.idx[i];
     const g = genTest({ id: e.id, q: e.q, S: e.S, dtEnd: e.dtEnd, tp: e.tp, pStar: pStarAt(e.tc), tc_h: tcH(e.tc), tc_ms: e.tc, stepTo: e.stepTo,
-                        steps: memSteps(e.stepTo), multiRate: true, kHeld: !!e.kHeld, kBase: kBase || RES.k, delta: 0.05, stage: 'final' });
+                        steps: memSteps(e.stepTo), multiRate: true, kHeld: !!e.kHeld, kBase: kBase || RES.k, delta: 0.05, stage: 'final',
+                        dtSample_h: median(diffsS(ix.j1, ix.jEnd)) / 3600 });
     gens[e.id] = g;
     if (!kBase && !e.kHeld) kBase = RES.k;
     const r = g.result;
@@ -1138,6 +1279,38 @@ function genAnalysis() {
       spec: g.specStored, result: r, used: { baseline: false, trend: false, alert: false }, partialSuspect: false, overrides: e.excludedBy ? [e.excludedBy] : [],
     });
   });
+  // daily rate history and allocation rows (pwfMean = mean flowing record sample of the day)
+  const rateAt = (ms) => { let q = 0; for (const s of steps) { if (s.t_ms <= ms) q = s.q; else break; } return q; };
+  const pwfMeanOf = (() => {
+    let j = 0;
+    return (d0, d1) => {
+      while (j < record.n && record.t[j] < d0) j++;
+      let sum = 0, c = 0;
+      for (let i = j; i < record.n && record.t[i] < d1; i++) if (R.flowing[i]) { sum += record.p[i]; c++; }
+      return c ? sum / c : null;
+    };
+  })();
+  const days = [], rows = [];
+  for (let d0 = ORIGIN_MS; d0 < endMs; d0 += DAY) {
+    const d1 = d0 + DAY;
+    let V = 0, hOn = 0;
+    const cuts = [d0, d1];
+    steps.forEach((s) => { if (s.t_ms > d0 && s.t_ms < d1) cuts.push(s.t_ms); });
+    cuts.sort((a, c) => a - c);
+    for (let i = 0; i + 1 < cuts.length; i++) { const q = rateAt(cuts[i]); const hh = (cuts[i + 1] - cuts[i]) / HOUR; V += q * hh / 24; if (q > 0) hOn += hh; }
+    const dayEvents = evs.filter((e) => e.tc < d1 && e.end > d0).map((e) => e.ev);
+    const closing = evs.find((e) => e.tc >= d0 && e.tc < d1);
+    const q = hOn >= 0.5 ? 24 * V / hOn : 0;
+    const pm = hOn >= 0.5 ? pwfMeanOf(d0, d1) : null;
+    const date = dateOf(d0);
+    days.push({
+      date, t0_ms: d0, t1_ms: d1, hours: 24, hOn, V, q, cls: hOn < 0.5 ? 'shut' : dayEvents.length ? 'event' : 'clean', events: dayEvents,
+      pwfMean_psia: pm, pwfMeanDatum_psia: pm,
+      R3: closing ? { ratio: 1.0, tol: 0.15, pass: true, status: 'pass' } : null, R4: closing ? { ratio: 1.02, pass: true, status: 'pass' } : null, R6: null,
+      ignoresShutin: false, equalRateAssumed: false, shortDay: !!closing && hOn < 6,
+    });
+    rows.push({ date, oil: Math.round(V * 10) / 10, gas: Math.round(V * WELL.Rs / 100) / 10, water: 0, hours: hOn });
+  }
   // used set: k/S label ≥ medium and not excluded; baseline = first 3 used
   const usedTests = tests.filter((t) => t.status === 'interpreted' && RANK[t.result.confidence.ks] >= 1);
   const baseIds = usedTests.slice(0, 3).map((t) => t.id);
@@ -1156,22 +1329,51 @@ function genAnalysis() {
   const immediate = raisedA && raisedA.result.confidence.ks === 'high' && raisedA.result.final.S - serrOf(raisedA) - SETTINGS.trend.abs >= 1;
   const sSens = tests[0].result.sErr.sSens;
   const lo = usedTests.find((t) => absEx(t, -sSens)), hi = usedTests.find((t) => absEx(t, +sSens));
-  // onset: midway between the last baseline-level used test and the raising test; recent slope over the tests after it
+  // onset (placeholder): midway between the last baseline-level used test and the raising test
   const iRaise = usedTests.indexOf(raisedD);
   const tau = 0.5 * (tDays(usedTests[iRaise - 1]) + tDays(raisedD));
-  const post = usedTests.slice(iRaise);
-  const b = (post[post.length - 1].result.final.S - post[0].result.final.S) / (tDays(post[post.length - 1]) - tDays(post[0]));
-  const sPath = [[tau, Sb]].concat(post.map((t) => [tDays(t), t.result.final.S]));
-  const sAt = (d) => { for (let i = 1; i < sPath.length; i++) if (d <= sPath[i][0]) return sPath[i - 1][1] + (sPath[i][1] - sPath[i - 1][1]) * (d - sPath[i - 1][0]) / (sPath[i][0] - sPath[i - 1][0]); return sPath[sPath.length - 1][1]; };
+  const post = usedTests.filter((t) => tDays(t) > tau);
+  // S(t): piecewise linear through the used tests with the onset knot (τ̂, S_base); constant outside
+  const sKnots = usedTests.filter((t) => tDays(t) < tau).map((t) => [tDays(t), t.result.final.S]).concat([[tau, Sb]]).concat(post.map((t) => [tDays(t), t.result.final.S]));
+  const sAt = (d) => lin(sKnots, d);
   const latest = usedTests[usedTests.length - 1];
   const X = Math.log(WELL.re_ft / WELL.rw) - 0.75;
   const Snow = latest.result.final.S;
   const kNow = latest.result.final.k;
-  // cumulative at stake since τ (daily, S interpolated linearly from τ)
+  const kB = RES.k;                                // Analysis.baseline.k
+  const midDays = (d) => (0.5 * (d.t0_ms + d.t1_ms) - firstTest) / DAY;
+  // T8 cumulative since τ̂: Σ_days q_d·[(X + S(t_d))/(X + S_base) − 1]
   let cum = 0;
-  for (let d = Math.ceil(tau); d <= tDays(latest); d++) { const S = sAt(d); cum += latest.Dq * ((X + S) / (X + Sb) - 1); }
+  days.forEach((d) => { const td = midDays(d); if (td >= tau) cum += FORMULAS.atStakeDay(d.q, X, sAt(td), Sb); });
+  // T11 model-free ΔS at Δt_ref (used tests with an IARF window; reference = the first of them)
+  const iarfTests = usedTests.filter((t) => t.result.iarf.dt0_h != null);
+  const minEnd = Math.min.apply(null, iarfTests.map((t) => t.dtEnd_h));
+  const dtRef = Math.max.apply(null, iarfTests.map((t) => t.result.iarf.dt0_h).filter((x) => x <= minEnd));
+  const refT = iarfTests[0];
+  const atRef = (t) => {
+    const r = t.result, dteEnd = r.bins.dte[r.bins.dte.length - 1];
+    const dte = FORMULAS.dte(dtRef, t.dtEnd_h * dteEnd / (t.dtEnd_h - dteEnd));
+    return { dte, dp: logInterp(r.bins.dte, r.bins.dp, dte) };
+  };
+  const modelFree = iarfTests.slice(1).map((t) => {
+    const a = atRef(t), b = atRef(refT);
+    const dS = FORMULAS.modelFreeDS(a.dp, t.Dq, b.dp, refT.Dq, refT.result.final.m / refT.Dq, a.dte, b.dte);
+    const fitted = t.result.final.S - refT.result.final.S;
+    return { id: t.id, refId: refT.id, dS, fittedDS: fitted, agrees: Math.abs(dS - fitted) <= Math.max(0.3, serrOf(t)) };
+  });
+  // T13 PI cross-check: J_obs/J_pred on clean flowing days between consecutive used tests
+  const pKnots = usedTests.filter((t) => t.result.final.pExt != null).map((t) => [t.tc_ms, t.result.final.pExt]);
+  const piRows = usedTests.slice(1).map((t, i) => {
+    const a = usedTests[i], ratios = [];
+    days.forEach((d) => {
+      const mid = 0.5 * (d.t0_ms + d.t1_ms);
+      if (d.cls !== 'clean' || d.pwfMean_psia == null || !(mid > a.tc_ms && mid < t.tc_ms)) return;
+      ratios.push(FORMULAS.jObs(d.q, lin(pKnots, mid), d.pwfMean_psia) / FORMULAS.jPred(kB, WELL.h, WELL.B, WELL.mu, X, sAt(midDays(d))));
+    });
+    return { from: a.id, to: t.id, RJ: ratios.length ? median(ratios) : null };
+  });
   const pStars = usedTests.map((t) => t.result.final.pStar).filter((v) => v != null);
-  const pSlope = -DEPL_PSI_PER_DAY * 30;
+  const pSlope = -DEPL_PSI_PER_DAY * 30;           // Theil–Sen of the used p* (exactly linear in the fixture), psi/30 d
   const trend = {
     ok: true, n: tests.length, nUsed: usedTests.length, enabled: true, disabledReason: null,
     baseline: { S: Sb, sigma: Math.max(median(baseIds.map((id) => serrOf(tests.find((t) => t.id === id)))),
@@ -1191,19 +1393,19 @@ function genAnalysis() {
     },
     onset: { tauDays: tau, interval: [tau - 5, tau + 5], date: dateOf(firstTest + tau * DAY), model: 'hinge', cusum: { alarmAt: raisedD ? raisedD.id : null, onsetAt: usedTests[iRaise - 1].id },
              indicative: usedTests.length < 6, ev: ['T4'] },
-    recent: { slopePer30d: b * 30, ci: [null, null], mkZ: 0, mkP: 1, n: post.length, indicative: true, wlsSlopePer30d: b * 30, disagree: false, ev: ['T5'] },
-    forecast: { show: false, date: null, earliest: null, latest: null, reason: 'Not shown: too few tests after the onset for a slope interval.', ev: ['T6'] },
+    // §4.7: the recent trend needs n ≥ 3 tests after τ̂; the fixture has 2, so the slopes are not computed
+    recent: post.length >= 3 ? null : { slopePer30d: null, ci: [null, null], mkZ: null, mkP: null, n: post.length, indicative: true, wlsSlopePer30d: null, disagree: false, ev: ['T5'] },
+    forecast: { show: false, date: null, earliest: null, latest: null, reason: 'Not shown: fewer than 3 tests after the onset, so there is no recent slope.', ev: ['T6'] },
     skinDp: tests.map((t) => ({ id: t.id, dpSkin_psi: t.result.final.dpSkin_psi })),
     pi: { X, re_ft: WELL.re_ft, reSource: 'input', ratioNow: X / (X + Snow), ratioBase: X / (X + Sb), ratioLowerBound: false,
           rateAtStake: latest.Dq * ((X + Snow) / (X + Sb) - 1), rateUnit: 'STB/d', extraDrawdown_psi: 141.2 * latest.Dq * WELL.B * WELL.mu * (Snow - Sb) / (kNow * WELL.h),
           cumAtStake: cum, cumUnit: 'STB', atStakeUpperBound: false, value: null, guard: false, ev: ['T8'] },
     kStability: { cv: 0, stable: true, allocAccPct: WELL.allocAccPct, reading: 'nearWell', ev: ['T9'] },
     pTrend: { quantity: 'pStar', assessable: true, reason: null, slopePer30d: pSlope, scatter: 0, depletion: pStars.length >= 3, label: 'Depletion or gauge drift (the drift input could explain it).', ev: ['T10'] },
-    modelFree: usedTests.slice(1).map((t) => ({ id: t.id, refId: usedTests[0].id, dS: t.result.final.S - usedTests[0].result.final.S,
-                                                 fittedDS: t.result.final.S - usedTests[0].result.final.S, agrees: true })),
+    modelFree,
     bubble: { rows: usedTests.map((t) => ({ id: t.id, pwfSand_lo: t.pwf0Datum, pwfSand_hi: t.pwf0Datum, margin: t.pwf0Datum - WELL.Pb, level: t.pwf0Datum >= WELL.Pb + 100 ? 'ok' : 'minor' })),
               spearman: null, ev: ['T12'] },
-    piCheck: { available: true, reason: null, rows: usedTests.slice(1).map((t, i) => ({ from: usedTests[i].id, to: t.id, RJ: 1.0 })), consistent: true, rho: null, ev: ['T13'] },
+    piCheck: { available: true, reason: null, rows: piRows, consistent: piRows.every((r) => r.RJ != null && r.RJ >= 0.8 && r.RJ <= 1.25), rho: null, ev: ['T13'] },
     mech: { available: false, Sgeo: null, SgeoRange: [null, null], basis: 'pressureDrop', ev: ['T14'] },
     rateSkin: { resolved: false, S: null, D: null, seD: null, reason: 'Oil well: rate-dependent skin is not assessed.', dqEffect: null, ev: ['T15'] },
     crossTest: { windowLevelInconsistent: [], closedWithoutDepletion: [] },
@@ -1213,40 +1415,21 @@ function genAnalysis() {
       { code: 'iarfEarliest', text: 'The IARF window is the earliest plateau after the storage hump, not the longest; the longest qualifying window is reported.' },
     ],
   };
-  // events
-  const events = evs.map((e, i) => ({
-    id: e.ev, kind: 'shutin', status: e.tooShort ? 'too_short' : 'analysable', tc_ms: e.tc, dtc_s: RES.dtc_h * 3600,
-    j0: Math.round((e.tc - ORIGIN_MS) / 60000) - 1, j1: Math.round((e.tc - ORIGIN_MS) / 60000),
-    pwf0: e.id ? gens[e.id].pwf0 : pStarAt(e.tc) - 650, pwf0SE: RES.pwf0SE,
-    trend: { a: e.id ? gens[e.id].pwf0 : pStarAt(e.tc) - 650, b: RES.dpdtFlow, ref_ms: e.tc, n: 30, sigmaRes: RES.sigmaFlow },
-    rise_psi: e.id ? gens[e.id].result.bins.dp[Math.min(30, gens[e.id].result.bins.dp.length - 1)] : 40, riseScale_min: 5, Ts_psi: 5,
-    tEnd_ms: e.end, dtEnd_h: e.dtEnd, endReason: 'reopen', ramp: { present: false, dur_s: 0 },
-    fhat: 1, fhatMethod: 'allocation', qBefore: e.q, qAfter: 0,
-    alloc: { date: dateOf(e.tc), ratio: 1.0, pass: true, ignoresShutin: false, confirm: 'confirmed' }, manual: false,
-    ev: ['D1', 'D2', 'D3', 'D4', 'D5', 'D6'], warnings: [],
-  }));
-  // daily rate history and allocation rows
-  const rateAt = (ms) => { let q = 0; for (const s of steps) { if (s.t_ms <= ms) q = s.q; else break; } return q; };
-  const days = [], rows = [];
-  for (let d0 = ORIGIN_MS; d0 < endMs; d0 += DAY) {
-    const d1 = d0 + DAY;
-    let V = 0, hOn = 0;
-    const cuts = [d0, d1];
-    steps.forEach((s) => { if (s.t_ms > d0 && s.t_ms < d1) cuts.push(s.t_ms); });
-    cuts.sort((a, c) => a - c);
-    for (let i = 0; i + 1 < cuts.length; i++) { const q = rateAt(cuts[i]); const hh = (cuts[i + 1] - cuts[i]) / HOUR; V += q * hh / 24; if (q > 0) hOn += hh; }
-    const dayEvents = evs.filter((e) => e.tc < d1 && e.end > d0).map((e) => e.ev);
-    const closing = evs.find((e) => e.tc >= d0 && e.tc < d1);
-    const q = hOn >= 0.5 ? 24 * V / hOn : 0;
-    const date = dateOf(d0);
-    days.push({
-      date, t0_ms: d0, t1_ms: d1, hours: 24, hOn, V, q, cls: hOn < 0.5 ? 'shut' : dayEvents.length ? 'event' : 'clean', events: dayEvents,
-      pwfMean_psia: hOn >= 0.5 ? pStarAt(d0) - 650 : null, pwfMeanDatum_psia: hOn >= 0.5 ? pStarAt(d0) - 650 : null,
-      R3: closing ? { ratio: 1.0, tol: 0.15, pass: true, status: 'pass' } : null, R4: closing ? { ratio: 1.02, pass: true, status: 'pass' } : null, R6: null,
-      ignoresShutin: false, equalRateAssumed: false, shortDay: !!closing && hOn < 6,
-    });
-    rows.push({ date, oil: Math.round(V * 10) / 10, gas: Math.round(V * WELL.Rs / 100) / 10, water: 0, hours: hOn });
-  }
+  if (!trend.recent) throw new Error('_buildup-shapes: the fixture plan now has 3 tests after the onset; compute the recent trend');
+  // events (j0/j1 and the flowing trend from the record)
+  const events = evs.map((e, i) => {
+    const ix = R.idx[i], pwf0 = e.id ? gens[e.id].pwf0 : ix.pwf0, b = CF.dpdtAt(e.q, e.tp);
+    return {
+      id: e.ev, kind: 'shutin', status: e.tooShort ? 'too_short' : 'analysable', tc_ms: e.tc, dtc_s: RES.dtc_h * 3600,
+      j0: ix.j0, j1: ix.j1, pwf0, pwf0SE: RES.pwf0SE,
+      trend: { a: pwf0, b, ref_ms: e.tc, n: 10, sigmaRes: RES.sigmaFlow },
+      rise_psi: e.id ? gens[e.id].result.bins.dp[Math.min(30, gens[e.id].result.bins.dp.length - 1)] : 40, riseScale_min: 5, Ts_psi: 5,
+      tEnd_ms: e.end, dtEnd_h: e.dtEnd, endReason: 'reopen', ramp: { present: false, dur_s: 0 },
+      fhat: 1, fhatMethod: 'allocation', qBefore: e.q, qAfter: 0,
+      alloc: { date: dateOf(e.tc), ratio: 1.0, pass: true, ignoresShutin: false, confirm: 'confirmed' }, manual: false,
+      ev: ['D1', 'D2', 'D3', 'D4', 'D5', 'D6'], warnings: [],
+    };
+  });
   const rates = {
     mode: 'daily', unit: 'STB/d', phase: 'oil', days, steps,
     start: { source: 'date', prepend_h: (ORIGIN_MS - PROD_START_MS) / HOUR, q: PLAN[0].q, flag: false },
@@ -1254,11 +1437,17 @@ function genAnalysis() {
     phaseBasis: { used: 'oil', wcMax: 0, gorRatioMax: 1.0, twoPhaseCt: false },
     ev: ['R1', 'R2', 'R3', 'R4', 'R5', 'R6', 'R7'], warnings: [],
   };
+  const allDiffs = diffsS(0, record.n - 1);
+  const segments = [];
+  evs.forEach((e, i) => {
+    segments.push({ t0_ms: i ? evs[i - 1].end : ORIGIN_MS, t1_ms: e.tc, kind: 'flow', sigma: RES.sigmaFlow });
+    segments.push({ t0_ms: e.tc, t1_ms: e.end, kind: 'shut', sigma: RES.sigma });
+  });
+  segments.push({ t0_ms: evs[evs.length - 1].end, t1_ms: record.t[record.n - 1], kind: 'flow', sigma: RES.sigmaFlow });
   const qc = {
-    ok: true, n: Math.round((endMs - ORIGIN_MS) / 300000), dtMed_s: 60, dtP05_s: 60, dtP95_s: 300,
+    ok: true, n: record.n, dtMed_s: median(allDiffs), dtP05_s: quantile(allDiffs, 0.05), dtP95_s: quantile(allDiffs, 0.95),
     sigma_psi: RES.sigma, sigmaFlow_psi: RES.sigmaFlow, sigmaShut_psi: RES.sigma,
-    segments: [{ t0_ms: ORIGIN_MS, t1_ms: evs[0].tc, kind: 'flow', sigma: RES.sigmaFlow }, { t0_ms: evs[0].tc, t1_ms: evs[0].end, kind: 'shut', sigma: RES.sigma }],
-    resolution_psi: 0.01, resolutionLimited: false, rho1: -0.4, noiseCorrelated: false,
+    segments, resolution_psi: Math.pow(10, -P_RES_DP), resolutionLimited: false, rho1: -0.4, noiseCorrelated: false,
     gaps: [], gapCount: 0, gapTotal_h: 0, longestGap_h: 0, spikes: { count: 0, mode: 'off', idx: [] },
     depth: { applied: false, shift_psi: 0 }, temperature: { present: false, fastChanges: [] }, plausibility: [],
     ev: ['Q1', 'Q2', 'Q3', 'Q4', 'Q5', 'Q7', 'Q8'],
@@ -1271,7 +1460,7 @@ function genAnalysis() {
   };
   const overrides = [{ id: 'O1', kind: 'exclude', target: 'B4', value: true, reason: 'The gauge was swapped during this shut-in.', who: 'Engineer A', at: '2026-06-20T08:30:00Z', appVersion: '3.3' }];
   const zones = { gauge: { mode: 'utc' }, day: { zone: { mode: 'utc' }, startHour: 0 } };
-  const recordSummary = { name: 'well-a-gauge.csv', source: 'csv', n: qc.n, origin_ms: ORIGIN_MS, end_ms: endMs, hash: AI.hash16('fixture gauge record well-a-gauge.csv'), reduced: false, rawStored: 'none' };
+  const recordSummary = { name: record.name, source: record.source, n: record.n, origin_ms: record.origin_ms, end_ms: record.t[record.n - 1], hash: record.hash, reduced: false, rawStored: 'none' };
   const inputHash = AI.hash16(AI.canon({
     well: WELL, completion: null, depth: null, settings: SETTINGS, zones, history: { mode: 'date', date: dateOf(PROD_START_MS), cum: null }, allocationRows: rows,
     recordHash: recordSummary.hash, events: events.map((e) => ({ id: e.id, tc_ms: e.tc_ms, status: e.status })), overrides,
@@ -1284,37 +1473,48 @@ function genAnalysis() {
     ok: true, version: '1.0', appVersion: '3.3', runAt: RUN_AT, inputHash, resultHash,
     meta: META_FIX, well: WELL, completion: null, depth: null, settings: SETTINGS, zones,
     record: recordSummary, qc, events, missed, rates,
-    baseline: { k: RES.k, cvK: 0, kh: CF.kh(RES.k), tests: baseIds },
+    baseline: { k: kB, cvK: 0, kh: CF.kh(kB), tests: baseIds },
     tests, trend, overrides, stats: { evals: 264, fits: 7, slices: 14, ms: null }, warnings: [],
   };
-  return { analysis, rows, gens, evs, steps, tcH, memSteps };
+  return { analysis, rows, gens, evs, steps, tcH, memSteps, record };
 }
 
-// A small gauge record excerpt (B1 closing ±1 day, 5-min samples) from the same closed forms.
-function genRecord(gen, ev) {
-  const AI = autoInterp();
+// The SynthCase's own record: the reference case (k 45, S 5, q 800, tp 720 h from production start), 60 s samples from
+// 6 h before the closing to 72 h after it, the first shut-in sample 0.005 h after the closing; daily allocation rows.
+const SYN_PROD_START_MS = Date.UTC(2026, 3, 1, 9);
+function genSynthRecord(ref) {
+  const R = FIX_REF;
+  const tc = SYN_PROD_START_MS + R.tp * HOUR, end = tc + R.dtEnd * HOUR, step = 60000;
   const t = [], p = [];
-  const t0 = ev.tc - 6 * HOUR, t1 = ev.tc + 24 * HOUR;
-  const k = RES.k, m = CF.m(ev.q, k);
-  for (let ms = t0; ms <= t1; ms += 300000) {
+  for (let ms = tc - 6 * HOUR + Math.round(RES.dtFirst * HOUR); ms <= end; ms += step) {
     t.push(ms);
-    if (ms <= ev.tc) p.push(gen.pwf0 + RES.dpdtFlow * (ms - ev.tc) / HOUR);
-    else {
-      const dt = (ms - ev.tc) / HOUR, dte = CF.dte(dt, ev.tp);
-      const a = CF.dpIarf(dte, k, ev.S, m), w = ev.q * WELL.B * dt / (24 * RES.C);
-      p.push(gen.pwf0 + (a > 0 ? a * (1 - Math.exp(-w / a)) : w));
-    }
+    p.push(rnd(ms <= tc ? R.pStar - CF.dpDraw((ms - SYN_PROD_START_MS) / HOUR, R.q, R.S) : ref.pwf0 + CF.dpShut((ms - tc) / HOUR, R.tp, R.q, R.S)));
   }
-  return { ok: true, origin_ms: t[0], t, p, T: null, n: t.length, source: 'csv', name: 'well-a-gauge.csv', zone: { mode: 'utc' }, pUnitIn: 'psia', patm: 14.696,
-           elapsed: false, rollup: false, hash: AI.hash16(t.length + '|' + t[0] + '|' + p.map((x) => x.toFixed(3)).join(',')), warnings: [] };
+  const rows = [];
+  for (let d0 = Date.UTC(2026, 3, 1); d0 < end; d0 += DAY) {
+    const a = Math.max(d0, SYN_PROD_START_MS), b = Math.min(d0 + DAY, tc);
+    const hOn = Math.max(0, (b - a) / HOUR), V = R.q * hOn / 24;
+    rows.push({ date: dateOf(d0), oil: Math.round(V), gas: Math.round(V * WELL.Rs / 100) / 10, water: 0, hours: hOn });
+  }
+  return { record: gaugeRecord(t, p, 'synthetic case 100000', 'demo'), rows, tc };
 }
 
 function val(v, cat, dp, ref) { return { v, cat, dp, ref }; }
 
-function genSamples(A) {
+function genSamples(A, ref) {
   const an = A.analysis;
-  const B1 = an.tests[0], B3 = an.tests.find((t) => t.id === 'B3'), B6 = an.tests.find((t) => t.id === 'B6');
-  const record = genRecord(A.gens.B1, A.evs[0]);
+  const B3 = an.tests.find((t) => t.id === 'B3'), B6 = an.tests.find((t) => t.id === 'B6');
+  const record = A.record;
+  // a sealing-fault rival fit (PRiSM keeps the categorical BC in params), as WP1 reports one in models[]
+  const homB3 = B3.result.models[0], dF_ft = 2400, seDF = 300;
+  const modelFitFault = Object.assign(JSON.parse(JSON.stringify(homB3)), {
+    key: 'linearBoundary', base: 'linearBoundary', p: 4, bic: homB3.bic + 6.4, eligible: false, why: ['No T-up trigger: fitted for the BIC table only.'],
+    phys: { k: homB3.phys.k, S: homB3.phys.S, C: homB3.phys.C, dF_ft },
+    params: { Cd: homB3.params.Cd, S: homB3.params.S, dF: dF_ft / WELL.rw, BC: 'noflow' },
+    se: { k: homB3.se.k, S: homB3.se.S, C: homB3.se.C, dF_ft: seDF },
+    ci95: { k: homB3.ci95.k, S: homB3.ci95.S, C: homB3.ci95.C, dF_ft: [dF_ft - 1.96 * seDF, dF_ft + 1.96 * seDF] },
+    fullySeen: { status: 'not', value: dF_ft, bound: 'lower', text: 'Sealing fault not seen: the derivative stays flat to the end of the test.' },
+  });
   const trendTests = an.tests.map((t) => {
     const r = t.result;
     return {
@@ -1366,28 +1566,34 @@ function genSamples(A) {
     signature: null,
     reproducibility: { kind: 'notes', head: 'Notes', template: 'Reproducible: opening this project in the same app version and pressing Analyse gives the same displayed numbers.', values: {}, ev: [] },
   };
-  const truth = { model: 'homogeneous', k: 45, S: 5, C: 0.02, h: 50, phi: 0.2, mu: 1, B: 1.2, ct: 1e-5, rw: 0.354, q: 800, D: null, extra: {} };
+  // SynthCase: the reference case as the generator would emit it (single rate for 30 days = tp 720 h, closing at 09:00,
+  // 72 h build-up, 60 s samples, exact allocation), with its own record and allocation rows.
+  const R = FIX_REF;
+  const truth = { model: 'homogeneous', k: R.k, S: R.S, C: R.C, h: R.h, phi: WELL.phi, mu: R.mu, B: R.B, ct: WELL.ct, rw: WELL.rw, q: R.q, D: null, extra: {} };
   const given = { h: 52, phi: 0.2, ct: 1.05e-5, rw: 0.354, B: 1.21, mu: 1 };
+  const syn = genSynthRecord(ref);
   const caseSpec = {
     seed: 100000, stratum: 'hom', row: 0, truth, given,
-    history: { days: 60, variationPct: 10, earlierShutins: 1, truncate: false, intraDayChange: false, flushPct: 0, flushDecay_h: 0 },
-    test: { closeHour: 9, dtEnd_h: 72, dtSample_s: 60, sigma: 0.02, sigmaFlowFactor: 1, ar1Rho: null, quant: 0, spikes: 0, drift_psi_d: 0, tide: { M2: 0, K1: 0 }, ramp_s: 0, partialBefore: null },
-    alloc: { errPct: 3, bias: 0, ignoresShutin: false, hoursConflict_h: 0, resolution: 1 },
+    history: { days: R.tp / 24, variationPct: 0, earlierShutins: 0, truncate: false, intraDayChange: false, flushPct: 0, flushDecay_h: 0 },
+    test: { closeHour: new Date(syn.tc).getUTCHours(), dtEnd_h: R.dtEnd, dtSample_s: 60, sigma: 0.02, sigmaFlowFactor: 1, ar1Rho: null, quant: 0, spikes: 0, drift_psi_d: 0,
+            tide: { M2: 0, K1: 0 }, ramp_s: 0, partialBefore: null },
+    alloc: { errPct: 0, bias: 0, ignoresShutin: false, hoursConflict_h: 0, resolution: 1 },
   };
   const f = 1.0;
   const kStar = FORMULAS.kStar(truth, given, f), SStar = FORMULAS.SStar(truth, given, f);
   const synth = {
-    spec: caseSpec, record, allocation: { rows: A.rows.slice(0, 12) }, rateTable: null,
+    spec: caseSpec, record: syn.record, allocation: { rows: syn.rows }, rateTable: null,
     well: Object.assign({}, WELL, { h: given.h, ct: given.ct, B: given.B }),
-    truth: { tc_ms: A.evs[0].tc, k: truth.k, S: truth.S, model: 'homogeneous', f, qCorrect: 800, kStar, SStar,
-             plateaus: [{ dt0_h: 15.9, dt1_h: 56.0, kStar, SStar }], visible: { fault: false, comp: false, closed: false, distractor: false }, notAnalysable: false, partial: false },
+    truth: { tc_ms: syn.tc, k: truth.k, S: truth.S, model: 'homogeneous', f, qCorrect: R.q, kStar, SStar,
+             plateaus: [{ dt0_h: ref.result.iarf.dt0_h, dt1_h: ref.result.iarf.dt1_h, kStar, SStar }], visible: { fault: false, comp: false, closed: false, distractor: false },
+             notAnalysable: false, partial: false },
   };
   const kHat = kStar * 1.02, SHat = SStar - 0.2;
   const score = { matched: true, status: 'interpreted', abstained: false, fullyRight: true, ksRight: true, kRight: true, sRight: true, modelRight: true, strict: true,
                   falseSeen: false, distractorCaught: null, dkPct: FORMULAS.dkPct(kHat, kStar), dS: SHat - SStar, rateErrPct: 0.4,
                   label: { ks: 'high', model: 'medium', headline: 'medium' }, _kHat: kHat, _SHat: SHat };
   const input = {
-    record, stored: null, allocation: { rows: A.rows, gUnit: 'Mscf', resolution: { oil: 0.1, gas: 0.1, water: 0.1 } }, rateTable: null,
+    record: Object.assign({}, record, { t: record.t.slice(), p: record.p.slice(), zone: Object.assign({}, record.zone), warnings: [] }), stored: null, allocation: { rows: A.rows, gUnit: 'Mscf', resolution: { oil: 0.1, gas: 0.1, water: 0.1 } }, rateTable: null,
     well: WELL, completion: null, depth: null, history: { mode: 'date', date: dateOf(PROD_START_MS), cum: null },
     zones: { gauge: { mode: 'device' }, day: { zone: { mode: 'device' }, startHour: 0 } },
     settings: SETTINGS, overrides: an.overrides, workovers: [], meta: META_FIX,
@@ -1404,10 +1610,17 @@ function genSamples(A) {
     order: ['B3·I1', 'T2'],
   };
   return { BuildupSpec: A.gens.B1.specMem, GaugeRecord: record, AnalysisInput: input, TrendTests: trendTests, Review: review, Finding: finding,
-           Answer: answer, ReportModel: report, CaseSpec: caseSpec, SynthCase: synth, Score: score, Signoff: signoff, EvidenceIndex: evIndex };
+           Answer: answer, ReportModel: report, CaseSpec: caseSpec, SynthCase: synth, Score: score, Signoff: signoff, EvidenceIndex: evIndex,
+           ModelFitFault: modelFitFault };
 }
 
-function deepFreeze(o) { if (o && typeof o === 'object' && !Object.isFrozen(o)) { Object.freeze(o); Object.keys(o).forEach((k) => deepFreeze(o[k])); } return o; }
+function deepFreeze(o) {
+  if (!o || typeof o !== 'object' || Object.isFrozen(o)) return o;
+  Object.freeze(o);
+  if (Array.isArray(o)) { for (let i = 0; i < o.length; i++) if (o[i] && typeof o[i] === 'object') deepFreeze(o[i]); }
+  else Object.keys(o).forEach((k) => deepFreeze(o[k]));
+  return o;
+}
 let _fix = null;
 function buildFix() {
   if (_fix) return _fix;
@@ -1420,7 +1633,7 @@ function buildFix() {
     return { dt, hom, chosen: null };
   })();
   const A = genAnalysis();
-  const samples = genSamples(A);
+  const samples = genSamples(A, ref);
   const score = samples.Score;
   const scoreInputs = { kHat: score._kHat, SHat: score._SHat };
   delete score._kHat; delete score._SHat;
@@ -1429,14 +1642,16 @@ function buildFix() {
     analysis: A.analysis,
     samples,
     cal: fixCal(),
-    inputs: { well: WELL, res: RES, settings: SETTINGS, plan: PLAN, reference: { k: 45, S: 5, C: 0.02, h: 50, mu: 1, q: 800, B: 1.2, tp: 720, dtEnd: 72, pStar: 4000 },
-              origin_ms: ORIGIN_MS, prodStart_ms: PROD_START_MS, score: scoreInputs, specReference: ref.specMem },
+    inputs: { well: WELL, res: RES, settings: SETTINGS, plan: PLAN, reference: FIX_REF, e4S: E4_S,
+              sampling: { shut_ms: SHUT_SAMPLE_MS, flow_ms: FLOW_SAMPLE_MS, resolution_psi: Math.pow(10, -P_RES_DP), firstShut_h: RES.dtFirst },
+              origin_ms: ORIGIN_MS, prodStart_ms: PROD_START_MS, synProdStart_ms: SYN_PROD_START_MS, score: scoreInputs, specReference: ref.specMem },
   };
   deepFreeze(_fix);
   return _fix;
 }
-// Callers get a deep copy so a test can break a fixture without touching the cache.
-const clone = (o) => JSON.parse(JSON.stringify(o));
+// Callers get a deep copy so a test can break a fixture without touching the cache (structuredClone: the records are
+// tens of thousands of samples, and a JSON round trip of them would cost every access tens of milliseconds).
+const clone = (o) => (typeof structuredClone === 'function' ? structuredClone(o) : JSON.parse(JSON.stringify(o)));
 const FIX = {};
 ['result', 'analysis', 'samples', 'cal', 'inputs'].forEach((k) => Object.defineProperty(FIX, k, { enumerable: true, get: () => clone(buildFix()[k]) }));
 

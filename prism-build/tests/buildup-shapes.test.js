@@ -1,7 +1,10 @@
 // Build-up Surveillance — WP0 contract tests (docs/BUILDUP-SURVEILLANCE-PLAN.md §3.13, §9 WP0).
 //
-//   SH1  every fixture passes its own shape check (all §3.13 names covered); broken copies fail with a path
-//   SH2  fixture self-consistency: every derived number equals FORMULAS applied to its stored inputs (display precision)
+//   SH1  every fixture passes its own shape check (all §3.13 names covered); broken copies fail with a path; the WP0
+//        resolutions (categorical model params, se/ci95 keys, typed settings, event_add target, Infinity in text)
+//   SH2  fixture self-consistency: every derived number equals FORMULAS applied to its stored inputs (display precision),
+//        including the X axes (log10 Δt_e), window and shift geometry, p*, p1hr, S_kAnalytic, the trend copies, the T8
+//        cumulative, T11, T13, and the one gauge record the analysis is derived from
 //   SH3  canon / hash16 vectors: fixed inputs → fixed hex; key order does not matter; a 1e-15 perturbation does not
 //        change a display-mode hash; inputs mode rounds to 6 significant figures; the Round-8 build carries file 53
 'use strict';
@@ -56,6 +59,7 @@ module.exports = [
       sm.TrendTests.forEach((t, i) => ok('TrendTest', t, 'samples.TrendTests[' + i + ']'));
       ['BuildupSpec', 'GaugeRecord', 'AnalysisInput', 'Review', 'Finding', 'Answer', 'ReportModel', 'CaseSpec', 'SynthCase', 'Score'].forEach((n) => ok(n, sm[n], 'samples.' + n));
       ok('Signoff', sm.Signoff); ok('EvidenceIndex', sm.EvidenceIndex);
+      ok('ModelFit', sm.ModelFitFault, 'samples.ModelFitFault (categorical BC in params)');
       ok('Cal', fx.cal, 'FIX.cal');
       assert.deepStrictEqual(S.SHAPE_NAMES.filter((n) => !covered.has(n)), [], 'every §3.13 name has a passing fixture');
       // fixture facts the other work packages build on
@@ -107,6 +111,31 @@ module.exports = [
       expectFail(assert, broken('CaseSpec', sm.CaseSpec, (o) => { o.stratum = 'other'; }), 'stratum', 'stratum enum');
       expectFail(assert, broken('Cal', fx.cal, (o) => { o.thresholds.tauBic = null; }), 'thresholds.tauBic', 'threshold never null');
       expectFail(assert, broken('TrendTest', sm.TrendTests[0], (o) => { o.fullySeen = { status: 'n/a' }; }), 'fullySeen', 'TrendTest.fullySeen is the status string');
+      expectFail(assert, broken('BuildupResult', res, (o) => { o.warnings = [{ code: 'X', level: 'warn', text: 'value is Infinity', ev: [] }]; }), 'warnings[0].text', 'Infinity in text');
+      // WP0 resolutions: categorical model parameters (PRiSM keeps BC in params) pass in ModelFit and fitC4
+      assert.strictEqual(sm.ModelFitFault.params.BC, 'noflow');
+      const withFault = JSON.parse(JSON.stringify(res));
+      withFault.models.push(JSON.parse(JSON.stringify(sm.ModelFitFault)));
+      withFault.fitC4 = { modelKey: 'linearBoundary', params: Object.assign({}, sm.ModelFitFault.params), phys: Object.assign({}, sm.ModelFitFault.phys), r2: 0.9998, converged: true };
+      assert(S.checkShape('BuildupResult', withFault).ok, 'a linearBoundary rival and fitC4 with BC pass: ' + JSON.stringify(S.checkShape('BuildupResult', withFault).errors.slice(0, 4)));
+      expectFail(assert, broken('ModelFit', sm.ModelFitFault, (o) => { o.params.BC = { v: 'noflow' }; }), 'params.BC', 'object in params');
+      expectFail(assert, broken('ModelFit', res.models[0], (o) => { o.se = {}; }), 'se.k', 'se must carry k, S, C');
+      expectFail(assert, broken('ModelFit', res.models[0], (o) => { delete o.ci95.S; }), 'ci95.S', 'ci95 must carry k, S, C');
+      assert(S.checkShape('ModelFit', Object.assign(JSON.parse(JSON.stringify(res.models[0])), { se: { k: null, S: 0.1, C: null, extra: 2 } })).ok, 'se keys may be null; other keys open');
+      // typed settings: partial boolean, band/slope fractions, kHeld and confirm enums
+      expectFail(assert, broken('Settings', an.settings, (o) => { o.detect.partial = 'banana'; }), 'detect.partial', 'partial is a boolean');
+      expectFail(assert, broken('Settings', an.settings, (o) => { o.interp.band = 10; }), 'interp.band', 'band is a fraction, not %');
+      expectFail(assert, broken('Settings', an.settings, (o) => { o.interp.kHeld = 42; }), 'interp.kHeld', 'kHeld enum');
+      expectFail(assert, broken('Settings', an.settings, (o) => { o.trend.confirm = {}; }), 'trend.confirm', 'confirm enum');
+      expectFail(assert, broken('AnalysisInput', sm.AnalysisInput, (o) => { o.settings.interp.slope = 3; }), 'settings.interp.slope', 'slope is a fraction (in an AnalysisInput)');
+      assert.strictEqual(an.settings.detect.partial, true, 'FIX partial cuts classified (checkbox on)');
+      // WellInput.defaulted takes any key name (gas keys included), never an empty string
+      assert(S.checkShape('WellInput', Object.assign({}, an.well, { defaulted: ['sg', 'T_F'] })).ok, 'gas keys may be defaulted');
+      expectFail(assert, S.checkShape('WellInput', Object.assign({}, an.well, { defaulted: [''] })), 'defaulted[0]', 'empty defaulted key');
+      // Override.target: null only for event_add
+      const evAdd = { id: 'O2', kind: 'event_add', target: null, value: { t_ms: an.events[0].tc_ms + 3 * 86400000 }, reason: 'Typed closing time from the daily report.', who: 'Engineer A', at: '2026-06-21T08:00:00Z', appVersion: '3.3' };
+      assert(S.checkShape('Override', evAdd).ok, 'event_add with target null: ' + JSON.stringify(S.checkShape('Override', evAdd).errors));
+      expectFail(assert, S.checkShape('Override', Object.assign({}, evAdd, { kind: 'exclude' })), 'target', 'target null outside event_add');
       // the null rule: an output number may be null, NaN never
       assert(S.checkShape('BuildupResult', Object.assign(JSON.parse(JSON.stringify(res)), { final: Object.assign({}, res.final, { rinv_ft: null }) })).ok, 'null passes in an output number');
       const nan = JSON.parse(JSON.stringify(res)); nan.final.rinv_ft = NaN;
@@ -118,7 +147,8 @@ module.exports = [
     wp: WP,
     opts: false,
     run(app, assert) {
-      const F = S.FORMULAS, fx = S.FIX, an = fx.analysis, w = an.well;
+      // one copy of each fixture (every FIX access is a fresh deep copy)
+      const F = S.FORMULAS, fx = { analysis: S.FIX.analysis, result: S.FIX.result, samples: S.FIX.samples, inputs: S.FIX.inputs }, an = fx.analysis, w = an.well;
       let n = 0;
       const eq = (key, stored, recomputed, where) => {
         n++;
@@ -145,8 +175,15 @@ module.exports = [
         if (r.reach.fairShut_h !== null) eq('fairShut_h', r.reach.fairShut_h, F.shutOfDte(r.reach.fair_h, tp), where + ' reach');
         if (r.reach.goodShut_h !== null) eq('goodShut_h', r.reach.goodShut_h, F.shutOfDte(r.reach.good_h, tp), where + ' reach');
         eq('rDrift', r.quality.rDrift, F.rDrift(spec.driftPsiPerDay, dtEnd, f.mPrime), where + ' quality');
+        eq('dpdt_flow', spec.dpdt_flow, -f.m / (Math.LN10 * tp), where + ' spec (slope of the drawdown at closing)');
+        if (f.pStar !== null) eq('pStar', f.pStar, F.pStar(spec.pwf0, f.m, tp, F.logTerm(f.k, w.phi, w.mu, w.ct, w.rw), f.S), where + ' final p* from pwf0');
         if (r.iarf.found) {
-          eq('cycles', r.iarf.cycles, (r.iarf.X1 - r.iarf.X0) / Math.LN10, where + ' iarf (X in ln Δt_e, cycles in log10)');
+          // X0, X1 and line.shifts[].dX are log10 Δt_e (cycles); dt0_h/dt1_h are their shut-in times with the test's tp
+          eq('cycles', r.iarf.cycles, r.iarf.X1 - r.iarf.X0, where + ' iarf (cycles = X1 − X0, log10 Δt_e)');
+          eq('X0', r.iarf.X0, F.xOfDte(r.reach.t5_h), where + ' iarf (window starts at t5 %)');
+          eq('X1', r.iarf.X1, F.xOfDte(dte) - spec.opts.Lcyc, where + ' iarf (last full-window bin)');
+          eq('dt0_h', r.iarf.dt0_h, F.shutOfDte(F.dteOfX(r.iarf.X0), tp), where + ' iarf');
+          eq('dt1_h', r.iarf.dt1_h, F.shutOfDte(F.dteOfX(r.iarf.X1), tp), where + ' iarf');
           eq('level_psi', r.iarf.level_psi, F.mPrime(F.m(Dq, w.B, w.mu, f.k, w.h)), where + ' iarf (m′ = 70.6·qBμ/kh)');
         }
         if (r.line) {
@@ -155,6 +192,13 @@ module.exports = [
           eq('dkPct', r.agreement.dkPct, F.dkPct(r.line.k, f.k), where + ' agreement');
           eq('dS', r.agreement.dS, r.line.S - f.S, where + ' agreement');
           eq('khDiffPct', r.line.plateauCheck.khDiffPct, F.dkPct(r.line.kh, f.kh), where + ' plateau check');
+          eq('p1hr', r.line.p1hr, F.p1hr(r.line.pStar, r.line.m, tp), where + ' line (Horner at 1 h)');
+          eq('dt0_h', r.line.dt0_h, r.iarf.dt0_h, where + ' line window'); eq('dt1_h', r.line.dt1_h, r.iarf.dt1_h, where + ' line window');
+          r.line.shifts.forEach((sh, j) => {
+            eq('dX', Math.abs(sh.dX), Math.min(0.25, 0.2 * r.iarf.cycles), where + ' line.shifts[' + j + '] (δ = min(0.25, 0.2·span) cycle)');
+            eq('dt0_h', sh.dt0_h, F.shutOfDte(F.dteOfX(r.iarf.X0 + sh.dX), tp), where + ' line.shifts[' + j + '] window');
+            eq('dt1_h', sh.dt1_h, F.shutOfDte(F.dteOfX(r.iarf.X1 + sh.dX), tp), where + ' line.shifts[' + j + '] window');
+          });
         }
         // S_err composition (§4.6 item 15)
         const e = r.sErr;
@@ -168,6 +212,7 @@ module.exports = [
           eq('value', e.value, Math.max(e.floor, e.seS, e.dLineMatch, e.sWin, e.sTc, e.sPwf), where + ' sErr');
         } else if (e.mode === 'kHeld') {
           eq('S_k', r.kHeld.S_k, Math.abs(r.kHeld.refits[0].S - r.kHeld.refits[1].S) / 2, where + ' kHeld');
+          eq('S_kAnalytic', r.kHeld.S_kAnalytic, F.sKAnalytic(r.kHeld.delta, last(r.bins.dp), f.m), where + ' kHeld (§4.6 item 18)');
           eq('sK', e.sK, r.kHeld.S_k, where + ' sErr');
           eq('value', e.value, Math.max(e.floor, e.seS, e.sTc, e.sPwf, e.sK), where + ' sErr');
         }
@@ -220,6 +265,107 @@ module.exports = [
       const firstEx = used.find(ex);
       assert.strictEqual(tr.alerts.delta.raisedAt, firstEx.id, 'delta raised at the first used test that exceeds');
       assert.strictEqual(tr.alerts.delta.confirmedAt, used.slice(used.indexOf(firstEx) + 1).find(ex).id, 'delta confirmed at the next used test that exceeds');
+
+      // trend copies: series[] and TrendTest are copied from the tests
+      const DAY = 86400000, t0 = an.tests[0].tc_ms, tD = (ms) => (ms - t0) / DAY;
+      const byId = (id) => an.tests.find((t) => t.id === id);
+      tr.series.forEach((sr) => {
+        const t = byId(sr.id), r = t.result;
+        [['tDays', sr.tDays, tD(t.tc_ms)], ['S', sr.S, r.final.S], ['Serr', sr.Serr, r.sErr.value], ['k', sr.k, r.final.k], ['pExt', sr.pExt, r.final.pExt],
+         ['pwf0Datum', sr.pwf0Datum, t.pwf0Datum]].forEach((c) => eq(c[0], c[1], c[2], 'trend.series ' + sr.id));
+        assert.deepStrictEqual(sr.conf, { ks: r.confidence.ks, model: r.confidence.model, headline: r.confidence.headline }, 'trend.series ' + sr.id + ' conf');
+      });
+      fx.samples.TrendTests.forEach((tt) => {
+        const t = byId(tt.id), r = t.result;
+        [['t_ms', tt.t_ms, t.tc_ms], ['tDays', tt.tDays, tD(t.tc_ms)], ['S', tt.S, r.final.S], ['Serr', tt.Serr, r.sErr.value], ['SerrExt', tt.SerrExt, r.sErr.ext.value],
+         ['k', tt.k, r.final.k], ['kh', tt.kh, r.final.kh], ['C', tt.C, r.final.C], ['m', tt.m, r.final.m], ['mPrime', tt.mPrime, r.final.mPrime],
+         ['pStarDatum', tt.pStarDatum, t.pStarDatum], ['pExtDatum', tt.pExtDatum, t.pExtDatum], ['piModelDatum', tt.piModelDatum, r.final.piModel],
+         ['pwf0Datum', tt.pwf0Datum, t.pwf0Datum], ['Dq', tt.Dq, t.Dq], ['rinv_ft', tt.rinv_ft, r.final.rinv_ft], ['dpSkin_psi', tt.dpSkin_psi, r.final.dpSkin_psi],
+         ['iarfDt0_h', tt.iarfDt0_h, r.iarf.dt0_h], ['dtEnd_h', tt.dtEnd_h, t.dtEnd_h], ['dteEnd_h', tt.dteEnd_h, last(r.bins.dte)],
+         ['reachFair_h', tt.reachFair_h, r.reach.fair_h], ['reachGood_h', tt.reachGood_h, r.reach.good_h],
+         ['reachFairShut_h', tt.reachFairShut_h, r.reach.fairShut_h], ['reachGoodShut_h', tt.reachGoodShut_h, r.reach.goodShut_h]].forEach((c) => eq(c[0], c[1], c[2], 'TrendTest ' + tt.id));
+        assert.strictEqual(tt.SerrMode, r.sErr.mode); assert.strictEqual(tt.chosen, r.chosen.key); assert.strictEqual(tt.fullySeen, r.chosen.fullySeen.status);
+        assert.strictEqual(tt.kHeld, !!r.kHeld); assert.strictEqual(tt.excluded, t.status === 'excluded'); assert.strictEqual(tt.date, t.date);
+        assert.deepStrictEqual(tt.conf, { ks: r.confidence.ks, model: r.confidence.model, headline: r.confidence.headline }, 'TrendTest ' + tt.id + ' conf');
+        assert.deepStrictEqual(tt.bins, { dte: r.bins.dte, dp: r.bins.dp }, 'TrendTest ' + tt.id + ' bins');
+      });
+
+      // S(t) for T8 and T13: piecewise linear through the used tests with the onset knot (τ̂, S_base); constant outside
+      const tau = tr.onset.tauDays;
+      const knots = used.filter((t) => tD(t.tc_ms) < tau).map((t) => [tD(t.tc_ms), t.result.final.S]).concat([[tau, Sb]])
+        .concat(used.filter((t) => tD(t.tc_ms) > tau).map((t) => [tD(t.tc_ms), t.result.final.S]));
+      const lin = (k, x) => { if (x <= k[0][0]) return k[0][1]; for (let i = 1; i < k.length; i++) if (x <= k[i][0]) return k[i - 1][1] + (k[i][1] - k[i - 1][1]) * (x - k[i - 1][0]) / (k[i][0] - k[i - 1][0]); return last(k)[1]; };
+      const days = an.rates.days, midD = (d) => tD(0.5 * (d.t0_ms + d.t1_ms));
+      // T8 cumulative since τ̂ = Σ_days q_d·[(X + S(t_d))/(X + S_base) − 1]
+      eq('cumAtStake', tr.pi.cumAtStake, days.filter((d) => midD(d) >= tau).reduce((a, d) => a + F.atStakeDay(d.q, X, lin(knots, midD(d)), Sb), 0), 'trend pi (T8 cumulative)');
+      // T5: the recent trend needs ≥ 3 tests after τ̂
+      const nPost = used.filter((t) => tD(t.tc_ms) > tau).length;
+      assert.strictEqual(tr.recent.n, nPost, 'recent.n = tests after the onset');
+      if (nPost < 3) ['slopePer30d', 'wlsSlopePer30d', 'mkZ', 'mkP'].forEach((k) => assert.strictEqual(tr.recent[k], null, 'recent.' + k + ' is null with n < 3'));
+      // T11 model-free ΔS at Δt_ref (used tests with an IARF window, reference = the first)
+      const wins = used.filter((t) => t.result.iarf.dt0_h !== null);
+      const minEnd = Math.min.apply(null, wins.map((t) => t.dtEnd_h));
+      const dtRef = Math.max.apply(null, wins.map((t) => t.result.iarf.dt0_h).filter((x) => x <= minEnd));
+      const atRef = (t) => {
+        const b = t.result.bins, dteEnd = last(b.dte), dte = F.dte(dtRef, t.dtEnd_h * dteEnd / (t.dtEnd_h - dteEnd));
+        const i = b.dte.findIndex((x) => x >= dte);
+        return { dte, dp: b.dp[i - 1] + (b.dp[i] - b.dp[i - 1]) * Math.log(dte / b.dte[i - 1]) / Math.log(b.dte[i] / b.dte[i - 1]) };
+      };
+      assert.deepStrictEqual(tr.modelFree.map((r) => r.id), wins.slice(1).map((t) => t.id), 'T11 rows: the used tests with a window after the reference');
+      tr.modelFree.forEach((row) => {
+        const t = byId(row.id), b = byId(row.refId), a = atRef(t), c = atRef(b);
+        assert.strictEqual(row.refId, wins[0].id, 'T11 reference');
+        eq('dS', row.dS, F.modelFreeDS(a.dp, t.Dq, c.dp, b.Dq, b.result.final.m / b.Dq, a.dte, c.dte), 'trend modelFree ' + row.id);
+        eq('fittedDS', row.fittedDS, t.result.final.S - b.result.final.S, 'trend modelFree ' + row.id);
+        assert.strictEqual(row.agrees, Math.abs(row.dS - row.fittedDS) <= Math.max(0.3, t.result.sErr.value), 'T11 agrees ' + row.id);
+      });
+      // T13 PI cross-check: median J_obs/J_pred on clean flowing days between consecutive used tests
+      const pK = used.filter((t) => t.result.final.pExt !== null).map((t) => [t.tc_ms, t.result.final.pExt]);
+      tr.piCheck.rows.forEach((row, i) => {
+        const a = used[i], b = used[i + 1];
+        assert.deepStrictEqual([row.from, row.to], [a.id, b.id], 'T13 interval ' + i);
+        const rj = days.filter((d) => d.cls === 'clean' && d.pwfMean_psia !== null && 0.5 * (d.t0_ms + d.t1_ms) > a.tc_ms && 0.5 * (d.t0_ms + d.t1_ms) < b.tc_ms)
+          .map((d) => F.jObs(d.q, lin(pK, 0.5 * (d.t0_ms + d.t1_ms)), d.pwfMean_psia) / F.jPred(an.baseline.k, w.h, w.B, w.mu, X, lin(knots, midD(d))));
+        assert(rj.length >= 5, 'T13 interval ' + i + ' has clean days');
+        eq('RJ', row.RJ, median(rj), 'trend piCheck ' + row.from + '→' + row.to);
+      });
+      assert.strictEqual(tr.piCheck.consistent, tr.piCheck.rows.every((r) => r.RJ >= 0.8 && r.RJ <= 1.25), 'T13 consistent = every RJ in [0.8, 1.25]');
+
+      // the one gauge record: analysis.record, QC, events, spec sampling and daily pwf are derived from it
+      const rec = fx.samples.GaugeRecord, ai = fx.samples.AnalysisInput;
+      ['n', 'origin_ms', 'hash'].forEach((k) => assert.strictEqual(an.record[k], rec[k], 'analysis.record.' + k + ' = GaugeRecord.' + k));
+      assert.strictEqual(an.record.end_ms, last(rec.t), 'analysis.record.end_ms = last sample');
+      assert.strictEqual(ai.record.hash, an.record.hash, 'AnalysisInput.record is the analysed record (raw usable per §3.11)');
+      assert.strictEqual(an.qc.n, rec.n, 'qc.n');
+      const diffs = []; for (let j = 1; j < rec.n; j++) diffs.push((rec.t[j] - rec.t[j - 1]) / 1000);
+      const sorted = diffs.slice().sort((x, y) => x - y), q = (p) => sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))];
+      assert.strictEqual(an.qc.dtMed_s, median(diffs), 'qc.dtMed_s'); assert.strictEqual(an.qc.dtP05_s, q(0.05), 'qc.dtP05_s'); assert.strictEqual(an.qc.dtP95_s, q(0.95), 'qc.dtP95_s');
+      an.events.forEach((e) => {
+        assert.strictEqual(e.j1, e.j0 + 1, e.id + ' j1 = j0 + 1');
+        assert(rec.t[e.j0] <= e.tc_ms && rec.t[e.j1] > e.tc_ms, e.id + ': j0 is the last sample at or before t_c, j1 the first after it');
+        assert.near(rec.p[e.j0], e.pwf0, 0.0006, e.id + ' pwf0 = record pressure at t_c');
+      });
+      an.tests.forEach((t) => {
+        const e = an.events.find((x) => x.id === t.eventId);
+        eq('pwf0', t.spec.pwf0, e.pwf0, t.id + ' spec.pwf0 = event pwf0');
+        const d = []; for (let j = e.j1 + 1; j < rec.n && rec.t[j] <= e.tEnd_ms; j++) d.push((rec.t[j] - rec.t[j - 1]) / 3600000);
+        eq('dtSample_h', t.spec.dtSample_h, median(d), t.id + ' spec.dtSample_h = median shut-in sampling');
+      });
+      const shutIn = (ms) => an.events.some((e) => ms > e.tc_ms && ms <= e.tEnd_ms);
+      let jr = 0;
+      days.forEach((d) => {
+        let sum = 0, c = 0;
+        while (jr < rec.n && rec.t[jr] < d.t0_ms) jr++;
+        for (let j = jr; j < rec.n && rec.t[j] < d.t1_ms; j++) if (!shutIn(rec.t[j])) { sum += rec.p[j]; c++; }
+        if (d.pwfMean_psia !== null) eq('pwfMean_psia', d.pwfMean_psia, sum / c, 'rates.days ' + d.date + ' (mean flowing sample)');
+        else assert(d.hOn < 0.5, 'rates.days ' + d.date + ': pwfMean null only on a shut day');
+      });
+      // the SynthCase record matches its own spec
+      const sr = fx.samples.SynthCase, sd = []; for (let j = 1; j < sr.record.n; j++) sd.push((sr.record.t[j] - sr.record.t[j - 1]) / 1000);
+      assert.strictEqual(median(sd), sr.spec.test.dtSample_s, 'SynthCase record sampling = spec.test.dtSample_s');
+      assert(sr.record.t[0] < sr.truth.tc_ms && last(sr.record.t) <= sr.truth.tc_ms + sr.spec.test.dtEnd_h * 3600000, 'SynthCase record spans the closing');
+      assert.strictEqual(new Date(sr.truth.tc_ms).getUTCHours(), sr.spec.test.closeHour, 'SynthCase closeHour');
+      eq('hours', sr.allocation.rows.reduce((a, r) => a + r.hours, 0), sr.spec.history.days * 24, 'SynthCase flowing hours = history');
       // synthetic truth (§5.3) and score
       const sc = fx.samples.SynthCase, cs = sc.spec;
       eq('kStar', sc.truth.kStar, F.kStar(cs.truth, cs.given, sc.truth.f), 'SynthCase truth');

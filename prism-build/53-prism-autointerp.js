@@ -12,7 +12,9 @@
 //   "changed after sign-off". WP1 adds the rest of §3.1 to this file and
 //   leaves these two functions untouched.
 //
-// canon(obj, mode) → canonical JSON string
+// canon(obj, mode) → canonical JSON string. These rules are normative: plan
+// §3.1 "WP0 resolutions" and §8.4 point here, and the code below implements
+// exactly this list (DISPLAY_RULES holds the full key-name table).
 //   • Object keys sorted (UTF-16 code-unit order), no whitespace.
 //   • NaN, +Infinity, −Infinity → null; −0 → 0; |v| < 1e-12 → 0 in both modes,
 //     so a value that is 0 on one engine and 2e-16 on another hashes the same.
@@ -23,7 +25,11 @@
 //   • mode 'inputs' (also the default for a missing or unknown mode): every
 //     number to 6 significant figures, except epoch milliseconds (keys that
 //     end in "_ms"), which are rounded to whole seconds — 6 significant
-//     figures of an epoch-ms value would lose hours.
+//     figures of an epoch-ms value would lose hours. The rule goes by the key
+//     name only, so it also rounds a millisecond DURATION whose key ends in
+//     "_ms" (e.g. store.encode tScale_ms) to whole seconds, in both modes:
+//     name sub-second durations in another unit (_s, _h) or keep them out of
+//     hashed objects.
 //   • mode 'display': each number is rounded to its display precision
 //     (plan §8.4), chosen from the property name (first rule that matches):
 //       epoch      key ends "_ms"                      → whole seconds

@@ -1,6 +1,6 @@
 # Build-up Surveillance (v3.3) — implementation plan
 
-> **Status: plan, reviewed (2026-10-31); WP0 done (2026-10-31)** — FILES, the 53 skeleton (`canon`/`hash16`, frozen), `tests/_buildup-shapes.js` and SH1–SH3 landed; WP1–WP7 can start. This revision resolves the engineering and architecture
+> **Status: plan, reviewed (2026-10-31); WP0 done (2026-10-31; review fixes the same day, see §3.1 "WP0 resolutions")** — FILES, the 53 skeleton (`canon`/`hash16`, frozen), `tests/_buildup-shapes.js` and SH1–SH3 landed; WP1–WP7 can start. This revision resolves the engineering and architecture
 > review; Appendix B lists the review notes. Literature is cited by author, year, title and SPE number; numbers marked
 > "no. to verify" never go into the app.
 
@@ -41,7 +41,7 @@
 | D7 | IARF window | The **earliest** plateau run after the storage hump; inside it, the longest window that passes. This deviates from the requirement's "longest window" (a later plateau is often a boundary or a second zone); the deviation is stated in the I1 text and the limitations, and the longest qualifying window is always reported. Tolerances widen with noise up to caps (band 0.20, slope 0.06), with the slope standard error from the noise model. Reported grades use the requirement's fixed ±10 % / ±0.03: a widened window is "fair (noise-widened)" and fails KH1 | Window stability across tests; honest grades under noise |
 | D8 | Model choice | BIC on the **log-Δp block** (the Δp part of what the fit minimises), on a common log-spaced point set (12 per cycle), with n_eff from lag-1 autocorrelation and a relative variance floor. A rival must beat homogeneous by τ (default 10, calibrated so the false-rival rate is ≤ 5 %) | One residual definition for fit, BIC and standard errors; scale-free across tests |
 | D9 | Line vs match | One rule, defined once in `PRiSM_autoInterp.DEFAULTS.agree`: k ±5 % and S ±0.5, or "bias explained" within 3 % and 0.3. Both the page and the PRiSM Skin check use it. 34's line-vs-derivative-plateau check (5 %, 0.3) stays as a separate sanity check, labelled as such | One threshold set |
-| D10 | S_err | Line-based tests: `max(floor 0.2, se_S·√(n/n_eff), \|S_line − S_match\|, S_win, S_tc, S_pwf)`. k-held tests: `max(floor, se_S·√(n/n_eff), S_tc, S_pwf, S_k)`, where S_k includes the k spread and the test's own rate error. The C-held half-range is reported separately (S_err,ext) and feeds the label. The floor is calibrated by coverage | Requirement §4 plus the window, closing-time, flowing-pressure and held-k terms |
+| D10 | S_err | Line-based tests: `max(floor 0.2, se_S·√(n/n_eff), \|S_line − S_match\|, S_win, S_tc, S_pwf)`. k-held tests: `max(floor, se_S·√(n/n_eff), S_tc, S_pwf, S_k)`, where S_k includes the k spread and the test's own rate error. se_S·√(n/n_eff) is `ModelFit.se.S` as stored (inflated once, §4.6 item 6), never inflated again. The C-held half-range is reported separately (S_err,ext) and feeds the label. The floor is calibrated by coverage | Requirement §4 plus the window, closing-time, flowing-pressure and held-k terms |
 | D11 | Alerts | Delta: `S − S_err − S_base > 2` (requirement form, default). Option `bu_t_basevar` uses `√(S_err² + σ_base²)`. WP8 picks the shipped default from the sequence benchmark's false-alarm rate. Absolute: `S − S_err > 5`, on **mechanical skin** when completion data exist, else on total skin labelled "may include geometric pseudo-skin". Status `none` / `possible` / `provisional` / `confirmed`; `possible` when only tests excluded as low exceed the threshold | Requirement §5; the label gate must not hide a rise |
 | D12 | Rates and zones | Each day's volume is spread over the detected flowing hours. The gauge zone and the production-day zone are **resolved to IANA names** at the first analysis (`device` → `Intl.DateTimeFormat().resolvedOptions().timeZone`), stored and hashed, and every conversion uses `Intl` with that name. Day lengths come from the actual boundaries (23/25 h). Closing-day volumes from less than 6 flowing hours are not used for Δq. An offset scan warns on a better-fitting offset. Partial cuts are classified, never interpreted | Requirement §3 and §9 (reproducible on any device) |
 | D13 | History before the data | Inputs: production start date or cumulative. If unknown, prepend `max(30 d, 10 × longest Δt_end)` at the first allocated rate, flag it, and run a doubling check (more than 2 % change in the IARF derivative caps the label at medium). With an estimated history p* is reported as a range (prepend ×0.5, ×2, ×10) and no rule uses p* or its trend (depletion, background slope, R4, V2, T13); the drift input is used instead | p* is wrong by about −m·log10(tp_true/tp_assumed) while S cancels |
@@ -341,7 +341,7 @@ WBS–skin hump as linear flow), and `PRiSM_deconvolve` (synchronous, 1.7 s). A 
 | `pStarRange(prep, line, spec)` | | `{lo, hi, byFactor:{0.5, 1, 2, 10}}` when `history.estimated`, else `null` |
 | `pExt(prep, fit, family)` | `family` `'infinite'\|'closed'`; `fit` the test's chosen fit (closed family: r_e from the analysis) | psia at the gauge: p* (infinite) or p̄ (closed) |
 | `kHeldJob(prep, opts)` | `opts {k, delta}` | `Job<KHeld>`: the k-held fit plus two refits at k·(1 ± δ) |
-| `sErr(parts)` | `{mode:'line'\|'kHeld'\|'model', seS, nOverNeff, sLine, sMatch, sWin, sTc, sPwf, sK, sC, sSens, floor}` | `SErr` |
+| `sErr(parts)` | `{mode:'line'\|'kHeld'\|'model', seS, sLine, sMatch, sWin, sTc, sPwf, sK, sC, sSens, floor}`; `seS` = the chosen fit's `ModelFit.se.S`, already inflated by √(n/n_eff) (no separate `nOverNeff`) | `SErr` |
 | `sensitivity(final, well, ranges)` | `ranges {req, typ}`, each `{h, phi, ct, rw, B, mu, q}` fractions (§4.6 item 16) | `Sensitivity` |
 | `confidence(ev, cal)` | `ev` = `EvidenceVector` (below); `cal` = `PRiSM_autoInterpCal` or null | `Confidence` |
 | `rinv(k, dt_h, well)` | | ft: `0.0325·√(k·Δt/(φμct))` |
@@ -423,12 +423,12 @@ tideRemoved:bool, warnings}`, where:
             seed: { tUs_h, tHump_h } | null, humpConsistent: bool|null, ev:['W1','W2','W3'] },
   reach:  { t10_h, t5_h, fair_h, good_h, fairShut_h: number|null, goodShut_h: number|null, reachable: bool, ev:['W4'] },
   iarf:   { found: bool, grade: 'good'|'fair'|'none', noiseWidened: bool, status: 'ok'|'tooShort'|'expectedNotFound',
-            dt0_h, dt1_h, X0, X1, cycles, level_psi, slope, slopeSE, slopeLast, slopeLastSE, band, slopeTol, noiseLimited: bool,
+            dt0_h, dt1_h, X0, X1 /* log10 Δt_e; cycles = X1 − X0 */, cycles, level_psi, slope, slopeSE, slopeLast, slopeLastSE, band, slopeTol, noiseLimited: bool,
             pointSkin: { spread, min, max }, longest: null | { dt0_h, dt1_h, cycles },
             secondLevel: null | { dt0_h, dt1_h, level_psi, ratio }, laterPlateaus: [{dt0_h, dt1_h, level_psi}],
             forced: bool, reason: string, ev:['I1','I2','I3','I4','I6'] },
   line:   null | { method:'superposition'|'horner', k, kh, S, m, pStar, pStarRange: null|{lo, hi}, p1hr, r2, dt0_h, dt1_h, n,
-                   shifts: [ { dX, dt0_h, dt1_h, S, bS: number|null } ],      // S_win lines (0, 1 or 2)
+                   shifts: [ { dX, dt0_h, dt1_h, S, bS: number|null } ],      // S_win lines (0, 1 or 2); dX in log10 cycles (− earlier)
                    plateauCheck: { khDiffPct, dS, pass }, ev:['L1','L2','L3'] },
   triggers:{ up: bool, down: bool, level: bool, none: bool, noneSkipped: bool, fired: ['T-up', ...], ev:['M2'] },
   flags:  [ { code:'valley'|'halfLate'|'earlyQuarter'|'earlyHalf'|'humpDp'|'steepStorage'|'negLate'|'fracHalf',
@@ -500,6 +500,38 @@ rivals:{composite:{freezeF:true, M:[0.05,20]}, closedStarts:[0.7,1.0,1.4]},
 round:{dBic:0.1, span:0.01, slope:0.001, ratio:0.001}}`.
 `costMs` is the measured desktop cost of one 60-point pd + pd′, keyed by the sign of S (`neg` for S < 0; WP1 measures and freezes the
 values). Values marked "cal" in §4.10 are overridden by `PRiSM_autoInterpCal.thresholds` when that table is present and `calibrated:true`.
+
+**WP0 resolutions (normative for every WP; encoded in `tests/_buildup-shapes.js`).**
+- **`canon` rules.** The header of `53-prism-autointerp.js` is normative; in short:
+  - keys sorted (UTF-16 order), no whitespace; NaN/±Infinity → `null`; −0 → 0; **|v| < 1e-12 → 0 in both modes**; `undefined`,
+    functions and symbols dropped from objects (`null` in arrays); typed arrays as arrays; Dates as ISO strings; a cycle → `null`;
+  - `inputs` (also the default mode): 6 significant figures, except **every key ending in `_ms`, rounded to whole seconds**. The rule
+    goes by the key name, so it also rounds millisecond durations (for example `store.encode` `tScale_ms`) in both modes. Name
+    sub-second durations in another unit (`_s`, `_h`) or keep them out of hashed objects;
+  - `display`: the precision is chosen from the key name, first match wins (the full table is `DISPLAY_RULES` in 53). Epoch `_ms`
+    → whole seconds; counts (`n`, `nEval`, `iterations`, `seed`, `j0`, …) are kept when they are integers; `…Pct…` → 1 dp; ΔBIC
+    (`bic`, `dBic…`) → 1 dp; skin (`S`, `dS`, `Serr`, `sErr`, `sWin`, `S_…`, …) → 2 dp; k (`k`, `kh`, `kStar`, …) and C (`C`,
+    `C_us`, `Cd`, `CD`) → 3 significant figures; pressure (`p`, `pi`, `dp`, `m`, `mPrime`, `pwf…`, `pStar…`, `pExt…`, `…_psi(a)`)
+    → 1 dp; rate (`q`, `Dq`, `rateAtStake`, `cumAtStake`, `V`, …) → 1 dp; time (`…_h`, `dt`, `dte`, `t`, `…Days`) → 3 dp; `…_s` → 0 dp;
+    distance (`…_ft`, `rw`) → 0 dp. For pressure, rate, time, seconds and distance, **3 significant figures are used instead when that
+    is finer**, so 0.012 psi, 0.0028 h or rw = 0.354 ft keep 3 figures. `v`, `value`, `lo`, `hi`, `min`, `max`, `range`, `ext` and
+    numeric keys inherit the parent key's rule, array elements take the array key's rule, and every other key uses **4 significant
+    figures**.
+- **X axes.** `bins.X` is ln Δt_e (the derivative's abscissa, D6). `iarf.X0`, `iarf.X1` and `line.shifts[].dX` are **log10 Δt_e**
+  (cycles): cycles = X1 − X0, and a shifted window is [X0 + dX, X1 + dX]. `dt0_h`/`dt1_h` are the shut-in times of 10^X0 and 10^X1,
+  converted with the test's effective tp (Δt = Δt_e·tp/(tp − Δt_e)).
+- **S_err.** `sErr.seS` is the chosen fit's `ModelFit.se.S`, which item 6 has already inflated by √(n/n_eff). Every "se_S·√(n/n_eff)"
+  in D10 and §4.6 item 15 means that stored value: it is never inflated twice.
+- **Model parameters.** `ModelFit.params` and `fitC4.params` hold numbers or the categorical values PRiSM keeps in params (strings such
+  as linearBoundary `BC` `'noflow'|'constP'`, booleans), so a rival fit restores in PRiSM unchanged. `ModelFit.se` and `ci95` always
+  carry `k`, `S` and `C` (each may be `null`); other keys are open.
+- **C-held.** With `triggered:false`: `mode:'pair'`, `refits:[]`, the ranges collapse to the fit's own C, k and S, and `S_C = 0`.
+- **Keys and nulls.** The keys listed in §3 are required; a key written `key?` may be absent; the stored copy drops `curves`, `bins.X`
+  and `bins.dte`. `BuildupResult.evidence?` holds the `EvidenceVector` that is stored with the result. Extra keys are allowed and
+  enumerations are exact. In output shapes every number is finite or `null`, except array samples and time anchors, which are always
+  finite. In input shapes a number may be `null` only where §3 writes `|null`.
+- **Text.** Plain text under 300 characters (notes, recommendations and limitations ≤ 600), and never contains `null`, `undefined`,
+  `NaN`, `Infinity` or `[object Object]`.
 
 ### 3.2 Changes to `PRiSM_fitPhysical` / `PRiSM_physicalModel` / `PRiSM_lm` (05, 33; WP1)
 
@@ -677,17 +709,21 @@ detectability:{ok:bool, pStarMinusPwf_psi:number|null, Ts_psi}, tooShort:[eventI
 
 WellInput = { fluid: 'oil'|'gas'|'water_inj', h, phi, mu, B, ct, rw, re_ft: number|null, Pb: number|null, Rs: number|null,
               gas: null | { sg, T_F, co2, h2s, n2, pseudoTime: bool, pdew: number|null, apiCond: number|null, Mo: number|null },
-              Bw, muw, allocAccPct: 5, driftPsiPerDay: 0.01, defaulted: [string],
+              Bw, muw, allocAccPct: 5, driftPsiPerDay: 0.01, defaulted: [string],   // any WellInput or gas key name ('h', 'sg', 'T_F', …)
               sens: { h:0.2, phi:0.1, ct:0.3, rw:0.05, B:0.05, mu:0.2, q:0.1 } }
 Completion = { hp_ft, htop_ft, theta_deg, kvkh: [lo, hi], perf: null | { spf, lp_in, rp_in, phase_deg } }
 Depth      = { gaugeTVD, datumTVD, grad, gradFlow: number|null }
-Settings   = { detect: {winMin, riseMin, riseSig, persistMin, minDur_h, gapN, spike, partial},
-               interp: {Lcyc, band, slope, minCycles, rivals, cheld, kHeld, tide},
-               trend:  {baseN, delta, abs, basevar, confirm, price: number|null, enabled: 'auto'|'on'|'off'},
+Settings   = { detect: {winMin, riseMin, riseSig, persistMin, minDur_h, gapN, spike, partial: bool},
+               interp: {Lcyc, band, slope, minCycles, rivals, cheld, kHeld: 'auto'|'off', tide},   // band, slope: fractions
+               trend:  {baseN, delta, abs, basevar, confirm: 'next'|'immediate', price: number|null, enabled: 'auto'|'on'|'off'},
                report: {detail: 'selected'|'all'} }
 Override   = { id: 'O7', kind: 'exclude'|'include'|'window'|'model'|'event_add'|'event_drop'|'tc',
-               target: 'B3'|'E5', value: any, reason: string /* ≥ 5 chars */, who, at: ISO, appVersion }
+               target: 'B3'|'E5'|null, value: any, reason: string /* ≥ 5 chars */, who, at: ISO, appVersion }
 ```
+
+`Settings.interp.band` and `interp.slope` are fractions, as in `DEFAULTS.iarf` (band 0.10 is the 10 % of `bu_i_band`; the page divides
+the percentage control by 100). `trend.delta` and `trend.abs` are in skin units. `Override.target` is `null` only for `event_add`: a typed
+time or a missed-list entry has no event id yet, and the next Analyse assigns the new `E<n>`. The time goes in `value`.
 
 Edited inputs are not dialog overrides: at the next Analyse after a sign-off (or any earlier run), `run` writes one audit entry
 `kind:'input'` with the field diff against the previous run's inputs and an optional reason (§6.4).
@@ -787,7 +823,7 @@ CaseSpec = { seed, stratum: 'hom'|'fault'|'comp'|'closed'|'dualpor'|'channel'|'w
   given:   { h, phi, ct, rw, B, mu },          // the inputs the engine receives (primes, §5.3)
   history: { days, variationPct, earlierShutins, truncate: bool, intraDayChange: bool, flushPct, flushDecay_h },
   test:    { closeHour, dtEnd_h, dtSample_s, sigma, sigmaFlowFactor, ar1Rho: number|null, quant, spikes, drift_psi_d,
-             tide: {M2, K1}, ramp_s, partialBefore: number|null },
+             tide: {M2, K1}, ramp_s, partialBefore: number|null },   // rate fraction f cut before the closing: q_after = (1 − f)·q_before
   alloc:   { errPct, bias, ignoresShutin: bool, hoursConflict_h, resolution } }
 SynthCase = { spec, record: GaugeRecord, allocation: { rows }, rateTable: null|[...], well: WellInput,
               truth: { tc_ms, k, S, model, f, qCorrect, kStar, SStar, plateaus: [ {dt0_h, dt1_h, kStar, SStar} ],
@@ -921,13 +957,37 @@ G.WTS_calcRegistry.buildup = {
 ### 3.13 Contract fixtures (`tests/_buildup-shapes.js`, WP0, frozen)
 
 It exports:
-- `checkShape(name, obj) → {ok, errors:[path]}`, with names `BuildupSpec`, `BuildupResult`, `ModelFit`, `KHeld`, `Reach`, `GaugeRecord`,
-  `QC`, `Event`, `RateHistory`, `AnalysisInput`, `Analysis`, `TestEntry`, `TrendTest`, `Trend`, `Review`, `Finding`, `Answer`,
-  `ReportModel`, `CaseSpec`, `SynthCase`, `Score` and `Cal`;
-- fixture objects **generated from closed-form values** (homogeneous IARF formulas, Appendix A): `FIX.analysis` (a 6-test oil analysis
-  with a confirmed delta alert, one excluded test and one k-held test) and `FIX.result`, a reference-case `BuildupResult`;
-- `FORMULAS`, a test-only table of the derived quantities (Δp_skin, m, PI ratio, rate at stake, dkPct, r_inv), used by the fixture
-  self-consistency test (SH2). WP5 writes its own runtime registry; RV12 asserts that both agree on `FIX.analysis`.
+- `checkShape(name, obj) → {ok, errors:['<path>: <reason>']}`, with names `BuildupSpec`, `BuildupResult`, `ModelFit`, `KHeld`, `Reach`,
+  `GaugeRecord`, `QC`, `Event`, `RateHistory`, `AnalysisInput`, `Analysis`, `TestEntry`, `TrendTest`, `Trend`, `Review`, `Finding`,
+  `Answer`, `ReportModel`, `CaseSpec`, `SynthCase`, `Score` and `Cal` (`SHAPE_NAMES`). The helper shapes (`BuildupSpecStored`, `Iarf`,
+  `Line`, `Settings`, `Override`, `WellInput`, `Warning`, …) are checkable too (`SHAPES`);
+- fixture objects **generated from closed-form values** (homogeneous IARF formulas, Appendix A). Every access returns a deep copy:
+  - `FIX.analysis`: a 6-test oil analysis with a confirmed delta alert, one excluded test and one k-held test;
+  - `FIX.result`: a reference-case `BuildupResult`;
+  - `FIX.samples`: one example of every other shape, plus `ModelFitFault`, a linearBoundary rival with `BC` in params;
+  - `FIX.cal`: a fixture-only calibration table;
+  - `FIX.inputs`: the generator inputs;
+- `FORMULAS`, a test-only table of the derived quantities (m, Δp_skin, PI ratio, rate at stake, extra drawdown, dkPct, r_inv, Δt_e and
+  its inverse, the log10 X axis, p*, p1hr, reach, S_tc, S_pwf, r_drift, sensitivity, S_kAnalytic, the T8 day term, J_obs, J_pred, the
+  T11 ΔS, k* and S*), used by the fixture self-consistency test (SH2). WP5 writes its own runtime registry; RV12 asserts that both agree
+  on `FIX.analysis`;
+- `autoInterp()`, which loads `canon`/`hash16` from file 53 with the self-test stripped exactly as Round 8 strips it, and
+  `nearDisplay(key, a, b)`.
+
+The helper encodes the §3.1 "WP0 resolutions". Its fixture conventions are:
+- **One gauge record.** `FIX.samples.GaugeRecord` (= `AnalysisInput.record`) carries the whole analysis: 15-min samples while flowing,
+  1-min samples in every shut-in from Δt = 0.005 h, 0.001 psi, no noise. `analysis.record.{n, origin_ms, end_ms, hash}`, the `qc`
+  sampling figures, `Event.j0/j1`, `spec.dtSample_h` and `days[].pwfMean_psia` are derived from it, so the §3.11 raw-record rule (use
+  raw only when its hash equals `analysis.record.hash`) can be exercised. The record hash itself is a fixture convention; WP2 defines
+  the real one.
+- **Derived trend numbers.** Baseline, alerts, T7, T8 (the cumulative uses q_d per day), T11 and T13 are computed with the §4.7
+  formulas from the stored inputs. The recent trend is null because only 2 tests follow τ̂ (n ≥ 3 is required). The remaining
+  **placeholders** are fixed values, not derived: onset τ̂ (midway; interval ±5 days; CUSUM ids), the QC noise figures, the Event
+  detection numbers (rise, scale, T_s, allocation ratios, f̂) and the R3/R4 ratios.
+- **Not regression truth for the engine.** The FIX bins and Δt_e use single-rate Horner with tp since the last reopening, while
+  `spec.steps` hold the full multi-rate history (`line.method:'superposition'` for B1–B6). The bins are closed-form log bins, not
+  binned from the record. An engine run on the FIX specs therefore does not reproduce the FIX bins, p* or S exactly. WP1 and WP2 must
+  not assert their numbers against FIX values until the lead refreshes FIX from engine output (below).
 
 Every WP's tests assert `checkShape` on their outputs. WP5 and WP6 build against `FIX.analysis` until the real engines land. After WP2 and
 WP3 merge, the lead refreshes `FIX` from real engine output (same shapes) and re-runs SH2. The helper changes only through the lead,
@@ -1101,7 +1161,8 @@ This section fixes what is built. Formulas and reference tables that several sec
 
 ### 4.6 Per build-up interpretation (WP1) — M§A8–M§A17
 
-Spans, slopes, cycles and windows are measured in X = log10 Δt_e throughout. Work units in this order; each bullet is at most one
+Spans, slopes, cycles and windows are measured in X = log10 Δt_e throughout (`iarf.X0/X1`, `line.shifts[].dX`); only `bins.X` and the
+Bourdet distance L are in ln (D6). Work units in this order; each bullet is at most one
 `step()`:
 
 1. **Prep.**
@@ -1238,7 +1299,8 @@ Spans, slopes, cycles and windows are measured in X = log10 Δt_e throughout. Wo
     prepended period doubled. If the masked derivative inside the IARF window changes by more than 2 % → `history.sensitive:true`
     (KC1 cap; review V15).
 15. **S_err (M§A14, D10).**
-    - Line-based tests: value = max(floor, se_S·√(n/n_eff), |S_line − S_match|, S_win, S_tc, S_pwf).
+    - Line-based tests: value = max(floor, se_S·√(n/n_eff), |S_line − S_match|, S_win, S_tc, S_pwf). Here se_S·√(n/n_eff) is
+      `ModelFit.se.S` as item 6 stores it (already inflated), not inflated again.
     - S_win: with two shifted lines, |S₊ − S₋|/2; with one, |S_shift − S_0| (a one-sided value, not doubled); with none, 0 (noted). When
       the agreement mode is "bias explained", each line's S is first corrected by its own b_S (S − b_S), so S_win measures the window
       sensitivity, not the known unsettled-window bias that |S_line − S_match| already carries. Target: the reference 72 h case gives
@@ -1346,8 +1408,10 @@ baseline, trend and alerts. Low tests are shown and excluded, with the reason.
   - Guard: X + S ≥ 1, else "not computable (strongly negative skin)".
   - PI ratio X/(X + S).
   - Constant-drawdown rate at stake: q_now·[(X + S_now)/(X + S_base) − 1].
-  - Constant-rate extra drawdown: 141.2·qBμ·ΔS/kh.
-  - Cumulative since τ̂: Σ_days q_d·[(X + S(t_d))/(X + S_base) − 1].
+  - Constant-rate extra drawdown: 141.2·qBμ·ΔS/kh. It and Δp_skin (T7) are different quantities (q_now and k_now against each test's
+    own q and m; 0.8686·162.6 = 141.23 against 141.2) and are **never compared or equated** by a rule or a text.
+  - Cumulative since τ̂: Σ_days q_d·[(X + S(t_d))/(X + S_base) − 1] over the days whose midpoint is at or after τ̂, with S(t) piecewise
+    linear through the used tests' (tDays, S) with the onset knot (τ̂, S_base) inserted, and constant outside.
   - Optional value = cumulative × value per unit volume.
   - Gas: S → S + D·q in the X + S terms.
   - All of these are labelled "pseudo-steady-state estimate". When `reSource:'rinv'`, the PI ratio is labelled "lower bound" and the rate
@@ -1361,15 +1425,18 @@ baseline, trend and alerts. Low tests are shown and excluded, with the reason.
   estimated (the assumption alone creates a trend of about +10 psi per 30 days on a 5-year-old well) or with fewer than 3 tests; the
   report then says "depletion cannot be assessed" and quotes the p* range. Closed-circle tests without depletion → `closedWithoutDepletion`
   (model cap medium, V18) only when the trend is assessable.
-- **Model-free ΔS (T11, M§A28).** At a common Δt_ref (the largest `iarfDt0_h` that is ≤ the smallest `dtEnd_h`), from `TrendTest.bins`:
+- **Model-free ΔS (T11, M§A28).** At a common Δt_ref (the largest `iarfDt0_h` that is ≤ the smallest `dtEnd_h`, both over the used
+  tests that have an IARF window; k-held tests without one are skipped), from `TrendTest.bins` (Δp read at each test's Δt_e of Δt_ref,
+  interpolated linearly in log Δt_e); the reference b is the first such test:
   ΔS = 1.1513·[(Δp_j/q_j − Δp_b/q_b)/(m/q)_b − log10(Δt_e,j/Δt_e,b)]. It agrees within max(0.3, S_err).
 - **Bubble point (T12, M§A20).** The sandface pwf range = pwf0_datum ± ΔG·Δz, with the flowing gradient input ±20 %.
   - ok ≥ Pb + 100; minor within 100 psi; major below Pb; critical when p_ext < Pb (only when the pressure trend is assessable; with an
     estimated history the upper end of the p* range is compared and the level is at most major).
   - Spearman ρ(S, max(0, Pb − pwf)) ≥ 0.7 over ≥ 4 tests is a rule (V12).
   - Off for gas and injectors.
-- **PI cross-check (T13, M§A21).** J_obs,d = q_d/(p_ref,d − pwf_d) on flowing days, with pwf_d = `days[].pwfMean_psia` and p_ref
-  interpolated between the tests' p_ext. J_pred uses the PSS form with S(t) interpolated. The median R_J per interval should lie in
+- **PI cross-check (T13, M§A21).** J_obs,d = q_d/(p_ref,d − pwf_d) on clean flowing days, with pwf_d = `days[].pwfMean_psia` and p_ref
+  interpolated between the used tests' p_ext (tests without p_ext are skipped). J_pred = k_base·h/(141.2·B·μ·(X + S(t))), with S(t) as for
+  the cumulative (T8). R_J = J_obs/J_pred; one row per interval between consecutive used tests, with the median R_J, which should lie in
   [0.8, 1.25]. Off for injectors and when the history is estimated (`available:false`).
 - **Mechanical skin (T14, D23).** `PRiSM_skinCheck.mechanicalSkin` per test; ΔS_mech = ΔS_total − D·Δq.
 - **Rate skin (T15, M§A19).** `PRiSM_skinCheck.rateSkin` over the baseline segment (or tests ≤ 60 days apart with no significant trend),
@@ -2189,9 +2256,12 @@ tables.
 
 ### 8.4 Hashes and signature
 
-- `canon` (53) sorts keys and rounds numbers. Mode `inputs`: 6 significant figures. Mode `display`: k 3 significant figures; S and
-  S_err 2 dp; C 3 significant figures; pressures 1 dp; distances 0 dp; times 3 dp (h) or whole seconds (epoch); rates 1 dp;
-  percentages 1 dp; ΔBIC 1 dp.
+- `canon` (53) sorts keys and rounds numbers. The exact rules are in the 53 header (normative) and in §3.1 "WP0 resolutions". In both
+  modes |v| < 1e-12 serialises as 0, and every key ending in `_ms` is rounded to whole seconds (epoch values, and also millisecond
+  durations). Mode `inputs`: 6 significant figures. Mode `display`, chosen by key name: k 3 significant figures; S and S_err 2 dp;
+  C 3 significant figures; pressures 1 dp; rates 1 dp; times 3 dp (h); seconds 0 dp; distances 0 dp. For pressures, rates, times,
+  seconds and distances, 3 significant figures are used instead when that is finer. Percentages are 1 dp, ΔBIC 1 dp and counts
+  exact. Any other key uses 4 significant figures.
 - **inputsHash** = `hash16(canon(…, 'inputs'))` over well, completion, depth, settings, the resolved zones, history, allocation rows, the
   record hash, the events (t_c rounded to 1 s) and the overrides.
 - **resultsHash** = `hash16(canon(…, 'display'))` over each test's final values, S_err and labels, plus the trend alerts, onset and recent
@@ -2264,7 +2334,8 @@ WP0 (lead, serial: FILES, shapes + fixtures, 53 skeleton with canon/hash16)
   - SH2: fixture self-consistency: every derived number in `FIX` equals `FORMULAS` applied to its stored inputs at display precision;
   - SH3: `canon`/`hash16` vectors: fixed inputs give fixed hex; key order does not matter; a 1e-15 perturbation does not change a
     `display`-mode hash; `inputs` mode rounds to 6 significant figures.
-- **Done when:** Dev builds; smoke 317/317; the existing acceptance files touched by Round 8 pass; tag `v3.3-wp0`.
+- **Done when:** Dev builds; smoke 317/317; the existing acceptance files touched by Round 8 pass. When the WP0 review is accepted,
+  the lead creates the tag `v3.3-wp0` locally (not pushed). The tag marks acceptance, so a builder does not create it.
 
 ### WP1 — PRiSM automatic interpretation engine
 
