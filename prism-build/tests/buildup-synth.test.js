@@ -268,10 +268,11 @@ module.exports = [
       SY.SEED_TABLE.forEach((e) => { assert.strictEqual(e.from, s0); assert.strictEqual(e.to, s0 + e.n - 1); s0 += e.n; });
       assert.strictEqual(s0, 100640, '640 single cases');
       const R = SY.RANGES, inR = (v, r, what) => assert(v >= r[0] * (1 - 1e-9) && v <= r[1] * (1 + 1e-9), what + ' = ' + v + ' outside [' + r + ']');
-      const seen = new Set(), sCells = {};
+      const seen = new Set(), sCells = {}, all = [];
       let edge = 0;
       for (let seed = 100000; seed <= 100639; seed++) {
         const cs = SY.caseFromSeed(seed), e = SY.SEED_TABLE.find((x) => seed >= x.from && seed <= x.to), t = cs.truth;
+        all.push(cs);
         assert.strictEqual(cs.seed, seed); assert.strictEqual(cs.stratum, e.stratum); assert.strictEqual(cs.row, seed - e.from);
         seen.add(cs.stratum);
         inR(t.k, R.k, seed + ' k'); inR(t.h, R.h, seed + ' h'); inR(t.S, R.S, seed + ' S'); inR(t.C, R.C, seed + ' C'); inR(t.phi, R.phi, seed + ' φ'); inR(t.rw, R.rw, seed + ' rw');
@@ -294,13 +295,16 @@ module.exports = [
       assert(edge / 640 <= 0.05, 'cases at the rejection edge (Δp(Δt_end) < 6.5 psi): ' + edge + ' of 640');
       SY.SEED_TABLE.forEach((e) => assert.strictEqual(sCells[e.stratum].size, e.n, e.stratum + ': S is Latin-hypercube stratified (one row per cell)'));
       // short tests: 20 % of hom at 2–8 h
-      const hom = SY.SEED_TABLE[0], shortN = Array.from({ length: hom.n }, (_, i) => SY.caseFromSeed(hom.from + i)).filter((c) => c.test.dtEnd_h < 8).length;
+      const hom = SY.SEED_TABLE[0], shortN = all.slice(0, hom.n).filter((c) => c.test.dtEnd_h < 8).length;
       assert(Math.abs(shortN / hom.n - 0.2) < 0.01, 'hom short share ' + shortN / hom.n);
       // pure function of the seed; seeds outside the table refused
       deq(assert, JSON.parse(JSON.stringify(SY.caseFromSeed(100321))), JSON.parse(JSON.stringify(SY.caseFromSeed(100321))));
       assert.throws(() => SY.caseFromSeed(99999)); assert.throws(() => SY.caseFromSeed(100640));
       // at least 40 % of cases contain an effect the engine does not model (§5.2; the generator reports the share)
-      const share = SY.unmodelledShare();
+      // (SY.unmodelledShare() runs the same count over the table; computed here from the cases already built)
+      assert.strictEqual(typeof SY.unmodelledShare, 'function');
+      const share = { share: 0, byEffect: {} };
+      all.forEach((cs) => { const ef = SY.unmodelledEffects(cs); if (ef.length) share.share += 1 / 640; ef.forEach((x) => { share.byEffect[x] = (share.byEffect[x] || 0) + 1; }); });
       assert(share.share >= 0.40, 'unmodelled share ' + share.share); assert.strictEqual(share.byEffect.physics, 130, '126 distractor cases + 4 injector fractures');
       // the 24 in-app cases sit in their strata
       const ia = SY.IN_APP;

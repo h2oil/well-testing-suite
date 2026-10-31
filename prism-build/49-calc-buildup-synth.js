@@ -2199,8 +2199,9 @@
     }
     // The plan's reference case (US4, §4.8 timings in buildup-validate.js --perf): k 45 md, S 5, C 0.02 bbl/psi, h 50 ft,
     // μ 1 cp, B 1.2, q 800 STB/d, φ 0.2, ct 1e-5 1/psi, rw 0.354 ft, p_i 4000 psia; a 72 h build-up after `days` days of
-    // production (30 → t_p 720 h). opts {days = 30, variationPct = 0} (365 days at ±15 % gives the 365-daily-step case);
-    // 1 min sampling in the build-up and the day before, σ 0.01 psi, exact allocation (rounded to 1 STB).
+    // production (30 → t_p 720 h). opts {days = 30, variationPct = 0, rateTable = false} (365 days at ±15 % with rateTable gives
+    // the 365-daily-step case: a time-stamped rate table, so day steps are rates, not candidate closings); 1 min sampling in the
+    // build-up and the day before, σ 0.01 psi, exact allocation (rounded to 1 STB).
     function reference(opts) {
         opts = opts || {};
         var days = MM.max(2, MM.round(opts.days || 30)), vp = +opts.variationPct || 0, r = rng(3303), qDay = [];
@@ -2214,7 +2215,7 @@
             prod: { tStart_h: 0, qHist: qDay[0], qDay: qDay, dayShift_h: 12, dayIndex0: -1, flushPct: 0, flushDecay_h: 4 },
             events: [ev], S0: 5, sampling: { base_s: 300, dense_s: 60, burst: false },
             noise: { sigma: 0.01, sigmaFlowFactor: 1, ar1Rho: null, lf: null, quant: 0, spikes: 0, drift: 0, tideM2: 0, tideK1: 0 },
-            extras: null, gap: null, alloc: { errPct: 0, bias: 0, ignoresShutin: false, hoursConflict_h: 0, resolution: 1 }, rateSource: 'allocation',
+            extras: null, gap: null, alloc: { errPct: 0, bias: 0, ignoresShutin: false, hoursConflict_h: 0, resolution: 1 }, rateSource: opts.rateTable ? 'table' : 'allocation',
             given: { h: 50, phi: 0.2, ct: 1e-5, rw: 0.354, B: 1.2, mu: 1 }, notAnalysable: false, Rs: 450, wc: 0.01,
             history: { mode: 'date', date: dateOf(Date.UTC(2026, 0, 5, 12)), cum: null },
             zones: { gauge: { mode: 'utc' }, day: { zone: { mode: 'utc' }, startHour: 0 } }, seedNoise: 3303,
@@ -2222,7 +2223,7 @@
         };
         var g = _run(_jobWrap(SC, {}, function (x) { return x; })), tr = g.truths[0];
         return {
-            name: SC.name, record: g.record, allocation: { rows: g.allocation.rows, gUnit: 'Mscf', resolution: { oil: 1, gas: 0.1, water: 1 } }, rateTable: null,
+            name: SC.name, record: g.record, allocation: { rows: g.allocation.rows, gUnit: 'Mscf', resolution: { oil: 1, gas: 0.1, water: 1 } }, rateTable: g.rateTable || null,
             well: g.well, completion: g.completion, settings: defaultSettings(), history: g.history, zones: g.zones, workovers: [],
             truth: { tests: [{ id: 'B1', tc_ms: tr.tc_ms, k: tr.k, S: tr.S, kStar: tr.kStar, SStar: tr.SStar, dtEnd_h: tr.dtEnd_h, grade: tr.grade, reach: tr.reach }] },
             info: g.info

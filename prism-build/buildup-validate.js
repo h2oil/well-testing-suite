@@ -891,12 +891,16 @@ function perfReference(env, add) {
       if (typeof AI.resetStats === 'function') AI.resetStats();
       const t0 = nowMs(); out = fn(); const ms = nowMs() - t0;
       const st = typeof AI.stats === 'function' ? AI.stats() : null;
-      const cnt = st ? ' [' + ['evals', 'gridBuilds', 'fits', 'lmIters', 'slices', 'lines'].filter((k) => typeof st[k] === 'number' && st[k]).map((k) => k + ' ' + st[k]).join(', ') + ']' : '';
+      const used = st ? ['evals', 'gridBuilds', 'fits', 'lmIters', 'slices', 'lines'].filter((k) => typeof st[k] === 'number' && st[k]).map((k) => k + ' ' + st[k]) : null;
+      const cnt = used ? ' [' + (used.length ? used.join(', ') : 'no evaluation run') + ']' : '';
       add(label + cnt, ms, target);
     } catch (e) { add(label + ' (failed: ' + e.message + ')', null, target); }
     return out;
   };
-  const specOf = (sc) => { const an = RUN.analyse(SY.toInput(sc), { cache: null }); const t = an && an.tests && an.tests.find((x) => x.spec); return { an, spec: t ? t.spec : null }; };
+  // a TestEntry keeps the stored BuildupSpec (no rate steps, §3.7); the run layer's rehydrate restores the steps from the
+  // analysis rate history when it is exported
+  const full = (an, t) => ((t.spec && t.spec.steps) || typeof RUN.rehydrate !== 'function' || !an.rates || !an.record) ? t.spec : RUN.rehydrate(t.spec, an.rates, an.record.origin_ms);
+  const specOf = (sc) => { const an = RUN.analyse(SY.toInput(sc), { cache: null }); const t = an && an.tests && an.tests.find((x) => x.spec && x.status === 'interpreted'); return { an, spec: t ? full(an, t) : null }; };
   let ref, r365;
   try { ref = SY.reference({ days: 30 }); } catch (e) { add('reference case generation (failed: ' + e.message + ')', null, 2000); return; }
   const t0 = nowMs(); const R = specOf(ref); add('reference case, whole analysis (1 test, ≤ typical test + trend/review)', nowMs() - t0, 250);
@@ -908,14 +912,14 @@ function perfReference(env, add) {
   if (!prep || prep.ok === false) return;
   hom = timed('reference: homogeneous fit (30 daily steps)', 60, () => AI.fit('homogeneous', prep));
   if (hom) {
-    const ch = timed('reference: C-held refit pair (target per refit ≤ 30 ms, pair ≤ 60)', 60, () => runJob(AI.cHeldJob(prep, hom, { mode: 'auto' })));
-    void ch;
+    // 'extended' runs the ×0.8 / ×1.25 refit pair even when the unit slope is sampled (in 'auto' it is skipped then)
+    timed('reference: C-held refit pair, forced (target per refit ≤ 30 ms, pair ≤ 60)', 60, () => runJob(AI.cHeldJob(prep, hom, { mode: 'extended' })));
     timed('reference: k-held fit + 2 refits', 80, () => runJob(AI.kHeldJob(prep, { k: hom.phys ? hom.phys.k : 45, delta: 0.05 })));
   }
   timed('reference: fault fit', 100, () => AI.fit('linearBoundary', prep));
   timed('reference: composite fit, F frozen', 300, () => AI.fit('composite2', prep, { freeze: { F: true } }));
   timed('reference: closed-circle fit', 150, () => AI.fit('closedCircle', prep));
-  try { r365 = SY.reference({ days: 365, variationPct: 15 }); } catch (e) { r365 = null; }
+  try { r365 = SY.reference({ days: 365, variationPct: 15, rateTable: true }); } catch (e) { r365 = null; }
   if (r365) {
     const R2 = specOf(r365);
     if (R2.spec) { const p2 = AI.prepare(R2.spec); if (p2 && p2.ok !== false) timed('homogeneous fit, 365 daily steps (reference)', 60, () => AI.fit('homogeneous', p2)); }

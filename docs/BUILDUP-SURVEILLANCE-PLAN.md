@@ -1786,8 +1786,9 @@ node prism-build/buildup-validate.js [--quick] [--strata hom,fault] [--seeds 100
   target is missed.
 - Exit codes: 0 ok; 1 targets missed (with `--strict`); 2 crash. The default `--out` is `$TMPDIR/wts-buildup-validate`. Only file 55 is
   ever committed.
-- Runtime: WP4 measures generation and analysis per case on the capped records and updates this line; the planning estimate is
-  0.5–1.5 s per build-up end to end (generation included), i.e. 15–40 min on 1 worker and 4–10 min on 4. `--quick` stays under 2 min.
+- Runtime (measured by WP4 on a WP1 + WP2 scratch merge, desktop): median 0.45 s per single case end to end (generation 0.19 s,
+  analysis 0.27 s; P90 0.8 s each), so about 5 min for the 640 single cases on 1 worker and under 2 min on 4, plus the sequences;
+  `--quick` (60 cases + the 20 false-rival seeds) took 19 s on 4 workers. The planning estimate was 0.5–1.5 s per build-up.
 
 ### 5.6 What runs where
 
@@ -1795,8 +1796,9 @@ node prism-build/buildup-validate.js [--quick] [--strata hom,fault] [--seeds 100
   dualpor, partial, baddata), generated with 60 s sampling and histories of at most 30 days. It asserts the snapshot outcomes (status, k/S
   and headline labels, fully right) recorded by WP8 and that no "high" case is wrong. Seeds are chosen with a margin (below) so the
   snapshot cannot flip on a last-bit difference. Budget ≤ 9 s.
-- **In-app validation card**: the 24 `IN_APP` cases, user-triggered and asynchronous (planning estimate 10 s desktop, 30 s phone, with
-  progress and cancel; WP4 measures and updates). Each case is chosen with margin ≥ 0.1: the smallest distance of its evidence to any
+- **In-app validation card**: the 24 `IN_APP` cases, user-triggered and asynchronous (measured by WP4: 4.4 s desktop for the
+  24 provisional cases, generation 1.4 s and analysis 3.0 s, largest generation unit 28 ms; planning estimate 30 s phone; with progress
+  and cancel). Each case is chosen with margin ≥ 0.1: the smallest distance of its evidence to any
   label threshold, normalised by the threshold, stored in file 55. Outcomes are compared with `PRiSM_autoInterpCal.inApp[].expect`: "24 of
   24 as expected", or the differences, where a difference whose recomputed evidence lies within the stored margin of a threshold is shown
   as "near threshold" and not as a failure. The card also shows both reliability tables (label, n, rate, interval).
