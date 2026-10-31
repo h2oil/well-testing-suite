@@ -463,7 +463,9 @@ module.exports = [
       assert.strictEqual(app.win.WTS_buildup_review_selfTest, undefined, 'the self-test is stripped from the build');
       const reg = app.win.WTS_calcRegistry || {};
       assert(!Object.keys(reg).some((k) => /review/.test(k)), 'the helper registers no page');
-      assert.strictEqual(W.hashes(an, rv).resultsHash, h.resultsHash, 'app hashes = file hashes');
+      // file 53 reaches the committed HTML with the integrator's Round-8 rebuild (plan §2.6); until then no hash16
+      if (app.win.PRiSM_autoInterp && typeof app.win.PRiSM_autoInterp.hash16 === 'function') assert.strictEqual(W.hashes(an, rv).resultsHash, h.resultsHash, 'app hashes = file hashes');
+      else assert.strictEqual(W.hashes(an, rv).resultsHash, null, 'a build without file 53 has no hash16 (no own fallback)');
     },
   },
   {
@@ -481,6 +483,7 @@ module.exports = [
       assert.strictEqual(so.ok, false); assert.strictEqual(so.code, 'OPEN_FINDINGS'); assert(so.bad.indexOf(v8.id) !== -1, 'the open major is named');
       assert.strictEqual(R.signoff(Object.assign({}, form, { name: '  ' }), an, rv).code, 'NO_NAME');
       assert.strictEqual(R.signoff(Object.assign({}, form, { statement: false }), an, rv).code, 'NO_STATEMENT');
+      assert.strictEqual(R.signoff(form, {}, R.run({}, null, { at: AT })).code, 'NO_ANALYSIS', 'nothing to sign without an analysis');
       const m0 = R.report(an, rv, null, null, imp);
       assert.strictEqual(m0.status, 'DRAFT');
       const s11 = (m) => m.sections.find((s) => s.id === 'S11').blocks.filter((b) => b.kind === 'verdict').map((b) => R.fill(b.template, b.values, imp));
@@ -611,6 +614,19 @@ module.exports = [
       assert.strictEqual(t.rows[1][0], 'B11'); assert.strictEqual(t.rows[30][0], 'B40');
       const ev = model.sections.find((s) => s.id === 'S3').blocks.find((b) => b.id === 'bu_tbl_events');
       assert.strictEqual(ev.rows.length, 31); assert.strictEqual(ev.rows[0][0].v, 11, '41 events → 11 older');
+      // degenerate inputs: no exception, shape-valid output, no null/undefined text
+      const deg = [['{}', {}], ['null', null], ['no trend', (() => { const a = S.FIX.analysis; a.trend = null; return a; })()],
+                   ['no results', (() => { const a = S.FIX.analysis; a.tests.forEach((x) => { x.result = null; x.status = 'failed'; }); return a; })()],
+                   ['no line', (() => { const a = S.FIX.analysis; a.tests[5].result.line = null; a.tests[5].result.chosen = null; return a; })()],
+                   ['gas', variant('V3')], ['injector', (() => { const a = S.FIX.analysis; a.well.fluid = 'water_inj'; a.well.Pb = null; return a; })()],
+                   ['no rates or qc', (() => { const a = S.FIX.analysis; a.rates = null; a.qc = null; a.missed = null; return a; })()]];
+      deg.forEach(([label, a]) => {
+        const rv = R.run(a, null, { at: AT }), m = R.report(a, rv, null, null, imp), q = R.ask('is there an alert?', a, null, imp);
+        assert(S.checkShape('Review', plain(rv)).ok && S.checkShape('ReportModel', plain(m)).ok && S.checkShape('Answer', plain(q)).ok, label + ': shapes');
+        assert.deepStrictEqual(plain(rv.warnings), [], label + ': no rule error');
+        const txt = textsOf(R, m, imp).map((x) => x[2]).concat([R.fill(q.template, q.values, imp), R.aiExport(a, rv, {}).text]).join('\n');
+        assert(!BANNED.test(txt), label + ': banned word in the text');
+      });
       // the calibration tables (file 55 shape) appear in S12
       const s12 = model.sections.find((s) => s.id === 'S12');
       assert(s12.blocks.some((b) => b.id === 'bu_tbl_cal_ks') && s12.blocks.some((b) => b.id === 'bu_tbl_cal_hl'), 'S12 shows both calibration tables');

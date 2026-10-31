@@ -31,7 +31,8 @@
 //   signature(analysis, review, form)    → {hash, inputsHash, resultsHash, decisionsHash, appVersion, runAt}.
 //   status(analysis, review, signoff)    → 'DRAFT' | 'SIGNED' | 'CHANGED' (CHANGED decided on the three hashes).
 //   canSign(review)                      → {ok, open:[findingId]}.
-//   signoff(form, analysis, review)      → Signoff (with ok:true) or {ok:false, code, errors, bad}.
+//   signoff(form, analysis, review)      → Signoff (with ok:true) or {ok:false, code, errors, bad}; codes NO_NAME,
+//                                          NO_STATEMENT, NO_ANALYSIS (no analysis or no hash16), EVIDENCE_CHECK_FAILED, OPEN_FINDINGS.
 //   applyDecisions(review, decisions)    → review with Finding.decision filled. decisions: array of
 //                                          {target: findingKey | rule id | finding id, d, note, who, at} (later
 //                                          entries win; d null clears) or an audit log (kind 'decision' entries).
@@ -258,6 +259,7 @@
         add: F(['a', 'b'], 'a + b', function (a, b) { return _allNum(a, b) ? a + b : null; }),
         rss: F(['a', 'b'], '√(a² + b²)', function (a, b) { return _allNum(a, b) ? Math.sqrt(a * a + b * b) : null; }),
         pct100: F(['x'], '100·x', function (x) { return _isNum(x) ? 100 * x : null; }),
+        scale: F(['x', 'f'], 'x·f (unit change, e.g. Mscf → MMscf)', function (x, f) { return _allNum(x, f) ? x * f : null; }),
         cvLim: F(['allocAccPct'], 'max(5 %, allocation accuracy)', function (a) { return _isNum(a) ? Math.max(5, a) : 5; }),
         lit: F(['x'], 'the quoted literal (question input)', function (x) { return x === undefined ? null : x; }),
         yesNo: F(['x'], "'yes' | 'no'", function (x) { return x === true ? 'yes' : x === false ? 'no' : null; }),
@@ -743,7 +745,9 @@
     function FX(f, args, k, c, p) { return { f: { f: f, args: args }, k: k, c: c, p: p }; }
 
     function _rateCat(qUnit) { return qUnit === 'Mscf/d' ? 'gasRateSmall' : 'liquidRate'; }
-    function _volCat(an) { return (an && an.rates && an.rates.unit === 'Mscf/d') ? null : 'volume'; }
+    function _volCat(an) { return (an && an.rates && an.rates.unit === 'Mscf/d') ? 'gasVolume' : 'volume'; }
+    // A volume value: liquid volumes (STB, bbl) as stored; gas volumes in Mscf quoted in MMscf (the gasVolume unit).
+    function _volSpec(path, mscf) { return mscf ? FX('scale', { x: path, f: { lit: 0.001 } }, 'D', 'gasVolume') : P(path, 'n', 'volume'); }
 
     function evidence(analysis, opts) {
         opts = opts || {};
@@ -800,12 +804,12 @@
         add('D1', 'D', null, 'Detection summary and missed list', d1);
 
         // ── well level: R (rates) ──
-        var r2 = { nOlderDays: null };
+        var r2 = { nOlderDays: null }, gasDays = !!(an.rates && an.rates.unit === 'Mscf/d');
         var days = an.rates ? _arr(an.rates.days) : [];
         var dayPick = _daysAround(an);
         dayPick.forEach(function (j) {
             var pd = 'rates.days[' + j + ']';
-            r2['d' + j + '_date'] = P(pd + '.date'); r2['d' + j + '_hOn'] = P(pd + '.hOn', 'h'); r2['d' + j + '_V'] = P(pd + '.V', 'n', _volCat(an));
+            r2['d' + j + '_date'] = P(pd + '.date'); r2['d' + j + '_hOn'] = P(pd + '.hOn', 'h'); r2['d' + j + '_V'] = _volSpec(pd + '.V', gasDays);
             r2['d' + j + '_q'] = P(pd + '.q', 'q', _rateCat(an.rates && an.rates.unit)); r2['d' + j + '_R3'] = P(pd + '.R3.ratio', 'ratio');
         });
         r2.nOlderDays = FX('older', { n: { lit: dayPick.length }, shown: { lit: MAX_ROWS } }, 'n', null, 'rates.days');
@@ -846,7 +850,7 @@
                 qDay: FX('closingRate', { days: 'rates.days', tc_ms: pt + '.tc_ms', dqSource: s + '.rateQC.dqSource', mode: 'rates.mode', events: 'events', eventId: pt + '.eventId' }, 'q', qc),
                 dqPct: FX('closingRatePct', { days: 'rates.days', tc_ms: pt + '.tc_ms', dqSource: s + '.rateQC.dqSource', mode: 'rates.mode', events: 'events', eventId: pt + '.eventId', fRate: s + '.fRate', Dq: s + '.Dq' }, 'pct')
             };
-            if (di >= 0) { r2v.date = P('rates.days[' + di + '].date'); r2v.hOn = P('rates.days[' + di + '].hOn', 'h'); r2v.V = P('rates.days[' + di + '].V', 'n', _volCat(an)); }
+            if (di >= 0) { r2v.date = P('rates.days[' + di + '].date'); r2v.hOn = P('rates.days[' + di + '].hOn', 'h'); r2v.V = _volSpec('rates.days[' + di + '].V', !!(an.rates && an.rates.unit === 'Mscf/d')); }
             add(id + '·R2', 'R', id, 'Flowing hours on the closing day', r2v);
             add(id + '·R3', 'R', id, 'Allocation consistency', { r3: P(s + '.rateQC.r3', 'ratio'), status: P(s + '.rateQC.r3Status'), date: P(pt + '.date') });
             add(id + '·R4', 'R', id, 'Pressure-based rate check', { r4: P(s + '.rateQC.r4', 'ratio'), status: P(s + '.rateQC.r4Status') });
@@ -895,7 +899,7 @@
                 var pr = r + '.bic.rows[' + j + ']';
                 m4['r' + j + '_key'] = P(pr + '.key'); m4['r' + j + '_bic'] = P(pr + '.bic', 'bic'); m4['r' + j + '_p'] = P(pr + '.p', 'n'); m4['r' + j + '_eligible'] = P(pr + '.eligible');
                 if (hj >= 0) m4['r' + j + '_gain'] = FX('sub', { a: r + '.bic.rows[' + hj + '].bic', b: pr + '.bic' }, 'bic');
-                if (row && row.key === res.chosen.key && hj >= 0) m4.gainChosen = FX('sub', { a: r + '.bic.rows[' + hj + '].bic', b: pr + '.bic' }, 'bic');
+                if (row && res.chosen && row.key === res.chosen.key && hj >= 0) m4.gainChosen = FX('sub', { a: r + '.bic.rows[' + hj + '].bic', b: pr + '.bic' }, 'bic');
             });
             add(id + '·M4', 'M', id, 'BIC table', m4);
             add(id + '·M5', 'M', id, 'Fully seen', { status: P(r + '.chosen.fullySeen.status'), value: P(r + '.chosen.fullySeen.value', 'n', 'length'), minFaultDist_ft: P(r + '.final.minFaultDist_ft', 'n', 'length') });
@@ -968,7 +972,7 @@
         add('T7', 'T', null, 'Pressure drop across the skin', t7);
         var t8 = { X: P('trend.pi.X', 'ratio'), re_ft: P('trend.pi.re_ft', 'n', 'length'), reSource: P('trend.pi.reSource'), ratioNow: P('trend.pi.ratioNow', 'ratio'), ratioBase: P('trend.pi.ratioBase', 'ratio'),
             ratioLowerBound: P('trend.pi.ratioLowerBound'), rateAtStake: P('trend.pi.rateAtStake', 'q', _rateCat(an.rates && an.rates.unit)), rateUnit: P('trend.pi.rateUnit'),
-            extraDrawdown_psi: P('trend.pi.extraDrawdown_psi', 'p', 'pressure'), cumAtStake: P('trend.pi.cumAtStake', 'n', _volCat(an)), cumUnit: P('trend.pi.cumUnit'),
+            extraDrawdown_psi: P('trend.pi.extraDrawdown_psi', 'p', 'pressure'), cumAtStake: _volSpec('trend.pi.cumAtStake', !!(tr.pi && tr.pi.cumUnit === 'Mscf')), cumUnit: P('trend.pi.cumUnit'),
             atStakeUpperBound: P('trend.pi.atStakeUpperBound'), value: P('trend.pi.value', 'n'), guard: P('trend.pi.guard') };
         if (!gas) {
             t8.X = FX('X', { re_ft: 'trend.pi.re_ft', rw: 'well.rw' }, 'ratio');
@@ -1071,10 +1075,11 @@
         for (var j = 0; j < days.length; j++) if (days[j] && days[j].t0_ms <= t.tc_ms && t.tc_ms < days[j].t1_ms) return j;
         return -1;
     }
-    // day indexes within ±2 days of every test's closing day (S3 day table), sorted, latest MAX_ROWS kept
+    // day indexes within ±2 days of every event's closing day (S3 day table), sorted
     function _daysAround(an) {
         var days = an && an.rates ? _arr(an.rates.days) : [], pick = {};
-        _arr(an && an.tests).forEach(function (t) {
+        var src = _arr(an && an.events).length ? _arr(an.events) : _arr(an && an.tests);
+        src.forEach(function (t) {
             if (!t) return;
             var j = _closingDay(an, t); if (j < 0) return;
             for (var k = Math.max(0, j - 2); k <= Math.min(days.length - 1, j + 2); k++) pick[k] = 1;
@@ -1475,7 +1480,7 @@
             out.forEach(function (o) { var f = _mkFinding(rule, o, idx); f._seq = seq++; findings.push(f); });
         });
         var review = { version: 'r1', at: _now(opts), findings: findings, counts: null, evidenceCheck: { ok: true, nChecked: 0, nFailed: 0 },
-                       inputHash: an.inputHash || null, resultHash: an.resultHash || null, warnings: warnings };
+                       inputHash: an.inputHash || GENESIS, resultHash: an.resultHash || GENESIS, warnings: warnings };
         _renumber(review);
         // evidence check of every finding's own values (V14 for failures)
         var allFail = [], nChecked = 0;
@@ -1570,6 +1575,7 @@
         var an = _obj(analysis) ? analysis : {};
         if (!form || typeof form.name !== 'string' || !form.name.trim()) return _fail('NO_NAME', ['Enter the name of the person signing off.'], ['name']);
         if (form.statement !== true) return _fail('NO_STATEMENT', ['Tick the statement "I have reviewed the analysis and the findings".'], ['statement']);
+        if (typeof an.inputHash !== 'string' || !_resultsHash(an)) return _fail('NO_ANALYSIS', ['Run an analysis before sign-off.'], []);
         var rv = _obj(review) ? review : { findings: [] };
         var v14 = _arr(rv.findings).filter(function (f) { return f && f.rule === 'V14'; });
         if (v14.length || (rv.evidenceCheck && rv.evidenceCheck.ok === false)) return _fail('EVIDENCE_CHECK_FAILED', ['The evidence check failed: re-run the analysis before sign-off.'], v14.map(function (f) { return f.id; }));
@@ -2585,7 +2591,8 @@
             subtitle: wn + ' · ' + (st === 'SIGNED' ? 'signed off' : st === 'CHANGED' ? 'DRAFT (changed after sign-off)' : 'DRAFT'),
             status: st,
             sections: [_S1(c, st), _S2(c), _S3(c), _S4(c), _S5(c), _S6(c), _S7(c), _S8(c), _S9(c), _S10(c), _S11(c, st), _S12(c)],
-            signature: { hash: sig.hash, inputsHash: sig.inputsHash || GENESIS, resultsHash: sig.resultsHash || GENESIS, decisionsHash: sig.decisionsHash || GENESIS, appVersion: sig.appVersion, runAt: sig.runAt || an.runAt },
+            signature: { hash: sig.hash, inputsHash: sig.inputsHash || GENESIS, resultsHash: sig.resultsHash || GENESIS, decisionsHash: sig.decisionsHash || GENESIS, appVersion: sig.appVersion,
+                         runAt: sig.runAt || (review && review.at) || new Date(0).toISOString() },
             reproducibility: _reproBlock(c)
         };
         return { model: model, c: c };
