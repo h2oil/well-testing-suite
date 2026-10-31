@@ -102,12 +102,14 @@
         out.trend.baseN = Math.round(out.trend.baseN);
         return out;
     }
+    // B in RB/STB (oil, water) or RB/Mscf (gas: about 0.3 for deep dry gas at high pressure, so its lower bound is 0.3)
     var WELL_RANGES = { h: [1, 2000], phi: [0.01, 0.5], mu: [0.01, 1000], B: [0.5, 5], ct: [1e-7, 1e-3], rw: [0.1, 2] };
+    var B_GAS = [0.3, 5];
     function checkWell(w) {
         var bad = [], errs = [];
         if (!w || typeof w !== 'object') return fail('BAD_WELL', ['Well inputs are missing.'], ['well']);
         Object.keys(WELL_RANGES).forEach(function (k) {
-            var r = WELL_RANGES[k], v = w[k];
+            var r = (k === 'B' && w.fluid === 'gas') ? B_GAS : WELL_RANGES[k], v = w[k];
             if (!isNum(v) || v < r[0] || v > r[1]) { bad.push(k); errs.push(k + ' must be between ' + r[0] + ' and ' + r[1] + '.'); }
         });
         if (['oil', 'gas', 'water_inj'].indexOf(w.fluid) === -1) { bad.push('fluid'); errs.push('Well type must be oil, gas or water injector.'); }
@@ -431,7 +433,7 @@
     // the longest per day newest first, then the newest); the others are excluded with the reason 'test cap'. The cap
     // runs before stage 1, when the labels are not known yet, so the first 2·baseN live tests of each segment are kept:
     // the stage-2 baseline (the first baseN tests labelled ≥ medium) then still has candidates when some early tests
-    // turn out low. (Approximation: when more than baseN of them are low, the baseline has fewer tests.)
+    // turn out low; when that leaves capped tests earlier than the baseline, _readmit interprets them after all.
     function _cap(tests, st, workovers) {
         var live = tests.filter(function (t) { return t.status !== 'excluded'; });
         if (live.length <= MAX_TESTS) return;
@@ -448,7 +450,28 @@
         longestBy(function (t) { return mFloor((t.tc_ms - 345600000) / WEEK); }).forEach(add);     // weeks start on Monday 00:00 UTC
         longestBy(function (t) { return t.date; }).forEach(add);
         live.slice().sort(function (a, b) { return b.tc_ms - a.tc_ms; }).forEach(add);
-        live.forEach(function (t) { if (!keep[t.id]) { t.status = 'excluded'; t.statusReason = 'test cap'; t._capped = true; } });
+        live.forEach(function (t) { if (!keep[t.id]) { t._capPrev = { status: t.status, statusReason: t.statusReason }; t.status = 'excluded'; t.statusReason = 'test cap'; t._capped = true; } });
+    }
+    // Stage 2 re-admission (one round): the baseline is the first baseN tests of a segment labelled ≥ medium. When kept
+    // early tests turn out low, capped tests earlier than the baseN-th kept test labelled ≥ medium (all of them when there
+    // are fewer than baseN) could have been baseline tests: the earliest 2·baseN of them are interpreted in stage 1 after
+    // all and join the candidates. The number of interpreted tests may then exceed 60 by at most 2·baseN per segment.
+    function _readmit(tests, st, workovers) {
+        var out = [], segs = {}, n = st.trend.baseN;
+        tests.forEach(function (t) { var s = _segment(t.date, workovers); (segs[s] = segs[s] || []).push(t); });
+        Object.keys(segs).forEach(function (s) {
+            var list = segs[s].slice().sort(function (a, b) { return a.tc_ms - b.tc_ms; });
+            if (!list.some(function (t) { return t._capped; })) return;
+            var good = list.filter(function (t) { return !t._capped && t.status === 'interpreted' && t.result && t.result.confidence && rank(t.result.confidence.ks) >= 1; });
+            var tB = good.length >= n ? good[n - 1].tc_ms : Infinity, k = 0;
+            list.forEach(function (t) {
+                if (k >= 2 * n || !t._capped || !(t.tc_ms < tB)) return;
+                var pv = t._capPrev || { status: 'interpreted', statusReason: null };
+                t._capped = false; t.status = pv.status; t.statusReason = pv.statusReason;
+                out.push(t); k++;
+            });
+        });
+        return out;
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -658,6 +681,9 @@
             if (bw) return finish(bw);
             st = settingsOf(input.settings);
             zones = resolvedZones(input.zones);
+            // the input hash of the input as given, before any stage runs (the engines never write into the input: the
+            // data layer works on copies of the allocation rows)
+            X.inputHash = inputHash(input);
             cal = G.PRiSM_autoInterpCal || null;
             calVersion = cal && cal.version ? cal.version : null;
             var a = AI();
@@ -758,41 +784,40 @@
             return { done: false, progress: 0.26 + 0.03 * X.ci / X.cand.length, label: 'Preparing ' + e.id };
         }
         // The 60-test cap and the cache lookup.
+        function applyCache(t) {
+            var c = X.cacheMap[t._key];
+            if (!c || t._capped) return;
+            var r = clone(c.result);
+            r.id = t.id;
+            r.confidence = clone(c.pass1.confidence); r.final = clone(c.pass1.final); r.sErr = clone(c.pass1.sErr);
+            if (c.pass1.evidence !== undefined) r.evidence = clone(c.pass1.evidence);
+            r.kHeld = null; r.background = null;
+            t.result = r; t._cached = true;
+            // a stored copy has no bins.X / bins.dte (§3.1): recomputed in stage 1, one test per unit
+            var b = r.bins || {}, nb = Array.isArray(b.dt) ? b.dt.length : 0;
+            t._needDte = !(Array.isArray(b.dte) && b.dte.length === nb && Array.isArray(b.X) && b.X.length === nb);
+        }
         function finishTests() {
             _cap(tests, st, input.workovers);
             // cache
-            var cache = {};
-            if (opts.cache && opts.cache.tests) opts.cache.tests.forEach(function (c) { if (c && c.inputHash && c.result && c.pass1) cache[c.inputHash] = c; });
-            tests.forEach(function (t) {
-                t.inputHash = t._key;
-                var c = cache[t._key];
-                if (c && !t._capped) {
-                    var r = clone(c.result);
-                    r.id = t.id;
-                    r.confidence = clone(c.pass1.confidence); r.final = clone(c.pass1.final); r.sErr = clone(c.pass1.sErr);
-                    if (c.pass1.evidence !== undefined) r.evidence = clone(c.pass1.evidence);
-                    r.kHeld = null; r.background = null;
-                    t.result = r; t._cached = true;
-                    // a stored copy has no bins.X / bins.dte (§3.1): recomputed in stage 1, one test per unit
-                    var b = r.bins || {}, nb = Array.isArray(b.dt) ? b.dt.length : 0;
-                    t._needDte = !(Array.isArray(b.dte) && b.dte.length === nb && Array.isArray(b.X) && b.X.length === nb);
-                }
-            });
+            X.cacheMap = {};
+            if (opts.cache && opts.cache.tests) opts.cache.tests.forEach(function (c) { if (c && c.inputHash && c.result && c.pass1) X.cacheMap[c.inputHash] = c; });
+            tests.forEach(function (t) { t.inputHash = t._key; applyCache(t); });
             X.phase = 'stage1'; X.i = 0;
             return { done: false, progress: 0.3, label: tests.length + ' build-ups' };
         }
         function stage1() {
-            while (X.i < tests.length && (tests[X.i]._capped || (tests[X.i]._cached && !tests[X.i]._needDte))) X.i++;
+            while (X.i < tests.length && (tests[X.i]._capped || tests[X.i]._done || (tests[X.i]._cached && !tests[X.i]._needDte))) X.i++;
             if (X.i >= tests.length) { X.phase = 'stage2'; return { done: false, progress: 0.85, label: 'Interpretation done' }; }
             var t = tests[X.i], a = AI(), lab = 'Interpreting ' + t.id + ' (' + (X.i + 1) + '/' + tests.length + ')';
             if (t._cached) {
-                _ensureDte(t.result, t._spec); t._needDte = false; X.i++;
+                _ensureDte(t.result, t._spec); t._needDte = false; t._done = true; X.i++;
                 return { done: false, progress: prog(0.3, 0.85, X.i / tests.length), label: 'Stored result ' + t.id };
             }
             if (!X.sub) {
-                if (!a || typeof a.interpretJob !== 'function') { t.status = 'failed'; t.statusReason = 'The interpretation engine is not loaded.'; X.i++; return { done: false, progress: prog(0.3, 0.85, X.i / tests.length), label: lab }; }
+                if (!a || typeof a.interpretJob !== 'function') { t.status = 'failed'; t.statusReason = 'The interpretation engine is not loaded.'; t._done = true; X.i++; return { done: false, progress: prog(0.3, 0.85, X.i / tests.length), label: lab }; }
                 try { X.sub = a.interpretJob(t._spec, { cal: cal, rivals: st.interp.rivals, cheld: st.interp.cheld }); }
-                catch (e) { X.sub = null; t.status = 'failed'; t.statusReason = 'Interpretation failed: ' + String(e && e.message || e).slice(0, 200); X.i++; return { done: false, progress: prog(0.3, 0.85, X.i / tests.length), label: lab }; }
+                catch (e) { X.sub = null; t.status = 'failed'; t.statusReason = 'Interpretation failed: ' + String(e && e.message || e).slice(0, 200); t._done = true; X.i++; return { done: false, progress: prog(0.3, 0.85, X.i / tests.length), label: lab }; }
                 X.order.push('interpret:' + t.id);
             }
             var r;
@@ -809,6 +834,7 @@
                 t.result = res;
                 if (t.result.id !== t.id) t.result.id = t.id;
             }
+            t._done = true;
             X.i++;
             return { done: false, progress: prog(0.3, 0.85, X.i / tests.length), label: lab };
         }
@@ -822,6 +848,16 @@
         }
         // Stage 2: baseline over the pass-1 tests whose k/S label is ≥ medium (first up to baseN per segment).
         function stage2() {
+            if (!X.readmitDone) {
+                X.readmitDone = true;
+                var re = _readmit(tests, st, input.workovers);
+                if (re.length) {
+                    re.forEach(applyCache);
+                    X.order.push('readmit:' + re.map(function (t) { return t.id; }).join(','));
+                    X.phase = 'stage1'; X.i = 0;
+                    return { done: false, progress: 0.85, label: 'Re-admitting ' + re.length + ' capped build-ups for the baseline' };
+                }
+            }
             snapshotPass1();
             X.order.push('baseline');
             var cands = tests.filter(function (t) { return t.status === 'interpreted' && t.result && t.result.confidence && rank(t.result.confidence.ks) >= 1; });
@@ -1056,7 +1092,7 @@
             var meta = input.meta || {};
             an = {
                 ok: true, version: VERSION, appVersion: appVersion,
-                runAt: iso(Date.now()), inputHash: inputHash(input), resultHash: resultHash(outTests, X.trend),
+                runAt: iso(Date.now()), inputHash: X.inputHash, resultHash: resultHash(outTests, X.trend),
                 meta: { wellName: String(meta.wellName || ''), engineer: String(meta.engineer || ''), appVersion: String(meta.appVersion || '') },
                 well: input.well, completion: input.completion || null, depth: input.depth || null, settings: st, zones: zones,
                 record: recSum, qc: scanRes.qc, events: scanRes.events, missed: missed, rates: rh, baseline: X.baseline || null,
