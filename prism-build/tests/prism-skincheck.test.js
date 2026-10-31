@@ -183,10 +183,13 @@ function injectionData(app) {
   const t = logspace(-3, 2, 120);
   return { t, p: t.map((tt) => TRUTH.pi + INJ.q * a * pd(bt * tt)), q: t.map(() => -INJ.q) };
 }
-// A gas build-up after 240 h at 5000 Mscf/d (shape only; the card's conversions are what is tested).
+// A gas build-up after 240 h at 5000 Mscf/d (shape only; the card's conversions are what is tested): a storage
+// hump near 1 h, then a semilog line in the Horner time Δt·tp/(tp + Δt), so the real engine (which applies the
+// producing time and pseudo-time itself) finds an IARF window of about 0.7 cycle (8–45 h real Δt). A line in
+// ln(1 + Δt) alone rises by (tp + Δt)/tp on the superposition derivative and has no plateau for the real engine.
 function gasBuildup() {
   const t = logspace(-3, Math.log10(72), 120);
-  return { t, p: t.map((dt) => 3000 + 600 * (1 - Math.exp(-dt)) + 20 * Math.log(1 + dt)) };
+  return { t, p: t.map((dt) => 3000 + 600 * (1 - Math.exp(-dt)) + 20 * Math.log(1 + dt * TP / (TP + dt))) };
 }
 function storageSnapshot(app) {
   const o = app.storage.__snapshot();
@@ -344,7 +347,9 @@ async function sk8Copies(app, assert) {
   // A run started from the drawer copy updates that copy only while it runs.
   app.click(drawer.querySelector('#prism_skc_cheld'));
   assert.strictEqual(SC._ui.running, true);
-  assert.includes(st(drawer), 'Running', 'the drawer copy shows the progress');
+  // "Running…" until the first step reports; the real drive runs its first step inside the click
+  // (step, then the setTimeout(0) yield), so the step's label and percentage may already be there.
+  assert(/Running…|\d+ %/.test(st(drawer)), 'the drawer copy shows the progress: "' + st(drawer) + '"');
   assert.strictEqual(st(hidden), hidden0, 'the hidden copy is not touched');
   assert.strictEqual(drawer.querySelector('#prism_skc_cheld_cancel').disabled, false);
   assert.strictEqual(hidden.querySelector('#prism_skc_cheld_cancel').disabled, true);
@@ -1087,14 +1092,14 @@ module.exports = [
       }
       // No m(p) table → no gas Δp skin (and the card hides Δp skin and FE).
       assert.strictEqual(SC.gasDpSkin({}, { h: 35 }, 45, 2.5, 5000, 3000), null);
-      // A window that cannot be converted: the button is disabled, with a note.
-      if (eng.stubbed) {
-        w.PRiSM_autoInterp.iarf = iw(100, 500);
-        SC.renderPanel(host);
-        assert.strictEqual(SC._ui.model.window, null);
-        assert(host.querySelector('#prism_skc_usewin').disabled, 'button disabled');
-        assert(SC._ui.model.notes.some((n) => /could not be converted/.test(n)));
-      }
+      // A window that cannot be converted (past the last real Δt): the button is disabled, with a note.
+      // With the real engine its own window is moved out of the data for this one render.
+      const AI = w.PRiSM_autoInterp, keepIarf = AI.iarf;
+      AI.iarf = eng.stubbed ? iw(100, 500) : (prep, o) => Object.assign(keepIarf(prep, o), { dt0_h: 100, dt1_h: 500 });
+      try { SC.renderPanel(host); } finally { if (!eng.stubbed) AI.iarf = keepIarf; }
+      assert.strictEqual(SC._ui.model.window, null);
+      assert(host.querySelector('#prism_skc_usewin').disabled, 'button disabled');
+      assert(SC._ui.model.notes.some((n) => /could not be converted/.test(n)));
       assert(!BAD_TEXT.test(host.textContent), 'no null/NaN text');
     },
   },
