@@ -66,28 +66,30 @@
 (function () {
     'use strict';
     var G = (typeof window !== 'undefined') ? window : globalThis;
+    // builtins held in locals: one lookup instead of a global lookup per call (much cheaper in sandboxed contexts)
+    var MATH = Math, _isFin = isFinite, _isArr = Array.isArray;
     var BU = G.WTS_buildup = G.WTS_buildup || {};
     var RV = {};
 
     // ─────────────────────────────────────────────────────────────────────
     // 0. Utilities
     // ─────────────────────────────────────────────────────────────────────
-    var LN10 = Math.LN10;
+    var LN10 = MATH.LN10;
     var GENESIS = '0000000000000000';
     var MAX_ROWS = 30;
     var DATE_RE = /^\d{4}-\d{2}-\d{2}/;
 
-    function _isNum(v) { return typeof v === 'number' && isFinite(v); }
+    function _isNum(v) { return typeof v === 'number' && _isFin(v); }
     function _allNum() { for (var i = 0; i < arguments.length; i++) if (!_isNum(arguments[i])) return false; return true; }
-    function _obj(v) { return v !== null && typeof v === 'object' && !Array.isArray(v); }
-    function _arr(v) { return Array.isArray(v) ? v : []; }
+    function _obj(v) { return v !== null && typeof v === 'object' && !_isArr(v); }
+    function _arr(v) { return _isArr(v) ? v : []; }
     function _str(v) { return (v === null || v === undefined) ? '' : String(v); }
-    function _round(v, dp) { if (!_isNum(v)) return v; var f = Math.pow(10, dp); var r = Math.round(v * f) / f; return r === 0 ? 0 : r; }
-    function _fixed(v, dp) { var s = v.toFixed(Math.max(0, Math.min(20, dp | 0))); return /^-0(\.0+)?$/.test(s) ? s.slice(1) : s; }
+    function _round(v, dp) { if (!_isNum(v)) return v; var f = MATH.pow(10, dp); var r = MATH.round(v * f) / f; return r === 0 ? 0 : r; }
+    function _fixed(v, dp) { var s = v.toFixed(MATH.max(0, MATH.min(20, dp | 0))); return /^-0(\.0+)?$/.test(s) ? s.slice(1) : s; }
     function _sfDp(v, n) {
-        if (!_isNum(v) || v === 0) return Math.max(0, n - 1);
-        var e = Math.floor(Math.log(Math.abs(v)) / LN10 + 1e-12);
-        return Math.max(0, Math.min(8, n - 1 - e));
+        if (!_isNum(v) || v === 0) return MATH.max(0, n - 1);
+        var e = MATH.floor(MATH.log(MATH.abs(v)) / LN10 + 1e-12);
+        return MATH.max(0, MATH.min(8, n - 1 - e));
     }
     function _median(a) {
         var s = a.filter(_isNum).slice().sort(function (x, y) { return x - y; });
@@ -124,7 +126,7 @@
         for (; i < parts.length; i++) {
             if (cur === null || cur === undefined) return undefined;
             var k = parts[i];
-            if (k === 'length' && (Array.isArray(cur) || typeof cur === 'string')) { cur = cur.length; continue; }
+            if (k === 'length' && (_isArr(cur) || typeof cur === 'string')) { cur = cur.length; continue; }
             cur = cur[k];
         }
         return cur;
@@ -167,7 +169,7 @@
     function sha256(str) {
         var bytes = _utf8(str === null || str === undefined ? '' : String(str));
         var len = bytes.length;
-        var hi = Math.floor(len / 0x20000000), lo = (len * 8) >>> 0;
+        var hi = MATH.floor(len / 0x20000000), lo = (len * 8) >>> 0;
         bytes.push(0x80);
         while ((bytes.length % 64) !== 56) bytes.push(0);
         bytes.push((hi >>> 24) & 255, (hi >>> 16) & 255, (hi >>> 8) & 255, hi & 255, (lo >>> 24) & 255, (lo >>> 16) & 255, (lo >>> 8) & 255, lo & 255);
@@ -217,7 +219,7 @@
             function (Dq, B, mu, k, h) { return _allNum(Dq, B, mu, k, h) && k * h !== 0 ? 162.6 * Dq * B * mu / (k * h) : null; }),
         mPrime: F(['m'], 'm′ = m/ln 10  [psi]', function (m) { return _isNum(m) ? m / LN10 : null; }),
         dpSkin: F(['m', 'S'], 'Δp_skin = 0.8686·m·S  [psi]', function (m, S) { return _allNum(m, S) ? 0.8686 * m * S : null; }),
-        X: F(['re_ft', 'rw'], 'X = ln(r_e/rw) − 0.75', function (re, rw) { return _allNum(re, rw) && re > 0 && rw > 0 ? Math.log(re / rw) - 0.75 : null; }),
+        X: F(['re_ft', 'rw'], 'X = ln(r_e/rw) − 0.75', function (re, rw) { return _allNum(re, rw) && re > 0 && rw > 0 ? MATH.log(re / rw) - 0.75 : null; }),
         piRatio: F(['X', 'S'], 'PI ratio = X/(X + S)', function (X, S) { return _allNum(X, S) && X + S !== 0 ? X / (X + S) : null; }),
         rateAtStake: F(['qNow', 'X', 'Snow', 'Sbase'], 'rate at stake = q_now·[(X + S_now)/(X + S_base) − 1]',
             function (q, X, Sn, Sb) { return _allNum(q, X, Sn, Sb) && X + Sb !== 0 ? q * ((X + Sn) / (X + Sb) - 1) : null; }),
@@ -225,23 +227,23 @@
             function (q, B, mu, dS, k, h) { return _allNum(q, B, mu, dS, k, h) && k * h !== 0 ? 141.2 * q * B * mu * dS / (k * h) : null; }),
         dkPct: F(['k', 'kRef'], 'dk% = 100·(k/k_ref − 1)', function (k, kRef) { return _allNum(k, kRef) && kRef !== 0 ? 100 * (k / kRef - 1) : null; }),
         rinv: F(['k', 'dt', 'phi', 'mu', 'ct'], 'r_inv = 0.0325·√(k·Δt/(φ·μ·ct))  [ft]',
-            function (k, dt, phi, mu, ct) { return _allNum(k, dt, phi, mu, ct) && phi * mu * ct > 0 && k * dt >= 0 ? 0.0325 * Math.sqrt(k * dt / (phi * mu * ct)) : null; }),
+            function (k, dt, phi, mu, ct) { return _allNum(k, dt, phi, mu, ct) && phi * mu * ct > 0 && k * dt >= 0 ? 0.0325 * MATH.sqrt(k * dt / (phi * mu * ct)) : null; }),
         dte: F(['dt', 'tp'], 'Δt_e = tp·Δt/(tp + Δt)  [h]', function (dt, tp) { return _allNum(dt, tp) && tp + dt !== 0 ? tp * dt / (tp + dt) : null; }),
         shutOfDte: F(['dte', 'tp'], 'Δt = Δt_e·tp/(tp − Δt_e), null when Δt_e ≥ tp  [h]', function (dte, tp) { return _allNum(dte, tp) && dte < tp ? dte * tp / (tp - dte) : null; }),
-        xOfDte: F(['dte'], 'X = log10 Δt_e  [cycles]', function (dte) { return _isNum(dte) && dte > 0 ? Math.log(dte) / LN10 : null; }),
-        dteOfX: F(['X'], 'Δt_e = 10^X  [h]', function (X) { return _isNum(X) ? Math.pow(10, X) : null; }),
+        xOfDte: F(['dte'], 'X = log10 Δt_e  [cycles]', function (dte) { return _isNum(dte) && dte > 0 ? MATH.log(dte) / LN10 : null; }),
+        dteOfX: F(['X'], 'Δt_e = 10^X  [h]', function (X) { return _isNum(X) ? MATH.pow(10, X) : null; }),
         logTerm: F(['k', 'phi', 'mu', 'ct', 'rw'], 'log10(k/(φ·μ·ct·rw²)) − 3.2275',
-            function (k, phi, mu, ct, rw) { return _allNum(k, phi, mu, ct, rw) && k > 0 && phi * mu * ct * rw > 0 ? Math.log(k / (phi * mu * ct * rw * rw)) / LN10 - 3.2275 : null; }),
+            function (k, phi, mu, ct, rw) { return _allNum(k, phi, mu, ct, rw) && k > 0 && phi * mu * ct * rw > 0 ? MATH.log(k / (phi * mu * ct * rw * rw)) / LN10 - 3.2275 : null; }),
         pStar: F(['pwf0', 'm', 'tp', 'logTerm', 'S'], 'p* = pwf0 + m·[log10 tp + logTerm + 0.8686·S]  [psia]',
-            function (pwf0, m, tp, lt, S) { return _allNum(pwf0, m, tp, lt, S) && tp > 0 ? pwf0 + m * (Math.log(tp) / LN10 + lt + 0.8686 * S) : null; }),
-        p1hr: F(['pStar', 'm', 'tp'], 'p1hr = p* − m·log10(tp + 1)  [psia]', function (pStar, m, tp) { return _allNum(pStar, m, tp) && tp > -1 ? pStar - m * Math.log(tp + 1) / LN10 : null; }),
-        reachFair: F(['t5', 'Lcyc'], 'reach.fair = 10^(0.5 + Lcyc)·t_5%  [h]', function (t5, L) { return _allNum(t5, L) ? Math.pow(10, 0.5 + L) * t5 : null; }),
-        reachGood: F(['t5', 'Lcyc'], 'reach.good = 10^(1 + Lcyc)·t_5%  [h]', function (t5, L) { return _allNum(t5, L) ? Math.pow(10, 1 + L) * t5 : null; }),
-        sTc: F(['dpdt', 'dtc_h', 'm'], 'S_tc = 1.1513·|dp/dt_flow|·δt_c/m', function (dpdt, dtc, m) { return _allNum(dpdt, dtc, m) && m !== 0 ? 1.1513 * Math.abs(dpdt) * dtc / m : null; }),
+            function (pwf0, m, tp, lt, S) { return _allNum(pwf0, m, tp, lt, S) && tp > 0 ? pwf0 + m * (MATH.log(tp) / LN10 + lt + 0.8686 * S) : null; }),
+        p1hr: F(['pStar', 'm', 'tp'], 'p1hr = p* − m·log10(tp + 1)  [psia]', function (pStar, m, tp) { return _allNum(pStar, m, tp) && tp > -1 ? pStar - m * MATH.log(tp + 1) / LN10 : null; }),
+        reachFair: F(['t5', 'Lcyc'], 'reach.fair = 10^(0.5 + Lcyc)·t_5%  [h]', function (t5, L) { return _allNum(t5, L) ? MATH.pow(10, 0.5 + L) * t5 : null; }),
+        reachGood: F(['t5', 'Lcyc'], 'reach.good = 10^(1 + Lcyc)·t_5%  [h]', function (t5, L) { return _allNum(t5, L) ? MATH.pow(10, 1 + L) * t5 : null; }),
+        sTc: F(['dpdt', 'dtc_h', 'm'], 'S_tc = 1.1513·|dp/dt_flow|·δt_c/m', function (dpdt, dtc, m) { return _allNum(dpdt, dtc, m) && m !== 0 ? 1.1513 * MATH.abs(dpdt) * dtc / m : null; }),
         sPwf: F(['pwf0SE', 'm'], 'S_pwf = 1.1513·se(pwf0)/m', function (se, m) { return _allNum(se, m) && m !== 0 ? 1.1513 * se / m : null; }),
         rDrift: F(['driftPsiPerDay', 'dtEnd_h', 'mPrime'], 'r_drift = (d/24)·Δt_end/m′', function (d, dtEnd, mp) { return _allNum(d, dtEnd, mp) && mp !== 0 ? (d / 24) * dtEnd / mp : null; }),
         sensDS: F(['input', 'f'], 'ΔS for input × f: +1.1513·log10 f (h, φ, ct), +2.3026·log10 f (rw), −1.1513·log10 f (B, q), 0 (μ)',
-            function (input, f) { return (SENS_COEF.hasOwnProperty(input) && _isNum(f) && f > 0) ? SENS_COEF[input] * Math.log(f) / LN10 : null; }),
+            function (input, f) { return (SENS_COEF.hasOwnProperty(input) && _isNum(f) && f > 0) ? SENS_COEF[input] * MATH.log(f) / LN10 : null; }),
         sensK: F(['input', 'f', 'k'], 'k for input × f: k/f (h), k·f (B, μ, q), k (φ, ct, rw)',
             function (input, f, k) { return (SENS_COEF.hasOwnProperty(input) && _allNum(f, k) && f > 0) ? _sensK(input, f, k) : null; }),
         sKAnalytic: F(['delta', 'dpEnd', 'm'], 'S_kAnalytic = δ·(ln 10·Δp_end/(2·m) − 0.5)',
@@ -253,14 +255,14 @@
             function (k, h, B, mu, X, S) { return _allNum(k, h, B, mu, X, S) && B * mu * (X + S) !== 0 ? k * h / (141.2 * B * mu * (X + S)) : null; }),
         modelFreeDS: F(['dpj', 'qj', 'dpb', 'qb', 'mOverQb', 'dtej', 'dteb'], 'ΔS = 1.1513·[(Δp_j/q_j − Δp_b/q_b)/(m/q)_b − log10(Δt_e,j/Δt_e,b)]',
             function (dpj, qj, dpb, qb, mq, dtej, dteb) {
-                return _allNum(dpj, qj, dpb, qb, mq, dtej, dteb) && qj * qb * mq !== 0 && dtej > 0 && dteb > 0 ? 1.1513 * ((dpj / qj - dpb / qb) / mq - Math.log(dtej / dteb) / LN10) : null;
+                return _allNum(dpj, qj, dpb, qb, mq, dtej, dteb) && qj * qb * mq !== 0 && dtej > 0 && dteb > 0 ? 1.1513 * ((dpj / qj - dpb / qb) / mq - MATH.log(dtej / dteb) / LN10) : null;
             }),
         kStar: F(['truth', 'given', 'f'], 'k* = f·k·(B′/B)·(μ′/μ)·(h/h′)',
             function (t, g, f) { return (_obj(t) && _obj(g) && _isNum(f)) ? f * t.k * (g.B / t.B) * (g.mu / t.mu) * (t.h / g.h) : null; }),
         SStar: F(['truth', 'given', 'f'], 'S* = S + 1.1513·log10((h′/h)(φ′/φ)(ct′/ct)) + 2.3026·log10(rw′/rw) − 1.1513·log10((B′/B)·f)',
             function (t, g, f) {
                 if (!(_obj(t) && _obj(g) && _isNum(f))) return null;
-                return t.S + 1.1513 * Math.log((g.h / t.h) * (g.phi / t.phi) * (g.ct / t.ct)) / LN10 + 2.3026 * Math.log(g.rw / t.rw) / LN10 - 1.1513 * Math.log((g.B / t.B) * f) / LN10;
+                return t.S + 1.1513 * MATH.log((g.h / t.h) * (g.phi / t.phi) * (g.ct / t.ct)) / LN10 + 2.3026 * MATH.log(g.rw / t.rw) / LN10 - 1.1513 * MATH.log((g.B / t.B) * f) / LN10;
             }),
 
         // ── review helpers (derived numbers and texts quoted by the report) ──
@@ -274,22 +276,22 @@
         sub: F(['a', 'b'], 'a − b', function (a, b) { return _allNum(a, b) ? a - b : null; }),
         neg: F(['a'], '−a', function (a) { return _isNum(a) ? -a : null; }),
         add: F(['a', 'b'], 'a + b', function (a, b) { return _allNum(a, b) ? a + b : null; }),
-        rss: F(['a', 'b'], '√(a² + b²)', function (a, b) { return _allNum(a, b) ? Math.sqrt(a * a + b * b) : null; }),
+        rss: F(['a', 'b'], '√(a² + b²)', function (a, b) { return _allNum(a, b) ? MATH.sqrt(a * a + b * b) : null; }),
         pct100: F(['x'], '100·x', function (x) { return _isNum(x) ? 100 * x : null; }),
         scale: F(['x', 'f'], 'x·f (unit change, e.g. Mscf → MMscf)', function (x, f) { return _allNum(x, f) ? x * f : null; }),
-        cvLim: F(['allocAccPct'], 'max(5 %, allocation accuracy)', function (a) { return _isNum(a) ? Math.max(5, a) : 5; }),
+        cvLim: F(['allocAccPct'], 'max(5 %, allocation accuracy)', function (a) { return _isNum(a) ? MATH.max(5, a) : 5; }),
         lit: F(['x'], 'the quoted literal (question input)', function (x) { return x === undefined ? null : x; }),
         yesNo: F(['x'], "'yes' | 'no'", function (x) { return x === true ? 'yes' : x === false ? 'no' : null; }),
-        join: F(['x'], 'list joined with commas', function (x) { return Array.isArray(x) ? (x.length ? x.join(', ') : 'none') : null; }),
-        joinCodes: F(['x'], 'flag codes joined', function (x) { return Array.isArray(x) ? (x.length ? x.map(function (f) { return f && f.code; }).filter(Boolean).join(', ') : 'none') : null; }),
-        joinRules: F(['x'], 'confidence rule ids joined', function (x) { return Array.isArray(x) ? (x.length ? _uniq(x.map(function (r) { return r && r.rule; })).join(', ') : 'none') : null; }),
+        join: F(['x'], 'list joined with commas', function (x) { return _isArr(x) ? (x.length ? x.join(', ') : 'none') : null; }),
+        joinCodes: F(['x'], 'flag codes joined', function (x) { return _isArr(x) ? (x.length ? x.map(function (f) { return f && f.code; }).filter(Boolean).join(', ') : 'none') : null; }),
+        joinRules: F(['x'], 'confidence rule ids joined', function (x) { return _isArr(x) ? (x.length ? _uniq(x.map(function (r) { return r && r.rule; })).join(', ') : 'none') : null; }),
         joinDefaulted: F(['x'], 'defaulted physical inputs', function (x) {
-            if (!Array.isArray(x)) return null;
+            if (!_isArr(x)) return null;
             var phys = x.filter(function (k) { return ['h', 'mu', 'B', 'phi', 'ct', 'rw'].indexOf(k) !== -1; });
             return phys.length ? phys.join(', ') : 'none';
         }),
         labelPair: F(['ks', 'headline'], "'k/S label · headline label'", function (a, b) { return (a && b) ? a + ' · ' + b : null; }),
-        older: F(['n', 'shown'], 'max(0, n − shown)', function (n, s) { return _allNum(n, s) ? Math.max(0, n - s) : null; }),
+        older: F(['n', 'shown'], 'max(0, n − shown)', function (n, s) { return _allNum(n, s) ? MATH.max(0, n - s) : null; }),
         dateOfIso: F(['iso'], 'date part of an ISO time', function (s) { return _dateOfIso(s); }),
         dateOfMs: F(['ms'], 'UTC date of an epoch-ms time', function (ms) { return _dateOfMs(ms); }),
         timeText: F(['ms', 'zone'], 'epoch ms as a date and time in the resolved gauge zone', function (ms, zone) { return _timeText(ms, zone); }),
@@ -299,17 +301,17 @@
         rawText: F(['raw'], 'raw gauge data embedded or not', function (r) { return (r === 'idb' || r === 'memory') ? 'embedded' : 'not embedded; interpretation and trend reproduce from the stored build-ups'; }),
         basisText: F(['basis'], 'absolute alert basis', function (b) { return b === 'mechanical' ? 'mechanical skin' : b === 'total' ? 'total skin (may include geometric pseudo-skin)' : null; }),
         baseState: F(['unstable', 'provisional'], 'baseline state', function (u, p) { return u && p ? 'unstable and provisional' : u ? 'unstable' : p ? 'provisional' : 'stable'; }),
-        rivalCount: F(['models'], 'number of rival fits', function (m) { return Array.isArray(m) ? Math.max(0, m.length - 1) : null; }),
+        rivalCount: F(['models'], 'number of rival fits', function (m) { return _isArr(m) ? MATH.max(0, m.length - 1) : null; }),
         resultsHashOf: F(['an'], 'results hash (display-precision canon of finals, S_err, labels, alerts, onset, recent slope)', function (an) { return _resultsHash(an); }),
         results8: F(['an'], 'results hash, first 8', function (an) { var h = _resultsHash(an); return h ? h.slice(0, 8) : null; }),
         decisionsHashOf: F(['review'], 'decisions hash', function (rv) { return _decisionsHash(rv); }),
         openCount: F(['review'], 'open critical/major findings', function (rv) { return _obj(rv) ? canSign(rv).open.length : null; }),
-        moreFindings: F(['review', 'shown'], 'findings beyond the shown rows', function (rv, s) { return _obj(rv) && _isNum(s) ? Math.max(0, _arr(rv.findings).length - s) : null; }),
+        moreFindings: F(['review', 'shown'], 'findings beyond the shown rows', function (rv, s) { return _obj(rv) && _isNum(s) ? MATH.max(0, _arr(rv.findings).length - s) : null; }),
         chainHead: F(['audit'], 'audit chain head', function (a) { return _auditLog(a) ? auditHead(a) : null; }),
         auditFolded: F(['audit'], 'folded audit entries', function (a) { var L = _auditLog(a); return L ? (L.summary && _isNum(L.summary.n) ? L.summary.n : 0) : null; }),
-        testList: F(['tests'], 'test ids', function (t) { return Array.isArray(t) ? (t.length ? t.map(function (x) { return x && x.id; }).join(', ') : 'none') : null; }),
+        testList: F(['tests'], 'test ids', function (t) { return _isArr(t) ? (t.length ? t.map(function (x) { return x && x.id; }).join(', ') : 'none') : null; }),
         excludedList: F(['tests'], 'excluded or not analysed tests', function (t) {
-            if (!Array.isArray(t)) return null;
+            if (!_isArr(t)) return null;
             var l = t.filter(function (x) { return x && x.status !== 'interpreted'; }).map(function (x) { return x.id + ' (' + x.status + ')'; });
             return l.length ? l.join(', ') : 'none';
         }),
@@ -320,12 +322,12 @@
         rhoSq: F(['an'], 'Spearman ρ(S, Δq) over the used tests', function (an) { return _rhoSq(an); }),
         bubbleBelow: F(['an'], 'tests with sandface pwf below Pb', function (an) { return _bubbleCount(an).below; }),
         bubbleN: F(['an'], 'tests in the bubble-point check', function (an) { return _bubbleCount(an).n; }),
-        mfAgree: F(['rows'], 'model-free rows that agree', function (r) { return Array.isArray(r) ? r.filter(function (x) { return x && x.agrees; }).length : null; }),
-        minMargin: F(['rows'], 'lowest bubble-point margin', function (r) { var m = _arr(r).map(function (x) { return x && x.margin; }).filter(_isNum); return m.length ? Math.min.apply(null, m) : null; }),
-        maxOf: F(['xs'], 'largest value', function (xs) { var m = _arr(xs).filter(_isNum); return m.length ? Math.max.apply(null, m) : null; }),
+        mfAgree: F(['rows'], 'model-free rows that agree', function (r) { return _isArr(r) ? r.filter(function (x) { return x && x.agrees; }).length : null; }),
+        minMargin: F(['rows'], 'lowest bubble-point margin', function (r) { var m = _arr(r).map(function (x) { return x && x.margin; }).filter(_isNum); return m.length ? MATH.min.apply(null, m) : null; }),
+        maxOf: F(['xs'], 'largest value', function (xs) { var m = _arr(xs).filter(_isNum); return m.length ? MATH.max.apply(null, m) : null; }),
         dteEnd: F(['evDte', 'dte', 'dtEnd', 'steps', 'from', 'to'], 'Δt_e at the end of the test (evidence, bins or the rate history)', function (evDte, dte, dtEnd, steps, from, to) {
             if (_isNum(evDte)) return evDte;
-            if (Array.isArray(dte) && dte.length && _isNum(dte[dte.length - 1])) return dte[dte.length - 1];
+            if (_isArr(dte) && dte.length && _isNum(dte[dte.length - 1])) return dte[dte.length - 1];
             var r = _dteFromSteps([dtEnd], steps, from, to);
             return r ? r[0] : null;
         }),
@@ -336,12 +338,12 @@
     // ─────────────────────────────────────────────────────────────────────
     // ── RE-DERIVATION START ── (V23–V27 and the functions they use: stored data only, no engine calls)
     // ─────────────────────────────────────────────────────────────────────
-    function _rdNum(v) { return typeof v === 'number' && isFinite(v); }
-    function _rdRound(v, dp) { var f = Math.pow(10, dp); var r = Math.round(v * f) / f; return r === 0 ? 0 : r; }
+    function _rdNum(v) { return typeof v === 'number' && _isFin(v); }
+    function _rdRound(v, dp) { var f = MATH.pow(10, dp); var r = MATH.round(v * f) / f; return r === 0 ? 0 : r; }
     // Superposition equivalent time from the stored rate history (stepRef into analysis.rates.steps, the last step
     // being the q = 0 step at t_c): log10 Δt_e = log10 Δt − Σ_{i<N} w_i·log10((t_c − τ_i + Δt)/(t_c − τ_i)), w_i = Δq_i/Δq.
     function _dteFromSteps(dts, steps, from, to) {
-        if (!Array.isArray(dts) || !Array.isArray(steps) || !_rdNum(from) || !_rdNum(to) || to <= from || to >= steps.length) return null;
+        if (!_isArr(dts) || !_isArr(steps) || !_rdNum(from) || !_rdNum(to) || to <= from || to >= steps.length) return null;
         var last = steps[to]; if (!last || !_rdNum(last.t_ms)) return null;
         var dq = steps[to - 1] && _rdNum(steps[to - 1].q) ? steps[to - 1].q : null;
         if (!dq) return null;
@@ -354,9 +356,9 @@
         }
         return dts.map(function (dt) {
             if (!_rdNum(dt) || dt <= 0) return null;
-            var lg = Math.log(dt);
-            for (var j = 0; j < terms.length; j++) lg -= terms[j].w * Math.log((terms[j].age + dt) / terms[j].age);
-            return Math.exp(lg);
+            var lg = MATH.log(dt);
+            for (var j = 0; j < terms.length; j++) lg -= terms[j].w * MATH.log((terms[j].age + dt) / terms[j].age);
+            return MATH.exp(lg);
         });
     }
     // k from the IARF derivative level: k = 70.6·Δq·B·μ/(m′·h)  (V23)
@@ -364,23 +366,23 @@
     // Mean point skin over the stored IARF window (V24): S_i = 0.5·[Δp_i/m′ − ln(k·Δt_e,i/(φ·μ·ct·rw²)) + 7.4316],
     // with k from the same level, so the result is independent of the fitted k.
     function _rdPointSkinMean(dp, dte, dt, X0, X1, level, Dq, B, mu, h, phi, ct, rw, steps, from, to) {
-        if (!Array.isArray(dp) || !_rdNum(X0) || !_rdNum(X1) || X1 <= X0) return null;
+        if (!_isArr(dp) || !_rdNum(X0) || !_rdNum(X1) || X1 <= X0) return null;
         var k = _rdKLevel(Dq, B, mu, level, h);
         if (!k || !_rdNum(phi) || !_rdNum(ct) || !_rdNum(rw) || phi * mu * ct * rw <= 0) return null;
-        var te = (Array.isArray(dte) && dte.length === dp.length) ? dte : _dteFromSteps(dt, steps, from, to);
+        var te = (_isArr(dte) && dte.length === dp.length) ? dte : _dteFromSteps(dt, steps, from, to);
         if (!te) return null;
-        var lo = Math.pow(10, X0) * (1 - 1e-6), hi = Math.pow(10, X1) * (1 + 1e-6), sum = 0, n = 0;
+        var lo = MATH.pow(10, X0) * (1 - 1e-6), hi = MATH.pow(10, X1) * (1 + 1e-6), sum = 0, n = 0;
         for (var i = 0; i < dp.length; i++) {
             var x = te[i], y = dp[i];
             if (!_rdNum(x) || !_rdNum(y) || y <= 0 || x < lo || x > hi) continue;
-            sum += 0.5 * (y / level - Math.log(k * x / (phi * mu * ct * rw * rw)) + 7.4316);
+            sum += 0.5 * (y / level - MATH.log(k * x / (phi * mu * ct * rw * rw)) + 7.4316);
             n++;
         }
         return n >= 2 ? sum / n : null;
     }
     // Δq re-derived from the allocation volume and the detected flowing hours of the closing day (V25).
     function _rdClosingRate(days, tcMs, dqSource, mode, events, eventId, closeDayMin) {
-        if (mode !== 'daily' || !Array.isArray(days) || !_rdNum(tcMs)) return null;
+        if (mode !== 'daily' || !_isArr(days) || !_rdNum(tcMs)) return null;
         var di = -1;
         for (var i = 0; i < days.length; i++) { var d = days[i]; if (d && d.t0_ms <= tcMs && tcMs < d.t1_ms) { di = i; break; } }
         if (di < 0) return null;
@@ -402,12 +404,12 @@
     }
     // The model the stored BIC table selects with τ (rounded to 0.1 per D27); null when exact and rounded differ.
     function _rdBicChoice(bic, ov, trig, found, chosen) {
-        if (!bic || !Array.isArray(bic.rows)) return null;
+        if (!bic || !_isArr(bic.rows)) return null;
         var hom = bic.rows.filter(function (r) { return r && r.key === 'homogeneous'; })[0];
         if (!hom || !_rdNum(hom.bic)) return null;
         if (ov && ov.model) return ov.model;
         var tau = _rdNum(bic.tau) ? bic.tau : 10;
-        var excl = (ov && Array.isArray(ov.excludeRivals)) ? ov.excludeRivals : [];
+        var excl = (ov && _isArr(ov.excludeRivals)) ? ov.excludeRivals : [];
         var cands = bic.rows.filter(function (r) { return r && r.key !== 'homogeneous' && r.eligible === true && _rdNum(r.bic) && excl.indexOf(r.key) === -1; });
         function pick(rounded, useTau) {
             var best = hom;
@@ -433,7 +435,7 @@
         var A = tr.alerts[which];
         var keep = { status: A.status, raisedAt: A.raisedAt, confirmedAt: A.confirmedAt, ambiguous: true };
         if (tr.enabled === false) return keep;
-        var segs = tr.baseline && Array.isArray(tr.baseline.segments) ? tr.baseline.segments : [];
+        var segs = tr.baseline && _isArr(tr.baseline.segments) ? tr.baseline.segments : [];
         if (segs.length > 1) return keep;                          // per-segment re-arming is not re-derived
         var base = tr.baseline && _rdNum(tr.baseline.S) ? tr.baseline.S : null;
         var sigB = tr.baseline && _rdNum(tr.baseline.sigma) ? tr.baseline.sigma : 0;
@@ -442,16 +444,16 @@
         var sh = _rdNum(shift) ? shift : 0;
         var mech = which === 'absolute' && A.basis === 'mechanical';
         var confirmMode = an.settings && an.settings.trend ? an.settings.trend.confirm : 'next';
-        var series = Array.isArray(tr.series) ? tr.series : [];
+        var series = _isArr(tr.series) ? tr.series : [];
         var low = {};
-        (tr.excludedLow && Array.isArray(tr.excludedLow.ids) ? tr.excludedLow.ids : []).forEach(function (id) { low[id] = 1; });
+        (tr.excludedLow && _isArr(tr.excludedLow.ids) ? tr.excludedLow.ids : []).forEach(function (id) { low[id] = 1; });
         function excess(s, rounded) {
             var S = mech ? s.Smech : s.S, E = mech ? s.SmechErr : s.Serr;
             if (!_rdNum(S) || !_rdNum(E)) return null;
             var x;
             if (which === 'delta') {
                 if (base === null) return null;
-                var Ej = (A.form === 'basevar') ? Math.sqrt(E * E + sigB * sigB) : E;
+                var Ej = (A.form === 'basevar') ? MATH.sqrt(E * E + sigB * sigB) : E;
                 x = (S + sh) - Ej - (base + sh) - thr;           // a uniform shift moves the baseline too
             } else x = (S + sh) - E - thr;
             return rounded ? _rdRound(x, 2) : x;
@@ -501,8 +503,8 @@
             if (r.final.source !== 'match' && r.final.source !== 'line') return;
             var d = c.V(t.id + '·I3', 'dkLevel');
             if (!_rdNum(d.v)) return;
-            var tol = 5 + ((r.agreement && _rdNum(r.agreement.biasKPct)) ? Math.abs(r.agreement.biasKPct) : 0);
-            if (_rdRound(Math.abs(d.v), 1) > _rdRound(tol, 1)) {
+            var tol = 5 + ((r.agreement && _rdNum(r.agreement.biasKPct)) ? MATH.abs(r.agreement.biasKPct) : 0);
+            if (_rdRound(MATH.abs(d.v), 1) > _rdRound(tol, 1)) {
                 out.push({ subject: t.id, tests: [t.id], ev: [t.id + '·I3', t.id + '·A2'],
                            template: '{test}: k re-derived from the stored IARF level ({kl}) differs from the final k ({k}) by {d} %.',
                            values: { test: c.V(t.id + '·A2', 'test'), kl: c.V(t.id + '·I3', 'kLevel'), k: c.V(t.id + '·A2', 'k'), d: d } });
@@ -518,8 +520,8 @@
             if (r.final.source !== 'match' && r.final.source !== 'line') return;
             var sm = c.V(t.id + '·I4', 'Smean');
             if (!_rdNum(sm.v) || !_rdNum(r.final.S)) return;
-            var thr = Math.max(0.5, _rdNum(r.sErr.value) ? r.sErr.value : 0);
-            if (_rdRound(Math.abs(sm.v - r.final.S), 2) > _rdRound(thr, 2)) {
+            var thr = MATH.max(0.5, _rdNum(r.sErr.value) ? r.sErr.value : 0);
+            if (_rdRound(MATH.abs(sm.v - r.final.S), 2) > _rdRound(thr, 2)) {
                 out.push({ subject: t.id, tests: [t.id], ev: [t.id + '·I4', t.id + '·A2'],
                            template: '{test}: the mean point skin over the stored window ({sm}) differs from the final skin ({s}) by more than its uncertainty ({e}).',
                            values: { test: c.V(t.id + '·A2', 'test'), sm: sm, s: c.V(t.id + '·A2', 'S'), e: c.V(t.id + '·U1', 'value') } });
@@ -536,7 +538,7 @@
             if (!_rdNum(d.v)) return;
             var rr = _rdClosingRate(an.rates.days, t.tc_ms, s.rateQC.dqSource, an.rates.mode, an.events, t.eventId, 6);
             var tol = (rr && _rdNum(rr.tol)) ? rr.tol : 0.15;
-            if (_rdRound(Math.abs(d.v), 1) > _rdRound(100 * tol, 1)) {
+            if (_rdRound(MATH.abs(d.v), 1) > _rdRound(100 * tol, 1)) {
                 out.push({ subject: t.id, tests: [t.id], ev: [t.id + '·R1', t.id + '·R2'],
                            template: '{test}: the rate re-derived from the allocation and the detected flowing hours ({qa}) differs from the rate used ({q}) by {d} %.',
                            values: { test: c.V(t.id + '·A2', 'test'), qa: c.V(t.id + '·R2', 'qDay'), q: c.V(t.id + '·R1', 'Dq'), d: d } });
@@ -579,7 +581,7 @@
     function _zoneText(z) {
         if (!_obj(z)) return null;
         if (z.mode === 'utc') return 'UTC';
-        if (z.mode === 'fixed' && _isNum(z.offset_h)) return 'UTC' + (z.offset_h >= 0 ? '+' : '−') + Math.abs(z.offset_h) + ' h';
+        if (z.mode === 'fixed' && _isNum(z.offset_h)) return 'UTC' + (z.offset_h >= 0 ? '+' : '−') + MATH.abs(z.offset_h) + ' h';
         if (z.mode === 'iana' && z.tz) return String(z.tz);
         if (z.mode === 'device') return 'device zone (not yet resolved)';
         return null;
@@ -607,12 +609,12 @@
         var r = t && t.result;
         if (!r) return null;
         if (r.evidence && _isNum(r.evidence.dteEnd_h)) return r.evidence.dteEnd_h;
-        if (r.bins && Array.isArray(r.bins.dte) && r.bins.dte.length) return r.bins.dte[r.bins.dte.length - 1];
+        if (r.bins && _isArr(r.bins.dte) && r.bins.dte.length) return r.bins.dte[r.bins.dte.length - 1];
         return null;
     }
     function _reachSummary(an) {
         var out = { n: 0, nShort: 0, fair: null, good: null };
-        if (!an || !Array.isArray(an.tests)) return out;
+        if (!an || !_isArr(an.tests)) return out;
         var fairs = [], goods = [];
         an.tests.forEach(function (t) {
             if (!t || t.status !== 'interpreted' || !t.result || !t.result.reach) return;
@@ -635,10 +637,10 @@
         }
         var rx = ranks(x), ry = ranks(y), mx = (n + 1) / 2, sxy = 0, sxx = 0, syy = 0;
         for (var i = 0; i < n; i++) { sxy += (rx[i] - mx) * (ry[i] - mx); sxx += (rx[i] - mx) * (rx[i] - mx); syy += (ry[i] - mx) * (ry[i] - mx); }
-        return (sxx > 0 && syy > 0) ? sxy / Math.sqrt(sxx * syy) : null;
+        return (sxx > 0 && syy > 0) ? sxy / MATH.sqrt(sxx * syy) : null;
     }
     function _rhoSq(an) {
-        if (!an || !Array.isArray(an.tests)) return null;
+        if (!an || !_isArr(an.tests)) return null;
         var S = [], Q = [];
         an.tests.forEach(function (t) {
             if (!t || !t.used || !t.used.trend || !t.result || !t.result.final) return;
@@ -662,7 +664,7 @@
         if (!tr || _fluid(an) !== 'oil' || tr.enabled === false || !tr.pi || tr.pi.guard === true || !tr.onset || !tr.baseline) return null;
         var X = tr.pi.X, Sb = tr.baseline.S, tau = tr.onset.tauDays;
         if (!_allNum(X, Sb, tau) || X + Sb < 1) return null;
-        if (Array.isArray(tr.baseline.segments) && tr.baseline.segments.length > 1) return null;
+        if (_isArr(tr.baseline.segments) && tr.baseline.segments.length > 1) return null;
         var days = an.rates ? _arr(an.rates.days) : [];
         if (!days.length) return null;
         var byId = {};
@@ -674,7 +676,7 @@
             if (s.used && s.used.trend && _isNum(s.S)) vals.push([s.tDays, s.S]);
         });
         if (first === null || !vals.length) return null;
-        var atTau = vals.some(function (k) { return Math.abs(k[0] - tau) < 1e-9; });
+        var atTau = vals.some(function (k) { return MATH.abs(k[0] - tau) < 1e-9; });
         var knots = atTau ? vals : vals.filter(function (k) { return k[0] < tau; }).concat([[tau, Sb]]).concat(vals.filter(function (k) { return k[0] > tau; }));
         var cum = 0;
         for (var i = 0; i < days.length; i++) {
@@ -750,8 +752,8 @@
             case 'dS3': return 3;
             case 'pct': case 'bic': case 'days': case 'snr': return 1;
             case 'k': case 'C': case 'kh': case 'J': case 'D': return _sfDp(v, 3);
-            case 'p': case 'q': return (_isNum(v) && v !== 0 && Math.abs(v) < 10) ? Math.max(1, _sfDp(v, 3)) : 1;
-            case 'h': if (!_isNum(v)) return 1; var a = Math.abs(v); return a >= 100 ? 0 : a >= 10 ? 1 : Math.max(1, _sfDp(v, 3));
+            case 'p': case 'q': return (_isNum(v) && v !== 0 && MATH.abs(v) < 10) ? MATH.max(1, _sfDp(v, 3)) : 1;
+            case 'h': if (!_isNum(v)) return 1; var a = MATH.abs(v); return a >= 100 ? 0 : a >= 10 ? 1 : MATH.max(1, _sfDp(v, 3));
             case 'ratio': case 'idx': case 'frac': return 3;
             case 'cyc': return 2;
             default: return 0;          // strings, counts, distances (ft), seconds, volumes
@@ -764,7 +766,7 @@
     }
     function _firstPath(f) {
         if (!f || !f.args) return null;
-        for (var k in f.args) { var a = f.args[k]; if (typeof a === 'string') return a; if (_obj(a) && typeof a.path === 'string') return a.path; if (_obj(a) && Array.isArray(a.paths) && a.paths.length) return a.paths[0]; }
+        for (var k in f.args) { var a = f.args[k]; if (typeof a === 'string') return a; if (_obj(a) && typeof a.path === 'string') return a.path; if (_obj(a) && _isArr(a.paths) && a.paths.length) return a.paths[0]; }
         return null;
     }
     function _arg(a, roots) {
@@ -772,7 +774,7 @@
         if (typeof a === 'string') return _get(roots, a);
         if (_obj(a)) {
             if ('lit' in a) return a.lit;
-            if (Array.isArray(a.paths)) return a.paths.map(function (p) { return _get(roots, p); });
+            if (_isArr(a.paths)) return a.paths.map(function (p) { return _get(roots, p); });
             if (typeof a.path === 'string') return _get(roots, a.path);
         }
         return a;
@@ -785,7 +787,7 @@
     }
     function _clean(v) {
         if (v === undefined || v === null) return null;
-        if (typeof v === 'number') return isFinite(v) ? (v === 0 ? 0 : v) : null;
+        if (typeof v === 'number') return _isFin(v) ? (v === 0 ? 0 : v) : null;
         if (typeof v === 'string') return v;
         if (typeof v === 'boolean') return v ? 'yes' : 'no';
         return null;
@@ -811,7 +813,7 @@
             var raw = _get(roots, path);
             if (raw === undefined) return null;
             if (typeof raw === 'boolean') formula = { f: 'yesNo', args: { x: path } };
-            else if (Array.isArray(raw)) { if (raw.every(function (x) { return typeof x === 'string' || typeof x === 'number'; })) formula = { f: 'join', args: { x: path } }; else return null; }
+            else if (_isArr(raw)) { if (raw.every(function (x) { return typeof x === 'string' || typeof x === 'number'; })) formula = { f: 'join', args: { x: path } }; else return null; }
             else if (raw !== null && typeof raw === 'object') return null;
         }
         var v;
@@ -1213,7 +1215,7 @@
         src.forEach(function (t) {
             if (!t) return;
             var j = find(t.tc_ms); if (j < 0) return;
-            for (var k = Math.max(0, j - 2); k <= Math.min(days.length - 1, j + 2); k++) pick[k] = 1;
+            for (var k = MATH.max(0, j - 2); k <= MATH.min(days.length - 1, j + 2); k++) pick[k] = 1;
         });
         return Object.keys(pick).map(Number).sort(function (a, b) { return a - b; });
     }
@@ -1281,7 +1283,7 @@
                 var c = _cmpRef(iv.v, iv, roots, iv.dp | 0);
                 if (c.r === undefined) continue;
                 out.nChecked++;
-                if (!c.ok) out.failures.push({ ref: id + ':' + name, quoted: iv.v, recomputed: c.r, tol: typeof iv.v === 'number' ? 0.5 * Math.pow(10, -(iv.dp | 0)) : 0 });
+                if (!c.ok) out.failures.push({ ref: id + ':' + name, quoted: iv.v, recomputed: c.r, tol: typeof iv.v === 'number' ? 0.5 * MATH.pow(10, -(iv.dp | 0)) : 0 });
             }
         });
         return out;
@@ -1291,15 +1293,15 @@
         if (q === null || q === undefined) return r === null || r === undefined;
         if (typeof q === 'number') {
             if (!_isNum(r)) return false;
-            var tol = (dp >= 0 && dp <= 8) ? HALF_UNIT[dp] : 0.5 * Math.pow(10, -dp);
-            return Math.abs(q - r) <= tol + 1e-9 * Math.max(1, Math.abs(r));
+            var tol = (dp >= 0 && dp <= 8) ? HALF_UNIT[dp] : 0.5 * MATH.pow(10, -dp);
+            return MATH.abs(q - r) <= tol + 1e-9 * MATH.max(1, MATH.abs(r));
         }
         return String(q) === String(r);
     }
     function _checkValue(val, roots, idx) {
         var sr = _splitRef(val.ref);
         var item = idx && idx.items ? idx.items[sr.id] : null;
-        var tol = 0.5 * Math.pow(10, -(val.dp | 0));
+        var tol = 0.5 * MATH.pow(10, -(val.dp | 0));
         if (!item) return { checked: true, fail: { ref: val.ref, quoted: val.v, recomputed: null, tol: tol, reason: 'unknown evidence id' } };
         var r;
         if (_obj(val.calc)) {
@@ -1336,7 +1338,7 @@
                 if (c.fail) { res.nFailed++; res.failures.push(c.fail); }
                 return;
             }
-            if (Array.isArray(o)) { for (var i = 0; i < o.length; i++) walk(o[i], null); return; }
+            if (_isArr(o)) { for (var i = 0; i < o.length; i++) walk(o[i], null); return; }
             Object.keys(o).forEach(function (k) { walk(o[k], k); });
         })(obj, null);
         res.ok = res.nFailed === 0;
@@ -1380,7 +1382,7 @@
     });
     defRule('V3', 'major', 'S5', 'Non-Darcy skin significant and not resolved', ['T15'], function (c) {
         var rs = c.an.trend && c.an.trend.rateSkin;
-        if (c.fluid !== 'gas' || !rs || rs.resolved === true || !_isNum(rs.dqEffect) || !(_round(Math.abs(rs.dqEffect), 2) > 0.5)) return [];
+        if (c.fluid !== 'gas' || !rs || rs.resolved === true || !_isNum(rs.dqEffect) || !(_round(MATH.abs(rs.dqEffect), 2) > 0.5)) return [];
         return [{ subject: '', tests: [], ev: ['T15'],
                   template: 'Gas well: the expected non-Darcy skin at the test rates ({dq}) is above half a skin unit and the rate-dependent skin is not resolved.',
                   values: { dq: c.V('T15', 'dqEffect') } }];
@@ -1404,7 +1406,7 @@
     defRule('V6', 'major', 'S5', 'k varies between tests', ['T9'], function (c) {
         var ks = c.an.trend && c.an.trend.kStability;
         if (!ks || !_isNum(ks.cv)) return [];
-        var lim = Math.max(0.05, _isNum(ks.allocAccPct) ? ks.allocAccPct / 100 : 0.05);
+        var lim = MATH.max(0.05, _isNum(ks.allocAccPct) ? ks.allocAccPct / 100 : 0.05);
         if (!(_r3(ks.cv) > _r3(lim))) return [];
         return [{ subject: '', tests: [], ev: ['T9'], template: 'k varies between tests: CV {cv} % against an allowed {lim} %.',
                   values: { cv: c.V('T9', 'cvPct'), lim: c.V('T9', 'cvLimPct') } }];
@@ -1703,13 +1705,13 @@
         var prev = review.evidenceCheck || { nChecked: 0, nFailed: 0 };
         _addV14(review, allFail, idx);
         var nV14 = review.findings.filter(function (f) { return f.rule === 'V14'; }).length;
-        review.evidenceCheck = { ok: nV14 === 0, nChecked: Math.max(nChecked, prev.nChecked || 0), nFailed: Math.max(allFail.length, nV14) };
+        review.evidenceCheck = { ok: nV14 === 0, nChecked: MATH.max(nChecked, prev.nChecked || 0), nFailed: MATH.max(allFail.length, nV14) };
         return review;
     }
     var DECISION_CODES = { accept: 1, reject: 1, note: 1 };
     function applyDecisions(review, decisions) {
         if (!_obj(review)) return review;
-        var list = Array.isArray(decisions) ? decisions : _decisionsFromAudit(decisions);
+        var list = _isArr(decisions) ? decisions : _decisionsFromAudit(decisions);
         _arr(review.findings).forEach(function (f) {
             var dec = f.decision || null;
             list.forEach(function (d) {
@@ -1806,15 +1808,15 @@
     // ─────────────────────────────────────────────────────────────────────
     var AUDIT_MAX = 500, AUDIT_BYTES = 200000;
     function _auditLog(a) {
-        if (Array.isArray(a)) return { v: 1, entries: a, summary: null };
-        if (_obj(a) && Array.isArray(a.entries)) return a;
+        if (_isArr(a)) return { v: 1, entries: a, summary: null };
+        if (_obj(a) && _isArr(a.entries)) return a;
         return null;
     }
     // Lossless: numeric leaves are serialised exactly (String(n), the shortest round-trip form) before canon, so canon sorts the keys
     // but rounds nothing; an edit at any digit of an entry breaks the chain.
     function _exactLeaves(v) {
         if (typeof v === 'number') return 'n:' + String(v);
-        if (Array.isArray(v)) return v.map(_exactLeaves);
+        if (_isArr(v)) return v.map(_exactLeaves);
         if (v !== null && typeof v === 'object') { var o = {}; Object.keys(v).forEach(function (k) { o[k] = _exactLeaves(v[k]); }); return o; }
         return v;
     }
@@ -1834,7 +1836,7 @@
         opts = opts || {};
         var max = _isNum(opts.max) ? opts.max : AUDIT_MAX, maxBytes = _isNum(opts.maxBytes) ? opts.maxBytes : AUDIT_BYTES;
         var entries = L.entries.slice(), summary = L.summary ? JSON.parse(JSON.stringify(L.summary)) : null;
-        var cut = Math.max(0, entries.length - max);
+        var cut = MATH.max(0, entries.length - max);
         var total = 1;
         for (var i = cut; i < entries.length; i++) total += _entryBytes(entries[i]) + 1;
         while (cut < entries.length - 1 && total > maxBytes) { total -= _entryBytes(entries[cut]) + 1; cut++; }
@@ -2025,7 +2027,7 @@
         }),
         I('whatif_input', 'what if h is 20 % higher?', [[/\bwhat if\b|\bsuppose\b|\bwhat happens if\b|\bassume\b|\bif (the |our )?[a-zφμ ]{1,30}\b(is|were|was|are)\b/, 3]], function (c, e) {
             if (!e.input) return _ans('Name the input (h, φ, ct, rw, B, μ or q) and a percentage, for example: what if h is higher?', {}, ['U2'], 'partial', ['What if h is 20 % higher?']);
-            var p = e.pcts.length ? Math.abs(e.pcts[0]) : (e.input === 'q' ? 10 : 20);
+            var p = e.pcts.length ? MATH.abs(e.pcts[0]) : (e.input === 'q' ? 10 : 20);
             var sign = (e.pcts.length && e.pcts[0] < 0) ? -1 : (e.down && !e.up) ? -1 : 1;
             var f = 1 + sign * p / 100;
             if (!(f > 0)) return _ans('That change would make the input zero or negative.', {}, ['U2'], 'partial');
@@ -2232,7 +2234,7 @@
             if (fc.show) { tpl = 'Skin is forecast to cross the absolute threshold ({thr}) about {d} (earliest {e}, latest {l}).'; vals.d = c.V('T6', 'date'); vals.e = c.V('T6', 'earliest'); vals.l = c.V('T6', 'latest'); }
             else { tpl = 'No forecast: {why}'; vals.why = c.V('T6', 'reason'); delete vals.thr; }
             var thrNow = c.an.trend.alerts && c.an.trend.alerts.absolute ? c.an.trend.alerts.absolute.threshold : null;
-            if (e.thr.length && _isNum(thrNow) && Math.abs(e.thr[0] - thrNow) > 1e-9) { tpl += ' The forecast uses the configured threshold {thr}.'; vals.thr = c.V('T3', 'threshold'); }
+            if (e.thr.length && _isNum(thrNow) && MATH.abs(e.thr[0] - thrNow) > 1e-9) { tpl += ' The forecast uses the configured threshold {thr}.'; vals.thr = c.V('T3', 'threshold'); }
             return _ans(tpl, vals, ['T6', 'T3', 'T5'], 'full', ['When did skin start rising?']);
         }),
         I('mech', 'what is the mechanical skin?', [[/\bmechanical\b/, 5], [/\bpseudo ?-?skins?\b|\bgeometric\b|\bpartial penetration\b|\bdeviation skin\b|\bdecompos|\bsplit\b/, 4], [/\bdamage\b/, 3]], function (c, e) {
@@ -2318,7 +2320,7 @@
     function _blank(n) { var a = []; for (var i = 0; i < n; i++) a.push(''); return a; }
 
     function _rc(an, review, audit, signoff, opts) {
-        var idx = (opts.idx && opts.idx.items && Array.isArray(opts.idx.order)) ? opts.idx : _evidenceFor(an, { cal: opts.cal });
+        var idx = (opts.idx && opts.idx.items && _isArr(opts.idx.order)) ? opts.idx : _evidenceFor(an, { cal: opts.cal });
         var roots = _roots(an, { review: review, signoff: signoff, audit: audit, cal: opts.cal });
         var c = _ctxFor(an, idx, roots);
         c.roots = roots; c.review = review; c.signoff = signoff; c.audit = _auditLog(audit); c.opts = opts;
@@ -2504,15 +2506,15 @@
         if (!reasons.length) reasons = [['—', '—', 'No rule capped or lowered the label.', id + '·K1']];
         b.push(_table('bu_tbl_reasons' + suffix, [{ text: 'Rule', cat: null }, { text: 'Kind', cat: null }, { text: 'Meaning', cat: null }, { text: 'Evidence', cat: null }], reasons, c.evs([id + '·K1', id + '·K2'])));
         var bins = r.bins || {};
-        if (Array.isArray(bins.dt) && bins.dt.length) {
+        if (_isArr(bins.dt) && bins.dt.length) {
             var ser = [_series('Δp', 'pressure', bins.dt, _arr(bins.dp)), _series('Δp′', 'pressure', bins.dt, _arr(bins.deriv))];
-            if (r.curves && Array.isArray(r.curves.dt)) {
+            if (r.curves && _isArr(r.curves.dt)) {
                 if (r.curves.hom) { ser.push(_series('Homogeneous Δp', 'pressure', r.curves.dt, _arr(r.curves.hom.dp))); ser.push(_series('Homogeneous Δp′', 'pressure', r.curves.dt, _arr(r.curves.hom.deriv))); }
                 if (r.curves.chosen) { ser.push(_series('Chosen model Δp', 'pressure', r.curves.dt, _arr(r.curves.chosen.dp))); ser.push(_series('Chosen model Δp′', 'pressure', r.curves.dt, _arr(r.curves.chosen.deriv))); }
             }
             b.push(_chart('bu_ch_ll' + suffix, ser));
-            var te = (Array.isArray(bins.dte) && bins.dte.length === bins.dt.length) ? bins.dte : bins.dt;
-            b.push(_chart('bu_ch_sl' + suffix, [_series('Δp against log10 Δt_e', 'pressure', te.map(function (x) { return _isNum(x) && x > 0 ? Math.log(x) / LN10 : null; }), _arr(bins.dp))]));
+            var te = (_isArr(bins.dte) && bins.dte.length === bins.dt.length) ? bins.dte : bins.dt;
+            b.push(_chart('bu_ch_sl' + suffix, [_series('Δp against log10 Δt_e', 'pressure', te.map(function (x) { return _isNum(x) && x > 0 ? MATH.log(x) / LN10 : null; }), _arr(bins.dp))]));
         }
         var why = _arr(r.triggers && r.triggers.fired).length ? 'triggers {tr}' : 'no trigger fired';
         b.push(_notes('Interpretation', '{t}: {mdl} chosen (' + why + '). IARF {g}' + (iarf.found ? ', {cy} cycle' : '') + '. Final k {k}, S {s} ± {e}; confidence {ks} for k and S and {hl} for the test.',
@@ -2562,7 +2564,7 @@
         var skin = [_series('Skin', null, xs, series.map(function (s) { return s.S; })), _series('Skin + S_err', null, xs, series.map(function (s) { return _isNum(s.S) && _isNum(s.Serr) ? s.S + s.Serr : null; })),
                     _series('Skin − S_err', null, xs, series.map(function (s) { return _isNum(s.S) && _isNum(s.Serr) ? s.S - s.Serr : null; }))];
         if (xs.length && tr.baseline && _isNum(tr.baseline.S)) {
-            var x2 = [Math.min.apply(null, xs.filter(_isNum)), Math.max.apply(null, xs.filter(_isNum))];
+            var x2 = [MATH.min.apply(null, xs.filter(_isNum)), MATH.max.apply(null, xs.filter(_isNum))];
             skin.push(_series('Baseline', null, x2, [tr.baseline.S, tr.baseline.S]));
             if (tr.alerts && tr.alerts.delta && _isNum(tr.alerts.delta.threshold)) skin.push(_series('Baseline + delta threshold', null, x2, [tr.baseline.S + tr.alerts.delta.threshold, tr.baseline.S + tr.alerts.delta.threshold]));
             if (tr.alerts && tr.alerts.absolute && _isNum(tr.alerts.absolute.threshold)) skin.push(_series('Absolute threshold', null, x2, [tr.alerts.absolute.threshold, tr.alerts.absolute.threshold]));
@@ -2575,11 +2577,11 @@
         if (c.fluid === 'oil' && tr.bubble && _arr(tr.bubble.rows).length) {
             var br = tr.bubble.rows, bx = br.map(function (r) { var s = series.filter(function (x) { return x.id === r.id; })[0]; return s ? s.tDays : null; });
             var ser = [_series('Sandface pwf low', 'pressure', bx, br.map(function (r) { return r.pwfSand_lo; })), _series('Sandface pwf high', 'pressure', bx, br.map(function (r) { return r.pwfSand_hi; }))];
-            if (_isNum(an.well && an.well.Pb)) { var bxs = bx.filter(_isNum); if (bxs.length) ser.push(_series('Bubble point', 'pressure', [Math.min.apply(null, bxs), Math.max.apply(null, bxs)], [an.well.Pb, an.well.Pb])); }
+            if (_isNum(an.well && an.well.Pb)) { var bxs = bx.filter(_isNum); if (bxs.length) ser.push(_series('Bubble point', 'pressure', [MATH.min.apply(null, bxs), MATH.max.apply(null, bxs)], [an.well.Pb, an.well.Pb])); }
             b.push(_chart('bu_ch_pwf', ser));
         }
         var ov = used.slice(-12).map(function (t) {
-            var bn = t.result.bins || {}, te = (Array.isArray(bn.dte) && bn.dte.length === _arr(bn.dt).length) ? bn.dte : _arr(bn.dt);
+            var bn = t.result.bins || {}, te = (_isArr(bn.dte) && bn.dte.length === _arr(bn.dt).length) ? bn.dte : _arr(bn.dt);
             return _series(t.id + ' Δp/q', null, te, _arr(bn.dp).map(function (y) { return _isNum(y) && t.Dq ? y / t.Dq : null; }));   // psi per rate unit: no single unit category
         });
         if (ov.length) b.push(_chart('bu_ch_ov', ov));
@@ -2882,7 +2884,7 @@
         opts = opts || {};
         var deid = opts.deidentify !== false, dates = opts.includeDates === true, free = opts.includeFreeText === true;
         var an = _obj(analysis) ? analysis : {};
-        var idx = (opts.idx && opts.idx.items && Array.isArray(opts.idx.order)) ? opts.idx : _evidenceFor(an, opts);
+        var idx = (opts.idx && opts.idx.items && _isArr(opts.idx.order)) ? opts.idx : _evidenceFor(an, opts);
         var roots = _roots(an, { review: review, signoff: opts.signoff, cal: opts.cal });
         var c = _ctxFor(an, idx, roots);
         var fmt = typeof opts.fmt === 'function' ? opts.fmt : _impFmt;
