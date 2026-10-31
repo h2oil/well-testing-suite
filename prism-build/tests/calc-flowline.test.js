@@ -14,6 +14,11 @@
 //   * Single-phase water: Darcy-Weisbach with Meehan Bw / McCain μw typed in here.
 //   * Single-phase gas line: RK4 integration of dp/dx = f·ρ·v²/(2·gc·D) with Z and μg
 //     from the PVT library's DAK / Lee-Gonzalez-Eakin (reference implementation).
+//
+// Since the well route is marched BACKWARDS from the separator pressure (the gas PCV holds it;
+// the choke takes WHP − P2), the route tests below read the line inlet pressure (r.well.pIn = P2)
+// and the hand calculations run from the separator end. The flare route (PCV outlet → tip, marched
+// back from the tip) has its own hand calculations in flowline-flare.test.js.
 'use strict';
 
 const WP = 'FLOW';
@@ -236,13 +241,17 @@ module.exports = [
     wp: WP,
     run(app, assert) {
       const C = app.win.WTS_flowline_compute;
-      const inp = { qo: 0, qw: 10000, qg: 0, api: 35, sgg: 0.7, sgw: 1.0, pwh: 300, t0: 100, t1: 100, psep: 0, rough: 0.0018,
+      // Separator at 100 psig (was 0 psig with a forward march from 300 psig): the line is now marched
+      // back from the separator, and the downhill case below needs the pressure to stay above atmospheric.
+      const inp = { qo: 0, qw: 10000, qg: 0, api: 35, sgg: 0.7, sgw: 1.0, pwh: 400, t0: 100, t1: 100, psep: 100, rough: 0.0018,
         payne: true, accel: true, well: [{ name: 'h', len: 1000, id: 3.826, dz: 0 }], flare: [] };
       const r = C(inp);
       assert.ok(r.ok, JSON.stringify(r.errors));
       assert.strictEqual(r.well.segments[0].patterns.join(), 'liquid');
-      // Hand: Bw at mid pressure (~ 300 psig), μw McCain, Darcy
-      const pm = 300 + 14.696 - r.well.dp / 2;
+      assert.rel(r.well.pOut, 100, 1e-12, 'the line arrives at the separator pressure');
+      assert.rel(r.well.pIn - r.well.dp, 100, 1e-9, 'P2 = Psep + line drop');
+      // Hand: Bw at mid pressure (separator + half the drop), μw McCain, Darcy
+      const pm = 100 + 14.696 + r.well.dp / 2;
       const bw = bwMeehan(pm, 100), rho = 62.366 / bw;
       const mu = 109.574 * Math.pow(100, -1.12166) * (0.9994 + 4.0295e-5 * pm + 3.1062e-9 * pm * pm);
       assert.rel(r.inlet.muw, 109.574 * Math.pow(100, -1.12166), 0.02, 'McCain dead water viscosity (pressure correction ≤ 2 %)');
@@ -254,17 +263,19 @@ module.exports = [
       assert.ok(mu > 0);
       // Vertical riser, 100 ft up, near-zero rate: hydrostatic ≈ ρ·100/144
       const v2 = C(Object.assign({}, inp, { qw: 1, well: [{ name: 'v', len: 100, id: 3.826, dz: 100 }] }));
-      assert.rel(v2.well.dp, 62.366 / bwMeehan(300, 100) * 100 / 144, 2e-3, 'static column');
+      assert.rel(v2.well.dp, 62.366 / bwMeehan(136, 100) * 100 / 144, 2e-3, 'static column');
       const v3 = C(Object.assign({}, inp, { qw: 1, well: [{ name: 'v', len: 100, id: 3.826, dz: -100 }] }));
       assert.rel(v3.well.dp, -v2.well.dp, 2e-3, 'downhill gains the same head');
     },
   },
   {
-    name: 'FLOW full route: dry gas flare line equals an RK4 integration of the isothermal real-gas equation',
+    name: 'FLOW full route: dry gas line marched back from the separator equals an RK4 integration of the isothermal real-gas equation',
     wp: WP,
     run(app, assert) {
       const C = app.win.WTS_flowline_compute;
       const L = app.win.PRiSM_pvt_correlations;
+      // Was a forward march from 150 psig; now the separator (100 psig) is the boundary and the RK4
+      // runs backwards from it to the line inlet (P2), then forwards again from P2 (consistency).
       const inp = { qo: 0, qw: 0, qg: 3, api: 35, sgg: 0.65, sgw: 1.0, pwh: 150, t0: 80, t1: 80, psep: 100, rough: 0.0018,
         payne: true, accel: false, well: [{ name: 'g', len: 3000, id: 4.026, dz: 0 }], flare: [] };
       const r = C(inp);
@@ -278,36 +289,58 @@ module.exports = [
         const f = colebrookBisect(1488 * rho * v * D / mu, 0.0018 / 4.026);
         return -f * rho * v * v / (2 * 32.174 * D) / 144;
       };
-      let p = 164.696; const h = 10;
-      for (let x = 0; x < 3000; x += h) {
-        const k1 = dpdx(p), k2 = dpdx(p + h * k1 / 2), k3 = dpdx(p + h * k2 / 2), k4 = dpdx(p + h * k3);
-        p += h * (k1 + 2 * k2 + 2 * k3 + k4) / 6;
-      }
-      assert.rel(r.well.pOut, p - 14.696, 2e-3, 'outlet pressure vs RK4 ' + (p - 14.696).toFixed(2));
+      const rk4 = (p0, sgn) => {
+        let p = p0; const h = 10;
+        for (let x = 0; x < 3000; x += h) {
+          const f = (q) => sgn * dpdx(q);
+          const k1 = f(p), k2 = f(p + h * k1 / 2), k3 = f(p + h * k2 / 2), k4 = f(p + h * k3);
+          p += h * (k1 + 2 * k2 + 2 * k3 + k4) / 6;
+        }
+        return p;
+      };
+      const p2 = rk4(114.696, -1) - 14.696;
+      assert.rel(r.well.pIn, p2, 2e-3, 'line inlet pressure vs backward RK4 ' + p2.toFixed(2));
+      assert.rel(rk4(r.well.pIn + 14.696, 1) - 14.696, 100, 2e-3, 'forward RK4 from P2 arrives at the separator');
       assert.ok(r.well.dp > 5, 'meaningful drop ' + r.well.dp);
+      // Dry gas: the choke's critical ratio is (2/(k+1))^(k/(k−1)) with the Gas PVT ideal-gas k
+      const k = app.win.WTS_gaspvt_k(0.65, 80, 0, 0, 0);
+      assert.strictEqual(r.choke.basis, 'gas');
+      assert.rel(r.choke.rc, Math.pow(2 / (k + 1), k / (k - 1)), 1e-12, 'gas critical ratio');
+      assert.rel(r.choke.ratio, (p2 + 14.696) / 164.696, 3e-3, 'p2/p1');
     },
   },
   {
-    name: 'FLOW page: default case renders, arrives above the separator, report sections, state, chart',
+    name: 'FLOW page: default case renders, choke takes WHP − P2, PCV and flare line, report sections, state, chart',
     wp: WP,
     run(app, assert) {
       open(app);
       const st = S(app);
       assert.ok(st.ok, JSON.stringify(st.result.errors));
-      assert.ok(st.pArr > 250 && st.pArr < 600, 'arrival ' + st.pArr);
-      assert.rel(rv(app, 'fl_res', 'Arrival pressure at separator'), st.pArr, 2e-3);
-      assert.includes(app.el('fl_res').textContent, '✓ Arrives at the separator');
-      assert.ok(st.dpFlare > 0 && st.pFlare < 250, 'flare line computed');
-      assert.strictEqual(rtext(app, 'fl_res', 'Flow pattern at inlet'), 'Intermittent');
+      // The well line now ends at the separator pressure (held by the gas PCV); the choke takes the rest.
+      assert.rel(st.pArr, 250, 1e-9, 'arrives at the separator pressure');
+      assert.ok(st.p2Choke > 250 && st.p2Choke < 600, 'P2 ' + st.p2Choke);
+      assert.rel(st.dpChoke, 600 - st.p2Choke, 1e-12);
+      assert.rel(st.dpSep, st.p2Choke - 250, 1e-9);
+      assert.rel(rv(app, 'fl_res', 'Required pressure downstream of the choke'), st.p2Choke, 2e-3);
+      assert.ok(st.chokeCritical === true, 'p2/p1 ≤ 0.588 at 600 psig WHP');
+      assert.includes(app.el('fl_res').textContent, '✓ Choke: 600 psig');
+      // Flare line downstream of the PCV, not at the separator pressure
+      assert.rel(st.pFlare, 1.5, 1e-6, 'tip at the default 1.5 psi tip drop');
+      assert.ok(st.dpFlare > 0 && st.pPcvOut > st.pFlare && st.pPcvOut < 60, 'flare header back-pressure ' + st.pPcvOut);
+      assert.rel(st.dpPcv, 250 - st.pPcvOut, 1e-12);
+      // At the choke outlet (≈ 307 psig rather than the 600 psig of the old forward march) the gas
+      // velocity is twice as high: the inlet pattern is distributed (was intermittent).
+      assert.strictEqual(rtext(app, 'fl_res', 'Flow pattern at inlet'), 'Distributed');
       // segment ΔP components add up
       st.result.well.segments.forEach((s) => assert.rel(s.dpEl + s.dpF + s.dpAcc, s.dp, 1e-6, s.name));
       assert.ok(app.findAll('#fl_res table.dtable').length >= 2, 'segment tables');
       assert.ok(app.canvasLog('fl_chart', 'lineTo').length > 20, 'pressure chart drawn');
       noBad(assert, app, 'default');
-      // Low inlet pressure → does not reach separator
+      // WHP below the pressure needed downstream of the choke → the well cannot deliver
       set(app, { fl_pwh: 260 }); calc(app);
-      assert.ok(!S(app).result.well.reaches, 'below separator');
-      assert.includes(app.el('fl_res').textContent, '✗ Arrival pressure');
+      assert.ok(!S(app).result.choke.deliver, 'cannot deliver');
+      assert.includes(app.el('fl_res').textContent, '✗ WHP 260 psig is below');
+      assert.strictEqual(rtext(app, 'fl_res', 'Choke pressure drop'), '—');
       noBad(assert, app, 'low');
     },
   },
@@ -334,7 +367,7 @@ module.exports = [
     wp: WP,
     run(app, assert) {
       open(app);
-      const imp = S(app).pArr, impF = S(app).dpFlare;
+      const imp = S(app).p2Choke, impF = S(app).dpFlare;
       const U = app.win.WTS_units;
       app.flush(10);
       U.setSystem('metric');
@@ -346,14 +379,14 @@ module.exports = [
         assert.match(lab('fl_rough'), /\(mm\)/);
         assert.includes(app.el('fl_wh_id').textContent, 'mm');
         assert.includes(app.el('fl_wh_len').textContent, '(m)');
-        assert.rel(S(app).pArr, imp, 2e-3, 'metric same arrival');
+        assert.rel(S(app).p2Choke, imp, 2e-3, 'metric same P2');
         assert.rel(S(app).dpFlare, impF, 5e-3, 'metric same flare drop');
-        assert.includes(rtext(app, 'fl_res', 'Arrival pressure at separator'), 'kPa');
+        assert.includes(rtext(app, 'fl_res', 'Required pressure downstream of the choke'), 'kPa');
         assert.includes(rtext(app, 'fl_res', 'Pressure gradient at inlet'), 'kPa/m');
         app.input('fl_w1_len', String(150 * 0.3048)); calc(app);
-        assert.rel(S(app).pArr, imp, 2e-3, 'metric entry of 45.72 m');
+        assert.rel(S(app).p2Choke, imp, 2e-3, 'metric entry of 45.72 m');
       } finally { U.setSystem('imperial'); }
-      assert.rel(S(app).pArr, imp, 2e-3);
+      assert.rel(S(app).p2Choke, imp, 2e-3);
       assert.includes(app.el('fl_wh_len').textContent, '(ft)');
     },
   },
@@ -372,13 +405,13 @@ module.exports = [
       assert.rel(Number(app.el('fl_t0').value), Number(lh.tIn.toFixed(2)), 1e-9, 'inlet T from line heat');
       assert.rel(Number(app.el('fl_t1').value), Number(lh.tArr.toFixed(2)), 1e-9, 'arrival T from line heat');
       set(app, { fl_qg: 4, fl_payne: 'no' }); calc(app);
-      const p = S(app).pArr;
+      const p = S(app).p2Choke;
       const model = app.win.collectPageReport(app.el('pgBody'), { charts: false });
       const rt = model.results.map((x) => x.title);
-      ['Line Summary', 'Inlet Conditions and Fluid Properties', 'Segments: Wellhead to separator', 'Segments: Separator to flare']
+      ['Line Summary', 'Gas PCV and Flare Line', 'Inlet Conditions and Fluid Properties', 'Segments: Choke outlet to separator', 'Segments: PCV outlet to flare tip']
         .forEach((t) => assert.ok(rt.indexOf(t) !== -1, 'section ' + t + ': ' + rt.join(' | ')));
       const s = JSON.stringify(model);
-      ['Separator gas rate', 'Payne et al. corrections', 'Choke manifold to heater'].forEach((n) => assert.includes(s, n));
+      ['Separator gas rate', 'Payne et al. corrections', 'Choke manifold to heater', 'Flare tip pressure drop', 'Separator PSV set pressure'].forEach((n) => assert.includes(s, n));
       const n0 = app.opened.length;
       app.win.exportPagePDF();
       const pdf = app.opened[n0] && app.opened[n0].html();
@@ -393,7 +426,7 @@ module.exports = [
       try {
         open(app2);
         assert.strictEqual(app2.el('fl_qg').value, '4');
-        assert.rel(app2.win.WTS_state.flowline.pArr, p, 1e-9, 'restored and recalculated');
+        assert.rel(app2.win.WTS_state.flowline.p2Choke, p, 1e-9, 'restored and recalculated');
         app2.hook.nav('home');
         const titles = app2.findAll('.dash-card').map((c) => String(c.querySelector('h3').textContent).trim());
         assert.ok(titles.indexOf('Multiphase Flowline Pressure Drop') !== -1, 'dashboard tile');

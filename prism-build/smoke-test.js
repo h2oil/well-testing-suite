@@ -243,6 +243,52 @@ checks.push(['WTS_calcRegistry entries well-formed', Object.keys(win.WTS_calcReg
   checks.push(['WTS_calcRegistry.' + k + ' registered',  !!(win.WTS_calcRegistry && win.WTS_calcRegistry[k])]);
   checks.push(['window.' + fn + ' (function)',          typeof win[fn] === 'function']);
 });
+// v3.2 Chemical Injection foundation: data module WTS_chemlib (40-calc-chemlib.js, no page of its own)
+// and the additive Gas PVT exports (46-calc-gaspvt.js) the planner codes against.
+checks.push(['window.WTS_chemlib shape (records, matrix, lookups; no registry page)', (() => {
+  try {
+    const C = win.WTS_chemlib;
+    if (!C || typeof C !== 'object') return false;
+    const arrays = ['groups', 'families', 'chemicals', 'points', 'pumps', 'plungers', 'strokes', 'actuators', 'capillary', 'compat']
+      .every((k) => Array.isArray(C[k]) && C[k].length > 0);
+    const fns = ['find', 'list', 'family', 'point', 'pump', 'cap', 'suit', 'suitInfo', 'eff', 'pairRules', 'ctxRules', 'elastomerRow']
+      .every((f) => typeof C[f] === 'function');
+    const pts = C.points.map((p) => p.key).join(',') === 'dh,wh,dsch,sepin,sepgas,flare,sepoil,sepwat,tank';
+    const fams = C.families.every((f) => C.pointKeys.every((p) => ['R', 'A', 'N', 'X'].indexOf(f.suit[p]) !== -1));
+    const chems = C.chemicals.every((c) => c && C.find(c.key) === c && !!C.family(c.family) && !!C.bases[c.basis] &&
+      typeof c.sg === 'number' && c.sg > 0 && c.water >= 0 && c.water < 1 && Array.isArray(c.points) &&
+      c.points.every((p) => ['R', 'A', 'N'].indexOf(C.suit(c.key, p)) !== -1));
+    const pumps = C.pumps.every((p) => ['plunger', 'meter', 'airliquid', 'transfer', 'hand'].indexOf(p.kind) !== -1 && C.pump(p.key) === p);
+    const noPage = !(win.WTS_calcRegistry && win.WTS_calcRegistry.chemlib);
+    return arrays && fns && pts && fams && chems && pumps && noPage && !!C.find('meoh') && !!C.pump('air_liquid') && C.defaults.fJT === 1.1;
+  } catch (e) { console.error('WTS_chemlib shape check threw:', e.message); return false; }
+})()]);
+checks.push(['window.WTS_gaspvt_z / _enthalpy / _isenthalpic (+ stats)',
+  ['WTS_gaspvt_z', 'WTS_gaspvt_enthalpy', 'WTS_gaspvt_isenthalpic'].every((f) => typeof win[f] === 'function') &&
+  typeof (win.WTS_gaspvt_isenthalpic || {}).stats === 'function']);
+checks.push(['WTS_gaspvt_isenthalpic γ 0.65 110 °F 3014.7 → 1014.7 psia ≈ 41.42 °F', (() => {
+  try { const r = win.WTS_gaspvt_isenthalpic({ sg: 0.65, p1: 3014.7, t1: 110, p2: 1014.7 }); return r.ok === true && Math.abs(r.t2 - 41.42) < 0.3; }
+  catch (e) { return false; }
+})()]);
+// v3.2 Chemical Injection engine (49-calc-cheminj.js): window.WTS_cheminj namespace + WTS_cheminj_compute
+checks.push(['window.WTS_cheminj engines + WTS_cheminj_compute (function)',
+  !!win.WTS_cheminj && typeof win.WTS_cheminj_compute === 'function' &&
+  ['spread', 'hydrateDose', 'doseRate', 'pumpSetting', 'pumpOptions', 'injectionPressure', 'supplyGas', 'calibration', 'tank', 'stats']
+    .every((f) => typeof win.WTS_cheminj[f] === 'function')]);
+checks.push(['WTS_cheminj_compute page defaults (H1) ≈ 1061.5 lb/d methanol, air 45.6 psig', (() => {
+  try {
+    const r = win.WTS_cheminj_compute({});
+    const L1 = r.ok && r.lines[0];
+    return !!L1 && Math.abs(L1.hydrate.inh.solution_lb_d - 1061.5) < 32 && Math.abs(L1.pump.airDesign - 45.6) < 0.5;
+  } catch (e) { console.error('WTS_cheminj_compute threw:', e.message); return false; }
+})()]);
+// v3.2 Chemical Injection page: registry entry (Test System Safety, silent restore) + page entry points
+checks.push(['WTS_calcRegistry.cheminj in "Test System Safety" (hooks.silent) + renderChemInj / calcChemInj', (() => {
+  const e = win.WTS_calcRegistry && win.WTS_calcRegistry.cheminj;
+  return !!e && e.key === 'cheminj' && e.title === 'Chemical Injection' && e.group === 'Test System Safety' &&
+    !!e.hooks && e.hooks.silent === true && typeof e.hooks.after === 'function' &&
+    typeof win.renderChemInj === 'function' && typeof win.calcChemInj === 'function';
+})()]);
 // Round-10 — live data (6N-*.js): Modbus core + station, Modbus page, Mini WellOS
 checks.push(['window.WTS_modbus (object)',            !!win.WTS_modbus && typeof win.WTS_modbus === 'object']);
 checks.push(['WTS_modbus.createClient / createStation', !!win.WTS_modbus && typeof win.WTS_modbus.createClient === 'function' && typeof win.WTS_modbus.createStation === 'function']);

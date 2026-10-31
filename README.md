@@ -7,7 +7,7 @@ packaged as a free iOS app, **H2Oil Well Testing**.
 
 - **Web app:** <https://welltest.h2oil.co.uk>, or open `well-testing-app.html` from this repository
 - **iOS app:** free, with no in-app purchases, no account and no analytics (see [ios-app/README.md](ios-app/README.md))
-- **Current release:** v3.1.1 (2026-10-30)
+- **Current release:** v3.2 (2026-10-31)
 - **Contact:** software@h2oil.co.uk
 
 ---
@@ -30,8 +30,8 @@ packaged as a free iOS app, **H2Oil Well Testing**.
 
 ## Highlights
 
-- **55 calculators and tools** in 9 sidebar groups: metering, chokes, flowlines, test-system safety,
-  well kill, separators, flare radiation and emissions, PVT, IPR and deliverability, process
+- **56 calculators and tools** in 9 sidebar groups: metering, chokes, flowlines, test-system safety,
+  chemical injection, well kill, separators, flare radiation and emissions, PVT, IPR and deliverability, process
   equipment, electrical and field conversions.
 - **Well Test Simulator:** a live process model of the test spread (wellhead → ESD valve → choke →
   heater → separator → surge tank → gauge tank, with gas to flare), in 3D or as a 2D schematic.
@@ -89,6 +89,7 @@ host route table (`const pages = {…}` in `well-testing-app.html`).
 | ESD Hi-Pilot | PSH set point that trips the ESD before a blocked section reaches its relief setting within the ESD response time |
 | ESD Lo-Pilot | PSL set point that trips on a target detectable leak rate, with section temperature and a trip check |
 | Hydrate Management | Hydrate-formation temperature per segment and Hammerschmidt methanol / MEG / DEG / TEG injection rates |
+| Chemical Injection *(plug-in)* | Up to six injection lines on the spread: hydrate-inhibitor design (real-gas J-T cooling, condensed water, vapour loss; flowing, shut-in and start-up), ppm treating chemicals, pump strokes/min, % stroke × % speed or air-pump setting, discharge pressure and rating, calibration check, tank days and totes |
 | Liquid Line / RO | LCV gas blow-by to the atmospheric tank and restriction-orifice sizing |
 | Pipe Service Life | Sand-erosion rate (DNV-RP-O501; Salama selectable), remaining life, time to failure and MAWP per segment |
 | H2S Exposure & Scavenger *(plug-in)* | 100 / 500 ppm radius of exposure, SO2 from flaring sour gas and scavenger dosing |
@@ -481,6 +482,7 @@ and Quick Report capture; no host edits are needed. Test it with
 
 | Version | Date | Highlights |
 |---|---|---|
+| v3.2 | 2026-10-31 | Chemical Injection planner (Test System Safety): hydrate-inhibitor design with real-gas J-T cooling and a 10 °F margin, ppm treating chemicals, pump settings ranked for classified areas, discharge pressure and relief-valve band, calibration, tank and totes; links from Hydrate Management and Chemical & Dosage; Quick Report entries; ⓘ background and standards pop-ups; Multiphase Flowline flare line calculated from the flare tip back to the separator gas control valve (header pressure, valve drop, Mach, ρv²) and the choke from the separator pressure |
 | v3.1.1 | 2026-10-30 | iOS app: iOS 27 launch fix (UIKit scene life cycle), App Store version matches the app, archive builds with no warnings |
 | v3.1 | 2026-10-01 | Module-by-module review of every page and button; metric mode across more calculators and the simulator; simulator rig-up switches and pump-free surge→gauge transfer (sim ~40 % faster); PRiSM undersaturated-oil PVT and crop persistence; Modbus bad-value and timeout handling; ESD Hi-Pilot relief advice per ASME VIII |
 | v3.0.2 | 2026-09-30 | Modbus bridge allows any device by default; one-click Windows installer (WTS-Modbus-Bridge-Setup.exe, auto-start at login) and one-line macOS/Linux install; version label follows the release |
