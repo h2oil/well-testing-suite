@@ -4,6 +4,7 @@
 //   RU3 cancel rejects CANCELLED, no timers                RU8  spec.rateQC (daily, table), R4 in stage 3
 //   RU4 an override re-runs exactly one test               RU9  80 detected tests → 60 kept by selection
 //   RU5 the cache reuses unchanged tests                   RU10 WTS_buildup_compute({}) and inputHash
+//   RU15 inputHash of the clean input (deep copies, stored re-run)   RU16 gas B ≥ 0.3   RU17 test-cap re-admission
 //
 // WP1 (PRiSM_autoInterp.interpretJob, prepare, kHeldJob, backgroundCheck, confidence, drive) and WP3 (WTS_buildup.trend
 // baseline / compute) are not merged on this branch: every test installs explicit stubs (§3, §9 WP2). interpretJob returns
@@ -666,6 +667,67 @@ module.exports = [
       assert.ok(/outside the gauge record/.test(c.overrides[0].warnings[0].text));
       assert.ok(/already closes/.test(c.overrides[1].warnings[0].text));
       shapeOk(assert, 'Analysis', J(c));
+    },
+  },
+  {
+    name: 'RU15 inputHash is the hash of the input as given: deep copies (as the page hands them) of a record-mode run and of its stored re-run hash the same; the input is never written',
+    wp: WP,
+    run(app, assert) {
+      stubs(app);
+      const input = makeInput(app), before = R(app).inputHash(input), rowsCopy = J(input.allocation.rows);
+      const copyOf = (x) => Object.assign(J(Object.assign({}, x, { record: null })), { record: x.record });
+      const a = R(app).analyse(copyOf(input));
+      assert.strictEqual(a.inputHash, before, 'record mode: the hash of the clean input');
+      const b = R(app).analyse(input);
+      assert.strictEqual(b.inputHash, before, 'same input object: same hash');
+      assert.deepStrictEqual(J(input.allocation.rows), rowsCopy, 'the allocation rows are not written (no _V)');
+      const aj = J(a);
+      const stored = { events: aj.events, rates: aj.rates, qc: aj.qc, tests: aj.tests.map((t) => ({ id: t.id, eventId: t.eventId, spec: t.spec })), record: aj.record, missed: aj.missed };
+      // the page's reload path: a fresh deep copy of the stored input (no raw record)
+      const c = R(app).analyse(J(Object.assign({}, input, { record: null, stored })));
+      assert.strictEqual(c.ok, true);
+      assert.strictEqual(c.inputHash, a.inputHash, 'a re-run from the stored build-ups keeps the record-mode hash (a signed report stays SIGNED)');
+      assert.strictEqual(c.resultHash, a.resultHash, 'and the result hash');
+    },
+  },
+  {
+    name: 'RU16 well checks: a gas formation volume factor down to 0.3 RB/Mscf is accepted (deep dry gas); oil keeps 0.5; below 0.3 is refused',
+    wp: WP,
+    run(app, assert) {
+      stubs(app);
+      const gasWell = (B) => Object.assign(J(WELL), { fluid: 'gas', B, mu: 0.025, ct: 1e-4, gas: { sg: 0.65, T_F: 220 } });
+      const ok = R(app).analyse(Object.assign(makeInput(app), { well: gasWell(0.32) }));
+      assert.ok(!(ok.ok === false && ok.code === 'BAD_WELL'), 'gas B 0.32 accepted: ' + JSON.stringify(ok.errors || ''));
+      const low = R(app).analyse(Object.assign(makeInput(app), { well: gasWell(0.25) }));
+      assert.strictEqual(low.code, 'BAD_WELL'); assert.ok(low.bad.indexOf('B') >= 0);
+      assert.ok(/0\.3 and 5/.test(low.errors.join(' ')), 'the message names the gas range: ' + low.errors.join(' '));
+      const oil = R(app).analyse(Object.assign(makeInput(app), { well: Object.assign(J(WELL), { B: 0.32 }) }));
+      assert.strictEqual(oil.code, 'BAD_WELL', 'oil B 0.32 refused'); assert.ok(/0\.5 and 5/.test(oil.errors.join(' ')));
+    },
+  },
+  {
+    name: 'RU17 test cap re-admission: when the kept baseline candidates of a segment turn out low, its earliest capped tests are interpreted after all and join the baseline',
+    wp: WP,
+    run(app, assert) {
+      const sched = [];
+      for (let d = 1; d <= 40; d++) { const day = 2 * d - 1; sched.push({ t_ms: T0 + day * DAY + 1 * HOUR, dur_h: 3 }); sched.push({ t_ms: T0 + day * DAY + 7 * HOUR, dur_h: 4 }); }
+      // the six kept baseline candidates (B1–B6) come out low after pass 1; every other test medium
+      const pass1 = {};
+      for (let i = 1; i <= 80; i++) pass1['B' + i] = i <= 6 ? ['low', 'low'] : ['medium', 'medium'];
+      const st = stubs(app, { pass1 });
+      const an = R(app).analyse(makeInput(app, { sched, days: 82, sample_s: 300 }));
+      assert.strictEqual(an.tests.length, 80, '80 tests');
+      const capped = an.tests.filter((t) => t.statusReason === 'test cap'), interp = st.log.filter((l) => /^interpret:/.test(l));
+      assert.strictEqual(capped.length, 17, '3 of the 20 capped tests re-admitted (baseN = 3)');
+      assert.strictEqual(interp.length, 63, '60 + 3 interpretations');
+      const re = an.tests.filter((t) => t.status === 'interpreted' && t.result && interp.indexOf('interpret:' + t.id) > 59);
+      assert.strictEqual(re.length, 3, 're-admitted tests interpreted: ' + re.map((t) => t.id).join(','));
+      // they are the earliest capped tests of the segment
+      const firstCapped = an.tests.filter((t) => t.statusReason === 'test cap' || re.indexOf(t) >= 0).slice(0, 3).map((t) => t.id);
+      assert.deepStrictEqual(re.map((t) => t.id), firstCapped, 'the earliest capped tests');
+      assert.ok(an.baseline && re.some((t) => an.baseline.tests.indexOf(t.id) >= 0), 'a re-admitted test is in the baseline: ' + JSON.stringify(an.baseline && an.baseline.tests));
+      assert.ok(an._order.some((o) => /^readmit:/.test(o)), 'readmit step in the stage order');
+      shapeOk(assert, 'Analysis', J(an));
     },
   },
 ];

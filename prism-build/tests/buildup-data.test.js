@@ -7,6 +7,9 @@
 //   DA6 partial cuts (f̂ by late Δp differences; 0.9–0.95 interpreted)         DA14 two events in one day
 //   DA7 stimulation without a workover date stays a shut-in                   DA15 interventions
 //   DA8 rate spreading over the flowing hours, short closing day              DA16 phase basis (water cut, condensate)
+//   DA17 gate substeps   DA18 manual events   DA19 day-rate steps (no event, nothing swallowed)   DA20 precursor of a closing
+//   DA21 bound on an unconfirmed event   DA22 data end (hours check, zero day)   DA23 R3 sides   DA24 interventions
+//   DA25 inputs never written   DA26 slow reopening, flowing closing day without volume
 //
 // Synthetic records come from the small analytic generator below (homogeneous reservoir with wellbore storage and skin,
 // superposed over the rate steps), not from WP4's generator. Every test checks the §3 shapes of what it produces.
@@ -104,6 +107,24 @@ function allocRows(o) {
     const date = new Date(a).toISOString().slice(0, 10);
     const err = o.errFn ? o.errFn(date) : 1, wc = o.wcFn ? o.wcFn(date) : 0;
     rows.push({ date, oil: Math.round(V * err * (1 - wc) * 10) / 10, gas: Math.round(V * err * (1 - wc) * (o.gor || 400)) / 1000, water: Math.round(V * err * wc * 10) / 10, hours: Math.round(hOn * 100) / 100 });
+  }
+  return rows;
+}
+// daily allocation integrated from makeRecord's rate steps (g.steps: [{t, dq}]): exact for any mix of day-rate steps,
+// partial cuts and shut-ins. Days start at startHour UTC; a day containing endMs is cut there (an allocation exported at
+// the data end). errFn(date) scales the volume.
+function allocFromSteps(g, o) {
+  const sh = (o.startHour || 0) * HOUR, end = o.end_ms || (o.start_ms + o.days * DAY), rows = [];
+  const s0 = new Date(o.start_ms), st = g.steps.slice().sort((a, b) => a.t - b.t);
+  const qAt = (ms) => { let q = 0; for (const s of st) { if (s.t <= ms) q += s.dq; else break; } return Math.max(0, q); };
+  for (let a = Date.UTC(s0.getUTCFullYear(), s0.getUTCMonth(), s0.getUTCDate()) + sh; a < end; a += DAY) {
+    const b = Math.min(a + DAY, o.cutAtEnd ? end : a + DAY), cuts = [a, b];
+    st.forEach((s) => { if (s.t > a && s.t < b) cuts.push(s.t); });
+    cuts.sort((x, y) => x - y);
+    let V = 0, hOn = 0;
+    for (let i = 0; i + 1 < cuts.length; i++) { const q = qAt(0.5 * (cuts[i] + cuts[i + 1])), hh = (cuts[i + 1] - cuts[i]) / HOUR; V += q * hh / 24; if (q > 0) hOn += hh; }
+    const date = new Date(a).toISOString().slice(0, 10), err = o.errFn ? o.errFn(date) : 1;
+    rows.push({ date, oil: Math.round(V * err * 10) / 10, gas: Math.round(V * err * 400) / 1000, water: 0, hours: Math.round(hOn * 100) / 100 });
   }
   return rows;
 }
@@ -686,6 +707,212 @@ module.exports = [
       ['O3', 'O4', 'O5'].forEach((id) => assert.ok(rf.ovWarn[id] && rf.ovWarn[id][0].code === 'OVERRIDE_NOT_APPLIED', id + ' refused with a warning'));
       assert.strictEqual(rf.res.events[1].status, 'analysable');
       p.res.events.concat(f2.res.events).forEach((x) => shapeOk(assert, 'Event', x, x.id));
+    },
+  },
+  {
+    name: 'DA19 day-rate steps: modest allocation day-rate drops (8 %, 10 %) open no event (missed.rateSteps); the shut-in 134 h after a drop that never recovers is found, not swallowed',
+    wp: WP,
+    run(app, assert) {
+      const D = Dof(app), d = (n, h) => T0 + n * DAY + (h || 0) * HOUR;
+      // nominal 800 STB/d; every f is a share of 800 (a shut-in after a drop cuts the rate that is left)
+      const evs = [
+        { t_ms: d(4), f: 0.08 },                       // day-rate drop to 736 (no recovery)
+        { t_ms: d(6, 10), dur_h: 30, f: 0.92 },        // A
+        { t_ms: d(9), f: -0.05 },                      // day-rate rise to 776
+        { t_ms: d(12), f: 0.10 },                      // day-rate drop to 696 that never recovers
+        { t_ms: d(17, 14), dur_h: 36, f: 0.87 },       // B, 134 h after that drop
+        { t_ms: d(22, 9), dur_h: 48, f: 0.87 },        // C
+      ];
+      const g = makeRecord({ start_ms: T0, days: 26, sample_s: 60, events: evs, sigma: 0.02, sigmaFlow: 0.05, seed: 19 });
+      const rec = record(D, g), rows = allocFromSteps(g, { start_ms: T0, days: 26 });
+      const res = scan(D, rec, rows);
+      assert.ok(res.ok, 'scan ok');
+      const truth = [evs[1], evs[4], evs[5]];
+      assert.strictEqual(res.events.length, 3, 'three events: ' + res.events.map((e) => e.id + '@' + ((e.tc_ms - T0) / HOUR).toFixed(1) + 'h ' + e.status).join(', '));
+      res.events.forEach((e, i) => {
+        assert.ok(Math.abs(e.tc_ms - truth[i].t_ms) <= 2 * MIN, e.id + ' closing time (' + ((e.tc_ms - truth[i].t_ms) / MIN).toFixed(1) + ' min)');
+        assert.strictEqual(e.status, 'analysable', e.id + ' analysable');
+        assert.near(e.dtEnd_h, truth[i].dur_h, 0.5, e.id + ' duration');
+        if (i + 1 < res.events.length) assert.ok(e.tEnd_ms < res.events[i + 1].tc_ms, e.id + ' ends before the next closing');
+        shapeOk(assert, 'Event', e, e.id);
+      });
+      const rs = res.missed.rateSteps || [];
+      [evs[0], evs[3]].forEach((x) => assert.ok(rs.some((r) => Math.abs(r.t_ms - x.t_ms) <= HOUR && r.dp_psi > 0 && r.fAlloc < 0.3), 'day-rate drop at ' + new Date(x.t_ms).toISOString() + ' listed: ' + JSON.stringify(rs)));
+      shapeOk(assert, 'Missed', res.missed); shapeOk(assert, 'RateHistory', res.rates);
+      // the rate history keeps the day rates: no q = 0 period outside the three shut-ins
+      res.rates.steps.forEach((s) => {
+        if (s.q !== 0 || s.t_ms < rec.t[0]) return;
+        assert.ok(res.events.some((e) => s.t_ms >= e.tc_ms - 6 * MIN && s.t_ms <= e.tEnd_ms + DAY), 'q = 0 step at ' + new Date(s.t_ms).toISOString() + ' belongs to a shut-in');
+      });
+    },
+  },
+  {
+    name: 'DA20 precursor: a 30 % cut 6 h before a shut-in ends at the sharper rise (END_AT_RISE) and is classified partial from the response ratio (derivRatio, f̂ ≈ 0.3); the shut-in keeps its closing time and Δq',
+    wp: WP,
+    run(app, assert) {
+      const D = Dof(app), d = (n, h) => T0 + n * DAY + (h || 0) * HOUR;
+      const evs = [{ t_ms: d(2, 9), dur_h: 30 }, { t_ms: d(6, 9), dur_h: 36, f: 0.3 }, { t_ms: d(6, 15), dur_h: 30, f: 0.7 }];
+      const g = makeRecord({ start_ms: T0, days: 10, sample_s: 60, events: evs, sigma: 0.02, sigmaFlow: 0.05, seed: 20 });
+      const rec = record(D, g), res = scan(D, rec, allocFromSteps(g, { start_ms: T0, days: 10 }));
+      assert.strictEqual(res.events.length, 3, 'reference, precursor, shut-in: ' + res.events.map((e) => e.id + ':' + e.kind + '/' + e.status).join(', '));
+      const p = res.events[1], s2 = res.events[2];
+      assert.ok(Math.abs(p.tc_ms - evs[1].t_ms) <= 2 * MIN, 'precursor closing');
+      assert.ok(codes(p.warnings).includes('END_AT_RISE'), 'precursor ends at the sharper rise');
+      assert.ok(p.tEnd_ms < s2.tc_ms, 'precursor ends before the closing');
+      assert.strictEqual(p.fhatMethod, 'derivRatio');
+      assert.within(p.fhat, 0.22, 0.38, 'precursor f̂ (true 0.3)');
+      assert.strictEqual(p.kind, 'partial'); assert.strictEqual(p.status, 'partial');
+      assert.ok(Math.abs(s2.tc_ms - evs[2].t_ms) <= 2 * MIN, 'shut-in closing (' + ((s2.tc_ms - evs[2].t_ms) / MIN).toFixed(1) + ' min)');
+      assert.strictEqual(s2.status, 'analysable');
+      assert.rel(res.rates.byEvent[s2.id].Dq, 560, 0.1, 'Δq = the rate left after the cut (560 STB/d)');
+      res.events.forEach((x) => shapeOk(assert, 'Event', x, x.id));
+    },
+  },
+  {
+    name: 'DA21 unconfirmed bound: a lasting 40 % cut with no confirming day ends at the first whole contradicting day ≥ 24 h after it (END_ALLOC), enters no q = 0 period (the day rates carry it); a later shut-in is still found',
+    wp: WP,
+    run(app, assert) {
+      const D = Dof(app), d = (n, h) => T0 + n * DAY + (h || 0) * HOUR;
+      const evs = [{ t_ms: d(5, 8), f: 0.4 }, { t_ms: d(12, 9), dur_h: 30, f: 0.6 }];
+      const g = makeRecord({ start_ms: T0, days: 16, sample_s: 60, events: evs, sigma: 0.02, sigmaFlow: 0.05, seed: 21 });
+      const rec = record(D, g), res = scan(D, rec, allocFromSteps(g, { start_ms: T0, days: 16 }));
+      const e1 = res.events.find((e) => Math.abs(e.tc_ms - evs[0].t_ms) <= 10 * MIN);
+      assert.ok(e1, 'the cut is detected (40 % is not a modest day-rate step)');
+      assert.ok(codes(e1.warnings).includes('END_ALLOC'), 'bounded by the allocation: ' + codes(e1.warnings).join(','));
+      assert.ok(e1.tEnd_ms < d(7) && e1.tEnd_ms >= d(7) - 10 * MIN, 'ends at the start of the first whole contradicting day ≥ 24 h after the cut (' + new Date(e1.tEnd_ms).toISOString() + ')');
+      assert.strictEqual(e1.endReason, 'reopen');
+      // whole days inside it show production and nothing measures a shut-in: the day rates carry the cut, no q = 0 period
+      assert.strictEqual(e1.kind, 'substep'); assert.strictEqual(e1.status, 'not_confirmed');
+      assert.ok(!res.rates.steps.some((s) => s.q === 0 && s.t_ms >= e1.tc_ms - MIN && s.t_ms <= e1.tEnd_ms), 'no q = 0 period for the cut');
+      assert.ok(res.missed.subThreshold.some((s) => s.t_ms === e1.tc_ms), 'listed with the sub-threshold steps');
+      const e2 = res.events.find((e) => Math.abs(e.tc_ms - evs[1].t_ms) <= 2 * MIN);
+      assert.ok(e2, 'the later shut-in is found');
+      assert.strictEqual(e2.status, 'analysable');
+      res.events.forEach((x) => shapeOk(assert, 'Event', x, x.id));
+    },
+  },
+  {
+    name: 'DA22 data end: a 3 h test closing at 03:00 on the last (cut) day is confirmed by the hours its volume implies; a test running to the data end is confirmed by a day with no volume although its closing day fails R3',
+    wp: WP,
+    run(app, assert) {
+      const D = Dof(app), d = (n, h) => T0 + n * DAY + (h || 0) * HOUR;
+      // (a) closing 03:00, data end 06:00 (R3 unavailable: 3 flowing hours)
+      const ea = [{ t_ms: d(3, 9), dur_h: 30 }, { t_ms: d(9, 3), dur_h: 10 }], endA = d(9, 6);
+      const ga = makeRecord({ start_ms: T0, end_ms: endA, sample_s: 60, events: ea, sigma: 0.02, sigmaFlow: 0.05, seed: 22 });
+      const ra = scan(D, record(D, ga), allocFromSteps(ga, { start_ms: T0, end_ms: endA, cutAtEnd: true }));
+      const a = ra.events[ra.events.length - 1];
+      assert.ok(Math.abs(a.tc_ms - ea[1].t_ms) <= 2 * MIN, 'test (a) found');
+      assert.strictEqual(a.endReason, 'data_end');
+      const dayA = ra.rates.days[ra.rates.days.length - 1];
+      assert.strictEqual(dayA.R3.status, 'unavailable', 'R3 unavailable on a 3-h closing day');
+      assert.ok(a.alloc.hoursCheck && a.alloc.hoursCheck.pass, 'the volume implies the detected flowing hours: ' + JSON.stringify(a.alloc.hoursCheck));
+      assert.strictEqual(a.alloc.confirm, 'confirmed'); assert.strictEqual(a.status, 'analysable'); assert.strictEqual(a.fhatMethod, 'allocation');
+      assert.near(dayA.hOn, 3, 0.05, 'the shut-in runs to the end of the day (3 flowing hours, not 3 + 18)');
+      // (b) closing 15:00, data end two days later; the closing day carries 30 % more volume (a rate change that day)
+      const eb = [{ t_ms: d(3, 9), dur_h: 30 }, { t_ms: d(8, 15), dur_h: 39 }], endB = d(10, 6);
+      const gb = makeRecord({ start_ms: T0, end_ms: endB, sample_s: 60, events: eb, sigma: 0.02, sigmaFlow: 0.05, seed: 23 });
+      const rowsB = allocFromSteps(gb, { start_ms: T0, end_ms: endB, cutAtEnd: true, errFn: (dt) => (dt === '2026-03-09' ? 1.3 : 1) });
+      const rb = scan(D, record(D, gb), rowsB);
+      const b = rb.events[rb.events.length - 1];
+      const dayB = rb.rates.days.find((x) => x.date === '2026-03-09');
+      assert.strictEqual(dayB.R3.status, 'fail', 'closing day R3 fails (' + dayB.R3.ratio + ')');
+      assert.strictEqual(b.alloc.confirm, 'confirmed', 'a whole day with no volume confirms the shut-in');
+      assert.strictEqual(b.status, 'analysable');
+      ra.events.concat(rb.events).forEach((x) => shapeOk(assert, 'Event', x, x.id));
+      shapeOk(assert, 'RateHistory', ra.rates); shapeOk(assert, 'RateHistory', rb.rates);
+    },
+  },
+  {
+    name: 'DA23 R3 sides: the rate level halves while the well is shut — the closing day takes q_ref from before the shut-in, the reopening day from after it; both pass and the shut-in is confirmed',
+    wp: WP,
+    run(app, assert) {
+      const D = Dof(app), d = (n, h) => T0 + n * DAY + (h || 0) * HOUR;
+      const evs = [{ t_ms: d(6, 9), dur_h: 48 }, { t_ms: d(8, 9), f: 0.5 }];
+      const g = makeRecord({ start_ms: T0, days: 14, sample_s: 120, events: evs, well: { q: 1000 }, sigma: 0.02, sigmaFlow: 0.05, seed: 24 });
+      const res = scan(D, record(D, g), allocFromSteps(g, { start_ms: T0, days: 14 }));
+      const e = res.events[0];
+      assert.strictEqual(res.events.length, 1, 'one event (the level change at the reopening is not a closing)');
+      const cd = res.rates.days.find((x) => x.date === '2026-03-07'), rd = res.rates.days.find((x) => x.date === '2026-03-09');
+      assert.strictEqual(cd.qRefSide, 'before'); assert.rel(cd.qRef, 1000, 0.01);
+      assert.strictEqual(cd.R3.status, 'pass', 'closing day R3 (' + cd.R3.ratio + ')');
+      assert.strictEqual(rd.qRefSide, 'after'); assert.rel(rd.qRef, 500, 0.01);
+      assert.strictEqual(rd.R3.status, 'pass', 'reopening day R3 (' + rd.R3.ratio + ')');
+      assert.strictEqual(e.alloc.confirm, 'confirmed'); assert.strictEqual(e.status, 'analysable');
+      assert.rel(res.rates.byEvent[e.id].Dq, 1000, 0.01, 'Δq from the closing day');
+      // the sides agree within the tolerance: one median over both (unchanged rule)
+      const quiet = res.rates.days.find((x) => x.date === '2026-03-12');
+      assert.strictEqual(quiet.qRefSide, 'both');
+      shapeOk(assert, 'RateHistory', res.rates);
+    },
+  },
+  {
+    name: 'DA24 interventions: an early phase-redistribution hump that decays is not one; a build-up far larger than an earlier, non-comparable "build-up" (a cut the allocation shows as a shut-in) is not one; a renewed rise and fall inside a shut-in still is',
+    wp: WP,
+    run(app, assert) {
+      const D = Dof(app), d = (n, h) => T0 + n * DAY + (h || 0) * HOUR;
+      // (a) a 20-psi hump peaking at 1.5 h on a low-rate well (the build-up rises little after it, so the hump's decay shows)
+      const ea = [{ t_ms: d(2, 9), dur_h: 48 }];
+      const ga = makeRecord({ start_ms: T0, days: 6, sample_s: 60, events: ea, well: { q: 50 }, humps: [{ t_ms: ea[0].t_ms, at_h: 1.5, dp: 20, width_h: 0.7 }], sigma: 0.02, seed: 25 });
+      const ra = scan(D, record(D, ga), allocFromSteps(ga, { start_ms: T0, days: 6 }));
+      assert.strictEqual(ra.events.length, 1);
+      assert.notStrictEqual(ra.events[0].status, 'intervention', 'hump: ' + codes(ra.events[0].warnings).join(','));
+      // (b) a 25 % cut over a whole day that the allocation records as a shut-in (no volume), then a real shut-in: the
+      // cut's "p*" is a quarter of the way up, so the real build-up would read as an intervention against it
+      const eb = [{ t_ms: d(3), dur_h: 30, f: 0.25 }, { t_ms: d(8, 9), dur_h: 48 }];
+      const gb = makeRecord({ start_ms: T0, days: 12, sample_s: 60, events: eb, sigma: 0.02, sigmaFlow: 0.05, seed: 26 });
+      const rb = scan(D, record(D, gb), allocFromSteps(gb, { start_ms: T0, days: 12, errFn: (dt) => (dt === '2026-03-04' ? 0 : 1) }));
+      assert.strictEqual(rb.events.length, 2);
+      assert.strictEqual(rb.events[0].status, 'analysable', 'the cut passes as a shut-in (allocation)');
+      assert.strictEqual(rb.events[1].status, 'analysable', 'real build-up: ' + codes(rb.events[1].warnings).join(','));
+      // (c) a 40-psi rise 20 h into a shut-in that falls back within 6 h (bullheading)
+      const ec = [{ t_ms: d(2, 9), dur_h: 60 }];
+      const gc = makeRecord({ start_ms: T0, days: 6, sample_s: 60, events: ec, well: { q: 100 }, humps: [{ t_ms: ec[0].t_ms, at_h: 20, dp: 40, width_h: 1.5 }], sigma: 0.02, seed: 27 });
+      const rc = scan(D, record(D, gc), allocFromSteps(gc, { start_ms: T0, days: 6 }));
+      assert.strictEqual(rc.events.length, 1);
+      assert.strictEqual(rc.events[0].status, 'intervention', 'renewed rise and fall: ' + codes(rc.events[0].warnings).join(','));
+    },
+  },
+  {
+    name: 'DA25 inputs are never written: rates() and scan() leave the allocation rows as given (no _V key, deep-equal after)',
+    wp: WP,
+    run(app, assert) {
+      const D = Dof(app);
+      const rows = allocRows({ start_ms: T0, days: 14, events: SCHED.slice(0, 3) }), copy = J(rows);
+      D.rates(null, [ev('E1', SCHED[0].t_ms, 30)], rows, { fluid: 'oil', day: UTC_DAY, history: { mode: 'unknown' } });
+      assert.deepStrictEqual(J(rows), copy, 'rates() leaves the rows unchanged');
+      assert.ok(rows.every((r) => !Object.prototype.hasOwnProperty.call(r, '_V')), 'no _V key');
+      const rec = record(D, makeRecord({ start_ms: T0, days: 14, sample_s: 600, events: SCHED.slice(0, 3), sigma: 0.02, seed: 28 }));
+      scan(D, rec, rows);
+      assert.deepStrictEqual(J(rows), copy, 'scan() leaves the rows unchanged');
+      const grows = J(rows).map((r) => ({ date: r.date, oil: 50, gas: 5000, water: 0, hours: r.hours }));
+      const gcopy = J(grows);
+      D.rates(null, [], grows, { fluid: 'gas', day: UTC_DAY, gas: { apiCond: 50 } });
+      assert.deepStrictEqual(J(grows), gcopy, 'gas rows unchanged');
+    },
+  },
+  {
+    name: 'DA26 slow reopening: a large-storage, low-rate well that falls 2 psi per window after reopening ends at the reopening, so the next closing keeps its flowing rate; a flowing closing day without volume takes the previous day (R2)',
+    wp: WP,
+    run(app, assert) {
+      const D = Dof(app), d = (n, h) => T0 + n * DAY + (h || 0) * HOUR;
+      const evs = [{ t_ms: d(2, 9), dur_h: 24 }, { t_ms: d(6, 10), dur_h: 30 }];
+      const g = makeRecord({ start_ms: T0, days: 9, sample_s: 60, events: evs, well: { q: 100, C: 0.2 }, sigma: 0.01, sigmaFlow: 0.02, seed: 29 });
+      const res = scan(D, record(D, g), allocFromSteps(g, { start_ms: T0, days: 9 }));
+      assert.strictEqual(res.events.length, 2, 'two shut-ins: ' + res.events.map((e) => e.id + ' ' + e.endReason + ' ' + (+e.dtEnd_h).toFixed(1) + ' h').join(', '));
+      const e1 = res.events[0];
+      assert.strictEqual(e1.endReason, 'reopen');
+      assert.ok(Math.abs(e1.tEnd_ms - (evs[0].t_ms + 24 * HOUR)) <= 15 * MIN, 'ends at the slow reopening (' + ((e1.tEnd_ms - evs[0].t_ms) / HOUR).toFixed(2) + ' h)');
+      assert.ok(Math.abs(res.events[1].tc_ms - evs[1].t_ms) <= 2 * MIN, 'second closing');
+      assert.rel(res.rates.byEvent[res.events[1].id].Dq, 100, 0.05, 'the second closing keeps its flowing rate');
+      res.events.forEach((x) => shapeOk(assert, 'Event', x, x.id));
+      // a closing day with 15 flowing hours and no allocated volume (a misplaced row): Δq from the previous full day
+      const d5 = T0 + 5 * DAY, rows = allocRows({ start_ms: T0, days: 14, events: [{ t_ms: d5 + 15 * HOUR, dur_h: 30 }] });
+      rows[5].oil = 0;
+      const rh = D.rates(null, [ev('E1', d5 + 15 * HOUR, 30)], rows, { fluid: 'oil', day: UTC_DAY });
+      assert.strictEqual(rh.byEvent.E1.dqSource, 'previousDay');
+      assert.rel(rh.byEvent.E1.Dq, 800, 1e-3, 'Δq = the previous day\'s rate');
+      assert.ok(codes(rh.warnings).includes('NO_VOLUME_FLOWING'), 'R2 flag');
+      shapeOk(assert, 'RateHistory', rh);
     },
   },
 ];
