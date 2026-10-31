@@ -573,8 +573,17 @@ module.exports = [
       assert.strictEqual(rh.phaseBasis.used, 'total'); assert.strictEqual(rh.phase, 'total_rb'); assert.strictEqual(rh.unit, 'bbl/d');
       assert.near(rh.phaseBasis.wcMax, 0.08, 1e-3);
       rh.days.forEach((d, i) => assert.rel(d.V, rows[i].oil * 1.2 + rows[i].water * 1.02, 1e-9, 'total reservoir volume ' + d.date));
-      const rhOil = D.rates(null, [], allocRows({ start_ms: T0, days: 20, events: [], wcFn: () => 0.02, gor: 500 }), { fluid: 'oil', day: UTC_DAY, B: 1.2, Bw: 1.02, Rs: 600 });
+      assert.strictEqual(rh.phaseBasis.kTotalMobility, true);
+      const tb = rh.warnings.find((w) => w.code === 'TOTAL_BASIS');
+      assert.ok(tb && /total-mobility/.test(tb.text) && tb.text.length < 299, 'TOTAL_BASIS states what k means: ' + (tb && tb.text));
+      const rowsLowWc = allocRows({ start_ms: T0, days: 20, events: [], wcFn: () => 0.02, gor: 500 });
+      const rhOil = D.rates(null, [], rowsLowWc, { fluid: 'oil', day: UTC_DAY, B: 1.2, Bw: 1.02, Rs: 600 });
       assert.strictEqual(rhOil.phaseBasis.used, 'oil');
+      assert.strictEqual(rhOil.phaseBasis.kTotalMobility, false);
+      // §3.6 names the option rsScfStb: GOR 500 > 1.2 × 400 → total basis (Rs is accepted too)
+      assert.strictEqual(D.rates(null, [], rowsLowWc, { fluid: 'oil', day: UTC_DAY, B: 1.2, Bw: 1.02, rsScfStb: 400 }).phaseBasis.used, 'total', 'rsScfStb read');
+      assert.strictEqual(D.rates(null, [], rowsLowWc, { fluid: 'oil', day: UTC_DAY, B: 1.2, Bw: 1.02, Rs: 400 }).phaseBasis.used, 'total', 'Rs read');
+      assert.strictEqual(D.rates(null, [], rowsLowWc, { fluid: 'oil', day: UTC_DAY, B: 1.2, Bw: 1.02 }).phaseBasis.used, 'oil', 'no Rs: no GOR test');
       // gas with condensate: q_eq = q_g + 133.3·γo·q_o/M_o (API 50, M_o = 6,084/(API − 5.9))
       const grows = [];
       for (let d = 1; d <= 10; d++) grows.push({ date: '2026-03-' + String(d).padStart(2, '0'), oil: 500, gas: 5000, water: 0, hours: 24 });
@@ -584,6 +593,94 @@ module.exports = [
       assert.rel(rg.days[0].V, 5000 + 133.3 * go * 500 / Mo, 1e-12, 'wet-gas equivalent');
       const dry = D.rates(null, [], grows.map((r) => Object.assign({}, r, { oil: 10 })), { fluid: 'gas', day: UTC_DAY, gas: { apiCond: 50 } });
       assert.strictEqual(dry.phaseBasis.used, 'gas', 'condensate below 5 %: dry-gas basis');
+    },
+  },
+  {
+    name: 'DA17 gate: a 3 % cut (f̂ < 0.1 by late Δp differences) becomes a substep: no rate step, the day’s rate unchanged, listed with the sub-threshold steps',
+    wp: WP,
+    run(app, assert) {
+      const D = Dof(app);
+      const evs = [{ t_ms: T0 + 3 * DAY + 9 * HOUR, dur_h: 36 }, { t_ms: T0 + 9 * DAY + 6 * HOUR, dur_h: 10, f: 0.03 }];
+      const rows = allocRows({ start_ms: T0, days: 14, events: evs });
+      // small storage (C = 0.002 bbl/psi) so the 15-psi reopening fall of the cut is sharp enough to end the event
+      const rec = record(D, makeRecord({ start_ms: T0, days: 14, sample_s: 60, events: evs, well: { C: 0.002 }, sigma: 0.02, sigmaFlow: 0.05, seed: 17 }));
+      const res = scan(D, rec, rows);
+      assert.strictEqual(res.events.length, 2, 'the 3 % cut is detected (rise above T_s)');
+      const ref = res.events[0], e = res.events[1];
+      assert.strictEqual(ref.kind, 'shutin'); assert.strictEqual(ref.status, 'analysable');
+      assert.strictEqual(e.fhatMethod, 'dpDiff', 'measured by late Δp differences');
+      assert.near(e.dtEnd_h, 10, 0.2, 'the reopening of the cut ends the event');
+      assert.within(e.fhat, 0, 0.1 - 1e-12, '3 % cut f̂ (' + e.fhat + ')');
+      assert.strictEqual(e.kind, 'substep'); assert.strictEqual(e.status, 'not_confirmed');
+      assert.ok(codes(e.warnings).includes('NOT_CONFIRMED'));
+      // no q = 0 period and no rate step across the cut; the day's rate is its volume over 24 h (not 24·V/14)
+      const qFlow = rateAt(res.rates, e.tc_ms - HOUR);
+      assert.ok(qFlow > 0);
+      [1, 5, 9.5].forEach((h) => assert.strictEqual(rateAt(res.rates, e.tc_ms + h * HOUR), qFlow, 'rate unchanged ' + h + ' h into the cut'));
+      assert.ok(!res.rates.steps.some((s) => s.t_ms >= e.tc_ms && s.t_ms <= e.tEnd_ms), 'no step inside the cut');
+      const day = res.rates.days.find((d) => d.date === '2026-03-10');
+      assert.near(day.hOn, 24, 1e-9, 'all hours flowing');
+      assert.rel(day.q, day.V, 1e-9, 'q = 24·V/24');
+      assert.ok(day.q < 1.05 * 800, 'no over-rate day (' + day.q + ')');
+      assert.ok(!res.rates.byEvent[e.id], 'no Δq entry for a substep');
+      // listed with the sub-threshold steps
+      assert.ok(res.missed.subThreshold.some((s) => s.t_ms === e.tc_ms && s.dp_psi > 0), 'listed in missed.subThreshold');
+      res.events.forEach((x) => shapeOk(assert, 'Event', x, x.id));
+      shapeOk(assert, 'Missed', res.missed); shapeOk(assert, 'RateHistory', res.rates);
+    },
+  },
+  {
+    name: 'DA18 manual events: none outside the record; the end never runs into the next event; a promoted sub-threshold step ends at its reopening step',
+    wp: WP,
+    run(app, assert) {
+      const D = Dof(app), R = app.win.WTS_buildup.run;
+      // a 0.8 % cut for 8 h (≈ 4 psi: between T_p = 2 psi and T_s = 5 psi) between two full shut-ins
+      const evs = [{ t_ms: T0 + 3 * DAY + 9 * HOUR, dur_h: 30 }, { t_ms: T0 + 7 * DAY + 8 * HOUR, dur_h: 8, f: 0.008 }, { t_ms: T0 + 11 * DAY + 10 * HOUR, dur_h: 30 }];
+      const rows = allocRows({ start_ms: T0, days: 14, events: evs });
+      const rec = record(D, makeRecord({ start_ms: T0, days: 14, sample_s: 300, events: evs, sigma: 0.02, sigmaFlow: 0.02, seed: 18 }));
+      const base = scan(D, rec, rows);
+      assert.deepStrictEqual(J(base.events.map((e) => e.id)), ['E1', 'E2'], 'the sub-threshold step is not an event');
+      const rise = base.missed.subThreshold.find((s) => s.dp_psi > 0 && Math.abs(s.t_ms - evs[1].t_ms) < HOUR);
+      const fall = base.missed.subThreshold.find((s) => s.dp_psi < 0 && Math.abs(s.t_ms - (evs[1].t_ms + 8 * HOUR)) < HOUR);
+      assert.ok(rise && fall, 'the step and its reopening are in the missed list: ' + JSON.stringify(base.missed.subThreshold));
+      const zones = { gauge: { mode: 'utc' }, day: UTC_DAY };
+      const ov = (id, value) => ({ id, kind: 'event_add', target: null, value, reason: 'Promoted from the missed list.', who: 'Engineer A', at: '2026-07-01T09:00:00Z', appVersion: '3.3' });
+      const withAdd = (ovs) => {
+        const ovWarn = {}, input = { well: { fluid: 'oil' }, settings: {}, overrides: ovs };
+        const res = scan(D, rec, rows, { extra: { adjust: (e2, r, q, missed) => R.adjustEvents(e2, r, q, input, zones, missed, ovWarn) } });
+        return { res, ovWarn };
+      };
+      // promotion: the end is the reopening step, not the next full shut-in's reopening
+      const p = withAdd([ov('O1', { t_ms: rise.t_ms })]);
+      const m = p.res.events.find((e) => e.manual);
+      assert.ok(m && m.id === 'E3', 'manual event E3');
+      assert.near(m.tEnd_ms, evs[1].t_ms + 8 * HOUR, 0.75 * HOUR, 'ends at the reopening step');
+      assert.strictEqual(m.endReason, 'reopen');
+      assert.ok(codes(m.warnings).includes('SUBSTEP_PROMOTED'));
+      assert.deepStrictEqual(J(m.overrideIds), ['O1']);
+      const E2 = p.res.events.find((e) => e.id === 'E2');
+      assert.strictEqual(E2.status, 'analysable', 'the next shut-in is untouched');
+      assert.ok(p.res.rates.byEvent.E2.Dq > 0);
+      assert.ok(!p.res.missed.subThreshold.some((s) => s.dp_psi < 0 && s.t_ms === fall.t_ms), 'the promoted reopening left the missed list');
+      // outside the record: no event
+      assert.strictEqual(D.eventAt(rec, base.qc, rec.t[0] - 10 * DAY, {}), null, 'before the record');
+      assert.strictEqual(D.eventAt(rec, base.qc, rec.t[rec.t.length - 1] + HOUR, {}), null, 'after the record');
+      // a typed time in a flowing period: the end stops before the next event's flowing trend window
+      const bE2 = base.events[1], tFlow = T0 + 9 * DAY;
+      const fl = D.eventAt(rec, base.qc, tFlow, { prevEnd_ms: base.events[0].tEnd_ms, nextStart_ms: rec.t[bE2.j0] });
+      assert.ok(fl && fl.tEnd_ms <= rec.t[bE2.j0] - 30 * MIN && fl.tEnd_ms > tFlow, 'bounded before the next closing');
+      assert.ok(codes(fl.warnings).includes('END_BOUNDED'));
+      // through the override: the next shut-in keeps its status and its rate before closing
+      const f2 = withAdd([ov('O2', { t_ms: tFlow })]);
+      const e2b = f2.res.events.find((e) => e.id === 'E2');
+      assert.strictEqual(e2b.status, 'analysable'); assert.ok(f2.res.rates.byEvent.E2.Dq > 0, 'rate before closing known');
+      assert.ok(f2.res.events.find((e) => e.manual).tEnd_ms < e2b.tc_ms - 30 * MIN);
+      // refused: before the record, at a detected closing, inside a shut-in
+      const rf = withAdd([ov('O3', { t_ms: rec.t[0] - 10 * DAY }), ov('O4', { t_ms: bE2.tc_ms + 2 * MIN }), ov('O5', { t_ms: bE2.tc_ms + 6 * HOUR })]);
+      assert.deepStrictEqual(J(rf.res.events.map((e) => e.id)), ['E1', 'E2'], 'no event added');
+      ['O3', 'O4', 'O5'].forEach((id) => assert.ok(rf.ovWarn[id] && rf.ovWarn[id][0].code === 'OVERRIDE_NOT_APPLIED', id + ' refused with a warning'));
+      assert.strictEqual(rf.res.events[1].status, 'analysable');
+      p.res.events.concat(f2.res.events).forEach((x) => shapeOk(assert, 'Event', x, x.id));
     },
   },
 ];

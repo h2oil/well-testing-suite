@@ -123,18 +123,23 @@
         var rz = function (x) { return D ? D.resolveZone(x) : (x && x.mode !== 'device' ? x : { mode: 'utc' }); };
         return { gauge: rz(z.gauge), day: { zone: rz(day.zone), startHour: clamp(Math.round(num(+day.startHour, 0)), 0, 23) } };
     }
-    // hex16 over canon(…, 'inputs') of everything that changes numbers (§4.9): well, completion, depth, clamped settings,
-    // the resolved zones, history, allocation rows, rate table, record hash, overrides (kind, target, value) and workovers.
+    // hex16 over canon(…, 'inputs') of everything that changes numbers (§4.9): well, completion, depth, the clamped
+    // settings that change numbers (detect, interp, trend; report.detail changes none), the resolved zones, history,
+    // allocation rows with their volume resolution and gas unit (the resolution widens the R3 tolerance), rate table,
+    // record hash, overrides (kind, target, value) and workovers.
+    function _hashSettings(s) { var o = settingsOf(s); delete o.report; return o; }
+    function _ovList(input) { return (input && Array.isArray(input.overrides) ? input.overrides : []).filter(function (o) { return o && typeof o === 'object'; }); }
     function inputHash(input) {
         input = input || {};
-        var st = input.stored || null;
+        var st = input.stored || null, al = input.allocation || null;
         var rec = input.record ? input.record.hash : (st && st.record && st.record.hash) || null;
         return hash16(canon({
-            well: input.well || null, completion: input.completion || null, depth: input.depth || null, settings: settingsOf(input.settings),
+            well: input.well || null, completion: input.completion || null, depth: input.depth || null, settings: _hashSettings(input.settings),
             zones: resolvedZones(input.zones), history: input.history || null,
-            allocationRows: input.allocation && input.allocation.rows ? input.allocation.rows : null, rateTable: input.rateTable || null,
+            allocationRows: al && al.rows ? al.rows : null, allocationResolution: al && al.rows ? (al.resolution || null) : null,
+            allocationGUnit: al && al.rows ? (al.gUnit || null) : null, rateTable: input.rateTable || null,
             recordHash: rec, workovers: (input.workovers || []).slice().sort(),
-            overrides: (input.overrides || []).map(function (o) { return { id: o.id, kind: o.kind, target: o.target, value: o.value === undefined ? null : o.value }; })
+            overrides: _ovList(input).map(function (o) { return { id: o.id, kind: o.kind, target: o.target === undefined ? null : o.target, value: o.value === undefined ? null : o.value }; })
         }, 'inputs'));
     }
     // Field diff between two AnalysisInputs (canonical imperial values at 6 significant figures, resolved zones), for the
@@ -144,7 +149,7 @@
             input = input || {};
             var o = { well: input.well || null, completion: input.completion || null, depth: input.depth || null, settings: settingsOf(input.settings),
                       zones: resolvedZones(input.zones), history: input.history || null, workovers: (input.workovers || []).slice().sort(),
-                      allocation: input.allocation && input.allocation.rows ? hash16(canon(input.allocation.rows, 'inputs')) : null,
+                      allocation: input.allocation && input.allocation.rows ? hash16(canon({ rows: input.allocation.rows, resolution: input.allocation.resolution || null, gUnit: input.allocation.gUnit || null }, 'inputs')) : null,
                       rateTable: input.rateTable ? hash16(canon(input.rateTable, 'inputs')) : null,
                       record: input.record ? input.record.hash : (input.stored && input.stored.record ? input.stored.record.hash : null) };
             var out = {};
@@ -240,18 +245,37 @@
         return o;
     }
 
-    // Event + record + RateHistory + AnalysisInput → BuildupSpec (in-memory form, dt/p at 6 significant figures so the
-    // engine sees exactly what the stored form reproduces). o {id, origin_ms, settings, qc, test} → spec or a failure.
+    // Stored pressures at 6 significant figures (§3.1; the frozen BuildupSpecStored fixture checks it). Note for the lead:
+    // at ≥ 10,000 psia that is 0.1 psi, coarse for a 1-psi derivative; storing Δp from pwf0 would keep gauge resolution.
+    // Record and stored modes use the same rounding.
+    function rp(x) { return sf6(x); }
+    // BuildupSpec.opts from the clamped settings. band, slope and minCycles (the IARF tolerances, fractions and cycles)
+    // are extra keys the engine reads (spec.opts.band / slope / minCycles).
+    function _specOpts(st) {
+        return { Lcyc: st.interp.Lcyc, binsPerCycle: 20, fitBinsPerCycle: 12, rivals: st.interp.rivals, cheld: st.interp.cheld, tide: st.interp.tide,
+                 band: st.interp.band, slope: st.interp.slope, minCycles: st.interp.minCycles };
+    }
+    // Event + record + RateHistory + AnalysisInput → BuildupSpec (in-memory form, dt at 6 significant figures and p as rp(),
+    // so the engine sees exactly what the stored form reproduces). o {id, origin_ms, settings, qc, test} → spec or a
+    // failure. Without o.qc (the §3.7 four-argument form) the noise comes from input.stored.qc, else from data.qc(record).
     function specFor(event, record, rh, input, o) {
         o = o || {};
         input = input || {};
-        var D = DA(), w = input.well || {}, st = o.settings || settingsOf(input.settings), q = o.qc || {};
-        if (!event || !record || !record.t || !rh) return fail('NO_DATA', ['Event, record and rates are needed.'], ['event']);
-        var t = record.t, p = record.p, n = t.length, sign = event.kind === 'falloff' ? -1 : 1;
+        var D = DA(), w = input.well || {}, st = o.settings || settingsOf(input.settings), q = o.qc;
+        if (!event || !record || !record.t || !record.p || !rh) return fail('NO_DATA', ['Event, record and rates are needed.'], ['event']);
+        if (!q && input.stored && input.stored.qc && input.stored.qc.ok !== undefined) q = input.stored.qc;
+        if (!q && D && typeof D.qc === 'function') { try { q = D.qc(record, { events: [event] }); } catch (e) { q = null; } }
+        if (!q || typeof q !== 'object') return fail('NO_QC', ['The data quality (gauge noise) is not available.'], ['qc']);
+        var t = record.t, p = record.p, n = mMin(t.length, p.length), sign = event.kind === 'falloff' ? -1 : 1;
         var origin = isNum(o.origin_ms) ? o.origin_ms : record.origin_ms;
         var i0 = D.util.lowerBound(t, event.tc_ms + 1), i1 = D.util.lowerBound(t, event.tEnd_ms + 1);
-        var dt = [], pp = [], gaps = [];
-        for (var i = i0; i < i1 && i < n; i++) { dt.push((t[i] - event.tc_ms) / HOUR); pp.push(p[i]); if (i > i0) gaps.push((t[i] - t[i - 1]) / HOUR); }
+        var dt = [], pp = [], gaps = [], tPrev = null;
+        for (var i = i0; i < i1 && i < n; i++) {
+            if (!isNum(t[i]) || !isNum(p[i]) || !(t[i] > event.tc_ms)) continue;      // non-finite samples are skipped
+            dt.push((t[i] - event.tc_ms) / HOUR); pp.push(p[i]);
+            if (tPrev !== null) gaps.push((t[i] - tPrev) / HOUR);
+            tPrev = t[i];
+        }
         if (dt.length < 5) return fail('TOO_FEW_POINTS', ['Fewer than 5 shut-in samples.'], ['event']);
         var bins = _bin(dt, pp, 20);
         var be = (rh.byEvent && rh.byEvent[event.id]) || {};
@@ -264,7 +288,7 @@
         var spec = {
             id: o.id || event.id, testType: sign < 0 ? 'falloff' : 'buildup', tc_h: (event.tc_ms - origin) / HOUR, dtc_h: num(event.dtc_s, 0) / 3600,
             pwf0: event.pwf0, pwf0SE: num(event.pwf0SE, 0), dpdt_flow: num(event.trend && event.trend.b, 0),
-            dt: bins.dt.map(sf6), p: bins.p.map(sf6), n: bins.n,
+            dt: bins.dt.map(sf6), p: bins.p.map(rp), n: bins.n,
             steps: steps, qUnit: rh.unit, Dq: Dq, fRate: fh,
             rateQC: { source: table ? 'table' : 'allocation', r3: table ? null : fin(be.r3), r3Status: table ? 'n/a' : (be.r3Status || 'unavailable'),
                       r4: null, r4Status: table ? 'n/a' : 'unavailable', dqKnown: Dq > 0, dqSource: table ? 'table' : (be.dqSource || 'closingDay'),
@@ -275,7 +299,7 @@
             driftPsiPerDay: num(w.driftPsiPerDay, 0.01),
             history: { estimated: !!hist.flag, tPrepend_h: num(hist.prepend_h, 0), source: hist.source || 'data' },
             overrides: o.test ? _ovFor(input, o.test) : { window: null, model: null, excludeRivals: [] },
-            opts: { Lcyc: st.interp.Lcyc, binsPerCycle: 20, fitBinsPerCycle: 12, rivals: st.interp.rivals, cheld: st.interp.cheld, tide: st.interp.tide }
+            opts: _specOpts(st)
         };
         if (!(spec.dtSample_h > 0)) spec.dtSample_h = 1 / 60;
         return spec;
@@ -283,7 +307,7 @@
     function storedSpec(spec, rh, tc_ms) {
         var s = {};
         Object.keys(spec).forEach(function (k) { if (k !== 'steps') s[k] = clone(spec[k]); });
-        s.dt = spec.dt.map(sf6); s.p = spec.p.map(sf6); s.n = spec.n ? spec.n.slice() : null;
+        s.dt = spec.dt.map(sf6); s.p = spec.p.map(rp); s.n = spec.n ? spec.n.slice() : null;
         var to = DA().stepIndexAt(rh, tc_ms);
         if (to < 0) return null;
         s.stepRef = { from: 0, to: to };
@@ -295,10 +319,16 @@
         s.steps = (rh.steps || []).slice(ref.from, ref.to + 1).map(function (x) { return { t: (x.t_ms - origin) / HOUR, q: x.q }; });
         return s;
     }
-    function cacheKey(spec, st, calVersion) {
+    // Per-test cache key: the spec, the interpretation settings, the calibration version, the engine version and the app
+    // version (results of two engine or app versions are never mixed, §4.9).
+    function cacheKey(spec, st, calVersion, engine, app) {
         var s = {};
         Object.keys(spec).forEach(function (k) { if (k !== 'stepRef') s[k] = spec[k]; });
-        return hash16(canon({ spec: s, interp: st.interp, cal: calVersion || null }, 'inputs'));
+        return hash16(canon({ spec: s, interp: st.interp, cal: calVersion || null, engine: engine || null, app: app || null }, 'inputs'));
+    }
+    function _appVersion(input) {
+        var meta = (input && input.meta) || {};
+        return String(meta.appVersion || (typeof G.WTS_appVersion === 'function' ? G.WTS_appVersion() : '') || '');
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -307,47 +337,97 @@
     function isShut(e) { return e && (e.kind === 'shutin' || e.kind === 'falloff') && !e.dropped; }
     function _segment(date, workovers) { var s = 0; (workovers || []).forEach(function (w) { if (typeof w === 'string' && w <= date) s++; }); return s; }
 
-    // Applies event_drop, tc and event_add overrides to the detected events (called by data.scanJob after detection).
-    function adjustEvents(events, record, q, input, zones) {
-        var D = DA(), ovs = input.overrides || [], maxId = 0;
+    // Applies event_drop, tc and event_add overrides to the detected events (called by data.scanJob after detection, with
+    // the detection's missed list). A refused override gets a warning in ovWarn[ov.id] (copied to Analysis.overrides[] and
+    // Analysis.warnings): a time outside the record, an event_add within ±max(10 min, 5·Δt_med) of an existing closing or
+    // inside an existing shut-in, or no room before the next event. Events changed or created by an override list the
+    // override id in overrideIds (extra key; the stored mode uses it to tell applied overrides from unapplied ones).
+    function _ovWarn(ovWarn, ov, text) {
+        if (!ovWarn || !ov || !ov.id) return;
+        (ovWarn[ov.id] = ovWarn[ov.id] || []).push(W('OVERRIDE_NOT_APPLIED', 'warn', 'Override ' + ov.id + ' (' + String(ov.kind).replace(/_/g, ' ') + ') was not applied: ' + text, ['D1']));
+    }
+    function _ovValueTime(v, key) {
+        if (isNum(+v) && v !== null && v !== '' && typeof v !== 'object') return +v;
+        if (v && typeof v === 'object') {
+            if (key && isNum(+v[key]) && v[key] !== null) return +v[key];
+            if (isNum(+v.t_ms) && v.t_ms !== null) return +v.t_ms;
+            if (isNum(+v.tc_ms) && v.tc_ms !== null) return +v.tc_ms;
+        }
+        return NaN;
+    }
+    function adjustEvents(events, record, q, input, zones, missed, ovWarn) {
+        var D = DA(), ovs = _ovList(input), maxId = 0;
         events.forEach(function (e) { var k = parseInt(String(e.id).slice(1), 10); if (k > maxId) maxId = k; });
-        var opts = { settings: settingsOf(input.settings).detect, fluid: input.well && input.well.fluid, day: zones.day };
+        var opts = { settings: settingsOf(input.settings).detect, fluid: input.well && input.well.fluid, day: zones.day,
+                     subThreshold: missed && Array.isArray(missed.subThreshold) ? missed.subThreshold : [] };
+        var t = record.t, t0 = t[0], tN = t[t.length - 1];
+        var dtMed = (q && isNum(q.dtMed_s) && q.dtMed_s > 0 ? q.dtMed_s : 60) * 1000, tolDup = mMax(10 * 60000, 5 * dtMed);
+        function live() { return events.filter(function (x) { return x && !x.dropped; }).sort(function (a, b) { return a.tc_ms - b.tc_ms; }); }
+        function startOf(x) { return isNum(x.j0) && x.j0 >= 0 && x.j0 < t.length ? t[x.j0] : x.tc_ms; }
+        function mark(e, ov) { e.overrideIds = (e.overrideIds || []).concat([ov.id]); }
         ovs.forEach(function (ov) {
-            if (!ov) return;
             if (ov.kind === 'event_drop') {
                 var e = events.filter(function (x) { return x.id === ov.target; })[0];
-                if (e) { e.dropped = true; e.status = 'excluded'; e.warnings.push(W('EVENT_DROPPED', 'info', 'Removed by override ' + ov.id + '.', ['D1'])); }
-            } else if (ov.kind === 'tc' && /^E\d+$/.test(String(ov.target)) && isNum(+(ov.value && ov.value.tc_ms !== undefined ? ov.value.tc_ms : ov.value))) {
+                if (e) { e.dropped = true; e.status = 'excluded'; mark(e, ov); e.warnings.push(W('EVENT_DROPPED', 'info', 'Removed by override ' + ov.id + '.', ['D1'])); }
+                else _ovWarn(ovWarn, ov, 'no event ' + String(ov.target || '') + ' was detected.');
+            } else if (ov.kind === 'tc') {
+                var tc = _ovValueTime(ov.value, 'tc_ms');
                 var idx = -1;
                 events.forEach(function (x, i) { if (x.id === ov.target) idx = i; });
-                if (idx < 0) return;
-                var tc = +(ov.value && ov.value.tc_ms !== undefined ? ov.value.tc_ms : ov.value);
-                var prevEnd = idx > 0 ? events[idx - 1].tEnd_ms : null;
-                var ne = D.eventAt(record, q, tc, Object.assign({ exact: true, prevEnd_ms: prevEnd }, opts));
-                if (ne) { ne.id = ov.target; ne.manual = true; ne.warnings.push(W('TC_OVERRIDE', 'info', 'Closing time set by override ' + ov.id + '.', ['D2'])); events[idx] = ne; }
+                if (!/^E\d+$/.test(String(ov.target)) || idx < 0) { _ovWarn(ovWarn, ov, 'no event ' + String(ov.target || '') + ' was detected.'); return; }
+                if (!isNum(tc) || tc < t0 || tc > tN) { _ovWarn(ovWarn, ov, 'the closing time is outside the gauge record.'); return; }
+                var L = live(), prevE = null, nextE = null;
+                L.forEach(function (x) { if (x.id === ov.target) return; if (x.tc_ms < tc && (!prevE || x.tc_ms > prevE.tc_ms)) prevE = x; if (x.tc_ms > tc && (!nextE || x.tc_ms < nextE.tc_ms)) nextE = x; });
+                if (prevE && tc <= prevE.tEnd_ms) { _ovWarn(ovWarn, ov, 'the closing time falls inside the shut-in of ' + prevE.id + '.'); return; }
+                var ne = D.eventAt(record, q, tc, Object.assign({ exact: true, prevEnd_ms: prevE ? prevE.tEnd_ms : null, nextStart_ms: nextE ? startOf(nextE) : null }, opts));
+                if (!ne) { _ovWarn(ovWarn, ov, 'no room before the next shut-in.'); return; }
+                ne.id = ov.target; ne.manual = true; ne.overrideIds = (events[idx].overrideIds || []).concat([ov.id]);
+                ne.warnings.push(W('TC_OVERRIDE', 'info', 'Closing time set by override ' + ov.id + '.', ['D2']));
+                events[idx] = ne;
             } else if (ov.kind === 'event_add') {
-                var v = ov.value, tAdd = isNum(+v) ? +v : (v && isNum(+v.t_ms) ? +v.t_ms : (v && isNum(+v.tc_ms) ? +v.tc_ms : NaN));
-                if (!isNum(tAdd)) return;
-                var prev = null;
-                events.forEach(function (x) { if (x.tc_ms < tAdd && (!prev || x.tc_ms > prev.tc_ms)) prev = x; });
-                var ae = D.eventAt(record, q, tAdd, Object.assign({ exact: !!(v && v.exact), prevEnd_ms: prev ? prev.tEnd_ms : null }, opts));
-                if (ae) { maxId++; ae.id = 'E' + maxId; ae.warnings.push(W('EVENT_ADDED', 'info', 'Added by override ' + ov.id + '.', ['D1'])); events.push(ae); }
+                var tAdd = _ovValueTime(ov.value, 't_ms'), v = ov.value;
+                if (!isNum(tAdd)) { _ovWarn(ovWarn, ov, 'no closing time was given.'); return; }
+                if (tAdd < t0 || tAdd > tN) { _ovWarn(ovWarn, ov, 'the closing time is outside the gauge record.'); return; }
+                var L2 = live(), prev = null, next = null, clash = null;
+                L2.forEach(function (x) {
+                    if (mAbs(x.tc_ms - tAdd) <= tolDup || (tAdd >= x.tc_ms && isNum(x.tEnd_ms) && tAdd <= x.tEnd_ms)) { if (!clash) clash = x; return; }
+                    if (x.tc_ms < tAdd && (!prev || x.tc_ms > prev.tc_ms)) prev = x;
+                    if (x.tc_ms > tAdd && (!next || x.tc_ms < next.tc_ms)) next = x;
+                });
+                if (clash) { _ovWarn(ovWarn, ov, mAbs(clash.tc_ms - tAdd) <= tolDup ? 'event ' + clash.id + ' already closes at that time (use a closing-time override).' : 'the time falls inside the shut-in of ' + clash.id + '.'); return; }
+                var ae = D.eventAt(record, q, tAdd, Object.assign({ exact: !!(v && typeof v === 'object' && v.exact), prevEnd_ms: prev ? prev.tEnd_ms : null, nextStart_ms: next ? startOf(next) : null }, opts));
+                if (!ae) { _ovWarn(ovWarn, ov, 'no room before the next shut-in.'); return; }
+                maxId++; ae.id = 'E' + maxId; mark(ae, ov);
+                ae.warnings.push(W('EVENT_ADDED', 'info', 'Added by override ' + ov.id + '.', ['D1']));
+                events.push(ae);
             }
         });
         events.sort(function (a, b) { return a.tc_ms - b.tc_ms; });
         return events;
     }
+    // Stored mode (no raw record): event-level overrides cannot be applied. Those the stored events already reflect
+    // (overrideIds) are fine; the others get a warning.
+    function _storedOverrideWarnings(input, events, ovWarn) {
+        var applied = {};
+        (events || []).forEach(function (e) { (e && e.overrideIds || []).forEach(function (id) { applied[id] = 1; }); });
+        _ovList(input).forEach(function (ov) {
+            if ((ov.kind === 'event_add' || ov.kind === 'event_drop' || ov.kind === 'tc') && !applied[ov.id]) _ovWarn(ovWarn, ov, 'it needs the raw gauge record, which is not loaded.');
+        });
+    }
     function _overrideState(input, ids) {
         var st = {};
-        (input.overrides || []).forEach(function (ov) {
+        _ovList(input).forEach(function (ov) {
             if (!ov || !ov.target) return;
             if (ov.kind === 'exclude') st[ov.target] = { s: 'exclude', ov: ov };
             else if (ov.kind === 'include') st[ov.target] = { s: 'include', ov: ov };
         });
         return st;
     }
-    // More than 60 tests: keep by selection (baseline tests of each segment, the longest per week newest first, the longest
-    // per day newest first, then the newest); the others are excluded with the reason 'test cap'.
+    // More than 60 tests: keep by selection (the baseline candidates of each segment, the longest per week newest first,
+    // the longest per day newest first, then the newest); the others are excluded with the reason 'test cap'. The cap
+    // runs before stage 1, when the labels are not known yet, so the first 2·baseN live tests of each segment are kept:
+    // the stage-2 baseline (the first baseN tests labelled ≥ medium) then still has candidates when some early tests
+    // turn out low. (Approximation: when more than baseN of them are low, the baseline has fewer tests.)
     function _cap(tests, st, workovers) {
         var live = tests.filter(function (t) { return t.status !== 'excluded'; });
         if (live.length <= MAX_TESTS) return;
@@ -355,7 +435,7 @@
         function add(t) { if (!keep[t.id] && nKeep < MAX_TESTS) { keep[t.id] = 1; nKeep++; } }
         var segs = {};
         live.forEach(function (t) { var s = _segment(t.date, workovers); (segs[s] = segs[s] || []).push(t); });
-        Object.keys(segs).forEach(function (s) { segs[s].slice(0, st.trend.baseN).forEach(add); });
+        Object.keys(segs).forEach(function (s) { segs[s].slice(0, 2 * st.trend.baseN).forEach(add); });
         function longestBy(keyFn) {
             var best = {};
             live.forEach(function (t) { var k = keyFn(t); if (!best[k] || t.dtEnd_h > best[k].dtEnd_h) best[k] = t; });
@@ -378,7 +458,8 @@
     function _dteEnd(res, spec) {
         if (res.evidence && isNum(res.evidence.dteEnd_h)) return res.evidence.dteEnd_h;
         if (res.bins && res.bins.dte && res.bins.dte.length) return res.bins.dte[res.bins.dte.length - 1];
-        return spec.dt[spec.dt.length - 1];
+        var dtEnd = spec.dt[spec.dt.length - 1], fn = _lnDteFn(spec), v = fn ? Math.exp(fn(dtEnd)) : NaN;
+        return isNum(v) ? v : dtEnd;
     }
     function _kHeldEligible(res, spec) {
         var ia = res.iarf || {}, tr = res.triggers || {}, reach = res.reach || {};
@@ -386,14 +467,32 @@
         if (ia.grade === 'fair' && isNum(ia.cycles) && ia.cycles < 0.6 && isNum(reach.fair_h) && _dteEnd(res, spec) < reach.fair_h) return true;
         return false;
     }
-    // Final values and S_err of a k-held test (§4.6 items 13, 15, 18).
-    function _applyKHeld(res, kh, spec) {
-        var w = spec.well, k = kh.k, S = kh.fit && kh.fit.phys ? kh.fit.phys.S : res.final.S, C = kh.fit && kh.fit.phys ? kh.fit.phys.C : res.final.C;
-        var m = 162.6 * spec.Dq * w.B * w.mu / (k * w.h);
-        var f = res.final, dtEnd = spec.dt[spec.dt.length - 1], dteEnd = _dteEnd(res, spec);
-        f.k = k; f.kh = k * w.h; f.S = S; f.C = C; f.source = 'kHeld'; f.m = m; f.mPrime = m / LN10; f.dpSkin_psi = 0.8686 * m * S;
-        f.rinv_ft = 0.0325 * mSqrt(k * dtEnd / (w.phi * w.mu * w.ct)); f.rinvE_ft = 0.0325 * mSqrt(k * dteEnd / (w.phi * w.mu * w.ct));
-        var sTc = 1.1513 * mAbs(spec.dpdt_flow) * spec.dtc_h / m, sPwf = 1.1513 * spec.pwf0SE / m;
+    // Final values and S_err of a k-held test (§4.6 items 13, 15, 18). The pass-1 values are scaled, never recomputed from
+    // the fluid inputs: at a fixed rate and fluid m ∝ 1/k and r_inv ∝ √k, which holds for every fluid (for gas the engine
+    // works in normalised pseudo-pressure with Bg and μg, which spec.well does not carry). prep (optional, the stage-3
+    // prepare) gives the gas table for Δp_skin in psi; without it the pass-1 gas Δp_skin is scaled with Δm_skin.
+    function _applyKHeld(res, kh, spec, prep) {
+        var w = spec.well, k = kh.k, f = res.final;
+        var S = kh.fit && kh.fit.phys && isNum(kh.fit.phys.S) ? kh.fit.phys.S : f.S, C = kh.fit && kh.fit.phys && isNum(kh.fit.phys.C) ? kh.fit.phys.C : f.C;
+        var pw = prep && prep.well ? prep.well : w;
+        var kOld = isNum(f.k) && f.k > 0 ? f.k : k, ratio = kOld / k;
+        var m = isNum(f.m) && f.m !== 0 ? f.m * ratio : 162.6 * spec.Dq * pw.B * pw.mu / (k * w.h);
+        var mPrime = isNum(f.mPrime) && f.mPrime !== 0 ? f.mPrime * ratio : m / LN10;
+        var dtEnd = spec.dt[spec.dt.length - 1], dteEnd = _dteEnd(res, spec), sq = mSqrt(k / kOld);
+        var dmSkin = 0.8686 * m * S, oldGas = f.gas;
+        f.k = k; f.kh = k * w.h; f.S = S; f.C = C; f.source = 'kHeld'; f.m = m; f.mPrime = mPrime;
+        f.rinv_ft = isNum(f.rinv_ft) ? f.rinv_ft * sq : 0.0325 * mSqrt(k * dtEnd / (pw.phi * pw.mu * pw.ct));
+        f.rinvE_ft = isNum(f.rinvE_ft) ? f.rinvE_ft * sq : 0.0325 * mSqrt(k * dteEnd / (pw.phi * pw.mu * pw.ct));
+        if (oldGas || (w.fluid === 'gas' && spec.gas)) {
+            var dps = null, gt = prep && prep.gasTable, ad = prep && prep.adata;
+            if (gt && typeof gt.pOfPn === 'function' && ad && isNum(ad.pRef)) {
+                try { var pAt = gt.pOfPn(ad.pRef + num(prep.sign, 1) * dmSkin); if (isNum(pAt)) dps = mAbs(pAt - spec.pwf0); } catch (e) { dps = null; }
+            }
+            if (!isNum(dps)) dps = (oldGas && isNum(oldGas.dpSkin_psi) && isNum(oldGas.dmSkin) && mAbs(oldGas.dmSkin) > 1e-12) ? mAbs(oldGas.dpSkin_psi * dmSkin / oldGas.dmSkin) : mAbs(dmSkin);
+            f.gas = { Sprime: S, dmSkin: dmSkin, dpSkin_psi: dps };
+            f.dpSkin_psi = dps;
+        } else f.dpSkin_psi = dmSkin;
+        var sTc = 1.1513 * mAbs(num(spec.dpdt_flow, 0)) * num(spec.dtc_h, 0) / mAbs(m), sPwf = 1.1513 * num(spec.pwf0SE, 0) / mAbs(m);
         var floor = res.sErr && isNum(res.sErr.floor) ? res.sErr.floor : 0.2, seS = kh.fit && kh.fit.se && isNum(kh.fit.se.S) ? kh.fit.se.S : 0;
         var a = AI(), se = null;
         if (a && typeof a.sErr === 'function') { try { se = a.sErr({ mode: 'kHeld', seS: seS, sTc: sTc, sPwf: sPwf, sK: kh.S_k, floor: floor }); } catch (e) { se = null; } }
@@ -407,9 +506,42 @@
         res.sErr = se;
         res.kHeld = kh;
     }
+    // ln Δt_e as the engine builds it (§3.1 prepare, D6): ln Δt + Σ w_i [ln(off_i + Δt) − ln off_i], w_i = Δq_i/Δq_n,
+    // off_i = t_c − t_i, over the rate steps scaled so that the final drop equals Δq. null when the history is unusable.
+    function _lnDteFn(spec) {
+        var st = Array.isArray(spec && spec.steps) ? spec.steps.filter(function (s) { return s && isNum(s.t) && isNum(s.q); }).map(function (s) { return { t: s.t, q: mAbs(s.q) }; }) : [];
+        var tc = spec ? spec.tc_h : null, n = st.length;
+        if (!isNum(tc) || n < 2 || !(spec.Dq > 0)) return null;
+        var qPrev = st[n - 2].q;
+        if (!(qPrev > 0)) return null;
+        var scale = spec.Dq / qPrev, stU = st.map(function (s) { return { t: s.t, q: s.q * scale }; });
+        var dqn = stU[n - 1].q - stU[n - 2].q, terms = [];
+        if (dqn === 0) return null;
+        for (var i = 0; i < n - 1; i++) {
+            var dq = stU[i].q - (i > 0 ? stU[i - 1].q : 0);
+            if (dq === 0) continue;
+            var off = tc - stU[i].t;
+            if (!(off > 0)) return null;
+            terms.push({ w: dq / dqn, off: off });
+        }
+        return function (dt) { var v = mLog(dt); for (var j = 0; j < terms.length; j++) v += terms[j].w * (mLog(terms[j].off + dt) - mLog(terms[j].off)); return v; };
+    }
+    // The stored copy of a BuildupResult drops bins.X and bins.dte (§3.1); they are recomputed from bins.dt and the
+    // rehydrated spec's rate steps with the superposition time function, so cached and fresh tests share one time axis.
+    function _ensureDte(r, spec) {
+        if (!r || !r.bins || !Array.isArray(r.bins.dt)) return;
+        var b = r.bins, n = b.dt.length;
+        if (Array.isArray(b.dte) && b.dte.length === n && Array.isArray(b.X) && b.X.length === n) return;
+        var fn = _lnDteFn(spec);
+        if (!fn) return;
+        var X = b.dt.map(function (d) { return d > 0 ? fn(d) : NaN; });
+        if (!X.every(isNum)) return;
+        b.X = X; b.dte = X.map(function (x) { return Math.exp(x); });
+    }
     function _trendTest(t, first_ms, shift) {
-        var r = t.result, f = r.final, sp = t.spec;
-        var dte = r.bins && r.bins.dte ? r.bins.dte : null, dp = r.bins && r.bins.dp ? r.bins.dp : null;
+        var r = t.result, f = r.final, sp = t._spec || t.spec;
+        _ensureDte(r, sp);
+        var dte = r.bins && Array.isArray(r.bins.dte) && r.bins.dte.length === (r.bins.dp || []).length ? r.bins.dte : null, dp = dte ? r.bins.dp : null;
         var add = function (v) { return isNum(v) ? v + shift : null; };
         return {
             id: t.id, t_ms: t.tc_ms, tDays: (t.tc_ms - first_ms) / DAY, date: t.date, S: f.S, Serr: r.sErr ? r.sErr.value : null,
@@ -423,7 +555,7 @@
             gasSprime: f.gas ? f.gas.Sprime : null, partialSuspect: !!t.partialSuspect, iarfDt0_h: r.iarf && r.iarf.found ? r.iarf.dt0_h : null,
             dtEnd_h: t.dtEnd_h, dteEnd_h: _dteEnd(r, sp), reachFair_h: r.reach ? r.reach.fair_h : null, reachGood_h: r.reach ? r.reach.good_h : null,
             reachFairShut_h: r.reach ? r.reach.fairShut_h : null, reachGoodShut_h: r.reach ? r.reach.goodShut_h : null,
-            bins: { dte: dte ? dte.slice() : (r.bins ? r.bins.dt.slice() : []), dp: dp ? dp.slice() : [] }
+            bins: { dte: dte ? dte.slice() : [], dp: dp ? dp.slice() : [] }       // Δt_e only, never Δt
         };
     }
     // A disabled trend (trend module not loaded): the same shape, nothing computed.
@@ -456,14 +588,60 @@
         };
     }
 
+    // Stable test ids (B<n>). A previous analysis (the cache, or the stored tests) keeps its id for the same closing:
+    // matched by the event id with the closing within tol, then by the closing time within tol, then by the event id
+    // within 6 h (a closing-time override). A previous id is never given to another event, so an override that targets
+    // it can never move to a different build-up. A new test takes B<event number> when that id is free (so a fresh
+    // analysis gives the same ids whether or not an earlier event is included), else the next free number.
+    function _bNum(id) { var m = /^B(\d+)$/.exec(String(id || '')); return m ? parseInt(m[1], 10) : 0; }
+    function _assignIds(cand, prev, tol) {
+        var out = {}, taken = {}, used = [], maxN = 0, rest = [];
+        prev = (prev || []).filter(function (p) { return p && _bNum(p.id) > 0; });
+        prev.forEach(function (p) { taken[p.id] = 1; });
+        function dtc(e, p) { return isNum(p.tc_ms) && isNum(e.tc_ms) ? mAbs(p.tc_ms - e.tc_ms) : Infinity; }
+        function pass(match) {
+            cand.forEach(function (e) {
+                if (out[e.id]) return;
+                var best = -1, bd = Infinity;
+                prev.forEach(function (p, i) { if (used[i]) return; var d = match(e, p); if (d !== null && d < bd) { bd = d; best = i; } });
+                if (best >= 0) { out[e.id] = prev[best].id; used[best] = true; }
+            });
+        }
+        pass(function (e, p) { var d = dtc(e, p); return p.eventId === e.id && d <= tol ? d : null; });
+        pass(function (e, p) { var d = dtc(e, p); return d <= tol ? d : null; });
+        pass(function (e, p) { var d = dtc(e, p); return p.eventId === e.id && d <= 6 * HOUR ? d : null; });
+        cand.forEach(function (e) {
+            if (out[e.id]) return;
+            var en = /^E(\d+)$/.exec(String(e.id)), id = en ? 'B' + parseInt(en[1], 10) : null;
+            if (id && !taken[id] && _bNum(id) > 0) { out[e.id] = id; taken[id] = 1; } else rest.push(e);
+        });
+        Object.keys(taken).forEach(function (k) { maxN = mMax(maxN, _bNum(k)); });
+        cand.forEach(function (e) { if (out[e.id]) maxN = mMax(maxN, _bNum(out[e.id])); });
+        rest.forEach(function (e) { maxN++; out[e.id] = 'B' + maxN; });
+        return out;
+    }
+    // A record with non-finite samples (a store decode, an external generator): those samples are skipped (copy).
+    function _cleanRecord(rec) {
+        var t = rec.t, p = rec.p;
+        if (!t || !p || typeof t.length !== 'number' || typeof p.length !== 'number') return null;
+        var n = mMin(t.length, p.length), bad = 0, i;
+        for (i = 0; i < n; i++) if (!isNum(t[i]) || !isNum(p[i])) bad++;
+        if (!bad && t.length === p.length) return rec;
+        var m = n - bad, tt = new Float64Array(m), pp = new Float64Array(m), TT = rec.T && rec.T.length >= n ? new Float64Array(m) : null, k = 0;
+        for (i = 0; i < n; i++) if (isNum(t[i]) && isNum(p[i])) { tt[k] = t[i]; pp[k] = p[i]; if (TT) TT[k] = rec.T[i]; k++; }
+        var out = Object.assign({}, rec, { t: tt, p: pp, T: TT, n: m, origin_ms: m ? tt[0] : rec.origin_ms });
+        out.warnings = (rec.warnings || []).concat([W('SAMPLES_SKIPPED', 'warn', (bad + mAbs(t.length - p.length)) + ' samples without a finite time or pressure were skipped.', ['Q2'])]);
+        return out;
+    }
+
     // ─────────────────────────────────────────────────────────────────────
     // The pipeline job
     // ─────────────────────────────────────────────────────────────────────
     // input: AnalysisInput; opts {cache: Analysis|null}
     function job(input, opts) {
         opts = opts || {};
-        var X = { phase: 'start', res: null, cancelled: false, sub: null, i: 0, warnings: [], order: [] };
-        var D, st, zones, an, tests, scanRes, cal, calVersion, statsStart, kBase = null, cvK = 0, seMedK = 0, candK = [];
+        var X = { phase: 'start', res: null, cancelled: false, sub: null, i: 0, warnings: [], order: [], ovWarn: {}, rec: null };
+        var D, st, zones, an, tests, scanRes, cal, calVersion, engineVersion, appVersion, statsStart, kBase = null, cvK = 0, seMedK = 0, candK = [];
 
         function finish(r) { X.res = r; X.phase = 'done'; return { done: true, progress: 1, label: r && r.ok === false ? 'Stopped' : 'Analysis complete' }; }
         function prog(a, b, f) { return a + (b - a) * clamp(num(f, 0), 0, 1); }
@@ -479,19 +657,27 @@
             cal = G.PRiSM_autoInterpCal || null;
             calVersion = cal && cal.version ? cal.version : null;
             var a = AI();
+            engineVersion = a && a.version ? String(a.version) : null;
+            appVersion = _appVersion(input);
             statsStart = a && typeof a.stats === 'function' ? clone(a.stats()) : null;
             if (input.record) {
-                X.sub = D.scanJob(input.record, {
+                var rec = _cleanRecord(input.record);
+                if (!rec || !(rec.t.length >= 10)) return finish(fail('NO_DATA', ['The gauge record has fewer than 10 samples with a finite time and pressure.'], ['record']));
+                if (rec !== input.record) X.warnings.push(rec.warnings[rec.warnings.length - 1]);
+                X.rec = rec;
+                X.sub = D.scanJob(rec, {
                     settings: st, zones: zones, allocation: input.rateTable && input.rateTable.length ? null : input.allocation, rateTable: input.rateTable,
                     history: input.history, well: input.well, depth: input.depth, workovers: input.workovers,
-                    adjust: function (evs, rec, q) { return adjustEvents(evs, rec, q, input, zones); }
+                    adjust: function (evs, r2, q, missed) { return adjustEvents(evs, r2, q, input, zones, missed, X.ovWarn); }
                 });
                 X.phase = 'scan';
                 return { done: false, progress: 0.01, label: 'Reading the gauge data' };
             }
             var s = input.stored;
-            if (!s.events || !s.rates || !s.qc || !s.tests) return finish(fail('NO_DATA', ['The stored analysis is incomplete.'], ['stored']));
+            if (!s || !Array.isArray(s.events) || !s.rates || !Array.isArray(s.rates.steps) || !s.rates.steps.length || !s.qc || s.qc.ok === undefined || !Array.isArray(s.tests))
+                return finish(fail('NO_DATA', ['The stored analysis is incomplete.'], ['stored']));
             scanRes = { ok: true, qc: clone(s.qc), events: clone(s.events), rates: clone(s.rates), record: null, missed: clone(s.missed) || null };
+            _storedOverrideWarnings(input, scanRes.events, X.ovWarn);
             X.phase = 'tests';
             return { done: false, progress: 0.25, label: 'Stored build-ups' };
         }
@@ -505,12 +691,13 @@
         }
         // Test list, overrides, cap, specs and cache lookup (one unit).
         function buildTests() {
-            var rh = scanRes.rates, events = scanRes.events, rec = scanRes.record || input.record;
+            var rh = scanRes.rates, events = scanRes.events, rec = scanRes.record || X.rec;
             var ovs = _overrideState(input);
             var shift = D.depthShift(input.depth);
             tests = [];
-            var storedById = {};
-            if (!rec) (input.stored.tests || []).forEach(function (x) { storedById[x.eventId] = x; });
+            var storedById = {}, evById = {};
+            events.forEach(function (e) { if (e) evById[e.id] = e; });
+            if (!rec) (input.stored.tests || []).forEach(function (x) { if (x && x.spec) storedById[x.eventId] = x; });
             var origin = rec ? rec.origin_ms : null;
             var cand = events.filter(function (e) {
                 if (!isShut(e)) return false;
@@ -518,7 +705,13 @@
                 if (e.status === 'analysable') return true;
                 return !!(ovs[e.id] && ovs[e.id].s === 'include');
             });
-            X.cand = cand; X.ci = 0; X.k = 0; X.bt = { rh: rh, rec: rec, ovs: ovs, shift: shift, storedById: storedById, origin: origin };
+            // stable test ids: the stored tests (stored mode) or the cache's tests keep their ids
+            var prev = [];
+            if (!rec) prev = (input.stored.tests || []).filter(Boolean).map(function (x) { return { id: x.id, eventId: x.eventId, tc_ms: evById[x.eventId] ? evById[x.eventId].tc_ms : null }; });
+            else if (opts.cache && Array.isArray(opts.cache.tests)) prev = opts.cache.tests.filter(Boolean).map(function (c) { return { id: c.id, eventId: c.eventId, tc_ms: c.tc_ms }; });
+            var dtMed = scanRes.qc && isNum(scanRes.qc.dtMed_s) && scanRes.qc.dtMed_s > 0 ? scanRes.qc.dtMed_s * 1000 : 60000;
+            X.idOf = _assignIds(cand, prev, mMax(10 * 60000, 5 * dtMed));
+            X.cand = cand; X.ci = 0; X.bt = { rh: rh, rec: rec, ovs: ovs, shift: shift, storedById: storedById, origin: origin };
             X.phase = 'specs';
             return { done: false, progress: 0.26, label: cand.length + ' shut-ins to interpret' };
         }
@@ -527,13 +720,13 @@
             if (X.ci >= X.cand.length) { X.phase = 'finishTests'; return { done: false, progress: 0.29, label: 'Specs' }; }
             var e = X.cand[X.ci++], rh = X.bt.rh, rec = X.bt.rec, ovs = X.bt.ovs, shift = X.bt.shift, storedById = X.bt.storedById, origin = X.bt.origin;
             (function () {
-                var id = 'B' + (X.k + 1), t = {
+                var id = X.idOf[e.id], t = {
                     id: id, eventId: e.id, date: e.alloc && e.alloc.date ? e.alloc.date : D.dayOf(e.tc_ms, zones.day), tc_ms: e.tc_ms, dtEnd_h: mMax(e.dtEnd_h, 1e-6),
                     Dq: null, qUnit: rh.unit, pwf0: e.pwf0, pwf0Datum: e.pwf0 + shift, pStarDatum: null, pExtDatum: null,
                     status: 'interpreted', statusReason: e.status !== 'analysable' ? 'Included by override (event status ' + e.status.replace(/_/g, ' ') + ').' : null,
                     spec: null, result: null, used: { baseline: false, trend: false, alert: false }, partialSuspect: false, overrides: []
                 };
-                (input.overrides || []).forEach(function (ov) { if (ov && (ov.target === id || ov.target === e.id)) t.overrides.push(ov.id); });
+                _ovList(input).forEach(function (ov) { if (ov.target === id || ov.target === e.id) t.overrides.push(ov.id); });
                 var o2 = ovs[id] || ovs[e.id];
                 if (o2 && o2.s === 'exclude') { t.status = 'excluded'; t.statusReason = 'Excluded by override ' + o2.ov.id + ': ' + String(o2.ov.reason || '').slice(0, 200); }
                 // spec
@@ -548,14 +741,14 @@
                     sto = clone(storedById[e.id].spec);
                     sto.id = id;
                     // the stage-1 spec never carries R4 (filled in stage 3), so the engine and the cache key see what record mode sees
-                    sto.rateQC.r4 = null; sto.rateQC.r4Status = rh.mode === 'table' ? 'n/a' : 'unavailable';
+                    if (sto.rateQC) { sto.rateQC.r4 = null; sto.rateQC.r4Status = rh.mode === 'table' ? 'n/a' : 'unavailable'; }
                     sto.overrides = _ovFor(input, t);
+                    sto.opts = _specOpts(st);              // the current interpretation settings, as record mode builds them
                     var org = e.tc_ms - sto.tc_h * HOUR;
                     spec = rehydrate(sto, rh, org);
                 }
-                X.k++;
                 t.Dq = spec.Dq; t.spec = sto; t._spec = spec; t._event = e;
-                t._key = cacheKey(sto.stepRef ? Object.assign({}, sto, { steps: spec.steps }) : sto, st, calVersion);
+                t._key = cacheKey(sto.stepRef ? Object.assign({}, sto, { steps: spec.steps }) : sto, st, calVersion, engineVersion, appVersion);
                 tests.push(t);
             })();
             return { done: false, progress: 0.26 + 0.03 * X.ci / X.cand.length, label: 'Preparing ' + e.id };
@@ -576,15 +769,22 @@
                     if (c.pass1.evidence !== undefined) r.evidence = clone(c.pass1.evidence);
                     r.kHeld = null; r.background = null;
                     t.result = r; t._cached = true;
+                    // a stored copy has no bins.X / bins.dte (§3.1): recomputed in stage 1, one test per unit
+                    var b = r.bins || {}, nb = Array.isArray(b.dt) ? b.dt.length : 0;
+                    t._needDte = !(Array.isArray(b.dte) && b.dte.length === nb && Array.isArray(b.X) && b.X.length === nb);
                 }
             });
             X.phase = 'stage1'; X.i = 0;
             return { done: false, progress: 0.3, label: tests.length + ' build-ups' };
         }
         function stage1() {
-            while (X.i < tests.length && (tests[X.i]._capped || tests[X.i]._cached)) X.i++;
+            while (X.i < tests.length && (tests[X.i]._capped || (tests[X.i]._cached && !tests[X.i]._needDte))) X.i++;
             if (X.i >= tests.length) { X.phase = 'stage2'; return { done: false, progress: 0.85, label: 'Interpretation done' }; }
             var t = tests[X.i], a = AI(), lab = 'Interpreting ' + t.id + ' (' + (X.i + 1) + '/' + tests.length + ')';
+            if (t._cached) {
+                _ensureDte(t.result, t._spec); t._needDte = false; X.i++;
+                return { done: false, progress: prog(0.3, 0.85, X.i / tests.length), label: 'Stored result ' + t.id };
+            }
             if (!X.sub) {
                 if (!a || typeof a.interpretJob !== 'function') { t.status = 'failed'; t.statusReason = 'The interpretation engine is not loaded.'; X.i++; return { done: false, progress: prog(0.3, 0.85, X.i / tests.length), label: lab }; }
                 try { X.sub = a.interpretJob(t._spec, { cal: cal, rivals: st.interp.rivals, cheld: st.interp.cheld }); }
@@ -652,12 +852,13 @@
             if (X.i >= tests.length || !a || typeof a.kHeldJob !== 'function' || typeof a.prepare !== 'function') { X.phase = 'stage3b'; return { done: false, progress: 0.9, label: 'Pass 2' }; }
             var t = tests[X.i];
             if (!X.sub) {
+                // one unit: the prepare (≤ 40 ms) and the job construction
                 var prep = null;
                 try { prep = a.prepare(t._spec); } catch (e) { prep = null; }
                 X.order.push('kHeld:' + t.id);
-                if (!prep || prep.ok === false) { X.i++; return { done: false, progress: 0.88, label: 'k-held ' + t.id }; }
+                if (!prep || prep.ok === false) { t._kHeldFailed = true; X.i++; return { done: false, progress: 0.88, label: 'k-held ' + t.id }; }
                 var delta = mSqrt(cvK * cvK + Math.pow(num(input.well.allocAccPct, 5) / 100, 2) + seMedK * seMedK);
-                try { X.sub = a.kHeldJob(prep, { k: kBase, delta: delta }); } catch (e3) { X.sub = null; X.i++; }
+                try { X.sub = a.kHeldJob(prep, { k: kBase, delta: delta }); t._prep = prep; } catch (e3) { X.sub = null; t._kHeldFailed = true; X.i++; }
                 return { done: false, progress: 0.88, label: 'k-held ' + t.id };
             }
             var r;
@@ -665,15 +866,16 @@
             if (!r.done) return { done: false, progress: 0.88, label: 'k-held ' + t.id };
             var kh = r.error ? null : X.sub.result();
             X.sub = null;
-            if (kh && kh.ok !== false && isNum(kh.k)) _applyKHeld(t.result, kh, t._spec);
-            else if (t.result.evidence) t.result.evidence.kHeldConverged = false;
+            if (kh && kh.ok !== false && isNum(kh.k) && kh.k > 0) _applyKHeld(t.result, kh, t._spec, t._prep);
+            else t._kHeldFailed = true;
+            t._prep = null;
             X.i++;
             return { done: false, progress: 0.89, label: 'k-held ' + t.id };
         }
-        function _kHeldReady(t) { return t && t.status === 'interpreted' && t.result && !t.result.kHeld && _kHeldEligible(t.result, t._spec); }
-        // Stage 3b: background check, partial-cut suspicion, R4, window-level check, final confidence; frozen used set.
+        function _kHeldReady(t) { return t && t.status === 'interpreted' && t.result && !t.result.kHeld && !t._kHeldFailed && _kHeldEligible(t.result, t._spec); }
+        // Stage 3b (one unit): the pass-2 context — background slope, p_ext list for R4, k stability.
         function stage3b() {
-            var a = AI(), rh = scanRes.rates, well = input.well, acc = num(well.allocAccPct, 5) / 100;
+            var rh = scanRes.rates, well = input.well, acc = num(well.allocAccPct, 5) / 100;
             var interp = tests.filter(function (t) { return t.result && t.status !== 'failed'; });
             var estimated = !!(rh.start && rh.start.flag);
             // background slope: Theil–Sen of the pass-1 p_ext (psi/h), or the drift input with < 3 tests or an estimated history
@@ -681,23 +883,47 @@
             interp.forEach(function (t) { var pe = t.pass1 && t.pass1.final ? t.pass1.final.pExt : null; if (isNum(pe) && t.status === 'interpreted') { px.push(t.tc_ms / HOUR); py.push(pe); } });
             var useTs = px.length >= 3 && !estimated, bg = useTs ? theilSenSlope(px, py) : null;
             if (!isNum(bg)) { bg = -num(well.driftPsiPerDay, 0.01) / 24; useTs = false; }
-            var kStable = cvK <= mMax(0.05, acc);
             var dayBy = {};
             (rh.days || []).forEach(function (d, i) { dayBy[d.date] = i; });
             var pk = interp.filter(function (t) { return t.status === 'interpreted' && t.pass1 && isNum(t.pass1.final.pExt); })
                 .map(function (t) { return [t.tc_ms, t.pass1.final.pExt]; }).sort(function (x, y) { return x[0] - y[0]; });
+            X.p2 = { interp: interp, estimated: estimated, useTs: useTs, bg: bg, kStable: cvK <= mMax(0.05, acc), acc: acc, dayBy: dayBy, pk: pk };
+            X.i = 0;
+            X.phase = 'stage3c';
+            return { done: false, progress: 0.9, label: 'Pass 2' };
+        }
+        // Stage 3c: one test per unit — background check (the engine's prepare + triggers), partial-cut suspicion,
+        // window-level check, R4 and the final confidence (§4.8: at most one engine call per unit).
+        function stage3c() {
+            var P2 = X.p2;
+            if (X.i >= P2.interp.length) { X.phase = 'stage3d'; return { done: false, progress: 0.93, label: 'Final labels' }; }
+            var t = P2.interp[X.i++];
+            pass2Test(t, P2);
+            return { done: false, progress: prog(0.9, 0.93, X.i / mMax(1, P2.interp.length)), label: 'Pass 2 ' + t.id };
+        }
+        // Stage 3d (closing unit): the used set is frozen.
+        function stage3d() {
+            X.order.push('confidence');
+            tests.forEach(function (t) { t._used = !!(t.status === 'interpreted' && t.result && t.result.confidence && rank(t.result.confidence.ks) >= 1); });
+            X.p2 = null;
+            X.phase = 'stage4';
+            return { done: false, progress: 0.93, label: 'Final labels' };
+        }
+        function pass2Test(t, P2) {
+            var a = AI(), rh = scanRes.rates, well = input.well, acc = P2.acc, estimated = P2.estimated, useTs = P2.useTs, bg = P2.bg, kStable = P2.kStable;
+            var dayBy = P2.dayBy, pk = P2.pk;
             function pRefAt(ms) {
                 if (!pk.length) return null;
                 if (ms <= pk[0][0]) return pk[0][1];
                 for (var i = 1; i < pk.length; i++) if (ms <= pk[i][0]) return pk[i - 1][1] + (pk[i][1] - pk[i - 1][1]) * (ms - pk[i - 1][0]) / (pk[i][0] - pk[i - 1][0]);
                 return pk[pk.length - 1][1];
             }
-            interp.forEach(function (t) {
+            (function () {
                 var res = t.result, ev = res.evidence ? res.evidence : null, sp = t._spec, w = sp.well;
                 // background check
                 if (a && typeof a.backgroundCheck === 'function') {
                     try {
-                        var bc = a.backgroundCheck(res, sp, bg);
+                        var bc = a.backgroundCheck(res, sp, bg, useTs ? 'pstar' : 'drift');
                         if (bc) res.background = { applied: !!bc.applied, slopeSource: useTs ? 'pstar' : 'drift', boundaryDepends: !!bc.boundaryDepends, ev: ['M7'] };
                     } catch (e) { /* keep null */ }
                     X.order.push('background:' + t.id);
@@ -735,7 +961,8 @@
                     var rq = sp.rateQC;
                     ev.rateSource = rq.source; ev.r3 = rq.r3; ev.r3Status = rq.r3Status; ev.r4 = rq.r4; ev.r4Status = rq.r4Status; ev.dqKnown = rq.dqKnown;
                     ev.fRate = sp.fRate; ev.equalRateAssumed = rq.equalRateAssumed;
-                    ev.kHeld = !!res.kHeld; ev.kHeldConverged = res.kHeld ? !!res.kHeld.converged : null;
+                    // a failed k-held pass stays visible to the labels (KK rules) and the review: converged false
+                    ev.kHeld = !!res.kHeld; ev.kHeldConverged = res.kHeld ? !!res.kHeld.converged : (t._kHeldFailed ? false : null);
                     ev.kHeldCorrCS = res.kHeld ? fin(res.kHeld.corrCS) : null; ev.kHeldRmsRatio = res.kHeld ? fin(res.kHeld.rmsRatio) : null;
                     ev.partialSuspect = t.partialSuspect; ev.windowLevelInconsistent = wli;
                     ev.boundaryDepends = res.background ? !!res.background.boundaryDepends : false;
@@ -746,12 +973,7 @@
                     try { var c = a.confidence(ev, cal); if (c && c.ks) res.confidence = c; } catch (e4) { /* keep pass-1 labels */ }
                 }
                 if (res.confidence) res.confidence.stage = 'final';
-            });
-            X.order.push('confidence');
-            // frozen used set
-            tests.forEach(function (t) { t._used = !!(t.status === 'interpreted' && t.result && t.result.confidence && rank(t.result.confidence.ks) >= 1); });
-            X.phase = 'stage4';
-            return { done: false, progress: 0.93, label: 'Final labels' };
+            })();
         }
         // Stage 4: trend over the frozen used set.
         function stage4() {
@@ -789,7 +1011,7 @@
                 c.model = minLevel(c.model, 'medium');
                 c.headline = minLevel(c.ks, c.model);
             });
-            var rh = scanRes.rates, shift = D.depthShift(input.depth), rec = scanRes.record || input.record;
+            var rh = scanRes.rates, shift = D.depthShift(input.depth), rec = scanRes.record || X.rec;
             tests.forEach(function (t) {
                 var f = t.result ? t.result.final : null;
                 t.pStarDatum = f && isNum(f.pStar) ? f.pStar + shift : null;
@@ -808,25 +1030,39 @@
                  'partialSuspect', 'overrides', 'inputHash', 'pass1'].forEach(function (k) { if (t[k] !== undefined) o[k] = t[k]; });
                 return o;
             });
-            var recSum = rec ? { name: String(rec.name || ''), source: rec.source || 'csv', n: rec.n || rec.t.length, origin_ms: rec.origin_ms, end_ms: rec.t[rec.t.length - 1], hash: rec.hash, reduced: false, rawStored: 'none' }
-                : (input.stored.record ? clone(input.stored.record) : { name: '', source: 'csv', n: 0, origin_ms: tests.length ? tests[0].tc_ms : 0, end_ms: tests.length ? tests[tests.length - 1].tc_ms : 0, hash: '0000000000000000', reduced: false, rawStored: 'none' });
+            var recSum;
+            if (rec) recSum = { name: String(rec.name || ''), source: rec.source || 'csv', n: rec.n || rec.t.length, origin_ms: rec.origin_ms, end_ms: rec.t[rec.t.length - 1], hash: rec.hash, reduced: false, rawStored: 'none' };
+            else if (input.stored.record && isNum(input.stored.record.origin_ms)) recSum = clone(input.stored.record);
+            else {
+                // no record summary stored: the history-clock origin from the first stored spec, else the first rate step
+                var org = null, endMs = rh.steps[rh.steps.length - 1].t_ms;
+                tests.forEach(function (t) { if (org === null && t._event && t.spec && isNum(t.spec.tc_h)) org = t._event.tc_ms - t.spec.tc_h * HOUR; });
+                (scanRes.events || []).forEach(function (e) { if (e && isNum(e.tEnd_ms)) endMs = mMax(endMs, e.tEnd_ms); });
+                if (!isNum(org)) org = rh.steps[0].t_ms;
+                recSum = { name: '', source: 'csv', n: 0, origin_ms: org, end_ms: mMax(org, endMs), hash: '0000000000000000', reduced: false, rawStored: 'none' };
+            }
             var a = AI(), s1 = a && typeof a.stats === 'function' ? a.stats() : null, s0 = statsStart || {};
             var stats = { evals: s1 ? mMax(0, num(s1.evals, 0) - num(s0.evals, 0)) : 0, fits: s1 ? mMax(0, num(s1.fits, 0) - num(s0.fits, 0)) : 0,
                           slices: s1 ? mMax(0, num(s1.slices, 0) - num(s0.slices, 0)) : 0, ms: null };
-            var warns = X.warnings.concat((rh.warnings || []).filter(function (w2) { return w2.level !== 'info'; }).slice(0, 20));
+            // overrides that were not applied carry their warnings (extra key) and are listed in the analysis warnings
+            var ovOut = _ovList(input).map(function (ov) { var w = X.ovWarn[ov.id]; return w && w.length ? Object.assign({}, ov, { warnings: w.slice() }) : ov; });
+            var ovWarns = [];
+            ovOut.forEach(function (ov) { if (ov.warnings) ovWarns = ovWarns.concat(ov.warnings); });
+            var warns = X.warnings.concat(ovWarns, (rh.warnings || []).filter(function (w2) { return w2.level !== 'info'; }).slice(0, 20));
             var meta = input.meta || {};
             an = {
-                ok: true, version: VERSION, appVersion: String(meta.appVersion || (typeof G.WTS_appVersion === 'function' ? G.WTS_appVersion() : '') || ''),
+                ok: true, version: VERSION, appVersion: appVersion,
                 runAt: iso(Date.now()), inputHash: inputHash(input), resultHash: resultHash(outTests, X.trend),
                 meta: { wellName: String(meta.wellName || ''), engineer: String(meta.engineer || ''), appVersion: String(meta.appVersion || '') },
                 well: input.well, completion: input.completion || null, depth: input.depth || null, settings: st, zones: zones,
                 record: recSum, qc: scanRes.qc, events: scanRes.events, missed: missed, rates: rh, baseline: X.baseline || null,
-                tests: outTests, trend: X.trend, overrides: (input.overrides || []).slice(), stats: stats, warnings: warns
+                tests: outTests, trend: X.trend, overrides: ovOut, stats: stats, warnings: warns
             };
             Object.defineProperty(an, '_order', { value: X.order.slice(), enumerable: false });
             return finish(an);
         }
-        var PH = { start: start, scan: scan, tests: buildTests, specs: specUnit, finishTests: finishTests, stage1: stage1, stage2: stage2, stage3: stage3, stage3b: stage3b, stage4: stage4, stage5: stage5 };
+        var PH = { start: start, scan: scan, tests: buildTests, specs: specUnit, finishTests: finishTests, stage1: stage1, stage2: stage2, stage3: stage3,
+                   stage3b: stage3b, stage3c: stage3c, stage3d: stage3d, stage4: stage4, stage5: stage5 };
         return {
             step: function () {
                 if (X.phase === 'done' || X.cancelled) return { done: true, progress: 1, label: X.cancelled ? 'Cancelled' : 'Analysis complete' };
