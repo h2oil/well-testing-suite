@@ -1073,7 +1073,7 @@
                     template: stt === 'SIGNED' ? 'Signed off.' : (stt === 'CHANGED' ? 'DRAFT — changed after sign-off.' : 'DRAFT — not signed off.'), values: {}, ev: [] }] }
             ] };
     }
-    function _isDetailChart(id) { return /^bu_ch_(ll|sl|ov)(_|$)/.test(String(id)); }
+    function _isDetailChart(id) { return /^bu_ch_(ll|sl|ov)(_|$)/i.test(String(id)); }
     function reportModel() {
         var a = _st && _st.analysis;
         if (!a) return null;
@@ -1116,10 +1116,10 @@
             if (!sec || !sec.id) return;
             var inner = '';
             (sec.blocks || []).forEach(function (b) { inner += _blockHtml(b, sec.id, charts); });
-            charts.forEach(function (c) { have[c.id] = 1; });
+            charts.forEach(function (c) { have[String(c.id).toLowerCase()] = 1; });   // chart ids compare without case (the report may write bu_ch_j for bu_ch_J)
             (want[sec.id] || []).forEach(function (id) {
-                if (have[id] || (id === 'bu_ch_ll' && have.bu_ch_ll) || (id === 'bu_ch_sl' && have.bu_ch_sl)) return;
-                charts.push({ id: id, block: null }); have[id] = 1;
+                if (have[id.toLowerCase()]) return;
+                charts.push({ id: id, block: null }); have[id.toLowerCase()] = 1;
                 inner += _canvasHtml(id);
             });
             if (_st.missingTests && (sec.id === 'S4' || (sec.id === 'S1' && !(rm && rm._fallback)))) inner = '<div class="bu-detail-missing" style="color:var(--yellow)">⚠ ' + _esc(_cut(DETAIL_MISSING, 296)) + '</div>' + inner;
@@ -1404,13 +1404,13 @@
     function _drawOne(c) {
         var cv = _byId(c.id), a = _st && _st.analysis;
         if (!cv || !a || !B.plot) return;
-        var m = /^bu_ch_(ll|sl)(?:_(B\d+))?$/.exec(c.id);
+        var m = /^bu_ch_(ll|sl)(?:_(B\d+))?$/i.exec(c.id);
         if (m) {
-            var t = m[2] ? (a.tests || []).filter(function (x) { return x && x.id === m[2]; })[0] : _selTest();
-            if (m[1] === 'll') _llChart(cv, t); else _slChart(cv, t, a);
+            var t = m[2] ? (a.tests || []).filter(function (x) { return x && String(x.id).toUpperCase() === m[2].toUpperCase(); })[0] : _selTest();
+            if (m[1].toLowerCase() === 'll') _llChart(cv, t); else _slChart(cv, t, a);
             return;
         }
-        var f = { bu_ch_skin: _skinChart, bu_ch_k: _kChart, bu_ch_pi: _piChart, bu_ch_J: _jChart, bu_ch_pwf: _pwfChart, bu_ch_ov: _ovChart, bu_ch_rate: _rateChart }[c.id];
+        var f = { bu_ch_skin: _skinChart, bu_ch_k: _kChart, bu_ch_pi: _piChart, bu_ch_j: _jChart, bu_ch_pwf: _pwfChart, bu_ch_ov: _ovChart, bu_ch_rate: _rateChart }[String(c.id).toLowerCase()];
         if (f) f(cv, a); else if (c.block) _blockChart(cv, c.block);
     }
     function _drawChartsAsync(list) {

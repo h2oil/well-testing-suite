@@ -635,6 +635,8 @@ module.exports = [
       open(app);
       const ids = app.findAll('#bu_res .rbox[data-sec]').map((e) => e.getAttribute('data-sec'));
       for (let i = 1; i <= 12; i++) assert.ok(ids.indexOf('S' + i) !== -1, 'section S' + i + ' rendered: ' + ids.join(','));
+      const cvIds = app.findAll('#bu_res canvas').map((c) => String(c.id).toLowerCase());
+      assert.strictEqual(new Set(cvIds).size, cvIds.length, 'one canvas per chart (ids compared without case): ' + cvIds.join(','));
       const m = app.win.collectPageReport(app.el('pgBody'), { charts: false });
       const titles = m.results.map((s) => s.title);
       app.findAll('#bu_res .rbox[data-sec] > .rbox-title').forEach((t) => assert.ok(titles.indexOf(txt(t)) !== -1, 'report has section "' + txt(t) + '"'));
