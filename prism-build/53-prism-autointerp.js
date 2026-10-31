@@ -445,9 +445,10 @@
     function _k0e(x) { return x > 16 ? _asymK(x, 0) : _kePair(x)[0]; }
     function _k1e(x) { return x > 16 ? _asymK(x, 1) : _kePair(x)[1]; }
     function _i1e(x) { return x > 20 ? _asymI(x, 1) : _iePair(x)[1]; }
-    // Well-term values repeat across parameter sets: with S ≥ 0 the grid lattice fixes every
-    // Stehfest s, so a bounded memo keyed by √s returns the identical numbers without the
-    // series / trapezoid work (speed only; cleared when full; never used for S < 0).
+    // Well-term values repeat across parameter sets: the grid lattice fixes every Stehfest s
+    // (for S < 0 through the effective-time lattice, see gridEntry), so a bounded memo keyed by
+    // √s returns the identical numbers without the series / trapezoid work (speed only; cleared
+    // when full). Direct evaluations off the lattice (_pair with S < 0) do not use it.
     var MEMO_MAX = 40000, _KMEMO = new Map(), _IMEMO = new Map();
     function _kePairW(q, memo) {
         if (!memo) return _kePair(q);
@@ -1592,12 +1593,14 @@
     // ─────────────────────────────────────────────────────────────────────
     // gridEntry(key, prep, opts) — registry-like entry on a pd grid (D5)
     // ─────────────────────────────────────────────────────────────────────
-    // One grid per parameter set (LRU), on a fixed lattice log10 tD = j/perDecade,
-    // holding [pd, pd′] (closed circle: the bounded pd − 2tD/reD² and pd′ − 2tD/reD²,
-    // the linear term added analytically). pd is a cubic Hermite in ln tD with
+    // One grid per parameter set (LRU), on a fixed lattice log10 tD = j/perDecade (S < 0:
+    // log10 tD·e^{2S} = j/perDecade, the effective-radius form), holding [pd, pd′]
+    // (closed circle: the bounded pd − 2tD/reD² and pd′ − 2tD/reD², the linear term
+    // added analytically). pd is a cubic Hermite in ln tD with
     // the exact pd′; pd′ is a cubic Hermite with central-difference slopes. The
     // first build covers [tD_min/2, 2·tD(t_c − τ_0 + Δt_end)] at the requested
     // time scale; later calls extend the lattice only when a value falls outside.
+    // The fold of the reservoir values with C_D and S is the one of _pair (and 03).
     var GRID_SPECS = {
         homogeneous: { base: 'homogeneous', category: 'homogeneous', shape: [] },
         linearBoundary: { base: 'linearBoundary', category: 'boundary', shape: [
