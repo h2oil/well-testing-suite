@@ -129,16 +129,17 @@ module.exports = [
       app.select(q('[data-rt-f="add"]'), 't:notes');
       app.click(q('[data-rt="add"]'));
       const n = app.el('wts_rt_box').querySelectorAll('[data-rt-h]').length;
-      assert.strictEqual(n, 7, 'six built-in sections + notes');
-      app.input(q('[data-rt-x="6"]'), 'Night shift: no incidents.');
-      app.click(q('[data-rt="up"][data-i="6"]'));           // notes → position 6
+      assert.strictEqual(n, 8, 'seven built-in sections (v3.2: + Chemical injection) + notes');
+      app.input(q('[data-rt-x="7"]'), 'Night shift: no incidents.');
+      app.click(q('[data-rt="up"][data-i="7"]'));           // notes → position 7
+      app.click(q('[data-rt="up"][data-i="6"]'));           // notes → position 6, before Flare emissions
       app.click(q('[data-rt="rm"][data-i="0"]'));           // drop client info
       app.click(q('[data-rt="save"]'));
       const st = JSON.parse(app.storage.getItem('wts_report_templates'));
       assert.strictEqual(st.templates.length, 1);
       const t = st.templates[0];
       assert.ok(/^u/.test(t.id) && t.name === 'Rig daily' && t.title === 'Rig Daily Report');
-      assert.deepStrictEqual(t.sections.map((s) => s.type), ['events', 'rates', 'pages', 'sim', 'notes', 'pages']);
+      assert.deepStrictEqual(t.sections.map((s) => s.type), ['events', 'rates', 'pages', 'sim', 'notes', 'pages', 'pages']);
       assert.strictEqual(t.sections[4].text, 'Night shift: no incidents.');
       // make it the default → the plain Quick Report now uses it
       app.click(q('[data-rt="default"]'));

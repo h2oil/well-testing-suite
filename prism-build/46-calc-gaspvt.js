@@ -39,6 +39,20 @@
 //   WTS_gaspvt_state(sg, p, tF, yco2, yh2s, yn2)  light state at one point: z, rho, k, kReal, cpReal,
 //                               c (speed of sound) and the Joule–Thomson coefficient muJT (°F/psi)
 //
+//   v3.2 (Chemical Injection) — additive; compute() and the page are unchanged.
+//   All three take p in psia, t in °F and CO2 / H2S / N2 in MOLE % (like compute()):
+//   WTS_gaspvt_z({sg, p, t, co2, h2s, n2})
+//       → {ok, z, Bg_ft3scf, Tpr, Ppr, Tpc, Ppc, sgHc, warnings[]} | {ok:false, errors[], keys[], bad[]}
+//       one DAK solve; no −40 °F floor, only Tpr ≥ 1.0
+//   WTS_gaspvt_enthalpy({sg, p, t, co2, h2s, n2})
+//       → {ok, h_Jmol, hIdeal_Jmol, hRes_Jmol, cp_JmolK, cpIdeal_JmolK, cpRes_JmolK, muJT_Fpsi,
+//          z, Tpr, Ppr, warnings[]}   (h° = 0 for the ideal gas at 60 °F; only differences matter)
+//   WTS_gaspvt_isenthalpic({sg, p1, t1, p2, co2, h2s, n2, fJT?})
+//       → {ok, t1, p1, p2, t2, dT (= t2 − t1), cooling (= t1 − t2), iterations, clamped,
+//          t2Predictor, muJT1_Fpsi, h1_Jmol, z1, z2, tFloor, warnings[], fJT?, t2Design?}
+//       raw DAK J-T expansion (p2 ≤ p1); with fJT, t2Design = t1 − fJT·(t1 − t2).
+//       WTS_gaspvt_isenthalpic.stats() → {solves, hits, size};  .clearMemo() (tests only)
+//
 // STATE
 //   WTS_state.gaspvt = {ok, z, zDAK, zHY, Tpc, Ppc, Bg_ft3scf, rho, mu, cg, c, k, ts}
 // ════════════════════════════════════════════════════════════════════
@@ -383,6 +397,234 @@
         return pc ? heatCapacity(pc.sgHc, tF, yco2 || 0, yh2s || 0, yn2 || 0).k : NaN;
     };
 
+    // ── v3.2: Z, enthalpy and the isenthalpic (J-T) expansion ────────
+    // Used by the Chemical Injection page (choke outlet, start-up and
+    // back-pressure-valve temperatures, gas velocity and contact time).
+    // Impurities are MOLE % in every call, like compute().
+    //
+    //   h(T, p)  = h°(T) + (h − h°)
+    //   h°(T)    = ∫ Cp°(T) dT from 60 °F (Reid–Prausnitz–Poling polynomials, the
+    //              same molar-mass interpolation as heatCapacity())
+    //   h − h°   = −R·Tpc·Tpr²·∫0^Ppr (∂Z/∂Tpr)_Ppr dPpr/Ppr
+    //   Cp − Cp° = −R·∫0^Ppr [2·Tpr·(∂Z/∂Tpr) + Tpr²·(∂²Z/∂Tpr²)]_Ppr dPpr/Ppr
+    //   μJT      = [T·(∂V/∂T)_p − V]/Cp = R·Tpc·Tpr²·(∂Z/∂Tpr)_Ppr / (p·Cp)
+    // DAK Z on the Sutton + Kay + Wichert–Aziz pseudo-criticals; 40-point
+    // Gauss–Legendre on [0, Ppr] (the integrands are finite as Ppr → 0, so the
+    // open nodes need no special end point); central differences, δ = 1e-4 in Tpr
+    // (Smith, Van Ness & Abbott, 7th ed., §6.3).
+    //
+    // Isenthalpic solve h(t2, p2) = h(t1, p1):
+    //   predictor t2⁰ = t1 − μJT(t1, p1)·(p1 − p2), clipped to [tFloor, t1 + 20 °F],
+    //   tFloor = max(−80 °F, 1.02·Tpc − 459.67);
+    //   Newton with the slope Cp(t2, p2) = ∂h/∂T|p, bisection when a step leaves the
+    //   bracket; |Δt| < 0.01 °F, at most 30 iterations. A root below the floor (or
+    //   above t1 + 20 °F) is returned at the bound with clamped = true and a warning.
+    // Memo: 64 entries keyed by the inputs rounded to 0.001, least recently used out,
+    // never cleared by callers (stats() counts solves and hits for tests).
+    // This is the RAW correlation: the Chemical Injection page applies its J-T design
+    // factor (t2,design = t1 − fJT·(t1 − t2)); pass fJT here to get t2Design as well.
+    var T_REF_K = T_SC / 1.8;                        // 60 °F = 288.706 K: h° = 0 there
+    var _GL = null;                                  // 40-point Gauss–Legendre, built on first use
+    function _gaussLegendre(n) {
+        var x = new Array(n), w = new Array(n), m = (n + 1) >> 1;
+        for (var i = 0; i < m; i++) {
+            var z = Math.cos(Math.PI * (i + 0.75) / (n + 0.5)), z1, pp = 1;
+            for (var it = 0; it < 100; it++) {
+                var p1 = 1, p2 = 0;
+                for (var j = 1; j <= n; j++) { var p3 = p2; p2 = p1; p1 = ((2 * j - 1) * z * p2 - (j - 1) * p3) / j; }
+                pp = n * (z * p1 - p2) / (z * z - 1);
+                z1 = z; z = z1 - p1 / pp;
+                if (Math.abs(z - z1) < 1e-15) break;
+            }
+            x[i] = -z; x[n - 1 - i] = z;
+            w[i] = w[n - 1 - i] = 2 / ((1 - z * z) * pp * pp);
+        }
+        return { x: x, w: w };
+    }
+    function _hPoly(c, TK) { return TK * (c.a + TK * (c.b / 2 + TK * (c.c / 3 + TK * c.d / 4))); }
+    function _hP(c, TK) { return _hPoly(c, TK) - _hPoly(c, T_REF_K); }
+    function _hHc(M, TK) {                           // ∫Cp° dT of the paraffin part, as _cpHc()
+        var h1 = _hP(CP.c1, TK), h2 = _hP(CP.c2, TK), h3 = _hP(CP.c3, TK);
+        if (M <= CP.c1.M) return h1;
+        if (M <= CP.c2.M) return h1 + (h2 - h1) * (M - CP.c1.M) / (CP.c2.M - CP.c1.M);
+        return h2 + (h3 - h2) * (M - CP.c2.M) / (CP.c3.M - CP.c2.M);
+    }
+    function idealEnthalpy(sgHc, tF, yco2, yh2s, yn2) {   // J/mol relative to the ideal gas at 60 °F
+        var TK = (tF + RANKINE) / 1.8, yh = 1 - yco2 - yh2s - yn2;
+        return yh * _hHc(MW_AIR * sgHc, TK) + yn2 * _hP(CP.n2, TK) + yco2 * _hP(CP.co2, TK) + yh2s * _hP(CP.h2s, TK);
+    }
+
+    // Shared input check for the three exports: pKeys / tKeys name the pressure
+    // and temperature fields. Returns {errors, keys, bad} or the parsed gas.
+    function _gasIn(i, pKeys, tKeys) {
+        i = i || {};
+        function n0(v) { return (v === '' || v == null) ? 0 : Number(v); }
+        var sg = Number(i.sg), co2 = n0(i.co2), h2s = n0(i.h2s), n2 = n0(i.n2);
+        var errors = [], keys = [], bad = [];
+        function err(k, m) { errors.push(m); keys.push(k); if (bad.indexOf(k) === -1) bad.push(k); }
+        if (!(_fin(sg) && sg >= 0.55 && sg <= 3)) err('sg', 'Gas gravity must be between 0.55 and 3.0 (air = 1).');
+        var v = {};
+        pKeys.forEach(function (k) {
+            var p = Number(i[k]); v[k] = p;
+            if (!(_fin(p) && p > 0 && p <= 30000)) err(k, 'Pressure (' + k + ') must be above 0 and no more than 30,000 psia.');
+        });
+        tKeys.forEach(function (k) {
+            var t = Number(i[k]); v[k] = t;
+            if (!(_fin(t) && t > -RANKINE && t <= 700)) err(k, 'Temperature (' + k + ') must be above absolute zero and no more than 700 °F.');
+        });
+        if (!(_fin(co2) && co2 >= 0 && co2 < 100)) err('co2', 'CO2 must be between 0 and 100 mol %.');
+        if (!(_fin(h2s) && h2s >= 0 && h2s < 100)) err('h2s', 'H2S must be between 0 and 100 mol %.');
+        if (!(_fin(n2) && n2 >= 0 && n2 < 100)) err('n2', 'N2 must be between 0 and 100 mol %.');
+        if (!bad.length && co2 + h2s + n2 >= 95) { err('sum', 'CO2 + H2S + N2 must be below 95 mol % (the gas must be mostly hydrocarbon).'); bad.push('h2s', 'n2'); }
+        var L = _lib();
+        if (!L) err('lib', 'The PVT correlation library (PRiSM) is not loaded.');
+        if (errors.length) return { ok: false, errors: errors, keys: keys, bad: bad };
+        var yco2 = co2 / 100, yh2s = h2s / 100, yn2 = n2 / 100;
+        var pc = pseudoCriticals(sg, yco2, yh2s, yn2);
+        if (!(pc && pc.sgHc >= 0.55)) {
+            return { ok: false, bad: ['sg'], keys: ['sghc'], errors: ['Gas gravity ' + _fmt(sg, 3) + ' is too low for the stated CO2/H2S/N2: the hydrocarbon part would be lighter than methane.'] };
+        }
+        for (var t = 0; t < tKeys.length; t++) {
+            var TR = v[tKeys[t]] + RANKINE;
+            if (!(TR / pc.Tpc >= 1.0)) {
+                return { ok: false, bad: [tKeys[t]], keys: ['tpc'], tpcF: pc.Tpc - RANKINE, errors: ['Temperature is below the pseudo-critical temperature (' + _fmt(pc.Tpc - RANKINE, 1) + ' °F); the gas correlations do not apply (Tpr must be at least 1.0).'] };
+            }
+        }
+        return { ok: true, L: L, sg: sg, co2: co2, h2s: h2s, n2: n2, yco2: yco2, yh2s: yh2s, yn2: yn2, pc: pc, v: v };
+    }
+    function _rangeWarnings(g, Tpr, Ppr, where) {
+        var w = [], pre = where ? where + ' ' : '';
+        if (Tpr < 1.05 || Tpr > 3.0) w.push(pre + 'Tpr = ' + _fmt(Tpr, 3) + ' is outside 1.05–3.0, the range the Z correlations were fitted over.');
+        if (Ppr > 15) w.push(pre + 'Ppr = ' + _fmt(Ppr, 2) + ' is above 15; Z is extrapolated beyond the Standing–Katz chart.');
+        if (g.pc.sgHc < 0.57 || g.pc.sgHc > 1.68) w.push('Hydrocarbon gravity ' + _fmt(g.pc.sgHc, 3) + ' is outside the Sutton data range (0.57–1.68).');
+        if (g.yco2 > 0.544 || g.yh2s > 0.738) w.push('CO2 or H2S is above the Wichert–Aziz data range (CO2 54.4 %, H2S 73.8 %).');
+        return w;
+    }
+
+    // Enthalpy, real-gas Cp and μJT at (p psia, t °F) on parsed gas g: 123 DAK solves.
+    function _enth(g, p, tF) {
+        var L = g.L, pc = g.pc, Tpr = (tF + RANKINE) / pc.Tpc, Ppr = p / pc.Ppc;
+        var GL = _GL || (_GL = _gaussLegendre(40));
+        var d = 1e-4, half = Ppr / 2, sT = 0, sC = 0, Zf = L.Z_dranchukAbouKassem;
+        for (var k = 0; k < GL.x.length; k++) {
+            var q = half * (GL.x[k] + 1), wq = GL.w[k] * half / q;
+            var zp = Zf(Tpr + d, q), z0 = Zf(Tpr, q), zm = Zf(Tpr - d, q);
+            var zt = (zp - zm) / (2 * d), ztt = (zp - 2 * z0 + zm) / (d * d);
+            sT += wq * zt;
+            sC += wq * (2 * Tpr * zt + Tpr * Tpr * ztt);
+        }
+        var TpcK = pc.Tpc / 1.8;
+        var hRes = -R_J * TpcK * Tpr * Tpr * sT;
+        var cpRes = -R_J * sC;
+        var hId = idealEnthalpy(pc.sgHc, tF, g.yco2, g.yh2s, g.yn2);
+        var cpId = heatCapacity(pc.sgHc, tF, g.yco2, g.yh2s, g.yn2).cp;
+        var Z = Zf(Tpr, Ppr), zT = (Zf(Tpr + d, Ppr) - Zf(Tpr - d, Ppr)) / (2 * d);
+        var cp = cpId + cpRes;
+        // R·Tpc[K]/p[psia] is a volume in J/(mol·psi); ÷ Cp [J/(mol·K)] → K/psi; × 1.8 → °F/psi
+        var mu = 1.8 * R_J * TpcK * Tpr * Tpr * zT / (p * cp);
+        return { h: hId + hRes, hIdeal: hId, hRes: hRes, cp: cp, cpIdeal: cpId, cpRes: cpRes, muJT: mu, z: Z, Tpr: Tpr, Ppr: Ppr };
+    }
+
+    function gasZ(input) {
+        var g = _gasIn(input, ['p'], ['t']);
+        if (!g.ok) return g;
+        var p = g.v.p, t = g.v.t, TR = t + RANKINE, Tpr = TR / g.pc.Tpc, Ppr = p / g.pc.Ppc;
+        var Z = g.L.Z_dranchukAbouKassem(Tpr, Ppr);
+        if (!(_fin(Z) && Z > 0)) return { ok: false, bad: ['p'], keys: ['z'], errors: ['Z could not be solved at these conditions.'] };
+        return {
+            ok: true, z: Z, Bg_ft3scf: P_SC * Z * TR / (T_SC * p), Tpr: Tpr, Ppr: Ppr,
+            Tpc: g.pc.Tpc, Ppc: g.pc.Ppc, sgHc: g.pc.sgHc, warnings: _rangeWarnings(g, Tpr, Ppr)
+        };
+    }
+
+    function gasEnthalpy(input) {
+        var g = _gasIn(input, ['p'], ['t']);
+        if (!g.ok) return g;
+        var e = _enth(g, g.v.p, g.v.t);
+        if (!(_fin(e.h) && _fin(e.cp) && e.cp > 0)) return { ok: false, bad: ['p'], keys: ['h'], errors: ['Enthalpy could not be evaluated at these conditions.'] };
+        return {
+            ok: true, h_Jmol: e.h, hIdeal_Jmol: e.hIdeal, hRes_Jmol: e.hRes,
+            cp_JmolK: e.cp, cpIdeal_JmolK: e.cpIdeal, cpRes_JmolK: e.cpRes, muJT_Fpsi: e.muJT,
+            z: e.z, Tpr: e.Tpr, Ppr: e.Ppr, warnings: _rangeWarnings(g, e.Tpr, e.Ppr)
+        };
+    }
+
+    var _ise = { memo: (typeof Map === 'function') ? new Map() : null, max: 64, solves: 0, hits: 0 };
+    function _r3(x) { return Math.round(x * 1000) / 1000; }
+    function _iseCopy(r, fJT) {
+        var o = {};
+        for (var k in r) if (Object.prototype.hasOwnProperty.call(r, k)) o[k] = r[k];
+        o.warnings = r.warnings.slice();
+        if (_fin(fJT)) { o.fJT = fJT; o.t2Design = r.t1 - fJT * (r.t1 - r.t2); }
+        return o;
+    }
+    function isenthalpic(input) {
+        var i = input || {};
+        var g = _gasIn(i, ['p1', 'p2'], ['t1']);
+        if (!g.ok) return g;
+        var p1 = g.v.p1, p2 = g.v.p2, t1 = g.v.t1;
+        if (p2 > p1) return { ok: false, bad: ['p2'], keys: ['p2gtp1'], errors: ['Downstream pressure must not exceed the upstream pressure (an isenthalpic expansion has p2 ≤ p1).'] };
+        var fJT = (i.fJT === '' || i.fJT == null) ? NaN : Number(i.fJT);
+        var key = [g.sg, p1, t1, p2, g.co2, g.h2s, g.n2].map(_r3).join('|');
+        var M = _ise.memo;
+        if (M && M.has(key)) {
+            var hit = M.get(key);
+            M.delete(key); M.set(key, hit);                        // most recently used last
+            _ise.hits++;
+            return _iseCopy(hit, fJT);
+        }
+        _ise.solves++;
+        var pc = g.pc;
+        var tFloor = Math.max(-80, 1.02 * pc.Tpc - RANKINE), tTop = t1 + 20;
+        if (tFloor > t1) tFloor = t1;
+        var e1 = _enth(g, p1, t1), h1 = e1.h;
+        var pred = t1 - e1.muJT * (p1 - p2);
+        var T = Math.min(tTop, Math.max(tFloor, _fin(pred) ? pred : t1));
+        var lo = tFloor, hi = tTop, loKnown = false, hiKnown = false, clamped = false, it = 0, e2 = null;
+        for (it = 1; it <= 30; it++) {
+            e2 = _enth(g, p2, T);
+            var f = e2.h - h1;
+            if (f > 0) { hi = T; hiKnown = true; } else { lo = T; loKnown = true; }
+            if (f > 0 && T <= tFloor + 1e-9) { clamped = true; break; }      // root below the floor
+            if (f < 0 && T >= tTop - 1e-9) { clamped = true; break; }        // root above t1 + 20 °F
+            var Tn = T - 1.8 * f / e2.cp;                                    // J/mol ÷ J/(mol·K) → K → °F
+            var probe = false;
+            if (!(_fin(Tn) && Tn > lo && Tn < hi)) {
+                // Leaves the bracket: evaluate an untried bound once (the root may lie
+                // beyond it → clamp), otherwise bisect.
+                if (_fin(Tn) && Tn <= lo && !loKnown) { Tn = tFloor; probe = true; }
+                else if (_fin(Tn) && Tn >= hi && !hiKnown) { Tn = tTop; probe = true; }
+                else Tn = 0.5 * (lo + hi);
+            }
+            if (!probe && Math.abs(Tn - T) < 0.01) { T = Tn; break; }
+            T = Tn;
+        }
+        if (it > 30) it = 30;
+        var z2 = g.L.Z_dranchukAbouKassem((T + RANKINE) / pc.Tpc, p2 / pc.Ppc);
+        var warnings = _rangeWarnings(g, e1.Tpr, e1.Ppr, 'Upstream');
+        var Tpr2 = (T + RANKINE) / pc.Tpc;
+        if (Tpr2 < 1.05) warnings.push('Outlet Tpr = ' + _fmt(Tpr2, 3) + ' is below 1.05, the lower limit of the range the Z correlations were fitted over.');
+        if (clamped) warnings.push('Outlet temperature limited to the solver bound ' + _fmt(T, 1) + ' °F (floor = max(−80 °F, 1.02 × pseudo-critical temperature); top = inlet + 20 °F): the true value lies beyond it.');
+        if (T < -40) warnings.push('Outlet temperature ' + _fmt(T, 1) + ' °F is below −40 °F, outside the Gas PVT page range: treat it as an estimate.');
+        if (p1 > 5000 && e1.muJT < 0.002) warnings.push('Near the J-T inversion (μJT ' + _fmt(e1.muJT, 4) + ' °F/psi at ' + _fmt(p1, 0) + ' psia): DAK is unreliable here.');
+        var r = {
+            ok: _fin(T), t1: t1, p1: p1, p2: p2, t2: T, dT: T - t1, cooling: t1 - T, iterations: it, clamped: clamped,
+            t2Predictor: pred, muJT1_Fpsi: e1.muJT, h1_Jmol: h1, z1: e1.z, z2: z2, tFloor: tFloor, warnings: warnings
+        };
+        if (!r.ok) return { ok: false, bad: ['t1'], keys: ['solve'], errors: ['The isenthalpic expansion could not be solved at these conditions.'] };
+        if (M) {
+            if (M.size >= _ise.max) M.delete(M.keys().next().value);  // least recently used out
+            M.set(key, r);
+        }
+        return _iseCopy(r, fJT);
+    }
+    isenthalpic.stats = function () { return { solves: _ise.solves, hits: _ise.hits, size: _ise.memo ? _ise.memo.size : 0 }; };
+    isenthalpic.clearMemo = function () { if (_ise.memo) _ise.memo.clear(); _ise.solves = 0; _ise.hits = 0; };
+
+    G.WTS_gaspvt_z = gasZ;
+    G.WTS_gaspvt_enthalpy = gasEnthalpy;
+    G.WTS_gaspvt_isenthalpic = isenthalpic;
+
     // ── Page ─────────────────────────────────────────────────────────
     var TITLE = 'Gas PVT';
     var SUB = 'Z-factor (DAK and Hall–Yarborough), Bg, density, viscosity, cg and speed of sound, with sour-gas correction';
@@ -636,6 +878,11 @@
     // Standing–Katz chart: Tpr 1.5, Ppr 2 → 0.82 ; Tpr 2.0, Ppr 3 → 0.94
     var L = G.PRiSM_pvt_correlations;
     near(L.Z_dranchukAbouKassem(1.5, 2), 0.82, 0.015, 'SK 1.5/2 DAK'); near(L.Z_hallYarborough(2, 3), 0.94, 0.015, 'SK 2/3 HY');
+    // v3.2 isenthalpic: γ 0.65, 110 °F, 3014.7 → 1014.7 psia → DAK 41.42 °F, design (× 1.10) 34.56 °F
+    var ise = G.WTS_gaspvt_isenthalpic({ sg: 0.65, p1: 3014.7, t1: 110, p2: 1014.7, fJT: 1.10 });
+    near(ise.t2, 41.42, 0.05, 'isenthalpic DAK'); near(ise.t2Design, 34.56, 0.05, 'isenthalpic design');
+    near(G.WTS_gaspvt_z({ sg: 0.65, p: 999.7, t: 100 }).z, 0.871, 0.001, 'WTS_gaspvt_z');
+    G.WTS_gaspvt_isenthalpic.clearMemo();
     if (fails.length) {
         if (typeof console !== 'undefined') console.error('[gaspvt self-test] ' + fails.length + '/' + n + ' FAILED:\n  ' + fails.join('\n  '));
         if (typeof window === 'undefined' && typeof process !== 'undefined') process.exitCode = 1;
