@@ -191,4 +191,25 @@ module.exports = [
       assert.ok(html.indexOf('&lt;svg onload=alert(3)&gt;') !== -1, 'notes text escaped');
     },
   },
+  {
+    name: 'picker on iOS: the dialog keeps clear of the status bar / Dynamic Island, home indicator and landscape insets; web layout unchanged',
+    wp: WP,
+    run(app, assert) {
+      const fs = require('fs'), path = require('path');
+      const ios = fs.readFileSync(path.join(__dirname, '..', '..', 'ios-app', 'ios-additions', 'ios-styles.css'), 'utf8');
+      const rule = (ios.match(/html\.ios-app \.wts-rt-ov\s*\{([^}]*)\}/) || [])[1] || '';
+      assert.ok(rule, 'iOS rule for the overlay');
+      assert.match(rule, /display:\s*block;/, 'block layout so the bottom padding stays in the scroll area');
+      assert.match(rule, /padding:\s*max\(24px, calc\(8px \+ env\(safe-area-inset-top\)\)\) max\(16px, calc\(8px \+ env\(safe-area-inset-right\)\)\)\s+max\(24px, calc\(12px \+ env\(safe-area-inset-bottom\)\)\) max\(16px, calc\(8px \+ env\(safe-area-inset-left\)\)\);/, 'safe-area padding, never less than the web padding');
+      assert.match(ios, /html\.ios-app \.wts-rt-box \{ margin: 0 auto; \}/, 'box centred as on the web');
+      assert.match(ios, /html\.ios-app \.wts-rt-list label \{ min-height: 44px;/, '44 pt template rows');
+      (ios.replace(/\/\*[\s\S]*?\*\//g, '').match(/[^{}]*\.wts-rt-[^{}]*\{/g) || []).forEach((sel) => assert.match(sel.trim(), /^html\.ios-app \.wts-rt-/, 'scoped under html.ios-app: ' + sel.trim()));
+      // the web dialog CSS (host _RT_CSS) is untouched: flex overlay, 24 px / 16 px padding, no env()
+      app.click(app.find('[data-wts-qr-tpl]'));
+      assert.ok(app.el('wts_rt_ov'), 'dialog open');
+      const css = app.el('wts_rt_css').textContent;
+      assert.match(css, /\.wts-rt-ov\{position:fixed;inset:0;[^}]*display:flex;[^}]*overflow:auto;padding:24px 16px\}/, 'web overlay as before');
+      assert.ok(css.indexOf('env(') === -1, 'no safe-area insets in the web CSS');
+    },
+  },
 ];
