@@ -25,8 +25,10 @@
 // Every cross-file function is looked up at call time. Pure (§3.0): no DOM, no
 // storage, no timers, no events and no random numbers; the only yields are the
 // driver's (analyseAsync). A per-test cache key covers the spec, the
-// interpretation settings and the calibration version, so a re-analysis re-runs
-// only the tests whose key changed, then stages 2–5.
+// interpretation settings, the calibration version and the engine and app
+// versions, so a re-analysis re-runs only the tests whose key changed, then
+// stages 2–5. Test ids (B<n>) are stable: the cache's or the stored tests' ids
+// are kept for the same closing, so overrides never move to another build-up.
 // =============================================================================
 
 (function () {
@@ -365,16 +367,17 @@
         function live() { return events.filter(function (x) { return x && !x.dropped; }).sort(function (a, b) { return a.tc_ms - b.tc_ms; }); }
         function startOf(x) { return isNum(x.j0) && x.j0 >= 0 && x.j0 < t.length ? t[x.j0] : x.tc_ms; }
         function mark(e, ov) { e.overrideIds = (e.overrideIds || []).concat([ov.id]); }
+        function noEvent(ov) { return /^E\d+$/.test(String(ov.target)) ? 'no event ' + ov.target + ' was detected.' : 'it names no detected event.'; }
         ovs.forEach(function (ov) {
             if (ov.kind === 'event_drop') {
                 var e = events.filter(function (x) { return x.id === ov.target; })[0];
                 if (e) { e.dropped = true; e.status = 'excluded'; mark(e, ov); e.warnings.push(W('EVENT_DROPPED', 'info', 'Removed by override ' + ov.id + '.', ['D1'])); }
-                else _ovWarn(ovWarn, ov, 'no event ' + String(ov.target || '') + ' was detected.');
+                else _ovWarn(ovWarn, ov, noEvent(ov));
             } else if (ov.kind === 'tc') {
                 var tc = _ovValueTime(ov.value, 'tc_ms');
                 var idx = -1;
                 events.forEach(function (x, i) { if (x.id === ov.target) idx = i; });
-                if (!/^E\d+$/.test(String(ov.target)) || idx < 0) { _ovWarn(ovWarn, ov, 'no event ' + String(ov.target || '') + ' was detected.'); return; }
+                if (!/^E\d+$/.test(String(ov.target)) || idx < 0) { _ovWarn(ovWarn, ov, noEvent(ov)); return; }
                 if (!isNum(tc) || tc < t0 || tc > tN) { _ovWarn(ovWarn, ov, 'the closing time is outside the gauge record.'); return; }
                 var L = live(), prevE = null, nextE = null;
                 L.forEach(function (x) { if (x.id === ov.target) return; if (x.tc_ms < tc && (!prevE || x.tc_ms > prevE.tc_ms)) prevE = x; if (x.tc_ms > tc && (!nextE || x.tc_ms < nextE.tc_ms)) nextE = x; });
