@@ -484,7 +484,7 @@
         f.k = k; f.kh = k * w.h; f.S = S; f.C = C; f.source = 'kHeld'; f.m = m; f.mPrime = mPrime;
         f.rinv_ft = isNum(f.rinv_ft) ? f.rinv_ft * sq : 0.0325 * mSqrt(k * dtEnd / (pw.phi * pw.mu * pw.ct));
         f.rinvE_ft = isNum(f.rinvE_ft) ? f.rinvE_ft * sq : 0.0325 * mSqrt(k * dteEnd / (pw.phi * pw.mu * pw.ct));
-        if (oldGas || (w.fluid === 'gas' && spec.gas)) {
+        if (oldGas || (prep && prep.gasTable)) {          // a gas test analysed in pseudo-pressure (else the liquid form)
             var dps = null, gt = prep && prep.gasTable, ad = prep && prep.adata;
             if (gt && typeof gt.pOfPn === 'function' && ad && isNum(ad.pRef)) {
                 try { var pAt = gt.pOfPn(ad.pRef + num(prep.sign, 1) * dmSkin); if (isNum(pAt)) dps = mAbs(pAt - spec.pwf0); } catch (e) { dps = null; }
