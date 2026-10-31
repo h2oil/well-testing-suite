@@ -42,6 +42,12 @@
 //   values rounded to display precision (D27): skins in integer hundredths, p-values and ratios to 0.001.
 //   Alerts, onset, recent trend and forecast are evaluated in the CURRENT workover segment (the last
 //   segment that holds used tests): an entered workover date starts a new baseline and resets the alerts.
+//   Onset: the hinge family has two shapes, a ramp (continuous hinge) and a step (a level shift at τ, then a
+//   line), both reported as model 'hinge' with onset.shape; the CUSUM (κ 0.5, h 4) is reported alongside as the
+//   confirmation (onset.cusum). Gas with D resolved: alerts, onset and trend use S′ − D·(q − q_ref).
+//   Extra output keys (allowed by §3.13): onset.shape; series[].Salert/SerrAlert/seg (the alert basis and the
+//   segment, for the review's re-derivation); kStability.median/n/falling/followsRate; pi.FE/DR; rateSkin.n/
+//   qRatio/expectedD/consistent; recommendations[].values; piCheck.rows[].nDays; corrected; family; warnings.
 // =============================================================================
 (function () {
   'use strict';
@@ -302,9 +308,13 @@
     var bic = { constant: c.wssr + lnN, line: null, hinge: null, step: null };
     var line = n >= 3 ? wlsN(T.map(function (x) { return [1, x]; }), Y, W) : null;
     if (line && line.ok) { out.wssr.line = line.wssr; bic.line = line.wssr + 2 * lnN; }
-    var design = {
-      hinge: function (tau) { return T.map(function (x) { return [1, Math.max(0, x - tau)]; }); },
-      step: function (tau) { return T.map(function (x) { return [1, x > tau ? 1 : 0, Math.max(0, x - tau)]; }); }
+    // fit(shape, τ) → {beta, wssr, ok}: the ramp by the closed-form two-parameter WLS, the step by wlsN
+    var fitAt = function (shape, tau) {
+      if (shape === 'hinge') {
+        var f = wls(T.map(function (x) { return Math.max(0, x - tau); }), Y, W, true);
+        return f.ok ? { beta: [f.a, f.b], wssr: f.wssr, ok: true } : f;
+      }
+      return wlsN(T.map(function (x) { return [1, x > tau ? 1 : 0, Math.max(0, x - tau)]; }), Y, W);
     };
     var NP = { hinge: 3, step: 4 }, NMIN = { hinge: 4, step: 5 };
     var valid = function (tau) {
@@ -324,7 +334,7 @@
       var b0 = null;
       cand.forEach(function (cd) {
         if (!valid(cd.tau)) return;
-        var f = wlsN(design[shape](cd.tau), Y, W);
+        var f = fitAt(shape, cd.tau);
         if (!f.ok) return;
         var tie = b0 !== null && Math.abs(f.wssr - b0.wssr) <= 1e-9 * Math.max(1, b0.wssr);
         if (b0 === null || (!tie && f.wssr < b0.wssr) || (tie && shape === 'step' && cd.mid && !b0.mid)) b0 = { tau: cd.tau, mid: cd.mid, beta: f.beta, wssr: f.wssr };
@@ -340,15 +350,15 @@
     var bs = best[model];
     out.model = 'hinge'; out.shape = model === 'step' ? 'step' : 'ramp'; out.tau = bs.tau; out.a = bs.beta[0];
     out.b = model === 'step' ? bs.beta[2] : bs.beta[1]; out.jump = model === 'step' ? bs.beta[1] : 0;
-    // profile interval on a refined grid, contiguous around τ̂
+    // profile interval on a refined grid (16 steps per test interval), walked outward from τ̂ while ΔWSSR ≤ 1
     var grid = [];
     for (i = 0; i <= n - 3; i++) for (var s = 0; s < 16; s++) grid.push(T[i] + (T[i + 1] - T[i]) * s / 16);
     grid.push(bs.tau);
     grid = grid.filter(valid).sort(num);
-    var ws = grid.map(function (tau) { var f = wlsN(design[model](tau), Y, W); return f.ok ? f.wssr : Infinity; });
-    var k0 = grid.indexOf(bs.tau), lim = bs.wssr + 1, lo = k0, hi = k0;
-    while (lo - 1 >= 0 && ws[lo - 1] <= lim) lo--;
-    while (hi + 1 < grid.length && ws[hi + 1] <= lim) hi++;
+    var lim = bs.wssr + 1, k0 = grid.indexOf(bs.tau), lo = k0, hi = k0;
+    var okAt = function (k) { var f = fitAt(model, grid[k]); return f.ok && f.wssr <= lim; };
+    while (lo - 1 >= 0 && okAt(lo - 1)) lo--;
+    while (hi + 1 < grid.length && okAt(hi + 1)) hi++;
     out.interval = [grid[lo], grid[hi]];
     return out;
   }
@@ -613,7 +623,7 @@
 
   function forecastOf(P, res, rec, tau, enabled) {
     var f = { show: false, date: null, earliest: null, latest: null, reason: '', ev: ['T6'] };
-    var TS = res.TS, MK = res.MK, recent = res.recent;
+    var TS = res.TS, MK = res.MK;
     if (!enabled) { f.reason = 'Not shown: the trend and alerts are off.'; return f; }
     if (!TS || TS.slope === null) { f.reason = 'Not shown: fewer than 3 tests after the onset, so there is no recent slope.'; return f; }
     var sig = (fin(TS.lo) && TS.lo > 0) || (fin(MK.p) && r3(MK.p) < DEFAULTS.mkAlpha && rec.length >= DEFAULTS.recentSigN);
@@ -642,7 +652,8 @@
     f.earliest = tEarly !== null ? dateOf(P.first_ms + tEarly * DAY_MS) : null;
     f.latest = tLate !== null && tLate - tLast <= horizon ? dateOf(P.first_ms + tLate * DAY_MS) : null;
     f.reason = 'Sen-slope extrapolation of the recent skin trend to the absolute threshold (S − S_err = ' + fmtNum(P.ts.abs, 1) +
-      '); the range comes from the 95 % slope bounds' + (f.latest ? '.' : ' and its late end lies beyond the forecast horizon.');
+      '); the range comes from the 95 % slope bounds' + (f.latest ? '.' : tLate === null ? '; the late end is open (the lower slope bound is not above zero).' :
+      ' and its late end lies beyond the forecast horizon.');
     f.tDays = tc;
     return f;
   }
@@ -687,10 +698,16 @@
       return fin(v) ? v : sSensFix;
     };
 
-    // ── pass A: on the reported skin (S′ for gas) ──
+    // ── gas only: the current segment and its baseline on the reported skin S′ (rate-skin row selection) ──
     var valRep = function (r) { return { S: kind === 'gas' ? r.Sap : r.S, E: r.E }; };
     var base = { recs: recs, ts: ts, wo: wo, form: form, enabled: enabled, first_ms: first_ms, sSens: sSensOfList };
-    var A = seriesPass(Object.assign({}, base, { val: valRep, absVal: null }));
+    var A = { B: { tests: [] }, cur: [] };
+    if (kind === 'gas') {
+      A.B = baseline(recs.map(function (r) {
+        return { id: r.id, tDays: r.td, date: r.date, S: r.Sap, Serr: r.E, k: r.k, kh: r.t.kh, kHeld: r.kHeld, excluded: !r.used, conf: { ks: r.ks } };
+      }), ts.baseN, wo);
+      A.cur = recs.filter(function (r) { return r.used && r.seg === A.B.seg && fin(r.Sap); });
+    }
 
     // ── T15 rate-dependent skin (gas) ──
     var rate = { resolved: false, S: null, D: null, seD: null, reason: '', dqEffect: null, ev: ['T15'] };
@@ -765,16 +782,18 @@
     var P = Object.assign({}, base, { val: valAl, absVal: absVal, lowAbsVal: lowAbsVal, absBasis: absBasis });
     var R = seriesPass(P);
     var B = R.B;
-    var curSeg = B.seg;
     var baseIds = {}; B.segments.forEach(function (g) { g.tests.forEach(function (id) { baseIds[id] = true; }); });
 
     // ── used flags and series ──
     var usedFlags = {};
     recs.forEach(function (r) { usedFlags[r.id] = { baseline: !!baseIds[r.id], trend: r.used && enabled, alert: r.used && enabled }; });
+    // extra keys for the review's re-derivation (V27): Salert/SerrAlert = the delta-alert basis (equal to S/Serr
+    // except for gas with D resolved, where they are S′ − D·(q − q_ref) and its inflated S_err); seg = segment index
     var series = recs.map(function (r) {
-      var t = r.t, m = mechMap[r.id];
+      var t = r.t, m = mechMap[r.id], va = r.ok ? valAl(r) : null;
       return { id: r.id, tDays: nn(r.td), S: nn(r.S), Serr: nn(r.E), k: nn(r.k), pExt: nn(t.pExtDatum), pwf0Datum: nn(t.pwf0Datum),
                Smech: m ? m.S : null, SmechErr: m ? m.E : null, Sd: m ? m.Sd : null,
+               Salert: va ? nn(va.S) : null, SerrAlert: va ? nn(va.E) : null, seg: r.seg,
                conf: { ks: r.ks, model: isObj(t.conf) && RANK.hasOwnProperty(t.conf.model) ? t.conf.model : r.ks,
                        headline: isObj(t.conf) && RANK.hasOwnProperty(t.conf.headline) ? t.conf.headline : r.ks },
                used: usedFlags[r.id] };
@@ -974,22 +993,25 @@
       var pKnots = used.filter(function (r) { return fin(r.t.pExtDatum) && fin(r.t.t_ms); }).map(function (r) { return [r.t.t_ms, r.t.pExtDatum]; });
       if (pKnots.length < 1 || used.length < 2) piCheck.reason = 'Fewer than 2 used tests with p_ext.';
       else {
+        // one pass over the days: each clean flowing day falls in the interval (t_u−1, t_u) of consecutive used tests
         var bmuP = median(used.map(bmuOf)) || bmuWell, allObs = [], allPred = [];
+        var tU = used.map(function (r) { return r.t.t_ms; }), byInt = used.map(function () { return []; });
+        days.forEach(function (d) {
+          if (d.cls !== 'clean' || !fin(d.q) || !(d.q > 0) || !fin(d.t0_ms) || !fin(d.t1_ms)) return;
+          var pwf = fin(d.pwfMeanDatum_psia) ? d.pwfMeanDatum_psia : (fin(d.pwfMean_psia) ? d.pwfMean_psia : null);
+          if (pwf === null) return;
+          var mid = 0.5 * (d.t0_ms + d.t1_ms);
+          var lo = 0, hi = tU.length;                       // first index u with tU[u] > mid
+          while (lo < hi) { var md = (lo + hi) >> 1; if (tU[md] > mid) hi = md; else lo = md + 1; }
+          if (lo < 1 || lo >= tU.length || !(mid > tU[lo - 1])) return;
+          var pRef = lin(pKnots, mid); if (!(pRef > pwf)) return;
+          var sd = effS(sAt((mid - first_ms) / DAY_MS), d.q);
+          if (!(X + sd > 0)) return;
+          var jObs = d.q / (pRef - pwf), jPred = kBase * h / (141.2 * bmuP * (X + sd));
+          byInt[lo].push(jObs / jPred); allObs.push(jObs); allPred.push(jPred);
+        });
         for (var u = 1; u < used.length; u++) {
-          var ta = used[u - 1], tb = used[u], ratios = [];
-          days.forEach(function (d) {
-            if (d.cls !== 'clean' || !fin(d.q) || !(d.q > 0) || !fin(d.t0_ms) || !fin(d.t1_ms)) return;
-            var pwf = fin(d.pwfMeanDatum_psia) ? d.pwfMeanDatum_psia : (fin(d.pwfMean_psia) ? d.pwfMean_psia : null);
-            if (pwf === null) return;
-            var mid = 0.5 * (d.t0_ms + d.t1_ms);
-            if (!(mid > ta.t.t_ms && mid < tb.t.t_ms)) return;
-            var pRef = lin(pKnots, mid); if (!(pRef > pwf)) return;
-            var sd = effS(sAt((mid - first_ms) / DAY_MS), d.q);
-            if (!(X + sd > 0)) return;
-            var jObs = d.q / (pRef - pwf), jPred = kBase * h / (141.2 * bmuP * (X + sd));
-            ratios.push(jObs / jPred); allObs.push(jObs); allPred.push(jPred);
-          });
-          piCheck.rows.push({ from: ta.id, to: tb.id, RJ: ratios.length ? median(ratios) : null, nDays: ratios.length });
+          piCheck.rows.push({ from: used[u - 1].id, to: used[u].id, RJ: byInt[u].length ? median(byInt[u]) : null, nDays: byInt[u].length });
         }
         piCheck.available = true;
         var withData = piCheck.rows.filter(function (r) { return fin(r.RJ); });

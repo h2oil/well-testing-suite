@@ -180,6 +180,21 @@ function sKnotsOf(out, tests) {
   return vals.filter((k) => k[0] < tau).concat([[tau, Sb]]).concat(vals.filter((k) => k[0] > tau));
 }
 
+// Delta-alert status re-derived from trend.series (Salert/SerrAlert, used.alert, seg), the baseline and the
+// threshold — the review's V27 path (plain form, 'next' confirmation): proves the series carries what it needs.
+function redoDelta(out) {
+  const h = (x) => Math.round(x * 100), seg = out.baseline.seg, thr = h(out.alerts.delta.threshold), Sb = h(out.baseline.S);
+  const cur = out.series.filter((r) => r.seg === seg && r.used.alert);
+  const ex = (r) => h(r.Salert) - h(r.SerrAlert) - Sb - thr > 0;
+  const i = cur.findIndex(ex);
+  if (i >= 0) {
+    const hi = cur[i].conf.ks === 'high' && h(cur[i].Salert) - h(cur[i].SerrAlert) - Sb - thr >= 100;
+    return hi || cur.slice(i + 1).some(ex) ? 'confirmed' : 'provisional';
+  }
+  const low = out.series.filter((r) => r.seg === seg && r.conf.ks === 'low' && out.excludedLow.ids.indexOf(r.id) !== -1);
+  return low.some((r) => h(r.S) - h(r.Serr) - Sb - thr > 0) ? 'possible' : 'none';
+}
+
 module.exports = [
   {
     name: 'TR1 baseline: median of the first 3 used tests, σ_base, unstable and provisional; a workover date starts a segment; FIX baseline',
@@ -291,6 +306,12 @@ module.exports = [
       assert.deepStrictEqual([a.basis, a.threshold, a.raisedAt, a.confirmedAt, a.status], ['total', 5, 'B5', 'B6', 'confirmed']);
       out = T.compute(series(base.concat([{ id: 'B4', d: 60, S: 5.6, E: 0.3, ks: 'low' }])), ctxOf());
       assert.strictEqual(out.alerts.absolute.status, 'possible', 'absolute: only a low test exceeds → possible');
+      // the alert status re-derives from the stored series and thresholds (review V27)
+      [series(base.concat([{ id: 'B4', d: 60, S: 4.0, E: 0.4 }, { id: 'B5', d: 80, S: 4.5, E: 0.4 }])),
+       series(base.concat([{ id: 'B4', d: 60, S: 4.0, E: 0.4, ks: 'low' }])), series(base)].forEach((list, i) => {
+        const o = T.compute(list, ctxOf());
+        assert.strictEqual(redoDelta(o), o.alerts.delta.status, 'V27 re-derivation case ' + i);
+      });
       // FIX: alerts reproduced
       const an = S.FIX.analysis;
       out = T.compute(S.FIX.samples.TrendTests, fixCtx(an));
@@ -691,6 +712,8 @@ module.exports = [
       assert.strictEqual(out.alerts.delta.status, 'none', 'constant-S gas well: no delta alert once D is resolved');
       assert.strictEqual(out.onset.model, 'constant', 'no onset from rate changes');
       near(assert, rs.dqEffect, rs.D * (10000 - 5000), 1e-9, 'D·Δq between the latest test and the baseline rate');
+      out.series.forEach((sr, i) => near(assert, sr.Salert, sr.S - rs.D * (qs[i] - 5000), 1e-9, sr.id + ' alert basis S′ − D·(q − q_ref)'));
+      assert.strictEqual(redoDelta(out), out.alerts.delta.status, 'delta status re-derived from series[].Salert (V27)');
       assert(!out.recommendations.some((r) => r.code === 'nonDarcy'), 'no multi-rate recommendation once resolved');
       // oil wells: not assessed
       out = T.compute(app.toWin(series(baseS([1.2, 1.3, 1.1], 0.3))), app.toWin(ctxOf()));
