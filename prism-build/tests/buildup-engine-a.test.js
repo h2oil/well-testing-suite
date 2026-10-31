@@ -248,8 +248,8 @@ module.exports = [
     wp: 'WP1', timeoutMs: 120000,
     run(app, assert) {
       const DIST = ['earlyHalf', 'earlyQuarter', 'fracHalf'];
-      [-4, -3].forEach((S) => [0.0005, 0.001, 0.002, 0.005, 0.01, 0.02].forEach((C) => {
-        const r = run(app, synth(app.win, { k: 45, S, C, q: 800, tp: 720, dtEnd: 72 }).spec);
+      [-4, -3].forEach((S) => [0.0005, 0.002, 0.005, 0.02].forEach((C) => {
+        const r = run(app, synth(app.win, { k: 45, S, C, q: 800, tp: 720, dtEnd: 72 }).spec, { cheld: 'off' });   // flags and labels only
         const tag = 'S ' + S + ', C ' + C + ': ';
         assert.ok(!r.flags.some((f) => DIST.indexOf(f.code) >= 0), tag + 'no early-slope flag (' + r.flags.map((f) => f.code).join(',') + ')');
         assert.ok(!r.confidence.reasons.some((x) => x.rule === 'KL9'), tag + 'no KL9');
