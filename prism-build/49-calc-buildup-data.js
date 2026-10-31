@@ -1327,22 +1327,26 @@
     // subThreshold (missed.subThreshold of the detection)}. The end is bounded: a manual event never runs into the next
     // event (when no reopening is found before it, the event ends before the next event's flowing trend window). A
     // promoted sub-threshold step ends at the next sub-threshold fall, else at the first persistent fall of at least
-    // T_p = max(2 psi, 6σ). Returns null when tc_ms is outside the record or leaves no room before the next event.
+    // T_p = max(2 psi, 6σ). Returns null when tc_ms is outside the record, leaves no room before the next event, or (not
+    // exact) shows no pressure rise within ±max(10 min, 5·Δt_med); opts.out.reason ('outside'|'noRoom'|'noRise') says why.
     function eventAt(record, q, tc_ms, opts) {
         opts = opts || {};
-        if (!record || !record.t || record.t.length < 10 || !isNum(tc_ms)) return null;
-        if (tc_ms < record.t[0] || tc_ms > record.t[record.t.length - 1]) return null;
+        var out = opts.out && typeof opts.out === 'object' ? opts.out : {};
+        if (!record || !record.t || record.t.length < 10 || !isNum(tc_ms)) { out.reason = 'outside'; return null; }
+        if (tc_ms < record.t[0] || tc_ms > record.t[record.t.length - 1]) { out.reason = 'outside'; return null; }
         var C = _ctx(record, q, opts);
         C.win = _windows(C.t, C.p, C.n, C.w, C.sign);
         var t = C.t, tol = mMax(10 * MIN, 5 * C.dtMed), S = C.S;
         var nextStart = isNum(opts.nextStart_ms) && opts.nextStart_ms > tc_ms ? opts.nextStart_ms : INF;
         var tMax = nextStart - mMax(S.trendMin * MIN, S.trendDtFactor * C.dtMed);
-        if (!(tMax > tc_ms)) return null;
+        if (!(tMax > tc_ms)) { out.reason = 'noRoom'; return null; }
         var prevEndIdx = isNum(opts.prevEnd_ms) ? lowerBound(t, opts.prevEnd_ms + 1) - 1 : -1;
         var tw = _trendWindow(C, lowerBound(t, tc_ms - (opts.exact ? 0 : tol)) - 1, prevEndIdx + 1, tc_ms, isNum(opts.prevEnd_ms) ? opts.prevEnd_ms : null);
         var j1 = opts.exact ? lowerBound(t, tc_ms + 1) : _firstShut(C, tw.tr, lowerBound(t, tc_ms - tol), lowerBound(t, mMin(tc_ms + tol + C.w, tMax)));
+        // a typed time with no pressure rise near it (a flowing period) is not a closing; an exact time forces the event
+        if (!opts.exact && j1 < 1) { out.reason = 'noRise'; return null; }
         if (j1 < 1) j1 = mMax(1, lowerBound(t, tc_ms + 1));
-        if (j1 >= C.n || !(t[j1] < tMax)) return null;
+        if (j1 >= C.n || !(t[j1] < tMax)) { out.reason = 'noRoom'; return null; }
         var ev = _newEvent(C, j1, tw.tr, tw.warnings, { manual: true });
         var sub = Array.isArray(opts.subThreshold) ? opts.subThreshold : [], near = mMax(tol, 2 * C.w), promo = null, found = false;
         sub.forEach(function (s) {

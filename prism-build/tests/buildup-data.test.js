@@ -665,13 +665,18 @@ module.exports = [
       // outside the record: no event
       assert.strictEqual(D.eventAt(rec, base.qc, rec.t[0] - 10 * DAY, {}), null, 'before the record');
       assert.strictEqual(D.eventAt(rec, base.qc, rec.t[rec.t.length - 1] + HOUR, {}), null, 'after the record');
-      // a typed time in a flowing period: the end stops before the next event's flowing trend window
-      const bE2 = base.events[1], tFlow = T0 + 9 * DAY;
-      const fl = D.eventAt(rec, base.qc, tFlow, { prevEnd_ms: base.events[0].tEnd_ms, nextStart_ms: rec.t[bE2.j0] });
+      // a typed time in a flowing period: no pressure rise → no event; an exact (forced) time ends before the next
+      // event's flowing trend window
+      const bE2 = base.events[1], tFlow = T0 + 9 * DAY, why = {};
+      assert.strictEqual(D.eventAt(rec, base.qc, tFlow, { prevEnd_ms: base.events[0].tEnd_ms, nextStart_ms: rec.t[bE2.j0], out: why }), null, 'no rise, no event');
+      assert.strictEqual(why.reason, 'noRise');
+      const fl = D.eventAt(rec, base.qc, tFlow, { exact: true, prevEnd_ms: base.events[0].tEnd_ms, nextStart_ms: rec.t[bE2.j0] });
       assert.ok(fl && fl.tEnd_ms <= rec.t[bE2.j0] - 30 * MIN && fl.tEnd_ms > tFlow, 'bounded before the next closing');
       assert.ok(codes(fl.warnings).includes('END_BOUNDED'));
-      // through the override: the next shut-in keeps its status and its rate before closing
-      const f2 = withAdd([ov('O2', { t_ms: tFlow })]);
+      // through the override: refused without a rise; forced, the next shut-in keeps its status and its rate before closing
+      const f1 = withAdd([ov('O2', { t_ms: tFlow })]);
+      assert.ok(f1.ovWarn.O2 && /no pressure rise/.test(f1.ovWarn.O2[0].text), 'refused: no rise');
+      const f2 = withAdd([ov('O2', { t_ms: tFlow, exact: true })]);
       const e2b = f2.res.events.find((e) => e.id === 'E2');
       assert.strictEqual(e2b.status, 'analysable'); assert.ok(f2.res.rates.byEvent.E2.Dq > 0, 'rate before closing known');
       assert.ok(f2.res.events.find((e) => e.manual).tEnd_ms < e2b.tc_ms - 30 * MIN);

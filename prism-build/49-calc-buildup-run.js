@@ -395,8 +395,9 @@
                     if (x.tc_ms > tAdd && (!next || x.tc_ms < next.tc_ms)) next = x;
                 });
                 if (clash) { _ovWarn(ovWarn, ov, mAbs(clash.tc_ms - tAdd) <= tolDup ? 'event ' + clash.id + ' already closes at that time (use a closing-time override).' : 'the time falls inside the shut-in of ' + clash.id + '.'); return; }
-                var ae = D.eventAt(record, q, tAdd, Object.assign({ exact: !!(v && typeof v === 'object' && v.exact), prevEnd_ms: prev ? prev.tEnd_ms : null, nextStart_ms: next ? startOf(next) : null }, opts));
-                if (!ae) { _ovWarn(ovWarn, ov, 'no room before the next shut-in.'); return; }
+                var why = {};
+                var ae = D.eventAt(record, q, tAdd, Object.assign({ exact: !!(v && typeof v === 'object' && v.exact), prevEnd_ms: prev ? prev.tEnd_ms : null, nextStart_ms: next ? startOf(next) : null, out: why }, opts));
+                if (!ae) { _ovWarn(ovWarn, ov, why.reason === 'noRise' ? 'no pressure rise was found near that time (an exact closing time forces the event).' : 'no room before the next shut-in.'); return; }
                 maxId++; ae.id = 'E' + maxId; mark(ae, ov);
                 ae.warnings.push(W('EVENT_ADDED', 'info', 'Added by override ' + ov.id + '.', ['D1']));
                 events.push(ae);
