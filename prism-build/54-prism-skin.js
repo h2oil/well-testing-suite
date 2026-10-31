@@ -19,21 +19,42 @@
 //                        PRiSM_getLastFit) and calls the PRiSM_autoInterp pieces
 //                        (prepare, storage, iarf, line, reach, triggers,
 //                        agreement, sErr, sensitivity, confidence). No fit runs.
-//   renderPanel(el)      the card (Tab 6 panel 'prism_skincheck', order 8; the
-//                        Tools drawer lists it from that registration under
-//                        "Step panels" with its written title). Render writes no
-//                        state and fires no event.
+//   renderPanel(el)      the card (Tab 6 panel 'prism_skincheck', order 8).
+//                        Tools drawer: listed from the Tab-6 registration under
+//                        "Step panels" with its written title; exported as
+//                        window.PRiSM_renderSkinCheckPanel once 37's
+//                        TOOL_CATALOGUE lists that name (see SECTION 9). Render
+//                        writes no state and fires no event. Every DOM lookup
+//                        stays inside the card's own root, so a hidden Tab-6
+//                        copy and a Tools-drawer copy never cross-update.
 //   reportSection(model) the PRiSM report section {id:'skincheck', order 45}.
 //   User actions only: "Use this window in the straight-line panel"
-//   (PRiSM_semilogAnalysis(null, null, {window, store:true})), "Run C-held
-//   refits" (a homogeneous fit seeded from the match, then cHeldJob, both
-//   through PRiSM_autoInterp.drive — the only timers, owned by 53), and the
-//   completion inputs (saved in wts_prism_skincheck, a per-well key).
+//   (PRiSM_semilogAnalysis(null, null, {window, store:true}); the window is
+//   converted to PRiSM's pseudo-time axis when gas pseudo-time is on), "Run
+//   C-held refits" (a homogeneous fit seeded from the match, then cHeldJob,
+//   both through PRiSM_autoInterp.drive — the only timers, owned by 53), and
+//   the completion inputs (saved in wts_prism_skincheck, a per-well key).
 //   PRiSM's rate is entered or tabled, so the rate checks are 'n/a' (no KC4).
 //   Drawdowns and injection periods from pi are passed to the build-up engine
 //   as a build-up after a very long producing time (Δt_e = Δt, the drawdown Δp
 //   mirrored about pi): the labels are calibrated on build-ups and are
-//   indicative there, as the card says. p* is not shown for them.
+//   indicative there, as the card says. p* is not shown for them; pwf for the
+//   flow efficiency is the last sample of the period (lowest for a drawdown,
+//   highest for an injection).
+//   Build-ups with neither a rate history nor tp: the producing time is
+//   estimated as in D13 (max(30 d, 10·Δt_end) at the entered rate,
+//   history.estimated = true, source 'default'). p* is then not shown (the
+//   engine's p* range is, when it gives one), the flow efficiency uses pi
+//   (never p*), and the history sensitivity (plan §4.6 item 14) is checked
+//   analytically: doubling the producing time tp changes the derivative at
+//   the end of the IARF window by Δt1/(2·tp + Δt1); more than 2 % → KC1.
+//   Gas: the engine gets real Δt (adata.tReal when pseudo-time is on; the
+//   engine applies pseudo-time itself through spec.gas.pseudoTime) and pressure
+//   in psia; Δp_skin is Δm_S = 0.8686·m·S′ (m = 1637·q·T/kh) converted to psi
+//   through PRiSM's m(p) table, or not shown when no table is available.
+//   Expensive engine steps (prepare, storage, IARF, line) are cached by the
+//   analysed period and well inputs, so a fit-only change re-runs only the
+//   cheap parts.
 //
 // -----------------------------------------------------------------------------
 // KARAKAS–TARIQ COEFFICIENT TABLE — VERIFICATION RECORD (plan §11 Q7)
@@ -91,8 +112,10 @@
 //   PRiSM is field-unit only, so the card shows field units in Metric mode too.
 // Every output number is finite or null; text never says null/undefined/NaN.
 // Load rules: no document, no timers, no other PRiSM symbol needed at load;
-// listeners are attached only behind a typeof guard and every handler first
-// checks that the card is mounted (#prism_skc_root).
+// listeners are attached only behind typeof document !== 'undefined' &&
+// typeof document.addEventListener === 'function' (plan §3.0; they listen on
+// window, where 34 and 33 dispatch) and every handler first checks that a card
+// is mounted.
 // The namespace object is merged, never replaced.
 // =============================================================================
 
@@ -362,7 +385,7 @@
     // =========================================================================
     // SECTION 4 — RATE-DEPENDENT SKIN (M§A19)
     // =========================================================================
-    var RATE_DEFAULTS = Object.freeze({ qRatioMin: 1.5, maxDays: 60, joint: true, corrMax: 0.8, dOverSeMin: 2, jointMinN: 4, serrMin: 0.05, serrDefault: 0.2, expectedFactor: 3 });
+    var RATE_DEFAULTS = Object.freeze({ qRatioMin: 1.5, maxDays: 60, joint: true, stable: null, corrMax: 0.8, dOverSeMin: 2, jointMinN: 4, serrMin: 0.05, serrDefault: 0.2, expectedFactor: 3 });
 
     // Weighted least squares y = X·beta with weights w; returns {beta, cov, chi2, dof}.
     function wls(X, y, w) {
@@ -413,8 +436,9 @@
         if (!(sxx > 0) || !(syy > 0)) return null;
         return sxy / Math.sqrt(sxx * syy);
     }
-    // Expected D for a gas well (1/(Mscf/d)) and its range.
-    function expectedD(e) {
+    // Expected D for a gas well (1/(Mscf/d)): {D (central), lo, hi, beta, unit, method} or null.
+    // rateSkin reports the central value as the number expectedD and this object as expectedDRange.
+    function expectedDRange(e) {
         if (!e || typeof e !== 'object') return null;
         var k = num(e.k), h = num(e.h), hp = num(e.hp), rw = num(e.rw), sg = num(e.sg), mu = num(e.mu_g);
         if (hp == null) hp = h;
@@ -427,22 +451,32 @@
                  method: 'D = 2.222e-15·γg·k·h·β/(μg·rw·hp²), β = 2.6e10·k^-1.2; range ×1/3 to ×3' };
     }
 
-    // rateSkin(rows [{id, t_days, q, S, Serr}], opts {qRatioMin, maxDays, joint, expected})
-    //   → {resolved, S, D, seD, n, qRatio, joint:null|{S0, r_per30d, D, seD}, expectedD,
-    //      consistent, reason, ev:['T15']}
-    // Rows are sorted by time and split where two consecutive tests are more than
-    // maxDays apart; the group with the most tests (the latest on a tie) is used.
-    // D needs q_max/q_min ≥ qRatioMin, |corr(q, t)| < 0.8 (two tests are always
-    // collinear) and D/se ≥ 2. A joint fit S′ = S0 + r·t/30 + D·q runs with ≥ 4
-    // tests; when its time term is significant (|r|/se ≥ 2) D comes from it.
+    // rateSkin(rows [{id, t_days, q, S, Serr}], opts {qRatioMin, maxDays, joint, stable, expected})
+    //   → {resolved, S, D, seD, n, qRatio, joint:null|{S0, r_per30d, D, seD, seR}, expectedD:number|null,
+    //      expectedDRange:null|{D, lo, hi, beta, unit, method}, consistent, corrQT, ids, reason, ev:['T15']}
+    // Window: the tests inside the span of at most maxDays (first to last test) that holds
+    // the most tests, the latest such window on a tie. A chain of weekly tests over a year
+    // is therefore never one group (a skin trend would be confounded with D).
+    // D needs q_max/q_min ≥ qRatioMin and D/se ≥ 2. Collinearity of rate and time
+    // (|corr(q, t)| ≥ 0.8; two tests count as collinear) refuses:
+    //   • the joint fit with a time term, always (plan §4.7 T15, resolution 9);
+    //   • the plain (S, D) fit too, unless the caller states opts.stable === true, i.e.
+    //     it has checked that S′ shows no significant time trend in these rows (for
+    //     example Mann–Kendall over a stable-skin segment). Without that statement a
+    //     skin trend cannot be told from D when rate and time move together.
+    // A joint fit S′ = S0 + r·t/30 + D·q runs with ≥ 4 tests and low collinearity; when its
+    // time term is significant (|r|/se ≥ 2) D comes from it.
+    // expectedD is the central value of the correlation (a number, as plan §3.0 requires
+    // for every output number); expectedDRange carries its ×1/3 … ×3 range.
     function rateSkin(rows, opts) {
         var o = {};
         var k;
         for (k in RATE_DEFAULTS) if (Object.prototype.hasOwnProperty.call(RATE_DEFAULTS, k)) o[k] = RATE_DEFAULTS[k];
         if (opts && typeof opts === 'object') for (k in opts) if (Object.prototype.hasOwnProperty.call(opts, k) && opts[k] != null) o[k] = opts[k];
-        var out = { resolved: false, S: null, D: null, seD: null, n: 0, qRatio: null, joint: null, expectedD: null, consistent: null,
-                    corrQT: null, ids: [], reason: '', ev: ['T15'] };
-        out.expectedD = expectedD(o.expected);
+        var out = { resolved: false, S: null, D: null, seD: null, n: 0, qRatio: null, joint: null, expectedD: null, expectedDRange: null,
+                    consistent: null, corrQT: null, ids: [], stable: o.stable === true, reason: '', ev: ['T15'] };
+        out.expectedDRange = expectedDRange(o.expected);
+        out.expectedD = out.expectedDRange ? fin(out.expectedDRange.D) : null;
         var list = [];
         (Array.isArray(rows) ? rows : []).forEach(function (r) {
             if (!r || typeof r !== 'object') return;
@@ -452,15 +486,12 @@
             list.push({ id: r.id == null ? '' : String(r.id), q: Math.abs(q), S: S, t: t, se: Math.max(se, o.serrMin) });
         });
         list.sort(function (a, b) { return a.t - b.t; });
-        // Split at gaps > maxDays; keep the largest (latest on a tie) group.
-        var groups = [], cur = [];
-        list.forEach(function (r) {
-            if (cur.length && r.t - cur[cur.length - 1].t > o.maxDays) { groups.push(cur); cur = []; }
-            cur.push(r);
-        });
-        if (cur.length) groups.push(cur);
-        var g = [];
-        groups.forEach(function (x) { if (x.length >= g.length) g = x; });
+        // The window of span ≤ maxDays with the most tests (the latest on a tie).
+        var g = [], i0 = 0;
+        for (var j = 0; j < list.length; j++) {
+            while (list[j].t - list[i0].t > o.maxDays + 1e-9) i0++;
+            if (j - i0 + 1 >= g.length) g = list.slice(i0, j + 1);
+        }
         out.n = g.length;
         out.ids = g.map(function (r) { return r.id; });
         if (g.length < 2) { out.reason = 'Fewer than two tests within ' + fmt(o.maxDays, 0) + ' days: D cannot be separated from S; S′ is the apparent skin including D·q.'; return out; }
@@ -474,8 +505,9 @@
         var corr = (g.length === 2) ? 1 : pearson(qs, ts);
         if (corr == null) corr = (g.length === 2) ? 1 : 0;
         out.corrQT = corr;
-        if (Math.abs(corr) >= o.corrMax) {
-            out.reason = 'Rate and time are collinear (|corr| ' + fmt(Math.abs(corr), 2) + ' ≥ ' + fmt(o.corrMax, 1) + '): D cannot be separated from a skin trend; joint fit refused.';
+        var collinear = Math.abs(corr) >= o.corrMax;
+        if (collinear && !out.stable) {
+            out.reason = 'Rate and time are collinear (|corr| ' + fmt(Math.abs(corr), 2) + ' ≥ ' + fmt(o.corrMax, 1) + ') and skin stability was not assessed: D cannot be separated from a skin trend; joint fit refused.';
             return out;
         }
         var w = g.map(function (r) { return 1 / sq(r.se); });
@@ -483,8 +515,8 @@
         if (!fit) { out.reason = 'The rate-skin fit is singular.'; return out; }
         var infl = fit.dof > 0 ? Math.max(1, fit.chi2 / fit.dof) : 1;
         var S = fit.beta[0], D = fit.beta[1], seD = Math.sqrt(fit.cov[1][1] * infl);
-        var trendNote = '';
-        if (o.joint && g.length >= o.jointMinN) {
+        var trendNote = collinear ? ' Rate and time are collinear (|corr| ' + fmt(Math.abs(corr), 2) + '): joint fit with a time term refused; skin stability as stated by the caller.' : '';
+        if (o.joint && !collinear && g.length >= o.jointMinN) {
             var jf = wls(g.map(function (r) { return [1, r.t / 30, r.q]; }), g.map(function (r) { return r.S; }), w);
             if (jf) {
                 var ji = jf.dof > 0 ? Math.max(1, jf.chi2 / jf.dof) : 1;
@@ -508,33 +540,43 @@
         } else {
             out.reason = 'D/se ' + fmt(D / seD, 1) + ' is below 2: D not resolved; S′ is the apparent skin including D·q.' + trendNote;
         }
-        if (out.resolved && out.expectedD) out.consistent = D >= out.expectedD.lo && D <= out.expectedD.hi;
+        if (out.resolved && out.expectedDRange) out.consistent = D >= out.expectedDRange.lo && D <= out.expectedDRange.hi;
         return out;
     }
 
     // =========================================================================
     // SECTION 5 — SKIN PRODUCTS (T7, T8, M§A27)
     // =========================================================================
-    // products({S, k, h, B, mu, q, Dq, rw, re_ft, reSource, pbar|null, pwf})
-    //   → {dpSkin_psi, m, X, reAssumed, piRatio, piRatioLowerBound, rateAtStakeUpperBound,
-    //      FE|null, DR|null, guard}
+    // products({S, k, h, B, mu, q, Dq, rw, re_ft, reSource, pbar|null, pwf, dpSkin_psi?})
+    //   → {dpSkin_psi, m, X, reAssumed, piRatio, piRatioLowerBound, piRatioUpperBound,
+    //      rateAtStakeUpperBound, rateAtStakeLowerBound, FE|null, DR|null, guard, labels}
     // m = 162.6·Dq·B·μ/(k·h) [psi/cycle]; Δp_skin = 0.8686·m·S; X = ln(r_e/rw) − 0.75;
     // PI ratio X/(X + S) (pseudo-steady state); guard = X + S < 1 (not computable).
+    // A finite dpSkin_psi input replaces 0.8686·m·S (gas: Δm_S converted to psi through
+    // the m(p) table by the caller).
     // dpPerSkin_psi = 141.2·q·B·μ/(k·h) is the constant-rate extra drawdown per unit
     // skin at the current rate q: a different quantity from Δp_skin, never equated.
+    // Bounds when r_e is assumed from r_inv (r_inv ≤ r_e, so X is low): X/(X + S) rises
+    // with X when S ≥ 0 and falls when S < 0, so the PI ratio is a lower bound for S ≥ 0
+    // and an upper bound for S < 0; the rate at stake (X + S)/X − 1 = S/X is an upper
+    // bound for S ≥ 0 and a lower bound (too negative) for S < 0. For a change from
+    // S_base to S_now the same holds with the sign of S_now − S_base (WP3, §4.7).
     function products(i) {
         i = i || {};
         var S = num(i.S), k = num(i.k), h = num(i.h), B = num(i.B), mu = num(i.mu), q = num(i.q), Dq = num(i.Dq);
-        var rw = num(i.rw), re = num(i.re_ft), pbar = num(i.pbar), pwf = num(i.pwf);
+        var rw = num(i.rw), re = num(i.re_ft), pbar = num(i.pbar), pwf = num(i.pwf), dpIn = num(i.dpSkin_psi);
         var reSource = i.reSource === 'rinv' ? 'rinv' : 'input';
+        var rinv = reSource === 'rinv', negS = isNum(S) && S < 0;
+        var RINV = ' (r_e assumed from r_inv)';
         var out = {
-            dpSkin_psi: null, m: null, X: null, reAssumed: reSource === 'rinv', reSource: reSource,
-            piRatio: null, piRatioLowerBound: reSource === 'rinv', rateAtStakeUpperBound: reSource === 'rinv',
-            FE: null, DR: null, guard: false, dpPerSkin_psi: null, qIdealFactor: null, drawdown_psi: null,
+            dpSkin_psi: null, m: null, X: null, reAssumed: rinv, reSource: reSource,
+            piRatio: null, piRatioLowerBound: rinv && !negS, piRatioUpperBound: rinv && negS,
+            rateAtStakeUpperBound: rinv && !negS, rateAtStakeLowerBound: rinv && negS,
+            FE: null, DR: null, guard: false, dpPerSkin_psi: null, qIdealFactor: null, drawdown_psi: null, dpSkinSource: null,
             labels: {
                 basis: 'pseudo-steady-state estimate',
-                piRatio: reSource === 'rinv' ? 'lower bound (r_e assumed from r_inv)' : 'pseudo-steady-state estimate',
-                rateAtStake: reSource === 'rinv' ? 'upper bound (r_e assumed from r_inv)' : 'pseudo-steady-state estimate'
+                piRatio: rinv ? (negS ? 'upper bound' : 'lower bound') + RINV : 'pseudo-steady-state estimate',
+                rateAtStake: rinv ? (negS ? 'lower bound' : 'upper bound') + RINV : 'pseudo-steady-state estimate'
             },
             warnings: []
         };
@@ -543,8 +585,9 @@
         if (pos(k) && pos(h) && pos(B) && pos(mu)) {
             if (pos(Dq)) out.m = 162.6 * Dq * B * mu / (k * h);
             if (pos(q)) out.dpPerSkin_psi = 141.2 * q * B * mu / (k * h);
-        } else out.warnings.push(warning('noKh', 'info', 'k, h, B or μ missing: m and the skin pressure drop are not computed.'));
-        if (isNum(out.m) && isNum(S)) out.dpSkin_psi = 0.8686 * out.m * S;
+        } else if (!isNum(dpIn)) out.warnings.push(warning('noKh', 'info', 'k, h, B or μ missing: m and the skin pressure drop are not computed.'));
+        if (isNum(dpIn)) { out.dpSkin_psi = dpIn; out.dpSkinSource = 'input'; }
+        else if (isNum(out.m) && isNum(S)) { out.dpSkin_psi = 0.8686 * out.m * S; out.dpSkinSource = 'liquid'; }
         if (pos(re) && pos(rw) && re > rw) {
             out.X = Math.log(re / rw) - 0.75;
             if (isNum(S)) {
@@ -579,6 +622,7 @@
     var DISTRACTORS = { valley: 1, halfLate: 1, earlyQuarter: 1, earlyHalf: 1, fracHalf: 1 };
     var HUMPS = { humpDp: 1, steepStorage: 1 };
     var TP_LONG_H = 1e6;     // drawdown / injection → build-up after a very long producing time
+    var TP_DEFAULT_MIN_H = 720, TP_DEFAULT_FACTOR = 10;   // D13: unknown tp → max(30 d, 10·Δt_end)
     var CHELD_NOTE = 'Calibrated on build-ups; indicative for drawdowns.';
 
     function AIns() { var a = G.PRiSM_autoInterp; return (a && typeof a === 'object') ? a : null; }
@@ -636,7 +680,12 @@
         var steps0 = toArr(adata.rateHistory);
         var nIdx = isNum(adata.stepIndex) ? adata.stepIndex : steps0.length - 1;
         if (!shut && nIdx > 0) return { ok: false, reason: 'The automatic checks need a build-up, a fall-off or the first flow period from pi; this is a later flow period.' };
-        var T = toArr(adata.t), P = toArr(adata.p);
+        // Gas pseudo-time: C2 puts t_a in adata.t and keeps the real Δt in adata.tReal. The engine
+        // takes real Δt (like spec.steps) and applies pseudo-time itself (spec.gas.pseudoTime).
+        // adata.p is always psia (m(p) only lives in adata.dp / pRef).
+        var pseudoT = hasRealTime(adata);
+        if (adata.pseudoTime && !pseudoT) return { ok: false, reason: 'Gas pseudo-time is on but the real elapsed time is not available: turn pseudo-time off for the skin check.' };
+        var T = toArr(pseudoT ? adata.tReal : adata.t), P = toArr(adata.p);
         var pRef = num(adata.pRefPressure);
         if (pRef == null) pRef = num(adata.pRef);
         if (!pos(pRef)) return { ok: false, reason: 'The reference pressure of the analysed period is unknown.' };
@@ -655,13 +704,23 @@
         if (!pos(Dq)) return { ok: false, reason: 'The rate before the analysed period is unknown: enter q in Well & Test.' };
         var tc = num(adata.tStart);
         if (tc == null) tc = 0;
-        var steps, tpUnknown = false;
+        var dtEnd = dt[dt.length - 1];
+        var steps, tpUnknown = false, history = { estimated: false, tPrepend_h: 0, source: 'data' };
         if (shut && steps0.length >= 2) {
             steps = steps0.map(function (s) { return { t: s.t, q: Math.abs(s.q) }; });
             steps[steps.length - 1] = { t: tc, q: 0 };
+        } else if (shut) {
+            // No rate history and no tp: estimate the producing time as D13 does
+            // (max(30 d, 10·Δt_end) at the entered rate) and flag the history as estimated,
+            // so p* is reported as a range only and the history sensitivity is checked.
+            var tPre = Math.max(TP_DEFAULT_MIN_H, TP_DEFAULT_FACTOR * dtEnd);
+            steps = [{ t: tc - tPre, q: Dq }, { t: tc, q: 0 }];
+            history = { estimated: true, tPrepend_h: tPre, source: 'default' };
+            tpUnknown = true;
         } else {
+            // Drawdown / injection from pi: a build-up after a very long producing time
+            // (Δt_e = Δt). A modelling device, not an estimate of the history.
             steps = [{ t: tc - TP_LONG_H, q: Dq }, { t: tc, q: 0 }];
-            tpUnknown = shut;
         }
         var sigma = noiseOf(p);
         var dts = [];
@@ -694,14 +753,74 @@
                     T_R: pos(well.T_R) ? well.T_R : null, re_ft: null,
                     defaulted: toArr(well.defaulted).filter(function (k) { return ['h', 'phi', 'mu', 'B', 'ct', 'rw'].indexOf(k) !== -1; }) },
             gas: fluid === 'gas' ? { sg: pos(well.sg) ? well.sg : 0.65, T_F: pos(well.T_F) ? well.T_F : 200, co2: 0, h2s: 0, n2: 0,
-                                     pseudoTime: !!adata.pseudoTime, pdew: null } : null,
+                                     pseudoTime: pseudoT, pdew: null } : null,
             sigma_psi: sigma, sigmaFlow_psi: sigma, sigmaLF_psi: null,
             dtSample_h: median(dts) || 0.01, driftPsiPerDay: 0.01,
-            history: { estimated: false, tPrepend_h: 0, source: 'data' },
+            history: history,
             overrides: { window: null, model: null, excludeRivals: [] },
             opts: { Lcyc: 0.1, binsPerCycle: 20, fitBinsPerCycle: 12, rivals: 'none', cheld: 'off', tide: 'off' }
         };
-        return { ok: true, spec: spec, shut: shut, indicative: !shut, tpUnknown: tpUnknown, fromPi: fromPi, pwfTrend: pwfTrend, sigma: sigma, dtEnd_h: dt[dt.length - 1] };
+        return { ok: true, spec: spec, shut: shut, indicative: !shut, tpUnknown: tpUnknown, fromPi: fromPi, pwfTrend: pwfTrend, sigma: sigma,
+                 dtEnd_h: dtEnd, pseudoTime: pseudoT };
+    }
+
+    // Plan §4.6 item 14 for a single-rate estimated history (the only estimated history the
+    // card builds): in radial flow the response to a history twice as long, differentiated
+    // with the assumed time function, changes by Δt/(2·tp + Δt). Evaluated at the end of
+    // the IARF window (the largest change inside it); > maxDerivPct (2 %) → sensitive (KC1).
+    function historyCheck(spec, iarf, AI) {
+        var h = spec && spec.history;
+        var out = { estimated: !!(h && h.estimated), tPrepend_h: h ? fin(h.tPrepend_h) : null, dDerivPct: null, sensitive: false, ev: ['R5'] };
+        if (!out.estimated) return out;
+        var maxPct = (AI && AI.DEFAULTS && AI.DEFAULTS.history && isNum(AI.DEFAULTS.history.maxDerivPct)) ? AI.DEFAULTS.history.maxDerivPct : 2;
+        var tp = h.tPrepend_h, dt1 = iarf && iarf.found ? num(iarf.dt1_h) : null;
+        if (!pos(tp) || !pos(dt1)) return out;
+        out.dDerivPct = 100 * dt1 / (2 * tp + dt1);
+        out.sensitive = out.dDerivPct > maxPct;
+        return out;
+    }
+
+    // C2 with gas pseudo-time: adata.t = t_a and adata.tReal = the real Δt, sample for sample.
+    function hasRealTime(adata) {
+        return !!(adata && adata.pseudoTime && adata.tReal && adata.t && adata.tReal.length === adata.t.length);
+    }
+    // Real shut-in Δt → PRiSM's analysis time (pseudo-time t_a when it is on): log-log
+    // interpolation along (adata.tReal, adata.t), both ascending. null outside the data.
+    function toPrismTime(adata, dtReal) {
+        if (!hasRealTime(adata)) return pos(dtReal) ? dtReal : null;
+        var R = toArr(adata.tReal), A = toArr(adata.t);
+        if (!pos(dtReal) || R.length < 2) return null;
+        if (dtReal < R[0] * (1 - 1e-9) || dtReal > R[R.length - 1] * (1 + 1e-9)) return null;
+        for (var i = 1; i < R.length; i++) {
+            if (R[i] >= dtReal) {
+                var r0 = R[i - 1], r1 = R[i], a0 = A[i - 1], a1 = A[i];
+                if (!pos(r0) || !pos(r1) || !pos(a0) || !pos(a1) || !(r1 > r0)) return dtReal <= r0 ? fin(a0) : fin(a1);
+                var u = (Math.log(dtReal) - Math.log(r0)) / (Math.log(r1) - Math.log(r0));
+                return fin(Math.exp(Math.log(a0) + Math.max(0, Math.min(1, u)) * (Math.log(a1) - Math.log(a0))));
+            }
+        }
+        return fin(A[A.length - 1]);
+    }
+
+    // Gas Δp_skin (plan §4.6 item 13): Δm_S = 0.8686·m·S′ with m = 1637·q·T_R/(k·h)
+    // (so Δm_S = 1422·q·T_R·S′/(k·h), psi²/cp), converted to psi at the flowing
+    // pressure with PRiSM's m(p) table: Δp_skin = p(m(pwf) + Δm_S) − pwf. null when the
+    // table or an input is missing (the card then does not show Δp_skin or FE).
+    function gasDpSkin(adata, well, k, S, q, pwf) {
+        var spec = adata && adata.mpSpec;
+        if (!spec || typeof G.PRiSM_mpTable !== 'function') return null;
+        var TF = num(spec.T_F);
+        if (!isNum(TF)) TF = num(well && well.T_F);
+        var h = num(well && well.h);
+        if (!isNum(TF) || !pos(k) || !pos(h) || !pos(q) || !isNum(S) || !pos(pwf)) return null;
+        var tbl = null;
+        try { tbl = G.PRiSM_mpTable(spec); } catch (e) { tbl = null; }
+        if (!tbl || typeof tbl.mOf !== 'function' || typeof tbl.pOf !== 'function') return null;
+        var dm = 1422 * q * (TF + 459.67) * S / (k * h);
+        var m0 = tbl.mOf(pwf);
+        if (!isNum(m0) || !(m0 + dm > 0)) return null;
+        var p1 = tbl.pOf(m0 + dm);
+        return isNum(p1) ? fin(p1 - pwf) : null;
     }
 
     // PRiSM C4 fit → a ModelFit-like object for the engine (homogeneous base for
@@ -751,6 +870,35 @@
                 w.q, w.B, w.mu, w.ct, w.h, w.phi, w.rw, w.pwf0].join('|');
     }
 
+    // One-entry cache of the expensive engine steps (prepare, storage, IARF, line), keyed by
+    // the BuildupSpec itself and the engine functions in use: a fit-only change (or a second
+    // card copy, or the report) re-runs only the cheap parts. Results are never mutated
+    // (run() copies the line before it edits p*); a step that threw is not cached.
+    var _cache = { key: null, AI: null, fns: null, v: null };
+    function engineSteps(AI, spec) {
+        var key = null;
+        try { key = JSON.stringify(spec); } catch (e) { key = null; }
+        var fns = [AI.prepare, AI.storage, AI.iarf, AI.line];
+        if (key !== null && _cache.key === key && _cache.AI === AI &&
+            fns.every(function (f, i) { return f === _cache.fns[i]; })) return _cache.v;
+        var v = { prep: null, prepErr: null, storage: null, iarf: null, line: null, errors: [] };
+        var r = call('prepare', function () { return AI.prepare(spec); });
+        v.prep = r.v; v.prepErr = r.err;
+        if (v.prep && v.prep.ok !== false) {
+            if (typeof AI.storage === 'function') { r = call('storage', function () { return AI.storage(v.prep); }); v.storage = r.v; if (r.err) v.errors.push(r.err); }
+            r = call('iarf', function () { return AI.iarf(v.prep, {}); }); v.iarf = r.v; if (r.err) v.errors.push(r.err);
+            if (v.iarf && v.iarf.found) { r = call('line', function () { return AI.line(v.prep, v.iarf); }); v.line = r.v; if (r.err) v.errors.push(r.err); }
+        }
+        if (key !== null && !v.prepErr && !v.errors.length) _cache = { key: key, AI: AI, fns: fns, v: v };
+        return v;
+    }
+    function shallow(o) {
+        if (!o || typeof o !== 'object') return o;
+        var c = {};
+        for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) c[k] = o[k];
+        return c;
+    }
+
     // Completion inputs (card; wts_prism_skincheck).
     var LS_KEY = 'wts_prism_skincheck';
     var COMP_DEFAULT = { on: false, hp_ft: null, htop_ft: 0, theta_deg: 0, kvlo: 0.1, kvhi: 1,
@@ -798,6 +946,7 @@
             well: null, iarf: null, line: null, plateau: null, storage: null, reach: null, triggers: null, flags: [],
             agreement: null, final: null, sErr: null, sensitivity: null, confidence: null, evidence: null,
             products: null, mech: null, completion: null, cheld: null, cheldAvailable: false,
+            tpUnknown: false, pseudoTime: false, history: null, window: null, pbarSource: null,
             rate: { status: 'n/a', source: 'measured', text: 'Entered or tabled rate: rate checks do not apply.' },
             calibrated: false, notes: [], warnings: [], errors: []
         };
@@ -825,11 +974,14 @@
         var sp = specFromAdata(adata, well);
         if (!sp.ok) { m.reason = sp.reason; return m; }
         m.indicative = sp.indicative;
+        m.tpUnknown = sp.tpUnknown;
+        m.pseudoTime = sp.pseudoTime;
         var spec = sp.spec;
-        var r = call('prepare', function () { return AI.prepare(spec); });
-        var prep = r.v;
+        var es = engineSteps(AI, spec);
+        var r;
+        var prep = es.prep;
         if (!prep || prep.ok === false) {
-            m.reason = (prep && prep.errors && prep.errors[0]) || r.err || 'The analysed period could not be prepared for the automatic checks.';
+            m.reason = (prep && prep.errors && prep.errors[0]) || es.prepErr || 'The analysed period could not be prepared for the automatic checks.';
             return m;
         }
         m.ok = true;
@@ -837,12 +989,41 @@
         m.matchAvailable = !!match;
         if (fit && !match) m.warnings.push(warning('noPhys', 'info', 'The current fit has no physical k and S: line vs match not checked.'));
         if (fit && fit.stale) m.warnings.push(warning('stale', 'warn', 'The fit is for another dataset or model: re-run the fit.'));
-        if (sp.tpUnknown) m.warnings.push(warning('tpUnknown', 'warn', 'Producing time unknown: the checks use Δt (a very long producing time is assumed). Enter tp or the rate history in Well & Test.'));
+        if (sp.tpUnknown) {
+            m.warnings.push(warning('tpUnknown', 'warn', 'Producing time unknown: the checks assume ' + sig(spec.history.tPrepend_h) +
+                ' h at the entered rate (30 days or 10 × the shut-in, the longer). p* is not shown and the flow efficiency uses pi. Enter tp or the rate history in Well & Test.'));
+        }
         if (sp.indicative) m.warnings.push(warning('indicative', 'info', 'Drawdown or injection period: checks run as for a build-up after a long producing time; indicative only, p* not shown.'));
-        if (typeof AI.storage === 'function') { r = call('storage', function () { return AI.storage(prep); }); m.storage = r.v; if (r.err) m.errors.push(r.err); }
-        r = call('iarf', function () { return AI.iarf(prep, {}); }); m.iarf = r.v; if (r.err) m.errors.push(r.err);
-        if (m.iarf && m.iarf.found) { r = call('line', function () { return AI.line(prep, m.iarf); }); m.line = r.v; if (r.err) m.errors.push(r.err); }
+        m.storage = es.storage;
+        m.iarf = es.iarf;
+        m.line = es.line ? shallow(es.line) : null;      // a copy: the cached line is never edited
+        es.errors.forEach(function (e) { m.errors.push(e); });
+        // p*: not shown for drawdowns/injections (indicative) nor with an estimated producing
+        // time (D13: only the range, when the engine gives one, and no rule uses p*).
         if (m.line && sp.indicative) { m.line.pStar = null; m.line.pStarRange = null; }
+        if (m.line && sp.tpUnknown) {
+            m.line.pStar = null;
+            var pr0 = m.line.pStarRange;
+            if (!(pr0 && isNum(pr0.lo) && isNum(pr0.hi)) && typeof AI.pStarRange === 'function') {
+                r = call('pStarRange', function () { return AI.pStarRange(prep, es.line, spec); });
+                pr0 = r.v; if (r.err) m.errors.push(r.err);
+            }
+            m.line.pStarRange = (pr0 && isNum(pr0.lo) && isNum(pr0.hi)) ? { lo: Math.min(pr0.lo, pr0.hi), hi: Math.max(pr0.lo, pr0.hi) } : null;
+        }
+        // History sensitivity (D13, plan §4.6 item 14) → KC1 through the evidence vector.
+        m.history = historyCheck(spec, m.iarf, AI);
+        if (m.history.estimated && isNum(m.history.dDerivPct)) {
+            m.notes.push('Producing time estimated: doubling it changes the derivative at the end of the IARF window by ' + fmt(m.history.dDerivPct, 1) +
+                         ' %' + (m.history.sensitive ? ' (more than 2 %: k/S label capped at medium).' : ' (within 2 %).'));
+        }
+        // "Use this window": the IARF window on PRiSM's own time axis (pseudo-time when on).
+        m.window = null;
+        if (m.iarf && m.iarf.found) {
+            var w0 = toPrismTime(adata, m.iarf.dt0_h), w1 = toPrismTime(adata, m.iarf.dt1_h);
+            m.window = (pos(w0) && pos(w1) && w1 > w0) ? { t0: w0, t1: w1, pseudoTime: !!sp.pseudoTime } : null;
+            if (!m.window && sp.pseudoTime) m.notes.push('The IARF window could not be converted to PRiSM\'s pseudo-time axis: "Use this window" is not available.');
+            else if (sp.pseudoTime) m.notes.push('Gas pseudo-time is on: the window is found on real Δt and passed to the straight-line panel in pseudo-time.');
+        }
         m.plateau = m.line && m.line.plateauCheck ? m.line.plateauCheck : null;
         // Homogeneous k, S, C for the numeric reach: the match, else the line with C from storage.
         var hom = match;
@@ -934,7 +1115,7 @@
                 flags: flags, distractorAtOrBeforeIarf: distractor, humpAfterIarf: humpAfter,
                 dtEnd_h: sp.dtEnd_h, dteEnd_h: isNum(dte) ? dte : sp.dtEnd_h,
                 t10_h: m.reach ? fin(m.reach.t10_h) : null, t5_h: m.reach ? fin(m.reach.t5_h) : null,
-                historySensitive: false, outsideEnvelope: outside, kHeld: false, kHeldConverged: null, kHeldCorrCS: null, kHeldRmsRatio: null,
+                historySensitive: !!(m.history && m.history.sensitive), outsideEnvelope: outside, kHeld: false, kHeldConverged: null, kHeldCorrCS: null, kHeldRmsRatio: null,
                 partialSuspect: null, windowLevelInconsistent: null,
                 chosenKey: m.engineKey || 'homogeneous', chosenFullySeen: 'n/a',
                 triggers: m.triggers && Array.isArray(m.triggers.fired) ? m.triggers.fired : [],
@@ -945,14 +1126,33 @@
             if (!m.engineKey && m.confidence) m.notes.push('The model label applies to the automatic model set; for this PRiSM model read the k/S label only.');
         }
         // Skin products (T7, T8): r_e from r_inv at the end of the test → bounds.
+        // p̄ for FE: p* from a build-up with a known history (never an estimated one), else pi.
+        // pwf: pwf0 for a shut-in; for a drawdown / injection from pi the last sample of the
+        // period (its lowest pressure for a drawdown, its highest for an injection).
         if (m.final) {
             var dtE = sp.dtEnd_h;
             var re = rinvOf(AI, m.final.k, dtE, well);
             var pbar = null, pwf = null;
-            if (sp.shut) { pbar = (m.line && isNum(m.line.pStar)) ? m.line.pStar : (pos(well.pi) ? well.pi : null); pwf = spec.pwf0; }
-            else if (pos(well.pi)) { pbar = well.pi; pwf = Math.min.apply(null, toArr(adata.p).filter(isNum)); }
+            if (sp.shut) {
+                pbar = (!sp.tpUnknown && m.line && isNum(m.line.pStar)) ? m.line.pStar : (pos(well.pi) ? well.pi : null);
+                pwf = spec.pwf0;
+            } else if (pos(well.pi)) {
+                var PP = toArr(adata.p).filter(isNum);
+                pbar = well.pi;
+                pwf = PP.length ? PP[PP.length - 1] : null;
+            }
+            m.pbarSource = pbar == null ? null : ((sp.shut && !sp.tpUnknown && m.line && isNum(m.line.pStar)) ? 'pStar' : 'pi');
+            var gas = spec.well.fluid === 'gas', dpGas = null;
+            if (gas) dpGas = gasDpSkin(adata, well, m.final.k, m.final.S, spec.Dq, pwf);
             m.products = products({ S: m.final.S, k: m.final.k, h: well.h, B: well.B, mu: well.mu, q: well.q, Dq: spec.Dq,
-                                    rw: well.rw, re_ft: re, reSource: 'rinv', pbar: pbar, pwf: pwf });
+                                    rw: well.rw, re_ft: re, reSource: 'rinv', pbar: pbar, pwf: pwf, dpSkin_psi: dpGas });
+            if (gas && !isNum(dpGas)) {
+                // The liquid formula does not apply to gas: hide Δp_skin and FE rather than mislead.
+                m.products.dpSkin_psi = null; m.products.FE = null; m.products.DR = null; m.products.dpSkinSource = null;
+                m.notes.push('Gas: Δp skin and flow efficiency need the m(p) table (gas gravity and temperature in Well & Test); not shown.');
+            } else if (gas) {
+                m.notes.push('Gas: Δp skin is Δm_S = 0.8686·m·S′ converted to psi through the m(p) table at pwf; S′ includes D·q.');
+            }
             m.rinv_ft = fin(re);
         }
         // Mechanical skin (both bases) with the kv/kh range.
@@ -968,7 +1168,9 @@
     // =========================================================================
     // SECTION 7 — THE CARD (Tab 6 panel, Tools drawer)
     // =========================================================================
-    var _ui = { model: null, cheld: null, running: false, cancel: false, progress: '', sig: '' };
+    // hosts: the elements the card was painted into (a Tab-6 body, the Tools drawer panel …);
+    // jobHost: the host whose button started the running C-held job.
+    var _ui = { model: null, cheld: null, running: false, cancel: false, progress: '', sig: '', hosts: [], jobHost: null };
     var CSS_ID = 'prism_skc_css';
     var CSS = '.prism-skc{display:grid;gap:10px;min-width:0}' +
         '.prism-skc-sec{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;min-width:0}' +
@@ -1124,14 +1326,20 @@
         }
         h += sec('prism_skc_iarf', 'Automatic IARF window (L = 0.1 cycle)', kvHTML(ip) +
             (iw && iw.reason ? '<div class="prism-skc-note">' + esc(iw.reason) + '</div>' : '') +
-            '<div class="prism-skc-row"><button type="button" class="prism-skc-btn" id="prism_skc_usewin"' + (iw && iw.found ? '' : ' disabled') +
+            '<div class="prism-skc-row"><button type="button" class="prism-skc-btn" id="prism_skc_usewin"' + (m.window ? '' : ' disabled') +
             '>Use this window in the straight-line panel</button></div>');
         // Line.
         var l = m.line;
-        h += sec('prism_skc_line', 'Straight line through the window', l ? kvHTML([
+        var linePairs = l ? [
             ['Method', l.method === 'horner' ? 'Horner' : 'Superposition'], ['k', sig(l.k) + ' md'], ['kh', sig(l.kh) + ' md·ft'], ['S', fmt(l.S, 2)],
-            ['m', sig(Math.abs(l.m), 4) + ' psi/cycle'], ['p*', isNum(l.pStar) ? fmt(l.pStar, 1) + ' psia' : '—'], ['R²', fmt(l.r2, 4)]
-        ]) : '<div class="prism-skc-note">No line: no IARF window.</div>');
+            ['m', sig(Math.abs(l.m), 4) + ' psi/cycle'],
+            ['p*', isNum(l.pStar) ? fmt(l.pStar, 1) + ' psia' : (m.tpUnknown ? 'not shown (producing time estimated)' : (m.indicative ? 'not shown (not a shut-in)' : '—'))],
+            ['R²', fmt(l.r2, 4)]
+        ] : null;
+        if (l && l.pStarRange && isNum(l.pStarRange.lo) && isNum(l.pStarRange.hi)) {
+            linePairs.splice(6, 0, ['p* range (estimated history)', fmt(l.pStarRange.lo, 1) + ' to ' + fmt(l.pStarRange.hi, 1) + ' psia']);
+        }
+        h += sec('prism_skc_line', 'Straight line through the window', l ? kvHTML(linePairs) : '<div class="prism-skc-note">No line: no IARF window.</div>');
         // Agreement.
         h += sec('prism_skc_agree', 'Line vs match', kvHTML([
             ['Line vs match', agreeText(m.agreement)],
@@ -1168,7 +1376,7 @@
         if (pr) {
             h += sec('prism_skc_prod', 'Skin pressure drop and productivity', kvHTML([
                 ['Δp skin', isNum(pr.dpSkin_psi) ? fmt(pr.dpSkin_psi, 1) + ' psi' : '—'],
-                ['Flow efficiency', isNum(pr.FE) ? fmt(pr.FE, 3) : '—'],
+                ['Flow efficiency', isNum(pr.FE) ? fmt(pr.FE, 3) + (m.pbarSource === 'pi' ? ' (from pi)' : (m.pbarSource === 'pStar' ? ' (from p*)' : '')) : '—'],
                 ['PI ratio X/(X + S)', isNum(pr.piRatio) ? fmt(pr.piRatio, 3) + ', ' + pr.labels.piRatio : (pr.guard ? 'not computable (X + S < 1)' : '—')],
                 ['r_e used', isNum(m.rinv_ft) ? sig(m.rinv_ft) + ' ft (r_inv at the end of the test)' : '—']
             ]) + '<div class="prism-skc-note">Pseudo-steady-state estimates.</div>');
@@ -1192,14 +1400,29 @@
             (document.head || document.body || document.documentElement).appendChild(st);
         } catch (e) { /* cosmetic */ }
     }
-    function rootEl() { return (typeof document !== 'undefined' && document.getElementById) ? document.getElementById('prism_skc_root') : null; }
-    function mounted() {
-        var r = rootEl();
-        if (!r) return false;
-        for (var n = r; n; n = n.parentNode) if (n === document.body || n === document.documentElement) return true;
+    // Every lookup goes through a host's own root, never document.getElementById: a hidden
+    // Tab-6 copy (display:none, still in the DOM) and a Tools-drawer copy carry the same ids.
+    function rootOf(host) {
+        try { return (host && host.querySelector) ? host.querySelector('#prism_skc_root') : null; } catch (e) { return null; }
+    }
+    function inDocument(el) {
+        if (typeof document === 'undefined' || !el) return false;
+        for (var n = el; n; n = n.parentNode) if (n === document.body || n === document.documentElement) return true;
         return false;
     }
+    // A host is live while it is in the document and still holds a card root.
+    function live(host) { var r = rootOf(host); return !!(r && inDocument(r)); }
+    function liveHosts() {
+        _ui.hosts = _ui.hosts.filter(live);
+        return _ui.hosts.slice();
+    }
+    function q(root, id) { try { return root ? root.querySelector('#' + id) : null; } catch (e) { return null; } }
 
+    function paint(el, m) {
+        el.innerHTML = cardHTML(m);
+        wire(el);
+        if (_ui.hosts.indexOf(el) === -1) _ui.hosts.push(el);
+    }
     // renderPanel(el): paint the card. No storage writes, no events.
     function renderPanel(el) {
         if (!el || typeof el !== 'object') return null;
@@ -1207,13 +1430,19 @@
         var m = run({ cheld: _ui.cheld });
         if (_ui.running && m.sig !== _ui.sig) _ui.cancel = true;
         _ui.model = m;
-        el.innerHTML = cardHTML(m);
-        wire(el);
+        paint(el, m);
         return m;
     }
-    function rerender() {
-        var r = rootEl();
-        if (r && r.parentNode) renderPanel(r.parentNode);
+    // Re-paint the given hosts (default: every live host) from one run().
+    function rerender(hosts) {
+        var list = (hosts || liveHosts()).filter(live);
+        if (!list.length) return null;
+        ensureCss();
+        var m = run({ cheld: _ui.cheld });
+        if (_ui.running && m.sig !== _ui.sig) _ui.cancel = true;
+        _ui.model = m;
+        list.forEach(function (h) { paint(h, m); });
+        return m;
     }
     function compFromInputs(root) {
         function v(id) { var e = root.querySelector('#' + id); return e ? e.value : null; }
@@ -1246,81 +1475,120 @@
         var res = root.querySelector('#prism_skc_mech_res');
         if (res) res.innerHTML = mechHTML(m);
     }
+    // "Use this window": the IARF window on PRiSM's own time axis (m.window: pseudo-time when
+    // gas pseudo-time is on; null — button disabled — when it cannot be converted).
     function useWindow() {
         var m = _ui.model;
-        if (!m || !m.iarf || !m.iarf.found || typeof G.PRiSM_semilogAnalysis !== 'function') return null;
-        return G.PRiSM_semilogAnalysis(null, null, { window: { t0: m.iarf.dt0_h, t1: m.iarf.dt1_h }, store: true });
+        if (!m || !m.window || typeof G.PRiSM_semilogAnalysis !== 'function') return null;
+        return G.PRiSM_semilogAnalysis(null, null, { window: { t0: m.window.t0, t1: m.window.t1 }, store: true });
     }
     // A homogeneous fit seeded from the match (engine ModelFit with BIC), then the C-held refits.
+    // A step that throws ends the job with failed = the step's name (drive then resolves null).
     function cheldJob(AI, prep, seed) {
-        var phase = 0, fitJ = null, chJ = null, base = seed, res = null, cancelled = false;
+        var phase = 0, fitJ = null, chJ = null, base = seed, res = null, cancelled = false, failed = null;
         if (typeof AI.fitJob === 'function') {
             fitJ = AI.fitJob('homogeneous', prep, { start: { phys: { k: seed.phys.k, S: seed.phys.S, C: seed.phys.C } } });
         } else phase = 1;
+        function stepInner() {
+            if (phase === 0) {
+                var s0 = fitJ.step();
+                if (s0.done) { var f = fitJ.result(); if (f && f.ok !== false && f.phys) base = f; phase = 1; }
+                return { done: false, progress: 0.4 * (s0.progress || 0), label: 'Homogeneous fit' };
+            }
+            if (phase === 1) { chJ = AI.cHeldJob(prep, base, { mode: 'auto' }); phase = 2; return { done: false, progress: 0.4, label: 'C-held refits' }; }
+            var s = chJ.step();
+            if (s.done) { res = chJ.result(); return { done: true, progress: 1, label: 'Done' }; }
+            return { done: false, progress: 0.4 + 0.6 * (s.progress || 0), label: s.label || 'C-held refits' };
+        }
         return {
             step: function () {
-                if (cancelled) return { done: true, progress: 1, label: 'Cancelled' };
-                if (phase === 0) {
-                    var s0 = fitJ.step();
-                    if (s0.done) { var f = fitJ.result(); if (f && f.ok !== false && f.phys) base = f; phase = 1; }
-                    return { done: false, progress: 0.4 * (s0.progress || 0), label: 'Homogeneous fit' };
+                if (cancelled || failed) return { done: true, progress: 1, label: cancelled ? 'Cancelled' : 'Failed' };
+                try { return stepInner(); }
+                catch (e) {
+                    failed = phase === 0 ? 'fitJob' : 'cHeldJob';
+                    if (typeof console !== 'undefined' && console.warn) console.warn('[PRiSM skin check] ' + failed + ' failed:', e);
+                    res = null;
+                    return { done: true, progress: 1, label: 'Failed' };
                 }
-                if (phase === 1) { chJ = AI.cHeldJob(prep, base, { mode: 'auto' }); phase = 2; return { done: false, progress: 0.4, label: 'C-held refits' }; }
-                var s = chJ.step();
-                if (s.done) { res = chJ.result(); return { done: true, progress: 1, label: 'Done' }; }
-                return { done: false, progress: 0.4 + 0.6 * (s.progress || 0), label: s.label || 'C-held refits' };
             },
             result: function () { return res; },
+            failed: function () { return failed; },
             cancel: function () { cancelled = true; if (fitJ && fitJ.cancel) fitJ.cancel(); if (chJ && chJ.cancel) chJ.cancel(); }
         };
     }
-    function setStatus(text) {
+    // Status text of the C-held row, in the given root (default: the job's host) only.
+    function setStatus(text, root) {
         _ui.progress = text;
-        var e = (typeof document !== 'undefined') ? document.getElementById('prism_skc_cheld_status') : null;
+        var e = q(root || rootOf(_ui.jobHost), 'prism_skc_cheld_status');
         if (e) e.textContent = text;
     }
-    function startCheld() {
+    // startCheld(root): root = the card root whose button was clicked (default: the first live card).
+    function startCheld(root) {
         var AI = AIns(), m = _ui.model;
         if (_ui.running || !m || !m.ok || !m.cheldAvailable || !AI) return null;
-        var well = G.PRiSM_getWell ? G.PRiSM_getWell() : {};
-        var adata = G.PRiSM_getAnalysisData ? G.PRiSM_getAnalysisData() : null;
-        var sp = adata && adata.ok ? specFromAdata(adata, well) : null;
-        var prep = sp && sp.ok ? AI.prepare(sp.spec) : null;
-        if (!prep || prep.ok === false) { setStatus('C-held refits are not available for this period.'); return null; }
+        if (!root) { var hs = liveHosts(); root = hs.length ? rootOf(hs[0]) : null; }
+        var host = root && root.parentNode ? root.parentNode : null;
+        function unavailable(text) { setStatus(text, root); return null; }
+        var setup = call('prepare', function () {
+            var well = G.PRiSM_getWell ? G.PRiSM_getWell() : {};
+            var adata = G.PRiSM_getAnalysisData ? G.PRiSM_getAnalysisData() : null;
+            var sp = adata && adata.ok ? specFromAdata(adata, well || {}) : null;
+            if (!sp || !sp.ok) return { prep: null };
+            var es = engineSteps(AI, sp.spec);
+            if (es.prepErr) throw new Error('prepare failed');
+            return { prep: es.prep };
+        });
+        if (setup.err) return unavailable('C-held refits are not available: ' + setup.err + ' failed.');
+        var prep = setup.v && setup.v.prep;
+        if (!prep || prep.ok === false) return unavailable('C-held refits are not available for this period.');
         var fit = G.PRiSM_getLastFit ? G.PRiSM_getLastFit() : null;
         var seed = matchFromFit(fit, 'homogeneous');
         if (!seed && m.final) seed = matchFromFit({ modelKey: 'homogeneous', phys: { k: m.final.k, S: m.final.S, C: m.final.C } }, 'homogeneous');
-        if (!seed || !pos(seed.phys.C)) { setStatus('C-held refits need wellbore storage C from the match or the unit slope.'); return null; }
-        var job = cheldJob(AI, prep, seed);
+        if (!seed || !pos(seed.phys.C)) return unavailable('C-held refits need wellbore storage C from the match or the unit slope.');
+        var jr = call('fitJob', function () { return cheldJob(AI, prep, seed); });
+        if (jr.err || !jr.v) return unavailable('C-held refits are not available: ' + (jr.err || 'fitJob') + ' failed.');
+        var job = jr.v;
         var sigNow = m.sig;
-        _ui.running = true; _ui.cancel = false; _ui.sig = sigNow;
-        setStatus('Running…');
-        var r = rootEl();
-        if (r) { var b1 = r.querySelector('#prism_skc_cheld'), b2 = r.querySelector('#prism_skc_cheld_cancel'); if (b1) b1.disabled = true; if (b2) b2.disabled = false; }
-        var p = AI.drive(job, {
-            shouldCancel: function () { return _ui.cancel || !mounted(); },
-            onProgress: function (f, label) { setStatus((label || 'Working') + ' ' + fmt(100 * (f || 0), 0) + ' %'); }
+        _ui.running = true; _ui.cancel = false; _ui.sig = sigNow; _ui.jobHost = host;
+        setStatus('Running…', root);
+        var b1 = q(root, 'prism_skc_cheld'), b2 = q(root, 'prism_skc_cheld_cancel');
+        if (b1) b1.disabled = true;
+        if (b2) b2.disabled = false;
+        function done(text) {
+            _ui.running = false; _ui.cancel = false; _ui.progress = text;
+            var h = _ui.jobHost; _ui.jobHost = null;
+            // Re-paint the card that ran the job (and any other live copy) from one run().
+            var hosts = liveHosts();
+            if (h && live(h) && hosts.indexOf(h) === -1) hosts.push(h);
+            rerender(hosts);
+        }
+        var dr = call('drive', function () {
+            return AI.drive(job, {
+                shouldCancel: function () { return _ui.cancel || !live(host); },
+                onProgress: function (f, label) { setStatus((label || 'Working') + ' ' + fmt(100 * (f || 0), 0) + ' %'); }
+            });
         });
-        function done(text) { _ui.running = false; _ui.cancel = false; _ui.progress = text; rerender(); }
-        return p.then(function (res) {
-            _ui.cheld = res ? { sig: sigNow, result: res } : null;
-            done(res ? 'C-held refits finished.' : 'C-held refits returned no result.');
-            return res;
+        if (dr.err || !dr.v || typeof dr.v.then !== 'function') { done('C-held refits are not available: drive failed.'); return null; }
+        return dr.v.then(function (res) {
+            var bad = job.failed && job.failed();
+            _ui.cheld = (res && !bad) ? { sig: sigNow, result: res } : null;
+            done(bad ? 'C-held refits failed: ' + bad + '.' : (res ? 'C-held refits finished.' : 'C-held refits returned no result.'));
+            return bad ? null : res;
         }, function (e) {
             done(e && e.code === 'CANCELLED' ? 'Cancelled.' : 'C-held refits failed.');
             return null;
         });
     }
     function wire(el) {
-        var root = el.querySelector ? el.querySelector('#prism_skc_root') : null;
+        var root = rootOf(el);
         if (!root) return;
         root.addEventListener('click', function (ev) {
             var t = ev.target;
             while (t && t !== root && !(t.id && /^prism_skc_/.test(t.id) && t.tagName === 'BUTTON')) t = t.parentNode;
             if (!t || t === root || t.disabled) return;
             if (t.id === 'prism_skc_usewin') useWindow();
-            else if (t.id === 'prism_skc_cheld') startCheld();
-            else if (t.id === 'prism_skc_cheld_cancel') { _ui.cancel = true; setStatus('Cancelling…'); }
+            else if (t.id === 'prism_skc_cheld') startCheld(root);
+            else if (t.id === 'prism_skc_cheld_cancel') { _ui.cancel = true; setStatus('Cancelling…', root); }
         });
         root.addEventListener('change', function (ev) {
             var t = ev.target;
@@ -1348,15 +1616,19 @@
         list.push(PANEL);
     })();
 
-    // Re-render on the C7 events while mounted (no polling); a running C-held job
-    // for other inputs is cancelled by renderPanel.
-    if (typeof G.addEventListener === 'function' && !G.__PRiSM_skinCheckListeners) {
+    // Re-render every mounted copy on the C7 events (no polling). Attached only when a
+    // document exists (plan §3.0); the events are dispatched on window (33, 34), so the
+    // listeners sit there. Engine steps are cached by the spec, so a fit-only event re-runs
+    // the cheap parts only. A running C-held job for other inputs is cancelled by rerender.
+    if (typeof document !== 'undefined' && typeof document.addEventListener === 'function' &&
+        typeof G.addEventListener === 'function' && !G.__PRiSM_skinCheckListeners) {
         G.__PRiSM_skinCheckListeners = true;
         ['prism:fit-updated', 'prism:period-changed', 'prism:well-changed', 'prism:dataset-loaded'].forEach(function (type) {
             G.addEventListener(type, function () {
-                if (!rootEl()) return;
+                var hosts = liveHosts();
+                if (!hosts.length) return;
                 if (type !== 'prism:fit-updated') _ui.cheld = null;
-                rerender();
+                rerender(hosts);
             });
         });
     }
@@ -1375,6 +1647,13 @@
         kv.push(['IARF window (L = 0.1 cycle)', iarfText(iw) + (iw && iw.found ? ', Δt ' + sig(iw.dt0_h) + ' to ' + sig(iw.dt1_h) + ' h' : '')]);
         if (iw && iw.longest && iw.found) kv.push(['Longest qualifying window', sig(iw.longest.dt0_h) + ' to ' + sig(iw.longest.dt1_h) + ' h']);
         kv.push(['Line through the window', lineSummary(m.line)]);
+        if (m.line && m.line.pStarRange && isNum(m.line.pStarRange.lo) && isNum(m.line.pStarRange.hi)) {
+            kv.push(['p* range (estimated history)', fmt(m.line.pStarRange.lo, 1) + ' to ' + fmt(m.line.pStarRange.hi, 1) + ' psia']);
+        }
+        if (m.history && m.history.estimated) {
+            kv.push(['Producing time', 'estimated, ' + sig(m.history.tPrepend_h) + ' h' + (isNum(m.history.dDerivPct) ? '; doubling it changes the derivative by ' +
+                     fmt(m.history.dDerivPct, 1) + ' %' + (m.history.sensitive ? ' (label capped at medium)' : '') : '')]);
+        }
         kv.push(['Line vs match', agreeText(m.agreement)]);
         kv.push(['Line vs derivative plateau (sanity check)', plateauText(m.plateau)]);
         if (m.sErr) kv.push(['Skin uncertainty S_err', '± ' + fmt(m.sErr.value, 2) + ' (largest term: ' + (DRIVER[m.sErr.driver] || String(m.sErr.driver || '—')) + ')']);
@@ -1382,7 +1661,7 @@
         kv.push(['Confidence', verdictText(m.confidence).replace(/^Confidence: /, '')]);
         if (m.products) {
             kv.push(['Δp skin', isNum(m.products.dpSkin_psi) ? fmt(m.products.dpSkin_psi, 1) + ' psi' : '—']);
-            kv.push(['Flow efficiency', isNum(m.products.FE) ? fmt(m.products.FE, 3) : '—']);
+            kv.push(['Flow efficiency', isNum(m.products.FE) ? fmt(m.products.FE, 3) + (m.pbarSource === 'pi' ? ' (from pi)' : (m.pbarSource === 'pStar' ? ' (from p*)' : '')) : '—']);
             kv.push(['PI ratio', isNum(m.products.piRatio) ? fmt(m.products.piRatio, 3) + ', ' + m.products.labels.piRatio : '—']);
         }
         if (m.mech) {
@@ -1416,8 +1695,10 @@
     SC.mechanicalSkin = mechanicalSkin;
     SC.rateSkin = rateSkin;
     SC.products = products;
-    SC.expectedD = expectedD;
+    SC.expectedDRange = expectedDRange;
     SC.RATE_DEFAULTS = RATE_DEFAULTS;
+    SC.historyCheck = historyCheck;     // tests and the integrator
+    SC.gasDpSkin = gasDpSkin;           // tests
     SC._ktCompute = ktCompute;          // table-consistency test only
     SC._papatzacos = papatzacos;        // tests only
     SC.run = run;
@@ -1428,11 +1709,21 @@
     SC.runCheld = startCheld;
     SC.PANEL = PANEL;
     SC._ui = _ui;
-    // Tools drawer: the card is listed through its Tab-6 registration ("Step panels", with its
-    // written title). It is deliberately NOT exported as window.PRiSM_renderSkinCheckPanel: 37
-    // would auto-list that name under "More" with a machine-made title, which the existing
-    // wp16 test forbids. To list it in a catalogue group instead, add one TOOL_CATALOGUE entry
-    // in 37 and export the name here (plan §3.4 deviation, see the WP7 merge note).
+    // Tools drawer (plan §3.4, §6.11): window.PRiSM_renderSkinCheckPanel = renderPanel, exported
+    // once 37's TOOL_CATALOGUE lists that name in a group (one entry, group 'Diagnose', the
+    // card's written title). Until then the card is listed through its Tab-6 registration
+    // ("Step panels", written title) and the name is not exported: 37 auto-lists every other
+    // exported PRiSM_render*Panel under "More" with a machine-made title, which the wp16 test
+    // forbids. 37 is loaded before 54 (Round 8 FILES), so the check runs at load.
+    (function exportDrawerName() {
+        try {
+            if (typeof G.PRiSM_listTools !== 'function') return;
+            var listed = G.PRiSM_listTools().some(function (t) {
+                return t && t.fn === 'PRiSM_renderSkinCheckPanel' && t.group && t.group !== 'More';
+            });
+            if (listed) G.PRiSM_renderSkinCheckPanel = renderPanel;
+        } catch (e) { /* the drawer is optional */ }
+    })();
 })();
 
 // === SELF-TEST ===

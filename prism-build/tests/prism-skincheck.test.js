@@ -6,16 +6,27 @@
 //        routine always, so flipping the flag is one line)
 //   SK2  mechanical skin: S_total 5.5 → 12 with S_pp 4 → S_mech 1.5 → 8; S_d = S_mech·h_w/h; D·q removed
 //   SK3  deviation above 75° → validity warning, not split
-//   SK4  rateSkin guards: q ratio < 1.5 → unresolved; collinear q and t → joint fit refused; a 2× spread resolves D
-//   SK9a products: TR7 numbers, guard, bounds labelled when reSource 'rinv'
+//   SK4  rateSkin guards: q ratio < 1.5 → unresolved; collinear q and t → joint fit refused (and the plain fit too
+//        unless the caller states a stable skin, opts.stable); a 2× spread resolves D; expectedD is a number (the
+//        correlation's central D) with expectedDRange {D, lo, hi}; the window is the ≤ maxDays span with the most tests
+//   SK9a products: TR7 numbers, guard, bounds labelled by the sign of S when reSource 'rinv'; a Δp_skin input (gas)
 //   SK0  54 in Round 8 and the app; no Math.random or timers in 54; Tab-6 panel and report entry registered
 //   SK0b Tools drawer lists the card once with its written title (no machine-named "More" entry) and opens it
+//   SK0c [integration] with the TOOL_CATALOGUE entry the lead adds in 37: PRiSM_renderSkinCheckPanel is exported,
+//        listed once under Diagnose, and wp16's "no More entries" rule still holds
 //   SK5  the card renders on Tab 6 after a fit with no localStorage change, no events and no timers on render;
 //        hidden in decline mode and without a fit or straight line; the BuildupSpec / EvidenceVector it builds pass checkShape
-//   SK5b a drawdown from pi is passed as a build-up after a very long producing time, labelled indicative, no p*
+//   SK5b a drawdown and an injection from pi are passed as a build-up after a very long producing time, labelled
+//        indicative, no p*, pwf for FE = the last sample (lowest / highest); a build-up with neither rate history nor tp:
+//        history estimated (D13 default prepend), p* not shown (the engine's range is), FE from pi, analytic history
+//        sensitivity → EvidenceVector.historySensitive (KC1)
+//   SK5d gas build-up with pseudo-time: spec.dt = real Δt (adata.tReal), the window goes back to t_a for "Use this
+//        window" (disabled when it cannot be converted), Δp skin through the m(p) table
 //   SK6  the PRiSM report contains the "Skin check" section (order 45)
 //   SK7  "Use this window" stores the semilog window (user action, the C7 event allowed)
-//   SK8  the C-held button runs through PRiSM_autoInterp.drive, can be cancelled (button or unmount), leaves no timers
+//   SK8  the C-held button runs through PRiSM_autoInterp.drive, can be cancelled (button or unmount), leaves no timers;
+//        two mounted copies (hidden Tab-6 body + drawer) never cross-update; errors in prepare / fitJob (setup) and in a
+//        job step are caught and reported on the card that was clicked
 //   SK9  rate status n/a (no KC4 cap), the numeric reach is shown, PI ratio labelled lower bound; completion inputs saved
 //        on change and the mechanical skin re-split
 //
@@ -23,7 +34,8 @@
 // STUBS: SK0b and SK5–SK9 need WP1's PRiSM_autoInterp pieces (§3.1: prepare, storage, iarf, line, reach, triggers,
 // agreement, sErr, sensitivity, confidence, fitJob, cHeldJob, drive). While 53 has only the WP0 skeleton, engine() installs
 // explicit stubs built from the WP0 fixtures (FIX.result); once WP1 is merged the real engine is used and the assertions
-// that depend on stub values are skipped (they are guarded by eng.stubbed).
+// that depend on stub values are skipped (they are guarded by eng.stubbed). SK5b and SK5d also stub pStarRange and
+// iarf with chosen values when stubbed (eng.stubbed only).
 'use strict';
 
 const fs = require('fs');
@@ -156,6 +168,26 @@ function engine(app) {
   });
   return { stubbed: true, calls };
 }
+// A build-up record with no rate column and no tp (Δt from 0.001 to 72 h; true tp 240 h, pwf0 not entered).
+function buildupOnly(app) {
+  const pd = (td) => app.win.PRiSM_MODELS.homogeneous.pd(td, { Cd: TRUTH.Cd, S: TRUTH.S });
+  const t = logspace(-3, Math.log10(72), 140);
+  return { t, p: t.map((dt) => TRUTH.pi - TRUTH.q * A1 * (pd(BT * (TP + dt)) - pd(BT * dt))) };
+}
+// A 100 h water injection at 1000 bbl/d from pi = 4200 psia (pressure rises above pi).
+const INJ = { q: 1000, B: 1.02, mu: 0.5, ct: 6e-6 };
+function injectionData(app) {
+  const pd = (td) => app.win.PRiSM_MODELS.homogeneous.pd(td, { Cd: TRUTH.Cd, S: TRUTH.S });
+  const a = 141.2 * INJ.B * INJ.mu / (TRUTH.k * TRUTH.h);
+  const bt = 0.0002637 * TRUTH.k / (TRUTH.phi * INJ.mu * INJ.ct * TRUTH.rw * TRUTH.rw);
+  const t = logspace(-3, 2, 120);
+  return { t, p: t.map((tt) => TRUTH.pi + INJ.q * a * pd(bt * tt)), q: t.map(() => -INJ.q) };
+}
+// A gas build-up after 240 h at 5000 Mscf/d (shape only; the card's conversions are what is tested).
+function gasBuildup() {
+  const t = logspace(-3, Math.log10(72), 120);
+  return { t, p: t.map((dt) => 3000 + 600 * (1 - Math.exp(-dt)) + 20 * Math.log(1 + dt)) };
+}
 function storageSnapshot(app) {
   const o = app.storage.__snapshot();
   const keys = Object.keys(o).sort();
@@ -174,9 +206,193 @@ function mountHost(app) {
   return host;
 }
 
+// 37 with the one TOOL_CATALOGUE entry the lead adds at merge (§6.11 review: 'Diagnose', the written title).
+// null when 37 already lists the name (then SK0c runs on the sources as they are).
+const SKC_TITLE = 'Skin check: IARF window, line vs match, uncertainty, confidence';
+function with37Entry() {
+  const src = fs.readFileSync(path.join(__dirname, '..', '37-prism-workflow.js'), 'utf8');
+  if (/'PRiSM_renderSkinCheckPanel'/.test(src)) return null;
+  const anchor = "        { id: 'pltinv',";
+  if (src.indexOf(anchor) === -1) throw new Error('37-prism-workflow.js: TOOL_CATALOGUE anchor not found');
+  const entry = "        { id: 'skincheck',   fn: 'PRiSM_renderSkinCheckPanel',      group: 'Diagnose', title: '" + SKC_TITLE +
+                "', sub: 'Automatic IARF window, skin uncertainty and confidence' },\n";
+  return src.replace(anchor, entry + anchor);
+}
+const SK0C_OPTS = (() => { const s = with37Entry(); return s ? { sourceOverrides: { '37-prism-workflow.js': s } } : {}; })();
+
 // KT vectors (plan §9 WP7 SK1): rw 0.406 ft, lp 8 in, rp 0.25 in, kh/kv 3, 2 spf.
 const KT_BASE = { rw_ft: 0.406, lp_in: 8, rp_in: 0.25, spf: 2, kvkh: 1 / 3 };
 const KT_VECTORS = [[180, 2.19], [0, 3.09], [90, 2.03], [60, 2.29]];
+
+// SK5b, part 2: a water injection from pi (C2 testType 'injection', Δp from pi; the pressure rises above pi).
+function sk5bInjection(app, assert) {
+  const w = app.win;
+  app.openPRiSM();
+  w.PRiSM_setWell(app.toWin({ pi: TRUTH.pi, testType: 'injection', q: INJ.q, Bw: INJ.B, mu_w: INJ.mu, Bo: INJ.B, mu_o: INJ.mu, ct: INJ.ct,
+                              h: TRUTH.h, phi: TRUTH.phi, rw: TRUTH.rw, fluidType: 'water' }), app.toWin({ source: 'user' }));
+  w.PRiSM_dataset = app.toWin(injectionData(app));
+  w.PRiSM_state.model = 'homogeneous';
+  w.PRiSM_setLastFit(app.toWin(MATCH));
+  app.flushUntilIdle(10000);
+  const ad = w.PRiSM_getAnalysisData();
+  assert.strictEqual(ad.testType, 'injection');
+  assert.strictEqual(ad.dRef, 'pi');
+  const m = w.PRiSM_skinCheck.run();
+  assert.strictEqual(m.ok, true, m.reason);
+  assert.strictEqual(m.indicative, true);
+  const P = Array.from(ad.p), pLast = P[P.length - 1], pFirst = P[0];
+  assert(pLast > pFirst + 100, 'the pressure rises during the injection');
+  const pr = m.products;
+  assert.near(pr.drawdown_psi, pLast - TRUTH.pi, 1e-9, 'pwf = the last sample (the highest), not the lowest');
+  assert(pr.drawdown_psi > 3 * (pFirst - TRUTH.pi), 'not the first (lowest) sample');
+  assert.near(pr.FE, (pr.drawdown_psi - pr.dpSkin_psi) / pr.drawdown_psi, 1e-12);
+  assert(pr.FE > 0 && pr.FE < 1, 'FE ' + pr.FE);
+  assert.strictEqual(m.pbarSource, 'pi');
+}
+// SK5b, part 3: a build-up with neither a rate history nor tp (the review's major: history estimated, no p*,
+// FE from pi, history sensitivity → KC1). eng = the engine() result of the caller (stubs are installed once).
+function sk5bNoTp(app, assert, eng) {
+  const w = app.win;
+  app.openPRiSM();
+  w.PRiSM_setWell(app.toWin({ pi: TRUTH.pi, testType: 'buildup', q: TRUTH.q, Bo: TRUTH.B, mu_o: TRUTH.mu, ct: TRUTH.ct, h: TRUTH.h,
+                              phi: TRUTH.phi, rw: TRUTH.rw, fluidType: 'oil' }), app.toWin({ source: 'user' }));
+  w.PRiSM_dataset = app.toWin(buildupOnly(app));
+  w.PRiSM_state.model = 'homogeneous';
+  w.PRiSM_setLastFit(app.toWin(MATCH));
+  app.flushUntilIdle(10000);
+  const SC = w.PRiSM_skinCheck;
+  const ad = w.PRiSM_getAnalysisData();
+  assert.strictEqual(ad.testType, 'buildup');
+  assert.strictEqual(ad.tp, null, 'PRiSM has no tp');
+  assert.strictEqual(Array.from(ad.rateHistory || []).length, 0, 'and no rate history');
+  const sp = SC.specFromAdata(ad, w.PRiSM_getWell());
+  assert.strictEqual(sp.ok, true, sp.reason);
+  assert.strictEqual(sp.tpUnknown, true);
+  const tPre = Math.max(720, 10 * sp.dtEnd_h);
+  assert.strictEqual(sp.spec.history.estimated, true, 'history.estimated');
+  assert.strictEqual(sp.spec.history.source, 'default');
+  assert.near(sp.spec.history.tPrepend_h, tPre, 1e-9, 'D13 default: max(30 d, 10·Δt_end)');
+  assert.near(sp.spec.steps[0].t, sp.spec.tc_h - tPre, 1e-9, 'the estimated producing period');
+  assert.near(sp.spec.steps[0].q, TRUTH.q, 1e-9);
+  const S = require('./_buildup-shapes');
+  const chk = S.checkShape('BuildupSpec', sp.spec);
+  assert(chk.ok, 'BuildupSpec shape: ' + JSON.stringify(chk.errors.slice(0, 5)));
+  // The engine's p* range is shown when it gives one (stub: a fixed range).
+  if (eng.stubbed) w.PRiSM_autoInterp.pStarRange = () => app.toWin({ lo: 4185.5, hi: 4231.25, byFactor: { 0.5: 4185.5, 1: 4200, 2: 4214, 10: 4231.25 } });
+  const host = mountHost(app);
+  SC.renderPanel(host);
+  const m = SC._ui.model;
+  assert.strictEqual(m.ok, true, m.reason);
+  assert.strictEqual(m.tpUnknown, true);
+  assert(m.warnings.some((x) => x.code === 'tpUnknown'));
+  if (m.line) {
+    assert.strictEqual(m.line.pStar, null, 'no p* from an assumed history');
+    assert.includes(app.el('prism_skc_line').innerHTML, 'not shown (producing time estimated)');
+    if (eng.stubbed) {
+      assert.deepStrictEqual(plain(m.line.pStarRange), { lo: 4185.5, hi: 4231.25 });
+      assert.includes(app.el('prism_skc_line').innerHTML, 'p* range (estimated history)');
+    }
+  }
+  // FE from pi, never from p*.
+  assert.strictEqual(m.pbarSource, 'pi');
+  const pr = m.products;
+  const dd = TRUTH.pi - sp.spec.pwf0;
+  assert.near(pr.drawdown_psi, dd, 1e-9, 'p̄ = pi');
+  assert.near(pr.FE, (dd - pr.dpSkin_psi) / dd, 1e-12);
+  assert.includes(app.el('prism_skc_prod').innerHTML, '(from pi)');
+  // History sensitivity (§4.6 item 14): doubling tp changes the derivative at the window end by Δt1/(2·tp + Δt1).
+  assert(m.history && m.history.estimated === true);
+  if (m.iarf && m.iarf.found) {
+    const want = 100 * m.iarf.dt1_h / (2 * tPre + m.iarf.dt1_h);
+    assert.near(m.history.dDerivPct, want, 1e-9);
+    assert.strictEqual(m.history.sensitive, want > 2);
+    assert.strictEqual(m.evidence.historySensitive, m.history.sensitive, 'KC1 evidence');
+    if (eng.stubbed) {
+      assert.strictEqual(m.history.sensitive, true, 'window end 56 h against tp 720 h: 3.7 %');
+      assert.strictEqual(eng.calls.confidence[eng.calls.confidence.length - 1].historySensitive, true, 'passed to confidence (KC1)');
+      assert(m.notes.some((n) => /capped at medium/.test(n)));
+    }
+  }
+  const hc = SC.historyCheck({ history: { estimated: true, tPrepend_h: 720 } }, { found: true, dt1_h: 20 });
+  assert.near(hc.dDerivPct, 100 * 20 / 1460, 1e-12);
+  assert.strictEqual(hc.sensitive, false, '1.4 % is within 2 %');
+  assert.strictEqual(SC.historyCheck({ history: { estimated: false, tPrepend_h: 0 } }, { found: true, dt1_h: 20 }).dDerivPct, null);
+  // The report says so too.
+  const rs = SC.reportSection({});
+  const prod = rs.kv.find((p) => p[0] === 'Producing time');
+  assert(prod && /estimated/.test(prod[1]), 'report: producing time estimated');
+  textsOk(assert, plain(rs), 'report');
+  // Without pi there is no p̄ at all: FE is not computed (p* is never used for it).
+  const m2 = SC.run({ well: Object.assign({}, w.PRiSM_getWell(), { pi: null }) });
+  assert.strictEqual(m2.ok, true, m2.reason);
+  assert.strictEqual(m2.products.FE, null);
+  assert.strictEqual(m2.products.drawdown_psi, null);
+  assert.strictEqual(m2.pbarSource, null);
+}
+// SK8, part 2: two mounted copies (a hidden Tab-6 body and a drawer) never cross-update; C-held setup and step
+// errors are caught and reported on the card that was clicked.
+async function sk8Copies(app, assert) {
+  const w = app.win;
+  const SC = w.PRiSM_skinCheck;
+  const hidden = mountHost(app); hidden.id = 'skc_hidden';
+  const drawer = mountHost(app); drawer.id = 'skc_drawer';
+  SC.renderPanel(hidden);
+  SC.renderPanel(drawer);
+  const st = (h) => h.querySelector('#prism_skc_cheld_status').textContent;
+  const hidden0 = st(hidden);
+  const idle = async () => { for (let i = 0; i < 2000 && (app.pendingTimers() > 0 || SC._ui.running); i++) await app.flushAsync(0); };
+  // A run started from the drawer copy updates that copy only while it runs.
+  app.click(drawer.querySelector('#prism_skc_cheld'));
+  assert.strictEqual(SC._ui.running, true);
+  assert.includes(st(drawer), 'Running', 'the drawer copy shows the progress');
+  assert.strictEqual(st(hidden), hidden0, 'the hidden copy is not touched');
+  assert.strictEqual(drawer.querySelector('#prism_skc_cheld_cancel').disabled, false);
+  assert.strictEqual(hidden.querySelector('#prism_skc_cheld_cancel').disabled, true);
+  await idle();
+  assert.strictEqual(SC._ui.running, false);
+  assert.includes(st(drawer), 'finished');
+  const ch = SC._ui.model.cheld;
+  assert(ch, 'result on the model');
+  const mark = (ch.triggered || ch.refits.length) ? 'S_C (half range)' : 'not needed';
+  assert.includes(drawer.innerHTML, mark, 'the drawer copy shows the result');
+  assert.includes(hidden.innerHTML, mark, 'every live copy is re-painted from one model');
+  assert.strictEqual(app.pendingTimers(), 0);
+  // A C7 event re-renders every mounted copy.
+  const oldA = hidden.querySelector('#prism_skc_root'), oldB = drawer.querySelector('#prism_skc_root');
+  app.fire('window', 'prism:well-changed', {});
+  assert.notStrictEqual(hidden.querySelector('#prism_skc_root'), oldA, 'hidden copy re-rendered');
+  assert.notStrictEqual(drawer.querySelector('#prism_skc_root'), oldB, 'drawer copy re-rendered');
+  app.flushUntilIdle(10000);      // PRiSM's own debounced C8 save after the event (not the card's)
+  assert.strictEqual(app.pendingTimers(), 0);
+  // Errors in the setup of a run are caught and reported on the card that was clicked.
+  const AI = w.PRiSM_autoInterp;
+  const keep = { prepare: AI.prepare, fitJob: AI.fitJob, cHeldJob: AI.cHeldJob };
+  let threw = null, res;
+  const hiddenBefore = st(hidden);
+  AI.prepare = () => { throw new Error('boom'); };
+  try { res = SC.runCheld(drawer.querySelector('#prism_skc_root')); } catch (e) { threw = e; } finally { AI.prepare = keep.prepare; }
+  assert.strictEqual(threw, null, 'runCheld does not throw (prepare)');
+  assert.strictEqual(res, null);
+  assert.strictEqual(SC._ui.running, false);
+  assert.includes(st(drawer), 'C-held refits are not available: prepare failed.');
+  assert.strictEqual(st(hidden), hiddenBefore, 'the other copy is not touched');
+  if (typeof keep.fitJob === 'function') {
+    AI.fitJob = () => { throw new Error('boom'); };
+    try { res = SC.runCheld(drawer.querySelector('#prism_skc_root')); } catch (e) { threw = e; } finally { AI.fitJob = keep.fitJob; }
+    assert.strictEqual(threw, null, 'runCheld does not throw (fitJob)');
+    assert.strictEqual(res, null);
+    assert.includes(st(drawer), 'C-held refits are not available: fitJob failed.');
+  }
+  // A step that throws inside drive ends the job (no hung "running" state, no timers left).
+  AI.cHeldJob = () => { throw new Error('boom'); };
+  try {
+    SC.runCheld(drawer.querySelector('#prism_skc_root'));
+    await idle();
+  } finally { AI.cHeldJob = keep.cHeldJob; }
+  assert.strictEqual(SC._ui.running, false, 'a failing step ends the job');
+  assert.includes(st(drawer), 'C-held refits failed: cHeldJob.');
+  assert.strictEqual(app.pendingTimers(), 0);
+}
 
 module.exports = [
   {
@@ -342,10 +558,28 @@ module.exports = [
       assert.strictEqual(r2.resolved, false);
       assert.strictEqual(r2.joint, null, 'joint fit refused');
       assert(/collinear/.test(r2.reason) && Math.abs(r2.corrQT) >= 0.8, r2.reason);
+      assert(/stability was not assessed/.test(r2.reason), r2.reason);
       // Two tests are always collinear.
       const r2b = SC.rateSkin(mk([5000, 10000], [0, 10]));
       assert.strictEqual(r2b.resolved, false);
       assert(/collinear/.test(r2b.reason));
+      // Plan §4.7 T15: the collinearity gate belongs to the joint fit. When the caller has checked that the
+      // skin is stable (opts.stable), a plain (S, D) fit needs only q ratio ≥ 1.5 and D/se ≥ 2: one rate
+      // step up (q 5000/10000/10000, corr 0.87) resolves D, and the joint fit is still refused.
+      const step = mk([5000, 10000, 10000], [0, 10, 20]);
+      const r2c = SC.rateSkin(step);
+      assert.strictEqual(r2c.resolved, false, 'stability not assessed → refused');
+      assert(Math.abs(r2c.corrQT) >= 0.8 && Math.abs(r2c.corrQT) < 0.9, 'corr ' + r2c.corrQT);
+      const r2d = SC.rateSkin(step, { stable: true });
+      assert.strictEqual(r2d.resolved, true, r2d.reason);
+      assert.near(r2d.D, D, 1e-12, 'plain fit D');
+      assert.strictEqual(r2d.joint, null, 'joint fit with a time term refused when collinear');
+      assert(/collinear/.test(r2d.reason) && /stability as stated by the caller/.test(r2d.reason), r2d.reason);
+      assert.strictEqual(r2d.stable, true);
+      // Two tests with a stated stable skin: se from S_err only, D/se = 1/(0.2·√2) ≥ 2.
+      const r2e = SC.rateSkin(mk([5000, 10000], [0, 10]), { stable: true });
+      assert.strictEqual(r2e.resolved, true, r2e.reason);
+      assert.near(r2e.seD, 0.2 * Math.SQRT2 / 5000, 1e-15);
       // 3 + 3 constant-skin tests 2.0× apart (the gas demo pattern): D within 10 % and D/se ≥ 2.
       const r3 = SC.rateSkin(mk([10000, 5000, 10000, 5000, 10000, 5000], [0, 7, 14, 21, 28, 35]),
         { expected: { k: 10, h: 50, hp: 50, rw: 0.354, sg: 0.65, mu_g: 0.02 } });
@@ -357,23 +591,47 @@ module.exports = [
       assert.deepStrictEqual(plain(r3.ev), ['T15']);
       // se with S_err 0.2 at both levels: se(ΔS′) = 0.2·√(1/3 + 1/3) over Δq = 5000.
       assert.near(r3.seD, 0.2 * Math.sqrt(2 / 3) / 5000, 1e-12, 'GE5 arithmetic');
-      // Joint fit runs (≥ 4 tests, low corr); the expected D is reported with its range.
+      // Joint fit runs (≥ 4 tests, low corr); the expected D is reported as a number (plan §3.0: every
+      // output number is finite or null) with its range in expectedDRange.
       assert(r3.joint && Number.isFinite(r3.joint.D), 'joint fit present');
-      assert(r3.expectedD && r3.expectedD.lo < r3.expectedD.D && r3.expectedD.D < r3.expectedD.hi);
+      const Dcorr = 2.222e-15 * 0.65 * 10 * 50 * (2.6e10 * Math.pow(10, -1.2)) / (0.02 * 0.354 * 50 * 50);
+      assert.strictEqual(typeof r3.expectedD, 'number', 'expectedD is a number');
+      assert.near(r3.expectedD, Dcorr, Dcorr * 1e-12, 'expectedD = the correlation\'s central D');
+      assert(r3.expectedDRange && r3.expectedDRange.lo < r3.expectedD && r3.expectedD < r3.expectedDRange.hi);
+      assert.near(r3.expectedDRange.D, r3.expectedD, 0);
+      assert.near(r3.expectedDRange.lo, Dcorr / 3, Dcorr * 1e-12);
+      assert.near(r3.expectedDRange.hi, Dcorr * 3, Dcorr * 1e-12);
+      // A consumer reading "a number, else the midpoint of a range" (WP3, 49-calc-buildup-trend.js) gets D, not 1.67·D.
+      const read = (ed) => (typeof ed === 'number' && isFinite(ed)) ? ed : (ed && isFinite(ed.lo) && isFinite(ed.hi)) ? 0.5 * (ed.lo + ed.hi) : null;
+      assert.near(read(r3.expectedD), Dcorr, Dcorr * 1e-12, 'consumer reads the central D');
       assert.strictEqual(typeof r3.consistent, 'boolean');
+      assert.strictEqual(r3.consistent, r3.D >= r3.expectedDRange.lo && r3.D <= r3.expectedDRange.hi);
+      // Without the expected inputs: null, never an object with NaN.
+      assert.strictEqual(SC.rateSkin(mk([10000, 5000, 10000], [0, 7, 14])).expectedD, null);
+      assert.strictEqual(SC.rateSkin(mk([10000, 5000, 10000], [0, 7, 14])).expectedDRange, null);
       // A real skin trend alongside the rate spread: the joint fit separates it.
       const r4 = SC.rateSkin(mk([10000, 5000, 5000, 10000, 10000, 5000], [0, 7, 14, 21, 28, 35], (q, t) => S0 + 0.06 * t + D * q));
       assert.strictEqual(r4.resolved, true, r4.reason);
       assert.near(r4.D, D, 1e-9, 'D from the joint fit');
       assert.near(r4.joint.r_per30d, 0.06 * 30, 1e-6);
       assert(/trend/.test(r4.reason));
-      // Gaps > 60 days split the tests; the largest group is used.
+      // Window: the span of at most 60 days holding the most tests; a far test is left out.
       const r5 = SC.rateSkin(mk([10000, 5000, 10000, 5000, 10000, 5000, 9000], [0, 7, 14, 21, 28, 35, 200]));
       assert.strictEqual(r5.n, 6);
       assert(r5.ids.indexOf('B7') === -1);
+      // Weekly tests over 196 days are never chained into one group: the window spans ≤ 60 days
+      // (9 tests, 56 days), the latest such window on a tie.
+      const wq = [], wt = [];
+      for (let i = 0; i < 29; i++) { wq.push(i % 2 ? 5000 : 10000); wt.push(7 * i); }
+      const r6 = SC.rateSkin(mk(wq, wt));
+      assert.strictEqual(r6.n, 9, 'tests inside one 60-day window');
+      assert.deepStrictEqual(plain(r6.ids), ['B21', 'B22', 'B23', 'B24', 'B25', 'B26', 'B27', 'B28', 'B29'], 'the latest window');
+      assert.strictEqual(r6.resolved, true, r6.reason);
+      // The window limit is maxDays.
+      assert.strictEqual(SC.rateSkin(mk(wq, wt), { maxDays: 30 }).n, 5);
       // Insufficient rows.
       assert.strictEqual(SC.rateSkin([]).resolved, false);
-      [r1, r2, r2b, r3, r4, r5].forEach((r, i) => textsOk(assert, plain(r), 'rateSkin' + i));
+      [r1, r2, r2b, r2c, r2d, r2e, r3, r4, r5, r6].forEach((r, i) => textsOk(assert, plain(r), 'rateSkin' + i));
     },
   },
   {
@@ -408,12 +666,35 @@ module.exports = [
       assert.strictEqual(r.piRatioLowerBound, true);
       assert.strictEqual(r.rateAtStakeUpperBound, true);
       assert(/lower bound/.test(r.labels.piRatio) && /upper bound/.test(r.labels.rateAtStake));
+      assert.strictEqual(r.piRatioUpperBound, false);
+      assert.strictEqual(r.rateAtStakeLowerBound, false);
+      // Negative skin: X/(X + S) falls as X grows, so with X from r_inv (too small) the PI ratio is an
+      // upper bound and the rate at stake S/X a lower bound (too negative).
+      const n = SC.products(Object.assign({ S: -2 }, base, { reSource: 'rinv' }));
+      assert.strictEqual(n.piRatioLowerBound, false);
+      assert.strictEqual(n.piRatioUpperBound, true);
+      assert.strictEqual(n.rateAtStakeUpperBound, false);
+      assert.strictEqual(n.rateAtStakeLowerBound, true);
+      assert(/^upper bound/.test(n.labels.piRatio) && /^lower bound/.test(n.labels.rateAtStake), JSON.stringify(plain(n.labels)));
+      const nBig = SC.products(Object.assign({ S: -2 }, base, { reSource: 'rinv', re_ft: 4 * re }));
+      assert(nBig.piRatio < n.piRatio, 'a larger r_e lowers the PI ratio for S < 0 (so the r_inv value is an upper bound)');
+      const pBig = SC.products(Object.assign({ S: 7.4 }, base, { reSource: 'rinv', re_ft: 4 * re }));
+      assert(pBig.piRatio > r.piRatio, 'a larger r_e raises the PI ratio for S > 0 (so the r_inv value is a lower bound)');
+      // r_e given: no bound flags either way.
+      const ni = SC.products(Object.assign({ S: -2 }, base));
+      assert(!ni.piRatioLowerBound && !ni.piRatioUpperBound && !ni.rateAtStakeUpperBound && !ni.rateAtStakeLowerBound);
+      // A Δp_skin input (gas: Δm_S through the m(p) table) replaces 0.8686·m·S, and FE uses it.
+      const o = SC.products(Object.assign({ S: 7.4 }, base, { dpSkin_psi: 123 }));
+      assert.strictEqual(o.dpSkin_psi, 123);
+      assert.strictEqual(o.dpSkinSource, 'input');
+      assert.near(o.FE, (600 - 123) / 600, 1e-12);
+      assert.strictEqual(b.dpSkinSource, 'liquid');
       // Missing inputs → nulls, no NaN.
       const m = SC.products({ S: 2 });
       assert.strictEqual(m.m, null);
       assert.strictEqual(m.dpSkin_psi, null);
       assert.strictEqual(m.FE, null);
-      [a, b, g, r, m].forEach((x, i) => textsOk(assert, plain(x), 'products' + i));
+      [a, b, g, r, n, ni, o, m].forEach((x, i) => textsOk(assert, plain(x), 'products' + i));
     },
   },
   {
@@ -450,6 +731,9 @@ module.exports = [
       assert.notStrictEqual(mine[0].group, 'More', 'a written title, not an auto-named entry');
       const more = Array.from(tools.filter((t) => t.group === 'More'), (t) => t.title);
       assert.strictEqual(more.length, 0, 'no auto-named tools (wp16 rule): ' + JSON.stringify(more));
+      // The name is exported exactly when 37's catalogue lists it (SK0c covers the catalogue case).
+      const inCatalogue = w.PRiSM_listTools().some((t) => t.fn === 'PRiSM_renderSkinCheckPanel' && t.group !== 'More');
+      assert.strictEqual(typeof w.PRiSM_renderSkinCheckPanel === 'function', inCatalogue, 'export follows the catalogue');
       w.PRiSM_openTools(mine[0].id);
       assert(app.el('prism_tools_panel').querySelector('#prism_skc_root'), 'the drawer shows the card');
       w.PRiSM_closeTools();
@@ -518,7 +802,7 @@ module.exports = [
     },
   },
   {
-    name: 'SK5b drawdown from pi: passed as a build-up after a long producing time, labelled indicative, no p*',
+    name: 'SK5b drawdown and injection from pi (indicative, no p*, pwf = last sample); build-up with no rate history and no tp (history estimated, no p*, FE from pi, KC1 evidence)',
     wp: WP,
     run(app, assert) {
       const w = app.win;
@@ -537,6 +821,8 @@ module.exports = [
       assert.strictEqual(sp.spec.testType, 'buildup');
       assert.near(sp.spec.pwf0, 4200, 1e-9, 'reference = pi');
       assert(sp.spec.steps[0].t <= ad.tStart - 1e5, 'very long producing time');
+      assert.strictEqual(sp.spec.history.estimated, false, 'a modelling device, not an estimated history');
+      assert.strictEqual(sp.tpUnknown, false);
       // Δp of the mirrored record equals the drawdown Δp (pi − p), increasing.
       const j = Math.floor(ad.n / 2);
       const k = sp.spec.dt.findIndex((x) => Math.abs(x - ad.t[j]) < 1e-12);
@@ -549,8 +835,15 @@ module.exports = [
       assert.strictEqual(m.indicative, true);
       assert(m.warnings.some((x) => x.code === 'indicative'));
       if (m.line) assert.strictEqual(m.line.pStar, null, 'no p* for a drawdown');
+      // pwf for FE: the last sample of the drawdown (its lowest pressure), p̄ = pi.
+      if (m.products && Number.isFinite(m.products.drawdown_psi)) {
+        const P = Array.from(ad.p);
+        assert.near(m.products.drawdown_psi, 4200 - P[P.length - 1], 1e-9, 'drawdown to the last sample');
+      }
       assert(m.notes.indexOf('Calibrated on build-ups; indicative for drawdowns.') !== -1);
       if (eng.stubbed) assert.strictEqual(eng.calls.specs[eng.calls.specs.length - 1].testType, 'buildup');
+      sk5bInjection(app, assert);
+      sk5bNoTp(app, assert, eng);
     },
   },
   {
@@ -606,7 +899,7 @@ module.exports = [
     },
   },
   {
-    name: 'SK8 "Run C-held refits" runs through drive, can be cancelled, and leaves no timers',
+    name: 'SK8 "Run C-held refits" runs through drive, can be cancelled, leaves no timers; two mounted copies never cross-update; errors are caught',
     wp: WP,
     async run(app, assert) {
       const w = setupPRiSM(app);
@@ -646,6 +939,7 @@ module.exports = [
       for (let i = 0; i < 2000 && (app.pendingTimers() > 0 || w.PRiSM_skinCheck._ui.running); i++) await app.flushAsync(0);
       assert.strictEqual(w.PRiSM_skinCheck._ui.running, false, 'cancelled when the card is gone');
       assert.strictEqual(app.pendingTimers(), 0);
+      await sk8Copies(app, assert);
     },
   },
   {
@@ -689,6 +983,119 @@ module.exports = [
       assert(mech.parts.pp > 0, 'partial penetration split');
       assert.includes(app.el('prism_skc_mech_res').innerHTML, 'S_mech (pressure-drop basis)');
       assert.includes(app.el('prism_skc_mech_res').innerHTML, 'S_d local');
+    },
+  },
+  {
+    name: 'SK0c Tools drawer with the 37 catalogue entry: PRiSM_renderSkinCheckPanel exported, listed once under Diagnose, no "More" entry',
+    wp: WP,
+    // A merge check (54 + the lead's one-line TOOL_CATALOGUE entry in 37, built in memory): integration
+    // section, so the unit run stays inside its time budget (the override forces a second in-memory build).
+    integration: true,
+    opts: SK0C_OPTS,
+    run(app, assert) {
+      const w = setupPRiSM(app);
+      engine(app);
+      const SC = w.PRiSM_skinCheck;
+      assert.strictEqual(w.PRiSM_renderSkinCheckPanel, SC.renderPanel, 'exported once 37 lists the name (plan §3.4)');
+      const tools = w.PRiSM_listTools().filter((t) => t.available);
+      const mine = tools.filter((t) => /skin ?check/i.test(t.title + ' ' + t.id));
+      assert.strictEqual(mine.length, 1, 'listed once: ' + JSON.stringify(mine.map((t) => t.id + ' ' + t.title)));
+      assert.strictEqual(mine[0].fn, 'PRiSM_renderSkinCheckPanel');
+      assert.strictEqual(mine[0].group, 'Diagnose');
+      assert.strictEqual(mine[0].title, SKC_TITLE);
+      assert.deepStrictEqual(Array.from(tools.filter((t) => t.group === 'More'), (t) => t.title), [], 'no auto-named tools (wp16 rule)');
+      const titles = tools.map((t) => t.title.toLowerCase());
+      assert.strictEqual(new Set(titles).size, titles.length, 'no duplicate titles');
+      w.PRiSM_openTools(mine[0].id);
+      assert(app.el('prism_tools_panel').querySelector('#prism_skc_root'), 'the drawer shows the card');
+      w.PRiSM_closeTools();
+    },
+  },
+  {
+    name: 'SK5d gas build-up with pseudo-time: the engine gets real Δt, the window goes back to pseudo-time, Δp skin through m(p)',
+    wp: WP,
+    run(app, assert) {
+      const w = app.win;
+      app.openPRiSM();
+      w.PRiSM_setWell(app.toWin({ pi: 4200, testType: 'buildup', q: 5000, tp: 240, h: 35, phi: 0.18, rw: 0.354, fluidType: 'gas', T_res: 200, SG_g: 0.65 }),
+                      app.toWin({ source: 'user' }));
+      w.PRiSM_dataset = app.toWin(gasBuildup());
+      w.PRiSM_setGasOption('pseudoTime', true);
+      w.PRiSM_state.model = 'homogeneous';
+      w.PRiSM_setLastFit(app.toWin(MATCH));
+      app.flushUntilIdle(10000);
+      const eng = engine(app);
+      const SC = w.PRiSM_skinCheck;
+      const ad = w.PRiSM_getAnalysisData();
+      assert.strictEqual(ad.pseudoTime, true, 'pseudo-time on');
+      const tR = Array.from(ad.tReal), tA = Array.from(ad.t);
+      assert(tA[tA.length - 1] < tR[tR.length - 1] - 1, 't_a differs from the real Δt');
+      const sp = SC.specFromAdata(ad, w.PRiSM_getWell());
+      assert.strictEqual(sp.ok, true, sp.reason);
+      assert.strictEqual(sp.pseudoTime, true);
+      assert.deepStrictEqual(plain(sp.spec.dt), tR, 'spec.dt is the real Δt (adata.tReal), not t_a');
+      assert.deepStrictEqual(plain(sp.spec.p), Array.from(ad.p), 'pressure in psia');
+      assert.strictEqual(sp.spec.gas.pseudoTime, true, 'the engine applies pseudo-time itself');
+      assert.near(sp.spec.steps[0].t, sp.spec.tc_h - 240, 1e-9, 'steps in real hours');
+      // Pseudo-time on without the real Δt: refused rather than a silent double conversion.
+      const noReal = SC.specFromAdata(Object.assign({}, ad, { tReal: null }), w.PRiSM_getWell());
+      assert.strictEqual(noReal.ok, false);
+      assert(/pseudo-time/.test(noReal.reason), noReal.reason);
+      const S = require('./_buildup-shapes');
+      const chk = S.checkShape('BuildupSpec', sp.spec);
+      assert(chk.ok, 'BuildupSpec shape: ' + JSON.stringify(chk.errors.slice(0, 5)));
+      // The engine's window (real Δt) is converted to PRiSM's t_a for "Use this window".
+      const R = S.FIX.result;
+      const iw = (a, b) => () => app.toWin(Object.assign(JSON.parse(JSON.stringify(R.iarf)), { dt0_h: a, dt1_h: b }));
+      if (eng.stubbed) w.PRiSM_autoInterp.iarf = iw(tR[60], tR[100]);
+      const host = mountHost(app);
+      SC.renderPanel(host);
+      const m = SC._ui.model;
+      assert.strictEqual(m.ok, true, m.reason);
+      assert.strictEqual(m.pseudoTime, true);
+      assert(m.window && m.window.pseudoTime === true, 'window converted');
+      const conv = (x) => {
+        for (let i = 1; i < tR.length; i++) if (tR[i] >= x) {
+          const u = (Math.log(x) - Math.log(tR[i - 1])) / (Math.log(tR[i]) - Math.log(tR[i - 1]));
+          return Math.exp(Math.log(tA[i - 1]) + u * (Math.log(tA[i]) - Math.log(tA[i - 1])));
+        }
+        return null;
+      };
+      assert.near(m.window.t0, conv(m.iarf.dt0_h), 1e-9 * m.window.t0);
+      assert.near(m.window.t1, conv(m.iarf.dt1_h), 1e-9 * m.window.t1);
+      if (eng.stubbed) {
+        assert.near(m.window.t0, tA[60], 1e-9 * tA[60], 'a sample maps onto its own t_a');
+        assert.near(m.window.t1, tA[100], 1e-9 * tA[100]);
+      }
+      assert(m.notes.some((n) => /pseudo-time/.test(n)));
+      // The click passes the pseudo-time window to the straight-line panel.
+      const orig = w.PRiSM_semilogAnalysis;
+      let seen = null;
+      w.PRiSM_semilogAnalysis = (a, b, o) => { seen = { a, b, t0: o.window.t0, t1: o.window.t1, store: o.store }; return null; };
+      try { app.click(host.querySelector('#prism_skc_usewin')); } finally { w.PRiSM_semilogAnalysis = orig; }
+      assert(seen && seen.a === null && seen.b === null && seen.store === true, 'PRiSM_semilogAnalysis(null, null, {window, store:true})');
+      assert.near(seen.t0, m.window.t0, 0);
+      assert.near(seen.t1, m.window.t1, 0);
+      // Gas Δp_skin: Δm_S = 1422·q·T_R·S/(kh) converted with the m(p) table at pwf0.
+      if (m.final) {
+        const tbl = w.PRiSM_mpTable(ad.mpSpec);
+        const dm = 1422 * 5000 * (200 + 459.67) * m.final.S / (m.final.k * 35);
+        const want = tbl.pOf(tbl.mOf(sp.spec.pwf0) + dm) - sp.spec.pwf0;
+        assert.near(m.products.dpSkin_psi, want, 1e-6, 'Δp skin through m(p)');
+        assert.strictEqual(m.products.dpSkinSource, 'input');
+        assert(m.notes.some((n) => /m\(p\) table/.test(n)));
+      }
+      // No m(p) table → no gas Δp skin (and the card hides Δp skin and FE).
+      assert.strictEqual(SC.gasDpSkin({}, { h: 35 }, 45, 2.5, 5000, 3000), null);
+      // A window that cannot be converted: the button is disabled, with a note.
+      if (eng.stubbed) {
+        w.PRiSM_autoInterp.iarf = iw(100, 500);
+        SC.renderPanel(host);
+        assert.strictEqual(SC._ui.model.window, null);
+        assert(host.querySelector('#prism_skc_usewin').disabled, 'button disabled');
+        assert(SC._ui.model.notes.some((n) => /could not be converted/.test(n)));
+      }
+      assert(!BAD_TEXT.test(host.textContent), 'no null/NaN text');
     },
   },
 ];
