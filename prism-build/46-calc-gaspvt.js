@@ -36,6 +36,8 @@
 //   WTS_gaspvt_k(sg, tF, co2, h2s, n2)            ideal-gas Cp/Cv
 //   WTS_gaspvt_viscosity(sg, tF, Z, p, yco2, yh2s, yn2)  LGE + Standing impurity correction
 //   (compute() also returns kReal, cpReal, cvReal: real-gas values from the DAK departure functions)
+//   WTS_gaspvt_state(sg, p, tF, yco2, yh2s, yn2)  light state at one point: z, rho, k, kReal, cpReal,
+//                               c (speed of sound) and the Joule–Thomson coefficient muJT (°F/psi)
 //
 // STATE
 //   WTS_state.gaspvt = {ok, z, zDAK, zHY, Tpc, Ppc, Bg_ft3scf, rho, mu, cg, c, k, ts}
@@ -185,9 +187,9 @@
     //   (∂p/∂ρ)_T = Z·R·T / (M·[1 − (Ppr/Z)(∂Z/∂Ppr)])
     //   c = √(k·g_c·(∂p/∂ρ)_T),   k = Cp/Cv (real gas)
     // Derivatives by central differences (h = 1e-3·Tpr, 1e-4·Ppr), integral by
-    // composite Simpson on 120 panels. At low pressure k → Cp°/Cv° and
-    // c → √(k°·R·T/M).
-    function realGas(L, Tpr, Ppr, cpIdeal) {
+    // composite Simpson on 120 panels (nPanels, even, when given: state() uses fewer at low Ppr).
+    // At low pressure k → Cp°/Cv° and c → √(k°·R·T/M).
+    function realGas(L, Tpr, Ppr, cpIdeal, nPanels) {
         var Zf = function (t, q) { return L.Z_dranchukAbouKassem(t, q); };
         var ht = 1e-3 * Tpr;
         function g(q) {                                // integrand 2T·Z_T + T²·Z_TT at Ppr = q, divided by q
@@ -195,12 +197,17 @@
             var zt = (zp - zm) / (2 * ht), ztt = (zp - 2 * z0 + zm) / (ht * ht);
             return (2 * Tpr * zt + Tpr * Tpr * ztt) / q;
         }
-        var N = 120, hq = Ppr / N, s = 0;
-        for (var j = 0; j <= N; j++) {
-            var q = j === 0 ? 1e-6 * Ppr : j * hq;          // integrand is finite at 0 (second virial)
-            var w = (j === 0 || j === N) ? 1 : (j % 2 ? 4 : 2);
-            s += w * g(q);
+        // The integrand is finite at Ppr → 0 (second virial) but cannot be evaluated there: the Z
+        // differences vanish into round-off (at q = 1e-6·Ppr it read ±400 against ≈ −0.7, a ±1 % Cp
+        // scatter at 30 psia with 120 panels). The end value is extrapolated linearly from the first two
+        // nodes instead.
+        var N = nPanels || 120, hq = Ppr / N, s = 0, g1 = 0, g2 = 0;
+        for (var j = 1; j <= N; j++) {
+            var gj = g(j * hq);
+            if (j === 1) g1 = gj; else if (j === 2) g2 = gj;
+            s += ((j === N) ? 1 : (j % 2 ? 4 : 2)) * gj;
         }
+        s += 2 * g1 - g2;
         var cpRes = -R_J * s * hq / 3;
         var Z = Zf(Tpr, Ppr);
         var zT = (Zf(Tpr + ht, Ppr) - Zf(Tpr - ht, Ppr)) / (2 * ht);
@@ -338,7 +345,36 @@
         };
     }
 
+    // Thermodynamic state at one (p psia, T °F) without the Z table or the validation of compute()
+    // (used by the flowline page for the gas PCV and the flare line). Real-gas Cp, k and speed of sound
+    // as compute(), plus the Joule–Thomson coefficient of the isenthalpic expansion
+    //   μJT = (∂T/∂p)_h = [T(∂v/∂T)p − v]/Cp = R·T²·(∂Z/∂T)p / (p·Cp)
+    // (Smith, Van Ness & Abbott, 7th ed., §6.1; v = ZRT/p), with (∂Z/∂T)p = (∂Z/∂Tpr)/Tpc from the DAK
+    // departure derivatives of realGas() and the real-gas Cp. Field units: μJT in °F/psi (Cp J/mol·K
+    // ÷ 4.1868 → Btu/lb-mol·°R, × 5.40395 psia·ft³/Btu). Mole fractions. Null without the PVT library,
+    // for p ≤ 0 or below the pseudo-critical temperature (Tpr < 1).
+    function state(sg, p, tF, yco2, yh2s, yn2) {
+        var L = _lib();
+        if (!L || !(p > 0) || !_fin(tF)) return null;
+        var pc = pseudoCriticals(sg, yco2 || 0, yh2s || 0, yn2 || 0);
+        if (!pc || !(pc.sgHc >= 0.55)) return null;
+        var TR = tF + RANKINE, Tpr = TR / pc.Tpc, Ppr = p / pc.Ppc;
+        if (!(Tpr >= 1)) return null;
+        var hc = heatCapacity(pc.sgHc, tF, yco2 || 0, yh2s || 0, yn2 || 0);
+        // Simpson panels: 16 up to Ppr 1, then 16 per unit of Ppr (≤ 120); the integrand is smooth in Ppr
+        // (Cp, k and c within 1e-5 of the 120-panel values from Ppr 0.05 to 7.5; tests/flowline-flare
+        // compares c and k with compute()).
+        var nP = Math.min(120, 2 * Math.ceil(8 * Math.max(1, Ppr)));
+        var rg = realGas(L, Tpr, Ppr, hc.cp, nP), M = MW_AIR * sg, Z = rg.Z;
+        var c = Math.sqrt(rg.k * GC * Z * R_FT_LBF * TR / (M * rg.compFactor));
+        var muJT = R_GAS * TR * TR * (rg.dZdT / pc.Tpc) / (p * (rg.cp / 4.1868) * 5.403951);
+        if (!(_fin(c) && _fin(muJT))) return null;
+        return { p: p, t: tF, z: Z, rho: p * M / (Z * R_GAS * TR), M: M, Tpc: pc.Tpc, Ppc: pc.Ppc,
+            k: hc.k, kReal: rg.k, cp: hc.cp, cpReal: rg.cp, c: c, muJT: muJT };
+    }
+
     G.WTS_gaspvt_compute = compute;
+    G.WTS_gaspvt_state = state;
     G.WTS_gaspvt_pseudoCriticals = pseudoCriticals;
     G.WTS_gaspvt_viscosity = function (sg, tF, Z, p, yco2, yh2s, yn2) { var L = _lib(); return L ? viscosity(L, sg, tF, Z, p, yco2, yh2s, yn2) : null; };
     G.WTS_gaspvt_standingDelta = standingDelta;
