@@ -1,4 +1,4 @@
-// prism-build/tests/buildup-engine-b.test.js — WP1 automatic interpretation engine, EN12–EN22
+// prism-build/tests/buildup-engine-b.test.js — WP1 automatic interpretation engine, EN12–EN23
 // (docs/BUILDUP-SURVEILLANCE-PLAN.md §9 WP1). One fresh app per test.
 // The synthetic generator is the same as in buildup-engine-a.test.js (registry kernels on a fine table,
 // full rate history), copied so each file stands alone.
@@ -94,8 +94,9 @@ module.exports = [
       assert.ok(ref.sErr.sWin <= 0.15, 'S_win ' + ref.sErr.sWin);
       assert.equal(ref.line.shifts.length, 1, 'only the earlier shift fits before the last full-window bin');
       assert.ok(ref.line.shifts[0].dX < 0);
-      assert.near(ref.sErr.sWin, Math.abs(ref.line.shifts[0].S - ref.line.S), 1e-9, 'one-sided S_win (raw agreement)');
-      assert.near(ref.sErr.dLineMatch, Math.abs(ref.line.S - ref.models[0].phys.S), 1e-9);
+      // the result is stored at 6 significant figures (STORE_SF; ≤ 5e-6 S at S ≈ 5): differences of stored values agree to 2e-5
+      assert.near(ref.sErr.sWin, Math.abs(ref.line.shifts[0].S - ref.line.S), 2e-5, 'one-sided S_win (raw agreement)');
+      assert.near(ref.sErr.dLineMatch, Math.abs(ref.line.S - ref.models[0].phys.S), 2e-5);
       // kh = 100,000 md·ft, m = 162.6·800·1.2/1e5 = 1.56 psi/cycle, pwf0SE 0.5 psi → 0.37
       const hk = run(app, synth(app.win, { k: 2000, S: 0, C: 0.002, q: 800, dtEnd: 200, steps: [{ t: 0, q: 800 }, { t: 2000, q: 0 }], pwf0SE: 0.5 }).spec);
       assert.near(hk.final.m, 1.561, 0.002);
@@ -318,16 +319,22 @@ module.exports = [
       shapeOk(assert, 'KHeld', AI.clean(k0));
       assert.equal(k0.window, null, 'no anomaly: the k-held fit uses every fit point'); assert.equal(k0.humpAfterFitStart, false);
       assert.ok(k0.converged); assert.near(k0.fit.phys.S, 5, 0.05, 'S with k at the truth'); assert.equal(k0.fit.phys.k, 45);
-      const k1 = runJob(AI.kHeldJob(prep, app.toWin({ k: 45 * 1.05, delta: 0.05 })));
+      const j1 = AI.kHeldJob(prep, app.toWin({ k: 45 * 1.05, delta: 0.05 }));
+      const k1 = runJob(j1), k1raw = j1.raw();
+      // the result is JSON data at the stored precision: no internal fit fields, k and delta echoed as given
+      assert.ok(!JSON.stringify(k1).includes('"_'), 'no internal (_) fields in the k-held result');
+      assert.equal(k1.k, 45 * 1.05); assert.equal(k1.delta, 0.05); assert.equal(k1.fit.phys.k, 45 * 1.05, 'held k as given');
+      assert.ok(JSON.stringify(k1).length < 1500, 'k-held result ' + JSON.stringify(k1).length + ' characters (8.5 k with the fit internals)');
       const dS = Math.abs(k1.fit.phys.S - 5);
       assert.within(dS, 0.5, 0.6, '|ΔS| for a 5 % k offset');
       assert.ok(Math.abs(k1.S_k / k1.S_kAnalytic - 1) <= 0.2, 'S_k ' + k1.S_k + ' vs analytic ' + k1.S_kAnalytic);
       // the k-held fit's se is inflated once by √(n/n_eff) and carries ci95 (the value S_err uses, §3.1)
       assert.ok(k1.n > 0 && k1.nEff > 0 && k1.nEff <= k1.n, 'n and n_eff reported (' + k1.n + ', ' + k1.nEff + ')');
-      const seRaw = Math.abs(k1.fit._fr.stderr.S);
-      assert.rel(k1.fit.se.S, seRaw * Math.sqrt(k1.n / k1.nEff), 1e-9, 'se.S inflated by √(n/n_eff)');
+      const seRaw = Math.abs(k1raw.fit._fr.stderr.S);
+      assert.rel(k1raw.fit.se.S, seRaw * Math.sqrt(k1raw.n / k1raw.nEff), 1e-9, 'se.S inflated by √(n/n_eff)');
+      assert.rel(k1.fit.se.S, k1raw.fit.se.S, 5e-6, 'stored at 6 significant figures');
       assert.ok(k1.fit.ci95.S && k1.fit.ci95.S.length === 2, 'ci95.S set');
-      assert.near(k1.fit.ci95.S[1] - k1.fit.ci95.S[0], 2 * 1.96 * k1.fit.se.S, 1e-9, 'ci95.S = S ± 1.96·se');
+      assert.near(k1raw.fit.ci95.S[1] - k1raw.fit.ci95.S[0], 2 * 1.96 * k1raw.fit.se.S, 1e-9, 'ci95.S = S ± 1.96·se');
       assert.equal(k1.fit.ci95.k, null, 'k frozen: no ci95.k');
       const se = AI.sErr(app.toWin({ mode: 'kHeld', floor: 0.2, seS: k1.fit.se.S || 0, sK: k1.S_k, sTc: 0, sPwf: 0 }));
       assert.ok(se.value >= dS, 'S_err ' + se.value + ' ≥ |ΔS| ' + dS);
@@ -504,7 +511,8 @@ module.exports = [
       assert.rel(r.reach.t5_h, 13.23, 0.05, 't5 % ' + r.reach.t5_h.toFixed(2) + ' h');
       assert.rel(r.reach.fair_h, 52.7, 0.05, 'reach.fair ' + r.reach.fair_h.toFixed(1) + ' h');
       assert.rel(r.reach.good_h, 166.6, 0.05, 'reach.good ' + r.reach.good_h.toFixed(1) + ' h');
-      assert.rel(r.reach.fair_h, Math.pow(10, 0.6) * r.reach.t5_h, 1e-9); assert.rel(r.reach.good_h, Math.pow(10, 1.1) * r.reach.t5_h, 1e-9);
+      // stored at 6 significant figures: two roundings of at most 5e-6 (relative) each
+      assert.rel(r.reach.fair_h, Math.pow(10, 0.6) * r.reach.t5_h, 1e-5); assert.rel(r.reach.good_h, Math.pow(10, 1.1) * r.reach.t5_h, 1e-5);
       assert.ok(r.reach.t10_h < r.reach.t5_h);
       assert.ok(r.reach.reachable && r.reach.fairShut_h > r.reach.fair_h, 'shut-in hours from Δt_e');
       // 24 h: no IARF, no rival, too short
@@ -530,6 +538,36 @@ module.exports = [
       assert.ok(rg.lo <= rt.final.pStar && rt.final.pStar <= rg.hi, 'range [' + rg.lo + ', ' + rg.hi + '] brackets the true p* ' + rt.final.pStar);
       assert.near(re.final.S, rt.final.S, 0.1, 'S cancels to first order');
       assert.equal(re.history.estimated, true); assert.ok(Number.isFinite(re.history.dDerivPct));
+    },
+  },
+  {
+    name: 'EN23 stored form: every non-integer number at 6 significant figures, no internal fields; labels re-derive from the stored evidence and the sensitivity rows from the stored final; the stored copy of the reference result is under 11 kB (16 kB at full precision)',
+    wp: 'WP1',
+    run(app, assert) {
+      const AI = AIof(app);
+      assert.equal(AI.STORE_SF, 6);
+      const { spec } = synth(app.win, Object.assign({ dtEnd: 72 }, REF));
+      const r = run(app, spec);
+      shapeOk(assert, 'BuildupResult', r);
+      const txt = JSON.stringify(r);
+      assert.ok(!txt.includes('"_'), 'no internal (_) fields');
+      // every number is an integer or at 6 significant figures (the precision of canon 'inputs' and of the stored spec)
+      const bad = [];
+      (function walk(v, p) {
+        if (typeof v === 'number') { if (Math.floor(v) !== v && v !== +v.toPrecision(6)) bad.push(p + '=' + v); }
+        else if (Array.isArray(v)) v.forEach((x, i) => walk(x, p + '[' + i + ']'));
+        else if (v && typeof v === 'object') Object.keys(v).forEach((k) => walk(v[k], p + '.' + k));
+      })(r, 'r');
+      assert.deepEqual(bad.slice(0, 5), [], 'numbers beyond 6 significant figures');
+      // the stored labels and the sensitivity block re-derive exactly from what is stored
+      assert.deepEqual(JSON.parse(JSON.stringify(AI.confidence(app.toWin(r.evidence)))), r.confidence, 'confidence(result.evidence) = result.confidence');
+      assert.deepEqual(JSON.parse(JSON.stringify(AI.storedSensitivity(app.toWin(r.final), app.toWin(spec.well)))), r.sensitivity, 'storedSensitivity(final, well) = result.sensitivity');
+      // the stored copy (the store drops curves, bins.X and bins.dte, §3.1)
+      const st = JSON.parse(txt); delete st.curves; delete st.bins.X; delete st.bins.dte;
+      const n = JSON.stringify(st).length;
+      assert.ok(n < 11000, 'stored copy ' + n + ' characters');
+      // a re-run gives the same stored result (determinism survives the rounding)
+      assert.equal(JSON.stringify(run(app, spec)), txt, 'identical re-run');
     },
   },
 ];
