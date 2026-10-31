@@ -73,6 +73,7 @@
 //   hooks.silent (restore applies saved values without events, hooks.after runs one calc).
 //   WTS_cheminj.ranges (validation ranges), WTS_cheminj.pageCalcs() (calc counter for tests).
 //   Publishes window.WTS_state.cheminj {ok, ts, lines[], total_gal_d, hydrate, h2s, result}.
+//   ⓘ background pop-ups: window.WTS_cheminjInfo (prism-build/49-calc-cheminj-info.js).
 //   Unit categories added when absent: chemRate, chemRateHr, doseGasVol, volPerStroke,
 //   massRateDay, lbPerBbl.
 // ════════════════════════════════════════════════════════════════════
@@ -1631,6 +1632,9 @@
     //   #cj_res, the line chips, the two charts and the six Notes boxes. Restore is silent
     //   (hooks.silent): hooks.after re-syncs data-prev and the show/hide state, then runs
     //   exactly one calc. Listeners sit on #cj_root only; no timers, no resize listener.
+    //   ⓘ buttons (rp-skip, no id) and the "Background and standards" row open the
+    //   background pop-ups of WTS_cheminjInfo (49-calc-cheminj-info.js) through one click
+    //   listener on #cj_root; a pop-up never recalculates and holds no form control.
     // ════════════════════════════════════════════════════════════════
     var PG_KEY = 'cheminj';
     var PG_TITLE = 'Chemical Injection';
@@ -1739,13 +1743,21 @@
 
     // ── Markup ───────────────────────────────────────────────────────
     function _fo(v, label, sel) { return '<option value="' + _esc(v) + '"' + (sel ? ' selected' : '') + '>' + _esc(label) + '</option>'; }
-    function _fsel(id, label, opts, selAttr, wrapAttr) {
-        return '<div class="fg-item"' + (wrapAttr || '') + '><label for="' + id + '">' + _esc(label) + '</label><select id="' + id + '"' + (selAttr || '') + '>' + opts + '</select></div>';
+    // info: optional ⓘ button markup (_ib), placed beside the label, never inside it
+    function _lab(id, label, info) {
+        var l = '<label for="' + id + '">' + _esc(label) + '</label>';
+        return info ? '<div class="cj-lab">' + l + info + '</div>' : l;
     }
-    function _fnum(id, label, val, attr, wrapAttr) {
-        return '<div class="fg-item"' + (wrapAttr || '') + '><label for="' + id + '">' + _esc(label) + '</label>' +
+    function _fsel(id, label, opts, selAttr, wrapAttr, info) {
+        return '<div class="fg-item"' + (wrapAttr || '') + '>' + _lab(id, label, info) + '<select id="' + id + '"' + (selAttr || '') + '>' + opts + '</select></div>';
+    }
+    function _fnum(id, label, val, attr, wrapAttr, info) {
+        return '<div class="fg-item"' + (wrapAttr || '') + '>' + _lab(id, label, info) +
             '<input type="number" id="' + id + '" step="any" value="' + _esc(val == null ? '' : val) + '"' + (attr || '') + '></div>';
     }
+    // ⓘ background pop-up button (49-calc-cheminj-info.js); empty when that module is not loaded
+    function _info() { var I = G.WTS_cheminjInfo; return (I && typeof I.button === 'function') ? I : null; }
+    function _ib(key, aria, n, sec) { var I = _info(); return I ? I.button(key, aria, n, sec) : ''; }
     function _tog(id, text, aria) { return '<label class="cj-tog rp-skip"><input type="checkbox" id="' + id + '" aria-label="' + _esc(aria) + '"> ' + _esc(text) + '</label>'; }
     function _optsList(pairs, sel) { return pairs.map(function (p) { return _fo(p[0], p[1], String(p[0]) === String(sel)); }).join(''); }
     function _chemLabel(c) {
@@ -1794,14 +1806,17 @@
             '<div class="card-title">Injection line ' + s + '</div>' +
             '<div class="cj-chip rp-skip" id="cj_chip_' + s + '"></div>' +
             '<div class="fg">' +
-            _fsel(id('pt'), 'Injection point', L.points.map(function (p) { return _fo(p.key, p.label, p.key === d.point); }).join('')) +
-            _fsel(id('chem'), 'Chemical (grouped by purpose)', _optsChems(d.chem), ' data-prev="' + _esc(d.chem) + '"') +
+            _fsel(id('pt'), 'Injection point', L.points.map(function (p) { return _fo(p.key, p.label, p.key === d.point); }).join(''), '', '',
+                _ib('points', 'About injection point selection (line ' + s + ')', s)) +
+            _fsel(id('chem'), 'Chemical (grouped by purpose)', _optsChems(d.chem), ' data-prev="' + _esc(d.chem) + '"', '',
+                _ib('chem', 'About the selected chemical family (line ' + s + ')', s)) +
             _fsel(id('basis'), 'Dose basis', _optsBases(d.basis)) +
             _fnum(id('dose'), _doseLabel(d.basis), d.dose, ' min="0"') +
             _fnum(id('lean'), 'Lean (as-injected) strength (wt %)', d.lean, ' min="50" max="100"', ' data-k="thi"') +
             _fnum(id('sgc'), 'Product SG (water = 1)', d.sgc, ' min="0.5" max="2"') +
             _fnum(id('eff'), 'Scavenger utilisation (0–1), blank = point default', d.eff, ' min="0.01" max="1"', ' data-k="scav"') +
-            _fsel(id('pump'), 'Pump type', _optsPumps(d.pump), ' data-prev="' + _esc(d.pump) + '"') +
+            _fsel(id('pump'), 'Pump type', _optsPumps(d.pump), ' data-prev="' + _esc(d.pump) + '"', '',
+                _ib('pumps', 'About pump selection and calibration (line ' + s + ')', s)) +
             _fsel(id('plg'), 'Plunger diameter', _optsSizes(L.plungers, d.plunger), '', ' data-k="plunger"') +
             _fsel(id('stk'), 'Stroke length (maximum for an electric pump)', _optsSizes(L.strokes, d.stroke), '', ' data-k="plunger"') +
             _fsel(id('heads'), 'Heads (pneumatic: plungers on one actuator)', _optsList(heads, d.heads), '', ' data-k="plunger"') +
@@ -1857,14 +1872,15 @@
             ['cj_res', 'Results'], ['cj_charts', 'Charts'], ['cj_notes_res', 'Notes']];
         var nl = [], cl = [];
         for (var k = 1; k <= NLINES; k++) { nl.push([k, String(k)]); cl.push([k, 'Line ' + k]); }
-        return '<div id="cj_root">' + PG_CSS +
+        var I = _info();
+        return '<div id="cj_root">' + PG_CSS + (I ? I.css() : '') +
             '<nav class="cj-jump rp-skip" aria-label="Jump to a section of this page">' +
             jump.map(function (a) { return '<a href="#' + a[0] + '">' + a[1] + '</a>'; }).join('') + '</nav>' +
             '<div class="cols-2">' +
             '<div class="card" id="cj_card_stream"><div class="card-title">Well stream</div><div class="fg">' +
             _fnum('cj_qg', 'Gas rate (MMSCFD)', 10, ' min="0"') +
             _fnum('cj_sg', 'Gas gravity (air = 1)', 0.65, ' min="0.55" max="3"') +
-            _fnum('cj_h2s', 'H2S in gas (ppm mol)', 0, ' min="0"') +
+            _fnum('cj_h2s', 'H2S in gas (ppm mol)', 0, ' min="0"', '', _ib('h2s', 'About H2S scavenging')) +
             _fnum('cj_co2', 'CO2 (mol %)', 0, ' min="0" max="50"') +
             _fnum('cj_n2', 'N2 (mol %)', 0, ' min="0" max="50"') +
             _fnum('cj_qo', 'Oil / condensate rate (BPD)', 0, ' min="0"') +
@@ -1881,7 +1897,8 @@
             _fnum('cj_fwht', 'Flowing wellhead temperature (°F)', 110) +
             _fnum('cj_tamb', 'Ambient / cold-tree temperature (°F)', 60) +
             _fnum('cj_pck', 'Pressure downstream of choke (psig)', 1000, ' min="0"') +
-            _fsel('cj_jt', 'Choke outlet temperature from', _optsList([['ise', 'Real-gas isenthalpic × J-T factor'], ['rule', '7 °F per 100 psi rule (quick check)'], ['user', 'User value']], 'ise')) +
+            _fsel('cj_jt', 'Choke outlet temperature from', _optsList([['ise', 'Real-gas isenthalpic × J-T factor'], ['rule', '7 °F per 100 psi rule (quick check)'], ['user', 'User value']], 'ise'), '', '',
+                _ib('hydrate', 'About hydrate inhibition and choke cooling')) +
             _fnum('cj_tck', 'Choke outlet temperature, user (°F)', 34.6, '', ' style="display:none"') +
             _fsel('cj_htr', 'Heater on the spread', _optsList(yesno, 'yes')) +
             _fnum('cj_thtr', 'Heater outlet temperature (°F)', 90) +
@@ -1889,7 +1906,8 @@
             _fnum('cj_tsep', 'Separator temperature, blank = heater or choke outlet (°F)', '', ' placeholder="auto"') +
             _fnum('cj_psvsep', 'Separator relief-valve set pressure (psig)', 1440, ' min="0"') +
             _fsel('cj_whclass', 'Flowhead / data-header pressure class', _optsList([[2000, '2,000 psi (13.8 MPa)'], [3000, '3,000 psi (20.7 MPa)'], [5000, '5,000 psi (34.5 MPa)'], [10000, '10,000 psi (69.0 MPa)'], [15000, '15,000 psi (103.4 MPa)']], 5000)) +
-            _fsel('cj_haz', 'Chemical pumps in a classified (hazardous) area', _optsList(yesno, 'yes')) +
+            _fsel('cj_haz', 'Chemical pumps in a classified (hazardous) area', _optsList(yesno, 'yes'), '', '',
+                _ib('pumps', 'About pump selection in a hazardous area')) +
             _fsel('cj_supgas', 'Pneumatic / air-pump drive gas', _optsList([['air', 'Instrument air'], ['n2', 'Nitrogen'], ['sweet', 'Sweet fuel gas'], ['well', 'Produced well gas']], 'air')) +
             _fnum('cj_pbpv', 'Flare line downstream of the back-pressure valve, blank = 0 (psig)', '', ' min="0" placeholder="blank"') +
             '</div></div></div>' +
@@ -1919,9 +1937,10 @@
             '</div></div>' +
             '<div class="card" id="cj_card_lines"><div class="card-title">Injection lines</div><div class="fg">' +
             _fsel('cj_nlines', 'Number of injection lines', _optsList(nl, 1)) +
-            '</div><div class="cj-hint">For each line choose the injection point, the chemical and the pump. Choosing a chemical fills in its dose and product data; the point never changes by itself, and its suitability shows as a verdict.</div></div>' +
+            '</div><div class="cj-hint">For each line choose the injection point, the chemical and the pump. Choosing a chemical fills in its dose and product data; the point never changes by itself, and its suitability shows as a verdict.</div>' +
+            (I ? I.strip() : '') + '</div>' +
             lines +
-            '<div class="card" id="cj_card_cal"><div class="card-title">Field calibration check</div><div class="fg">' +
+            '<div class="card" id="cj_card_cal"><div class="card-title">Field calibration check' + _ib('pumps', 'About pump calibration', null, 'cal') + '</div><div class="fg">' +
             _fsel('cj_cal_line', 'Line tested', _optsList(cl, 1)) +
             _fnum('cj_cal_ml', 'Measured volume drawn down (mL)', '', ' min="0" placeholder="blank = no check"') +
             _fnum('cj_cal_s', 'Measured time (s)', '', ' min="0" placeholder="e.g. 60"') +
@@ -2035,6 +2054,15 @@
         } else if (P.kind === 'transfer') _setv('cj_q0_' + n, P.q0_galh);
         if (P.kind !== 'airliquid') { _setv('cj_ratio_' + n, ''); _setv('cj_vcyc_' + n, ''); }
         _setv('cj_spmmax_' + n, '');
+    }
+    // ⓘ buttons: open the background pop-up for the topic; a per-line button passes that
+    // line's point, chemical and pump. Nothing is recalculated or stored.
+    function _onInfoClick(e) {
+        var I = _info(), t = e && e.target, b = (t && t.closest) ? t.closest('[data-cj-info]') : null;
+        if (!I || !b) return;
+        var n = b.getAttribute('data-n'), opts = { section: b.getAttribute('data-sec') || null };
+        if (n) { opts.line = Number(n); opts.chem = _sv('cj_chem_' + n); opts.point = _sv('cj_pt_' + n); opts.pump = _sv('cj_pump_' + n); }
+        I.open(b.getAttribute('data-cj-info'), opts, b, _pgById('cj_root'));
     }
     function _onChange(e) {
         var t = e && e.target, id = (t && t.id) || '';
@@ -2604,7 +2632,7 @@
             for (n = 1; n <= NLINES; n++) for (k in LN_UNITS) U.tagInput('cj_' + k + '_' + n, LN_UNITS[k]);
         }
         var root = _pgById('cj_root');
-        if (root && root.addEventListener) root.addEventListener('change', _onChange);
+        if (root && root.addEventListener) { root.addEventListener('change', _onChange); root.addEventListener('click', _onInfoClick); }
         _syncUi();
         // With autosave on, the host restores the saved values silently right after this
         // render and then calls hooks.after, which runs the one calc; otherwise calc now.
