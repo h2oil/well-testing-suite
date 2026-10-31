@@ -111,7 +111,7 @@ module.exports = [
     },
   },
   {
-    name: 'EN2 bin: 20 per cycle, medians, counts; single-sample bins raw; count-weighted re-binning',
+    name: 'EN2 bin: 20 per cycle, medians, counts; single-sample bins raw; count-weighted re-binning; canonical lattice (bin of bins = bins; raw and pre-binned specs interpret alike)',
     wp: 'WP1',
     run(app, assert) {
       const AI = AIof(app);
@@ -131,6 +131,33 @@ module.exports = [
       // pre-binned input with counts: weighted median, counts add up
       const b3 = AI.bin(app.toWin([1, 1.01, 1.02]), app.toWin([10, 20, 30]), app.toWin({ perCycle: 20, counts: [1, 1, 5] }));
       assert.equal(b3.n[0], 7); assert.equal(b3.p[0], 30);
+      // canonical lattice: bin(bin(x)) == bin(x), whatever the first sample (j = floor(log10 Δt·perCycle + ε))
+      [0.001, 0.0013, 0.00271].forEach((t0) => {
+        const dr = [], pr = [];
+        for (let i = 0; t0 * Math.pow(10, i / 47) < 80; i++) { const t = t0 * Math.pow(10, i / 47); dr.push(t); pr.push(3000 + 40 * Math.log10(1 + 200 * t)); }
+        const once = AI.bin(app.toWin(dr), app.toWin(pr), app.toWin({ perCycle: 20 }));
+        const twice = AI.bin(once.dt, once.p, app.toWin({ perCycle: 20, counts: Array.from(once.n) }));
+        assert.deepEqual(Array.from(twice.dt), Array.from(once.dt), 'idempotent Δt (first sample ' + t0 + ')');
+        assert.deepEqual(Array.from(twice.p), Array.from(once.p), 'idempotent p');
+        assert.deepEqual(Array.from(twice.n), Array.from(once.n), 'idempotent counts');
+        Array.from(once.dt).forEach((t, i) => { if (i) assert.ok(Math.floor(Math.log10(t) * 20 + 1e-7) > Math.floor(Math.log10(once.dt[i - 1]) * 20 + 1e-7), 'one bin per lattice cell'); });
+      });
+      // a tie (even weight) keeps a real sample: monotone data stay on their curve, rising or falling
+      const bt = AI.bin(app.toWin([1, 1.05]), app.toWin([10, 12]), app.toWin({ perCycle: 20 }));
+      assert.deepEqual([bt.dt[0], bt.p[0], bt.n[0]], [1, 10, 2], 'rising pair');
+      const bf = AI.bin(app.toWin([1, 1.05]), app.toWin([12, 10]), app.toWin({ perCycle: 20 }));
+      assert.deepEqual([bf.dt[0], bf.p[0]], [1, 12], 'falling pair');
+      // raw samples and the same samples pre-binned at 20 per cycle (with counts) give the same interpretation
+      const { spec } = synth(app.win, Object.assign({ dtEnd: 72 }, REF));
+      const rRaw = run(app, spec);
+      const pb = AI.bin(app.toWin(spec.dt), app.toWin(spec.p), app.toWin({ perCycle: 20 }));
+      const rBin = run(app, Object.assign({}, spec, { dt: Array.from(pb.dt), p: Array.from(pb.p), n: Array.from(pb.n) }));
+      assert.equal(rBin.bins.dt.length, rRaw.bins.dt.length, 'same bins');
+      assert.equal(rBin.iarf.grade, rRaw.iarf.grade, 'same IARF grade (' + rRaw.iarf.grade + ')');
+      assert.equal(rBin.chosen.key, rRaw.chosen.key, 'same model');
+      assert.equal(rBin.confidence.ks, rRaw.confidence.ks, 'same k/S label'); assert.equal(rBin.confidence.model, rRaw.confidence.model, 'same model label');
+      assert.deepEqual(rBin.triggers.fired, rRaw.triggers.fired, 'same triggers');
+      assert.rel(rBin.final.k, rRaw.final.k, 1e-3, 'k'); assert.near(rBin.final.S, rRaw.final.S, 1e-3, 'S');
     },
   },
   {

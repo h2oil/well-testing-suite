@@ -319,19 +319,21 @@
         if (!_num(m)) return NaN;
         return _median(a.map(function (v) { return _num(v) ? Math.abs(v - m) : NaN; }));
     }
-    function _wmedian(vals, w) {
+    // Weighted median as element indices: {i, j} with i === j, or the two middle elements of a tie
+    // (i the lower value).
+    function _wmedianIdx(vals, w) {
         var idx = [];
         for (var i = 0; i < vals.length; i++) idx.push(i);
-        idx.sort(function (a, b) { return vals[a] - vals[b]; });
+        idx.sort(function (a, b) { return vals[a] - vals[b] || a - b; });
         var tot = 0;
         for (var j = 0; j < w.length; j++) tot += w[j];
         var acc = 0;
         for (var k = 0; k < idx.length; k++) {
             acc += w[idx[k]];
-            if (acc > tot / 2) return vals[idx[k]];
-            if (acc === tot / 2 && k + 1 < idx.length) return 0.5 * (vals[idx[k]] + vals[idx[k + 1]]);
+            if (acc > tot / 2) return { i: idx[k], j: idx[k] };
+            if (acc === tot / 2 && k + 1 < idx.length) return { i: idx[k], j: idx[k + 1] };
         }
-        return vals[idx[idx.length - 1]];
+        return { i: idx[idx.length - 1], j: idx[idx.length - 1] };
     }
     // Decision rounding (D27): fixed decimals through the language-defined toFixed.
     function _rdp(v, step) {
@@ -594,28 +596,36 @@
     // ─────────────────────────────────────────────────────────────────────
     // bin — medians per log bin (§4.6 item 1)
     // ─────────────────────────────────────────────────────────────────────
-    // Bins of 1/perCycle log10 cycle anchored at opts.dtMin (default: the first
-    // Δt). With opts.counts (pre-binned input) the medians are count-weighted
-    // and the counts add up. Single-sample bins keep the raw value.
+    // Bins of 1/perCycle log10 cycle on a canonical lattice, bin j = floor(log10 Δt·perCycle + ε)
+    // (anchored at 1 h, or at opts.dtMin when given), so the lattice does not depend on the
+    // first sample. Every bin median lies inside its own bin, so bin(bin(x)) == bin(x): a spec
+    // pre-binned at this resolution (with counts) gives the same bins as its raw samples. With
+    // opts.counts (pre-binned input) the medians are count-weighted and the counts add up.
+    // Single-sample bins keep the raw value.
     function bin(dt, p, opts) {
         opts = opts || {};
         var per = _pos(opts.perCycle) ? opts.perCycle : 20;
         var counts = Array.isArray(opts.counts) || (opts.counts && typeof opts.counts.length === 'number') ? opts.counts : null;
         var out = { dt: [], p: [], n: [] };
         if (!dt || !dt.length) return out;
-        var anchor = _pos(opts.dtMin) ? opts.dtMin : null;
         var i0 = 0;
         while (i0 < dt.length && !(dt[i0] > 0 && _num(p[i0]))) i0++;
         if (i0 >= dt.length) return out;
-        if (anchor === null) anchor = dt[i0];
-        var la = Math.log10(anchor);
+        var la = _pos(opts.dtMin) ? Math.log10(opts.dtMin) : 0;
         var curJ = null, bd = [], bp = [], bw = [];
         function flush() {
             if (!bd.length) return;
             var n = 0;
             for (var q = 0; q < bw.length; q++) n += bw[q];
             if (bd.length === 1) { out.dt.push(bd[0]); out.p.push(bp[0]); }
-            else { out.dt.push(_wmedian(bd, bw)); out.p.push(_wmedian(bp, bw)); }
+            else {
+                // A tie (even total weight) is broken by the lower Δt element, and p takes that same
+                // element when it is one of its two middle values (else their mean): monotone data stay
+                // on their curve whether p rises or falls.
+                var md = _wmedianIdx(bd, bw), mp = _wmedianIdx(bp, bw);
+                out.dt.push(bd[md.i]);
+                out.p.push(mp.i === mp.j ? bp[mp.i] : ((md.i === mp.i || md.i === mp.j) ? bp[md.i] : 0.5 * (bp[mp.i] + bp[mp.j])));
+            }
             out.n.push(n);
             bd = []; bp = []; bw = [];
         }
@@ -968,9 +978,11 @@
         // Tide (Q6): index and removal before the derivative
         var rTide = null, tideRemoved = false, tideFit = 'none';
         var tideMode = (spec.opts && spec.opts.tide) || 'auto';
+        // The fit set is binned from the 20-per-cycle bins (count-weighted), so raw samples and the
+        // same samples pre-binned at that resolution give identical bins and fit sets.
         function buildBins(yy) {
             var b20 = bin(dtA, yy, { perCycle: per20, counts: cnt ? nA : null });
-            var bf = bin(dtA, yy, { perCycle: per12, counts: cnt ? nA : null });
+            var bf = bin(b20.dt, b20.p, { perCycle: per12, counts: b20.n });
             return { b20: b20, bf: bf };
         }
         var BB = buildBins(yA);

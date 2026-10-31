@@ -360,10 +360,10 @@ module.exports = [
       const fU = W.PRiSM_fitPhysical('homogeneous', prep.adata, prep.well, { entry: ent, isolated: true, mode: 'physical', dataset: { t: [], p: [] }, singleStart: true, start: app.toWin(start), maxIter: 40 });
       ['k', 'S', 'C'].forEach((k) => assert.rel(fA.phys[k], fU.phys[k], 1e-9, 'sliced = unsliced: ' + k));
       assert.equal(fA.iterations, fU.iterations, 'sliced = unsliced: iterations (a pause is not an iteration)');
-      // a fit that pauses inside its trial loop and ends on lambda-max (a parameter-hash jitter of 1e-6 in pD spoils
+      // a fit that pauses inside its trial loop and ends on lambda-max (a parameter-hash jitter of 3e-6 in pD spoils
       // the forward-difference Jacobian near the optimum): the slices carry the normal equations, so the sliced
       // path equals the unsliced one in parameters, iterations and stop reason, and λ > λmax ends it in either form
-      const jit = (p) => { const x = Math.sin(12345.678 * (Math.log(p.Cd) + 7 * p.S)) * 43758.5453; return 1e-6 * (x - Math.floor(x)); };
+      const jit = (p) => { const x = Math.sin(12345.678 * (Math.log(p.Cd) + 7 * p.S)) * 43758.5453; return 3e-6 * (x - Math.floor(x)); };
       const ej = Object.assign({}, ent, { pd: (td, p) => { const v = ent.pd(td, p), j = jit(p); return typeof v === 'number' ? v + j : Array.from(v, (x) => x + j); } });
       const bj = { entry: ej, isolated: true, mode: 'physical', dataset: { t: [], p: [] }, singleStart: true, start: app.toWin(start) };
       const uJ = W.PRiSM_fitPhysical('homogeneous', prep.adata, prep.well, Object.assign({}, bj, { maxIter: 40 }));
