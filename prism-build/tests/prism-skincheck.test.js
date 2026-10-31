@@ -7,9 +7,23 @@
 //   SK2  mechanical skin: S_total 5.5 → 12 with S_pp 4 → S_mech 1.5 → 8; S_d = S_mech·h_w/h; D·q removed
 //   SK3  deviation above 75° → validity warning, not split
 //   SK4  rateSkin guards: q ratio < 1.5 → unresolved; collinear q and t → joint fit refused; a 2× spread resolves D
-//   SK9  products: TR7 numbers, guard, bounds labelled when reSource 'rinv'
+//   SK9a products: TR7 numbers, guard, bounds labelled when reSource 'rinv'
+//   SK0  54 in Round 8 and the app; no Math.random or timers in 54; Tab-6 panel and report entry registered
+//   SK0b Tools drawer lists the card once with its written title (no machine-named "More" entry) and opens it
+//   SK5  the card renders on Tab 6 after a fit with no localStorage change, no events and no timers on render;
+//        hidden in decline mode and without a fit or straight line; the BuildupSpec / EvidenceVector it builds pass checkShape
+//   SK5b a drawdown from pi is passed as a build-up after a very long producing time, labelled indicative, no p*
+//   SK6  the PRiSM report contains the "Skin check" section (order 45)
+//   SK7  "Use this window" stores the semilog window (user action, the C7 event allowed)
+//   SK8  the C-held button runs through PRiSM_autoInterp.drive, can be cancelled (button or unmount), leaves no timers
+//   SK9  rate status n/a (no KC4 cap), the numeric reach is shown, PI ratio labelled lower bound; completion inputs saved
+//        on change and the mechanical skin re-split
 //
 // The maths tests load 54-prism-skin.js on its own (self-test stripped exactly as Round 8 strips it), so they need no app.
+// STUBS: SK0b and SK5–SK9 need WP1's PRiSM_autoInterp pieces (§3.1: prepare, storage, iarf, line, reach, triggers,
+// agreement, sErr, sensitivity, confidence, fitJob, cHeldJob, drive). While 53 has only the WP0 skeleton, engine() installs
+// explicit stubs built from the WP0 fixtures (FIX.result); once WP1 is merged the real engine is used and the assertions
+// that depend on stub values are skipped (they are guarded by eng.stubbed).
 'use strict';
 
 const fs = require('fs');
@@ -43,6 +57,121 @@ function textsOk(assert, o, where) {
     else if (v && typeof v === 'object') Object.keys(v).forEach((k) => walk(v[k], p + '.' + k));
     else if (typeof v === 'number') assert(isFinite(v), where + p + ': number must be finite or null');
   })(o, '');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Card fixtures (SK5–SK9): a 240 h drawdown at 850 STB/d then a 72 h build-up from the homogeneous model
+// (k 45 md, Cd 80, S 2.5), a PRiSM homogeneous match with the true parameters, field units.
+// ─────────────────────────────────────────────────────────────────────────────
+const TRUTH = { k: 45, Cd: 80, S: 2.5, q: 850, B: 1.25, mu: 1.1, ct: 1.2e-5, h: 35, phi: 0.18, rw: 0.354, pi: 4200 };
+TRUTH.C = TRUTH.Cd * TRUTH.phi * TRUTH.ct * TRUTH.h * TRUTH.rw * TRUTH.rw / 0.8936;
+const A1 = 141.2 * TRUTH.B * TRUTH.mu / (TRUTH.k * TRUTH.h);
+const BT = 0.0002637 * TRUTH.k / (TRUTH.phi * TRUTH.mu * TRUTH.ct * TRUTH.rw * TRUTH.rw);
+const TP = 240;
+function logspace(lo, hi, n) { const o = []; for (let i = 0; i < n; i++) o.push(Math.pow(10, lo + (hi - lo) * i / (n - 1))); return o; }
+function buildupData(app) {
+  const pd = (td) => app.win.PRiSM_MODELS.homogeneous.pd(td, { Cd: TRUTH.Cd, S: TRUTH.S });
+  const tDD = logspace(-2, Math.log10(TP), 50); tDD[tDD.length - 1] = TP;
+  const dts = logspace(-3, Math.log10(72), 140);
+  const t = [], p = [], q = [];
+  // Deterministic sub-0.01 psi wobble (no Math.random): the record is not unrealistically smooth.
+  const wob = (i) => 0.004 * Math.sin(1.7 * i) * Math.cos(0.37 * i);
+  tDD.forEach((tt, i) => { t.push(tt); p.push(TRUTH.pi - TRUTH.q * A1 * pd(BT * tt) + wob(i)); q.push(TRUTH.q); });
+  dts.forEach((dt, i) => {
+    t.push(TP + dt);
+    p.push(TRUTH.pi - TRUTH.q * A1 * (pd(BT * (TP + dt)) - pd(BT * dt)) + wob(i + 50));
+    q.push(0);
+  });
+  return { t, p, q };
+}
+const MATCH = { modelKey: 'homogeneous', params: { Cd: TRUTH.Cd, S: TRUTH.S }, phys: { k: TRUTH.k, S: TRUTH.S, C: TRUTH.C },
+                ci95: { k: [44.6, 45.4], S: [2.44, 2.56], C: [TRUTH.C * 0.98, TRUTH.C * 1.02] }, r2: 0.9995, converged: true };
+function setupPRiSM(app, opts) {
+  opts = opts || {};
+  const w = app.win;
+  app.openPRiSM();
+  w.PRiSM_setWell(app.toWin({ pi: TRUTH.pi, testType: 'buildup', q: TRUTH.q, Bo: TRUTH.B, mu_o: TRUTH.mu, ct: TRUTH.ct, h: TRUTH.h,
+                              phi: TRUTH.phi, rw: TRUTH.rw, fluidType: 'oil' }), app.toWin({ source: 'user' }));
+  w.PRiSM_dataset = app.toWin(buildupData(app));
+  w.PRiSM_state = w.PRiSM_state || app.toWin({});
+  w.PRiSM_state.model = 'homogeneous';
+  if (opts.fit !== false) w.PRiSM_setLastFit(app.toWin(MATCH));
+  app.flushUntilIdle(10000);
+  return w;
+}
+
+// PRiSM_autoInterp pieces from WP1 (plan §3.1). Where they do not exist yet (this branch), explicit stubs
+// that return shape-valid objects from the WP0 fixtures (tests/_buildup-shapes.js FIX.result) are installed.
+// The stubs are installed as one set only when PRiSM_autoInterp.prepare is missing, so after WP1 merges these
+// tests run against the real engine.
+function engine(app) {
+  const W = app.win;
+  const AI = W.PRiSM_autoInterp;
+  if (typeof AI.prepare === 'function') return { stubbed: false, calls: null };
+  const S = require('./_buildup-shapes');
+  const R = S.FIX.result;
+  const cp = (o) => app.toWin(JSON.parse(JSON.stringify(o)));
+  const calls = { prepare: 0, confidence: [], sErr: [], specs: [], drive: 0 };
+  const job = (n, res) => { let i = 0, cancelled = false; return {
+    step() { if (cancelled) return { done: true, progress: 1, label: 'cancelled' }; i++; return { done: i >= n, progress: i / n, label: 'stub ' + i }; },
+    result() { return (i >= n && !cancelled) ? cp(res) : null; },
+    cancel() { cancelled = true; } }; };
+  AI.DEFAULTS = AI.DEFAULTS || cp({ agree: { kPct: 5, dS: 0.5, biasKPct: 3, biasDS: 0.3 }, sErr: { floor: 0.2, winShift: 0.25, winShiftFrac: 0.2 } });
+  AI.prepare = (spec) => {
+    calls.prepare++; calls.specs.push(JSON.parse(JSON.stringify(spec)));
+    const dt = Array.from(spec.dt);
+    return cp({ ok: true, id: spec.id, sign: spec.testType === 'falloff' ? -1 : 1, bins: { dt: dt.slice(-5), dte: dt.slice(-5) },
+                snrD: 400, rDrift: 0.001, rTide: 0.02, tideRemoved: false, warnings: [] });
+  };
+  AI.storage = () => cp(R.storage);
+  AI.iarf = () => cp(R.iarf);
+  AI.line = () => cp(R.line);
+  AI.reach = () => cp(R.reach);
+  AI.triggers = () => cp({ triggers: R.triggers, flags: R.flags });
+  AI.agreement = () => cp(R.agreement);
+  AI.sErr = (parts) => { calls.sErr.push(JSON.parse(JSON.stringify(parts))); return cp(R.sErr); };
+  AI.sensitivity = () => cp(R.sensitivity);
+  AI.confidence = (ev) => {
+    const e = JSON.parse(JSON.stringify(ev));
+    calls.confidence.push(e);
+    const c = JSON.parse(JSON.stringify(R.confidence));
+    // KC4 exactly as §5.1 states it: R3 unavailable or an equal-rate assumption; not when R3 is 'n/a'.
+    if (e.r3Status === 'unavailable' || e.equalRateAssumed) c.reasons.push({ rule: 'KC4', kind: 'cap', text: 'KC4: rate check unavailable.', ev: ['R3'] });
+    return cp(c);
+  };
+  AI.fitJob = () => job(3, R.models[0]);
+  AI.cHeldJob = () => job(4, { triggered: true, mode: 'pair', meaningful: true, ev: ['C1'], S_C: 0.2,
+    refits: [{ f: 0.8, k: 44.2, S: 4.6, C: 0.016, dBic: 3.1, rejected: false }, { f: 1.25, k: 45.9, S: 5.4, C: 0.025, dBic: 12.4, rejected: true }],
+    range: { C: [0.016, 0.02], k: [44.2, 45], S: [4.6, 5] } });
+  // The D19 driver: a terminating chain of one-shot setTimeout(0) yields, count-sliced, cancel → {code:'CANCELLED'}.
+  AI.drive = (j, o) => new W.Promise((resolve, reject) => {
+    calls.drive++;
+    const tick = () => {
+      if (o && o.shouldCancel && o.shouldCancel()) { j.cancel(); reject(app.toWin({ code: 'CANCELLED' })); return; }
+      const s = j.step();
+      if (o && o.onProgress) o.onProgress(s.progress, s.label);
+      if (s.done) resolve(j.result()); else W.setTimeout(tick, 0);
+    };
+    W.setTimeout(tick, 0);
+  });
+  return { stubbed: true, calls };
+}
+function storageSnapshot(app) {
+  const o = app.storage.__snapshot();
+  const keys = Object.keys(o).sort();
+  return JSON.stringify(keys.map((k) => [k, o[k]]));
+}
+const PRISM_EVENTS = ['prism:fit-updated', 'prism:well-changed', 'prism:dataset-loaded', 'prism:period-changed', 'prism:model-changed', 'prism:step-changed', 'prism:tab-open', 'prism:mode-changed'];
+function recordEvents(app) {
+  const log = [];
+  PRISM_EVENTS.forEach((t) => app.win.addEventListener(t, (e) => log.push({ type: t, source: e && e.detail && e.detail.source })));
+  return log;
+}
+function mountHost(app) {
+  const host = app.document.createElement('div');
+  host.id = 'skc_test_host';
+  app.document.body.appendChild(host);
+  return host;
 }
 
 // KT vectors (plan §9 WP7 SK1): rw 0.406 ft, lp 8 in, rp 0.25 in, kh/kv 3, 2 spf.
@@ -298,7 +427,268 @@ module.exports = [
       assert(!/\bset(Timeout|Interval)\s*\(/.test(src), 'no timers in 54 (the C-held refits run through PRiSM_autoInterp.drive)');
       const SC = app.win.PRiSM_skinCheck;
       assert(SC, 'PRiSM_skinCheck in the app');
-      ['perforationSkin', 'mechanicalSkin', 'rateSkin', 'products'].forEach((k) => assert.fn(SC[k], k));
+      ['perforationSkin', 'mechanicalSkin', 'rateSkin', 'products', 'run', 'renderPanel', 'reportSection'].forEach((k) => assert.fn(SC[k], k));
+      const panel = (app.win.PRiSM_tabPanels[6] || []).find((p) => p && p.id === 'prism_skincheck');
+      assert(panel, 'Tab 6 panel registered');
+      assert.strictEqual(panel.order, 8);
+      assert.strictEqual(panel.title, 'Skin check: IARF window, line vs match, uncertainty, confidence');
+      assert.strictEqual(panel.render, SC.renderPanel);
+      const rs = (app.win.PRiSM_reportSections || []).filter((f) => f && f._prismId === 'skin-check');
+      assert.strictEqual(rs.length, 1, 'one report-section entry');
+    },
+  },
+  {
+    name: 'SK0b Tools drawer: the card is listed once with its written title (no machine-named "More" entry) and opens',
+    wp: WP,
+    run(app, assert) {
+      const w = setupPRiSM(app);
+      engine(app);
+      const tools = w.PRiSM_listTools().filter((t) => t.available);
+      const mine = tools.filter((t) => /skin ?check/i.test(t.title + ' ' + t.id));
+      assert.strictEqual(mine.length, 1, 'listed once: ' + JSON.stringify(mine.map((t) => t.title)));
+      assert.strictEqual(mine[0].title, 'Skin check: IARF window, line vs match, uncertainty, confidence');
+      assert.notStrictEqual(mine[0].group, 'More', 'a written title, not an auto-named entry');
+      const more = Array.from(tools.filter((t) => t.group === 'More'), (t) => t.title);
+      assert.strictEqual(more.length, 0, 'no auto-named tools (wp16 rule): ' + JSON.stringify(more));
+      w.PRiSM_openTools(mine[0].id);
+      assert(app.el('prism_tools_panel').querySelector('#prism_skc_root'), 'the drawer shows the card');
+      w.PRiSM_closeTools();
+    },
+  },
+  {
+    name: 'SK5 the card renders on Tab 6 after a fit: no localStorage change, no events, no timers on render',
+    wp: WP,
+    run(app, assert) {
+      const w = setupPRiSM(app);
+      const eng = engine(app);
+      const SC = w.PRiSM_skinCheck;
+      // Placement: Tab 6 mounts the panel after a fit; hidden without a fit or in decline mode.
+      assert.strictEqual(SC.PANEL.when(), true, 'when() after a fit');
+      app.renderTab(6);
+      app.flushUntilIdle(10000);
+      const card = app.el('prism_panel_6_prism_skincheck');
+      assert(card, 'Tab 6 card mounted in #prism_tab_6_panels');
+      const body = app.el('prism_panel_6_prism_skincheck_body');
+      assert(body && body.querySelector('#prism_skc_root'), 'card body rendered');
+      // Render again on Tab 6 with storage, events and timers watched.
+      const before = storageSnapshot(app);
+      const log = recordEvents(app);
+      const timers0 = app.pendingTimers();
+      const m = SC.PANEL.render(body) || SC._ui.model;
+      assert.strictEqual(storageSnapshot(app), before, 'render writes no localStorage');
+      assert.strictEqual(log.length, 0, 'render fires no events: ' + JSON.stringify(log));
+      assert.strictEqual(app.pendingTimers(), timers0, 'render starts no timers');
+      const model = SC._ui.model;
+      assert.strictEqual(model.ok, true, model.reason);
+      const html = body.innerHTML;
+      ['Automatic IARF window (L = 0.1 cycle)', 'Straight line through the window', 'Line vs match', 'Line vs derivative plateau (sanity check)',
+       'Skin uncertainty S_err', 'Input sensitivity (analytic)', 'Confidence', 'Calibrated on build-ups; indicative for drawdowns.',
+       'Δp skin', 'Flow efficiency', 'PI ratio', 'Mechanical skin', 'Expected IARF reach', 'Run C-held refits',
+       'Use this window in the straight-line panel'].forEach((s) => assert.includes(html, s));
+      assert(!BAD_TEXT.test(body.textContent), 'no null/NaN/undefined text: ' + (body.textContent.match(BAD_TEXT) || [])[0]);
+      // The spec handed to the engine: build-up, PRiSM's own C2 data, measured/tabled rate with R3/R4 'n/a'.
+      if (eng.stubbed) {
+        const spec = eng.calls.specs[eng.calls.specs.length - 1];
+        assert.strictEqual(spec.testType, 'buildup');
+        assert.near(spec.tc_h, TP, 1e-9);
+        assert.near(spec.Dq, TRUTH.q, 1e-9);
+        assert.strictEqual(spec.rateQC.r3Status, 'n/a');
+        assert.strictEqual(spec.steps[spec.steps.length - 1].q, 0);
+        assert.near(spec.pwf0, w.PRiSM_getAnalysisData().pRefPressure, 1e-9);
+        const S = require('./_buildup-shapes');
+        const chk = S.checkShape('BuildupSpec', spec);
+        assert(chk.ok, 'BuildupSpec shape: ' + JSON.stringify(chk.errors.slice(0, 5)));
+        const ev = eng.calls.confidence[eng.calls.confidence.length - 1];
+        const ce = S.checkShape('EvidenceVector', ev);
+        assert(ce.ok, 'EvidenceVector shape: ' + JSON.stringify(ce.errors.slice(0, 5)));
+      }
+      // Decline mode or no fit and no straight line → hidden.
+      w.PRiSM.mode = 'decline';
+      assert.strictEqual(SC.PANEL.when(), false, 'hidden in decline mode');
+      w.PRiSM.mode = 'transient';
+      const keepFit = w.PRiSM_state.lastFit, keepSl = w.PRiSM_state.semilog;
+      w.PRiSM_state.lastFit = null; w.PRiSM_state.semilog = null;
+      assert.strictEqual(SC.PANEL.when(), false, 'hidden without a fit or a straight line');
+      w.PRiSM_state.lastFit = keepFit; w.PRiSM_state.semilog = keepSl;
+      // Without well inputs the card says what is missing (still no writes).
+      const m2 = SC.run({ well: app.toWin({ q: 850, B: 1.25, mu: 1.1, ct: 1.2e-5, h: null, phi: 0.18, rw: 0.354 }) });
+      assert.strictEqual(m2.ok, false);
+      assert.includes(m2.reason, 'h');
+      assert.strictEqual(storageSnapshot(app), before);
+    },
+  },
+  {
+    name: 'SK5b drawdown from pi: passed as a build-up after a long producing time, labelled indicative, no p*',
+    wp: WP,
+    run(app, assert) {
+      const w = app.win;
+      app.openPRiSM();
+      app.seedSample();
+      w.PRiSM_setWell(app.toWin(w.PRiSM_DEFAULT_SAMPLE_META), app.toWin({ source: 'sample' }));
+      w.PRiSM_state.model = 'homogeneous';
+      w.PRiSM_setLastFit(app.toWin(MATCH));
+      app.flushUntilIdle(10000);
+      const eng = engine(app);
+      const ad = w.PRiSM_getAnalysisData();
+      assert.strictEqual(ad.testType, 'drawdown');
+      const sp = w.PRiSM_skinCheck.specFromAdata(ad, w.PRiSM_getWell());
+      assert.strictEqual(sp.ok, true, sp.reason);
+      assert.strictEqual(sp.indicative, true);
+      assert.strictEqual(sp.spec.testType, 'buildup');
+      assert.near(sp.spec.pwf0, 4200, 1e-9, 'reference = pi');
+      assert(sp.spec.steps[0].t <= ad.tStart - 1e5, 'very long producing time');
+      // Δp of the mirrored record equals the drawdown Δp (pi − p), increasing.
+      const j = Math.floor(ad.n / 2);
+      const k = sp.spec.dt.findIndex((x) => Math.abs(x - ad.t[j]) < 1e-12);
+      assert.near(sp.spec.p[k] - sp.spec.pwf0, ad.dp[j], 1e-6);
+      const S = require('./_buildup-shapes');
+      const chk = S.checkShape('BuildupSpec', sp.spec);
+      assert(chk.ok, 'BuildupSpec shape: ' + JSON.stringify(chk.errors.slice(0, 5)));
+      const m = w.PRiSM_skinCheck.run();
+      assert.strictEqual(m.ok, true, m.reason);
+      assert.strictEqual(m.indicative, true);
+      assert(m.warnings.some((x) => x.code === 'indicative'));
+      if (m.line) assert.strictEqual(m.line.pStar, null, 'no p* for a drawdown');
+      assert(m.notes.indexOf('Calibrated on build-ups; indicative for drawdowns.') !== -1);
+      if (eng.stubbed) assert.strictEqual(eng.calls.specs[eng.calls.specs.length - 1].testType, 'buildup');
+    },
+  },
+  {
+    name: 'SK6 the PRiSM report contains the "Skin check" section (order 45, plain text)',
+    wp: WP,
+    run(app, assert) {
+      const w = setupPRiSM(app);
+      engine(app);
+      const sec = w.PRiSM_skinCheck.reportSection({});
+      assert(sec, 'section produced');
+      assert.strictEqual(sec.id, 'skincheck');
+      assert.strictEqual(sec.title, 'Skin check');
+      assert.strictEqual(sec.order, 45);
+      const labels = sec.kv.map((p) => p[0]);
+      ['IARF window (L = 0.1 cycle)', 'Line vs match', 'Line vs derivative plateau (sanity check)', 'Skin uncertainty S_err', 'Confidence',
+       'Δp skin', 'PI ratio', 'Mechanical skin', 'Expected IARF reach'].forEach((l) => assert(labels.indexOf(l) !== -1, 'kv ' + l));
+      assert(sec.notes.some((n) => /indicative for drawdowns/.test(n)));
+      textsOk(assert, plain(sec), 'section');
+      sec.kv.forEach((p) => assert(p[1].length < 300));
+      // Through 36-report: the model's extra sections and the PDF HTML.
+      const m = w.PRiSM_reportData();
+      const x = m.extra.find((s) => s.id === 'skincheck');
+      assert(x && x.title === 'Skin check', 'in PRiSM_reportData().extra');
+      const html = w.PRiSM_buildReportHTML({ model: m });
+      assert.includes(html, 'Skin check');
+      assert.includes(html, 'Line vs match');
+      // No fit and no straight line → no section.
+      w.PRiSM_state.lastFit = null; w.PRiSM_state.semilog = null;
+      assert.strictEqual(w.PRiSM_skinCheck.reportSection({}), null);
+    },
+  },
+  {
+    name: 'SK7 "Use this window" stores the semilog window (a user action)',
+    wp: WP,
+    run(app, assert) {
+      const w = setupPRiSM(app);
+      engine(app);
+      const host = mountHost(app);
+      w.PRiSM_skinCheck.renderPanel(host);
+      const iw = w.PRiSM_skinCheck._ui.model.iarf;
+      assert(iw && iw.found, 'an IARF window on the reference build-up');
+      const log = recordEvents(app);
+      app.click('prism_skc_usewin');
+      app.flushUntilIdle(5000);
+      const sl = w.PRiSM_state.semilog;
+      assert(sl && sl.ok, 'semilog stored: ' + (sl && sl.reason));
+      assert(sl.opts && sl.opts.window, 'a manual window, not the automatic one');
+      assert(sl.window.t0 >= iw.dt0_h - 1e-9 && sl.window.t1 <= iw.dt1_h + 1e-9, 'window inside the IARF window');
+      assert(sl.window.t1 / sl.window.t0 > Math.pow(10, 0.8 * (Math.log10(iw.dt1_h / iw.dt0_h))), 'window spans the IARF window');
+      assert(log.some((e) => e.type === 'prism:fit-updated' && e.source === 'semilog'), 'the C7 event of the user action');
+      // The card re-rendered on the event and is still mounted.
+      assert(app.el('prism_skc_root'), 'card still mounted');
+    },
+  },
+  {
+    name: 'SK8 "Run C-held refits" runs through drive, can be cancelled, and leaves no timers',
+    wp: WP,
+    async run(app, assert) {
+      const w = setupPRiSM(app);
+      const eng = engine(app);
+      const host = mountHost(app);
+      w.PRiSM_skinCheck.renderPanel(host);
+      assert.strictEqual(w.PRiSM_skinCheck._ui.model.cheldAvailable, true);
+      const before = storageSnapshot(app);
+      app.click('prism_skc_cheld');
+      assert.strictEqual(w.PRiSM_skinCheck._ui.running, true, 'running');
+      if (eng.stubbed) assert(app.pendingTimers() > 0, 'yields through setTimeout(0) (drive)');
+      for (let i = 0; i < 2000 && (app.pendingTimers() > 0 || w.PRiSM_skinCheck._ui.running); i++) await app.flushAsync(0);
+      assert.strictEqual(w.PRiSM_skinCheck._ui.running, false, 'finished');
+      assert.strictEqual(app.pendingTimers(), 0, 'no timers left');
+      const ch = w.PRiSM_skinCheck._ui.model.cheld;
+      assert(ch && ch.range && Array.isArray(ch.refits), 'C-held result on the card');
+      // Refits when triggered (missed unit slope); otherwise the card says they are not needed.
+      assert.includes(app.el('prism_skc_root').innerHTML, (ch.triggered || ch.refits.length) ? 'S_C (half range)' : 'not needed');
+      assert.includes(app.el('prism_skc_cheld_status').textContent, 'finished');
+      if (eng.stubbed) {
+        assert(eng.calls.drive >= 1, 'through PRiSM_autoInterp.drive');
+        const parts = eng.calls.sErr[eng.calls.sErr.length - 1];
+        assert.near(parts.sC, 0.2, 1e-12, 'S_C feeds S_err (ext)');
+      }
+      assert.strictEqual(storageSnapshot(app), before, 'C-held writes no storage');
+      // Cancel.
+      app.click('prism_skc_cheld');
+      assert.strictEqual(w.PRiSM_skinCheck._ui.running, true);
+      app.click('prism_skc_cheld_cancel');
+      for (let i = 0; i < 2000 && (app.pendingTimers() > 0 || w.PRiSM_skinCheck._ui.running); i++) await app.flushAsync(0);
+      assert.strictEqual(w.PRiSM_skinCheck._ui.running, false);
+      assert.strictEqual(app.pendingTimers(), 0, 'no timers after cancel');
+      assert.includes(app.el('prism_skc_cheld_status').textContent, 'Cancelled');
+      // Unmounting cancels a running job too.
+      app.click('prism_skc_cheld');
+      host.innerHTML = '';
+      for (let i = 0; i < 2000 && (app.pendingTimers() > 0 || w.PRiSM_skinCheck._ui.running); i++) await app.flushAsync(0);
+      assert.strictEqual(w.PRiSM_skinCheck._ui.running, false, 'cancelled when the card is gone');
+      assert.strictEqual(app.pendingTimers(), 0);
+    },
+  },
+  {
+    name: 'SK9 rate status n/a (no KC4 cap), numeric reach shown, PI ratio labelled lower bound (r_e from r_inv)',
+    wp: WP,
+    run(app, assert) {
+      const w = setupPRiSM(app);
+      const eng = engine(app);
+      const host = mountHost(app);
+      w.PRiSM_skinCheck.renderPanel(host);
+      const m = w.PRiSM_skinCheck._ui.model;
+      assert.strictEqual(m.rate.status, 'n/a');
+      assert.strictEqual(m.evidence.r3Status, 'n/a');
+      assert.strictEqual(m.evidence.r4Status, 'n/a');
+      assert(m.evidence.rateSource === 'measured' || m.evidence.rateSource === 'table');
+      assert.strictEqual(m.evidence.equalRateAssumed, false);
+      assert(!(m.confidence.reasons || []).some((r) => r.rule === 'KC4'), 'no KC4 cap');
+      // The reach is the numeric one from PRiSM_autoInterp.reach (not the Appendix A.1 correlation).
+      assert(m.reach && Number.isFinite(m.reach.fair_h));
+      const html = app.el('prism_skc_reach').innerHTML;
+      assert.includes(html, String(+m.reach.fair_h.toPrecision(3)) + ' h');
+      if (eng.stubbed) {
+        const R = require('./_buildup-shapes').FIX.result;
+        assert.near(m.reach.fair_h, R.reach.fair_h, 1e-9, 'shown reach = PRiSM_autoInterp.reach');
+      }
+      // Products with r_e from r_inv: labelled lower / upper bound.
+      assert.strictEqual(m.products.reSource, 'rinv');
+      assert.strictEqual(m.products.piRatioLowerBound, true);
+      assert.strictEqual(m.products.rateAtStakeUpperBound, true);
+      assert.includes(app.el('prism_skc_prod').innerHTML, 'lower bound');
+      // Completion inputs: saved on change (user action), mechanical skin re-split, perforation inputs hidden while unverified.
+      assert.strictEqual(app.el('prism_skc_perf_on'), null, 'perforation inputs hidden while the table is unverified');
+      app.check('prism_skc_cmp_on', true);
+      app.change('prism_skc_hp', '15');
+      app.flushUntilIdle(2000);
+      const saved = JSON.parse(app.storage.getItem('wts_prism_skincheck'));
+      assert.strictEqual(saved.completion.on, true);
+      assert.strictEqual(saved.completion.hp_ft, 15);
+      const mech = w.PRiSM_skinCheck._ui.model.mech;
+      assert.strictEqual(mech.available, true);
+      assert(mech.parts.pp > 0, 'partial penetration split');
+      assert.includes(app.el('prism_skc_mech_res').innerHTML, 'S_mech (pressure-drop basis)');
+      assert.includes(app.el('prism_skc_mech_res').innerHTML, 'S_d local');
     },
   },
 ];

@@ -13,6 +13,28 @@
 //   rateSkin(rows, opts) guarded rate-dependent skin S′ = S + D·q (M§A19)
 //   products(i)          Δp_skin, m, X, PI ratio, FE, DR (T7, T8, M§A27)
 //
+// SKIN-CHECK CARD (plan §6.11):
+//   run(opts)            SkinCheck card model for PRiSM's current analysis. Pure:
+//                        reads C1/C2/C4 (PRiSM_getWell, PRiSM_getAnalysisData,
+//                        PRiSM_getLastFit) and calls the PRiSM_autoInterp pieces
+//                        (prepare, storage, iarf, line, reach, triggers,
+//                        agreement, sErr, sensitivity, confidence). No fit runs.
+//   renderPanel(el)      the card (Tab 6 panel 'prism_skincheck', order 8; the
+//                        Tools drawer lists it from that registration under
+//                        "Step panels" with its written title). Render writes no
+//                        state and fires no event.
+//   reportSection(model) the PRiSM report section {id:'skincheck', order 45}.
+//   User actions only: "Use this window in the straight-line panel"
+//   (PRiSM_semilogAnalysis(null, null, {window, store:true})), "Run C-held
+//   refits" (a homogeneous fit seeded from the match, then cHeldJob, both
+//   through PRiSM_autoInterp.drive — the only timers, owned by 53), and the
+//   completion inputs (saved in wts_prism_skincheck, a per-well key).
+//   PRiSM's rate is entered or tabled, so the rate checks are 'n/a' (no KC4).
+//   Drawdowns and injection periods from pi are passed to the build-up engine
+//   as a build-up after a very long producing time (Δt_e = Δt, the drawdown Δp
+//   mirrored about pi): the labels are calibrated on build-ups and are
+//   indicative there, as the card says. p* is not shown for them.
+//
 // -----------------------------------------------------------------------------
 // KARAKAS–TARIQ COEFFICIENT TABLE — VERIFICATION RECORD (plan §11 Q7)
 //   Status: UNVERIFIED (KT.verified = false). perforationSkin() returns
@@ -65,9 +87,12 @@
 //     scatter widely, so the expected range is ×1/3 … ×3.
 //
 // UNITS — field units: ft, in (perforation length and radius), md, cp,
-//   RB/STB (or RB/Mscf), STB/d | Mscf/d | bbl/d, psia, psi/cycle, days.
+//   RB/STB (or RB/Mscf), STB/d | Mscf/d | bbl/d, psia, psi/cycle, days, hours.
+//   PRiSM is field-unit only, so the card shows field units in Metric mode too.
 // Every output number is finite or null; text never says null/undefined/NaN.
-// Load rules: no document, no timers, no other PRiSM symbol needed at load.
+// Load rules: no document, no timers, no other PRiSM symbol needed at load;
+// listeners are attached only behind a typeof guard and every handler first
+// checks that the card is mounted (#prism_skc_root).
 // The namespace object is merged, never replaced.
 // =============================================================================
 
@@ -546,6 +571,843 @@
     }
 
     // =========================================================================
+    // SECTION 6 — SKIN-CHECK MODEL: run(opts)  (pure)
+    // =========================================================================
+    var ENGINE_KEYS = { homogeneous: 'homogeneous', linearBoundary: 'linearBoundary', closedCircle: 'closedCircle', radialComposite: 'composite2', composite2: 'composite2' };
+    var REQ_RANGES = Object.freeze({ h: 0.2, phi: 0.2, ct: 0.2, rw: 0.2, B: 0.2, mu: 0.2, q: 0.1 });
+    var TYP_RANGES = Object.freeze({ h: 0.2, phi: 0.1, ct: 0.3, rw: 0.05, B: 0.05, mu: 0.2, q: 0.1 });
+    var DISTRACTORS = { valley: 1, halfLate: 1, earlyQuarter: 1, earlyHalf: 1, fracHalf: 1 };
+    var HUMPS = { humpDp: 1, steepStorage: 1 };
+    var TP_LONG_H = 1e6;     // drawdown / injection → build-up after a very long producing time
+    var CHELD_NOTE = 'Calibrated on build-ups; indicative for drawdowns.';
+
+    function AIns() { var a = G.PRiSM_autoInterp; return (a && typeof a === 'object') ? a : null; }
+    function engineReady(a) {
+        return !!(a && ['prepare', 'iarf', 'line'].every(function (k) { return typeof a[k] === 'function'; }));
+    }
+    function call(name, fn) {
+        try { return { v: fn(), err: null }; }
+        catch (e) {
+            if (typeof console !== 'undefined' && console.warn) console.warn('[PRiSM skin check] ' + name + ' failed:', e);
+            return { v: null, err: name };
+        }
+    }
+    function median(a) {
+        var b = a.filter(isNum).sort(function (x, y) { return x - y; });
+        if (!b.length) return null;
+        var m = b.length >> 1;
+        return b.length % 2 ? b[m] : 0.5 * (b[m - 1] + b[m]);
+    }
+    function toArr(v) { return (v && typeof v.length === 'number') ? Array.prototype.slice.call(v) : []; }
+    // Robust gauge noise from second differences (white noise: var(d2) = 6σ²), late half.
+    function noiseOf(p) {
+        var n = p.length;
+        if (n < 8) return 0.01;
+        var d2 = [];
+        for (var i = Math.max(1, n >> 1); i < n - 1; i++) d2.push(p[i + 1] - 2 * p[i] + p[i - 1]);
+        var md = median(d2);
+        var mad = median(d2.map(function (x) { return Math.abs(x - md); }));
+        var s = 1.4826 * (mad || 0) / Math.sqrt(6);
+        return Math.max(isNum(s) ? s : 0, 1e-4);
+    }
+    function linSlope(x, y) {
+        var n = x.length;
+        if (n < 3) return null;
+        var mx = 0, my = 0, i;
+        for (i = 0; i < n; i++) { mx += x[i]; my += y[i]; }
+        mx /= n; my /= n;
+        var sxx = 0, sxy = 0;
+        for (i = 0; i < n; i++) { sxx += sq(x[i] - mx); sxy += (x[i] - mx) * (y[i] - my); }
+        return sxx > 0 ? sxy / sxx : null;
+    }
+    function fluidOf(well, adata) {
+        var f = (adata && adata.fluid) || (well && well.fluid) || 'oil';
+        if (f === 'gas') return 'gas';
+        if ((adata && (adata.testType === 'falloff' || adata.testType === 'injection')) || f === 'water') return 'water_inj';
+        return 'oil';
+    }
+    function qUnitOf(fluid) { return fluid === 'gas' ? 'Mscf/d' : (fluid === 'water_inj' ? 'bbl/d' : 'STB/d'); }
+
+    // BuildupSpec (plan §3.1) from PRiSM's C2 analysis data and C1 well.
+    function specFromAdata(adata, well) {
+        var tt = adata.testType;
+        var shut = tt === 'buildup' || tt === 'falloff';
+        var fromPi = adata.dRef === 'pi' || adata.pRefSource === 'pi';
+        var steps0 = toArr(adata.rateHistory);
+        var nIdx = isNum(adata.stepIndex) ? adata.stepIndex : steps0.length - 1;
+        if (!shut && nIdx > 0) return { ok: false, reason: 'The automatic checks need a build-up, a fall-off or the first flow period from pi; this is a later flow period.' };
+        var T = toArr(adata.t), P = toArr(adata.p);
+        var pRef = num(adata.pRefPressure);
+        if (pRef == null) pRef = num(adata.pRef);
+        if (!pos(pRef)) return { ok: false, reason: 'The reference pressure of the analysed period is unknown.' };
+        var fluid = fluidOf(well, adata);
+        if (!shut && fluid === 'gas') return { ok: false, reason: 'For gas wells the automatic checks need a build-up or a fall-off period.' };
+        var dt = [], p = [], last = -Infinity;
+        for (var i = 0; i < T.length; i++) {
+            if (!(T[i] > last) || !isNum(P[i])) continue;
+            last = T[i];
+            dt.push(T[i]);
+            p.push(shut || tt === 'injection' ? P[i] : 2 * pRef - P[i]);   // drawdown: Δp mirrored about pi
+        }
+        if (dt.length < 10) return { ok: false, reason: 'Fewer than 10 samples in the analysed period.' };
+        var Dq = num(adata.qRef);
+        if (!pos(Dq)) Dq = pos(well.q) ? well.q : null;
+        if (!pos(Dq)) return { ok: false, reason: 'The rate before the analysed period is unknown: enter q in Well & Test.' };
+        var tc = num(adata.tStart);
+        if (tc == null) tc = 0;
+        var steps, tpUnknown = false;
+        if (shut && steps0.length >= 2) {
+            steps = steps0.map(function (s) { return { t: s.t, q: Math.abs(s.q) }; });
+            steps[steps.length - 1] = { t: tc, q: 0 };
+        } else {
+            steps = [{ t: tc - TP_LONG_H, q: Dq }, { t: tc, q: 0 }];
+            tpUnknown = shut;
+        }
+        var sigma = noiseOf(p);
+        var dts = [];
+        for (var j = 1; j < dt.length; j++) dts.push(dt[j] - dt[j - 1]);
+        // Flowing-trend slope at the closing (buildups with flowing samples in the dataset).
+        var dpdt = 0, ds = G.PRiSM_dataset;
+        if (shut && ds && ds.t && ds.p) {
+            var DT = toArr(ds.t), DP = toArr(ds.p), fx = [], fy = [];
+            for (var k = DT.length - 1; k >= 0 && fx.length < 12; k--) {
+                if (DT[k] <= tc + 1e-12 && DT[k] >= tc - 2 && isNum(DP[k])) { fx.unshift(DT[k]); fy.unshift(DP[k]); }
+            }
+            var sl = linSlope(fx, fy);
+            if (isNum(sl)) dpdt = sl;
+        }
+        // pwf0 uncertainty: entered → 0; a data row → σ; extrapolated / first sample → a trend value.
+        var src = adata.pRefSource, pwf0SE = 0, pwfTrend = false;
+        if (shut) {
+            var entered = pos(well.pwf0) && well.provenance && well.provenance.pwf0 && well.provenance.pwf0 !== 'default';
+            if (entered) pwf0SE = 0;
+            else if (src === 'pwf0') pwf0SE = sigma;
+            else { pwf0SE = Math.max(sigma, p.length > 1 ? 0.5 * Math.abs(p[1] - p[0]) : sigma); pwfTrend = true; }
+        }
+        var spec = {
+            id: 'PRiSM', testType: tt === 'falloff' ? 'falloff' : 'buildup',
+            tc_h: tc, dtc_h: 0, pwf0: pRef, pwf0SE: pwf0SE, dpdt_flow: dpdt,
+            dt: dt, p: p, n: null, steps: steps, qUnit: qUnitOf(fluid), Dq: Dq, fRate: 1,
+            rateQC: { source: /dataset/.test(String(adata.rateSource || '')) ? 'table' : 'measured', r3: null, r3Status: 'n/a', r4: null, r4Status: 'n/a',
+                      dqKnown: true, dqSource: 'table', equalRateAssumed: false, ignoresShutin: false, allocAccPct: 5 },
+            well: { fluid: fluid, h: well.h, phi: well.phi, mu: well.mu, B: well.B, ct: well.ct, rw: well.rw,
+                    T_R: pos(well.T_R) ? well.T_R : null, re_ft: null,
+                    defaulted: toArr(well.defaulted).filter(function (k) { return ['h', 'phi', 'mu', 'B', 'ct', 'rw'].indexOf(k) !== -1; }) },
+            gas: fluid === 'gas' ? { sg: pos(well.sg) ? well.sg : 0.65, T_F: pos(well.T_F) ? well.T_F : 200, co2: 0, h2s: 0, n2: 0,
+                                     pseudoTime: !!adata.pseudoTime, pdew: null } : null,
+            sigma_psi: sigma, sigmaFlow_psi: sigma, sigmaLF_psi: null,
+            dtSample_h: median(dts) || 0.01, driftPsiPerDay: 0.01,
+            history: { estimated: false, tPrepend_h: 0, source: 'data' },
+            overrides: { window: null, model: null, excludeRivals: [] },
+            opts: { Lcyc: 0.1, binsPerCycle: 20, fitBinsPerCycle: 12, rivals: 'none', cheld: 'off', tide: 'off' }
+        };
+        return { ok: true, spec: spec, shut: shut, indicative: !shut, tpUnknown: tpUnknown, fromPi: fromPi, pwfTrend: pwfTrend, sigma: sigma, dtEnd_h: dt[dt.length - 1] };
+    }
+
+    // PRiSM C4 fit → a ModelFit-like object for the engine (homogeneous base for
+    // the storage/IARF checks; the engine key when the model is in its set).
+    function matchFromFit(fit, engineKey) {
+        if (!fit || !fit.phys) return null;
+        var ph = fit.phys, pr = fit.params || {};
+        var k = num(ph.k), S = isNum(num(ph.S)) ? num(ph.S) : num(pr.S), C = num(ph.C);
+        if (!pos(k) || !isNum(S)) return null;
+        var ci = fit.ci95 || {};
+        function se(key) {
+            var c = ci[key];
+            return (c && isNum(c[0]) && isNum(c[1])) ? Math.abs(c[1] - c[0]) / (2 * 1.96) : null;
+        }
+        function ci95(key) { var c = ci[key]; return (c && isNum(c[0]) && isNum(c[1])) ? [c[0], c[1]] : null; }
+        var params = {};
+        Object.keys(pr).forEach(function (kk) { var v = pr[kk]; if (isNum(v) || typeof v === 'string' || typeof v === 'boolean') params[kk] = v; });
+        return {
+            key: engineKey || 'homogeneous', base: fit.modelKey || 'homogeneous', ok: true, converged: fit.converged !== false,
+            stopReason: 'prism', iterations: 0, slices: 0, nEval: 0,
+            phys: { k: k, S: S, C: pos(C) ? C : null }, params: params,
+            se: { k: se('k'), S: se('S'), C: se('C') }, ci95: { k: ci95('k'), S: ci95('S'), C: ci95('C') },
+            corr: { CS: null, kS: null }, ssrLog: null, nDp: 0, rmseDp: null, bic: null, p: 3, eligible: true, why: [],
+            fullySeen: { status: 'n/a', value: null, bound: null, text: 'Not assessed for a PRiSM match.' }
+        };
+    }
+
+    // S_win from the shifted lines (bias-corrected in "bias explained" mode), plan §4.6 item 15.
+    function sWinOf(line, agreement) {
+        var sh = (line && Array.isArray(line.shifts)) ? line.shifts : [];
+        var bias = !!(agreement && agreement.mode === 'bias');
+        function c(S, bS) { return (bias && isNum(bS)) ? S - bS : S; }
+        var S0 = line ? c(line.S, agreement ? agreement.biasDS : null) : null;
+        if (sh.length >= 2 && isNum(sh[0].S) && isNum(sh[1].S)) return Math.abs(c(sh[0].S, sh[0].bS) - c(sh[1].S, sh[1].bS)) / 2;
+        if (sh.length === 1 && isNum(sh[0].S) && isNum(S0)) return Math.abs(c(sh[0].S, sh[0].bS) - S0);
+        return 0;
+    }
+    function rinvOf(AI, k, dt, well) {
+        if (AI && typeof AI.rinv === 'function') { try { var r = AI.rinv(k, dt, well); if (isNum(r)) return r; } catch (e) { /* formula */ } }
+        if (!pos(k) || !pos(dt) || !pos(well.phi) || !pos(well.mu) || !pos(well.ct)) return null;
+        return 0.0325 * Math.sqrt(k * dt / (well.phi * well.mu * well.ct));
+    }
+    function sigOf(adata, fit, well) {
+        var w = well || {};
+        return [adata && adata.hash, adata && adata.periodIndex, adata && adata.testType, adata && adata.n,
+                fit && fit.modelKey, fit && fit.timestamp, fit && fit.phys && fit.phys.k, fit && fit.phys && fit.phys.S,
+                w.q, w.B, w.mu, w.ct, w.h, w.phi, w.rw, w.pwf0].join('|');
+    }
+
+    // Completion inputs (card; wts_prism_skincheck).
+    var LS_KEY = 'wts_prism_skincheck';
+    var COMP_DEFAULT = { on: false, hp_ft: null, htop_ft: 0, theta_deg: 0, kvlo: 0.1, kvhi: 1,
+                         perf: { on: false, spf: 4, lp_in: 12, rp_in: 0.2, phase_deg: 90 } };
+    function normComp(o) {
+        var c = JSON.parse(JSON.stringify(COMP_DEFAULT));
+        if (!o || typeof o !== 'object') return c;
+        c.on = !!o.on;
+        ['hp_ft', 'htop_ft', 'theta_deg', 'kvlo', 'kvhi'].forEach(function (k) { var v = num(o[k]); if (v != null) c[k] = v; });
+        if (o.perf && typeof o.perf === 'object') {
+            c.perf.on = !!o.perf.on;
+            ['spf', 'lp_in', 'rp_in', 'phase_deg'].forEach(function (k) { var v = num(o.perf[k]); if (v != null) c.perf[k] = v; });
+        }
+        return c;
+    }
+    function loadComp() {
+        try {
+            var ls = G.localStorage;
+            var raw = ls ? ls.getItem(LS_KEY) : null;
+            return normComp(raw ? JSON.parse(raw).completion : null);
+        } catch (e) { return normComp(null); }
+    }
+    function saveComp(c) {
+        var txt = JSON.stringify({ v: 1, completion: normComp(c) });
+        try {
+            if (typeof G.WTS_lsSet === 'function') { G.WTS_lsSet(LS_KEY, txt); return; }
+            if (G.localStorage) G.localStorage.setItem(LS_KEY, txt);
+        } catch (e) { /* storage optional */ }
+    }
+    function completionFor(c, h) {
+        c = normComp(c);
+        if (!c.on) return null;
+        return { hp_ft: pos(c.hp_ft) ? c.hp_ft : h, htop_ft: isNum(c.htop_ft) ? c.htop_ft : 0, theta_deg: isNum(c.theta_deg) ? c.theta_deg : 0,
+                 kvkh: [c.kvlo, c.kvhi],
+                 perf: c.perf.on ? { spf: c.perf.spf, lp_in: c.perf.lp_in, rp_in: c.perf.rp_in, phase_deg: c.perf.phase_deg } : null };
+    }
+
+    // run(opts {adata?, fit?, well?, completion?, cheld?}) → SkinCheck card model.
+    function run(opts) {
+        opts = opts || {};
+        var AI = AIns();
+        var m = {
+            ok: false, reason: '', version: SC.version, engine: engineReady(AI), indicative: false, testType: null,
+            sig: '', fitKey: null, engineKey: null, matchAvailable: false,
+            well: null, iarf: null, line: null, plateau: null, storage: null, reach: null, triggers: null, flags: [],
+            agreement: null, final: null, sErr: null, sensitivity: null, confidence: null, evidence: null,
+            products: null, mech: null, completion: null, cheld: null, cheldAvailable: false,
+            rate: { status: 'n/a', source: 'measured', text: 'Entered or tabled rate: rate checks do not apply.' },
+            calibrated: false, notes: [], warnings: [], errors: []
+        };
+        var adata = opts.adata, well = opts.well, fit = opts.fit;
+        try {
+            if (!adata && typeof G.PRiSM_getAnalysisData === 'function') adata = G.PRiSM_getAnalysisData();
+            if (!well && typeof G.PRiSM_getWell === 'function') well = G.PRiSM_getWell();
+            if (fit === undefined && typeof G.PRiSM_getLastFit === 'function') fit = G.PRiSM_getLastFit();
+        } catch (e) { m.reason = 'PRiSM inputs could not be read.'; return m; }
+        well = well || {};
+        if (fit && fit.kind === 'rate') fit = null;
+        m.sig = sigOf(adata, fit, well);
+        m.completion = normComp(opts.completion !== undefined ? opts.completion : loadComp());
+        m.well = { q: fin(well.q), B: fin(well.B), mu: fin(well.mu), ct: fin(well.ct), h: fin(well.h), phi: fin(well.phi), rw: fin(well.rw), fluid: well.fluid || 'oil' };
+        m.notes.push(CHELD_NOTE);
+        if (!adata || !adata.ok) { m.reason = (adata && adata.reason) || 'No analysis data.'; return m; }
+        m.testType = adata.testType;
+        var missing = ['q', 'B', 'mu', 'ct', 'h', 'phi', 'rw'].filter(function (k) { return !pos(well[k]); });
+        if (missing.length) { m.reason = 'Well inputs missing: ' + missing.join(', ') + '. Enter them in Well & Test.'; return m; }
+        if (fit) {
+            m.fitKey = fit.modelKey || null;
+            m.engineKey = ENGINE_KEYS[m.fitKey] || null;
+        }
+        if (!m.engine) { m.reason = 'The automatic interpretation engine is not loaded in this build.'; return m; }
+        var sp = specFromAdata(adata, well);
+        if (!sp.ok) { m.reason = sp.reason; return m; }
+        m.indicative = sp.indicative;
+        var spec = sp.spec;
+        var r = call('prepare', function () { return AI.prepare(spec); });
+        var prep = r.v;
+        if (!prep || prep.ok === false) {
+            m.reason = (prep && prep.errors && prep.errors[0]) || r.err || 'The analysed period could not be prepared for the automatic checks.';
+            return m;
+        }
+        m.ok = true;
+        var match = matchFromFit(fit, 'homogeneous');
+        m.matchAvailable = !!match;
+        if (fit && !match) m.warnings.push(warning('noPhys', 'info', 'The current fit has no physical k and S: line vs match not checked.'));
+        if (fit && fit.stale) m.warnings.push(warning('stale', 'warn', 'The fit is for another dataset or model: re-run the fit.'));
+        if (sp.tpUnknown) m.warnings.push(warning('tpUnknown', 'warn', 'Producing time unknown: the checks use Δt (a very long producing time is assumed). Enter tp or the rate history in Well & Test.'));
+        if (sp.indicative) m.warnings.push(warning('indicative', 'info', 'Drawdown or injection period: checks run as for a build-up after a long producing time; indicative only, p* not shown.'));
+        if (typeof AI.storage === 'function') { r = call('storage', function () { return AI.storage(prep); }); m.storage = r.v; if (r.err) m.errors.push(r.err); }
+        r = call('iarf', function () { return AI.iarf(prep, {}); }); m.iarf = r.v; if (r.err) m.errors.push(r.err);
+        if (m.iarf && m.iarf.found) { r = call('line', function () { return AI.line(prep, m.iarf); }); m.line = r.v; if (r.err) m.errors.push(r.err); }
+        if (m.line && sp.indicative) { m.line.pStar = null; m.line.pStarRange = null; }
+        m.plateau = m.line && m.line.plateauCheck ? m.line.plateauCheck : null;
+        // Homogeneous k, S, C for the numeric reach: the match, else the line with C from storage.
+        var hom = match;
+        if (!hom && m.line) {
+            var Cs = m.storage && pos(m.storage.C_us) ? m.storage.C_us : null;
+            hom = matchFromFit({ modelKey: 'homogeneous', phys: { k: m.line.k, S: m.line.S, C: Cs } }, 'homogeneous');
+        }
+        if (hom && typeof AI.reach === 'function') { r = call('reach', function () { return AI.reach(prep, hom); }); m.reach = r.v; if (r.err) m.errors.push(r.err); }
+        if (typeof AI.triggers === 'function') {
+            r = call('triggers', function () { return AI.triggers(prep, m.iarf, m.reach); });
+            if (r.v) { m.triggers = r.v.triggers || null; m.flags = Array.isArray(r.v.flags) ? r.v.flags : []; }
+            if (r.err) m.errors.push(r.err);
+        }
+        // Line vs match (DEFAULTS.agree, D9). Engine bias check for its own model set.
+        var agreeDef = (AI.DEFAULTS && AI.DEFAULTS.agree) || { kPct: 5, dS: 0.5 };
+        if (m.line && match) {
+            if (m.engineKey && typeof AI.agreement === 'function') {
+                var em = matchFromFit(fit, m.engineKey);
+                r = call('agreement', function () { return AI.agreement(m.line, em, prep); });
+                m.agreement = r.v; if (r.err) m.errors.push(r.err);
+            }
+            if (!m.agreement) {
+                var dk = (m.line.k / match.phys.k - 1) * 100, dS = m.line.S - match.phys.S;
+                var ok = Math.abs(dk) <= agreeDef.kPct && Math.abs(dS) <= agreeDef.dS;
+                m.agreement = { agree: ok, mode: ok ? 'raw' : 'none', dkPct: dk, dS: dS, biasKPct: null, biasDS: null, ev: ['A1'] };
+                if (!m.engineKey) m.notes.push('The bias check of the line runs for homogeneous, sealing-fault, composite and closed-circle matches; this match is compared raw.');
+            }
+        }
+        // Final k, S: the match when line and match agree, else the line, else the match.
+        var agreeOK = !!(m.agreement && m.agreement.agree);
+        if (match && (agreeOK || !m.line)) m.final = { k: match.phys.k, S: match.phys.S, C: match.phys.C, source: m.line ? 'match' : 'model' };
+        else if (m.line) m.final = { k: m.line.k, S: m.line.S, C: match ? match.phys.C : (m.storage ? fin(m.storage.C_us) : null), source: 'line' };
+        if (m.final) { m.final.kh = m.final.k * well.h; m.final.m = 162.6 * spec.Dq * well.B * well.mu / m.final.kh; }
+        // Sensitivity (analytic, plan §4.6 item 16).
+        if (m.final && typeof AI.sensitivity === 'function') {
+            r = call('sensitivity', function () { return AI.sensitivity(m.final, spec.well, { req: REQ_RANGES, typ: TYP_RANGES }); });
+            m.sensitivity = r.v; if (r.err) m.errors.push(r.err);
+        }
+        // C-held result from a user run on the same inputs.
+        var ch = opts.cheld && opts.cheld.sig === m.sig ? opts.cheld.result : null;
+        m.cheld = ch || null;
+        m.cheldAvailable = typeof AI.cHeldJob === 'function' && typeof AI.drive === 'function' && !!hom;
+        // S_err (D10, plan §4.6 item 15).
+        var cal = G.PRiSM_autoInterpCal || null;
+        m.calibrated = !!(cal && cal.calibrated);
+        var floor = (cal && cal.calibrated && cal.thresholds && isNum(cal.thresholds.sErrFloor)) ? cal.thresholds.sErrFloor
+                  : ((AI.DEFAULTS && AI.DEFAULTS.sErr && isNum(AI.DEFAULTS.sErr.floor)) ? AI.DEFAULTS.sErr.floor : 0.2);
+        var mAbs = m.line && isNum(m.line.m) ? Math.abs(m.line.m) : (m.final ? m.final.m : null);
+        if (m.final && typeof AI.sErr === 'function') {
+            var parts = {
+                mode: m.line ? 'line' : 'model',
+                seS: match && isNum(match.se.S) ? match.se.S : 0,
+                sLine: m.line ? m.line.S : null, sMatch: match ? match.phys.S : (m.line ? m.line.S : null),
+                sWin: m.line ? sWinOf(m.line, m.agreement) : 0,
+                sTc: (pos(mAbs) ? 1.1513 * Math.abs(spec.dpdt_flow) * spec.dtc_h / mAbs : 0),
+                sPwf: (pos(mAbs) ? 1.1513 * spec.pwf0SE / mAbs : 0),
+                sK: 0, sC: ch && isNum(ch.S_C) ? ch.S_C : 0,
+                sSens: m.sensitivity && isNum(m.sensitivity.sSens) ? m.sensitivity.sSens : 0,
+                floor: floor
+            };
+            r = call('sErr', function () { return AI.sErr(parts); });
+            m.sErr = r.v; if (r.err) m.errors.push(r.err);
+            m.sErrParts = parts;
+            if (sp.pwfTrend) m.notes.push('pwf at shut-in is a trend value (extrapolated or first sample): S_pwf is included in S_err.');
+        }
+        // Evidence vector and labels (§5.1); PRiSM's rate → R3/R4 'n/a' (no KC4).
+        if (m.iarf && typeof AI.confidence === 'function') {
+            var iw = m.iarf;
+            var dte = prep.bins && Array.isArray(prep.bins.dte) && prep.bins.dte.length ? prep.bins.dte[prep.bins.dte.length - 1] : sp.dtEnd_h;
+            var flags = m.flags.map(function (f) { return f.code; });
+            var distractor = m.flags.some(function (f) { return DISTRACTORS[f.code] && (!iw.found || f.dt0_h <= iw.dt1_h); });
+            var humpAfter = m.flags.some(function (f) { return HUMPS[f.code] && iw.found && f.dt1_h >= iw.dt0_h; });
+            var rejBoth = !!(ch && Array.isArray(ch.refits) && ch.refits.filter(function (x) { return (x.f === 0.8 || x.f === 1.25) && x.rejected; }).length >= 2);
+            var outside = false;
+            if (cal && cal.envelope && m.final) {
+                var env = cal.envelope;
+                if (env.k && (m.final.k < env.k[0] || m.final.k > env.k[1])) outside = true;
+                if (env.S && (m.final.S < env.S[0] || m.final.S > env.S[1])) outside = true;
+                if (env.dtEnd_h && (sp.dtEnd_h < env.dtEnd_h[0] || sp.dtEnd_h > env.dtEnd_h[1])) outside = true;
+            }
+            m.evidence = {
+                grade: iw.grade, noiseWidened: !!iw.noiseWidened, span: fin(iw.cycles) || 0, pointSkinSpread: iw.pointSkin ? fin(iw.pointSkin.spread) || 0 : 0,
+                agree: agreeOK, agreeMode: m.agreement ? m.agreement.mode : 'none',
+                dkPct: m.agreement ? fin(m.agreement.dkPct) : null, dS: m.agreement ? fin(m.agreement.dS) : null,
+                sErr: m.sErr ? fin(m.sErr.value) : null, sErrMode: m.sErr ? m.sErr.mode : (m.line ? 'line' : 'model'),
+                unitSlope: !!(m.storage && m.storage.unitSlope), cheldRejectedBoth: rejBoth,
+                rateSource: spec.rateQC.source, r3: null, r3Status: 'n/a', r4: null, r4Status: 'n/a', dqKnown: true, fRate: 1,
+                equalRateAssumed: false, snrD: fin(prep.snrD), rDrift: fin(prep.rDrift), rTide: fin(prep.rTide), tideRemoved: !!prep.tideRemoved,
+                flags: flags, distractorAtOrBeforeIarf: distractor, humpAfterIarf: humpAfter,
+                dtEnd_h: sp.dtEnd_h, dteEnd_h: isNum(dte) ? dte : sp.dtEnd_h,
+                t10_h: m.reach ? fin(m.reach.t10_h) : null, t5_h: m.reach ? fin(m.reach.t5_h) : null,
+                historySensitive: false, outsideEnvelope: outside, kHeld: false, kHeldConverged: null, kHeldCorrCS: null, kHeldRmsRatio: null,
+                partialSuspect: null, windowLevelInconsistent: null,
+                chosenKey: m.engineKey || 'homogeneous', chosenFullySeen: 'n/a',
+                triggers: m.triggers && Array.isArray(m.triggers.fired) ? m.triggers.fired : [],
+                dBicChosen: null, dBicNext: null, boundaryDepends: null
+            };
+            r = call('confidence', function () { return AI.confidence(m.evidence, cal); });
+            m.confidence = r.v; if (r.err) m.errors.push(r.err);
+            if (!m.engineKey && m.confidence) m.notes.push('The model label applies to the automatic model set; for this PRiSM model read the k/S label only.');
+        }
+        // Skin products (T7, T8): r_e from r_inv at the end of the test → bounds.
+        if (m.final) {
+            var dtE = sp.dtEnd_h;
+            var re = rinvOf(AI, m.final.k, dtE, well);
+            var pbar = null, pwf = null;
+            if (sp.shut) { pbar = (m.line && isNum(m.line.pStar)) ? m.line.pStar : (pos(well.pi) ? well.pi : null); pwf = spec.pwf0; }
+            else if (pos(well.pi)) { pbar = well.pi; pwf = Math.min.apply(null, toArr(adata.p).filter(isNum)); }
+            m.products = products({ S: m.final.S, k: m.final.k, h: well.h, B: well.B, mu: well.mu, q: well.q, Dq: spec.Dq,
+                                    rw: well.rw, re_ft: re, reSource: 'rinv', pbar: pbar, pwf: pwf });
+            m.rinv_ft = fin(re);
+        }
+        // Mechanical skin (both bases) with the kv/kh range.
+        if (m.final) {
+            m.mech = mechanicalSkin({ S_total: m.final.S, Serr: m.sErr ? m.sErr.value : null, h: well.h, rw: well.rw,
+                                      completion: completionFor(m.completion, well.h), D: null, q: null });
+            if (fluidOf(well, adata) === 'gas' && m.mech.available) m.notes.push('Gas: the skin includes D·q (rate-dependent skin is not removed here).');
+        }
+        if (cal && !cal.calibrated) m.notes.push('Labels not yet calibrated: every label is capped at medium.');
+        return m;
+    }
+
+    // =========================================================================
+    // SECTION 7 — THE CARD (Tab 6 panel, Tools drawer)
+    // =========================================================================
+    var _ui = { model: null, cheld: null, running: false, cancel: false, progress: '', sig: '' };
+    var CSS_ID = 'prism_skc_css';
+    var CSS = '.prism-skc{display:grid;gap:10px;min-width:0}' +
+        '.prism-skc-sec{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;min-width:0}' +
+        '.prism-skc-sec h4{margin:0 0 6px;font-size:13px;color:var(--text)}' +
+        '.prism-skc-kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:6px}' +
+        '.prism-skc-kv div{background:var(--bg1);border:1px solid var(--border);border-radius:6px;padding:5px 8px;min-width:0}' +
+        '.prism-skc-kv span{display:block;font-size:11px;color:var(--text2)}' +
+        '.prism-skc-kv b{font-size:13px;color:var(--text);word-break:break-word}' +
+        '.prism-skc-note{font-size:12px;color:var(--text2);margin:4px 0}' +
+        '.prism-skc-warn{font-size:12px;color:var(--yellow);margin:4px 0}' +
+        '.prism-skc-verdict{font-size:13px;font-weight:600;margin:2px 0 6px}' +
+        '.prism-skc-tw{overflow-x:auto;max-width:100%;-webkit-overflow-scrolling:touch}' +
+        '.prism-skc table{border-collapse:collapse;width:100%;font-size:12px}' +
+        '.prism-skc th,.prism-skc td{border-bottom:1px solid var(--border);padding:4px 6px;text-align:left;vertical-align:top}' +
+        '.prism-skc-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:6px}' +
+        '.prism-skc-btn{appearance:none;background:var(--bg3,var(--bg2));border:1px solid var(--border);color:var(--text);border-radius:6px;padding:7px 11px;font:inherit;font-size:12px;cursor:pointer;min-height:34px;touch-action:manipulation}' +
+        '.prism-skc-btn[disabled]{opacity:.55;cursor:default}' +
+        '.prism-skc-f{display:flex;flex-direction:column;gap:2px;min-width:110px;flex:1 1 110px}' +
+        '.prism-skc-f label{font-size:11px;color:var(--text2)}' +
+        '.prism-skc-f input,.prism-skc-f select{width:100%;box-sizing:border-box;background:var(--bg1);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:5px 6px;font-size:12px}';
+
+    function esc(s) {
+        return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+    function sig(v, n) { return isNum(v) ? String(+v.toPrecision(n || 3)) : '—'; }
+    function kvHTML(pairs) {
+        return '<div class="prism-skc-kv">' + pairs.map(function (p) { return '<div><span>' + esc(p[0]) + '</span><b>' + esc(p[1]) + '</b></div>'; }).join('') + '</div>';
+    }
+    function tableHTML(head, rows) {
+        return '<div class="prism-skc-tw"><table><thead><tr>' + head.map(function (h) { return '<th>' + esc(h) + '</th>'; }).join('') +
+            '</tr></thead><tbody>' + rows.map(function (r) { return '<tr>' + r.map(function (c) { return '<td>' + esc(c) + '</td>'; }).join('') + '</tr>'; }).join('') +
+            '</tbody></table></div>';
+    }
+    function sec(id, title, body) { return '<div class="prism-skc-sec" id="' + id + '"><h4>' + esc(title) + '</h4>' + body + '</div>'; }
+    function lvl(v) { return v === 'high' || v === 'medium' || v === 'low' ? v : '—'; }
+    function verdictText(c) {
+        if (!c) return 'Confidence: not assessed';
+        return 'Confidence: ' + lvl(c.ks) + ' (k/S) · ' + lvl(c.headline) + ' (test)';
+    }
+    function rateText(c) {
+        if (!c || !c.rates || !c.rates.ks) return '';
+        var r = c.rates.ks;
+        return 'k and S right in ' + fmt(100 * r.rate, 0) + ' % of calibration cases labelled ' + lvl(c.ks) + ' (' + fmt(100 * r.lo, 0) + '–' + fmt(100 * r.hi, 0) + ' %).';
+    }
+    var GRADE_TEXT = { good: 'good', fair: 'fair', none: 'none' };
+    function iarfText(iw) {
+        if (!iw) return 'not assessed';
+        if (!iw.found) return 'none (' + (iw.status === 'tooShort' ? 'test too short' : 'expected but not found') + ')';
+        return (GRADE_TEXT[iw.grade] || iw.grade) + (iw.noiseWidened ? ' (noise-widened)' : '') + ', ' + fmt(iw.cycles, 2) + ' cycle';
+    }
+    function lineSummary(l) { return l ? 'k ' + sig(l.k) + ' md, S ' + fmt(l.S, 2) : '—'; }
+    function agreeText(a) {
+        if (!a) return 'not checked';
+        var t = a.agree ? (a.mode === 'bias' ? 'agree (bias explained)' : 'agree') : 'disagree';
+        return t + ': Δk ' + fmt(a.dkPct, 1) + ' %, ΔS ' + fmt(a.dS, 2);
+    }
+    function plateauText(pc) {
+        if (!pc) return 'not checked';
+        return (pc.pass ? 'pass' : 'fail') + ': kh ' + fmt(pc.khDiffPct, 1) + ' %, ΔS ' + fmt(pc.dS, 2);
+    }
+    function reachText(r) {
+        if (!r) return '—';
+        var s = 'fair ' + sig(r.fair_h) + ' h, good ' + sig(r.good_h) + ' h (equivalent time)';
+        if (r.reachable && isNum(r.fairShut_h)) s += '; shut-in ' + sig(r.fairShut_h) + ' h / ' + (isNum(r.goodShut_h) ? sig(r.goodShut_h) + ' h' : '—');
+        return s;
+    }
+    var DRIVER = { floor: 'floor', se: 'fit standard error', lineMatch: 'line vs match', window: 'window shift', tc: 'closing time', pwf: 'pwf at shut-in', kHeld: 'held k' };
+    var INPUT_NAME = { h: 'h', phi: 'φ', ct: 'ct', rw: 'rw', B: 'B', mu: 'μ', q: 'q' };
+
+    function compInputsHTML(c, verified) {
+        var on = c.on ? ' checked' : '';
+        var p = c.perf;
+        function f(id, label, val, step) {
+            return '<div class="prism-skc-f"><label for="' + id + '">' + esc(label) + '</label><input id="' + id + '" type="number" inputmode="decimal" step="' + step + '" value="' + esc(isNum(val) ? val : '') + '"></div>';
+        }
+        var h = '<div class="prism-skc-row"><label><input type="checkbox" id="prism_skc_cmp_on"' + on + '> Completion data</label></div>';
+        h += '<div class="prism-skc-row">' +
+            f('prism_skc_hp', 'Open interval h_w (ft, blank = h)', c.hp_ft, 'any') +
+            f('prism_skc_htop', 'Top of layer to interval (ft)', c.htop_ft, 'any') +
+            f('prism_skc_theta', 'Deviation θ (°, ≤ 75)', c.theta_deg, 'any') +
+            f('prism_skc_kvlo', 'kv/kh low', c.kvlo, 'any') +
+            f('prism_skc_kvhi', 'kv/kh high', c.kvhi, 'any') + '</div>';
+        if (verified) {
+            var opt = [0, 180, 120, 90, 60, 45].map(function (v) { return '<option value="' + v + '"' + (p.phase_deg === v ? ' selected' : '') + '>' + v + '°</option>'; }).join('');
+            h += '<div class="prism-skc-row"><label><input type="checkbox" id="prism_skc_perf_on"' + (p.on ? ' checked' : '') + '> Perforation data</label></div>' +
+                '<div class="prism-skc-row">' + f('prism_skc_spf', 'Shots per foot', p.spf, 'any') + f('prism_skc_lp', 'Perforation length (in)', p.lp_in, 'any') +
+                f('prism_skc_rp', 'Perforation radius (in)', p.rp_in, 'any') +
+                '<div class="prism-skc-f"><label for="prism_skc_phase">Phasing</label><select id="prism_skc_phase">' + opt + '</select></div></div>';
+        } else {
+            h += '<div class="prism-skc-note">Perforation skin not split: the perforation-skin coefficients are not yet verified.</div>';
+        }
+        return h;
+    }
+    function mechHTML(m) {
+        var x = m.mech;
+        if (!x) return '<div class="prism-skc-note">Needs a skin value from the line or the match.</div>';
+        if (!x.available) {
+            return '<div class="prism-skc-note">' + esc(x.reason || 'Not split.') + '</div>' +
+                x.validity.map(function (v) { return '<div class="prism-skc-warn">⚠ ' + esc(v.text) + '</div>'; }).join('');
+        }
+        var pairs = [
+            ['S total', fmt(m.final.S, 2)],
+            ['Geometric pseudo-skin', fmt(x.S_geo, 2) + ' (' + fmt(x.S_geo_lo, 2) + ' to ' + fmt(x.S_geo_hi, 2) + ')'],
+            ['  partial penetration', fmt(x.parts.pp, 2)],
+            ['  deviation', fmt(x.parts.theta, 2)],
+            ['S_mech (pressure-drop basis)', fmt(x.S_mech, 2) + ' ± ' + fmt(x.S_mech_err, 2)],
+            ['S_d local (open interval)', fmt(x.S_d_local, 2)],
+            ['kv/kh range', fmt(x.kvkh[0], 2) + ' to ' + fmt(x.kvkh[1], 2)]
+        ];
+        if (isNum(x.parts.perf)) pairs.splice(4, 0, ['  perforations', fmt(x.parts.perf, 2)]);
+        return kvHTML(pairs) + x.validity.map(function (v) { return '<div class="prism-skc-warn">⚠ ' + esc(v.text) + '</div>'; }).join('');
+    }
+    function cheldHTML(m) {
+        var h = '';
+        var ch = m.cheld;
+        if (ch) {
+            if (!ch.triggered && (!ch.refits || !ch.refits.length)) h += '<div class="prism-skc-note">C-held refits not needed: the unit slope was sampled.</div>';
+            else {
+                h += kvHTML([['C range (bbl/psi)', sig(ch.range.C[0]) + ' to ' + sig(ch.range.C[1])], ['k range (md)', sig(ch.range.k[0]) + ' to ' + sig(ch.range.k[1])],
+                             ['S range', fmt(ch.range.S[0], 2) + ' to ' + fmt(ch.range.S[1], 2)], ['S_C (half range)', fmt(ch.S_C, 2)]]);
+                h += tableHTML(['C × f', 'k (md)', 'S', 'C (bbl/psi)', 'ΔBIC', 'Rejected'],
+                    (ch.refits || []).map(function (x) { return [fmt(x.f, 2), sig(x.k), fmt(x.S, 2), sig(x.C), fmt(x.dBic, 1), x.rejected ? 'yes' : 'no']; }));
+            }
+        }
+        var dis = (!m.cheldAvailable || _ui.running) ? ' disabled' : '';
+        h += '<div class="prism-skc-row"><button type="button" class="prism-skc-btn" id="prism_skc_cheld"' + dis + '>Run C-held refits</button>' +
+             '<button type="button" class="prism-skc-btn" id="prism_skc_cheld_cancel"' + (_ui.running ? '' : ' disabled') + '>Cancel</button>' +
+             '<span class="prism-skc-note" id="prism_skc_cheld_status" role="status" aria-live="polite">' + esc(_ui.progress) + '</span></div>';
+        if (!m.cheldAvailable) h += '<div class="prism-skc-note">C-held refits need the automatic engine and k, S and C from a match or the line.</div>';
+        return h;
+    }
+
+    function cardHTML(m) {
+        if (!m.ok) {
+            return '<div id="prism_skc_root" class="prism-skc"><div class="prism-skc-note">' + esc(m.reason || 'The skin check is not available.') + '</div>' +
+                   '<div class="prism-skc-note">' + esc(CHELD_NOTE) + '</div></div>';
+        }
+        var h = '<div id="prism_skc_root" class="prism-skc">';
+        var c = m.confidence;
+        h += '<div class="prism-skc-sec" id="prism_skc_head"><div class="prism-skc-verdict">' + esc(verdictText(c)) + '</div>' +
+             (rateText(c) ? '<div class="prism-skc-note">' + esc(rateText(c)) + '</div>' : '') +
+             m.notes.map(function (n) { return '<div class="prism-skc-note">' + esc(n) + '</div>'; }).join('') +
+             m.warnings.map(function (w) { return '<div class="prism-skc-warn">⚠ ' + esc(w.text) + '</div>'; }).join('') +
+             (m.errors.length ? '<div class="prism-skc-warn">⚠ Not available in this build: ' + esc(m.errors.join(', ')) + '.</div>' : '') + '</div>';
+        // IARF window.
+        var iw = m.iarf;
+        var ip = [['Grade', iarfText(iw)]];
+        if (iw && iw.found) {
+            ip.push(['Window Δt', sig(iw.dt0_h) + ' to ' + sig(iw.dt1_h) + ' h']);
+            ip.push(['Derivative level', sig(iw.level_psi, 4) + ' psi']);
+            if (iw.longest) ip.push(['Longest qualifying window', sig(iw.longest.dt0_h) + ' to ' + sig(iw.longest.dt1_h) + ' h (' + fmt(iw.longest.cycles, 2) + ' cycle)']);
+            if (iw.pointSkin) ip.push(['Point-skin spread', fmt(iw.pointSkin.spread, 2)]);
+        }
+        h += sec('prism_skc_iarf', 'Automatic IARF window (L = 0.1 cycle)', kvHTML(ip) +
+            (iw && iw.reason ? '<div class="prism-skc-note">' + esc(iw.reason) + '</div>' : '') +
+            '<div class="prism-skc-row"><button type="button" class="prism-skc-btn" id="prism_skc_usewin"' + (iw && iw.found ? '' : ' disabled') +
+            '>Use this window in the straight-line panel</button></div>');
+        // Line.
+        var l = m.line;
+        h += sec('prism_skc_line', 'Straight line through the window', l ? kvHTML([
+            ['Method', l.method === 'horner' ? 'Horner' : 'Superposition'], ['k', sig(l.k) + ' md'], ['kh', sig(l.kh) + ' md·ft'], ['S', fmt(l.S, 2)],
+            ['m', sig(Math.abs(l.m), 4) + ' psi/cycle'], ['p*', isNum(l.pStar) ? fmt(l.pStar, 1) + ' psia' : '—'], ['R²', fmt(l.r2, 4)]
+        ]) : '<div class="prism-skc-note">No line: no IARF window.</div>');
+        // Agreement.
+        h += sec('prism_skc_agree', 'Line vs match', kvHTML([
+            ['Line vs match', agreeText(m.agreement)],
+            ['Match', m.matchAvailable && m.final ? (m.fitKey || 'fit') : 'no match'],
+            ['Line vs derivative plateau (sanity check)', plateauText(m.plateau)]
+        ]) + '<div class="prism-skc-note">Agreement rule: k within 5 % and S within 0.5, or the difference explained by the unsettled-window bias within 3 % and 0.3.</div>');
+        // S_err.
+        var se = m.sErr;
+        if (se) {
+            var comp = [['Floor', fmt(se.floor, 2)], ['Fit standard error', fmt(se.seS, 2)], ['Line vs match', fmt(se.dLineMatch, 2)],
+                        ['Window shift', fmt(se.sWin, 2)], ['Closing time', fmt(se.sTc, 2)], ['pwf at shut-in', fmt(se.sPwf, 2)]];
+            h += sec('prism_skc_serr', 'Skin uncertainty S_err', kvHTML([['S_err', '± ' + fmt(se.value, 2)], ['Largest term', DRIVER[se.driver] || String(se.driver || '—')],
+                ['With the C-held range', '± ' + fmt(se.ext && se.ext.value, 2)], ['Inputs (typical ranges)', '± ' + fmt(se.sSens, 2)], ['Total with inputs', '± ' + fmt(se.sAbs, 2)]]) +
+                tableHTML(['Term', 'ΔS'], comp));
+        }
+        // Sensitivity.
+        var sv = m.sensitivity;
+        if (sv && Array.isArray(sv.req)) {
+            h += sec('prism_skc_sens', 'Input sensitivity (analytic)', tableHTML(['Input', 'Factor', 'k (md)', 'Δk %', 'ΔS'],
+                sv.req.map(function (x) { return [INPUT_NAME[x.input] || x.input, '× ' + fmt(x.f, 2), sig(x.k), fmt(x.dkPct, 1), fmt(x.dS, 3)]; })) +
+                '<div class="prism-skc-note">Dominant for k: ' + esc(INPUT_NAME[sv.dominantK && sv.dominantK.req] || '—') + '; for S: ' +
+                esc(INPUT_NAME[sv.dominantS && sv.dominantS.req] || '—') + ' (±20 %, q ±10 %). μ has no effect on S.</div>');
+        }
+        // Confidence reasons.
+        if (c) {
+            h += sec('prism_skc_conf', 'Confidence', '<div class="prism-skc-verdict">' + esc(verdictText(c)) + '</div>' +
+                (Array.isArray(c.reasons) && c.reasons.length ? tableHTML(['Rule', 'Kind', 'Reason', 'Evidence'],
+                    c.reasons.map(function (x) { return [x.rule, x.kind, x.text, (x.ev || []).join(', ')]; })) : '<div class="prism-skc-note">Every rule for this label is met.</div>') +
+                '<div class="prism-skc-note">Rate checks: ' + esc(m.rate.status) + ' (' + esc(m.rate.text) + ')</div>' +
+                '<div class="prism-skc-note">' + esc(CHELD_NOTE) + '</div>');
+        }
+        // Products.
+        var pr = m.products;
+        if (pr) {
+            h += sec('prism_skc_prod', 'Skin pressure drop and productivity', kvHTML([
+                ['Δp skin', isNum(pr.dpSkin_psi) ? fmt(pr.dpSkin_psi, 1) + ' psi' : '—'],
+                ['Flow efficiency', isNum(pr.FE) ? fmt(pr.FE, 3) : '—'],
+                ['PI ratio X/(X + S)', isNum(pr.piRatio) ? fmt(pr.piRatio, 3) + ', ' + pr.labels.piRatio : (pr.guard ? 'not computable (X + S < 1)' : '—')],
+                ['r_e used', isNum(m.rinv_ft) ? sig(m.rinv_ft) + ' ft (r_inv at the end of the test)' : '—']
+            ]) + '<div class="prism-skc-note">Pseudo-steady-state estimates.</div>');
+        }
+        // Mechanical skin.
+        h += sec('prism_skc_mech', 'Mechanical skin', compInputsHTML(m.completion, KT.verified) + '<div id="prism_skc_mech_res">' + mechHTML(m) + '</div>');
+        // Reach.
+        h += sec('prism_skc_reach', 'Expected IARF reach (from the fitted model)', kvHTML([['Reach', reachText(m.reach)], ['This test', sig(m.evidence ? m.evidence.dtEnd_h : null) + ' h']]) +
+            '<div class="prism-skc-note">Hours of equivalent time for a fair (0.5 cycle) and a good (1 cycle) IARF, allowing for the derivative window.</div>');
+        // C-held.
+        h += sec('prism_skc_cheld_sec', 'C-held refits (storage sensitivity)', cheldHTML(m));
+        h += '</div>';
+        return h;
+    }
+    function ensureCss() {
+        if (typeof document === 'undefined' || !document.getElementById || document.getElementById(CSS_ID)) return;
+        try {
+            var st = document.createElement('style');
+            st.id = CSS_ID;
+            st.textContent = CSS;
+            (document.head || document.body || document.documentElement).appendChild(st);
+        } catch (e) { /* cosmetic */ }
+    }
+    function rootEl() { return (typeof document !== 'undefined' && document.getElementById) ? document.getElementById('prism_skc_root') : null; }
+    function mounted() {
+        var r = rootEl();
+        if (!r) return false;
+        for (var n = r; n; n = n.parentNode) if (n === document.body || n === document.documentElement) return true;
+        return false;
+    }
+
+    // renderPanel(el): paint the card. No storage writes, no events.
+    function renderPanel(el) {
+        if (!el || typeof el !== 'object') return null;
+        ensureCss();
+        var m = run({ cheld: _ui.cheld });
+        if (_ui.running && m.sig !== _ui.sig) _ui.cancel = true;
+        _ui.model = m;
+        el.innerHTML = cardHTML(m);
+        wire(el);
+        return m;
+    }
+    function rerender() {
+        var r = rootEl();
+        if (r && r.parentNode) renderPanel(r.parentNode);
+    }
+    function compFromInputs(root) {
+        function v(id) { var e = root.querySelector('#' + id); return e ? e.value : null; }
+        function chk(id) { var e = root.querySelector('#' + id); return !!(e && e.checked); }
+        var c = normComp(_ui.model ? _ui.model.completion : loadComp());
+        c.on = chk('prism_skc_cmp_on');
+        var hp = num(v('prism_skc_hp'));
+        c.hp_ft = pos(hp) ? hp : null;
+        ['htop_ft:prism_skc_htop', 'theta_deg:prism_skc_theta', 'kvlo:prism_skc_kvlo', 'kvhi:prism_skc_kvhi'].forEach(function (p) {
+            var a = p.split(':'), x = num(v(a[1]));
+            if (x != null) c[a[0]] = x;
+        });
+        if (root.querySelector('#prism_skc_perf_on')) {
+            c.perf.on = chk('prism_skc_perf_on');
+            ['spf:prism_skc_spf', 'lp_in:prism_skc_lp', 'rp_in:prism_skc_rp', 'phase_deg:prism_skc_phase'].forEach(function (p) {
+                var a = p.split(':'), x = num(v(a[1]));
+                if (x != null) c.perf[a[0]] = x;
+            });
+        }
+        return c;
+    }
+    function onCompChange(root) {
+        var c = compFromInputs(root);
+        saveComp(c);
+        var m = _ui.model;
+        if (!m || !m.final || !m.well) return;
+        m.completion = c;
+        m.mech = mechanicalSkin({ S_total: m.final.S, Serr: m.sErr ? m.sErr.value : null, h: m.well.h, rw: m.well.rw,
+                                  completion: completionFor(c, m.well.h), D: null, q: null });
+        var res = root.querySelector('#prism_skc_mech_res');
+        if (res) res.innerHTML = mechHTML(m);
+    }
+    function useWindow() {
+        var m = _ui.model;
+        if (!m || !m.iarf || !m.iarf.found || typeof G.PRiSM_semilogAnalysis !== 'function') return null;
+        return G.PRiSM_semilogAnalysis(null, null, { window: { t0: m.iarf.dt0_h, t1: m.iarf.dt1_h }, store: true });
+    }
+    // A homogeneous fit seeded from the match (engine ModelFit with BIC), then the C-held refits.
+    function cheldJob(AI, prep, seed) {
+        var phase = 0, fitJ = null, chJ = null, base = seed, res = null, cancelled = false;
+        if (typeof AI.fitJob === 'function') {
+            fitJ = AI.fitJob('homogeneous', prep, { start: { phys: { k: seed.phys.k, S: seed.phys.S, C: seed.phys.C } } });
+        } else phase = 1;
+        return {
+            step: function () {
+                if (cancelled) return { done: true, progress: 1, label: 'Cancelled' };
+                if (phase === 0) {
+                    var s0 = fitJ.step();
+                    if (s0.done) { var f = fitJ.result(); if (f && f.ok !== false && f.phys) base = f; phase = 1; }
+                    return { done: false, progress: 0.4 * (s0.progress || 0), label: 'Homogeneous fit' };
+                }
+                if (phase === 1) { chJ = AI.cHeldJob(prep, base, { mode: 'auto' }); phase = 2; return { done: false, progress: 0.4, label: 'C-held refits' }; }
+                var s = chJ.step();
+                if (s.done) { res = chJ.result(); return { done: true, progress: 1, label: 'Done' }; }
+                return { done: false, progress: 0.4 + 0.6 * (s.progress || 0), label: s.label || 'C-held refits' };
+            },
+            result: function () { return res; },
+            cancel: function () { cancelled = true; if (fitJ && fitJ.cancel) fitJ.cancel(); if (chJ && chJ.cancel) chJ.cancel(); }
+        };
+    }
+    function setStatus(text) {
+        _ui.progress = text;
+        var e = (typeof document !== 'undefined') ? document.getElementById('prism_skc_cheld_status') : null;
+        if (e) e.textContent = text;
+    }
+    function startCheld() {
+        var AI = AIns(), m = _ui.model;
+        if (_ui.running || !m || !m.ok || !m.cheldAvailable || !AI) return null;
+        var well = G.PRiSM_getWell ? G.PRiSM_getWell() : {};
+        var adata = G.PRiSM_getAnalysisData ? G.PRiSM_getAnalysisData() : null;
+        var sp = adata && adata.ok ? specFromAdata(adata, well) : null;
+        var prep = sp && sp.ok ? AI.prepare(sp.spec) : null;
+        if (!prep || prep.ok === false) { setStatus('C-held refits are not available for this period.'); return null; }
+        var fit = G.PRiSM_getLastFit ? G.PRiSM_getLastFit() : null;
+        var seed = matchFromFit(fit, 'homogeneous');
+        if (!seed && m.final) seed = matchFromFit({ modelKey: 'homogeneous', phys: { k: m.final.k, S: m.final.S, C: m.final.C } }, 'homogeneous');
+        if (!seed || !pos(seed.phys.C)) { setStatus('C-held refits need wellbore storage C from the match or the unit slope.'); return null; }
+        var job = cheldJob(AI, prep, seed);
+        var sigNow = m.sig;
+        _ui.running = true; _ui.cancel = false; _ui.sig = sigNow;
+        setStatus('Running…');
+        var r = rootEl();
+        if (r) { var b1 = r.querySelector('#prism_skc_cheld'), b2 = r.querySelector('#prism_skc_cheld_cancel'); if (b1) b1.disabled = true; if (b2) b2.disabled = false; }
+        var p = AI.drive(job, {
+            shouldCancel: function () { return _ui.cancel || !mounted(); },
+            onProgress: function (f, label) { setStatus((label || 'Working') + ' ' + fmt(100 * (f || 0), 0) + ' %'); }
+        });
+        function done(text) { _ui.running = false; _ui.cancel = false; _ui.progress = text; rerender(); }
+        return p.then(function (res) {
+            _ui.cheld = res ? { sig: sigNow, result: res } : null;
+            done(res ? 'C-held refits finished.' : 'C-held refits returned no result.');
+            return res;
+        }, function (e) {
+            done(e && e.code === 'CANCELLED' ? 'Cancelled.' : 'C-held refits failed.');
+            return null;
+        });
+    }
+    function wire(el) {
+        var root = el.querySelector ? el.querySelector('#prism_skc_root') : null;
+        if (!root) return;
+        root.addEventListener('click', function (ev) {
+            var t = ev.target;
+            while (t && t !== root && !(t.id && /^prism_skc_/.test(t.id) && t.tagName === 'BUTTON')) t = t.parentNode;
+            if (!t || t === root || t.disabled) return;
+            if (t.id === 'prism_skc_usewin') useWindow();
+            else if (t.id === 'prism_skc_cheld') startCheld();
+            else if (t.id === 'prism_skc_cheld_cancel') { _ui.cancel = true; setStatus('Cancelling…'); }
+        });
+        root.addEventListener('change', function (ev) {
+            var t = ev.target;
+            if (t && t.id && /^prism_skc_(cmp_on|hp|htop|theta|kvlo|kvhi|perf_on|spf|lp|rp|phase)$/.test(t.id)) onCompChange(root);
+        });
+    }
+
+    // Tab 6 panel (C7): shown when a pressure fit or a semilog result exists, not in decline mode.
+    function panelWhen() {
+        if (G.PRiSM && G.PRiSM.mode === 'decline') return false;
+        var st = G.PRiSM_state || {};
+        var fitOk = !!(st.lastFit && typeof st.lastFit === 'object' && st.lastFit.kind !== 'rate');
+        var slOk = !!(st.semilog && st.semilog.ok);
+        return fitOk || slOk;
+    }
+    // render is the same function as window.PRiSM_renderSkinCheckPanel, so the Tools drawer
+    // lists the card once (37 drops a step panel whose render equals a listed tool).
+    var PANEL = { id: 'prism_skincheck', title: 'Skin check: IARF window, line vs match, uncertainty, confidence', order: 8,
+                  when: panelWhen, render: renderPanel };
+    (function registerPanel() {
+        try { if (typeof G.PRiSM_registerTabPanel === 'function') { G.PRiSM_registerTabPanel(6, PANEL); return; } } catch (e) { /* raw registry */ }
+        G.PRiSM_tabPanels = (G.PRiSM_tabPanels && typeof G.PRiSM_tabPanels === 'object') ? G.PRiSM_tabPanels : {};
+        var list = G.PRiSM_tabPanels[6] = Array.isArray(G.PRiSM_tabPanels[6]) ? G.PRiSM_tabPanels[6] : [];
+        for (var i = 0; i < list.length; i++) if (list[i] && list[i].id === PANEL.id) { list[i] = PANEL; return; }
+        list.push(PANEL);
+    })();
+
+    // Re-render on the C7 events while mounted (no polling); a running C-held job
+    // for other inputs is cancelled by renderPanel.
+    if (typeof G.addEventListener === 'function' && !G.__PRiSM_skinCheckListeners) {
+        G.__PRiSM_skinCheckListeners = true;
+        ['prism:fit-updated', 'prism:period-changed', 'prism:well-changed', 'prism:dataset-loaded'].forEach(function (type) {
+            G.addEventListener(type, function () {
+                if (!rootEl()) return;
+                if (type !== 'prism:fit-updated') _ui.cheld = null;
+                rerender();
+            });
+        });
+    }
+
+    // =========================================================================
+    // SECTION 8 — REPORT SECTION (36-report.js PRiSM_reportSections, order 45)
+    // =========================================================================
+    function reportSection(model) {
+        var st = G.PRiSM_state || {};
+        if (G.PRiSM && G.PRiSM.mode === 'decline') return null;
+        if (!(st.lastFit && st.lastFit.kind !== 'rate') && !(st.semilog && st.semilog.ok)) return null;
+        var m = run({ cheld: _ui.cheld });
+        if (!m.ok) return null;
+        var kv = [];
+        var iw = m.iarf;
+        kv.push(['IARF window (L = 0.1 cycle)', iarfText(iw) + (iw && iw.found ? ', Δt ' + sig(iw.dt0_h) + ' to ' + sig(iw.dt1_h) + ' h' : '')]);
+        if (iw && iw.longest && iw.found) kv.push(['Longest qualifying window', sig(iw.longest.dt0_h) + ' to ' + sig(iw.longest.dt1_h) + ' h']);
+        kv.push(['Line through the window', lineSummary(m.line)]);
+        kv.push(['Line vs match', agreeText(m.agreement)]);
+        kv.push(['Line vs derivative plateau (sanity check)', plateauText(m.plateau)]);
+        if (m.sErr) kv.push(['Skin uncertainty S_err', '± ' + fmt(m.sErr.value, 2) + ' (largest term: ' + (DRIVER[m.sErr.driver] || String(m.sErr.driver || '—')) + ')']);
+        if (m.final) kv.push(['Final k and S', 'k ' + sig(m.final.k) + ' md, S ' + fmt(m.final.S, 2) + ' (from the ' + m.final.source + ')']);
+        kv.push(['Confidence', verdictText(m.confidence).replace(/^Confidence: /, '')]);
+        if (m.products) {
+            kv.push(['Δp skin', isNum(m.products.dpSkin_psi) ? fmt(m.products.dpSkin_psi, 1) + ' psi' : '—']);
+            kv.push(['Flow efficiency', isNum(m.products.FE) ? fmt(m.products.FE, 3) : '—']);
+            kv.push(['PI ratio', isNum(m.products.piRatio) ? fmt(m.products.piRatio, 3) + ', ' + m.products.labels.piRatio : '—']);
+        }
+        if (m.mech) {
+            kv.push(['Mechanical skin', m.mech.available ? 'S_mech ' + fmt(m.mech.S_mech, 2) + ' ± ' + fmt(m.mech.S_mech_err, 2) + ' (pressure-drop basis), S_d local ' + fmt(m.mech.S_d_local, 2) +
+                     ', kv/kh ' + fmt(m.mech.kvkh[0], 2) + ' to ' + fmt(m.mech.kvkh[1], 2) : String(m.mech.reason || 'not split')]);
+        }
+        kv.push(['Expected IARF reach', reachText(m.reach)]);
+        if (m.cheld && m.cheld.range) kv.push(['C-held S range', fmt(m.cheld.range.S[0], 2) + ' to ' + fmt(m.cheld.range.S[1], 2) + ' (S_C ' + fmt(m.cheld.S_C, 2) + ')']);
+        var c = m.confidence;
+        var rows = (c && Array.isArray(c.reasons)) ? c.reasons.map(function (x) { return [x.rule, x.kind, x.text, (x.ev || []).join(', ')]; }) : [];
+        var notes = m.notes.slice();
+        if (m.mech && m.mech.validity) m.mech.validity.forEach(function (v) { notes.push(v.text); });
+        m.warnings.forEach(function (w) { notes.push(w.text); });
+        return { id: 'skincheck', title: 'Skin check', order: 45, kv: kv.map(function (p) { return [p[0], String(p[1]).slice(0, 299)]; }),
+                 table: rows.length ? { head: ['Rule', 'Kind', 'Reason', 'Evidence'], rows: rows } : null,
+                 notes: notes.map(function (n) { return String(n).slice(0, 299); }) };
+    }
+    (function registerReport() {
+        var reg = G.PRiSM_reportSections = Array.isArray(G.PRiSM_reportSections) ? G.PRiSM_reportSections : [];
+        reportSection._prismId = 'skin-check';
+        for (var i = 0; i < reg.length; i++) if (reg[i] && reg[i]._prismId === reportSection._prismId) { reg[i] = reportSection; return; }
+        reg.push(reportSection);
+    })();
+
+    // =========================================================================
     // SECTION 9 — EXPORTS
     // =========================================================================
     SC.version = '1.0';
@@ -558,6 +1420,19 @@
     SC.RATE_DEFAULTS = RATE_DEFAULTS;
     SC._ktCompute = ktCompute;          // table-consistency test only
     SC._papatzacos = papatzacos;        // tests only
+    SC.run = run;
+    SC.renderPanel = renderPanel;
+    SC.reportSection = reportSection;
+    SC.specFromAdata = specFromAdata;   // tests and the integrator
+    SC.useWindow = useWindow;
+    SC.runCheld = startCheld;
+    SC.PANEL = PANEL;
+    SC._ui = _ui;
+    // Tools drawer: the card is listed through its Tab-6 registration ("Step panels", with its
+    // written title). It is deliberately NOT exported as window.PRiSM_renderSkinCheckPanel: 37
+    // would auto-list that name under "More" with a machine-made title, which the existing
+    // wp16 test forbids. To list it in a catalogue group instead, add one TOOL_CATALOGUE entry
+    // in 37 and export the name here (plan §3.4 deviation, see the WP7 merge note).
 })();
 
 // === SELF-TEST ===
