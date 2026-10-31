@@ -9,6 +9,9 @@
 //   • 39-prism-fieldtools  (gauge register, sequence of events, ct builder)
 //   • 51-prism-workspace   (fit library + compare overlays, analysis branches, model browser)
 //   • 52-prism-gas         (gas m(p) results, pseudo-time, skin vs rate, AOF / IPR)
+//   • 53-prism-autointerp  (automatic build-up interpretation engine, canon / hash16)
+//   • 54-prism-skin        (skin decomposition, PI and skin products, Skin-check card)
+//   • 55-prism-autointerp-cal (generated confidence-label calibration table)
 // ═══════════════════════════════════════════════════════════════════════
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -72,13 +75,16 @@ var G = (typeof window !== 'undefined') ? window
       : (typeof globalThis !== 'undefined' ? globalThis : {});
 
 var STATE_KEY = 'wts_prism_state';
+// v3.3: _num runs per element in the model evaluation; a closure alias avoids a global lookup
+// (an intercepted call inside an embedding sandbox such as the acceptance harness' vm context).
+var _isFinite = isFinite;
 var LN_EULER = 0.80907;              // ln(4/γ) − ln 1 term of the radial-flow asymptote
 
 // ═══════════════════════════════════════════════════════════════
 // SECTION 1 — SMALL HELPERS
 // ═══════════════════════════════════════════════════════════════
 
-function _num(v) { return typeof v === 'number' && isFinite(v); }
+function _num(v) { return typeof v === 'number' && _isFinite(v); }
 function _pos(v) { return _num(v) && v > 0; }
 function _isArr(a) { return !!a && typeof a !== 'string' && typeof a.length === 'number'; }
 function _clamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
@@ -930,7 +936,9 @@ function _registryKeys(entry) {
 G.PRiSM_physicalModel = function PRiSM_physicalModel(modelKey, well, adata, opts) {
     opts = opts || {};
     var reg = G.PRiSM_MODELS || {};
-    var entry = reg[modelKey];
+    // opts.entry (v3.3): a registry-like object used instead of PRiSM_MODELS[modelKey];
+    // opts.isolated: never read PRiSM_state (categorical keys come from phys or defaults).
+    var entry = (opts.entry && typeof opts.entry.pd === 'function') ? opts.entry : reg[modelKey];
     if (!entry || typeof entry.pd !== 'function') return { ok: false, reason: 'Unknown model "' + modelKey + '".' };
     if (entry.kind === 'rate' || entry.timeInput === 'days') {
         return { ok: false, reason: 'Model "' + modelKey + '" is a rate (decline) model: fit it to rates, not pressure.' };
@@ -1049,7 +1057,7 @@ G.PRiSM_physicalModel = function PRiSM_physicalModel(modelKey, well, adata, opts
         shapeKeys.forEach(function (k) {
             params[k] = _num(phys[k]) ? phys[k] : defaults[k];
         });
-        var stP = (G.PRiSM_state && G.PRiSM_state.model === modelKey && G.PRiSM_state.params) || {};
+        var stP = opts.isolated ? {} : ((G.PRiSM_state && G.PRiSM_state.model === modelKey && G.PRiSM_state.params) || {});
         catKeys.forEach(function (k) {
             var has = function (v) { return v !== undefined && v !== null && v !== ''; };
             params[k] = has(phys[k]) ? phys[k] : has(stP[k]) ? stP[k]
@@ -1408,6 +1416,89 @@ G.PRiSM_matchToPhysical = function PRiSM_matchToPhysical(tc, modelKey, params, w
     out.phys = { k: out.k, kh: out.kh, C: out.C, Cd: out.Cd, S: out.S };
     if (refLength !== 'rw') out.phys[refLength] = out[refLength];
     return out;
+};
+
+
+// ═══════════════════════════════════════════════════════════════
+// SECTION 8b — OPEN AN EXTERNAL BUILD-UP (v3.3, Build-up Surveillance)
+// ═══════════════════════════════════════════════════════════════
+// PRiSM_openExternalBuildup(o) — the only path that writes a build-up from
+// another page into PRiSM (a user action, after a confirm on that page).
+//   o = { ds:{t, p, q?, name?}, pasteText, multiRate:[{t, q}] (dataset clock,
+//         negative t allowed, last step q = 0 at tShut), well:{q, B, mu, ct, h,
+//         phi, rw, fluid, testType}, tShut, pwf0, modelKey, fitC4 }
+// It owns every PRiSM store write: the paste box text (so a reload re-reads
+// the same data), the multi-rate table, the C1 well inputs, the dataset
+// commit, the active flow period, the model (adopted BEFORE the C4 fit so a
+// prism:fit-updated listener sees a consistent state) and the saved state.
+var EXT_MODEL_MAP = { composite2: 'radialComposite' };
+G.PRiSM_openExternalBuildup = function PRiSM_openExternalBuildup(o) {
+    o = o || {};
+    var ds = o.ds;
+    if (!ds || !_isArr(ds.t) || !ds.t.length || !_isArr(ds.p)) return { ok: false, reason: 'No build-up data to open.' };
+    var ls = _storage();
+    // 1. the paste box text (reload trap: PRiSM re-reads it after a reload)
+    if (ls && typeof o.pasteText === 'string') {
+        try {
+            var raw = ls.getItem('wts_prism'), box = raw ? JSON.parse(raw) : {};
+            if (!box || typeof box !== 'object') box = {};
+            box.prism_data_paste = o.pasteText;
+            ls.setItem('wts_prism', JSON.stringify(box));
+        } catch (e) { /* quota / private mode */ }
+    }
+    // 2. the multi-rate table (positive rates; C2 signs injection internally)
+    var rows = (o.multiRate || []).filter(function (r) { return r && _num(+r.t) && _num(+r.q); })
+        .map(function (r) { return { t: +r.t, q: Math.abs(+r.q) }; });
+    if (!G.PRiSM) G.PRiSM = { mode: 'transient', tab: 1, multiRate: [] };
+    G.PRiSM.multiRate = rows;
+    if (ls) { try { ls.setItem('wts_prism_mrate', JSON.stringify(rows)); } catch (e2) { /* ignore */ } }
+    // 3. C1 well inputs: a water injector's fall-off is fluid water / testType falloff
+    var w = o.well || {};
+    var inj = w.fluid === 'water_inj' || w.testType === 'falloff';
+    var patch = { q: Math.abs(+w.q), B: w.B, mu: w.mu, ct: w.ct, h: w.h, phi: w.phi, rw: w.rw,
+                  fluid: w.fluid === 'water_inj' ? 'water' : (w.fluid || 'oil'),
+                  testType: inj ? 'falloff' : 'buildup', tShut: _num(o.tShut) ? o.tShut : null, pwf0: _num(o.pwf0) ? o.pwf0 : null, tp: null };
+    if (typeof G.PRiSM_setWell === 'function') G.PRiSM_setWell(patch, { source: 'user', origin: 'buildup' });
+    // 4. the dataset
+    if (typeof G.PRiSM_commitDataset === 'function') G.PRiSM_commitDataset(ds, { source: 'buildup' });
+    else G.PRiSM_dataset = ds;
+    // 5. the active period: the C2 period that contains tShut
+    var st = G.PRiSM_state = G.PRiSM_state || {};
+    var period = null;
+    var rh = (typeof G.PRiSM_rateHistory === 'function') ? G.PRiSM_rateHistory(ds) : null;
+    if (rh && rh.periods && _num(o.tShut)) {
+        var eps = 1e-6 * Math.max(1, Math.abs(o.tShut));
+        for (var i = 0; i < rh.periods.length; i++) {
+            var pr = rh.periods[i];
+            if (pr.t0 <= o.tShut + eps && (!_num(pr.t1) || pr.t1 > o.tShut + eps || i === rh.periods.length - 1)) period = i;
+        }
+    }
+    if (period !== null) st.activePeriod = period;
+    _dispatch('prism:period-changed', { period: period, source: 'buildup' });
+    // 6. model adoption, then the C4 fit
+    var f = o.fitC4 ? _clone(o.fitC4) : null;
+    var key = EXT_MODEL_MAP[o.modelKey || (f && f.modelKey)] || o.modelKey || (f && f.modelKey) || null;
+    if (key && G.PRiSM_MODELS && G.PRiSM_MODELS[key]) {
+        st.model = key;
+        if (f) {
+            var params = _clone(f.params || {});
+            if (key === 'radialComposite' && !_num(params.F)) params.F = 1;
+            st.params = params;
+            st.phys = _clone(f.phys || {});
+            var ph = f.phys || {};
+            if (_pos(ph.k) && _pos(patch.h) && _pos(patch.B) && _pos(patch.mu) && _pos(patch.q) && _pos(patch.phi) && _pos(patch.ct) && _pos(patch.rw)) {
+                var A = CONST.A * patch.q * patch.B * patch.mu / (ph.k * patch.h);
+                var Bt = CONST.B * ph.k / (patch.phi * patch.mu * patch.ct * patch.rw * patch.rw);
+                st.tcMatch = { logPM: Math.log10(1 / A), logTM: Math.log10(Bt) };
+            }
+            f.modelKey = key;
+            f.source = f.source || 'buildup';
+            _dispatch('prism:model-changed', { model: key, source: 'buildup' });
+            G.PRiSM_setLastFit(f);
+        } else _dispatch('prism:model-changed', { model: key, source: 'buildup' });
+    }
+    try { G.PRiSM_saveState(); } catch (e3) { /* storage optional */ }
+    return { ok: true, period: period, modelKey: key };
 };
 
 
@@ -9916,6 +10007,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         { id: 'dsets',       fn: 'PRiSM_renderDatasetsPanel',       group: 'Data',     title: 'Gauges & analysis datasets',       sub: 'Store, sample and activate datasets' },
         { id: 'gas',         fn: 'PRiSM_renderGasPanel',            group: 'Diagnose', title: 'Gas analysis: m(p) and pseudo-time', sub: 'Pseudo-pressure basis for gas tests' },
         { id: 'rateskin',    fn: 'PRiSM_renderRateSkinPanel',       group: 'Diagnose', title: 'Rate-dependent skin (S′ vs rate)', sub: 'Separate mechanical skin S and D' },
+        { id: 'skincheck',   fn: 'PRiSM_renderSkinCheckPanel',      group: 'Diagnose', title: 'Skin check: IARF window, line vs match, uncertainty, confidence', sub: 'Automatic IARF window, skin uncertainty and confidence' },
         { id: 'deliv',       fn: 'PRiSM_renderDeliverabilityPanel', group: 'Diagnose', title: 'Deliverability: AOF (gas) / IPR (oil)', sub: 'Flow-after-flow, isochronal, IPR' },
         { id: 'rta',         fn: 'PRiSM_renderRTAPanel',            group: 'Diagnose', title: 'Rate-transient analysis',          sub: 'Normalised rate, FMB and linear flow' },
         { id: 'plottools',   fn: 'PRiSM_renderPlotToolsPanel',      group: 'Plot',     title: 'Plot tools',                       sub: 'Overlays, difference plot, copy & export' },
@@ -11671,6 +11763,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         linearBoundary: ['Well near one straight fault: sealing, or constant pressure.', 'Flat, then the derivative doubles (sealing) or falls away (constant pressure).', 'fault sealing no flow boundary barrier single fault doubling constant pressure aquifer gas cap'],
         parallelChannel: ['Well between two parallel sealing faults (a channel).', 'Flat, then a half-slope rise (linear flow along the channel).', 'channel parallel faults fluvial elongated'],
         closedChannel3: ['Channel closed at one end (three sealing faults, U shape).', 'Half-slope rise from the channel, steepening once the closed end is felt.', 'u shape three faults closed channel'],
+        closedCircle: ['Closed circular reservoir (well at the centre).', 'Flat, then the derivative bends up to a unit slope (pseudo-steady state).', 'closed circle circular bounded drainage radius depletion'],
         closedRectangle: ['Closed rectangular reservoir (four sealing faults).', 'Flat, then a unit slope at late time (pseudo-steady state, depletion).', 'closed bounded compartment depletion pseudo steady state box tank'],
         intersecting: ['Well inside a wedge formed by two intersecting faults.', 'Flat, then a higher flat level set by the wedge angle.', 'wedge intersecting faults angle corner'],
         fogBoundary: ['Fault that leaks (partially communicating).', 'Rises like a fault, then returns towards the first flat level.', 'leaky fault partially sealing semi permeable communicating'],
@@ -13454,4 +13547,5574 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
 })();
 
 // ─── END 52-prism-gas ─────────────────────────────────────────────
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// ─── BEGIN 53-prism-autointerp ───────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════
+// =============================================================================
+// PRiSM — 53-prism-autointerp.js  (Round 8)
+// -----------------------------------------------------------------------------
+// Automatic build-up interpretation engine, window.PRiSM_autoInterp. Shared by
+// the Build-up Surveillance page (Round 9) and the PRiSM Skin-check card.
+// Plan: docs/BUILDUP-SURVEILLANCE-PLAN.md §3.1 (interfaces) and §4.6.
+//
+// WP0: version, canon(obj, mode), hash16(str).
+//   canon and hash16 are FROZEN from WP0 on. Every stored hash (inputs,
+//   results and decisions hashes, the per-test inputHash, the audit chain)
+//   depends on them bit for bit, so any change would mark every signed report
+//   "changed after sign-off". WP1 left these two functions untouched.
+// WP1: the rest of §3.1 — bin, derivative, prepare, storage, iarf, line,
+//   gridEntry, fitJob / fit (sliced PRiSM_fitPhysical), reach, predictors,
+//   triggers / flags, bic, fullySeen, agreement, cHeldJob, sErr, sensitivity,
+//   confidence, rinv, compactHistory, gasTable, pStarRange, pExt, kHeldJob,
+//   backgroundCheck, interpretJob / interpret, drive, stats; kernels
+//   (closed circle, two-zone composite, scaled Bessel functions); and
+//   PRiSM_MODELS.closedCircle (§3.3).
+//
+// canon(obj, mode) → canonical JSON string. These rules are normative: plan
+// §3.1 "WP0 resolutions" and §8.4 point here, and the code below implements
+// exactly this list (DISPLAY_RULES holds the full key-name table).
+//   • Object keys sorted (UTF-16 code-unit order), no whitespace.
+//   • NaN, +Infinity, −Infinity → null; −0 → 0; |v| < 1e-12 → 0 in both modes,
+//     so a value that is 0 on one engine and 2e-16 on another hashes the same.
+//   • undefined, functions and symbols are dropped from objects and become
+//     null inside arrays (as JSON does). Typed arrays serialise as arrays,
+//     Dates as their ISO string (null when invalid). A repeated reference to
+//     an object that is still being serialised (a cycle) becomes null.
+//   • mode 'inputs' (also the default for a missing or unknown mode): every
+//     number to 6 significant figures, except epoch milliseconds (keys that
+//     end in "_ms"), which are rounded to whole seconds — 6 significant
+//     figures of an epoch-ms value would lose hours. The rule goes by the key
+//     name only, so it also rounds a millisecond DURATION whose key ends in
+//     "_ms" (e.g. store.encode tScale_ms) to whole seconds, in both modes:
+//     name sub-second durations in another unit (_s, _h) or keep them out of
+//     hashed objects.
+//   • mode 'display': each number is rounded to its display precision
+//     (plan §8.4), chosen from the property name (first rule that matches):
+//       epoch      key ends "_ms"                      → whole seconds
+//       count      n, nEval, iterations, seed, …       → kept when an integer
+//       percent    key contains "Pct"                  → 1 dp
+//       ΔBIC       bic, dBic, dBicHom, …               → 1 dp
+//       skin       S, dS, Serr, S_err, sErr, sWin, …   → 2 dp
+//       k          k, kh, kStar, kBase, …              → 3 significant figures
+//       C          C, C_us, Cd, CD                     → 3 significant figures
+//       pressure   p*, pwf0, p_ext, dp, m, "_psi(a)"   → 1 dp (*)
+//       rate       q, Dq, rateAtStake, V, …            → 1 dp (*)
+//       time       key ends "_h", dt, dte, t, …Days    → 3 dp (*)
+//       seconds    key ends "_s"                       → 0 dp (*)
+//       distance   key ends "_ft", rw                  → 0 dp (*)
+//       inherit    v, value, lo, hi, min, max, …       → the parent key's rule
+//       other                                          → 4 significant figures
+//     (*) or 3 significant figures when that is finer, so small values such
+//     as noise in psi, a 0.0028 h first bin or rw = 0.354 ft keep 3 figures.
+//     Array elements take the rule of the array's key; numeric keys
+//     ('0.5', '2', …) inherit like v/value.
+//   • Rounding uses Number.prototype.toPrecision / toFixed / toExponential,
+//     which the language defines exactly, so the string is the same on every
+//     JS engine for the same input numbers.
+//   • GaugeRecord.t (raw epoch-ms samples under the key "t") is not meant to
+//     go through canon: the record hash is computed from the record itself.
+//
+// hash16(str) → 16 lowercase hex characters
+//   Two 32-bit FNV-1a passes over the UTF-16 code units of the string (each
+//   code unit XORed in whole, then multiplied by the FNV prime 16777619 with
+//   Math.imul), with offset bases 0x811c9dc5 and 0x050c5d1f, each written as
+//   8 hex digits and concatenated. For an ASCII string the first half equals
+//   the standard 32-bit FNV-1a of its bytes. null/undefined hash as ''.
+//
+// Load rules (smoke stub): no document, no timers, no other PRiSM symbol is
+// needed at load time. The namespace object is merged, never replaced.
+// =============================================================================
+
+(function () {
+    'use strict';
+    var G = (typeof window !== 'undefined') ? window : globalThis;
+    var AI = G.PRiSM_autoInterp = G.PRiSM_autoInterp || {};
+
+    // ─────────────────────────────────────────────────────────────────────
+    // canon — canonical JSON (FROZEN after WP0)
+    // ─────────────────────────────────────────────────────────────────────
+    var SF_INPUTS = 6;
+    var SF_FALLBACK = 4;
+    var ZERO_FLOOR = 1e-12;     // |v| below this serialises as 0 in both modes
+
+    // Display-precision rules, first match wins. r: rounding kind
+    //   'epoch' whole seconds · 'count' integer kept · 'dp' fixed decimals ·
+    //   'dp3' fixed decimals or 3 significant figures when finer · 'sf' significant figures.
+    var DISPLAY_RULES = [
+        { cat: 'epoch',    r: 'epoch', re: /_ms$/ },
+        { cat: 'count',    r: 'count', re: /^(n|nDp|nKept|nLumped|nEval|nChecked|nFailed|nCases|nBuildups|nTests|nUsed|iterations|slices|evals|fits|lmIters|gridBuilds|lines|seq|seed|row|j0|j1|gapCount|decisions|open|from|to|idx|count|startHour|master)$/ },
+        { cat: 'percent',  r: 'dp', n: 1, re: /Pct($|[A-Z_0-9])/ },
+        { cat: 'bic',      r: 'dp', n: 1, re: /^d?(bic|Bic|BIC)($|[A-Z_0-9])/ },
+        { cat: 'skin',     r: 'dp', n: 2, re: /^(S|dS|bS|S0|Sd|Sprime|Smech|SmechErr|Serr|SerrExt|Sgeo|SgeoRange|Sbase|seS|biasDS|dLineMatch|medAbsDS|disagreeDS|fittedDS|pointSkin|pointSkinSpread|floor|sErr|sWin|sTc|sPwf|sK|sC|sSens|sAbs|sLine|sMatch|sErrFloor|sErrHigh|sErrLow|sErrMax)$|^S_|^S[A-Z]/ },
+        { cat: 'perm',     r: 'sf', n: 3, re: /^(k|kh|kStar|kBase|k_base|khBase|kLine|kMatch|kMed|kMedian)$/ },
+        { cat: 'storage',  r: 'sf', n: 3, re: /^(C|C_us|Cd|CD)$/ },
+        { cat: 'pressure', r: 'dp3', n: 1, re: /_psia?$|^(p|pi|pbar|Pb|patm|pmax|pdew|p1hr|pRef|dp|dpdt|dpdt_flow|deriv|m|mPrime)$|^pwf|^pStar|^pExt|^piModel/ },
+        { cat: 'rate',     r: 'dp3', n: 1, re: /^(q|Dq|qBefore|qAfter|qNow|qRef|qFlow|qCorrect|rateAtStake|cumAtStake|V|oil|gas|water)$/ },
+        { cat: 'time',     r: 'dp3', n: 3, re: /_h$|^(dt|dte|t|days)$|Days$/ },
+        { cat: 'seconds',  r: 'dp3', n: 0, re: /_s$/ },
+        { cat: 'distance', r: 'dp3', n: 0, re: /_ft$|^rw$/ }
+    ];
+    var INHERIT_RE = /^(v|value|lo|hi|min|max|mean|median|spread|ext|range|byFactor|-?\d+(\.\d+)?)$/;
+    var FALLBACK_RULE = { cat: 'other', r: 'sf', n: SF_FALLBACK };
+    var ROOT_RULE = FALLBACK_RULE;
+
+    function _ruleFor(key, parentRule) {
+        if (INHERIT_RE.test(key)) return parentRule || ROOT_RULE;
+        for (var i = 0; i < DISPLAY_RULES.length; i++) {
+            if (DISPLAY_RULES[i].re.test(key)) return DISPLAY_RULES[i];
+        }
+        return FALLBACK_RULE;
+    }
+
+    function _clean(x) { return (x === 0) ? 0 : x; }   // −0 → 0
+
+    function _sf(v, n) { return _clean(parseFloat(v.toPrecision(n))); }
+    function _dp(v, n) { return _clean(parseFloat(v.toFixed(n))); }
+    function _dp3(v, n) {
+        if (v === 0) return 0;
+        // Exponent of v written with 3 significant figures (exact per the language spec).
+        var s = v.toExponential(2);
+        var e = parseInt(s.slice(s.indexOf('e') + 1), 10);
+        return (2 - e > n) ? _sf(v, 3) : _dp(v, n);
+    }
+
+    function _roundNum(v, mode, rule, key) {
+        if (typeof v !== 'number' || !isFinite(v)) return null;
+        if (Math.abs(v) < ZERO_FLOOR) return 0;   // last-bit residue (0 vs 2e-16) never reaches a hash
+        var epochKey = /_ms$/.test(key || '');
+        if (mode !== 'display') {
+            if (epochKey) return _clean(Math.round(v / 1000) * 1000);
+            return _sf(v, SF_INPUTS);
+        }
+        switch (rule.r) {
+            case 'epoch': return _clean(Math.round(v / 1000) * 1000);
+            case 'count': return (Math.floor(v) === v && Math.abs(v) <= 9007199254740991) ? _clean(v) : _sf(v, SF_FALLBACK);
+            case 'dp':    return _dp(v, rule.n);
+            case 'dp3':   return _dp3(v, rule.n);
+            default:      return _sf(v, rule.n);
+        }
+    }
+
+    // Tag checks (not instanceof) so objects made in another realm (iframe, vm context) behave the same.
+    function _tag(x) { return Object.prototype.toString.call(x); }
+    function _isTyped(x) {
+        return (typeof ArrayBuffer !== 'undefined') && typeof ArrayBuffer.isView === 'function' &&
+               ArrayBuffer.isView(x) && _tag(x) !== '[object DataView]';
+    }
+
+    function _ser(v, mode, rule, key, stack) {
+        if (v === null || v === undefined) return 'null';
+        var t = typeof v;
+        if (t === 'number') {
+            var r = _roundNum(v, mode, rule, key);
+            return r === null ? 'null' : JSON.stringify(r);
+        }
+        if (t === 'boolean') return v ? 'true' : 'false';
+        if (t === 'string') return JSON.stringify(v);
+        if (t === 'bigint') return JSON.stringify(String(v));
+        if (t === 'function' || t === 'symbol') return 'null';
+        if (stack.indexOf(v) !== -1) return 'null';           // cycle
+        if (_tag(v) === '[object Date]') return isFinite(v.getTime()) ? JSON.stringify(v.toISOString()) : 'null';
+        var out, i;
+        stack.push(v);
+        if (Array.isArray(v) || _isTyped(v)) {
+            out = [];
+            for (i = 0; i < v.length; i++) out.push(_ser(v[i], mode, rule, key, stack));
+            stack.pop();
+            return '[' + out.join(',') + ']';
+        }
+        var keys = Object.keys(v).sort();
+        out = [];
+        for (i = 0; i < keys.length; i++) {
+            var k = keys[i], val = v[k], vt = typeof val;
+            if (val === undefined || vt === 'function' || vt === 'symbol') continue;
+            out.push(JSON.stringify(k) + ':' + _ser(val, mode, _ruleFor(k, rule), k, stack));
+        }
+        stack.pop();
+        return '{' + out.join(',') + '}';
+    }
+
+    function canon(obj, mode) {
+        var m = (mode === 'display') ? 'display' : 'inputs';
+        return _ser(obj, m, ROOT_RULE, '', []);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // hash16 — two 32-bit FNV-1a passes (FROZEN after WP0)
+    // ─────────────────────────────────────────────────────────────────────
+    var FNV_PRIME = 16777619;     // 0x01000193
+    var FNV_BASE_A = 0x811c9dc5;
+    var FNV_BASE_B = 0x050c5d1f;
+
+    function _fnv(s, basis) {
+        var h = basis | 0;
+        for (var i = 0; i < s.length; i++) {
+            h ^= s.charCodeAt(i);
+            h = Math.imul(h, FNV_PRIME);
+        }
+        return h >>> 0;
+    }
+    function _hex8(x) { return ('0000000' + (x >>> 0).toString(16)).slice(-8); }
+
+    function hash16(str) {
+        var s = (str === null || str === undefined) ? '' : String(str);
+        return _hex8(_fnv(s, FNV_BASE_A)) + _hex8(_fnv(s, FNV_BASE_B));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Public surface (WP0). WP1 adds the rest of §3.1 to this object.
+    // ─────────────────────────────────────────────────────────────────────
+    AI.version = '1.0';
+    AI.canon = canon;
+    AI.hash16 = hash16;
+
+    // =====================================================================
+    // WP1 — AUTOMATIC BUILD-UP INTERPRETATION ENGINE (plan §3.1–§3.3, §4.6)
+    // =====================================================================
+    // Pure engine: no DOM, no storage, no events, no random numbers. The only
+    // timer user is drive() (a terminating chain of one-shot setTimeout(0)).
+    // Every cross-file PRiSM function is looked up at CALL time.
+    //
+    // Conventions (plan "Conventions" and §3.0)
+    //   • Field units: psia, hours, STB/d | Mscf/d | bbl/d, md, ft, cp, 1/psi, bbl/psi.
+    //   • Spans, cycles and windows are in log10 Δt_e (iarf.X0/X1, shifts[].dX);
+    //     bins.X and the Bourdet distance L are ln Δt_e (D6).
+    //   • "Slope" of the derivative is its log-log slope d ln Δp′/d ln Δt_e
+    //     (base-independent, the quantity the half / quarter / unit slope
+    //     flags use). The OLS slope of Δp′/ℓ is regressed on ln Δt_e.
+    //   • Threshold decisions compare inputs rounded per DEFAULTS.round (D27).
+    //   • The builtins are parameters of the inner function below: inside an embedding
+    //     sandbox (the acceptance harness runs the app in a vm context) every global lookup
+    //     is an intercepted call, many times slower than a closure read (the Bessel kernels
+    //     ran 10-70x slower). The arguments are the realm's own objects, so the numbers are
+    //     the same. The engine code keeps the module indent.
+
+    (function (Math, isFinite, Infinity, NaN, Array, Object, String, Number, JSON, Map, Float64Array) {
+
+    var LN10 = Math.LN10, LN2 = Math.LN2;
+    var EULER = 0.5772156649015329;
+    var C_A = 141.2, C_B = 0.0002637, C_CD = 0.8936, C_M = 162.6, C_PLAT = 70.6;
+
+    function _deepFreeze(o) {
+        if (o && typeof o === 'object' && !Object.isFrozen(o)) {
+            Object.freeze(o);
+            Object.keys(o).forEach(function (k) { _deepFreeze(o[k]); });
+        }
+        return o;
+    }
+
+    var DEFAULTS = _deepFreeze({
+        Lcyc: 0.1, binsPerCycle: 20, fitBinsPerCycle: 12,
+        iarf: { band: 0.10, slope: 0.03, bandCap: 0.20, slopeCap: 0.06, minCycles: 0.5, goodCycles: 1.0, goodSlope: 0.01, goodSE: 0.01,
+                valleyDepth: 0.15, mergeLevel: 0.05, mergeGap: 0.2 },
+        reach: { fairCycles: 0.5, goodCycles: 1.0 },
+        trig: { late: 0.15, lateCycles: 0.2, level: [0.8, 1.25] },
+        bic: { tau: 10, perCycle: 12, logFloor: 0.005 },
+        agree: { kPct: 5, dS: 0.5, biasKPct: 3, biasDS: 0.3 },
+        cheld: { f: [0.8, 1.25], ext: [0.64, 0.5, 1.56, 2.0], reject: 10 },
+        sErr: { floor: 0.2, winShift: 0.25, winShiftFrac: 0.2 },
+        kHeld: { spanMax: 0.6, corrMax: 0.95, rmsK: 3, sErrMax: 1.0 },
+        pwf: { trendMin_min: 30, trendSamplesMin: 10, trendDtFactor: 10 },
+        seen: { fault: 1.8, faultCycles: 0.15, compCycles: 0.3, closed: 0.5, closedSlope: -0.5, faultDepart: 0.15 },
+        history: { maxDerivPct: 2, pStarFactors: [0.5, 2, 10] },
+        tide: { m2Min_h: 24, k1Min_h: 48, index: 0.10 },
+        budget: { unitMs: 50, perDecade: 10, maxIterTotal: 40, evalsMax: 24,
+                  costMs: { homogeneous: { pos: 4, neg: 8 }, closedCircle: { pos: 1.5, neg: 3 }, composite2: { pos: 3, neg: 6 }, linearBoundary: { pos: 9, neg: 18 } } },
+        rivals: { composite: { freezeF: true, M: [0.05, 20] }, closedStarts: [0.7, 1.0, 1.4] },
+        round: { dBic: 0.1, span: 0.01, slope: 0.001, ratio: 0.001 },
+        // Confidence thresholds (§5.1; '*' rules, replaced by PRiSM_autoInterpCal.thresholds when calibrated)
+        conf: { snrHigh: 20, snrLow: 5, sErrHigh: 0.5, sErrLow: 1.0, fairSpanHigh: 0.7, pointSkinSpread: 0.3, disagreeDS: 1.0,
+                disagreeKPct: 15, reachFactor: 3.98, distractorRule: true, kHeldRmsK: 3, rateTolPct: 15, tauBic: 10, sErrFloor: 0.2,
+                rDriftMax: 0.05, rTideMax: 0.10, r4TolPct: 15, r3LowPct: 25 }
+    });
+
+    // Calibration lookup at call time (placeholder file 55 or none → DEFAULTS).
+    function _cal(cal) {
+        if (cal !== undefined) return cal;
+        var c = G.PRiSM_autoInterpCal;
+        return (c && typeof c === 'object') ? c : null;
+    }
+    function _thr(cal) {
+        var d = DEFAULTS.conf, out = {};
+        Object.keys(d).forEach(function (k) { out[k] = d[k]; });
+        var c = _cal(cal);
+        if (c && c.calibrated && c.thresholds && typeof c.thresholds === 'object') {
+            Object.keys(c.thresholds).forEach(function (k) {
+                var v = c.thresholds[k];
+                if (k === 'deltaForm') return;
+                if ((typeof v === 'number' && isFinite(v)) || typeof v === 'boolean') out[k] = v;
+            });
+        }
+        return out;
+    }
+
+    // ── stats (counters for tests; plan §4.8) ──
+    var STATS = { evals: 0, gridBuilds: 0, fits: 0, lmIters: 0, slices: 0, lines: 0, cheldRefits: 0, cheldExt: 0, kernelEvals: 0, resvPoints: 0 };
+    function stats() { var o = {}; Object.keys(STATS).forEach(function (k) { o[k] = STATS[k]; }); return o; }
+    function resetStats() { Object.keys(STATS).forEach(function (k) { STATS[k] = 0; }); }
+
+    // ── small numeric helpers ──
+    function _num(v) { return typeof v === 'number' && isFinite(v); }
+    function _pos(v) { return _num(v) && v > 0; }
+    function _fin(v) { return _num(v) ? v : null; }
+    function _clamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
+    function _median(a) {
+        var s = [];
+        for (var i = 0; i < a.length; i++) if (_num(a[i])) s.push(a[i]);
+        if (!s.length) return NaN;
+        s.sort(function (x, y) { return x - y; });
+        var m = s.length >> 1;
+        return (s.length % 2) ? s[m] : 0.5 * (s[m - 1] + s[m]);
+    }
+    function _mad(a) {
+        var m = _median(a);
+        if (!_num(m)) return NaN;
+        return _median(a.map(function (v) { return _num(v) ? Math.abs(v - m) : NaN; }));
+    }
+    // Weighted median as element indices: {i, j} with i === j, or the two middle elements of a tie
+    // (i the lower value).
+    function _wmedianIdx(vals, w) {
+        var idx = [];
+        for (var i = 0; i < vals.length; i++) idx.push(i);
+        idx.sort(function (a, b) { return vals[a] - vals[b] || a - b; });
+        var tot = 0;
+        for (var j = 0; j < w.length; j++) tot += w[j];
+        var acc = 0;
+        for (var k = 0; k < idx.length; k++) {
+            acc += w[idx[k]];
+            if (acc > tot / 2) return { i: idx[k], j: idx[k] };
+            if (acc === tot / 2 && k + 1 < idx.length) return { i: idx[k], j: idx[k + 1] };
+        }
+        return { i: idx[idx.length - 1], j: idx[idx.length - 1] };
+    }
+    // Decision rounding (D27): fixed decimals through the language-defined toFixed.
+    function _rdp(v, step) {
+        if (!_num(v)) return v;
+        var dp = Math.max(0, Math.round(-Math.log10(step)));
+        var r = parseFloat(v.toFixed(dp));
+        return r === 0 ? 0 : r;
+    }
+    function _rBic(v) { return _rdp(v, DEFAULTS.round.dBic); }
+    function _rSpan(v) { return _rdp(v, DEFAULTS.round.span); }
+    function _rSlope(v) { return _rdp(v, DEFAULTS.round.slope); }
+    function _rRatio(v) { return _rdp(v, DEFAULTS.round.ratio); }
+    function _r2(v) { return _rdp(v, 0.01); }
+    function _txt(s) {   // plain text < 300 characters, no banned words
+        s = String(s == null ? '' : s).replace(/\b(null|undefined|NaN|Infinity)\b/g, '—').replace(/\[object Object\]/g, '');
+        return s.length < 300 ? s : s.slice(0, 296) + '…';
+    }
+    function _fmt(v, sig) {
+        if (!_num(v)) return '—';
+        var a = Math.abs(v);
+        if (a !== 0 && (a >= 1e5 || a < 1e-3)) return v.toExponential(Math.max(0, (sig || 3) - 1));
+        return String(+v.toPrecision(sig || 3));
+    }
+    function _warn(code, level, text, ev) { return { code: code, level: level, text: _txt(text), ev: ev || ['M7'] }; }
+    function _copy(o) { var r = {}; if (o) for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) r[k] = o[k]; return r; }
+    function _jsonClean(v) {
+        // finite-or-null for every number, plain arrays (JSON-safe), no undefined
+        if (v === null || v === undefined) return null;
+        if (typeof v === 'number') return isFinite(v) ? v : null;
+        if (typeof v !== 'object') return v;
+        if (Array.isArray(v) || (typeof ArrayBuffer !== 'undefined' && ArrayBuffer.isView && ArrayBuffer.isView(v))) {
+            var a = new Array(v.length);
+            for (var i = 0; i < v.length; i++) a[i] = _jsonClean(v[i]);
+            return a;
+        }
+        var o = {};
+        for (var k in v) if (Object.prototype.hasOwnProperty.call(v, k) && k.charAt(0) !== '_' && v[k] !== undefined && typeof v[k] !== 'function') o[k] = _jsonClean(v[k]);
+        return o;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Scaled modified Bessel functions (local to 53): I0e, I1e, K0e, K1e
+    //   Ke(x) = K(x)·e^x, Ie(x) = I(x)·e^-x. ≤ ~1e-14 relative (Stehfest
+    //   amplifies kernel error ~1e5, so polynomial fits are not used).
+    //   K: ascending series for x ≤ 2, trapezoid on ∫ e^{−x(cosh u − 1)} cosh(νu) du for 2 < x ≤ 16
+    //   (the trapezoid error grows like e^{x−49}: 8e-15 at 16, 7e-11 at 25), asymptotic beyond (error ~e^{−2x}).
+    //   I: ascending series for x ≤ 20, asymptotic expansion beyond (error ~e^{−2x}).
+    // ─────────────────────────────────────────────────────────────────────
+    var BH = 0.2, BCOSH = [];
+    for (var bk = 0; bk < 400; bk++) BCOSH.push(Math.cosh(bk * BH));
+    function _kSmall(x) {
+        var y = x * x / 4, lx = Math.log(x / 2);
+        var t0 = 1, t1 = 1, I0 = 0, I1s = 0, s0 = 0, s1 = 0, psi = -EULER, psi1 = 1 - EULER;
+        for (var k = 0; k < 60; k++) {
+            if (k > 0) { t0 *= y / (k * k); t1 *= y / (k * (k + 1)); psi += 1 / k; psi1 += 1 / (k + 1); }
+            I0 += t0; I1s += t1; s0 += psi * t0; s1 += (psi + psi1) * t1;
+            if (t0 < 1e-18 * I0 && k > 2) break;
+        }
+        var I1 = (x / 2) * I1s;
+        return [-lx * I0 + s0, 1 / x + lx * I1 - (x / 4) * s1];
+    }
+    function _asymK(x, nu) {   // K_ν(x)·e^x ≈ √(π/2x) Σ a_k(ν)/x^k (x > 16: error ~e^{−2x} ≤ 1.3e-14)
+        var mu = 4 * nu * nu, sum = 1, term = 1, prev = Infinity;
+        for (var k = 1; k < 60; k++) {
+            term *= (mu - (2 * k - 1) * (2 * k - 1)) / (k * 8 * x);
+            var at = Math.abs(term);
+            if (at > prev) break;
+            sum += term; prev = at;
+            if (at < 1e-17 * Math.abs(sum)) break;
+        }
+        return sum * Math.sqrt(Math.PI / (2 * x));
+    }
+    function _kePair(x) {      // [K0e, K1e]
+        if (x <= 2) { var k = _kSmall(x), e = Math.exp(x); return [k[0] * e, k[1] * e]; }
+        if (x > 16) return [_asymK(x, 0), _asymK(x, 1)];
+        var s0 = 0.5, s1 = 0.5;
+        for (var j = 1; j < 400; j++) {
+            var ch = BCOSH[j], ee = Math.exp(-x * (ch - 1));
+            s0 += ee; s1 += ee * ch;
+            if (ee * ch < 1e-18 * s1) break;
+        }
+        return [s0 * BH, s1 * BH];
+    }
+    function _iePair(x) {      // [I0e, I1e]
+        if (!(x > 0)) return [1, 0];
+        if (x <= 20) {
+            var y = x * x / 4, t0 = 1, t1 = 1, I0 = 1, I1s = 1;
+            for (var k = 1; k < 300; k++) {
+                t0 *= y / (k * k); t1 *= y / (k * (k + 1));
+                I0 += t0; I1s += t1;
+                if (t0 < 1e-17 * I0 && t1 < 1e-17 * I1s) break;
+            }
+            var e = Math.exp(-x);
+            return [I0 * e, (x / 2) * I1s * e];
+        }
+        return [_asymI(x, 0), _asymI(x, 1)];
+    }
+    function _asymI(x, nu) {   // I_ν(x)·e^-x ≈ Σ (−1)^k a_k(ν)/x^k / √(2πx) (x > 20)
+        var pref = 1 / Math.sqrt(2 * Math.PI * x);
+        var mu = 4 * nu * nu, sum = 1, term = 1, prev = Infinity;
+        for (var kk = 1; kk < 60; kk++) {
+            term *= -(mu - (2 * kk - 1) * (2 * kk - 1)) / (kk * 8 * x);
+            var at = Math.abs(term);
+            if (at > prev) break;
+            sum += term; prev = at;
+            if (at < 1e-17 * Math.abs(sum)) break;
+        }
+        return sum * pref;
+    }
+    // Single members (bit-identical to the pairs; the asymptotic branches skip the unused order).
+    function _k0e(x) { return x > 16 ? _asymK(x, 0) : _kePair(x)[0]; }
+    function _k1e(x) { return x > 16 ? _asymK(x, 1) : _kePair(x)[1]; }
+    function _i1e(x) { return x > 20 ? _asymI(x, 1) : _iePair(x)[1]; }
+    // Well-term values repeat across parameter sets: the grid lattice fixes every Stehfest s
+    // (for S < 0 through the effective-time lattice, see gridEntry), so a bounded memo keyed by
+    // √s returns the identical numbers without the series / trapezoid work (speed only; cleared
+    // when full). Direct evaluations off the lattice (_pair with S < 0) do not use it.
+    var MEMO_MAX = 40000, _KMEMO = new Map(), _IMEMO = new Map();
+    function _kePairW(q, memo) {
+        if (!memo) return _kePair(q);
+        var v = _KMEMO.get(q);
+        if (v === undefined) { if (_KMEMO.size >= MEMO_MAX) _KMEMO.clear(); v = _kePair(q); _KMEMO.set(q, v); }
+        return v;
+    }
+    function _iePairW(q, memo) {
+        if (!memo) return _iePair(q);
+        var v = _IMEMO.get(q);
+        if (v === undefined) { if (_IMEMO.size >= MEMO_MAX) _IMEMO.clear(); v = _iePair(q); _IMEMO.set(q, v); }
+        return v;
+    }
+    function K0e(x) { return _kePair(x)[0]; }
+    function K1e(x) { return _kePair(x)[1]; }
+    function I0e(x) { return _iePair(x)[0]; }
+    function I1e(x) { return _iePair(x)[1]; }
+
+    // ── Laplace reservoir kernels p̄(s) (no WBS / skin); d = distance scale ──
+    function _lapHom(s, d, memo) { var q = Math.sqrt(s), k = _kePairW(q, memo); return k[0] / (s * q * k[1]); }
+    // Image term K0e(q·r)·e^{−q(r−1)}: skipped beyond q(r − 1) = 40, where it is below 2^−54 of the
+    // well term K0e(q) (K0e decreases), so the sum rounds to the same double (speed only).
+    var IMG_SKIP = 40;
+    function _lapFault(dF, bc) {
+        var sgn = (bc === 'constP') ? -1 : 1;
+        return function (s, d, memo) {
+            var q = Math.sqrt(s), kw = _kePairW(q, memo), r = 2 * dF * (d || 1);
+            var img = 0;
+            if (r > 1) { var e = q * (r - 1); if (e < IMG_SKIP) img = _k0e(q * r) * Math.exp(-e); }
+            return (kw[0] + sgn * img) / (s * q * kw[1]);
+        };
+    }
+    // Closed circle, well at the centre: p̄ = [K0(√s) + I0(√s)ρ] / (s√s[K1(√s) − I1(√s)ρ]),
+    // ρ = K1(reD√s)/I1(reD√s), in scaled form (the e^{2q−2x} factor underflows safely to 0).
+    // The boundary terms carry e^{g}, g = 2q − 2x; below g = −40 they are < 1e-17
+    // of the well term (ρ ≈ π e^g, I(q)e^{−q} ≤ 1) and are skipped.
+    var G_SKIP = -40;
+    function _lapClosedCircle(reD) {
+        return function (s, d, memo) {
+            var q = Math.sqrt(s), x = reD * (d || 1) * q;
+            var kq = _kePairW(q, memo);
+            var g = 2 * q - 2 * x;
+            if (g < G_SKIP) return kq[0] / (s * q * kq[1]);
+            var iq = _iePairW(q, memo);
+            var rho = (_k1e(x) / _i1e(x)) * Math.exp(g);
+            return (kq[0] + iq[0] * rho) / (s * q * (kq[1] - iq[1] * rho));
+        };
+    }
+    // Two-zone radial composite (inner r ∈ [1, R], outer r > R; M = λ1/λ2, F = (φct)1/(φct)2):
+    //   p̄1 = A I0(r√s) + B K0(r√s), p̄2 = Cc K0(r√(sM/F)); √s(B K1(√s) − A I1(√s)) = 1/s;
+    //   p̄1 = p̄2 and dp̄1/dr = (1/M) dp̄2/dr at R. Solved in closed form (3×3 reduced), scaled.
+    function _lapComposite2(M, F, R) {
+        return function (s, d, memo) {
+            var a = Math.sqrt(s), b = Math.sqrt(s * M / F);
+            var RR = R * (d || 1); if (!(RR > 1.000001)) RR = 1.000001;
+            var ka = _kePairW(a, memo);
+            var g = 2 * a - 2 * a * RR;
+            if (g < G_SKIP - Math.log(Math.max(1, M))) return ka[0] / (s * a * ka[1]);
+            var ia = _iePairW(a, memo), kbR = _kePair(b * RR);
+            var gam = (b / M) * kbR[1] / kbR[0];
+            var kaR = _kePair(a * RR), iaR = _iePair(a * RR);
+            var kap = (a * kaR[1] - gam * kaR[0]) / (a * iaR[1] + gam * iaR[0]) * Math.exp(g);
+            return (ka[0] + kap * ia[0]) / (s * a * (ka[1] - kap * ia[1]));
+        };
+    }
+
+    // ── Stehfest N = 12 (the app's weights when present) ──
+    var _SW = null;
+    function _stehW() {
+        if (_SW) return _SW;
+        var t = G.PRiSM_STEHFEST_W;
+        if (t && t[12] && t[12].length === 12) { _SW = Array.prototype.slice.call(t[12]); return _SW; }
+        var N = 12, N2 = 6, fact = [1];
+        for (var i = 1; i <= 2 * N; i++) fact[i] = fact[i - 1] * i;
+        var W = new Array(N);
+        for (var n = 1; n <= N; n++) {
+            var sum = 0;
+            for (var k = Math.floor((n + 1) / 2); k <= Math.min(n, N2); k++) {
+                sum += Math.pow(k, N2) * fact[2 * k] / (fact[N2 - k] * fact[k] * fact[k - 1] * fact[n - k] * fact[2 * k - n]);
+            }
+            W[n - 1] = (((n + N2) % 2 === 0) ? 1 : -1) * sum;
+        }
+        _SW = W;
+        return W;
+    }
+
+    // [pd, pd′] with WBS + skin, one set of kernel evaluations for both; the same
+    // fold, negative-skin transform and pure-storage fast path as PRiSM_evalWbsSkin (03).
+    function _pair(lap, t, Cd, S, scaleDist) {
+        if (!(t > 0)) return [0, 0];
+        var C = (Cd > 0) ? Cd : 0, SS = S || 0, tt = t, dS = 1, memo = !(SS < 0);
+        if (SS < 0) { var e2 = Math.exp(2 * SS); tt = t * e2; C = C * e2; dS = scaleDist === false ? 1 : Math.exp(SS); SS = 0; }
+        if (C > 0 && tt < Math.min(1e-3 * C, 1e-12 * C * C)) return [tt / C, tt / C];
+        var W = _stehW(), a = LN2 / tt, accP = 0, accD = 0;
+        for (var i = 1; i <= 12; i++) {
+            var s = i * a, pbar = lap(s, dS, memo), inner = s * pbar + SS;
+            var F = inner / (s * (1 + C * s * inner));
+            accP += W[i - 1] * F; accD += W[i - 1] * s * F;
+        }
+        STATS.kernelEvals++;
+        return [a * accP, tt * a * accD];
+    }
+    function _evalModel(lap, td, Cd, S, deriv) {
+        var one = function (t) { return _pair(lap, +t, Cd, S, true)[deriv ? 1 : 0]; };
+        if (Array.isArray(td) || (td && typeof td.length === 'number' && typeof td !== 'string')) {
+            var out = new Array(td.length);
+            for (var i = 0; i < td.length; i++) out[i] = one(td[i]);
+            return out;
+        }
+        return one(td);
+    }
+
+    // ── PRiSM_MODELS.closedCircle (§3.3): registry model folded with PRiSM_evalWbsSkin ──
+    function _ccParams(params) {
+        var p = params || {};
+        var Cd = _num(p.Cd) ? p.Cd : 100, S = _num(p.S) ? p.S : 0, reD = _num(p.reD) ? p.reD : 5000;
+        if (!(Cd >= 0)) throw new Error('PRiSM closedCircle: Cd must be ≥ 0');
+        if (!(reD > 1)) throw new Error('PRiSM closedCircle: reD must be > 1');
+        return { Cd: Cd, S: S, reD: reD };
+    }
+    function _ccEval(td, params, deriv) {
+        var p = _ccParams(params), lap = _lapClosedCircle(p.reD);
+        if (typeof G.PRiSM_evalWbsSkin === 'function') return G.PRiSM_evalWbsSkin(lap, td, p.Cd, p.S, { derivative: !!deriv });
+        return _evalModel(lap, td, p.Cd, p.S, deriv);
+    }
+    G.PRiSM_MODELS = G.PRiSM_MODELS || {};
+    G.PRiSM_MODELS.closedCircle = {
+        name: 'Closed circle',
+        pd: function (td, params) { return _ccEval(td, params, false); },
+        pdPrime: function (td, params) { return _ccEval(td, params, true); },
+        kind: 'pressure', timeInput: 'td', category: 'boundary', refLength: 'rw',
+        defaultFrozen: [], evalCostMs: 1.5,
+        defaults: { Cd: 100, S: 0, reD: 5000 },
+        paramSpec: [
+            { key: 'Cd', label: 'Wellbore storage Cd', unit: '-', min: 0, max: 1e10, default: 100, scale: 'log' },
+            { key: 'S', label: 'Skin S', unit: '-', min: -7, max: 50, default: 0 },
+            { key: 'reD', label: 'r_e / r_w', unit: '-', min: 50, max: 1e7, default: 5000, scale: 'log' }
+        ],
+        description: 'Well at the centre of a closed circular reservoir; pseudo-steady state at late time.',
+        reference: 'van Everdingen & Hurst 1949, The application of the Laplace transformation to flow problems in reservoirs'
+    };
+
+    // ─────────────────────────────────────────────────────────────────────
+    // bin — medians per log bin (§4.6 item 1)
+    // ─────────────────────────────────────────────────────────────────────
+    // Bins of 1/perCycle log10 cycle on a canonical lattice, bin j = floor(log10 Δt·perCycle + ε)
+    // (anchored at 1 h, or at opts.dtMin when given), so the lattice does not depend on the
+    // first sample. Every bin median lies inside its own bin, so bin(bin(x)) == bin(x): a spec
+    // pre-binned at this resolution (with counts) gives the same bins as its raw samples. With
+    // opts.counts (pre-binned input) the medians are count-weighted and the counts add up.
+    // Single-sample bins keep the raw value.
+    function bin(dt, p, opts) {
+        opts = opts || {};
+        var per = _pos(opts.perCycle) ? opts.perCycle : 20;
+        var counts = Array.isArray(opts.counts) || (opts.counts && typeof opts.counts.length === 'number') ? opts.counts : null;
+        var out = { dt: [], p: [], n: [] };
+        if (!dt || !dt.length) return out;
+        var i0 = 0;
+        while (i0 < dt.length && !(dt[i0] > 0 && _num(p[i0]))) i0++;
+        if (i0 >= dt.length) return out;
+        var la = _pos(opts.dtMin) ? Math.log10(opts.dtMin) : 0;
+        var curJ = null, bd = [], bp = [], bw = [];
+        function flush() {
+            if (!bd.length) return;
+            var n = 0;
+            for (var q = 0; q < bw.length; q++) n += bw[q];
+            if (bd.length === 1) { out.dt.push(bd[0]); out.p.push(bp[0]); }
+            else {
+                // A tie (even total weight) is broken by the lower Δt element, and p takes that same
+                // element when it is one of its two middle values (else their mean): monotone data stay
+                // on their curve whether p rises or falls.
+                var md = _wmedianIdx(bd, bw), mp = _wmedianIdx(bp, bw);
+                out.dt.push(bd[md.i]);
+                out.p.push(mp.i === mp.j ? bp[mp.i] : ((md.i === mp.i || md.i === mp.j) ? bp[md.i] : 0.5 * (bp[mp.i] + bp[mp.j])));
+            }
+            out.n.push(n);
+            bd = []; bp = []; bw = [];
+        }
+        for (var i = i0; i < dt.length; i++) {
+            var t = dt[i], v = p[i];
+            if (!(t > 0) || !_num(v)) continue;
+            var j = Math.floor((Math.log10(t) - la) * per + 1e-7);
+            if (j !== curJ) { flush(); curJ = j; }
+            bd.push(t); bp.push(v);
+            bw.push(counts ? (_pos(counts[i]) ? counts[i] : 1) : 1);
+        }
+        flush();
+        // keep strictly ascending Δt (weighted medians of neighbouring bins never cross, but guard)
+        for (var k = out.dt.length - 1; k > 0; k--) {
+            if (!(out.dt[k] > out.dt[k - 1])) { out.dt.splice(k, 1); out.p.splice(k, 1); out.n[k - 1] += out.n[k]; out.n.splice(k, 1); }
+        }
+        return out;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // derivative — Bourdet dΔp/d ln Δt_e with a full-window mask (D6)
+    // ─────────────────────────────────────────────────────────────────────
+    // x = ln Δt_e ascending; L = Lcyc·ln 10 (0.2303 ln at 0.1 cycle). Bin i is
+    // "full" when a neighbour at ≥ L exists on both sides (the nearest such
+    // neighbours are used); other entries are null. Negative derivatives stay
+    // in deriv (they are "falling" evidence) and are listed in neg; they are
+    // never logged.
+    function derivative(x, dp, Lcyc, opts) {
+        var L = (_pos(Lcyc) ? Lcyc : DEFAULTS.Lcyc) * LN10;
+        var Ltol = L * (1 - 1e-9);
+        var n = x.length, d = new Array(n), full = new Array(n), neg = [];
+        var j = 0, k = 0;
+        for (var i = 0; i < n; i++) {
+            d[i] = null; full[i] = false;
+            // nearest j < i with x_i − x_j ≥ L (largest such j)
+            while (j + 1 < i && x[i] - x[j + 1] >= Ltol) j++;
+            if (k < i + 1) k = i + 1;
+            while (k < n && x[k] - x[i] < Ltol) k++;
+            if (!(x[i] - x[j] >= Ltol) || j >= i || k >= n) continue;
+            var a = x[i] - x[j], b = x[k] - x[i];
+            var v = ((dp[i] - dp[j]) / a * b + (dp[k] - dp[i]) / b * a) / (a + b);
+            if (!_num(v)) continue;
+            d[i] = v; full[i] = true;
+            if (v <= 0) neg.push(i);
+        }
+        return { deriv: d, full: full, neg: neg, L_ln: L };
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Superposition equivalent time Δt_e over a rate history
+    // ─────────────────────────────────────────────────────────────────────
+    // ln Δt_e(Δt) = ln Δt + Σ_{i<n} w_i [ln(off_i + Δt) − ln off_i], w_i = Δq_i/Δq_n,
+    // off_i = t_c − t_i. Δt_e → Δt as Δt → 0; Δt_e → tp_eff = Π off_i^{−w_i} as Δt → ∞
+    // (= tp for a single rate, so Δt = Δt_e·tp/(tp − Δt_e) exactly there).
+    function _supTerms(steps, tc) {
+        var n = steps.length, terms = [];
+        var dqn = steps[n - 1].q - (n > 1 ? steps[n - 2].q : 0);
+        if (dqn === 0) return null;
+        for (var i = 0; i < n - 1; i++) {
+            var dq = steps[i].q - (i > 0 ? steps[i - 1].q : 0);
+            if (dq === 0) continue;
+            var off = tc - steps[i].t;
+            if (!(off > 0)) return null;
+            terms.push({ w: dq / dqn, off: off });
+        }
+        return terms;
+    }
+    function _makeTime(steps, tc) {
+        var terms = _supTerms(steps, tc);
+        if (!terms) return null;
+        var lnTp = 0;
+        for (var i = 0; i < terms.length; i++) lnTp -= terms[i].w * Math.log(terms[i].off);
+        function lnDte(dt) {
+            var v = Math.log(dt);
+            for (var j = 0; j < terms.length; j++) v += terms[j].w * (Math.log(terms[j].off + dt) - Math.log(terms[j].off));
+            return v;
+        }
+        var tpEff = Math.exp(lnTp);
+        function dtOfDte(dte) {
+            if (!(dte > 0) || !(dte < tpEff * (1 - 1e-12))) return null;
+            if (terms.length === 1 && Math.abs(terms[0].w + 1) < 1e-12) return dte * tpEff / (tpEff - dte);
+            var target = Math.log(dte), lo = Math.log(dte) - 1e-9, hi = lo;
+            var f = function (u) { return lnDte(Math.exp(u)) - target; };
+            if (f(lo) > 0) { while (f(lo) > 0 && lo > -60) lo -= 1; }
+            hi = lo;
+            var guard = 0;
+            while (f(hi) < 0 && guard++ < 200) hi += 1;
+            if (f(hi) < 0) return null;
+            for (var it = 0; it < 100; it++) {
+                var mid = 0.5 * (lo + hi);
+                if (f(mid) < 0) lo = mid; else hi = mid;
+                if (hi - lo < 1e-13) break;
+            }
+            return Math.exp(0.5 * (lo + hi));
+        }
+        // PRiSM C2 time-function terms (x = exp Σ w ln(off + Δt), includes the last step with off 0)
+        var c2 = terms.map(function (t) { return { w: t.w, off: t.off }; });
+        c2.push({ w: 1, off: 0 });
+        return { terms: terms, c2terms: c2, tpEff: tpEff, lnDte: lnDte, dtOfDte: dtOfDte };
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // compactHistory — last keepFactor·Δt_end exact + one volume-mean block (D5)
+    // ─────────────────────────────────────────────────────────────────────
+    function compactHistory(steps, tc_h, dtEnd_h, opts) {
+        opts = opts || {};
+        var keep = _pos(opts.keepFactor) ? opts.keepFactor : 10;
+        var s = (steps || []).filter(function (x) { return x && _num(x.t) && _num(x.q); }).map(function (x) { return { t: x.t, q: x.q }; });
+        if (!s.length) return { steps: [], nKept: 0, nLumped: 0, lumped: null };
+        var tcut = tc_h - keep * dtEnd_h;
+        if (!(s[0].t < tcut)) return { steps: s, nKept: s.length, nLumped: 0, lumped: null };
+        var V = 0, nL = 0, qAtCut = 0;
+        for (var i = 0; i < s.length; i++) {
+            if (s[i].t >= tcut) break;
+            var t1 = (i + 1 < s.length) ? Math.min(s[i + 1].t, tcut) : tcut;
+            V += s[i].q * (t1 - s[i].t);
+            qAtCut = s[i].q;
+            nL++;
+        }
+        var kept = s.slice(nL);
+        var t0 = s[0].t, qL = V / (tcut - t0);
+        var out = [{ t: t0, q: qL }];
+        if (!kept.length || kept[0].t > tcut) out.push({ t: tcut, q: qAtCut });
+        kept.forEach(function (x) { out.push(x); });
+        // merge equal consecutive rates (never the final q = 0 step)
+        var merged = [out[0]];
+        for (var k = 1; k < out.length; k++) {
+            if (out[k].q === merged[merged.length - 1].q && k < out.length - 1) continue;
+            merged.push(out[k]);
+        }
+        return { steps: merged, nKept: kept.length, nLumped: nL, lumped: { t0: t0, t1: tcut, q: qL, V: V } };
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // gasTable — m(p), z, μ, cg on a pressure grid; normalised pseudo-pressure
+    // ─────────────────────────────────────────────────────────────────────
+    // z from WTS_gaspvt_z (impurity-aware) when present, else the PRiSM
+    // correlations (Sutton pseudo-criticals, Dranchuk–Abou-Kassem); μg Lee–
+    // Gonzalez–Eakin. p_n(p) = (μz/p)_ref·m(p)/2 (Meunier et al. 1987) has
+    // pressure units and behaves like a liquid Δp with μ_ref, Bg_ref, ct.
+    function gasTable(gas) {
+        gas = gas || {};
+        var sg = +gas.sg, T_F = +gas.T_F, co2 = +gas.co2 || 0, h2s = +gas.h2s || 0, n2 = +gas.n2 || 0;
+        var pmax = _pos(gas.pmax) ? gas.pmax : 6000;
+        var L = G.PRiSM_pvt_correlations;
+        if (!_pos(sg) || !_num(T_F)) return { ok: false, reason: 'gas gravity and temperature are required' };
+        var TR = T_F + 459.67;
+        var zFn = null, impurityAware = false;
+        if (typeof G.WTS_gaspvt_z === 'function') {
+            zFn = function (p) { try { var r = G.WTS_gaspvt_z({ sg: sg, p: p, t: T_F, co2: co2, h2s: h2s, n2: n2 }); return (r && r.ok) ? r.z : NaN; } catch (e) { return NaN; } };
+            impurityAware = true;
+            if (!_pos(zFn(Math.min(1000, pmax)))) { zFn = null; impurityAware = false; }
+        }
+        if (!zFn && L && typeof L.Z_dranchukAbouKassem === 'function') {
+            var Tpc = L.Tpc_sutton(sg), Ppc = L.Ppc_sutton(sg);
+            zFn = function (p) { return L.Z_dranchukAbouKassem(TR / Tpc, p / Ppc); };
+        }
+        if (!zFn || !L || typeof L.mu_g_leeGonzalezEakin !== 'function') return { ok: false, reason: 'gas PVT correlations are not loaded' };
+        var muFn = function (p, z) { return L.mu_g_leeGonzalezEakin(sg, T_F, z, p); };
+        var N = 241, p0 = 14.7, h = (pmax - p0) / (N - 1);
+        var P = new Array(N), Z = new Array(N), MU = new Array(N), D = new Array(N), Mv = new Array(N);
+        for (var i = 0; i < N; i++) {
+            P[i] = p0 + i * h; Z[i] = zFn(P[i]); MU[i] = muFn(P[i], Z[i]);
+            if (!_pos(Z[i]) || !_pos(MU[i])) return { ok: false, reason: 'z or viscosity could not be evaluated' };
+            D[i] = 2 * P[i] / (MU[i] * Z[i]);
+        }
+        Mv[0] = D[0] * p0 / 2;     // ∫_0^p0 2p/(μz) dp with μz ≈ constant
+        for (var j = 1; j < N; j++) {
+            var pm = P[j] - h / 2, zm = zFn(pm), mm = muFn(pm, zm);
+            var dm = (_pos(zm) && _pos(mm)) ? 2 * pm / (mm * zm) : 0.5 * (D[j - 1] + D[j]);
+            Mv[j] = Mv[j - 1] + (h / 6) * (D[j - 1] + 4 * dm + D[j]);
+        }
+        function idx(p) { return Math.max(0, Math.min(N - 2, Math.floor((p - p0) / h))); }
+        function mOf(p) {
+            if (!_num(p)) return NaN;
+            if (p <= p0) return Mv[0] * (p > 0 ? (p / p0) * (p / p0) : 0);
+            if (p >= P[N - 1]) return Mv[N - 1] + D[N - 1] * (p - P[N - 1]);
+            var k = idx(p), u = (p - P[k]) / h, u2 = u * u, u3 = u2 * u;
+            return (2 * u3 - 3 * u2 + 1) * Mv[k] + (u3 - 2 * u2 + u) * h * D[k] + (-2 * u3 + 3 * u2) * Mv[k + 1] + (u3 - u2) * h * D[k + 1];
+        }
+        function pOf(m) {
+            if (!_num(m)) return NaN;
+            if (m <= Mv[0]) return p0 * Math.sqrt(Math.max(0, m / Mv[0]));
+            if (m >= Mv[N - 1]) return P[N - 1] + (m - Mv[N - 1]) / D[N - 1];
+            var lo = 0, hi = N - 1;
+            while (hi - lo > 1) { var mid = (lo + hi) >> 1; if (Mv[mid] > m) hi = mid; else lo = mid; }
+            var a = P[lo], b = P[hi];
+            for (var it = 0; it < 60; it++) { var c = 0.5 * (a + b); if (mOf(c) > m) b = c; else a = c; if (b - a < 1e-10) break; }
+            return 0.5 * (a + b);
+        }
+        function interp(arr, p) { var k = idx(p), u = (p - P[k]) / h; return arr[k] + u * (arr[k + 1] - arr[k]); }
+        function cgOf(p) {   // cg = 1/p − (1/z) dz/dp
+            var k = idx(p), dz = (Z[k + 1] - Z[k]) / h;
+            return 1 / p - dz / interp(Z, p);
+        }
+        var tbl = { ok: true, p: P, m: Mv, z: Z, mu: MU, cg: P.map(function (pp) { return cgOf(pp); }), mOf: mOf, pOf: pOf,
+                    zOf: function (p) { return interp(Z, p); }, muOf: function (p) { return interp(MU, p); }, cgOf: cgOf,
+                    impurityAware: impurityAware, ref: null };
+        var pRef = _pos(gas.pRef) ? gas.pRef : Math.min(pmax / 1.2, 0.5 * pmax);
+        tbl.setRef = function (pr) {
+            var z = interp(Z, pr), mu = interp(MU, pr);
+            tbl.ref = { p: pr, mu: mu, z: z, ct: cgOf(pr), Bg: 5.035 * z * TR / pr };
+            return tbl.ref;
+        };
+        tbl.pn = function (p) { return (tbl.ref.mu * tbl.ref.z / tbl.ref.p) * mOf(p) / 2; };
+        tbl.pOfPn = function (pn) { return pOf(pn * 2 * tbl.ref.p / (tbl.ref.mu * tbl.ref.z)); };
+        tbl.setRef(pRef);
+        return tbl;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Tide fit (Q6): M2 (12.4206 h) from 24 h, M2 + K1 (23.9345 h) from 48 h
+    // ─────────────────────────────────────────────────────────────────────
+    function _solve(A, b) {    // small dense Gaussian elimination with partial pivoting
+        var n = b.length, M = A.map(function (r, i) { return r.slice().concat([b[i]]); });
+        for (var c = 0; c < n; c++) {
+            var piv = c;
+            for (var r = c + 1; r < n; r++) if (Math.abs(M[r][c]) > Math.abs(M[piv][c])) piv = r;
+            if (!(Math.abs(M[piv][c]) > 1e-300)) return null;
+            var tmp = M[c]; M[c] = M[piv]; M[piv] = tmp;
+            for (var r2 = c + 1; r2 < n; r2++) {
+                var f = M[r2][c] / M[c][c];
+                for (var k = c; k <= n; k++) M[r2][k] -= f * M[c][k];
+            }
+        }
+        var x = new Array(n);
+        for (var i = n - 1; i >= 0; i--) {
+            var s = M[i][n];
+            for (var j = i + 1; j < n; j++) s -= M[i][j] * x[j];
+            x[i] = s / M[i][i];
+        }
+        return x;
+    }
+    function _tideFit(dt, y, tc, dtEnd, nHarm) {
+        var t0 = Math.max(2, dtEnd / 4), rows = [];
+        var periods = nHarm === 2 ? [12.4206, 23.9345] : [12.4206];
+        for (var i = 0; i < dt.length; i++) {
+            if (!(dt[i] >= t0) || !_num(y[i])) continue;
+            var X = Math.log(dt[i]), r = [1, X, X * X];
+            for (var k = 0; k < periods.length; k++) {
+                var w = 2 * Math.PI / periods[k], ta = tc + dt[i];
+                r.push(Math.cos(w * ta), Math.sin(w * ta));
+            }
+            rows.push({ r: r, y: y[i] });
+        }
+        var m = 3 + 2 * periods.length;
+        if (rows.length < m + 5) return null;
+        var A = [], b = [];
+        for (var a = 0; a < m; a++) { A.push(new Array(m).fill(0)); b.push(0); }
+        rows.forEach(function (o) {
+            for (var a2 = 0; a2 < m; a2++) { b[a2] += o.r[a2] * o.y; for (var c = 0; c < m; c++) A[a2][c] += o.r[a2] * o.r[c]; }
+        });
+        var x = _solve(A, b);
+        if (!x) return null;
+        var harm = [];
+        for (var k2 = 0; k2 < periods.length; k2++) {
+            var ca = x[3 + 2 * k2], sa = x[4 + 2 * k2];
+            harm.push({ period: periods[k2], w: 2 * Math.PI / periods[k2], a: ca, b: sa, A: Math.sqrt(ca * ca + sa * sa) });
+        }
+        return { harm: harm };
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // prepare(spec) → Prep (§3.1)
+    // ─────────────────────────────────────────────────────────────────────
+    function _failP(code, msg, bad) { return { ok: false, code: code, errors: [_txt(msg)], bad: bad || [] }; }
+
+    function _localSlopes(X, y) {   // d ln y / d X (central), null where undefined
+        var n = X.length, s = new Array(n);
+        for (var i = 0; i < n; i++) {
+            s[i] = null;
+            var a = Math.max(0, i - 1), b = Math.min(n - 1, i + 1);
+            if (b === a || !(y[a] > 0) || !(y[b] > 0)) continue;
+            s[i] = (Math.log(y[b]) - Math.log(y[a])) / (X[b] - X[a]);
+        }
+        return s;
+    }
+
+    function prepare(spec, opts) {
+        opts = opts || {};
+        if (!spec || typeof spec !== 'object') return _failP('NO_DATA', 'No build-up specification.', ['spec']);
+        var dtIn = spec.dt, pIn = spec.p;
+        if (!dtIn || !pIn || dtIn.length < 5 || pIn.length !== dtIn.length) return _failP('NO_DATA', 'Too few build-up samples.', ['dt', 'p']);
+        var w = spec.well || {};
+        var badW = ['h', 'phi', 'mu', 'B', 'ct', 'rw'].filter(function (k) { return !_pos(w[k]); });
+        if (badW.length) return _failP('BAD_WELL', 'Well inputs missing or not positive: ' + badW.join(', ') + '.', badW);
+        if (!_pos(spec.Dq)) return _failP('BAD_WELL', 'The rate before closing is not positive.', ['Dq']);
+        var steps = Array.isArray(spec.steps) ? spec.steps.filter(function (s) { return s && _num(s.t) && _num(s.q); }).map(function (s) { return { t: s.t, q: Math.abs(s.q) }; }) : [];
+        var tc = spec.tc_h;
+        if (!_num(tc) || steps.length < 2) return _failP('BAD_HISTORY', 'The rate history needs at least one flowing step and the closing.', ['steps']);
+        for (var si = 1; si < steps.length; si++) if (!(steps[si].t > steps[si - 1].t)) return _failP('BAD_HISTORY', 'Rate steps are not in time order.', ['steps']);
+        var last = steps[steps.length - 1];
+        if (last.q !== 0 || Math.abs(last.t - tc) > 1e-6 * Math.max(1, Math.abs(tc))) return _failP('BAD_HISTORY', 'The rate history must end with q = 0 at the closing time.', ['steps']);
+        var qPrev = steps[steps.length - 2].q;
+        if (!(qPrev > 0)) return _failP('BAD_HISTORY', 'The well was not flowing before the closing.', ['steps']);
+        var warnings = [];
+        var sign = spec.testType === 'falloff' ? -1 : 1;
+        var Lcyc = (spec.opts && _pos(spec.opts.Lcyc)) ? spec.opts.Lcyc : DEFAULTS.Lcyc;
+        var per20 = (spec.opts && _pos(spec.opts.binsPerCycle)) ? spec.opts.binsPerCycle : DEFAULTS.binsPerCycle;
+        var per12 = (spec.opts && _pos(spec.opts.fitBinsPerCycle)) ? spec.opts.fitBinsPerCycle : DEFAULTS.fitBinsPerCycle;
+        // Rates: the whole history scaled so the final drop equals Δq (f̂ already in Dq).
+        var scale = spec.Dq / qPrev;
+        var stepsU = steps.map(function (s) { return { t: s.t, q: s.q * scale }; });
+        if (Math.abs(scale - 1) > 1e-6) warnings.push(_warn('RATE_SCALED', 'info', 'The rate history was scaled by ' + _fmt(scale, 4) + ' so the drop at closing equals the interpreted rate change.', ['R1']));
+        var tm = _makeTime(stepsU, tc);
+        if (!tm) return _failP('BAD_HISTORY', 'The superposition time cannot be built from this rate history.', ['steps']);
+
+        // Raw arrays (sorted, Δt > 0, finite)
+        var dtA = [], pA = [], nA = [];
+        var cnt = spec.n || null;
+        for (var i = 0; i < dtIn.length; i++) {
+            if (!(dtIn[i] > 0) || !_num(pIn[i])) continue;
+            dtA.push(+dtIn[i]); pA.push(+pIn[i]); nA.push(cnt && _pos(cnt[i]) ? cnt[i] : 1);
+        }
+        if (dtA.length < 5) return _failP('TOO_FEW_POINTS', 'Fewer than 5 valid build-up samples.', ['dt']);
+        for (var c0 = 1; c0 < dtA.length; c0++) if (!(dtA[c0] > dtA[c0 - 1])) return _failP('NO_DATA', 'Build-up times are not ascending.', ['dt']);
+        var dtEnd = dtA[dtA.length - 1];
+
+        // Gas: normalised pseudo-pressure (and optional pseudo-time for the build-up period)
+        var gt = null, fluid = w.fluid || 'oil';
+        var Bm = w.B, mum = w.mu, ctm = w.ct, qUnit = spec.qUnit || (fluid === 'gas' ? 'Mscf/d' : 'STB/d');
+        if (fluid === 'gas' && spec.gas) {
+            var pmx = spec.pwf0;
+            for (var g0 = 0; g0 < pA.length; g0++) if (pA[g0] > pmx) pmx = pA[g0];
+            gt = gasTable({ sg: spec.gas.sg, T_F: spec.gas.T_F, co2: spec.gas.co2, h2s: spec.gas.h2s, n2: spec.gas.n2, pmax: Math.max(1.3 * pmx, pmx + 500) });
+            if (!gt || !gt.ok) {
+                warnings.push(_warn('GAS_TABLE', 'warn', 'Gas properties could not be evaluated: the build-up is analysed with pressure (liquid form).', ['M1']));
+                gt = null;
+            } else {
+                gt.setRef(0.5 * (spec.pwf0 + pA[pA.length - 1]));   // μ·ct at the build-up average pressure (stated)
+                Bm = gt.ref.Bg; mum = gt.ref.mu;
+            }
+        }
+        var yA = gt ? pA.map(gt.pn) : pA.slice();
+        var y0 = gt ? gt.pn(spec.pwf0) : spec.pwf0;
+        if (gt && spec.gas && spec.gas.pseudoTime) {
+            // t_a = (μ ct)_ref ∫ dt/(μ ct) over the build-up period only (ct ∝ cg here)
+            var ta = new Array(dtA.length), acc = 0, prevT = 0, prevF = 1;
+            var fOf = function (pp) { return (gt.ref.mu * gt.ref.ct) / (gt.muOf(pp) * gt.cgOf(pp)); };
+            prevF = fOf(spec.pwf0);
+            for (var tI = 0; tI < dtA.length; tI++) {
+                var fI = fOf(pA[tI]);
+                acc += 0.5 * (prevF + fI) * (dtA[tI] - prevT);
+                ta[tI] = acc; prevT = dtA[tI]; prevF = fI;
+            }
+            var okTa = ta.every(function (v, ii) { return v > 0 && (ii === 0 || v > ta[ii - 1]); });
+            if (okTa) { dtA = ta; warnings.push(_warn('PSEUDO_TIME', 'info', 'Pseudo-time replaces the elapsed time of the build-up period; earlier rate steps stay in real time.', ['M1'])); }
+        }
+
+        // Tide (Q6): index and removal before the derivative
+        var rTide = null, tideRemoved = false, tideFit = 'none';
+        var tideMode = (spec.opts && spec.opts.tide) || 'auto';
+        // The fit set is binned from the 20-per-cycle bins (count-weighted), so raw samples and the
+        // same samples pre-binned at that resolution give identical bins and fit sets.
+        function buildBins(yy) {
+            var b20 = bin(dtA, yy, { perCycle: per20, counts: cnt ? nA : null });
+            var bf = bin(b20.dt, b20.p, { perCycle: per12, counts: b20.n });
+            return { b20: b20, bf: bf };
+        }
+        var BB = buildBins(yA);
+        function derivOf(b) {
+            var dp = b.p.map(function (v) { return sign * (v - y0); });
+            var X = b.dt.map(function (v) { return tm.lnDte(v); });
+            return { dp: dp, X: X, d: derivative(X, dp, Lcyc) };
+        }
+        var D20 = derivOf(BB.b20);
+        if (tideMode !== 'off' && dtEnd >= DEFAULTS.tide.m2Min_h) {
+            var lateD = [];
+            for (var lq = 0; lq < D20.X.length; lq++) if (D20.d.full[lq] && D20.d.deriv[lq] > 0 && D20.X[lq] >= D20.X[D20.X.length - 1] - 0.5 * LN10) lateD.push(D20.d.deriv[lq]);
+            var mpProv = _median(lateD);
+            var nH = dtEnd >= DEFAULTS.tide.k1Min_h ? 2 : 1;
+            var tf = _pos(mpProv) ? _tideFit(dtA, yA, tc, dtEnd, nH) : null;
+            if (tf) {
+                var sAw = 0;
+                tf.harm.forEach(function (hh) { sAw += hh.A * hh.w; });
+                rTide = sAw * dtEnd / mpProv;
+                if (rTide > DEFAULTS.tide.index) {
+                    yA = yA.map(function (v, ii) {
+                        var ta2 = tc + dtA[ii], corr = 0;
+                        tf.harm.forEach(function (hh) { corr += hh.a * Math.cos(hh.w * ta2) + hh.b * Math.sin(hh.w * ta2); });
+                        return v - corr;
+                    });
+                    tideRemoved = true; tideFit = nH === 2 ? 'M2K1' : 'M2';
+                    BB = buildBins(yA);
+                    D20 = derivOf(BB.b20);
+                    warnings.push(_warn('TIDE_REMOVED', 'info', 'Tidal signal removed before the derivative (index ' + _fmt(rTide, 2) + ').', ['Q6']));
+                }
+            }
+        }
+
+        // Drop non-positive Δp bins (log scale) — counted
+        function keepPos(b, D) {
+            var o = { dt: [], p: [], n: [], dp: [], X: [] }, dropped = 0;
+            for (var k = 0; k < b.dt.length; k++) {
+                if (!(D.dp[k] > 0)) { dropped++; continue; }
+                o.dt.push(b.dt[k]); o.p.push(b.p[k]); o.n.push(b.n[k]); o.dp.push(D.dp[k]); o.X.push(D.X[k]);
+            }
+            o.dropped = dropped;
+            return o;
+        }
+        var B20 = keepPos(BB.b20, D20);
+        var DF = derivOf(BB.bf), BF = keepPos(BB.bf, DF);
+        if (B20.dt.length < 8 || BF.dt.length < 5) return _failP('TOO_FEW_POINTS', 'Too few build-up bins with a positive pressure change.', ['p']);
+        if (B20.dropped) warnings.push(_warn('DP_NONPOS', 'info', B20.dropped + ' early bins with no pressure rise were left out.', ['I5']));
+        for (var mx = 1; mx < B20.X.length; mx++) if (!(B20.X[mx] > B20.X[mx - 1])) return _failP('BAD_HISTORY', 'The equivalent time is not monotonic for this rate history.', ['steps']);
+        var dv = derivative(B20.X, B20.dp, Lcyc);
+        var sig = _num(spec.sigma_psi) ? Math.max(0, spec.sigma_psi) : 0;
+        var sigLF = _num(spec.sigmaLF_psi) ? Math.max(0, spec.sigmaLF_psi) : 0;
+        var sigma_b = B20.n.map(function (n) { return 1.2533 * sig / Math.sqrt(Math.max(1, n)); });
+        var sigma_d = sigma_b.map(function (sb) { return Math.sqrt(sb * sb + sigLF * sigLF) / (Math.SQRT2 * dv.L_ln); });
+        var sigma_bF = BF.n.map(function (n) { return 1.2533 * sig / Math.sqrt(Math.max(1, n)); });
+        var pReal20 = gt ? B20.p.map(gt.pOfPn) : B20.p.slice();
+
+        // Compacted history for the model; signed rates for PRiSM (injection negative)
+        var comp = compactHistory(stepsU, tc, dtEnd, { keepFactor: 10 });
+        var tmFit = _makeTime(comp.steps, tc);
+        if (!tmFit) return _failP('BAD_HISTORY', 'The compacted rate history is not usable.', ['steps']);
+        var qs = sign < 0 ? -1 : 1;
+        var rhFit = comp.steps.map(function (s) { return { t: s.t, q: qs * s.q }; });
+        var rhFull = stepsU.map(function (s) { return { t: s.t, q: qs * s.q }; });
+        var singleRate = stepsU.filter(function (s) { return s.q !== 0; }).length === 1 && stepsU.length === 2;
+
+        var wellC1 = { fluid: fluid === 'water_inj' ? 'water' : (gt ? 'gas' : (fluid === 'gas' ? 'gas' : 'oil')), q: spec.Dq, B: Bm, mu: mum, ct: ctm,
+                       h: w.h, phi: w.phi, rw: w.rw, T_R: _num(w.T_R) ? w.T_R : null, pi: null, complete: true, missing: [], defaulted: [],
+                       testType: sign < 0 ? 'falloff' : 'buildup', tp: tmFit.tpEff, tShut: tc, pwf0: y0 };
+        function mkAdata(b, dp, tmx, rh, Lln) {
+            var lnx = b.dt.map(function (v) { var s = 0; tmx.c2terms.forEach(function (t) { s += t.w * Math.log(t.off + v); }); return s; });
+            var x = lnx.map(Math.exp);
+            var bourdet = (typeof G.PRiSM_compute_bourdet === 'function') ? G.PRiSM_compute_bourdet : null;
+            var dd = null;
+            if (bourdet) { try { dd = Array.prototype.slice.call(bourdet(x, dp, Lln)); } catch (e) { dd = null; } }
+            if (!dd) {   // same 3-point formula as PRiSM_compute_bourdet (02)
+                dd = new Array(x.length);
+                for (var q = 0; q < x.length; q++) {
+                    dd[q] = NaN;
+                    if (q === 0 || q === x.length - 1) continue;
+                    var i1 = q - 1, i2 = q + 1;
+                    while (i1 > 0 && lnx[q] - lnx[i1] < Lln) i1--;
+                    while (i2 < x.length - 1 && lnx[i2] - lnx[q] < Lln) i2++;
+                    var d1 = lnx[q] - lnx[i1], d2 = lnx[i2] - lnx[q], dT = lnx[i2] - lnx[i1];
+                    dd[q] = (dp[q] - dp[i1]) / d1 * (d2 / dT) + (dp[i2] - dp[q]) / d2 * (d1 / dT);
+                }
+            }
+            return {
+                ok: true, reason: null, n: b.dt.length, t: b.dt.slice(), tAbs: b.dt.map(function (v) { return tc + v; }), p: b.p.slice(), dp: dp.slice(),
+                x: x, lnx: lnx, deriv: dd, L: Lln, timeFn: 'superposition', timeFnSpec: { kind: 'superposition', tp: tmx.tpEff, terms: tmx.c2terms },
+                sign: sign, pRef: y0, pRefPressure: y0, pRefSource: 'pwf0', dRef: 'start', pwf0: y0, testType: sign < 0 ? 'falloff' : 'buildup',
+                tStart: tc, tShut: tc, tp: tmx.tpEff, qRef: spec.Dq, qFlow: spec.Dq, rateHistory: rh, stepIndex: rh.length - 1, periods: [],
+                // Gas: the build-up is analysed in normalised pseudo-pressure p_n (psi, liquid form with μ_ref
+                // and Bg_ref), so pseudo stays false and mpSpec null on purpose: PRiSM must not apply its own
+                // m(p) coefficient or table to p_n (prep.gasTable converts p_n back to psia).
+                fluid: wellC1.fluid, pseudo: false, dpUnit: 'psi', mpSpec: null, warnings: []
+            };
+        }
+        var adata = mkAdata(BF, BF.dp, tmFit, rhFit, dv.L_ln);
+        var adataLine = mkAdata(B20, B20.dp, tm, rhFull, dv.L_ln);
+        adataLine.tp = singleRate ? (tc - stepsU[0].t) : tm.tpEff;
+
+        // Provisional derivative SNR and drift index from the last cycle of full-window bins (the late
+        // level stands in for m′); interpretJob replaces both with the IARF-window values of
+        // BuildupResult.quality once the window is known.
+        var q0 = (function () {
+            var lf = -1, lv = [], ls = [];
+            for (var i = dv.full.length - 1; i >= 0; i--) if (dv.full[i]) { lf = i; break; }
+            if (lf < 0) return { snrD: null, rDrift: null };
+            for (var j = 0; j <= lf; j++) if (dv.full[j] && dv.deriv[j] > 0 && B20.X[j] >= B20.X[lf] - LN10) { lv.push(dv.deriv[j]); ls.push(sigma_d[j]); }
+            var mp = _median(lv), sd = _median(ls);
+            if (!_pos(mp)) return { snrD: null, rDrift: null };
+            return { snrD: Math.min(1e6, _pos(sd) ? mp / sd : 1e6), rDrift: _fin(((_num(spec.driftPsiPerDay) ? spec.driftPsiPerDay : 0) / 24) * dtEnd / mp) };
+        })();
+        var prep = {
+            ok: true, id: _specId(spec), sign: sign, spec: spec,
+            bins: { dt: B20.dt, dte: B20.X.map(Math.exp), X: B20.X, dp: B20.dp, n: B20.n, p: B20.p, pReal: pReal20, sigma_b: sigma_b, sigma_d: sigma_d },
+            deriv: dv, fitSet: { dt: BF.dt, dp: BF.dp, n: BF.n, p: BF.p, sigma_b: sigma_bF, X: BF.X, idx: BF.dt.map(function (v, k) { return k; }) },
+            adata: adata, adataLine: adataLine, well: wellC1, gasTable: gt,
+            histFull: { steps: stepsU }, histFit: comp, time: tm, timeFit: tmFit, tpEff: tm.tpEff, singleRate: singleRate,
+            dtEnd: dtEnd, dteEnd: Math.exp(tm.lnDte(dtEnd)), Lcyc: Lcyc, L_ln: dv.L_ln, qUnit: qUnit,
+            snrD: q0.snrD, rDrift: q0.rDrift, rTide: _fin(rTide), tideRemoved: tideRemoved, tideFit: tideFit,
+            sigma: sig, sigmaLF: sigLF, warnings: warnings, raw: { dt: dtA, y: yA, p: pA }
+        };
+        return prep;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // storage(prep) — unit slope, C_us, hump (W1–W3)
+    // ─────────────────────────────────────────────────────────────────────
+    // The derivative maximum: the running maximum, confirmed by a decline of at least 10 % — or of
+    // 3 σ_d at the maximum when the noise is larger (capped at 30 %), so a noise spike before the
+    // top of the hump is not taken for it (the IARF scan is gated after this index).
+    function _humpIndex(prep) {
+        var d = prep.deriv.deriv, f = prep.deriv.full, sd = prep.bins.sigma_d || [], iMax = -1;
+        for (var i = 0; i < d.length; i++) {
+            if (!f[i] || !(d[i] > 0)) continue;
+            if (iMax < 0 || d[i] > d[iMax]) { iMax = i; continue; }
+            var thr = Math.min(0.3, Math.max(0.1, 3 * (sd[iMax] || 0) / d[iMax]));
+            if (d[i] < (1 - thr) * d[iMax]) return iMax;
+        }
+        return -1;
+    }
+    function storage(prep) {
+        var b = prep.bins, n = b.dt.length;
+        var iH = _humpIndex(prep);
+        var sl = _localSlopes(b.X, b.dp);
+        var d = prep.deriv.deriv;
+        var end = iH >= 0 ? iH : n;
+        var us = [];
+        for (var i = 0; i < end; i++) {
+            if (sl[i] === null) continue;
+            if (sl[i] < 0.85 || sl[i] > 1.10) { if (us.length) break; continue; }
+            var ratio = (d[i] !== null && _num(d[i])) ? d[i] / b.dp[i] : sl[i];
+            if (ratio < 0.85) { if (us.length) break; continue; }
+            us.push(i);
+        }
+        var unitSlope = us.length >= 3;
+        var C_us = null;
+        if (unitSlope) {
+            var Bq = prep.well.B, q = prep.spec.Dq;
+            var cs = us.map(function (k) {
+                var dpr = Math.abs(b.pReal[k] - prep.spec.pwf0);
+                return q * Bq * b.dt[k] / (24 * dpr);
+            });
+            C_us = _median(cs);
+            if (!_pos(C_us)) { C_us = null; unitSlope = false; }
+        }
+        // The derivative maximum (iH) gates the IARF scan; the hump is reported as present when
+        // max/m′ ≥ HUMP_RATIO, with m′ here the derivative minimum after the maximum (interpret refines
+        // it with the IARF level).
+        var hr = null;
+        if (iH >= 0) {
+            var mnA = null;
+            for (var ia = iH + 1; ia < n; ia++) if (prep.deriv.full[ia] && d[ia] > 0 && (mnA === null || d[ia] < mnA)) mnA = d[ia];
+            hr = _pos(mnA) ? d[iH] / mnA : null;
+        }
+        var present = iH >= 0 && _num(hr) && _rRatio(hr) >= HUMP_RATIO;
+        return {
+            unitSlope: unitSlope, C_us: C_us, tHump_h: present ? b.dt[iH] : null, humpRatio: _fin(hr), seed: null, humpConsistent: null,
+            ev: ['W1', 'W2', 'W3'], _iHump: iH, _us: us
+        };
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // iarf(prep, opts) — earliest plateau run, longest window inside (M§A8, D7)
+    // ─────────────────────────────────────────────────────────────────────
+    function _sparse(vals, fn) {          // sparse table for O(1) range min / max
+        var n = vals.length, T = [vals.slice()];
+        for (var k = 1; (1 << k) <= n; k++) {
+            var prev = T[k - 1], cur = new Array(n - (1 << k) + 1), half = 1 << (k - 1);
+            for (var i = 0; i < cur.length; i++) cur[i] = fn(prev[i], prev[i + half]);
+            T.push(cur);
+        }
+        return function (a, b) {          // inclusive
+            var len = b - a + 1, k2 = 0;
+            while ((1 << (k2 + 1)) <= len) k2++;
+            return fn(T[k2][a], T[k2][b - (1 << k2) + 1]);
+        };
+    }
+    function _seSlope(u, s, a, b, Lcyc) {  // √(aᵀΣa) of the OLS slope on u (ln), banded noise covariance
+        var n = b - a + 1, mu = 0, Sxx = 0, i, j;
+        for (i = a; i <= b; i++) mu += u[i];
+        mu /= n;
+        for (i = a; i <= b; i++) Sxx += (u[i] - mu) * (u[i] - mu);
+        if (!(Sxx > 0)) return Infinity;
+        var w2 = 2 * Lcyc * LN10, acc = 0;
+        for (i = a; i <= b; i++) {
+            var ai = (u[i] - mu) / Sxx;
+            for (j = i; j <= b; j++) {
+                var dx = u[j] - u[i];
+                if (dx >= w2) break;
+                var kij = 1 - dx / w2, aj = (u[j] - mu) / Sxx;
+                acc += (j === i ? 1 : 2) * ai * aj * s[i] * s[j] * kij;
+            }
+        }
+        return Math.sqrt(Math.max(0, acc));
+    }
+    function _gateIndex(prep, st) {
+        var d = prep.deriv.deriv, f = prep.deriv.full, X = prep.bins.X;
+        if (st && st._iHump >= 0) {
+            for (var i = st._iHump + 1; i < d.length; i++) if (f[i]) return i;
+            return d.length;
+        }
+        // No hump: after the derivative's local log-slope falls below 0.25.
+        for (var k = 1; k < d.length - 1; k++) {
+            if (!f[k] || !f[k + 1] || !(d[k] > 0) || !(d[k + 1] > 0)) continue;
+            var s = (Math.log(d[k + 1]) - Math.log(d[k])) / (X[k + 1] - X[k]);
+            if (s < 0.25) return k;
+        }
+        return d.length;
+    }
+    var DRIFT_CYC = 0.1;   // IARF level-drift guard: head / tail averaging span (cycle)
+    function _iarfNone(prep, D, reason, status, extra) {
+        return Object.assign({
+            found: false, grade: 'none', noiseWidened: false, status: status || 'expectedNotFound',
+            dt0_h: null, dt1_h: null, X0: null, X1: null, cycles: null, level_psi: null, slope: null, slopeSE: null,
+            slopeLast: null, slopeLastSE: null, band: D.band, slopeTol: D.slope, noiseLimited: false,
+            pointSkin: { spread: null, min: null, max: null }, longest: null, secondLevel: null, laterPlateaus: [], forced: false,
+            reason: _txt(reason), ev: ['I1']
+        }, extra || {});
+    }
+    function iarf(prep, opts) {
+        opts = opts || {};
+        var D = _copy(DEFAULTS.iarf);
+        ['band', 'slope', 'bandCap', 'slopeCap', 'minCycles', 'goodCycles', 'goodSlope', 'goodSE', 'valleyDepth', 'mergeLevel', 'mergeGap']
+            .forEach(function (k) { if (_pos(opts[k])) D[k] = opts[k]; });
+        D.bandCap = Math.max(D.bandCap, D.band); D.slopeCap = Math.max(D.slopeCap, D.slope);
+        var b = prep.bins, dv = prep.deriv, X = b.X, d = dv.deriv, full = dv.full, sd = b.sigma_d, n = X.length;
+        var st = opts.storage || storage(prep);
+        var Lcyc = prep.Lcyc;
+        var a0 = _gateIndex(prep, st);
+        var lastFull = -1;
+        for (var lf = n - 1; lf >= 0; lf--) if (full[lf]) { lastFull = lf; break; }
+        var w = prep.well, q = prep.spec.Dq;
+        var kOf = function (lvl) { return C_PLAT * q * w.B * w.mu / (w.h * lvl); };
+        function windowStats(ia, ib) {   // bin indices inclusive
+            var nn = ib - ia + 1, sy = 0, su = 0, suu = 0, suy = 0, mn = Infinity, mxv = -Infinity, ssd = [], ys = [], sds = 0;
+            for (var i = ia; i <= ib; i++) {
+                sy += d[i]; su += X[i]; suu += X[i] * X[i]; suy += X[i] * d[i];
+                if (d[i] < mn) mn = d[i]; if (d[i] > mxv) mxv = d[i];
+                ssd.push(sd[i]); ys.push(d[i]); sds += sd[i];
+            }
+            var lvl = _median(ys), mu = su / nn, Sxx = suu - nn * mu * mu, Sxy = suy - mu * sy;
+            return { n: nn, level: lvl, slope: (Sxx > 0 ? Sxy / Sxx : 0) / lvl, band: Math.max(Math.abs(mxv / lvl - 1), Math.abs(mn / lvl - 1)),
+                     sdMed: _median(ssd), sdMean: sds / nn, span: (X[ib] - X[ia]) / LN10 };
+        }
+        function finish(ia, ib, forced, widened, extra) {
+            var ws = windowStats(ia, ib), lvl = ws.level;
+            var se = _seSlope(X, sd, ia, ib, Lcyc) / lvl;
+            // last 0.5 cycle of the window
+            var il = ib;
+            while (il > ia && (X[ib] - X[il - 1]) / LN10 <= D.goodCycles * 0.5 + 1e-9) il--;
+            var wl = windowStats(il, ib), seL = (ib - il >= 2) ? _seSlope(X, sd, il, ib, Lcyc) / wl.level : Infinity;
+            var fixedPass = _rRatio(ws.band) <= D.band && _rSlope(Math.abs(ws.slope)) <= D.slope;
+            var span = ws.span, grade;
+            var good = fixedPass && _rSpan(span) >= D.goodCycles && _rSlope(Math.abs(wl.slope)) <= D.goodSlope && _rSlope(seL) <= D.goodSE;
+            if (good) grade = 'good';
+            else if (_rSpan(span) >= D.minCycles) grade = 'fair';
+            else grade = forced ? 'fair' : 'none';
+            var noiseWidened = !fixedPass && !forced;
+            // noiseLimited: noise was the only reason for missing 'good' — the span is there (≥ goodCycles),
+            // the last half cycle is flat within its own noise, and either the window needed the
+            // noise-widened tolerances or its last-half-cycle se is above goodSE.
+            var lastFlat = _rSlope(Math.abs(wl.slope)) <= D.goodSlope || (_num(seL) && Math.abs(wl.slope) <= 2 * seL);
+            var noiseLimited = !good && !forced && _rSpan(span) >= D.goodCycles && lastFlat &&
+                               (noiseWidened || (_num(seL) && _rSlope(seL) > D.goodSE));
+            var kk = kOf(lvl), ps = [];
+            for (var i = ia; i <= ib; i++) {
+                ps.push(0.5 * (b.dp[i] / lvl - Math.log(kk * b.dte[i] / (w.phi * w.mu * w.ct * w.rw * w.rw)) + 7.4316));
+            }
+            var pMin = Math.min.apply(null, ps), pMax = Math.max.apply(null, ps);
+            var bandTol = Math.min(D.bandCap, Math.max(D.band, 3 * ws.sdMean / lvl));   // the scan's statistic (mean σ_d)
+            var slopeTol = Math.min(D.slopeCap, Math.max(D.slope, 2 * se));
+            return Object.assign({
+                found: true, grade: grade, noiseWidened: noiseWidened, status: 'ok',
+                dt0_h: b.dt[ia], dt1_h: b.dt[ib], X0: X[ia] / LN10, X1: X[ib] / LN10, cycles: span, level_psi: lvl,
+                slope: ws.slope, slopeSE: _fin(se), slopeLast: wl.slope, slopeLastSE: _num(seL) ? seL : null,
+                band: forced ? D.band : (fixedPass ? D.band : bandTol), slopeTol: forced ? D.slope : (fixedPass ? D.slope : slopeTol),
+                noiseLimited: !!noiseLimited, pointSkin: { spread: pMax - pMin, min: pMin, max: pMax },
+                longest: null, secondLevel: null, laterPlateaus: [], forced: !!forced,
+                reason: '', ev: ['I1', 'I2', 'I3', 'I4'], _a: ia, _b: ib, _a0: a0, _lastFull: lastFull, _fixedPass: fixedPass
+            }, extra || {});
+        }
+
+        // Forced window (engineer override)
+        if (opts.window && _pos(opts.window.dt0_h) && _pos(opts.window.dt1_h)) {
+            var fa = -1, fb = -1;
+            for (var fi = 0; fi < n; fi++) {
+                if (!full[fi] || !(d[fi] > 0)) continue;
+                if (b.dt[fi] >= opts.window.dt0_h * (1 - 1e-9) && b.dt[fi] <= opts.window.dt1_h * (1 + 1e-9)) { if (fa < 0) fa = fi; fb = fi; }
+            }
+            if (fa < 0 || fb - fa < 2) return _iarfNone(prep, D, 'The forced window holds fewer than 3 full-window derivative points.', 'expectedNotFound', { forced: true });
+            var fr = finish(fa, fb, true, false);
+            fr.reason = _txt('Window set by the engineer (override): ' + _fmt(fr.dt0_h) + '–' + _fmt(fr.dt1_h) + ' h.');
+            return fr;
+        }
+
+        // Candidate positions: full bins from the gate on
+        var P = [];
+        for (var pi = a0; pi < n; pi++) if (full[pi]) P.push(pi);
+        var m = P.length;
+        var lateLvl = (function () {
+            var v = [];
+            for (var i = 0; i < n; i++) if (full[i] && d[i] > 0 && X[i] >= X[lastFull] - LN10) v.push(d[i]);
+            return _median(v);
+        })();
+        var lateSd = (function () {
+            var v = [];
+            for (var i = 0; i < n; i++) if (full[i] && X[i] >= X[lastFull] - LN10) v.push(sd[i]);
+            return _median(v);
+        })();
+        if (m < 3) {
+            return _iarfNone(prep, D, 'No IARF: too few full-window derivative points after the storage hump.', opts.reachFair && prep.dteEnd < opts.reachFair ? 'tooShort' : 'expectedNotFound');
+        }
+        var u = P.map(function (i) { return X[i]; }), y = P.map(function (i) { return d[i]; }), sP = P.map(function (i) { return sd[i]; });
+        var Su = [0], Suu = [0], Sy = [0], Suy = [0], Syy = [0], Ss = [0];
+        for (var j = 0; j < m; j++) {
+            Su.push(Su[j] + u[j]); Suu.push(Suu[j] + u[j] * u[j]); Sy.push(Sy[j] + y[j]); Suy.push(Suy[j] + u[j] * y[j]);
+            Syy.push(Syy[j] + y[j] * y[j]); Ss.push(Ss[j] + sP[j]);
+        }
+        var minQ = _sparse(y, Math.min), maxQ = _sparse(y, Math.max);
+        // Level-drift guard (EN3): the band is centred on the window median, which a boundary rise (or a
+        // fall) at the window end pulls along, so a window could run on until the derivative was 12 % above
+        // the plateau. A window also needs its end level (mean over the last DRIFT_CYC cycle) within
+        // ±drTol of its start level (first DRIFT_CYC cycle) and no more than drTol above its lowest
+        // 3-bin running mean (the most settled level: the bottom of a hump-tail-to-boundary U), with
+        // drTol = min(bandCap, max(band/2, 3σ_d/ℓ)): ±5 % for clean data, the noise band otherwise.
+        var HC = DRIFT_CYC * LN10;
+        var fwd = new Array(m), bwd = new Array(m);
+        for (var fq = 0, fe = 0; fq < m; fq++) { if (fe < fq) fe = fq; while (fe + 1 < m && u[fe + 1] - u[fq] <= HC + 1e-12) fe++; fwd[fq] = fe; }
+        for (var bq = m - 1, bs = m - 1; bq >= 0; bq--) { if (bs > bq) bs = bq; while (bs - 1 >= 0 && u[bq] - u[bs - 1] <= HC + 1e-12) bs--; bwd[bq] = bs; }
+        var rm = y.map(function (v, c) { var lo = Math.max(0, c - 1), hi = Math.min(m - 1, c + 1), sm = 0; for (var q = lo; q <= hi; q++) sm += y[q]; return sm / (hi - lo + 1); });
+        var rmMinQ = _sparse(rm, Math.min);
+        var sdMinQ = _sparse(sP, Math.min);
+        function valleyAt(c) {   // centre bin is a local minimum ≥ 15 % below both sides within 0.5 cycle
+            var i = P[c], maxL = -Infinity, maxR = -Infinity;
+            for (var k = i - 1; k >= 0 && (X[i] - X[k]) / LN10 <= 0.5; k--) if (full[k] && d[k] > maxL) maxL = d[k];
+            for (var k2 = i + 1; k2 < n && (X[k2] - X[i]) / LN10 <= 0.5; k2++) if (full[k2] && d[k2] > maxR) maxR = d[k2];
+            var locMin = (c === 0 || y[c] <= y[c - 1]) && (c === m - 1 || y[c] <= y[c + 1]);
+            return locMin && d[i] <= (1 - D.valleyDepth) * maxL && d[i] <= (1 - D.valleyDepth) * maxR;
+        }
+        var wins = [], noiseBlocked = false;
+        function ins(arr, v) { var lo = 0, hi = arr.length; while (lo < hi) { var mid = (lo + hi) >> 1; if (arr[mid] < v) lo = mid + 1; else hi = mid; } arr.splice(lo, 0, v); }
+        for (var a = 0; a < m; a++) {
+            var sorted = [y[a]];
+            if (a + 1 < m) ins(sorted, y[a + 1]);
+            for (var bb = a + 2; bb < m; bb++) {
+                ins(sorted, y[bb]);
+                var span = (u[bb] - u[a]) / LN10;
+                if (_rSpan(span) < D.minCycles) continue;
+                var nn = bb - a + 1;
+                // window level ℓ: the median derivative (robust to a U-shaped hump-tail + boundary segment)
+                var sy = Sy[bb + 1] - Sy[a], hm = nn >> 1, lvl = (nn % 2) ? sorted[hm] : 0.5 * (sorted[hm - 1] + sorted[hm]);
+                if (!(lvl > 0)) continue;
+                var mn = minQ(a, bb), mxv = maxQ(a, bb);
+                if (!(mn > 0)) continue;
+                var band = Math.max(mxv / lvl - 1, 1 - mn / lvl);
+                var sdMean = (Ss[bb + 1] - Ss[a]) / nn;
+                var bandTol = Math.min(D.bandCap, Math.max(D.band, 3 * sdMean / lvl));
+                if (_rRatio(band) > bandTol) {
+                    if (3 * sdMean / lvl > D.bandCap && _rRatio(band) <= 3 * sdMean / lvl) noiseBlocked = true;
+                    continue;
+                }
+                var hEnd = Math.min(fwd[a], bb), tSt = Math.max(bwd[bb], a);
+                var headL = (Sy[hEnd + 1] - Sy[a]) / (hEnd - a + 1), tailL = (Sy[bb + 1] - Sy[tSt]) / (bb - tSt + 1);
+                var drTol = Math.min(D.bandCap, Math.max(0.5 * D.band, 3 * sdMean / lvl));
+                if (_rRatio(Math.abs(tailL / headL - 1)) > drTol || _rRatio(tailL / rmMinQ(a, bb) - 1) > drTol) continue;
+                var su = Su[bb + 1] - Su[a], mu = su / nn, Sxx = (Suu[bb + 1] - Suu[a]) - nn * mu * mu;
+                var sl = ((Suy[bb + 1] - Suy[a]) - mu * sy) / Sxx / lvl;
+                var asl = _rSlope(Math.abs(sl));
+                var fixed = _rRatio(band) <= D.band && asl <= D.slope;
+                if (!fixed) {
+                    if (asl > D.slopeCap && !(2 * sdMinQ(a, bb) / lvl > D.slopeCap)) continue;
+                    var se = _seSlope(u, sP, a, bb, Lcyc) / lvl;
+                    var slopeTol = Math.min(D.slopeCap, Math.max(D.slope, 2 * se));
+                    if (asl > slopeTol) { if (2 * se > D.slopeCap) noiseBlocked = true; continue; }
+                }
+                // valley guard
+                var cX = 0.5 * (u[a] + u[bb]), c = a;
+                while (c + 1 <= bb && Math.abs(u[c + 1] - cX) < Math.abs(u[c] - cX)) c++;
+                if (valleyAt(c)) continue;
+                var ssq = (Syy[bb + 1] - Syy[a] - 2 * lvl * sy + nn * lvl * lvl) / (lvl * lvl);
+                wins.push({ a: a, b: bb, span: span, level: lvl, rms: Math.sqrt(Math.max(0, ssq) / nn), fixed: fixed });
+            }
+        }
+        if (!wins.length) {
+            var tooShort = _pos(opts.reachFair) && prep.dteEnd < opts.reachFair;
+            var noiseCase = noiseBlocked || (_pos(lateLvl) && 3 * lateSd / lateLvl > D.bandCap);
+            var reason = noiseCase ? 'No IARF window: the derivative noise exceeds the widening caps (noise).'
+                       : (tooShort ? 'No IARF: the test is too short for the expected reach.' : 'No IARF: no derivative plateau of at least ' + D.minCycles + ' cycle after the storage hump.');
+            return _iarfNone(prep, D, reason, tooShort ? 'tooShort' : 'expectedNotFound', { _a0: a0, _lastFull: lastFull, _noise: noiseCase });
+        }
+        // Plateau runs: overlapping windows; merge runs with levels within 5 % less than 0.2 cycle apart.
+        wins.sort(function (p1, p2) { return p1.a - p2.a || p1.b - p2.b; });
+        var runs = [];
+        wins.forEach(function (wv) {
+            var r = runs[runs.length - 1];
+            if (r && wv.a <= r.end) { r.w.push(wv); if (wv.b > r.end) r.end = wv.b; }
+            else runs.push({ start: wv.a, end: wv.b, w: [wv] });
+        });
+        runs.forEach(function (r) {
+            r.best = r.w.reduce(function (p1, p2) { return (p2.span > p1.span + 1e-12 || (Math.abs(p2.span - p1.span) <= 1e-12 && p2.rms < p1.rms)) ? p2 : p1; });
+            r.level = r.best.level;
+        });
+        var merged = [];
+        runs.forEach(function (r) {
+            var pr = merged[merged.length - 1];
+            if (pr && Math.abs(r.level / pr.level - 1) <= D.mergeLevel && (u[r.start] - u[pr.end]) / LN10 < D.mergeGap) {
+                pr.w = pr.w.concat(r.w); pr.end = Math.max(pr.end, r.end);
+                pr.best = pr.w.reduce(function (p1, p2) { return (p2.span > p1.span + 1e-12 || (Math.abs(p2.span - p1.span) <= 1e-12 && p2.rms < p1.rms)) ? p2 : p1; });
+                pr.level = pr.best.level;
+            } else merged.push(r);
+        });
+        var chosen = merged[0].best;
+        var longestAll = wins.reduce(function (p1, p2) { return p2.span > p1.span + 1e-12 ? p2 : p1; });
+        var res = finish(P[chosen.a], P[chosen.b], false, !chosen.fixed);
+        res.longest = { dt0_h: b.dt[P[longestAll.a]], dt1_h: b.dt[P[longestAll.b]], cycles: longestAll.span };
+        res.laterPlateaus = merged.slice(1).map(function (r) { return { dt0_h: b.dt[P[r.best.a]], dt1_h: b.dt[P[r.best.b]], level_psi: r.best.level }; });
+        // Second level (I6): disjoint window ≥ 0.3 cycle, ±10 %, |s| ≤ 0.05, ℓ2/ℓ outside [0.8, 1.25]
+        var best2 = null;
+        for (var a2 = 0; a2 < m; a2++) {
+            for (var b2 = a2 + 2; b2 < m; b2++) {
+                if (!(b2 < chosen.a || a2 > chosen.b)) continue;
+                var sp2 = (u[b2] - u[a2]) / LN10;
+                if (_rSpan(sp2) < 0.3) continue;
+                var n2 = b2 - a2 + 1, l2 = (Sy[b2 + 1] - Sy[a2]) / n2;
+                if (!(l2 > 0)) continue;
+                var mn2 = minQ(a2, b2), mx2 = maxQ(a2, b2);
+                if (_rRatio(Math.max(mx2 / l2 - 1, 1 - mn2 / l2)) > 0.10) continue;
+                var mu2 = (Su[b2 + 1] - Su[a2]) / n2, Sxx2 = (Suu[b2 + 1] - Suu[a2]) - n2 * mu2 * mu2;
+                var s2 = ((Suy[b2 + 1] - Suy[a2]) - mu2 * (Sy[b2 + 1] - Sy[a2])) / Sxx2 / l2;
+                if (_rSlope(Math.abs(s2)) > 0.05) continue;
+                var ratio = _rRatio(l2 / res.level_psi);
+                if (ratio >= DEFAULTS.trig.level[0] && ratio <= DEFAULTS.trig.level[1]) continue;
+                if (!best2 || sp2 > best2.span + 1e-12) best2 = { a: a2, b: b2, span: sp2, level: l2 };
+            }
+        }
+        if (best2) res.secondLevel = { dt0_h: b.dt[P[best2.a]], dt1_h: b.dt[P[best2.b]], level_psi: best2.level, ratio: best2.level / res.level_psi };
+        if (res.secondLevel) res.ev = ['I1', 'I2', 'I3', 'I4', 'I6'];
+        var gradeTxt = res.grade === 'good' ? 'Good' : (res.noiseWidened ? 'Fair (noise-widened)' : 'Fair');
+        res.reason = _txt(gradeTxt + ' window ' + _fmt(res.dt0_h) + '–' + _fmt(res.dt1_h) + ' h (' + _fmt(res.cycles, 2) + ' cycle): the earliest plateau after the storage hump, longest window inside it' +
+            ((longestAll !== chosen) ? '; longest qualifying window ' + _fmt(res.longest.cycles, 2) + ' cycle.' : '.'));
+        return res;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // line(prep, iarf) — semilog line through the window, shifted lines (L1–L3)
+    // ─────────────────────────────────────────────────────────────────────
+    function _semilog(prep, dt0, dt1, adata) {
+        var fn = G.PRiSM_semilogAnalysis;
+        if (typeof fn !== 'function' || !_pos(dt0) || !_pos(dt1) || !(dt1 > dt0)) return null;
+        STATS.lines++;
+        var w = prep.well;
+        var wl = { fluid: w.fluid === 'gas' ? 'oil' : w.fluid, B: w.B, mu: w.mu, h: w.h, phi: w.phi, ct: w.ct, rw: w.rw, q: prep.spec.Dq, tp: adata.tp };
+        var r;
+        try {
+            r = fn(adata, wl, { method: prep.singleRate ? 'horner' : 'superposition', window: { t0: dt0 * (1 - 1e-9), t1: dt1 * (1 + 1e-9) }, L: prep.L_ln });
+        } catch (e) { return null; }
+        if (!r || !r.ok || !_pos(r.k) || !_num(r.S)) return null;
+        return r;
+    }
+    function _toP(prep, y) { return (prep.gasTable && _num(y)) ? prep.gasTable.pOfPn(y) : y; }
+    function line(prep, ir, opts) {
+        opts = opts || {};
+        if (!ir || !ir.found) return null;
+        var r = _semilog(prep, ir.dt0_h, ir.dt1_h, prep.adataLine);
+        if (!r) return null;
+        var cc = r.crossCheck || {};
+        var out = {
+            method: prep.singleRate ? 'horner' : 'superposition', k: r.k, kh: r.kh, S: r.S, m: r.m,
+            pStar: _fin(_toP(prep, r.pStar)), pStarRange: null, p1hr: _fin(_toP(prep, r.p1hr)), r2: _fin(r.r2),
+            dt0_h: ir.dt0_h, dt1_h: ir.dt1_h, n: r.window ? r.window.n : null,
+            shifts: [],
+            plateauCheck: { khDiffPct: _fin(cc.khDiffPct), dS: _fin(cc.dS), pass: !!cc.pass },
+            Smid: null, dtMid_h: null,
+            ev: ['L1', 'L2', 'L3']
+        };
+        // S at the window midpoint's Δt_e (§4.6 item 4): the point skin of the observed Δp there with the
+        // line's k and m (cross-check of the line skin against the point skins of the window, I4).
+        if (ir._a != null && ir._b != null && _pos(r.m) && _pos(r.k)) {
+            var bx = prep.bins, xm = 0.5 * (ir.X0 + ir.X1), im = ir._a, w = prep.well;
+            for (var ii = ir._a; ii <= ir._b; ii++) if (Math.abs(bx.X[ii] / LN10 - xm) < Math.abs(bx.X[im] / LN10 - xm)) im = ii;
+            var sm = 0.5 * (bx.dp[im] / (r.m / LN10) - Math.log(r.k * bx.dte[im] / (w.phi * w.mu * w.ct * w.rw * w.rw)) + 7.4316);
+            out.Smid = _fin(sm); out.dtMid_h = bx.dt[im];
+        }
+        // Shifted lines for S_win: δ = min(0.25, 0.2·span), earlier and later, clipped to [gate, last full bin]
+        var span = ir.cycles, delta = Math.min(DEFAULTS.sErr.winShift, DEFAULTS.sErr.winShiftFrac * span);
+        var Xg = (ir._a0 != null && ir._a0 < prep.bins.X.length) ? prep.bins.X[ir._a0] / LN10 : ir.X0;
+        var Xl = (ir._lastFull != null && ir._lastFull >= 0) ? prep.bins.X[ir._lastFull] / LN10 : ir.X1;
+        [-delta, delta].forEach(function (dX) {
+            var x0 = ir.X0 + dX, x1 = ir.X1 + dX;
+            if (x0 < Xg - 1e-9 || x1 > Xl + 1e-9) return;
+            var d0 = prep.time.dtOfDte(Math.pow(10, x0)), d1 = prep.time.dtOfDte(Math.pow(10, x1));
+            if (!_pos(d0) || !_pos(d1)) return;
+            var rs = _semilog(prep, d0, d1, prep.adataLine);
+            if (!rs) return;
+            out.shifts.push({ dX: dX, dt0_h: d0, dt1_h: d1, S: rs.S, bS: null });
+        });
+        return out;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Anomaly flags (M7) and triggers (M§A9)
+    // ─────────────────────────────────────────────────────────────────────
+    function _derivSlopes(prep, halfCyc) {   // OLS log-log slope of Δp′ over ±halfCyc cycle (positive full bins)
+        var X = prep.bins.X, d = prep.deriv.deriv, f = prep.deriv.full, n = X.length, out = new Array(n);
+        for (var i = 0; i < n; i++) {
+            out[i] = null;
+            if (!f[i] || !(d[i] > 0)) continue;
+            var sx = 0, sy = 0, sxx = 0, sxy = 0, c = 0;
+            for (var k = 0; k < n; k++) {
+                if (!f[k] || !(d[k] > 0) || Math.abs(X[k] - X[i]) / LN10 > halfCyc + 1e-9) continue;
+                var xx = X[k], yy = Math.log(d[k]);
+                sx += xx; sy += yy; sxx += xx * xx; sxy += xx * yy; c++;
+            }
+            if (c < 3) continue;
+            var den = c * sxx - sx * sx;
+            if (den > 0) out[i] = (c * sxy - sx * sy) / den;
+        }
+        return out;
+    }
+    function _runs(prep, pred, minCyc, from, to) {    // runs of bins satisfying pred(i) spanning ≥ minCyc cycle
+        var X = prep.bins.X, out = [], st = -1;
+        for (var i = from; i <= to + 1; i++) {
+            var ok = i <= to && pred(i);
+            if (ok && st < 0) st = i;
+            if (!ok && st >= 0) {
+                if ((X[i - 1] - X[st]) / LN10 >= minCyc - 1e-9) out.push({ i0: st, i1: i - 1 });
+                st = -1;
+            }
+        }
+        return out;
+    }
+    var FLAG_TEXT = {
+        valley: 'Derivative valley (dual-porosity or layered behaviour, not modelled).',
+        halfLate: 'Late half slope (channel or elongated drainage, not modelled).',
+        earlyQuarter: 'Early quarter slope (finite-conductivity fracture, bilinear flow).',
+        earlyHalf: 'Early half slope (fracture linear flow).',
+        humpDp: 'Pressure hump (phase redistribution in the wellbore); the fit starts after it.',
+        steepStorage: 'Storage steeper than unit slope (changing wellbore storage); the fit starts after it.',
+        negLate: 'Negative late derivative (interference, depletion or gauge drift).',
+        fracHalf: 'Early half slope in the fall-off (injection-induced fracture).'
+    };
+    var DISTRACTORS = { valley: 1, halfLate: 1, earlyQuarter: 1, earlyHalf: 1, fracHalf: 1 };
+    var FLAG_MIN_CYC = 0.3, FLAG_SLOPE_RANGE = 0.10, FLAG_SLOPE_TREND = 0.05, FLAG_RATIO_TOL = 0.10;   // early half / quarter slope regime
+    function flagsFor(prep, ir, st) {
+        var b = prep.bins, X = b.X, d = prep.deriv.deriv, f = prep.deriv.full, n = X.length, out = [];
+        var sl = _derivSlopes(prep, 0.1);
+        var a0 = _gateIndex(prep, st), lastFull = -1;
+        for (var lf = n - 1; lf >= 0; lf--) if (f[lf]) { lastFull = lf; break; }
+        if (lastFull < 0) return out;
+        function add(code, i0, i1) { out.push({ code: code, dt0_h: b.dt[i0], dt1_h: b.dt[i1], text: FLAG_TEXT[code] }); }
+        var iarfStart = (ir && ir.found) ? ir._a : lastFull;
+        // Early quarter / half slope between the gate (or the start) and the IARF start. Only a
+        // sustained flow regime is flagged: over ≥ 0.3 cycle the derivative slope stays in the band,
+        // varies by ≤ FLAG_SLOPE_RANGE with a trend of ≤ FLAG_SLOPE_TREND per cycle, and Δp′/Δp exceeds
+        // the slope by ≤ FLAG_RATIO_TOL (a power-law regime has Δp′/Δp = slope; a fracture-face skin or
+        // a storage hump only lowers the ratio). The smooth storage-to-radial bend of a negative-skin
+        // well passes through slopes 0.5 and 0.25 either with Δp′/Δp about 0.15 above the slope (C
+        // visible) or with the slope falling steadily, about 0.07 per cycle at S = −4 (C negligible),
+        // so it is not flagged.
+        var eFrom = (st && st._iHump >= 0) ? a0 : 0, eTo = Math.max(eFrom, iarfStart - 1);
+        function regime(lo, hi) {
+            var runs = _runs(prep, function (i) {
+                return sl[i] !== null && sl[i] >= lo && sl[i] <= hi && d[i] > 0 && b.dp[i] > 0 && d[i] / b.dp[i] - sl[i] <= FLAG_RATIO_TOL;
+            }, FLAG_MIN_CYC, eFrom, eTo);
+            for (var r = 0; r < runs.length; r++) {
+                var best = null;
+                for (var s0 = runs[r].i0; s0 <= runs[r].i1; s0++) {
+                    var mn = Infinity, mx = -Infinity, c = 0, sx = 0, sy = 0, sxx = 0, sxy = 0;
+                    for (var e = s0; e <= runs[r].i1; e++) {
+                        if (sl[e] < mn) mn = sl[e];
+                        if (sl[e] > mx) mx = sl[e];
+                        if (mx - mn > FLAG_SLOPE_RANGE + 1e-9) break;
+                        var xe = X[e] / LN10;
+                        c++; sx += xe; sy += sl[e]; sxx += xe * xe; sxy += xe * sl[e];
+                        if ((X[e] - X[s0]) / LN10 < FLAG_MIN_CYC - 1e-9) continue;
+                        var den = c * sxx - sx * sx, trend = den > 0 ? (c * sxy - sx * sy) / den : 0;
+                        if (Math.abs(trend) <= FLAG_SLOPE_TREND && (!best || X[e] - X[s0] > X[best.i1] - X[best.i0] + 1e-12)) best = { i0: s0, i1: e };
+                    }
+                }
+                if (best) return best;
+            }
+            return null;
+        }
+        var half = regime(0.40, 0.60);
+        if (half) add(prep.sign < 0 ? 'fracHalf' : 'earlyHalf', half.i0, half.i1);
+        var qtr = regime(0.18, 0.32);
+        if (qtr) add('earlyQuarter', qtr.i0, qtr.i1);
+        // late half slope: the last ≥ 0.2 cycle at slope 0.35–0.65
+        var lateH = _runs(prep, function (i) { return sl[i] !== null && sl[i] >= 0.35 && sl[i] <= 0.65; }, 0.2, Math.max(a0, 0), lastFull);
+        if (lateH.length && lateH[lateH.length - 1].i1 === lastFull && (!ir || !ir.found || lateH[lateH.length - 1].i0 > ir._b)) add('halfLate', lateH[lateH.length - 1].i0, lastFull);
+        // valley: a local minimum ≥ 15 % below both sides within 0.5 cycle that is followed by a
+        // plateau (the IARF window starts after it, a later plateau at the IARF level, or — with no
+        // IARF — a flat derivative above the dip). A boundary (fault, composite M > 1) has its minimum
+        // inside the IARF window, so it is not flagged.
+        for (var c = Math.max(a0, 1); c < lastFull; c++) {
+            if (!f[c] || !(d[c] > 0)) continue;
+            if (!(d[c] <= d[c - 1] && d[c] <= d[c + 1])) continue;
+            var maxL = -Infinity, maxR = -Infinity;
+            for (var k = c - 1; k >= 0 && (X[c] - X[k]) / LN10 <= 0.5; k--) if (f[k] && d[k] > maxL) maxL = d[k];
+            for (var k2 = c + 1; k2 <= lastFull && (X[k2] - X[c]) / LN10 <= 0.5; k2++) if (f[k2] && d[k2] > maxR) maxR = d[k2];
+            if (!(d[c] <= 0.85 * maxL && d[c] <= 0.85 * maxR)) continue;
+            var after = false;
+            if (ir && ir.found) {
+                if (c < ir._a) after = true;
+                else (ir.laterPlateaus || []).forEach(function (lp) {
+                    var rr = lp.level_psi / ir.level_psi;
+                    if (lp.dt0_h > b.dt[c] && rr >= 0.8 && rr <= 1.25) after = true;
+                });
+            } else {
+                for (var k3 = c + 1; k3 <= lastFull; k3++) if (f[k3] && sl[k3] !== null && sl[k3] <= 0.1 && d[k3] >= d[c] / 0.85) { after = true; break; }
+            }
+            if (after) {
+                var vi0 = c, vi1 = c;
+                while (vi0 > 0 && (X[c] - X[vi0 - 1]) / LN10 <= 0.25) vi0--;
+                while (vi1 < lastFull && (X[vi1 + 1] - X[c]) / LN10 <= 0.25) vi1++;
+                add('valley', vi0, vi1);
+                break;
+            }
+        }
+        // pressure hump: Δp falls by more than max(3σ_b, 0.2 psi, 0.5 %) before rising again
+        var pkI = -1;
+        for (var h = 1; h < n; h++) {
+            if (pkI < 0 || b.dp[h] > b.dp[pkI]) { pkI = h; continue; }
+            var drop = b.dp[pkI] - b.dp[h], tol = Math.max(3 * (b.sigma_b[h] || 0), 0.2, 0.005 * b.dp[pkI]);
+            if (drop > tol) {
+                var hEnd = h;
+                while (hEnd < n - 1 && b.dp[hEnd] < b.dp[pkI]) hEnd++;
+                add('humpDp', pkI, hEnd);
+                break;
+            }
+        }
+        // steep storage: early Δp log-slope > 1.25 over ≥ 3 bins
+        var lsp = _localSlopes(X, b.dp), run = 0;
+        for (var e = 0; e < Math.min(n, (st && st._iHump >= 0) ? st._iHump : n); e++) {
+            if (lsp[e] !== null && lsp[e] > 1.25) { run++; if (run >= 3) { add('steepStorage', e - run + 1, e); break; } }
+            else run = 0;
+        }
+        // negative late derivative: ≥ 2 non-positive full bins in the last 0.5 cycle
+        var negs = prep.deriv.neg.filter(function (i) { return (X[lastFull] - X[i]) / LN10 <= 0.5; });
+        if (negs.length >= 2) add('negLate', negs[0], negs[negs.length - 1]);
+        return out;
+    }
+
+    function triggers(prep, ir, rch) {
+        var b = prep.bins, X = b.X, d = prep.deriv.deriv, f = prep.deriv.full, n = X.length;
+        var T = DEFAULTS.trig, flags = [];
+        var lastFull = -1;
+        for (var lf = n - 1; lf >= 0; lf--) if (f[lf]) { lastFull = lf; break; }
+        var st = (ir && ir._st) || null;
+        var lvl = null;
+        if (ir && ir.found) lvl = ir.level_psi;
+        else {
+            var a0 = _gateIndex(prep, st || storage(prep)), mn = Infinity;
+            for (var i = a0; i <= lastFull; i++) if (f[i] && d[i] > 0 && d[i] < mn) mn = d[i];
+            lvl = mn < Infinity ? mn : null;
+        }
+        var up = false, down = false;
+        if (lvl && lastFull >= 0) {
+            var from = lastFull;   // the last ≥ 0.2 cycle of full bins
+            while (from > 0 && f[from - 1] && (X[lastFull] - X[from]) / LN10 < T.lateCycles - 1e-9) from--;
+            if ((X[lastFull] - X[from]) / LN10 >= T.lateCycles - 1e-9) {
+                var allUp = true, allDown = true, xs = [], ys = [];
+                for (var k = from; k <= lastFull; k++) {
+                    if (!(d[k] > (1 + T.late) * lvl)) allUp = false;
+                    if (!(d[k] < (1 - T.late) * lvl)) allDown = false;
+                    xs.push(X[k]); ys.push(d[k]);
+                }
+                var mx = xs.reduce(function (s, v) { return s + v; }, 0) / xs.length, my = ys.reduce(function (s, v) { return s + v; }, 0) / ys.length;
+                var sxy = 0, sxx = 0;
+                for (var q2 = 0; q2 < xs.length; q2++) { sxy += (xs[q2] - mx) * (ys[q2] - my); sxx += (xs[q2] - mx) * (xs[q2] - mx); }
+                var slope = sxx > 0 ? sxy / sxx : 0;
+                up = allUp && slope > 0 && !(ir && ir.found && ir._b === lastFull);
+                down = allDown && slope < 0 && !(ir && ir.found && ir._b === lastFull);
+            }
+        }
+        var level = !!(ir && ir.secondLevel);
+        var none = !(ir && ir.found) && !!(rch && _pos(rch.fair_h) && prep.dteEnd >= rch.fair_h);
+        var noneSkipped = !(ir && ir.found) && !none;
+        flags = flagsFor(prep, ir, st || storage(prep));
+        var fired = [];
+        if (up) fired.push('T-up');
+        if (down) fired.push('T-down');
+        if (level) fired.push('T-level');
+        if (none) fired.push('T-none');
+        return { triggers: { up: up, down: down, level: level, none: none, noneSkipped: noneSkipped, fired: fired, ev: ['M2'] }, flags: flags, _level: lvl };
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // gridEntry(key, prep, opts) — registry-like entry on a pd grid (D5)
+    // ─────────────────────────────────────────────────────────────────────
+    // One grid per parameter set (LRU), on a fixed lattice log10 tD = j/perDecade (S < 0:
+    // log10 tD·e^{2S} = j/perDecade, the effective-radius form), holding [pd, pd′]
+    // (closed circle: the bounded pd − 2tD/reD² and pd′ − 2tD/reD², the linear term
+    // added analytically). pd is a cubic Hermite in ln tD with
+    // the exact pd′; pd′ is a cubic Hermite with central-difference slopes. The
+    // first build covers [tD_min/2, 2·tD(t_c − τ_0 + Δt_end)] at the requested
+    // time scale; later calls extend the lattice only when a value falls outside.
+    // The fold of the reservoir values with C_D and S is the one of _pair (and 03).
+    var GRID_SPECS = {
+        homogeneous: { base: 'homogeneous', category: 'homogeneous', shape: [] },
+        linearBoundary: { base: 'linearBoundary', category: 'boundary', shape: [
+            { key: 'dF', label: 'Distance to boundary', unit: 'r_w', min: 1, max: 1e7, default: 1000, scale: 'log' },
+            { key: 'BC', label: 'Boundary condition', unit: '', options: ['noflow', 'constP'], default: 'noflow' }] },
+        composite2: { base: 'radialComposite', category: 'composite', shape: [
+            { key: 'M', label: 'Mobility ratio M', unit: '-', min: 0.05, max: 20, default: 1, scale: 'log' },
+            { key: 'F', label: 'Storativity ratio F', unit: '-', min: 0.05, max: 20, default: 1, scale: 'log' },
+            { key: 'R', label: 'Inner-zone radius R/rw', unit: '-', min: 1.5, max: 1e7, default: 1000, scale: 'log' }] },
+        closedCircle: { base: 'closedCircle', category: 'boundary', shape: [
+            { key: 'reD', label: 'r_e / r_w', unit: '-', min: 50, max: 1e7, default: 5000, scale: 'log' }] }
+    };
+    var GRID_LABEL = { homogeneous: 'Homogeneous', linearBoundary: 'Sealing fault', composite2: 'Radial composite', closedCircle: 'Closed circle' };
+
+    // Reservoir values p̄(s) (no WBS / skin) at the lattice Stehfest abscissae s = i·ln2/10^(j/per),
+    // i = 1…12. They depend on the model's shape parameters and distance scale only, not on C_D or
+    // S, so a C_D, S or k step of a fit re-folds stored values instead of evaluating Bessel functions
+    // again (the same numbers either way: speed only). Bounded LRU shared by every grid entry.
+    var RESV_MAX = 16, _RESV = [];
+    function _resvEntry(rk, key, p, dS, per) {
+        for (var c = 0; c < _RESV.length; c++) {
+            if (_RESV[c].rk === rk) { var E = _RESV[c]; if (c) { _RESV.splice(c, 1); _RESV.unshift(E); } return E; }
+        }
+        var E2 = { rk: rk, lap: _lapFor(key, p), dS: dS, per: per, m: new Map() };
+        _RESV.unshift(E2);
+        if (_RESV.length > RESV_MAX) _RESV.pop();
+        return E2;
+    }
+    function _resvVals(R, j) {
+        var v = R.m.get(j);
+        if (v) return v;
+        STATS.resvPoints++;
+        v = new Float64Array(12);
+        var a = LN2 / Math.pow(10, j / R.per);
+        for (var i = 1; i <= 12; i++) v[i - 1] = R.lap(i * a, R.dS, true);
+        R.m.set(j, v);
+        return v;
+    }
+
+    function _hRange(prep) {
+        var hMin = Math.min(prep.fitSet.dt[0], prep.bins.dt[0]) / 2;
+        var st = prep.histFit.steps, tau0 = st.length ? st[0].t : prep.spec.tc_h - prep.tpEff;
+        var hMax = 2 * (prep.spec.tc_h - tau0 + prep.dtEnd);
+        return { hMin: hMin, hMax: Math.max(hMax, 4 * hMin) };
+    }
+    function gridEntry(key, prep, opts) {
+        opts = opts || {};
+        var G0 = GRID_SPECS[key];
+        if (!G0) throw new Error('PRiSM_autoInterp.gridEntry: unknown key ' + key);
+        var per = _pos(opts.perDecade) ? opts.perDecade : DEFAULTS.budget.perDecade;
+        var H = LN10 / per;
+        var hr = _hRange(prep);
+        var spanJ = Math.ceil(Math.log10(hr.hMax / hr.hMin) * per) + 4;
+        var cache = [];
+        var shapeKeys = G0.shape.filter(function (s) { return !s.options; }).map(function (s) { return s.key; });
+        function pkey(p) {
+            var s = String(p.Cd) + '|' + String(p.S);
+            for (var i = 0; i < shapeKeys.length; i++) s += '|' + String(p[shapeKeys[i]]);
+            if (key === 'linearBoundary') s += '|' + (p.BC === 'constP' ? 'c' : 'n');
+            return s;
+        }
+        function norm(p) {
+            p = p || {};
+            var o = { Cd: _num(p.Cd) ? Math.max(0, p.Cd) : 100, S: _num(p.S) ? p.S : 0 };
+            G0.shape.forEach(function (s) { o[s.key] = (p[s.key] !== undefined && p[s.key] !== null && p[s.key] !== '') ? p[s.key] : s.default; });
+            if (key === 'composite2' && !_pos(o.F)) o.F = 1;
+            return o;
+        }
+        function linK(p) { return key === 'closedCircle' ? 2 / (p.reD * p.reD) : 0; }
+        // S ≥ 0: the lattice is in t_D. S < 0: it is in the effective time t_D·e^{2S} (effective
+        // radius r_w·e^{−S}, C_D·e^{2S}, distances ×e^{S}, S = 0; the transform of PRiSM_evalWbsSkin),
+        // so the Stehfest abscissae stay on the lattice and the reservoir values are shared.
+        function foldOf(p) {
+            var C = (p.Cd > 0) ? p.Cd : 0, SS = p.S || 0, f = { C: C, S: SS, e2: 1, dS: 1, neg: false };
+            if (SS < 0) { f.e2 = Math.exp(2 * SS); f.C = C * f.e2; f.dS = Math.exp(SS); f.S = 0; f.neg = true; }
+            return f;
+        }
+        function resvKey(p, f) {
+            var s = key + '|' + per;
+            for (var i = 0; i < shapeKeys.length; i++) s += '|' + String(p[shapeKeys[i]]);
+            if (key === 'linearBoundary') s += '|' + (p.BC === 'constP' ? 'c' : 'n');
+            if (key !== 'homogeneous') s += '|' + String(f.dS);   // the homogeneous kernel has no distance
+            return s;
+        }
+        function evalPoint(E, j) {
+            var tt = Math.pow(10, j / per), td = E.f.neg ? tt / E.f.e2 : tt, lk = E.lk * td;
+            var C = E.f.C, SS = E.f.S;
+            if (C > 0 && tt < Math.min(1e-3 * C, 1e-12 * C * C)) return [tt / C - lk, tt / C - lk];
+            var R = _resvVals(E.rv, j), W = _stehW(), a = LN2 / tt, accP = 0, accD = 0;
+            for (var i = 1; i <= 12; i++) {
+                var s = i * a, inner = s * R[i - 1] + SS;
+                var F = inner / (s * (1 + C * s * inner));
+                accP += W[i - 1] * F; accD += W[i - 1] * s * F;
+            }
+            STATS.kernelEvals++;
+            return [a * accP - lk, tt * a * accD - lk];
+        }
+        function getGrid(p, jlo, jhi, f) {
+            var k = pkey(p), E = null;
+            for (var c = 0; c < cache.length; c++) if (cache[c].k === k) { E = cache[c]; if (c) { cache.splice(c, 1); cache.unshift(E); } break; }
+            if (!E) {
+                STATS.gridBuilds++;
+                var j1 = jhi, j0 = Math.min(jlo, jhi - spanJ);
+                E = { k: k, p: p, f: f, lk: linK(p), rv: _resvEntry(resvKey(p, f), key, p, f.dS, per), j0: j0, j1: j0 - 1, g: [], gp: [] };
+                cache.unshift(E);
+                if (cache.length > 12) cache.pop();
+                extend(E, j0, j1);
+                return E;
+            }
+            if (jlo < E.j0 || jhi > E.j1) extend(E, jlo, jhi);
+            return E;
+        }
+        function extend(E, jlo, jhi) {
+            var i;
+            if (E.j1 < E.j0) {   // empty
+                for (i = jlo; i <= jhi; i++) { var v = evalPoint(E, i); E.g.push(v[0]); E.gp.push(v[1]); }
+                E.j0 = jlo; E.j1 = jhi; return;
+            }
+            if (jlo < E.j0) {
+                var pre = [], preD = [];
+                for (i = jlo; i < E.j0; i++) { var v1 = evalPoint(E, i); pre.push(v1[0]); preD.push(v1[1]); }
+                E.g = pre.concat(E.g); E.gp = preD.concat(E.gp); E.j0 = jlo;
+            }
+            if (jhi > E.j1) {
+                for (i = E.j1 + 1; i <= jhi; i++) { var v2 = evalPoint(E, i); E.g.push(v2[0]); E.gp.push(v2[1]); }
+                E.j1 = jhi;
+            }
+        }
+        function run(td, params, deriv) {
+            var arr = (Array.isArray(td) || (td && typeof td.length === 'number' && typeof td !== 'string'));
+            var tdA = arr ? td : [td];
+            var p = norm(params), lo = Infinity, hi = -Infinity, i;
+            for (i = 0; i < tdA.length; i++) { var t = tdA[i]; if (t > 0) { if (t < lo) lo = t; if (t > hi) hi = t; } }
+            var out = new Array(tdA.length);
+            if (!(hi > 0)) { for (i = 0; i < tdA.length; i++) out[i] = 0; return arr ? out : out[0]; }
+            var f = foldOf(p), e2 = f.e2;
+            var jlo = Math.floor(Math.log10(lo * e2) * per) - 2, jhi = Math.ceil(Math.log10(hi * e2) * per) + 2;
+            var E = getGrid(p, jlo, jhi, f), lk = E.lk;
+            for (i = 0; i < tdA.length; i++) {
+                var tt = tdA[i];
+                if (!(tt > 0)) { out[i] = 0; continue; }
+                var u = Math.log10(f.neg ? tt * e2 : tt) * per, jf = Math.floor(u), tau = u - jf, ix = jf - E.j0;
+                if (ix < 1) { ix = 1; tau = 0; } if (ix > E.g.length - 3) { ix = E.g.length - 3; tau = 1; }
+                var t2 = tau * tau, t3 = t2 * tau;
+                var h00 = 2 * t3 - 3 * t2 + 1, h10 = t3 - 2 * t2 + tau, h01 = -2 * t3 + 3 * t2, h11 = t3 - t2;
+                var v;
+                if (!deriv) v = h00 * E.g[ix] + h10 * H * E.gp[ix] + h01 * E.g[ix + 1] + h11 * H * E.gp[ix + 1];
+                else {
+                    var s0 = (E.gp[ix + 1] - E.gp[ix - 1]) / 2, s1 = (E.gp[ix + 2] - E.gp[ix]) / 2;
+                    v = h00 * E.gp[ix] + h10 * s0 + h01 * E.gp[ix + 1] + h11 * s1;
+                }
+                out[i] = v + lk * tt;
+            }
+            return arr ? out : out[0];
+        }
+        var spec = [
+            { key: 'Cd', label: 'Wellbore storage Cd', unit: '-', min: 0, max: 1e10, default: 100, scale: 'log' },
+            { key: 'S', label: 'Skin S', unit: '-', min: -7, max: 50, default: 0 }
+        ].concat(G0.shape.map(function (s) { return _copy(s); }));
+        var defaults = { Cd: 100, S: 0 };
+        G0.shape.forEach(function (s) { defaults[s.key] = s.default; });
+        return {
+            key: key, base: G0.base, name: GRID_LABEL[key],
+            pd: function (td, params) { return run(td, params, false); },
+            pdPrime: function (td, params) { return run(td, params, true); },
+            paramSpec: spec, defaults: defaults, refLength: 'rw', kind: 'pressure', timeInput: 'td', defaultFrozen: [],
+            category: G0.category, description: GRID_LABEL[key] + ' (automatic-interpretation pd grid).',
+            reference: 'Plan §4.6 grid form', evalCostMs: DEFAULTS.budget.costMs[key].pos,
+            gridPoints: function () { return Math.ceil(Math.log10(hr.hMax / hr.hMin) * per) + 1; },
+            _cacheSize: function () { return cache.length; }
+        };
+    }
+
+    // Slicing rule (§4.8): evalsPerSlice = clamp(floor(unitMs / evalCost), nFree + 1, 24),
+    // evalCost = costMs[key][sign of S] × gridPoints / 60 — static, never a clock.
+    function evalsPerSlice(key, S, nGrid, nFree) {
+        var B = DEFAULTS.budget, c = B.costMs[key] || B.costMs.homogeneous;
+        var cost = (S < 0 ? c.neg : c.pos) * nGrid / 60;
+        return _clamp(Math.floor(B.unitMs / cost), nFree + 1, B.evalsMax);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // fitJob / fit — sliced PRiSM_fitPhysical through a grid entry
+    // ─────────────────────────────────────────────────────────────────────
+    function _pmFor(key, prep, entry) {
+        if (typeof G.PRiSM_physicalModel !== 'function') return null;
+        try {
+            var pm = G.PRiSM_physicalModel(key, prep.well, prep.adata, { entry: entry, isolated: true, mode: 'physical' });
+            return (pm && pm.ok) ? pm : null;
+        } catch (e) { return null; }
+    }
+    function _fitPoints(prep, win) {
+        var t = prep.adata.t, dp = prep.adata.dp, idx = [];
+        var tmin = (win && _num(win.tmin)) ? win.tmin : -Infinity, tmax = (win && _num(win.tmax)) ? win.tmax : Infinity;
+        for (var i = 0; i < t.length; i++) if (t[i] >= tmin && t[i] <= tmax && dp[i] > 0) idx.push(i);
+        return idx;
+    }
+    // log-Δp block: residuals, floor, Jacobian standard errors (raw: inflated once by bic()).
+    function _logBlock(key, prep, entry, phys, freeKeys, win) {
+        var pm = _pmFor(key, prep, entry);
+        var idx = _fitPoints(prep, win), n = idx.length;
+        var t = idx.map(function (i) { return prep.adata.t[i]; });
+        var yd = idx.map(function (i) { return Math.log(prep.adata.dp[i]); });
+        var out = { n: n, res: null, ssr: null, floor: 0, se: {}, corr: { CS: null, kS: null }, ok: false, dpModel: null };
+        idx.forEach(function (i) {
+            var sb = prep.fitSet.sigma_b[i] || 0, dpi = prep.adata.dp[i];
+            out.floor += (sb / dpi) * (sb / dpi) + DEFAULTS.bic.logFloor * DEFAULTS.bic.logFloor;
+        });
+        if (!pm || n < 3) return out;
+        function lnModel(ph) {
+            STATS.evals++;
+            var dm = pm.dp(t, ph);
+            return dm.map(function (v) { return v > 0 ? Math.log(v) : NaN; });
+        }
+        var base = lnModel(phys);
+        out.dpModel = base.map(Math.exp);
+        var res = base.map(function (v, i) { return _num(v) ? yd[i] - v : 3; });
+        out.res = res;
+        out.ssr = res.reduce(function (s, v) { return s + v * v; }, 0);
+        var p = freeKeys.length;
+        if (!p || n <= p) { out.ok = true; return out; }
+        var isLog = function (k) { var sp = pm.spec[k]; return !!(sp && sp.scale === 'log'); };
+        var J = [];
+        for (var a = 0; a < p; a++) {
+            var kk = freeKeys[a], ph2 = _copy(phys), h;
+            if (isLog(kk)) { h = 1e-4; ph2[kk] = phys[kk] * Math.pow(10, h); }
+            else { h = 1e-4 * Math.max(1, Math.abs(phys[kk])); ph2[kk] = phys[kk] + h; }
+            var y2 = lnModel(ph2);
+            J.push(y2.map(function (v, i) { return _num(v) && _num(base[i]) ? (v - base[i]) / h : 0; }));
+        }
+        var A = [];
+        for (var r = 0; r < p; r++) { A.push([]); for (var c = 0; c < p; c++) { var s = 0; for (var i2 = 0; i2 < n; i2++) s += J[r][i2] * J[c][i2]; A[r].push(s); } }
+        var inv = _invert(A);
+        if (!inv) return out;
+        // σ² from the block's own residuals (the floor belongs to BIC only): noise-free data give se → 0.
+        var s2 = out.ssr / Math.max(1, n - p);
+        var seInt = freeKeys.map(function (k, i3) { return inv[i3][i3] > 0 ? Math.sqrt(s2 * inv[i3][i3]) : NaN; });
+        freeKeys.forEach(function (k, i4) {
+            out.se[k] = isLog(k) ? phys[k] * LN10 * seInt[i4] : seInt[i4];
+        });
+        function corrOf(k1, k2) {
+            var i1 = freeKeys.indexOf(k1), j1 = freeKeys.indexOf(k2);
+            if (i1 < 0 || j1 < 0) return null;
+            var den = Math.sqrt(inv[i1][i1] * inv[j1][j1]);
+            return den > 0 ? inv[i1][j1] / den : null;
+        }
+        out.corr = { CS: corrOf('C', 'S'), kS: corrOf('k', 'S') };
+        out.corrMax = 0;
+        for (var u = 0; u < p; u++) for (var v = u + 1; v < p; v++) {
+            var dd = Math.sqrt(inv[u][u] * inv[v][v]);
+            if (dd > 0) out.corrMax = Math.max(out.corrMax, Math.abs(inv[u][v] / dd));
+        }
+        out.ok = true;
+        return out;
+    }
+    function _invert(A) {
+        var n = A.length, M = A.map(function (r, i) { var e = new Array(n).fill(0); e[i] = 1; return r.slice().concat(e); });
+        for (var c = 0; c < n; c++) {
+            var piv = c;
+            for (var r = c + 1; r < n; r++) if (Math.abs(M[r][c]) > Math.abs(M[piv][c])) piv = r;
+            if (!(Math.abs(M[piv][c]) > 1e-300)) return null;
+            var t = M[c]; M[c] = M[piv]; M[piv] = t;
+            var d = M[c][c];
+            for (var k = 0; k < 2 * n; k++) M[c][k] /= d;
+            for (var r2 = 0; r2 < n; r2++) {
+                if (r2 === c) continue;
+                var f = M[r2][c];
+                if (f === 0) continue;
+                for (var k2 = 0; k2 < 2 * n; k2++) M[r2][k2] -= f * M[c][k2];
+            }
+        }
+        return M.map(function (r) { return r.slice(n); });
+    }
+
+    var FS_NA = { status: 'n/a', value: null, bound: null, text: 'Homogeneous model: no boundary to see.' };
+    function _distanceFt(key, params, rw) {
+        var o = {};
+        if (key === 'linearBoundary' && _pos(params.dF)) o.dF_ft = params.dF * rw;
+        if (key === 'composite2' && _pos(params.R)) o.R_ft = params.R * rw;
+        if (key === 'closedCircle' && _pos(params.reD)) o.re_ft = params.reD * rw;
+        return o;
+    }
+    function _buildModelFit(key, prep, entry, fr, meta) {
+        var rw = prep.well.rw;
+        var ph = fr.phys || {};
+        var phys = { k: _fin(ph.k), S: _fin(ph.S), C: _fin(ph.C) };
+        var shapeOut = {};
+        GRID_SPECS[key].shape.forEach(function (s) { if (!s.options && _num(ph[s.key])) shapeOut[s.key] = ph[s.key]; });
+        if (key === 'composite2') { phys.M = _fin(shapeOut.M); phys.F = _num(shapeOut.F) ? shapeOut.F : 1; }
+        var dist = _distanceFt(key, shapeOut, rw);
+        Object.keys(dist).forEach(function (k) { phys[k] = dist[k]; });
+        var params = {};
+        Object.keys(fr.params || {}).forEach(function (k) { var v = fr.params[k]; if (_num(v) || typeof v === 'string' || typeof v === 'boolean') params[k] = v; });
+        var freeKeys = (fr.fitKeys || []).filter(function (k) { return (fr.frozen || []).indexOf(k) < 0 && _num(ph[k]); });
+        var physForPm = {};
+        (fr.fitKeys || []).forEach(function (k) { if (_num(ph[k])) physForPm[k] = ph[k]; });
+        if (key === 'linearBoundary' && params.BC) physForPm.BC = params.BC;
+        var lb = _logBlock(key, prep, entry, physForPm, [], meta.window);
+        // Standard errors and correlations from the fit's own final Jacobian (Δp and derivative
+        // blocks as fitted): the Δp block alone leaves k and S nearly collinear. bic() inflates
+        // them once by √(n/n_eff).
+        var se = { k: null, S: null, C: null }, ci = { k: null, S: null, C: null };
+        freeKeys.forEach(function (k) { if (fr.stderr && _num(fr.stderr[k])) se[k] = Math.abs(fr.stderr[k]); });
+        var ck = fr.corrKeys || [], cm = fr.corr || null;
+        function corrOf(a, b2) {
+            var i = ck.indexOf(a), j = ck.indexOf(b2);
+            return (cm && i >= 0 && j >= 0 && cm[i] && _num(cm[i][j])) ? cm[i][j] : null;
+        }
+        lb.corr = { CS: corrOf('C', 'S'), kS: corrOf('k', 'S') };
+        lb.corrMax = 0;
+        if (cm) for (var ci1 = 0; ci1 < ck.length; ci1++) for (var cj1 = ci1 + 1; cj1 < ck.length; cj1++) if (cm[ci1] && _num(cm[ci1][cj1])) lb.corrMax = Math.max(lb.corrMax, Math.abs(cm[ci1][cj1]));
+        // At the round-off floor of a noise-free match the LM can end on 'lambda-max' with the
+        // objective settled (no further decrease possible): that is a converged fit.
+        var settledMin = !fr.converged && fr.stopReason === 'lambda-max' &&
+                         !(fr.stalledAtBound && fr.stalledAtBound.length) && !(_num(fr.r2) && fr.r2 < 0.9);
+        return {
+            key: key, base: entry.base, ok: !!fr.ok, converged: !!fr.converged || !!settledMin,
+            stopReason: String(fr.stopReason || '') + (settledMin ? ' (settled)' : ''),
+            iterations: meta.iterations, slices: meta.slices, nEval: meta.nEval,
+            phys: phys, params: params, se: se, ci95: ci, corr: { CS: _fin(lb.corr.CS), kS: _fin(lb.corr.kS) },
+            ssrLog: _fin(lb.ssr), nDp: lb.n, rmseDp: _fin(fr.rmse), bic: null, p: freeKeys.length, eligible: key === 'homogeneous', why: [],
+            fullySeen: key === 'homogeneous' ? _copy(FS_NA) : { status: 'not', value: null, bound: null, text: 'Not assessed.' },
+            evalsPerSlice: meta.evalsPerSlice, gridPoints: meta.gridPoints,
+            _res: lb.res, _floor: lb.floor, _corrMax: lb.corrMax || 0, _fr: fr, _freeKeys: freeKeys, _physPm: physForPm, _entry: entry,
+            _atBound: _atBounds(fr, entry, freeKeys), _dpModel: lb.dpModel, _window: meta.window || null
+        };
+    }
+    function _atBounds(fr, entry, freeKeys) {   // parameters within 1 % (of the log / linear range) of a bound
+        var out = [], ph = fr.phys || {};
+        var pmSpec = { k: { min: 1e-4, max: 1e5, scale: 'log' }, C: { min: 1e-7, max: 10, scale: 'log' }, S: { min: -7, max: 50 } };
+        (entry.paramSpec || []).forEach(function (s) { if (s.key !== 'Cd' && s.key !== 'S' && !s.options) pmSpec[s.key] = s; });
+        freeKeys.forEach(function (k) {
+            var sp = pmSpec[k], v = ph[k];
+            if (!sp || !_num(v)) return;
+            if (sp.scale === 'log' && v > 0 && sp.min > 0) {
+                var rng = Math.log10(sp.max / sp.min);
+                if (Math.log10(v / sp.min) < 0.01 * rng || Math.log10(sp.max / v) < 0.01 * rng) out.push(k);
+            } else if (_num(sp.min) && _num(sp.max)) {
+                var r2 = sp.max - sp.min;
+                if (v - sp.min < 0.01 * r2 || sp.max - v < 0.01 * r2) out.push(k);
+            }
+        });
+        return out;
+    }
+    function _failFit(key, entry, reason, meta) {
+        return {
+            key: key, base: entry ? entry.base : key, ok: false, converged: false, stopReason: 'failed', iterations: meta ? meta.iterations : 0,
+            slices: meta ? meta.slices : 0, nEval: meta ? meta.nEval : 0, phys: { k: null, S: null, C: null }, params: {},
+            se: { k: null, S: null, C: null }, ci95: { k: null, S: null, C: null }, corr: { CS: null, kS: null }, ssrLog: null, nDp: 0,
+            rmseDp: null, bic: null, p: 0, eligible: false, why: [_txt(reason)], fullySeen: key === 'homogeneous' ? _copy(FS_NA) : { status: 'not', value: null, bound: null, text: 'Fit failed.' }
+        };
+    }
+    function _betterFit(a, b) {   // converged preferred within 0.1 %, then lower objective
+        if (!a || !a.ok) return b;
+        if (!b || !b.ok) return a;
+        var oa = a._fr.objectiveValue, ob = b._fr.objectiveValue, tol = 1e-3 * Math.max(oa, ob);
+        if (a.converged && !b.converged && oa <= ob + tol) return a;
+        if (b.converged && !a.converged && ob <= oa + tol) return b;
+        return ob < oa ? b : a;
+    }
+    function fitJob(key, prep, opts) {
+        opts = opts || {};
+        var entry = opts.entry || gridEntry(key, prep);
+        var maxIt = _pos(opts.maxIterTotal) ? opts.maxIterTotal : DEFAULTS.budget.maxIterTotal;
+        var start = _copy(opts.start || {});
+        var freeze = _copy(opts.freeze || {});
+        var nFree = 3 + GRID_SPECS[key].shape.filter(function (s) { return !s.options; }).length - Object.keys(freeze).filter(function (k) { return freeze[k]; }).length;
+        var nGrid = entry.gridPoints();
+        var eps = evalsPerSlice(key, _num(start.S) ? start.S : 0, nGrid, Math.max(1, nFree));
+        var state = { phase: 'run', lm: null, it: 0, nEval: 0, slices: 0, retried: false, result: null, best: null, cancelled: false, start: start };
+        var label = 'Fit ' + (GRID_LABEL[key] || key);
+        function fpOpts(extra) {
+            var o = { entry: entry, isolated: true, mode: 'physical', dataset: { t: [], p: [] }, singleStart: true, start: state.start,
+                      freeze: freeze, objective: opts.objective === 'dp' ? 'dp' : 'dp+deriv', window: opts.window || undefined };
+            if (opts.params0) o.params0 = opts.params0;
+            return Object.assign(o, extra);
+        }
+        function finishWith(fr) {
+            var meta = { iterations: state.it, slices: state.slices, nEval: state.nEval, evalsPerSlice: eps, gridPoints: nGrid, window: opts.window || null };
+            var mf = (fr && fr.ok) ? _buildModelFit(key, prep, entry, fr, meta) : _failFit(key, entry, (fr && fr.reason) || 'Fit failed.', meta);
+            STATS.fits++;
+            state.best = state.best ? _betterFit(state.best, mf) : mf;
+            // A second start (S ± 2) only if not converged and iterations remain: maxIterTotal counts both
+            // starts together (§4.6 item 5).
+            if (!mf.converged && !state.retried && opts.retry !== false && _num(start.S) && !freeze.S && state.it < maxIt) {
+                state.retried = true;
+                var dir = (mf.ok && _num(mf.phys.S) && mf.phys.S < start.S) ? -2 : 2;
+                state.start = _copy(start); state.start.S = _clamp(start.S + dir, -6.5, 49);
+                state.lm = null; state.phase = 'run';
+                return false;
+            }
+            state.result = state.best;
+            state.phase = 'done';
+            return true;
+        }
+        return {
+            step: function () {
+                if (state.phase === 'done' || state.cancelled) return { done: true, progress: 1, label: label };
+                if (typeof G.PRiSM_fitPhysical !== 'function') { state.result = _failFit(key, entry, 'PRiSM regression is not loaded.', null); state.phase = 'done'; return { done: true, progress: 1, label: label }; }
+                var fr;
+                if (state.phase === 'run') {
+                    fr = G.PRiSM_fitPhysical(key, prep.adata, prep.well, fpOpts({ evalBudget: eps, lmState: state.lm || undefined, slice: true, maxIter: Math.max(1, maxIt - state.it) }));
+                    if (!fr || !fr.ok) { finishWith(fr); return { done: state.phase === 'done', progress: state.phase === 'done' ? 1 : 0.5, label: label }; }
+                    state.it += fr.iterations || 0; state.nEval += fr.nEval || 0; state.slices++;
+                    STATS.slices++; STATS.lmIters += fr.iterations || 0; STATS.evals += fr.nEval || 0;
+                    state.lm = fr.lmState;
+                    if (state.lm.done || state.it >= maxIt) {
+                        if (!state.lm.done) { state.lm.done = true; state.lm.converged = false; state.lm.stopReason = 'maxIter'; }
+                        state.phase = 'final';
+                    }
+                    return { done: false, progress: Math.min(0.9, state.it / maxIt), label: label };
+                }
+                // final statistics at the carried parameters (no further iteration)
+                fr = G.PRiSM_fitPhysical(key, prep.adata, prep.well, fpOpts({ lmState: state.lm, maxIter: 1 }));
+                if (fr && fr.ok) { state.nEval += fr.nEval || 0; STATS.evals += fr.nEval || 0; fr.iterations = state.it; }
+                var done = finishWith(fr);
+                return { done: done, progress: done ? 1 : 0.5, label: label };
+            },
+            result: function () { return state.result; },
+            cancel: function () { state.cancelled = true; },
+            entry: entry, evalsPerSlice: eps
+        };
+    }
+    function _runJob(job) { var s, guard = 0; do { s = job.step(); } while (!s.done && ++guard < 100000); return job.result(); }
+    function fit(key, prep, opts) { return _runJob(fitJob(key, prep, opts)); }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // reach(prep, homFit) — numeric t_10 %, t_5 % and the IARF reach (W4, item 5b)
+    // ─────────────────────────────────────────────────────────────────────
+    // Storage times of a fitted homogeneous model (one pd / pd′ scan, 20 per decade, as for the
+    // reach): tUs_h = the first Δt_e where the Δp log-slope pd′/pd falls below 0.9 (leaves unit
+    // slope); tHump_h = the pd′ maximum and humpRatio = max pd′ / 0.5 (the hump is present when
+    // humpRatio ≥ HUMP_RATIO). Used for the C-held trigger and the hump consistency (§4.6 items 2, 8);
+    // the Appendix A.1 correlation only seeds C.
+    var HUMP_RATIO = 1.2;
+    function _homStorageTimes(k, C, S, well) {
+        var out = { tUs_h: null, tHump_h: null, humpRatio: null };
+        if (!_pos(k) || !_pos(C) || !_num(S)) return out;
+        var Cd = C_CD * C / (well.phi * well.ct * well.h * well.rw * well.rw);
+        var Bt = C_B * k / (well.phi * well.mu * well.ct * well.rw * well.rw);
+        var per = 20, j0 = Math.floor(Math.log10(Math.max(1e-4, 1e-3 * Cd)) * per);   // t_D/C_D = 1e-3 (any S)
+        var jMax = -1, dMax = -Infinity, tUs = null, below = 0;
+        for (var j = j0; j < j0 + 14 * per; j++) {
+            var td = Math.pow(10, j / per), pr = _pair(_lapHom, td, Cd, S, true);
+            if (!_pos(pr[0]) || !_num(pr[1])) continue;
+            if (tUs === null && pr[1] / pr[0] < 0.9 && j > j0) tUs = td;
+            if (pr[1] > dMax) { dMax = pr[1]; jMax = j; }
+            if (tUs !== null && Math.abs(2 * pr[1] - 1) < 0.01 && ++below >= per) break;   // a cycle on the plateau
+        }
+        if (tUs !== null) out.tUs_h = tUs / Bt;
+        if (jMax >= 0 && dMax > 0) { out.humpRatio = 2 * dMax; out.tHump_h = Math.pow(10, jMax / per) / Bt; }
+        return out;
+    }
+    function _tPct(k, C, S, well, frac) {   // last Δt_e (h) where |Δp′/m′ − 1| > frac (homogeneous drawdown)
+        var Cd = C_CD * C / (well.phi * well.ct * well.h * well.rw * well.rw);
+        var Bt = C_B * k / (well.phi * well.mu * well.ct * well.rw * well.rw);
+        var per = 20, j0 = Math.floor(Math.log10(Math.max(1e-3, 1e-2 * Math.max(Cd, 1e-3))) * per);
+        var devs = [], lastBad = -1, nGood = 0;
+        for (var j = j0; j < j0 + 16 * per; j++) {
+            var td = Math.pow(10, j / per), dev = Math.abs(2 * _pair(_lapHom, td, Cd, S, true)[1] - 1);
+            devs.push(dev);
+            if (dev > frac) { lastBad = devs.length - 1; nGood = 0; }
+            else if (lastBad >= 0 && ++nGood >= 3 * per) break;
+        }
+        if (lastBad < 0) return 0;
+        var u = (j0 + lastBad) / per;
+        if (lastBad + 1 < devs.length) {   // interpolate the crossing in log tD
+            var d0 = devs[lastBad], d1 = devs[lastBad + 1];
+            if (d0 > d1) u += (d0 - frac) / (d0 - d1) / per;
+        }
+        return Math.pow(10, u) / Bt;
+    }
+    function reach(prep, homFit) {
+        var f = homFit && homFit.phys ? homFit.phys : null;
+        if (!f || !_pos(f.k) || !_pos(f.C) || !_num(f.S)) {
+            return { t10_h: null, t5_h: null, fair_h: null, good_h: null, fairShut_h: null, goodShut_h: null, reachable: false, ev: ['W4'] };
+        }
+        var t10 = _tPct(f.k, f.C, f.S, prep.well, 0.10), t5 = _tPct(f.k, f.C, f.S, prep.well, 0.05);
+        var L = prep.Lcyc, fair = Math.pow(10, DEFAULTS.reach.fairCycles + L) * t5, good = Math.pow(10, DEFAULTS.reach.goodCycles + L) * t5;
+        var fs = prep.time.dtOfDte(fair), gs = prep.time.dtOfDte(good);
+        return { t10_h: t10, t5_h: t5, fair_h: fair, good_h: good, fairShut_h: _pos(fs) ? fs : null, goodShut_h: _pos(gs) ? gs : null,
+                 reachable: _pos(fs), ev: ['W4'] };
+    }
+    // Storage correlation (Appendix A.1), seeding only: valid 0 ≤ S ≤ 8, 220 ≤ C_D ≤ 22,060.
+    function predictors(k, h, mu, C, S) {
+        var Sc = _clamp(_num(S) ? S : 0, 0, 8), f = C * mu / (k * h);
+        return { tUs_h: (2900 + 750 * Sc) * f, tHump_h: (21400 + 3390 * Sc) * f };
+    }
+    function _cFromHump(tHump, k, h, mu, S) { var Sc = _clamp(_num(S) ? S : 0, 0, 8); return tHump * k * h / ((21400 + 3390 * Sc) * mu); }
+    function rinv(k, dt_h, well) { return 0.0325 * Math.sqrt(k * dt_h / (well.phi * well.mu * well.ct)); }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // bic(prep, fits, opts) — log-Δp block BIC with n_eff and a floor (M§A10, D8)
+    // ─────────────────────────────────────────────────────────────────────
+    // SSR_m = Σ(ln Δp_i − ln Δp_model,i)², floored at Σ((σ_b,i/Δp_i)² + 0.005²);
+    // ρ1 = lag-1 autocorrelation of the best model's residuals (clipped to [0, 0.9]);
+    // n_eff = n(1 − ρ1)/(1 + ρ1); BIC = n_eff·ln(SSR/n) + p·ln n_eff. dBicHom = BIC_hom − BIC_m
+    // (positive = better than homogeneous), rounded to 0.1 before any comparison with τ.
+    // Standard errors are inflated by √(n/n_eff) here, once.
+    function _rho1(r) {
+        if (!r || r.length < 3) return 0;
+        var m = 0, i;
+        for (i = 0; i < r.length; i++) m += r[i];
+        m /= r.length;
+        var num = 0, den = 0;
+        for (i = 0; i < r.length; i++) { den += (r[i] - m) * (r[i] - m); if (i) num += (r[i] - m) * (r[i - 1] - m); }
+        return den > 0 ? _clamp(num / den, 0, 0.9) : 0;
+    }
+    function bic(prep, fits, opts) {
+        opts = opts || {};
+        var tau = _num(opts.tau) ? opts.tau : _thr(opts.cal).tauBic;
+        var ok = fits.filter(function (f) { return f && f.ok && Array.isArray(f._res) && _num(f.ssrLog); });
+        var homF = fits.filter(function (f) { return f && f.key === 'homogeneous'; })[0] || null;
+        var n = ok.length ? ok[0]._res.length : 0;
+        var floor = ok.length ? ok[0]._floor : 0;
+        var best = null;
+        ok.forEach(function (f) { if (!best || f.ssrLog < best.ssrLog) best = f; });
+        var rho = best ? _rho1(best._res) : 0;
+        var nEff = n * (1 - rho) / (1 + rho);
+        var floorUsed = false;
+        ok.forEach(function (f) {
+            var ssr = f.ssrLog;
+            if (ssr < floor) { ssr = floor; floorUsed = true; }
+            f.bic = (n > 0 && nEff > 0) ? nEff * Math.log(ssr / n) + f.p * Math.log(Math.max(nEff, 1.0000001)) : null;
+            if (!f._seInflated && nEff > 0) {
+                var infl = Math.sqrt(n / nEff);
+                Object.keys(f.se).forEach(function (k) { if (_num(f.se[k])) f.se[k] *= infl; });
+                f._seInflated = true;
+                var ci = {};
+                Object.keys(f.se).forEach(function (k) {
+                    var v = f.phys[k], s = f.se[k];
+                    if (!_num(v) || !_num(s)) { ci[k] = null; return; }
+                    ci[k] = (k === 'S') ? [v - 1.96 * s, v + 1.96 * s] : [v * Math.exp(-1.96 * s / v), v * Math.exp(1.96 * s / v)];
+                });
+                ['k', 'S', 'C'].forEach(function (k) { if (!(k in ci)) ci[k] = null; });
+                f.ci95 = ci;
+            }
+        });
+        var bHom = homF && _num(homF.bic) ? homF.bic : null;
+        var rows = fits.filter(function (f) { return f; }).map(function (f) {
+            var d = (f.key === 'homogeneous') ? 0 : ((_num(f.bic) && _num(bHom)) ? _rBic(bHom - f.bic) : null);
+            return { key: f.key, bic: _fin(f.bic), dBicHom: d, p: f.p, eligible: !!f.eligible, why: (f.why || []).slice() };
+        });
+        // choice: the best eligible model; a rival replaces homogeneous only if BIC_hom − BIC_r > τ
+        var forced = opts.forceModel || null, chosen = 'homogeneous';
+        var cands = rows.filter(function (r) { return r.key !== 'homogeneous' && r.eligible && _num(r.dBicHom) && r.dBicHom > tau; });
+        cands.sort(function (a, b) { return b.dBicHom - a.dBicHom; });
+        if (cands.length) chosen = cands[0].key;
+        if (forced && rows.some(function (r) { return r.key === forced; })) chosen = forced;
+        // margin: the chosen model's lead over the next best model (ΔBIC, rounded)
+        var others = rows.filter(function (r) { return r.key !== chosen && _num(r.bic); });
+        var cRow = rows.filter(function (r) { return r.key === chosen; })[0];
+        var margin = null;
+        if (others.length && cRow && _num(cRow.bic)) {
+            var nb = others.reduce(function (a, b) { return a.bic < b.bic ? a : b; });
+            margin = _rBic(nb.bic - cRow.bic);
+        }
+        return { n: n, nEff: nEff, rho1: rho, tau: tau, basis: 'logDp', floorUsed: floorUsed, rows: rows, chosen: chosen, margin: margin, ev: ['M4'] };
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // fullySeen(key, prep, iarf, fit) (M§A11)
+    // ─────────────────────────────────────────────────────────────────────
+    function fullySeen(key, prep, ir, mf) {
+        if (key === 'homogeneous') return _copy(FS_NA);
+        var b = prep.bins, X = b.X, d = prep.deriv.deriv, f = prep.deriv.full, n = X.length, S = DEFAULTS.seen;
+        var lvl = ir && ir.found ? ir.level_psi : null;
+        if (!lvl) {   // no IARF: the minimum after the hump
+            var a0 = _gateIndex(prep, storage(prep)), mn = Infinity;
+            for (var i = a0; i < n; i++) if (f[i] && d[i] > 0 && d[i] < mn) mn = d[i];
+            lvl = mn < Infinity ? mn : null;
+        }
+        var lastFull = -1;
+        for (var lf = n - 1; lf >= 0; lf--) if (f[lf]) { lastFull = lf; break; }
+        var ph = (mf && mf.phys) || {};
+        function tail(pred, cyc) {      // the last ≥ cyc cycle of full bins all satisfying pred
+            if (lastFull < 0) return false;
+            var k = lastFull;
+            while (k >= 0 && f[k] && pred(k)) k--;
+            return (X[lastFull] - X[k + 1]) / LN10 >= cyc - 1e-9 && k + 1 <= lastFull;
+        }
+        var sl = _derivSlopes(prep, 0.1);
+        var full = false, any = false, val = null, txt = '';
+        if (key === 'linearBoundary') {
+            val = _fin(ph.dF_ft);
+            full = !!lvl && tail(function (k) { return d[k] >= S.fault * lvl; }, S.faultCycles);
+            any = !!lvl && tail(function (k) { return d[k] >= (1 + S.faultDepart) * lvl; }, 0.05);
+            txt = full ? 'Sealing fault fully seen: the derivative reached ' + S.fault + '× the IARF level.' : 'Sealing fault seen, not fully: the distance is an upper-bound estimate.';
+        } else if (key === 'composite2') {
+            val = _fin(ph.R_ft);
+            var lv2 = ir && ir.secondLevel ? ir.secondLevel : null;
+            full = !!lv2 && Math.log10(lv2.dt1_h / lv2.dt0_h) >= S.compCycles - 1e-9;
+            if (!full && lvl) full = tail(function (k) { return sl[k] !== null && Math.abs(sl[k]) <= 0.05 && Math.abs(d[k] / lvl - 1) > 0.2; }, S.compCycles);
+            any = full || !!(lvl && tail(function (k) { return Math.abs(d[k] / lvl - 1) > 0.15; }, 0.05));
+            txt = full ? 'Radial composite fully seen: the outer level is flat for at least ' + S.compCycles + ' cycle.' : 'Radial composite seen, not fully: the outer level is not yet flat; R is an estimate.';
+        } else if (key === 'closedCircle') {
+            val = _fin(ph.re_ft);
+            full = !!lvl && tail(function (k) { return (d[k] <= S.closed * lvl) && sl[k] !== null && sl[k] <= S.closedSlope; }, 0.2);
+            any = full || !!(lvl && tail(function (k) { return d[k] < (1 - S.faultDepart) * lvl; }, 0.05));
+            txt = (full ? 'Closed boundary fully seen (falling derivative).' : 'Closed boundary seen, not fully.') +
+                  ' Alternatives: constant-pressure boundary, interference or depletion.';
+        }
+        var status = full ? 'full' : (any ? 'partial' : 'not');
+        if (status === 'not') {
+            // No departure seen: the boundary (if any) lies beyond what the test investigated, so a fitted
+            // distance can only be a lower bound.
+            var nm = key === 'linearBoundary' ? 'Sealing fault' : (key === 'composite2' ? 'Radial composite' : 'Closed boundary');
+            txt = nm + ' not seen: no departure from the IARF level in this test; any fitted distance is a lower bound.' +
+                  (key === 'closedCircle' ? ' Alternatives: constant-pressure boundary, interference or depletion.' : '');
+        }
+        return { status: status, value: val, bound: status === 'full' ? null : (status === 'partial' ? 'upper' : 'lower'), text: _txt(txt) };
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // agreement(line, fit, prep) — line vs match, bias explained (M§A12, D9)
+    // ─────────────────────────────────────────────────────────────────────
+    function _syntheticLine(prep, mf, dt0, dt1) {
+        var pm = _pmFor(mf.key, prep, mf._entry);
+        if (!pm) return null;
+        STATS.evals++;
+        var dpm = pm.dp(prep.adataLine.t, mf._physPm);
+        var ad = _copy(prep.adataLine);
+        ad.dp = dpm.slice();
+        ad.p = dpm.map(function (v) { return prep.adata.pRef + prep.sign * v; });
+        return { ad: ad, run: function (a, b) { return _semilog(prep, a, b, ad); } };
+    }
+    function agreement(ln, mf, prep) {
+        var A = DEFAULTS.agree;
+        if (!ln || !mf || !mf.ok || !_pos(mf.phys.k)) {
+            return { agree: false, mode: 'none', dkPct: null, dS: null, biasKPct: null, biasDS: null, ev: ['A1'] };
+        }
+        var dk = ln.k / mf.phys.k - 1, dS = ln.S - mf.phys.S;
+        var rawOk = _rRatio(Math.abs(dk)) <= A.kPct / 100 && _r2(Math.abs(dS)) <= A.dS;
+        var out = { agree: rawOk, mode: rawOk ? 'raw' : 'none', dkPct: 100 * dk, dS: dS, biasKPct: null, biasDS: null, ev: ['A1'] };
+        var syn = _syntheticLine(prep, mf, ln.dt0_h, ln.dt1_h);
+        if (syn) {
+            var rb = syn.run(ln.dt0_h, ln.dt1_h);
+            if (rb) {
+                var bk = rb.k / mf.phys.k - 1, bS = rb.S - mf.phys.S;
+                out.biasKPct = 100 * bk; out.biasDS = bS;
+                if (!rawOk && _rRatio(Math.abs(dk - bk)) <= A.biasKPct / 100 && _r2(Math.abs(dS - bS)) <= A.biasDS) { out.agree = true; out.mode = 'bias'; }
+            }
+            (ln.shifts || []).forEach(function (s) {
+                var rs = syn.run(s.dt0_h, s.dt1_h);
+                s.bS = rs ? rs.S - mf.phys.S : null;
+            });
+            ln._biasS = out.biasDS;
+        }
+        return out;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // cHeldJob(prep, fit, opts) — C-held refits (M§A13)
+    // ─────────────────────────────────────────────────────────────────────
+    // Triggered when the unit slope was not sampled, or Δt_1 > t_us/2 with t_us from the fitted
+    // homogeneous model (numeric scan, not the A.1 correlation).
+    function _cheldTriggered(prep, st, mf, tUs) {
+        if (!st.unitSlope) return true;
+        if (!_pos(tUs)) tUs = _homStorageTimes(mf.phys.k, mf.phys.C, mf.phys.S, prep.well).tUs_h;
+        return _pos(tUs) ? prep.bins.dte[0] > tUs / 2 : false;
+    }
+    function cHeldJob(prep, mf, opts) {
+        opts = opts || {};
+        var mode = opts.mode || 'auto';
+        var st = opts.storage || storage(prep);
+        var flags = opts.flags || [];
+        var bt = opts.bicTable || null;
+        var nEff = bt ? bt.nEff : null, nB = bt ? bt.n : null;
+        var reject = DEFAULTS.cheld.reject;
+        var trig = mf && mf.ok ? _cheldTriggered(prep, st, mf, opts.tUs_h) : false;
+        var meaningful = !flags.some(function (fl) { return fl.code === 'humpDp' || fl.code === 'steepStorage'; });
+        var refits = [], queue = [], cur = null, curF = null, side = null;
+        var rejectedSide = { lo: false, hi: false };
+        if (trig && mode !== 'off') { queue.push({ f: DEFAULTS.cheld.f[0], side: 'lo', ext: false }); queue.push({ f: DEFAULTS.cheld.f[1], side: 'hi', ext: false }); }
+        var extDone = false, result = null;
+        function dBicOf(fr) {
+            if (!fr || !fr.ok || !_num(fr.ssrLog) || !_num(mf.ssrLog)) return null;
+            var n = nB || fr.nDp, ne = nEff || n, fl = mf._floor || 0;
+            var s1 = Math.max(fr.ssrLog, fl), s0 = Math.max(mf.ssrLog, fl);
+            // BIC_refit − BIC_fit: the refit has one parameter fewer (C frozen), so its penalty is ln n_eff lower.
+            return _rBic(ne * Math.log(s1 / s0) - Math.log(Math.max(ne, 1.0000001)));
+        }
+        function enqueueExt() {
+            extDone = true;
+            var E = DEFAULTS.cheld.ext;
+            var lo = [E[0], E[1]], hi = [E[2], E[3]];
+            if (mode === 'extended' || !rejectedSide.lo) lo.forEach(function (f) { queue.push({ f: f, side: 'lo', ext: true }); });
+            if (mode === 'extended' || !rejectedSide.hi) hi.forEach(function (f) { queue.push({ f: f, side: 'hi', ext: true }); });
+        }
+        function finish() {
+            var acc = refits.filter(function (r) { return !r.rejected; });
+            var Cs = [mf.phys.C], ks = [mf.phys.k], Ss = [mf.phys.S];
+            acc.forEach(function (r) { Cs.push(r.C); ks.push(r.k); Ss.push(r.S); });
+            var rng = function (a) { return [Math.min.apply(null, a), Math.max.apply(null, a)]; };
+            var sR = rng(Ss);
+            result = { triggered: trig, mode: (trig && (mode === 'extended' || refits.some(function (r) { return r._ext; }))) ? 'extended' : 'pair',
+                       refits: refits.map(function (r) { return { f: r.f, k: r.k, S: r.S, C: r.C, dBic: r.dBic, rejected: r.rejected }; }),
+                       range: { C: rng(Cs), k: rng(ks), S: sR }, S_C: (sR[1] - sR[0]) / 2, meaningful: meaningful, ev: ['C1'],
+                       _rejectedBoth: refits.filter(function (r) { return !r._ext && r.rejected; }).length === 2 };
+        }
+        var label = 'C-held refits';
+        return {
+            step: function () {
+                if (result) return { done: true, progress: 1, label: label };
+                if (cur) {
+                    var s = cur.step();
+                    if (!s.done) return { done: false, progress: 0.5, label: label };
+                    var fr = cur.result(); cur = null;
+                    var db = dBicOf(fr);
+                    var rej = !(fr && fr.ok) || db === null || db > reject;
+                    STATS.cheldRefits++; if (curF.ext) STATS.cheldExt++;
+                    refits.push({ f: curF.f, k: fr && fr.ok ? fr.phys.k : mf.phys.k, S: fr && fr.ok ? fr.phys.S : mf.phys.S, C: mf.phys.C * curF.f,
+                                  dBic: _num(db) ? db : 0, rejected: rej, _ext: curF.ext });
+                    if (rej) {
+                        rejectedSide[curF.side] = true;
+                        if (curF.ext && mode !== 'extended') queue = queue.filter(function (q) { return q.side !== curF.side; });
+                    }
+                    return { done: false, progress: 0.5, label: label };
+                }
+                if (!queue.length && trig && mode !== 'off' && !extDone) enqueueExt();
+                if (!queue.length) { finish(); return { done: true, progress: 1, label: label }; }
+                curF = queue.shift();
+                var stt = { k: mf.phys.k, S: mf.phys.S, C: mf.phys.C * curF.f };
+                cur = fitJob(mf.key, prep, { start: stt, freeze: { C: true }, entry: mf._entry, window: mf._window || undefined, retry: false });
+                return { done: false, progress: 0.3, label: label };
+            },
+            result: function () { return result; },
+            cancel: function () { if (cur) cur.cancel(); result = result || null; }
+        };
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // sErr(parts) (M§A14, D10)
+    // ─────────────────────────────────────────────────────────────────────
+    function sErr(parts) {
+        parts = parts || {};
+        var mode = parts.mode || 'line';
+        var floor = _num(parts.floor) ? parts.floor : DEFAULTS.sErr.floor;
+        var seS = _num(parts.seS) ? Math.abs(parts.seS) : 0;
+        var dLM = (mode === 'line' && _num(parts.sLine) && _num(parts.sMatch)) ? Math.abs(parts.sLine - parts.sMatch) : null;
+        var sWin = mode === 'line' ? (_num(parts.sWin) ? Math.abs(parts.sWin) : 0) : null;
+        var sTc = _num(parts.sTc) ? Math.abs(parts.sTc) : 0, sPwf = _num(parts.sPwf) ? Math.abs(parts.sPwf) : 0;
+        var sK = mode === 'kHeld' ? (_num(parts.sK) ? Math.abs(parts.sK) : 0) : null;
+        var terms = [['floor', floor], ['se', seS]];
+        if (mode === 'line') { terms.push(['lineMatch', dLM || 0]); terms.push(['window', sWin]); }
+        terms.push(['tc', sTc]); terms.push(['pwf', sPwf]);
+        if (mode === 'kHeld') terms.push(['kHeld', sK]);
+        var top = terms[0];
+        for (var i = 1; i < terms.length; i++) if (terms[i][1] > top[1]) top = terms[i];
+        var value = top[1];
+        var S_C = _num(parts.sC) ? Math.abs(parts.sC) : 0;
+        var sSens = _num(parts.sSens) ? Math.abs(parts.sSens) : 0;
+        return { value: value, mode: mode, floor: floor, seS: seS, dLineMatch: dLM, sWin: sWin, sTc: sTc, sPwf: sPwf, sK: sK, driver: top[0],
+                 ext: { value: Math.max(value, S_C), S_C: S_C }, sSens: sSens, sAbs: Math.sqrt(value * value + sSens * sSens), ev: ['U1'] };
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // sensitivity(final, well, ranges) — analytic, exact for homogeneous (M§A16, Appendix A.2)
+    // ─────────────────────────────────────────────────────────────────────
+    var SENS_COEF = { h: 1.1513, phi: 1.1513, ct: 1.1513, rw: 2.3026, B: -1.1513, mu: 0, q: -1.1513 };
+    var SENS_INPUTS = ['h', 'phi', 'ct', 'rw', 'B', 'mu', 'q'];
+    var REQ_RANGES = { h: 0.2, phi: 0.2, ct: 0.2, rw: 0.2, B: 0.2, mu: 0.2, q: 0.1 };
+    function sensitivity(fin, well, ranges) {
+        ranges = ranges || {};
+        var req = ranges.req || REQ_RANGES;
+        var typ = ranges.typ || (well && well.sens) || { h: 0.2, phi: 0.1, ct: 0.3, rw: 0.05, B: 0.05, mu: 0.2, q: 0.1 };
+        var k = fin.k, S = fin.S;
+        function rows(rg) {
+            var out = [];
+            SENS_INPUTS.forEach(function (inp) {
+                var r = _num(rg[inp]) ? rg[inp] : 0;
+                [1 + r, 1 - r].forEach(function (f) {
+                    if (!(f > 0)) return;
+                    var dS = SENS_COEF[inp] * Math.log10(f);
+                    var kk = inp === 'h' ? k / f : (inp === 'B' || inp === 'mu' || inp === 'q') ? k * f : k;
+                    out.push({ input: inp, f: f, k: kk, S: S + dS, dkPct: 100 * (kk / k - 1), dS: dS });
+                });
+            });
+            return out;
+        }
+        function dom(rs, fn) {
+            var best = null, bv = -1;
+            rs.forEach(function (r) { var v = _rRatio(Math.abs(fn(r))); if (v > bv + 1e-12) { bv = v; best = r.input; } });
+            return best;
+        }
+        var R = rows(req), T = rows(typ);
+        var mx = {};
+        T.forEach(function (r) { mx[r.input] = Math.max(mx[r.input] || 0, Math.abs(r.dS)); });
+        var sSens = Math.sqrt(Object.keys(mx).reduce(function (s, kk) { return s + mx[kk] * mx[kk]; }, 0));
+        return { req: R, typ: T, dominantK: { req: dom(R, function (r) { return r.dkPct; }), typ: dom(T, function (r) { return r.dkPct; }) },
+                 dominantS: { req: dom(R, function (r) { return r.dS; }), typ: dom(T, function (r) { return r.dS; }) },
+                 sSens: sSens, muNoEffectOnS: true, ev: ['U2', 'U3'] };
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // confidence(ev, cal) — k/S label (K1), model label (K2), headline (§5.1)
+    // ─────────────────────────────────────────────────────────────────────
+    var RANKL = { low: 0, medium: 1, high: 2 }, LVL = ['low', 'medium', 'high'];
+    function confidence(ev, cal) {
+        ev = ev || {};
+        var c = _cal(cal);
+        var T = _thr(c);
+        var calibrated = !!(c && c.calibrated);
+        var reasons = [];
+        function add(rule, kind, text, evIds) { reasons.push({ rule: rule, kind: kind, text: _txt(text), ev: evIds }); }
+        var flags = ev.flags || [];
+        var hasDistractor = flags.some(function (fl) { return DISTRACTORS[fl]; });
+        var kHeld = !!ev.kHeld;
+        var low = false, cap = false;
+        // ── LOW rules ──
+        var r3Fail = ev.r3Status === 'fail' && _num(ev.r3) && _rRatio(Math.abs(ev.r3 - 1)) > T.r3LowPct / 100;
+        var r4Fail = ev.r4Status === 'fail' && _num(ev.r4) && _rRatio(Math.abs(ev.r4 - 1)) > T.r3LowPct / 100;
+        if (r3Fail || r4Fail || ev.dqKnown === false) { low = true; add('KL3', 'low', 'KL3: rate check failed by more than ' + T.r3LowPct + ' % or the rate change is unknown.', ['R1', 'R3', 'R4']); }
+        if (kHeld) {
+            // KL4 (k-held): a hump / steep-storage flag at or after the k-held fit start — KHeld.humpAfterFitStart
+            // (kHeldHumpAfterStart), else the pass-1 humpAfterFitStart (same anomaly rule), else any such flag.
+            var hAfter = typeof ev.kHeldHumpAfterStart === 'boolean' ? ev.kHeldHumpAfterStart
+                : (typeof ev.humpAfterFitStart === 'boolean' ? ev.humpAfterFitStart : flags.some(function (fl) { return fl === 'humpDp' || fl === 'steepStorage'; }));
+            if (hAfter) { low = true; add('KL4', 'low', 'KL4: pressure hump or steep storage after the fit start.', ['M7']); }
+            if (T.distractorRule && hasDistractor) { low = true; add('KL9', 'low', 'KL9: a distractor flag (valley, half or quarter slope) in a k-held test.', ['M7', 'I1']); }
+            if (ev.kHeldConverged === false) { low = true; add('KK1', 'low', 'KK1: the k-held fit did not converge.', ['M8']); }
+            if (_num(ev.kHeldCorrCS) && _rRatio(Math.abs(ev.kHeldCorrCS)) >= DEFAULTS.kHeld.corrMax) { low = true; add('KK2', 'low', 'KK2: C and S are strongly correlated in the k-held fit (|r| ' + _fmt(Math.abs(ev.kHeldCorrCS), 3) + ').', ['M8']); }
+            if (_num(ev.kHeldRmsRatio) && _rRatio(ev.kHeldRmsRatio) > T.kHeldRmsK) { low = true; add('KK3', 'low', 'KK3: k-held residual RMS ' + _fmt(ev.kHeldRmsRatio, 2) + '× the noise level.', ['M8', 'I5']); }
+            if (_num(ev.sErr) && _r2(ev.sErr) > DEFAULTS.kHeld.sErrMax) { low = true; add('KK4', 'low', 'KK4: skin uncertainty ' + _fmt(ev.sErr, 2) + ' above ' + DEFAULTS.kHeld.sErrMax + ' (k-held).', ['U1']); }
+        } else {
+            var noRival = ev.chosenFullySeen !== 'full';
+            if (ev.grade === 'none' && noRival) { low = true; add('KL1', 'low', 'KL1: no IARF window and no fully seen boundary model.', ['I1', 'M5']); }
+            if (_num(ev.sErr) && _r2(ev.sErr) > T.sErrLow) { low = true; add('KL2', 'low', 'KL2: skin uncertainty ' + _fmt(ev.sErr, 2) + ' above ' + T.sErrLow + '.', ['U1']); }
+            if (ev.humpAfterIarf) { low = true; add('KL4', 'low', 'KL4: pressure hump or steep storage inside or after the IARF start.', ['M7']); }
+            if (ev.grade !== 'none' && _num(ev.snrD) && _r2(ev.snrD) < T.snrLow) { low = true; add('KL5', 'low', 'KL5: derivative signal-to-noise ' + _fmt(ev.snrD, 2) + ' below ' + T.snrLow + ' in the IARF window.', ['I5']); }
+            if (ev.grade !== 'none' && !ev.agree && ((_num(ev.dS) && _r2(Math.abs(ev.dS)) > T.disagreeDS) || (_num(ev.dkPct) && _rdp(Math.abs(ev.dkPct), 0.1) > T.disagreeKPct))) {
+                low = true; add('KL6', 'low', 'KL6: line and match disagree (Δk ' + _fmt(ev.dkPct, 2) + ' %, ΔS ' + _fmt(ev.dS, 2) + '), not explained by the window bias.', ['A1']);
+            }
+            if (ev.grade !== 'none' && _num(ev.dteEnd_h) && _num(ev.t10_h) && _rRatio(ev.dteEnd_h / (T.reachFactor * ev.t10_h)) < 1) {
+                low = true; add('KL7', 'low', 'KL7: the test ends before ' + T.reachFactor + '× the 10 % storage time: the window cannot be IARF.', ['W4', 'I1']);
+            }
+            if (ev.partialSuspect === true) { low = true; add('KL8', 'low', 'KL8: partial-cut suspicion (semilog slope below 0.7 of the baseline).', ['R1', 'I3', 'T9']); }
+            if (T.distractorRule && ev.distractorAtOrBeforeIarf) { low = true; add('KL9', 'low', 'KL9: a distractor flag (valley, half or quarter slope) at or before the IARF window.', ['M7', 'I1']); }
+        }
+        // ── MEDIUM caps ──
+        if (ev.historySensitive) { cap = true; add('KC1', 'cap', 'KC1: history start estimated and the derivative is sensitive to it.', ['R5']); }
+        if (ev.outsideEnvelope || !calibrated) { cap = true; add('KC2', 'cap', ev.outsideEnvelope ? 'KC2: outside the calibration envelope.' : 'KC2: labels not yet calibrated.', ['K1']); }
+        if (kHeld) { cap = true; add('KC3', 'cap', 'KC3: k-held result (k fixed at the baseline median).', ['M8']); }
+        if (ev.r3Status === 'unavailable' || (ev.equalRateAssumed && ev.r3Status !== 'n/a')) { cap = true; add('KC4', 'cap', ev.r3Status === 'unavailable' ? 'KC4: allocation check unavailable.' : 'KC4: equal rates assumed for several events in one day.', ['R2', 'R3']); }
+        if (!kHeld && ev.windowLevelInconsistent === true) { cap = true; add('KC5', 'cap', 'KC5: IARF level inconsistent with the baseline kh.', ['T9']); }
+        if (_num(ev.fRate) && ev.fRate < 1) { cap = true; add('KC6', 'cap', 'KC6: rate step interpreted with Δq·f̂ (f̂ ' + _fmt(ev.fRate, 3) + ').', ['R1', 'D6']); }
+        // ── HIGH (free results only) ──
+        var allHigh = false;
+        if (!kHeld) {
+            var kh1 = ev.grade === 'good' || (ev.grade === 'fair' && !ev.noiseWidened && _num(ev.span) && _rSpan(ev.span) >= T.fairSpanHigh &&
+                      _num(ev.pointSkinSpread) && _r2(ev.pointSkinSpread) <= T.pointSkinSpread);
+            var kh2 = !!ev.agree;
+            var kh3 = _num(ev.sErr) && _r2(ev.sErr) <= T.sErrHigh;
+            var kh4 = !!ev.unitSlope || !!ev.cheldRejectedBoth;
+            var r4ok = !(ev.r4Status === 'fail') && (!_num(ev.r4) || ev.r4Status === 'unavailable' || ev.r4Status === 'n/a' || _rRatio(Math.abs(ev.r4 - 1)) <= T.r4TolPct / 100);
+            var kh5 = (ev.r3Status === 'n/a' || (ev.r3Status === 'pass' && (!_num(ev.r3) || _rRatio(Math.abs(ev.r3 - 1)) <= T.rateTolPct / 100))) && r4ok;
+            var kh6 = _num(ev.snrD) && _r2(ev.snrD) >= T.snrHigh && (!_num(ev.rDrift) || _rRatio(ev.rDrift) <= T.rDriftMax) &&
+                      (!_num(ev.rTide) || ev.tideRemoved || _rRatio(ev.rTide) <= T.rTideMax) && !flags.length;
+            if (!kh1) add('KH1', 'unmet', 'KH1 unmet: ' + (ev.grade === 'none' ? 'no IARF window' : (ev.noiseWidened ? 'noise-widened window' : 'fair window ' + _fmt(ev.span, 2) + ' cycle')) + '.', ['I1', 'I4']);
+            if (!kh2) add('KH2', 'unmet', 'KH2 unmet: line and match do not agree.', ['A1']);
+            if (!kh3) add('KH3', 'unmet', 'KH3 unmet: skin uncertainty above ' + T.sErrHigh + '.', ['U1']);
+            if (!kh4) add('KH4', 'unmet', 'KH4 unmet: unit slope not sampled and the C-held refits were not both rejected.', ['W1', 'C1']);
+            if (!kh5) add('KH5', 'unmet', 'KH5 unmet: rate checks not passed within tolerance.', ['R3', 'R4']);
+            if (!kh6) add('KH6', 'unmet', 'KH6 unmet: signal-to-noise, drift, tide or anomaly flags.', ['I5', 'Q5', 'Q6', 'M7']);
+            allHigh = kh1 && kh2 && kh3 && kh4 && kh5 && kh6;
+        }
+        var ks = low ? 'low' : ((cap || !allHigh) ? 'medium' : 'high');
+        // ── model label (K2) ──
+        var trig = ev.triggers || [];
+        var model;
+        var tau = T.tauBic;
+        if ((trig.indexOf('T-none') >= 0 && ev.chosenFullySeen !== 'full') || hasDistractor || ev.boundaryDepends === true) model = 'low';
+        else if (ev.chosenKey === 'homogeneous' && !trig.length && ev.grade === 'good') model = 'high';
+        else if (ev.chosenKey && ev.chosenKey !== 'homogeneous' && _num(ev.dBicChosen) && _rBic(ev.dBicChosen) > tau &&
+                 (!_num(ev.dBicNext) || _rBic(ev.dBicNext) > tau) && ev.chosenFullySeen === 'full') model = 'high';
+        else model = 'medium';
+        if (ev.compositeOutOfRace && model === 'high') model = 'medium';
+        if (_num(ev.modelCap) && RANKL[model] > ev.modelCap) model = LVL[ev.modelCap];
+        if (RANKL[model] > RANKL[ks]) model = ks;
+        var headline = RANKL[ks] < RANKL[model] ? ks : model;
+        var rates = null;
+        if (c && Array.isArray(c.ksTable) && Array.isArray(c.table)) {
+            var a = c.ksTable.filter(function (r) { return r.label === ks; })[0], bRow = c.table.filter(function (r) { return r.label === headline; })[0];
+            if (a && bRow) rates = { ks: { rate: a.right, lo: a.lo, hi: a.hi }, headline: { rate: bRow.fullyRight, lo: bRow.lo, hi: bRow.hi } };
+        }
+        return { ks: ks, model: model, headline: headline, stage: ev.stage === 'final' ? 'final' : 'pass1', reasons: reasons, rates: rates,
+                 outsideCalibration: !!ev.outsideEnvelope, calVersion: c ? (c.version || null) : null, calibrated: calibrated, ev: ['K1', 'K2'] };
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // p* range, p_ext, k-held, background check
+    // ─────────────────────────────────────────────────────────────────────
+    function pStarRange(prep, ln, spec) {
+        spec = spec || prep.spec;
+        if (!ln || !spec.history || !spec.history.estimated || !_pos(spec.history.tPrepend_h)) return null;
+        var by = { '1': ln.pStar }, vals = [ln.pStar];
+        DEFAULTS.history.pStarFactors.forEach(function (fct) {
+            var st = prep.histFull.steps.map(function (s) { return { t: s.t, q: s.q }; });
+            st[0].t = st[0].t + spec.history.tPrepend_h * (1 - fct);
+            var ad = _copy(prep.adataLine);
+            ad.rateHistory = st.map(function (s) { return { t: s.t, q: prep.sign < 0 ? -s.q : s.q }; });
+            if (prep.singleRate) ad.tp = prep.spec.tc_h - st[0].t;     // Horner uses tp
+            var r = _semilog(prep, ln.dt0_h, ln.dt1_h, ad);
+            var ps = r ? _toP(prep, r.pStar) : null;
+            by[String(fct)] = _fin(ps);
+            if (_num(ps)) vals.push(ps);
+        });
+        vals = vals.filter(_num);
+        if (!vals.length) return null;
+        return { lo: Math.min.apply(null, vals), hi: Math.max.apply(null, vals), byFactor: by };
+    }
+    function _modelDrawdownAtTc(prep, mf) {   // A1·Σ Δq_i·pD(B(t_c − τ_i)), the model drawdown at t_c (psi or pn)
+        var e = mf._entry, w = prep.well, ph = mf._physPm || {};
+        var Cd = C_CD * ph.C / (w.phi * w.ct * w.h * w.rw * w.rw), Bt = C_B * ph.k / (w.phi * w.mu * w.ct * w.rw * w.rw);
+        var params = _copy(mf.params); params.Cd = Cd; params.S = ph.S;
+        var A1 = C_A * w.B * w.mu / (ph.k * w.h), st = prep.histFit.steps, tc = prep.spec.tc_h, D = 0;
+        for (var i = 0; i < st.length - 1; i++) {
+            var dq = st[i].q - (i ? st[i - 1].q : 0);
+            if (dq === 0) continue;
+            D += dq * e.pd(Bt * (tc - st[i].t), params);
+        }
+        return A1 * D;
+    }
+    function pExt(prep, mf, family) {
+        if (!mf || !mf.ok || !_pos(mf.phys.k)) return null;
+        var pi = _piModel(prep, mf);
+        if (!_num(pi)) return null;
+        if (family !== 'closed') return pi;
+        var re = mf.phys.re_ft || prep.spec.well.re_ft;
+        if (!_pos(re)) return null;
+        var w = prep.well, st = prep.histFull.steps, Np = 0;
+        for (var i = 0; i < st.length - 1; i++) Np += st[i].q * (st[i + 1].t - st[i].t) / 24;
+        var dpbar = 5.615 * w.B * Np / (Math.PI * re * re * w.h * w.phi * w.ct);
+        var yb = _yOfP(prep, pi) - prep.sign * dpbar;
+        return _fin(_toP(prep, yb));
+    }
+    function _yOfP(prep, p) { return prep.gasTable ? prep.gasTable.pn(p) : p; }
+    function _piModel(prep, mf) {
+        try {
+            var D = _modelDrawdownAtTc(prep, mf);
+            return _fin(_toP(prep, prep.adata.pRef + prep.sign * D));
+        } catch (e) { return null; }
+    }
+
+    // Fit start after a pressure hump or steep storage (§4.6 item 10): 3·t_end of the anomaly, kept only
+    // when at least 8 fit points remain. humpAfterFitStart: such a flag still ends at or after the fit
+    // start (the fit includes the anomaly), the k-held form of KL4.
+    function _anomalyWindow(prep, flags) {
+        var anom = (flags || []).filter(function (fl) { return fl.code === 'humpDp' || fl.code === 'steepStorage'; });
+        var win = anom.length ? { tmin: 3 * Math.max.apply(null, anom.map(function (fl) { return fl.dt1_h; })) } : null;
+        if (win && _fitPoints(prep, win).length < 8) win = null;
+        var t0 = win ? win.tmin : (prep.fitSet.dt.length ? prep.fitSet.dt[0] : 0);
+        return { window: win, humpAfterFitStart: anom.some(function (fl) { return fl.dt1_h >= t0; }) };
+    }
+
+    // kHeldJob(prep, {k, delta, window?}) — k fixed at the baseline median, S and C free, then
+    // two refits at k·(1 ± δ); S_k = half the S range (§4.6 item 18, D14). Without opts.window the fit
+    // starts after a hump / steep-storage anomaly as in pass 1 (computed in the first step).
+    function kHeldJob(prep, opts) {
+        opts = opts || {};
+        var k = opts.k, delta = _num(opts.delta) ? Math.abs(opts.delta) : 0.05;
+        var start = _copy(opts.start || {});
+        var jobs = [], idx = 0, cur = null, fits = [], result = null;
+        var plan = [1, 1 + delta, 1 - delta];
+        var seedS = _num(start.S) ? start.S : null, seedC = _pos(start.C) ? start.C : null;
+        if (seedS === null || seedC === null) {
+            var sd = _seedFromData(prep, k);
+            if (seedS === null) seedS = sd.S;
+            if (seedC === null) seedC = sd.C;
+        }
+        var win = opts.window || null, setup = !!opts.window, humpAfter = null;
+        var label = 'k-held fit';
+        function finish() {
+            var f0 = fits[0];
+            var ok = f0 && f0.ok;
+            // n_eff from the k-held fit's own log residuals: inflates se by √(n/n_eff) and builds ci95
+            // once, as bic() does for free fits, so KHeld.fit.se.S is the value S_err uses (§3.1).
+            var bt = ok ? bic(prep, [f0]) : null;
+            var refits = fits.slice(1).map(function (f, i) { return { f: plan[i + 1], S: f && f.ok ? f.phys.S : null, C: f && f.ok ? f.phys.C : null }; });
+            var Ss = refits.map(function (r) { return r.S; }).filter(_num);
+            var Sk = Ss.length === 2 ? Math.abs(Ss[0] - Ss[1]) / 2 : null;
+            var w = prep.well, mHeld = C_PLAT * prep.spec.Dq * w.B * w.mu / (k * w.h);
+            var dpEnd = prep.bins.dp[prep.bins.dp.length - 1];
+            var pD = dpEnd / (2 * mHeld);
+            var sig = _median(prep.fitSet.sigma_b.map(function (sb) { return Math.sqrt(sb * sb + prep.sigmaLF * prep.sigmaLF); }));
+            var rmsRatio = (ok && _num(f0.rmseDp) && sig > 0) ? f0.rmseDp / sig : (ok && _num(f0.rmseDp) && f0.rmseDp === 0 ? 0 : null);
+            result = {
+                k: k, delta: delta, fit: ok ? f0 : _failFit('homogeneous', null, 'k-held fit failed', null),
+                refits: refits.filter(function (r) { return _num(r.S); }), S_k: _fin(Sk), S_kAnalytic: Math.abs(delta * (pD - 0.5)),
+                corrCS: ok ? _fin(f0.corr.CS) : null, rmsRatio: _fin(rmsRatio), converged: !!(ok && f0.converged),
+                n: bt ? bt.n : null, nEff: bt ? _fin(bt.nEff) : null, window: win ? { tmin: win.tmin } : null, humpAfterFitStart: humpAfter,
+                ev: ['M8']
+            };
+        }
+        return {
+            step: function () {
+                if (result) return { done: true, progress: 1, label: label };
+                if (!setup) {
+                    setup = true;
+                    var st0 = storage(prep), aw = _anomalyWindow(prep, flagsFor(prep, iarf(prep, { storage: st0 }), st0));
+                    win = aw.window; humpAfter = aw.humpAfterFitStart;
+                    return { done: false, progress: 0.02, label: label };
+                }
+                if (cur) {
+                    var s = cur.step();
+                    if (!s.done) return { done: false, progress: (idx + 0.5) / 3, label: label };
+                    fits.push(cur.result()); cur = null; idx++;
+                    if (idx >= plan.length) { finish(); return { done: true, progress: 1, label: label }; }
+                    return { done: false, progress: idx / 3, label: label };
+                }
+                var f0 = fits[0];
+                var st = { k: k * plan[idx], S: (f0 && f0.ok) ? f0.phys.S : seedS, C: (f0 && f0.ok) ? f0.phys.C : seedC };
+                cur = fitJob('homogeneous', prep, { start: st, freeze: { k: true }, window: win || undefined, entry: opts.entry || undefined, retry: idx === 0 });
+                if (!opts.entry) opts.entry = cur.entry;
+                return { done: false, progress: idx / 3, label: label };
+            },
+            result: function () { return result; },
+            cancel: function () { if (cur) cur.cancel(); }
+        };
+    }
+    function _seedFromData(prep, k) {   // S from the late Δp with k given; C from the first bins
+        var b = prep.bins, w = prep.well, n = b.dt.length;
+        var mp = C_PLAT * prep.spec.Dq * w.B * w.mu / (k * w.h);
+        var S = 0.5 * (b.dp[n - 1] / mp - Math.log(k * b.dte[n - 1] / (w.phi * w.mu * w.ct * w.rw * w.rw)) + 7.4316);
+        var C = prep.spec.Dq * w.B * b.dt[0] / (24 * Math.max(1e-6, Math.abs(b.pReal[0] - prep.spec.pwf0)));
+        return { S: _clamp(_num(S) ? S : 0, -6, 40), C: _clamp(_pos(C) ? C : 0.01, 1e-6, 5) };
+    }
+
+    // backgroundCheck(result, spec, dpdt) — subtract Δt·(dp/dt)_bg, recompute the derivative and
+    // the triggers (no refit); a chosen rival whose trigger disappears → boundaryDepends.
+    function backgroundCheck(result, spec, dpdt_psi_h, source) {
+        var out = { applied: false, slopeSource: source === 'drift' ? 'drift' : 'pstar', triggersBefore: [], triggersAfter: [], boundaryDepends: false, ev: ['M7'] };
+        if (!result || !spec || !_num(dpdt_psi_h)) return out;
+        var sp = _copy(spec);
+        sp.p = spec.p.map(function (v, i) { return v - spec.dt[i] * dpdt_psi_h; });
+        var pr = prepare(sp);
+        if (!pr.ok) return out;
+        var st = storage(pr), ir = iarf(pr, { storage: st, reachFair: result.reach && result.reach.fair_h });
+        ir._st = st;
+        var tg = triggers(pr, ir, result.reach);
+        out.applied = true;
+        out.triggersBefore = (result.triggers && result.triggers.fired) ? result.triggers.fired.slice() : [];
+        out.triggersAfter = tg.triggers.fired.slice();
+        var need = { linearBoundary: ['T-up', 'T-none'], composite2: ['T-up', 'T-down', 'T-level', 'T-none'], closedCircle: ['T-down', 'T-none'] };
+        var ck = result.chosen && result.chosen.key;
+        if (ck && need[ck]) out.boundaryDepends = !need[ck].some(function (t) { return out.triggersAfter.indexOf(t) >= 0; });
+        return out;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // interpretJob(spec, opts) → Job<BuildupResult> (stage 1, §4.6 items 1–17)
+    // ─────────────────────────────────────────────────────────────────────
+    var COMPOSITE_IN_RACE = true;   // two-zone kernel measured within its 6 ms limit (merge note)
+    var LABELS = { homogeneous: 'Homogeneous', linearBoundary: 'Sealing fault', composite2: 'Radial composite', closedCircle: 'Closed circle' };
+    var NEEDS = { linearBoundary: ['T-up', 'T-none'], composite2: ['T-up', 'T-down', 'T-level', 'T-none'], closedCircle: ['T-down', 'T-none'] };
+
+    function _runner() {
+        var q = [], sub = null, subCb = null, done = 0;
+        return {
+            add: function (label, fn) { q.push({ label: label, fn: fn }); },
+            front: function (items) { q = items.concat(q); },
+            sub: function (job, cb) { sub = job; subCb = cb; },
+            step: function () {
+                if (sub) {
+                    var s = sub.step();
+                    if (s.done) { var j = sub, cb = subCb; sub = null; subCb = null; done++; cb(j.result()); }
+                    return s.label;
+                }
+                if (!q.length) return null;
+                var it = q.shift(); done++;
+                it.fn();
+                return it.label;
+            },
+            idle: function () { return !sub && !q.length; },
+            count: function () { return done; },
+            pending: function () { return q.length + (sub ? 1 : 0); },
+            cancel: function () { if (sub && sub.cancel) sub.cancel(); sub = null; q = []; }
+        };
+    }
+    function _failResult(spec, code, errors, bad) {
+        return { ok: false, id: _specId(spec), version: AI.version, code: code || 'FAILED', errors: errors || [],
+                 bad: Array.isArray(bad) ? bad.slice() : [], reason: code || 'FAILED', warnings: [] };
+    }
+    var HASH_CHUNK = 2000;   // samples per input-hash work unit
+    function _specId(spec) { return (spec && spec.id != null && spec.id !== '') ? String(spec.id) : 'B?'; }
+
+    function interpretJob(spec, opts) {
+        opts = opts || {};
+        var cal = _cal(opts.cal);
+        var R = _runner();
+        var S = { result: null, cancelled: false };
+        var so = (spec && spec.opts) || {};
+        var ovr = (spec && spec.overrides) || {};
+        var rivalsMode = opts.rivals || so.rivals || 'auto';
+        var cheldMode = opts.cheld || so.cheld || 'auto';
+        var label0 = 'Build-up ' + _specId(spec);
+        // inputHash = hash16(canon({spec (without dt/p/n), data: [hash16 of each HASH_CHUNK-sample block of
+        // dt/p/n], rivals, cheld, engine})): computed inside the work units, one block per unit, so a raw
+        // spec with many samples never puts the whole canonical serialisation in one step (§4.8).
+        var inputHash = null, hParts = [], specLite = {};
+        if (spec && typeof spec === 'object') Object.keys(spec).forEach(function (k) { if (k !== 'dt' && k !== 'p' && k !== 'n') specLite[k] = spec[k]; });
+        var nSamp = (spec && spec.dt && typeof spec.dt.length === 'number') ? spec.dt.length : 0;
+        function sl(a, i0, i1) { return (a && typeof a.length === 'number') ? Array.prototype.slice.call(a, i0, i1) : null; }
+        for (var hc = 0; hc < nSamp; hc += HASH_CHUNK) {
+            (function (i0, i1) {
+                R.add('input hash', function () { hParts.push(hash16(canon({ dt: sl(spec.dt, i0, i1), p: sl(spec.p, i0, i1), n: sl(spec.n, i0, i1) }, 'inputs'))); });
+            })(hc, Math.min(nSamp, hc + HASH_CHUNK));
+        }
+        R.add('input hash', function () { inputHash = hash16(canon({ spec: specLite, data: hParts, rivals: rivalsMode, cheld: cheldMode, engine: AI.version }, 'inputs')); });
+
+        R.add('prepare', function () {
+            var p = prepare(spec);
+            if (!p.ok) { S.result = _failResult(spec, p.code, p.errors, p.bad); R.cancel(); return; }
+            S.prep = p;
+            S.storage = storage(p);
+            S.iarf = iarf(p, { storage: S.storage, window: ovr.window || null,
+                               band: spec.opts && spec.opts.band, slope: spec.opts && spec.opts.slope });
+            S.iarf._st = S.storage;
+            // The hump is present when max/m′ ≥ 1.2 (§4.6 item 2), m′ = the IARF level, else the derivative
+            // minimum after the maximum. A smaller maximum still gates the IARF scan (the derivative maximum).
+            if (S.storage._iHump >= 0) {
+                var dH = p.deriv.deriv, fH = p.deriv.full, lvH = S.iarf.found ? S.iarf.level_psi : null;
+                if (!lvH) { for (var ih = S.storage._iHump + 1; ih < dH.length; ih++) if (fH[ih] && dH[ih] > 0 && (lvH === null || dH[ih] < lvH)) lvH = dH[ih]; }
+                var hr = _pos(lvH) ? dH[S.storage._iHump] / lvH : null;
+                S.storage.humpRatio = _fin(hr);
+                S.storage.tHump_h = (_num(hr) && _rRatio(hr) >= HUMP_RATIO) ? p.bins.dt[S.storage._iHump] : null;
+            }
+            S.line = line(p, S.iarf);
+            S.flags = flagsFor(p, S.iarf, S.storage);
+            // Seeds (item 5): k, S from the line, else the level and the point skin; C from C_us, else the hump correlation.
+            var w = p.well, q = p.spec.Dq, k0, S0, C0;
+            if (S.line) { k0 = S.line.k; S0 = S.line.S; }
+            else {
+                var lv = triggers(p, S.iarf, null)._level || _median(p.deriv.deriv.filter(function (v) { return v > 0; }));
+                k0 = C_PLAT * q * w.B * w.mu / (w.h * lv);
+                var nb = p.bins.dt.length - 1;
+                S0 = 0.5 * (p.bins.dp[nb] / lv - Math.log(k0 * p.bins.dte[nb] / (w.phi * w.mu * w.ct * w.rw * w.rw)) + 7.4316);
+            }
+            k0 = _clamp(_pos(k0) ? k0 : 10, 1e-3, 5e4); S0 = _clamp(_num(S0) ? S0 : 0, -6, 40);
+            if (S.storage.unitSlope) C0 = S.storage.C_us;
+            else if (_pos(S.storage.tHump_h)) C0 = _cFromHump(S.storage.tHump_h, k0, w.h, w.mu, S0);
+            else C0 = q * w.B * p.bins.dt[0] / (24 * Math.max(1e-6, Math.abs(p.bins.pReal[0] - p.spec.pwf0)));
+            C0 = _clamp(_pos(C0) ? C0 : 0.01, 1e-6, 5);
+            if (!S.storage.unitSlope) S.storage.seed = predictors(k0, w.h, w.mu, C0, S0);
+            S.seed = { k: k0, S: S0, C: C0 };
+            // A hump or steep-storage flag moves the fit start to 3·t_end of the anomaly.
+            var aw = _anomalyWindow(p, S.flags);
+            S.window = aw.window; S.humpAfterFitStart = aw.humpAfterFitStart;
+            R.sub(fitJob('homogeneous', p, { start: S.seed, window: S.window || undefined }), function (mf) { S.hom = mf; });
+        });
+        R.add('reach and agreement', function () {
+            var p = S.prep;
+            if (!S.hom || !S.hom.ok) { S.result = _failResult(spec, 'FIT_FAILED', ['The homogeneous fit failed.']); R.cancel(); return; }
+            S.reach = reach(p, S.hom);
+            if (!S.iarf.found) {
+                S.iarf.status = (_pos(S.reach.fair_h) && p.dteEnd < S.reach.fair_h) ? 'tooShort' : 'expectedNotFound';
+                if (S.iarf.status === 'tooShort' && !S.iarf._noise) {
+                    S.iarf.reason = _txt('No IARF: the test is too short (equivalent time ' + _fmt(p.dteEnd) + ' h; a fair IARF needs ' + _fmt(S.reach.fair_h) + ' h).');
+                }
+            }
+            var tg = triggers(p, S.iarf, S.reach);
+            S.trig = tg.triggers;
+            S.bic0 = bic(p, [S.hom], { cal: cal });
+            S.agreement = agreement(S.line, S.hom, p);
+            // storage consistency: the observed hump vs the fitted model's hump (numeric scan) within ×1.5
+            var hs = _homStorageTimes(S.hom.phys.k, S.hom.phys.C, S.hom.phys.S, p.well);
+            if (_pos(S.storage.tHump_h)) {
+                S.storage.humpConsistent = !!(_pos(hs.tHump_h) && _num(hs.humpRatio) && hs.humpRatio >= HUMP_RATIO &&
+                    Math.abs(Math.log(p.bins.dte[S.storage._iHump] / hs.tHump_h)) <= Math.log(1.5));
+            }
+            var cj = cHeldJob(p, S.hom, { mode: cheldMode, storage: S.storage, flags: S.flags, bicTable: S.bic0, tUs_h: hs.tUs_h });
+            R.sub(cj, function (ch) { S.cheld = ch; });
+        });
+        R.add('rivals', function () {
+            var p = S.prep, fired = S.trig.fired, keys = [];
+            function want(k) { if (keys.indexOf(k) < 0) keys.push(k); }
+            if (rivalsMode === 'all') { want('linearBoundary'); want('composite2'); want('closedCircle'); }
+            else if (rivalsMode !== 'none') {
+                if (S.trig.up) { want('linearBoundary'); want('composite2'); }
+                if (S.trig.down) { want('closedCircle'); want('composite2'); }
+                if (S.trig.level) want('composite2');
+                if (S.trig.none) { want('linearBoundary'); want('composite2'); want('closedCircle'); }
+            }
+            if (ovr.model && ovr.model !== 'homogeneous') want(ovr.model);
+            var excl = ovr.excludeRivals || [];
+            keys = keys.filter(function (k) { return excl.indexOf(k) < 0 || k === ovr.model; });
+            if (!COMPOSITE_IN_RACE && ovr.model !== 'composite2') { S.compositeOut = keys.indexOf('composite2') >= 0; keys = keys.filter(function (k) { return k !== 'composite2'; }); }
+            S.rivalKeys = keys;
+            S.rivals = [];
+            var hp = S.hom.phys, w = p.well, lvl = S.iarf.found ? S.iarf.level_psi : (triggers(p, S.iarf, S.reach)._level || null);
+            var b = p.bins, d = p.deriv.deriv, f = p.deriv.full, n = b.dt.length;
+            var lastFull = -1;
+            for (var lf = n - 1; lf >= 0; lf--) if (f[lf]) { lastFull = lf; break; }
+            var from;
+            if (S.iarf.found) from = S.iarf._b + 1;
+            else {   // no IARF: from the derivative minimum after the hump (the base level)
+                from = _gateIndex(p, S.storage);
+                var iMin = -1;
+                for (var im = Math.max(0, from); im <= lastFull; im++) if (f[im] && d[im] > 0 && (iMin < 0 || d[im] < d[iMin])) iMin = im;
+                if (iMin >= 0) { from = iMin; lvl = d[iMin]; }
+            }
+            var tDev = null;
+            for (var i = Math.max(0, from); i <= lastFull; i++) if (f[i] && lvl && Math.abs(d[i] / lvl - 1) > DEFAULTS.seen.faultDepart) { tDev = b.dte[i]; break; }
+            if (!tDev) tDev = 0.4 * p.dteEnd;   // no departure seen from a base level: a fraction of the investigated time
+            var rInvDev = rinv(hp.k, tDev, w);
+            var dEnd = lastFull >= 0 ? d[lastFull] : null;
+            var subs = [];
+            keys.forEach(function (key) {
+                var base = { k: hp.k, S: hp.S, C: hp.C };
+                if (key === 'linearBoundary') {
+                    var Ls = [];
+                    for (var j = Math.max(0, from); j <= lastFull; j++) {
+                        if (!f[j] || !lvl) continue;
+                        var g = d[j] / lvl - 1;
+                        if (g >= 0.1 && g <= 0.9) Ls.push(Math.sqrt(C_B * hp.k * b.dte[j] * Math.log(1 / g) / (w.phi * w.mu * w.ct)));
+                    }
+                    var L = Ls.length ? _median(Ls) : rInvDev;
+                    base.dF = _clamp(L / w.rw, 2, 1e7);
+                    subs.push({ key: key, starts: [base] });
+                } else if (key === 'composite2') {
+                    var M = S.iarf.secondLevel ? S.iarf.secondLevel.ratio : ((dEnd > 0 && lvl) ? dEnd / lvl : 1);
+                    if (S.trig.up && !S.trig.level) M = Math.max(M, 1.1);
+                    if (S.trig.down && !S.trig.level) M = Math.min(M, 0.9);
+                    base.M = _clamp(M, 0.06, 18); base.F = 1; base.R = _clamp(rInvDev / w.rw, 2, 1e7);
+                    subs.push({ key: key, starts: [base], freeze: { F: true } });
+                } else if (key === 'closedCircle') {
+                    var re = 0.9 * rInvDev;
+                    subs.push({ key: key, starts: DEFAULTS.rivals.closedStarts.map(function (fc) { var s = _copy(base); s.reD = _clamp(fc * re / w.rw, 60, 9e6); return s; }) });
+                }
+            });
+            var items = [];
+            subs.forEach(function (sb) {
+                var bestR = null, entry = gridEntry(sb.key, p);
+                sb.starts.forEach(function (st0, si) {
+                    items.push({ label: 'fit ' + sb.key, fn: function () {
+                        R.sub(fitJob(sb.key, p, { start: st0, freeze: sb.freeze || {}, entry: entry, window: S.window || undefined, retry: false }), function (mf) {
+                            bestR = bestR ? _betterFit(bestR, mf) : mf;
+                            if (si === sb.starts.length - 1) S.rivals.push(bestR);
+                        });
+                    } });
+                });
+            });
+            R.front(items);
+        });
+        R.add('model choice', function () {
+            var p = S.prep, fired = S.trig.fired;
+            var rinvEnd = function (k) { return rinv(k, p.dteEnd, p.well); };
+            S.rivals.forEach(function (mf) {
+                var why = [];
+                var trigOk = NEEDS[mf.key].some(function (t) { return fired.indexOf(t) >= 0; }) || rivalsMode === 'all';
+                if (!trigOk) why.push('No trigger for this model.');
+                if (!mf.ok) why.push('The fit failed.');
+                else {
+                    if (!mf.converged) why.push('The fit did not converge (' + mf.stopReason + ').');
+                    if (mf._atBound && mf._atBound.length) why.push('Parameter at a bound: ' + mf._atBound.join(', ') + '.');
+                    if (mf._corrMax >= 0.98) why.push('Parameters strongly correlated (|r| ' + _fmt(mf._corrMax, 3) + ').');
+                    var ri = rinvEnd(mf.phys.k), dist = mf.phys.dF_ft || mf.phys.R_ft || mf.phys.re_ft;
+                    if (_pos(dist) && (dist < 0.05 * ri || dist > 1.5 * ri)) why.push('Distance ' + _fmt(dist, 3) + ' ft outside 0.05–1.5 × the radius of investigation (' + _fmt(ri, 3) + ' ft).');
+                    if (mf.key === 'composite2' && _num(mf.phys.M) && (mf.phys.M < 0.05 || mf.phys.M > 20)) why.push('Mobility ratio outside 0.05–20.');
+                }
+                mf.why = why.map(_txt);
+                mf.eligible = !why.length;
+                mf.fullySeen = fullySeen(mf.key, p, S.iarf, mf);
+            });
+            var fits = [S.hom].concat(S.rivals);
+            S.bic = bic(p, fits, { cal: cal, forceModel: ovr.model || null });
+            S.chosenKey = S.bic.chosen;
+            S.chosenFit = fits.filter(function (f) { return f.key === S.chosenKey; })[0] || S.hom;
+            S.agreementChosen = (S.chosenFit === S.hom) ? S.agreement : agreement(S.line, S.chosenFit, p);
+        });
+        R.add('final values', function () {
+            var p = S.prep, w = p.well, cf = S.chosenFit, ag = S.agreementChosen;
+            var src, k, Sk, C;
+            if (S.line && ag.agree) { src = 'match'; k = cf.phys.k; Sk = cf.phys.S; C = cf.phys.C; }
+            else if (S.line) { src = 'line'; k = S.line.k; Sk = S.line.S; C = _pos(cf.phys.C) ? cf.phys.C : S.storage.C_us; }
+            else { src = 'model'; k = cf.phys.k; Sk = cf.phys.S; C = cf.phys.C; }
+            var kh = k * w.h, m = C_M * p.spec.Dq * w.B * w.mu / kh;
+            var pStar = S.line ? S.line.pStar : null;
+            var range = pStarRange(p, S.line, spec);
+            if (S.line) S.line.pStarRange = range ? { lo: range.lo, hi: range.hi } : null;
+            var piM = _piModel(p, cf);
+            var pE = _num(pStar) ? pStar : piM;
+            var dpSkin = 0.8686 * m * Sk;
+            var gasOut = null;
+            if (p.gasTable) {
+                var y0 = p.adata.pRef, pw = p.spec.pwf0;
+                var pAt = p.gasTable.pOfPn(y0 + p.sign * dpSkin);
+                gasOut = { Sprime: Sk, dmSkin: dpSkin, dpSkin_psi: _fin(Math.abs(pAt - pw)) };
+            }
+            var dist = {};
+            ['dF_ft', 'R_ft', 're_ft'].forEach(function (kk) { if (_pos(cf.phys[kk])) dist[kk] = cf.phys[kk]; });
+            var minFault = null;
+            if (S.chosenKey === 'homogeneous' && S.iarf.found && !S.trig.up) {
+                var lf = S.iarf._lastFull, dteLast = p.bins.dte[lf];
+                var sdv = _median(p.bins.sigma_d.slice(S.iarf._a, S.iarf._b + 1));
+                var g = Math.max(DEFAULTS.seen.faultDepart, 3 * (_num(sdv) ? sdv : 0) / S.iarf.level_psi);
+                if (g < 1) minFault = Math.sqrt(C_B * k * dteLast * Math.log(1 / g) / (w.phi * w.mu * w.ct));
+            }
+            S.final = { k: k, kh: kh, S: Sk, C: C, source: src, m: m, mPrime: m / LN10, pStar: _fin(pStar),
+                        pStarRange: range ? { lo: range.lo, hi: range.hi } : null, pExt: _fin(pE), pExtKind: 'pStar',
+                        // p_ext is the infinite-acting extrapolation (pStar family) either way; pExtSource says whether it
+                        // is the semilog line's p* or, with no line, the chosen model's extrapolated pressure.
+                        pExtSource: _num(pStar) ? 'line' : (_num(piM) ? 'model' : null), piModel: _fin(piM),
+                        rinv_ft: rinv(k, p.dtEnd, w), rinvE_ft: rinv(k, p.dteEnd, w), dpSkin_psi: p.gasTable ? (gasOut.dpSkin_psi) : dpSkin,
+                        distances: dist, minFaultDist_ft: _fin(minFault), gas: gasOut, ev: ['A2'] };
+            // History sensitivity (item 14)
+            S.history = { estimated: !!(spec.history && spec.history.estimated), dDerivPct: null, sensitive: false, ev: ['R5'] };
+            if (S.history.estimated && _pos(spec.history.tPrepend_h) && S.iarf.found) S.history = _historyCheck(p, S.hom, S.iarf, spec.history.tPrepend_h);
+        });
+        R.add('uncertainty and confidence', function () {
+            var p = S.prep, w = p.well, fin = S.final, cf = S.chosenFit;
+            var thr = _thr(cal);
+            var sens = sensitivity({ k: fin.k, S: fin.S }, { sens: (spec.well && spec.well.sens) || null });
+            var m = fin.m;
+            var sTc = 1.1513 * Math.abs(p.spec.dpdt_flow || 0) * (p.spec.dtc_h || 0) / m;
+            var sPwf = 1.1513 * (p.spec.pwf0SE || 0) / m;
+            var parts = { floor: thr.sErrFloor, seS: cf.se.S, sTc: sTc, sPwf: sPwf, sC: S.cheld ? S.cheld.S_C : 0, sSens: sens.sSens };
+            if (S.line && fin.source !== 'model') {
+                var bias = S.agreementChosen.mode === 'bias';
+                var s0 = S.line.S - (bias && _num(S.line._biasS) ? S.line._biasS : 0);
+                var sh = S.line.shifts.map(function (x) { return x.S - (bias && _num(x.bS) ? x.bS : 0); });
+                var sWin = sh.length === 2 ? Math.abs(sh[1] - sh[0]) / 2 : (sh.length === 1 ? Math.abs(sh[0] - s0) : 0);
+                parts.mode = 'line'; parts.sLine = S.line.S; parts.sMatch = cf.phys.S; parts.sWin = sWin;
+            } else parts.mode = 'model';
+            S.sErr = sErr(parts);
+            S.sensitivity = sens;
+            // quality
+            var ir = S.iarf, sdW = ir.found ? _median(p.bins.sigma_d.slice(ir._a, ir._b + 1)) : _median(p.bins.sigma_d);
+            var mp = ir.found ? ir.level_psi : fin.mPrime;
+            var snr = (_pos(sdW) ? mp / sdW : 1e6);
+            snr = Math.min(1e6, snr);
+            var rDrift = ((spec.driftPsiPerDay || 0) / 24) * p.dtEnd / fin.mPrime;
+            S.quality = { sigma_psi: p.sigma, sigmaFlow_psi: _num(spec.sigmaFlow_psi) ? spec.sigmaFlow_psi : 0, sigmaD_psi: _num(sdW) ? sdW : 0,
+                          snrD: snr, rDrift: rDrift, rTide: p.rTide, tideRemoved: p.tideRemoved, tideFit: p.tideFit, ev: ['I5', 'Q5', 'Q6'] };
+            p.snrD = snr; p.rDrift = _fin(rDrift);   // Prep carries the window values from here on (§3.1)
+            // evidence vector
+            var codes = S.flags.map(function (fl) { return fl.code; });
+            var distr = S.flags.some(function (fl) { return DISTRACTORS[fl.code] && (!ir.found || fl.dt0_h <= ir.dt1_h); });
+            var humpAfter = S.flags.some(function (fl) { return (fl.code === 'humpDp' || fl.code === 'steepStorage') && ir.found && fl.dt1_h >= ir.dt0_h; });
+            var rq = spec.rateQC || {};
+            var rows = S.bic.rows, cRow = rows.filter(function (r) { return r.key === S.chosenKey; })[0];
+            var others = rows.filter(function (r) { return r.key !== S.chosenKey && _num(r.bic); });
+            var dNext = (others.length && cRow && _num(cRow.bic)) ? _rBic(Math.min.apply(null, others.map(function (r) { return r.bic; })) - cRow.bic) : null;
+            var env = _envelope(cal, { k: fin.k, S: fin.S, C: fin.C, well: w, dteEnd: p.dteEnd, snrD: snr, dtEnd: p.dtEnd });
+            S.evidence = {
+                grade: ir.grade, noiseWidened: !!ir.noiseWidened, span: _fin(ir.cycles), pointSkinSpread: _fin(ir.pointSkin.spread),
+                agree: !!S.agreementChosen.agree, agreeMode: S.agreementChosen.mode, dkPct: _fin(S.agreementChosen.dkPct), dS: _fin(S.agreementChosen.dS),
+                sErr: S.sErr.value, sErrMode: S.sErr.mode, unitSlope: !!S.storage.unitSlope, cheldRejectedBoth: !!(S.cheld && S.cheld._rejectedBoth),
+                rateSource: rq.source || 'allocation', r3: _fin(rq.r3), r3Status: rq.r3Status || 'unavailable', r4: _fin(rq.r4), r4Status: rq.r4Status || 'unavailable',
+                dqKnown: rq.dqKnown !== false, fRate: _num(spec.fRate) ? spec.fRate : 1, equalRateAssumed: !!rq.equalRateAssumed,
+                snrD: snr, rDrift: rDrift, rTide: p.rTide, tideRemoved: p.tideRemoved, flags: codes, distractorAtOrBeforeIarf: distr, humpAfterIarf: humpAfter, humpAfterFitStart: !!S.humpAfterFitStart,
+                dtEnd_h: p.dtEnd, dteEnd_h: p.dteEnd, t10_h: S.reach.t10_h, t5_h: S.reach.t5_h, historySensitive: !!S.history.sensitive,
+                outsideEnvelope: env, kHeld: false, kHeldConverged: null, kHeldCorrCS: null, kHeldRmsRatio: null, partialSuspect: null,
+                windowLevelInconsistent: null, chosenKey: S.chosenKey, chosenFullySeen: S.chosenFit.fullySeen.status, triggers: S.trig.fired.slice(),
+                dBicChosen: S.chosenKey === 'homogeneous' ? 0 : (cRow ? cRow.dBicHom : null), dBicNext: dNext, boundaryDepends: null,
+                compositeOutOfRace: !!S.compositeOut, stage: 'pass1'
+            };
+            S.confidence = confidence(S.evidence, cal);
+        });
+        R.add('result', function () {
+            var p = S.prep, ir = S.iarf, cf = S.chosenFit;
+            var curves = _curves(p, S.hom, cf === S.hom ? null : cf);
+            var chosenReason;
+            if (ovr.model && ovr.model === S.chosenKey) chosenReason = 'Model forced by the engineer (override); it is still fitted and reported.';
+            else if (S.chosenKey === 'homogeneous') chosenReason = S.trig.fired.length ? 'No rival better than homogeneous by more than ' + S.bic.tau + ' (BIC): homogeneous kept.'
+                : (ir.found ? 'No trigger fired: homogeneous kept.' : 'No IARF (test too short): no rival fitted.');
+            else chosenReason = LABELS[S.chosenKey] + ' better than homogeneous by ΔBIC ' + _fmt(S.evidence.dBicChosen, 3) + ' (threshold ' + S.bic.tau + ').';
+            var reason = null;
+            if (!ir.found) reason = S.trig.noneSkipped ? 'NO_IARF_TOO_SHORT' : (ir._noise ? 'NO_IARF_NOISE' : (S.chosenFit.fullySeen.status === 'full' ? 'NO_IARF_MODEL' : 'NO_IARF_NO_MODEL'));
+            var warnings = p.warnings.slice();
+            if (!ir.found) warnings.push(_warn(reason, 'warn', ir.reason, ['I1']));
+            if (S.compositeOut) warnings.push(_warn('COMPOSITE_OUT', 'info', 'Possible radial composite — open in PRiSM.', ['M2']));
+            if (S.final.pExtSource === 'model') warnings.push(_warn('PEXT_MODEL', 'info', 'No semilog line: the extrapolated pressure is the chosen model\'s, not a line p*.', ['A2']));
+            var fitC4 = {
+                modelKey: S.chosenKey, params: _copy(cf.params), phys: _physC4(cf, p), r2: _fin(cf._fr && cf._fr.r2), converged: !!cf.converged,
+                ci95: _jsonClean(cf.ci95), kind: 'pressure', source: 'buildup'
+            };
+            var models = [S.hom].concat(S.rivals);
+            var res = {
+                ok: true, id: _specId(spec), version: AI.version, inputHash: inputHash, testType: p.sign < 0 ? 'falloff' : 'buildup', reason: reason,
+                bins: { dt: p.bins.dt, dte: p.bins.dte, dp: p.bins.dp, n: p.bins.n, deriv: p.deriv.deriv, full: p.deriv.full, X: p.bins.X },
+                quality: S.quality, storage: S.storage, reach: S.reach, iarf: ir, line: S.line, triggers: S.trig, flags: S.flags,
+                models: models, bic: S.bic,
+                chosen: { key: S.chosenKey, label: LABELS[S.chosenKey], fullySeen: S.chosenFit.fullySeen, reason: _txt(chosenReason), ev: ['M6', 'M5'] },
+                agreement: S.agreementChosen, final: S.final, cheld: S.cheld || _cheldNone(S.hom), sErr: S.sErr, sensitivity: S.sensitivity,
+                history: S.history, background: null, kHeld: null, confidence: S.confidence, curves: curves, fitC4: fitC4, warnings: warnings,
+                evidence: S.evidence
+            };
+            S.result = _jsonClean(res);
+            S.result.evidence.stage = 'pass1';
+        });
+        var nUnits0 = 7 + Math.ceil(nSamp / HASH_CHUNK);
+        return {
+            step: function () {
+                if (S.result || S.cancelled) return { done: true, progress: 1, label: label0 };
+                var lbl = R.step();
+                var done = !!S.result || R.idle();
+                if (done && !S.result) S.result = _failResult(spec, 'INCOMPLETE', ['The interpretation did not complete.']);
+                var c = R.count(), pend = R.pending();
+                return { done: done, progress: done ? 1 : Math.min(0.99, c / (c + pend + 1 + Math.max(0, nUnits0 - c))), label: label0 + (lbl ? ': ' + lbl : '') };
+            },
+            result: function () { return S.result; },
+            cancel: function () { S.cancelled = true; R.cancel(); }
+        };
+    }
+    function interpret(spec, opts) { return _runJob(interpretJob(spec, opts)); }
+
+    function _cheldNone(mf) {
+        var k = mf && mf.phys ? mf.phys.k : null, S = mf && mf.phys ? mf.phys.S : null, C = mf && mf.phys ? mf.phys.C : null;
+        return { triggered: false, mode: 'pair', refits: [], range: { C: [C, C], k: [k, k], S: [S, S] }, S_C: 0, meaningful: true, ev: ['C1'] };
+    }
+    function _physC4(mf, prep) {
+        var w = prep.well, o = {};
+        Object.keys(mf.phys).forEach(function (k) { if (_num(mf.phys[k])) o[k] = mf.phys[k]; });
+        if (_pos(o.k)) o.kh = o.k * w.h;
+        if (_pos(o.C)) o.Cd = C_CD * o.C / (w.phi * w.ct * w.h * w.rw * w.rw);
+        return o;
+    }
+    function _envelope(cal, x) {
+        var c = _cal(cal);
+        if (!c || !c.envelope) return false;
+        var e = c.envelope, w = x.well;
+        var CD = C_CD * x.C / (w.phi * w.ct * w.h * w.rw * w.rw);
+        var tDCD = 0.0002951 * x.k * w.h * x.dteEnd / (w.mu * x.C);
+        var chk = [['CD', CD], ['S', x.S], ['tDCDend', tDCD], ['snrD', x.snrD], ['k', x.k], ['dtEnd_h', x.dtEnd]];
+        return chk.some(function (q) { var r = e[q[0]]; return Array.isArray(r) && _num(q[1]) && (q[1] < r[0] || q[1] > r[1]); });
+    }
+    function _curves(prep, hom, ch) {
+        var b = prep.bins, n = 40, t0 = b.dt[0], t1 = b.dt[b.dt.length - 1], dt = [];
+        for (var i = 0; i < n; i++) dt.push(t0 * Math.pow(t1 / t0, i / (n - 1)));
+        function one(mf) {
+            var pm = _pmFor(mf.key, prep, mf._entry);
+            if (!pm) return { dp: dt.map(function () { return null; }), deriv: dt.map(function () { return null; }) };
+            STATS.evals++;
+            var dpm = pm.dp(dt, mf._physPm);
+            var X = dt.map(function (v) { return prep.time.lnDte(v); });
+            var dd = [];
+            for (var k = 0; k < n; k++) {   // central differences on ln Δt_e (display only)
+                var a = Math.max(0, k - 1), c = Math.min(n - 1, k + 1);
+                dd.push((dpm[c] - dpm[a]) / (X[c] - X[a]));
+            }
+            return { dp: dpm, deriv: dd };
+        }
+        return { dt: dt, hom: hom && hom.ok ? one(hom) : { dp: [], deriv: [] }, chosen: ch && ch.ok ? one(ch) : null };
+    }
+    function _historyCheck(prep, hom, ir, tPrepend) {
+        var out = { estimated: true, dDerivPct: null, sensitive: false, ev: ['R5'] };
+        var st = prep.histFull.steps.map(function (s) { return { t: s.t, q: s.q }; });
+        st[0].t -= tPrepend;     // the prepended period doubled
+        var comp2 = compactHistory(st, prep.spec.tc_h, prep.dtEnd, { keepFactor: 10 });
+        var tm2 = _makeTime(st, prep.spec.tc_h);
+        if (!tm2) return out;
+        var ad2 = _copy(prep.adata);
+        ad2.rateHistory = comp2.steps.map(function (s) { return { t: s.t, q: prep.sign < 0 ? -s.q : s.q }; });
+        var tmf2 = _makeTime(comp2.steps, prep.spec.tc_h);
+        ad2.timeFnSpec = { kind: 'superposition', tp: tmf2.tpEff, terms: tmf2.c2terms };
+        if (typeof G.PRiSM_physicalModel !== 'function') return out;
+        var pm1 = _pmFor('homogeneous', prep, hom._entry), pm2 = null;
+        try { pm2 = G.PRiSM_physicalModel('homogeneous', prep.well, ad2, { entry: hom._entry, isolated: true, mode: 'physical' }); } catch (e) { pm2 = null; }
+        if (!pm1 || !pm2 || !pm2.ok) return out;
+        var t = prep.bins.dt;
+        STATS.evals += 2;
+        var d1 = pm1.dp(t, hom._physPm), d2 = pm2.dp(t, hom._physPm);
+        var X1 = t.map(function (v) { return prep.time.lnDte(v); }), X2 = t.map(function (v) { return tm2.lnDte(v); });
+        var D1 = derivative(X1, d1, prep.Lcyc), D2 = derivative(X2, d2, prep.Lcyc);
+        var mx = 0;
+        for (var i = ir._a; i <= ir._b; i++) {
+            if (D1.full[i] && D2.full[i] && D1.deriv[i] > 0) mx = Math.max(mx, Math.abs(D2.deriv[i] / D1.deriv[i] - 1));
+        }
+        out.dDerivPct = 100 * mx;
+        out.sensitive = _rdp(out.dDerivPct, 0.1) > DEFAULTS.history.maxDerivPct;
+        return out;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // drive(job, opts) — the only timer user in Round 8 (D19)
+    // ─────────────────────────────────────────────────────────────────────
+    // step(), then a one-shot setTimeout(0) yield, then shouldCancel() and the
+    // progress callback; repeat until done. Cancel rejects with {code:'CANCELLED'}
+    // at the next yield, so no timer remains; it never re-arms while idle.
+    function drive(job, opts) {
+        opts = opts || {};
+        return new Promise(function (resolve, reject) {
+            function tick() {
+                var s;
+                try {
+                    if (opts.shouldCancel && opts.shouldCancel()) { if (job.cancel) job.cancel(); reject({ code: 'CANCELLED' }); return; }
+                    s = job.step();
+                    if (typeof opts.onProgress === 'function') { try { opts.onProgress(s.progress, s.label); } catch (e0) { /* listener error ignored */ } }
+                } catch (e) { reject(e); return; }
+                if (s.done) { resolve(job.result()); return; }
+                setTimeout(tick, 0);
+            }
+            tick();
+        });
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Public surface (§3.1)
+    // ─────────────────────────────────────────────────────────────────────
+    AI.DEFAULTS = DEFAULTS;
+    AI.bin = bin;
+    AI.derivative = derivative;
+    AI.prepare = prepare;
+    AI.storage = storage;
+    AI.iarf = function (prep, opts) { var r = iarf(prep, opts); return r; };
+    AI.line = line;
+    AI.gridEntry = gridEntry;
+    AI.fitJob = fitJob;
+    AI.fit = fit;
+    AI.reach = reach;
+    AI.predictors = predictors;
+    AI.triggers = function (prep, ir, rch) { var t = triggers(prep, ir, rch); return { triggers: t.triggers, flags: t.flags }; };
+    AI.flags = flagsFor;
+    AI.bic = bic;
+    AI.fullySeen = fullySeen;
+    AI.agreement = agreement;
+    AI.cHeldJob = cHeldJob;
+    AI.pStarRange = pStarRange;
+    AI.pExt = pExt;
+    AI.kHeldJob = kHeldJob;
+    AI.sErr = sErr;
+    AI.sensitivity = sensitivity;
+    AI.confidence = confidence;
+    AI.rinv = rinv;
+    AI.compactHistory = compactHistory;
+    AI.gasTable = gasTable;
+    AI.backgroundCheck = backgroundCheck;
+    AI.interpretJob = interpretJob;
+    AI.interpret = interpret;
+    AI.drive = drive;
+    AI.stats = stats;
+    AI.resetStats = resetStats;
+    AI.evalsPerSlice = evalsPerSlice;
+    AI.clean = _jsonClean;
+    AI.thresholds = function (cal) { return _thr(cal); };
+
+    AI.kernels = {
+        closedCircleLap: function (s, reD) { return _lapClosedCircle(reD)(s, 1); },
+        composite2Lap: function (s, M, F, R) { return _lapComposite2(M, F, R)(s, 1); },
+        homogeneousLap: function (s) { return _lapHom(s); },
+        bessel: { I0e: I0e, I1e: I1e, K0e: K0e, K1e: K1e },
+        pair: function (key, td, params) { return _pair(_lapFor(key, params), td, params.Cd, params.S, true); }
+    };
+    function _lapFor(key, p) {
+        if (key === 'closedCircle') return _lapClosedCircle(p.reD);
+        if (key === 'composite2') return _lapComposite2(p.M, _num(p.F) ? p.F : 1, p.R);
+        if (key === 'linearBoundary') return _lapFault(p.dF, p.BC);
+        return _lapHom;
+    }
+
+    })(Math, isFinite, Infinity, NaN, Array, Object, String, Number, JSON, Map, Float64Array);
+
+})();
+
+// ─── END 53-prism-autointerp ─────────────────────────────────────────────
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// ─── BEGIN 54-prism-skin ───────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════
+// =============================================================================
+// PRiSM — 54-prism-skin.js  (Round 8)
+// -----------------------------------------------------------------------------
+// Skin maths shared by the Build-up Surveillance page (Round 9) and the PRiSM
+// Skin-check card: window.PRiSM_skinCheck.
+// Plan: docs/BUILDUP-SURVEILLANCE-PLAN.md §3.4 (interfaces), D23, §4.7 (T7, T8,
+// T14, T15), §6.11 (card), §11 Q7.
+//
+// MILESTONE M1 (pure, no DOM, no storage, no timers, no events):
+//   perforationSkin(i)   Karakas–Tariq perforation skin (S_H + S_V + S_wb)
+//   mechanicalSkin(i)    S_mech on the pressure-drop basis and the local damage
+//                        skin S_d = S_mech·h_w/h (D23)
+//   rateSkin(rows, opts) guarded rate-dependent skin S′ = S + D·q (M§A19)
+//   products(i)          Δp_skin, m, X, PI ratio, FE, DR (T7, T8, M§A27)
+//
+// SKIN-CHECK CARD (plan §6.11):
+//   run(opts)            SkinCheck card model for PRiSM's current analysis. Pure:
+//                        reads C1/C2/C4 (PRiSM_getWell, PRiSM_getAnalysisData,
+//                        PRiSM_getLastFit) and calls the PRiSM_autoInterp pieces
+//                        (prepare, storage, iarf, line, reach, triggers,
+//                        agreement, sErr, sensitivity, confidence). No fit runs.
+//   renderPanel(el)      the card (Tab 6 panel 'prism_skincheck', order 8).
+//                        Tools drawer: listed from the Tab-6 registration under
+//                        "Step panels" with its written title; exported as
+//                        window.PRiSM_renderSkinCheckPanel once 37's
+//                        TOOL_CATALOGUE lists that name (see SECTION 9). Render
+//                        writes no state and fires no event. Every DOM lookup
+//                        stays inside the card's own root, so a hidden Tab-6
+//                        copy and a Tools-drawer copy never cross-update.
+//   reportSection(model) the PRiSM report section {id:'skincheck', order 45}.
+//   User actions only: "Use this window in the straight-line panel"
+//   (PRiSM_semilogAnalysis(null, null, {window, store:true}); the window is
+//   converted to PRiSM's pseudo-time axis when gas pseudo-time is on), "Run
+//   C-held refits" (a homogeneous fit seeded from the match, then cHeldJob,
+//   both through PRiSM_autoInterp.drive — the only timers, owned by 53), and
+//   the completion inputs (saved in wts_prism_skincheck, a per-well key).
+//   PRiSM's rate is entered or tabled, so the rate checks are 'n/a' (no KC4).
+//   Drawdowns and injection periods from pi are passed to the build-up engine
+//   as a build-up after a very long producing time (Δt_e = Δt, the drawdown Δp
+//   mirrored about pi): the labels are calibrated on build-ups and are
+//   indicative there, as the card says. p* is not shown for them; pwf for the
+//   flow efficiency is the last sample of the period (lowest for a drawdown,
+//   highest for an injection).
+//   Build-ups with neither a rate history nor tp: the producing time is
+//   estimated as in D13 (max(30 d, 10·Δt_end) at the entered rate,
+//   history.estimated = true, source 'default'). p* is then not shown (the
+//   engine's p* range is, when it gives one), the flow efficiency uses pi
+//   (never p*), and the history sensitivity (plan §4.6 item 14) is checked
+//   analytically: doubling the producing time tp changes the derivative at
+//   the end of the IARF window by Δt1/(2·tp + Δt1); more than 2 % → KC1.
+//   Gas: the engine gets real Δt (adata.tReal when pseudo-time is on; the
+//   engine applies pseudo-time itself through spec.gas.pseudoTime) and pressure
+//   in psia; Δp_skin is Δm_S = 0.8686·m·S′ (m = 1637·q·T/kh) converted to psi
+//   through PRiSM's m(p) table, or not shown when no table is available.
+//   Expensive engine steps (prepare, storage, IARF, line) are cached by the
+//   analysed period and well inputs, so a fit-only change re-runs only the
+//   cheap parts.
+//
+// -----------------------------------------------------------------------------
+// KARAKAS–TARIQ COEFFICIENT TABLE — VERIFICATION RECORD (plan §11 Q7)
+//   Status: UNVERIFIED (KT.verified = false). perforationSkin() returns
+//   {ok:false, code:'UNVERIFIED'} and mechanicalSkin() says "perforation skin
+//   not split" until this record is completed.
+//   Checked on 2026-10-31 (WP7): the paper itself (Karakas & Tariq 1991,
+//   "Semianalytical productivity models for perforated completions",
+//   SPE 18247, SPE Production Engineering, January 1991) could not be read:
+//   it is not openly available, so the table could not be checked against
+//   the paper's own page. Two later publications that reproduce the table
+//   were read instead:
+//     • a 2022 doctoral thesis on perforation skin (its Tables 4.1 and 4.2)
+//       agrees with every one of the 42 values below;
+//     • a journal article agrees with 41 of them and prints c2 = 5.42 for
+//       120° phasing where the thesis (and the table below) has 5.320.
+//   The disagreement shows that copies of this table carry transcription
+//   errors, so corroboration by copies is not treated as verification.
+//   TO VERIFY: compare every row with the table in SPE 18247 itself, record
+//   the page here, set KT.verified = true. Test SK1 then checks the plan's
+//   vectors through the public function (rw 0.406 ft, lp 8 in, rp 0.25 in,
+//   kh/kv 3, 2 spf: 180° 2.19, 0° 3.09, 90° 2.03, 60° 2.29); they are already
+//   checked against the internal routine so the switch is one line.
+//
+//   S_p = S_H + S_V + S_wb
+//   S_H = ln(rw / rw′(θ)),  rw′ = lp/4 (θ = 0°), a_θ·(rw + lp) otherwise
+//   S_V = 10^a · hD^(b−1) · rD^b,  hD = (hs/lp)·√(kh/kv),  rD = rp/(2hs)·(1 + √(kv/kh)),
+//         a = a1·log10 rD + a2,  b = b1·rD + b2,  hs = 1/spf (ft)
+//   S_wb = c1·exp(c2·rwD),  rwD = rw/(lp + rw)
+//   Correlation range: hD ≤ 10 and rD ≥ 0.01 (a warning outside it).
+//
+// REFERENCES (author, year, title; SPE numbers only where verified in plan §14)
+//   Karakas & Tariq 1991, "Semianalytical productivity models for perforated
+//     completions", SPE 18247.
+//   Papatzacos 1987, "Approximate partial-penetration pseudoskin for
+//     infinite-conductivity wells", SPE 13956 — partial penetration with the
+//     interval anywhere in the layer:
+//       S_pp = (1/hpD − 1)·ln(π/(2rD)) + (1/hpD)·ln[ hpD/(2 + hpD) · ((A − 1)/(B − 1))^½ ],
+//       hpD = hp/h, rD = (rw/h)·√(kv/kh), h1D = htop/h,
+//       A = 1/(h1D + hpD/4), B = 1/(h1D + 3hpD/4).
+//   Brons & Marting 1961, "The effect of restricted fluid entry on well
+//     productivity", SPE 1322-G — cross-check for an interval at the top or
+//     the bottom of the layer (PRiSM_pseudoSkin.bronsMarting).
+//   Cinco-Ley, Ramey & Miller 1975, "Pseudo-skin factors for
+//     partially-penetrating directionally-drilled wells" — slanted well,
+//     valid for θ ≤ 75° (PRiSM_pseudoSkin.cincoLey).
+//   Swift & Kiel 1962, "The prediction of gas-well performance including the
+//     effect of non-Darcy flow", SPE 143 — S′ = S + D·q. Expected D from
+//     D = 2.222e-15·γg·k·h·β/(μg·rw·hp²) [1/(Mscf/d)] with
+//     β = 2.6e10·k^−1.2 [1/ft] (Firoozabadi & Katz 1979); β correlations
+//     scatter widely, so the expected range is ×1/3 … ×3.
+//
+// UNITS — field units: ft, in (perforation length and radius), md, cp,
+//   RB/STB (or RB/Mscf), STB/d | Mscf/d | bbl/d, psia, psi/cycle, days, hours.
+//   PRiSM is field-unit only, so the card shows field units in Metric mode too.
+// Every output number is finite or null; text never says null/undefined/NaN.
+// Load rules: no document, no timers, no other PRiSM symbol needed at load;
+// listeners are attached only behind typeof document !== 'undefined' &&
+// typeof document.addEventListener === 'function' (plan §3.0; they listen on
+// window, where 34 and 33 dispatch) and every handler first checks that a card
+// is mounted.
+// The namespace object is merged, never replaced.
+// =============================================================================
+
+(function () {
+    'use strict';
+    var G = (typeof window !== 'undefined') ? window : globalThis;
+    var SC = G.PRiSM_skinCheck = G.PRiSM_skinCheck || {};
+
+    // =========================================================================
+    // SECTION 1 — HELPERS
+    // =========================================================================
+    var LN10 = Math.LN10;
+    function isNum(v) { return typeof v === 'number' && isFinite(v); }
+    function pos(v) { return isNum(v) && v > 0; }
+    function fin(v) { return isNum(v) ? v : null; }
+    function num(v) {
+        if (isNum(v)) return v;
+        if (typeof v === 'string' && v.trim() !== '' && isFinite(+v)) return +v;
+        return null;
+    }
+    function sq(x) { return x * x; }
+    // Plain-text number (never "NaN"/"null").
+    function fmt(v, dp) {
+        if (!isNum(v)) return '—';
+        var d = (dp == null) ? 2 : dp;
+        var s = v.toFixed(d);
+        return (s === '-0' || /^-0\.0*$/.test(s)) ? s.slice(1) : s;
+    }
+    function warning(code, level, text) { return { code: code, level: level || 'warn', text: String(text).slice(0, 299), ev: [] }; }
+    function fail(code, errors, bad, extra) {
+        var o = { ok: false, code: code, errors: errors || [], bad: bad || [] };
+        if (extra) for (var k in extra) if (Object.prototype.hasOwnProperty.call(extra, k)) o[k] = extra[k];
+        return o;
+    }
+
+    // =========================================================================
+    // SECTION 2 — PERFORATION SKIN (Karakas & Tariq)
+    // =========================================================================
+    function row(aT, a1, a2, b1, b2, c1, c2) {
+        return Object.freeze({ a_theta: aT, a1: a1, a2: a2, b1: b1, b2: b2, c1: c1, c2: c2 });
+    }
+    var KT = Object.freeze({
+        verified: false,     // see the verification record in the file header (plan §11 Q7)
+        source: 'Karakas & Tariq 1991, Semianalytical productivity models for perforated completions (SPE 18247); ' +
+                'coefficients corroborated by later reproductions, not yet checked against the paper',
+        page: null,          // the table's page in SPE 18247, recorded when verified
+        phases: Object.freeze([0, 45, 60, 90, 120, 180]),
+        rows: Object.freeze({
+            0:   row(0.250, -2.091, 0.0453, 5.1313, 1.8672, 1.6e-1, 2.675),
+            180: row(0.500, -2.025, 0.0943, 3.0373, 1.8115, 2.6e-2, 4.532),
+            120: row(0.648, -2.018, 0.0634, 1.6136, 1.7770, 6.6e-3, 5.320),
+            90:  row(0.726, -1.905, 0.1038, 1.5674, 1.6935, 1.9e-3, 6.155),
+            60:  row(0.813, -1.898, 0.1023, 1.3654, 1.6490, 3.0e-4, 7.509),
+            45:  row(0.860, -1.788, 0.2398, 1.1915, 1.6392, 4.6e-5, 8.791)
+        }),
+        range: Object.freeze({ hDMax: 10, rDMin: 0.01 })
+    });
+
+    // The Karakas–Tariq arithmetic, independent of the verification flag.
+    // Internal (exposed as _ktCompute for the table-consistency test only);
+    // pages and the card call perforationSkin().
+    function ktCompute(i) {
+        i = i || {};
+        var rw = num(i.rw_ft), lpIn = num(i.lp_in), rpIn = num(i.rp_in), spf = num(i.spf);
+        var ph = num(i.phase_deg), kvkh = num(i.kvkh);
+        if (ph === 360) ph = 0;
+        var bad = [], errors = [];
+        if (!pos(rw)) { bad.push('rw_ft'); errors.push('Wellbore radius must be positive.'); }
+        if (!pos(lpIn)) { bad.push('lp_in'); errors.push('Perforation length must be positive.'); }
+        if (!pos(rpIn)) { bad.push('rp_in'); errors.push('Perforation radius must be positive.'); }
+        if (!pos(spf)) { bad.push('spf'); errors.push('Shot density must be positive.'); }
+        if (!isNum(ph) || !KT.rows[ph]) { bad.push('phase_deg'); errors.push('Phasing must be 0, 45, 60, 90, 120 or 180 degrees.'); }
+        if (kvkh == null) kvkh = 1;
+        if (!pos(kvkh)) { bad.push('kvkh'); errors.push('kv/kh must be positive.'); }
+        if (bad.length) return fail('BAD_INPUT', errors, bad);
+        var c = KT.rows[ph];
+        var lp = lpIn / 12, rp = rpIn / 12, hs = 1 / spf;
+        var rwPrime = (ph === 0) ? lp / 4 : c.a_theta * (rw + lp);
+        var S_H = Math.log(rw / rwPrime);
+        var hD = (hs / lp) * Math.sqrt(1 / kvkh);
+        var rD = (rp / (2 * hs)) * (1 + Math.sqrt(kvkh));
+        var a = c.a1 * Math.log(rD) / LN10 + c.a2;
+        var b = c.b1 * rD + c.b2;
+        var S_V = Math.pow(10, a) * Math.pow(hD, b - 1) * Math.pow(rD, b);
+        var rwD = rw / (lp + rw);
+        var S_wb = c.c1 * Math.exp(c.c2 * rwD);
+        var warnings = [];
+        if (hD > KT.range.hDMax) warnings.push(warning('ktHd', 'warn', 'Perforation spacing is large for the correlation (hD ' + fmt(hD, 2) + ' > 10): the vertical skin is extrapolated.'));
+        if (rD < KT.range.rDMin) warnings.push(warning('ktRd', 'warn', 'Perforation radius is small for the correlation (rD ' + fmt(rD, 4) + ' < 0.01): the vertical skin is extrapolated.'));
+        if (kvkh > 1) warnings.push(warning('ktKv', 'info', 'kv/kh is above 1.'));
+        var S = S_H + S_V + S_wb;
+        if (!isNum(S)) return fail('BAD_INPUT', ['The perforation skin could not be computed from these inputs.'], ['lp_in', 'rp_in', 'spf']);
+        return {
+            ok: true, verified: KT.verified,
+            S_H: S_H, S_V: S_V, S_wb: S_wb, S_perf: S,
+            rwPrime_ft: rwPrime, hD: hD, rD: rD, rwD: rwD, a: a, b: b, phase_deg: ph,
+            warnings: warnings
+        };
+    }
+
+    // perforationSkin({rw_ft, lp_in, rp_in, spf, phase_deg, kvkh})
+    //   → {ok, S_H, S_V, S_wb, S_perf, verified, warnings}
+    //   → {ok:false, code:'UNVERIFIED'} while the coefficient table is unverified.
+    function perforationSkin(i) {
+        if (!KT.verified) {
+            return fail('UNVERIFIED', ['The perforation-skin coefficients are not verified against the paper: perforation skin is not split.'], [],
+                        { verified: false, S_H: null, S_V: null, S_wb: null, S_perf: null, warnings: [] });
+        }
+        return ktCompute(i);
+    }
+
+    // =========================================================================
+    // SECTION 3 — MECHANICAL SKIN (D23)
+    // =========================================================================
+    var THETA_MAX = 75;
+
+    // Papatzacos (1987): partial penetration, interval anywhere in the layer.
+    function papatzacos(hpD, h1D, rD) {
+        if (!(hpD > 0) || !(rD > 0)) return null;
+        if (hpD >= 1) return 0;
+        var A = 1 / (h1D + hpD / 4), B = 1 / (h1D + 3 * hpD / 4);
+        var r = (A - 1) / (B - 1);
+        if (!(r > 0)) return null;
+        var v = (1 / hpD - 1) * Math.log(Math.PI / (2 * rD)) + (1 / hpD) * Math.log((hpD / (2 + hpD)) * Math.sqrt(r));
+        return isNum(v) ? v : null;
+    }
+    // Brons & Marting (1961), interval at the top or bottom (cross-check).
+    function bronsMarting(b, hD) {
+        var lib = G.PRiSM_pseudoSkin;
+        if (lib && typeof lib.bronsMarting === 'function') {
+            try { var v = lib.bronsMarting(b, hD); if (isNum(v)) return v; } catch (e) { /* local */ }
+        }
+        if (!(b > 0) || !(hD > 0)) return null;
+        if (b >= 1) return 0;
+        var Gb = 2.948 - 7.363 * b + 11.45 * b * b - 4.675 * b * b * b;
+        return (1 / b - 1) * (Math.log(hD) - Gb);
+    }
+    // Cinco-Ley, Ramey & Miller (1975): slanted well.
+    function cincoLey(thetaDeg, kvkh, hRw) {
+        var lib = G.PRiSM_pseudoSkin;
+        if (lib && typeof lib.cincoLey === 'function') {
+            try { var v = lib.cincoLey(thetaDeg, kvkh, hRw); if (isNum(v)) return v; } catch (e) { /* local */ }
+        }
+        if (!isNum(thetaDeg) || thetaDeg === 0) return 0;
+        var th = Math.min(Math.abs(thetaDeg), 89.999);
+        var thP = Math.atan(Math.sqrt(kvkh) * Math.tan(th * Math.PI / 180)) * 180 / Math.PI;
+        var hD = hRw * Math.sqrt(1 / kvkh);
+        return -Math.pow(thP / 41, 2.06) - Math.pow(thP / 56, 1.865) * (Math.log(hD / 100) / LN10);
+    }
+
+    // mechanicalSkin({S_total, Serr, h, rw, completion:{hp_ft, htop_ft, theta_deg,
+    //   kvkh:[lo,hi], perf|null}, D|null, q|null})
+    //   → {available, S_geo, S_geo_lo, S_geo_hi, parts:{pp, ppMethod, theta, perf|null},
+    //      S_mech, S_mech_err, S_d_local, validity:[{code,text}], warnings}
+    // S_mech = S_total − S_geo − D·q is the pressure-drop basis (referred to h):
+    // what alerts and production loss use. S_d_local = S_mech·hp/h is the skin of
+    // the open interval itself (treatment design). S_geo is evaluated at the
+    // geometric mean of the kv/kh range; S_geo_lo/hi span the range.
+    function mechanicalSkin(i) {
+        i = i || {};
+        var out = {
+            ok: true, available: false, reason: '', basis: 'pressureDrop',
+            S_geo: null, S_geo_lo: null, S_geo_hi: null,
+            parts: { pp: null, ppMethod: 'none', theta: null, perf: null, perfLocal: null, ppBronsMarting: null, Dq: null },
+            S_mech: null, S_mech_err: null, S_d_local: null, kvkh: null,
+            validity: [], warnings: []
+        };
+        function stop(reason) { out.reason = reason; return out; }
+        var St = num(i.S_total), Serr = num(i.Serr), h = num(i.h), rw = num(i.rw), c = i.completion;
+        if (!isNum(St)) return stop('Total skin is not available.');
+        if (!pos(h) || !pos(rw)) return stop('Net thickness and wellbore radius are needed to split the skin.');
+        if (!c || typeof c !== 'object') return stop('No completion data: the total skin is not split.');
+        if (!isNum(Serr) || Serr < 0) {
+            Serr = 0;
+            out.warnings.push(warning('noSerr', 'info', 'Skin uncertainty not given: the mechanical-skin range covers kv/kh only.'));
+        }
+        var hp = num(c.hp_ft), htop = num(c.htop_ft), theta = num(c.theta_deg);
+        if (hp == null) hp = h;
+        if (htop == null) htop = 0;
+        if (theta == null) theta = 0;
+        if (!pos(hp)) return stop('The open interval must be positive.');
+        if (htop < 0) return stop('The distance from the top of the layer to the open interval cannot be negative.');
+        var tol = 1e-6 * h;
+        if (htop + hp > h + tol) {
+            out.validity.push({ code: 'intervalOutside', text: 'The open interval (' + fmt(htop, 1) + ' + ' + fmt(hp, 1) + ' ft) extends below the layer (' + fmt(h, 1) + ' ft): the total skin is not split.' });
+            return stop('The open interval does not fit inside the layer.');
+        }
+        if (hp > h) hp = h;
+        theta = Math.abs(theta);
+        if (theta > THETA_MAX) {
+            out.validity.push({ code: 'thetaRange', text: 'Well deviation ' + fmt(theta, 0) + '° is above the 75° limit of the slanted-well correlation: the total skin is not split.' });
+            return stop('Deviation above 75°: the slanted-well pseudo-skin is outside its validity range.');
+        }
+        // kv/kh range.
+        var kv = Array.isArray(c.kvkh) ? c.kvkh : (isNum(c.kvkh) ? [c.kvkh, c.kvkh] : null);
+        var lo = kv ? num(kv[0]) : null, hi = kv ? num(kv[1]) : null;
+        if (!pos(lo) || !pos(hi)) {
+            lo = 0.1; hi = 1;
+            out.warnings.push(warning('kvkhDefault', 'info', 'kv/kh range not given: 0.1 to 1 assumed.'));
+        }
+        if (lo > hi) { var t = lo; lo = hi; hi = t; }
+        var mid = Math.sqrt(lo * hi);
+        out.kvkh = [lo, hi];
+
+        var partial = hp < h * (1 - 1e-9);
+        var h1D = htop / h, hpD = hp / h;
+        var perfIn = c.perf && typeof c.perf === 'object' ? c.perf : null;
+        var perfStatus = null;
+        function geo(K) {
+            var pp = 0, th = 0, pf = 0, pfLocal = null;
+            if (partial) {
+                pp = papatzacos(hpD, h1D, (rw / h) * Math.sqrt(K));
+                if (pp == null) return null;
+            }
+            if (theta > 0) {
+                th = cincoLey(theta, K, h / rw);
+                if (!isNum(th)) return null;
+            }
+            if (perfIn) {
+                var r = perforationSkin({ rw_ft: rw, lp_in: perfIn.lp_in, rp_in: perfIn.rp_in, spf: perfIn.spf, phase_deg: perfIn.phase_deg, kvkh: K });
+                if (r.ok) { pfLocal = r.S_perf; pf = r.S_perf * h / hp; perfStatus = perfStatus || r; }
+                else { perfStatus = r; pf = 0; }
+            }
+            return { pp: pp, theta: th, perf: pfLocal == null ? null : pf, perfLocal: pfLocal, total: pp + th + pf };
+        }
+        var gMid = geo(mid), gLo = geo(lo), gHi = geo(hi);
+        if (!gMid || !gLo || !gHi) return stop('The geometric pseudo-skin could not be computed from these completion inputs.');
+        out.parts.pp = gMid.pp;
+        out.parts.ppMethod = partial ? 'papatzacos' : 'none';
+        out.parts.theta = gMid.theta;
+        out.parts.perf = gMid.perf;
+        out.parts.perfLocal = gMid.perfLocal;
+        if (partial && (htop <= tol || htop + hp >= h - tol)) {
+            out.parts.ppBronsMarting = fin(bronsMarting(hpD, (h / rw) * Math.sqrt(1 / mid)));
+        }
+        if (perfIn && perfStatus && !perfStatus.ok) {
+            if (perfStatus.code === 'UNVERIFIED') {
+                out.validity.push({ code: 'perfNotSplit', text: 'Perforation skin not split: the perforation-skin coefficients are not verified. S_mech includes the perforation skin.' });
+            } else {
+                out.validity.push({ code: 'perfBadInput', text: 'Perforation data incomplete: perforation skin not split. ' + (perfStatus.errors[0] || '') });
+            }
+        } else if (perfIn && perfStatus && perfStatus.ok) {
+            perfStatus.warnings.forEach(function (w) { out.warnings.push(w); });
+        }
+        if (partial && theta > 0) {
+            out.validity.push({ code: 'ppTheta', text: 'Partial penetration and deviation pseudo-skins are added (an approximation when both apply).' });
+        }
+        if (theta > 0 && (h / rw) * Math.sqrt(1 / hi) < 40) {
+            out.validity.push({ code: 'thetaHd', text: 'Thin layer for the slanted-well correlation (h/rw·√(kh/kv) below 40): the deviation skin is approximate.' });
+        }
+        var vals = [gLo.total, gMid.total, gHi.total];
+        out.S_geo = gMid.total;
+        out.S_geo_lo = Math.min.apply(null, vals);
+        out.S_geo_hi = Math.max.apply(null, vals);
+        var D = num(i.D), q = num(i.q), Dq = 0;
+        if (isNum(D) && isNum(q)) Dq = D * Math.abs(q);
+        else if (isNum(D)) out.warnings.push(warning('noRate', 'info', 'D given without a rate: D·q not removed.'));
+        out.parts.Dq = Dq;
+        out.S_mech = St - out.S_geo - Dq;
+        out.S_mech_err = Math.sqrt(sq(Serr) + sq((out.S_geo_hi - out.S_geo_lo) / 2));
+        out.S_d_local = out.S_mech * hp / h;
+        out.available = true;
+        out.reason = '';
+        return out;
+    }
+
+    // =========================================================================
+    // SECTION 4 — RATE-DEPENDENT SKIN (M§A19)
+    // =========================================================================
+    var RATE_DEFAULTS = Object.freeze({ qRatioMin: 1.5, maxDays: 60, joint: true, stable: null, corrMax: 0.8, dOverSeMin: 2, jointMinN: 4, serrMin: 0.05, serrDefault: 0.2, expectedFactor: 3 });
+
+    // Weighted least squares y = X·beta with weights w; returns {beta, cov, chi2, dof}.
+    function wls(X, y, w) {
+        var n = y.length, p = X[0].length, A = [], bv = [], r, c, k;
+        for (r = 0; r < p; r++) { A.push(new Array(p).fill(0)); bv.push(0); }
+        for (k = 0; k < n; k++) {
+            for (r = 0; r < p; r++) {
+                bv[r] += w[k] * X[k][r] * y[k];
+                for (c = 0; c < p; c++) A[r][c] += w[k] * X[k][r] * X[k][c];
+            }
+        }
+        var inv = invert(A);
+        if (!inv) return null;
+        var beta = [];
+        for (r = 0; r < p; r++) { var s = 0; for (c = 0; c < p; c++) s += inv[r][c] * bv[c]; beta.push(s); }
+        var chi2 = 0;
+        for (k = 0; k < n; k++) { var f = 0; for (r = 0; r < p; r++) f += X[k][r] * beta[r]; chi2 += w[k] * sq(y[k] - f); }
+        return { beta: beta, cov: inv, chi2: chi2, dof: n - p };
+    }
+    function invert(M) {
+        var n = M.length, A = M.map(function (r, i) { var e = new Array(n).fill(0); e[i] = 1; return r.slice().concat(e); });
+        var scale = 0;
+        for (var a = 0; a < n; a++) for (var b = 0; b < n; b++) scale = Math.max(scale, Math.abs(M[a][b]));
+        for (var col = 0; col < n; col++) {
+            var piv = col;
+            for (var r = col + 1; r < n; r++) if (Math.abs(A[r][col]) > Math.abs(A[piv][col])) piv = r;
+            if (!(Math.abs(A[piv][col]) > 1e-12 * (scale || 1))) return null;
+            var tmp = A[col]; A[col] = A[piv]; A[piv] = tmp;
+            var d = A[col][col];
+            for (var j = 0; j < 2 * n; j++) A[col][j] /= d;
+            for (var r2 = 0; r2 < n; r2++) {
+                if (r2 === col) continue;
+                var f = A[r2][col];
+                if (f === 0) continue;
+                for (var j2 = 0; j2 < 2 * n; j2++) A[r2][j2] -= f * A[col][j2];
+            }
+        }
+        return A.map(function (r) { return r.slice(n); });
+    }
+    function pearson(x, y) {
+        var n = x.length;
+        if (n < 2) return null;
+        var mx = 0, my = 0, i;
+        for (i = 0; i < n; i++) { mx += x[i]; my += y[i]; }
+        mx /= n; my /= n;
+        var sxy = 0, sxx = 0, syy = 0;
+        for (i = 0; i < n; i++) { sxy += (x[i] - mx) * (y[i] - my); sxx += sq(x[i] - mx); syy += sq(y[i] - my); }
+        if (!(sxx > 0) || !(syy > 0)) return null;
+        return sxy / Math.sqrt(sxx * syy);
+    }
+    // Expected D for a gas well (1/(Mscf/d)): {D (central), lo, hi, beta, unit, method} or null.
+    // rateSkin reports the central value as the number expectedD and this object as expectedDRange.
+    function expectedDRange(e) {
+        if (!e || typeof e !== 'object') return null;
+        var k = num(e.k), h = num(e.h), hp = num(e.hp), rw = num(e.rw), sg = num(e.sg), mu = num(e.mu_g);
+        if (hp == null) hp = h;
+        if (!pos(k) || !pos(h) || !pos(hp) || !pos(rw) || !pos(sg) || !pos(mu)) return null;
+        var beta = 2.6e10 * Math.pow(k, -1.2);
+        var D = 2.222e-15 * sg * k * h * beta / (mu * rw * hp * hp);
+        if (!pos(D)) return null;
+        var f = RATE_DEFAULTS.expectedFactor;
+        return { D: D, lo: D / f, hi: D * f, beta: beta, unit: '1/(Mscf/d)',
+                 method: 'D = 2.222e-15·γg·k·h·β/(μg·rw·hp²), β = 2.6e10·k^-1.2; range ×1/3 to ×3' };
+    }
+
+    // rateSkin(rows [{id, t_days, q, S, Serr}], opts {qRatioMin, maxDays, joint, stable, expected})
+    //   → {resolved, S, D, seD, n, qRatio, joint:null|{S0, r_per30d, D, seD, seR}, expectedD:number|null,
+    //      expectedDRange:null|{D, lo, hi, beta, unit, method}, consistent, corrQT, ids, reason, ev:['T15']}
+    // Window: the tests inside the span of at most maxDays (first to last test) that holds
+    // the most tests, the latest such window on a tie. A chain of weekly tests over a year
+    // is therefore never one group (a skin trend would be confounded with D).
+    // D needs q_max/q_min ≥ qRatioMin and D/se ≥ 2. Collinearity of rate and time
+    // (|corr(q, t)| ≥ 0.8; two tests count as collinear) refuses:
+    //   • the joint fit with a time term, always (plan §4.7 T15, resolution 9);
+    //   • the plain (S, D) fit too, unless the caller states opts.stable === true, i.e.
+    //     it has checked that S′ shows no significant time trend in these rows (for
+    //     example Mann–Kendall over a stable-skin segment). Without that statement a
+    //     skin trend cannot be told from D when rate and time move together.
+    // A joint fit S′ = S0 + r·t/30 + D·q runs with ≥ 4 tests and low collinearity; when its
+    // time term is significant (|r|/se ≥ 2) D comes from it.
+    // expectedD is the central value of the correlation (a number, as plan §3.0 requires
+    // for every output number); expectedDRange carries its ×1/3 … ×3 range.
+    function rateSkin(rows, opts) {
+        var o = {};
+        var k;
+        for (k in RATE_DEFAULTS) if (Object.prototype.hasOwnProperty.call(RATE_DEFAULTS, k)) o[k] = RATE_DEFAULTS[k];
+        if (opts && typeof opts === 'object') for (k in opts) if (Object.prototype.hasOwnProperty.call(opts, k) && opts[k] != null) o[k] = opts[k];
+        var out = { resolved: false, S: null, D: null, seD: null, n: 0, qRatio: null, joint: null, expectedD: null, expectedDRange: null,
+                    consistent: null, corrQT: null, ids: [], stable: o.stable === true, reason: '', ev: ['T15'] };
+        out.expectedDRange = expectedDRange(o.expected);
+        out.expectedD = out.expectedDRange ? fin(out.expectedDRange.D) : null;
+        var list = [];
+        (Array.isArray(rows) ? rows : []).forEach(function (r) {
+            if (!r || typeof r !== 'object') return;
+            var q = num(r.q), S = num(r.S), t = num(r.t_days), se = num(r.Serr);
+            if (!isNum(q) || q === 0 || !isNum(S) || !isNum(t)) return;
+            if (!isNum(se) || se < 0) se = o.serrDefault;
+            list.push({ id: r.id == null ? '' : String(r.id), q: Math.abs(q), S: S, t: t, se: Math.max(se, o.serrMin) });
+        });
+        list.sort(function (a, b) { return a.t - b.t; });
+        // The window of span ≤ maxDays with the most tests (the latest on a tie).
+        var g = [], i0 = 0;
+        for (var j = 0; j < list.length; j++) {
+            while (list[j].t - list[i0].t > o.maxDays + 1e-9) i0++;
+            if (j - i0 + 1 >= g.length) g = list.slice(i0, j + 1);
+        }
+        out.n = g.length;
+        out.ids = g.map(function (r) { return r.id; });
+        if (g.length < 2) { out.reason = 'Fewer than two tests within ' + fmt(o.maxDays, 0) + ' days: D cannot be separated from S; S′ is the apparent skin including D·q.'; return out; }
+        var qs = g.map(function (r) { return r.q; }), ts = g.map(function (r) { return r.t; });
+        var qMax = Math.max.apply(null, qs), qMin = Math.min.apply(null, qs);
+        out.qRatio = qMax / qMin;
+        if (out.qRatio < o.qRatioMin) {
+            out.reason = 'Rate ratio ' + fmt(out.qRatio, 2) + ' is below ' + fmt(o.qRatioMin, 1) + ': D cannot be separated from S; S′ is the apparent skin including D·q.';
+            return out;
+        }
+        var corr = (g.length === 2) ? 1 : pearson(qs, ts);
+        if (corr == null) corr = (g.length === 2) ? 1 : 0;
+        out.corrQT = corr;
+        var collinear = Math.abs(corr) >= o.corrMax;
+        if (collinear && !out.stable) {
+            out.reason = 'Rate and time are collinear (|corr| ' + fmt(Math.abs(corr), 2) + ' ≥ ' + fmt(o.corrMax, 1) + ') and skin stability was not assessed: D cannot be separated from a skin trend; joint fit refused.';
+            return out;
+        }
+        var w = g.map(function (r) { return 1 / sq(r.se); });
+        var fit = wls(g.map(function (r) { return [1, r.q]; }), g.map(function (r) { return r.S; }), w);
+        if (!fit) { out.reason = 'The rate-skin fit is singular.'; return out; }
+        var infl = fit.dof > 0 ? Math.max(1, fit.chi2 / fit.dof) : 1;
+        var S = fit.beta[0], D = fit.beta[1], seD = Math.sqrt(fit.cov[1][1] * infl);
+        var trendNote = collinear ? ' Rate and time are collinear (|corr| ' + fmt(Math.abs(corr), 2) + '): joint fit with a time term refused; skin stability as stated by the caller.' : '';
+        if (o.joint && !collinear && g.length >= o.jointMinN) {
+            var jf = wls(g.map(function (r) { return [1, r.t / 30, r.q]; }), g.map(function (r) { return r.S; }), w);
+            if (jf) {
+                var ji = jf.dof > 0 ? Math.max(1, jf.chi2 / jf.dof) : 1;
+                var seR = Math.sqrt(jf.cov[1][1] * ji), seDj = Math.sqrt(jf.cov[2][2] * ji);
+                out.joint = { S0: fin(jf.beta[0]), r_per30d: fin(jf.beta[1]), D: fin(jf.beta[2]), seD: fin(seDj), seR: fin(seR) };
+                if (isNum(seR) && seR > 0 && Math.abs(jf.beta[1]) / seR >= o.dOverSeMin) {
+                    var tMean = ts.reduce(function (a, b) { return a + b; }, 0) / ts.length;
+                    S = jf.beta[0] + jf.beta[1] * tMean / 30;
+                    D = jf.beta[2]; seD = seDj;
+                    trendNote = ' A skin trend of ' + fmt(jf.beta[1], 2) + ' per 30 days was fitted jointly.';
+                }
+            }
+        }
+        out.S = fin(S); out.D = fin(D); out.seD = fin(seD);
+        if (!isNum(D) || !isNum(seD)) { out.reason = 'The rate-skin fit failed.'; out.S = out.D = out.seD = null; return out; }
+        if (D <= 0) {
+            out.reason = 'Fitted D is not positive (' + fmt(D, 6) + '): not physical; S′ is the apparent skin.' + trendNote;
+        } else if (!(seD > 0) || D / seD >= o.dOverSeMin) {
+            out.resolved = true;
+            out.reason = 'D resolved: D/se ' + (seD > 0 ? fmt(D / seD, 1) : 'large') + ' from ' + g.length + ' tests with a rate ratio of ' + fmt(out.qRatio, 2) + '.' + trendNote;
+        } else {
+            out.reason = 'D/se ' + fmt(D / seD, 1) + ' is below 2: D not resolved; S′ is the apparent skin including D·q.' + trendNote;
+        }
+        if (out.resolved && out.expectedDRange) out.consistent = D >= out.expectedDRange.lo && D <= out.expectedDRange.hi;
+        return out;
+    }
+
+    // =========================================================================
+    // SECTION 5 — SKIN PRODUCTS (T7, T8, M§A27)
+    // =========================================================================
+    // products({S, k, h, B, mu, q, Dq, rw, re_ft, reSource, pbar|null, pwf, dpSkin_psi?})
+    //   → {dpSkin_psi, m, X, reAssumed, piRatio, piRatioLowerBound, piRatioUpperBound,
+    //      rateAtStakeUpperBound, rateAtStakeLowerBound, FE|null, DR|null, guard, labels}
+    // m = 162.6·Dq·B·μ/(k·h) [psi/cycle]; Δp_skin = 0.8686·m·S; X = ln(r_e/rw) − 0.75;
+    // PI ratio X/(X + S) (pseudo-steady state); guard = X + S < 1 (not computable).
+    // A finite dpSkin_psi input replaces 0.8686·m·S (gas: Δm_S converted to psi through
+    // the m(p) table by the caller).
+    // dpPerSkin_psi = 141.2·q·B·μ/(k·h) is the constant-rate extra drawdown per unit
+    // skin at the current rate q: a different quantity from Δp_skin, never equated.
+    // Bounds when r_e is assumed from r_inv (r_inv ≤ r_e, so X is low): X/(X + S) rises
+    // with X when S ≥ 0 and falls when S < 0, so the PI ratio is a lower bound for S ≥ 0
+    // and an upper bound for S < 0; the rate at stake (X + S)/X − 1 = S/X is an upper
+    // bound for S ≥ 0 and a lower bound (too negative) for S < 0. For a change from
+    // S_base to S_now the same holds with the sign of S_now − S_base (WP3, §4.7).
+    function products(i) {
+        i = i || {};
+        var S = num(i.S), k = num(i.k), h = num(i.h), B = num(i.B), mu = num(i.mu), q = num(i.q), Dq = num(i.Dq);
+        var rw = num(i.rw), re = num(i.re_ft), pbar = num(i.pbar), pwf = num(i.pwf), dpIn = num(i.dpSkin_psi);
+        var reSource = i.reSource === 'rinv' ? 'rinv' : 'input';
+        var rinv = reSource === 'rinv', negS = isNum(S) && S < 0;
+        var RINV = ' (r_e assumed from r_inv)';
+        var out = {
+            dpSkin_psi: null, m: null, X: null, reAssumed: rinv, reSource: reSource,
+            piRatio: null, piRatioLowerBound: rinv && !negS, piRatioUpperBound: rinv && negS,
+            rateAtStakeUpperBound: rinv && !negS, rateAtStakeLowerBound: rinv && negS,
+            FE: null, DR: null, guard: false, dpPerSkin_psi: null, qIdealFactor: null, drawdown_psi: null, dpSkinSource: null,
+            labels: {
+                basis: 'pseudo-steady-state estimate',
+                piRatio: rinv ? (negS ? 'upper bound' : 'lower bound') + RINV : 'pseudo-steady-state estimate',
+                rateAtStake: rinv ? (negS ? 'lower bound' : 'upper bound') + RINV : 'pseudo-steady-state estimate'
+            },
+            warnings: []
+        };
+        if (isNum(Dq)) Dq = Math.abs(Dq);
+        if (isNum(q)) q = Math.abs(q);
+        if (pos(k) && pos(h) && pos(B) && pos(mu)) {
+            if (pos(Dq)) out.m = 162.6 * Dq * B * mu / (k * h);
+            if (pos(q)) out.dpPerSkin_psi = 141.2 * q * B * mu / (k * h);
+        } else if (!isNum(dpIn)) out.warnings.push(warning('noKh', 'info', 'k, h, B or μ missing: m and the skin pressure drop are not computed.'));
+        if (isNum(dpIn)) { out.dpSkin_psi = dpIn; out.dpSkinSource = 'input'; }
+        else if (isNum(out.m) && isNum(S)) { out.dpSkin_psi = 0.8686 * out.m * S; out.dpSkinSource = 'liquid'; }
+        if (pos(re) && pos(rw) && re > rw) {
+            out.X = Math.log(re / rw) - 0.75;
+            if (isNum(S)) {
+                if (out.X + S < 1) {
+                    out.guard = true;
+                    out.warnings.push(warning('guard', 'warn', 'PI ratio not computable (strongly negative skin: X + S < 1).'));
+                } else {
+                    out.piRatio = out.X / (out.X + S);
+                    out.qIdealFactor = (out.X + S) / out.X;
+                }
+            }
+        } else out.warnings.push(warning('noRe', 'info', 'Drainage radius not available: PI ratio not computed.'));
+        if (isNum(pbar) && isNum(pwf)) {
+            var dd = Math.abs(pbar - pwf);
+            if (dd > 0) {
+                out.drawdown_psi = dd;
+                if (isNum(out.dpSkin_psi)) {
+                    out.FE = (dd - out.dpSkin_psi) / dd;
+                    out.DR = out.FE !== 0 ? fin(1 / out.FE) : null;
+                }
+            }
+        }
+        return out;
+    }
+
+    // =========================================================================
+    // SECTION 6 — SKIN-CHECK MODEL: run(opts)  (pure)
+    // =========================================================================
+    var ENGINE_KEYS = { homogeneous: 'homogeneous', linearBoundary: 'linearBoundary', closedCircle: 'closedCircle', radialComposite: 'composite2', composite2: 'composite2' };
+    var REQ_RANGES = Object.freeze({ h: 0.2, phi: 0.2, ct: 0.2, rw: 0.2, B: 0.2, mu: 0.2, q: 0.1 });
+    var TYP_RANGES = Object.freeze({ h: 0.2, phi: 0.1, ct: 0.3, rw: 0.05, B: 0.05, mu: 0.2, q: 0.1 });
+    var DISTRACTORS = { valley: 1, halfLate: 1, earlyQuarter: 1, earlyHalf: 1, fracHalf: 1 };
+    var HUMPS = { humpDp: 1, steepStorage: 1 };
+    var TP_LONG_H = 1e6;     // drawdown / injection → build-up after a very long producing time
+    var TP_DEFAULT_MIN_H = 720, TP_DEFAULT_FACTOR = 10;   // D13: unknown tp → max(30 d, 10·Δt_end)
+    var CHELD_NOTE = 'Calibrated on build-ups; indicative for drawdowns.';
+
+    function AIns() { var a = G.PRiSM_autoInterp; return (a && typeof a === 'object') ? a : null; }
+    function engineReady(a) {
+        return !!(a && ['prepare', 'iarf', 'line'].every(function (k) { return typeof a[k] === 'function'; }));
+    }
+    function call(name, fn) {
+        try { return { v: fn(), err: null }; }
+        catch (e) {
+            if (typeof console !== 'undefined' && console.warn) console.warn('[PRiSM skin check] ' + name + ' failed:', e);
+            return { v: null, err: name };
+        }
+    }
+    function median(a) {
+        var b = a.filter(isNum).sort(function (x, y) { return x - y; });
+        if (!b.length) return null;
+        var m = b.length >> 1;
+        return b.length % 2 ? b[m] : 0.5 * (b[m - 1] + b[m]);
+    }
+    function toArr(v) { return (v && typeof v.length === 'number') ? Array.prototype.slice.call(v) : []; }
+    // Robust gauge noise from second differences (white noise: var(d2) = 6σ²), late half.
+    function noiseOf(p) {
+        var n = p.length;
+        if (n < 8) return 0.01;
+        var d2 = [];
+        for (var i = Math.max(1, n >> 1); i < n - 1; i++) d2.push(p[i + 1] - 2 * p[i] + p[i - 1]);
+        var md = median(d2);
+        var mad = median(d2.map(function (x) { return Math.abs(x - md); }));
+        var s = 1.4826 * (mad || 0) / Math.sqrt(6);
+        return Math.max(isNum(s) ? s : 0, 1e-4);
+    }
+    function linSlope(x, y) {
+        var n = x.length;
+        if (n < 3) return null;
+        var mx = 0, my = 0, i;
+        for (i = 0; i < n; i++) { mx += x[i]; my += y[i]; }
+        mx /= n; my /= n;
+        var sxx = 0, sxy = 0;
+        for (i = 0; i < n; i++) { sxx += sq(x[i] - mx); sxy += (x[i] - mx) * (y[i] - my); }
+        return sxx > 0 ? sxy / sxx : null;
+    }
+    function fluidOf(well, adata) {
+        var f = (adata && adata.fluid) || (well && well.fluid) || 'oil';
+        if (f === 'gas') return 'gas';
+        if ((adata && (adata.testType === 'falloff' || adata.testType === 'injection')) || f === 'water') return 'water_inj';
+        return 'oil';
+    }
+    function qUnitOf(fluid) { return fluid === 'gas' ? 'Mscf/d' : (fluid === 'water_inj' ? 'bbl/d' : 'STB/d'); }
+
+    // BuildupSpec (plan §3.1) from PRiSM's C2 analysis data and C1 well.
+    function specFromAdata(adata, well) {
+        var tt = adata.testType;
+        var shut = tt === 'buildup' || tt === 'falloff';
+        var fromPi = adata.dRef === 'pi' || adata.pRefSource === 'pi';
+        var steps0 = toArr(adata.rateHistory);
+        var nIdx = isNum(adata.stepIndex) ? adata.stepIndex : steps0.length - 1;
+        if (!shut && nIdx > 0) return { ok: false, reason: 'The automatic checks need a build-up, a fall-off or the first flow period from pi; this is a later flow period.' };
+        // Gas pseudo-time: C2 puts t_a in adata.t and keeps the real Δt in adata.tReal. The engine
+        // takes real Δt (like spec.steps) and applies pseudo-time itself (spec.gas.pseudoTime).
+        // adata.p is always psia (m(p) only lives in adata.dp / pRef).
+        var pseudoT = hasRealTime(adata);
+        if (adata.pseudoTime && !pseudoT) return { ok: false, reason: 'Gas pseudo-time is on but the real elapsed time is not available: turn pseudo-time off for the skin check.' };
+        var T = toArr(pseudoT ? adata.tReal : adata.t), P = toArr(adata.p);
+        var pRef = num(adata.pRefPressure);
+        if (pRef == null) pRef = num(adata.pRef);
+        if (!pos(pRef)) return { ok: false, reason: 'The reference pressure of the analysed period is unknown.' };
+        var fluid = fluidOf(well, adata);
+        if (!shut && fluid === 'gas') return { ok: false, reason: 'For gas wells the automatic checks need a build-up or a fall-off period.' };
+        var dt = [], p = [], last = -Infinity;
+        for (var i = 0; i < T.length; i++) {
+            if (!(T[i] > last) || !isNum(P[i])) continue;
+            last = T[i];
+            dt.push(T[i]);
+            p.push(shut || tt === 'injection' ? P[i] : 2 * pRef - P[i]);   // drawdown: Δp mirrored about pi
+        }
+        if (dt.length < 10) return { ok: false, reason: 'Fewer than 10 samples in the analysed period.' };
+        var Dq = num(adata.qRef);
+        if (!pos(Dq)) Dq = pos(well.q) ? well.q : null;
+        if (!pos(Dq)) return { ok: false, reason: 'The rate before the analysed period is unknown: enter q in Well & Test.' };
+        var tc = num(adata.tStart);
+        if (tc == null) tc = 0;
+        var dtEnd = dt[dt.length - 1];
+        var steps, tpUnknown = false, history = { estimated: false, tPrepend_h: 0, source: 'data' };
+        if (shut && steps0.length >= 2) {
+            steps = steps0.map(function (s) { return { t: s.t, q: Math.abs(s.q) }; });
+            steps[steps.length - 1] = { t: tc, q: 0 };
+        } else if (shut) {
+            // No rate history and no tp: estimate the producing time as D13 does
+            // (max(30 d, 10·Δt_end) at the entered rate) and flag the history as estimated,
+            // so p* is reported as a range only and the history sensitivity is checked.
+            var tPre = Math.max(TP_DEFAULT_MIN_H, TP_DEFAULT_FACTOR * dtEnd);
+            steps = [{ t: tc - tPre, q: Dq }, { t: tc, q: 0 }];
+            history = { estimated: true, tPrepend_h: tPre, source: 'default' };
+            tpUnknown = true;
+        } else {
+            // Drawdown / injection from pi: a build-up after a very long producing time
+            // (Δt_e = Δt). A modelling device, not an estimate of the history.
+            steps = [{ t: tc - TP_LONG_H, q: Dq }, { t: tc, q: 0 }];
+        }
+        var sigma = noiseOf(p);
+        var dts = [];
+        for (var j = 1; j < dt.length; j++) dts.push(dt[j] - dt[j - 1]);
+        // Flowing-trend slope at the closing (buildups with flowing samples in the dataset).
+        var dpdt = 0, ds = G.PRiSM_dataset;
+        if (shut && ds && ds.t && ds.p) {
+            var DT = toArr(ds.t), DP = toArr(ds.p), fx = [], fy = [];
+            for (var k = DT.length - 1; k >= 0 && fx.length < 12; k--) {
+                if (DT[k] <= tc + 1e-12 && DT[k] >= tc - 2 && isNum(DP[k])) { fx.unshift(DT[k]); fy.unshift(DP[k]); }
+            }
+            var sl = linSlope(fx, fy);
+            if (isNum(sl)) dpdt = sl;
+        }
+        // pwf0 uncertainty: entered → 0; a data row → σ; extrapolated / first sample → a trend value.
+        var src = adata.pRefSource, pwf0SE = 0, pwfTrend = false;
+        if (shut) {
+            var entered = pos(well.pwf0) && well.provenance && well.provenance.pwf0 && well.provenance.pwf0 !== 'default';
+            if (entered) pwf0SE = 0;
+            else if (src === 'pwf0') pwf0SE = sigma;
+            else { pwf0SE = Math.max(sigma, p.length > 1 ? 0.5 * Math.abs(p[1] - p[0]) : sigma); pwfTrend = true; }
+        }
+        var spec = {
+            id: 'PRiSM', testType: tt === 'falloff' ? 'falloff' : 'buildup',
+            tc_h: tc, dtc_h: 0, pwf0: pRef, pwf0SE: pwf0SE, dpdt_flow: dpdt,
+            dt: dt, p: p, n: null, steps: steps, qUnit: qUnitOf(fluid), Dq: Dq, fRate: 1,
+            rateQC: { source: /dataset/.test(String(adata.rateSource || '')) ? 'table' : 'measured', r3: null, r3Status: 'n/a', r4: null, r4Status: 'n/a',
+                      dqKnown: true, dqSource: 'table', equalRateAssumed: false, ignoresShutin: false, allocAccPct: 5 },
+            well: { fluid: fluid, h: well.h, phi: well.phi, mu: well.mu, B: well.B, ct: well.ct, rw: well.rw,
+                    T_R: pos(well.T_R) ? well.T_R : null, re_ft: null,
+                    defaulted: toArr(well.defaulted).filter(function (k) { return ['h', 'phi', 'mu', 'B', 'ct', 'rw'].indexOf(k) !== -1; }) },
+            gas: fluid === 'gas' ? { sg: pos(well.sg) ? well.sg : 0.65, T_F: pos(well.T_F) ? well.T_F : 200, co2: 0, h2s: 0, n2: 0,
+                                     pseudoTime: pseudoT, pdew: null } : null,
+            sigma_psi: sigma, sigmaFlow_psi: sigma, sigmaLF_psi: null,
+            dtSample_h: median(dts) || 0.01, driftPsiPerDay: 0.01,
+            history: history,
+            overrides: { window: null, model: null, excludeRivals: [] },
+            opts: { Lcyc: 0.1, binsPerCycle: 20, fitBinsPerCycle: 12, rivals: 'none', cheld: 'off', tide: 'off' }
+        };
+        return { ok: true, spec: spec, shut: shut, indicative: !shut, tpUnknown: tpUnknown, fromPi: fromPi, pwfTrend: pwfTrend, sigma: sigma,
+                 dtEnd_h: dtEnd, pseudoTime: pseudoT };
+    }
+
+    // Plan §4.6 item 14 for a single-rate estimated history (the only estimated history the
+    // card builds): in radial flow the response to a history twice as long, differentiated
+    // with the assumed time function, changes by Δt/(2·tp + Δt). Evaluated at the end of
+    // the IARF window (the largest change inside it); > maxDerivPct (2 %) → sensitive (KC1).
+    function historyCheck(spec, iarf, AI) {
+        var h = spec && spec.history;
+        var out = { estimated: !!(h && h.estimated), tPrepend_h: h ? fin(h.tPrepend_h) : null, dDerivPct: null, sensitive: false, ev: ['R5'] };
+        if (!out.estimated) return out;
+        var maxPct = (AI && AI.DEFAULTS && AI.DEFAULTS.history && isNum(AI.DEFAULTS.history.maxDerivPct)) ? AI.DEFAULTS.history.maxDerivPct : 2;
+        var tp = h.tPrepend_h, dt1 = iarf && iarf.found ? num(iarf.dt1_h) : null;
+        if (!pos(tp) || !pos(dt1)) return out;
+        out.dDerivPct = 100 * dt1 / (2 * tp + dt1);
+        out.sensitive = out.dDerivPct > maxPct;
+        return out;
+    }
+
+    // C2 with gas pseudo-time: adata.t = t_a and adata.tReal = the real Δt, sample for sample.
+    function hasRealTime(adata) {
+        return !!(adata && adata.pseudoTime && adata.tReal && adata.t && adata.tReal.length === adata.t.length);
+    }
+    // Real shut-in Δt → PRiSM's analysis time (pseudo-time t_a when it is on): log-log
+    // interpolation along (adata.tReal, adata.t), both ascending. null outside the data.
+    function toPrismTime(adata, dtReal) {
+        if (!hasRealTime(adata)) return pos(dtReal) ? dtReal : null;
+        var R = toArr(adata.tReal), A = toArr(adata.t);
+        if (!pos(dtReal) || R.length < 2) return null;
+        if (dtReal < R[0] * (1 - 1e-9) || dtReal > R[R.length - 1] * (1 + 1e-9)) return null;
+        for (var i = 1; i < R.length; i++) {
+            if (R[i] >= dtReal) {
+                var r0 = R[i - 1], r1 = R[i], a0 = A[i - 1], a1 = A[i];
+                if (!pos(r0) || !pos(r1) || !pos(a0) || !pos(a1) || !(r1 > r0)) return dtReal <= r0 ? fin(a0) : fin(a1);
+                var u = (Math.log(dtReal) - Math.log(r0)) / (Math.log(r1) - Math.log(r0));
+                return fin(Math.exp(Math.log(a0) + Math.max(0, Math.min(1, u)) * (Math.log(a1) - Math.log(a0))));
+            }
+        }
+        return fin(A[A.length - 1]);
+    }
+
+    // Gas Δp_skin (plan §4.6 item 13): Δm_S = 0.8686·m·S′ with m = 1637·q·T_R/(k·h)
+    // (so Δm_S = 1422·q·T_R·S′/(k·h), psi²/cp), converted to psi at the flowing
+    // pressure with PRiSM's m(p) table: Δp_skin = p(m(pwf) + Δm_S) − pwf. null when the
+    // table or an input is missing (the card then does not show Δp_skin or FE).
+    function gasDpSkin(adata, well, k, S, q, pwf) {
+        var spec = adata && adata.mpSpec;
+        if (!spec || typeof G.PRiSM_mpTable !== 'function') return null;
+        var TF = num(spec.T_F);
+        if (!isNum(TF)) TF = num(well && well.T_F);
+        var h = num(well && well.h);
+        if (!isNum(TF) || !pos(k) || !pos(h) || !pos(q) || !isNum(S) || !pos(pwf)) return null;
+        var tbl = null;
+        try { tbl = G.PRiSM_mpTable(spec); } catch (e) { tbl = null; }
+        if (!tbl || typeof tbl.mOf !== 'function' || typeof tbl.pOf !== 'function') return null;
+        var dm = 1422 * q * (TF + 459.67) * S / (k * h);
+        var m0 = tbl.mOf(pwf);
+        if (!isNum(m0) || !(m0 + dm > 0)) return null;
+        var p1 = tbl.pOf(m0 + dm);
+        return isNum(p1) ? fin(p1 - pwf) : null;
+    }
+
+    // PRiSM C4 fit → a ModelFit-like object for the engine (homogeneous base for
+    // the storage/IARF checks; the engine key when the model is in its set).
+    function matchFromFit(fit, engineKey) {
+        if (!fit || !fit.phys) return null;
+        var ph = fit.phys, pr = fit.params || {};
+        var k = num(ph.k), S = isNum(num(ph.S)) ? num(ph.S) : num(pr.S), C = num(ph.C);
+        if (!pos(k) || !isNum(S)) return null;
+        var ci = fit.ci95 || {};
+        function se(key) {
+            var c = ci[key];
+            return (c && isNum(c[0]) && isNum(c[1])) ? Math.abs(c[1] - c[0]) / (2 * 1.96) : null;
+        }
+        function ci95(key) { var c = ci[key]; return (c && isNum(c[0]) && isNum(c[1])) ? [c[0], c[1]] : null; }
+        var params = {};
+        Object.keys(pr).forEach(function (kk) { var v = pr[kk]; if (isNum(v) || typeof v === 'string' || typeof v === 'boolean') params[kk] = v; });
+        return {
+            key: engineKey || 'homogeneous', base: fit.modelKey || 'homogeneous', ok: true, converged: fit.converged !== false,
+            stopReason: 'prism', iterations: 0, slices: 0, nEval: 0,
+            phys: { k: k, S: S, C: pos(C) ? C : null }, params: params,
+            se: { k: se('k'), S: se('S'), C: se('C') }, ci95: { k: ci95('k'), S: ci95('S'), C: ci95('C') },
+            corr: { CS: null, kS: null }, ssrLog: null, nDp: 0, rmseDp: null, bic: null, p: 3, eligible: true, why: [],
+            fullySeen: { status: 'n/a', value: null, bound: null, text: 'Not assessed for a PRiSM match.' }
+        };
+    }
+
+    // S_win from the shifted lines (bias-corrected in "bias explained" mode), plan §4.6 item 15.
+    function sWinOf(line, agreement) {
+        var sh = (line && Array.isArray(line.shifts)) ? line.shifts : [];
+        var bias = !!(agreement && agreement.mode === 'bias');
+        function c(S, bS) { return (bias && isNum(bS)) ? S - bS : S; }
+        var S0 = line ? c(line.S, agreement ? agreement.biasDS : null) : null;
+        if (sh.length >= 2 && isNum(sh[0].S) && isNum(sh[1].S)) return Math.abs(c(sh[0].S, sh[0].bS) - c(sh[1].S, sh[1].bS)) / 2;
+        if (sh.length === 1 && isNum(sh[0].S) && isNum(S0)) return Math.abs(c(sh[0].S, sh[0].bS) - S0);
+        return 0;
+    }
+    function rinvOf(AI, k, dt, well) {
+        if (AI && typeof AI.rinv === 'function') { try { var r = AI.rinv(k, dt, well); if (isNum(r)) return r; } catch (e) { /* formula */ } }
+        if (!pos(k) || !pos(dt) || !pos(well.phi) || !pos(well.mu) || !pos(well.ct)) return null;
+        return 0.0325 * Math.sqrt(k * dt / (well.phi * well.mu * well.ct));
+    }
+    function sigOf(adata, fit, well) {
+        var w = well || {};
+        return [adata && adata.hash, adata && adata.periodIndex, adata && adata.testType, adata && adata.n,
+                fit && fit.modelKey, fit && fit.timestamp, fit && fit.phys && fit.phys.k, fit && fit.phys && fit.phys.S,
+                w.q, w.B, w.mu, w.ct, w.h, w.phi, w.rw, w.pwf0].join('|');
+    }
+
+    // One-entry cache of the expensive engine steps (prepare, storage, IARF, line), keyed by
+    // the BuildupSpec itself and the engine functions in use: a fit-only change (or a second
+    // card copy, or the report) re-runs only the cheap parts. Results are never mutated
+    // (run() copies the line before it edits p*); a step that threw is not cached.
+    var _cache = { key: null, AI: null, fns: null, v: null };
+    function engineSteps(AI, spec) {
+        var key = null;
+        try { key = JSON.stringify(spec); } catch (e) { key = null; }
+        var fns = [AI.prepare, AI.storage, AI.iarf, AI.line];
+        if (key !== null && _cache.key === key && _cache.AI === AI &&
+            fns.every(function (f, i) { return f === _cache.fns[i]; })) return _cache.v;
+        var v = { prep: null, prepErr: null, storage: null, iarf: null, line: null, errors: [] };
+        var r = call('prepare', function () { return AI.prepare(spec); });
+        v.prep = r.v; v.prepErr = r.err;
+        if (v.prep && v.prep.ok !== false) {
+            if (typeof AI.storage === 'function') { r = call('storage', function () { return AI.storage(v.prep); }); v.storage = r.v; if (r.err) v.errors.push(r.err); }
+            r = call('iarf', function () { return AI.iarf(v.prep, {}); }); v.iarf = r.v; if (r.err) v.errors.push(r.err);
+            if (v.iarf && v.iarf.found) { r = call('line', function () { return AI.line(v.prep, v.iarf); }); v.line = r.v; if (r.err) v.errors.push(r.err); }
+        }
+        if (key !== null && !v.prepErr && !v.errors.length) _cache = { key: key, AI: AI, fns: fns, v: v };
+        return v;
+    }
+    function shallow(o) {
+        if (!o || typeof o !== 'object') return o;
+        var c = {};
+        for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) c[k] = o[k];
+        return c;
+    }
+
+    // Completion inputs (card; wts_prism_skincheck).
+    var LS_KEY = 'wts_prism_skincheck';
+    var COMP_DEFAULT = { on: false, hp_ft: null, htop_ft: 0, theta_deg: 0, kvlo: 0.1, kvhi: 1,
+                         perf: { on: false, spf: 4, lp_in: 12, rp_in: 0.2, phase_deg: 90 } };
+    function normComp(o) {
+        var c = JSON.parse(JSON.stringify(COMP_DEFAULT));
+        if (!o || typeof o !== 'object') return c;
+        c.on = !!o.on;
+        ['hp_ft', 'htop_ft', 'theta_deg', 'kvlo', 'kvhi'].forEach(function (k) { var v = num(o[k]); if (v != null) c[k] = v; });
+        if (o.perf && typeof o.perf === 'object') {
+            c.perf.on = !!o.perf.on;
+            ['spf', 'lp_in', 'rp_in', 'phase_deg'].forEach(function (k) { var v = num(o.perf[k]); if (v != null) c.perf[k] = v; });
+        }
+        return c;
+    }
+    function loadComp() {
+        try {
+            var ls = G.localStorage;
+            var raw = ls ? ls.getItem(LS_KEY) : null;
+            return normComp(raw ? JSON.parse(raw).completion : null);
+        } catch (e) { return normComp(null); }
+    }
+    function saveComp(c) {
+        var txt = JSON.stringify({ v: 1, completion: normComp(c) });
+        try {
+            if (typeof G.WTS_lsSet === 'function') { G.WTS_lsSet(LS_KEY, txt); return; }
+            if (G.localStorage) G.localStorage.setItem(LS_KEY, txt);
+        } catch (e) { /* storage optional */ }
+    }
+    function completionFor(c, h) {
+        c = normComp(c);
+        if (!c.on) return null;
+        return { hp_ft: pos(c.hp_ft) ? c.hp_ft : h, htop_ft: isNum(c.htop_ft) ? c.htop_ft : 0, theta_deg: isNum(c.theta_deg) ? c.theta_deg : 0,
+                 kvkh: [c.kvlo, c.kvhi],
+                 perf: c.perf.on ? { spf: c.perf.spf, lp_in: c.perf.lp_in, rp_in: c.perf.rp_in, phase_deg: c.perf.phase_deg } : null };
+    }
+
+    // run(opts {adata?, fit?, well?, completion?, cheld?}) → SkinCheck card model.
+    function run(opts) {
+        opts = opts || {};
+        var AI = AIns();
+        var m = {
+            ok: false, reason: '', version: SC.version, engine: engineReady(AI), indicative: false, testType: null,
+            sig: '', fitKey: null, engineKey: null, matchAvailable: false,
+            well: null, iarf: null, line: null, plateau: null, storage: null, reach: null, triggers: null, flags: [],
+            agreement: null, final: null, sErr: null, sensitivity: null, confidence: null, evidence: null,
+            products: null, mech: null, completion: null, cheld: null, cheldAvailable: false,
+            tpUnknown: false, pseudoTime: false, history: null, window: null, pbarSource: null,
+            rate: { status: 'n/a', source: 'measured', text: 'Entered or tabled rate: rate checks do not apply.' },
+            calibrated: false, notes: [], warnings: [], errors: []
+        };
+        var adata = opts.adata, well = opts.well, fit = opts.fit;
+        try {
+            if (!adata && typeof G.PRiSM_getAnalysisData === 'function') adata = G.PRiSM_getAnalysisData();
+            if (!well && typeof G.PRiSM_getWell === 'function') well = G.PRiSM_getWell();
+            if (fit === undefined && typeof G.PRiSM_getLastFit === 'function') fit = G.PRiSM_getLastFit();
+        } catch (e) { m.reason = 'PRiSM inputs could not be read.'; return m; }
+        well = well || {};
+        if (fit && fit.kind === 'rate') fit = null;
+        m.sig = sigOf(adata, fit, well);
+        m.completion = normComp(opts.completion !== undefined ? opts.completion : loadComp());
+        m.well = { q: fin(well.q), B: fin(well.B), mu: fin(well.mu), ct: fin(well.ct), h: fin(well.h), phi: fin(well.phi), rw: fin(well.rw), fluid: well.fluid || 'oil' };
+        m.notes.push(CHELD_NOTE);
+        if (!adata || !adata.ok) { m.reason = (adata && adata.reason) || 'No analysis data.'; return m; }
+        m.testType = adata.testType;
+        var missing = ['q', 'B', 'mu', 'ct', 'h', 'phi', 'rw'].filter(function (k) { return !pos(well[k]); });
+        if (missing.length) { m.reason = 'Well inputs missing: ' + missing.join(', ') + '. Enter them in Well & Test.'; return m; }
+        if (fit) {
+            m.fitKey = fit.modelKey || null;
+            m.engineKey = ENGINE_KEYS[m.fitKey] || null;
+        }
+        if (!m.engine) { m.reason = 'The automatic interpretation engine is not loaded in this build.'; return m; }
+        var sp = specFromAdata(adata, well);
+        if (!sp.ok) { m.reason = sp.reason; return m; }
+        m.indicative = sp.indicative;
+        m.tpUnknown = sp.tpUnknown;
+        m.pseudoTime = sp.pseudoTime;
+        var spec = sp.spec;
+        var es = engineSteps(AI, spec);
+        var r;
+        var prep = es.prep;
+        if (!prep || prep.ok === false) {
+            m.reason = (prep && prep.errors && prep.errors[0]) || es.prepErr || 'The analysed period could not be prepared for the automatic checks.';
+            return m;
+        }
+        m.ok = true;
+        var match = matchFromFit(fit, 'homogeneous');
+        m.matchAvailable = !!match;
+        if (fit && !match) m.warnings.push(warning('noPhys', 'info', 'The current fit has no physical k and S: line vs match not checked.'));
+        if (fit && fit.stale) m.warnings.push(warning('stale', 'warn', 'The fit is for another dataset or model: re-run the fit.'));
+        if (sp.tpUnknown) {
+            m.warnings.push(warning('tpUnknown', 'warn', 'Producing time unknown: the checks assume ' + sig(spec.history.tPrepend_h) +
+                ' h at the entered rate (30 days or 10 × the shut-in, the longer). p* is not shown and the flow efficiency uses pi. Enter tp or the rate history in Well & Test.'));
+        }
+        if (sp.indicative) m.warnings.push(warning('indicative', 'info', 'Drawdown or injection period: checks run as for a build-up after a long producing time; indicative only, p* not shown.'));
+        m.storage = es.storage;
+        m.iarf = es.iarf;
+        m.line = es.line ? shallow(es.line) : null;      // a copy: the cached line is never edited
+        es.errors.forEach(function (e) { m.errors.push(e); });
+        // p*: not shown for drawdowns/injections (indicative) nor with an estimated producing
+        // time (D13: only the range, when the engine gives one, and no rule uses p*).
+        if (m.line && sp.indicative) { m.line.pStar = null; m.line.pStarRange = null; }
+        if (m.line && sp.tpUnknown) {
+            m.line.pStar = null;
+            var pr0 = m.line.pStarRange;
+            if (!(pr0 && isNum(pr0.lo) && isNum(pr0.hi)) && typeof AI.pStarRange === 'function') {
+                r = call('pStarRange', function () { return AI.pStarRange(prep, es.line, spec); });
+                pr0 = r.v; if (r.err) m.errors.push(r.err);
+            }
+            m.line.pStarRange = (pr0 && isNum(pr0.lo) && isNum(pr0.hi)) ? { lo: Math.min(pr0.lo, pr0.hi), hi: Math.max(pr0.lo, pr0.hi) } : null;
+        }
+        // History sensitivity (D13, plan §4.6 item 14) → KC1 through the evidence vector.
+        m.history = historyCheck(spec, m.iarf, AI);
+        if (m.history.estimated && isNum(m.history.dDerivPct)) {
+            m.notes.push('Producing time estimated: doubling it changes the derivative at the end of the IARF window by ' + fmt(m.history.dDerivPct, 1) +
+                         ' %' + (m.history.sensitive ? ' (more than 2 %: k/S label capped at medium).' : ' (within 2 %).'));
+        }
+        // "Use this window": the IARF window on PRiSM's own time axis (pseudo-time when on).
+        m.window = null;
+        if (m.iarf && m.iarf.found) {
+            var w0 = toPrismTime(adata, m.iarf.dt0_h), w1 = toPrismTime(adata, m.iarf.dt1_h);
+            m.window = (pos(w0) && pos(w1) && w1 > w0) ? { t0: w0, t1: w1, pseudoTime: !!sp.pseudoTime } : null;
+            if (!m.window && sp.pseudoTime) m.notes.push('The IARF window could not be converted to PRiSM\'s pseudo-time axis: "Use this window" is not available.');
+            else if (sp.pseudoTime) m.notes.push('Gas pseudo-time is on: the window is found on real Δt and passed to the straight-line panel in pseudo-time.');
+        }
+        m.plateau = m.line && m.line.plateauCheck ? m.line.plateauCheck : null;
+        // Homogeneous k, S, C for the numeric reach: the match, else the line with C from storage.
+        var hom = match;
+        if (!hom && m.line) {
+            var Cs = m.storage && pos(m.storage.C_us) ? m.storage.C_us : null;
+            hom = matchFromFit({ modelKey: 'homogeneous', phys: { k: m.line.k, S: m.line.S, C: Cs } }, 'homogeneous');
+        }
+        if (hom && typeof AI.reach === 'function') { r = call('reach', function () { return AI.reach(prep, hom); }); m.reach = r.v; if (r.err) m.errors.push(r.err); }
+        if (typeof AI.triggers === 'function') {
+            r = call('triggers', function () { return AI.triggers(prep, m.iarf, m.reach); });
+            if (r.v) { m.triggers = r.v.triggers || null; m.flags = Array.isArray(r.v.flags) ? r.v.flags : []; }
+            if (r.err) m.errors.push(r.err);
+        }
+        // Line vs match (DEFAULTS.agree, D9). Engine bias check for its own model set.
+        var agreeDef = (AI.DEFAULTS && AI.DEFAULTS.agree) || { kPct: 5, dS: 0.5 };
+        if (m.line && match) {
+            if (m.engineKey && typeof AI.agreement === 'function') {
+                var em = matchFromFit(fit, m.engineKey);
+                r = call('agreement', function () { return AI.agreement(m.line, em, prep); });
+                m.agreement = r.v; if (r.err) m.errors.push(r.err);
+            }
+            if (!m.agreement) {
+                var dk = (m.line.k / match.phys.k - 1) * 100, dS = m.line.S - match.phys.S;
+                var ok = Math.abs(dk) <= agreeDef.kPct && Math.abs(dS) <= agreeDef.dS;
+                m.agreement = { agree: ok, mode: ok ? 'raw' : 'none', dkPct: dk, dS: dS, biasKPct: null, biasDS: null, ev: ['A1'] };
+                if (!m.engineKey) m.notes.push('The bias check of the line runs for homogeneous, sealing-fault, composite and closed-circle matches; this match is compared raw.');
+            }
+        }
+        // Final k, S: the match when line and match agree, else the line, else the match.
+        var agreeOK = !!(m.agreement && m.agreement.agree);
+        if (match && (agreeOK || !m.line)) m.final = { k: match.phys.k, S: match.phys.S, C: match.phys.C, source: m.line ? 'match' : 'model' };
+        else if (m.line) m.final = { k: m.line.k, S: m.line.S, C: match ? match.phys.C : (m.storage ? fin(m.storage.C_us) : null), source: 'line' };
+        if (m.final) { m.final.kh = m.final.k * well.h; m.final.m = 162.6 * spec.Dq * well.B * well.mu / m.final.kh; }
+        // Sensitivity (analytic, plan §4.6 item 16).
+        if (m.final && typeof AI.sensitivity === 'function') {
+            r = call('sensitivity', function () { return AI.sensitivity(m.final, spec.well, { req: REQ_RANGES, typ: TYP_RANGES }); });
+            m.sensitivity = r.v; if (r.err) m.errors.push(r.err);
+        }
+        // C-held result from a user run on the same inputs.
+        var ch = opts.cheld && opts.cheld.sig === m.sig ? opts.cheld.result : null;
+        m.cheld = ch || null;
+        m.cheldAvailable = typeof AI.cHeldJob === 'function' && typeof AI.drive === 'function' && !!hom;
+        // S_err (D10, plan §4.6 item 15).
+        var cal = G.PRiSM_autoInterpCal || null;
+        m.calibrated = !!(cal && cal.calibrated);
+        var floor = (cal && cal.calibrated && cal.thresholds && isNum(cal.thresholds.sErrFloor)) ? cal.thresholds.sErrFloor
+                  : ((AI.DEFAULTS && AI.DEFAULTS.sErr && isNum(AI.DEFAULTS.sErr.floor)) ? AI.DEFAULTS.sErr.floor : 0.2);
+        var mAbs = m.line && isNum(m.line.m) ? Math.abs(m.line.m) : (m.final ? m.final.m : null);
+        if (m.final && typeof AI.sErr === 'function') {
+            var parts = {
+                mode: m.line ? 'line' : 'model',
+                seS: match && isNum(match.se.S) ? match.se.S : 0,
+                sLine: m.line ? m.line.S : null, sMatch: match ? match.phys.S : (m.line ? m.line.S : null),
+                sWin: m.line ? sWinOf(m.line, m.agreement) : 0,
+                sTc: (pos(mAbs) ? 1.1513 * Math.abs(spec.dpdt_flow) * spec.dtc_h / mAbs : 0),
+                sPwf: (pos(mAbs) ? 1.1513 * spec.pwf0SE / mAbs : 0),
+                sK: 0, sC: ch && isNum(ch.S_C) ? ch.S_C : 0,
+                sSens: m.sensitivity && isNum(m.sensitivity.sSens) ? m.sensitivity.sSens : 0,
+                floor: floor
+            };
+            r = call('sErr', function () { return AI.sErr(parts); });
+            m.sErr = r.v; if (r.err) m.errors.push(r.err);
+            m.sErrParts = parts;
+            if (sp.pwfTrend) m.notes.push('pwf at shut-in is a trend value (extrapolated or first sample): S_pwf is included in S_err.');
+        }
+        // Evidence vector and labels (§5.1); PRiSM's rate → R3/R4 'n/a' (no KC4).
+        if (m.iarf && typeof AI.confidence === 'function') {
+            var iw = m.iarf;
+            var dte = prep.bins && Array.isArray(prep.bins.dte) && prep.bins.dte.length ? prep.bins.dte[prep.bins.dte.length - 1] : sp.dtEnd_h;
+            var flags = m.flags.map(function (f) { return f.code; });
+            var distractor = m.flags.some(function (f) { return DISTRACTORS[f.code] && (!iw.found || f.dt0_h <= iw.dt1_h); });
+            var humpAfter = m.flags.some(function (f) { return HUMPS[f.code] && iw.found && f.dt1_h >= iw.dt0_h; });
+            var rejBoth = !!(ch && Array.isArray(ch.refits) && ch.refits.filter(function (x) { return (x.f === 0.8 || x.f === 1.25) && x.rejected; }).length >= 2);
+            var outside = false;
+            if (cal && cal.envelope && m.final) {
+                var env = cal.envelope;
+                if (env.k && (m.final.k < env.k[0] || m.final.k > env.k[1])) outside = true;
+                if (env.S && (m.final.S < env.S[0] || m.final.S > env.S[1])) outside = true;
+                if (env.dtEnd_h && (sp.dtEnd_h < env.dtEnd_h[0] || sp.dtEnd_h > env.dtEnd_h[1])) outside = true;
+            }
+            m.evidence = {
+                grade: iw.grade, noiseWidened: !!iw.noiseWidened, span: fin(iw.cycles) || 0, pointSkinSpread: iw.pointSkin ? fin(iw.pointSkin.spread) || 0 : 0,
+                agree: agreeOK, agreeMode: m.agreement ? m.agreement.mode : 'none',
+                dkPct: m.agreement ? fin(m.agreement.dkPct) : null, dS: m.agreement ? fin(m.agreement.dS) : null,
+                sErr: m.sErr ? fin(m.sErr.value) : null, sErrMode: m.sErr ? m.sErr.mode : (m.line ? 'line' : 'model'),
+                unitSlope: !!(m.storage && m.storage.unitSlope), cheldRejectedBoth: rejBoth,
+                rateSource: spec.rateQC.source, r3: null, r3Status: 'n/a', r4: null, r4Status: 'n/a', dqKnown: true, fRate: 1,
+                equalRateAssumed: false, snrD: fin(prep.snrD), rDrift: fin(prep.rDrift), rTide: fin(prep.rTide), tideRemoved: !!prep.tideRemoved,
+                flags: flags, distractorAtOrBeforeIarf: distractor, humpAfterIarf: humpAfter,
+                dtEnd_h: sp.dtEnd_h, dteEnd_h: isNum(dte) ? dte : sp.dtEnd_h,
+                t10_h: m.reach ? fin(m.reach.t10_h) : null, t5_h: m.reach ? fin(m.reach.t5_h) : null,
+                historySensitive: !!(m.history && m.history.sensitive), outsideEnvelope: outside, kHeld: false, kHeldConverged: null, kHeldCorrCS: null, kHeldRmsRatio: null,
+                partialSuspect: null, windowLevelInconsistent: null,
+                chosenKey: m.engineKey || 'homogeneous', chosenFullySeen: 'n/a',
+                triggers: m.triggers && Array.isArray(m.triggers.fired) ? m.triggers.fired : [],
+                dBicChosen: null, dBicNext: null, boundaryDepends: null
+            };
+            r = call('confidence', function () { return AI.confidence(m.evidence, cal); });
+            m.confidence = r.v; if (r.err) m.errors.push(r.err);
+            if (!m.engineKey && m.confidence) m.notes.push('The model label applies to the automatic model set; for this PRiSM model read the k/S label only.');
+        }
+        // Skin products (T7, T8): r_e from r_inv at the end of the test → bounds.
+        // p̄ for FE: p* from a build-up with a known history (never an estimated one), else pi.
+        // pwf: pwf0 for a shut-in; for a drawdown / injection from pi the last sample of the
+        // period (its lowest pressure for a drawdown, its highest for an injection).
+        if (m.final) {
+            var dtE = sp.dtEnd_h;
+            var re = rinvOf(AI, m.final.k, dtE, well);
+            var pbar = null, pwf = null;
+            if (sp.shut) {
+                pbar = (!sp.tpUnknown && m.line && isNum(m.line.pStar)) ? m.line.pStar : (pos(well.pi) ? well.pi : null);
+                pwf = spec.pwf0;
+            } else if (pos(well.pi)) {
+                var PP = toArr(adata.p).filter(isNum);
+                pbar = well.pi;
+                pwf = PP.length ? PP[PP.length - 1] : null;
+            }
+            m.pbarSource = pbar == null ? null : ((sp.shut && !sp.tpUnknown && m.line && isNum(m.line.pStar)) ? 'pStar' : 'pi');
+            var gas = spec.well.fluid === 'gas', dpGas = null;
+            if (gas) dpGas = gasDpSkin(adata, well, m.final.k, m.final.S, spec.Dq, pwf);
+            m.products = products({ S: m.final.S, k: m.final.k, h: well.h, B: well.B, mu: well.mu, q: well.q, Dq: spec.Dq,
+                                    rw: well.rw, re_ft: re, reSource: 'rinv', pbar: pbar, pwf: pwf, dpSkin_psi: dpGas });
+            if (gas && !isNum(dpGas)) {
+                // The liquid formula does not apply to gas: hide Δp_skin and FE rather than mislead.
+                m.products.dpSkin_psi = null; m.products.FE = null; m.products.DR = null; m.products.dpSkinSource = null;
+                m.notes.push('Gas: Δp skin and flow efficiency need the m(p) table (gas gravity and temperature in Well & Test); not shown.');
+            } else if (gas) {
+                m.notes.push('Gas: Δp skin is Δm_S = 0.8686·m·S′ converted to psi through the m(p) table at pwf; S′ includes D·q.');
+            }
+            m.rinv_ft = fin(re);
+        }
+        // Mechanical skin (both bases) with the kv/kh range.
+        if (m.final) {
+            m.mech = mechanicalSkin({ S_total: m.final.S, Serr: m.sErr ? m.sErr.value : null, h: well.h, rw: well.rw,
+                                      completion: completionFor(m.completion, well.h), D: null, q: null });
+            if (fluidOf(well, adata) === 'gas' && m.mech.available) m.notes.push('Gas: the skin includes D·q (rate-dependent skin is not removed here).');
+        }
+        if (cal && !cal.calibrated) m.notes.push('Labels not yet calibrated: every label is capped at medium.');
+        return m;
+    }
+
+    // =========================================================================
+    // SECTION 7 — THE CARD (Tab 6 panel, Tools drawer)
+    // =========================================================================
+    // hosts: the elements the card was painted into (a Tab-6 body, the Tools drawer panel …);
+    // jobHost: the host whose button started the running C-held job.
+    var _ui = { model: null, cheld: null, running: false, cancel: false, progress: '', sig: '', hosts: [], jobHost: null };
+    var CSS_ID = 'prism_skc_css';
+    var CSS = '.prism-skc{display:grid;gap:10px;min-width:0}' +
+        '.prism-skc-sec{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;min-width:0}' +
+        '.prism-skc-sec h4{margin:0 0 6px;font-size:13px;color:var(--text)}' +
+        '.prism-skc-kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:6px}' +
+        '.prism-skc-kv div{background:var(--bg1);border:1px solid var(--border);border-radius:6px;padding:5px 8px;min-width:0}' +
+        '.prism-skc-kv span{display:block;font-size:11px;color:var(--text2)}' +
+        '.prism-skc-kv b{font-size:13px;color:var(--text);word-break:break-word}' +
+        '.prism-skc-note{font-size:12px;color:var(--text2);margin:4px 0}' +
+        '.prism-skc-warn{font-size:12px;color:var(--yellow);margin:4px 0}' +
+        '.prism-skc-verdict{font-size:13px;font-weight:600;margin:2px 0 6px}' +
+        '.prism-skc-tw{overflow-x:auto;max-width:100%;-webkit-overflow-scrolling:touch}' +
+        '.prism-skc table{border-collapse:collapse;width:100%;font-size:12px}' +
+        '.prism-skc th,.prism-skc td{border-bottom:1px solid var(--border);padding:4px 6px;text-align:left;vertical-align:top}' +
+        '.prism-skc-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:6px}' +
+        '.prism-skc-btn{appearance:none;background:var(--bg3,var(--bg2));border:1px solid var(--border);color:var(--text);border-radius:6px;padding:7px 11px;font:inherit;font-size:12px;cursor:pointer;min-height:34px;touch-action:manipulation}' +
+        '.prism-skc-btn[disabled]{opacity:.55;cursor:default}' +
+        '.prism-skc-f{display:flex;flex-direction:column;gap:2px;min-width:110px;flex:1 1 110px}' +
+        '.prism-skc-f label{font-size:11px;color:var(--text2)}' +
+        '.prism-skc-f input,.prism-skc-f select{width:100%;box-sizing:border-box;background:var(--bg1);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:5px 6px;font-size:12px}';
+
+    function esc(s) {
+        return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+    function sig(v, n) { return isNum(v) ? String(+v.toPrecision(n || 3)) : '—'; }
+    function kvHTML(pairs) {
+        return '<div class="prism-skc-kv">' + pairs.map(function (p) { return '<div><span>' + esc(p[0]) + '</span><b>' + esc(p[1]) + '</b></div>'; }).join('') + '</div>';
+    }
+    function tableHTML(head, rows) {
+        return '<div class="prism-skc-tw"><table><thead><tr>' + head.map(function (h) { return '<th>' + esc(h) + '</th>'; }).join('') +
+            '</tr></thead><tbody>' + rows.map(function (r) { return '<tr>' + r.map(function (c) { return '<td>' + esc(c) + '</td>'; }).join('') + '</tr>'; }).join('') +
+            '</tbody></table></div>';
+    }
+    function sec(id, title, body) { return '<div class="prism-skc-sec" id="' + id + '"><h4>' + esc(title) + '</h4>' + body + '</div>'; }
+    function lvl(v) { return v === 'high' || v === 'medium' || v === 'low' ? v : '—'; }
+    function verdictText(c) {
+        if (!c) return 'Confidence: not assessed';
+        return 'Confidence: ' + lvl(c.ks) + ' (k/S) · ' + lvl(c.headline) + ' (test)';
+    }
+    function rateText(c) {
+        if (!c || !c.rates || !c.rates.ks) return '';
+        var r = c.rates.ks;
+        return 'k and S right in ' + fmt(100 * r.rate, 0) + ' % of calibration cases labelled ' + lvl(c.ks) + ' (' + fmt(100 * r.lo, 0) + '–' + fmt(100 * r.hi, 0) + ' %).';
+    }
+    var GRADE_TEXT = { good: 'good', fair: 'fair', none: 'none' };
+    function iarfText(iw) {
+        if (!iw) return 'not assessed';
+        if (!iw.found) return 'none (' + (iw.status === 'tooShort' ? 'test too short' : 'expected but not found') + ')';
+        return (GRADE_TEXT[iw.grade] || iw.grade) + (iw.noiseWidened ? ' (noise-widened)' : '') + ', ' + fmt(iw.cycles, 2) + ' cycle';
+    }
+    function lineSummary(l) { return l ? 'k ' + sig(l.k) + ' md, S ' + fmt(l.S, 2) : '—'; }
+    function agreeText(a) {
+        if (!a) return 'not checked';
+        var t = a.agree ? (a.mode === 'bias' ? 'agree (bias explained)' : 'agree') : 'disagree';
+        return t + ': Δk ' + fmt(a.dkPct, 1) + ' %, ΔS ' + fmt(a.dS, 2);
+    }
+    function plateauText(pc) {
+        if (!pc) return 'not checked';
+        return (pc.pass ? 'pass' : 'fail') + ': kh ' + fmt(pc.khDiffPct, 1) + ' %, ΔS ' + fmt(pc.dS, 2);
+    }
+    function reachText(r) {
+        if (!r) return '—';
+        var s = 'fair ' + sig(r.fair_h) + ' h, good ' + sig(r.good_h) + ' h (equivalent time)';
+        if (r.reachable && isNum(r.fairShut_h)) s += '; shut-in ' + sig(r.fairShut_h) + ' h / ' + (isNum(r.goodShut_h) ? sig(r.goodShut_h) + ' h' : '—');
+        return s;
+    }
+    var DRIVER = { floor: 'floor', se: 'fit standard error', lineMatch: 'line vs match', window: 'window shift', tc: 'closing time', pwf: 'pwf at shut-in', kHeld: 'held k' };
+    var INPUT_NAME = { h: 'h', phi: 'φ', ct: 'ct', rw: 'rw', B: 'B', mu: 'μ', q: 'q' };
+
+    function compInputsHTML(c, verified) {
+        var on = c.on ? ' checked' : '';
+        var p = c.perf;
+        function f(id, label, val, step) {
+            return '<div class="prism-skc-f"><label for="' + id + '">' + esc(label) + '</label><input id="' + id + '" type="number" inputmode="decimal" step="' + step + '" value="' + esc(isNum(val) ? val : '') + '"></div>';
+        }
+        var h = '<div class="prism-skc-row"><label><input type="checkbox" id="prism_skc_cmp_on"' + on + '> Completion data</label></div>';
+        h += '<div class="prism-skc-row">' +
+            f('prism_skc_hp', 'Open interval h_w (ft, blank = h)', c.hp_ft, 'any') +
+            f('prism_skc_htop', 'Top of layer to interval (ft)', c.htop_ft, 'any') +
+            f('prism_skc_theta', 'Deviation θ (°, ≤ 75)', c.theta_deg, 'any') +
+            f('prism_skc_kvlo', 'kv/kh low', c.kvlo, 'any') +
+            f('prism_skc_kvhi', 'kv/kh high', c.kvhi, 'any') + '</div>';
+        if (verified) {
+            var opt = [0, 180, 120, 90, 60, 45].map(function (v) { return '<option value="' + v + '"' + (p.phase_deg === v ? ' selected' : '') + '>' + v + '°</option>'; }).join('');
+            h += '<div class="prism-skc-row"><label><input type="checkbox" id="prism_skc_perf_on"' + (p.on ? ' checked' : '') + '> Perforation data</label></div>' +
+                '<div class="prism-skc-row">' + f('prism_skc_spf', 'Shots per foot', p.spf, 'any') + f('prism_skc_lp', 'Perforation length (in)', p.lp_in, 'any') +
+                f('prism_skc_rp', 'Perforation radius (in)', p.rp_in, 'any') +
+                '<div class="prism-skc-f"><label for="prism_skc_phase">Phasing</label><select id="prism_skc_phase">' + opt + '</select></div></div>';
+        } else {
+            h += '<div class="prism-skc-note">Perforation skin not split: the perforation-skin coefficients are not yet verified.</div>';
+        }
+        return h;
+    }
+    function mechHTML(m) {
+        var x = m.mech;
+        if (!x) return '<div class="prism-skc-note">Needs a skin value from the line or the match.</div>';
+        if (!x.available) {
+            return '<div class="prism-skc-note">' + esc(x.reason || 'Not split.') + '</div>' +
+                x.validity.map(function (v) { return '<div class="prism-skc-warn">⚠ ' + esc(v.text) + '</div>'; }).join('');
+        }
+        var pairs = [
+            ['S total', fmt(m.final.S, 2)],
+            ['Geometric pseudo-skin', fmt(x.S_geo, 2) + ' (' + fmt(x.S_geo_lo, 2) + ' to ' + fmt(x.S_geo_hi, 2) + ')'],
+            ['  partial penetration', fmt(x.parts.pp, 2)],
+            ['  deviation', fmt(x.parts.theta, 2)],
+            ['S_mech (pressure-drop basis)', fmt(x.S_mech, 2) + ' ± ' + fmt(x.S_mech_err, 2)],
+            ['S_d local (open interval)', fmt(x.S_d_local, 2)],
+            ['kv/kh range', fmt(x.kvkh[0], 2) + ' to ' + fmt(x.kvkh[1], 2)]
+        ];
+        if (isNum(x.parts.perf)) pairs.splice(4, 0, ['  perforations', fmt(x.parts.perf, 2)]);
+        return kvHTML(pairs) + x.validity.map(function (v) { return '<div class="prism-skc-warn">⚠ ' + esc(v.text) + '</div>'; }).join('');
+    }
+    function cheldHTML(m) {
+        var h = '';
+        var ch = m.cheld;
+        if (ch) {
+            if (!ch.triggered && (!ch.refits || !ch.refits.length)) h += '<div class="prism-skc-note">C-held refits not needed: the unit slope was sampled.</div>';
+            else {
+                h += kvHTML([['C range (bbl/psi)', sig(ch.range.C[0]) + ' to ' + sig(ch.range.C[1])], ['k range (md)', sig(ch.range.k[0]) + ' to ' + sig(ch.range.k[1])],
+                             ['S range', fmt(ch.range.S[0], 2) + ' to ' + fmt(ch.range.S[1], 2)], ['S_C (half range)', fmt(ch.S_C, 2)]]);
+                h += tableHTML(['C × f', 'k (md)', 'S', 'C (bbl/psi)', 'ΔBIC', 'Rejected'],
+                    (ch.refits || []).map(function (x) { return [fmt(x.f, 2), sig(x.k), fmt(x.S, 2), sig(x.C), fmt(x.dBic, 1), x.rejected ? 'yes' : 'no']; }));
+            }
+        }
+        var dis = (!m.cheldAvailable || _ui.running) ? ' disabled' : '';
+        h += '<div class="prism-skc-row"><button type="button" class="prism-skc-btn" id="prism_skc_cheld"' + dis + '>Run C-held refits</button>' +
+             '<button type="button" class="prism-skc-btn" id="prism_skc_cheld_cancel"' + (_ui.running ? '' : ' disabled') + '>Cancel</button>' +
+             '<span class="prism-skc-note" id="prism_skc_cheld_status" role="status" aria-live="polite">' + esc(_ui.progress) + '</span></div>';
+        if (!m.cheldAvailable) h += '<div class="prism-skc-note">C-held refits need the automatic engine and k, S and C from a match or the line.</div>';
+        return h;
+    }
+
+    function cardHTML(m) {
+        if (!m.ok) {
+            return '<div id="prism_skc_root" class="prism-skc"><div class="prism-skc-note">' + esc(m.reason || 'The skin check is not available.') + '</div>' +
+                   '<div class="prism-skc-note">' + esc(CHELD_NOTE) + '</div></div>';
+        }
+        var h = '<div id="prism_skc_root" class="prism-skc">';
+        var c = m.confidence;
+        h += '<div class="prism-skc-sec" id="prism_skc_head"><div class="prism-skc-verdict">' + esc(verdictText(c)) + '</div>' +
+             (rateText(c) ? '<div class="prism-skc-note">' + esc(rateText(c)) + '</div>' : '') +
+             m.notes.map(function (n) { return '<div class="prism-skc-note">' + esc(n) + '</div>'; }).join('') +
+             m.warnings.map(function (w) { return '<div class="prism-skc-warn">⚠ ' + esc(w.text) + '</div>'; }).join('') +
+             (m.errors.length ? '<div class="prism-skc-warn">⚠ Not available in this build: ' + esc(m.errors.join(', ')) + '.</div>' : '') + '</div>';
+        // IARF window.
+        var iw = m.iarf;
+        var ip = [['Grade', iarfText(iw)]];
+        if (iw && iw.found) {
+            ip.push(['Window Δt', sig(iw.dt0_h) + ' to ' + sig(iw.dt1_h) + ' h']);
+            ip.push(['Derivative level', sig(iw.level_psi, 4) + ' psi']);
+            if (iw.longest) ip.push(['Longest qualifying window', sig(iw.longest.dt0_h) + ' to ' + sig(iw.longest.dt1_h) + ' h (' + fmt(iw.longest.cycles, 2) + ' cycle)']);
+            if (iw.pointSkin) ip.push(['Point-skin spread', fmt(iw.pointSkin.spread, 2)]);
+        }
+        h += sec('prism_skc_iarf', 'Automatic IARF window (L = 0.1 cycle)', kvHTML(ip) +
+            (iw && iw.reason ? '<div class="prism-skc-note">' + esc(iw.reason) + '</div>' : '') +
+            '<div class="prism-skc-row"><button type="button" class="prism-skc-btn" id="prism_skc_usewin"' + (m.window ? '' : ' disabled') +
+            '>Use this window in the straight-line panel</button></div>');
+        // Line.
+        var l = m.line;
+        var linePairs = l ? [
+            ['Method', l.method === 'horner' ? 'Horner' : 'Superposition'], ['k', sig(l.k) + ' md'], ['kh', sig(l.kh) + ' md·ft'], ['S', fmt(l.S, 2)],
+            ['m', sig(Math.abs(l.m), 4) + ' psi/cycle'],
+            ['p*', isNum(l.pStar) ? fmt(l.pStar, 1) + ' psia' : (m.tpUnknown ? 'not shown (producing time estimated)' : (m.indicative ? 'not shown (not a shut-in)' : '—'))],
+            ['R²', fmt(l.r2, 4)]
+        ] : null;
+        if (l && l.pStarRange && isNum(l.pStarRange.lo) && isNum(l.pStarRange.hi)) {
+            linePairs.splice(6, 0, ['p* range (estimated history)', fmt(l.pStarRange.lo, 1) + ' to ' + fmt(l.pStarRange.hi, 1) + ' psia']);
+        }
+        h += sec('prism_skc_line', 'Straight line through the window', l ? kvHTML(linePairs) : '<div class="prism-skc-note">No line: no IARF window.</div>');
+        // Agreement.
+        h += sec('prism_skc_agree', 'Line vs match', kvHTML([
+            ['Line vs match', agreeText(m.agreement)],
+            ['Match', m.matchAvailable && m.final ? (m.fitKey || 'fit') : 'no match'],
+            ['Line vs derivative plateau (sanity check)', plateauText(m.plateau)]
+        ]) + '<div class="prism-skc-note">Agreement rule: k within 5 % and S within 0.5, or the difference explained by the unsettled-window bias within 3 % and 0.3.</div>');
+        // S_err.
+        var se = m.sErr;
+        if (se) {
+            var comp = [['Floor', fmt(se.floor, 2)], ['Fit standard error', fmt(se.seS, 2)], ['Line vs match', fmt(se.dLineMatch, 2)],
+                        ['Window shift', fmt(se.sWin, 2)], ['Closing time', fmt(se.sTc, 2)], ['pwf at shut-in', fmt(se.sPwf, 2)]];
+            h += sec('prism_skc_serr', 'Skin uncertainty S_err', kvHTML([['S_err', '± ' + fmt(se.value, 2)], ['Largest term', DRIVER[se.driver] || String(se.driver || '—')],
+                ['With the C-held range', '± ' + fmt(se.ext && se.ext.value, 2)], ['Inputs (typical ranges)', '± ' + fmt(se.sSens, 2)], ['Total with inputs', '± ' + fmt(se.sAbs, 2)]]) +
+                tableHTML(['Term', 'ΔS'], comp));
+        }
+        // Sensitivity.
+        var sv = m.sensitivity;
+        if (sv && Array.isArray(sv.req)) {
+            h += sec('prism_skc_sens', 'Input sensitivity (analytic)', tableHTML(['Input', 'Factor', 'k (md)', 'Δk %', 'ΔS'],
+                sv.req.map(function (x) { return [INPUT_NAME[x.input] || x.input, '× ' + fmt(x.f, 2), sig(x.k), fmt(x.dkPct, 1), fmt(x.dS, 3)]; })) +
+                '<div class="prism-skc-note">Dominant for k: ' + esc(INPUT_NAME[sv.dominantK && sv.dominantK.req] || '—') + '; for S: ' +
+                esc(INPUT_NAME[sv.dominantS && sv.dominantS.req] || '—') + ' (±20 %, q ±10 %). μ has no effect on S.</div>');
+        }
+        // Confidence reasons.
+        if (c) {
+            h += sec('prism_skc_conf', 'Confidence', '<div class="prism-skc-verdict">' + esc(verdictText(c)) + '</div>' +
+                (Array.isArray(c.reasons) && c.reasons.length ? tableHTML(['Rule', 'Kind', 'Reason', 'Evidence'],
+                    c.reasons.map(function (x) { return [x.rule, x.kind, x.text, (x.ev || []).join(', ')]; })) : '<div class="prism-skc-note">Every rule for this label is met.</div>') +
+                '<div class="prism-skc-note">Rate checks: ' + esc(m.rate.status) + ' (' + esc(m.rate.text) + ')</div>' +
+                '<div class="prism-skc-note">' + esc(CHELD_NOTE) + '</div>');
+        }
+        // Products.
+        var pr = m.products;
+        if (pr) {
+            h += sec('prism_skc_prod', 'Skin pressure drop and productivity', kvHTML([
+                ['Δp skin', isNum(pr.dpSkin_psi) ? fmt(pr.dpSkin_psi, 1) + ' psi' : '—'],
+                ['Flow efficiency', isNum(pr.FE) ? fmt(pr.FE, 3) + (m.pbarSource === 'pi' ? ' (from pi)' : (m.pbarSource === 'pStar' ? ' (from p*)' : '')) : '—'],
+                ['PI ratio X/(X + S)', isNum(pr.piRatio) ? fmt(pr.piRatio, 3) + ', ' + pr.labels.piRatio : (pr.guard ? 'not computable (X + S < 1)' : '—')],
+                ['r_e used', isNum(m.rinv_ft) ? sig(m.rinv_ft) + ' ft (r_inv at the end of the test)' : '—']
+            ]) + '<div class="prism-skc-note">Pseudo-steady-state estimates.</div>');
+        }
+        // Mechanical skin.
+        h += sec('prism_skc_mech', 'Mechanical skin', compInputsHTML(m.completion, KT.verified) + '<div id="prism_skc_mech_res">' + mechHTML(m) + '</div>');
+        // Reach.
+        h += sec('prism_skc_reach', 'Expected IARF reach (from the fitted model)', kvHTML([['Reach', reachText(m.reach)], ['This test', sig(m.evidence ? m.evidence.dtEnd_h : null) + ' h']]) +
+            '<div class="prism-skc-note">Hours of equivalent time for a fair (0.5 cycle) and a good (1 cycle) IARF, allowing for the derivative window.</div>');
+        // C-held.
+        h += sec('prism_skc_cheld_sec', 'C-held refits (storage sensitivity)', cheldHTML(m));
+        h += '</div>';
+        return h;
+    }
+    function ensureCss() {
+        if (typeof document === 'undefined' || !document.getElementById || document.getElementById(CSS_ID)) return;
+        try {
+            var st = document.createElement('style');
+            st.id = CSS_ID;
+            st.textContent = CSS;
+            (document.head || document.body || document.documentElement).appendChild(st);
+        } catch (e) { /* cosmetic */ }
+    }
+    // Every lookup goes through a host's own root, never document.getElementById: a hidden
+    // Tab-6 copy (display:none, still in the DOM) and a Tools-drawer copy carry the same ids.
+    function rootOf(host) {
+        try { return (host && host.querySelector) ? host.querySelector('#prism_skc_root') : null; } catch (e) { return null; }
+    }
+    function inDocument(el) {
+        if (typeof document === 'undefined' || !el) return false;
+        for (var n = el; n; n = n.parentNode) if (n === document.body || n === document.documentElement) return true;
+        return false;
+    }
+    // A host is live while it is in the document and still holds a card root.
+    function live(host) { var r = rootOf(host); return !!(r && inDocument(r)); }
+    function liveHosts() {
+        _ui.hosts = _ui.hosts.filter(live);
+        return _ui.hosts.slice();
+    }
+    function q(root, id) { try { return root ? root.querySelector('#' + id) : null; } catch (e) { return null; } }
+
+    function paint(el, m) {
+        el.innerHTML = cardHTML(m);
+        wire(el);
+        if (_ui.hosts.indexOf(el) === -1) _ui.hosts.push(el);
+    }
+    // renderPanel(el): paint the card. No storage writes, no events.
+    function renderPanel(el) {
+        if (!el || typeof el !== 'object') return null;
+        ensureCss();
+        var m = run({ cheld: _ui.cheld });
+        if (_ui.running && m.sig !== _ui.sig) _ui.cancel = true;
+        _ui.model = m;
+        paint(el, m);
+        return m;
+    }
+    // Re-paint the given hosts (default: every live host) from one run().
+    function rerender(hosts) {
+        var list = (hosts || liveHosts()).filter(live);
+        if (!list.length) return null;
+        ensureCss();
+        var m = run({ cheld: _ui.cheld });
+        if (_ui.running && m.sig !== _ui.sig) _ui.cancel = true;
+        _ui.model = m;
+        list.forEach(function (h) { paint(h, m); });
+        return m;
+    }
+    function compFromInputs(root) {
+        function v(id) { var e = root.querySelector('#' + id); return e ? e.value : null; }
+        function chk(id) { var e = root.querySelector('#' + id); return !!(e && e.checked); }
+        var c = normComp(_ui.model ? _ui.model.completion : loadComp());
+        c.on = chk('prism_skc_cmp_on');
+        var hp = num(v('prism_skc_hp'));
+        c.hp_ft = pos(hp) ? hp : null;
+        ['htop_ft:prism_skc_htop', 'theta_deg:prism_skc_theta', 'kvlo:prism_skc_kvlo', 'kvhi:prism_skc_kvhi'].forEach(function (p) {
+            var a = p.split(':'), x = num(v(a[1]));
+            if (x != null) c[a[0]] = x;
+        });
+        if (root.querySelector('#prism_skc_perf_on')) {
+            c.perf.on = chk('prism_skc_perf_on');
+            ['spf:prism_skc_spf', 'lp_in:prism_skc_lp', 'rp_in:prism_skc_rp', 'phase_deg:prism_skc_phase'].forEach(function (p) {
+                var a = p.split(':'), x = num(v(a[1]));
+                if (x != null) c.perf[a[0]] = x;
+            });
+        }
+        return c;
+    }
+    function onCompChange(root) {
+        var c = compFromInputs(root);
+        saveComp(c);
+        var m = _ui.model;
+        if (!m || !m.final || !m.well) return;
+        m.completion = c;
+        m.mech = mechanicalSkin({ S_total: m.final.S, Serr: m.sErr ? m.sErr.value : null, h: m.well.h, rw: m.well.rw,
+                                  completion: completionFor(c, m.well.h), D: null, q: null });
+        var res = root.querySelector('#prism_skc_mech_res');
+        if (res) res.innerHTML = mechHTML(m);
+    }
+    // "Use this window": the IARF window on PRiSM's own time axis (m.window: pseudo-time when
+    // gas pseudo-time is on; null — button disabled — when it cannot be converted).
+    function useWindow() {
+        var m = _ui.model;
+        if (!m || !m.window || typeof G.PRiSM_semilogAnalysis !== 'function') return null;
+        return G.PRiSM_semilogAnalysis(null, null, { window: { t0: m.window.t0, t1: m.window.t1 }, store: true });
+    }
+    // A homogeneous fit seeded from the match (engine ModelFit with BIC), then the C-held refits.
+    // A step that throws ends the job with failed = the step's name (drive then resolves null).
+    function cheldJob(AI, prep, seed) {
+        var phase = 0, fitJ = null, chJ = null, base = seed, res = null, cancelled = false, failed = null;
+        if (typeof AI.fitJob === 'function') {
+            fitJ = AI.fitJob('homogeneous', prep, { start: { phys: { k: seed.phys.k, S: seed.phys.S, C: seed.phys.C } } });
+        } else phase = 1;
+        function stepInner() {
+            if (phase === 0) {
+                var s0 = fitJ.step();
+                if (s0.done) { var f = fitJ.result(); if (f && f.ok !== false && f.phys) base = f; phase = 1; }
+                return { done: false, progress: 0.4 * (s0.progress || 0), label: 'Homogeneous fit' };
+            }
+            if (phase === 1) { chJ = AI.cHeldJob(prep, base, { mode: 'auto' }); phase = 2; return { done: false, progress: 0.4, label: 'C-held refits' }; }
+            var s = chJ.step();
+            if (s.done) { res = chJ.result(); return { done: true, progress: 1, label: 'Done' }; }
+            return { done: false, progress: 0.4 + 0.6 * (s.progress || 0), label: s.label || 'C-held refits' };
+        }
+        return {
+            step: function () {
+                if (cancelled || failed) return { done: true, progress: 1, label: cancelled ? 'Cancelled' : 'Failed' };
+                try { return stepInner(); }
+                catch (e) {
+                    failed = phase === 0 ? 'fitJob' : 'cHeldJob';
+                    if (typeof console !== 'undefined' && console.warn) console.warn('[PRiSM skin check] ' + failed + ' failed:', e);
+                    res = null;
+                    return { done: true, progress: 1, label: 'Failed' };
+                }
+            },
+            result: function () { return res; },
+            failed: function () { return failed; },
+            cancel: function () { cancelled = true; if (fitJ && fitJ.cancel) fitJ.cancel(); if (chJ && chJ.cancel) chJ.cancel(); }
+        };
+    }
+    // Status text of the C-held row, in the given root (default: the job's host) only.
+    function setStatus(text, root) {
+        _ui.progress = text;
+        var e = q(root || rootOf(_ui.jobHost), 'prism_skc_cheld_status');
+        if (e) e.textContent = text;
+    }
+    // startCheld(root): root = the card root whose button was clicked (default: the first live card).
+    function startCheld(root) {
+        var AI = AIns(), m = _ui.model;
+        if (_ui.running || !m || !m.ok || !m.cheldAvailable || !AI) return null;
+        if (!root) { var hs = liveHosts(); root = hs.length ? rootOf(hs[0]) : null; }
+        var host = root && root.parentNode ? root.parentNode : null;
+        function unavailable(text) { setStatus(text, root); return null; }
+        var setup = call('prepare', function () {
+            var well = G.PRiSM_getWell ? G.PRiSM_getWell() : {};
+            var adata = G.PRiSM_getAnalysisData ? G.PRiSM_getAnalysisData() : null;
+            var sp = adata && adata.ok ? specFromAdata(adata, well || {}) : null;
+            if (!sp || !sp.ok) return { prep: null };
+            var es = engineSteps(AI, sp.spec);
+            if (es.prepErr) throw new Error('prepare failed');
+            return { prep: es.prep };
+        });
+        if (setup.err) return unavailable('C-held refits are not available: ' + setup.err + ' failed.');
+        var prep = setup.v && setup.v.prep;
+        if (!prep || prep.ok === false) return unavailable('C-held refits are not available for this period.');
+        var fit = G.PRiSM_getLastFit ? G.PRiSM_getLastFit() : null;
+        var seed = matchFromFit(fit, 'homogeneous');
+        if (!seed && m.final) seed = matchFromFit({ modelKey: 'homogeneous', phys: { k: m.final.k, S: m.final.S, C: m.final.C } }, 'homogeneous');
+        if (!seed || !pos(seed.phys.C)) return unavailable('C-held refits need wellbore storage C from the match or the unit slope.');
+        var jr = call('fitJob', function () { return cheldJob(AI, prep, seed); });
+        if (jr.err || !jr.v) return unavailable('C-held refits are not available: ' + (jr.err || 'fitJob') + ' failed.');
+        var job = jr.v;
+        var sigNow = m.sig;
+        _ui.running = true; _ui.cancel = false; _ui.sig = sigNow; _ui.jobHost = host;
+        setStatus('Running…', root);
+        var b1 = q(root, 'prism_skc_cheld'), b2 = q(root, 'prism_skc_cheld_cancel');
+        if (b1) b1.disabled = true;
+        if (b2) b2.disabled = false;
+        function done(text) {
+            _ui.running = false; _ui.cancel = false; _ui.progress = text;
+            var h = _ui.jobHost; _ui.jobHost = null;
+            // Re-paint the card that ran the job (and any other live copy) from one run().
+            var hosts = liveHosts();
+            if (h && live(h) && hosts.indexOf(h) === -1) hosts.push(h);
+            rerender(hosts);
+        }
+        var dr = call('drive', function () {
+            return AI.drive(job, {
+                shouldCancel: function () { return _ui.cancel || !live(host); },
+                onProgress: function (f, label) { setStatus((label || 'Working') + ' ' + fmt(100 * (f || 0), 0) + ' %'); }
+            });
+        });
+        if (dr.err || !dr.v || typeof dr.v.then !== 'function') { done('C-held refits are not available: drive failed.'); return null; }
+        return dr.v.then(function (res) {
+            var bad = job.failed && job.failed();
+            _ui.cheld = (res && !bad) ? { sig: sigNow, result: res } : null;
+            done(bad ? 'C-held refits failed: ' + bad + '.' : (res ? 'C-held refits finished.' : 'C-held refits returned no result.'));
+            return bad ? null : res;
+        }, function (e) {
+            done(e && e.code === 'CANCELLED' ? 'Cancelled.' : 'C-held refits failed.');
+            return null;
+        });
+    }
+    function wire(el) {
+        var root = rootOf(el);
+        if (!root) return;
+        root.addEventListener('click', function (ev) {
+            var t = ev.target;
+            while (t && t !== root && !(t.id && /^prism_skc_/.test(t.id) && t.tagName === 'BUTTON')) t = t.parentNode;
+            if (!t || t === root || t.disabled) return;
+            if (t.id === 'prism_skc_usewin') useWindow();
+            else if (t.id === 'prism_skc_cheld') startCheld(root);
+            else if (t.id === 'prism_skc_cheld_cancel') { _ui.cancel = true; setStatus('Cancelling…', root); }
+        });
+        root.addEventListener('change', function (ev) {
+            var t = ev.target;
+            if (t && t.id && /^prism_skc_(cmp_on|hp|htop|theta|kvlo|kvhi|perf_on|spf|lp|rp|phase)$/.test(t.id)) onCompChange(root);
+        });
+    }
+
+    // Tab 6 panel (C7): shown when a pressure fit or a semilog result exists, not in decline mode.
+    function panelWhen() {
+        if (G.PRiSM && G.PRiSM.mode === 'decline') return false;
+        var st = G.PRiSM_state || {};
+        var fitOk = !!(st.lastFit && typeof st.lastFit === 'object' && st.lastFit.kind !== 'rate');
+        var slOk = !!(st.semilog && st.semilog.ok);
+        return fitOk || slOk;
+    }
+    // render is the same function as window.PRiSM_renderSkinCheckPanel, so the Tools drawer
+    // lists the card once (37 drops a step panel whose render equals a listed tool).
+    var PANEL = { id: 'prism_skincheck', title: 'Skin check: IARF window, line vs match, uncertainty, confidence', order: 8,
+                  when: panelWhen, render: renderPanel };
+    (function registerPanel() {
+        try { if (typeof G.PRiSM_registerTabPanel === 'function') { G.PRiSM_registerTabPanel(6, PANEL); return; } } catch (e) { /* raw registry */ }
+        G.PRiSM_tabPanels = (G.PRiSM_tabPanels && typeof G.PRiSM_tabPanels === 'object') ? G.PRiSM_tabPanels : {};
+        var list = G.PRiSM_tabPanels[6] = Array.isArray(G.PRiSM_tabPanels[6]) ? G.PRiSM_tabPanels[6] : [];
+        for (var i = 0; i < list.length; i++) if (list[i] && list[i].id === PANEL.id) { list[i] = PANEL; return; }
+        list.push(PANEL);
+    })();
+
+    // Re-render every mounted copy on the C7 events (no polling). Attached only when a
+    // document exists (plan §3.0); the events are dispatched on window (33, 34), so the
+    // listeners sit there. Engine steps are cached by the spec, so a fit-only event re-runs
+    // the cheap parts only. A running C-held job for other inputs is cancelled by rerender.
+    if (typeof document !== 'undefined' && typeof document.addEventListener === 'function' &&
+        typeof G.addEventListener === 'function' && !G.__PRiSM_skinCheckListeners) {
+        G.__PRiSM_skinCheckListeners = true;
+        ['prism:fit-updated', 'prism:period-changed', 'prism:well-changed', 'prism:dataset-loaded'].forEach(function (type) {
+            G.addEventListener(type, function () {
+                var hosts = liveHosts();
+                if (!hosts.length) return;
+                if (type !== 'prism:fit-updated') _ui.cheld = null;
+                rerender(hosts);
+            });
+        });
+    }
+
+    // =========================================================================
+    // SECTION 8 — REPORT SECTION (36-report.js PRiSM_reportSections, order 45)
+    // =========================================================================
+    function reportSection(model) {
+        var st = G.PRiSM_state || {};
+        if (G.PRiSM && G.PRiSM.mode === 'decline') return null;
+        if (!(st.lastFit && st.lastFit.kind !== 'rate') && !(st.semilog && st.semilog.ok)) return null;
+        var m = run({ cheld: _ui.cheld });
+        if (!m.ok) return null;
+        var kv = [];
+        var iw = m.iarf;
+        kv.push(['IARF window (L = 0.1 cycle)', iarfText(iw) + (iw && iw.found ? ', Δt ' + sig(iw.dt0_h) + ' to ' + sig(iw.dt1_h) + ' h' : '')]);
+        if (iw && iw.longest && iw.found) kv.push(['Longest qualifying window', sig(iw.longest.dt0_h) + ' to ' + sig(iw.longest.dt1_h) + ' h']);
+        kv.push(['Line through the window', lineSummary(m.line)]);
+        if (m.line && m.line.pStarRange && isNum(m.line.pStarRange.lo) && isNum(m.line.pStarRange.hi)) {
+            kv.push(['p* range (estimated history)', fmt(m.line.pStarRange.lo, 1) + ' to ' + fmt(m.line.pStarRange.hi, 1) + ' psia']);
+        }
+        if (m.history && m.history.estimated) {
+            kv.push(['Producing time', 'estimated, ' + sig(m.history.tPrepend_h) + ' h' + (isNum(m.history.dDerivPct) ? '; doubling it changes the derivative by ' +
+                     fmt(m.history.dDerivPct, 1) + ' %' + (m.history.sensitive ? ' (label capped at medium)' : '') : '')]);
+        }
+        kv.push(['Line vs match', agreeText(m.agreement)]);
+        kv.push(['Line vs derivative plateau (sanity check)', plateauText(m.plateau)]);
+        if (m.sErr) kv.push(['Skin uncertainty S_err', '± ' + fmt(m.sErr.value, 2) + ' (largest term: ' + (DRIVER[m.sErr.driver] || String(m.sErr.driver || '—')) + ')']);
+        if (m.final) kv.push(['Final k and S', 'k ' + sig(m.final.k) + ' md, S ' + fmt(m.final.S, 2) + ' (from the ' + m.final.source + ')']);
+        kv.push(['Confidence', verdictText(m.confidence).replace(/^Confidence: /, '')]);
+        if (m.products) {
+            kv.push(['Δp skin', isNum(m.products.dpSkin_psi) ? fmt(m.products.dpSkin_psi, 1) + ' psi' : '—']);
+            kv.push(['Flow efficiency', isNum(m.products.FE) ? fmt(m.products.FE, 3) + (m.pbarSource === 'pi' ? ' (from pi)' : (m.pbarSource === 'pStar' ? ' (from p*)' : '')) : '—']);
+            kv.push(['PI ratio', isNum(m.products.piRatio) ? fmt(m.products.piRatio, 3) + ', ' + m.products.labels.piRatio : '—']);
+        }
+        if (m.mech) {
+            kv.push(['Mechanical skin', m.mech.available ? 'S_mech ' + fmt(m.mech.S_mech, 2) + ' ± ' + fmt(m.mech.S_mech_err, 2) + ' (pressure-drop basis), S_d local ' + fmt(m.mech.S_d_local, 2) +
+                     ', kv/kh ' + fmt(m.mech.kvkh[0], 2) + ' to ' + fmt(m.mech.kvkh[1], 2) : String(m.mech.reason || 'not split')]);
+        }
+        kv.push(['Expected IARF reach', reachText(m.reach)]);
+        if (m.cheld && m.cheld.range) kv.push(['C-held S range', fmt(m.cheld.range.S[0], 2) + ' to ' + fmt(m.cheld.range.S[1], 2) + ' (S_C ' + fmt(m.cheld.S_C, 2) + ')']);
+        var c = m.confidence;
+        var rows = (c && Array.isArray(c.reasons)) ? c.reasons.map(function (x) { return [x.rule, x.kind, x.text, (x.ev || []).join(', ')]; }) : [];
+        var notes = m.notes.slice();
+        if (m.mech && m.mech.validity) m.mech.validity.forEach(function (v) { notes.push(v.text); });
+        m.warnings.forEach(function (w) { notes.push(w.text); });
+        return { id: 'skincheck', title: 'Skin check', order: 45, kv: kv.map(function (p) { return [p[0], String(p[1]).slice(0, 299)]; }),
+                 table: rows.length ? { head: ['Rule', 'Kind', 'Reason', 'Evidence'], rows: rows } : null,
+                 notes: notes.map(function (n) { return String(n).slice(0, 299); }) };
+    }
+    (function registerReport() {
+        var reg = G.PRiSM_reportSections = Array.isArray(G.PRiSM_reportSections) ? G.PRiSM_reportSections : [];
+        reportSection._prismId = 'skin-check';
+        for (var i = 0; i < reg.length; i++) if (reg[i] && reg[i]._prismId === reportSection._prismId) { reg[i] = reportSection; return; }
+        reg.push(reportSection);
+    })();
+
+    // =========================================================================
+    // SECTION 9 — EXPORTS
+    // =========================================================================
+    SC.version = '1.0';
+    SC.KT = KT;
+    SC.perforationSkin = perforationSkin;
+    SC.mechanicalSkin = mechanicalSkin;
+    SC.rateSkin = rateSkin;
+    SC.products = products;
+    SC.expectedDRange = expectedDRange;
+    SC.RATE_DEFAULTS = RATE_DEFAULTS;
+    SC.historyCheck = historyCheck;     // tests and the integrator
+    SC.gasDpSkin = gasDpSkin;           // tests
+    SC._ktCompute = ktCompute;          // table-consistency test only
+    SC._papatzacos = papatzacos;        // tests only
+    SC.run = run;
+    SC.renderPanel = renderPanel;
+    SC.reportSection = reportSection;
+    SC.specFromAdata = specFromAdata;   // tests and the integrator
+    SC.useWindow = useWindow;
+    SC.runCheld = startCheld;
+    SC.PANEL = PANEL;
+    SC._ui = _ui;
+    // Tools drawer (plan §3.4, §6.11): window.PRiSM_renderSkinCheckPanel = renderPanel, exported
+    // once 37's TOOL_CATALOGUE lists that name in a group (one entry, group 'Diagnose', the
+    // card's written title). Until then the card is listed through its Tab-6 registration
+    // ("Step panels", written title) and the name is not exported: 37 auto-lists every other
+    // exported PRiSM_render*Panel under "More" with a machine-made title, which the wp16 test
+    // forbids. 37 is loaded before 54 (Round 8 FILES), so the check runs at load.
+    (function exportDrawerName() {
+        try {
+            if (typeof G.PRiSM_listTools !== 'function') return;
+            var listed = G.PRiSM_listTools().some(function (t) {
+                return t && t.fn === 'PRiSM_renderSkinCheckPanel' && t.group && t.group !== 'More';
+            });
+            if (listed) G.PRiSM_renderSkinCheckPanel = renderPanel;
+        } catch (e) { /* the drawer is optional */ }
+    })();
+})();
+
+// ─── END 54-prism-skin ─────────────────────────────────────────────
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// ─── BEGIN 55-prism-autointerp-cal ───────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════
+// =============================================================================
+// PRiSM — 55-prism-autointerp-cal.js  (Round 8)
+// GENERATED by buildup-validate.js — do not edit by hand
+// version cal-0 (placeholder, not calibrated) · generated 2026-10-31 · seeds single 100000–100639, sequences 200000–200119, master 3300
+// -----------------------------------------------------------------------------
+// window.PRiSM_autoInterpCal — the confidence-label calibration table (docs/BUILDUP-SURVEILLANCE-PLAN.md §3.5, §5.4).
+// calibrated:false: the engine uses the pre-calibration thresholds, KC2 caps every label at medium and the page shows
+// "labels not yet calibrated". WP8 regenerates this file with: node prism-build/buildup-validate.js --sequences --write
+// Loads with no document and no other symbol; the table is deep-frozen.
+// =============================================================================
+
+(function () {
+    'use strict';
+    var G = (typeof window !== 'undefined') ? window : globalThis;
+    function freeze(o) { if (o && typeof o === 'object' && !Object.isFrozen(o)) { Object.freeze(o); Object.keys(o).forEach(function (k) { freeze(o[k]); }); } return o; }
+    G.PRiSM_autoInterpCal = freeze({
+      "abstain": {
+        "n": 0,
+        "rate": null,
+        "rateHom": null
+      },
+      "app": "v3.3",
+      "brier": null,
+      "bss": null,
+      "calibrated": false,
+      "distractorCaught": {
+        "n": 0,
+        "rate": null
+      },
+      "engine": "1.0",
+      "envelope": {
+        "CD": [
+          null,
+          null
+        ],
+        "S": [
+          -2,
+          15
+        ],
+        "dtEnd_h": [
+          2,
+          200
+        ],
+        "k": [
+          1,
+          2000
+        ],
+        "snrD": [
+          null,
+          null
+        ],
+        "tDCDend": [
+          null,
+          null
+        ]
+      },
+      "falseRival": null,
+      "gasTable": [
+        {
+          "cover2": null,
+          "fullyRight": null,
+          "hi": null,
+          "hiCluster": null,
+          "kRight": null,
+          "label": "high",
+          "lo": null,
+          "loCluster": null,
+          "medAbsDS": null,
+          "modelRight": null,
+          "n": 0,
+          "sRight": null
+        },
+        {
+          "cover2": null,
+          "fullyRight": null,
+          "hi": null,
+          "hiCluster": null,
+          "kRight": null,
+          "label": "medium",
+          "lo": null,
+          "loCluster": null,
+          "medAbsDS": null,
+          "modelRight": null,
+          "n": 0,
+          "sRight": null
+        },
+        {
+          "cover2": null,
+          "fullyRight": null,
+          "hi": null,
+          "hiCluster": null,
+          "kRight": null,
+          "label": "low",
+          "lo": null,
+          "loCluster": null,
+          "medAbsDS": null,
+          "modelRight": null,
+          "n": 0,
+          "sRight": null
+        }
+      ],
+      "generated": "2026-10-31",
+      "inApp": [
+        {
+          "expect": {
+            "fullyRight": null,
+            "headline": null,
+            "ks": null,
+            "status": null
+          },
+          "margin": null,
+          "seed": 100003,
+          "stratum": "hom"
+        },
+        {
+          "expect": {
+            "fullyRight": null,
+            "headline": null,
+            "ks": null,
+            "status": null
+          },
+          "margin": null,
+          "seed": 100017,
+          "stratum": "hom"
+        },
+        {
+          "expect": {
+            "fullyRight": null,
+            "headline": null,
+            "ks": null,
+            "status": null
+          },
+          "margin": null,
+          "seed": 100041,
+          "stratum": "hom"
+        },
+        {
+          "expect": {
+            "fullyRight": null,
+            "headline": null,
+            "ks": null,
+            "status": null
+          },
+          "margin": null,
+          "seed": 100088,
+          "stratum": "hom"
+        },
+        {
+          "expect": {
+            "fullyRight": null,
+            "headline": null,
+            "ks": null,
+            "status": null
+          },
+          "margin": null,
+          "seed": 100120,
+          "stratum": "hom"
+        },
+        {
+          "expect": {
+            "fullyRight": null,
+            "headline": null,
+            "ks": null,
+            "status": null
+          },
+          "margin": null,
+          "seed": 100160,
+          "stratum": "hom"
+        },
+        {
+          "expect": {
+            "fullyRight": null,
+            "headline": null,
+            "ks": null,
+            "status": null
+          },
+          "margin": null,
+          "seed": 100205,
+          "stratum": "hom"
+        },
+        {
+          "expect": {
+            "fullyRight": null,
+            "headline": null,
+            "ks": null,
+            "status": null
+          },
+          "margin": null,
+          "seed": 100236,
+          "stratum": "fault"
+        },
+        {
+          "expect": {
+            "fullyRight": null,
+            "headline": null,
+            "ks": null,
+            "status": null
+          },
+          "margin": null,
+          "seed": 100270,
+          "stratum": "fault"
+        },
+        {
+          "expect": {
+            "fullyRight": null,
+            "headline": null,
+            "ks": null,
+            "status": null
+          },
+          "margin": null,
+          "seed": 100300,
+          "stratum": "comp"
+        },
+        {
+          "expect": {
+            "fullyRight": null,
+            "headline": null,
+            "ks": null,
+            "status": null
+          },
+          "margin": null,
+          "seed": 100340,
+          "stratum": "comp"
+        },
+        {
+          "expect": {
+            "fullyRight": null,
+            "headline": null,
+            "ks": null,
+            "status": null
+          },
+          "margin": null,
+          "seed": 100360,
+          "stratum": "closed"
+        },
+        {
+          "expect": {
+            "fullyRight": null,
+            "headline": null,
+            "ks": null,
+            "status": null
+          },
+          "margin": null,
+          "seed": 100380,
+          "stratum": "closed"
+        },
+        {
+          "expect": {
+            "fullyRight": null,
+            "headline": null,
+            "ks": null,
+            "status": null
+          },
+          "margin": null,
+          "seed": 100400,
+          "stratum": "gas"
+        },
+        {
+          "expect": {
+            "fullyRight": null,
+            "headline": null,
+            "ks": null,
+            "status": null
+          },
+          "margin": null,
+          "seed": 100430,
+          "stratum": "gas"
+        },
+        {
+          "expect": {
+            "fullyRight": null,
+            "headline": null,
+            "ks": null,
+            "status": null
+          },
+          "margin": null,
+          "seed": 100460,
+          "stratum": "gas"
+        },
+        {
+          "expect": {
+            "fullyRight": null,
+            "headline": null,
+            "ks": null,
+            "status": null
+          },
+          "margin": null,
+          "seed": 100470,
+          "stratum": "inj"
+        },
+        {
+          "expect": {
+            "fullyRight": null,
+            "headline": null,
+            "ks": null,
+            "status": null
+          },
+          "margin": null,
+          "seed": 100485,
+          "stratum": "inj"
+        },
+        {
+          "expect": {
+            "fullyRight": null,
+            "headline": null,
+            "ks": null,
+            "status": null
+          },
+          "margin": null,
+          "seed": 100500,
+          "stratum": "dualpor"
+        },
+        {
+          "expect": {
+            "fullyRight": null,
+            "headline": null,
+            "ks": null,
+            "status": null
+          },
+          "margin": null,
+          "seed": 100530,
+          "stratum": "channel"
+        },
+        {
+          "expect": {
+            "fullyRight": null,
+            "headline": null,
+            "ks": null,
+            "status": null
+          },
+          "margin": null,
+          "seed": 100555,
+          "stratum": "wbschange"
+        },
+        {
+          "expect": {
+            "fullyRight": null,
+            "headline": null,
+            "ks": null,
+            "status": null
+          },
+          "margin": null,
+          "seed": 100598,
+          "stratum": "constp"
+        },
+        {
+          "expect": {
+            "fullyRight": null,
+            "headline": null,
+            "ks": null,
+            "status": null
+          },
+          "margin": null,
+          "seed": 100620,
+          "stratum": "partial"
+        },
+        {
+          "expect": {
+            "fullyRight": null,
+            "headline": null,
+            "ks": null,
+            "status": null
+          },
+          "margin": null,
+          "seed": 100630,
+          "stratum": "baddata"
+        }
+      ],
+      "kHeldTable": [
+        {
+          "cover2": null,
+          "hi": null,
+          "hiCluster": null,
+          "label": "medium",
+          "lo": null,
+          "loCluster": null,
+          "medAbsDS": null,
+          "n": 0,
+          "right": null
+        },
+        {
+          "cover2": null,
+          "hi": null,
+          "hiCluster": null,
+          "label": "low",
+          "lo": null,
+          "loCluster": null,
+          "medAbsDS": null,
+          "n": 0,
+          "right": null
+        }
+      ],
+      "ksTable": [
+        {
+          "cover2": null,
+          "hi": null,
+          "hiCluster": null,
+          "label": "high",
+          "lo": null,
+          "loCluster": null,
+          "medAbsDS": null,
+          "n": 0,
+          "right": null
+        },
+        {
+          "cover2": null,
+          "hi": null,
+          "hiCluster": null,
+          "label": "medium",
+          "lo": null,
+          "loCluster": null,
+          "medAbsDS": null,
+          "n": 0,
+          "right": null
+        },
+        {
+          "cover2": null,
+          "hi": null,
+          "hiCluster": null,
+          "label": "low",
+          "lo": null,
+          "loCluster": null,
+          "medAbsDS": null,
+          "n": 0,
+          "right": null
+        }
+      ],
+      "nBuildups": 0,
+      "nCases": 0,
+      "rateAccuracy": {
+        "medAbsPct": null,
+        "p90AbsPct": null
+      },
+      "reliability": null,
+      "resolution": null,
+      "seeds": {
+        "master": 3300,
+        "sequences": [
+          200000,
+          200119
+        ],
+        "single": [
+          100000,
+          100639
+        ]
+      },
+      "sequences": {
+        "delayMedian": null,
+        "delayMedianShort": null,
+        "falseAlarmAbs": null,
+        "falseAlarmDelta": null,
+        "onsetWithin1": null,
+        "senCover": null
+      },
+      "strict": [
+        {
+          "cover2": null,
+          "fullyRight": null,
+          "hi": null,
+          "hiCluster": null,
+          "kRight": null,
+          "label": "high",
+          "lo": null,
+          "loCluster": null,
+          "medAbsDS": null,
+          "modelRight": null,
+          "n": 0,
+          "sRight": null
+        },
+        {
+          "cover2": null,
+          "fullyRight": null,
+          "hi": null,
+          "hiCluster": null,
+          "kRight": null,
+          "label": "medium",
+          "lo": null,
+          "loCluster": null,
+          "medAbsDS": null,
+          "modelRight": null,
+          "n": 0,
+          "sRight": null
+        },
+        {
+          "cover2": null,
+          "fullyRight": null,
+          "hi": null,
+          "hiCluster": null,
+          "kRight": null,
+          "label": "low",
+          "lo": null,
+          "loCluster": null,
+          "medAbsDS": null,
+          "modelRight": null,
+          "n": 0,
+          "sRight": null
+        }
+      ],
+      "table": [
+        {
+          "cover2": null,
+          "fullyRight": null,
+          "hi": null,
+          "hiCluster": null,
+          "kRight": null,
+          "label": "high",
+          "lo": null,
+          "loCluster": null,
+          "medAbsDS": null,
+          "modelRight": null,
+          "n": 0,
+          "sRight": null
+        },
+        {
+          "cover2": null,
+          "fullyRight": null,
+          "hi": null,
+          "hiCluster": null,
+          "kRight": null,
+          "label": "medium",
+          "lo": null,
+          "loCluster": null,
+          "medAbsDS": null,
+          "modelRight": null,
+          "n": 0,
+          "sRight": null
+        },
+        {
+          "cover2": null,
+          "fullyRight": null,
+          "hi": null,
+          "hiCluster": null,
+          "kRight": null,
+          "label": "low",
+          "lo": null,
+          "loCluster": null,
+          "medAbsDS": null,
+          "modelRight": null,
+          "n": 0,
+          "sRight": null
+        }
+      ],
+      "thresholds": {
+        "deltaForm": "plain",
+        "disagreeDS": 1,
+        "disagreeKPct": 15,
+        "distractorRule": true,
+        "fairSpanHigh": 0.7,
+        "kHeldRmsK": 3,
+        "pointSkinSpread": 0.3,
+        "rateTolPct": 15,
+        "reachFactor": 3.98,
+        "sErrFloor": 0.2,
+        "sErrHigh": 0.5,
+        "sErrLow": 1,
+        "snrHigh": 20,
+        "snrLow": 5,
+        "tauBic": 10
+      },
+      "uncertainty": null,
+      "version": "cal-0"
+    });
+})();
+
+// ─── END 55-prism-autointerp-cal ─────────────────────────────────────────────
 

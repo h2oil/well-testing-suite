@@ -2637,7 +2637,7 @@
 //     list() → [{id, name, active, created, modified}]     active() → id
 //     switchTo(id) · create(name?, {duplicate}) · rename(id, name) · remove(id)
 //     copyPage(fromId, route?)   copy one page's inputs into the active well
-//     results(id?) → {gasdeliv, oilipr, rates, flareghg, h2sroe, wellkill, fit}
+//     results(id?) → {gasdeliv, oilipr, rates, flareghg, h2sroe, wellkill, fit, buildup}
 //     table() → {rows:[{key,label,unit}], wells:[…], cells:[[text]]}
 //     renderPage(body)  (route 'wells')   renderSwitcher(host)
 //   }
@@ -2784,8 +2784,13 @@
         if (st.flareghg) r.flareghg = { co2e_t: _num(st.flareghg.co2e_t), co2_t: _num(st.flareghg.co2_t), so2_t: _num(st.flareghg.so2_t) };
         if (st.h2sroe) r.h2sroe = { x100: _num(st.h2sroe.x100_ft), x500: _num(st.h2sroe.x500_ft) };
         if (st.wellkill) r.wellkill = { kwf: _num(st.wellkill.kwf) };
+        // v3.3 Build-up Surveillance (49-calc-buildup.js publishes WTS_state.buildup)
+        if (st.buildup) r.buildup = _ok(st.buildup) ? { S: _num(st.buildup.latest && st.buildup.latest.S), dS: _num(st.buildup.dS),
+            alertCode: _ALERT_LABEL[st.buildup.alertCode] ? st.buildup.alertCode : null, k: _num(st.buildup.kMedian) } : null;
         return r;
     }
+    // Skin-alert status codes → text (the comparison row shows a label, not a number).
+    var _ALERT_LABEL = { none: 'No alert', possible: 'Possible', provisional: 'Provisional', confirmed: 'Confirmed' };
     function _fitOf(fit) {
         if (!fit || typeof fit !== 'object' || !fit.phys || typeof fit.phys !== 'object') return null;
         var k = _num(fit.phys.k), S = _num(fit.phys.S);
@@ -2831,7 +2836,8 @@
             fit = _fitOf(m.prism && m.prism.lastFit) || _fitOf((_parse(b.keys.wts_prism_state) || {}).lastFit);
         }
         return { gasdeliv: r.gasdeliv || null, oilipr: r.oilipr || null, rates: _pickRates(r),
-                 flareghg: r.flareghg || null, h2sroe: r.h2sroe || null, wellkill: r.wellkill || null, fit: fit };
+                 flareghg: r.flareghg || null, h2sroe: r.h2sroe || null, wellkill: r.wellkill || null, fit: fit,
+                 buildup: r.buildup || null };
     }
 
     // Display: canonical field units → active unit system (22-units.js).
@@ -2860,14 +2866,18 @@
         { key: 'co2e', label: 'Flare emissions CO₂e',    src: 'Flare Emissions',    get: function (r) { return r.flareghg && r.flareghg.co2e_t; }, cat: null, dp: 2, imp: 't' },
         { key: 'roe100', label: 'H₂S ROE 100 ppm',        src: 'H₂S ROE',           get: function (r) { return r.h2sroe && r.h2sroe.x100; }, cat: 'length', dp: 0, imp: 'ft' },
         { key: 'roe500', label: 'H₂S ROE 500 ppm',        src: 'H₂S ROE',           get: function (r) { return r.h2sroe && r.h2sroe.x500; }, cat: 'length', dp: 0, imp: 'ft' },
-        { key: 'kwf',  label: 'Kill fluid weight',       src: 'Well Kill',          get: function (r) { return r.wellkill && r.wellkill.kwf; }, cat: 'densityLiquid', dp: 2, imp: 'ppg' }
+        { key: 'kwf',  label: 'Kill fluid weight',       src: 'Well Kill',          get: function (r) { return r.wellkill && r.wellkill.kwf; }, cat: 'densityLiquid', dp: 2, imp: 'ppg' },
+        { key: 'buS',  label: 'Latest skin (build-up surveillance)', src: 'Build-up Surveillance', get: function (r) { return r.buildup && r.buildup.S; }, cat: null, dp: 2, imp: '' },
+        { key: 'buDS', label: 'Skin change vs baseline', src: 'Build-up Surveillance', get: function (r) { return r.buildup && r.buildup.dS; }, cat: null, dp: 2, imp: '' },
+        { key: 'buAlert', label: 'Skin alert',           src: 'Build-up Surveillance', get: function (r) { return r.buildup && r.buildup.alertCode; }, text: function (v) { return _ALERT_LABEL[v] || '—'; } },
+        { key: 'buK',  label: 'Permeability k (build-up median)', src: 'Build-up Surveillance', get: function (r) { return r.buildup && r.buildup.k; }, cat: 'permeability', dp: 2, imp: 'md' }
     ];
     // Comparison table: one row per result, one column per well.
     function table() {
         var reg = _readReg();
         var wells = reg.wells.map(function (w) { return { id: w.id, name: w.name, active: w.id === reg.active, r: results(w.id) || {} }; });
         var cells = ROWS.map(function (row) {
-            return wells.map(function (w) { var v = row.get(w.r); return _uv(v == null ? null : v, row.cat, row.dp, row.imp); });
+            return wells.map(function (w) { var v = row.get(w.r); return row.text ? row.text(v) : _uv(v == null ? null : v, row.cat, row.dp, row.imp); });
         });
         var srcRow = wells.map(function (w) { return (w.r.rates && w.r.rates.source) || '—'; });
         return { rows: ROWS.map(function (r) { return { key: r.key, label: r.label, src: r.src }; }), wells: wells, cells: cells, rateSource: srcRow };
