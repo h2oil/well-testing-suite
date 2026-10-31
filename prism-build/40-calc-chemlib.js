@@ -195,7 +195,7 @@
     //                                                                              dh   wh   dsch sepin sepgas flare sepoil sepwat tank
     var FAMILIES = [
         _fam('thi_alcohol', 'Thermodynamic hydrate inhibitor — alcohol', 'hydrate', 'thi', ['A', 'R', 'A', 'N', 'A', 'N', 'X', 'X', 'X'], {
-            dh: 'Recommended when the wellbore crosses the hydrate temperature.',
+            dh: 'Use when the wellbore crosses the hydrate temperature.',
             dsch: 'The choke body and bean are not protected.',
             sepin: 'Too late: the choke outlet is already the coldest point.',
             sepgas: 'Second-expansion point (gas re-expanded at the back-pressure valve).',

@@ -164,3 +164,21 @@
             html.ios-app #pgBody table.wts-stack { display: block; max-width: 100%; overflow: visible; }
             html.ios-app #pgBody table.wts-stack tr > td, html.ios-app #pgBody table.wts-stack tr > th { padding-left: 0; padding-right: 0; }
         }
+
+        /* 5. v3.2 Chemical Injection background pop-ups (prism-build/49-calc-cheminj-info.js).
+              The app runs edge to edge (viewport-fit=cover, overlaysWebView=true): the full-screen
+              dialog keeps its title, × and Close clear of the status bar, notch / Dynamic Island and
+              home indicator, in portrait and landscape. The ⓘ buttons, topic chips and × get the
+              44 pt touch target; negative margins keep the label rows close to their web height. */
+        html.ios-app #cj_root .cj-dlg-ov {
+            padding: max(10px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right))
+                     max(10px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
+        }
+        html.ios-app #cj_root .cj-dlg {
+            max-height: calc(100vh - max(10px, env(safe-area-inset-top)) - max(10px, env(safe-area-inset-bottom)));
+            max-height: calc(100dvh - max(10px, env(safe-area-inset-top)) - max(10px, env(safe-area-inset-bottom)));
+        }
+        html.ios-app #cj_root .cj-info { width: 44px; height: 44px; min-height: 44px; margin: -10px -10px -10px -6px; }
+        html.ios-app #cj_root .card-title .cj-info { margin: -10px -10px -10px -2px; }
+        html.ios-app #cj_root .cj-info-chip { min-height: 44px; }
+        html.ios-app #cj_root .cj-dlg-x { width: 44px; height: 44px; min-height: 44px; margin: -10px -10px -6px 0; }
