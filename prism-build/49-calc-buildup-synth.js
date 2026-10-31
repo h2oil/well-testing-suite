@@ -41,8 +41,18 @@
 // fitted-model registry keys are never named here.
 //
 // Field units throughout: psia, hours, STB/d (oil), bbl/d (water injection), Mscf/d
-// (gas), md, ft, cp, 1/psi, bbl/psi; °F in, °R inside. Record times are epoch ms UTC;
-// scenario times are hours on the history clock (hours since the first sample).
+// (gas), md, ft, cp, 1/psi, bbl/psi; °F in, °R inside. Gas B is Bg in rb/Mscf (5.035·z·T/p).
+// Record times are epoch ms UTC; scenario times are hours on the history clock (hours since
+// the first sample).
+//
+// Conventions shared with the engines
+//   • Closing time: with a closing ramp, t_c is the ramp midpoint and Δp is referenced to the
+//     flowing pressure extrapolated to t_c with the pre-ramp rate (§4.3 M§A3); truth tc_ms,
+//     Δt_end and the noise-free reference curve all use it.
+//   • Record hash: the data layer's construction (hash16 of "n|t0|tN|digest") with the
+//     generator's own copy of the frozen hash16, so a bare load and the app agree.
+//   • generateJob work units are count-based (UNIT_FWD / UNIT_GRID / UNIT_FIN ops per step,
+//     OPS weights); job.stats() reports the largest step per phase.
 //
 // Load rules: no document, no timers, nothing from other modules at load time. The
 // namespace is merged (window.WTS_buildup = window.WTS_buildup || {}) and this file owns
@@ -72,7 +82,7 @@
     var STEHFEST_N = 16;
     var MAX_SAMPLES = 500000;
     var IARF_C = 0.80907;          // 0.5·(ln tD + 0.80907) + S
-    var UNIT_FWD = 1000000;        // sample-step grid evaluations per generateJob step (count-based, ≈ 30–45 ms desktop)
+    var UNIT_FWD = 500000;         // sample-step grid evaluations per generateJob step (count-based, ≈ 15–30 ms desktop)
     var UNIT_GRID = 60000;         // Laplace-kernel evaluations (cost-weighted) per step
 
     // ═════════════════════════════════════════════════════════════════════
@@ -397,19 +407,42 @@
     // Uniform-flux, interval-averaged partial-penetration series (Gringarten–Ramey form):
     // p̄ = K0/(s√s K1) + (1/s)·Σ c_n K0(√(s + a_n)), c_n = (2/hw²)·((sin nπz2 − sin nπz1)/(nπ))²,
     // a_n = (kv/kh)·(nπ/hD)². Terms past the per-time cut use K0(√a_n) (precomputed tail).
-    function _ppPrepare(P) {
+    // Count-sliced preparation (generateJob): step(nTerms) evaluates nTerms more series terms; one term costs about one
+    // Bessel evaluation (one cost unit of KERNEL_COST). The last prepared table is memoised by its parameters.
+    var _ppMemo = { key: null, val: null };
+    function _ppKey(P) { return [P.hD, P.kvkh, P.hw, P.ztop].map(function (v) { return (+v).toPrecision(12); }).join('|'); }
+    function _ppPrepareJob(P) {
+        var key = _ppKey(P);
+        if (_ppMemo.key === key) return { done: true, result: _ppMemo.val, step: function () { return 0; } };
         var hD = P.hD, kap = P.kvkh, hw = P.hw, z1 = P.ztop, z2 = P.ztop + P.hw;
         var nMax = MM.max(20, MM.min(200000, MM.ceil(40 * hD / (MM.PI * MM.sqrt(kap)))));
         var c = new Float64Array(nMax + 2), a = new Float64Array(nMax + 2), tail = new Float64Array(nMax + 2), t = new Float64Array(nMax + 2);
-        for (var n = 1; n <= nMax; n++) {
-            var w = n * MM.PI, d = (MM.sin(w * z2) - MM.sin(w * z1)) / w;
-            c[n] = 2 * d * d / (hw * hw);
-            a[n] = kap * (w / hD) * (w / hD);
-            t[n] = c[n] * besselK0(MM.sqrt(a[n]));
-        }
-        tail[nMax] = 0;
-        for (n = nMax - 1; n >= 0; n--) tail[n] = tail[n + 1] + t[n + 1];
-        return { c: c, a: a, tail: tail, nMax: nMax, Spp: tail[0] };
+        var job = { done: false, result: null, next: 1 };
+        job.step = function (nTerms) {
+            var end = MM.min(nMax, job.next + MM.max(1, nTerms) - 1), n;
+            for (n = job.next; n <= end; n++) {
+                var w = n * MM.PI, d = (MM.sin(w * z2) - MM.sin(w * z1)) / w;
+                c[n] = 2 * d * d / (hw * hw);
+                a[n] = kap * (w / hD) * (w / hD);
+                t[n] = c[n] * besselK0(MM.sqrt(a[n]));
+            }
+            var used = end - job.next + 1;
+            job.next = end + 1;
+            if (job.next > nMax) {
+                tail[nMax] = 0;
+                for (n = nMax - 1; n >= 0; n--) tail[n] = tail[n + 1] + t[n + 1];
+                job.result = { c: c, a: a, tail: tail, nMax: nMax, Spp: tail[0] };
+                job.done = true;
+                _ppMemo.key = key; _ppMemo.val = job.result;
+            }
+            return used;
+        };
+        return job;
+    }
+    function _ppPrepare(P) {
+        var j = _ppPrepareJob(P);
+        while (!j.done) j.step(1e9);
+        return j.result;
     }
     // Terms with a_n ≥ 25·s_max are replaced by K0(√a_n) (≤ 2 % in the argument, smooth in s within one
     // inversion); the cap of 300 only affects times where wellbore storage dominates.
@@ -479,23 +512,35 @@
         var x0 = MM.log(tDmin), n = MM.max(4, MM.ceil((MM.log(tDmax) - x0) / DX) + 2);
         var g = { model: model, x0: x0, dx: DX, idx: 1 / DX, n: n, P: new Float64Array(n), D: new Float64Array(n), Cd: Cd, S: S, ready: false, filled: 0,
                   cost: (KERNEL_COST[model] || 1) * STEHFEST_N };
-        var prepared = false;
-        g.build = function (count) {
-            if (!prepared) { _prep(model, P); prepared = true; }
-            var end = MM.min(n, g.filled + count);
-            for (var i = g.filled; i < end; i++) {
+        var prepared = false, ppJob = null;
+        // build(budget): evaluates grid points (and, for partial penetration, its series preparation first) until
+        // `budget` cost units are used (at least one point); returns the cost units used.
+        g.build = function (budget) {
+            var used = 0;
+            if (!prepared) {
+                if (model === 'partpen' && !P._pp) {
+                    if (!ppJob) ppJob = _ppPrepareJob(P);
+                    if (!ppJob.done) used += ppJob.step(MM.max(1, MM.floor(budget)));
+                    if (!ppJob.done) return used;
+                    P._pp = ppJob.result;
+                }
+                _prep(model, P); prepared = true;
+            }
+            var i = g.filled;
+            while (i < n && (used === 0 || used + g.cost <= budget)) {
                 var tD = MM.exp(x0 + i * DX), r = _invert(model, P, Cde, Se, tD * tScale);
                 g.P[i] = r[0]; g.D[i] = r[1];
+                i++; used += g.cost;
             }
-            g.filled = end;
-            if (end >= n) { g.ready = true; g.P0 = g.P[0]; g.tD0 = MM.exp(x0); }
-            return g.ready;
+            g.filled = i;
+            if (i >= n) { g.ready = true; g.P0 = g.P[0]; g.tD0 = MM.exp(x0); }
+            return used;
         };
         return g;
     }
     function buildGrid(model, params, Cd, S, tDmin, tDmax) {
         var g = gridJob(model, params, Cd, S, tDmin, tDmax);
-        g.build(g.n);
+        while (!g.ready) g.build(Infinity);
         return g;
     }
     // pwD at tD from a grid (early: pure storage or log extrapolation; late: log-linear).
@@ -576,11 +621,12 @@
             }
             return p;
         }
+        // Bg in rb/Mscf (gas rates are Mscf/d): 5.035·z·T/p, the unit the engines use for gas B (§3.7 WellInput).
         function props(p) {
             var z = zOf(p), m = muOf(p, z), h = MM.max(0.5, p * 1e-4);
             var dzdp = (zOf(p + h) - zOf(p - h)) / (2 * h);
             var cg = 1 / p - dzdp / z;
-            return { p: p, z: z, mu: m, cg: cg, Bg: 0.00504 * z * T / p };
+            return { p: p, z: z, mu: m, cg: cg, Bg: 5.035 * z * T / p };
         }
         return { T_R: T, zOf: zOf, muOf: function (p) { return muOf(p, zOf(p)); }, mOf: mOf, pOfM: pOfM, props: props, Tpc: TpcS, Ppc: PpcS };
     }
@@ -615,32 +661,6 @@
         while (lo < hi) { var mid = (lo + hi) >> 1; if (arr[mid] > v) hi = mid; else lo = mid + 1; }
         return lo;
     }
-    // hash16 / canon from PRiSM_autoInterp when present (the feature's one hash); a same-algorithm
-    // fallback keeps a bare load working (sorted-key JSON, two FNV-1a passes).
-    function _hash16Fallback(str) {
-        function pass(h) { for (var i = 0; i < str.length; i++) h = MM.imul(h ^ str.charCodeAt(i), 16777619); return ('0000000' + (h >>> 0).toString(16)).slice(-8); }
-        return pass(0x811c9dc5 | 0) + pass(0x050c5d1f);
-    }
-    function _canonFallback(o) {
-        if (o === null || typeof o !== 'object') return JSON.stringify(o);
-        if (Array.isArray(o)) return '[' + o.map(_canonFallback).join(',') + ']';
-        return '{' + Object.keys(o).sort().map(function (k) { return JSON.stringify(k) + ':' + _canonFallback(o[k]); }).join(',') + '}';
-    }
-    function hashObj(o) {
-        var AI = G.PRiSM_autoInterp;
-        if (AI && typeof AI.hash16 === 'function' && typeof AI.canon === 'function') return AI.hash16(AI.canon(o, 'inputs'));
-        return _hash16Fallback(_canonFallback(o));
-    }
-    function recordHash(t, p) {
-        var h = 0x811c9dc5 | 0;
-        for (var i = 0; i < t.length; i++) {
-            var dt = i ? t[i] - t[i - 1] : 0;
-            h = MM.imul(h ^ (dt | 0), 16777619);
-            h = MM.imul(h ^ (MM.round(p[i] * 1000) | 0), 16777619);
-        }
-        return hashObj({ gen: VERSION, n: t.length, origin_ms: t[0], end_ms: t[t.length - 1], digest: ('0000000' + (h >>> 0).toString(16)).slice(-8) });
-    }
-
     // ═════════════════════════════════════════════════════════════════════
     // SECTION 9 — scenario: rate schedule, steps, skins
     // ═════════════════════════════════════════════════════════════════════
@@ -651,6 +671,15 @@
     //             Safter: number|null, isTest, label}],
     //   S0, sampling: {base_s, dense_s, burst}, noise: {...}, extras: {...}, gap: null|{t0, t1},
     //   alloc: {...}, rateSource, given, history, zones, seedNoise }
+    // Hold the true day rate of the QUIET_DAYS days before day index dc at the closing day's rate qDay[dc] (no day-boundary
+    // step over the closing day and the 4 days before it; the variation there lives in the allocation error). A softer
+    // ±2 % compression was measured too: it made no difference to the detection reach, because the pressure step of even
+    // a 1–2 % rate change exceeds the 5 psi rise threshold on most wells.
+    var QUIET_DAYS = 4;
+    function _quietWindow(qDay, dc) {
+        if (!(dc >= 0 && dc < qDay.length)) return;
+        for (var d = MM.max(0, dc - QUIET_DAYS); d < dc; d++) qDay[d] = qDay[dc];
+    }
     function _qDayAt(SC, t) {
         var pr = SC.prod, d = MM.floor((t - pr.dayShift_h) / 24) - pr.dayIndex0;
         return pr.qDay[clamp(d, 0, pr.qDay.length - 1)];
@@ -789,26 +818,48 @@
             if (base < 3600) base *= 2; else { dense *= 2; SC.sampling.burst = false; }
         }
         SC.sampling.base_eff = base; SC.sampling.dense_eff = dense;
-        var tmp = new Float64Array(count), n = 0;
-        L.forEach(function (s) { for (var k = MM.ceil(s.a / s.st); k <= MM.floor(s.b / s.st); k++) tmp[n++] = k * s.st; });
-        var arr = tmp.subarray(0, n).sort();
-        var out = new Float64Array(n), m = 0;
-        for (var i = 0; i < n; i++) if (!m || arr[i] > out[m - 1]) out[m++] = arr[i];
+        // k-way merge of the segments' arithmetic progressions (each ascending), duplicates dropped: O(n·segments), no sort
+        var nSeg = L.length, kNext = new Float64Array(nSeg), kLast = new Float64Array(nSeg), stp = new Float64Array(nSeg), j;
+        for (j = 0; j < nSeg; j++) { stp[j] = L[j].st; kNext[j] = MM.ceil(L[j].a / L[j].st); kLast[j] = MM.floor(L[j].b / L[j].st); }
+        var out = new Float64Array(count), m = 0;
+        for (;;) {
+            var best = Infinity;
+            for (j = 0; j < nSeg; j++) if (kNext[j] <= kLast[j]) { var v = kNext[j] * stp[j]; if (v < best) best = v; }
+            if (best === Infinity) break;
+            if (!m || best > out[m - 1]) out[m++] = best;
+            for (j = 0; j < nSeg; j++) if (kNext[j] <= kLast[j] && kNext[j] * stp[j] === best) kNext[j]++;
+        }
         return out.slice(0, m);   // ms after T0, strictly ascending
     }
+
+    // Work units are count-based (the §4.8 slicing rule: a static cost table, never a clock). The forward phase does
+    // UNIT_FWD sample-step evaluations per step (a single superposition step is split across units when needed), the
+    // grid phase UNIT_GRID cost units (Bessel evaluations, KERNEL_COST), and the finishing phase UNIT_FIN ops on the same
+    // scale as the forward phase (one op ≈ one interpolated grid evaluation) with the per-item weights of OPS. An
+    // indivisible item (one allocation pass, one truth tail) waits for a fresh unit when it does not fit the rest of one.
+    // job.stats() reports the largest step of each phase against its cap (test GE1).
+    var UNIT_FIN = UNIT_FWD;
+    // (weights measured on desktop V8: one op ≈ 30 ns; pseudo-time per sample = pseudoEval·(steps evaluated) + pseudoSample)
+    var OPS = { setupSample: 3, pOil: 1, pGas: 40, pseudoEval: 3, pseudoSample: 450, extra: 5, extraOffset: 75, flow: 2, noise: 10, post: 2, gap: 1,
+                record: 4, allocCell: 6, curvePoint: 5, plateauPoint: 4, reachPoint: 100, gradeOp: 0.4 };
 
     function GenJob(SC, opts) {
         opts = opts || {};
         var self = this;
         this.SC = SC; this.phase = 0; this.res = null; this.cancelled = false;
-        var steps, plan, grids = [], gridJobs = [], refPlan, refGrids = [], tms, th, acc, nS, stepIdx = 0, isGas = SC.fluid === 'gas';
-        var res = SC.res, muct = res.mu * res.ct, gasT = null;
-        var unitsTotal = 1, unitsDone = 0;
-        function setup() {
+        var steps, plan, grids = [], gridJobs = [], refPlan, refGrids = [], tms, th, acc, nS, stepIdx = 0, fwdI = -1, isGas = SC.fluid === 'gas';
+        var res = SC.res, muct = res.mu * res.ct;
+        var unitsTotal = 1, unitsDone = 0, lastOps = 0;
+        var stats = { steps: 0, max: { setup: 0, grid: 0, fwd: 0, fin: 0 }, cap: { setup: null, grid: UNIT_GRID, fwd: UNIT_FWD, fin: UNIT_FIN }, worst: null };
+        // setup in two steps: (A) gas tables, the rate steps and the sample times; (B) hours, grids and the unit plan
+        function setupA() {
             if (isGas) { _gasSetup(SC); _fillGasGiven(SC); }
             muct = SC.res.muct || (res.mu * res.ct);
             steps = buildSteps(SC);
             tms = _sampleTimes(SC, opts.maxSamples || MAX_SAMPLES);
+            return tms.length * OPS.setupSample;
+        }
+        function setup() {
             nS = tms.length; th = new Float64Array(nS);
             for (var i = 0; i < nS; i++) th[i] = tms[i] / HOUR_MS;
             acc = new Float64Array(nS);
@@ -822,31 +873,32 @@
             if (res.model !== 'homogeneous') {
                 plan.values.forEach(function (S) { var gj = gridJob('homogeneous', {}, SC.Cd, S + (SC.Sgeo || 0), tDmin, tDmax); refGrids.push(gj); gridJobs.push(gj); });
             } else refGrids = grids;
-            var gridUnits = 0; gridJobs.forEach(function (g) { gridUnits += g.n * g.cost; });
+            var gridUnits = 0, maxCost = 0; gridJobs.forEach(function (g) { gridUnits += g.n * g.cost; maxCost = MM.max(maxCost, g.cost); });
+            stats.cap.grid = UNIT_GRID + maxCost;   // a step may finish the point it started
             var fwd = 0, j = 0, wNode = plan.mode === 'nodes' ? 4 : 1; steps.forEach(function (st) { while (j < nS && th[j] <= st.t) j++; fwd += (nS - j) * wNode; });
             SC._fwdOps = fwd;
             unitsTotal = gridUnits / UNIT_GRID + fwd / UNIT_FWD + 2;
+            return nS * OPS.setupSample;
         }
         function gridsStep() {
-            var budget = UNIT_GRID;
-            for (var i = 0; i < gridJobs.length && budget > 0; i++) {
-                var g = gridJobs[i];
-                if (g.ready) continue;
-                var n = MM.max(1, MM.floor(budget / g.cost));
-                var before = g.filled;
-                g.build(n);
-                budget -= (g.filled - before) * g.cost;
-                unitsDone += (g.filled - before) * g.cost / UNIT_GRID;
+            var budget = UNIT_GRID, used = 0;
+            for (var i = 0; i < gridJobs.length && used < budget; i++) {
+                if (gridJobs[i].ready) continue;
+                used += gridJobs[i].build(budget - used);
             }
+            unitsDone += used / UNIT_GRID;
+            lastOps = used;
             return gridJobs.every(function (g) { return g.ready; });
         }
         function forwardStep() {
             var ops = 0, tdc = SC.tdc;
             while (stepIdx < steps.length && ops < UNIT_FWD) {
-                var st = steps[stepIdx++], dq = st.dq, t0 = st.t, i = bsearchFirstAbove(th, t0);
+                var st = steps[stepIdx], dq = st.dq, t0 = st.t, i;
+                if (fwdI < 0) fwdI = bsearchFirstAbove(th, t0);
+                var w = st.g ? 1 : 4, iEnd = MM.min(nS, fwdI + MM.max(1, MM.ceil((UNIT_FWD - ops) / w)));
                 if (st.g) {
                     var g = st.g, P = g.P, D = g.D, x0 = g.x0, idx = g.idx, n1 = g.n - 1, gdx = g.dx;
-                    for (; i < nS; i++) {
+                    for (i = fwdI; i < iEnd; i++) {
                         var tD = tdc * (th[i] - t0), x = MM.log(tD), f = (x - x0) * idx, v;
                         if (f < 0 || f >= n1) v = gEval(g, tD);
                         else {
@@ -854,40 +906,56 @@
                             v = (2 * u3 - 3 * u2 + 1) * P[k] + (u3 - 2 * u2 + u) * gdx * D[k] + (3 * u2 - 2 * u3) * P[k + 1] + (u3 - u2) * gdx * D[k + 1];
                         }
                         acc[i] += dq * v;
-                        ops++;
                     }
                 } else {
-                    for (; i < nS; i++) { acc[i] += dq * _stepEval(st, tdc * (th[i] - t0)); ops += 4; }   // four skin-node grids
+                    for (i = fwdI; i < iEnd; i++) acc[i] += dq * _stepEval(st, tdc * (th[i] - t0));   // four skin-node grids
                 }
+                ops += (iEnd - fwdI) * w;
+                fwdI = iEnd;
+                if (fwdI >= nS) { stepIdx++; fwdI = -1; }
             }
             unitsDone += ops / UNIT_FWD;
+            lastOps = ops;
             return stepIdx >= steps.length;
         }
         var fin = null;
         function finishStep() {
             if (!fin) fin = new _Finisher(SC, steps, refGrids, refPlan, tms, th, acc, opts);
-            if (fin.step()) { self.res = fin.result; return true; }
+            var done = fin.step();
+            lastOps = fin.lastOps;
+            if (done) { self.res = fin.result; return true; }
             return false;
+        }
+        function note(phase) {
+            stats.steps++;
+            if (lastOps > stats.max[phase]) stats.max[phase] = lastOps;
+            var cap = stats.cap[phase], ratio = cap ? lastOps / cap : 0;
+            if (cap && (!stats.worst || ratio > stats.worst.ratio)) stats.worst = { phase: phase, ops: lastOps, cap: cap, ratio: ratio, detail: phase === 'fin' && fin ? fin.lastDetail.slice() : null };
         }
         this.step = function () {
             if (self.cancelled) return { done: true, progress: 1, label: 'cancelled' };
-            if (self.phase === 0) { setup(); self.phase = 1; return { done: false, progress: 0.02, label: 'Preparing the synthetic well' }; }
+            if (self.phase === 0) { lastOps = setupA(); note('setup'); self.phase = 0.5; return { done: false, progress: 0.01, label: 'Preparing the synthetic well' }; }
+            if (self.phase === 0.5) { lastOps = setup(); note('setup'); self.phase = 1; return { done: false, progress: 0.02, label: 'Preparing the synthetic well' }; }
             if (self.phase === 1) {
-                if (gridsStep()) { _attachGrids(steps, plan, grids); self.phase = 2; }
+                var gd = gridsStep(); note('grid');
+                if (gd) { _attachGrids(steps, plan, grids); self.phase = 2; }
                 return { done: false, progress: MM.min(0.95, unitsDone / unitsTotal), label: 'Tabulating the forward model' };
             }
             if (self.phase === 2) {
-                if (forwardStep()) self.phase = 3;
+                var fd = forwardStep(); note('fwd');
+                if (fd) self.phase = 3;
                 return { done: false, progress: MM.min(0.95, unitsDone / unitsTotal), label: 'Computing gauge pressures' };
             }
             if (self.phase === 3) {
-                if (finishStep()) { self.phase = 4; return { done: true, progress: 1, label: 'Synthetic data ready' }; }
+                var dn = finishStep(); note('fin');
+                if (dn) { self.phase = 4; return { done: true, progress: 1, label: 'Synthetic data ready' }; }
                 return { done: false, progress: 0.96, label: 'Noise, allocation and truth' };
             }
             return { done: true, progress: 1, label: 'Synthetic data ready' };
         };
         this.result = function () { return self.res; };
         this.cancel = function () { self.cancelled = true; };
+        this.stats = function () { return deepCopy(stats); };
     }
 
     function _gasSetup(SC) {
@@ -895,9 +963,7 @@
         var T = gasPVT(g, pmax);
         SC.gasT = T;
         // reference μ·ct at the build-up average pressure (estimated once from the test's expected levels)
-        var ref = T.props(res.pi);
-        var pr = SC._pRefEst || res.pi;
-        ref = T.props(pr);
+        var pr = SC._pRefEst || res.pi, ref = T.props(pr);
         res.mu = ref.mu; res.B = ref.Bg; res.ctRef = gasCt(ref.cg); res.ct = res.ctRef; res.muct = ref.mu * res.ctRef;
         res.zRef = ref.z; res.pRef = pr; res.T_R = T.T_R;
         SC.mi = T.mOf(res.pi);
@@ -934,122 +1000,238 @@
         }
         return v;
     }
+    // The record hash is the data layer's construction exactly (§3.6 GaugeRecord.hash): hash16 of
+    // "n|t0|tN|digest", digest = FNV-1a (Math.imul) over the sample spacing and round(p·1000), unpadded hex.
+    // hash16 here is the generator's own copy of the frozen §3.1 algorithm (two FNV-1a passes, offset bases
+    // 0x811c9dc5 and 0x050c5d1f), so a bare load and the app give the same hash.
+    function _hash16(str) {
+        function pass(h) { for (var i = 0; i < str.length; i++) h = MM.imul(h ^ str.charCodeAt(i), 16777619); return ('0000000' + (h >>> 0).toString(16)).slice(-8); }
+        return pass(0x811c9dc5 | 0) + pass(0x050c5d1f);
+    }
+    function _digestStep(h, dt, pv) { h = MM.imul(h ^ dt, 16777619); return MM.imul(h ^ MM.round(pv * 1000), 16777619); }
+    function _digestHash(n, t0, tN, h) { return n ? _hash16(n + '|' + t0 + '|' + tN + '|' + (h >>> 0).toString(16)) : _hash16('0||'); }
+    function recordHash(t, p) {
+        var n = t ? t.length : 0, h = 0x811c9dc5;
+        for (var i = 0; i < n; i++) h = _digestStep(h, i ? t[i] - t[i - 1] : 0, p[i]);
+        return _digestHash(n, n ? t[0] : 0, n ? t[n - 1] : 0, h);
+    }
 
-    // Finishing work in count-sliced sub-steps: noise-free pressures, the gas pseudo-time march (chunked by
-    // evaluations), extras and noise, record and allocation, then one test truth per step.
-    var UNIT_PT = 400000;   // superposition evaluations per pseudo-time sub-step
+    // Finishing work in count-sliced stages: noise-free pressures, the gas pseudo-time march, the noise-free reference
+    // values of each test, extras and noise, the record, the allocation, then each test's truth (TruthJob).
     function _Finisher(SC, steps, refGrids, refPlan, tms, th, acc, opts) {
-        var self = this, res = SC.res, nS = th.length, i, isGas = SC.fluid === 'gas';
-        var rN = rng(SC.seedNoise >>> 0), stage = 0, p = null, test = null, ptQueue = [], ptState = null, al = null, record = null, flowing = null;
-        var truths = [], ti = 0, perEval = 0;
+        var self = this, res = SC.res, nS = th.length, isGas = SC.fluid === 'gas';
+        var rN = rng(SC.seedNoise >>> 0), stage = 0, cur = 0, p = null, test = null, ptQueue = [], ptState = null, al = null, record = null, flowing = null;
+        var truths = [], ti = 0, tj = null, perEval = 0, nf = [], nz = SC.noise, si = 0, ar = 0, ou = 0, tideP1 = 0, tideP2 = 0, t0h = th[0];
+        var keep = null, nOut = 0, Tm = null, Pp = null, hDig = 0x811c9dc5, pmin = Infinity;
         this.result = null;
-        this.step = function () {
-            if (stage === 0) { init(); stage = 1; return false; }
-            if (stage === 1) { if (pseudoStep()) stage = 2; return false; }
-            if (stage === 2) { noiseAndRecord(); stage = 3; return false; }
-            if (stage === 3) {
-                if (ti < test.length) { truths.push(_truthFor(SC, steps, test[ti], al, th)); ti++; }
-                if (ti >= test.length) { assemble(); stage = 4; return true; }
-                return false;
-            }
-            return true;
-        };
-        function init() {
-            // reference-model grids on each step (for truth only)
-            steps.forEach(function (st) {
-            var r = { g: null, gw: null };
-            if (refPlan.mode === 'exact') { for (var j = 0; j < refPlan.values.length; j++) if (MM.abs(refPlan.values[j] - st.Sstep) < 1e-9) r.g = refGrids[j]; }
-            else {
-                var v = refPlan.values, jj = clamp(MM.floor((st.Sstep - v[0]) / 0.25) - 1, 0, v.length - 4), w = [];
-                for (var a = 0; a < 4; a++) { var L = 1; for (var b = 0; b < 4; b++) if (b !== a) L *= (st.Sstep - v[jj + b]) / (v[jj + a] - v[jj + b]); w.push([refGrids[jj + a], L]); }
-                r.gw = w;
-            }
-            st._ref = r;
-            });
-            // noise-free pressures
-            p = new Float64Array(nS);
-            for (i = 0; i < nS; i++) p[i] = _pOfAcc(SC, acc[i]);
-            test = SC.events.filter(function (ev) { return ev.isTest; });
-            if (isGas && SC.gas.pseudoTime) ptQueue = test.slice();
-            perEval = steps.length * (steps[0] && steps[0].gw ? 4 : 1);
+        this.lastOps = 0;
+        function chunk(budget, w, n, body) {   // body(i0, i1): process [i0, i1); returns true when the whole range is done
+            var cnt = MM.max(1, MM.floor(budget / w)), i1 = MM.min(n, cur + cnt), used = (i1 - cur) * w;
+            body(cur, i1);
+            cur = i1;
+            if (cur >= n) { cur = 0; stage++; }
+            return MM.max(1, used);
         }
-        // gas pseudo-time on the test build-up (Δt → Δt_a, marched with the wellbore pressure, predictor-corrector)
-        function pseudoStep() {
-            var budget = UNIT_PT, T = SC.gasT, ref = res.muct;
-            function ratio(pp) { var pr = T.props(MM.max(pp, 20)); return ref / (pr.mu * gasCt(pr.cg)); }
-            while (budget > 0) {
-                if (!ptState) {
-                    if (!ptQueue.length) return true;
-                    var ev = ptQueue.shift();
-                    ptState = { ev: ev, k: bsearchFirstAbove(th, ev.tc), ta: 0, tPrev: ev.tc, pPrev: _pOfAcc(SC, _accAt(SC, steps, ev.tc, false)) };
+        var STAGES = [
+            function init() {
+                steps.forEach(function (st) {
+                    var r = { g: null, gw: null };
+                    if (refPlan.mode === 'exact') { for (var j = 0; j < refPlan.values.length; j++) if (MM.abs(refPlan.values[j] - st.Sstep) < 1e-9) r.g = refGrids[j]; }
+                    else {
+                        var v = refPlan.values, jj = clamp(MM.floor((st.Sstep - v[0]) / 0.25) - 1, 0, v.length - 4), w = [];
+                        for (var a = 0; a < 4; a++) { var L = 1; for (var b = 0; b < 4; b++) if (b !== a) L *= (st.Sstep - v[jj + b]) / (v[jj + a] - v[jj + b]); w.push([refGrids[jj + a], L]); }
+                        r.gw = w;
+                    }
+                    st._ref = r;
+                });
+                p = new Float64Array(nS);
+                test = SC.events.filter(function (ev) { return ev.isTest; });
+                if (isGas && SC.gas.pseudoTime) ptQueue = test.slice();
+                perEval = steps.length * (steps[0] && steps[0].gw ? 4 : 1);
+                stage++;
+                return 1 + 4 * steps.length;
+            },
+            function pressures(budget) {   // noise-free pressures from the superposed pwD
+                return chunk(budget, isGas ? OPS.pGas : OPS.pOil, nS, function (i0, i1) { for (var i = i0; i < i1; i++) p[i] = _pOfAcc(SC, acc[i]); });
+            },
+            function pseudo(budget) {   // gas pseudo-time on the test build-up (Δt → Δt_a, marched with the wellbore pressure)
+                if (!ptQueue.length && !ptState) { stage++; return 1; }
+                var used = 0, T = SC.gasT, ref = res.muct, per = OPS.pseudoEval * perEval + OPS.pseudoSample;
+                function ratio(pp) { var pr = T.props(MM.max(pp, 20)); return ref / (pr.mu * gasCt(pr.cg)); }
+                while (used === 0 || used + per <= budget) {
+                    if (!ptState) {
+                        if (!ptQueue.length) { stage++; return MM.max(1, used); }
+                        var ev = ptQueue.shift();
+                        ptState = { ev: ev, k: bsearchFirstAbove(th, ev.tc), ta: 0, tPrev: ev.tc, pPrev: _pOfAcc(SC, _accAt(SC, steps, ev.tc, false)) };
+                        used += perEval;
+                    }
+                    var stt = ptState, e2 = stt.ev;
+                    if (!(stt.k < nS && th[stt.k] <= e2.tc + e2.dur + 1e-9)) { ptState = null; continue; }
+                    var dt = th[stt.k] - stt.tPrev, r1 = ratio(stt.pPrev), taP = stt.ta + dt * r1;
+                    var pP = _pOfAcc(SC, _accAt(SC, steps, e2.tc + taP, false));
+                    stt.ta = stt.ta + dt * 0.5 * (r1 + ratio(pP));
+                    var pk = _pOfAcc(SC, _accAt(SC, steps, e2.tc + stt.ta, false));
+                    p[stt.k] = pk; stt.tPrev = th[stt.k]; stt.pPrev = pk; stt.k++;
+                    used += per;
                 }
-                var stt = ptState, e2 = stt.ev;
-                if (!(stt.k < nS && th[stt.k] <= e2.tc + e2.dur + 1e-9)) { ptState = null; continue; }
-                var dt = th[stt.k] - stt.tPrev, r1 = ratio(stt.pPrev), taP = stt.ta + dt * r1;
-                var pP = _pOfAcc(SC, _accAt(SC, steps, e2.tc + taP, false));
-                stt.ta = stt.ta + dt * 0.5 * (r1 + ratio(pP));
-                var pk = _pOfAcc(SC, _accAt(SC, steps, e2.tc + stt.ta, false));
-                p[stt.k] = pk; stt.tPrev = th[stt.k]; stt.pPrev = pk; stt.k++;
-                budget -= 2 * perEval;
+                return used;
+            },
+            function noiseFree() {   // the noise-free pwf0 at t_c and the last build-up pressure of each test (gas truth, §5.3)
+                test.forEach(function (ev) {
+                    var ps = _preSteps(SC, ev), kEnd = bsearchFirstAbove(th, ev.tc + ev.dur + 1e-9) - 1;
+                    nf.push({ pwf0: _pOfAcc(SC, _accList(SC, ps.pre, _tcOf(ev), false)), pEnd: kEnd >= 0 ? p[kEnd] : null });
+                });
+                stage++;
+                return 1 + test.length * (steps.length + 10);
+            },
+            function extras(budget) {   // depletion, offset well, test humps (oil and injector strata only)
+                if (!SC.extras) { stage++; return 1; }
+                return chunk(budget, SC.extras.offset ? OPS.extraOffset : OPS.extra, nS, function (i0, i1) { for (var i = i0; i < i1; i++) p[i] += _extraAt(SC, th[i]); });
+            },
+            function flows(budget) {   // flowing flags (slugging noise while flowing)
+                if (!flowing) flowing = new Uint8Array(nS);
+                return chunk(budget, OPS.flow, nS, function (i0, i1) {
+                    for (var i = i0; i < i1; i++) { while (si + 1 < steps.length && steps[si + 1].t < th[i]) si++; flowing[i] = (steps[si] && steps[si].t < th[i] && steps[si].q > 0) ? 1 : 0; }
+                });
+            },
+            function noise(budget) {   // white, AR(1), low-frequency, drift, tides (one sequential stream)
+                if (cur === 0) { tideP1 = rN.uniform(0, 2 * MM.PI); tideP2 = rN.uniform(0, 2 * MM.PI); }
+                return chunk(budget, OPS.noise, nS, function (i0, i1) {
+                    for (var i = i0; i < i1; i++) {
+                        var sig = nz.sigma * (flowing[i] ? nz.sigmaFlowFactor : 1), e = rN.normal() * sig;
+                        if (nz.ar1Rho) { ar = nz.ar1Rho * ar + MM.sqrt(1 - nz.ar1Rho * nz.ar1Rho) * sig * rN.normal(); e = ar; }
+                        if (nz.lf) {
+                            var dt2 = i ? th[i] - th[i - 1] : 0, dec = MM.exp(-dt2 / nz.lf.tau_h);
+                            ou = ou * dec + nz.lf.sigma * MM.sqrt(1 - dec * dec) * rN.normal();
+                            e += ou;
+                        }
+                        if (nz.drift) e += nz.drift * (th[i] - t0h) / 24;
+                        if (nz.tideM2 || nz.tideK1) e += nz.tideM2 * MM.sin(2 * MM.PI * th[i] / 12.4206 + tideP1) + nz.tideK1 * MM.sin(2 * MM.PI * th[i] / 23.9345 + tideP2);
+                        p[i] += e;
+                    }
+                });
+            },
+            function spikes() {
+                if (nz.spikes > 0) {
+                    var protect = SC.events.map(function (ev) { return bsearchFirstAbove(th, ev.tc); });
+                    for (var sp = 0; sp < nz.spikes; sp++) {
+                        var at = rN.int(5, nS - 6), ok = true;
+                        for (var q2 = 0; q2 < protect.length; q2++) if (MM.abs(at - protect[q2]) <= 4) ok = false;
+                        if (!ok) continue;
+                        var mag = MM.max(1, 20 * nz.sigma) * rN.uniform(1, 3) * (rN.next() < 0.5 ? -1 : 1), run = rN.int(1, 2);
+                        for (var r = 0; r < run; r++) p[at + r] += mag;
+                    }
+                }
+                stage++;
+                return 1 + 10 * (nz.spikes || 0);
+            },
+            function post(budget) {   // quantisation, 0.1 mpsi rounding, the lowest flowing pressure
+                return chunk(budget, OPS.post, nS, function (i0, i1) {
+                    for (var i = i0; i < i1; i++) {
+                        if (nz.quant > 0) p[i] = MM.round(p[i] / nz.quant) * nz.quant;
+                        p[i] = MM.round(p[i] * 1e4) / 1e4; if (p[i] < 1) p[i] = 1;
+                        if (flowing[i] && p[i] < pmin) pmin = p[i];
+                    }
+                });
+            },
+            function gaps(budget) {   // data gaps (baddata)
+                if (!SC.gap) { nOut = nS; stage++; return 1; }
+                if (!keep) keep = [];
+                var used = chunk(budget, OPS.gap, nS, function (i0, i1) { for (var i = i0; i < i1; i++) if (!(th[i] > SC.gap.t0 && th[i] < SC.gap.t1)) keep.push(i); });
+                nOut = keep.length;
+                return used;
+            },
+            function rec(budget) {   // the GaugeRecord arrays and the record hash, incrementally
+                if (!Tm) { Tm = new Float64Array(nOut); Pp = new Float64Array(nOut); }
+                var before = stage, used = chunk(budget, OPS.record, nOut, function (i0, i1) {
+                    for (var i = i0; i < i1; i++) {
+                        var src = keep ? keep[i] : i;
+                        Tm[i] = SC.T0_ms + tms[src]; Pp[i] = p[src];
+                        hDig = _digestStep(hDig, i ? Tm[i] - Tm[i - 1] : 0, Pp[i]);
+                    }
+                });
+                if (stage !== before) {
+                    record = { ok: true, origin_ms: Tm[0], t: Tm, p: Pp, T: null, n: nOut, source: 'demo', name: SC.name, zone: { mode: 'utc' }, pUnitIn: 'psia',
+                               patm: 14.696, elapsed: false, rollup: false, hash: _digestHash(nOut, Tm[0], Tm[nOut - 1], hDig), warnings: [] };
+                }
+                return used;
+            },
+            function alloc(budget, fresh) {   // allocation / rate table (one pass)
+                var days = MM.ceil((SC.tEnd_h - MM.min(0, SC.prod.dayShift_h)) / 24) + 2, est = days * steps.length * OPS.allocCell;
+                if (!fresh && est > budget) return -1;
+                al = _allocation(SC, rN);
+                stage++;
+                return MM.max(1, est);
+            },
+            function truthsStage(budget, fresh) {   // one TruthJob per test
+                if (ti >= test.length) { stage++; return 1; }
+                if (!tj) tj = new TruthJob(SC, steps, test[ti], al, nf[ti]);
+                var used = tj.step(budget, fresh);
+                if (used < 0) return -1;
+                if (tj.done) { truths.push(tj.result); tj = null; ti++; }
+                return MM.max(1, used);
+            },
+            function assemble() {
+                var well = _wellInput(SC, pmin);
+                self.result = {
+                    record: record, allocation: { rows: al.rows }, rateTable: al.table, well: well, truths: truths,
+                    history: SC.history, zones: SC.zones, completion: SC.completion || null, workovers: SC.workovers || [],
+                    info: { nSamples: record.n, nSteps: steps.length, fwdOps: SC._fwdOps, base_s: SC.sampling.base_eff, dense_s: SC.sampling.dense_eff,
+                            gridModel: res.model, Cd: SC.Cd, tdc: SC.tdc, Sgeo: SC.Sgeo || 0, gasRef: isGas ? { p: res.pRef, mu: res.mu, z: res.zRef, ct: res.ctRef, Bg: res.B } : null }
+                };
+                stage++;
+                return 1;
             }
-            return false;
-        }
-        function noiseAndRecord() {
-            // extras (oil and injector strata only)
-            if (SC.extras) for (i = 0; i < nS; i++) p[i] += _extraAt(SC, th[i]);
-            // noise
-            var nz = SC.noise, si = 0;
-            flowing = new Uint8Array(nS);
-            for (i = 0; i < nS; i++) { while (si + 1 < steps.length && steps[si + 1].t < th[i]) si++; flowing[i] = (steps[si] && steps[si].t < th[i] && steps[si].q > 0) ? 1 : 0; }
-            var ar = 0, ou = 0, t0h = th[0];
-            var tideP1 = rN.uniform(0, 2 * MM.PI), tideP2 = rN.uniform(0, 2 * MM.PI);
-            for (i = 0; i < nS; i++) {
-            var sig = nz.sigma * (flowing[i] ? nz.sigmaFlowFactor : 1), e = rN.normal() * sig;
-            if (nz.ar1Rho) { ar = nz.ar1Rho * ar + MM.sqrt(1 - nz.ar1Rho * nz.ar1Rho) * sig * rN.normal(); e = ar; }
-            if (nz.lf) {
-                var dt2 = i ? th[i] - th[i - 1] : 0, dec = MM.exp(-dt2 / nz.lf.tau_h);
-                ou = ou * dec + nz.lf.sigma * MM.sqrt(1 - dec * dec) * rN.normal();
-                e += ou;
+        ];
+        this.step = function () {
+            var used = 0, detail = [];
+            while (stage < STAGES.length && used < UNIT_FIN) {
+                var name = STAGES[stage].name, r = STAGES[stage](UNIT_FIN - used, used === 0);
+                if (r < 0) break;   // an indivisible item waits for a fresh unit
+                used += r; detail.push(name + ' ' + r);
             }
-            if (nz.drift) e += nz.drift * (th[i] - t0h) / 24;
-            if (nz.tideM2 || nz.tideK1) e += nz.tideM2 * MM.sin(2 * MM.PI * th[i] / 12.4206 + tideP1) + nz.tideK1 * MM.sin(2 * MM.PI * th[i] / 23.9345 + tideP2);
-            p[i] += e;
+            self.lastOps = used; self.lastDetail = detail;
+            return stage >= STAGES.length;
+        };
+    }
+
+    // One test's truth in count-sliced phases: the head (rates, f, k*, S*), the noise-free build-up curve and its
+    // homogeneous reference (points per step), then the plateaus, visibility and reach, then the grade prediction.
+    function TruthJob(SC, steps, ev, al, nf) {
+        var self = this, phase = 0, head = null, cv = null, rcv = null, tail = null;
+        var shareRef = SC.res.model === 'homogeneous' && !SC.extras;   // the reference curve is the curve itself
+        this.done = false; this.result = null;
+        this.step = function (budget, fresh) {
+            var used = 0, est;
+            while (!self.done && (used < budget || used === 0)) {
+                if (phase === 0) { head = _truthHead(SC, steps, ev, al, nf); cv = _curveJob(SC, steps, ev, false); phase = 1; used += 20; continue; }
+                if (phase === 1) {
+                    used += cv.step(MM.max(1, budget - used));
+                    if (cv.done()) { rcv = shareRef ? cv : _curveJob(SC, steps, ev, true); phase = 2; }
+                    if (used >= budget) break;
+                    continue;
+                }
+                if (phase === 2) {
+                    if (rcv !== cv) used += rcv.step(MM.max(1, budget - used));
+                    if (rcv.done()) phase = 3;
+                    if (used >= budget) break;
+                    continue;
+                }
+                if (phase === 3) {
+                    est = cv.out.X.length * OPS.plateauPoint + (_reachCached(SC, head.Stest) ? 1 : _reachPoints(SC, head.Stest) * OPS.reachPoint);
+                    if ((used > 0 || !fresh) && used + est > budget) break;
+                    tail = _truthTail1(SC, ev, head, cv.out, rcv.out);
+                    used += est; phase = 4;
+                    continue;
+                }
+                est = _gradeOps(cv.out) * OPS.gradeOp;
+                if ((used > 0 || !fresh) && used + est > budget) break;
+                self.result = _truthTail2(SC, ev, head, cv.out, tail);
+                used += est; self.done = true;
             }
-            if (nz.spikes > 0) {
-            var protect = SC.events.map(function (ev) { return bsearchFirstAbove(th, ev.tc); });
-            for (var sp = 0; sp < nz.spikes; sp++) {
-                var at = rN.int(5, nS - 6), ok = true;
-                for (var q2 = 0; q2 < protect.length; q2++) if (MM.abs(at - protect[q2]) <= 4) ok = false;
-                if (!ok) continue;
-                var mag = MM.max(1, 20 * nz.sigma) * rN.uniform(1, 3) * (rN.next() < 0.5 ? -1 : 1), run = rN.int(1, 2);
-                for (var r = 0; r < run; r++) p[at + r] += mag;
-            }
-            }
-            if (nz.quant > 0) for (i = 0; i < nS; i++) p[i] = MM.round(p[i] / nz.quant) * nz.quant;
-            for (i = 0; i < nS; i++) { p[i] = MM.round(p[i] * 1e4) / 1e4; if (p[i] < 1) p[i] = 1; }
-            // data gaps (baddata)
-            var keep = null;
-            if (SC.gap) {
-            keep = [];
-            for (i = 0; i < nS; i++) if (!(th[i] > SC.gap.t0 && th[i] < SC.gap.t1)) keep.push(i);
-            }
-            var nOut = keep ? keep.length : nS, T = new Float64Array(nOut), Pp = new Float64Array(nOut);
-            for (i = 0; i < nOut; i++) { var src = keep ? keep[i] : i; T[i] = SC.T0_ms + tms[src]; Pp[i] = p[src]; }
-            record = { ok: true, origin_ms: T[0], t: T, p: Pp, T: null, n: nOut, source: 'demo', name: SC.name, zone: { mode: 'utc' }, pUnitIn: 'psia',
-                       patm: 14.696, elapsed: false, rollup: false, hash: recordHash(T, Pp), warnings: [] };
-            // allocation / rate table
-            al = _allocation(SC, rN);
-        }
-        function assemble() {
-            var pmin = Infinity; for (i = 0; i < nS; i++) if (flowing[i] && p[i] < pmin) pmin = p[i];
-            var well = _wellInput(SC, pmin);
-            self.result = {
-                record: record, allocation: { rows: al.rows }, rateTable: al.table, well: well, truths: truths,
-                history: SC.history, zones: SC.zones, completion: SC.completion || null, workovers: SC.workovers || [],
-                info: { nSamples: record.n, nSteps: steps.length, fwdOps: SC._fwdOps, base_s: SC.sampling.base_eff, dense_s: SC.sampling.dense_eff,
-                        gridModel: res.model, Cd: SC.Cd, tdc: SC.tdc, Sgeo: SC.Sgeo || 0, gasRef: isGas ? { p: res.pRef, mu: res.mu, z: res.zRef, ct: res.ctRef, Bg: res.B } : null }
-            };
-        }
+            if (used === 0 && !fresh && !self.done) return -1;
+            return used;
+        };
     }
 
     // ── allocation (own day code) ──
@@ -1107,8 +1289,13 @@
     }
 
     // ── truth for one test event (§5.3) ──
-    function _truthFor(SC, steps, ev, al, th) {
-        var res = SC.res, tc = ev.tc, rampH = (ev.ramp_s || 0) / 3600;
+    // Closing-time convention (§4.3 M§A3): with a closing ramp the closing time t_c is the ramp midpoint, Δt is measured
+    // from it, and Δp is referenced to the flowing pressure extrapolated to it with the pre-ramp rate (pwf0 = trend(t_c));
+    // the ramp itself acts like two half-rate steps. Without a ramp t_c is the closing.
+    function _tcOf(ev) { return ev.tc - 0.5 * (ev.ramp_s || 0) / 3600; }
+    // head: rates, f, k*, S* (the input-consistent truth of §5.3)
+    function _truthHead(SC, steps, ev, al, nf) {
+        var res = SC.res, tc = ev.tc, rampH = (ev.ramp_s || 0) / 3600, tm = _tcOf(ev);
         var qTrue = qBeforeAt(SC, tc - rampH);   // the rate before the closing ramp (after any partial cut)
         var qCorrect = qTrue, dqSource = 'closingDay';
         if (ev.kind === 'partial') { qCorrect = qTrue; dqSource = 'partial'; }
@@ -1127,10 +1314,12 @@
             } else if (dy && dy.hOn < 6 && k > 0 && days[k - 1].hOn > 0) {
                 qCorrect = 24 * days[k - 1].Vg / days[k - 1].hOn * cut; dqSource = 'previousDay';
             } else if (dy && dy.hOn > 0) {
-                var base = 24 * dy.Vg / dy.hOn;
+                // a closing ramp counts as half its length (two half-rate steps, t_c at its midpoint, §4.3): the true
+                // flowing hours up to t_c are hOn − ramp/2, so 24·V/h reads the pre-ramp rate exactly
+                var rIn = MM.max(0, MM.min(rampH, tc - dy.a)), base = 24 * dy.Vg / MM.max(1e-6, dy.hOn - 0.5 * rIn);
                 if (ev.pb) {
-                    var h2 = MM.max(0, tc - MM.max(dy.a, tc - ev.pb.lead)), h1 = MM.max(0, dy.hOn - h2), f = ev.pb.f;
-                    base = (1 - f) * 24 * dy.Vg / (h1 + (1 - f) * h2);
+                    var h2 = MM.max(0, tc - MM.max(dy.a, tc - ev.pb.lead)), h1 = MM.max(0, dy.hOn - h2), f0 = ev.pb.f;
+                    base = (1 - f0) * 24 * dy.Vg / (h1 + (1 - f0) * MM.max(1e-6, h2 - 0.5 * rIn));
                 }
                 qCorrect = base;
             }
@@ -1140,41 +1329,70 @@
         var Stest = SC.SmechAt(tc - 1e-6) + (res.D || 0) * qTrue;
         var kStar = f * res.k * (g.B / res.B0) * (g.mu / res.mu0) * (res.h / g.h);
         var inTerm = 1.1513 * MM.log10((g.h / res.h) * (g.phi / res.phi) * (g.ct / res.ct)) + 2.3026 * MM.log10(g.rw / res.rw) - 1.1513 * MM.log10((g.B / res.B0) * f);
-        var SStar = Stest + inTerm;
-        // noise-free dimensionless build-up and its derivative on ln Δt_e
-        var curve = _buildupCurve(SC, steps, ev, false), refCurve = _buildupCurve(SC, steps, ev, true);
-        var plateaus = _plateaus(curve, res, f, g, null, kStar / res.k);
-        var visible = _visibility(SC, curve, refCurve);
-        var reach = _reach(SC, Stest, ev);
-        var grade = _predictGrade(curve);
+        // Gas (§4.6 item 1, "μ·ct at the build-up average pressure"): the engine takes μ from its own table at
+        // 0.5·(pwf0 + p_end), not the given μ, and S in pseudo-pressure depends on the μ in t_D. The truth therefore
+        // evaluates μ with the generator's table at the realised noise-free mean of pwf0 (at t_c) and the last build-up
+        // pressure: S* += 1.1513·log10(μ(p̄)/μ′). k* is unaffected (k from the normalised pseudo-pressure does not depend
+        // on the reference). Residual: the engine's own z/μ correlations may differ from the generator's slightly.
+        var gasMu = null;
+        if (SC.fluid === 'gas' && nf && nf.pwf0 > 0 && nf.pEnd > 0) {
+            var pBar = 0.5 * (nf.pwf0 + nf.pEnd), muBar = SC.gasT.props(pBar).mu;
+            gasMu = { pBar: pBar, mu: muBar, term: 1.1513 * MM.log10(muBar / g.mu) };
+            inTerm += gasMu.term;
+        }
+        return { tc: tc, tm: tm, rampH: rampH, qTrue: qTrue, qCorrect: qCorrect, dqSource: dqSource, f: f, Stest: Stest, kStar: kStar, inTerm: inTerm,
+                 SStar: Stest + inTerm, gasMu: gasMu };
+    }
+    // tail 1: plateaus (first-plateau truth), visibility, reach
+    function _truthTail1(SC, ev, hd, curve, refCurve) {
+        return { plateaus: _plateaus(curve, SC.res, hd.inTerm, hd.kStar / SC.res.k), visible: _visibility(SC, curve, refCurve), reach: _reach(SC, hd.Stest, ev) };
+    }
+    // tail 2: the grade prediction and the truth object
+    function _truthTail2(SC, ev, hd, curve, t1) {
+        var res = SC.res, grade = _predictGrade(curve), plateaus = t1.plateaus;
         var distractor = DISTRACTORS.indexOf(SC.stratum) !== -1 || (SC.stratum === 'inj' && res.model === 'frac');
         var refPl = null;
         for (var r = 0; r < plateaus.length; r++) if (MM.log10(plateaus[r]._dte1 / plateaus[r]._dte0) >= 0.5) { refPl = plateaus[r]; break; }
-        var kS = kStar, SS = SStar;
+        var kS = hd.kStar, SS = hd.SStar;
         if (distractor && refPl) { kS = refPl.kStar; SS = refPl.SStar; }
         var dteEnd = curve.dte[curve.dte.length - 1];
         return {
-            tc_ms: SC.T0_ms + MM.round(tc * HOUR_MS), tc_h: tc, label: ev.label || null, kind: ev.kind,
-            k: res.k, S: Stest, Smech: SC.SmechAt(tc - 1e-6), model: SC.truthModel || res.model, f: f, qTrue: qTrue, qCorrect: qCorrect, dqSource: dqSource,
-            kStar: kS, SStar: SS, kStarInputs: kStar, SStarInputs: SStar,
+            tc_ms: SC.T0_ms + MM.round(hd.tm * HOUR_MS), tc_h: hd.tm, label: ev.label || null, kind: ev.kind, ramp_s: ev.ramp_s || 0, gasMu: hd.gasMu,
+            k: res.k, S: hd.Stest, Smech: SC.SmechAt(hd.tc - 1e-6), model: SC.truthModel || res.model, f: hd.f, qTrue: hd.qTrue, qCorrect: hd.qCorrect, dqSource: hd.dqSource,
+            kStar: kS, SStar: SS, kStarInputs: hd.kStar, SStarInputs: hd.SStar,
             plateaus: plateaus.map(function (pl) { return { dt0_h: pl.dt0_h, dt1_h: pl.dt1_h, kStar: pl.kStar, SStar: pl.SStar }; }),
-            visible: visible, notAnalysable: !!SC.notAnalysable && ev.isTest, partial: ev.kind === 'partial',
-            dtEnd_h: ev.dur, dteEnd_h: dteEnd, reach: reach,
+            visible: t1.visible, notAnalysable: !!SC.notAnalysable && ev.isTest, partial: ev.kind === 'partial',
+            dtEnd_h: ev.dur + 0.5 * hd.rampH, dteEnd_h: dteEnd, reach: t1.reach,
             grade: grade.grade, gradeInfo: grade, distractor: distractor
         };
     }
+    // the truth of one test event (synchronous; generateJob uses TruthJob)
+    function _truthFor(SC, steps, ev, al, nf) {
+        var tj = new TruthJob(SC, steps, ev, al, nf);
+        while (!tj.done) tj.step(1e15, true);
+        return tj.result;
+    }
     // Δp_D(Δt) per unit last rate, Δt_e, exact-ish derivative (central differences in ln Δt_e)
-    // Steps before the closing that define Δt_e: a closing ramp (≤ 5 min) is collapsed into the closing,
-    // so the build-up is normalised by the rate before the ramp (the generator's q_true).
+    // Steps before the closing that define Δt_e: the steps before a closing ramp (≤ 5 min). The ramp's own steps are
+    // not in Δt_e: the build-up is normalised by the rate before the ramp (the generator's q_true), Δt runs from the ramp
+    // midpoint t_c (_tcOf) and Δp from the flowing pressure extrapolated to t_c with the pre-ramp steps (§4.3).
     function _preSteps(SC, ev) {
         var rampH = (ev.ramp_s || 0) / 3600, tcut = ev.tc - rampH - 1e-9, pre = [], i, qN = 0;
         for (i = 0; i < SC.steps.length && SC.steps[i].t < tcut; i++) { pre.push(SC.steps[i]); qN = SC.steps[i].q; }
         return { pre: pre, qN: qN };
     }
-    function _buildupCurve(SC, steps, ev, useRef) {
-        var tc = ev.tc, dur = ev.dur, res = SC.res, ps = _preSteps(SC, ev), qN = ps.qN, pre = ps.pre;
+    // Σ Δq·pwD over a list of steps (all before t)
+    function _accList(SC, list, t, useRef) {
+        var s = 0, tdc = SC.tdc;
+        for (var i = 0; i < list.length; i++) { var st = list[i]; if (st.t < t) s += st.dq * (useRef ? _stepEval(st._ref, tdc * (t - st.t)) : _stepEval(st, tdc * (t - st.t))); }
+        return s;
+    }
+    // The noise-free build-up curve as a count-sliced job: step(budget) evaluates points until `budget` ops are used
+    // (at least one point; one point ≈ 3 superpositions over the steps, OPS.curvePoint per step evaluation).
+    function _curveJob(SC, steps, ev, useRef) {
+        var tc = _tcOf(ev), dur = ev.dur + (ev.tc - tc), res = SC.res, ps = _preSteps(SC, ev), qN = ps.qN, pre = ps.pre;
         var cP = (SC.fluid === 'gas') ? 1 : C_P * res.B * res.mu / (res.k * res.h);
-        var a0 = _accAt(SC, steps, tc, useRef);
+        var a0 = _accList(SC, pre, tc, useRef);   // the flowing level at t_c with the pre-ramp rate (= the acc at t_c without a ramp)
         function lnDte(dt) {
             var v = MM.log(dt);
             for (var j = 0; j < pre.length; j++) { var w = pre[j].dq / qN; v += w * (MM.log(tc - pre[j].t) - MM.log(tc + dt - pre[j].t)); }
@@ -1188,19 +1406,33 @@
             }
             return v;
         }
-        var dt0 = MM.max(2e-3, 1 / 3600), n = MM.max(8, MM.ceil(20 * MM.log10(dur / dt0))), h = 0.01;
+        var dt0 = MM.max(2e-3, 1 / 3600), n = MM.max(8, MM.ceil(20 * MM.log10(dur / dt0))), h = 0.01, k = 0;
+        var wNode = (steps[0] && (useRef ? (steps[0]._ref && steps[0]._ref.gw) : steps[0].gw)) ? 4 : 1, perPoint = OPS.curvePoint * steps.length * wNode + 3 * pre.length;
         var out = { dt: [], dte: [], X: [], dp: [], d: [] };
-        for (var k = 0; k <= n; k++) {
-            var dt = dt0 * MM.pow(dur / dt0, k / n);
-            var lp = lnDte(dt * MM.exp(h)), lm = lnDte(dt * MM.exp(-h));
-            var dd = (dpD(dt * MM.exp(h)) - dpD(dt * MM.exp(-h))) / (lp - lm);
-            var le = lnDte(dt);
-            out.dt.push(dt); out.dte.push(MM.exp(le)); out.X.push(le / LN10); out.dp.push(dpD(dt)); out.d.push(dd);
-        }
-        return out;
+        return {
+            out: out,
+            done: function () { return k > n; },
+            step: function (budget) {
+                var used = 0;
+                while (k <= n && (used === 0 || used + perPoint <= budget)) {
+                    var dt = dt0 * MM.pow(dur / dt0, k / n);
+                    var lp = lnDte(dt * MM.exp(h)), lm = lnDte(dt * MM.exp(-h));
+                    var dd = (dpD(dt * MM.exp(h)) - dpD(dt * MM.exp(-h))) / (lp - lm);
+                    var le = lnDte(dt);
+                    out.dt.push(dt); out.dte.push(MM.exp(le)); out.X.push(le / LN10); out.dp.push(dpD(dt)); out.d.push(dd);
+                    k++; used += perPoint;
+                }
+                return used;
+            }
+        };
+    }
+    function _buildupCurve(SC, steps, ev, useRef) {
+        var cj = _curveJob(SC, steps, ev, useRef);
+        while (!cj.done()) cj.step(1e15);
+        return cj.out;
     }
     // first-plateau truth: k* from the level, S* = pD − ½(ln tD + 0.80907) at the plateau middle (apparent k)
-    function _plateaus(cv, res, f, g, _unused, fk) {
+    function _plateaus(cv, res, inTerm, fk) {
         var n = cv.X.length, sl = [], i;
         var hump = 0; for (i = 1; i < n; i++) if (cv.d[i] > cv.d[hump]) hump = i;
         for (i = 0; i < n; i++) {
@@ -1228,7 +1460,6 @@
             var tdc = C_TD * res.k / (res.phi * (res.muct || res.mu * res.ct) * res.rw * res.rw);
             var pDapp = cv.dp[mid] * ratio, tDapp = tdc * cv.dte[mid] * ratio;
             var Sapp = pDapp - 0.5 * (MM.log(tDapp) + IARF_C);
-            var inTerm = 1.1513 * MM.log10((g.h / res.h) * (g.phi / res.phi) * (g.ct / res.ct)) + 2.3026 * MM.log10(g.rw / res.rw) - 1.1513 * MM.log10((g.B / res.B0) * f);
             out.push({ dt0_h: cv.dt[r.i0], dt1_h: cv.dt[r.i1], _dte0: cv.dte[r.i0], _dte1: cv.dte[r.i1],
                        kStar: fk * res.k * ratio, SStar: Sapp + inTerm });
         });
@@ -1249,13 +1480,19 @@
     }
     // own numeric reach (homogeneous, Cd and the test's skin): last tD outside ±10 % / ±5 % of 0.5
     var _reachCache = {};
+    function _reachKey(SC, S) { return SC.Cd.toPrecision(8) + '|' + S.toPrecision(8); }
+    function _reachRange(SC, S) { var lo = MM.max(1, SC.Cd * 0.1), hi = MM.max(1e6, SC.Cd * 1e5 * MM.exp(2 * MM.max(0, S))); return { lo: lo, hi: hi, n: MM.ceil(MM.log10(hi / lo) * 60) }; }
+    function _reachCached(SC, S) { return !!_reachCache[_reachKey(SC, S)]; }
+    function _reachPoints(SC, S) { return _reachRange(SC, S).n + 1; }
+    // static op count of the grade prediction (windows × fit lengths over the 20-per-cycle bins)
+    function _gradeOps(cv) { var nb = MM.max(0, MM.floor((cv.X[cv.X.length - 1] - 0.1 - cv.X[0]) * 20) + 1); return 100 + nb * nb * nb / 3; }
     function _reach(SC, S, ev) {
-        var key = SC.Cd.toPrecision(8) + '|' + S.toPrecision(8);
+        var key = _reachKey(SC, S);
         var tD10 = null, tD5 = null;
         if (_reachCache[key]) { tD10 = _reachCache[key][0]; tD5 = _reachCache[key][1]; }
         else {
-            var lo = MM.max(1, SC.Cd * 0.1), hi = MM.max(1e6, SC.Cd * 1e5 * MM.exp(2 * MM.max(0, S)));
-            var n = MM.ceil(MM.log10(hi / lo) * 60), xs = [], ds = [];
+            var rr = _reachRange(SC, S), lo = rr.lo, hi = rr.hi;
+            var n = rr.n, xs = [], ds = [];
             var P = (S < 0) ? { e: MM.exp(S) } : null;
             for (var i = 0; i <= n; i++) {
                 var tD = lo * MM.pow(hi / lo, i / n);
@@ -1280,7 +1517,7 @@
         return c;
     }
     function _buildupCurveTp(SC, ev) {
-        var tc = ev.tc, ps = _preSteps(SC, ev), qN = ps.qN, dt = MM.max(1, ev.dur), v = MM.log(dt);
+        var tc = _tcOf(ev), ps = _preSteps(SC, ev), qN = ps.qN, dt = MM.max(1, ev.dur + (ev.tc - tc)), v = MM.log(dt);
         ps.pre.forEach(function (st) { v += st.dq / qN * (MM.log(tc - st.t) - MM.log(tc + dt - st.t)); });
         var dte = MM.exp(v);
         return dte < dt ? dt * dte / (dt - dte) : 1e9;
@@ -1544,28 +1781,42 @@
                 break;
         }
         // rejection: Δp(Δt_end) ≥ 5 psi and pwf ≥ 50 psia (rate rescaled first, then k / h redrawn)
+        // gas: keep the formation volume factor inside the engines' accepted range (B 0.5–5 rb/Mscf): a very high p_i
+        // at a low temperature (Bg < 0.52 at p_i) is lowered until Bg(p_i) = 0.53 (flagged gasPiLimited)
+        if (fluid === 'gas') {
+            var pv0 = gasPVT(cs.gas, MM.max(cs.pi * 1.6, 2000));
+            for (var lim0 = 0; lim0 < 8; lim0++) { var bg0 = pv0.props(cs.pi).Bg; if (bg0 >= 0.52) break; cs.pi *= bg0 / 0.53; cs.gasPiLimited = true; }
+        }
         var pvt = fluid === 'gas' ? gasPVT(cs.gas, MM.max(cs.pi * 1.6, 2000)) : null;
+        // A rescale aims at a Δp(Δt_end) level drawn per case (log-uniform 6–60 psi), so rescaled cases do not pile up at
+        // the rule's edge; a drawdown limit halves the aim. A redraw keeps the stratum's own design draws (composite
+        // R ratio) and, for high-kh cases, kh in 20,000–100,000 md·ft.
         var qRange = fluid === 'gas' ? RANGES.qGas : RANGES.q, attempts = 0, chk = _roughCheck(cs, pvt);
+        var dpTarget = logU(r.next(), 6, 60);
         while (!chk.ok && attempts < 40) {
             attempts++;
-            if (chk.dpEnd < 5) t.q = MM.min(qRange[1], t.q * MM.max(1.5, 6 / MM.max(chk.dpEnd, 1e-3)));
-            var pwfMin = fluid === 'gas' ? MM.max(50, 0.25 * cs.pi) : 50;
-            if (chk.pwf < pwfMin || chk.pwf > 15000) {
+            var pwfMin = fluid === 'gas' ? MM.max(50, 0.25 * cs.pi) : 50, pwfBad = chk.pwf < pwfMin || chk.pwf > 15000;
+            if (pwfBad) {
                 var lim = (fluid === 'water_inj') ? (15000 - cs.pi) * 0.5 : (fluid === 'gas' ? 0.5 * cs.pi : (cs.pi - 50) * 0.6);
                 t.q = MM.max(qRange[0], t.q * MM.min(0.7, lim / MM.max(chk.ddown, 1e-6)));
-            }
+                dpTarget = MM.max(6, 0.5 * dpTarget);
+            } else if (chk.dpEnd < 5) t.q = MM.min(qRange[1], t.q * dpTarget / MM.max(chk.dpEnd, 1e-3));
             chk = _roughCheck(cs, pvt);
             if (!chk.ok && attempts > 8) {
-                t.k = logU(r.next(), 1, 2000); t.h = lin(r.next(), 15, 300); t.q = logU(r.next(), qRange[0], qRange[1]);
+                if (highKh) { var kh2 = logU(r.next(), 20000, 100000); t.h = MM.min(300, MM.max(lin(r.next(), 15, 300), kh2 / 2000)); t.k = clamp(kh2 / t.h, 1, 2000); }
+                else { t.k = logU(r.next(), 1, 2000); t.h = lin(r.next(), 15, 300); }
+                t.q = logU(r.next(), qRange[0], qRange[1]);
                 if (st === 'fault' || st === 'constp') t.extra.dF_ft = _distFor(t.extra.ratio * dur, t.k, phi, mu, ct);
-                if (st === 'comp' || (st === 'inj' && t.model === 'composite')) t.extra.R_ft = _rinv(t.k, dur, phi, mu, ct) * lin(U.x5, 0.2, 1.0);
+                if (st === 'comp') t.extra.R_ft = _rinv(t.k, dur, phi, mu, ct) * lin(U.x3, 0.2, 1.5);
+                if (st === 'inj' && t.model === 'composite') t.extra.R_ft = _rinv(t.k, dur, phi, mu, ct) * lin(U.x5, 0.2, 1.0);
                 if (st === 'closed') t.extra.re_ft = MM.sqrt(C_TD * t.k * dur / (phi * mu * ct * MM.PI * t.extra.tDA));
                 if (st === 'channel') { var bf = _distFor(dur * lin(U.x2, 0.05, 0.5), t.k, phi, mu, ct); t.extra.width_ft = bf / (1 - lin(U.x3, 0.25, 0.5)); t.extra.a_ft = lin(U.x3, 0.25, 0.5) * t.extra.width_ft; }
                 chk = _roughCheck(cs, pvt);
             }
         }
         cs.rejections = attempts;
-        cs.check = { dpEnd_psi: round6(chk.dpEnd), pwf_psia: round6(chk.pwf), ok: chk.ok };
+        cs.highKh = highKh;
+        cs.check = { dpEnd_psi: round6(chk.dpEnd), pwf_psia: round6(chk.pwf), ok: chk.ok, dpTarget_psi: round6(dpTarget) };
         if (fluid === 'gas') {
             if (t.extra.Dq != null) t.D = t.extra.Dq / t.q;
             var gref = _gasRef(cs, pvt);
@@ -1621,6 +1872,10 @@
         // day rates: an AR(1) day-to-day variation around the nominal rate with a slow decline (the closing day is not pinned:
         // q_true is whatever rate flows before the closing, and the truth uses it)
         for (var d = 0; d < nD; d++) { level = 1 + (level - 1) * 0.6 + 0.4 * v * r.normal(); qDay.push(q * clamp(level, 0.5, 1.6) * MM.pow(0.9995, d)); }
+        // Quiet window before the test (§5.2): the true rate is held at the closing day's rate over the closing day and the
+        // QUIET_DAYS days before it (the day-to-day variation there lives in the allocation error); a 5–25 % day-to-day step
+        // right before a closing is a partial cut in its own right and would hide the test from detection.
+        _quietWindow(qDay, MM.floor((tc - dayShift) / 24) - MM.floor((0 - dayShift) / 24));
         var events = [];
         // earlier shut-ins
         for (var e = 0; e < hist.earlierShutins; e++) {
@@ -1645,7 +1900,9 @@
             T0_ms: Date.UTC(2025, 0, 6) + ((cs.seed * 7) % 180) * DAY_MS, tEnd_h: tEnd,
             res: { k: t.k, h: t.h, phi: t.phi, mu: t.mu, B: t.B, ct: t.ct, rw: t.rw, C: t.C, pi: cs.pi, D: t.D || 0, model: resModel, mp: mp, mu0: t.mu, B0: t.B },
             gas: cs.gas || null, truthModel: model === 'homogeneous' ? 'homogeneous' : model, Sgeo: sgeo,
-            prod: { tStart_h: hist.truncate ? -cs.truncYears * 8760 : 0, qHist: q * r.uniform(0.8, 1.5), qDay: qDay, dayShift_h: dayShift,
+            // truncated history: years of production at a rate within ±3 % of the first record day (an unknown start,
+            // §5.2, without a rate step at the first sample)
+            prod: { tStart_h: hist.truncate ? -cs.truncYears * 8760 : 0, qHist: qDay[0] * r.uniform(0.97, 1.03), qDay: qDay, dayShift_h: dayShift,
                     dayIndex0: MM.floor((0 - dayShift) / 24), flushPct: hist.earlierShutins > 0 ? hist.flushPct : 0, flushDecay_h: hist.flushDecay_h },
             events: events, S0: t.S,
             sampling: dt === 1 ? { base_s: 300, dense_s: 60, burst: true } : { base_s: MM.max(300, dt), dense_s: dt, burst: false },
@@ -1684,7 +1941,7 @@
                 plateaus: tr.plateaus, visible: { fault: tr.visible.fault, comp: tr.visible.comp, closed: tr.visible.closed, distractor: tr.visible.distractor },
                 notAnalysable: tr.notAnalysable, partial: tr.partial,
                 stratum: cs.stratum, qTrue: tr.qTrue, dqSource: tr.dqSource, kStarInputs: tr.kStarInputs, SStarInputs: tr.SStarInputs,
-                dtEnd_h: tr.dtEnd_h, dteEnd_h: tr.dteEnd_h, reach: tr.reach, grade: tr.grade, distractor: tr.distractor,
+                dtEnd_h: tr.dtEnd_h, dteEnd_h: tr.dteEnd_h, reach: tr.reach, grade: tr.grade, gradeMargin: fin(tr.gradeInfo.margin), distractor: tr.distractor, ramp_s: tr.ramp_s, gasMu: tr.gasMu,
                 departure: { end: tr.visible._endDep, max: tr.visible._maxDep }, fluid: cs.fluid
             },
             history: g.history, zones: g.zones, completion: g.completion, workovers: g.workovers, settings: defaultSettings(), info: g.info
@@ -1699,7 +1956,8 @@
                 return r;
             },
             result: function () { return out; },
-            cancel: function () { j.cancel(); }
+            cancel: function () { j.cancel(); },
+            stats: function () { return j.stats(); }   // largest step per phase against its cap (count-based units)
         };
     }
     function generateJob(spec, opts) {
@@ -1765,6 +2023,7 @@
         var t = spec.truth, r = rng((spec.seed * 104729 + 3) | 0), days = spec.days + 2;
         var qDay = [], level = 1, tests = spec.tests;
         for (var d = 0; d < days + 2; d++) { level = 1 + (level - 1) * 0.6 + 0.4 * 0.08 * r.normal(); qDay.push(t.q * clamp(level, 0.7, 1.3) * MM.pow(0.9997, d)); }
+        tests.forEach(function (x) { _quietWindow(qDay, x.day); });   // constant over each closing day and the 4 days before it
         if (spec.path === 'gasRate') {
             for (d = 0; d < qDay.length; d++) {
                 var fac = 1;
@@ -1824,23 +2083,25 @@
     // SECTION 15 — demos (oil 3301, gas 3302)
     // ═════════════════════════════════════════════════════════════════════
     // Oil: 135 days, k 45 md, h 50 ft, μ 1 cp, C 0.01 bbl/psi; 9 analysable build-ups on the skin path
-    // 1.2 → 7.4, one 1.5 h shut-in (too short) and one 40 % partial cut; B3 closes at 15:00 on a day that
+    // 1.2 → 7.4 (B6 at 4.0: its excess over the delta threshold, 0.8, stays below 1, so no immediate confirmation), one 1.5 h shut-in (too short) and one 40 % partial cut; B3 closes at 15:00 on a day that
     // starts at 00:00 (the 24·V/15 example); 1 min sampling inside events and the day before, 5 min elsewhere.
     var DEMO_OIL = {
         seed: 3301, start: Date.UTC(2026, 0, 5), days: 135,
         res: { k: 45, h: 50, phi: 0.2, mu: 1, B: 1.2, ct: 1e-5, rw: 0.354, C: 0.01, pi: 4200, q: 800 },
-        // [day, closing hour, duration h, skin before the closing]
-        tests: [[7, 9, 72, 1.2], [26, 10, 48, 1.3], [40, 15, 36, 1.1], [52, 8, 30, 1.8], [68, 9, 48, 2.9], [82, 7, 42, 4.2], [95, 10, 48, 5.9], [108, 9, 60, 6.8], [122, 8, 72, 7.4]],
+        // [day, closing hour, duration h, skin before the closing]; B1 closes on day 6 so that its noise-free grade prediction
+        // is clear of the fair/good boundary (margin ≥ 0.1, GE4)
+        tests: [[6, 9, 72, 1.2], [26, 10, 48, 1.3], [40, 15, 36, 1.1], [52, 8, 30, 1.8], [68, 9, 48, 2.9], [82, 7, 42, 4.0], [95, 10, 48, 5.9], [108, 9, 60, 6.8], [122, 8, 72, 7.4]],
         short: [33, 14, 1.5], partial: [60, 11, 24, 0.4],
         expect: { analysable: 9, tooShort: 1, partial: 1, delta: { raisedAt: 'B6', confirmedAt: 'B7' }, absolute: { raisedAt: 'B7', confirmedAt: 'B8' } }
     };
     // Gas: 8 build-ups; 6 at constant mechanical S on two rates 2.0× apart (high, low, …), D·q = 2.0 at the
-    // high rate; then 2 at the high rate with the mechanical skin up by +3 and +5.
+    // high rate; then 2 at the high rate with the mechanical skin up by +2.5 and +5 (the excess at test 7 stays
+    // below 1 on both the S′ and the mechanical basis, so the alert confirms at test 8, not immediately).
     var DEMO_GAS = {
         seed: 3302, start: Date.UTC(2026, 1, 2), days: 140,
         res: { k: 20, h: 40, phi: 0.15, rw: 0.354, C: 0.02, pi: 5200 },
         gas: { sg: 0.68, T_F: 220, co2: 2, h2s: 0, n2: 1, pseudoTime: false },
-        qHigh: 10000, ratio: 2.0, DqHigh: 2.0, Smech0: 2.0, rises: [3, 5],
+        qHigh: 10000, ratio: 2.0, DqHigh: 2.0, Smech0: 2.0, rises: [2.5, 5],
         tests: [[12, 9, 48], [28, 10, 48], [44, 9, 48], [60, 8, 48], [76, 10, 48], [92, 9, 48], [108, 9, 48], [124, 10, 48]],
         expect: { tests: 8, constantSkinTests: 6, rateRatio: 2.0, DqHigh: 2.0, delta: { raisedAt: 'B7', confirmedAt: 'B8' }, DResolved: true }
     };
@@ -1848,7 +2109,9 @@
         var D = kind === 'gas' ? DEMO_GAS : DEMO_OIL, r = rng(D.seed), i;
         var qDay = [], events = [];
         if (kind === 'oil') {
-            for (i = 0; i < D.days + 5; i++) qDay.push(D.res.q * (1 - 0.0008 * i) * (1 + 0.02 * r.normal()));
+            // a smooth true rate (0.08 % decline per day, steps of about 0.4 psi): the day-to-day variation of the demo lives
+            // in the 3 % allocation error, so no day boundary produces a pressure step a detector could take for a closing
+            for (i = 0; i < D.days + 5; i++) qDay.push(D.res.q * (1 - 0.0008 * i));
             D.tests.forEach(function (x, k) {
                 var next = D.tests[k + 1];
                 events.push({ kind: 'shutin', tc: x[0] * 24 + x[1], dur: x[2], f: 1, ramp_s: 0, pb: null, intra: null, Safter: next ? next[3] : null, isTest: true, label: 'B' + (k + 1) });
@@ -1934,6 +2197,37 @@
         if (!_demoMemo[kind]) _demoMemo[kind] = _run(demoJob(kind));
         return deepCopy(_demoMemo[kind]);
     }
+    // The plan's reference case (US4, §4.8 timings in buildup-validate.js --perf): k 45 md, S 5, C 0.02 bbl/psi, h 50 ft,
+    // μ 1 cp, B 1.2, q 800 STB/d, φ 0.2, ct 1e-5 1/psi, rw 0.354 ft, p_i 4000 psia; a 72 h build-up after `days` days of
+    // production (30 → t_p 720 h). opts {days = 30, variationPct = 0} (365 days at ±15 % gives the 365-daily-step case);
+    // 1 min sampling in the build-up and the day before, σ 0.01 psi, exact allocation (rounded to 1 STB).
+    function reference(opts) {
+        opts = opts || {};
+        var days = MM.max(2, MM.round(opts.days || 30)), vp = +opts.variationPct || 0, r = rng(3303), qDay = [];
+        for (var i = 0; i < days + 6; i++) qDay.push(800 * (1 + (vp / 100) * clamp(r.normal(), -2, 2) / 2));
+        var tc = days * 24, ev = { kind: 'shutin', tc: tc, dur: 72, f: 1, ramp_s: 0, pb: null, intra: null, Safter: null, isTest: true, label: 'B1' };
+        var SC = {
+            name: 'Reference case (72 h)', stratum: 'hom', fluid: 'oil', T0_ms: Date.UTC(2026, 0, 5, 12), tEnd_h: tc + 72,
+            res: { k: 45, h: 50, phi: 0.2, mu: 1, B: 1.2, ct: 1e-5, rw: 0.354, C: 0.02, pi: 4000, D: 0, model: 'homogeneous', mp: {}, mu0: 1, B0: 1.2 },
+            gas: null, truthModel: 'homogeneous', Sgeo: 0,
+            // the record starts at 12:00 and production days at 00:00, so the closing (t_p = 24·days h) is at 12:00
+            prod: { tStart_h: 0, qHist: qDay[0], qDay: qDay, dayShift_h: 12, dayIndex0: -1, flushPct: 0, flushDecay_h: 4 },
+            events: [ev], S0: 5, sampling: { base_s: 300, dense_s: 60, burst: false },
+            noise: { sigma: 0.01, sigmaFlowFactor: 1, ar1Rho: null, lf: null, quant: 0, spikes: 0, drift: 0, tideM2: 0, tideK1: 0 },
+            extras: null, gap: null, alloc: { errPct: 0, bias: 0, ignoresShutin: false, hoursConflict_h: 0, resolution: 1 }, rateSource: 'allocation',
+            given: { h: 50, phi: 0.2, ct: 1e-5, rw: 0.354, B: 1.2, mu: 1 }, notAnalysable: false, Rs: 450, wc: 0.01,
+            history: { mode: 'date', date: dateOf(Date.UTC(2026, 0, 5, 12)), cum: null },
+            zones: { gauge: { mode: 'utc' }, day: { zone: { mode: 'utc' }, startHour: 0 } }, seedNoise: 3303,
+            completion: { hp_ft: 50, htop_ft: 0, theta_deg: 0, kvkh: [0.1, 0.5], perf: null }
+        };
+        var g = _run(_jobWrap(SC, {}, function (x) { return x; })), tr = g.truths[0];
+        return {
+            name: SC.name, record: g.record, allocation: { rows: g.allocation.rows, gUnit: 'Mscf', resolution: { oil: 1, gas: 0.1, water: 1 } }, rateTable: null,
+            well: g.well, completion: g.completion, settings: defaultSettings(), history: g.history, zones: g.zones, workovers: [],
+            truth: { tests: [{ id: 'B1', tc_ms: tr.tc_ms, k: tr.k, S: tr.S, kStar: tr.kStar, SStar: tr.SStar, dtEnd_h: tr.dtEnd_h, grade: tr.grade, reach: tr.reach }] },
+            info: g.info
+        };
+    }
 
     // ═════════════════════════════════════════════════════════════════════
     // SECTION 16 — settings, AnalysisInput, IN_APP
@@ -1950,7 +2244,11 @@
     function toInput(sc, opts) {
         opts = opts || {};
         var rows = (sc.allocation && sc.allocation.rows) || [];
-        var res = (sc.allocation && sc.allocation.resolution) || { oil: (sc.spec && sc.spec.alloc) ? sc.spec.alloc.resolution : 1, gas: 0.1, water: (sc.spec && sc.spec.alloc) ? sc.spec.alloc.resolution : 1 };
+        // volume resolution of each column as the generator rounds it (_allocation): the main phase to spec.alloc.resolution
+        // (sequences 1); oil wells' gas column to 0.1, gas wells' water column to 0.1
+        var vr = (sc.spec && sc.spec.alloc) ? sc.spec.alloc.resolution : 1, fl = sc.well ? sc.well.fluid : 'oil';
+        var res = (sc.allocation && sc.allocation.resolution) ||
+            (fl === 'gas' ? { oil: null, gas: vr, water: 0.1 } : fl === 'water_inj' ? { oil: null, gas: null, water: vr } : { oil: vr, gas: 0.1, water: vr });
         var appV = '';
         try { if (typeof G.WTS_appVersion === 'function') appV = String(G.WTS_appVersion() || ''); } catch (e) { appV = ''; }
         return {
@@ -1970,9 +2268,11 @@
         [100400, 'gas'], [100430, 'gas'], [100460, 'gas'], [100470, 'inj'], [100485, 'inj'], [100500, 'dualpor'], [100530, 'channel'],
         [100555, 'wbschange'], [100598, 'constp'], [100620, 'partial'], [100630, 'baddata']
     ].map(function (e) { return { seed: e[0], stratum: e[1], lite: true }; });
+    // A calibrated file 55 is authoritative for the list, whatever its length (buildup-validate.js --write refuses to
+    // write calibrated:true unless all 24 cases meet the margin), so the page and file 55 always agree.
     function inAppList() {
         var cal = G.PRiSM_autoInterpCal;
-        if (cal && cal.calibrated && Array.isArray(cal.inApp) && cal.inApp.length === 24) {
+        if (cal && cal.calibrated && Array.isArray(cal.inApp) && cal.inApp.length) {
             return cal.inApp.map(function (c) { return { seed: c.seed, stratum: c.stratum, lite: true }; });
         }
         return IN_APP_DEFAULT.map(function (c) { return { seed: c.seed, stratum: c.stratum, lite: true }; });
@@ -2063,6 +2363,7 @@
     SY.generateSequence = generateSequence;
     SY.demo = demo;
     SY.demoJob = demoJob;
+    SY.reference = reference;
     SY.toInput = toInput;
     SY.defaultSettings = defaultSettings;
     SY.match = match;
@@ -2080,7 +2381,7 @@
     SY.special = { besselKe: function (x) { besselKe(x); return [_K[0], _K[1]]; }, besselIe: function (x) { besselIe(x); return [_I[0], _I[1]]; },
                    E1: expE1, intK0: intK0, sumK0n: function (x) { return sumK0n(x, 0); }, sumK0shift: function (x, a) { return sumK0shift(x, a, 0); },
                    stehfestWeights: stehfestWeights, gasPVT: gasPVT };
-    SY.UNIT = { fwd: UNIT_FWD, grid: UNIT_GRID, maxSamples: MAX_SAMPLES };
+    SY.UNIT = { fwd: UNIT_FWD, grid: UNIT_GRID, fin: UNIT_FIN, maxSamples: MAX_SAMPLES };
     Object.defineProperty(SY, 'IN_APP', { enumerable: true, get: inAppList });
     BU.synth = SY;
 })();

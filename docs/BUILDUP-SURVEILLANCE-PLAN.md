@@ -724,6 +724,8 @@ Override   = { id: 'O7', kind: 'exclude'|'include'|'window'|'model'|'event_add'|
 `Settings.interp.band` and `interp.slope` are fractions, as in `DEFAULTS.iarf` (band 0.10 is the 10 % of `bu_i_band`; the page divides
 the percentage control by 100). `trend.delta` and `trend.abs` are in skin units. `Override.target` is `null` only for `event_add`: a typed
 time or a missed-list entry has no event id yet, and the next Analyse assigns the new `E<n>`. The time goes in `value`.
+For gas wells `WellInput.B` is the gas formation volume factor Bg in **rb/Mscf** (5.035·z·T/p at the reference pressure; gas rates are
+Mscf/d), so it lies in the same 0.5–5 range as an oil B; `mu` and `ct` are the gas values at that pressure.
 
 Edited inputs are not dialog overrides: at the next Analyse after a sign-off (or any earlier run), `run` writes one audit entry
 `kind:'input'` with the field diff against the previous run's inputs and an optional reason (§6.4).
@@ -2470,13 +2472,15 @@ WP0 (lead, serial: FILES, shapes + fixtures, 53 skeleton with canon/hash16)
   - §3.9 and §5.2–§5.5, including the seed table, the input-consistent truth and the realism factors;
   - the demos:
     - **oil:** 135 days; 9 analysable build-ups, 1 short shut-in (1.5 h), 1 partial cut (40 %); k 45 md, h 50 ft, μ 1 cp, C 0.01 bbl/psi;
-      S path 1.2, 1.3, 1.1, 1.8, 2.9, 4.2, 5.9, 6.8, 7.4; durations 72, 48, 36, 30, 48, 42, 48, 60, 72 h (each ≥ 1.2·reach.fair at its S,
+      S path 1.2, 1.3, 1.1, 1.8, 2.9, 4.0, 5.9, 6.8, 7.4; durations 72, 48, 36, 30, 48, 42, 48, 60, 72 h (each ≥ 1.2·reach.fair at its S,
       from the generator's own numeric reach; about 21 h at S 1.2 and 38 h at S 7.4); one closing at 15:00 on a production day starting at
       00:00 (the US3 example); daily allocation with 3 % noise; 1 min sampling within build-ups and the day before, 5 min elsewhere. Expected:
-      delta alert raised at B6 (its excess stays below 1, so no immediate confirmation) and confirmed at B7; absolute alert raised at B7 and
-      confirmed at B8;
+      delta alert raised at B6 (its excess over the threshold, about 0.8 with S 4.0, stays below 1, so no immediate confirmation) and
+      confirmed at B7; absolute alert raised at B7 (excess about 0.9) and confirmed at B8. The true rate is smooth (the 3 % day-to-day variation
+      lives in the allocation), so no day boundary steps the pressure;
     - **gas:** 8 build-ups; the first 6 at constant mechanical S on two rate levels 2.0× apart (high, low, high, low, high, low), D·q = 2.0
-      at the high rate (1.0 at the low rate); then 2 at the high rate with mechanical S rising by +3 and +5. With S_err at the 0.2 floor the
+      at the high rate (1.0 at the low rate); then 2 at the high rate with mechanical S rising by +2.5 and +5 (the excess at test 7 is about
+      0.8 on S′ and 0.5 on the mechanical skin, below the 1 of the immediate confirmation). With S_err at the 0.2 floor the
       rate-skin step between the levels is ΔS′ = 1.0 and se(ΔS′) = 0.2·√(1/3 + 1/3) = 0.163, so D/se ≈ 6.1. Expected: D resolved; no delta
       alert on the 6 constant-skin tests (their S′ differ by D·Δq = 1.0 < 2); delta raised at test 7 and confirmed at test 8;
   - `IN_APP` (24 seeds, chosen with margin ≥ 0.1); the placeholder file 55 (`--placeholder`).

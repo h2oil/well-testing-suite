@@ -70,7 +70,35 @@ module.exports = [
       assert.strictEqual(h.next(), 0.24572046380490065); assert.notStrictEqual(k.next(), 0.24572046380490065);
       const ri = SY.rng(7); for (let i = 0; i < 200; i++) { const v = ri.int(2, 5); assert(v >= 2 && v <= 5 && v === Math.floor(v)); }
       assert(S.checkShape('SynthCase', a).ok, JSON.stringify(S.checkShape('SynthCase', a).errors.slice(0, 4)));
+      // the record hash is the data layer's construction (§3.6): hash16("n|t0|tN|digest"), digest = FNV-1a (Math.imul) over the
+      // sample spacing and round(p·1000), unpadded hex; hash16 = the frozen §3.1 algorithm (the app's PRiSM_autoInterp.hash16)
+      const AI = env(ctx).app.win.PRiSM_autoInterp, rec = a.record;
+      let hd = 0x811c9dc5;
+      for (let i = 0; i < rec.n; i++) { hd = Math.imul(hd ^ (i ? rec.t[i] - rec.t[i - 1] : 0), 16777619); hd = Math.imul(hd ^ Math.round(rec.p[i] * 1000), 16777619); }
+      assert.strictEqual(rec.hash, AI.hash16(rec.n + '|' + rec.t[0] + '|' + rec.t[rec.n - 1] + '|' + (hd >>> 0).toString(16)), 'record hash = the data layer recipe');
       assert.strictEqual(app, null);
+    },
+  },
+  {
+    name: 'GE1b count-based work units: no generateJob step exceeds its phase cap (forward, grid, finishing)',
+    wp: WP, opts: false,
+    run(app, assert, ctx) {
+      const { SY } = env(ctx);
+      assert.strictEqual(SY.UNIT.fwd, 500000, 'UNIT_FWD halved to 5e5 (§4.8 50 ms desktop unit)');
+      // a lite homogeneous case, a gas case with pseudo-time, a channel case (cost-weighted grid) and an injector
+      const jobs = [SY.generateJob(SY.caseFromSeed(100003, { lite: true })), SY.generateJob(SY.caseFromSeed(100400, { lite: true })),
+                    SY.generateJob(SY.caseFromSeed(100530, { lite: true })), SY.generateJob(SY.caseFromSeed(100485, { lite: true }))];
+      jobs.forEach((job, j) => {
+        let r, n = 0; do { r = job.step(); n++; } while (!r.done && n < 20000);
+        assert(r.done, 'job ' + j + ' finished');
+        const st = job.stats();
+        ['grid', 'fwd', 'fin'].forEach((ph) => {
+          assert(st.cap[ph] > 0, ph + ' cap');
+          // a step may finish the item it started (one grid point, one curve point): 2 % slack
+          assert(st.max[ph] <= 1.02 * st.cap[ph], 'job ' + j + ' ' + ph + ': largest step ' + Math.round(st.max[ph]) + ' ops > cap ' + st.cap[ph] + (st.worst ? ' ' + JSON.stringify(st.worst.detail) : ''));
+        });
+        assert(st.steps >= 4, 'several units');
+      });
     },
   },
   {
@@ -132,7 +160,17 @@ module.exports = [
       assert.strictEqual(part.length, 1); assert.strictEqual(part[0].f, 0.4, 'partial cut 40 %');
       assert.strictEqual(T.k, 45); assert.strictEqual(T.C, 0.01); assert.strictEqual(T.h, 50);
       assert.strictEqual(d.well.h, 50); assert.strictEqual(d.well.mu, 1); assert.strictEqual(d.well.fluid, 'oil');
-      deq(assert, T.tests.map((t) => t.S), [1.2, 1.3, 1.1, 1.8, 2.9, 4.2, 5.9, 6.8, 7.4], 'S path');
+      deq(assert, T.tests.map((t) => t.S), [1.2, 1.3, 1.1, 1.8, 2.9, 4.0, 5.9, 6.8, 7.4], 'S path');
+      // the expected alerts sit clear of the immediate-confirmation rule (§4.7: confirm at once when the raising test exceeds
+      // its threshold by ≥ 1): excesses from truth.SStar with baseN = 3, delta 2, absolute 5, all below 1 − 0.1 at the raising test
+      const SS = T.tests.map((t) => t.SStar), base = (SS[0] + SS[1] + SS[2]) / 3, M = 0.1;
+      const dRaise = SS.findIndex((s, i) => i >= 3 && s - base >= 2), aRaise = SS.findIndex((s) => s >= 5);
+      assert.strictEqual(dRaise, 5, 'delta raised at B6 (S* − base ' + (SS[5] - base).toFixed(2) + ')');
+      assert(SS[5] - base - 2 < 1 - M && SS[5] - base - 2 > M, 'B6 delta excess ' + (SS[5] - base - 2).toFixed(2) + ' clear of 0 and 1');
+      assert(SS[6] - base >= 2 + M, 'B7 confirms the delta alert');
+      assert.strictEqual(aRaise, 6, 'absolute raised at B7');
+      assert(SS[6] - 5 < 1 - M && SS[6] - 5 > M && SS[7] >= 5 + M, 'B7 absolute excess ' + (SS[6] - 5).toFixed(2) + '; B8 confirms');
+      assert(SS.slice(0, 5).every((s) => s - base < 2 - M), 'no delta alert before B6');
       deq(assert, T.tests.map((t) => t.dtEnd_h), [72, 48, 36, 30, 48, 42, 48, 60, 72], 'durations');
       T.tests.forEach((t) => {
         assert(t.dtEnd_h >= 1.2 * t.reachFair_h, t.id + ': ' + t.dtEnd_h + ' h ≥ 1.2 × ' + t.reachFair_h.toFixed(1) + ' h');
@@ -183,7 +221,27 @@ module.exports = [
       const first6 = tests.slice(0, 6);
       assert(first6.every((t) => t.Smech === first6[0].Smech), 'constant mechanical skin on the first 6');
       assert.strictEqual(hi.filter((t) => first6.includes(t)).length, 3); assert.strictEqual(lo.length, 3, '3 + 3 constant-skin tests');
-      deq(assert, tests.slice(6).map((t) => +(t.Smech - first6[0].Smech).toFixed(9)), [3, 5], 'then +3 and +5');
+      deq(assert, tests.slice(6).map((t) => +(t.Smech - first6[0].Smech).toFixed(9)), [2.5, 5], 'then +2.5 and +5');
+      // test 7 raises the delta alert on both bases (S′ and mechanical, baseN = 3, threshold 2) without the immediate
+      // confirmation of §4.7 (excess ≥ 1); test 8 confirms
+      const M = 0.1, SSg = tests.map((t) => t.SStar), baseP = (SSg[0] + SSg[1] + SSg[2]) / 3, exP = SSg[6] - baseP - 2, exM = tests[6].Smech - first6[0].Smech - 2;
+      assert(exP > M && exP < 1 - M, 'S′ excess at test 7 ' + exP.toFixed(2));
+      assert(exM > M && exM < 1 - M, 'mechanical excess at test 7 ' + exM.toFixed(2));
+      assert(SSg.slice(0, 6).every((s) => s - baseP < 2 - M), 'no delta alert on the constant-skin tests');
+      assert(SSg[7] - baseP >= 2 + M && tests[7].Smech - first6[0].Smech >= 2 + M, 'test 8 confirms');
+      // gas B is Bg in rb/Mscf (q in Mscf/d) and the WellInput passes the run layer's well check. Explicit stub of that check
+      // (§3: another WP's function in a WP4 test): WP2's WELL_RANGES in 49-calc-buildup-run.js, copied here.
+      const RANGES = { h: [1, 2000], phi: [0.01, 0.5], mu: [0.01, 1000], B: [0.5, 5], ct: [1e-7, 1e-3], rw: [0.1, 2] };
+      const wellOk = (w) => Object.keys(RANGES).filter((k) => !(w[k] >= RANGES[k][0] && w[k] <= RANGES[k][1]));
+      const SY = env(ctx).SY;
+      const one = SY.generate(SY.caseFromSeed(100400, { lite: true })), seq = SY.generateSequence(200112, { lite: true });
+      [['demo', d.well], ['single case 100400', one.well], ['sequence 200112', seq.well]].forEach(([what, w]) => {
+        assert.strictEqual(w.fluid, 'gas', what);
+        assert(w.B >= 0.5 && w.B <= 5, what + ': gas B ' + w.B + ' rb/Mscf');
+        deq(assert, wellOk(w), [], what + ': passes the well check');
+      });
+      assert.near(d.well.B, 5.035 * d.info.gasRef.z * (220 + 459.67) / d.info.gasRef.p, 1e-4 * d.well.B, 'Bg = 5.035·z·T/p at the reference pressure');
+      for (let s = 100388; s < 100468; s++) { const cs = SY.caseFromSeed(s); assert(cs.given.B >= 0.52 && cs.given.B <= 5, s + ' gas B ' + cs.given.B); }
       // S′ = S + D·q: the constant-skin tests differ by D·Δq = 1.0 < 2 (no delta alert expected)
       const Sp = first6.map((t) => t.S);
       assert.near(Math.max(...Sp) - Math.min(...Sp), 1.0, 1e-9, 'S′ spread on the constant tests');
@@ -210,6 +268,7 @@ module.exports = [
       assert.strictEqual(s0, 100640, '640 single cases');
       const R = SY.RANGES, inR = (v, r, what) => assert(v >= r[0] * (1 - 1e-9) && v <= r[1] * (1 + 1e-9), what + ' = ' + v + ' outside [' + r + ']');
       const seen = new Set(), sCells = {};
+      let edge = 0;
       for (let seed = 100000; seed <= 100639; seed++) {
         const cs = SY.caseFromSeed(seed), e = SY.SEED_TABLE.find((x) => seed >= x.from && seed <= x.to), t = cs.truth;
         assert.strictEqual(cs.seed, seed); assert.strictEqual(cs.stratum, e.stratum); assert.strictEqual(cs.row, seed - e.from);
@@ -222,12 +281,16 @@ module.exports = [
           inR(t.q, R.q, seed + ' q'); inR(t.B, R.B, seed + ' B'); inR(t.mu, R.mu, seed + ' μ'); inR(t.ct, R.ct, seed + ' ct');
         }
         assert(cs.check.ok, seed + ': the rejection rule holds (Δp(Δt_end) ≥ 5 psi, pwf ≥ 50 psia)');
+        if (cs.check.dpEnd_psi < 6.5) edge++;
+        if (cs.highKh) assert(t.k * t.h >= 20000 * (1 - 1e-9), seed + ': high-kh case keeps kh ≥ 20,000 md·ft (' + t.k * t.h + ')');
         assert(cs.test.dtEnd_h >= 2 && cs.test.dtEnd_h <= 200, seed + ' duration');
         const cell = Math.min(e.n - 1, Math.floor((t.S + 2) / 17 * e.n));
         (sCells[e.stratum] = sCells[e.stratum] || new Set()).add(cell);
         if (seed % 40 === 0) { const r = S.checkShape('CaseSpec', JSON.parse(JSON.stringify(cs))); assert(r.ok, seed + ': ' + JSON.stringify(r.errors.slice(0, 3))); }
       }
       assert.strictEqual(seen.size, 15, 'every stratum covered');
+      // rescaled cases aim at a per-case level (log-uniform 6–60 psi), so they do not pile up at the rejection edge
+      assert(edge / 640 <= 0.05, 'cases at the rejection edge (Δp(Δt_end) < 6.5 psi): ' + edge + ' of 640');
       SY.SEED_TABLE.forEach((e) => assert.strictEqual(sCells[e.stratum].size, e.n, e.stratum + ': S is Latin-hypercube stratified (one row per cell)'));
       // short tests: 20 % of hom at 2–8 h
       const hom = SY.SEED_TABLE[0], shortN = Array.from({ length: hom.n }, (_, i) => SY.caseFromSeed(hom.from + i)).filter((c) => c.test.dtEnd_h < 8).length;
@@ -325,6 +388,43 @@ module.exports = [
       assert.strictEqual(SY.UNIT.maxSamples, 500000);
       const capped = SY.generate(SY.caseFromSeed(plain.seed, { lite: true }), { maxSamples: 3000 });
       assert(capped.record.n <= 3000 && capped.record.n > 500, 'capped record ' + capped.record.n);
+    },
+  },
+  {
+    name: 'GE8b closing ramp: t_c at the ramp midpoint; S*, k* and the grade equal the no-ramp values (dualpor, frac); gas WellInput and resolution',
+    wp: WP, opts: false,
+    run(app, assert, ctx) {
+      const { SY } = env(ctx);
+      // §4.3: with a closing ramp t_c is the ramp midpoint, Δp is referenced to the pre-ramp flowing level extrapolated to it,
+      // so the reference build-up (first-plateau truth of distractors, grade) is the one of an instantaneous closing there
+      [[100502, 'dualpor'], [100592, 'frac']].forEach(([seed, st]) => {
+        const cs = SY.caseFromSeed(seed, { lite: true });
+        assert.strictEqual(cs.stratum, st); assert(cs.test.ramp_s > 60, seed + ' has a closing ramp (' + cs.test.ramp_s + ' s)');
+        const cs0 = JSON.parse(JSON.stringify(cs)); cs0.test.ramp_s = 0;
+        const a = SY.generate(cs).truth, b = SY.generate(cs0).truth;
+        assert(a.plateaus.length >= 1 && a.distractor, seed + ': distractor scored on its first plateau');
+        assert.near(a.tc_ms, b.tc_ms - 500 * cs.test.ramp_s, 1, seed + ': truth t_c at the ramp midpoint');
+        assert(Math.abs(a.SStar - b.SStar) <= 0.1, seed + ' S* ' + a.SStar + ' vs ' + b.SStar);
+        assert(Math.abs(a.kStar / b.kStar - 1) <= 0.01, seed + ' k* ' + a.kStar + ' vs ' + b.kStar);
+        // the grade is compared where neither prediction sits on a grade threshold (100502 without the ramp is exactly on
+        // the fair/good boundary, margin 0)
+        if (a.gradeMargin >= 0.1 && b.gradeMargin >= 0.1) assert.strictEqual(a.grade, b.grade, seed + ' grade');
+        else assert.strictEqual(seed, 100502, 'only the documented knife-edge case skips the grade comparison');
+      });
+      // gas single case: B in rb/Mscf, volumes resolved as generated (gas column to spec.alloc.resolution, water to 0.1)
+      let gs = 100388; while (SY.caseFromSeed(gs).rateSource !== 'allocation') gs++;
+      const g = SY.generate(SY.caseFromSeed(gs, { lite: true })), inp = SY.toInput(g);
+      assert(g.well.B >= 0.5 && g.well.B <= 5, 'gas B ' + g.well.B);
+      deq(assert, inp.allocation.resolution, { oil: null, gas: g.spec.alloc.resolution, water: 0.1 }, 'gas resolution');
+      let os = 100041; while (SY.caseFromSeed(os).rateSource !== 'allocation') os++;
+      const o = SY.generate(SY.caseFromSeed(os, { lite: true }));
+      deq(assert, SY.toInput(o).allocation.resolution, { oil: o.spec.alloc.resolution, gas: 0.1, water: o.spec.alloc.resolution }, 'oil resolution');
+      // gas S* follows the engine's μ rule (§4.6 item 1): μ at the realised noise-free mean of pwf0 and the last build-up pressure
+      const gt = g.truth, gm = gt.gasMu, gv = g.spec.given, gr = g.spec.truth;
+      assert(gm && gm.pBar > 0 && gm.pBar < g.spec.pi, 'gas μ reference pressure ' + (gm && gm.pBar));
+      assert.near(gm.mu, g.spec.gasRef.mu, 0.05 * gm.mu, 'μ(p̄) near the planning estimate');
+      const sx = gt.S + 1.1513 * Math.log10((gv.h / gr.h) * (gv.phi / gr.phi) * (gv.ct / gr.ct)) + 2.3026 * Math.log10(gv.rw / gr.rw) - 1.1513 * Math.log10((gv.B / gr.B) * gt.f) + 1.1513 * Math.log10(gm.mu / gv.mu);
+      assert.near(gt.SStarInputs, sx, 1e-4, 'gas S* = S′ + input terms + 1.1513·log10(μ(p̄)/μ′)');
     },
   },
   {
