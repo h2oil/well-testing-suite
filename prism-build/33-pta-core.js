@@ -56,13 +56,16 @@ var G = (typeof window !== 'undefined') ? window
       : (typeof globalThis !== 'undefined' ? globalThis : {});
 
 var STATE_KEY = 'wts_prism_state';
+// v3.3: _num runs per element in the model evaluation; a closure alias avoids a global lookup
+// (an intercepted call inside an embedding sandbox such as the acceptance harness' vm context).
+var _isFinite = isFinite;
 var LN_EULER = 0.80907;              // ln(4/γ) − ln 1 term of the radial-flow asymptote
 
 // ═══════════════════════════════════════════════════════════════
 // SECTION 1 — SMALL HELPERS
 // ═══════════════════════════════════════════════════════════════
 
-function _num(v) { return typeof v === 'number' && isFinite(v); }
+function _num(v) { return typeof v === 'number' && _isFinite(v); }
 function _pos(v) { return _num(v) && v > 0; }
 function _isArr(a) { return !!a && typeof a !== 'string' && typeof a.length === 'number'; }
 function _clamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }

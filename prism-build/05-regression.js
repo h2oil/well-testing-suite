@@ -45,6 +45,9 @@
 var G = (typeof window !== 'undefined') ? window
       : (typeof globalThis !== 'undefined' ? globalThis : {});
 var LN10 = Math.LN10;
+// v3.3: per-element loops call closure aliases of these builtins (inside an embedding sandbox,
+// such as the acceptance harness' vm context, a global lookup is an intercepted call).
+var _isFinite = isFinite, _log = Math.log;
 
 
 // =============================================================================
@@ -232,7 +235,7 @@ function PRiSM_jacobianForward(modelFn, t, params, baseline, freeKeys, derivStep
 }
 
 function _allFinite(a) {
-    for (var i = 0; i < a.length; i++) if (!isFinite(a[i])) return false;
+    for (var i = 0; i < a.length; i++) if (!_isFinite(a[i])) return false;
     return true;
 }
 
@@ -1123,7 +1126,7 @@ function PRiSM_sandface_convolution(data, refRateIdx) {
 // PRiSM_physicalModel) is not loaded. They follow the same contract shapes.
 // =============================================================================
 
-function _num(x) { return typeof x === 'number' && isFinite(x); }
+function _num(x) { return typeof x === 'number' && _isFinite(x); }
 function _pos(x) { return _num(x) && x > 0; }
 function _pick() {
     for (var i = 0; i < arguments.length; i++) {
@@ -1172,6 +1175,66 @@ function _bourdet(x, y, L) {
         d[i] = (y[i] - y[i1]) / dl1 * (dl2 / dlT) + (y[i2] - y[i]) / dl2 * (dl1 / dlT);
     }
     return d;
+}
+// Precomputed Bourdet operator on fixed abscissae (v3.3): the window search and log spacings
+// of PRiSM_compute_bourdet (02), evaluated with the same operations in the same order.
+function _bourdetOp(x, L) {
+    L = (isFinite(L) && L > 0) ? L : 0;
+    var n = x.length, op = { n: n, idx: [], i1: [], i2: [], dl1: [], dl2: [], f1: [], f2: [] };
+    if (n < 3) return op;
+    for (var i = 1; i < n - 1; i++) {
+        if (!isFinite(x[i]) || x[i] <= 0) continue;
+        var i1 = i - 1, i2 = i + 1;
+        if (L > 0) {
+            var lnT = Math.log(x[i]);
+            while (i1 > 0 && lnT - Math.log(x[i1]) < L) i1--;
+            while (i2 < n - 1 && Math.log(x[i2]) - lnT < L) i2++;
+        }
+        var t1 = x[i1], t2 = x[i2], ti = x[i];
+        if (!isFinite(t1) || !isFinite(t2) || t1 <= 0 || t2 <= 0) continue;
+        var dl1 = Math.log(ti) - Math.log(t1);
+        var dl2 = Math.log(t2) - Math.log(ti);
+        var dlT = Math.log(t2) - Math.log(t1);
+        if (dl1 === 0 || dl2 === 0 || dlT === 0) continue;
+        op.idx.push(i); op.i1.push(i1); op.i2.push(i2); op.dl1.push(dl1); op.dl2.push(dl2);
+        op.f2.push(dl2 / dlT); op.f1.push(dl1 / dlT);
+    }
+    return op;
+}
+function _bourdetApply(op, y) {
+    var d = new Array(op.n), k;
+    for (k = 0; k < op.n; k++) d[k] = NaN;
+    for (k = 0; k < op.idx.length; k++) {
+        var i = op.idx[k];
+        if (!_isFinite(y[i])) continue;
+        d[i] = (y[i] - y[op.i1[k]]) / op.dl1[k] * op.f2[k] + (y[op.i2[k]] - y[i]) / op.dl2[k] * op.f1[k];
+    }
+    return d;
+}
+function _sameNumArr(a, b) {
+    if (!a || !b || a.length !== b.length) return false;
+    for (var i = 0; i < a.length; i++) if (!(a[i] === b[i] || (a[i] !== a[i] && b[i] !== b[i]))) return false;
+    return true;
+}
+// Verified operators by abscissae (compared value by value, so a reused or mutated array
+// never picks up a stale operator) and L, with the shared function they were checked against.
+var _BOP_CACHE = [], _BOP_MAX = 4;
+function _bopLookup(x, L) {
+    for (var c = 0; c < _BOP_CACHE.length; c++) {
+        var e = _BOP_CACHE[c];
+        if (e.L === L && e.x.length === x.length) {
+            var same = true;
+            for (var i = 0; i < x.length; i++) if (e.x[i] !== x[i]) { same = false; break; }
+            if (same) return e;
+        }
+    }
+    return null;
+}
+function _bopStore(x, L, op, fn) {
+    var e = _bopLookup(x, L);
+    if (e) { e.op = op; e.fn = fn; return; }
+    _BOP_CACHE.unshift({ x: Array.prototype.slice.call(x), L: L, op: op, fn: fn });
+    if (_BOP_CACHE.length > _BOP_MAX) _BOP_CACHE.pop();
 }
 
 // C1 fallback — well & fluid inputs from PRiSM_pvt.
@@ -1745,8 +1808,26 @@ function PRiSM_fitPhysical(modelKey, adata, well, opts) {
     var PEN = 30;
 
     function modelDpAll(phys) { return pm.dp(tAll, phys); }
+    // The consistent model derivative applies the Bourdet operator at the fixed abscissae X
+    // every evaluation; its indices and log spacings depend on X and L only, so they are
+    // computed once (v3.3) and kept for later calls on the same abscissae (sliced fits).
+    // An operator is used only after it reproduced the shared PRiSM_compute_bourdet bit for
+    // bit; with an override that differs the shared function is called every time, so the
+    // numbers are unchanged either way.
+    var bOp = null, bOpChecked = false;
     function modelDeriv(phys, dpAll) {
-        if (derivMode === 'consistent') return _bourdet(X, dpAll, Lb);
+        if (derivMode === 'consistent') {
+            if (bOp) return _bourdetApply(bOp, dpAll);
+            if (!bOpChecked) {
+                bOpChecked = true;
+                var fnRef = G.PRiSM_compute_bourdet, ce = _bopLookup(X, Lb);
+                if (ce && ce.fn === fnRef) { bOp = ce.op; return _bourdetApply(bOp, dpAll); }
+                var d0 = _bourdet(X, dpAll, Lb), op = ce ? ce.op : _bourdetOp(X, Lb);
+                if (_sameNumArr(_bourdetApply(op, dpAll), d0)) { bOp = op; _bopStore(X, Lb, op, fnRef); }
+                return d0;
+            }
+            return _bourdet(X, dpAll, Lb);
+        }
         var tD = idxD.map(function (i) { return T[i]; });
         var dv = pm.deriv(tD, phys), full = new Array(T.length);
         for (var z = 0; z < idxD.length; z++) full[idxD[z]] = dv[z];
@@ -1765,13 +1846,13 @@ function PRiSM_fitPhysical(modelKey, adata, well, opts) {
         for (var a = 0; a < idxDp.length; a++) {
             var j = idxDp[a], yd = DP[j] + sh, ym = dpm[j];
             if (objective === 'dp') out[c++] = -((yd) - ym);
-            else out[c++] = (yd > 0 && ym > 0) ? -(Math.log(yd) - Math.log(ym)) : PEN;
+            else out[c++] = (yd > 0 && ym > 0) ? -(_log(yd) - _log(ym)) : PEN;
         }
         if (idxD.length) {
             var dm = modelDeriv(phys, dpm);
             for (var b = 0; b < idxD.length; b++) {
                 var jd = idxD[b], dmv = dm[jd];
-                out[c++] = (dmv > 0) ? -(Math.log(DD[jd]) - Math.log(dmv)) : PEN;
+                out[c++] = (dmv > 0) ? -(_log(DD[jd]) - _log(dmv)) : PEN;
             }
         }
         return out;

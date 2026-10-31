@@ -76,11 +76,6 @@
 (function () {
     'use strict';
     var G = (typeof window !== 'undefined') ? window : globalThis;
-    // Builtins bound once to closure variables: inside an embedding sandbox (the acceptance
-    // harness runs the app in a vm context) every global lookup is an intercepted call, many
-    // times slower than a closure read. They are the same objects, so the numbers are too.
-    var Math = G.Math, isFinite = G.isFinite, Infinity = G.Infinity, NaN = G.NaN, Array = G.Array, Object = G.Object,
-        String = G.String, Number = G.Number, JSON = G.JSON, Map = G.Map, Float64Array = G.Float64Array, parseFloat = G.parseFloat;
     var AI = G.PRiSM_autoInterp = G.PRiSM_autoInterp || {};
 
     // ─────────────────────────────────────────────────────────────────────
@@ -236,6 +231,13 @@
     //     (base-independent, the quantity the half / quarter / unit slope
     //     flags use). The OLS slope of Δp′/ℓ is regressed on ln Δt_e.
     //   • Threshold decisions compare inputs rounded per DEFAULTS.round (D27).
+    //   • The builtins are parameters of the inner function below: inside an embedding
+    //     sandbox (the acceptance harness runs the app in a vm context) every global lookup
+    //     is an intercepted call, many times slower than a closure read (the Bessel kernels
+    //     ran 10-70x slower). The arguments are the realm's own objects, so the numbers are
+    //     the same. The engine code keeps the module indent.
+
+    (function (Math, isFinite, Infinity, NaN, Array, Object, String, Number, JSON, Map, Float64Array) {
 
     var LN10 = Math.LN10, LN2 = Math.LN2;
     var EULER = 0.5772156649015329;
@@ -1614,7 +1616,7 @@
     // i = 1…12. They depend on the model's shape parameters and distance scale only, not on C_D or
     // S, so a C_D, S or k step of a fit re-folds stored values instead of evaluating Bessel functions
     // again (the same numbers either way: speed only). Bounded LRU shared by every grid entry.
-    var RESV_MAX = 48, _RESV = [];
+    var RESV_MAX = 16, _RESV = [];
     function _resvEntry(rk, key, p, dS, per) {
         for (var c = 0; c < _RESV.length; c++) {
             if (_RESV[c].rk === rk) { var E = _RESV[c]; if (c) { _RESV.splice(c, 1); _RESV.unshift(E); } return E; }
@@ -3055,6 +3057,8 @@
         if (key === 'linearBoundary') return _lapFault(p.dF, p.BC);
         return _lapHom;
     }
+
+    })(Math, isFinite, Infinity, NaN, Array, Object, String, Number, JSON, Map, Float64Array);
 
 })();
 

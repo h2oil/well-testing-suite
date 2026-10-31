@@ -286,7 +286,7 @@ module.exports = [
     },
   },
   {
-    name: 'EN8 opts.entry grid vs the registry ≤ 0.02 psi (60 daily steps); opts.isolated ignores PRiSM_state.params (BC constP set; isolated uses noflow)',
+    name: 'EN8 opts.entry grid vs the registry ≤ 0.02 psi (60 daily steps, S 5 and −2; cached reservoir values = direct kernel at the nodes); opts.isolated ignores PRiSM_state.params (BC constP set; isolated uses noflow)',
     wp: 'WP1',
     run(app, assert) {
       const AI = AIof(app), W = app.win;
@@ -300,6 +300,25 @@ module.exports = [
       const a = pmG.dp(prep.adata.t, ph), b = pmR.dp(prep.adata.t, ph);
       let mx = 0; for (let i = 0; i < a.length; i++) mx = Math.max(mx, Math.abs(a[i] - b[i]));
       assert.ok(mx <= 0.02, 'grid vs registry ' + mx.toFixed(5) + ' psi');
+      // S < 0: the lattice is in the effective time t_D·e^{2S}; the same tolerance against the registry
+      const phN = app.toWin({ k: 45, C: 0.02, S: -2 });
+      const aN = pmG.dp(prep.adata.t, phN), bN = pmR.dp(prep.adata.t, phN);
+      let mxN = 0; for (let i = 0; i < aN.length; i++) mxN = Math.max(mxN, Math.abs(aN[i] - bN[i]));
+      assert.ok(mxN <= 0.02, 'grid vs registry at S = −2: ' + mxN.toFixed(5) + ' psi');
+      // the cached reservoir values fold to the direct kernel values at the lattice nodes (every grid key,
+      // both signs of S; nodes of the effective lattice for S < 0) — the cache changes speed only
+      const sets = { homogeneous: { Cd: 900 }, linearBoundary: { Cd: 900, dF: 3000, BC: 'noflow' },
+        composite2: { Cd: 900, M: 0.4, F: 1, R: 2500 }, closedCircle: { Cd: 900, reD: 6000 } };
+      Object.keys(sets).forEach((key) => [2.5, -1.5].forEach((S) => {
+        const e = AI.gridEntry(key, prep), p = app.toWin(Object.assign({ S }, sets[key]));
+        const tds = [31, 33, 35, 37, 39, 41, 43].map((j) => Math.pow(10, j / 10) / (S < 0 ? Math.exp(2 * S) : 1));
+        const gp = e.pd(app.toWin(tds), p), gd = e.pdPrime(app.toWin(tds), p);
+        tds.forEach((td, i) => {
+          const d = AI.kernels.pair(key, td, p);
+          assert.rel(gp[i], d[0], 1e-9, key + ' S ' + S + ' pd at node ' + i);
+          assert.rel(gd[i], d[1], 1e-9, key + ' S ' + S + ' pd′ at node ' + i);
+        });
+      }));
       // isolated: categorical keys never come from PRiSM_state
       W.PRiSM_state = W.PRiSM_state || app.toWin({});
       W.PRiSM_state.model = 'linearBoundary';
@@ -315,7 +334,7 @@ module.exports = [
     },
   },
   {
-    name: 'EN8b fitPhysical(\'composite2\', …, {entry}) succeeds while PRiSM_MODELS has no composite2 key',
+    name: 'EN8b fitPhysical(\'composite2\', …, {entry}) succeeds while PRiSM_MODELS has no composite2 key; a differing PRiSM_compute_bourdet override is honoured',
     wp: 'WP1',
     run(app, assert) {
       const AI = AIof(app), W = app.win;
@@ -337,6 +356,20 @@ module.exports = [
         const f2 = W.PRiSM_fitPhysical('composite2', prep.adata, prep.well, { entry: ent, isolated: true, singleStart: true, maxIter: 2, mode: 'physical', freeze: { F: true }, start: { k: 45, C: 0.002, S: 0, M: 2, F: 1, R: 2825 } });
         assert.ok(f2.ok, 'fallback path: ' + f2.reason);
       } finally { W.PRiSM_physicalModel = keep; }
+      // The model derivative's precomputed Bourdet operator is used only while it reproduces the shared
+      // PRiSM_compute_bourdet: an override that differs is called on the evaluations and changes the fit;
+      // after the override is removed the fit is bit-identical to the first one (no stale operator).
+      const fo = () => ({ entry: ent, isolated: true, singleStart: true, maxIter: 3, freeze: { F: true }, start: { k: 40, C: 0.002, S: 0.5, M: 1.6, F: 1, R: 2500 } });
+      const g0 = W.PRiSM_fitPhysical('composite2', prep.adata, prep.well, fo());
+      const orig = W.PRiSM_compute_bourdet;
+      let calls = 0;
+      W.PRiSM_compute_bourdet = function (t, dp, L) { calls++; return Array.from(orig(t, dp, L)).map((v) => v * 1.05); };
+      let g1;
+      try { g1 = W.PRiSM_fitPhysical('composite2', prep.adata, prep.well, fo()); } finally { W.PRiSM_compute_bourdet = orig; }
+      assert.ok(g1.ok && calls > 1 && calls >= Math.floor(0.9 * g1.nEval), 'override called on the evaluations (' + calls + ' calls, ' + g1.nEval + ' evaluations)');
+      assert.ok(g1.phys.k !== g0.phys.k, 'the override changed the fit');
+      const g2 = W.PRiSM_fitPhysical('composite2', prep.adata, prep.well, fo());
+      assert.equal(JSON.stringify(g2.phys), JSON.stringify(g0.phys), 'identical after the override is removed');
     },
   },
   {
