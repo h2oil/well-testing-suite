@@ -574,8 +574,15 @@
         _setDisabled('bu_ai_copy', !has || !R || typeof R.aiExport !== 'function');
         _setDisabled('bu_ai_dl', !has || !R || typeof R.aiExport !== 'function');
         _setDisabled('bu_open_prism', !has || typeof G.PRiSM_openExternalBuildup !== 'function');
-        var S = B.synth, cal = G.PRiSM_autoInterpCal;
-        _setDisabled('bu_val_run', running || !(S && Array.isArray(S.IN_APP) && S.IN_APP.length && typeof S.caseFromSeed === 'function' && _Run() && cal && Array.isArray(cal.inApp)));
+        // The 24-case check compares outcomes with the calibrated expectations in file 55 (§5.6). The placeholder file
+        // (calibrated:false) has none, so the check stays disabled, with the reason shown, until WP8 calibrates it.
+        var S = B.synth, valReady = !!(S && Array.isArray(S.IN_APP) && S.IN_APP.length && typeof S.caseFromSeed === 'function' && _Run()), calOk = _calReady();
+        _setDisabled('bu_val_run', running || !valReady || !calOk);
+        var vo = _byId('bu_val_out');
+        if (vo && (!vo.textContent || vo.getAttribute('data-note') === '1')) {
+            if (valReady && !calOk) { vo.setAttribute('data-note', '1'); vo.textContent = 'The 24-case check becomes available once the confidence labels are calibrated (this version uses the provisional thresholds).'; }
+            else if (vo.getAttribute('data-note') === '1') { vo.removeAttribute('data-note'); vo.textContent = ''; }
+        }
         _setDisabled('bu_demo_load', !_Syn());
         _setDisabled('bu_h_load', !(G.WTS_historian && _D() && typeof _D().fromHistorian === 'function'));
         _setDisabled('bu_p_load', !(_D() && typeof _D().fromPRiSM === 'function'));
@@ -1082,7 +1089,8 @@
         try {
             if (!_st.review && typeof R.run === 'function' && !_st.missingTests) _st.review = R.run(a, _idx());
             if (_st.missingTests && !_st.review) return _fallbackReport(a, DETAIL_MISSING);
-            return R.report(_viewAnalysis(a), _st.review, _auditList(), _st.signoff || null, fmt);
+            // the evidence index of the stored analysis (the view only adds settings.report, which no evidence quotes)
+            return R.report(_viewAnalysis(a), _st.review, _auditList(), _st.signoff || null, fmt, { idx: _idx() });
         } catch (e) {
             if (!_st.missingTests && typeof console !== 'undefined' && console.error) console.error('[buildup] report failed', e);
             return _fallbackReport(a, _st.missingTests ? DETAIL_MISSING : 'The report could not be built from this analysis; press Analyse to recompute it.');
@@ -1793,6 +1801,38 @@
         set('bu_pb', w.Pb); set('bu_rs', w.Rs); set('bu_bw', w.Bw); set('bu_muw', w.muw); set('bu_alloc_acc', w.allocAccPct); set('bu_drift', w.driftPsiPerDay);
         if (w.gas) { set('bu_sg', w.gas.sg); set('bu_tres', w.gas.T_F); set('bu_co2', w.gas.co2); set('bu_h2s', w.gas.h2s); set('bu_n2', w.gas.n2); set('bu_pdew', w.gas.pdew); var pt = _byId('bu_ptime'); if (pt) pt.checked = !!w.gas.pseudoTime; }
     }
+    // The demo's history option and zones (synth metadata, §3.7 AnalysisInput.history / zones) → page inputs, so a
+    // loaded demo always passes the input check: a history mode is applied only with what it needs (a production
+    // start date, or a cumulative in the rate's field unit: STB, or Mscf shown as MMscf), otherwise "unknown".
+    // The production days and gauge times of a demo are in its own zones (UTC), whatever this device's zone is.
+    function _applyDemoMeta(d) {
+        var h = (d && d.history) || {}, fl = _val('bu_fluid') || 'oil', mode = 'unknown';
+        var hdate = typeof h.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(h.date) ? h.date : '';
+        if (h.mode === 'date' && hdate) {
+            mode = 'date';
+            var de = _byId('bu_hist_date'); if (de) de.value = hdate;
+        } else if (h.mode === 'cum' && _fin(h.cum) && h.cum >= 0) {
+            mode = 'cum';
+            if (fl === 'gas') _setVal('bu_hist_cumg', h.cum / 1000); else _setVal('bu_hist_cumo', h.cum);
+        }
+        var hm = _byId('bu_hist_mode'); if (hm) hm.value = mode;
+        var z = (d && d.zones) || {}, day = z.day || {};
+        var zsel = function (selId, offId, zone) {
+            if (!zone || !zone.mode) return;
+            var e = _byId(selId);
+            if (!e) return;
+            if (zone.mode === 'utc') e.value = 'utc';
+            else if (zone.mode === 'fixed' && _fin(zone.offset_h)) { e.value = 'fixed'; _setVal(offId, zone.offset_h); }
+        };
+        zsel('bu_g_tz', 'bu_g_tzoff', z.gauge);
+        zsel('bu_pd_tz', 'bu_pd_tzoff', day.zone);
+        if (_fin(day.startHour)) _setVal('bu_pd_start', day.startHour);
+        // a short note for the allocation status: what was set (fixed strings and a validated date only)
+        var note = [];
+        if (mode === 'date') note.push('production start ' + hdate);
+        if (day.zone && (day.zone.mode === 'utc' || day.zone.mode === 'fixed')) note.push('production days in ' + _zoneName(day.zone));
+        return note.join('; ');
+    }
     function _loadDemo() {
         var S = _Syn();
         if (!S) return;
@@ -1813,9 +1853,9 @@
             _setVal('bu_cmp_hp', c.hp_ft); _setVal('bu_cmp_htop', c.htop_ft); _setVal('bu_cmp_theta', c.theta_deg);
             if (c.kvkh) { _setVal('bu_cmp_kvlo', c.kvkh[0]); _setVal('bu_cmp_kvhi', c.kvkh[1]); }
         }
-        var hm = _byId('bu_hist_mode'); if (hm && d.history && d.history.mode) hm.value = d.history.mode;
+        var meta = _applyDemoMeta(d);
         var as = _byId('bu_a_status');
-        if (as) { as.setAttribute('data-msg', '1'); _status('bu_a_status', 'ok', _mem.allocation ? 'Demo allocation: ' + _mem.allocation.rows.length + ' days.' : 'Demo rates come from the rate table.'); }
+        if (as) { as.setAttribute('data-msg', '1'); _status('bu_a_status', 'ok', (_mem.allocation ? 'Demo allocation: ' + _mem.allocation.rows.length + ' days' : 'Demo rates come from the rate table') + (meta ? ' (' + meta + ').' : '.')); }
         _setRecord(rec, d.rateTable || null, d.name || ('Demo ' + kind));
     }
     function _parseAlloc(text, name) {
@@ -2108,7 +2148,7 @@
     function _aiText() {
         var R = _R(), a = _st && _st.analysis;
         if (!R || !a || typeof R.aiExport !== 'function') return null;
-        try { return R.aiExport(a, _st.review, { deidentify: _checked('bu_ai_deid'), includeDates: false, includeFreeText: _checked('bu_ai_free') }); } catch (e) { return null; }
+        try { return R.aiExport(a, _st.review, { deidentify: _checked('bu_ai_deid'), includeDates: false, includeFreeText: _checked('bu_ai_free'), idx: _idx() }); } catch (e) { return null; }
     }
     function _download(text, name) {
         try {
@@ -2187,9 +2227,15 @@
         if (typeof G.WTS_nav === 'function') G.WTS_nav('prism');
         if (typeof G.PRiSM_gotoStep === 'function') { try { G.PRiSM_gotoStep(3); } catch (e) { /* PRiSM decides */ } }
     }
+    // file 55 carries calibrated expectations for the in-app cases (not the placeholder)
+    function _calReady() {
+        var cal = G.PRiSM_autoInterpCal;
+        return !!(cal && cal.calibrated === true && Array.isArray(cal.inApp) && cal.inApp.length);
+    }
     function _validate() {
         var S = B.synth, R = _Run(), cal = G.PRiSM_autoInterpCal, root = _root();
-        if (!S || !R || !cal || !Array.isArray(cal.inApp) || !root || _run) return;
+        if (!S || !R || !_calReady() || !root || _run) return;
+        var vo = _byId('bu_val_out'); if (vo) vo.removeAttribute('data-note');
         var cases = cal.inApp.slice(0, 24), i = 0, done = 0, same = 0, near = 0, diffs = [], sub = null;
         var run = { token: ++_token, wellId: _wellId(), cancelled: false };
         _run = run; _buttons();
