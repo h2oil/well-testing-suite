@@ -1580,6 +1580,32 @@
         return cs;
     }
     var LITE = { dtSample_s: 60, maxDays: 30 };
+    // Effects in a CaseSpec that the engine does not model (§5.2 asks the generator to report the exact share):
+    // distractor physics, coloured noise, slugging, spikes, gauge drift, tides, flush after reopening, an intra-day
+    // rate change, a truncated history and a production-day offset.
+    function unmodelledEffects(cs) {
+        var e = [], t = cs.test, h = cs.history;
+        if (DISTRACTORS.indexOf(cs.stratum) !== -1 || (cs.stratum === 'inj' && cs.truth.model === 'frac')) e.push('physics');
+        if (t.ar1Rho || t.lf) e.push('colouredNoise');
+        if (t.sigmaFlowFactor > 1) e.push('slugging');
+        if (t.spikes > 0) e.push('spikes');
+        if (t.drift_psi_d > 0) e.push('drift');
+        if (t.tide.M2 > 0 || t.tide.K1 > 0) e.push('tide');
+        if (h.earlierShutins > 0 && h.flushPct > 0) e.push('flush');
+        if (h.intraDayChange) e.push('intraDayChange');
+        if (h.truncate) e.push('truncatedHistory');
+        if (cs.dayStart && cs.dayStart.trueHour !== cs.dayStart.statedHour) e.push('dayOffset');
+        return e;
+    }
+    function unmodelledShare() {
+        var n = 0, k = 0, by = {};
+        for (var s = SINGLE0; s < SINGLE0 + 640; s++) {
+            var e = unmodelledEffects(caseFromSeed(s)); n++;
+            if (e.length) k++;
+            e.forEach(function (x) { by[x] = (by[x] || 0) + 1; });
+        }
+        return { n: n, withEffect: k, share: k / n, byEffect: by };
+    }
 
     // CaseSpec → internal scenario
     function _scenarioFromCase(cs, opts) {
@@ -2042,6 +2068,8 @@
     SY.score = score;
     SY.scoreAnalysis = scoreAnalysis;
     SY.inAppList = inAppList;
+    SY.unmodelledEffects = unmodelledEffects;
+    SY.unmodelledShare = unmodelledShare;
     SY.LITE = LITE;
     SY.SEED_TABLE = SEED_TABLE.map(function (e) { return { stratum: e.stratum, n: e.n, from: e.from, to: e.to }; });
     SY.SEQUENCES = { from: SEQ0, to: SEQ0 + N_SEQ - 1, paths: SEQ_PATHS.map(function (p) { return { path: p[0], n: p[1] }; }) };
