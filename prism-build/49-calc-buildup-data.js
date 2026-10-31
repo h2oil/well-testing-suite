@@ -42,10 +42,10 @@
     var LN10 = Math.LN10;
 
     // Lines per parse step. Measured on the reference machine (WP2 merge note):
-    // ~1.1 µs per row for elapsed-hours rows and ~2.4 µs per row for naive ISO
-    // rows in an IANA zone, so 10,000 lines cost ≤ 25 ms (≤ 50 ms budget).
+    // ~0.67 µs per row for elapsed-hours rows and ~0.96 µs per row for naive ISO
+    // rows in an IANA zone, so 10,000 lines cost ≤ 10 ms (≤ 50 ms budget).
     var CHUNK_LINES = 10000;
-    // Samples per QC / detection unit (§4.8).
+    // Samples per detection scan unit (§4.8): one unit scans the windows of about 50,000 samples.
     var UNIT_SAMPLES = 50000;
 
     function deepFreeze(o) {
@@ -634,7 +634,12 @@
                     if (skipped) warnings.push(W('ROWS_SKIPPED', 'warn', skipped + ' rows without a valid time or pressure were skipped.', ['Q2']));
                     fin2 = _finishRecord(T, Pp, TT, n, { q: Q }, warnings);
                     if (fin2.T) { var any = false; for (var k = 0; k < fin2.n; k++) if (isNum(fin2.T[k])) { any = true; break; } if (!any) fin2.T = null; }
-                    if (fin2.T) for (var k2 = 0; k2 < fin2.n; k2++) if (!isNum(fin2.T[k2])) fin2.T[k2] = k2 ? fin2.T[k2 - 1] : 0;
+                    if (fin2.T) {
+                        // leading rows without a temperature take the first valid one (0 °F would read as a fast change, Q7)
+                        var firstT = NaN;
+                        for (var k1 = 0; k1 < fin2.n; k1++) if (isNum(fin2.T[k1])) { firstT = fin2.T[k1]; break; }
+                        for (var k2 = 0; k2 < fin2.n; k2++) if (!isNum(fin2.T[k2])) fin2.T[k2] = k2 ? fin2.T[k2 - 1] : firstT;
+                    }
                     phase = 'hash';
                     return { done: false, progress: 0.95, label: 'Sorting' };
                 }
@@ -1129,43 +1134,54 @@
         else if (ev.dtEnd_h < S.minDur_h) ev.status = 'too_short';
         else ev.status = 'analysable';
     }
+    // The highest (sign-aware) sample of windows m − 1 … m + 1 ends the build-up at a reopening found at window m.
+    function _endAtWindow(C, ev, m, mFirst) {
+        var t = C.t, p = C.p, Wd = C.win, sign = C.sign;
+        var ka = mMax(mFirst, m - 1), kb = mMin(Wd.K - 1, m + 1);
+        var a = Wd.first[ka] >= 0 ? Wd.first[ka] : Wd.first[m], b = Wd.last[kb] >= 0 ? Wd.last[kb] : Wd.last[m];
+        if (a < 0 || b < 0) { a = mMax(ev.j1, lowerBound(t, Wd.t0 + m * Wd.w) - 1); b = a; }
+        var bi = mMax(a, ev.j1);
+        for (var x = bi; x <= b; x++) if (sign * p[x] > sign * p[bi]) bi = x;
+        ev.tEnd_ms = t[bi]; ev.endReason = 'reopen'; ev._endIdx = bi;
+    }
     // End of the build-up: a persistent fall (every window up to +30 min, 2 h on an allocation day with no volume) to a
-    // level below the one reached 30 min before; otherwise a gap or the data end.
-    function _findEnd(C, ev) {
-        var t = C.t, p = C.p, n = C.n, Wd = C.win, M = Wd.M, sign = C.sign, S = C.S;
+    // level below the one reached 30 min before; otherwise a gap or the data end. o {thr (fall threshold, default T_s),
+    // tMax_ms (manual events: the search stops before the next event's closing; returns false when nothing was found)}.
+    function _findEnd(C, ev, o) {
+        o = o || {};
+        var t = C.t, p = C.p, n = C.n, Wd = C.win, M = Wd.M, S = C.S;
+        var thr = isNum(o.thr) && o.thr > 0 ? o.thr : C.Ts, tMax = isNum(o.tMax_ms) ? o.tMax_ms : INF;
         var mFirst = mFloor((t[ev.j1] - Wd.t0) / Wd.w);
         var gs = INF, gIdx = -1;
         for (var g = 0; g < C.gaps.length; g++) if (C.gaps[g].t0_ms >= t[ev.j1]) { gs = C.gaps[g].t0_ms; gIdx = lowerBound(t, gs); break; }
         var P = C.P, P2 = mMax(P, mCeil(S.shutDayPersist_h * HOUR / Wd.w));
         for (var m = mFirst + 1; m < Wd.K; m++) {
-            if (Wd.t0 + m * Wd.w >= gs) break;
+            if (Wd.t0 + m * Wd.w >= gs || Wd.t0 + m * Wd.w >= tMax) break;
             if (!(M[m] === M[m])) continue;
             var Pm = _inRanges(C.shutDays, Wd.t0 + m * Wd.w) ? P2 : P;
             var ok = true, cnt = 0, lastV = NaN;
             for (var ii = 1; ii <= Pm && m + ii < Wd.K; ii++) {
                 if (Wd.t0 + (m + ii) * Wd.w >= gs) break;
                 var v = M[m + ii];
-                if (v === v) { cnt++; lastV = v; if (!(v - M[m] < -C.Ts)) { ok = false; break; } }
+                if (v === v) { cnt++; lastV = v; if (!(v - M[m] < -thr)) { ok = false; break; } }
             }
             if (!ok || cnt < 2) continue;
             var ri = mMax(m - P, mFirst);
             while (ri < m && !(M[ri] === M[ri])) ri++;
             if (!(lastV < M[ri])) continue;
-            var ka = mMax(mFirst, m - 1), kb = mMin(Wd.K - 1, m + 1);
-            var a = Wd.first[ka] >= 0 ? Wd.first[ka] : Wd.first[m], b = Wd.last[kb] >= 0 ? Wd.last[kb] : Wd.last[m];
-            var bi = a;
-            for (var x = a; x <= b; x++) if (sign * p[x] > sign * p[bi]) bi = x;
-            ev.tEnd_ms = t[bi]; ev.endReason = 'reopen'; ev._endIdx = bi;
-            return;
+            _endAtWindow(C, ev, m, mFirst);
+            return true;
         }
+        if (_isFin(tMax) && tMax < gs) return false;
         if (_isFin(gs)) {
             var li = mMax(ev.j1, gIdx);
             ev.tEnd_ms = t[li]; ev._endIdx = li;
             var after = medianRange(p, li + 1, mMin(n, li + 6)), before = medianRange(p, mMax(ev.j1, li - 4), li + 1);
-            ev.endReason = (sign * (after - before) < -C.Ts) ? 'reopen' : 'gap';
-            return;
+            ev.endReason = (C.sign * (after - before) < -C.Ts) ? 'reopen' : 'gap';
+            return true;
         }
         ev.tEnd_ms = t[n - 1]; ev._endIdx = n - 1; ev.endReason = 'data_end';
+        return true;
     }
 
     function _ctx(record, q, opts) {
@@ -1262,7 +1278,8 @@
         var table = !!(opts.rateTable && opts.rateTable.length);
         if (!record || !record.t || record.t.length < 10) res = { events: [], missed: _missed([], [], null, q, 0) };
         function scanUnit() {
-            var Wd = C.win, M = Wd.M, lim = mMin(Wd.K, k + 20000), nEv = 0;
+            var Wd = C.win, M = Wd.M, perWin = mMax(1, C.n / mMax(1, Wd.K));
+            var lim = mMin(Wd.K, k + mMax(1, mCeil(UNIT_SAMPLES / perWin))), nEv = 0;
             while (k < lim && nEv < 10) {
                 if (!(M[k] === M[k])) { k++; continue; }
                 var j = 0;
@@ -1306,18 +1323,46 @@
     }
     function detect(record, q, opts) { return runSync(detectJob(record, q, opts)); }
     // A manual event (override event_add or tc) at a typed closing time: trend, closing refinement and end as detected ones.
+    // opts {exact, prevEnd_ms (the previous event's end), nextStart_ms (the next event's last flowing sample, t_j0),
+    // subThreshold (missed.subThreshold of the detection)}. The end is bounded: a manual event never runs into the next
+    // event (when no reopening is found before it, the event ends before the next event's flowing trend window). A
+    // promoted sub-threshold step ends at the next sub-threshold fall, else at the first persistent fall of at least
+    // T_p = max(2 psi, 6σ). Returns null when tc_ms is outside the record or leaves no room before the next event.
     function eventAt(record, q, tc_ms, opts) {
         opts = opts || {};
+        if (!record || !record.t || record.t.length < 10 || !isNum(tc_ms)) return null;
+        if (tc_ms < record.t[0] || tc_ms > record.t[record.t.length - 1]) return null;
         var C = _ctx(record, q, opts);
         C.win = _windows(C.t, C.p, C.n, C.w, C.sign);
-        var t = C.t, tol = mMax(10 * MIN, 5 * C.dtMed);
+        var t = C.t, tol = mMax(10 * MIN, 5 * C.dtMed), S = C.S;
+        var nextStart = isNum(opts.nextStart_ms) && opts.nextStart_ms > tc_ms ? opts.nextStart_ms : INF;
+        var tMax = nextStart - mMax(S.trendMin * MIN, S.trendDtFactor * C.dtMed);
+        if (!(tMax > tc_ms)) return null;
         var prevEndIdx = isNum(opts.prevEnd_ms) ? lowerBound(t, opts.prevEnd_ms + 1) - 1 : -1;
         var tw = _trendWindow(C, lowerBound(t, tc_ms - (opts.exact ? 0 : tol)) - 1, prevEndIdx + 1, tc_ms, isNum(opts.prevEnd_ms) ? opts.prevEnd_ms : null);
-        var j1 = opts.exact ? lowerBound(t, tc_ms + 1) : _firstShut(C, tw.tr, lowerBound(t, tc_ms - tol), lowerBound(t, tc_ms + tol + C.w));
+        var j1 = opts.exact ? lowerBound(t, tc_ms + 1) : _firstShut(C, tw.tr, lowerBound(t, tc_ms - tol), lowerBound(t, mMin(tc_ms + tol + C.w, tMax)));
         if (j1 < 1) j1 = mMax(1, lowerBound(t, tc_ms + 1));
-        if (j1 >= C.n) return null;
+        if (j1 >= C.n || !(t[j1] < tMax)) return null;
         var ev = _newEvent(C, j1, tw.tr, tw.warnings, { manual: true });
-        _findEnd(C, ev);
+        var sub = Array.isArray(opts.subThreshold) ? opts.subThreshold : [], near = mMax(tol, 2 * C.w), promo = null, found = false;
+        sub.forEach(function (s) {
+            if (s && isNum(s.t_ms) && C.sign * s.dp_psi > 0 && mAbs(s.t_ms - tc_ms) <= near && (!promo || mAbs(s.t_ms - tc_ms) < mAbs(promo.t_ms - tc_ms))) promo = s;
+        });
+        if (promo) {
+            var reo = null, mFirst = mFloor((t[j1] - C.win.t0) / C.win.w);
+            sub.forEach(function (s) { if (s && isNum(s.t_ms) && C.sign * s.dp_psi < 0 && s.t_ms > t[j1] && s.t_ms < tMax && (!reo || s.t_ms < reo.t_ms)) reo = s; });
+            if (reo) {
+                var mr = mMax(mFirst, mRound((reo.t_ms - C.win.t0) / C.win.w) - 1);
+                if (mr < C.win.K) { _endAtWindow(C, ev, mr, mFirst); found = true; }
+            }
+            if (!found) found = _findEnd(C, ev, { thr: mMax(S.stepMin_psi, S.stepSig * C.sigma), tMax_ms: tMax });
+            ev.warnings.push(W('SUBSTEP_PROMOTED', 'info', 'A sub-threshold step promoted to an event; its end is the next sub-threshold fall or the first fall of the step size.', ['D1']));
+        } else found = _findEnd(C, ev, { tMax_ms: tMax });
+        if (!found) {
+            var li = mMax(j1, lowerBound(t, tMax) - 1);
+            ev.tEnd_ms = t[li]; ev._endIdx = li; ev.endReason = 'reopen';
+            ev.warnings.push(W('END_BOUNDED', 'warn', 'No reopening was found before the next shut-in: the event ends before the next closing.', ['D1']));
+        }
         if (opts.exact) {
             ev.tc_ms = mRound(tc_ms); ev.pwf0 = trendAt(tw.tr, tc_ms); ev.dtc_s = 0;
             ev.trend = trendRebase(tw.tr, ev.tc_ms);
@@ -1333,12 +1378,10 @@
     // M§A5 missed list
     function _missed(events, sub, rh, q, Ts) {
         var gaps = ((q && q.gaps) || []).filter(function (g) { return g.dur_h >= D.DEFAULTS.qc.gapReport_h; }).map(function (g) { return { t0_ms: g.t0_ms, t1_ms: g.t1_ms }; });
-        var rises = (events || []).filter(function (e) { return (e.kind === 'shutin' || e.kind === 'falloff') && e.status === 'analysable'; })
-            .map(function (e) { return e.rise_psi; }).filter(isNum);
-        var obs = rises.length ? Math.max.apply(null, rises) : null;
+        // detectability: p* − pwf is known only after interpretation; run fills it from median(p* − pwf0) of the tests
         return {
             subThreshold: sub || [], allocOnly: (rh && rh.allocOnly) || [], gaps: gaps,
-            detectability: { ok: obs === null ? true : obs >= 2 * Ts, pStarMinusPwf_psi: obs, Ts_psi: Ts || 0 },
+            detectability: { ok: true, pStarMinusPwf_psi: null, Ts_psi: Ts || 0 },
             tooShort: (events || []).filter(function (e) { return e.status === 'too_short'; }).map(function (e) { return e.id; }),
             interventions: (events || []).filter(function (e) { return e.status === 'intervention'; }).map(function (e) { return e.id; }),
             ev: ['D1']
@@ -1520,15 +1563,22 @@
                     if (f1 !== null && f1 < C.fInterp) ev.warnings.push(W('ALLOC_VS_PRESSURE', 'warn', 'The allocation says shut-in, the pressure says a partial cut (rate fraction ' + f1.toFixed(2) + ').', ['D6']));
                 } else if (f1 !== null) {
                     ev.fhat = f1; ev.fhatMethod = 'dpDiff';
-                    if (f1 >= C.fShut) { /* full shut-in */ }
+                    if (f1 >= C.fShut) {
+                        // full shut-in by the pressure; an allocation that contradicts it is reported, not followed (the
+                        // pressure response is the stronger evidence; a 0.9–0.95 step expects residual volume anyway)
+                        if (contra && !alloc.ignoresShutin) ev.warnings.push(W('ALLOC_CONTRADICTS', 'warn', 'The allocation contradicts the shut-in (volume on the closing day or on whole days inside it); the pressure response (rate fraction ' + f1.toFixed(2) + ') is used.', ['D6']));
+                    }
                     else if (f1 >= C.fInterp) ev.warnings.push(W('RATE_FRACTION', 'warn', 'Rate step interpreted with ' + f1.toFixed(3) + ' of the rate before closing.', ['D6', 'R1']));
                     else if (f1 >= C.fPartial) {
                         if (S.partial) { ev.kind = 'partial'; ev.status = 'partial'; }
                         else { ev.kind = 'substep'; ev.status = 'not_confirmed'; }
                         ev.warnings.push(W('PARTIAL_CUT', 'info', 'Partial rate cut (rate fraction removed ' + f1.toFixed(2) + '): entered in the rate history, not interpreted.', ['D6']));
                     } else {
-                        if (ev.status === 'analysable') ev.status = 'not_confirmed';
-                        ev.warnings.push(W('NOT_CONFIRMED', 'warn', 'The pressure response is too small for a shut-in (rate fraction ' + f1.toFixed(2) + ').', ['D6']));
+                        // the gate measured that the rate barely changed: no rate step enters the history (a q = 0 period
+                        // here would put a fictitious shut-in into every later test); listed with the sub-threshold steps
+                        ev.gateDp_psi = (ev.kind === 'falloff' ? -1 : 1) * num(ev.rise_psi, 0);    // real psi, as missed.subThreshold
+                        ev.kind = 'substep'; ev.status = 'not_confirmed'; ev.gateSubstep = true;
+                        ev.warnings.push(W('NOT_CONFIRMED', 'warn', 'The pressure response is too small for a shut-in (rate fraction ' + f1.toFixed(2) + '): no rate change is entered; listed with the sub-threshold steps.', ['D6']));
                     }
                 } else {
                     ev.fhat = ev.fhatProxy; ev.fhatMethod = isNum(ev.fhatProxy) ? 'proxy' : null;
@@ -1731,7 +1781,9 @@
         (rows || []).forEach(function (r) { if (r && parseDate(r.date)) map[r.date] = r; });
         var rs = Object.keys(map).sort().map(function (k) { return map[k]; });
         if (!rs.length) return { ok: false, code: 'NO_ALLOCATION', errors: ['No daily allocation rows.'], bad: ['allocation'] };
-        var Bo = num(+opts.B, 1), Bw = num(+opts.Bw, 1), Rs = isNum(+opts.Rs) && opts.Rs !== null ? +opts.Rs : null, Pb = isNum(+opts.Pb) && opts.Pb !== null ? +opts.Pb : null;
+        // R_s (scf/STB): §3.6 names the option rsScfStb; Rs is accepted too (WellInput.Rs)
+        var rsIn = opts.rsScfStb !== undefined && opts.rsScfStb !== null ? opts.rsScfStb : opts.Rs;
+        var Bo = num(+opts.B, 1), Bw = num(+opts.Bw, 1), Rs = isNum(+rsIn) && rsIn !== null && rsIn !== '' ? +rsIn : null, Pb = isNum(+opts.Pb) && opts.Pb !== null ? +opts.Pb : null;
         var gas = opts.gas || {};
         // phase basis (R7), once per analysis
         var wcMax = null, gorMax = null, basis = 'oil', phase = 'oil';
@@ -1928,19 +1980,23 @@
                      hEff: d.hEff, qRef: d.qRef, qUse: d.qUse, vRes: vRes };
         });
         var twoPhase = fluid === 'oil' && ((Pb !== null && outDays.some(function (d) { return d.pwfMean_psia !== null && d.pwfMean_psia < Pb; })) || (Rs !== null && gorMax !== null && gorMax > R.gorFactor * Rs));
-        if (basis === 'total') warnings.push(W('TOTAL_BASIS', 'info', 'Water cut or GOR above the oil-basis limits: every test uses the total reservoir rate (B = 1).', ['R7']));
+        if (basis === 'total') warnings.push(W('TOTAL_BASIS', 'info', 'Water cut or GOR above the oil-basis limits: every test uses the total reservoir rate (B = 1, oil viscosity), so k is a total-mobility equivalent (k = total mobility × oil viscosity).', ['R7']));
         return {
             mode: 'daily', unit: _unitFor(fluid, basis), phase: phase, days: outDays, steps: steps, start: start,
             offsetScan: { current_h: sh, best_h: sh + best.off, better: better, improvement: cur.sum > 0 ? 1 - best.sum / cur.sum : 0 },
-            phaseBasis: { used: basis, wcMax: wcMax, gorRatioMax: (Rs && gorMax !== null) ? gorMax / Rs : null, twoPhaseCt: !!twoPhase },
+            // kTotalMobility (extra key): on the total basis k means total mobility × oil viscosity (limitation for trend/review)
+            phaseBasis: { used: basis, wcMax: wcMax, gorRatioMax: (Rs && gorMax !== null) ? gorMax / Rs : null, twoPhaseCt: !!twoPhase, kTotalMobility: basis === 'total' },
             ev: ['R1', 'R2', 'R3', 'R4', 'R5', 'R6', 'R7'], warnings: warnings, byEvent: byEvent, allocOnly: allocOnly
         };
     }
 
-    // Time-stamped rate table → RateHistory (table mode, D15). opts {fluid, events (closings move to the refined t_c)}
+    // Time-stamped rate table → RateHistory (table mode, D15). opts {fluid, events (closings move to the refined t_c),
+    // dtMed_s (QC median sampling interval: a tabled closing within ±max(10 min, 5·Δt_med) of t_c moves to t_c, as in
+    // the table-mode detection; a closing farther away is inserted)}
     function rateTable(rows, opts) {
         opts = opts || {};
         var fluid = opts.fluid || 'oil';
+        var tolT = mMax(D.DEFAULTS.detect.tableTolMin * MIN, D.DEFAULTS.detect.tableTolN * (isNum(+opts.dtMed_s) && +opts.dtMed_s > 0 ? +opts.dtMed_s : 60) * SEC);
         var rt = (rows || []).filter(function (r) { return r && isNum(r.t_ms) && isNum(r.q); }).map(function (r) { return { t_ms: mRound(r.t_ms), q: mAbs(r.q) }; })
             .sort(function (a, b) { return a.t_ms - b.t_ms; });
         if (!rt.length) return { ok: false, code: 'NO_RATES', errors: ['No time-stamped rates.'], bad: ['rateTable'] };
@@ -1952,7 +2008,7 @@
             // the tabled closing nearest to t_c moves to t_c; a closing not in the table is inserted
             var best = -1, bd = INF;
             for (var i = 1; i < steps.length; i++) if (steps[i].q === 0 && steps[i - 1].q > 0) { var dd = mAbs(steps[i].t_ms - e.tc_ms); if (dd < bd) { bd = dd; best = i; } }
-            var tol = mMax(10 * MIN, 6 * HOUR);
+            var tol = tolT;
             if (best > 0 && bd <= tol && (best + 1 >= steps.length || steps[best + 1].t_ms > e.tc_ms) && steps[best - 1].t_ms < e.tc_ms) steps[best].t_ms = e.tc_ms;
             else {
                 var k = lowerBound(steps.map(function (s) { return s.t_ms; }), e.tc_ms);
@@ -1972,7 +2028,7 @@
         return {
             mode: 'table', unit: _unitFor(fluid, 'oil'), phase: fluid === 'water_inj' ? 'water_inj' : fluid === 'gas' ? 'gas' : 'oil', days: [], steps: steps,
             start: { source: 'data', prepend_h: 0, q: steps[0].q, flag: false }, offsetScan: { current_h: 0, best_h: 0, better: false, improvement: 0 },
-            phaseBasis: { used: fluid === 'gas' ? 'gas' : 'oil', wcMax: null, gorRatioMax: null, twoPhaseCt: false },
+            phaseBasis: { used: fluid === 'gas' ? 'gas' : 'oil', wcMax: null, gorRatioMax: null, twoPhaseCt: false, kTotalMobility: false },
             ev: ['R1', 'R2', 'R3', 'R4', 'R5', 'R6', 'R7'], warnings: warnings, byEvent: byEvent, allocOnly: []
         };
     }
@@ -1999,6 +2055,20 @@
     // ─────────────────────────────────────────────────────────────────────
     // opts {settings:{detect}, fluid, zones:{day}, allocation:{rows, resolution}, rateTable, history, well {B, Bw, Rs, Pb, gas},
     //       depth, workovers, adjust(events, record, qc) (overrides; returns the events)}
+    // The missed list's sub-threshold steps after the overrides and the classification gate: steps promoted to a manual
+    // event (inside its closing … end, ± the matching tolerance) leave the list; events the gate turned into a 'substep'
+    // (f̂ < fPartial by late Δp differences) join it. Sorted by time.
+    function _subList(events, sub, q) {
+        var dtMed = (q && isNum(q.dtMed_s) && q.dtMed_s > 0 ? q.dtMed_s : 60) * SEC, near = mMax(10 * MIN, 5 * dtMed, 2 * mMax(D.DEFAULTS.detect.winMin * MIN, 3 * dtMed));
+        var manual = (events || []).filter(function (e) { return e && e.manual && !e.dropped && isNum(e.tc_ms) && isNum(e.tEnd_ms); });
+        var out = (sub || []).filter(function (s) {
+            return !manual.some(function (e) { return s.t_ms >= e.tc_ms - near && s.t_ms <= e.tEnd_ms + near; });
+        });
+        (events || []).forEach(function (e) {
+            if (e && e.gateSubstep && !e.dropped && isNum(e.tc_ms)) out.push({ t_ms: e.tc_ms, dp_psi: num(e.gateDp_psi, 0), dur_h: isNum(e.dtEnd_h) ? e.dtEnd_h : 0 });
+        });
+        return out.sort(function (a, b) { return a.t_ms - b.t_ms; });
+    }
     function scanJob(record, opts) {
         opts = opts || {};
         var S = detectSettings(opts.settings && opts.settings.detect);
@@ -2037,7 +2107,7 @@
                     if (!sd.done) return { done: false, progress: 0.25 + 0.2 * sd.progress, label: sd.label };
                     det = st.sub.result(); st.sub = null;
                     events = det.events;
-                    if (typeof opts.adjust === 'function') events = opts.adjust(events, rec, q0) || events;
+                    if (typeof opts.adjust === 'function') events = opts.adjust(events, rec, q0, det.missed) || events;
                     st.phase = 'qc1';
                     return { done: false, progress: 0.5, label: 'Shut-ins found: ' + events.length };
                 }
@@ -2069,9 +2139,9 @@
                     return { done: false, progress: 0.8 + 0.1 * sc.progress, label: sc.done ? 'Shut-ins classified' : sc.label };
                 }
                 if (st.phase === 'rates2') {                 // final rates with the partial cuts split
-                    rh = table ? rateTable(opts.rateTable, { fluid: well.fluid, events: events }) : rates(rec, events, rows, rateOpts(false));
+                    rh = table ? rateTable(opts.rateTable, { fluid: well.fluid, events: events, dtMed_s: q0 && q0.dtMed_s }) : rates(rec, events, rows, rateOpts(false));
                     if (rh && rh.ok === false) { res = rh; return { done: true, progress: 1, label: 'No rates' }; }
-                    res = { ok: true, qc: q1, events: events, missed: _missed(events, det.missed.subThreshold, rh, q1, Ts), rates: rh, record: rec, qc0: q0 };
+                    res = { ok: true, qc: q1, events: events, missed: _missed(events, _subList(events, det.missed.subThreshold, q0), rh, q1, Ts), rates: rh, record: rec, qc0: q0 };
                     return { done: true, progress: 1, label: 'Rates' };
                 }
                 return { done: true, progress: 1, label: '' };
