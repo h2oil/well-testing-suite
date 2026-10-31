@@ -19,8 +19,11 @@
 //                                          the pass-1 tests; compute calls it again over the final used set).
 //                                          series items: {id, tDays|t_ms, date, S, Serr, k, kh, kHeld,
 //                                          excluded, conf:{ks}}; opts = {workovers:['YYYY-MM-DD']} (or the
-//                                          array itself). Returns the Trend.baseline object plus k (median
-//                                          free-k of the baseline tests), cvK, kh, n and seg (current segment).
+//                                          array itself). Returns the Trend.baseline object plus n, seg (the
+//                                          current segment), from (its start date) and k (median free k of the
+//                                          baseline tests), cvK, kh — k, cvK and kh come from the latest segment
+//                                          that holds tests (a workover does not change k), the rest from the
+//                                          current segment (S, sigma null and tests [] when it holds none).
 //   theilSen(t, y)  → {slope, intercept, lo, hi, n, nPairs}   (Sen 95 % CI, Gilbert 1987)
 //   mannKendall(y)  → {S, varS, z, p, n, tau}                 (y in time order; ties corrected)
 //   hinge(t, y, w)  → {model, shape:'ramp'|'step'|null, tau, interval, a, b, jump, wssr, bic, n, indicative}
@@ -39,15 +42,34 @@
 // CONVENTIONS
 //   Field units (psia, hours, days for trend time, STB/d | Mscf/d | bbl/d, md, ft). tDays = days since the
 //   first test. Every output number is finite or null; arrays are plain. Threshold decisions compare
-//   values rounded to display precision (D27): skins in integer hundredths, p-values and ratios to 0.001.
-//   Alerts, onset, recent trend and forecast are evaluated in the CURRENT workover segment (the last
-//   segment that holds used tests): an entered workover date starts a new baseline and resets the alerts.
+//   values rounded to display precision (D27, DEFAULTS.round): skins to 0.01, slopes to 0.001 in their
+//   reported per-30-day units, p-values and ratios to 0.001. compute() never throws: an internal failure
+//   returns a complete empty Trend with ok:false, code 'TREND_ERROR'; no tests gives code 'NO_TESTS'.
+//   Records whose id is not a non-empty string or a number are skipped.
+//   Segments: alerts, onset, recent trend and forecast are evaluated in the CURRENT workover segment, the one
+//   the latest workover date opens (segOf(max(latest test date, latest workover date)), i.e. segment
+//   wo.length): an entered workover date starts a new baseline and resets the alerts at once. While that
+//   segment holds no used test, the baseline S and σ are null (provisional), both alerts are 'none' (low tests
+//   have no baseline to compare with), onset, recent trend and forecast are empty, there is no stimulation
+//   recommendation, the PI ratio and production-at-stake numbers are skipped (pi.X is kept) and a limitation
+//   says alerts restart with the next test. series[].used.alert marks the current-segment tests on the alert
+//   basis; used.trend marks every used test (the S(t) of T8/T13 and the plot run through all of them).
+//   Alerts: excluded low tests are compared on the same basis as the used tests (the 'possible' status).
 //   Onset: the hinge family has two shapes, a ramp (continuous hinge) and a step (a level shift at τ, then a
 //   line), both reported as model 'hinge' with onset.shape; the CUSUM (κ 0.5, h 4) is reported alongside as the
 //   confirmation (onset.cusum). Gas with D resolved: alerts, onset and trend use S′ − D·(q − q_ref).
+//   Without an onset (model 'constant' or 'line'): the recent trend uses every current-segment test
+//   (recent.from 'segment', else 'onset') and the cumulative production at stake is summed from the last
+//   baseline test (pi.cumFrom 'baselineEnd', else 'onset'; pi.cumFromDays = its tDays), so the page can label
+//   it "since the end of the baseline". The extra drawdown (T8) and J_pred (T13) use the well's B·μ (Bw·μw for
+//   injectors), as §4.7 writes them. The pressure trend (T10) does not depend on the trend switch: it is not
+//   assessable only with an estimated history or fewer than 3 tests, so closedWithoutDepletion (V18) is
+//   reported in table mode and with the trend off too.
 //   Extra output keys (allowed by §3.13): onset.shape; series[].Salert/SerrAlert/seg (the alert basis and the
-//   segment, for the review's re-derivation); kStability.median/n/falling/followsRate; pi.FE/DR; rateSkin.n/
-//   qRatio/expectedD/consistent; recommendations[].values; piCheck.rows[].nDays; corrected; family; warnings.
+//   segment, for the review's re-derivation); baseline.n/seg/from/k/cvK/kh; recent.from; kStability.median/n/
+//   falling/followsRate; pi.FE/DR/cumFrom/cumFromDays; rateSkin.n/qRatio/expectedD (the module's central D)/
+//   expectedDRange [lo, hi]/consistent; recommendations[].values; piCheck.rows[].nDays; corrected; family;
+//   warnings; code/errors/bad on a failure.
 // =============================================================================
 (function () {
   'use strict';
@@ -77,7 +99,9 @@
     qRatioMin: 1.5, maxDays: 60, collinearCorr: 0.8, dSeMin: 2,
     agreeMin: 0.3,                 // model-free ΔS agreement: max(0.3, S_err)
     workoverDrop: 2,               // skin drop between consecutive used tests that suggests an intervention
-    weightFloor: 0.05              // S_err floor for 1/S_err² weights
+    weightFloor: 0.05,             // S_err floor for 1/S_err² weights
+    // D27 display precision for threshold decisions (slopes in their reported per-30-day units)
+    round: Object.freeze({ dBic: 0.1, span: 0.01, slope: 0.001, ratio: 0.001, skin: 0.01 })
   });
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -102,8 +126,10 @@
   }
   function minOf(a) { var m = null; a.forEach(function (v) { if (fin(v) && (m === null || v < m)) m = v; }); return m; }
   function maxOf(a) { var m = null; a.forEach(function (v) { if (fin(v) && (m === null || v > m)) m = v; }); return m; }
-  function hund(x) { return Math.round(x * 100); }                 // skin → integer hundredths (D27, 2 dp)
+  function hund(x) { return Math.round(x * 100); }                 // skin → integer hundredths (D27, round.skin 0.01)
   function r3(x) { return Math.round(x * 1000) / 1000; }           // ratios, p-values (D27, 0.001)
+  // a per-day slope → integer thousandths of its reported per-30-day value (D27); NaN for a non-number
+  function s30(b) { return fin(b) ? Math.round(30000 * b) : NaN; }   // round.slope 0.001
   function validDate(s) {
     if (typeof s !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
     var d = new Date(s + 'T00:00:00Z');
@@ -297,20 +323,26 @@
     }
     pts.sort(function (p, q) { return p[0] - q[0]; });
     var n = pts.length;
-    var T = pts.map(function (p) { return p[0]; }), Y = pts.map(function (p) { return p[1]; }), W = pts.map(function (p) { return p[2]; });
+    // the fits use weights normalised by their maximum (the estimates do not change; the pivot, determinant and tie
+    // tests stay meaningful for any S_err); WSSRs are scaled back to the caller's weights for the BIC and the output,
+    // and the ΔWSSR ≤ 1 profile limit is 1/wMax in normalised units
+    var wMax = 0; pts.forEach(function (p) { if (p[2] > wMax) wMax = p[2]; });
+    var T = pts.map(function (p) { return p[0]; }), Y = pts.map(function (p) { return p[1]; }), W = pts.map(function (p) { return p[2] / wMax; });
+    var back = function (f) { return f.ok ? { beta: f.beta, wssr: f.wssr * wMax, ok: true } : f; };
     var out = { model: 'constant', shape: null, tau: null, interval: null, a: null, b: 0, jump: null,
                 wssr: { constant: null, line: null, hinge: null, step: null }, bic: { constant: null, line: null, hinge: null, step: null },
                 n: n, indicative: n < 6 };
-    if (!n) return out;
+    if (!n || !(wMax > 0) || !isFinite(wMax)) return out;
     var lnN = Math.log(n);
-    var c = wlsN(T.map(function () { return [1]; }), Y, W);
+    var c = back(wlsN(T.map(function () { return [1]; }), Y, W));
+    if (!c.ok || !fin(c.wssr)) return out;
     out.a = c.beta[0]; out.wssr.constant = c.wssr;
     var bic = { constant: c.wssr + lnN, line: null, hinge: null, step: null };
-    var line = n >= 3 ? wlsN(T.map(function (x) { return [1, x]; }), Y, W) : null;
+    var line = n >= 3 ? back(wlsN(T.map(function (x) { return [1, x]; }), Y, W)) : null;
     if (line && line.ok) { out.wssr.line = line.wssr; bic.line = line.wssr + 2 * lnN; }
     // fit(shape, τ) → {beta, wssr, ok}: the ramp by the closed-form two-parameter WLS, the step by wlsN
     var fitAt = function (shape, tau) {
-      if (shape === 'hinge') {
+      if (shape === 'hinge') {                                   // (normalised WSSR)
         var f = wls(T.map(function (x) { return Math.max(0, x - tau); }), Y, W, true);
         return f.ok ? { beta: [f.a, f.b], wssr: f.wssr, ok: true } : f;
       }
@@ -339,7 +371,7 @@
         var tie = b0 !== null && Math.abs(f.wssr - b0.wssr) <= 1e-9 * Math.max(1, b0.wssr);
         if (b0 === null || (!tie && f.wssr < b0.wssr) || (tie && shape === 'step' && cd.mid && !b0.mid)) b0 = { tau: cd.tau, mid: cd.mid, beta: f.beta, wssr: f.wssr };
       });
-      if (b0) { best[shape] = b0; out.wssr[shape] = b0.wssr; bic[shape] = b0.wssr + NP[shape] * lnN; }
+      if (b0) { best[shape] = b0; out.wssr[shape] = b0.wssr * wMax; bic[shape] = b0.wssr * wMax + NP[shape] * lnN; }
     });
     var r1 = function (v) { return Math.round(v * 10); };
     var model = 'constant', bb = r1(bic.constant);
@@ -355,7 +387,7 @@
     for (i = 0; i <= n - 3; i++) for (var s = 0; s < 16; s++) grid.push(T[i] + (T[i + 1] - T[i]) * s / 16);
     grid.push(bs.tau);
     grid = grid.filter(valid).sort(num);
-    var lim = bs.wssr + 1, k0 = grid.indexOf(bs.tau), lo = k0, hi = k0;
+    var lim = bs.wssr + 1 / wMax, k0 = grid.indexOf(bs.tau), lo = k0, hi = k0;
     var okAt = function (k) { var f = fitAt(model, grid[k]); return f.ok && f.wssr <= lim; };
     while (lo - 1 >= 0 && okAt(lo - 1)) lo--;
     while (hi + 1 < grid.length && okAt(hi + 1)) hi++;
@@ -427,13 +459,17 @@
         seg: s, from: s === 0 ? itemDate(list[0]) : wo[s - 1], S: Sb,
         sigma: Math.max(median(E), 1.4826 * m / Math.sqrt(base.length)),
         tests: base.map(function (it) { return String(it.id); }),
-        unstable: (maxOf(S) - minOf(S)) > 2 * maxOf(E),
-        provisional: base.length < Math.max(DEFAULTS.baseMinTests, n) || base.some(function (it) { return it.kHeld === true; }),
+        unstable: hund(maxOf(S) - minOf(S)) > hund(2 * maxOf(E)),                 // range > 2·max S_err (D27)
+        provisional: base.length < DEFAULTS.baseMinTests || base.some(function (it) { return it.kHeld === true; }),
         k: kMed, cvK: (kMed && kArr.length) ? 1.4826 * madAbout(kArr, kMed) / kMed : null, kh: khArr.length ? median(khArr) : null,
         n: base.length
       };
     });
-    var cur = segs.length ? segs[segs.length - 1] : null;
+    // The current segment is the one the latest workover opens: segOf(max(latest test date, latest workover date)),
+    // which is wo.length whenever a workover date is entered (0 without one). It may hold no test yet.
+    var curSeg = wo.length, cur = null;
+    segs.forEach(function (g) { if (g.seg === curSeg) cur = g; });
+    var kSrc = cur || (segs.length ? segs[segs.length - 1] : null);        // a workover does not change k
     return {
       S: cur ? cur.S : null, sigma: cur ? cur.sigma : null, tests: cur ? cur.tests.slice() : [],
       unstable: cur ? cur.unstable : false, provisional: cur ? cur.provisional : true,
@@ -441,7 +477,8 @@
         return { from: g.from, S: g.S, tests: g.tests.slice(), seg: g.seg, sigma: g.sigma, unstable: g.unstable, provisional: g.provisional };
       }),
       ev: ['T1'],
-      k: cur ? cur.k : null, cvK: cur ? cur.cvK : null, kh: cur ? cur.kh : null, n: cur ? cur.n : 0, seg: cur ? cur.seg : null
+      k: kSrc ? kSrc.k : null, cvK: kSrc ? kSrc.cvK : null, kh: kSrc ? kSrc.kh : null, n: cur ? cur.n : 0, seg: curSeg,
+      from: cur ? cur.from : (curSeg > 0 ? wo[curSeg - 1] : null)
     };
   }
 
@@ -460,9 +497,12 @@
     var sc = G.PRiSM_skinCheck;
     return (sc && typeof sc[name] === 'function') ? function () { return sc[name].apply(sc, arguments); } : null;
   }
-  function safeCall(fn, args, warnings, code) {
+  // ev: the evidence id of the item the call feeds (T14 mechanical skin, T15 rate skin, T8 products)
+  function safeCall(fn, args, warnings, code, ev) {
     try { return fn.apply(null, args); } catch (e) {
-      warnings.push({ code: code, level: 'warn', text: 'The skin module failed on one calculation; that item is left out.', ev: ['T14'] });
+      if (!warnings.some(function (w) { return w.code === code; })) {
+        warnings.push({ code: code, level: 'warn', text: 'The skin module failed on a calculation; the items it affects are left out.', ev: [ev || 'T14'] });
+      }
       return null;
     }
   }
@@ -487,8 +527,9 @@
     return (cal && cal.calibrated === true && cal.thresholds && cal.thresholds.deltaForm === 'basevar') ? 'basevar' : 'plain';
   }
 
+  function goodId(id) { return (typeof id === 'string' && id.length > 0) || fin(id); }
   function prepRecords(tests, ctx, wo) {
-    var arr = Array.isArray(tests) ? tests.filter(isObj) : [];
+    var arr = Array.isArray(tests) ? tests.filter(function (t) { return isObj(t) && goodId(t.id); }) : [];
     var first = fin(ctx.firstTest_ms) ? ctx.firstTest_ms : null;
     if (first === null) arr.forEach(function (t) { if (fin(t.t_ms) && (first === null || t.t_ms - (fin(t.tDays) ? t.tDays * DAY_MS : 0) < first)) first = t.t_ms - (fin(t.tDays) ? t.tDays * DAY_MS : 0); });
     var recs = arr.map(function (t, i) {
@@ -545,14 +586,18 @@
     var cur = recs.filter(function (r) { return r.used && r.seg === B.seg && val(r); });
     var lowCur = recs.filter(function (r) { return r.low && r.seg === B.seg; });
     var form = P.form, Sb = B.S, sigB = B.sigma;
+    // the current segment (opened by the latest workover) holds no used test yet: nothing to alert on
+    var segEmpty = B.n === 0 && P.wo.length > 0;
     var E = function (r, e) { return form === 'basevar' ? Math.sqrt(e * e + (fin(sigB) ? sigB * sigB : 0)) : e; };
+    // excluded low tests are compared on the alert basis too (val works for any record)
     var dMargin = function (r) {
-      var v = r.low ? { S: r.S, E: r.E } : val(r);
+      var v = val(r);
       if (!v || !fin(v.S) || !fin(v.E) || !fin(Sb)) return null;
       return hund(v.S) - hund(E(r, v.E)) - hund(Sb) - hund(ts.delta);
     };
-    var res = { B: B, cur: cur, form: form };
-    var enabled = P.enabled && fin(Sb);
+    var res = { B: B, cur: cur, form: form, segEmpty: segEmpty };
+    var enabled = P.enabled && fin(Sb) && !segEmpty;
+    var aOn = P.enabled && !segEmpty;
     // delta alert (T2)
     var dRun = enabled ? alertRun(cur, dMargin, ts.confirm === 'immediate') : { raisedAt: null, confirmedAt: null, kHeldOnly: false };
     res.delta = {
@@ -569,11 +614,11 @@
         };
       };
       var aCur = recs.filter(function (r) { return r.used && r.seg === B.seg && absVal(r); });
-      var aRun = P.enabled ? alertRun(aCur, aMarginD(0), ts.confirm === 'immediate') : { raisedAt: null, confirmedAt: null, kHeldOnly: false };
-      var status = P.enabled ? alertStatus(aRun, lowCur, aMarginD(0)) : 'none';
+      var aRun = aOn ? alertRun(aCur, aMarginD(0), ts.confirm === 'immediate') : { raisedAt: null, confirmedAt: null, kHeldOnly: false };
+      var status = aOn ? alertStatus(aRun, lowCur, aMarginD(0)) : 'none';
       var refOf = function (run) { return status === 'confirmed' ? run.confirmedAt : run.raisedAt; };
-      var lo = P.enabled ? alertRun(aCur, aMarginD(-P.sSens(aCur)), ts.confirm === 'immediate') : aRun;
-      var hi = P.enabled ? alertRun(aCur, aMarginD(+P.sSens(aCur)), ts.confirm === 'immediate') : aRun;
+      var lo = aOn ? alertRun(aCur, aMarginD(-P.sSens(aCur)), ts.confirm === 'immediate') : aRun;
+      var hi = aOn ? alertRun(aCur, aMarginD(+P.sSens(aCur)), ts.confirm === 'immediate') : aRun;
       var nom = refOf(aRun);
       res.absolute = {
         threshold: ts.abs, basis: P.absBasis, raisedAt: aRun.raisedAt, confirmedAt: aRun.confirmedAt, status: status, kHeldOnly: !!aRun.kHeldOnly,
@@ -595,10 +640,12 @@
       cusum: { alarmAt: C.alarm !== null ? cur[C.alarm].id : null, onsetAt: C.onset !== null ? cur[C.onset].id : null },
       indicative: cur.length < 6, ev: ['T4']
     };
-    // recent trend (T5): Theil–Sen ×30 with the Sen CI and Mann–Kendall over the tests after τ̂
+    // recent trend (T5): Theil–Sen ×30 with the Sen CI and Mann–Kendall over the tests after τ̂ (every current-segment
+    // test when there is no onset: recent.from 'segment')
     var rec = tau !== null ? cur.filter(function (r) { return r.td > tau; }) : cur.slice();
     res.recentSet = rec;
-    var recent = { slopePer30d: null, ci: [null, null], mkZ: null, mkP: null, n: rec.length, indicative: true, wlsSlopePer30d: null, disagree: false, ev: ['T5'] };
+    var recent = { slopePer30d: null, ci: [null, null], mkZ: null, mkP: null, n: rec.length, indicative: true, wlsSlopePer30d: null, disagree: false,
+                   from: tau !== null ? 'onset' : 'segment', ev: ['T5'] };
     var TS = null, MK = null;
     if (enabled && rec.length >= DEFAULTS.recentMinN) {
       var rt = rec.map(function (r) { return r.td; }), ry = rec.map(function (r) { return val(r).S; });
@@ -624,10 +671,13 @@
   function forecastOf(P, res, rec, tau, enabled) {
     var f = { show: false, date: null, earliest: null, latest: null, reason: '', ev: ['T6'] };
     var TS = res.TS, MK = res.MK;
+    if (res.segEmpty) { f.reason = 'Not shown: no interpreted test since the workover on ' + P.wo[P.wo.length - 1] + '.'; return f; }
     if (!enabled) { f.reason = 'Not shown: the trend and alerts are off.'; return f; }
     if (!TS || TS.slope === null) { f.reason = 'Not shown: fewer than 3 tests after the onset, so there is no recent slope.'; return f; }
-    var sig = (fin(TS.lo) && TS.lo > 0) || (fin(MK.p) && r3(MK.p) < DEFAULTS.mkAlpha && rec.length >= DEFAULTS.recentSigN);
-    if (!(TS.slope > 0)) { f.reason = 'Not shown: the recent skin trend is not rising.'; return f; }
+    // slope decisions on the per-30-day values rounded to 0.001 (D27)
+    var kLo = s30(TS.lo), kSl = s30(TS.slope), kHi = s30(TS.hi);
+    var sig = kLo > 0 || (fin(MK.p) && r3(MK.p) < DEFAULTS.mkAlpha && rec.length >= DEFAULTS.recentSigN);
+    if (!(kSl > 0)) { f.reason = 'Not shown: the recent skin trend is not rising.'; return f; }
     if (!sig) { f.reason = 'Not shown: the lower bound of the Sen slope is at or below zero (the rise is not significant).'; return f; }
     var val = P.val, tLast = rec[rec.length - 1].td, tStart = tau !== null ? tau : rec[0].td;
     var span = tLast - tStart;
@@ -641,16 +691,17 @@
     } else eTyp = median(rec.map(function (r) { return val(r).E; }));
     if (!fin(eTyp) || !fin(offset)) { f.reason = 'Not shown: no skin uncertainty for the recent tests.'; return f; }
     var target = P.ts.abs + eTyp + offset;
-    if (sFit >= target) { f.reason = 'Not shown: the fitted skin is already above the absolute threshold.'; return f; }
+    if (hund(sFit) >= hund(target)) { f.reason = 'Not shown: the fitted skin is already above the absolute threshold.'; return f; }
     var horizon = DEFAULTS.horizonFactor * span;
     var tc = tLast + (target - sFit) / TS.slope;
-    if (!(span > 0) || tc - tLast > horizon) { f.reason = 'Not shown: the crossing lies beyond twice the span of the recent tests.'; return f; }
-    var tEarly = TS.hi > 0 ? tLast + (target - sFit) / TS.hi : null;
-    var tLate = TS.lo > 0 ? tLast + (target - sFit) / TS.lo : null;
+    var beyond = function (t) { return Math.round((t - tLast) * 100) > Math.round(horizon * 100); };   // days to 0.01
+    if (!(span > 0) || beyond(tc)) { f.reason = 'Not shown: the crossing lies beyond twice the span of the recent tests.'; return f; }
+    var tEarly = kHi > 0 ? tLast + (target - sFit) / TS.hi : null;
+    var tLate = kLo > 0 ? tLast + (target - sFit) / TS.lo : null;
     f.show = true;
     f.date = dateOf(P.first_ms + tc * DAY_MS);
     f.earliest = tEarly !== null ? dateOf(P.first_ms + tEarly * DAY_MS) : null;
-    f.latest = tLate !== null && tLate - tLast <= horizon ? dateOf(P.first_ms + tLate * DAY_MS) : null;
+    f.latest = tLate !== null && !beyond(tLate) ? dateOf(P.first_ms + tLate * DAY_MS) : null;
     f.reason = 'Sen-slope extrapolation of the recent skin trend to the absolute threshold (S − S_err = ' + fmtNum(P.ts.abs, 1) +
       '); the range comes from the 95 % slope bounds' + (f.latest ? '.' : tLate === null ? '; the late end is open (the lower slope bound is not above zero).' :
       ' and its late end lies beyond the forecast horizon.');
@@ -658,7 +709,7 @@
     return f;
   }
 
-  function compute(tests, ctx) {
+  function computeTrend(tests, ctx) {
     ctx = isObj(ctx) ? ctx : {};
     var well = isObj(ctx.well) ? ctx.well : {};
     var fluid = ctx.fluid || well.fluid || 'oil', kind = ruleOf(fluid);
@@ -723,31 +774,47 @@
       // ≤ 60-day window and the q ratio itself. (A rate-alternating S′ is not a time trend, so it is kept.)
       var segT = A.cur.map(function (r) { return r.td; }), segS = A.cur.map(function (r) { return r.Sap; });
       var segMK = A.cur.length >= 3 ? mannKendall(segS) : null, segTS = A.cur.length >= 3 ? theilSen(segT, segS) : null;
-      var segTrend = !!(segMK && ((fin(segMK.p) && r3(segMK.p) < DEFAULTS.mkAlpha) || (segTS && fin(segTS.lo) && fin(segTS.hi) && (segTS.lo > 0 || segTS.hi < 0))));
+      var segTrend = !!(segMK && ((fin(segMK.p) && r3(segMK.p) < DEFAULTS.mkAlpha) || (segTS && fin(segTS.lo) && fin(segTS.hi) && (s30(segTS.lo) > 0 || s30(segTS.hi) < 0))));
       var stable = segTrend ? A.cur.filter(function (r) { return A.B.tests.indexOf(r.id) !== -1; }) : A.cur.slice();
       var rows = stable.filter(function (r) { return pos(r.q); }).map(function (r) { return { id: r.id, t_days: r.td, q: r.q, S: r.Sap, Serr: r.E }; });
       var cmp = isObj(ctx.completion) ? ctx.completion : null;
       var opts = { qRatioMin: DEFAULTS.qRatioMin, maxDays: DEFAULTS.maxDays, joint: true,
                    expected: { k: isObj(ctx.baseline) && pos(ctx.baseline.k) ? ctx.baseline.k : A.B.k, h: h, hp: cmp && pos(cmp.hp_ft) ? cmp.hp_ft : h, rw: rw,
                                sg: isObj(well.gas) ? well.gas.sg : null, mu_g: well.mu } };
-      var rs = rateFn ? safeCall(rateFn, [rows, opts], warnings, 'RATE_SKIN') : null;
+      var rs = rateFn ? safeCall(rateFn, [rows, opts], warnings, 'RATE_SKIN', 'T15') : null;
       var corr = rows.length >= 3 ? pearson(rows.map(function (x) { return x.q; }), rows.map(function (x) { return x.t_days; })) : null;
+      var expectedDRange = null;
       if (rs && rs.expectedD != null) {
+        // §3.4 returns {D, lo, hi, …}: the central D is the module's estimate (the range is ×1/3 to ×3, so its
+        // arithmetic midpoint would be 1.67× too high). A bare number or a [lo, hi] pair is also accepted; a range
+        // alone gives its geometric centre (the arithmetic midpoint when a bound is not positive).
         var ed = rs.expectedD;
-        expectedD = fin(ed) ? ed : Array.isArray(ed) && fin(ed[0]) && fin(ed[1]) ? 0.5 * (ed[0] + ed[1]) : isObj(ed) && fin(ed.lo) && fin(ed.hi) ? 0.5 * (ed.lo + ed.hi) : null;
+        var centre = function (lo, hi) { return lo > 0 && hi > 0 ? Math.sqrt(lo * hi) : 0.5 * (lo + hi); };
+        if (fin(ed)) expectedD = ed;
+        else if (Array.isArray(ed) && fin(ed[0]) && fin(ed[1])) { expectedDRange = [ed[0], ed[1]]; expectedD = centre(ed[0], ed[1]); }
+        else if (isObj(ed)) {
+          if (fin(ed.lo) && fin(ed.hi)) expectedDRange = [ed.lo, ed.hi];
+          expectedD = fin(ed.D) ? ed.D : expectedDRange ? centre(ed.lo, ed.hi) : null;
+        }
       }
       if (!rateFn) rate.reason = 'The PRiSM skin module is not loaded: S′ is the apparent skin including D·q.';
       else if (corr !== null && Math.abs(corr) >= DEFAULTS.collinearCorr) {
         rate.reason = 'Rate and time are collinear in these tests (|r| = ' + fmtNum(Math.abs(corr), 2) + '): D cannot be separated from a skin trend; S′ is the apparent skin including D·q.';
       } else if (rs && rs.resolved === true && fin(rs.D) && pos(rs.seD) && Math.abs(rs.D) / rs.seD >= DEFAULTS.dSeMin && (!fin(rs.qRatio) || rs.qRatio >= DEFAULTS.qRatioMin)) {
         rate.resolved = true; rate.S = nn(rs.S); rate.D = rs.D; rate.seD = rs.seD; Dres = rs.D; seDres = rs.seD;
-        rate.reason = 'D resolved from ' + rows.length + ' tests in a stable-skin segment (q ratio ' + fmtNum(rs.qRatio, 2) + ', D/se ' + fmtNum(Math.abs(rs.D) / rs.seD, 1) + ').';
+        rate.reason = 'D resolved from ' + rows.length + ' tests in a stable-skin segment (' + (fin(rs.qRatio) ? 'q ratio ' + fmtNum(rs.qRatio, 2) + ', ' : '') +
+          'D/se ' + fmtNum(Math.abs(rs.D) / rs.seD, 1) + ').';
       } else {
-        rate.reason = (rs && typeof rs.reason === 'string' && rs.reason && rs.reason.length < 200 ? rs.reason + ' ' : '') + 'S′ is the apparent skin including D·q.';
+        var why = rs && typeof rs.reason === 'string' && rs.reason && rs.reason.length < 200 ? rs.reason : '';
+        rate.reason = /apparent skin/.test(why) ? why : (why ? why + ' ' : '') + 'S′ is the apparent skin including D·q.';
       }
       var Duse = Dres !== null ? Dres : expectedD;
       rate.dqEffect = fin(Duse) && fin(qNow) && fin(qRef) ? Duse * (qNow - qRef) : null;
-      if (rs && isObj(rs)) { rate.n = nn(rs.n); rate.qRatio = nn(rs.qRatio); rate.expectedD = nn(expectedD); rate.consistent = typeof rs.consistent === 'boolean' ? rs.consistent : null; }
+      if (rs && isObj(rs)) {
+        rate.n = nn(rs.n); rate.qRatio = nn(rs.qRatio); rate.expectedD = nn(expectedD);
+        rate.expectedDRange = expectedDRange ? [nn(expectedDRange[0]), nn(expectedDRange[1])] : null;
+        rate.consistent = typeof rs.consistent === 'boolean' ? rs.consistent : null;
+      }
     }
     // corrected skin on the common reference rate (gas with D resolved): S_c = S′ − D·(q − q_ref)
     var corrected = kind === 'gas' && Dres !== null && fin(qRef);
@@ -764,7 +831,7 @@
       recs.forEach(function (r) {
         if (!fin(r.S)) return;
         var m = safeCall(mech0, [{ S_total: kind === 'gas' ? r.Sap : r.S, Serr: fin(r.E) ? r.E : 0, h: h, rw: rw, completion: cmpl,
-                                   D: corrected ? Dres : null, q: corrected ? r.q : null }], warnings, 'MECH_SKIN');
+                                   D: corrected ? Dres : null, q: corrected ? r.q : null }], warnings, 'MECH_SKIN', 'T14');
         if (m && m.available === true && fin(m.S_mech)) {
           mechMap[r.id] = { S: m.S_mech, E: fin(m.S_mech_err) ? m.S_mech_err : r.E, Sd: nn(m.S_d_local) };
           if (!mech.available) {
@@ -776,17 +843,22 @@
     }
     var absBasis = mech.available ? 'mechanical' : 'total';
     var absVal = absBasis === 'mechanical' ? function (r) { return mechMap[r.id] || null; } : valAl;
-    var lowAbsVal = absBasis === 'mechanical' ? function (r) { return mechMap[r.id] || null; } : function (r) { return { S: r.S, E: r.E }; };
+    // excluded low tests on the same basis as the used tests (the 'possible' status never mixes bases)
+    var lowAbsVal = absVal;
 
     // ── pass B: alerts, onset, recent, forecast on the alert basis ──
     var P = Object.assign({}, base, { val: valAl, absVal: absVal, lowAbsVal: lowAbsVal, absBasis: absBasis });
     var R = seriesPass(P);
-    var B = R.B;
+    var B = R.B, segEmpty = R.segEmpty;
     var baseIds = {}; B.segments.forEach(function (g) { g.tests.forEach(function (id) { baseIds[id] = true; }); });
 
     // ── used flags and series ──
+    // trend: every used test (the trend plot and the S(t) of T8/T13 run through all segments); alert: the used tests
+    // of the current segment that have a value on the alert basis (the tests the alert evaluation actually reads)
     var usedFlags = {};
-    recs.forEach(function (r) { usedFlags[r.id] = { baseline: !!baseIds[r.id], trend: r.used && enabled, alert: r.used && enabled }; });
+    recs.forEach(function (r) {
+      usedFlags[r.id] = { baseline: !!baseIds[r.id], trend: r.used && enabled, alert: r.used && enabled && !segEmpty && r.seg === B.seg && !!valAl(r) };
+    });
     // extra keys for the review's re-derivation (V27): Salert/SerrAlert = the delta-alert basis (equal to S/Serr
     // except for gas with D resolved, where they are S′ − D·(q − q_ref) and its inflated S_err); seg = segment index
     var series = recs.map(function (r) {
@@ -813,8 +885,11 @@
       sKnots = usedVals.filter(function (k) { return k[0] < tau; }).concat([[tau, Sb]]).concat(usedVals.filter(function (k) { return k[0] > tau; }));
     } else sKnots = usedVals.slice();
     var sAt = function (d) { return lin(sKnots, d); };
+    // the cumulative runs from τ̂; without an onset (model 'constant' or 'line') from the last baseline test of the
+    // current segment (pi.cumFrom 'baselineEnd'), so the page can say "since the end of the baseline"
     var lastBase = B.tests.length ? recs.find(function (r) { return r.id === B.tests[B.tests.length - 1]; }) : null;
-    var tauCum = enabled ? (tau !== null ? tau : (lastBase ? lastBase.td : null)) : null;
+    var tauCum = enabled && !segEmpty ? (tau !== null ? tau : (lastBase ? lastBase.td : null)) : null;
+    var cumFrom = tauCum === null ? null : tau !== null ? 'onset' : 'baselineEnd';
 
     // ── T7 Δp across the skin ──
     var skinDp = recs.filter(function (r) { return fin(r.S); }).map(function (r) {
@@ -825,30 +900,27 @@
     // ── T8 PI ratio and production at stake (pseudo-steady-state estimates) ──
     var rinvMax = maxOf(used.map(function (r) { return pos(r.t.rinv_ft) ? r.t.rinv_ft : null; }));
     var reSource = pos(well.re_ft) ? 'input' : 'rinv', re = pos(well.re_ft) ? well.re_ft : rinvMax;
-    var bmuWell = fluid === 'water_inj' ? (pos(well.Bw) ? well.Bw : 1) * (pos(well.muw) ? well.muw : 1) : (pos(well.B) ? well.B : 1) * (pos(well.mu) ? well.mu : 1);
-    var bmuOf = function (r) {
-      var t = r ? r.t : null;
-      if (t && fin(t.m) && pos(r.k) && pos(r.q) && h) { var v = Math.abs(t.m) * r.k * h / (162.6 * r.q); if (pos(v)) return v; }
-      return bmuWell;
-    };
+    // B and μ from the well inputs (Bw and μw for injectors), as §4.7 writes 141.2·qBμ·ΔS/kh and J_pred
+    var B_ = fluid === 'water_inj' ? (pos(well.Bw) ? well.Bw : 1) : (pos(well.B) ? well.B : 1);
+    var mu_ = fluid === 'water_inj' ? (pos(well.muw) ? well.muw : 1) : (pos(well.mu) ? well.mu : 1);
+    var bmuWell = B_ * mu_;
     var qUnit = latestUsed && latestUsed.t.qUnit ? latestUsed.t.qUnit : (kind === 'gas' ? 'Mscf/d' : kind === 'inj' ? 'bbl/d' : 'STB/d');
     var pi = { X: null, re_ft: nn(re), reSource: reSource, ratioNow: null, ratioBase: null, ratioLowerBound: reSource === 'rinv',
                rateAtStake: null, rateUnit: qUnit, extraDrawdown_psi: null, cumAtStake: null, cumUnit: volUnit(qUnit),
-               atStakeUpperBound: reSource === 'rinv', value: null, guard: false, ev: ['T8'] };
+               atStakeUpperBound: reSource === 'rinv', value: null, guard: false, cumFrom: null, cumFromDays: null, ev: ['T8'] };
     // gas with D resolved: the X + S terms use S + D·q at the rate in question
     var effS = function (Sc, q) { return corrected && fin(q) ? Sc + Dres * (q - qRef) : Sc; };
     var latestVal = latestUsed ? valAl(latestUsed) : null;
     var Snow = latestVal ? effS(latestVal.S, qNow) : null, SbaseNow = fin(Sb) ? effS(Sb, qNow) : null;
     var X = null;
     if (prodFn && latestUsed && pos(re) && rw && fin(Snow)) {
-      var B_ = fluid === 'water_inj' ? (pos(well.Bw) ? well.Bw : 1) : (pos(well.B) ? well.B : 1);
-      var mu_ = fluid === 'water_inj' ? (pos(well.muw) ? well.muw : 1) : (pos(well.mu) ? well.mu : 1);
       var common = { k: latestUsed.k, h: h, B: B_, mu: mu_, q: qNow, Dq: qNow, rw: rw, re_ft: re, reSource: reSource,
                      pbar: nn(latestUsed.t.pExtDatum), pwf: nn(latestUsed.t.pwf0Datum) };
-      var pNow = safeCall(prodFn, [Object.assign({ S: Snow }, common)], warnings, 'PRODUCTS');
-      var pBase = fin(SbaseNow) ? safeCall(prodFn, [Object.assign({ S: SbaseNow }, common)], warnings, 'PRODUCTS') : null;
-      if (pNow && fin(pNow.X)) {
-        X = pNow.X; pi.X = X;
+      var pNow = safeCall(prodFn, [Object.assign({ S: Snow }, common)], warnings, 'PRODUCTS', 'T8');
+      var pBase = fin(SbaseNow) && !segEmpty ? safeCall(prodFn, [Object.assign({ S: SbaseNow }, common)], warnings, 'PRODUCTS', 'T8') : null;
+      // X is geometric (kept for T13); the PI ratio and at-stake numbers wait for a test in the current segment
+      if (pNow && fin(pNow.X)) { X = pNow.X; pi.X = X; }
+      if (pNow && fin(pNow.X) && !segEmpty) {
         if (typeof pNow.piRatioLowerBound === 'boolean') pi.ratioLowerBound = pNow.piRatioLowerBound;
         if (typeof pNow.rateAtStakeUpperBound === 'boolean') pi.atStakeUpperBound = pNow.rateAtStakeUpperBound;
         pi.guard = pNow.guard === true || (pBase ? pBase.guard === true : false);
@@ -858,9 +930,10 @@
           pi.ratioBase = pBase ? nn(pBase.piRatio) : null;
           if (fin(SbaseNow) && pos(qNow)) {
             pi.rateAtStake = qNow * ((X + Snow) / (X + SbaseNow) - 1);
-            if (pos(latestUsed.k) && h) pi.extraDrawdown_psi = 141.2 * qNow * bmuOf(latestUsed) * (Snow - SbaseNow) / (latestUsed.k * h);
+            if (pos(latestUsed.k) && h) pi.extraDrawdown_psi = 141.2 * qNow * bmuWell * (Snow - SbaseNow) / (latestUsed.k * h);
           }
           // cumulative since τ̂: Σ_days q_d·[(X + S(t_d))/(X + S_base) − 1] over days whose midpoint is at or after τ̂
+          // (or the last baseline test when there is no onset; see cumFrom)
           if (tauCum !== null && fin(Sb) && days.length) {
             var cum = 0, nDay = 0, guardHit = false;
             days.forEach(function (d) {
@@ -872,7 +945,7 @@
               cum += d.q * ((X + sNow) / (X + sB) - 1); nDay++;
             });
             if (guardHit) pi.guard = true;
-            else { pi.cumAtStake = cum; pi.value = ts.price !== null ? cum * ts.price : null; }
+            else { pi.cumAtStake = cum; pi.value = ts.price !== null ? cum * ts.price : null; pi.cumFrom = cumFrom; pi.cumFromDays = nn(tauCum); }
           }
         }
       }
@@ -884,10 +957,10 @@
     var cv = kMed ? (kArr.length >= 2 ? 1.4826 * madAbout(kArr, kMed) / kMed : 0) : null;
     var tol = Math.max(DEFAULTS.kStableMinPct, allocAccPct) / 100;
     var kStable = cv !== null ? r3(cv) <= tol : true;
-    var sRising = R.delta.status === 'provisional' || R.delta.status === 'confirmed' || (fin(R.recent.ci[0]) && R.recent.ci[0] > 0);
+    var sRising = R.delta.status === 'provisional' || R.delta.status === 'confirmed' || (fin(R.recent.ci[0]) && Math.round(R.recent.ci[0] * 1000) > 0);
     var kTS = free.length >= 3 ? theilSen(free.map(function (r) { return r.td; }), kArr) : null;
     var kSpan = free.length >= 2 ? free[free.length - 1].td - free[0].td : 0;
-    var kFalling = !!(kTS && kTS.slope !== null && kMed && kTS.slope * kSpan < 0 && Math.abs(kTS.slope * kSpan) / kMed > tol);
+    var kFalling = !!(kTS && kTS.slope !== null && kMed && kSpan > 0 && s30(kTS.slope) < 0 && r3(Math.abs(kTS.slope * kSpan) / kMed) > tol);
     var kRateRho = spearman(free.map(function (r) { return r.k; }), free.map(function (r) { return r.q; }), DEFAULTS.spearmanN);
     var kFollowsRate = kRateRho !== null && kRateRho >= DEFAULTS.kRateSpearman;
     var reading = kStable ? (sRising ? 'nearWell' : 'none') : (sRising ? 'mobility' : (kFollowsRate ? 'allocation' : 'none'));
@@ -904,13 +977,11 @@
       return v !== null ? [r.td, v] : null;
     }).filter(Boolean);
     var drift = fin(well.driftPsiPerDay) ? Math.abs(well.driftPsiPerDay) : 0.01;
+    // (independent of the skin trend switch: only an estimated history or fewer than 3 tests make it not assessable)
     var pTrend = { quantity: quantity, assessable: false, reason: null, slopePer30d: null, scatter: null, depletion: null, label: '', ev: ['T10'] };
     if (historyEstimated) {
       pTrend.reason = 'The production start is estimated: the assumed history alone would create a p* trend, so depletion cannot be assessed.';
       pTrend.label = 'Depletion cannot be assessed (estimated history); see the p* range of each test.';
-    } else if (!enabled) {
-      pTrend.reason = disabledReason || 'The trend is off.';
-      pTrend.label = 'Depletion cannot be assessed (trend off).';
     } else if (pPts.length < 3) {
       pTrend.reason = quantity === 'pbar' ? 'Fewer than 3 tests carry an average-pressure value.' : 'Fewer than 3 tests carry p*.';
       pTrend.label = 'Depletion cannot be assessed (fewer than 3 tests).';
@@ -924,11 +995,13 @@
       var sig = Math.round(change * 10) > Math.round(2 * scatter * 10) && r3(pMK.p) < DEFAULTS.mkAlpha;
       pTrend.assessable = true;
       pTrend.slopePer30d = 30 * pTS.slope; pTrend.scatter = scatter;
-      pTrend.depletion = sig && pTS.slope < 0;
-      var driftCould = Math.abs(pTS.slope) <= drift + 1e-12;
+      // slope sign and the drift comparison on the per-30-day values rounded to 0.001 psi (D27)
+      var falls = s30(pTS.slope) < 0;
+      pTrend.depletion = sig && falls;
+      var driftCould = s30(Math.abs(pTS.slope)) <= s30(drift);
       var qn = quantity === 'pbar' ? 'average pressure' : 'p*';
       if (!sig) pTrend.label = 'No significant ' + qn + ' trend (no depletion seen).';
-      else if (pTS.slope < 0) pTrend.label = driftCould ? 'Depletion or gauge drift (the drift input could explain it).' : 'Depletion: ' + qn + ' falls by ' + fmtNum(Math.abs(30 * pTS.slope), 1) + ' psi per 30 days (gauge drift alone cannot explain it).';
+      else if (falls) pTrend.label = driftCould ? 'Depletion or gauge drift (the drift input could explain it).' : 'Depletion: ' + qn + ' falls by ' + fmtNum(Math.abs(30 * pTS.slope), 1) + ' psi per 30 days (gauge drift alone cannot explain it).';
       else pTrend.label = driftCould ? 'Rising ' + qn + ': pressure support or gauge drift (the drift input could explain it).' : 'Rising ' + qn + ': pressure support, injection or interference.';
     }
     var closedWithoutDepletion = pTrend.assessable && pTrend.depletion === false
@@ -994,7 +1067,7 @@
       if (pKnots.length < 1 || used.length < 2) piCheck.reason = 'Fewer than 2 used tests with p_ext.';
       else {
         // one pass over the days: each clean flowing day falls in the interval (t_u−1, t_u) of consecutive used tests
-        var bmuP = median(used.map(bmuOf)) || bmuWell, allObs = [], allPred = [];
+        var allObs = [], allPred = [];
         var tU = used.map(function (r) { return r.t.t_ms; }), byInt = used.map(function () { return []; });
         days.forEach(function (d) {
           if (d.cls !== 'clean' || !fin(d.q) || !(d.q > 0) || !fin(d.t0_ms) || !fin(d.t1_ms)) return;
@@ -1007,7 +1080,7 @@
           var pRef = lin(pKnots, mid); if (!(pRef > pwf)) return;
           var sd = effS(sAt((mid - first_ms) / DAY_MS), d.q);
           if (!(X + sd > 0)) return;
-          var jObs = d.q / (pRef - pwf), jPred = kBase * h / (141.2 * bmuP * (X + sd));
+          var jObs = d.q / (pRef - pwf), jPred = kBase * h / (141.2 * bmuWell * (X + sd));
           byInt[lo].push(jObs / jPred); allObs.push(jObs); allPred.push(jPred);
         });
         for (var u = 1; u < used.length; u++) {
@@ -1034,9 +1107,11 @@
       push('stimReview', 'Confirmed skin rise with stable k: review the well as a stimulation candidate.', ['T2', 'T9']);
     }
     var defaulted = Array.isArray(well.defaulted) ? well.defaulted.filter(function (k) { return typeof k === 'string'; }) : [];
-    var keyInputs = defaulted.filter(function (k) { return ['h', 'mu', 'B', 'phi', 'ct', 'rw'].indexOf(k) !== -1; });
+    var INPUT_NAME = { h: 'h', mu: 'μ', B: 'B', phi: 'φ', ct: 'c_t', rw: 'r_w' };
+    var keyInputs = defaulted.filter(function (k, i) { return INPUT_NAME.hasOwnProperty(k) && defaulted.indexOf(k) === i; });
     if (keyInputs.length) {
-      push('verifyInputs', 'Verify the defaulted inputs (' + keyInputs.join(', ') + '): h, μ and B scale k, and h, φ, ct and rw shift every skin equally (the skin change and the delta alert are not affected).',
+      push('verifyInputs', 'Verify the defaulted inputs (' + keyInputs.map(function (k) { return INPUT_NAME[k]; }).join(', ') +
+           '): h, μ and B scale k, and h, φ, c_t and r_w shift every skin equally (the skin change and the delta alert are not affected).',
            latestUsed ? [evId(latestUsed.id, 'U2')] : ['T9']);
     }
     var bubbleBad = bubble.rows.filter(function (r) { return r.level === 'major' || r.level === 'critical'; });
@@ -1091,6 +1166,7 @@
     if (historyEstimated) L('pStarEstimated', 'The production start is estimated: p* is reported as a range and is not used for any trend.');
     if (!enabled && disabledReason) L('trendOff', disabledReason);
     if (wo.length) L('segments', 'Each entered workover date starts a new baseline; alerts are evaluated in the latest segment only.');
+    if (segEmpty && enabled) L('segmentEmpty', 'No interpreted test since the workover on ' + wo[wo.length - 1] + '; alerts restart with the next test.');
     if (skinMissing) L('skinModule', 'The PRiSM skin module is not loaded: the mechanical skin, the rate-dependent skin and the PSS products are not computed.');
     if (pi.guard) L('negSkin', 'PI ratio and production at stake: not computable (strongly negative skin, X + S below 1).');
 
@@ -1102,8 +1178,20 @@
       mech: mech, rateSkin: rate, crossTest: crossTest, recommendations: recos, limitations: lim,
       corrected: corrected, family: family, warnings: warnings
     };
+    if (!recs.length) { trend.code = 'NO_TESTS'; trend.errors = ['No interpreted build-up tests.']; trend.bad = ['tests']; }
     if (scrub(trend, 0)) warnings.push({ code: 'NON_FINITE', level: 'warn', text: 'A non-finite number was replaced by an empty value.', ev: ['T1'] });
     return trend;
+  }
+
+  // §3.0: engines never throw. An internal failure returns a complete empty Trend with the failure keys.
+  function compute(tests, ctx) {
+    try { return computeTrend(tests, ctx); } catch (e) {
+      var t;
+      try { t = computeTrend([], {}); } catch (e2) { t = { ok: false, n: 0, nUsed: 0, enabled: false, warnings: [] }; }
+      t.ok = false; t.code = 'TREND_ERROR'; t.errors = ['The trend could not be computed from these tests.']; t.bad = ['tests'];
+      t.disabledReason = 'The trend could not be computed from these tests.';
+      return t;
+    }
   }
 
   BU.trend = {

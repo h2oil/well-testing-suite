@@ -85,14 +85,14 @@ function skinStub() {
   };
 }
 
-// The trend module alone in a bare context (no document, no PRiSM), with the stub.
-function vmTrend() {
+// The trend module alone in a bare context (no document, no PRiSM), with the stub (patch replaces stub functions).
+function vmTrend(patch) {
   const src = stripSelfTest(fs.readFileSync(FILE, 'utf8'), '49-calc-buildup-trend.js', { log() {}, warn() {} });
   const errors = [];
   const ctx = { console: { log() {}, warn() {}, error: (...a) => errors.push(a.join(' ')) } };
   ctx.window = ctx;
   vm.createContext(ctx);
-  ctx.PRiSM_skinCheck = skinStub();
+  ctx.PRiSM_skinCheck = Object.assign(skinStub(), patch || {});
   vm.runInContext(src, ctx, { filename: FILE });
   if (errors.length) throw new Error('module load errors: ' + errors.join('; '));
   return ctx.WTS_buildup.trend;
@@ -183,6 +183,7 @@ function sKnotsOf(out, tests) {
 // Delta-alert status re-derived from trend.series (Salert/SerrAlert, used.alert, seg), the baseline and the
 // threshold — the review's V27 path (plain form, 'next' confirmation): proves the series carries what it needs.
 function redoDelta(out) {
+  if (out.baseline.S == null) return 'none';                               // no baseline in the current segment
   const h = (x) => Math.round(x * 100), seg = out.baseline.seg, thr = h(out.alerts.delta.threshold), Sb = h(out.baseline.S);
   const cur = out.series.filter((r) => r.seg === seg && r.used.alert);
   const ex = (r) => h(r.Salert) - h(r.SerrAlert) - Sb - thr > 0;
@@ -192,7 +193,7 @@ function redoDelta(out) {
     return hi || cur.slice(i + 1).some(ex) ? 'confirmed' : 'provisional';
   }
   const low = out.series.filter((r) => r.seg === seg && r.conf.ks === 'low' && out.excludedLow.ids.indexOf(r.id) !== -1);
-  return low.some((r) => h(r.S) - h(r.Serr) - Sb - thr > 0) ? 'possible' : 'none';
+  return low.some((r) => r.Salert != null && r.SerrAlert != null && ex(r)) ? 'possible' : 'none';
 }
 
 module.exports = [
@@ -219,6 +220,10 @@ module.exports = [
       // provisional: fewer than 3 used tests, or a k-held baseline test
       out = T.compute(series(baseS([1.0, 1.4, 1.2], 0.3).slice(0, 2)), ctxOf());
       assert.strictEqual(out.baseline.provisional, true, '2 tests → provisional');
+      out = T.compute(five, ctxOf({ settings: trendSet({ baseN: 5 }) }));
+      assert.deepStrictEqual([out.baseline.tests.length, out.baseline.provisional], [5, false], 'baseN 5: five tests, not provisional');
+      out = T.compute(series(baseS([1.0, 1.4, 1.2], 0.3)), ctxOf({ settings: trendSet({ baseN: 5 }) }));
+      assert.deepStrictEqual([out.baseline.tests.length, out.baseline.provisional], [3, false], 'baseN 5 with 3 tests: the plan rule (fewer than 3) → not provisional');
       out = T.compute(series([{ id: 'B1', d: 0, S: 1.0 }, { id: 'B2', d: 20, S: 1.2, kHeld: true }, { id: 'B3', d: 40, S: 1.1 }]), ctxOf());
       assert.strictEqual(out.baseline.provisional, true, 'k-held baseline test → provisional');
       // low and excluded tests are not baseline tests
@@ -241,6 +246,38 @@ module.exports = [
       out = T.compute(series(wo), ctxOf());
       assert.strictEqual(out.alerts.delta.raisedAt, 'B4', 'without the workover date the rise raises at B4');
       assert.strictEqual(out.alerts.delta.status, 'confirmed');
+      // a workover entered after the last used test resets the alerts at once (the segment it opens is current)
+      const rise = [{ id: 'B1', d: 0, S: 1.2 }, { id: 'B2', d: 20, S: 1.3 }, { id: 'B3', d: 40, S: 1.1 }, { id: 'B4', d: 60, S: 4.0 }, { id: 'B5', d: 80, S: 4.6 }];
+      const daily = []; for (let d = 0; d < 110; d++) daily.push({ t0_ms: T0 + d * DAY, t1_ms: T0 + (d + 1) * DAY, q: 800, cls: 'clean', pwfMean_psia: 3400 });
+      const wo90 = iso(T0 + 90 * DAY);
+      const pre = T.compute(series(rise), ctxOf({ days: daily }));
+      assert.deepStrictEqual([pre.alerts.delta.status, pre.recommendations.some((r) => r.code === 'stimReview')], ['confirmed', true], 'before the workover: confirmed, stimulation review');
+      assert(isNum(pre.pi.rateAtStake) && isNum(pre.pi.cumAtStake) && isNum(pre.pi.ratioNow), 'before the workover: PI and at-stake numbers');
+      [series(rise.concat([{ id: 'B6', d: 100, S: 9.0, E: 0.3, ks: 'low' }])), series(rise)].forEach((list, i) => {
+        const label = i === 0 ? 'low-only segment' : 'empty segment';
+        const o = T.compute(list, ctxOf({ workovers: [wo90], days: daily }));
+        shapeOk(assert, o, label);
+        assert.deepStrictEqual([o.baseline.S, o.baseline.sigma, o.baseline.provisional, J(o.baseline.tests)], [null, null, true, []], label + ': no baseline yet');
+        assert.strictEqual(o.baseline.seg, 1, label + ': the segment the workover opens is current');
+        assert.deepStrictEqual(J(o.baseline.segments.map((g) => g.tests)), [['B1', 'B2', 'B3']], label + ': the earlier segment is kept');
+        assert.deepStrictEqual([o.alerts.delta.status, o.alerts.delta.raisedAt, o.alerts.delta.confirmedAt], ['none', null, null], label + ': delta reset');
+        assert.deepStrictEqual([o.alerts.absolute.status, o.alerts.absolute.raisedAt], ['none', null], label + ': absolute reset (a low S 9.0 has no baseline to compare with)');
+        assert.deepStrictEqual([o.onset.tauDays, o.onset.model, o.recent.slopePer30d, o.recent.n, o.forecast.show], [null, 'constant', null, 0, false], label + ': no onset, trend or forecast');
+        assert(/workover/.test(o.forecast.reason) && !BANNED.test(o.forecast.reason), label + ': forecast reason ' + o.forecast.reason);
+        assert(!o.recommendations.some((r) => r.code === 'stimReview'), label + ': no stimulation review');
+        assert.deepStrictEqual([o.pi.ratioNow, o.pi.ratioBase, o.pi.rateAtStake, o.pi.extraDrawdown_psi, o.pi.cumAtStake, o.pi.value], [null, null, null, null, null, null], label + ': PI and at-stake skipped');
+        assert(isNum(o.pi.X), label + ': X kept');
+        const lim = o.limitations.find((l) => l.code === 'segmentEmpty');
+        assert(lim && lim.text.indexOf(wo90) !== -1 && /restart with the next test/.test(lim.text) && !BANNED.test(lim.text), label + ': limitation names the workover date');
+        assert(o.series.every((r) => r.used.alert === false), label + ': no test is an alert test');
+        assert.deepStrictEqual(J(o.series.filter((r) => r.used.trend).map((r) => r.id)), ['B1', 'B2', 'B3', 'B4', 'B5'], label + ': every used test stays in the trend');
+        assert.strictEqual(redoDelta(o), o.alerts.delta.status, label + ': V27 re-derivation');
+      });
+      // the next used test after the workover starts the new baseline; earlier-segment tests are not alert tests
+      out = T.compute(series(rise.concat([{ id: 'B6', d: 100, S: 0.8 }])), ctxOf({ workovers: [wo90], days: daily }));
+      assert.deepStrictEqual([out.baseline.S, J(out.baseline.tests), out.baseline.provisional, out.alerts.delta.status], [0.8, ['B6'], true, 'none'], 'new segment baseline from B6');
+      assert(!out.limitations.some((l) => l.code === 'segmentEmpty'), 'no empty-segment limitation once a test exists');
+      assert.deepStrictEqual(J(out.series.filter((r) => r.used.alert).map((r) => r.id)), ['B6'], 'used.alert marks the current-segment tests only');
       // the helper itself (stage 2 calls it with pass-1 tests)
       const b = T.baseline(five, 2, { workovers: [] });
       assert.deepStrictEqual(J(b.tests), ['B1', 'B2'], 'n = 2');
@@ -715,6 +752,20 @@ module.exports = [
       out.series.forEach((sr, i) => near(assert, sr.Salert, sr.S - rs.D * (qs[i] - 5000), 1e-9, sr.id + ' alert basis S′ − D·(q − q_ref)'));
       assert.strictEqual(redoDelta(out), out.alerts.delta.status, 'delta status re-derived from series[].Salert (V27)');
       assert(!out.recommendations.some((r) => r.code === 'nonDarcy'), 'no multi-rate recommendation once resolved');
+      // an excluded low test is compared on the same (rate-corrected) basis: raw S′ above the threshold, corrected skin not
+      const lowT = Object.assign({}, gas([10000])[0], { id: 'B7', tDays: 60, t_ms: T0 + 60 * DAY, date: iso(T0 + 60 * DAY), conf: { ks: 'low', model: 'low', headline: 'low' } });
+      lowT.S = lowT.gasSprime = Strue + D * 5000 + 1.3 + D * 5000;             // corrected rise 1.3 at q_ref, observed at 10,000 Mscf/d
+      const withLow = gas(qs, [0.02, -0.02, 0.01, -0.01, 0, 0]).concat([lowT]);
+      out = T.compute(app.toWin(withLow), app.toWin(gctx()));
+      shapeOk(assert, out, 'corrected + low');
+      assert.strictEqual(out.corrected, true, 'D still resolved (low tests are not rate-skin rows)');
+      const h = (x) => Math.round(x * 100), b7 = out.series.find((x) => x.id === 'B7');
+      assert(h(b7.S) - h(b7.Serr) - h(out.baseline.S) - 200 > 0, 'precondition: the raw S′ margin exceeds the threshold');
+      assert(h(b7.Salert) - h(b7.SerrAlert) - h(out.baseline.S) - 200 <= 0, 'the corrected margin does not: ' + b7.Salert);
+      assert.deepStrictEqual(J(out.excludedLow.ids), ['B7']);
+      assert.strictEqual(out.alerts.delta.status, 'none', 'no "possible" from a mixed basis');
+      assert.strictEqual(redoDelta(out), 'none', 'V27 re-derivation on Salert for the low test');
+      assert.strictEqual(b7.used.alert, false, 'a low test is not an alert test');
       // oil wells: not assessed
       out = T.compute(app.toWin(series(baseS([1.2, 1.3, 1.1], 0.3))), app.toWin(ctxOf()));
       assert.deepStrictEqual([out.rateSkin.resolved, out.rateSkin.reason], [false, 'Oil well: rate-dependent skin is not assessed.']);
@@ -745,7 +796,8 @@ module.exports = [
       assert(!/40 h/.test(ls.text), 'not the Δt_e reach');
       assert.deepStrictEqual(J(ls.ev), ['B1·W4', 'B2·W4', 'B3·W4', 'B4·W4', 'B5·W4', 'B6·W4'], 'evidence = the tests short of the reach');
       const vi = out.recommendations.find((r) => r.code === 'verifyInputs');
-      assert(/h, mu/.test(vi.text), 'names the defaulted inputs');
+      assert(/\(h, μ\)/.test(vi.text), 'names the defaulted inputs by their display names: ' + vi.text);
+      assert(!/\bmu\b|\bphi\b|\bct\b|\brw\b/.test(vi.text), 'no raw key names');
       // limitations: fixed list plus case items, plain text ≤ 600
       const lc = out.limitations.map((l) => l.code);
       ['models', 'singlePhase', 'inputs', 'allocation', 'totalSkin', 'pss', 'partialCuts', 'storage', 'gradient', 'iarfEarliest', 'pStarEstimated'].forEach((c) => assert(lc.indexOf(c) !== -1, 'limitation ' + c));
@@ -843,11 +895,16 @@ module.exports = [
       const noDatum = J(ctx); noDatum.days.forEach((d) => { d.pwfMeanDatum_psia = null; });
       const out2 = T.compute(app.toWin(tts), app.toWin(noDatum));
       assert.deepStrictEqual(J(out2.piCheck.rows), J(pc.rows), 'pwfMean_psia read');
-      // a day's pwfMean moves its interval's R_J
-      const moved = J(noDatum); const day = moved.days.find((d) => d.cls === 'clean' && 0.5 * (d.t0_ms + d.t1_ms) > used[0].t_ms && 0.5 * (d.t0_ms + d.t1_ms) < used[1].t_ms);
-      day.pwfMean_psia -= 200;
+      // R_J responds to pwfMean_psia: every clean day of the first interval 200 psi lower → J_obs falls, so R_J falls
+      const moved = J(noDatum);
+      const inFirst = (d) => d.cls === 'clean' && d.pwfMean_psia != null && 0.5 * (d.t0_ms + d.t1_ms) > used[0].t_ms && 0.5 * (d.t0_ms + d.t1_ms) < used[1].t_ms;
+      const shifted = moved.days.filter(inFirst);
+      assert(shifted.length >= 1 && shifted.length === pc.rows[0].nDays, 'the first interval has clean days: ' + shifted.length);
+      shifted.forEach((d) => { d.pwfMean_psia -= 200; });
       const out3 = T.compute(app.toWin(tts), app.toWin(moved));
-      assert(out3.piCheck.rows[0].RJ !== pc.rows[0].RJ || out3.piCheck.rows[0].nDays > 1, 'R_J responds to pwfMean_psia');
+      assert.strictEqual(out3.piCheck.rows[0].nDays, pc.rows[0].nDays, 'same clean days');
+      assert(isNum(out3.piCheck.rows[0].RJ) && out3.piCheck.rows[0].RJ < pc.rows[0].RJ, 'R_J falls: ' + out3.piCheck.rows[0].RJ + ' < ' + pc.rows[0].RJ);
+      assert.deepStrictEqual(J(out3.piCheck.rows.slice(1)), J(pc.rows.slice(1)), 'the other intervals are unchanged');
       // estimated history / injector → unavailable
       out = T.compute(app.toWin(tts), app.toWin(Object.assign({}, ctx, { historyEstimated: true })));
       shapeOk(assert, out, 'estimated');
@@ -856,6 +913,85 @@ module.exports = [
       const inj = Object.assign({}, an.well, { fluid: 'water_inj' });
       out = T.compute(app.toWin(tts), app.toWin(Object.assign({}, ctx, { well: inj, fluid: 'water_inj' })));
       assert.deepStrictEqual([out.piCheck.available, out.piCheck.rows.length], [false, 0], 'injector: off');
+    },
+  },
+
+  {
+    name: 'TR17 robustness: never throws (huge S_err, tiny weights, bad ids, internal failure); failure keys; expected D from the module; evidence per skin call; pressure trend with the trend off',
+    wp: WP, opts: false,
+    run(app, assert) {
+      const T = vmTrend();
+      // no tests → NO_TESTS failure keys on a complete Trend
+      let out = T.compute([], {});
+      shapeOk(assert, out, 'empty');
+      assert.deepStrictEqual([out.ok, out.code, J(out.errors), J(out.bad)], [false, 'NO_TESTS', ['No interpreted build-up tests.'], ['tests']]);
+      // S_err 1e7 on every test: the weights sum below 1e-12 and the fits still run
+      const huge = series([0, 10, 20, 30, 40, 50, 60].map((d, i) => ({ id: 'B' + (i + 1), d, S: 1 + 0.1 * i, E: 1e7 })));
+      out = T.compute(huge, ctxOf());
+      shapeOk(assert, out, 'huge S_err');
+      assert.strictEqual(out.ok, true); assert.strictEqual(out.onset.model, 'constant', 'huge S_err: nothing beats the constant');
+      // the hinge helper with tiny weights (1e-13, i.e. S_err ≈ 3e6) fits without throwing: the WSSRs are in the caller's
+      // weights (so the BIC keeps the constant: nothing is significant), the estimates do not depend on the scale
+      const days = [0, 10, 20, 30, 40, 50, 60, 70], yr = days.map((d) => (d <= 30 ? 1 : 1 + 0.1 * (d - 30)));
+      const h1 = T.hinge(days, yr, days.map(() => 1e-13)), h2 = T.hinge(days, yr, days.map(() => 1)), h3 = T.hinge(days, yr, days.map(() => 1e6));
+      assert.deepStrictEqual([h1.model, h2.model, h2.shape, h2.tau], ['constant', 'hinge', 'ramp', 30], 'tiny weights → constant; unit weights → the ramp at day 30');
+      near(assert, h1.a, yr.reduce((a, b) => a + b, 0) / yr.length, 1e-12, 'constant = weighted mean');
+      near(assert, h1.wssr.constant, 1e-13 * h2.wssr.constant, 1e-20, "WSSR in the caller's weights (constant)");
+      near(assert, h1.wssr.hinge, 1e-13 * h2.wssr.hinge, 1e-20, "WSSR in the caller's weights (hinge)");
+      assert.deepStrictEqual([h3.model, h3.shape, h3.tau], [h2.model, h2.shape, h2.tau], 'large weights: the same onset');
+      near(assert, h3.b, h2.b, 1e-9, 'the same slope after τ̂');
+      assert.deepStrictEqual(J(T.hinge(days, yr, days.map(() => 0))).model, 'constant', 'all weights zero → no fit, no throw');
+      // records without a usable id are skipped (no "undefined" ids in the output)
+      const noId = series(baseS([1.2, 1.3, 1.1], 0.3)).concat([Object.assign(tt({ id: 'B9', d: 60, S: 1.2 }), { id: undefined }), Object.assign(tt({ id: 'B9', d: 70, S: 1.2 }), { id: '' })]);
+      out = T.compute(noId, ctxOf());
+      shapeOk(assert, out, 'ids');
+      assert.strictEqual(out.n, 3, 'two id-less records skipped');
+      assert(!BANNED.test(JSON.stringify(out.series.map((r) => r.id))), 'no "undefined" ids');
+      // an internal failure: a complete empty Trend with ok false and TREND_ERROR
+      const bad = {}; Object.defineProperty(bad, 'well', { enumerable: true, get() { throw new Error('boom'); } });
+      out = T.compute(series(baseS([1.2, 1.3, 1.1], 0.3)), bad);
+      shapeOk(assert, out, 'internal failure');
+      assert.deepStrictEqual([out.ok, out.code, J(out.bad)], [false, 'TREND_ERROR', ['tests']]);
+      assert(out.errors.length === 1 && !BANNED.test(out.errors[0]), 'plain error text');
+      // expected D: the module's central D, not the midpoint of its ×1/3–×3 range; the range is exposed
+      const gw = Object.assign({}, WELL, { fluid: 'gas', mu: 0.02, B: 0.8, Pb: null, gas: { sg: 0.65, T_F: 200, co2: 1, h2s: 0, n2: 1, pseudoTime: false, pdew: null, apiCond: null, Mo: null } });
+      const gctx = ctxOf({ well: gw, fluid: 'gas', phaseBasis: { used: 'gas', wcMax: null, gorRatioMax: null, twoPhaseCt: false } });
+      const gasList = series([5000, 10000, 5000, 10000].map((q, i) => ({ id: 'B' + (i + 1), d: 10 * i, q, S: 1.5, gasSprime: 1.5, E: 0.2, qUnit: 'Mscf/d' })), gw);
+      const Dc = 4.95e-5;
+      const Tx = vmTrend({ rateSkin: () => ({ resolved: false, S: null, D: null, seD: null, n: 4, qRatio: null, joint: null, consistent: null,
+                                             expectedD: { D: Dc, lo: Dc / 3, hi: Dc * 3, unit: '1/(Mscf/d)' }, reason: 'D/se 1.2 is below 2: D not resolved; S′ is the apparent skin including D·q.', ev: ['T15'] }) });
+      out = Tx.compute(gasList, gctx);
+      shapeOk(assert, out, 'expected D');
+      near(assert, out.rateSkin.expectedD, Dc, 1e-15, 'central expected D');
+      assert.deepStrictEqual(J(out.rateSkin.expectedDRange), [Dc / 3, Dc * 3], 'expected-D range');
+      near(assert, out.rateSkin.dqEffect, Dc * (10000 - 5000), 1e-12, 'expected D × Δq');
+      assert.strictEqual((out.rateSkin.reason.match(/apparent skin/g) || []).length, 1, 'the apparent-skin clause once: ' + out.rateSkin.reason);
+      // resolved with no rate ratio from the module: no empty "q ratio" clause
+      const Tr = vmTrend({ rateSkin: () => ({ resolved: true, S: 1.0, D: 2e-4, seD: 1e-5, n: 4, qRatio: null, joint: null, expectedD: null, consistent: null, reason: '', ev: ['T15'] }) });
+      out = Tr.compute(gasList, gctx);
+      assert.strictEqual(out.rateSkin.resolved, true);
+      assert(!/q ratio/.test(out.rateSkin.reason) && !/\(\s*,/.test(out.rateSkin.reason), 'reason: ' + out.rateSkin.reason);
+      // a failing skin call warns with the evidence id of the item it feeds
+      const boom = () => { throw new Error('x'); };
+      out = vmTrend({ rateSkin: boom, products: boom, mechanicalSkin: boom }).compute(gasList, Object.assign({}, gctx, { completion: { hp_ft: 30, htop_ft: 10, theta_deg: 0, kvkh: [0.1, 0.5], perf: null } }));
+      shapeOk(assert, out, 'skin failures');
+      const wv = (c) => out.warnings.filter((w) => w.code === c);
+      assert.deepStrictEqual([wv('RATE_SKIN').length, wv('PRODUCTS').length, wv('MECH_SKIN').length], [1, 1, 1], 'one warning per failing call kind');
+      assert.deepStrictEqual([J(wv('RATE_SKIN')[0].ev), J(wv('PRODUCTS')[0].ev), J(wv('MECH_SKIN')[0].ev)], [['T15'], ['T8'], ['T14']]);
+      // the pressure trend does not depend on the trend switch (table mode, 'off')
+      const dep = series([0, 20, 40, 60, 80].map((d, i) => ({ id: 'B' + (i + 1), d, S: 1.2, pStar: 4000 - 0.5 * d })));
+      ['table', 'off'].forEach((m) => {
+        const o = T.compute(dep, ctxOf(m === 'table' ? { mode: 'table' } : { settings: trendSet({ enabled: 'off' }) }));
+        assert.strictEqual(o.enabled, false, m + ': trend off');
+        assert.deepStrictEqual([o.pTrend.assessable, o.pTrend.depletion], [true, true], m + ': depletion still assessed');
+      });
+      const closed = series([0, 20, 40, 60, 80].map((d, i) => ({ id: 'B' + (i + 1), d, S: 1.2, chosen: i < 3 ? 'closedCircle' : 'homogeneous', pExtKind: 'pbar', pExt: 3500 })));
+      out = T.compute(closed, ctxOf({ mode: 'table' }));
+      assert.deepStrictEqual(J(out.crossTest.closedWithoutDepletion), ['B1', 'B2', 'B3'], 'V18 candidates with the trend off');
+      // D27: a slope that rounds to zero per 30 days is not significant; a p* slope just above the drift input rounds to it
+      const drift = series([0, 20, 40, 60, 80].map((d, i) => ({ id: 'B' + (i + 1), d, S: 1.2, pStar: 4000 - (0.01 + 1e-9) * d })));
+      out = T.compute(drift, ctxOf());
+      assert.strictEqual(out.pTrend.label, 'Depletion or gauge drift (the drift input could explain it).', 'drift comparison on rounded slopes');
     },
   },
 ];
