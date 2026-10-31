@@ -227,7 +227,8 @@ module.exports = [
       const spread = res.find((s) => /^Spread hydrate check/.test(s.title));
       assert.ok(spread.items.some((i) => i.type === 'table' && i.rows.some((r) => r[0].t === 'Downstream of choke')), 'node table captured');
       const line = res.find((s) => /^Line 1 —/.test(s.title));
-      assert.ok(line.items.some((i) => i.type === 'kv' && i.label === 'Air pressure setting: design · peak'), 'line rows');
+      assert.ok(line.items.some((i) => i.type === 'kv' && i.label === 'Air pressure setting at the shut-in design pressure: design · peak'), 'line rows');
+      assert.ok(line.items.some((i) => i.type === 'kv' && i.label === 'Operating air setting while flowing (3,050 psig): design · peak'), 'operating air row');
       assert.ok(line.items.some((i) => i.type === 'note' && i.verdict && /drawdown cylinder/.test(i.text)), 'line verdicts');
       assert.ok(!/Methanol · Upstream of choke · 1/.test(titles.join('|')), 'chip text in no section title');
       assert.ok(!/Advanced settings|Advanced design basis|Pump chart for line|Jump to/.test(all), 'toggles, chart selector and jump bar are not captured');
@@ -337,8 +338,18 @@ module.exports = [
       app.input('cj_cal_air', '45.6');
       assert.match(txt(app.find('#cj_rb_cal .rbox-title')), /^Field calibration check, line 1$/);
       assert.match(row(app, 'cj_rb_cal', 'Measured rate'), /^144\.5\d gal\/d \(380\.0 mL\/min\)$/);
+      // Re-fitted at the flowing discharge pressure FWHP + allowance = 3,050 psig (not the 3,550 psig shut-in case):
+      // Q₀ = 144.57 / (1 − 3050/4560) = 436.6 gal/d → air = 3050 / (100·(1 − 159.95/436.6)) = 48.1 psig.
+      assert.ok(shown(app, 'cj_cal_pd'), 'test discharge-pressure field for the air-driven line');
+      assert.strictEqual(row(app, 'cj_rb_cal', 'Discharge pressure during the test'), '3,050 psig (flowing line pressure + allowance)');
+      assert.match(row(app, 'cj_rb_cal', 'Free flow re-fitted to the test'), /^436\.\d\d gal\/d$/);
+      assert.match(row(app, 'cj_rb_cal', 'Corrected setting'), /^air 48\.1 psig$/);
+      assert.ok(verdicts(app, '#cj_rb_cal').some((v) => /^⚠ Calibration reads -9\.6 % from target: reset to air 48\.1 psig/.test(v)), verdicts(app, '#cj_rb_cal').join(' | '));
+      // A test taken with the line at the shut-in pressure: enter it.
+      app.input('cj_cal_pd', '3550');
+      assert.strictEqual(row(app, 'cj_rb_cal', 'Discharge pressure during the test'), '3,550 psig (entered)');
       assert.match(row(app, 'cj_rb_cal', 'Corrected setting'), /^air 4[67](\.\d)? psig$/);
-      assert.ok(verdicts(app, '#cj_rb_cal').some((v) => /^⚠ Calibration reads -9\.6 % from target: reset to air 4[67](\.\d)? psig/.test(v)), verdicts(app, '#cj_rb_cal').join(' | '));
+      app.input('cj_cal_pd', '');
       // plunger line: SPM setting field; a half-filled entry is a note in the box, never a page error
       app.select('cj_pump_1', 'pneu_plunger');
       assert.ok(shown(app, 'cj_cal_set') && !shown(app, 'cj_cal_air'));

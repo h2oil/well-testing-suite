@@ -398,6 +398,8 @@
     function _tl() { return _metric() ? '°C' : '°F'; }
     function _uT(v, d)  { return _fmt(_uval(v, 'temperature'), d) + ' ' + _tl(); }   // temperature
     function _uDT(v, d) { return _fmt(_uval(v, 'tempDelta'), d) + ' ' + _tl(); }     // temperature difference
+    // The 5 °F screening margin of the Chemical Injection banner, in the display system.
+    function _cjMarginTxt() { return _uDT(5, _metric() ? 1 : 0); }
 
     // Build one segment card HTML.
     function _segCardHTML(seg, idx) {
@@ -502,7 +504,7 @@
         // (rp-skip: kept out of reports; this page's numbers are unchanged).
         var cjLink = ''
             + '<div class="info-bar rp-skip" id="wts_hydrate_cjlink" style="margin-bottom:10px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between">'
-            +   '<span>Screening estimate: free water only, +30 % methanol vapour allowance, 5 &deg;F default margin. '
+            +   '<span>Screening estimate: free water only, +30 % methanol vapour allowance, <span id="wts_hydrate_cjmargin">' + _cjMarginTxt() + '</span> default margin. '
             +   'Full design with condensed water, J-T cooling and pump settings:</span>'
             +   '<button type="button" class="btn btn-secondary" id="wts_hydrate_gocj" style="padding:6px 12px">Chemical Injection &rarr;</button>'
             + '</div>';
@@ -753,6 +755,8 @@
     // summary in the active system (canonical context → inputs read °F / psig).
     if (_hasDoc && typeof document.addEventListener === 'function') {
         document.addEventListener('wts:unit-system-changed', function () {
+            var cjm = _byId('wts_hydrate_cjmargin');
+            if (cjm) cjm.textContent = _cjMarginTxt();
             if (!_byId('wts_hydrate_summary') || !_byId('wts_hydrate_run')) return;
             var U = G.WTS_units;
             if (U && U.runCanonical) U.runCanonical(_runHydrateUI); else _runHydrateUI();

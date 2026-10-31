@@ -53776,6 +53776,8 @@ _registerPanel(6, {
     function _tl() { return _metric() ? '°C' : '°F'; }
     function _uT(v, d)  { return _fmt(_uval(v, 'temperature'), d) + ' ' + _tl(); }   // temperature
     function _uDT(v, d) { return _fmt(_uval(v, 'tempDelta'), d) + ' ' + _tl(); }     // temperature difference
+    // The 5 °F screening margin of the Chemical Injection banner, in the display system.
+    function _cjMarginTxt() { return _uDT(5, _metric() ? 1 : 0); }
 
     // Build one segment card HTML.
     function _segCardHTML(seg, idx) {
@@ -53880,7 +53882,7 @@ _registerPanel(6, {
         // (rp-skip: kept out of reports; this page's numbers are unchanged).
         var cjLink = ''
             + '<div class="info-bar rp-skip" id="wts_hydrate_cjlink" style="margin-bottom:10px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between">'
-            +   '<span>Screening estimate: free water only, +30 % methanol vapour allowance, 5 &deg;F default margin. '
+            +   '<span>Screening estimate: free water only, +30 % methanol vapour allowance, <span id="wts_hydrate_cjmargin">' + _cjMarginTxt() + '</span> default margin. '
             +   'Full design with condensed water, J-T cooling and pump settings:</span>'
             +   '<button type="button" class="btn btn-secondary" id="wts_hydrate_gocj" style="padding:6px 12px">Chemical Injection &rarr;</button>'
             + '</div>';
@@ -54131,6 +54133,8 @@ _registerPanel(6, {
     // summary in the active system (canonical context → inputs read °F / psig).
     if (_hasDoc && typeof document.addEventListener === 'function') {
         document.addEventListener('wts:unit-system-changed', function () {
+            var cjm = _byId('wts_hydrate_cjmargin');
+            if (cjm) cjm.textContent = _cjMarginTxt();
             if (!_byId('wts_hydrate_summary') || !_byId('wts_hydrate_run')) return;
             var U = G.WTS_units;
             if (U && U.runCanonical) U.runCanonical(_runHydrateUI); else _runHydrateUI();
@@ -92239,15 +92243,20 @@ G.WTS_calcRegistry.historian = {
 //   requiredWt(key, dT, method) → {ok, W, W_ham, W_nb, methodUsed, outOfRange, overMax, marginal, warnings}
 //   methanolLoss(pPsia, tF, W, vm?, M?) → {K, x, perMole, lbPerMMscf, inRange}
 //   freezePoint(key, W) → °F | null
-//   spread(i) → {ok, nodes[], shutin, startup, margin, jt, title, verdicts, warnings}
-//   hydrateDose(i) → {ok, control, dT, XR, XR_ham, XR_nb, x, water, inh, freezeF, shutin, startup, verdicts}
+//   spread(i) → {ok, nodes[], shutin, startup, margin, jt {…, liquids}, title, verdicts, warnings}
+//     (optional i.qo/qw/api/sgw: ⚠ jt_liquids when the liquids carry > 10 % of the gas heat capacity;
+//      a refused sour correlation marks every node status 'refused' and keeps the largest adder)
+//   hydrateDose(i) → {ok, control, dT, XR, XR_ham, XR_nb, x, water, inh, freezeF, shutin, startup,
+//                     noRate, refused, underDosed, XRdesign, verdicts}
 //   doseRate(i) → {ok, gal_d, L_d, L_hr, gal_h, mL_min, bbl_d, gal_MMscf, activePpm, phase}
+//     (optional i.phases {oil, water}: total-liquid ppm on the phases present at the point)
 //   scavRatio(i), scavengerDose(i)   gas-phase H2S scavenger line rate (stoichiometry ÷ utilisation)
-//   pumpSetting(i) → plunger {spm…} | meter {f, S, N…} | air-driven {airDesign, cyclesMin…}
+//   pumpSetting(i) → plunger {spm…} | meter {f, S, N…} | air-driven {airDesign, airFlow (at i.pFlow), cyclesMin…};
+//     every kind: pMax (capability), pumpRating (default MAWP), deliverable (design rate at P_req)
 //   pumpOptions(i) → {ranked[≤3], current, nextPlunger, reason, byPump}
-//   injectionPressure(i) → {ok, pLine, pBack, pReq, pRating, psvBand, dPdT_psiF, verdicts}
+//   injectionPressure(i) → {ok, pLine, pBack, pReq, pReqFlow, pReqShutin, pRating, mawp, psvBand, dPdT_psiF, verdicts}
 //   supplyGas(i) → {applies, ps_set, stalls, scf_stroke, scf_d, scf_h, regDefault_scf_h, exhaust…, verdicts}
-//   calibration(i), fieldCheck(rate_gal_d, peakF), tank(i), compat(lines)
+//   calibration(i) (air-driven: Q₀ re-fit at i.pTest, default i.pReq), fieldCheck(rate_gal_d, peakF), tank(i), compat(lines)
 //   defaults() → the page-default input (worked example H1); fromIds(map) → input from cj_* ids
 //   stats() → {isenthalpicSolves, memoHits}
 //   WTS_cheminj_compute(input, opts?) → {ok, spread, hydrate, lines[], summary, compat, calibration,
@@ -92281,6 +92290,7 @@ G.WTS_calcRegistry.historian = {
     var WHCLASSES = [2000, 3000, 5000, 10000, 15000];
 
     function _fin(x) { return typeof x === 'number' && isFinite(x); }
+    function _low(s) { s = String(s || ''); return s.charAt(0).toLowerCase() + s.slice(1); }
     function _has(o, k) { return !!o && Object.prototype.hasOwnProperty.call(o, k); }
     function _lib() { return G.WTS_chemlib || null; }
     function _num(v, d) { if (v === undefined) return d; if (v === '' || v === null) return NaN; var n = Number(v); return _fin(n) ? n : NaN; }
@@ -92332,7 +92342,13 @@ G.WTS_calcRegistry.historian = {
         lbD: function (v) { return _sig(v) + ' lb/d'; },
         scfD: function (v) { return _grp(v, 0) + ' scf/d'; },
         psiF: function (v) { return _grp(v, 0) + ' psi per °F'; },
-        inch: function (v) { return _frac(v) + ' in'; }
+        inch: function (v) { return _frac(v) + ' in'; },
+        pA0: function (v) { return _grp(v, 0) + ' psia'; },
+        t0: function (v) { return _grp(v, 0) + ' °F'; },
+        scfH: function (v) { return _grp(v, 1) + ' scf/h'; },
+        lbD4: function (v) { return _grp(v, 4) + ' lb/d'; },
+        galLb: function (v) { return _grp(v, 0) + ' gal/lb'; },
+        jtRule: function () { return '7 °F/100 psi'; }
     };
     function _fmt(o) {
         var f = {}, k;
@@ -92362,8 +92378,8 @@ G.WTS_calcRegistry.historian = {
         var B = Math.pow(10, -3083.87 / (t + 459.6) + 6.69449);
         var W = 47484 * pv / p + B, warnings = [];
         var inRange = t >= 60 && t <= 460 && p >= 15 && p <= 10000;
-        if (t < 60) warnings.push('Water content below 60 °F is extrapolated beyond the Bukacek correlation range (60–460 °F).');
-        if (t > 460 || p < 15 || p > 10000) warnings.push('Water content is outside the Bukacek correlation range (60–460 °F, 15–10,000 psia).');
+        if (t < 60) warnings.push('Water content below ' + F.t0(60) + ' is extrapolated beyond the Bukacek correlation range (' + F.t0(60) + ' to ' + F.t0(460) + ').');
+        if (t > 460 || p < 15 || p > 10000) warnings.push('Water content is outside the Bukacek correlation range (' + F.t0(60) + ' to ' + F.t0(460) + ', ' + F.pA0(15) + ' to ' + F.pA0(10000) + ').');
         return { ok: true, W_lbMMscf: W, pv: pv, B: B, inRange: inRange, warnings: warnings };
     }
 
@@ -92462,10 +92478,24 @@ G.WTS_calcRegistry.historian = {
             if (typeof f === 'function') {
                 var r = f({ sg: gas.sg, p1: p1g + ATM, t1: t1, p2: Math.min(p2g, p1g) + ATM, co2: gas.co2, h2s: gas.h2s, n2: gas.n2, fJT: fJT });
                 if (r && r.ok) return { t: r.t2Design, tDak: r.t2, method: 'ise', warnings: (r.warnings || []).slice(), iterations: r.iterations, clamped: r.clamped };
-                w.push('Real-gas J-T expansion not available here (' + ((r && r.errors && r.errors[0]) || 'Gas PVT engine missing') + '): 7 °F/100 psi rule used.');
-            } else w.push('Gas PVT engine not loaded: 7 °F/100 psi rule used.');
+                w.push('Real-gas J-T expansion not available here (' + ((r && r.errors && r.errors[0]) || 'Gas PVT engine missing') + '): ' + F.jtRule() + ' rule used.');
+            } else w.push('Gas PVT engine not loaded: ' + F.jtRule() + ' rule used.');
         }
         return { t: t1 - RULE_FPSI * Math.max(0, p1g - p2g), tDak: null, method: 'rule', warnings: w };
+    }
+    // Heat capacity of the stream through the choke (plan §4.1.5 mixture formula, used for the
+    // 3.2a warning only): gas q_g·10⁶/V_m·28.97·γ lb/d, oil q_o·350.2·SG_o, water q_w·350.2·SG_w,
+    // with typical c_p 0.6 (gas at line pressure), 0.5 (oil) and 1.0 (water) Btu/lb·°F.
+    // Returns null without liquids; ratio = liquid / gas heat capacity (null with no gas).
+    var CP_GAS = 0.6, CP_OIL = 0.5, CP_WATER = 1.0, LIQ_HEAT_WARN = 0.10;
+    function _liqHeat(qg, sg, i, vm) {
+        var qo = Math.max(0, _opt(i.qo, 0)), qw = Math.max(0, _opt(i.qw, 0));
+        if (!(_fin(qo) && _fin(qw)) || !(qo + qw > 0)) return null;
+        var api = _opt(i.api, 50), sgw = _opt(i.sgw, 1.05);
+        var sgo = 141.5 / (131.5 + (_fin(api) ? api : 50));
+        var cg = Math.max(0, _fin(qg) ? qg : 0) * 1e6 / vm * 28.97 * sg * CP_GAS;
+        var cl = qo * LB_BBL * sgo * CP_OIL + qw * LB_BBL * (_fin(sgw) ? sgw : 1.05) * CP_WATER;
+        return { gasFrac: cg / (cg + cl), ratio: cg > 0 ? cl / cg : null };
     }
     function _zAt(gas, pPsia, tF) {
         var f = G.WTS_gaspvt_z;
@@ -92509,19 +92539,21 @@ G.WTS_calcRegistry.historian = {
         // Margin and sour gas (§4.2)
         var y = gas.h2s, adder = 0, refused = false, refusedText = '';
         if (src === 'tm') {
-            if (y > 3) { refused = true; refusedText = 'H2S ' + _grp(y, 2) + ' mol % is beyond the sweet-gas correlation: enter a lab or composition-based hydrate temperature. No rate given.'; }
+            // Beyond the limits the correlation is refused; the margin keeps the largest adder
+            // (3 × sour for H2S, the flat adder for CO2) so it never falls as the gas gets sourer.
+            if (y > 3) { refused = true; adder += 3 * v.sour; refusedText = 'H2S ' + _grp(y, 2) + ' mol % is beyond the sweet-gas correlation: enter a lab or composition-based hydrate temperature. No rate given.'; }
             else if (y > 0.1) adder += Math.max(v.sour, v.sour * y);
-            if (v.co2 > 20) { refused = true; refusedText = refusedText || ('CO2 ' + _grp(v.co2, 1) + ' mol % is beyond the sweet-gas correlation: enter a lab or composition-based hydrate temperature. No rate given.'); }
+            if (v.co2 > 20) { refused = true; adder += v.sour; refusedText = refusedText || ('CO2 ' + _grp(v.co2, 1) + ' mol % is beyond the sweet-gas correlation: enter a lab or composition-based hydrate temperature. No rate given.'); }
             else if (v.co2 > 5) adder += v.sour;
         }
         var mUsed = v.margin + adder;
         if (refused) verdicts.push(_V('bad', 'sour_refused', refusedText));
         else if (adder > 0) verdicts.push(_V('warn', 'sour_adder', 'Sweet-gas hydrate correlation used on sour gas: margin raised by ' + F.dt(adder) + ' (margin now ' + F.dt(mUsed) + '). Enter a lab or composition-based hydrate temperature.'));
-        if (v.margin < 5) verdicts.push(_V('warn', 'margin_low', 'Hydrate margin ' + F.dt(v.margin) + ' is below 5 °F.'));
-        else if (src === 'tm' && v.margin < 10) verdicts.push(_V('warn', 'margin_corr', 'Hydrate margin ' + F.dt(v.margin) + ' is below 10 °F while the hydrate temperature comes from the gas-gravity correlation (about ±5 °F).'));
+        if (v.margin < 5) verdicts.push(_V('warn', 'margin_low', 'Hydrate margin ' + F.dt(v.margin) + ' is below ' + F.dt(5) + '.'));
+        else if (src === 'tm' && v.margin < 10) verdicts.push(_V('warn', 'margin_corr', 'Hydrate margin ' + F.dt(v.margin) + ' is below ' + F.dt(10) + ' while the hydrate temperature comes from the gas-gravity correlation (about ±' + F.dt(5) + ').'));
         var jtMethod = v.jt === 'rule' ? 'rule' : v.jt === 'user' ? 'user' : 'ise';
         if (jtMethod === 'ise' && v.fJT < 1.10) verdicts.push(_V('warn', 'fjt_low', 'J-T factor ' + _grp(v.fJT, 2) + ' is below 1.10: DAK alone under-predicts J-T cooling by up to 9 %.'));
-        if (jtMethod === 'rule') verdicts.push(_V('warn', 'jt_rule', 'Choke outlet uses 7 °F/100 psi: a quick check that can overstate or understate cooling.'));
+        if (jtMethod === 'rule') verdicts.push(_V('warn', 'jt_rule', 'Choke outlet uses ' + F.jtRule() + ': a quick check that can overstate or understate cooling.'));
         if (v.fwhp > v.sithp) verdicts.push(_V('warn', 'fwhp_gt_sithp', 'Flowing wellhead pressure is above the shut-in pressure: check the inputs.'));
         var whc = Number(v.whclass);
         if (_fin(whc) && v.sithp > whc) verdicts.push(_V('bad', 'class', 'SITHP exceeds the flowhead class (' + F.pG(v.sithp) + ' against ' + F.pG(whc) + ').'));
@@ -92544,15 +92576,30 @@ G.WTS_calcRegistry.historian = {
         var suJ = _jt(gas, v.sithp, v.tamb, Math.min(v.pck, v.sithp), jtMethod === 'user' ? 'ise' : jtMethod, v.fJT, NaN);
         suJ.warnings.forEach(function (w) { warnings.push('Start-up: ' + w); });
         var su = _node('su', 'Start-up: downstream of choke', 'dsch', Math.min(v.pck, v.sithp), suJ.t, suJ.tDak, gas, thydFn, mUsed);
-        var allOk = nodes.every(function (n) { return n.status === 'ok'; });
+        // Refused correlation: the temperatures stand, the hydrate status of every node is unknown.
+        if (refused) nodes.concat([si, su]).forEach(function (n) { n.status = 'refused'; });
+        var allOk = !refused && nodes.every(function (n) { return n.status === 'ok'; });
         if (allOk) verdicts.push(_V('ok', 'no_risk', 'No hydrate risk at the spread nodes with a ' + F.dt(mUsed) + ' margin.'));
-        var jtTxt = jtMethod === 'ise' ? 'J-T × ' + _grp(v.fJT, 2) : jtMethod === 'rule' ? 'J-T 7 °F/100 psi' : 'choke temperature entered';
+        // Liquids in the choke (plan §4.1.5, §8.3): the 3.2a choke temperature is for the gas
+        // only. When the liquids carry more than 10 % of the gas heat capacity the cooling, and
+        // with it the hydrate dose, is overstated: say so with the mixture estimate (not applied).
+        var liq = _liqHeat(v.qg, v.sg, i, _vm());
+        var liqInfo = null;
+        if (liq) {
+            var dTg = v.fwht - ck.t;
+            liqInfo = { gasFrac: liq.gasFrac, ratio: liq.ratio, tMix: v.fwht - dTg * liq.gasFrac };
+            if (jtMethod !== 'user' && (liq.ratio == null || liq.ratio > LIQ_HEAT_WARN) && dTg > 0) {
+                verdicts.push(_V('warn', 'jt_liquids', 'Choke cooling is computed for the gas only; the liquids carry ' + _grp(100 * (1 - liq.gasFrac), 0) +
+                    ' % of the stream heat capacity and reduce it (mixture estimate ' + F.t(liqInfo.tMix) + ' against ' + F.t(ck.t) + '). The hydrate dose is conservative and may be far too high.'));
+            }
+        }
+        var jtTxt = jtMethod === 'ise' ? 'J-T × ' + _grp(v.fJT, 2) : jtMethod === 'rule' ? 'J-T ' + F.jtRule() : 'choke temperature entered';
         return {
             ok: true, sg: v.sg, gas: gas, qg: v.qg, h2s_ppm: v.h2s, h2s_molPct: y,
             sithp: v.sithp, fwhp: v.fwhp, fwht: v.fwht, tamb: v.tamb, pck: v.pck, psep: v.psep, tsep: tsep, heater: heater,
             margin: { base: v.margin, adder: adder, used: mUsed, refused: refused, refusedText: refusedText },
             thydSrc: src, thydShift: shift,
-            jt: { method: jtMethod, fJT: v.fJT, choke: ck, startup: suJ },
+            jt: { method: jtMethod, fJT: v.fJT, choke: ck, startup: suJ, liquids: liqInfo },
             nodes: nodes, shutin: si, startup: su,
             title: 'Spread hydrate check (margin ' + F.dt(mUsed) + ', ' + jtTxt + ')',
             verdicts: verdicts, warnings: warnings
@@ -92572,16 +92619,23 @@ G.WTS_calcRegistry.historian = {
         var wsat = waterContent(sp.fwhp + ATM, sp.fwht), wc = waterContent(ctrl.p_psia, ctrl.t_F);
         var Win = wsat.ok ? wsat.W_lbMMscf : 0, Wout = q.cond === 'all' ? 0 : (wc.ok ? wc.W_lbMMscf : 0), Wsep = null, cond;
         if (q.wbasis === 'sep') {
+            // The separator gas carries at most the flowhead water: a separator warmer than the
+            // gas dew point condensed nothing upstream, so W_sep is capped at W_in.
             var ws = waterContent(sp.psep + ATM, sp.tsep);
             Wsep = ws.ok ? ws.W_lbMMscf : 0;
-            cond = Math.max(0, q.qg) * Math.max(0, Wsep - Wout);
+            cond = Math.max(0, q.qg) * Math.max(0, Math.min(Win, Wsep) - Wout);
         } else cond = Math.max(0, q.qg) * Math.max(0, Win - Wout);
         var oth = 0, oList = [];
         (other || []).forEach(function (o) {
             if (o && _fin(o.lb_d) && o.lb_d > 0 && _ptOrder(o.point) <= LOC_ORDER[ctrl.loc]) { oth += o.lb_d; oList.push(o); }
         });
         var warns = [];
-        if (q.cond !== 'all' && ctrl.t_F < 60 && q.qg > 0) warns.push('Condensed water at ' + F.t(ctrl.t_F) + ' is extrapolated below the 60 °F limit of the Bukacek correlation.');
+        if (q.cond !== 'all' && ctrl.t_F < 60 && q.qg > 0) warns.push('Condensed water at ' + F.t(ctrl.t_F) + ' is extrapolated below the ' + F.t0(60) + ' limit of the Bukacek correlation.');
+        // Plan §4.4: acid gas raises the water content at high pressure; no correction in 3.2a.
+        var gs = sp.gas || {};
+        if (q.qg > 0 && ((gs.h2s || 0) > 0.1 || (gs.h2s || 0) + (gs.co2 || 0) > 5)) {
+            warns.push('Sour gas holds more water than the sweet-gas Bukacek correlation predicts at high pressure; condensed water may be under-estimated (no correction in this version).');
+        }
         return { free: free, cond: cond, other: oth, otherLines: oList, total: free + cond + oth, Win: Win, Wout: Wout, Wsep: Wsep, extrapolated: ctrl.t_F < 60, warnings: warns };
     }
     function hydrateDose(i) {
@@ -92601,11 +92655,16 @@ G.WTS_calcRegistry.historian = {
         var verdicts = [], warnings = [], m = sp.margin.used;
         var res = {
             ok: true, chem: c.key, point: point, marginUsed: m, control: null, dT: 0, XR: 0, XR_ham: 0, XR_nb: null, methodUsed: null, x: 0,
-            water: null, inh: null, freezeF: null, required: false, noRate: false, leanPct: leanPct,
+            water: null, inh: null, freezeF: null, required: false, noRate: false, refused: false, underDosed: false, XRdesign: null, leanPct: leanPct,
             shutin: null, startup: null, verdicts: verdicts, warnings: warnings
         };
         // Shut-in and start-up requirements (any THI line; information + verdicts)
         function caseReq(node, label) {
+            if (sp.margin.refused) {
+                // No correlation-based requirement when the sweet-gas correlation is refused.
+                return { node: node.key, label: label, dT: node.dTreq, XR: null, XR_ham: null, XR_nb: null, level: 'bad', refused: true,
+                    text: label + ': not assessed, the sweet-gas hydrate correlation is refused: enter a lab or composition-based hydrate temperature.' };
+            }
             var r = requiredWt(c.key, node.dTreq, method), o = { node: node.key, label: label, dT: node.dTreq, XR: r.W, XR_ham: r.W_ham, XR_nb: r.W_nb, level: 'ok', text: '' };
             if (node.dTreq <= 0) { o.text = label + ': no inhibitor needed with a ' + F.dt(m) + ' margin.'; return o; }
             if (r.overMax) { o.level = 'bad'; o.text = label + ': required concentration is beyond the method range (' + _grp(r.W, 1) + ' wt %). Heat, stage the pressure drop or start on a small choke.'; }
@@ -92616,7 +92675,7 @@ G.WTS_calcRegistry.historian = {
         res.shutin = caseReq(sp.shutin, 'Shut-in');
         res.startup = caseReq(sp.startup, 'Start-up');
         if (sp.margin.refused) {
-            res.noRate = true;
+            res.noRate = true; res.refused = true;
             verdicts.push(_V('bad', 'sour_refused', sp.margin.refusedText));
             res.inh = _inhOut(0, 0, 0, 0, 0, 0, 1, q.qg);
             return res;
@@ -92655,7 +92714,13 @@ G.WTS_calcRegistry.historian = {
         var dT = ctrl.dTreq, req;
         if (_fin(override)) {
             req = { ok: true, W: override, W_ham: _hamInv(c, Math.max(0, dT)), W_nb: c.thi.nb ? _nbInv(c.thi.M, Math.max(0, dT)) : null, methodUsed: 'user', outOfRange: override >= 79.99, overMax: override > c.thi.maxPct, marginal: override > c.thi.warnPct, warnings: [] };
-            warnings.push('Rich concentration entered by the user (' + _grp(override, 2) + ' wt %), not the design value.');
+            // An override below the design requirement does not protect the controlling node.
+            var des = dT > 0 ? requiredWt(c.key, dT, method) : null;
+            if (des && des.ok && override < des.W - 1e-9) {
+                res.underDosed = true; res.XRdesign = des.W;
+                verdicts.push(_V('bad', 'override_low', 'Rich ' + _grp(override, 2) + ' wt % entered is below the required ' + _grp(des.W, 2) + ' wt % ' + c.short +
+                    ': the dose does not protect ' + _low(ctrl.label) + ' (margin ' + F.dt(m) + ').'));
+            } else warnings.push('Rich concentration entered by the user (' + _grp(override, 2) + ' wt %), not the design value.');
         } else req = requiredWt(c.key, dT, method);
         req.warnings.forEach(function (w) { warnings.push(w); });
         res.dT = dT; res.XR = req.W; res.XR_ham = req.W_ham; res.XR_nb = req.W_nb; res.methodUsed = req.methodUsed;
@@ -92682,7 +92747,7 @@ G.WTS_calcRegistry.historian = {
             K = ml.K;
             vap = Math.max(0, q.qg) * ml.lbPerMMscf;
             lhc = Math.max(0, q.qo) * fc * x / X_REF_30;
-            if (!ml.inRange) warnings.push('Methanol vapour-loss correlation used outside its range (−10 to 100 °F, 100–5,000 psia, up to 70 wt %).');
+            if (!ml.inRange) warnings.push('Methanol vapour-loss correlation used outside its range (' + F.t0(-10) + ' to ' + F.t0(100) + ', ' + F.pA0(100) + ' to ' + F.pA0(5000) + ', up to 70 wt %).');
             if (c.key !== 'meoh') warnings.push(c.short + ' vapour and condensate losses use the methanol correlations (conservative).');
             Lsol = (XR * wat.total + (vap + lhc) * (1 - XR)) / (XL - XR);
         } else {
@@ -92696,7 +92761,7 @@ G.WTS_calcRegistry.historian = {
         res.freezeF = freezePoint(c.key, req.W);
         res.tMin = tMin;
         if (res.freezeF != null) {
-            if (res.freezeF > tMin - 5) verdicts.push(_V('warn', 'freeze', 'Rich-phase freeze point ' + F.t(res.freezeF) + ' is within 5 °F of the coldest node (' + F.t(tMin) + ').'));
+            if (res.freezeF > tMin - 5) verdicts.push(_V('warn', 'freeze', 'Rich-phase freeze point ' + F.t(res.freezeF) + ' is within ' + F.dt(5) + ' of the coldest node (' + F.t(tMin) + ').'));
         }
         return res;
     }
@@ -92720,10 +92785,14 @@ G.WTS_calcRegistry.historian = {
         var qo = Math.max(0, _num(i.qo, 0)), qw = Math.max(0, _num(i.qw, 0)), qg = Math.max(0, _num(i.qg, 0));
         var api = _num(i.api, 50), sgo = 141.5 / (131.5 + api), sgw = _num(i.sgw, 1.05), sgc = _num(i.sgc, 1);
         var qwc = _opt(i.qwCtrl, qw), g = 0, batch = null;
+        // Plan §4.9: the rate is on the phase present at the point (i.phases = the point's
+        // {oil, water}); total liquid is oil + water only where both are present.
+        var ph = i.phases && typeof i.phases === 'object' ? i.phases : null;
+        var qLiq = ph ? (ph.oil ? qo : 0) + (ph.water ? qw : 0) : qo + qw;
         switch (b) {
             case 'ppmv_oil': g = 42 * qo * C * 1e-6; break;
             case 'ppmv_water': g = 42 * qw * C * 1e-6; break;
-            case 'ppmv_liq': g = 42 * (qo + qw) * C * 1e-6; break;
+            case 'ppmv_liq': g = 42 * qLiq * C * 1e-6; break;
             case 'ppmw_water': g = 42 * qw * C * 1e-6 * sgw / sgc; break;
             case 'ppmw_oil': g = 42 * qo * C * 1e-6 * sgo / sgc; break;
             case 'pt_mmscf': g = qg * C / 8; break;
@@ -92775,7 +92844,7 @@ G.WTS_calcRegistry.historian = {
         out.removed_lb_d = (out.gas ? out.gas.lb_d : 0) + liqLb;
         var g = out.removed_lb_d * (_fin(R) ? R : 0), r2 = _rates(g, qg);
         for (var k in r2) out[k] = r2[k];
-        if (out.removed_lb_d > 200) verdicts.push(_V('warn', 'high_load', 'High H2S load (above 200 lb/d): consider a contactor vessel or an alternative treatment; liquid direct injection is commonly economic only below about 100–200 lb/d.'));
+        if (out.removed_lb_d > 200) verdicts.push(_V('warn', 'high_load', 'High H2S load (above ' + F.lbD(200) + '): consider a contactor vessel or an alternative treatment; liquid direct injection is commonly economic only below about ' + F.lbD(100) + ' to ' + F.lbD(200) + '.'));
         return out;
     }
 
@@ -92800,6 +92869,13 @@ G.WTS_calcRegistry.historian = {
         var b = _fin(beta) ? beta : 3.1e-6, pd = Math.max(0, _fin(pReq) ? pReq : 0), r = 0.5 * ((Lmax > 0 && L > 0) ? Lmax / L : 1);
         return Math.max(0.3, 1 - b * pd * (1 + r) - 0.03);
     }
+    // Pressure rating of the pump itself (the default MAWP of the discharge circuit): the body
+    // rating of a pneumatic or air-driven pump, not its drive-limited output; the rod-load rating
+    // of an electric plunger pump at this plunger; the nameplate of a metering pump.
+    function _ratingOf(P, c, pMax) {
+        if ((P.pmaxRule === 'pneumatic' || P.pmaxRule === 'ratio') && _fin(P.bodyPsi)) return P.bodyPsi;
+        return pMax;
+    }
     function _pmaxOf(P, c, psup) {
         switch (P.pmaxRule) {
             case 'pneumatic': return Math.min(P.bodyPsi || 10000, (P.etaM || 0.8) * psup * _area(c.actD) / (c.heads * _area(c.plunger)));
@@ -92822,8 +92898,10 @@ G.WTS_calcRegistry.historian = {
             qRated_galh: _opt(i.qRated_galh, P.qRated_galh),
             pmax: _opt(i.pmax, P.pmax),
             q0_galh: _opt(i.q0_galh, P.q0_galh),
-            ratio: _opt(i.ratio, P.ratio),
-            vcyc: _opt(i.vcyc_in3, P.vcyc_in3),
+            // The pressure ratio is an air-driven liquid pump input only: an air-operated diaphragm
+            // pump is about 1:1 whatever a hidden field left over from another pump type holds.
+            ratio: P.kind === 'airliquid' ? _opt(i.ratio, P.ratio) : (P.ratio || 1),
+            vcyc: P.kind === 'airliquid' ? _opt(i.vcyc_in3, P.vcyc_in3) : P.vcyc_in3,
             rod: _opt(i.rod, P.rodLbf || 2500),
             vfd: _has(i, 'vfd') ? !!i.vfd : !!P.vfd
         };
@@ -92836,20 +92914,22 @@ G.WTS_calcRegistry.historian = {
         if (!c) return { ok: false, errors: ['Unknown pump type.'], bad: ['pump'] };
         var P = c.P, rate = Math.max(0, _num(i.rate_gal_d, 0)), peakF = _opt(i.peakF, 1.25), minF = _opt(i.minF, 0.5);
         var B = _bands(i), psup = _opt(i.psup, 100), pReq = _opt(i.pReq, 0), pRating = _opt(i.pRating, pReq);
+        var pFlow = Math.min(pReq, _opt(i.pFlow, pReq));   // discharge pressure while the well flows
         var verdicts = [], warnings = [], why = [];
         var o = {
             ok: true, pump: P.key, name: P.short, kind: P.kind, setting: P.setting, electric: !!P.electric, vents: !!P.vents,
-            rate_gal_d: rate, peak_gal_d: rate * peakF, peakF: peakF, noFlow: !(rate > 0), pReq: pReq, pRating: pRating,
-            pct: 0, peakPct: 0, band: 'green', feasible: true, why: why, whyText: '', pMax: null, pOk: true, verdicts: verdicts, warnings: warnings
+            rate_gal_d: rate, peak_gal_d: rate * peakF, peakF: peakF, noFlow: !(rate > 0), pReq: pReq, pFlow: pFlow, pRating: pRating,
+            pct: 0, peakPct: 0, band: 'green', feasible: true, why: why, whyText: '', pMax: null, pumpRating: null, pOk: true, verdicts: verdicts, warnings: warnings
         };
         var hazTxt = 'Electric pump in a classified area: motor and controls must be certified for the zone (API RP 500/505).';
         if (P.electric && i.haz === 'yes' && !i._lite) verdicts.push(_V('warn', 'haz_electric', hazTxt));
         if (P.kind === 'hand') {
             o.feasible = false; why.push('batch'); o.whyText = 'batch only';
             verdicts.push(_V('warn', 'hand', 'Hand pump: batch filling only, not continuous dosing.'));
-            o.pMax = P.pmax || 0; return o;
+            o.pMax = P.pmax || 0; o.pumpRating = o.pMax; o.deliverable = false; return o;
         }
         o.pMax = _pmaxOf(P, c, psup);
+        o.pumpRating = _ratingOf(P, c, o.pMax);
         o.pOk = o.pMax >= pRating - 1e-9;
         if (P.kind === 'plunger') {
             var eta = _blank(i.eta) ? _etaAuto(i.beta, pReq, P.strokeMax || c.stroke, c.stroke) : _opt(i.eta, P.etaDef || 0.9);
@@ -92893,8 +92973,12 @@ G.WTS_calcRegistry.historian = {
             var q0 = (c.q0_galh || 0) * 24, r = c.ratio || 1, stall = r * psup;
             o.q0_gal_d = q0; o.ratio = r; o.vcyc_in3 = c.vcyc; o.stallAvail = stall;
             o.qAtPreq = Math.max(0, q0 * (1 - pReq / stall));
-            function air(q) { return (q < q0) ? pReq / (r * (1 - q / q0)) : null; }
-            o.airDesign = air(rate); o.airPeak = air(rate * peakF);
+            function air(q, pd) { return (q < q0) ? pd / (r * (1 - q / q0)) : null; }
+            // Design and peak settings at P_req (the shut-in case upstream of the choke: the
+            // feasibility, stall and drive-gas basis); the operating setting while the well flows
+            // is at the flowing discharge pressure, where the shut-in setting over-delivers.
+            o.airDesign = air(rate, pReq); o.airPeak = air(rate * peakF, pReq);
+            o.airFlow = air(rate, pFlow); o.airFlowPeak = air(rate * peakF, pFlow);
             o.cyclesMin = c.vcyc > 0 ? rate * IN3_GAL / 1440 / c.vcyc : null;
             o.cyclesPeak = o.cyclesMin != null ? o.cyclesMin * peakF : null;
             o.pStallDesign = o.airDesign != null ? r * o.airDesign : null;
@@ -92922,8 +93006,18 @@ G.WTS_calcRegistry.historian = {
             if (o.peakPct > B.a) why.push('rate');
             if (!o.noFlow && o.f * minF < 0.10) why.push('turndown');
             if (!o.pOk) why.push('pressure');
+            if (!o.gasOk) why.push('drivegas');
             if (!o.noFlow && !i._lite) verdicts.push(_V('warn', 'transfer', 'Air-operated diaphragm pump: a coarse transfer pump, not a metering pump.'));
         }
+        // Can the pump deliver the design rate at P_req at all (capacity, pressure, drive gas)?
+        // Narrower than `feasible`, which also wants start-up headroom, turndown and the rating margin.
+        var canQ = true;
+        if (P.kind === 'plunger') canQ = P.setting === 'spm' ? o.pct <= 100 + 1e-9 : o.f <= 1 + 1e-9;
+        else if (P.kind === 'meter') canQ = o.f <= 1 + 1e-9;
+        else if (P.kind === 'airliquid') canQ = o.airDesign != null && o.airDesign <= psup + 1e-9;
+        else if (P.kind === 'transfer') canQ = o.pct <= 100 + 1e-9;
+        var gasQ = ((P.kind === 'plunger' && P.setting === 'spm') || P.kind === 'transfer') ? o.gasOk !== false : true;
+        o.deliverable = canQ && o.pMax >= pReq - 1e-9 && gasQ;
         o.band = _band(o.pct, B);
         o.peakBand = _band(o.peakPct, B);
         if (o.noFlow) { o.why = []; o.feasible = true; o.whyText = 'no flow required'; return o; }
@@ -92955,8 +93049,8 @@ G.WTS_calcRegistry.historian = {
                 case 'rate': return 'rate ' + _grp(o.pct, 0) + ' %';
                 case 'peak': return 'peak ' + _grp(o.peakPct, 0) + ' %';
                 case 'turndown': return 'below turndown';
-                case 'pressure': return 'pressure (maximum ' + _grp(o.pMax, 0) + ' psig)';
-                case 'drivegas': return 'drive gas ' + _grp(o.psSet, 1) + ' psig needed';
+                case 'pressure': return 'pressure (maximum ' + F.pG(o.pMax) + ')';
+                case 'drivegas': return 'drive gas ' + F.pSet(o.psSet) + ' needed';
                 default: return w;
             }
         }).join(', ');
@@ -92977,27 +93071,31 @@ G.WTS_calcRegistry.historian = {
             if (o.f < o.fMin) V.push(_V('warn', 'turndown', 'Below pump turndown: dilute 1 : ' + Math.ceil(0.25 / Math.max(o.f, 1e-9) - 1e-9) + ' in a compatible carrier or use a smaller head.'));
             else if (why.indexOf('turndown') !== -1) V.push(_V('warn', 'turndown_min', 'At the minimum rate the pump is below its turndown (' + _grp(100 * o.fMin, 0) + ' % of maximum): use a smaller head or dilute.'));
         }
-        if (!o.pOk && o.kind !== 'airliquid') {
-            var pl = (o.kind === 'plunger') ? ' with a ' + F.inch(o.plunger_in) + ' plunger' : '';
-            var dmax = '';
-            if (o.kind === 'plunger' && o.setting === 'spm') {
-                var P = _pumpRec(i.pump), c = _cfg(i);
-                var dm = Math.sqrt(4 / Math.PI * (P.etaM || 0.8) * _opt(i.psup, 100) * _area(c.actD) / (c.heads * o.pRating));
-                var fits = (P.plungers || []).filter(function (d) { return d <= dm + 1e-9; });
-                if (fits.length) dmax = ' (' + F.inch(fits[fits.length - 1]) + ' or less)';
-            }
-            V.push(_V('bad', 'pressure', 'Pump cannot reach ' + F.pG(o.pRating) + pl + ' (maximum ' + F.pG(o.pMax) + '). Use a smaller plunger' + dmax + ', a larger actuator, an air-driven pump or an electric plunger metering pump.'));
+        if (!o.pOk && o.kind === 'plunger' && o.setting === 'spm') {
+            var P = _pumpRec(i.pump), c = _cfg(i), dmax = '';
+            var dm = Math.sqrt(4 / Math.PI * (P.etaM || 0.8) * _opt(i.psup, 100) * _area(c.actD) / (c.heads * o.pRating));
+            var fits = (P.plungers || []).filter(function (d) { return d <= dm + 1e-9; });
+            if (fits.length) dmax = ' (' + F.inch(fits[fits.length - 1]) + ' or less)';
+            V.push(_V('bad', 'pressure', 'Pump cannot reach ' + F.pG(o.pRating) + ' with a ' + F.inch(o.plunger_in) + ' plunger (maximum ' + F.pG(o.pMax) + '). Use a smaller plunger' + dmax + ', a larger actuator, an air-driven pump or an electric plunger metering pump.'));
+        } else if (!o.pOk && o.kind === 'plunger') {
+            // Electric plunger: the rod load sets the pressure; no actuator to change.
+            V.push(_V('bad', 'pressure', 'Pump cannot reach ' + F.pG(o.pRating) + ' with a ' + F.inch(o.plunger_in) + ' plunger (rod-load maximum ' + F.pG(o.pMax) + '). Use a smaller plunger, a frame with a higher rod load or an air-driven liquid pump.'));
+        } else if (!o.pOk && o.kind !== 'airliquid') {
+            // Metering diaphragm or transfer pump: a fixed pressure rating, no plunger or actuator.
+            V.push(_V('bad', 'pressure', 'Pump cannot reach ' + F.pG(o.pRating) + ' (maximum ' + F.pG(o.pMax) + '). Choose a pump rated for at least ' + F.pG(o.pRating) + ': an electric plunger metering pump or an air-driven liquid pump.'));
         } else if (!o.pOk) {
             V.push(_V('bad', 'pressure', 'Pump cannot reach ' + F.pG(o.pRating) + ' (maximum ' + F.pG(o.pMax) + '). Raise the drive air, or use a higher-ratio air-driven pump or an electric plunger metering pump.'));
         }
     }
-    // Next plunger for a pneumatic plunger pump: design > 85 % → the smallest larger plunger at ≤ 85 %
-    // whose P_max passes; minimum below the stable SPM → the largest smaller plunger that runs stable.
+    // Next plunger for a pneumatic plunger pump: design or peak > 85 % → the smallest larger plunger;
+    // minimum below the stable SPM → the largest smaller plunger. Either way the suggestion must be
+    // feasible itself (§4.10.5): peak ≤ the amber limit, minimum ≥ the stable SPM, P_max ≥ the
+    // rating and the drive gas enough at the design pressure; otherwise no suggestion.
     function nextPlunger(i, o) {
         var P = _pumpRec(i.pump);
         if (!P || P.kind !== 'plunger' || P.setting !== 'spm' || !o || o.noFlow) return null;
-        var B = _bands(i), list = (P.plungers || []).slice().sort(function (a, b) { return a - b; });
-        var up = o.pct > B.a || o.peakPct > B.a, down = !up && o.spmMin < o.spmMinStable, byPeak = up && o.pct <= B.a;
+        var B = _bands(i), pk = _opt(i.peakF, 1.25), list = (P.plungers || []).slice().sort(function (a, b) { return a - b; });
+        var up = o.pct > B.a || o.peakPct > B.a, down = !up && o.spmMin < o.spmMinStable;
         if (!up && !down) return null;
         var cand = up ? list.filter(function (d) { return d > o.plunger_in + 1e-9; }) : list.filter(function (d) { return d < o.plunger_in - 1e-9; }).reverse();
         for (var k = 0; k < cand.length; k++) {
@@ -93005,9 +93103,8 @@ G.WTS_calcRegistry.historian = {
             for (key in i) if (_has(i, key)) j[key] = i[key];
             j.plunger_in = cand[k];
             var r = _plungerQuick(j);
-            if (!r.pOk) continue;
-            if (up && (byPeak ? r.pct * _opt(i.peakF, 1.25) : r.pct) <= B.a) return { plunger_in: cand[k], spm: r.spm, pct: r.pct, pMax: r.pMax };
-            if (down && r.spmMin >= r.spmMinStable) return { plunger_in: cand[k], spm: r.spm, pct: r.pct, pMax: r.pMax };
+            if (!r.pOk || !r.gasOk || r.pct * pk > B.a + 1e-9 || r.spmMin < r.spmMinStable) continue;
+            return { plunger_in: cand[k], spm: r.spm, pct: r.pct, peakPct: r.pct * pk, pMax: r.pMax };
         }
         return null;
     }
@@ -93016,7 +93113,9 @@ G.WTS_calcRegistry.historian = {
         var eta = _blank(i.eta) ? _etaAuto(i.beta, pReq, P.strokeMax || c.stroke, c.stroke) : _opt(i.eta, P.etaDef || 0.9);
         var spm = Math.max(0, _num(i.rate_gal_d, 0)) / (c.heads * _area(c.plunger) * c.stroke * 1440 / IN3_GAL * eta);
         var pMax = _pmaxOf(P, c, psup);
-        return { spm: spm, pct: 100 * spm / c.spmMax, spmMin: spm * _opt(i.minF, 0.5), spmMinStable: P.spmMin || 3, pMax: pMax, pOk: pMax >= pRating - 1e-9 };
+        var ps = Math.max(20, c.heads * pReq * _area(c.plunger) / ((P.etaM || 0.8) * _area(c.actD)) + (P.pSpring != null ? P.pSpring : 5));
+        return { spm: spm, pct: 100 * spm / c.spmMax, spmMin: spm * _opt(i.minF, 0.5), spmMinStable: P.spmMin || 3, pMax: pMax, pOk: pMax >= pRating - 1e-9,
+            psSet: ps, gasOk: ps <= psup + 1e-9 };
     }
     // Pump options: every candidate, ranked (§4.10.6).
     function pumpOptions(i) {
@@ -93085,10 +93184,15 @@ G.WTS_calcRegistry.historian = {
         var feas = ranked.filter(function (c) { return c.feasible; });
         var reason = '';
         if (!feas.length) {
-            var rateLim = cands.some(function (c) { return c.why.indexOf('pressure') === -1 && c.why.indexOf('drivegas') === -1; });
-            var presLim = cands.some(function (c) { return c.why.indexOf('rate') === -1 && c.why.indexOf('peak') === -1 && c.why.indexOf('turndown') === -1; });
+            // Too much flow (rate / peak), too little (below turndown only) or too much pressure.
+            var has = function (c, w) { return c.why.indexOf(w) !== -1; };
+            var pres = function (c) { return has(c, 'pressure') || has(c, 'drivegas'); };
+            var highLim = cands.some(function (c) { return !pres(c) && (has(c, 'rate') || has(c, 'peak')); });
+            var lowLim = cands.some(function (c) { return !pres(c) && has(c, 'turndown') && !has(c, 'rate') && !has(c, 'peak'); });
+            var presLim = cands.some(function (c) { return pres(c) && !has(c, 'rate') && !has(c, 'peak') && !has(c, 'turndown'); });
             var parts = [];
-            if (rateLim) parts.push('rate-limited: two pumps in parallel, an air-driven liquid pump, an electric plunger pump or a skid');
+            if (highLim) parts.push('rate-limited: two pumps in parallel, an air-driven liquid pump, an electric plunger pump or a skid');
+            if (lowLim) parts.push('below turndown: dilute in a compatible carrier or use a smaller metering pump or head');
             if (presLim) parts.push('pressure-limited: a smaller plunger, a larger actuator, an air-driven pump or an electric plunger pump');
             reason = 'No feasible pump option (' + (parts.join('; ') || 'check the inputs') + ').';
         }
@@ -93116,15 +93220,19 @@ G.WTS_calcRegistry.historian = {
             case 'dh': case 'wh': pLine = Math.max(sithp, fwhp); break;
             case 'ck': pLine = pck; break;
             case 'sep': pLine = psep; break;
-            case 'bpv': pLine = _fin(pbpv) ? pbpv : 0; if (!_fin(pbpv)) warnings.push('Flare-line pressure not entered: 0 psig assumed.'); break;
+            case 'bpv': pLine = _fin(pbpv) ? pbpv : 0; if (!_fin(pbpv)) warnings.push('Flare-line pressure not entered: ' + F.pG(0) + ' assumed.'); break;
             default: pLine = 0;
         }
         var cls = i.rateBasis === 'class';
         var bk = cls ? pt.pBackClass : pt.pBack;
         pBack = bk === 'sithp' ? sithp : bk === 'whclass' ? whc : bk === 'psvsep' ? psv : 0;
         var pReq = pLine + dpq;
+        // While the well flows the line upstream of the choke is at FWHP, not the shut-in case.
+        var pReqFlow = (pt.pLine === 'dh' || pt.pLine === 'wh') ? fwhp + dpq : pReq;
         var pRating = Math.max(pReq * (1 + mp / 100), pReq + ma, pBack * (1 + mp / 100), pBack + ma);
-        var mawpIn = _opt(i.mawp, NaN), pumpP = _opt(i.pumpPmax, NaN);
+        // Blank MAWP = the pump's own pressure rating (body rating for pneumatic and air-driven
+        // pumps, never their drive-limited output); pumpPmax is the older name of the same input.
+        var mawpIn = _opt(i.mawp, NaN), pumpP = _opt(i.pumpRating, _opt(i.pumpPmax, NaN));
         var mawp = _fin(mawpIn) ? mawpIn : (_fin(pumpP) ? pumpP : null);
         var lo = Math.max(1.10 * pReq, pBack), hi = mawp;
         var band = { lo: lo, hi: hi, ok: hi == null ? null : lo <= hi + 1e-9 };
@@ -93135,13 +93243,13 @@ G.WTS_calcRegistry.historian = {
         if (mawp != null && mawp < pRating - 1e-9) verdicts.push(_V('bad', 'below_rating', 'Discharge circuit rated ' + F.pG(mawp) + ', below the required rating ' + F.pG(pRating) + '.'));
         if (band.ok === false) verdicts.push(_V('bad', 'psv_band', 'Relief valve band is empty: the set pressure must be at least ' + F.pG(lo) + ' but the circuit MAWP is ' + F.pG(hi) + '.'));
         var advice = [];
-        if (pt.key === 'tank') verdicts.push(_V('warn', 'anti_siphon', 'Atmospheric tank: fit an anti-siphon / back-pressure valve set at least 25 psi above the suction head.'));
+        if (pt.key === 'tank') verdicts.push(_V('warn', 'anti_siphon', 'Atmospheric tank: fit an anti-siphon / back-pressure valve set at least ' + F.dp(25) + ' above the suction head.'));
         else advice.push(_V('warn', 'backflow', BACKFLOW));
         if (dPdT != null) advice.push(_thermalV(chem.short, dPdT));
         return {
             ok: true, point: pt.key, pLine: pLine, pBack: pBack, pBackBasis: bk, rateBasis: cls ? 'class' : 'credible',
             breakdown: { line: pLine, allowance: dpq, friction: 0, hydrostatic: 0, civ: 0 },
-            pReq: pReq, pReqFlow: pReq, pReqShutin: pReq, pRating: pRating, mawp: mawp, psvBand: band,
+            pReq: pReq, pReqFlow: pReqFlow, pReqShutin: pReq, pRating: pRating, mawp: mawp, mawpEntered: _fin(mawpIn), psvBand: band,
             dPdT_psiF: dPdT, verdicts: verdicts, advice: advice, warnings: warnings
         };
     }
@@ -93178,10 +93286,10 @@ G.WTS_calcRegistry.historian = {
             if (gt === 'well') {
                 out.exhaustH2S_ppm = y;
                 out.exhaustH2S_lb_d = out.scf_d != null ? out.scf_d * y * 1e-6 * MW_H2S / vm : null;
-                var ex = 'Exhaust carries ' + _grp(y, 0) + ' ppm H2S' + (out.exhaustH2S_lb_d != null ? ' (' + _grp(out.exhaustH2S_lb_d, 4) + ' lb/d)' : '') + '.';
+                var ex = 'Exhaust carries ' + _grp(y, 0) + ' ppm H2S' + (out.exhaustH2S_lb_d != null ? ' (' + F.lbD4(out.exhaustH2S_lb_d) + ')' : '') + '.';
                 if (y >= 10) verdicts.push(_V('bad', 'sour_drive', 'Do not drive pneumatic pumps with sour produced gas: use instrument air, nitrogen or sweet gas, or route the exhaust to flare. ' + ex));
                 else verdicts.push(_V('warn', 'well_drive', 'Produced gas drives the pump and vents methane at the pump. ' + ex));
-            } else verdicts.push(_V('warn', 'sweet_drive', 'Sweet fuel gas drives the pump and vents methane at the pump (regulatory default 13.3 scf/h per pump).'));
+            } else verdicts.push(_V('warn', 'sweet_drive', 'Sweet fuel gas drives the pump and vents methane at the pump (regulatory default ' + F.scfH(REG_SCF_H) + ' per pump).'));
         }
         return out;
     }
@@ -93199,7 +93307,7 @@ G.WTS_calcRegistry.historian = {
         var mL = Number(i.mL), s = Number(i.s), set = Number(i.setting), tgt = Number(i.target_gal_d), kind = i.kind || 'spm', tol = _opt(i.tolPct, 5);
         if (!(mL > 0 && s > 0)) return { ok: false, errors: ['Enter the measured volume (mL) and the time (s), both above 0.'], bad: ['mL', 's'] };
         if (!(set > 0)) return { ok: false, errors: ['Enter the pump setting used during the test.'], bad: ['setting'] };
-        var q = 22.8245 * mL / s, out = { ok: true, gal_d: q, mL_min: 60 * mL / s, etaActual: null, newSetting: null, withinPct: null, q0Refit_gal_d: null, verdicts: [] };
+        var q = 22.8245 * mL / s, out = { ok: true, gal_d: q, mL_min: 60 * mL / s, etaActual: null, newSetting: null, withinPct: null, q0Refit_gal_d: null, pTest: null, verdicts: [] };
         if (kind === 'spm') {
             var Vs = Number(i.Vs_mL), nh = _opt(i.heads, 1);
             if (Vs > 0) out.etaActual = out.mL_min / (nh * Vs * set);
@@ -93207,7 +93315,10 @@ G.WTS_calcRegistry.historian = {
         if (tgt > 0) {
             out.withinPct = 100 * (q - tgt) / tgt;
             if (kind === 'air') {
-                var pd = Number(i.pReq), r = Number(i.ratio);
+                // Q₀ is re-fitted, and the corrected air found, at the discharge pressure during the
+                // test (i.pTest: the flowing line pressure + allowance by default), not at P_req.
+                var pd = _opt(i.pTest, Number(i.pReq)), r = Number(i.ratio);
+                out.pTest = _fin(pd) ? pd : null;
                 var den = 1 - pd / (r * set);
                 if (pd >= 0 && r > 0 && den > 0) {
                     var q0 = q / den;
@@ -93286,7 +93397,7 @@ G.WTS_calcRegistry.historian = {
             basis: { margin: 10, fJT: 1.10, thsrc: 'tm', thuser: '', thuserp: '', method: 'auto', cond: 'buk', h2sOut: 4,
                 pmpct: 10, pmabs: 100, ratebasis: 'credible', days: 5, psup: 100, fc: 0.25, glyloss: 1, sour: 5, bandG: 70, bandA: 85, minf: 0.5 },
             nlines: 1, lines: lines,
-            cal: { line: 1, mL: '', s: '', setting: '' }
+            cal: { line: 1, mL: '', s: '', setting: '', pd: '' }
         };
     }
     var IDS = {
@@ -93300,7 +93411,7 @@ G.WTS_calcRegistry.historian = {
             plunger: 'cj_plg_', stroke: 'cj_stk_', heads: 'cj_heads_', qrated: 'cj_qrated_', pmax: 'cj_pmax_', q0: 'cj_q0_', ratio: 'cj_ratio_', vcyc: 'cj_vcyc_',
             tank: 'cj_tank_', active: 'cj_act_', water: 'cj_wat_', peak: 'cj_peak_', ve: 'cj_ve_', spmmax: 'cj_spmmax_', actd: 'cj_actd_', rod: 'cj_rod_',
             dpq: 'cj_dpq_', mawp: 'cj_mawp_', o2: 'cj_o2_' },
-        cal: { line: 'cj_cal_line', mL: 'cj_cal_ml', s: 'cj_cal_s', setting: 'cj_cal_set' }
+        cal: { line: 'cj_cal_line', mL: 'cj_cal_ml', s: 'cj_cal_s', setting: 'cj_cal_set', pd: 'cj_cal_pd' }
     };
     function fromIds(map) {
         map = map || {};
@@ -93395,6 +93506,7 @@ G.WTS_calcRegistry.historian = {
             var cl = Number(inp.cal.line);
             if (!(cl >= 1 && cl <= inp.nlines && Math.round(cl) === cl)) err('cj_cal_line', 'Choose a calibration line between 1 and the number of lines.');
             ['mL', 's', 'setting'].forEach(function (k) { var x = Number(inp.cal[k]); if (!(x > 0 && x < 1e7)) err(IDS.cal[k], 'Calibration ' + k + ' must be above 0.'); });
+            if (!(inp.cal.pd === undefined || _blank(inp.cal.pd))) { var pdv = Number(inp.cal.pd); if (!(_fin(pdv) && pdv >= 0 && pdv <= 30000)) err('cj_cal_pd', 'Calibration discharge pressure must be between 0 and 30,000 psig.'); }
         }
         return errors.length ? { errors: errors, bad: bad } : null;
     }
@@ -93404,6 +93516,10 @@ G.WTS_calcRegistry.historian = {
         if (inp && typeof inp === 'object') for (k in inp) if (_has(inp, k) && inp[k] !== undefined) out[k] = inp[k];
         return out;
     }
+
+    var ZERO_TXT = { refused: 'refused: enter a lab hydrate temperature', norate: 'no rate given: see ✗', nodose: 'no dose entered', batch: 'batch only' };
+    // A THI line with a rate at or upstream of node nd (protection also needs !t.protectWhy).
+    function _covers(t, nd) { return t.kind === 'thi' && t.hydrate && t.hydrate.ok && t.rate.gal_d > 0 && _ptOrder(t.point) <= LOC_ORDER[nd.loc]; }
 
     // ── WTS_cheminj_compute (plan §6.3) ──────────────────────────────
     function compute(input, opts) {
@@ -93428,7 +93544,7 @@ G.WTS_calcRegistry.historian = {
         // Spread (or a precomputed one for loops)
         var pre = input.precomputed && input.precomputed.spread;
         var S = (pre && pre.ok) ? pre : spread({
-            qg: st.qg, sg: st.sg, h2s: st.h2s, co2: st.co2, n2: st.n2,
+            qg: st.qg, sg: st.sg, h2s: st.h2s, co2: st.co2, n2: st.n2, qo: st.qo, qw: st.qw, api: st.api, sgw: st.sgw,
             sithp: sp.sithp, fwhp: sp.fwhp, fwht: sp.fwht, tamb: sp.tamb, pck: sp.pck, jt: sp.jt, tck: sp.tck,
             htr: sp.htr, thtr: sp.thtr, psep: sp.psep, tsep: sp.tsep, whclass: sp.whclass,
             margin: b.margin, fJT: b.fJT, sour: b.sour, thsrc: b.thsrc, thuser: b.thuser, thuserp: b.thuserp
@@ -93467,7 +93583,7 @@ G.WTS_calcRegistry.historian = {
                     ratio = scavRatio({ mw: u.c.stoich.mw, nH2S: u.c.stoich.n, activePct: _opt(u.l.active, u.c.stoich.activePct), sg: u.sgc, eff: eff });
                     if (ratio.ok) {
                         R = ratio.galPerLb;
-                        if (ratio.effClamped) r.verdicts.push(_V('warn', 'eff_clamped', 'Utilisation raised to ' + _grp(ratio.eff, 3) + ' so that the ratio stays within 10 gal/lb.'));
+                        if (ratio.effClamped) r.verdicts.push(_V('warn', 'eff_clamped', 'Utilisation raised to ' + _grp(ratio.eff, 3) + ' so that the ratio stays within ' + F.galLb(10) + '.'));
                     }
                 }
                 var fam = L.family(u.c.family);
@@ -93488,7 +93604,7 @@ G.WTS_calcRegistry.historian = {
                 if (!_fin(d0)) { r.gal_d = 0; r.verdicts.push(_V('warn', 'no_dose', 'Enter the dose for this chemical.')); r.doseUsed = null; }
                 else {
                     var dr = doseRate({
-                        basis: u.basis, dose: d0, activePct: u.active, qo: st.qo, qw: st.qw, qg: st.qg, api: st.api, sgw: st.sgw, sgc: u.sgc,
+                        basis: u.basis, dose: d0, activePct: u.active, qo: st.qo, qw: st.qw, qg: st.qg, api: st.api, sgw: st.sgw, sgc: u.sgc, phases: u.pt.phases,
                         qwCtrl: u.basis === 'vol_water' ? qwCtrl(u.pt.key) : undefined, h2sOil: st.h2so, o2: _opt(u.l.o2, 0.5)
                     });
                     r.dose = dr; r.gal_d = dr.gal_d; r.doseUsed = d0; r.activePpm = dr.activePpm;
@@ -93545,10 +93661,10 @@ G.WTS_calcRegistry.historian = {
             var pumpIn = {
                 rate_gal_d: gal, pump: P.key, plunger_in: l.plunger, stroke_in: l.stroke, heads: l.heads, actD_in: l.actd,
                 eta: l.ve, beta: c.beta, spmMax: l.spmmax, qRated_galh: l.qrated, pmax: l.pmax, q0_galh: l.q0, ratio: l.ratio, vcyc_in3: l.vcyc, rod: l.rod,
-                psup: b.psup, peakF: u.peak, minF: b.minf, pRating: ip0.pRating, pReq: ip0.pReq, bandG: b.bandG, bandA: b.bandA, haz: sp.haz
+                psup: b.psup, peakF: u.peak, minF: b.minf, pRating: ip0.pRating, pReq: ip0.pReq, pFlow: ip0.pReqFlow, bandG: b.bandG, bandA: b.bandA, haz: sp.haz
             };
             var ps = pumpSetting(pumpIn);
-            ipIn.pumpPmax = ps.pMax;
+            ipIn.pumpRating = ps.pumpRating;
             var ip = injectionPressure(ipIn);
             var opt = opts.noOptions ? null : pumpOptions(_merge(pumpIn, { current: { pump: P.key } }));
             var gasKind = P.kind === 'plunger' && P.setting === 'spm' ? 'pneumatic' : P.kind === 'airliquid' ? 'airliquid' : P.kind === 'transfer' ? 'transfer' : null;
@@ -93556,23 +93672,41 @@ G.WTS_calcRegistry.historian = {
                 kind: gasKind, actD_in: ps.actD_in, stroke_in: ps.stroke_in, heads: ps.heads, plunger_in: ps.plunger_in, spm: ps.spm,
                 pdDesign_psig: ip.pReq, airPeak_psig: ps.airPeak, psup: b.psup, etaM: P.etaM, pSpring: P.pSpring, gasType: sp.supgas, h2s_ppm: st.h2s, vm: vm
             });
-            if (gal > 0) {
-                ps.verdicts.forEach(function (x) { lv.push(x); });
-                if (gasKind) sg2.verdicts.forEach(function (x) { lv.push(x); });
-            } else if (P.electric && sp.haz === 'yes') lv.push(_V('warn', 'haz_electric', 'Electric pump in a classified area: motor and controls must be certified for the zone (API RP 500/505).'));
+            if (gal > 0) ps.verdicts.forEach(function (x) { lv.push(x); });
+            else if (P.electric && sp.haz === 'yes') lv.push(_V('warn', 'haz_electric', 'Electric pump in a classified area: motor and controls must be certified for the zone (API RP 500/505).'));
+            // Drive gas (stall at the shut-in pressure, sour or sweet produced gas) applies to the
+            // pump whatever the steady rate: it still runs for start-up, shut-in or a refused dose.
+            if (gasKind) sg2.verdicts.forEach(function (x) { lv.push(x); });
             ip.verdicts.forEach(function (x) { lv.push(x); });
             var fc = fieldCheck(gal, u.peak);
             var tk = (l.tank === undefined || _blank(l.tank)) ? null : tank({ V_gal: Number(l.tank), rate_gal_d: gal, days: b.days });
             if (tk) tk.verdicts.forEach(function (x) { lv.push(x); });
             var setTxt = _settingText(ps);
-            var chip = c.short + ' · ' + pt.short + ' · ' + (gal > 0 ? F.galD(gal) : 'no flow') + (setTxt ? ' · ' + setTxt : '');
+            // A zero rate that is not a real zero demand (no risk, no water, no H2S) says why.
+            var zero = null;
+            if (!(gal > 0)) {
+                if (r.hydrate && r.hydrate.ok && r.hydrate.noRate) zero = r.hydrate.refused ? 'refused' : 'norate';
+                else if (u.basis === 'batch_gal') zero = 'batch';
+                else if (r.verdicts.some(function (x) { return x.code === 'no_dose'; })) zero = 'nodose';
+                else if (r.verdicts.some(function (x) { return x.level === 'bad'; })) zero = 'norate';
+            }
+            var zeroText = zero ? ZERO_TXT[zero] : '';
+            var chip = c.short + ' · ' + pt.short + ' · ' + (gal > 0 ? F.galD(gal) : (zeroText || 'no flow')) + (setTxt ? ' · ' + setTxt : '');
+            // A THI line protects downstream nodes only when its dose meets the design and its
+            // pump can deliver it at the required pressure (rate, pressure and drive gas).
+            var protectWhy = null;
+            if (c.kind === 'thi' && r.hydrate && r.hydrate.ok && gal > 0) {
+                if (r.hydrate.underDosed) protectWhy = 'line ' + u.n + ' rich ' + _grp(r.hydrate.XR, 2) + ' wt % entered is below the required ' + _grp(r.hydrate.XRdesign, 2) + ' wt %';
+                else if (!ps.deliverable) protectWhy = 'the line ' + u.n + ' pump cannot deliver the design dose at the required pressure (see line ' + u.n + ')';
+            }
             lines.push({
                 n: u.n, point: pt.key, pointLabel: pt.label, pointShort: pt.short, chem: c.key, chemName: c.name, chemShort: c.short, kind: c.kind,
                 basis: u.basis, dose: r.doseUsed, sgc: u.sgc, water: u.water, peakF: u.peak, suit: si,
                 rate: rates, peak_gal_d: gal * u.peak, achieved: r.achieved || null, activePpm: r.activePpm != null ? r.activePpm : null,
                 hydrate: r.hydrate || null, scav: r.scav || null, ratio: r.ratio || null, doseCalc: r.dose || null,
                 pump: ps, options: opt, pressure: ip, gas: sg2, field: fc, supply: tk, dPdT_psiF: c.dPdT,
-                setting: setTxt, chip: chip, verdicts: lv, level: _worst(lv)
+                setting: setTxt, chip: chip, zero: zero, zeroText: zeroText, noRate: zero === 'refused' || zero === 'norate', protectWhy: protectWhy,
+                verdicts: lv, level: _worst(lv)
             });
         });
         // Aqueous chemicals upstream of an unprotected hydrate-risk node (§3.2 rule 8)
@@ -93582,7 +93716,7 @@ G.WTS_calcRegistry.historian = {
             var o = _ptOrder(ln.point);
             var risk = S.nodes.filter(function (nd) { return nd.dTreq > 0 && LOC_ORDER[nd.loc] >= o; });
             risk.forEach(function (nd) {
-                var prot = lines.some(function (t) { return t.kind === 'thi' && t.hydrate && t.rate.gal_d > 0 && _ptOrder(t.point) <= LOC_ORDER[nd.loc]; });
+                var prot = lines.some(function (t) { return _covers(t, nd) && !t.protectWhy; });
                 if (!prot && !ln.verdicts.some(function (x) { return x.code === 'aq_hydrate'; })) {
                     ln.verdicts.push(_V('warn', 'aq_hydrate', u.c.short + ' is about ' + _grp(u.water * 100, 0) + ' % water and is injected upstream of a hydrate-risk node (' + nd.label + ') with no hydrate inhibitor: it can form hydrate or ice there.'));
                     ln.level = _worst(ln.verdicts);
@@ -93591,14 +93725,17 @@ G.WTS_calcRegistry.historian = {
         });
         // Hydrate block (spread + node verdicts with the inhibitor lines)
         var hv = S.verdicts.slice();
-        S.nodes.forEach(function (nd) {
+        // Refused correlation: no node, shut-in or start-up status (the sour_refused ✗ says why).
+        if (!S.margin.refused) S.nodes.forEach(function (nd) {
             if (!(nd.dTreq > 0)) return;
-            var prot = lines.filter(function (t) { return t.kind === 'thi' && t.hydrate && t.rate.gal_d > 0 && _ptOrder(t.point) <= LOC_ORDER[nd.loc]; });
-            if (prot.length) hv.push(_V('ok', 'node_protected', nd.label + ' is protected by line ' + prot.map(function (t) { return t.n; }).join(', ') + ' (' + prot[0].chemShort + ', margin ' + F.dt(S.margin.used) + ').'));
+            var cover = lines.filter(function (t) { return _covers(t, nd); });
+            var prot = cover.filter(function (t) { return !t.protectWhy; });
+            if (!prot.length && cover.length) hv.push(_V(nd.status === 'bad' ? 'bad' : 'warn', 'node_unprotected', nd.label + ' is not protected: ' + cover.map(function (t) { return t.protectWhy; }).join('; ') + '.'));
+            else if (prot.length) hv.push(_V('ok', 'node_protected', nd.label + ' is protected by line ' + prot.map(function (t) { return t.n; }).join(', ') + ' (' + prot[0].chemShort + ', margin ' + F.dt(S.margin.used) + ').'));
             else if (nd.status === 'bad') hv.push(_V('bad', 'node_risk', 'Hydrate risk at ' + nd.label.toLowerCase() + ': ' + F.t(nd.t_F) + ' is ' + F.dt(nd.sub) + ' below the hydrate temperature ' + F.t(nd.thyd) + ' (margin ' + F.dt(S.margin.used) + '). Inject upstream of ' + nd.label.toLowerCase() + '.'));
             else hv.push(_V('warn', 'node_margin', nd.label + ' is within the ' + F.dt(S.margin.used) + ' hydrate margin (' + F.t(nd.t_F) + ' against ' + F.t(nd.thyd) + ').'));
         });
-        [S.shutin, S.startup].forEach(function (nd) {
+        if (!S.margin.refused) [S.shutin, S.startup].forEach(function (nd) {
             if (!(nd.dTreq > 0)) return;
             var thi = lines.filter(function (t) { return t.kind === 'thi' && t.hydrate && t.hydrate.ok; })[0];
             var cr = thi ? (nd.key === 'si' ? thi.hydrate.shutin : thi.hydrate.startup) : null;
@@ -93625,7 +93762,7 @@ G.WTS_calcRegistry.historian = {
         });
         var summary = {
             rows: lines.map(function (ln) {
-                return { n: ln.n, point: ln.pointShort, chem: ln.chemShort, gal_d: ln.rate.gal_d, mL_min: ln.rate.mL_min, pump: ln.pump.name, setting: ln.setting,
+                return { n: ln.n, point: ln.pointShort, chem: ln.chemShort, gal_d: ln.rate.gal_d, mL_min: ln.rate.mL_min, pump: ln.pump.name, setting: ln.setting, zeroText: ln.zeroText,
                     pReq: ln.pressure.pReq, pRating: ln.pressure.pRating, level: ln.level };
             }),
             inventory: Object.keys(inv).map(function (k) { return inv[k]; }),
@@ -93639,7 +93776,9 @@ G.WTS_calcRegistry.historian = {
             var ps2 = ln.pump;
             var kind = ps2.kind === 'airliquid' ? 'air' : (ps2.setting === 'spm' ? 'spm' : 'stroke_speed');
             cal = calibration({ mL: Number(ci.mL), s: Number(ci.s), setting: Number(ci.setting), kind: kind, Vs_mL: ps2.Vs_mL, heads: ps2.heads,
-                target_gal_d: ln.rate.gal_d, pReq: ln.pressure.pReq, ratio: ps2.ratio });
+                target_gal_d: ln.rate.gal_d, pReq: ln.pressure.pReq, ratio: ps2.ratio,
+                pTest: _opt(ci.pd, ln.pressure.pReqFlow) });
+            cal.pTestEntered = !(ci.pd === undefined || _blank(ci.pd));
             cal.line = ln.n;
         }
         var basisEcho = {
@@ -93718,7 +93857,7 @@ G.WTS_calcRegistry.historian = {
         cj_sithp: 'pressureG', cj_fwhp: 'pressureG', cj_fwht: 'temperature', cj_tamb: 'temperature', cj_pck: 'pressureG',
         cj_tck: 'temperature', cj_thtr: 'temperature', cj_psep: 'pressureG', cj_tsep: 'temperature', cj_psvsep: 'pressureG',
         cj_pbpv: 'pressureG', cj_margin: 'tempDelta', cj_thuser: 'temperature', cj_thuserp: 'pressureG', cj_pmabs: 'pressure',
-        cj_psup: 'pressureG', cj_fc: 'lbPerBbl', cj_sour: 'tempDelta', cj_cal_air: 'pressureG'
+        cj_psup: 'pressureG', cj_fc: 'lbPerBbl', cj_sour: 'tempDelta', cj_cal_air: 'pressureG', cj_cal_pd: 'pressureG'
     };
     var LN_UNITS = { qrated: 'chemRateHr', pmax: 'pressureG', q0: 'chemRateHr', vcyc: 'volPerStroke', tank: 'volumeSmall', rod: 'force', dpq: 'pressure', mawp: 'pressureG' };
 
@@ -93763,8 +93902,9 @@ G.WTS_calcRegistry.historian = {
         return _nf(galD, galD < 10 ? 3 : 2) + ' gal/d';
     }
     // gal/d · L/d · L/h · mL/min (Metric: L/d · L/h · mL/min)
-    function _rateTxt(r) {
-        if (!r || !(r.gal_d > 0)) return 'No flow required';
+    function _cap1(s) { s = String(s || ''); return s.charAt(0).toUpperCase() + s.slice(1); }
+    function _rateTxt(r, zeroText) {
+        if (!r || !(r.gal_d > 0)) return zeroText ? _cap1(zeroText) : 'No flow required';
         var mm = _nf(r.mL_min, r.mL_min < 10 ? 2 : 1) + ' mL/min', lh = _nf(r.L_hr, r.L_hr < 10 ? 3 : 2) + ' L/h', ld = _nf(r.L_d, r.L_d < 10 ? 2 : 1) + ' L/d';
         return _isM() ? ld + ' · ' + lh + ' · ' + mm : _nf(r.gal_d, r.gal_d < 10 ? 3 : 2) + ' gal/d · ' + ld + ' · ' + lh + ' · ' + mm;
     }
@@ -93782,9 +93922,16 @@ G.WTS_calcRegistry.historian = {
             lbD: function (v) { return _qv(v, 'massRateDay', 1, 'lb/d', 1); },
             scfD: function (v) { return _nf(v * 0.028316846592, 1) + ' Sm³/d'; },
             psiF: function (v) { return _nf(v * 6.894757293168 * 1.8, 0) + ' kPa per °C'; },
-            inch: function (v) { return _frac(v) + ' in (' + _nf(v * 25.4, 1) + ' mm)'; }
+            inch: function (v) { return _frac(v) + ' in (' + _nf(v * 25.4, 1) + ' mm)'; },
+            pA0: function (v) { return _qv(v, 'pressure', 0, 'psia', 0); },
+            t0: function (v) { return _qv(v, 'temperature', 0, '°F', 1); },
+            scfH: function (v) { return _nf(v * 0.028316846592, 3) + ' Sm³/h'; },
+            lbD4: function (v) { return _nf(v * 0.45359237, 4) + ' kg/d'; },
+            galLb: function (v) { return _nf(v * GAL_L / 0.45359237, 1) + ' L/kg'; },
+            jtRule: function () { return '0.56 °C per bar'; }
         };
     }
+    function _ruleTxt() { return _isM() ? '0.56 °C per bar' : '7 °F per 100 psi'; }
     function _sizeTxt(d) { return _isM() ? _frac(d) + ' in (' + _nf(d * 25.4, 1) + ' mm)' : _frac(d) + ' in'; }
 
     // ── Markup ───────────────────────────────────────────────────────
@@ -93977,6 +94124,7 @@ G.WTS_calcRegistry.historian = {
             _fnum('cj_cal_s', 'Measured time (s)', '', ' min="0" placeholder="e.g. 60"') +
             _fnum('cj_cal_set', 'Setting during the test (SPM)', '', ' min="0"') +
             _fnum('cj_cal_air', 'Air pressure during the test (psig)', '', ' min="0"', ' style="display:none"') +
+            _fnum('cj_cal_pd', 'Discharge pressure during the test, blank = flowing line pressure + allowance (psig)', '', ' min="0" placeholder="auto"', ' style="display:none"') +
             '</div></div>' +
             '<div id="cj_res"></div>' +
             '<div class="card" id="cj_charts"><div class="card-title">Charts</div>' +
@@ -94023,6 +94171,7 @@ G.WTS_calcRegistry.historian = {
         // calibration: air pressure for an air-driven line, else SPM / % speed / % stroke
         var cl = parseInt(_sv('cj_cal_line'), 10) || 1, P = L.pump(_sv('cj_pump_' + cl)), air = !!(P && P.kind === 'airliquid');
         _show(_wrapOf('cj_cal_air'), air);
+        _show(_wrapOf('cj_cal_pd'), air);
         _show(_wrapOf('cj_cal_set'), !air);
         var cs = _wrapOf('cj_cal_set'), csl = cs ? cs.querySelector('label') : null;
         if (csl && P) csl.textContent = 'Setting during the test (' + (P.setting === 'spm' ? 'SPM' : P.kind === 'transfer' ? 'cycles/min' : (P.kind === 'plunger' && !P.vfd) ? '% stroke' : '% speed') + ')';
@@ -94081,6 +94230,7 @@ G.WTS_calcRegistry.historian = {
             _setv('cj_ratio_' + n, P.ratio);
             _setv('cj_vcyc_' + n, P.vcyc_in3);
         } else if (P.kind === 'transfer') _setv('cj_q0_' + n, P.q0_galh);
+        if (P.kind !== 'airliquid') { _setv('cj_ratio_' + n, ''); _setv('cj_vcyc_' + n, ''); }
         _setv('cj_spmmax_' + n, '');
     }
     function _onChange(e) {
@@ -94107,10 +94257,12 @@ G.WTS_calcRegistry.historian = {
         if (map.cj_cal_ml !== '' && map.cj_cal_ml !== undefined) {
             var P = L.pump(map['cj_pump_' + cl]), set = (P && P.kind === 'airliquid') ? map.cj_cal_air : map.cj_cal_set;
             var pos = function (v) { var x = Number(v); return v !== '' && v != null && isFinite(x) && x > 0 && x < 1e7; };
+            var air = !!(P && P.kind === 'airliquid'), pd = map.cj_cal_pd, pdx = Number(pd);
+            var pdOk = !air || pd === '' || pd == null || (isFinite(pdx) && pdx >= 0 && pdx <= 30000);
             if (cl > nl) ctx.calUnused = true;
-            else if (!(pos(map.cj_cal_ml) && pos(map.cj_cal_s) && pos(set))) ctx.calIncomplete = true;
-            if (ctx.calUnused || ctx.calIncomplete) inp.cal = { line: 1, mL: '', s: '', setting: '' };
-            else inp.cal.setting = set;
+            else if (!(pos(map.cj_cal_ml) && pos(map.cj_cal_s) && pos(set) && pdOk)) ctx.calIncomplete = true;
+            if (ctx.calUnused || ctx.calIncomplete) inp.cal = { line: 1, mL: '', s: '', setting: '', pd: '' };
+            else { inp.cal.setting = set; if (!air) inp.cal.pd = ''; }
         }
         return { inp: inp, map: map, ctx: ctx };
     }
@@ -94140,7 +94292,7 @@ G.WTS_calcRegistry.historian = {
         r.summary.verdicts.forEach(function (v) { if (v.level === 'bad') lv = 'bad'; });
         var l1 = r.lines[0];
         var one = function (ln) {
-            return ln.chemShort + ' ' + _low1(ln.pointShort) + ', ' + (ln.rate.gal_d > 0 ? _rq(ln.rate.gal_d) + ' (' + _nf(ln.rate.mL_min, 1) + ' mL/min)' + (ln.setting ? ', ' + ln.setting : '') : 'no flow required');
+            return ln.chemShort + ' ' + _low1(ln.pointShort) + ', ' + (ln.rate.gal_d > 0 ? _rq(ln.rate.gal_d) + ' (' + _nf(ln.rate.mL_min, 1) + ' mL/min)' + (ln.setting ? ', ' + ln.setting : '') : (ln.zeroText || 'no flow required'));
         };
         var t = r.lines.length === 1 ? 'Line 1: ' + one(l1) + '.'
             : r.lines.length + ' injection lines, ' + _rq(r.summary.total_gal_d) + ' in total. Line 1: ' + one(l1) + '.';
@@ -94153,8 +94305,8 @@ G.WTS_calcRegistry.historian = {
         h += _rrow('Hydrate temperature', S.thydSrc === 'user'
             ? 'User value ' + _qv(Number(r.input.basis.thuser), 'temperature', 1, '°F') + ' at ' + _qv(Number(r.input.basis.thuserp), 'pressureG', 0, 'psig') + ', correlation curve shifted in parallel'
             : 'Gas-gravity correlation (Towler–Mokhatab), sweet gas, about ±' + _qv(5, 'tempDelta', 1, '°F'), true);
-        h += _rrow('Choke outlet temperature', b.jt === 'ise' ? 'Real-gas isenthalpic (DAK) with J-T cooling × ' + _nf(b.fJT, 2, 2)
-            : b.jt === 'rule' ? '7 °F per 100 psi rule (quick check)' : 'User value', true);
+        h += _rrow('Choke outlet temperature', b.jt === 'ise' ? 'Real-gas isenthalpic (DAK) for the gas only (liquids reduce the cooling), with J-T cooling × ' + _nf(b.fJT, 2, 2)
+            : b.jt === 'rule' ? _ruleTxt() + ' rule (quick check)' : 'User value', true);
         h += _rrow('Depression method', b.method === 'ham' ? 'Hammerschmidt (forced, comparison only)' : b.method === 'nb' ? 'Nielsen–Bucklin (forced, comparison only)'
             : 'Larger of Hammerschmidt and Nielsen–Bucklin (Hammerschmidt only for DEG and TEG)', true);
         h += _rrow('Condensed water', b.cond === 'all' ? 'All vapour water condenses at the cold node (conservative)' : 'Bukacek water content, gas saturated at the flowhead', true);
@@ -94172,7 +94324,7 @@ G.WTS_calcRegistry.historian = {
             _qv(b.sour, 'tempDelta', 1, '°F') + ' per mol %; bands green ≤ ' + _nf(b.bandG, 0) + ' %, amber ≤ ' + _nf(b.bandA, 0) + ' %; minimum-rate factor ' + _nf(b.minf, 2), true);
         return h + '</div>';
     }
-    function _statusTxt(s) { return s === 'bad' ? '✗ hydrate region' : s === 'warn' ? '⚠ within margin' : '✓ no risk'; }
+    function _statusTxt(s) { return s === 'refused' ? '✗ refused: enter a lab hydrate temperature' : s === 'bad' ? '✗ hydrate region' : s === 'warn' ? '⚠ within margin' : '✓ no risk'; }
     function _thiRows(ln, prefix) {
         var hd = ln.hydrate, h = '', c = _lib().find(ln.chem), name = c ? _low1(c.short) : 'inhibitor';
         if (!hd || !hd.ok) return '';
@@ -94195,14 +94347,15 @@ G.WTS_calcRegistry.historian = {
         }
         return h;
     }
-    function _caseTxt(cr, chemName, dT) {
+    function _caseTxt(cr, chemName, dT, refused) {
+        if (refused) return 'Not assessed: the sweet-gas correlation is refused; enter a lab or composition-based hydrate temperature';
         if (!(dT > 0)) return 'No inhibitor needed with the margin';
         if (!cr) return 'Depression needed ' + _qv(dT, 'tempDelta', 2, '°F');
         return _nf(cr.XR, 2, 2) + ' wt % ' + chemName + ' (depression ' + _qv(dT, 'tempDelta', 2, '°F') + ')';
     }
     function _spreadBox(r) {
         var S = r.spread, H = r.hydrate, m = S.margin, b = r.basis, h = '';
-        var jt = b.jt === 'ise' ? 'J-T × ' + _nf(b.fJT, 2, 2) : b.jt === 'rule' ? (_isM() ? 'J-T 0.56 °C per bar' : 'J-T 7 °F per 100 psi') : 'choke temperature entered';
+        var jt = b.jt === 'ise' ? 'J-T × ' + _nf(b.fJT, 2, 2) : b.jt === 'rule' ? 'J-T ' + _ruleTxt() : 'choke temperature entered';
         h += '<div class="rbox" id="cj_rb_spread"><div class="rbox-title">Spread hydrate check (margin ' + _esc(_qv(m.used, 'tempDelta', 1, '°F')) + ', ' + _esc(jt) + ')</div>';
         var rows = S.nodes.concat([S.shutin, S.startup]).map(function (nd) {
             return [nd.label, _nf(_dv(nd.p_psig, 'pressureG'), 0),
@@ -94213,13 +94366,13 @@ G.WTS_calcRegistry.historian = {
             'Subcooling, hydrate − T (' + _ul('tempDelta', '°F') + ')', 'Status'], rows);
         var ck = H.jt.choke;
         h += _rrow('Choke outlet temperature', ck.method === 'ise' ? _qv(ck.t, 'temperature', 2, '°F') + ' design (DAK ' + _qv(ck.tDak, 'temperature', 2, '°F') + ', J-T × ' + _nf(b.fJT, 2, 2) + ')'
-            : ck.method === 'rule' ? _qv(ck.t, 'temperature', 2, '°F') + ' (7 °F per 100 psi rule)' : _qv(ck.t, 'temperature', 2, '°F') + ' (entered)');
+            : ck.method === 'rule' ? _qv(ck.t, 'temperature', 2, '°F') + ' (' + _ruleTxt() + ' rule)' : _qv(ck.t, 'temperature', 2, '°F') + ' (entered)');
         h += _rrow('Design margin used', _qv(m.used, 'tempDelta', 1, '°F') + (m.adder > 0 ? ' (includes ' + _qv(m.adder, 'tempDelta', 1, '°F') + ' sour adder)' : ''));
         var thi = r.lines.filter(function (ln) { return ln.kind === 'thi' && ln.hydrate; });
         thi.forEach(function (ln) { h += _thiRows(ln, thi.length > 1 ? 'Line ' + ln.n + ': ' : ''); });
         var t0 = thi.filter(function (ln) { return ln.hydrate.ok; })[0], cn = t0 ? _low1(t0.chemShort) : '';
-        h += _rrow('Shut-in requirement (SITHP, ambient)', _caseTxt(t0 && t0.hydrate.shutin, cn, S.shutin.dTreq), true);
-        h += _rrow('Start-up requirement (cold tree to choke outlet)', _caseTxt(t0 && t0.hydrate.startup, cn, S.startup.dTreq), true);
+        h += _rrow('Shut-in requirement (SITHP, ambient)', _caseTxt(t0 && t0.hydrate.shutin, cn, S.shutin.dTreq, m.refused), true);
+        h += _rrow('Start-up requirement (cold tree to choke outlet)', _caseTxt(t0 && t0.hydrate.startup, cn, S.startup.dTreq, m.refused), true);
         if (!thi.length && S.nodes.some(function (nd) { return nd.dTreq > 0; })) h += _rrow('Hydrate inhibitor line', 'None: add a line with a thermodynamic inhibitor upstream of the first risk node', true);
         var seen = {};
         H.verdicts.forEach(function (v) { if (!seen[v.text]) { seen[v.text] = 1; h += _vdiv(v); } });
@@ -94237,11 +94390,16 @@ G.WTS_calcRegistry.historian = {
     function _pumpRows(ln, r) {
         var ps = ln.pump, h = '';
         h += _rrow('Pump', _pumpCfgTxt(ps), true);
-        if (ps.noFlow) return h + _rrow('Pump setting', 'No flow required', true);
+        if (ps.noFlow) return h + _rrow('Pump setting', ln.zeroText ? _cap1(ln.zeroText) : 'No flow required', true);
         if (ps.kind === 'airliquid') {
-            h += _rrow('Air pressure setting: design · peak', ps.airDesign != null
+            h += _rrow('Air pressure setting at the shut-in design pressure: design · peak', ps.airDesign != null
                 ? _qv(ps.airDesign, 'pressureG', 1, 'psig', 0) + ' · ' + (ps.airPeak != null ? _qv(ps.airPeak, 'pressureG', 1, 'psig', 0) : 'peak not reachable')
                 : 'Not reachable at the required pressure');
+            if (ps.pFlow < ps.pReq - 0.5) {
+                h += _rrow('Operating air setting while flowing (' + _qv(ps.pFlow, 'pressureG', 0, 'psig') + '): design · peak', ps.airFlow != null
+                    ? _qv(ps.airFlow, 'pressureG', 1, 'psig', 0) + ' · ' + (ps.airFlowPeak != null ? _qv(ps.airFlowPeak, 'pressureG', 1, 'psig', 0) : 'peak not reachable')
+                    : 'Not reachable');
+            }
             h += _rrow('Flow at the required pressure with full air', _rq(ps.qAtPreq) + ' at ' + _qv(ps.pReq, 'pressureG', 0, 'psig'));
             h += _rrow('Cycles per minute (field count): design · peak', ps.cyclesMin != null ? _nf(ps.cyclesMin, 1, 1) + ' · ' + _nf(ps.cyclesPeak, 1, 1) : '—');
             h += _rrow('Stall pressure at the design setting', ps.pStallDesign != null ? _qv(ps.pStallDesign, 'pressureG', 0, 'psig') : '—');
@@ -94286,7 +94444,7 @@ G.WTS_calcRegistry.historian = {
         });
         var c = op.current;
         if (c && c.ok) {
-            rows.push(['Current', _pumpCfgTxt(c), c.noFlow ? 'no flow' : _optSetting(c), c.noFlow ? '—' : _pctTxt(c.pct) + ' (peak ' + _pctTxt(c.peakPct) + ')',
+            rows.push(['Current', _pumpCfgTxt(c), c.noFlow ? (ln.zeroText || 'no flow') : _optSetting(c), c.noFlow ? '—' : _pctTxt(c.pct) + ' (peak ' + _pctTxt(c.peakPct) + ')',
                 _nf(_dv(c.pMax, 'pressureG'), 0), c.feasible ? '✓ feasible' : '✗ ' + (c.whyText || 'not feasible')]);
         }
         var h = _subh('Pump options (top 3 feasible, ranked; then the current choice)') +
@@ -94351,7 +94509,7 @@ G.WTS_calcRegistry.historian = {
     function _lineBox(r, ln) {
         var h = '<div class="rbox" id="cj_rb_line_' + ln.n + '"><div class="rbox-title">' + _esc('Line ' + ln.n + ' — ' + _lineName(ln)) + '</div>';
         h += _subh('Rate');
-        h += _rrow('Chemical rate', _rateTxt(ln.rate));
+        h += _rrow('Chemical rate', _rateTxt(ln.rate, ln.zeroText));
         if (ln.rate.gal_d > 0) h += _rrow('Peak / start-up rate (× ' + _nf(ln.peakF, 2, 1) + ')', _rq(ln.peak_gal_d));
         h += _doseRows(ln);
         h += _subh('Pump setting') + _pumpRows(ln, r);
@@ -94379,7 +94537,7 @@ G.WTS_calcRegistry.historian = {
         h += _tbl(['Line', 'Point', 'Chemical', 'Rate (' + (_isM() ? 'L/h' : 'gal/d') + ')', 'Rate (mL/min)', 'Pump', 'Setting', 'Required (' + _ul('pressureG', 'psig') + ')', 'Rating (' + _ul('pressureG', 'psig') + ')', 'Verdict'],
             r.summary.rows.map(function (s) {
                 var q = _isM() ? s.gal_d * GAL_L / 24 : s.gal_d;
-                return [String(s.n), s.point, s.chem, _nf(q, q < 10 ? 3 : 2), _nf(s.mL_min, 1), _pumpLabel({ short: s.pump }), s.setting || 'no flow',
+                return [String(s.n), s.point, s.chem, _nf(q, q < 10 ? 3 : 2), _nf(s.mL_min, 1), _pumpLabel({ short: s.pump }), s.setting || s.zeroText || 'no flow',
                     _nf(_dv(s.pReq, 'pressureG'), 0), _nf(_dv(s.pRating, 'pressureG'), 0), SYM[s.level] || '⚠'];
             }));
         r.summary.inventory.forEach(function (e) {
@@ -94397,7 +94555,7 @@ G.WTS_calcRegistry.historian = {
         }
         if (rd.ctx.calIncomplete) {
             return '<div class="rbox" id="cj_rb_cal"><div class="rbox-title">Field calibration check, line ' + rd.ctx.calLine + '</div>' +
-                _vdiv({ level: 'warn', text: 'Enter the measured volume, the time and the pump setting during the test (all above 0) to check line ' + rd.ctx.calLine + '.' }) + '</div>';
+                _vdiv({ level: 'warn', text: 'Enter the measured volume, the time and the pump setting during the test (all above 0; a discharge pressure, when entered, 0 or more) to check line ' + rd.ctx.calLine + '.' }) + '</div>';
         }
         if (!c) return '';
         var ln = r.lines[c.line - 1], ps = ln.pump, h = '<div class="rbox" id="cj_rb_cal"><div class="rbox-title">Field calibration check, line ' + c.line + '</div>';
@@ -94412,6 +94570,7 @@ G.WTS_calcRegistry.historian = {
         h += _rrow('Target rate', _rq(ln.rate.gal_d));
         if (c.withinPct != null) h += _rrow('Deviation from target', (c.withinPct > 0 ? '+' : '') + _nf(c.withinPct, 1, 1) + ' %');
         if (c.etaActual != null) h += _rrow('Measured volumetric efficiency', _nf(c.etaActual, 3, 3));
+        if (air && c.pTest != null) h += _rrow('Discharge pressure during the test', _qv(c.pTest, 'pressureG', 0, 'psig') + (c.pTestEntered ? ' (entered)' : ' (flowing line pressure + allowance)'));
         if (c.q0Refit_gal_d != null) h += _rrow('Free flow re-fitted to the test', _rq(c.q0Refit_gal_d));
         h += _rrow('Corrected setting', setTxt(c.newSetting));
         if (c.withinPct != null) {
@@ -94423,7 +94582,7 @@ G.WTS_calcRegistry.historian = {
         return h + '</div>';
     }
     var NOTES = [
-        'Methods. Hydrate temperature: gas-gravity correlation (Towler–Mokhatab 2005), sweet gas, about ±5 °F. Choke temperature: real-gas isenthalpic (DAK) with J-T cooling × {fjt} for design. Depression: larger of Hammerschmidt and Nielsen–Bucklin (Hammerschmidt only for DEG/TEG). Water: free + condensed (Bukacek) + water in other aqueous chemicals. Methanol loss to gas: K-value correlation. Scavenger: stoichiometry ÷ utilisation. Pumps: displacement × volumetric efficiency. Downhole: tubing pressure + valve set + friction − hydrostatic.',
+        'Methods. Hydrate temperature: gas-gravity correlation (Towler–Mokhatab 2005), sweet gas, about ±5 °F. Choke temperature: real-gas isenthalpic (DAK) for the gas only (liquids reduce the cooling), with J-T cooling × {fjt} for design. Depression: larger of Hammerschmidt and Nielsen–Bucklin (Hammerschmidt only for DEG/TEG). Water: free + condensed (Bukacek) + water in other aqueous chemicals. Methanol loss to gas: K-value correlation. Scavenger: stoichiometry ÷ utilisation. Pumps: displacement × volumetric efficiency. Downhole: tubing pressure + valve set + friction − hydrostatic.',
         'Sour service and samples. The sour-service materials basis and the radius of exposure use the untreated H2S; scavenging does not change them. Take PVT and H2S samples upstream of the scavenger, or with it off. Do not drive pneumatic or air-driven pumps with sour produced gas: use instrument air, nitrogen or sweet gas, or route the exhaust to flare.',
         'Injection hardware and overpressure. Every tie-in: block valve, two check valves in series and a bleed, rated to the flowhead or manifold class and leak-tested before opening the well; a tie-in upstream of the surface safety valve can bypass it. Rate the pump discharge for the shut-in or tie-in pressure, not the operating pressure. Fit a relief valve on every pump discharge and drive-gas regulator. Size the tank vent for gas blow-by or fit a low-discharge-pressure trip: the pump relief valve does not protect the tank.',
         'Methanol. Flash point 52 °F (11 °C), near-invisible flame, toxic by skin, inhalation and ingestion (exposure limit 200 ppm, skin). Bond and ground during transfer; flame arrestor on the vent; bund at 110 %; shade the tank and keep a flooded suction. Separator water carrying methanol is itself flammable: treat water tanks, pits and lines as hazardous. With high-salinity brine, methanol can precipitate salt and scale. Area classification per API RP 500/505.',
@@ -94604,7 +94763,8 @@ G.WTS_calcRegistry.historian = {
             ok: true, ts: Date.now(),
             lines: r.lines.map(function (ln) {
                 return { n: ln.n, point: ln.point, chem: ln.chem, gal_d: ln.rate.gal_d, L_hr: ln.rate.L_hr, mL_min: ln.rate.mL_min, pump: ln.pump.pump,
-                    setting: ln.setting, spm: ln.pump.spm != null ? ln.pump.spm : null, pReq_psig: ln.pressure.pReq, pRating_psig: ln.pressure.pRating, verdict: ln.level };
+                    setting: ln.setting, spm: ln.pump.spm != null ? ln.pump.spm : null, pReq_psig: ln.pressure.pReq, pRating_psig: ln.pressure.pRating, verdict: ln.level,
+                    noRate: !!ln.noRate, zero: ln.zero || null };
             }),
             total_gal_d: r.summary.total_gal_d,
             hydrate: { controlNode: t && t.hydrate.control ? t.hydrate.control.key : null, dT: t ? t.hydrate.dT : null, XR: t ? t.hydrate.XR : null,

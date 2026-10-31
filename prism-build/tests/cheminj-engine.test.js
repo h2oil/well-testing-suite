@@ -488,12 +488,17 @@ module.exports = [
     wp: WP,
     run(app, assert) {
       const C = E(app);
-      const n = C.pumpSetting({ rate_gal_d: 30, pump: 'pneu_plunger', plunger_in: 0.25, stroke_in: 1, heads: 1, eta: 0.9, pReq: 1000, pRating: 1100, psup: 100, peakF: 1.25 });
+      // Plan N30 (steady rate, peak factor 1): 1/4 in at 108.9 SPM ✗ → 3/8 in at 48.4 SPM (80.7 %).
+      const n = C.pumpSetting({ rate_gal_d: 30, pump: 'pneu_plunger', plunger_in: 0.25, stroke_in: 1, heads: 1, eta: 0.9, pReq: 1000, pRating: 1100, psup: 100, peakF: 1 });
       assert.near(n.spm, 108.9, 0.1); assert.ok(codes(n.verdicts).indexOf('spm_over') !== -1 && !n.feasible, '✗ above the maximum SPM');
       assert.ok(n.nextPlunger && n.nextPlunger.plunger_in === 0.375, 'next plunger 3/8 in');
       assert.near(n.nextPlunger.spm, 48.4, 0.1);
       assert.includes(n.verdicts.filter((v) => v.code === 'spm_over')[0].text, 'Next plunger: 3/8 in at 48.4 SPM');
-      assert.strictEqual(C.nextPlunger({ rate_gal_d: 30, pump: 'pneu_plunger', plunger_in: 0.25, stroke_in: 1, eta: 0.9, pReq: 1000, pRating: 1100 }).plunger_in, 0.375);
+      // With a 1.25 peak factor 3/8 in peaks at 100.8 % (infeasible), so the suggestion is 1/2 in (27.2 SPM, peak 56.7 %).
+      const n2 = C.pumpSetting({ rate_gal_d: 30, pump: 'pneu_plunger', plunger_in: 0.25, stroke_in: 1, heads: 1, eta: 0.9, pReq: 1000, pRating: 1100, psup: 100, peakF: 1.25 });
+      assert.ok(n2.nextPlunger && n2.nextPlunger.plunger_in === 0.5, 'next feasible plunger 1/2 in at peak 1.25');
+      assert.near(n2.nextPlunger.spm, 27.2, 0.1);
+      assert.strictEqual(C.nextPlunger({ rate_gal_d: 30, pump: 'pneu_plunger', plunger_in: 0.25, stroke_in: 1, eta: 0.9, pReq: 1000, pRating: 1100 }).plunger_in, 0.5);
       const lo = C.pumpSetting({ rate_gal_d: 1, pump: 'pneu_plunger', plunger_in: 1, stroke_in: 1, eta: 0.9, pReq: 100, pRating: 200 });
       assert.ok(codes(lo.verdicts).indexOf('spm_min') !== -1 && lo.verdicts.filter((v) => v.code === 'spm_min')[0].level === 'bad', '✗ below the stable minimum');
       assert.ok(lo.nextPlunger && lo.nextPlunger.plunger_in === 0.1875, 'next smaller plunger 3/16 in');
