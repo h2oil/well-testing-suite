@@ -18,14 +18,18 @@
 //   Generic chemistry names only; no company, brand, product or web address.
 //
 // DIALOG
-//   Mounted inside #cj_root (navigation removes it with the page) as
-//   .cj-dlg-ov.rp-skip[data-rp-nosnap]: role="dialog", aria-modal="true",
-//   labelled by its title and described by its lead paragraph. Focus moves into
-//   the dialog and returns to the button that opened it; Esc, the × and Close
-//   buttons and a backdrop click close it; Tab stays inside. It holds no form
-//   control, so autosave, the report model and the calculation never see it,
-//   and opening it never recalculates. No timers and no document listeners:
-//   the keys are handled on the overlay, which holds the focus.
+//   A <dialog class="cj-dlg-ov rp-skip" data-rp-nosnap> mounted inside #cj_root
+//   (navigation removes it with the page) and shown with showModal(), so the page
+//   behind it is inert; without showModal() it is shown with the open attribute.
+//   role="dialog", aria-modal="true", labelled by its title and described by its
+//   lead paragraph. Focus moves into the dialog and returns to the button that
+//   opened it; Esc (keydown or the native cancel event), the × and Close buttons
+//   and a backdrop click close it; Tab stays inside. It holds no form control and
+//   the host's autosave and snapshot click listeners skip [data-rp-nosnap], so
+//   autosave, the report model and the calculation never see it, and opening it
+//   never recalculates. Design-basis values the user can edit are read from the
+//   last calculation (WTS_state.cheminj) and shown with the library default.
+//   No timers and no document listeners: the events are handled on the dialog.
 //
 // PUBLIC API (window.WTS_cheminjInfo)
 //   topics[]                       topic keys of the "Background and standards" row, in order
@@ -40,7 +44,7 @@
 //   button(key, aria, n?, sec?)    ⓘ icon button markup (rp-skip, data-rp-nosnap, no id)
 //   strip()                        the "Background and standards" row of topic buttons
 //   css()                          the stylesheet, scoped to #cj_root
-//   open(key, opts, opener, mount) opens the dialog (opts.section scrolls to that section) → dialog element | null
+//   open(key, opts, opener, mount) opens the dialog (opts.section scrolls to that section) → the <dialog> | null
 //   close()                        closes it; focus goes back to the opener → true when one was open
 //   isOpen()
 //   refs                           the reference texts, keyed
@@ -81,11 +85,40 @@
     function _T(v) { return _q(v, 'temperature', 0, '°F', 0); }         // temperature
     function _dP(v) { return _q(v, 'pressure', 0, 'psi', 0); }          // pressure difference
     function _n(v) { return _nf(v, v >= 100 ? 0 : v >= 10 ? 1 : 2); }  // plain number, about 3 figures
-    // Library prose quoted as is; in Metric a pressure written in it ("about 1000 psi") is converted.
+    function _sig(v, n) {                                                // v rounded to n significant figures
+        if (!_fin(v) || v === 0) return v;
+        var p = Math.pow(10, n - 1 - Math.floor(Math.log(Math.abs(v)) / Math.LN10));
+        return Math.round(v * p) / p;
+    }
+    // Library prose quoted as is; in Metric a pressure written in it is converted and rounded to the
+    // precision of the original: 2 significant figures after "about" ("about 1000 psi" → "about
+    // 6,900 kPa", not 6,895), 3 otherwise.
     function _lt(s) {
         s = String(s == null ? '' : s);
-        if (!_isM()) return s;
-        return s.replace(/(\d[\d,]*(?:\.\d+)?)\s*psi[ag]?\b/g, function (m, x) { return _dP(Number(x.replace(/,/g, ''))); });
+        if (!_isM() || !_hasCat('pressure')) return s;
+        return s.replace(/(\b(?:about|approximately|around|roughly)\s+|~\s*)?(\d[\d,]*(?:\.\d+)?)\s*psi[ag]?\b/g, function (m, pre, x) {
+            var f = G.WTS_units.format(Number(x.replace(/,/g, '')), 'pressure'), v = _sig(f.value, pre ? 2 : 3);
+            return (pre || '') + _n(v) + (f.label ? ' ' + f.label : '');
+        });
+    }
+    // ── Design basis the user can edit (Design basis card, line fields) ──
+    // The value in use comes from the last calculation (WTS_state.cheminj.result.basis); the library
+    // value is the default. Text reads "10 °F (default)" or "15 °F on this page (default 10 °F)", so a
+    // pop-up never disagrees with the calculator after an edit. Reading the state never recalculates.
+    function _basis() {
+        var s = G.WTS_state && G.WTS_state.cheminj;
+        return (s && s.ok && s.result && s.result.basis) ? s.result.basis : null;
+    }
+    function _bv(def, field, fmt) {
+        var b = _basis(), cur = b && _fin(b[field]) ? b[field] : def, d = fmt(def), c = fmt(cur);
+        return { d: d, c: c, changed: c !== d };
+    }
+    function _bvTxt(list, sep) {
+        sep = sep || ' and ';
+        var c = list.map(function (x) { return x.c; }).join(sep);
+        var dw = list.length > 1 ? 'defaults' : 'default';
+        if (list.some(function (x) { return x.changed; })) return c + ' on this page (' + dw + ' ' + list.map(function (x) { return x.d; }).join(sep) + ')';
+        return c + ' (' + dw + ')';
     }
 
     // ── Markup helpers: text is escaped after its {tokens} are filled ──
@@ -220,6 +253,8 @@
         std520: 'API Std 520 — Sizing, Selection, and Installation of Pressure-relieving Devices (Part I sizing and selection, Part II installation).',
         std521: 'API Std 521 — Pressure-relieving and Depressuring Systems.',
         rp500: 'API RP 500 and API RP 505 — classification of locations for electrical installations at petroleum facilities (Class I, Division and Zone systems).',
+        iec60079: 'IEC 60079-10-1 — Explosive atmospheres: classification of areas, explosive gas atmospheres.',
+        tm0374: 'NACE TM0374 — laboratory screening tests of scale inhibitors against calcium sulfate and calcium carbonate precipitation (static jar test).',
         spec6a: 'API Spec 6A — Specification for Wellhead and Tree Equipment (pressure ratings of flowheads and connections).',
         gpsa: 'GPSA Engineering Data Book — dehydration section (hydrate formation and hydrate inhibition with methanol and glycols).',
         gpsaTreat: 'GPSA Engineering Data Book — hydrocarbon treating section (H2S removal).',
@@ -238,13 +273,15 @@
         sds: 'The safety data sheet (SDS) and technical data sheet of the product.'
     };
     var DISCLAIMER = 'Planning guidance only — follow the product data sheet and site procedures.';
+    // One wording in the H2S and pump pop-ups, matching the calculator's drive-gas verdict and Notes.
+    var SOUR_DRIVE = 'Do not drive pneumatic or air-driven pumps with sour produced gas unless the exhaust is routed to the flare; instrument air, nitrogen or sweet gas is preferred.';
 
     // ── Topics ───────────────────────────────────────────────────────
     var TOPICS = {};
 
     TOPICS.hydrate = {
         title: 'Hydrate inhibition: methanol and glycols', chip: 'Hydrate inhibition',
-        refs: ['gpsa', 'sloan', 'carroll', 'hammer', 'nb', 'tm', 'eh40', 'rp500'],
+        refs: ['gpsa', 'sloan', 'carroll', 'hammer', 'nb', 'tm', 'eh40', 'iec60079', 'rp500'],
         lead: function () {
             return tx('Gas hydrates are ice-like solids of water and light gas molecules (methane, ethane, propane, CO2, H2S) that form at high pressure and low temperature wherever liquid water is present. In a well test they can plug the choke, the flowhead, instrument lines and the heater coil within minutes.');
         },
@@ -273,11 +310,11 @@
                 S('dose', 'Dose basis and typical range',
                     P(tx('The page finds the required depression (hydrate temperature plus margin, minus the coldest temperature) and the rich concentration that gives it — the larger of the Hammerschmidt and Nielsen–Bucklin results, Hammerschmidt only for DEG and TEG. It then adds the free, condensed and chemical water to treat and the methanol lost to the gas and condensate.')) +
                     UL([
-                        tx('Design margin {m} with the gas-gravity hydrate correlation; {mm} allowed with a lab hydrate temperature.', { m: _dT(D.marginF), mm: _dT(D.marginMinF) }),
-                        tx('Joule–Thomson cooling × {f} for design (editable from {f0} to {f1}).', { f: _nf(D.fJT, 2, 2), f0: _nf(D.fJTMin, 2, 2), f1: _nf(D.fJTMax, 2, 2) }),
-                        tx('Sour gas: an adder of {s} per mol % H2S above {s0} mol %, and for CO2 above {c} mol %; above {sx} mol % H2S the correlation is refused unless a lab hydrate temperature is entered.',
-                            { s: _dT(D.sourPerMolF), s0: _nf(D.sourNoAdderMolPct, 1), c: _nf(D.co2AdderMolPct, 0), sx: _nf(D.sourMaxMolPct, 0) }),
-                        tx('Pump peak factor {p} × the design rate, for start-up.', { p: _nf(D.peakThi, 2, 1) })
+                        tx('Design margin {m} with the gas-gravity hydrate correlation; {mm} allowed with a lab hydrate temperature.', { m: _bvTxt([_bv(D.marginF, 'margin', _dT)]), mm: _dT(D.marginMinF) }),
+                        tx('Joule–Thomson cooling design factor {f}, editable from {f0} to {f1}.', { f: _bvTxt([_bv(D.fJT, 'fJT', function (v) { return _nf(v, 2, 2); })]), f0: _nf(D.fJTMin, 2, 2), f1: _nf(D.fJTMax, 2, 2) }),
+                        tx('Sour gas, with the correlation only: the margin is raised by the sour adder, {s}, per mol % H2S above {s0} mol % (never less than one adder), and by one adder for CO2 above {c} mol %. Above {sx} mol % H2S or {cx} mol % CO2 the correlation is refused unless a lab hydrate temperature is entered; with a lab hydrate temperature no adder is applied.',
+                            { s: _bvTxt([_bv(D.sourPerMolF, 'sour', _dT)]), s0: _nf(D.sourNoAdderMolPct, 1), c: _nf(D.co2AdderMolPct, 0), sx: _nf(D.sourMaxMolPct, 0), cx: _nf(D.co2MaxMolPct, 0) }),
+                        tx('Pump peak factor {p} × the design rate, for start-up (library default; editable on each line).', { p: _nf(D.peakThi, 2, 1) })
                     ]) + P(tx('Products in the library:')) + _doseList(L, chems)),
                 S('cautions', 'Key cautions',
                     UL([
@@ -317,7 +354,7 @@
                     ]) + P(B('Not the right choice')) + UL([
                         tx('Short tests that may be shut in unexpectedly: a thermodynamic inhibitor is the default.'),
                         tx('Subcooling above the product limit, which is common through the choke at start-up: use a thermodynamic inhibitor or heat.'),
-                        tx('Dry gas with no condensate, or a water cut above the limit (AA).'),
+                        al ? tx('AA: dry gas with no liquid hydrocarbon, or a water cut above {w} %.', { w: _n(al.maxWaterCutPct) }) : '',
                         tx('Any product not yet qualified for the fluids.')
                     ]) + P(tx('The page doses these products on vol % of the water phase; read the subcooling at each node from the spread hydrate check.'))),
                 S('where', 'Where to inject and why',
@@ -358,7 +395,7 @@
                     P(tx('The reaction needs contact: droplet size, turbulence and time decide how much of the product is used (the utilisation).'))),
                 S('when', 'When to use it in a well test',
                     P(B('Use it')) + UL([
-                        tx('To keep H2S at the flare, vents, tank vapour space and sample points, and in gas or oil sent to a buyer, below the target.'),
+                        tx('To keep H2S at the flare, vents, tank vapour space and work areas, and in gas or oil sent to a buyer, below the target. H2S and PVT samples are taken upstream of the injection point or with injection stopped.'),
                         tx('When the mass of H2S per day is small enough for a practical chemical volume: the page converts the gas rate and H2S content into the mass to remove.')
                     ]) + P(B('Not a substitute for')) + UL([
                         tx('Sour-service materials, H2S detection, breathing apparatus or the radius-of-exposure assessment: these all use the untreated H2S.'),
@@ -373,7 +410,7 @@
                     ]) + P(tx('Point ranking used by the page:')) + _suitLines(L, fams)),
                 S('dose', 'Dose basis and typical range',
                     P(tx('Gas-phase scavenger lines are sized as product per mass of H2S removed = stoichiometry ÷ utilisation, from the gas rate, the H2S content and the outlet target you enter.')) +
-                    (eta.length ? P(tx('Utilisation the page assumes by point: {e}', { e: eta.join(', ') }) + (own.length ? tx('; product values override it ({o}).', { o: own.join(', ') }) : tx('.'))) : '') +
+                    (eta.length ? P(tx('Utilisation the page assumes by point: {e}', { e: eta.join(', ') }) + (own.length ? tx('; product values override it ({o}). A utilisation entered on the line overrides both.', { o: own.join(', ') }) : tx('. A utilisation entered on the line overrides it.'))) : '') +
                     P(tx('Products in the library (product as supplied):')) + _doseList(L, chems)),
                 S('cautions', 'Key cautions',
                     UL([
@@ -383,7 +420,7 @@
                         tx('Sour service: if the untreated H2S partial pressure is at or above {pp}, equipment wetted by the fluid must meet ISO 15156 / NACE MR0175. Scavenging does not change the materials basis or the radius of exposure.', { pp: _isM() ? '0.3 kPa' : '0.05 psia' }),
                         tx('Spent scavenger: triazine forms dithiazine solids when over-spent or at low velocity, raises the pH (calcium carbonate scale with calcium-rich water) and adds water to the hydrate load; plan for solids at the separator and in the water.'),
                         tx('Incompatibilities: never mix oxidisers with organic chemicals, or nitrite with amines (nitrosamines); keep triazine apart from aldehydes and acidic scale inhibitors, and check it against the corrosion inhibitor — use separate lines and quills.'),
-                        tx('Do not drive pneumatic or air-driven pumps with sour produced gas.')
+                        tx(SOUR_DRIVE)
                     ]) + P(tx('Product cautions from the chemical library:')) + _cautionList(L, chems)),
                 _compatSec(L, chems)
             ];
@@ -432,12 +469,13 @@
 
     TOPICS.scale = {
         title: 'Scale inhibition', chip: 'Scale inhibition',
-        refs: ['rp45', 'kelland'],
+        refs: ['rp45', 'tm0374', 'kelland'],
         lead: function () {
             return tx('Scale is mineral deposit from produced water — mainly calcium carbonate where the pressure drops and CO2 leaves the water, and barium, strontium or calcium sulfate where incompatible waters mix.');
         },
         build: function (L) {
-            var fams = _famsOf(L, 'scale'), chems = _chemsOf(L, fams);
+            var fams = _famsOf(L, 'scale'), chems = _chemsOf(L, fams), act = [];
+            chems.forEach(function (c) { if (_fin(c.activeDef) && c.activeDef > 0 && act.indexOf(c.activeDef) === -1) act.push(c.activeDef); });
             return [
                 S('what', 'What it is and how it works',
                     P(tx('Threshold inhibitors (phosphonates and polymers) adsorb on growing crystal nuclei and stop them growing at a few ppm, far below the stoichiometric amount. The dose must stay above the minimum inhibitor concentration (MIC) for the water and the temperature.'))),
@@ -453,7 +491,10 @@
                         tx('Upstream of the point where scale forms — downhole or upstream of the choke — so the inhibitor is in the water before the pressure drop. Downstream of the protected equipment it does nothing.')
                     ]) + P(tx('Point ranking used by the page:')) + _suitLines(L, fams)),
                 S('dose', 'Dose basis and typical range',
-                    P(tx('Product as supplied, in ppm by mass on the water; set it at 1.5 to 2 times the MIC from the water analysis (the MIC is quoted as active).')) + _doseList(L, chems)),
+                    P(tx('Product as supplied, in ppm by mass on the water. Set it at 1.5 to 2 times the minimum inhibitor concentration (MIC) found by inhibitor performance tests on the water (dynamic tube-blocking or static jar tests) or given on the data sheet. The water analysis gives the scaling tendency, not the MIC.')) +
+                    (act.length ? P(tx('The MIC is quoted as active, so divide by the active fraction (library default {a} %) to get product as supplied; for example, an MIC of {m} ppm active with a {a0} % active product needs {lo} to {hi} ppm of product. The page shows the active ppm of the dose entered.',
+                        { a: act.map(_n).join(' or '), a0: _n(act[0]), m: _n(5), lo: _n(_sig(1.5 * 5 * 100 / act[0], 2)), hi: _n(_sig(2 * 5 * 100 / act[0], 2)) })) : '') +
+                    _doseList(L, chems)),
                 S('cautions', 'Key cautions',
                     UL([
                         tx('Methanol-rich water can precipitate some inhibitors, and high calcium can drop calcium phosphonate: test compatibility with the actual water and the other chemicals.'),
@@ -628,7 +669,7 @@
                         var rec = L.families.filter(function (f) { return f.suit[q.key] === 'R' && f.kind !== 'custom'; }).map(function (f) { return f.label; });
                         var alw = L.families.filter(function (f) { return f.suit[q.key] === 'A' && f.kind !== 'custom'; }).length;
                         return B(q.label) + tx(': pressure basis {b}. Typical pump: {t}. Recommended for: {r}.',
-                            { b: LINE_TXT[q.pLine] || q.pLine, t: q.pumpClass, r: rec.length ? rec.join('; ') : (alw ? 'none (allowed for ' + alw + ' families)' : 'none') });
+                            { b: LINE_TXT[q.pLine] || q.pLine, t: q.pumpClass, r: rec.length ? rec.join('; ') : (alw ? 'none (allowed for ' + alw + (alw === 1 ? ' family)' : ' families)') : 'none') });
                     })))
             );
             return out;
@@ -637,7 +678,7 @@
 
     TOPICS.pumps = {
         title: 'Pump selection and calibration', chip: 'Pumps and calibration',
-        refs: ['std675', 'std674', 'rp14c', 'std520', 'std521', 'rp500'],
+        refs: ['std675', 'std674', 'rp14c', 'std520', 'std521', 'iec60079', 'rp500'],
         lead: function () {
             return tx('A chemical injection pump must deliver a small, steady rate against the highest pressure the tie-in can see, work in a hazardous area, and be checked in the field.');
         },
@@ -653,14 +694,16 @@
             out.push(
                 S('choose', 'Choosing a pump',
                     UL([
-                        tx('Pressure: the required discharge pressure is the line pressure at the point plus the quill and check-valve allowance ({q}); the discharge circuit is rated for the larger of +{pc} % and +{pa} above both that and the credible back-pressure (the shut-in pressure upstream of the choke, the separator relief-valve set pressure downstream) — not the operating pressure.',
-                            { q: _dP(D.dpQuillPsi), pc: _nf(D.pumpMarginPct, 0), pa: _dP(D.pumpMarginPsi) }),
-                        tx('Rate: the design rate times the peak factor (hydrate inhibitor {a}, scavenger {b}, other chemicals {c}) must fit the pump. Settings up to {g} % of the pump maximum are preferred (green), up to {am} % acceptable (amber); below {lo} % the rate becomes unsteady and below {mn} % it is out of range — choose a smaller plunger or pump.',
-                            { a: _nf(D.peakThi, 2, 1), b: _nf(D.peakScav, 2, 1), c: _nf(D.peakOther, 2), g: _nf(D.bandGreenPct, 0), am: _nf(D.bandAmberPct, 0), lo: _nf(D.bandLowPct, 0), mn: _nf(D.bandMinPct, 0) }),
-                        tx('Hazardous area: pneumatic and air-driven pumps have no electrics but vent their drive gas at the pump; electric pumps need motors and controls certified for the zone (area classification to API RP 500 / RP 505).'),
-                        tx('Drive gas: instrument air, nitrogen or sweet gas; never sour produced gas unless the exhaust is routed to the flare.'),
+                        tx('Pressure: the required discharge pressure is the line pressure at the point plus the quill and check-valve allowance ({q}, the default on each line); the discharge circuit is rated for the larger of {m} above both that and the credible back-pressure (the shut-in pressure upstream of the choke, the separator relief-valve set pressure downstream) — not the operating pressure.',
+                            { q: _dP(D.dpQuillPsi), m: _bvTxt([_bv(D.pumpMarginPct, 'pmpct', function (v) { return '+' + _nf(v, 1) + ' %'; }), _bv(D.pumpMarginPsi, 'pmabs', function (v) { return '+' + _dP(v); })]) }),
+                        tx('Rate: the design rate times the peak factor (library defaults, editable on each line: hydrate inhibitor {a}, scavenger {b}, other chemicals {c}) must fit the pump. Settings up to {g} of the pump maximum are preferred (green), up to {am} acceptable (amber); below {lo} % the rate becomes unsteady and below {mn} % it is out of range — choose a smaller plunger or pump.',
+                            { a: _nf(D.peakThi, 2, 1), b: _nf(D.peakScav, 2, 1), c: _nf(D.peakOther, 2),
+                              g: _bvTxt([_bv(D.bandGreenPct, 'bandG', function (v) { return _nf(v, 0) + ' %'; })]), am: _bvTxt([_bv(D.bandAmberPct, 'bandA', function (v) { return _nf(v, 0) + ' %'; })]),
+                              lo: _nf(D.bandLowPct, 0), mn: _nf(D.bandMinPct, 0) }),
+                        tx('Hazardous area: pneumatic and air-driven pumps have no electrics but vent their drive gas at the pump; electric pumps need motors and controls certified for the zone (area classification to IEC 60079-10-1 or API RP 500 / RP 505, as applies at the site).'),
+                        tx(SOUR_DRIVE),
                         tx('Protection: a relief valve on every pump discharge and drive-gas regulator, thermal relief on liquid-full sections that can be blocked in, and a block valve, two check valves and a bleed at every tie-in; size the tank vent for gas blow-by.'),
-                        tx('Metering (controlled-volume) pumps to API Std 675 hold a steady-state accuracy of ±1 % over a 10:1 turndown; reciprocating plunger pumps are covered by API Std 674. Air-driven liquid pumps are not metering pumps: set the air pressure, then verify the rate.')
+                        tx('Metering (controlled-volume) pumps to API Std 675 hold a steady-state accuracy of ±1 % over a 10:1 turndown; non-metering reciprocating pumps (power-frame and direct-acting) are covered by API Std 674, which excludes controlled-volume pumps. Air-driven liquid pumps are not metering pumps: set the air pressure, then verify the rate.')
                     ])),
                 S('types', 'Pump types in the library',
                     UL(L.pumps.filter(function (q) { return q.mvp; }).map(pumpLine))),
@@ -773,19 +816,25 @@
             '</div>';
     }
     var CSS = '<style>' +
-        '#cj_root .cj-lab{display:flex;align-items:center;gap:2px;margin-bottom:5px;min-width:0}' +
+        '#cj_root .cj-lab{display:flex;align-items:center;gap:5px;margin-bottom:5px;min-width:0}' +
         '#cj_root .cj-lab label{margin-bottom:0;min-width:0}' +
         '#cj_root .cj-info{flex:none;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;min-width:0;min-height:0;margin:-6px 0;padding:0;border:0;border-radius:50%;background:transparent;color:var(--accent);cursor:pointer;vertical-align:middle;text-transform:none;letter-spacing:0;line-height:1}' +
         '#cj_root .cj-info::before,#cj_root .cj-info-chip::before{content:"i";display:inline-flex;align-items:center;justify-content:center;flex:none;width:15px;height:15px;box-sizing:border-box;border:1.5px solid currentColor;border-radius:50%;font:italic 700 10px/1 Georgia,"Times New Roman",serif;text-transform:none}' +
         '#cj_root .cj-info:hover{color:var(--text)}' +
-        '#cj_root .cj-info:focus-visible,#cj_root .cj-info-chip:focus-visible,#cj_root .cj-dlg-x:focus-visible{outline:2px solid var(--accent);outline-offset:1px}' +
+        // keyboard focus: the app-wide ring (var(--focus), P10); only the offset is tightened
+        '#cj_root .cj-info:focus-visible{outline-offset:0}' +
+        '#cj_root .cj-info-chip:focus-visible,#cj_root .cj-dlg-x:focus-visible{outline-offset:1px}' +
         '#cj_root .card-title .cj-info{margin:-6px 0 -6px 4px}' +
         '#cj_root .cj-info-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:12px}' +
         '#cj_root .cj-info-lab{font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;margin-right:2px}' +
         '#cj_root .cj-info-chip{display:inline-flex;align-items:center;gap:6px;min-height:28px;padding:3px 10px 3px 6px;border:1px solid var(--border);border-radius:14px;background:var(--bg2);color:var(--text2);font-size:12px;font-weight:600;cursor:pointer}' +
         '#cj_root .cj-info-chip::before{color:var(--accent)}' +
         '#cj_root .cj-info-chip:hover{border-color:var(--accent);color:var(--accent)}' +
-        '#cj_root .cj-dlg-ov{position:fixed;inset:0;z-index:10050;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(1,4,9,.72);overscroll-behavior:contain}' +
+        // the overlay is a <dialog> (shown modal: top layer, inert page behind); it fills the viewport
+        // and paints the dim itself, so a click outside the box lands on it (backdrop click)
+        '#cj_root .cj-dlg-ov{position:fixed;inset:0;z-index:10050;display:none;align-items:center;justify-content:center;box-sizing:border-box;width:auto;height:auto;max-width:none;max-height:none;margin:0;padding:16px;border:0;background:rgba(1,4,9,.72);color:var(--text);overflow:hidden;overscroll-behavior:contain}' +
+        '#cj_root .cj-dlg-ov[open]{display:flex}' +
+        '#cj_root .cj-dlg-ov::backdrop{background:transparent}' +
         '#cj_root .cj-dlg{display:flex;flex-direction:column;width:min(780px,100%);max-height:calc(100vh - 32px);max-height:calc(100dvh - 32px);background:var(--bg2);border:1px solid var(--border);border-radius:10px;box-shadow:0 12px 40px rgba(0,0,0,.45);color:var(--text);outline:none}' +
         '#cj_root .cj-dlg-hd{display:flex;align-items:flex-start;gap:12px;padding:14px 16px 10px;border-bottom:1px solid var(--border)}' +
         '#cj_root .cj-dlg-hd h3{flex:1;min-width:0;margin:0;font-size:16px;line-height:1.3;color:var(--accent);overflow-wrap:anywhere}' +
@@ -793,7 +842,7 @@
         '#cj_root .cj-dlg-x:hover{background:var(--bg3);color:var(--text)}' +
         '#cj_root .cj-dlg-bd{position:relative;flex:1 1 auto;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;padding:12px 16px 4px;font-size:13px;line-height:1.55;overflow-wrap:anywhere}' +
         '#cj_root .cj-dlg-bd:focus{outline:none}' +
-        '#cj_root .cj-dlg-bd:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}' +
+        '#cj_root .cj-dlg-bd:focus-visible{outline:2px solid var(--focus);outline-offset:-2px}' +
         '#cj_root .cj-dlg-lead{margin:0 0 6px;color:var(--text)}' +
         '#cj_root .cj-dlg-bd h4{margin:14px 0 4px;font-size:11.5px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.4px}' +
         '#cj_root .cj-dlg-bd p{margin:4px 0 6px;color:var(--text2)}' +
@@ -808,10 +857,15 @@
     function css() { return CSS; }
 
     // ── Dialog ───────────────────────────────────────────────────────
-    var _cur = null;   // {ov, dlg, bd, opener, key, down}
+    // The overlay is a <dialog> element shown with showModal(): the browser puts it in the top layer
+    // and makes the page behind it inert (assistive technology and Tab cannot reach the sidebar, the
+    // header or the page inputs), fires 'cancel' on Esc wherever the focus is, and drops it from the
+    // top layer when navigation removes it with #cj_root. Without showModal() (older WebViews, the
+    // test DOM) the same element is shown with the open attribute and relies on aria-modal and the
+    // Tab trap. The overlay fills the viewport and paints the dim, so a click on it is a backdrop click.
+    var _cur = null;   // {ov, dlg, bd, opener, key, down, modal}
     function _dialogHtml(c) {
-        var h = '<div class="cj-dlg" role="dialog" aria-modal="true" aria-labelledby="cj_info_title" aria-describedby="cj_info_lead" tabindex="-1" data-topic="' + _esc(c.key) + '"' +
-            (c.family ? ' data-family="' + _esc(c.family) + '"' : '') + '>' +
+        var h = '<div class="cj-dlg" tabindex="-1">' +
             '<div class="cj-dlg-hd"><h3 id="cj_info_title">' + _esc(c.title) + '</h3>' +
             '<button type="button" class="cj-dlg-x" data-cj-close aria-label="Close">×</button></div>' +
             '<div class="cj-dlg-bd" tabindex="0" role="document" aria-labelledby="cj_info_title">' +
@@ -859,13 +913,24 @@
             if (i <= 0) { e.preventDefault(); f[f.length - 1].focus(); }
         } else if (i === -1 || i === f.length - 1) { e.preventDefault(); f[0].focus(); }
     }
+    // Esc (or another close request) while the focus is not inside the box, e.g. after a click on plain text
+    function _onCancel(e) {
+        if (!_cur || e.target !== _cur.ov) return;
+        if (e.preventDefault) e.preventDefault();
+        close();
+    }
+    // closed by the browser without a cancel event; a late event of a replaced dialog is ignored
+    function _onClose(e) { if (_cur && e.target === _cur.ov) close(); }
     function isOpen() { return !!(_cur && _cur.ov && _cur.ov.parentNode && _cur.ov.isConnected !== false); }
     function close(noFocus) {
         var c = _cur;
         _cur = null;
         if (!c) return false;
-        var was = !!(c.ov && c.ov.parentNode && c.ov.isConnected !== false);
-        if (c.ov && c.ov.parentNode) c.ov.parentNode.removeChild(c.ov);
+        var ov = c.ov, was = !!(ov && ov.parentNode && ov.isConnected !== false);
+        if (ov && c.modal && ov.open && typeof ov.close === 'function') {
+            try { ov.close(); } catch (e) { /* the removal below also leaves the top layer */ }
+        }
+        if (ov && ov.parentNode) ov.parentNode.removeChild(ov);
         if (was && noFocus !== true && c.opener && c.opener.isConnected !== false && typeof c.opener.focus === 'function') {
             try { c.opener.focus(); } catch (e) { /* focus is best effort */ }
         }
@@ -878,19 +943,31 @@
         close(true);
         var host = mount || document.getElementById('cj_root') || document.body;
         if (!host) return null;
-        var ov = document.createElement('div');
+        var ov = document.createElement('dialog');
         ov.className = 'cj-dlg-ov rp-skip';
         ov.setAttribute('data-rp-nosnap', '');
+        ov.setAttribute('role', 'dialog');
+        ov.setAttribute('aria-modal', 'true');
+        ov.setAttribute('aria-labelledby', 'cj_info_title');
+        ov.setAttribute('aria-describedby', 'cj_info_lead');
+        ov.setAttribute('data-topic', c.key);
+        if (c.family) ov.setAttribute('data-family', c.family);
         ov.innerHTML = _dialogHtml(c);
         host.appendChild(ov);
-        _cur = { ov: ov, dlg: ov.querySelector('.cj-dlg'), bd: ov.querySelector('.cj-dlg-bd'), opener: opener || null, key: c.key, down: null };
+        _cur = { ov: ov, dlg: ov.querySelector('.cj-dlg'), bd: ov.querySelector('.cj-dlg-bd'), opener: opener || null, key: c.key, down: null, modal: false };
         ov.addEventListener('mousedown', _onDown);
         ov.addEventListener('click', _onClick);
         ov.addEventListener('keydown', _onKey);
+        ov.addEventListener('cancel', _onCancel);
+        ov.addEventListener('close', _onClose);
+        if (typeof ov.showModal === 'function') {
+            try { ov.showModal(); _cur.modal = true; } catch (e) { _cur.modal = false; }
+        }
+        if (!_cur.modal) ov.setAttribute('open', '');
         var sec = opts && opts.section ? ov.querySelector('h4[data-sec="' + String(opts.section).replace(/[^a-z]/g, '') + '"]') : null;
         if (sec && _cur.bd) _cur.bd.scrollTop = Math.max(0, (sec.offsetTop || 0) - 8);
         try { (_cur.bd || _cur.dlg).focus(); } catch (e) { /* focus is best effort */ }
-        return _cur.dlg;
+        return ov;
     }
 
     G.WTS_cheminjInfo = {
