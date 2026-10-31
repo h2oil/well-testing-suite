@@ -251,6 +251,21 @@ module.exports = [
       assert.strictEqual(st.log.filter((l) => /^interpret:/.test(l)).length, 0);
       assert.strictEqual(c.tests.find((t) => t.id === 'B4').status, 'excluded');
       assert.ok(/O2/.test(c.tests.find((t) => t.id === 'B4').statusReason));
+      // event_drop removes a detection; event_add at the typed closing time brings it back as a manual event
+      const ovd = Object.assign({}, ov, { id: 'O3', kind: 'event_drop', target: 'E1', value: true });
+      const d = R(app).analyse(Object.assign({}, input, { overrides: [ovd] }), { cache: a });
+      assert.strictEqual(d.tests.length, 5); assert.strictEqual(d.events.find((e) => e.id === 'E1').status, 'excluded');
+      const ova = Object.assign({}, ov, { id: 'O4', kind: 'event_add', target: null, value: { t_ms: SCHED[0].t_ms, exact: true } });
+      const e2 = R(app).analyse(Object.assign({}, input, { overrides: [ovd, ova] }), { cache: a });
+      const added = e2.events.find((e) => e.manual && !e.dropped);
+      assert.ok(added && added.id === 'E7', 'manual event added with the next id');
+      assert.strictEqual(e2.tests.length, 6); assert.strictEqual(e2.tests[0].eventId, 'E7');
+      assert.strictEqual(added.tc_ms, SCHED[0].t_ms); assert.near(added.dtEnd_h, 36, 0.1);
+      shapeOk(assert, 'Analysis', J(e2));
+      // the page's 'input' audit entry: a field diff of the inputs
+      const diff = J(R(app).inputDiff(input, Object.assign({}, input, { well: Object.assign(J(WELL), { h: 60 }) })));
+      assert.deepStrictEqual(diff, [{ field: 'well.h', from: 50, to: 60 }]);
+      assert.deepStrictEqual(J(R(app).inputDiff(input, input)), []);
     },
   },
   {

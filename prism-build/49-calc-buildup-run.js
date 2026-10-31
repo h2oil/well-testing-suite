@@ -137,6 +137,30 @@
             overrides: (input.overrides || []).map(function (o) { return { id: o.id, kind: o.kind, target: o.target, value: o.value === undefined ? null : o.value }; })
         }, 'inputs'));
     }
+    // Field diff between two AnalysisInputs (canonical imperial values at 6 significant figures, resolved zones), for the
+    // page's single 'input' audit entry at the next Analyse (§3.7, §6.4). Arrays and objects are compared whole.
+    function inputDiff(prev, next) {
+        function flat(input) {
+            input = input || {};
+            var o = { well: input.well || null, completion: input.completion || null, depth: input.depth || null, settings: settingsOf(input.settings),
+                      zones: resolvedZones(input.zones), history: input.history || null, workovers: (input.workovers || []).slice().sort(),
+                      allocation: input.allocation && input.allocation.rows ? hash16(canon(input.allocation.rows, 'inputs')) : null,
+                      rateTable: input.rateTable ? hash16(canon(input.rateTable, 'inputs')) : null,
+                      record: input.record ? input.record.hash : (input.stored && input.stored.record ? input.stored.record.hash : null) };
+            var out = {};
+            (function walk(x, p) {
+                if (x && typeof x === 'object' && !Array.isArray(x)) { Object.keys(x).forEach(function (k) { walk(x[k], p ? p + '.' + k : k); }); return; }
+                out[p] = canon(x === undefined ? null : x, 'inputs');
+            })(o, '');
+            return out;
+        }
+        var a = flat(prev), b = flat(next), keys = {}, diff = [];
+        Object.keys(a).concat(Object.keys(b)).forEach(function (k) { keys[k] = 1; });
+        Object.keys(keys).sort().forEach(function (k) {
+            if (a[k] !== b[k]) diff.push({ field: k, from: a[k] === undefined ? null : JSON.parse(a[k]), to: b[k] === undefined ? null : JSON.parse(b[k]) });
+        });
+        return diff;
+    }
     function resultHash(tests, trend) {
         return hash16(canon({
             tests: tests.map(function (t) {
@@ -835,6 +859,7 @@
     R.rehydrate = rehydrate;
     R.inputHash = inputHash;
     R.resultHash = resultHash;
+    R.inputDiff = inputDiff;
     R.adjustEvents = adjustEvents;
     // Registry contract (smoke check): = analyse(input); {ok:false, code:'NO_DATA'} for {} and never throws.
     G.WTS_buildup_compute = function (input) {

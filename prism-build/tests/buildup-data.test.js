@@ -432,9 +432,9 @@ module.exports = [
     },
   },
   {
-    name: 'DA11 parser: chunked = one-shot; elapsed-hours CSV with a rate column → rateTable; psig → psia; 500k rows take ≥ 50 steps',
+    name: 'DA11 parser: chunked = one-shot; elapsed-hours CSV with a rate column → rateTable; psig → psia; 500k rows take ≥ 50 steps; PRiSM and historian sources',
     wp: WP,
-    run(app, assert) {
+    async run(app, assert) {
       const D = Dof(app);
       assert.ok(D.DEFAULTS.parse.chunkLines <= 10000, 'frozen chunk size');
       const iso = ['Time;Pressure (psig);Temp (degC)'];
@@ -464,6 +464,19 @@ module.exports = [
       const job = D.parseJob(big.join('\n'), { zone: { mode: 'utc' } });
       let steps = 0; for (;;) { steps++; if (job.step().done) break; }
       assert.ok(steps >= 50, steps + ' steps'); assert.strictEqual(job.result().record.n, 500000);
+      // the PRiSM dataset (read only) and a historian tag (bad samples dropped, psig → psia, 60-s rollups flagged)
+      app.win.PRiSM_dataset = app.toWin({ t: [0, 0.5, 1, 1.5], p: [3000, 3001, 3002, 3003], q: [500, 500, 0, 0], name: 'PRiSM test' });
+      const fp = D.fromPRiSM({ t0_ms: T0 });
+      assert.strictEqual(fp.record.source, 'prism'); assert.strictEqual(fp.record.n, 4); assert.strictEqual(fp.record.t[1], T0 + HOUR / 2);
+      assert.deepStrictEqual(J(fp.rateTable), [{ t_ms: T0, q: 500 }, { t_ms: T0 + HOUR, q: 0 }]);
+      app.win.WTS_historian = { query: (o) => Promise.resolve({ series: [{ tag: o.tags[0], unit: 'psig', t: [T0, T0 + 60000, T0 + 120000], v: [1000, 1001, 1002], q: [0, 2, 0], rollup: [0, 0, 1] }] }) };
+      const fh = await D.fromHistorian({ tag: 'PT-101', from_ms: T0, to_ms: T0 + DAY, patm: 14.7 });
+      assert.strictEqual(fh.source, 'historian'); assert.strictEqual(fh.n, 2, 'bad-quality sample dropped');
+      assert.near(fh.p[0], 1014.7, 1e-9, 'psig + patm'); assert.strictEqual(fh.rollup, true);
+      { const r = S.checkShape('GaugeRecord', fh); assert.ok(r.ok, JSON.stringify(r.errors.slice(0, 3))); }
+      delete app.win.WTS_historian;
+      const rej = await D.fromHistorian({ tag: 'x' }).then(() => null, (e) => e);
+      assert.strictEqual(rej && rej.code, 'NO_HISTORIAN');
     },
   },
   {
