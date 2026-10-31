@@ -95,6 +95,8 @@ prism-build/                    ← PRiSM module source (numbered files + toolin
   tests/_harness.js             ← loadApp(): DOM store, recording canvas, manual timers, shared storage
   .tmp/                         ← Extracted main script for syntax checks (gitignored)
 PRISM-PLAN.md                   ← Phasing plan + model catalogue + decisions
+docs/CHEMICAL-INJECTION-PLAN.md ← Chemical Injection module plan (v3.2a/3.2b; hydrate inhibitors, H2S scavengers, ppm chemicals,
+                                  injection points, pump SPM / metering settings; open questions Q1-Q20)
 PROJECT-NOTES.md                ← Running changelog (newest on top)
 README.md                       ← Public-facing description
 ```
