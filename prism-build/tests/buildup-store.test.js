@@ -184,6 +184,11 @@ module.exports = [
       assert.deepStrictEqual(Object.keys(m.wells), [], 'cold mirror: no wells embedded');
       assert.deepStrictEqual(Array.from(m.omitted), [S.wellId()], 'the well with an analysis is listed as omitted');
       assert.ok(p.modules.storage.keys.wts_buildup_state, 'state travels in the storage module');
+      assert.ok(!p.modules.buildup_analysis, 'no overflow → nothing to carry or omit in buildup_analysis');
+      app.storage.setItem('wts_buildup_state', JSON.stringify({ v: 1, analysis: FIX.analysis, overflow: { wellId: S.wellId(), tests: ['B1'] } }));
+      const pOv = W.WTS_project._buildPayload();
+      assert.deepStrictEqual(Array.from(pOv.modules.buildup_analysis.omitted), [S.wellId()], 'an overflowed analysis with a cold mirror is listed as omitted');
+      app.storage.setItem('wts_buildup_state', JSON.stringify({ v: 1, analysis: FIX.analysis }));
       // write fills the mirror before IndexedDB
       const enc = JSON.parse(JSON.stringify(S.encode(app.toWin(synthRecord(250, '1111222233334444')))));
       W.WTS_project.loadFromObject(app.toWin({ format: 'h2oilproj', version: '1.0', modules: { storage: p.modules.storage, buildup_raw: { wells: { [S.wellId()]: enc }, omitted: [] },

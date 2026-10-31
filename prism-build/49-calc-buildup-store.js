@@ -463,18 +463,21 @@
 
     // ── project-file modules (buildup_raw, buildup_analysis) ──
     var _loaded = { raw: null, tests: null };
-    function _wellsWithAnalysis() {
+    // Wells whose stored analysis needs this store: every analysis for 'raw', overflowed analyses for 'tests'
+    // (the state text holds "overflow":{"wellId"…, escaped once more inside a parked well's blob).
+    var OVERFLOW_RE = /overflow\\?"\s*:\s*\{\s*\\?"wellId/;
+    function _wellsWithAnalysis(store) {
         var out = [], ls = _ls();
         if (!ls) return out;
-        var act = wellId();
-        try { if (ls.getItem(STATE_KEY)) out.push(act); } catch (e) { /* none */ }
+        var act = wellId(), need = function (txt) { return !!txt && (store !== 'tests' || OVERFLOW_RE.test(txt)); };
+        try { if (need(ls.getItem(STATE_KEY))) out.push(act); } catch (e) { /* none */ }
         try {
             var W = G.WTS_wells, list = W && typeof W.list === 'function' ? W.list() : [];
             (list || []).forEach(function (w) {
                 if (!w || w.active || out.indexOf(w.id) !== -1) return;
                 var b = null;
                 try { b = ls.getItem('wts_well_' + w.id); } catch (e) { b = null; }
-                if (b && b.indexOf(STATE_KEY) !== -1) out.push(String(w.id));
+                if (b && b.indexOf(STATE_KEY) !== -1 && need(b)) out.push(String(w.id));
             });
         } catch (e) { /* single well */ }
         return out;
@@ -491,7 +494,7 @@
             if (store === 'raw' && total + sz > RAW_CAP) { omitted.push(id); return; }
             total += sz; wells[id] = v; any = true;
         });
-        _wellsWithAnalysis().forEach(function (id) { if (!_own(wells, id) && omitted.indexOf(id) === -1) omitted.push(id); });
+        _wellsWithAnalysis(store).forEach(function (id) { if (!_own(wells, id) && omitted.indexOf(id) === -1) omitted.push(id); });
         if (!any && !omitted.length) return null;
         return { wells: wells, omitted: omitted };
     }

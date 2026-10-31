@@ -250,7 +250,7 @@
     }
     function _ensure() {
         var id = _wellId();
-        if (_mem.wellId !== id) _mem = _freshMem(id);
+        if (_mem.wellId !== id) { _mem = _freshMem(id); _st = null; }
         if (!_st) _st = _loadSt();
         if (_st.input && !_mem.allocation && _st.input.allocation) _mem.allocation = _st.input.allocation;
         if (_st.input && !_mem.rateTable && _st.input.rateTable) _mem.rateTable = _st.input.rateTable;
@@ -592,6 +592,7 @@
         if (/^bu_(pb|rs)$/.test(id)) return fl === 'oil';
         if (/^bu_(sg|tres|co2|h2s|n2|pdew|api|mo)$/.test(id)) return fl === 'gas';
         if (/^bu_(bw|muw)$/.test(id)) return fl === 'water_inj';
+        if (id === 'bu_patm') return _val('bu_src') === 'file' || _val('bu_src') === 'paste';
         if (/^bu_dep_/.test(id)) return _checked('bu_dep_on');
         if (/^bu_cmp_(hp|htop|theta|kvlo|kvhi)$/.test(id)) return _checked('bu_cmp_on');
         if (/^bu_cmp_(spf|lp|rp)$/.test(id)) return _checked('bu_cmp_on') && _checked('bu_cmp_perf') && _perfOK();
@@ -1395,10 +1396,22 @@
         map.forEach(function (m) { var v = parseInt(_val(m[0]), 10); o[m[1]] = _fin(v) ? v : -1; if (o[m[1]] >= 0) any = true; });
         return any ? o : null;
     }
+    // A per-sample rate column becomes its steps (rows where q changes, plus the last row), so a rate table
+    // read from a long gauge file stays small in wts_buildup_state; piecewise-constant rates are kept exactly.
+    function _compactRates(rt) {
+        if (!rt || !rt.length) return null;
+        var out = [], last = null;
+        for (var i = 0; i < rt.length; i++) {
+            var r = rt[i];
+            if (!r || !_fin(r.t_ms) || !_fin(r.q)) continue;
+            if (last === null || r.q !== last.q || i === rt.length - 1) { out.push({ t_ms: r.t_ms, q: r.q }); last = r; }
+        }
+        return out.length ? out : null;
+    }
     function _setRecord(rec, rateTable, name, hasRate) {
         _ensure();
         _mem.record = rec;
-        _mem.rateTable = rateTable && rateTable.length ? rateTable : null;
+        _mem.rateTable = _compactRates(rateTable);
         _mem.rawChecked = true;
         var rn = _byId('bu_raw_note'); if (rn) rn.textContent = '';
         _audit({ kind: 'import', target: null, value: { name: String(name || rec.name || '').slice(0, 80), n: rec.n || 0, hash: rec.hash || null, source: rec.source || '' } });
@@ -1986,8 +1999,7 @@
         var t = _byId('pgTitle'), s = _byId('pgSub');
         if (t) t.textContent = PG_TITLE;
         if (s) s.textContent = PG_SUB;
-        _st = null;
-        _ensure();
+        _ensure();        // keeps the in-memory analysis (with its model curves) across navigation within one well
         body.innerHTML = _markup();
         var U = G.WTS_units;
         if (U && typeof U.tagInput === 'function') for (var k in TAGS) if (_own(TAGS, k)) U.tagInput(k, TAGS[k]);
