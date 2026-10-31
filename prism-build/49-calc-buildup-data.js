@@ -984,20 +984,27 @@
             }
         }
         var tc, dtc, ramp = { present: false, dur_s: 0 };
-        if (ub >= 0 && nn[ub] > 1.05) {
-            // closing ramp: local log-slopes from t_j0 until the response turns linear (n ≤ 1.05)
-            var rampEnd = NaN;
-            for (var a2 = 0; a2 < 30 && j1 + a2 + 1 <= lastIdx; a2++) {
-                var ia = j1 + a2, ib = ia + 1;
-                var ra = sign * (p[ia] - trendAt(tr, t[ia])), rb = sign * (p[ib] - trendAt(tr, t[ib]));
-                if (!(ra > 0 && rb > 0)) continue;
-                var sl = mLog(rb / ra) / mLog((t[ib] - tA) / (t[ia] - tA));
-                if (sl <= 1.05) { rampEnd = t[ia]; break; }
-            }
-            if (isNum(rampEnd) && rampEnd - tA > 2 * dtMed) {
-                ramp = { present: true, dur_s: (rampEnd - tA) / SEC };
-                tc = tA + (rampEnd - tA) / 2;
-                dtc = (rampEnd - tA) / mSqrt(12);
+        // Closing ramp: the rise is still accelerating (second differences of the residual above 3·√6·σ) two samples after
+        // the first shut-in sample, i.e. n > 1.05 over more than 2·Δt_med. The storage line after the convex part
+        // extrapolates to the ramp midpoint, where t_c goes; the ramp lasts twice the time from there to its end.
+        var thr2 = 3 * mSqrt(6) * mMax(num(tr.sigmaRes, 0), 1e-6), run0 = -1, run1 = -1;
+        var resid = function (i) { return sign * (p[i] - trendAt(tr, t[i])); };
+        for (var c = mMax(1, j0 - 2); c <= mMin(lastIdx - 1, j1 + 40); c++) {
+            var d2 = resid(c + 1) - 2 * resid(c) + resid(c - 1);
+            if (d2 > thr2) { if (run0 < 0) run0 = c; run1 = c; }
+            else if (run0 >= 0 || c > j1 + 1) break;
+        }
+        if (run0 >= 0 && run1 >= j1 + 2 && run1 + 3 <= lastIdx) {
+            var sx = 0, sy = 0, sxx = 0, sxy = 0;
+            for (var u = run1 + 1; u <= run1 + 3; u++) { var xu = (t[u] - t[run1]) / HOUR, yu = resid(u); sx += xu; sy += yu; sxx += xu * xu; sxy += xu * yu; }
+            var den2 = 3 * sxx - sx * sx, slp = den2 > 0 ? (3 * sxy - sx * sy) / den2 : 0, icp = (sy - slp * sx) / 3;
+            if (slp > 0) {
+                var tmid = t[run1] - icp / slp * HOUR, dur = 2 * (t[run1] - tmid);
+                if (dur > 2 * dtMed && tmid > t[mMax(0, run0 - 2)] && tmid < t[run1]) {
+                    ramp = { present: true, dur_s: dur / SEC };
+                    tc = tmid;
+                    dtc = dur / mSqrt(12);
+                }
             }
         }
         if (!ramp.present) {
@@ -1434,7 +1441,10 @@
                     ref = e2; break;
                 }
                 if (ref && ev.dtEnd_h > 0 && ref.dtEnd_h > 0) {
-                    var qe = (byEv[ev.id] && byEv[ev.id].Dq) || ev.qBefore, qr = (byEv[ref.id] && byEv[ref.id].Dq) || ref.qBefore;
+                    // rate before each closing: the closing day's reference rate (clean days), else Δq of the preliminary pass
+                    // (which spreads a partial cut's volume as if it were a full shut-in)
+                    var qOf = function (x) { var b0 = byEv[x.id]; return (b0 && isNum(b0.qRef) && b0.qRef > 0) ? b0.qRef : ((b0 && b0.Dq) || x.qBefore); };
+                    var qe = qOf(ev), qr = qOf(ref);
                     var qRatio = (isNum(qe) && qe > 0 && isNum(qr) && qr > 0) ? qr / qe : 1;
                     f1 = _fhatDpDiff(record, ev, ref, qRatio, lnFn(ev), lnFn(ref));
                 }
@@ -1510,8 +1520,9 @@
         if (meds.length >= 3) {
             var mx = -INF, mi = -1;
             meds.forEach(function (v, q) { if (v > mx) { mx = v; mi = q; } });
-            var tail = meds.slice(mi + 1);
-            if (tail.length && mx - tail[tail.length - 1] > Ts && tail.every(function (v) { return v < mx - 0.5 * Ts; })) {
+            var tail = meds.slice(mi + 1), k0 = -1;
+            for (var z = 0; z < tail.length; z++) if (tail[z] < mx - Ts) { k0 = z; break; }
+            if (k0 >= 0 && mx - tail[tail.length - 1] > Ts && tail.slice(k0).every(function (v) { return v < mx - 0.5 * Ts; })) {
                 ev.status = 'intervention';
                 ev.warnings.push(W('INTERVENTION', 'warn', 'Pressure rose and then fell by ' + (mx - tail[tail.length - 1]).toFixed(1) + ' psi inside the shut-in: suspected intervention, not interpreted.', ['D1']));
             }
@@ -1599,16 +1610,19 @@
             if (!(e.kind === 'shutin' || e.kind === 'falloff' || e.kind === 'partial')) return;
             if (!isNum(e.tc_ms) || !isNum(e.tEnd_ms) || !(e.tEnd_ms > e.tc_ms)) return;
             var f = (e.kind === 'partial' && !fullShut) ? clamp(num(e.fhat, 1), 0, 1) : 1;
+            // a shut-in interpreted with Δq·f̂ (0.9 ≤ f̂ < 0.95) keeps q = 0 in the steps, but the residual (1 − f̂)·q still
+            // carries volume when the day's rate is spread (fv)
+            var fv = (!fullShut && e.kind !== 'partial' && e.fhatMethod === 'dpDiff' && isNum(e.fhat) && e.fhat >= 0.9 && e.fhat < 0.95) ? e.fhat : f;
             var half = (e.ramp && e.ramp.present && e.ramp.dur_s > 0) ? mRound(e.ramp.dur_s * SEC / 2) : 0;
-            if (half > 0) ivs.push({ t0: e.tc_ms - half, t1: e.tc_ms, f: 0.5, ramp: true, id: e.id, ev: e });
-            ivs.push({ t0: e.tc_ms, t1: e.tEnd_ms, f: f, ramp: false, id: e.id, ev: e });
+            if (half > 0) ivs.push({ t0: e.tc_ms - half, t1: e.tc_ms, f: 0.5, fv: 0.5, ramp: true, id: e.id, ev: e });
+            ivs.push({ t0: e.tc_ms, t1: e.tEnd_ms, f: f, fv: fv, ramp: false, id: e.id, ev: e });
         });
         return ivs.sort(function (a, b) { return a.t0 - b.t0 || (a.ramp ? -1 : 1); });
     }
     // Fraction of the day's rate flowing at ms (1 = full rate, 1 − f in a partial cut, 0 shut).
-    function _fracAt(ivs, ms) {
+    function _fracAt(ivs, ms, vol) {
         var fr = 1;
-        for (var i = 0; i < ivs.length; i++) { if (ivs[i].t0 > ms) break; if (ms < ivs[i].t1) fr = 1 - ivs[i].f; }
+        for (var i = 0; i < ivs.length; i++) { if (ivs[i].t0 > ms) break; if (ms < ivs[i].t1) fr = 1 - (vol ? ivs[i].fv : ivs[i].f); }
         return fr;
     }
     function _pieces(ivs, a, b) {
@@ -1618,13 +1632,14 @@
         var out = [];
         for (var i = 0; i + 1 < cuts.length; i++) {
             if (cuts[i + 1] <= cuts[i]) continue;
-            out.push({ a: cuts[i], b: cuts[i + 1], frac: _fracAt(ivs, 0.5 * (cuts[i] + cuts[i + 1])) });
+            var mid = 0.5 * (cuts[i] + cuts[i + 1]);
+            out.push({ a: cuts[i], b: cuts[i + 1], frac: _fracAt(ivs, mid), fracV: _fracAt(ivs, mid, true) });
         }
         return out;
     }
     function _hours(pieces) {
         var on = 0, eff = 0;
-        pieces.forEach(function (pc) { var h = (pc.b - pc.a) / HOUR; if (pc.frac > 0) on += h; eff += pc.frac * h; });
+        pieces.forEach(function (pc) { var h = (pc.b - pc.a) / HOUR; if (pc.frac > 0) on += h; eff += pc.fracV * h; });
         return { on: on, eff: eff };
     }
     function _unitFor(fluid, basis) {
@@ -1705,6 +1720,9 @@
             for (var a = i - 1, na = 0; a >= 0 && na < R.refEach; a--) { if ((d.t0_ms - days[a].t0_ms) / DAY > R.refDays + 0.5) break; if (days[a].cls === 'clean' && days[a].q > 0) { c.push(days[a].q); na++; } }
             for (var b2 = i + 1, nb = 0; b2 < days.length && nb < R.refEach; b2++) { if ((days[b2].t0_ms - d.t0_ms) / DAY > R.refDays + 0.5) break; if (days[b2].cls === 'clean' && days[b2].q > 0) { c.push(days[b2].q); nb++; } }
             d.qRef = c.length >= R.refMin ? median(c) : null;
+            // preliminary pass (every event as a full shut-in): an event day's spread rate would put a partial cut's volume
+            // into the flowing hours, so the rate history used by the classification gate takes the reference rate there
+            if (opts.fullShut && d.events.length && d.qRef !== null) d.qUse = d.qRef;
         });
         // R3, R6, ignores-shut-in, short days and substitutions
         days.forEach(function (d, i) {
@@ -1802,14 +1820,25 @@
             var ratio = d.V / (d.qRef * d.hours / 24);
             if (ratio < R.allocOnly) allocOnly.push({ date: d.date, ratio: ratio });
         });
-        // offset scan (§4.4): −12…+12 h, R3 on the closing and reopening days
+        // offset scan (§4.4): −12…+12 h. For each offset the day windows move, the clean days and their reference rates are
+        // recomputed, and R3 is evaluated on the closing and reopening days.
         var evDays = days.filter(function (d) { return (d.closings.length || d.reopens.length) && d.qRef !== null; });
         function scanAt(off) {
-            var sum = 0, pass = 0;
-            evDays.forEach(function (d) {
-                var h = _hours(_pieces(ivs, d.t0_ms + off * HOUR, d.t1_ms + off * HOUR)), Ve = d.qRef * h.eff / 24;
-                if (!(Ve > 0)) { sum += d.V > vRes ? 1 : 0; return; }
-                var dev = mAbs(d.V / Ve - 1);
+            var sum = 0, pass = 0, sd = days.map(function (d) {
+                var a = d.t0_ms + off * HOUR, b = d.t1_ms + off * HOUR, h = _hours(_pieces(ivs, a, b));
+                var evIn = false, cr = false;
+                mainIvs.forEach(function (iv) { if (iv.t0 < b && iv.t1 > a) evIn = true; if ((iv.t0 >= a && iv.t0 < b) || (iv.t1 > a && iv.t1 <= b)) cr = true; });
+                return { V: d.V, t0: a, h: h, cr: cr, clean: !evIn && h.on >= (b - a) / HOUR - R.cleanSlack_h, q: h.eff >= R.hOnMin_h ? 24 * d.V / h.eff : 0 };
+            });
+            sd.forEach(function (x, i) {
+                if (!x.cr) return;
+                var c = [];
+                for (var a2 = i - 1, na = 0; a2 >= 0 && na < R.refEach; a2--) { if ((x.t0 - sd[a2].t0) / DAY > R.refDays + 0.5) break; if (sd[a2].clean && sd[a2].q > 0) { c.push(sd[a2].q); na++; } }
+                for (var b2 = i + 1, nb = 0; b2 < sd.length && nb < R.refEach; b2++) { if ((sd[b2].t0 - x.t0) / DAY > R.refDays + 0.5) break; if (sd[b2].clean && sd[b2].q > 0) { c.push(sd[b2].q); nb++; } }
+                if (c.length < R.refMin) return;
+                var Ve = median(c) * x.h.eff / 24;
+                if (!(Ve > 0)) { sum += x.V > vRes ? 1 : 0; return; }
+                var dev = mAbs(x.V / Ve - 1);
                 sum += mMin(2, dev);
                 if (dev <= R.r3Tol + vRes / Ve) pass++;
             });
