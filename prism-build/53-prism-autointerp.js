@@ -1112,12 +1112,16 @@
     // ─────────────────────────────────────────────────────────────────────
     // storage(prep) — unit slope, C_us, hump (W1–W3)
     // ─────────────────────────────────────────────────────────────────────
+    // The derivative maximum: the running maximum, confirmed by a decline of at least 10 % — or of
+    // 3 σ_d at the maximum when the noise is larger (capped at 30 %), so a noise spike before the
+    // top of the hump is not taken for it (the IARF scan is gated after this index).
     function _humpIndex(prep) {
-        var d = prep.deriv.deriv, f = prep.deriv.full, iMax = -1;
+        var d = prep.deriv.deriv, f = prep.deriv.full, sd = prep.bins.sigma_d || [], iMax = -1;
         for (var i = 0; i < d.length; i++) {
             if (!f[i] || !(d[i] > 0)) continue;
-            if (iMax < 0 || d[i] > d[iMax]) iMax = i;
-            else if (d[i] < 0.9 * d[iMax]) return iMax;   // a ≥ 10 % decline after the maximum: the storage hump
+            if (iMax < 0 || d[i] > d[iMax]) { iMax = i; continue; }
+            var thr = Math.min(0.3, Math.max(0.1, 3 * (sd[iMax] || 0) / d[iMax]));
+            if (d[i] < (1 - thr) * d[iMax]) return iMax;
         }
         return -1;
     }
@@ -1210,6 +1214,7 @@
         }
         return d.length;
     }
+    var DRIFT_CYC = 0.1;   // IARF level-drift guard: head / tail averaging span (cycle)
     function _iarfNone(prep, D, reason, status, extra) {
         return Object.assign({
             found: false, grade: 'none', noiseWidened: false, status: status || 'expectedNotFound',
@@ -1234,15 +1239,15 @@
         var w = prep.well, q = prep.spec.Dq;
         var kOf = function (lvl) { return C_PLAT * q * w.B * w.mu / (w.h * lvl); };
         function windowStats(ia, ib) {   // bin indices inclusive
-            var nn = ib - ia + 1, sy = 0, su = 0, suu = 0, suy = 0, mn = Infinity, mxv = -Infinity, ssd = [], ys = [];
+            var nn = ib - ia + 1, sy = 0, su = 0, suu = 0, suy = 0, mn = Infinity, mxv = -Infinity, ssd = [], ys = [], sds = 0;
             for (var i = ia; i <= ib; i++) {
                 sy += d[i]; su += X[i]; suu += X[i] * X[i]; suy += X[i] * d[i];
                 if (d[i] < mn) mn = d[i]; if (d[i] > mxv) mxv = d[i];
-                ssd.push(sd[i]); ys.push(d[i]);
+                ssd.push(sd[i]); ys.push(d[i]); sds += sd[i];
             }
             var lvl = _median(ys), mu = su / nn, Sxx = suu - nn * mu * mu, Sxy = suy - mu * sy;
             return { n: nn, level: lvl, slope: (Sxx > 0 ? Sxy / Sxx : 0) / lvl, band: Math.max(Math.abs(mxv / lvl - 1), Math.abs(mn / lvl - 1)),
-                     sdMed: _median(ssd), span: (X[ib] - X[ia]) / LN10 };
+                     sdMed: _median(ssd), sdMean: sds / nn, span: (X[ib] - X[ia]) / LN10 };
         }
         function finish(ia, ib, forced, widened, extra) {
             var ws = windowStats(ia, ib), lvl = ws.level;
@@ -1258,14 +1263,18 @@
             else if (_rSpan(span) >= D.minCycles) grade = 'fair';
             else grade = forced ? 'fair' : 'none';
             var noiseWidened = !fixedPass && !forced;
-            var noiseLimited = grade !== 'good' && (noiseWidened || (fixedPass && _rSpan(span) >= D.goodCycles &&
-                               _rSlope(Math.abs(wl.slope)) <= D.goodSlope && _rSlope(seL) > D.goodSE));
+            // noiseLimited: noise was the only reason for missing 'good' — the span is there (≥ goodCycles),
+            // the last half cycle is flat within its own noise, and either the window needed the
+            // noise-widened tolerances or its last-half-cycle se is above goodSE.
+            var lastFlat = _rSlope(Math.abs(wl.slope)) <= D.goodSlope || (_num(seL) && Math.abs(wl.slope) <= 2 * seL);
+            var noiseLimited = !good && !forced && _rSpan(span) >= D.goodCycles && lastFlat &&
+                               (noiseWidened || (_num(seL) && _rSlope(seL) > D.goodSE));
             var kk = kOf(lvl), ps = [];
             for (var i = ia; i <= ib; i++) {
                 ps.push(0.5 * (b.dp[i] / lvl - Math.log(kk * b.dte[i] / (w.phi * w.mu * w.ct * w.rw * w.rw)) + 7.4316));
             }
             var pMin = Math.min.apply(null, ps), pMax = Math.max.apply(null, ps);
-            var bandTol = Math.min(D.bandCap, Math.max(D.band, 3 * ws.sdMed / lvl));
+            var bandTol = Math.min(D.bandCap, Math.max(D.band, 3 * ws.sdMean / lvl));   // the scan's statistic (mean σ_d)
             var slopeTol = Math.min(D.slopeCap, Math.max(D.slope, 2 * se));
             return Object.assign({
                 found: true, grade: grade, noiseWidened: noiseWidened, status: 'ok',
@@ -1315,6 +1324,18 @@
             Syy.push(Syy[j] + y[j] * y[j]); Ss.push(Ss[j] + sP[j]);
         }
         var minQ = _sparse(y, Math.min), maxQ = _sparse(y, Math.max);
+        // Level-drift guard (EN3): the band is centred on the window median, which a boundary rise (or a
+        // fall) at the window end pulls along, so a window could run on until the derivative was 12 % above
+        // the plateau. A window also needs its end level (mean over the last DRIFT_CYC cycle) within
+        // ±drTol of its start level (first DRIFT_CYC cycle) and no more than drTol above its lowest
+        // 3-bin running mean (the most settled level: the bottom of a hump-tail-to-boundary U), with
+        // drTol = min(bandCap, max(band/2, 3σ_d/ℓ)): ±5 % for clean data, the noise band otherwise.
+        var HC = DRIFT_CYC * LN10;
+        var fwd = new Array(m), bwd = new Array(m);
+        for (var fq = 0, fe = 0; fq < m; fq++) { if (fe < fq) fe = fq; while (fe + 1 < m && u[fe + 1] - u[fq] <= HC + 1e-12) fe++; fwd[fq] = fe; }
+        for (var bq = m - 1, bs = m - 1; bq >= 0; bq--) { if (bs > bq) bs = bq; while (bs - 1 >= 0 && u[bq] - u[bs - 1] <= HC + 1e-12) bs--; bwd[bq] = bs; }
+        var rm = y.map(function (v, c) { var lo = Math.max(0, c - 1), hi = Math.min(m - 1, c + 1), sm = 0; for (var q = lo; q <= hi; q++) sm += y[q]; return sm / (hi - lo + 1); });
+        var rmMinQ = _sparse(rm, Math.min);
         var sdMinQ = _sparse(sP, Math.min);
         function valleyAt(c) {   // centre bin is a local minimum ≥ 15 % below both sides within 0.5 cycle
             var i = P[c], maxL = -Infinity, maxR = -Infinity;
@@ -1345,6 +1366,10 @@
                     if (3 * sdMean / lvl > D.bandCap && _rRatio(band) <= 3 * sdMean / lvl) noiseBlocked = true;
                     continue;
                 }
+                var hEnd = Math.min(fwd[a], bb), tSt = Math.max(bwd[bb], a);
+                var headL = (Sy[hEnd + 1] - Sy[a]) / (hEnd - a + 1), tailL = (Sy[bb + 1] - Sy[tSt]) / (bb - tSt + 1);
+                var drTol = Math.min(D.bandCap, Math.max(0.5 * D.band, 3 * sdMean / lvl));
+                if (_rRatio(Math.abs(tailL / headL - 1)) > drTol || _rRatio(tailL / rmMinQ(a, bb) - 1) > drTol) continue;
                 var su = Su[bb + 1] - Su[a], mu = su / nn, Sxx = (Suu[bb + 1] - Suu[a]) - nn * mu * mu;
                 var sl = ((Suy[bb + 1] - Suy[a]) - mu * sy) / Sxx / lvl;
                 var asl = _rSlope(Math.abs(sl));

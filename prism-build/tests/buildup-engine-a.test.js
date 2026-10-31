@@ -161,7 +161,7 @@ module.exports = [
     },
   },
   {
-    name: 'EN3 IARF: reference 72 h fair (start ±0.1 cycle of 15.5 h, span 0.5–0.65, longest reported); 400 h good; 600 ft fault → window ends before the 15 % departure, T-up fires',
+    name: 'EN3 IARF: reference 72 h fair (start ±0.1 cycle of 15.5 h, span 0.5–0.65, longest reported); 400 h good; 600 ft fault → window ends before 24 h, T-up fires; reference storage + 600 ft fault → fault chosen, k within 1 %',
     wp: 'WP1',
     run(app, assert) {
       const AI = AIof(app);
@@ -184,9 +184,10 @@ module.exports = [
       const L = 600, f = synth(app.win, LONG({ k: 45, S: 0, C: 0.002, q: 800, model: 'linearBoundary', params: { dF: L / 0.354, BC: 'noflow' } }));
       const rf = run(app, f.spec);
       assert.ok(rf.iarf.found, 'IARF before the fault');
-      const t15 = L * L * 0.2 * 1 * 1e-5 / (0.0002637 * 45 * Math.log(1 / 0.15));   // image term adds 15 %
-      const tp = 2000, dteEnd1 = rf.iarf.dt1_h * tp / (tp + rf.iarf.dt1_h);
-      assert.ok(dteEnd1 < t15, 'window ends (Δt_e ' + dteEnd1.toFixed(1) + ' h) before the 15 % departure (' + t15.toFixed(1) + ' h)');
+      // the window ends before 24 h, where the image term has added 8 % (the level-drift guard: the end level stays
+      // within 5 % of the window's start and of its most settled level, not of the median the rise pulls up)
+      assert.ok(rf.iarf.dt1_h < 24, 'window ends at ' + rf.iarf.dt1_h.toFixed(1) + ' h, before 24 h');
+      assert.rel(rf.iarf.level_psi, f.truth.mp, 0.03, 'window level on the plateau');
       assert.ok(rf.triggers.up && rf.triggers.fired.indexOf('T-up') >= 0, 'T-up fires');
       shapeOk(assert, 'BuildupResult', rf);
       // pass-2 background check: no background keeps the trigger; a rising background explains it away
@@ -197,13 +198,21 @@ module.exports = [
         const bg1 = AI.backgroundCheck(app.toWin(rf), app.toWin(f.spec), 0.1, 'pstar');
         assert.ok(bg1.triggersAfter.indexOf('T-up') < 0 && bg1.boundaryDepends === true, 'the rival depends on the background: ' + JSON.stringify(bg1));
       }
+      // the reference storage (C 0.02, S 5) with the same fault: the hump tail runs into the fault rise and the
+      // derivative never settles on m′; whatever window qualifies, the fault is chosen and the match recovers k and S
+      const fr = synth(app.win, LONG({ k: 45, S: 5, C: 0.02, q: 800, model: 'linearBoundary', params: { dF: L / 0.354, BC: 'noflow' } }));
+      const rr = run(app, fr.spec);
+      assert.equal(rr.chosen.key, 'linearBoundary', 'fault chosen');
+      assert.rel(rr.final.k, 45, 0.01, 'final k within 1 %'); assert.near(rr.final.S, 5, 0.1, 'final S');
+      assert.ok(!rr.iarf.found || rr.iarf.level_psi <= 1.09 * fr.truth.mp, 'a qualifying window stays below +9 % (' + (rr.iarf.level_psi / fr.truth.mp).toFixed(3) + ')');
     },
   },
   {
     name: 'EN4 composite direction and earliest plateau: M 0.5 → inner level, T-down, composite M < 1; M 2 → T-up, M within 10 %; a dual-porosity valley is never chosen',
     wp: 'WP1', timeoutMs: 180000,
     run(app, assert) {
-      const c1 = synth(app.win, LONG({ k: 45, S: 0, C: 0.0005, q: 800, model: 'radialComposite', params: { M: 0.5, F: 1, R: 600 / 0.354 } }));
+      // inner zone 200 ft: the outer level is flat for more than a cycle before 400 h
+      const c1 = synth(app.win, LONG({ k: 45, S: 0, C: 0.0005, q: 800, model: 'radialComposite', params: { M: 0.5, F: 1, R: 200 / 0.354 } }));
       const r1 = run(app, c1.spec);
       assert.ok(r1.iarf.found);
       assert.rel(r1.iarf.level_psi, c1.truth.mp, 0.03, 'window on the inner level');
@@ -212,7 +221,12 @@ module.exports = [
       assert.ok(comp1 && comp1.ok && comp1.phys.M < 1, 'composite fitted with M < 1');
       assert.rel(comp1.phys.M, 0.5, 0.1, 'M recovered');
       assert.equal(r1.chosen.key, 'composite2', 'composite chosen');
-      assert.ok(r1.iarf.secondLevel || r1.models.some((m) => m.key === 'composite2'), 'outer level evidence');
+      assert.ok(r1.iarf.secondLevel, 'second level (I6) reported');
+      assert.rel(r1.iarf.secondLevel.ratio, 0.5, 0.1, 'second level ratio ℓ2/ℓ ≈ M');
+      assert.ok(r1.iarf.secondLevel.dt0_h > r1.iarf.dt1_h, 'the second level is after the window');
+      assert.ok(r1.triggers.level && r1.triggers.fired.indexOf('T-level') >= 0, 'T-level fires');
+      assert.equal(r1.chosen.fullySeen.status, 'full', 'composite fully seen (outer level flat ≥ 0.3 cycle)');
+      assert.rel(r1.final.distances.R_ft, 200, 0.05, 'inner radius');
       const c2 = synth(app.win, LONG({ k: 45, S: 0, C: 0.002, q: 800, model: 'radialComposite', params: { M: 2, F: 1, R: 1000 / 0.354 } }));
       const r2 = run(app, c2.spec);
       assert.ok(r2.triggers.up, 'T-up fires');
@@ -262,20 +276,34 @@ module.exports = [
     wp: 'WP1', timeoutMs: 120000,
     run(app, assert) {
       const AI = AIof(app);
+      // a gauge logging every minute (log-spaced to 0.05 h, then one sample a minute to 150 h), so the late
+      // bins average hundreds of samples, as in the field
       const base = { k: 800, S: 2, C: 0.01, q: 800, steps: [{ t: 0, q: 800 }, { t: 2000, q: 0 }], dtEnd: 150, perCycle: 60 };
-      const n1 = synth(app.win, Object.assign({}, base, { sigma: 0.5, seed: 11 }));
+      const dense = (sigma, seed) => {
+        const { spec, truth } = synth(app.win, base), st = spec.steps, dq = st.map((x, i) => x.q - (i ? st[i - 1].q : 0)), rng = lcg(seed), dts = [];
+        for (let i = 0; 0.001 * Math.pow(10, i / 60) <= 0.05; i++) dts.push(0.001 * Math.pow(10, i / 60));
+        for (let i = 1; 0.05 + i / 60 <= 150 + 1e-9; i++) dts.push(0.05 + i / 60);
+        const p = dts.map((dt) => { let D = 0; st.forEach((x, i) => { if (dq[i]) D += dq[i] * truth.pd(truth.Bt * (spec.tc_h + dt - x.t)); }); return truth.pi - truth.A1 * D + sigma * rng.n(); });
+        return { spec: Object.assign({}, spec, { dt: dts, p, sigma_psi: sigma, sigmaFlow_psi: sigma }), truth };
+      };
+      const n1 = dense(0.5, 11);
       const p1 = prepOf(app, n1.spec);
       const i1 = AI.iarf(p1);
       assert.equal(i1.found, true, 'window found: ' + i1.reason);
       assert.equal(i1.noiseWidened, true, 'noise-widened');
       assert.equal(i1.grade, 'fair');
+      assert.rel(i1.level_psi, n1.truth.mp, 0.05, 'the window is on the IARF plateau, not the top of the storage hump');
+      assert.ok(i1.cycles >= 1, 'a cycle or more: noise is the only reason for missing good (' + i1.cycles + ')');
       assert.equal(i1.noiseLimited, true);
+      // a window shorter than a cycle is never noise-limited (its span also misses good)
+      const short = AI.iarf(p1, app.toWin({ window: { dt0_h: 20, dt1_h: 80 } }));
+      assert.equal(short.noiseLimited, false, 'forced / short window not noise-limited');
       assert.ok(i1.band <= 0.20 + 1e-12 && i1.slopeTol <= 0.06 + 1e-12 && (i1.band > 0.10 || i1.slopeTol > 0.03), 'widened within the caps');
       const ev = { grade: i1.grade, noiseWidened: true, span: i1.cycles, pointSkinSpread: 0.1, agree: true, sErr: 0.3, unitSlope: true, r3Status: 'n/a', r4Status: 'n/a', snrD: 50, rDrift: 0, rTide: null, flags: [], triggers: [], chosenKey: 'homogeneous', chosenFullySeen: 'n/a', dtEnd_h: 150, dteEnd_h: 140, t10_h: 1, kHeld: false };
       const cf = AI.confidence(app.toWin(ev), app.toWin(shapes.FIX.cal));
       assert.ok(cf.reasons.some((r) => r.rule === 'KH1' && r.kind === 'unmet'), 'KH1 fails for a noise-widened window');
       // noise far beyond the caps
-      const n2 = synth(app.win, Object.assign({}, base, { sigma: 20, seed: 12 }));
+      const n2 = dense(20, 12);
       const i2 = AI.iarf(prepOf(app, n2.spec));
       assert.equal(i2.grade, 'none'); assert.equal(i2.found, false);
       assert.includes(i2.reason, 'noise');
