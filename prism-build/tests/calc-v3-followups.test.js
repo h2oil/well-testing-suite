@@ -177,11 +177,13 @@ module.exports = [
     wp: WP,
     run(app, assert) {
       const W = app.win, C = W.WTS_flowline_compute;
-      const base = { qo: 2000, qw: 500, qg: 3, api: 35, sgg: 0.7, sgw: 1.05, pwh: 1000, t0: 120, t1: 100, psep: 0, rough: 0.0018, payne: true, accel: true,
+      // Separator at 100 psig (was 0): the line is marched back from the separator pressure, and at 0 psig
+      // this rate would choke at the separator inlet. The line inlet pressure (P2) is what the heat inputs could move.
+      const base = { qo: 2000, qw: 500, qg: 3, api: 35, sgg: 0.7, sgw: 1.05, pwh: 1000, t0: 120, t1: 100, psep: 100, rough: 0.0018, payne: true, accel: true,
         well: [{ name: 'l', len: 5000, id: 2.9, dz: 0 }], flare: [] };
       const lin = C(base);
       const lin2 = C(Object.assign({}, base, { tmode: 'linear', tair: 'x' }));
-      assert.strictEqual(lin.well.pOut, lin2.well.pOut, 'linear mode ignores heat inputs');
+      assert.strictEqual(lin.well.pIn, lin2.well.pIn, 'linear mode ignores heat inputs');
       const heat = { tmode: 'heat', tair: 60, wind: 10, eps: 0.9, wall: 0.3, ins: 0, kp: 26, kins: 0.025, cpo: 0.5, cpw: 1, cpg: 0.55, jt: 0 };
       const h = C(Object.assign({}, base, heat));
       assert.ok(h.ok && h.coupled, 'coupled ok');
