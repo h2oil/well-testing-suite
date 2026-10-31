@@ -367,7 +367,13 @@ module.exports = [
       const doc = app.document, bad = [];
       app.findAll('#bu_root input, #bu_root select, #bu_root textarea, #bu_root button').forEach((c) => { if (!(c.type === 'hidden') && !accName(doc, c)) bad.push(c.id || c.outerHTML.slice(0, 60)); });
       assert.deepStrictEqual(bad, [], 'every control has an accessible name');
-      ['bu_cancel', 'bu_so_unsign', 'bu_so_sign', 'bu_ai_copy', 'bu_ai_dl', 'bu_open_prism', 'bu_qa_go', 'bu_ev_add', 'bu_val_run'].forEach((id) => assert.ok(app.el(id).disabled, id + ' disabled while idle'));
+      ['bu_cancel', 'bu_so_unsign', 'bu_so_sign', 'bu_ai_copy', 'bu_ai_dl', 'bu_open_prism', 'bu_qa_go', 'bu_ev_add'].forEach((id) => assert.ok(app.el(id).disabled, id + ' disabled while idle'));
+      // The 24-case check needs no analysis but compares with file 55's calibrated expectations (§5.6): disabled, with
+      // the reason shown, while file 55 is the placeholder; enabled once it is calibrated and the generator is loaded.
+      const cal = app.win.PRiSM_autoInterpCal, calOk = !!(cal && cal.calibrated === true && cal.inApp && cal.inApp.length);
+      const synOk = !!(app.win.WTS_buildup.synth && typeof app.win.WTS_buildup.synth.caseFromSeed === 'function' && app.win.__BU_STUBS.indexOf('WTS_buildup.run') === -1);
+      assert.strictEqual(app.el('bu_val_run').disabled, !(calOk && synOk), 'bu_val_run disabled unless file 55 is calibrated (calibrated ' + calOk + ', engines ' + synOk + ')');
+      if (synOk && !calOk) assert.match(txt(app.el('bu_val_out')), /once the confidence labels are calibrated/, 'the reason is shown');
       assert.strictEqual(app.el('bu_run').disabled, false, 'Analyse enabled');
       assert.strictEqual(P(app).calcs(), 1, 'one calc at open');
       assert.strictEqual(app.el('bu_dlg').hasAttribute('open'), false, 'dialog closed');
@@ -388,6 +394,16 @@ module.exports = [
       assert.match(txt(app.el('bu_g_status')), /Loaded/, 'demo loaded: ' + txt(app.el('bu_g_status')));
       const g = P(app).gather();
       assert.strictEqual(g.bad.length, 0, 'demo inputs valid: ' + Array.from(g.errors).join(' '));
+      // the demo's history option and zones reach the inputs (synth metadata → page): a production start the history
+      // option needs, and the demo's own (UTC) production days and gauge times whatever this device's zone is
+      const dm = app.win.WTS_buildup.synth.demo('oil'), dh = dm.history || {};
+      assert.strictEqual(g.input.history.mode, dh.mode === 'date' && dh.date ? 'date' : dh.mode === 'cum' && typeof dh.cum === 'number' ? 'cum' : 'unknown', 'history option from the demo');
+      if (g.input.history.mode === 'date') assert.strictEqual(g.input.history.date, dh.date, 'production start from the demo');
+      if (dm.zones) {
+        assert.strictEqual(g.input.zones.gauge.mode, dm.zones.gauge.mode, 'gauge zone from the demo');
+        assert.strictEqual(g.input.zones.day.zone.mode, dm.zones.day.zone.mode, 'production-day zone from the demo');
+        assert.strictEqual(g.input.zones.day.startHour, dm.zones.day.startHour, 'production-day start from the demo');
+      }
       const sh = checkShape('AnalysisInput', g.input);
       assert.ok(sh.ok, 'page builds a valid AnalysisInput: ' + sh.errors.slice(0, 4).join('; '));
       app.click('bu_run');

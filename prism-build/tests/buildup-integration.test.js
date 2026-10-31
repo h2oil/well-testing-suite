@@ -68,7 +68,7 @@ async function demo(ctx, kind) {
       analysis: JSON.parse(JSON.stringify(st.analysis)), truth: JSON.parse(JSON.stringify(app.win.WTS_buildup.synth.demo(kind).truth || {})),
       stats: typeof AI.stats === 'function' ? JSON.parse(JSON.stringify(AI.stats())) : null, pending: app.pendingTimers(), ms,
       storage: { wts_buildup_state: app.storage.getItem('wts_buildup_state'), wts_buildup_audit: app.storage.getItem('wts_buildup_audit'), wts_page_buildup: app.storage.getItem('wts_page_buildup') },
-      latest: app.win.WTS_state.buildup ? JSON.parse(JSON.stringify(app.win.WTS_state.buildup)) : null,
+      pub: app.win.WTS_state.buildup ? JSON.parse(JSON.stringify(app.win.WTS_state.buildup)) : null,   // WTS_state.buildup (§3.12)
     };
     console.log('[buildup-integration] ' + kind + ' demo analysed through the page in ' + ms + ' ms (' + st.analysis.tests.length + ' tests)');
   } finally { app.dispose(); }
@@ -77,10 +77,29 @@ async function demo(ctx, kind) {
 const interpreted = (a) => a.tests.filter((t) => t.status === 'interpreted' && t.result && t.result.final);
 const RANK = { low: 0, medium: 1, high: 2 };
 const BAD_TXT = /\b(NaN|Infinity|undefined|null)\b|\[object Object\]/;
+// IARF grades in order; the engine may grade a build-up better than the generator's noise-free prediction (GE4), not worse.
+const GRADE = { none: 0, fair: 1, good: 2 };
 function nearestTruth(truth, t) {
   let best = null;
   (truth.tests || []).forEach((x) => { if (!best || Math.abs(x.tc_ms - t.tc_ms) < Math.abs(best.tc_ms - t.tc_ms)) best = x; });
   return best && Math.abs(best.tc_ms - t.tc_ms) <= 2 * 3600000 ? best : null;
+}
+// Demo truth id (B1…) of an analysis test id. Tests are matched by CLOSING TIME: the analysis numbers every detected
+// event (the too-short shut-in and the partial cut take ids too), so demo B6 is not analysis B6.
+function demoId(a, truth, id) {
+  const t = id ? a.tests.find((x) => x.id === id) : null, tr = t ? nearestTruth(truth, t) : null;
+  return tr ? tr.id : null;
+}
+// {truthId: analysis test} for the interpreted tests, asserting one analysis test per demo build-up
+function byClosing(assert, a, truth, ok) {
+  const m = {};
+  ok.forEach((t) => {
+    const tr = nearestTruth(truth, t);
+    assert.ok(tr, t.id + ': a demo truth entry within 2 h of the closing (truth.tests[].tc_ms)');
+    assert.ok(!m[tr.id], 'one analysis test per demo build-up: ' + tr.id + ' matches ' + (m[tr.id] && m[tr.id].id) + ' and ' + t.id);
+    m[tr.id] = t;
+  });
+  return m;
 }
 
 module.exports = [
@@ -95,21 +114,26 @@ module.exports = [
       assert.strictEqual(ok.length, 9, 'interpreted build-ups: ' + a.tests.map((t) => t.id + ':' + t.status).join(' '));
       assert.strictEqual(a.events.filter((e) => e.status === 'too_short').length, 1, 'one short shut-in "too short"');
       assert.strictEqual(a.events.filter((e) => e.kind === 'partial' || e.status === 'partial').length, 1, 'one partial cut');
-      // Truth per build-up from synth.demo('oil').truth.tests[] (§3.9): {tc_ms, k, S, dtEnd_h, grade}. The expected
-      // IARF grade (GE4) is required: WP4 records it as truth.tests[].grade ('good'|'fair'|'none').
+      // Truth per build-up from synth.demo('oil').truth.tests[] (§3.9): {id, tc_ms, k, S, dtEnd_h, grade}, matched to the
+      // analysis by closing time. The expected IARF grade (GE4) is required: WP4 records it as truth.tests[].grade
+      // ('good'|'fair'|'none'); the engine's grade must be the same or better (it sees the real derivative, the
+      // generator predicts from the noise-free curve with a margin).
+      const m = byClosing(assert, a, r.truth, ok);
+      assert.deepStrictEqual(Object.keys(m).sort(), r.truth.tests.map((x) => x.id).sort(), 'every demo build-up interpreted once');
       ok.forEach((t) => {
-        assert.ok(Math.abs(t.result.final.k / 45 - 1) <= 0.10, t.id + ' k ' + t.result.final.k + ' within 10 % of 45');
-        const tr = nearestTruth(r.truth, t);
-        assert.ok(tr, t.id + ': a demo truth entry within 2 h of the closing (truth.tests[].tc_ms)');
-        assert.ok(typeof tr.S === 'number', t.id + ': truth S present');
-        assert.ok(Math.abs(t.result.final.S - tr.S) <= 0.6, t.id + ' S ' + t.result.final.S + ' within ±0.6 of ' + tr.S);
-        assert.ok(/^(good|fair|none)$/.test(String(tr.grade)), t.id + ': expected IARF grade recorded in truth.tests[].grade (got ' + JSON.stringify(tr.grade) + ')');
-        assert.strictEqual(t.result.iarf.grade, tr.grade, t.id + ' expected IARF grade (GE4)');
+        const tr = nearestTruth(r.truth, t), lbl = t.id + ' (demo ' + tr.id + ')';
+        assert.ok(Math.abs(t.result.final.k / 45 - 1) <= 0.10, lbl + ' k ' + t.result.final.k + ' within 10 % of 45');
+        assert.ok(typeof tr.S === 'number', lbl + ': truth S present');
+        assert.ok(Math.abs(t.result.final.S - tr.S) <= 0.6, lbl + ' S ' + t.result.final.S + ' within ±0.6 of ' + tr.S);
+        assert.ok(/^(good|fair|none)$/.test(String(tr.grade)), lbl + ': expected IARF grade recorded in truth.tests[].grade (got ' + JSON.stringify(tr.grade) + ')');
+        const g = t.result.iarf && t.result.iarf.grade;
+        assert.ok(g in GRADE && GRADE[g] >= GRADE[tr.grade], lbl + ' IARF grade ' + g + ' equal to or better than the expected ' + tr.grade + ' (GE4)');
       });
-      const al = a.trend.alerts;
-      assert.strictEqual(al.delta.raisedAt, 'B6', 'delta alert raised at B6');
-      assert.strictEqual(al.delta.confirmedAt, 'B7', 'delta alert confirmed at B7');
-      assert.strictEqual(al.absolute.raisedAt, 'B7', 'absolute alert raised at B7');
+      // the alerts name analysis ids; the plan states them in demo ids
+      const al = a.trend.alerts, dn = (id) => demoId(a, r.truth, id) + ' (analysis ' + id + ')';
+      assert.strictEqual(demoId(a, r.truth, al.delta.raisedAt), 'B6', 'delta alert raised at B6: ' + dn(al.delta.raisedAt));
+      assert.strictEqual(demoId(a, r.truth, al.delta.confirmedAt), 'B7', 'delta alert confirmed at B7: ' + dn(al.delta.confirmedAt));
+      assert.strictEqual(demoId(a, r.truth, al.absolute.raisedAt), 'B7', 'absolute alert raised at B7: ' + dn(al.absolute.raisedAt));
       const good = ok.filter((t) => RANK[t.result.confidence.ks] >= RANK.medium).length;
       assert.ok(good >= 8, 'k/S labels ≥ medium on ' + good + ' of 9 tests');
     },
@@ -120,15 +144,26 @@ module.exports = [
     timeoutMs: 600000,
     async run(app, assert, ctx) {
       if (skipped('IN2', app, ['trend', 'review', 'skin'])) return;
-      const r = await demo(ctx, 'gas'), a = r.analysis, ok = interpreted(a);
-      assert.strictEqual(ok.length, 8, 'gas build-ups interpreted: ' + a.tests.map((t) => t.id + ':' + t.status).join(' '));
-      const rs = a.trend.rateSkin;
+      const r = await demo(ctx, 'gas'), a = r.analysis, ok = interpreted(a), rs = a.trend.rateSkin;
+      // cross-WP (WP3 × WP7): the trend's expected D is the correlation's central D for the analysis's baseline k and
+      // well (PRiSM_skinCheck.expectedDRange(expected).D), not the midpoint of its ×1/3 … ×3 range
+      const w = a.well || {}, cmp = a.completion || {}, kB = a.baseline && a.baseline.k > 0 ? a.baseline.k : (a.trend.baseline || {}).k;
+      const exp = { k: kB, h: w.h, hp: cmp.hp_ft > 0 ? cmp.hp_ft : w.h, rw: w.rw, sg: w.gas && w.gas.sg, mu_g: w.mu };
+      const er = app.win.PRiSM_skinCheck.expectedDRange(app.toWin(exp));
+      assert.ok(rs && er && typeof rs.expectedD === 'number' && Math.abs(rs.expectedD / er.D - 1) < 1e-9,
+        'Trend.rateSkin.expectedD ' + (rs && rs.expectedD) + ' = PRiSM_skinCheck.expectedDRange(expected).D ' + (er && er.D) + ' for ' + JSON.stringify(exp));
+      // every demo build-up interpreted, matched by closing time (8 tests: D needs both rate levels)
+      assert.strictEqual(ok.length, 8, 'gas build-ups interpreted: ' + a.tests.map((t) => t.id + ':' + t.status).join(' ') +
+        ' / events ' + a.events.map((e) => e.id + ':' + e.status).join(' '));
+      const m = byClosing(assert, a, r.truth, ok);
+      assert.deepStrictEqual(Object.keys(m).sort(), r.truth.tests.map((x) => x.id).sort(), 'every demo build-up interpreted once');
       assert.ok(rs && rs.resolved, 'rate-dependent skin resolved: ' + (rs && rs.reason));
       assert.ok(rs.seD > 0 && rs.D / rs.seD >= 2, 'D/se = ' + (rs.D / rs.seD));
-      const al = a.trend.alerts.delta, ids = ok.map((t) => t.id);
-      assert.ok(ids.slice(0, 6).indexOf(al.raisedAt) === -1, 'no delta alert on the constant-skin tests (raised at ' + al.raisedAt + ')');
-      assert.strictEqual(al.raisedAt, ids[6], 'delta raised at test 7');
-      assert.strictEqual(al.confirmedAt, ids[7], 'delta confirmed at test 8');
+      // the 6 constant-skin tests are demo B1–B6 (truth.constantSkinTests); test 7 / 8 are demo B7 / B8
+      const al = a.trend.alerts.delta, nConst = r.truth.constantSkinTests || 6, at = demoId(a, r.truth, al.raisedAt);
+      assert.ok(!(at && Number(at.slice(1)) <= nConst), 'no delta alert on the ' + nConst + ' constant-skin tests (raised at demo ' + at + ', analysis ' + al.raisedAt + ')');
+      assert.strictEqual(at, 'B7', 'delta raised at test 7 (analysis ' + al.raisedAt + ')');
+      assert.strictEqual(demoId(a, r.truth, al.confirmedAt), 'B8', 'delta confirmed at test 8 (analysis ' + al.confirmedAt + ')');
     },
   },
   {
@@ -142,7 +177,8 @@ module.exports = [
         const a = app.toWin((await demo(ctx, kind)).analysis);
         const idx = R.evidence(a), rv = R.run(a, idx);
         assert.ok(rv.evidenceCheck && rv.evidenceCheck.ok, kind + ': evidence check ok (' + JSON.stringify(rv.evidenceCheck) + ')');
-        const bad = rv.findings.filter((f) => f.rule === 'V14' || /^V2[3-7]$/.test(f.rule)).map((f) => f.rule + ' ' + f.id);
+        // Array.from: the findings live in the app realm, and a cross-realm array never deep-equals [] here
+        const bad = Array.from(rv.findings).filter((f) => f.rule === 'V14' || /^V2[3-7]$/.test(f.rule)).map((f) => f.rule + ' ' + f.id);
         assert.deepStrictEqual(bad, [], kind + ': no V14 and no V23–V27 findings');
         const rm = R.report(a, rv, [], null, P(app).fmt);
         const chk = R.check(rm, a, idx);
@@ -164,7 +200,7 @@ module.exports = [
       const t = app.win.WTS_wells.table(), row = t.rows.findIndex((x) => x.key === 'buS'), col = t.wells.findIndex((w) => w.active);
       assert.ok(row !== -1, 'latest-skin row on the comparison page');
       assert.strictEqual(t.cells[row][col], Number(S).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 }));
-      assert.strictEqual(S, r.latest.S, 'same latest S as the run');
+      assert.strictEqual(S, r.pub.latest.S, 'same latest S as the run');
     },
   },
   {
