@@ -96,11 +96,16 @@ module.exports = [
         assert.ok(r2 && r2.n === FIX.samples.GaugeRecord.n, 'memory engine keeps the record for the session');
         assert.deepStrictEqual(bad.keys(DB, 'raw'), [], 'nothing written to the failed database');
       } finally { app2.dispose(); }
-      // write failures do not throw either
+      // write failures do not throw either; they resolve ok:false (the page then records rawStored 'memory')
       idb.failWrites = true;
       const r3 = await S.putRaw('w2', record(app));
-      assert.ok(r3 && r3.ok, 'a failed IndexedDB write still resolves (mirror kept)');
+      assert.ok(r3 && r3.ok === false, 'a failed IndexedDB write resolves ok:false: ' + JSON.stringify(r3));
       assert.ok(S.hasRaw('w2'), 'mirror holds the record');
+      const r4 = await S.putTests('w2', app.toWin({ B1: { spec: {}, result: {} } }));
+      assert.ok(r4 && r4.ok === false, 'a failed tests write resolves ok:false');
+      idb.failWrites = false;
+      const r5 = await S.putRaw('w3', record(app));
+      assert.ok(r5 && r5.ok === true && r5.engine === 'idb', 'a stored write resolves ok:true');
     },
   },
   {

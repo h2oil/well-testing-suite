@@ -52,6 +52,7 @@
     var PG_TITLE = 'Build-up Surveillance';
     var PG_SUB = 'Automatic interpretation of every shut-in, skin trend and alerts, with review and sign-off';
     var MODEL_LABEL = { homogeneous: 'Homogeneous', linearBoundary: 'Sealing fault', composite2: 'Radial composite', closedCircle: 'Closed circle' };
+    var DETAIL_MISSING = 'Per-test detail and charts are not available on this device (the stored build-ups were not found): the results below come from the per-test summaries. Press Analyse to recompute them (re-import the gauge data first if asked).';
 
     // ── unit categories (merge-if-absent, so a Metric first paint has them) ──
     (function _cats() {
@@ -85,7 +86,7 @@
         bu_alloc_acc: [5, null, 0.5, 50, 'phys'], bu_drift: [0.01, 'pressurePerDay', 0, 10, 'phys'], bu_patm: [14.696, 'pressureBase', 10, 16, 'phys'],
         bu_dep_g: ['', 'length', 0, 40000, 'phys'], bu_dep_d: ['', 'length', 0, 40000, 'phys'], bu_dep_grad: [0.35, 'pressureGradient', 0.01, 0.6, 'phys'],
         bu_dep_gradf: ['', 'pressureGradient', 0.01, 0.6, 'opt'], bu_cmp_hp: ['', 'length', 0.1, 2000, 'opt'], bu_cmp_htop: [0, 'length', 0, 2000, 'phys'],
-        bu_cmp_theta: [0, null, 0, 90, 'phys'], bu_cmp_kvlo: [0.1, null, 0.001, 1, 'phys'], bu_cmp_kvhi: [1, null, 0.001, 1, 'phys'],
+        bu_cmp_theta: [0, null, 0, 75, 'phys'], bu_cmp_kvlo: [0.1, null, 0.001, 1, 'phys'], bu_cmp_kvhi: [1, null, 0.001, 1, 'phys'],
         bu_cmp_spf: [4, null, 0.5, 60, 'phys'], bu_cmp_lp: [12, 'lengthSmall', 1, 60, 'phys'], bu_cmp_rp: [0.2, 'lengthSmall', 0.05, 1, 'phys'],
         bu_hist_cumo: ['', 'volume', 0, 1e10, 'opt'], bu_hist_cumg: ['', 'gasVolume', 0, 1e8, 'opt'],
         bu_sr_h: [20, null, 0, 100, 'set'], bu_sr_phi: [10, null, 0, 100, 'set'], bu_sr_ct: [30, null, 0, 100, 'set'], bu_sr_rw: [5, null, 0, 100, 'set'],
@@ -118,7 +119,11 @@
         bu_pd_start: 'Production day starts at (hour)', bu_g_tzoff: 'Gauge fixed offset from UTC (h)', bu_pd_tzoff: 'Production-day fixed offset from UTC (h)'
     };
     var DISPLAY_ONLY = { bu_test_sel: 1, bu_rep_detail: 1, bu_qa_q: 1, bu_ai_deid: 1, bu_ai_free: 1, bu_so_name: 1, bu_so_role: 1, bu_so_ok: 1, bu_eng: 1 };
-    var DEFAULTED_KEYS = { h: 'bu_h', phi: 'bu_phi', mu: 'bu_mu', B: 'bu_B', ct: 'bu_ct', rw: 'bu_rw' };
+    // WellInput / gas keys reported in well.defaulted when the field still holds its default and was never edited
+    // (only for the fields that apply to the well type).
+    var DEFAULTED_KEYS = { h: 'bu_h', phi: 'bu_phi', mu: 'bu_mu', B: 'bu_B', ct: 'bu_ct', rw: 'bu_rw', sg: 'bu_sg', T_F: 'bu_tres', Bw: 'bu_bw', muw: 'bu_muw' };
+    var DEFAULTED_NAMES = { h: 'net pay', phi: 'porosity', mu: 'viscosity', B: 'volume factor', ct: 'compressibility', rw: 'wellbore radius',
+        sg: 'gas gravity', T_F: 'reservoir temperature', Bw: 'water volume factor', muw: 'water viscosity' };
 
     // ── small helpers ────────────────────────────────────────────────
     function _fin(x) { return typeof x === 'number' && isFinite(x); }
@@ -223,7 +228,7 @@
 
     // ── state ────────────────────────────────────────────────────────
     var _st = null;          // {analysis, review, signoff, qa, overrides, input, pageHash, zones, lastStatus, uiSel, touched, ovSeq, partial}
-    var _mem = { wellId: null, record: null, recordText: null, sniff: null, allocation: null, allocText: null, rateTable: null, rawChecked: false };
+    var _mem = { wellId: null, record: null, recordText: null, sniff: null, allocation: null, allocText: null, rateTable: null, rawChecked: false, rawStored: null };
     var _run = null;         // {token, wellId, cancelled}
     var _token = 0, _chartTok = 0, _calcs = 0, _idxCache = null, _lastPub = null, _dlgCtx = null;
 
@@ -231,7 +236,7 @@
         return { analysis: null, review: null, signoff: null, qa: [], overrides: [], input: null, pageHash: null, zones: { g: '', pd: '' },
             lastStatus: null, uiSel: {}, touched: {}, ovSeq: 0, partial: false, missingTests: false };
     }
-    function _freshMem(id) { return { wellId: id || null, record: null, recordText: null, sniff: null, allocation: null, allocText: null, rateTable: null, rawChecked: false }; }
+    function _freshMem(id) { return { wellId: id || null, record: null, recordText: null, sniff: null, allocation: null, allocText: null, rateTable: null, rawChecked: false, rawStored: null }; }
     function _loadSt() {
         var S = _store(), st = _freshSt(), raw = null;
         try { raw = S && typeof S.loadState === 'function' ? S.loadState() : null; } catch (e) { raw = null; }
@@ -243,6 +248,7 @@
             if (raw.uiSel && typeof raw.uiSel === 'object') st.uiSel = raw.uiSel;
             if (raw.touched && typeof raw.touched === 'object') st.touched = raw.touched;
             if (_fin(raw.ovSeq)) st.ovSeq = raw.ovSeq;
+            if (raw.detailMissing) st.missingTests = true;
             if (raw.overflow) { st.partial = true; st._raw = raw; }
         }
         if (st.analysis && !Array.isArray(st.analysis.tests)) st.analysis = null;
@@ -259,10 +265,11 @@
     function _save() {
         var S = _store();
         if (!S || !_st || typeof S.saveState !== 'function') return { ok: false };
+        if (_st.partial) return { ok: true, deferred: true };   // parked build-ups still loading: never overwrite them with summaries
         var st = { v: 1, appVersion: _appVer(), savedAt: _nowIso(), input: _st.input, analysis: _st.analysis, review: _st.review,
             qa: (_st.qa || []).slice(-20), uiSel: _st.uiSel || {}, signoff: _st.signoff || null, overrides: _st.overrides || [],
             pageHash: _st.pageHash || null, zones: _st.zones || { g: '', pd: '' }, lastStatus: _st.lastStatus || null,
-            touched: _st.touched || {}, ovSeq: _st.ovSeq || 0 };
+            touched: _st.touched || {}, ovSeq: _st.ovSeq || 0, detailMissing: !!_st.missingTests };
         var r = { ok: false };
         try { r = S.saveState(st, { wellId: _wellId() }); } catch (e) { r = { ok: false }; }
         if (!r.ok) _status('bu_progress', 'warn', 'Device storage is full: this analysis could not be saved on the device. Use File → Save to keep it.');
@@ -399,12 +406,12 @@
             '<div class="fg-item">' + _lab('bu_g_file', 'Gauge file (.csv, .txt, .xlsx)') + '<input type="file" id="bu_g_file" accept=".csv,.txt,.tsv,.dat,.xlsx,text/csv,text/plain"></div>' +
             '<div class="fg-item">' + _lab('bu_g_paste', 'Paste gauge data') + '<textarea id="bu_g_paste" rows="4"' + np + nd + ' spellcheck="false" placeholder="time, pressure"></textarea></div>' +
             _fsel('bu_h_tag', 'Historian tag', [['', '—']], '', np) +
-            _ftxt('bu_h_from', 'Historian data from', '', 'datetime-local') +
-            _ftxt('bu_h_to', 'Historian data to', '', 'datetime-local') +
+            _ftxt('bu_h_from', 'Historian data from (gauge time zone)', '', 'datetime-local') +
+            _ftxt('bu_h_to', 'Historian data to (gauge time zone)', '', 'datetime-local') +
             _fsel('bu_demo_kind', 'Demo', [['oil', 'Oil producer (9 build-ups, skin rising)'], ['gas', 'Gas producer (two rate levels)']], 'oil') +
             _fsel('bu_g_tfmt', 'Time format', [['auto', 'Detect automatically'], ['iso', 'ISO date and time'], ['dmy', 'Day/month/year'], ['mdy', 'Month/day/year'],
                 ['elapsed_h', 'Elapsed hours'], ['elapsed_min', 'Elapsed minutes'], ['elapsed_s', 'Elapsed seconds'], ['serial', 'Spreadsheet serial days']], 'auto') +
-            _ftxt('bu_g_t0', 'Start of elapsed time', ' value="2026-01-01T00:00"', 'datetime-local') +
+            _ftxt('bu_g_t0', 'Start of elapsed time (gauge time zone)', ' value="2026-01-01T00:00"', 'datetime-local') +
             _fsel('bu_g_tz', 'Gauge time zone', TZ, 'device') + _fnum('bu_g_tzoff') +
             _ftxt('bu_g_tzname', 'Gauge time zone (resolved)', ' readonly tabindex="-1" placeholder="set at the first analysis"') +
             _fsel('bu_g_punit', 'Pressure unit in the file', [['psia', 'psia'], ['psig', 'psig'], ['kPa', 'kPa (absolute)'], ['kPag', 'kPa (gauge)'], ['bar', 'bar (absolute)'], ['barg', 'bar (gauge)'], ['MPa', 'MPa (absolute)']], 'psia') +
@@ -436,7 +443,7 @@
             _fchk('bu_ptime', 'Use pseudo-time for the build-up', false) +
             ['bu_pdew', 'bu_api', 'bu_mo', 'bu_bw', 'bu_muw', 'bu_alloc_acc', 'bu_drift'].map(function (id) { return _fnum(id); }).join('') +
             '</div><div class="bu-btns">' + _btn('bu_well_prism', 'Copy from PRiSM well inputs') + '</div>' +
-            '<div id="bu_defaults_note" class="bu-status"></div></div>' +
+            '<div id="bu_defaults_note" class="bu-status"></div><div id="bu_well_status" class="bu-status" role="status"></div></div>' +
             '<div class="card" id="bu_card_cmp"><div class="card-title">Gauge depth &amp; completion (optional)</div><div class="fg">' +
             _fchk('bu_dep_on', 'Depth correction', false) + ['bu_dep_g', 'bu_dep_d', 'bu_dep_grad', 'bu_dep_gradf'].map(function (id) { return _fnum(id); }).join('') +
             _fchk('bu_cmp_on', 'Completion data', false) + ['bu_cmp_hp', 'bu_cmp_htop', 'bu_cmp_theta', 'bu_cmp_kvlo', 'bu_cmp_kvhi'].map(function (id) { return _fnum(id); }).join('') +
@@ -499,7 +506,7 @@
             '<div class="fg-item">' + _lab('bu_dlg_t0', 'IARF window start, shut-in time (h)') + '<input type="number" id="bu_dlg_t0" step="any" min="0"></div>' +
             '<div class="fg-item">' + _lab('bu_dlg_t1', 'IARF window end, shut-in time (h)') + '<input type="number" id="bu_dlg_t1" step="any" min="0"></div>' +
             _fsel('bu_dlg_model', 'Model', [['homogeneous', 'Homogeneous'], ['linearBoundary', 'Sealing fault'], ['composite2', 'Radial composite'], ['closedCircle', 'Closed circle']], 'homogeneous') +
-            _ftxt('bu_dlg_time', 'Closing time', '', 'datetime-local') +
+            _ftxt('bu_dlg_time', 'Closing time (gauge time zone)', '', 'datetime-local') +
             _ftxt('bu_dlg_reason', 'Reason (at least 5 characters)', nd + ' maxlength="290" autocomplete="off"') +
             '</div><div id="bu_dlg_msg" class="bu-status" role="status"></div>' +
             '<div class="bu-dlg-ft">' + _btn('bu_dlg_cancel', 'Cancel') + _btn('bu_dlg_ok', 'OK', 'btn-primary') + '</div>' +
@@ -632,6 +639,48 @@
         try { var tz = Intl.DateTimeFormat().resolvedOptions().timeZone; if (tz) return String(tz); } catch (e) { /* none */ }
         return '';
     }
+    // ── wall-clock date-times in a resolved zone ─────────────────────
+    // Typed and shown date-times (closing time, missed shut-ins, start of elapsed time, historian period) use the
+    // resolved gauge zone — the zone the review shows event times in (S3) and the data reader reads ISO times in.
+    var _dtfC = {};
+    function _dtf(tz) {
+        if (_own(_dtfC, tz)) return _dtfC[tz];
+        var f = null;
+        try { f = new Intl.DateTimeFormat('en-US', { timeZone: tz, hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' }); } catch (e) { f = null; }
+        _dtfC[tz] = f;
+        return f;
+    }
+    function _offMs(zone, ms) {                 // zone wall clock minus UTC at the instant ms
+        if (!zone || zone.mode === 'utc' || !_fin(ms)) return 0;
+        if (zone.mode === 'fixed') return _fin(zone.offset_h) ? Math.round(zone.offset_h * 3600000) : 0;
+        var f = zone.tz ? _dtf(zone.tz) : null;
+        if (!f || typeof f.formatToParts !== 'function') return 0;
+        var p = {};
+        try { f.formatToParts(new Date(ms)).forEach(function (x) { p[x.type] = x.value; }); } catch (e) { return 0; }
+        var wall = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour === 24 ? 0 : +p.hour, +p.minute, +p.second);
+        return _fin(wall) ? wall - Math.floor(ms / 1000) * 1000 : 0;
+    }
+    function _msToLocal(ms, zone) { return _fin(ms) ? new Date(ms + _offMs(zone, ms)).toISOString().slice(0, 16) : ''; }
+    function _localToMs(s, zone) {
+        var m = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?$/.exec(String(s == null ? '' : s).trim());
+        if (!m) return NaN;
+        var g = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0));
+        if (!_fin(g)) return NaN;
+        return g - _offMs(zone, g - _offMs(zone, g));     // two passes: right on both sides of a clock change
+    }
+    function _zoneName(z) {
+        if (!z || z.mode === 'utc') return 'UTC';
+        if (z.mode === 'fixed') { var o = _fin(z.offset_h) ? z.offset_h : 0; return 'UTC' + (o >= 0 ? '+' : '−') + Math.abs(o) + ' h'; }
+        return String(z.tz || 'UTC');
+    }
+    // The analysis's resolved gauge zone (event times), else the zone the inputs resolve to now.
+    function _gaugeZone(useAnalysis) {
+        var a = useAnalysis !== false && _st && _st.analysis, z = a && a.zones && a.zones.gauge;
+        if (z && z.mode && z.mode !== 'device') return z;
+        z = _zoneOf('g');
+        if (z.mode === 'device') { var n = _deviceZone(); z = n ? { mode: 'iana', tz: n } : { mode: 'utc' }; }
+        return z;
+    }
     function _resolveZones() {
         var changed = false;
         [['g', 'bu_g_tz', 'bu_g_tzname'], ['pd', 'bu_pd_tz', 'bu_pd_tzname']].forEach(function (z) {
@@ -674,6 +723,7 @@
         var defaulted = [];
         Object.keys(DEFAULTED_KEYS).forEach(function (k) {
             var id = DEFAULTED_KEYS[k];
+            if (!_isActive(id, fl)) return;
             if (!(_st.touched && _st.touched[id]) && _fin(v[id]) && Math.abs(v[id] - NUM[id][0]) <= Math.abs(NUM[id][0]) * 1e-9) defaulted.push(k);
         });
         var gas = null;
@@ -689,7 +739,10 @@
         var hm = _val('bu_hist_mode');
         var hdate = /^\d{4}-\d{2}-\d{2}$/.test(_val('bu_hist_date')) ? _val('bu_hist_date') : null;
         if (hm === 'date' && !hdate) { bad.push('bu_hist_date'); errors.push('Enter the production start date, or choose another history option.'); }
-        var history = { mode: hm === 'date' || hm === 'cum' ? hm : 'unknown', date: hm === 'date' ? hdate : null, cum: hm === 'cum' ? (fl === 'gas' ? v.bu_hist_cumg : v.bu_hist_cumo) : null };
+        // history.cum is in the rate's field volume unit (§3.0): STB (bbl for injectors) or Mscf. The gas field is
+        // tagged gasVolume, whose canonical unit is MMscf, so it is scaled to Mscf here.
+        var cumG = _fin(v.bu_hist_cumg) ? Number((v.bu_hist_cumg * 1000).toPrecision(12)) : v.bu_hist_cumg;
+        var history = { mode: hm === 'date' || hm === 'cum' ? hm : 'unknown', date: hm === 'date' ? hdate : null, cum: hm === 'cum' ? (fl === 'gas' ? cumG : v.bu_hist_cumo) : null };
         if (hm === 'cum' && !_fin(history.cum)) { bad.push(fl === 'gas' ? 'bu_hist_cumg' : 'bu_hist_cumo'); errors.push('Enter the cumulative production before the data, or choose another history option.'); }
         var settings = {
             detect: { winMin: v.bu_d_win, riseMin: v.bu_d_rise, riseSig: v.bu_d_sig, persistMin: v.bu_d_persist, minDur_h: v.bu_d_mindur, gapN: v.bu_d_gapn,
@@ -706,7 +759,7 @@
         var rate = _val('bu_rate_mode') === 'table' ? 'table' : 'daily';
         var a = _st.analysis;
         var stored = null;
-        if (!_mem.record && a && Array.isArray(a.tests)) {
+        if (!_mem.record && a && Array.isArray(a.tests) && !_st.missingTests && !_st.partial) {   // summaries cannot be re-run
             stored = { events: a.events || [], rates: a.rates || null, qc: a.qc || null,
                 tests: a.tests.map(function (t) { return { id: t.id, eventId: t.eventId, spec: t.spec }; }) };
         }
@@ -723,6 +776,36 @@
         return { input: input, bad: bad, errors: errors };
     }
     function gather() { return _canonRun(_gatherImpl); }
+    // Canonical copies of the allocation and rate-table rows: only the fields that change numbers, never any key an
+    // engine adds to a row it was given, so a run can never make the page look stale.
+    function _numOrNull(x) { return _fin(x) ? x : null; }
+    function _canonRows(rows) {
+        return Array.isArray(rows) ? rows.map(function (r) {
+            return r ? { date: String(r.date == null ? '' : r.date), oil: _numOrNull(r.oil), gas: _numOrNull(r.gas), water: _numOrNull(r.water), hours: _numOrNull(r.hours) } : null;
+        }) : null;
+    }
+    function _canonAlloc(al) {
+        if (!al) return null;
+        var res = al.resolution || {};
+        return { rows: _canonRows(al.rows) || [], gUnit: al.gUnit || 'Mscf', resolution: { oil: _numOrNull(res.oil), gas: _numOrNull(res.gas), water: _numOrNull(res.water) } };
+    }
+    function _canonRt(rt) { return Array.isArray(rt) ? rt.map(function (r) { return r ? { t_ms: _numOrNull(r.t_ms), q: _numOrNull(r.q) } : null; }) : null; }
+    function _clone(o) { return o == null ? o : JSON.parse(JSON.stringify(o)); }
+    // The AnalysisInput handed to the engines: a deep copy (typed record arrays sliced), so nothing an engine
+    // writes into its input reaches the page's memory, its state or its hashes.
+    function _engineInput(input) {
+        var c = {}, k;
+        for (k in input) if (_own(input, k) && k !== 'record' && k !== 'allocation' && k !== 'rateTable') c[k] = _clone(input[k]);
+        c.allocation = _canonAlloc(input.allocation);
+        c.rateTable = _canonRt(input.rateTable);
+        var r = input.record;
+        if (r) {
+            var rc = {};
+            for (k in r) if (_own(r, k)) rc[k] = (r[k] && typeof r[k] === 'object' && typeof r[k].slice === 'function') ? r[k].slice() : (r[k] && typeof r[k] === 'object' ? _clone(r[k]) : r[k]);
+            c.record = rc;
+        } else c.record = null;
+        return c;
+    }
     // Page-level hash of everything that changes numbers (canonical imperial, 6 s.f.; display-only keys out).
     function pageHash(input) {
         if (!input) return null;
@@ -730,8 +813,8 @@
         var recHash = input.record ? (input.record.hash || null) : (a && a.record ? a.record.hash : null);
         var s = {}, k;
         for (k in input.settings) if (_own(input.settings, k) && k !== 'report') s[k] = input.settings[k];
-        var alloc = input.allocation ? { rows: input.allocation.rows, gUnit: input.allocation.gUnit } : null;
-        return _hash({ rec: recHash, alloc: alloc, rt: input.rateTable, well: _wellNoDefaulted(input.well), completion: input.completion,
+        var alloc = input.allocation ? { rows: _canonRows(input.allocation.rows), gUnit: input.allocation.gUnit } : null;
+        return _hash({ rec: recHash, alloc: alloc, rt: _canonRt(input.rateTable), well: _wellNoDefaulted(input.well), completion: input.completion,
             depth: input.depth, history: input.history, zones: input.zones, settings: s, overrides: input.overrides, workovers: input.workovers });
     }
     function _wellNoDefaulted(w) {
@@ -741,7 +824,9 @@
     }
     function _forState(input) {
         var c = {}, k;
-        for (k in input) if (_own(input, k) && k !== 'record' && k !== 'stored') c[k] = input[k];
+        for (k in input) if (_own(input, k) && k !== 'record' && k !== 'stored') c[k] = _clone(input[k]);
+        c.allocation = _canonAlloc(input.allocation);
+        c.rateTable = _canonRt(input.rateTable);
         var r = input.record;
         c.record = r ? { hash: r.hash || null, name: String(r.name || ''), source: r.source || '', n: r.n || 0, origin_ms: r.origin_ms || null } : null;
         return c;
@@ -755,8 +840,10 @@
     function _inputDiff(prev, next) {
         if (!prev || !next) return [];
         var skip = { 'meta.appVersion': 1, 'meta.engineer': 1, 'settings.report.detail': 1, 'well.defaulted': 1 };
-        var A = _flat({ well: prev.well, completion: prev.completion, depth: prev.depth, history: prev.history, zones: prev.zones, settings: prev.settings, workovers: prev.workovers, rec: prev.record && prev.record.hash, alloc: prev.allocation && _hash(prev.allocation.rows || []) }, '');
-        var Bn = _flat({ well: next.well, completion: next.completion, depth: next.depth, history: next.history, zones: next.zones, settings: next.settings, workovers: next.workovers, rec: next.record && next.record.hash, alloc: next.allocation && _hash(next.allocation.rows || []) }, '');
+        var A = _flat({ well: prev.well, completion: prev.completion, depth: prev.depth, history: prev.history, zones: prev.zones, settings: prev.settings, workovers: prev.workovers, rec: prev.record && prev.record.hash,
+            alloc: prev.allocation && _hash(_canonRows(prev.allocation.rows) || []), rt: prev.rateTable && _hash(_canonRt(prev.rateTable)) }, '');
+        var Bn = _flat({ well: next.well, completion: next.completion, depth: next.depth, history: next.history, zones: next.zones, settings: next.settings, workovers: next.workovers, rec: next.record && next.record.hash,
+            alloc: next.allocation && _hash(_canonRows(next.allocation.rows) || []), rt: next.rateTable && _hash(_canonRt(next.rateTable)) }, '');
         var keys = {}, out = [];
         Object.keys(A).forEach(function (k) { keys[k] = 1; });
         Object.keys(Bn).forEach(function (k) { keys[k] = 1; });
@@ -780,7 +867,7 @@
         bu_rs: ['well', 'Rs'], bu_tres: ['well', 'gas', 'T_F'], bu_pdew: ['well', 'gas', 'pdew'], bu_muw: ['well', 'muw'], bu_drift: ['well', 'driftPsiPerDay'],
         bu_dep_g: ['depth', 'gaugeTVD'], bu_dep_d: ['depth', 'datumTVD'], bu_dep_grad: ['depth', 'grad'], bu_dep_gradf: ['depth', 'gradFlow'],
         bu_cmp_hp: ['completion', 'hp_ft'], bu_cmp_htop: ['completion', 'htop_ft'], bu_cmp_lp: ['completion', 'perf', 'lp_in'], bu_cmp_rp: ['completion', 'perf', 'rp_in'],
-        bu_hist_cumo: ['history', 'cum'], bu_hist_cumg: ['history', 'cum'], bu_d_rise: ['settings', 'detect', 'riseMin'], bu_t_price: ['settings', 'trend', 'price']
+        bu_hist_cumo: ['history', 'cum'], bu_hist_cumg: ['history', 'cum', 0.001], bu_d_rise: ['settings', 'detect', 'riseMin'], bu_t_price: ['settings', 'trend', 'price']
     };
     function _snapToAnalysed() {
         var U = G.WTS_units, inp = _st && _st.input;
@@ -839,9 +926,8 @@
     function _defaultsNote(input) {
         var n = _byId('bu_defaults_note');
         if (!n) return;
-        var names = { h: 'net pay', phi: 'porosity', mu: 'viscosity', B: 'volume factor', ct: 'compressibility', rw: 'wellbore radius' };
         var d = (input && input.well && input.well.defaulted) || [];
-        n.textContent = d.length ? 'Inputs left at default: ' + d.map(function (k) { return names[k] || k; }).join(', ') + '.' : '';
+        n.textContent = d.length ? 'Inputs left at default: ' + d.map(function (k) { return DEFAULTED_NAMES[k] || k; }).join(', ') + '.' : '';
     }
 
     // ── report rendering ─────────────────────────────────────────────
@@ -921,6 +1007,7 @@
             return h + '</tbody></table></div>';
         }
         if (b.kind === 'chart' && b.id) {
+            if (_st && _st.missingTests && _isDetailChart(b.id)) return '';   // per-test detail not on this device
             charts.push({ id: String(b.id), block: b });
             return _canvasHtml(String(b.id));
         }
@@ -951,34 +1038,58 @@
         c.settings = s;
         return c;
     }
+    // Report from the per-test summaries alone (no review module, a report that cannot be built, or the per-test
+    // detail missing on this device): summary, tests, trend and alerts, sign-off status.
     function _fallbackReport(a, why) {
-        var tests = (a.tests || []), rows = tests.slice(-30).map(function (t) {
-            var f = t.result && t.result.final;
-            return [t.id, t.date || '—', t.status, f ? { v: f.k, cat: 'permeability', dp: 1, ref: t.id + '·A2:k' } : '—', f ? { v: f.S, cat: null, dp: 2, ref: t.id + '·A2:S' } : '—'];
+        var V = function (v, cat, dp, ref) { return { v: _fin(v) ? v : (typeof v === 'string' ? v : null), cat: cat || null, dp: dp, ref: ref }; };
+        var tests = (a.tests || []), ok = tests.filter(function (t) { return t && t.status === 'interpreted' && t.result && t.result.final; });
+        var last = ok.length ? ok[ok.length - 1] : null, lf = last ? last.result.final : null;
+        var tr = a.trend || {}, al = tr.alerts || {}, d = al.delta || {}, ab = al.absolute || {}, bS = tr.baseline && _fin(tr.baseline.S) ? tr.baseline.S : null;
+        var rows = tests.slice(-30).map(function (t) {
+            var r = t.result || {}, f = r.final;
+            return [t.id, t.date || '—', String(t.status || '—').replace('_', ' '), f ? V(f.k, 'permeability', 1, t.id + '·A2:k') : '—', f ? V(f.S, null, 2, t.id + '·A2:S') : '—',
+                r.sErr ? V(r.sErr.value, null, 2, t.id + '·U1:value') : '—', r.confidence ? String(r.confidence.headline || '—') : '—'];
         });
-        return { title: PG_TITLE, subtitle: '', status: _st.signoff ? 'SIGNED' : 'DRAFT', signature: null, reproducibility: null,
+        var stt = _status2() || 'DRAFT', ex = tr.excludedLow || { n: 0 };
+        var alertTxt = function (x) { return String(x.status || 'none') + (x.raisedAt ? ', raised at ' + x.raisedAt : '') + (x.confirmedAt ? ', confirmed at ' + x.confirmedAt : ''); };
+        return { title: PG_TITLE, subtitle: '', status: stt, signature: null, reproducibility: null, _fallback: true,
             sections: [
-                { id: 'S1', title: 'Summary', blocks: [{ kind: 'verdict', level: 'warn', template: why || 'The automated review is not loaded: the numbers are shown without it.', values: {}, ev: [] }] },
-                { id: 'S4', title: 'Build-up tests', blocks: [{ kind: 'table', id: 'bu_tbl_tests', head: [{ text: 'Test', cat: null }, { text: 'Date', cat: null }, { text: 'Status', cat: null }, { text: 'k', cat: 'permeability' }, { text: 'S', cat: null }], rows: rows, ev: [] }] }
+                { id: 'S1', title: 'Summary', blocks: [
+                    { kind: 'verdict', level: 'warn', template: why || 'The automated review is not loaded: the numbers are shown without it.', values: {}, ev: [] },
+                    { kind: 'kpi', items: [{ label: 'Latest skin', value: V(lf ? lf.S : null, null, 2, last ? last.id + '·A2:S' : 'A2:S'), ev: last ? [last.id + '·A2'] : [] },
+                        { label: 'Latest permeability', value: V(lf ? lf.k : null, 'permeability', 1, last ? last.id + '·A2:k' : 'A2:k'), ev: last ? [last.id + '·A2'] : [] },
+                        { label: 'Baseline skin', value: V(bS, null, 2, 'T1:S'), ev: ['T1'] }] }] },
+                { id: 'S4', title: 'Build-up tests', blocks: [{ kind: 'table', id: 'bu_tbl_tests', head: [{ text: 'Test', cat: null }, { text: 'Date', cat: null }, { text: 'Status', cat: null },
+                    { text: 'k', cat: 'permeability' }, { text: 'S', cat: null }, { text: 'S_err', cat: null }, { text: 'Confidence', cat: null }], rows: rows, ev: [] }] },
+                { id: 'S5', title: 'Trend and alerts', blocks: [{ kind: 'kv', rows: [
+                    { label: 'Baseline skin', value: V(bS, null, 2, 'T1:S'), ev: ['T1'] },
+                    { label: 'Delta skin alert', value: alertTxt(d), ev: ['T2'] },
+                    { label: 'Absolute skin alert', value: alertTxt(ab) + (ab.basis ? ' (' + ab.basis + ' skin)' : ''), ev: ['T3'] },
+                    { label: 'Low tests excluded', value: _fin(ex.n) && ex.n ? String(ex.n) : 'none', ev: ['T16'] }] }] },
+                { id: 'S11', title: 'Sign-off', blocks: [{ kind: 'verdict', level: stt === 'SIGNED' ? 'ok' : 'warn',
+                    template: stt === 'SIGNED' ? 'Signed off.' : (stt === 'CHANGED' ? 'DRAFT — changed after sign-off.' : 'DRAFT — not signed off.'), values: {}, ev: [] }] }
             ] };
     }
+    function _isDetailChart(id) { return /^bu_ch_(ll|sl|ov)(_|$)/.test(String(id)); }
     function reportModel() {
         var a = _st && _st.analysis;
         if (!a) return null;
         var R = _R();
-        if (!R) return _fallbackReport(a);
+        if (!R) return _fallbackReport(a, _st.missingTests ? DETAIL_MISSING : null);
         try {
-            if (!_st.review && typeof R.run === 'function') _st.review = R.run(a, _idx());
+            if (!_st.review && typeof R.run === 'function' && !_st.missingTests) _st.review = R.run(a, _idx());
+            if (_st.missingTests && !_st.review) return _fallbackReport(a, DETAIL_MISSING);
             return R.report(_viewAnalysis(a), _st.review, _auditList(), _st.signoff || null, fmt);
         } catch (e) {
-            if (typeof console !== 'undefined' && console.error) console.error('[buildup] report failed', e);
-            return _fallbackReport(a, 'The report could not be built from this analysis; press Analyse to recompute it.');
+            if (!_st.missingTests && typeof console !== 'undefined' && console.error) console.error('[buildup] report failed', e);
+            return _fallbackReport(a, _st.missingTests ? DETAIL_MISSING : 'The report could not be built from this analysis; press Analyse to recompute it.');
         }
     }
     // charts each section should hold (added when the report model has no chart block for them)
     function _wantedCharts(a) {
         var w = { S3: ['bu_ch_rate'], S4: [], S5: ['bu_ch_skin', 'bu_ch_k', 'bu_ch_pi', 'bu_ch_J', 'bu_ch_ov'] };
         if (a && a.well && a.well.fluid === 'oil') w.S5.splice(4, 0, 'bu_ch_pwf');
+        if (_st && _st.missingTests) { w.S5 = w.S5.filter(function (id) { return !_isDetailChart(id); }); return w; }
         if (_val('bu_rep_detail') === 'all') {
             (a.tests || []).filter(function (t) { return t && t.status === 'interpreted' && t.result; }).slice(-12).forEach(function (t) { w.S4.push('bu_ch_ll_' + t.id, 'bu_ch_sl_' + t.id); });
         } else w.S4.push('bu_ch_ll', 'bu_ch_sl');
@@ -1008,6 +1119,7 @@
                 charts.push({ id: id, block: null }); have[id] = 1;
                 inner += _canvasHtml(id);
             });
+            if (_st.missingTests && (sec.id === 'S4' || (sec.id === 'S1' && !(rm && rm._fallback)))) inner = '<div class="bu-detail-missing" style="color:var(--yellow)">⚠ ' + _esc(_cut(DETAIL_MISSING, 296)) + '</div>' + inner;
             h += '<div class="rbox" id="bu_s_' + _esc(sec.id) + '" data-sec="' + _esc(sec.id) + '"><div class="rbox-title" tabindex="-1">' + _esc(sec.title || sec.id) + '</div>' + inner + '</div>';
         });
         if (rm && rm.reproducibility && rm.reproducibility.kind === 'notes' && !/id="bu_s_S10"/.test(h)) h += '<div class="rbox" id="bu_s_repro"><div class="rbox-title">Reproducibility</div>' + _blockHtml(rm.reproducibility, 'S10', charts) + '</div>';
@@ -1057,61 +1169,149 @@
         P.loglog(cv, { series: series, band: band, markersNeg: neg, xLabel: 'Shut-in time Δt (h)', yLabel: 'Δp and derivative (' + _ul(pu) + ')' });
         cv.setAttribute('aria-label', String(cv.getAttribute('aria-label') || '').replace(/^Log-log chart/, 'Log-log diagnostic of ' + t.id));
     }
+    // Superposition-equivalent time Δt_e of a test's display bins: bins.dte in memory; after a reload (the stored
+    // copy drops it) recomputed from the stored spec and the analysis rate steps with PRiSM_autoInterp.prepare;
+    // null when neither is possible (the chart then falls back to single-rate Horner and says so).
+    var _dteMemo = {}, _dteMemoN = 0;
+    function _interpLog(xt, xs, ys) {
+        var lx = xs.map(function (v) { return v > 0 ? Math.log(v) : NaN; }), ly = ys.map(function (v) { return v > 0 ? Math.log(v) : NaN; });
+        return xt.map(function (v) {
+            if (!(v > 0)) return null;
+            var l = Math.log(v);
+            for (var i = 0; i + 1 < lx.length; i++) {
+                if (_fin(lx[i]) && _fin(lx[i + 1]) && _fin(ly[i]) && _fin(ly[i + 1]) && l >= lx[i] - 1e-12 && l <= lx[i + 1] + 1e-12) {
+                    var f = lx[i + 1] > lx[i] ? (l - lx[i]) / (lx[i + 1] - lx[i]) : 0;
+                    return Math.exp(ly[i] + f * (ly[i + 1] - ly[i]));
+                }
+            }
+            return null;
+        });
+    }
+    function _dteFor(t, a) {
+        var r = t && t.result, dt = r && r.bins && r.bins.dt;
+        if (!Array.isArray(dt)) return null;
+        if (Array.isArray(r.bins.dte) && r.bins.dte.length === dt.length) return r.bins.dte;
+        var key = t.id + '|' + (r.inputHash || '') + '|' + (a.resultHash || '');
+        if (_own(_dteMemo, key)) return _dteMemo[key];
+        var A = _AI(), out = null, sp = t.spec, steps = a.rates && a.rates.steps, ref = sp && sp.stepRef;
+        if (A && typeof A.prepare === 'function' && sp && Array.isArray(sp.dt) && sp.dt.length > 2 && Array.isArray(steps) && ref && _fin(ref.to) && steps[ref.to] && _fin(sp.tc_h)) {
+            try {
+                var s = _clone(sp), origin = steps[ref.to].t_ms - sp.tc_h * 3600000;      // the q = 0 step at index `to` is at tc_h
+                delete s.stepRef;
+                s.steps = steps.slice(Math.max(0, ref.from || 0), ref.to + 1).map(function (x) { return { t: (x.t_ms - origin) / 3600000, q: x.q }; });
+                var pr = A.prepare(s);
+                if (pr && pr.ok !== false && pr.bins && Array.isArray(pr.bins.dt) && Array.isArray(pr.bins.dte)) out = _interpLog(dt, pr.bins.dt, pr.bins.dte);
+                if (out && !out.some(_fin)) out = null;
+            } catch (e) { out = null; }
+        }
+        if (++_dteMemoN > 200) { _dteMemo = {}; _dteMemoN = 1; }
+        _dteMemo[key] = out;
+        return out;
+    }
     function _slChart(cv, t, a) {
         var P = B.plot, r = t && t.result;
         if (!P || !r || !r.bins) { if (P) P.trend(cv, { datasets: [] }); return; }
-        var dt = r.bins.dt || [], dp = r.bins.dp || [], dte = r.bins.dte, tp = _testTp(a, t), pu = 'pressure';
+        var dt = r.bins.dt || [], dp = r.bins.dp || [], dte = _dteFor(t, a), tp = _testTp(a, t), pu = 'pressure', approx = false;
         var xs = dt.map(function (d, i) {
-            var e = (dte && _fin(dte[i])) ? dte[i] : (_fin(tp) && tp > 0 ? tp * d / (tp + d) : d);
+            var e = (dte && _fin(dte[i])) ? dte[i] : null;
+            if (e === null) { approx = true; e = (_fin(tp) && tp > 0 ? tp * d / (tp + d) : d); }
             return _fin(e) && e > 0 ? Math.log(e) / Math.LN10 : null;
         });
-        var pts = [], win = [];
-        var i0 = r.iarf && _fin(r.iarf.dt0_h) ? r.iarf.dt0_h : null, i1 = r.iarf && _fin(r.iarf.dt1_h) ? r.iarf.dt1_h : null;
+        var pts = [], win = [], ln = r.line || null;
+        var i0 = ln && _fin(ln.dt0_h) ? ln.dt0_h : (r.iarf && _fin(r.iarf.dt0_h) ? r.iarf.dt0_h : null);
+        var i1 = ln && _fin(ln.dt1_h) ? ln.dt1_h : (r.iarf && _fin(r.iarf.dt1_h) ? r.iarf.dt1_h : null);
         xs.forEach(function (x, i) {
             if (x == null || !_fin(dp[i])) return;
             pts.push({ x: x, y: _cv(Math.abs(dp[i]), pu) });
-            if (i0 != null && i1 != null && dt[i] >= i0 && dt[i] <= i1) win.push({ x: x, y: _cv(Math.abs(dp[i]), pu) });
+            if (i0 != null && i1 != null && dt[i] >= i0 * (1 - 1e-9) && dt[i] <= i1 * (1 + 1e-9)) win.push({ x: x, y: _cv(Math.abs(dp[i]), pu) });
         });
         var ds = [{ label: 'Δp', color: '#58a6ff', data: pts, points: true, width: 1 }];
-        if (win.length >= 2) {
-            var n = win.length, sx = 0, sy = 0, sxx = 0, sxy = 0;
-            win.forEach(function (p) { sx += p.x; sy += p.y; sxx += p.x * p.x; sxy += p.x * p.y; });
-            var m = (n * sxy - sx * sy) / (n * sxx - sx * sx), b0 = (sy - m * sx) / n;
-            if (_fin(m) && _fin(b0)) {
-                var xa = pts.length ? pts[0].x : win[0].x, xb = pts.length ? pts[pts.length - 1].x : win[n - 1].x;
-                ds.push({ label: 'Line through the IARF window', color: '#3fb950', data: [{ x: xa, y: m * xa + b0 }, { x: xb, y: m * xb + b0 }], points: false, width: 2 });
-                ds.push({ label: 'IARF window', color: '#f0883e', data: win, points: true, width: 0.5 });
+        // the engine's semilog line (m, p1hr): Δp = |p1hr − pwf0| + |m|·(X − X(1 h)), X = log10 Δt_e. For gas the line
+        // lives in pseudo-pressure, so it is drawn with the engine's slope through the window instead.
+        if (ln && _fin(ln.m) && pts.length >= 2) {
+            var m = Math.abs(ln.m), pw0 = t.spec && _fin(t.spec.pwf0) ? t.spec.pwf0 : t.pwf0, b0 = null, x1 = null;
+            var gas = a.well && a.well.fluid === 'gas';
+            if (!gas && _fin(ln.p1hr) && _fin(pw0)) {
+                var lt = dt.map(function (d) { return d > 0 ? Math.log(d) / Math.LN10 : null; });
+                for (var i = 0; i + 1 < dt.length && x1 === null; i++) if (lt[i] != null && lt[i + 1] != null && xs[i] != null && xs[i + 1] != null && lt[i] <= 0 && lt[i + 1] >= 0) x1 = xs[i] + (xs[i + 1] - xs[i]) * (0 - lt[i]) / ((lt[i + 1] - lt[i]) || 1);
+                if (x1 === null) { var j0 = dt[0] > 1 ? 0 : dt.length - 1; if (xs[j0] != null && lt[j0] != null) x1 = xs[j0] - lt[j0]; }   // Δt_e ≈ Δt away from the data
+                b0 = Math.abs(ln.p1hr - pw0);
+            }
+            if ((b0 === null || x1 === null) && win.length) {
+                var mx = 0, my = 0;
+                win.forEach(function (p) { mx += p.x; my += p.y; });
+                mx /= win.length; my /= win.length;
+                var mC = _cv(m, pu) - _cv(0, pu);           // a pressure difference per cycle
+                ds.push({ label: 'Semilog line (engine slope m)', color: '#3fb950', data: [{ x: pts[0].x, y: my + mC * (pts[0].x - mx) }, { x: pts[pts.length - 1].x, y: my + mC * (pts[pts.length - 1].x - mx) }], points: false, width: 2 });
+            } else if (b0 !== null && x1 !== null) {
+                var xa = pts[0].x, xb = pts[pts.length - 1].x;
+                ds.push({ label: 'Semilog line (m, p1hr)', color: '#3fb950', data: [{ x: xa, y: _cv(b0 + m * (xa - x1), pu) }, { x: xb, y: _cv(b0 + m * (xb - x1), pu) }], points: false, width: 2 });
             }
         }
-        P.trend(cv, { datasets: ds, xLabel: 'log10 equivalent time (h)', yLabel: 'Δp (' + _ul(pu) + ')', xDec: 1, yDec: 1 });
+        if (win.length) ds.push({ label: 'IARF window', color: '#f0883e', data: win, points: true, width: 0.5 });
+        P.trend(cv, { datasets: ds, xLabel: 'log10 equivalent time (h)' + (approx ? ', single-rate approximation' : ''), yLabel: 'Δp (' + _ul(pu) + ')', xDec: 1, yDec: 1 });
     }
     function _seriesOf(a) { return (a.trend && Array.isArray(a.trend.series)) ? a.trend.series : []; }
     function _skinChart(cv, a) {
-        var tr = a.trend || {}, ser = _seriesOf(a), used = [], hi = [], lo = [], exc = [];
+        var tr = a.trend || {}, ser = _seriesOf(a), used = [], hi = [], lo = [], exc = [], low = [], sm = [], uS = [], uW = [];
+        var al = tr.alerts || {}, ab = al.absolute || {}, mech = ab.basis === 'mechanical';
+        var lowIds = {}, seen = {};
+        ((tr.excludedLow && tr.excludedLow.ids) || []).forEach(function (id) { lowIds[id] = 1; });
         ser.forEach(function (s) {
             if (!_fin(s.tDays) || !_fin(s.S)) return;
+            seen[s.id] = 1;
             var u = s.used && s.used.trend !== false;
-            (u ? used : exc).push({ x: s.tDays, y: s.S });
+            if (lowIds[s.id]) low.push({ x: s.tDays, y: s.S });
+            else (u ? used : exc).push({ x: s.tDays, y: s.S });
+            if (u && !lowIds[s.id]) { uS.push(s); uW.push(1 / Math.pow(Math.max(_fin(s.Serr) ? s.Serr : 0.3, 0.05), 2)); }
             if (u && _fin(s.Serr)) { hi.push({ x: s.tDays, y: s.S + s.Serr }); lo.push({ x: s.tDays, y: s.S - s.Serr }); }
+            if (mech && _fin(s.Smech)) sm.push({ x: s.tDays, y: s.Smech });
         });
-        var th = [], bS = tr.baseline && _fin(tr.baseline.S) ? tr.baseline.S : null, al = tr.alerts || {};
+        Object.keys(lowIds).forEach(function (id) {          // excluded low tests that the series does not carry
+            if (seen[id]) return;
+            var t = (a.tests || []).filter(function (x) { return x && x.id === id; })[0], f = t && t.result && t.result.final;
+            if (f && _fin(f.S) && _fin(t.tc_ms)) low.push({ x: _tDays(t.tc_ms, a), y: f.S });
+        });
+        var th = [], bS = tr.baseline && _fin(tr.baseline.S) ? tr.baseline.S : null;
         if (bS != null) th.push({ label: 'Baseline', y: bS, color: '#8b949e' });
         if (bS != null && al.delta && _fin(al.delta.threshold)) th.push({ label: 'Baseline + delta threshold', y: bS + al.delta.threshold, color: '#e3b341' });
-        if (al.absolute && _fin(al.absolute.threshold)) th.push({ label: 'Absolute threshold', y: al.absolute.threshold, color: '#ff7b72' });
+        if (_fin(ab.threshold)) th.push({ label: mech ? 'Absolute threshold (on mechanical skin)' : 'Absolute threshold', y: ab.threshold, color: '#ff7b72' });
         var ds = [{ label: 'Skin S', color: '#58a6ff', data: used, points: true }, { label: 'S + S_err', color: '#58a6ff', data: hi, points: false, dash: [3, 3], width: 1 },
             { label: 'S − S_err', color: '#58a6ff', data: lo, points: false, dash: [3, 3], width: 1 }];
+        // the absolute alert is judged on mechanical skin when its basis says so: plot that series against its threshold
+        if (sm.length) ds.push({ label: 'Mechanical skin', color: '#ffa657', data: sm, points: true });
         if (exc.length) ds.push({ label: 'Tests not used', color: '#6e7681', data: exc, points: true, width: 0.01 });
+        if (low.length) ds.push({ label: 'Low tests excluded', color: '#8b949e', data: low, hollow: true });
+        // hinge fit (onset model) through the used tests, weighted by 1/S_err²
+        var on = tr.onset, Tm = B.trend;
+        if (on && on.model === 'hinge' && uS.length >= 4 && Tm && typeof Tm.hinge === 'function') {
+            try {
+                var hg = Tm.hinge(uS.map(function (s) { return s.tDays; }), uS.map(function (s) { return s.S; }), uW);
+                if (hg && hg.model === 'hinge' && _fin(hg.tau) && _fin(hg.a) && _fin(hg.b)) {
+                    var j = _fin(hg.jump) ? hg.jump : 0, x0 = uS[0].tDays, xN = uS[uS.length - 1].tDays, hp = [{ x: x0, y: hg.a }, { x: hg.tau, y: hg.a }];
+                    if (j) hp.push({ x: hg.tau, y: hg.a + j });
+                    hp.push({ x: xN, y: hg.a + j + hg.b * Math.max(0, xN - hg.tau) });
+                    ds.push({ label: 'Hinge fit (onset)', color: '#56d364', data: hp, points: false, width: 1.5 });
+                }
+            } catch (e) { /* display only */ }
+        }
         var rec = tr.recent;
         if (rec && _fin(rec.slopePer30d) && used.length >= 2) {
             var xl = used[used.length - 1].x, yl = used[used.length - 1].y, xa = used[Math.max(0, used.length - (rec.n || 3))].x;
-            ds.push({ label: 'Recent trend', color: '#d2a8ff', data: [{ x: xa, y: yl - rec.slopePer30d * (xl - xa) / 30 }, { x: xl, y: yl }], points: false, width: 1.5 });
+            ds.push({ label: 'Recent trend (Theil–Sen)', color: '#d2a8ff', data: [{ x: xa, y: yl - rec.slopePer30d * (xl - xa) / 30 }, { x: xl, y: yl }], points: false, width: 1.5 });
         }
-        B.plot.trend(cv, { datasets: ds, thresholds: th, xLabel: 'Days since the first test', yLabel: 'Skin S', yDec: 1 });
+        // dashed forecast from the latest point to the absolute threshold at the forecast date
+        var fc = tr.forecast, base = sm.length ? sm : used;
+        if (fc && fc.show && fc.date && /^\d{4}-\d{2}-\d{2}$/.test(String(fc.date)) && _fin(ab.threshold) && base.length) {
+            var xf = _tDays(Date.parse(fc.date + 'T12:00:00Z'), a), lp = base[base.length - 1];
+            if (_fin(xf) && xf > lp.x) ds.push({ label: 'Forecast to the absolute threshold', color: '#ff7b72', data: [{ x: lp.x, y: lp.y }, { x: xf, y: ab.threshold }], points: false, dash: [6, 4], width: 1.5 });
+        }
+        B.plot.trend(cv, { datasets: ds, thresholds: th, xLabel: 'Days since the first test', yLabel: mech ? 'Skin S and mechanical skin' : 'Skin S', yDec: 1 });
     }
     function _kChart(cv, a) {
         var ser = _seriesOf(a), pts = ser.filter(function (s) { return _fin(s.tDays) && _fin(s.k); }).map(function (s) { return { x: s.tDays, y: _cv(s.k, 'permeability') }; });
         var med = _median(pts.map(function (p) { return p.y; })), acc = (a.well && _fin(a.well.allocAccPct) ? a.well.allocAccPct : 5) / 100, th = [];
-        if (med != null) th.push({ label: 'Median', y: med, color: '#8b949e' }, { label: 'Median ± allocation accuracy', y: med * (1 + acc), color: '#6e7681' }, { label: '', y: med * (1 - acc), color: '#6e7681' });
+        if (med != null) th.push({ label: 'Median', y: med, color: '#8b949e' }, { label: 'Median + allocation accuracy', y: med * (1 + acc), color: '#6e7681' }, { label: 'Median − allocation accuracy', y: med * (1 - acc), color: '#6e7681' });
         B.plot.trend(cv, { datasets: [{ label: 'Permeability k', color: '#3fb950', data: pts, points: true }], thresholds: th, xLabel: 'Days since the first test', yLabel: 'k (' + _ul('permeability') + ')', yDec: 1 });
     }
     function _piChart(cv, a) {
@@ -1120,10 +1320,24 @@
         var pt = a.trend && a.trend.pTrend;
         if (pt && pt.assessable && _fin(pt.slopePer30d) && pts.length >= 2) {
             var xm = _median(pts.map(function (p) { return p.x; })), ym = _median(pts.map(function (p) { return p.y; }));
-            var s = _cv(pt.slopePer30d, 'pressure') / 30, xa = pts[0].x, xb = pts[pts.length - 1].x;
+            var s = (_cv(pt.slopePer30d, 'pressure') - _cv(0, 'pressure')) / 30, xa = pts[0].x, xb = pts[pts.length - 1].x;
             ds.push({ label: 'Theil–Sen line', color: '#d2a8ff', data: [{ x: xa, y: ym + s * (xa - xm) }, { x: xb, y: ym + s * (xb - xm) }], points: false, width: 1.5 });
         }
-        B.plot.trend(cv, { datasets: ds, xLabel: 'Days since the first test', yLabel: 'Pressure (' + _ul('pressure') + ')', yDec: 0 });
+        // p* range bars when the production history before the data is estimated (pStarRangeDatum, or the test's
+        // gauge-depth range moved to the datum by the test's own p*/p_ext depth shift)
+        var bars = [], byId = {};
+        ser.forEach(function (s) { byId[s.id] = s; });
+        (a.tests || []).forEach(function (t) {
+            var s = t && byId[t.id], r = t && t.result, f = r && r.final;
+            if (!s || !_fin(s.tDays)) return;
+            var rg = s.pStarRangeDatum || t.pStarRangeDatum || null, shift = 0;
+            if (!rg && f) {
+                rg = f.pStarRange || (r.line && r.line.pStarRange) || null;
+                shift = (_fin(t.pStarDatum) && _fin(f.pStar)) ? t.pStarDatum - f.pStar : ((_fin(t.pExtDatum) && _fin(f.pExt)) ? t.pExtDatum - f.pExt : 0);
+            }
+            if (rg && _fin(rg.lo) && _fin(rg.hi)) bars.push({ x: s.tDays, lo: _cv(rg.lo + shift, 'pressure'), hi: _cv(rg.hi + shift, 'pressure') });
+        });
+        B.plot.trend(cv, { datasets: ds, bars: bars, barsLabel: 'p* range (estimated history)', barsColor: '#79c0ff', xLabel: 'Days since the first test', yLabel: 'Pressure (' + _ul('pressure') + ')', yDec: 0 });
     }
     function _jChart(cv, a) {
         var pc = a.trend && a.trend.piCheck, rows = pc && Array.isArray(pc.rows) ? pc.rows : [], pts = [];
@@ -1290,7 +1504,11 @@
         if (!R) { _status('bu_val', 'bad', 'The analysis engine is not loaded in this version, so the build-ups cannot be interpreted.'); return G.Promise.resolve(null); }
         var g0 = gather();
         if (g0.bad.length) { _showErr(g0); return G.Promise.resolve(null); }
-        if (!g0.input.record && !g0.input.stored) { _status('bu_val', 'bad', 'Load gauge data first: a file, pasted data, a historian tag, the PRiSM dataset or the demo.'); return G.Promise.resolve(null); }
+        if (!g0.input.record && !g0.input.stored) {
+            _status('bu_val', 'bad', (_st.analysis && (_st.missingTests || _st.partial)) ? 'The stored build-ups of this analysis are not on this device: re-import the gauge data (or open the project file that holds it), then press Analyse.'
+                : 'Load gauge data first: a file, pasted data, a historian tag, the PRiSM dataset or the demo.');
+            return G.Promise.resolve(null);
+        }
         if (g0.input.rateTable === null && _val('bu_rate_mode') === 'table' && g0.input.record) { _status('bu_val', 'bad', 'Rate-table mode needs a rate column in the gauge data. Load a file with a rate column or use the daily allocation.'); return G.Promise.resolve(null); }
         _resolveZones();
         var g = gather(), input = g.input, ph = pageHash(input);
@@ -1304,25 +1522,37 @@
         _buttons();
         var cancel = _shouldCancel(run, root), S = _store();
         var P = G.Promise.resolve();
+        var rawStored = !input.record ? null : (_mem.rawStored && _mem.rawStored.hash === input.record.hash) ? _mem.rawStored.as
+            : ((S && typeof S.engine === 'function' && S.engine() === 'idb' && S.rawHash(wellId) === input.record.hash) ? 'idb' : 'memory');
         if (input.record && S && typeof S.encodeJob === 'function' && S.rawHash(wellId) !== input.record.hash) {
+            var rh = input.record.hash;
             P = _drive(S.encodeJob(input.record), { shouldCancel: cancel, onProgress: function (f) { _status('bu_progress', '', 'Analysing… 0 % — storing the raw gauge data (' + Math.round(f * 100) + ' %)'); } })
-                .then(function (enc) { return S.putRaw(wellId, enc); });
+                .then(function (enc) { return S.putRaw(wellId, enc); })
+                .then(function (r) {
+                    rawStored = (r && r.ok) ? 'idb' : 'memory';
+                    if (_wellId() === wellId) _mem.rawStored = { hash: rh, as: rawStored };
+                });
         }
+        // The engines get their own deep copy: they may annotate what they are given (allocation rows, overrides).
+        var engIn = _engineInput(input);
         return P.then(function () {
             if (cancel()) throw { code: 'CANCELLED' };
-            return R.analyseAsync(input, {
+            return R.analyseAsync(engIn, {
                 cache: _st.analysis || null, shouldCancel: cancel,
                 onProgress: function (f, lab) { _status('bu_progress', '', 'Analysing… ' + Math.round((_fin(f) ? f : 0) * 100) + ' %' + (lab ? ' — ' + lab : '')); }
             });
         }).then(function (analysis) {
-            if (run.token !== _token || run.cancelled || _wellId() !== wellId || !root.isConnected) return null;   // discarded
+            if (run.token !== _token || run.cancelled || _wellId() !== wellId || !root.isConnected) {   // discarded
+                if (_run === run) { _run = null; _buttons(); }
+                return null;
+            }
             _run = null;
             if (!analysis || analysis.ok === false) {
                 _status('bu_progress', 'bad', 'The analysis failed: ' + String((analysis && analysis.errors && analysis.errors[0]) || 'no result') + '. Previous results kept.');
                 _buttons();
                 return null;
             }
-            if (analysis.record) analysis.record.rawStored = input.record ? (S && S.engine ? S.engine() : 'memory') : (analysis.record.rawStored || 'none');
+            if (analysis.record) analysis.record.rawStored = input.record ? rawStored : (analysis.record.rawStored || 'none');
             _complete(analysis, input, ph, diff, reason);
             return analysis;
         }).then(null, function (e) {
@@ -1339,7 +1569,14 @@
     }
     function _carryDecisions(prev, next) {
         if (!prev || !next || !Array.isArray(prev.findings) || !Array.isArray(next.findings)) return;
-        var key = function (f) { return f.rule + '|' + (f.where || '') + '|' + (f.ev || []).join(','); }, map = {};
+        // A decision follows its finding only while the finding quotes the same numbers (6 significant figures):
+        // after a re-run that changes a value, the finding is open again for the reviewer.
+        var vals = function (f) {
+            var o = {}, vs = f.values || {};
+            Object.keys(vs).forEach(function (k) { var x = vs[k]; o[k] = (x && typeof x === 'object' && _own(x, 'v')) ? x.v : x; });
+            return _hash(o);
+        };
+        var key = function (f) { return f.rule + '|' + (f.where || '') + '|' + (f.ev || []).join(',') + '|' + vals(f); }, map = {};
         prev.findings.forEach(function (f) { if (f && f.decision) map[key(f)] = f.decision; });
         next.findings.forEach(function (f) { if (f && !f.decision && map[key(f)] && f.acceptable !== false) f.decision = map[key(f)]; });
     }
@@ -1347,6 +1584,8 @@
         var R = _R();
         _st.analysis = analysis;
         _st.partial = false;
+        _st.missingTests = false;
+        delete _st._raw;
         _idxCache = null;
         var rv = null;
         if (R && typeof R.run === 'function') { try { rv = R.run(analysis, _idx()); } catch (e) { rv = null; } }
@@ -1397,18 +1636,44 @@
         map.forEach(function (m) { var v = parseInt(_val(m[0]), 10); o[m[1]] = _fin(v) ? v : -1; if (o[m[1]] >= 0) any = true; });
         return any ? o : null;
     }
-    // A per-sample rate column becomes its steps (rows where q changes, plus the last row), so a rate table
-    // read from a long gauge file stays small in wts_buildup_state; piecewise-constant rates are kept exactly.
+    // A per-sample rate column becomes steps, so a rate table read from a long gauge file stays small in
+    // wts_buildup_state. Consecutive rows within a tolerance of their segment's time-weighted mean rate merge into
+    // one step at that mean (a measured, noisy rate column); zero-rate rows (shut-ins) never merge with flowing
+    // ones; piecewise-constant rates are kept exactly. The tolerance grows (0.5 % → 10 %) until at most
+    // RT_CAP steps remain. The last row is kept as the end of the table.
+    var RT_TOLS = [0.005, 0.01, 0.02, 0.05, 0.1], RT_CAP = 2000;
+    function _compactRatesTol(rows, tol) {
+        var out = [], seg = null;
+        var close = function () {
+            if (!seg) return;
+            var q = seg.same ? seg.q0 : (seg.dur > 0 ? seg.area / seg.dur : seg.q0);
+            out.push({ t_ms: seg.t, q: seg.same ? q : Number(q.toPrecision(6)) });
+        };
+        for (var i = 0; i < rows.length; i++) {
+            var r = rows[i], nx = rows[i + 1], dur = nx ? Math.max(0, nx.t_ms - r.t_ms) : 0, zero = !(r.q > 0);
+            if (seg) {
+                var mean = seg.dur > 0 ? seg.area / seg.dur : seg.q0;
+                var join = zero ? seg.zero : (!seg.zero && Math.abs(r.q - mean) <= tol * Math.abs(mean));
+                if (join) { seg.area += r.q * dur; seg.dur += dur; if (r.q !== seg.q0) seg.same = false; continue; }
+                close();
+            }
+            seg = { t: r.t_ms, q0: r.q, area: r.q * dur, dur: dur, zero: zero, same: true };
+        }
+        close();
+        var last = rows[rows.length - 1];
+        if (out.length && out[out.length - 1].t_ms !== last.t_ms) out.push({ t_ms: last.t_ms, q: out[out.length - 1].q });
+        return out;
+    }
     function _compactRates(rt) {
         if (!rt || !rt.length) return null;
-        var out = [], last = null;
-        for (var i = 0; i < rt.length; i++) {
-            var r = rt[i];
-            if (!r || !_fin(r.t_ms) || !_fin(r.q)) continue;
-            if (last === null || r.q !== last.q || i === rt.length - 1) { out.push({ t_ms: r.t_ms, q: r.q }); last = r; }
-        }
+        var rows = [];
+        for (var i = 0; i < rt.length; i++) { var r = rt[i]; if (r && _fin(r.t_ms) && _fin(r.q)) rows.push({ t_ms: r.t_ms, q: r.q }); }
+        if (!rows.length) return null;
+        var out = rows;
+        for (var k = 0; k < RT_TOLS.length; k++) { out = _compactRatesTol(rows, RT_TOLS[k]); if (out.length <= RT_CAP) break; }
         return out.length ? out : null;
     }
+    PG._compactRates = _compactRates;
     function _setRecord(rec, rateTable, name, hasRate) {
         _ensure();
         _mem.record = rec;
@@ -1437,10 +1702,11 @@
         if (sn && !sameText) _fillMap('bu_g_map', GMAP, sn.headers, sn.cols);
         var cols = sameText ? (_mapCols(GMAP) || (sn && sn.cols)) : (sn && sn.cols) || _mapCols(GMAP);
         var tf = _val('bu_g_tfmt');
-        var t0 = Date.parse(String(_val('bu_g_t0') || '2026-01-01T00:00') + ':00Z');
-        var opts = { cols: cols || null, timeFormat: tf === 'auto' ? ((sn && sn.timeFormat) || null) : tf, t0_ms: _fin(t0) ? t0 : Date.UTC(2026, 0, 1),
-            zone: (function () { _ensure(); var z = _zoneOf('g'); if (z.mode === 'device') { var n = _deviceZone(); z = n ? { mode: 'iana', tz: n } : { mode: 'utc' }; } return z; })(),
-            pUnit: _val('bu_g_punit') || 'psia', patm: _readNum('bu_patm').v || 14.696, source: source || 'csv', name: name || '' };
+        _ensure();
+        var zone = _gaugeZone(false);                                  // the zone this record is read in
+        var t0 = _localToMs(String(_val('bu_g_t0') || '2026-01-01T00:00'), zone);   // elapsed-time start: wall clock in that zone
+        var opts = { cols: cols || null, timeFormat: tf === 'auto' ? ((sn && sn.timeFormat) || null) : tf, t0_ms: _fin(t0) ? t0 : Date.UTC(2026, 0, 1) - _offMs(zone, Date.UTC(2026, 0, 1)),
+            zone: zone, pUnit: _val('bu_g_punit') || 'psia', patm: _readNum('bu_patm').v || 14.696, source: source || 'csv', name: name || '' };
         _mem.recordText = text;
         _status('bu_g_status', '', 'Reading the gauge data… 0 %');
         var P;
@@ -1479,7 +1745,7 @@
         var D = _D(), tag = _val('bu_h_tag');
         if (!D || typeof D.fromHistorian !== 'function') return;
         if (!tag) { _status('bu_g_status', 'bad', 'Choose a historian tag first.'); return; }
-        var to = Date.parse(_val('bu_h_to') + ':00Z'), from = Date.parse(_val('bu_h_from') + ':00Z');
+        var gz = _gaugeZone(false), to = _localToMs(_val('bu_h_to'), gz), from = _localToMs(_val('bu_h_from'), gz);   // typed in the gauge zone
         if (!_fin(to)) to = Date.now();
         if (!_fin(from)) from = to - 30 * 86400000;
         _status('bu_g_status', '', 'Reading the historian…');
@@ -1493,7 +1759,9 @@
         var D = _D();
         if (!D || typeof D.fromPRiSM !== 'function') return;
         var r = null;
-        try { r = D.fromPRiSM({ t0_ms: Date.parse(String(_val('bu_g_t0') || '2026-01-01T00:00') + ':00Z') }); } catch (e) { r = null; }
+        _ensure();
+        var t0 = _localToMs(String(_val('bu_g_t0') || '2026-01-01T00:00'), _gaugeZone(false));
+        try { r = D.fromPRiSM({ t0_ms: _fin(t0) ? t0 : Date.UTC(2026, 0, 1) }); } catch (e) { r = null; }
         if (!r || !r.record || r.record.ok === false) { _status('bu_g_status', 'bad', 'PRiSM has no dataset loaded.'); return; }
         _setRecord(r.record, r.rateTable || null, 'PRiSM dataset');
     }
@@ -1562,8 +1830,10 @@
         var w = null;
         try { w = G.PRiSM_getWell(); } catch (e) { w = null; }
         if (!w) return;
-        _applyWell({ fluid: w.fluid === 'gas' ? 'gas' : (w.testType === 'falloff' ? 'water_inj' : 'oil'), h: w.h, phi: w.phi, mu: w.mu, B: w.B, ct: w.ct, rw: w.rw });
-        _status('bu_a_status', '', '');
+        var got = { fluid: w.fluid === 'gas' ? 'gas' : (w.testType === 'falloff' ? 'water_inj' : 'oil'), h: w.h, phi: w.phi, mu: w.mu, B: w.B, ct: w.ct, rw: w.rw };
+        _applyWell(got);
+        var names = { h: 'net pay', phi: 'porosity', mu: 'viscosity', B: 'volume factor', ct: 'compressibility', rw: 'wellbore radius' }, copied = Object.keys(names).filter(function (k) { return _fin(got[k]); });
+        _status('bu_well_status', copied.length ? 'ok' : 'warn', copied.length ? 'Copied from the PRiSM well inputs: ' + copied.map(function (k) { return names[k]; }).join(', ') + '.' : 'The PRiSM well inputs hold no values to copy.');
         _syncUi();
         _checkStale();
     }
@@ -1574,7 +1844,11 @@
         S.getRaw(wid).then(function (rec) {
             if (!_root() || _wellId() !== wid || _mem.record) return;
             var cur = _st && _st.analysis;
-            if (rec && cur && cur.record && rec.hash && rec.hash === cur.record.hash) { _mem.record = rec; _mem.rawChecked = true; return; }
+            if (rec && cur && cur.record && rec.hash && rec.hash === cur.record.hash) {
+                _mem.record = rec; _mem.rawChecked = true;
+                _mem.rawStored = { hash: rec.hash, as: (typeof S.engine === 'function' && S.engine() === 'idb') ? 'idb' : 'memory' };
+                return;
+            }
             _mem.rawChecked = true;
             var n = _byId('bu_raw_note');
             if (n && cur) n.textContent = 'Raw gauge data is not embedded for this well — re-import it to re-run detection; interpretation and trend reproduce from the stored build-ups.';
@@ -1586,18 +1860,22 @@
         if (!_st || !_st.partial || !S || typeof S.rehydrate !== 'function') return;
         var wid = _wellId(), raw = _st._raw;
         S.rehydrate(raw).then(function (st) {
-            if (!_root() || _wellId() !== wid || !_st || _st._raw !== raw) return;
+            if (!_st || _st._raw !== raw || _wellId() !== wid) return;
             _st.partial = false;
             delete _st._raw;
-            if (st && st.analysis && !st.overflowMissing) { _st.analysis = st.analysis; _idxCache = null; }
+            _idxCache = null;
+            if (st && st.analysis && !st.overflowMissing) { _st.analysis = st.analysis; _st.missingTests = false; }
             else {
-                _st.analysis = null;
-                _status('bu_progress', 'warn', 'The stored build-ups of this analysis are not available on this device; press Analyse to recompute them.');
+                // The parked per-test detail is not on this device (no IndexedDB, another device, cleared site data):
+                // keep the analysis and render it from the per-test summaries the state holds.
+                _st.missingTests = true;
             }
+            if (!_root()) return;
+            if (_st.missingTests) _status('bu_progress', 'warn', DETAIL_MISSING);
             _fillTestSel();
             _renderResults({ charts: true });
             _publish();
-        });
+        }, function () { if (_st && _st._raw === raw) { _st.partial = false; delete _st._raw; _st.missingTests = true; if (_root()) { _renderResults({ charts: true }); _publish(); } } });
     }
     function _loadTags() {
         var H = G.WTS_historian, sel = _byId('bu_h_tag');
@@ -1628,7 +1906,9 @@
         if (!d) return;
         _dlgCtx = { ctx: ctx, opener: opener || null };
         var title = _byId('bu_dlg_title'), body = _byId('bu_dlg_body'), act = _byId('bu_dlg_act');
-        var pairs = [];
+        var pairs = [], gz = _gaugeZone();
+        var tl = _byId('bu_dlg_time'), tlw = tl && tl.closest ? tl.closest('.fg-item') : null, tll = tlw && tlw.querySelector ? tlw.querySelector('label') : null;
+        if (tll) tll.textContent = 'Closing time (' + _zoneName(gz) + ')';
         if (ctx.kind === 'test') {
             var t = _testById(ctx.test);
             if (title) title.textContent = 'Build-up ' + ctx.test;
@@ -1642,7 +1922,7 @@
             if (e0) e0.value = r && r.iarf && _fin(r.iarf.dt0_h) ? String(Number(r.iarf.dt0_h.toPrecision(4))) : '';
             if (e1) e1.value = r && r.iarf && _fin(r.iarf.dt1_h) ? String(Number(r.iarf.dt1_h.toPrecision(4))) : '';
             var md = _byId('bu_dlg_model'); if (md) md.value = r && r.chosen && MODEL_LABEL[r.chosen.key] ? r.chosen.key : 'homogeneous';
-            var tm = _byId('bu_dlg_time'); if (tm) tm.value = t && _fin(t.tc_ms) ? new Date(t.tc_ms).toISOString().slice(0, 16) : '';
+            var tm = _byId('bu_dlg_time'); if (tm) tm.value = t && _fin(t.tc_ms) ? _msToLocal(t.tc_ms, gz) : '';
         } else if (ctx.kind === 'findings') {
             if (title) title.textContent = 'Review findings ' + ctx.f.join(', ');
             pairs.push(['accept', 'Accept'], ['reject', 'Reject (with a note)'], ['note', 'Add a note']);
@@ -1652,7 +1932,7 @@
             if (title) title.textContent = 'Add a missed shut-in';
             pairs.push(['event_add', 'Typed closing time']);
             var m = _st.analysis && _st.analysis.missed;
-            (m && m.subThreshold || []).slice(0, 20).forEach(function (s, i) { if (_fin(s.t_ms)) pairs.push(['missed:' + s.t_ms, 'Possible shut-in ' + new Date(s.t_ms).toISOString().slice(0, 16).replace('T', ' ') + ' (rise ' + fmt(s.dp_psi, 'pressure', 1) + ')']); });
+            (m && m.subThreshold || []).slice(0, 20).forEach(function (s, i) { if (_fin(s.t_ms)) pairs.push(['missed:' + s.t_ms, 'Possible shut-in ' + _msToLocal(s.t_ms, gz).replace('T', ' ') + ' ' + _zoneName(gz) + ' (rise ' + fmt(s.dp_psi, 'pressure', 1) + ')']); });
             if (body) body.textContent = 'The next Analyse adds the shut-in as a new event and interprets it.';
             var tm2 = _byId('bu_dlg_time'); if (tm2) tm2.value = '';
         }
@@ -1679,8 +1959,10 @@
         }
         var op = c && c.opener;
         if (op && op.isConnected === false && op.getAttribute) {   // the row may have been re-rendered: find its new button
-            var sel = op.getAttribute('data-test') ? '[data-act="menu"][data-test="' + op.getAttribute('data-test') + '"]' : (op.getAttribute('data-f') ? '[data-act="menu"][data-f="' + op.getAttribute('data-f') + '"]' : null);
+            var safe = function (s) { return String(s || '').replace(/[^A-Za-z0-9,_·-]/g, ''); };
+            var sel = op.getAttribute('data-test') ? '[data-act="menu"][data-test="' + safe(op.getAttribute('data-test')) + '"]' : (op.getAttribute('data-f') ? '[data-act="menu"][data-f="' + safe(op.getAttribute('data-f')) + '"]' : null);
             var r = _root(); op = sel && r ? r.querySelector(sel) : (op.id ? _byId(op.id) : null);
+            if (!op && c.ctx && c.ctx.kind === 'findings') op = _byId('bu_s_S9') && _byId('bu_s_S9').querySelector('.rbox-title');   // the findings were decided away
         }
         if (op && typeof op.focus === 'function') { try { op.focus(); } catch (e) { /* best effort */ } }
     }
@@ -1708,8 +1990,8 @@
             });
             if (!changed.length) { _status('bu_dlg_msg', 'bad', 'This finding cannot be accepted: re-run the analysis to clear it.'); return; }
             _audit({ kind: 'decision', target: changed.join(','), value: act, reason: reason, who: who });
+            _afterChange({});     // re-render first, so the focus goes to the re-rendered Actions… button
             _dlgClose();
-            _afterChange({});
             return;
         }
         if (reason.length < 5) { _status('bu_dlg_msg', 'bad', 'A reason of at least 5 characters is required.'); return; }
@@ -1729,21 +2011,22 @@
             } else if (act === 'model') { ov.target = ctx.test; ov.value = MODEL_LABEL[_val('bu_dlg_model')] ? _val('bu_dlg_model') : 'homogeneous'; }
             else if (act === 'event_drop') ov.target = t ? t.eventId : null;
             else if (act === 'tc' || act === 'event_add' || /^missed:/.test(act)) {
-                var tm = /^missed:/.test(act) ? Number(act.slice(7)) : Date.parse(_val('bu_dlg_time') + ':00Z');
+                var listed = /^missed:/.test(act);
+                var tm = listed ? Number(act.slice(7)) : _localToMs(_val('bu_dlg_time'), _gaugeZone());   // typed in the gauge zone
                 if (!_fin(tm)) { _status('bu_dlg_msg', 'bad', 'Enter the closing time.'); return; }
                 if (act === 'tc') { ov.target = t ? t.eventId : null; ov.value = { tc_ms: tm }; }
-                else { ov.kind = 'event_add'; ov.target = null; ov.value = { t_ms: tm }; }
+                else { ov.kind = 'event_add'; ov.target = null; ov.value = listed ? { t_ms: tm } : { t_ms: tm, exact: true }; }   // a listed step is refined
             }
             if (ov.kind !== 'event_add' && !ov.target) { _status('bu_dlg_msg', 'bad', 'This action needs a test.'); return; }
             ov.id = _nextOv();
             _st.overrides = (_st.overrides || []).concat([ov]);
             _audit({ kind: 'override', target: ov.target, value: { id: ov.id, kind: ov.kind, value: ov.value }, reason: ov.reason, who: who2 });
         }
-        _dlgClose();
         _save();
         _checkStale();
         _renderResults({ charts: false });
         _status('bu_progress', 'warn', 'Override recorded: press Analyse to apply it (only the affected tests are re-run).');
+        _dlgClose();          // after the re-render: focus returns to the new Actions… button of the row
     }
 
     // ── sign-off, questions, export, validation, PRiSM ───────────────
@@ -1835,21 +2118,34 @@
         if (!a || typeof f !== 'function') return;
         if (!t || !t.result || !t.spec) { _status('bu_ai_status', 'bad', 'Choose an interpreted build-up first.'); return; }
         if (typeof G.confirm === 'function' && !G.confirm('This replaces the PRiSM dataset and well inputs with build-up ' + t.id + ' and its rate history. Continue?')) return;
-        var dtEnd = _fin(t.dtEnd_h) ? t.dtEnd_h : 24, rows = [];
+        var dtEnd = _fin(t.dtEnd_h) ? t.dtEnd_h : 24, MAXROWS = 3000;
         var rec = (_mem.record && a.record && _mem.record.hash === a.record.hash) ? _mem.record : null;
+        // build-up: the stored samples binned at 20 per log cycle (PRiSM_autoInterp.bin), else thinned to ≤ 2,000
+        var sp = t.spec, dt0 = [], p0 = [], A0 = _AI();
+        for (var j = 0; j < (sp.dt || []).length && j < (sp.p || []).length; j++) if (_fin(sp.dt[j]) && sp.dt[j] > 0 && _fin(sp.p[j])) { dt0.push(sp.dt[j]); p0.push(sp.p[j]); }
+        var bu = null;
+        if (A0 && typeof A0.bin === 'function' && dt0.length > 1) { try { var bb = A0.bin(dt0, p0, { perCycle: 20 }); if (bb && Array.isArray(bb.dt) && bb.dt.length && bb.dt.length === (bb.p || []).length) bu = { dt: bb.dt, p: bb.p }; } catch (e) { bu = null; } }
+        if (!bu) { var st0 = Math.max(1, Math.ceil(dt0.length / 2000)); bu = { dt: dt0.filter(function (x, k) { return k % st0 === 0 || k === dt0.length - 1; }), p: p0.filter(function (x, k) { return k % st0 === 0 || k === p0.length - 1; }) }; }
+        var buRows = bu.dt.map(function (d, k) { return [t.tc_ms + d * 3600000, bu.p[k]]; }).filter(function (r) { return _fin(r[0]) && _fin(r[1]); });
+        // flowing: the last sample of each 15-min window counted back from the closing over the last 10·Δt_end, so the
+        // last flowing point is the last flowing sample; thinned further if the total would pass 3,000 rows
+        var fl = [];
         if (rec && rec.n) {
             var from = t.tc_ms - 10 * dtEnd * 3600000, bucket = 15 * 60000, lastB = null;
-            for (var i = 0; i < rec.n; i++) {
+            for (var i = rec.n - 1; i >= 0; i--) {
                 var tt = rec.t[i];
-                if (tt < from || tt >= t.tc_ms) continue;
-                var bk = Math.floor((tt - from) / bucket);
-                if (bk !== lastB) { rows.push([tt, rec.p[i]]); lastB = bk; }
+                if (tt >= t.tc_ms) continue;
+                if (tt < from) break;
+                var bk = Math.floor((t.tc_ms - tt) / bucket);
+                if (bk !== lastB && _fin(rec.p[i])) { fl.push([tt, rec.p[i]]); lastB = bk; }
             }
+            fl.reverse();
+            var room = Math.max(1, MAXROWS - buRows.length);
+            if (fl.length > room) { var stf = Math.ceil(fl.length / room), nF = fl.length; fl = fl.filter(function (r, k) { return (nF - 1 - k) % stf === 0; }); }
         }
-        var sp = t.spec, dt = sp.dt || [], p = sp.p || [];
-        if (!rows.length && _fin(t.pwf0)) rows.push([t.tc_ms, t.pwf0]);   // no raw record: start at the closing (flowing pressure pwf0)
-        for (var j = 0; j < dt.length && j < p.length; j++) if (_fin(dt[j]) && _fin(p[j])) rows.push([t.tc_ms + dt[j] * 3600000, p[j]]);
-        if (rows.length > 3000) { var keep = rows.length - dt.length, stp = Math.ceil(keep / (3000 - dt.length)); rows = rows.filter(function (r, k) { return k >= keep || k % stp === 0; }); }
+        if (!fl.length && _fin(t.pwf0)) fl.push([t.tc_ms, t.pwf0]);   // no raw record: start at the closing (flowing pressure pwf0)
+        var rows = fl.concat(buRows);
+        if (rows.length > MAXROWS) rows = rows.slice(rows.length - MAXROWS);
         rows.sort(function (x, y) { return x[0] - y[0]; });
         if (!rows.length) { _status('bu_ai_status', 'bad', 'This build-up has no stored samples.'); return; }
         var t0 = rows[0][0];
@@ -1884,12 +2180,26 @@
                 if (i >= cases.length) return { done: true, progress: 1, label: '' };
                 var c = cases[i];
                 try {
+                    // one work unit per step: the case is generated through synth.generateJob (§3.9), then analysed
                     if (!sub) {
-                        var sc = S.generate(S.caseFromSeed(c.seed));
-                        sub = { sc: sc, job: R.job({ record: sc.record, stored: null, allocation: sc.allocation ? { rows: sc.allocation.rows, gUnit: 'Mscf', resolution: { oil: null, gas: null, water: null } } : null,
+                        var spec = S.caseFromSeed(c.seed);
+                        sub = { gen: typeof S.generateJob === 'function' ? S.generateJob(spec) : null, spec: spec, sc: null, job: null };
+                        if (!sub.gen) sub.sc = S.generate(spec);
+                        if (sub.gen) return { done: false, progress: i / cases.length, label: 'Case ' + (i + 1) + ': generating' };
+                    }
+                    if (!sub.sc) {
+                        var gs = sub.gen.step();
+                        if (!gs.done) return { done: false, progress: i / cases.length, label: 'Case ' + (i + 1) + ': generating' };
+                        sub.sc = sub.gen.result();
+                        if (!sub.sc) throw new Error('no case');
+                        return { done: false, progress: i / cases.length, label: 'Case ' + (i + 1) + ': generated' };
+                    }
+                    if (!sub.job) {
+                        var sc = sub.sc;
+                        sub.job = R.job({ record: sc.record, stored: null, allocation: sc.allocation ? { rows: sc.allocation.rows, gUnit: 'Mscf', resolution: { oil: null, gas: null, water: null } } : null,
                             rateTable: sc.rateTable || null, well: sc.well, completion: null, depth: null, history: { mode: 'unknown', date: null, cum: null },
                             zones: { gauge: { mode: 'utc' }, day: { zone: { mode: 'utc' }, startHour: 0 } }, settings: gather().input.settings, overrides: [], workovers: [],
-                            meta: { wellName: 'Check case', engineer: '', appVersion: _appVer() } }, {}) };
+                            meta: { wellName: 'Check case', engineer: '', appVersion: _appVer() } }, {});
                     }
                     var st = sub.job.step();
                     if (st.done) {
@@ -2004,6 +2314,8 @@
         if (t) t.textContent = PG_TITLE;
         if (s) s.textContent = PG_SUB;
         _ensure();        // keeps the in-memory analysis (with its model curves) across navigation within one well
+        var S0 = _store();
+        if (S0 && typeof S0.init === 'function') { try { S0.init(); } catch (e) { /* memory engine */ } }   // opens IndexedDB, warms the mirrors
         body.innerHTML = _markup();
         var U = G.WTS_units;
         if (U && typeof U.tagInput === 'function') for (var k in TAGS) if (_own(TAGS, k)) U.tagInput(k, TAGS[k]);

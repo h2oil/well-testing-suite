@@ -244,13 +244,51 @@
             });
         }, function () { return null; });
     }
-    function init() { return _openDb().then(function () { return { engine: _engine || 'memory' }; }); }
+    // Mirror warm-up: every record already in IndexedDB is copied into the memory mirror (entries written
+    // since are kept), so a project File → Save in a fresh session embeds every well instead of listing it
+    // under `omitted`. Runs once per opened database; a project Open / New / reset in between (generation
+    // change) discards the read.
+    var _gen = 0, _warmP = null;
+    function _readAll(db, store) {
+        var P = _P();
+        return new P(function (res) {
+            var out = {};
+            try {
+                var t = db.transaction(store, 'readonly'), s = t.objectStore(store);
+                if (typeof s.getAllKeys !== 'function') { res(out); return; }
+                var r = s.getAllKeys();
+                r.onsuccess = function () {
+                    (r.result || []).forEach(function (k) {
+                        var g = s.get(k);
+                        g.onsuccess = function () { if (g.result != null) out[String(k)] = g.result; };
+                    });
+                };
+                t.oncomplete = function () { res(out); }; t.onerror = function () { res(out); }; t.onabort = function () { res(out); };
+            } catch (e) { res(out); }
+        });
+    }
+    function _warm(db) {
+        var P = _P();
+        if (!db) return P.resolve(0);
+        if (_warmP) return _warmP;
+        var g0 = _gen;
+        _warmP = P.all([_readAll(db, 'raw'), _readAll(db, 'tests')]).then(function (r) {
+            if (g0 !== _gen) { _warmP = null; return 0; }    // superseded: a later init() reads again
+            var n = 0;
+            for (var id in r[0]) if (_own(r[0], id) && !_own(_mem.raw, id) && _isEncoded(r[0][id])) { _mem.raw[id] = r[0][id]; n++; }
+            for (var id2 in r[1]) if (_own(r[1], id2) && !_own(_mem.tests, id2) && r[1][id2] && typeof r[1][id2] === 'object') { _mem.tests[id2] = r[1][id2]; n++; }
+            return n;
+        }, function () { return 0; });
+        return _warmP;
+    }
+    function init() { return _openDb().then(function (db) { return _warm(db); }).then(function () { return { engine: _engine || 'memory' }; }); }
     function _isEncoded(x) { return !!x && typeof x === 'object' && typeof x.tB64 === 'string' && typeof x.pB64 === 'string'; }
+    // Resolves {ok, engine}: ok is true only when IndexedDB holds the record (the mirror always does, for this session).
     function putRaw(id, rec) {
         id = wellId(id);
         var enc = _isEncoded(rec) ? rec : encode(rec || {});
         _mem.raw[id] = enc;
-        return _tx('raw', 'readwrite', function (s) { return s.put(enc, id); }).then(function () { return { ok: true, engine: _engine || 'memory' }; });
+        return _tx('raw', 'readwrite', function (s) { return s.put(enc, id); }).then(function (v) { return { ok: v === true, engine: _engine || 'memory' }; });
     }
     function getRawEncoded(id) {
         id = wellId(id);
@@ -265,7 +303,7 @@
         id = wellId(id);
         var v = (obj && typeof obj === 'object') ? obj : {};
         _mem.tests[id] = v;
-        return _tx('tests', 'readwrite', function (s) { return s.put(v, id); }).then(function () { return { ok: true, engine: _engine || 'memory' }; });
+        return _tx('tests', 'readwrite', function (s) { return s.put(v, id); }).then(function (r) { return { ok: r === true, engine: _engine || 'memory' }; });
     }
     function getTests(id) {
         id = wellId(id);
@@ -276,10 +314,12 @@
         });
     }
     function _drop(store, id) {
+        _gen++;
         delete _mem[store][id];
         return _tx(store, 'readwrite', function (s) { return s.delete(id); });
     }
     function _clear(store) {
+        _gen++;
         _mem[store] = {};
         return _tx(store, 'readwrite', function (s) { return s.clear(); });
     }
@@ -317,17 +357,60 @@
         if (!ls) return false;
         try { ls.setItem(key, txt); return true; } catch (e) { return false; }
     }
+    function _shallow(o) { var c = {}; for (var k in o) if (_own(o, k)) c[k] = o[k]; return c; }
+    // Arrays whose length grows with the record (thousands of gaps on a 15-min flowing / 1-min shut-in record)
+    // are capped in the stored copy; the counts and totals the review quotes (gapCount, gapTotal_h, longestGap_h,
+    // spikes.count, missed list lengths) are kept, and the full lists come back with the next detection run.
+    var GAP_FIRST = 10, GAP_LONGEST = 20, SPIKE_IDX = 50, FAST_T = 40, WARN_MAX = 40, EV_WARN_MAX = 8, MISSED_MAX = 500;
+    function _capList(a, n) { return Array.isArray(a) && a.length > n ? a.slice(0, n) : a; }
+    function _capGaps(gaps) {
+        if (!Array.isArray(gaps) || gaps.length <= GAP_FIRST + GAP_LONGEST) return gaps;
+        var idx = gaps.map(function (g, i) { return i; });
+        var keep = {}, i;
+        for (i = 0; i < GAP_FIRST; i++) keep[i] = 1;
+        idx.slice().sort(function (x, y) { return ((gaps[y] && gaps[y].dur_h) || 0) - ((gaps[x] && gaps[x].dur_h) || 0) || x - y; })
+            .slice(0, GAP_LONGEST).forEach(function (j) { keep[j] = 1; });
+        return idx.filter(function (j) { return keep[j]; }).map(function (j) { return gaps[j]; });
+    }
+    function _compactAnalysis(a) {
+        var ac = _shallow(a), k;
+        if (a.qc && typeof a.qc === 'object') {
+            var q = ac.qc = _shallow(a.qc);
+            if (Array.isArray(a.qc.gaps) && a.qc.gaps.length > GAP_FIRST + GAP_LONGEST) {
+                q.gaps = _capGaps(a.qc.gaps);
+                q.gapsStored = { kept: q.gaps.length, total: a.qc.gaps.length, rule: 'first ' + GAP_FIRST + ' and longest ' + GAP_LONGEST };
+                if (!_fin(q.gapCount)) q.gapCount = a.qc.gaps.length;
+            }
+            if (a.qc.spikes && Array.isArray(a.qc.spikes.idx) && a.qc.spikes.idx.length > SPIKE_IDX) { q.spikes = _shallow(a.qc.spikes); q.spikes.idx = a.qc.spikes.idx.slice(0, SPIKE_IDX); }
+            if (a.qc.temperature && Array.isArray(a.qc.temperature.fastChanges) && a.qc.temperature.fastChanges.length > FAST_T) {
+                q.temperature = _shallow(a.qc.temperature);
+                q.temperature.fastChanges = a.qc.temperature.fastChanges.slice().sort(function (x, y) { return Math.abs((y && y.dT_F) || 0) - Math.abs((x && x.dT_F) || 0); })
+                    .slice(0, FAST_T).sort(function (x, y) { return ((x && x.t_ms) || 0) - ((y && y.t_ms) || 0); });
+            }
+            q.plausibility = _capList(a.qc.plausibility, WARN_MAX);
+        }
+        if (Array.isArray(a.events)) ac.events = a.events.map(function (e) {
+            if (!e || !Array.isArray(e.warnings) || e.warnings.length <= EV_WARN_MAX) return e;
+            var ec = _shallow(e); ec.warnings = e.warnings.slice(0, EV_WARN_MAX); return ec;
+        });
+        if (a.missed && typeof a.missed === 'object') {
+            var m = ac.missed = _shallow(a.missed);
+            ['subThreshold', 'allocOnly', 'gaps'].forEach(function (key) { m[key] = _capList(a.missed[key], MISSED_MAX); });
+        }
+        ac.warnings = _capList(a.warnings, WARN_MAX);
+        if (a.rates && typeof a.rates === 'object' && Array.isArray(a.rates.warnings) && a.rates.warnings.length > WARN_MAX) { ac.rates = _shallow(a.rates); ac.rates.warnings = a.rates.warnings.slice(0, WARN_MAX); }
+        if (a.trend && typeof a.trend === 'object' && Array.isArray(a.trend.warnings) && a.trend.warnings.length > WARN_MAX) { ac.trend = _shallow(a.trend); ac.trend.warnings = a.trend.warnings.slice(0, WARN_MAX); }
+        for (k in ac) if (_own(ac, k) && ac[k] === undefined) delete ac[k];
+        return ac;
+    }
     function _copyState(st) {
-        var c = {}, k;
-        for (k in st) if (_own(st, k)) c[k] = st[k];
+        var c = _shallow(st);
         var a = st.analysis;
         if (a && typeof a === 'object' && Array.isArray(a.tests)) {
-            var ac = {};
-            for (k in a) if (_own(a, k)) ac[k] = a[k];
+            var ac = _compactAnalysis(a);
             ac.tests = a.tests.map(function (t) {
                 if (!t || typeof t !== 'object') return t;
-                var tc = {};
-                for (var j in t) if (_own(t, j)) tc[j] = t[j];
+                var tc = _shallow(t);
                 tc.result = stripResult(t.result);
                 return tc;
             });
@@ -556,6 +639,9 @@
     if (typeof document !== 'undefined' && document && typeof document.addEventListener === 'function') {
         document.addEventListener('wts:project-loaded', _onProjectLoaded);
     }
+    // Warm the mirrors at load when this device holds a build-up analysis (an IndexedDB open request; no timers),
+    // so File → Save before the page is opened still embeds the raw records and the parked build-ups.
+    try { if (_idb() && _wellsWithAnalysis('raw').length) init(); } catch (e) { /* the page warms them on open */ }
 
     // ── public ──
     S.STATE_KEY = STATE_KEY; S.AUDIT_KEY = AUDIT_KEY; S.STATE_CAP = STATE_CAP; S.AUDIT_CAP = AUDIT_CAP; S.AUDIT_MAX = AUDIT_MAX;

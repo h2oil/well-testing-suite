@@ -174,23 +174,48 @@
         if (typeof drawLineChart === 'function') return drawLineChart;   // eslint-disable-line no-undef
         return typeof G.drawLineChart === 'function' ? G.drawLineChart : null;
     }
+    // drawLineChart's frame (host): pads 30/20/50/70 px and widens the given bounds by 5 % (x) and 8 % (y).
+    function _frame(cv, b) {
+        var W = cv.width || 720, H = cv.height || 300, pad = { t: 30, r: 20, b: 50, l: 70 }, pw = W - pad.l - pad.r, ph = H - pad.t - pad.b;
+        var x0 = b.xMin, x1 = b.xMax, y0 = b.yMin, y1 = b.yMax;
+        if (x0 === x1) x1 = x0 + 1;
+        if (y0 === y1) y1 = y0 + 1;
+        var xp = (x1 - x0) * 0.05, yp = (y1 - y0) * 0.08;
+        x0 -= xp; x1 += xp; y0 -= yp; y1 += yp;
+        return { x: function (v) { return pad.l + (v - x0) / (x1 - x0) * pw; }, y: function (v) { return pad.t + ph - (v - y0) / (y1 - y0) * ph; } };
+    }
+    function _minMax(a) {
+        var lo = Infinity, hi = -Infinity;
+        for (var i = 0; i < a.length; i++) { if (a[i] < lo) lo = a[i]; if (a[i] > hi) hi = a[i]; }
+        return lo <= hi ? [lo, hi] : null;
+    }
+    // spec.datasets[].hollow: points drawn as open circles (for example excluded tests), no line;
+    // spec.bars [{x, lo, hi}] (+ barsLabel, barsColor): vertical range bars with caps. Both are drawn over the
+    // drawLineChart frame, with a legend entry each.
     function trend(cv, spec) {
         spec = spec || {};
-        var ds = [];
+        var ds = [], hollow = [], bars = [];
         (spec.datasets || []).forEach(function (d) {
             var data = (d.data || []).filter(function (p) { return p && _fin(p.x) && _fin(p.y); });
-            if (data.length) ds.push({ label: d.label || '', color: d.color, data: data, dash: d.dash, points: d.points, width: d.width });
+            if (!data.length) return;
+            if (d.hollow) hollow.push({ label: d.label || '', color: d.color || '#8b949e', data: data });
+            else ds.push({ label: d.label || '', color: d.color, data: data, dash: d.dash, points: d.points, width: d.width });
         });
-        var xs = [];
-        ds.forEach(function (d) { d.data.forEach(function (p) { xs.push(p.x); }); });
-        var xMin = _fin(spec.xMin) ? spec.xMin : (xs.length ? Math.min.apply(null, xs) : 0);
-        var xMax = _fin(spec.xMax) ? spec.xMax : (xs.length ? Math.max.apply(null, xs) : 1);
+        (spec.bars || []).forEach(function (b) { if (b && _fin(b.x) && _fin(b.lo) && _fin(b.hi)) bars.push({ x: b.x, lo: Math.min(b.lo, b.hi), hi: Math.max(b.lo, b.hi) }); });
+        var xs = [], ys = [];
+        ds.concat(hollow).forEach(function (d) { d.data.forEach(function (p) { xs.push(p.x); ys.push(p.y); }); });
+        bars.forEach(function (b) { xs.push(b.x); ys.push(b.lo, b.hi); });
+        var xr = _minMax(xs);
+        var xMin = _fin(spec.xMin) ? spec.xMin : (xr ? xr[0] : 0);
+        var xMax = _fin(spec.xMax) ? spec.xMax : (xr ? xr[1] : 1);
         (spec.thresholds || []).forEach(function (t) {
-            if (t && _fin(t.y)) ds.push({ label: t.label || '', color: t.color || '#8b949e', data: [{ x: xMin, y: t.y }, { x: xMax, y: t.y }], dash: t.dash || [6, 4], points: false, width: 1.5 });
+            if (t && _fin(t.y)) { ds.push({ label: t.label || '', color: t.color || '#8b949e', data: [{ x: xMin, y: t.y }, { x: xMax, y: t.y }], dash: t.dash || [6, 4], points: false, width: 1.5 }); ys.push(t.y); }
         });
+        var yr = _minMax(ys);
         var n = 0;
         (spec.datasets || []).forEach(function (d) { n += (d.data || []).filter(function (p) { return p && _fin(p.x) && _fin(p.y); }).length; });
         var f = _dlc(), c = _ctx(cv);
+        if (!ds.length && hollow.length) ds.push({ label: '', color: 'rgba(0,0,0,0)', data: hollow[0].data.slice(0, 1), points: false, width: 0.01 });   // a frame to draw on
         if (!ds.length || !c) {
             if (c) {
                 var W = cv.width || 720, H = cv.height || 300;
@@ -203,13 +228,33 @@
         }
         if (f) {
             var o = { xLabel: spec.xLabel || '', yLabel: spec.yLabel || '', yDec: _fin(spec.yDec) ? spec.yDec : 1, xDec: _fin(spec.xDec) ? spec.xDec : 0 };
-            if (_fin(spec.yMin)) o.yMin = spec.yMin;
-            if (_fin(spec.yMax)) o.yMax = spec.yMax;
-            try { f(cv, ds, o); } catch (e) { /* drawing is best effort */ }
+            var bnd = { xMin: xMin, xMax: xMax, yMin: _fin(spec.yMin) ? spec.yMin : (yr ? yr[0] : 0), yMax: _fin(spec.yMax) ? spec.yMax : (yr ? yr[1] : 1) };
+            o.xMin = bnd.xMin; o.xMax = bnd.xMax; o.yMin = bnd.yMin; o.yMax = bnd.yMax;
+            // legend entries for the overlays (no data: drawLineChart lists them and draws nothing)
+            hollow.forEach(function (h) { if (h.label) ds.push({ label: h.label + ' (open circles)', color: h.color, data: [], points: false }); });
+            if (bars.length) ds.push({ label: spec.barsLabel || 'Range', color: spec.barsColor || '#79c0ff', data: [], points: false });
+            try {
+                f(cv, ds, o);
+                var fr = _frame(cv, bnd);
+                if (typeof c.setLineDash === 'function') c.setLineDash([]);
+                c.lineWidth = 1.5;
+                c.strokeStyle = spec.barsColor || '#79c0ff';
+                bars.forEach(function (b) {
+                    var x = fr.x(b.x), ya = fr.y(b.lo), yb = fr.y(b.hi);
+                    c.beginPath(); c.moveTo(x, ya); c.lineTo(x, yb); c.moveTo(x - 4, ya); c.lineTo(x + 4, ya); c.moveTo(x - 4, yb); c.lineTo(x + 4, yb); c.stroke();
+                });
+                hollow.forEach(function (h) {
+                    c.strokeStyle = h.color;
+                    h.data.forEach(function (p) { c.beginPath(); c.arc(fr.x(p.x), fr.y(p.y), 4, 0, Math.PI * 2); c.stroke(); });
+                });
+            } catch (e) { /* drawing is best effort */ }
         }
-        // drawLineChart writes its own summary; keep it when present, else ours
-        if (!cv.getAttribute || !cv.getAttribute('aria-label')) _aria(cv, 'Chart of ' + (spec.yLabel || 'value') + ' against ' + (spec.xLabel || 'days') + ': ' + n + ' points.');
-        else cv.setAttribute('role', 'img');
+        // our own summary (the page's placeholder label is not one): series names and point counts
+        var parts = (spec.datasets || []).filter(function (d) { return d && d.label; }).map(function (d) {
+            return d.label + ' ' + (d.data || []).filter(function (p) { return p && _fin(p.x) && _fin(p.y); }).length;
+        });
+        if (bars.length) parts.push((spec.barsLabel || 'Range') + ' ' + bars.length);
+        _aria(cv, 'Chart of ' + (spec.yLabel || 'value') + ' against ' + (spec.xLabel || 'days') + ': ' + n + ' points' + (parts.length ? ' (' + parts.join(', ') + ')' : '') + '.');
         return { ok: true, points: n };
     }
 
