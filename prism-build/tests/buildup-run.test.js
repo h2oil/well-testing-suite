@@ -87,7 +87,9 @@ function setLabels(c, ks, model) {
 // o {pass1: {id: [ks, model]}, final: {id: [ks, model]}, kHeldIds: [id], cwd: [id] (closed without depletion)}
 function stubs(app, o) {
   o = o || {};
-  const W = app.win, AI = W.PRiSM_autoInterp, log = [], specs = {};
+  const W = app.win, log = [], specs = {};
+  // an HTML built before Round 8 carried file 53 has no PRiSM_autoInterp: canon/hash16 then come from file 53 itself
+  const AI = W.PRiSM_autoInterp || (W.PRiSM_autoInterp = { canon: S.autoInterp().canon, hash16: S.autoInterp().hash16 });
   AI.interpretJob = function (spec) {
     log.push('interpret:' + spec.id);
     specs[spec.id] = AI.canon(spec, 'inputs');
@@ -374,6 +376,7 @@ module.exports = [
     name: 'RU10 WTS_buildup_compute({}) → {ok:false, code:NO_DATA} without throwing; inputHash changes with the resolved zone name, not with a unit-system flip',
     wp: WP,
     run(app, assert) {
+      stubs(app);
       const W = app.win;
       assert.fn(W.WTS_buildup_compute);
       [{}, null, undefined, { record: null }].forEach((x) => {
