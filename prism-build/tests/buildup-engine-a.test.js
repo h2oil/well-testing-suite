@@ -267,10 +267,12 @@ module.exports = [
       const prep = prepOf(app, spec);
       assert.ok(prep.ok);
       assert.ok(prep.histFit.nLumped > 300 && prep.histFit.steps.length < 40, 'compacted history');
-      // compaction error: full vs compacted history through the registry model
+      // compaction error: full vs compacted history through the same kernel (the engine's grid entry, so the
+      // difference is the compaction alone; EN8 checks the grid against the registry)
       const full = AI.clean(prep.adata); full.rateHistory = app.toWin(steps.map((s) => ({ t: s.t, q: s.q * spec.Dq / steps[363 + 1].q })));
-      const pmF = W.PRiSM_physicalModel('homogeneous', prep.well, app.toWin(full), app.toWin({ isolated: true }));
-      const pmC = W.PRiSM_physicalModel('homogeneous', prep.well, prep.adata, app.toWin({ isolated: true }));
+      const entH = AI.gridEntry('homogeneous', prep);
+      const pmF = W.PRiSM_physicalModel('homogeneous', prep.well, app.toWin(full), { entry: entH, isolated: true });
+      const pmC = W.PRiSM_physicalModel('homogeneous', prep.well, prep.adata, { entry: entH, isolated: true });
       const ph = app.toWin({ k: 45, C: 0.02, S: 5 });
       const a = pmF.dp(prep.adata.t, ph), b = pmC.dp(prep.adata.t, ph);
       let mx = 0; for (let i = 0; i < a.length; i++) mx = Math.max(mx, Math.abs(a[i] - b[i]));
