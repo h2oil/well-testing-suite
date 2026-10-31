@@ -16,8 +16,13 @@
 //   RV10  every ReportModel number is a Value with a ref; check() uses v, not text (imperial = metric result)
 //   RV11  with a metric formatter, report, finding and answer text contains no psi, ft or STB
 //   RV12  review.FORMULAS agrees with the shapes FORMULAS on FIX.analysis
-//   RV13  the audit chain verifies; folding beyond 500 entries keeps the chain
+//   RV13  the audit chain verifies; folding beyond 500 entries keeps the chain; a 7th-digit edit breaks it
 //   RV14  the evidence check uses full-precision stored values (no false V14 from display rounding)
+//   RV15  a stored derived number (m, m′, Δp_skin, r_inv, cycles, S_abs, sensitivity rows, T7, T8) that disagrees with FORMULAS
+//         raises V14 from run() and from report(); the page and the report show the stored number
+// Also: RV4 no-result excluded test, mech questions naming a test, the what-if over every used test; RV7 a stale review cannot be
+// signed, a V14 after sign-off reads CHANGED, unknown decision codes are ignored; RV9 S9 without a review, S3 Note column.
+// Crafted variants go through refresh(), which recomputes the derived numbers an engine stores, so they stay consistent.
 //
 // The module is pure, so most tests evaluate prism-build/49-calc-buildup-review.js (with file 53 for canon/hash16)
 // in a bare vm context, self-tests stripped exactly as the build strips them. RV6 also checks the app build.
@@ -104,20 +109,41 @@ const PLAN_RULES = {
   V15: ['major', 'S4'], V16: ['major', 'S3'], V17: ['major', 'S4'], V18: ['minor', 'S4'], V19: ['major', 'S4'], V20: ['major', 'S4'], V21: ['minor', 'S12'],
   V22: ['minor', 'S10'], V23: ['major', 'S4'], V24: ['major', 'S4'], V25: ['major', 'S3'], V26: ['major', 'S4'], V27: ['major', 'S5'],
 };
-const variant = (...rules) => { const a = S.FIX.analysis; rules.forEach((r) => CASES[r](a)); return a; };
+// Recompute the derived numbers an engine stores (final kh, m, m′, Δp_skin, r_inv, T7, oil T8) after a crafted edit, so a variant
+// stays engine-consistent: the evidence check recomputes them and would otherwise (rightly) raise V14.
+function refresh(a) {
+  const F = S.FORMULAS, w = a.well;
+  a.tests.forEach((t) => {
+    const r = t.result; if (!r || !r.final) return;
+    const f = r.final, sw = t.spec.well, ev = r.evidence || {};
+    f.kh = f.k * sw.h; f.m = F.m(t.spec.Dq, sw.B, sw.mu, f.k, sw.h); f.mPrime = F.mPrime(f.m); f.dpSkin_psi = F.dpSkin(f.m, f.S);
+    f.rinv_ft = F.rinv(f.k, ev.dtEnd_h != null ? ev.dtEnd_h : t.dtEnd_h, sw.phi, sw.mu, sw.ct);
+    if (ev.dteEnd_h != null) f.rinvE_ft = F.rinv(f.k, ev.dteEnd_h, sw.phi, sw.mu, sw.ct);
+  });
+  const tr = a.trend; if (!tr) return a;
+  (tr.skinDp || []).forEach((row) => { const t = a.tests.find((x) => x.id === row.id); if (t && t.result) row.dpSkin_psi = t.result.final.dpSkin_psi; });
+  const L = [...a.tests].reverse().find((t) => t.result && t.used && t.used.trend), pi = tr.pi, Sb = tr.baseline && tr.baseline.S;
+  if (pi && L && !pi.guard && a.well.fluid === 'oil') {
+    const Sn = L.result.final.S;
+    Object.assign(pi, { ratioNow: F.piRatio(pi.X, Sn), ratioBase: F.piRatio(pi.X, Sb), rateAtStake: F.rateAtStake(L.Dq, pi.X, Sn, Sb), extraDrawdown_psi: F.extraDrawdown(L.Dq, w.B, w.mu, Sn - Sb, L.result.final.k, w.h) });
+  }
+  return a;
+}
+const variant = (...rules) => { const a = S.FIX.analysis; rules.forEach((r) => CASES[r](a)); return refresh(a); };
 // one analysis with many findings at once (S9 grouping, limits, metric text)
 const MANY = ['V1', 'V4', 'V6', 'V7', 'V8', 'V10', 'V11', 'V13', 'V15', 'V16', 'V17', 'V19', 'V20', 'V21', 'V22', 'V26', 'V27'];
 function manyVariant() { const a = variant(...MANY); a.tests[1].result.quality.rDrift = 0.09; return a; }
-// 40 tests: B7…B40 cloned from B3 (later dates), with their events and trend rows
+// 40 tests: B7…B40 cloned from B3 (later dates), with their events and trend rows. The clones are interpreted but not used for the
+// trend, so the stored trend (baseline, alerts, T8 from B6) stays consistent with the tests.
 function fortyTests() {
   const a = S.FIX.analysis, src = a.tests[2], ev = a.events.find((e) => e.id === src.eventId), ser = a.trend.series.find((s) => s.id === 'B3');
-  const last = a.tests[a.tests.length - 1].tc_ms;
+  const last = a.tests[a.tests.length - 1].tc_ms, unused = () => ({ baseline: false, trend: false, alert: false });
   for (let n = 7; n <= 40; n++) {
     const t = clone(src), id = 'B' + n, eid = 'E' + (n + 10), tc = last + (n - 6) * 10 * 86400000;
-    t.id = id; t.eventId = eid; t.tc_ms = tc; t.date = new Date(tc).toISOString().slice(0, 10); t.result.id = id; t.spec.id = id;
+    t.id = id; t.eventId = eid; t.tc_ms = tc; t.date = new Date(tc).toISOString().slice(0, 10); t.result.id = id; t.spec.id = id; t.used = unused();
     a.tests.push(t);
     const e = clone(ev); e.id = eid; e.tc_ms = tc; e.tEnd_ms = tc + 240 * 3600000; a.events.push(e);
-    const s = clone(ser); s.id = id; s.tDays = (tc - a.tests[0].tc_ms) / 86400000; a.trend.series.push(s);
+    const s = clone(ser); s.id = id; s.tDays = (tc - a.tests[0].tc_ms) / 86400000; s.used = unused(); a.trend.series.push(s);
   }
   return a;
 }
@@ -390,6 +416,39 @@ module.exports = [
       // the question is capped at 300 characters and the index is optional
       const long = R.ask('is there an alert? ' + 'x'.repeat(400), an);
       assert.strictEqual(long.q.length, 300); assert.strictEqual(long.intent, 'alert');
+      // the what-if names every used test with its shifted skin
+      const usedIds = an.tests.filter((t) => t.used && t.used.trend && t.result).map((t) => t.id);
+      usedIds.forEach((id, j) => {
+        assert.strictEqual(w.values['t' + j].v, id, 'what-if lists ' + id);
+        assert.near(w.values['u' + j].v, an.tests.find((t) => t.id === id).result.final.S + 1.1513 * Math.log10(1.2), 1e-9, id + ' shifted S');
+      });
+      assert(R.fill(w.template, w.values, imp).length <= 600, 'what-if text ≤ 600');
+      // when the stored series cannot re-derive the absolute alert, the answer says so and quotes no stored status
+      const amb = S.FIX.analysis; amb.trend.baseline.segments.push({ from: amb.tests[3].date, S: amb.trend.baseline.S, tests: ['B4'] });
+      const wa = R.ask('what if h is 20 % higher?', amb, null, imp);
+      assert.strictEqual(wa.check.ok, true); assert(!('abs' in wa.values), 'no absolute-alert status quoted');
+      assert(/cannot be re-derived from the stored series/.test(wa.template), wa.template);
+      // a test named with a mechanical-skin keyword goes to mech, not to value
+      ['What is the mechanical skin of B6?', 'How much of the skin of B6 is damage?', 'What is the pseudo-skin for test 3?'].forEach((q) => {
+        const a = R.ask(q, an, idx, imp);
+        assert.strictEqual(a.intent, 'mech', JSON.stringify(q) + ' → ' + a.intent); assert.strictEqual(a.check.ok, true);
+      });
+      assert.strictEqual(R.ask('What is the skin of B6?', an, idx, imp).intent, 'value', 'a plain value question stays value');
+      // an excluded test without a result (the usual case) still has its A2 item: excluded and shut-in answers are not withheld
+      const nr = S.FIX.analysis, b4 = nr.tests[3];
+      Object.assign(b4, { result: null, status: 'not_analysable', statusReason: 'Shut-in too short for IARF.' });
+      const nidx = R.evidence(nr);
+      assert(nidx.items['B4·A2'] && nidx.items['B4·A2'].values.status.v === 'not_analysable', 'B4·A2 exists without a result');
+      assert(!('k' in nidx.items['B4·A2'].values), 'and holds no result values');
+      const ex = R.ask('why was B4 excluded?', nr, nidx, imp);
+      assert.strictEqual(ex.intent, 'excluded'); assert(!ex.withheld, 'excluded answer not withheld: ' + JSON.stringify(plain(ex.check.failures)));
+      assert.strictEqual(ex.values.st.v, 'not_analysable'); assert.strictEqual(ex.values.why.v, 'Shut-in too short for IARF.');
+      assert(ex.ev.indexOf('B4·A2') !== -1);
+      const sl = R.ask('how long should the shut-in be for B4?', nr, nidx, imp);
+      assert.strictEqual(sl.intent, 'shutin_length'); assert(!sl.withheld, 'shut-in answer not withheld'); assert.strictEqual(sl.values.test.v, 'B4');
+      assert(S.checkShape('EvidenceIndex', plain(nidx)).ok, 'index shape with a no-result test');
+      const rvn = R.run(nr, nidx, { at: AT });
+      assert(!rvn.findings.some((f) => f.rule === 'V14'), 'no V14 with a no-result test: ' + rvn.findings.filter((f) => f.rule === 'V14').map((f) => f.values.ref.v).join(', '));
     },
   },
   {
@@ -533,6 +592,47 @@ module.exports = [
       // a tampered sign-off record is not accepted as SIGNED
       const bad = Object.assign({}, so, { name: 'Someone Else' });
       assert.strictEqual(R.status(an, rv, bad), 'CHANGED', 'tampered sign-off record');
+      // the review carries the results hash recomputed from the analysis it was run on
+      assert.strictEqual(rv.resultHash, R.hashes(an, rv).resultsHash, 'Review.resultHash = recomputed results hash');
+      // a review run on an earlier state of the analysis cannot be signed: results edited in place after run()
+      const an6 = variant('V8'), rv6 = R.run(an6, null, { at: AT });
+      R.applyDecisions(rv6, [{ target: v8.key, d: 'reject', note: 'Baseline spread is the known gauge swap.', who: 'Reviewer B', at: AT }]);
+      Object.assign(an6.tests[5].result.final, { S: 9.9, k: 10 });
+      const st6 = R.signoff(form, an6, rv6);
+      assert.strictEqual(st6.ok, false, 'stale review refused'); assert.strictEqual(st6.code, 'EVIDENCE_CHECK_FAILED');
+      assert(/earlier state of the analysis/.test(st6.errors[0]), st6.errors[0]);
+      const fresh6 = R.run(an6, null, { at: AT });
+      assert(fresh6.findings.some((f) => f.rule === 'V24' || f.rule === 'V23' || f.rule === 'V14'), 'a fresh run sees the edit');
+      // … and with changed inputs
+      const an7 = clone(an), rv7 = R.applyDecisions(R.run(an7, null, { at: AT }), [{ target: v8.key, d: 'reject', note: 'Baseline spread is the known gauge swap.', who: 'Reviewer B', at: AT }]);
+      an7.inputHash = 'eeeeeeeeeeeeeeee';
+      assert.strictEqual(R.signoff(form, an7, rv7).code, 'EVIDENCE_CHECK_FAILED', 'inputs changed after the review');
+      assert.strictEqual(R.signoff(form, an, null).code, 'EVIDENCE_CHECK_FAILED', 'no review, no sign-off');
+      // sign-off re-runs the evidence check of the review: a quote that no longer matches is caught (V14) and blocks it
+      const an8 = clone(an), rv8 = R.applyDecisions(R.run(an8, null, { at: AT }), [{ target: v8.key, d: 'reject', note: 'Baseline spread is the known gauge swap.', who: 'Reviewer B', at: AT }]);
+      an8.trend.baseline.tests = ['B1', 'B2'];                    // quoted by V8, outside the results hash
+      const st8 = R.signoff(form, an8, rv8);
+      assert.strictEqual(st8.code, 'EVIDENCE_CHECK_FAILED', 'recheck before canSign'); assert(rv8.findings.some((f) => f.rule === 'V14'), 'V14 added by the recheck');
+      // a V14 that appears after sign-off (a field outside the results hash) voids the signature: CHANGED, no ✓ in S11
+      const an9 = clone(an), rv9 = R.applyDecisions(R.run(an9, null, { at: AT }), [{ target: v8.key, d: 'reject', note: 'Baseline spread is the known gauge swap.', who: 'Reviewer B', at: AT }]);
+      const so9 = R.signoff(form, an9, rv9);
+      assert.strictEqual(so9.ok, true); assert.strictEqual(R.status(an9, rv9, so9), 'SIGNED');
+      an9.trend.kStability.cv = 0.041;
+      const m9 = R.report(an9, rv9, null, so9, imp);
+      assert(rv9.findings.some((f) => f.rule === 'V14'), 'report() adds V14');
+      assert.strictEqual(R.status(an9, rv9, so9), 'CHANGED', 'V14 after sign-off → CHANGED');
+      assert.strictEqual(m9.status, 'CHANGED');
+      assert(!s11(m9).some((t) => /^✓/.test(t)), 'S11 has no ✓ verdict: ' + JSON.stringify(s11(m9)));
+      // decision codes: only accept | reject | note (null or 'clear' clears); anything else is ignored
+      const rv10 = R.run(an, null, { at: AT });
+      R.applyDecisions(rv10, [{ target: v8.key, d: 'approve', note: 'Looks fine.', who: 'Reviewer B', at: AT }]);
+      assert.strictEqual(rv10.findings.find((f) => f.rule === 'V8').decision, null, "d:'approve' is ignored");
+      assert(R.canSign(rv10).open.indexOf(rv10.findings.find((f) => f.rule === 'V8').id) !== -1, 'the major stays open');
+      R.applyDecisions(rv10, [{ target: v8.key, d: 'note', note: 'Seen.', who: 'Reviewer B', at: AT }, { target: v8.key, d: 'approve', who: 'Reviewer B', at: AT }]);
+      assert.strictEqual(rv10.findings.find((f) => f.rule === 'V8').decision.d, 'note', 'an ignored code does not overwrite a valid decision');
+      assert(S.checkShape('Review', plain(rv10)).ok, 'Review shape after decisions');
+      rv10.findings.find((f) => f.rule === 'V8').decision = { d: 'approve', note: null, who: 'X', at: AT };
+      assert.strictEqual(R.canSign(rv10).ok, false, 'canSign does not count an invalid stored decision');
     },
   },
   {
@@ -541,13 +641,13 @@ module.exports = [
     opts: false,
     run(app, assert) {
       const R = R0(), an = S.FIX.analysis;
-      an.meta.wellName = 'Kestrel North 7'; an.meta.engineer = 'Sam Example'; an.record.name = 'kestrel-north-7-gauge.csv';
+      an.meta.wellName = 'Test Well North 7'; an.meta.engineer = 'Sam Example'; an.record.name = 'test-well-north-7-gauge.csv';
       const reason = an.overrides[0].reason;
       const rv = R.run(an, null, { at: AT });
       R.applyDecisions(rv, [{ target: 'V5', d: 'accept', note: 'Agreed with the operations team on 2026-07-02.', who: 'Sam Example', at: AT }]);
       const x = R.aiExport(an, rv, {});
       const t = x.text;
-      ['Kestrel', 'Sam Example', 'kestrel-north-7-gauge', reason, 'gauge was swapped', 'operations team'].forEach((s) => assert(t.indexOf(s) === -1, 'leaks ' + JSON.stringify(s)));
+      ['Test Well North 7', 'North 7', 'Sam Example', 'test-well-north-7-gauge', reason, 'gauge was swapped', 'operations team'].forEach((s) => assert(t.indexOf(s) === -1, 'leaks ' + JSON.stringify(s)));
       assert(!/\d{4}-\d{2}-\d{2}/.test(t), 'no date strings: ' + (t.match(/.{0,30}\d{4}-\d{2}-\d{2}.{0,10}/) || [''])[0]);
       assert(!/https?:|www\.|\.(com|org|net|uk|io|ai)\b/i.test(t), 'no URL');
       assert(/Well A/.test(t), 'de-identified well label');
@@ -561,9 +661,9 @@ module.exports = [
       assert(f.indexOf(reason) !== -1, 'includeFreeText: the override reason appears');
       assert(f.indexOf('Agreed with the operations team') !== -1, 'includeFreeText: the decision note appears');
       assert(!/\d{4}-\d{2}-\d{2}/.test(f), 'still no dates (free text is de-dated)');
-      assert(f.indexOf('Sam Example') === -1 && f.indexOf('Kestrel North 7') === -1, 'still de-identified');
+      assert(f.indexOf('Sam Example') === -1 && f.indexOf('Test Well North 7') === -1, 'still de-identified');
       assert(/\d{4}-\d{2}-\d{2}/.test(R.aiExport(an, rv, { includeDates: true }).text), 'includeDates keeps dates');
-      assert(R.aiExport(an, rv, { deidentify: false }).text.indexOf('Kestrel North 7') !== -1, 'deidentify:false keeps the well name');
+      assert(R.aiExport(an, rv, { deidentify: false }).text.indexOf('Test Well North 7') !== -1, 'deidentify:false keeps the well name');
     },
   },
   {
@@ -630,6 +730,23 @@ module.exports = [
       // the calibration tables (file 55 shape) appear in S12
       const s12 = model.sections.find((s) => s.id === 'S12');
       assert(s12.blocks.some((b) => b.id === 'bu_tbl_cal_ks') && s12.blocks.some((b) => b.id === 'bu_tbl_cal_hl'), 'S12 shows both calibration tables');
+      // §8.2 S3: the events table has a Note column; the S2 confirmation setting is a checked T2 value
+      const fixM = prepared('FIX').model;
+      const evt = fixM.sections.find((s) => s.id === 'S3').blocks.find((b) => b.id === 'bu_tbl_events');
+      assert.strictEqual(evt.head[evt.head.length - 1].text, 'Note', 'events table: Note column');
+      assert(evt.rows.every((r) => typeof r[r.length - 1] === 'string' && r[r.length - 1].length > 0), 'every event row has a note');
+      const s2 = fixM.sections.find((s) => s.id === 'S2').blocks.find((b) => b.kind === 'kv').rows.find((r) => /trend$/.test(r.label));
+      assert.strictEqual(s2.value.values.cf.ref, 'T2:confirm'); assert(prepared('FIX').idx.items.T2.values.confirm, 'T2 carries the confirmation setting');
+      // the Δp/q overlay mixes pressure and rate: no unit category, so Metric mode does not convert it
+      const ov = fixM.sections.find((s) => s.id === 'S5').blocks.find((b) => b.id === 'bu_ch_ov');
+      assert(ov && ov.series.every((s) => s.cat === null), 'bu_ch_ov series have cat null');
+      // without a review, S9 claims nothing (no ✓): it says the review was not run
+      const noRv = R.report(S.FIX.analysis, null, null, null, imp);
+      assert(S.checkShape('ReportModel', plain(noRv)).ok, 'report without a review: shape');
+      const s9t = textsOf(R, noRv, imp).filter((x) => x[0] === 'S9' && x[1] === 'verdict').map((x) => x[2]);
+      assert(s9t.length === 1 && /^⚠ The automated rule-based review has not been run/.test(s9t[0]), 'S9 without a review: ' + JSON.stringify(s9t));
+      assert(!textsOf(R, noRv, imp).some((x) => x[0] === 'S9' && /^✓/.test(x[2])), 'no ✓ in S9 without a review');
+      assert(!textsOf(R, noRv, imp).some((x) => /—\s*$/.test(x[2]) && /Findings that need a decision/.test(x[2])), 'S11 does not show a blank open count');
     },
   },
   {
@@ -783,9 +900,16 @@ module.exports = [
       let v = A.verify(log);
       assert.strictEqual(v.ok, true, 'verifies after folding: ' + v.reason); assert.strictEqual(v.folded, 20); assert.strictEqual(v.head, log.entries[499].hash);
       assert.strictEqual(A.head(log), v.head);
-      // hash rule: hash16(prevHash + canon(entry without hash)) with file 53
+      // hash rule: hash16(prevHash + canon(entry without hash)) with file 53, every numeric leaf serialised exactly first (lossless)
+      const exact = (v) => (typeof v === 'number' ? 'n:' + String(v) : Array.isArray(v) ? v.map(exact)
+        : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).map((k) => [k, exact(v[k])])) : v);
       const e = log.entries[123], copy = Object.assign({}, e); delete copy.hash;
-      assert.strictEqual(e.hash, AI.hash16(e.prevHash + AI.canon(copy, 'inputs')), 'entry hash = hash16(prevHash + canon(entry))');
+      assert.strictEqual(e.hash, AI.hash16(e.prevHash + AI.canon(exact(copy), 'inputs')), 'entry hash = hash16(prevHash + canon(entry, numbers exact))');
+      // an edit at the 7th significant digit of an entry value (canon 'inputs' keeps 6) still breaks the chain
+      const d7 = clone(log), x0 = d7.entries[20].value.x;
+      d7.entries[20].value.x = Number((x0 * (1 + 3e-7)).toPrecision(9));
+      assert.notStrictEqual(d7.entries[20].value.x, x0); assert.strictEqual(AI.canon(d7.entries[20].value.x, 'inputs'), AI.canon(x0, 'inputs'), 'the change is below canon’s 6 figures');
+      v = A.verify(d7); assert.strictEqual(v.ok, false, 'a 7th-digit edit breaks the chain'); assert.strictEqual(v.brokenAt, d7.entries[20].seq);
       // folding again keeps from = 1 and the chain
       for (let i = 521; i <= 560; i++) log = A.append(log, entry(i));
       assert.deepStrictEqual(plain([log.summary.from, log.summary.to, log.summary.n, log.entries.length]), [1, 60, 60, 500]);
@@ -821,6 +945,7 @@ module.exports = [
       const R = R0(), an = S.FIX.analysis, t = an.tests[0], f = t.result.final;
       f.S = 1.005;                                         // displays as 1.00 (binary 1.00499…)
       f.dpSkin_psi = 0.8686 * f.m * f.S;                   // stored at full precision, as the engine does
+      an.trend.skinDp.find((r) => r.id === t.id).dpSkin_psi = f.dpSkin_psi;   // T7 carries the same stored number
       // the rounded-input recomputation would disagree at display precision (so this test is meaningful)
       const fromDisplayed = 0.8686 * Number(f.m.toFixed(1)) * Number(f.S.toFixed(2));
       assert(Math.abs(fromDisplayed - f.dpSkin_psi) > 0.05, 'displayed inputs give a different Δp_skin (' + fromDisplayed.toFixed(2) + ' vs ' + f.dpSkin_psi.toFixed(2) + ')');
@@ -841,6 +966,80 @@ module.exports = [
       assert.strictEqual(R.check({ values: { q: Object.assign({}, q, { v: 1.0150001 }) } }, an, idx).ok, false, 'a change of one displayed unit fails');
       // derived values from full-precision inputs: k from the IARF level and the mean point skin re-derive without V23/V24
       assert(!rv.findings.some((x) => x.rule === 'V23' || x.rule === 'V24'), 'no V23/V24 on FIX');
+    },
+  },
+  {
+    name: 'RV15 a stored derived number that disagrees with FORMULAS raises V14 from run() and report(); the page shows the stored number',
+    wp: WP,
+    opts: false,
+    run(app, assert) {
+      const R = R0(), F = R.FORMULAS;
+      // FIX is engine-consistent: every stored derived value recomputes, none raises V14, and the T8 cumulative is re-derived
+      const an0 = S.FIX.analysis, idx0 = R.evidence(an0), rv0 = R.run(an0, idx0, { at: AT });
+      assert(!rv0.findings.some((f) => f.rule === 'V14'), 'no V14 on FIX');
+      const stored = [];
+      Object.keys(idx0.items).forEach((id) => Object.keys(idx0.items[id].values).forEach((n) => { if (idx0.items[id].values[n].stored) stored.push(id + ':' + n); }));
+      ['B6·A2:m', 'B6·A2:mPrime', 'B6·A2:dpSkin_psi', 'B6·A2:rinv_ft', 'B6·A2:rinvE_ft', 'B6·I1:cycles', 'B6·U1:sAbs', 'B6·U2:req0_dS', 'B6·U2:req0_dkPct',
+        'T7:B1_dpSkin', 'T7:B6_dpSkin', 'T8:X', 'T8:ratioNow', 'T8:ratioBase', 'T8:rateAtStake', 'T8:extraDrawdown_psi', 'T8:cumAtStake']
+        .forEach((ref) => assert(stored.indexOf(ref) !== -1, ref + ' is a stored derived value (got ' + stored.length + ')'));
+      assert(rv0.evidenceCheck.nChecked >= stored.length, 'the review checks every stored derived value (' + rv0.evidenceCheck.nChecked + ')');
+      assert.rel(F.cumAtStake(an0), an0.trend.pi.cumAtStake, 1e-9, 'T8 cumulative re-derived from the stored series, onset and days');
+      // each stored value moved by more than half a displayed unit (and only that value): V14 names it, from run() and from report()
+      const at = (a, id) => a.tests.find((t) => t.id === id);
+      const T7row = (a, id) => a.trend.skinDp.find((r) => r.id === id);
+      const EDITS = [
+        ['B6·A2:m', (a) => { at(a, 'B6').result.final.m *= 1.5; }],
+        ['B6·A2:mPrime', (a) => { at(a, 'B6').result.final.mPrime *= 1.1; }],
+        ['B6·A2:dpSkin_psi', (a) => { at(a, 'B6').result.final.dpSkin_psi *= 2; }],
+        ['B6·A2:rinv_ft', (a) => { at(a, 'B6').result.final.rinv_ft *= 2; }],
+        ['B6·A2:rinvE_ft', (a) => { at(a, 'B6').result.final.rinvE_ft *= 2; }],
+        ['B6·I1:cycles', (a) => { at(a, 'B6').result.iarf.cycles += 0.1; }],
+        ['B6·U1:sAbs', (a) => { at(a, 'B6').result.sErr.sAbs *= 2; }],
+        ['B6·U2:req0_dS', (a) => { at(a, 'B6').result.sensitivity.req[0].dS *= 5; }],
+        ['B6·U2:req0_dkPct', (a) => { at(a, 'B6').result.sensitivity.req[0].dkPct += 5; }],
+        ['T7:B6_dpSkin', (a) => { T7row(a, 'B6').dpSkin_psi *= 2; }],
+        ['T7:B1_dpSkin', (a) => { T7row(a, 'B1').dpSkin_psi *= 2; }],
+        ['T8:X', (a) => { a.trend.pi.X += 1; }],
+        ['T8:ratioNow', (a) => { a.trend.pi.ratioNow = 0.1; }],
+        ['T8:ratioBase', (a) => { a.trend.pi.ratioBase *= 0.5; }],
+        ['T8:rateAtStake', (a) => { a.trend.pi.rateAtStake *= 3; }],
+        ['T8:extraDrawdown_psi', (a) => { a.trend.pi.extraDrawdown_psi *= 3; }],
+        ['T8:cumAtStake', (a) => { a.trend.pi.cumAtStake *= 3; }],
+      ];
+      const before = plain(rv0);                                  // the review of the unedited analysis (plain data)
+      EDITS.forEach(([ref, edit]) => {
+        const a = S.FIX.analysis; edit(a);
+        const rv = R.run(a, null, { at: AT }), v14 = rv.findings.filter((f) => f.rule === 'V14');
+        assert(v14.some((f) => f.values.ref.v === ref), ref + ': run() raises V14 for it (got ' + v14.map((f) => f.values.ref.v).join(', ') + ')');
+        assert.strictEqual(rv.evidenceCheck.ok, false, ref + ': evidence check failed');
+        assert.strictEqual(R.canSign(rv).ok, false, ref + ': not signable');
+        // the report path: a review run before the edit gains V14 when the report is built on the edited analysis
+        const rvb = clone(before);
+        R.report(a, rvb, null, null, imp);
+        assert(rvb.findings.some((f) => f.rule === 'V14' && f.values.ref.v === ref), ref + ': report() adds V14 for it');
+      });
+      // the page shows the engine's stored number (not the review's own recomputation)
+      const a = S.FIX.analysis; a.trend.pi.ratioNow = 0.1;
+      const idx = R.evidence(a), m = R.report(a, R.run(a, idx, { at: AT }), null, null, imp);
+      assert.strictEqual(idx.items.T8.values.ratioNow.v, 0.1, 'T8 ratioNow quotes the stored 0.1');
+      const s5 = m.sections.find((s) => s.id === 'S5').blocks.find((b) => b.kind === 'kv').rows.find((r) => /^PI ratio/.test(r.label));
+      assert.strictEqual(s5.value.values.now.v, 0.1, 'S5 shows the stored PI ratio');
+      const s9 = m.sections.find((s) => s.id === 'S9');
+      assert(s9.blocks.some((b) => b.kind === 'verdict' && /^✗ Evidence check/.test(R.fill(b.template, b.values, imp))), 'S9 reports the failed evidence check');
+      // a stale index passed to report() cannot hide a stored value changed in place (its formula inputs unchanged)
+      const c = S.FIX.analysis, ic = R.evidence(c), rvc = R.run(c, ic, { at: AT });
+      c.trend.pi.ratioNow = 0.1;
+      R.report(c, rvc, null, null, imp, { idx: ic });
+      assert(rvc.findings.some((f) => f.rule === 'V14' && f.values.ref.v === 'T8:ratioNow'), 'stale index: the changed stored value is caught');
+      // a stored null (engine guard) is quoted as null and raises nothing
+      const g = S.FIX.analysis; Object.assign(g.trend.pi, { guard: true, ratioNow: null, ratioBase: null, rateAtStake: null, extraDrawdown_psi: null, cumAtStake: null });
+      const rg = R.run(g, null, { at: AT });
+      assert(!rg.findings.some((f) => f.rule === 'V14'), 'guarded T8 (stored nulls): no V14');
+      // a derived value whose inputs are missing falls back to re-reading the stored field (no false V14)
+      const h = S.FIX.analysis; delete h.tests[5].result.final.m;
+      const ih = R.evidence(h);
+      assert.near(ih.items['B6·A2'].values.m.v, F.m(h.tests[5].spec.Dq, h.tests[5].spec.well.B, h.tests[5].spec.well.mu, h.tests[5].result.final.k, h.tests[5].spec.well.h), 1e-9,
+        'nothing stored → the formula value is quoted');
     },
   },
 ];

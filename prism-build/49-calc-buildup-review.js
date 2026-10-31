@@ -7,9 +7,14 @@
 //
 // PUBLIC API (window.WTS_buildup.review)
 //   evidence(analysis, opts?)            → EvidenceIndex. Every quotable number lives here with the path it is read
-//                                          from; derived numbers also carry the formula that recomputes them.
+//                                          from; derived numbers also carry the formula that recomputes them. A derived
+//                                          number the engine stores (m, Δp_skin, r_inv, cycles, S_abs, sensitivity rows,
+//                                          T7, oil T8) is quoted as stored (stored:true) and recomputed by check(), so a
+//                                          stored value that disagrees with FORMULAS raises V14.
 //                                          opts.cal: calibration table (default window.PRiSM_autoInterpCal).
-//   run(analysis, idx?, opts?)           → Review: rules V1–V27 (V14 = evidence-check failures, never acceptable).
+//   run(analysis, idx?, opts?)           → Review: rules V1–V27 (V14 = evidence-check failures, never acceptable). The
+//                                          evidence check covers the findings' values and every stored derived value of
+//                                          the index. Review.resultHash = the results hash recomputed from the analysis.
 //   check(obj, analysis, idx, ctx?)      → {ok, nChecked, nFailed, failures:[{ref, quoted, recomputed, tol}]}.
 //                                          Walks every Value {v, cat, dp, ref} in a Review, Answer or ReportModel,
 //                                          re-reads it from the analysis (full precision) or recomputes it with
@@ -24,22 +29,29 @@
 //                                          withheld) and never adds a review finding.
 //   report(analysis, review, audit, signoff, fmt?, opts?) → ReportModel, sections S1–S12 (§8.2). Every number is a
 //                                          Value with a ref; templates carry no numbers. The evidence check runs on
-//                                          the model and on the review; a failure adds V14 to the review.
-//                                          opts {selected:'B3', cal}.
+//                                          the model, on the review and on the stored derived values; a failure adds V14
+//                                          to the review. Without a review S9 says the review was not run.
+//                                          opts {selected:'B3', cal, idx (an index already built for this analysis)}.
 //   sha256(str)                          → 64 hex (UTF-8, built-in synchronous implementation).
 //   hashes(analysis, review)             → {inputsHash, resultsHash, decisionsHash} (hash16/canon from file 53).
 //   signature(analysis, review, form)    → {hash, inputsHash, resultsHash, decisionsHash, appVersion, runAt}.
-//   status(analysis, review, signoff)    → 'DRAFT' | 'SIGNED' | 'CHANGED' (CHANGED decided on the three hashes).
+//   status(analysis, review, signoff)    → 'DRAFT' | 'SIGNED' | 'CHANGED' (CHANGED when one of the three hashes differs from the
+//                                          signed ones, or when the review holds a V14 finding / a failed evidence check).
 //   canSign(review)                      → {ok, open:[findingId]}.
 //   signoff(form, analysis, review)      → Signoff (with ok:true) or {ok:false, code, errors, bad}; codes NO_NAME,
-//                                          NO_STATEMENT, NO_ANALYSIS (no analysis or no hash16), EVIDENCE_CHECK_FAILED, OPEN_FINDINGS.
+//                                          NO_STATEMENT, NO_ANALYSIS (no analysis or no hash16), EVIDENCE_CHECK_FAILED (also
+//                                          when the review was run on another state of the analysis: Review.inputHash or
+//                                          Review.resultHash differ from the analysis now), OPEN_FINDINGS. It re-runs the
+//                                          evidence check of the review (recheck) before canSign.
 //   applyDecisions(review, decisions)    → review with Finding.decision filled. decisions: array of
 //                                          {target: findingKey | rule id | finding id, d, note, who, at} (later
-//                                          entries win; d null clears) or an audit log (kind 'decision' entries).
+//                                          entries win; d 'accept' | 'reject' | 'note'; null or 'clear' clears; any other
+//                                          code is ignored) or an audit log (kind 'decision' entries).
 //   aiExport(analysis, review, opts)     → {text, filename}. opts {deidentify:true, includeDates:false,
-//                                          includeFreeText:false, signoff, fmt}. No network, no URL.
-//   audit.{append, verify, fold, head, entryHash, GENESIS}  audit chain (hash = hash16(prevHash + canon(entry))),
-//                                          folded beyond 500 entries into a summary that keeps the chain hash.
+//                                          includeFreeText:false, signoff, fmt, idx}. No network, no URL.
+//   audit.{append, verify, fold, head, entryHash, GENESIS}  audit chain (hash = hash16(prevHash + canon(entry)) with every
+//                                          numeric leaf serialised exactly first, so no digit is rounded away), folded
+//                                          beyond 500 entries into a summary that keeps the chain hash.
 //   fill(template, values, fmt), blockText(block, fmt), headText(head, fmt), render(model, fmt) → plain text.
 //   RULES, INTENTS, FORMULAS, K_TEXT, version.
 //
@@ -94,12 +106,13 @@
     function _clip(s, n) { s = _str(s); return s.length > n ? s.slice(0, n - 1) + '…' : s; }
 
     // Path syntax: 'tests[2].result.final.k', 'missed.tooShort.length', '$review.counts.critical', '$analysis'.
-    var _pathCache = {};
+    var _pathCache = typeof Map === 'function' ? new Map() : null, _pathObj = {};
     function _parsePath(p) {
-        if (_pathCache[p]) return _pathCache[p];
+        var hit = _pathCache ? _pathCache.get(p) : _pathObj[p];
+        if (hit) return hit;
         var parts = [], re = /([^.[\]]+)|\[(\d+)\]/g, m;
         while ((m = re.exec(p)) !== null) parts.push(m[1] !== undefined ? m[1] : +m[2]);
-        _pathCache[p] = parts;
+        if (_pathCache) { if (_pathCache.size > 50000) _pathCache.clear(); _pathCache.set(p, parts); } else _pathObj[p] = parts;
         return parts;
     }
     function _ctxRoot(path) { return typeof path === 'string' && path.charAt(0) === '$' && path !== '$analysis' && path.indexOf('$analysis.') !== 0 && path.indexOf('$cal') !== 0; }
@@ -253,6 +266,10 @@
         // ── review helpers (derived numbers and texts quoted by the report) ──
         sensDkPct: F(['input', 'f'], 'dk% for input × f = 100·(k(f)/k − 1)',
             function (input, f) { return (SENS_COEF.hasOwnProperty(input) && _isNum(f) && f > 0) ? 100 * (_sensK(input, f, 1) - 1) : null; }),
+        extraDrawdownS: F(['q', 'B', 'mu', 'Snow', 'Sbase', 'k', 'h'], 'extra drawdown = 141.2·q_now·B·μ·(S_now − S_base)/(k_now·h)  [psi]',
+            function (q, B, mu, Sn, Sb, k, h) { return _allNum(q, B, mu, Sn, Sb, k, h) && k * h !== 0 ? 141.2 * q * B * mu * (Sn - Sb) / (k * h) : null; }),
+        cumAtStake: F(['an'], 'cumulative at stake since the onset: Σ_days q_d·[(X + S(t_d))/(X + S_base) − 1] (oil; S(t) through the used tests with the onset knot)',
+            function (an) { return _cumAtStake(an); }),
         cycles: F(['X0', 'X1'], 'cycles = X1 − X0 (log10 Δt_e)', function (a, b) { return _allNum(a, b) ? b - a : null; }),
         sub: F(['a', 'b'], 'a − b', function (a, b) { return _allNum(a, b) ? a - b : null; }),
         neg: F(['a'], '−a', function (a) { return _isNum(a) ? -a : null; }),
@@ -629,6 +646,48 @@
         });
         return S.length >= 4 ? _spearman(S, Q) : null;
     }
+    // piecewise-linear interpolation through [x, y] knots (x ascending), constant outside
+    function _lin(knots, x) {
+        if (!knots.length) return null;
+        if (x <= knots[0][0]) return knots[0][1];
+        for (var i = 1; i < knots.length; i++) {
+            if (x <= knots[i][0]) { var dx = knots[i][0] - knots[i - 1][0]; return dx > 0 ? knots[i - 1][1] + (knots[i][1] - knots[i - 1][1]) * (x - knots[i - 1][0]) / dx : knots[i][1]; }
+        }
+        return knots[knots.length - 1][1];
+    }
+    // T8 cumulative at stake re-derived from the stored series, baseline, onset and daily rates (plan §4.7). Null when it cannot
+    // be re-derived from stored data alone (not oil, no onset, several baseline segments, guard), so check() then re-reads it.
+    function _cumAtStake(an) {
+        var tr = an && an.trend;
+        if (!tr || _fluid(an) !== 'oil' || tr.enabled === false || !tr.pi || tr.pi.guard === true || !tr.onset || !tr.baseline) return null;
+        var X = tr.pi.X, Sb = tr.baseline.S, tau = tr.onset.tauDays;
+        if (!_allNum(X, Sb, tau) || X + Sb < 1) return null;
+        if (Array.isArray(tr.baseline.segments) && tr.baseline.segments.length > 1) return null;
+        var days = an.rates ? _arr(an.rates.days) : [];
+        if (!days.length) return null;
+        var byId = {};
+        _arr(an.tests).forEach(function (t) { if (t && t.id) byId[t.id] = t; });
+        var first = null, vals = [];
+        _arr(tr.series).forEach(function (s) {
+            if (!s || !_isNum(s.tDays)) return;
+            if (first === null && byId[s.id] && _isNum(byId[s.id].tc_ms)) first = byId[s.id].tc_ms - s.tDays * 86400000;
+            if (s.used && s.used.trend && _isNum(s.S)) vals.push([s.tDays, s.S]);
+        });
+        if (first === null || !vals.length) return null;
+        var atTau = vals.some(function (k) { return Math.abs(k[0] - tau) < 1e-9; });
+        var knots = atTau ? vals : vals.filter(function (k) { return k[0] < tau; }).concat([[tau, Sb]]).concat(vals.filter(function (k) { return k[0] > tau; }));
+        var cum = 0;
+        for (var i = 0; i < days.length; i++) {
+            var d = days[i];
+            if (!d || !_allNum(d.t0_ms, d.t1_ms, d.q)) continue;
+            var td = (0.5 * (d.t0_ms + d.t1_ms) - first) / 86400000;
+            if (td < tau) continue;
+            var s = _lin(knots, td);
+            if (X + s < 1) return null;
+            cum += d.q * ((X + s) / (X + Sb) - 1);
+        }
+        return cum;
+    }
     function _bubbleCount(an) {
         var rows = an && an.trend && an.trend.bubble ? _arr(an.trend.bubble.rows) : [];
         var pb = an && an.well ? an.well.Pb : null;
@@ -637,13 +696,24 @@
     }
     // One top-level call (report, run, evidence, check, ask, aiExport, status, signature) memoizes the results hash
     // per analysis object: everything is synchronous, so the analysis cannot change during the call.
-    var _memo = null;
+    // The evidence index is cached the same way (per analysis object and calibration table), so report(), its second build after a
+    // V14 and the checks inside one call build it once.
+    var _memo = null, _evMemo = null;
     function _memoized(fn) {
         return function () {
             var outer = _memo === null;
-            if (outer) _memo = typeof Map === 'function' ? new Map() : null;
-            try { return fn.apply(this, arguments); } finally { if (outer) _memo = null; }
+            if (outer) { _memo = typeof Map === 'function' ? new Map() : null; _evMemo = _memo ? new Map() : null; }
+            try { return fn.apply(this, arguments); } finally { if (outer) { _memo = null; _evMemo = null; } }
         };
+    }
+    function _evidenceFor(an, opts) {
+        if (!_evMemo || !_obj(an)) return evidence(an, opts);
+        var cal = _roots(an, opts).cal, list = _evMemo.get(an);
+        if (list) for (var i = 0; i < list.length; i++) if (list[i].cal === cal) return list[i].idx;
+        var idx = evidence(an, opts);
+        if (!list) _evMemo.set(an, list = []);
+        list.push({ cal: cal, idx: idx });
+        return idx;
     }
     function _resultsHash(an) {
         if (!_obj(an)) return null;
@@ -720,12 +790,23 @@
         if (typeof v === 'boolean') return v ? 'yes' : 'no';
         return null;
     }
-    // Build one evidence value: sp = {p: path, k: kind, c: unit category, f: {f, args}}.
+    // Build one evidence value: sp = {p: path, k: kind, c: unit category, f: {f, args}, s: stored}.
+    //   P  — a stored field, quoted as stored and re-read by check();
+    //   FX — a number only the review computes (v = formula; p, when given, is a reference path only);
+    //   FS — a derived number the engine stores: v = the stored field (what the page shows), and check() recomputes it with
+    //        the formula from the full-precision stored inputs, so a stored value that disagrees with FORMULAS raises V14.
     function _mkValue(sp, roots) {
         var formula = sp.f || null;
         var path = sp.p || _firstPath(formula);
         if (!path) return null;
+        if (!formula && path.charCodeAt(0) !== 36) {                     // fast path: a plain stored field (no '$' root, no formula)
+            var pv = _get(roots, path);
+            if (pv === undefined) return null;
+            if (pv === null || (typeof pv !== 'object' && typeof pv !== 'boolean')) { var cv = _clean(pv); return { v: cv, cat: sp.c || null, dp: _dpFor(sp.k, cv), path: path }; }
+            // booleans and arrays continue below (yesNo / join)
+        }
         var ctx = _usesCtx(sp);
+        if (sp.lazy && formula && !ctx) return _lazyValue(sp, formula, path, roots);
         if (!formula && !ctx) {
             var raw = _get(roots, path);
             if (raw === undefined) return null;
@@ -734,15 +815,30 @@
             else if (raw !== null && typeof raw === 'object') return null;
         }
         var v;
-        if (ctx) v = formula ? _evalF(formula, roots) : _get(roots, path);
+        if (sp.s && formula) { var st = sp.hasVal ? sp.val : _get(roots, path); v = st === undefined ? _evalF(formula, roots) : st; }
         else v = formula ? _evalF(formula, roots) : _get(roots, path);
         v = _clean(v);
         var out = { v: v, cat: sp.c || null, dp: _dpFor(sp.k, v), path: path };
         if (formula) out.formula = formula;
+        if (sp.s && formula) out.stored = true;
+        return out;
+    }
+    // A costly review-only number (results hash, alert recompute, level k, point-skin mean, closing-day rate, BIC choice, well-level
+    // summaries): computed on first read of v (then kept), so building the index does not pay for the ones nobody quotes; JSON and
+    // check() read it like any other value.
+    function _lazyValue(sp, formula, path, roots) {
+        var out = { cat: sp.c || null, path: path, formula: formula };
+        var done = false, val = null;
+        function get() { if (!done) { val = _clean(_evalF(formula, roots)); done = true; } return val; }
+        Object.defineProperty(out, 'v', { enumerable: true, configurable: true, get: get, set: function (x) { val = x; done = true; } });
+        Object.defineProperty(out, 'dp', { enumerable: true, configurable: true, get: function () { return _dpFor(sp.k, get()); }, set: function () {} });
         return out;
     }
     function P(p, k, c) { return { p: p, k: k, c: c }; }
     function FX(f, args, k, c, p) { return { f: { f: f, args: args }, k: k, c: c, p: p }; }
+    // FS(…, val): val is the stored field already in hand (read without resolving the path again)
+    function FS(p, f, args, k, c, val) { var o = { p: p, s: true, f: { f: f, args: args }, k: k, c: c }; if (arguments.length > 5) { o.hasVal = true; o.val = val; } return o; }
+    function FL(f, args, k, c, p) { return { f: { f: f, args: args }, k: k, c: c, p: p, lazy: true }; }
 
     function _rateCat(qUnit) { return qUnit === 'Mscf/d' ? 'gasRateSmall' : 'liquidRate'; }
     function _volCat(an) { return (an && an.rates && an.rates.unit === 'Mscf/d') ? 'gasVolume' : 'volume'; }
@@ -760,13 +856,14 @@
         events.forEach(function (e, j) { if (e && e.id) evIndex[e.id] = j; });
 
         function add(id, group, test, title, vals) {
-            var values = {}, names = [];
-            Object.keys(vals).forEach(function (name) {
-                var sp = vals[name]; if (!sp) return;
-                var iv = _mkValue(sp, roots); if (!iv) return;
+            var values = {}, names = [], tpl = title, name;
+            for (name in vals) {
+                if (!Object.prototype.hasOwnProperty.call(vals, name) || !vals[name]) continue;
+                var iv = _mkValue(vals[name], roots); if (!iv) continue;
                 values[name] = iv; names.push(name);
-            });
-            var tpl = title + (names.length ? ': ' + names.slice(0, 8).map(function (n) { return n + ' {' + n + '}'; }).join(', ') + '.' : '.');
+            }
+            for (var i = 0; i < names.length && i < 8; i++) tpl += (i ? ', ' : ': ') + names[i] + ' {' + names[i] + '}';
+            tpl += '.';
             idx.items[id] = { id: id, group: group, test: test, title: title, values: values, template: tpl.length <= 600 ? tpl : title + '.' };
             idx.order.push(id);
         }
@@ -780,7 +877,7 @@
         add('Q3', 'Q', null, 'Gaps', { gapCount: P('qc.gapCount', 'n'), gapTotal_h: P('qc.gapTotal_h', 'h'), longestGap_h: P('qc.longestGap_h', 'h') });
         add('Q4', 'Q', null, 'Spikes', { count: P('qc.spikes.count', 'n'), mode: P('qc.spikes.mode') });
         add('Q5', 'Q', null, 'Gauge drift (assumed)', { drift: P('well.driftPsiPerDay', 'idx', 'pressurePerDay') });
-        add('Q6', 'Q', null, 'Tide index', { maxTide: FX('maxOf', { xs: { paths: tests.map(function (t, i) { return 'tests[' + i + '].result.quality.rTide'; }) } }, 'idx', null, tests.length ? 'tests[0].result.quality.rTide' : 'tests') });
+        add('Q6', 'Q', null, 'Tide index', { maxTide: FL('maxOf', { xs: { paths: tests.map(function (t, i) { return 'tests[' + i + '].result.quality.rTide'; }) } }, 'idx', null, tests.length ? 'tests[0].result.quality.rTide' : 'tests') });
         add('Q7', 'Q', null, 'Temperature', { present: P('qc.temperature.present') });
         add('Q8', 'Q', null, 'Depth correction', { applied: P('qc.depth.applied'), shift_psi: P('qc.depth.shift_psi', 'p', 'pressure') });
 
@@ -806,7 +903,7 @@
         // ── well level: R (rates) ──
         var r2 = { nOlderDays: null }, gasDays = !!(an.rates && an.rates.unit === 'Mscf/d');
         var days = an.rates ? _arr(an.rates.days) : [];
-        var dayPick = _daysAround(an);
+        var findDay = _dayFinder(an), dayPick = _daysAround(an, findDay);
         dayPick.forEach(function (j) {
             var pd = 'rates.days[' + j + ']';
             r2['d' + j + '_date'] = P(pd + '.date'); r2['d' + j + '_hOn'] = P(pd + '.hOn', 'h'); r2['d' + j + '_V'] = _volSpec(pd + '.V', gasDays);
@@ -825,8 +922,8 @@
         add('U2', 'U', null, 'Well inputs', { h: P('well.h', 'n', 'length'), phi: P('well.phi', 'ratio'), mu: P('well.mu', 'ratio', 'viscosity'), B: P('well.B', 'ratio'),
             ct: P('well.ct', 'D', 'compressibility'), rw: P('well.rw', 'ratio', 'length'), re_ft: P('well.re_ft', 'n', 'length'), Pb: P('well.Pb', 'p', 'pressure'),
             defaulted: FX('join', { x: 'well.defaulted' }), defaultedPhys: FX('joinDefaulted', { x: 'well.defaulted' }), fluid: P('well.fluid'), allocAccPct: P('well.allocAccPct', 'pct') });
-        add('W4', 'W', null, 'Expected IARF reach (summary)', { nShort: FX('reachShort', { an: '$analysis' }, 'n', null, 'tests'), n: FX('reachTests', { an: '$analysis' }, 'n', null, 'tests'),
-            fairShutMedian: FX('fairShutMedian', { an: '$analysis' }, 'h', null, 'tests'), goodShutMedian: FX('goodShutMedian', { an: '$analysis' }, 'h', null, 'tests') });
+        add('W4', 'W', null, 'Expected IARF reach (summary)', { nShort: FL('reachShort', { an: '$analysis' }, 'n', null, 'tests'), n: FL('reachTests', { an: '$analysis' }, 'n', null, 'tests'),
+            fairShutMedian: FL('fairShutMedian', { an: '$analysis' }, 'h', null, 'tests'), goodShutMedian: FL('goodShutMedian', { an: '$analysis' }, 'h', null, 'tests') });
 
         // ── per test ──
         var latestUsed = _latestIdx(an);
@@ -845,10 +942,10 @@
             }
             add(id + '·D5', 'D', id, 'Duration', { dtEnd_h: P(pt + '.dtEnd_h', 'h') });
             add(id + '·R1', 'R', id, 'Rate before closing', { Dq: P(s + '.Dq', 'q', qc), source: P(s + '.rateQC.source'), dqSource: P(s + '.rateQC.dqSource'), fRate: P(s + '.fRate', 'ratio'), partialSuspect: P(pt + '.partialSuspect') });
-            var di = _closingDay(an, t);
+            var di = _closingDay(an, t, findDay);
             var r2v = {
-                qDay: FX('closingRate', { days: 'rates.days', tc_ms: pt + '.tc_ms', dqSource: s + '.rateQC.dqSource', mode: 'rates.mode', events: 'events', eventId: pt + '.eventId' }, 'q', qc),
-                dqPct: FX('closingRatePct', { days: 'rates.days', tc_ms: pt + '.tc_ms', dqSource: s + '.rateQC.dqSource', mode: 'rates.mode', events: 'events', eventId: pt + '.eventId', fRate: s + '.fRate', Dq: s + '.Dq' }, 'pct')
+                qDay: FL('closingRate', { days: 'rates.days', tc_ms: pt + '.tc_ms', dqSource: s + '.rateQC.dqSource', mode: 'rates.mode', events: 'events', eventId: pt + '.eventId' }, 'q', qc),
+                dqPct: FL('closingRatePct', { days: 'rates.days', tc_ms: pt + '.tc_ms', dqSource: s + '.rateQC.dqSource', mode: 'rates.mode', events: 'events', eventId: pt + '.eventId', fRate: s + '.fRate', Dq: s + '.Dq' }, 'pct')
             };
             if (di >= 0) { r2v.date = P('rates.days[' + di + '].date'); r2v.hOn = P('rates.days[' + di + '].hOn', 'h'); r2v.V = _volSpec('rates.days[' + di + '].V', !!(an.rates && an.rates.unit === 'Mscf/d')); }
             add(id + '·R2', 'R', id, 'Flowing hours on the closing day', r2v);
@@ -856,22 +953,25 @@
             add(id + '·R4', 'R', id, 'Pressure-based rate check', { r4: P(s + '.rateQC.r4', 'ratio'), status: P(s + '.rateQC.r4Status') });
             add(id + '·R5', 'R', id, 'Rate history', { estimated: P(s + '.history.estimated'), source: P(s + '.history.source'), tPrepend_h: P(s + '.history.tPrepend_h', 'h'),
                 sensitive: P(r + '.history.sensitive'), dDerivPct: P(r + '.history.dDerivPct', 'pct') });
-            if (!res) return;
+            // A2 exists for every test (id, date, status and reason are test-level); the result values join it when there is a result
+            var a2 = { test: P(pt + '.id'), date: P(pt + '.date'), status: P(pt + '.status'), statusReason: P(pt + '.statusReason'), Dq: P(s + '.Dq', 'q', qc),
+                pExtDatum: P(pt + '.pExtDatum', 'p', 'pressure'), pwf0Datum: P(pt + '.pwf0Datum', 'p', 'pressure') };
+            if (!res) { add(id + '·A2', 'A', id, 'Final values', a2); return; }
             add(id + '·W1', 'W', id, 'Unit slope', { unitSlope: P(r + '.storage.unitSlope') });
             add(id + '·W2', 'W', id, 'Storage', { C_us: P(r + '.storage.C_us', 'C', 'wbStorage') });
             add(id + '·W3', 'W', id, 'Hump', { tHump_h: P(r + '.storage.tHump_h', 'h'), humpRatio: P(r + '.storage.humpRatio', 'ratio') });
             add(id + '·W4', 'W', id, 'Expected IARF reach', { t5_h: P(r + '.reach.t5_h', 'h'), t10_h: P(r + '.reach.t10_h', 'h'), fair_h: P(r + '.reach.fair_h', 'h'), good_h: P(r + '.reach.good_h', 'h'),
                 fairShut_h: P(r + '.reach.fairShut_h', 'h'), goodShut_h: P(r + '.reach.goodShut_h', 'h'), reachable: P(r + '.reach.reachable'),
                 dteEnd_h: FX('dteEnd', { evDte: r + '.evidence.dteEnd_h', dte: r + '.bins.dte', dtEnd: pt + '.dtEnd_h', steps: 'rates.steps', from: s + '.stepRef.from', to: s + '.stepRef.to' }, 'h') });
-            add(id + '·I1', 'I', id, 'IARF window', { grade: P(r + '.iarf.grade'), status: P(r + '.iarf.status'), cycles: FX('cycles', { X0: r + '.iarf.X0', X1: r + '.iarf.X1' }, 'cyc'),
+            add(id + '·I1', 'I', id, 'IARF window', { grade: P(r + '.iarf.grade'), status: P(r + '.iarf.status'), cycles: FS(r + '.iarf.cycles', 'cycles', { X0: r + '.iarf.X0', X1: r + '.iarf.X1' }, 'cyc'),
                 dt0_h: P(r + '.iarf.dt0_h', 'h'), dt1_h: P(r + '.iarf.dt1_h', 'h'), noiseWidened: P(r + '.iarf.noiseWidened'), forced: P(r + '.iarf.forced'), longest: P(r + '.iarf.longest.cycles', 'cyc') });
             add(id + '·I2', 'I', id, 'IARF end slope', { slopeLast: P(r + '.iarf.slopeLast', 'ratio'), slopeLastSE: P(r + '.iarf.slopeLastSE', 'ratio'), slope: P(r + '.iarf.slope', 'ratio') });
             var i3 = { level_psi: P(r + '.iarf.level_psi', 'p', 'pressure') };
             var i4 = { spread: P(r + '.iarf.pointSkin.spread', 'S'), min: P(r + '.iarf.pointSkin.min', 'S'), max: P(r + '.iarf.pointSkin.max', 'S') };
             if (physOk) {
-                i3.kLevel = FX('kFromLevel', { Dq: s + '.Dq', B: W + '.B', mu: W + '.mu', mPrime: r + '.iarf.level_psi', h: W + '.h' }, 'k', 'permeability');
-                i3.dkLevel = FX('dkLevelPct', { Dq: s + '.Dq', B: W + '.B', mu: W + '.mu', mPrime: r + '.iarf.level_psi', h: W + '.h', k: r + '.final.k' }, 'pct');
-                i4.Smean = FX('pointSkinMean', { dp: r + '.bins.dp', dte: r + '.bins.dte', dt: r + '.bins.dt', X0: r + '.iarf.X0', X1: r + '.iarf.X1', mPrime: r + '.iarf.level_psi', Dq: s + '.Dq',
+                i3.kLevel = FL('kFromLevel', { Dq: s + '.Dq', B: W + '.B', mu: W + '.mu', mPrime: r + '.iarf.level_psi', h: W + '.h' }, 'k', 'permeability');
+                i3.dkLevel = FL('dkLevelPct', { Dq: s + '.Dq', B: W + '.B', mu: W + '.mu', mPrime: r + '.iarf.level_psi', h: W + '.h', k: r + '.final.k' }, 'pct');
+                i4.Smean = FL('pointSkinMean', { dp: r + '.bins.dp', dte: r + '.bins.dte', dt: r + '.bins.dt', X0: r + '.iarf.X0', X1: r + '.iarf.X1', mPrime: r + '.iarf.level_psi', Dq: s + '.Dq',
                     B: W + '.B', mu: W + '.mu', h: W + '.h', phi: W + '.phi', ct: W + '.ct', rw: W + '.rw', steps: 'rates.steps', from: s + '.stepRef.from', to: s + '.stepRef.to' }, 'S');
             }
             add(id + '·I3', 'I', id, 'IARF level', i3);
@@ -891,7 +991,7 @@
             add(id + '·M2', 'M', id, 'Triggers', { fired: P(r + '.triggers.fired'), noneSkipped: P(r + '.triggers.noneSkipped') });
             add(id + '·M3', 'M', id, 'Rival fits', { count: FX('rivalCount', { models: r + '.models' }, 'n') });
             var m4 = { n: P(r + '.bic.n', 'n'), nEff: P(r + '.bic.nEff', 'snr'), tau: P(r + '.bic.tau', 'bic'), chosen: P(r + '.bic.chosen'), margin: P(r + '.bic.margin', 'bic'),
-                expected: FX('bicChoice', { bic: r + '.bic', ov: s + '.overrides', trig: r + '.triggers', found: r + '.iarf.found', chosen: r + '.chosen.key' }) };
+                expected: FL('bicChoice', { bic: r + '.bic', ov: s + '.overrides', trig: r + '.triggers', found: r + '.iarf.found', chosen: r + '.chosen.key' }) };
             var rows = res.bic ? _arr(res.bic.rows) : [];
             var hj = -1;
             rows.forEach(function (row, j) { if (row && row.key === 'homogeneous') hj = j; });
@@ -909,16 +1009,18 @@
                 S_kAnalytic: P(r + '.kHeld.S_kAnalytic', 'S'), converged: P(r + '.kHeld.converged'), corrCS: P(r + '.kHeld.corrCS', 'ratio'), rmsRatio: P(r + '.kHeld.rmsRatio', 'ratio') });
             add(id + '·A1', 'A', id, 'Line vs match', { agree: P(r + '.agreement.agree'), mode: P(r + '.agreement.mode'), dkPct: P(r + '.agreement.dkPct', 'pct'), dS: P(r + '.agreement.dS', 'S'),
                 biasKPct: P(r + '.agreement.biasKPct', 'pct'), biasDS: P(r + '.agreement.biasDS', 'S') });
-            var a2 = { test: P(pt + '.id'), date: P(pt + '.date'), status: P(pt + '.status'), statusReason: P(pt + '.statusReason'), k: P(r + '.final.k', 'k', 'permeability'),
-                kh: P(r + '.final.kh', 'kh', 'permThickness'), S: P(r + '.final.S', 'S'), C: P(r + '.final.C', 'C', 'wbStorage'), source: P(r + '.final.source'),
-                pStar: P(r + '.final.pStar', 'p', 'pressure'), pExt: P(r + '.final.pExt', 'p', 'pressure'), pExtDatum: P(pt + '.pExtDatum', 'p', 'pressure'), pwf0Datum: P(pt + '.pwf0Datum', 'p', 'pressure'),
-                piModel: P(r + '.final.piModel', 'p', 'pressure'), Dq: P(s + '.Dq', 'q', qc), pStarLo: P(r + '.final.pStarRange.lo', 'p', 'pressure'), pStarHi: P(r + '.final.pStarRange.hi', 'p', 'pressure') };
+            a2.k = P(r + '.final.k', 'k', 'permeability'); a2.kh = P(r + '.final.kh', 'kh', 'permThickness'); a2.S = P(r + '.final.S', 'S'); a2.C = P(r + '.final.C', 'C', 'wbStorage');
+            a2.source = P(r + '.final.source'); a2.pStar = P(r + '.final.pStar', 'p', 'pressure'); a2.pExt = P(r + '.final.pExt', 'p', 'pressure');
+            a2.piModel = P(r + '.final.piModel', 'p', 'pressure'); a2.pStarLo = P(r + '.final.pStarRange.lo', 'p', 'pressure'); a2.pStarHi = P(r + '.final.pStarRange.hi', 'p', 'pressure');
             if (physOk) {
-                a2.m = FX('m', { Dq: s + '.Dq', B: W + '.B', mu: W + '.mu', k: r + '.final.k', h: W + '.h' }, 'p', 'pressure');
-                a2.mPrime = FX('mPrime', { m: r + '.final.m' }, 'p', 'pressure');
-                a2.dpSkin_psi = FX('dpSkin', { m: r + '.final.m', S: r + '.final.S' }, 'p', 'pressure');
-                a2.rinv_ft = FX('rinv', { k: r + '.final.k', dt: pt + '.dtEnd_h', phi: W + '.phi', mu: W + '.mu', ct: W + '.ct' }, 'n', 'length');
-                if (res.evidence && _isNum(res.evidence.dteEnd_h)) a2.rinvE_ft = FX('rinv', { k: r + '.final.k', dt: r + '.evidence.dteEnd_h', phi: W + '.phi', mu: W + '.mu', ct: W + '.ct' }, 'n', 'length');
+                // stored engine values, recomputed by check() from the full-precision stored inputs (the engine's Δt_end and
+                // Δt_e,end are result.evidence.dtEnd_h / dteEnd_h when present)
+                var dtEndP = (res.evidence && _isNum(res.evidence.dtEnd_h)) ? r + '.evidence.dtEnd_h' : pt + '.dtEnd_h';
+                a2.m = FS(r + '.final.m', 'm', { Dq: s + '.Dq', B: W + '.B', mu: W + '.mu', k: r + '.final.k', h: W + '.h' }, 'p', 'pressure');
+                a2.mPrime = FS(r + '.final.mPrime', 'mPrime', { m: r + '.final.m' }, 'p', 'pressure');
+                a2.dpSkin_psi = FS(r + '.final.dpSkin_psi', 'dpSkin', { m: r + '.final.m', S: r + '.final.S' }, 'p', 'pressure');
+                a2.rinv_ft = FS(r + '.final.rinv_ft', 'rinv', { k: r + '.final.k', dt: dtEndP, phi: W + '.phi', mu: W + '.mu', ct: W + '.ct' }, 'n', 'length');
+                if (res.evidence && _isNum(res.evidence.dteEnd_h)) a2.rinvE_ft = FS(r + '.final.rinvE_ft', 'rinv', { k: r + '.final.k', dt: r + '.evidence.dteEnd_h', phi: W + '.phi', mu: W + '.mu', ct: W + '.ct' }, 'n', 'length');
                 else a2.rinvE_ft = P(r + '.final.rinvE_ft', 'n', 'length');
             } else {
                 a2.m = P(r + '.final.m', 'p', 'pressure'); a2.mPrime = P(r + '.final.mPrime', 'p', 'pressure'); a2.dpSkin_psi = P(r + '.final.dpSkin_psi', 'p', 'pressure');
@@ -930,14 +1032,14 @@
             add(id + '·U1', 'U', id, 'Skin uncertainty', { value: P(r + '.sErr.value', 'S'), mode: P(r + '.sErr.mode'), driver: P(r + '.sErr.driver'), floor: P(r + '.sErr.floor', 'S'), seS: P(r + '.sErr.seS', 'S'),
                 dLineMatch: P(r + '.sErr.dLineMatch', 'S'), sWin: P(r + '.sErr.sWin', 'S'), sTc: P(r + '.sErr.sTc', 'S'), sPwf: P(r + '.sErr.sPwf', 'S'), sK: P(r + '.sErr.sK', 'S'),
                 ext: P(r + '.sErr.ext.value', 'S'), S_C: P(r + '.sErr.ext.S_C', 'S'), sSens: P(r + '.sErr.sSens', 'S'),
-                sAbs: FX('rss', { a: r + '.sErr.value', b: r + '.sErr.sSens' }, 'S') });
+                sAbs: FS(r + '.sErr.sAbs', 'rss', { a: r + '.sErr.value', b: r + '.sErr.sSens' }, 'S') });
             var u2 = { sSens: P(r + '.sensitivity.sSens', 'S') };
             ['req', 'typ'].forEach(function (tab) {
                 _arr(res.sensitivity && res.sensitivity[tab]).forEach(function (row, j) {
                     var pr = r + '.sensitivity.' + tab + '[' + j + ']';
-                    u2[tab + j + '_input'] = P(pr + '.input'); u2[tab + j + '_f'] = P(pr + '.f', 'ratio');
-                    u2[tab + j + '_dkPct'] = FX('sensDkPct', { input: pr + '.input', f: pr + '.f' }, 'pct');
-                    u2[tab + j + '_dS'] = FX('sensDS', { input: pr + '.input', f: pr + '.f' }, 'dS3');
+                    var ra = { input: pr + '.input', f: pr + '.f' };
+                    u2[tab + j + '_dkPct'] = FS(pr + '.dkPct', 'sensDkPct', ra, 'pct', null, row ? row.dkPct : undefined);
+                    u2[tab + j + '_dS'] = FS(pr + '.dS', 'sensDS', ra, 'dS3', null, row ? row.dS : undefined);
                 });
             });
             add(id + '·U2', 'U', id, 'Input sensitivity', u2);
@@ -957,29 +1059,45 @@
         add('T1', 'T', null, 'Baseline', t1);
         add('T2', 'T', null, 'Delta alert', { status: P('trend.alerts.delta.status'), raisedAt: P('trend.alerts.delta.raisedAt'), confirmedAt: P('trend.alerts.delta.confirmedAt'),
             threshold: P('trend.alerts.delta.threshold', 'S'), form: P('trend.alerts.delta.form'), kHeldOnly: P('trend.alerts.delta.kHeldOnly'), enabled: P('trend.enabled'),
-            recomputed: FX('alertRecomputed', { an: '$analysis', which: { lit: 'delta' } }, null, null, 'trend.alerts.delta.status') });
+            confirm: P('settings.trend.confirm'),
+            recomputed: FL('alertRecomputed', { an: '$analysis', which: { lit: 'delta' } }, null, null, 'trend.alerts.delta.status') });
         add('T3', 'T', null, 'Absolute alert', { status: P('trend.alerts.absolute.status'), raisedAt: P('trend.alerts.absolute.raisedAt'), confirmedAt: P('trend.alerts.absolute.confirmedAt'),
             threshold: P('trend.alerts.absolute.threshold', 'S'), basis: P('trend.alerts.absolute.basis'), basisText: FX('basisText', { basis: 'trend.alerts.absolute.basis' }),
             kHeldOnly: P('trend.alerts.absolute.kHeldOnly'), loAt: P('trend.alerts.absolute.robustness.lo'), hiAt: P('trend.alerts.absolute.robustness.hi'), unchanged: P('trend.alerts.absolute.robustness.unchanged'),
-            recomputed: FX('alertRecomputed', { an: '$analysis', which: { lit: 'absolute' } }, null, null, 'trend.alerts.absolute.status') });
+            recomputed: FL('alertRecomputed', { an: '$analysis', which: { lit: 'absolute' } }, null, null, 'trend.alerts.absolute.status') });
         add('T4', 'T', null, 'Onset', { tauDays: P('trend.onset.tauDays', 'days'), date: P('trend.onset.date'), lo: P('trend.onset.interval[0]', 'days'), hi: P('trend.onset.interval[1]', 'days'),
             model: P('trend.onset.model'), alarmAt: P('trend.onset.cusum.alarmAt'), onsetAt: P('trend.onset.cusum.onsetAt'), indicative: P('trend.onset.indicative') });
         add('T5', 'T', null, 'Recent trend', { slopePer30d: P('trend.recent.slopePer30d', 'S'), ciLo: P('trend.recent.ci[0]', 'S'), ciHi: P('trend.recent.ci[1]', 'S'), mkP: P('trend.recent.mkP', 'ratio'),
             n: P('trend.recent.n', 'n'), indicative: P('trend.recent.indicative'), disagree: P('trend.recent.disagree') });
         add('T6', 'T', null, 'Forecast', { show: P('trend.forecast.show'), date: P('trend.forecast.date'), earliest: P('trend.forecast.earliest'), latest: P('trend.forecast.latest'), reason: P('trend.forecast.reason') });
+        // T7 and T8: the engine's stored numbers; for oil check() recomputes them (§4.7) from each test's final m and S, the stored
+        // X, the baseline S and the latest used test (q_now, k_now, S_now), with B, μ and h from the well inputs
+        var oil = _fluid(an) === 'oil', testIdx = {};
+        tests.forEach(function (t, i) { if (t && t.id) testIdx[t.id] = i; });
         var t7 = {};
-        _arr(tr.skinDp).forEach(function (row, j) { if (row && row.id) t7[row.id + '_dpSkin'] = P('trend.skinDp[' + j + '].dpSkin_psi', 'p', 'pressure'); });
+        _arr(tr.skinDp).forEach(function (row, j) {
+            if (!row || !row.id) return;
+            var p7 = 'trend.skinDp[' + j + '].dpSkin_psi', ti = testIdx[row.id];
+            if (oil && ti !== undefined && tests[ti].result && tests[ti].result.final) {
+                var rf = 'tests[' + ti + '].result.final';
+                t7[row.id + '_dpSkin'] = FS(p7, 'dpSkin', { m: rf + '.m', S: rf + '.S' }, 'p', 'pressure');
+            } else t7[row.id + '_dpSkin'] = P(p7, 'p', 'pressure');
+        });
         add('T7', 'T', null, 'Pressure drop across the skin', t7);
         var t8 = { X: P('trend.pi.X', 'ratio'), re_ft: P('trend.pi.re_ft', 'n', 'length'), reSource: P('trend.pi.reSource'), ratioNow: P('trend.pi.ratioNow', 'ratio'), ratioBase: P('trend.pi.ratioBase', 'ratio'),
             ratioLowerBound: P('trend.pi.ratioLowerBound'), rateAtStake: P('trend.pi.rateAtStake', 'q', _rateCat(an.rates && an.rates.unit)), rateUnit: P('trend.pi.rateUnit'),
             extraDrawdown_psi: P('trend.pi.extraDrawdown_psi', 'p', 'pressure'), cumAtStake: _volSpec('trend.pi.cumAtStake', !!(tr.pi && tr.pi.cumUnit === 'Mscf')), cumUnit: P('trend.pi.cumUnit'),
             atStakeUpperBound: P('trend.pi.atStakeUpperBound'), value: P('trend.pi.value', 'n'), guard: P('trend.pi.guard') };
-        if (!gas) {
-            t8.X = FX('X', { re_ft: 'trend.pi.re_ft', rw: 'well.rw' }, 'ratio');
-            t8.ratioBase = FX('piRatio', { X: 'trend.pi.X', S: 'trend.baseline.S' }, 'ratio');
+        if (oil) {
+            var rqc8 = _rateCat(an.rates && an.rates.unit);
+            t8.X = FS('trend.pi.X', 'X', { re_ft: 'trend.pi.re_ft', rw: 'well.rw' }, 'ratio');
+            t8.ratioBase = FS('trend.pi.ratioBase', 'piRatio', { X: 'trend.pi.X', S: 'trend.baseline.S' }, 'ratio');
+            t8.cumAtStake = FS('trend.pi.cumAtStake', 'cumAtStake', { an: '$analysis' }, 'n', 'volume');
             if (L) {
-                t8.ratioNow = FX('piRatio', { X: 'trend.pi.X', S: L + '.result.final.S' }, 'ratio');
-                t8.rateAtStake = FX('rateAtStake', { qNow: L + '.Dq', X: 'trend.pi.X', Snow: L + '.result.final.S', Sbase: 'trend.baseline.S' }, 'q', _rateCat(an.rates && an.rates.unit));
+                var LF = L + '.result.final';
+                t8.ratioNow = FS('trend.pi.ratioNow', 'piRatio', { X: 'trend.pi.X', S: LF + '.S' }, 'ratio');
+                t8.rateAtStake = FS('trend.pi.rateAtStake', 'rateAtStake', { qNow: L + '.Dq', X: 'trend.pi.X', Snow: LF + '.S', Sbase: 'trend.baseline.S' }, 'q', rqc8);
+                t8.extraDrawdown_psi = FS('trend.pi.extraDrawdown_psi', 'extraDrawdownS', { q: L + '.Dq', B: 'well.B', mu: 'well.mu', Snow: LF + '.S', Sbase: 'trend.baseline.S', k: LF + '.k', h: 'well.h' }, 'p', 'pressure');
             }
         }
         add('T8', 'T', null, 'PI ratio and production at stake', t8);
@@ -995,8 +1113,8 @@
             t11[row.id + '_dS'] = P(pr + '.dS', 'S'); t11[row.id + '_fitted'] = P(pr + '.fittedDS', 'S'); t11[row.id + '_ref'] = P(pr + '.refId'); t11[row.id + '_agrees'] = P(pr + '.agrees');
         });
         add('T11', 'T', null, 'Model-free skin change', t11);
-        var t12 = { spearman: P('trend.bubble.spearman', 'ratio'), pb: P('well.Pb', 'p', 'pressure'), n: FX('bubbleN', { an: '$analysis' }, 'n', null, 'trend.bubble'),
-            nBelow: FX('bubbleBelow', { an: '$analysis' }, 'n', null, 'trend.bubble'), minMargin: FX('minMargin', { rows: 'trend.bubble.rows' }, 'p', 'pressure') };
+        var t12 = { spearman: P('trend.bubble.spearman', 'ratio'), pb: P('well.Pb', 'p', 'pressure'), n: FL('bubbleN', { an: '$analysis' }, 'n', null, 'trend.bubble'),
+            nBelow: FL('bubbleBelow', { an: '$analysis' }, 'n', null, 'trend.bubble'), minMargin: FX('minMargin', { rows: 'trend.bubble.rows' }, 'p', 'pressure') };
         _arr(tr.bubble && tr.bubble.rows).forEach(function (row, j) {
             if (!row || !row.id) return;
             var pr = 'trend.bubble.rows[' + j + ']';
@@ -1018,7 +1136,7 @@
         });
         add('T14', 'T', null, 'Mechanical skin', t14);
         add('T15', 'T', null, 'Rate-dependent skin', { resolved: P('trend.rateSkin.resolved'), S: P('trend.rateSkin.S', 'S'), D: P('trend.rateSkin.D', 'D'), seD: P('trend.rateSkin.seD', 'D'),
-            reason: P('trend.rateSkin.reason'), dqEffect: P('trend.rateSkin.dqEffect', 'S'), rhoSq: FX('rhoSq', { an: '$analysis' }, 'ratio', null, 'trend.series') });
+            reason: P('trend.rateSkin.reason'), dqEffect: P('trend.rateSkin.dqEffect', 'S'), rhoSq: FL('rhoSq', { an: '$analysis' }, 'ratio', null, 'trend.series') });
         add('T16', 'T', null, 'Tests excluded as low', { n: P('trend.excludedLow.n', 'n'), ids: P('trend.excludedLow.ids'), Slo: P('trend.excludedLow.S[0]', 'S'), Shi: P('trend.excludedLow.S[1]', 'S') });
 
         // ── well level: K (calibration tables, file 55) ──
@@ -1043,7 +1161,7 @@
         RULE_ORDER.forEach(function (rid) {
             if (rid !== 'V14') { add(rid, 'V', null, RULES[rid].title, {}); return; }
             add('V14', 'V', null, RULES.V14.title, {
-                inputsHash: P('inputHash'), resultsHash: FX('resultsHashOf', { an: '$analysis' }, null, null, 'resultHash'), results8: FX('results8', { an: '$analysis' }, null, null, 'resultHash'),
+                inputsHash: P('inputHash'), resultsHash: FL('resultsHashOf', { an: '$analysis' }, null, null, 'resultHash'), results8: FL('results8', { an: '$analysis' }, null, null, 'resultHash'),
                 inputs8: FX('prefix8', { h: 'inputHash' }), appVersion: P('appVersion'), runAt: P('runAt'), runDate: FX('dateOfIso', { iso: 'runAt' }),
                 rawText: FX('rawText', { raw: 'record.rawStored' }),
                 nCritical: P('$review.counts.critical', 'n'), nMajor: P('$review.counts.major', 'n'), nMinor: P('$review.counts.minor', 'n'), nSuggestion: P('$review.counts.suggestion', 'n'),
@@ -1070,18 +1188,31 @@
         for (i = tests.length - 1; i >= 0; i--) if (tests[i] && tests[i].result && tests[i].status === 'interpreted') return i;
         return -1;
     }
-    function _closingDay(an, t) {
-        var days = an && an.rates ? _arr(an.rates.days) : [];
-        for (var j = 0; j < days.length; j++) if (days[j] && days[j].t0_ms <= t.tc_ms && t.tc_ms < days[j].t1_ms) return j;
-        return -1;
+    // tc → index of the production day that contains it: binary search when the days are in time order (as WP2 stores them),
+    // else a linear scan
+    function _dayFinder(an) {
+        var days = an && an.rates ? _arr(an.rates.days) : [], sorted = true;
+        for (var i = 0; i < days.length; i++) {
+            var d = days[i];
+            if (!d || !_isNum(d.t0_ms) || !_isNum(d.t1_ms) || d.t1_ms < d.t0_ms || (i && !(d.t0_ms >= days[i - 1].t1_ms))) { sorted = false; break; }
+        }
+        return function (tc) {
+            if (!_isNum(tc)) return -1;
+            if (!sorted) { for (var j = 0; j < days.length; j++) if (days[j] && days[j].t0_ms <= tc && tc < days[j].t1_ms) return j; return -1; }
+            var lo = 0, hi = days.length - 1;
+            while (lo <= hi) { var mid = (lo + hi) >> 1, dm = days[mid]; if (tc < dm.t0_ms) hi = mid - 1; else if (tc >= dm.t1_ms) lo = mid + 1; else return mid; }
+            return -1;
+        };
     }
+    function _closingDay(an, t, find) { return t ? (find || _dayFinder(an))(t.tc_ms) : -1; }
     // day indexes within ±2 days of every event's closing day (S3 day table), sorted
-    function _daysAround(an) {
+    function _daysAround(an, find) {
         var days = an && an.rates ? _arr(an.rates.days) : [], pick = {};
         var src = _arr(an && an.events).length ? _arr(an.events) : _arr(an && an.tests);
+        find = find || _dayFinder(an);
         src.forEach(function (t) {
             if (!t) return;
-            var j = _closingDay(an, t); if (j < 0) return;
+            var j = find(t.tc_ms); if (j < 0) return;
             for (var k = Math.max(0, j - 2); k <= Math.min(days.length - 1, j + 2); k++) pick[k] = 1;
         });
         return Object.keys(pick).map(Number).sort(function (a, b) { return a - b; });
@@ -1092,22 +1223,75 @@
     // ─────────────────────────────────────────────────────────────────────
     function _isValue(o) { return _obj(o) && typeof o.ref === 'string' && typeof o.dp === 'number' && Object.prototype.hasOwnProperty.call(o, 'v'); }
     function _splitRef(ref) { var i = ref.indexOf(':'); return i === -1 ? { id: ref, name: null } : { id: ref.slice(0, i), name: ref.slice(i + 1) }; }
+    // whether an index value needs a context root ($review, $signoff, $audit), cached per value
+    var _ctxMemo = typeof WeakMap === 'function' ? new WeakMap() : null;
+    function _ivCtx(iv) {
+        if (!iv.formula) return _ctxRoot(iv.path);
+        if (!_ctxMemo) return _usesCtx({ p: iv.path, f: iv.formula });
+        var c = _ctxMemo.get(iv);
+        if (c === undefined) { c = _usesCtx({ p: iv.path, f: iv.formula }); _ctxMemo.set(iv, c); }
+        return c;
+    }
     // The value a ref points to, evaluated with the given roots: undefined when the context is missing.
+    // A stored derived value (FS) is recomputed with its formula from the stored inputs; when nothing is stored the formula is the
+    // value, when the engine stored null the expected value is null, and when the formula cannot be evaluated (missing inputs)
+    // the stored field is re-read instead (no recomputation possible, so no false failure).
     function _evalRef(iv, roots) {
-        if (_usesCtx({ p: iv.path, f: iv.formula })) {
+        if (_ivCtx(iv)) {
             var needs = [];
             var collect = function (p) { if (typeof p === 'string' && _ctxRoot(p)) needs.push(p.split(/[.[]/)[0].slice(1)); };
             collect(iv.path);
             if (iv.formula && iv.formula.args) Object.keys(iv.formula.args).forEach(function (k) { collect(iv.formula.args[k]); });
             for (var i = 0; i < needs.length; i++) if (roots[needs[i]] === undefined || roots[needs[i]] === null) return undefined;
         }
+        if (iv.stored && iv.formula) { var e = _storedRefs(iv, roots); return e.r; }
         return _clean(iv.formula ? _evalF(iv.formula, roots) : _get(roots, iv.path));
     }
+    // A stored derived value has two references: the recomputation (r) and the field as stored now (s, undefined when nothing is
+    // stored or when it equals r's source). A quote must agree with both, so a stale quote of a stored value is caught too.
+    function _storedRefs(iv, roots) {
+        var st = _get(roots, iv.path);
+        if (st === undefined) return { r: _clean(_evalF(iv.formula, roots)), s: undefined };
+        st = _clean(st);
+        if (st === null) return { r: null, s: undefined };
+        var rc = _clean(_evalF(iv.formula, roots));
+        return (rc === null || rc === undefined) ? { r: st, s: undefined } : { r: rc, s: st };
+    }
+    // quoted q against a value-index entry: {ok, r (the reference that failed, or the recomputation)}
+    function _cmpRef(q, iv, roots, dp) {
+        if (iv.stored && iv.formula && !_ivCtx(iv)) {
+            var e = _storedRefs(iv, roots);
+            if (!_cmp(q, e.r, dp)) return { ok: false, r: e.r };
+            if (e.s !== undefined && !_cmp(q, e.s, dp)) return { ok: false, r: e.s };
+            return { ok: true, r: e.r };
+        }
+        var r = _evalRef(iv, roots);
+        if (r === undefined) return { ok: true, r: undefined };
+        return { ok: _cmp(q, r, dp), r: r };
+    }
+    // Every stored derived value of the index re-checked against its formula (run(), recheck() and report() call this), so a stored
+    // engine number that disagrees with FORMULAS raises V14 even where no text quotes it. Returns {nChecked, failures}.
+    function _checkDerived(idx, an, ctx) {
+        var roots = _roots(an, ctx), out = { nChecked: 0, failures: [] };
+        _arr(idx && idx.order).forEach(function (id) {
+            var it = idx.items[id]; if (!it) return;
+            for (var name in it.values) {
+                var iv = it.values[name];
+                if (!iv || !iv.stored || iv.v === null) continue;
+                var c = _cmpRef(iv.v, iv, roots, iv.dp | 0);
+                if (c.r === undefined) continue;
+                out.nChecked++;
+                if (!c.ok) out.failures.push({ ref: id + ':' + name, quoted: iv.v, recomputed: c.r, tol: typeof iv.v === 'number' ? 0.5 * Math.pow(10, -(iv.dp | 0)) : 0 });
+            }
+        });
+        return out;
+    }
+    var HALF_UNIT = [0.5, 0.05, 0.005, 0.0005, 0.00005, 0.000005, 0.0000005, 0.00000005, 0.000000005];
     function _cmp(q, r, dp) {
         if (q === null || q === undefined) return r === null || r === undefined;
         if (typeof q === 'number') {
             if (!_isNum(r)) return false;
-            var tol = 0.5 * Math.pow(10, -dp);
+            var tol = (dp >= 0 && dp <= 8) ? HALF_UNIT[dp] : 0.5 * Math.pow(10, -dp);
             return Math.abs(q - r) <= tol + 1e-9 * Math.max(1, Math.abs(r));
         }
         return String(q) === String(r);
@@ -1127,23 +1311,25 @@
                 if (typeof val.v === 'number') return { checked: true, fail: { ref: val.ref, quoted: val.v, recomputed: null, tol: tol, reason: 'no source for this number' } };
                 return { checked: false };
             }
-            r = _evalRef(iv, roots);
-            if (r === undefined) return { checked: false };
+            var cr = _cmpRef(val.v, iv, roots, val.dp | 0);
+            if (cr.r === undefined) return { checked: false };
+            if (cr.ok) return { checked: true };
+            r = cr.r;
         }
         if (_cmp(val.v, r, val.dp | 0)) return { checked: true };
         return { checked: true, fail: { ref: val.ref, quoted: val.v, recomputed: r, tol: typeof val.v === 'number' ? tol : 0 } };
     }
     function check(obj, analysis, idx, ctx) {
         var an = _obj(analysis) ? analysis : {};
-        idx = idx || evidence(an, ctx);
+        idx = idx || _evidenceFor(an, ctx);
         var roots = _roots(an, ctx);
         var res = { ok: true, nChecked: 0, nFailed: 0, failures: [] };
-        var seen = [];
+        var seen = typeof WeakSet === 'function' ? new WeakSet() : null, seenA = [];
         (function walk(o, key) {
             if (o === null || typeof o !== 'object') return;
             if (key === 'check' || key === 'failures' || key === 'decision') return;
-            if (seen.indexOf(o) !== -1) return;
-            seen.push(o);
+            if (seen) { if (seen.has(o)) return; seen.add(o); }
+            else { if (seenA.indexOf(o) !== -1) return; seenA.push(o); }
             if (_isValue(o)) {
                 var c = _checkValue(o, roots, idx);
                 if (c.checked) res.nChecked++;
@@ -1425,7 +1611,7 @@
         var item = idx && idx.items ? idx.items[id] : null;
         var iv = item ? item.values[name] : null;
         var v = iv ? iv.v : null;
-        if (iv && _usesCtx({ p: iv.path, f: iv.formula })) { var e = _evalRef(iv, roots); v = e === undefined ? null : e; }
+        if (iv && _ivCtx(iv)) { var e = _evalRef(iv, roots); v = e === undefined ? null : e; }
         return { v: v === undefined ? null : v, cat: iv ? iv.cat : null, dp: iv ? iv.dp : 0, ref: id + ':' + name };
     }
     function _mkFinding(rule, o, idx) {
@@ -1468,7 +1654,7 @@
     function run(analysis, idx, opts) {
         opts = opts || {};
         var an = _obj(analysis) ? analysis : {};
-        idx = idx || evidence(an, opts);
+        idx = idx || _evidenceFor(an, opts);
         var roots = _roots(an, opts);
         var c = _ctxFor(an, idx, roots);
         var findings = [], warnings = [], seq = 0;
@@ -1479,10 +1665,11 @@
             catch (e) { warnings.push({ code: 'RULE_ERROR', level: 'warn', text: 'Rule ' + rid + ' could not be evaluated on this analysis.', ev: [rid] }); out = []; }
             out.forEach(function (o) { var f = _mkFinding(rule, o, idx); f._seq = seq++; findings.push(f); });
         });
+        // resultHash: the results hash recomputed from this analysis (not the stored one), so sign-off can tell a stale review
         var review = { version: 'r1', at: _now(opts), findings: findings, counts: null, evidenceCheck: { ok: true, nChecked: 0, nFailed: 0 },
-                       inputHash: an.inputHash || GENESIS, resultHash: an.resultHash || GENESIS, warnings: warnings };
+                       inputHash: an.inputHash || GENESIS, resultHash: _resultsHash(an) || an.resultHash || GENESIS, warnings: warnings };
         _renumber(review);
-        // evidence check of every finding's own values (V14 for failures)
+        // evidence check of every finding's own values and of every stored derived value of the index (V14 for failures)
         var allFail = [], nChecked = 0;
         review.findings.forEach(function (f) {
             var r = check({ values: f.values }, an, idx, { review: review, cal: roots.cal });
@@ -1490,6 +1677,8 @@
             f.check = { ok: r.ok, failures: r.failures };
             allFail = allFail.concat(r.failures);
         });
+        var dc = _checkDerived(idx, an, { review: review, cal: roots.cal });
+        nChecked += dc.nChecked; allFail = allFail.concat(dc.failures);
         review.evidenceCheck = { ok: allFail.length === 0, nChecked: nChecked, nFailed: allFail.length };
         _addV14(review, allFail, idx);
         _strip(review);
@@ -1499,7 +1688,7 @@
     function recheck(review, analysis, idx, opts) {
         if (!_obj(review)) return review;
         var an = _obj(analysis) ? analysis : {};
-        idx = idx || evidence(an, opts);
+        idx = idx || _evidenceFor(an, opts);
         var roots = _roots(an, opts);
         var allFail = [], nChecked = 0;
         _arr(review.findings).forEach(function (f) {
@@ -1509,12 +1698,15 @@
             f.check = { ok: r.ok, failures: r.failures };
             allFail = allFail.concat(r.failures);
         });
+        var dc = _checkDerived(idx, an, { review: review, cal: roots.cal });
+        nChecked += dc.nChecked; allFail = allFail.concat(dc.failures);
         var prev = review.evidenceCheck || { nChecked: 0, nFailed: 0 };
         _addV14(review, allFail, idx);
         var nV14 = review.findings.filter(function (f) { return f.rule === 'V14'; }).length;
         review.evidenceCheck = { ok: nV14 === 0, nChecked: Math.max(nChecked, prev.nChecked || 0), nFailed: Math.max(allFail.length, nV14) };
         return review;
     }
+    var DECISION_CODES = { accept: 1, reject: 1, note: 1 };
     function applyDecisions(review, decisions) {
         if (!_obj(review)) return review;
         var list = Array.isArray(decisions) ? decisions : _decisionsFromAudit(decisions);
@@ -1524,7 +1716,9 @@
                 if (!d) return;
                 var tgt = d.target;
                 if (tgt !== f.key && tgt !== f.rule && tgt !== f.id) return;
-                dec = (d.d === null || d.d === undefined || d.d === 'clear') ? null
+                var clear = d.d === null || d.d === undefined || d.d === 'clear';
+                if (!clear && !DECISION_CODES[d.d]) return;                 // unknown decision codes are ignored
+                dec = clear ? null
                     : { d: d.d, note: (typeof d.note === 'string' && d.note.trim()) ? d.note.slice(0, 600) : null, who: _str(d.who), at: d.at || null };
             });
             if (dec && !dec.at) dec.at = new Date(0).toISOString();
@@ -1564,19 +1758,27 @@
         var open = [];
         _arr(review && review.findings).forEach(function (f) {
             if (!f) return;
+            var dec = f.decision && DECISION_CODES[f.decision.d] ? f.decision : null;
             if (f.rule === 'V14') { open.push(f.id); return; }
-            if ((f.severity === 'critical' || f.severity === 'major') && !f.decision) { open.push(f.id); return; }
-            if (f.decision && f.decision.d === 'reject' && !(typeof f.decision.note === 'string' && f.decision.note.trim())) open.push(f.id);
+            if ((f.severity === 'critical' || f.severity === 'major') && !dec) { open.push(f.id); return; }
+            if (dec && dec.d === 'reject' && !(typeof dec.note === 'string' && dec.note.trim())) open.push(f.id);
         });
         return { ok: open.length === 0, open: open };
     }
     function _fail(code, errors, bad) { return { ok: false, code: code, errors: errors, bad: bad || [] }; }
+    // The review must have been built for this state of the analysis: same inputs hash and the same results hash recomputed now;
+    // the evidence check of the review is then re-run against the analysis (recheck adds V14 for any quote that no longer matches).
     function signoff(form, analysis, review) {
         var an = _obj(analysis) ? analysis : {};
         if (!form || typeof form.name !== 'string' || !form.name.trim()) return _fail('NO_NAME', ['Enter the name of the person signing off.'], ['name']);
         if (form.statement !== true) return _fail('NO_STATEMENT', ['Tick the statement "I have reviewed the analysis and the findings".'], ['statement']);
-        if (typeof an.inputHash !== 'string' || !_resultsHash(an)) return _fail('NO_ANALYSIS', ['Run an analysis before sign-off.'], []);
+        var rh = _resultsHash(an);
+        if (typeof an.inputHash !== 'string' || !rh) return _fail('NO_ANALYSIS', ['Run an analysis before sign-off.'], []);
         var rv = _obj(review) ? review : { findings: [] };
+        if (!_obj(review) || rv.inputHash !== an.inputHash || rv.resultHash !== rh) {
+            return _fail('EVIDENCE_CHECK_FAILED', ['The review was built for an earlier state of the analysis: run the analysis and the review again before sign-off.'], []);
+        }
+        recheck(rv, an);
         var v14 = _arr(rv.findings).filter(function (f) { return f && f.rule === 'V14'; });
         if (v14.length || (rv.evidenceCheck && rv.evidenceCheck.ok === false)) return _fail('EVIDENCE_CHECK_FAILED', ['The evidence check failed: re-run the analysis before sign-off.'], v14.map(function (f) { return f.id; }));
         var cs = canSign(rv);
@@ -1594,6 +1796,8 @@
         var h = hashes(analysis, review);
         if (h.inputsHash !== so.inputsHash || h.resultsHash !== so.resultsHash || h.decisionsHash !== so.decisionsHash) return 'CHANGED';
         if (_sigHash({ inputsHash: so.inputsHash, resultsHash: so.resultsHash, decisionsHash: so.decisionsHash }, so.name, _str(so.role), so.at || null) !== so.hash) return 'CHANGED';
+        // a quoted number that no longer matches the analysis (V14, e.g. a field outside the results hash) voids the signature
+        if (_obj(review) && (_arr(review.findings).some(function (f) { return f && f.rule === 'V14'; }) || (review.evidenceCheck && review.evidenceCheck.ok === false))) return 'CHANGED';
         return 'SIGNED';
     }
 
@@ -1606,11 +1810,19 @@
         if (_obj(a) && Array.isArray(a.entries)) return a;
         return null;
     }
+    // Lossless: numeric leaves are serialised exactly (String(n), the shortest round-trip form) before canon, so canon sorts the keys
+    // but rounds nothing; an edit at any digit of an entry breaks the chain.
+    function _exactLeaves(v) {
+        if (typeof v === 'number') return 'n:' + String(v);
+        if (Array.isArray(v)) return v.map(_exactLeaves);
+        if (v !== null && typeof v === 'object') { var o = {}; Object.keys(v).forEach(function (k) { o[k] = _exactLeaves(v[k]); }); return o; }
+        return v;
+    }
     function entryHash(prevHash, entry) {
         var e = {};
         Object.keys(entry || {}).forEach(function (k) { if (k !== 'hash') e[k] = entry[k]; });
         var a = _AI();
-        return a ? a.hash16(_str(prevHash) + a.canon(e, 'inputs')) : null;
+        return a ? a.hash16(_str(prevHash) + a.canon(_exactLeaves(e), 'inputs')) : null;
     }
     function auditHead(log) {
         var L = _auditLog(log); if (!L) return GENESIS;
@@ -1826,6 +2038,21 @@
             };
             var tpl = 'If ' + INPUT_LABEL[e.input] + ' is {pct} % ' + (sign > 0 ? 'higher' : 'lower') + ', k changes by {dk} % and S by {ds} on every test (analytic, homogeneous).';
             var ev = ['U2'];
+            // every used test (the latest 8 named), with its shifted skin
+            var used = c.tests.filter(function (t) { return t.used && t.used.trend && t.result && t.result.final && _isNum(t.result.final.S); });
+            if (!used.length) used = c.tests.filter(function (t) { return t.result && t.result.final && _isNum(t.result.final.S); });
+            var shown = used.slice(-8);
+            if (shown.length) {
+                tpl += ' Shifted skin of the ' + (used[0].used && used[0].used.trend ? 'used' : 'interpreted') + ' tests: ' + shown.map(function (t, j) { return '{t' + j + '} {u' + j + '}'; }).join(', ');
+                shown.forEach(function (t, j) {
+                    var tj = c.an.tests.indexOf(t);
+                    vals['t' + j] = c.V(t.id + '·A2', 'test');
+                    vals['u' + j] = { v: FORMULAS.add(t.result.final.S, dS), cat: null, dp: 2, ref: t.id + '·U2:S', calc: { f: 'add', args: { a: 'tests[' + tj + '].result.final.S', b: lit(dS) } } };
+                    ev.push(t.id + '·A2');
+                });
+                if (used.length > shown.length) { tpl += ' (and {nOld} earlier tests)'; vals.nOld = { v: used.length - shown.length, cat: null, dp: 0, ref: 'U2:older', calc: { f: 'lit', args: { x: lit(used.length - shown.length) } } }; }
+                tpl += '.';
+            }
             if (L && L.result && L.result.final) {
                 var li = c.an.tests.indexOf(L);
                 tpl += ' For {test}: k {k1}, S {s1}.';
@@ -1836,10 +2063,13 @@
                 ev.push(L.id + '·U2', L.id + '·A2');
             }
             if (c.an.trend && c.an.trend.alerts) {
-                tpl += ' The delta alert is unchanged because a uniform input error shifts every skin equally; the absolute alert would be {abs} (at {at}).';
+                tpl += ' The delta alert is unchanged because a uniform input error shifts every skin equally; ';
                 var a = _alertRecompute(c.an, 'absolute', dS);
-                vals.abs = { v: a ? a.status : null, cat: null, dp: 0, ref: 'T3:shifted', calc: { f: 'alertShift', args: { an: '$analysis', which: lit('absolute'), shift: lit(dS) } } };
-                vals.at = { v: a ? (a.confirmedAt || a.raisedAt || 'none') : null, cat: null, dp: 0, ref: 'T3:shiftedAt', calc: { f: 'alertShiftAt', args: { an: '$analysis', which: lit('absolute'), shift: lit(dS) } } };
+                if (a && !a.ambiguous) {
+                    tpl += 'the absolute alert would be {abs} (at {at}).';
+                    vals.abs = { v: a.status, cat: null, dp: 0, ref: 'T3:shifted', calc: { f: 'alertShift', args: { an: '$analysis', which: lit('absolute'), shift: lit(dS) } } };
+                    vals.at = { v: a.confirmedAt || a.raisedAt || 'none', cat: null, dp: 0, ref: 'T3:shiftedAt', calc: { f: 'alertShiftAt', args: { an: '$analysis', which: lit('absolute'), shift: lit(dS) } } };
+                } else tpl += 'the effect on the absolute alert cannot be re-derived from the stored series; press Analyse with the changed input.';
                 ev.push('T2', 'T3');
             }
             return _ans(tpl, vals, ev.filter(function (x) { return c.idx.items[x]; }), 'full', ['What if ' + e.input + ' is ' + p + ' % ' + (sign > 0 ? 'lower' : 'higher') + '?', 'Is there an alert?']);
@@ -2012,7 +2242,7 @@
             return _ans('{test}: mechanical skin {sm} ± {se} (pressure-drop basis); geometric pseudo-skin {sg} (range {lo} to {hi}); local damage skin {sd}.',
                         { test: id ? c.V(id + '·A2', 'test') : c.V('T14', 'basis'), sm: c.V('T14', id + '_Smech'), se: c.V('T14', id + '_SmechErr'), sg: c.V('T14', 'Sgeo'), lo: c.V('T14', 'SgeoLo'),
                           hi: c.V('T14', 'SgeoHi'), sd: c.V('T14', id + '_Sd') }, ['T14'], 'full');
-        }),
+        }, function (e) { return (e.tests.length && /\b(mechanical|pseudo ?-?skins?|damage)\b/.test(e.norm)) ? 2 : 0; }),   // offsets value's test-id bonus
         I('depletion', 'is the reservoir depleting?', [[/\bdeplet/, 5], [/\breservoir pressure\b/, 4], [/\b(pstar|extrapolated pressure|average pressure)\b|(^|\s)p\*/, 2], [/\b(falling|declining|decline|dropping|trend)\b/, 1],
             [/\btrend\b.*(p\*|pstar|pressure)|(p\*|pstar|pressure).*\btrend\b/, 3]], function (c) {
             var pt = c.an.trend && c.an.trend.pTrend;
@@ -2041,7 +2271,7 @@
     function ask(text, analysis, idx, fmt, opts) {
         var q = _str(text).slice(0, 300);
         var an = _obj(analysis) ? analysis : {};
-        idx = idx || evidence(an, opts);
+        idx = idx || _evidenceFor(an, opts);
         var roots = _roots(an, opts);
         var c = _ctxFor(an, idx, roots);
         var e = _entities(q, an);
@@ -2088,7 +2318,7 @@
     function _blank(n) { var a = []; for (var i = 0; i < n; i++) a.push(''); return a; }
 
     function _rc(an, review, audit, signoff, opts) {
-        var idx = evidence(an, { cal: opts.cal });
+        var idx = (opts.idx && opts.idx.items && Array.isArray(opts.idx.order)) ? opts.idx : _evidenceFor(an, { cal: opts.cal });
         var roots = _roots(an, { review: review, signoff: signoff, audit: audit, cal: opts.cal });
         var c = _ctxFor(an, idx, roots);
         c.roots = roots; c.review = review; c.signoff = signoff; c.audit = _auditLog(audit); c.opts = opts;
@@ -2166,8 +2396,7 @@
             _row('Settings used: interpretation', _tv('Bourdet L {L} cycle, IARF band {b} %, slope {sl}, minimum {mc} cycle', { L: c.V('I1', 'Lcyc'), b: c.V('I1', 'bandPct'), sl: c.V('I1', 'slope'), mc: c.V('I1', 'minCycles') }), ['I1']),
             _row('Settings used: models', _tv('rivals {r}, C-held refits {c}, k-held fits {k}, tide removal {t}', { r: c.V('M1', 'rivals'), c: c.V('M1', 'cheld'), k: c.V('M1', 'kHeld'), t: c.V('M1', 'tide') }), ['M1']),
             _row('Settings used: trend', _tv('baseline tests {n}, delta alert {d}, absolute alert {a}, confirmation {cf}, trend enabled {en}',
-                { n: c.V('T1', 'baseN'), d: c.V('T2', 'threshold'), a: c.V('T3', 'threshold'), cf: { v: _str(c.an.settings && c.an.settings.trend && c.an.settings.trend.confirm) || null, cat: null, dp: 0, ref: 'T2:confirm' },
-                  en: c.V('T2', 'enabled') }), ['T1', 'T2', 'T3'])
+                { n: c.V('T1', 'baseN'), d: c.V('T2', 'threshold'), a: c.V('T3', 'threshold'), cf: c.V('T2', 'confirm'), en: c.V('T2', 'enabled') }), ['T1', 'T2', 'T3'])
         ]));
         var warned = false;
         if (qc.resolutionLimited) { warned = true; b.push(_verdict('warn', '⚠ Gauge resolution ({r}) limits the noise estimate.', { r: c.V('Q1', 'resolution_psi') }, ['Q1'])); }
@@ -2181,17 +2410,19 @@
         c.tests.forEach(function (t) { testOf[t.eventId] = t; });
         var rqc = _rateCat(an.rates && an.rates.unit);
         var head = [{ text: 'Event', cat: null }, { text: 'Test', cat: null }, { text: 'Time', cat: null }, { text: 'Kind', cat: null }, { text: 'Status', cat: null },
-                    { text: 'Δt end (h)', cat: null }, { text: 'Δq', cat: rqc }, { text: 'Rate source', cat: null }, { text: 'pwf0', cat: 'pressure' }, { text: 'Allocation check', cat: null }];
+                    { text: 'Δt end (h)', cat: null }, { text: 'Δq', cat: rqc }, { text: 'Rate source', cat: null }, { text: 'pwf0', cat: 'pressure' }, { text: 'Allocation check', cat: null },
+                    { text: 'Note', cat: null }];
         var shown = events.slice(-MAX_ROWS), rows = [], ev = ['D1'];
-        if (events.length > MAX_ROWS) rows.push([c.V('D1', 'nOlderEvents'), 'older events not shown', '', '', '', '', '', '', '', '']);
+        if (events.length > MAX_ROWS) rows.push([c.V('D1', 'nOlderEvents'), 'older events not shown'].concat(_blank(head.length - 2)));
         shown.forEach(function (e) {
             var t = testOf[e.id];
             rows.push([e.id, t ? t.id : '—', c.V('D1', e.id + '_time'), _str(e.kind), _str(e.status), c.V('D1', e.id + '_dtEnd_h'),
-                       t ? c.V(t.id + '·R1', 'Dq') : '—', t && t.spec && t.spec.rateQC ? _str(t.spec.rateQC.dqSource) : '—', c.V('D1', e.id + '_pwf0'), e.alloc ? _str(e.alloc.confirm) : '—']);
+                       t ? c.V(t.id + '·R1', 'Dq') : '—', t && t.spec && t.spec.rateQC ? _str(t.spec.rateQC.dqSource) : '—', c.V('D1', e.id + '_pwf0'), e.alloc ? _str(e.alloc.confirm) : '—',
+                       _eventNote(e, t)]);
             if (t && c.has(t.id + '·D2')) ev.push(t.id + '·D2');
         });
         b.push(_table('bu_tbl_events', head, rows, c.evs(ev)));
-        var dayIdx = _daysAround(an), dayRows = [], days = an.rates ? _arr(an.rates.days) : [];
+        var dayIdx = _daysAround(an, _dayFinder(an)), dayRows = [], days = an.rates ? _arr(an.rates.days) : [];
         var keep = dayIdx.slice(-MAX_ROWS);
         if (dayIdx.length > MAX_ROWS) dayRows.push([c.V('R2', 'nOlderDays'), 'earlier days not shown', '', '', '', '']);
         keep.forEach(function (j) {
@@ -2218,6 +2449,19 @@
         b.push(_notes('Notes', tpl, { ne: c.V('D1', 'nEvents'), ns: c.V('D1', 'nTooShort'), ni: c.V('D1', 'nInterventions'), nsub: c.V('D1', 'nSub'), nal: c.V('D1', 'nAllocOnly'), ng: c.V('D1', 'nGaps'),
                                          d: c.V('D1', 'pStarMinusPwf_psi'), ts: c.V('D1', 'Ts_psi') }, ['D1']));
         return { id: 'S3', title: 'Events and rates', blocks: b };
+    }
+    // S3 events table "Note": fixed reason texts, plus the test's own status reason (free text, escaped by the page)
+    var END_TEXT = { reopen: 'ended at the reopening', gap: 'ended at a data gap', data_end: 'ended at the end of the data' };
+    var EV_STATUS_TEXT = { too_short: 'too short to interpret', gap_at_closing: 'data gap at the closing time', partial: 'partial rate cut (kept in the rate history)',
+                           excluded: 'excluded', not_confirmed: 'not confirmed by the allocation', intervention: 'suspected intervention' };
+    function _eventNote(e, t) {
+        var l = [];
+        if (e.manual === true) l.push('added manually');
+        if (e.ramp && e.ramp.present === true) l.push('ramped closing');
+        if (EV_STATUS_TEXT[e.status]) l.push(EV_STATUS_TEXT[e.status]);
+        if (END_TEXT[e.endReason]) l.push(END_TEXT[e.endReason]);
+        if (t && t.status !== 'interpreted' && typeof t.statusReason === 'string' && t.statusReason.trim()) l.push(_clip(t.statusReason.trim(), 120));
+        return l.length ? l.join('; ') : '—';
     }
     function _usedText(t) {
         var u = t.used || {}, l = [];
@@ -2336,7 +2580,7 @@
         }
         var ov = used.slice(-12).map(function (t) {
             var bn = t.result.bins || {}, te = (Array.isArray(bn.dte) && bn.dte.length === _arr(bn.dt).length) ? bn.dte : _arr(bn.dt);
-            return _series(t.id + ' Δp/q', 'pressure', te, _arr(bn.dp).map(function (y) { return _isNum(y) && t.Dq ? y / t.Dq : null; }));
+            return _series(t.id + ' Δp/q', null, te, _arr(bn.dp).map(function (y) { return _isNum(y) && t.Dq ? y / t.Dq : null; }));   // psi per rate unit: no single unit category
         });
         if (ov.length) b.push(_chart('bu_ch_ov', ov));
         var L = c.latest, pi = tr.pi || {};
@@ -2386,7 +2630,7 @@
         if (used.length < 2) return null;
         var pk = used.map(function (t) { return [t.tc_ms, t.result.final.pExt]; });
         var sk = used.map(function (t) { return [(t.tc_ms - c.t0) / 86400000, t.result.final.S]; });
-        var lin = function (k, x) { if (x <= k[0][0]) return k[0][1]; for (var i = 1; i < k.length; i++) if (x <= k[i][0]) return k[i - 1][1] + (k[i][1] - k[i - 1][1]) * (x - k[i - 1][0]) / (k[i][0] - k[i - 1][0]); return k[k.length - 1][1]; };
+        var lin = _lin;
         var w = an.well || {}, x = [], jo = [], jp = [];
         days.forEach(function (d) {
             var mid = 0.5 * (d.t0_ms + d.t1_ms);
@@ -2484,8 +2728,15 @@
         if (cur) b.push(_notes('Notes', cur, {}, c.evs(ev)));
         return { id: 'S8', title: 'Limitations', blocks: b };
     }
+    var S9_NOTE = 'This automated rule-based review is independent of the report text and partly of the engine: its re-derivation rules recompute key results from stored data without calling the interpretation engine. ' +
+                  'It is not independent of the physics model. The evidence check re-reads every quoted number from the analysis and recomputes derived quantities; a failure blocks sign-off until a re-run clears it.';
     function _S9(c) {
-        var b = [], rv = c.review || { findings: [], counts: { critical: 0, major: 0, minor: 0, suggestion: 0 }, evidenceCheck: { ok: true, nChecked: 0, nFailed: 0 } };
+        var b = [], rv = c.review;
+        if (!_obj(rv)) {
+            b.push(_verdict('warn', '⚠ The automated rule-based review has not been run on this analysis: no findings and no evidence check are reported.', {}, ['V14']));
+            b.push(_notes('Notes', S9_NOTE, {}, ['V14']));
+            return { id: 'S9', title: 'Automated rule-based review', blocks: b };
+        }
         var cn = rv.counts || {};
         var lvl = cn.critical > 0 ? 'bad' : cn.major > 0 ? 'warn' : 'ok';
         b.push(_verdict(lvl, (lvl === 'ok' ? '✓' : lvl === 'warn' ? '⚠' : '✗') + ' Automated rule-based review: {c} critical, {mj} major, {mn} minor, {sg} suggestions.',
@@ -2514,8 +2765,7 @@
             if (rv.findings.length > MAX_ROWS) fr.push(_row('More findings', _tv('{n} more findings are listed in the table above.', { n: c.V('V14', 'nMoreFindings') }), ['V14']));
             b.push(_kv(fr));
         }
-        b.push(_notes('Notes', 'This automated rule-based review is independent of the report text and partly of the engine: its re-derivation rules recompute key results from stored data without calling the interpretation engine. ' +
-                      'It is not independent of the physics model. The evidence check re-reads every quoted number from the analysis and recomputes derived quantities; a failure blocks sign-off until a re-run clears it.', {}, ['V14']));
+        b.push(_notes('Notes', S9_NOTE, {}, ['V14']));
         return { id: 'S9', title: 'Automated rule-based review', blocks: b };
     }
     function _reproBlock(c) {
@@ -2562,7 +2812,7 @@
             if (so.appVersion && cur && so.appVersion !== cur) b.push(_verdict('warn', '⚠ Signed with {v}; re-run to verify.', { v: c.V('V14', 'signedVersion') }, ['V14']));
             b.push(_notes('Notes', 'The signature hash checks the integrity of the inputs, results and decisions; it does not authenticate the signer.', {}, ['V14']));
         } else {
-            b.push(_kv([_row('Findings that need a decision', c.V('V14', 'nOpen'), ['V14']),
+            b.push(_kv([_obj(c.review) ? _row('Findings that need a decision', c.V('V14', 'nOpen'), ['V14']) : _row('Findings that need a decision', _tv('the review has not been run', {}), ['V14']),
                         _row('Statement', _tv('I have reviewed the analysis and the findings.', {}), ['V14'])]));
         }
         return { id: 'S11', title: 'Sign-off', blocks: b };
@@ -2610,6 +2860,7 @@
                 var r = check({ values: f.values }, an, idx, ctx);
                 if (!r.ok) { f.check = { ok: false, failures: r.failures }; fails = fails.concat(r.failures); }
             });
+            fails = fails.concat(_checkDerived(idx, an, ctx).failures);
             if (fails.length) {
                 var n = _addV14(review, fails, idx);
                 if (n) {
@@ -2631,8 +2882,8 @@
         opts = opts || {};
         var deid = opts.deidentify !== false, dates = opts.includeDates === true, free = opts.includeFreeText === true;
         var an = _obj(analysis) ? analysis : {};
-        var idx = evidence(an, opts);
-        var roots = _roots(an, { review: review, signoff: opts.signoff });
+        var idx = (opts.idx && opts.idx.items && Array.isArray(opts.idx.order)) ? opts.idx : _evidenceFor(an, opts);
+        var roots = _roots(an, { review: review, signoff: opts.signoff, cal: opts.cal });
         var c = _ctxFor(an, idx, roots);
         var fmt = typeof opts.fmt === 'function' ? opts.fmt : _impFmt;
         var t0 = c.tests.length ? c.tests[0].tc_ms : null;
@@ -2730,7 +2981,7 @@
     RV.signature = _memoized(signature);
     RV.status = _memoized(status);
     RV.canSign = canSign;
-    RV.signoff = signoff;
+    RV.signoff = _memoized(signoff);
     RV.applyDecisions = applyDecisions;
     RV.aiExport = _memoized(aiExport);
     RV.audit = { GENESIS: GENESIS, MAX: AUDIT_MAX, entryHash: entryHash, append: auditAppend, verify: auditVerify, fold: auditFold, head: auditHead, decisions: _decisionsFromAudit };
