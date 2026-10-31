@@ -516,6 +516,8 @@
                 } else {
                     sto = clone(storedById[e.id].spec);
                     sto.id = id;
+                    // the stage-1 spec never carries R4 (filled in stage 3), so the engine and the cache key see what record mode sees
+                    sto.rateQC.r4 = null; sto.rateQC.r4Status = rh.mode === 'table' ? 'n/a' : 'unavailable';
                     sto.overrides = _ovFor(input, t);
                     var org = e.tc_ms - sto.tc_h * HOUR;
                     spec = rehydrate(sto, rh, org);

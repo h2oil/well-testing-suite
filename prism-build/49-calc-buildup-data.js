@@ -935,20 +935,44 @@
         }
         return { M: M, first: first, last: last, K: K, t0: t0, w: w };
     }
-    function trendAt(tr, ms) { return tr.a + tr.b * (ms - tr.ref_ms) / HOUR; }
-
-    // Flowing trend on samples i0..i1 (Theil–Sen, ≤ trendMax samples), referenced at ref_ms.
-    function _flowTrend(t, p, i0, i1, ref, S, sigFlow) {
+    // Flowing trend: p = a + b·(t − ref_ms) [h], or, soon after a reopening, p = A + B·ln(t − t0) [h] (trend.log; the
+    // drawdown is still curved there and a straight line extrapolated to the closing would read a rise too early).
+    function trendAt(tr, ms) {
+        if (tr.log) return tr.log.A + tr.log.B * mLog(mMax(1e-9, (ms - tr.log.t0) / HOUR));
+        return tr.a + tr.b * (ms - tr.ref_ms) / HOUR;
+    }
+    function _trendX(tr, ms) { return tr.log ? mLog(mMax(1e-9, (ms - tr.log.t0) / HOUR)) : (ms - tr.ref_ms) / HOUR; }
+    // Standard error of the trend at ms: σ_res·√(1/n + (x − x̄)²/Σ(x_i − x̄)²) (x in the trend's own abscissa).
+    function trendSE(tr, ms) {
+        var xb = tr.log ? tr.log.xbar : tr.tbar_h, sxx = tr.log ? tr.log.sxx : tr.sxx_h2, x = _trendX(tr, ms);
+        if (!tr.log) x = (ms - tr.ref_ms) / HOUR;
+        var se = num(tr.sigmaRes, 0) * mSqrt(1 / mMax(1, tr.n) + (sxx > 0 ? (x - xb) * (x - xb) / sxx : 0));
+        return isNum(se) ? se : num(tr.sigmaRes, 0);
+    }
+    // The trend referenced at ms (a = trend(ms), b = the local slope in psi/h).
+    function trendRebase(tr, ms) {
+        var out = { a: trendAt(tr, ms), b: tr.log ? tr.log.B / mMax(1e-9, (ms - tr.log.t0) / HOUR) : tr.b, ref_ms: ms, n: tr.n, sigmaRes: tr.sigmaRes };
+        if (tr.log) out.log = tr.log;
+        else { out.tbar_h = tr.tbar_h - (ms - tr.ref_ms) / HOUR; out.sxx_h2 = tr.sxx_h2; }
+        return out;
+    }
+    // Flowing trend on samples i0..i1 (Theil–Sen, ≤ trendMax samples), referenced at ref_ms; tOpen = the previous reopening.
+    function _flowTrend(t, p, i0, i1, ref, S, sigFlow, tOpen) {
+        var useLog = isNum(tOpen) && t[i0] > tOpen && (t[i1] - tOpen) < 20 * mMax(t[i1] - t[i0], 1);
         var x = [], y = [];
-        for (var i = i0; i <= i1; i++) { x.push((t[i] - ref) / HOUR); y.push(p[i]); }
+        for (var i = i0; i <= i1; i++) { x.push(useLog ? mLog((t[i] - tOpen) / HOUR) : (t[i] - ref) / HOUR); y.push(p[i]); }
         var ts = theilSen(x, y, S.trendMax);
         if (!isNum(ts.a)) ts = { a: y.length ? y[y.length - 1] : NaN, b: 0 };
         var res = [], sx = 0;
         for (var k = 0; k < x.length; k++) { res.push(y[k] - ts.a - ts.b * x[k]); sx += x[k]; }
-        var tbar = x.length ? sx / x.length : 0, sxx = 0;
-        for (var q = 0; q < x.length; q++) sxx += (x[q] - tbar) * (x[q] - tbar);
-        var madr = res.length >= 3 ? 1.4826 * mad(res) : 0;
-        return { a: ts.a, b: ts.b, ref_ms: ref, n: x.length, sigmaRes: mMax(num(sigFlow, 0), num(madr, 0)), tbar_h: tbar, sxx_h2: sxx };
+        var xbar = x.length ? sx / x.length : 0, sxx = 0;
+        for (var q = 0; q < x.length; q++) sxx += (x[q] - xbar) * (x[q] - xbar);
+        var madr = res.length >= 3 ? 1.4826 * mad(res) : 0, sig = mMax(num(sigFlow, 0), num(madr, 0));
+        if (useLog) {
+            var tr = { a: 0, b: 0, ref_ms: ref, n: x.length, sigmaRes: sig, log: { t0: tOpen, A: ts.a, B: ts.b, xbar: xbar, sxx: sxx } };
+            return trendRebase(tr, ref);
+        }
+        return { a: ts.a, b: ts.b, ref_ms: ref, n: x.length, sigmaRes: sig, tbar_h: xbar, sxx_h2: sxx };
     }
 
     // M§A3: t_c on a 50-point grid in [t_j0, t_j1) from ln r_j against ln(t_j − t_c) over the first K = 3–5 shut-in
@@ -1021,13 +1045,12 @@
         }
         tc = mRound(tc);
         var pwf0 = trendAt(tr, tc);
-        var xc = (tc - tr.ref_ms) / HOUR;
-        var se = tr.sigmaRes * mSqrt(1 / mMax(1, tr.n) + (tr.sxx_h2 > 0 ? (xc - tr.tbar_h) * (xc - tr.tbar_h) / tr.sxx_h2 : 0));
+        var se = trendSE(tr, tc);
         ev.tc_ms = tc;
         ev.dtc_s = dtc / SEC;
         ev.pwf0 = pwf0;
         ev.pwf0SE = isNum(se) ? se : tr.sigmaRes;
-        ev.trend = { a: pwf0, b: tr.b, ref_ms: tc, n: tr.n, sigmaRes: tr.sigmaRes, tbar_h: tr.tbar_h - xc, sxx_h2: tr.sxx_h2 };
+        ev.trend = trendRebase(tr, tc);
         ev.ramp = ramp;
         if (isNum(ev.tEnd_ms)) ev.dtEnd_h = mMax(0, (ev.tEnd_ms - tc) / HOUR);
         return ev;
@@ -1046,7 +1069,7 @@
         return Object.assign(ev, extra || {});
     }
     // Trend window ending at sample iEnd: ≥ max(30 min, 10·Δt_med) and ≥ 10 samples, never before iMin.
-    function _trendWindow(C, iEnd, iMin, ref) {
+    function _trendWindow(C, iEnd, iMin, ref, tOpen) {
         var t = C.t, p = C.p, S = C.S, warnings = [];
         var L = mMax(S.trendMin * MIN, S.trendDtFactor * C.dtMed), i0 = iEnd;
         while (i0 - 1 >= iMin && ((t[iEnd] - t[i0 - 1]) <= L || (iEnd - i0 + 1) < S.trendN)) i0--;
@@ -1056,28 +1079,38 @@
             tr = { a: p[f0], b: 0, ref_ms: t[f0], n: 1, sigmaRes: num(C.sigFlow, 0), tbar_h: 0, sxx_h2: 0 };
             warnings.push(W('TREND_SHORT', 'warn', 'No flowing samples before the closing: pwf0 comes from the first sample.', ['D3']));
         } else {
-            tr = _flowTrend(t, p, i0, iEnd, ref, S, C.sigFlow);
+            tr = _flowTrend(t, p, i0, iEnd, ref, S, C.sigFlow, tOpen);
             if (tr.n < S.trendN) warnings.push(W('TREND_SHORT', 'warn', 'Only ' + tr.n + ' flowing samples before the closing for the pwf0 trend.', ['D3']));
         }
         return { tr: tr, warnings: warnings };
     }
     // First shut-in sample after iFrom: the first residual above max(4σ, 0.5 psi) that stays above for 3 samples.
+    // A trend extrapolated over a curved flowing period can drift above the threshold before the closing; the closing
+    // itself makes the residual jump (wellbore storage). So, from the threshold sample, the steepest rise among the next
+    // samples is found and the first shut-in sample is moved forward to where the rise is at least 10 % of that steepest one.
     function _firstShut(C, tr, iFrom, iLim) {
-        var t = C.t, p = C.p, S = C.S, sign = C.sign;
+        var t = C.t, p = C.p, S = C.S, sign = C.sign, n = C.n;
         var thr = mMax(S.firstSig * tr.sigmaRes, S.firstMin_psi);
-        for (var i = mMax(iFrom, 1); i <= iLim && i < C.n; i++) {
-            if (sign * (p[i] - trendAt(tr, t[i])) <= thr) continue;
+        var r = function (i) { return sign * (p[i] - trendAt(tr, t[i])); };
+        var j1 = -1;
+        for (var i = mMax(iFrom, 1); i <= iLim && i < n; i++) {
+            if (r(i) <= thr) continue;
             var ok = true;
-            for (var r = 1; r < S.firstRun && i + r < C.n; r++) if (sign * (p[i + r] - trendAt(tr, t[i + r])) <= thr) { ok = false; break; }
-            if (ok) return i;
+            for (var k = 1; k < S.firstRun && i + k < n; k++) if (r(i + k) <= thr) { ok = false; break; }
+            if (ok) { j1 = i; break; }
         }
-        return -1;
+        if (j1 < 1) return j1;
+        var hi = mMin(n - 1, iLim + S.firstRun, j1 + 60), dMax = -INF, s0 = j1;
+        for (var a = j1; a <= hi; a++) { var d = r(a) - r(a - 1); if (d > dMax) { dMax = d; s0 = a; } }
+        if (!(dMax > thr)) return j1;
+        while (s0 - 1 >= j1 && r(s0 - 1) - r(s0 - 2) > 0.1 * dMax) s0--;
+        return s0;
     }
 
     // Builds one event from a rise detected at window k (multi-scale j).
     function _eventAt(C, k, j, prevEndIdx) {
         var Wd = C.win, tk0 = Wd.t0 + k * Wd.w;
-        var tw = _trendWindow(C, Wd.first[k] - 1, prevEndIdx + 1, tk0);
+        var tw = _trendWindow(C, Wd.first[k] - 1, prevEndIdx + 1, tk0, prevEndIdx >= 0 ? C.t[prevEndIdx] : null);
         var kLim = mMin(Wd.K - 1, k + j + C.P + 1), iLim = C.n - 1;
         for (var kk = kLim; kk >= k; kk--) if (Wd.last[kk] >= 0) { iLim = Wd.last[kk]; break; }
         var j1 = _firstShut(C, tw.tr, Wd.first[k], iLim);
@@ -1192,7 +1225,7 @@
             var Tc = rows[i].t_ms, To = INF;
             for (var k = i + 1; k < rows.length; k++) if (mAbs(rows[k].q) > 0) { To = rows[k].t_ms; break; }
             if (Tc <= t[0] || Tc >= t[n - 1]) continue;
-            var tw = _trendWindow(C, lowerBound(t, Tc - tol) - 1, prevEndIdx + 1, Tc);
+            var tw = _trendWindow(C, lowerBound(t, Tc - tol) - 1, prevEndIdx + 1, Tc, prevEndIdx >= 0 ? t[prevEndIdx] : null);
             var j1 = _firstShut(C, tw.tr, lowerBound(t, Tc - tol), lowerBound(t, Tc + tol + C.w));
             if (j1 < 1) j1 = mMax(1, lowerBound(t, Tc));
             if (j1 >= n) continue;
@@ -1204,7 +1237,7 @@
             refineClosing(C.record, ev, C.qc);
             if (mAbs(ev.tc_ms - Tc) > tol) {
                 ev.tc_ms = mRound(Tc); ev.pwf0 = trendAt(tw.tr, Tc);
-                ev.trend = Object.assign({}, ev.trend, { a: ev.pwf0, ref_ms: ev.tc_ms });
+                ev.trend = trendRebase(tw.tr, ev.tc_ms); ev.pwf0SE = trendSE(tw.tr, ev.tc_ms);
                 ev.dtEnd_h = (ev.tEnd_ms - ev.tc_ms) / HOUR;
             }
             ev.rise_psi = C.sign * (C.p[endIdx] - ev.pwf0);
@@ -1255,7 +1288,7 @@
         C.win = _windows(C.t, C.p, C.n, C.w, C.sign);
         var t = C.t, tol = mMax(10 * MIN, 5 * C.dtMed);
         var prevEndIdx = isNum(opts.prevEnd_ms) ? lowerBound(t, opts.prevEnd_ms + 1) - 1 : -1;
-        var tw = _trendWindow(C, lowerBound(t, tc_ms - (opts.exact ? 0 : tol)) - 1, prevEndIdx + 1, tc_ms);
+        var tw = _trendWindow(C, lowerBound(t, tc_ms - (opts.exact ? 0 : tol)) - 1, prevEndIdx + 1, tc_ms, isNum(opts.prevEnd_ms) ? opts.prevEnd_ms : null);
         var j1 = opts.exact ? lowerBound(t, tc_ms + 1) : _firstShut(C, tw.tr, lowerBound(t, tc_ms - tol), lowerBound(t, tc_ms + tol + C.w));
         if (j1 < 1) j1 = mMax(1, lowerBound(t, tc_ms + 1));
         if (j1 >= C.n) return null;
@@ -1263,8 +1296,8 @@
         _findEnd(C, ev);
         if (opts.exact) {
             ev.tc_ms = mRound(tc_ms); ev.pwf0 = trendAt(tw.tr, tc_ms); ev.dtc_s = 0;
-            ev.trend = Object.assign({}, tw.tr, { a: ev.pwf0, ref_ms: ev.tc_ms, tbar_h: tw.tr.tbar_h - (tc_ms - tw.tr.ref_ms) / HOUR });
-            ev.pwf0SE = tw.tr.sigmaRes * mSqrt(1 / mMax(1, tw.tr.n) + (tw.tr.sxx_h2 > 0 ? ev.trend.tbar_h * ev.trend.tbar_h / tw.tr.sxx_h2 : 0));
+            ev.trend = trendRebase(tw.tr, ev.tc_ms);
+            ev.pwf0SE = trendSE(tw.tr, ev.tc_ms);
             ev.dtEnd_h = (ev.tEnd_ms - ev.tc_ms) / HOUR;
         } else refineClosing(record, ev, q);
         ev.rise_psi = C.sign * (C.p[ev._endIdx] - ev.pwf0);
