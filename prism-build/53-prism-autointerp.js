@@ -76,6 +76,11 @@
 (function () {
     'use strict';
     var G = (typeof window !== 'undefined') ? window : globalThis;
+    // Builtins bound once to closure variables: inside an embedding sandbox (the acceptance
+    // harness runs the app in a vm context) every global lookup is an intercepted call, many
+    // times slower than a closure read. They are the same objects, so the numbers are too.
+    var Math = G.Math, isFinite = G.isFinite, Infinity = G.Infinity, NaN = G.NaN, Array = G.Array, Object = G.Object,
+        String = G.String, Number = G.Number, JSON = G.JSON, Map = G.Map, Float64Array = G.Float64Array, parseFloat = G.parseFloat;
     var AI = G.PRiSM_autoInterp = G.PRiSM_autoInterp || {};
 
     // ─────────────────────────────────────────────────────────────────────
@@ -290,7 +295,7 @@
     }
 
     // ── stats (counters for tests; plan §4.8) ──
-    var STATS = { evals: 0, gridBuilds: 0, fits: 0, lmIters: 0, slices: 0, lines: 0, cheldRefits: 0, cheldExt: 0, kernelEvals: 0 };
+    var STATS = { evals: 0, gridBuilds: 0, fits: 0, lmIters: 0, slices: 0, lines: 0, cheldRefits: 0, cheldExt: 0, kernelEvals: 0, resvPoints: 0 };
     function stats() { var o = {}; Object.keys(STATS).forEach(function (k) { o[k] = STATS[k]; }); return o; }
     function resetStats() { Object.keys(STATS).forEach(function (k) { STATS[k] = 0; }); }
 
@@ -420,20 +425,24 @@
             var e = Math.exp(-x);
             return [I0 * e, (x / 2) * I1s * e];
         }
-        var pref = 1 / Math.sqrt(2 * Math.PI * x);
-        function asym(nu) {
-            var mu = 4 * nu * nu, sum = 1, term = 1, prev = Infinity;
-            for (var kk = 1; kk < 60; kk++) {
-                term *= -(mu - (2 * kk - 1) * (2 * kk - 1)) / (kk * 8 * x);
-                var at = Math.abs(term);
-                if (at > prev) break;
-                sum += term; prev = at;
-                if (at < 1e-17 * Math.abs(sum)) break;
-            }
-            return sum * pref;
-        }
-        return [asym(0), asym(1)];
+        return [_asymI(x, 0), _asymI(x, 1)];
     }
+    function _asymI(x, nu) {   // I_ν(x)·e^-x ≈ Σ (−1)^k a_k(ν)/x^k / √(2πx) (x > 20)
+        var pref = 1 / Math.sqrt(2 * Math.PI * x);
+        var mu = 4 * nu * nu, sum = 1, term = 1, prev = Infinity;
+        for (var kk = 1; kk < 60; kk++) {
+            term *= -(mu - (2 * kk - 1) * (2 * kk - 1)) / (kk * 8 * x);
+            var at = Math.abs(term);
+            if (at > prev) break;
+            sum += term; prev = at;
+            if (at < 1e-17 * Math.abs(sum)) break;
+        }
+        return sum * pref;
+    }
+    // Single members (bit-identical to the pairs; the asymptotic branches skip the unused order).
+    function _k0e(x) { return x > 16 ? _asymK(x, 0) : _kePair(x)[0]; }
+    function _k1e(x) { return x > 16 ? _asymK(x, 1) : _kePair(x)[1]; }
+    function _i1e(x) { return x > 20 ? _asymI(x, 1) : _iePair(x)[1]; }
     // Well-term values repeat across parameter sets: with S ≥ 0 the grid lattice fixes every
     // Stehfest s, so a bounded memo keyed by √s returns the identical numbers without the
     // series / trapezoid work (speed only; cleared when full; never used for S < 0).
@@ -457,12 +466,15 @@
 
     // ── Laplace reservoir kernels p̄(s) (no WBS / skin); d = distance scale ──
     function _lapHom(s, d, memo) { var q = Math.sqrt(s), k = _kePairW(q, memo); return k[0] / (s * q * k[1]); }
+    // Image term K0e(q·r)·e^{−q(r−1)}: skipped beyond q(r − 1) = 40, where it is below 2^−54 of the
+    // well term K0e(q) (K0e decreases), so the sum rounds to the same double (speed only).
+    var IMG_SKIP = 40;
     function _lapFault(dF, bc) {
         var sgn = (bc === 'constP') ? -1 : 1;
         return function (s, d, memo) {
             var q = Math.sqrt(s), kw = _kePairW(q, memo), r = 2 * dF * (d || 1);
             var img = 0;
-            if (r > 1) { var e = q * (r - 1); if (e < 740) img = _kePair(q * r)[0] * Math.exp(-e); }
+            if (r > 1) { var e = q * (r - 1); if (e < IMG_SKIP) img = _k0e(q * r) * Math.exp(-e); }
             return (kw[0] + sgn * img) / (s * q * kw[1]);
         };
     }
@@ -477,8 +489,8 @@
             var kq = _kePairW(q, memo);
             var g = 2 * q - 2 * x;
             if (g < G_SKIP) return kq[0] / (s * q * kq[1]);
-            var iq = _iePairW(q, memo), kx = _kePair(x), ix = _iePair(x);
-            var rho = (kx[1] / ix[1]) * Math.exp(g);
+            var iq = _iePairW(q, memo);
+            var rho = (_k1e(x) / _i1e(x)) * Math.exp(g);
             return (kq[0] + iq[0] * rho) / (s * q * (kq[1] - iq[1] * rho));
         };
     }
@@ -1598,6 +1610,31 @@
     };
     var GRID_LABEL = { homogeneous: 'Homogeneous', linearBoundary: 'Sealing fault', composite2: 'Radial composite', closedCircle: 'Closed circle' };
 
+    // Reservoir values p̄(s) (no WBS / skin) at the lattice Stehfest abscissae s = i·ln2/10^(j/per),
+    // i = 1…12. They depend on the model's shape parameters and distance scale only, not on C_D or
+    // S, so a C_D, S or k step of a fit re-folds stored values instead of evaluating Bessel functions
+    // again (the same numbers either way: speed only). Bounded LRU shared by every grid entry.
+    var RESV_MAX = 48, _RESV = [];
+    function _resvEntry(rk, key, p, dS, per) {
+        for (var c = 0; c < _RESV.length; c++) {
+            if (_RESV[c].rk === rk) { var E = _RESV[c]; if (c) { _RESV.splice(c, 1); _RESV.unshift(E); } return E; }
+        }
+        var E2 = { rk: rk, lap: _lapFor(key, p), dS: dS, per: per, m: new Map() };
+        _RESV.unshift(E2);
+        if (_RESV.length > RESV_MAX) _RESV.pop();
+        return E2;
+    }
+    function _resvVals(R, j) {
+        var v = R.m.get(j);
+        if (v) return v;
+        STATS.resvPoints++;
+        v = new Float64Array(12);
+        var a = LN2 / Math.pow(10, j / R.per);
+        for (var i = 1; i <= 12; i++) v[i - 1] = R.lap(i * a, R.dS, true);
+        R.m.set(j, v);
+        return v;
+    }
+
     function _hRange(prep) {
         var hMin = Math.min(prep.fitSet.dt[0], prep.bins.dt[0]) / 2;
         var st = prep.histFit.steps, tau0 = st.length ? st[0].t : prep.spec.tc_h - prep.tpEff;
@@ -1628,17 +1665,41 @@
             return o;
         }
         function linK(p) { return key === 'closedCircle' ? 2 / (p.reD * p.reD) : 0; }
-        function evalPoint(lap, p, j) {
-            var td = Math.pow(10, j / per), pr = _pair(lap, td, p.Cd, p.S, true), lk = linK(p) * td;
-            return [pr[0] - lk, pr[1] - lk];
+        // S ≥ 0: the lattice is in t_D. S < 0: it is in the effective time t_D·e^{2S} (effective
+        // radius r_w·e^{−S}, C_D·e^{2S}, distances ×e^{S}, S = 0; the transform of PRiSM_evalWbsSkin),
+        // so the Stehfest abscissae stay on the lattice and the reservoir values are shared.
+        function foldOf(p) {
+            var C = (p.Cd > 0) ? p.Cd : 0, SS = p.S || 0, f = { C: C, S: SS, e2: 1, dS: 1, neg: false };
+            if (SS < 0) { f.e2 = Math.exp(2 * SS); f.C = C * f.e2; f.dS = Math.exp(SS); f.S = 0; f.neg = true; }
+            return f;
         }
-        function getGrid(p, jlo, jhi) {
+        function resvKey(p, f) {
+            var s = key + '|' + per;
+            for (var i = 0; i < shapeKeys.length; i++) s += '|' + String(p[shapeKeys[i]]);
+            if (key === 'linearBoundary') s += '|' + (p.BC === 'constP' ? 'c' : 'n');
+            if (key !== 'homogeneous') s += '|' + String(f.dS);   // the homogeneous kernel has no distance
+            return s;
+        }
+        function evalPoint(E, j) {
+            var tt = Math.pow(10, j / per), td = E.f.neg ? tt / E.f.e2 : tt, lk = E.lk * td;
+            var C = E.f.C, SS = E.f.S;
+            if (C > 0 && tt < Math.min(1e-3 * C, 1e-12 * C * C)) return [tt / C - lk, tt / C - lk];
+            var R = _resvVals(E.rv, j), W = _stehW(), a = LN2 / tt, accP = 0, accD = 0;
+            for (var i = 1; i <= 12; i++) {
+                var s = i * a, inner = s * R[i - 1] + SS;
+                var F = inner / (s * (1 + C * s * inner));
+                accP += W[i - 1] * F; accD += W[i - 1] * s * F;
+            }
+            STATS.kernelEvals++;
+            return [a * accP - lk, tt * a * accD - lk];
+        }
+        function getGrid(p, jlo, jhi, f) {
             var k = pkey(p), E = null;
             for (var c = 0; c < cache.length; c++) if (cache[c].k === k) { E = cache[c]; if (c) { cache.splice(c, 1); cache.unshift(E); } break; }
             if (!E) {
                 STATS.gridBuilds++;
                 var j1 = jhi, j0 = Math.min(jlo, jhi - spanJ);
-                E = { k: k, p: p, lap: _lapFor(key, p), j0: j0, j1: j0 - 1, g: [], gp: [] };
+                E = { k: k, p: p, f: f, lk: linK(p), rv: _resvEntry(resvKey(p, f), key, p, f.dS, per), j0: j0, j1: j0 - 1, g: [], gp: [] };
                 cache.unshift(E);
                 if (cache.length > 12) cache.pop();
                 extend(E, j0, j1);
@@ -1650,16 +1711,16 @@
         function extend(E, jlo, jhi) {
             var i;
             if (E.j1 < E.j0) {   // empty
-                for (i = jlo; i <= jhi; i++) { var v = evalPoint(E.lap, E.p, i); E.g.push(v[0]); E.gp.push(v[1]); }
+                for (i = jlo; i <= jhi; i++) { var v = evalPoint(E, i); E.g.push(v[0]); E.gp.push(v[1]); }
                 E.j0 = jlo; E.j1 = jhi; return;
             }
             if (jlo < E.j0) {
                 var pre = [], preD = [];
-                for (i = jlo; i < E.j0; i++) { var v1 = evalPoint(E.lap, E.p, i); pre.push(v1[0]); preD.push(v1[1]); }
+                for (i = jlo; i < E.j0; i++) { var v1 = evalPoint(E, i); pre.push(v1[0]); preD.push(v1[1]); }
                 E.g = pre.concat(E.g); E.gp = preD.concat(E.gp); E.j0 = jlo;
             }
             if (jhi > E.j1) {
-                for (i = E.j1 + 1; i <= jhi; i++) { var v2 = evalPoint(E.lap, E.p, i); E.g.push(v2[0]); E.gp.push(v2[1]); }
+                for (i = E.j1 + 1; i <= jhi; i++) { var v2 = evalPoint(E, i); E.g.push(v2[0]); E.gp.push(v2[1]); }
                 E.j1 = jhi;
             }
         }
@@ -1670,12 +1731,13 @@
             for (i = 0; i < tdA.length; i++) { var t = tdA[i]; if (t > 0) { if (t < lo) lo = t; if (t > hi) hi = t; } }
             var out = new Array(tdA.length);
             if (!(hi > 0)) { for (i = 0; i < tdA.length; i++) out[i] = 0; return arr ? out : out[0]; }
-            var jlo = Math.floor(Math.log10(lo) * per) - 2, jhi = Math.ceil(Math.log10(hi) * per) + 2;
-            var E = getGrid(p, jlo, jhi), lk = linK(p);
+            var f = foldOf(p), e2 = f.e2;
+            var jlo = Math.floor(Math.log10(lo * e2) * per) - 2, jhi = Math.ceil(Math.log10(hi * e2) * per) + 2;
+            var E = getGrid(p, jlo, jhi, f), lk = E.lk;
             for (i = 0; i < tdA.length; i++) {
                 var tt = tdA[i];
                 if (!(tt > 0)) { out[i] = 0; continue; }
-                var u = Math.log10(tt) * per, jf = Math.floor(u), tau = u - jf, ix = jf - E.j0;
+                var u = Math.log10(f.neg ? tt * e2 : tt) * per, jf = Math.floor(u), tau = u - jf, ix = jf - E.j0;
                 if (ix < 1) { ix = 1; tau = 0; } if (ix > E.g.length - 3) { ix = E.g.length - 3; tau = 1; }
                 var t2 = tau * tau, t3 = t2 * tau;
                 var h00 = 2 * t3 - 3 * t2 + 1, h10 = t3 - 2 * t2 + tau, h01 = -2 * t3 + 3 * t2, h11 = t3 - t2;
