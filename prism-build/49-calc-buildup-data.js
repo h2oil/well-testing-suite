@@ -1197,19 +1197,23 @@
             for (var k = mMax(0, a); k <= mMin(Wd.K - 1, b); k++) busy[k] = 1;
         });
         function step(y) { return medianRange(M, y + 1, y + 1 + H2) - medianRange(M, y - H2 + 1, y + 1); }
-        var k = H2;
+        var pre = new Int32Array(Wd.K + 1);
+        for (var z = 0; z < Wd.K; z++) pre[z + 1] = pre[z] + busy[z];
+        function free(y) { return y - H2 + 1 >= 0 && y + H2 + 1 <= Wd.K && pre[y + H2 + 1] - pre[y - H2 + 1] === 0; }
+        // coarse screen every q windows (a step shows at least half its size there), then the local maximum ±q
+        var q = mMax(1, half >> 1), k = H2;
         while (k < Wd.K - H2) {
-            var skip = false;
-            for (var z = k - H2 + 1; z <= k + H2; z++) if (busy[z]) { skip = true; break; }
-            if (skip) { k++; continue; }
-            var d = step(k);
-            if (!(mAbs(d) >= Tp && mAbs(d) < C.Ts)) { k++; continue; }
-            var b1 = medianRange(M, k - H2 + 1, k - H2 + 1 + half), b2 = medianRange(M, k + 1 - half, k + 1);
-            var a1 = medianRange(M, k + 1, k + 1 + half), a2 = medianRange(M, k + 1 + H2 - half, k + 1 + H2);
-            if (mAbs(b2 - b1) > 0.25 * mAbs(d) || mAbs(a2 - a1) > 0.25 * mAbs(d)) { k++; continue; }
-            var bk = k, bd = mAbs(d);
-            for (var y = k + 1; y <= mMin(Wd.K - H2 - 1, k + half); y++) { var dd = mAbs(step(y)); if (dd > bd) { bd = dd; bk = y; } }
-            out.push({ t_ms: Wd.t0 + (bk + 1) * Wd.w, dp_psi: C.sign * step(bk), dur_h: S.stepMin_h });
+            if (!free(k)) { k += q; continue; }
+            var d0 = step(k);
+            if (!(mAbs(d0) >= 0.5 * Tp)) { k += q; continue; }
+            var bk = k, bd = mAbs(d0);
+            for (var y = mMax(H2, k - q); y <= mMin(Wd.K - H2 - 1, k + q); y++) { if (y === k || !free(y)) continue; var dd = mAbs(step(y)); if (dd > bd) { bd = dd; bk = y; } }
+            var d = step(bk);
+            if (!(mAbs(d) >= Tp && mAbs(d) < C.Ts)) { k += q; continue; }
+            var b1 = medianRange(M, bk - H2 + 1, bk - H2 + 1 + half), b2 = medianRange(M, bk + 1 - half, bk + 1);
+            var a1 = medianRange(M, bk + 1, bk + 1 + half), a2 = medianRange(M, bk + 1 + H2 - half, bk + 1 + H2);
+            if (mAbs(b2 - b1) > 0.25 * mAbs(d) || mAbs(a2 - a1) > 0.25 * mAbs(d)) { k += q; continue; }
+            out.push({ t_ms: Wd.t0 + (bk + 1) * Wd.w, dp_psi: C.sign * d, dur_h: S.stepMin_h });
             k = bk + H2;
         }
         return out;
@@ -1251,16 +1255,15 @@
 
     // record + QC → {events, missed} (M§A2, M§A3, M§A5). opts {settings (detect), fluid, day {zone, startHour},
     // rateTable (table mode), shutDays [[t0_ms, t1_ms]] (allocation days with no volume: the end needs a 2-h fall)}
-    function detect(record, q, opts) {
+    // detectJob runs it in units (window medians; the scan, ≤ 20,000 windows or 10 events per unit; sub-threshold steps).
+    function detectJob(record, q, opts) {
         opts = opts || {};
-        if (!record || !record.t || record.t.length < 10) return { events: [], missed: _missed([], [], null, q, 0) };
-        var C = _ctx(record, q, opts);
-        C.win = _windows(C.t, C.p, C.n, C.w, C.sign);
-        var events = [];
-        if (opts.rateTable && opts.rateTable.length) events = _detectTable(C, opts.rateTable);
-        else {
-            var Wd = C.win, M = Wd.M, k = 0, prevEndIdx = -1;
-            while (k < Wd.K) {
+        var res = null, phase = 0, C = null, events = [], k = 0, prevEndIdx = -1;
+        var table = !!(opts.rateTable && opts.rateTable.length);
+        if (!record || !record.t || record.t.length < 10) res = { events: [], missed: _missed([], [], null, q, 0) };
+        function scanUnit() {
+            var Wd = C.win, M = Wd.M, lim = mMin(Wd.K, k + 20000), nEv = 0;
+            while (k < lim && nEv < 10) {
                 if (!(M[k] === M[k])) { k++; continue; }
                 var j = 0;
                 for (var jj = 1; jj <= C.J && k + jj < Wd.K; jj++) { var v = M[k + jj]; if (v === v && v - M[k] > C.Ts) { j = jj; break; } }
@@ -1272,15 +1275,36 @@
                 }
                 if (!okp || !(cnt >= 2 || (atEnd && cnt >= 1))) { k++; continue; }
                 var ev = _eventAt(C, k, j, prevEndIdx);
-                events.push(ev);
+                events.push(ev); nEv++;
                 prevEndIdx = ev._endIdx;
                 k = mMax(k + 1, mFloor((ev.tEnd_ms - Wd.t0) / Wd.w) + 1);
             }
+            return k >= Wd.K;
         }
-        events.forEach(function (e, i) { e.id = 'E' + (i + 1); delete e._endIdx; });
-        var sub = (opts.rateTable && opts.rateTable.length) ? [] : _substeps(C, events);
-        return { events: events, missed: _missed(events, sub, null, q, C.Ts) };
+        return {
+            step: function () {
+                if (res) return { done: true, progress: 1, label: 'Shut-ins found: ' + res.events.length };
+                if (phase === 0) {
+                    C = _ctx(record, q, opts);
+                    C.win = _windows(C.t, C.p, C.n, C.w, C.sign);
+                    phase = table ? 2 : 1;
+                    if (table) events = _detectTable(C, opts.rateTable);
+                    return { done: false, progress: 0.3, label: 'Window medians' };
+                }
+                if (phase === 1) {
+                    if (scanUnit()) phase = 2;
+                    return { done: false, progress: 0.3 + 0.5 * mMin(1, k / mMax(1, C.win.K)), label: 'Looking for shut-ins (' + events.length + ')' };
+                }
+                events.forEach(function (e, i) { e.id = 'E' + (i + 1); delete e._endIdx; });
+                var sub = table ? [] : _substeps(C, events);
+                res = { events: events, missed: _missed(events, sub, null, q, C.Ts) };
+                return { done: true, progress: 1, label: 'Shut-ins found: ' + events.length };
+            },
+            result: function () { return res; },
+            cancel: function () { if (!res) res = { events: events, missed: _missed(events, [], null, q, C ? C.Ts : 0) }; }
+        };
     }
+    function detect(record, q, opts) { return runSync(detectJob(record, q, opts)); }
     // A manual event (override event_add or tc) at a typed closing time: trend, closing refinement and end as detected ones.
     function eventAt(record, q, tc_ms, opts) {
         opts = opts || {};
@@ -1418,7 +1442,7 @@
     // events + record + preliminary days (rates computed with every event as a full shut-in) → events with kind, status,
     // fhat, fhatMethod and alloc set (M§A4), interventions flagged. opts {rh (preliminary RateHistory), workovers, settings
     // (detect), table (bool), pExt {[eventId]: psia} (optional), Ts}
-    function classify(events, record, days, opts) {
+    function classifyJob(events, record, days, opts) {
         opts = opts || {};
         var C = D.DEFAULTS.classify, S = detectSettings(opts.settings);
         var rh = opts.rh || null, byEv = (rh && rh.byEvent) || {};
@@ -1433,7 +1457,7 @@
             fnCache[e.id] = _lnDteFn(e, stp, (e.tc_ms - open) / HOUR);
             return fnCache[e.id];
         }
-        (events || []).forEach(function (ev, idx) {
+        function one(ev, idx) {
             if (!ev || ev.dropped) return;
             if (!_isShutKind(ev)) return;
             var Ts = isNum(ev.Ts_psi) ? ev.Ts_psi : num(opts.Ts, 5);
@@ -1519,9 +1543,19 @@
                 _intervention(ev, prevShut, record, Ts, opts, prevShut ? _pStarEst(record, prevShut, lnFn(prevShut)) : null);
                 if (ev.status === 'analysable') prevShut = ev;
             }
-        });
-        return events;
+        }
+        var list = events || [], i = 0;
+        return {
+            step: function () {
+                var lim = mMin(list.length, i + 10);
+                for (; i < lim; i++) one(list[i], i);
+                return { done: i >= list.length, progress: list.length ? i / list.length : 1, label: 'Classifying shut-ins' };
+            },
+            result: function () { return i >= list.length ? list : null; },
+            cancel: function () { i = list.length; }
+        };
     }
+    function classify(events, record, days, opts) { return runSync(classifyJob(events, record, days, opts)); }
     // Intervention: the pressure exceeds the previous p_ext (or the previous build-up's last pressure) by more than 2·T_s,
     // or it rises and then falls by more than T_s inside the event (after the first hour) without recovering.
     function _intervention(ev, prev, record, Ts, opts, pStarPrev) {
@@ -1838,11 +1872,11 @@
         if (record && record.t && record.t.length) {
             var t = record.t, p = record.p;
             days.forEach(function (d) {
-                var i0 = lowerBound(t, d.t0_ms), s = 0, cN = 0, sp = 0, cp = 0;
-                for (var i = i0; i < t.length && t[i] < d.t1_ms; i++) {
-                    var fr = _fracAt(ivs, t[i]);
-                    if (fr === 1) { s += p[i]; cN++; } else if (fr > 0) { sp += p[i]; cp++; }
-                }
+                var s = 0, cN = 0, sp = 0, cp = 0;
+                d.pieces.forEach(function (pc) {
+                    if (!(pc.frac > 0)) return;
+                    for (var i = lowerBound(t, pc.a); i < t.length && t[i] < pc.b; i++) { if (pc.frac === 1) { s += p[i]; cN++; } else { sp += p[i]; cp++; } }
+                });
                 d.pwfMean_psia = cN ? s / cN : cp ? sp / cp : null;
             });
         } else days.forEach(function (d) { d.pwfMean_psia = null; });
@@ -1991,12 +2025,17 @@
                     return { done: false, progress: 0.25, label: 'Data quality' };
                 }
                 if (st.phase === 'detect') {
-                    var shutDays = [];
-                    (rows || []).forEach(function (r) {
-                        var v = (r.oil || 0) + (r.gas || 0) + (r.water || 0);
-                        if (v <= 0) { var b = dayBounds(r.date, day); if (b) shutDays.push([b.t0_ms, b.t1_ms]); }
-                    });
-                    det = detect(rec, q0, { settings: S, fluid: well.fluid, day: day, rateTable: table ? opts.rateTable : null, shutDays: shutDays });
+                    if (!st.sub) {
+                        var shutDays = [];
+                        (rows || []).forEach(function (r) {
+                            var v = (r.oil || 0) + (r.gas || 0) + (r.water || 0);
+                            if (v <= 0) { var b = dayBounds(r.date, day); if (b) shutDays.push([b.t0_ms, b.t1_ms]); }
+                        });
+                        st.sub = detectJob(rec, q0, { settings: S, fluid: well.fluid, day: day, rateTable: table ? opts.rateTable : null, shutDays: shutDays });
+                    }
+                    var sd = st.sub.step();
+                    if (!sd.done) return { done: false, progress: 0.25 + 0.2 * sd.progress, label: sd.label };
+                    det = st.sub.result(); st.sub = null;
                     events = det.events;
                     if (typeof opts.adjust === 'function') events = opts.adjust(events, rec, q0) || events;
                     st.phase = 'qc1';
@@ -2010,21 +2049,27 @@
                     st.phase = 'rates';
                     return { done: false, progress: 0.75, label: 'Noise by segment' };
                 }
-                if (st.phase === 'rates') {
-                    var Ts = mMax(S.riseMin, S.riseSig * num(q0.sigma_psi, 0));
-                    if (table) {
-                        rh = rateTable(opts.rateTable, { fluid: well.fluid, events: events });
-                        classify(events, rec, null, { table: true, settings: S, workovers: opts.workovers, Ts: Ts });
-                        rh = rateTable(opts.rateTable, { fluid: well.fluid, events: events });
-                    } else if (rows && rows.length) {
+                var Ts = mMax(S.riseMin, S.riseSig * num(q0.sigma_psi, 0));
+                if (st.phase === 'rates') {                  // preliminary rates (every event as a full shut-in)
+                    if (table) st.sub = classifyJob(events, rec, null, { table: true, settings: S, workovers: opts.workovers, Ts: Ts });
+                    else if (rows && rows.length) {
                         var pre = rates(rec, events, rows, rateOpts(true));
                         if (pre && pre.ok === false) { res = pre; return { done: true, progress: 1, label: 'No allocation' }; }
-                        classify(events, rec, pre.days, { rh: pre, settings: S, workovers: opts.workovers, Ts: Ts });
-                        rh = rates(rec, events, rows, rateOpts(false));
+                        st.sub = classifyJob(events, rec, pre.days, { rh: pre, settings: S, workovers: opts.workovers, Ts: Ts });
                     } else {
                         res = { ok: false, code: 'NO_RATES', errors: ['Load a daily allocation or a time-stamped rate table.'], bad: ['allocation'] };
                         return { done: true, progress: 1, label: 'No rates' };
                     }
+                    st.phase = 'classify';
+                    return { done: false, progress: 0.8, label: 'Preliminary rates' };
+                }
+                if (st.phase === 'classify') {               // the classification gate, 10 events per unit
+                    var sc = st.sub.step();
+                    if (sc.done) { st.sub = null; st.phase = 'rates2'; }
+                    return { done: false, progress: 0.8 + 0.1 * sc.progress, label: sc.done ? 'Shut-ins classified' : sc.label };
+                }
+                if (st.phase === 'rates2') {                 // final rates with the partial cuts split
+                    rh = table ? rateTable(opts.rateTable, { fluid: well.fluid, events: events }) : rates(rec, events, rows, rateOpts(false));
                     if (rh && rh.ok === false) { res = rh; return { done: true, progress: 1, label: 'No rates' }; }
                     res = { ok: true, qc: q1, events: events, missed: _missed(events, det.missed.subThreshold, rh, q1, Ts), rates: rh, record: rec, qc0: q0 };
                     return { done: true, progress: 1, label: 'Rates' };
@@ -2049,8 +2094,10 @@
     D.qc = qc;
     D.qcJob = qcJob;
     D.detect = detect;
+    D.detectJob = detectJob;
     D.refineClosing = refineClosing;
     D.classify = classify;
+    D.classifyJob = classifyJob;
     D.parseAllocation = parseAllocation;
     D.dayBounds = dayBounds;
     D.rates = rates;

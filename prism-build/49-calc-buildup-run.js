@@ -494,9 +494,16 @@
                 if (e.status === 'analysable') return true;
                 return !!(ovs[e.id] && ovs[e.id].s === 'include');
             });
-            var k = 0;
-            cand.forEach(function (e) {
-                var id = 'B' + (k + 1), t = {
+            X.cand = cand; X.ci = 0; X.k = 0; X.bt = { rh: rh, rec: rec, ovs: ovs, shift: shift, storedById: storedById, origin: origin };
+            X.phase = 'specs';
+            return { done: false, progress: 0.26, label: cand.length + ' shut-ins to interpret' };
+        }
+        // One spec per unit (binning, stored form, cache key).
+        function specUnit() {
+            if (X.ci >= X.cand.length) { X.phase = 'finishTests'; return { done: false, progress: 0.29, label: 'Specs' }; }
+            var e = X.cand[X.ci++], rh = X.bt.rh, rec = X.bt.rec, ovs = X.bt.ovs, shift = X.bt.shift, storedById = X.bt.storedById, origin = X.bt.origin;
+            (function () {
+                var id = 'B' + (X.k + 1), t = {
                     id: id, eventId: e.id, date: e.alloc && e.alloc.date ? e.alloc.date : D.dayOf(e.tc_ms, zones.day), tc_ms: e.tc_ms, dtEnd_h: mMax(e.dtEnd_h, 1e-6),
                     Dq: null, qUnit: rh.unit, pwf0: e.pwf0, pwf0Datum: e.pwf0 + shift, pStarDatum: null, pExtDatum: null,
                     status: 'interpreted', statusReason: e.status !== 'analysable' ? 'Included by override (event status ' + e.status.replace(/_/g, ' ') + ').' : null,
@@ -522,11 +529,15 @@
                     var org = e.tc_ms - sto.tc_h * HOUR;
                     spec = rehydrate(sto, rh, org);
                 }
-                k++;
+                X.k++;
                 t.Dq = spec.Dq; t.spec = sto; t._spec = spec; t._event = e;
                 t._key = cacheKey(sto.stepRef ? Object.assign({}, sto, { steps: spec.steps }) : sto, st, calVersion);
                 tests.push(t);
-            });
+            })();
+            return { done: false, progress: 0.26 + 0.03 * X.ci / X.cand.length, label: 'Preparing ' + e.id };
+        }
+        // The 60-test cap and the cache lookup.
+        function finishTests() {
             _cap(tests, st, input.workovers);
             // cache
             var cache = {};
@@ -791,7 +802,7 @@
             Object.defineProperty(an, '_order', { value: X.order.slice(), enumerable: false });
             return finish(an);
         }
-        var PH = { start: start, scan: scan, tests: buildTests, stage1: stage1, stage2: stage2, stage3: stage3, stage3b: stage3b, stage4: stage4, stage5: stage5 };
+        var PH = { start: start, scan: scan, tests: buildTests, specs: specUnit, finishTests: finishTests, stage1: stage1, stage2: stage2, stage3: stage3, stage3b: stage3b, stage4: stage4, stage5: stage5 };
         return {
             step: function () {
                 if (X.phase === 'done' || X.cancelled) return { done: true, progress: 1, label: X.cancelled ? 'Cancelled' : 'Analysis complete' };
