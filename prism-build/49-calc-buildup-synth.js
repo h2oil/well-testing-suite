@@ -1618,8 +1618,9 @@
         var tc = (days - 1) * 24 + clamp(cs.test.closeHour, 0, 23.99) + dayShift;
         var dur = cs.test.dtEnd_h, tEnd = tc + dur;
         var qDay = [], q = t.q, nD = days + MM.ceil(dur / 24) + 3, v = hist.variationPct / 100, level = 1;
+        // day rates: an AR(1) day-to-day variation around the nominal rate with a slow decline (the closing day is not pinned:
+        // q_true is whatever rate flows before the closing, and the truth uses it)
         for (var d = 0; d < nD; d++) { level = 1 + (level - 1) * 0.6 + 0.4 * v * r.normal(); qDay.push(q * clamp(level, 0.5, 1.6) * MM.pow(0.9995, d)); }
-        // pin the closing day to the nominal rate
         var events = [];
         // earlier shut-ins
         for (var e = 0; e < hist.earlierShutins; e++) {

@@ -18,6 +18,8 @@
 //   --json         print the summary as JSON on stdout
 //   --lite         generate every case with the lite settings (60 s sampling, ≤ 30 days; what the in-app check uses)
 //   --grid-sample n  evaluate only every n-th combination of the calibration grid (quick dry runs; default 1)
+//   --cal-out f    write the calibration file to f instead of prism-build/55-prism-autointerp-cal.js (dry runs)
+//   --stub-engine  plumbing check only: an empty analysis stands in for WP1/WP2 (workers, case file, summary, --write path)
 //
 // Pipeline per case: synth.generate(synth.caseFromSeed(seed)) → run.analyse(synth.toInput(case)) → synth.scoreAnalysis.
 // The app is loaded once per worker through tests/_harness.js loadApp({fromSources:true, timers:'real', console:'errors'}).
@@ -143,11 +145,20 @@ function loadEnv() {
   const harness = require('./tests/_harness');
   const app = harness.loadApp({ fromSources: true, timers: 'real', console: 'errors' });
   const W = app.win, BU = W.WTS_buildup || {};
+  if (process.env.BUV_STUB_ENGINE === '1') installStubEngine(W);
   const missing = [];
   if (!BU.synth || typeof BU.synth.generate !== 'function') missing.push('WTS_buildup.synth (49-calc-buildup-synth.js, WP4)');
   if (!W.PRiSM_autoInterp || typeof W.PRiSM_autoInterp.interpretJob !== 'function') missing.push('PRiSM_autoInterp.interpretJob (53-prism-autointerp.js, WP1)');
   if (!BU.run || typeof BU.run.analyse !== 'function') missing.push('WTS_buildup.run.analyse (49-calc-buildup-run.js, WP2)');
   return { app, W, SY: BU.synth, RUN: BU.run, AI: W.PRiSM_autoInterp, DATA: BU.data, REVIEW: BU.review, missing, build: app.build };
+}
+// --stub-engine: no interpretation at all (every case scores as missed); exercises the tool, never the engine
+function installStubEngine(W) {
+  W.PRiSM_autoInterp = W.PRiSM_autoInterp || {};
+  if (typeof W.PRiSM_autoInterp.interpretJob !== 'function') W.PRiSM_autoInterp.interpretJob = function () { return { step() { return { done: true, progress: 1, label: '' }; }, result() { return null; }, cancel() {} }; };
+  if (typeof W.PRiSM_autoInterp.confidence !== 'function') W.PRiSM_autoInterp.confidence = function () { return { ks: 'low', model: 'low', headline: 'low' }; };
+  W.WTS_buildup.run = W.WTS_buildup.run || {};
+  if (typeof W.WTS_buildup.run.analyse !== 'function') W.WTS_buildup.run.analyse = function () { return { ok: true, events: [], tests: [], trend: { alerts: {} } }; };
 }
 function notRunnable(missing) {
   const msg = [
@@ -405,7 +416,8 @@ function relabel(c, th, env) {
     const key = elig.length ? elig[0].key : 'homogeneous';
     if (key !== (r.chosen && r.chosen.key)) {
       const m = (r.models || []).find((x) => x.key === key);
-      const label = { homogeneous: 'Homogeneous', composite2: 'Radial composite' }[key] || (m && /fault|bound/i.test(key) ? 'Sealing fault' : 'Closed circle');
+      // the engine's display labels (§3.1 chosen.label) for its four model keys
+      const label = key === 'homogeneous' ? 'Homogeneous' : key === 'composite2' ? 'Radial composite' : /fault|bound/i.test(key) ? 'Sealing fault' : 'Closed circle';
       const t2 = JSON.parse(JSON.stringify(t));
       t2.result.chosen = { key, label, fullySeen: { status: m && m.fullySeen ? m.fullySeen : 'n/a' } };
       if (m && t2.result.final) { t2.result.final.k = m.k; t2.result.final.S = m.S; if (t2.result.final.gas) t2.result.final.gas.Sprime = m.S; }
@@ -523,9 +535,11 @@ function objective(cases, labels) {   // share labelled high (headline), −Infi
   if (fr.rate !== null && fr.rate > TARGETS.falseRival) return -Infinity;
   return T.hd.high.length / Math.max(1, cases.length);
 }
+// Staged exhaustive grid (stage 1 LOW thresholds, stage 2 HIGH thresholds and τ, stage 1 again). The pre-calibration set is
+// the incumbent: a candidate replaces it only when strictly better, so ties keep the documented defaults.
 function searchThresholds(cases, env, sample) {
-  let th = Object.assign({}, PRE_THRESHOLDS), best = -Infinity;
   const evalSet = (cand) => objective(cases, cases.map((c) => relabel(c, cand, env)));
+  let th = Object.assign({}, PRE_THRESHOLDS), best = evalSet(th);
   const stage = (grid) => {
     combos(grid).forEach((cmb, i) => {
       if (sample > 1 && i % sample) return;
@@ -667,7 +681,7 @@ function summarize(lines, env, quickFR) {
                 cWithin25: { n: cU.length, rate: cU.length ? cOk / cU.length : null }, byRateSource: bySource };
   if (lines.some((l) => l.kind === 'sequence')) out.sequences = { plain: sequenceMetrics(lines, 'plain'), basevar: sequenceMetrics(lines, 'basevar') };
   if (quickFR) {
-    const fl = quickFR.filter((l) => !l.error);
+    const fl = quickFR.filter((l) => !l.error && l.test && l.test.result && l.test.result.chosen);   // cases with a chosen model
     const k = fl.filter((l) => l.test && l.test.result && l.test.result.chosen && l.test.result.chosen.label !== 'Homogeneous').length;
     out.falseRival = { n: fl.length, rivals: k, rate: fl.length ? k / fl.length : null, target: TARGETS.falseRival };
   }
@@ -750,6 +764,8 @@ async function main() {
     return 0;
   }
   const out = path.resolve(val('--out', path.join(os.tmpdir(), 'wts-buildup-validate')));
+  const calOut = val('--cal-out', null) ? path.resolve(val('--cal-out')) : CAL_FILE;
+  if (flag('--stub-engine')) { process.env.BUV_STUB_ENGINE = '1'; console.log('[validate] --stub-engine: plumbing check only, no interpretation'); }
   const strict = flag('--strict'), asJson = flag('--json');
   const nWorkers = Math.max(1, +val('--workers', Math.min(4, os.cpus().length)) || 1);
   const t0 = nowMs();
@@ -807,10 +823,10 @@ async function main() {
     res.cal.inApp = chooseInApp(liteLines, res.cal.thresholds, env);
     if (res.cal.inApp.length < 24) fails.push('only ' + res.cal.inApp.length + ' in-app cases with margin ≥ 0.1');
     checkTargets(res.T).forEach((f) => fails.push('calibration: ' + f));
-    writeCal(res.cal);
+    writeCal(res.cal, calOut);
     fs.writeFileSync(path.join(out, 'calibration.md'), markdown(res.cal, summary));
     summary.calibration = { thresholds: res.cal.thresholds, falseRival: res.cal.falseRival, sequences: res.cal.sequences };
-    console.log('[validate] wrote ' + path.relative(process.cwd(), CAL_FILE) + ' and ' + path.join(out, 'calibration.md'));
+    console.log('[validate] wrote ' + path.relative(process.cwd(), calOut) + ' and ' + path.join(out, 'calibration.md'));
   }
   fs.writeFileSync(path.join(out, 'summary.json'), JSON.stringify(summary, null, 2));
   console.log('[validate] ' + summary.cases + ' cases, ' + summary.errors + ' errors, median per case ' + Math.round(summary.timings.perCaseMedian_ms || 0) + ' ms ' +
