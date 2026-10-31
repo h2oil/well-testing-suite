@@ -40,6 +40,7 @@ const H = 3600000, DAY = 86400000;
 // deep equality across realms (app values come from the harness vm realm, with their own Array/Object prototypes)
 const plain = (v) => JSON.parse(JSON.stringify(v));
 function deq(assert, a, b, msg) { assert.deepStrictEqual(plain(a), plain(b), msg); }
+const LABELS_OF = (tb) => [].concat(tb.high, tb.medium, tb.low);
 function medianOf(a) { const s = a.slice().sort((x, y) => x - y); const n = s.length; return n % 2 ? s[(n - 1) / 2] : 0.5 * (s[n / 2 - 1] + s[n / 2]); }
 
 module.exports = [
@@ -484,12 +485,57 @@ module.exports = [
         return { kind: 'single', seed: 100000 + i, stratum: 'hom', durClass: 'long', fluid: 'oil', truth: truthL, test, event: null, error: null, gen_ms: 1, analyse_ms: 1,
                  outcome: SY.score(test, truthL), evidence: { sErr, snrD: 40 - 0.5 * i, pointSkinSpread: 0.1 } };
       });
+      // non-analysable truths: a partial cut the engine correctly left unlabelled stays out of both tables (§5.3); one it
+      // interpreted keeps its label with y = false
+      const pTruth = Object.assign({}, lines[0].truth, { partial: true, model: 'partial' });
+      const evP = { id: 'E9', kind: 'partial', status: 'partial' };
+      lines.push({ kind: 'single', seed: 100620, stratum: 'partial', durClass: 'long', fluid: 'oil', truth: pTruth, test: null, event: evP, error: null, gen_ms: 1, analyse_ms: 1,
+                   outcome: SY.score(null, pTruth, { event: evP }), evidence: null });
+      const wrongTest = JSON.parse(JSON.stringify(lines[1].test));
+      lines.push({ kind: 'single', seed: 100621, stratum: 'partial', durClass: 'long', fluid: 'oil', truth: pTruth, test: wrongTest, event: null, error: null, gen_ms: 1, analyse_ms: 1,
+                   outcome: SY.score(wrongTest, pTruth), evidence: { sErr: 0.3, snrD: 39, pointSkinSpread: 0.1 } });
       const res = tool.calibrate(lines, { SY, AI: stubAI }, { gridSample: 5000 });
       res.cal.inApp = [];
       const rc = S.checkShape('Cal', JSON.parse(JSON.stringify(res.cal))); assert(rc.ok, JSON.stringify(rc.errors.slice(0, 5)));
-      assert.strictEqual(res.cal.calibrated, true); assert.strictEqual(res.cal.nBuildups, 60);
-      assert.strictEqual(res.cal.ksTable.reduce((a, x) => a + x.n, 0), 60, 'every case in the k/S table');
-      assert(tool.markdown(res.cal, tool.summarize(lines, { SY })).indexOf('## Headline label') !== -1);
+      assert.strictEqual(res.cal.calibrated, true); assert.strictEqual(res.cal.nBuildups, 61, '60 analysable + the wrongly interpreted partial cut');
+      assert.strictEqual(res.cal.ksTable.reduce((a, x) => a + x.n, 0), 61, 'the unlabelled partial cut is not in the k/S table');
+      const allY = []; LABELS_OF(res.T.hd).forEach((x) => allY.push(x));
+      assert(!allY.some((x) => x.i === 60), 'unlabelled non-analysable truth left out');
+      assert(allY.some((x) => x.i === 61 && x.y === false), 'interpreted partial cut kept, y = false');
+      // Brier with training-fold forecasts: the Murphy identity BS = REL − RES + UNC holds over the forecast bins
+      assert.near(res.cal.brier, res.cal.reliability - res.cal.resolution + res.cal.uncertainty, 1e-12, 'Murphy decomposition');
+      const sm2 = tool.summarize(lines, { SY });
+      assert.strictEqual(sm2.statusAccuracy.partial.n, 2); assert.strictEqual(sm2.statusAccuracy.partial.right, 1, 'status accuracy of partial truths reported apart');
+      const md = tool.markdown(res.cal, sm2);
+      assert(md.indexOf('## Headline label') !== -1 && md.indexOf('## Non-analysable truth') !== -1 && md.indexOf('## Reach') !== -1);
+      assert(!/\bnull\b|\bundefined\b/.test(md), 'calibration.md prints no null/undefined text');
+      // §5.4 lower bounds: Wilson on the single cases AND a cluster bootstrap over wells on the pooled table. Stub: 40 single
+      // cases right, 20 sequence wells of 20 tests with one well entirely wrong: pooled rate 0.952 and pooled Wilson bound 0.927
+      // pass, but the tests of one well are correlated and the cluster bound falls below 0.90
+      const mk = (bad) => {
+        const it = []; let i = 0;
+        for (let s = 0; s < 40; s++) it.push({ i: i++, g: 's' + s, single: true, y: true, dS: null, cov: null });
+        for (let w = 0; w < 20; w++) for (let k = 0; k < 20; k++) it.push({ i: i++, g: 'q' + w, single: false, y: bad(w, k), dS: null, cov: null });
+        return { ks: { high: it, medium: [], low: [] }, hd: { high: it.map((x) => Object.assign({}, x)), medium: [], low: [] } };
+      };
+      const Tc = mk((w) => w !== 7), pooled = tool.wilson(400, 420);
+      assert(pooled.rate >= 0.95 && pooled.lo >= 0.90, 'pooled Wilson passes (' + pooled.lo.toFixed(3) + ')');
+      const fc = tool.checkTargets(Tc, { rng: SY.rng });
+      assert(fc.some((f) => /cluster-bootstrap/.test(f)), 'the cluster bound fails: ' + JSON.stringify(fc));
+      // the same 20 wrong tests spread one per well: the cluster bound passes
+      const Ts = mk((w, k) => k !== w % 20 || w >= 20);
+      deq(assert, tool.checkTargets(Ts, { rng: SY.rng }), [], 'spread errors pass');
+      // sequence targets: the stimulation drop without a workover date classified as a shut-in; no delta alert on
+      // constant-skin gas wells with D resolved
+      const stim = (kind, status) => ({ kind: 'sequence', seed: 2, path: 'stimulation', shutClass: '24-48',
+        truth: { path: 'stimulation', constantS: false, onsetIdx: 2, workover: { afterTest: 3, entered: false }, tests: [{ S: 1, tDays: 0 }, { S: 1, tDays: 14 }, { S: 1, tDays: 28 }, { S: 6, tDays: 42 }, { S: 0, tDays: 56 }] },
+        alerts: { plain: { delta: { status: 'confirmed', raisedAt: 'B4', confirmedAt: 'B5' }, absolute: { status: 'none' } }, basevar: null },
+        matched: [0, 1, 2, 3, 4].map((j) => ({ truthIdx: j, testId: 'B' + (j + 1), event: j === 4 ? { id: 'E5', kind, status } : { id: 'E' + (j + 1), kind: 'shutin', status: 'analysable' } })) });
+      const gasW = (raisedD) => ({ kind: 'sequence', seed: 3, path: 'gasRate', shutClass: '48-120', truth: { path: 'gasRate', constantS: true, onsetIdx: null, tests: [{ S: 2, tDays: 0 }, { S: 1, tDays: 14 }, { S: 2, tDays: 28 }] },
+        alerts: { plain: { delta: { status: raisedD ? 'provisional' : 'none' }, absolute: { status: 'none' }, rateSkin: { resolved: true } }, basevar: null }, matched: [] });
+      const sm3 = tool.sequenceMetrics([stim('shutin', 'analysable'), stim('partial', 'partial'), gasW(false), gasW(true)], 'plain');
+      assert.strictEqual(sm3.stimN, 2); assert.strictEqual(sm3.stimShutinRate, 0.5, 'one of two post-workover tests classified as a shut-in');
+      assert.strictEqual(sm3.gasResolvedN, 2); assert.strictEqual(sm3.gasNoAlertWhenDResolved, 0.5, 'one resolved gas well raised a delta alert');
     },
   },
 ];

@@ -11,8 +11,10 @@
 //   --seeds a-b    single-case seeds (ranges and comma lists; default the full table 100000–100639)
 //   --strata s,t   keep only these strata
 //   --sequences    also run the 120 multi-test wells (200000–200119)
-//   --write        calibration (§5.4): writes file 55 (calibrated:true) and <out>/calibration.md
-//   --perf         the §4.8 timing targets on the oil demo and a 500k-row file (wall clock); --strict exits 1 on a miss
+//   --write        calibration (§5.4): writes file 55 (calibrated:true) and <out>/calibration.md; exits 1 and leaves file 55
+//                  alone unless all 24 in-app cases meet margin ≥ 0.1 (the lite candidate pool widens before it gives up)
+//   --perf         the §4.8 timing targets (wall clock) on the oil demo, the reference case (US4, 72 h; per stage), the
+//                  365-daily-step reference and a 500k-row file; --strict exits 1 on a miss
 //   --workers n    child processes (default min(4, CPUs)); worker i takes the seeds ≡ i (mod n)
 //   --out dir      output directory (default $TMPDIR/wts-buildup-validate): cases.jsonl, summary.json, calibration.md
 //   --json         print the summary as JSON on stdout
@@ -54,7 +56,10 @@ const GRID_STAGE1 = { sErrLow: [0.8, 1.0, 1.2], snrLow: [3, 5, 8], disagreeDS: [
                       distractorRule: [true, false], kHeldRmsK: [2, 3, 4] };
 const GRID_STAGE2 = { snrHigh: [10, 15, 20, 30], sErrHigh: [0.3, 0.4, 0.5, 0.6], fairSpanHigh: [0.6, 0.7, 0.8, 1.0], pointSkinSpread: [0.2, 0.3, 0.4],
                       tauBic: [6, 10, 20, 40], rateTolPct: [10, 15, 20], sErrFloor: [0.2, 0.25, 0.3, 0.4] };
-const TARGETS = { highRate: 0.95, highLo: 0.90, medRate: 0.80, medLo: 0.70, lowGap: 0.20, falseRival: 0.05, cover: 0.90, abstainHom: 0.10, falseAlarm: 0.05 };
+// reach: share of analysable-truth single cases whose true closing reaches an analysable test of the pipeline (per stratum; a
+// check on detection, implied by the ≤ 10 % abstention constraint on hom); stimShutin / gasNoAlert: the §5.2 sequence targets.
+const TARGETS = { highRate: 0.95, highLo: 0.90, medRate: 0.80, medLo: 0.70, lowGap: 0.20, falseRival: 0.05, cover: 0.90, abstainHom: 0.10, falseAlarm: 0.05,
+                  reach: 0.90, stimShutin: 0.95, gasNoAlert: 1.0 };
 const SINGLE = [100000, 100639], SEQ = [200000, 200119], MASTER = 3300;
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -292,7 +297,8 @@ function runSequence(env, seed, opts) {
                        notAnalysable: false, partial: false, distractor: false, stratum: sq.spec.fluid === 'gas' ? 'gas' : 'hom' };
       const m = SY.match(an, truthT);
       const s = SY.score(m.test, truthT, { event: m.event });
-      return { truthIdx: i, testId: m.test ? m.test.id : null, outcome: s, test: testSummary(m.test), evidence: (m.test && m.test.result && m.test.result.evidence) || null,
+      return { truthIdx: i, testId: m.test ? m.test.id : null, event: m.event ? { id: m.event.id, kind: m.event.kind, status: m.event.status } : null,
+               outcome: s, test: testSummary(m.test), evidence: (m.test && m.test.result && m.test.result.evidence) || null,
                truth: Object.assign({}, truthT, { visible: undefined, f: tt.f, dtEnd_h: tt.dtEnd_h }) };
     });
   } catch (e) {
@@ -359,19 +365,45 @@ function quantile(arr, q) {
   const pos = (s.length - 1) * q, lo = Math.floor(pos), hi = Math.ceil(pos);
   return s[lo] + (s[hi] - s[lo]) * (pos - lo);
 }
-// Cluster bootstrap over wells (groups): 2000 resamples with synth.rng(seed) → 2.5 % / 97.5 % of the rate.
+// Cluster bootstrap over wells (groups): B resamples (2,000 for every reported bound and the confirmation of the chosen
+// thresholds; BOOT_GRID inside the grid search) with synth.rng(MASTER + 77) → 2.5 % / 97.5 % of the rate. Resample b draws
+// group i from position b·G + i of the seeded uniform stream, which is generated once and kept (same numbers as drawing it
+// afresh each call, much faster in the grid search).
+const BOOT_FULL = 2000, BOOT_GRID = 400;
+const _uStreams = new Map();
+function _uStream(rngFactory, len) {
+  let s = _uStreams.get(rngFactory);
+  if (!s || s.u.length < len) {
+    const u = new Float64Array(Math.max(len, s ? 2 * s.u.length : 0)), r = rngFactory(MASTER + 77);
+    for (let i = 0; i < u.length; i++) u[i] = r.next();
+    s = { u }; _uStreams.set(rngFactory, s);
+  }
+  return s.u;
+}
 function clusterBootstrap(items, rngFactory, B) {
   const groups = new Map();
   items.forEach((it) => { if (!groups.has(it.g)) groups.set(it.g, { k: 0, n: 0 }); const g = groups.get(it.g); g.n++; g.k += it.y ? 1 : 0; });
-  const G = Array.from(groups.values());
-  if (!G.length) return { lo: null, hi: null };
-  const r = rngFactory(MASTER + 77), rates = [];
-  for (let b = 0; b < (B || 2000); b++) {
+  const G = Array.from(groups.values()), nG = G.length;
+  if (!nG) return { lo: null, hi: null };
+  B = B || BOOT_FULL;
+  const u = _uStream(rngFactory, B * nG), K = new Float64Array(nG), N = new Float64Array(nG), rates = new Array(B);
+  for (let i = 0; i < nG; i++) { K[i] = G[i].k; N[i] = G[i].n; }
+  for (let b = 0, p = 0; b < B; b++) {
     let k = 0, n = 0;
-    for (let i = 0; i < G.length; i++) { const g = G[Math.floor(r.next() * G.length)]; k += g.k; n += g.n; }
-    rates.push(n ? k / n : 0);
+    for (let i = 0; i < nG; i++, p++) { const j = Math.floor(u[p] * nG); k += K[j]; n += N[j]; }
+    rates[b] = n ? k / n : 0;
   }
   return { lo: quantile(rates, 0.025), hi: quantile(rates, 0.975) };
+}
+// cached bootstrap of one label row (the grid search meets the same rows many times): key = B + a 2×32-bit FNV over (case, y)
+function bootRow(items, rngFactory, B, cache) {
+  if (!cache) return clusterBootstrap(items, rngFactory, B);
+  let h1 = 0x811c9dc5 | 0, h2 = 0x050c5d1f | 0;
+  for (const x of items) { const v = (x.i << 1) | (x.y ? 1 : 0); h1 = Math.imul(h1 ^ v, 16777619); h2 = Math.imul(h2 ^ (v + 0x9e3779b9), 16777619); }
+  const key = B + ':' + items.length + ':' + (h1 >>> 0) + ':' + (h2 >>> 0);
+  let r = cache.get(key);
+  if (!r) { r = clusterBootstrap(items, rngFactory, B); cache.set(key, r); }
+  return r;
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -395,13 +427,16 @@ function round1(v) { return Math.round(v * 10) / 10; }
 // Re-derive the evidence and the outcome of one case under thresholds th (approximate where §5.4 needs upstream values:
 // S_err with another floor from the stored parts, R3 with another tolerance from the stored ratio, the model choice with
 // another τ from the stored ΔBIC rows and the rival fits).
+// unlabelled: a truth that is not analysable (partial, baddata) and that the engine left without a label. §5.3 counts only
+// abstention on ANALYSABLE truth as "low, y = 0"; these cases stay out of both tables (their status accuracy is reported
+// separately). A non-analysable truth the engine interpreted keeps its label, with y = false.
 function relabel(c, th, env) {
   const ev = c.evidence ? Object.assign({}, c.evidence) : null;
   const t = c.test, r = t && t.result;
   let outcome = c.outcome;
   if (!ev || !r) {
-    const lab = c.outcome && c.outcome.label;
-    return { ks: lab ? lab.ks : 'low', headline: lab ? lab.headline : 'low', outcome, sErr: r && r.sErr ? r.sErr.value : null };
+    const lab = c.outcome && c.outcome.label, nonAnal = !!(c.truth && (c.truth.notAnalysable || c.truth.partial));
+    return { ks: lab ? lab.ks : 'low', headline: lab ? lab.headline : 'low', outcome, sErr: r && r.sErr ? r.sErr.value : null, unlabelled: !lab && nonAnal };
   }
   let sErr = r.sErr ? r.sErr.value : ev.sErr;
   if (r.sErr) {
@@ -431,16 +466,19 @@ function relabel(c, th, env) {
   if (!conf || LABELS.indexOf(conf.ks) === -1) return { ks: 'low', headline: 'low', outcome, sErr, error: true };
   return { ks: conf.ks, headline: conf.headline, outcome, sErr };
 }
+// Items carry i (case index), g (well), single (a single case, not a sequence test) and y.
 function tables(cases, labels) {
   const ks = {}, hd = {};
   LABELS.forEach((L) => { ks[L] = []; hd[L] = []; });
   cases.forEach((c, i) => {
     const lb = labels[i], o = lb.outcome || {};
-    const abst = !!o.abstained;
+    if (lb.unlabelled) return;
+    const abst = !!o.abstained, nonAnal = !!(c.truth && (c.truth.notAnalysable || c.truth.partial)), wrong = abst || nonAnal;
     const ksL = abst ? 'low' : lb.ks, hdL = abst ? 'low' : lb.headline;
     const dS = typeof o.dS === 'number' ? Math.abs(o.dS) : null, cov = (dS !== null && typeof lb.sErr === 'number') ? dS <= 2 * lb.sErr : null;
-    ks[ksL].push({ y: abst ? false : !!o.ksRight, g: c.g, dS, cov });
-    hd[hdL].push({ y: abst ? false : !!o.fullyRight, g: c.g, dS, cov, k: !!o.kRight, s: !!o.sRight, m: !!o.modelRight, strict: abst ? false : !!o.strict });
+    const single = c.single !== false;
+    ks[ksL].push({ i, y: wrong ? false : !!o.ksRight, g: c.g, single, dS, cov });
+    hd[hdL].push({ i, y: wrong ? false : !!o.fullyRight, g: c.g, single, dS, cov, k: !!o.kRight, s: !!o.sRight, m: !!o.modelRight, strict: wrong ? false : !!o.strict });
   });
   return { ks, hd };
 }
@@ -449,16 +487,37 @@ function rowStats(items, yKey) {
   const ds = items.map((x) => x.dS).filter((v) => v !== null), cv = items.map((x) => x.cov).filter((v) => v !== null);
   return { n, rate: w.rate, lo: w.lo, hi: w.hi, medAbsDS: quantile(ds, 0.5), cover2: cv.length ? cv.filter(Boolean).length / cv.length : null };
 }
-function checkTargets(T) {
+// §5.4 step 3 constraints for both tables: rate(high) ≥ 0.95 and rate(medium) ≥ 0.80 on the pooled table; their lower bounds
+// (≥ 0.90 / ≥ 0.70) twice: Wilson on the single-case subset and a cluster bootstrap over wells on the pooled table (tests of
+// one sequence well are correlated, so a pooled Wilson bound would be anti-conservative); rate(low) ≤ rate(medium) − 0.20;
+// S_err coverage ≥ 0.90 for high and medium. opts {B (resamples, default 2,000), cache (Map), rng (synth.rng)}.
+function checkTargets(T, opts) {
+  opts = opts || {};
+  const B = opts.B || BOOT_FULL, rng = opts.rng || _defaultRng();
   const fails = [];
   [['k/S', T.ks], ['headline', T.hd]].forEach(([name, tb]) => {
     const h = rowStats(tb.high), m = rowStats(tb.medium), l = rowStats(tb.low);
-    if (h.n && (h.rate < TARGETS.highRate || h.lo < TARGETS.highLo)) fails.push(name + ' high');
-    if (m.n && (m.rate < TARGETS.medRate || m.lo < TARGETS.medLo)) fails.push(name + ' medium');
+    [[h, 'high', TARGETS.highRate, TARGETS.highLo], [m, 'medium', TARGETS.medRate, TARGETS.medLo]].forEach(([s, L, rate, lo]) => {
+      if (!s.n) return;
+      if (s.rate < rate) { fails.push(name + ' ' + L); return; }
+      const sg = rowStats(tb[L].filter((x) => x.single !== false));
+      if (sg.n && sg.lo < lo) { fails.push(name + ' ' + L + ' (Wilson bound, single cases)'); return; }
+      const cb = bootRow(tb[L], rng, B, opts.cache || null);
+      if (cb.lo !== null && cb.lo < lo) fails.push(name + ' ' + L + ' (cluster-bootstrap bound)');
+    });
     if (l.n && m.n && l.rate > m.rate - TARGETS.lowGap) fails.push(name + ' low gap');
     [h, m].forEach((x, i) => { if (x.n && x.cover2 !== null && x.cover2 < TARGETS.cover) fails.push(name + ' cover ' + LABELS[i]); });
   });
   return fails;
+}
+// the generator's PRNG for the bootstrap when no environment is passed (stand-alone use of the helpers)
+let _rngCache = null;
+function _defaultRng() {
+  if (_rngCache) return _rngCache;
+  const vm = require('vm'), c = { console: { log() {}, warn() {} } }; c.window = c; vm.createContext(c);
+  vm.runInContext(fs.readFileSync(path.join(ROOT, '49-calc-buildup-synth.js'), 'utf8').split('// === SELF-TEST ===')[0], c);
+  _rngCache = c.WTS_buildup.synth.rng;
+  return _rngCache;
 }
 function falseRivalRate(cases, labels) {
   let n = 0, k = 0;
@@ -504,9 +563,22 @@ function sequenceMetrics(lines, form) {
       senN++; if (l.truth.slopePer30d >= a.recent.ci[0] && l.truth.slopePer30d <= a.recent.ci[1]) senOk++;
     }
   });
+  // the stimulation drop on wells without an entered workover date: the post-workover test is classified as a shut-in
+  // (event kind shutin, analysable or excluded), not a partial cut or an unconfirmed event (§5.2 target ≥ 95 %)
+  let stimN = 0, stimOk = 0;
+  seqs.filter((l) => l.truth.path === 'stimulation' && l.truth.workover && !l.truth.workover.entered).forEach((l) => {
+    const m = (l.matched || [])[l.truth.workover.afterTest + 1];
+    if (!m) return;
+    stimN++;
+    if (m.event && m.event.kind === 'shutin' && (m.event.status === 'analysable' || m.event.status === 'excluded')) stimOk++;
+  });
+  // constant-S gas wells (rate changes only) where D is resolved: no delta alert (§5.2 target: none)
+  const gasRes = seqs.filter((l) => { const a = pick(l); return l.truth.path === 'gasRate' && a && a.rateSkin && a.rateSkin.resolved; });
+  const gasQuiet = gasRes.filter((l) => !raised(pick(l).delta)).length;
   return {
     n: seqs.length, falseAlarmDelta: constant.length ? fa / constant.length : null, falseAlarmAbs: constant.length ? faAbs / constant.length : null,
     delayMedian: quantile(delays, 0.5), delayMedianShort: quantile(delaysShort, 0.5), onsetWithin1: onsetN ? onsetOk / onsetN : null, senCover: senN ? senOk / senN : null,
+    stimShutinRate: stimN ? stimOk / stimN : null, stimN, gasNoAlertWhenDResolved: gasRes.length ? gasQuiet / gasRes.length : null, gasResolvedN: gasRes.length,
   };
 }
 
@@ -528,41 +600,69 @@ function foldsOf(cases, K) {   // groups (wells) to folds, stratified by stratum
   Array.from(strata.keys()).sort().forEach((s) => { strata.get(s).forEach((g, i) => fold.set(g, (i + off) % K)); off += strata.get(s).length; });
   return cases.map((c) => fold.get(c.g));
 }
-function objective(cases, labels) {   // share labelled high (headline), −Infinity when a constraint fails
+// share labelled high (headline) among the labelled cases, −Infinity when a constraint fails. With `floor`, a candidate whose
+// share cannot beat it is not checked (it could not replace the incumbent anyway). opts as checkTargets.
+function objective(cases, labels, opts, floor) {
   const T = tables(cases, labels);
-  if (checkTargets(T).length) return -Infinity;
+  const nLab = LABELS.reduce((a, L) => a + T.hd[L].length, 0), share = T.hd.high.length / Math.max(1, nLab);
+  if (floor !== undefined && !(share > floor)) return -Infinity;
   const fr = falseRivalRate(cases, labels);
   if (fr.rate !== null && fr.rate > TARGETS.falseRival) return -Infinity;
-  return T.hd.high.length / Math.max(1, cases.length);
+  if (checkTargets(T, opts).length) return -Infinity;
+  return share;
 }
 // Staged exhaustive grid (stage 1 LOW thresholds, stage 2 HIGH thresholds and τ, stage 1 again). The pre-calibration set is
-// the incumbent: a candidate replaces it only when strictly better, so ties keep the documented defaults.
-function searchThresholds(cases, env, sample) {
-  const evalSet = (cand) => objective(cases, cases.map((c) => relabel(c, cand, env)));
-  let th = Object.assign({}, PRE_THRESHOLDS), best = evalSet(th);
-  const stage = (grid) => {
-    combos(grid).forEach((cmb, i) => {
-      if (sample > 1 && i % sample) return;
-      const cand = Object.assign({}, th, cmb), v = evalSet(cand);
-      if (v > best) { best = v; th = cand; }
-    });
+// the incumbent: a candidate replaces it only when strictly better, so ties keep the documented defaults. Inside the grid the
+// cluster bootstrap uses BOOT_GRID resamples (cached per label row); the winner is confirmed with the full 2,000, and when it
+// fails there the whole search is repeated at 2,000.
+function searchThresholds(cases, env, sample, opts) {
+  opts = opts || {};
+  const cache = new Map(), rng = env.SY.rng;
+  const run = (B) => {
+    const evalSet = (cand, floor) => objective(cases, cases.map((c) => relabel(c, cand, env)), { B, cache, rng }, floor);
+    let th = Object.assign({}, PRE_THRESHOLDS), best = evalSet(th);
+    const stage = (grid) => {
+      combos(grid).forEach((cmb, i) => {
+        if (sample > 1 && i % sample) return;
+        const cand = Object.assign({}, th, cmb), v = evalSet(cand, best);
+        if (v > best) { best = v; th = cand; }
+      });
+    };
+    stage(GRID_STAGE1); stage(GRID_STAGE2); stage(GRID_STAGE1);
+    return { th, best, evalSet };
   };
-  stage(GRID_STAGE1); stage(GRID_STAGE2); stage(GRID_STAGE1);
-  if (best === -Infinity) {   // constraints unmet everywhere: the strictest set (never relaxed targets)
+  const Bg = opts.bootGrid || BOOT_GRID;
+  let res = run(Bg), confirmed = Bg >= BOOT_FULL;
+  if (res.best > -Infinity && !confirmed) {
+    const T = tables(cases, cases.map((c) => relabel(c, res.th, env)));
+    confirmed = checkTargets(T, { B: BOOT_FULL, cache, rng }).length === 0;
+    if (!confirmed) res = run(BOOT_FULL);
+  }
+  let th = res.th;
+  if (res.best === -Infinity) {   // constraints unmet everywhere: the strictest set (never relaxed targets)
     th = Object.assign({}, PRE_THRESHOLDS, { snrHigh: 30, sErrHigh: 0.3, fairSpanHigh: 1.0, pointSkinSpread: 0.2, sErrLow: 0.8, snrLow: 8, disagreeDS: 0.7, disagreeKPct: 10, reachFactor: 5.0, kHeldRmsK: 2 });
   }
-  return { th, best };
+  return { th, best: res.best };
 }
 function calibrate(lines, env, opts) {
-  const cases = labelledSet(lines), K = 5, fold = foldsOf(cases, K), oof = new Array(cases.length);
+  const cases = labelledSet(lines), K = 5, fold = foldsOf(cases, K), oof = new Array(cases.length), fcst = new Array(cases.length).fill(null);
   console.log('[validate] calibration: ' + cases.length + ' labelled build-ups, ' + new Set(cases.map((c) => c.g)).size + ' wells, 5 folds');
   for (let f = 0; f < K; f++) {
     const train = cases.filter((_, i) => fold[i] !== f);
-    const { th } = searchThresholds(train, env, opts.gridSample);
-    cases.forEach((c, i) => { if (fold[i] === f) oof[i] = relabel(c, th, env); });
+    const { th } = searchThresholds(train, env, opts.gridSample, opts);
+    // the forecast of a held-out case is the TRAINING-fold rate of its headline label (so the reliability term of the
+    // Murphy decomposition measures something: the out-of-fold rates are not their own forecasts)
+    const Ttr = tables(train, train.map((c) => relabel(c, th, env))), rateTr = {};
+    LABELS.forEach((L) => { rateTr[L] = rowStats(Ttr.hd[L]).rate; });
+    cases.forEach((c, i) => {
+      if (fold[i] !== f) return;
+      oof[i] = relabel(c, th, env);
+      const o = oof[i].outcome || {}, L = o.abstained ? 'low' : oof[i].headline;
+      if (!oof[i].unlabelled) fcst[i] = { p: rateTr[L] === null ? 0 : rateTr[L], bin: f + ':' + L };
+    });
     console.log('[validate]   fold ' + (f + 1) + '/5 done');
   }
-  const final = searchThresholds(cases, env, opts.gridSample).th;
+  const final = searchThresholds(cases, env, opts.gridSample, opts).th;
   // delta-alert form from the sequence false-alarm rate (plain unless it misses 5 %)
   const seqPlain = sequenceMetrics(lines, 'plain'), seqBase = sequenceMetrics(lines, 'basevar');
   final.deltaForm = (seqPlain.falseAlarmDelta !== null && seqPlain.falseAlarmDelta > TARGETS.falseAlarm && seqBase.falseAlarmDelta !== null &&
@@ -578,13 +678,19 @@ function calibrate(lines, env, opts) {
   };
   const sub = (pred) => { const idx = cases.map((c, i) => (pred(c, i) ? i : -1)).filter((i) => i >= 0); return tables(idx.map((i) => cases[i]), idx.map((i) => oof[i])); };
   const Tk = sub((c) => c.test && c.test.result && c.test.result.kHeld), Tg = sub((c) => c.fluid === 'gas');
-  // Brier with the out-of-fold headline rates as forecasts; Murphy decomposition
-  const rateOf = {}; LABELS.forEach((L) => { rateOf[L] = rowStats(T.hd[L]).rate; });
-  let bs = 0, N = 0; const bins = {};
-  LABELS.forEach((L) => T.hd[L].forEach((x) => { const p = rateOf[L] || 0, y = x.y ? 1 : 0; bs += (p - y) * (p - y); N++; bins[L] = bins[L] || { n: 0, y: 0, p }; bins[L].n++; bins[L].y += y; }));
-  const ybar = N ? LABELS.reduce((a, L) => a + (bins[L] ? bins[L].y : 0), 0) / N : 0;
+  // Brier score of the headline label: forecast = the training-fold rate of the case's label (fcst), outcome y = fully right
+  // (abstention on analysable truth: y = 0). Murphy decomposition over the forecast bins (fold × label; one forecast value each),
+  // so BS = REL − RES + UNC exactly.
+  const yOf = new Map(); LABELS.forEach((L) => T.hd[L].forEach((x) => yOf.set(x.i, x.y ? 1 : 0)));
+  let bs = 0, N = 0, ysum = 0; const bins = {};
+  cases.forEach((c, i) => {
+    if (!fcst[i] || !yOf.has(i)) return;
+    const p = fcst[i].p, y = yOf.get(i), b = bins[fcst[i].bin] = bins[fcst[i].bin] || { n: 0, y: 0, p };
+    bs += (p - y) * (p - y); N++; ysum += y; b.n++; b.y += y;
+  });
+  const ybar = N ? ysum / N : 0;
   let rel = 0, res = 0;
-  Object.keys(bins).forEach((L) => { const b = bins[L], yk = b.y / b.n; rel += b.n * (b.p - yk) * (b.p - yk); res += b.n * (yk - ybar) * (yk - ybar); });
+  Object.keys(bins).forEach((k) => { const b = bins[k], yk = b.y / b.n; rel += b.n * (b.p - yk) * (b.p - yk); res += b.n * (yk - ybar) * (yk - ybar); });
   const unc = ybar * (1 - ybar), brier = N ? bs / N : null;
   const env5 = (vals) => [quantile(vals, 0.05), quantile(vals, 0.95)];
   const ev = cases.map((c) => c.evidence).filter(Boolean);
@@ -594,7 +700,7 @@ function calibrate(lines, env, opts) {
   const cal = {
     version: 'cal-1', calibrated: true, generated: todayUTC(), app: 'v3.3', engine: (env.AI && env.AI.version) || '1.0',
     seeds: { single: SINGLE.slice(), sequences: SEQ.slice(), master: MASTER },
-    nCases: lines.filter((l) => l.kind === 'single' && !l.error).length, nBuildups: cases.length,
+    nCases: lines.filter((l) => l.kind === 'single' && !l.error).length, nBuildups: LABELS.reduce((a, L) => a + T.hd[L].length, 0),
     thresholds: final,
     ksTable: LABELS.map((L) => ksRow(L, T.ks[L])), table: LABELS.map((L) => tbRow(L, T.hd[L])), strict: LABELS.map((L) => tbRow(L, T.hd[L], 'strict')),
     kHeldTable: ['medium', 'low'].map((L) => ksRow(L, Tk.ks[L])), gasTable: LABELS.map((L) => tbRow(L, Tg.hd[L])),
@@ -677,8 +783,23 @@ function summarize(lines, env, quickFR) {
   const cOk = cU.filter((l) => Math.abs(l.test.result.final.C / l.truth.C - 1) <= 0.25).length;
   const bySource = {};
   all.forEach((l) => { const k = l.rateSource || 'allocation'; const b = bySource[k] = bySource[k] || { n: 0, fullyRight: 0, ksRight: 0 }; b.n++; if (l.outcome && l.outcome.fullyRight) b.fullyRight++; if (l.outcome && l.outcome.ksRight) b.ksRight++; });
+  // reach per stratum: analysable truth whose closing reached a test entry that is not "not analysable" (target TARGETS.reach)
+  const reach = {};
+  all.filter((l) => l.truth && !l.truth.notAnalysable && !l.truth.partial).forEach((l) => {
+    const r = reach[l.stratum] = reach[l.stratum] || { n: 0, reached: 0, rate: null, target: TARGETS.reach };
+    r.n++; if (l.test && l.test.status !== 'not_analysable') r.reached++;
+  });
+  Object.keys(reach).forEach((k) => { reach[k].rate = reach[k].n ? reach[k].reached / reach[k].n : null; });
+  // status accuracy on non-analysable truth (kept out of the label tables, §5.3): partial → classified partial, baddata →
+  // not analysable (or not detected at all)
+  const statusAccuracy = {};
+  [['partial', (l) => l.truth && l.truth.partial], ['baddata', (l) => l.truth && l.truth.notAnalysable && !l.truth.partial]].forEach(([k, pred]) => {
+    const arr = all.filter(pred), ok = arr.filter((l) => l.outcome && l.outcome.fullyRight).length, by = {};
+    arr.forEach((l) => { const s = (l.outcome && l.outcome.status) || 'missed'; by[s] = (by[s] || 0) + 1; });
+    statusAccuracy[k] = { n: arr.length, right: ok, rate: arr.length ? ok / arr.length : null, byStatus: by };
+  });
   const out = { cases: singles.length, errors: singles.filter((l) => l.error).length, perStratum: per, timings, sequences: null, falseRival: null,
-                cWithin25: { n: cU.length, rate: cU.length ? cOk / cU.length : null }, byRateSource: bySource };
+                cWithin25: { n: cU.length, rate: cU.length ? cOk / cU.length : null }, byRateSource: bySource, reach, statusAccuracy };
   if (lines.some((l) => l.kind === 'sequence')) out.sequences = { plain: sequenceMetrics(lines, 'plain'), basevar: sequenceMetrics(lines, 'basevar') };
   if (quickFR) {
     const fl = quickFR.filter((l) => !l.error && l.test && l.test.result && l.test.result.chosen);   // cases with a chosen model
@@ -689,6 +810,7 @@ function summarize(lines, env, quickFR) {
 }
 function pct(v) { return v === null || v === undefined ? '—' : (100 * v).toFixed(1) + ' %'; }
 function f2(v) { return v === null || v === undefined ? '—' : (+v).toFixed(2); }
+function dash(v) { return v === null || v === undefined || (typeof v === 'number' && !isFinite(v)) ? '—' : String(v); }
 function markdown(cal, summary) {
   const L = ['# Build-up Surveillance — calibration report', '', 'Generated ' + cal.generated + ' by buildup-validate.js (engine ' + cal.engine + ', app ' + cal.app + ').', ''];
   L.push('## Thresholds', '', '| key | value |', '|---|---|');
@@ -702,15 +824,23 @@ function markdown(cal, summary) {
   L.push('', '## Scores', '', '- Brier ' + f2(cal.brier) + ', BSS ' + f2(cal.bss) + ' (reliability ' + f2(cal.reliability) + ', resolution ' + f2(cal.resolution) + ', uncertainty ' + f2(cal.uncertainty) + ')',
     '- False-rival rate on homogeneous truth ' + pct(cal.falseRival), '- Abstention ' + pct(cal.abstain.rate) + ' (hom ' + pct(cal.abstain.rateHom) + ')',
     '- Distractor caught ' + pct(cal.distractorCaught.rate) + ' of ' + cal.distractorCaught.n, '- Rate accuracy: median |error| ' + f2(cal.rateAccuracy.medAbsPct) + ' %, P90 ' + f2(cal.rateAccuracy.p90AbsPct) + ' %');
+  const sq = (summary.sequences && (cal.thresholds.deltaForm === 'basevar' ? summary.sequences.basevar : summary.sequences.plain)) || {};
   L.push('', '## Sequences', '', '- Delta form shipped: ' + cal.thresholds.deltaForm, '- False alarms: delta ' + pct(cal.sequences.falseAlarmDelta) + ', absolute ' + pct(cal.sequences.falseAlarmAbs),
     '- Median confirmed-alert delay ' + f2(cal.sequences.delayMedian) + ' tests (24–48 h wells ' + f2(cal.sequences.delayMedianShort) + ')',
-    '- Onset within one interval ' + pct(cal.sequences.onsetWithin1) + '; Sen CI covering the true slope ' + pct(cal.sequences.senCover));
+    '- Onset within one interval ' + pct(cal.sequences.onsetWithin1) + '; Sen CI covering the true slope ' + pct(cal.sequences.senCover),
+    '- Stimulation drop without a workover date classified as a shut-in: ' + pct(sq.stimShutinRate) + ' of ' + dash(sq.stimN) + ' (target ≥ ' + pct(TARGETS.stimShutin) + ')',
+    '- Constant-skin gas wells with D resolved and no delta alert: ' + pct(sq.gasNoAlertWhenDResolved) + ' of ' + dash(sq.gasResolvedN) + ' (target ' + pct(TARGETS.gasNoAlert) + ')');
+  L.push('', '## Non-analysable truth (not in the label tables)', '', '| stratum | n | status right | rate | statuses |', '|---|---|---|---|---|');
+  Object.keys(summary.statusAccuracy || {}).forEach((k) => { const s = summary.statusAccuracy[k]; L.push('| ' + k + ' | ' + s.n + ' | ' + s.right + ' | ' + pct(s.rate) + ' | ' + Object.keys(s.byStatus).map((x) => x + ' ' + s.byStatus[x]).join(', ') + ' |'); });
+  L.push('', '## Reach (analysable truth reaching an analysable test; target ≥ ' + pct(TARGETS.reach) + ')', '', '| stratum | n | reached | rate |', '|---|---|---|---|');
+  Object.keys(summary.reach || {}).forEach((k) => { const r = summary.reach[k]; L.push('| ' + k + ' | ' + r.n + ' | ' + r.reached + ' | ' + pct(r.rate) + ' |'); });
   L.push('', '## Other figures', '', '- C within ±25 % when the unit slope was sampled: ' + pct(summary.cWithin25 ? summary.cWithin25.rate : null) + ' of ' + (summary.cWithin25 ? summary.cWithin25.n : 0));
   Object.keys(summary.byRateSource || {}).forEach((k) => { const b = summary.byRateSource[k]; L.push('- Rate source ' + k + ': ' + b.n + ' cases, fully right ' + b.fullyRight + ', k/S right ' + b.ksRight); });
   L.push('', '## Per stratum', '', '| stratum | n | errors | fully right | k/S right | abstained | high / medium / low | gen ms | analyse ms |', '|---|---|---|---|---|---|---|---|---|');
   Object.keys(summary.perStratum).forEach((s) => { const p = summary.perStratum[s]; L.push('| ' + s + ' | ' + p.n + ' | ' + p.errors + ' | ' + p.fullyRight + ' | ' + p.ksRight + ' | ' + p.abstained + ' | ' + (p.high || 0) + ' / ' + (p.medium || 0) + ' / ' + (p.low || 0) + ' | ' + f2(p.gen_ms) + ' | ' + f2(p.analyse_ms) + ' |'); });
   L.push('', '## In-app cases (24, lite settings)', '', '| seed | stratum | status | k/S | headline | fully right | margin |', '|---|---|---|---|---|---|---|');
-  cal.inApp.forEach((c) => L.push('| ' + c.seed + ' | ' + c.stratum + ' | ' + c.expect.status + ' | ' + c.expect.ks + ' | ' + c.expect.headline + ' | ' + c.expect.fullyRight + ' | ' + c.margin + ' |'));
+  cal.inApp.forEach((c) => L.push('| ' + c.seed + ' | ' + c.stratum + ' | ' + dash(c.expect.status) + ' | ' + dash(c.expect.ks) + ' | ' + dash(c.expect.headline) + ' | ' +
+                                  dash(c.expect.fullyRight) + ' | ' + dash(c.margin) + ' |'));
   return L.join('\n') + '\n';
 }
 
@@ -745,7 +875,52 @@ function perf(env) {
       t0 = nowMs(); const qc = DATA.qc(rec, {}); DATA.detect(rec, qc, {}); add('QC + detection, 500k samples', nowMs() - t0, 400);
     } catch (e) { add('parse / detection (failed: ' + e.message + ')', null, 1500); }
   }
+  perfReference(env, add);
   return rows;
+}
+// The reference case (US4: k 45, S 5, C 0.02, h 50, μ 1, 72 h after t_p 720 h; synth.reference) through the pipeline, then
+// the §4.8 per-stage rows timed on its BuildupSpec with the §3.1 functions, each with the PRiSM_autoInterp.stats() counters it
+// used; and the homogeneous fit on the 365-daily-step reference (±15 % day variation).
+function perfReference(env, add) {
+  const { SY, RUN, AI } = env;
+  if (!SY || typeof SY.reference !== 'function' || !AI || !RUN) return;
+  const runJob = (j) => { let s, g = 0; do { s = j.step(); } while (!s.done && ++g < 1e6); return j.result(); };
+  const timed = (label, target, fn) => {
+    let out = null;
+    try {
+      if (typeof AI.resetStats === 'function') AI.resetStats();
+      const t0 = nowMs(); out = fn(); const ms = nowMs() - t0;
+      const st = typeof AI.stats === 'function' ? AI.stats() : null;
+      const cnt = st ? ' [' + ['evals', 'gridBuilds', 'fits', 'lmIters', 'slices', 'lines'].filter((k) => typeof st[k] === 'number' && st[k]).map((k) => k + ' ' + st[k]).join(', ') + ']' : '';
+      add(label + cnt, ms, target);
+    } catch (e) { add(label + ' (failed: ' + e.message + ')', null, target); }
+    return out;
+  };
+  const specOf = (sc) => { const an = RUN.analyse(SY.toInput(sc), { cache: null }); const t = an && an.tests && an.tests.find((x) => x.spec); return { an, spec: t ? t.spec : null }; };
+  let ref, r365;
+  try { ref = SY.reference({ days: 30 }); } catch (e) { add('reference case generation (failed: ' + e.message + ')', null, 2000); return; }
+  const t0 = nowMs(); const R = specOf(ref); add('reference case, whole analysis (1 test, ≤ typical test + trend/review)', nowMs() - t0, 250);
+  if (!R.spec) { add('reference case: no analysable test (stage rows skipped)', null, 0); return; }
+  const spec = R.spec;
+  timed('reference: interpret (typical test)', 200, () => AI.interpret(spec));
+  let prep = null, ir = null, hom = null;
+  timed('reference: per-test prep (prepare, storage, IARF, line)', 40, () => { prep = AI.prepare(spec); AI.storage(prep); ir = AI.iarf(prep); AI.line(prep, ir); return prep; });
+  if (!prep || prep.ok === false) return;
+  hom = timed('reference: homogeneous fit (30 daily steps)', 60, () => AI.fit('homogeneous', prep));
+  if (hom) {
+    const ch = timed('reference: C-held refit pair (target per refit ≤ 30 ms, pair ≤ 60)', 60, () => runJob(AI.cHeldJob(prep, hom, { mode: 'auto' })));
+    void ch;
+    timed('reference: k-held fit + 2 refits', 80, () => runJob(AI.kHeldJob(prep, { k: hom.phys ? hom.phys.k : 45, delta: 0.05 })));
+  }
+  timed('reference: fault fit', 100, () => AI.fit('linearBoundary', prep));
+  timed('reference: composite fit, F frozen', 300, () => AI.fit('composite2', prep, { freeze: { F: true } }));
+  timed('reference: closed-circle fit', 150, () => AI.fit('closedCircle', prep));
+  try { r365 = SY.reference({ days: 365, variationPct: 15 }); } catch (e) { r365 = null; }
+  if (r365) {
+    const R2 = specOf(r365);
+    if (R2.spec) { const p2 = AI.prepare(R2.spec); if (p2 && p2.ok !== false) timed('homogeneous fit, 365 daily steps (reference)', 60, () => AI.fit('homogeneous', p2)); }
+    else add('365-step reference: no analysable test', null, 60);
+  }
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -800,12 +975,6 @@ async function main() {
   try {
     lines = await runItems(items, opts, nWorkers, progress);
     if (frSeeds) frLines = await runItems(frSeeds.map((seed) => ({ kind: 'single', seed })), opts, nWorkers, null);
-    if (flag('--write')) {
-      const cand = [];
-      SY.SEED_TABLE.forEach((e) => { for (let i = 0; i < Math.min(e.n, 6); i++) cand.push(e.from + Math.floor(i * e.n / 6)); });
-      IN_APP_PROVISIONAL.forEach(([s]) => { if (!cand.includes(s)) cand.push(s); });
-      liteLines = await runItems(cand.map((seed) => ({ kind: 'single', seed })), { lite: true }, nWorkers, null);
-    }
   } catch (e) {
     if (e && e.missing) return notRunnable(e.missing);
     console.error('[validate] crash: ' + (e && e.stack || e)); return 2;
@@ -818,15 +987,38 @@ async function main() {
   summary.elapsed_s = Math.round((nowMs() - t0) / 100) / 10;
   if (summary.falseRival && summary.falseRival.rate !== null && summary.falseRival.rate > TARGETS.falseRival) fails.push('false-rival rate ' + pct(summary.falseRival.rate));
   if (summary.errors) fails.push(summary.errors + ' case errors');
+  Object.keys(summary.reach).forEach((k) => { const r = summary.reach[k]; if (r.rate !== null && r.rate < TARGETS.reach) fails.push('reach ' + k + ' ' + pct(r.rate)); });
+  if (summary.sequences) {
+    const sp = summary.sequences.plain;
+    if (sp.stimShutinRate !== null && sp.stimShutinRate < TARGETS.stimShutin) fails.push('stimulation drop classified as a shut-in ' + pct(sp.stimShutinRate));
+    if (sp.gasNoAlertWhenDResolved !== null && sp.gasNoAlertWhenDResolved < TARGETS.gasNoAlert) fails.push('delta alerts on constant-skin gas wells with D resolved');
+  }
+  let calFailed = false;
   if (flag('--write')) {
     const res = calibrate(lines, env, opts);
-    res.cal.inApp = chooseInApp(liteLines, res.cal.thresholds, env);
-    if (res.cal.inApp.length < 24) fails.push('only ' + res.cal.inApp.length + ' in-app cases with margin ≥ 0.1');
-    checkTargets(res.T).forEach((f) => fails.push('calibration: ' + f));
-    writeCal(res.cal, calOut);
+    // the 24 in-app cases need margin ≥ 0.1 (§5.6); the candidate pool widens (6, 15, then every seed per stratum) before
+    // giving up, and file 55 is never written as calibrated with fewer than 24
+    const seen = new Set(), pools = [6, 15, Infinity];
+    liteLines = [];
+    for (const per of pools) {
+      const cand = [];
+      SY.SEED_TABLE.forEach((e) => { const m = Math.min(e.n, per); for (let i = 0; i < m; i++) cand.push(e.from + Math.floor(i * e.n / m)); });
+      if (per === pools[0]) IN_APP_PROVISIONAL.forEach(([s]) => cand.push(s));
+      const fresh = cand.filter((s) => !seen.has(s) && seen.add(s));
+      if (fresh.length) {
+        try { liteLines = liteLines.concat(await runItems(fresh.map((seed) => ({ kind: 'single', seed })), { lite: true }, nWorkers, null)); }
+        catch (e) { if (e && e.missing) return notRunnable(e.missing); console.error('[validate] crash: ' + (e && e.stack || e)); return 2; }
+      }
+      res.cal.inApp = chooseInApp(liteLines, res.cal.thresholds, env);
+      console.log('[validate] in-app cases with margin ≥ 0.1: ' + res.cal.inApp.length + ' of 24 (pool ' + seen.size + ' lite cases)');
+      if (res.cal.inApp.length === 24) break;
+    }
+    if (res.cal.inApp.length !== 24) { calFailed = true; fails.push('only ' + res.cal.inApp.length + ' in-app cases with margin ≥ 0.1: file 55 not written'); }
+    checkTargets(res.T, { rng: SY.rng }).forEach((f) => fails.push('calibration: ' + f));
+    if (!calFailed) writeCal(res.cal, calOut);
     fs.writeFileSync(path.join(out, 'calibration.md'), markdown(res.cal, summary));
-    summary.calibration = { thresholds: res.cal.thresholds, falseRival: res.cal.falseRival, sequences: res.cal.sequences };
-    console.log('[validate] wrote ' + path.relative(process.cwd(), calOut) + ' and ' + path.join(out, 'calibration.md'));
+    summary.calibration = { thresholds: res.cal.thresholds, falseRival: res.cal.falseRival, sequences: res.cal.sequences, written: !calFailed, inApp: res.cal.inApp.length };
+    console.log('[validate] wrote ' + (calFailed ? '' : path.relative(process.cwd(), calOut) + ' and ') + path.join(out, 'calibration.md'));
   }
   fs.writeFileSync(path.join(out, 'summary.json'), JSON.stringify(summary, null, 2));
   console.log('[validate] ' + summary.cases + ' cases, ' + summary.errors + ' errors, median per case ' + Math.round(summary.timings.perCaseMedian_ms || 0) + ' ms ' +
@@ -836,11 +1028,13 @@ async function main() {
   if (summary.sequences) console.log('  sequences: delta false alarms ' + pct(summary.sequences.plain.falseAlarmDelta) + ' (plain) / ' + pct(summary.sequences.basevar.falseAlarmDelta) + ' (basevar)');
   if (asJson) console.log(JSON.stringify(summary, null, 2));
   if (fails.length) console.log('[validate] targets missed: ' + fails.join('; '));
+  if (calFailed) return 1;   // --write without 24 in-app cases: never a silent success
   return strict && fails.length ? 1 : 0;
 }
 
-module.exports = { PRE_THRESHOLDS, GRID_STAGE1, GRID_STAGE2, TARGETS, IN_APP_PROVISIONAL, placeholderCal, calSource, writeCal, parseSeeds, wilson, quantile,
-                   clusterBootstrap, marginOf, sequenceMetrics, labelledSet, foldsOf, combos, calibrate, chooseInApp, summarize, markdown, relabel, CAL_FILE };
+module.exports = { PRE_THRESHOLDS, GRID_STAGE1, GRID_STAGE2, TARGETS, IN_APP_PROVISIONAL, BOOT_FULL, BOOT_GRID, placeholderCal, calSource, writeCal, parseSeeds, wilson,
+                   quantile, clusterBootstrap, bootRow, checkTargets, tables, rowStats, marginOf, sequenceMetrics, labelledSet, foldsOf, combos, calibrate, chooseInApp,
+                   summarize, markdown, relabel, CAL_FILE };
 
 if (require.main === module) {
   if (IS_WORKER) workerMain();
