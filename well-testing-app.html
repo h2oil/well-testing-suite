@@ -1404,7 +1404,7 @@ const __NAV_ORDER = [
     'home', 'clientinfo', 'wells', 'privacy',
     'aga3', 'orifice', 'choke', 'chokeflow', 'chokecnv', 'chokeperf', 'mcfshr', 'turbmeter', 'proving', 'sepqc',
     'wts', 'bottomsup', 'casing', 'flowline', 'lineheat', 'pipesz',
-    'prism', 'oilgas', 'solgor', 'gasdeliv', 'oilipr', 'gaslift',
+    'prism', 'oilgas', 'solgor', 'gasdeliv', 'oilipr', 'gaslift', 'buildup',
     'wellos', 'modbus', 'historian',
     'esdhi', 'esdlo', 'hydrate', 'cheminj', 'liquidline', 'pipelife', 'h2sroe', 'wellkill', 'complfluids',
     'sep', 'seprate', 'sephand', 'heater', 'vessel', 'tank', 'pumpsz', 'arc', 'aircomp',
@@ -3233,6 +3233,9 @@ function _snapshotPage() {
     _reportSnaps[_snapPage] = { title: m.title, subtitle: m.subtitle, inputs: m.inputs, results: m.results, at: new Date().toISOString() };
     __lsSet('wts_report_snapshots', () => JSON.stringify(_reportSnaps), _snapPage);   // evicts older snapshots if full
 }
+// v3.3: pages whose results change after an asynchronous run (Build-up Surveillance) capture
+// their Quick Report snapshot at once instead of waiting for the 900 ms click debounce.
+window.WTS_snapshotNow = function () { clearTimeout(_snapTimer); _snapshotPage(); };
 document.addEventListener('h2oil:pagechange', e => { _snapPage = e.detail && e.detail.page; clearTimeout(_snapTimer); });
 // Project File → New / Open replace localStorage; re-sync the in-memory cache.
 ['wts:project-new', 'wts:project-loaded'].forEach(t => document.addEventListener(t, () => {
@@ -3311,6 +3314,7 @@ const RT_BUILTIN = [
         { type:'rates', heading:'Rates' },
         { type:'pages', heading:'Deliverability & inflow performance', pages:['gasdeliv', 'oilipr'] },
         { type:'prism', heading:'Pressure-transient analysis (PRiSM)' },
+        { type:'pages', heading:'Build-up surveillance', pages:['buildup'], detail:'results' },
         { type:'pages', heading:'Emissions', pages:['flareghg'] },
         { type:'pages', heading:'Safety checks', pages:['esdhi', 'esdlo', 'hydrate', 'liquidline', 'pipelife', 'h2sroe', 'cheminj'] }
       ] }
@@ -11282,6 +11286,8 @@ const RELEASE_NOTES = [
 ];
 // The version under the logo always follows the newest release-notes entry.
 try { const _vl = document.getElementById('appVersionLabel'); if (_vl && RELEASE_NOTES[0] && RELEASE_NOTES[0].ver) _vl.textContent = 'Well Testing Suite ' + RELEASE_NOTES[0].ver; } catch (e) {}
+// v3.3: the app version for audit entries, signatures and reproducibility statements.
+window.WTS_appVersion = function () { return (RELEASE_NOTES[0] && RELEASE_NOTES[0].ver) || ''; };
 // Category chips, in display order within each release.
 const RN_CATS = {
     'new':      { label:'New calculators', color:'var(--green)',  bg:'rgba(63,185,80,.12)' },

@@ -199,3 +199,23 @@
         }
         html.ios-app .wts-rt-box { margin: 0 auto; }
         html.ios-app .wts-rt-list label { min-height: 44px; box-sizing: border-box; }
+
+        /* 7. v3.3 Build-up Surveillance action dialog (prism-build/49-calc-buildup.js, #bu_dlg).
+              Same two-part safe-area pattern as section 5: the full-screen <dialog> overlay keeps
+              the title, × and the OK / Cancel buttons clear of the status bar, notch / Dynamic
+              Island and home indicator in portrait and landscape; the inner box scrolls within the
+              insets (100vh first, 100dvh where supported). Controls and the close × get 44 pt. */
+        html.ios-app #bu_root .bu-dlg {
+            box-sizing: border-box;
+            padding: max(10px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right))
+                     max(10px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
+        }
+        html.ios-app #bu_root .bu-dlg-box {
+            box-sizing: border-box;
+            max-height: calc(100vh - max(10px, env(safe-area-inset-top)) - max(10px, env(safe-area-inset-bottom)));
+            max-height: calc(100dvh - max(10px, env(safe-area-inset-top)) - max(10px, env(safe-area-inset-bottom)));
+        }
+        html.ios-app #bu_root .bu-dlg-box button, html.ios-app #bu_root .bu-dlg-box select,
+        html.ios-app #bu_root .bu-dlg-box input, html.ios-app #bu_root .bu-dlg-x { min-height: 44px; }
+        html.ios-app #bu_root .bu-dlg-x { width: 44px; height: 44px; }
+        html.ios-app #bu_root .bu-act { min-height: 44px; }
