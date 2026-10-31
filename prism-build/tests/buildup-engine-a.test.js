@@ -230,6 +230,34 @@ module.exports = [
     },
   },
   {
+    name: 'EN4b early-slope flags: homogeneous S −4 / −3 with C 0.0005–0.02 → no earlyHalf, earlyQuarter or fracHalf and no KL9; fractured wells keep earlyHalf / earlyQuarter, a fractured injector fracHalf',
+    wp: 'WP1', timeoutMs: 120000,
+    run(app, assert) {
+      const DIST = ['earlyHalf', 'earlyQuarter', 'fracHalf'];
+      [-4, -3].forEach((S) => [0.0005, 0.001, 0.002, 0.005, 0.01, 0.02].forEach((C) => {
+        const r = run(app, synth(app.win, { k: 45, S, C, q: 800, tp: 720, dtEnd: 72 }).spec);
+        const tag = 'S ' + S + ', C ' + C + ': ';
+        assert.ok(!r.flags.some((f) => DIST.indexOf(f.code) >= 0), tag + 'no early-slope flag (' + r.flags.map((f) => f.code).join(',') + ')');
+        assert.ok(!r.confidence.reasons.some((x) => x.rule === 'KL9'), tag + 'no KL9');
+        assert.equal(r.evidence.distractorAtOrBeforeIarf, false, tag + 'no distractor');
+        assert.rel(r.final.k, 45, 0.005, tag + 'k'); assert.near(r.final.S, S, 0.05, tag + 'S');
+      }));
+      // fractured wells (the generator's time scale on x_f, interpreted with r_w = 0.354 ft)
+      const frac = (o) => { const s = synth(app.win, Object.assign({ q: 500, tp: 720, dtEnd: 200, well: { rw: o.xf } }, o)).spec; s.well.rw = 0.354; return run(app, s, { rivals: 'none' }); };   // flags only: no rival fits
+      const f1 = frac({ k: 10, S: 0, C: 0.001, xf: 100, model: 'infiniteFrac' });
+      assert.ok(f1.flags.some((f) => f.code === 'earlyHalf'), 'infinite-conductivity fracture: earlyHalf');
+      assert.ok(!f1.flags.some((f) => f.code === 'earlyQuarter'), 'no quarter slope from the linear-to-radial bend');
+      // bilinear flow (Δp ∝ Δt^¼; the registry finite-conductivity kernel is too slow for this file)
+      const bl = synth(app.win, { k: 10, S: 0, C: 0.001, q: 500, tp: 720, dtEnd: 30, perCycle: 30 }).spec;
+      bl.p = bl.dt.map((t) => bl.pwf0 + 25 * Math.pow(t, 0.25));
+      const f2 = run(app, bl, { rivals: 'none' });
+      assert.ok(f2.flags.some((f) => f.code === 'earlyQuarter'), 'bilinear flow: earlyQuarter (' + f2.flags.map((f) => f.code).join(',') + ')');
+      const f3 = frac({ k: 10, S: 0, C: 0.001, xf: 150, model: 'infiniteFrac', falloff: true });
+      assert.ok(f3.flags.some((f) => f.code === 'fracHalf') && !f3.flags.some((f) => f.code === 'earlyHalf'), 'fall-off: fracHalf');
+      assert.ok(f3.confidence.reasons.some((x) => x.rule === 'KL9') || f3.iarf.grade === 'none', 'the distractor reaches the label');
+    },
+  },
+  {
     name: 'EN5 noise: σ 0.5 psi at kh 40,000 → widened within caps, fair (noise-widened), noiseLimited, KH1 fails; beyond the caps → none, reason noise; se_s from the noise model only',
     wp: 'WP1', timeoutMs: 120000,
     run(app, assert) {

@@ -1488,6 +1488,7 @@
         fracHalf: 'Early half slope in the fall-off (injection-induced fracture).'
     };
     var DISTRACTORS = { valley: 1, halfLate: 1, earlyQuarter: 1, earlyHalf: 1, fracHalf: 1 };
+    var FLAG_MIN_CYC = 0.3, FLAG_SLOPE_RANGE = 0.10, FLAG_SLOPE_TREND = 0.05, FLAG_RATIO_TOL = 0.10;   // early half / quarter slope regime
     function flagsFor(prep, ir, st) {
         var b = prep.bins, X = b.X, d = prep.deriv.deriv, f = prep.deriv.full, n = X.length, out = [];
         var sl = _derivSlopes(prep, 0.1);
@@ -1496,12 +1497,42 @@
         if (lastFull < 0) return out;
         function add(code, i0, i1) { out.push({ code: code, dt0_h: b.dt[i0], dt1_h: b.dt[i1], text: FLAG_TEXT[code] }); }
         var iarfStart = (ir && ir.found) ? ir._a : lastFull;
-        // early quarter / half slope between the gate (or the start) and the IARF start
-        var eFrom = (st && st._iHump >= 0) ? a0 : 0;
-        var half = _runs(prep, function (i) { return sl[i] !== null && sl[i] >= 0.40 && sl[i] <= 0.60; }, 0.3, eFrom, Math.max(eFrom, iarfStart - 1));
-        if (half.length) add(prep.sign < 0 ? 'fracHalf' : 'earlyHalf', half[0].i0, half[0].i1);
-        var qtr = _runs(prep, function (i) { return sl[i] !== null && sl[i] >= 0.18 && sl[i] <= 0.32; }, 0.3, eFrom, Math.max(eFrom, iarfStart - 1));
-        if (qtr.length) add('earlyQuarter', qtr[0].i0, qtr[0].i1);
+        // Early quarter / half slope between the gate (or the start) and the IARF start. Only a
+        // sustained flow regime is flagged: over ≥ 0.3 cycle the derivative slope stays in the band,
+        // varies by ≤ FLAG_SLOPE_RANGE with a trend of ≤ FLAG_SLOPE_TREND per cycle, and Δp′/Δp exceeds
+        // the slope by ≤ FLAG_RATIO_TOL (a power-law regime has Δp′/Δp = slope; a fracture-face skin or
+        // a storage hump only lowers the ratio). The smooth storage-to-radial bend of a negative-skin
+        // well passes through slopes 0.5 and 0.25 either with Δp′/Δp about 0.15 above the slope (C
+        // visible) or with the slope falling steadily, about 0.07 per cycle at S = −4 (C negligible),
+        // so it is not flagged.
+        var eFrom = (st && st._iHump >= 0) ? a0 : 0, eTo = Math.max(eFrom, iarfStart - 1);
+        function regime(lo, hi) {
+            var runs = _runs(prep, function (i) {
+                return sl[i] !== null && sl[i] >= lo && sl[i] <= hi && d[i] > 0 && b.dp[i] > 0 && d[i] / b.dp[i] - sl[i] <= FLAG_RATIO_TOL;
+            }, FLAG_MIN_CYC, eFrom, eTo);
+            for (var r = 0; r < runs.length; r++) {
+                var best = null;
+                for (var s0 = runs[r].i0; s0 <= runs[r].i1; s0++) {
+                    var mn = Infinity, mx = -Infinity, c = 0, sx = 0, sy = 0, sxx = 0, sxy = 0;
+                    for (var e = s0; e <= runs[r].i1; e++) {
+                        if (sl[e] < mn) mn = sl[e];
+                        if (sl[e] > mx) mx = sl[e];
+                        if (mx - mn > FLAG_SLOPE_RANGE + 1e-9) break;
+                        var xe = X[e] / LN10;
+                        c++; sx += xe; sy += sl[e]; sxx += xe * xe; sxy += xe * sl[e];
+                        if ((X[e] - X[s0]) / LN10 < FLAG_MIN_CYC - 1e-9) continue;
+                        var den = c * sxx - sx * sx, trend = den > 0 ? (c * sxy - sx * sy) / den : 0;
+                        if (Math.abs(trend) <= FLAG_SLOPE_TREND && (!best || X[e] - X[s0] > X[best.i1] - X[best.i0] + 1e-12)) best = { i0: s0, i1: e };
+                    }
+                }
+                if (best) return best;
+            }
+            return null;
+        }
+        var half = regime(0.40, 0.60);
+        if (half) add(prep.sign < 0 ? 'fracHalf' : 'earlyHalf', half.i0, half.i1);
+        var qtr = regime(0.18, 0.32);
+        if (qtr) add('earlyQuarter', qtr.i0, qtr.i1);
         // late half slope: the last ≥ 0.2 cycle at slope 0.35–0.65
         var lateH = _runs(prep, function (i) { return sl[i] !== null && sl[i] >= 0.35 && sl[i] <= 0.65; }, 0.2, Math.max(a0, 0), lastFull);
         if (lateH.length && lateH[lateH.length - 1].i1 === lastFull && (!ir || !ir.found || lateH[lateH.length - 1].i0 > ir._b)) add('halfLate', lateH[lateH.length - 1].i0, lastFull);
