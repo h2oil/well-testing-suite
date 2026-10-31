@@ -162,6 +162,14 @@ module.exports = [
       assert.ok(dteEnd1 < t15, 'window ends (Δt_e ' + dteEnd1.toFixed(1) + ' h) before the 15 % departure (' + t15.toFixed(1) + ' h)');
       assert.ok(rf.triggers.up && rf.triggers.fired.indexOf('T-up') >= 0, 'T-up fires');
       shapeOk(assert, 'BuildupResult', rf);
+      // pass-2 background check: no background keeps the trigger; a rising background explains it away
+      const bg0 = AI.backgroundCheck(app.toWin(rf), app.toWin(f.spec), 0, 'drift');
+      assert.ok(bg0.applied && bg0.triggersAfter.indexOf('T-up') >= 0 && bg0.boundaryDepends === false, JSON.stringify(bg0));
+      assert.equal(bg0.slopeSource, 'drift'); assert.deepEqual(Array.from(bg0.ev), ['M7']);
+      if (rf.chosen.key !== 'homogeneous') {
+        const bg1 = AI.backgroundCheck(app.toWin(rf), app.toWin(f.spec), 0.1, 'pstar');
+        assert.ok(bg1.triggersAfter.indexOf('T-up') < 0 && bg1.boundaryDepends === true, 'the rival depends on the background: ' + JSON.stringify(bg1));
+      }
     },
   },
   {

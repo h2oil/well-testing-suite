@@ -359,15 +359,28 @@ module.exports = [
       const ent = AI.gridEntry('homogeneous', prep);
       const fU = W.PRiSM_fitPhysical('homogeneous', prep.adata, prep.well, { entry: ent, isolated: true, mode: 'physical', dataset: { t: [], p: [] }, singleStart: true, start: app.toWin(start), maxIter: 40 });
       ['k', 'S', 'C'].forEach((k) => assert.rel(fA.phys[k], fU.phys[k], 1e-9, 'sliced = unsliced: ' + k));
-      // plateau counter: resuming with stagnant0 = 4 stops after one more stagnant step
-      const fn = (t, p) => t.map(() => 1 + 1e-15 * (p.a - 5) * (p.a - 5));
-      const data = { t: [0, 1, 2], p: [1, 1, 1] };
-      const r0 = W.PRiSM_lm(fn, app.toWin(data), app.toWin({ a: 0 }), app.toWin({ a: [-100, 100] }), null, app.toWin({ maxIter: 40 }));
-      const r1 = W.PRiSM_lm(fn, app.toWin(data), app.toWin({ a: 0 }), app.toWin({ a: [-100, 100] }), null, app.toWin({ maxIter: 40, stagnant0: 4 }));
-      if (r0.stopReason === 'plateau') {
-        assert.equal(r1.stopReason, 'plateau');
-        assert.ok(r1.iterations < r0.iterations, 'the carried counter stops earlier (' + r1.iterations + ' < ' + r0.iterations + ')');
+      // plateau counter: an objective whose accepted steps each change the SSR by < 1e-12 (relative)
+      const fn = (t, p) => t.map((ti) => (ti === 0 ? 1e10 : Math.exp(p.a) - Math.exp(5)));
+      const data = app.toWin({ t: [0, 1], p: [0, 0] }), bnd = app.toWin({ a: [0, 20] });
+      const r0 = W.PRiSM_lm(fn, data, app.toWin({ a: 8.87 }), bnd, null, app.toWin({ maxIter: 40, tolerance: 0 }));
+      const r1 = W.PRiSM_lm(fn, data, app.toWin({ a: 8.87 }), bnd, null, app.toWin({ maxIter: 40, tolerance: 0, stagnant0: 4 }));
+      assert.ok(r0.stopReason !== 'plateau' && r0.stagnantSteps === 4, 'four stagnant steps alone: ' + r0.stopReason);
+      assert.equal(r1.stopReason, 'plateau', 'resumed with the carried counter, the fifth stagnant step stops');
+      assert.equal(r1.iterations, 1);
+      // the same stop through one-iteration slices carrying p / y / SSR / λ / counter
+      const full = W.PRiSM_lm(fn, data, app.toWin({ a: 9.2 }), bnd, null, app.toWin({ maxIter: 40, tolerance: 0 }));
+      assert.equal(full.stopReason, 'plateau');
+      let st = null, last = null, slices = 0;
+      while (slices < 20) {
+        const o = { maxIter: 1, tolerance: 0, skipFinal: true };
+        if (st) Object.assign(o, { p0: st.pInt, y0: st.y, ssr0: st.ssr, lambda0: st.lambda, stagnant0: st.stagnantSteps });
+        last = W.PRiSM_lm(fn, data, app.toWin({ a: 9.2 }), bnd, null, app.toWin(o));
+        slices++; st = last;
+        if (last.stopReason !== 'maxIter') break;
       }
+      assert.equal(last.stopReason, 'plateau', 'the plateau stop fires across slices');
+      assert.equal(slices, full.iterations, 'after the same number of iterations');
+      assert.near(last.params.a, full.params.a, 1e-12);
       assert.ok(typeof r1.stagnantSteps === 'number' && typeof r1.lambda === 'number' && r1.nEval > 0, 'PRiSM_lm reports λ, nEval and the counter');
       const sl = W.PRiSM_fitPhysical('homogeneous', prep.adata, prep.well, { entry: ent, isolated: true, mode: 'physical', dataset: { t: [], p: [] }, singleStart: true, start: app.toWin(start), evalBudget: 5, slice: true, maxIter: 40 });
       assert.ok(sl.sliced && sl.lmState && typeof sl.lmState.stagnant === 'number' && sl.lmState.done === false, 'a slice returns its state');

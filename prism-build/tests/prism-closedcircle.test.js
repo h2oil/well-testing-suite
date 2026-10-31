@@ -80,6 +80,8 @@ module.exports = [
       assert.ok(f.ok && f.converged, 'converged: ' + f.stopReason);
       assert.rel(f.phys.re_ft, re, 0.05, 're ' + f.phys.re_ft);
       assert.rel(f.phys.k, 45, 0.03);
+      const pStarM = AI.pExt(prep, f, 'infinite'), pBar = AI.pExt(prep, f, 'closed');
+      assert.ok(Number.isFinite(pStarM) && Number.isFinite(pBar) && pBar < pStarM, 'p̄ (closed family) below the model p* (' + pBar + ' < ' + pStarM + ')');
       // and through the full interpretation: chosen, fully seen, wording lists the alternatives
       const r = JSON.parse(JSON.stringify(AI.interpret(app.toWin(spec))));
       assert.equal(r.chosen.key, 'closedCircle');
