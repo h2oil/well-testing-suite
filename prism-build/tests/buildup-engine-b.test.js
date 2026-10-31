@@ -179,6 +179,11 @@ module.exports = [
       [['KK1', { kHeldConverged: false }], ['KK2', { kHeldCorrCS: -0.97 }], ['KK3', { kHeldRmsRatio: 4 }], ['KK4', { sErr: 1.3 }]].forEach(([id, p]) => {
         const r = kh(p); assert.ok(fired(r, id), id); assert.equal(r.ks, 'low', id + ' low');
       });
+      // KL4 (k-held) only for a hump / steep-storage flag at or after the k-held fit start
+      assert.ok(fired(kh({ flags: ['humpDp'] }), 'KL4'), 'KL4 on a hump flag when the fit start is unknown');
+      assert.ok(!fired(kh({ flags: ['humpDp'], humpAfterFitStart: false }), 'KL4'), 'no KL4: the fit starts after the hump (pass-1 rule)');
+      assert.ok(fired(kh({ flags: ['humpDp'], humpAfterFitStart: false, kHeldHumpAfterStart: true }), 'KL4'), 'KL4: the k-held fit includes the hump');
+      assert.ok(!fired(kh({ flags: ['steepStorage'], kHeldHumpAfterStart: false }), 'KL4'), 'no KL4: the k-held fit starts after it');
       // model label rules
       assert.equal(conf({ chosenKey: 'linearBoundary', dBicChosen: 25, dBicNext: 15, chosenFullySeen: 'full', triggers: ['T-up'] }).model, 'high');
       assert.equal(conf({ chosenKey: 'linearBoundary', dBicChosen: 25, dBicNext: 15, chosenFullySeen: 'partial', triggers: ['T-up'] }).model, 'medium');
@@ -270,6 +275,22 @@ module.exports = [
       assert.equal(code, 'CANCELLED');
       app.flush(1000);
       assert.equal(app.pendingTimers(), 0);
+      // failures keep prepare's bad fields; a spec without an id is 'B?' (never a banned word)
+      const bw = JSON.parse(JSON.stringify(spec)); bw.well.h = 0;
+      const fb = JSON.parse(JSON.stringify(AI.interpret(app.toWin(bw))));
+      assert.equal(fb.ok, false); assert.equal(fb.code, 'BAD_WELL'); assert.deepEqual(fb.bad, ['h'], 'bad fields kept');
+      const noId = JSON.parse(JSON.stringify(spec)); delete noId.id;
+      const rn = JSON.stringify(AI.interpret(app.toWin(noId)));
+      assert.equal(JSON.parse(rn).id, 'B?'); assert.ok(!/undefined/.test(rn), 'no banned word');
+      // the input hash is computed inside the work units, one 2000-sample block per unit
+      const big = synth(W, Object.assign({}, REF, { dtEnd: 72, perCycle: 1000 })).spec;
+      assert.ok(big.dt.length > 4000, big.dt.length + ' raw samples');
+      const jb = AI.interpretJob(app.toWin(big)), labels = [];
+      for (let i = 0; i < 4; i++) labels.push(jb.step().label);
+      assert.ok(labels.slice(0, 3).every((l) => /input hash/.test(l)), 'hash units first: ' + labels.join(' | '));
+      let sb; do { sb = jb.step(); } while (!sb.done);
+      assert.ok(/^[0-9a-f]{16}$/.test(jb.result().inputHash), 'inputHash');
+      assert.equal(jb.result().inputHash, AI.interpret(app.toWin(big)).inputHash, 'same hash from interpret');
       // decisions use rounded inputs (D27): 1e-12 either side of a threshold gives the same label / choice
       const cal = app.toWin(shapes.FIX.cal);
       const ev = (x) => app.toWin(Object.assign(EV_HIGH(), { sErr: x }));
@@ -295,6 +316,7 @@ module.exports = [
       const prep = prepOf(app, spec);
       const k0 = runJob(AI.kHeldJob(prep, app.toWin({ k: 45, delta: 0.05 })));
       shapeOk(assert, 'KHeld', AI.clean(k0));
+      assert.equal(k0.window, null, 'no anomaly: the k-held fit uses every fit point'); assert.equal(k0.humpAfterFitStart, false);
       assert.ok(k0.converged); assert.near(k0.fit.phys.S, 5, 0.05, 'S with k at the truth'); assert.equal(k0.fit.phys.k, 45);
       const k1 = runJob(AI.kHeldJob(prep, app.toWin({ k: 45 * 1.05, delta: 0.05 })));
       const dS = Math.abs(k1.fit.phys.S - 5);
@@ -412,6 +434,13 @@ module.exports = [
       const sl = W.PRiSM_fitPhysical('homogeneous', prep.adata, prep.well, { entry: ent, isolated: true, mode: 'physical', dataset: { t: [], p: [] }, singleStart: true, start: app.toWin(start), evalBudget: 5, slice: true, maxIter: 40 });
       assert.ok(sl.sliced && sl.lmState && typeof sl.lmState.stagnant === 'number' && sl.lmState.done === false, 'a slice returns its state');
       assert.ok(sl.nEval <= 5 + 4, 'one slice stays within its budget plus one iteration');
+      // an early return (no free parameter) carries the resume fields too
+      const e0 = W.PRiSM_lm(fn, data, app.toWin({ a: 8.87 }), bnd, app.toWin({ a: true }), app.toWin({ maxIter: 10 }));
+      assert.equal(e0.stopReason, 'no-free-params');
+      assert.ok(typeof e0.lambda === 'number' && typeof e0.nEval === 'number' && e0.stagnantSteps === 0 && e0.pInt && Array.isArray(e0.y), 'resume fields on the early return');
+      // maxIterTotal counts both starts: a fit that misses convergence never runs more than the total
+      const capped = AI.fit('homogeneous', prep, app.toWin({ start: { k: 3, S: 25, C: 0.3 }, maxIterTotal: 6 }));
+      assert.ok(capped.iterations <= 6, 'iterations ' + capped.iterations + ' ≤ 6 across both starts');
     },
   },
   {
@@ -458,7 +487,7 @@ module.exports = [
     },
   },
   {
-    name: 'EN22 reach and p*: numeric t_5 % within 5 % of a direct scan (reach.fair = 10^0.6·t5, good = 10^1.1·t5); 24 h without IARF fits no rival, "too short"; an estimated history brackets the true p*',
+    name: 'EN22 reach and p*: numeric t_5 % 13.2 h ± 5 % (= a direct scan; the A.1 correlation gives 15.5 h), reach.fair 52.7 h, reach.good 167 h; 24 h without IARF fits no rival, "too short"; an estimated history within the ×10 cover brackets the true p*',
     wp: 'WP1', timeoutMs: 120000,
     run(app, assert) {
       const AI = AIof(app), W = app.win;
@@ -469,7 +498,12 @@ module.exports = [
       const ts = []; for (let i = 0; i <= 400; i++) ts.push(Math.pow(10, -1 + i / 100));
       const pdp = W.PRiSM_MODELS.homogeneous.pdPrime(app.toWin(ts.map((x) => Bt * x)), app.toWin({ Cd, S: 5 }));
       let t5 = null; for (let i = ts.length - 1; i >= 0; i--) if (Math.abs(2 * pdp[i] - 1) > 0.05) { t5 = ts[i]; break; }
-      assert.rel(r.reach.t5_h, t5, 0.05, 'numeric t5 % (' + r.reach.t5_h + ' h vs scan ' + t5 + ' h; A.1 correlation 15.5 h)');
+      assert.rel(r.reach.t5_h, t5, 0.05, 'numeric t5 % (' + r.reach.t5_h + ' h vs scan ' + t5 + ' h)');
+      // Resolved numbers (deviation from the plan's 15.5 / 62 / 196 h, which are the Appendix A.1 correlation values;
+      // A.1 itself says the reach is computed numerically): t5 13.23 h, fair 52.7 h, good 166.6 h.
+      assert.rel(r.reach.t5_h, 13.23, 0.05, 't5 % ' + r.reach.t5_h.toFixed(2) + ' h');
+      assert.rel(r.reach.fair_h, 52.7, 0.05, 'reach.fair ' + r.reach.fair_h.toFixed(1) + ' h');
+      assert.rel(r.reach.good_h, 166.6, 0.05, 'reach.good ' + r.reach.good_h.toFixed(1) + ' h');
       assert.rel(r.reach.fair_h, Math.pow(10, 0.6) * r.reach.t5_h, 1e-9); assert.rel(r.reach.good_h, Math.pow(10, 1.1) * r.reach.t5_h, 1e-9);
       assert.ok(r.reach.t10_h < r.reach.t5_h);
       assert.ok(r.reach.reachable && r.reach.fairShut_h > r.reach.fair_h, 'shut-in hours from Δt_e');
@@ -479,7 +513,12 @@ module.exports = [
       assert.equal(s24.triggers.noneSkipped, true); assert.equal(s24.triggers.none, false);
       assert.equal(s24.models.length, 1, 'no rival fitted'); assert.equal(s24.reason, 'NO_IARF_TOO_SHORT');
       assert.includes(s24.iarf.reason, 'too short');
-      // estimated history: true production 1 year, 90 days known + the default 30-day prepend
+      assert.equal(s24.final.pExtSource, 'model', 'no line: p_ext from the model'); assert.equal(s24.final.pExtKind, 'pStar');
+      assert.ok(s24.warnings.some((w) => w.code === 'PEXT_MODEL'), 'noted in the warnings');
+      assert.equal(r.final.pExtSource, 'line');
+      // estimated history: true production 1 year, 90 days known + the default 30-day prepend. The p* range re-evaluates
+      // the line with the prepend ×0.5, ×2 and ×10, so it covers a true history up to 90 + 300 days; the plan's 5-year
+      // case (range [4920, 4960] psia against a true p* of 5006) is outside that cover (deviation for the lead).
       const tc = 365 * 24, truth = synth(W, { k: 45, S: 5, C: 0.02, q: 800, steps: [{ t: 0, q: 800 }, { t: tc, q: 0 }], dtEnd: 72 });
       const rt = run(app, truth.spec);
       const est = JSON.parse(JSON.stringify(truth.spec));

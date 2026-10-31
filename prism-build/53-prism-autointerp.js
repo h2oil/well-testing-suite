@@ -1477,8 +1477,17 @@
             dt0_h: ir.dt0_h, dt1_h: ir.dt1_h, n: r.window ? r.window.n : null,
             shifts: [],
             plateauCheck: { khDiffPct: _fin(cc.khDiffPct), dS: _fin(cc.dS), pass: !!cc.pass },
+            Smid: null, dtMid_h: null,
             ev: ['L1', 'L2', 'L3']
         };
+        // S at the window midpoint's Δt_e (§4.6 item 4): the point skin of the observed Δp there with the
+        // line's k and m (cross-check of the line skin against the point skins of the window, I4).
+        if (ir._a != null && ir._b != null && _pos(r.m) && _pos(r.k)) {
+            var bx = prep.bins, xm = 0.5 * (ir.X0 + ir.X1), im = ir._a, w = prep.well;
+            for (var ii = ir._a; ii <= ir._b; ii++) if (Math.abs(bx.X[ii] / LN10 - xm) < Math.abs(bx.X[im] / LN10 - xm)) im = ii;
+            var sm = 0.5 * (bx.dp[im] / (r.m / LN10) - Math.log(r.k * bx.dte[im] / (w.phi * w.mu * w.ct * w.rw * w.rw)) + 7.4316);
+            out.Smid = _fin(sm); out.dtMid_h = bx.dt[im];
+        }
         // Shifted lines for S_win: δ = min(0.25, 0.2·span), earlier and later, clipped to [gate, last full bin]
         var span = ir.cycles, delta = Math.min(DEFAULTS.sErr.winShift, DEFAULTS.sErr.winShiftFrac * span);
         var Xg = (ir._a0 != null && ir._a0 < prep.bins.X.length) ? prep.bins.X[ir._a0] / LN10 : ir.X0;
@@ -2076,11 +2085,13 @@
             var mf = (fr && fr.ok) ? _buildModelFit(key, prep, entry, fr, meta) : _failFit(key, entry, (fr && fr.reason) || 'Fit failed.', meta);
             STATS.fits++;
             state.best = state.best ? _betterFit(state.best, mf) : mf;
-            if (!mf.converged && !state.retried && opts.retry !== false && _num(start.S) && !freeze.S) {
+            // A second start (S ± 2) only if not converged and iterations remain: maxIterTotal counts both
+            // starts together (§4.6 item 5).
+            if (!mf.converged && !state.retried && opts.retry !== false && _num(start.S) && !freeze.S && state.it < maxIt) {
                 state.retried = true;
                 var dir = (mf.ok && _num(mf.phys.S) && mf.phys.S < start.S) ? -2 : 2;
                 state.start = _copy(start); state.start.S = _clamp(start.S + dir, -6.5, 49);
-                state.lm = null; state.it = 0; state.phase = 'run';
+                state.lm = null; state.phase = 'run';
                 return false;
             }
             state.result = state.best;
@@ -2294,7 +2305,15 @@
             txt = (full ? 'Closed boundary fully seen (falling derivative).' : 'Closed boundary seen, not fully.') +
                   ' Alternatives: constant-pressure boundary, interference or depletion.';
         }
-        return { status: full ? 'full' : (any ? 'partial' : 'not'), value: val, bound: full ? null : 'upper', text: _txt(txt) };
+        var status = full ? 'full' : (any ? 'partial' : 'not');
+        if (status === 'not') {
+            // No departure seen: the boundary (if any) lies beyond what the test investigated, so a fitted
+            // distance can only be a lower bound.
+            var nm = key === 'linearBoundary' ? 'Sealing fault' : (key === 'composite2' ? 'Radial composite' : 'Closed boundary');
+            txt = nm + ' not seen: no departure from the IARF level in this test; any fitted distance is a lower bound.' +
+                  (key === 'closedCircle' ? ' Alternatives: constant-pressure boundary, interference or depletion.' : '');
+        }
+        return { status: status, value: val, bound: status === 'full' ? null : (status === 'partial' ? 'upper' : 'lower'), text: _txt(txt) };
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -2363,7 +2382,8 @@
             if (!fr || !fr.ok || !_num(fr.ssrLog) || !_num(mf.ssrLog)) return null;
             var n = nB || fr.nDp, ne = nEff || n, fl = mf._floor || 0;
             var s1 = Math.max(fr.ssrLog, fl), s0 = Math.max(mf.ssrLog, fl);
-            return _rBic(ne * Math.log(s1 / s0));
+            // BIC_refit − BIC_fit: the refit has one parameter fewer (C frozen), so its penalty is ln n_eff lower.
+            return _rBic(ne * Math.log(s1 / s0) - Math.log(Math.max(ne, 1.0000001)));
         }
         function enqueueExt() {
             extDone = true;
@@ -2497,7 +2517,11 @@
         var r4Fail = ev.r4Status === 'fail' && _num(ev.r4) && _rRatio(Math.abs(ev.r4 - 1)) > T.r3LowPct / 100;
         if (r3Fail || r4Fail || ev.dqKnown === false) { low = true; add('KL3', 'low', 'KL3: rate check failed by more than ' + T.r3LowPct + ' % or the rate change is unknown.', ['R1', 'R3', 'R4']); }
         if (kHeld) {
-            if (flags.some(function (fl) { return fl === 'humpDp' || fl === 'steepStorage'; })) { low = true; add('KL4', 'low', 'KL4: pressure hump or steep storage after the fit start.', ['M7']); }
+            // KL4 (k-held): a hump / steep-storage flag at or after the k-held fit start — KHeld.humpAfterFitStart
+            // (kHeldHumpAfterStart), else the pass-1 humpAfterFitStart (same anomaly rule), else any such flag.
+            var hAfter = typeof ev.kHeldHumpAfterStart === 'boolean' ? ev.kHeldHumpAfterStart
+                : (typeof ev.humpAfterFitStart === 'boolean' ? ev.humpAfterFitStart : flags.some(function (fl) { return fl === 'humpDp' || fl === 'steepStorage'; }));
+            if (hAfter) { low = true; add('KL4', 'low', 'KL4: pressure hump or steep storage after the fit start.', ['M7']); }
             if (T.distractorRule && hasDistractor) { low = true; add('KL9', 'low', 'KL9: a distractor flag (valley, half or quarter slope) in a k-held test.', ['M7', 'I1']); }
             if (ev.kHeldConverged === false) { low = true; add('KK1', 'low', 'KK1: the k-held fit did not converge.', ['M8']); }
             if (_num(ev.kHeldCorrCS) && _rRatio(Math.abs(ev.kHeldCorrCS)) >= DEFAULTS.kHeld.corrMax) { low = true; add('KK2', 'low', 'KK2: C and S are strongly correlated in the k-held fit (|r| ' + _fmt(Math.abs(ev.kHeldCorrCS), 3) + ').', ['M8']); }
@@ -2623,8 +2647,20 @@
         } catch (e) { return null; }
     }
 
-    // kHeldJob(prep, {k, delta}) — k fixed at the baseline median, S and C free, then
-    // two refits at k·(1 ± δ); S_k = half the S range (§4.6 item 18, D14).
+    // Fit start after a pressure hump or steep storage (§4.6 item 10): 3·t_end of the anomaly, kept only
+    // when at least 8 fit points remain. humpAfterFitStart: such a flag still ends at or after the fit
+    // start (the fit includes the anomaly), the k-held form of KL4.
+    function _anomalyWindow(prep, flags) {
+        var anom = (flags || []).filter(function (fl) { return fl.code === 'humpDp' || fl.code === 'steepStorage'; });
+        var win = anom.length ? { tmin: 3 * Math.max.apply(null, anom.map(function (fl) { return fl.dt1_h; })) } : null;
+        if (win && _fitPoints(prep, win).length < 8) win = null;
+        var t0 = win ? win.tmin : (prep.fitSet.dt.length ? prep.fitSet.dt[0] : 0);
+        return { window: win, humpAfterFitStart: anom.some(function (fl) { return fl.dt1_h >= t0; }) };
+    }
+
+    // kHeldJob(prep, {k, delta, window?}) — k fixed at the baseline median, S and C free, then
+    // two refits at k·(1 ± δ); S_k = half the S range (§4.6 item 18, D14). Without opts.window the fit
+    // starts after a hump / steep-storage anomaly as in pass 1 (computed in the first step).
     function kHeldJob(prep, opts) {
         opts = opts || {};
         var k = opts.k, delta = _num(opts.delta) ? Math.abs(opts.delta) : 0.05;
@@ -2637,7 +2673,7 @@
             if (seedS === null) seedS = sd.S;
             if (seedC === null) seedC = sd.C;
         }
-        var win = opts.window || null;
+        var win = opts.window || null, setup = !!opts.window, humpAfter = null;
         var label = 'k-held fit';
         function finish() {
             var f0 = fits[0];
@@ -2657,12 +2693,19 @@
                 k: k, delta: delta, fit: ok ? f0 : _failFit('homogeneous', null, 'k-held fit failed', null),
                 refits: refits.filter(function (r) { return _num(r.S); }), S_k: _fin(Sk), S_kAnalytic: Math.abs(delta * (pD - 0.5)),
                 corrCS: ok ? _fin(f0.corr.CS) : null, rmsRatio: _fin(rmsRatio), converged: !!(ok && f0.converged),
-                n: bt ? bt.n : null, nEff: bt ? _fin(bt.nEff) : null, ev: ['M8']
+                n: bt ? bt.n : null, nEff: bt ? _fin(bt.nEff) : null, window: win ? { tmin: win.tmin } : null, humpAfterFitStart: humpAfter,
+                ev: ['M8']
             };
         }
         return {
             step: function () {
                 if (result) return { done: true, progress: 1, label: label };
+                if (!setup) {
+                    setup = true;
+                    var st0 = storage(prep), aw = _anomalyWindow(prep, flagsFor(prep, iarf(prep, { storage: st0 }), st0));
+                    win = aw.window; humpAfter = aw.humpAfterFitStart;
+                    return { done: false, progress: 0.02, label: label };
+                }
                 if (cur) {
                     var s = cur.step();
                     if (!s.done) return { done: false, progress: (idx + 0.5) / 3, label: label };
@@ -2743,6 +2786,7 @@
         return { ok: false, id: _specId(spec), version: AI.version, code: code || 'FAILED', errors: errors || [],
                  bad: Array.isArray(bad) ? bad.slice() : [], reason: code || 'FAILED', warnings: [] };
     }
+    var HASH_CHUNK = 2000;   // samples per input-hash work unit
     function _specId(spec) { return (spec && spec.id != null && spec.id !== '') ? String(spec.id) : 'B?'; }
 
     function interpretJob(spec, opts) {
@@ -2755,7 +2799,19 @@
         var rivalsMode = opts.rivals || so.rivals || 'auto';
         var cheldMode = opts.cheld || so.cheld || 'auto';
         var label0 = 'Build-up ' + _specId(spec);
-        var inputHash = hash16(canon({ spec: spec, rivals: rivalsMode, cheld: cheldMode, engine: AI.version }, 'inputs'));
+        // inputHash = hash16(canon({spec (without dt/p/n), data: [hash16 of each HASH_CHUNK-sample block of
+        // dt/p/n], rivals, cheld, engine})): computed inside the work units, one block per unit, so a raw
+        // spec with many samples never puts the whole canonical serialisation in one step (§4.8).
+        var inputHash = null, hParts = [], specLite = {};
+        if (spec && typeof spec === 'object') Object.keys(spec).forEach(function (k) { if (k !== 'dt' && k !== 'p' && k !== 'n') specLite[k] = spec[k]; });
+        var nSamp = (spec && spec.dt && typeof spec.dt.length === 'number') ? spec.dt.length : 0;
+        function sl(a, i0, i1) { return (a && typeof a.length === 'number') ? Array.prototype.slice.call(a, i0, i1) : null; }
+        for (var hc = 0; hc < nSamp; hc += HASH_CHUNK) {
+            (function (i0, i1) {
+                R.add('input hash', function () { hParts.push(hash16(canon({ dt: sl(spec.dt, i0, i1), p: sl(spec.p, i0, i1), n: sl(spec.n, i0, i1) }, 'inputs'))); });
+            })(hc, Math.min(nSamp, hc + HASH_CHUNK));
+        }
+        R.add('input hash', function () { inputHash = hash16(canon({ spec: specLite, data: hParts, rivals: rivalsMode, cheld: cheldMode, engine: AI.version }, 'inputs')); });
 
         R.add('prepare', function () {
             var p = prepare(spec);
@@ -2793,9 +2849,8 @@
             if (!S.storage.unitSlope) S.storage.seed = predictors(k0, w.h, w.mu, C0, S0);
             S.seed = { k: k0, S: S0, C: C0 };
             // A hump or steep-storage flag moves the fit start to 3·t_end of the anomaly.
-            var anom = S.flags.filter(function (fl) { return fl.code === 'humpDp' || fl.code === 'steepStorage'; });
-            S.window = anom.length ? { tmin: 3 * Math.max.apply(null, anom.map(function (fl) { return fl.dt1_h; })) } : null;
-            if (S.window && _fitPoints(p, S.window).length < 8) S.window = null;
+            var aw = _anomalyWindow(p, S.flags);
+            S.window = aw.window; S.humpAfterFitStart = aw.humpAfterFitStart;
             R.sub(fitJob('homogeneous', p, { start: S.seed, window: S.window || undefined }), function (mf) { S.hom = mf; });
         });
         R.add('reach and agreement', function () {
@@ -2947,7 +3002,10 @@
                 if (g < 1) minFault = Math.sqrt(C_B * k * dteLast * Math.log(1 / g) / (w.phi * w.mu * w.ct));
             }
             S.final = { k: k, kh: kh, S: Sk, C: C, source: src, m: m, mPrime: m / LN10, pStar: _fin(pStar),
-                        pStarRange: range ? { lo: range.lo, hi: range.hi } : null, pExt: _fin(pE), pExtKind: 'pStar', piModel: _fin(piM),
+                        pStarRange: range ? { lo: range.lo, hi: range.hi } : null, pExt: _fin(pE), pExtKind: 'pStar',
+                        // p_ext is the infinite-acting extrapolation (pStar family) either way; pExtSource says whether it
+                        // is the semilog line's p* or, with no line, the chosen model's extrapolated pressure.
+                        pExtSource: _num(pStar) ? 'line' : (_num(piM) ? 'model' : null), piModel: _fin(piM),
                         rinv_ft: rinv(k, p.dtEnd, w), rinvE_ft: rinv(k, p.dteEnd, w), dpSkin_psi: p.gasTable ? (gasOut.dpSkin_psi) : dpSkin,
                         distances: dist, minFaultDist_ft: _fin(minFault), gas: gasOut, ev: ['A2'] };
             // History sensitivity (item 14)
@@ -2995,7 +3053,7 @@
                 sErr: S.sErr.value, sErrMode: S.sErr.mode, unitSlope: !!S.storage.unitSlope, cheldRejectedBoth: !!(S.cheld && S.cheld._rejectedBoth),
                 rateSource: rq.source || 'allocation', r3: _fin(rq.r3), r3Status: rq.r3Status || 'unavailable', r4: _fin(rq.r4), r4Status: rq.r4Status || 'unavailable',
                 dqKnown: rq.dqKnown !== false, fRate: _num(spec.fRate) ? spec.fRate : 1, equalRateAssumed: !!rq.equalRateAssumed,
-                snrD: snr, rDrift: rDrift, rTide: p.rTide, tideRemoved: p.tideRemoved, flags: codes, distractorAtOrBeforeIarf: distr, humpAfterIarf: humpAfter,
+                snrD: snr, rDrift: rDrift, rTide: p.rTide, tideRemoved: p.tideRemoved, flags: codes, distractorAtOrBeforeIarf: distr, humpAfterIarf: humpAfter, humpAfterFitStart: !!S.humpAfterFitStart,
                 dtEnd_h: p.dtEnd, dteEnd_h: p.dteEnd, t10_h: S.reach.t10_h, t5_h: S.reach.t5_h, historySensitive: !!S.history.sensitive,
                 outsideEnvelope: env, kHeld: false, kHeldConverged: null, kHeldCorrCS: null, kHeldRmsRatio: null, partialSuspect: null,
                 windowLevelInconsistent: null, chosenKey: S.chosenKey, chosenFullySeen: S.chosenFit.fullySeen.status, triggers: S.trig.fired.slice(),
@@ -3017,6 +3075,7 @@
             var warnings = p.warnings.slice();
             if (!ir.found) warnings.push(_warn(reason, 'warn', ir.reason, ['I1']));
             if (S.compositeOut) warnings.push(_warn('COMPOSITE_OUT', 'info', 'Possible radial composite — open in PRiSM.', ['M2']));
+            if (S.final.pExtSource === 'model') warnings.push(_warn('PEXT_MODEL', 'info', 'No semilog line: the extrapolated pressure is the chosen model\'s, not a line p*.', ['A2']));
             var fitC4 = {
                 modelKey: S.chosenKey, params: _copy(cf.params), phys: _physC4(cf, p), r2: _fin(cf._fr && cf._fr.r2), converged: !!cf.converged,
                 ci95: _jsonClean(cf.ci95), kind: 'pressure', source: 'buildup'
@@ -3035,7 +3094,7 @@
             S.result = _jsonClean(res);
             S.result.evidence.stage = 'pass1';
         });
-        var nUnits0 = 6;
+        var nUnits0 = 7 + Math.ceil(nSamp / HASH_CHUNK);
         return {
             step: function () {
                 if (S.result || S.cancelled) return { done: true, progress: 1, label: label0 };

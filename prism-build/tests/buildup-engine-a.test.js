@@ -331,6 +331,11 @@ module.exports = [
       assert.within(ln.S - 5, -0.43, -0.23, 'S bias');
       assert.ok(ln.shifts.length >= 1 && ln.shifts.every((s) => Math.abs(Math.abs(s.dX) - Math.min(0.25, 0.2 * ir.cycles)) < 1e-9), 'shifted lines by min(0.25, 0.2·span)');
       assert.ok(ln.plateauCheck && typeof ln.plateauCheck.pass === 'boolean', 'line vs derivative plateau kept');
+      // S at the window midpoint's Δt_e (point-skin cross-check, §4.6 item 4)
+      assert.ok(ln.dtMid_h > ir.dt0_h && ln.dtMid_h < ir.dt1_h, 'midpoint inside the window');
+      assert.near(ln.Smid, ln.S, 0.05, 'midpoint skin ' + ln.Smid + ' vs line ' + ln.S);
+      // Prep carries the derivative SNR and the drift index
+      assert.ok(prep.snrD > 0 && Number.isFinite(prep.rDrift), 'Prep.snrD / rDrift filled');
       // tp = 1 h: the superposition W term keeps S right
       const s2 = synth(app.win, { k: 300, S: 2, C: 0.0002, q: 500, tp: 1, dtEnd: 30, perCycle: 60, dtFirst: 0.0003 });
       const p2 = prepOf(app, s2.spec), i2 = AI.iarf(p2, app.toWin({ window: { dt0_h: 0.6, dt1_h: 25 } }));
@@ -466,6 +471,13 @@ module.exports = [
         const r = run(app, spec, { rivals: s === 1 ? 'all' : 'auto' });   // seed 1 fits every rival; the others only on triggers
         assert.equal(r.chosen.key, 'homogeneous', 'seed ' + s + ' kept homogeneous: ' + JSON.stringify(r.bic.rows.map((x) => [x.key, x.dBicHom])));
         assert.equal(r.bic.basis, 'logDp');
+        if (s === 1) {   // a rival with no departure in the data: 'not seen', and its distance is only a lower bound
+          const lb = r.models.find((m) => m.key === 'linearBoundary');
+          if (lb && lb.fullySeen.status === 'not') { assert.equal(lb.fullySeen.bound, 'lower'); assert.includes(lb.fullySeen.text, 'not seen'); }
+          const AI = AIof(app), pr = prepOf(app, spec), ir = AI.iarf(pr);
+          const fs0 = AI.fullySeen('linearBoundary', pr, ir, app.toWin({ phys: { dF_ft: 5000 } }));
+          assert.deepEqual([fs0.status, fs0.bound], ['not', 'lower'], JSON.stringify(fs0)); assert.includes(fs0.text, 'not seen');
+        }
         r.bic.rows.forEach((row) => { if (row.dBicHom !== null) assert.ok(Math.abs(row.dBicHom) < 1000, 'finite ΔBIC'); });
       }
       const f = synth(app.win, LONG({ k: 45, S: 0, C: 0.002, q: 800, sigma: 0.02, seed: 5, perCycle: 30, model: 'linearBoundary', params: { dF: 800 / 0.354, BC: 'noflow' } }));
@@ -516,6 +528,10 @@ module.exports = [
       assert.equal(early.storage.unitSlope, true);
       assert.equal(early.cheld.triggered, false);
       assert.equal(early.cheld.mode, 'pair'); assert.deepEqual(early.cheld.refits, []); assert.equal(early.cheld.S_C, 0);
+      assert.ok(early.storage.humpRatio >= 1.2 && early.storage.tHump_h > 0 && early.storage.humpConsistent === true, 'hump present (max/m′ ≥ 1.2) and consistent with the fitted model');
+      // mode 'extended' requested but C-held not triggered → still 'pair' with no refits (WP0 rule)
+      const ext0 = run(app, synth(app.win, Object.assign({ dtEnd: 72, opts: { cheld: 'extended' } }, REF)).spec);
+      assert.equal(ext0.cheld.triggered, false); assert.equal(ext0.cheld.mode, 'pair'); assert.deepEqual(ext0.cheld.refits, []);
       // changing storage (a pressure hump) → not meaningful
       const hump = synth(app.win, Object.assign({ dtEnd: 72, dtFirst: 0.3 }, REF, { extra: (dt) => 40 * Math.exp(-Math.pow((dt - 0.8) / 0.15, 2)) }));
       const r3 = run(app, hump.spec);

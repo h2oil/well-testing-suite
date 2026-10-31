@@ -92,7 +92,7 @@ module.exports = [
     },
   },
   {
-    name: 'CC4 bounded grid form vs direct Stehfest superposition (365 daily steps, r_e = 0.9·r_inv): ≤ 0.05 psi',
+    name: 'CC4 bounded grid form on the compacted history vs direct Stehfest superposition over the full 365 daily steps (r_e = 0.9·r_inv): ≤ 0.05 psi',
     wp: 'WP1', timeoutMs: 60000,
     run(app, assert) {
       const AI = app.win.PRiSM_autoInterp, W = app.win;
@@ -105,12 +105,18 @@ module.exports = [
       const prep = AI.prepare(app.toWin(spec));
       const ent = AI.gridEntry('closedCircle', prep);
       const ph = app.toWin({ k, C: 0.02, S: 2, reD });
+      // the engine's form: grid entry on the compacted history (last 10·Δt_end exact + one volume-mean block)
+      assert.ok(prep.histFit.nLumped > 300 && prep.histFit.steps.length < 40, 'compacted history (' + prep.histFit.steps.length + ' steps)');
       const pmG = W.PRiSM_physicalModel('closedCircle', prep.well, prep.adata, { entry: ent, isolated: true });
-      const pmR = W.PRiSM_physicalModel('closedCircle', prep.well, prep.adata, app.toWin({ isolated: true }));
+      // the reference: the registry kernel (direct Stehfest) superposed over all 365 daily steps
+      const full = AI.clean(prep.adata);
+      full.rateHistory = app.toWin(prep.histFull.steps.map((x) => ({ t: x.t, q: x.q })));
+      assert.equal(full.rateHistory.length, 366, 'full history');
+      const pmR = W.PRiSM_physicalModel('closedCircle', prep.well, full, app.toWin({ isolated: true }));
       const t = prep.adata.t.filter((v, i) => i % 3 === 0);
       const a = pmG.dp(app.toWin(t), ph), b = pmR.dp(app.toWin(t), ph);
       let mx = 0; for (let i = 0; i < a.length; i++) mx = Math.max(mx, Math.abs(a[i] - b[i]));
-      assert.ok(mx <= 0.05, 'bounded grid vs direct Stehfest: ' + mx.toFixed(4) + ' psi');
+      assert.ok(mx <= 0.05, 'bounded grid + compaction vs direct Stehfest over the full history: ' + mx.toFixed(4) + ' psi');
       assert.ok(b[b.length - 1] > 50, 'a real build-up (Δp ' + b[b.length - 1].toFixed(1) + ' psi)');
     },
   },

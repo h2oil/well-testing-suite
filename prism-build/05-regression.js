@@ -452,14 +452,22 @@ function PRiSM_lm(modelFn, data, params0, bounds, freeze, opts) {
         yMod = fInt(data.t, params);
         ssr = _ssr(data.p, yMod, W);
     }
-    if (!freeKeys.length) {
-        ctx.stopReason = 'no-free-params';
-        return _buildResult(params, freeKeys, null, data, yMod, W, ssr, 0, false, [ssr], ctx);
+    // Early returns carry the same resume fields as a full run (lambda, nEval, stagnantSteps, pInt, y).
+    function earlyOut(reason) {
+        ctx.stopReason = reason;
+        var r0 = _buildResult(params, freeKeys, null, data, yMod, W, ssr, 0, false, [ssr], ctx);
+        var pi0 = {};
+        for (var q0 = 0; q0 < freeKeys.length; q0++) pi0[freeKeys[q0]] = params[freeKeys[q0]];
+        r0.lambda = O.lambda0;
+        r0.nEval = nEval;
+        r0.stagnantSteps = (typeof O.stagnant0 === 'number' && isFinite(O.stagnant0)) ? O.stagnant0 : 0;
+        r0.pInt = pi0;
+        r0.y = yMod.slice();
+        r0.jac = null;
+        return r0;
     }
-    if (!isFinite(ssr)) {
-        ctx.stopReason = 'non-finite-start';
-        return _buildResult(params, freeKeys, null, data, yMod, W, ssr, 0, false, [ssr], ctx);
-    }
+    if (!freeKeys.length) return earlyOut('no-free-params');
+    if (!isFinite(ssr)) return earlyOut('non-finite-start');
 
     var boundArr = freeKeys.map(function (k) { return ib[k]; });
     var history = [ssr];

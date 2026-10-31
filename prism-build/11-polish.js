@@ -448,7 +448,6 @@ function _schematic_parallelChannel() {
     return s;
 }
 
-// 10. Closed rectangle — producer in centre, four sealing sides.
 // Closed circle (53-prism-autointerp.js): a circular sealed boundary with the well at the centre.
 function _schematic_closedCircle() {
     var s = _svg_open();
@@ -468,6 +467,7 @@ function _schematic_closedCircle() {
     return s;
 }
 
+// 10. Closed rectangle — producer in centre, four sealing sides.
 function _schematic_closedRectangle() {
     var s = _svg_open();
     // Outer (background)
