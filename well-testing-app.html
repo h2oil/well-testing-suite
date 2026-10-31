@@ -11027,7 +11027,7 @@ window.calcVDrop=function(){
 // so write &amp; for a literal ampersand. Scope: engineering, usability and
 // platform changes only; aim for 3-10 items per release.
 const RELEASE_NOTES = [
-    { ver:'v3.2', date:'2026-10-31', title:'Chemical Injection module',
+    { ver:'v3.2', date:'2026-10-31', title:'Chemical Injection module &amp; flare line rework',
       note:'A new planner for every chemical injection line on a surface well-test spread: where to inject, how much, and the pump setting.',
       items:[
         ['new', 'Chemical Injection', 'Plan up to six injection lines under Test System Safety: injection point, chemical (grouped by purpose), dose and pump. Each line gives the rate in gal/d, L/h and mL/min, the pump setting (strokes per minute, % stroke × % speed, or the air pressure of an air-driven liquid pump), the discharge pressure and rating, the calibration-cylinder check, tank days and totes, with ✓ / ⚠ / ✗ verdicts, two charts and a design-basis summary.'],
@@ -11035,6 +11035,9 @@ const RELEASE_NOTES = [
         ['new', 'Pumps &amp; discharge pressure', 'Pump options are ranked, with pneumatic and air-driven pumps first in a classified area. The required pressure comes from the shut-in case, the rating covers the shut-in or relief-valve back-pressure, and the page gives the relief-valve band, backflow and thermal-relief warnings, the drive-gas setting and a ✗ for sour produced drive gas.'],
         ['calc', 'Hydrate Management &amp; Chemical &amp; Dosage', 'Both pages link to Chemical Injection for the full design; Hydrate Management’s screening numbers are unchanged.'],
         ['report', 'Quick Report', 'The final well-test report lists Chemical Injection under its safety checks, and the daily report gains a Chemical injection section. The App Store version is 3.2.'],
+        ['new', 'Background &amp; standards pop-ups', 'Every topic on the Chemical Injection page (hydrate inhibition, low-dose inhibitors, H2S scavenging, corrosion, scale, foam and emulsion, wax and asphaltene, injection points, pumps and calibration) has an ⓘ pop-up: when and why to use each chemical, where to inject, dose basis from the calculator’s own library, cautions and the relevant standards and references.'],
+        ['calc', 'Multiphase Flowline: flare line', 'The separator-to-flare line now starts downstream of the separator gas pressure control valve: it is calculated back from the flare tip, giving the flare-header pressure, the valve pressure drop and choking check, the gas temperature after the valve, velocity, Mach (API 521 limits) and ρv² for each segment, and the back-pressure against 10 % of the separator relief-valve set pressure.'],
+        ['calc', 'Multiphase Flowline: choke', 'The well line is calculated back from the separator pressure to the choke outlet, so the page shows the pressure needed downstream of the choke, the choke pressure drop and whether flow through it is critical, and flags a wellhead pressure that cannot deliver the rate.'],
         // <!-- v3.2 more items -->
       ] },
     { ver:'v3.1.1', date:'2026-10-30', title:'iOS build clean-up',
