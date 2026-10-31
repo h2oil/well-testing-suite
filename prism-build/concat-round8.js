@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Round-8 concatenator — PRiSM gap-closure layer (PTA core, semilog/skin,
-// RTA + DCA results, report, workflow shell content).
+// RTA + DCA results, report, workflow shell content, automatic build-up
+// interpretation and skin checks).
 //
 // Run with:  node prism-build/concat-round8.js
 // Writes:    prism-build/combined-round8.js
@@ -24,6 +25,10 @@ const FILES = [
   '39-prism-fieldtools.js',
   '51-prism-workspace.js',
   '52-prism-gas.js',
+  '53-prism-autointerp.js',      // Build-up Surveillance (v3.3): automatic interpretation engine
+  '54-prism-skin.js',            // Build-up Surveillance (v3.3): skin maths + Skin-check card
+  '55-prism-autointerp-cal.js',  // Build-up Surveillance (v3.3): GENERATED calibration table
+  // DFIT workstream files take 56 upwards (plan D25); only the lead edits this list.
 ];
 
 const ROOT = __dirname;
@@ -94,6 +99,9 @@ function build(opts) {
     '//   • 39-prism-fieldtools  (gauge register, sequence of events, ct builder)\n' +
     '//   • 51-prism-workspace   (fit library + compare overlays, analysis branches, model browser)\n' +
     '//   • 52-prism-gas         (gas m(p) results, pseudo-time, skin vs rate, AOF / IPR)\n' +
+    '//   • 53-prism-autointerp  (automatic build-up interpretation engine, canon / hash16)\n' +
+    '//   • 54-prism-skin        (skin decomposition, PI and skin products, Skin-check card)\n' +
+    '//   • 55-prism-autointerp-cal (generated confidence-label calibration table)\n' +
     '// ═══════════════════════════════════════════════════════════════════════\n';
   let included = 0;
   for (const f of FILES) {

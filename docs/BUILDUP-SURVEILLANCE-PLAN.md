@@ -1,6 +1,6 @@
 # Build-up Surveillance (v3.3) — implementation plan
 
-> **Status: plan, reviewed (2026-10-31).** No code has been written yet. This revision resolves the engineering and architecture
+> **Status: plan, reviewed (2026-10-31); WP0 done (2026-10-31)** — FILES, the 53 skeleton (`canon`/`hash16`, frozen), `tests/_buildup-shapes.js` and SH1–SH3 landed; WP1–WP7 can start. This revision resolves the engineering and architecture
 > review; Appendix B lists the review notes. Literature is cited by author, year, title and SPE number; numbers marked
 > "no. to verify" never go into the app.
 
