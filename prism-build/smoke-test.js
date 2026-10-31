@@ -270,6 +270,18 @@ checks.push(['WTS_gaspvt_isenthalpic γ 0.65 110 °F 3014.7 → 1014.7 psia ≈ 
   try { const r = win.WTS_gaspvt_isenthalpic({ sg: 0.65, p1: 3014.7, t1: 110, p2: 1014.7 }); return r.ok === true && Math.abs(r.t2 - 41.42) < 0.3; }
   catch (e) { return false; }
 })()]);
+// v3.2 Chemical Injection engine (49-calc-cheminj.js): window.WTS_cheminj namespace + WTS_cheminj_compute
+checks.push(['window.WTS_cheminj engines + WTS_cheminj_compute (function)',
+  !!win.WTS_cheminj && typeof win.WTS_cheminj_compute === 'function' &&
+  ['spread', 'hydrateDose', 'doseRate', 'pumpSetting', 'pumpOptions', 'injectionPressure', 'supplyGas', 'calibration', 'tank', 'stats']
+    .every((f) => typeof win.WTS_cheminj[f] === 'function')]);
+checks.push(['WTS_cheminj_compute page defaults (H1) ≈ 1061.5 lb/d methanol, air 45.6 psig', (() => {
+  try {
+    const r = win.WTS_cheminj_compute({});
+    const L1 = r.ok && r.lines[0];
+    return !!L1 && Math.abs(L1.hydrate.inh.solution_lb_d - 1061.5) < 32 && Math.abs(L1.pump.airDesign - 45.6) < 0.5;
+  } catch (e) { console.error('WTS_cheminj_compute threw:', e.message); return false; }
+})()]);
 // Round-10 — live data (6N-*.js): Modbus core + station, Modbus page, Mini WellOS
 checks.push(['window.WTS_modbus (object)',            !!win.WTS_modbus && typeof win.WTS_modbus === 'object']);
 checks.push(['WTS_modbus.createClient / createStation', !!win.WTS_modbus && typeof win.WTS_modbus.createClient === 'function' && typeof win.WTS_modbus.createStation === 'function']);
