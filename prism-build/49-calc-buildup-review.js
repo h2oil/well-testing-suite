@@ -3,7 +3,7 @@
 // helper module: does not add a page to window.WTS_calcRegistry
 // -----------------------------------------------------------------------------
 // window.WTS_buildup.review (plan docs/BUILDUP-SURVEILLANCE-PLAN.md §3.10, §7, §8; work package WP5).
-// Pure and synchronous: no DOM, no storage, no timers, no events, no network, no Math.random.
+// Pure and synchronous: no DOM, no storage, no timers, no events, no network, no random numbers.
 //
 // PUBLIC API (window.WTS_buildup.review)
 //   evidence(analysis, opts?)            → EvidenceIndex. Every quotable number lives here with the path it is read
@@ -633,8 +633,24 @@
         var below = rows.filter(function (r) { return r && (r.level === 'major' || r.level === 'critical' || (_isNum(pb) && _isNum(r.pwfSand_hi) && r.pwfSand_hi < pb)); }).length;
         return { n: rows.length, below: below };
     }
+    // One top-level call (report, run, evidence, check, ask, aiExport, status, signature) memoizes the results hash
+    // per analysis object: everything is synchronous, so the analysis cannot change during the call.
+    var _memo = null;
+    function _memoized(fn) {
+        return function () {
+            var outer = _memo === null;
+            if (outer) _memo = typeof Map === 'function' ? new Map() : null;
+            try { return fn.apply(this, arguments); } finally { if (outer) _memo = null; }
+        };
+    }
     function _resultsHash(an) {
         if (!_obj(an)) return null;
+        if (_memo && _memo.has(an)) return _memo.get(an);
+        var h = _resultsHashRaw(an);
+        if (_memo) _memo.set(an, h);
+        return h;
+    }
+    function _resultsHashRaw(an) {
         var tr = an.trend || {};
         return _h16({
             tests: _arr(an.tests).map(function (t) {
@@ -1601,7 +1617,9 @@
         var max = _isNum(opts.max) ? opts.max : AUDIT_MAX, maxBytes = _isNum(opts.maxBytes) ? opts.maxBytes : AUDIT_BYTES;
         var entries = L.entries.slice(), summary = L.summary ? JSON.parse(JSON.stringify(L.summary)) : null;
         var cut = Math.max(0, entries.length - max);
-        while (cut < entries.length - 1 && JSON.stringify(entries.slice(cut)).length > maxBytes) cut++;
+        var total = 1;
+        for (var i = cut; i < entries.length; i++) total += _entryBytes(entries[i]) + 1;
+        while (cut < entries.length - 1 && total > maxBytes) { total -= _entryBytes(entries[cut]) + 1; cut++; }
         if (cut <= 0) return { v: 1, entries: entries, summary: summary };
         var folded = entries.slice(0, cut);
         var counts = summary ? Object.assign({}, summary.counts) : {};
@@ -1610,6 +1628,15 @@
         summary = { from: summary ? summary.from : folded[0].seq, to: last.seq, n: (summary ? summary.n : 0) + folded.length, counts: counts,
                     chainHash: last.hash, fromAt: summary ? summary.fromAt : (folded[0].at || null), toAt: last.at || null };
         return { v: 1, entries: entries.slice(cut), summary: summary };
+    }
+    // JSON size of an entry, cached per entry object (entries are never edited, §3.12)
+    var _sizes = typeof WeakMap === 'function' ? new WeakMap() : null;
+    function _entryBytes(e) {
+        if (!e || typeof e !== 'object') return 4;
+        if (_sizes && _sizes.has(e)) return _sizes.get(e);
+        var n = JSON.stringify(e).length;
+        if (_sizes) _sizes.set(e, n);
+        return n;
     }
     function auditAppend(log, entry, opts) {
         var L = _auditLog(log) || { v: 1, entries: [], summary: null };
@@ -2685,20 +2712,20 @@
     // Public surface
     // ─────────────────────────────────────────────────────────────────────
     RV.version = 'r1';
-    RV.evidence = evidence;
-    RV.run = run;
-    RV.check = check;
-    RV.recheck = recheck;
-    RV.ask = ask;
-    RV.report = report;
+    RV.evidence = _memoized(evidence);
+    RV.run = _memoized(run);
+    RV.check = _memoized(check);
+    RV.recheck = _memoized(recheck);
+    RV.ask = _memoized(ask);
+    RV.report = _memoized(report);
     RV.sha256 = sha256;
-    RV.hashes = hashes;
-    RV.signature = signature;
-    RV.status = status;
+    RV.hashes = _memoized(hashes);
+    RV.signature = _memoized(signature);
+    RV.status = _memoized(status);
     RV.canSign = canSign;
     RV.signoff = signoff;
     RV.applyDecisions = applyDecisions;
-    RV.aiExport = aiExport;
+    RV.aiExport = _memoized(aiExport);
     RV.audit = { GENESIS: GENESIS, MAX: AUDIT_MAX, entryHash: entryHash, append: auditAppend, verify: auditVerify, fold: auditFold, head: auditHead, decisions: _decisionsFromAudit };
     RV.fill = fill;
     RV.fmtValue = fmtValue;
