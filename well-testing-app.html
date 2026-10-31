@@ -83990,6 +83990,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
 // Round-9 (calculators) — auto-injected from prism-build/4N-calc-*.js
 //   Each file registers window.WTS_calcRegistry[key] = { key, title, sub, group, icon, render(body) };
 //   the host render() / sidebar / dashboard pick the entries up (no route-table edit).
+//   • 40-calc-chemlib
 //   • 40-calc-tubulars
 //   • 41-calc-gasdeliv
 //   • 42-calc-oilipr
@@ -84009,6 +84010,815 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
 //   • 49-calc-scale
 //   • 49-calc-sepqc
 // ═══════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════
+// ─── BEGIN 40-calc-chemlib ───────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════
+// WTS — Round-9 shared data module — chemical injection library (chemlib)
+//
+// PURPOSE
+//   Planning data for the Chemical Injection page (route `cheminj`,
+//   prism-build/49-calc-cheminj.js): the generic chemicals, the generic
+//   pump presets, the injection points, the chemical-family × point
+//   suitability matrix, the pairwise compatibility rules, the capillary
+//   lines and the elastomer screening table (docs/CHEMICAL-INJECTION-PLAN.md
+//   §3 and §5). It is a data module: it deliberately does NOT add a page to
+//   window.WTS_calcRegistry, so it has no sidebar button or tile. The file
+//   lives in the 4N-calc- namespace only so concat-round9.js picks it up
+//   ahead of the calculators (40-calc-chemlib sorts before 40-calc-tubulars).
+//
+//   Every chemical and pump is named by its generic chemistry or type only.
+//   All values are planning defaults, editable on the page; replace them with
+//   data-sheet and nameplate values. Confidence tags: H high, M medium, L low.
+//
+// UNITS (field units, like the rest of the app)
+//   SG at 60 °F (water = 1); mu68 = viscosity at 68 °F, cP; muB = Andrade B, K
+//   (μ(T) = mu68·exp(muB·(1/T_K − 1/293.15))); water = water MASS FRACTION of
+//   the product as supplied (0–1); activeDef = % active; leanDef/leanMin/leanMax
+//   = wt % of the as-injected solution (thermodynamic inhibitors only); beta =
+//   liquid compressibility, 1/psi; alphaV = volumetric thermal expansion, 1/°F;
+//   dPdT = alphaV/beta = blocked-in pressure rise, psi/°F; flashF, freezeF °F;
+//   dose in the units of its basis (bases[basis].unit); pump rates gal/h,
+//   plunger and stroke inches, pressures psi.
+//
+// PUBLIC API (window.WTS_chemlib) — arrays are read-only by convention (copy before editing)
+//   version                       data version (number)
+//   groups[]                      {key, label, order}           purpose groups (<optgroup> order)
+//   families[]                    {key, label, group, kind, scavPhase, suit{point: R|A|N|X}, notes{point: text}}
+//                                 kind: 'thi' | 'ldhi' | 'scavenger' | 'ppm' | 'custom'
+//   chemicals[]                   see CHEMICAL RECORD below (30 records, 'custom' last)
+//   bases{}                       dose bases keyed by basis key (§4.9): {key, label, unit, phase, product, twin, factor}
+//   points[]                      the 9 injection points in flow order (§3.1): see POINT RECORD below
+//   pointKeys[]                   ['dh','wh','dsch','sepin','sepgas','flare','sepoil','sepwat','tank']
+//   pumps[]                       see PUMP RECORD below (8 records)
+//   plungers[], strokes[], actuators[]   {in, value, frac, mm, label}  (value = String(in), label "3/8 in (9.5 mm)")
+//   heads[]                       [1, 2, 3]
+//   capillary[]                   {key, od, wall, id, idMm, barlowPsi, label}
+//   compat[]                      {key, a[], b[]|null, ctx|null, level:'bad'|'warn', text}
+//                                 pair rule when b is set (tags of two chemicals); context rule when ctx is set
+//   elastomer                     {materials[], rows{rowKey: {label, NBR, HNBR, EPDM, 'FKM std', 'FKM peroxide', FFKM, PTFE}}, note}
+//   fluidClasses{}                {methanol|ethanol|glycol|aqueous|solvent: {beta, alphaV, label}}
+//   constants{}, defaults{}       physical constants (§4) and the decided design-basis defaults (Q5, Q17, Q18, Q19)
+//   find(key)                     chemical record or null
+//   list(familyOrGroup?)          chemicals in that family or purpose group (all when omitted)
+//   family(key), point(key), pump(key), cap(key)   record or null
+//   suit(chemKey, pointKey)       'R' | 'A' | 'N' | 'X'  (null for an unknown key)
+//   suitInfo(chemKey, pointKey)   {level, verdict:'ok'|'warn'|'bad', note}  (null for an unknown key)
+//   eff(chemKey, pointKey)        default scavenger utilisation η (chemical effDef, else the point's etaScav), or null
+//   pairRules(chemKeyA, chemKeyB) compat pair rules that match the two chemicals' incompat tags
+//   ctxRules(chemKey)             compat context rules that apply to one chemical
+//   elastomerRow(chemKey)         elastomer row or null
+//
+// CHEMICAL RECORD
+//   {key, name, short, family, group, kind, basis, dose, doseMin, doseMax,
+//    leanDef, leanMin, leanMax, activeDef, sg, mu68, muB, water, fluidClass,
+//    beta, alphaV, dPdT, flashF, freezeF, flammable, oxidiser, vapourLoss,
+//    aqueous, peak, points[], suit{} (point overrides of the family matrix),
+//    incompat[], elastomer, stoich {mw, n, activePct} | null, effDef,
+//    thi {hamKey, M, Mham, K, nb, warnPct, maxPct} | null,
+//    ldhi {subMaxF, subAdvF, needsLHC, maxWaterCutPct} | null,
+//    freezeCurve [[wt %, °F], …] | null, bestTempF [lo, hi] | null, muLean | null,
+//    cautions, conf}
+//   dose null = computed: thermodynamic inhibitors from the hydrate design,
+//   stoichiometric scavengers from stoich ÷ η; 'custom' has user values.
+//   thi.hamKey is the 25-hydrate.js inhibitor key ('methanol' | 'meg' | 'deg' |
+//   'teg') or null (ethanol: compute Hammerschmidt locally with M and K);
+//   thi.nb false = Hammerschmidt only (DEG, TEG).
+//
+// POINT RECORD
+//   {key, order, branch, label, short, pLine, pBack, pBackClass, tBasis,
+//    phases {gas, water, oil}, wellbore, upstreamOfSep, contactSegs[],
+//    contactSegsHeater[], etaScav, pumpClass, note}
+//   pLine: dosing / P_req basis — 'dh' tubing pressure at depth, 'wh' max(SITHP, FWHP),
+//          'ck' downstream of choke, 'sep' separator, 'bpv' downstream of the
+//          back-pressure valve, 'atm' 0 psig.
+//   pBack: 'sithp' | 'psvsep' | 'none'; pBackClass is the full-class basis ('whclass' | 'psvsep' | 'none').
+//   tBasis: 'dh' | 'fwht' | 'ck' | 'htr' | 'sep' | 'bpv'.
+//   contactSegs: Card-2 pipe segments (1 flowhead→choke, 2 choke→heater inlet,
+//   3 heater coil, 4 heater→separator) from the point to the separator;
+//   contactSegsHeater applies when the heater is on (sepin = heater outlet).
+//   order is the position along the point's branch (well → separator → outlets).
+//
+// PUMP RECORD
+//   {key, name, short, kind, setting, mvp, electric, vents, hazSuitable, hazAreaNote,
+//    plungers[]|null, plungerDef, strokes[]|null, strokeDef, strokeMax, headsMax,
+//    actuators[]|null, actDef, spmMax, spmMin, spmCrank, spmCrankMin, spmCrankMax,
+//    sMin, nMin, vfd, pmaxRule, bodyPsi, pmax, rodLbf, capPsi, etaM, pSpring,
+//    qRated_galh, q0_galh, ratio, vcyc_in3, stallFracMax, q0FracMin, etaDef,
+//    accuracy, turndown, bestPoints[], conf}
+//   kind: 'plunger' | 'meter' | 'airliquid' | 'transfer' | 'hand'
+//   setting: 'spm' (pneumatic plunger) | 'stroke_speed' (metering pumps and the
+//   electric plunger: % stroke × % speed) | 'air' (air-driven liquid pump) |
+//   'cycles' (air-operated diaphragm) | 'batch' (hand pump)
+//   pmaxRule: 'pneumatic' (η_m·P_s·A_act/(n_h·A_pl), capped by bodyPsi) |
+//   'rod' (rodLbf/A_pl, capped by capPsi) | 'fixed' (pmax) | 'ratio' (ratio × drive pressure)
+//   mvp false = not offered in the 3.2a pump select (hand pump: Phase 2).
+// ════════════════════════════════════════════════════════════════════
+(function () {
+    'use strict';
+
+    var G = (typeof window !== 'undefined') ? window : globalThis;
+
+    var POINT_KEYS = ['dh', 'wh', 'dsch', 'sepin', 'sepgas', 'flare', 'sepoil', 'sepwat', 'tank'];
+
+    function _r(x, d) { var f = Math.pow(10, d); return Math.round(x * f) / f; }
+    function _has(o, k) { return !!o && Object.prototype.hasOwnProperty.call(o, k); }
+    function _frac(x) {
+        var whole = Math.floor(x + 1e-9), rem = x - whole, n = Math.round(rem * 64), d = 64;
+        if (n === 0) return String(whole);
+        while (n % 2 === 0 && d > 1) { n /= 2; d /= 2; }
+        return (whole ? whole + '-' : '') + n + '/' + d;
+    }
+    function _size(x) {
+        var mm = x * 25.4, shown = mm >= 100 ? Math.round(mm + 1e-9).toFixed(0) : (Math.round(mm * 10 + 1e-9) / 10).toFixed(1);
+        return { 'in': x, value: String(x), frac: _frac(x), mm: _r(mm, 4), label: _frac(x) + ' in (' + shown + ' mm)' };
+    }
+
+    // ── Constants (§4) ────────────────────────────────────────────────
+    var CONSTANTS = {
+        lbPerGalWater: 8.337,            // lb/gal water at 60 °F
+        lbPerBblWater: 350.2,            // lb/bbl water at 60 °F
+        psiPerFtPerSg: 0.4335,           // 0.052 × 8.337, the WTS_gradient_compute constant
+        galToL: 3.785411784,
+        in3PerGal: 231,
+        mLPerIn3: 16.387064,
+        galPerBbl: 42,
+        mLminPerGalD: 2.62876,           // 1 gal/d = 2.62876 mL/min
+        LhPerGalD: 0.157725,             // 1 gal/d = 0.157725 L/h
+        galDPerMLs: 22.8245,             // 1 mL/s = 22.8245 gal/d
+        galDPerSpmD2L: 4.896,            // Q gal/d = 4.896·d²·L·SPM·ηv (d, L in)
+        mwH2S: 34.081, mwMeOH: 32.04, mwWater: 18.015, mwO2: 31.998, mwSO2: 64.064,
+        usPintML: 473.176
+    };
+
+    // ── Decided design-basis defaults (plan §2.3; user decisions Q5, Q17, Q18, Q19) ──
+    var DEFAULTS = {
+        marginF: 10,                     // Q5: hydrate margin with the correlation hydrate temperature
+        marginMinF: 5,                   // allowed with a user / lab hydrate temperature
+        fJT: 1.10,                       // Q17: J-T cooling design factor (1.00–1.30)
+        fJTMin: 1.00, fJTMax: 1.30,
+        fJTRelaxed: 1.05,                // Q17: the user may relax to 1.05
+        sourPerMolF: 5,                  // sour adder per mol % H2S (1–3 mol %), flat for CO2 > 5 mol %
+        sourNoAdderMolPct: 0.1,          // H2S ≤ 0.1 mol % (1,000 ppm): no adder
+        sourMaxMolPct: 3,                // Q18: above 3 mol % H2S the correlation dose is refused unless a user T_hyd is entered
+        co2AdderMolPct: 5, co2MaxMolPct: 20,
+        thiDefaultPump: 'air_liquid',    // Q19: default pump for the hydrate (H1) line
+        thiDefaultChem: 'meoh',
+        thiDefaultPoint: 'wh',
+        pumpMarginPct: 10, pumpMarginPsi: 100,
+        dpQuillPsi: 50,
+        bandGreenPct: 70, bandAmberPct: 85, bandLowPct: 20, bandMinPct: 10,
+        minRateFactor: 0.5,
+        spmMinStable: 3,
+        peakThi: 2.0, peakScav: 1.5, peakOther: 1.25,
+        etaV: 0.90,
+        heelPct: 10, toteGal: 275, toteUsableFrac: 0.9, contingencyPct: 20,
+        psupPsig: 100, testDays: 5, tcReqS: 15,
+        glyLossPct: 1, fcLbPerBbl: 0.25,
+        segments: [{ len_ft: 20, id_in: 2.9 }, { len_ft: 60, id_in: 3.826 }, { len_ft: 200, id_in: 2.9 }, { len_ft: 80, id_in: 3.826 }]
+    };
+
+    // ── Fluid classes: compressibility β (1/psi) and thermal expansion α_v (1/°F) [§4.10.2, §4.11.1] ──
+    var FLUID = {
+        methanol: { label: 'methanol',                     beta: 8.6e-6, alphaV: 6.6e-4 },   // 77 psi/°F
+        ethanol:  { label: 'ethanol',                      beta: 7.7e-6, alphaV: 6.1e-4 },   // ≈ 79 psi/°F [M]
+        glycol:   { label: 'glycol',                       beta: 2.5e-6, alphaV: 3.5e-4 },   // 140 psi/°F [L]
+        aqueous:  { label: 'water-based product',          beta: 3.1e-6, alphaV: 1.18e-4 },  // ≈ 38 psi/°F
+        solvent:  { label: 'hydrocarbon-solvent product',  beta: 7.0e-6, alphaV: 5.6e-4 }    // 80 psi/°F [L]
+    };
+
+    // ── Purpose groups (<optgroup> order) ────────────────────────────
+    var GROUPS = [
+        { key: 'hydrate',   label: 'Hydrate inhibitors',  order: 1 },
+        { key: 'h2s',       label: 'H2S scavengers',      order: 2 },
+        { key: 'corrosion', label: 'Corrosion inhibitors', order: 3 },
+        { key: 'scale',     label: 'Scale inhibitors',    order: 4 },
+        { key: 'process',   label: 'Foam and emulsion',   order: 5 },
+        { key: 'flow',      label: 'Wax and asphaltene',  order: 6 },
+        { key: 'water',     label: 'Water systems',       order: 7 },
+        { key: 'custom',    label: 'Custom',              order: 8 }
+    ];
+
+    // ── Families and the family × point suitability matrix (§3.3) ────
+    // R recommended (✓), A allowed (✓ + note), N not recommended (⚠ + reason), X not applicable (✗).
+    var X_NOTE = 'Not applicable at this point.';
+    function _fam(key, label, group, kind, row, notes, scavPhase) {
+        var suit = {};
+        POINT_KEYS.forEach(function (p, i) { suit[p] = row[i]; });
+        return { key: key, label: label, group: group, kind: kind, scavPhase: scavPhase || null, suit: suit, notes: notes || {} };
+    }
+    //                                                                              dh   wh   dsch sepin sepgas flare sepoil sepwat tank
+    var FAMILIES = [
+        _fam('thi_alcohol', 'Thermodynamic hydrate inhibitor — alcohol', 'hydrate', 'thi', ['A', 'R', 'A', 'N', 'A', 'N', 'X', 'X', 'X'], {
+            dh: 'Recommended when the wellbore crosses the hydrate temperature.',
+            dsch: 'The choke body and bean are not protected.',
+            sepin: 'Too late: the choke outlet is already the coldest point.',
+            sepgas: 'Second-expansion point (gas re-expanded at the back-pressure valve).',
+            flare: 'Too late for hydrate control.'
+        }),
+        _fam('thi_glycol', 'Thermodynamic hydrate inhibitor — glycol', 'hydrate', 'thi', ['A', 'R', 'A', 'N', 'N', 'X', 'X', 'X', 'X'], {
+            dsch: 'The choke body and bean are not protected.',
+            sepin: 'Too late: the choke outlet is already the coldest point.',
+            sepgas: 'Liquid carry-over into the gas line.'
+        }),
+        _fam('ldhi_khi', 'Low-dosage hydrate inhibitor — kinetic', 'hydrate', 'ldhi', ['A', 'R', 'A', 'N', 'X', 'X', 'X', 'X', 'X'], {
+            dh: 'Check the cloud point at the downhole temperature.',
+            sepin: 'Too late: the choke outlet is already the coldest point.'
+        }),
+        _fam('ldhi_aa', 'Low-dosage hydrate inhibitor — anti-agglomerant', 'hydrate', 'ldhi', ['A', 'R', 'A', 'N', 'X', 'X', 'X', 'X', 'X'], {
+            sepin: 'Too late: the choke outlet is already the coldest point.'
+        }),
+        _fam('scav_aqueous', 'Aqueous H2S scavenger', 'h2s', 'scavenger', ['N', 'R', 'A', 'A', 'N', 'X', 'N', 'N', 'N'], {
+            dh: 'Hydrolysis at temperature and solids downhole.',
+            sepin: 'Short contact time to the separator.',
+            sepgas: 'Needs a knock-out or contactor downstream; otherwise liquid carries to the flare.',
+            sepoil: 'Aqueous product: poor contact with the oil.',
+            sepwat: 'Water-phase use is for glyoxal only.',
+            tank: 'Not a tank-dosing chemical.'
+        }, 'gas'),
+        _fam('scav_oil', 'Oil-phase H2S scavenger', 'h2s', 'scavenger', ['X', 'A', 'N', 'N', 'X', 'X', 'R', 'X', 'A'], {
+            dsch: 'Oil-phase product: poor contact with the gas.',
+            sepin: 'Oil-phase product: poor contact with the gas.'
+        }, 'oil'),
+        _fam('scav_oxidiser', 'Water-phase oxidiser scavenger', 'h2s', 'scavenger', ['X', 'X', 'X', 'X', 'X', 'X', 'X', 'R', 'N'], {
+            tank: 'Oxidiser: O2 or NOx evolution into a hydrocarbon vapour space; dose only into a vented, non-hydrocarbon tank.'
+        }, 'water'),
+        _fam('ci_oil', 'Corrosion inhibitor — oil-soluble film former', 'corrosion', 'ppm', ['R', 'A', 'A', 'A', 'N', 'X', 'N', 'N', 'N'], {
+            sepgas: 'Gas line: use a gas-well (atomised) inhibitor.',
+            sepoil: 'Downstream of the equipment it protects.',
+            sepwat: 'Downstream of the equipment it protects.',
+            tank: 'Downstream of the equipment it protects.'
+        }),
+        _fam('ci_aqueous', 'Corrosion inhibitor — water-soluble', 'corrosion', 'ppm', ['R', 'A', 'A', 'A', 'X', 'X', 'X', 'A', 'N'], {
+            tank: 'Downstream of the equipment it protects.'
+        }),
+        _fam('ci_gaswell', 'Corrosion inhibitor — gas well (atomised)', 'corrosion', 'ppm', ['A', 'R', 'A', 'N', 'N', 'X', 'X', 'X', 'X'], {
+            sepin: 'Downstream of the equipment it protects.',
+            sepgas: 'Downstream of the equipment it protects.'
+        }),
+        _fam('scale', 'Scale inhibitor', 'scale', 'ppm', ['R', 'A', 'A', 'A', 'X', 'X', 'X', 'A', 'N'], {
+            dsch: 'Heater-inlet point.',
+            tank: 'Downstream of the equipment it protects.'
+        }),
+        _fam('antifoam', 'Antifoam', 'process', 'ppm', ['X', 'N', 'A', 'R', 'X', 'X', 'N', 'X', 'A'], {
+            wh: 'Too early: inject close to the separator, where the foam forms.',
+            sepoil: 'After the separator, where the foam forms.'
+        }),
+        _fam('emulsion', 'Demulsifier', 'process', 'ppm', ['A', 'R', 'A', 'A', 'X', 'X', 'A', 'X', 'A']),
+        _fam('clarifier', 'Water clarifier', 'process', 'ppm', ['X', 'N', 'N', 'A', 'X', 'X', 'X', 'R', 'A'], {
+            wh: 'Too early: inject where the water is separated.',
+            dsch: 'Too early: inject where the water is separated.'
+        }),
+        _fam('wax', 'Wax inhibitor', 'flow', 'ppm', ['R', 'A', 'A', 'N', 'X', 'X', 'A', 'X', 'A'], {
+            dh: 'Inject where the temperature is above the wax appearance temperature.',
+            dsch: 'Only if the temperature here is above the wax appearance temperature.',
+            sepin: 'Too late: wax has already formed upstream.'
+        }),
+        _fam('pour_point', 'Pour-point depressant', 'flow', 'ppm', ['N', 'A', 'A', 'N', 'X', 'X', 'R', 'X', 'A'], {
+            dh: 'Not a downhole chemical.',
+            sepin: 'Inject into the oil leaving the separator.'
+        }),
+        _fam('asphaltene', 'Asphaltene inhibitor / dispersant', 'flow', 'ppm', ['R', 'A', 'N', 'N', 'X', 'X', 'N', 'X', 'N'], {
+            dh: 'Inject below the onset-pressure depth.',
+            wh: 'Dispersant only.',
+            dsch: 'Downstream of the onset pressure.',
+            sepin: 'Downstream of the onset pressure.',
+            sepoil: 'Downstream of the onset pressure.',
+            tank: 'Downstream of the onset pressure.'
+        }),
+        _fam('water_systems', 'Water-system chemical', 'water', 'ppm', ['X', 'X', 'X', 'X', 'X', 'X', 'X', 'A', 'A'], {
+            sepwat: 'Not normally used in a flowing test.',
+            tank: 'Not normally used in a flowing test.'
+        }),
+        _fam('custom', 'Custom chemical', 'custom', 'custom', ['A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A'], {})
+    ];
+    var FAM_BY_KEY = {};
+    FAMILIES.forEach(function (f) { FAM_BY_KEY[f.key] = f; });
+
+    // ── Dose bases (§4.9) ────────────────────────────────────────────
+    // phase: what the dose is referred to. product: the dose is product as supplied.
+    // twin / factor: metric twin of a gas or H2S basis (value_twin = value × factor).
+    var L_PER_1E6SM3_TO_GAL_PER_MMSCF = 0.028316846592 / 3.785411784;   // 0.0074805
+    var BASES = {
+        ppmv_oil:        { label: 'ppm by volume on oil / condensate (product, as supplied)', unit: 'ppm v', phase: 'oil', product: true },
+        ppmv_water:      { label: 'ppm by volume on water (product, as supplied)', unit: 'ppm v', phase: 'water', product: true },
+        ppmv_liq:        { label: 'ppm by volume on total liquid (product, as supplied)', unit: 'ppm v', phase: 'liquid', product: true },
+        ppmw_water:      { label: 'ppm by mass on water (product, as supplied)', unit: 'ppm w', phase: 'water', product: true },
+        ppmw_oil:        { label: 'ppm by mass on oil / condensate (product, as supplied)', unit: 'ppm w', phase: 'oil', product: true },
+        pt_mmscf:        { label: 'US pt of product per MMscf of gas', unit: 'US pt/MMscf', phase: 'gas', product: true, twin: 'l_1e6sm3', factor: (CONSTANTS.usPintML / 1000) / (L_PER_1E6SM3_TO_GAL_PER_MMSCF * CONSTANTS.galToL) },
+        gal_mmscf:       { label: 'gal of product per MMscf of gas', unit: 'gal/MMscf', phase: 'gas', product: true, twin: 'l_1e6sm3', factor: 1 / L_PER_1E6SM3_TO_GAL_PER_MMSCF },
+        l_1e6sm3:        { label: 'L of product per 10⁶ Sm³ of gas', unit: 'L/10⁶ Sm³', phase: 'gas', product: true, twin: 'gal_mmscf', factor: L_PER_1E6SM3_TO_GAL_PER_MMSCF },
+        vol_water:       { label: 'vol % of the water phase (product, as supplied)', unit: 'vol %', phase: 'water', product: true },
+        wt_water:        { label: 'wt % in the aqueous phase (from the hydrate design)', unit: 'wt %', phase: 'thi', product: false },
+        gal_lb_h2s:      { label: 'gal of product per lb of H2S removed', unit: 'gal/lb', phase: 'h2s', product: true, twin: 'l_kg_h2s', factor: CONSTANTS.galToL / 0.45359237 },
+        l_kg_h2s:        { label: 'L of product per kg of H2S removed', unit: 'L/kg', phase: 'h2s', product: true, twin: 'gal_lb_h2s', factor: 0.45359237 / CONSTANTS.galToL },
+        ppm_per_ppm_liq: { label: 'ppm of product (mass) per ppm of H2S in the oil', unit: 'ppm/ppm', phase: 'oil', product: true },
+        ppm_per_ppm_o2:  { label: 'ppm of product (mass) per ppm of O2 in the water', unit: 'ppm/ppm', phase: 'water', product: true },
+        batch_gal:       { label: 'batch volume', unit: 'gal', phase: 'batch', product: true }
+    };
+    Object.keys(BASES).forEach(function (k) {
+        var b = BASES[k]; b.key = k;
+        if (!_has(b, 'twin')) b.twin = null;
+        if (!_has(b, 'factor')) b.factor = null;
+    });
+
+    // ── Chemicals (§5.1) ─────────────────────────────────────────────
+    // _chem(key, name, short, family, basis, [dose, min, max], sg, mu68, water, fluidClass, points, extra)
+    // effDef null on a stoichiometric scavenger → the point default (points[].etaScav, §3.4).
+    function _chem(key, name, short, family, basis, dose, sg, mu68, water, fluid, points, x) {
+        var fam = FAM_BY_KEY[family], fc = FLUID[fluid];
+        x = x || {};
+        var kind = fam.kind;
+        var rec = {
+            key: key, name: name, short: short, family: family, group: fam.group, kind: kind,
+            basis: basis, dose: dose[0], doseMin: dose[1], doseMax: dose[2],
+            leanDef: _has(x, 'lean') ? x.lean[0] : null, leanMin: _has(x, 'lean') ? x.lean[1] : null, leanMax: _has(x, 'lean') ? x.lean[2] : null,
+            activeDef: _has(x, 'active') ? x.active : null,
+            sg: sg, mu68: mu68, muB: _has(x, 'muB') ? x.muB : 2500, water: water,
+            fluidClass: fluid, beta: fc.beta, alphaV: fc.alphaV, dPdT: fc.alphaV / fc.beta,
+            flashF: _has(x, 'flashF') ? x.flashF : null, freezeF: _has(x, 'freezeF') ? x.freezeF : null,
+            flammable: !!x.flammable, oxidiser: !!x.oxidiser, vapourLoss: !!x.vapourLoss, aqueous: water > 0,
+            peak: _has(x, 'peak') ? x.peak : (kind === 'thi' ? DEFAULTS.peakThi : kind === 'scavenger' ? DEFAULTS.peakScav : DEFAULTS.peakOther),
+            points: points.slice(), suit: x.suit || {},
+            incompat: x.tags || [], elastomer: _has(x, 'elastomer') ? x.elastomer : null,
+            stoich: x.stoich || null, effDef: _has(x, 'eff') ? x.eff : null,
+            thi: x.thi || null, ldhi: x.ldhi || null, freezeCurve: x.freezeCurve || null,
+            bestTempF: x.bestTempF || null, muLean: x.muLean || null,
+            cautions: x.cautions || '', conf: x.conf || 'M'
+        };
+        return rec;
+    }
+    var ORG = 'organic';
+    var CHEMICALS = [
+        // ── Hydrate inhibitors ──
+        _chem('meoh', 'Methanol', 'Methanol', 'thi_alcohol', 'wt_water', [null, null, null], 0.796, 0.58, 0, 'methanol', ['wh', 'dh', 'dsch', 'sepgas'], {
+            lean: [100, 90, 100], muB: 1252.7, flashF: 52, freezeF: -144, flammable: true, vapourLoss: true,
+            thi: { hamKey: 'methanol', M: 32.04, Mham: 32, K: 2335, nb: true, warnPct: 50, maxPct: 70 },
+            freezeCurve: [[0, 32], [20, 5], [30, -15], [40, -38], [50, -65]],
+            tags: [ORG, 'methanol', 'alcohol'], elastomer: 'methanol',
+            cautions: 'Low flash point and a near-invisible flame; toxic by skin, inhalation and ingestion (exposure limit 200 ppm, skin); high vapour loss; methanol-rich produced water is flammable; can precipitate salt and some scale inhibitors; flooded suction and a shaded tank.',
+            conf: 'H'
+        }),
+        _chem('etoh', 'Ethanol', 'Ethanol', 'thi_alcohol', 'wt_water', [null, null, null], 0.794, 1.2, 0, 'ethanol', ['wh', 'dh', 'dsch'], {
+            lean: [95, 90, 100], muB: 1630, flashF: 55, freezeF: -173, flammable: true, vapourLoss: true,
+            thi: { hamKey: null, M: 46.07, Mham: 46.07, K: 2335, nb: true, warnPct: 50, maxPct: 70 },
+            tags: [ORG, 'alcohol'],
+            cautions: 'Flammable; denatured grades may contain methanol; vapour loss uses the methanol correlation (conservative).',
+            conf: 'M'
+        }),
+        _chem('meg', 'Monoethylene glycol (MEG)', 'MEG', 'thi_glycol', 'wt_water', [null, null, null], 1.116, 20, 0, 'glycol', ['wh', 'dh', 'dsch'], {
+            lean: [80, 60, 100], muB: 4050, flashF: 232, freezeF: 9,
+            thi: { hamKey: 'meg', M: 62.07, Mham: 62, K: 2700, nb: true, warnPct: 60, maxPct: 70 },
+            freezeCurve: [[0, 32], [20, 18], [30, 5], [40, -11], [50, -33], [60, -54]],
+            muLean: { wtPct: 80, mu68: 9, muB: 3200 },
+            tags: [ORG, 'glycol'], elastomer: 'glycol',
+            cautions: 'Viscous when cold: size the tubing for the minimum temperature; pure MEG freezes in cold weather; toxic if swallowed.',
+            conf: 'H'
+        }),
+        _chem('deg', 'Diethylene glycol (DEG)', 'DEG', 'thi_glycol', 'wt_water', [null, null, null], 1.118, 36, 0, 'glycol', ['wh', 'dh'], {
+            lean: [90, 80, 100], muB: 3700, flashF: 280, freezeF: 14,
+            thi: { hamKey: 'deg', M: 106.12, Mham: 106, K: 4000, nb: false, warnPct: 60, maxPct: 70 },
+            tags: [ORG, 'glycol'], elastomer: 'glycol',
+            cautions: 'Limited validation (Hammerschmidt only); high ingestion toxicity; viscous when cold.',
+            conf: 'M'
+        }),
+        _chem('teg', 'Triethylene glycol (TEG)', 'TEG', 'thi_glycol', 'wt_water', [null, null, null], 1.125, 49, 0, 'glycol', ['wh'], {
+            lean: [95, 90, 100], muB: 3700, flashF: 330, freezeF: 19,
+            thi: { hamKey: 'teg', M: 150.17, Mham: 150, K: 5400, nb: false, warnPct: 60, maxPct: 70 },
+            tags: [ORG, 'glycol'], elastomer: 'glycol',
+            cautions: 'A dehydration glycol, rarely injected for hydrate control; limited validation (Hammerschmidt only).',
+            conf: 'L'
+        }),
+        _chem('khi', 'Kinetic hydrate inhibitor (water-soluble polymer in a glycol-ether carrier)', 'KHI', 'ldhi_khi', 'vol_water', [1.5, 0.5, 3], 1.00, 30, 0.30, 'glycol', ['wh', 'dh', 'dsch'], {
+            flammable: true,
+            ldhi: { subMaxF: 15, subAdvF: 27, needsLHC: false, maxWaterCutPct: null },
+            tags: [ORG, 'polymer'], elastomer: 'khi_solvent',
+            cautions: 'Subcooling limit applies over the flowing, shut-in and start-up cases; hold time against the planned shut-in; cloud point at hot points; qualify by rocking-cell or autoclave test.',
+            conf: 'M'
+        }),
+        _chem('aa', 'Anti-agglomerant (quaternary-ammonium surfactant type)', 'AA', 'ldhi_aa', 'vol_water', [2.0, 0.5, 3], 0.95, 20, 0.10, 'solvent', ['wh', 'dh', 'dsch'], {
+            flammable: true,
+            ldhi: { subMaxF: null, subAdvF: null, needsLHC: true, maxWaterCutPct: 50 },
+            tags: [ORG, 'surfactant'],
+            cautions: 'Needs a liquid hydrocarbon phase and a water cut of 50 % or less; can stabilise emulsions; aquatic toxicity; qualify by test.',
+            conf: 'M'
+        }),
+        // ── H2S scavengers ──
+        _chem('h2s_mea_triazine', 'MEA-triazine, 40–50 % aqueous', 'MEA-triazine', 'scav_aqueous', 'gal_lb_h2s', [null, 0.9, 2.2], 1.11, 10, 0.60, 'aqueous', ['wh', 'dsch', 'sepin', 'sepgas'], {
+            active: 40, stoich: { mw: 219.28, n: 2, activePct: 40 }, bestTempF: [80, 120],
+            tags: [ORG, 'triazine', 'amine', 'aqueous_scavenger'], elastomer: 'triazine',
+            cautions: 'Dithiazine solids if over-spent or at low velocity; raises pH and can drop calcium carbonate scale; its water adds to the hydrate load; aquatic toxicity; most effective at moderate temperature.',
+            conf: 'H'
+        }),
+        _chem('h2s_mma_triazine', 'MMA-triazine', 'MMA-triazine', 'scav_aqueous', 'gal_lb_h2s', [null, 0.6, 1.6], 1.03, 5, 0.60, 'aqueous', ['wh', 'dsch', 'sepin', 'sepoil'], {
+            active: 40, stoich: { mw: 129.21, n: 2, activePct: 40 }, eff: 0.55,
+            suit: { sepoil: 'A' },
+            tags: [ORG, 'triazine', 'amine', 'aqueous_scavenger'], elastomer: 'triazine',
+            cautions: 'More volatile and more hydrolysis-resistant than MEA-triazine; use the supplier figure for the ratio.',
+            conf: 'L'
+        }),
+        _chem('h2s_glyoxal', 'Glyoxal 40 %', 'Glyoxal', 'scav_aqueous', 'gal_lb_h2s', [null, 0.5, 2.5], 1.27, 10, 0.60, 'aqueous', ['wh', 'sepin', 'sepwat', 'sepoil'], {
+            active: 40, stoich: { mw: 58.04, n: 1, activePct: 40 }, eff: 0.40,
+            suit: { sepwat: 'A' },
+            tags: [ORG, 'aldehyde', 'glyoxal', 'acidic', 'aqueous_scavenger'],
+            cautions: 'Acidic (pH 2–3.5): stainless wetted parts and a corrosion inhibitor; slow reaction; does not raise scale; one H2S per molecule assumed.',
+            conf: 'L'
+        }),
+        _chem('h2s_aldehyde_blend', 'Formaldehyde-releaser blend (hemiformal / oxazolidine)', 'Aldehyde-releaser blend', 'scav_aqueous', 'gal_lb_h2s', [1.2, 0.6, 2.0], 1.10, 10, 0.50, 'aqueous', ['wh', 'dsch', 'sepin', 'sepoil'], {
+            tags: [ORG, 'aldehyde', 'aqueous_scavenger'],
+            cautions: 'Formaldehyde exposure hazard; use the supplier figure for the ratio.',
+            conf: 'L'
+        }),
+        _chem('h2s_oil_soluble', 'Oil-soluble amine-aldehyde scavenger', 'Oil-soluble scavenger', 'scav_oil', 'ppm_per_ppm_liq', [8, 3, 20], 0.95, 20, 0, 'solvent', ['sepoil', 'tank', 'wh'], {
+            flammable: true,
+            tags: [ORG, 'amine'],
+            cautions: 'For H2S in crude or condensate; use the supplier figure for the ratio.',
+            conf: 'L'
+        }),
+        _chem('h2s_zinc', 'Zinc carboxylate (oil-soluble)', 'Zinc carboxylate', 'scav_oil', 'gal_lb_h2s', [1.9, 1.6, 3.0], 1.00, 30, 0, 'solvent', ['sepoil', 'tank', 'wh'], {
+            flammable: true,
+            tags: [ORG, 'zinc'],
+            cautions: 'Zinc sulfide fines stabilise emulsions; check the discharge limits for zinc.',
+            conf: 'M'
+        }),
+        _chem('h2s_nitrite', 'Sodium nitrite 30 %', 'Sodium nitrite', 'scav_oxidiser', 'gal_lb_h2s', [0.4, 0.25, 0.8], 1.20, 2, 0.70, 'aqueous', ['sepwat'], {
+            active: 30, oxidiser: true,
+            tags: ['oxidiser', 'nitrite'],
+            cautions: 'Oxidiser: never with organics or amines; with acidic sour water it can release NOx (keep pH above about 7 and ventilate); sulfur deposits; never block in the line.',
+            conf: 'L–M'
+        }),
+        _chem('h2s_peroxide', 'Hydrogen peroxide 35 %', 'Hydrogen peroxide', 'scav_oxidiser', 'gal_lb_h2s', [0.4, 0.3, 1.4], 1.13, 1.1, 0.65, 'aqueous', ['sepwat'], {
+            active: 35, oxidiser: true,
+            tags: ['oxidiser', 'peroxide'],
+            cautions: 'Strong oxidiser: decomposes to O2 (flammable atmosphere in a hydrocarbon vapour space; overpressure when blocked in); vented, non-hydrocarbon tank only; water phase only.',
+            conf: 'M'
+        }),
+        // ── Corrosion inhibitors ──
+        _chem('ci_film_liq', 'Film-forming corrosion inhibitor (imidazoline / fatty amine / quaternary in solvent)', 'Film-forming corrosion inhibitor', 'ci_oil', 'ppmv_liq', [25, 10, 100], 0.92, 20, 0, 'solvent', ['dh', 'wh', 'dsch', 'sepin'], {
+            active: 30, flammable: true,
+            tags: [ORG, 'corrosion_inhibitor', 'cationic', 'amine'], elastomer: 'ci_solvent',
+            cautions: 'Overdose gives emulsion and foam; a cationic inhibitor and an anionic scale inhibitor precipitate when mixed neat; flammable solvent.',
+            conf: 'M'
+        }),
+        _chem('ci_water', 'Water-soluble corrosion inhibitor', 'Water-soluble corrosion inhibitor', 'ci_aqueous', 'ppmv_water', [50, 20, 200], 1.03, 10, 0.60, 'aqueous', ['dh', 'wh', 'sepin'], {
+            active: 30,
+            tags: [ORG, 'corrosion_inhibitor'],
+            cautions: 'Check compatibility with the other chemicals and the produced water.',
+            conf: 'M'
+        }),
+        _chem('ci_gas', 'Gas-well corrosion inhibitor (atomised)', 'Gas-well corrosion inhibitor', 'ci_gaswell', 'pt_mmscf', [1.0, 0.25, 2], 0.92, 20, 0, 'solvent', ['wh', 'dh', 'dsch'], {
+            active: 30, flammable: true,
+            tags: [ORG, 'corrosion_inhibitor'], elastomer: 'ci_solvent',
+            cautions: 'Atomise into the gas; batch treatments per the supplier procedure.',
+            conf: 'L–M'
+        }),
+        // ── Scale inhibitors ──
+        _chem('si_phosphonate', 'Phosphonate scale inhibitor', 'Phosphonate scale inhibitor', 'scale', 'ppmw_water', [10, 2, 50], 1.20, 10, 0.60, 'aqueous', ['dh', 'wh', 'dsch', 'sepin'], {
+            active: 30,
+            tags: [ORG, 'scale_inhibitor', 'anionic', 'acidic_si'], elastomer: 'si_acidic',
+            cautions: 'Dose 1.5–2 times the minimum inhibitor concentration (quoted as ppm active); high calcium can drop calcium phosphonate; high methanol can precipitate the inhibitor; acidic forms pH 1–3.',
+            conf: 'M'
+        }),
+        _chem('si_polymer', 'Polymeric scale inhibitor', 'Polymeric scale inhibitor', 'scale', 'ppmw_water', [15, 5, 50], 1.15, 15, 0.60, 'aqueous', ['dh', 'wh', 'dsch'], {
+            active: 30,
+            tags: [ORG, 'scale_inhibitor', 'anionic', 'polymer'], elastomer: 'si_acidic',
+            cautions: 'For sulfate scales; more tolerant of MEG than phosphonates.',
+            conf: 'M'
+        }),
+        // ── Foam and emulsion ──
+        _chem('af_silicone', 'Silicone antifoam (PDMS in solvent)', 'Silicone antifoam', 'antifoam', 'ppmv_oil', [5, 1, 30], 0.95, 50, 0, 'solvent', ['sepin', 'dsch'], {
+            active: 30, flammable: true,
+            tags: [ORG, 'antifoam', 'silicone'],
+            cautions: 'Silicon poisons refinery catalysts: check the buyer\'s silicon limit; tiny rates, so dilute.',
+            conf: 'M'
+        }),
+        _chem('af_nonsilicone', 'Non-silicone antifoam (polyglycol / alcohol)', 'Non-silicone antifoam', 'antifoam', 'ppmv_oil', [20, 5, 100], 0.98, 30, 0, 'solvent', ['sepin', 'dsch'], {
+            active: 30, flammable: true,
+            tags: [ORG, 'antifoam'],
+            cautions: 'Overdose stabilises foam.',
+            conf: 'M'
+        }),
+        _chem('demulsifier', 'Demulsifier (oxyalkylated resin / polyol blend in aromatic solvent)', 'Demulsifier', 'emulsion', 'ppmv_oil', [30, 5, 200], 0.94, 30, 0, 'solvent', ['wh', 'dh', 'dsch', 'sepin'], {
+            active: 30, flammable: true,
+            tags: [ORG, 'demulsifier'],
+            cautions: 'Select by bottle test; overdose re-stabilises the emulsion; the solvent often has a low flash point.',
+            conf: 'M'
+        }),
+        _chem('water_clarifier', 'Water clarifier (cationic polymer)', 'Water clarifier', 'clarifier', 'ppmv_water', [10, 2, 50], 1.05, 50, 0.60, 'aqueous', ['sepwat', 'sepin'], {
+            active: 30,
+            tags: [ORG, 'cationic', 'polymer'],
+            cautions: 'Only where the water is discharged or reinjected.',
+            conf: 'M'
+        }),
+        // ── Wax and asphaltene ──
+        _chem('paraffin_inhibitor', 'Wax inhibitor (EVA / polyacrylate comb polymer)', 'Wax inhibitor', 'wax', 'ppmv_oil', [200, 50, 1000], 0.90, 50, 0, 'solvent', ['dh', 'wh', 'dsch'], {
+            active: 30, flammable: true,
+            tags: [ORG, 'polymer'],
+            cautions: 'Inject where the temperature is above the wax appearance temperature, with margin; check the product pour point (winterised grade in cold weather).',
+            conf: 'M'
+        }),
+        _chem('ppd', 'Pour-point depressant', 'Pour-point depressant', 'pour_point', 'ppmv_oil', [300, 100, 2000], 0.90, 50, 0, 'solvent', ['sepoil', 'wh', 'dsch'], {
+            active: 30, flammable: true,
+            tags: [ORG, 'polymer'],
+            cautions: 'Check the product pour point (winterised grade in cold weather).',
+            conf: 'M'
+        }),
+        _chem('asphaltene_inhibitor', 'Asphaltene inhibitor / dispersant (alkylphenol resin / polyisobutylene succinimide)', 'Asphaltene inhibitor', 'asphaltene', 'ppmv_oil', [200, 50, 1000], 0.92, 20, 0, 'solvent', ['dh', 'wh'], {
+            active: 30, flammable: true,
+            tags: [ORG],
+            cautions: 'Inject below the onset-pressure depth; qualify on live oil.',
+            conf: 'M'
+        }),
+        // ── Water systems ──
+        _chem('biocide', 'Biocide (glutaraldehyde / THPS / quaternary)', 'Biocide', 'water_systems', 'ppmv_water', [250, 50, 1000], 1.10, 5, 0.50, 'aqueous', ['sepwat', 'tank'], {
+            active: 30,
+            tags: [ORG, 'aldehyde', 'biocide'],
+            cautions: 'Not normally used in a flowing test; batch dose.',
+            conf: 'M'
+        }),
+        _chem('o2_scavenger', 'Ammonium bisulfite 65 %', 'Ammonium bisulfite', 'water_systems', 'ppm_per_ppm_o2', [10, 8, 15], 1.35, 5, 0.35, 'aqueous', ['tank', 'sepwat'], {
+            active: 65,
+            tags: ['bisulfite', 'reducer'],
+            cautions: 'Not normally used in a flowing test; never with aldehydes.',
+            conf: 'M'
+        }),
+        // ── Custom ──
+        _chem('custom', 'Custom chemical', 'Custom chemical', 'custom', 'ppmv_liq', [null, null, null], 1.00, 10, 0, 'solvent', POINT_KEYS, {
+            tags: [],
+            cautions: 'Enter the data-sheet values (dose basis, dose, SG, viscosity, water content).',
+            conf: 'L'
+        })
+    ];
+    var CHEM_BY_KEY = {};
+    CHEMICALS.forEach(function (c) { CHEM_BY_KEY[c.key] = c; });
+
+    // ── Injection points (§3.1, §3.4) ────────────────────────────────
+    function _pt(key, order, branch, label, short, pLine, pBack, pBackClass, tBasis, ph, wellbore, upstream, segs, segsHeater, eta, pumpClass, note) {
+        return {
+            key: key, order: order, branch: branch, label: label, short: short,
+            pLine: pLine, pBack: pBack, pBackClass: pBackClass, tBasis: tBasis,
+            phases: { gas: ph.indexOf('g') !== -1, water: ph.indexOf('w') !== -1, oil: ph.indexOf('o') !== -1 },
+            wellbore: wellbore, upstreamOfSep: upstream, contactSegs: segs, contactSegsHeater: segsHeater,
+            etaScav: eta, pumpClass: pumpClass, note: note || ''
+        };
+    }
+    var POINTS = [
+        _pt('dh', 0, 'well', 'Downhole — CIV / capillary / subsea-test-tree port', 'Downhole', 'dh', 'sithp', 'whclass', 'dh', 'gwo', true, true, [1, 2, 3, 4], [1, 2, 3, 4], null,
+            'High-pressure plunger (small plunger), air-driven liquid pump or skid',
+            'Pressure at depth from the tubing; contact also includes the tubing above the injection depth.'),
+        _pt('wh', 1, 'well', 'Flowhead / upstream of choke (upstream data header)', 'Upstream of choke', 'wh', 'sithp', 'whclass', 'fwht', 'gwo', true, true, [1, 2, 3, 4], [1, 2, 3, 4], 0.58,
+            'Air-driven liquid pump, high-pressure plunger or skid',
+            'Required pressure from the shut-in case: max(SITHP, FWHP).'),
+        _pt('dsch', 2, 'well', 'Downstream of choke / heater inlet', 'Downstream of choke', 'ck', 'psvsep', 'psvsep', 'ck', 'gwo', false, true, [2, 3, 4], [2, 3, 4], 0.50,
+            'Pneumatic plunger or hydraulic-diaphragm metering pump',
+            'A blocked separator lets this section rise to the separator relief-valve set pressure.'),
+        _pt('sepin', 3, 'well', 'Heater outlet / separator inlet', 'Separator inlet', 'sep', 'psvsep', 'psvsep', 'htr', 'gwo', false, true, [3, 4], [4], 0.45,
+            'Pneumatic plunger or diaphragm metering pump',
+            'Temperature is the heater outlet when the heater is on, else the choke outlet.'),
+        _pt('sepgas', 4, 'gas', 'Separator gas outlet (upstream of back-pressure valve / meter)', 'Separator gas outlet', 'sep', 'psvsep', 'psvsep', 'sep', 'g', false, false, [], [], 0.40,
+            'Diaphragm metering pump or pneumatic plunger',
+            'Saturated gas with carried mist; the gas re-expands across the back-pressure valve.'),
+        _pt('flare', 5, 'gas', 'Flare / sales line downstream of the back-pressure valve', 'Flare line', 'bpv', 'psvsep', 'psvsep', 'bpv', 'g', false, false, [], [], null,
+            'Low-pressure metering pump',
+            'Back-pressure basis: a failed-open back-pressure valve.'),
+        _pt('sepoil', 4, 'oil', 'Separator oil outlet (upstream of level valve)', 'Separator oil outlet', 'sep', 'psvsep', 'psvsep', 'sep', 'o', false, false, [], [], null,
+            'Diaphragm metering pump rated above the separator pressure plus allowance',
+            ''),
+        _pt('sepwat', 4, 'water', 'Separator water outlet', 'Separator water outlet', 'sep', 'psvsep', 'psvsep', 'sep', 'w', false, false, [], [], null,
+            'Diaphragm metering pump rated above the separator pressure plus allowance',
+            ''),
+        _pt('tank', 5, 'liquid', 'Surge / gauge tank', 'Tank', 'atm', 'none', 'none', 'sep', 'wo', false, false, [], [], null,
+            'Solenoid or mechanical diaphragm pump, air-operated diaphragm pump',
+            'Fit an anti-siphon / back-pressure valve when the injection pressure is below the chemical-tank head.')
+    ];
+    var PT_BY_KEY = {};
+    POINTS.forEach(function (p) { PT_BY_KEY[p.key] = p; });
+
+    // ── Plunger, stroke and actuator lists (§2.3) ────────────────────
+    var PLUNGERS = [0.1875, 0.25, 0.3125, 0.375, 0.5, 0.625, 0.75, 0.875, 1, 1.25].map(_size);
+    var STROKES = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2].map(_size);
+    var ACTUATORS = [4, 6, 8].map(_size);
+
+    // ── Pumps (§5.2) — generic, illustrative envelopes ───────────────
+    function _pump(o) {
+        var base = {
+            key: '', name: '', short: '', kind: '', setting: '', mvp: true, electric: false, vents: false,
+            hazSuitable: true, hazAreaNote: '',
+            plungers: null, plungerDef: null, strokes: null, strokeDef: null, strokeMax: null, headsMax: 1,
+            actuators: null, actDef: null,
+            spmMax: null, spmMin: null, spmCrank: null, spmCrankMin: null, spmCrankMax: null,
+            sMin: null, nMin: null, vfd: false,
+            pmaxRule: 'fixed', bodyPsi: null, pmax: null, rodLbf: null, capPsi: null, etaM: null, pSpring: null,
+            qRated_galh: null, q0_galh: null, ratio: null, vcyc_in3: null, stallFracMax: null, q0FracMin: null,
+            etaDef: null, accuracy: '', turndown: '', bestPoints: [], conf: 'M'
+        };
+        for (var k in o) if (_has(o, k)) base[k] = o[k];
+        return base;
+    }
+    var PUMPS = [
+        _pump({
+            key: 'pneu_plunger', name: 'Pneumatic plunger pump (gas or air actuator, single-acting; 1 or 2 plungers on one actuator)',
+            short: 'Pneumatic plunger', kind: 'plunger', setting: 'spm', vents: true,
+            hazAreaNote: 'Suitable in a classified area (no electrics); vents its drive gas at the pump.',
+            plungers: [0.1875, 0.25, 0.3125, 0.375, 0.5, 0.625, 0.75, 0.875, 1], plungerDef: 0.5,
+            strokes: [0.25, 0.5, 0.75, 1], strokeDef: 1, strokeMax: 1, headsMax: 2,
+            actuators: [4, 6, 8], actDef: 4, spmMax: 60, spmMin: 3,
+            pmaxRule: 'pneumatic', bodyPsi: 10000, etaM: 0.8, pSpring: 5, etaDef: 0.90,
+            accuracy: '±5–10 % uncalibrated, ±2–5 % after a drawdown calibration',
+            turndown: 'about 10–20:1 on speed × 3:1 on stroke; some families run at 25–30 SPM maximum (edit)',
+            bestPoints: ['wh', 'dsch', 'sepin', 'dh'], conf: 'M'
+        }),
+        _pump({
+            key: 'air_liquid', name: 'Air-driven liquid pump (pressure amplifier)', short: 'Air-driven liquid pump',
+            kind: 'airliquid', setting: 'air', vents: true,
+            hazAreaNote: 'Suitable in a classified area (no electrics); vents its drive gas at the pump.',
+            pmaxRule: 'ratio', bodyPsi: 10000, q0_galh: 30, ratio: 100, vcyc_in3: 1.0,
+            stallFracMax: 0.7, q0FracMin: 0.1,
+            accuracy: 'Not a metering pump: set the air and verify the rate with a drawdown cylinder or meter (mandatory)',
+            turndown: 'design flow at least 0.1 × free flow; operate at or below 0.7 × stall pressure',
+            bestPoints: ['wh', 'dh'], conf: 'M'
+        }),
+        _pump({
+            key: 'elec_plunger', name: 'Electric packed-plunger metering pump (API 675 class)', short: 'Electric plunger metering pump',
+            kind: 'plunger', setting: 'stroke_speed', electric: true, hazSuitable: false,
+            hazAreaNote: 'Electric pump: the motor and controls must be certified for the zone.',
+            plungers: [0.25, 0.3125, 0.375, 0.5, 0.625, 0.75, 0.875, 1, 1.25], plungerDef: 0.875,
+            strokes: [0.25, 0.5, 0.75, 1], strokeDef: 1, strokeMax: 1, headsMax: 3,
+            spmMax: 120, spmCrank: 120, spmCrankMin: 30, spmCrankMax: 180, sMin: 10, nMin: 10, vfd: false,
+            pmaxRule: 'rod', rodLbf: 2500, capPsi: 15000, etaDef: 0.90,
+            accuracy: '±1 % over 10:1 (API 675)', turndown: '10:1 on stroke (× speed with a variable-speed drive)',
+            bestPoints: ['wh', 'dh'], conf: 'M'
+        }),
+        _pump({
+            key: 'elec_hyd_diaph', name: 'Hydraulically-actuated diaphragm metering pump (API 675 class)', short: 'Hydraulic-diaphragm metering pump',
+            kind: 'meter', setting: 'stroke_speed', electric: true, hazSuitable: false,
+            hazAreaNote: 'Electric pump: the motor and controls must be certified for the zone.',
+            qRated_galh: 5, spmMax: 120, sMin: 10, nMin: 10, vfd: true, pmaxRule: 'fixed', pmax: 3000,
+            accuracy: '±1 % over 10:1 (API 675)', turndown: '10:1 on stroke × speed',
+            bestPoints: ['dsch', 'sepin', 'wh'], conf: 'M'
+        }),
+        _pump({
+            key: 'elec_solenoid', name: 'Electric solenoid diaphragm metering pump', short: 'Solenoid metering pump',
+            kind: 'meter', setting: 'stroke_speed', electric: true, hazSuitable: false,
+            hazAreaNote: 'Electric pump: the unit must be certified for the zone.',
+            qRated_galh: 10 / CONSTANTS.galToL, spmMax: 120, sMin: 20, nMin: 10, vfd: true, pmaxRule: 'fixed', pmax: 150,
+            accuracy: '±2 % repeatability', turndown: 'about 100:1 on stroke × pulse rate',
+            bestPoints: ['tank', 'sepoil', 'sepwat'], conf: 'M'
+        }),
+        _pump({
+            key: 'elec_mech_diaph', name: 'Motor-driven mechanical diaphragm metering pump', short: 'Mechanical-diaphragm metering pump',
+            kind: 'meter', setting: 'stroke_speed', electric: true, hazSuitable: false,
+            hazAreaNote: 'Electric pump: the motor and controls must be certified for the zone.',
+            qRated_galh: 20, spmMax: 180, spmMin: 30, sMin: 20, nMin: 10, vfd: true, pmaxRule: 'fixed', pmax: 250,
+            accuracy: 'about ±2–5 %', turndown: '10:1 on stroke',
+            bestPoints: ['tank', 'sepoil', 'sepwat'], conf: 'M–L'
+        }),
+        _pump({
+            key: 'air_diaph', name: 'Air-operated diaphragm transfer pump', short: 'Air-operated diaphragm pump',
+            kind: 'transfer', setting: 'cycles', vents: true,
+            hazAreaNote: 'Suitable in a classified area (no electrics); vents its drive gas at the pump.',
+            q0_galh: 300, ratio: 1, spmMax: 200, pmaxRule: 'ratio',
+            accuracy: 'coarse: transfer duty, not metering', turndown: 'coarse',
+            bestPoints: ['tank'], conf: 'M–L'
+        }),
+        _pump({
+            key: 'hand', name: 'Hand pump (batch)', short: 'Hand pump', kind: 'hand', setting: 'batch', mvp: false,
+            hazAreaNote: 'Suitable in a classified area.',
+            vcyc_in3: 1.0, pmaxRule: 'fixed', pmax: 10000,
+            accuracy: 'batch only', turndown: 'batch only',
+            bestPoints: ['wh'], conf: 'L'
+        })
+    ];
+    var PUMP_BY_KEY = {};
+    PUMPS.forEach(function (p) { PUMP_BY_KEY[p.key] = p; });
+
+    // ── Capillary / control lines (§5.3) — Barlow, 316 stainless at 20 ksi ──
+    var CAPILLARY = [['c250_035', 0.25, 0.035], ['c250_049', 0.25, 0.049], ['c375_049', 0.375, 0.049], ['c375_065', 0.375, 0.065]].map(function (r) {
+        var id = _r(r[1] - 2 * r[2], 3), idMm = _r(id * 25.4, 2);
+        return {
+            key: r[0], od: r[1], wall: r[2], id: id, idMm: idMm,
+            barlowPsi: Math.round(2 * 20000 * r[2] / r[1] / 10) * 10,
+            label: _frac(r[1]) + ' × ' + r[2].toFixed(3) + ' in capillary (ID ' + idMm.toFixed(2) + ' mm)'
+        };
+    });
+    var CAP_BY_KEY = {};
+    CAPILLARY.forEach(function (c) { CAP_BY_KEY[c.key] = c; });
+
+    // ── Compatibility rules (§5.4) ───────────────────────────────────
+    // Pair rule: a chemical carrying any tag of a[] and another carrying any tag of b[]
+    // (either order). Context rule: one chemical carrying a tag of a[] in the context ctx:
+    //   'hc_tank' hydrocarbon tank or vapour space · 'sepgas_no_ko' at the separator gas outlet
+    //   with no knock-out · 'ca_water' produced water with calcium / bicarbonate ·
+    //   'sale_crude' crude for sale · 'carbon_steel' carbon-steel wetted parts.
+    var COMPAT = [
+        { key: 'organic_oxidiser', a: ['organic'], b: ['oxidiser'], ctx: null, level: 'bad', text: 'Never in the same line or tank: violent reaction, and the chemical is destroyed.' },
+        { key: 'oxidiser_hc_tank', a: ['oxidiser'], b: null, ctx: 'hc_tank', level: 'warn', text: 'O2 or NOx evolution into a hydrocarbon vapour space: vented, non-hydrocarbon tank only.' },
+        { key: 'amine_nitrite', a: ['triazine', 'amine'], b: ['nitrite'], ctx: null, level: 'bad', text: 'Never together: possible nitrosamines, and the nitrite is consumed.' },
+        { key: 'aldehyde_bisulfite', a: ['aldehyde'], b: ['bisulfite'], ctx: null, level: 'bad', text: 'Do not dose together: bisulfite adducts deactivate both.' },
+        { key: 'triazine_aldehyde', a: ['triazine'], b: ['aldehyde'], ctx: null, level: 'warn', text: 'Use separate injection points.' },
+        { key: 'triazine_acidic_si', a: ['triazine'], b: ['acidic_si'], ctx: null, level: 'warn', text: 'Use separate lines: neat mixing precipitates.' },
+        { key: 'cationic_anionic', a: ['cationic'], b: ['anionic'], ctx: null, level: 'warn', text: 'Separate quills several pipe diameters apart.' },
+        { key: 'methanol_si', a: ['methanol'], b: ['scale_inhibitor'], ctx: null, level: 'warn', text: 'Inhibitor salts may precipitate in high-methanol water: test compatibility (MEG is milder).' },
+        { key: 'ci_antifoam', a: ['corrosion_inhibitor', 'demulsifier'], b: ['antifoam'], ctx: null, level: 'warn', text: 'Bottle-test the package: an overdose reverses the effect.' },
+        { key: 'triazine_ca_water', a: ['triazine'], b: null, ctx: 'ca_water', level: 'warn', text: 'Calcium carbonate scale and emulsions: add a scale inhibitor and avoid overdosing.' },
+        { key: 'silicone_sale_crude', a: ['silicone'], b: null, ctx: 'sale_crude', level: 'warn', text: 'Check the buyer\'s silicon limit for the crude.' },
+        { key: 'glyoxal_carbon_steel', a: ['glyoxal'], b: null, ctx: 'carbon_steel', level: 'warn', text: 'Use stainless wetted parts and a corrosion inhibitor.' },
+        { key: 'aq_scav_sepgas', a: ['aqueous_scavenger'], b: null, ctx: 'sepgas_no_ko', level: 'warn', text: 'Liquid carry-over to the flare: fit a knock-out or contactor downstream.' }
+    ];
+
+    // ── Elastomer screening (§5.5): A good, B fair, C poor ───────────
+    var MATERIALS = ['NBR', 'HNBR', 'EPDM', 'FKM std', 'FKM peroxide', 'FFKM', 'PTFE'];
+    function _el(label, v) { var o = { label: label }; MATERIALS.forEach(function (m, i) { o[m] = v[i]; }); return o; }
+    var ELASTOMER = {
+        materials: MATERIALS,
+        rows: {
+            methanol:    _el('Methanol', ['B', 'B', 'A', 'C', 'A-B', 'A', 'A']),
+            glycol:      _el('MEG / glycols', ['A', 'A', 'A', 'A', 'A', 'A', 'A']),
+            triazine:    _el('MEA-triazine', ['B', 'B', 'A', 'C', 'B-C', 'A', 'A']),
+            ci_solvent:  _el('Oil-soluble corrosion inhibitor (aromatic solvent)', ['B', 'B', 'C', 'A', 'A', 'A', 'A']),
+            si_acidic:   _el('Aqueous acidic scale inhibitor', ['A-B', 'A', 'A', 'A-B', 'A', 'A', 'A']),
+            khi_solvent: _el('KHI in glycol-ether solvent', ['B-C', 'B', 'A-B', 'C', 'B', 'A', 'A'])
+        },
+        note: 'Seals: avoid standard FKM with methanol; use rapid-gas-decompression-rated grades in gas service above about 1000 psi.'
+    };
+
+    // ── Lookups ──────────────────────────────────────────────────────
+    function find(key) { return _has(CHEM_BY_KEY, key) ? CHEM_BY_KEY[key] : null; }
+    function suit(chemKey, pointKey) {
+        var c = find(chemKey);
+        if (!c || !_has(PT_BY_KEY, pointKey)) return null;
+        if (_has(c.suit, pointKey)) return c.suit[pointKey];
+        var f = FAM_BY_KEY[c.family];
+        return f ? f.suit[pointKey] : null;
+    }
+    function suitInfo(chemKey, pointKey) {
+        var lv = suit(chemKey, pointKey);
+        if (!lv) return null;
+        var c = find(chemKey), f = FAM_BY_KEY[c.family];
+        var note = (_has(c.suit, pointKey)) ? '' : ((f && f.notes[pointKey]) || '');
+        if (!note) note = lv === 'X' ? X_NOTE : lv === 'N' ? 'Not recommended at this point.' : lv === 'R' ? 'Recommended point.' : 'Allowed point.';
+        return { level: lv, verdict: lv === 'X' ? 'bad' : lv === 'N' ? 'warn' : 'ok', note: note };
+    }
+    function _tagHit(tags, list) { if (!list) return false; for (var i = 0; i < list.length; i++) if (tags.indexOf(list[i]) !== -1) return true; return false; }
+    function pairRules(ka, kb) {
+        var a = find(ka), b = find(kb);
+        if (!a || !b) return [];
+        return COMPAT.filter(function (r) {
+            return r.b && ((_tagHit(a.incompat, r.a) && _tagHit(b.incompat, r.b)) || (_tagHit(b.incompat, r.a) && _tagHit(a.incompat, r.b)));
+        });
+    }
+    function ctxRules(k) {
+        var c = find(k);
+        if (!c) return [];
+        return COMPAT.filter(function (r) { return r.ctx && _tagHit(c.incompat, r.a); });
+    }
+
+    G.WTS_chemlib = {
+        version: 1,
+        groups: GROUPS,
+        families: FAMILIES,
+        chemicals: CHEMICALS,
+        bases: BASES,
+        points: POINTS,
+        pointKeys: POINT_KEYS.slice(),
+        pumps: PUMPS,
+        plungers: PLUNGERS,
+        strokes: STROKES,
+        actuators: ACTUATORS,
+        heads: [1, 2, 3],
+        capillary: CAPILLARY,
+        compat: COMPAT,
+        elastomer: ELASTOMER,
+        fluidClasses: FLUID,
+        constants: CONSTANTS,
+        defaults: DEFAULTS,
+        find: find,
+        list: function (x) {
+            if (x == null || x === '') return CHEMICALS.slice();
+            return CHEMICALS.filter(function (c) { return c.family === x || c.group === x; });
+        },
+        family: function (k) { return _has(FAM_BY_KEY, k) ? FAM_BY_KEY[k] : null; },
+        point: function (k) { return _has(PT_BY_KEY, k) ? PT_BY_KEY[k] : null; },
+        pump: function (k) { return _has(PUMP_BY_KEY, k) ? PUMP_BY_KEY[k] : null; },
+        cap: function (k) { return _has(CAP_BY_KEY, k) ? CAP_BY_KEY[k] : null; },
+        suit: suit,
+        suitInfo: suitInfo,
+        eff: function (chemKey, pointKey) {
+            var c = find(chemKey);
+            if (!c || c.kind !== 'scavenger' || !c.stoich) return null;
+            if (c.effDef != null) return c.effDef;
+            var p = _has(PT_BY_KEY, pointKey) ? PT_BY_KEY[pointKey] : null;
+            return p && p.etaScav != null ? p.etaScav : null;
+        },
+        pairRules: pairRules,
+        ctxRules: ctxRules,
+        elastomerRow: function (k) { var c = find(k); return c && c.elastomer && _has(ELASTOMER.rows, c.elastomer) ? ELASTOMER.rows[c.elastomer] : null; }
+    };
+})();
+
+// ─── END 40-calc-chemlib ─────────────────────────────────────────────
+
 
 // ═══════════════════════════════════════════════════════════════════════
 // ─── BEGIN 40-calc-tubulars ───────────────────────────────────────────
@@ -86653,6 +87463,20 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
 //   WTS_gaspvt_viscosity(sg, tF, Z, p, yco2, yh2s, yn2)  LGE + Standing impurity correction
 //   (compute() also returns kReal, cpReal, cvReal: real-gas values from the DAK departure functions)
 //
+//   v3.2 (Chemical Injection) — additive; compute() and the page are unchanged.
+//   All three take p in psia, t in °F and CO2 / H2S / N2 in MOLE % (like compute()):
+//   WTS_gaspvt_z({sg, p, t, co2, h2s, n2})
+//       → {ok, z, Bg_ft3scf, Tpr, Ppr, Tpc, Ppc, sgHc, warnings[]} | {ok:false, errors[], keys[], bad[]}
+//       one DAK solve; no −40 °F floor, only Tpr ≥ 1.0
+//   WTS_gaspvt_enthalpy({sg, p, t, co2, h2s, n2})
+//       → {ok, h_Jmol, hIdeal_Jmol, hRes_Jmol, cp_JmolK, cpIdeal_JmolK, cpRes_JmolK, muJT_Fpsi,
+//          z, Tpr, Ppr, warnings[]}   (h° = 0 for the ideal gas at 60 °F; only differences matter)
+//   WTS_gaspvt_isenthalpic({sg, p1, t1, p2, co2, h2s, n2, fJT?})
+//       → {ok, t1, p1, p2, t2, dT (= t2 − t1), cooling (= t1 − t2), iterations, clamped,
+//          t2Predictor, muJT1_Fpsi, h1_Jmol, z1, z2, tFloor, warnings[], fJT?, t2Design?}
+//       raw DAK J-T expansion (p2 ≤ p1); with fJT, t2Design = t1 − fJT·(t1 − t2).
+//       WTS_gaspvt_isenthalpic.stats() → {solves, hits, size};  .clearMemo() (tests only)
+//
 // STATE
 //   WTS_state.gaspvt = {ok, z, zDAK, zHY, Tpc, Ppc, Bg_ft3scf, rho, mu, cg, c, k, ts}
 // ════════════════════════════════════════════════════════════════════
@@ -86962,6 +87786,234 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         var pc = pseudoCriticals(sg, yco2 || 0, yh2s || 0, yn2 || 0);
         return pc ? heatCapacity(pc.sgHc, tF, yco2 || 0, yh2s || 0, yn2 || 0).k : NaN;
     };
+
+    // ── v3.2: Z, enthalpy and the isenthalpic (J-T) expansion ────────
+    // Used by the Chemical Injection page (choke outlet, start-up and
+    // back-pressure-valve temperatures, gas velocity and contact time).
+    // Impurities are MOLE % in every call, like compute().
+    //
+    //   h(T, p)  = h°(T) + (h − h°)
+    //   h°(T)    = ∫ Cp°(T) dT from 60 °F (Reid–Prausnitz–Poling polynomials, the
+    //              same molar-mass interpolation as heatCapacity())
+    //   h − h°   = −R·Tpc·Tpr²·∫0^Ppr (∂Z/∂Tpr)_Ppr dPpr/Ppr
+    //   Cp − Cp° = −R·∫0^Ppr [2·Tpr·(∂Z/∂Tpr) + Tpr²·(∂²Z/∂Tpr²)]_Ppr dPpr/Ppr
+    //   μJT      = [T·(∂V/∂T)_p − V]/Cp = R·Tpc·Tpr²·(∂Z/∂Tpr)_Ppr / (p·Cp)
+    // DAK Z on the Sutton + Kay + Wichert–Aziz pseudo-criticals; 40-point
+    // Gauss–Legendre on [0, Ppr] (the integrands are finite as Ppr → 0, so the
+    // open nodes need no special end point); central differences, δ = 1e-4 in Tpr
+    // (Smith, Van Ness & Abbott, 7th ed., §6.3).
+    //
+    // Isenthalpic solve h(t2, p2) = h(t1, p1):
+    //   predictor t2⁰ = t1 − μJT(t1, p1)·(p1 − p2), clipped to [tFloor, t1 + 20 °F],
+    //   tFloor = max(−80 °F, 1.02·Tpc − 459.67);
+    //   Newton with the slope Cp(t2, p2) = ∂h/∂T|p, bisection when a step leaves the
+    //   bracket; |Δt| < 0.01 °F, at most 30 iterations. A root below the floor (or
+    //   above t1 + 20 °F) is returned at the bound with clamped = true and a warning.
+    // Memo: 64 entries keyed by the inputs rounded to 0.001, least recently used out,
+    // never cleared by callers (stats() counts solves and hits for tests).
+    // This is the RAW correlation: the Chemical Injection page applies its J-T design
+    // factor (t2,design = t1 − fJT·(t1 − t2)); pass fJT here to get t2Design as well.
+    var T_REF_K = T_SC / 1.8;                        // 60 °F = 288.706 K: h° = 0 there
+    var _GL = null;                                  // 40-point Gauss–Legendre, built on first use
+    function _gaussLegendre(n) {
+        var x = new Array(n), w = new Array(n), m = (n + 1) >> 1;
+        for (var i = 0; i < m; i++) {
+            var z = Math.cos(Math.PI * (i + 0.75) / (n + 0.5)), z1, pp = 1;
+            for (var it = 0; it < 100; it++) {
+                var p1 = 1, p2 = 0;
+                for (var j = 1; j <= n; j++) { var p3 = p2; p2 = p1; p1 = ((2 * j - 1) * z * p2 - (j - 1) * p3) / j; }
+                pp = n * (z * p1 - p2) / (z * z - 1);
+                z1 = z; z = z1 - p1 / pp;
+                if (Math.abs(z - z1) < 1e-15) break;
+            }
+            x[i] = -z; x[n - 1 - i] = z;
+            w[i] = w[n - 1 - i] = 2 / ((1 - z * z) * pp * pp);
+        }
+        return { x: x, w: w };
+    }
+    function _hPoly(c, TK) { return TK * (c.a + TK * (c.b / 2 + TK * (c.c / 3 + TK * c.d / 4))); }
+    function _hP(c, TK) { return _hPoly(c, TK) - _hPoly(c, T_REF_K); }
+    function _hHc(M, TK) {                           // ∫Cp° dT of the paraffin part, as _cpHc()
+        var h1 = _hP(CP.c1, TK), h2 = _hP(CP.c2, TK), h3 = _hP(CP.c3, TK);
+        if (M <= CP.c1.M) return h1;
+        if (M <= CP.c2.M) return h1 + (h2 - h1) * (M - CP.c1.M) / (CP.c2.M - CP.c1.M);
+        return h2 + (h3 - h2) * (M - CP.c2.M) / (CP.c3.M - CP.c2.M);
+    }
+    function idealEnthalpy(sgHc, tF, yco2, yh2s, yn2) {   // J/mol relative to the ideal gas at 60 °F
+        var TK = (tF + RANKINE) / 1.8, yh = 1 - yco2 - yh2s - yn2;
+        return yh * _hHc(MW_AIR * sgHc, TK) + yn2 * _hP(CP.n2, TK) + yco2 * _hP(CP.co2, TK) + yh2s * _hP(CP.h2s, TK);
+    }
+
+    // Shared input check for the three exports: pKeys / tKeys name the pressure
+    // and temperature fields. Returns {errors, keys, bad} or the parsed gas.
+    function _gasIn(i, pKeys, tKeys) {
+        i = i || {};
+        function n0(v) { return (v === '' || v == null) ? 0 : Number(v); }
+        var sg = Number(i.sg), co2 = n0(i.co2), h2s = n0(i.h2s), n2 = n0(i.n2);
+        var errors = [], keys = [], bad = [];
+        function err(k, m) { errors.push(m); keys.push(k); if (bad.indexOf(k) === -1) bad.push(k); }
+        if (!(_fin(sg) && sg >= 0.55 && sg <= 3)) err('sg', 'Gas gravity must be between 0.55 and 3.0 (air = 1).');
+        var v = {};
+        pKeys.forEach(function (k) {
+            var p = Number(i[k]); v[k] = p;
+            if (!(_fin(p) && p > 0 && p <= 30000)) err(k, 'Pressure (' + k + ') must be above 0 and no more than 30,000 psia.');
+        });
+        tKeys.forEach(function (k) {
+            var t = Number(i[k]); v[k] = t;
+            if (!(_fin(t) && t > -RANKINE && t <= 700)) err(k, 'Temperature (' + k + ') must be above absolute zero and no more than 700 °F.');
+        });
+        if (!(_fin(co2) && co2 >= 0 && co2 < 100)) err('co2', 'CO2 must be between 0 and 100 mol %.');
+        if (!(_fin(h2s) && h2s >= 0 && h2s < 100)) err('h2s', 'H2S must be between 0 and 100 mol %.');
+        if (!(_fin(n2) && n2 >= 0 && n2 < 100)) err('n2', 'N2 must be between 0 and 100 mol %.');
+        if (!bad.length && co2 + h2s + n2 >= 95) { err('sum', 'CO2 + H2S + N2 must be below 95 mol % (the gas must be mostly hydrocarbon).'); bad.push('h2s', 'n2'); }
+        var L = _lib();
+        if (!L) err('lib', 'The PVT correlation library (PRiSM) is not loaded.');
+        if (errors.length) return { ok: false, errors: errors, keys: keys, bad: bad };
+        var yco2 = co2 / 100, yh2s = h2s / 100, yn2 = n2 / 100;
+        var pc = pseudoCriticals(sg, yco2, yh2s, yn2);
+        if (!(pc && pc.sgHc >= 0.55)) {
+            return { ok: false, bad: ['sg'], keys: ['sghc'], errors: ['Gas gravity ' + _fmt(sg, 3) + ' is too low for the stated CO2/H2S/N2: the hydrocarbon part would be lighter than methane.'] };
+        }
+        for (var t = 0; t < tKeys.length; t++) {
+            var TR = v[tKeys[t]] + RANKINE;
+            if (!(TR / pc.Tpc >= 1.0)) {
+                return { ok: false, bad: [tKeys[t]], keys: ['tpc'], tpcF: pc.Tpc - RANKINE, errors: ['Temperature is below the pseudo-critical temperature (' + _fmt(pc.Tpc - RANKINE, 1) + ' °F); the gas correlations do not apply (Tpr must be at least 1.0).'] };
+            }
+        }
+        return { ok: true, L: L, sg: sg, co2: co2, h2s: h2s, n2: n2, yco2: yco2, yh2s: yh2s, yn2: yn2, pc: pc, v: v };
+    }
+    function _rangeWarnings(g, Tpr, Ppr, where) {
+        var w = [], pre = where ? where + ' ' : '';
+        if (Tpr < 1.05 || Tpr > 3.0) w.push(pre + 'Tpr = ' + _fmt(Tpr, 3) + ' is outside 1.05–3.0, the range the Z correlations were fitted over.');
+        if (Ppr > 15) w.push(pre + 'Ppr = ' + _fmt(Ppr, 2) + ' is above 15; Z is extrapolated beyond the Standing–Katz chart.');
+        if (g.pc.sgHc < 0.57 || g.pc.sgHc > 1.68) w.push('Hydrocarbon gravity ' + _fmt(g.pc.sgHc, 3) + ' is outside the Sutton data range (0.57–1.68).');
+        if (g.yco2 > 0.544 || g.yh2s > 0.738) w.push('CO2 or H2S is above the Wichert–Aziz data range (CO2 54.4 %, H2S 73.8 %).');
+        return w;
+    }
+
+    // Enthalpy, real-gas Cp and μJT at (p psia, t °F) on parsed gas g: 123 DAK solves.
+    function _enth(g, p, tF) {
+        var L = g.L, pc = g.pc, Tpr = (tF + RANKINE) / pc.Tpc, Ppr = p / pc.Ppc;
+        var GL = _GL || (_GL = _gaussLegendre(40));
+        var d = 1e-4, half = Ppr / 2, sT = 0, sC = 0, Zf = L.Z_dranchukAbouKassem;
+        for (var k = 0; k < GL.x.length; k++) {
+            var q = half * (GL.x[k] + 1), wq = GL.w[k] * half / q;
+            var zp = Zf(Tpr + d, q), z0 = Zf(Tpr, q), zm = Zf(Tpr - d, q);
+            var zt = (zp - zm) / (2 * d), ztt = (zp - 2 * z0 + zm) / (d * d);
+            sT += wq * zt;
+            sC += wq * (2 * Tpr * zt + Tpr * Tpr * ztt);
+        }
+        var TpcK = pc.Tpc / 1.8;
+        var hRes = -R_J * TpcK * Tpr * Tpr * sT;
+        var cpRes = -R_J * sC;
+        var hId = idealEnthalpy(pc.sgHc, tF, g.yco2, g.yh2s, g.yn2);
+        var cpId = heatCapacity(pc.sgHc, tF, g.yco2, g.yh2s, g.yn2).cp;
+        var Z = Zf(Tpr, Ppr), zT = (Zf(Tpr + d, Ppr) - Zf(Tpr - d, Ppr)) / (2 * d);
+        var cp = cpId + cpRes;
+        // R·Tpc[K]/p[psia] is a volume in J/(mol·psi); ÷ Cp [J/(mol·K)] → K/psi; × 1.8 → °F/psi
+        var mu = 1.8 * R_J * TpcK * Tpr * Tpr * zT / (p * cp);
+        return { h: hId + hRes, hIdeal: hId, hRes: hRes, cp: cp, cpIdeal: cpId, cpRes: cpRes, muJT: mu, z: Z, Tpr: Tpr, Ppr: Ppr };
+    }
+
+    function gasZ(input) {
+        var g = _gasIn(input, ['p'], ['t']);
+        if (!g.ok) return g;
+        var p = g.v.p, t = g.v.t, TR = t + RANKINE, Tpr = TR / g.pc.Tpc, Ppr = p / g.pc.Ppc;
+        var Z = g.L.Z_dranchukAbouKassem(Tpr, Ppr);
+        if (!(_fin(Z) && Z > 0)) return { ok: false, bad: ['p'], keys: ['z'], errors: ['Z could not be solved at these conditions.'] };
+        return {
+            ok: true, z: Z, Bg_ft3scf: P_SC * Z * TR / (T_SC * p), Tpr: Tpr, Ppr: Ppr,
+            Tpc: g.pc.Tpc, Ppc: g.pc.Ppc, sgHc: g.pc.sgHc, warnings: _rangeWarnings(g, Tpr, Ppr)
+        };
+    }
+
+    function gasEnthalpy(input) {
+        var g = _gasIn(input, ['p'], ['t']);
+        if (!g.ok) return g;
+        var e = _enth(g, g.v.p, g.v.t);
+        if (!(_fin(e.h) && _fin(e.cp) && e.cp > 0)) return { ok: false, bad: ['p'], keys: ['h'], errors: ['Enthalpy could not be evaluated at these conditions.'] };
+        return {
+            ok: true, h_Jmol: e.h, hIdeal_Jmol: e.hIdeal, hRes_Jmol: e.hRes,
+            cp_JmolK: e.cp, cpIdeal_JmolK: e.cpIdeal, cpRes_JmolK: e.cpRes, muJT_Fpsi: e.muJT,
+            z: e.z, Tpr: e.Tpr, Ppr: e.Ppr, warnings: _rangeWarnings(g, e.Tpr, e.Ppr)
+        };
+    }
+
+    var _ise = { memo: (typeof Map === 'function') ? new Map() : null, max: 64, solves: 0, hits: 0 };
+    function _r3(x) { return Math.round(x * 1000) / 1000; }
+    function _iseCopy(r, fJT) {
+        var o = {};
+        for (var k in r) if (Object.prototype.hasOwnProperty.call(r, k)) o[k] = r[k];
+        o.warnings = r.warnings.slice();
+        if (_fin(fJT)) { o.fJT = fJT; o.t2Design = r.t1 - fJT * (r.t1 - r.t2); }
+        return o;
+    }
+    function isenthalpic(input) {
+        var i = input || {};
+        var g = _gasIn(i, ['p1', 'p2'], ['t1']);
+        if (!g.ok) return g;
+        var p1 = g.v.p1, p2 = g.v.p2, t1 = g.v.t1;
+        if (p2 > p1) return { ok: false, bad: ['p2'], keys: ['p2gtp1'], errors: ['Downstream pressure must not exceed the upstream pressure (an isenthalpic expansion has p2 ≤ p1).'] };
+        var fJT = (i.fJT === '' || i.fJT == null) ? NaN : Number(i.fJT);
+        var key = [g.sg, p1, t1, p2, g.co2, g.h2s, g.n2].map(_r3).join('|');
+        var M = _ise.memo;
+        if (M && M.has(key)) {
+            var hit = M.get(key);
+            M.delete(key); M.set(key, hit);                        // most recently used last
+            _ise.hits++;
+            return _iseCopy(hit, fJT);
+        }
+        _ise.solves++;
+        var pc = g.pc;
+        var tFloor = Math.max(-80, 1.02 * pc.Tpc - RANKINE), tTop = t1 + 20;
+        if (tFloor > t1) tFloor = t1;
+        var e1 = _enth(g, p1, t1), h1 = e1.h;
+        var pred = t1 - e1.muJT * (p1 - p2);
+        var T = Math.min(tTop, Math.max(tFloor, _fin(pred) ? pred : t1));
+        var lo = tFloor, hi = tTop, loKnown = false, hiKnown = false, clamped = false, it = 0, e2 = null;
+        for (it = 1; it <= 30; it++) {
+            e2 = _enth(g, p2, T);
+            var f = e2.h - h1;
+            if (f > 0) { hi = T; hiKnown = true; } else { lo = T; loKnown = true; }
+            if (f > 0 && T <= tFloor + 1e-9) { clamped = true; break; }      // root below the floor
+            if (f < 0 && T >= tTop - 1e-9) { clamped = true; break; }        // root above t1 + 20 °F
+            var Tn = T - 1.8 * f / e2.cp;                                    // J/mol ÷ J/(mol·K) → K → °F
+            var probe = false;
+            if (!(_fin(Tn) && Tn > lo && Tn < hi)) {
+                // Leaves the bracket: evaluate an untried bound once (the root may lie
+                // beyond it → clamp), otherwise bisect.
+                if (_fin(Tn) && Tn <= lo && !loKnown) { Tn = tFloor; probe = true; }
+                else if (_fin(Tn) && Tn >= hi && !hiKnown) { Tn = tTop; probe = true; }
+                else Tn = 0.5 * (lo + hi);
+            }
+            if (!probe && Math.abs(Tn - T) < 0.01) { T = Tn; break; }
+            T = Tn;
+        }
+        if (it > 30) it = 30;
+        var z2 = g.L.Z_dranchukAbouKassem((T + RANKINE) / pc.Tpc, p2 / pc.Ppc);
+        var warnings = _rangeWarnings(g, e1.Tpr, e1.Ppr, 'Upstream');
+        var Tpr2 = (T + RANKINE) / pc.Tpc;
+        if (Tpr2 < 1.05) warnings.push('Outlet Tpr = ' + _fmt(Tpr2, 3) + ' is below 1.05, the lower limit of the range the Z correlations were fitted over.');
+        if (clamped) warnings.push('Outlet temperature limited to the solver bound ' + _fmt(T, 1) + ' °F (floor = max(−80 °F, 1.02 × pseudo-critical temperature); top = inlet + 20 °F): the true value lies beyond it.');
+        if (T < -40) warnings.push('Outlet temperature ' + _fmt(T, 1) + ' °F is below −40 °F, outside the Gas PVT page range: treat it as an estimate.');
+        if (p1 > 5000 && e1.muJT < 0.002) warnings.push('Near the J-T inversion (μJT ' + _fmt(e1.muJT, 4) + ' °F/psi at ' + _fmt(p1, 0) + ' psia): DAK is unreliable here.');
+        var r = {
+            ok: _fin(T), t1: t1, p1: p1, p2: p2, t2: T, dT: T - t1, cooling: t1 - T, iterations: it, clamped: clamped,
+            t2Predictor: pred, muJT1_Fpsi: e1.muJT, h1_Jmol: h1, z1: e1.z, z2: z2, tFloor: tFloor, warnings: warnings
+        };
+        if (!r.ok) return { ok: false, bad: ['t1'], keys: ['solve'], errors: ['The isenthalpic expansion could not be solved at these conditions.'] };
+        if (M) {
+            if (M.size >= _ise.max) M.delete(M.keys().next().value);  // least recently used out
+            M.set(key, r);
+        }
+        return _iseCopy(r, fJT);
+    }
+    isenthalpic.stats = function () { return { solves: _ise.solves, hits: _ise.hits, size: _ise.memo ? _ise.memo.size : 0 }; };
+    isenthalpic.clearMemo = function () { if (_ise.memo) _ise.memo.clear(); _ise.solves = 0; _ise.hits = 0; };
+
+    G.WTS_gaspvt_z = gasZ;
+    G.WTS_gaspvt_enthalpy = gasEnthalpy;
+    G.WTS_gaspvt_isenthalpic = isenthalpic;
 
     // ── Page ─────────────────────────────────────────────────────────
     var TITLE = 'Gas PVT';
