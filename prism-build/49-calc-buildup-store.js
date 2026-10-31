@@ -368,7 +368,7 @@
         var idx = gaps.map(function (g, i) { return i; });
         var keep = {}, i;
         for (i = 0; i < GAP_FIRST; i++) keep[i] = 1;
-        idx.slice().sort(function (x, y) { return ((gaps[y] && gaps[y].dur_h) || 0) - ((gaps[x] && gaps[x].dur_h) || 0) || x - y; })
+        idx.slice(GAP_FIRST).sort(function (x, y) { return ((gaps[y] && gaps[y].dur_h) || 0) - ((gaps[x] && gaps[x].dur_h) || 0) || x - y; })
             .slice(0, GAP_LONGEST).forEach(function (j) { keep[j] = 1; });
         return idx.filter(function (j) { return keep[j]; }).map(function (j) { return gaps[j]; });
     }

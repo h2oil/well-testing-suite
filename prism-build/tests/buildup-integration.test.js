@@ -95,13 +95,16 @@ module.exports = [
       assert.strictEqual(ok.length, 9, 'interpreted build-ups: ' + a.tests.map((t) => t.id + ':' + t.status).join(' '));
       assert.strictEqual(a.events.filter((e) => e.status === 'too_short').length, 1, 'one short shut-in "too short"');
       assert.strictEqual(a.events.filter((e) => e.kind === 'partial' || e.status === 'partial').length, 1, 'one partial cut');
-      const path = [1.2, 1.3, 1.1, 1.8, 2.9, 4.2, 5.9, 6.8, 7.4];
-      ok.forEach((t, i) => {
+      // Truth per build-up from synth.demo('oil').truth.tests[] (§3.9): {tc_ms, k, S, dtEnd_h, grade}. The expected
+      // IARF grade (GE4) is required: WP4 records it as truth.tests[].grade ('good'|'fair'|'none').
+      ok.forEach((t) => {
         assert.ok(Math.abs(t.result.final.k / 45 - 1) <= 0.10, t.id + ' k ' + t.result.final.k + ' within 10 % of 45');
         const tr = nearestTruth(r.truth, t);
-        const S = tr && typeof tr.S === 'number' ? tr.S : path[i];
-        assert.ok(Math.abs(t.result.final.S - S) <= 0.6, t.id + ' S ' + t.result.final.S + ' within ±0.6 of ' + S);
-        if (tr && tr.grade) assert.strictEqual(t.result.iarf.grade, tr.grade, t.id + ' expected IARF grade');
+        assert.ok(tr, t.id + ': a demo truth entry within 2 h of the closing (truth.tests[].tc_ms)');
+        assert.ok(typeof tr.S === 'number', t.id + ': truth S present');
+        assert.ok(Math.abs(t.result.final.S - tr.S) <= 0.6, t.id + ' S ' + t.result.final.S + ' within ±0.6 of ' + tr.S);
+        assert.ok(/^(good|fair|none)$/.test(String(tr.grade)), t.id + ': expected IARF grade recorded in truth.tests[].grade (got ' + JSON.stringify(tr.grade) + ')');
+        assert.strictEqual(t.result.iarf.grade, tr.grade, t.id + ' expected IARF grade (GE4)');
       });
       const al = a.trend.alerts;
       assert.strictEqual(al.delta.raisedAt, 'B6', 'delta alert raised at B6');
@@ -206,6 +209,26 @@ module.exports = [
       assert.ok(sl >= Math.ceil(ev / 24), 'at most 24 evaluations per slice: ' + ev + ' evaluations in ' + sl + ' slices');
       assert.ok(sl <= ev, 'at least one evaluation per slice');
       if (typeof s.fits === 'number' && typeof s.lmIters === 'number') assert.ok(s.lmIters <= 40 * Math.max(1, s.fits), 'LM iterations within maxIterTotal per fit');
+    },
+  },
+  {
+    name: 'IN7 integration history before the data: a gas well with 1 MMscf produced before the data at 1,000 Mscf/d gets 24 h prepended (the page\'s AnalysisInput through WTS_buildup.data.rates)',
+    wp: WP,
+    run(app, assert) {
+      const D = app.win.WTS_buildup && app.win.WTS_buildup.data;
+      if (!D || typeof D.rates !== 'function') { console.log('[skip] IN7 — needs WTS_buildup.data.rates (WP2, 49-calc-buildup-data.js).'); return; }
+      app.hook.nav('buildup'); app.flush(20);
+      app.select('bu_fluid', 'gas');
+      app.select('bu_hist_mode', 'cum');
+      app.input('bu_hist_cumg', '1');
+      const inp = P(app).gather().input;
+      assert.strictEqual(inp.history.cum, 1000, 'cumulative in Mscf');
+      const rows = [];
+      for (let d = 1; d <= 5; d++) rows.push({ date: '2026-03-0' + d, oil: 0, gas: 1000, water: 0, hours: 24 });
+      const rh = D.rates(null, [], app.toWin(rows), app.toWin({ fluid: 'gas', history: inp.history, day: { zone: { mode: 'utc' }, startHour: 0 }, gas: inp.well.gas, resolution: { oil: 1, gas: 1, water: 1 } }));
+      assert.ok(rh && rh.start, 'rate history built: ' + JSON.stringify(rh && rh.errors));
+      assert.strictEqual(rh.start.source, 'cum');
+      assert.ok(Math.abs(rh.start.prepend_h - 24) < 1e-6, '24 h prepended: ' + rh.start.prepend_h);
     },
   },
 ];

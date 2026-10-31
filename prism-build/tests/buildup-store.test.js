@@ -304,4 +304,60 @@ module.exports = [
       assert.strictEqual(S.audit.verify().ok, false, 'a tampered entry breaks the chain');
     },
   },
+  {
+    name: 'ST7 store: init() warms the raw and tests mirrors from IndexedDB, so a project saved in a fresh session embeds the well; newer mirror entries are kept',
+    wp: WP,
+    async run(app, assert) {
+      const idb = createFakeIDB();
+      app.win.indexedDB = idb.indexedDB;
+      const W = app.win, S = W.WTS_buildup.store, wid = S.wellId();
+      idb.set(DB, 'raw', wid, JSON.parse(JSON.stringify(S.encode(app.toWin(synthRecord(300, 'cccccccccccccccc'))))));
+      idb.set(DB, 'tests', wid, { B1: { spec: { dt: [1], p: [2], n: null }, result: { id: 'B1' } } });
+      idb.set(DB, 'raw', 'w9', JSON.parse(JSON.stringify(S.encode(app.toWin(synthRecord(100, 'dddddddddddddddd'))))));
+      app.storage.setItem('wts_buildup_state', JSON.stringify({ v: 1, analysis: FIX.analysis, overflow: { wellId: wid, tests: ['B1'] } }));
+      const cold = W.WTS_project._buildPayload();
+      assert.deepStrictEqual(Array.from(cold.modules.buildup_raw.omitted), [wid], 'cold mirror: omitted');
+      S.putRaw('w9', app.toWin(synthRecord(120, 'eeeeeeeeeeeeeeee')));   // written this session: newer than IndexedDB's copy
+      await settle(app, 4);
+      idb.set(DB, 'raw', 'w9', JSON.parse(JSON.stringify(S.encode(app.toWin(synthRecord(100, 'dddddddddddddddd'))))));
+      const r = await S.init();
+      assert.strictEqual(r.engine, 'idb');
+      const p = W.WTS_project._buildPayload();
+      assert.ok(p.modules.buildup_raw.wells[wid] && p.modules.buildup_raw.wells[wid].meta.hash === 'cccccccccccccccc', 'raw record embedded after the warm-up');
+      assert.deepStrictEqual(Array.from(p.modules.buildup_raw.omitted), [], 'nothing omitted');
+      assert.ok(p.modules.buildup_analysis && p.modules.buildup_analysis.wells[wid] && p.modules.buildup_analysis.wells[wid].B1, 'parked build-ups embedded');
+      assert.strictEqual(S.rawHash('w9'), 'eeeeeeeeeeeeeeee', 'a mirror entry written this session is not replaced by the warm-up');
+      app.flush(5000);
+      assert.strictEqual(app.pendingTimers(), 0, 'no timers');
+    },
+  },
+  {
+    name: 'ST8 store: saveState caps the arrays that grow with the record (qc.gaps first 10 + longest 20 with the counts kept, spike indices, event warnings) before deciding on overflow',
+    wp: WP,
+    run(app, assert) {
+      const S = app.win.WTS_buildup.store;
+      const a = FIX.analysis;
+      a.qc.gaps = [];
+      for (let i = 0; i < 12000; i++) a.qc.gaps.push({ t0_ms: 1772323200000 + i * 900000, t1_ms: 1772323200000 + i * 900000 + (i === 7777 ? 3720000 : 120000), dur_h: i === 7777 ? 1.0333 : 0.0333 });
+      a.qc.gapCount = 12000; a.qc.gapTotal_h = 400.6; a.qc.longestGap_h = 1.0333;
+      a.qc.spikes = { count: 200, mode: 'flag', idx: Array.from({ length: 200 }, (_, i) => i * 7) };
+      a.events[0].warnings = Array.from({ length: 30 }, (_, i) => ({ code: 'W' + i, level: 'info', text: 'Warning ' + i, ev: [] }));
+      const st = app.toWin({ v: 1, input: null, analysis: a, review: null, qa: [], uiSel: {}, signoff: null, overrides: [] });
+      const r = S.saveState(st, {});
+      assert.ok(r.ok && !r.overflow, 'saved without overflow: ' + JSON.stringify(r));
+      const back = S.loadState().analysis;
+      assert.strictEqual(back.qc.gaps.length, 30, 'first 10 + longest 20 gaps kept');
+      assert.ok(back.qc.gaps.some((g) => g.dur_h === 1.0333), 'the longest gap kept');
+      assert.ok(back.qc.gaps[0].t0_ms === a.qc.gaps[0].t0_ms, 'the first gap kept, in time order');
+      assert.strictEqual(back.qc.gapCount, 12000, 'gap count kept');
+      assert.strictEqual(back.qc.gapTotal_h, 400.6, 'total gap time kept');
+      assert.strictEqual(back.qc.longestGap_h, 1.0333);
+      assert.deepStrictEqual({ kept: back.qc.gapsStored.kept, total: back.qc.gapsStored.total }, { kept: 30, total: 12000 }, 'what was kept is recorded');
+      assert.strictEqual(back.qc.spikes.idx.length, 50, 'spike indices capped');
+      assert.strictEqual(back.qc.spikes.count, 200, 'spike count kept');
+      assert.strictEqual(back.events[0].warnings.length, 8, 'event warnings capped');
+      assert.strictEqual(st.analysis.qc.gaps.length, 12000, 'the live analysis is not touched');
+      assert.strictEqual(back.tests.length, a.tests.length);
+    },
+  },
 ];

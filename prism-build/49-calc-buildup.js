@@ -760,7 +760,9 @@
         var a = _st.analysis;
         var stored = null;
         if (!_mem.record && a && Array.isArray(a.tests) && !_st.missingTests && !_st.partial) {   // summaries cannot be re-run
-            stored = { events: a.events || [], rates: a.rates || null, qc: a.qc || null,
+            // record (its summary and hash) and missed travel too, so a stored re-run keeps the same record hash, inputHash
+            // and missed list as the run that detected the build-ups
+            stored = { events: a.events || [], rates: a.rates || null, qc: a.qc || null, record: a.record || null, missed: a.missed || null,
                 tests: a.tests.map(function (t) { return { id: t.id, eventId: t.eventId, spec: t.spec }; }) };
         }
         var input = {
@@ -828,6 +830,7 @@
         c.allocation = _canonAlloc(input.allocation);
         c.rateTable = _canonRt(input.rateTable);
         var r = input.record;
+        if (!r && input.stored && _st && _st.analysis && _st.analysis.record) r = _st.analysis.record;   // reproduced from the stored build-ups: same record
         c.record = r ? { hash: r.hash || null, name: String(r.name || ''), source: r.source || '', n: r.n || 0, origin_ms: r.origin_ms || null } : null;
         return c;
     }
@@ -1664,6 +1667,22 @@
         if (out.length && out[out.length - 1].t_ms !== last.t_ms) out.push({ t_ms: last.t_ms, q: out[out.length - 1].q });
         return out;
     }
+    // Last resort for a column too noisy to merge within 10 %: time-weighted means over blocks of n rows (a block
+    // still ends at every shut-in or reopening).
+    function _blockRates(rows, n) {
+        var out = [], seg = null;
+        var close = function () { if (seg) out.push({ t_ms: seg.t, q: seg.zero ? 0 : Number((seg.dur > 0 ? seg.area / seg.dur : seg.q0).toPrecision(6)) }); };
+        for (var i = 0; i < rows.length; i++) {
+            var r = rows[i], nx = rows[i + 1], dur = nx ? Math.max(0, nx.t_ms - r.t_ms) : 0, zero = !(r.q > 0);
+            if (seg && seg.zero === zero && seg.k < n) { seg.area += r.q * dur; seg.dur += dur; seg.k++; continue; }
+            close();
+            seg = { t: r.t_ms, q0: r.q, area: r.q * dur, dur: dur, zero: zero, k: 1 };
+        }
+        close();
+        var last = rows[rows.length - 1];
+        if (out.length && out[out.length - 1].t_ms !== last.t_ms) out.push({ t_ms: last.t_ms, q: out[out.length - 1].q });
+        return out;
+    }
     function _compactRates(rt) {
         if (!rt || !rt.length) return null;
         var rows = [];
@@ -1671,6 +1690,7 @@
         if (!rows.length) return null;
         var out = rows;
         for (var k = 0; k < RT_TOLS.length; k++) { out = _compactRatesTol(rows, RT_TOLS[k]); if (out.length <= RT_CAP) break; }
+        for (var n = Math.ceil(rows.length / (0.8 * RT_CAP)); out.length > RT_CAP && n <= rows.length; n *= 2) out = _blockRates(rows, n);
         return out.length ? out : null;
     }
     PG._compactRates = _compactRates;
@@ -2360,6 +2380,8 @@
     PG.ranges = NUM;
     PG.stale = function () { return _isStale; };
     PG.status = _status2;
+    PG._carryDecisions = _carryDecisions;
+    PG._zone = { offMs: _offMs, msToLocal: _msToLocal, localToMs: _localToMs, gaugeZone: _gaugeZone };
 
     // ── registry (merge, never replace) ──────────────────────────────
     G.WTS_calcRegistry = G.WTS_calcRegistry || {};
