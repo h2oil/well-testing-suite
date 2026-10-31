@@ -498,7 +498,21 @@
             +   '<div id="wts_hydrate_summary"><div style="opacity:.7;font-size:12px">Click <b>Recompute all nodes</b> to compute required injection at each segment.</div></div>'
             + '</div>';
 
-        body.innerHTML = instr + segGrid + systemCard + summaryCard;
+        // v3.2: one-line pointer to the full design on the Chemical Injection page
+        // (rp-skip: kept out of reports; this page's numbers are unchanged).
+        var cjLink = ''
+            + '<div class="info-bar rp-skip" id="wts_hydrate_cjlink" style="margin-bottom:10px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between">'
+            +   '<span>Screening estimate: free water only, +30 % methanol vapour allowance, 5 &deg;F default margin. '
+            +   'Full design with condensed water, J-T cooling and pump settings:</span>'
+            +   '<button type="button" class="btn btn-secondary" id="wts_hydrate_gocj" style="padding:6px 12px">Chemical Injection &rarr;</button>'
+            + '</div>';
+
+        body.innerHTML = cjLink + instr + segGrid + systemCard + summaryCard;
+
+        var goCj = _byId('wts_hydrate_gocj');
+        if (goCj) {
+            goCj.onclick = function () { if (typeof G.WTS_nav === 'function') G.WTS_nav('cheminj'); };
+        }
 
         // Wire compute button.
         var btn = _byId('wts_hydrate_run');

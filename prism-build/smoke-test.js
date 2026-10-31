@@ -282,6 +282,13 @@ checks.push(['WTS_cheminj_compute page defaults (H1) ≈ 1061.5 lb/d methanol, a
     return !!L1 && Math.abs(L1.hydrate.inh.solution_lb_d - 1061.5) < 32 && Math.abs(L1.pump.airDesign - 45.6) < 0.5;
   } catch (e) { console.error('WTS_cheminj_compute threw:', e.message); return false; }
 })()]);
+// v3.2 Chemical Injection page: registry entry (Test System Safety, silent restore) + page entry points
+checks.push(['WTS_calcRegistry.cheminj in "Test System Safety" (hooks.silent) + renderChemInj / calcChemInj', (() => {
+  const e = win.WTS_calcRegistry && win.WTS_calcRegistry.cheminj;
+  return !!e && e.key === 'cheminj' && e.title === 'Chemical Injection' && e.group === 'Test System Safety' &&
+    !!e.hooks && e.hooks.silent === true && typeof e.hooks.after === 'function' &&
+    typeof win.renderChemInj === 'function' && typeof win.calcChemInj === 'function';
+})()]);
 // Round-10 — live data (6N-*.js): Modbus core + station, Modbus page, Mini WellOS
 checks.push(['window.WTS_modbus (object)',            !!win.WTS_modbus && typeof win.WTS_modbus === 'object']);
 checks.push(['WTS_modbus.createClient / createStation', !!win.WTS_modbus && typeof win.WTS_modbus.createClient === 'function' && typeof win.WTS_modbus.createStation === 'function']);

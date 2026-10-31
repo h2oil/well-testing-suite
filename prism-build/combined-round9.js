@@ -8192,10 +8192,10 @@ G.WTS_calcRegistry.historian = {
 //   thermal-relief verdicts, drive-gas setting at the shut-in pressure,
 //   drawdown-cylinder calibration, tank and totes.
 //
-//   This step publishes the engine only. The page (renderChemInj /
-//   calcChemInj and the window.WTS_calcRegistry.cheminj entry, group
-//   "Test System Safety") is added in the next step; nothing here touches
-//   the DOM, starts a timer or wraps a function.
+//   The page (renderChemInj / calcChemInj, window.WTS_calcRegistry.cheminj,
+//   sidebar group "Test System Safety", ids cj_*) is the second half of this
+//   file. The engine functions touch no DOM; the page attaches listeners to
+//   #cj_root only. Nothing starts a timer or wraps a function.
 //
 //   Every chemical and pump is named by its generic chemistry or type only
 //   (data in prism-build/40-calc-chemlib.js, window.WTS_chemlib).
@@ -8243,6 +8243,13 @@ G.WTS_calcRegistry.historian = {
 //   {level:'ok'|'warn'|'bad', code, text} with plain text under 299 characters.
 //   opts.fmt may override the text formatters (pG, dp, t, dt, galD, lbD, gal, scf…)
 //   so the page can show Metric values in verdict text.
+//
+// PAGE (route cheminj) — window.renderChemInj(body), window.calcChemInj(); registry entry with
+//   hooks.silent (restore applies saved values without events, hooks.after runs one calc).
+//   WTS_cheminj.ranges (validation ranges), WTS_cheminj.pageCalcs() (calc counter for tests).
+//   Publishes window.WTS_state.cheminj {ok, ts, lines[], total_gal_d, hydrate, h2s, result}.
+//   Unit categories added when absent: chemRate, chemRateHr, doseGasVol, volPerStroke,
+//   massRateDay, lbPerBbl.
 // ════════════════════════════════════════════════════════════════════
 (function () {
     'use strict';
@@ -9660,6 +9667,1001 @@ G.WTS_calcRegistry.historian = {
         constants: { ATM: ATM, LB_GAL: LB_GAL, LB_BBL: LB_BBL, GAL_L: GAL_L, IN3_GAL: IN3_GAL, ML_IN3: ML_IN3, X_REF_30: X_REF_30, RULE_FPSI: RULE_FPSI }
     };
     G.WTS_cheminj_compute = compute;
+
+    // ════════════════════════════════════════════════════════════════
+    // PAGE — route `cheminj`, ids cj_* (plan §2, §6.2, §6.5–§6.9)
+    //   renderChemInj(body) paints one scrolling page (no tabs, so a report keeps every
+    //   visible block); calcChemInj() reads the cj_* controls in the units layer's canonical
+    //   context, runs WTS_cheminj_compute (Metric verdict text through opts.fmt) and paints
+    //   #cj_res, the line chips, the two charts and the six Notes boxes. Restore is silent
+    //   (hooks.silent): hooks.after re-syncs data-prev and the show/hide state, then runs
+    //   exactly one calc. Listeners sit on #cj_root only; no timers, no resize listener.
+    // ════════════════════════════════════════════════════════════════
+    var PG_KEY = 'cheminj';
+    var PG_TITLE = 'Chemical Injection';
+    var PG_SUB = 'Hydrate inhibitor, H2S scavenger and treating-chemical dosing per injection point, with pump settings';
+    var NLINES = 6;
+    var _calcCount = 0;
+
+    // Unit categories this page needs (merged into WTS_units when absent; plan §6.5).
+    (function _cats() {
+        var U = G.WTS_units, C = U && U.CATEGORIES;
+        if (!C) return;
+        function add(k, iu, il, f, mu, ml) {
+            if (!C[k]) C[k] = { imperial: { unit: iu, label: il, factor: f, offset: 0 }, metric: { unit: mu, label: ml, factor: 1, offset: 0 } };
+        }
+        add('chemRate', 'gal/d', 'gal/d', GAL_L, 'L/d', 'L/d');
+        add('chemRateHr', 'gal/h', 'gal/h', GAL_L, 'L/h', 'L/h');
+        add('doseGasVol', 'gal/MMscf', 'gal/MMscf', GAL_L / 0.028316846592, 'L/1e6Sm3', 'L/10⁶ Sm³');
+        add('volPerStroke', 'in3', 'in³', ML_IN3, 'mL', 'mL');
+        add('massRateDay', 'lb/d', 'lb/d', 0.45359237, 'kg/d', 'kg/d');
+        add('lbPerBbl', 'lb/bbl', 'lb/bbl', 0.45359237 / 0.158987294928, 'kg/m3', 'kg/m³');
+    })();
+
+    // Converting categories only: identity categories (%, ppm, SG, °API) stay untagged so the
+    // units layer leaves their labels alone.
+    var PG_UNITS = {
+        cj_qg: 'gasRate', cj_qo: 'liquidRate', cj_qw: 'liquidRate',
+        cj_sithp: 'pressureG', cj_fwhp: 'pressureG', cj_fwht: 'temperature', cj_tamb: 'temperature', cj_pck: 'pressureG',
+        cj_tck: 'temperature', cj_thtr: 'temperature', cj_psep: 'pressureG', cj_tsep: 'temperature', cj_psvsep: 'pressureG',
+        cj_pbpv: 'pressureG', cj_margin: 'tempDelta', cj_thuser: 'temperature', cj_thuserp: 'pressureG', cj_pmabs: 'pressure',
+        cj_psup: 'pressureG', cj_fc: 'lbPerBbl', cj_sour: 'tempDelta', cj_cal_air: 'pressureG'
+    };
+    var LN_UNITS = { qrated: 'chemRateHr', pmax: 'pressureG', q0: 'chemRateHr', vcyc: 'volPerStroke', tank: 'volumeSmall', rod: 'force', dpq: 'pressure', mawp: 'pressureG' };
+
+    // ── Page helpers ─────────────────────────────────────────────────
+    function _pgById(id) { try { return (typeof document !== 'undefined' && document && document.getElementById) ? document.getElementById(id) : null; } catch (e) { return null; } }
+    function _esc(s) {
+        return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; });
+    }
+    function _isM() { var U = G.WTS_units; return !!(U && typeof U.getSystem === 'function' && U.getSystem() === 'metric'); }
+    function _nf(v, d, dmin) {
+        if (!_fin(v)) return '—';
+        var mx = d == null ? 2 : d, mn = dmin == null ? 0 : Math.min(dmin, mx);
+        try {
+            return (typeof G.WTS_fmtNum === 'function') ? G.WTS_fmtNum(v, mn, mx)
+                : Number(v).toLocaleString(undefined, { minimumFractionDigits: mn, maximumFractionDigits: mx });
+        } catch (e) { return Number(v).toFixed(mx); }
+    }
+    function _hasCat(cat) { var U = G.WTS_units; return !!(U && typeof U.format === 'function' && U.CATEGORIES && U.CATEGORIES[cat]); }
+    // value in the display system ("3,550 psig" | "24,477 kPa(g)")
+    function _qv(v, cat, d, imp, dm) {
+        if (!_fin(v)) return '—';
+        if (_isM() && _hasCat(cat)) {
+            var f = G.WTS_units.format(v, cat);
+            return _nf(f.value, dm == null ? d : dm) + (f.label ? ' ' + f.label : '');
+        }
+        return _nf(v, d) + (imp ? ' ' + imp : '');
+    }
+    function _dv(v, cat) { return (_isM() && _hasCat(cat) && _fin(v)) ? G.WTS_units.format(v, cat).value : v; }
+    function _ul(cat, imp) { return (_isM() && _hasCat(cat)) ? G.WTS_units.CATEGORIES[cat].metric.label : imp; }
+    function _canon(fn) { var U = G.WTS_units; return (U && typeof U.runCanonical === 'function') ? U.runCanonical(fn) : fn(); }
+    function _r6(x) { return _fin(x) ? Number(Number(x).toPrecision(6)) : ''; }
+    function _low1(s) { s = String(s || ''); return s.charAt(0).toLowerCase() + s.slice(1); }
+    function _show(el, on) { if (el && el.style) el.style.display = on ? '' : 'none'; }
+    function _wrapOf(id) { var e = _pgById(id); return (e && e.closest) ? e.closest('.fg-item') : null; }
+    function _sv(id) { var e = _pgById(id); return e ? String(e.value) : ''; }
+    function _checked(id) { var e = _pgById(id); return !!(e && e.checked); }
+    function _each(list, fn) { for (var i = 0; list && i < list.length; i++) fn(list[i], i); }
+    // chemical rate, one value: gal/d (imperial) | L/h (Metric)
+    function _rq(galD) {
+        if (!_fin(galD)) return '—';
+        if (_isM()) { var lh = galD * GAL_L / 24; return _nf(lh, lh < 10 ? 3 : 2) + ' L/h'; }
+        return _nf(galD, galD < 10 ? 3 : 2) + ' gal/d';
+    }
+    // gal/d · L/d · L/h · mL/min (Metric: L/d · L/h · mL/min)
+    function _rateTxt(r) {
+        if (!r || !(r.gal_d > 0)) return 'No flow required';
+        var mm = _nf(r.mL_min, r.mL_min < 10 ? 2 : 1) + ' mL/min', lh = _nf(r.L_hr, r.L_hr < 10 ? 3 : 2) + ' L/h', ld = _nf(r.L_d, r.L_d < 10 ? 2 : 1) + ' L/d';
+        return _isM() ? ld + ' · ' + lh + ' · ' + mm : _nf(r.gal_d, r.gal_d < 10 ? 3 : 2) + ' gal/d · ' + ld + ' · ' + lh + ' · ' + mm;
+    }
+    // Metric text formatters for the engine's verdict strings (opts.fmt)
+    function _metricFmt() {
+        return {
+            pG: function (v) { return _qv(v, 'pressureG', 0, 'psig', 0); },
+            pA: function (v) { return _qv(v, 'pressure', 1, 'psia', 0); },
+            dp: function (v) { return _qv(v, 'pressure', 0, 'psi', 0); },
+            t: function (v) { return _qv(v, 'temperature', 1, '°F', 1); },
+            dt: function (v) { return _qv(v, 'tempDelta', 1, '°F', 1); },
+            pSet: function (v) { return _qv(v, 'pressureG', 1, 'psig', 0); },
+            galD: function (v) { return _qv(v, 'chemRate', 1, 'gal/d', Math.abs(v) * GAL_L < 10 ? 2 : 1); },
+            gal: function (v) { return _qv(v, 'volumeSmall', 0, 'gal', 0); },
+            lbD: function (v) { return _qv(v, 'massRateDay', 1, 'lb/d', 1); },
+            scfD: function (v) { return _nf(v * 0.028316846592, 1) + ' Sm³/d'; },
+            psiF: function (v) { return _nf(v * 6.894757293168 * 1.8, 0) + ' kPa per °C'; },
+            inch: function (v) { return _frac(v) + ' in (' + _nf(v * 25.4, 1) + ' mm)'; }
+        };
+    }
+    function _sizeTxt(d) { return _isM() ? _frac(d) + ' in (' + _nf(d * 25.4, 1) + ' mm)' : _frac(d) + ' in'; }
+
+    // ── Markup ───────────────────────────────────────────────────────
+    function _fo(v, label, sel) { return '<option value="' + _esc(v) + '"' + (sel ? ' selected' : '') + '>' + _esc(label) + '</option>'; }
+    function _fsel(id, label, opts, selAttr, wrapAttr) {
+        return '<div class="fg-item"' + (wrapAttr || '') + '><label for="' + id + '">' + _esc(label) + '</label><select id="' + id + '"' + (selAttr || '') + '>' + opts + '</select></div>';
+    }
+    function _fnum(id, label, val, attr, wrapAttr) {
+        return '<div class="fg-item"' + (wrapAttr || '') + '><label for="' + id + '">' + _esc(label) + '</label>' +
+            '<input type="number" id="' + id + '" step="any" value="' + _esc(val == null ? '' : val) + '"' + (attr || '') + '></div>';
+    }
+    function _tog(id, text, aria) { return '<label class="cj-tog rp-skip"><input type="checkbox" id="' + id + '" aria-label="' + _esc(aria) + '"> ' + _esc(text) + '</label>'; }
+    function _optsList(pairs, sel) { return pairs.map(function (p) { return _fo(p[0], p[1], String(p[0]) === String(sel)); }).join(''); }
+    function _chemLabel(c) {
+        if (c.name.length <= 48) return c.name;
+        var head = c.name.split(' (')[0];
+        return head + (c.short && c.short.length <= 4 && head.indexOf(c.short) === -1 ? ' (' + c.short + ')' : '');
+    }
+    function _optsChems(sel) {
+        var L = _lib(), h = '';
+        L.groups.slice().sort(function (a, b) { return a.order - b.order; }).forEach(function (g) {
+            var cs = L.chemicals.filter(function (c) { return c.group === g.key; });
+            if (cs.length) h += '<optgroup label="' + _esc(g.label) + '">' + cs.map(function (c) { return _fo(c.key, _chemLabel(c), c.key === sel); }).join('') + '</optgroup>';
+        });
+        return h;
+    }
+    function _optsBases(sel) { var B = _lib().bases; return Object.keys(B).map(function (k) { return _fo(k, B[k].label, k === sel); }).join(''); }
+    function _pumpLabel(P) { var s = P.short || P.name; return /pump$/i.test(s) ? s : s + ' pump'; }
+    function _optsPumps(sel) { return _lib().pumps.filter(function (P) { return P.mvp; }).map(function (P) { return _fo(P.key, _pumpLabel(P), P.key === sel); }).join(''); }
+    function _optsSizes(list, sel) { return list.map(function (s) { return _fo(s.value, s.label, Math.abs(s['in'] - Number(sel)) < 1e-9); }).join(''); }
+    function _doseLabel(basis) {
+        var B = _lib().bases[basis];
+        if (basis === 'wt_water') return 'Rich wt % override, blank = hydrate design';
+        if (basis === 'gal_lb_h2s') return 'Product per lb of H2S, blank = stoichiometry ÷ η (gal/lb)';
+        if (basis === 'l_kg_h2s') return 'Product per kg of H2S, blank = stoichiometry ÷ η (L/kg)';
+        if (basis === 'batch_gal') return 'Batch volume (gal)';
+        return 'Dose (' + (B ? B.unit : '') + ')';
+    }
+    function _lineDefaults(n) {
+        var d = LINE_DEF[n - 1], L = _lib(), c = L.find(d.chem), P = L.pump(d.pump);
+        return {
+            point: d.point, chem: d.chem, basis: c.basis, dose: c.dose == null ? '' : c.dose, lean: c.leanDef == null ? '' : c.leanDef,
+            sgc: c.sg, eff: '', pump: d.pump,
+            plunger: P.kind === 'plunger' ? P.plungerDef : 0.875, stroke: P.kind === 'plunger' ? P.strokeDef : 1, heads: 1,
+            qrated: P.kind === 'meter' ? _r6(P.qRated_galh) : '', pmax: P.kind === 'meter' ? P.pmax : '',
+            q0: (P.kind === 'airliquid' || P.kind === 'transfer') ? P.q0_galh : '', ratio: P.kind === 'airliquid' ? P.ratio : '',
+            vcyc: P.kind === 'airliquid' ? P.vcyc_in3 : '', tank: 275, act: c.activeDef == null ? '' : c.activeDef,
+            wat: c.kind === 'thi' ? '' : _r6(c.water * 100), peak: c.peak, ve: 0.9, spmmax: '', actd: P.actDef || 4,
+            rod: 2500, dpq: 50, mawp: '', o2: 0.5
+        };
+    }
+    function _lineCard(n) {
+        var L = _lib(), d = _lineDefaults(n), s = String(n);
+        function id(k) { return 'cj_' + k + '_' + s; }
+        var heads = [[1, '1 head'], [2, '2 heads'], [3, '3 heads']];
+        return '<div class="card cj-line" id="cj_line_' + s + '" data-n="' + s + '"' + (n > 1 ? ' style="display:none"' : '') + '>' +
+            '<div class="card-title">Injection line ' + s + '</div>' +
+            '<div class="cj-chip rp-skip" id="cj_chip_' + s + '"></div>' +
+            '<div class="fg">' +
+            _fsel(id('pt'), 'Injection point', L.points.map(function (p) { return _fo(p.key, p.label, p.key === d.point); }).join('')) +
+            _fsel(id('chem'), 'Chemical (grouped by purpose)', _optsChems(d.chem), ' data-prev="' + _esc(d.chem) + '"') +
+            _fsel(id('basis'), 'Dose basis', _optsBases(d.basis)) +
+            _fnum(id('dose'), _doseLabel(d.basis), d.dose, ' min="0"') +
+            _fnum(id('lean'), 'Lean (as-injected) strength (wt %)', d.lean, ' min="50" max="100"', ' data-k="thi"') +
+            _fnum(id('sgc'), 'Product SG (water = 1)', d.sgc, ' min="0.5" max="2"') +
+            _fnum(id('eff'), 'Scavenger utilisation (0–1), blank = point default', d.eff, ' min="0.01" max="1"', ' data-k="scav"') +
+            _fsel(id('pump'), 'Pump type', _optsPumps(d.pump), ' data-prev="' + _esc(d.pump) + '"') +
+            _fsel(id('plg'), 'Plunger diameter', _optsSizes(L.plungers, d.plunger), '', ' data-k="plunger"') +
+            _fsel(id('stk'), 'Stroke length (maximum for an electric pump)', _optsSizes(L.strokes, d.stroke), '', ' data-k="plunger"') +
+            _fsel(id('heads'), 'Heads (pneumatic: plungers on one actuator)', _optsList(heads, d.heads), '', ' data-k="plunger"') +
+            _fnum(id('qrated'), 'Rated capacity (gal/h)', d.qrated, ' min="0"', ' data-k="meter"') +
+            _fnum(id('pmax'), 'Maximum discharge pressure (psig)', d.pmax, ' min="0"', ' data-k="meter"') +
+            _fnum(id('q0'), 'Free-flow rate at full air (gal/h)', d.q0, ' min="0"', ' data-k="airliquid transfer"') +
+            _fnum(id('ratio'), 'Pressure ratio, outlet : air', d.ratio, ' min="1"', ' data-k="airliquid"') +
+            _fnum(id('vcyc'), 'Displacement per cycle (in³)', d.vcyc, ' min="0"', ' data-k="airliquid"') +
+            _fnum(id('tank'), 'Chemical tank usable volume (gal)', d.tank, ' min="0"') +
+            '</div>' +
+            _tog(id('adv'), 'Advanced settings', 'Line ' + s + ' advanced settings') +
+            '<div class="fg cj-adv" id="cj_advbox_' + s + '" style="display:none">' +
+            _fnum(id('act'), 'Active content (%)', d.act, ' min="0.1" max="100"') +
+            _fnum(id('wat'), 'Water in the product (wt %)', d.wat, ' min="0" max="99"', ' data-k="nonthi"') +
+            _fnum(id('peak'), 'Peak / start-up factor (× design rate)', d.peak, ' min="1" max="5"') +
+            _fnum(id('ve'), 'Volumetric efficiency (0.5–1), blank = auto model', d.ve, ' min="0.5" max="1"', ' data-k="plunger"') +
+            _fnum(id('spmmax'), 'Maximum SPM, crank or pulse rate, blank = preset', d.spmmax, ' min="1"', ' data-k="plunger meter"') +
+            _fsel(id('actd'), 'Pneumatic actuator diameter', _optsSizes(L.actuators, d.actd), '', ' data-k="pneu"') +
+            _fnum(id('rod'), 'Frame rod load (lbf)', d.rod, ' min="100"', ' data-k="elecplunger"') +
+            _fnum(id('dpq'), 'Quill / nozzle and check-valve allowance (psi)', d.dpq, ' min="0"') +
+            _fnum(id('mawp'), 'Lowest MAWP in the discharge circuit, blank = pump rating (psig)', d.mawp, ' min="0"') +
+            _fnum(id('o2'), 'Dissolved O2 in the water (ppm)', d.o2, ' min="0"', ' data-k="o2"') +
+            '</div></div>';
+    }
+    var PG_CSS = '<style>' +
+        '#cj_root .cj-jump{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 14px}' +
+        '#cj_root .cj-jump a{font-size:12px;font-weight:600;padding:5px 11px;border-radius:14px;border:1px solid var(--border);background:var(--bg3);color:var(--text2);text-decoration:none}' +
+        '#cj_root .cj-jump a:hover,#cj_root .cj-jump a:focus{border-color:var(--accent);color:var(--accent)}' +
+        '#cj_root .cj-chip{display:inline-block;max-width:100%;margin:-4px 0 12px;padding:4px 10px;border-radius:12px;background:rgba(240,136,62,.10);color:var(--accent);font-size:12px;font-weight:600;overflow-wrap:anywhere}' +
+        '#cj_root .cj-chip:empty{display:none}' +
+        '#cj_root .cj-tog{display:inline-flex;align-items:center;gap:8px;margin-top:14px;font-size:12px;font-weight:600;color:var(--text2);cursor:pointer}' +
+        '#cj_root .cj-tog input{width:16px;height:16px;margin:0;accent-color:var(--accent)}' +
+        '#cj_root .cj-adv{margin-top:12px;padding-top:12px;border-top:1px dashed var(--border)}' +
+        '#cj_root .cj-hint{font-size:12px;color:var(--text2);margin-top:10px;line-height:1.45}' +
+        '#cj_root .rrow{gap:12px;align-items:flex-start}' +
+        '#cj_root .rrow .rl{flex:0 1 44%;min-width:0}' +
+        '#cj_root .rrow .rv{text-align:right;min-width:0;overflow-wrap:anywhere;font-size:13px}' +
+        '#cj_root .rrow .rv.cj-t{font-family:inherit;font-weight:600;font-size:12px}' +
+        '#cj_root .cj-sub{margin:14px 0 2px;font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.4px}' +
+        '#cj_root .cj-tw{overflow-x:auto;margin:8px 0;-webkit-overflow-scrolling:touch}' +
+        '#cj_root .cj-tw .dtable{min-width:520px}' +
+        '#cj_root .cj-v{margin:6px 0;font-size:12.5px;line-height:1.45}' +
+        '#cj_root .cj-note{font-size:12px;color:var(--text2);line-height:1.5;margin:8px 0}' +
+        '#cj_root .cj-chartsel{margin-bottom:4px}' +
+        '#cj_root .chart-wrap canvas{max-width:960px;margin:0 auto}' +
+        '@media (max-width:768px){#cj_root .rrow{flex-direction:column;gap:2px}#cj_root .rrow .rl{flex:none}#cj_root .rrow .rv{text-align:left}}' +
+        '</style>';
+    function _markup() {
+        var L = _lib(), lines = '';
+        for (var n = 1; n <= NLINES; n++) lines += _lineCard(n);
+        var yesno = [['yes', 'Yes'], ['no', 'No']];
+        var jump = [['cj_card_stream', 'Stream'], ['cj_card_spread', 'Spread'], ['cj_card_basis', 'Basis'], ['cj_card_lines', 'Lines'],
+            ['cj_res', 'Results'], ['cj_charts', 'Charts'], ['cj_notes_res', 'Notes']];
+        var nl = [], cl = [];
+        for (var k = 1; k <= NLINES; k++) { nl.push([k, String(k)]); cl.push([k, 'Line ' + k]); }
+        return '<div id="cj_root">' + PG_CSS +
+            '<nav class="cj-jump rp-skip" aria-label="Jump to a section of this page">' +
+            jump.map(function (a) { return '<a href="#' + a[0] + '">' + a[1] + '</a>'; }).join('') + '</nav>' +
+            '<div class="cols-2">' +
+            '<div class="card" id="cj_card_stream"><div class="card-title">Well stream</div><div class="fg">' +
+            _fnum('cj_qg', 'Gas rate (MMSCFD)', 10, ' min="0"') +
+            _fnum('cj_sg', 'Gas gravity (air = 1)', 0.65, ' min="0.55" max="3"') +
+            _fnum('cj_h2s', 'H2S in gas (ppm mol)', 0, ' min="0"') +
+            _fnum('cj_co2', 'CO2 (mol %)', 0, ' min="0" max="50"') +
+            _fnum('cj_n2', 'N2 (mol %)', 0, ' min="0" max="50"') +
+            _fnum('cj_qo', 'Oil / condensate rate (BPD)', 0, ' min="0"') +
+            _fnum('cj_api', 'Oil / condensate gravity (°API)', 50, ' min="10" max="90"') +
+            _fnum('cj_qw', 'Water rate (BPD)', 2, ' min="0"') +
+            _fnum('cj_sgw', 'Water SG', 1.05, ' min="1" max="1.25"') +
+            _fsel('cj_wbasis', 'Water rate is', _optsList([['free', 'Free (formation) water at the wellhead'], ['sep', 'Measured at the separator']], 'free')) +
+            _fnum('cj_h2so', 'H2S dissolved in oil (ppm by mass)', 0, ' min="0"') +
+            _fnum('cj_h2sw', 'H2S dissolved in water (ppm by mass)', 0, ' min="0"') +
+            '</div></div>' +
+            '<div class="card" id="cj_card_spread"><div class="card-title">Spread conditions</div><div class="fg">' +
+            _fnum('cj_sithp', 'Shut-in tubing head pressure, SITHP (psig)', 3500, ' min="0"') +
+            _fnum('cj_fwhp', 'Flowing wellhead pressure, FWHP (psig)', 3000, ' min="0"') +
+            _fnum('cj_fwht', 'Flowing wellhead temperature (°F)', 110) +
+            _fnum('cj_tamb', 'Ambient / cold-tree temperature (°F)', 60) +
+            _fnum('cj_pck', 'Pressure downstream of choke (psig)', 1000, ' min="0"') +
+            _fsel('cj_jt', 'Choke outlet temperature from', _optsList([['ise', 'Real-gas isenthalpic × J-T factor'], ['rule', '7 °F per 100 psi rule (quick check)'], ['user', 'User value']], 'ise')) +
+            _fnum('cj_tck', 'Choke outlet temperature, user (°F)', 34.6, '', ' style="display:none"') +
+            _fsel('cj_htr', 'Heater on the spread', _optsList(yesno, 'yes')) +
+            _fnum('cj_thtr', 'Heater outlet temperature (°F)', 90) +
+            _fnum('cj_psep', 'Separator pressure (psig)', 1000, ' min="0"') +
+            _fnum('cj_tsep', 'Separator temperature, blank = heater or choke outlet (°F)', '', ' placeholder="auto"') +
+            _fnum('cj_psvsep', 'Separator relief-valve set pressure (psig)', 1440, ' min="0"') +
+            _fsel('cj_whclass', 'Flowhead / data-header pressure class', _optsList([[2000, '2,000 psi (13.8 MPa)'], [3000, '3,000 psi (20.7 MPa)'], [5000, '5,000 psi (34.5 MPa)'], [10000, '10,000 psi (69.0 MPa)'], [15000, '15,000 psi (103.4 MPa)']], 5000)) +
+            _fsel('cj_haz', 'Chemical pumps in a classified (hazardous) area', _optsList(yesno, 'yes')) +
+            _fsel('cj_supgas', 'Pneumatic / air-pump drive gas', _optsList([['air', 'Instrument air'], ['n2', 'Nitrogen'], ['sweet', 'Sweet fuel gas'], ['well', 'Produced well gas']], 'air')) +
+            _fnum('cj_pbpv', 'Flare line downstream of the back-pressure valve, blank = 0 (psig)', '', ' min="0" placeholder="blank"') +
+            '</div></div></div>' +
+            '<div class="card" id="cj_card_basis"><div class="card-title">Design basis</div><div class="fg">' +
+            _fnum('cj_margin', 'Hydrate design margin (°F)', 10, ' min="0" max="30"') +
+            _fnum('cj_fjt', 'J-T cooling design factor (1.00 to 1.30)', 1.10, ' min="1" max="1.3"') +
+            _fsel('cj_thsrc', 'Hydrate temperature from', _optsList([['tm', 'Gas-gravity correlation (Towler–Mokhatab)'], ['user', 'User / lab value at one pressure']], 'tm')) +
+            _fnum('cj_thuser', 'User hydrate temperature (°F)', '', '', ' style="display:none"') +
+            _fnum('cj_thuserp', 'Pressure of the user hydrate temperature (psig)', '', ' min="0"', ' style="display:none"') +
+            _fsel('cj_method', 'Depression method', _optsList([['auto', 'Larger of Hammerschmidt and Nielsen–Bucklin'], ['ham', 'Hammerschmidt (comparison only)'], ['nb', 'Nielsen–Bucklin (comparison only)']], 'auto')) +
+            _fsel('cj_cond', 'Condensed water', _optsList([['buk', 'Bukacek water content'], ['all', 'All vapour water condenses (conservative)']], 'buk')) +
+            _fnum('cj_h2scus', 'H2S outlet target for scavenger lines (ppm)', 4, ' min="0"') +
+            _fnum('cj_pmpct', 'Pump pressure margin, percent (%)', 10, ' min="0" max="50"') +
+            _fnum('cj_pmabs', 'Pump pressure margin, absolute (psi)', 100, ' min="0"') +
+            _fsel('cj_ratebasis', 'Discharge-circuit rating basis', _optsList([['credible', 'Maximum credible back-pressure'], ['class', 'Full tie-in class']], 'credible')) +
+            _fnum('cj_days', 'Test duration (d)', 5, ' min="0.1" max="90"') +
+            _fnum('cj_psup', 'Drive-gas (air) pressure available (psig)', 100, ' min="10"') +
+            '</div>' +
+            _tog('cj_adv_basis', 'Advanced design basis', 'Show advanced design basis') +
+            '<div class="fg cj-adv" id="cj_basis_adv" style="display:none">' +
+            _fnum('cj_fc', 'Methanol loss to condensate at 30 wt % and 40 °F (lb/bbl)', 0.25, ' min="0"') +
+            _fnum('cj_glyloss', 'Glycol loss allowance (%)', 1, ' min="0" max="10"') +
+            _fnum('cj_sour', 'Sour adder per mol % H2S, and for CO2 above 5 mol % (°F)', 5, ' min="0"') +
+            _fnum('cj_band_g', 'Setting band, green up to (% of maximum)', 70, ' min="50" max="95"') +
+            _fnum('cj_band_a', 'Setting band, amber up to (% of maximum)', 85, ' min="50" max="95"') +
+            _fnum('cj_minf', 'Minimum-rate factor for the turndown check', 0.5, ' min="0.1" max="1"') +
+            '</div></div>' +
+            '<div class="card" id="cj_card_lines"><div class="card-title">Injection lines</div><div class="fg">' +
+            _fsel('cj_nlines', 'Number of injection lines', _optsList(nl, 1)) +
+            '</div><div class="cj-hint">For each line choose the injection point, the chemical and the pump. Choosing a chemical fills in its dose and product data; the point never changes by itself, and its suitability shows as a verdict.</div></div>' +
+            lines +
+            '<div class="card" id="cj_card_cal"><div class="card-title">Field calibration check</div><div class="fg">' +
+            _fsel('cj_cal_line', 'Line tested', _optsList(cl, 1)) +
+            _fnum('cj_cal_ml', 'Measured volume drawn down (mL)', '', ' min="0" placeholder="blank = no check"') +
+            _fnum('cj_cal_s', 'Measured time (s)', '', ' min="0" placeholder="e.g. 60"') +
+            _fnum('cj_cal_set', 'Setting during the test (SPM)', '', ' min="0"') +
+            _fnum('cj_cal_air', 'Air pressure during the test (psig)', '', ' min="0"', ' style="display:none"') +
+            '</div></div>' +
+            '<div id="cj_res"></div>' +
+            '<div class="card" id="cj_charts"><div class="card-title">Charts</div>' +
+            '<div class="fg cj-chartsel rp-skip">' + _fsel('cj_chart_line', 'Pump chart for line', _optsList(cl, 1)) + '</div>' +
+            '<div class="rbox"><div class="rbox-title">Hydrate curve vs spread temperatures</div>' +
+            '<div class="chart-wrap"><canvas id="cj_chart_hyd" width="720" height="300" role="img" aria-label="Hydrate curve against the spread temperatures"></canvas></div></div>' +
+            '<div class="rbox"><div class="rbox-title" id="cj_chart_pump_t">Pump rate vs setting, line 1</div>' +
+            '<div class="chart-wrap"><canvas id="cj_chart_pump" width="720" height="300" role="img" aria-label="Pump rate against the pump setting"></canvas></div></div>' +
+            '</div>' +
+            '<div id="cj_notes_res"></div>' +
+            '</div>';
+    }
+
+    // ── Show / hide and data-prev (restore-safe: static markup, nothing rebuilt) ──
+    function _lineTokens(n) {
+        var L = _lib(), c = L.find(_sv('cj_chem_' + n)), P = L.pump(_sv('cj_pump_' + n)), b = _sv('cj_basis_' + n), tok = {};
+        if (c && c.kind === 'thi' && b === 'wt_water') tok.thi = 1; else tok.nonthi = 1;
+        if (c && c.stoich && (b === 'gal_lb_h2s' || b === 'l_kg_h2s')) tok.scav = 1;
+        if (b === 'ppm_per_ppm_o2') tok.o2 = 1;
+        if (P) { tok[P.kind] = 1; if (P.kind === 'plunger') tok[P.setting === 'spm' ? 'pneu' : 'elecplunger'] = 1; }
+        return tok;
+    }
+    function _applyVisibility() {
+        var L = _lib(), root = _pgById('cj_root');
+        if (!L || !root) return;
+        var nl = Math.max(1, Math.min(NLINES, parseInt(_sv('cj_nlines'), 10) || 1));
+        _show(_wrapOf('cj_tck'), _sv('cj_jt') === 'user');
+        _show(_wrapOf('cj_thtr'), _sv('cj_htr') !== 'no');
+        _show(_wrapOf('cj_thuser'), _sv('cj_thsrc') === 'user');
+        _show(_wrapOf('cj_thuserp'), _sv('cj_thsrc') === 'user');
+        _show(_pgById('cj_basis_adv'), _checked('cj_adv_basis'));
+        for (var n = 1; n <= NLINES; n++) {
+            var card = _pgById('cj_line_' + n);
+            if (!card) continue;
+            _show(card, n <= nl);
+            var tok = _lineTokens(n);
+            _each(card.querySelectorAll('[data-k]'), function (w) {
+                _show(w, String(w.getAttribute('data-k')).split(' ').some(function (k) { return !!tok[k]; }));
+            });
+            _show(_pgById('cj_advbox_' + n), _checked('cj_adv_' + n));
+            var dl = _pgById('cj_dose_' + n), lab = dl && dl.closest ? dl.closest('.fg-item').querySelector('label') : null;
+            if (lab) lab.textContent = _doseLabel(_sv('cj_basis_' + n));
+        }
+        // calibration: air pressure for an air-driven line, else SPM / % speed / % stroke
+        var cl = parseInt(_sv('cj_cal_line'), 10) || 1, P = L.pump(_sv('cj_pump_' + cl)), air = !!(P && P.kind === 'airliquid');
+        _show(_wrapOf('cj_cal_air'), air);
+        _show(_wrapOf('cj_cal_set'), !air);
+        var cs = _wrapOf('cj_cal_set'), csl = cs ? cs.querySelector('label') : null;
+        if (csl && P) csl.textContent = 'Setting during the test (' + (P.setting === 'spm' ? 'SPM' : P.kind === 'transfer' ? 'cycles/min' : (P.kind === 'plunger' && !P.vfd) ? '% stroke' : '% speed') + ')';
+    }
+    function _syncUi() {
+        for (var n = 1; n <= NLINES; n++) {
+            var c = _pgById('cj_chem_' + n), p = _pgById('cj_pump_' + n);
+            if (c) c.setAttribute('data-prev', c.value);
+            if (p) p.setAttribute('data-prev', p.value);
+        }
+        _applyVisibility();
+    }
+    // A chemical change presets only chemical-property fields, once per actual change (data-prev).
+    // It runs inside the #pgBody change event (canonical context), so tagged writes are imperial.
+    function _setv(id, v) { var e = _pgById(id); if (e) e.value = (v == null || (typeof v === 'number' && !isFinite(v))) ? '' : String(v); }
+    function _presetChem(n) {
+        var L = _lib(), sel = _pgById('cj_chem_' + n);
+        if (!L || !sel) return;
+        var key = sel.value;
+        if (key === sel.getAttribute('data-prev')) return;
+        sel.setAttribute('data-prev', key);
+        var c = L.find(key);
+        if (!c) return;
+        var basis = c.basis, dose = c.dose, B = L.bases[basis];
+        if (_isM() && B && B.twin && (basis === 'pt_mmscf' || basis === 'gal_mmscf' || basis === 'gal_lb_h2s')) {
+            dose = dose == null ? null : dose * B.factor;
+            basis = B.twin;
+        }
+        _setv('cj_basis_' + n, basis);
+        _setv('cj_dose_' + n, dose == null ? '' : _r6(dose));
+        _setv('cj_lean_' + n, c.leanDef == null ? '' : c.leanDef);
+        _setv('cj_sgc_' + n, c.sg);
+        _setv('cj_eff_' + n, '');
+        _setv('cj_act_' + n, c.activeDef == null ? '' : c.activeDef);
+        _setv('cj_wat_' + n, c.kind === 'thi' ? '' : _r6(c.water * 100));
+        _setv('cj_peak_' + n, c.peak);
+    }
+    function _presetPump(n) {
+        var L = _lib(), sel = _pgById('cj_pump_' + n);
+        if (!L || !sel) return;
+        var key = sel.value;
+        if (key === sel.getAttribute('data-prev')) return;
+        sel.setAttribute('data-prev', key);
+        var P = L.pump(key);
+        if (!P) return;
+        if (P.kind === 'plunger') {
+            _setv('cj_plg_' + n, P.plungerDef);
+            _setv('cj_stk_' + n, P.strokeDef);
+            if (Number(_sv('cj_heads_' + n)) > (P.headsMax || 1)) _setv('cj_heads_' + n, 1);
+            if (P.setting === 'spm') _setv('cj_actd_' + n, P.actDef || 4);
+        } else if (P.kind === 'meter') {
+            _setv('cj_qrated_' + n, _r6(P.qRated_galh));
+            _setv('cj_pmax_' + n, P.pmax);
+        } else if (P.kind === 'airliquid') {
+            _setv('cj_q0_' + n, P.q0_galh);
+            _setv('cj_ratio_' + n, P.ratio);
+            _setv('cj_vcyc_' + n, P.vcyc_in3);
+        } else if (P.kind === 'transfer') _setv('cj_q0_' + n, P.q0_galh);
+        _setv('cj_spmmax_' + n, '');
+    }
+    function _onChange(e) {
+        var t = e && e.target, id = (t && t.id) || '';
+        if (!/^cj_/.test(id)) return;
+        var m = /^cj_(chem|pump)_(\d)$/.exec(id);
+        if (m) { if (m[1] === 'chem') _presetChem(Number(m[2])); else _presetPump(Number(m[2])); }
+        _applyVisibility();
+        G.calcChemInj();
+    }
+
+    // ── Read the controls (canonical values inside calcChemInj) ──────
+    function _readInput() {
+        var root = _pgById('cj_root'), map = {}, L = _lib();
+        _each(root.querySelectorAll('input[id], select[id]'), function (el) {
+            if (!/^cj_/.test(el.id) || el.type === 'checkbox') return;
+            map[el.id] = String(el.value == null ? '' : el.value).trim();
+        });
+        var inp = G.WTS_cheminj.fromIds(map), ctx = { calUnused: false, calIncomplete: false, calLine: 1 };
+        var nl = parseInt(map.cj_nlines, 10) || 1, cl = parseInt(map.cj_cal_line, 10) || 1;
+        ctx.calLine = cl;
+        // The calibration card never blocks the results: a line not in use or a half-filled
+        // entry is reported in the calibration box instead of the validation list.
+        if (map.cj_cal_ml !== '' && map.cj_cal_ml !== undefined) {
+            var P = L.pump(map['cj_pump_' + cl]), set = (P && P.kind === 'airliquid') ? map.cj_cal_air : map.cj_cal_set;
+            var pos = function (v) { var x = Number(v); return v !== '' && v != null && isFinite(x) && x > 0 && x < 1e7; };
+            if (cl > nl) ctx.calUnused = true;
+            else if (!(pos(map.cj_cal_ml) && pos(map.cj_cal_s) && pos(set))) ctx.calIncomplete = true;
+            if (ctx.calUnused || ctx.calIncomplete) inp.cal = { line: 1, mL: '', s: '', setting: '' };
+            else inp.cal.setting = set;
+        }
+        return { inp: inp, map: map, ctx: ctx };
+    }
+
+    // ── Results ──────────────────────────────────────────────────────
+    var SYM = { ok: '✓', warn: '⚠', bad: '✗' };
+    var VCOL = { ok: 'var(--green)', warn: 'var(--yellow)', bad: 'var(--red)' };
+    function _vdiv(v) {
+        var lv = (v && SYM[v.level]) ? v.level : 'warn';
+        return '<div class="cj-v" style="color:' + VCOL[lv] + '">' + SYM[lv] + ' ' + _esc(String(v.text || '').slice(0, 296)) + '</div>';
+    }
+    function _rrow(l, v, txt) { return '<div class="rrow"><span class="rl">' + _esc(l) + '</span><span class="rv' + (txt ? ' cj-t' : '') + '">' + _esc(v) + '</span></div>'; }
+    function _subh(t) { return '<div class="cj-sub">' + _esc(t) + '</div>'; }
+    function _tbl(head, rows) {
+        return '<div class="cj-tw"><table class="dtable"><thead><tr>' + head.map(function (x) { return '<th>' + _esc(x) + '</th>'; }).join('') + '</tr></thead><tbody>' +
+            rows.map(function (r) { return '<tr>' + r.map(function (c) { return '<td>' + _esc(c) + '</td>'; }).join('') + '</tr>'; }).join('') + '</tbody></table></div>';
+    }
+    function _worse(a, b) { var o = { ok: 0, warn: 1, bad: 2 }; return (o[b] || 0) > (o[a] || 0) ? b : a; }
+    function _bandTxt(b) { return b === 'green' ? 'green band' : b === 'amber' ? 'amber band' : 'red band'; }
+    function _pctTxt(p) { return _fin(p) && p < 900 ? _nf(p, p < 10 ? 1 : 0) + ' %' : '—'; }
+    function _lineName(ln) { return ln.chemShort + ' · ' + ln.pointShort; }
+
+    function _headline(r) {
+        var lv = 'ok';
+        r.lines.forEach(function (ln) { lv = _worse(lv, ln.level); });
+        r.hydrate.verdicts.forEach(function (v) { lv = _worse(lv, v.level); });
+        r.summary.verdicts.forEach(function (v) { if (v.level === 'bad') lv = 'bad'; });
+        var l1 = r.lines[0];
+        var one = function (ln) {
+            return ln.chemShort + ' ' + _low1(ln.pointShort) + ', ' + (ln.rate.gal_d > 0 ? _rq(ln.rate.gal_d) + ' (' + _nf(ln.rate.mL_min, 1) + ' mL/min)' + (ln.setting ? ', ' + ln.setting : '') : 'no flow required');
+        };
+        var t = r.lines.length === 1 ? 'Line 1: ' + one(l1) + '.'
+            : r.lines.length + ' injection lines, ' + _rq(r.summary.total_gal_d) + ' in total. Line 1: ' + one(l1) + '.';
+        return _vdiv({ level: lv, text: t });
+    }
+    function _basisBox(r) {
+        var b = r.basis, S = r.spread, m = S.margin, sp = r.input.spread;
+        var h = '<div class="rbox" id="cj_rb_basis"><div class="rbox-title">Design basis</div>';
+        h += _rrow('Hydrate design margin', m.adder > 0 ? _qv(m.base, 'tempDelta', 1, '°F') + ' + ' + _qv(m.adder, 'tempDelta', 1, '°F') + ' sour adder = ' + _qv(m.used, 'tempDelta', 1, '°F') : _qv(m.used, 'tempDelta', 1, '°F'));
+        h += _rrow('Hydrate temperature', S.thydSrc === 'user'
+            ? 'User value ' + _qv(Number(r.input.basis.thuser), 'temperature', 1, '°F') + ' at ' + _qv(Number(r.input.basis.thuserp), 'pressureG', 0, 'psig') + ', correlation curve shifted in parallel'
+            : 'Gas-gravity correlation (Towler–Mokhatab), sweet gas, about ±' + _qv(5, 'tempDelta', 1, '°F'), true);
+        h += _rrow('Choke outlet temperature', b.jt === 'ise' ? 'Real-gas isenthalpic (DAK) with J-T cooling × ' + _nf(b.fJT, 2, 2)
+            : b.jt === 'rule' ? '7 °F per 100 psi rule (quick check)' : 'User value', true);
+        h += _rrow('Depression method', b.method === 'ham' ? 'Hammerschmidt (forced, comparison only)' : b.method === 'nb' ? 'Nielsen–Bucklin (forced, comparison only)'
+            : 'Larger of Hammerschmidt and Nielsen–Bucklin (Hammerschmidt only for DEG and TEG)', true);
+        h += _rrow('Condensed water', b.cond === 'all' ? 'All vapour water condenses at the cold node (conservative)' : 'Bukacek water content, gas saturated at the flowhead', true);
+        h += _rrow('Water rate', b.wbasis === 'sep' ? 'Measured at the separator' : 'Free (formation) water at the wellhead', true);
+        h += _rrow('Discharge rating basis', b.ratebasis === 'class'
+            ? 'Full tie-in class: flowhead ' + _qv(Number(sp.whclass), 'pressureG', 0, 'psig') + ', separator relief valve ' + _qv(sp.psvsep, 'pressureG', 0, 'psig')
+            : 'Maximum credible back-pressure: SITHP ' + _qv(sp.sithp, 'pressureG', 0, 'psig') + ' at the wellbore, separator relief valve ' + _qv(sp.psvsep, 'pressureG', 0, 'psig') + ' downstream of the choke', true);
+        h += _rrow('Pump pressure margins', _nf(b.pmpct, 1) + ' % and ' + _qv(b.pmabs, 'pressure', 0, 'psi'));
+        h += _rrow('Pumps in a classified area', b.haz === 'yes' ? 'Yes: pneumatic and air-driven pumps rank first' : 'No', true);
+        h += _rrow('Drive gas', ({ air: 'Instrument air', n2: 'Nitrogen', sweet: 'Sweet fuel gas', well: 'Produced well gas' })[b.supgas] + ', ' + _qv(b.psup, 'pressureG', 0, 'psig') + ' available', true);
+        h += _rrow('Test duration', _nf(b.days, 1) + ' d');
+        h += _rrow('Molar volume at the base conditions', _isM() ? _nf(b.vm * 0.028316846592 / 0.45359237, 3) + ' m³/kmol' : _nf(b.vm, 2) + ' scf/lb-mol');
+        if (r.lines.some(function (ln) { return ln.scav; })) h += _rrow('H2S outlet target (scavenger lines)', _nf(b.h2sOut, 2) + ' ppm');
+        h += _rrow('Advanced values', 'methanol loss to condensate ' + _qv(b.fc, 'lbPerBbl', 3, 'lb/bbl') + ' at 30 wt %; glycol loss ' + _nf(b.glyloss, 1) + ' %; sour adder ' +
+            _qv(b.sour, 'tempDelta', 1, '°F') + ' per mol %; bands green ≤ ' + _nf(b.bandG, 0) + ' %, amber ≤ ' + _nf(b.bandA, 0) + ' %; minimum-rate factor ' + _nf(b.minf, 2), true);
+        return h + '</div>';
+    }
+    function _statusTxt(s) { return s === 'bad' ? '✗ hydrate region' : s === 'warn' ? '⚠ within margin' : '✓ no risk'; }
+    function _thiRows(ln, prefix) {
+        var hd = ln.hydrate, h = '', c = _lib().find(ln.chem), name = c ? _low1(c.short) : 'inhibitor';
+        if (!hd || !hd.ok) return '';
+        if (hd.control) {
+            h += _rrow(prefix + 'Controlling node', hd.control.label + ': ' + _qv(hd.control.t_F, 'temperature', 1, '°F') + ' at ' + _qv(hd.control.p_psig, 'pressureG', 0, 'psig') +
+                ', hydrate ' + _qv(hd.control.thyd, 'temperature', 1, '°F'), true);
+        }
+        if (hd.required && !hd.noRate && hd.water) {
+            h += _rrow(prefix + 'Required depression (hydrate − T + margin)', _qv(hd.dT, 'tempDelta', 2, '°F'));
+            h += _rrow(prefix + 'Rich inhibitor in the water', _nf(hd.XR, 2, 2) + ' wt % ' + name + ' (' +
+                (hd.methodUsed === 'nb' ? 'Nielsen–Bucklin' : hd.methodUsed === 'ham' ? 'Hammerschmidt' : 'entered') + '; Hammerschmidt ' + _nf(hd.XR_ham, 2, 2) + ' wt %)');
+            var w = hd.water;
+            h += _rrow(prefix + 'Water to treat: free + condensed + other chemicals', _qv(w.total, 'massRateDay', 1, 'lb/d') + ' (' + _nf(_dv(w.free, 'massRateDay'), 1) + ' + ' +
+                _nf(_dv(w.cond, 'massRateDay'), 1) + ' + ' + _nf(_dv(w.other, 'massRateDay'), 1) + ')');
+            var inh = hd.inh;
+            h += _rrow(prefix + 'Inhibitor: in water + vapour loss + condensate loss', _nf(_dv(inh.aq, 'massRateDay'), 1) + ' + ' + _nf(_dv(inh.vap, 'massRateDay'), 1) + ' + ' +
+                _nf(_dv(inh.lhc, 'massRateDay'), 1) + ' ' + _ul('massRateDay', 'lb/d') + (inh.loss > 0 ? ' (glycol loss ' + _qv(inh.loss, 'massRateDay', 1, 'lb/d') + ')' : ''));
+            h += _rrow(prefix + 'Lean solution rate', _qv(inh.solution_lb_d, 'massRateDay', 1, 'lb/d') + ' = ' + _rq(inh.gal_d) + ' at ' + _nf(hd.leanPct, 1) + ' wt %');
+            if (hd.freezeF != null) h += _rrow(prefix + 'Rich-phase freeze point', _qv(hd.freezeF, 'temperature', 1, '°F'));
+        }
+        return h;
+    }
+    function _caseTxt(cr, chemName, dT) {
+        if (!(dT > 0)) return 'No inhibitor needed with the margin';
+        if (!cr) return 'Depression needed ' + _qv(dT, 'tempDelta', 2, '°F');
+        return _nf(cr.XR, 2, 2) + ' wt % ' + chemName + ' (depression ' + _qv(dT, 'tempDelta', 2, '°F') + ')';
+    }
+    function _spreadBox(r) {
+        var S = r.spread, H = r.hydrate, m = S.margin, b = r.basis, h = '';
+        var jt = b.jt === 'ise' ? 'J-T × ' + _nf(b.fJT, 2, 2) : b.jt === 'rule' ? (_isM() ? 'J-T 0.56 °C per bar' : 'J-T 7 °F per 100 psi') : 'choke temperature entered';
+        h += '<div class="rbox" id="cj_rb_spread"><div class="rbox-title">Spread hydrate check (margin ' + _esc(_qv(m.used, 'tempDelta', 1, '°F')) + ', ' + _esc(jt) + ')</div>';
+        var rows = S.nodes.concat([S.shutin, S.startup]).map(function (nd) {
+            return [nd.label, _nf(_dv(nd.p_psig, 'pressureG'), 0),
+                _nf(_dv(nd.t_F, 'temperature'), 1) + (nd.tDak_F != null && b.jt === 'ise' ? ' (DAK ' + _nf(_dv(nd.tDak_F, 'temperature'), 1) + ')' : ''),
+                _nf(_dv(nd.thyd, 'temperature'), 1), _nf(_dv(nd.sub, 'tempDelta'), 1), _statusTxt(nd.status)];
+        });
+        h += _tbl(['Node', 'Pressure (' + _ul('pressureG', 'psig') + ')', 'Temperature (' + _ul('temperature', '°F') + ')', 'Hydrate temperature (' + _ul('temperature', '°F') + ')',
+            'Subcooling, hydrate − T (' + _ul('tempDelta', '°F') + ')', 'Status'], rows);
+        var ck = H.jt.choke;
+        h += _rrow('Choke outlet temperature', ck.method === 'ise' ? _qv(ck.t, 'temperature', 2, '°F') + ' design (DAK ' + _qv(ck.tDak, 'temperature', 2, '°F') + ', J-T × ' + _nf(b.fJT, 2, 2) + ')'
+            : ck.method === 'rule' ? _qv(ck.t, 'temperature', 2, '°F') + ' (7 °F per 100 psi rule)' : _qv(ck.t, 'temperature', 2, '°F') + ' (entered)');
+        h += _rrow('Design margin used', _qv(m.used, 'tempDelta', 1, '°F') + (m.adder > 0 ? ' (includes ' + _qv(m.adder, 'tempDelta', 1, '°F') + ' sour adder)' : ''));
+        var thi = r.lines.filter(function (ln) { return ln.kind === 'thi' && ln.hydrate; });
+        thi.forEach(function (ln) { h += _thiRows(ln, thi.length > 1 ? 'Line ' + ln.n + ': ' : ''); });
+        var t0 = thi.filter(function (ln) { return ln.hydrate.ok; })[0], cn = t0 ? _low1(t0.chemShort) : '';
+        h += _rrow('Shut-in requirement (SITHP, ambient)', _caseTxt(t0 && t0.hydrate.shutin, cn, S.shutin.dTreq), true);
+        h += _rrow('Start-up requirement (cold tree to choke outlet)', _caseTxt(t0 && t0.hydrate.startup, cn, S.startup.dTreq), true);
+        if (!thi.length && S.nodes.some(function (nd) { return nd.dTreq > 0; })) h += _rrow('Hydrate inhibitor line', 'None: add a line with a thermodynamic inhibitor upstream of the first risk node', true);
+        var seen = {};
+        H.verdicts.forEach(function (v) { if (!seen[v.text]) { seen[v.text] = 1; h += _vdiv(v); } });
+        var ws = (S.warnings || []).slice();
+        thi.forEach(function (ln) { (ln.hydrate.warnings || []).forEach(function (w) { ws.push(w); }); });
+        ws.forEach(function (w) { if (!seen[w]) { seen[w] = 1; h += _vdiv({ level: 'warn', text: w }); } });
+        return h + '</div>';
+    }
+    function _pumpCfgTxt(ps) {
+        if (ps.kind !== 'plunger') return ps.name;
+        var t = ps.name + ', ' + _frac(ps.plunger_in) + ' × ' + _frac(ps.stroke_in) + ' in, ' + ps.heads + (ps.heads > 1 ? ' heads' : ' head');
+        if (ps.setting === 'spm' && ps.actD_in != null) t += ', ' + _frac(ps.actD_in) + ' in actuator';
+        return t;
+    }
+    function _pumpRows(ln, r) {
+        var ps = ln.pump, h = '';
+        h += _rrow('Pump', _pumpCfgTxt(ps), true);
+        if (ps.noFlow) return h + _rrow('Pump setting', 'No flow required', true);
+        if (ps.kind === 'airliquid') {
+            h += _rrow('Air pressure setting: design · peak', ps.airDesign != null
+                ? _qv(ps.airDesign, 'pressureG', 1, 'psig', 0) + ' · ' + (ps.airPeak != null ? _qv(ps.airPeak, 'pressureG', 1, 'psig', 0) : 'peak not reachable')
+                : 'Not reachable at the required pressure');
+            h += _rrow('Flow at the required pressure with full air', _rq(ps.qAtPreq) + ' at ' + _qv(ps.pReq, 'pressureG', 0, 'psig'));
+            h += _rrow('Cycles per minute (field count): design · peak', ps.cyclesMin != null ? _nf(ps.cyclesMin, 1, 1) + ' · ' + _nf(ps.cyclesPeak, 1, 1) : '—');
+            h += _rrow('Stall pressure at the design setting', ps.pStallDesign != null ? _qv(ps.pStallDesign, 'pressureG', 0, 'psig') : '—');
+            h += _rrow('Air setting, share of the air available', _pctTxt(ps.pct) + ' of ' + _qv(r.basis.psup, 'pressureG', 0, 'psig') + ' (' + _bandTxt(ps.band) + ')');
+        } else if (ps.kind === 'plunger' && ps.setting === 'spm') {
+            h += _rrow('Speed: design · peak · minimum', _nf(ps.spm, 1, 1) + ' · ' + _nf(ps.spmPeak, 1, 1) + ' · ' + _nf(ps.spmMin, 1, 1) + ' SPM');
+            h += _rrow('Share of the maximum SPM', _pctTxt(ps.pct) + ' of ' + _nf(ps.spmMax, 0) + ' SPM, peak ' + _pctTxt(ps.peakPct) + ' (' + _bandTxt(ps.band) + ')');
+            h += _rrow('Seconds per stroke · strokes per 15 s', (ps.sPerStroke != null ? _nf(ps.sPerStroke, 2, 2) + ' s' : '—') + ' · ' + _nf(ps.per15, 1, 1));
+            h += _rrow('Volume per stroke: swept · delivered (ηv ' + _nf(ps.eta, 2, 2) + ')', _nf(ps.Vs_mL, 3) + ' · ' + _nf(ps.del_mL, 3) + ' mL');
+            h += _rrow('Pump maximum pressure', _qv(ps.pMax, 'pressureG', 0, 'psig') + (ps.pOk ? ' ✓' : ' ✗'));
+            h += _rrow('Drive-gas setting at the shut-in design pressure', _qv(ps.psSet, 'pressureG', 1, 'psig', 0) + (ps.gasOk ? ' ✓' : ' ✗'));
+        } else if (ps.kind === 'plunger') {
+            h += _rrow('Setting', ps.vfd ? _nf(ps.S, 0) + ' % stroke × ' + _nf(ps.N, 1) + ' % speed' : _nf(ps.S, 1, 1) + ' % stroke at ' + _nf(ps.spmCrank, 0) + ' SPM');
+            h += _rrow('Share of the pump maximum: design · peak', _pctTxt(ps.pct) + ' · ' + _pctTxt(ps.peakPct) + ' (' + _bandTxt(ps.band) + ')');
+            h += _rrow('Volume per stroke at this setting: swept · delivered', _nf(ps.mLperStroke, 2, 2) + ' · ' + _nf(ps.del_mL, 2, 2) + ' mL');
+            h += _rrow('Pump maximum pressure (rod load)', _qv(ps.pMax, 'pressureG', 0, 'psig') + (ps.pOk ? ' ✓' : ' ✗'));
+            h += _rrow('Hydraulic power: at the required pressure · at the rating', _qv(ps.hhp, 'power', 2, 'hp', 3) + ' · ' + _qv(ps.hhpRating, 'power', 2, 'hp', 3));
+        } else if (ps.kind === 'meter') {
+            h += _rrow('Setting', _nf(ps.S, 0) + ' % stroke × ' + _nf(ps.N, 1) + ' % speed' + (ps.alt ? ' (alternative ' + _nf(ps.alt.S, 0) + ' × ' + _nf(ps.alt.N, 1) + ')' : ''));
+            h += _rrow('Share of the pump maximum: design · peak', _pctTxt(ps.pct) + ' · ' + _pctTxt(ps.peakPct) + ' (' + _bandTxt(ps.band) + ')');
+            h += _rrow('Pulse rate · volume per stroke', _nf(ps.pulse, 1, 1) + ' per min · ' + _nf(ps.mLperStroke, 3) + ' mL');
+            h += _rrow('Rated capacity · maximum pressure', _qv(ps.qRated_galh, 'chemRateHr', 2, 'gal/h') + ' · ' + _qv(ps.pMax, 'pressureG', 0, 'psig') + (ps.pOk ? ' ✓' : ' ✗'));
+        } else if (ps.kind === 'transfer') {
+            h += _rrow('Cycles per minute: design · peak', _nf(ps.cyclesMin, 1, 1) + ' · ' + _nf(ps.cyclesPeak, 1, 1));
+            h += _rrow('Share of the free flow', _pctTxt(ps.pct) + ' (' + _bandTxt(ps.band) + ')');
+        }
+        return h;
+    }
+    function _optSetting(o) {
+        if (o.kind === 'airliquid') return o.airDesign != null ? 'air ' + _qv(o.airDesign, 'pressureG', 1, 'psig', 0) : 'not reachable';
+        if (o.setting === 'spm') return _nf(o.spm, 1, 1) + ' SPM';
+        if (o.setting === 'stroke_speed') return (o.N != null && o.N < 99.95 ? _nf(o.S, 0) + ' % × ' + _nf(o.N, 1) + ' %' : _nf(o.S, 1, 1) + ' % stroke');
+        if (o.kind === 'transfer') return _nf(o.cyclesMin, 1, 1) + ' cycles/min';
+        return '—';
+    }
+    function _optionsTable(ln) {
+        var op = ln.options;
+        if (!op || !op.ok) return '';
+        var rows = op.ranked.map(function (o, k) {
+            return [String(k + 1), o.kind === 'plunger' ? _pumpLabel({ short: o.name }) + ', ' + o.label : _pumpLabel({ short: o.name }), _optSetting(o),
+                _pctTxt(o.pct) + ' (peak ' + _pctTxt(o.peakPct) + ')', _nf(_dv(o.pMax, 'pressureG'), 0), '✓ feasible'];
+        });
+        var c = op.current;
+        if (c && c.ok) {
+            rows.push(['Current', _pumpCfgTxt(c), c.noFlow ? 'no flow' : _optSetting(c), c.noFlow ? '—' : _pctTxt(c.pct) + ' (peak ' + _pctTxt(c.peakPct) + ')',
+                _nf(_dv(c.pMax, 'pressureG'), 0), c.feasible ? '✓ feasible' : '✗ ' + (c.whyText || 'not feasible')]);
+        }
+        var h = _subh('Pump options (top 3 feasible, ranked; then the current choice)') +
+            _tbl(['#', 'Option', 'Setting', 'Share of maximum', 'Maximum pressure (' + _ul('pressureG', 'psig') + ')', 'Verdict'], rows);
+        if (op.reason) h += _vdiv({ level: 'warn', text: op.reason });
+        return h;
+    }
+    function _pressureRows(ln) {
+        var ip = ln.pressure, ps = ln.pump, h = '';
+        var bb = { sithp: 'SITHP', psvsep: 'separator relief-valve set pressure', whclass: 'flowhead pressure class', none: 'atmospheric tank' }[ip.pBackBasis] || ip.pBackBasis;
+        h += _rrow('Required discharge pressure: line + allowance', _qv(ip.pReq, 'pressureG', 0, 'psig') + ' (' + _nf(_dv(ip.pLine, 'pressureG'), 0) + ' + ' + _nf(_dv(ip.breakdown.allowance, 'pressure'), 0) + ')');
+        h += _rrow('Back-pressure basis', _qv(ip.pBack, 'pressureG', 0, 'psig') + ' (' + bb + ')');
+        h += _rrow('Minimum discharge-circuit rating', _qv(ip.pRating, 'pressureG', 0, 'psig'));
+        h += _rrow('Pump pressure capability', ps.pMax != null ? _qv(ps.pMax, 'pressureG', 0, 'psig') + (ps.pOk ? ' ✓' : ' ✗') : '—');
+        h += _rrow('Relief-valve set band', ip.psvBand.hi != null ? _qv(ip.psvBand.lo, 'pressureG', 0, 'psig') + ' to ' + _qv(ip.psvBand.hi, 'pressureG', 0, 'psig') + (ip.psvBand.ok === false ? ' ✗ empty' : '')
+            : 'at least ' + _qv(ip.psvBand.lo, 'pressureG', 0, 'psig'));
+        if (ip.dPdT_psiF != null) {
+            h += _rrow('Blocked-in pressure rise', _isM() ? _nf(ip.dPdT_psiF * 6.894757293168 * 1.8, 0) + ' kPa per °C (' + _nf(ip.dPdT_psiF * 30 * 6.894757293168, 0) + ' kPa for a 16.7 °C rise)'
+                : _nf(ip.dPdT_psiF, 0) + ' psi per °F (' + _nf(ip.dPdT_psiF * 30, 0) + ' psi for a 30 °F rise)');
+        }
+        return h;
+    }
+    function _fieldRows(ln) {
+        var f = ln.field, h = '';
+        if (!(ln.rate.gal_d > 0)) return '';
+        h += _rrow('Drawdown cylinder: 30 s · 60 s', _nf(f.mL_30s, 0) + ' · ' + _nf(f.mL_60s, 0) + ' mL');
+        h += _rrow('Time to draw 100 mL', f.s_per_100mL != null ? _nf(f.s_per_100mL, 1, 1) + ' s' : '—');
+        h += _rrow('Calibration cylinder (1.25 × peak for 60 s)', f.cylinder_mL != null ? _nf(f.cylinder_mL, 0) + ' mL' : 'Over 4,000 mL: use an in-line meter', f.cylinder_mL == null);
+        return h;
+    }
+    function _supplyRows(ln) {
+        var t = ln.supply, g = ln.gas, h = '';
+        if (t && ln.rate.gal_d > 0) {
+            h += _rrow('Days per tank (' + _qv(t.usable_gal, 'volumeSmall', 1, 'gal', 0) + ' usable after a 10 % heel)', _nf(t.days, 2, 2) + ' d');
+            h += _rrow('Chemical for the test (+20 % contingency)', _qv(t.inventory_gal, 'volumeSmall', 0, 'gal', 0));
+            h += _rrow('Totes on site · tote changes (' + _qv(275, 'volumeSmall', 0, 'gal', 0) + ' totes)', t.totes + ' · ' + t.toteChanges);
+        }
+        if (g && g.applies && ln.rate.gal_d > 0) {
+            if (ln.pump.kind === 'plunger' && g.scf_d != null) {
+                h += _rrow('Drive gas: per stroke · per day', _isM() ? _nf(g.scf_stroke * 0.028316846592, 5) + ' Sm³ · ' + _nf(g.scf_d * 0.028316846592, 2) + ' Sm³/d'
+                    : _nf(g.scf_stroke, 5) + ' scf · ' + _nf(g.scf_d, 0) + ' scf/d (' + _nf(g.scf_h, 1) + ' scf/h)');
+            } else if (ln.pump.kind === 'airliquid') h += _rrow('Drive gas use', 'From the pump’s air-consumption curve (not computed)', true);
+            if (g.regDefault_scf_h != null) h += _rrow('Regulatory default for a gas-driven pump', _isM() ? _nf(g.regDefault_scf_h * 0.028316846592, 3) + ' Sm³/h' : _nf(g.regDefault_scf_h, 1) + ' scf/h');
+        }
+        return h;
+    }
+    function _doseRows(ln) {
+        var h = '', L = _lib(), B = L.bases[ln.basis];
+        if (ln.kind === 'thi' && ln.hydrate) {
+            if (ln.hydrate.XR > 0) h += _rrow('Rich inhibitor in the water', _nf(ln.hydrate.XR, 2, 2) + ' wt %');
+        } else if (ln.scav) {
+            var sc = ln.scav;
+            h += _rrow('H2S removed', _qv(sc.removed_lb_d, 'massRateDay', 3, 'lb/d', 3));
+            if (_fin(ln.dose)) h += _rrow('Product ratio', (_isM() ? _nf(ln.dose * L.bases.gal_lb_h2s.factor, 3) + ' L/kg' : _nf(ln.dose, 3) + ' US gal/lb') +
+                (ln.ratio && ln.ratio.ok ? ' (η ' + _nf(ln.ratio.eff, 3) + ')' : ''));
+        } else if (_fin(ln.dose)) {
+            h += _rrow('Dose (product, as supplied)', _nf(ln.dose, 3) + ' ' + (B ? B.unit : '') + (ln.activePpm != null ? ' (' + _nf(ln.activePpm, 2) + ' ppm active)' : ''));
+        }
+        if (ln.rate.gal_MMscf != null && ln.rate.gal_d > 0) h += _rrow('Per gas volume', _qv(ln.rate.gal_MMscf, 'doseGasVol', 3, 'gal/MMscf', 1));
+        return h;
+    }
+    function _lineBox(r, ln) {
+        var h = '<div class="rbox" id="cj_rb_line_' + ln.n + '"><div class="rbox-title">' + _esc('Line ' + ln.n + ' — ' + _lineName(ln)) + '</div>';
+        h += _subh('Rate');
+        h += _rrow('Chemical rate', _rateTxt(ln.rate));
+        if (ln.rate.gal_d > 0) h += _rrow('Peak / start-up rate (× ' + _nf(ln.peakF, 2, 1) + ')', _rq(ln.peak_gal_d));
+        h += _doseRows(ln);
+        h += _subh('Pump setting') + _pumpRows(ln, r);
+        h += _optionsTable(ln);
+        h += _subh('Discharge pressure') + _pressureRows(ln);
+        var fr = _fieldRows(ln), sr = _supplyRows(ln);
+        if (fr) h += _subh('Field check') + fr;
+        if (sr) h += _subh('Supply') + sr;
+        var c = _lib().find(ln.chem), ps = ln.pump, ip = ln.pressure;
+        var echo = ['peak × ' + _nf(ln.peakF, 2, 1)];
+        if (ps.kind === 'plunger') echo.push('ηv ' + _nf(ps.eta, 2, 2));
+        if (ln.water > 0) echo.push('water ' + _nf(ln.water * 100, 0) + ' %');
+        echo.push('allowance ' + _qv(ip.breakdown.allowance, 'pressure', 0, 'psi'));
+        var mv = r.input.lines[ln.n - 1].mawp, mawpIn = mv !== '' && mv != null && _fin(Number(mv));
+        echo.push(mawpIn ? 'MAWP ' + _qv(Number(mv), 'pressureG', 0, 'psig') : 'MAWP = pump rating');
+        h += _rrow('Line settings', echo.join(' · '), true);
+        if (c && c.cautions) h += _rrow('Chemical cautions', c.cautions, true);
+        var seen = {};
+        ln.verdicts.forEach(function (v) { if (!seen[v.text]) { seen[v.text] = 1; h += _vdiv(v); } });
+        (ip.warnings || []).forEach(function (w) { if (!seen[w]) { seen[w] = 1; h += _vdiv({ level: 'warn', text: w }); } });
+        return h + '</div>';
+    }
+    function _summaryBox(r) {
+        var h = '<div class="rbox" id="cj_rb_summary"><div class="rbox-title">Summary</div>';
+        h += _tbl(['Line', 'Point', 'Chemical', 'Rate (' + (_isM() ? 'L/h' : 'gal/d') + ')', 'Rate (mL/min)', 'Pump', 'Setting', 'Required (' + _ul('pressureG', 'psig') + ')', 'Rating (' + _ul('pressureG', 'psig') + ')', 'Verdict'],
+            r.summary.rows.map(function (s) {
+                var q = _isM() ? s.gal_d * GAL_L / 24 : s.gal_d;
+                return [String(s.n), s.point, s.chem, _nf(q, q < 10 ? 3 : 2), _nf(s.mL_min, 1), _pumpLabel({ short: s.pump }), s.setting || 'no flow',
+                    _nf(_dv(s.pReq, 'pressureG'), 0), _nf(_dv(s.pRating, 'pressureG'), 0), SYM[s.level] || '⚠'];
+            }));
+        r.summary.inventory.forEach(function (e) {
+            if (e.gal_d > 0) h += _rrow(e.name + ' for the test (' + _nf(r.basis.days, 1) + ' d + 20 %)', _qv(e.gal_test, 'volumeSmall', 0, 'gal', 0) + ' at ' + _rq(e.gal_d));
+        });
+        h += _rrow('Total chemical rate', _rq(r.summary.total_gal_d));
+        r.summary.verdicts.forEach(function (v) { h += _vdiv(v); });
+        return h + '</div>';
+    }
+    function _calBox(r, rd) {
+        var c = r.calibration;
+        if (rd.ctx.calUnused) {
+            return '<div class="rbox" id="cj_rb_cal"><div class="rbox-title">Field calibration check</div>' +
+                _vdiv({ level: 'warn', text: 'Calibration line ' + rd.ctx.calLine + ' is not in use: choose a line between 1 and ' + r.lines.length + '.' }) + '</div>';
+        }
+        if (rd.ctx.calIncomplete) {
+            return '<div class="rbox" id="cj_rb_cal"><div class="rbox-title">Field calibration check, line ' + rd.ctx.calLine + '</div>' +
+                _vdiv({ level: 'warn', text: 'Enter the measured volume, the time and the pump setting during the test (all above 0) to check line ' + rd.ctx.calLine + '.' }) + '</div>';
+        }
+        if (!c) return '';
+        var ln = r.lines[c.line - 1], ps = ln.pump, h = '<div class="rbox" id="cj_rb_cal"><div class="rbox-title">Field calibration check, line ' + c.line + '</div>';
+        var air = ps.kind === 'airliquid';
+        var setTxt = function (v) {
+            if (v == null || !_fin(v)) return 'not reachable';
+            if (air) return 'air ' + _qv(v, 'pressureG', 1, 'psig', 0);
+            if (ps.setting === 'spm') return _nf(v, 2, 2) + ' SPM';
+            return _nf(v, 2, 2) + (ps.kind === 'plunger' && !ps.vfd ? ' % stroke' : ' % speed');
+        };
+        h += _rrow('Measured rate', _rq(c.gal_d) + ' (' + _nf(c.mL_min, 1, 1) + ' mL/min)');
+        h += _rrow('Target rate', _rq(ln.rate.gal_d));
+        if (c.withinPct != null) h += _rrow('Deviation from target', (c.withinPct > 0 ? '+' : '') + _nf(c.withinPct, 1, 1) + ' %');
+        if (c.etaActual != null) h += _rrow('Measured volumetric efficiency', _nf(c.etaActual, 3, 3));
+        if (c.q0Refit_gal_d != null) h += _rrow('Free flow re-fitted to the test', _rq(c.q0Refit_gal_d));
+        h += _rrow('Corrected setting', setTxt(c.newSetting));
+        if (c.withinPct != null) {
+            var tol = 5;
+            h += Math.abs(c.withinPct) > tol
+                ? _vdiv({ level: 'warn', text: 'Calibration reads ' + (c.withinPct > 0 ? '+' : '') + _nf(c.withinPct, 1, 1) + ' % from target: reset to ' + setTxt(c.newSetting) + ' and re-test.' })
+                : _vdiv({ level: 'ok', text: 'Calibration within 5 % of the target rate.' });
+        } else h += _vdiv({ level: 'warn', text: 'The line has no flow to compare with: no corrected setting.' });
+        return h + '</div>';
+    }
+    var NOTES = [
+        'Methods. Hydrate temperature: gas-gravity correlation (Towler–Mokhatab 2005), sweet gas, about ±5 °F. Choke temperature: real-gas isenthalpic (DAK) with J-T cooling × {fjt} for design. Depression: larger of Hammerschmidt and Nielsen–Bucklin (Hammerschmidt only for DEG/TEG). Water: free + condensed (Bukacek) + water in other aqueous chemicals. Methanol loss to gas: K-value correlation. Scavenger: stoichiometry ÷ utilisation. Pumps: displacement × volumetric efficiency. Downhole: tubing pressure + valve set + friction − hydrostatic.',
+        'Sour service and samples. The sour-service materials basis and the radius of exposure use the untreated H2S; scavenging does not change them. Take PVT and H2S samples upstream of the scavenger, or with it off. Do not drive pneumatic or air-driven pumps with sour produced gas: use instrument air, nitrogen or sweet gas, or route the exhaust to flare.',
+        'Injection hardware and overpressure. Every tie-in: block valve, two check valves in series and a bleed, rated to the flowhead or manifold class and leak-tested before opening the well; a tie-in upstream of the surface safety valve can bypass it. Rate the pump discharge for the shut-in or tie-in pressure, not the operating pressure. Fit a relief valve on every pump discharge and drive-gas regulator. Size the tank vent for gas blow-by or fit a low-discharge-pressure trip: the pump relief valve does not protect the tank.',
+        'Methanol. Flash point 52 °F (11 °C), near-invisible flame, toxic by skin, inhalation and ingestion (exposure limit 200 ppm, skin). Bond and ground during transfer; flame arrestor on the vent; bund at 110 %; shade the tank and keep a flooded suction. Separator water carrying methanol is itself flammable: treat water tanks, pits and lines as hazardous. With high-salinity brine, methanol can precipitate salt and scale. Area classification per API RP 500/505.',
+        'Plugs, mixing and shutdown. Treat a suspected hydrate plug as trapped pressure: depressurise both sides equally and never heat the middle of a plug. Never mix incompatible chemicals in one line or tank, and flush lines when changing chemical. Oxidisers (peroxide, nitrite) go only into a vented, non-hydrocarbon tank and are never blocked in. Fit thermal relief on blockable liquid-full sections, or lock them open. Decide the ESD philosophy for each chemical pump (trip, or keep running for shut-in hydrate protection) before the test.',
+        'Data limits and sign-off. LDHI, scavenger utilisation, treating-chemical doses and pump presets depend on the formulation and the equipment; values here are screening ranges and illustrative envelopes, to be replaced by data-sheet and nameplate values. This page is not a substitute for the operator’s chemical programme, permit to work or a competent engineer’s review.'
+    ];
+    function _notesHtml(fJT) {
+        var f = _fin(fJT) ? _nf(fJT, 2, 2) : '1.10';
+        return '<div class="rbox" id="cj_rb_notes"><div class="rbox-title">Notes and assumptions</div>' +
+            NOTES.map(function (t) { return '<div class="cj-note"><b>Notes</b> ' + _esc(t.replace('{fjt}', f)) + '</div>'; }).join('') + '</div>';
+    }
+
+    // ── Charts (drawLineChart in fixed 720 × 300 canvases, drawn once per calc) ──
+    function _drawFn() {
+        // eslint-disable-next-line no-undef
+        if (typeof drawLineChart === 'function') return drawLineChart;
+        return typeof G.drawLineChart === 'function' ? G.drawLineChart : null;
+    }
+    function _pts(list) { return list.filter(function (p) { return p && _fin(p.x) && _fin(p.y); }); }
+    function _drawHyd(r) {
+        var cv = _pgById('cj_chart_hyd'), draw = _drawFn();
+        if (!cv || !draw) return;
+        var S = r.spread, X = function (t) { return _dv(t, 'temperature'); }, Y = function (pg) { return _dv(pg, 'pressureG'); };
+        var pMax = (Math.max(S.sithp, S.fwhp) + ATM) * 1.1;
+        var curve = hydrateCurve(S.sg, S.thydShift, pMax, 40);
+        var ds = [{ label: 'Hydrate curve (no inhibitor)', color: '#f85149', points: false, width: 2, data: _pts(curve.map(function (q) { return { x: X(q.t_F), y: Y(q.p_psia - ATM) }; })) }];
+        ds.push({ label: 'Hydrate curve + ' + _qv(S.margin.used, 'tempDelta', 1, '°F') + ' margin', color: '#d29922', points: false, width: 1.5, dash: [6, 4],
+            data: _pts(curve.map(function (q) { return { x: X(q.t_F + S.margin.used), y: Y(q.p_psia - ATM) }; })) });
+        var thi = r.lines.filter(function (ln) { return ln.kind === 'thi' && ln.hydrate && ln.hydrate.ok && ln.hydrate.XR > 0 && ln.rate.gal_d > 0; })[0];
+        if (thi) {
+            var dep = depression(thi.chem, thi.hydrate.XR, r.basis.method === 'ham' ? 'ham' : r.basis.method === 'nb' ? 'nb' : 'auto');
+            if (_fin(dep)) ds.push({ label: 'Inhibited (line ' + thi.n + ', ' + _nf(thi.hydrate.XR, 1) + ' wt %)', color: '#3fb950', points: false, width: 2, dash: [3, 3],
+                data: _pts(curve.map(function (q) { return { x: X(q.t_F - dep), y: Y(q.p_psia - ATM) }; })) });
+        }
+        ds.push({ label: 'Flowing spread', color: '#58a6ff', points: true, width: 2, data: _pts(S.nodes.map(function (nd) { return { x: X(nd.t_F), y: Y(nd.p_psig) }; })) });
+        ds.push({ label: 'Shut-in to start-up', color: '#a371f7', points: true, width: 1.5, dash: [4, 4], data: _pts([S.shutin, S.startup].map(function (nd) { return { x: X(nd.t_F), y: Y(nd.p_psig) }; })) });
+        var at = { wh: S.nodes[0], dsch: S.nodes[1], sepin: S.nodes[2] }, inj = [];
+        r.lines.forEach(function (ln) { var nd = at[ln.point]; if (nd) inj.push({ x: X(nd.t_F), y: Y(nd.p_psig) }); });
+        if (inj.length) ds.push({ label: 'Injection points', color: '#f0883e', points: true, width: 0.001, data: _pts(inj) });
+        try {
+            draw(cv, ds, { xLabel: 'Temperature (' + _ul('temperature', '°F') + ')', yLabel: 'Pressure (' + _ul('pressureG', 'psig') + ')', yMin: 0, xDec: 0, yDec: 0 });
+        } catch (e) { /* chart is cosmetic */ }
+    }
+    function _drawPump(r) {
+        var cv = _pgById('cj_chart_pump'), draw = _drawFn(), tt = _pgById('cj_chart_pump_t');
+        if (!cv) return;
+        var want = parseInt(_sv('cj_chart_line'), 10) || 1, n = Math.min(Math.max(1, want), r.lines.length), ln = r.lines[n - 1], ps = ln.pump, P = _lib().pump(ps.pump);
+        if (tt) tt.textContent = 'Pump rate vs setting, line ' + n + (want > r.lines.length ? ' (line ' + want + ' is not in use)' : '') + ': ' + _pumpLabel({ short: ps.name });
+        if (!draw || !P) return;
+        var Q = function (galD) { return _isM() ? galD * GAL_L / 24 : galD; };
+        var ds = [], xMax = 100, xl = '', op = null, x85 = null, k, pts;
+        var colors = ['#58a6ff', '#f0883e', '#8b949e'];
+        if (ps.kind === 'plunger') {
+            var list = (P.plungers || []).slice().sort(function (a, b) { return a - b; }), idx = -1;
+            for (k = 0; k < list.length; k++) if (Math.abs(list[k] - ps.plunger_in) < 1e-9) idx = k;
+            var pick = idx === -1 ? [ps.plunger_in] : list.slice(Math.max(0, idx - 1), Math.min(list.length, idx + 2));
+            var spmX = ps.setting === 'spm' ? ps.spmMax : ps.spmCrank;
+            xMax = ps.setting === 'spm' ? spmX : 100;
+            pick.forEach(function (d) {
+                var perSpm = ps.heads * Math.PI / 4 * d * d * ps.stroke_in * 1440 / IN3_GAL * (ps.eta || 0.9);
+                pts = [];
+                for (var i = 0; i <= 20; i++) { var x = xMax * i / 20; pts.push({ x: x, y: Q(ps.setting === 'spm' ? perSpm * x : perSpm * spmX * x / 100) }); }
+                var cur = Math.abs(d - ps.plunger_in) < 1e-9;
+                ds.push({ label: _frac(d) + ' in plunger' + (cur ? ' (selected)' : ''), color: cur ? '#f0883e' : (d < ps.plunger_in ? '#58a6ff' : '#8b949e'), points: false, width: cur ? 2.5 : 1.5, data: _pts(pts) });
+            });
+            xl = ps.setting === 'spm' ? 'Pump speed (SPM)' : 'Setting (% of pump maximum)';
+            if (!ps.noFlow) op = { x: ps.setting === 'spm' ? ps.spm : ps.pct, y: Q(ps.rate_gal_d) };
+            x85 = r.basis.bandA / 100 * xMax;
+        } else if (ps.kind === 'meter' || ps.kind === 'transfer') {
+            var qm = ps.kind === 'meter' ? ps.qMax_gal_d : ps.q0_gal_d;
+            ds.push({ label: ps.kind === 'meter' ? 'Rate at stroke × speed' : 'Rate', color: colors[0], points: false, width: 2, data: _pts([{ x: 0, y: 0 }, { x: 100, y: Q(qm) }]) });
+            xl = ps.kind === 'meter' ? 'Setting: % stroke × % speed / 100' : 'Share of the free flow (%)';
+            if (!ps.noFlow) op = { x: ps.pct, y: Q(ps.rate_gal_d) };
+            x85 = r.basis.bandA;
+        } else if (ps.kind === 'airliquid') {
+            var psup = r.basis.psup, pmin = ps.pReq / (ps.ratio || 1);
+            xMax = _dv(psup, 'pressureG');
+            pts = [];
+            for (k = 0; k <= 30; k++) {
+                var pa = pmin + (psup - pmin) * k / 30;
+                if (pa > 0) pts.push({ x: _dv(pa, 'pressureG'), y: Q(Math.max(0, ps.q0_gal_d * (1 - ps.pReq / ((ps.ratio || 1) * pa)))) });
+            }
+            ds.push({ label: 'Flow at ' + _qv(ps.pReq, 'pressureG', 0, 'psig'), color: colors[0], points: false, width: 2, data: _pts(pts) });
+            xl = 'Air pressure setting (' + _ul('pressureG', 'psig') + ')';
+            if (!ps.noFlow && ps.airDesign != null) op = { x: _dv(ps.airDesign, 'pressureG'), y: Q(ps.rate_gal_d) };
+            x85 = _dv(r.basis.bandA / 100 * psup, 'pressureG');
+        }
+        if (!ds.length) return;
+        var x0 = 0;
+        if (ps.rate_gal_d > 0) {
+            ds.push({ label: 'Design rate', color: '#3fb950', points: false, width: 1.5, dash: [6, 4], data: _pts([{ x: x0, y: Q(ps.rate_gal_d) }, { x: xMax, y: Q(ps.rate_gal_d) }]) });
+            ds.push({ label: 'Peak rate', color: '#d29922', points: false, width: 1.5, dash: [3, 3], data: _pts([{ x: x0, y: Q(ps.peak_gal_d) }, { x: xMax, y: Q(ps.peak_gal_d) }]) });
+        }
+        var yTop = 0;
+        ds.forEach(function (d) { d.data.forEach(function (p) { if (p.y > yTop) yTop = p.y; }); });
+        if (_fin(x85) && yTop > 0) ds.push({ label: _nf(r.basis.bandA, 0) + ' % limit', color: '#f85149', points: false, width: 1, dash: [2, 3], data: _pts([{ x: x85, y: 0 }, { x: x85, y: yTop }]) });
+        if (op && _fin(op.x) && _fin(op.y)) ds.push({ label: 'Operating point', color: '#e6edf3', points: true, width: 0.001, data: [op] });
+        try {
+            draw(cv, ds, { xLabel: xl, yLabel: 'Rate (' + (_isM() ? 'L/h' : 'gal/d') + ')', xMin: 0, yMin: 0, xDec: 0, yDec: _isM() ? 1 : 0 });
+        } catch (e) { /* chart is cosmetic */ }
+    }
+
+    // ── Paint ────────────────────────────────────────────────────────
+    function _clearChips() { for (var n = 1; n <= NLINES; n++) { var c = _pgById('cj_chip_' + n); if (c) c.textContent = ''; } }
+    function _labelOf(id) {
+        var w = _wrapOf(id), l = w ? w.querySelector('label') : null;
+        return l ? String(l.textContent).replace(/\s+/g, ' ').trim() : '';
+    }
+    function _bare(lab) { return lab.replace(/\s*\((?:[^()]|\([^()]*\))*\)\s*$/, ''); }
+    function _rangeFor(id) {
+        var m = /^cj_([a-z0-9]+)_(\d)$/.exec(id), sec, k;
+        if (m && RANGES.line) {
+            for (k in IDS.line) if (IDS.line[k] === 'cj_' + m[1] + '_' && RANGES.line[k]) return { r: RANGES.line[k], cat: LN_UNITS[k], line: m[2] };
+        }
+        for (sec in IDS) {
+            if (sec === 'line' || sec === 'cal' || !RANGES[sec]) continue;
+            for (k in IDS[sec]) if (IDS[sec][k] === id && RANGES[sec][k]) return { r: RANGES[sec][k], cat: PG_UNITS[id], line: null };
+        }
+        return null;
+    }
+    function _errMsg(msg, id) {
+        var rg = id ? _rangeFor(id) : null, raw = id ? _labelOf(id) : '';
+        // unit-tagged labels lose their "(unit)" (the bounds carry it); ", blank = …" hints go
+        var lab = String(rg && rg.cat ? _bare(raw) : raw).replace(/, blank = [^()]*(?=\s*\(|$)/, '').trim();
+        if (id && lab && rg && /must be between/.test(msg)) {
+            var cat = rg.cat, imp = cat && _hasCat(cat) ? G.WTS_units.CATEGORIES[cat].imperial.label : '';
+            var lo = _dv(rg.r[0], cat), hi = _dv(rg.r[1], cat);
+            var dp = function (v) { return Math.abs(v) < 10 && v % 1 ? 2 : 0; };
+            return (rg.line ? 'Line ' + rg.line + ': ' : '') + lab + ' must be between ' + _nf(lo, dp(lo)) + ' and ' + _qv(rg.r[1], cat, dp(rg.r[1]), imp, dp(hi)) + '.';
+        }
+        if (id && lab && /^Enter a value for /.test(msg)) return 'Enter a value for ' + _low1(_bare(lab)) + '.';
+        return msg;
+    }
+    function _paintError(r) {
+        var res = _pgById('cj_res');
+        _clearChips();
+        _show(_pgById('cj_charts'), false);
+        var items = '', bad = r.bad || [], errs = r.errors || [];
+        errs.forEach(function (m, k) {
+            var id = null, mm = /^(?:Line (\d): )?([a-z0-9_]+) must be between/.exec(m) || /^Enter a value for ([a-z0-9_]+)\./.exec(m);
+            if (mm) id = mm.length === 3 ? ('cj_' + mm[2] + (mm[1] ? '_' + mm[1] : '')) : 'cj_' + mm[1];
+            if (id && !_pgById(id)) id = bad[k] || null;
+            items += '<li>' + _esc(_errMsg(m, id)) + '</li>';
+        });
+        bad.forEach(function (id) { var e = _pgById(id); if (e && e.classList) e.classList.add('input-err'); });
+        if (res) {
+            res.innerHTML = '<div class="val-error"><strong>Please fix the following:</strong><ul>' + (items || '<li>Check the inputs.</li>') + '</ul></div>';
+            res.setAttribute('data-done', '1');
+        }
+        var nb = _pgById('cj_notes_res');
+        if (nb) nb.innerHTML = _notesHtml(NaN);
+    }
+    function _paint(r, rd) {
+        var res = _pgById('cj_res');
+        if (!res) return;
+        var h = _headline(r);
+        r.verdicts.forEach(function (v) { h += _vdiv(v); });
+        h += _basisBox(r) + _spreadBox(r);
+        r.lines.forEach(function (ln) { h += _lineBox(r, ln); });
+        h += _summaryBox(r) + _calBox(r, rd);
+        res.innerHTML = h;
+        res.setAttribute('data-done', '1');
+        for (var n = 1; n <= NLINES; n++) {
+            var c = _pgById('cj_chip_' + n), ln = r.lines[n - 1];
+            if (c) c.textContent = ln ? ln.chip : '';
+        }
+        _show(_pgById('cj_charts'), true);
+        _drawHyd(r);
+        _drawPump(r);
+        var nb = _pgById('cj_notes_res');
+        if (nb) nb.innerHTML = _notesHtml(r.basis.fJT);
+    }
+    function _publish(r) {
+        G.WTS_state = G.WTS_state || {};
+        if (!r.ok) { G.WTS_state.cheminj = { ok: false, errors: (r.errors || []).slice(), ts: Date.now() }; return; }
+        var t = r.lines.filter(function (ln) { return ln.kind === 'thi' && ln.hydrate && ln.hydrate.ok; })[0];
+        G.WTS_state.cheminj = {
+            ok: true, ts: Date.now(),
+            lines: r.lines.map(function (ln) {
+                return { n: ln.n, point: ln.point, chem: ln.chem, gal_d: ln.rate.gal_d, L_hr: ln.rate.L_hr, mL_min: ln.rate.mL_min, pump: ln.pump.pump,
+                    setting: ln.setting, spm: ln.pump.spm != null ? ln.pump.spm : null, pReq_psig: ln.pressure.pReq, pRating_psig: ln.pressure.pRating, verdict: ln.level };
+            }),
+            total_gal_d: r.summary.total_gal_d,
+            hydrate: { controlNode: t && t.hydrate.control ? t.hydrate.control.key : null, dT: t ? t.hydrate.dT : null, XR: t ? t.hydrate.XR : null,
+                inh_gal_d: t ? t.rate.gal_d : null, fJT: r.basis.fJT },
+            h2s: null, result: r
+        };
+    }
+    function _calcImpl() {
+        var root = _pgById('cj_root');
+        if (!root || !_lib()) return null;
+        _calcCount++;
+        _each(root.querySelectorAll('.input-err'), function (el) { el.classList.remove('input-err'); });
+        var rd = _readInput();
+        var r = G.WTS_cheminj_compute(rd.inp, { fmt: _isM() ? _metricFmt() : null });
+        if (!r.ok) _paintError(r); else _paint(r, rd);
+        _publish(r);
+        return r;
+    }
+    G.calcChemInj = function () { return _canon(_calcImpl); };
+
+    function renderChemInj(body) {
+        if (!body) return;
+        var t = _pgById('pgTitle'), s = _pgById('pgSub');
+        if (t) t.textContent = PG_TITLE;
+        if (s) s.textContent = PG_SUB;
+        if (!_lib()) {
+            body.innerHTML = '<div class="card"><div class="card-title">Chemical Injection</div><div class="val-error">The chemical library is not loaded.</div></div>';
+            return;
+        }
+        body.innerHTML = _markup();
+        var U = G.WTS_units, k, n;
+        if (U && typeof U.tagInput === 'function') {
+            for (k in PG_UNITS) U.tagInput(k, PG_UNITS[k]);
+            for (n = 1; n <= NLINES; n++) for (k in LN_UNITS) U.tagInput('cj_' + k + '_' + n, LN_UNITS[k]);
+        }
+        var root = _pgById('cj_root');
+        if (root && root.addEventListener) root.addEventListener('change', _onChange);
+        _syncUi();
+        // With autosave on, the host restores the saved values silently right after this
+        // render and then calls hooks.after, which runs the one calc; otherwise calc now.
+        var AS = G.WTS_pageAutosave;
+        var hostRestores = !!(AS && typeof AS.page === 'function' && AS.page() === PG_KEY && typeof AS.enabled === 'function' && AS.enabled(PG_KEY) && body.id === 'pgBody');
+        if (!hostRestores) G.calcChemInj();
+    }
+    G.renderChemInj = renderChemInj;
+    G.WTS_cheminj.ranges = RANGES;
+    G.WTS_cheminj.pageCalcs = function () { return _calcCount; };
+
+    // ── Registry (merge, never replace) ──────────────────────────────
+    G.WTS_calcRegistry = G.WTS_calcRegistry || {};
+    G.WTS_calcRegistry.cheminj = {
+        key: PG_KEY,
+        title: PG_TITLE,
+        sub: PG_SUB,
+        group: 'Test System Safety',
+        icon: '&#128167;',
+        desc: 'Plan where to inject, how much, and the pump stroke, speed or air setting for every chemical on the spread.',
+        hooks: { silent: true, after: function () { _syncUi(); G.calcChemInj(); } },
+        render: function (body) { return G.renderChemInj(body); }
+    };
+
+    // Unit flip / base-conditions change: recalculate a page that has shown results.
+    if (typeof document !== 'undefined' && document && typeof document.addEventListener === 'function') {
+        ['wts:unit-system-changed', 'wts:base-conditions-changed'].forEach(function (ev) {
+            document.addEventListener(ev, function () {
+                var res = _pgById('cj_res');
+                if (res && res.getAttribute && res.getAttribute('data-done') === '1') { _applyVisibility(); G.calcChemInj(); }
+            });
+        });
+    }
 })();
 
 // ─── END 49-calc-cheminj ─────────────────────────────────────────────
