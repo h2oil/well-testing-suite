@@ -449,6 +449,25 @@ function _schematic_parallelChannel() {
 }
 
 // 10. Closed rectangle — producer in centre, four sealing sides.
+// Closed circle (53-prism-autointerp.js): a circular sealed boundary with the well at the centre.
+function _schematic_closedCircle() {
+    var s = _svg_open();
+    s += '<rect x="20" y="40" width="360" height="220" fill="#0d1117" stroke="#8b949e" stroke-width="0.5"/>';
+    s += '<circle cx="200" cy="150" r="95" fill="#161b22" stroke="#da3633" stroke-width="3"/>';
+    for (var i = 0; i < 24; i++) {
+        var a = i * Math.PI / 12, c = Math.cos(a), sn = Math.sin(a);
+        var x1 = 200 + 95 * c, y1 = 150 + 95 * sn, x2 = 200 + 102 * c + 4 * sn, y2 = 150 + 102 * sn - 4 * c;
+        s += '<line x1="' + x1.toFixed(1) + '" y1="' + y1.toFixed(1) + '" x2="' + x2.toFixed(1) + '" y2="' + y2.toFixed(1) + '" stroke="#da3633" stroke-width="0.7"/>';
+    }
+    s += '<line x1="200" y1="150" x2="295" y2="150" stroke="#c9d1d9" stroke-width="0.8" stroke-dasharray="4,3"/>';
+    s += '<text x="250" y="144" font-size="10" fill="#c9d1d9" text-anchor="middle" font-style="italic">r_e</text>';
+    s += '<circle cx="200" cy="150" r="7" fill="#f0883e" stroke="#f0883e" stroke-width="2"/>';
+    s += '<text x="190" y="170" font-size="10" fill="#f0883e" text-anchor="middle">well</text>';
+    s += _svg_caption('Producer at the centre of a closed circular drainage area');
+    s += _svg_close();
+    return s;
+}
+
 function _schematic_closedRectangle() {
     var s = _svg_open();
     // Outer (background)
@@ -1369,7 +1388,7 @@ function _schematic_placeholder(modelKey) {
     return s;
 }
 
-// Public dispatch — covers all 45 PRiSM_MODELS entries.
+// Public dispatch — covers all 46 PRiSM_MODELS entries.
 G.PRiSM_getModelSchematic = function (modelKey) {
     if (!modelKey) return '';
     switch (modelKey) {
@@ -1384,6 +1403,7 @@ G.PRiSM_getModelSchematic = function (modelKey) {
         case 'linearBoundary':   return _schematic_linearBoundary();
         case 'parallelChannel':  return _schematic_parallelChannel();
         case 'closedRectangle':  return _schematic_closedRectangle();
+        case 'closedCircle':     return _schematic_closedCircle();
         case 'intersecting':     return _schematic_intersecting();
         case 'doublePorosity':   return _schematic_doublePorosity();
         case 'partialPen':       return _schematic_partialPen();

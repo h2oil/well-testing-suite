@@ -172,6 +172,7 @@ var PLAIN_NAMES = {
     verticalPulse:     'Vertical pulse test',
     twoLayerXF:        'Two layers with crossflow',
     radialComposite:   'Radial composite',
+    closedCircle:      'Closed circle',
     multiLayerXF:      'Multi-layer with crossflow',
     multiLayerNoXF:    'Multi-layer without crossflow',
     linearComposite:   'Linear composite',

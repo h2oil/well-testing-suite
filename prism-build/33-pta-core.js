@@ -914,7 +914,9 @@ function _registryKeys(entry) {
 G.PRiSM_physicalModel = function PRiSM_physicalModel(modelKey, well, adata, opts) {
     opts = opts || {};
     var reg = G.PRiSM_MODELS || {};
-    var entry = reg[modelKey];
+    // opts.entry (v3.3): a registry-like object used instead of PRiSM_MODELS[modelKey];
+    // opts.isolated: never read PRiSM_state (categorical keys come from phys or defaults).
+    var entry = (opts.entry && typeof opts.entry.pd === 'function') ? opts.entry : reg[modelKey];
     if (!entry || typeof entry.pd !== 'function') return { ok: false, reason: 'Unknown model "' + modelKey + '".' };
     if (entry.kind === 'rate' || entry.timeInput === 'days') {
         return { ok: false, reason: 'Model "' + modelKey + '" is a rate (decline) model: fit it to rates, not pressure.' };
@@ -1033,7 +1035,7 @@ G.PRiSM_physicalModel = function PRiSM_physicalModel(modelKey, well, adata, opts
         shapeKeys.forEach(function (k) {
             params[k] = _num(phys[k]) ? phys[k] : defaults[k];
         });
-        var stP = (G.PRiSM_state && G.PRiSM_state.model === modelKey && G.PRiSM_state.params) || {};
+        var stP = opts.isolated ? {} : ((G.PRiSM_state && G.PRiSM_state.model === modelKey && G.PRiSM_state.params) || {});
         catKeys.forEach(function (k) {
             var has = function (v) { return v !== undefined && v !== null && v !== ''; };
             params[k] = has(phys[k]) ? phys[k] : has(stP[k]) ? stP[k]
@@ -1392,6 +1394,89 @@ G.PRiSM_matchToPhysical = function PRiSM_matchToPhysical(tc, modelKey, params, w
     out.phys = { k: out.k, kh: out.kh, C: out.C, Cd: out.Cd, S: out.S };
     if (refLength !== 'rw') out.phys[refLength] = out[refLength];
     return out;
+};
+
+
+// ═══════════════════════════════════════════════════════════════
+// SECTION 8b — OPEN AN EXTERNAL BUILD-UP (v3.3, Build-up Surveillance)
+// ═══════════════════════════════════════════════════════════════
+// PRiSM_openExternalBuildup(o) — the only path that writes a build-up from
+// another page into PRiSM (a user action, after a confirm on that page).
+//   o = { ds:{t, p, q?, name?}, pasteText, multiRate:[{t, q}] (dataset clock,
+//         negative t allowed, last step q = 0 at tShut), well:{q, B, mu, ct, h,
+//         phi, rw, fluid, testType}, tShut, pwf0, modelKey, fitC4 }
+// It owns every PRiSM store write: the paste box text (so a reload re-reads
+// the same data), the multi-rate table, the C1 well inputs, the dataset
+// commit, the active flow period, the model (adopted BEFORE the C4 fit so a
+// prism:fit-updated listener sees a consistent state) and the saved state.
+var EXT_MODEL_MAP = { composite2: 'radialComposite' };
+G.PRiSM_openExternalBuildup = function PRiSM_openExternalBuildup(o) {
+    o = o || {};
+    var ds = o.ds;
+    if (!ds || !_isArr(ds.t) || !ds.t.length || !_isArr(ds.p)) return { ok: false, reason: 'No build-up data to open.' };
+    var ls = _storage();
+    // 1. the paste box text (reload trap: PRiSM re-reads it after a reload)
+    if (ls && typeof o.pasteText === 'string') {
+        try {
+            var raw = ls.getItem('wts_prism'), box = raw ? JSON.parse(raw) : {};
+            if (!box || typeof box !== 'object') box = {};
+            box.prism_data_paste = o.pasteText;
+            ls.setItem('wts_prism', JSON.stringify(box));
+        } catch (e) { /* quota / private mode */ }
+    }
+    // 2. the multi-rate table (positive rates; C2 signs injection internally)
+    var rows = (o.multiRate || []).filter(function (r) { return r && _num(+r.t) && _num(+r.q); })
+        .map(function (r) { return { t: +r.t, q: Math.abs(+r.q) }; });
+    if (!G.PRiSM) G.PRiSM = { mode: 'transient', tab: 1, multiRate: [] };
+    G.PRiSM.multiRate = rows;
+    if (ls) { try { ls.setItem('wts_prism_mrate', JSON.stringify(rows)); } catch (e2) { /* ignore */ } }
+    // 3. C1 well inputs: a water injector's fall-off is fluid water / testType falloff
+    var w = o.well || {};
+    var inj = w.fluid === 'water_inj' || w.testType === 'falloff';
+    var patch = { q: Math.abs(+w.q), B: w.B, mu: w.mu, ct: w.ct, h: w.h, phi: w.phi, rw: w.rw,
+                  fluid: w.fluid === 'water_inj' ? 'water' : (w.fluid || 'oil'),
+                  testType: inj ? 'falloff' : 'buildup', tShut: _num(o.tShut) ? o.tShut : null, pwf0: _num(o.pwf0) ? o.pwf0 : null, tp: null };
+    if (typeof G.PRiSM_setWell === 'function') G.PRiSM_setWell(patch, { source: 'user', origin: 'buildup' });
+    // 4. the dataset
+    if (typeof G.PRiSM_commitDataset === 'function') G.PRiSM_commitDataset(ds, { source: 'buildup' });
+    else G.PRiSM_dataset = ds;
+    // 5. the active period: the C2 period that contains tShut
+    var st = G.PRiSM_state = G.PRiSM_state || {};
+    var period = null;
+    var rh = (typeof G.PRiSM_rateHistory === 'function') ? G.PRiSM_rateHistory(ds) : null;
+    if (rh && rh.periods && _num(o.tShut)) {
+        var eps = 1e-6 * Math.max(1, Math.abs(o.tShut));
+        for (var i = 0; i < rh.periods.length; i++) {
+            var pr = rh.periods[i];
+            if (pr.t0 <= o.tShut + eps && (!_num(pr.t1) || pr.t1 > o.tShut + eps || i === rh.periods.length - 1)) period = i;
+        }
+    }
+    if (period !== null) st.activePeriod = period;
+    _dispatch('prism:period-changed', { period: period, source: 'buildup' });
+    // 6. model adoption, then the C4 fit
+    var f = o.fitC4 ? _clone(o.fitC4) : null;
+    var key = EXT_MODEL_MAP[o.modelKey || (f && f.modelKey)] || o.modelKey || (f && f.modelKey) || null;
+    if (key && G.PRiSM_MODELS && G.PRiSM_MODELS[key]) {
+        st.model = key;
+        if (f) {
+            var params = _clone(f.params || {});
+            if (key === 'radialComposite' && !_num(params.F)) params.F = 1;
+            st.params = params;
+            st.phys = _clone(f.phys || {});
+            var ph = f.phys || {};
+            if (_pos(ph.k) && _pos(patch.h) && _pos(patch.B) && _pos(patch.mu) && _pos(patch.q) && _pos(patch.phi) && _pos(patch.ct) && _pos(patch.rw)) {
+                var A = CONST.A * patch.q * patch.B * patch.mu / (ph.k * patch.h);
+                var Bt = CONST.B * ph.k / (patch.phi * patch.mu * patch.ct * patch.rw * patch.rw);
+                st.tcMatch = { logPM: Math.log10(1 / A), logTM: Math.log10(Bt) };
+            }
+            f.modelKey = key;
+            f.source = f.source || 'buildup';
+            _dispatch('prism:model-changed', { model: key, source: 'buildup' });
+            G.PRiSM_setLastFit(f);
+        } else _dispatch('prism:model-changed', { model: key, source: 'buildup' });
+    }
+    try { G.PRiSM_saveState(); } catch (e3) { /* storage optional */ }
+    return { ok: true, period: period, modelKey: key };
 };
 
 
