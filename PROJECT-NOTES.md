@@ -9,42 +9,61 @@ All changes land on `dev`; `master` is the stable tree consumed by the iOS sync 
 
 `node prism-build/buildup-validate.js --sequences --workers 4 --write` on 640 single synthetic build-ups (15 strata, 126 of them
 distractors the engine does not model) and 120 multi-test wells (993 build-ups): 1,683 labelled build-ups, 5-fold cross-validation grouped
-by well, out-of-fold reliability tables. Plan: docs/BUILDUP-SURVEILLANCE-PLAN.md §5.4 (method) and §5.7 (results).
+by well, out-of-fold reliability tables. Plan: docs/BUILDUP-SURVEILLANCE-PLAN.md §5.4 (method) and §5.7 (results). The report, file 55
+and the benchmark snapshot come from one run; the shipped tables come from a second out-of-fold pass over a re-run with the candidate
+table, so they carry the KC2 envelope cap exactly as the app labels.
 
 **Fixed at the root first** (the diagnosis separated engine faults from honest difficulty): the precursor chain at coarse sampling and
-the tabled closing ramp in the data layer (Δq read the pre-cut rate / the last ramp row; DA27, DA28); the page's 24-case check now
-repeats the calibration run exactly (BM3); `confidence().rates` at the stored precision (EN23); the scorer treats an intra-day decrease
-of ≥ 10 % as the partial cut the engine's gate makes of it.
+the tabled closing ramp in the data layer (Δq read the pre-cut rate / the last ramp row; DA27, DA28); the page's 24-case check repeats
+the calibration run exactly (BM3); `confidence().rates` at the stored precision (EN23); the scorer treats an intra-day decrease of ≥ 10 %
+as the partial cut the engine's gate makes of it (GE8c).
 
-**Outcome: the constraints cannot all be met, so the strictest grid set is shipped (§5.4: targets never relaxed).** Failing: the
-single-case Wilson lower bounds for high (k/S 0.76 on 12 cases, headline 0.61 on 6 — every single-case high label is right, there are
-too few for 0.90) and for the headline medium label (0.63; 71.4 % of 119): visible rivals below the T-up trigger and noise-level skin
-errors stay medium, and no calibrated threshold separates them. Thresholds: SNR_d high 30 / low 8, S_err high 0.3 / low 0.8 (floor 0.2),
-fair span 1.0, point-skin spread 0.2, τ_BIC 10, rate tolerance 15 %, disagreement 0.7 / 10 %, reach factor 5.0, KL9 on, k-held RMS 2.
+**Fix round (review of WP8, same day):**
+- The page's "near a threshold" now needs the evidence within 0.1 of a calibrated threshold AND the expected labels reproduced by moving
+  that one threshold by 0.1 (`PRiSM_autoInterp.nearThreshold`); any difference shows ⚠, never ✓ (the first rule showed real regressions
+  as a pass; BM4, BM5).
+- The generator's expected IARF grade uses the engine's definition on the noise-free derivative against the input-consistent
+  superposition time (the given allocation); the demo durations were re-chosen (168, 64, 32, 30, 48, 54, 48, 60, 66 h; B1 good, B2–B9
+  fair, every grade ≥ 0.1 from the next) and IN1 asserts the exact grade on all nine.
+- The tables and shares include the KC2 envelope cap (the first WP8 figures were computed without it); `confidence().rates` and the
+  Skin-check card quote the label's single-build-up row next to the pooled rate, and the report's calibration tables carry it as a column.
+- The threshold search adds two strict passes while the incumbent is infeasible and reports what it searched (20,377 candidates per
+  search, none feasible); the fallback set uses the strictest rate tolerance (10 %).
+
+**Outcome: no searched candidate meets every constraint, so the stricter set is shipped (§5.4: targets never relaxed)** — every LOW and
+HIGH label threshold of the grid at its strictest value: SNR_d high 30 / low 8, S_err high 0.3 / low 0.8, fair span 1.0, point-skin
+spread 0.2, rate tolerance 10 %, disagreement 0.7 / 10 %, reach factor 5.0, KL9 on, k-held RMS 2; the S_err floor (0.2) and τ_BIC (10)
+keep their pre-calibration values (the floor changes S_err itself, τ the model choice). Failing: the three single-case Wilson lower bounds
+— k/S high 0.57 on 5 cases and headline high 0.21 on 1 (every single-case high label is right; there are too few for 0.90) and headline
+medium 0.64 (72.6 % of 124): visible rivals below the T-up trigger and noise-level skin errors stay medium, and no calibrated threshold
+separates them.
 
 | k/S label | n | k and S right | Wilson 95 % | cluster 95 % | single cases |
 |---|---|---|---|---|---|
-| high | 132 | 100.0 % | 97.2–100 % | 100–100 % | 12, 100 % |
-| medium | 684 | 97.1 % | 95.5–98.1 % | 95.6–98.3 % | 116, 82.8 % |
+| high | 112 | 100.0 % | 96.7–100 % | 100–100 % | 5, 100 % |
+| medium | 704 | 97.2 % | 95.7–98.2 % | 95.7–98.4 % | 123, 83.7 % |
 | low | 867 | 46.7 % | 43.4–50.0 % | 40.4–52.5 % | 492, 31.9 % |
 
 | Headline label | n | fully right | Wilson 95 % | cluster 95 % | single cases |
 |---|---|---|---|---|---|
-| high | 96 | 100.0 % | 96.2–100 % | 100–100 % | 6, 100 % |
-| medium | 717 | 95.3 % | 93.4–96.6 % | 93.3–96.9 % | 119, 71.4 % |
+| high | 80 | 100.0 % | 95.4–100 % | 100–100 % | 1, 100 % |
+| medium | 733 | 95.4 % | 93.6–96.7 % | 93.4–96.9 % | 124, 72.6 % |
 | low | 870 | 44.5 % | 41.2–47.8 % | 38.3–50.5 % | 495, 28.1 % |
 
-- Share labelled high 5.7 % (headline), 7.8 % (k/S). Brier 0.149, BSS 0.299 (reliability 0.006, resolution 0.070, uncertainty 0.213).
-- S_err coverage (|ΔS| ≤ 2·S_err): 98.5 % / 98.4 % (k/S high / medium), 99.0 % / 98.3 % (headline).
+- Share labelled high, as the app labels: 4.8 % headline (0.2 % of the single cases), 6.7 % k/S (0.8 %); without the envelope cap
+  5.7 % / 7.8 % (1.0 % / 1.9 %). 589 of the 1,683 build-ups lie outside the envelope, whose Δt_end range starts at 10 h (pooled set),
+  so no build-up shorter than 10 h is labelled high. Brier 0.149, BSS 0.299 (reliability 0.006, resolution 0.070, uncertainty 0.213).
+- S_err coverage (|ΔS| ≤ 2·S_err): 98.2 % / 98.4 % (k/S high / medium), 98.8 % / 98.4 % (headline).
 - False-rival rate on homogeneous truth 0 %; abstention 6.8 % overall, 5.2 % on `hom` (7.8 % of the single `hom` cases).
 - Rate accuracy (engine Δq vs the input-consistent rate): median 0.01 %, P90 0.60 %. C within ±25 % (unit slope sampled) 90.9 %.
 - Sequences (re-run with the calibrated table): delta false alarms 0 %, absolute 1.7 %; median confirmed delay 1 test (1 on 24–48 h
   wells); onset within one interval 94.9 %; Sen CI coverage 41.7 % (target 85 %, open); stimulation without a workover date → shut-in
   6 of 6; no delta alert on constant-skin gas wells with D resolved (3 of 3). **Shipped delta-alert form: plain.**
 - Reach ≥ 90 % in every stratum except injectors 83 % (sub-threshold fall-offs) and changing storage 89 %; partial-cut status 3 of 10.
-- New acceptance test `tests/buildup-benchmark.test.js` (BM1 snapshot of 10 seeds, BM2 no wrong high, BM3 the page's check; 6 s).
-- Open (plan §12.1): the two single-case bounds, Sen CI coverage, injector and changing-storage reach, partial-cut status, review +
-  report timing (83 ms against 50 ms).
+- Acceptance test `tests/buildup-benchmark.test.js`: BM1 snapshot of 10 seeds, BM2 no wrong high (6 lite high cases and one sequence
+  well), BM3 the page's check, BM4 a wrong expectation reported as different, BM5 `nearThreshold`.
+- Open (plan §12.1): the three single-case lower bounds (k/S high, headline high, headline medium), the envelope population, Sen CI
+  coverage, injector and changing-storage reach, partial-cut status, review + report timing (83 ms against 50 ms).
 
 ---
 
