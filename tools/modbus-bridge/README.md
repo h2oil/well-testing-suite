@@ -129,7 +129,7 @@ lets a downloaded script run). The installer:
 - starts the bridge in its own window (leave it open), checks `http://127.0.0.1:8502/health` and
   prints the next steps.
 
-Options: `-AllowAny`, `-KeepAllow`, `-Port 8502`, `-Listen 127.0.0.1`, `-AllowWrites` / `-ReadOnly`, `-Origin https://my.site`,
+Options: `-AllowAny`, `-KeepAllow`, `-Port 8502`, `-Listen 127.0.0.1`, `-AllowWrites` / `-ReadOnly`, `-Origin https://app.company.example`,
 `-AutoStart` (start at every logon: a user-level Scheduled Task, or a Startup-folder shortcut when
 Task Scheduler refuses), `-NoStart`, `-Reset`, `-Yes` (answer yes to the Node.js question),
 `-Uninstall`.
@@ -155,7 +155,7 @@ The installer:
   `/health` and prints the next steps.
 
 Options: `--allow-any`, `--keep-allow`, `--port 8502`, `--listen 127.0.0.1`, `--allow-writes` / `--read-only`,
-`--origin https://my.site`, `--autostart`, `--no-start`, `--reset`, `--yes`, `--uninstall`.
+`--origin https://app.company.example`, `--autostart`, `--no-start`, `--reset`, `--yes`, `--uninstall`.
 
 `--autostart` starts the bridge now and at every login instead of in the Terminal (with
 `--no-start` it is only set up, and starts at the next login):

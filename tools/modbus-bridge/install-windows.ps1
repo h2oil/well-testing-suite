@@ -46,7 +46,7 @@
 .PARAMETER ReadOnly
   Refuse Modbus write requests again (the default for a new install).
 .PARAMETER Origin
-  Also accept pages from these origins, comma separated: https://my.site, http://host:port, or
+  Also accept pages from these origins, comma separated: https://app.company.example, http://host:port, or
   null for a saved file:// copy of the app (any web site can send "null", so only on a PC that
   is not used for general web browsing).
 .PARAMETER AutoStart

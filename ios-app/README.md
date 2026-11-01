@@ -99,7 +99,7 @@ After this, the `ios/` Xcode project lives in git. Anyone else (including future
 
 ### Option 1 — Pure git / Xcode (recommended)
 
-1. Edit `well-testing-app.html` at repo root (from anywhere — web IDE, VSCode, Cursor, etc.)
+1. Edit `well-testing-app.html` at repo root in any text editor.
 2. `git push`
 3. **GitHub Actions auto-regenerates `ios-app/www/index.html`** and commits it
 4. On your Mac: `git pull` in Xcode → ⌘+R

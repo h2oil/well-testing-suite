@@ -302,12 +302,12 @@ Critic items that belong in NEXT:
 Standards, regulations and papers referred to above.
 
 **Regulations and guidance**
-- Texas Administrative Code, 16 TAC §3.36 (Statewide Rule 36): hydrogen sulphide radius of exposure formulas, escape-rate basis (adjusted open flow, 14.65 psia and 60 °F), and the 50 ft / 3,000 ft thresholds. https://www.law.cornell.edu/regulations/texas/16-Tex-Admin-Code-SS-3-36
-- Railroad Commission of Texas, *Section G: well status reports*. Deliverability and AOF within 90 days of completion; stabilised one-point tests of at least 72 hours. https://www.rrc.texas.gov/media/wjbhs4tp/section_g.pdf
-- North Sea Transition Authority, *Flaring and venting guidance*, and the annual consents exercise. https://www.nstauthority.co.uk/regulatory-information/licensing-and-consents/consents/flaring-and-venting/
-- Commission Implementing Regulation (EU) 2018/2066, Annex IV §1.D (as retained in the UK ETS): flare Tier 1 reference factor of 0.00393 t CO2/Nm³ (ethane proxy); oxidation-factor tiers for flares. https://www.legislation.gov.uk/eur/2018/2066/annex/IV
+- Texas Administrative Code, 16 TAC §3.36 (Statewide Rule 36): hydrogen sulphide radius of exposure formulas, escape-rate basis (adjusted open flow, 14.65 psia and 60 °F), and the 50 ft / 3,000 ft thresholds.
+- Railroad Commission of Texas, *Section G: well status reports*. Deliverability and AOF within 90 days of completion; stabilised one-point tests of at least 72 hours.
+- North Sea Transition Authority, *Flaring and venting guidance*, and the annual consents exercise.
+- Commission Implementing Regulation (EU) 2018/2066, Annex IV §1.D (as retained in the UK ETS): flare Tier 1 reference factor of 0.00393 t CO2/Nm³ (ethane proxy); oxidation-factor tiers for flares.
 - US 40 CFR Part 98 Subpart W, §98.233(n) and (v): flare CO2/CH4/N2O method, default combustion efficiency 0.98, gas densities at 60 °F and 14.7 psia.
-- Kansas K.A.R. 82-3-303: an assigned back-pressure slope of 0.85 for low-rate wells. https://www.law.cornell.edu/regulations/kansas/K-A-R-82-3-303
+- Kansas K.A.R. 82-3-303: an assigned back-pressure slope of 0.85 for low-rate wells.
 
 **Industry standards**
 - API RP 14E (erosional velocity).

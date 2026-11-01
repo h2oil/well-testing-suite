@@ -257,12 +257,12 @@ time without breaking the user experience.
 This proposal is roughly 5–10× the LOC of the existing PTA module.
 Worth being explicit:
 
-- **Real well-test engineers using dedicated apps** (Saphir, F.A.S.T.,
-  KAPPA Workstation) have decades of model validation behind them.
-  Matching parity is unrealistic.
+- **Mature well-test analysis tools** have decades of model validation
+  behind them; matching that breadth is unrealistic.
 - **Our angle**: _"good-enough quick-look that runs offline in any
   browser, no licence."_ PRiSM Phase 1 + 2 hits that target.
-  Phases 3–5 push toward overlap with paid tools.
+  Phases 3–5 extend the model library and regression toward a full
+  analysis workstation.
 - **Recommendation**: ship Phase 1 + 2 fully tested before deciding
   whether 3–5 are worth the maintenance burden. Most users won't need
   Levenberg-Marquardt regression — visual matching covers the common
@@ -294,9 +294,9 @@ Worth being explicit:
 
 When Phase 1 starts, key references to have open:
 
-- Bourdet, D. _Well Test Analysis: The Use of Advanced Interpretation
-  Models_, Elsevier, 2002.
-- Horne, R. N. _Modern Well Test Analysis_, Petroway, 1995.
+- Bourdet, D. (2002). _Well Test Analysis: The Use of Advanced
+  Interpretation Models_.
+- Horne, R. N. (1995). _Modern Well Test Analysis_.
 - Lee, J. et al. _Pressure Transient Testing_, SPE Textbook
   Series Vol. 9, 2003.
 - Cinco-Ley, H., Samaniego-V., F. & Dominguez, N. (1978).

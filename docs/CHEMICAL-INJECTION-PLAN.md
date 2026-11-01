@@ -1470,35 +1470,35 @@ Decide before any code: **Q1, Q2, Q5, Q17, Q18, Q19.**
 **Hydrates and inhibitors**
 - Hammerschmidt, E.G. (1934). Formation of gas hydrates in natural gas transmission lines. *Ind. Eng. Chem.* 26(8), 851–855.
 - Katz, D.L. (1945). Prediction of conditions for hydrate formation in natural gases. *Trans. AIME* 160, 140–149 (permissible-expansion charts, reproduced in the GPSA Engineering Data Book, Section 20).
-- Nielsen, R.B., Bucklin, R.W. (1983). Why not use methanol for hydrate control? *Hydrocarbon Processing* 62(4), 71–78.
-- Moshfeghian, M., Maddox, R.N. (1993). Method predicts hydrates for high-pressure gas streams. *Oil & Gas Journal*, Aug. 1993.
-- Towler, B.F., Mokhatab, S. (2005). Quickly estimate hydrate formation conditions in natural gases. *Hydrocarbon Processing* 84(4), 61–62.
+- Nielsen, R.B., Bucklin, R.W. (1983). Why not use methanol for hydrate control? (trade-journal article).
+- Moshfeghian, M., Maddox, R.N. (1993). Method predicts hydrates for high-pressure gas streams (trade-journal article).
+- Towler, B.F., Mokhatab, S. (2005). Quickly estimate hydrate formation conditions in natural gases (trade-journal article).
 - Østergaard, K.K., Masoudi, R., Tohidi, B., Danesh, A., Todd, A.C. (2005). A general correlation for predicting the suppression of hydrate dissociation temperature in the presence of thermodynamic inhibitors. *J. Pet. Sci. Eng.* 48(1–2), 70–80.
 - Moshfeghian, M. (2011). A simple model for estimation of methanol loss to the vapour phase (technical article).
 - Moshfeghian, M. (2006, 2020). Accuracy of shortcut hydrate-inhibition methods; thermodynamic hydrate inhibitors compared (technical articles).
 - McIntyre, G., Hlavinka, M., Hernandez, V. (2004). Hydrate inhibition with methanol — a review and new concerns over experimental data presentation. 83rd GPA Annual Convention.
-- Bahadori, A., Vuthaluru, H.B., Mokhatab, S. (2008). Estimation of methanol vaporization loss and its solubility in hydrocarbon liquid phase. *Oil Gas European Magazine* 34(3), 149–151.
+- Bahadori, A., Vuthaluru, H.B., Mokhatab, S. (2008). Estimation of methanol vaporization loss and its solubility in hydrocarbon liquid phase (trade-journal article).
 - Hemmingsen, P.V., Burgass, R.W., Pedersen, K.S., Kinnari, K., Sørensen, H. (2011). Hydrate temperature depression of MEG solutions at concentrations up to 60 wt%. *Fluid Phase Equilibria* 307(2), 175–179.
-- Baillie, C., Wichert, E. (1987). Chart gives hydrate formation temperature for natural gas. *Oil & Gas Journal*.
+- Baillie, C., Wichert, E. (1987). Chart gives hydrate formation temperature for natural gas (trade-journal article).
 - Kelland, M.A. (2006). History of the development of low dosage hydrate inhibitors. *Energy & Fuels* 20(3), 825–847.
-- Kelland, M.A. (2014). *Production Chemicals for the Oil and Gas Industry*, 2nd ed. CRC Press.
+- Kelland, M.A. (2014). *Production Chemicals for the Oil and Gas Industry*, 2nd ed.
 - Almashwali, A.A., Bavoh, C.B., Lal, B., et al. (2022). Gas hydrate in oil-dominant systems: a review. *ACS Omega* 7(31), 27021–27037.
-- Sloan, E.D., Koh, C.A. (2008). *Clathrate Hydrates of Natural Gases*, 3rd ed. CRC Press. Sloan, E.D. (ed.) (2011). *Natural Gas Hydrates in Flow Assurance*.
+- Sloan, E.D., Koh, C.A. (2008). *Clathrate Hydrates of Natural Gases*, 3rd ed. Sloan, E.D. (ed.) (2011). *Natural Gas Hydrates in Flow Assurance*.
 - Carroll, J. (2014). *Natural Gas Hydrates: A Guide for Engineers*, 3rd ed.
 - Gas Processors Suppliers Association. *Engineering Data Book*, Sections 20 (Dehydration: hydrate inhibition, methanol solubility in liquid hydrocarbon, permissible expansion) and 21 (Hydrocarbon Treating).
 
 **Gas properties, J-T and water content**
 - Bukacek, R.F. (1955). Equilibrium moisture content of natural gases. Institute of Gas Technology Research Bulletin 8.
-- McKetta, J.J., Wehe, A.H. (1958). Use this chart for water content of natural gases. *Petroleum Refiner* 37(8).
+- McKetta, J.J., Wehe, A.H. (1958). Use this chart for water content of natural gases (trade-journal article).
 - Wagner, W., Pruss, A. (1993). International equations for the saturation properties of ordinary water substance. *J. Phys. Chem. Ref. Data* 22, 783.
 - Dranchuk, P.M., Abou-Kassem, J.H. (1975). Calculation of Z factors for natural gases using equations of state. *J. Can. Pet. Tech.* 14(3).
 - Sutton, R.P. (1985). Compressibility factors for high-molecular-weight reservoir gases. SPE 14265.
-- Wichert, E., Aziz, K. (1972). Calculate Z's for sour gases. *Hydrocarbon Processing* 51(5).
+- Wichert, E., Aziz, K. (1972). Calculate Z's for sour gases (trade-journal article).
 - Peng, D.-Y., Robinson, D.B. (1976). A new two-constant equation of state. *Ind. Eng. Chem. Fundam.* 15(1), 59–64 (J-T cross-check).
 - Setzmann, U., Wagner, W. (1991). A new equation of state and tables of thermodynamic properties for methane covering the range from the melting line to 625 K at pressures up to 1000 MPa. *J. Phys. Chem. Ref. Data* 20(6), 1061–1155.
 - NIST Chemistry WebBook, Standard Reference Database 69: Thermophysical properties of fluid systems (methane isotherms at 250 K and 300 K, retrieved 2026-10-31).
 - Reid, R.C., Prausnitz, J.M., Poling, B.E. (1987). *The Properties of Gases and Liquids*, 4th ed.
-- *CRC Handbook of Chemistry and Physics* (aqueous methanol and glycol freezing points, viscosities, compressibilities, thermal expansion).
+- *Handbook of Chemistry and Physics* (aqueous methanol and glycol freezing points, viscosities, compressibilities, thermal expansion).
 - Kaye & Laby. *Tables of Physical and Chemical Constants* (methanol viscosity).
 
 **H2S and scavengers**
@@ -1565,7 +1565,7 @@ Two reviewers raised 48 issues. "Fixed" means the change is in this revision; ch
 | 24 | minor | Methanol hazards missing (flammable produced water, NPSH, salt/scale) | Fixed. Notes box 4, chemlib caution, flooded-suction/shaded-tank note in the pump section | §4.10.2, §5.1, §8.1 |
 | 25 | minor | Solenoid and mechanical diaphragm best fit at separator outlets | Fixed. "Tank or low-pressure points; separator outlets only when P_sep + allowance < P_max"; the engine's pressure check drives feasibility | §3.1, §5.2 |
 | 26 | minor | S1 coil velocity near erosional; assumed choke-outlet T | Fixed. S1 choke outlet 300 psig and separator 285 psig; T after the choke from the isenthalpic solver (59.9 °F design); highest v/v_e 62 %; contact time 8.45 s (still ⚠); erosional ⚠ added to the engine | §4.8, §4.13 S1, N22 |
-| 27 | minor | Patents and a borderline author/firm name in the references | Fixed. Patent citations removed; the "Campbell" entry removed (GPSA and Kelland cover the same material). No brand, product or supplier names, and no forbidden word | §10 |
+| 27 | minor | Patents and a borderline author/firm name in the references | Fixed. Patent citations and one further textbook entry removed (GPSA and Kelland cover the same material). No brand, product or supplier names, and no forbidden word | §10 |
 | 28 | major | Single long Notes box and long verdicts would vanish from reports | Fixed. Six flat `<div><b>Notes</b> …</div>` boxes of 356–542 characters; every verdict < 299 characters; UI test 6 checks capture | §2.2, §6.6, §8.1–8.2, UI 6 |
 | 29 | major | Off-line card headers and chip text would land in reports | Fixed. One "Number of injection lines" select; whole line cards hidden; chip outside `.card-title` in `rp-skip`; every toggle labelled/aria-labelled | §2.2–2.3, §6.6, UI 6, UI 8 |
 | 30 | major | Solver cost and restore cost | Fixed. Newton with Cp slope + 40-point Gauss–Legendre (~1 ms per solve, prototype); 64-entry memo kept across calcs; heater alternative as an inverse root-find; `hooks.silent` + `after` (one calc on restore); solve counter for tests; combination loop on `WTS_cheminj_compute` | §4.1.2, §4.1.5, §6.2, §6.9, N44 |
