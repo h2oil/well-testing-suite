@@ -35,23 +35,33 @@ var PREFS_KEY = 'h2viz3d_prefs';
 var SPEEDS = [1, 10, 60, 600];
 var IMP = { pressureG: 'psig', pressureTank: 'psig', temperature: '°F', gasRate: 'MMSCFD', liquidRate: 'BPD',
     oilRate: 'STB/d', volume: 'bbl', oilVolume: 'STB', gasVolume: 'MMSCF', velocity: 'ft/s', length: 'ft',
-    lengthSmall: 'in', percent: '%', gor: 'scf/STB', powerLarge: 'MMBtu/hr', count: '', pressure: 'psi', tempDelta: '°F' };
+    lengthSmall: 'in', percent: '%', gor: 'scf/STB', powerLarge: 'MMBtu/hr', count: '', pressure: 'psi', tempDelta: '°F',
+    // v3.3.1 equipment (DS-101 sand, accumulator; steel-equivalent choke erosion screening)
+    mass: 'lb', volumeSmall: 'gal', erosionRate: 'mpy', erosionDay: 'mil/d' };
 var CAT_BASE = { pressureTank: 'pressureG', oilRate: 'liquidRate', oilVolume: 'volume' };
 var UNITLESS = { percent: 1, count: 1 };          // gor converts (scf/STB → sm³/sm³ in Metric)
 var STATUS_MAP_LOCAL = { trip: 'alarm', alarm: 'alarm', warn: 'warn', hyd: 'hyd', info: 'evt' };
 var ST_RANK = { ok: 0, evt: 1, hyd: 2, warn: 3, alarm: 4 };
 var SEV_RANK = { info: 1, hyd: 2, warn: 3, alarm: 4, trip: 5 };
-var EQ_IDS = ['wellhead', 'esd', 'choke', 'heater', 'separator', 'flare', 'surge', 'pump', 'gauge'];
+// v3.3.1: the optional rig-up items DS-101 (cyclonic desander upstream of the choke) and T-202 (second surge tank) are
+// appended; they are out by default and every view hides them while out (docs/SIM-EQUIPMENT-PLAN.md D18)
+var EQ_IDS = ['wellhead', 'esd', 'choke', 'heater', 'separator', 'flare', 'surge', 'pump', 'gauge', 'desander', 'surge2'];
+// STEP: the v3.3 numbering, kept as the fallback when WTS_sim.stepFor is missing (see stepMap)
 var STEP = { wellhead: '①', esd: '②', choke: '③', heater: '④', separator: '⑤',
     flare: '⑥', surge: '⑦', gauge: '⑧', pump: '⑨' };          // P-201 is downstream of the gauge tank (T-301 → export)
 var TAG = { wellhead: 'WH-101', esd: 'SDV-101', choke: 'CK-101', heater: 'H-101', separator: 'V-101',
-    flare: 'FS-401', surge: 'T-201', pump: 'P-201', gauge: 'T-301' };
+    flare: 'FS-401', surge: 'T-201', pump: 'P-201', gauge: 'T-301', desander: 'DS-101', surge2: 'T-202' };
 var NAME = { wellhead: 'Wellhead', esd: 'ESD Valve (SSV)', choke: 'Choke Manifold', heater: 'Line Heater',
-    separator: 'Test Separator', flare: 'Flare Stack', surge: 'Surge Tank', pump: 'Transfer Pump', gauge: 'Gauge Tank' };
+    separator: 'Test Separator', flare: 'Flare Stack', surge: 'Surge Tank', pump: 'Transfer Pump', gauge: 'Gauge Tank',
+    desander: 'Desander (cyclonic)', surge2: 'Surge Tank 2' };
 var EQ_ABBR = { wellhead: 'WH', esd: 'ESD', choke: 'CHK', heater: 'HTR', separator: 'SEP', flare: 'FLR',
-    surge: 'SURGE', pump: 'PUMP', gauge: 'GT' };
-var HOST_NM = ['Wellhead', 'SSV', 'Choke', 'Heater', 'Separator', 'Flare', 'Surge Tank', 'Atm Tank'];
-var NODE_KEYS = ['wellhead', 'esd', 'choke', 'heater', 'separator', 'flare', 'surge', 'gauge'];
+    surge: 'SURGE', pump: 'PUMP', gauge: 'GT', desander: 'DSND', surge2: 'T-202' };
+// host-node names / snapshot keys of liveNodes (append only: positional readers use the first 8; desander = 8, surge2 = 9)
+var HOST_NM = ['Wellhead', 'SSV', 'Choke', 'Heater', 'Separator', 'Flare', 'Surge Tank', 'Atm Tank', 'Desander', 'Surge Tank 2'];
+var NODE_KEYS = ['wellhead', 'esd', 'choke', 'heater', 'separator', 'flare', 'surge', 'gauge', 'desander', 'surge2'];
+// Equipment lookup for valve actions (a 'surge2' click must never operate a T-201 or T-301 valve). Unknown eq → no action.
+var EQV = { surge: { kind: 'comps', valves: ['XV-201A', 'XV-201B'], suction: true }, surge2: { kind: 'single', valves: ['XV-202'] },
+    gauge: { kind: 'tanks', valves: ['XV-301A', 'XV-301B'] }, desander: { kind: 'desander', dump: 'XV-103', bypass: 'HV-104' } };
 var SEG_DEF = [['4', 'multi', 4.026], ['4', 'multi', 4.026], ['6', 'multi', 6.065], ['6', 'multi', 6.065],
     ['6', 'gas', 6.065], ['3', 'liquid', 3.068]];
 var FAULTS = [['pcvStuckClosed', 'PCV-101 stuck closed'], ['pcvStuckOpen', 'PCV-101 stuck open'],
@@ -61,8 +71,10 @@ var FAULTS = [['pcvStuckClosed', 'PCV-101 stuck closed'], ['pcvStuckOpen', 'PCV-
 // Rig-up (which equipment is in the spread) — persisted in localStorage 'wts_sim_rigup' (a wts_* key, so it travels in
 // project files); the list and the rules come from WTS_sim.RIGUP / normRigup, this is the fallback.
 var RIG_KEY = 'wts_sim_rigup';
-var RIG_FALLBACK = [['esd', 'SDV-101', 'ESD valve (SSV)', 1], ['choke', 'CK-101', 'Choke manifold / data header', 1], ['heater', 'H-101', 'Line heater (steam exchanger)'],
-    ['separator', 'V-101', 'Test separator'], ['surge', 'T-201', 'Surge tank'], ['gauge', 'T-301', 'Gauge tank'],
+// [key, tag, name, locked, optional] in display (process) order; optional items are out by default
+var RIG_FALLBACK = [['esd', 'SDV-101', 'ESD valve (SSV)', 1], ['desander', 'DS-101', 'Cyclonic desander (upstream of the choke)', 0, 1],
+    ['choke', 'CK-101', 'Choke manifold / data header', 1], ['heater', 'H-101', 'Line heater (steam exchanger)'],
+    ['separator', 'V-101', 'Test separator'], ['surge', 'T-201', 'Surge tank'], ['surge2', 'T-202', 'Second surge tank', 0, 1], ['gauge', 'T-301', 'Gauge tank'],
     ['pump', 'P-201', 'Transfer pump (gauge tank → export / burner)'], ['flare', 'FS-401', 'Flare / burner']];
 var VIEWS = [['overview', 'Overview', '0'], ['wellhead', 'Wellhead & Choke', '1'], ['separator', 'Separator', '2'],
     ['tanks', 'Tanks', '3'], ['flare', 'Flare', '4'], ['process', 'Process', '5']];
@@ -70,8 +82,8 @@ var OVERLAYS = [['phase', 'Phase'], ['pressure', 'Pressure'], ['temperature', 'T
 var QUALS = [['auto', 'Auto'], ['high', 'High'], ['medium', 'Medium'], ['low', 'Low']];
 var LABEL_MODES = [['all', 'All'], ['equip', 'Equipment'], ['off', 'Off']];
 var INPUT_FOR = { wellhead: 'wts_Pwh', esd: 'wts_Pwh', choke: 'wts_bean', heater: 'wts_Thtr', separator: 'wts_Psep',
-    surge: 'wts_Psurge', pump: 'wts_nps6', gauge: 'wts_gtCap', flare: 'wts_nps5' };
-var DEF_COL = { gas: '#b8d4f0', oil: '#c98a2b', water: '#1f7fe0', emulsion: '#a08650' };
+    surge: 'wts_Psurge', pump: 'wts_nps6', gauge: 'wts_gtCap', flare: 'wts_nps5', desander: 'wts_sandPptb', surge2: 'wts_surge2Cap' };
+var DEF_COL = { gas: '#b8d4f0', oil: '#c98a2b', water: '#1f7fe0', emulsion: '#a08650', sand: '#c4a46b' };
 var PREF_DEFAULTS = { mode: '3d', labels: 'all', overlay: 'phase', quality: 'auto', speed: 10,
     legend: false, trends: false, orbit: false, ctl: null };
 // Metric alarm-message templates (§6.9), wording as 31 (tag stripped): [text, operator, category, suffix?].
@@ -190,7 +202,7 @@ function liveNodes(st, flow) {
     var N = (st && st.nodes) || {}, I = (st && st.inputs) || {}, out = [];
     if (flow === undefined) flow = _lastFlowObj;
     var FN = (flow && Array.isArray(flow.nodes)) ? flow.nodes : [];
-    for (var i = 0; i < 8; i++) {
+    for (var i = 0; i < NODE_KEYS.length; i++) {             // 10 nodes (the host diagram reads the first 8)
         var k = NODE_KEYS[i], n = N[k] || {}, fn = FN[i] || {};
         if (fn.id && fn.id !== k) { fn = {}; for (var j = 0; j < FN.length; j++) if (FN[j] && FN[j].id === k) { fn = FN[j]; break; } }
         var th = (Object.prototype.hasOwnProperty.call(n, 'th') && isNum(n.th)) ? n.th : num(fn.th, 32);
@@ -354,7 +366,8 @@ function summaryOf(st) {
         batches: B.slice(Math.max(0, B.length - 10)),
         alarms: ids,
         rigup: st.rigup ? { full: !!st.rigup.full, sig: String(st.rigup.sig || ''), notes: (st.rigup.notes || []).slice(),
-            out: rigItems().filter(function (it) { return st.rigup[it.key] === false; }).map(function (it) { return it.tag; }) } : null
+            out: rigItems().filter(function (it) { return !it.optional && st.rigup[it.key] === false; }).map(function (it) { return it.tag; }),
+            extras: rigItems().filter(function (it) { return it.optional && st.rigup[it.key] === true; }).map(function (it) { return it.key; }) } : null
     });
 }
 function bpOf(w) { return w >= 1000 ? 'lg' : w >= 768 ? 'md' : 'sm'; }
@@ -380,7 +393,7 @@ function palCol(key) {
     var W = G.WTS_3d, P = W && W.palette;
     if (P && typeof P === 'object') {
         var cands = { gas: ['gas', 'gasCap', 'gasBody'], water: ['water', 'waterBody', 'waterSurface'],
-            emulsion: ['emulsion', 'emulsionBand'] }[key] || [key];
+            emulsion: ['emulsion', 'emulsionBand'], sand: ['sand', 'sandBody'] }[key] || [key];
         for (var i = 0; i < cands.length; i++) if (typeof P[cands[i]] === 'string' && /^#/.test(P[cands[i]])) return P[cands[i]];
     }
     return DEF_COL[key];
@@ -768,7 +781,19 @@ function writePrefs(p) { try { if (G.localStorage) G.localStorage.setItem(PREFS_
 function rigItems() {
     var S = G.WTS_sim;
     if (S && Array.isArray(S.RIGUP) && S.RIGUP.length) return S.RIGUP;
-    return RIG_FALLBACK.map(function (r) { return { key: r[0], tag: r[1], name: r[2], locked: !!r[3], why: '' }; });
+    return RIG_FALLBACK.map(function (r) {
+        var it = { key: r[0], tag: r[1], name: r[2], locked: !!r[3], why: '' };
+        if (r[4]) { it.optional = true; it.def = false; }
+        return it;
+    });
+}
+// default state of a rig-up item (WTS_sim.RIG_DEFAULTS; fallback: core in, optional out)
+function rigDef(it) { return it.optional ? it.def === true : it.def !== false; }
+// requested value of item it in request rq (D2): a missing key → the item's default; optional items are in only when
+// strictly true, core items unless false
+function rigReqVal(rq, it) {
+    if (!rq || !Object.prototype.hasOwnProperty.call(rq, it.key) || rq[it.key] == null) return rigDef(it);
+    return it.optional ? rq[it.key] === true : rq[it.key] !== false;
 }
 // saved rig-up request {key: bool} (only booleans for known keys; anything else → null = full rig-up)
 function readRig() {
@@ -781,15 +806,27 @@ function readRig() {
         return n ? out : null;
     } catch (e) { return null; }
 }
+// The default request (= RIG_DEFAULTS: every core item in, both optional items out) removes the key; any other request is
+// stored with every item key (a request with only an optional item in must be kept).
 function writeRig(r) {
     try {
         if (!G.localStorage) return;
-        var full = true; for (var k in r) if (Object.prototype.hasOwnProperty.call(r, k) && r[k] === false) full = false;
-        if (full) G.localStorage.removeItem(RIG_KEY); else G.localStorage.setItem(RIG_KEY, JSON.stringify(r));
+        var out = {}, dflt = true;
+        rigItems().forEach(function (it) { var v = rigReqVal(r, it); out[it.key] = v; if (v !== rigDef(it)) dflt = false; });
+        if (dflt) G.localStorage.removeItem(RIG_KEY); else G.localStorage.setItem(RIG_KEY, JSON.stringify(out));
     } catch (e) {}
 }
 // equipment out of the rig-up (snapshot st.rigup; older snapshots: everything in)
 function rigOut(st, id) { var r = st && st.rigup; return !!(r && r[id] === false); }
+// optional equipment in the rig-up (only a strict true counts; older snapshots: out)
+function rigIn(st, id) { var r = st && st.rigup; return !!(r && r[id] === true); }
+// step numbers for the effective rig-up: WTS_sim.stepFor when present, else the v3.3 STEP table
+function stepFor(rig) {
+    var S = G.WTS_sim;
+    if (S && typeof S.stepFor === 'function') { try { var m = S.stepFor(rig || {}); if (m && typeof m === 'object') return m; } catch (e) {} }
+    return STEP;
+}
+function stepMap(st) { return stepFor(st && st.rigup); }
 // surge outlet transfer LCV-201 (no pump; snapshot surge.transfer, legacy surge.pump) — short state text
 function xferOf(st) { var su = st && st.surge; return su ? (su.transfer || su.pump || null) : null; }
 function xferShort(st) {
@@ -1005,25 +1042,46 @@ function createController(vizEl, mopts) {
         var xp = xferOf(st), items = rigItems();
         var tr = !xp ? '—' : rigOut(st, 'surge') ? 'not in use (no surge tank)' :
             'LCV-201 ' + xferShort(st) + (isNum(xp.dP_psi) ? ' · ΔP ' + fmtU(xp.dP_psi, 'pressure', 1) : '') + ' (surge tank pressure, no pump)';
-        var sig = (ru ? ru.sig + '|' + (ru.notes || []).join('|') : '-') + '|' + JSON.stringify(req) + '|' + tr + '|' + !!_sim;
+        var x2s = rigIn(st, 'surge2') && st.surge2 && st.surge2.transfer;
+        var sig = (ru ? ru.sig + '|' + (ru.notes || []).join('|') : '-') + '|' + JSON.stringify(req) + '|' + tr + '|' + !!_sim +
+            (x2s ? '|' + [x2s.on, x2s.tripped, x2s.failed, isNum(x2s.dP_psi) ? fmtU(x2s.dP_psi, 'pressure', 1) : ''].join(',') : '');
         if (!force && c.__sig === sig) return;
         c.__sig = sig;
-        var nOut = 0;
+        // in / asked: core items are in unless false (older snapshots: in); optional items only when strictly true (older: out)
+        var isIn = function (o, it) { return it.optional ? !!(o && o[it.key] === true) : (!o || o[it.key] !== false); };
+        var nOut = 0, extras = [];
+        var noSurge = !!(ru && ru.surge === false);
         var rows = items.map(function (it) {
-            var inRig = !ru || ru[it.key] !== false, asked = !req || req[it.key] !== false;
+            var inRig = isIn(ru, it), asked = isIn(req, it), dis = it.locked || !_sim, why = '';
+            if (it.optional) {
+                if (inRig) extras.push(it.tag);
+                if (it.needs && ru && ru[it.needs] === false) { dis = true; why = it.tag + ' needs ' + (TAG[it.needs] || it.needs) + ' in the rig-up'; }
+                var tipO = why || (asked ? 'Take ' + it.tag + ' out of the rig-up' : 'Add ' + it.tag + ' to the rig-up');
+                // out → rp-skip (not 'off'): a default page report keeps exactly the v3.3 rows
+                return '<div class="rrow wtsl-rig-row opt' + (inRig ? '' : ' rp-skip') + '" data-k="' + esc(it.key) + '"><span class="rl">' + esc(it.tag) + ' · ' + esc(it.name) + '</span>' +
+                    '<span class="rv">' + esc(inRig ? 'In service' : asked ? 'Out of line (see note)' : 'Not in the spread') + '</span><button type="button" class="wtsl-sw" role="switch" data-rig="' + esc(it.key) + '" aria-checked="' + asked + '"' +
+                    ' aria-label="' + esc(it.tag + ' ' + it.name + ' in the rig-up') + '" title="' + esc(tipO) + '"' + (dis ? ' disabled' : '') + '><i></i></button></div>';
+            }
             if (!inRig) nOut++;
             var txt = it.locked ? 'In service (required)' : inRig ? (asked ? 'In service' : 'In service (kept, see note)')
                 : asked ? 'Out of line (see note)' : (it.key === 'heater' || it.key === 'separator') ? 'Bypassed' : 'Out of rig-up';
             var tip = it.locked ? (it.why || 'Required') : (asked ? 'Take ' + it.tag + ' out of the rig-up' : 'Put ' + it.tag + ' back in the rig-up');
             return '<div class="rrow wtsl-rig-row' + (inRig ? '' : ' off') + '" data-k="' + esc(it.key) + '"><span class="rl">' + esc(it.tag) + ' · ' + esc(it.name) + '</span>' +
                 '<span class="rv">' + esc(txt) + '</span><button type="button" class="wtsl-sw" role="switch" data-rig="' + esc(it.key) + '" aria-checked="' + (it.locked || asked) + '"' +
-                ' aria-label="' + esc(it.tag + ' ' + it.name + ' in the rig-up') + '" title="' + esc(tip) + '"' + (it.locked || !_sim ? ' disabled' : '') + '><i></i></button></div>';
+                ' aria-label="' + esc(it.tag + ' ' + it.name + ' in the rig-up') + '" title="' + esc(tip) + '"' + (dis ? ' disabled' : '') + '><i></i></button></div>';
         });
-        rows.push('<div class="rrow wtsl-rig-row info"><span class="rl">Configuration</span><span class="rv">' + (nOut ? nOut + ' item' + (nOut > 1 ? 's' : '') + ' out of the rig-up' : 'Full rig-up') + '</span></div>');
+        rows.push('<div class="rrow wtsl-rig-row info"><span class="rl">Configuration</span><span class="rv">' + (nOut ? nOut + ' item' + (nOut > 1 ? 's' : '') + ' out of the rig-up' : 'Full rig-up') +
+            (extras.length ? ' · with ' + esc(extras.join(' / ')) : '') + '</span></div>');
         rows.push('<div class="rrow wtsl-rig-row info"><span class="rl">T-201 → T-301 transfer</span><span class="rv">' + esc(tr) + '</span></div>');
+        if (rigIn(st, 'surge2') && !noSurge) {
+            var x2 = st.surge2 && st.surge2.transfer;
+            var tr2 = !x2 ? '—' : 'LCV-202 ' + (x2.failed ? 'STUCK SHUT' : x2.tripped ? 'TRIP' : x2.on ? 'OPEN' : 'SHUT') + (isNum(x2.dP_psi) ? ' · ΔP ' + fmtU(x2.dP_psi, 'pressure', 1) : '');
+            rows.push('<div class="rrow wtsl-rig-row info"><span class="rl">T-202 → T-301 transfer (LCV-202)</span><span class="rv">' + esc(tr2) + '</span></div>');
+        }
         setHTML(q('.wtsl-rig-list', c), rows.join(''));
         setHTML(q('.wtsl-rig-notes', c), ((ru && ru.notes) || []).map(function (n) { return '<div class="wtsl-rig-note"><b>Note</b>' + esc(n) + '</div>'; }).join(''));
-        var all = q('.wtsl-rig-all', c); if (all) all.disabled = !_sim || !!(ru && ru.full && (!req || items.every(function (it) { return req[it.key] !== false; })));
+        // Full rig-up: every CORE item in (optional items are left as they are)
+        var all = q('.wtsl-rig-all', c); if (all) all.disabled = !_sim || !!(ru && ru.full && (!req || items.filter(function (it) { return !it.optional; }).every(function (it) { return req[it.key] !== false; })));
     }
     function hudHtml() {
         function item(k, label, cls) {
@@ -1170,7 +1228,7 @@ function createController(vizEl, mopts) {
     }
     function fullRig() {
         if (!_sim || typeof _sim.setRigup !== 'function') return;
-        var o = {}; rigItems().forEach(function (it) { o[it.key] = true; });
+        var o = {}; rigItems().forEach(function (it) { if (!it.optional) o[it.key] = true; });   // core items in; optional items as they are
         try { _sim.setRigup(o); } catch (e) {}
         poke(); renderRig(state(), true);
     }
@@ -1222,7 +1280,11 @@ function createController(vizEl, mopts) {
         if (_rigPending && typeof _sim.setRigup === 'function') {      // project Open / New: the saved rig-up (none = full)
             _rigPending = false;
             var rq = readRig() || {}, all = {};
-            rigItems().forEach(function (it) { all[it.key] = rq[it.key] !== false; });
+            // a missing key takes the item's default (core in, optional out); an optional item is in only when strictly true
+            rigItems().forEach(function (it) {
+                var has = Object.prototype.hasOwnProperty.call(rq, it.key);
+                all[it.key] = has ? (it.optional ? rq[it.key] === true : rq[it.key] !== false) : !it.optional;
+            });
             try { _sim.setRigup(all); } catch (e) {}
         }
         if (_resetPending) { _resetPending = false; _alarmMap = {}; _sim.reset('steady'); }
@@ -2014,7 +2076,7 @@ function createController(vizEl, mopts) {
         closeMenu(); closePop();
         cardId = id;
         var spec = cardSpec(id), st = state();
-        var h = '<div class="wtsl-grab"></div><div class="wtsl-ch"><span class="n">' + STEP[id] + '</span><div class="tt"><b>' + TAG[id] + '</b><span>' + esc(NAME[id]) + '</span></div>' +
+        var h = '<div class="wtsl-grab"></div><div class="wtsl-ch"><span class="n">' + (stepMap(st)[id] || STEP[id] || '') + '</span><div class="tt"><b>' + TAG[id] + '</b><span>' + esc(NAME[id]) + '</span></div>' +
             '<span class="wtsl-chip" data-cref="chip">OK</span><button type="button" data-wts-ui class="wtsl-b ic" data-act="card-close" aria-label="Close" title="Close (Esc)">' + ICON.x + '</button></div>' +
             '<div class="wtsl-cb"><div class="wtsl-kv">';
         spec.rows.forEach(function (r, i) {
@@ -3272,6 +3334,12 @@ G.WTS_live = {
         bpOf: bpOf, dpFor: dpFor, readPrefs: readPrefs, PREFS_KEY: PREFS_KEY, CSS: CSS, miniSnapshot: miniSnapshot,
         setHostInput: setHostInput, readHost: readHost, fmtClock: fmtClockLocal,
         RIG_KEY: RIG_KEY, readRig: readRig, writeRig: writeRig, rigItems: rigItems, rigOut: rigOut, xferShort: xferShort, pumpShort: pumpShort,
+        // v3.3.1 foundation: optional rig-up items, equipment lookup, step numbers (WTS_sim.stepFor, STEP fallback)
+        rigIn: rigIn, EQV: EQV, STEP: STEP, stepFor: stepFor, stepMap: stepMap, EQ_IDS: EQ_IDS, TAG: TAG, NAME: NAME, EQ_ABBR: EQ_ABBR,
+        HOST_NM: HOST_NM, NODE_KEYS: NODE_KEYS, IMP: IMP, INPUT_FOR: INPUT_FOR, palCol: palCol,
+        // test hooks: the current engine, and a recording stub for view tests (useSim(null) restores nothing — it clears)
+        sim: function () { return _sim; },
+        useSim: function (stub) { _sim = (stub && typeof stub === 'object') ? stub : null; return _sim; },
         _reset: function () { if (_ctl) { try { _ctl.dispose(); } catch (e) {} } _ctl = null; if (_sim) { try { _sim.dispose(); } catch (e) {} } _sim = null; _lastFlowObj = null; _resetPending = false; _alarmMap = {}; } }
 };
 
@@ -3330,12 +3398,13 @@ G.WTS_live = {
         else if (G.WTS_3d && G.WTS_3d._internals && typeof G.WTS_3d._internals.fakeSnapshot === 'function') st = G.WTS_3d._internals.fakeSnapshot(12.3);
         else st = L._internals.miniSnapshot();
         var n = L.liveNodes(st), s = L.liveSegs(st);
-        var names = ['Wellhead', 'SSV', 'Choke', 'Heater', 'Separator', 'Flare', 'Surge Tank', 'Atm Tank'];
-        if (n.length !== 8 || s.length !== 6) return false;
-        for (var i = 0; i < 8; i++) if (n[i].nm !== names[i] || !isFinite(n[i].P) || !isFinite(n[i].T)) return false;
+        // v3.3.1: 10 nodes (DS-101 and T-202 appended; positional readers use the first 8), segments stay 6
+        var names = ['Wellhead', 'SSV', 'Choke', 'Heater', 'Separator', 'Flare', 'Surge Tank', 'Atm Tank', 'Desander', 'Surge Tank 2'];
+        if (n.length !== 10 || s.length !== 6) return false;
+        for (var i = 0; i < 10; i++) if (n[i].nm !== names[i] || !isFinite(n[i].P) || !isFinite(n[i].T)) return false;
         for (var j = 0; j < 6; j++) if (!isFinite(s[j].vel)) return false;
         var e = L.liveNodes(null);
-        return e.length === 8 && isFinite(e[0].P) && typeof n[2].regime === 'string' && isFinite(n[2].Qmax);
+        return e.length === 10 && isFinite(e[0].P) && typeof n[2].regime === 'string' && isFinite(n[2].Qmax);
     });
     // 6 mount contract
     t('mount(null)', function () { return typeof L.mount === 'function' && L.mount(null) === null; });

@@ -46,13 +46,37 @@ function round7Bodies(html) {
   return out;
 }
 
-function runStates(S, secs, dt, every, setup) {
-  const sim = S.create(S.SAMPLE_FLOW, { seed: 7 });
+function runStates(S, secs, dt, every, setup, flow, opts) {
+  const sim = S.create(flow || S.SAMPLE_FLOW, Object.assign({ seed: 7 }, opts || {}));
   if (setup) setup(sim);
   const states = [JSON.parse(JSON.stringify(sim.getState()))];
   const n = Math.round(secs / dt), k = Math.round(every / dt);
   for (let i = 1; i <= n; i++) { sim.advance(dt); if (i % k === 0) states.push(JSON.parse(JSON.stringify(sim.getState()))); }
   return { sim, states };
+}
+
+// every number finite; null only on a NULLABLE path ('[n]' → '[*]'); never undefined
+function finiteBad(o, nullable, p, bad) {
+  p = p || ''; bad = bad || [];
+  if (o === null) { if (nullable.indexOf(p.replace(/\[\d+\]/g, '[*]')) < 0) bad.push(p + '=null'); return bad; }
+  if (o === undefined) { bad.push(p + '=undefined'); return bad; }
+  if (typeof o === 'number') { if (!isFinite(o)) bad.push(p + '=' + o); return bad; }
+  if (Array.isArray(o)) { o.forEach((v, i) => finiteBad(v, nullable, p + '[' + i + ']', bad)); return bad; }
+  if (typeof o === 'object') Object.keys(o).forEach((k) => finiteBad(o[k], nullable, p ? p + '.' + k : k, bad));
+  return bad;
+}
+const J = (x) => JSON.parse(JSON.stringify(x));
+// identity of two state lists (v3.3 paths exact, §7 sig rule)
+function sameStates(assert, a, b, tag) {
+  assert.strictEqual(a.states.length, b.states.length, tag + ' state count');
+  a.states.forEach((st, i) => {
+    const d = X.identityDiff(st, b.states[i], 5);
+    assert.ok(d.length === 0, tag + ' state ' + i + ': ' + d.join('; '));
+    if (b.states[i].rigup) assert.strictEqual(b.states[i].rigup.sig.slice(8), '00', tag + ' both optional items out');
+  });
+  const ha = J(a.sim.getHistory ? X.HIST_KEYS_V33.map((k) => a.sim.getHistory(k)) : []), hb = J(X.HIST_KEYS_V33.map((k) => b.sim.getHistory(k)));
+  const dh = X.identityDiff(ha, hb, 5);
+  assert.ok(dh.length === 0, tag + ' history: ' + dh.join('; '));
 }
 
 module.exports = [
@@ -279,6 +303,292 @@ module.exports = [
         });
         assert.strictEqual(JSON.stringify(base), before, bn + ' base not modified');
       });
+    },
+  },
+  // ─── WP-E0: rig-up model, contract, frozen-engine identity, 38 foundation ─────────────────────────────────────────────
+  {
+    name: 'WTSEQ E0 rig-up model: defaults, v3.3 8-key requests, strict-true optional items, the T-202 rule, null → default, sig / full / extras, RIG_TXT for every key',
+    wp: WP,
+    run(app, assert) {
+      const S = app.win.WTS_sim;
+      assert.strictEqual(S.VERSION, X.VERSION_NEW);
+      assert.deepStrictEqual(J(S.RIG_KEYS), X.RIG_KEYS);
+      assert.deepStrictEqual(J(S.RIGUP.map((it) => it.key)), X.RIG_ORDER, 'display order = process order');
+      X.RIG_ITEMS_NEW.forEach((n) => assert.deepStrictEqual(J(S.RIGUP.find((it) => it.key === n.key)), n, 'RIG_ITEMS row ' + n.key));
+      assert.deepStrictEqual(J(S.RIG_DEFAULTS), X.RIG_DEFAULTS); assert.deepStrictEqual(J(S.RIG_OPTIONAL), X.RIG_OPTIONAL);
+      assert.ok(Object.isFrozen(S.RIG_DEFAULTS) && Object.isFrozen(S.RIG_OPTIONAL), 'deep-frozen exports');
+      const d = S.normRigup(app.toWin({}));
+      assert.ok(d.sig === X.SIG_DEFAULT && d.full === true && d.extras.length === 0 && d.notes.length === 0, 'default ' + d.sig);
+      const v33 = {}; X.RIG_KEYS_V33.forEach((k) => { v33[k] = true; });
+      assert.strictEqual(S.normRigup(app.toWin(v33)).sig, X.SIG_DEFAULT, 'a v3.3 8-key request → both new items out');
+      [null, 'true', 1, 'yes', {}, []].forEach((v) => assert.strictEqual(S.normRigup(app.toWin({ desander: v, surge2: v })).sig, X.SIG_DEFAULT, 'optional ' + JSON.stringify(v) + ' → out'));
+      const r = S.normRigup(app.toWin({ surge2: true, surge: false }));
+      assert.ok(r.rig.surge2 === false && r.notes.indexOf(X.RIG_NOTES.surge2NeedsSurge) >= 0, 'surge2 without surge → out with the note');
+      const both = S.normRigup(app.toWin({ desander: true, surge2: true }));
+      assert.ok(both.sig === '1111111111' && both.full === true && J(both.extras).join() === 'desander,surge2', 'both in: sig / full / extras');
+      const sim = S.create(S.SAMPLE_FLOW, app.toWin({ seed: 2, config: { noise: { on: false } } }));
+      assert.strictEqual(JSON.stringify(sim.getRigup()), X.GETRIGUP_DEFAULT_JSON, 'getRigup default (10 keys)');
+      let st = sim.getState();
+      assert.ok(X.checkShape('rigup', J(st.rigup), { strict: true }).ok, 'rigup shape: ' + X.checkShape('rigup', J(st.rigup)).errors.join('; '));
+      // RIG_TXT: every key has an entry (toggle each non-locked key and read the message)
+      const msgs = []; sim.on('rigup', (p) => msgs.push(p.msg));
+      [['desander', true], ['surge2', true], ['heater', false], ['separator', false], ['gauge', false], ['pump', false], ['flare', false], ['surge', false]].forEach(([k, v]) => {
+        const o = {}; o[k] = v; assert.strictEqual(sim.setRigup(app.toWin(o)), true, 'set ' + k);
+      });
+      assert.ok(msgs.some((m) => m.indexOf('DS-101 ' + X.RIG_TXT_NEW.desander[2]) >= 0), 'DS-101 entering text');
+      assert.ok(msgs.some((m) => m.indexOf('T-202 ' + X.RIG_TXT_NEW.surge2[2]) >= 0), 'T-202 entering text');
+      assert.ok(msgs.some((m) => /T-202 out of the rig-up/.test(m) && /T-201 out of the rig-up/.test(m)), 'T-201 out takes T-202 out (D11): ' + msgs[msgs.length - 1]);
+      assert.strictEqual(sim.setRigup(app.toWin({ desander: null, surge2: null, heater: null, separator: null, gauge: null, pump: null, flare: null, surge: null })), true);
+      assert.strictEqual(JSON.stringify(sim.getRigup()), X.GETRIGUP_DEFAULT_JSON, 'null → each item default');
+      assert.ok(/DS-101 out of the rig-up \(well stream straight to the choke\)/.test(msgs[msgs.length - 1]) && /\(full rig-up\)$/.test(msgs[msgs.length - 1]), msgs[msgs.length - 1]);
+      st = sim.getState();
+      assert.ok(st.rigup.sig === X.SIG_DEFAULT && st.rigup.full, 'back to the default');
+      assert.strictEqual(sim.setRigup(app.toWin({ desander: false })), false, 'no change → false');
+    },
+  },
+  {
+    name: 'WTSEQ E0 contract: the real snapshot matches _wts-equip-shapes (new blocks, nodes, lines, faults, history, NULLABLE, controls, DEFAULTS, SAMPLE_FLOW.sim, stepFor, API stubs)',
+    wp: WP,
+    run(app, assert) {
+      const S = app.win.WTS_sim;
+      Object.keys(X.TAGS_NEW).forEach((k) => assert.strictEqual(S.TAGS[k], X.TAGS_NEW[k], 'TAGS.' + k));
+      Object.keys(X.NAMES_NEW).forEach((k) => assert.strictEqual(S.NAMES[k], X.NAMES_NEW[k], 'NAMES.' + k));
+      X.NULLABLE_NEW.forEach((p) => assert.ok(S.NULLABLE.indexOf(p) >= 0, 'NULLABLE ' + p));
+      assert.deepStrictEqual(J(S.FAULTS.map((f) => f.id)), X.FAULT_IDS, 'fault ids');
+      X.FAULTS_NEW.forEach((f) => assert.strictEqual(S.FAULTS.find((x) => x.id === f.id).label, f.label, 'fault label ' + f.id));
+      Object.keys(X.DEFAULTS_NEW).forEach((k) => assert.deepStrictEqual(J(S.DEFAULTS[k]), X.DEFAULTS_NEW[k], 'DEFAULTS.' + k));
+      assert.deepStrictEqual(J(S.SAMPLE_FLOW.sim), Object.assign({ sepID_in: 36, sepLss_ft: 10, surgeP_psig: 25, surgeCap_bbl: 100, gaugeCap_bbl: 100 }, X.SAMPLE_FLOW_SIM), 'SAMPLE_FLOW.sim');
+      X.API_STATIC_NEW.filter((k) => k !== 'sand').forEach((k) => assert.ok(k in S, 'WTS_sim.' + k));   // sand helpers: WP-E1
+      X.STEP_COMBOS.forEach((c) => assert.deepStrictEqual(J(S.stepFor(app.toWin(c.rig))), c.step, 'stepFor ' + c.name));
+      assert.deepStrictEqual(J(S.stepFor(app.toWin({ desander: 'yes', surge2: 1 }))), X.STEP_V33, 'stepFor strict true');
+      const sim = S.create(S.SAMPLE_FLOW, app.toWin({ seed: 4 }));
+      sim.advance(600);
+      const st = J(sim.getState());
+      ['desander', 'sand', 'surge2'].forEach((n) => { const r = X.checkShape(n, st[n], { strict: true }); assert.ok(r.ok, n + ': ' + r.errors.join('; ')); });
+      ['desander', 'surge2'].forEach((n) => { const r = X.checkShape('nodes.' + n, st.nodes[n], { strict: true }); assert.ok(r.ok, 'nodes.' + n + ': ' + r.errors.join('; ')); });
+      assert.deepStrictEqual(Object.keys(st.nodes), X.NODE_IDS, 'node order (desander 8, surge2 9)');
+      assert.strictEqual(st.segs.length, X.SEG_COUNT);
+      assert.deepStrictEqual(Object.keys(st.lines), X.LINE_NAMES, '20 line names');
+      Object.keys(X.LINES_NEW).forEach((k) => {
+        const r = X.checkShape('line', st.lines[k], { strict: true }); assert.ok(r.ok, 'line ' + k + ': ' + r.errors.join('; '));
+        assert.strictEqual(st.lines[k].unit, X.LINES_NEW[k].unit, k + ' unit'); assert.strictEqual(st.lines[k].phase, X.LINES_NEW[k].phase, k + ' phase');
+      });
+      X.FAULTS_NEW.forEach((f) => assert.strictEqual(st.faults[f.id], false, 'fault key ' + f.id));
+      assert.strictEqual(st.health.massErr.sand, 0, 'massErr.sand');
+      assert.ok(X.checkShape('rigup', st.rigup, { strict: true }).ok, 'rigup');
+      // static values while out: the desander follows the choke inlet; T-202 follows T-201's set point
+      assert.ok(st.desander.inRig === false && st.desander.Pin === st.nodes.choke.Pin && st.desander.dP_psi === 0 && st.nodes.desander.P === st.nodes.choke.Pin, 'DS-101 out');
+      assert.strictEqual(st.nodes.esd.P, st.nodes.choke.Pin, 'ESD node = choke inlet with DS-101 out (as v3.3)');
+      assert.ok(st.surge2.inRig === false && st.surge2.SP === st.surge.SP && st.surge2.frac === 0 && st.surge2.route === 'surge', 'T-202 out');
+      const A = (id) => X.ANCHORS.find((a) => a.id === id);
+      assert.ok(Math.abs(st.desander.sand.cap_lb - A('capLb').value) <= A('capLb').rel * A('capLb').value, 'accumulator cap ' + st.desander.sand.cap_lb);
+      assert.ok(Math.abs(st.desander.sand.bufCap_lb - A('bufCapLb').value) <= A('bufCapLb').rel * A('bufCapLb').value, 'buffer cap');
+      assert.ok(Math.abs(st.sand.choke.warn_mild - A('warnMild').value) <= A('warnMild').abs && Math.abs(st.sand.choke.high_mild - A('highMild').value) <= A('highMild').abs, 'band limits');
+      assert.ok(Math.abs(st.desander.sithp_psi - A('sithpEst').value) <= A('sithpEst').rel * A('sithpEst').value && st.desander.sithpEst === true && st.desander.ratingOK, 'SITHP estimate');
+      X.HIST_KEYS.forEach((k) => { const h = sim.getHistory(k); assert.ok(h.t.length > 0 && h.y.every((y) => isFinite(y)), 'history ' + k); });
+      // controls (§6.9, exact JSON key order) and the API stubs of WP-E1 / WP-E2
+      assert.strictEqual(JSON.stringify(sim.getControls()), X.CONTROLS_DEFAULT_JSON, 'getControls default');
+      assert.ok(X.checkShape('controls', J(sim.getControls()), { strict: true }).ok);
+      X.API_INSTANCE_NEW.forEach((k) => assert.strictEqual(typeof sim[k], 'function', 'api ' + k));
+      assert.strictEqual(sim.dumpDesander().ok, false); assert.strictEqual(sim.setSurgeRoute('both').ok, false);
+      assert.strictEqual(sim.setDesander(app.toWin({ bypass: true })), false); assert.strictEqual(sim.setValve('surge2', 0, true), false);
+      assert.strictEqual(sim.setAutoDivert('surge2', true), false); assert.strictEqual(sim.setValveOptions('surge2', app.toWin({ strokeS: 3 })), false);
+      // v3.3 prefs (no surge2 / desander keys) keep the defaults; new keys are read and clamped
+      const s2 = S.create(S.SAMPLE_FLOW, app.toWin({ seed: 4 }));
+      s2.setControls(app.toWin({ surge: X.CONTROLS_DEFAULT.surge, gauge: X.CONTROLS_DEFAULT.gauge, v: 1 }), app.toWin({ initial: true }));
+      assert.strictEqual(JSON.stringify(s2.getControls()), X.CONTROLS_DEFAULT_JSON, 'v3.3 prefs');
+      s2.setControls(app.toWin({ surge2: { inlet: true, auto: true, sp: 0.75, hyst: 9, strokeS: 99 }, desander: { bypass: true, auto: true, sp: 0.1 } }), app.toWin({ initial: true }));
+      const c2 = J(s2.getControls());
+      assert.deepStrictEqual(c2.surge2, { inlet: true, auto: true, sp: 0.75, hyst: 0.5, strokeS: 60 }, 'surge2 controls read + clamped');
+      assert.deepStrictEqual(c2.desander, { bypass: true, auto: true, sp: 0.5 }, 'desander controls read + clamped (sp 0.5–0.95)');
+      // flow.sim values are clamped to the §6.3 ranges (1e400 = Infinity never gets through)
+      const f = S.flowFromInputs(app.toWin({}), app.toWin({ sand_pptb: 1e400, sand_lbmmscf: -5, sand_d50_um: 5, desRating_psi: 7000, desAcc_gal: 1e9, sithp_psig: 50, surge2Cap_bbl: 1000 }));
+      const cfg = S.create(f, app.toWin({ seed: 1 }))._internal().cfg;
+      assert.deepStrictEqual([cfg.sand.pptb, cfg.sand.lbPerMMscf, cfg.sand.d50_um, cfg.desander.rating_psi, cfg.desander.acc_gal, cfg.desander.sithp_psig, cfg.surge2.cap_bbl],
+        [0, 0, 20, 10000, 200, 100, 500], 'clamped');
+      const cfg0 = S.create(S.SAMPLE_FLOW, app.toWin({ seed: 1 }))._internal().cfg;
+      assert.strictEqual(cfg0.desander.sithp_psig, null, 'blank SITHP stays null (estimated)');
+    },
+  },
+  {
+    name: 'WTSEQ E0 frozen-engine identity (U6): scenarios a–e on the v3.3 engine and the working engine, with the v3.3 and the new SAMPLE_FLOW — every v3.3 path ===',
+    wp: WP,
+    opts: false,
+    timeoutMs: 600000,
+    run(app, assert) {
+      const A = X.loadEngine('v33'), B = X.loadEngine('work');
+      const F33 = J(A.SAMPLE_FLOW), Fnew = J(B.SAMPLE_FLOW);
+      assert.deepStrictEqual(Object.keys(Fnew.sim).slice(5), Object.keys(X.SAMPLE_FLOW_SIM), 'new SAMPLE_FLOW carries the seven keys');
+      const scen = [
+        { name: '(a) 4 h default dt 10', secs: 4 * 3600, dt: 10, every: 1200 },
+        { name: '(c) T-201 A/B divert with auto-divert', secs: 2 * 3600, dt: 5, every: 600, setup: (s) => { s.setAutoDivert('surge', true, { sp: 0.6 }); s.setValve('surge', 1, false); } },
+        { name: '(d) oilDumpStuckOpen', secs: 3600, dt: 5, every: 600, setup: (s) => s.setFault('oilDumpStuckOpen', true) },
+        { name: '(d) xferStuckClosed', secs: 3600, dt: 5, every: 600, setup: (s) => s.setFault('xferStuckClosed', true) },
+        { name: '(e) ESD trip and reset', secs: 1200, dt: 2, every: 200, setup: (s) => s.tripESD('test'), after: true },
+      ];
+      ['heater', 'separator', 'surge', 'gauge', 'pump', 'flare'].forEach((k) => {
+        const rig = {}; rig[k] = false;
+        scen.push({ name: '(b) 1 h without ' + k, secs: 3600, dt: 10, every: 900, opts: { rigup: rig } });
+      });
+      scen.forEach((sc) => {
+        const a = runStates(A, sc.secs, sc.dt, sc.every, sc.setup, F33, sc.opts);
+        [['v3.3 flow', F33], ['new flow', Fnew]].forEach(([fn, flow]) => {
+          const b = runStates(B, sc.secs, sc.dt, sc.every, sc.setup, flow, sc.opts);
+          sameStates(assert, a, b, sc.name + ' / ' + fn);
+          if (sc.after) {
+            const ra = a.sim.resetESD(), rb = b.sim.resetESD();
+            assert.strictEqual(JSON.stringify(ra), JSON.stringify(rb), 'resetESD result');
+            for (let i = 0; i < 60; i++) { a.sim.advance(10); b.sim.advance(10); }
+            const d = X.identityDiff(J(a.sim.getState()), J(b.sim.getState()), 5);
+            assert.ok(d.length === 0, sc.name + ' / ' + fn + ' after the reset: ' + d.join('; '));
+            if (fn === 'v3.3 flow') { a.sim = runStates(A, sc.secs, sc.dt, sc.every, sc.setup, F33, sc.opts).sim; }   // fresh v3.3 run for the new-flow pass
+          }
+        });
+      });
+    },
+  },
+  {
+    name: 'WTSEQ E0 both items in (+ flow-back fault): finite walk with NULLABLE, determinism (same seed), dt 1 vs dt 10, balances',
+    wp: WP,
+    timeoutMs: 300000,
+    run(app, assert) {
+      const S = app.win.WTS_sim;
+      const mk = () => S.create(S.SAMPLE_FLOW, app.toWin({ seed: 21, rigup: { desander: true, surge2: true } }));
+      const a = mk(), b = mk();
+      a.setFault('sandFlowback', true); b.setFault('sandFlowback', true);
+      for (let i = 0; i < 360; i++) { a.advance(10); b.advance(10); }
+      const sa = J(a.getState()), sb = J(b.getState());
+      const bad = finiteBad(sa, J(S.NULLABLE));
+      assert.ok(bad.length === 0, 'finite walk: ' + bad.slice(0, 6).join(', '));
+      assert.strictEqual(JSON.stringify(sa), JSON.stringify(sb), 'determinism: same seed → same state');
+      assert.ok(sa.rigup.desander && sa.rigup.surge2 && sa.desander.inRig && sa.surge2.inRig && sa.faults.sandFlowback, 'both in');
+      const m = sa.health.massErr;
+      assert.ok(Math.abs(m.oil) < 1e-9 && Math.abs(m.water) < 1e-9 && Math.abs(m.gas) < 1e-9 && m.sand === 0, 'balances ' + JSON.stringify(m));
+      ['desander', 'sand', 'surge2'].forEach((n) => assert.ok(X.checkShape(n, sa[n], { strict: true }).ok, n + ' shape with the item in'));
+      // step size: dt 1 vs dt 10 over 2 h (tolerances of 31 self-test 6)
+      const cfg = { noise: { on: false } };
+      const c = S.create(S.SAMPLE_FLOW, app.toWin({ seed: 3, config: cfg, rigup: { desander: true, surge2: true } }));
+      const d = S.create(S.SAMPLE_FLOW, app.toWin({ seed: 3, config: cfg, rigup: { desander: true, surge2: true } }));
+      for (let i = 0; i < 7200; i++) c.advance(1);
+      for (let i = 0; i < 720; i++) d.advance(10);
+      const sc = c.getState(), sd = d.getState();
+      assert.near(sc.t, sd.t, 1e-6, 't');
+      assert.near(sc.cum.oilIn_stb / sd.cum.oilIn_stb, 1, 1e-6, 'cum oil');
+      assert.near(sc.gauge.tanks[0].frac, sd.gauge.tanks[0].frac, 0.005, 'gauge A');
+      assert.near(sc.sep.P, sd.sep.P, 1, 'Psep');
+      assert.near(sc.sand.cum.in_lb, sd.sand.cum.in_lb, 0.01 * Math.max(1, sd.sand.cum.in_lb), 'sand in within 1 %');
+    },
+  },
+  {
+    name: 'WTSEQ E0 38 foundation: constants, rigIn / EQV / stepFor fallback, readRig / writeRig round trips with v3.3 and v3.3.1 objects, summaryOf, test hooks',
+    wp: WP,
+    run(app, assert) {
+      const L = app.win.WTS_live, I = L && L._internals, S = app.win.WTS_sim;
+      assert.ok(I, 'WTS_live._internals');
+      ['desander', 'surge2'].forEach((k) => {
+        assert.ok(I.EQ_IDS.indexOf(k) >= 0, 'EQ_IDS ' + k); assert.strictEqual(I.TAG[k], k === 'desander' ? 'DS-101' : 'T-202');
+      });
+      assert.strictEqual(I.NAME.desander, 'Desander (cyclonic)'); assert.strictEqual(I.NAME.surge2, 'Surge Tank 2');
+      assert.strictEqual(I.EQ_ABBR.desander, 'DSND'); assert.strictEqual(I.EQ_ABBR.surge2, 'T-202');
+      assert.deepStrictEqual(J(I.HOST_NM).slice(8), ['Desander', 'Surge Tank 2']); assert.deepStrictEqual(J(I.NODE_KEYS).slice(8), ['desander', 'surge2']);
+      assert.strictEqual(I.INPUT_FOR.desander, 'wts_sandPptb'); assert.strictEqual(I.INPUT_FOR.surge2, 'wts_surge2Cap');
+      ['mass', 'volumeSmall', 'erosionRate', 'erosionDay'].forEach((k) => assert.ok(typeof I.IMP[k] === 'string' && I.IMP[k], 'IMP.' + k));
+      assert.ok(/^#|^rgb/.test(I.palCol('sand')), 'sand colour');
+      assert.strictEqual(I.EQV.surge2.kind, 'single'); assert.deepStrictEqual(J(I.EQV.surge2.valves), ['XV-202']);
+      assert.ok(I.EQV.surge.suction === true && I.EQV.gauge.kind === 'tanks' && I.EQV.desander.bypass === 'HV-104', 'EQV');
+      assert.ok(I.rigIn({ rigup: { surge2: true } }, 'surge2') && !I.rigIn({ rigup: { surge2: 'true' } }, 'surge2') && !I.rigIn({}, 'desander'), 'rigIn');
+      X.STEP_COMBOS.forEach((c) => assert.deepStrictEqual(J(I.stepFor(app.toWin(c.rig))), c.step, '38 stepFor ' + c.name));
+      assert.strictEqual(I.rigItems().length, 10);
+      const ls = app.win.localStorage;
+      // v3.3 request (8 keys, an item out) → stored as is by v3.3; read back, the new items stay out in the sim
+      ls.setItem(I.RIG_KEY, '{"esd":true,"choke":true,"heater":false,"separator":true,"surge":true,"gauge":true,"pump":true,"flare":true}');
+      const r33 = I.readRig();
+      assert.deepStrictEqual(J(r33), { esd: true, choke: true, heater: false, separator: true, surge: true, gauge: true, pump: true, flare: true }, 'readRig v3.3');
+      const s33 = S.create(S.SAMPLE_FLOW, app.toWin({ seed: 1, rigup: r33 }));
+      assert.strictEqual(s33.getState().rigup.sig, '1101111100', 'v3.3 request → both new items out');
+      I.writeRig(s33.getRigup());
+      const w = JSON.parse(ls.getItem(I.RIG_KEY));
+      assert.ok(Object.keys(w).length === 10 && w.heater === false && w.desander === false && w.surge2 === false, 'writeRig stores all 10 keys: ' + ls.getItem(I.RIG_KEY));
+      // v3.3.1 request with an optional item only → stored (the v3.3 "no false = remove" rule would drop it)
+      I.writeRig(app.toWin({ desander: true }));
+      assert.strictEqual(JSON.parse(ls.getItem(I.RIG_KEY)).desander, true, 'optional-only request stored');
+      const r331 = I.readRig(), s331 = S.create(S.SAMPLE_FLOW, app.toWin({ seed: 1, rigup: r331 }));
+      assert.strictEqual(s331.getState().rigup.sig, '1111111110', 'round trip v3.3.1 → DS-101 in');
+      I.writeRig(s331.getRigup()); assert.strictEqual(JSON.parse(ls.getItem(I.RIG_KEY)).desander, true);
+      I.writeRig(S.RIG_DEFAULTS); assert.strictEqual(ls.getItem(I.RIG_KEY), null, 'request = RIG_DEFAULTS → no key');
+      I.writeRig(app.toWin({ heater: true, desander: false })); assert.strictEqual(ls.getItem(I.RIG_KEY), null, 'default request → no key');
+      // a v3.3 build reading a v3.3.1 object ignores unknown keys (its readRig keeps booleans for its 8 known keys)
+      const known8 = {}; const o331 = JSON.parse('{"esd":true,"desander":true,"choke":true,"heater":true,"separator":true,"surge":true,"surge2":true,"gauge":true,"pump":true,"flare":true}');
+      X.RIG_KEYS_V33.forEach((k) => { if (typeof o331[k] === 'boolean') known8[k] = o331[k]; });
+      assert.strictEqual(Object.keys(known8).length, 8, 'v3.3 view of a v3.3.1 object: 8 known keys, all in');
+      // summaryOf: out = core items out only, extras = optional items in
+      const sum = I.summaryOf(J(S.create(S.SAMPLE_FLOW, app.toWin({ seed: 1, rigup: { desander: true, gauge: false } })).getState()));
+      assert.deepStrictEqual(J(sum.rigup.out), ['T-301', 'P-201'], 'summary out (core only)');
+      assert.deepStrictEqual(J(sum.rigup.extras), ['desander'], 'summary extras');
+      // test hooks: sim() / useSim(stub)
+      const keep = I.sim(), stub = { tag: 'stub' };
+      assert.strictEqual(I.useSim(stub), stub); assert.strictEqual(I.sim(), stub);
+      I.useSim(keep); assert.strictEqual(I.sim(), keep);
+      // liveNodes: 10 calc-shaped nodes with finite P / T
+      const n = L.liveNodes(J(s331.getState()));
+      assert.ok(n.length === 10 && n.every((x) => isFinite(x.P) && isFinite(x.T)) && n[8].nm === 'Desander' && n[9].nm === 'Surge Tank 2', 'liveNodes 10');
+    },
+  },
+  {
+    name: 'WTSEQ E0 live Rig-up card: default shows "Full rig-up" with the button disabled, no DS-101 / T-202 rows in the page report; optional switches; applyFlow / fullRig keep optional items as requested; reload restores',
+    wp: WP,
+    integration: true,
+    run(app, assert, ctx) {
+      const openWts = (a) => {
+        const b = a.find('.nav-btn[data-p="wts"]'); if (!b) throw new Error('no Well Test Simulator sidebar button');
+        a.click(b); a.flush(500);
+        const s = a.win.WTS_live && a.win.WTS_live.getSim && a.win.WTS_live.getSim(); if (!s) throw new Error('live simulator did not start');
+        return s;
+      };
+      const live = openWts(app);
+      const card = app.el('wtsl_rigup'), sw = (k) => card.querySelector('[data-rig="' + k + '"]');
+      assert.ok(card, 'Rig-up card');
+      const cfgRow = () => Array.prototype.find.call(card.querySelectorAll('.rrow'), (r) => /Configuration/.test(r.textContent));
+      assert.ok(/Full rig-up/.test(cfgRow().textContent) && !/with/.test(cfgRow().textContent), 'Configuration: Full rig-up');
+      assert.ok(card.querySelector('[data-rig-act="all"]').disabled, 'Full rig-up button disabled by default');
+      ['desander', 'surge2'].forEach((k) => {
+        assert.ok(sw(k) && !sw(k).disabled && sw(k).getAttribute('aria-checked') === 'false', k + ' switch present, off');
+        assert.ok(sw(k).closest('.rrow').classList.contains('rp-skip'), k + ' row is rp-skip while out');
+      });
+      const model = app.win.collectPageReport(app.el('pgBody'), { charts: false });
+      const txt = JSON.stringify(model);
+      assert.ok(txt.indexOf('Rig-up') >= 0 && !/DS-101|T-202|desander/i.test(txt), 'default report has no DS-101 / T-202 rows');
+      // DS-101 in from the card: request saved with all keys; 'with DS-101' in the configuration row; button still disabled
+      app.click(sw('desander'));
+      assert.strictEqual(live.getState().rigup.desander, true, 'sim has DS-101');
+      assert.strictEqual(JSON.parse(app.win.localStorage.getItem('wts_sim_rigup') || '{}').desander, true, 'saved');
+      assert.ok(/Full rig-up · with DS-101/.test(cfgRow().textContent), cfgRow().textContent);
+      assert.ok(card.querySelector('[data-rig-act="all"]').disabled, 'Full rig-up still disabled (core items all in)');
+      // T-201 out disables T-202's switch with the reason
+      app.click(sw('surge'));
+      assert.ok(sw('surge2').disabled && /needs T-201/.test(sw('surge2').getAttribute('title')), 'T-202 switch disabled while T-201 is out');
+      // Full rig-up restores core items and leaves DS-101 in
+      app.click(card.querySelector('[data-rig-act="all"]'));
+      let st = live.getState();
+      assert.ok(st.rigup.surge === true && st.rigup.desander === true && st.rigup.full, 'fullRig: core in, DS-101 kept');
+      // project open: a v3.3 saved rig-up (8 keys) re-applied by applyFlow → both new items out
+      app.win.localStorage.setItem('wts_sim_rigup', '{"esd":true,"choke":true,"heater":false,"separator":true,"surge":true,"gauge":true,"pump":true,"flare":true}');
+      app.fire('document', 'wts:project-loaded', {});
+      app.fire('document', 'wts:calc', app.toWin({ flow: J(app.win.WTS_sim.SAMPLE_FLOW) }));
+      app.flush(500);
+      st = live.getState();
+      assert.ok(st.rigup.heater === false && st.rigup.desander === false && st.rigup.surge2 === false, 'v3.3 project rig-up: ' + st.rigup.sig);
+      // reload restores a v3.3.1 request with T-202 in
+      app.win.WTS_live.getSim().setRigup(app.toWin({ heater: true, surge2: true }));
+      const saved = JSON.parse(app.win.localStorage.getItem('wts_sim_rigup') || '{}');
+      assert.ok(saved.surge2 === true && Object.keys(saved).length === 10, 'saved v3.3.1 request: ' + JSON.stringify(saved));
+      const app2 = ctx.loadApp({ storage: app.storage });
+      try {
+        const live2 = openWts(app2);
+        const st2 = live2.getState();
+        assert.ok(st2.rigup.surge2 === true && st2.rigup.desander === false && st2.rigup.heater === true, 'restored after reload: ' + st2.rigup.sig);
+      } finally { if (app2.dispose) app2.dispose(); }
+      assert.strictEqual(app.consoleErrors().length, 0, 'no console errors: ' + app.consoleErrors().join(' | '));
     },
   },
 ];

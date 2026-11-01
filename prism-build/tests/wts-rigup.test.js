@@ -97,7 +97,8 @@ module.exports = [
     wp: WP,
     run(app, assert) {
       const S = app.win.WTS_sim;
-      assert.deepStrictEqual(JSON.parse(JSON.stringify(S.RIG_KEYS)), ['esd', 'choke', 'heater', 'separator', 'surge', 'gauge', 'pump', 'flare']);
+      // v3.3.1: signature order appends the optional items DS-101 (desander) and T-202 (surge2)
+      assert.deepStrictEqual(JSON.parse(JSON.stringify(S.RIG_KEYS)), ['esd', 'choke', 'heater', 'separator', 'surge', 'gauge', 'pump', 'flare', 'desander', 'surge2']);
       assert.ok(S.RIGUP.filter((it) => it.locked).map((it) => it.key).join() === 'esd,choke', 'locked items');
       const n = S.normRigup(app.toWin({ esd: false, choke: false, separator: false, flare: false, gauge: false }));
       assert.ok(n.rig.esd && n.rig.choke, 'ESD and choke stay in');
@@ -115,7 +116,37 @@ module.exports = [
       assert.strictEqual(s.setRigup(null), false, 'bad input ignored');
       // default = full rig-up, no notes (existing behaviour)
       st = s.getState();
-      assert.ok(st.rigup.full && st.rigup.sig === '11111111' && st.rigup.notes.length === 0 && st.rates.separated === true, 'default full rig-up');
+      assert.ok(st.rigup.full && st.rigup.sig === '1111111100' && st.rigup.notes.length === 0 && st.rates.separated === true, 'default full rig-up');
+      assert.deepStrictEqual(JSON.parse(JSON.stringify(st.rigup.extras)), [], 'no optional item in by default');
+    }
+  },
+  {
+    name: 'WTSRIG optional items: DS-101 and T-202 out by default, in only when strictly true; T-201 out forces T-202 out (note) and the dumps go to T-301; full counts core items only',
+    wp: WP,
+    run(app, assert) {
+      const S = app.win.WTS_sim;
+      const items = S.RIGUP.filter((it) => it.optional).map((it) => it.key + ':' + it.tag + ':' + it.def);
+      assert.deepStrictEqual(JSON.parse(JSON.stringify(items)), ['desander:DS-101:false', 'surge2:T-202:false'], 'two optional items, out by default');
+      assert.strictEqual(S.RIGUP.map((it) => it.key).join(), 'esd,desander,choke,heater,separator,surge,surge2,gauge,pump,flare', 'display order = process order');
+      assert.strictEqual(S.normRigup(app.toWin({ desander: 'true', surge2: 1 })).sig, '1111111100', 'strings / numbers do not put an optional item in');
+      // a v3.3 request (8 keys, all present) leaves both new items out
+      assert.strictEqual(S.normRigup(app.toWin({ esd: true, choke: true, heater: true, separator: true, surge: true, gauge: true, pump: true, flare: true })).sig, '1111111100');
+      const n = S.normRigup(app.toWin({ surge: false, surge2: true }));
+      assert.ok(!n.rig.surge2 && n.notes.some((m) => /T-202 works alongside T-201/.test(m)), 'T-201 out forces T-202 out with a note');
+      assert.ok(n.full === false && n.sig === '1111011100', 'sig ' + n.sig);
+      assert.ok(S.normRigup(app.toWin({ desander: true, surge2: true })).full === true, 'full counts core items only');
+      const s = sim(app, { config: NOISE_OFF, rigup: { surge: false, surge2: true } });
+      run(s, 1800, 10);
+      const st = s.getState();
+      assert.ok(st.rigup.surge2 === false && st.surge2.inRig === false && s.getRigup().surge2 === true, 'effective out, request kept');
+      assert.ok(st.cum.gaugeOil_stb > 0, 'the dumps go to T-301');
+      assert.ok(!st.esd.tripped, 'no trip: ' + st.esd.cause);
+      balanced(assert, st, 'T-201 out with T-202 requested');
+      // restoring T-201 brings T-202 in (the request was kept); the message names it
+      const ev = []; s.on('rigup', (p) => ev.push(p));
+      assert.strictEqual(s.setRigup(app.toWin({ surge: true })), true);
+      assert.ok(s.getState().rigup.surge2 === true && ev[0] && /T-202 in the rig-up \(standby: XV-202 shut\)/.test(ev[0].msg), ev[0] && ev[0].msg);
+      assert.ok(/\(full rig-up\)$/.test(ev[0].msg) && ev[0].extras.join() === 'surge2', 'full rig-up message + extras');
     }
   },
   {

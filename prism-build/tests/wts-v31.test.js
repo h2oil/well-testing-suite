@@ -243,11 +243,13 @@ module.exports = [
       assert.ok(rig, 'rig-up card');
       const keys = Array.from(rig.querySelectorAll('[data-rig]')).filter((b) => !b.disabled).map((b) => b.getAttribute('data-rig'));
       assert.ok(keys.length >= 6, 'switches: ' + keys.join());
+      // core items toggle out and back in; the optional items (DS-101, T-202, v3.3.1) start out, so they toggle in and back out
       keys.forEach((k) => {
+        const was = s.getRigup()[k];
         app.click(rig.querySelector('[data-rig="' + k + '"]')); app.flush(60);
-        assert.strictEqual(s.getRigup()[k], false, k + ' out');
+        assert.strictEqual(s.getRigup()[k], !was, k + (was ? ' out' : ' in'));
         app.click(rig.querySelector('[data-rig="' + k + '"]')); app.flush(60);
-        assert.strictEqual(s.getRigup()[k], true, k + ' back in');
+        assert.strictEqual(s.getRigup()[k], was, k + ' back');
       });
       app.click(rig.querySelector('[data-rig-act="all"]')); app.flush(60);
       assert.strictEqual(s.getState().rigup.full, true, 'full rig-up');

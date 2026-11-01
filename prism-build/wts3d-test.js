@@ -179,7 +179,9 @@ const SECTION_A = (G, src) => {
       if (!['setValve', 'setSuction', 'setAutoDivert', 'getControls', 'setControls'].every(k => typeof s[k] === 'function')) return 'api';
       const c0 = JSON.stringify(s.getControls());
       // v3.0: the lineup also carries the divert valve stroke (s) and the gauge 'allow interrupting batches' option
-      if (c0 !== JSON.stringify({ surge: { inlet: [true, true], suction: 'both', auto: false, sp: 0.8, hyst: 0.1, strokeS: 6 }, gauge: { inlet: [true, false], auto: false, sp: 0.9, hyst: 0.1, strokeS: 6, allowInterrupt: false }, v: 1 })) bad.push('defaults ' + c0);
+      // v1.4.0: + T-202 inlet / auto route (surge2) and DS-101 bypass / auto-dump (desander), exact key order
+      if (c0 !== JSON.stringify({ surge: { inlet: [true, true], suction: 'both', auto: false, sp: 0.8, hyst: 0.1, strokeS: 6 }, gauge: { inlet: [true, false], auto: false, sp: 0.9, hyst: 0.1, strokeS: 6, allowInterrupt: false },
+        surge2: { inlet: false, auto: false, sp: 0.8, hyst: 0.1, strokeS: 6 }, desander: { bypass: false, auto: false, sp: 0.8 }, v: 1 })) bad.push('defaults ' + c0);
       if (st.surge.comps.length !== 2 || st.surge.comps[0].tag !== 'T-201A' || st.gauge.tanks[1].valveTag !== 'XV-301B' || st.surge.auto.on !== false) bad.push('snapshot');
       s.setValve('gauge', 1, true); s.setValve('gauge', 0, false); s.setValve('surge', 1, false); s.setSuction('B'); s.setAutoDivert('surge', true, { sp: 0.85 });
       for (let i = 0; i < 60; i++) s.advance(10);
@@ -199,16 +201,25 @@ const SECTION_A = (G, src) => {
     // ── v3.0.2 rig-up + pressure-driven surge → gauge transfer ──
     ['31: rig-up API + snapshot (setRigup / getRigup, rigup notes, RIGUP / normRigup exports; default = full rig-up)', () => {
       const bad = [];
-      if (typeof S.normRigup !== 'function' || !Array.isArray(S.RIGUP) || S.RIGUP.length !== 8 || !deepFrozen(S.RIGUP)) bad.push('exports');
+      // v1.4.0: 10 items (DS-101 / T-202 optional, out by default); the RIGUP key set = RIG_KEYS; sig appends desander, surge2
+      if (typeof S.normRigup !== 'function' || !Array.isArray(S.RIGUP) || S.RIGUP.length !== 10 || !deepFrozen(S.RIGUP)) bad.push('exports');
+      if (S.RIGUP.map((it) => it.key).sort().join() !== S.RIG_KEYS.slice().sort().join()) bad.push('RIGUP keys = RIG_KEYS');
+      if (!deepFrozen(S.RIG_DEFAULTS) || !deepFrozen(S.RIG_OPTIONAL) || S.RIG_OPTIONAL.join() !== 'desander,surge2' || S.VERSION !== '1.4.0') bad.push('v1.4.0 exports');
       const s = S.create(F, { seed: 2 }); let st = s.getState();
-      if (!(st.rigup.full && st.rigup.sig === '11111111' && st.rigup.notes.length === 0)) bad.push('default ' + st.rigup.sig);
+      if (!(st.rigup.full && st.rigup.sig === '1111111100' && st.rigup.notes.length === 0 && Array.isArray(st.rigup.extras) && st.rigup.extras.length === 0)) bad.push('default ' + st.rigup.sig);
+      // step numbers (D17): the four combinations; the default is the v3.3 STEP table
+      const STEPS = [[{}, { wellhead: '①', esd: '②', choke: '③', heater: '④', separator: '⑤', flare: '⑥', surge: '⑦', gauge: '⑧', pump: '⑨' }],
+        [{ desander: true }, { wellhead: '①', esd: '②', desander: '③', choke: '④', heater: '⑤', separator: '⑥', flare: '⑦', surge: '⑧', gauge: '⑨', pump: '⑩' }],
+        [{ surge2: true }, { wellhead: '①', esd: '②', choke: '③', heater: '④', separator: '⑤', flare: '⑥', surge: '⑦', surge2: '⑧', gauge: '⑨', pump: '⑩' }],
+        [{ desander: true, surge2: true }, { wellhead: '①', esd: '②', desander: '③', choke: '④', heater: '⑤', separator: '⑥', flare: '⑦', surge: '⑧', surge2: '⑨', gauge: '⑩', pump: '⑪' }]];
+      if (typeof S.stepFor !== 'function' || !STEPS.every((p) => JSON.stringify(S.stepFor(p[0])) === JSON.stringify(p[1]))) bad.push('stepFor');
       if (typeof s.setRigup !== 'function' || typeof s.getRigup !== 'function') return 'api';
       const ev = []; s.on('rigup', (p) => ev.push(p));
       if (s.setRigup({ separator: false, flare: false }) !== true) bad.push('set');
       st = s.getState();
       if (st.rigup.separator !== false || st.rigup.flare !== true || !st.rigup.notes.some((n) => /nowhere to go/.test(n))) bad.push('rules');
       if (ev.length !== 1 || ev[0].sig !== st.rigup.sig) bad.push('event');
-      if (JSON.stringify(s.getRigup()) !== JSON.stringify({ esd: true, choke: true, heater: true, separator: false, surge: true, gauge: true, pump: true, flare: false })) bad.push('request ' + JSON.stringify(s.getRigup()));
+      if (JSON.stringify(s.getRigup()) !== JSON.stringify({ esd: true, choke: true, heater: true, separator: false, surge: true, gauge: true, pump: true, flare: false, desander: false, surge2: false })) bad.push('request ' + JSON.stringify(s.getRigup()));
       s.advance(600); const fw = []; finiteWalk(s.getState(), '', fw); if (fw.length) bad.push('finite ' + fw.slice(0, 3));
       const m = s.getState().health.massErr; if (Math.abs(m.oil) > 1e-9 || Math.abs(m.gas) > 1e-9) bad.push('mass');
       return bad.length === 0 || bad.join('; ');
@@ -379,7 +390,7 @@ const SECTION_C = (G, src) => {
     ['38: all HMI controls are buttons (no <input>/<select>/<textarea> markup)', () => !/<(input|select|textarea)\b/i.test(code) || 'found form control markup'],
     ['38: liveNodes/liveSegs follow the live snapshot (host names, psig, MSCF/D)', () => {
       const s = simAt(600); const st = s.getState(); const n = L.liveNodes(st), g = L.liveSegs(st);
-      return n.map(x => x.nm).join('|') === 'Wellhead|SSV|Choke|Heater|Separator|Flare|Surge Tank|Atm Tank' &&
+      return n.map(x => x.nm).join('|') === 'Wellhead|SSV|Choke|Heater|Separator|Flare|Surge Tank|Atm Tank|Desander|Surge Tank 2' &&
         n[4].P === st.nodes.separator.P && n[0].P === st.nodes.wellhead.P && n[2].Pci === st.nodes.choke.Pin &&
         Math.abs(n[2].Qmax - st.nodes.choke.QmaxMMscfd * 1000) < 1e-9 && n[2].regime === 'Critical' && n[2].flowLimited === false &&
         n[3].duty === st.nodes.heater.dutyMMBtuHr && n[6].P === st.nodes.surge.P && n[7].P === 0 &&
@@ -470,12 +481,21 @@ const SECTION_C = (G, src) => {
       G.localStorage = { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); }, removeItem: (k) => { delete store[k]; } };
       try {
         const bad = [];
-        if (I.RIG_KEY !== 'wts_sim_rigup' || I.rigItems().length !== 8) bad.push('key / items');
-        I.writeRig({ heater: false, surge: true }); if (store.wts_sim_rigup !== '{"heater":false,"surge":true}') bad.push('write ' + store.wts_sim_rigup);
-        if (JSON.stringify(I.readRig()) !== '{"heater":false,"surge":true}') bad.push('read');
+        // v3.3.1: 10 items; a request equal to RIG_DEFAULTS stores no key, any other request stores all 10 keys (display order)
+        if (I.RIG_KEY !== 'wts_sim_rigup' || I.rigItems().length !== 10) bad.push('key / items');
+        const ALL10 = '{"esd":true,"desander":false,"choke":true,"heater":false,"separator":true,"surge":true,"surge2":false,"gauge":true,"pump":true,"flare":true}';
+        I.writeRig({ heater: false, surge: true }); if (store.wts_sim_rigup !== ALL10) bad.push('write ' + store.wts_sim_rigup);
+        if (JSON.stringify(I.readRig()) !== ALL10) bad.push('read');
         store.wts_sim_rigup = '{"heater":"no","bogus":false}'; if (I.readRig() !== null) bad.push('shape');
         store.wts_sim_rigup = 'x'; if (I.readRig() !== null) bad.push('parse');
         I.writeRig({ heater: true }); if ('wts_sim_rigup' in store) bad.push('full keeps no key');
+        I.writeRig(S.RIG_DEFAULTS); if ('wts_sim_rigup' in store) bad.push('RIG_DEFAULTS keeps no key');
+        I.writeRig({ desander: true }); const o1 = JSON.parse(store.wts_sim_rigup || '{}');
+        if (o1.desander !== true || o1.surge2 !== false || o1.heater !== true || Object.keys(o1).length !== 10) bad.push('optional-only request stored ' + store.wts_sim_rigup);
+        I.writeRig({ desander: 'yes', surge2: 1 }); if ('wts_sim_rigup' in store) bad.push('non-true optional = default');
+        if (I.rigIn({ rigup: { desander: true } }, 'desander') !== true || I.rigIn({ rigup: { desander: 'x' } }, 'desander') || I.rigIn(null, 'surge2')) bad.push('rigIn');
+        if (I.EQV.surge2.valves.join() !== 'XV-202' || I.EQV.surge.valves.join() !== 'XV-201A,XV-201B' || I.EQV.gauge.valves.join() !== 'XV-301A,XV-301B' || I.EQV.desander.dump !== 'XV-103') bad.push('EQV');
+        if (JSON.stringify(I.stepFor({})) !== JSON.stringify(I.STEP) || I.stepFor({ desander: true }).choke !== '④') bad.push('stepFor fallback');
         const st = simAt(600), st0 = st.getState();
         if (I.xferShort(st0) !== 'OPEN' && I.xferShort(st0) !== 'SHUT') bad.push('xfer ' + I.xferShort(st0));
         if (!/RUNNING|STANDBY/.test(I.pumpShort(st0)) || I.rigOut(st0, 'heater')) bad.push('pump / rigOut');
@@ -501,7 +521,12 @@ const SECTION_C = (G, src) => {
       const r = runHostCalc(); const f = r.L.flow; const bad = [];
       if (!f) return 'no flow';
       const strip = o => { const c = JSON.parse(JSON.stringify(o)); delete c.ts; delete c.seq; return c; };
-      eqShape(strip(f), strip(S.SAMPLE_FLOW), 'flow', bad);
+      // v3.3.1 (WP-E0): SAMPLE_FLOW.sim carries the seven new keys (sand / desander / T-202); the host Dynamic Simulation inputs
+      // that publish them come with WP-2D — until then a host flow with none of the seven is accepted (WP-2D: remove this)
+      const SIM7 = ['sand_pptb', 'sand_lbmmscf', 'sand_d50_um', 'desRating_psi', 'desAcc_gal', 'sithp_psig', 'surge2Cap_bbl'];
+      const ref = strip(S.SAMPLE_FLOW);
+      if (f.sim && SIM7.every(k => !(k in f.sim))) SIM7.forEach(k => { delete ref.sim[k]; });
+      eqShape(strip(f), ref, 'flow', bad);
       const near = (a, b, t) => Math.abs(a - b) <= t;
       if (!near(f.choke.Pout, S.SAMPLE_FLOW.choke.Pout, 0.01) || !near(f.heater.dutyMMBtuHr, 2.103, 0.001) || f.choke.regime !== 'Critical') bad.push('numbers');
       if (r.events.length !== 1 || r.events[0].type !== 'wts:calc' || r.events[0].detail !== r.L) bad.push('event');
@@ -561,16 +586,21 @@ const SECTION_X = (G) => {
       walk(I.fakeSnapshot(), real(), '');
       return miss.length === 0 || miss.slice(0, 8).join(', ');
     }]);
-    if (Array.isArray(I.NULLABLE)) out.push(['X: 32 NULLABLE list equals WTS_sim.NULLABLE', () =>
-      JSON.stringify(I.NULLABLE.slice().sort()) === JSON.stringify(S.NULLABLE.slice().sort()) || 'differs']);
+    // v3.3.1 (WP-E0): 31 adds desander.dump.lastT, surge2.tFull_s, surge2.transfer.trip; 32's copy gains them with WP-3D —
+    // until then 32 may equal the list without those three (WP-3D: drop the allowance once 32 carries them)
+    const NEW_NULL = ['desander.dump.lastT', 'surge2.tFull_s', 'surge2.transfer.trip'];
+    if (Array.isArray(I.NULLABLE)) out.push(['X: 32 NULLABLE list equals WTS_sim.NULLABLE', () => {
+      const a = JSON.stringify(I.NULLABLE.slice().sort()), b = S.NULLABLE.slice().sort();
+      return a === JSON.stringify(b) || a === JSON.stringify(b.filter(p => NEW_NULL.indexOf(p) < 0)) || 'differs';
+    }]);
     if (typeof I.normalize === 'function') out.push(['X: 32 normalize(real snapshot) yields only finite numbers', () => {
       const bad = []; nonFinite(I.normalize(real()), '', bad); return bad.length === 0 || bad.slice(0, 6).join(', ');
     }]);
     if (T.STATUS_MAP) out.push(['X: STATUS_MAP covers every sim alarm severity', () => ['trip', 'alarm', 'warn', 'hyd', 'info'].every(k => typeof T.STATUS_MAP[k] === 'string')]);
   }
   if (L) {
-    if (typeof L.liveNodes === 'function') out.push(['X: 38 liveNodes(real) → 8 calc-shaped nodes with finite P/T', () => {
-      const n = L.liveNodes(real()); return Array.isArray(n) && n.length === 8 && n.every(x => isFinite(x.P) && isFinite(x.T));
+    if (typeof L.liveNodes === 'function') out.push(['X: 38 liveNodes(real) → 10 calc-shaped nodes with finite P/T', () => {
+      const n = L.liveNodes(real()); return Array.isArray(n) && n.length === 10 && n.every(x => isFinite(x.P) && isFinite(x.T));
     }]);
     if (typeof L.liveSegs === 'function') out.push(['X: 38 liveSegs(real) → 6 calc-shaped segments with finite vel', () => {
       const s = L.liveSegs(real()); return Array.isArray(s) && s.length === 6 && s.every(x => isFinite(x.vel) && isFinite(x.vPct));
