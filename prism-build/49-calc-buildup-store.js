@@ -489,15 +489,25 @@
         if (!_own(o, 'summary')) o.summary = null;
         return o;
     }
+    // The chain uses the review's recipe (WTS_buildup.review.audit.entryHash and GENESIS): hash16(prevHash +
+    // canon(entry without hash)) with every numeric leaf serialised exactly first, so canon sorts the keys but rounds
+    // nothing and an edit at any digit breaks the chain. The first entry links to GENESIS.
+    var GENESIS = '0000000000000000';
+    function _exactLeaves(v) {
+        if (typeof v === 'number') return 'n:' + String(v);
+        if (Array.isArray(v)) return v.map(_exactLeaves);
+        if (v !== null && typeof v === 'object') { var o = {}; Object.keys(v).forEach(function (k) { o[k] = _exactLeaves(v[k]); }); return o; }
+        return v;
+    }
     function _entryHash(prev, e) {
         var c = {}, k;
         for (k in e) if (_own(e, k) && k !== 'hash') c[k] = e[k];
-        return _hash(String(prev || '') + _canon(c, 'inputs'));
+        return _hash(String(prev || '') + _canon(_exactLeaves(c), 'inputs'));
     }
     function chainHash() {
         var a = _auditRead();
-        if (a.entries.length) return a.entries[a.entries.length - 1].hash || '';
-        return (a.summary && a.summary.chainHash) || '';
+        if (a.entries.length) return a.entries[a.entries.length - 1].hash || GENESIS;
+        return (a.summary && a.summary.chainHash) || GENESIS;
     }
     function _fold(a, keep) {
         var nFold = a.entries.length - (keep == null ? AUDIT_KEEP : keep);
@@ -514,7 +524,7 @@
     function auditAppend(entry) {
         var a = _auditRead();
         var last = a.entries.length ? a.entries[a.entries.length - 1] : null;
-        var prev = last ? last.hash : ((a.summary && a.summary.chainHash) || '');
+        var prev = last ? last.hash : ((a.summary && a.summary.chainHash) || GENESIS);
         var seq = last ? (last.seq + 1) : ((a.summary && a.summary.toSeq) ? a.summary.toSeq + 1 : 1);
         var e = {
             seq: seq, at: (entry && entry.at) || new Date().toISOString(), who: String((entry && entry.who) || ''),
@@ -535,7 +545,7 @@
         return ok ? e : null;
     }
     function auditVerify() {
-        var a = _auditRead(), prev = (a.summary && a.summary.chainHash) || '';
+        var a = _auditRead(), prev = (a.summary && a.summary.chainHash) || GENESIS;
         for (var i = 0; i < a.entries.length; i++) {
             var e = a.entries[i];
             if (e.prevHash !== prev || _entryHash(prev, e) !== e.hash) return { ok: false, at: e.seq, n: a.entries.length };

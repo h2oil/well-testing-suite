@@ -289,9 +289,21 @@ module.exports = [
       assert.ok(Math.abs(back.p[77777] - rec.p[77777]) < 0.0006);
       app.flush(5000);
       assert.strictEqual(app.pendingTimers(), 0, 'no timers left');
-      // audit chain
+      // audit chain: the first entry links to GENESIS; lossless (an edit in the 7th digit of a value breaks it)
+      const first = S.audit.append(app.toWin({ kind: 'run', who: 'A', reason: 'first', target: null, value: 1.2345678 }));
+      assert.strictEqual(first.prevHash, '0000000000000000', 'genesis');
+      const raw0 = JSON.parse(app.storage.getItem('wts_buildup_audit'));
+      raw0.entries[0].value = 1.2345679;
+      app.storage.setItem('wts_buildup_audit', JSON.stringify(raw0));
+      assert.strictEqual(S.audit.verify().ok, false, 'a 7th-digit edit breaks the chain');
+      app.storage.removeItem('wts_buildup_audit');
       for (let i = 0; i < 520; i++) S.audit.append(app.toWin({ kind: i % 2 ? 'override' : 'run', who: 'A', reason: 'r' + i, target: 'B1', value: i }));
       const v = S.audit.verify();
+      // one recipe for both chains: every stored entry hash equals the review's entryHash
+      const RA = app.win.WTS_buildup.review && app.win.WTS_buildup.review.audit;
+      if (RA && typeof RA.entryHash === 'function') {
+        S.audit.list().slice(-5).forEach((e) => assert.strictEqual(e.hash, RA.entryHash(e.prevHash, e), 'store entry ' + e.seq + ' hash = review.audit.entryHash'));
+      }
       assert.ok(v.ok, 'chain verifies after folding: ' + JSON.stringify(v));
       const sum = S.audit.summary();
       assert.ok(sum && sum.n >= 20 && sum.chainHash, 'oldest entries folded into a summary with their chain hash');
