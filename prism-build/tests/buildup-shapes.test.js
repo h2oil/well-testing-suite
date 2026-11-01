@@ -290,10 +290,12 @@ module.exports = [
         assert.deepStrictEqual(tt.bins, { dte: r.bins.dte, dp: r.bins.dp }, 'TrendTest ' + tt.id + ' bins');
       });
 
-      // S(t) for T8 and T13: piecewise linear through the used tests with the onset knot (τ̂, S_base); constant outside
+      // S(t) for T8 and T13: piecewise linear through the used tests with the onset knot (τ̂, S_base) inserted between tests
+      // (a used test at τ̂ keeps its own value — the refreshed onset sits on B3); constant outside
       const tau = tr.onset.tauDays;
-      const knots = used.filter((t) => tD(t.tc_ms) < tau).map((t) => [tD(t.tc_ms), t.result.final.S]).concat([[tau, Sb]])
-        .concat(used.filter((t) => tD(t.tc_ms) > tau).map((t) => [tD(t.tc_ms), t.result.final.S]));
+      const vals = used.map((t) => [tD(t.tc_ms), t.result.final.S]);
+      const knots = vals.some((k) => Math.abs(k[0] - tau) < 1e-9) ? vals
+        : vals.filter((k) => k[0] < tau).concat([[tau, Sb]]).concat(vals.filter((k) => k[0] > tau));
       const lin = (k, x) => { if (x <= k[0][0]) return k[0][1]; for (let i = 1; i < k.length; i++) if (x <= k[i][0]) return k[i - 1][1] + (k[i][1] - k[i - 1][1]) * (x - k[i - 1][0]) / (k[i][0] - k[i - 1][0]); return last(k)[1]; };
       const days = an.rates.days, midD = (d) => tD(0.5 * (d.t0_ms + d.t1_ms));
       // T8 cumulative since τ̂ = Σ_days q_d·[(X + S(t_d))/(X + S_base) − 1]

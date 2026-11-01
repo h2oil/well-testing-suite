@@ -434,6 +434,11 @@ module.exports = [
       near(assert, hs.jump, 5, 1e-9, 'step size'); near(assert, hs.b, 0, 1e-9, 'flat after the step');
       assert(hs.interval[0] >= 30 && hs.interval[1] < 40, 'step interval inside the bracketing tests: ' + hs.interval);
       assert.strictEqual(T.hinge(days.slice(0, 5), [1, 1, 1, 2, 3], w.slice(0, 5)).indicative, true, 'n < 6 → indicative');
+      // FIX: the refreshed onset (§3.13) is this engine's output on the fixture
+      const an = S.FIX.analysis;
+      out = T.compute(S.FIX.samples.TrendTests, fixCtx(an));
+      assert.deepStrictEqual(J(out.onset), J(an.trend.onset), 'FIX onset');
+      assert.deepStrictEqual(J(out.recent), J(an.trend.recent), 'FIX recent');
       // CUSUM helper: alarm at the first C > h, onset at the last C = 0 before it
       const c = T.cusum([0, 0.1, -0.2, 0.05, 15, 16], 0.5, 4);
       assert.deepStrictEqual([c.alarm, c.onset], [4, 3]);
@@ -570,6 +575,8 @@ module.exports = [
       let cum = 0;
       an.rates.days.forEach((d) => { const td = (0.5 * (d.t0_ms + d.t1_ms) - first) / DAY; if (td >= out.onset.tauDays) cum += S.FORMULAS.atStakeDay(d.q, X, lin(kn, td), out.baseline.S); });
       near(assert, out.pi.cumAtStake, cum, 1e-6 * Math.abs(cum), 'cumulative since τ̂ (q_d per day)');
+      near(assert, out.pi.cumAtStake, an.trend.pi.cumAtStake, 1e-9 * Math.abs(cum), 'FIX cumulative (refreshed, §3.13)');
+      assert.deepStrictEqual([out.pi.cumFrom, out.pi.cumFromDays], [an.trend.pi.cumFrom, an.trend.pi.cumFromDays], 'FIX cumFrom');
     },
   },
 
@@ -891,6 +898,9 @@ module.exports = [
         near(assert, pc.rows[i].RJ, median(ratios), 1e-9, a.id + '→' + b.id + ' R_J');
       });
       assert.strictEqual(pc.consistent, pc.rows.every((r) => r.RJ >= 0.8 && r.RJ <= 1.25), 'consistent = every R_J in [0.8, 1.25]');
+      pc.rows.forEach((r, i) => { near(assert, r.RJ, an.trend.piCheck.rows[i].RJ, 1e-9, 'FIX R_J ' + r.from + '→' + r.to); assert.strictEqual(r.nDays, an.trend.piCheck.rows[i].nDays, 'FIX nDays'); });
+      near(assert, pc.rho, an.trend.piCheck.rho, 1e-12, 'FIX ρ (refreshed, §3.13)');
+      assert.strictEqual(pc.consistent, an.trend.piCheck.consistent, 'FIX consistent');
       // the datum copy is optional: without it the same rows come from pwfMean_psia
       const noDatum = J(ctx); noDatum.days.forEach((d) => { d.pwfMeanDatum_psia = null; });
       const out2 = T.compute(app.toWin(tts), app.toWin(noDatum));
