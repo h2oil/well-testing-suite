@@ -9609,6 +9609,14 @@ G.WTS_calcRegistry.historian = {
     }
 
     // Table mode (D15): periods from the time-stamped rates; the rise detector only refines t_c within ±max(10 min, 5·Δt_med).
+    // Index of the row before a tabled closing ramp: rows i0 < i that are non-zero, each lower than the row before it,
+    // within tol_ms of the zero row i (a choke-back over a few minutes, logged row by row). Returns i − 1 when there is
+    // no ramp. M§A3: the ramp is part of the closing (t_c at its midpoint, Δq the rate before it).
+    function _tableRampStart(rows, i, tol_ms) {
+        var r = i - 1;
+        while (r >= 1 && mAbs(rows[r].q) > 0 && mAbs(rows[r].q) < mAbs(rows[r - 1].q) && rows[i].t_ms - rows[r].t_ms <= tol_ms) r--;
+        return r;
+    }
     function _detectTable(C, rt) {
         var t = C.t, n = C.n, S = C.S, events = [];
         var rows = (rt || []).filter(function (r) { return r && isNum(r.t_ms) && isNum(r.q); }).slice().sort(function (a, b) { return a.t_ms - b.t_ms; });
@@ -9618,13 +9626,16 @@ G.WTS_calcRegistry.historian = {
             var Tc = rows[i].t_ms, To = INF;
             for (var k = i + 1; k < rows.length; k++) if (mAbs(rows[k].q) > 0) { To = rows[k].t_ms; break; }
             if (Tc <= t[0] || Tc >= t[n - 1]) continue;
+            // a closing ramp in the table (falling non-zero rows within the tolerance before the zero row) is part of the
+            // closing: the rate before it is the pre-ramp row (as rateTable reads it)
+            var ib = _tableRampStart(rows, i, tol);
             var tw = _trendWindow(C, lowerBound(t, Tc - tol) - 1, prevEndIdx + 1, Tc, prevEndIdx >= 0 ? t[prevEndIdx] : null);
             var j1 = _firstShut(C, tw.tr, lowerBound(t, Tc - tol), lowerBound(t, Tc + tol + C.w));
             if (j1 < 1) j1 = mMax(1, lowerBound(t, Tc));
             if (j1 >= n) continue;
             var endIdx = _isFin(To) ? mMax(j1, lowerBound(t, To) - 1) : n - 1;
             var ev = _newEvent(C, j1, tw.tr, tw.warnings, {
-                tEnd_ms: t[endIdx], endReason: _isFin(To) ? 'reopen' : 'data_end', fhat: 1, qBefore: mAbs(rows[i - 1].q), qAfter: 0
+                tEnd_ms: t[endIdx], endReason: _isFin(To) ? 'reopen' : 'data_end', fhat: 1, qBefore: mAbs(rows[ib].q), qAfter: 0
             });
             Object.defineProperty(ev, '_tableClose', { value: Tc, enumerable: false, writable: true });
             refineClosing(C.record, ev, C.qc);
@@ -9913,12 +9924,16 @@ G.WTS_calcRegistry.historian = {
         var f = ((a / b) * qRatio * Lref + Hev) / lr;
         return isNum(f) ? f : null;
     }
-    // f̂ of a precursor (an event that ended at a sharper rise, END_AT_RISE) from the closing that follows it within 2 h:
+    // f̂ of a precursor (an event that ended at a sharper rise, END_AT_RISE) from the closing that follows it:
     // r = Δp_ev(Δt)/Δp_next(Δt) at Δt = min(1 h, half of each duration), f̂ = r/(1 + r). Null when it does not apply.
-    function _fhatChain(record, ev, nx) {
+    // The split ends the precursor one flowing-trend window Lt = max(30 min, 10·Δt_med) before the window that holds the
+    // sharper rise (_findEnd), and the closing follows that rise within the multi-scale reach, so the closing comes at
+    // most max(2 h, Lt + 1.5 h) after the precursor's end (lead_ms = Lt; 2 h at Δt_med ≤ 1 min, 3.2 h at 10 min sampling).
+    function _fhatChain(record, ev, nx, lead_ms) {
         if (!ev || !nx || nx.dropped || !_isShutKind(nx) || !isNum(ev.tEnd_ms) || !isNum(nx.tc_ms)) return null;
         if (!(ev.warnings || []).some(function (w) { return w.code === 'END_AT_RISE'; })) return null;
-        if (!(nx.tc_ms - ev.tEnd_ms <= 2 * HOUR) || !(nx.tc_ms > ev.tc_ms)) return null;
+        var gapMax = mMax(2 * HOUR, (isNum(lead_ms) ? lead_ms : 30 * MIN) + 1.5 * HOUR);
+        if (!(nx.tc_ms - ev.tEnd_ms <= gapMax) || !(nx.tc_ms > ev.tc_ms)) return null;
         var dts = mMin(1, 0.5 * num(ev.dtEnd_h, 0), 0.5 * num(nx.dtEnd_h, 0));
         if (!(dts > 0)) return null;
         var a1 = _dpAt(record, ev, dts), a2 = _dpAt(record, nx, dts);
@@ -9938,7 +9953,7 @@ G.WTS_calcRegistry.historian = {
 
     // events + record + preliminary days (rates computed with every event as a full shut-in) → events with kind, status,
     // fhat, fhatMethod and alloc set (M§A4), interventions flagged. opts {rh (preliminary RateHistory), workovers, settings
-    // (detect), table (bool), pExt {[eventId]: psia} (optional), Ts}
+    // (detect), table (bool), pExt {[eventId]: psia} (optional), Ts, dtMed_s (QC median sampling interval: the precursor gap)}
     function classifyJob(events, record, days, opts) {
         opts = opts || {};
         var C = D.DEFAULTS.classify, S = detectSettings(opts.settings);
@@ -9947,6 +9962,8 @@ G.WTS_calcRegistry.historian = {
         var table = !!opts.table || !!(rh && rh.mode === 'table');
         var hasAlloc = !!(dayList && dayList.length) && !table;
         var prevShuts = [], fnCache = {}, stp = rh && rh.steps;
+        // the split rule's flowing-trend window (the precursor ends this long before the sharper rise, _findEnd)
+        var leadMs = mMax(S.trendMin * MIN, S.trendDtFactor * (isNum(+opts.dtMed_s) && +opts.dtMed_s > 0 ? +opts.dtMed_s : 60) * SEC);
         function lnFn(e) {
             if (fnCache[e.id] !== undefined) return fnCache[e.id];
             var open = record.t[0] - D.DEFAULTS.rates.prependMin_h * HOUR, k2 = events.indexOf(e);
@@ -10034,7 +10051,7 @@ G.WTS_calcRegistry.historian = {
                 // level), so it cut part of the rate and the closing cut the rest. With the same well response,
                 // Δp_ev(Δt)/Δp_next(Δt) = f/(1 − f) at the same Δt after each closing (superposition; skin and storage
                 // cancel), so f̂ = r/(1 + r) (method 'derivRatio'). The allocation of the day they share cannot separate them.
-                var fChain = _fhatChain(record, ev, events[idx + 1]);
+                var fChain = _fhatChain(record, ev, events[idx + 1], leadMs);
                 // (rateEnd_ms, extra key: the cut lasts until that closing, so the rate history carries no full-rate gap
                 // over the closing's trend window and the closing's Δq is the rate the cut left)
                 if (fChain !== null) { f1 = fChain; confirmed = false; ev.rateEnd_ms = events[idx + 1].tc_ms; }
@@ -10558,6 +10575,13 @@ G.WTS_calcRegistry.historian = {
             var best = -1, bd = INF;
             for (var i = 1; i < steps.length; i++) if (steps[i].q === 0 && steps[i - 1].q > 0) { var dd = mAbs(steps[i].t_ms - e.tc_ms); if (dd < bd) { bd = dd; best = i; } }
             var tol = tolT;
+            if (best > 0 && bd <= tol) {
+                // a closing ramp logged row by row (falling rows within the tolerance before the zero row) is one closing
+                // at t_c with the rate before the ramp: M§A3 places t_c at the ramp midpoint and models the ramp as two
+                // half-rate steps, so Δq is the pre-ramp rate (not the last, smallest ramp row)
+                var r0 = _tableRampStart(steps, best, tol);
+                if (r0 < best - 1) { steps.splice(r0 + 1, best - 1 - r0); best = r0 + 1; }
+            }
             if (best > 0 && bd <= tol && (best + 1 >= steps.length || steps[best + 1].t_ms > e.tc_ms) && steps[best - 1].t_ms < e.tc_ms) steps[best].t_ms = e.tc_ms;
             else {
                 var k = lowerBound(steps.map(function (s) { return s.t_ms; }), e.tc_ms);
@@ -10677,11 +10701,11 @@ G.WTS_calcRegistry.historian = {
                 }
                 var Ts = mMax(S.riseMin, S.riseSig * num(q0.sigma_psi, 0));
                 if (st.phase === 'rates') {                  // preliminary rates (every event as a full shut-in)
-                    if (table) st.sub = classifyJob(events, rec, null, { table: true, settings: S, workovers: opts.workovers, Ts: Ts });
+                    if (table) st.sub = classifyJob(events, rec, null, { table: true, settings: S, workovers: opts.workovers, Ts: Ts, dtMed_s: q0.dtMed_s });
                     else if (rows && rows.length) {
                         var pre = rates(rec, events, rows, rateOpts(true));
                         if (pre && pre.ok === false) { res = pre; return { done: true, progress: 1, label: 'No allocation' }; }
-                        st.sub = classifyJob(events, rec, pre.days, { rh: pre, settings: S, workovers: opts.workovers, Ts: Ts });
+                        st.sub = classifyJob(events, rec, pre.days, { rh: pre, settings: S, workovers: opts.workovers, Ts: Ts, dtMed_s: q0.dtMed_s });
                     } else {
                         res = { ok: false, code: 'NO_RATES', errors: ['Load a daily allocation or a time-stamped rate table.'], bad: ['allocation'] };
                         return { done: true, progress: 1, label: 'No rates' };
@@ -17178,7 +17202,12 @@ G.WTS_calcRegistry.historian = {
             var days = al.days, k = -1;
             for (var j = 0; j < days.length; j++) if (tc >= days[j].t0 && tc < days[j].t0 + 24) k = j;
             var dy = days[k];
-            var cut = ev.pb ? (1 - ev.pb.f) : 1;   // a partial cut before the closing: the post-cut rate
+            // A partial cut before the closing: the post-cut rate (§5.3). That is the generator's pb factor, or an intra-day
+            // rate decrease of at least 10 %: the engine's classification gate (§4.3 M§A4) makes a removed fraction f̂ ≥ 0.1
+            // a partial cut, so a correct reading of the pressure and the volumes gives the rate after it. A smaller
+            // decrease or an increase makes no event, and the day's volume over its flowing hours stays the reading.
+            var pb = ev.pb || ((ev.intra && 1 - ev.intra.factor >= 0.1) ? { f: 1 - ev.intra.factor, lead: ev.intra.lead } : null);
+            var cut = pb ? (1 - pb.f) : 1;
             if (SC.alloc.ignoresShutin && k > 0) {
                 var ref = [];
                 for (var m = k - 1; m >= 0 && ref.length < 3; m--) if (days[m].hOn >= 23.5) ref.push(24 * days[m].Vg / days[m].hOn);
@@ -17189,8 +17218,8 @@ G.WTS_calcRegistry.historian = {
                 // a closing ramp counts as half its length (two half-rate steps, t_c at its midpoint, §4.3): the true
                 // flowing hours up to t_c are hOn − ramp/2, so 24·V/h reads the pre-ramp rate exactly
                 var rIn = MM.max(0, MM.min(rampH, tc - dy.a)), base = 24 * dy.Vg / MM.max(1e-6, dy.hOn - 0.5 * rIn);
-                if (ev.pb) {
-                    var h2 = MM.max(0, tc - MM.max(dy.a, tc - ev.pb.lead)), h1 = MM.max(0, dy.hOn - h2), f0 = ev.pb.f;
+                if (pb) {
+                    var h2 = MM.max(0, tc - MM.max(dy.a, tc - pb.lead)), h1 = MM.max(0, dy.hOn - h2), f0 = pb.f;
                     base = (1 - f0) * 24 * dy.Vg / (h1 + (1 - f0) * MM.max(1e-6, h2 - 0.5 * rIn));
                 }
                 qCorrect = base;
@@ -21730,9 +21759,13 @@ G.WTS_calcRegistry.historian = {
                 if (i >= cases.length) return { done: true, progress: 1, label: '' };
                 var c = cases[i];
                 try {
-                    // one work unit per step: the case is generated through synth.generateJob (§3.9), then analysed
+                    // one work unit per step: the case is generated through synth.generateJob (§3.9), then analysed.
+                    // The check repeats the calibration run exactly (buildup-validate.js --lite): the lite case
+                    // (60 s sampling, ≤ 30 days), the generator's own AnalysisInput (synth.toInput: its history,
+                    // zones, allocation resolution and the default settings, not the page's) and synth.scoreAnalysis
+                    // (the test matched to the true closing within 1 h).
                     if (!sub) {
-                        var spec = S.caseFromSeed(c.seed);
+                        var spec = S.caseFromSeed(c.seed, { lite: true });
                         sub = { gen: typeof S.generateJob === 'function' ? S.generateJob(spec) : null, spec: spec, sc: null, job: null };
                         if (!sub.gen) sub.sc = S.generate(spec);
                         if (sub.gen) return { done: false, progress: i / cases.length, label: 'Case ' + (i + 1) + ': generating' };
@@ -21745,20 +21778,20 @@ G.WTS_calcRegistry.historian = {
                         return { done: false, progress: i / cases.length, label: 'Case ' + (i + 1) + ': generated' };
                     }
                     if (!sub.job) {
-                        var sc = sub.sc;
-                        sub.job = R.job({ record: sc.record, stored: null, allocation: sc.allocation ? { rows: sc.allocation.rows, gUnit: 'Mscf', resolution: { oil: null, gas: null, water: null } } : null,
-                            rateTable: sc.rateTable || null, well: sc.well, completion: null, depth: null, history: { mode: 'unknown', date: null, cum: null },
-                            zones: { gauge: { mode: 'utc' }, day: { zone: { mode: 'utc' }, startHour: 0 } }, settings: gather().input.settings, overrides: [], workovers: [],
-                            meta: { wellName: 'Check case', engineer: '', appVersion: _appVer() } }, {});
+                        var inp = S.toInput(sub.sc, { appVersion: _appVer() });
+                        inp.meta.wellName = 'Check case';
+                        sub.job = R.job(inp, {});
                     }
                     var st = sub.job.step();
                     if (st.done) {
-                        var an = sub.job.result(), tr = sub.sc.truth || {}, best = null;
-                        (an && an.tests || []).forEach(function (t) { if (!best || Math.abs(t.tc_ms - tr.tc_ms) < Math.abs(best.tc_ms - tr.tc_ms)) best = t; });
-                        var sco = best ? S.score(best, tr, {}) : null, ex = c.expect || {};
+                        var an = sub.job.result(), m = S.scoreAnalysis(an, sub.sc), sco = m ? m.score : null, ex = c.expect || {};
                         var lab = sco && sco.label ? sco.label : {};
-                        var ok = !!sco && sco.status === ex.status && lab.ks === ex.ks && lab.headline === ex.headline;
-                        if (ok) same++; else if (_fin(c.margin) && c.margin < 0.1) near++; else diffs.push(String(c.seed));
+                        var ok = !!sco && sco.status === ex.status && (lab.ks || null) === (ex.ks || null) && (lab.headline || null) === (ex.headline || null);
+                        // a difference whose recomputed evidence lies within the stored margin of a threshold is "near a
+                        // threshold" (§5.6), not a failure
+                        var ev = m && m.test && m.test.result ? m.test.result.evidence : null, AI = G.PRiSM_autoInterp;
+                        var mNow = (ev && AI && typeof AI.thresholdMargin === 'function') ? AI.thresholdMargin(ev, cal.thresholds) : null;
+                        if (ok) same++; else if (_fin(c.margin) && _fin(mNow) && mNow <= c.margin) near++; else diffs.push(String(c.seed));
                         done++; i++; sub = null;
                     }
                 } catch (e) { diffs.push(String(c.seed)); done++; i++; sub = null; }
