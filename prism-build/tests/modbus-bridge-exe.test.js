@@ -232,7 +232,7 @@ module.exports = [
       const S = fakeWin();
       try {
         fs.mkdirSync(S.P.dir, { recursive: true });
-        const mine = { _comment: 'mine', allow: ['10.0.0.5:502'], allowMode: 'list', port: 8600, listen: '127.0.0.1', origins: ['https://my.site'], anyOrigin: false, allowWrites: true, verbose: true };
+        const mine = { _comment: 'mine', allow: ['10.0.0.5:502'], allowMode: 'list', port: 8600, listen: '127.0.0.1', origins: ['https://app.company.example'], anyOrigin: false, allowWrites: true, verbose: true };
         fs.writeFileSync(S.P.config, JSON.stringify(mine));
         assert.strictEqual(await S.app.main(['--quiet']), 0);
         assert.deepStrictEqual(S.cfg(), mine, 'kept as it is');
@@ -240,7 +240,7 @@ module.exports = [
         assert.deepStrictEqual(S.lastHealth, { port: 8600, host: '127.0.0.1' }, 'health checked on the configured port');
         await S.app.main(['--allow', '10.0.0.6:0502', '--allow', '10.0.0.5:502', '--read-only', '--quiet']);
         let c = S.cfg();
-        assert.deepStrictEqual([c.allow, c.allowWrites, c.port, c.origins, c.verbose, c._comment], [['10.0.0.5:502', '10.0.0.6:502'], false, 8600, ['https://my.site'], true, 'mine']);
+        assert.deepStrictEqual([c.allow, c.allowWrites, c.port, c.origins, c.verbose, c._comment], [['10.0.0.5:502', '10.0.0.6:502'], false, 8600, ['https://app.company.example'], true, 'mine']);
         await S.app.main(['--allow-any', '--allow-writes', '--port', '8700', '--quiet']);
         c = S.cfg();
         assert.deepStrictEqual([c.allow, c.allowMode, c.allowWrites, c.port], [[], 'any', true, 8700], '--allow-any empties the list (any device)');

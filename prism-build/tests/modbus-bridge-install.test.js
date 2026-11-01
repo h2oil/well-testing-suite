@@ -830,14 +830,14 @@ module.exports = [
         assert.deepStrictEqual([c.allow, c.port, c.allowWrites], [['127.0.0.1:5020'], 8530, true]);
         assert.match(r.stdout, /Keeping the settings of the existing .*bridge-config\.json \(1 target/);
         // "not in the allow-list" fix: --allow one more device — added, nothing dropped
-        const hand = Object.assign(c, { origins: ['https://my.site'], verbose: true });
+        const hand = Object.assign(c, { origins: ['https://app.company.example'], verbose: true });
         fs.writeFileSync(path.join(sb.dir, 'bridge-config.json'), JSON.stringify(hand, null, 2));
         r = runSh(inst, ['--no-start', '--allow', '192.168.1.11:0502', '--origin', 'null', '--listen', 'localhost'], sb.env);
         assert.strictEqual(r.status, 0, r.stderr);
         c = readCfg(sb.dir);
         assert.deepStrictEqual(c.allow, ['127.0.0.1:5020', '192.168.1.11:502']);
         assert.deepStrictEqual([c.port, c.allowWrites, c.verbose, c.listen], [8530, true, true, '127.0.0.1'], 'port, writes, verbose kept; localhost → 127.0.0.1');
-        assert.deepStrictEqual(c.origins, ['https://my.site', 'null']);
+        assert.deepStrictEqual(c.origins, ['https://app.company.example', 'null']);
         assert.ok(fs.existsSync(path.join(sb.dir, 'bridge-config.json.bak')));
         r = runSh(inst, ['--no-start', '--read-only'], sb.env);
         assert.strictEqual(readCfg(sb.dir).allowWrites, false);
@@ -873,7 +873,7 @@ module.exports = [
     async run(app, assert) {
       if (!unixInstall || process.platform !== 'linux') { console.log('      (skipped: needs Linux bash)'); return; }
       const SH = path.join(TOOLS, 'install.sh');
-      const OLD = { _comment: 'old', allow: ['192.168.1.10:502'], port: 8531, listen: '127.0.0.1', origins: ['https://my.site'], anyOrigin: false, allowWrites: true, verbose: false };
+      const OLD = { _comment: 'old', allow: ['192.168.1.10:502'], port: 8531, listen: '127.0.0.1', origins: ['https://app.company.example'], anyOrigin: false, allowWrites: true, verbose: false };
       const NOTE = 'Allow-list 192.168.1.10:502 replaced by any device (default since 1.2). Use --keep-allow to keep it.';
       const sb = sandboxHome('migrate');
       const seed = (cfg) => { fs.mkdirSync(sb.dir, { recursive: true }); fs.writeFileSync(path.join(sb.dir, 'bridge-config.json'), JSON.stringify(cfg || OLD, null, 2)); };
@@ -884,7 +884,7 @@ module.exports = [
         assert.strictEqual(r.status, 0, r.stderr);
         assert.includes(r.stdout, NOTE);
         let c = readCfg(sb.dir);
-        assert.deepStrictEqual([c.allow, c.allowMode, c.port, c.allowWrites, c.origins], [['*:*'], 'any', 8531, true, ['https://my.site']]);
+        assert.deepStrictEqual([c.allow, c.allowMode, c.port, c.allowWrites, c.origins], [['*:*'], 'any', 8531, true, ['https://app.company.example']]);
         assert.deepStrictEqual(Object.keys(c).slice(0, 3), ['_comment', 'allow', 'allowMode']);
         const { parseConfig } = require(path.join(TOOLS, 'modbus-bridge.js'));
         assert.deepStrictEqual(parseConfig(fs.readFileSync(path.join(sb.dir, 'bridge-config.json'), 'utf8')).warnings, [], 'no unknown-key warning for allowMode');
