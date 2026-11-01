@@ -326,7 +326,7 @@ WBS–skin hump as linear flow), and `PRiSM_deconvolve` (synchronous, 1.7 s). A 
 | `derivative(x, dp, Lcyc, opts)` | `x` = ln Δt_e (ascending), `dp` psi, `Lcyc` log10 cycles | `{deriv:[number\|null], full:[bool], neg:[index], L_ln}` |
 | `prepare(spec)` | `BuildupSpec` | `Prep` or failure (`NO_DATA`, `BAD_HISTORY`, `TOO_FEW_POINTS`, `BAD_WELL`) |
 | `storage(prep)` | | `Storage` |
-| `iarf(prep, opts)` | `opts` overrides `DEFAULTS.iarf`; `opts.window {dt0_h, dt1_h}` forces a window | `Iarf` |
+| `iarf(prep, opts)` | `opts` overrides `DEFAULTS.iarf`; `band`, `slope` and `minCycles` come from `opts`, else `prep.spec.opts` (the page settings), else `DEFAULTS.iarf`; `opts.window {dt0_h, dt1_h}` forces a window | `Iarf` |
 | `line(prep, iarf, opts)` | | `Line` (with the shifted lines for S_win) or `null` (no window) |
 | `gridEntry(key, prep, opts)` | `key` ∈ `homogeneous`, `linearBoundary`, `composite2`, `closedCircle`; `opts {perDecade=10}` | registry-like entry `{pd, pdPrime, paramSpec, defaults, refLength:'rw', kind:'pressure', timeInput:'td', category, description, reference, evalCostMs, base}` |
 | `fitJob(key, prep, opts)` | `opts {start, freeze, params0, maxIterTotal=40, objective='dp+deriv'}` | `Job<ModelFit>` |
@@ -338,9 +338,10 @@ WBS–skin hump as linear flow), and `PRiSM_deconvolve` (synchronous, 1.7 s). A 
 | `fullySeen(key, prep, iarf, fit)` | | `FullySeen` |
 | `agreement(line, fit, prep)` | | `Agreement` (with the bias of every shifted line) |
 | `cHeldJob(prep, fit, opts)` | `opts {mode:'auto'\|'off'\|'extended'}` | `Job<CHeld>` |
-| `pStarRange(prep, line, spec)` | | `{lo, hi, byFactor:{0.5, 1, 2, 10}}` when `history.estimated`, else `null` |
+| `pStarRange(prep, line, spec)` | | `{lo, hi, byFactor:{0.5, 1, 2, 10}}` when `history.estimated`, else `null`. Scope: the ×10 factor covers a true history of up to ten times the default prepend (known data + 300 days with the 30-day default); a much longer true history (for example 5 years with 90 days known) can lie outside the range (EN22) |
 | `pExt(prep, fit, family)` | `family` `'infinite'\|'closed'`; `fit` the test's chosen fit (closed family: r_e from the analysis) | psia at the gauge: p* (infinite) or p̄ (closed) |
-| `kHeldJob(prep, opts)` | `opts {k, delta}` | `Job<KHeld>`: the k-held fit plus two refits at k·(1 ± δ) |
+| `kHeldJob(prep, opts)` | `opts {k, delta}` | `Job<KHeld>`: the k-held fit plus two refits at k·(1 ± δ). The result is plain JSON data at the stored precision, without the fit's internal fields; `job.raw()` returns the full object for diagnostics |
+| `storedSensitivity(final, well)` | | the `Sensitivity` block rebuilt exactly from a stored result's `final` (k and S at `STORE_SF`) |
 | `sErr(parts)` | `{mode:'line'\|'kHeld'\|'model', seS, sLine, sMatch, sWin, sTc, sPwf, sK, sC, sSens, floor}`; `seS` = the chosen fit's `ModelFit.se.S`, already inflated by √(n/n_eff) (no separate `nOverNeff`) | `SErr` |
 | `sensitivity(final, well, ranges)` | `ranges {req, typ}`, each `{h, phi, ct, rw, B, mu, q}` fractions (§4.6 item 16) | `Sensitivity` |
 | `confidence(ev, cal)` | `ev` = `EvidenceVector` (below); `cal` = `PRiSM_autoInterpCal` or null | `Confidence` |
@@ -389,7 +390,8 @@ work unit of at most `DEFAULTS.budget.unitMs` estimated desktop cost (§4.8). `i
   history: { estimated: bool, tPrepend_h: number, source: 'data'|'date'|'cum'|'default' },
   overrides: { window: null | {dt0_h, dt1_h}, model: null | key, excludeRivals: [key] },
   opts: { Lcyc: 0.1, binsPerCycle: 20, fitBinsPerCycle: 12, rivals: 'auto'|'none'|'all',
-          cheld: 'auto'|'off'|'extended', tide: 'auto'|'off' }
+          cheld: 'auto'|'off'|'extended', tide: 'auto'|'off',
+          band: 0.10, slope: 0.03, minCycles: 0.5 }  // from Settings.interp; iarf() reads them (explicit opts first)
 }
 ```
 
@@ -405,12 +407,18 @@ tideRemoved:bool, warnings}`, where:
   (ln units); `timeFn:'superposition'`; `timeFnSpec {kind:'superposition', tp, terms:[{w, off}]}` from the compacted history; `sign`
   (+1 build-up, −1 fall-off); `pRef` = `pRefPressure` = pwf0; `pRefSource:'pwf0'`; `dRef:'start'`; `testType`; `tStart` = `tShut` =
   t_c (h); `tp`; `qRef` = `qFlow` = Δq; `rateHistory [{t, q}]` (compacted, ending with q = 0 at t_c); `stepIndex`; `periods:[]` (34 then
-  builds its steps from `rateHistory`); `fluid`; `pseudo` and `mpSpec` (gas); `dpUnit`; `warnings:[]`.
+  builds its steps from `rateHistory`); `fluid`; `pseudo` and `mpSpec` (`pseudo:false` and `mpSpec:null` for gas too: the engine fits the
+  normalised pseudo-pressure p_n in liquid form, and `pseudo:true` would make `PRiSM_physicalModel` switch to the m(p) coefficient and
+  table); `dpUnit`; `warnings:[]`.
 - `well` (C1-shaped, as passed to PRiSM): `{fluid, q: Δq, B, mu, ct, h, phi, rw, T_R (gas), pi:null, complete:true, missing:[],
   defaulted:[]}`. Defaulted inputs never reach `fitPhysical` (which would flag S "not identifiable" with a PRiSM-only message);
   they are handled by V13 and the label.
 
-**`BuildupResult`** (per test; the stored copy drops `curves`, `bins.X` and `bins.dte`, which are recomputable, and is under 6 kB JSON):
+**`BuildupResult`** (per test; built once at 6 significant figures, `STORE_SF`, the precision of canon `'inputs'`, so the in-memory and
+stored numbers are the same and the labels re-derive exactly from the stored evidence; the stored copy drops `curves`, `bins.X` and
+`bins.dte`, which are recomputable, and is about 10 kB JSON per test (under 11 kB for the 72-h reference, EN23). The earlier "under
+6 kB" target is not reachable with every required key at 6 figures (about 7 kB); dropping the sensitivity rows and the derivative
+arrays from the stored copy is a later option):
 
 ```js
 {
@@ -574,10 +582,10 @@ values). Values marked "cal" in §4.10 are overridden by `PRiSM_autoInterpCal.th
 |---|---|---|
 | `perforationSkin(i)` | `{rw_ft, lp_in, rp_in, spf, phase_deg ∈ {0,45,60,90,120,180}, kvkh}` | `{ok, S_H, S_V, S_wb, S_perf, verified:bool, warnings}`. Returns `ok:false, code:'UNVERIFIED'` when the coefficient table is not marked verified (§11 Q7) |
 | `mechanicalSkin(i)` | `{S_total, Serr, h, rw, completion:{hp_ft, htop_ft, theta_deg, kvkh:[lo,hi], perf\|null}, D\|null, q\|null}` | `{available, S_geo, S_geo_lo, S_geo_hi, parts:{pp, ppMethod, theta, perf\|null}, S_mech (pressure-drop basis), S_mech_err, S_d_local (= S_mech·hp/h), validity:[{code, text}], warnings}` |
-| `rateSkin(rows, opts)` | `rows [{id, t_days, q, S, Serr}]`, `opts {qRatioMin:1.5, maxDays:60, joint:true, expected:{k, h, hp, rw, sg, mu_g}}` | `{resolved, S, D, seD, n, qRatio, joint:null\|{S0, r_per30d, D, seD}, expectedD, consistent:bool\|null, reason, ev:['T15']}` |
-| `products(i)` | `{S, k, h, B, mu, q, Dq, rw, re_ft, reSource:'input'\|'rinv', pbar\|null, pwf}` | `{dpSkin_psi, m, X, reAssumed:bool, piRatio, piRatioLowerBound:bool, rateAtStakeUpperBound:bool, FE\|null, DR\|null, guard:bool}`, where `m = 162.6·Dq·B·μ/(k·h)` and guard means X + S < 1 |
+| `rateSkin(rows, opts)` | `rows [{id, t_days, q, S, Serr}]`, `opts {qRatioMin:1.5, maxDays:60, joint:true, stable:bool, expected:{k, h, hp, rw, sg, mu_g}}`. `stable:true` = the caller checked there is no skin trend; the joint fit is always refused when \|corr(q, t)\| ≥ 0.8. The window is the span of at most `maxDays` holding the most tests (the latest on a tie) | `{resolved, S, D, seD, n, qRatio, joint:null\|{S0, r_per30d, D, seD}, expectedD:number\|null (the correlation's central D), expectedDRange:{D, lo, hi, beta, unit, method}\|null, consistent:bool\|null, reason, ev:['T15']}`. Helpers: `expectedDRange(expected)`, `historyCheck(…)`, `gasDpSkin(…)` |
+| `products(i)` | `{S, k, h, B, mu, q, Dq, rw, re_ft, reSource:'input'\|'rinv', pbar\|null, pwf, dpSkin_psi?}` | `{dpSkin_psi, m, X, reAssumed:bool, piRatio, piRatioLowerBound:bool, piRatioUpperBound:bool, rateAtStakeUpperBound:bool, rateAtStakeLowerBound:bool, dpSkinSource, FE\|null, DR\|null, guard:bool}`, where `m = 162.6·Dq·B·μ/(k·h)` and guard means X + S < 1. With `reSource:'rinv'` the bounds follow the sign of S (§4.7) |
 | `run(opts)` | `{adata?, fit?, well?, completion?}`, defaults from PRiSM C1/C2/C4 (Skin check only) | `SkinCheck` (card model, §6.11) |
-| `renderPanel(el)` | DOM element | — (`window.PRiSM_renderSkinCheckPanel = renderPanel` for the Tools drawer) |
+| `renderPanel(el)` | DOM element | — (`window.PRiSM_renderSkinCheckPanel = renderPanel`, listed in the Tools drawer by its `TOOL_CATALOGUE` entry in 37) |
 | `reportSection(model)` | PRiSM report model | `{id:'skincheck', title:'Skin check', order:45, kv, table, notes}`, pushed onto `PRiSM_reportSections` |
 
 ### 3.5 `window.PRiSM_autoInterpCal` (55, generated)
@@ -655,12 +663,15 @@ They are never put in localStorage.
   rise_psi, riseScale_min, Ts_psi, tEnd_ms, dtEnd_h, endReason: 'reopen'|'gap'|'data_end',
   ramp: { present: bool, dur_s }, fhat: number|null, fhatMethod: 'derivRatio'|'dpDiff'|'allocation'|'proxy'|null,
   qBefore: number|null, qAfter: number|null,
-  alloc: { date, ratio: number|null, pass: bool|null, ignoresShutin: bool, confirm: 'confirmed'|'not_confirmed'|'no_alloc'|'n/a' },
+  rateEnd_ms?,                               // precursor partial cut: its rate interval runs to the closing that ends it
+  alloc: { date, ratio: number|null, pass: bool|null, ignoresShutin: bool, confirm: 'confirmed'|'not_confirmed'|'no_alloc'|'n/a',
+           hoursCheck? },                    // short closing day: hours implied by the volume vs the detected hours
   manual: bool,                              // added by an engineer override
   ev: ['D1','D2','D3','D4','D5','D6'], warnings: [] }
 ```
 
-**`Missed` (M§A5):** `{subThreshold:[{t_ms, dp_psi, dur_h}], allocOnly:[{date, ratio}], gaps:[{t0_ms, t1_ms}],
+**`Missed` (M§A5):** `{subThreshold:[{t_ms, dp_psi, dur_h}], allocOnly:[{date, ratio}], gaps:[{t0_ms, t1_ms}], rateSteps?:[…] (day-rate
+steps that open no event, §4.3),
 detectability:{ok:bool, pStarMinusPwf_psi:number|null, Ts_psi}, tooShort:[eventId], interventions:[eventId], ev:['D1']}`.
 
 **`AllocRow`:** `{date:'YYYY-MM-DD', oil:STB|null, gas:Mscf|null, water:STB|null, hours:number|null}`. For water injectors,
@@ -674,12 +685,14 @@ detectability:{ok:bool, pStarMinusPwf_psi:number|null, Ts_psi}, tooShort:[eventI
             pwfMean_psia: number|null, pwfMeanDatum_psia: number|null,      // mean flowing pressure over the day's flowing hours
             R3: { ratio, tol, pass, status: 'pass'|'fail'|'unavailable'|'n/a' } | null,
             R4: { ratio, pass, status: 'pass'|'fail'|'unavailable'|'n/a' } | null, R6: { reported, detected, flag } | null,
-            ignoresShutin: bool, equalRateAssumed: bool, shortDay: bool } ],
+            ignoresShutin: bool, equalRateAssumed: bool, shortDay: bool, qRefSide? } ],   // qRefSide: R3 side used, §4.5
   steps: [ { t_ms, q } ],                    // full, uncompacted, from the start of history (prepend included) to the data end;
-                                             // every detected q = 0 period stays in, whatever its event status
+                                             // every detected q = 0 period stays in, whatever its event status, except an
+                                             // unconfirmed event that whole allocation days contradict (a substep, §4.5)
   start: { source: 'data'|'date'|'cum'|'default', prepend_h, q, flag: bool },
   offsetScan: { current_h, best_h, better: bool, improvement: number },
-  phaseBasis: { used: 'oil'|'total'|'gas'|'gasEq', wcMax: number|null, gorRatioMax: number|null, twoPhaseCt: bool },
+  phaseBasis: { used: 'oil'|'total'|'gas'|'gasEq', wcMax: number|null, gorRatioMax: number|null, twoPhaseCt: bool,
+                kTotalMobility? },          // total basis: k is a total-mobility k (quoted as a limitation)
   ev: ['R1','R2','R3','R4','R5','R6','R7'], warnings: [] }
 ```
 
@@ -725,7 +738,8 @@ Override   = { id: 'O7', kind: 'exclude'|'include'|'window'|'model'|'event_add'|
 the percentage control by 100). `trend.delta` and `trend.abs` are in skin units. `Override.target` is `null` only for `event_add`: a typed
 time or a missed-list entry has no event id yet, and the next Analyse assigns the new `E<n>`. The time goes in `value`.
 For gas wells `WellInput.B` is the gas formation volume factor Bg in **rb/Mscf** (5.035·z·T/p at the reference pressure; gas rates are
-Mscf/d), so it lies in the same 0.5–5 range as an oil B; `mu` and `ct` are the gas values at that pressure.
+Mscf/d); the run layer accepts 0.3–5 for gas (deep dry gas reaches about 0.3) and 0.5–5 for oil; `mu` and `ct` are the gas values at
+that pressure.
 
 Edited inputs are not dialog overrides: at the next Analyse after a sign-off (or any earlier run), `run` writes one audit entry
 `kind:'input'` with the field diff against the previous run's inputs and an optional reason (§6.4).
@@ -738,7 +752,7 @@ Edited inputs are not dialog overrides: at the next Analyse after a sign-off (or
   record: { name, source, n, origin_ms, end_ms, hash, reduced: false, rawStored: 'idb'|'memory'|'none' },
   qc: QC, events: [Event], missed: Missed, rates: RateHistory,
   baseline: { k, cvK, kh, tests: [id] } | null,              // stage 2
-  tests: [ TestEntry ], trend: Trend, overrides: [Override],
+  tests: [ TestEntry ], trend: Trend, overrides: [Override],   // overrides[].warnings? (OVERRIDE_NOT_APPLIED) when one was not applied
   stats: { evals, fits, slices, ms: number|null }, warnings: [] }
 
 TestEntry = { id: 'B1', eventId: 'E2', date: 'YYYY-MM-DD', tc_ms, dtEnd_h, Dq, qUnit,
@@ -751,8 +765,14 @@ TestEntry = { id: 'B1', eventId: 'E2', date: 'YYYY-MM-DD', tc_ms, dtEnd_h, Dq, q
 
 When more than 60 tests are detected, the analysis keeps 60 by selection, not by age: the longest analysable shut-in per day, then per
 week, newest weeks first, while always keeping the baseline tests of each segment; the others get `status:'excluded'`, `statusReason:
-'test cap'`. Pipeline order, overrides and caching are in §4.6 item 18 and §4.8. An override re-runs only the tests whose `inputHash`
-changed, then stages 2–5.
+'test cap'`. The cap runs before stage 1, when the labels are unknown, so the first 2·baseN live tests of each segment are kept; when
+some of them turn out low and capped tests lie earlier than the baseline, stage 2 re-admits those (at most 2·baseN per segment, one
+round) and interprets them in a second stage-1 pass, so a segment holds at most 60 + 2·baseN interpreted tests. Pipeline order,
+overrides and caching are in §4.6 item 18 and §4.8. An override re-runs only the tests whose `inputHash` changed, then stages 2–5.
+Test ids follow the event number (`B<n>` for event `E<n>` when free, else the next free number) and are matched to the cache and the
+stored tests by event id and closing time, so including or excluding an event never renumbers the others; ids can have gaps.
+`inputHash` is computed on the input as given, at the start of the job (the run layer never writes into its input), so a stored
+re-run from copies gives the same hash as the record-mode run.
 
 ### 3.8 `WTS_buildup.trend` (49-calc-buildup-trend.js, WP3)
 
@@ -938,12 +958,14 @@ G.WTS_calcRegistry.buildup = {
   | Key | Contents | Cap |
   |---|---|---|
   | `wts_page_buildup` | host autosave of id'd controls | host |
-  | `wts_buildup_state` | `{v:1, appVersion, savedAt, input (no record), analysis (Analysis without raw; rates.steps once; specs by stepRef; no recomputable arrays), review, qa:[last 20 Answers], uiSel, signoff}` | 300 kB (typical 10 tests ≤ 150 kB); overflow to IndexedDB `tests` |
+  | `wts_buildup_state` | `{v:1, appVersion, savedAt, input (no record), analysis (Analysis without raw; rates.steps once; specs by stepRef; no recomputable arrays), review, qa:[last 20 Answers], uiSel, signoff}` | 300 kB (planned: typical 10 tests ≤ 150 kB; measured: the 9-test oil demo about 230 kB, of which the rate history is about 60 kB); overflow to IndexedDB `tests` |
   | `wts_buildup_audit` | `{v:1, entries:[AuditEntry], summary: null \| {from, to, n, counts, chainHash}}` | 200 kB, 500 entries |
 
   `AuditEntry = {seq, at, who, kind:'run'|'override'|'override_removed'|'input'|'decision'|'signoff'|'unsign'|'import'|
   'changed_after_signoff', target, value, reason, appVersion, inputsHash, resultsHash, prevHash, hash}`. Entries are never edited. Each
-  carries `hash = hash16(prevHash + canon(entry))`. Beyond 500 entries the oldest are folded into one `summary` record that keeps the
+  carries `hash = hash16(prevHash + canon(entry))`, with every numeric leaf serialised exactly before canon (lossless: an edit at any
+  digit breaks the chain); the store and `WTS_buildup.review.audit.entryHash` use this one recipe, and the first entry links to
+  `GENESIS = '0000000000000000'`. Beyond 500 entries the oldest are folded into one `summary` record that keeps the
   chain hash of the folded entries, so the chain still verifies.
 - IndexedDB: database `wts_buildup`, stores `raw` (key well id, value `store.encode(record)`) and `tests` (key `wellId`, value
   `{[testId]: {spec, result}}`).
@@ -994,6 +1016,14 @@ The helper encodes the §3.1 "WP0 resolutions". Its fixture conventions are:
 Every WP's tests assert `checkShape` on their outputs. WP5 and WP6 build against `FIX.analysis` until the real engines land. After WP2 and
 WP3 merge, the lead refreshes `FIX` from real engine output (same shapes) and re-runs SH2. The helper changes only through the lead,
 together with an update of this section.
+
+**Refreshed (v3.3 integration).** On the fixture's own inputs the engines give: the onset τ̂ on B3 (the WP3 hinge, ramp) with the
+profile interval [38.72, 52.55] days, so S(t) keeps B3's own value at τ̂ (no inserted knot), the T8 cumulative is 14,056 STB and the
+T13 R_J rows (with `nDays`) and ρ follow; `recent.from`, `pi.cumFrom` and the engine's limitation list; and, from
+`WTS_buildup.run.analyse` on `FIX.samples.AnalysisInput` (the same seven events, j0/j1 and statuses), the rise over the 30-min rise
+scale, the closing-day allocation ratios, the R3 tolerances and the R4 ratios (R4 null on the too-short E4's day), also in each test's
+`rateQC` and evidence. The QC noise figures stay fixture inputs (the record is noise-free); k, S and the bins stay closed form. TR4,
+TR7 and TR16 compare the refreshed values with the engine.
 
 ---
 
@@ -1062,6 +1092,17 @@ This section fixes what is built. Formulas and reference tables that several sec
     persist for 2 h. A phase-redistribution hump or a burst of noise therefore does not end the test. Otherwise the build-up ends at a
     gap or at the data end.
   - Analysable when Δt_end ≥ 2 h and there is no gap at the closing.
+  - **Sharper rise ends an event** (integration resolution). After an event's first hour (`splitMin_h`), a rise 3× steeper
+    (`splitRatio`) than the steepest 30-min rise of the previous hour starts another closing and ends the current event:
+    `END_AT_RISE` when the event still held its level (it ends before the new closing's trend window and is treated as a precursor),
+    `END_AT_CLOSING` when the level had fallen for at least 1 h first (the event ends at that fall).
+  - **Slow reopenings.** A deep fall (more than half the rise and more than 2·T_s, held 30 min) also ends an event.
+  - **Allocation read at detection (daily mode).** Each production day the event covers for at least 6 h (`allocShutMin_h`) is checked;
+    a day confirms when half the shut hours are missing from its volume. With no confirming day and every whole day at most 30 %
+    short (`allocModest`) the rise is a day-rate step: no event is opened and it is listed in `missed.rateSteps`. With no confirming
+    day otherwise, the event ends at the first whole production day at least 24 h (`allocBound_h`) after its closing (`END_ALLOC`);
+    after a confirming day it ends at the first whole contradicting day. Events that end at another closing are judged together,
+    strongest first, so a day's missing volume goes to the strongest event.
 - **Injectors (D15).** For fluid `water_inj` the detector looks for **falls**: the same rules on −p, `kind:'falloff'`, sign −1.
   The event type comes from the fluid and the rate sign, never from the pressure sign alone.
 - **M§A3 closing time.** For t_c on a 50-point grid in [t_j0, t_j1), regress ln r_j on ln(t_j − t_c) over the first K = 3–5 shut-in
@@ -1087,10 +1128,17 @@ This section fixes what is built. Formulas and reference tables that several sec
     the rate history and are **never interpreted** in v3.3.
   - Neither method available, or the allocation contradicts → `not_confirmed` (listed; the engineer can include it with an `include`
     override and a reason).
+  - A precursor (an event ended by a sharper rise) is gated by the ratio r of its two responses: f̂ = r/(1 + r), `fhatMethod:'derivRatio'`;
+    its rate interval runs to the closing (`Event.rateEnd_ms`), so the closing's Δq is the rate left after the cut.
+  - f̂ < 0.1 from `dpDiff` → `substep` with status `not_confirmed` and no rate change; f̂ ≥ 0.95 from `dpDiff` still makes a shut-in
+    when the allocation contradicts, with warning D6 `ALLOC_CONTRADICTS` (a 90 % cut always leaves residual volume).
   - Sub-threshold steps T_p = max(2 psi, 6σ) ≤ Δ < T_s sustained for ≥ 2 h → `substep` ("possible partial cut / choke change").
-- **Interventions.** An event is flagged `status:'intervention'` and not interpreted when the pressure exceeds the previous p_ext (or the
-  previous build-up's last pressure) by more than 2·T_s, or when it rises and then falls by more than T_s inside the event while the
-  allocation shows no reopening (bullheading, a squeeze or a kill). The page suggests entering a workover date.
+- **Interventions.** An event is flagged `status:'intervention'` and not interpreted when the pressure exceeds the reference by more than
+  the margin, or when it rises and then falls by more than T_s inside the event while the allocation shows no reopening (bullheading, a
+  squeeze or a kill). The page suggests entering a workover date. Integration resolution: the reference is the highest of the last 3
+  analysable build-ups in the segment; p* is used only from a stable last cycle and only when the two build-ups have comparable rise per
+  unit rate; the margin is max(2·T_s, 0.25 × the reference's rise) (`interventionFrac`), measured on the second half of the event; the
+  rise-then-fall rule needs a renewed rise and a fall within 6 h.
 - **Pass-2 partial-cut suspicion** (run, stage 3). For an interpreted test, m′_obs/m′_expected, with m′_expected from the baseline kh at
   the test's Δq. A ratio below 0.7 while k elsewhere is stable → `partialSuspect` (KL8, review V17).
 - **M§A5 missed.** Sub-threshold steps; allocation days with V < 0.85·V_ref and no pressure event; gaps over 2 h; detectability
@@ -1131,6 +1179,13 @@ This section fixes what is built. Formulas and reference tables that several sec
     of the allocation column (detected by `parseAllocation`; default 1 STB or 1 Mscf).
   - **Fewer than 2 clean days within ±10 days, or h_on < 6 h on the day → `R3.status:'unavailable'`**, which is not a pass (KH5 fails,
     and KC4 caps the label at medium).
+  - **R3 sides** (integration resolution). When the q_ref medians of the two sides differ by more than the R3 tolerance (a planned rate
+    change inside the shut-in), the closing day uses the side before the shut-in and the reopening day the side after
+    (`days[].qRefSide`).
+  - A whole day with no volume confirms a shut-in even when the closing day fails R3. A closing day with under 6 flowing hours is
+    confirmed when the hours implied by its volume match the detected hours (`alloc.hoursCheck`). A flowing closing day with no volume
+    takes the previous full day's rate (warning `NO_VOLUME_FLOWING`, R2). A shut-in still running at the data end counts as shut to the
+    end of that day.
   - **Measured or tabled rates** (rate-table mode, D15) → `R3.status:'n/a'`: treated as a pass by KH5 and never capped by KC4. The rate
     source is part of the evidence vector and calibrated as its own sub-stratum.
   - "Allocation ignores the shut-in": |V/(q_ref·day hours/24) − 1| ≤ 0.15 with h_on ≤ day hours − 3 → q_ref is used for Δq, and the flag
@@ -1154,7 +1209,8 @@ This section fixes what is built. Formulas and reference tables that several sec
   - Unknown → prepend max(30 d, 10 × the longest Δt_end), with `start.flag:true`.
 - **Zero-rate periods.** Every detected q = 0 period stays in `RateHistory.steps`, whatever the event's status: `too_short`,
   `gap_at_closing`, `not_confirmed`, `excluded`, `intervention`, and the split of a partial cut. Leaving one out would make the late
-  derivative fall and look like T-down or a closed boundary.
+  derivative fall and look like T-down or a closed boundary. Integration resolution (one exception): an unconfirmed event that whole
+  days of production contradict becomes a `substep` and adds no q = 0 period, because the allocation shows the well flowing.
 - **Rate-table mode (D15).** Steps come straight from the time-stamped table. Shut-ins are the q = 0 periods. The rise detector only
   refines t_c within ±max(10 min, 5·Δt_med) of each tabled closing. No daily spreading or allocation rules apply (`R3`/`R4` `n/a`), and
   the history is "complete" (p* meaningful). With short producing times Δt_e compresses, so spans, slopes and reach are always measured
@@ -1229,8 +1285,9 @@ Bourdet distance L are in ln (D6). Work units in this order; each bullet is at m
    - **5b. Reach (W4).** One pd′ evaluation of the fitted homogeneous model on the grid gives t_10 % and t_5 % (the last Δt_e outside
      ±10 % / ±5 % of the plateau). reach.fair = 10^(0.5 + Lcyc)·t_5 % (3.98·t_5 %) and reach.good = 10^(1 + Lcyc)·t_5 % (12.6·t_5 %),
      because the masked derivative ends one window (Lcyc) before Δt_e,end. They are compared with Δt_e,end and converted to shut-in
-     hours with the test's effective tp. Reference case (k 45 md, S 5, C 0.02 bbl/psi, h 50 ft, μ 1 cp): t_5 % = 15.5 h, reach.fair =
-     62 h, reach.good = 196 h.
+     hours with the test's effective tp. Reference case (k 45 md, S 5, C 0.02 bbl/psi, h 50 ft, μ 1 cp): the numeric t_5 % is 13.2 h
+     (= a direct scan of the model; the Appendix A.1 correlation gives 15.5 h), reach.fair = 52.7 h, reach.good = 166.6 h (EN22,
+     ±5 %).
 6. **BIC (M§A10, D8).**
    - On the common point set (the 12-per-cycle fit bins, identical for every candidate and refit of the test), on the **log-Δp block**:
      SSR_m = Σ(ln Δp_i − ln Δp_model,i)², floored at Σ((σ_b,i/Δp_i)² + 0.005²).
@@ -1396,7 +1453,10 @@ baseline, trend and alerts. Low tests are shown and excluded, with the reason.
   - Delta is input-robust (a uniform input error shifts every S equally, exactly so for homogeneous).
   - Gas: the alert text states the D·q change between the tests (expected D × Δq).
 - **Onset (M§A24).** Hinge regression with weights 1/S_err² over τ on test dates and midpoints (needs ≥ 2 tests after τ).
-  - The profile interval is ΔWSSR ≤ 1.
+  - Two shapes compete (integration resolution): the ramp (level, then a slope after τ; 3 parameters) and the step-shaped hinge (level,
+    a jump at τ and a slope after it; 4 parameters, at least 5 tests), each by BIC against constant and line; `onset.shape` says which.
+    A step's τ̂ ties go to the midpoint between the bracketing tests. The searches run in WSSR normalised by the largest weight.
+  - The profile interval is ΔWSSR ≤ 1 (walked on a 16-step grid between tests).
   - Hinge vs constant vs line by BIC, with "indicative" when n < 6.
   - CUSUM confirmation (κ = 0.5, h = 4).
 - **Recent trend (M§A25).** Theil–Sen ×30 (skin per 30 days) with the Sen CI and Mann–Kendall over the tests after τ̂ (n ≥ 3; n ≤ 4
@@ -1417,7 +1477,10 @@ baseline, trend and alerts. Low tests are shown and excluded, with the reason.
   - Optional value = cumulative × value per unit volume.
   - Gas: S → S + D·q in the X + S terms.
   - All of these are labelled "pseudo-steady-state estimate". When `reSource:'rinv'`, the PI ratio is labelled "lower bound" and the rate
-    and cumulative at stake "upper bound (r_e assumed from r_inv)".
+    and cumulative at stake "upper bound (r_e assumed from r_inv)" for a positive skin change (S_now − S_base > 0); the bounds are
+    reversed for a negative change (`piRatioUpperBound`, `rateAtStakeLowerBound`).
+  - The cumulative runs from τ̂ (`pi.cumFrom:'onset'`); without an onset from the last baseline test of the current segment
+    (`'baselineEnd'`), with `cumFromDays`.
 - **k stability (T9).** CV_k = 1.4826·MAD/median; stable if ≤ max(5 %, allocation accuracy). The interpretation table is Appendix A.3.
   The cross-test window check (KC5) is computed in stage 3 and reported here.
 - **Pressure trend (T10).** One quantity per analysis: the family is `closed` when the closed circle is the chosen model on at least half
@@ -1436,7 +1499,8 @@ baseline, trend and alerts. Low tests are shown and excluded, with the reason.
     estimated history the upper end of the p* range is compared and the level is at most major).
   - Spearman ρ(S, max(0, Pb − pwf)) ≥ 0.7 over ≥ 4 tests is a rule (V12).
   - Off for gas and injectors.
-- **PI cross-check (T13, M§A21).** J_obs,d = q_d/(p_ref,d − pwf_d) on clean flowing days, with pwf_d = `days[].pwfMean_psia` and p_ref
+- **PI cross-check (T13, M§A21).** J_obs,d = q_d/(p_ref,d − pwf_d) on clean flowing days, with pwf_d = `days[].pwfMeanDatum_psia` (else
+  `days[].pwfMean_psia`) and p_ref
   interpolated between the used tests' p_ext (tests without p_ext are skipped). J_pred = k_base·h/(141.2·B·μ·(X + S(t))), with S(t) as for
   the cumulative (T8). R_J = J_obs/J_pred; one row per interval between consecutive used tests, with the median R_J, which should lie in
   [0.8, 1.25]. Off for injectors and when the history is estimated (`available:false`).
@@ -1528,6 +1592,8 @@ and v3-ux tests open every route).
 | End of build-up | fall < −T_s persisting 30 min and below the level 30 min earlier; 2 h when the allocation says shut all day |
 | Flowing trend for pwf0 | max(30 min, 10·Δt_med, ≥ 10 samples), not crossing the previous event; first shut-in sample > max(4σ_flow, 0.5 psi) |
 | Partial step / gate | max(2 psi, 6σ), ≥ 2 h; shut-in when the allocation confirms full-shut-in hours or f̂ ≥ 0.95; 0.9 ≤ f̂ < 0.95 interpreted with Δq·f̂ (cap medium) |
+| Event split and allocation at detection | `splitMin_h` 1, `splitRatio` 3; `allocShutMin_h` 6, `allocModest` 0.3, `allocBound_h` 24 |
+| Interventions | margin max(2·T_s, `interventionFrac` 0.25 × the reference's rise); reference = the highest of the last 3 analysable build-ups |
 | Minimum duration; gap | 2 h; gap > max(5·Δt_med, Δt_med + 60 s); gap at closing > max(5·Δt_med, 10 min) |
 | Spike filter | off (k 5, 6 robust σ, runs ≤ 2) |
 | Bins | 20 per cycle (derivative), 12 per cycle (fit and BIC) |
@@ -1555,7 +1621,7 @@ and v3-ux tests open every route).
 | PI check | 0.8 ≤ R_J ≤ 1.25 |
 | Non-Darcy | q ratio ≥ 1.5, ≤ 60 days apart, D/se ≥ 2 |
 | Sensitivity, typical | h 20 %, φ 10 %, ct 30 %, rw 5 %, B 5 %, μ 20 %, q 10 % |
-| Maximum tests | 60 per analysis, kept by selection (longest per day, then per week, baseline tests always kept) |
+| Maximum tests | 60 per analysis, kept by selection (longest per day, then per week, baseline tests always kept); stage 2 re-admits up to 2·baseN per segment |
 
 ---
 
@@ -1887,7 +1953,7 @@ pattern). Detection, interpretation and trend settings and counts are clamped on
 | `bu_test_sel` | Test shown in detail | select (options rendered from the stored analysis before the host restore) | latest | Display only (no stale marking) |
 | `bu_qa_q`, `bu_qa_go`, `bu_qa_out` | Ask about the analysis; Ask; answers | text (`data-no-persist`, `data-no-decimal-comma`, ≤ 300 chars); button; div | | |
 | `bu_so_name`, `bu_so_role`, `bu_so_ok`, `bu_so_sign`, `bu_so_unsign` | Signed by; role; statement; Sign off; Withdraw sign-off | text ×2 (`data-no-decimal-comma`); checkbox (`data-no-persist`); buttons | | Withdraw is disabled unless signed |
-| `bu_val_run`, `bu_val_out` | Re-run 24-case check; result | button; div | | Asynchronous |
+| `bu_val_run`, `bu_val_out` | Re-run 24-case check; result | button; div | | Asynchronous. Disabled until file 55 is calibrated (`calibrated:true` with a non-empty `inApp` list); the reason is shown in `bu_val_out` |
 | `bu_ai_deid`, `bu_ai_free`, `bu_ai_copy`, `bu_ai_dl` | De-identify; include free text (notes, reasons, file and tag names); Copy for your AI assistant; Download | checkbox (on); checkbox (off); buttons | | No network; buttons disabled until an analysis exists |
 | `bu_open_prism` | Open this build-up in PRiSM | button | | Disabled until an analysis exists; confirm first (§6.10) |
 | Dialog: `bu_dlg_title`, `bu_dlg_body`, `bu_dlg_act`, `bu_dlg_t0`, `bu_dlg_t1`, `bu_dlg_model`, `bu_dlg_reason`, `bu_dlg_ok`, `bu_dlg_cancel` | Action / override / decision form | Inside `<dialog data-no-persist data-rp-nosnap>` | | A reason of at least 5 characters is required for overrides and rejections |
@@ -1911,7 +1977,7 @@ The page renders `review.report(..., _uFmt)` into `#bu_res`: one `.rbox` with an
 | `bu_ch_skin` | S5 | S ± S_err against days; baseline; baseline + Δ; absolute threshold; hinge fit; Theil–Sen line; dashed forecast; excluded low tests as hollow markers | `plot.trend` |
 | `bu_ch_k` | S5 | k against days with the median ± allocation-accuracy band | `plot.trend` |
 | `bu_ch_pi` | S5 | Datum p_ext against days with the Theil–Sen line (p* range bars when the history is estimated) | `plot.trend` |
-| `bu_ch_J` | S5 | Daily J_obs and J_pred | `plot.trend` |
+| `bu_ch_j` | S5 | Daily J_obs and J_pred (the page matches chart ids without case) | `plot.trend` |
 | `bu_ch_pwf` | S5 | Sandface pwf at closing (range) against Pb (oil producers only) | `plot.trend` |
 
 Canvas size comes from the `#bu_root` width: 720×300, or 600×400 below 600 px, so chart text stays legible on phones.
@@ -2066,8 +2132,10 @@ only checks that the button calls the function with the right arguments.
 ### 6.11 PRiSM Skin-check card (WP7)
 
 - **Placement.** Tab-6 panel `{id:'prism_skincheck', title:'Skin check: IARF window, line vs match, uncertainty, confidence', order:8,
-  when: a fit or a semilog result exists and mode ≠ decline, render}`. Tools drawer: `window.PRiSM_renderSkinCheckPanel`
-  (auto-discovered under "More"; no `TOOL_CATALOGUE` edit). Report: a `PRiSM_reportSections` entry (order 45).
+  when: a fit or a semilog result exists and mode ≠ decline, render}`. Tools drawer: `window.PRiSM_renderSkinCheckPanel` through its
+  catalogue entry in 37's `TOOL_CATALOGUE` (group Diagnose). Report: a `PRiSM_reportSections` entry (order 45).
+- **Perforation skin.** The Karakas–Tariq coefficient table is not verified for v3.3 (Q7): `perforationSkin` returns `UNVERIFIED`, the
+  card hides the perforation inputs and the decomposition says "perforation skin not split" (a known limitation).
 - **Inputs.** `PRiSM_getAnalysisData()` (PRiSM's own settings belong here), `PRiSM_getLastFit()` and `PRiSM_getWell()`. The rate is the
   user's entered or tabled rate, so `rateQC.r3Status = 'n/a'` and KC4 does not apply.
   Completion inputs sit in the card and are saved in `wts_prism_skincheck` (small, well-scoped; PRiSM is skipped by page autosave).
@@ -2236,7 +2304,7 @@ tables.
 | S2 | Data and quality | kv Q1–Q8, resolved zones and "Settings used" (echo of the advanced and clamped values); verdicts |
 | S3 | Events and rates | table of events (id, time, kind, status, duration, Δq and its source, pwf0, allocation check, note); table of days around events; chart `bu_ch_rate`; notes "Notes" (what could have been missed) |
 | S4 | Build-up tests | table of the latest 30 tests plus an "n older tests" row (id, date, Δt_end, Δq, IARF grade and cycles, k, S ± S_err, C, model and ΔBIC, agree, labels, used, override, Actions…); per selected test (or up to 12 tests): kv (window, longest window, line, final, p* and range, p_ext, r_inv, fully seen, reach), table of models / BIC, table of confidence reasons, charts `bu_ch_ll` and `bu_ch_sl`, notes "Interpretation" |
-| S5 | Trend and alerts | charts `bu_ch_skin`, `bu_ch_k`, `bu_ch_pi`, `bu_ch_J`, `bu_ch_pwf`, `bu_ch_ov`; kv T1–T16 ("N low tests excluded, S a–b"); verdicts; table of alert robustness |
+| S5 | Trend and alerts | charts `bu_ch_skin`, `bu_ch_k`, `bu_ch_pi`, `bu_ch_j`, `bu_ch_pwf`, `bu_ch_ov`; kv T1–T16 ("N low tests excluded, S a–b"); verdicts; table of alert robustness |
 | S6 | Uncertainty | table of S_err composition per test (mode, floor, se, line–match, window, t_c, pwf0, k-held S_k, C-held range, S_sens); kv dominant inputs (requirement ranges and typical ranges, each labelled); notes "Assessment" ("a uniform input error shifts every skin equally …"; "total skin = mechanical + pseudo-skins …") |
 | S7 | Recommendations | up to 6 notes "Recommendations" (≤ 600 characters each) with evidence |
 | S8 | Limitations | notes "Notes" (fixed list plus case items) |
@@ -2381,7 +2449,7 @@ WP0 (lead, serial: FILES, shapes + fixtures, 53 skeleton with canon/hash16)
   | EN19 | Two-zone kernel vs `radialComposite` ≤ 0.5 % (six sets: three with M > 1, three with M < 1) |
   | EN20 | Slicing: `evalBudget` is count-only (the same fit under a frozen and an advancing clock gives identical results); a sliced fit equals the unsliced fit within 1e-9 relative; the plateau stop fires across slices; the evaluations per slice follow the §4.8 rule (11 for a homogeneous fit with 65 grid points and S ≥ 0) |
   | EN21 | `PRiSM_openExternalBuildup`: dataset, paste text and multi-rate written; `water_inj` → `water` / `falloff`; `activePeriod` contains tShut; the model is adopted before `setLastFit` (a `prism:fit-updated` listener sees a consistent `st`); `composite2` → `radialComposite`; after `reload()` PRiSM still shows the period |
-  | EN22 | Reach and p*: numeric t_5 % on the reference case 15.5 h ± 5 %, reach.fair 62 h, reach.good 196 h; a 24 h test without IARF fits no rival and reports "too short"; with an estimated history (true production 5 years, default prepend) `pStarRange` brackets the true p* |
+  | EN22 | Reach and p*: numeric t_5 % on the reference case 13.2 h ± 5 % (= a direct scan; the A.1 correlation gives 15.5 h), reach.fair 52.7 h, reach.good 166.6 h; a 24 h test without IARF fits no rival and reports "too short"; with an estimated history inside the ×10 cover (true production 1 year, 90 days known) `pStarRange` brackets the true p* (a 5-year true history is out of scope, §3.1 `pStarRange`) |
 
   `prism-closedcircle.test.js` (≤ 3 s):
   - CC1: late pD′ = 2tD/reD² within 0.5 %;
@@ -2486,6 +2554,8 @@ WP0 (lead, serial: FILES, shapes + fixtures, 53 skeleton with canon/hash16)
       rate-skin step between the levels is ΔS′ = 1.0 and se(ΔS′) = 0.2·√(1/3 + 1/3) = 0.163, so D/se ≈ 6.1. Expected: D resolved; no delta
       alert on the 6 constant-skin tests (their S′ differ by D·Δq = 1.0 < 2); delta raised at test 7 and confirmed at test 8;
   - `IN_APP` (24 seeds, chosen with margin ≥ 0.1); the placeholder file 55 (`--placeholder`).
+  - Gas cases keep the run layer's gas B range (0.3–5 rb/Mscf): a very high p_i at a low temperature (Bg < 0.32 at p_i) is lowered until
+    Bg(p_i) = 0.33 (`gasPiLimited`).
 - **Tests:** `buildup-synth.test.js`, ≤ 4 s:
   - GE1: the same seed gives an identical record hash;
   - GE2: the homogeneous generator vs the IARF asymptote 0.5(ln tD + 0.80907) + S, within 0.1 % at late time;
@@ -2579,9 +2649,12 @@ WP0 (lead, serial: FILES, shapes + fixtures, 53 skeleton with canon/hash16)
   - ST6: `encodeJob` runs in 50k-sample units through `drive` and leaves no timers.
 
   `buildup-integration.test.js`, ≤ 9 s (real engines):
-  - IN1: oil demo → 9 interpreted, 1 too short, 1 partial; k within 10 % of 45; the S path within ±0.6; each test's expected grade (GE4);
-    delta alert raised at B6 and confirmed at B7; absolute raised at B7; k/S labels ≥ medium on at least 8 of 9 tests;
+  - IN1: oil demo → 9 interpreted, 1 too short, 1 partial; k within 10 % of 45; the S path within ±0.6; each test's expected grade (GE4;
+    the engine's IARF grade must be at least the generator's); delta alert raised at demo B6 and confirmed at demo B7; absolute raised at
+    demo B7; k/S labels ≥ medium on at least 8 of 9 tests. Analysis tests are matched to the demo build-ups by closing time (analysis ids
+    follow event numbers, so demo B6/B7 are analysis B8/B9);
   - IN2: gas demo → D resolved (D/se ≥ 2); no delta alert on the 6 constant-skin tests; delta raised at test 7 and confirmed at test 8;
+    `Trend.rateSkin.expectedD` equals `PRiSM_skinCheck.expectedDRange(expected).D`;
   - IN3: the evidence check passes on the real analysis (0 V14), and V23–V27 do not fire on either demo;
   - IN4: the comparison page shows the latest skin row;
   - IN5: report limits (600 / 300 / 30, no "null" or "undefined") on the real oil and gas demo analyses;
@@ -2676,8 +2749,9 @@ WP0 (lead, serial: FILES, shapes + fixtures, 53 skeleton with canon/hash16)
   - the sidebar note: Production & Reservoir has 7 of 8 rows; the DFIT page goes to Well Test & Flowlines;
   - stats: 46 models (42 transient + 4 decline), SVG schematics 46 → 47, 21 plug-in pages, smoke 326, acceptance 941 + new;
   - the shared-engine list: `PRiSM_autoInterp` (with `canon`/`hash16`), `PRiSM_skinCheck`, `WTS_buildup`;
-  - known limitations: partial cuts not interpreted; deconvolution not on the page; two-phase skin not quantified; perforation skin only
-    if verified; the IARF window is the earliest plateau; p* with an estimated history is a range;
+  - known limitations: partial cuts not interpreted; deconvolution not on the page; two-phase skin not quantified; perforation skin
+    (Karakas–Tariq) not split in v3.3 (table unverified, Q7); the IARF window is the earliest plateau; p* with an estimated history is a
+    range; a stored build-up result is about 10 kB per test;
   - correct the Stehfest line (a table keyed by N, not on window);
   - "Latest release: v3.3".
 - **PROJECT-NOTES:** the v3.3 entry with the calibration summary.
@@ -2697,7 +2771,7 @@ WP0 (lead, serial: FILES, shapes + fixtures, 53 skeleton with canon/hash16)
 | Q4 | Delta alert form | Requirement form (plain); WP8 switches to `basevar` only if the plain form misses the 5 % false-alarm target |
 | Q5 | S_err floor | 0.2 unless the benchmark coverage is below 90 %; then the calibrated value |
 | Q6 | History default when the start is unknown | max(30 d, 10 × the longest Δt_end), flagged, with the doubling check; p* reported as a range and not used for any trend |
-| Q7 | Karakas–Tariq coefficients are unverified (recalled from memory) | Perforation skin ships **only** if WP7 verifies the table against SPE 18247. Otherwise the perforation inputs are hidden and the decomposition says "perforation skin not split" |
+| Q7 | Karakas–Tariq coefficients are unverified (recalled from memory) | Perforation skin ships **only** if WP7 verifies the table against SPE 18247. Otherwise the perforation inputs are hidden and the decomposition says "perforation skin not split". **Decided for v3.3:** not verified, so it stays hidden (`KT.verified = false`) and is listed under the known limitations |
 | Q8 | SPE numbers marked "no. to verify" | Never shown in the app; cite author, year and title only until verified |
 | Q9 | Raw data in project files | Embed up to 16 MB encoded (active well plus wells opened this session), used only when the hash matches; otherwise omitted with a visible note |
 | Q10 | Daily Quick Report section | **No**: final template only; the daily template and its tests are unchanged |
@@ -2759,6 +2833,32 @@ architecture review is in Appendix B).
 | 25 | Line-vs-match threshold vs 34 (minor) | One rule in `PRiSM_autoInterp.DEFAULTS.agree` (k 5 %, S 0.5) for both the page and the Skin check; 34's check compares against the derivative plateau, a different quantity, and is kept and labelled separately | D9 |
 | 26 | In-app benchmark cost (minor) | The precomputed tables per version (file 55); an in-app 24-case check on demand; the full benchmark offline only; 10 cases in acceptance | §5.5, §5.6 |
 | 27 | Several shut-ins per day; no clean days (minor) | Fewer than 2 clean days within ±10 days → "unavailable" (not a pass, label ≤ medium); equal-rate assumption flagged per test; flush hours excluded from clean days; trend off by default for tests less than a day apart | §4.5, §5.1 |
+
+### 12.1 Integration resolutions (v3.3 integration round; accepted builder deviations)
+
+Recorded inline where the text changed (§3.1, §3.4, §3.6, §3.7, §3.12, §3.13, §4.3, §4.5, §4.6 item 5b, §4.7, §4.10, §6.2, §6.11, WP4,
+WP6, Q7). The others:
+- **WP1.** Extra keys: `KHeld.{n, nEff, window, humpAfterFitStart}`, `Line.{Smid, dtMid_h}`, `final.pExtSource` ('line'|'model', with a
+  `PEXT_MODEL` info warning when there is no line), `evidence.humpAfterFitStart`. An early regime needs, over at least 0.3 cycle, the
+  slope in its band varying by at most 0.10, a trend of at most 0.05 per cycle and dp′/dp no more than 0.10 above the slope. The IARF
+  window also keeps its end level within drTol = min(0.20, max(0.05, 3σ_d/ℓ)) of its start level and of its lowest 3-bin running mean
+  (EN3). The hump index needs a decline of max(10 %, 3σ_d), capped at 30 %. The 12-per-cycle fit set is binned from the 20-per-cycle
+  bins, and a bin tie keeps a real sample. `inputHash` hashes the spec without its arrays plus the hash of each 2000-sample block.
+  Without a known tp, the Skin check prepends the D13 default max(720 h, 10·Δt_end) and judges history sensitivity analytically.
+- **WP2.** `data.eventAt` is bounded by the record, the next event and the reopening of a promoted step; `adjustEvents` refuses
+  duplicates, times inside a shut-in and times outside the record, each with an override warning; in stored mode an applied
+  `event_drop` / `tc` / `event_add` override is listed in the event's `overrideIds`. Stage 3b is three phases (context, one test per
+  unit, freeze the used set). The stored `bins.p` stays at 6 significant figures (the frozen BuildupSpecStored rule).
+- **WP3.** `used.alert` covers the current segment only (`used.trend` does not); an empty current segment gives `absolute:'none'` and a
+  null baseline S with k kept from the latest segment that holds tests; `pi.cumFrom` / `recent.from`; a range-only expected D uses the
+  geometric centre; `DEFAULTS.round` for the rounded decisions; the pressure trend is assessable with the trend off and in table mode.
+- **WP5.** A stale review is refused with `EVIDENCE_CHECK_FAILED` ("built for an earlier state of the analysis"); `run`, `recheck` and
+  `report` check every stored derived value in the evidence index; `report` and `aiExport` accept `opts.idx`.
+- **WP6.** Loading a demo sets the demo's history option, production start or cumulative, and UTC gauge and production-day zones.
+  Missing per-test detail renders from the summaries. Page tests seed one demo run and share it (PG2 is the only full analysis).
+- **Open after this round.** The stored result size (about 10 kB per test, §3.1) and the duplicated `t.pass1` block in the run layer;
+  the page-test runtime (about 16 s against the 9 s budget, one fresh app per test); the 24-case in-app check waits for the calibrated
+  file 55 (WP8).
 
 ---
 
