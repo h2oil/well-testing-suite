@@ -146,9 +146,13 @@ function writeCal(cal, file) {
 // ═════════════════════════════════════════════════════════════════════════════
 // App environment
 // ═════════════════════════════════════════════════════════════════════════════
+// BUV_CAL_SRC (a file path): the workers load that calibration file in place of prism-build/55-prism-autointerp-cal.js
+// (the --write verification runs the candidate table before it is committed to file 55).
 function loadEnv() {
   const harness = require('./tests/_harness');
-  const app = harness.loadApp({ fromSources: true, timers: 'real', console: 'errors' });
+  const calSrc = process.env.BUV_CAL_SRC ? fs.readFileSync(process.env.BUV_CAL_SRC, 'utf8') : null;
+  const app = harness.loadApp(Object.assign({ fromSources: true, timers: 'real', console: 'errors' },
+    calSrc ? { sourceOverrides: { '55-prism-autointerp-cal.js': calSrc } } : {}));
   const W = app.win, BU = W.WTS_buildup || {};
   if (process.env.BUV_STUB_ENGINE === '1') installStubEngine(W);
   const missing = [];
@@ -329,14 +333,16 @@ function workerMain() {
     if (msg.type === 'exit') process.exit(0);
   });
 }
-function runItems(items, opts, nWorkers, onLine) {
+function runItems(items, opts, nWorkers, onLine, calSrcFile) {
   return new Promise((resolve, reject) => {
     if (!items.length) { resolve([]); return; }
     const W = Math.max(1, Math.min(nWorkers, items.length)), lines = [];
     let done = 0, failed = false;
+    const envW = Object.assign({}, process.env);
+    if (calSrcFile) envW.BUV_CAL_SRC = calSrcFile; else delete envW.BUV_CAL_SRC;
     for (let w = 0; w < W; w++) {
       const mine = items.filter((_, i) => i % W === w);
-      const child = fork(__filename, ['--worker'], { stdio: ['ignore', 'inherit', 'inherit', 'ipc'] });
+      const child = fork(__filename, ['--worker'], { stdio: ['ignore', 'inherit', 'inherit', 'ipc'], env: envW });
       child.on('message', (msg) => {
         if (msg.type === 'ready') {
           if (msg.missing && msg.missing.length) { failed = true; child.send({ type: 'exit' }); reject(Object.assign(new Error('missing'), { missing: msg.missing })); return; }
@@ -670,11 +676,14 @@ function calibrate(lines, env, opts) {
   const seqM = final.deltaForm === 'basevar' ? seqBase : seqPlain;
   const T = tables(cases, oof);
   const rng = env.SY.rng;
-  const ksRow = (L, items) => { const s = rowStats(items); const cb = clusterBootstrap(items, rng); return { label: L, n: s.n, right: s.rate, lo: s.lo, hi: s.hi, loCluster: cb.lo, hiCluster: cb.hi, medAbsDS: s.medAbsDS, cover2: s.cover2 }; };
+  // single: the single-case rows of the same label (Wilson interval; the harder population, with the distractor strata
+  // and the crossed factors, that the single-case Wilson bound of the §5.4 constraints is taken on)
+  const sgl = (items, yKey) => { const sg = items.filter((x) => x.single !== false), w = wilson(sg.filter((x) => x[yKey || 'y']).length, sg.length); return { n: sg.length, rate: w.rate, lo: w.lo, hi: w.hi }; };
+  const ksRow = (L, items) => { const s = rowStats(items); const cb = clusterBootstrap(items, rng); return { label: L, n: s.n, right: s.rate, lo: s.lo, hi: s.hi, loCluster: cb.lo, hiCluster: cb.hi, medAbsDS: s.medAbsDS, cover2: s.cover2, single: sgl(items) }; };
   const tbRow = (L, items, yKey) => {
     const s = rowStats(items, yKey); const cb = clusterBootstrap(items.map((x) => ({ g: x.g, y: x[yKey || 'y'] })), rng);
     const fr = (k) => (items.length ? items.filter((x) => x[k]).length / items.length : null);
-    return { label: L, n: s.n, fullyRight: s.rate, lo: s.lo, hi: s.hi, loCluster: cb.lo, hiCluster: cb.hi, kRight: fr('k'), sRight: fr('s'), modelRight: fr('m'), medAbsDS: s.medAbsDS, cover2: s.cover2 };
+    return { label: L, n: s.n, fullyRight: s.rate, lo: s.lo, hi: s.hi, loCluster: cb.lo, hiCluster: cb.hi, kRight: fr('k'), sRight: fr('s'), modelRight: fr('m'), medAbsDS: s.medAbsDS, cover2: s.cover2, single: sgl(items, yKey) };
   };
   const sub = (pred) => { const idx = cases.map((c, i) => (pred(c, i) ? i : -1)).filter((i) => i >= 0); return tables(idx.map((i) => cases[i]), idx.map((i) => oof[i])); };
   const Tk = sub((c) => c.test && c.test.result && c.test.result.kHeld), Tg = sub((c) => c.fluid === 'gas');
@@ -717,8 +726,12 @@ function calibrate(lines, env, opts) {
   };
   return { cal, cases, oof, T, seqPlain, seqBase };
 }
-// Normalised distance of a case's evidence to the nearest label threshold (§5.6 margin).
+// Normalised distance of a case's evidence to the nearest label threshold (§5.6 margin). The engine's own
+// PRiSM_autoInterp.thresholdMargin is used when an environment is given (one implementation for the tool, the page's
+// 24-case check and the benchmark test); the copy below is the stand-alone fallback and must stay identical.
+let _marginAI = null;
 function marginOf(ev, th) {
+  if (_marginAI && typeof _marginAI.thresholdMargin === 'function') return _marginAI.thresholdMargin(ev, th);
   if (!ev) return 0;
   const d = [];
   const add = (v, t) => { if (typeof v === 'number' && isFinite(v) && t) d.push(Math.abs(v - t) / Math.abs(t)); };
@@ -732,13 +745,21 @@ function marginOf(ev, th) {
   if (typeof ev.dBicChosen === 'number' && ev.chosenKey && ev.chosenKey !== 'homogeneous') add(Math.abs(ev.dBicChosen), th.tauBic);
   return d.length ? Math.min.apply(null, d) : 1;
 }
-function chooseInApp(liteLines, th, env) {
+// actual: the lite lines were run with the calibrated table loaded (BUV_CAL_SRC), so their labels are the app's own (with
+// pass 2 and the envelope cap); without it the labels are re-derived from the evidence (relabel).
+function liteItem(l, th, env, actual) {
+  const c = labelledSet([l])[0]; if (!c) return null;
+  const margin = marginOf(l.evidence, th), o = l.outcome || {};
+  let expect;
+  if (actual) expect = { status: o.status || null, ks: o.label ? o.label.ks : null, headline: o.label ? o.label.headline : null, fullyRight: !!o.fullyRight };
+  else { const lb = relabel(c, th, env); expect = { status: o.status || null, ks: lb.ks, headline: lb.headline, fullyRight: lb.outcome ? !!lb.outcome.fullyRight : null }; }
+  return { seed: l.seed, stratum: l.stratum, margin, expect, durClass: l.durClass, visible: l.truth ? l.truth.visible : null, hasEvidence: !!l.evidence };
+}
+function chooseInApp(liteLines, th, env, actual) {
+  if (env && env.AI) _marginAI = env.AI;
   const byStratum = new Map();
   liteLines.filter((l) => !l.error && l.kind === 'single').forEach((l) => {
-    const c = labelledSet([l])[0]; if (!c) return;
-    const lb = relabel(c, th, env), margin = marginOf(l.evidence, th);
-    const item = { seed: l.seed, stratum: l.stratum, margin, expect: { status: l.outcome ? l.outcome.status : null, ks: lb.ks, headline: lb.headline,
-                   fullyRight: lb.outcome ? !!lb.outcome.fullyRight : null } };
+    const item = liteItem(l, th, env, actual); if (!item) return;
     if (!byStratum.has(l.stratum)) byStratum.set(l.stratum, []);
     byStratum.get(l.stratum).push(item);
   });
@@ -754,6 +775,29 @@ function chooseInApp(liteLines, th, env) {
     rest.slice(0, 24 - out.length).forEach((x) => out.push(x));
   }
   return out.sort((a, b) => a.seed - b.seed).slice(0, 24).map((x) => ({ seed: x.seed, stratum: x.stratum, expect: x.expect, margin: Math.round(x.margin * 1000) / 1000 }));
+}
+// The 10 acceptance seeds of §5.6 (buildup-benchmark.test.js BM1): hom short, hom long, fault seen, comp, closed, gas, inj,
+// dualpor, partial, baddata, from the lite lines run with the calibrated table. Each interpreted case has margin ≥ 0.1;
+// the two hom slots take the highest headline label available (so the snapshot covers more than "low"), the others the
+// largest margin; partial and baddata are judged on their status alone (no label, no threshold: margin null).
+const BENCH_SLOTS = [
+  ['hom short', (x) => x.stratum === 'hom' && x.durClass === 'short'], ['hom long', (x) => x.stratum === 'hom' && x.durClass !== 'short'],
+  ['fault seen', (x) => x.stratum === 'fault' && x.visible && x.visible.fault], ['comp', (x) => x.stratum === 'comp'], ['closed', (x) => x.stratum === 'closed'],
+  ['gas', (x) => x.stratum === 'gas'], ['inj', (x) => x.stratum === 'inj'], ['dualpor', (x) => x.stratum === 'dualpor'],
+  ['partial', (x) => x.stratum === 'partial' && x.expect.status === 'partial'], ['baddata', (x) => x.stratum === 'baddata' && (x.expect.status === 'missed' || x.expect.status === 'not_analysable')],
+];
+const RANK_L = { low: 1, medium: 2, high: 3 };
+function chooseBench(liteLines, th, env) {
+  if (env && env.AI) _marginAI = env.AI;
+  const items = liteLines.filter((l) => !l.error && l.kind === 'single').map((l) => liteItem(l, th, env, true)).filter(Boolean);
+  const out = [];
+  BENCH_SLOTS.forEach(([slot, pred]) => {
+    const statusOnly = slot === 'partial' || slot === 'baddata';
+    const list = items.filter((x) => pred(x) && !out.some((o) => o.seed === x.seed) && (statusOnly ? !x.hasEvidence : (x.hasEvidence && x.margin >= 0.1)))
+      .sort((a, b) => (/^hom /.test(slot) ? (RANK_L[b.expect.headline] || 0) - (RANK_L[a.expect.headline] || 0) : 0) || b.margin - a.margin || a.seed - b.seed);
+    if (list.length) out.push({ slot, seed: list[0].seed, stratum: list[0].stratum, expect: list[0].expect, margin: statusOnly ? null : Math.round(list[0].margin * 1000) / 1000 });
+  });
+  return out;
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -816,8 +860,9 @@ function markdown(cal, summary) {
   L.push('## Thresholds', '', '| key | value |', '|---|---|');
   Object.keys(cal.thresholds).sort().forEach((k) => L.push('| ' + k + ' | ' + cal.thresholds[k] + ' |'));
   const tbl = (title, rows, yKey) => {
-    L.push('', '## ' + title, '', '| label | n | rate | Wilson 95 % | cluster 95 % | median abs ΔS | cover 2·S_err |', '|---|---|---|---|---|---|---|');
-    rows.forEach((r) => L.push('| ' + r.label + ' | ' + r.n + ' | ' + pct(r[yKey]) + ' | ' + pct(r.lo) + '–' + pct(r.hi) + ' | ' + pct(r.loCluster) + '–' + pct(r.hiCluster) + ' | ' + f2(r.medAbsDS) + ' | ' + pct(r.cover2) + ' |'));
+    L.push('', '## ' + title, '', '| label | n | rate | Wilson 95 % | cluster 95 % | median abs ΔS | cover 2·S_err | single cases: n, rate, Wilson 95 % |', '|---|---|---|---|---|---|---|---|');
+    rows.forEach((r) => L.push('| ' + r.label + ' | ' + r.n + ' | ' + pct(r[yKey]) + ' | ' + pct(r.lo) + '–' + pct(r.hi) + ' | ' + pct(r.loCluster) + '–' + pct(r.hiCluster) + ' | ' + f2(r.medAbsDS) + ' | ' + pct(r.cover2) + ' | ' +
+                               (r.single ? r.single.n + ', ' + pct(r.single.rate) + ', ' + pct(r.single.lo) + '–' + pct(r.single.hi) : '—') + ' |'));
   };
   tbl('k/S label (k and S right)', cal.ksTable, 'right'); tbl('Headline label (fully right)', cal.table, 'fullyRight'); tbl('Strict (k ±5 %, S ±0.3)', cal.strict, 'fullyRight');
   tbl('k-held sub-table', cal.kHeldTable, 'right'); tbl('Gas sub-table', cal.gasTable, 'fullyRight');
@@ -838,9 +883,22 @@ function markdown(cal, summary) {
   Object.keys(summary.byRateSource || {}).forEach((k) => { const b = summary.byRateSource[k]; L.push('- Rate source ' + k + ': ' + b.n + ' cases, fully right ' + b.fullyRight + ', k/S right ' + b.ksRight); });
   L.push('', '## Per stratum', '', '| stratum | n | errors | fully right | k/S right | abstained | high / medium / low | gen ms | analyse ms |', '|---|---|---|---|---|---|---|---|---|');
   Object.keys(summary.perStratum).forEach((s) => { const p = summary.perStratum[s]; L.push('| ' + s + ' | ' + p.n + ' | ' + p.errors + ' | ' + p.fullyRight + ' | ' + p.ksRight + ' | ' + p.abstained + ' | ' + (p.high || 0) + ' / ' + (p.medium || 0) + ' / ' + (p.low || 0) + ' | ' + f2(p.gen_ms) + ' | ' + f2(p.analyse_ms) + ' |'); });
-  L.push('', '## In-app cases (24, lite settings)', '', '| seed | stratum | status | k/S | headline | fully right | margin |', '|---|---|---|---|---|---|---|');
+  L.push('', '## In-app cases (24, lite settings, run with the calibrated table)', '', '| seed | stratum | status | k/S | headline | fully right | margin |', '|---|---|---|---|---|---|---|');
   cal.inApp.forEach((c) => L.push('| ' + c.seed + ' | ' + c.stratum + ' | ' + dash(c.expect.status) + ' | ' + dash(c.expect.ks) + ' | ' + dash(c.expect.headline) + ' | ' +
                                   dash(c.expect.fullyRight) + ' | ' + dash(c.margin) + ' |'));
+  if (summary.bench) {
+    L.push('', '## Benchmark acceptance seeds (BM1, lite, run with the calibrated table)', '', '| slot | seed | status | k/S | headline | fully right | margin |', '|---|---|---|---|---|---|---|');
+    summary.bench.forEach((c) => L.push('| ' + c.slot + ' | ' + c.seed + ' | ' + dash(c.expect.status) + ' | ' + dash(c.expect.ks) + ' | ' + dash(c.expect.headline) + ' | ' + dash(c.expect.fullyRight) + ' | ' + dash(c.margin) + ' |'));
+  }
+  if (summary.benchHigh) {
+    L.push('', '## High cases re-run by BM2 (lite, run with the calibrated table)', '', '| seed | stratum | status | k/S | headline | fully right | margin |', '|---|---|---|---|---|---|---|');
+    summary.benchHigh.forEach((c) => L.push('| ' + c.seed + ' | ' + c.stratum + ' | ' + dash(c.expect.status) + ' | ' + dash(c.expect.ks) + ' | ' + dash(c.expect.headline) + ' | ' + dash(c.expect.fullyRight) + ' | ' + dash(c.margin) + ' |'));
+  }
+  if (summary.sequencesCalibrated) {
+    const a = summary.sequencesCalibrated;
+    L.push('', '## Sequences re-run with the calibrated table', '', '| form | delta false alarms | absolute false alarms | median delay | delay 24–48 h | onset within 1 | Sen CI cover | stimulation → shut-in | gas quiet |', '|---|---|---|---|---|---|---|---|---|');
+    ['plain', 'basevar'].forEach((k) => { const q = a[k]; L.push('| ' + k + ' | ' + pct(q.falseAlarmDelta) + ' | ' + pct(q.falseAlarmAbs) + ' | ' + f2(q.delayMedian) + ' | ' + f2(q.delayMedianShort) + ' | ' + pct(q.onsetWithin1) + ' | ' + pct(q.senCover) + ' | ' + pct(q.stimShutinRate) + ' | ' + pct(q.gasNoAlertWhenDResolved) + ' |'); });
+  }
   return L.join('\n') + '\n';
 }
 
@@ -1000,6 +1058,27 @@ async function main() {
   let calFailed = false;
   if (flag('--write')) {
     const res = calibrate(lines, env, opts);
+    // The candidate table goes to <out>/cal-candidate.js and the workers load it (BUV_CAL_SRC): the sequences are re-run
+    // with it (their alerts depend on the labels through the used set), and the lite in-app pool runs with it, so the
+    // in-app expectations are the app's own labels (pass 2, the envelope cap) and their margins come from that evidence.
+    const candFile = path.join(out, 'cal-candidate.js');
+    writeCal(res.cal, candFile);
+    if (lines.some((l) => l.kind === 'sequence')) {
+      let seqLines;
+      try { seqLines = await runItems(lines.filter((l) => l.kind === 'sequence').map((l) => ({ kind: 'sequence', seed: l.seed })), opts, nWorkers, null, candFile); }
+      catch (e) { if (e && e.missing) return notRunnable(e.missing); console.error('[validate] crash: ' + (e && e.stack || e)); return 2; }
+      seqLines.sort(order);
+      fs.writeFileSync(path.join(out, 'sequences-calibrated.jsonl'), seqLines.map((l) => JSON.stringify(l)).join('\n') + '\n');
+      const sp = sequenceMetrics(seqLines, 'plain'), sb = sequenceMetrics(seqLines, 'basevar');
+      res.cal.thresholds.deltaForm = (sp.falseAlarmDelta !== null && sp.falseAlarmDelta > TARGETS.falseAlarm && sb.falseAlarmDelta !== null &&
+                                      sb.falseAlarmDelta <= TARGETS.falseAlarm) ? 'basevar' : 'plain';
+      const sm = res.cal.thresholds.deltaForm === 'basevar' ? sb : sp;
+      res.cal.sequences = { falseAlarmDelta: sm.falseAlarmDelta, falseAlarmAbs: sm.falseAlarmAbs, delayMedian: sm.delayMedian, delayMedianShort: sm.delayMedianShort,
+                            onsetWithin1: sm.onsetWithin1, senCover: sm.senCover };
+      summary.sequencesCalibrated = { plain: sp, basevar: sb };
+      if (sm.falseAlarmDelta !== null && sm.falseAlarmDelta > TARGETS.falseAlarm) fails.push('calibration: sequence delta false-alarm rate ' + pct(sm.falseAlarmDelta));
+      writeCal(res.cal, candFile);
+    }
     // the 24 in-app cases need margin ≥ 0.1 (§5.6); the candidate pool widens (6, 15, then every seed per stratum) before
     // giving up, and file 55 is never written as calibrated with fewer than 24
     const seen = new Set(), pools = [6, 15, Infinity];
@@ -1010,13 +1089,53 @@ async function main() {
       if (per === pools[0]) IN_APP_PROVISIONAL.forEach(([s]) => cand.push(s));
       const fresh = cand.filter((s) => !seen.has(s) && seen.add(s));
       if (fresh.length) {
-        try { liteLines = liteLines.concat(await runItems(fresh.map((seed) => ({ kind: 'single', seed })), { lite: true }, nWorkers, null)); }
+        try { liteLines = liteLines.concat(await runItems(fresh.map((seed) => ({ kind: 'single', seed })), { lite: true }, nWorkers, null, candFile)); }
         catch (e) { if (e && e.missing) return notRunnable(e.missing); console.error('[validate] crash: ' + (e && e.stack || e)); return 2; }
       }
-      res.cal.inApp = chooseInApp(liteLines, res.cal.thresholds, env);
+      res.cal.inApp = chooseInApp(liteLines, res.cal.thresholds, env, true);
       console.log('[validate] in-app cases with margin ≥ 0.1: ' + res.cal.inApp.length + ' of 24 (pool ' + seen.size + ' lite cases)');
       if (res.cal.inApp.length === 24) break;
     }
+    fs.writeFileSync(path.join(out, 'lite-calibrated.jsonl'), liteLines.slice().sort(order).map((l) => JSON.stringify(l)).join('\n') + '\n');
+    summary.bench = chooseBench(liteLines, res.cal.thresholds, env);
+    // a slot still empty (or hom long without a high case for BM2): widen the lite pool for that stratum (up to 40 more seeds)
+    const wantSlots = BENCH_SLOTS.map((b) => b[0]).filter((sl) => !summary.bench.some((b) => b.slot === sl) || (sl === 'hom long' && !summary.bench.some((b) => b.slot === sl && b.expect.headline === 'high')));
+    if (wantSlots.length) {
+      const strataW = new Set(wantSlots.map((sl) => sl.split(' ')[0]).map((x) => (x === 'fault' ? 'fault' : x)));
+      const more = [];
+      SY.SEED_TABLE.forEach((e) => {
+        if (!strataW.has(e.stratum)) return;
+        let k = 0;
+        for (let sd = e.from; sd <= e.to && k < 40; sd++) {
+          if (seen.has(sd)) continue;
+          if (e.stratum === 'hom') { const short = SY.caseFromSeed(sd).test.dtEnd_h < 8; if (short !== wantSlots.includes('hom short') && !wantSlots.includes('hom long')) continue; }
+          seen.add(sd); more.push(sd); k++;
+        }
+      });
+      if (more.length) {
+        try { liteLines = liteLines.concat(await runItems(more.map((seed) => ({ kind: 'single', seed })), { lite: true }, nWorkers, null, candFile)); }
+        catch (e) { if (e && e.missing) return notRunnable(e.missing); console.error('[validate] crash: ' + (e && e.stack || e)); return 2; }
+        summary.bench = chooseBench(liteLines, res.cal.thresholds, env);
+        fs.writeFileSync(path.join(out, 'lite-calibrated.jsonl'), liteLines.slice().sort(order).map((l) => JSON.stringify(l)).join('\n') + '\n');
+      }
+    }
+    // BM2 needs high cases to check: up to 3 lite cases labelled high (k/S or headline) with margin ≥ 0.1; when the pool
+    // holds fewer than 3, every hom and gas seed not yet run is run lite with the candidate table
+    const highsOf = () => liteLines.filter((l) => !l.error && l.kind === 'single').map((l) => liteItem(l, res.cal.thresholds, env, true)).filter((x) => x && x.hasEvidence && x.margin >= 0.1 &&
+      (x.expect.ks === 'high' || x.expect.headline === 'high')).sort((a, b) => (b.expect.headline === 'high') - (a.expect.headline === 'high') || b.margin - a.margin || a.seed - b.seed);
+    if (highsOf().length < 3) {
+      const more2 = [];
+      SY.SEED_TABLE.forEach((e) => { if (e.stratum !== 'hom' && e.stratum !== 'gas') return; for (let sd = e.from; sd <= e.to; sd++) if (!seen.has(sd)) { seen.add(sd); more2.push(sd); } });
+      if (more2.length) {
+        try { liteLines = liteLines.concat(await runItems(more2.map((seed) => ({ kind: 'single', seed })), { lite: true }, nWorkers, null, candFile)); }
+        catch (e) { if (e && e.missing) return notRunnable(e.missing); console.error('[validate] crash: ' + (e && e.stack || e)); return 2; }
+        fs.writeFileSync(path.join(out, 'lite-calibrated.jsonl'), liteLines.slice().sort(order).map((l) => JSON.stringify(l)).join('\n') + '\n');
+      }
+    }
+    summary.bench = chooseBench(liteLines, res.cal.thresholds, env);
+    summary.benchHigh = highsOf().slice(0, 3).map((x) => ({ seed: x.seed, stratum: x.stratum, expect: x.expect, margin: Math.round(x.margin * 1000) / 1000 }));
+    console.log('[validate] high cases for BM2: ' + (summary.benchHigh.map((b) => b.seed + ' (' + b.expect.ks + '/' + b.expect.headline + ')').join(', ') || 'none'));
+    console.log('[validate] benchmark seeds (BM1): ' + summary.bench.map((b) => b.slot + ' ' + b.seed + ' (' + (b.expect.headline || b.expect.status) + ')').join(', '));
     if (res.cal.inApp.length !== 24) { calFailed = true; fails.push('only ' + res.cal.inApp.length + ' in-app cases with margin ≥ 0.1: file 55 not written'); }
     checkTargets(res.T, { rng: SY.rng }).forEach((f) => fails.push('calibration: ' + f));
     if (!calFailed) writeCal(res.cal, calOut);
@@ -1038,7 +1157,7 @@ async function main() {
 
 module.exports = { PRE_THRESHOLDS, GRID_STAGE1, GRID_STAGE2, TARGETS, IN_APP_PROVISIONAL, BOOT_FULL, BOOT_GRID, placeholderCal, calSource, writeCal, parseSeeds, wilson,
                    quantile, clusterBootstrap, bootRow, checkTargets, tables, rowStats, marginOf, sequenceMetrics, labelledSet, foldsOf, combos, calibrate, chooseInApp,
-                   summarize, markdown, relabel, CAL_FILE };
+                   summarize, markdown, relabel, CAL_FILE, chooseBench, liteItem };
 
 if (require.main === module) {
   if (IS_WORKER) workerMain();
