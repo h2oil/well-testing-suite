@@ -683,6 +683,24 @@ module.exports = [
       assert.deepStrictEqual(J(out.modelFree), J(an.trend.modelFree), 'FIX modelFree');
     },
   },
+  {
+    name: 'TR10b model-free tolerance (WP9): a 3 % allocation error on a high-skin test (S 7) shifts the model-free ΔS by ≈ 0.4 — within max(0.3, S_err, 1.1513·a·Δp/m), so it agrees; a 1.2 skin difference still disagrees; the check is labelled indicative',
+    wp: WP, opts: false,
+    run(app, assert) {
+      const T = vmTrend();
+      const ref = tt({ id: 'B1', d: 0, S: 1.0 }), b2 = tt({ id: 'B2', d: 20, S: 7.0 });
+      b2.Dq = 800 * 0.97;                                                       // the allocated rate 3 % low; the pressures follow 800 STB/d
+      let out = T.compute([ref, b2], ctxOf());
+      const r = out.modelFree[0], gap = Math.abs(r.dS - r.fittedDS);
+      assert(gap > 0.3 && gap < 0.6, 'the allocation error moves the model-free ΔS by ' + gap.toFixed(3) + ' (more than the old max(0.3, S_err) tolerance)');
+      assert.strictEqual(r.agrees, true, 'agrees within 1.1513·a·Δp/m');
+      assert(out.limitations.some((l) => l.code === 'modelFree' && /indicative/.test(l.text)), 'T11 labelled indicative');
+      // a real disagreement is still caught: the bins carry S 5.8 while the fit says 7.0
+      const b3 = tt({ id: 'B2', d: 20, S: 7.0, binS: 5.8 });
+      out = T.compute([ref, b3], ctxOf());
+      assert.strictEqual(out.modelFree[0].agrees, false, '1.2 apart: disagrees');
+    },
+  },
 
   {
     name: 'TR11 bubble point: sandface range from the gradient ±20 %, levels, Spearman rule, off for gas and injectors, critical only when assessable',
@@ -1051,6 +1069,9 @@ module.exports = [
       assert.strictEqual(o2.corrected, false);
       assert(/outside the expected range/.test(o2.rateSkin.reason) && o2.rateSkin.reason.length < 300, o2.rateSkin.reason);
       assert(o2.warnings.some((w) => w.code === 'RATE_SKIN_WITHHELD' && w.level === 'warn'), 'RATE_SKIN_WITHHELD warning');
+      // the mechanical basis then still contains D·q, and says so (review basisText: 'mechanical skin + D·q (D not resolved)')
+      assert.deepStrictEqual([o2.alerts.absolute.basis, o2.alerts.absolute.dqIncluded], ['mechanical', true], 'D·q left in the mechanical skin is flagged');
+      assert.ok(!out.alerts.absolute.dqIncluded, 'D resolved: D·q removed');
       o2 = vmTrend({ rateSkin: () => rsOut(3.5) }).compute(gl, ctx);
       assert.strictEqual(o2.rateSkin.resolved, true, 'D/se 3.5: used');
       assert(/from 5 tests \(B1–B5\)/.test(o2.rateSkin.reason), o2.rateSkin.reason);
@@ -1149,6 +1170,65 @@ module.exports = [
       near(assert, tot.pi.FE, (L.pExtDatum - L.pwf0Datum - L.dpSkin_psi) / (L.pExtDatum - L.pwf0Datum), 1e-9, 'FE from the engine Δp_skin');
       const oilB = T.compute(app.toWin(rise), app.toWin(ctxOf({ well: wT, days: daily })));
       near(assert, oilB.pi.extraDrawdown_psi / tot.pi.extraDrawdown_psi, 1.3, 1e-9, 'the oil basis keeps the oil B');
+    },
+  },
+
+  {
+    name: 'TR21 disclosures (WP9): no depth data → the bubble-point check says it uses the gauge pwf (no ±20 % band); injectors state what k means; gas states that Δp_skin is across S′ and splits the D·q share when D is resolved',
+    wp: WP, opts: false,
+    run(app, assert) {
+      const lim = (o, c) => o.limitations.find((l) => l.code === c);
+      const list = series(baseS([1.2, 1.3, 1.1], 0.3).concat([{ id: 'B4', d: 60, S: 4.0, pwf0: 2550 }]));
+      let out = vmTrend().compute(list, ctxOf());
+      assert.ok(out.bubble.rows.length && out.bubble.depthCorrected !== true, 'no depth: not depth corrected');
+      assert.ok(out.bubble.rows.every((r) => r.pwfSand_lo === r.pwfSand_hi), 'the gradient band collapses');
+      assert.ok(lim(out, 'bubbleNoDepth') && /no depth correction/.test(lim(out, 'bubbleNoDepth').text), 'limitation says so');
+      out = vmTrend().compute(list, ctxOf({ depth: { gaugeTVD: 9000, datumTVD: 9200, grad: 0.35, gradFlow: 0.3 } }));
+      assert.strictEqual(out.bubble.depthCorrected, true);
+      assert.ok(!lim(out, 'bubbleNoDepth') && out.bubble.rows.every((r) => r.pwfSand_hi > r.pwfSand_lo), 'depth data: a range, no limitation');
+      // injector
+      const inj = Object.assign({}, WELL, { fluid: 'water_inj' });
+      out = vmTrend().compute(series(baseS([1.2, 1.3, 1.1], 0.3), inj), ctxOf({ well: inj, fluid: 'water_inj' }));
+      assert.ok(lim(out, 'injector') && /injected-water bank/.test(lim(out, 'injector').text) && /composite/.test(lim(out, 'injector').text), 'injector limitation');
+      assert.ok(!lim(vmTrend().compute(list, ctxOf()), 'injector'), 'not for a producer');
+      // gas with D resolved: the D·q share of the drop; the limitation names S′
+      const gw = Object.assign({}, WELL, { fluid: 'gas', mu: 0.02, B: 0.8, Pb: null, gas: { sg: 0.65, T_F: 200, co2: 0, h2s: 0, n2: 0, pseudoTime: false, pdew: null, apiCond: null, Mo: null } });
+      const qs = [5000, 10000, 5000, 10000, 5000, 10000];
+      const gl = series(qs.map((q, i) => ({ id: 'B' + (i + 1), d: 10 * i, q, S: 1 + 2e-4 * q, gasSprime: 1 + 2e-4 * q, E: 0.2, qUnit: 'Mscf/d' })), gw);
+      const gctx = ctxOf({ well: gw, fluid: 'gas', phaseBasis: { used: 'gas', wcMax: null, gorRatioMax: null, twoPhaseCt: false } });
+      const rs = () => ({ resolved: true, S: 1, D: 2e-4, seD: 1e-5, n: 6, ids: gl.map((t) => t.id), qRatio: 2, joint: null, expectedD: null, consistent: null, reason: '', ev: ['T15'] });
+      out = vmTrend({ rateSkin: rs }).compute(gl, gctx);
+      assert.strictEqual(out.corrected, true);
+      out.skinDp.forEach((r, i) => near(assert, r.dpDq_psi, r.dpSkin_psi * 2e-4 * qs[i] / (1 + 2e-4 * qs[i]), 1e-9, r.id + ' D·q share of Δp_skin'));
+      assert.ok(lim(out, 'gasSkinDrop') && /S′/.test(lim(out, 'gasSkinDrop').text) && /D·q share/.test(lim(out, 'gasSkinDrop').text));
+      out = vmTrend({ rateSkin: () => Object.assign(rs(), { resolved: false, D: null, seD: null }) }).compute(gl, gctx);
+      assert.ok(out.skinDp.every((r) => r.dpDq_psi === undefined) && /not split/.test(lim(out, 'gasSkinDrop').text), 'D not resolved: no split');
+      shapeOk(assert, out, 'gas unresolved');
+    },
+  },
+
+  {
+    name: 'TR22 onset and forecast dates are production-day labels (WP9): with a day zone 10 h behind UTC the step onset at 09:00 UTC is labelled the day before its UTC date (from ctx.days, or ctx.dayOf as run passes it); without either the UTC date',
+    wp: WP, opts: false,
+    run(app, assert) {
+      const T = vmTrend();
+      const dd = [0, 10, 20, 30, 40, 50, 60, 70];
+      const step = series(dd.map((d, i) => ({ id: 'B' + (i + 1), d, S: i < 4 ? 1.0 + [0, 0.05, -0.05, 0][i] : 6.0 + [0, 0.1, -0.1, 0][i - 4], E: 0.3 })));
+      const utc = T.compute(step, ctxOf()).onset;
+      assert.strictEqual(utc.date, iso(T0 + utc.tauDays * DAY), 'no day data: the UTC date');
+      // production days of a zone 10 h behind UTC, starting at local midnight: [D 10:00 UTC, D+1 10:00 UTC) is labelled D
+      const days = [];
+      for (let k = -2; k < 90; k++) { const t0 = Date.UTC(2026, 0, 10 + k, 10); days.push({ date: iso(Date.UTC(2026, 0, 10 + k)), t0_ms: t0, t1_ms: t0 + DAY, q: 800, cls: 'clean', pwfMean_psia: 3400 }); }
+      const ms = T0 + utc.tauDays * DAY, label = days.find((d) => ms >= d.t0_ms && ms < d.t1_ms).date;
+      assert.notStrictEqual(label, iso(ms), 'precondition: the onset instant (' + new Date(ms).toISOString() + ') falls on the previous production day');
+      const byDays = T.compute(step, ctxOf({ days })).onset;
+      assert.strictEqual(byDays.tauDays, utc.tauDays);
+      assert.strictEqual(byDays.date, label, 'ctx.days label');
+      const byFn = T.compute(step, ctxOf({ dayOf: (x) => days.find((d) => x >= d.t0_ms && x < d.t1_ms).date })).onset;
+      assert.strictEqual(byFn.date, label, 'ctx.dayOf label');
+      // beyond the day data the last day's start offset is carried forward
+      const short = days.filter((d) => d.t1_ms <= T0 + 20 * DAY);
+      assert.strictEqual(T.compute(step, ctxOf({ days: short })).onset.date, label, 'offset carried beyond the data');
     },
   },
 ];

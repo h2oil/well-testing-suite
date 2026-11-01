@@ -2148,7 +2148,7 @@
         var Bo = num(+opts.B, 1), Bw = num(+opts.Bw, 1), Rs = isNum(+rsIn) && rsIn !== null && rsIn !== '' ? +rsIn : null, Pb = isNum(+opts.Pb) && opts.Pb !== null ? +opts.Pb : null;
         var gas = opts.gas || {};
         // phase basis (R7), once per analysis
-        var wcMax = null, gorMax = null, basis = 'oil', phase = 'oil';
+        var wcMax = null, gorMax = null, basis = 'oil', phase = 'oil', wsSg = null, sepSg = null, cgrStbMMscf = null;
         if (fluid === 'water_inj') { phase = 'water_inj'; basis = 'oil'; }
         else if (fluid === 'gas') {
             var api = isNum(+gas.apiCond) && gas.apiCond !== null ? +gas.apiCond : 50, Mo = isNum(+gas.Mo) && gas.Mo !== null && +gas.Mo > 0 ? +gas.Mo : 6084 / (api - 5.9);
@@ -2158,6 +2158,19 @@
             phase = basis;
             var geo = 133.3 * go / Mo;
             rs.forEach(function (r) { r._V = (r.gas || 0) + (basis === 'gasEq' ? geo * (r.oil || 0) + (gas.wcond ? R.waterGE_Mscf * (r.water || 0) : 0) : 0); });
+            // wet-gas equivalent: the gas properties (z, μg, Bg, m(p)) belong to the recombined well stream, not the separator
+            // gas: γw = (R·γg + 4584·γo)/(R + 132,800·γo/Mo), R the producing GOR (scf/STB) over the days with both phases
+            if (basis === 'gasEq' && isNum(+gas.sg) && +gas.sg > 0) {
+                var sG = 0, sO = 0;
+                rs.forEach(function (r) { if (r.gas > 0 && r.oil > 0) { sG += r.gas; sO += r.oil; } });
+                if (sG > 0 && sO > 0) {
+                    var Rgor = 1000 * sG / sO;
+                    sepSg = +gas.sg; cgrStbMMscf = 1000 * sO / sG;
+                    wsSg = (Rgor * sepSg + 4584 * go) / (Rgor + 132800 * go / Mo);
+                    warnings.push(W('GAS_EQ_BASIS', 'info', 'Condensate above ' + R.condensatePct + ' % of the gas equivalent (' + cgrStbMMscf.toFixed(0) + ' STB/MMscf): rates are wet-gas equivalent and the gas properties use the recombined well-stream gravity ' +
+                        wsSg.toFixed(3) + ' (separator gas ' + sepSg.toFixed(3) + ').', ['R7']));
+                }
+            }
         } else {
             rs.forEach(function (r) {
                 var o = r.oil || 0, w = r.water || 0, g = r.gas || 0;
@@ -2372,7 +2385,9 @@
             mode: 'daily', unit: _unitFor(fluid, basis), phase: phase, days: outDays, steps: steps, start: start,
             offsetScan: { current_h: sh, best_h: sh + best.off, better: better, improvement: cur.sum > 0 ? 1 - best.sum / cur.sum : 0 },
             // kTotalMobility (extra key): on the total basis k means total mobility × oil viscosity (limitation for trend/review)
-            phaseBasis: { used: basis, wcMax: wcMax, gorRatioMax: (Rs && gorMax !== null) ? gorMax / Rs : null, twoPhaseCt: !!twoPhase, kTotalMobility: basis === 'total' },
+            // wellStreamSg / separatorSg / cgr (extra keys, gasEq only): the gravity the gas properties use on the wet-gas basis
+            phaseBasis: { used: basis, wcMax: wcMax, gorRatioMax: (Rs && gorMax !== null) ? gorMax / Rs : null, twoPhaseCt: !!twoPhase, kTotalMobility: basis === 'total',
+                          wellStreamSg: wsSg, separatorSg: sepSg, cgrStbMMscf: cgrStbMMscf },
             ev: ['R1', 'R2', 'R3', 'R4', 'R5', 'R6', 'R7'], warnings: warnings, byEvent: byEvent, allocOnly: allocOnly
         };
     }

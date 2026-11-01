@@ -240,11 +240,15 @@
             defaulted: (w.defaulted || []).filter(function (k) { return typeof k === 'string' && k; })
         };
     }
-    function _gasForSpec(w) {
+    // On the wet-gas-equivalent basis (R7, condensate above 5 %) the gas table uses the recombined well-stream gravity
+    // (rh.phaseBasis.wellStreamSg); sgSeparator keeps the entered value.
+    function _gasForSpec(w, rh) {
         if (w.fluid !== 'gas' || !w.gas) return null;
-        var g = w.gas;
-        return { sg: num(g.sg, 0.65), T_F: num(g.T_F, 200), co2: num(g.co2, 0), h2s: num(g.h2s, 0), n2: num(g.n2, 0), pseudoTime: !!g.pseudoTime,
+        var g = w.gas, pb = rh && rh.phaseBasis, ws = pb && pb.used === 'gasEq' && isNum(pb.wellStreamSg) && pb.wellStreamSg > 0 ? pb.wellStreamSg : null;
+        var o = { sg: ws !== null ? ws : num(g.sg, 0.65), T_F: num(g.T_F, 200), co2: num(g.co2, 0), h2s: num(g.h2s, 0), n2: num(g.n2, 0), pseudoTime: !!g.pseudoTime,
                  pdew: isNum(g.pdew) && g.pdew > 0 ? g.pdew : null };
+        if (ws !== null) { o.sgSeparator = num(g.sg, 0.65); o.sgBasis = 'wellStream'; }
+        return o;
     }
     function _ovFor(input, test, emap) {
         var o = { window: null, model: null, excludeRivals: [] };
@@ -304,7 +308,7 @@
             rateQC: { source: table ? 'table' : 'allocation', r3: table ? null : fin(be.r3), r3Status: table ? 'n/a' : (be.r3Status || 'unavailable'),
                       r4: null, r4Status: table ? 'n/a' : 'unavailable', dqKnown: Dq > 0, dqSource: table ? 'table' : (be.dqSource || 'closingDay'),
                       equalRateAssumed: !!be.equalRateAssumed, ignoresShutin: !!be.ignoresShutin, allocAccPct: num(w.allocAccPct, 5) },
-            well: _wellForSpec(w, rh), gas: _gasForSpec(w),
+            well: _wellForSpec(w, rh), gas: _gasForSpec(w, rh),
             sigma_psi: num(q.sigmaShut_psi, num(q.sigma_psi, 0)), sigmaFlow_psi: num(q.sigmaFlow_psi, num(q.sigma_psi, 0)),
             sigmaLF_psi: _sigmaLF(bins.dt, bins.p, event.dtEnd_h), dtSample_h: gaps.length ? median(gaps) : 1 / 60,
             driftPsiPerDay: num(w.driftPsiPerDay, 0.01),
@@ -1113,7 +1117,7 @@
             tests.forEach(function (t) { if (t._used) used[t.id] = true; });
             var rh = scanRes.rates, T = TR(), trend = null;
             var ctx = { well: input.well, completion: input.completion || null, depth: input.depth || null, settings: st, days: rh.days || [], workovers: input.workovers || [],
-                        fluid: input.well.fluid, firstTest_ms: first, mode: rh.mode, phaseBasis: rh.phaseBasis, start: rh.start, historyEstimated: !!(rh.start && rh.start.flag), steps: rh.steps || [],
+                        fluid: input.well.fluid, firstTest_ms: first, mode: rh.mode, phaseBasis: rh.phaseBasis, start: rh.start, historyEstimated: !!(rh.start && rh.start.flag), steps: rh.steps || [], dayOf: function (ms) { return D.dayOf(ms, zones.day); },
                         baseline: X.baseline, used: used, windowLevelInconsistent: tests.filter(function (t) { return t._wli; }).map(function (t) { return t.id; }) };
             if (T && typeof T.compute === 'function') {
                 try { trend = T.compute(tt, ctx); } catch (e) { trend = null; X.warnings.push(W('TREND_FAILED', 'bad', 'The trend could not be computed: ' + String(e && e.message || e).slice(0, 200), ['T1'])); }

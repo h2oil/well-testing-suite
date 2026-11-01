@@ -892,4 +892,25 @@ module.exports = [
       assert.notStrictEqual(oil.code, 'BAD_WELL');
     },
   },
+  {
+    name: 'RU23 wet-gas equivalent: the spec\'s gas table uses the recombined well-stream gravity (sgSeparator keeps the entry); the dry-gas basis keeps the separator gravity',
+    wp: WP,
+    run(app, assert) {
+      stubs(app);
+      const D = app.win.WTS_buildup.data, rh0 = D.rates(null, [], [{ date: '2026-03-01', oil: 700, gas: 10000, water: 0, hours: 24 }, { date: '2026-03-02', oil: 700, gas: 10000, water: 0, hours: 24 }],
+        { fluid: 'gas', day: { zone: { mode: 'utc' }, startHour: 0 }, gas: { sg: 0.68, T_F: 220, apiCond: 50 } });
+      const input = makeInput(app);
+      input.well = Object.assign(J(WELL), { fluid: 'gas', B: 0.8, mu: 0.025, ct: 1e-4, gas: { sg: 0.68, T_F: 220, co2: 0, h2s: 0, n2: 0, pseudoTime: false, pdew: null, apiCond: 50, Mo: null } });
+      const ev = { id: 'E1', kind: 'shutin', tc_ms: SCHED[1].t_ms, tEnd_ms: SCHED[1].t_ms + 24 * HOUR, dtEnd_h: 24, pwf0: 3500, pwf0SE: 0.1, dtc_s: 0, trend: { b: 0 } };
+      const mk = (pb) => R(app).specFor(app.toWin(ev), input.record, app.toWin({ mode: 'daily', unit: 'Mscf/d', phaseBasis: pb, byEvent: { E1: { Dq: 5000 } },
+        steps: [{ t_ms: T0 - 30 * DAY, q: 5000 }, { t_ms: SCHED[1].t_ms, q: 0 }], start: { source: 'date', prepend_h: 0, q: 5000, flag: false }, days: [] }), input, { qc: { sigma_psi: 0.02, dtMed_s: 300 } });
+      assert.strictEqual(rh0.phaseBasis.used, 'gasEq');
+      const wet = mk(J(rh0.phaseBasis));
+      assert.ok(wet && wet.gas, 'spec built: ' + JSON.stringify(wet && wet.errors));
+      assert.near(wet.gas.sg, rh0.phaseBasis.wellStreamSg, 1e-12, 'well-stream gravity');
+      assert.deepStrictEqual([wet.gas.sgSeparator, wet.gas.sgBasis], [0.68, 'wellStream']);
+      const dry = mk({ used: 'gas', wcMax: null, gorRatioMax: null, twoPhaseCt: false });
+      assert.deepStrictEqual([dry.gas.sg, dry.gas.sgSeparator], [0.68, undefined], 'dry gas: the entered gravity');
+    },
+  },
 ];

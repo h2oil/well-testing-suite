@@ -1003,4 +1003,25 @@ module.exports = [
       assert.strictEqual(D.offsetAt(ny, Date.UTC(2020, 6, 1)), -4 * HOUR, 'offsets still right after the drop (EDT)');
     },
   },
+  {
+    name: 'DA30 wet-gas equivalent (WP9): with condensate above 5 % the gas properties use the recombined well-stream gravity γw = (R·γg + 4584·γo)/(R + 132,800·γo/Mo) — 0.884 for 70 STB/MMscf of API 50 condensate on 0.68 gas — stated in a GAS_EQ_BASIS note; the dry-gas basis keeps the separator gravity',
+    wp: WP,
+    run(app, assert) {
+      const D = Dof(app);
+      const grows = [];
+      for (let d = 1; d <= 10; d++) grows.push({ date: '2026-03-' + String(d).padStart(2, '0'), oil: 700, gas: 10000, water: 0, hours: 24 });
+      const rg = D.rates(null, [], grows, { fluid: 'gas', day: UTC_DAY, gas: { sg: 0.68, T_F: 220, apiCond: 50 } });
+      const go = 141.5 / (131.5 + 50), Mo = 6084 / (50 - 5.9), R = 1e6 / 70, ws = (R * 0.68 + 4584 * go) / (R + 132800 * go / Mo);
+      assert.strictEqual(rg.phaseBasis.used, 'gasEq');
+      assert.near(rg.phaseBasis.wellStreamSg, ws, 1e-9, 'recombined well-stream gravity');
+      assert.near(ws, 0.884, 0.001, 'the textbook value');
+      assert.deepStrictEqual([rg.phaseBasis.separatorSg, Math.round(rg.phaseBasis.cgrStbMMscf)], [0.68, 70]);
+      const w = rg.warnings.find((x) => x.code === 'GAS_EQ_BASIS');
+      assert.ok(w && /0\.884/.test(w.text) && /0\.680/.test(w.text) && w.text.length < 299, 'the basis is stated: ' + (w && w.text));
+      shapeOk(assert, 'RateHistory', rg);
+      const dry = D.rates(null, [], grows.map((r) => Object.assign({}, r, { oil: 10 })), { fluid: 'gas', day: UTC_DAY, gas: { sg: 0.68, T_F: 220, apiCond: 50 } });
+      assert.deepStrictEqual([dry.phaseBasis.used, dry.phaseBasis.wellStreamSg], ['gas', null], 'dry gas: no recombination');
+      assert.ok(!dry.warnings.some((x) => x.code === 'GAS_EQ_BASIS'));
+    },
+  },
 ];

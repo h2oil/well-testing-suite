@@ -1073,6 +1073,20 @@ module.exports = [
       assert(jc, 'J chart present');
       const jp = jc.series.find((sr) => sr.name === 'J predicted');
       assert.deepStrictEqual(plain(jp.x), [5, 6]); assert.deepStrictEqual(plain(jp.y), [2.0, 2.05]);
+      // gas with D not resolved: the 'mechanical' basis still contains D·q and the text says so
+      assert.strictEqual(R.FORMULAS.basisText('mechanical', true), 'mechanical skin + D·q (D not resolved)');
+      assert.strictEqual(R.FORMULAS.basisText('mechanical'), 'mechanical skin');
+      const g = S.FIX.analysis; g.trend.alerts.absolute.basis = 'mechanical'; g.trend.alerts.absolute.dqIncluded = true;
+      assert.strictEqual(R.evidence(g).items.T3.values.basisText.v, 'mechanical skin + D·q (D not resolved)');
+      // the robustness table: the S row uses the same reference test as the ± rows (the confirming test once confirmed)
+      const h = S.FIX.analysis; Object.assign(h.trend.alerts.absolute, { status: 'confirmed', raisedAt: 'B5', confirmedAt: 'B6', robustness: { lo: 'B6', hi: 'B6', unchanged: true } });
+      const mh = R.report(h, R.run(h, null, { at: AT }), null, null, imp);
+      let rob = null;
+      mh.sections.forEach((s) => s.blocks.forEach((bl) => { if (bl.id === 'bu_tbl_robust') rob = bl; }));
+      assert(rob, 'robustness table present');
+      const cell = (row) => { const v = rob.rows[row][1]; return v && typeof v === 'object' ? v.v : v; };
+      assert.deepStrictEqual([cell(0), cell(1), cell(2)], ['B6', 'B6', 'B6'], 'S − S_sens / S / S + S_sens all at the confirming test');
+      assert(/confirming/.test(rob.head[1].text), 'column title names the confirming test');
     },
   },
 ];
