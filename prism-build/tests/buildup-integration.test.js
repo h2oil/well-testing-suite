@@ -78,7 +78,6 @@ const interpreted = (a) => a.tests.filter((t) => t.status === 'interpreted' && t
 const RANK = { low: 0, medium: 1, high: 2 };
 const BAD_TXT = /\b(NaN|Infinity|undefined|null)\b|\[object Object\]/;
 // IARF grades in order; the engine may grade a build-up better than the generator's noise-free prediction (GE4), not worse.
-const GRADE = { none: 0, fair: 1, good: 2 };
 function nearestTruth(truth, t) {
   let best = null;
   (truth.tests || []).forEach((x) => { if (!best || Math.abs(x.tc_ms - t.tc_ms) < Math.abs(best.tc_ms - t.tc_ms)) best = x; });
@@ -115,9 +114,13 @@ module.exports = [
       assert.strictEqual(a.events.filter((e) => e.status === 'too_short').length, 1, 'one short shut-in "too short"');
       assert.strictEqual(a.events.filter((e) => e.kind === 'partial' || e.status === 'partial').length, 1, 'one partial cut');
       // Truth per build-up from synth.demo('oil').truth.tests[] (§3.9): {id, tc_ms, k, S, dtEnd_h, grade}, matched to the
-      // analysis by closing time. The expected IARF grade (GE4) is required: WP4 records it as truth.tests[].grade
-      // ('good'|'fair'|'none'); the engine's grade must be the same or better (it sees the real derivative, the
-      // generator predicts from the noise-free curve with a margin).
+      // analysis by closing time. The expected IARF grade (GE4, truth.tests[].grade) must match exactly on demo B3–B9.
+      // B1 and B2 are the two build-ups whose noise-free derivative sits at the 'good' limit: the generator grades the
+      // exact derivative, whose last half cycle slopes at 0.012 and 0.0135 per ln Δt_e (good needs ≤ 0.01; grade
+      // margins 0.21 and 0.35, the smallest of the nine), while the engine's Bourdet derivative (L = 0.1 cycle) on the
+      // noisy 20-per-cycle bins measures −0.003 ± 0.005 and −0.009 ± 0.001 there over 1.12 and 1.02 cycles. Their
+      // grade is 'fair' or 'good' by the data, so those two may read either; every other one is exact (WP8).
+      const NEAR_GOOD = { B1: 1, B2: 1 };
       const m = byClosing(assert, a, r.truth, ok);
       assert.deepStrictEqual(Object.keys(m).sort(), r.truth.tests.map((x) => x.id).sort(), 'every demo build-up interpreted once');
       ok.forEach((t) => {
@@ -127,7 +130,8 @@ module.exports = [
         assert.ok(Math.abs(t.result.final.S - tr.S) <= 0.6, lbl + ' S ' + t.result.final.S + ' within ±0.6 of ' + tr.S);
         assert.ok(/^(good|fair|none)$/.test(String(tr.grade)), lbl + ': expected IARF grade recorded in truth.tests[].grade (got ' + JSON.stringify(tr.grade) + ')');
         const g = t.result.iarf && t.result.iarf.grade;
-        assert.ok(g in GRADE && GRADE[g] >= GRADE[tr.grade], lbl + ' IARF grade ' + g + ' equal to or better than the expected ' + tr.grade + ' (GE4)');
+        if (NEAR_GOOD[tr.id]) assert.ok(g === tr.grade || (tr.grade === 'fair' && g === 'good'), lbl + ' IARF grade ' + g + ': the expected ' + tr.grade + ', or good at the good limit (GE4)');
+        else assert.strictEqual(g, tr.grade, lbl + ' IARF grade ' + g + ' = the expected ' + tr.grade + ' (GE4)');
       });
       // the alerts name analysis ids; the plan states them in demo ids
       const al = a.trend.alerts, dn = (id) => demoId(a, r.truth, id) + ' (analysis ' + id + ')';
