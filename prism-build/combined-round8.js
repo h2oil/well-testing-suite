@@ -16174,7 +16174,10 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             // quoted at the stored precision (STORE_SF), so a stored result's confidence re-derives exactly from its evidence
             // once file 55 carries calibrated rates (EN23)
             var q = function (v) { return _num(v) ? _sfRound(v, STORE_SF) : (v === undefined ? null : v); };
-            if (a && bRow) rates = { ks: { rate: q(a.right), lo: q(a.lo), hi: q(a.hi) }, headline: { rate: q(bRow.fullyRight), lo: q(bRow.lo), hi: q(bRow.hi) } };
+            // single: the single-build-up row of the same label (file 55 row.single, Wilson interval). The pooled rate is
+            // dominated by the sequence-well tests; a single test is quoted with both (§5.1, §5.7).
+            var sg = function (r) { var s = r && r.single; return (s && _num(s.n) && s.n > 0) ? { n: s.n, rate: q(s.rate), lo: q(s.lo), hi: q(s.hi) } : null; };
+            if (a && bRow) rates = { ks: { rate: q(a.right), lo: q(a.lo), hi: q(a.hi), single: sg(a) }, headline: { rate: q(bRow.fullyRight), lo: q(bRow.lo), hi: q(bRow.hi), single: sg(bRow) } };
         }
         return { ks: ks, model: model, headline: headline, stage: ev.stage === 'final' ? 'final' : 'pass1', reasons: reasons, rates: rates,
                  outsideCalibration: !!ev.outsideEnvelope, calVersion: c ? (c.version || null) : null, calibrated: calibrated, ev: ['K1', 'K2'] };
@@ -16198,6 +16201,35 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         if (_num(ev.r3)) add(Math.abs(ev.r3 - 1) * 100, th.rateTolPct);
         if (_num(ev.dBicChosen) && ev.chosenKey && ev.chosenKey !== 'homogeneous') add(Math.abs(ev.dBicChosen), th.tauBic);
         return d.length ? Math.min.apply(null, d) : 1;
+    }
+    // nearThreshold(ev, cal, expect, opts) — is a label that differs from its expectation explained by a threshold? (§5.6)
+    // Near only when BOTH hold: the evidence lies within the selection margin m (default 0.1, normalised as in
+    // thresholdMargin) of a calibrated threshold, AND moving ONE calibrated threshold by the same m (×(1 ± m)) reproduces
+    // the expected k/S and headline labels from this evidence. A difference with another cause (a flag, the IARF grade,
+    // a KC cap, the model choice) is never "near", however close some unrelated evidence item is to its threshold.
+    // → {near, margin, key, dir}: key and dir (+1 / −1) name the move that reproduces the expectation (null when none).
+    var NEAR_KEYS = ['snrHigh', 'snrLow', 'sErrHigh', 'sErrLow', 'fairSpanHigh', 'pointSkinSpread', 'disagreeDS', 'disagreeKPct',
+                     'reachFactor', 'kHeldRmsK', 'rateTolPct', 'tauBic'];
+    function nearThreshold(ev, cal, expect, opts) {
+        opts = opts || {};
+        var m = _pos(opts.margin) ? opts.margin : 0.1;
+        var c = _cal(cal), th = _thr(c), ex = expect || {};
+        var mg = ev ? thresholdMargin(ev, th) : null;
+        var out = { near: false, margin: _num(mg) ? mg : null, key: null, dir: null };
+        if (!ev || !c || !_num(mg) || !(mg < m) || !ex.ks || !ex.headline) return out;
+        for (var i = 0; i < NEAR_KEYS.length; i++) {
+            var k = NEAR_KEYS[i];
+            if (!_num(th[k]) || !th[k]) continue;
+            for (var s = -1; s <= 1; s += 2) {
+                var t2 = {}; Object.keys(th).forEach(function (kk) { t2[kk] = th[kk]; });
+                t2[k] = th[k] * (1 + s * m);
+                var c2 = {}; Object.keys(c).forEach(function (kk) { c2[kk] = c[kk]; });
+                c2.thresholds = t2;
+                var lab = confidence(ev, c2);
+                if (lab.ks === ex.ks && lab.headline === ex.headline) { out.near = true; out.key = k; out.dir = s; return out; }
+            }
+        }
+        return out;
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -16847,6 +16879,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
     AI.storedSensitivity = storedSensitivity;
     AI.confidence = confidence;
     AI.thresholdMargin = thresholdMargin;
+    AI.nearThreshold = nearThreshold;
     AI.rinv = rinv;
     AI.compactHistory = compactHistory;
     AI.gasTable = gasTable;
@@ -18099,8 +18132,11 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
     }
     function rateText(c) {
         if (!c || !c.rates || !c.rates.ks) return '';
-        var r = c.rates.ks;
-        return 'k and S right in ' + fmt(100 * r.rate, 0) + ' % of calibration cases labelled ' + lvl(c.ks) + ' (' + fmt(100 * r.lo, 0) + '–' + fmt(100 * r.hi, 0) + ' %).';
+        var r = c.rates.ks, sg = r.single;
+        // the pooled rate is dominated by the tests of the sequence wells; a single build-up is quoted with the single-case
+        // row of the same label next to it (§5.1, §5.7)
+        return 'k and S right in ' + fmt(100 * r.rate, 0) + ' % of calibration cases labelled ' + lvl(c.ks) + ' (' + fmt(100 * r.lo, 0) + '–' + fmt(100 * r.hi, 0) + ' %)' +
+            (sg && isNum(sg.rate) ? '; in ' + fmt(100 * sg.rate, 0) + ' % of single build-ups (' + fmt(100 * sg.lo, 0) + '–' + fmt(100 * sg.hi, 0) + ' %, ' + sg.n + ' cases).' : '.');
     }
     var GRADE_TEXT = { good: 'good', fair: 'fair', none: 'none' };
     function iarfText(iw) {
@@ -18641,9 +18677,30 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         "rateHom": 0.051969823973176864
       },
       "app": "v3.3",
-      "brier": 0.14908995578049816,
-      "bss": 0.2994687324637332,
+      "brier": 0.149111131239594,
+      "bss": 0.29936923500849943,
       "calibrated": true,
+      "capped": {
+        "outsideEnvelope": 589,
+        "shares": {
+          "headline": {
+            "high": 80,
+            "highSingle": 1,
+            "n": 1683,
+            "nSingle": 620,
+            "share": 0.047534165181224004,
+            "shareSingle": 0.0016129032258064516
+          },
+          "ks": {
+            "high": 112,
+            "highSingle": 5,
+            "n": 1683,
+            "nSingle": 620,
+            "share": 0.06654783125371361,
+            "shareSingle": 0.008064516129032258
+          }
+        }
+      },
       "distractorCaught": {
         "n": 101,
         "rate": 0.6336633663366337
@@ -18675,6 +18732,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
           847123.4467116086
         ]
       },
+      "envelopeCapped": true,
       "falseRival": 0,
       "gasTable": [
         {
@@ -18684,37 +18742,37 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
           "hiCluster": 1,
           "kRight": 1,
           "label": "high",
-          "lo": 0.8156818626193444,
+          "lo": 0.796116696403513,
           "loCluster": 1,
           "medAbsDS": 0.031184366198367286,
           "modelRight": 1,
-          "n": 17,
+          "n": 15,
           "sRight": 1,
           "single": {
-            "hi": 1,
-            "lo": 0.34238022395464934,
-            "n": 2,
-            "rate": 1
+            "hi": null,
+            "lo": null,
+            "n": 0,
+            "rate": null
           }
         },
         {
           "cover2": 1,
-          "fullyRight": 0.9682539682539683,
-          "hi": 0.9912504725171988,
+          "fullyRight": 0.9692307692307692,
+          "hi": 0.9915210028398984,
           "hiCluster": 1,
           "kRight": 1,
           "label": "medium",
-          "lo": 0.8914352286548587,
-          "loCluster": 0.9073966408268734,
-          "medAbsDS": 0.10582833312164519,
+          "lo": 0.8945729439078441,
+          "loCluster": 0.9111111111111111,
+          "medAbsDS": 0.10107687434011225,
           "modelRight": 1,
-          "n": 63,
-          "sRight": 0.9682539682539683,
+          "n": 65,
+          "sRight": 0.9692307692307692,
           "single": {
-            "hi": 0.9721335190383086,
-            "lo": 0.6989663528135878,
-            "n": 20,
-            "rate": 0.9
+            "hi": 0.9747045712376774,
+            "lo": 0.7218505297217489,
+            "n": 22,
+            "rate": 0.9090909090909091
           }
         },
         {
@@ -18780,7 +18838,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             "ks": "low",
             "status": "interpreted"
           },
-          "margin": 0.137,
+          "margin": 0.294,
           "seed": 100205,
           "stratum": "hom"
         },
@@ -18824,8 +18882,8 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             "ks": "low",
             "status": "interpreted"
           },
-          "margin": 0.753,
-          "seed": 100376,
+          "margin": 0.737,
+          "seed": 100360,
           "stratum": "closed"
         },
         {
@@ -18835,8 +18893,8 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             "ks": "low",
             "status": "interpreted"
           },
-          "margin": 0.268,
-          "seed": 100382,
+          "margin": 0.753,
+          "seed": 100376,
           "stratum": "closed"
         },
         {
@@ -18923,7 +18981,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             "ks": "low",
             "status": "interpreted"
           },
-          "margin": 0.558,
+          "margin": 0.337,
           "seed": 100532,
           "stratum": "channel"
         },
@@ -18946,7 +19004,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             "status": "interpreted"
           },
           "margin": 0.333,
-          "seed": 100552,
+          "seed": 100561,
           "stratum": "wbschange"
         },
         {
@@ -18956,7 +19014,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             "ks": "low",
             "status": "interpreted"
           },
-          "margin": 0.919,
+          "margin": 0.879,
           "seed": 100574,
           "stratum": "partpen"
         },
@@ -19000,7 +19058,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             "ks": "low",
             "status": "interpreted"
           },
-          "margin": 0.173,
+          "margin": 0.333,
           "seed": 100638,
           "stratum": "baddata"
         }
@@ -19043,37 +19101,37 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
       ],
       "ksTable": [
         {
-          "cover2": 0.9848484848484849,
+          "cover2": 0.9821428571428571,
           "hi": 0.9999999999999998,
           "hiCluster": 1,
           "label": "high",
-          "lo": 0.9717210127678851,
+          "lo": 0.9668386524272592,
           "loCluster": 1,
-          "medAbsDS": 0.05180995212546935,
-          "n": 132,
+          "medAbsDS": 0.05201390670750855,
+          "n": 112,
           "right": 1,
           "single": {
             "hi": 1,
-            "lo": 0.757505990446902,
-            "n": 12,
+            "lo": 0.5655175313406071,
+            "n": 5,
             "rate": 1
           }
         },
         {
-          "cover2": 0.9839181286549707,
-          "hi": 0.9809933120328707,
-          "hiCluster": 0.9832179535945226,
+          "cover2": 0.984375,
+          "hi": 0.9815354388600478,
+          "hiCluster": 0.9835397449704234,
           "label": "medium",
-          "lo": 0.9552689496915101,
-          "loCluster": 0.9562930691757222,
-          "medAbsDS": 0.09133163544694534,
-          "n": 684,
-          "right": 0.9707602339181286,
+          "lo": 0.9565277272187165,
+          "loCluster": 0.9569220563847429,
+          "medAbsDS": 0.08999343230215812,
+          "n": 704,
+          "right": 0.9715909090909091,
           "single": {
-            "hi": 0.885525589772115,
-            "lo": 0.7486455953039834,
-            "n": 116,
-            "rate": 0.8275862068965517
+            "hi": 0.8922043921226788,
+            "lo": 0.7621557889414257,
+            "n": 123,
+            "rate": 0.8373983739837398
           }
         },
         {
@@ -19100,8 +19158,8 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         "medAbsPct": 0.0131136298802903,
         "p90AbsPct": 0.6020925817916694
       },
-      "reliability": 0.006034937456711839,
-      "resolution": 0.06976910914855315,
+      "reliability": 0.006036225085504298,
+      "resolution": 0.06974922131824966,
       "seeds": {
         "master": 3300,
         "sequences": [
@@ -19123,43 +19181,43 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
       },
       "strict": [
         {
-          "cover2": 0.9895833333333334,
-          "fullyRight": 0.9583333333333334,
-          "hi": 0.983679292577073,
+          "cover2": 0.9875,
+          "fullyRight": 0.9625,
+          "hi": 0.9871654311799435,
           "hiCluster": 1,
           "kRight": 1,
           "label": "high",
-          "lo": 0.8977180846850661,
-          "loCluster": 0.9069658769832645,
+          "lo": 0.8954527983617242,
+          "loCluster": 0.9054018492176387,
           "medAbsDS": 0.0500706505919426,
           "modelRight": 1,
-          "n": 96,
+          "n": 80,
           "sRight": 1,
           "single": {
             "hi": 1,
-            "lo": 0.6096657083436264,
-            "n": 6,
+            "lo": 0.20654931179180275,
+            "n": 1,
             "rate": 1
           }
         },
         {
-          "cover2": 0.9832635983263598,
-          "fullyRight": 0.9037656903765691,
-          "hi": 0.9232500942215018,
-          "hiCluster": 0.9250016149870801,
-          "kRight": 0.99302649930265,
+          "cover2": 0.9836289222373806,
+          "fullyRight": 0.9045020463847203,
+          "hi": 0.9237185911568955,
+          "hiCluster": 0.9270085093612654,
+          "kRight": 0.9931787175989086,
           "label": "medium",
-          "lo": 0.8799778456622199,
-          "loCluster": 0.8782486096275613,
-          "medAbsDS": 0.08726286743572764,
-          "modelRight": 0.9721059972105998,
-          "n": 717,
-          "sRight": 0.9735006973500697,
+          "lo": 0.8810678291136439,
+          "loCluster": 0.8780864197530864,
+          "medAbsDS": 0.0856009270400171,
+          "modelRight": 0.9727148703956344,
+          "n": 733,
+          "sRight": 0.9740791268758526,
           "single": {
-            "hi": 0.6882653499669199,
-            "lo": 0.5152490028230282,
-            "n": 119,
-            "rate": 0.6050420168067226
+            "hi": 0.7015091870653807,
+            "lo": 0.5331564704022469,
+            "n": 124,
+            "rate": 0.6209677419354839
           }
         },
         {
@@ -19185,43 +19243,43 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
       ],
       "table": [
         {
-          "cover2": 0.9895833333333334,
+          "cover2": 0.9875,
           "fullyRight": 1,
-          "hi": 1,
+          "hi": 0.9999999999999998,
           "hiCluster": 1,
           "kRight": 1,
           "label": "high",
-          "lo": 0.9615244115586972,
+          "lo": 0.9541818697747757,
           "loCluster": 1,
           "medAbsDS": 0.0500706505919426,
           "modelRight": 1,
-          "n": 96,
+          "n": 80,
           "sRight": 1,
           "single": {
             "hi": 1,
-            "lo": 0.6096657083436264,
-            "n": 6,
+            "lo": 0.20654931179180275,
+            "n": 1,
             "rate": 1
           }
         },
         {
-          "cover2": 0.9832635983263598,
-          "fullyRight": 0.9525801952580195,
-          "hi": 0.9658699329943063,
-          "hiCluster": 0.9694960212201591,
-          "kRight": 0.99302649930265,
+          "cover2": 0.9836289222373806,
+          "fullyRight": 0.9536152796725784,
+          "hi": 0.9666191467243304,
+          "hiCluster": 0.9685573097163394,
+          "kRight": 0.9931787175989086,
           "label": "medium",
-          "lo": 0.9344667388269984,
-          "loCluster": 0.9333308605341246,
-          "medAbsDS": 0.08726286743572764,
-          "modelRight": 0.9721059972105998,
-          "n": 717,
-          "sRight": 0.9735006973500697,
+          "lo": 0.9358816449787196,
+          "loCluster": 0.9337001654048155,
+          "medAbsDS": 0.0856009270400171,
+          "modelRight": 0.9727148703956344,
+          "n": 733,
+          "sRight": 0.9740791268758526,
           "single": {
-            "hi": 0.7877524641629972,
-            "lo": 0.6274168155284974,
-            "n": 119,
-            "rate": 0.7142857142857143
+            "hi": 0.7966489624968653,
+            "lo": 0.6413935981093728,
+            "n": 124,
+            "rate": 0.7258064516129032
           }
         },
         {
@@ -19253,7 +19311,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         "fairSpanHigh": 1,
         "kHeldRmsK": 2,
         "pointSkinSpread": 0.2,
-        "rateTolPct": 15,
+        "rateTolPct": 10,
         "reachFactor": 5,
         "sErrFloor": 0.2,
         "sErrHigh": 0.3,
@@ -19261,6 +19319,141 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         "snrHigh": 30,
         "snrLow": 8,
         "tauBic": 10
+      },
+      "uncapped": {
+        "ksTable": [
+          {
+            "cover2": 0.9847328244274809,
+            "hi": 1,
+            "hiCluster": 1,
+            "label": "high",
+            "lo": 0.9715112924973786,
+            "loCluster": 1,
+            "medAbsDS": 0.05007457675165261,
+            "n": 131,
+            "right": 1,
+            "single": {
+              "hi": 1,
+              "lo": 0.757505990446902,
+              "n": 12,
+              "rate": 1
+            }
+          },
+          {
+            "cover2": 0.983941605839416,
+            "hi": 0.9810211733483133,
+            "hiCluster": 0.9832179535945226,
+            "label": "medium",
+            "lo": 0.9553336172699864,
+            "loCluster": 0.9563993351977235,
+            "medAbsDS": 0.09141308274939641,
+            "n": 685,
+            "right": 0.9708029197080292,
+            "single": {
+              "hi": 0.885525589772115,
+              "lo": 0.7486455953039834,
+              "n": 116,
+              "rate": 0.8275862068965517
+            }
+          },
+          {
+            "cover2": 0.7749667110519307,
+            "hi": 0.500409950112701,
+            "hiCluster": 0.5250626706272213,
+            "label": "low",
+            "lo": 0.43413611516854606,
+            "loCluster": 0.40368532111926714,
+            "medAbsDS": 0.3555018246804149,
+            "n": 867,
+            "right": 0.4671280276816609,
+            "single": {
+              "hi": 0.3615593981934108,
+              "lo": 0.27945488810366736,
+              "n": 492,
+              "rate": 0.31910569105691056
+            }
+          }
+        ],
+        "shares": {
+          "headline": {
+            "high": 96,
+            "highSingle": 6,
+            "n": 1683,
+            "nSingle": 620,
+            "share": 0.0570409982174688,
+            "shareSingle": 0.00967741935483871
+          },
+          "ks": {
+            "high": 131,
+            "highSingle": 12,
+            "n": 1683,
+            "nSingle": 620,
+            "share": 0.0778371954842543,
+            "shareSingle": 0.01935483870967742
+          }
+        },
+        "table": [
+          {
+            "cover2": 0.9895833333333334,
+            "fullyRight": 1,
+            "hi": 1,
+            "hiCluster": 1,
+            "kRight": 1,
+            "label": "high",
+            "lo": 0.9615244115586972,
+            "loCluster": 1,
+            "medAbsDS": 0.0500706505919426,
+            "modelRight": 1,
+            "n": 96,
+            "sRight": 1,
+            "single": {
+              "hi": 1,
+              "lo": 0.6096657083436264,
+              "n": 6,
+              "rate": 1
+            }
+          },
+          {
+            "cover2": 0.9832635983263598,
+            "fullyRight": 0.9525801952580195,
+            "hi": 0.9658699329943063,
+            "hiCluster": 0.9694960212201591,
+            "kRight": 0.99302649930265,
+            "label": "medium",
+            "lo": 0.9344667388269984,
+            "loCluster": 0.9333308605341246,
+            "medAbsDS": 0.08726286743572764,
+            "modelRight": 0.9721059972105998,
+            "n": 717,
+            "sRight": 0.9735006973500697,
+            "single": {
+              "hi": 0.7877524641629972,
+              "lo": 0.6274168155284974,
+              "n": 119,
+              "rate": 0.7142857142857143
+            }
+          },
+          {
+            "cover2": 0.7758620689655172,
+            "fullyRight": 0.44482758620689655,
+            "hi": 0.47801996914355427,
+            "hiCluster": 0.5051212253622589,
+            "kRight": 0.6195402298850575,
+            "label": "low",
+            "lo": 0.41212028567692494,
+            "loCluster": 0.3828468867418143,
+            "medAbsDS": 0.351030784507507,
+            "modelRight": 0.7528735632183908,
+            "n": 870,
+            "sRight": 0.4885057471264368,
+            "single": {
+              "hi": 0.32196823849521095,
+              "lo": 0.2430238123125845,
+              "n": 495,
+              "rate": 0.2808080808080808
+            }
+          }
+        ]
       },
       "uncertainty": 0.2128241274723397,
       "version": "cal-1"
