@@ -21,14 +21,20 @@
 //
 // PUBLIC API — window.WTS_buildup.store
 //   init() → Promise<{engine:'idb'|'memory'}>
-//   putRaw(wellId, recordOrEncoded) → Promise   getRaw(wellId) → Promise<GaugeRecord|null>
+//   putRaw(wellId, recordOrEncoded) → Promise   getRaw(wellId) → Promise<GaugeRecord|null> (null unless the samples
+//     re-hash to the record's hash, data.recordHash; rec.hashVerified)
 //   putTests(wellId, {[id]:{spec,result}}) → Promise   getTests(wellId) → Promise<object|null>
 //   encode(record) → {origin_ms, tScale_ms, pScale, TScale, n, tB64, pB64, TB64|null, meta}
 //   encodeJob(record) → Job (units of ENCODE_UNIT samples; run through PRiSM_autoInterp.drive)
-//   decode(obj) → GaugeRecord (Float64Array t/p/T)
-//   loadState() → object|null     saveState(state, {wellId}) → {ok, bytes, overflow}
+//   decode(obj) → GaugeRecord (Float64Array t/p/T) | null (n not a sample count, or a stream shorter than n);
+//     header fields come from meta by name and type only
+//   loadState() → object|null     saveState(state, {wellId}) → {ok, bytes, overflow, overflowWrite?: Promise<{ok, engine}>}
 //   stripResult(result) → copy without the recomputable arrays (curves, bins.X, bins.dte)
-//   audit.list() / audit.append(entry) / audit.summary() / audit.verify() / audit.chainHash()
+//   audit.list() / audit.append(entry) → entry|null / audit.summary() / audit.verify() / audit.chainHash()
+//   audit.status() → {state: missing|ok|broken|unreadable, brokenAt, lost, lastRunSeq}; an unreadable log is kept
+//     under wts_buildup_audit_corrupt_<ms> before a new chain (with lost:{at, key, chars}) is started
+//   Project-file import (write) keeps only safe well ids, encoded records of the encoder's shape within RAW_CAP in
+//   total, and plain-object analyses.
 //   wellId(id?) → id || WTS_wells.active() || 'default'
 //   STATE_KEY, AUDIT_KEY, STATE_CAP, AUDIT_CAP, AUDIT_MAX, RAW_CAP, ENCODE_UNIT
 //   _mirror() (tests), _reset() (tests: forget the opened database and the mirror)
@@ -183,10 +189,44 @@
             units: Math.max(1, Math.ceil(st.n / ENCODE_UNIT))
         };
     }
+    // n of an encoded record: a non-negative integer up to MAX_N samples (a crafted or damaged entry is refused).
+    var MAX_N = 2e7;
+    function _validN(n) { return typeof n === 'number' && isFinite(n) && n >= 0 && Math.floor(n) === n && n <= MAX_N; }
+    // Base64 length of n int32 values as the encoder writes it (padded): 4·ceil(4n/3).
+    function _b64LenFor(n) { return 4 * Math.ceil(4 * n / 3); }
+    function _b64Consistent(e) {
+        if (!_isEncoded(e) || !_validN(e.n)) return false;
+        var L = _b64LenFor(e.n);
+        if (e.tB64.length !== L || e.pB64.length !== L) return false;
+        return e.TB64 == null || (typeof e.TB64 === 'string' && e.TB64.length === L);
+    }
+    // GaugeRecord header fields copied from meta, by name and type only (never the prototype or unknown keys).
+    var META_TYPES = { ok: 'boolean', source: 'string', name: 'string', pUnitIn: 'string', patm: 'number', elapsed: 'boolean', rollup: 'boolean', hash: 'string' };
+    function _metaCopy(m, rec) {
+        if (!m || typeof m !== 'object') return;
+        Object.keys(META_TYPES).forEach(function (k) {
+            if (!_own(m, k) || typeof m[k] !== META_TYPES[k] || (META_TYPES[k] === 'number' && !isFinite(m[k]))) return;
+            rec[k] = META_TYPES[k] === 'string' ? String(m[k]).slice(0, 400) : m[k];
+        });
+        var z = _own(m, 'zone') ? m.zone : null;
+        if (z && typeof z === 'object' && typeof z.mode === 'string') {
+            var zc = { mode: String(z.mode).slice(0, 16) };
+            if (typeof z.tz === 'string') zc.tz = String(z.tz).slice(0, 64);
+            if (_fin(z.offset_h)) zc.offset_h = z.offset_h;
+            rec.zone = zc;
+        }
+        if (_own(m, 'warnings') && Array.isArray(m.warnings)) {
+            rec.warnings = m.warnings.slice(0, 200).filter(function (w) { return w && typeof w === 'object' && !Array.isArray(w); }).map(function (w) {
+                return { code: String(w.code == null ? '' : w.code).slice(0, 60), level: w.level === 'bad' || w.level === 'warn' ? w.level : 'info',
+                    text: String(w.text == null ? '' : w.text).slice(0, 298), ev: Array.isArray(w.ev) ? w.ev.filter(function (x) { return typeof x === 'string'; }).slice(0, 12) : [] };
+            });
+        }
+    }
     function decode(obj) {
-        if (!obj || typeof obj !== 'object' || !_fin(obj.n)) return null;
-        var n = obj.n, t = new Float64Array(n), p = new Float64Array(n), T = null;
+        if (!obj || typeof obj !== 'object' || !_validN(obj.n)) return null;
         var dt = _bytesInt32(_b64Decode(obj.tB64)), dp = _bytesInt32(_b64Decode(obj.pB64));
+        if (dt.length < obj.n || dp.length < obj.n) return null;    // a truncated stream is not a record
+        var n = obj.n, t = new Float64Array(n), p = new Float64Array(n), T = null;
         var sc = _fin(obj.tScale_ms) ? obj.tScale_ms : 1, ps = _fin(obj.pScale) ? obj.pScale : P_SCALE, o = _fin(obj.origin_ms) ? obj.origin_ms : 0;
         var at = 0, ap = 0, i;
         for (i = 0; i < n && i < dt.length; i++) { at += dt[i]; t[i] = o + at * sc; }
@@ -196,16 +236,31 @@
             T = new Float64Array(n);
             for (i = 0; i < n && i < dT.length; i++) { aT += dT[i]; T[i] = Number((aT * Ts).toFixed(6)); }
         }
-        var m = obj.meta || {}, rec = { ok: true, origin_ms: n ? t[0] : o, t: t, p: p, T: T, n: n };
-        for (var k in m) if (_own(m, k) && !_own(rec, k)) rec[k] = m[k];
+        var rec = { ok: true, origin_ms: n ? t[0] : o, t: t, p: p, T: T, n: n };
+        _metaCopy(obj.meta, rec);
         rec.ok = true;
         if (!rec.warnings) rec.warnings = [];
+        return rec;
+    }
+    // A decoded record is used only when its samples re-hash to the hash it carries (WTS_buildup.data.recordHash:
+    // the parser rounds every time to whole ms and the store keeps p to 0.001 psi, so a stored record re-hashes
+    // exactly). rec.hashVerified tells the page the check ran; a mismatch (a truncated or edited entry) → null.
+    function _verifyRec(rec) {
+        if (!rec) return null;
+        var D = B.data;
+        if (!D || typeof D.recordHash !== 'function') { rec.hashVerified = false; return rec; }
+        var h = null;
+        try { h = D.recordHash(rec.t, rec.p); } catch (e) { h = null; }
+        if (!h || h !== rec.hash) return null;
+        rec.hashVerified = true;
         return rec;
     }
     function _encodedChars(e) { return e ? (String(e.tB64 || '').length + String(e.pB64 || '').length + String(e.TB64 || '').length + 512) : 0; }
 
     // ── IndexedDB with a memory mirror ──
-    var _mem = { raw: {}, tests: {} };
+    // Mirror maps have no prototype, so a well id such as '__proto__' from a project file is an ordinary key.
+    function _map() { return Object.create(null); }
+    var _mem = { raw: _map(), tests: _map() };
     var _db = null, _dbP = null, _engine = null;
     function _idb() { try { return G.indexedDB || null; } catch (e) { return null; } }
     function _openDb() {
@@ -252,7 +307,7 @@
     function _readAll(db, store) {
         var P = _P();
         return new P(function (res) {
-            var out = {};
+            var out = _map();
             try {
                 var t = db.transaction(store, 'readonly'), s = t.objectStore(store);
                 if (typeof s.getAllKeys !== 'function') { res(out); return; }
@@ -298,7 +353,7 @@
             return null;
         });
     }
-    function getRaw(id) { return getRawEncoded(id).then(function (e) { return e ? decode(e) : null; }); }
+    function getRaw(id) { return getRawEncoded(id).then(function (e) { return e ? _verifyRec(decode(e)) : null; }); }
     function putTests(id, obj) {
         id = wellId(id);
         var v = (obj && typeof obj === 'object') ? obj : {};
@@ -320,7 +375,7 @@
     }
     function _clear(store) {
         _gen++;
-        _mem[store] = {};
+        _mem[store] = _map();
         return _tx(store, 'readwrite', function (s) { return s.clear(); });
     }
 
@@ -427,7 +482,7 @@
         delete c.overflow;
         var txt = _json(c);
         if (txt == null) return { ok: false, bytes: 0, overflow: false };
-        var bytes = _bytes(txt), overflow = false;
+        var bytes = _bytes(txt), overflow = false, overflowWrite = null;
         if (bytes > STATE_CAP && c.analysis && Array.isArray(c.analysis.tests)) {
             // Overflow: per-test arrays and results go to the IndexedDB 'tests' store.
             var parked = {}, ids = [];
@@ -444,14 +499,18 @@
                 return tc;
             });
             c.overflow = { wellId: id, tests: ids };
-            putTests(id, parked);
+            // The parked detail is in the mirror at once; overflowWrite resolves {ok, engine} once IndexedDB holds it
+            // (ok:false without IndexedDB or on a failed write: the detail is then lost at the next reload).
+            overflowWrite = putTests(id, parked);
             txt = _json(c);
             bytes = _bytes(txt);
             overflow = true;
             if (bytes > STATE_CAP && Array.isArray(c.qa) && c.qa.length) { c.qa = c.qa.slice(-5); txt = _json(c); bytes = _bytes(txt); }
         }
         var ok = bytes <= STATE_CAP && _write(STATE_KEY, txt);
-        return { ok: ok, bytes: bytes, overflow: overflow };
+        var res = { ok: ok, bytes: bytes, overflow: overflow };
+        if (overflowWrite) res.overflowWrite = overflowWrite;
+        return res;
     }
     function loadState() {
         var ls = _ls();
@@ -482,13 +541,19 @@
     }
 
     // ── wts_buildup_audit (append-only chain) ──
-    function _auditRead() {
-        var ls = _ls(), o = null;
-        try { o = ls ? JSON.parse(ls.getItem(AUDIT_KEY) || 'null') : null; } catch (e) { o = null; }
-        if (!o || typeof o !== 'object' || o.v !== 1 || !Array.isArray(o.entries)) o = { v: 1, entries: [], summary: null };
+    // {log, state, raw}: state 'missing' (no log yet), 'ok', or 'unreadable' (text present but not a v1 log: it is
+    // never overwritten in place — auditAppend first keeps it under AUDIT_KEY + '_corrupt_<ms>').
+    function _auditLoad() {
+        var ls = _ls(), raw = null, o = null;
+        try { raw = ls ? ls.getItem(AUDIT_KEY) : null; } catch (e) { raw = null; }
+        if (raw == null || raw === '') return { log: { v: 1, entries: [], summary: null }, state: 'missing', raw: null };
+        try { o = JSON.parse(raw); } catch (e) { o = null; }
+        if (!o || typeof o !== 'object' || o.v !== 1 || !Array.isArray(o.entries)) return { log: { v: 1, entries: [], summary: null }, state: 'unreadable', raw: String(raw) };
         if (!_own(o, 'summary')) o.summary = null;
-        return o;
+        if (_own(o, 'lost') && !(o.lost && typeof o.lost === 'object')) delete o.lost;
+        return { log: o, state: 'ok', raw: null };
     }
+    function _auditRead() { return _auditLoad().log; }
     // The chain uses the review's recipe (WTS_buildup.review.audit.entryHash and GENESIS): hash16(prevHash +
     // canon(entry without hash)) with every numeric leaf serialised exactly first, so canon sorts the keys but rounds
     // nothing and an edit at any digit breaks the chain. The first entry links to GENESIS.
@@ -521,8 +586,16 @@
         a.entries = a.entries.slice(nFold);
         return a;
     }
+    // Returns the stored entry, or null when it could not be stored (device storage full, or an unreadable log
+    // whose text could not be kept aside): the caller then changes nothing.
     function auditAppend(entry) {
-        var a = _auditRead();
+        var L = _auditLoad(), a = L.log;
+        if (L.state === 'unreadable') {
+            // Keep the unreadable text as it is, then start a new chain that records the loss for good (S10 shows it).
+            var key = AUDIT_KEY + '_corrupt_' + Date.now();
+            if (!_write(key, L.raw)) return null;
+            a = { v: 1, entries: [], summary: null, lost: { at: new Date().toISOString(), key: key, chars: L.raw.length } };
+        }
         var last = a.entries.length ? a.entries[a.entries.length - 1] : null;
         var prev = last ? last.hash : ((a.summary && a.summary.chainHash) || GENESIS);
         var seq = last ? (last.seq + 1) : ((a.summary && a.summary.toSeq) ? a.summary.toSeq + 1 : 1);
@@ -544,14 +617,28 @@
         var ok = txt != null && _write(AUDIT_KEY, txt);
         return ok ? e : null;
     }
-    function auditVerify() {
-        var a = _auditRead(), prev = (a.summary && a.summary.chainHash) || GENESIS;
+    function _verifyLog(a) {
+        var prev = (a.summary && a.summary.chainHash) || GENESIS;
         for (var i = 0; i < a.entries.length; i++) {
             var e = a.entries[i];
-            if (e.prevHash !== prev || _entryHash(prev, e) !== e.hash) return { ok: false, at: e.seq, n: a.entries.length };
+            if (!e || typeof e !== 'object' || e.prevHash !== prev || _entryHash(prev, e) !== e.hash) return { ok: false, at: e && _fin(e.seq) ? e.seq : i + 1, n: a.entries.length };
             prev = e.hash;
         }
         return { ok: true, n: a.entries.length, folded: a.summary ? a.summary.n : 0, chainHash: prev };
+    }
+    function auditVerify() {
+        var L = _auditLoad();
+        if (L.state === 'unreadable') return { ok: false, at: null, n: 0, unreadable: true };
+        return _verifyLog(L.log);
+    }
+    // {state: 'missing'|'ok'|'broken'|'unreadable', brokenAt, lost, lastRunSeq}: brokenAt is the first entry that does
+    // not verify; lost is the record of an earlier unreadable log ({at, key, chars}); lastRunSeq the latest 'run' entry.
+    function auditStatus() {
+        var L = _auditLoad();
+        if (L.state === 'unreadable') return { state: 'unreadable', brokenAt: null, lost: null, lastRunSeq: null };
+        var v = _verifyLog(L.log), lastRun = null;
+        L.log.entries.forEach(function (e) { if (e && e.kind === 'run' && _fin(e.seq)) lastRun = e.seq; });
+        return { state: !v.ok ? 'broken' : (L.state === 'missing' ? 'missing' : 'ok'), brokenAt: v.ok ? null : v.at, lost: L.log.lost || null, lastRunSeq: lastRun };
     }
 
     // ── project-file modules (buildup_raw, buildup_analysis) ──
@@ -591,16 +678,25 @@
         if (!any && !omitted.length) return null;
         return { wells: wells, omitted: omitted };
     }
+    // Well ids accepted from a project file: the app's ids ('w1', 'default', …), never a prototype key.
+    var SAFE_ID = /^[A-Za-z0-9_.:-]{1,64}$/, BAD_ID = { '__proto__': 1, 'constructor': 1, 'prototype': 1 };
+    function _safeId(id) { return typeof id === 'string' && SAFE_ID.test(id) && !_own(BAD_ID, id); }
     function _modWrite(store, state) {
         if (state === null) { _loaded[store] = []; _clear(store); return; }
         if (!state || typeof state !== 'object' || !state.wells || typeof state.wells !== 'object') return;
-        var ids = [];
-        for (var id in state.wells) {
-            if (!_own(state.wells, id)) continue;
+        var ids = [], total = 0;
+        Object.keys(state.wells).forEach(function (id) {
+            if (!_safeId(id)) return;
             var v = state.wells[id];
-            if (store === 'raw' && !_isEncoded(v)) continue;
+            if (store === 'raw') {
+                // the shape the encoder writes (n a sample count, base64 lengths of 4·n bytes) and RAW_CAP in total, as on Save
+                if (!_b64Consistent(v)) return;
+                var sz = _encodedChars(v);
+                if (total + sz > RAW_CAP) return;
+                total += sz;
+            } else if (!v || typeof v !== 'object' || Array.isArray(v)) return;
             _mem[store][id] = v; ids.push(id);
-        }
+        });
         _loaded[store] = ids;
         ids.forEach(function (wid) { var v = _mem[store][wid]; _tx(store, 'readwrite', function (s) { return s.put(v, wid); }); });
     }
@@ -661,7 +757,10 @@
     S.dropRaw = function (id) { return _drop('raw', wellId(id)); };
     S.dropTests = function (id) { return _drop('tests', wellId(id)); };
     S.hasRaw = function (id) { return _own(_mem.raw, wellId(id)); };
-    S.rawHash = function (id) { var e = _mem.raw[wellId(id)]; return e && e.meta ? e.meta.hash || null : null; };
+    S.rawHash = function (id) {
+        var k = wellId(id), e = _own(_mem.raw, k) ? _mem.raw[k] : null;
+        return (e && e.meta && _own(e.meta, 'hash') && typeof e.meta.hash === 'string') ? e.meta.hash || null : null;
+    };
     S.encode = encode; S.encodeJob = encodeJob; S.decode = decode;
     S.loadState = loadState; S.saveState = saveState; S.rehydrate = rehydrate; S.stripResult = stripResult;
     S.registerModules = registerModules;
@@ -670,11 +769,12 @@
         append: auditAppend,
         summary: function () { return _auditRead().summary; },
         verify: auditVerify,
+        status: auditStatus,
         chainHash: chainHash
     };
     S.engine = function () { return _engine || 'memory'; };
     S._mirror = function () { return _mem; };
-    S._reset = function () { _db = null; _dbP = null; _engine = null; _mem = { raw: {}, tests: {} }; _loaded = { raw: null, tests: null }; };
+    S._reset = function () { _db = null; _dbP = null; _engine = null; _mem = { raw: _map(), tests: _map() }; _loaded = { raw: null, tests: null }; };
 })();
 
 // === SELF-TEST ===

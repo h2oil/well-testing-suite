@@ -1784,6 +1784,11 @@ fits those models.
   - With primes for the inputs the engine received (`CaseSpec.given`):
     k* = f·k·(B′/B)·(μ′/μ)·(h/h′),
     S* = S + 1.1513·log10((h′/h)·(φ′/φ)·(ct′/ct)) + 2.3026·log10(rw′/rw) − 1.1513·log10((B′/B)·f).
+  - Calibration note (WP9 review): f is the closing-day factor, while the engine superposes the given daily rates over every step in the
+    window's reach (earlier days carry their own ratio V′/V). With a one-day rate error the input-consistent k therefore lies between k
+    and f·k, so k* = f·k overstates the expected k error by up to |f − 1| (oil B1: f 1.068, k* 48.08, engine 46.27, true 45; gas B3:
+    f 1.048, k* 20.97, engine 20.29) and S* by about 0.03. The calibration tables and S_err coverage are scored against this truth; a
+    truth forward-modelled from the given rate history would remove the bias (not done in v3.3).
   - Gas: S* = S′ = S + D·q at the test rate, with the same input terms.
   - Every rate-spreading error the engine makes (wrong flowing hours, zone offset, missed partial cut, mishandled "ignores the shut-in")
     therefore shows up as a k or S error and counts against the label. A uniform allocation bias cannot be seen in pressure data and is
@@ -2081,7 +2086,7 @@ pattern). Detection, interpretation and trend settings and counts are clamped on
 | `bu_qa_q`, `bu_qa_go`, `bu_qa_out` | Ask about the analysis; Ask; answers | text (`data-no-persist`, `data-no-decimal-comma`, ≤ 300 chars); button; div | | |
 | `bu_so_name`, `bu_so_role`, `bu_so_ok`, `bu_so_sign`, `bu_so_unsign` | Signed by; role; statement; Sign off; Withdraw sign-off | text ×2 (`data-no-decimal-comma`); checkbox (`data-no-persist`); buttons | | Withdraw is disabled unless signed |
 | `bu_val_run`, `bu_val_out` | Re-run 24-case check; result | button; div | | Asynchronous. Disabled until file 55 is calibrated (`calibrated:true` with a non-empty `inApp` list); the reason is shown in `bu_val_out` |
-| `bu_ai_deid`, `bu_ai_free`, `bu_ai_copy`, `bu_ai_dl` | De-identify; include free text (notes, reasons, file and tag names); Copy for your AI assistant; Download | checkbox (on); checkbox (off); buttons | | No network; buttons disabled until an analysis exists |
+| `bu_ai_deid`, `bu_ai_free`, `bu_ai_copy`, `bu_ai_dl` | De-identify; include free text (notes, reasons, file and tag names); Copy for your AI assistant; Download | checkbox (on, `data-no-persist`); checkbox (off, `data-no-persist`); buttons | | No network; buttons disabled until an analysis exists. Both checkboxes start at their defaults in every session and after a project Open (a sender's choice never travels in a project file) |
 | `bu_open_prism` | Open this build-up in PRiSM | button | | Disabled until an analysis exists; confirm first (§6.10) |
 | Dialog: `bu_dlg_title`, `bu_dlg_body`, `bu_dlg_act`, `bu_dlg_t0`, `bu_dlg_t1`, `bu_dlg_model`, `bu_dlg_reason`, `bu_dlg_ok`, `bu_dlg_cancel` | Action / override / decision form | Inside `<dialog data-no-persist data-rp-nosnap>` | | A reason of at least 5 characters is required for overrides and rejections |
 
@@ -2199,7 +2204,7 @@ Canvas size comes from the `#bu_root` width: 720×300, or 600×400 below 600 px,
 ### 6.8 Autosave, project file, multi-well
 
 - **Autosave.** Every id'd control saves to `wts_page_buildup`, except `data-no-persist` areas (pastes, column maps, the dialog, the
-  Q&A box, the statement checkbox).
+  Q&A box, the statement checkbox, the two AI-export privacy checkboxes).
 - **State.** Analysis state, the audit trail and the sign-off live in `wts_buildup_state` (≤ 300 kB) and `wts_buildup_audit` (≤ 200 kB)
   (§3.12), written through `WTS_lsSet`. They are well-scoped automatically and carried in project files by the `storage` module. The
   overflow `tests` store travels in the `buildup_analysis` module. Budgeting matters because a well switch parks the active well as a blob
@@ -3094,6 +3099,11 @@ WP6, Q7). The others:
     WLS slope interval) is open.
   - **Review + report timing**: 83 ms on the oil demo against the 50 ms target (`--perf`, desktop, measured with the calibration
     search running on another core).
+  - **End of Analyse (WP9 review).** The GUI review measured the synchronous tail after the last engine unit (review, report model,
+    12 sections, the 230 kB state save and the Quick Report snapshot) at 106 + 55 ms on desktop and 567 + 287 ms at a 4× CPU throttle
+    (390 px). The page now runs it as four yielded drive units (review; apply + audit + save; test list and sections; publish, event and
+    snapshot), with the charts still one per unit; the review unit alone remains above 50 ms (83 ms above). The 4× figures after the
+    split are to be re-measured in the WP9 phone check and recorded here (Q29).
   - **Pressure-bin rounding (decision).** The stored `p` stays at 6 significant figures (frozen BuildupSpecStored rule): 0.01 psi at
     1,000–9,999 psia (0.003 psi rms, below the benchmark's smallest σ of 0.005 psi) and 0.1 psi (0.03 psi rms) from 10,000 psia, which
     only injectors reach in the benchmark (producers have p_i ≤ 8,000 psia). Kept; a Δp-relative store is the remedy if high-pressure,

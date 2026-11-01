@@ -546,7 +546,7 @@ module.exports = [
       const m0 = R.report(an, rv, null, null, imp);
       assert.strictEqual(m0.status, 'DRAFT');
       const s11 = (m) => m.sections.find((s) => s.id === 'S11').blocks.filter((b) => b.kind === 'verdict').map((b) => R.fill(b.template, b.values, imp));
-      assert(/^⚠ DRAFT — not signed off \(1 findings need a decision\)/.test(s11(m0)[0]), 'S11 DRAFT with the open count: ' + s11(m0)[0]);
+      assert(/^⚠ DRAFT — not signed off \(1 finding needs a decision\)/.test(s11(m0)[0]), 'S11 DRAFT with the open count (singular for one): ' + s11(m0)[0]);
       // a rejection needs a note
       R.applyDecisions(rv, [{ target: 'V8', d: 'reject', who: 'Reviewer B', at: AT }]);
       assert.strictEqual(R.canSign(rv).ok, false, 'a rejection without a note stays open');
@@ -1040,6 +1040,113 @@ module.exports = [
       const ih = R.evidence(h);
       assert.near(ih.items['B6·A2'].values.m.v, F.m(h.tests[5].spec.Dq, h.tests[5].spec.well.B, h.tests[5].spec.well.mu, h.tests[5].result.final.k, h.tests[5].spec.well.h), 1e-9,
         'nothing stored → the formula value is quoted');
+    },
+  },
+  {
+    name: 'RV16 WP9 review fixes: skin change on the baseline basis; decimal-comma questions; plurals; plain labels for codes; limitations never cut or repeated; noise wording',
+    wp: WP,
+    opts: false,
+    run(app, assert) {
+      const R = R0();
+      const fill = (b) => R.fill(b.template, b.values, imp);
+      // (1) gas with D resolved: the baseline is on the rate-corrected basis (series Salert); so is the change since the baseline
+      const an = S.FIX.analysis, li = an.tests.map((t) => t.id).lastIndexOf('B6');
+      const L = an.tests[li], ser = an.trend.series.find((s) => s.id === L.id);
+      ser.Salert = L.result.final.S + 0.75;
+      const idx = R.evidence(an), rv = R.run(an, idx, { at: AT }), m = R.report(an, rv, null, null, imp);
+      const kpi = m.sections[0].blocks.find((b) => b.kind === 'kpi').items.find((i) => i.label === 'Skin change since the baseline').value;
+      assert.near(kpi.v, ser.Salert - an.trend.baseline.S, 1e-9, 'Salert − baseline (both on the rate-corrected basis)');
+      const asmt = m.sections[0].blocks.find((b) => b.kind === 'notes' && b.head === 'Assessment');
+      assert(/on the rate-corrected basis of the baseline/.test(fill(asmt)), 'the assessment names the basis: ' + fill(asmt));
+      assert(R.check(m, an, idx, { review: rv }).ok, 'the model passes its evidence check');
+      const plainM = R.report(S.FIX.analysis, null, null, null, imp);
+      assert(!/rate-corrected/.test(fill(plainM.sections[0].blocks.find((b) => b.kind === 'notes' && b.head === 'Assessment'))), 'no basis note when the two agree');
+      // (2) a decimal comma in a question reads like a point
+      const a0 = S.FIX.analysis, i0 = R.evidence(a0);
+      const tc = R.ask('What if h is 12,5 % higher?', a0, i0, imp), tp = R.ask('What if h is 12.5 % higher?', a0, i0, imp);
+      assert.strictEqual(R.fill(tc.template, tc.values, imp), R.fill(tp.template, tp.values, imp), 'comma = point');
+      assert(/12\.5 %/.test(R.fill(tc.template, tc.values, imp)), '12.5 % answered: ' + R.fill(tc.template, tc.values, imp).slice(0, 120));
+      const a1 = S.FIX.analysis; a1.trend.alerts.absolute.threshold = 4.5;
+      const fc = R.ask('when will skin cross 4,5?', a1, null, imp), fp = R.ask('when will skin cross 4.5?', a1, null, imp);
+      assert.strictEqual(R.fill(fc.template, fc.values, imp), R.fill(fp.template, fp.values, imp), 'threshold 4,5 = 4.5');
+      // (3) plurals follow the count
+      const a2 = S.FIX.analysis; a2.qc.gapCount = 1; a2.qc.longestGap_h = 0.5; a2.qc.gapTotal_h = 0.5;
+      const rv2 = R.run(a2, null, { at: AT }); rv2.counts.suggestion = 1;
+      const t2 = textsOf(R, R.report(a2, rv2, null, null, imp), imp).map((x) => x[2]).join('\n');
+      assert(/\b1 gap, /.test(t2) && /⚠ 1 data gap of /.test(t2), 'one gap: singular');
+      assert(/\b1 suggestion\./.test(t2) && !/\b1 suggestions\b/.test(t2), 'one suggestion: singular');
+      // (4) codes are shown in words (events table, k-stability reading); the codes stay in the index
+      const a3 = S.FIX.analysis; a3.trend.kStability.reading = 'nearWell';
+      const m3 = R.report(a3, R.run(a3, null, { at: AT }), null, null, imp), t3 = textsOf(R, m3, imp).map((x) => x[2]).join('\n');
+      assert(!/\b(shutin|closingDay|previousDay|nearWell|not_confirmed|too_short|no_alloc|gap_at_closing)\b/.test(t3), 'no engine codes in the report: ' + (t3.match(/\b(shutin|closingDay|nearWell|not_confirmed|too_short)\b/) || [])[0]);
+      assert(/reading near-well change/.test(t3), 'k-stability reading in words');
+      const evt = m3.sections.find((s) => s.id === 'S3').blocks.find((b) => b.id === 'bu_tbl_events');
+      assert(evt.rows.some((r) => r[3] === 'Shut-in'), 'event kind in words');
+      assert.strictEqual(R.evidence(a3).items.T9.values.reading.v, 'nearWell', 'the index keeps the code');
+      // (5) limitations: every Notes box fits with its references, and no statement is repeated
+      const a4 = S.FIX.analysis;
+      a4.trend.limitations = (a4.trend.limitations || []).concat([{ code: 'partialCuts', text: 'Partial rate cuts are classified and listed, not interpreted.' },
+        { code: 'gradient', text: 'Gradient changes in the wellbore during the build-up are not modelled.' }, { code: 'storage', text: 'Changing wellbore storage is not modelled.' }]);
+      const s8 = R.report(a4, null, null, null, imp).sections.find((s) => s.id === 'S8').blocks;
+      s8.forEach((b) => assert(fill(b).length + (b.ev && b.ev.length ? 3 + b.ev.join(', ').length : 0) <= 560, 'S8 note with refs ≤ 560: ' + fill(b).length));
+      const all8 = s8.map(fill).join(' ');
+      assert.strictEqual((all8.match(/gradient changes in the wellbore/gi) || []).length, 1, 'the wellbore-gradient statement once');
+      assert.strictEqual((all8.match(/Partial rate cuts/g) || []).length, 1, 'the partial-cut statement once');
+      // (6) the noise verdict says what the autocorrelation is of
+      const a5 = S.FIX.analysis; a5.qc.noiseCorrelated = true; a5.qc.rho1 = 0.074;
+      const nv = textsOf(R, R.report(a5, null, null, null, imp), imp).find((x) => x[0] === 'S2' && /correlated/.test(x[2]));
+      assert(nv && /pressure differences 0\.07/.test(nv[2]) && /minus one half/.test(nv[2]), 'noise wording: ' + (nv && nv[2]));
+    },
+  },
+  {
+    name: 'RV17 WP9 AI export: with free text, short names, decision and override authors, sign-off and page-supplied names are scrubbed as whole words; d/m/y and month-name dates are removed',
+    wp: WP,
+    opts: false,
+    run(app, assert) {
+      const R = R0(), an = S.FIX.analysis;
+      an.meta.wellName = 'P7'; an.meta.engineer = 'Bo';
+      an.overrides[0].reason = 'Per Bo, P7 gauge swapped.'; an.overrides[0].who = 'Kim Lee';
+      const rv = R.run(an, null, { at: AT });
+      R.applyDecisions(rv, [{ target: 'V5', d: 'accept', note: 'ok by Bo 3/7/26; Kim agreed on 5 May 2026; checked with Jo Smith.', who: 'Ana Ruiz', at: AT }]);
+      const opts = { includeFreeText: true, signoff: { name: 'Sig Ner' }, names: [{ s: 'Jo Smith', role: 'person' }, { s: 'North Field', role: 'well' }] };
+      const t = R.aiExport(an, rv, opts).text;
+      ['P7', 'Bo', 'Kim', 'Lee', 'Ana', 'Ruiz', 'Jo Smith', '3/7/26', '5 May 2026'].forEach((s) => assert(!new RegExp('(^|[^A-Za-z0-9_])' + s.replace(/\//g, '\\/') + '(?![A-Za-z0-9_])').test(t), 'leaks ' + JSON.stringify(s)));
+      assert(/Per the engineer, Well A gauge swapped\./.test(t), 'the reason is scrubbed in place: ' + (t.match(/Override O1[^\n]*/) || [''])[0]);
+      assert(/a date/.test(t), 'dates replaced');
+      assert(/B6·A2/.test(t) && /\bB6 \|/.test(t), 'evidence and test ids untouched');
+      assert(/Well A/.test(t) && /\(de-identified\)/.test(t), 'still de-identified');
+      // case-insensitive, whole words only: a name inside another word is not touched
+      const an2 = S.FIX.analysis; an2.meta.engineer = 'Al'; an2.overrides[0].reason = 'AL and al checked the alarm log.';
+      const t2 = R.aiExport(an2, R.run(an2, null, { at: AT }), { includeFreeText: true }).text;
+      assert(/the engineer and the engineer checked the alarm log\./.test(t2), 'whole words, any case: ' + (t2.match(/Override O1[^\n]*/) || [''])[0]);
+      // de-identification off: names kept
+      assert(R.aiExport(an, rv, { includeFreeText: true, deidentify: false }).text.indexOf('Per Bo, P7') !== -1, 'deidentify:false keeps the text');
+    },
+  },
+  {
+    name: 'RV18 WP9 audit: S10 and S11 warn when the chain does not verify (review-format and device-store logs) or an earlier log could not be read; an intact chain gives no warning',
+    wp: WP,
+    opts: false,
+    run(app, assert) {
+      const R = R0(), A = R.audit, an = S.FIX.analysis, rv = R.run(an, null, { at: AT });
+      let log = null;
+      for (let i = 1; i <= 6; i++) log = A.append(log, { kind: 'run', who: 'Engineer A', at: new Date(Date.UTC(2026, 6, 1) + i * 60000).toISOString(), reason: 'entry ' + i });
+      const warns = (m, sid) => m.sections.find((s) => s.id === sid).blocks.filter((b) => b.kind === 'verdict' && /Audit trail|audit trail/.test(b.template)).map((b) => String(R.fill(b.template, b.values, imp)));
+      const ok = R.report(an, rv, log, null, imp);
+      assert.deepStrictEqual(plain(warns(ok, 'S10')), [], 'intact chain: no warning');
+      const ed = clone(log); ed.entries[2].reason = 'edited later';
+      const m = R.report(an, rv, ed, null, imp);
+      assert.deepStrictEqual(plain(warns(m, 'S10')), ['⚠ Audit trail does not verify at entry #3: it was edited or damaged after it was written.'], 'S10 names the entry');
+      assert.strictEqual(warns(m, 'S11').length, 1, 'S11 repeats the warning');
+      assert(R.check(m, an, R.evidence(an), { review: rv, audit: ed }).ok, 'the warning passes the evidence check');
+      // the page's form: an entry array carrying the device store's summary (from / to are times, toSeq the last folded seq)
+      const dev = clone(log).entries.slice(2);
+      dev.summary = { from: log.entries[0].at, to: log.entries[1].at, n: 2, fromSeq: 1, toSeq: 2, counts: { run: 2 }, chainHash: log.entries[1].hash };
+      assert.deepStrictEqual(plain(warns(R.report(an, rv, dev, null, imp), 'S10')), [], 'a folded device log verifies from its summary');
+      const kv = R.report(an, rv, dev, null, imp).sections.find((s) => s.id === 'S10').blocks.find((b) => b.kind === 'kv').rows.find((r) => r.label === 'Audit chain');
+      assert(/\(2 folded entries\)$/.test(R.fill(kv.value.template, kv.value.values, imp)), 'folded count from the device summary');
+      const lost = clone(log).entries; lost.lost = { at: AT, key: 'wts_buildup_audit_corrupt_1782900000000', chars: 812 };
+      assert(/could not be read; its text is kept as wts_buildup_audit_corrupt_1782900000000/.test(warns(R.report(an, rv, lost, null, imp), 'S10').join(' ')), 'an earlier unreadable log is reported');
     },
   },
 ];

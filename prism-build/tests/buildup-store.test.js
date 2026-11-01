@@ -131,8 +131,15 @@ module.exports = [
       const note = String(app.el('bu_raw_note').textContent);
       assert.match(note, /not embedded/i, 'note shown: ' + note);
       assert.ok(app.el('bu_res').getAttribute('data-done') === '1', 'stored analysis rendered');
-      // the matching record is used
-      const right = S.encode(app.toWin(synthRecord(400, a.record.hash)));
+      // a record that only carries the analysis's hash as a label (its samples hash differently) is not used either
+      const forged = S.encode(app.toWin(synthRecord(400, a.record.hash)));
+      await S.putRaw(wid, forged);
+      W.__WTS_TEST__.nav('home'); W.__WTS_TEST__.nav('buildup');
+      await settle(app, 6);
+      assert.strictEqual(W.WTS_buildup.page.mem().record, null, 'a forged hash label is not accepted');
+      assert.strictEqual(await S.getRaw(wid), null, 'getRaw re-hashes the samples');
+      // the matching record (its samples hash to the analysis's record hash) is used
+      const right = S.encode(record(app));
       await S.putRaw(wid, right);
       W.__WTS_TEST__.nav('home'); W.__WTS_TEST__.nav('buildup');
       await settle(app, 6);
@@ -372,4 +379,162 @@ module.exports = [
       assert.strictEqual(back.tests.length, a.tests.length);
     },
   },
+  {
+    name: 'ST9 store/page: a truncated or edited raw record that keeps its hash label is treated as absent (getRaw re-hashes the samples); decode refuses an invalid n or a stream shorter than n',
+    wp: WP,
+    async run(app, assert) {
+      const idb = createFakeIDB();
+      app.win.indexedDB = idb.indexedDB;
+      const W = app.win, S = W.WTS_buildup.store;
+      await S.init();
+      const rec = record(app);
+      const enc = JSON.parse(JSON.stringify(S.encode(rec)));
+      await S.putRaw('w1', app.toWin(enc));
+      const good = await S.getRaw('w1');
+      assert.ok(good && good.hashVerified === true && good.hash === rec.hash, 'an intact record re-hashes exactly');
+      // half of the pressure stream removed, meta.hash kept
+      const cut = Object.assign({}, enc, { pB64: enc.pB64.slice(0, Math.floor(enc.pB64.length / 2)) });
+      assert.strictEqual(S.decode(app.toWin(cut)), null, 'decode: a stream shorter than n is not a record');
+      await S.putRaw('w2', app.toWin(cut));
+      assert.strictEqual(await S.getRaw('w2'), null, 'truncated → absent');
+      // same length, one base64 character changed (edited samples): the label no longer matches the samples
+      const i = Math.floor(enc.pB64.length / 2), ed = Object.assign({}, enc, { pB64: enc.pB64.slice(0, i) + (enc.pB64[i] === 'A' ? 'B' : 'A') + enc.pB64.slice(i + 1) });
+      assert.ok(S.decode(app.toWin(ed)), 'the edited stream still decodes');
+      await S.putRaw('w3', app.toWin(ed));
+      assert.strictEqual(await S.getRaw('w3'), null, 'edited samples → absent');
+      // invalid sample counts
+      [-1, 2.5, 3e8, NaN].forEach((n) => assert.strictEqual(S.decode(app.toWin({ n: n, tB64: '', pB64: '' })), null, 'n = ' + n + ' refused'));
+      // the page: the analysis's record id holds the edited entry → raw absent, note shown
+      const wid = S.wellId();
+      app.storage.setItem('wts_buildup_state', JSON.stringify({ v: 1, analysis: FIX.analysis, review: null, qa: [], uiSel: {}, signoff: null, overrides: FIX.analysis.overrides }));
+      await S.putRaw(wid, app.toWin(ed));
+      W.__WTS_TEST__.nav('buildup');
+      await settle(app, 8);
+      assert.strictEqual(W.WTS_buildup.page.mem().record, null, 'edited raw record is not used');
+      assert.match(String(app.el('bu_raw_note').textContent), /not embedded/i, 'note shown');
+      app.flush(5000);
+      assert.strictEqual(app.pendingTimers(), 0);
+    },
+  },
+  {
+    name: 'ST10 store: project-file well ids "__proto__" / "constructor" are ignored, the mirror maps have no prototype, rawHash reads own entries only, decode copies meta by name and type',
+    wp: WP,
+    async run(app, assert) {
+      const idb = createFakeIDB();
+      app.win.indexedDB = idb.indexedDB;
+      const W = app.win, S = W.WTS_buildup.store;
+      const enc = JSON.parse(JSON.stringify(S.encode(record(app))));
+      const inj = JSON.stringify(Object.assign({}, enc, { meta: Object.assign({}, enc.meta, { hash: 'injected' }) }));
+      const text = '{"format":"h2oilproj","version":"1.0","modules":{"storage":{"keys":{},"skipped":[]},"buildup_raw":{"wells":{"__proto__":{"w2":' + inj + '},' +
+        '"constructor":' + JSON.stringify(enc) + ',"w 9":' + JSON.stringify(enc) + ',"w1":' + JSON.stringify(enc) + '},"omitted":[]}}}';
+      W.WTS_project.loadFromObject(W.JSON.parse(text));
+      const m = S._mirror();
+      assert.strictEqual(Object.getPrototypeOf(m.raw), null, 'mirror map has no prototype');
+      assert.deepStrictEqual(Object.keys(m.raw), ['w1'], 'only the safe well id is imported: ' + Object.keys(m.raw).join(','));
+      assert.strictEqual(S.rawHash('w2'), null, 'no inherited hash');
+      assert.strictEqual(S.hasRaw('w2'), false);
+      assert.strictEqual(S.rawHash('w1'), enc.meta.hash);
+      assert.strictEqual(W.Object.prototype.w2, undefined, 'Object.prototype untouched');
+      await settle(app, 6);
+      assert.deepStrictEqual(idb.keys(DB, 'raw'), ['w1'], 'nothing stored under a prototype key');
+      // meta: by name and type only
+      const metaText = JSON.stringify(Object.assign({}, enc, { meta: null })).replace('"meta":null', '"meta":{"__proto__":{"zone":"forged","extra":1},"name":"ok.csv","hash":5,"patm":"x","zone":{"mode":"iana","tz":"Europe/London","evil":1}}');
+      const d = S.decode(W.JSON.parse(metaText));
+      assert.ok(d, 'decoded');
+      assert.strictEqual(Object.getPrototypeOf(d), W.Object.prototype, 'ordinary prototype');
+      assert.strictEqual(d.extra, undefined); assert.strictEqual(d.name, 'ok.csv');
+      assert.strictEqual(d.hash, undefined, 'a non-string hash is not copied'); assert.strictEqual(d.patm, undefined, 'a non-number patm is not copied');
+      assert.deepStrictEqual(JSON.parse(JSON.stringify(d.zone)), { mode: 'iana', tz: 'Europe/London' }, 'zone copied field by field');
+    },
+  },
+  {
+    name: 'ST11 store: a project-file import keeps only encoder-shaped raw records within RAW_CAP in total and plain-object analyses',
+    wp: WP,
+    timeoutMs: 60000,
+    async run(app, assert) {
+      const idb = createFakeIDB();
+      app.win.indexedDB = idb.indexedDB;
+      const W = app.win, S = W.WTS_buildup.store;
+      const n = 562500, L = 4 * Math.ceil(4 * n / 3), big = 'A'.repeat(L);   // ≈ 6 MB per record
+      const ent = () => ({ v: 1, origin_ms: 1772323200000, tScale_ms: 1000, pScale: 0.001, TScale: 0.01, n, tB64: big, pB64: big, TB64: null, meta: { hash: '0123456789abcdef' } });
+      const wells = { w1: ent(), w2: ent(), w3: ent(), bad1: { n: 10, tB64: 'AAAA', pB64: 'AAAA', meta: {} }, bad2: { n: -1, tB64: '', pB64: '', meta: {} },
+        bad3: Object.assign(ent(), { tB64: big + 'AAAA' }) };
+      W.WTS_project.loadFromObject(app.toWin({ format: 'h2oilproj', version: '1.0', modules: { storage: { keys: {}, skipped: [] }, buildup_raw: { wells, omitted: [] },
+        buildup_analysis: { wells: { w1: [1, 2], w2: 'text', w3: { B1: { spec: { dt: [1], p: [2], n: null }, result: { id: 'B1' } } } }, omitted: [] } } }));
+      assert.deepStrictEqual(Object.keys(S._mirror().raw), ['w1', 'w2'], 'the third 6 MB record exceeds RAW_CAP; malformed records are skipped');
+      assert.deepStrictEqual(Object.keys(S._mirror().tests), ['w3'], 'only plain-object analyses');
+      await settle(app, 6);
+      assert.deepStrictEqual(idb.keys(DB, 'raw').sort(), ['w1', 'w2']);
+    },
+  },
+  {
+    name: 'ST12 store: an overflowed saveState returns overflowWrite, which resolves ok:false when IndexedDB fails or is absent and ok:true when it holds the parked build-ups',
+    wp: WP,
+    timeoutMs: 60000,
+    async run(app, assert, ctx) {
+      const idb = createFakeIDB({ failWrites: true });
+      app.win.indexedDB = idb.indexedDB;
+      const S = app.win.WTS_buildup.store;
+      await S.init();
+      const st = (a) => a.toWin({ v: 1, input: null, analysis: bigAnalysis(60), review: null, qa: [], uiSel: {}, signoff: null, overrides: [] });
+      const r = S.saveState(st(app), {});
+      assert.ok(r.ok && r.overflow, 'saved with overflow: ' + JSON.stringify(r));
+      assert.ok(r.overflowWrite && typeof r.overflowWrite.then === 'function', 'overflowWrite is a promise');
+      assert.strictEqual((await r.overflowWrite).ok, false, 'a failed IndexedDB write is reported');
+      idb.failWrites = false;
+      assert.strictEqual((await S.saveState(st(app), {}).overflowWrite).ok, true, 'a stored write is reported ok');
+      const small = S.saveState(app.toWin({ v: 1, analysis: FIX.analysis }), {});
+      assert.ok(small.ok && !small.overflow && !small.overflowWrite, 'no overflow → no overflowWrite');
+      const app2 = ctx.loadApp({});
+      try {
+        const S2 = app2.win.WTS_buildup.store;
+        const w2 = await S2.saveState(st(app2), {}).overflowWrite;
+        assert.ok(w2 && w2.ok === false && w2.engine === 'memory', 'without IndexedDB (memory engine) the parked detail is not durable: ' + JSON.stringify(w2));
+      } finally { app2.dispose(); }
+    },
+  },
+  {
+    name: 'ST13 store: an unreadable audit log is never overwritten in place — its text is kept under wts_buildup_audit_corrupt_<ms> and a new chain records the loss; when it cannot be kept, append refuses',
+    wp: WP,
+    run(app, assert) {
+      const W = app.win, S = W.WTS_buildup.store;
+      S.audit.append(app.toWin({ kind: 'signoff', who: 'A', reason: 'signed' }));
+      S.audit.append(app.toWin({ kind: 'decision', who: 'A', reason: 'accepted' }));
+      const bad = app.storage.getItem('wts_buildup_audit').slice(0, -3);
+      app.storage.setItem('wts_buildup_audit', bad);
+      assert.strictEqual(S.audit.status().state, 'unreadable');
+      assert.strictEqual(S.audit.verify().ok, false, 'an unreadable log does not verify');
+      const orig = W.WTS_lsSet;
+      W.WTS_lsSet = function (k, v) { if (/_corrupt_/.test(k)) return false; return orig(k, v); };
+      assert.strictEqual(S.audit.append(app.toWin({ kind: 'run', who: 'A' })), null, 'append refuses when the text cannot be kept aside');
+      assert.strictEqual(app.storage.getItem('wts_buildup_audit'), bad, 'the unreadable text is untouched');
+      W.WTS_lsSet = orig;
+      const e = S.audit.append(app.toWin({ kind: 'run', who: 'A' }));
+      assert.ok(e && e.seq === 1 && e.prevHash === '0000000000000000', 'a new chain starts');
+      const st = S.audit.status();
+      assert.strictEqual(st.state, 'ok');
+      assert.ok(st.lost && /^wts_buildup_audit_corrupt_\d+$/.test(st.lost.key), 'the loss is recorded: ' + JSON.stringify(st.lost));
+      assert.strictEqual(app.storage.getItem(st.lost.key), bad, 'the unreadable text is kept verbatim');
+      assert.ok(S.audit.verify().ok, 'the new chain verifies');
+      for (let i = 0; i < 520; i++) S.audit.append(app.toWin({ kind: 'run', who: 'A', reason: 'r' + i }));
+      assert.strictEqual(S.audit.status().lost.key, st.lost.key, 'the loss record survives folding');
+      // a broken chain is reported with the entry number and the latest run
+      const raw = JSON.parse(app.storage.getItem('wts_buildup_audit'));
+      raw.entries[5].reason = 'edited later';
+      app.storage.setItem('wts_buildup_audit', JSON.stringify(raw));
+      const b = S.audit.status();
+      assert.strictEqual(b.state, 'broken'); assert.strictEqual(b.brokenAt, raw.entries[5].seq); assert.strictEqual(b.lastRunSeq, raw.entries[raw.entries.length - 1].seq);
+    },
+  },
 ];
+// A 60-test analysis built from FIX (the per-test arrays push the state over STATE_CAP).
+function bigAnalysis(nTests) {
+  const a = JSON.parse(JSON.stringify(FIX.analysis)), t0 = a.tests;
+  a.tests = [];
+  for (let i = 0; i < nTests; i++) {
+    const t = JSON.parse(JSON.stringify(t0[i % t0.length]));
+    t.id = 'B' + (i + 1); if (t.result) t.result.id = t.id;
+    a.tests.push(t);
+  }
+  return a;
+}

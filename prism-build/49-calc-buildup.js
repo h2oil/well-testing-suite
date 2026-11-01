@@ -273,7 +273,23 @@
         var r = { ok: false };
         try { r = S.saveState(st, { wellId: _wellId() }); } catch (e) { r = { ok: false }; }
         if (!r.ok) _status('bu_progress', 'warn', 'Device storage is full: this analysis could not be saved on the device. Use File → Save to keep it.');
+        // An overflowed state keeps only per-test summaries in localStorage: say so when the parked detail did not reach
+        // the browser database (none, private mode, storage full), since it is then missing after a reload.
+        var tok = ++_saveTok, wid = _wellId();
+        if (r && r.overflowWrite && typeof r.overflowWrite.then === 'function') {
+            r.overflowWrite.then(function (w) {
+                if (tok !== _saveTok || _wellId() !== wid) return;
+                _status('bu_store_note', w && w.ok ? '' : 'warn', w && w.ok ? '' : STORE_NOTE);
+            }, function () { if (tok === _saveTok && _wellId() === wid) _status('bu_store_note', 'warn', STORE_NOTE); });
+        } else _status('bu_store_note', '', '');
         return r;
+    }
+    var STORE_NOTE = 'The per-test detail could not be stored in this browser\'s database (not available, private mode or storage full): it will be missing after a reload. Use File → Save to keep it.';
+    var _saveTok = 0;
+    var AUDIT_FAIL = 'The audit trail could not be saved (device storage full) — nothing was changed. Free space or use File → Save.';
+    function _auditStatus() {
+        var S = _store();
+        try { return (S && S.audit && typeof S.audit.status === 'function') ? S.audit.status() : null; } catch (e) { return null; }
     }
     function _audit(e) {
         var S = _store();
@@ -290,6 +306,8 @@
         var arr = list.slice();
         arr.entries = list;                                       // array and object form in one value
         try { arr.summary = S && S.audit ? S.audit.summary() : null; arr.chainHash = S && S.audit ? S.audit.chainHash() : ''; } catch (e) { arr.summary = null; arr.chainHash = ''; }
+        var ast = _auditStatus();                                 // S10 shows an earlier log that could not be read
+        arr.lost = ast ? (ast.lost || (ast.state === 'unreadable' ? { key: null } : null)) : null;
         return arr;
     }
 
@@ -372,6 +390,8 @@
         '#bu_root .bu-tw{max-width:100%;overflow-x:auto;overscroll-behavior-x:contain}' +
         '#bu_root .bu-tw table{min-width:100%}' +
         '#bu_root .bu-act{padding:2px 8px;font-size:11px;margin-left:6px}' +
+        '#bu_root td.bu-evc{white-space:nowrap;font-size:11px;color:var(--text3)}#bu_root td.bu-nw{white-space:nowrap}' +
+        '#bu_root tr.bu-older td{color:var(--text3);font-style:italic}#bu_root .fg-item.bu-wide{grid-column:1/-1}' +
         '#bu_root .bu-note{margin:8px 0;font-size:12.5px;line-height:1.5;color:var(--text2)}#bu_root .bu-note b{color:var(--text)}' +
         '#bu_root .bu-notes{margin-top:12px;font-size:12.5px;line-height:1.5;color:var(--text2)}#bu_root .bu-notes b{color:var(--text)}' +
         '#bu_root .bu-qa{margin-top:8px;font-size:12.5px;color:var(--text2)}#bu_root .bu-qa .bu-q{color:var(--text);font-weight:600}' +
@@ -384,7 +404,7 @@
         '#bu_root .bu-dlg-x{flex:none;width:32px;height:32px;border:0;border-radius:6px;background:transparent;color:var(--text2);font-size:22px;line-height:1;cursor:pointer}' +
         '#bu_root .bu-dlg-bd{margin:8px 0;font-size:13px;color:var(--text2);overflow-wrap:anywhere}' +
         '#bu_root .bu-dlg-ft{display:flex;justify-content:flex-end;gap:8px;margin-top:10px}' +
-        '@media (max-width:600px){#bu_root .bu-dlg{padding:8px}#bu_root .bu-dlg-box{width:100%}}' +
+        '@media (max-width:600px){#bu_root .bu-dlg{padding:8px}#bu_root .bu-dlg-box{width:100%}#bu_root .bu-act{min-height:28px;padding:4px 10px}}' +
         '</style>';
     var NOTES = [
         'Method: every shut-in in the gauge record is found and interpreted automatically on the Bourdet derivative of the superposition-equivalent time (L = 0.1 log cycle). The IARF window is the earliest qualifying plateau after the storage hump; the semilog line and a homogeneous match (rival models only when a trigger fires) give k, S and C with a skin uncertainty and a calibrated confidence label. Skin is then tracked against a baseline with delta and absolute alerts.',
@@ -480,12 +500,12 @@
             '<div id="bu_progress" class="bu-status" role="status" aria-live="polite"></div></div>' +
             '<div id="bu_val"></div>' +
             '<div id="bu_stale" style="color:var(--yellow);display:none">⚠ Inputs changed since the last analysis — press Analyse</div>' +
-            '<div id="bu_raw_note" class="bu-status"></div>' +
+            '<div id="bu_raw_note" class="bu-status"></div><div id="bu_store_note" class="bu-status rp-skip" role="status"></div><div id="bu_ov_note" class="bu-status rp-skip" role="status"></div>' +
             '<div class="bu-view rp-skip">' + _fsel('bu_test_sel', 'Test shown in detail', [['', 'Latest test']], '') + '</div>' +
             '<div id="bu_res"></div>' +
             // ── questions, sign-off and export ──
             '<div class="card rp-skip" id="bu_card_act"><div class="card-title">Questions, sign-off and export</div><div class="fg">' +
-            _ftxt('bu_qa_q', 'Ask about the analysis', np + nd + ' maxlength="300" placeholder="Why this model? What if h is 20 % higher?" autocomplete="off"') +
+            '<div class="fg-item bu-wide">' + _lab('bu_qa_q', 'Ask about the analysis') + '<input type="text" id="bu_qa_q"' + np + nd + ' maxlength="300" placeholder="Why this model? What if h is 20 % higher?" autocomplete="off"></div>' +
             '</div><div class="bu-btns">' + _btn('bu_qa_go', 'Ask', 'btn-secondary', ' disabled') + '</div><div id="bu_qa_out" class="bu-qa" aria-live="polite"></div>' +
             '<div class="bu-sub">Sign-off</div><div class="fg">' +
             _ftxt('bu_so_name', 'Signed by', nd + ' maxlength="80" autocomplete="off"') + _ftxt('bu_so_role', 'Role', nd + ' maxlength="80" autocomplete="off"') +
@@ -493,7 +513,8 @@
             '</div><div class="bu-btns">' + _btn('bu_so_sign', 'Sign off', 'btn-primary', ' disabled') + _btn('bu_so_unsign', 'Withdraw sign-off', 'btn-secondary', ' disabled') + '</div>' +
             '<div id="bu_so_status" class="bu-status" role="status"></div>' +
             '<div class="bu-sub">Export and checks</div><div class="fg">' +
-            _fchk('bu_ai_deid', 'De-identify', true) + _fchk('bu_ai_free', 'Include free text (notes, reasons, file and tag names)', false) +
+            // privacy controls are never autosaved (nor carried in project files): every session starts de-identified, no free text
+            _fchk('bu_ai_deid', 'De-identify', true, np) + _fchk('bu_ai_free', 'Include free text (notes, reasons, file and tag names)', false, np) +
             '</div><div class="bu-btns">' + _btn('bu_ai_copy', 'Copy for your AI assistant', 'btn-secondary', ' disabled') + _btn('bu_ai_dl', 'Download', 'btn-secondary', ' disabled') +
             _btn('bu_open_prism', 'Open this build-up in PRiSM', 'btn-secondary', ' disabled') + _btn('bu_val_run', 'Re-run 24-case check', 'btn-secondary', ' disabled') + '</div>' +
             '<div id="bu_ai_status" class="bu-status" role="status"></div><div id="bu_val_out" class="bu-status" role="status"></div></div>' +
@@ -673,7 +694,13 @@
         if (!m) return NaN;
         var g = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0));
         if (!_fin(g)) return NaN;
-        return g - _offMs(zone, g - _offMs(zone, g));     // two passes: right on both sides of a clock change
+        // One rule with the gauge-data reader (data.localToUtc): in a DST gap the later offset, in a repeated hour the
+        // first occurrence, so a typed closing time lines up with the parsed sample times.
+        var D = _D();
+        if (D && typeof D.localToUtc === 'function' && zone && zone.mode && zone.mode !== 'device') {
+            try { var u = D.localToUtc(zone, g); if (_fin(u)) return u; } catch (e) { /* fallback below */ }
+        }
+        return g - _offMs(zone, g - _offMs(zone, g));     // fallback (no data module): two passes
     }
     function _zoneName(z) {
         if (!z || z.mode === 'utc') return 'UTC';
@@ -963,7 +990,8 @@
         var h = '';
         if (b.kind === 'verdict') {
             var sy = SYM[b.level] || SYM.warn;
-            var t = _cleanTxt(_fill(b.template, b.values)) + _refs(b.ev);
+            // the review's templates start with their own glyph: one symbol per verdict (the level's), never two
+            var t = _cleanTxt(_fill(b.template, b.values)).replace(/^\s*[✓⚠✗×]\s*/, '') + _refs(b.ev);
             return '<div style="color:var(--' + sy[1] + ')">' + sy[0] + ' ' + _esc(_cut(t, 296)) + '</div>';
         }
         if (b.kind === 'kv') {
@@ -997,9 +1025,16 @@
                 return '<th>' + _esc(text) + (u ? ' (' + _esc(u) + ')' : '') + '</th>';
             }).join('');
             var anyEv = (b.rows || []).some(function (r) { return (r || []).some(function (c) { return !!_evOf(c); }); });
+            var nCol = (b.head || []).length + (anyEv ? 1 : 0), nw = {};
+            (b.head || []).forEach(function (c, ci) { var text = (c && typeof c === 'object') ? c.text : c; if (/^Labels\b/.test(String(text || ''))) nw[ci] = 1; });
             h = '<div class="bu-tw"' + (noStack ? ' data-no-stack' : '') + '><table class="dtable"' + (b.id ? ' id="' + _esc(b.id) + '"' : '') + '><thead><tr>' + head + (anyEv ? '<th>Ev.</th>' : '') + '</tr></thead><tbody>';
             (b.rows || []).forEach(function (r) {
                 var ev = [];
+                // "N older tests / events / earlier days not shown": one cell across the table, not a data row
+                if (r && r.length > 1 && typeof r[1] === 'string' && / not shown$/.test(r[1]) && _isVal(r[0])) {
+                    h += '<tr class="bu-older"><td colspan="' + nCol + '">' + _esc(_cleanTxt(_fmtNoUnit(r[0].v, r[0].cat, r[0].dp) + ' ' + r[1])) + '</td></tr>';
+                    return;
+                }
                 h += '<tr>' + (r || []).map(function (c, ci) {
                     var txt, act = '';
                     if (_isVal(c)) { txt = _fmtNoUnit(c.v, c.cat, c.dp); var e = _evOf(c); if (e && ev.indexOf(e) === -1) ev.push(e); }
@@ -1011,8 +1046,8 @@
                             if (fids.length) act = '<button type="button" class="btn btn-secondary bu-act rp-skip" data-act="menu" data-f="' + _esc(fids.join(',')) + '" aria-label="Decide the ' + _esc(c) + ' findings">Actions…</button>';
                         }
                     }
-                    return '<td>' + _esc(_cleanTxt(txt)) + act + '</td>';
-                }).join('') + (anyEv ? '<td>' + _esc(ev.join(', ')) + '</td>' : '') + '</tr>';
+                    return '<td' + (nw[ci] ? ' class="bu-nw"' : '') + '>' + _esc(_cleanTxt(txt)) + act + '</td>';
+                }).join('') + (anyEv ? '<td class="bu-evc">' + _esc(ev.join(', ')) + '</td>' : '') + '</tr>';
             });
             return h + '</tbody></table></div>';
         }
@@ -1112,7 +1147,7 @@
         if (!res) return;
         var a = _st && _st.analysis;
         _buttons();
-        if (!a) { res.innerHTML = ''; res.removeAttribute('data-done'); _setSub(); return; }
+        if (!a) { res.innerHTML = ''; res.removeAttribute('data-done'); _setSub(); _ovNote(null); return; }
         if (_st.partial) {
             res.innerHTML = '<div class="rbox" id="bu_s_S1"><div class="rbox-title" tabindex="-1">Summary</div><div class="bu-note"><b>Notes</b> Loading the stored build-ups of this analysis…</div></div>';
             _setSub();
@@ -1138,7 +1173,37 @@
         res.setAttribute('data-done', '1');
         if (typeof G.WTS_stackTables === 'function') { try { G.WTS_stackTables(res); } catch (e) { /* layout only */ } }
         _setSub();
+        _ovNote(a);
         if (opts.charts !== false) _drawChartsAsync(charts);
+    }
+    // What became of each event-level override at the last Analyse: a refused one with the engine's reason (its
+    // OVERRIDE_NOT_APPLIED warning), an added shut-in with the event it created and whether a build-up was interpreted.
+    var EV_KIND_TXT = { shutin: 'a shut-in', falloff: 'a fall-off', partial: 'a partial rate cut', substep: 'a small rate step' };
+    var EV_STATUS_TXT = { too_short: 'too short to interpret', not_confirmed: 'not confirmed as a shut-in', gap_at_closing: 'a data gap at the closing', excluded: 'excluded', intervention: 'a suspected intervention', partial: 'a partial cut' };
+    function _ovOutcomes(a) {
+        var out = [], gz = _gaugeZone();
+        ((a && a.overrides) || []).forEach(function (o) {
+            if (!o || !o.id) return;
+            var ws = Array.isArray(o.warnings) ? o.warnings.filter(function (w) { return w && w.code === 'OVERRIDE_NOT_APPLIED' && w.text; }) : [];
+            if (ws.length) { out.push({ lvl: 'warn', text: ws.map(function (w) { return String(w.text); }).join(' ') }); return; }
+            if (o.kind !== 'event_add') return;
+            var e = ((a.events || []).filter(function (x) { return x && (x.overrideIds || []).indexOf(o.id) !== -1; }))[0];
+            if (!e) return;
+            var t = ((a.tests || []).filter(function (x) { return x && x.eventId === e.id; }))[0];
+            var interp = !!(t && t.status === 'interpreted');
+            out.push({ lvl: interp ? 'ok' : 'warn', text: 'Override ' + o.id + ' added event ' + e.id + ' at ' + _msToLocal(e.tc_ms, gz).replace('T', ' ') + ' ' + _zoneName(gz) + ': ' +
+                (EV_KIND_TXT[e.kind] || String(e.kind)) + (EV_STATUS_TXT[e.status] ? ', ' + EV_STATUS_TXT[e.status] : '') +
+                (interp ? '; interpreted as build-up ' + t.id + '.' : (t ? '; build-up ' + t.id + ' ' + String(t.status).replace(/_/g, ' ') + '.' : '; no build-up was interpreted from it.')) });
+        });
+        return out;
+    }
+    function _ovNote(a) {
+        var n = _byId('bu_ov_note');
+        if (!n) return;
+        var list = _ovOutcomes(a);
+        n.innerHTML = list.map(function (x) {
+            return '<div style="color:var(--' + (x.lvl === 'ok' ? 'green' : 'yellow') + ')">' + (x.lvl === 'ok' ? '✓ ' : '⚠ ') + _esc(String(x.text).slice(0, 290)) + '</div>';
+        }).join('');
     }
 
     // ── charts ───────────────────────────────────────────────────────
@@ -1287,8 +1352,8 @@
         if (bS != null) th.push({ label: 'Baseline', y: bS, color: '#8b949e' });
         if (bS != null && al.delta && _fin(al.delta.threshold)) th.push({ label: 'Baseline + delta threshold', y: bS + al.delta.threshold, color: '#e3b341' });
         if (_fin(ab.threshold)) th.push({ label: mech ? 'Absolute threshold (on mechanical skin)' : 'Absolute threshold', y: ab.threshold, color: '#ff7b72' });
-        var ds = [{ label: 'Skin S', color: '#58a6ff', data: used, points: true }, { label: 'S + S_err', color: '#58a6ff', data: hi, points: false, dash: [3, 3], width: 1 },
-            { label: 'S − S_err', color: '#58a6ff', data: lo, points: false, dash: [3, 3], width: 1 }];
+        var ds = [{ label: 'Skin S', color: '#58a6ff', data: used, points: true }, { label: 'S ± S_err', color: '#58a6ff', data: hi, points: false, dash: [3, 3], width: 1 },
+            { label: '', color: '#58a6ff', data: lo, points: false, dash: [3, 3], width: 1 }];   // one dashed band, one legend entry
         // the absolute alert is judged on mechanical skin when its basis says so: plot that series against its threshold
         if (sm.length) ds.push({ label: 'Mechanical skin', color: '#ffa657', data: sm, points: true });
         if (exc.length) ds.push({ label: 'Tests not used', color: '#6e7681', data: exc, points: true, width: 0.01 });
@@ -1348,24 +1413,24 @@
             }
             if (rg && _fin(rg.lo) && _fin(rg.hi)) bars.push({ x: s.tDays, lo: _cv(rg.lo + shift, 'pressure'), hi: _cv(rg.hi + shift, 'pressure') });
         });
-        B.plot.trend(cv, { datasets: ds, bars: bars, barsLabel: 'p* range (estimated history)', barsColor: '#79c0ff', xLabel: 'Days since the first test', yLabel: 'Pressure (' + _ul('pressure') + ')', yDec: 0 });
+        B.plot.trend(cv, { datasets: ds, bars: bars, barsLabel: 'p* range (estimated history)', barsColor: '#79c0ff', xLabel: 'Days since the first test', yLabel: 'Pressure (' + _ul('pressure') + ')' });   // tick decimals follow the p* scatter
     }
     function _jChart(cv, a) {
         var pc = a.trend && a.trend.piCheck, rows = pc && Array.isArray(pc.rows) ? pc.rows : [], pts = [];
         var byId = {};
         _seriesOf(a).forEach(function (s) { byId[s.id] = s.tDays; });
         rows.forEach(function (r) { var x0 = byId[r.from], x1 = byId[r.to]; if (_fin(x0) && _fin(x1) && _fin(r.RJ)) pts.push({ x: (x0 + x1) / 2, y: r.RJ }); });
-        B.plot.trend(cv, { datasets: [{ label: 'Observed / predicted productivity index', color: '#3fb950', data: pts, points: true }],
+        B.plot.trend(cv, { datasets: [{ label: 'PI ratio (observed / predicted)', color: '#3fb950', data: pts, points: true }],
             thresholds: [{ label: 'Lower limit 0.8', y: 0.8, color: '#e3b341' }, { label: 'Upper limit 1.25', y: 1.25, color: '#e3b341' }],
-            xLabel: 'Days since the first test', yLabel: 'Ratio of observed to predicted productivity index', yDec: 2 });
+            xLabel: 'Days since the first test', yLabel: 'PI ratio (observed / predicted)', yDec: 2 });
     }
     function _pwfChart(cv, a) {
         var bub = a.trend && a.trend.bubble, rows = bub && Array.isArray(bub.rows) ? bub.rows : [], byId = {}, lo = [], hi = [];
         _seriesOf(a).forEach(function (s) { byId[s.id] = s.tDays; });
         rows.forEach(function (r) { var x = byId[r.id]; if (!_fin(x)) return; if (_fin(r.pwfSand_lo)) lo.push({ x: x, y: _cv(r.pwfSand_lo, 'pressure') }); if (_fin(r.pwfSand_hi)) hi.push({ x: x, y: _cv(r.pwfSand_hi, 'pressure') }); });
         var th = (a.well && _fin(a.well.Pb)) ? [{ label: 'Bubble point', y: _cv(a.well.Pb, 'pressure'), color: '#ff7b72' }] : [];
-        B.plot.trend(cv, { datasets: [{ label: 'Sandface pressure at closing, low', color: '#58a6ff', data: lo, points: true }, { label: 'Sandface pressure at closing, high', color: '#79c0ff', data: hi, points: true }],
-            thresholds: th, xLabel: 'Days since the first test', yLabel: 'Pressure (' + _ul('pressure') + ')', yDec: 0 });
+        B.plot.trend(cv, { datasets: [{ label: 'Sandface pressure at closing, low', color: '#58a6ff', data: lo, points: true }, { label: 'Sandface pressure at closing, high', color: '#d2a8ff', data: hi, points: true, dash: [4, 3] }],
+            thresholds: th, xLabel: 'Days since the first test', yLabel: 'Pressure (' + _ul('pressure') + ')' });
     }
     function _ovChart(cv, a) {
         var used = {}, list = [];
@@ -1399,7 +1464,7 @@
         (a.tests || []).forEach(function (t) { if (t && _fin(t.tc_ms) && _fin(t.pwf0)) ev.push({ x: (t.tc_ms - t0) / 86400000, y: _cv(t.pwf0, 'pressure') }); });
         B.plot.trend(cv, { datasets: [{ label: 'Gauge pressure', color: '#58a6ff', data: pr, points: false, width: 1 },
             { label: 'Allocated rate (scaled, maximum ' + _nf(_cv(qmax, unit), 0) + ' ' + _ul(unit) + ')', color: '#3fb950', data: rq, points: false, width: 1.5 },
-            { label: 'Closings', color: '#f0883e', data: ev, points: true, width: 0.01 }], xLabel: 'Days since the first test', yLabel: 'Pressure (' + _ul('pressure') + ')', yDec: 0 });
+            { label: 'Closings', color: '#f0883e', data: ev, points: true, width: 0.01 }], xLabel: 'Days since the first test', yLabel: 'Pressure (' + _ul('pressure') + ')' });
     }
     function _blockChart(cv, b) {
         var ds = (b && b.series || []).map(function (s, i) {
@@ -1557,15 +1622,14 @@
                 if (_run === run) { _run = null; _buttons(); }
                 return null;
             }
-            _run = null;
             if (!analysis || analysis.ok === false) {
+                _run = null;
                 _status('bu_progress', 'bad', 'The analysis failed: ' + String((analysis && analysis.errors && analysis.errors[0]) || 'no result') + '. Previous results kept.');
                 _buttons();
                 return null;
             }
             if (analysis.record) analysis.record.rawStored = input.record ? rawStored : (analysis.record.rawStored || 'none');
-            _complete(analysis, input, ph, diff, reason);
-            return analysis;
+            return _completeAsync(analysis, input, ph, diff, reason, run, cancel);
         }).then(null, function (e) {
             var mine = (_run === run);
             if (mine) _run = null;
@@ -1591,26 +1655,78 @@
         prev.findings.forEach(function (f) { if (f && f.decision) map[key(f)] = f.decision; });
         next.findings.forEach(function (f) { if (f && !f.decision && map[key(f)] && f.acceptable !== false) f.decision = map[key(f)]; });
     }
-    function _complete(analysis, input, ph, diff, reason) {
-        var R = _R();
-        _st.analysis = analysis;
-        _st.partial = false;
-        _st.missingTests = false;
-        delete _st._raw;
-        _idxCache = null;
-        var rv = null;
-        if (R && typeof R.run === 'function') { try { rv = R.run(analysis, _idx()); } catch (e) { rv = null; } }
-        _carryDecisions(_st.review, rv);
-        _st.review = rv;
-        _st.input = _forState(input);
-        _st.pageHash = ph;
-        _audit({ kind: 'run', target: null, value: { nTests: (analysis.tests || []).length, inputHash: analysis.inputHash, resultHash: analysis.resultHash } });
-        if (diff && diff.length) _audit({ kind: 'input', target: null, value: diff, reason: reason || '' });
-        _afterChange({});
-        _status('bu_progress', 'ok', 'Analysis complete: ' + (analysis.tests || []).length + ' build-up tests.');
-        var t = _byId('bu_s_S1');
-        var tt = t && t.querySelector ? t.querySelector('.rbox-title') : null;
-        if (tt && typeof tt.focus === 'function') { try { tt.focus(); } catch (e) { /* focus is best effort */ } }
+    // The end of Analyse in yielded units through the drive chain (plan §4.8: no long block after the last engine unit):
+    //   1 review (evidence index + rules)   2 state applied, audit entries, saved   3 test list and report sections
+    //   (charts follow one per unit)   4 publish, event, Quick Report snapshot, status line.
+    // Units 1-2 discard the result on Cancel, navigation, a well switch or a newer run, as before; from unit 2 on the
+    // result is applied and saved, so later units stop only for a well switch or a newer state (the render is then moot).
+    var COMPLETE_LABELS = ['Reviewing the analysis', 'Saving', 'Rendering the report', 'Publishing'];
+    function _completeAsync(analysis, input, ph, diff, reason, run, cancel) {
+        var R = _R(), wellId = run.wellId, k = 0, stopped = false, st0 = null, rv = null, idx = null;
+        var units = [
+            function () {
+                if (R && typeof R.evidence === 'function') { try { idx = R.evidence(analysis); } catch (e) { idx = null; } }
+                if (R && typeof R.run === 'function') { try { rv = R.run(analysis, idx); } catch (e) { rv = null; } }
+            },
+            function () {
+                _st.analysis = analysis;
+                _st.partial = false;
+                _st.missingTests = false;
+                delete _st._raw;
+                _idxCache = idx ? { a: analysis, idx: idx } : null;
+                _carryDecisions(_st.review, rv);
+                _st.review = rv;
+                _st.input = _forState(input);
+                _st.pageHash = ph;
+                st0 = _st;
+                _audit({ kind: 'run', target: null, value: { nTests: (analysis.tests || []).length, inputHash: analysis.inputHash, resultHash: analysis.resultHash } });
+                if (diff && diff.length) _audit({ kind: 'input', target: null, value: diff, reason: reason || '' });
+                var stt = _status2();
+                if (_st.signoff && stt === 'CHANGED' && _st.lastStatus !== 'CHANGED') _audit({ kind: 'changed_after_signoff', target: null, value: { signedAt: _st.signoff.at || null } });
+                _st.lastStatus = stt;
+                _save();
+            },
+            function () {
+                if (!_root()) return;
+                _fillTestSel();
+                _renderResults({ charts: true });
+                _checkStale(true);
+            },
+            function () {
+                _publish(true);
+                _emitUpdated();
+                if (!_root()) return;
+                _snap();
+                _status('bu_progress', 'ok', 'Analysis complete: ' + (analysis.tests || []).length + ' build-up tests.');
+                var t = _byId('bu_s_S1');
+                var tt = t && t.querySelector ? t.querySelector('.rbox-title') : null;
+                if (tt && typeof tt.focus === 'function') { try { tt.focus(); } catch (e) { /* focus is best effort */ } }
+            }
+        ];
+        var job = {
+            step: function () {
+                if (!stopped && k < units.length) { units[k](); k++; }
+                return { done: stopped || k >= units.length, progress: k / units.length, label: COMPLETE_LABELS[Math.min(k, units.length - 1)] };
+            },
+            result: function () { return analysis; },
+            cancel: function () { stopped = true; }
+        };
+        var shouldCancel = function () { return k < 2 ? cancel() : (_st !== st0 || _wellId() !== wellId || run.token !== _token); };
+        return _drive(job, {
+            shouldCancel: shouldCancel,
+            onProgress: function (f, lab) { if (k < units.length && _root()) _status('bu_progress', '', 'Analysing… 100 % — ' + (lab || '')); }
+        }).then(function () {
+            if (_run === run) _run = null;
+            _buttons();
+            return analysis;
+        }, function (e) {
+            if (k >= 2) {             // applied and saved: a later stop only skips the render
+                if (_run === run) _run = null;
+                _buttons();
+                return analysis;
+            }
+            throw e;                  // before the apply: discarded, as a cancelled run
+        });
     }
 
     // ── data loading ─────────────────────────────────────────────────
@@ -1904,7 +2020,8 @@
         S.getRaw(wid).then(function (rec) {
             if (!_root() || _wellId() !== wid || _mem.record) return;
             var cur = _st && _st.analysis;
-            if (rec && cur && cur.record && rec.hash && rec.hash === cur.record.hash) {
+            // getRaw re-hashes the decoded samples (hashVerified): a stored label alone never makes a record "the analysis's"
+            if (rec && rec.hashVerified === true && cur && cur.record && rec.hash && rec.hash === cur.record.hash) {
                 _mem.record = rec; _mem.rawChecked = true;
                 _mem.rawStored = { hash: rec.hash, as: (typeof S.engine === 'function' && S.engine() === 'idb') ? 'idb' : 'memory' };
                 return;
@@ -2041,15 +2158,13 @@
             if ((act === 'reject' || act === 'note') && reason.length < 5) { _status('bu_dlg_msg', 'bad', 'A note of at least 5 characters is required.'); return; }
             var who = _who();
             if (!who) { _status('bu_dlg_msg', 'bad', 'Enter your name in the Engineer field first.'); return; }
-            var at = _nowIso(), changed = [];
-            ((_st.review && _st.review.findings) || []).forEach(function (f) {
-                if (!f || ctx.f.indexOf(f.id) === -1) return;
-                if (f.acceptable === false && act === 'accept') return;   // a V14 finding cannot be accepted
-                f.decision = { d: act, note: reason, who: who, at: at };
-                changed.push(f.id);
+            var at = _nowIso(), targets = ((_st.review && _st.review.findings) || []).filter(function (f) {
+                return f && ctx.f.indexOf(f.id) !== -1 && !(f.acceptable === false && act === 'accept');   // a V14 finding cannot be accepted
             });
-            if (!changed.length) { _status('bu_dlg_msg', 'bad', 'This finding cannot be accepted: re-run the analysis to clear it.'); return; }
-            _audit({ kind: 'decision', target: changed.join(','), value: act, reason: reason, who: who });
+            if (!targets.length) { _status('bu_dlg_msg', 'bad', 'This finding cannot be accepted: re-run the analysis to clear it.'); return; }
+            // the audit entry is written first: without it nothing is changed
+            if (!_audit({ kind: 'decision', target: targets.map(function (f) { return f.id; }).join(','), value: act, reason: reason, who: who })) { _status('bu_dlg_msg', 'bad', AUDIT_FAIL); return; }
+            targets.forEach(function (f) { f.decision = { d: act, note: reason, who: who, at: at }; });
             _afterChange({});     // re-render first, so the focus goes to the re-rendered Actions… button
             _dlgClose();
             return;
@@ -2059,8 +2174,8 @@
         if (!who2) { _status('bu_dlg_msg', 'bad', 'Enter your name in the Engineer field first.'); return; }
         if (/^remove:/.test(act)) {
             var oid = act.slice(7), o = (_st.overrides || []).filter(function (x) { return x.id === oid; })[0];
+            if (!_audit({ kind: 'override_removed', target: o ? o.target : null, value: oid, reason: reason, who: who2 })) { _status('bu_dlg_msg', 'bad', AUDIT_FAIL); return; }
             _st.overrides = (_st.overrides || []).filter(function (x) { return x.id !== oid; });
-            _audit({ kind: 'override_removed', target: o ? o.target : null, value: oid, reason: reason, who: who2 });
         } else {
             var t = ctx.kind === 'test' ? _testById(ctx.test) : null, ov = { id: '', kind: act, target: null, value: true, reason: reason.slice(0, 290), who: who2, at: _nowIso(), appVersion: _appVer() };
             if (act === 'exclude' || act === 'include') ov.target = ctx.test;
@@ -2078,9 +2193,14 @@
                 else { ov.kind = 'event_add'; ov.target = null; ov.value = listed ? { t_ms: tm } : { t_ms: tm, exact: true }; }   // a listed step is refined
             }
             if (ov.kind !== 'event_add' && !ov.target) { _status('bu_dlg_msg', 'bad', 'This action needs a test.'); return; }
+            var seq0 = _st.ovSeq;
             ov.id = _nextOv();
+            if (!_audit({ kind: 'override', target: ov.target, value: { id: ov.id, kind: ov.kind, value: ov.value }, reason: ov.reason, who: who2 })) {
+                _st.ovSeq = seq0;
+                _status('bu_dlg_msg', 'bad', AUDIT_FAIL);
+                return;
+            }
             _st.overrides = (_st.overrides || []).concat([ov]);
-            _audit({ kind: 'override', target: ov.target, value: { id: ov.id, kind: ov.kind, value: ov.value }, reason: ov.reason, who: who2 });
         }
         _save();
         _checkStale();
@@ -2099,6 +2219,12 @@
         if (_isStale) { _status('bu_so_status', 'bad', 'The inputs changed since the last analysis: press Analyse before signing off.'); return; }
         var cs = typeof R.canSign === 'function' ? R.canSign(_st.review) : { ok: true, open: [] };
         if (!cs || !cs.ok) { _status('bu_so_status', 'bad', 'Decide the open findings first (critical and major findings need a decision, a rejection needs a note): ' + ((cs && cs.open) || []).join(', ') + '.'); return; }
+        // A chain that does not verify (S10 ⚠) blocks a sign-off until the analysis has been re-run after the damaged entry.
+        var ast = _auditStatus();
+        if (ast && ast.state === 'broken' && !(_fin(ast.lastRunSeq) && _fin(ast.brokenAt) && ast.lastRunSeq > ast.brokenAt)) {
+            _status('bu_so_status', 'bad', 'The audit trail does not verify at entry #' + (_fin(ast.brokenAt) ? ast.brokenAt : '?') + ' (edited or damaged after it was written): press Analyse to re-run the analysis, then sign off.');
+            return;
+        }
         var so = null;
         try { so = R.signoff(form, a, _st.review); } catch (e) { so = null; }
         if (!so || so.ok === false) {
@@ -2106,9 +2232,13 @@
             _status('bu_so_status', 'bad', 'Not signed: ' + why + '.');
             return;
         }
+        // the audit entry is written first: without it the sign-off is not applied
+        if (!_audit({ kind: 'signoff', target: null, value: { hash: so.hash || null, decisionsHash: so.decisionsHash || null, name: form.name, role: form.role }, who: form.name, inputsHash: so.inputsHash, resultsHash: so.resultsHash })) {
+            _status('bu_so_status', 'bad', AUDIT_FAIL);
+            return;
+        }
         _st.signoff = so;
         _st.lastStatus = 'SIGNED';
-        _audit({ kind: 'signoff', target: null, value: { hash: so.hash || null, decisionsHash: so.decisionsHash || null, name: form.name, role: form.role }, who: form.name, inputsHash: so.inputsHash, resultsHash: so.resultsHash });
         var ok = _byId('bu_so_ok'); if (ok) ok.checked = false;
         _status('bu_so_status', 'ok', 'Signed off by ' + form.name + (form.role ? ' (' + form.role + ')' : '') + ' · hash ' + String(so.hash || '').slice(0, 16) + '.');
         _afterChange({});
@@ -2119,7 +2249,7 @@
         if (typeof G.prompt === 'function') { try { r = G.prompt('Reason for withdrawing the sign-off (at least 5 characters):', ''); } catch (e) { r = null; } }
         r = String(r || '').trim();
         if (r.length < 5) { _status('bu_so_status', 'bad', 'A reason of at least 5 characters is required to withdraw the sign-off.'); return; }
-        _audit({ kind: 'unsign', target: null, value: { hash: _st.signoff.hash || null }, reason: r.slice(0, 290) });
+        if (!_audit({ kind: 'unsign', target: null, value: { hash: _st.signoff.hash || null }, reason: r.slice(0, 290) })) { _status('bu_so_status', 'bad', AUDIT_FAIL); return; }
         _st.signoff = null;
         _st.lastStatus = 'DRAFT';
         _status('bu_so_status', 'warn', 'Sign-off withdrawn: the report is a DRAFT again.');
@@ -2148,7 +2278,19 @@
     function _aiText() {
         var R = _R(), a = _st && _st.analysis;
         if (!R || !a || typeof R.aiExport !== 'function') return null;
-        try { return R.aiExport(a, _st.review, { deidentify: _checked('bu_ai_deid'), includeDates: false, includeFreeText: _checked('bu_ai_free'), idx: _idx() }); } catch (e) { return null; }
+        try { return R.aiExport(a, _st.review, { deidentify: _checked('bu_ai_deid'), includeDates: false, includeFreeText: _checked('bu_ai_free'), idx: _idx(), signoff: _st.signoff || null, names: _knownNames() }); } catch (e) { return null; }
+    }
+    // Every name the page knows of, for de-identification: well names (this well, the well list, the client info) and
+    // people (engineer, signer, audit trail).
+    function _knownNames() {
+        var out = [];
+        var push = function (s, role) { s = String(s == null ? '' : s).trim(); if (s) out.push({ s: s.slice(0, 80), role: role }); };
+        push(_wellName(), 'well');
+        try { var W = G.WTS_wells, l = W && typeof W.list === 'function' ? W.list() : []; (l || []).forEach(function (w) { if (w) push(w.name, 'well'); }); } catch (e) { /* single well */ }
+        push(_val('bu_eng'), 'person'); push(_val('bu_so_name'), 'person');
+        if (_st && _st.signoff) push(_st.signoff.name, 'person');
+        _each(_auditList(), function (e) { if (e) push(e.who, 'person'); });
+        return out;
     }
     function _download(text, name) {
         try {

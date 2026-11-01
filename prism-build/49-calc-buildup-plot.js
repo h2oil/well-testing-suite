@@ -26,7 +26,49 @@
     var P = B.plot = B.plot || {};
 
     var BG = '#0d1117', GRID = '#21262d', TICK = '#6e7681', AXIS = '#8b949e';
-    var PALETTE = ['#58a6ff', '#f0883e', '#3fb950', '#d2a8ff', '#ff7b72', '#e3b341', '#79c0ff', '#56d364', '#ffa657', '#bc8cff', '#a5d6ff', '#f778ba'];
+    // distinct hues first (blue, orange, green, purple, red, yellow, cyan, pink), lighter variants after; beyond 8 series
+    // the overlay also switches to open markers, so no two tests look alike
+    var PALETTE = ['#58a6ff', '#f0883e', '#3fb950', '#d2a8ff', '#ff7b72', '#e3b341', '#39c5cf', '#f778ba', '#a5d6ff', '#ffa657', '#56d364', '#bc8cff'];
+    var OPEN_FROM = 8;
+
+    // A legend in a box (the background at 88 % opacity), so data and threshold lines never strike through the labels.
+    // entries [{label, color, dash, kind: 'line'|'point'|'deriv'|'open'|'bar'}]; cover: rows to hide underneath (the
+    // host legend's swatches).
+    function _legend(c, entries, x0, y0, cover) {
+        if (!c) return;
+        var list = (entries || []).filter(function (e) { return e && e.label; });
+        var rows = Math.max(list.length, cover || 0);
+        if (!rows) return;
+        c.font = '11px sans-serif';
+        var w = 0;
+        list.forEach(function (e) {
+            var s = String(e.label), m = 0;
+            try { m = (typeof c.measureText === 'function' && c.measureText(s)) ? c.measureText(s).width : 0; } catch (x) { m = 0; }
+            w = Math.max(w, m || s.length * 6);
+        });
+        var a0 = c.globalAlpha;
+        c.globalAlpha = 0.88; c.fillStyle = BG;
+        c.fillRect(x0 - 6, y0 - 8, Math.max(40, w) + 30, rows * 16 + 6);
+        c.globalAlpha = a0 == null ? 1 : a0;
+        list.forEach(function (e, i) {
+            var y = y0 + i * 16, col = e.color || PALETTE[i % PALETTE.length];
+            c.strokeStyle = col; c.fillStyle = col; c.lineWidth = 2;
+            if (typeof c.setLineDash === 'function') c.setLineDash(e.dash || []);
+            if (e.kind === 'point' || e.kind === 'open') { c.beginPath(); c.arc(x0 + 6, y + 1.5, 3, 0, Math.PI * 2); if (e.kind === 'open') { c.lineWidth = 1.5; c.stroke(); } else c.fill(); }
+            else if (e.kind === 'deriv') { c.beginPath(); c.moveTo(x0 + 6, y - 1.7); c.lineTo(x0 + 9, y + 3.9); c.lineTo(x0 + 3, y + 3.9); c.closePath(); c.fill(); }
+            else if (e.kind === 'bar') { c.beginPath(); c.moveTo(x0 + 6, y - 4); c.lineTo(x0 + 6, y + 7); c.moveTo(x0 + 2, y - 4); c.lineTo(x0 + 10, y - 4); c.moveTo(x0 + 2, y + 7); c.lineTo(x0 + 10, y + 7); c.stroke(); }
+            else { c.beginPath(); c.moveTo(x0, y + 1.5); c.lineTo(x0 + 12, y + 1.5); c.stroke(); }
+            if (typeof c.setLineDash === 'function') c.setLineDash([]);
+            c.fillStyle = AXIS; c.textAlign = 'left'; c.fillText(String(e.label), x0 + 16, y + 4);
+        });
+    }
+    // Decimals that keep the 6 tick steps of a range distinct (drawLineChart widens y by 8 %, x by 5 %).
+    function _autoDec(lo, hi, pad) {
+        if (!_fin(lo) || !_fin(hi)) return 0;
+        var r = (hi - lo) * (1 + 2 * pad);
+        if (!(r > 0)) return 0;
+        return Math.max(0, Math.min(4, Math.ceil(-Math.log(r / 6) / Math.LN10 + 1e-9)));
+    }
 
     function _fin(x) { return typeof x === 'number' && isFinite(x); }
     function _ctx(cv) { try { return cv && typeof cv.getContext === 'function' ? cv.getContext('2d') : null; } catch (e) { return null; } }
@@ -125,8 +167,9 @@
                     if (!(_fin(dt[j]) && dt[j] > 0 && _fin(y[j]) && y[j] > 0)) continue;
                     var px = lx(dt[j]), py = ly(y[j]);
                     c.beginPath();
-                    if (s.kind === 'deriv') { c.moveTo(px, py - 3.2); c.lineTo(px + 3, py + 2.4); c.lineTo(px - 3, py + 2.4); c.closePath(); c.fill(); }
-                    else { c.arc(px, py, 2.6, 0, Math.PI * 2); c.fill(); }
+                    if (s.kind === 'deriv') { c.moveTo(px, py - 3.2); c.lineTo(px + 3, py + 2.4); c.lineTo(px - 3, py + 2.4); c.closePath(); }
+                    else c.arc(px, py, 2.6, 0, Math.PI * 2);
+                    if (s.open) { c.lineWidth = 1.2; c.stroke(); } else c.fill();
                 }
             }
         });
@@ -137,16 +180,11 @@
             var px = lx(m.dt), py = ly(Math.abs(m.y));
             c.beginPath(); c.moveTo(px - 3, py - 3); c.lineTo(px + 3, py + 3); c.moveTo(px + 3, py - 3); c.lineTo(px - 3, py + 3); c.stroke();
         });
-        // legend
-        var lgy = pad.t + 10;
-        c.font = '11px sans-serif'; c.textAlign = 'left';
-        series.forEach(function (s, si) {
-            if (!s.label) return;
-            c.fillStyle = s.color || PALETTE[si % PALETTE.length];
-            c.fillRect(pad.l + 8, lgy - 3, 12, 3);
-            c.fillStyle = AXIS; c.fillText(String(s.label), pad.l + 24, lgy + 1);
-            lgy += 15;
-        });
+        // legend (in a box, marker or line style per series)
+        _legend(c, series.map(function (s, si) {
+            return s.label ? { label: String(s.label), color: s.color || PALETTE[si % PALETTE.length], dash: s.dash,
+                kind: s.kind === 'model' ? 'line' : (s.open ? 'open' : (s.kind === 'deriv' ? 'deriv' : 'point')) } : null;
+        }), pad.l + 12, pad.t + 10, 0);
         var xr = 'over ' + (o.xLabel || 'time') + ' ' + _decTick(Math.pow(10, bx.lo)) + ' to ' + _decTick(Math.pow(10, bx.hi));
         _aria(cv, label + ', ' + xr + (o.band && _fin(o.band.dt0) ? ', IARF window shaded' : '') + '.');
         return { ok: true, points: npts };
@@ -157,9 +195,9 @@
         opts = opts || {};
         var series = [];
         (Array.isArray(tests) ? tests : []).forEach(function (t, i) {
-            var col = t.color || PALETTE[i % PALETTE.length];
-            series.push({ dt: t.dt || [], y: t.dpq || [], kind: 'dp', color: col, label: String(t.id || ('Test ' + (i + 1))) });
-            series.push({ dt: t.dt || [], y: t.derivq || [], kind: 'deriv', color: col });
+            var col = t.color || PALETTE[i % PALETTE.length], open = i >= OPEN_FROM;   // beyond 8 tests: open markers too
+            series.push({ dt: t.dt || [], y: t.dpq || [], kind: 'dp', color: col, open: open, label: String(t.id || ('Test ' + (i + 1))) });
+            series.push({ dt: t.dt || [], y: t.derivq || [], kind: 'deriv', color: col, open: open });
         });
         var r = loglog(cv, { series: series, xLabel: opts.xLabel, yLabel: opts.yLabel || 'rate-normalised pressure change' });
         if (cv && typeof cv.setAttribute === 'function') {
@@ -227,14 +265,20 @@
             return { ok: false, points: 0 };
         }
         if (f) {
-            var o = { xLabel: spec.xLabel || '', yLabel: spec.yLabel || '', yDec: _fin(spec.yDec) ? spec.yDec : 1, xDec: _fin(spec.xDec) ? spec.xDec : 0 };
             var bnd = { xMin: xMin, xMax: xMax, yMin: _fin(spec.yMin) ? spec.yMin : (yr ? yr[0] : 0), yMax: _fin(spec.yMax) ? spec.yMax : (yr ? yr[1] : 1) };
+            // tick decimals: the caller's (a floor), raised until the 6 tick steps of the range read differently
+            var o = { xLabel: spec.xLabel || '', yLabel: spec.yLabel || '',
+                yDec: Math.max(_fin(spec.yDec) ? spec.yDec : 0, _autoDec(bnd.yMin, bnd.yMax, 0.08)),
+                xDec: Math.max(_fin(spec.xDec) ? spec.xDec : 0, _autoDec(bnd.xMin, bnd.xMax, 0.05)) };
             o.xMin = bnd.xMin; o.xMax = bnd.xMax; o.yMin = bnd.yMin; o.yMax = bnd.yMax;
-            // legend entries for the overlays (no data: drawLineChart lists them and draws nothing)
-            hollow.forEach(function (h) { if (h.label) ds.push({ label: h.label + ' (open circles)', color: h.color, data: [], points: false }); });
-            if (bars.length) ds.push({ label: spec.barsLabel || 'Range', color: spec.barsColor || '#79c0ff', data: [], points: false });
+            // Our own boxed legend replaces drawLineChart's (drawn with blank labels underneath and covered): line and dash
+            // style per series, open circles and range bars with their own symbols.
+            var leg = ds.map(function (d) { return d.label ? { label: d.label, color: d.color, dash: d.dash, kind: d.points === false ? 'line' : (d.width != null && d.width < 0.1 ? 'point' : 'line') } : null; });
+            hollow.forEach(function (h) { if (h.label) leg.push({ label: h.label + ' (open circles)', color: h.color, kind: 'open' }); });
+            if (bars.length) leg.push({ label: spec.barsLabel || 'Range', color: spec.barsColor || '#79c0ff', kind: 'bar' });
+            var hostDs = ds.map(function (d) { return { label: '', color: d.color, data: d.data, dash: d.dash, points: d.points, width: d.width }; });
             try {
-                f(cv, ds, o);
+                f(cv, hostDs, o);
                 var fr = _frame(cv, bnd);
                 if (typeof c.setLineDash === 'function') c.setLineDash([]);
                 c.lineWidth = 1.5;
@@ -247,6 +291,7 @@
                     c.strokeStyle = h.color;
                     h.data.forEach(function (p) { c.beginPath(); c.arc(fr.x(p.x), fr.y(p.y), 4, 0, Math.PI * 2); c.stroke(); });
                 });
+                _legend(c, leg, 80, 40, hostDs.length > 1 ? hostDs.length : 0);   // last, at drawLineChart's legend origin (pad.l + 10, pad.t + 10)
             } catch (e) { /* drawing is best effort */ }
         }
         // our own summary (the page's placeholder label is not one): series names and point counts

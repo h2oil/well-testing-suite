@@ -210,7 +210,15 @@
     //    tests/_buildup-shapes.js (RV12 checks that both agree on FIX.analysis).
     // ─────────────────────────────────────────────────────────────────────
     function F(args, text, fn) { fn.args = args; fn.text = text; return fn; }
-    var SENS_COEF = { h: 1.1513, phi: 1.1513, ct: 1.1513, rw: 2.3026, B: -1.1513, q: -1.1513, mu: 0 };
+    // Plain words for the engines' codes, used where the report shows them (the codes stay in the analysis and the index).
+    var READING_LABEL = { nearWell: 'near-well change', mobility: 'mobility change', allocation: 'allocation error', none: 'none' };
+    var EV_KIND_LABEL = { shutin: 'Shut-in', falloff: 'Fall-off', partial: 'Partial cut', substep: 'Small step' };
+    var EV_STATUS_LABEL = { analysable: 'Analysable', too_short: 'Too short', gap_at_closing: 'Gap at closing', partial: 'Partial', excluded: 'Excluded',
+                            not_confirmed: 'Not confirmed', intervention: 'Intervention' };
+    var DQ_SOURCE_LABEL = { closingDay: 'closing day', previousDay: 'previous day', qref: 'reference rate', table: 'rate table' };
+    var ALLOC_CONFIRM_LABEL = { confirmed: 'confirmed', not_confirmed: 'not confirmed', no_alloc: 'no allocation', 'n/a': 'n/a' };
+    function _lab(map, code) { var s = _str(code); return Object.prototype.hasOwnProperty.call(map, s) ? map[s] : s.replace(/_/g, ' '); }
+    var SENS_COEF ={ h: 1.1513, phi: 1.1513, ct: 1.1513, rw: 2.3026, B: -1.1513, q: -1.1513, mu: 0 };
     function _sensK(input, f, k) { return input === 'h' ? k / f : (input === 'B' || input === 'mu' || input === 'q') ? k * f : k; }
 
     var FORMULAS = {
@@ -257,6 +265,8 @@
             function (dpj, qj, dpb, qb, mq, dtej, dteb) {
                 return _allNum(dpj, qj, dpb, qb, mq, dtej, dteb) && qj * qb * mq !== 0 && dtej > 0 && dteb > 0 ? 1.1513 * ((dpj / qj - dpb / qb) / mq - MATH.log(dtej / dteb) / LN10) : null;
             }),
+        // §5.3 truth. f is the closing-day factor; the engine superposes every given daily rate, so with a one-day rate
+        // error the input-consistent k lies between k and f·k (k* overstates the expected error by up to |f − 1|; plan §5.3 note).
         kStar: F(['truth', 'given', 'f'], 'k* = f·k·(B′/B)·(μ′/μ)·(h/h′)',
             function (t, g, f) { return (_obj(t) && _obj(g) && _isNum(f)) ? f * t.k * (g.B / t.B) * (g.mu / t.mu) * (t.h / g.h) : null; }),
         SStar: F(['truth', 'given', 'f'], 'S* = S + 1.1513·log10((h′/h)(φ′/φ)(ct′/ct)) + 2.3026·log10(rw′/rw) − 1.1513·log10((B′/B)·f)',
@@ -309,6 +319,15 @@
         moreFindings: F(['review', 'shown'], 'findings beyond the shown rows', function (rv, s) { return _obj(rv) && _isNum(s) ? MATH.max(0, _arr(rv.findings).length - s) : null; }),
         chainHead: F(['audit'], 'audit chain head', function (a) { return _auditLog(a) ? auditHead(a) : null; }),
         auditFolded: F(['audit'], 'folded audit entries', function (a) { var L = _auditLog(a); return L ? (L.summary && _isNum(L.summary.n) ? L.summary.n : 0) : null; }),
+        readingText: F(['reading'], 'k-stability reading in words', function (r) { return typeof r === 'string' ? (READING_LABEL[r] || r) : null; }),
+        auditBrokenAt: F(['audit'], 'first audit entry that does not verify', function (a) {
+            var v = _auditVerified(_auditLog(a));
+            return v && v.ok === false && _isNum(v.brokenAt) ? v.brokenAt : null;
+        }),
+        auditLostKey: F(['audit'], 'where an unreadable earlier audit trail was kept', function (a) {
+            var L = _auditLog(a);
+            return L && _obj(L.lost) && typeof L.lost.key === 'string' && L.lost.key ? L.lost.key : null;
+        }),
         testList: F(['tests'], 'test ids', function (t) { return _isArr(t) ? (t.length ? t.map(function (x) { return x && x.id; }).join(', ') : 'none') : null; }),
         excludedList: F(['tests'], 'excluded or not analysed tests', function (t) {
             if (!_isArr(t)) return null;
@@ -1057,7 +1076,17 @@
         var t1 = { S: P('trend.baseline.S', 'S'), sigma: P('trend.baseline.sigma', 'S'), unstable: P('trend.baseline.unstable'), provisional: P('trend.baseline.provisional'),
             tests: P('trend.baseline.tests'), nTests: P('trend.baseline.tests.length', 'n'), baseN: P('settings.trend.baseN', 'n'),
             state: FX('baseState', { unstable: 'trend.baseline.unstable', provisional: 'trend.baseline.provisional' }) };
-        if (L) { t1.latest = P(L + '.id'); t1.dSLatest = FX('sub', { a: L + '.result.final.S', b: 'trend.baseline.S' }, 'S'); }
+        if (L) {
+            t1.latest = P(L + '.id');
+            // the change since the baseline on the baseline's own basis: the latest test's alert-basis skin (series Salert;
+            // for gas with D resolved S′ − D·(q − q_ref), as the baseline median), else its final S
+            var lid = an.tests[latestUsed] && an.tests[latestUsed].id, sj = -1;
+            _arr(tr.series).forEach(function (s, j) { if (s && s.id === lid && _isNum(s.Salert)) sj = j; });
+            if (sj >= 0) {
+                t1.latestAlert = P('trend.series[' + sj + '].Salert', 'S');
+                t1.dSLatest = FX('sub', { a: 'trend.series[' + sj + '].Salert', b: 'trend.baseline.S' }, 'S');
+            } else t1.dSLatest = FX('sub', { a: L + '.result.final.S', b: 'trend.baseline.S' }, 'S');
+        }
         add('T1', 'T', null, 'Baseline', t1);
         add('T2', 'T', null, 'Delta alert', { status: P('trend.alerts.delta.status'), raisedAt: P('trend.alerts.delta.raisedAt'), confirmedAt: P('trend.alerts.delta.confirmedAt'),
             threshold: P('trend.alerts.delta.threshold', 'S'), form: P('trend.alerts.delta.form'), kHeldOnly: P('trend.alerts.delta.kHeldOnly'), enabled: P('trend.enabled'),
@@ -1104,7 +1133,7 @@
         }
         add('T8', 'T', null, 'PI ratio and production at stake', t8);
         add('T9', 'T', null, 'k stability', { cv: P('trend.kStability.cv', 'frac'), cvPct: FX('pct100', { x: 'trend.kStability.cv' }, 'pct'), stable: P('trend.kStability.stable'),
-            allocAccPct: P('trend.kStability.allocAccPct', 'pct'), cvLimPct: FX('cvLim', { allocAccPct: 'trend.kStability.allocAccPct' }, 'pct'), reading: P('trend.kStability.reading'),
+            allocAccPct: P('trend.kStability.allocAccPct', 'pct'), cvLimPct: FX('cvLim', { allocAccPct: 'trend.kStability.allocAccPct' }, 'pct'), reading: P('trend.kStability.reading'), readingText: FX('readingText', { reading: 'trend.kStability.reading' }),
             kBase: P('baseline.k', 'k', 'permeability'), cvK: P('baseline.cvK', 'frac') });
         add('T10', 'T', null, 'Pressure trend', { quantity: P('trend.pTrend.quantity'), assessable: P('trend.pTrend.assessable'), reason: P('trend.pTrend.reason'), slopePer30d: P('trend.pTrend.slopePer30d', 'p', 'pressure'),
             scatter: P('trend.pTrend.scatter', 'p', 'pressure'), depletion: P('trend.pTrend.depletion'), label: P('trend.pTrend.label') });
@@ -1176,6 +1205,7 @@
                 nChecked: P('$review.evidenceCheck.nChecked', 'n'), nFailed: P('$review.evidenceCheck.nFailed', 'n'),
                 nOpen: FX('openCount', { review: '$review' }, 'n'), nMoreFindings: FX('moreFindings', { review: '$review', shown: { lit: MAX_ROWS } }, 'n'),
                 decisionsHash: FX('decisionsHashOf', { review: '$review' }), chainHash: FX('chainHead', { audit: '$audit' }), auditFolded: FX('auditFolded', { audit: '$audit' }, 'n'),
+                auditBrokenAt: FX('auditBrokenAt', { audit: '$audit' }, 'n'), auditLostKey: FX('auditLostKey', { audit: '$audit' }),
                 signer: P('$signoff.name'), role: P('$signoff.role'), signedAt: FX('dateOfIso', { iso: '$signoff.at' }), sigHash: P('$signoff.hash'), sigHash16: FX('prefix16', { h: '$signoff.hash' }),
                 signedVersion: P('$signoff.appVersion'), decisions: P('$signoff.decisions', 'n')
             });
@@ -1813,10 +1843,22 @@
     // 9. Audit chain (§3.12, §8.5): hash = hash16(prevHash + canon(entry without hash)); folded beyond 500 entries
     // ─────────────────────────────────────────────────────────────────────
     var AUDIT_MAX = 500, AUDIT_BYTES = 200000;
+    // An audit log: {v, entries, summary, lost?}, or the page's entry array carrying summary / lost as properties.
     function _auditLog(a) {
-        if (_isArr(a)) return { v: 1, entries: a, summary: null };
+        if (_isArr(a)) return { v: 1, entries: a, summary: _obj(a.summary) ? a.summary : null, lost: _obj(a.lost) ? a.lost : null };
         if (_obj(a) && _isArr(a.entries)) return a;
         return null;
+    }
+    // verify() of a log, memoised on its content (S10 and the evidence check both ask for it).
+    var _vMemo = { key: null, res: null };
+    function _auditVerified(L) {
+        if (!L) return null;
+        var key = null;
+        try { key = JSON.stringify([L.summary, L.entries]); } catch (e) { key = null; }
+        if (key !== null && key === _vMemo.key) return _vMemo.res;
+        var res = auditVerify(L);
+        if (key !== null) _vMemo = { key: key, res: res };
+        return res;
     }
     // Lossless: numeric leaves are serialised exactly (String(n), the shortest round-trip form) before canon, so canon sorts the keys
     // but rounds nothing; an edit at any digit of an entry breaks the chain.
@@ -1879,7 +1921,8 @@
         var L = _auditLog(log);
         if (!L) return { ok: false, n: 0, head: null, brokenAt: null, reason: 'not an audit log' };
         var prev = (L.summary && L.summary.chainHash) || GENESIS;
-        var seq = L.summary ? L.summary.to : null;
+        // the last folded seq: 'to' here, 'toSeq' in the device store's summary (whose from / to are times)
+        var seq = L.summary ? (_isNum(L.summary.toSeq) ? L.summary.toSeq : (_isNum(L.summary.to) ? L.summary.to : null)) : null;
         for (var i = 0; i < L.entries.length; i++) {
             var e = L.entries[i];
             if (!e || e.prevHash !== prev) return { ok: false, n: L.entries.length, head: prev, brokenAt: e ? e.seq : i, reason: 'chain broken (previous hash)' };
@@ -1960,8 +2003,10 @@
     function _entities(q, an) {
         var low = String(q).toLowerCase();
         var ids = _matchAll(low, /\b(?:b|test|build-?up)\s*#?(\d+)\b/g).map(function (m) { return 'B' + parseInt(m[1], 10); });
-        var pcts = _matchAll(low, /([+-]?\d+(?:\.\d+)?)\s*%/g).map(function (m) { return parseFloat(m[1]); }).filter(_isNum);
-        var thr = _matchAll(low, /\b(?:cross(?:es)?|reach(?:es)?|exceed(?:s)?|above)\s+([+-]?\d+(?:\.\d+)?)(?!\s*%)/g).map(function (m) { return parseFloat(m[1]); });
+        // a decimal point or a decimal comma ("12,5 %", "crosses 4,5": the question box is never converted by the a11y layer)
+        var dec = function (s) { return parseFloat(String(s).replace(',', '.')); };
+        var pcts = _matchAll(low, /([+-]?\d+(?:[.,]\d+)?)\s*%/g).map(function (m) { return dec(m[1]); }).filter(_isNum);
+        var thr = _matchAll(low, /\b(?:cross(?:es)?|reach(?:es)?|exceed(?:s)?|above)\s+([+-]?\d+(?:[.,]\d+)?)(?![\d.,]*\s*%)/g).map(function (m) { return dec(m[1]); });
         var input = null;
         var lowNoTests = low.replace(/\b(?:b|test|build-?up)\s*#?\d+\b/g, ' ');
         for (var i = 0; i < INPUT_SYN.length; i++) if (INPUT_SYN[i][1].test(lowNoTests)) { input = INPUT_SYN[i][0]; break; }
@@ -2058,7 +2103,7 @@
                     vals['u' + j] = { v: FORMULAS.add(t.result.final.S, dS), cat: null, dp: 2, ref: t.id + '·U2:S', calc: { f: 'add', args: { a: 'tests[' + tj + '].result.final.S', b: lit(dS) } } };
                     ev.push(t.id + '·A2');
                 });
-                if (used.length > shown.length) { tpl += ' (and {nOld} earlier tests)'; vals.nOld = { v: used.length - shown.length, cat: null, dp: 0, ref: 'U2:older', calc: { f: 'lit', args: { x: lit(used.length - shown.length) } } }; }
+                if (used.length > shown.length) { tpl += ' (and {nOld} earlier ' + (used.length - shown.length === 1 ? 'test' : 'tests') + ')'; vals.nOld = { v: used.length - shown.length, cat: null, dp: 0, ref: 'U2:older', calc: { f: 'lit', args: { x: lit(used.length - shown.length) } } }; }
                 tpl += '.';
             }
             if (L && L.result && L.result.final) {
@@ -2358,7 +2403,7 @@
         if (st === 'SIGNED') return _verdict('ok', '✓ Signed off by {name} ({role}) on {date} · hash {h}.', { name: c.V('V14', 'signer'), role: c.V('V14', 'role'), date: c.V('V14', 'signedAt'), h: c.V('V14', 'sigHash16') }, ['V14']);
         if (st === 'CHANGED') return _verdict('warn', '⚠ DRAFT — changed after sign-off on {date}; sign off again after review.', { date: c.V('V14', 'signedAt') }, ['V14']);
         var n = c.review ? canSign(c.review).open.length : 0;
-        if (n) return _verdict('warn', '⚠ DRAFT — not signed off ({n} findings need a decision).', { n: c.V('V14', 'nOpen') }, ['V14']);
+        if (n) return _verdict('warn', '⚠ DRAFT — not signed off ({n} ' + (n === 1 ? 'finding needs' : 'findings need') + ' a decision).', { n: c.V('V14', 'nOpen') }, ['V14']);
         return _verdict('warn', '⚠ DRAFT — not signed off.', {}, ['V14']);
     }
     function _S1(c, st) {
@@ -2379,10 +2424,14 @@
         b.push(_statusVerdict(c, st));
         if (L && L.result) {
             var tr = c.an.trend || {}, d = tr.alerts && tr.alerts.delta;
+            var la = c.V('T1', 'latestAlert'), sv = c.V(L.id + '·A2', 'S');
+            var rc = la && _isNum(la.v) && sv && _isNum(sv.v) && MATH.abs(la.v - sv.v) >= 0.005;   // gas with D resolved: say the basis
             var tpl = (d && d.status === 'confirmed' ? 'Skin has risen above the baseline' : d && (d.status === 'provisional' || d.status === 'possible') ? 'Skin may be rising above the baseline' : 'Skin is near the baseline') +
-                      ': baseline {sb}, latest {s} ± {e} at {t}. k is ' + (tr.kStability && tr.kStability.stable ? 'stable' : 'not stable') + ' between tests (CV {cv} %). ';
+                      ': baseline {sb}, latest {s} ± {e} at {t}' + (rc ? ' ({sa} on the rate-corrected basis of the baseline)' : '') + '. k is ' + (tr.kStability && tr.kStability.stable ? 'stable' : 'not stable') + ' between tests (CV {cv} %). ';
             tpl += (tr.kStability && tr.kStability.stable && d && d.status === 'confirmed') ? 'With stable k the change is near the well (damage or a pseudo-skin change), not in the formation.' : 'Read the alerts with the confidence labels and the review findings below.';
-            b.push(_notes('Assessment', tpl, { sb: c.V('T1', 'S'), s: c.V(L.id + '·A2', 'S'), e: c.V(L.id + '·U1', 'value'), t: c.V(L.id + '·A2', 'test'), cv: c.V('T9', 'cvPct') }, c.evs(['T1', 'T9', L.id + '·A2'])));
+            var av = { sb: c.V('T1', 'S'), s: sv, e: c.V(L.id + '·U1', 'value'), t: c.V(L.id + '·A2', 'test'), cv: c.V('T9', 'cvPct') };
+            if (rc) av.sa = la;
+            b.push(_notes('Assessment', tpl, av, c.evs(['T1', 'T9', L.id + '·A2'])));
         }
         return { id: 'S1', title: 'Summary', blocks: b };
     }
@@ -2391,7 +2440,7 @@
         b.push(_kv([
             _row('Gauge noise σ (shut-in / flowing)', _tv('{a} / {b}', { a: c.V('Q1', 'sigmaShut_psi'), b: c.V('Q1', 'sigmaFlow_psi') }), ['Q1']),
             _row('Sampling interval (median, 5 %, 95 %)', _tv('{m} s, {p5} s, {p95} s ({n} samples)', { m: c.V('Q2', 'dtMed_s'), p5: c.V('Q2', 'dtP05_s'), p95: c.V('Q2', 'dtP95_s'), n: c.V('Q2', 'n') }), ['Q2']),
-            _row('Gaps', _tv('{n} gaps, {tot} h in total, longest {lg} h', { n: c.V('Q3', 'gapCount'), tot: c.V('Q3', 'gapTotal_h'), lg: c.V('Q3', 'longestGap_h') }), ['Q3']),
+            _row('Gaps', _tv('{n} ' + (qc.gapCount === 1 ? 'gap' : 'gaps') + ', {tot} h in total, longest {lg} h', { n: c.V('Q3', 'gapCount'), tot: c.V('Q3', 'gapTotal_h'), lg: c.V('Q3', 'longestGap_h') }), ['Q3']),
             _row('Spikes', _tv('{n} ({mode})', { n: c.V('Q4', 'count'), mode: c.V('Q4', 'mode') }), ['Q4']),
             _row('Gauge drift (assumed)', c.V('Q5', 'drift'), ['Q5']),
             _row('Tide index (largest test)', c.V('Q6', 'maxTide'), ['Q6']),
@@ -2408,8 +2457,8 @@
         ]));
         var warned = false;
         if (qc.resolutionLimited) { warned = true; b.push(_verdict('warn', '⚠ Gauge resolution ({r}) limits the noise estimate.', { r: c.V('Q1', 'resolution_psi') }, ['Q1'])); }
-        if (qc.noiseCorrelated) { warned = true; b.push(_verdict('warn', '⚠ Gauge noise is correlated (lag-one autocorrelation {rho}); σ is a lower bound.', { rho: c.V('Q1', 'rho1') }, ['Q1'])); }
-        if (_isNum(qc.gapCount) && qc.gapCount > 0) { warned = true; b.push(_verdict('warn', '⚠ {n} data gaps, the longest {lg} h.', { n: c.V('Q3', 'gapCount'), lg: c.V('Q3', 'longestGap_h') }, ['Q3'])); }
+        if (qc.noiseCorrelated) { warned = true; b.push(_verdict('warn', '⚠ Gauge noise is correlated (lag-one autocorrelation of the pressure differences {rho}, where uncorrelated noise gives minus one half); σ is a lower bound.', { rho: c.V('Q1', 'rho1') }, ['Q1'])); }
+        if (_isNum(qc.gapCount) && qc.gapCount > 0) { warned = true; b.push(_verdict('warn', qc.gapCount === 1 ? '⚠ {n} data gap of {lg} h.' : '⚠ {n} data gaps, the longest {lg} h.', { n: c.V('Q3', 'gapCount'), lg: c.V('Q3', 'longestGap_h') }, ['Q3'])); }
         if (!warned) b.push(_verdict('ok', '✓ Data quality checks passed: no gaps, uncorrelated noise, resolution adequate.', {}, ['Q1', 'Q2', 'Q3']));
         return { id: 'S2', title: 'Data and quality', blocks: b };
     }
@@ -2424,8 +2473,8 @@
         if (events.length > MAX_ROWS) rows.push([c.V('D1', 'nOlderEvents'), 'older events not shown'].concat(_blank(head.length - 2)));
         shown.forEach(function (e) {
             var t = testOf[e.id];
-            rows.push([e.id, t ? t.id : '—', c.V('D1', e.id + '_time'), _str(e.kind), _str(e.status), c.V('D1', e.id + '_dtEnd_h'),
-                       t ? c.V(t.id + '·R1', 'Dq') : '—', t && t.spec && t.spec.rateQC ? _str(t.spec.rateQC.dqSource) : '—', c.V('D1', e.id + '_pwf0'), e.alloc ? _str(e.alloc.confirm) : '—',
+            rows.push([e.id, t ? t.id : '—', c.V('D1', e.id + '_time'), _lab(EV_KIND_LABEL, e.kind), _lab(EV_STATUS_LABEL, e.status), c.V('D1', e.id + '_dtEnd_h'),
+                       t ? c.V(t.id + '·R1', 'Dq') : '—', t && t.spec && t.spec.rateQC ? _lab(DQ_SOURCE_LABEL, t.spec.rateQC.dqSource) : '—', c.V('D1', e.id + '_pwf0'), e.alloc ? _lab(ALLOC_CONFIRM_LABEL, e.alloc.confirm) : '—',
                        _eventNote(e, t)]);
             if (t && c.has(t.id + '·D2')) ev.push(t.id + '·D2');
         });
@@ -2606,7 +2655,7 @@
             _row('PI ratio and production at stake', pi.guard ? _tv('not computable (strongly negative skin)', {}) :
                  _tv('PI ratio {now} now against {base} at the baseline' + (pi.ratioLowerBound ? ' (lower bound)' : '') + '; rate at stake {rate}; extra drawdown at constant rate {dd}; cumulative since the onset {cum}' + (pi.atStakeUpperBound ? ' (upper bounds)' : '') + '; pseudo-steady-state estimate',
                      { now: c.V('T8', 'ratioNow'), base: c.V('T8', 'ratioBase'), rate: c.V('T8', 'rateAtStake'), dd: c.V('T8', 'extraDrawdown_psi'), cum: c.V('T8', 'cumAtStake') }), ['T8']),
-            _row('k stability', _tv('CV {cv} % (limit {lim} %): ' + (ks.stable ? 'stable' : 'not stable') + '; reading {rd}', { cv: c.V('T9', 'cvPct'), lim: c.V('T9', 'cvLimPct'), rd: c.V('T9', 'reading') }), ['T9']),
+            _row('k stability', _tv('CV {cv} % (limit {lim} %): ' + (ks.stable ? 'stable' : 'not stable') + '; reading {rd}', { cv: c.V('T9', 'cvPct'), lim: c.V('T9', 'cvLimPct'), rd: c.V('T9', 'readingText') }), ['T9']),
             _row('Pressure trend', pt.assessable ? _tv((pt.quantity === 'pbar' ? 'average pressure' : 'p*') + ' changes by {sl} per 30 days, scatter {sc}; depletion {dep}', { sl: c.V('T10', 'slopePer30d'), sc: c.V('T10', 'scatter'), dep: c.V('T10', 'depletion') })
                                                  : _tv('depletion cannot be assessed: {why}', { why: c.V('T10', 'reason') }), ['T10']),
             _row('Model-free skin change', _tv('{n} tests checked; {a} agree with the fitted change', { n: c.V('T11', 'n'), a: c.V('T11', 'nAgree') }), ['T11']),
@@ -2616,7 +2665,7 @@
             _row('Mechanical skin', (tr.mech && tr.mech.available) ? _tv('geometric pseudo-skin {sg} (range {lo} to {hi}), pressure-drop basis', { sg: c.V('T14', 'Sgeo'), lo: c.V('T14', 'SgeoLo'), hi: c.V('T14', 'SgeoHi') })
                                                                    : _tv('not available (no completion data): the alerts use total skin', {}), ['T14']),
             _row('Rate-dependent skin', c.gas ? _tv('resolved {r}: D {d} ± {se}', { r: c.V('T15', 'resolved'), d: c.V('T15', 'D'), se: c.V('T15', 'seD') }) : _tv('not assessed for this fluid', {}), ['T15']),
-            _row('Tests excluded as low', (_isNum(low.n) && low.n > 0) ? _tv('{n} low tests excluded, S {lo} to {hi}', { n: c.V('T16', 'n'), lo: c.V('T16', 'Slo'), hi: c.V('T16', 'Shi') }) : _tv('{n} low tests excluded', { n: c.V('T16', 'n') }), ['T16'])
+            _row('Tests excluded as low', (_isNum(low.n) && low.n > 0) ? _tv('{n} low ' + (low.n === 1 ? 'test' : 'tests') + ' excluded, S {lo} to {hi}', { n: c.V('T16', 'n'), lo: c.V('T16', 'Slo'), hi: c.V('T16', 'Shi') }) : _tv('{n} low tests excluded', { n: c.V('T16', 'n') }), ['T16'])
         ];
         b.push(_kv(rowsKv));
         b.push(_alertVerdict(c, 'delta'));
@@ -2720,16 +2769,20 @@
         ['iarfEarliest', 'The IARF window is the earliest plateau after the storage hump, not the longest; the longest qualifying window is reported.', 'I1'],
         ['history', 'With an estimated production history p* is a range and is not used for any trend.', 'R5']
     ];
+    // trend-module limitation codes that repeat a fixed item above (same statement in other words)
+    var LIMIT_SAME = { partialCuts: 'partial', gradient: 'storage', pStarEstimated: 'history' };
+    var NOTE_ROOM = 560;    // text plus " [refs]" per Notes box: the page and the reports never cut a sentence
     function _S8(c) {
         var items = LIMITS.slice(), have = {};
         items.forEach(function (x) { have[x[0]] = 1; });
         _arr(c.an.trend && c.an.trend.limitations).forEach(function (l) {
-            if (!l || have[l.code] || typeof l.text !== 'string' || /\d/.test(l.text) || l.text.indexOf('{') !== -1 || l.text.length > 300) return;
+            if (!l || have[l.code] || (LIMIT_SAME[l.code] && have[LIMIT_SAME[l.code]]) || typeof l.text !== 'string' || /\d/.test(l.text) || l.text.indexOf('{') !== -1 || l.text.length > 300) return;
             have[l.code] = 1; items.push([l.code, l.text, 'T1']);
         });
         var b = [], cur = '', ev = [];
+        var room = function (txt, evs) { var e = c.evs(evs); return txt.length + (e.length ? 3 + e.join(', ').length : 0); };
         items.forEach(function (x) {
-            if (cur && cur.length + 1 + x[1].length > 600) { b.push(_notes('Notes', cur, {}, c.evs(ev))); cur = ''; ev = []; }
+            if (cur && room(cur + ' ' + x[1], ev.concat([x[2]])) > NOTE_ROOM) { b.push(_notes('Notes', cur, {}, c.evs(ev))); cur = ''; ev = []; }
             cur = cur ? cur + ' ' + x[1] : x[1];
             ev.push(x[2]);
         });
@@ -2747,7 +2800,7 @@
         }
         var cn = rv.counts || {};
         var lvl = cn.critical > 0 ? 'bad' : cn.major > 0 ? 'warn' : 'ok';
-        b.push(_verdict(lvl, (lvl === 'ok' ? '✓' : lvl === 'warn' ? '⚠' : '✗') + ' Automated rule-based review: {c} critical, {mj} major, {mn} minor, {sg} suggestions.',
+        b.push(_verdict(lvl, (lvl === 'ok' ? '✓' : lvl === 'warn' ? '⚠' : '✗') + ' Automated rule-based review: {c} critical, {mj} major, {mn} minor, {sg} ' + (cn.suggestion === 1 ? 'suggestion' : 'suggestions') + '.',
                         { c: c.V('V14', 'nCritical'), mj: c.V('V14', 'nMajor'), mn: c.V('V14', 'nMinor'), sg: c.V('V14', 'nSuggestion') }, ['V14']));
         var ec = rv.evidenceCheck || {};
         var v14 = _arr(rv.findings).some(function (f) { return f.rule === 'V14'; });
@@ -2770,7 +2823,7 @@
             var fr = _arr(rv.findings).slice(0, MAX_ROWS).map(function (f) {
                 return _row(f.id + ' · ' + f.rule + ' · ' + f.severity + (f.decision ? ' · ' + f.decision.d : ''), _tv(f.template, f.values), c.evs(_arr(f.ev).length ? f.ev : [f.rule]));
             });
-            if (rv.findings.length > MAX_ROWS) fr.push(_row('More findings', _tv('{n} more findings are listed in the table above.', { n: c.V('V14', 'nMoreFindings') }), ['V14']));
+            if (rv.findings.length > MAX_ROWS) fr.push(_row('More findings', _tv((rv.findings.length - MAX_ROWS === 1 ? '{n} more finding is' : '{n} more findings are') + ' listed in the table above.', { n: c.V('V14', 'nMoreFindings') }), ['V14']));
             b.push(_kv(fr));
         }
         b.push(_notes('Notes', S9_NOTE, {}, ['V14']));
@@ -2802,11 +2855,23 @@
         ];
         if (L) kv.push(_row('Audit chain', _tv('{h} ({f} folded entries)', { h: c.V('V14', 'chainHash'), f: c.V('V14', 'auditFolded') }), ['V14']));
         b.push(_kv(kv));
+        _auditVerdicts(c).forEach(function (v) { b.push(v); });
         b.push(_reproBlock(c));
         return { id: 'S10', title: 'Audit trail and reproducibility', blocks: b };
     }
+    // ⚠ when the stored chain does not verify (an entry edited, removed or damaged after it was written) or an earlier
+    // log could not be read. hash16 has no secret: this catches corruption and naive edits, not a rewritten chain.
+    function _auditVerdicts(c) {
+        var L = c.audit, out = [];
+        if (!L) return out;
+        var vf = _auditVerified(L);
+        if (vf && vf.ok === false) out.push(_verdict('warn', '⚠ Audit trail does not verify at entry #{n}: it was edited or damaged after it was written.', { n: c.V('V14', 'auditBrokenAt') }, ['V14']));
+        if (_obj(L.lost) && typeof L.lost.key === 'string' && L.lost.key) out.push(_verdict('warn', '⚠ An earlier audit trail on this device could not be read; its text is kept as {k} and the entries above start after it.', { k: c.V('V14', 'auditLostKey') }, ['V14']));
+        else if (_obj(L.lost)) out.push(_verdict('warn', '⚠ The audit trail stored on this device could not be read; its text is kept aside, unchanged, at the next audited action and a new trail starts.', {}, ['V14']));
+        return out;
+    }
     function _S11(c, st) {
-        var b = [_statusVerdict(c, st)], so = c.signoff;
+        var b = [_statusVerdict(c, st)].concat(_auditVerdicts(c)), so = c.signoff;
         if (so && so.hash) {
             b.push(_kv([
                 _row('Signed by', _tv('{n} ({r})', { n: c.V('V14', 'signer'), r: c.V('V14', 'role') }), ['V14']),
@@ -2892,6 +2957,41 @@
     var IMP_UNIT = { pressure: 'psi', permeability: 'md', permThickness: 'md·ft', length: 'ft', liquidRate: 'STB/d', gasRateSmall: 'Mscf/d', volume: 'STB', wbStorage: 'bbl/psi',
                      productivityIndex: 'STB/d/psi', gasPI: 'Mscf/d/psi', pressurePerDay: 'psi/d', viscosity: 'cp', compressibility: '1/psi' };
     function _impFmt(v, cat, dp) { return _fixed(v, dp) + (cat && IMP_UNIT[cat] ? ' ' + IMP_UNIT[cat] : ''); }
+    var MONTHS_RE = '(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)';
+    // De-identification: every name the analysis, the review, the sign-off or the page knows of (opts.names: audit and well
+    // names) is replaced as a whole word, any case, from two characters on, longest first. Person names are also replaced
+    // by their parts (three characters or more). Words the export itself uses and evidence / test ids are never treated as names.
+    var SCRUB_STOP = /^(?:well|wells|test|tests|day|days|rate|rates|skin|model|status|review|alert|alerts|used|labels|open|none|accept|reject|note|notes|ok|yes|no|and|or|of|at|by|on|in|to|the|an|is|it|as|be|well a|engineer|reviewer|decision|override|trend|data|gauge|free|text|psi|psia|md|ft|cp|stb|bbl|mscf|day|date|a date)$/i;
+    var SCRUB_ID = /^(?:B\d+|[QDRWILMACUKTVOEFS]\d+|K[LKCH]\d|B\d+·[A-Z]\d+|[+-]?\d+(?:[.,]\d+)?)$/i;
+    function _namesFor(an, review, opts) {
+        var out = [], add = function (s, role) {
+            if (typeof s !== 'string') return;
+            var t = s.replace(/\s+/g, ' ').trim();
+            if (t.length < 2 || SCRUB_STOP.test(t) || SCRUB_ID.test(t)) return;
+            out.push({ s: t, role: role });
+            if (role !== 'well') t.split(' ').forEach(function (p) { p = p.replace(/^[^\w]+|[^\w]+$/g, ''); if (p.length >= 3 && p !== t && !SCRUB_STOP.test(p) && !SCRUB_ID.test(p)) out.push({ s: p, role: role }); });
+        };
+        var m = (an && an.meta) || {};
+        add(m.wellName, 'well');
+        add(m.engineer, 'engineer');
+        _arr(an && an.overrides).forEach(function (o) { if (o) add(o.who, 'person'); });
+        _arr(review && review.findings).forEach(function (f) { if (f && f.decision) add(f.decision.who, 'person'); });
+        if (opts && _obj(opts.signoff)) add(opts.signoff.name, 'person');
+        _arr(opts && opts.names).forEach(function (x) { if (_obj(x)) add(x.s, x.role === 'well' ? 'well' : 'person'); else add(x, 'person'); });
+        return out;
+    }
+    function _scrubNames(text, names) {
+        var seen = {};
+        names.slice().sort(function (a, b) { return b.s.length - a.s.length; }).forEach(function (n) {
+            var key = n.s.toLowerCase();
+            if (seen[key]) return;
+            seen[key] = 1;
+            var esc = n.s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, '\\s+');
+            var rep = n.role === 'well' ? 'Well A' : n.role === 'engineer' ? 'the engineer' : 'a reviewer';
+            text = text.replace(new RegExp('(^|[^A-Za-z0-9_])' + esc + '(?![A-Za-z0-9_])', 'gi'), function (x, pre) { return pre + rep; });
+        });
+        return text;
+    }
     function aiExport(analysis, review, opts) {
         opts = opts || {};
         var deid = opts.deidentify !== false, dates = opts.includeDates === true, free = opts.includeFreeText === true;
@@ -2907,7 +3007,15 @@
             var ms = Date.UTC(+m[1], +m[2] - 1, +m[3]);
             return 'day ' + _fixed((ms - Date.UTC(new Date(t0).getUTCFullYear(), new Date(t0).getUTCMonth(), new Date(t0).getUTCDate())) / 86400000, 0);
         };
-        var undate = function (s) { return dates ? s : _str(s).replace(/\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})?(?: [A-Za-z_/+−-]+)?)?/g, function (x) { return dayOf(x); }); };
+        // ISO dates become day numbers; the other forms the data reader accepts (d/m/y, m/d/y, DD-Mon-YYYY, Mon DD YYYY) are
+        // ambiguous between day and month, so they become "a date".
+        var undate = function (s) {
+            if (dates) return s;
+            return _str(s).replace(/\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})?(?: [A-Za-z_/+−-]+)?)?/g, function (x) { return dayOf(x); })
+                .replace(/(^|[^\d.\/v-])(\d{1,2}[\/.-]\d{1,2}[\/.-](?:\d{4}|\d{2}))(?![\d.\/-]*\d)/g, function (m, pre) { return pre + 'a date'; })
+                .replace(new RegExp('\\b\\d{1,2}(?:st|nd|rd|th)?[ -]?' + MONTHS_RE + '\\.?[ ,-]+\\d{2,4}\\b', 'gi'), 'a date')
+                .replace(new RegExp('\\b' + MONTHS_RE + '\\.? \\d{1,2}(?:st|nd|rd|th)?,? \\d{4}\\b', 'gi'), 'a date');
+        };
         var V = function (id, name) { var v = c.V(id, name); return fmtValue(v, fmt); };
         var fillD = function (tpl, vals) {
             var vv = {};
@@ -2944,7 +3052,7 @@
                  '; absolute alert ' + V('T3', 'status') + ' on ' + V('T3', 'basisText') + (A.absolute && A.absolute.raisedAt ? ' (raised ' + A.absolute.raisedAt + (A.absolute.confirmedAt ? ', confirmed ' + A.absolute.confirmedAt : '') + ')' : '') +
                  ', threshold ' + V('T3', 'threshold') + '.');
         if (tr.onset && _isNum(tr.onset.tauDays)) out.push('Onset about day ' + V('T4', 'tauDays') + ' (interval days ' + V('T4', 'lo') + ' to ' + V('T4', 'hi') + ', ' + V('T4', 'model') + ' model)' + (dates ? ', ' + V('T4', 'date') : '') + '.');
-        out.push('k stability: CV ' + V('T9', 'cvPct') + ' % (limit ' + V('T9', 'cvLimPct') + ' %), reading ' + V('T9', 'reading') + '. Pressure trend: ' +
+        out.push('k stability: CV ' + V('T9', 'cvPct') + ' % (limit ' + V('T9', 'cvLimPct') + ' %), reading ' + V('T9', 'readingText') + '. Pressure trend: ' +
                  (tr.pTrend && tr.pTrend.assessable ? V('T10', 'slopePer30d') + ' per 30 days, depletion ' + V('T10', 'depletion') : 'not assessable') + '.');
         if (tr.pi && !tr.pi.guard) out.push('PI ratio ' + V('T8', 'ratioNow') + ' (baseline ' + V('T8', 'ratioBase') + '); rate at stake ' + V('T8', 'rateAtStake') + '; cumulative since the onset ' + V('T8', 'cumAtStake') + ' (pseudo-steady-state estimates).');
         out.push('');
@@ -2966,9 +3074,7 @@
         out.push('Please review this automated build-up surveillance analysis. Check it for consistency and physical plausibility (permeability, skin and its uncertainty, model choice, rates, alerts). ' +
                  'For each point, cite the evidence ids above. Say which extra data or tests would change the conclusions, and which findings you would accept or reject and why.');
         var text = out.join('\n');
-        if (deid && an.meta) {
-            [an.meta.wellName, an.meta.engineer].forEach(function (s) { if (typeof s === 'string' && s.trim().length >= 4 && s.trim() !== 'Well A') text = text.split(s.trim()).join(s === an.meta.wellName ? 'Well A' : 'the engineer'); });
-        }
+        if (deid) text = _scrubNames(text, _namesFor(an, review, opts));
         if (!free) {
             var drop = [];
             if (an.record && an.record.name) drop.push(an.record.name);

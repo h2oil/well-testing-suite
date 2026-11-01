@@ -2022,17 +2022,19 @@ function drawLineChart(canvas, datasets, opts={}) {
     // Grid
     ctx.strokeStyle='#21262d'; ctx.lineWidth=1;
     const yTicks=6, xTicks=6;
+    // a tick just below zero rounds to "-0" at the shown decimals: label it 0
+    const tickTxt = (v, d) => { const s = fmt(v, d); return /^[-\u2212]0(?:[.,]0+)?$/.test(s) ? s.slice(1) : s; };
     ctx.fillStyle='#6e7681'; ctx.font='11px sans-serif'; ctx.textAlign='right';
     for(let i=0;i<=yTicks;i++){
         const v=yMin+(yMax-yMin)*i/yTicks, y=toY(v);
         ctx.beginPath(); ctx.moveTo(pad.l,y); ctx.lineTo(W-pad.r,y); ctx.stroke();
-        ctx.fillText(fmt(v, opts.yDec??1), pad.l-8, y+4);
+        ctx.fillText(tickTxt(v, opts.yDec??1), pad.l-8, y+4);
     }
     ctx.textAlign='center';
     for(let i=0;i<=xTicks;i++){
         const v=xMin+(xMax-xMin)*i/xTicks, x=toX(v);
         ctx.beginPath(); ctx.moveTo(x,pad.t); ctx.lineTo(x,pad.t+ph); ctx.stroke();
-        ctx.fillText(fmt(v, opts.xDec??1), x, H-pad.b+20);
+        ctx.fillText(tickTxt(v, opts.xDec??1), x, H-pad.b+20);
     }
 
     // Axes labels

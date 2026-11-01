@@ -1332,6 +1332,8 @@
         if (!(qCorrect > 0)) qCorrect = qTrue;
         var f = qCorrect / qTrue, g = SC.given;
         var Stest = SC.SmechAt(tc - 1e-6) + (res.D || 0) * qTrue;
+        // f is the closing-day factor only; the engine superposes the given rate on every day, so the input-consistent k lies
+        // between k and f·k and this truth overstates the expected k error by up to |f − 1| (plan §5.3 calibration note).
         var kStar = f * res.k * (g.B / res.B0) * (g.mu / res.mu0) * (res.h / g.h);
         var inTerm = 1.1513 * MM.log10((g.h / res.h) * (g.phi / res.phi) * (g.ct / res.ct)) + 2.3026 * MM.log10(g.rw / res.rw) - 1.1513 * MM.log10((g.B / res.B0) * f);
         // Gas (§4.6 item 1, "μ·ct at the build-up average pressure"): the engine takes μ from its own table at
