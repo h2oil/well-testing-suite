@@ -1,6 +1,8 @@
 # H2Oil Well Testing Suite: roadmap
 
-Status: planning document, updated 2026-09-29 after v1.7. Owner: H2Oil Engineering.
+Status: planning document, updated 2026-09-29 after v1.7; §2.3 and §4 updated 2026-11-01 after v3.3. Owner: H2Oil Engineering.
+
+**v3.3 shipped (DONE):** Build-up Surveillance (`49-calc-buildup*.js`, PRiSM `53`–`55`) and the PRiSM Skin-check card with the closed-circle model; most of L4 (§2.2). What v3.3 deferred and what it left open is in §2.3. **Next: v3.4 DFIT module — see docs/DFIT-PLAN.md.**
 
 **v1.7 shipped (DONE):** calculators #1–#4 (`gasdeliv`, `oilipr`, `flareghg`, `h2sroe`) on the new plug-in calculator registry (Round-9, `prism-build/4N-calc-*.js`), and an accuracy audit of the host calculators in groups G1–G5 (§1.5). Everything not marked DONE is the forward plan.
 
@@ -247,10 +249,10 @@ Critic items that belong in NEXT:
 
 | ID | Package | What it adds | Value | Effort | Dependencies |
 |---|---|---|---|---|---|
-| L1 | Special tests | DFIT/minifrac: G-function, √t, after-closure analysis, tangent and compliance closure picks. Slug and DST. Closed-chamber. Step-rate. Impulse tests | H | L | R4, R13 |
+| L1 | Special tests | DFIT/minifrac: G-function, √t, after-closure analysis, tangent and compliance closure picks. Slug and DST. Closed-chamber. Step-rate. Impulse tests. **DFIT is planned for v3.4 as a PRiSM workspace mode — see docs/DFIT-PLAN.md** | H | L | R4, R13 |
 | L2 | RTA suite | Normalised-rate type curves (Blasingame and Agarwal-Gardner families) with k, S and r_e from the match. Normalised pressure integral. Fetkovich type curves. p–q plot. Production-data QC card | H | L | N3, N8 |
 | L3 | Advanced deconvolution | Common-initial-pressure variant. Late-part-only variant. Gas-depletion variant. Exposed controls and validity checks. Monte-Carlo uncertainty | M | M | N5, N6 |
-| L4 | Permanent-gauge surveillance | Wavelet denoising. Automatic shut-in detection with confirmation. Skin vs time over many build-ups. PI vs time. Incremental re-analysis of new periods | M–H | L | N2 global regression, N5 |
+| L4 | Permanent-gauge surveillance | **Mostly DONE (v3.3, Build-up Surveillance):** automatic shut-in detection with confirmation through overrides, skin, k, p* and PI vs time over many build-ups, alerts, review and sign-off; complete per-test results are reused on a re-run. Open: wavelet denoising, automatic live rescans, the §2.3 items | M–H | L | N2 global regression, N5 |
 | L5 | Collaboration & assistance | Read-only share viewer. Comment pins. Plain-language "explain this derivative shape". Drafted narrative. QC assistant | M | L | §3 P5 sharing, R23 privacy |
 | L6 | Integration | Offset-well manager and map. Production-log rate multilayer regression. Documented JS API. "Send to rate history" from separator and orifice calculators. Industry-standard PRODML exchange | M | M | §3 P3 multi-well, R13 |
 | L7 | Numerical models | Boundary-element or WebAssembly finite-volume models for polygon reservoirs, started from the analytical fit | M | L (8+ weeks) | N4, performance work |
@@ -259,6 +261,40 @@ Critic items that belong in NEXT:
 | R5–R11 | Specialist markets | Gas condensate (two-phase m(p), condensate-bank composite). Pressure-dependent k and φ. Coalbed methane (Langmuir). Unconventional flowback. Frac-hit interference. Areal pulse tests. Groundwater and aquifer tests | L–M each | M each | Case by case |
 | R24 | Standard data exchange (PRODML well-test and PTA objects) | L–M | M | L6 |
 | R23 | **DONE (v1.8: Privacy page, analytics allow-list).** Privacy statement and analytics audit (no well data in analytics events). Encrypted project files as an option | H (trust) | S | Do first; a precondition for L5 |
+
+### 2.3 After v3.3 (Build-up Surveillance): deferred and open items
+
+Plan: docs/BUILDUP-SURVEILLANCE-PLAN.md (§1.5 deferred scope, §5.7 measured results, §12.1 open items).
+
+**Deferred on purpose in v3.3** (each with the reason):
+
+| ID | Item | Why deferred |
+|---|---|---|
+| B1 | Multi-build-up deconvolution on the Build-up Surveillance page | `PRiSM_deconvolve` blocks the UI for 1.6–1.8 s, synchronously; "Open in PRiSM" passes the full history, so it can be run there |
+| B2 | A phase-redistribution model term | v3.3 flags the anomaly and starts the fit after it |
+| B3 | Interpretation of partial rate cuts | They are classified, put into the rate history and listed, not interpreted |
+| B4 | Interference modelling of offset wells | Flagged through the negative late derivative and the background check |
+| B5 | Two-phase near-well skin quantification | Review flag only |
+| B6 | A PDF watermark for DRAFT reports | None exists in the app; DRAFT is a verdict line plus subtitle text |
+| B7 | Worker threads for the analysis | The test harness has none; the sliced driver is the only path |
+| B8 | Perforation skin in the skin decomposition | The perforation-skin coefficient table is not verified; the input is hidden and the decomposition says "perforation skin not split" until it is |
+
+**Open after v3.3** (measured on the synthetic benchmark, §5.7, or found in the reviews):
+
+| ID | Item | Status and options |
+|---|---|---|
+| B9 | Headline single-build-up "medium" reliability | 72.6 % right (Wilson lower bound 0.64 against the 0.70 target): visible rivals below the late-derivative trigger and noise-level skin errors stay medium. Options: a model-label rule on the late derivative ratio, or the trigger threshold in the calibration grid |
+| B10 | Single-build-up "high" bound | Every single-build-up high label is right, but there are too few (5 k/S, 1 headline) for the 0.90 lower bound; about 35 are needed |
+| B11 | Calibration envelope population | The envelope comes from the pooled set, so no build-up shorter than 10 h is labelled high; a per-population envelope is an option |
+| B12 | Sen confidence interval of the skin trend | Covers the true slope in 42 % of the sequences (target 85 %); combine it with the S_err-propagated slope interval |
+| B13 | Reach for injectors (83 %) and changing storage (89 %) | Fall-offs below the step threshold; one storage hump read as an intervention |
+| B14 | Partial-cut status | 3 of 10 right; most stay "not confirmed" by design |
+| B15 | Review and report timing | About 83 ms on the oil demo against a 50 ms target; the end of Analyse is split into yielded units, and the 4× CPU phone figures are still to be re-measured |
+| B16 | IARF window and grade | The window is the earliest plateau (the longest window is reported); the grade is noise-limited on the last half cycle |
+| B17 | p* with an estimated rate history | Reported as a range |
+| B18 | Stored result size | About 10 kB per test; the run layer keeps a duplicated first-pass block |
+| B19 | Page-test runtime | About 16 s against the 9 s budget |
+| B20 | Visible-rival definition | The benchmark's "visible rival" (10 % at the end of the test) and the engine's trigger (15 % over 0.2 cycle) differ; kept and reported |
 
 **Sequencing notes.**
 - N3 should follow calculators #1 and #2, so deliverability maths lives in one place.
@@ -294,6 +330,8 @@ Critic items that belong in NEXT:
 | v1.8 | Calculators #6, #7, #5 (after the shared tubular table) and #8. P4 report templates (daily and final well-test). P7 base conditions. PRiSM R12, R13, R15, R16 and N3 (gas m(p) plus in-PRiSM deliverability using the #1/#2 compute functions) |
 | v1.9 | Calculators #9, #10, #11 and #12. PRiSM N1, N2, N5 and R19. P6 performance (workers) and P8 verification suite |
 | v2.0 — **mostly delivered in v3.0** | P3 multi-well projects and P5(a) read-only snapshots. PRiSM N6 test design, L1 special tests (DFIT), L2 RTA type curves |
+| v3.3 — **DONE** | Build-up Surveillance (L4 mostly), PRiSM Skin check and the closed-circle model |
+| v3.4 | DFIT module inside PRiSM (L1, DFIT part) — see docs/DFIT-PLAN.md. Candidates from §2.3: B9–B12 |
 
 ---
 

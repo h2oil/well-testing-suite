@@ -56,7 +56,7 @@
 | D22 | Calibration | 640 single build-ups plus 120 multi-test wells (about 1,000 more build-ups), from an independent seeded generator, run end to end (raw samples plus daily allocation). Folds grouped by well, a staged threshold grid that includes the LOW thresholds, Wilson intervals for single cases and cluster-bootstrap intervals for the pooled table, two tables (k/S label and headline label), frozen in `55-prism-autointerp-cal.js`. 10 cases run in the acceptance tests and 24 in the in-app check | Requirement §13 |
 | D23 | Skin decomposition | New `PRiSM_skinCheck.mechanicalSkin` returns S_mech on the **pressure-drop basis** (S_t − S_geo − D·q; what alerts and production loss use) and the **local damage skin** S_d = S_mech·h_w/h (used for treatment design). 34's `PRiSM_skinDecomposition` is unchanged, because its tests pin the additive form | Decomposition scaling |
 | D24 | Version | v3.3 everywhere: `RELEASE_NOTES[0]`, `MARKETING_VERSION` ×2, `VERSION_BASE` ×2 | CLAUDE.md |
-| D25 | Coordination with the DFIT workstream | Round-8 numbers 53–55 belong to this feature; DFIT files take 56 upwards. The lead is the only editor of `concat-round8.js` FILES for both. The DFIT page goes to Well Test & Flowlines (6 → 7 rows), so Production & Reservoir keeps one free row | Both drafts claimed 55; both wanted the same sidebar group |
+| D25 | Coordination with the DFIT workstream | Round-8 numbers 53–55 belong to this feature; DFIT files take 56 upwards. The lead is the only editor of `concat-round8.js` FILES for both. The DFIT page goes to Well Test & Flowlines (6 → 7 rows), so Production & Reservoir keeps one free row (superseded in WP9: docs/DFIT-PLAN.md puts DFIT inside PRiSM as a workspace mode, not a sidebar row) | Both drafts claimed 55; both wanted the same sidebar group |
 | D26 | Label pipeline | One staged pipeline owned by `run` (§4.6 item 18): pass-1 labels → baseline from pass-1 tests ≥ medium → pass 2 (k-held, background, partial-cut suspicion, window-level check) → final k/S labels and the frozen used set → trend → trend model caps applied once, with no feedback into the used set | Removes the circular dependency between labels and trend |
 | D27 | Decisions near thresholds | Every threshold test compares inputs rounded to display precision (ΔBIC 0.1, span 0.01 cycle, slope 0.001, ratios 0.001). Canonical inputs are rounded to 6 significant figures | Last-bit differences between JS engines must not flip a model, label or hash |
 
@@ -584,7 +584,7 @@ values). Values marked "cal" in §4.10 are overridden by `PRiSM_autoInterpCal.th
 |---|---|---|
 | `perforationSkin(i)` | `{rw_ft, lp_in, rp_in, spf, phase_deg ∈ {0,45,60,90,120,180}, kvkh}` | `{ok, S_H, S_V, S_wb, S_perf, verified:bool, warnings}`. Returns `ok:false, code:'UNVERIFIED'` when the coefficient table is not marked verified (§11 Q7) |
 | `mechanicalSkin(i)` | `{S_total, Serr, h, rw, completion:{hp_ft, htop_ft, theta_deg, kvkh:[lo,hi], perf\|null}, D\|null, q\|null}` | `{available, S_geo, S_geo_lo, S_geo_hi, parts:{pp, ppMethod, theta, perf\|null}, S_mech (pressure-drop basis), S_mech_err, S_d_local (= S_mech·hp/h), validity:[{code, text}], warnings}` |
-| `rateSkin(rows, opts)` | `rows [{id, t_days, q, S, Serr}]`, `opts {qRatioMin:1.5, maxDays:60, joint:true, stable:bool, expected:{k, h, hp, rw, sg, mu_g}}`. `stable:true` = the caller checked there is no skin trend; the joint fit is always refused when \|corr(q, t)\| ≥ 0.8. The window is the span of at most `maxDays` holding the most tests (the latest on a tie) | `{resolved, S, D, seD, n, qRatio, joint:null\|{S0, r_per30d, D, seD}, expectedD:number\|null (the correlation's central D), expectedDRange:{D, lo, hi, beta, unit, method}\|null, consistent:bool\|null, reason, ev:['T15']}`. Helpers: `expectedDRange(expected)`, `historyCheck(…)`, `gasDpSkin(…)` |
+| `rateSkin(rows, opts)` | `rows [{id, t_days, q, S, Serr}]`, `opts {qRatioMin:1.5, maxDays:60, joint:true, stable:bool, window:'most'\|'earliest', expected:{k, h, hp, rw, sg, mu_g}}`. `stable:true` = the caller checked there is no skin trend; the joint fit is always refused when \|corr(q, t)\| ≥ 0.8 and needs at least 5 tests (2 degrees of freedom); a significant time term in a window the caller states stable leaves D unresolved (WP9). The window is the span of at most `maxDays` holding the most tests (the latest on a tie), or with `window:'earliest'` the earliest such span (WP9; the trend's choice) | `{resolved, S, D, seD, n, qRatio, joint:null\|{S0, r_per30d, D, seD}, expectedD:number\|null (the correlation's central D), expectedDRange:{D, lo, hi, beta, unit, method}\|null, consistent:bool\|null, reason, ev:['T15']}`. Helpers: `expectedDRange(expected)`, `historyCheck(…)`, `gasDpSkin(…)` |
 | `products(i)` | `{S, k, h, B, mu, q, Dq, rw, re_ft, reSource:'input'\|'rinv', pbar\|null, pwf, dpSkin_psi?}` | `{dpSkin_psi, m, X, reAssumed:bool, piRatio, piRatioLowerBound:bool, piRatioUpperBound:bool, rateAtStakeUpperBound:bool, rateAtStakeLowerBound:bool, dpSkinSource, FE\|null, DR\|null, guard:bool}`, where `m = 162.6·Dq·B·μ/(k·h)` and guard means X + S < 1. With `reSource:'rinv'` the bounds follow the sign of S (§4.7) |
 | `run(opts)` | `{adata?, fit?, well?, completion?}`, defaults from PRiSM C1/C2/C4 (Skin check only) | `SkinCheck` (card model, §6.11) |
 | `renderPanel(el)` | DOM element | — (`window.PRiSM_renderSkinCheckPanel = renderPanel`, listed in the Tools drawer by its `TOOL_CATALOGUE` entry in 37) |
@@ -1441,7 +1441,8 @@ baseline, trend and alerts. Low tests are shown and excluded, with the reason.
   spacing is under 1 day (`disabledReason`); `on` / `off` override.
 - **Baseline (M§A22).** S_base = median of the first (up to) 3 used tests in each segment. Workover dates start new segments.
   - σ_base = max(median S_err, 1.4826·MAD/√n).
-  - "Unstable" when the range > 2·max S_err.
+  - "Unstable" when Σ(S − S̄)²/S_err² > χ²(n − 1, 95 %) (WP9; the earlier rule, range > 2·max S_err, fired on a third to a half
+    of constant-skin baselines).
   - Fewer than 3 tests or any k-held test → `provisional`.
 - **Alerts (M§A23, D11).**
   - Delta: S_j − E_j − S_base > Δ (default 2), where E_j = S_err,j (plain form, the default) or √(S_err,j² + σ_base²) (`basevar` form).
@@ -1495,7 +1496,8 @@ baseline, trend and alerts. Low tests are shown and excluded, with the reason.
 - **Model-free ΔS (T11, M§A28).** At a common Δt_ref (the largest `iarfDt0_h` that is ≤ the smallest `dtEnd_h`, both over the used
   tests that have an IARF window; k-held tests without one are skipped), from `TrendTest.bins` (Δp read at each test's Δt_e of Δt_ref,
   interpolated linearly in log Δt_e); the reference b is the first such test:
-  ΔS = 1.1513·[(Δp_j/q_j − Δp_b/q_b)/(m/q)_b − log10(Δt_e,j/Δt_e,b)]. It agrees within max(0.3, S_err).
+  ΔS = 1.1513·[(Δp_j/q_j − Δp_b/q_b)/(m/q)_b − log10(Δt_e,j/Δt_e,b)]. It agrees within max(0.3, S_err, 1.1513·a·Δp_j/m_j), with a
+  the allocation accuracy (WP9), and the check is labelled indicative.
 - **Bubble point (T12, M§A20).** The sandface pwf range = pwf0_datum ± ΔG·Δz, with the flowing gradient input ±20 %.
   - ok ≥ Pb + 100; minor within 100 psi; major below Pb; critical when p_ext < Pb (only when the pressure trend is assessable; with an
     estimated history the upper end of the p* range is compared and the level is at most major).
@@ -1503,12 +1505,17 @@ baseline, trend and alerts. Low tests are shown and excluded, with the reason.
   - Off for gas and injectors.
 - **PI cross-check (T13, M§A21).** J_obs,d = q_d/(p_ref,d − pwf_d) on clean flowing days, with pwf_d = `days[].pwfMeanDatum_psia` (else
   `days[].pwfMean_psia`) and p_ref
-  interpolated between the used tests' p_ext (tests without p_ext are skipped). J_pred = k_base·h/(141.2·B·μ·(X + S(t))), with S(t) as for
-  the cumulative (T8). R_J = J_obs/J_pred; one row per interval between consecutive used tests, with the median R_J, which should lie in
+  interpolated between the used tests' p_ext (tests without p_ext are skipped). J_pred comes from the infinite-acting model through the
+  superposed rate history (WP9), capped at pseudo-steady state when `well.re_ft` is entered, with S(t) as for the cumulative (T8); gas uses
+  m(p) (k·h/(1422·T·(X + S′))). Without the rate steps the old pseudo-steady-state form J_pred = k_base·h/(141.2·B·μ·(X + S(t))) is used,
+  marked `indicative`, and raises no V11. B and μ are the analysis basis (B = 1 on the total-rate basis, Bw/μw for injectors, the engine's
+  Bg·μ for gas), stored as `pi.B` / `pi.mu` and also used by T8. R_J = J_obs/J_pred; one row per interval between consecutive used tests, with the median R_J, which should lie in
   [0.8, 1.25]. Off for injectors and when the history is estimated (`available:false`).
 - **Mechanical skin (T14, D23).** `PRiSM_skinCheck.mechanicalSkin` per test; ΔS_mech = ΔS_total − D·Δq.
-- **Rate skin (T15, M§A19).** `PRiSM_skinCheck.rateSkin` over the baseline segment (or tests ≤ 60 days apart with no significant trend),
-  with q_max/q_min ≥ **1.5** and D/se ≥ 2. A joint fit with a time term needs ≥ 4 tests and |corr(q, t)| < 0.8. Otherwise "S′
+- **Rate skin (T15, M§A19).** `PRiSM_skinCheck.rateSkin` over the stable part of the current segment (WP9): seeded from the baseline
+  tests, later tests kept while S′ stays on the S + D̂·q line, with Mann–Kendall on the rate-corrected S′ − D̂·q; `stable:true` and
+  `window:'earliest'`; q_max/q_min ≥ **1.5** and D/se ≥ 2. A joint fit with a time term needs ≥ 5 tests and |corr(q, t)| < 0.8. A D
+  outside the expected range with D/se < 3 is withheld (`RATE_SKIN_WITHHELD`); the reason names the tests used. Otherwise "S′
   (apparent skin including D·q)" with the expected-D range.
 - **Recommendations** (advisory, each with evidence):
   - stimulation-candidate review (confirmed delta alert with stable k);
@@ -2929,7 +2936,7 @@ WP0 (lead, serial: FILES, shapes + fixtures, 53 skeleton with canon/hash16)
 - **CLAUDE.md:**
   - file-map lines for 53 / 54 / 55, `49-calc-buildup-*.js` and `buildup-validate.js` (with "file 55 is GENERATED; never edit by hand");
   - the build note that Round 8 now has 53–55, and the numbering rule (DFIT from 56; only the lead edits `concat-round8.js` FILES);
-  - the sidebar note: Production & Reservoir has 7 of 8 rows; the DFIT page goes to Well Test & Flowlines;
+  - the sidebar note: Production & Reservoir has 7 of 8 rows; DFIT goes inside PRiSM as a workspace mode (docs/DFIT-PLAN.md), not a sidebar row;
   - stats: 46 models (42 transient + 4 decline), SVG schematics 46 → 47, 21 plug-in pages, smoke 326, acceptance 941 + new;
   - the shared-engine list: `PRiSM_autoInterp` (with `canon`/`hash16`), `PRiSM_skinCheck`, `WTS_buildup`;
   - known limitations: partial cuts not interpreted; deconvolution not on the page; two-phase skin not quantified; perforation skin

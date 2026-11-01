@@ -7,7 +7,7 @@ packaged as a free iOS app, **H2Oil Well Testing**.
 
 - **Web app:** <https://welltest.h2oil.co.uk>, or open `well-testing-app.html` from this repository
 - **iOS app:** free, with no in-app purchases, no account and no analytics (see [ios-app/README.md](ios-app/README.md))
-- **Current release:** v3.2 (2026-10-31)
+- **Current release:** v3.3 (2026-11-01)
 - **Contact:** software@h2oil.co.uk
 
 ---
@@ -17,6 +17,7 @@ packaged as a free iOS app, **H2Oil Well Testing**.
 - [Highlights](#highlights)
 - [Feature catalogue](#feature-catalogue)
 - [PRiSM: well test analysis](#prism-well-test-analysis)
+- [Build-up Surveillance](#build-up-surveillance)
 - [Live data: Mini WellOS, Modbus and the historian](#live-data-mini-wellos-modbus-and-the-historian)
 - [Units, standard conditions and standards](#units-standard-conditions-and-standards)
 - [Reports, projects and multi-well](#reports-projects-and-multi-well)
@@ -30,13 +31,15 @@ packaged as a free iOS app, **H2Oil Well Testing**.
 
 ## Highlights
 
-- **56 calculators and tools** in 9 sidebar groups: metering, chokes, flowlines, test-system safety,
+- **57 calculators and tools** in 9 sidebar groups: metering, chokes, flowlines, test-system safety,
   chemical injection, well kill, separators, flare radiation and emissions, PVT, IPR and deliverability, process
   equipment, electrical and field conversions.
 - **Well Test Simulator:** a live process model of the test spread (wellhead → ESD valve → choke →
   heater → separator → surge tank → gauge tank, with gas to flare), in 3D or as a 2D schematic.
-- **PRiSM:** pressure-transient and decline/rate-transient analysis with 45 models,
-  Levenberg–Marquardt regression, auto-match, deconvolution, gas m(p), and a report.
+- **PRiSM:** pressure-transient and decline/rate-transient analysis with 46 models,
+  Levenberg–Marquardt regression, auto-match, deconvolution, gas m(p), a skin check and a report.
+- **Build-up Surveillance:** interprets the shut-ins in permanent-gauge data automatically and
+  tracks skin, k, p* and productivity index over time, with alerts, a rule-based review and sign-off.
 - **Mini WellOS:** a live SCADA view driven by Modbus TCP/RTU or by the simulator, with alarms,
   trends and an in-browser SQLite historian.
 - **Imperial ⇄ metric** on every page, and a standard-conditions selector for gas volumes.
@@ -106,6 +109,7 @@ host route table (`const pages = {…}` in `well-testing-app.html`).
 | Gas Deliverability & AOF *(plug-in)* | Back-pressure (C, n) and LIT analysis of flow-after-flow, isochronal, modified isochronal and single-point tests |
 | Oil Well IPR *(plug-in)* | Straight-line PI, Vogel / composite with Standing flow efficiency, Fetkovich, future IPR |
 | Gas Lift Design *(plug-in)* | Injection-gas gradient, point of injection, gas requirement, unloading-valve spacing and valve schedule (API RP 11V6) |
+| Build-up Surveillance *(plug-in)* | Shut-ins found in permanent-gauge data, each full build-up interpreted automatically, skin / k / p* / PI trends with alerts, review and sign-off (see [Build-up Surveillance](#build-up-surveillance)) |
 
 ### Separation & Vessels
 
@@ -186,9 +190,9 @@ rate-transient workshop that works in field units.
 - **Diagnostics:** Bourdet log-log derivative (sign-aware Δp for drawdowns and build-ups),
   MDH / Horner / superposition semilog, square-root and quarter-root time, spherical and
   sandface convolution, and 24 click-on-plot line tools.
-- **45 models** (41 transient + 4 decline): homogeneous; infinite- and finite-conductivity
+- **46 models** (42 transient + 4 decline): homogeneous; infinite- and finite-conductivity
   fractures; inclined, horizontal and partially penetrating wells; double porosity; fault,
-  channel, rectangle and intersecting-fault boundaries; radial and linear composite; multi-layer
+  channel, rectangle, closed-circle and intersecting-fault boundaries; radial and linear composite; multi-layer
   with and without cross-flow; multi-lateral; interference and pulse tests; user-defined curves;
   Arps, Duong, SEPD and Fetkovich decline. Each has a schematic and a plain-language description.
 - **Regression:** Levenberg–Marquardt with parameter freezing, 95 % confidence intervals, R², RMSE,
@@ -198,6 +202,9 @@ rate-transient workshop that works in field units.
   English.
 - **Straight lines and skin:** m, k, p1hr, p*, skin, Δp skin, flow efficiency, damage ratio,
   productivity index, skin decomposition and rate-dependent skin.
+- **Skin check** (step ④): the automatic IARF window, line-vs-match agreement, skin uncertainty
+  with its composition, an analytic sensitivity table, Δp skin, flow efficiency, PI ratio, mechanical
+  skin and the expected IARF reach, with a confidence label calibrated on synthetic build-ups.
 - **Gas:** m(p) end to end, normalised pseudo-time, skin-vs-rate (S′ = S + D·q), gas p1hr / p* /
   Δp skin in psi, and AOF/IPR from the test's flow periods.
 - **Advanced:** deconvolution with total-variation regularisation and L-curve selection; 17 PVT
@@ -215,6 +222,40 @@ rate-transient workshop that works in field units.
 Known limitations are listed in [CLAUDE.md](CLAUDE.md#known-limitations-verified-not-yet-fixed)
 (for example, decline type-curve matching for k, S and re is not implemented, and horizontal-well
 fits are slow).
+
+---
+
+## Build-up Surveillance
+
+Build-up Surveillance (Production & Reservoir → Build-up Surveillance, new in v3.3) reads months of
+permanent downhole-gauge data, finds the shut-ins and interprets each full build-up with the PRiSM
+engine, then follows the well over time.
+
+- **Data:** gauge files (CSV and similar text formats, large files read in slices), the historian
+  or a PRiSM dataset; daily allocated volumes or a time-stamped rate table (DST style); gauge and
+  production-day time zones; drift and tide index with M2 / K1 removal.
+- **Rates over flowing hours:** each day's allocated volume is spread over the hours the well
+  actually flowed, with allocation consistency checks. Partial rate cuts are classified, put into the
+  rate history and listed, but not interpreted.
+- **Per build-up:** wellbore storage, the automatic IARF window (the earliest plateau), the semilog
+  line and a model match (homogeneous, sealing fault, radial composite or closed circle), k, S with
+  its uncertainty, p*, r_inv and the recommended shut-in length, and confidence labels whose measured
+  reliability on synthetic build-ups is shown next to them.
+- **Trend:** skin, k, p* and PI against time, delta and absolute skin alerts (on mechanical skin when
+  completion data exist), onset date, a forecast crossing date with its range, observed vs predicted
+  PI and a model-free skin-change cross-check. Gas wells use normalised pseudo-pressure and separate
+  the rate-dependent skin only from tests in a stable-skin period; water-injector fall-offs are
+  supported.
+- **Review and report:** an automated rule-based review whose evidence check ties every quoted number
+  to the analysis, questions answered from the analysis, overrides with reasons, an audit trail, DRAFT
+  until sign-off with a signature hash, a de-identified "copy for your AI assistant" summary, Open in
+  PRiSM for any test, and a Build-up surveillance section in the Quick Report.
+- **Responsive:** imports and analyses run in short slices with progress and cancel, also on phones.
+
+The method, the synthetic benchmark (1,683 labelled build-ups) and its measured results are in
+[docs/BUILDUP-SURVEILLANCE-PLAN.md](docs/BUILDUP-SURVEILLANCE-PLAN.md) (§5.7). The labels are most
+reliable on the multi-test sequences; on single build-ups a "medium" headline label was right in
+72.6 % of the benchmark cases, and the report's calibration section shows that row next to the pooled rate.
 
 ---
 
@@ -390,20 +431,23 @@ jsPDF, html2canvas, SheetJS Community Edition, SQLite WASM, sql.js).
 ### Repository layout
 
 ```
-well-testing-app.html     Single source of truth for the web app (~76k lines)
+well-testing-app.html     Single source of truth for the web app (~127k lines)
 sw.js                     Offline service worker (web only)
 prism-build/              Module sources, build scripts and tests
   01-21                   PRiSM core: engine, models, plots, regression, auto-match, PVT, deconvolution …
   22-30, 50               Units layer, Test System Safety pages, help, project save, multi-well, Quick Report, a11y
   31-32, 38               Well Test Simulator and 3D view
   33-37, 39, 51-52        PRiSM workflow, semilog/skin, RTA/DCA, report, field tools, workspace, gas
-  4N-calc-*.js            Plug-in calculators (auto-discovered)
+  53-55                   PRiSM automatic interpretation, skin maths and Skin check, calibration table (55 is generated)
+  4N-calc-*.js            Plug-in calculators (auto-discovered), incl. 49-calc-buildup*.js (Build-up Surveillance)
   6N-*.js                 Live data: Modbus core/station/page, Mini WellOS, bridge pack and setup
   concat-*.js, inject-*.js  Build pipeline;  combined-*.js are generated
   smoke-test.js, accept-test.js, wts3d-test.js, tests/
+  buildup-validate.js     Build-up Surveillance benchmark and calibration (writes file 55)
 tools/modbus-bridge/      Modbus TCP bridge and its installers
 ios-app/                  Capacitor 8 iOS wrapper (www/ is generated from the root HTML)
 docs/ROADMAP.md           Roadmap and open engineering decisions
+docs/*-PLAN.md            Module plans (Chemical Injection, Build-up Surveillance, DFIT for v3.4)
 wiki/                     Older per-module user notes (written before v1.3; partly out of date)
 CLAUDE.md                 Architecture, conventions, build pipeline and shared contracts
 PROJECT-NOTES.md          Running change log
@@ -424,7 +468,7 @@ The module sources in `prism-build/` are concatenated in numbered "rounds" and s
 | Round 5 | 23-27 (Test System Safety) | `concat-round5.js`, `inject-round5.js` |
 | Round 6 | 28, 29 (project save, multi-well), 30, 50 | `concat-round6.js`, `inject-round6.js` |
 | Round 7 | 31, 32, 38 (Well Test Simulator) | `concat-round7.js`, `inject-round7.js` |
-| Round 8 | 33-37, 39, 51, 52 (PRiSM) | `concat-round8.js`, `inject-round8.js` |
+| Round 8 | 33-37, 39, 51-55 (PRiSM) | `concat-round8.js`, `inject-round8.js` |
 | Round 9 | every `4N-calc-*.js` | `concat-round9.js`, `inject-round9.js` |
 | Round 10 | every `6N-*.js` (runs `pack-modbus-bridge.js` first) | `concat-round10.js`, `inject-round10.js` |
 
@@ -445,16 +489,16 @@ mkdir -p prism-build/.tmp
 node -e "const fs=require('fs');const h=fs.readFileSync('well-testing-app.html','utf8');const m=h.match(/<script>\s*\/\* ═+\s*WELL TESTING SUITE([\s\S]+?)<\/script>/);fs.writeFileSync('prism-build/.tmp/wts-main.js','/* ═══ WELL TESTING SUITE'+m[1])"
 node --check prism-build/.tmp/wts-main.js
 
-node prism-build/smoke-test.js                          # 311 checks: namespaces, contracts, no running timers
-node prism-build/accept-test.js --html --integration    # 776 numeric acceptance tests against the built HTML
-node prism-build/wts3d-test.js                          # 97 Well Test Simulator / 3D checks
+node prism-build/smoke-test.js                          # 326 checks: namespaces, contracts, no running timers
+node prism-build/accept-test.js --html --integration    # 1162 numeric acceptance tests against the built HTML
+node prism-build/wts3d-test.js                          # 101 Well Test Simulator / 3D checks
 ```
 
 `accept-test.js` builds from the sources by default (`--sources`); `--html` tests the built file.
 It also takes `--grep`, `--file`, `--wp` and `--verbose`. The tests run headless in Node (22
 recommended) with a small DOM, a recording canvas and virtual timers (`prism-build/tests/_harness.js`).
-On a Linux/macOS (LF) checkout, three `wts3d-test.js` checks that expect Windows CRLF line endings
-or Windows timing fail; that is expected.
+On a Linux/macOS (LF) checkout, the two `wts3d-test.js` checks that expect Windows CRLF line endings
+fail; that is expected.
 
 ### Adding a calculator
 
@@ -482,6 +526,7 @@ and Quick Report capture; no host edits are needed. Test it with
 
 | Version | Date | Highlights |
 |---|---|---|
+| v3.3 | 2026-11-01 | Build-up Surveillance (Production & Reservoir): shut-ins found in permanent-gauge data, each full build-up interpreted automatically, rates over the flowing hours, skin / k / p* / PI trends with delta and absolute alerts, onset and forecast, gas wells and injector fall-offs, rule-based review with an evidence check, audit trail and sign-off, Quick Report section; PRiSM Skin-check card with a calibrated confidence label and the closed-circle model (46 models) |
 | v3.2 | 2026-10-31 | Chemical Injection planner (Test System Safety): hydrate-inhibitor design with real-gas J-T cooling and a 10 °F margin, ppm treating chemicals, pump settings ranked for classified areas, discharge pressure and relief-valve band, calibration, tank and totes; links from Hydrate Management and Chemical & Dosage; Quick Report entries; ⓘ background and standards pop-ups; Multiphase Flowline flare line calculated from the flare tip back to the separator gas control valve (header pressure, valve drop, Mach, ρv²) and the choke from the separator pressure |
 | v3.1.1 | 2026-10-30 | iOS app: iOS 27 launch fix (UIKit scene life cycle), App Store version matches the app, archive builds with no warnings |
 | v3.1 | 2026-10-01 | Module-by-module review of every page and button; metric mode across more calculators and the simulator; simulator rig-up switches and pump-free surge→gauge transfer (sim ~40 % faster); PRiSM undersaturated-oil PVT and crop persistence; Modbus bad-value and timeout handling; ESD Hi-Pilot relief advice per ASME VIII |
