@@ -2013,7 +2013,9 @@ try { if (G.PRiSM_state || _storage()) G.PRiSM_restoreState(); } catch (e) { /* 
     // Returns { steps:[{T, q}], n } in PRODUCTION sign convention where the
     // last step is the analysed period (T = its start, absolute hours).
 
-    function _steps(adata, method, testType) {
+    // exact (opts.exactSteps): keep every rate step (the superposition time an exact sum over all steps); otherwise a step
+    // within 1 % of the last kept one is merged into it
+    function _steps(adata, method, testType, exact) {
         var qRef = firstNum(adata.qRef);
         var tp = firstNum(adata.tp);
         var isShut = (testType === 'buildup' || testType === 'falloff');
@@ -2045,7 +2047,7 @@ try { if (G.PRiSM_state || _storage()) G.PRiSM_restoreState(); } catch (e) { /* 
         for (var i = 0; i < raw.length; i++) {
             if (raw[i].T > tStart + 1e-9) break;
             var last = steps[steps.length - 1];
-            if (last && Math.abs(last.q - raw[i].q) <= 0.01 * Math.max(Math.abs(last.q), Math.abs(raw[i].q))) continue;
+            if (last && (exact ? last.q === raw[i].q : Math.abs(last.q - raw[i].q) <= 0.01 * Math.max(Math.abs(last.q), Math.abs(raw[i].q)))) continue;
             steps.push({ T: raw[i].T, q: raw[i].q });
         }
         // Leading zero-rate steps carry no information (q_0 = 0 already).
@@ -2351,7 +2353,7 @@ try { if (G.PRiSM_state || _storage()) G.PRiSM_restoreState(); } catch (e) { /* 
         if (isNum(tp) && tp <= 0) tp = null;
         var adTp = { qRef: firstNum(adata.qRef, well.q), tp: tp, periods: adata.periods, rateHistory: adata.rateHistory,
             tStart: adata.tStart, tShut: adata.tShut };
-        var supSteps = _steps(adTp, 'superposition', testType);
+        var supSteps = _steps(adTp, 'superposition', testType, !!opts.exactSteps);
         var nFlow = supSteps ? supSteps.filter(function (s) { return s.q !== 0; }).length : 0;
         var multi = !!(supSteps && (isShut ? nFlow > 1 : supSteps.length > 1));
         var method = opts.method && opts.method !== 'auto' ? opts.method : null;
@@ -14152,6 +14154,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         pdPrime: function (td, params) { return _ccEval(td, params, true); },
         kind: 'pressure', timeInput: 'td', category: 'boundary', refLength: 'rw',
         defaultFrozen: [], evalCostMs: 1.5,
+        distLabel: { reD: 'Drainage radius r_e' },          // C3 distances_ft.reD = reD·rw (04 labels the row with it)
         defaults: { Cd: 100, S: 0, reD: 5000 },
         paramSpec: [
             { key: 'Cd', label: 'Wellbore storage Cd', unit: '-', min: 0, max: 1e10, default: 100, scale: 'log' },
@@ -14428,6 +14431,8 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         }
         return x;
     }
+    // The real shut-in length of a Prep (prep.dtEnd is on the bins' axis: pseudo-time when the gas option asks for it).
+    function _dtReal(p) { return p && _pos(p.dtEndReal) ? p.dtEndReal : p.dtEnd; }
     function _tideFit(dt, y, tc, dtEnd, nHarm) {
         var t0 = Math.max(2, dtEnd / 4), rows = [];
         var periods = nHarm === 2 ? [12.4206, 23.9345] : [12.4206];
@@ -14512,6 +14517,9 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         if (dtA.length < 5) return _failP('TOO_FEW_POINTS', 'Fewer than 5 valid build-up samples.', ['dt']);
         for (var c0 = 1; c0 < dtA.length; c0++) if (!(dtA[c0] > dtA[c0 - 1])) return _failP('NO_DATA', 'Build-up times are not ascending.', ['dt']);
         var dtEnd = dtA[dtA.length - 1];
+        // real elapsed time (dtA and dtEnd move to pseudo-time below when it is asked for; the tide, the drift, r_inv and the
+        // reported shut-in length stay on real time, the bins, reach, Δt_e,end and the history compaction on the bins' axis)
+        var dtReal = dtA.slice(), dtEndReal = dtEnd;
 
         // Gas: normalised pseudo-pressure (and optional pseudo-time for the build-up period)
         var gt = null, fluid = w.fluid || 'oil';
@@ -14541,7 +14549,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
                 ta[tI] = acc; prevT = dtA[tI]; prevF = fI;
             }
             var okTa = ta.every(function (v, ii) { return v > 0 && (ii === 0 || v > ta[ii - 1]); });
-            if (okTa) { dtA = ta; warnings.push(_warn('PSEUDO_TIME', 'info', 'Pseudo-time replaces the elapsed time of the build-up period; earlier rate steps stay in real time.', ['M1'])); }
+            if (okTa) { dtA = ta; dtEnd = dtA[dtA.length - 1]; warnings.push(_warn('PSEUDO_TIME', 'info', 'Pseudo-time replaces the elapsed time of the build-up period; earlier rate steps stay in real time.', ['M1'])); }
         }
 
         // Tide (Q6): index and removal before the derivative
@@ -14561,19 +14569,19 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             return { dp: dp, X: X, d: derivative(X, dp, Lcyc) };
         }
         var D20 = derivOf(BB.b20);
-        if (tideMode !== 'off' && dtEnd >= DEFAULTS.tide.m2Min_h) {
+        if (tideMode !== 'off' && dtEndReal >= DEFAULTS.tide.m2Min_h) {
             var lateD = [];
             for (var lq = 0; lq < D20.X.length; lq++) if (D20.d.full[lq] && D20.d.deriv[lq] > 0 && D20.X[lq] >= D20.X[D20.X.length - 1] - 0.5 * LN10) lateD.push(D20.d.deriv[lq]);
             var mpProv = _median(lateD);
-            var nH = dtEnd >= DEFAULTS.tide.k1Min_h ? 2 : 1;
-            var tf = _pos(mpProv) ? _tideFit(dtA, yA, tc, dtEnd, nH) : null;
+            var nH = dtEndReal >= DEFAULTS.tide.k1Min_h ? 2 : 1;
+            var tf = _pos(mpProv) ? _tideFit(dtReal, yA, tc, dtEndReal, nH) : null;   // tides are a real-time signal
             if (tf) {
                 var sAw = 0;
                 tf.harm.forEach(function (hh) { sAw += hh.A * hh.w; });
-                rTide = sAw * dtEnd / mpProv;
+                rTide = sAw * dtEndReal / mpProv;
                 if (rTide > DEFAULTS.tide.index) {
                     yA = yA.map(function (v, ii) {
-                        var ta2 = tc + dtA[ii], corr = 0;
+                        var ta2 = tc + dtReal[ii], corr = 0;
                         tf.harm.forEach(function (hh) { corr += hh.a * Math.cos(hh.w * ta2) + hh.b * Math.sin(hh.w * ta2); });
                         return v - corr;
                     });
@@ -14663,7 +14671,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             for (var j = 0; j <= lf; j++) if (dv.full[j] && dv.deriv[j] > 0 && B20.X[j] >= B20.X[lf] - LN10) { lv.push(dv.deriv[j]); ls.push(sigma_d[j]); }
             var mp = _median(lv), sd = _median(ls);
             if (!_pos(mp)) return { snrD: null, rDrift: null };
-            return { snrD: Math.min(1e6, _pos(sd) ? mp / sd : 1e6), rDrift: _fin(((_num(spec.driftPsiPerDay) ? spec.driftPsiPerDay : 0) / 24) * dtEnd / mp) };
+            return { snrD: Math.min(1e6, _pos(sd) ? mp / sd : 1e6), rDrift: _fin(((_num(spec.driftPsiPerDay) ? spec.driftPsiPerDay : 0) / 24) * dtEndReal / mp) };
         })();
         var prep = {
             ok: true, id: _specId(spec), sign: sign, spec: spec,
@@ -14671,7 +14679,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             deriv: dv, fitSet: { dt: BF.dt, dp: BF.dp, n: BF.n, p: BF.p, sigma_b: sigma_bF, X: BF.X, idx: BF.dt.map(function (v, k) { return k; }) },
             adata: adata, adataLine: adataLine, well: wellC1, gasTable: gt,
             histFull: { steps: stepsU }, histFit: comp, time: tm, timeFit: tmFit, tpEff: tm.tpEff, singleRate: singleRate,
-            dtEnd: dtEnd, dteEnd: Math.exp(tm.lnDte(dtEnd)), Lcyc: Lcyc, L_ln: dv.L_ln, qUnit: qUnit,
+            dtEnd: dtEnd, dtEndReal: dtEndReal, dteEnd: Math.exp(tm.lnDte(dtEnd)), Lcyc: Lcyc, L_ln: dv.L_ln, qUnit: qUnit,
             snrD: q0.snrD, rDrift: q0.rDrift, rTide: _fin(rTide), tideRemoved: tideRemoved, tideFit: tideFit,
             sigma: sig, sigmaLF: sigLF, warnings: warnings, raw: { dt: dtA, y: yA, p: pA }
         };
@@ -15036,7 +15044,8 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         var wl = { fluid: w.fluid === 'gas' ? 'oil' : w.fluid, B: w.B, mu: w.mu, h: w.h, phi: w.phi, ct: w.ct, rw: w.rw, q: prep.spec.Dq, tp: adata.tp };
         var r;
         try {
-            r = fn(adata, wl, { method: prep.singleRate ? 'horner' : 'superposition', window: { t0: dt0 * (1 - 1e-9), t1: dt1 * (1 + 1e-9) }, L: prep.L_ln });
+            // exactSteps: the line's superposition time is the exact sum over every rate step, as the engine's own Δt_e (§4.6)
+            r = fn(adata, wl, { method: prep.singleRate ? 'horner' : 'superposition', window: { t0: dt0 * (1 - 1e-9), t1: dt1 * (1 + 1e-9) }, L: prep.L_ln, exactSteps: true });
         } catch (e) { return null; }
         if (!r || !r.ok || !_pos(r.k) || !_num(r.S)) return null;
         return r;
@@ -16653,7 +16662,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
                         // p_ext is the infinite-acting extrapolation (pStar family) either way; pExtSource says whether it
                         // is the semilog line's p* or, with no line, the chosen model's extrapolated pressure.
                         pExtSource: _num(pStar) ? 'line' : (_num(piM) ? 'model' : null), piModel: _fin(piM),
-                        rinv_ft: rinv(k, p.dtEnd, w), rinvE_ft: rinv(k, p.dteEnd, w), dpSkin_psi: p.gasTable ? (gasOut.dpSkin_psi) : dpSkin,
+                        rinv_ft: rinv(k, _dtReal(p), w), rinvE_ft: rinv(k, p.dteEnd, w), dpSkin_psi: p.gasTable ? (gasOut.dpSkin_psi) : dpSkin,
                         distances: dist, minFaultDist_ft: _fin(minFault), gas: gasOut, ev: ['A2'] };
             // History sensitivity (item 14)
             S.history = { estimated: !!(spec.history && spec.history.estimated), dDerivPct: null, sensitive: false, ev: ['R5'] };
@@ -16664,8 +16673,16 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             var thr = _thr(cal);
             var sens = storedSensitivity(fin, spec.well);
             var m = fin.m;
-            var sTc = 1.1513 * Math.abs(p.spec.dpdt_flow || 0) * (p.spec.dtc_h || 0) / m;
-            var sPwf = 1.1513 * (p.spec.pwf0SE || 0) / m;
+            // dpdt_flow and pwf0SE are in psi; gas m is in normalised pseudo-pressure: convert with dp_n/dp at pwf0 =
+            // (μz/p)_ref·p/(μz) (about 0.8 at half the reference pressure; 1 for liquids)
+            var dpn = 1, gtU = p.gasTable;
+            if (gtU && gtU.ref && _pos(p.spec.pwf0) && typeof gtU.muOf === 'function' && typeof gtU.zOf === 'function') {
+                var muz0 = gtU.muOf(p.spec.pwf0) * gtU.zOf(p.spec.pwf0);
+                if (_pos(muz0)) dpn = (gtU.ref.mu * gtU.ref.z / gtU.ref.p) * p.spec.pwf0 / muz0;
+                if (!_pos(dpn)) dpn = 1;
+            }
+            var sTc = 1.1513 * dpn * Math.abs(p.spec.dpdt_flow || 0) * (p.spec.dtc_h || 0) / m;
+            var sPwf = 1.1513 * dpn * (p.spec.pwf0SE || 0) / m;
             var parts = { floor: thr.sErrFloor, seS: cf.se.S, sTc: sTc, sPwf: sPwf, sC: S.cheld ? S.cheld.S_C : 0, sSens: sens.sSens };
             if (S.line && fin.source !== 'model') {
                 var bias = S.agreementChosen.mode === 'bias';
@@ -16681,7 +16698,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             var mp = ir.found ? ir.level_psi : fin.mPrime;
             var snr = (_pos(sdW) ? mp / sdW : 1e6);
             snr = Math.min(1e6, snr);
-            var rDrift = ((spec.driftPsiPerDay || 0) / 24) * p.dtEnd / fin.mPrime;
+            var rDrift = ((spec.driftPsiPerDay || 0) / 24) * _dtReal(p) / fin.mPrime;
             S.quality = { sigma_psi: p.sigma, sigmaFlow_psi: _num(spec.sigmaFlow_psi) ? spec.sigmaFlow_psi : 0, sigmaD_psi: _num(sdW) ? sdW : 0,
                           snrD: snr, rDrift: rDrift, rTide: p.rTide, tideRemoved: p.tideRemoved, tideFit: p.tideFit, ev: ['I5', 'Q5', 'Q6'] };
             p.snrD = snr; p.rDrift = _fin(rDrift);   // Prep carries the window values from here on (§3.1)
@@ -16693,7 +16710,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             var rows = S.bic.rows, cRow = rows.filter(function (r) { return r.key === S.chosenKey; })[0];
             var others = rows.filter(function (r) { return r.key !== S.chosenKey && _num(r.bic); });
             var dNext = (others.length && cRow && _num(cRow.bic)) ? _rBic(Math.min.apply(null, others.map(function (r) { return r.bic; })) - cRow.bic) : null;
-            var env = _envelope(cal, { k: fin.k, S: fin.S, C: fin.C, well: w, dteEnd: p.dteEnd, snrD: snr, dtEnd: p.dtEnd });
+            var env = _envelope(cal, { k: fin.k, S: fin.S, C: fin.C, well: w, dteEnd: p.dteEnd, snrD: snr, dtEnd: _dtReal(p) });
             S.evidence = {
                 grade: ir.grade, noiseWidened: !!ir.noiseWidened, span: _fin(ir.cycles), pointSkinSpread: _fin(ir.pointSkin.spread),
                 agree: !!S.agreementChosen.agree, agreeMode: S.agreementChosen.mode, dkPct: _fin(S.agreementChosen.dkPct), dS: _fin(S.agreementChosen.dS),
@@ -16701,7 +16718,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
                 rateSource: rq.source || 'allocation', r3: _fin(rq.r3), r3Status: rq.r3Status || 'unavailable', r4: _fin(rq.r4), r4Status: rq.r4Status || 'unavailable',
                 dqKnown: rq.dqKnown !== false, fRate: _num(spec.fRate) ? spec.fRate : 1, equalRateAssumed: !!rq.equalRateAssumed,
                 snrD: snr, rDrift: rDrift, rTide: p.rTide, tideRemoved: p.tideRemoved, flags: codes, distractorAtOrBeforeIarf: distr, humpAfterIarf: humpAfter, humpAfterFitStart: !!S.humpAfterFitStart,
-                dtEnd_h: p.dtEnd, dteEnd_h: p.dteEnd, t10_h: S.reach.t10_h, t5_h: S.reach.t5_h, historySensitive: !!S.history.sensitive,
+                dtEnd_h: _dtReal(p), dteEnd_h: p.dteEnd, t10_h: S.reach.t10_h, t5_h: S.reach.t5_h, historySensitive: !!S.history.sensitive,
                 outsideEnvelope: env, kHeld: false, kHeldConverged: null, kHeldCorrCS: null, kHeldRmsRatio: null, partialSuspect: null,
                 windowLevelInconsistent: null, chosenKey: S.chosenKey, chosenFullySeen: S.chosenFit.fullySeen.status, triggers: S.trig.fired.slice(),
                 dBicChosen: S.chosenKey === 'homogeneous' ? 0 : (cRow ? cRow.dBicHom : null), dBicNext: dNext, boundaryDepends: null,
@@ -17305,7 +17322,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
     // =========================================================================
     // SECTION 4 — RATE-DEPENDENT SKIN (M§A19)
     // =========================================================================
-    var RATE_DEFAULTS = Object.freeze({ qRatioMin: 1.5, maxDays: 60, joint: true, stable: null, corrMax: 0.8, dOverSeMin: 2, jointMinN: 4, serrMin: 0.05, serrDefault: 0.2, expectedFactor: 3 });
+    var RATE_DEFAULTS = Object.freeze({ qRatioMin: 1.5, maxDays: 60, joint: true, stable: null, corrMax: 0.8, dOverSeMin: 2, jointMinN: 5, serrMin: 0.05, serrDefault: 0.2, expectedFactor: 3, window: 'latest' });
 
     // Weighted least squares y = X·beta with weights w; returns {beta, cov, chi2, dof}.
     function wls(X, y, w) {
@@ -17371,11 +17388,12 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
                  method: 'D = 2.222e-15·γg·k·h·β/(μg·rw·hp²), β = 2.6e10·k^-1.2; range ×1/3 to ×3' };
     }
 
-    // rateSkin(rows [{id, t_days, q, S, Serr}], opts {qRatioMin, maxDays, joint, stable, expected})
+    // rateSkin(rows [{id, t_days, q, S, Serr}], opts {qRatioMin, maxDays, joint, stable, expected, window: 'latest'|'earliest'})
     //   → {resolved, S, D, seD, n, qRatio, joint:null|{S0, r_per30d, D, seD, seR}, expectedD:number|null,
     //      expectedDRange:null|{D, lo, hi, beta, unit, method}, consistent, corrQT, ids, reason, ev:['T15']}
     // Window: the tests inside the span of at most maxDays (first to last test) that holds
-    // the most tests, the latest such window on a tie. A chain of weekly tests over a year
+    // the most tests, the latest such window on a tie (opts.window 'earliest': the earliest, e.g. the baseline of a
+    // surveillance segment, before any later skin change). A chain of weekly tests over a year
     // is therefore never one group (a skin trend would be confounded with D).
     // D needs q_max/q_min ≥ qRatioMin and D/se ≥ 2. Collinearity of rate and time
     // (|corr(q, t)| ≥ 0.8; two tests count as collinear) refuses:
@@ -17384,8 +17402,9 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
     //     it has checked that S′ shows no significant time trend in these rows (for
     //     example Mann–Kendall over a stable-skin segment). Without that statement a
     //     skin trend cannot be told from D when rate and time move together.
-    // A joint fit S′ = S0 + r·t/30 + D·q runs with ≥ 4 tests and low collinearity; when its
-    // time term is significant (|r|/se ≥ 2) D comes from it.
+    // A joint fit S′ = S0 + r·t/30 + D·q runs with ≥ 5 tests (≥ 2 degrees of freedom) and low collinearity; when its
+    // time term is significant (|r|/se ≥ 2) D comes from it — unless the caller stated a stable skin (opts.stable):
+    // a significant time term then shows the window is not stable, and D is not resolved.
     // expectedD is the central value of the correlation (a number, as plan §3.0 requires
     // for every output number); expectedDRange carries its ×1/3 … ×3 range.
     function rateSkin(rows, opts) {
@@ -17406,11 +17425,11 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             list.push({ id: r.id == null ? '' : String(r.id), q: Math.abs(q), S: S, t: t, se: Math.max(se, o.serrMin) });
         });
         list.sort(function (a, b) { return a.t - b.t; });
-        // The window of span ≤ maxDays with the most tests (the latest on a tie).
-        var g = [], i0 = 0;
+        // The window of span ≤ maxDays with the most tests (the latest on a tie, or the earliest with window 'earliest').
+        var g = [], i0 = 0, early = o.window === 'earliest';
         for (var j = 0; j < list.length; j++) {
             while (list[j].t - list[i0].t > o.maxDays + 1e-9) i0++;
-            if (j - i0 + 1 >= g.length) g = list.slice(i0, j + 1);
+            if (early ? j - i0 + 1 > g.length : j - i0 + 1 >= g.length) g = list.slice(i0, j + 1);
         }
         out.n = g.length;
         out.ids = g.map(function (r) { return r.id; });
@@ -17442,6 +17461,11 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
                 var ji = jf.dof > 0 ? Math.max(1, jf.chi2 / jf.dof) : 1;
                 var seR = Math.sqrt(jf.cov[1][1] * ji), seDj = Math.sqrt(jf.cov[2][2] * ji);
                 out.joint = { S0: fin(jf.beta[0]), r_per30d: fin(jf.beta[1]), D: fin(jf.beta[2]), seD: fin(seDj), seR: fin(seR) };
+                if (isNum(seR) && seR > 0 && Math.abs(jf.beta[1]) / seR >= o.dOverSeMin && out.stable) {
+                    out.S = out.D = out.seD = null;
+                    out.reason = 'A skin trend of ' + fmt(jf.beta[1], 2) + ' per 30 days (|r|/se ' + fmt(Math.abs(jf.beta[1]) / seR, 1) + ') in a window stated stable: the skin is not stable there, so D is not resolved; S′ is the apparent skin including D·q.';
+                    return out;
+                }
                 if (isNum(seR) && seR > 0 && Math.abs(jf.beta[1]) / seR >= o.dOverSeMin) {
                     var tMean = ts.reduce(function (a, b) { return a + b; }, 0) / ts.length;
                     S = jf.beta[0] + jf.beta[1] * tMean / 30;
@@ -17985,7 +18009,11 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         // C-held result from a user run on the same inputs.
         var ch = opts.cheld && opts.cheld.sig === m.sig ? opts.cheld.result : null;
         m.cheld = ch || null;
-        m.cheldAvailable = typeof AI.cHeldJob === 'function' && typeof AI.drive === 'function' && !!hom;
+        // C-held refits also need a wellbore storage C to scale (the match's, else the final's): the button is disabled
+        // with that reason shown instead of failing on click
+        var cSeed = matchFromFit(fit, 'homogeneous');
+        m.cheldHasC = !!((cSeed && cSeed.phys && pos(cSeed.phys.C)) || (m.final && pos(m.final.C)));
+        m.cheldAvailable = typeof AI.cHeldJob === 'function' && typeof AI.drive === 'function' && !!hom && m.cheldHasC;
         // S_err (D10, plan §4.6 item 15).
         var cal = G.PRiSM_autoInterpCal || null;
         m.calibrated = !!(cal && cal.calibrated);
@@ -18154,13 +18182,16 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         if (!pc) return 'not checked';
         return (pc.pass ? 'pass' : 'fail') + ': kh ' + fmt(pc.khDiffPct, 1) + ' %, ΔS ' + fmt(pc.dS, 2);
     }
-    function reachText(r) {
+    // shut: the test is a build-up / fall-off (else the real-time reach is of 'this test', not of a shut-in)
+    function reachText(r, shut) {
         if (!r) return '—';
         var s = 'fair ' + sig(r.fair_h) + ' h, good ' + sig(r.good_h) + ' h (equivalent time)';
-        if (r.reachable && isNum(r.fairShut_h)) s += '; shut-in ' + sig(r.fairShut_h) + ' h / ' + (isNum(r.goodShut_h) ? sig(r.goodShut_h) + ' h' : '—');
+        if (r.reachable && isNum(r.fairShut_h)) s += '; ' + (shut === false ? 'this test' : 'shut-in') + ' ' + sig(r.fairShut_h) + ' h / ' + (isNum(r.goodShut_h) ? sig(r.goodShut_h) + ' h' : '—');
         return s;
     }
     var DRIVER = { floor: 'floor', se: 'fit standard error', lineMatch: 'line vs match', window: 'window shift', tc: 'closing time', pwf: 'pwf at shut-in', kHeld: 'held k' };
+    function shutOf(m) { return !m || !m.testType || m.testType === 'buildup' || m.testType === 'falloff'; }
+    function driverText(m, d) { return d === 'pwf' && !shutOf(m) ? 'pwf at the test start' : (DRIVER[d] || String(d || '—')); }
     var INPUT_NAME = { h: 'h', phi: 'φ', ct: 'ct', rw: 'rw', B: 'B', mu: 'μ', q: 'q' };
 
     function compInputsHTML(c, verified) {
@@ -18222,7 +18253,8 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         h += '<div class="prism-skc-row"><button type="button" class="prism-skc-btn" id="prism_skc_cheld"' + dis + '>Run C-held refits</button>' +
              '<button type="button" class="prism-skc-btn" id="prism_skc_cheld_cancel"' + (_ui.running ? '' : ' disabled') + '>Cancel</button>' +
              '<span class="prism-skc-note" id="prism_skc_cheld_status" role="status" aria-live="polite">' + esc(_ui.progress) + '</span></div>';
-        if (!m.cheldAvailable) h += '<div class="prism-skc-note">C-held refits need the automatic engine and k, S and C from a match or the line.</div>';
+        if (!m.cheldAvailable) h += '<div class="prism-skc-note" id="prism_skc_cheld_why">' + (m.cheldHasC === false ? 'C-held refits need wellbore storage C from the match or the unit slope.'
+                                                                                                  : 'C-held refits need the automatic engine and k, S and C from a match or the line.') + '</div>';
         return h;
     }
 
@@ -18273,8 +18305,8 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         var se = m.sErr;
         if (se) {
             var comp = [['Floor', fmt(se.floor, 2)], ['Fit standard error', fmt(se.seS, 2)], ['Line vs match', fmt(se.dLineMatch, 2)],
-                        ['Window shift', fmt(se.sWin, 2)], ['Closing time', fmt(se.sTc, 2)], ['pwf at shut-in', fmt(se.sPwf, 2)]];
-            h += sec('prism_skc_serr', 'Skin uncertainty S_err', kvHTML([['S_err', '± ' + fmt(se.value, 2)], ['Largest term', DRIVER[se.driver] || String(se.driver || '—')],
+                        ['Window shift', fmt(se.sWin, 2)], ['Closing time', fmt(se.sTc, 2)], [shutOf(m) ? 'pwf at shut-in' : 'pwf at the test start', fmt(se.sPwf, 2)]];
+            h += sec('prism_skc_serr', 'Skin uncertainty S_err', kvHTML([['S_err', '± ' + fmt(se.value, 2)], ['Largest term', driverText(m, se.driver)],
                 ['With the C-held range', '± ' + fmt(se.ext && se.ext.value, 2)], ['Inputs (typical ranges)', '± ' + fmt(se.sSens, 2)], ['Total with inputs', '± ' + fmt(se.sAbs, 2)]]) +
                 tableHTML(['Term', 'ΔS'], comp));
         }
@@ -18291,8 +18323,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             h += sec('prism_skc_conf', 'Confidence', '<div class="prism-skc-verdict">' + esc(verdictText(c)) + '</div>' +
                 (Array.isArray(c.reasons) && c.reasons.length ? tableHTML(['Rule', 'Kind', 'Reason', 'Evidence'],
                     c.reasons.map(function (x) { return [x.rule, x.kind, x.text, (x.ev || []).join(', ')]; })) : '<div class="prism-skc-note">Every rule for this label is met.</div>') +
-                '<div class="prism-skc-note">Rate checks: ' + esc(m.rate.status) + ' (' + esc(m.rate.text) + ')</div>' +
-                '<div class="prism-skc-note">' + esc(CHELD_NOTE) + '</div>');
+                '<div class="prism-skc-note">Rate checks: ' + esc(m.rate.status) + ' (' + esc(m.rate.text) + ')</div>');
         }
         // Products.
         var pr = m.products;
@@ -18307,7 +18338,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         // Mechanical skin.
         h += sec('prism_skc_mech', 'Mechanical skin', compInputsHTML(m.completion, KT.verified) + '<div id="prism_skc_mech_res">' + mechHTML(m) + '</div>');
         // Reach.
-        h += sec('prism_skc_reach', 'Expected IARF reach (from the fitted model)', kvHTML([['Reach', reachText(m.reach)], ['This test', sig(m.evidence ? m.evidence.dtEnd_h : null) + ' h']]) +
+        h += sec('prism_skc_reach', 'Expected IARF reach (from the fitted model)', kvHTML([['Reach', reachText(m.reach, shutOf(m))], ['This test', sig(m.evidence ? m.evidence.dtEnd_h : null) + ' h']]) +
             '<div class="prism-skc-note">Hours of equivalent time for a fair (0.5 cycle) and a good (1 cycle) IARF, allowing for the derivative window.</div>');
         // C-held.
         h += sec('prism_skc_cheld_sec', 'C-held refits (storage sensitivity)', cheldHTML(m));
@@ -18365,7 +18396,19 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         if (_ui.running && m.sig !== _ui.sig) _ui.cancel = true;
         _ui.model = m;
         list.forEach(function (h) { paint(h, m); });
+        restoreFocus();
         return m;
+    }
+    // A re-paint (e.g. 'Use this window' fires prism:fit-updated) replaces the focused button: keyboard focus goes back
+    // to the re-created control of the card the user acted on (or the card itself when the control is now disabled).
+    function restoreFocus() {
+        var f = _ui.refocus;
+        if (!f || !f.host || !live(f.host)) return;
+        var r = rootOf(f.host), el = q(r, f.id);
+        try {
+            if (el && !el.disabled && typeof el.focus === 'function') el.focus();
+            else if (r && typeof r.focus === 'function') { if (r.setAttribute) r.setAttribute('tabindex', '-1'); r.focus(); }
+        } catch (e) { /* focus is cosmetic */ }
     }
     function compFromInputs(root) {
         function v(id) { var e = root.querySelector('#' + id); return e ? e.value : null; }
@@ -18509,7 +18552,12 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             var t = ev.target;
             while (t && t !== root && !(t.id && /^prism_skc_/.test(t.id) && t.tagName === 'BUTTON')) t = t.parentNode;
             if (!t || t === root || t.disabled) return;
-            if (t.id === 'prism_skc_usewin') useWindow();
+            if (t.id === 'prism_skc_usewin') {
+                _ui.refocus = { host: root.parentNode, id: 'prism_skc_usewin' };
+                useWindow();
+                restoreFocus();
+                _ui.refocus = null;
+            }
             else if (t.id === 'prism_skc_cheld') startCheld(root);
             else if (t.id === 'prism_skc_cheld_cancel') { _ui.cancel = true; setStatus('Cancelling…', root); }
         });
@@ -18579,7 +18627,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         }
         kv.push(['Line vs match', agreeText(m.agreement)]);
         kv.push(['Line vs derivative plateau (sanity check)', plateauText(m.plateau)]);
-        if (m.sErr) kv.push(['Skin uncertainty S_err', '± ' + fmt(m.sErr.value, 2) + ' (largest term: ' + (DRIVER[m.sErr.driver] || String(m.sErr.driver || '—')) + ')']);
+        if (m.sErr) kv.push(['Skin uncertainty S_err', '± ' + fmt(m.sErr.value, 2) + ' (largest term: ' + driverText(m, m.sErr.driver) + ')']);
         if (m.final) kv.push(['Final k and S', 'k ' + sig(m.final.k) + ' md, S ' + fmt(m.final.S, 2) + ' (from the ' + m.final.source + ')']);
         kv.push(['Confidence', verdictText(m.confidence).replace(/^Confidence: /, '')]);
         if (m.products) {
@@ -18591,7 +18639,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             kv.push(['Mechanical skin', m.mech.available ? 'S_mech ' + fmt(m.mech.S_mech, 2) + ' ± ' + fmt(m.mech.S_mech_err, 2) + ' (pressure-drop basis), S_d local ' + fmt(m.mech.S_d_local, 2) +
                      ', kv/kh ' + fmt(m.mech.kvkh[0], 2) + ' to ' + fmt(m.mech.kvkh[1], 2) : String(m.mech.reason || 'not split')]);
         }
-        kv.push(['Expected IARF reach', reachText(m.reach)]);
+        kv.push(['Expected IARF reach', reachText(m.reach, shutOf(m))]);
         if (m.cheld && m.cheld.range) kv.push(['C-held S range', fmt(m.cheld.range.S[0], 2) + ' to ' + fmt(m.cheld.range.S[1], 2) + ' (S_C ' + fmt(m.cheld.S_C, 2) + ')']);
         var c = m.confidence;
         var rows = (c && Array.isArray(c.reasons)) ? c.reasons.map(function (x) { return [x.rule, x.kind, x.text, (x.ev || []).join(', ')]; }) : [];

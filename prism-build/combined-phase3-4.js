@@ -2605,8 +2605,9 @@ function _fitResultsHTML(fit) {
             '<td class="prism-num">' + _esc(_ciText(key, ci[key], v)) + '</td><td>' + flag + '</td></tr>';
     };
     PHYS_ORDER.forEach(function (k) { addRow(k, phys[k], PHYS_LABELS[k] || (k === 'rinv' ? 'Radius of investigation' : k), PHYS_UNITS[k] || '-'); });
-    var dist = phys.distances_ft || {};
-    for (var dk in dist) if (Object.prototype.hasOwnProperty.call(dist, dk)) addRow('dist_' + dk, dist[dk], 'Distance ' + dk, 'ft');
+    // a model may name its distances (distLabel, e.g. the closed circle's drainage radius r_e = reD·rw); else 'Distance <key>'
+    var dist = phys.distances_ft || {}, mEntry = fit.modelKey ? _MODELS()[fit.modelKey] : null, dLab = mEntry && mEntry.distLabel && typeof mEntry.distLabel === 'object' ? mEntry.distLabel : {};
+    for (var dk in dist) if (Object.prototype.hasOwnProperty.call(dist, dk)) addRow('dist_' + dk, dist[dk], typeof dLab[dk] === 'string' && dLab[dk] ? dLab[dk] : 'Distance ' + dk, 'ft');
     var btRaw = fit.bootstrap || null;
     var bt = (btRaw && btRaw.percentiles) ? btRaw.percentiles : (fit.percentiles || fit.pBands || btRaw);
     var btRows = '';
@@ -4967,6 +4968,11 @@ function PRiSM_fitPhysical(modelKey, adata, well, opts) {
             identifiable[refKey] = false;
             warnings.push(refKey + ' and S are strongly correlated (r = ' + best.corr[iS][iL].toFixed(3) + ') — ' + refKey + ' is not identifiable from these data.');
         }
+    }
+    // A drainage radius beyond the radius of investigation was never seen by the data (closed circle, reD·rw)
+    var reFt = physOut.distances_ft && _num(physOut.distances_ft.reD) ? physOut.distances_ft.reD : null;
+    if (reFt !== null && _pos(physOut.rinv) && reFt > physOut.rinv) {
+        warnings.push('r_e (' + _fmtNum(reFt) + ' ft) is beyond the radius of investigation (' + _fmtNum(physOut.rinv) + ' ft): the boundary is not seen, so the data only show r_e ≥ r_inv (the fitted r_e is not determined).');
     }
     if (isFinite(r2) && r2 < 0.9) warnings.push('Poor match (R² = ' + r2.toFixed(3) + ').');
     // A fit stuck at a bound or with a poor match is not a converged result,

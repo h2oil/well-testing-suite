@@ -8468,8 +8468,16 @@ G.WTS_calcRegistry.historian = {
     }
     function _zoneKey(z) { return !z ? 'utc' : z.mode === 'iana' ? z.tz : z.mode === 'fixed' ? 'fixed' + z.offset_h : 'utc'; }
 
+    // Time-zone caches, one map per IANA zone: UTC 15-min bucket → offset, local 15-min bucket → offset. Each map is
+    // dropped once it holds TZ_CACHE_MAX buckets (about 3 years of data), so a long session cannot grow it without bound.
     var _offCache = {};
     var QUARTER = 15 * MIN;                   // every real-world transition falls on a 15-min boundary
+    var TZ_CACHE_MAX = 100000;
+    function _zoneCache(store, tz) {
+        var c = store[tz];
+        if (!c || c._n >= TZ_CACHE_MAX) { c = store[tz] = Object.create(null); c._n = 0; }
+        return c;
+    }
     function _ianaOffsetRaw(tz, ms) {
         var parts = _fmt(tz).formatToParts(new Date(ms)), f = {};
         for (var i = 0; i < parts.length; i++) f[parts[i].type] = parts[i].value;
@@ -8483,13 +8491,13 @@ G.WTS_calcRegistry.historian = {
         if (!zone || zone.mode === 'utc') return 0;
         if (zone.mode === 'fixed') return mRound(num(zone.offset_h, 0) * HOUR);
         if (zone.mode !== 'iana') return 0;
-        var c = _offCache[zone.tz] || (_offCache[zone.tz] = {});
+        var c = _zoneCache(_offCache, zone.tz);
         var key = mFloor(ms / QUARTER), v = c[key];
-        if (v === undefined) { v = _ianaOffsetRaw(zone.tz, key * QUARTER); c[key] = v; }
+        if (v === undefined) { v = _ianaOffsetRaw(zone.tz, key * QUARTER); c[key] = v; c._n++; }
         return v;
     }
     // Naive local wall-clock ms (UTC arithmetic) → UTC ms. In a DST gap the later offset is used; in an
-    // ambiguous hour the first occurrence.
+    // ambiguous hour the first occurrence (localLaterUtc gives the second one).
     function localToUtc(zone, local) {
         if (!zone || zone.mode === 'utc') return local;
         if (zone.mode === 'fixed') return local - mRound(num(zone.offset_h, 0) * HOUR);
@@ -8502,18 +8510,34 @@ G.WTS_calcRegistry.historian = {
         if (uE + offsetAt(zone, uE) === local) u = uE;
         return u;
     }
+    // The second UTC instant of a naive local time that the clocks show twice (the interval repeated when they go back),
+    // else NaN. The first instant is localToUtc(); the second is later by the size of the shift.
+    function localLaterUtc(zone, local) {
+        if (!zone || zone.mode !== 'iana') return NaN;
+        var uE = localToUtc(zone, local), oE = offsetAt(zone, uE), oL = offsetAt(zone, uE + 3 * HOUR);
+        if (!(oL < oE)) return NaN;
+        var uL = local - oL;
+        return (uL > uE && uL + offsetAt(zone, uL) === local) ? uL : NaN;
+    }
     var _l2u = {};
-    // Cached version for parsing many naive times: one conversion per local 15-min bucket unless a transition is near.
-    function localToUtcFast(zone, local) {
-        if (!zone || zone.mode !== 'iana') return localToUtc(zone, local);
-        var c = _l2u[zone.tz] || (_l2u[zone.tz] = {});
+    // Offset of the local 15-min bucket holding a naive time, cached per bucket; NaN for a bucket at or in a transition
+    // (a DST gap or a repeated interval), which callers must convert one time at a time.
+    function _bucketOffset(zone, local) {
+        var c = _zoneCache(_l2u, zone.tz);
         var key = mFloor(local / QUARTER), v = c[key];
         if (v === undefined) {
             var a = key * QUARTER, b = a + QUARTER - 1;
             var oa = a - localToUtc(zone, a), ob = b - localToUtc(zone, b);
-            v = (oa === ob) ? oa : NaN;
-            c[key] = v;
+            v = (oa === ob && !isNum(localLaterUtc(zone, a)) && !isNum(localLaterUtc(zone, b))) ? oa : NaN;
+            c[key] = v; c._n++;
         }
+        return v;
+    }
+    // Cached version for parsing many naive times: one conversion per local 15-min bucket unless a transition is near.
+    // Times in a repeated interval give the first occurrence; parseJob picks the occurrence from the row order.
+    function localToUtcFast(zone, local) {
+        if (!zone || zone.mode !== 'iana') return localToUtc(zone, local);
+        var v = _bucketOffset(zone, local);
         return (v === v) ? local - v : localToUtc(zone, local);
     }
 
@@ -8821,14 +8845,33 @@ G.WTS_calcRegistry.historian = {
         var cap = 4096, T = new Float64Array(cap), Pp = new Float64Array(cap), TT = cT >= 0 ? new Float64Array(cap) : null, Q = cq >= 0 ? new Float64Array(cap) : null;   // grown ×2 on demand
         var n = 0, phase = 'parse', res = null, cancelled = false, rec = null, warnings = [], fin2 = null;
         var useSimple = (sep !== ' ' && !merge);
+        // Naive local times in the interval the clocks repeat when they go back: the first pass through it is the first
+        // occurrence; once the previous row is already at or past a time's first occurrence (the clock went back), the
+        // time is its second occurrence.
+        var prevUtc = NaN, nRepeat = 0, nSecond = 0;
 
-        function parseTime(s) {
+        function naive(local) {
+            if (zone.mode !== 'iana') return localToUtc(zone, local);
+            var v = _bucketOffset(zone, local);
+            if (v === v) return local - v;
+            var uE = localToUtc(zone, local), uL = localLaterUtc(zone, local);
+            if (!isNum(uL)) return uE;
+            nRepeat++;
+            if (uE <= prevUtc && prevUtc < uL) { nSecond++; return uL; }
+            return uE;
+        }
+        function parseTime0(s) {
             if (elapsed) { var v = _num(s, decComma); return isNum(v) ? t0 + v * tMul : NaN; }
-            if (tf === 'serial') { var sv = _num(s, decComma); return isNum(sv) ? localToUtcFast(zone, mRound((sv - 25569) * DAY)) : NaN; }
-            if (tf === 'dmy' || tf === 'mdy') { var dm = _parseDMY(s, dayFirst); return dm === dm ? localToUtcFast(zone, dm) : NaN; }
+            if (tf === 'serial') { var sv = _num(s, decComma); return isNum(sv) ? naive(mRound((sv - 25569) * DAY)) : NaN; }
+            if (tf === 'dmy' || tf === 'mdy') { var dm = _parseDMY(s, dayFirst); return dm === dm ? naive(dm) : NaN; }
             var r = _parseIso(s);
-            if (r.ms !== r.ms) { var dm2 = _parseDMY(s, dayFirst); return dm2 === dm2 ? localToUtcFast(zone, dm2) : NaN; }
-            return r.abs ? r.ms : localToUtcFast(zone, r.ms);
+            if (r.ms !== r.ms) { var dm2 = _parseDMY(s, dayFirst); return dm2 === dm2 ? naive(dm2) : NaN; }
+            return r.abs ? r.ms : naive(r.ms);
+        }
+        function parseTime(s) {
+            var u = parseTime0(s);
+            if (u === u) prevUtc = u;
+            return u;
         }
         function doChunk() {
             var lines = 0;
@@ -8874,6 +8917,9 @@ G.WTS_calcRegistry.historian = {
                         return { done: true, progress: 1, label: 'No data' };
                     }
                     if (skipped) warnings.push(W('ROWS_SKIPPED', 'warn', skipped + ' rows without a valid time or pressure were skipped.', ['Q2']));
+                    if (nRepeat) warnings.push(W('DST_REPEATED_HOUR', 'warn', nRepeat + ' local times fell in the hour repeated when the clocks went back (' + zone.tz + '); ' +
+                        (nSecond ? nSecond + ' were read as its second occurrence from the row order.' : 'all were read as its first occurrence (the times never went back).') +
+                        ' Check any build-up that spans the change.', ['Q2']));
                     fin2 = _finishRecord(T, Pp, TT, n, { q: Q }, warnings);
                     if (fin2.T) { var any = false; for (var k = 0; k < fin2.n; k++) if (isNum(fin2.T[k])) { any = true; break; } if (!any) fin2.T = null; }
                     if (fin2.T) {
@@ -10327,7 +10373,7 @@ G.WTS_calcRegistry.historian = {
         var Bo = num(+opts.B, 1), Bw = num(+opts.Bw, 1), Rs = isNum(+rsIn) && rsIn !== null && rsIn !== '' ? +rsIn : null, Pb = isNum(+opts.Pb) && opts.Pb !== null ? +opts.Pb : null;
         var gas = opts.gas || {};
         // phase basis (R7), once per analysis
-        var wcMax = null, gorMax = null, basis = 'oil', phase = 'oil';
+        var wcMax = null, gorMax = null, basis = 'oil', phase = 'oil', wsSg = null, sepSg = null, cgrStbMMscf = null;
         if (fluid === 'water_inj') { phase = 'water_inj'; basis = 'oil'; }
         else if (fluid === 'gas') {
             var api = isNum(+gas.apiCond) && gas.apiCond !== null ? +gas.apiCond : 50, Mo = isNum(+gas.Mo) && gas.Mo !== null && +gas.Mo > 0 ? +gas.Mo : 6084 / (api - 5.9);
@@ -10337,6 +10383,19 @@ G.WTS_calcRegistry.historian = {
             phase = basis;
             var geo = 133.3 * go / Mo;
             rs.forEach(function (r) { r._V = (r.gas || 0) + (basis === 'gasEq' ? geo * (r.oil || 0) + (gas.wcond ? R.waterGE_Mscf * (r.water || 0) : 0) : 0); });
+            // wet-gas equivalent: the gas properties (z, μg, Bg, m(p)) belong to the recombined well stream, not the separator
+            // gas: γw = (R·γg + 4584·γo)/(R + 132,800·γo/Mo), R the producing GOR (scf/STB) over the days with both phases
+            if (basis === 'gasEq' && isNum(+gas.sg) && +gas.sg > 0) {
+                var sG = 0, sO = 0;
+                rs.forEach(function (r) { if (r.gas > 0 && r.oil > 0) { sG += r.gas; sO += r.oil; } });
+                if (sG > 0 && sO > 0) {
+                    var Rgor = 1000 * sG / sO;
+                    sepSg = +gas.sg; cgrStbMMscf = 1000 * sO / sG;
+                    wsSg = (Rgor * sepSg + 4584 * go) / (Rgor + 132800 * go / Mo);
+                    warnings.push(W('GAS_EQ_BASIS', 'info', 'Condensate above ' + R.condensatePct + ' % of the gas equivalent (' + cgrStbMMscf.toFixed(0) + ' STB/MMscf): rates are wet-gas equivalent and the gas properties use the recombined well-stream gravity ' +
+                        wsSg.toFixed(3) + ' (separator gas ' + sepSg.toFixed(3) + ').', ['R7']));
+                }
+            }
         } else {
             rs.forEach(function (r) {
                 var o = r.oil || 0, w = r.water || 0, g = r.gas || 0;
@@ -10551,7 +10610,9 @@ G.WTS_calcRegistry.historian = {
             mode: 'daily', unit: _unitFor(fluid, basis), phase: phase, days: outDays, steps: steps, start: start,
             offsetScan: { current_h: sh, best_h: sh + best.off, better: better, improvement: cur.sum > 0 ? 1 - best.sum / cur.sum : 0 },
             // kTotalMobility (extra key): on the total basis k means total mobility × oil viscosity (limitation for trend/review)
-            phaseBasis: { used: basis, wcMax: wcMax, gorRatioMax: (Rs && gorMax !== null) ? gorMax / Rs : null, twoPhaseCt: !!twoPhase, kTotalMobility: basis === 'total' },
+            // wellStreamSg / separatorSg / cgr (extra keys, gasEq only): the gravity the gas properties use on the wet-gas basis
+            phaseBasis: { used: basis, wcMax: wcMax, gorRatioMax: (Rs && gorMax !== null) ? gorMax / Rs : null, twoPhaseCt: !!twoPhase, kTotalMobility: basis === 'total',
+                          wellStreamSg: wsSg, separatorSg: sepSg, cgrStbMMscf: cgrStbMMscf },
             ev: ['R1', 'R2', 'R3', 'R4', 'R5', 'R6', 'R7'], warnings: warnings, byEvent: byEvent, allocOnly: allocOnly
         };
     }
@@ -10758,6 +10819,8 @@ G.WTS_calcRegistry.historian = {
     D.dayOf = dayOf;
     D.offsetAt = offsetAt;
     D.localToUtc = localToUtc;
+    D.localLaterUtc = localLaterUtc;
+    D.tzCacheSize = function (tz) { return { offset: (_offCache[tz] && _offCache[tz]._n) || 0, local: (_l2u[tz] && _l2u[tz]._n) || 0, max: TZ_CACHE_MAX }; };
     D.deviceZoneName = deviceZoneName;
     D.recordHash = recordHash;
     D.eventAt = eventAt;
@@ -10805,7 +10868,49 @@ G.WTS_calcRegistry.historian = {
     var P = B.plot = B.plot || {};
 
     var BG = '#0d1117', GRID = '#21262d', TICK = '#6e7681', AXIS = '#8b949e';
-    var PALETTE = ['#58a6ff', '#f0883e', '#3fb950', '#d2a8ff', '#ff7b72', '#e3b341', '#79c0ff', '#56d364', '#ffa657', '#bc8cff', '#a5d6ff', '#f778ba'];
+    // distinct hues first (blue, orange, green, purple, red, yellow, cyan, pink), lighter variants after; beyond 8 series
+    // the overlay also switches to open markers, so no two tests look alike
+    var PALETTE = ['#58a6ff', '#f0883e', '#3fb950', '#d2a8ff', '#ff7b72', '#e3b341', '#39c5cf', '#f778ba', '#a5d6ff', '#ffa657', '#56d364', '#bc8cff'];
+    var OPEN_FROM = 8;
+
+    // A legend in a box (the background at 88 % opacity), so data and threshold lines never strike through the labels.
+    // entries [{label, color, dash, kind: 'line'|'point'|'deriv'|'open'|'bar'}]; cover: rows to hide underneath (the
+    // host legend's swatches).
+    function _legend(c, entries, x0, y0, cover) {
+        if (!c) return;
+        var list = (entries || []).filter(function (e) { return e && e.label; });
+        var rows = Math.max(list.length, cover || 0);
+        if (!rows) return;
+        c.font = '11px sans-serif';
+        var w = 0;
+        list.forEach(function (e) {
+            var s = String(e.label), m = 0;
+            try { m = (typeof c.measureText === 'function' && c.measureText(s)) ? c.measureText(s).width : 0; } catch (x) { m = 0; }
+            w = Math.max(w, m || s.length * 6);
+        });
+        var a0 = c.globalAlpha;
+        c.globalAlpha = 0.88; c.fillStyle = BG;
+        c.fillRect(x0 - 6, y0 - 8, Math.max(40, w) + 30, rows * 16 + 6);
+        c.globalAlpha = a0 == null ? 1 : a0;
+        list.forEach(function (e, i) {
+            var y = y0 + i * 16, col = e.color || PALETTE[i % PALETTE.length];
+            c.strokeStyle = col; c.fillStyle = col; c.lineWidth = 2;
+            if (typeof c.setLineDash === 'function') c.setLineDash(e.dash || []);
+            if (e.kind === 'point' || e.kind === 'open') { c.beginPath(); c.arc(x0 + 6, y + 1.5, 3, 0, Math.PI * 2); if (e.kind === 'open') { c.lineWidth = 1.5; c.stroke(); } else c.fill(); }
+            else if (e.kind === 'deriv') { c.beginPath(); c.moveTo(x0 + 6, y - 1.7); c.lineTo(x0 + 9, y + 3.9); c.lineTo(x0 + 3, y + 3.9); c.closePath(); c.fill(); }
+            else if (e.kind === 'bar') { c.beginPath(); c.moveTo(x0 + 6, y - 4); c.lineTo(x0 + 6, y + 7); c.moveTo(x0 + 2, y - 4); c.lineTo(x0 + 10, y - 4); c.moveTo(x0 + 2, y + 7); c.lineTo(x0 + 10, y + 7); c.stroke(); }
+            else { c.beginPath(); c.moveTo(x0, y + 1.5); c.lineTo(x0 + 12, y + 1.5); c.stroke(); }
+            if (typeof c.setLineDash === 'function') c.setLineDash([]);
+            c.fillStyle = AXIS; c.textAlign = 'left'; c.fillText(String(e.label), x0 + 16, y + 4);
+        });
+    }
+    // Decimals that keep the 6 tick steps of a range distinct (drawLineChart widens y by 8 %, x by 5 %).
+    function _autoDec(lo, hi, pad) {
+        if (!_fin(lo) || !_fin(hi)) return 0;
+        var r = (hi - lo) * (1 + 2 * pad);
+        if (!(r > 0)) return 0;
+        return Math.max(0, Math.min(4, Math.ceil(-Math.log(r / 6) / Math.LN10 + 1e-9)));
+    }
 
     function _fin(x) { return typeof x === 'number' && isFinite(x); }
     function _ctx(cv) { try { return cv && typeof cv.getContext === 'function' ? cv.getContext('2d') : null; } catch (e) { return null; } }
@@ -10904,8 +11009,9 @@ G.WTS_calcRegistry.historian = {
                     if (!(_fin(dt[j]) && dt[j] > 0 && _fin(y[j]) && y[j] > 0)) continue;
                     var px = lx(dt[j]), py = ly(y[j]);
                     c.beginPath();
-                    if (s.kind === 'deriv') { c.moveTo(px, py - 3.2); c.lineTo(px + 3, py + 2.4); c.lineTo(px - 3, py + 2.4); c.closePath(); c.fill(); }
-                    else { c.arc(px, py, 2.6, 0, Math.PI * 2); c.fill(); }
+                    if (s.kind === 'deriv') { c.moveTo(px, py - 3.2); c.lineTo(px + 3, py + 2.4); c.lineTo(px - 3, py + 2.4); c.closePath(); }
+                    else c.arc(px, py, 2.6, 0, Math.PI * 2);
+                    if (s.open) { c.lineWidth = 1.2; c.stroke(); } else c.fill();
                 }
             }
         });
@@ -10916,16 +11022,11 @@ G.WTS_calcRegistry.historian = {
             var px = lx(m.dt), py = ly(Math.abs(m.y));
             c.beginPath(); c.moveTo(px - 3, py - 3); c.lineTo(px + 3, py + 3); c.moveTo(px + 3, py - 3); c.lineTo(px - 3, py + 3); c.stroke();
         });
-        // legend
-        var lgy = pad.t + 10;
-        c.font = '11px sans-serif'; c.textAlign = 'left';
-        series.forEach(function (s, si) {
-            if (!s.label) return;
-            c.fillStyle = s.color || PALETTE[si % PALETTE.length];
-            c.fillRect(pad.l + 8, lgy - 3, 12, 3);
-            c.fillStyle = AXIS; c.fillText(String(s.label), pad.l + 24, lgy + 1);
-            lgy += 15;
-        });
+        // legend (in a box, marker or line style per series)
+        _legend(c, series.map(function (s, si) {
+            return s.label ? { label: String(s.label), color: s.color || PALETTE[si % PALETTE.length], dash: s.dash,
+                kind: s.kind === 'model' ? 'line' : (s.open ? 'open' : (s.kind === 'deriv' ? 'deriv' : 'point')) } : null;
+        }), pad.l + 12, pad.t + 10, 0);
         var xr = 'over ' + (o.xLabel || 'time') + ' ' + _decTick(Math.pow(10, bx.lo)) + ' to ' + _decTick(Math.pow(10, bx.hi));
         _aria(cv, label + ', ' + xr + (o.band && _fin(o.band.dt0) ? ', IARF window shaded' : '') + '.');
         return { ok: true, points: npts };
@@ -10936,9 +11037,9 @@ G.WTS_calcRegistry.historian = {
         opts = opts || {};
         var series = [];
         (Array.isArray(tests) ? tests : []).forEach(function (t, i) {
-            var col = t.color || PALETTE[i % PALETTE.length];
-            series.push({ dt: t.dt || [], y: t.dpq || [], kind: 'dp', color: col, label: String(t.id || ('Test ' + (i + 1))) });
-            series.push({ dt: t.dt || [], y: t.derivq || [], kind: 'deriv', color: col });
+            var col = t.color || PALETTE[i % PALETTE.length], open = i >= OPEN_FROM;   // beyond 8 tests: open markers too
+            series.push({ dt: t.dt || [], y: t.dpq || [], kind: 'dp', color: col, open: open, label: String(t.id || ('Test ' + (i + 1))) });
+            series.push({ dt: t.dt || [], y: t.derivq || [], kind: 'deriv', color: col, open: open });
         });
         var r = loglog(cv, { series: series, xLabel: opts.xLabel, yLabel: opts.yLabel || 'rate-normalised pressure change' });
         if (cv && typeof cv.setAttribute === 'function') {
@@ -11006,14 +11107,20 @@ G.WTS_calcRegistry.historian = {
             return { ok: false, points: 0 };
         }
         if (f) {
-            var o = { xLabel: spec.xLabel || '', yLabel: spec.yLabel || '', yDec: _fin(spec.yDec) ? spec.yDec : 1, xDec: _fin(spec.xDec) ? spec.xDec : 0 };
             var bnd = { xMin: xMin, xMax: xMax, yMin: _fin(spec.yMin) ? spec.yMin : (yr ? yr[0] : 0), yMax: _fin(spec.yMax) ? spec.yMax : (yr ? yr[1] : 1) };
+            // tick decimals: the caller's (a floor), raised until the 6 tick steps of the range read differently
+            var o = { xLabel: spec.xLabel || '', yLabel: spec.yLabel || '',
+                yDec: Math.max(_fin(spec.yDec) ? spec.yDec : 0, _autoDec(bnd.yMin, bnd.yMax, 0.08)),
+                xDec: Math.max(_fin(spec.xDec) ? spec.xDec : 0, _autoDec(bnd.xMin, bnd.xMax, 0.05)) };
             o.xMin = bnd.xMin; o.xMax = bnd.xMax; o.yMin = bnd.yMin; o.yMax = bnd.yMax;
-            // legend entries for the overlays (no data: drawLineChart lists them and draws nothing)
-            hollow.forEach(function (h) { if (h.label) ds.push({ label: h.label + ' (open circles)', color: h.color, data: [], points: false }); });
-            if (bars.length) ds.push({ label: spec.barsLabel || 'Range', color: spec.barsColor || '#79c0ff', data: [], points: false });
+            // Our own boxed legend replaces drawLineChart's (drawn with blank labels underneath and covered): line and dash
+            // style per series, open circles and range bars with their own symbols.
+            var leg = ds.map(function (d) { return d.label ? { label: d.label, color: d.color, dash: d.dash, kind: d.points === false ? 'line' : (d.width != null && d.width < 0.1 ? 'point' : 'line') } : null; });
+            hollow.forEach(function (h) { if (h.label) leg.push({ label: h.label + ' (open circles)', color: h.color, kind: 'open' }); });
+            if (bars.length) leg.push({ label: spec.barsLabel || 'Range', color: spec.barsColor || '#79c0ff', kind: 'bar' });
+            var hostDs = ds.map(function (d) { return { label: '', color: d.color, data: d.data, dash: d.dash, points: d.points, width: d.width }; });
             try {
-                f(cv, ds, o);
+                f(cv, hostDs, o);
                 var fr = _frame(cv, bnd);
                 if (typeof c.setLineDash === 'function') c.setLineDash([]);
                 c.lineWidth = 1.5;
@@ -11026,6 +11133,7 @@ G.WTS_calcRegistry.historian = {
                     c.strokeStyle = h.color;
                     h.data.forEach(function (p) { c.beginPath(); c.arc(fr.x(p.x), fr.y(p.y), 4, 0, Math.PI * 2); c.stroke(); });
                 });
+                _legend(c, leg, 80, 40, hostDs.length > 1 ? hostDs.length : 0);   // last, at drawLineChart's legend origin (pad.l + 10, pad.t + 10)
             } catch (e) { /* drawing is best effort */ }
         }
         // our own summary (the page's placeholder label is not one): series names and point counts
@@ -11261,7 +11369,15 @@ G.WTS_calcRegistry.historian = {
     //    tests/_buildup-shapes.js (RV12 checks that both agree on FIX.analysis).
     // ─────────────────────────────────────────────────────────────────────
     function F(args, text, fn) { fn.args = args; fn.text = text; return fn; }
-    var SENS_COEF = { h: 1.1513, phi: 1.1513, ct: 1.1513, rw: 2.3026, B: -1.1513, q: -1.1513, mu: 0 };
+    // Plain words for the engines' codes, used where the report shows them (the codes stay in the analysis and the index).
+    var READING_LABEL = { nearWell: 'near-well change', mobility: 'mobility change', allocation: 'allocation error', none: 'none' };
+    var EV_KIND_LABEL = { shutin: 'Shut-in', falloff: 'Fall-off', partial: 'Partial cut', substep: 'Small step' };
+    var EV_STATUS_LABEL = { analysable: 'Analysable', too_short: 'Too short', gap_at_closing: 'Gap at closing', partial: 'Partial', excluded: 'Excluded',
+                            not_confirmed: 'Not confirmed', intervention: 'Intervention' };
+    var DQ_SOURCE_LABEL = { closingDay: 'closing day', previousDay: 'previous day', qref: 'reference rate', table: 'rate table' };
+    var ALLOC_CONFIRM_LABEL = { confirmed: 'confirmed', not_confirmed: 'not confirmed', no_alloc: 'no allocation', 'n/a': 'n/a' };
+    function _lab(map, code) { var s = _str(code); return Object.prototype.hasOwnProperty.call(map, s) ? map[s] : s.replace(/_/g, ' '); }
+    var SENS_COEF ={ h: 1.1513, phi: 1.1513, ct: 1.1513, rw: 2.3026, B: -1.1513, q: -1.1513, mu: 0 };
     function _sensK(input, f, k) { return input === 'h' ? k / f : (input === 'B' || input === 'mu' || input === 'q') ? k * f : k; }
 
     var FORMULAS = {
@@ -11308,6 +11424,8 @@ G.WTS_calcRegistry.historian = {
             function (dpj, qj, dpb, qb, mq, dtej, dteb) {
                 return _allNum(dpj, qj, dpb, qb, mq, dtej, dteb) && qj * qb * mq !== 0 && dtej > 0 && dteb > 0 ? 1.1513 * ((dpj / qj - dpb / qb) / mq - MATH.log(dtej / dteb) / LN10) : null;
             }),
+        // §5.3 truth. f is the closing-day factor; the engine superposes every given daily rate, so with a one-day rate
+        // error the input-consistent k lies between k and f·k (k* overstates the expected error by up to |f − 1|; plan §5.3 note).
         kStar: F(['truth', 'given', 'f'], 'k* = f·k·(B′/B)·(μ′/μ)·(h/h′)',
             function (t, g, f) { return (_obj(t) && _obj(g) && _isNum(f)) ? f * t.k * (g.B / t.B) * (g.mu / t.mu) * (t.h / g.h) : null; }),
         SStar: F(['truth', 'given', 'f'], 'S* = S + 1.1513·log10((h′/h)(φ′/φ)(ct′/ct)) + 2.3026·log10(rw′/rw) − 1.1513·log10((B′/B)·f)',
@@ -11350,7 +11468,7 @@ G.WTS_calcRegistry.historian = {
         prefix16: F(['h'], 'first 16 hex characters', function (h) { return typeof h === 'string' ? h.slice(0, 16) : null; }),
         prefix8: F(['h'], 'first 8 hex characters', function (h) { return typeof h === 'string' ? h.slice(0, 8) : null; }),
         rawText: F(['raw'], 'raw gauge data embedded or not', function (r) { return (r === 'idb' || r === 'memory') ? 'embedded' : 'not embedded; interpretation and trend reproduce from the stored build-ups'; }),
-        basisText: F(['basis'], 'absolute alert basis', function (b) { return b === 'mechanical' ? 'mechanical skin' : b === 'total' ? 'total skin (may include geometric pseudo-skin)' : null; }),
+        basisText: F(['basis', 'dq'], 'absolute alert basis', function (b, dq) { return b === 'mechanical' ? (dq === true ? 'mechanical skin + D·q (D not resolved)' : 'mechanical skin') : b === 'total' ? 'total skin (may include geometric pseudo-skin)' : null; }),
         baseState: F(['unstable', 'provisional'], 'baseline state', function (u, p) { return u && p ? 'unstable and provisional' : u ? 'unstable' : p ? 'provisional' : 'stable'; }),
         rivalCount: F(['models'], 'number of rival fits', function (m) { return _isArr(m) ? MATH.max(0, m.length - 1) : null; }),
         resultsHashOf: F(['an'], 'results hash (display-precision canon of finals, S_err, labels, alerts, onset, recent slope)', function (an) { return _resultsHash(an); }),
@@ -11360,6 +11478,15 @@ G.WTS_calcRegistry.historian = {
         moreFindings: F(['review', 'shown'], 'findings beyond the shown rows', function (rv, s) { return _obj(rv) && _isNum(s) ? MATH.max(0, _arr(rv.findings).length - s) : null; }),
         chainHead: F(['audit'], 'audit chain head', function (a) { return _auditLog(a) ? auditHead(a) : null; }),
         auditFolded: F(['audit'], 'folded audit entries', function (a) { var L = _auditLog(a); return L ? (L.summary && _isNum(L.summary.n) ? L.summary.n : 0) : null; }),
+        readingText: F(['reading'], 'k-stability reading in words', function (r) { return typeof r === 'string' ? (READING_LABEL[r] || r) : null; }),
+        auditBrokenAt: F(['audit'], 'first audit entry that does not verify', function (a) {
+            var v = _auditVerified(_auditLog(a));
+            return v && v.ok === false && _isNum(v.brokenAt) ? v.brokenAt : null;
+        }),
+        auditLostKey: F(['audit'], 'where an unreadable earlier audit trail was kept', function (a) {
+            var L = _auditLog(a);
+            return L && _obj(L.lost) && typeof L.lost.key === 'string' && L.lost.key ? L.lost.key : null;
+        }),
         testList: F(['tests'], 'test ids', function (t) { return _isArr(t) ? (t.length ? t.map(function (x) { return x && x.id; }).join(', ') : 'none') : null; }),
         excludedList: F(['tests'], 'excluded or not analysed tests', function (t) {
             if (!_isArr(t)) return null;
@@ -12108,14 +12235,24 @@ G.WTS_calcRegistry.historian = {
         var t1 = { S: P('trend.baseline.S', 'S'), sigma: P('trend.baseline.sigma', 'S'), unstable: P('trend.baseline.unstable'), provisional: P('trend.baseline.provisional'),
             tests: P('trend.baseline.tests'), nTests: P('trend.baseline.tests.length', 'n'), baseN: P('settings.trend.baseN', 'n'),
             state: FX('baseState', { unstable: 'trend.baseline.unstable', provisional: 'trend.baseline.provisional' }) };
-        if (L) { t1.latest = P(L + '.id'); t1.dSLatest = FX('sub', { a: L + '.result.final.S', b: 'trend.baseline.S' }, 'S'); }
+        if (L) {
+            t1.latest = P(L + '.id');
+            // the change since the baseline on the baseline's own basis: the latest test's alert-basis skin (series Salert;
+            // for gas with D resolved S′ − D·(q − q_ref), as the baseline median), else its final S
+            var lid = an.tests[latestUsed] && an.tests[latestUsed].id, sj = -1;
+            _arr(tr.series).forEach(function (s, j) { if (s && s.id === lid && _isNum(s.Salert)) sj = j; });
+            if (sj >= 0) {
+                t1.latestAlert = P('trend.series[' + sj + '].Salert', 'S');
+                t1.dSLatest = FX('sub', { a: 'trend.series[' + sj + '].Salert', b: 'trend.baseline.S' }, 'S');
+            } else t1.dSLatest = FX('sub', { a: L + '.result.final.S', b: 'trend.baseline.S' }, 'S');
+        }
         add('T1', 'T', null, 'Baseline', t1);
         add('T2', 'T', null, 'Delta alert', { status: P('trend.alerts.delta.status'), raisedAt: P('trend.alerts.delta.raisedAt'), confirmedAt: P('trend.alerts.delta.confirmedAt'),
             threshold: P('trend.alerts.delta.threshold', 'S'), form: P('trend.alerts.delta.form'), kHeldOnly: P('trend.alerts.delta.kHeldOnly'), enabled: P('trend.enabled'),
             confirm: P('settings.trend.confirm'),
             recomputed: FL('alertRecomputed', { an: '$analysis', which: { lit: 'delta' } }, null, null, 'trend.alerts.delta.status') });
         add('T3', 'T', null, 'Absolute alert', { status: P('trend.alerts.absolute.status'), raisedAt: P('trend.alerts.absolute.raisedAt'), confirmedAt: P('trend.alerts.absolute.confirmedAt'),
-            threshold: P('trend.alerts.absolute.threshold', 'S'), basis: P('trend.alerts.absolute.basis'), basisText: FX('basisText', { basis: 'trend.alerts.absolute.basis' }),
+            threshold: P('trend.alerts.absolute.threshold', 'S'), basis: P('trend.alerts.absolute.basis'), basisText: FX('basisText', { basis: 'trend.alerts.absolute.basis', dq: 'trend.alerts.absolute.dqIncluded' }),
             kHeldOnly: P('trend.alerts.absolute.kHeldOnly'), loAt: P('trend.alerts.absolute.robustness.lo'), hiAt: P('trend.alerts.absolute.robustness.hi'), unchanged: P('trend.alerts.absolute.robustness.unchanged'),
             recomputed: FL('alertRecomputed', { an: '$analysis', which: { lit: 'absolute' } }, null, null, 'trend.alerts.absolute.status') });
         add('T4', 'T', null, 'Onset', { tauDays: P('trend.onset.tauDays', 'days'), date: P('trend.onset.date'), lo: P('trend.onset.interval[0]', 'days'), hi: P('trend.onset.interval[1]', 'days'),
@@ -12150,12 +12287,14 @@ G.WTS_calcRegistry.historian = {
                 var LF = L + '.result.final';
                 t8.ratioNow = FS('trend.pi.ratioNow', 'piRatio', { X: 'trend.pi.X', S: LF + '.S' }, 'ratio');
                 t8.rateAtStake = FS('trend.pi.rateAtStake', 'rateAtStake', { qNow: L + '.Dq', X: 'trend.pi.X', Snow: LF + '.S', Sbase: 'trend.baseline.S' }, 'q', rqc8);
-                t8.extraDrawdown_psi = FS('trend.pi.extraDrawdown_psi', 'extraDrawdownS', { q: L + '.Dq', B: 'well.B', mu: 'well.mu', Snow: LF + '.S', Sbase: 'trend.baseline.S', k: LF + '.k', h: 'well.h' }, 'p', 'pressure');
+                // B and μ on the analysis basis the trend used (total rate: B = 1; gas: the engine's Bg·μ), else the inputs
+                var bB = tr.pi && _isNum(tr.pi.B) ? 'trend.pi.B' : 'well.B', bMu = tr.pi && _isNum(tr.pi.mu) ? 'trend.pi.mu' : 'well.mu';
+                t8.extraDrawdown_psi = FS('trend.pi.extraDrawdown_psi', 'extraDrawdownS', { q: L + '.Dq', B: bB, mu: bMu, Snow: LF + '.S', Sbase: 'trend.baseline.S', k: LF + '.k', h: 'well.h' }, 'p', 'pressure');
             }
         }
         add('T8', 'T', null, 'PI ratio and production at stake', t8);
         add('T9', 'T', null, 'k stability', { cv: P('trend.kStability.cv', 'frac'), cvPct: FX('pct100', { x: 'trend.kStability.cv' }, 'pct'), stable: P('trend.kStability.stable'),
-            allocAccPct: P('trend.kStability.allocAccPct', 'pct'), cvLimPct: FX('cvLim', { allocAccPct: 'trend.kStability.allocAccPct' }, 'pct'), reading: P('trend.kStability.reading'),
+            allocAccPct: P('trend.kStability.allocAccPct', 'pct'), cvLimPct: FX('cvLim', { allocAccPct: 'trend.kStability.allocAccPct' }, 'pct'), reading: P('trend.kStability.reading'), readingText: FX('readingText', { reading: 'trend.kStability.reading' }),
             kBase: P('baseline.k', 'k', 'permeability'), cvK: P('baseline.cvK', 'frac') });
         add('T10', 'T', null, 'Pressure trend', { quantity: P('trend.pTrend.quantity'), assessable: P('trend.pTrend.assessable'), reason: P('trend.pTrend.reason'), slopePer30d: P('trend.pTrend.slopePer30d', 'p', 'pressure'),
             scatter: P('trend.pTrend.scatter', 'p', 'pressure'), depletion: P('trend.pTrend.depletion'), label: P('trend.pTrend.label') });
@@ -12227,6 +12366,7 @@ G.WTS_calcRegistry.historian = {
                 nChecked: P('$review.evidenceCheck.nChecked', 'n'), nFailed: P('$review.evidenceCheck.nFailed', 'n'),
                 nOpen: FX('openCount', { review: '$review' }, 'n'), nMoreFindings: FX('moreFindings', { review: '$review', shown: { lit: MAX_ROWS } }, 'n'),
                 decisionsHash: FX('decisionsHashOf', { review: '$review' }), chainHash: FX('chainHead', { audit: '$audit' }), auditFolded: FX('auditFolded', { audit: '$audit' }, 'n'),
+                auditBrokenAt: FX('auditBrokenAt', { audit: '$audit' }, 'n'), auditLostKey: FX('auditLostKey', { audit: '$audit' }),
                 signer: P('$signoff.name'), role: P('$signoff.role'), signedAt: FX('dateOfIso', { iso: '$signoff.at' }), sigHash: P('$signoff.hash'), sigHash16: FX('prefix16', { h: '$signoff.hash' }),
                 signedVersion: P('$signoff.appVersion'), decisions: P('$signoff.decisions', 'n')
             });
@@ -12516,7 +12656,8 @@ G.WTS_calcRegistry.historian = {
     });
     defRule('V11', 'major', 'S5', 'PI cross-check outside its band', ['T13'], function (c) {
         var pc = c.an.trend && c.an.trend.piCheck, out = [];
-        if (!pc || pc.available !== true) return out;
+        // an indicative check (no rate history for the transient prediction: PSS X; gas without m(p)) is reported, not a finding
+        if (!pc || pc.available !== true || pc.indicative === true) return out;
         _arr(pc.rows).forEach(function (row, j) {
             if (!row || !_isNum(row.RJ)) return;
             var rj = _r3(row.RJ);
@@ -12864,10 +13005,22 @@ G.WTS_calcRegistry.historian = {
     // 9. Audit chain (§3.12, §8.5): hash = hash16(prevHash + canon(entry without hash)); folded beyond 500 entries
     // ─────────────────────────────────────────────────────────────────────
     var AUDIT_MAX = 500, AUDIT_BYTES = 200000;
+    // An audit log: {v, entries, summary, lost?}, or the page's entry array carrying summary / lost as properties.
     function _auditLog(a) {
-        if (_isArr(a)) return { v: 1, entries: a, summary: null };
+        if (_isArr(a)) return { v: 1, entries: a, summary: _obj(a.summary) ? a.summary : null, lost: _obj(a.lost) ? a.lost : null };
         if (_obj(a) && _isArr(a.entries)) return a;
         return null;
+    }
+    // verify() of a log, memoised on its content (S10 and the evidence check both ask for it).
+    var _vMemo = { key: null, res: null };
+    function _auditVerified(L) {
+        if (!L) return null;
+        var key = null;
+        try { key = JSON.stringify([L.summary, L.entries]); } catch (e) { key = null; }
+        if (key !== null && key === _vMemo.key) return _vMemo.res;
+        var res = auditVerify(L);
+        if (key !== null) _vMemo = { key: key, res: res };
+        return res;
     }
     // Lossless: numeric leaves are serialised exactly (String(n), the shortest round-trip form) before canon, so canon sorts the keys
     // but rounds nothing; an edit at any digit of an entry breaks the chain.
@@ -12930,7 +13083,8 @@ G.WTS_calcRegistry.historian = {
         var L = _auditLog(log);
         if (!L) return { ok: false, n: 0, head: null, brokenAt: null, reason: 'not an audit log' };
         var prev = (L.summary && L.summary.chainHash) || GENESIS;
-        var seq = L.summary ? L.summary.to : null;
+        // the last folded seq: 'to' here, 'toSeq' in the device store's summary (whose from / to are times)
+        var seq = L.summary ? (_isNum(L.summary.toSeq) ? L.summary.toSeq : (_isNum(L.summary.to) ? L.summary.to : null)) : null;
         for (var i = 0; i < L.entries.length; i++) {
             var e = L.entries[i];
             if (!e || e.prevHash !== prev) return { ok: false, n: L.entries.length, head: prev, brokenAt: e ? e.seq : i, reason: 'chain broken (previous hash)' };
@@ -13011,8 +13165,10 @@ G.WTS_calcRegistry.historian = {
     function _entities(q, an) {
         var low = String(q).toLowerCase();
         var ids = _matchAll(low, /\b(?:b|test|build-?up)\s*#?(\d+)\b/g).map(function (m) { return 'B' + parseInt(m[1], 10); });
-        var pcts = _matchAll(low, /([+-]?\d+(?:\.\d+)?)\s*%/g).map(function (m) { return parseFloat(m[1]); }).filter(_isNum);
-        var thr = _matchAll(low, /\b(?:cross(?:es)?|reach(?:es)?|exceed(?:s)?|above)\s+([+-]?\d+(?:\.\d+)?)(?!\s*%)/g).map(function (m) { return parseFloat(m[1]); });
+        // a decimal point or a decimal comma ("12,5 %", "crosses 4,5": the question box is never converted by the a11y layer)
+        var dec = function (s) { return parseFloat(String(s).replace(',', '.')); };
+        var pcts = _matchAll(low, /([+-]?\d+(?:[.,]\d+)?)\s*%/g).map(function (m) { return dec(m[1]); }).filter(_isNum);
+        var thr = _matchAll(low, /\b(?:cross(?:es)?|reach(?:es)?|exceed(?:s)?|above)\s+([+-]?\d+(?:[.,]\d+)?)(?![\d.,]*\s*%)/g).map(function (m) { return dec(m[1]); });
         var input = null;
         var lowNoTests = low.replace(/\b(?:b|test|build-?up)\s*#?\d+\b/g, ' ');
         for (var i = 0; i < INPUT_SYN.length; i++) if (INPUT_SYN[i][1].test(lowNoTests)) { input = INPUT_SYN[i][0]; break; }
@@ -13109,7 +13265,7 @@ G.WTS_calcRegistry.historian = {
                     vals['u' + j] = { v: FORMULAS.add(t.result.final.S, dS), cat: null, dp: 2, ref: t.id + '·U2:S', calc: { f: 'add', args: { a: 'tests[' + tj + '].result.final.S', b: lit(dS) } } };
                     ev.push(t.id + '·A2');
                 });
-                if (used.length > shown.length) { tpl += ' (and {nOld} earlier tests)'; vals.nOld = { v: used.length - shown.length, cat: null, dp: 0, ref: 'U2:older', calc: { f: 'lit', args: { x: lit(used.length - shown.length) } } }; }
+                if (used.length > shown.length) { tpl += ' (and {nOld} earlier ' + (used.length - shown.length === 1 ? 'test' : 'tests') + ')'; vals.nOld = { v: used.length - shown.length, cat: null, dp: 0, ref: 'U2:older', calc: { f: 'lit', args: { x: lit(used.length - shown.length) } } }; }
                 tpl += '.';
             }
             if (L && L.result && L.result.final) {
@@ -13314,7 +13470,7 @@ G.WTS_calcRegistry.historian = {
             var m = c.an.missed;
             if (!m) return _ans('No detection result is available.', {}, ['D1'], 'partial');
             var tpl = 'Detection found {ne} events ({nt} build-up tests); too short: {ns}; suspected interventions: {ni}. Sub-threshold steps ({nsub}), allocation-only days ({nal}) and gaps ({ng}) could hide shut-ins. ';
-            tpl += (m.detectability && m.detectability.ok === false) ? 'Full shut-ins may be missed: p* − pwf ({d}) is less than twice the rise threshold ({ts}).' : 'Full shut-ins are detectable (p* − pwf {d} against the rise threshold {ts}).';
+            tpl += (m.detectability && m.detectability.ok === false) ? 'Full shut-ins may be missed: |p* − pwf| ({d}) is less than twice the rise threshold ({ts}).' : 'Full shut-ins are detectable (|p* − pwf| {d} against the rise threshold {ts}).';
             return _ans(tpl, { ne: c.V('D1', 'nEvents'), nt: c.V('D1', 'nTests'), ns: c.V('D1', 'nTooShort'), ni: c.V('D1', 'nInterventions'), nsub: c.V('D1', 'nSub'), nal: c.V('D1', 'nAllocOnly'),
                                ng: c.V('D1', 'nGaps'), d: c.V('D1', 'pStarMinusPwf_psi'), ts: c.V('D1', 'Ts_psi') }, ['D1'], 'full', ['How long should the shut-in be?']);
         }),
@@ -13409,7 +13565,7 @@ G.WTS_calcRegistry.historian = {
         if (st === 'SIGNED') return _verdict('ok', '✓ Signed off by {name} ({role}) on {date} · hash {h}.', { name: c.V('V14', 'signer'), role: c.V('V14', 'role'), date: c.V('V14', 'signedAt'), h: c.V('V14', 'sigHash16') }, ['V14']);
         if (st === 'CHANGED') return _verdict('warn', '⚠ DRAFT — changed after sign-off on {date}; sign off again after review.', { date: c.V('V14', 'signedAt') }, ['V14']);
         var n = c.review ? canSign(c.review).open.length : 0;
-        if (n) return _verdict('warn', '⚠ DRAFT — not signed off ({n} findings need a decision).', { n: c.V('V14', 'nOpen') }, ['V14']);
+        if (n) return _verdict('warn', '⚠ DRAFT — not signed off ({n} ' + (n === 1 ? 'finding needs' : 'findings need') + ' a decision).', { n: c.V('V14', 'nOpen') }, ['V14']);
         return _verdict('warn', '⚠ DRAFT — not signed off.', {}, ['V14']);
     }
     function _S1(c, st) {
@@ -13430,10 +13586,14 @@ G.WTS_calcRegistry.historian = {
         b.push(_statusVerdict(c, st));
         if (L && L.result) {
             var tr = c.an.trend || {}, d = tr.alerts && tr.alerts.delta;
+            var la = c.V('T1', 'latestAlert'), sv = c.V(L.id + '·A2', 'S');
+            var rc = la && _isNum(la.v) && sv && _isNum(sv.v) && MATH.abs(la.v - sv.v) >= 0.005;   // gas with D resolved: say the basis
             var tpl = (d && d.status === 'confirmed' ? 'Skin has risen above the baseline' : d && (d.status === 'provisional' || d.status === 'possible') ? 'Skin may be rising above the baseline' : 'Skin is near the baseline') +
-                      ': baseline {sb}, latest {s} ± {e} at {t}. k is ' + (tr.kStability && tr.kStability.stable ? 'stable' : 'not stable') + ' between tests (CV {cv} %). ';
+                      ': baseline {sb}, latest {s} ± {e} at {t}' + (rc ? ' ({sa} on the rate-corrected basis of the baseline)' : '') + '. k is ' + (tr.kStability && tr.kStability.stable ? 'stable' : 'not stable') + ' between tests (CV {cv} %). ';
             tpl += (tr.kStability && tr.kStability.stable && d && d.status === 'confirmed') ? 'With stable k the change is near the well (damage or a pseudo-skin change), not in the formation.' : 'Read the alerts with the confidence labels and the review findings below.';
-            b.push(_notes('Assessment', tpl, { sb: c.V('T1', 'S'), s: c.V(L.id + '·A2', 'S'), e: c.V(L.id + '·U1', 'value'), t: c.V(L.id + '·A2', 'test'), cv: c.V('T9', 'cvPct') }, c.evs(['T1', 'T9', L.id + '·A2'])));
+            var av = { sb: c.V('T1', 'S'), s: sv, e: c.V(L.id + '·U1', 'value'), t: c.V(L.id + '·A2', 'test'), cv: c.V('T9', 'cvPct') };
+            if (rc) av.sa = la;
+            b.push(_notes('Assessment', tpl, av, c.evs(['T1', 'T9', L.id + '·A2'])));
         }
         return { id: 'S1', title: 'Summary', blocks: b };
     }
@@ -13442,7 +13602,7 @@ G.WTS_calcRegistry.historian = {
         b.push(_kv([
             _row('Gauge noise σ (shut-in / flowing)', _tv('{a} / {b}', { a: c.V('Q1', 'sigmaShut_psi'), b: c.V('Q1', 'sigmaFlow_psi') }), ['Q1']),
             _row('Sampling interval (median, 5 %, 95 %)', _tv('{m} s, {p5} s, {p95} s ({n} samples)', { m: c.V('Q2', 'dtMed_s'), p5: c.V('Q2', 'dtP05_s'), p95: c.V('Q2', 'dtP95_s'), n: c.V('Q2', 'n') }), ['Q2']),
-            _row('Gaps', _tv('{n} gaps, {tot} h in total, longest {lg} h', { n: c.V('Q3', 'gapCount'), tot: c.V('Q3', 'gapTotal_h'), lg: c.V('Q3', 'longestGap_h') }), ['Q3']),
+            _row('Gaps', _tv('{n} ' + (qc.gapCount === 1 ? 'gap' : 'gaps') + ', {tot} h in total, longest {lg} h', { n: c.V('Q3', 'gapCount'), tot: c.V('Q3', 'gapTotal_h'), lg: c.V('Q3', 'longestGap_h') }), ['Q3']),
             _row('Spikes', _tv('{n} ({mode})', { n: c.V('Q4', 'count'), mode: c.V('Q4', 'mode') }), ['Q4']),
             _row('Gauge drift (assumed)', c.V('Q5', 'drift'), ['Q5']),
             _row('Tide index (largest test)', c.V('Q6', 'maxTide'), ['Q6']),
@@ -13459,8 +13619,8 @@ G.WTS_calcRegistry.historian = {
         ]));
         var warned = false;
         if (qc.resolutionLimited) { warned = true; b.push(_verdict('warn', '⚠ Gauge resolution ({r}) limits the noise estimate.', { r: c.V('Q1', 'resolution_psi') }, ['Q1'])); }
-        if (qc.noiseCorrelated) { warned = true; b.push(_verdict('warn', '⚠ Gauge noise is correlated (lag-one autocorrelation {rho}); σ is a lower bound.', { rho: c.V('Q1', 'rho1') }, ['Q1'])); }
-        if (_isNum(qc.gapCount) && qc.gapCount > 0) { warned = true; b.push(_verdict('warn', '⚠ {n} data gaps, the longest {lg} h.', { n: c.V('Q3', 'gapCount'), lg: c.V('Q3', 'longestGap_h') }, ['Q3'])); }
+        if (qc.noiseCorrelated) { warned = true; b.push(_verdict('warn', '⚠ Gauge noise is correlated (lag-one autocorrelation of the pressure differences {rho}, where uncorrelated noise gives minus one half); σ is a lower bound.', { rho: c.V('Q1', 'rho1') }, ['Q1'])); }
+        if (_isNum(qc.gapCount) && qc.gapCount > 0) { warned = true; b.push(_verdict('warn', qc.gapCount === 1 ? '⚠ {n} data gap of {lg} h.' : '⚠ {n} data gaps, the longest {lg} h.', { n: c.V('Q3', 'gapCount'), lg: c.V('Q3', 'longestGap_h') }, ['Q3'])); }
         if (!warned) b.push(_verdict('ok', '✓ Data quality checks passed: no gaps, uncorrelated noise, resolution adequate.', {}, ['Q1', 'Q2', 'Q3']));
         return { id: 'S2', title: 'Data and quality', blocks: b };
     }
@@ -13475,8 +13635,8 @@ G.WTS_calcRegistry.historian = {
         if (events.length > MAX_ROWS) rows.push([c.V('D1', 'nOlderEvents'), 'older events not shown'].concat(_blank(head.length - 2)));
         shown.forEach(function (e) {
             var t = testOf[e.id];
-            rows.push([e.id, t ? t.id : '—', c.V('D1', e.id + '_time'), _str(e.kind), _str(e.status), c.V('D1', e.id + '_dtEnd_h'),
-                       t ? c.V(t.id + '·R1', 'Dq') : '—', t && t.spec && t.spec.rateQC ? _str(t.spec.rateQC.dqSource) : '—', c.V('D1', e.id + '_pwf0'), e.alloc ? _str(e.alloc.confirm) : '—',
+            rows.push([e.id, t ? t.id : '—', c.V('D1', e.id + '_time'), _lab(EV_KIND_LABEL, e.kind), _lab(EV_STATUS_LABEL, e.status), c.V('D1', e.id + '_dtEnd_h'),
+                       t ? c.V(t.id + '·R1', 'Dq') : '—', t && t.spec && t.spec.rateQC ? _lab(DQ_SOURCE_LABEL, t.spec.rateQC.dqSource) : '—', c.V('D1', e.id + '_pwf0'), e.alloc ? _lab(ALLOC_CONFIRM_LABEL, e.alloc.confirm) : '—',
                        _eventNote(e, t)]);
             if (t && c.has(t.id + '·D2')) ev.push(t.id + '·D2');
         });
@@ -13504,7 +13664,7 @@ G.WTS_calcRegistry.historian = {
         if (an.rates && an.rates.offsetScan && an.rates.offsetScan.better) b.push(_verdict('warn', '⚠ The offset scan prefers {best} h over the current {cur} h: check the gauge and production-day zones.', { best: c.V('R3', 'best_h'), cur: c.V('R3', 'current_h') }, ['R3']));
         var m = an.missed || {};
         var tpl = 'Detection found {ne} events; {ns} too short, {ni} suspected interventions, {nsub} sub-threshold steps, {nal} allocation-only days and {ng} gaps could hide shut-ins. ';
-        tpl += (m.detectability && m.detectability.ok === false) ? 'Full shut-ins may be missed: p* − pwf ({d}) is less than twice the rise threshold ({ts}).' : 'Full shut-ins are detectable (p* − pwf {d} against the rise threshold {ts}).';
+        tpl += (m.detectability && m.detectability.ok === false) ? 'Full shut-ins may be missed: |p* − pwf| ({d}) is less than twice the rise threshold ({ts}).' : 'Full shut-ins are detectable (|p* − pwf| {d} against the rise threshold {ts}).';
         b.push(_notes('Notes', tpl, { ne: c.V('D1', 'nEvents'), ns: c.V('D1', 'nTooShort'), ni: c.V('D1', 'nInterventions'), nsub: c.V('D1', 'nSub'), nal: c.V('D1', 'nAllocOnly'), ng: c.V('D1', 'nGaps'),
                                          d: c.V('D1', 'pStarMinusPwf_psi'), ts: c.V('D1', 'Ts_psi') }, ['D1']));
         return { id: 'S3', title: 'Events and rates', blocks: b };
@@ -13633,7 +13793,10 @@ G.WTS_calcRegistry.historian = {
         if (J) b.push(_chart('bu_ch_j', J));
         if (c.fluid === 'oil' && tr.bubble && _arr(tr.bubble.rows).length) {
             var br = tr.bubble.rows, bx = br.map(function (r) { var s = series.filter(function (x) { return x.id === r.id; })[0]; return s ? s.tDays : null; });
-            var ser = [_series('Sandface pwf low', 'pressure', bx, br.map(function (r) { return r.pwfSand_lo; })), _series('Sandface pwf high', 'pressure', bx, br.map(function (r) { return r.pwfSand_hi; }))];
+            // without depth data the 'sandface' range is the gauge pwf (no depth correction, the ±20 % gradient band collapses)
+            var noDz = !(tr.bubble && tr.bubble.depthCorrected === true);
+            var ser = noDz ? [_series('Gauge pwf (no depth correction)', 'pressure', bx, br.map(function (r) { return r.pwfSand_lo; }))]
+                           : [_series('Sandface pwf low', 'pressure', bx, br.map(function (r) { return r.pwfSand_lo; })), _series('Sandface pwf high', 'pressure', bx, br.map(function (r) { return r.pwfSand_hi; }))];
             if (_isNum(an.well && an.well.Pb)) { var bxs = bx.filter(_isNum); if (bxs.length) ser.push(_series('Bubble point', 'pressure', [MATH.min.apply(null, bxs), MATH.max.apply(null, bxs)], [an.well.Pb, an.well.Pb])); }
             b.push(_chart('bu_ch_pwf', ser));
         }
@@ -13653,11 +13816,11 @@ G.WTS_calcRegistry.historian = {
             _row('Recent trend', _isNum(rec.slopePer30d) ? _tv('{sl} per 30 days (Sen interval {lo} to {hi}, Mann–Kendall p {p}, {n} tests' + (rec.indicative ? ', indicative' : '') + ')', { sl: c.V('T5', 'slopePer30d'), lo: c.V('T5', 'ciLo'), hi: c.V('T5', 'ciHi'), p: c.V('T5', 'mkP'), n: c.V('T5', 'n') })
                                                        : _tv('not computed ({n} tests after the onset)', { n: c.V('T5', 'n') }), ['T5']),
             _row('Forecast', fc.show ? _tv('crossing about {d} (earliest {e}, latest {l})', { d: c.V('T6', 'date'), e: c.V('T6', 'earliest'), l: c.V('T6', 'latest') }) : _tv('{why}', { why: c.V('T6', 'reason') }), ['T6']),
-            L && c.has('T7') && c.idx.items.T7.values[L.id + '_dpSkin'] ? _row('Pressure drop across the skin (latest test)', _tv('{dp} at {t}', { dp: c.V('T7', L.id + '_dpSkin'), t: c.V(L.id + '·A2', 'test') }), c.evs(['T7', L.id + '·A2'])) : null,
+            L && c.has('T7') && c.idx.items.T7.values[L.id + '_dpSkin'] ? _row(c.gas ? 'Pressure drop across S′ (includes D·q; latest test)' : 'Pressure drop across the skin (latest test)', _tv('{dp} at {t}', { dp: c.V('T7', L.id + '_dpSkin'), t: c.V(L.id + '·A2', 'test') }), c.evs(['T7', L.id + '·A2'])) : null,
             _row('PI ratio and production at stake', pi.guard ? _tv('not computable (strongly negative skin)', {}) :
                  _tv('PI ratio {now} now against {base} at the baseline' + (pi.ratioLowerBound ? ' (lower bound)' : '') + '; rate at stake {rate}; extra drawdown at constant rate {dd}; cumulative since the onset {cum}' + (pi.atStakeUpperBound ? ' (upper bounds)' : '') + '; pseudo-steady-state estimate',
                      { now: c.V('T8', 'ratioNow'), base: c.V('T8', 'ratioBase'), rate: c.V('T8', 'rateAtStake'), dd: c.V('T8', 'extraDrawdown_psi'), cum: c.V('T8', 'cumAtStake') }), ['T8']),
-            _row('k stability', _tv('CV {cv} % (limit {lim} %): ' + (ks.stable ? 'stable' : 'not stable') + '; reading {rd}', { cv: c.V('T9', 'cvPct'), lim: c.V('T9', 'cvLimPct'), rd: c.V('T9', 'reading') }), ['T9']),
+            _row('k stability', _tv('CV {cv} % (limit {lim} %): ' + (ks.stable ? 'stable' : 'not stable') + '; reading {rd}', { cv: c.V('T9', 'cvPct'), lim: c.V('T9', 'cvLimPct'), rd: c.V('T9', 'readingText') }), ['T9']),
             _row('Pressure trend', pt.assessable ? _tv((pt.quantity === 'pbar' ? 'average pressure' : 'p*') + ' changes by {sl} per 30 days, scatter {sc}; depletion {dep}', { sl: c.V('T10', 'slopePer30d'), sc: c.V('T10', 'scatter'), dep: c.V('T10', 'depletion') })
                                                  : _tv('depletion cannot be assessed: {why}', { why: c.V('T10', 'reason') }), ['T10']),
             _row('Model-free skin change', _tv('{n} tests checked; {a} agree with the fitted change', { n: c.V('T11', 'n'), a: c.V('T11', 'nAgree') }), ['T11']),
@@ -13667,7 +13830,7 @@ G.WTS_calcRegistry.historian = {
             _row('Mechanical skin', (tr.mech && tr.mech.available) ? _tv('geometric pseudo-skin {sg} (range {lo} to {hi}), pressure-drop basis', { sg: c.V('T14', 'Sgeo'), lo: c.V('T14', 'SgeoLo'), hi: c.V('T14', 'SgeoHi') })
                                                                    : _tv('not available (no completion data): the alerts use total skin', {}), ['T14']),
             _row('Rate-dependent skin', c.gas ? _tv('resolved {r}: D {d} ± {se}', { r: c.V('T15', 'resolved'), d: c.V('T15', 'D'), se: c.V('T15', 'seD') }) : _tv('not assessed for this fluid', {}), ['T15']),
-            _row('Tests excluded as low', (_isNum(low.n) && low.n > 0) ? _tv('{n} low tests excluded, S {lo} to {hi}', { n: c.V('T16', 'n'), lo: c.V('T16', 'Slo'), hi: c.V('T16', 'Shi') }) : _tv('{n} low tests excluded', { n: c.V('T16', 'n') }), ['T16'])
+            _row('Tests excluded as low', (_isNum(low.n) && low.n > 0) ? _tv('{n} low ' + (low.n === 1 ? 'test' : 'tests') + ' excluded, S {lo} to {hi}', { n: c.V('T16', 'n'), lo: c.V('T16', 'Slo'), hi: c.V('T16', 'Shi') }) : _tv('{n} low tests excluded', { n: c.V('T16', 'n') }), ['T16'])
         ];
         b.push(_kv(rowsKv));
         b.push(_alertVerdict(c, 'delta'));
@@ -13677,13 +13840,23 @@ G.WTS_calcRegistry.historian = {
             b.push(_verdict('warn', '⚠ Depletion cannot be assessed (estimated history); the p* range at {t} is {lo} to {hi} against Pb {pb}.',
                             { t: c.V(L.id + '·A2', 'test'), lo: c.V(L.id + '·A2', 'pStarLo'), hi: c.V(L.id + '·A2', 'pStarHi'), pb: c.V('T12', 'pb') }, c.evs(['T10', 'T12', L.id + '·A2'])));
         }
-        b.push(_table('bu_tbl_robust', [{ text: 'Case', cat: null }, { text: 'First test meeting the absolute threshold', cat: null }],
-                      [['S − S_sens', c.V('T3', 'loAt')], ['S', c.V('T3', 'raisedAt')], ['S + S_sens', c.V('T3', 'hiAt')]], ['T3']));
+        // the ± rows hold the trend's reference test (the confirming test once the alert is confirmed, else the raising test):
+        // the S row uses the same reference, so equal rows mean S_sens does not move the alert
+        var absConf = an.trend && an.trend.alerts && an.trend.alerts.absolute && an.trend.alerts.absolute.status === 'confirmed';
+        b.push(_table('bu_tbl_robust', [{ text: 'Case', cat: null }, { text: absConf ? 'First test confirming the absolute alert' : 'First test raising the absolute alert', cat: null }],
+                      [['S − S_sens', c.V('T3', 'loAt')], ['S', c.V('T3', absConf ? 'confirmedAt' : 'raisedAt')], ['S + S_sens', c.V('T3', 'hiAt')]], ['T3']));
         return { id: 'S5', title: 'Trend and alerts', blocks: b };
     }
-    // Daily J_obs and J_pred (display only; T13 basis): p_ref interpolated between the used tests' p_ext.
+    // Daily J_obs and J_pred (display only; T13 basis): the trend's own per-day points when it has them (transient
+    // prediction through the rate history, on the analysis basis), else p_ref interpolated between the used tests' p_ext
+    // with the pseudo-steady-state X.
     function _jSeries(c) {
         var an = c.an, tr = an.trend || {}, days = an.rates ? _arr(an.rates.days) : [];
+        var cat0 = c.gas ? 'gasPI' : 'productivityIndex', pd = tr.piCheck ? _arr(tr.piCheck.days).filter(function (d) { return d && _isNum(d.tDays) && _isNum(d.jObs) && _isNum(d.jPred); }) : [];
+        if (c.fluid !== 'water_inj' && pd.length) {
+            return [_series('J observed', cat0, pd.map(function (d) { return d.tDays; }), pd.map(function (d) { return d.jObs; })),
+                    _series('J predicted', cat0, pd.map(function (d) { return d.tDays; }), pd.map(function (d) { return d.jPred; }))];
+        }
         if (c.fluid === 'water_inj' || !tr.pi || !_isNum(tr.pi.X) || !an.baseline || !_isNum(an.baseline.k) || !_isNum(c.t0)) return null;
         var used = c.tests.filter(function (t) { return t.used && t.used.trend && t.result && t.result.final && _isNum(t.result.final.pExt); });
         if (used.length < 2) return null;
@@ -13771,16 +13944,20 @@ G.WTS_calcRegistry.historian = {
         ['iarfEarliest', 'The IARF window is the earliest plateau after the storage hump, not the longest; the longest qualifying window is reported.', 'I1'],
         ['history', 'With an estimated production history p* is a range and is not used for any trend.', 'R5']
     ];
+    // trend-module limitation codes that repeat a fixed item above (same statement in other words)
+    var LIMIT_SAME = { partialCuts: 'partial', gradient: 'storage', pStarEstimated: 'history' };
+    var NOTE_ROOM = 560;    // text plus " [refs]" per Notes box: the page and the reports never cut a sentence
     function _S8(c) {
         var items = LIMITS.slice(), have = {};
         items.forEach(function (x) { have[x[0]] = 1; });
         _arr(c.an.trend && c.an.trend.limitations).forEach(function (l) {
-            if (!l || have[l.code] || typeof l.text !== 'string' || /\d/.test(l.text) || l.text.indexOf('{') !== -1 || l.text.length > 300) return;
+            if (!l || have[l.code] || (LIMIT_SAME[l.code] && have[LIMIT_SAME[l.code]]) || typeof l.text !== 'string' || /\d/.test(l.text) || l.text.indexOf('{') !== -1 || l.text.length > 300) return;
             have[l.code] = 1; items.push([l.code, l.text, 'T1']);
         });
         var b = [], cur = '', ev = [];
+        var room = function (txt, evs) { var e = c.evs(evs); return txt.length + (e.length ? 3 + e.join(', ').length : 0); };
         items.forEach(function (x) {
-            if (cur && cur.length + 1 + x[1].length > 600) { b.push(_notes('Notes', cur, {}, c.evs(ev))); cur = ''; ev = []; }
+            if (cur && room(cur + ' ' + x[1], ev.concat([x[2]])) > NOTE_ROOM) { b.push(_notes('Notes', cur, {}, c.evs(ev))); cur = ''; ev = []; }
             cur = cur ? cur + ' ' + x[1] : x[1];
             ev.push(x[2]);
         });
@@ -13798,7 +13975,7 @@ G.WTS_calcRegistry.historian = {
         }
         var cn = rv.counts || {};
         var lvl = cn.critical > 0 ? 'bad' : cn.major > 0 ? 'warn' : 'ok';
-        b.push(_verdict(lvl, (lvl === 'ok' ? '✓' : lvl === 'warn' ? '⚠' : '✗') + ' Automated rule-based review: {c} critical, {mj} major, {mn} minor, {sg} suggestions.',
+        b.push(_verdict(lvl, (lvl === 'ok' ? '✓' : lvl === 'warn' ? '⚠' : '✗') + ' Automated rule-based review: {c} critical, {mj} major, {mn} minor, {sg} ' + (cn.suggestion === 1 ? 'suggestion' : 'suggestions') + '.',
                         { c: c.V('V14', 'nCritical'), mj: c.V('V14', 'nMajor'), mn: c.V('V14', 'nMinor'), sg: c.V('V14', 'nSuggestion') }, ['V14']));
         var ec = rv.evidenceCheck || {};
         var v14 = _arr(rv.findings).some(function (f) { return f.rule === 'V14'; });
@@ -13821,7 +13998,7 @@ G.WTS_calcRegistry.historian = {
             var fr = _arr(rv.findings).slice(0, MAX_ROWS).map(function (f) {
                 return _row(f.id + ' · ' + f.rule + ' · ' + f.severity + (f.decision ? ' · ' + f.decision.d : ''), _tv(f.template, f.values), c.evs(_arr(f.ev).length ? f.ev : [f.rule]));
             });
-            if (rv.findings.length > MAX_ROWS) fr.push(_row('More findings', _tv('{n} more findings are listed in the table above.', { n: c.V('V14', 'nMoreFindings') }), ['V14']));
+            if (rv.findings.length > MAX_ROWS) fr.push(_row('More findings', _tv((rv.findings.length - MAX_ROWS === 1 ? '{n} more finding is' : '{n} more findings are') + ' listed in the table above.', { n: c.V('V14', 'nMoreFindings') }), ['V14']));
             b.push(_kv(fr));
         }
         b.push(_notes('Notes', S9_NOTE, {}, ['V14']));
@@ -13853,11 +14030,23 @@ G.WTS_calcRegistry.historian = {
         ];
         if (L) kv.push(_row('Audit chain', _tv('{h} ({f} folded entries)', { h: c.V('V14', 'chainHash'), f: c.V('V14', 'auditFolded') }), ['V14']));
         b.push(_kv(kv));
+        _auditVerdicts(c).forEach(function (v) { b.push(v); });
         b.push(_reproBlock(c));
         return { id: 'S10', title: 'Audit trail and reproducibility', blocks: b };
     }
+    // ⚠ when the stored chain does not verify (an entry edited, removed or damaged after it was written) or an earlier
+    // log could not be read. hash16 has no secret: this catches corruption and naive edits, not a rewritten chain.
+    function _auditVerdicts(c) {
+        var L = c.audit, out = [];
+        if (!L) return out;
+        var vf = _auditVerified(L);
+        if (vf && vf.ok === false) out.push(_verdict('warn', '⚠ Audit trail does not verify at entry #{n}: it was edited or damaged after it was written.', { n: c.V('V14', 'auditBrokenAt') }, ['V14']));
+        if (_obj(L.lost) && typeof L.lost.key === 'string' && L.lost.key) out.push(_verdict('warn', '⚠ An earlier audit trail on this device could not be read; its text is kept as {k} and the entries above start after it.', { k: c.V('V14', 'auditLostKey') }, ['V14']));
+        else if (_obj(L.lost)) out.push(_verdict('warn', '⚠ The audit trail stored on this device could not be read; its text is kept aside, unchanged, at the next audited action and a new trail starts.', {}, ['V14']));
+        return out;
+    }
     function _S11(c, st) {
-        var b = [_statusVerdict(c, st)], so = c.signoff;
+        var b = [_statusVerdict(c, st)].concat(_auditVerdicts(c)), so = c.signoff;
         if (so && so.hash) {
             b.push(_kv([
                 _row('Signed by', _tv('{n} ({r})', { n: c.V('V14', 'signer'), r: c.V('V14', 'role') }), ['V14']),
@@ -13943,6 +14132,41 @@ G.WTS_calcRegistry.historian = {
     var IMP_UNIT = { pressure: 'psi', permeability: 'md', permThickness: 'md·ft', length: 'ft', liquidRate: 'STB/d', gasRateSmall: 'Mscf/d', volume: 'STB', wbStorage: 'bbl/psi',
                      productivityIndex: 'STB/d/psi', gasPI: 'Mscf/d/psi', pressurePerDay: 'psi/d', viscosity: 'cp', compressibility: '1/psi' };
     function _impFmt(v, cat, dp) { return _fixed(v, dp) + (cat && IMP_UNIT[cat] ? ' ' + IMP_UNIT[cat] : ''); }
+    var MONTHS_RE = '(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)';
+    // De-identification: every name the analysis, the review, the sign-off or the page knows of (opts.names: audit and well
+    // names) is replaced as a whole word, any case, from two characters on, longest first. Person names are also replaced
+    // by their parts (three characters or more). Words the export itself uses and evidence / test ids are never treated as names.
+    var SCRUB_STOP = /^(?:well|wells|test|tests|day|days|rate|rates|skin|model|status|review|alert|alerts|used|labels|open|none|accept|reject|note|notes|ok|yes|no|and|or|of|at|by|on|in|to|the|an|is|it|as|be|well a|engineer|reviewer|decision|override|trend|data|gauge|free|text|psi|psia|md|ft|cp|stb|bbl|mscf|day|date|a date)$/i;
+    var SCRUB_ID = /^(?:B\d+|[QDRWILMACUKTVOEFS]\d+|K[LKCH]\d|B\d+·[A-Z]\d+|[+-]?\d+(?:[.,]\d+)?)$/i;
+    function _namesFor(an, review, opts) {
+        var out = [], add = function (s, role) {
+            if (typeof s !== 'string') return;
+            var t = s.replace(/\s+/g, ' ').trim();
+            if (t.length < 2 || SCRUB_STOP.test(t) || SCRUB_ID.test(t)) return;
+            out.push({ s: t, role: role });
+            if (role !== 'well') t.split(' ').forEach(function (p) { p = p.replace(/^[^\w]+|[^\w]+$/g, ''); if (p.length >= 3 && p !== t && !SCRUB_STOP.test(p) && !SCRUB_ID.test(p)) out.push({ s: p, role: role }); });
+        };
+        var m = (an && an.meta) || {};
+        add(m.wellName, 'well');
+        add(m.engineer, 'engineer');
+        _arr(an && an.overrides).forEach(function (o) { if (o) add(o.who, 'person'); });
+        _arr(review && review.findings).forEach(function (f) { if (f && f.decision) add(f.decision.who, 'person'); });
+        if (opts && _obj(opts.signoff)) add(opts.signoff.name, 'person');
+        _arr(opts && opts.names).forEach(function (x) { if (_obj(x)) add(x.s, x.role === 'well' ? 'well' : 'person'); else add(x, 'person'); });
+        return out;
+    }
+    function _scrubNames(text, names) {
+        var seen = {};
+        names.slice().sort(function (a, b) { return b.s.length - a.s.length; }).forEach(function (n) {
+            var key = n.s.toLowerCase();
+            if (seen[key]) return;
+            seen[key] = 1;
+            var esc = n.s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, '\\s+');
+            var rep = n.role === 'well' ? 'Well A' : n.role === 'engineer' ? 'the engineer' : 'a reviewer';
+            text = text.replace(new RegExp('(^|[^A-Za-z0-9_])' + esc + '(?![A-Za-z0-9_])', 'gi'), function (x, pre) { return pre + rep; });
+        });
+        return text;
+    }
     function aiExport(analysis, review, opts) {
         opts = opts || {};
         var deid = opts.deidentify !== false, dates = opts.includeDates === true, free = opts.includeFreeText === true;
@@ -13958,7 +14182,15 @@ G.WTS_calcRegistry.historian = {
             var ms = Date.UTC(+m[1], +m[2] - 1, +m[3]);
             return 'day ' + _fixed((ms - Date.UTC(new Date(t0).getUTCFullYear(), new Date(t0).getUTCMonth(), new Date(t0).getUTCDate())) / 86400000, 0);
         };
-        var undate = function (s) { return dates ? s : _str(s).replace(/\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})?(?: [A-Za-z_/+−-]+)?)?/g, function (x) { return dayOf(x); }); };
+        // ISO dates become day numbers; the other forms the data reader accepts (d/m/y, m/d/y, DD-Mon-YYYY, Mon DD YYYY) are
+        // ambiguous between day and month, so they become "a date".
+        var undate = function (s) {
+            if (dates) return s;
+            return _str(s).replace(/\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})?(?: [A-Za-z_/+−-]+)?)?/g, function (x) { return dayOf(x); })
+                .replace(/(^|[^\d.\/v-])(\d{1,2}[\/.-]\d{1,2}[\/.-](?:\d{4}|\d{2}))(?![\d.\/-]*\d)/g, function (m, pre) { return pre + 'a date'; })
+                .replace(new RegExp('\\b\\d{1,2}(?:st|nd|rd|th)?[ -]?' + MONTHS_RE + '\\.?[ ,-]+\\d{2,4}\\b', 'gi'), 'a date')
+                .replace(new RegExp('\\b' + MONTHS_RE + '\\.? \\d{1,2}(?:st|nd|rd|th)?,? \\d{4}\\b', 'gi'), 'a date');
+        };
         var V = function (id, name) { var v = c.V(id, name); return fmtValue(v, fmt); };
         var fillD = function (tpl, vals) {
             var vv = {};
@@ -13995,7 +14227,7 @@ G.WTS_calcRegistry.historian = {
                  '; absolute alert ' + V('T3', 'status') + ' on ' + V('T3', 'basisText') + (A.absolute && A.absolute.raisedAt ? ' (raised ' + A.absolute.raisedAt + (A.absolute.confirmedAt ? ', confirmed ' + A.absolute.confirmedAt : '') + ')' : '') +
                  ', threshold ' + V('T3', 'threshold') + '.');
         if (tr.onset && _isNum(tr.onset.tauDays)) out.push('Onset about day ' + V('T4', 'tauDays') + ' (interval days ' + V('T4', 'lo') + ' to ' + V('T4', 'hi') + ', ' + V('T4', 'model') + ' model)' + (dates ? ', ' + V('T4', 'date') : '') + '.');
-        out.push('k stability: CV ' + V('T9', 'cvPct') + ' % (limit ' + V('T9', 'cvLimPct') + ' %), reading ' + V('T9', 'reading') + '. Pressure trend: ' +
+        out.push('k stability: CV ' + V('T9', 'cvPct') + ' % (limit ' + V('T9', 'cvLimPct') + ' %), reading ' + V('T9', 'readingText') + '. Pressure trend: ' +
                  (tr.pTrend && tr.pTrend.assessable ? V('T10', 'slopePer30d') + ' per 30 days, depletion ' + V('T10', 'depletion') : 'not assessable') + '.');
         if (tr.pi && !tr.pi.guard) out.push('PI ratio ' + V('T8', 'ratioNow') + ' (baseline ' + V('T8', 'ratioBase') + '); rate at stake ' + V('T8', 'rateAtStake') + '; cumulative since the onset ' + V('T8', 'cumAtStake') + ' (pseudo-steady-state estimates).');
         out.push('');
@@ -14017,9 +14249,7 @@ G.WTS_calcRegistry.historian = {
         out.push('Please review this automated build-up surveillance analysis. Check it for consistency and physical plausibility (permeability, skin and its uncertainty, model choice, rates, alerts). ' +
                  'For each point, cite the evidence ids above. Say which extra data or tests would change the conclusions, and which findings you would accept or reject and why.');
         var text = out.join('\n');
-        if (deid && an.meta) {
-            [an.meta.wellName, an.meta.engineer].forEach(function (s) { if (typeof s === 'string' && s.trim().length >= 4 && s.trim() !== 'Well A') text = text.split(s.trim()).join(s === an.meta.wellName ? 'Well A' : 'the engineer'); });
-        }
+        if (deid) text = _scrubNames(text, _namesFor(an, review, opts));
         if (!free) {
             var drop = [];
             if (an.record && an.record.name) drop.push(an.record.name);
@@ -14175,7 +14405,7 @@ G.WTS_calcRegistry.historian = {
     }
     // B in RB/STB (oil, water) or RB/Mscf (gas: about 0.3 for deep dry gas at high pressure, so its lower bound is 0.3)
     var WELL_RANGES = { h: [1, 2000], phi: [0.01, 0.5], mu: [0.01, 1000], B: [0.5, 5], ct: [1e-7, 1e-3], rw: [0.1, 2] };
-    var B_GAS = [0.3, 5];
+    var B_GAS = [0.3, 5], GAS_SG = [0.55, 3], GAS_TF = [32, 500];   // the page's bu_sg and bu_tres ranges
     function checkWell(w) {
         var bad = [], errs = [];
         if (!w || typeof w !== 'object') return fail('BAD_WELL', ['Well inputs are missing.'], ['well']);
@@ -14185,6 +14415,13 @@ G.WTS_calcRegistry.historian = {
         });
         if (['oil', 'gas', 'water_inj'].indexOf(w.fluid) === -1) { bad.push('fluid'); errs.push('Well type must be oil, gas or water injector.'); }
         if (w.fluid === 'water_inj' && (!isNum(w.Bw) || !isNum(w.muw) || w.Bw <= 0 || w.muw <= 0)) { bad.push('Bw'); errs.push('Water injectors need the water formation volume factor and viscosity.'); }
+        // gas: the gas table (z, μg, Bg, m(p)) needs the gas gravity and the reservoir temperature; never defaulted here
+        // (the page enters its defaults and lists them in well.defaulted, so the labels see them)
+        if (w.fluid === 'gas') {
+            var g = (w.gas && typeof w.gas === 'object') ? w.gas : {};
+            if (!isNum(g.sg) || g.sg < GAS_SG[0] || g.sg > GAS_SG[1]) { bad.push('gas.sg'); errs.push('Gas wells need the gas gravity (air = 1), between ' + GAS_SG[0] + ' and ' + GAS_SG[1] + '.'); }
+            if (!isNum(g.T_F) || g.T_F < GAS_TF[0] || g.T_F > GAS_TF[1]) { bad.push('gas.T_F'); errs.push('Gas wells need the reservoir temperature, between ' + GAS_TF[0] + ' and ' + GAS_TF[1] + ' °F.'); }
+        }
         return bad.length ? fail('BAD_WELL', errs, bad) : null;
     }
 
@@ -14304,16 +14541,20 @@ G.WTS_calcRegistry.historian = {
             defaulted: (w.defaulted || []).filter(function (k) { return typeof k === 'string' && k; })
         };
     }
-    function _gasForSpec(w) {
+    // On the wet-gas-equivalent basis (R7, condensate above 5 %) the gas table uses the recombined well-stream gravity
+    // (rh.phaseBasis.wellStreamSg); sgSeparator keeps the entered value.
+    function _gasForSpec(w, rh) {
         if (w.fluid !== 'gas' || !w.gas) return null;
-        var g = w.gas;
-        return { sg: num(g.sg, 0.65), T_F: num(g.T_F, 200), co2: num(g.co2, 0), h2s: num(g.h2s, 0), n2: num(g.n2, 0), pseudoTime: !!g.pseudoTime,
+        var g = w.gas, pb = rh && rh.phaseBasis, ws = pb && pb.used === 'gasEq' && isNum(pb.wellStreamSg) && pb.wellStreamSg > 0 ? pb.wellStreamSg : null;
+        var o = { sg: ws !== null ? ws : num(g.sg, 0.65), T_F: num(g.T_F, 200), co2: num(g.co2, 0), h2s: num(g.h2s, 0), n2: num(g.n2, 0), pseudoTime: !!g.pseudoTime,
                  pdew: isNum(g.pdew) && g.pdew > 0 ? g.pdew : null };
+        if (ws !== null) { o.sgSeparator = num(g.sg, 0.65); o.sgBasis = 'wellStream'; }
+        return o;
     }
-    function _ovFor(input, test) {
+    function _ovFor(input, test, emap) {
         var o = { window: null, model: null, excludeRivals: [] };
         (input.overrides || []).forEach(function (ov) {
-            if (!ov || (ov.target !== test.id && ov.target !== test.eventId)) return;
+            if (!_ovNames(ov, test.id, test.eventId, emap)) return;
             if (ov.kind === 'window' && ov.value && isNum(+ov.value.dt0_h) && isNum(+ov.value.dt1_h) && +ov.value.dt1_h > +ov.value.dt0_h && +ov.value.dt0_h > 0) o.window = { dt0_h: +ov.value.dt0_h, dt1_h: +ov.value.dt1_h };
             if (ov.kind === 'model' && ['homogeneous', 'linearBoundary', 'composite2', 'closedCircle'].indexOf(ov.value) >= 0) o.model = ov.value;
         });
@@ -14368,12 +14609,12 @@ G.WTS_calcRegistry.historian = {
             rateQC: { source: table ? 'table' : 'allocation', r3: table ? null : fin(be.r3), r3Status: table ? 'n/a' : (be.r3Status || 'unavailable'),
                       r4: null, r4Status: table ? 'n/a' : 'unavailable', dqKnown: Dq > 0, dqSource: table ? 'table' : (be.dqSource || 'closingDay'),
                       equalRateAssumed: !!be.equalRateAssumed, ignoresShutin: !!be.ignoresShutin, allocAccPct: num(w.allocAccPct, 5) },
-            well: _wellForSpec(w, rh), gas: _gasForSpec(w),
+            well: _wellForSpec(w, rh), gas: _gasForSpec(w, rh),
             sigma_psi: num(q.sigmaShut_psi, num(q.sigma_psi, 0)), sigmaFlow_psi: num(q.sigmaFlow_psi, num(q.sigma_psi, 0)),
             sigmaLF_psi: _sigmaLF(bins.dt, bins.p, event.dtEnd_h), dtSample_h: gaps.length ? median(gaps) : 1 / 60,
             driftPsiPerDay: num(w.driftPsiPerDay, 0.01),
             history: { estimated: !!hist.flag, tPrepend_h: num(hist.prepend_h, 0), source: hist.source || 'data' },
-            overrides: o.test ? _ovFor(input, o.test) : { window: null, model: null, excludeRivals: [] },
+            overrides: o.test ? _ovFor(input, o.test, o.emap) : { window: null, model: null, excludeRivals: [] },
             opts: _specOpts(st)
         };
         if (!(spec.dtSample_h > 0)) spec.dtSample_h = 1 / 60;
@@ -14421,6 +14662,48 @@ G.WTS_calcRegistry.historian = {
         if (!ovWarn || !ov || !ov.id) return;
         (ovWarn[ov.id] = ovWarn[ov.id] || []).push(W('OVERRIDE_NOT_APPLIED', 'warn', 'Override ' + ov.id + ' (' + String(ov.kind).replace(/_/g, ' ') + ') was not applied: ' + text, ['D1']));
     }
+    // Event ids (E<n>) are renumbered whenever detection changes (a detection setting, a record re-loaded with an earlier
+    // start), so an override that names an event also carries the closing of that event (value.anchor_ms, written by
+    // the page). An anchored override follows its closing: the live event closing within ±max(10 min, 5·Δt_med) of the
+    // anchor; when there is none it is not applied (OVERRIDE_NOT_APPLIED). Overrides without an anchor (older files, API
+    // callers) use the id.
+    function _isEId(x) { return /^E\d+$/.test(String(x)); }
+    function _anchorOf(ov) {
+        var v = ov && ov.value;
+        return (v && typeof v === 'object' && v.anchor_ms !== null && v.anchor_ms !== '' && isNum(+v.anchor_ms)) ? +v.anchor_ms : NaN;
+    }
+    function _nearestEvent(events, a, tol) {
+        var best = -1, bd = Infinity;
+        (events || []).forEach(function (x, i) { if (!x || x.dropped || !isNum(x.tc_ms)) return; var d = mAbs(x.tc_ms - a); if (d <= tol && d < bd) { bd = d; best = i; } });
+        return best;
+    }
+    function _isoMin(ms) { try { return new Date(ms).toISOString().slice(0, 16).replace('T', ' ') + ' UTC'; } catch (e) { return String(ms); } }
+    // ov.id → the live event id an E-id override names now (null: its closing is no longer detected, or a drop / closing-
+    // time override that was not applied). event_drop and tc: the event adjustEvents marked with the override id.
+    function _eTargets(input, events, tol) {
+        var map = {};
+        _ovList(input).forEach(function (ov) {
+            if (!ov.id || !_isEId(ov.target)) return;
+            if (ov.kind === 'event_drop' || ov.kind === 'tc') {
+                var hit = (events || []).filter(function (e) { return e && (e.overrideIds || []).indexOf(ov.id) >= 0; })[0];
+                map[ov.id] = hit ? hit.id : null;
+                return;
+            }
+            var a = _anchorOf(ov);
+            if (!isNum(a)) { map[ov.id] = ov.target; return; }
+            var i = _nearestEvent(events, a, tol);
+            map[ov.id] = i >= 0 ? events[i].id : null;
+        });
+        return map;
+    }
+    // Does the override name the test (id) or its event (eid, through the anchor map)?
+    function _ovNames(ov, id, eid, emap) {
+        if (!ov || ov.target == null) return false;
+        if (ov.target === id) return true;
+        if (!_isEId(ov.target)) return false;
+        var r = emap && Object.prototype.hasOwnProperty.call(emap, ov.id) ? emap[ov.id] : ov.target;
+        return r != null && r === eid;
+    }
     function _ovValueTime(v, key) {
         if (isNum(+v) && v !== null && v !== '' && typeof v !== 'object') return +v;
         if (v && typeof v === 'object') {
@@ -14440,24 +14723,36 @@ G.WTS_calcRegistry.historian = {
         function live() { return events.filter(function (x) { return x && !x.dropped; }).sort(function (a, b) { return a.tc_ms - b.tc_ms; }); }
         function startOf(x) { return isNum(x.j0) && x.j0 >= 0 && x.j0 < t.length ? t[x.j0] : x.tc_ms; }
         function mark(e, ov) { e.overrideIds = (e.overrideIds || []).concat([ov.id]); }
-        function noEvent(ov) { return /^E\d+$/.test(String(ov.target)) ? 'no event ' + ov.target + ' was detected.' : 'it names no detected event.'; }
+        function noEvent(ov) {
+            var a = _anchorOf(ov);
+            if (isNum(a)) return 'the shut-in it named (' + ov.target + ', closing ' + _isoMin(a) + ') is no longer detected.';
+            return _isEId(ov.target) ? 'no event ' + ov.target + ' was detected.' : 'it names no detected event.';
+        }
+        // the index of the event an event_drop / tc override names: by its anchored closing, else (legacy) by id
+        function targetIdx(ov) {
+            var a = _anchorOf(ov);
+            if (isNum(a)) return _isEId(ov.target) ? _nearestEvent(events, a, tolDup) : -1;
+            var idx = -1;
+            if (_isEId(ov.target)) events.forEach(function (x, i) { if (x && x.id === ov.target) idx = i; });
+            return idx;
+        }
         ovs.forEach(function (ov) {
             if (ov.kind === 'event_drop') {
-                var e = events.filter(function (x) { return x.id === ov.target; })[0];
+                var ie = targetIdx(ov), e = ie >= 0 ? events[ie] : null;
                 if (e) { e.dropped = true; e.status = 'excluded'; mark(e, ov); e.warnings.push(W('EVENT_DROPPED', 'info', 'Removed by override ' + ov.id + '.', ['D1'])); }
                 else _ovWarn(ovWarn, ov, noEvent(ov));
             } else if (ov.kind === 'tc') {
                 var tc = _ovValueTime(ov.value, 'tc_ms');
-                var idx = -1;
-                events.forEach(function (x, i) { if (x.id === ov.target) idx = i; });
-                if (!/^E\d+$/.test(String(ov.target)) || idx < 0) { _ovWarn(ovWarn, ov, noEvent(ov)); return; }
+                var idx = targetIdx(ov);
+                if (idx < 0) { _ovWarn(ovWarn, ov, noEvent(ov)); return; }
                 if (!isNum(tc) || tc < t0 || tc > tN) { _ovWarn(ovWarn, ov, 'the closing time is outside the gauge record.'); return; }
+                var tgt = events[idx];
                 var L = live(), prevE = null, nextE = null;
-                L.forEach(function (x) { if (x.id === ov.target) return; if (x.tc_ms < tc && (!prevE || x.tc_ms > prevE.tc_ms)) prevE = x; if (x.tc_ms > tc && (!nextE || x.tc_ms < nextE.tc_ms)) nextE = x; });
+                L.forEach(function (x) { if (x === tgt) return; if (x.tc_ms < tc && (!prevE || x.tc_ms > prevE.tc_ms)) prevE = x; if (x.tc_ms > tc && (!nextE || x.tc_ms < nextE.tc_ms)) nextE = x; });
                 if (prevE && tc <= prevE.tEnd_ms) { _ovWarn(ovWarn, ov, 'the closing time falls inside the shut-in of ' + prevE.id + '.'); return; }
                 var ne = D.eventAt(record, q, tc, Object.assign({ exact: true, prevEnd_ms: prevE ? prevE.tEnd_ms : null, nextStart_ms: nextE ? startOf(nextE) : null }, opts));
                 if (!ne) { _ovWarn(ovWarn, ov, 'no room before the next shut-in.'); return; }
-                ne.id = ov.target; ne.manual = true; ne.overrideIds = (events[idx].overrideIds || []).concat([ov.id]);
+                ne.id = tgt.id; ne.manual = true; ne.overrideIds = (tgt.overrideIds || []).concat([ov.id]);
                 ne.warnings.push(W('TC_OVERRIDE', 'info', 'Closing time set by override ' + ov.id + '.', ['D2']));
                 events[idx] = ne;
             } else if (ov.kind === 'event_add') {
@@ -14491,12 +14786,18 @@ G.WTS_calcRegistry.historian = {
             if ((ov.kind === 'event_add' || ov.kind === 'event_drop' || ov.kind === 'tc') && !applied[ov.id]) _ovWarn(ovWarn, ov, 'it needs the raw gauge record, which is not loaded.');
         });
     }
-    function _overrideState(input, ids) {
+    // exclude / include state keyed by the test id or the live event id they name (an anchored E-id target through emap;
+    // one whose closing is no longer detected is refused with a warning).
+    function _overrideState(input, emap, ovWarn) {
         var st = {};
         _ovList(input).forEach(function (ov) {
-            if (!ov || !ov.target) return;
-            if (ov.kind === 'exclude') st[ov.target] = { s: 'exclude', ov: ov };
-            else if (ov.kind === 'include') st[ov.target] = { s: 'include', ov: ov };
+            if (!ov || !ov.target || (ov.kind !== 'exclude' && ov.kind !== 'include')) return;
+            var key = ov.target;
+            if (_isEId(key) && emap && Object.prototype.hasOwnProperty.call(emap, ov.id)) {
+                key = emap[ov.id];
+                if (key == null) { _ovWarn(ovWarn, ov, 'the shut-in it named (' + ov.target + (isNum(_anchorOf(ov)) ? ', closing ' + _isoMin(_anchorOf(ov)) : '') + ') is no longer detected.'); return; }
+            }
+            st[key] = { s: ov.kind, ov: ov };
         });
         return st;
     }
@@ -14624,6 +14925,12 @@ G.WTS_calcRegistry.historian = {
         }
         return function (dt) { var v = mLog(dt); for (var j = 0; j < terms.length; j++) v += terms[j].w * (mLog(terms[j].off + dt) - mLog(terms[j].off)); return v; };
     }
+    // A cached result can stand for a fresh one only when it is a whole BuildupResult: a summarised copy (summary:true,
+    // written when the state overflowed) keeps inputHash and pass1 but no bins, quality, storage, reach or models.
+    function _fullResult(r) {
+        return !!(r && typeof r === 'object' && r.ok !== false && !r.summary && r.bins && Array.isArray(r.bins.dt) && r.bins.dt.length &&
+            r.iarf && typeof r.iarf === 'object' && r.storage && typeof r.storage === 'object' && r.quality && r.final);
+    }
     // The stored copy of a BuildupResult drops bins.X and bins.dte (§3.1); they are recomputed from bins.dt and the
     // rehydrated spec's rate steps with the superposition time function, so cached and fresh tests share one time axis.
     function _ensureDte(r, spec) {
@@ -14687,13 +14994,16 @@ G.WTS_calcRegistry.historian = {
     }
 
     // Stable test ids (B<n>). A previous analysis (the cache, or the stored tests) keeps its id for the same closing:
-    // matched by the event id with the closing within tol, then by the closing time within tol, then by the event id
-    // within 6 h (a closing-time override). A previous id is never given to another event, so an override that targets
-    // it can never move to a different build-up. A new test takes B<event number> when that id is free (so a fresh
+    // matched by the event id with the closing within tol, then by the closing time within tol, then — only for an event
+    // moved by a closing-time override — by that override's anchor (the closing it replaced) within tol, or for a legacy
+    // override without an anchor by the event id within 6 h. A previous id is never given to another event, so an
+    // override that targets it can never move to a different build-up. A new test takes B<event number> when that id is free (so a fresh
     // analysis gives the same ids whether or not an earlier event is included), else the next free number.
     function _bNum(id) { var m = /^B(\d+)$/.exec(String(id || '')); return m ? parseInt(m[1], 10) : 0; }
-    function _assignIds(cand, prev, tol) {
-        var out = {}, taken = {}, used = [], maxN = 0, rest = [];
+    function _assignIds(cand, prev, tol, ovList) {
+        var out = {}, taken = {}, used = [], maxN = 0, rest = [], ovById = {};
+        (ovList || []).forEach(function (o) { if (o && o.id && o.kind === 'tc') ovById[o.id] = o; });
+        function tcOvs(e) { return (e.overrideIds || []).map(function (id) { return ovById[id]; }).filter(Boolean); }
         prev = (prev || []).filter(function (p) { return p && _bNum(p.id) > 0; });
         prev.forEach(function (p) { taken[p.id] = 1; });
         function dtc(e, p) { return isNum(p.tc_ms) && isNum(e.tc_ms) ? mAbs(p.tc_ms - e.tc_ms) : Infinity; }
@@ -14707,7 +15017,16 @@ G.WTS_calcRegistry.historian = {
         }
         pass(function (e, p) { var d = dtc(e, p); return p.eventId === e.id && d <= tol ? d : null; });
         pass(function (e, p) { var d = dtc(e, p); return d <= tol ? d : null; });
-        pass(function (e, p) { var d = dtc(e, p); return p.eventId === e.id && d <= 6 * HOUR ? d : null; });
+        pass(function (e, p) {
+            var best = null;
+            tcOvs(e).forEach(function (ov) {
+                var a = _anchorOf(ov), d;
+                if (isNum(a)) d = isNum(p.tc_ms) ? mAbs(p.tc_ms - a) : Infinity;
+                else d = p.eventId === e.id ? dtc(e, p) : Infinity;
+                if (d <= (isNum(a) ? tol : 6 * HOUR) && (best === null || d < best)) best = d;
+            });
+            return best;
+        });
         cand.forEach(function (e) {
             if (out[e.id]) return;
             var en = /^E(\d+)$/.exec(String(e.id)), id = en ? 'B' + parseInt(en[1], 10) : null;
@@ -14793,7 +15112,9 @@ G.WTS_calcRegistry.historian = {
         // Test list, overrides, cap, specs and cache lookup (one unit).
         function buildTests() {
             var rh = scanRes.rates, events = scanRes.events, rec = scanRes.record || X.rec;
-            var ovs = _overrideState(input);
+            var dtMed0 = scanRes.qc && isNum(scanRes.qc.dtMed_s) && scanRes.qc.dtMed_s > 0 ? scanRes.qc.dtMed_s * 1000 : 60000;
+            X.emap = _eTargets(input, events, mMax(10 * 60000, 5 * dtMed0));
+            var ovs = _overrideState(input, X.emap, X.ovWarn);
             var shift = D.depthShift(input.depth);
             tests = [];
             var storedById = {}, evById = {};
@@ -14811,7 +15132,7 @@ G.WTS_calcRegistry.historian = {
             if (!rec) prev = (input.stored.tests || []).filter(Boolean).map(function (x) { return { id: x.id, eventId: x.eventId, tc_ms: evById[x.eventId] ? evById[x.eventId].tc_ms : null }; });
             else if (opts.cache && Array.isArray(opts.cache.tests)) prev = opts.cache.tests.filter(Boolean).map(function (c) { return { id: c.id, eventId: c.eventId, tc_ms: c.tc_ms }; });
             var dtMed = scanRes.qc && isNum(scanRes.qc.dtMed_s) && scanRes.qc.dtMed_s > 0 ? scanRes.qc.dtMed_s * 1000 : 60000;
-            X.idOf = _assignIds(cand, prev, mMax(10 * 60000, 5 * dtMed));
+            X.idOf = _assignIds(cand, prev, mMax(10 * 60000, 5 * dtMed), _ovList(input));
             X.cand = cand; X.ci = 0; X.bt = { rh: rh, rec: rec, ovs: ovs, shift: shift, storedById: storedById, origin: origin };
             X.phase = 'specs';
             return { done: false, progress: 0.26, label: cand.length + ' shut-ins to interpret' };
@@ -14827,13 +15148,13 @@ G.WTS_calcRegistry.historian = {
                     status: 'interpreted', statusReason: e.status !== 'analysable' ? 'Included by override (event status ' + e.status.replace(/_/g, ' ') + ').' : null,
                     spec: null, result: null, used: { baseline: false, trend: false, alert: false }, partialSuspect: false, overrides: []
                 };
-                _ovList(input).forEach(function (ov) { if (ov.target === id || ov.target === e.id) t.overrides.push(ov.id); });
+                _ovList(input).forEach(function (ov) { if (_ovNames(ov, id, e.id, X.emap)) t.overrides.push(ov.id); });
                 var o2 = ovs[id] || ovs[e.id];
                 if (o2 && o2.s === 'exclude') { t.status = 'excluded'; t.statusReason = 'Excluded by override ' + o2.ov.id + ': ' + String(o2.ov.reason || '').slice(0, 200); }
                 // spec
                 var spec, sto;
                 if (rec) {
-                    spec = specFor(e, rec, rh, input, { id: id, origin_ms: origin, settings: st, qc: scanRes.qc, test: t });
+                    spec = specFor(e, rec, rh, input, { id: id, origin_ms: origin, settings: st, qc: scanRes.qc, test: t, emap: X.emap });
                     if (spec.ok === false) { e.warnings.push(W('NOT_INTERPRETED', 'warn', 'Not interpreted: ' + spec.errors.join(' '), ['D5'])); return; }
                     sto = storedSpec(spec, rh, e.tc_ms);
                     if (!sto) { e.warnings.push(W('NOT_INTERPRETED', 'warn', 'Not interpreted: the closing is not in the rate history.', ['R5'])); return; }
@@ -14843,7 +15164,7 @@ G.WTS_calcRegistry.historian = {
                     sto.id = id;
                     // the stage-1 spec never carries R4 (filled in stage 3), so the engine and the cache key see what record mode sees
                     if (sto.rateQC) { sto.rateQC.r4 = null; sto.rateQC.r4Status = rh.mode === 'table' ? 'n/a' : 'unavailable'; }
-                    sto.overrides = _ovFor(input, t);
+                    sto.overrides = _ovFor(input, t, X.emap);
                     sto.opts = _specOpts(st);              // the current interpretation settings, as record mode builds them
                     var org = e.tc_ms - sto.tc_h * HOUR;
                     spec = rehydrate(sto, rh, org);
@@ -14872,7 +15193,8 @@ G.WTS_calcRegistry.historian = {
             _cap(tests, st, input.workovers);
             // cache
             X.cacheMap = {};
-            if (opts.cache && opts.cache.tests) opts.cache.tests.forEach(function (c) { if (c && c.inputHash && c.result && c.pass1) X.cacheMap[c.inputHash] = c; });
+            // only complete results are reused: a stored summary (state overflow, §3.11) has no bins, quality, storage, …
+            if (opts.cache && opts.cache.tests) opts.cache.tests.forEach(function (c) { if (c && c.inputHash && c.pass1 && _fullResult(c.result)) X.cacheMap[c.inputHash] = c; });
             tests.forEach(function (t) { t.inputHash = t._key; applyCache(t); });
             X.phase = 'stage1'; X.i = 0;
             return { done: false, progress: 0.3, label: tests.length + ' build-ups' };
@@ -15096,7 +15418,7 @@ G.WTS_calcRegistry.historian = {
             tests.forEach(function (t) { if (t._used) used[t.id] = true; });
             var rh = scanRes.rates, T = TR(), trend = null;
             var ctx = { well: input.well, completion: input.completion || null, depth: input.depth || null, settings: st, days: rh.days || [], workovers: input.workovers || [],
-                        fluid: input.well.fluid, firstTest_ms: first, mode: rh.mode, phaseBasis: rh.phaseBasis, start: rh.start, historyEstimated: !!(rh.start && rh.start.flag),
+                        fluid: input.well.fluid, firstTest_ms: first, mode: rh.mode, phaseBasis: rh.phaseBasis, start: rh.start, historyEstimated: !!(rh.start && rh.start.flag), steps: rh.steps || [], dayOf: function (ms) { return D.dayOf(ms, zones.day); },
                         baseline: X.baseline, used: used, windowLevelInconsistent: tests.filter(function (t) { return t._wli; }).map(function (t) { return t.id; }) };
             if (T && typeof T.compute === 'function') {
                 try { trend = T.compute(tt, ctx); } catch (e) { trend = null; X.warnings.push(W('TREND_FAILED', 'bad', 'The trend could not be computed: ' + String(e && e.message || e).slice(0, 200), ['T1'])); }
@@ -15129,7 +15451,11 @@ G.WTS_calcRegistry.historian = {
                 t.pExtDatum = f && isNum(f.pExt) ? f.pExt + shift : null;
             });
             var missed = scanRes.missed || D.missed(scanRes.events, [], rh, scanRes.qc, 0);
-            var ps = tests.filter(function (t) { return t.result && isNum(t.result.final.pStar); }).map(function (t) { return t.result.final.pStar - t.pwf0; });
+            // sign-aware: a fall-off (injector) has p* below pwf0, so the size of the change is pwf0 − p* (|p* − pwf|)
+            var ps = tests.filter(function (t) { return t.status === 'interpreted' && t.result && t.result.final && isNum(t.result.final.pStar) && isNum(t.pwf0); }).map(function (t) {
+                var sp = t._spec || t.spec || {}, sg = (sp.testType === 'falloff' || (t._event && t._event.kind === 'falloff')) ? -1 : 1;
+                return sg * (t.result.final.pStar - t.pwf0);
+            });
             if (ps.length && missed.detectability) {
                 var md = median(ps);
                 missed.detectability.pStarMinusPwf_psi = md;
@@ -15244,14 +15570,21 @@ G.WTS_calcRegistry.historian = {
 //
 // PUBLIC API — window.WTS_buildup.store
 //   init() → Promise<{engine:'idb'|'memory'}>
-//   putRaw(wellId, recordOrEncoded) → Promise   getRaw(wellId) → Promise<GaugeRecord|null>
+//   putRaw(wellId, recordOrEncoded) → Promise   getRaw(wellId) → Promise<GaugeRecord|null> (null unless the samples
+//     re-hash to the record's hash, data.recordHash; rec.hashVerified)
 //   putTests(wellId, {[id]:{spec,result}}) → Promise   getTests(wellId) → Promise<object|null>
 //   encode(record) → {origin_ms, tScale_ms, pScale, TScale, n, tB64, pB64, TB64|null, meta}
 //   encodeJob(record) → Job (units of ENCODE_UNIT samples; run through PRiSM_autoInterp.drive)
-//   decode(obj) → GaugeRecord (Float64Array t/p/T)
-//   loadState() → object|null     saveState(state, {wellId}) → {ok, bytes, overflow}
+//   decode(obj) → GaugeRecord (Float64Array t/p/T) | null (n not a sample count, or a stream shorter than n);
+//     header fields come from meta by name and type only
+//   loadState() → object|null     saveState(state, {wellId}) → {ok, bytes, overflow, overflowWrite?: Promise<{ok, engine}>}
 //   stripResult(result) → copy without the recomputable arrays (curves, bins.X, bins.dte)
-//   audit.list() / audit.append(entry) / audit.summary() / audit.verify() / audit.chainHash()
+//   audit.list() / audit.append(entry) → entry|null / audit.summary() / audit.verify() / audit.chainHash()
+//   audit.info() → {state: missing|ok|unreadable, lost} (no chain check)
+//   audit.status() → {state: missing|ok|broken|unreadable, brokenAt, lost, lastRunSeq}; an unreadable log is kept
+//     under wts_buildup_audit_corrupt_<ms> before a new chain (with lost:{at, key, chars}) is started
+//   Project-file import (write) keeps only safe well ids, encoded records of the encoder's shape within RAW_CAP in
+//   total, and plain-object analyses.
 //   wellId(id?) → id || WTS_wells.active() || 'default'
 //   STATE_KEY, AUDIT_KEY, STATE_CAP, AUDIT_CAP, AUDIT_MAX, RAW_CAP, ENCODE_UNIT
 //   _mirror() (tests), _reset() (tests: forget the opened database and the mirror)
@@ -15406,10 +15739,44 @@ G.WTS_calcRegistry.historian = {
             units: Math.max(1, Math.ceil(st.n / ENCODE_UNIT))
         };
     }
+    // n of an encoded record: a non-negative integer up to MAX_N samples (a crafted or damaged entry is refused).
+    var MAX_N = 2e7;
+    function _validN(n) { return typeof n === 'number' && isFinite(n) && n >= 0 && Math.floor(n) === n && n <= MAX_N; }
+    // Base64 length of n int32 values as the encoder writes it (padded): 4·ceil(4n/3).
+    function _b64LenFor(n) { return 4 * Math.ceil(4 * n / 3); }
+    function _b64Consistent(e) {
+        if (!_isEncoded(e) || !_validN(e.n)) return false;
+        var L = _b64LenFor(e.n);
+        if (e.tB64.length !== L || e.pB64.length !== L) return false;
+        return e.TB64 == null || (typeof e.TB64 === 'string' && e.TB64.length === L);
+    }
+    // GaugeRecord header fields copied from meta, by name and type only (never the prototype or unknown keys).
+    var META_TYPES = { ok: 'boolean', source: 'string', name: 'string', pUnitIn: 'string', patm: 'number', elapsed: 'boolean', rollup: 'boolean', hash: 'string' };
+    function _metaCopy(m, rec) {
+        if (!m || typeof m !== 'object') return;
+        Object.keys(META_TYPES).forEach(function (k) {
+            if (!_own(m, k) || typeof m[k] !== META_TYPES[k] || (META_TYPES[k] === 'number' && !isFinite(m[k]))) return;
+            rec[k] = META_TYPES[k] === 'string' ? String(m[k]).slice(0, 400) : m[k];
+        });
+        var z = _own(m, 'zone') ? m.zone : null;
+        if (z && typeof z === 'object' && typeof z.mode === 'string') {
+            var zc = { mode: String(z.mode).slice(0, 16) };
+            if (typeof z.tz === 'string') zc.tz = String(z.tz).slice(0, 64);
+            if (_fin(z.offset_h)) zc.offset_h = z.offset_h;
+            rec.zone = zc;
+        }
+        if (_own(m, 'warnings') && Array.isArray(m.warnings)) {
+            rec.warnings = m.warnings.slice(0, 200).filter(function (w) { return w && typeof w === 'object' && !Array.isArray(w); }).map(function (w) {
+                return { code: String(w.code == null ? '' : w.code).slice(0, 60), level: w.level === 'bad' || w.level === 'warn' ? w.level : 'info',
+                    text: String(w.text == null ? '' : w.text).slice(0, 298), ev: Array.isArray(w.ev) ? w.ev.filter(function (x) { return typeof x === 'string'; }).slice(0, 12) : [] };
+            });
+        }
+    }
     function decode(obj) {
-        if (!obj || typeof obj !== 'object' || !_fin(obj.n)) return null;
-        var n = obj.n, t = new Float64Array(n), p = new Float64Array(n), T = null;
+        if (!obj || typeof obj !== 'object' || !_validN(obj.n)) return null;
         var dt = _bytesInt32(_b64Decode(obj.tB64)), dp = _bytesInt32(_b64Decode(obj.pB64));
+        if (dt.length < obj.n || dp.length < obj.n) return null;    // a truncated stream is not a record
+        var n = obj.n, t = new Float64Array(n), p = new Float64Array(n), T = null;
         var sc = _fin(obj.tScale_ms) ? obj.tScale_ms : 1, ps = _fin(obj.pScale) ? obj.pScale : P_SCALE, o = _fin(obj.origin_ms) ? obj.origin_ms : 0;
         var at = 0, ap = 0, i;
         for (i = 0; i < n && i < dt.length; i++) { at += dt[i]; t[i] = o + at * sc; }
@@ -15419,16 +15786,31 @@ G.WTS_calcRegistry.historian = {
             T = new Float64Array(n);
             for (i = 0; i < n && i < dT.length; i++) { aT += dT[i]; T[i] = Number((aT * Ts).toFixed(6)); }
         }
-        var m = obj.meta || {}, rec = { ok: true, origin_ms: n ? t[0] : o, t: t, p: p, T: T, n: n };
-        for (var k in m) if (_own(m, k) && !_own(rec, k)) rec[k] = m[k];
+        var rec = { ok: true, origin_ms: n ? t[0] : o, t: t, p: p, T: T, n: n };
+        _metaCopy(obj.meta, rec);
         rec.ok = true;
         if (!rec.warnings) rec.warnings = [];
+        return rec;
+    }
+    // A decoded record is used only when its samples re-hash to the hash it carries (WTS_buildup.data.recordHash:
+    // the parser rounds every time to whole ms and the store keeps p to 0.001 psi, so a stored record re-hashes
+    // exactly). rec.hashVerified tells the page the check ran; a mismatch (a truncated or edited entry) → null.
+    function _verifyRec(rec) {
+        if (!rec) return null;
+        var D = B.data;
+        if (!D || typeof D.recordHash !== 'function') { rec.hashVerified = false; return rec; }
+        var h = null;
+        try { h = D.recordHash(rec.t, rec.p); } catch (e) { h = null; }
+        if (!h || h !== rec.hash) return null;
+        rec.hashVerified = true;
         return rec;
     }
     function _encodedChars(e) { return e ? (String(e.tB64 || '').length + String(e.pB64 || '').length + String(e.TB64 || '').length + 512) : 0; }
 
     // ── IndexedDB with a memory mirror ──
-    var _mem = { raw: {}, tests: {} };
+    // Mirror maps have no prototype, so a well id such as '__proto__' from a project file is an ordinary key.
+    function _map() { return Object.create(null); }
+    var _mem = { raw: _map(), tests: _map() };
     var _db = null, _dbP = null, _engine = null;
     function _idb() { try { return G.indexedDB || null; } catch (e) { return null; } }
     function _openDb() {
@@ -15475,7 +15857,7 @@ G.WTS_calcRegistry.historian = {
     function _readAll(db, store) {
         var P = _P();
         return new P(function (res) {
-            var out = {};
+            var out = _map();
             try {
                 var t = db.transaction(store, 'readonly'), s = t.objectStore(store);
                 if (typeof s.getAllKeys !== 'function') { res(out); return; }
@@ -15521,7 +15903,7 @@ G.WTS_calcRegistry.historian = {
             return null;
         });
     }
-    function getRaw(id) { return getRawEncoded(id).then(function (e) { return e ? decode(e) : null; }); }
+    function getRaw(id) { return getRawEncoded(id).then(function (e) { return e ? _verifyRec(decode(e)) : null; }); }
     function putTests(id, obj) {
         id = wellId(id);
         var v = (obj && typeof obj === 'object') ? obj : {};
@@ -15543,7 +15925,7 @@ G.WTS_calcRegistry.historian = {
     }
     function _clear(store) {
         _gen++;
-        _mem[store] = {};
+        _mem[store] = _map();
         return _tx(store, 'readwrite', function (s) { return s.clear(); });
     }
 
@@ -15650,7 +16032,7 @@ G.WTS_calcRegistry.historian = {
         delete c.overflow;
         var txt = _json(c);
         if (txt == null) return { ok: false, bytes: 0, overflow: false };
-        var bytes = _bytes(txt), overflow = false;
+        var bytes = _bytes(txt), overflow = false, overflowWrite = null;
         if (bytes > STATE_CAP && c.analysis && Array.isArray(c.analysis.tests)) {
             // Overflow: per-test arrays and results go to the IndexedDB 'tests' store.
             var parked = {}, ids = [];
@@ -15667,14 +16049,18 @@ G.WTS_calcRegistry.historian = {
                 return tc;
             });
             c.overflow = { wellId: id, tests: ids };
-            putTests(id, parked);
+            // The parked detail is in the mirror at once; overflowWrite resolves {ok, engine} once IndexedDB holds it
+            // (ok:false without IndexedDB or on a failed write: the detail is then lost at the next reload).
+            overflowWrite = putTests(id, parked);
             txt = _json(c);
             bytes = _bytes(txt);
             overflow = true;
             if (bytes > STATE_CAP && Array.isArray(c.qa) && c.qa.length) { c.qa = c.qa.slice(-5); txt = _json(c); bytes = _bytes(txt); }
         }
         var ok = bytes <= STATE_CAP && _write(STATE_KEY, txt);
-        return { ok: ok, bytes: bytes, overflow: overflow };
+        var res = { ok: ok, bytes: bytes, overflow: overflow };
+        if (overflowWrite) res.overflowWrite = overflowWrite;
+        return res;
     }
     function loadState() {
         var ls = _ls();
@@ -15705,13 +16091,19 @@ G.WTS_calcRegistry.historian = {
     }
 
     // ── wts_buildup_audit (append-only chain) ──
-    function _auditRead() {
-        var ls = _ls(), o = null;
-        try { o = ls ? JSON.parse(ls.getItem(AUDIT_KEY) || 'null') : null; } catch (e) { o = null; }
-        if (!o || typeof o !== 'object' || o.v !== 1 || !Array.isArray(o.entries)) o = { v: 1, entries: [], summary: null };
+    // {log, state, raw}: state 'missing' (no log yet), 'ok', or 'unreadable' (text present but not a v1 log: it is
+    // never overwritten in place — auditAppend first keeps it under AUDIT_KEY + '_corrupt_<ms>').
+    function _auditLoad() {
+        var ls = _ls(), raw = null, o = null;
+        try { raw = ls ? ls.getItem(AUDIT_KEY) : null; } catch (e) { raw = null; }
+        if (raw == null || raw === '') return { log: { v: 1, entries: [], summary: null }, state: 'missing', raw: null };
+        try { o = JSON.parse(raw); } catch (e) { o = null; }
+        if (!o || typeof o !== 'object' || o.v !== 1 || !Array.isArray(o.entries)) return { log: { v: 1, entries: [], summary: null }, state: 'unreadable', raw: String(raw) };
         if (!_own(o, 'summary')) o.summary = null;
-        return o;
+        if (_own(o, 'lost') && !(o.lost && typeof o.lost === 'object')) delete o.lost;
+        return { log: o, state: 'ok', raw: null };
     }
+    function _auditRead() { return _auditLoad().log; }
     // The chain uses the review's recipe (WTS_buildup.review.audit.entryHash and GENESIS): hash16(prevHash +
     // canon(entry without hash)) with every numeric leaf serialised exactly first, so canon sorts the keys but rounds
     // nothing and an edit at any digit breaks the chain. The first entry links to GENESIS.
@@ -15744,8 +16136,16 @@ G.WTS_calcRegistry.historian = {
         a.entries = a.entries.slice(nFold);
         return a;
     }
+    // Returns the stored entry, or null when it could not be stored (device storage full, or an unreadable log
+    // whose text could not be kept aside): the caller then changes nothing.
     function auditAppend(entry) {
-        var a = _auditRead();
+        var L = _auditLoad(), a = L.log;
+        if (L.state === 'unreadable') {
+            // Keep the unreadable text as it is, then start a new chain that records the loss for good (S10 shows it).
+            var key = AUDIT_KEY + '_corrupt_' + Date.now();
+            if (!_write(key, L.raw)) return null;
+            a = { v: 1, entries: [], summary: null, lost: { at: new Date().toISOString(), key: key, chars: L.raw.length } };
+        }
         var last = a.entries.length ? a.entries[a.entries.length - 1] : null;
         var prev = last ? last.hash : ((a.summary && a.summary.chainHash) || GENESIS);
         var seq = last ? (last.seq + 1) : ((a.summary && a.summary.toSeq) ? a.summary.toSeq + 1 : 1);
@@ -15767,14 +16167,28 @@ G.WTS_calcRegistry.historian = {
         var ok = txt != null && _write(AUDIT_KEY, txt);
         return ok ? e : null;
     }
-    function auditVerify() {
-        var a = _auditRead(), prev = (a.summary && a.summary.chainHash) || GENESIS;
+    function _verifyLog(a) {
+        var prev = (a.summary && a.summary.chainHash) || GENESIS;
         for (var i = 0; i < a.entries.length; i++) {
             var e = a.entries[i];
-            if (e.prevHash !== prev || _entryHash(prev, e) !== e.hash) return { ok: false, at: e.seq, n: a.entries.length };
+            if (!e || typeof e !== 'object' || e.prevHash !== prev || _entryHash(prev, e) !== e.hash) return { ok: false, at: e && _fin(e.seq) ? e.seq : i + 1, n: a.entries.length };
             prev = e.hash;
         }
         return { ok: true, n: a.entries.length, folded: a.summary ? a.summary.n : 0, chainHash: prev };
+    }
+    function auditVerify() {
+        var L = _auditLoad();
+        if (L.state === 'unreadable') return { ok: false, at: null, n: 0, unreadable: true };
+        return _verifyLog(L.log);
+    }
+    // {state: 'missing'|'ok'|'broken'|'unreadable', brokenAt, lost, lastRunSeq}: brokenAt is the first entry that does
+    // not verify; lost is the record of an earlier unreadable log ({at, key, chars}); lastRunSeq the latest 'run' entry.
+    function auditStatus() {
+        var L = _auditLoad();
+        if (L.state === 'unreadable') return { state: 'unreadable', brokenAt: null, lost: null, lastRunSeq: null };
+        var v = _verifyLog(L.log), lastRun = null;
+        L.log.entries.forEach(function (e) { if (e && e.kind === 'run' && _fin(e.seq)) lastRun = e.seq; });
+        return { state: !v.ok ? 'broken' : (L.state === 'missing' ? 'missing' : 'ok'), brokenAt: v.ok ? null : v.at, lost: L.log.lost || null, lastRunSeq: lastRun };
     }
 
     // ── project-file modules (buildup_raw, buildup_analysis) ──
@@ -15814,16 +16228,25 @@ G.WTS_calcRegistry.historian = {
         if (!any && !omitted.length) return null;
         return { wells: wells, omitted: omitted };
     }
+    // Well ids accepted from a project file: the app's ids ('w1', 'default', …), never a prototype key.
+    var SAFE_ID = /^[A-Za-z0-9_.:-]{1,64}$/, BAD_ID = { '__proto__': 1, 'constructor': 1, 'prototype': 1 };
+    function _safeId(id) { return typeof id === 'string' && SAFE_ID.test(id) && !_own(BAD_ID, id); }
     function _modWrite(store, state) {
         if (state === null) { _loaded[store] = []; _clear(store); return; }
         if (!state || typeof state !== 'object' || !state.wells || typeof state.wells !== 'object') return;
-        var ids = [];
-        for (var id in state.wells) {
-            if (!_own(state.wells, id)) continue;
+        var ids = [], total = 0;
+        Object.keys(state.wells).forEach(function (id) {
+            if (!_safeId(id)) return;
             var v = state.wells[id];
-            if (store === 'raw' && !_isEncoded(v)) continue;
+            if (store === 'raw') {
+                // the shape the encoder writes (n a sample count, base64 lengths of 4·n bytes) and RAW_CAP in total, as on Save
+                if (!_b64Consistent(v)) return;
+                var sz = _encodedChars(v);
+                if (total + sz > RAW_CAP) return;
+                total += sz;
+            } else if (!v || typeof v !== 'object' || Array.isArray(v)) return;
             _mem[store][id] = v; ids.push(id);
-        }
+        });
         _loaded[store] = ids;
         ids.forEach(function (wid) { var v = _mem[store][wid]; _tx(store, 'readwrite', function (s) { return s.put(v, wid); }); });
     }
@@ -15884,7 +16307,10 @@ G.WTS_calcRegistry.historian = {
     S.dropRaw = function (id) { return _drop('raw', wellId(id)); };
     S.dropTests = function (id) { return _drop('tests', wellId(id)); };
     S.hasRaw = function (id) { return _own(_mem.raw, wellId(id)); };
-    S.rawHash = function (id) { var e = _mem.raw[wellId(id)]; return e && e.meta ? e.meta.hash || null : null; };
+    S.rawHash = function (id) {
+        var k = wellId(id), e = _own(_mem.raw, k) ? _mem.raw[k] : null;
+        return (e && e.meta && _own(e.meta, 'hash') && typeof e.meta.hash === 'string') ? e.meta.hash || null : null;
+    };
     S.encode = encode; S.encodeJob = encodeJob; S.decode = decode;
     S.loadState = loadState; S.saveState = saveState; S.rehydrate = rehydrate; S.stripResult = stripResult;
     S.registerModules = registerModules;
@@ -15893,11 +16319,14 @@ G.WTS_calcRegistry.historian = {
         append: auditAppend,
         summary: function () { return _auditRead().summary; },
         verify: auditVerify,
+        status: auditStatus,
+        // without the chain check (cheap, for every render): {state: 'missing'|'ok'|'unreadable', lost}
+        info: function () { var L = _auditLoad(); return { state: L.state, lost: L.log.lost || null }; },
         chainHash: chainHash
     };
     S.engine = function () { return _engine || 'memory'; };
     S._mirror = function () { return _mem; };
-    S._reset = function () { _db = null; _dbP = null; _engine = null; _mem = { raw: {}, tests: {} }; _loaded = { raw: null, tests: null }; };
+    S._reset = function () { _db = null; _dbP = null; _engine = null; _mem = { raw: _map(), tests: _map() }; _loaded = { raw: null, tests: null }; };
 })();
 
 // ─── END 49-calc-buildup-store ─────────────────────────────────────────────
@@ -17240,6 +17669,8 @@ G.WTS_calcRegistry.historian = {
         if (!(qCorrect > 0)) qCorrect = qTrue;
         var f = qCorrect / qTrue, g = SC.given;
         var Stest = SC.SmechAt(tc - 1e-6) + (res.D || 0) * qTrue;
+        // f is the closing-day factor only; the engine superposes the given rate on every day, so the input-consistent k lies
+        // between k and f·k and this truth overstates the expected k error by up to |f − 1| (plan §5.3 calibration note).
         var kStar = f * res.k * (g.B / res.B0) * (g.mu / res.mu0) * (res.h / g.h);
         var inTerm = 1.1513 * MM.log10((g.h / res.h) * (g.phi / res.phi) * (g.ct / res.ct)) + 2.3026 * MM.log10(g.rw / res.rw) - 1.1513 * MM.log10((g.B / res.B0) * f);
         // Gas (§4.6 item 1, "μ·ct at the build-up average pressure"): the engine takes μ from its own table at
@@ -18520,6 +18951,7 @@ G.WTS_calcRegistry.historian = {
     bubbleMargin: 100, gradTol: 0.2, spearmanMin: 0.7, spearmanN: 4,
     piLo: 0.8, piHi: 1.25,
     qRatioMin: 1.5, maxDays: 60, collinearCorr: 0.8, dSeMin: 2,
+    dSeStrong: 3,                  // a D outside the expected range is used only with D/se ≥ 3
     agreeMin: 0.3,                 // model-free ΔS agreement: max(0.3, S_err)
     workoverDrop: 2,               // skin drop between consecutive used tests that suggests an intervention
     weightFloor: 0.05,             // S_err floor for 1/S_err² weights
@@ -18559,6 +18991,25 @@ G.WTS_calcRegistry.historian = {
     return isFinite(d.getTime()) && d.toISOString().slice(0, 10) === s;
   }
   function dateOf(ms) { return (fin(ms) && Math.abs(ms) < 8.64e15) ? new Date(ms).toISOString().slice(0, 10) : null; }
+  // Production-day label of a UTC instant (onset and forecast dates, like the tests' own dates): ctx.dayOf (run passes
+  // the resolved day zone and start hour) when given, else the ctx.days interval holding it, else the last day's start
+  // offset carried forward (dates beyond the data), else the UTC date.
+  function dayLabeler(ctx) {
+    if (isObj(ctx) && typeof ctx.dayOf === 'function') {
+      return function (ms) { if (!fin(ms)) return null; try { var d = ctx.dayOf(ms); return validDate(d) ? d : dateOf(ms); } catch (e) { return dateOf(ms); } };
+    }
+    var days = (isObj(ctx) && Array.isArray(ctx.days) ? ctx.days : []).filter(function (d) { return isObj(d) && fin(d.t0_ms) && fin(d.t1_ms) && d.t1_ms > d.t0_ms && validDate(d.date); })
+      .slice().sort(function (a, b) { return a.t0_ms - b.t0_ms; });
+    if (!days.length) return dateOf;
+    var last = days[days.length - 1];
+    var shift = Date.UTC(+last.date.slice(0, 4), +last.date.slice(5, 7) - 1, +last.date.slice(8, 10)) - last.t0_ms;
+    return function (ms) {
+      if (!fin(ms)) return null;
+      var lo = 0, hi = days.length - 1;
+      while (lo <= hi) { var md = (lo + hi) >> 1, d = days[md]; if (ms < d.t0_ms) hi = md - 1; else if (ms >= d.t1_ms) lo = md + 1; else return d.date; }
+      return dateOf(ms + shift);
+    };
+  }
   function ruleOf(fluid) { return fluid === 'gas' ? 'gas' : fluid === 'water_inj' ? 'inj' : 'oil'; }
   function volUnit(qUnit) { return qUnit === 'Mscf/d' ? 'Mscf' : qUnit === 'bbl/d' ? 'bbl' : 'STB'; }
   function fmtNum(x, dp) { return fin(x) ? x.toFixed(dp) : ''; }
@@ -18862,6 +19313,25 @@ G.WTS_calcRegistry.historian = {
   function itemDate(it) { return validDate(it.date) ? it.date : dateOf(it.t_ms); }
   function itemLabel(it) { var c = isObj(it.conf) ? it.conf.ks : null; return RANK.hasOwnProperty(c) ? c : 'medium'; }
 
+  // Baseline stability (§4.7; WP9): χ² = Σ (S_i − S̄)²/S_err,i² above χ²(n − 1) at 95 % (5.99 for 3 tests), S̄ the
+  // 1/S_err²-weighted mean, S_err floored at DEFAULTS.weightFloor, compared at 0.001 (D27). The earlier rule (range >
+  // 2·max S_err) fired on a third to a half of constant-skin baselines with 3 tests.
+  var CHI2_95 = [3.841, 5.991, 7.815, 9.488, 11.070, 12.592, 14.067, 15.507, 16.919, 18.307];
+  function chi2q95(df) {
+    if (df <= CHI2_95.length) return CHI2_95[df - 1];
+    var a = 2 / (9 * df);
+    return df * Math.pow(1 - a + 1.6449 * Math.sqrt(a), 3);                   // Wilson–Hilferty
+  }
+  function baseUnstable(S, E) {
+    var n = S.length;
+    if (n < 2) return false;
+    var w = E.map(function (e) { var x = Math.max(fin(e) ? e : 0, DEFAULTS.weightFloor); return 1 / (x * x); });
+    var sw = 0, sy = 0, i;
+    for (i = 0; i < n; i++) { sw += w[i]; sy += w[i] * S[i]; }
+    var mean = sy / sw, chi = 0;
+    for (i = 0; i < n; i++) chi += w[i] * (S[i] - mean) * (S[i] - mean);
+    return r3(chi) > r3(chi2q95(n - 1));
+  }
   function baseline(series, n, opts) {
     n = Math.max(1, Math.floor(fin(n) ? n : DEFAULTS.baseN));
     var wo = sortedWorkovers(opts);
@@ -18882,7 +19352,7 @@ G.WTS_calcRegistry.historian = {
         seg: s, from: s === 0 ? itemDate(list[0]) : wo[s - 1], S: Sb,
         sigma: Math.max(median(E), 1.4826 * m / Math.sqrt(base.length)),
         tests: base.map(function (it) { return String(it.id); }),
-        unstable: hund(maxOf(S) - minOf(S)) > hund(2 * maxOf(E)),                 // range > 2·max S_err (D27)
+        unstable: baseUnstable(S, E),                                            // χ² test at 95 % (WP9)
         provisional: base.length < DEFAULTS.baseMinTests || base.some(function (it) { return it.kHeld === true; }),
         k: kMed, cvK: (kMed && kArr.length) ? 1.4826 * madAbout(kArr, kMed) / kMed : null, kh: khArr.length ? median(khArr) : null,
         n: base.length
@@ -19048,6 +19518,8 @@ G.WTS_calcRegistry.historian = {
         robustness: { lo: refOf(lo) || null, hi: refOf(hi) || null, unchanged: (refOf(lo) || null) === (nom || null) && (refOf(hi) || null) === (nom || null) },
         ev: ['T3']
       };
+      // dqIncluded (extra key, only when true): gas with D not resolved — the 'mechanical' skin still contains D·q
+      if (P.dqIncluded) res.absolute.dqIncluded = true;
     }
     // onset (T4): hinge regression with weights 1/S_err², CUSUM confirmation
     var tt = cur.map(function (r) { return r.td; }), yy = cur.map(function (r) { return val(r).S; });
@@ -19059,7 +19531,7 @@ G.WTS_calcRegistry.historian = {
     res.H = H;
     res.onset = {
       tauDays: tau, interval: tau !== null && H.interval ? [H.interval[0], H.interval[1]] : null,
-      date: tau !== null ? dateOf(P.first_ms + tau * DAY_MS) : null, model: H.model || 'constant', shape: H.shape || null,
+      date: tau !== null ? P.dayLabel(P.first_ms + tau * DAY_MS) : null, model: H.model || 'constant', shape: H.shape || null,
       cusum: { alarmAt: C.alarm !== null ? cur[C.alarm].id : null, onsetAt: C.onset !== null ? cur[C.onset].id : null },
       indicative: cur.length < 6, ev: ['T4']
     };
@@ -19122,14 +19594,69 @@ G.WTS_calcRegistry.historian = {
     var tEarly = kHi > 0 ? tLast + (target - sFit) / TS.hi : null;
     var tLate = kLo > 0 ? tLast + (target - sFit) / TS.lo : null;
     f.show = true;
-    f.date = dateOf(P.first_ms + tc * DAY_MS);
-    f.earliest = tEarly !== null ? dateOf(P.first_ms + tEarly * DAY_MS) : null;
-    f.latest = tLate !== null && !beyond(tLate) ? dateOf(P.first_ms + tLate * DAY_MS) : null;
+    f.date = P.dayLabel(P.first_ms + tc * DAY_MS);
+    f.earliest = tEarly !== null ? P.dayLabel(P.first_ms + tEarly * DAY_MS) : null;
+    f.latest = tLate !== null && !beyond(tLate) ? P.dayLabel(P.first_ms + tLate * DAY_MS) : null;
     f.reason = 'Sen-slope extrapolation of the recent skin trend to the absolute threshold (S − S_err = ' + fmtNum(P.ts.abs, 1) +
       '); the range comes from the 95 % slope bounds' + (f.latest ? '.' : tLate === null ? '; the late end is open (the lower slope bound is not above zero).' :
       ' and its late end lies beyond the forecast horizon.');
     f.tDays = tc;
     return f;
+  }
+
+  // S′ = S + D·q by weighted least squares (weights 1/S_err², floor DEFAULTS.weightFloor) over [{q, Sap, E}];
+  // → {S, D, c00, c01, c11} (covariance inflated by max(1, χ²/dof)) or null when D is not identifiable.
+  function fitSD(list) {
+    var n = list.length, Sw = 0, Sq = 0, Sqq = 0, Sy = 0, Sqy = 0;
+    if (n < 2) return null;
+    var wOf = function (r) { var e = Math.max(fin(r.E) ? r.E : 0, DEFAULTS.weightFloor); return 1 / (e * e); };
+    list.forEach(function (r) { var w = wOf(r); Sw += w; Sq += w * r.q; Sqq += w * r.q * r.q; Sy += w * r.Sap; Sqy += w * r.q * r.Sap; });
+    var det = Sw * Sqq - Sq * Sq;
+    if (!(det > 1e-9 * Sw * Sqq)) return null;
+    var D = (Sw * Sqy - Sq * Sy) / det, S = (Sy - D * Sq) / Sw, chi = 0;
+    list.forEach(function (r) { var res = r.Sap - S - D * r.q; chi += wOf(r) * res * res; });
+    var infl = n > 2 ? Math.max(1, chi / (n - 2)) : 1;
+    return { S: S, D: D, c00: infl * Sqq / det, c01: -infl * Sq / det, c11: infl * Sw / det };
+  }
+  // T15 rows (gas): the stable part of the current segment, never tests after a skin change. cur: the segment's used
+  // tests in time order ({id, td, q, Sap, E}); baseIds: its baseline tests.
+  //  1. seed: the leading tests up to the last baseline test, extended in time order until the rates differ by ≥ 1.5×;
+  //  2. S′ = S + D·q by weighted least squares on the kept tests; each later test is kept while its S′ lies within
+  //     2·√(S_err² + se_pred²) of the prediction (refit after each kept test). The first test that departs is the onset:
+  //     it and every later test are left out;
+  //  3. Mann–Kendall and Sen on the rate-corrected S′ − D̂·q of the kept tests (a rate-alternating S′ hides a rise in the
+  //     raw values): a significant trend falls back to the seed.
+  // → {rows, stable: true once the rows were checked (null: one rate level or fewer than 3 tests, rateSkin decides),
+  //    onset: id|null, seedN}
+  function stableRateRows(cur, baseIds) {
+    var list = (Array.isArray(cur) ? cur : []).filter(function (r) { return isObj(r) && fin(r.Sap) && pos(r.q) && fin(r.td); });
+    var out = { rows: list.slice(), stable: null, onset: null, seedN: 0 };
+    if (list.length < 3) return out;
+    var bset = {}, lastB = -1;
+    (Array.isArray(baseIds) ? baseIds : []).forEach(function (id) { bset[id] = true; });
+    list.forEach(function (r, i) { if (bset[r.id]) lastB = i; });
+    var ratio = function (n) { var qs = list.slice(0, n).map(function (r) { return r.q; }); return maxOf(qs) / minOf(qs); };
+    var k = Math.min(list.length, Math.max(2, lastB + 1));
+    while (k < list.length && !(ratio(k) >= DEFAULTS.qRatioMin)) k++;
+    var fit = ratio(k) >= DEFAULTS.qRatioMin ? fitSD(list.slice(0, k)) : null;
+    if (!fit) return out;
+    out.seedN = k;
+    var n = k;
+    for (; n < list.length; n++) {
+      var r = list[n], pred = fit.S + fit.D * r.q, vp = Math.max(0, fit.c00 + 2 * r.q * fit.c01 + r.q * r.q * fit.c11);
+      var e = Math.max(fin(r.E) ? r.E : 0, DEFAULTS.weightFloor);
+      if (Math.abs(r.Sap - pred) > 2 * Math.sqrt(e * e + vp)) { out.onset = String(r.id); break; }
+      fit = fitSD(list.slice(0, n + 1)) || fit;
+    }
+    var kept = list.slice(0, n);
+    if (kept.length > k && kept.length >= 3) {
+      var y = kept.map(function (x) { return x.Sap - fit.D * x.q; }), t = kept.map(function (x) { return x.td; });
+      var mk = mannKendall(y), tsn = theilSen(t, y);
+      var trend = !!(mk && ((fin(mk.p) && r3(mk.p) < DEFAULTS.mkAlpha) || (tsn && fin(tsn.lo) && fin(tsn.hi) && (s30(tsn.lo) > 0 || s30(tsn.hi) < 0))));
+      if (trend) { kept = list.slice(0, k); if (!out.onset) out.onset = String(list[k] ? list[k].id : '') || null; }
+    }
+    out.rows = kept; out.stable = true;
+    return out;
   }
 
   function computeTrend(tests, ctx) {
@@ -19148,6 +19675,9 @@ G.WTS_calcRegistry.historian = {
     var allocAccPct = fin(well.allocAccPct) ? well.allocAccPct : 5;
     var days = Array.isArray(ctx.days) ? ctx.days.filter(isObj) : [];
     var mech0 = skinFn('mechanicalSkin'), rateFn = skinFn('rateSkin'), prodFn = skinFn('products');
+    // gas gravity: the recombined well stream on the wet-gas-equivalent basis (R7), as the engine used it, else the entry
+    var pbIn = isObj(ctx.phaseBasis) ? ctx.phaseBasis : {};
+    var gasSg = pbIn.used === 'gasEq' && pos(pbIn.wellStreamSg) ? pbIn.wellStreamSg : (isObj(well.gas) && pos(well.gas.sg) ? well.gas.sg : null);
     var skinMissing = !mech0 || !rateFn || !prodFn;
 
     // ── enabled (TR14) ──
@@ -19174,7 +19704,7 @@ G.WTS_calcRegistry.historian = {
 
     // ── gas only: the current segment and its baseline on the reported skin S′ (rate-skin row selection) ──
     var valRep = function (r) { return { S: kind === 'gas' ? r.Sap : r.S, E: r.E }; };
-    var base = { recs: recs, ts: ts, wo: wo, form: form, enabled: enabled, first_ms: first_ms, sSens: sSensOfList };
+    var base = { recs: recs, ts: ts, wo: wo, form: form, enabled: enabled, first_ms: first_ms, sSens: sSensOfList, dayLabel: dayLabeler(ctx) };
     var A = { B: { tests: [] }, cur: [] };
     if (kind === 'gas') {
       A.B = baseline(recs.map(function (r) {
@@ -19192,18 +19722,15 @@ G.WTS_calcRegistry.historian = {
     if (kind !== 'gas') {
       rate.reason = kind === 'inj' ? 'Water injector: rate-dependent skin is not assessed.' : 'Oil well: rate-dependent skin is not assessed.';
     } else {
-      // rows: the current segment's used tests when S′ shows no significant time trend (two-sided Mann–Kendall
-      // p ≥ 0.10 and a Sen interval that contains 0); otherwise only its baseline tests. rateSkin applies the
-      // ≤ 60-day window and the q ratio itself. (A rate-alternating S′ is not a time trend, so it is kept.)
-      var segT = A.cur.map(function (r) { return r.td; }), segS = A.cur.map(function (r) { return r.Sap; });
-      var segMK = A.cur.length >= 3 ? mannKendall(segS) : null, segTS = A.cur.length >= 3 ? theilSen(segT, segS) : null;
-      var segTrend = !!(segMK && ((fin(segMK.p) && r3(segMK.p) < DEFAULTS.mkAlpha) || (segTS && fin(segTS.lo) && fin(segTS.hi) && (s30(segTS.lo) > 0 || s30(segTS.hi) < 0))));
-      var stable = segTrend ? A.cur.filter(function (r) { return A.B.tests.indexOf(r.id) !== -1; }) : A.cur.slice();
-      var rows = stable.filter(function (r) { return pos(r.q); }).map(function (r) { return { id: r.id, t_days: r.td, q: r.q, S: r.Sap, Serr: r.E }; });
+      // rows: the stable part of the current segment only (stableRateRows: the baseline seed, the later tests while S′
+      // stays on S + D̂·q, a Mann–Kendall check on the rate-corrected S′ − D̂·q), so D never comes from tests after a
+      // skin change. rateSkin applies the ≤ 60-day window (the earliest: the baseline) and the q ratio itself.
+      var sel = stableRateRows(A.cur.filter(function (r) { return pos(r.q); }), A.B.tests);
+      var rows = sel.rows.map(function (r) { return { id: r.id, t_days: r.td, q: r.q, S: r.Sap, Serr: r.E }; });
       var cmp = isObj(ctx.completion) ? ctx.completion : null;
-      var opts = { qRatioMin: DEFAULTS.qRatioMin, maxDays: DEFAULTS.maxDays, joint: true,
+      var opts = { qRatioMin: DEFAULTS.qRatioMin, maxDays: DEFAULTS.maxDays, joint: true, stable: sel.stable, window: 'earliest',
                    expected: { k: isObj(ctx.baseline) && pos(ctx.baseline.k) ? ctx.baseline.k : A.B.k, h: h, hp: cmp && pos(cmp.hp_ft) ? cmp.hp_ft : h, rw: rw,
-                               sg: isObj(well.gas) ? well.gas.sg : null, mu_g: well.mu } };
+                               sg: gasSg, mu_g: well.mu } };
       var rs = rateFn ? safeCall(rateFn, [rows, opts], warnings, 'RATE_SKIN', 'T15') : null;
       var corr = rows.length >= 3 ? pearson(rows.map(function (x) { return x.q; }), rows.map(function (x) { return x.t_days; })) : null;
       var expectedDRange = null;
@@ -19213,7 +19740,7 @@ G.WTS_calcRegistry.historian = {
         // alone gives its geometric centre (the arithmetic midpoint when a bound is not positive).
         var ed = rs.expectedD;
         var centre = function (lo, hi) { return lo > 0 && hi > 0 ? Math.sqrt(lo * hi) : 0.5 * (lo + hi); };
-        if (fin(ed)) expectedD = ed;
+        if (fin(ed)) { expectedD = ed; if (isObj(rs.expectedDRange) && fin(rs.expectedDRange.lo) && fin(rs.expectedDRange.hi)) expectedDRange = [rs.expectedDRange.lo, rs.expectedDRange.hi]; }
         else if (Array.isArray(ed) && fin(ed[0]) && fin(ed[1])) { expectedDRange = [ed[0], ed[1]]; expectedD = centre(ed[0], ed[1]); }
         else if (isObj(ed)) {
           if (fin(ed.lo) && fin(ed.hi)) expectedDRange = [ed.lo, ed.hi];
@@ -19223,10 +19750,19 @@ G.WTS_calcRegistry.historian = {
       if (!rateFn) rate.reason = 'The PRiSM skin module is not loaded: S′ is the apparent skin including D·q.';
       else if (corr !== null && Math.abs(corr) >= DEFAULTS.collinearCorr) {
         rate.reason = 'Rate and time are collinear in these tests (|r| = ' + fmtNum(Math.abs(corr), 2) + '): D cannot be separated from a skin trend; S′ is the apparent skin including D·q.';
+      } else if (rs && rs.resolved === true && fin(rs.D) && pos(rs.seD) && Math.abs(rs.D) / rs.seD >= DEFAULTS.dSeMin && (!fin(rs.qRatio) || rs.qRatio >= DEFAULTS.qRatioMin) &&
+                 rs.consistent === false && Math.abs(rs.D) / rs.seD < DEFAULTS.dSeStrong) {
+        // outside the expected-D range and not strong: withheld (a wrong D would shift every corrected and mechanical skin)
+        rate.reason = 'D = ' + rs.D.toExponential(2) + ' (D/se ' + fmtNum(Math.abs(rs.D) / rs.seD, 1) + ') lies outside the expected range' +
+          (expectedDRange ? ' (' + expectedDRange[0].toExponential(1) + ' to ' + expectedDRange[1].toExponential(1) + ')' : '') + ' with D/se below ' + DEFAULTS.dSeStrong +
+          ': not used; S′ is the apparent skin including D·q.';
+        warnings.push({ code: 'RATE_SKIN_WITHHELD', level: 'warn', text: 'The fitted rate-dependent skin D is outside the expected range and not strong enough (D/se < ' + DEFAULTS.dSeStrong + '): the D·q correction is not applied.', ev: ['T15'] });
       } else if (rs && rs.resolved === true && fin(rs.D) && pos(rs.seD) && Math.abs(rs.D) / rs.seD >= DEFAULTS.dSeMin && (!fin(rs.qRatio) || rs.qRatio >= DEFAULTS.qRatioMin)) {
         rate.resolved = true; rate.S = nn(rs.S); rate.D = rs.D; rate.seD = rs.seD; Dres = rs.D; seDres = rs.seD;
-        rate.reason = 'D resolved from ' + rows.length + ' tests in a stable-skin segment (' + (fin(rs.qRatio) ? 'q ratio ' + fmtNum(rs.qRatio, 2) + ', ' : '') +
-          'D/se ' + fmtNum(Math.abs(rs.D) / rs.seD, 1) + ').';
+        var rsIds = Array.isArray(rs.ids) ? rs.ids.filter(goodId).map(String) : [], nRs = fin(rs.n) ? rs.n : rsIds.length;
+        rate.reason = ('D resolved from ' + nRs + ' tests' + (rsIds.length ? ' (' + (rsIds.length > 2 ? rsIds[0] + '–' + rsIds[rsIds.length - 1] : rsIds.join(', ')) + ')' : '') +
+          ' in a stable-skin segment (' + (fin(rs.qRatio) ? 'q ratio ' + fmtNum(rs.qRatio, 2) + ', ' : '') + 'D/se ' + fmtNum(Math.abs(rs.D) / rs.seD, 1) + ').' +
+          (sel.onset ? ' Tests from ' + sel.onset + ' on are left out: their S′ departs from S + D·q.' : '')).slice(0, 298);
       } else {
         var why = rs && typeof rs.reason === 'string' && rs.reason && rs.reason.length < 200 ? rs.reason : '';
         rate.reason = /apparent skin/.test(why) ? why : (why ? why + ' ' : '') + 'S′ is the apparent skin including D·q.';
@@ -19270,7 +19806,7 @@ G.WTS_calcRegistry.historian = {
     var lowAbsVal = absVal;
 
     // ── pass B: alerts, onset, recent, forecast on the alert basis ──
-    var P = Object.assign({}, base, { val: valAl, absVal: absVal, lowAbsVal: lowAbsVal, absBasis: absBasis });
+    var P = Object.assign({}, base, { val: valAl, absVal: absVal, lowAbsVal: lowAbsVal, absBasis: absBasis, dqIncluded: kind === 'gas' && absBasis === 'mechanical' && !corrected });
     var R = seriesPass(P);
     var B = R.B, segEmpty = R.segEmpty;
     var baseIds = {}; B.segments.forEach(function (g) { g.tests.forEach(function (id) { baseIds[id] = true; }); });
@@ -19315,22 +19851,37 @@ G.WTS_calcRegistry.historian = {
     var cumFrom = tauCum === null ? null : tau !== null ? 'onset' : 'baselineEnd';
 
     // ── T7 Δp across the skin ──
+    // gas: the drop is across S′ (D·q included); with D resolved the D·q share is split off (dpDq_psi, extra key; the
+    // pseudo-pressure drop is linear in the skin, so the share is D·q/S′ of it)
     var skinDp = recs.filter(function (r) { return fin(r.S); }).map(function (r) {
       var t = r.t, v = fin(t.dpSkin_psi) ? t.dpSkin_psi : (fin(t.m) ? 0.8686 * t.m * r.S : null);
-      return { id: r.id, dpSkin_psi: v };
+      var o = { id: r.id, dpSkin_psi: v };
+      if (kind === 'gas' && corrected && fin(v) && fin(r.Sap) && r.Sap !== 0 && fin(r.q)) o.dpDq_psi = v * Dres * r.q / r.Sap;
+      return o;
     });
 
     // ── T8 PI ratio and production at stake (pseudo-steady-state estimates) ──
     var rinvMax = maxOf(used.map(function (r) { return pos(r.t.rinv_ft) ? r.t.rinv_ft : null; }));
     var reSource = pos(well.re_ft) ? 'input' : 'rinv', re = pos(well.re_ft) ? well.re_ft : rinvMax;
-    // B and μ from the well inputs (Bw and μw for injectors), as §4.7 writes 141.2·qBμ·ΔS/kh and J_pred
-    var B_ = fluid === 'water_inj' ? (pos(well.Bw) ? well.Bw : 1) : (pos(well.B) ? well.B : 1);
-    var mu_ = fluid === 'water_inj' ? (pos(well.muw) ? well.muw : 1) : (pos(well.mu) ? well.mu : 1);
+    // B and μ on the analysis basis, as the engine used them (run _wellForSpec): the total reservoir rate (R7, q in RB/d)
+    // with B = 1 and the oil viscosity; injectors Bw and μw; gas the engine's Bg_ref·μ_ref, recovered from the latest
+    // test's m = 162.6·q·B·μ/(k·h) (the stated μ kept, B the factor that matches it); oil B and μ. §4.7 141.2·qBμ·ΔS/kh, J_pred.
+    var totalBasis = isObj(ctx.phaseBasis) && ctx.phaseBasis.used === 'total';
+    var bmuOfTest = function (r) { return r && pos(r.t.m) && pos(r.k) && h && pos(r.t.Dq) ? r.t.m * r.k * h / (162.6 * r.t.Dq) : null; };
+    var B_, mu_, bmuSource = 'input';
+    if (kind === 'inj') { B_ = pos(well.Bw) ? well.Bw : 1; mu_ = pos(well.muw) ? well.muw : 1; }
+    else {
+      mu_ = pos(well.mu) ? well.mu : 1;
+      B_ = totalBasis ? 1 : (pos(well.B) ? well.B : 1);
+      if (totalBasis) bmuSource = 'totalRate';
+      var bmE = kind === 'gas' ? bmuOfTest(latestUsed) : null;
+      if (pos(bmE)) { B_ = bmE / mu_; bmuSource = 'engine'; }
+    }
     var bmuWell = B_ * mu_;
     var qUnit = latestUsed && latestUsed.t.qUnit ? latestUsed.t.qUnit : (kind === 'gas' ? 'Mscf/d' : kind === 'inj' ? 'bbl/d' : 'STB/d');
     var pi = { X: null, re_ft: nn(re), reSource: reSource, ratioNow: null, ratioBase: null, ratioLowerBound: reSource === 'rinv',
                rateAtStake: null, rateUnit: qUnit, extraDrawdown_psi: null, cumAtStake: null, cumUnit: volUnit(qUnit),
-               atStakeUpperBound: reSource === 'rinv', value: null, guard: false, cumFrom: null, cumFromDays: null, ev: ['T8'] };
+               atStakeUpperBound: reSource === 'rinv', value: null, guard: false, cumFrom: null, cumFromDays: null, B: nn(B_), mu: nn(mu_), bmuSource: bmuSource, ev: ['T8'] };
     // gas with D resolved: the X + S terms use S + D·q at the rate in question
     var effS = function (Sc, q) { return corrected && fin(q) ? Sc + Dres * (q - qRef) : Sc; };
     var latestVal = latestUsed ? valAl(latestUsed) : null;
@@ -19339,7 +19890,8 @@ G.WTS_calcRegistry.historian = {
     if (prodFn && latestUsed && pos(re) && rw && fin(Snow)) {
       var common = { k: latestUsed.k, h: h, B: B_, mu: mu_, q: qNow, Dq: qNow, rw: rw, re_ft: re, reSource: reSource,
                      pbar: nn(latestUsed.t.pExtDatum), pwf: nn(latestUsed.t.pwf0Datum) };
-      var pNow = safeCall(prodFn, [Object.assign({ S: Snow }, common)], warnings, 'PRODUCTS', 'T8');
+      // the engine's Δp across the skin of the latest test (its own B·μ basis; gas through m(p)) gives FE
+      var pNow = safeCall(prodFn, [Object.assign({ S: Snow, dpSkin_psi: fin(latestUsed.t.dpSkin_psi) ? latestUsed.t.dpSkin_psi : null }, common)], warnings, 'PRODUCTS', 'T8');
       var pBase = fin(SbaseNow) && !segEmpty ? safeCall(prodFn, [Object.assign({ S: SbaseNow }, common)], warnings, 'PRODUCTS', 'T8') : null;
       // X is geometric (kept for T13); the PI ratio and at-stake numbers wait for a test in the current segment
       if (pNow && fin(pNow.X)) { X = pNow.X; pi.X = X; }
@@ -19449,8 +20001,11 @@ G.WTS_calcRegistry.historian = {
           if (!fin(a.dp) || !fin(b.dp) || !pos(r.q) || !pos(refT.q) || !fin(refT.t.m) || refT.t.m === 0) return;
           var dS = 1.1513 * ((a.dp / r.q - b.dp / refT.q) / (refT.t.m / refT.q) - Math.log10(a.dte / b.dte));
           var fitted = r.S - refT.S;
+          // tolerance (WP9): max(0.3, S_err, 1.1513·a·Δp_j/m_j) — normalising by the reference test's (m/q) turns a rate or
+          // k difference of a (the allocation accuracy) into 1.1513·a·Δp_j/m_j of skin (≈ 0.6 at S ≈ 7 for 5 %)
+          var tolA = fin(r.t.m) && r.t.m !== 0 ? 1.1513 * (allocAccPct / 100) * Math.abs(a.dp / r.t.m) : 0;
           modelFree.push({ id: r.id, refId: refT.id, dS: dS, fittedDS: fitted,
-                           agrees: hund(Math.abs(dS - fitted)) <= hund(Math.max(DEFAULTS.agreeMin, r.E)) });
+                           agrees: hund(Math.abs(dS - fitted)) <= hund(Math.max(DEFAULTS.agreeMin, r.E, tolA)) });
         });
       }
     }
@@ -19461,6 +20016,7 @@ G.WTS_calcRegistry.historian = {
     if (kind === 'oil' && Pb !== null) {
       var dep = isObj(ctx.depth) ? ctx.depth : null;
       var dz = dep && fin(dep.datumTVD) && fin(dep.gaugeTVD) ? dep.datumTVD - dep.gaugeTVD : 0;
+      if (dz !== 0) bubble.depthCorrected = true;       // extra key; absent = the 'sandface' range is the gauge pwf (no depth data)
       var G0 = dep && fin(dep.grad) ? dep.grad : 0;
       var GF = dep && fin(dep.gradFlow) ? dep.gradFlow : G0;
       var tau3 = [];
@@ -19478,17 +20034,53 @@ G.WTS_calcRegistry.historian = {
     }
 
     // ── T13 PI cross-check ──
+    // J_pred on each clean flowing day from the homogeneous model through the superposed rate history (exact for an
+    // infinite-acting well, the PSS X with r_e from r_inv is not: it predicted 10–20 % too high a PI on clean data):
+    //   X_eq(t) = Σ_j (q_j − q_j−1)·½[ln t_D(t − t_j) + 0.80907] / q(t),   t_D = 0.0002637·k·Δt_h/(φ·μ·c_t·r_w²),
+    // capped at the pseudo-steady-state X = ln(r_e/r_w) − 0.75 when r_e is entered; J_pred = k·h/(141.2·B·μ·(X_eq + S(t)))
+    // on the analysis basis. Gas: J on pseudo-pressure, J_obs = q/(m(p_ref) − m(pwf)), J_pred = k·h/(1422·T·(X_eq + S′(t)))
+    // (the engine's normalised form, reference free). Without the rate steps the PSS X is used and the check is indicative.
     var kBase = isObj(ctx.baseline) && pos(ctx.baseline.k) ? ctx.baseline.k : B.k;
-    var piCheck = { available: false, reason: null, rows: [], consistent: null, rho: null, ev: ['T13'] };
+    var piCheck = { available: false, reason: null, rows: [], consistent: null, rho: null, basis: null, form: kind === 'gas' ? 'pseudoPressure' : 'pressure',
+                    indicative: false, days: [], ev: ['T13'] };
+    var steps = (Array.isArray(ctx.steps) ? ctx.steps : []).filter(function (s) { return isObj(s) && fin(s.t_ms) && fin(s.q) && s.q >= 0; });
+    var phi_ = pos(well.phi) ? well.phi : null, ct_ = pos(well.ct) ? well.ct : null, muD = kind === 'inj' ? (pos(well.muw) ? well.muw : null) : (pos(well.mu) ? well.mu : null);
+    var canSup = steps.length >= 1 && phi_ && ct_ && muD && rw;
+    var Xpss = pos(well.re_ft) && rw && well.re_ft > rw ? Math.log(well.re_ft / rw) - 0.75 : null;
+    var gtab = null, T_R = isObj(well.gas) && fin(well.gas.T_F) ? well.gas.T_F + 459.67 : null;
     if (kind === 'inj') piCheck.reason = 'Water injector: the PI cross-check is not used.';
     else if (historyEstimated) piCheck.reason = 'The production start is estimated, so p* (and the reference pressure) is not reliable.';
     else if (!days.length) piCheck.reason = 'No daily rates (rate-table mode).';
-    else if (X === null) piCheck.reason = skinMissing ? 'The PRiSM skin module is not loaded.' : 'The drainage radius term is not available.';
+    else if (!canSup && X === null) piCheck.reason = skinMissing ? 'The PRiSM skin module is not loaded.' : 'The drainage radius term is not available.';
     else if (!pos(kBase) || !h) piCheck.reason = 'No baseline permeability.';
     else {
       var pKnots = used.filter(function (r) { return fin(r.t.pExtDatum) && fin(r.t.t_ms); }).map(function (r) { return [r.t.t_ms, r.t.pExtDatum]; });
       if (pKnots.length < 1 || used.length < 2) piCheck.reason = 'Fewer than 2 used tests with p_ext.';
       else {
+        piCheck.basis = canSup ? (Xpss !== null ? 'transientCapped' : 'transient') : 'pss';
+        piCheck.indicative = !canSup;
+        if (kind === 'gas') {
+          var AIg = G.PRiSM_autoInterp, pMaxG = maxOf(pKnots.map(function (k) { return k[1]; }));
+          if (AIg && typeof AIg.gasTable === 'function' && T_R && pos(pMaxG)) {
+            try {
+              var gt0 = AIg.gasTable({ sg: gasSg, T_F: well.gas.T_F, co2: well.gas.co2, h2s: well.gas.h2s, n2: well.gas.n2, pmax: Math.max(1.3 * pMaxG, pMaxG + 500) });
+              if (gt0 && gt0.ok && typeof gt0.mOf === 'function') gtab = gt0;
+            } catch (eG) { gtab = null; }
+          }
+          if (!gtab) { piCheck.form = 'pressure'; piCheck.indicative = true; }
+        }
+        var tD1 = canSup ? 0.0002637 * kBase / (phi_ * muD * ct_ * rw * rw) : null;   // t_D per hour
+        var xEqAt = function (ms) {
+          var s = 0, qPrev = 0, qNowS = 0;
+          for (var j = 0; j < steps.length && steps[j].t_ms < ms; j++) {
+            var dq = steps[j].q - qPrev, dth = (ms - steps[j].t_ms) / 3600000;
+            if (dq !== 0 && dth > 0) s += dq * 0.5 * (Math.log(tD1 * dth) + 0.80907);
+            qPrev = steps[j].q; qNowS = steps[j].q;
+          }
+          if (!(qNowS > 0)) return null;
+          var xe = s / qNowS;
+          return Xpss !== null ? Math.min(xe, Xpss) : xe;
+        };
         // one pass over the days: each clean flowing day falls in the interval (t_u−1, t_u) of consecutive used tests
         var allObs = [], allPred = [];
         var tU = used.map(function (r) { return r.t.t_ms; }), byInt = used.map(function () { return []; });
@@ -19502,9 +20094,17 @@ G.WTS_calcRegistry.historian = {
           if (lo < 1 || lo >= tU.length || !(mid > tU[lo - 1])) return;
           var pRef = lin(pKnots, mid); if (!(pRef > pwf)) return;
           var sd = effS(sAt((mid - first_ms) / DAY_MS), d.q);
-          if (!(X + sd > 0)) return;
-          var jObs = d.q / (pRef - pwf), jPred = kBase * h / (141.2 * bmuWell * (X + sd));
+          var Xd = canSup ? xEqAt(mid) : X;
+          if (!fin(Xd) || !(Xd + sd > 0)) return;
+          var jObs, jPred, toPsi = 1;
+          if (gtab) {
+            var dm = gtab.mOf(pRef) - gtab.mOf(pwf);
+            if (!(dm > 0)) return;
+            jObs = d.q / dm; jPred = kBase * h / (1422 * T_R * (Xd + sd)); toPsi = dm / (pRef - pwf);
+          } else { jObs = d.q / (pRef - pwf); jPred = kBase * h / (141.2 * bmuWell * (Xd + sd)); }
           byInt[lo].push(jObs / jPred); allObs.push(jObs); allPred.push(jPred);
+          // display series in q per psi (the ratio is unchanged)
+          piCheck.days.push({ tDays: (mid - first_ms) / DAY_MS, jObs: jObs * toPsi, jPred: jPred * toPsi });
         });
         for (var u = 1; u < used.length; u++) {
           piCheck.rows.push({ from: used[u - 1].id, to: used[u].id, RJ: byInt[u].length ? median(byInt[u]) : null, nDays: byInt[u].length });
@@ -19514,6 +20114,8 @@ G.WTS_calcRegistry.historian = {
         piCheck.consistent = withData.length ? withData.every(function (r) { return r3(r.RJ) >= DEFAULTS.piLo && r3(r.RJ) <= DEFAULTS.piHi; }) : null;
         piCheck.rho = allObs.length >= DEFAULTS.spearmanN ? spearman(allObs, allPred, DEFAULTS.spearmanN) : null;
         if (!withData.length) piCheck.reason = 'No clean flowing days between the used tests.';
+        else if (piCheck.indicative) piCheck.reason = (!canSup ? 'Indicative: no rate history for the transient prediction, so the pseudo-steady-state X (r_e ' + (reSource === 'rinv' ? 'from r_inv' : 'entered') + ') is used.'
+                                                               : 'Indicative: the gas table is not available, so J uses pressure instead of m(p).');
       }
     }
 
@@ -19581,8 +20183,13 @@ G.WTS_calcRegistry.historian = {
     L('inputs', 'The reservoir and fluid inputs are not checked against other data; a uniform input error shifts every skin equally, so the skin change is unaffected but the absolute skin is not.');
     L('allocation', ctx.mode === 'table' ? 'Rates come from the time-stamped rate table and are taken as measured.' : 'Rates come from the daily allocation spread over the detected flowing hours; its accuracy (about ' + fmtNum(allocAccPct, 0) + ' %) limits k and the skin.');
     L('totalSkin', mech.available ? 'The absolute alert uses the mechanical skin (total skin less the geometric pseudo-skins); the delta alert uses the total skin.' : 'Skins are total skins and may include geometric pseudo-skins (partial penetration, deviation); enter the completion to split them.');
-    L('pss', 'The PI ratio, the production at stake and the predicted PI are pseudo-steady-state estimates' + (reSource === 'rinv' ? ' with r_e assumed from the radius of investigation (PI ratio a lower bound, production at stake an upper bound).' : '.'));
+    L('pss', 'The PI ratio and the production at stake are pseudo-steady-state estimates' + (reSource === 'rinv' ? ' with r_e assumed from the radius of investigation (PI ratio a lower bound, production at stake an upper bound)' : '') +
+      (piCheck.basis === 'pss' ? '; so is the predicted PI of the cross-check (indicative).' : '; the predicted PI of the cross-check is the infinite-acting model through the rate history' + (piCheck.basis === 'transientCapped' ? ', capped at pseudo-steady state with the entered r_e.' : '.')));
     L('partialCuts', 'Partial rate cuts are classified and listed, not interpreted.');
+    if (bubble.depthCorrected !== true && bubble.rows.length) L('bubbleNoDepth', 'No gauge and datum depths were entered: the bubble-point check compares the gauge pwf at closing (no depth correction, so no ±20 % gradient range) with Pb.');
+    if (kind === 'inj') L('injector', 'Water injector fall-offs: k is the effective permeability to water in the injected-water bank (μw, Bw); a swept-zone / oil-zone radial composite is possible; c_t is taken as entered.');
+    if (kind === 'gas') L('gasSkinDrop', 'Gas: the pressure drop across the skin and FE are on S′, which includes the rate-dependent part D·q' + (corrected ? ' (the D·q share is given per test).' : ' (D is not resolved, so it is not split).'));
+    if (modelFree.length) L('modelFree', 'The model-free skin change (T11) is indicative: it normalises every test by the reference test\'s semilog slope, so a rate or k difference between tests widens its tolerance to max(0.3, S_err, 1.1513·a·Δp/m), a the allocation accuracy (' + fmtNum(allocAccPct, 0) + ' %).');
     L('storage', 'Changing wellbore storage is not modelled.');
     L('gradient', 'Gradient changes in the wellbore during the build-up are not modelled.');
     L('iarfEarliest', 'The IARF window is the earliest plateau after the storage hump, not the longest; the longest qualifying window is reported.');
@@ -19627,6 +20234,7 @@ G.WTS_calcRegistry.historian = {
     cusum: cusum,
     pFamily: pFamily,
     sSensOf: sSensOf,
+    stableRateRows: stableRateRows,
     normCdf: normCdf,
     spearman: function (x, y) { return spearman(x || [], y || [], 3); }
   };
@@ -19913,7 +20521,23 @@ G.WTS_calcRegistry.historian = {
         var r = { ok: false };
         try { r = S.saveState(st, { wellId: _wellId() }); } catch (e) { r = { ok: false }; }
         if (!r.ok) _status('bu_progress', 'warn', 'Device storage is full: this analysis could not be saved on the device. Use File → Save to keep it.');
+        // An overflowed state keeps only per-test summaries in localStorage: say so when the parked detail did not reach
+        // the browser database (none, private mode, storage full), since it is then missing after a reload.
+        var tok = ++_saveTok, wid = _wellId();
+        if (r && r.overflowWrite && typeof r.overflowWrite.then === 'function') {
+            r.overflowWrite.then(function (w) {
+                if (tok !== _saveTok || _wellId() !== wid) return;
+                _status('bu_store_note', w && w.ok ? '' : 'warn', w && w.ok ? '' : STORE_NOTE);
+            }, function () { if (tok === _saveTok && _wellId() === wid) _status('bu_store_note', 'warn', STORE_NOTE); });
+        } else _status('bu_store_note', '', '');
         return r;
+    }
+    var STORE_NOTE = 'The per-test detail could not be stored in this browser\'s database (not available, private mode or storage full): it will be missing after a reload. Use File → Save to keep it.';
+    var _saveTok = 0;
+    var AUDIT_FAIL = 'The audit trail could not be saved (device storage full) — nothing was changed. Free space or use File → Save.';
+    function _auditStatus() {
+        var S = _store();
+        try { return (S && S.audit && typeof S.audit.status === 'function') ? S.audit.status() : null; } catch (e) { return null; }
     }
     function _audit(e) {
         var S = _store();
@@ -19930,6 +20554,9 @@ G.WTS_calcRegistry.historian = {
         var arr = list.slice();
         arr.entries = list;                                       // array and object form in one value
         try { arr.summary = S && S.audit ? S.audit.summary() : null; arr.chainHash = S && S.audit ? S.audit.chainHash() : ''; } catch (e) { arr.summary = null; arr.chainHash = ''; }
+        var ai = null;                                            // S10 shows an earlier log that could not be read
+        try { ai = (S && S.audit && typeof S.audit.info === 'function') ? S.audit.info() : null; } catch (e) { ai = null; }
+        arr.lost = ai ? (ai.lost || (ai.state === 'unreadable' ? { key: null } : null)) : null;
         return arr;
     }
 
@@ -20012,6 +20639,8 @@ G.WTS_calcRegistry.historian = {
         '#bu_root .bu-tw{max-width:100%;overflow-x:auto;overscroll-behavior-x:contain}' +
         '#bu_root .bu-tw table{min-width:100%}' +
         '#bu_root .bu-act{padding:2px 8px;font-size:11px;margin-left:6px}' +
+        '#bu_root td.bu-evc{white-space:nowrap;font-size:11px;color:var(--text3)}#bu_root td.bu-nw{white-space:nowrap}' +
+        '#bu_root tr.bu-older td{color:var(--text3);font-style:italic}#bu_root .fg-item.bu-wide{grid-column:1/-1}' +
         '#bu_root .bu-note{margin:8px 0;font-size:12.5px;line-height:1.5;color:var(--text2)}#bu_root .bu-note b{color:var(--text)}' +
         '#bu_root .bu-notes{margin-top:12px;font-size:12.5px;line-height:1.5;color:var(--text2)}#bu_root .bu-notes b{color:var(--text)}' +
         '#bu_root .bu-qa{margin-top:8px;font-size:12.5px;color:var(--text2)}#bu_root .bu-qa .bu-q{color:var(--text);font-weight:600}' +
@@ -20024,7 +20653,7 @@ G.WTS_calcRegistry.historian = {
         '#bu_root .bu-dlg-x{flex:none;width:32px;height:32px;border:0;border-radius:6px;background:transparent;color:var(--text2);font-size:22px;line-height:1;cursor:pointer}' +
         '#bu_root .bu-dlg-bd{margin:8px 0;font-size:13px;color:var(--text2);overflow-wrap:anywhere}' +
         '#bu_root .bu-dlg-ft{display:flex;justify-content:flex-end;gap:8px;margin-top:10px}' +
-        '@media (max-width:600px){#bu_root .bu-dlg{padding:8px}#bu_root .bu-dlg-box{width:100%}}' +
+        '@media (max-width:600px){#bu_root .bu-dlg{padding:8px}#bu_root .bu-dlg-box{width:100%}#bu_root .bu-act{min-height:28px;padding:4px 10px}}' +
         '</style>';
     var NOTES = [
         'Method: every shut-in in the gauge record is found and interpreted automatically on the Bourdet derivative of the superposition-equivalent time (L = 0.1 log cycle). The IARF window is the earliest qualifying plateau after the storage hump; the semilog line and a homogeneous match (rival models only when a trigger fires) give k, S and C with a skin uncertainty and a calibrated confidence label. Skin is then tracked against a baseline with delta and absolute alerts.',
@@ -20120,12 +20749,12 @@ G.WTS_calcRegistry.historian = {
             '<div id="bu_progress" class="bu-status" role="status" aria-live="polite"></div></div>' +
             '<div id="bu_val"></div>' +
             '<div id="bu_stale" style="color:var(--yellow);display:none">⚠ Inputs changed since the last analysis — press Analyse</div>' +
-            '<div id="bu_raw_note" class="bu-status"></div>' +
+            '<div id="bu_raw_note" class="bu-status"></div><div id="bu_store_note" class="bu-status rp-skip" role="status"></div><div id="bu_ov_note" class="bu-status rp-skip" role="status"></div>' +
             '<div class="bu-view rp-skip">' + _fsel('bu_test_sel', 'Test shown in detail', [['', 'Latest test']], '') + '</div>' +
             '<div id="bu_res"></div>' +
             // ── questions, sign-off and export ──
             '<div class="card rp-skip" id="bu_card_act"><div class="card-title">Questions, sign-off and export</div><div class="fg">' +
-            _ftxt('bu_qa_q', 'Ask about the analysis', np + nd + ' maxlength="300" placeholder="Why this model? What if h is 20 % higher?" autocomplete="off"') +
+            '<div class="fg-item bu-wide">' + _lab('bu_qa_q', 'Ask about the analysis') + '<input type="text" id="bu_qa_q"' + np + nd + ' maxlength="300" placeholder="Why this model? What if h is 20 % higher?" autocomplete="off"></div>' +
             '</div><div class="bu-btns">' + _btn('bu_qa_go', 'Ask', 'btn-secondary', ' disabled') + '</div><div id="bu_qa_out" class="bu-qa" aria-live="polite"></div>' +
             '<div class="bu-sub">Sign-off</div><div class="fg">' +
             _ftxt('bu_so_name', 'Signed by', nd + ' maxlength="80" autocomplete="off"') + _ftxt('bu_so_role', 'Role', nd + ' maxlength="80" autocomplete="off"') +
@@ -20133,7 +20762,8 @@ G.WTS_calcRegistry.historian = {
             '</div><div class="bu-btns">' + _btn('bu_so_sign', 'Sign off', 'btn-primary', ' disabled') + _btn('bu_so_unsign', 'Withdraw sign-off', 'btn-secondary', ' disabled') + '</div>' +
             '<div id="bu_so_status" class="bu-status" role="status"></div>' +
             '<div class="bu-sub">Export and checks</div><div class="fg">' +
-            _fchk('bu_ai_deid', 'De-identify', true) + _fchk('bu_ai_free', 'Include free text (notes, reasons, file and tag names)', false) +
+            // privacy controls are never autosaved (nor carried in project files): every session starts de-identified, no free text
+            _fchk('bu_ai_deid', 'De-identify', true, np) + _fchk('bu_ai_free', 'Include free text (notes, reasons, file and tag names)', false, np) +
             '</div><div class="bu-btns">' + _btn('bu_ai_copy', 'Copy for your AI assistant', 'btn-secondary', ' disabled') + _btn('bu_ai_dl', 'Download', 'btn-secondary', ' disabled') +
             _btn('bu_open_prism', 'Open this build-up in PRiSM', 'btn-secondary', ' disabled') + _btn('bu_val_run', 'Re-run 24-case check', 'btn-secondary', ' disabled') + '</div>' +
             '<div id="bu_ai_status" class="bu-status" role="status"></div><div id="bu_val_out" class="bu-status" role="status"></div></div>' +
@@ -20313,7 +20943,13 @@ G.WTS_calcRegistry.historian = {
         if (!m) return NaN;
         var g = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0));
         if (!_fin(g)) return NaN;
-        return g - _offMs(zone, g - _offMs(zone, g));     // two passes: right on both sides of a clock change
+        // One rule with the gauge-data reader (data.localToUtc): in a DST gap the later offset, in a repeated hour the
+        // first occurrence, so a typed closing time lines up with the parsed sample times.
+        var D = _D();
+        if (D && typeof D.localToUtc === 'function' && zone && zone.mode && zone.mode !== 'device') {
+            try { var u = D.localToUtc(zone, g); if (_fin(u)) return u; } catch (e) { /* fallback below */ }
+        }
+        return g - _offMs(zone, g - _offMs(zone, g));     // fallback (no data module): two passes
     }
     function _zoneName(z) {
         if (!z || z.mode === 'utc') return 'UTC';
@@ -20603,7 +21239,8 @@ G.WTS_calcRegistry.historian = {
         var h = '';
         if (b.kind === 'verdict') {
             var sy = SYM[b.level] || SYM.warn;
-            var t = _cleanTxt(_fill(b.template, b.values)) + _refs(b.ev);
+            // the review's templates start with their own glyph: one symbol per verdict (the level's), never two
+            var t = _cleanTxt(_fill(b.template, b.values)).replace(/^\s*[✓⚠✗×]\s*/, '') + _refs(b.ev);
             return '<div style="color:var(--' + sy[1] + ')">' + sy[0] + ' ' + _esc(_cut(t, 296)) + '</div>';
         }
         if (b.kind === 'kv') {
@@ -20637,9 +21274,16 @@ G.WTS_calcRegistry.historian = {
                 return '<th>' + _esc(text) + (u ? ' (' + _esc(u) + ')' : '') + '</th>';
             }).join('');
             var anyEv = (b.rows || []).some(function (r) { return (r || []).some(function (c) { return !!_evOf(c); }); });
+            var nCol = (b.head || []).length + (anyEv ? 1 : 0), nw = {};
+            (b.head || []).forEach(function (c, ci) { var text = (c && typeof c === 'object') ? c.text : c; if (/^Labels\b/.test(String(text || ''))) nw[ci] = 1; });
             h = '<div class="bu-tw"' + (noStack ? ' data-no-stack' : '') + '><table class="dtable"' + (b.id ? ' id="' + _esc(b.id) + '"' : '') + '><thead><tr>' + head + (anyEv ? '<th>Ev.</th>' : '') + '</tr></thead><tbody>';
             (b.rows || []).forEach(function (r) {
                 var ev = [];
+                // "N older tests / events / earlier days not shown": one cell across the table, not a data row
+                if (r && r.length > 1 && typeof r[1] === 'string' && / not shown$/.test(r[1]) && _isVal(r[0])) {
+                    h += '<tr class="bu-older"><td colspan="' + nCol + '">' + _esc(_cleanTxt(_fmtNoUnit(r[0].v, r[0].cat, r[0].dp) + ' ' + r[1])) + '</td></tr>';
+                    return;
+                }
                 h += '<tr>' + (r || []).map(function (c, ci) {
                     var txt, act = '';
                     if (_isVal(c)) { txt = _fmtNoUnit(c.v, c.cat, c.dp); var e = _evOf(c); if (e && ev.indexOf(e) === -1) ev.push(e); }
@@ -20651,8 +21295,8 @@ G.WTS_calcRegistry.historian = {
                             if (fids.length) act = '<button type="button" class="btn btn-secondary bu-act rp-skip" data-act="menu" data-f="' + _esc(fids.join(',')) + '" aria-label="Decide the ' + _esc(c) + ' findings">Actions…</button>';
                         }
                     }
-                    return '<td>' + _esc(_cleanTxt(txt)) + act + '</td>';
-                }).join('') + (anyEv ? '<td>' + _esc(ev.join(', ')) + '</td>' : '') + '</tr>';
+                    return '<td' + (nw[ci] ? ' class="bu-nw"' : '') + '>' + _esc(_cleanTxt(txt)) + act + '</td>';
+                }).join('') + (anyEv ? '<td class="bu-evc">' + _esc(ev.join(', ')) + '</td>' : '') + '</tr>';
             });
             return h + '</tbody></table></div>';
         }
@@ -20752,7 +21396,7 @@ G.WTS_calcRegistry.historian = {
         if (!res) return;
         var a = _st && _st.analysis;
         _buttons();
-        if (!a) { res.innerHTML = ''; res.removeAttribute('data-done'); _setSub(); return; }
+        if (!a) { res.innerHTML = ''; res.removeAttribute('data-done'); _setSub(); _ovNote(null); return; }
         if (_st.partial) {
             res.innerHTML = '<div class="rbox" id="bu_s_S1"><div class="rbox-title" tabindex="-1">Summary</div><div class="bu-note"><b>Notes</b> Loading the stored build-ups of this analysis…</div></div>';
             _setSub();
@@ -20778,7 +21422,37 @@ G.WTS_calcRegistry.historian = {
         res.setAttribute('data-done', '1');
         if (typeof G.WTS_stackTables === 'function') { try { G.WTS_stackTables(res); } catch (e) { /* layout only */ } }
         _setSub();
+        _ovNote(a);
         if (opts.charts !== false) _drawChartsAsync(charts);
+    }
+    // What became of each event-level override at the last Analyse: a refused one with the engine's reason (its
+    // OVERRIDE_NOT_APPLIED warning), an added shut-in with the event it created and whether a build-up was interpreted.
+    var EV_KIND_TXT = { shutin: 'a shut-in', falloff: 'a fall-off', partial: 'a partial rate cut', substep: 'a small rate step' };
+    var EV_STATUS_TXT = { too_short: 'too short to interpret', not_confirmed: 'not confirmed as a shut-in', gap_at_closing: 'a data gap at the closing', excluded: 'excluded', intervention: 'a suspected intervention', partial: 'a partial cut' };
+    function _ovOutcomes(a) {
+        var out = [], gz = _gaugeZone();
+        ((a && a.overrides) || []).forEach(function (o) {
+            if (!o || !o.id) return;
+            var ws = Array.isArray(o.warnings) ? o.warnings.filter(function (w) { return w && w.code === 'OVERRIDE_NOT_APPLIED' && w.text; }) : [];
+            if (ws.length) { out.push({ lvl: 'warn', text: ws.map(function (w) { return String(w.text); }).join(' ') }); return; }
+            if (o.kind !== 'event_add') return;
+            var e = ((a.events || []).filter(function (x) { return x && (x.overrideIds || []).indexOf(o.id) !== -1; }))[0];
+            if (!e) return;
+            var t = ((a.tests || []).filter(function (x) { return x && x.eventId === e.id; }))[0];
+            var interp = !!(t && t.status === 'interpreted');
+            out.push({ lvl: interp ? 'ok' : 'warn', text: 'Override ' + o.id + ' added event ' + e.id + ' at ' + _msToLocal(e.tc_ms, gz).replace('T', ' ') + ' ' + _zoneName(gz) + ': ' +
+                (_own(EV_KIND_TXT, e.kind) ? EV_KIND_TXT[e.kind] : String(e.kind)) + (_own(EV_STATUS_TXT, e.status) ? ', ' + EV_STATUS_TXT[e.status] : '') +
+                (interp ? '; interpreted as build-up ' + t.id + '.' : (t ? '; build-up ' + t.id + ' ' + String(t.status).replace(/_/g, ' ') + '.' : '; no build-up was interpreted from it.')) });
+        });
+        return out;
+    }
+    function _ovNote(a) {
+        var n = _byId('bu_ov_note');
+        if (!n) return;
+        var list = _ovOutcomes(a);
+        n.innerHTML = list.map(function (x) {
+            return '<div style="color:var(--' + (x.lvl === 'ok' ? 'green' : 'yellow') + ')">' + (x.lvl === 'ok' ? '✓ ' : '⚠ ') + _esc(String(x.text).slice(0, 290)) + '</div>';
+        }).join('');
     }
 
     // ── charts ───────────────────────────────────────────────────────
@@ -20927,8 +21601,8 @@ G.WTS_calcRegistry.historian = {
         if (bS != null) th.push({ label: 'Baseline', y: bS, color: '#8b949e' });
         if (bS != null && al.delta && _fin(al.delta.threshold)) th.push({ label: 'Baseline + delta threshold', y: bS + al.delta.threshold, color: '#e3b341' });
         if (_fin(ab.threshold)) th.push({ label: mech ? 'Absolute threshold (on mechanical skin)' : 'Absolute threshold', y: ab.threshold, color: '#ff7b72' });
-        var ds = [{ label: 'Skin S', color: '#58a6ff', data: used, points: true }, { label: 'S + S_err', color: '#58a6ff', data: hi, points: false, dash: [3, 3], width: 1 },
-            { label: 'S − S_err', color: '#58a6ff', data: lo, points: false, dash: [3, 3], width: 1 }];
+        var ds = [{ label: 'Skin S', color: '#58a6ff', data: used, points: true }, { label: 'S ± S_err', color: '#58a6ff', data: hi, points: false, dash: [3, 3], width: 1 },
+            { label: '', color: '#58a6ff', data: lo, points: false, dash: [3, 3], width: 1 }];   // one dashed band, one legend entry
         // the absolute alert is judged on mechanical skin when its basis says so: plot that series against its threshold
         if (sm.length) ds.push({ label: 'Mechanical skin', color: '#ffa657', data: sm, points: true });
         if (exc.length) ds.push({ label: 'Tests not used', color: '#6e7681', data: exc, points: true, width: 0.01 });
@@ -20988,24 +21662,24 @@ G.WTS_calcRegistry.historian = {
             }
             if (rg && _fin(rg.lo) && _fin(rg.hi)) bars.push({ x: s.tDays, lo: _cv(rg.lo + shift, 'pressure'), hi: _cv(rg.hi + shift, 'pressure') });
         });
-        B.plot.trend(cv, { datasets: ds, bars: bars, barsLabel: 'p* range (estimated history)', barsColor: '#79c0ff', xLabel: 'Days since the first test', yLabel: 'Pressure (' + _ul('pressure') + ')', yDec: 0 });
+        B.plot.trend(cv, { datasets: ds, bars: bars, barsLabel: 'p* range (estimated history)', barsColor: '#79c0ff', xLabel: 'Days since the first test', yLabel: 'Pressure (' + _ul('pressure') + ')' });   // tick decimals follow the p* scatter
     }
     function _jChart(cv, a) {
         var pc = a.trend && a.trend.piCheck, rows = pc && Array.isArray(pc.rows) ? pc.rows : [], pts = [];
         var byId = {};
         _seriesOf(a).forEach(function (s) { byId[s.id] = s.tDays; });
         rows.forEach(function (r) { var x0 = byId[r.from], x1 = byId[r.to]; if (_fin(x0) && _fin(x1) && _fin(r.RJ)) pts.push({ x: (x0 + x1) / 2, y: r.RJ }); });
-        B.plot.trend(cv, { datasets: [{ label: 'Observed / predicted productivity index', color: '#3fb950', data: pts, points: true }],
+        B.plot.trend(cv, { datasets: [{ label: 'PI ratio (observed / predicted)', color: '#3fb950', data: pts, points: true }],
             thresholds: [{ label: 'Lower limit 0.8', y: 0.8, color: '#e3b341' }, { label: 'Upper limit 1.25', y: 1.25, color: '#e3b341' }],
-            xLabel: 'Days since the first test', yLabel: 'Ratio of observed to predicted productivity index', yDec: 2 });
+            xLabel: 'Days since the first test', yLabel: 'PI ratio (observed / predicted)', yDec: 2 });
     }
     function _pwfChart(cv, a) {
         var bub = a.trend && a.trend.bubble, rows = bub && Array.isArray(bub.rows) ? bub.rows : [], byId = {}, lo = [], hi = [];
         _seriesOf(a).forEach(function (s) { byId[s.id] = s.tDays; });
         rows.forEach(function (r) { var x = byId[r.id]; if (!_fin(x)) return; if (_fin(r.pwfSand_lo)) lo.push({ x: x, y: _cv(r.pwfSand_lo, 'pressure') }); if (_fin(r.pwfSand_hi)) hi.push({ x: x, y: _cv(r.pwfSand_hi, 'pressure') }); });
         var th = (a.well && _fin(a.well.Pb)) ? [{ label: 'Bubble point', y: _cv(a.well.Pb, 'pressure'), color: '#ff7b72' }] : [];
-        B.plot.trend(cv, { datasets: [{ label: 'Sandface pressure at closing, low', color: '#58a6ff', data: lo, points: true }, { label: 'Sandface pressure at closing, high', color: '#79c0ff', data: hi, points: true }],
-            thresholds: th, xLabel: 'Days since the first test', yLabel: 'Pressure (' + _ul('pressure') + ')', yDec: 0 });
+        B.plot.trend(cv, { datasets: [{ label: 'Sandface pressure at closing, low', color: '#58a6ff', data: lo, points: true }, { label: 'Sandface pressure at closing, high', color: '#d2a8ff', data: hi, points: true, dash: [4, 3] }],
+            thresholds: th, xLabel: 'Days since the first test', yLabel: 'Pressure (' + _ul('pressure') + ')' });
     }
     function _ovChart(cv, a) {
         var used = {}, list = [];
@@ -21039,7 +21713,7 @@ G.WTS_calcRegistry.historian = {
         (a.tests || []).forEach(function (t) { if (t && _fin(t.tc_ms) && _fin(t.pwf0)) ev.push({ x: (t.tc_ms - t0) / 86400000, y: _cv(t.pwf0, 'pressure') }); });
         B.plot.trend(cv, { datasets: [{ label: 'Gauge pressure', color: '#58a6ff', data: pr, points: false, width: 1 },
             { label: 'Allocated rate (scaled, maximum ' + _nf(_cv(qmax, unit), 0) + ' ' + _ul(unit) + ')', color: '#3fb950', data: rq, points: false, width: 1.5 },
-            { label: 'Closings', color: '#f0883e', data: ev, points: true, width: 0.01 }], xLabel: 'Days since the first test', yLabel: 'Pressure (' + _ul('pressure') + ')', yDec: 0 });
+            { label: 'Closings', color: '#f0883e', data: ev, points: true, width: 0.01 }], xLabel: 'Days since the first test', yLabel: 'Pressure (' + _ul('pressure') + ')' });
     }
     function _blockChart(cv, b) {
         var ds = (b && b.series || []).map(function (s, i) {
@@ -21189,7 +21863,8 @@ G.WTS_calcRegistry.historian = {
         return P.then(function () {
             if (cancel()) throw { code: 'CANCELLED' };
             return R.analyseAsync(engIn, {
-                cache: _st.analysis || null, shouldCancel: cancel,
+                // stored summaries (detail not on this device, or still loading) are never a cache: every test is recomputed
+                cache: (_st.missingTests || _st.partial) ? null : (_st.analysis || null), shouldCancel: cancel,
                 onProgress: function (f, lab) { _status('bu_progress', '', 'Analysing… ' + Math.round((_fin(f) ? f : 0) * 100) + ' %' + (lab ? ' — ' + lab : '')); }
             });
         }).then(function (analysis) {
@@ -21197,15 +21872,14 @@ G.WTS_calcRegistry.historian = {
                 if (_run === run) { _run = null; _buttons(); }
                 return null;
             }
-            _run = null;
             if (!analysis || analysis.ok === false) {
+                _run = null;
                 _status('bu_progress', 'bad', 'The analysis failed: ' + String((analysis && analysis.errors && analysis.errors[0]) || 'no result') + '. Previous results kept.');
                 _buttons();
                 return null;
             }
             if (analysis.record) analysis.record.rawStored = input.record ? rawStored : (analysis.record.rawStored || 'none');
-            _complete(analysis, input, ph, diff, reason);
-            return analysis;
+            return _completeAsync(analysis, input, ph, diff, reason, run, cancel);
         }).then(null, function (e) {
             var mine = (_run === run);
             if (mine) _run = null;
@@ -21231,26 +21905,78 @@ G.WTS_calcRegistry.historian = {
         prev.findings.forEach(function (f) { if (f && f.decision) map[key(f)] = f.decision; });
         next.findings.forEach(function (f) { if (f && !f.decision && map[key(f)] && f.acceptable !== false) f.decision = map[key(f)]; });
     }
-    function _complete(analysis, input, ph, diff, reason) {
-        var R = _R();
-        _st.analysis = analysis;
-        _st.partial = false;
-        _st.missingTests = false;
-        delete _st._raw;
-        _idxCache = null;
-        var rv = null;
-        if (R && typeof R.run === 'function') { try { rv = R.run(analysis, _idx()); } catch (e) { rv = null; } }
-        _carryDecisions(_st.review, rv);
-        _st.review = rv;
-        _st.input = _forState(input);
-        _st.pageHash = ph;
-        _audit({ kind: 'run', target: null, value: { nTests: (analysis.tests || []).length, inputHash: analysis.inputHash, resultHash: analysis.resultHash } });
-        if (diff && diff.length) _audit({ kind: 'input', target: null, value: diff, reason: reason || '' });
-        _afterChange({});
-        _status('bu_progress', 'ok', 'Analysis complete: ' + (analysis.tests || []).length + ' build-up tests.');
-        var t = _byId('bu_s_S1');
-        var tt = t && t.querySelector ? t.querySelector('.rbox-title') : null;
-        if (tt && typeof tt.focus === 'function') { try { tt.focus(); } catch (e) { /* focus is best effort */ } }
+    // The end of Analyse in yielded units through the drive chain (plan §4.8: no long block after the last engine unit):
+    //   1 review (evidence index + rules)   2 state applied, audit entries, saved   3 test list and report sections
+    //   (charts follow one per unit)   4 publish, event, Quick Report snapshot, status line.
+    // Units 1-2 discard the result on Cancel, navigation, a well switch or a newer run, as before; from unit 2 on the
+    // result is applied and saved, so later units stop only for a well switch or a newer state (the render is then moot).
+    var COMPLETE_LABELS = ['Reviewing the analysis', 'Saving', 'Rendering the report', 'Publishing'];
+    function _completeAsync(analysis, input, ph, diff, reason, run, cancel) {
+        var R = _R(), wellId = run.wellId, k = 0, stopped = false, st0 = null, rv = null, idx = null;
+        var units = [
+            function () {
+                if (R && typeof R.evidence === 'function') { try { idx = R.evidence(analysis); } catch (e) { idx = null; } }
+                if (R && typeof R.run === 'function') { try { rv = R.run(analysis, idx); } catch (e) { rv = null; } }
+            },
+            function () {
+                _st.analysis = analysis;
+                _st.partial = false;
+                _st.missingTests = false;
+                delete _st._raw;
+                _idxCache = idx ? { a: analysis, idx: idx } : null;
+                _carryDecisions(_st.review, rv);
+                _st.review = rv;
+                _st.input = _forState(input);
+                _st.pageHash = ph;
+                st0 = _st;
+                _audit({ kind: 'run', target: null, value: { nTests: (analysis.tests || []).length, inputHash: analysis.inputHash, resultHash: analysis.resultHash } });
+                if (diff && diff.length) _audit({ kind: 'input', target: null, value: diff, reason: reason || '' });
+                var stt = _status2();
+                if (_st.signoff && stt === 'CHANGED' && _st.lastStatus !== 'CHANGED') _audit({ kind: 'changed_after_signoff', target: null, value: { signedAt: _st.signoff.at || null } });
+                _st.lastStatus = stt;
+                _save();
+            },
+            function () {
+                if (!_root()) return;
+                _fillTestSel();
+                _renderResults({ charts: true });
+                _checkStale(true);
+            },
+            function () {
+                _publish(true);
+                _emitUpdated();
+                if (!_root()) return;
+                _snap();
+                _status('bu_progress', 'ok', 'Analysis complete: ' + (analysis.tests || []).length + ' build-up tests.');
+                var t = _byId('bu_s_S1');
+                var tt = t && t.querySelector ? t.querySelector('.rbox-title') : null;
+                if (tt && typeof tt.focus === 'function') { try { tt.focus(); } catch (e) { /* focus is best effort */ } }
+            }
+        ];
+        var job = {
+            step: function () {
+                if (!stopped && k < units.length) { units[k](); k++; }
+                return { done: stopped || k >= units.length, progress: k / units.length, label: COMPLETE_LABELS[Math.min(k, units.length - 1)] };
+            },
+            result: function () { return analysis; },
+            cancel: function () { stopped = true; }
+        };
+        var shouldCancel = function () { return k < 2 ? cancel() : (_st !== st0 || _wellId() !== wellId || run.token !== _token); };
+        return _drive(job, {
+            shouldCancel: shouldCancel,
+            onProgress: function (f, lab) { if (k < units.length && _root()) _status('bu_progress', '', 'Analysing… 100 % — ' + (lab || '')); }
+        }).then(function () {
+            if (_run === run) _run = null;
+            _buttons();
+            return analysis;
+        }, function (e) {
+            if (k >= 2) {             // applied and saved: a later stop only skips the render
+                if (_run === run) _run = null;
+                _buttons();
+                return analysis;
+            }
+            throw e;                  // before the apply: discarded, as a cancelled run
+        });
     }
 
     // ── data loading ─────────────────────────────────────────────────
@@ -21544,7 +22270,8 @@ G.WTS_calcRegistry.historian = {
         S.getRaw(wid).then(function (rec) {
             if (!_root() || _wellId() !== wid || _mem.record) return;
             var cur = _st && _st.analysis;
-            if (rec && cur && cur.record && rec.hash && rec.hash === cur.record.hash) {
+            // getRaw re-hashes the decoded samples (hashVerified): a stored label alone never makes a record "the analysis's"
+            if (rec && rec.hashVerified === true && cur && cur.record && rec.hash && rec.hash === cur.record.hash) {
                 _mem.record = rec; _mem.rawChecked = true;
                 _mem.rawStored = { hash: rec.hash, as: (typeof S.engine === 'function' && S.engine() === 'idb') ? 'idb' : 'memory' };
                 return;
@@ -21681,15 +22408,13 @@ G.WTS_calcRegistry.historian = {
             if ((act === 'reject' || act === 'note') && reason.length < 5) { _status('bu_dlg_msg', 'bad', 'A note of at least 5 characters is required.'); return; }
             var who = _who();
             if (!who) { _status('bu_dlg_msg', 'bad', 'Enter your name in the Engineer field first.'); return; }
-            var at = _nowIso(), changed = [];
-            ((_st.review && _st.review.findings) || []).forEach(function (f) {
-                if (!f || ctx.f.indexOf(f.id) === -1) return;
-                if (f.acceptable === false && act === 'accept') return;   // a V14 finding cannot be accepted
-                f.decision = { d: act, note: reason, who: who, at: at };
-                changed.push(f.id);
+            var at = _nowIso(), targets = ((_st.review && _st.review.findings) || []).filter(function (f) {
+                return f && ctx.f.indexOf(f.id) !== -1 && !(f.acceptable === false && act === 'accept');   // a V14 finding cannot be accepted
             });
-            if (!changed.length) { _status('bu_dlg_msg', 'bad', 'This finding cannot be accepted: re-run the analysis to clear it.'); return; }
-            _audit({ kind: 'decision', target: changed.join(','), value: act, reason: reason, who: who });
+            if (!targets.length) { _status('bu_dlg_msg', 'bad', 'This finding cannot be accepted: re-run the analysis to clear it.'); return; }
+            // the audit entry is written first: without it nothing is changed
+            if (!_audit({ kind: 'decision', target: targets.map(function (f) { return f.id; }).join(','), value: act, reason: reason, who: who })) { _status('bu_dlg_msg', 'bad', AUDIT_FAIL); return; }
+            targets.forEach(function (f) { f.decision = { d: act, note: reason, who: who, at: at }; });
             _afterChange({});     // re-render first, so the focus goes to the re-rendered Actions… button
             _dlgClose();
             return;
@@ -21699,8 +22424,8 @@ G.WTS_calcRegistry.historian = {
         if (!who2) { _status('bu_dlg_msg', 'bad', 'Enter your name in the Engineer field first.'); return; }
         if (/^remove:/.test(act)) {
             var oid = act.slice(7), o = (_st.overrides || []).filter(function (x) { return x.id === oid; })[0];
+            if (!_audit({ kind: 'override_removed', target: o ? o.target : null, value: oid, reason: reason, who: who2 })) { _status('bu_dlg_msg', 'bad', AUDIT_FAIL); return; }
             _st.overrides = (_st.overrides || []).filter(function (x) { return x.id !== oid; });
-            _audit({ kind: 'override_removed', target: o ? o.target : null, value: oid, reason: reason, who: who2 });
         } else {
             var t = ctx.kind === 'test' ? _testById(ctx.test) : null, ov = { id: '', kind: act, target: null, value: true, reason: reason.slice(0, 290), who: who2, at: _nowIso(), appVersion: _appVer() };
             if (act === 'exclude' || act === 'include') ov.target = ctx.test;
@@ -21709,18 +22434,25 @@ G.WTS_calcRegistry.historian = {
                 if (!(_fin(t0) && _fin(t1) && t0 > 0 && t1 > t0 * 1.2)) { _status('bu_dlg_msg', 'bad', 'Enter a window start and an end at least 20 % later, in hours of shut-in time.'); return; }
                 ov.target = ctx.test; ov.value = { dt0_h: t0, dt1_h: t1 };
             } else if (act === 'model') { ov.target = ctx.test; ov.value = MODEL_LABEL[_val('bu_dlg_model')] ? _val('bu_dlg_model') : 'homogeneous'; }
-            else if (act === 'event_drop') ov.target = t ? t.eventId : null;
+            // event-level overrides carry the closing of the event they name (anchor_ms): event ids are renumbered when
+            // detection changes, and the run then follows the closing, never the bare id
+            else if (act === 'event_drop') { ov.target = t ? t.eventId : null; ov.value = { anchor_ms: t ? t.tc_ms : null }; }
             else if (act === 'tc' || act === 'event_add' || /^missed:/.test(act)) {
                 var listed = /^missed:/.test(act);
                 var tm = listed ? Number(act.slice(7)) : _localToMs(_val('bu_dlg_time'), _gaugeZone());   // typed in the gauge zone
                 if (!_fin(tm)) { _status('bu_dlg_msg', 'bad', 'Enter the closing time.'); return; }
-                if (act === 'tc') { ov.target = t ? t.eventId : null; ov.value = { tc_ms: tm }; }
+                if (act === 'tc') { ov.target = t ? t.eventId : null; ov.value = { tc_ms: tm, anchor_ms: t ? t.tc_ms : null }; }
                 else { ov.kind = 'event_add'; ov.target = null; ov.value = listed ? { t_ms: tm } : { t_ms: tm, exact: true }; }   // a listed step is refined
             }
             if (ov.kind !== 'event_add' && !ov.target) { _status('bu_dlg_msg', 'bad', 'This action needs a test.'); return; }
+            var seq0 = _st.ovSeq;
             ov.id = _nextOv();
+            if (!_audit({ kind: 'override', target: ov.target, value: { id: ov.id, kind: ov.kind, value: ov.value }, reason: ov.reason, who: who2 })) {
+                _st.ovSeq = seq0;
+                _status('bu_dlg_msg', 'bad', AUDIT_FAIL);
+                return;
+            }
             _st.overrides = (_st.overrides || []).concat([ov]);
-            _audit({ kind: 'override', target: ov.target, value: { id: ov.id, kind: ov.kind, value: ov.value }, reason: ov.reason, who: who2 });
         }
         _save();
         _checkStale();
@@ -21739,6 +22471,12 @@ G.WTS_calcRegistry.historian = {
         if (_isStale) { _status('bu_so_status', 'bad', 'The inputs changed since the last analysis: press Analyse before signing off.'); return; }
         var cs = typeof R.canSign === 'function' ? R.canSign(_st.review) : { ok: true, open: [] };
         if (!cs || !cs.ok) { _status('bu_so_status', 'bad', 'Decide the open findings first (critical and major findings need a decision, a rejection needs a note): ' + ((cs && cs.open) || []).join(', ') + '.'); return; }
+        // A chain that does not verify (S10 ⚠) blocks a sign-off until the analysis has been re-run after the damaged entry.
+        var ast = _auditStatus();
+        if (ast && ast.state === 'broken' && !(_fin(ast.lastRunSeq) && _fin(ast.brokenAt) && ast.lastRunSeq > ast.brokenAt)) {
+            _status('bu_so_status', 'bad', 'The audit trail does not verify at entry #' + (_fin(ast.brokenAt) ? ast.brokenAt : '?') + ' (edited or damaged after it was written): press Analyse to re-run the analysis, then sign off.');
+            return;
+        }
         var so = null;
         try { so = R.signoff(form, a, _st.review); } catch (e) { so = null; }
         if (!so || so.ok === false) {
@@ -21746,9 +22484,13 @@ G.WTS_calcRegistry.historian = {
             _status('bu_so_status', 'bad', 'Not signed: ' + why + '.');
             return;
         }
+        // the audit entry is written first: without it the sign-off is not applied
+        if (!_audit({ kind: 'signoff', target: null, value: { hash: so.hash || null, decisionsHash: so.decisionsHash || null, name: form.name, role: form.role }, who: form.name, inputsHash: so.inputsHash, resultsHash: so.resultsHash })) {
+            _status('bu_so_status', 'bad', AUDIT_FAIL);
+            return;
+        }
         _st.signoff = so;
         _st.lastStatus = 'SIGNED';
-        _audit({ kind: 'signoff', target: null, value: { hash: so.hash || null, decisionsHash: so.decisionsHash || null, name: form.name, role: form.role }, who: form.name, inputsHash: so.inputsHash, resultsHash: so.resultsHash });
         var ok = _byId('bu_so_ok'); if (ok) ok.checked = false;
         _status('bu_so_status', 'ok', 'Signed off by ' + form.name + (form.role ? ' (' + form.role + ')' : '') + ' · hash ' + String(so.hash || '').slice(0, 16) + '.');
         _afterChange({});
@@ -21759,7 +22501,7 @@ G.WTS_calcRegistry.historian = {
         if (typeof G.prompt === 'function') { try { r = G.prompt('Reason for withdrawing the sign-off (at least 5 characters):', ''); } catch (e) { r = null; } }
         r = String(r || '').trim();
         if (r.length < 5) { _status('bu_so_status', 'bad', 'A reason of at least 5 characters is required to withdraw the sign-off.'); return; }
-        _audit({ kind: 'unsign', target: null, value: { hash: _st.signoff.hash || null }, reason: r.slice(0, 290) });
+        if (!_audit({ kind: 'unsign', target: null, value: { hash: _st.signoff.hash || null }, reason: r.slice(0, 290) })) { _status('bu_so_status', 'bad', AUDIT_FAIL); return; }
         _st.signoff = null;
         _st.lastStatus = 'DRAFT';
         _status('bu_so_status', 'warn', 'Sign-off withdrawn: the report is a DRAFT again.');
@@ -21788,7 +22530,19 @@ G.WTS_calcRegistry.historian = {
     function _aiText() {
         var R = _R(), a = _st && _st.analysis;
         if (!R || !a || typeof R.aiExport !== 'function') return null;
-        try { return R.aiExport(a, _st.review, { deidentify: _checked('bu_ai_deid'), includeDates: false, includeFreeText: _checked('bu_ai_free'), idx: _idx() }); } catch (e) { return null; }
+        try { return R.aiExport(a, _st.review, { deidentify: _checked('bu_ai_deid'), includeDates: false, includeFreeText: _checked('bu_ai_free'), idx: _idx(), signoff: _st.signoff || null, names: _knownNames() }); } catch (e) { return null; }
+    }
+    // Every name the page knows of, for de-identification: well names (this well, the well list, the client info) and
+    // people (engineer, signer, audit trail).
+    function _knownNames() {
+        var out = [];
+        var push = function (s, role) { s = String(s == null ? '' : s).trim(); if (s) out.push({ s: s.slice(0, 80), role: role }); };
+        push(_wellName(), 'well');
+        try { var W = G.WTS_wells, l = W && typeof W.list === 'function' ? W.list() : []; (l || []).forEach(function (w) { if (w) push(w.name, 'well'); }); } catch (e) { /* single well */ }
+        push(_val('bu_eng'), 'person'); push(_val('bu_so_name'), 'person');
+        if (_st && _st.signoff) push(_st.signoff.name, 'person');
+        _each(_auditList(), function (e) { if (e) push(e.who, 'person'); });
+        return out;
     }
     function _download(text, name) {
         try {
@@ -25836,7 +26590,7 @@ G.WTS_calcRegistry.historian = {
 //     Drilling & Production Practice, 126–157. Ros, N.C.J. (1960) "An Analysis
 //     of Critical Simultaneous Gas/Liquid Flow Through a Restriction", Appl.
 //     Sci. Res. 9, 374. Baxendell, P.B. (1958) and Achong, I. (1961) "Revised
-//     Bean Performance Formula for Lake Maracaibo Wells" (Shell reports, as
+//     Bean Performance Formula for Lake Maracaibo Wells" (company reports, as
 //     tabulated in the references above).
 //     Validity: critical flow through the bean — Gilbert: upstream pressure at
 //     least 1.7 × downstream (p2/p1 ≤ 0.588, absolute).
@@ -30501,11 +31255,11 @@ G.WTS_calcRegistry.historian = {
 //   Ionic strength I = ½ Σ cᵢ·zᵢ² (mol/L).                         [Standard Methods 1030 / USBR MS-2016 eq. 1]
 //   Charge balance % = (Σcat − Σan)/(Σcat + Σan)·100 in meq/L;
 //     ≤ 5 % acceptable, 5–10 % questionable, > 10 % poor.           [Standard Methods 1030 E; USBR MS-2016 eq. 3]
-//   Langelier (v3.0: ASTM D3739 chart fit, the value shown and used):  [USBR MS-2016 eqs. 9–11; DuPont (1992)]
+//   Langelier (v3.0: ASTM D3739 chart fit, the value shown and used):  [USBR MS-2016 eqs. 9–11]
 //     pHs = pCa + pAlk + C,  pCa = −log10[Ca] (mol/L), pAlk = −log10(total alkalinity, eq/L),
 //     C(TDS, T) = 3.26·e^(−0.005·T) − 0.0116·log10(TDS³) + 0.0905·log10(TDS²) − 0.133·log10(TDS) − 0.02,
 //     T in °F; LSI = pH − pHs. Reproduces the USBR worked example (0.184 vs 0.18 published).
-//   Langelier, Carrier (1965) form (shown for comparison; the pre-v3.0 value): [Carrier (1965)]
+//   Langelier, approximate 1965 form (shown for comparison; the pre-v3.0 value): [approximate 1965 form]
 //     pHs = (9.3 + A + B) − (C + D); A = (log10 TDS − 1)/10,
 //     B = −13.12·log10(T_K) + 34.55, C = log10(Ca as CaCO3, mg/L) − 0.4,
 //     D = log10(total alkalinity as CaCO3, mg/L). USBR example: 0.13.
@@ -30631,10 +31385,10 @@ G.WTS_calcRegistry.historian = {
         // Alkalinity: HCO3 + 2·CO3 in eq/L; as CaCO3 mg/L = eq/L × 50,043.5
         var alkEq = c.hco3 + 2 * c.co3;
         var caCaCO3 = c.ca * CACO3 * 1000, alkCaCO3 = alkEq * CACO3 / 2 * 1000;
-        // Langelier, Carrier (1965) form (comparison)
+        // Langelier, approximate 1965 form (comparison)
         var A = (Math.log10(tds) - 1) / 10, B = -13.12 * Math.log10(tK) + 34.55;
         var C = Math.log10(caCaCO3) - 0.4, D = Math.log10(alkCaCO3);
-        var pHsCarrier = 9.3 + A + B - (C + D);
+        var pHsApprox = 9.3 + A + B - (C + D);
         // Langelier, ASTM D3739 chart fit (USBR MS-2016 eq. 9, T °F): pHs = pCa + pAlk + C(TDS, T)
         var lt = Math.log10(tds);
         var Cchart = 3.26 * Math.exp(-0.005 * t) - 0.0116 * 3 * lt + 0.0905 * 2 * lt - 0.133 * lt - 0.02;
@@ -30670,7 +31424,7 @@ G.WTS_calcRegistry.historian = {
             sumIons: sum, tds: tds, tdsMeasured: tdsIn != null, I: I, t: t, p: p, ph: ph, tC: tC,
             alkEq: alkEq, caCaCO3: caCaCO3, alkCaCO3: alkCaCO3,
             lsi: { Cchart: Cchart, pHs: pHsL, value: ph - pHsL, valid: tds <= 10000, band: band(ph - pHsL), tempOk: t <= 212,
-                carrier: { A: A, B: B, C: C, D: D, pHs: pHsCarrier, value: ph - pHsCarrier } },
+                approx: { A: A, B: B, C: C, D: D, pHs: pHsApprox, value: ph - pHsApprox } },
             sdi: { K: K, pCa: pCa, pAlk: pAlk, pHs: pHsS, value: ph - pHsS, band: band(ph - pHsS), tempOk: tC >= 0 && tC <= 90 },
             si: si, verdicts: verdicts, curve: curve, table: table
         };
@@ -30764,7 +31518,7 @@ G.WTS_calcRegistry.historian = {
         h += '<div class="rbox"><div class="rbox-title">Calcium Carbonate Indices</div>' +
             _row('Langelier saturation pH, pHs', _fx(L.pHs, 2)) +
             _row('Langelier index, LSI', _fx(L.value, 2)) +
-            _row('Langelier index, Carrier (1965) form (pre-v3.0 value)', _fx(L.carrier.value, 2)) +
+            _row('Langelier index, approximate 1965 form (pre-v3.0 value)', _fx(L.approx.value, 2)) +
             _row('Stiff–Davis K', _fx(S.K, 3)) +
             _row('Stiff–Davis saturation pH', _fx(S.pHs, 2)) +
             _row('Stiff–Davis index, S&DSI', _fx(S.value, 2)) +
@@ -30773,8 +31527,8 @@ G.WTS_calcRegistry.historian = {
             (S.tempOk ? '' : _warn('Temperature is outside the 0 to 90 °C range of the Stiff–Davis chart; K is extrapolated.')) +
             (L.valid && !L.tempOk ? _warn('Temperature is above 212 °F: the Langelier chart fit is extrapolated. Use Oddo–Tomson.') : '') +
             _note('Both indices use the measured pH and the analysis temperature. From v3.0 the LSI uses the ASTM D3739 ' +
-                'chart fit (DuPont 1992, USBR 2016 eq. 9: pHs = pCa + pAlk + C(TDS, T)), which reproduces the USBR worked ' +
-                'example (0.18); the Carrier (1965) form used before is shown for comparison (typically 0.02 to 0.06 lower). ' +
+                'chart fit (USBR 2016 eq. 9: pHs = pCa + pAlk + C(TDS, T)), which reproduces the USBR worked ' +
+                'example (0.18); the approximate 1965 form used before is shown for comparison (typically 0.02 to 0.06 lower). ' +
                 'Stiff–Davis K from the ASTM D4582 chart fit (USBR 2016 eqs. 13–14); on the USBR example it gives −0.04 against ' +
                 'the worksheet\'s 0.12, so treat |S&DSI| below about 0.2 as neutral. Positive values mean calcium carbonate ' +
                 'tends to deposit; values below −0.5 mean the water is aggressive to carbonate films.') +
