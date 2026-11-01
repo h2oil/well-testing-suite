@@ -22,6 +22,7 @@
 const fs = require('fs');
 const path = require('path');
 const { FIX, checkShape } = require('./_buildup-shapes');
+const { createFakeIDB } = require('./_buildup-idb-fake');
 
 const WP = 'WP6';
 const REPO = path.resolve(__dirname, '..', '..');
@@ -1171,6 +1172,267 @@ module.exports = [
       P(app)._carryDecisions(app.toWin(F(1.3, dec)), changed);
       assert.strictEqual(same.findings[0].decision && same.findings[0].decision.d, 'accept', 'same values: decision carried');
       assert.strictEqual(changed.findings[0].decision, null, 'changed values: the finding is open again');
+    },
+  },
+  {
+    name: 'PG25 page time zones (WP9): a typed wall-clock time uses the data reader\'s rule — first occurrence in the repeated hour, the reader\'s offset in the DST gap',
+    wp: WP,
+    run(app, assert) {
+      install(app);
+      const Z = P(app)._zone, D = app.win.WTS_buildup.data, z = app.toWin({ mode: 'iana', tz: 'Europe/London' });
+      assert.ok(D && typeof D.localToUtc === 'function', 'data module loaded');
+      [['2026-10-25T01:30', [2026, 9, 25, 1, 30]], ['2026-03-29T01:30', [2026, 2, 29, 1, 30]], ['2026-07-01T12:00', [2026, 6, 1, 12, 0]], ['2026-01-15T08:00', [2026, 0, 15, 8, 0]]]
+        .forEach(([s, f]) => assert.strictEqual(Z.localToMs(s, z), D.localToUtc(z, Date.UTC(f[0], f[1], f[2], f[3], f[4])), s + ': page = reader'));
+      assert.strictEqual(Z.localToMs('2026-10-25T01:30', z), Date.UTC(2026, 9, 25, 0, 30), 'repeated hour: the first occurrence (BST)');
+      assert.strictEqual(Z.localToMs('2026-03-29T01:30', z), Date.UTC(2026, 2, 29, 0, 30), 'gap: the reader\'s offset');
+      assert.strictEqual(Z.localToMs('2026-07-01T12:00', z), Date.UTC(2026, 6, 1, 11, 0), 'summer');
+      assert.strictEqual(Z.localToMs('2026-07-01T12:00', app.toWin({ mode: 'fixed', offset_h: 2 })), Date.UTC(2026, 6, 1, 10, 0), 'fixed offset');
+      assert.strictEqual(Z.localToMs('2026-07-01T12:00', app.toWin({ mode: 'utc' })), Date.UTC(2026, 6, 1, 12, 0), 'UTC');
+    },
+  },
+  {
+    name: 'PG26 page audit first (WP9): when the audit entry cannot be stored, a sign-off, an override and a decision change nothing and say so',
+    wp: WP,
+    timeoutMs: 120000,
+    async run(app, assert, ctx) {
+      applySeed(app, await seed(ctx));
+      open(app);
+      for (let i = 0; i < 6; i++) await app.flushAsync(1);
+      const W = app.win, R = W.WTS_buildup.review, st = P(app).state();
+      const cs = R.canSign(st.review);
+      if (!cs.ok) cs.open.forEach((fid) => { const f = st.review.findings.find((x) => x.id === fid); f.decision = { d: 'note', note: 'Reviewed in the test', who: 'Reviewer A', at: new Date().toISOString() }; });
+      const before = app.storage.getItem('wts_buildup_audit');
+      const orig = W.WTS_lsSet;
+      W.WTS_lsSet = function (k, v) { if (k === 'wts_buildup_audit') return false; return orig(k, v); };
+      app.input('bu_so_name', 'Reviewer A'); app.check('bu_so_ok', true);
+      app.click('bu_so_sign');
+      assert.match(txt(app.el('bu_so_status')), /audit trail could not be saved .* nothing was changed/, txt(app.el('bu_so_status')));
+      assert.strictEqual(P(app).state().signoff, null, 'no sign-off applied');
+      assert.notStrictEqual(P(app).status(), 'SIGNED');
+      // an override through the dialog
+      const t = st.analysis.tests.find((x) => x.status === 'interpreted');
+      const nOv = (P(app).state().overrides || []).length;
+      app.click(app.find('#bu_res [data-act="menu"][data-test="' + t.id + '"]'));
+      app.select('bu_dlg_act', 'exclude');
+      app.input('bu_eng', 'Engineer A');
+      app.input('bu_dlg_reason', 'Gauge failure during the test');
+      app.click('bu_dlg_ok');
+      assert.ok(app.el('bu_dlg').hasAttribute('open'), 'the dialog stays open');
+      assert.match(txt(app.el('bu_dlg_msg')), /audit trail could not be saved/);
+      assert.strictEqual((P(app).state().overrides || []).length, nOv, 'no override recorded');
+      app.click('bu_dlg_cancel');
+      // a finding decision
+      const fb = app.find('#bu_res [data-act="menu"][data-f]');
+      if (fb) {
+        const fid = fb.getAttribute('data-f').split(',')[0], f0 = P(app).state().review.findings.find((x) => x.id === fid), d0 = JSON.stringify(f0.decision || null);
+        app.click(fb);
+        app.select('bu_dlg_act', 'note');
+        app.input('bu_dlg_reason', 'Checked against the field log');
+        app.click('bu_dlg_ok');
+        assert.match(txt(app.el('bu_dlg_msg')), /audit trail could not be saved/);
+        assert.strictEqual(JSON.stringify(f0.decision || null), d0, 'decision not applied');
+        app.click('bu_dlg_cancel');
+      }
+      assert.strictEqual(app.storage.getItem('wts_buildup_audit'), before, 'the audit is unchanged');
+      // storage back: the sign-off goes through with its entry
+      W.WTS_lsSet = orig;
+      app.check('bu_so_ok', true);
+      app.click('bu_so_sign');
+      assert.strictEqual(P(app).status(), 'SIGNED', txt(app.el('bu_so_status')));
+      assert.ok(auditKinds(app).indexOf('signoff') !== -1, 'signoff entry written');
+    },
+  },
+  {
+    name: 'PG27 page audit chain (WP9): an edited entry shows ⚠ in S10 and S11 and blocks a sign-off until a re-run; an unreadable log is kept aside at the next audited action and reported',
+    wp: WP,
+    timeoutMs: 180000,
+    async run(app, assert, ctx) {
+      applySeed(app, await seed(ctx), null, { raw: true });
+      const raw = JSON.parse(app.storage.getItem('wts_buildup_audit'));
+      const last = raw.entries[raw.entries.length - 1], seq0 = last.seq;   // the latest run entry: no run after the damage
+      assert.strictEqual(last.kind, 'run');
+      last.reason = 'edited later';
+      app.storage.setItem('wts_buildup_audit', JSON.stringify(raw));
+      open(app);
+      for (let i = 0; i < 10; i++) await app.flushAsync(1);
+      assert.match(secText(app, 'S10'), new RegExp('Audit trail does not verify at entry #' + seq0 + ': it was edited or damaged'), 'S10 warning');
+      assert.match(secText(app, 'S11'), /Audit trail does not verify/, 'S11 warning');
+      const R = app.win.WTS_buildup.review, sign = () => {
+        const st = P(app).state(), cs = R.canSign(st.review);
+        if (!cs.ok) cs.open.forEach((fid) => { const f = st.review.findings.find((x) => x.id === fid); f.decision = { d: 'note', note: 'Reviewed in the test', who: 'Reviewer A', at: new Date().toISOString() }; });
+        app.input('bu_so_name', 'Reviewer A'); app.check('bu_so_ok', true); app.click('bu_so_sign');
+      };
+      sign();
+      assert.match(txt(app.el('bu_so_status')), /does not verify at entry #\d+ .*press Analyse/, txt(app.el('bu_so_status')));
+      assert.notStrictEqual(P(app).status(), 'SIGNED', 'not signed');
+      app.click('bu_run');
+      assert.ok(await idle(app));
+      sign();
+      assert.strictEqual(P(app).status(), 'SIGNED', 'signed after the re-run: ' + txt(app.el('bu_so_status')));
+      assert.match(secText(app, 'S10'), /does not verify/, 'the break stays on record');
+      // an unreadable log
+      app.storage.setItem('wts_buildup_audit', '{"v":1,"entries":[{"seq":1');
+      app.hook.nav('home'); app.hook.nav('buildup'); app.flush(20);
+      for (let i = 0; i < 6; i++) await app.flushAsync(1);
+      assert.match(secText(app, 'S10'), /could not be read/, 'reported before any action');
+      app.input('bu_eng', 'Engineer A');
+      const t = P(app).state().analysis.tests.find((x) => x.status === 'interpreted');
+      app.click(app.find('#bu_res [data-act="menu"][data-test="' + t.id + '"]'));
+      app.select('bu_dlg_act', 'exclude');
+      app.input('bu_dlg_reason', 'Gauge failure during the test');
+      app.click('bu_dlg_ok');
+      const ast = app.win.WTS_buildup.store.audit.status();
+      assert.ok(ast.lost && ast.lost.key, 'the loss is recorded');
+      assert.strictEqual(app.storage.getItem(ast.lost.key), '{"v":1,"entries":[{"seq":1', 'the unreadable text is kept verbatim');
+      assert.match(secText(app, 'S10'), /its text is kept as wts_buildup_audit_corrupt_\d+/, 'S10 names where');
+    },
+  },
+  {
+    name: 'PG28 page AI export privacy (WP9): De-identify and Include free text are never autosaved; a reload or a page record that carries them starts de-identified with no free text',
+    wp: WP,
+    async run(app, assert, ctx) {
+      const s = await seed(ctx);
+      applySeed(app, s);
+      open(app);
+      app.check('bu_ai_free', true); app.check('bu_ai_deid', false);
+      app.input('bu_eng', 'Engineer B');
+      app.flush(500);
+      const rec = app.storage.getItem('wts_page_buildup') || '';
+      assert.match(rec, /Engineer B/, 'autosaved');
+      assert.ok(!/bu_ai_deid|bu_ai_free/.test(rec), 'the privacy controls are not in the page record');
+      const a2 = app.reload();
+      try {
+        install(a2); parkTests(a2, s);
+        a2.hook.nav('buildup'); a2.flush(400);
+        assert.strictEqual(a2.el('bu_ai_deid').checked, true, 'de-identified after a reload');
+        assert.strictEqual(a2.el('bu_ai_free').checked, false, 'no free text after a reload');
+        // a page record from an older version (or a project file) that carries the keys does not set them
+        const r = JSON.parse(a2.storage.getItem('wts_page_buildup'));
+        r.f.bu_ai_deid = false; r.f.bu_ai_free = true;
+        a2.storage.setItem('wts_page_buildup', JSON.stringify(r));
+        a2.hook.nav('home'); a2.hook.nav('buildup'); a2.flush(400);
+        assert.strictEqual(a2.el('bu_ai_deid').checked, true, 'a carried choice does not apply');
+        assert.strictEqual(a2.el('bu_ai_free').checked, false);
+      } finally { a2.dispose(); }
+    },
+  },
+  {
+    name: 'PG29 page store note (WP9): an overflowed save whose per-test detail does not reach IndexedDB says so; a stored write clears the note',
+    wp: WP,
+    timeoutMs: 120000,
+    async run(app, assert, ctx) {
+      const idb = createFakeIDB({ failWrites: true });
+      app.win.indexedDB = idb.indexedDB;
+      applySeed(app, await seed(ctx));
+      open(app);
+      for (let i = 0; i < 6; i++) await app.flushAsync(1);
+      const st = P(app).state();
+      st.analysis.tests.forEach((t) => { if (t && t.spec) { const n = 6000; t.spec.dt = app.toWin(Array.from({ length: n }, (_, i) => i * 0.001)); t.spec.p = app.toWin(Array.from({ length: n }, (_, i) => 2500 + i * 0.01)); } });
+      const ask = async () => { app.input('bu_qa_q', 'is there an alert?'); app.click('bu_qa_go'); for (let i = 0; i < 6; i++) await app.flushAsync(1); };
+      await ask();
+      assert.match(txt(app.el('bu_store_note')), /could not be stored in this browser's database .* missing after a reload/, 'note shown: ' + txt(app.el('bu_store_note')));
+      assert.ok(app.el('bu_store_note').closest('.rp-skip'), 'the note is not part of the report');
+      idb.failWrites = false;
+      await ask();
+      assert.strictEqual(txt(app.el('bu_store_note')), '', 'a stored write clears the note');
+    },
+  },
+  {
+    name: 'PG30 page override outcomes (WP9): a refused event-level override shows the engine\'s reason; an added shut-in names the event it created',
+    wp: WP,
+    async run(app, assert, ctx) {
+      let evId = null;
+      applySeed(app, await seed(ctx), (o) => {
+        const a = o.analysis, ev = a.events.find((e) => !a.tests.some((t) => t.eventId === e.id)) || a.events[a.events.length - 1];
+        evId = ev.id;
+        ev.overrideIds = ['O2'];
+        a.overrides = (a.overrides || []).concat([
+          { id: 'O1', kind: 'event_add', target: null, value: { t_ms: a.events[0].tc_ms, exact: true }, reason: 'Missed shut-in', who: 'A',
+            warnings: [{ code: 'OVERRIDE_NOT_APPLIED', level: 'warn', text: 'Override O1 (event add) was not applied: event ' + a.events[0].id + ' already closes at that time (use a closing-time override).', ev: ['D1'] }] },
+          { id: 'O2', kind: 'event_add', target: null, value: { t_ms: ev.tc_ms, exact: true }, reason: 'Missed shut-in', who: 'A' }]);
+      });
+      open(app);
+      const note = txt(app.el('bu_ov_note'));
+      assert.match(note, /Override O1 \(event add\) was not applied: event E\d+ already closes at that time/, 'refusal shown: ' + note);
+      assert.match(note, new RegExp('Override O2 added event ' + evId + ' at \\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2} '), 'created event named: ' + note);
+      assert.ok(app.el('bu_ov_note').closest('.rp-skip'), 'not part of the report');
+    },
+  },
+  {
+    name: 'PG31 page rendering (WP9): one glyph per verdict; "older rows" span the table; Ev. and Labels cells do not wrap; phone-size Actions buttons; the question field spans the row; charts: distinct ticks, no -0, boxed legends, one S ± S_err entry, open markers beyond 8 tests',
+    wp: WP,
+    async run(app, assert, ctx) {
+      applySeed(app, await seed(ctx), (o) => {
+        const a = o.analysis, base = a.events.slice();
+        let k = 100;
+        while (a.events.length < 36) { const e = JSON.parse(JSON.stringify(base[a.events.length % base.length])); e.id = 'E' + (k++); e.tc_ms = base[0].tc_ms - 86400000 * (k - 99); a.events.unshift(e); }
+      });
+      open(app);
+      for (let i = 0; i < 40; i++) await app.flushAsync(1);
+      const all = txt(app.el('bu_res'));
+      assert.ok(!/[✓⚠✗×]\s+[✓⚠✗×]/.test(all), 'one glyph per verdict: ' + (all.match(/.{0,20}[✓⚠✗×]\s+[✓⚠✗×].{0,30}/) || [''])[0]);
+      const older = app.find('#bu_tbl_events tr.bu-older td');
+      assert.ok(older, 'an older-events row');
+      assert.strictEqual(older.getAttribute('colspan'), String(app.findAll('#bu_tbl_events thead th').length), 'spans every column');
+      assert.match(txt(older), /^\d+ older events not shown$/);
+      assert.ok(app.findAll('#bu_res td.bu-evc').length > 0, 'Ev. cells carry the no-wrap class');
+      const css = app.find('#bu_root style').textContent;
+      assert.ok(/td\.bu-evc\{white-space:nowrap/.test(css) && /td\.bu-nw\{white-space:nowrap\}/.test(css), 'no-wrap rules');
+      assert.ok(/@media \(max-width:600px\)\{[^}]*\}?[^@]*#bu_root \.bu-act\{min-height:28px/.test(css), 'Actions buttons at least 28 px on phones');
+      assert.ok(app.el('bu_qa_q').closest('.fg-item').classList.contains('bu-wide') && /\.fg-item\.bu-wide\{grid-column:1\/-1\}/.test(css), 'question field spans the row');
+      // charts
+      const texts = [].concat(...app.canvases(app.el('bu_res')).map((c) => app.canvasTexts(c)));
+      assert.ok(!texts.some((s) => /^[-−]0(?:[.,]0+)?$/.test(s)), 'no "-0" tick label');
+      const pi = app.canvasTexts('bu_ch_pi');
+      if (pi.length > 8) assert.strictEqual(new Set(pi.slice(0, 7)).size, 7, 'p* tick labels distinct: ' + pi.slice(0, 7).join(' | '));
+      const sk = app.canvasTexts('bu_ch_skin');
+      assert.ok(sk.indexOf('S ± S_err') !== -1 && sk.indexOf('S − S_err') === -1 && sk.indexOf('S + S_err') === -1, 'one S ± S_err legend entry');
+      assert.ok(app.canvasLog('bu_ch_skin').some((e) => e.op === 'set' && e.prop === 'globalAlpha' && e.value === 0.88), 'the legend sits in a box');
+      app.canvases(app.el('bu_res')).filter((c) => /^bu_ch_j$/i.test(c.id)).forEach((c) => assert.ok(!app.canvasTexts(c).some((s) => /Ratio of observed to predicted/.test(s)), 'short PI-ratio title'));
+      const Pj = app.win.WTS_buildup.plot, cj = app.document.createElement('canvas'); cj.id = 't_pij'; cj.width = 720; cj.height = 300; app.document.body.appendChild(cj);
+      Pj.trend(cj, app.toWin({ datasets: [{ label: 'a', data: [{ x: 0, y: 4203.4 }, { x: 0.2, y: 4202.8 }, { x: 0.4, y: 4201.1 }, { x: 0.6, y: 4204.0 }], points: true }], xDec: 1, yDec: 0 }));
+      const tj = app.canvasTexts('t_pij');
+      assert.strictEqual(new Set(tj.slice(0, 7)).size, 7, 'a 3-psi scatter gets distinct y ticks: ' + tj.slice(0, 7).join(' | '));
+      assert.ok(!tj.some((s) => /^[-\u2212]0(?:[.,]0+)?$/.test(s)), 'no -0 on an axis whose first tick is just below zero: ' + tj.slice(7, 14).join(' | '));
+      assert.strictEqual(tj[7], '0', 'the first x tick (−0.03 at one decimal) reads 0');
+      // overlay: tests beyond the 8th get open markers
+      const P0 = app.win.WTS_buildup.plot, mk = (n) => app.toWin(Array.from({ length: n }, (_, i) => ({ id: 'B' + (i + 1), dt: [0.1, 1, 10], dpq: [1 + i, 2 + i, 3 + i], derivq: [0.5, 0.6, 0.7] })));
+      const cv = (id) => { const c = app.document.createElement('canvas'); c.id = id; c.width = 720; c.height = 300; app.document.body.appendChild(c); return c; };
+      P0.overlay(cv('t_ov8'), mk(8)); P0.overlay(cv('t_ov10'), mk(10));
+      assert.ok(app.canvasLog('t_ov10', 'stroke').length - app.canvasLog('t_ov8', 'stroke').length >= 12, 'tests 9 and 10 drawn with open markers');
+      assert.strictEqual(app.errors.length, 0, app.errors.map((e) => e.message).join('; '));
+    },
+  },
+  {
+    name: 'PG32 page end of Analyse (WP9): saving, the report and the publish run as separate yielded units after the review; the run stays active until the last one',
+    wp: WP,
+    timeoutMs: 120000,
+    async run(app, assert, ctx) {
+      applySeed(app, await seed(ctx), null, { raw: true });
+      open(app);
+      for (let i = 0; i < 10; i++) await app.flushAsync(1);
+      // record every drive step after the engine (the drive runs one job step per timer task and reports it to onProgress)
+      const AI = app.win.PRiSM_autoInterp, orig = AI.drive, steps = [];
+      AI.drive = function (job, opts) {
+        const o = Object.assign({}, opts || {}), op = o.onProgress;
+        o.onProgress = function (f, l) {
+          steps.push({ label: String(l || ''), running: P(app).isRunning(), done: /✓ Analysis complete/.test(txt(app.el('bu_progress'))), hasRes: app.el('bu_res').getAttribute('data-done') === '1' });
+          if (op) return op.apply(this, arguments);
+        };
+        return orig.call(this, job, o);
+      };
+      app.click('bu_run');
+      assert.ok(await idle(app));
+      AI.drive = orig;
+      const tail = steps.filter((s) => /^(Saving|Rendering the report|Publishing)$/.test(s.label));
+      assert.deepStrictEqual(tail.map((s) => s.label), ['Saving', 'Rendering the report', 'Publishing', 'Publishing'], 'four completion steps, one per timer task: ' + steps.slice(-6).map((s) => s.label).join(', '));
+      assert.ok(tail.every((s) => s.running), 'the run stays active through every unit');
+      assert.ok(tail.slice(0, 3).every((s) => !s.done), '"Analysis complete" only after the last unit');
+      assert.strictEqual(P(app).isRunning(), false, 'the run ended');
+      assert.match(txt(app.el('bu_progress')), /✓ Analysis complete: \d+ build-up tests/);
+      assert.strictEqual(app.el('bu_res').getAttribute('data-done'), '1');
+      app.flush(5000);
+      assert.strictEqual(app.pendingTimers(), 0, 'no timers left');
     },
   },
 ];

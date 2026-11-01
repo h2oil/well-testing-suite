@@ -69,7 +69,7 @@ host route table (`const pages = {…}` in `well-testing-app.html`).
 |---|---|
 | AGA-3 Gas Metering | Orifice-meter gas rate per AGA Report No. 3 / API MPMS 14.3 (Reader-Harris/Gallagher Cd, expansion factor, Fpv = √(Zb/Zf)) |
 | Dual Choke | Intermediate pressure between two chokes, equivalent bean, critical-flow check, Gilbert multiphase |
-| Choke Flow Rates | Gas rate through a fixed choke (Thornhill–Craver), oil rate by Gilbert and Ros |
+| Choke Flow Rates | Gas rate through a fixed choke (API 14B nozzle equation), oil rate by Gilbert and Ros |
 | Choke Conversions | Choke sizes in 64ths, decimal inches and millimetres |
 | Bottoms Up Time | Circulation time for returns from rate and string volume |
 | MCF & Shrinkage % | Meter correction factor and shrinkage from turbine-meter and surge-tank readings |
@@ -311,7 +311,7 @@ Standards and methods cited in the calculators:
 | Emissions | IPCC AR4 / AR5 / AR6 GWP-100, 40 CFR 98 |
 | Electrical | IEC 60364-5-52, BS 7671 (cable ratings) |
 | Water chemistry | ASTM D3739 (Langelier), ASTM D4582 (Stiff–Davis), Oddo–Tomson |
-| Correlations | Standing, Vasquez–Beggs, Beggs–Robinson, Dranchuk–Abou-Kassem, Hall–Yarborough, Lee–Gonzalez–Eakin, Sutton, Wichert–Aziz, Hammerschmidt, Beggs & Brill with Payne, Gilbert / Ros / Baxendell / Achong, Thornhill–Craver, Vogel, Fetkovich, Arps, Duong, Bourdet, Stehfest |
+| Correlations | Standing, Vasquez–Beggs, Beggs–Robinson, Dranchuk–Abou-Kassem, Hall–Yarborough, Lee–Gonzalez–Eakin, Sutton, Wichert–Aziz, Hammerschmidt, Beggs & Brill with Payne, Gilbert / Ros / Baxendell / Achong, API 14B gas choke (nozzle) equation, Vogel, Fetkovich, Arps, Duong, Bourdet, Stehfest |
 
 ---
 

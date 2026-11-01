@@ -248,7 +248,7 @@ module.exports = [
       assert.ok(r.ok, 'ok');
       // Published: I = 0.0433 (includes 0.5 mg/L F⁻ and 10 mg/L NO3⁻, not entered here: −0.2 %)
       assert.rel(r.I, 0.0433, 0.01, 'ionic strength vs USBR');
-      assert.ok(Math.abs(r.lsi.value - 0.18) <= 0.06, 'LSI ' + r.lsi.value + ' vs USBR 0.18 (DuPont chart fit; Carrier form here)');
+      assert.ok(Math.abs(r.lsi.value - 0.18) <= 0.06, 'LSI ' + r.lsi.value + ' vs USBR 0.18 (ASTM D3739 chart fit)');
       assert.ok(Math.abs(r.si.barite - log10(20.94)) <= 0.1, 'barite SI ' + r.si.barite + ' vs USBR log10(IP/Ksp) 1.32');
       assert.ok(Math.abs(r.si.celestite - log10(1.36e-8 / 1.18e-6)) <= 0.1, 'celestite SI ' + r.si.celestite + ' vs USBR −1.94');
       // Charge balance by hand (meq/L)
@@ -257,10 +257,10 @@ module.exports = [
       assert.rel(r.cations_meq, cat, 1e-9, 'cations'); assert.rel(r.anions_meq, an, 1e-9, 'anions');
       assert.rel(r.cbPct, (cat - an) / (cat + an) * 100, 1e-9, 'balance %');
       assert.ok(Math.abs(r.cbPct - 2.4) < 0.6 && r.cb === 'ok', 'balance ≈ USBR 2.4 % (F, NO3 omitted), acceptable');
-      // Langelier by hand, Carrier (1965) form — the pre-v3.0 value, now shown for comparison
+      // Langelier by hand, approximate 1965 form — the pre-v3.0 value, now shown for comparison
       const tK = 288.15, caC = 196.3 / 40.078 * 100.087, alkC = 169.2 / 61.017 * 50.0435;
       const pHs = 9.3 + (log10(1566.56) - 1) / 10 + (-13.12 * log10(tK) + 34.55) - (log10(caC) - 0.4) - log10(alkC);
-      assert.rel(r.lsi.carrier.pHs, pHs, 1e-6, 'Carrier pHs'); assert.rel(r.lsi.carrier.value, 7.5 - pHs, 1e-5, 'Carrier LSI');
+      assert.rel(r.lsi.approx.pHs, pHs, 1e-6, 'approximate 1965 form pHs'); assert.rel(r.lsi.approx.value, 7.5 - pHs, 1e-5, 'approximate 1965 form LSI');
       // v3.0 LSI: ASTM D3739 chart fit, USBR MS-2016 eq. 9 (T °F): pHs = pCa + pAlk + C(TDS, T)
       const Lt = log10(1566.56), Cc = 3.26 * Math.exp(-0.005 * 59) - 0.0116 * log10(Math.pow(1566.56, 3)) + 0.0905 * log10(Math.pow(1566.56, 2)) - 0.133 * Lt - 0.02;
       const pHs9 = -log10(196.3 / 40078) - log10(169.2 / 61017) + Cc;

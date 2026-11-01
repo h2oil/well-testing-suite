@@ -172,7 +172,7 @@ Engineering choices made (stated on each page) that need a domain owner's confir
 - **Pipe-life erosion** is a calibrated fit, not Salama/DNV, and reads very high (≈ 222 mils/yr at 2 lb/MMscf), so the Pipe Sizing sand screen warns at almost any sand rate.
 - **Schedule 180** is not an ASME B36.10 schedule; **flame-arrestor K** is generic.
 - **Simulator:** should gauge auto-divert be allowed to interrupt a settling compartment, and should LSHH-301 also stop P-201?
-- **Scale:** Stiff–Davis curve fit gives −0.04 on the USBR example (published 0.12); Langelier uses Carrier (1965).
+- **Scale:** Stiff–Davis curve fit gives −0.04 on the USBR example (published 0.12); Langelier uses the approximate 1965 form.
 - **Sampling QC** tolerances (5 % / 5 % / 2 %), gauge-register thresholds, hydrate margin (5 °F), sand C-factors (70/100), verdict bands: user-adjustable defaults, not standards.
 - **3D hash check** is skipped when `crypto.subtle` is unavailable (plain http).
 

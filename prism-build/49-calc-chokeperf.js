@@ -44,7 +44,7 @@
 //     Drilling & Production Practice, 126–157. Ros, N.C.J. (1960) "An Analysis
 //     of Critical Simultaneous Gas/Liquid Flow Through a Restriction", Appl.
 //     Sci. Res. 9, 374. Baxendell, P.B. (1958) and Achong, I. (1961) "Revised
-//     Bean Performance Formula for Lake Maracaibo Wells" (Shell reports, as
+//     Bean Performance Formula for Lake Maracaibo Wells" (company reports, as
 //     tabulated in the references above).
 //     Validity: critical flow through the bean — Gilbert: upstream pressure at
 //     least 1.7 × downstream (p2/p1 ≤ 0.588, absolute).
