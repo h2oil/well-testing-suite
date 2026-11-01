@@ -20298,7 +20298,7 @@ G.WTS_calcRegistry.historian = {
 
     var PG_KEY = 'buildup';
     var PG_TITLE = 'Build-up Surveillance';
-    var PG_SUB = 'Automatic interpretation of every shut-in, skin trend and alerts, with review and sign-off';
+    var PG_SUB = 'Automatic interpretation of shut-ins in gauge data, skin trend and alerts, with review and sign-off';
     var MODEL_LABEL = { homogeneous: 'Homogeneous', linearBoundary: 'Sealing fault', composite2: 'Radial composite', closedCircle: 'Closed circle' };
     var DETAIL_MISSING = 'Per-test detail and charts are not available on this device (the stored build-ups were not found): the results below come from the per-test summaries. Press Analyse to recompute them (re-import the gauge data first if asked).';
 
@@ -20656,7 +20656,7 @@ G.WTS_calcRegistry.historian = {
         '@media (max-width:600px){#bu_root .bu-dlg{padding:8px}#bu_root .bu-dlg-box{width:100%}#bu_root .bu-act{min-height:28px;padding:4px 10px}}' +
         '</style>';
     var NOTES = [
-        'Method: every shut-in in the gauge record is found and interpreted automatically on the Bourdet derivative of the superposition-equivalent time (L = 0.1 log cycle). The IARF window is the earliest qualifying plateau after the storage hump; the semilog line and a homogeneous match (rival models only when a trigger fires) give k, S and C with a skin uncertainty and a calibrated confidence label. Skin is then tracked against a baseline with delta and absolute alerts.',
+        'Method: shut-ins in the gauge record are found automatically and each full build-up is interpreted on the Bourdet derivative of the superposition-equivalent time (L = 0.1 log cycle). The IARF window is the earliest qualifying plateau after the storage hump; the semilog line and a homogeneous match (rival models only when a trigger fires) give k, S and C with a skin uncertainty and a calibrated confidence label. Skin is then tracked against a baseline with delta and absolute alerts.',
         'Units: inputs and results follow the app unit system; engines work in field units (psia, hours, STB/d, Mscf/d, md, ft, cp, 1/psi). Skin, ΔBIC, log cycles and confidence labels are dimensionless. Times are read in the resolved gauge time zone and production days in the resolved production-day zone, both shown by name.',
         'Limitations: partial rate cuts are classified and listed but not interpreted; deconvolution is not run on this page (Open in PRiSM passes the full history); two-phase near-well skin is flagged, not quantified; with an unknown production start p* is reported as a range and not trended. The automated review checks consistency and plausibility, not the physics model, and the signature checks integrity, not the identity of the signer.'
     ];
@@ -22835,7 +22835,7 @@ G.WTS_calcRegistry.historian = {
     G.WTS_calcRegistry = G.WTS_calcRegistry || {};
     G.WTS_calcRegistry.buildup = {
         key: PG_KEY, title: PG_TITLE, sub: PG_SUB, group: 'Production & Reservoir', icon: '&#128200;',
-        desc: 'Find every shut-in in gauge data, interpret each build-up, track skin over time and get a reviewed, signed report.',
+        desc: 'Find shut-ins in gauge data, interpret each full build-up, track skin over time and get a reviewed, signed report.',
         hooks: { silent: true, after: function (body) { _syncUi(body); _snapToAnalysed(); var ts = _byId('bu_test_sel'); if (ts && ts.getAttribute('data-want') && !ts.value) { ts.value = ts.getAttribute('data-want'); } G.calcBuildup(); } },
         render: function (body) { return G.renderBuildup(body); }
     };
