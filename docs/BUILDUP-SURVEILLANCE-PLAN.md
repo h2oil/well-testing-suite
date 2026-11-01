@@ -1772,7 +1772,10 @@ fits those models.
 - **Input-consistent truth, computed in the generator only.** The scorer never reads the engine's Δq or rates.
   - f = q_correct/q_true, where q_correct is what a correct reading of the given data yields: the closing day's given volume spread over the
     **true** flowing hours (q_correct = 24·V_given/h_true,on). On "ignores the shut-in" days, q_correct is the neighbouring-day reference
-    rate the generator built from the given volumes. With a partial cut before the closing, the post-cut rate.
+    rate the generator built from the given volumes. With a partial cut before the closing, the post-cut rate. WP8: an intra-day
+    rate **decrease of at least 10 %** before the closing counts as such a partial cut (the classification gate of §4.3 M§A4 makes a
+    removed fraction f̂ ≥ 0.1 a partial cut, so a correct reading of the pressure and the volumes gives the post-change rate, split
+    with the volume preserved); a smaller decrease or an increase makes no event and keeps the day reading.
   - With primes for the inputs the engine received (`CaseSpec.given`):
     k* = f·k·(B′/B)·(μ′/μ)·(h/h′),
     S* = S + 1.1513·log10((h′/h)·(φ′/φ)·(ct′/ct)) + 2.3026·log10(rw′/rw) − 1.1513·log10((B′/B)·f).
@@ -1869,6 +1872,98 @@ node prism-build/buildup-validate.js [--quick] [--strata hom,fault] [--seeds 100
   24 as expected", or the differences, where a difference whose recomputed evidence lies within the stored margin of a threshold is shown
   as "near threshold" and not as a failure. The card also shows both reliability tables (label, n, rate, interval).
 - **Full benchmark**: only in `buildup-validate.js`, never in accept-test.
+
+### 5.7 Measured results (WP8, 2026-11-01)
+
+`node prism-build/buildup-validate.js --sequences --workers 4 --write`: 640 single cases (0 errors; median 475 ms per case, generation
+186 ms and analysis 254 ms; 172 s on 4 workers) and 120 sequence wells (993 matched build-ups), 1,683 labelled build-ups; the staged
+grid and the 5-fold CV took about 23 min on one core. The calibration was iterated once (the second run labels with the first table, so
+the pass-2 evidence behind the tables is the calibrated one); the second table equals the first exactly.
+
+**Engine faults found by the diagnosis and fixed at the root** (each with a regression test; details in §12.1 WP8):
+- precursor chain at coarse sampling (WP2): the closing comes up to Lt + 1.5 h after the precursor ends, beyond the old 2 h bound, so
+  the cut was not chained and Δq read the pre-cut rate (DA27);
+- tabled closing ramp (WP2): Δq was the last, smallest ramp row (DA28);
+- the page's 24-case check ran a different case than the calibration (full size, its own AnalysisInput, any nearest test) and its "near
+  threshold" never fired (WP6; BM3);
+- `confidence().rates` at full precision, so a stored result did not re-derive once the rates were real (WP1; EN23);
+- scorer (WP4, §5.3): an intra-day decrease of ≥ 10 % is scored as the partial cut the engine's gate makes of it.
+
+**Diagnosis of medium and low cases that are not fully right** (single cases; the sequences are almost all right at medium and high):
+- *Medium headline, 34 of 119 wrong at the shipped thresholds:* k or S wrong 20 — |ΔS| 0.55–1.1 with S_err 0.3–0.8 at SNR_d 12–25
+  (noise; coverage of 2·S_err holds), and Δq off by a 6 h production-day mismatch (by design the engine only warns, §4.4; R3 is
+  `unavailable` there, a medium cap, not a low rule); model wrong 14 — 7 fault and 4 composite cases whose rival is visible by §5.3
+  (≥ 10 % departure at Δt_end) but below the T-up trigger (≥ 15 % over 0.2 cycle of the masked derivative), so homogeneous is chosen with
+  k and S right, and 3 distractors without a flag (dual porosity, partial penetration, fracture).
+- *Low:* expected — short tests (KL1, KL7), rate checks failed (KL3), distractor flags (KL9), k-held fits with a residual above 2σ_eff
+  (KK3), and every non-modelled stratum.
+- *Rate errors* (|Δq/q_correct − 1| > 5 %, the six modelled strata, 49 cases with each factor): before the fixes, production-day
+  mismatch 36, partial cut before the closing 20, tabled rates 14 (every one with a closing ramp); after them, tabled rates 0, partial cut
+  before 16, intra-day change 5, mismatch 35 (warned by the offset scan and labelled, never corrected, §4.4).
+- *IARF grade:* on the 173 interpreted long homogeneous tests the engine grades 52 "fair" where the noise-free truth is "good" (the
+  last half cycle's se above 0.01), 13 good = good, 33 fair = fair, 56 none = none; the grade is not part of "fully right".
+- *C:* within ±25 % in 90.9 % of the 154 cases with a sampled unit slope.
+- *Scorer check:* `score` follows §5.3 (input-consistent truth, first-plateau truth for distractors, abstention as low with y = 0, no
+  engine Δq); labels are computed from the evidence vector only, never from the truth. One inconsistency was fixed (the intra-day
+  decrease above); the visible-rival definition (10 % at Δt_end) against the T-up trigger is kept and reported (open item, §12.1).
+
+**Calibration outcome.** No point of the §5.4 grid meets every constraint, and stricter values beyond it (S_err low 0.4, SNR_d low 30,
+disagreement 0.3 / 5 %, reach factor 12.6, k-held RMS 1.5, τ 6–40, rate tolerance 10 %) still leave the headline single-case medium bound
+at 0.68–0.70 (rate 0.79–0.81, 67 cases); the grid was therefore not extended. As §5.4 requires, the strictest grid set is shipped:
+SNR_d high 30, S_err high 0.3, fair span 1.0, point-skin spread 0.2, τ 10, rate tolerance 15 %, S_err floor 0.2, S_err low 0.8, SNR_d low 8,
+disagreement 0.7 / 10 %, reach factor 5.0, KL9 on, k-held RMS 2; delta form `plain`.
+
+| Constraint (both tables) | k/S | headline |
+|---|---|---|
+| high rate ≥ 0.95 (pooled) | 1.000 ✓ | 1.000 ✓ |
+| high: single-case Wilson lower bound ≥ 0.90 | 0.758 ✗ (12 cases, all right) | 0.610 ✗ (6 cases, all right) |
+| high: cluster-bootstrap lower bound ≥ 0.90 | 1.000 ✓ | 1.000 ✓ |
+| medium rate ≥ 0.80 (pooled) | 0.971 ✓ | 0.953 ✓ |
+| medium: single-case Wilson lower bound ≥ 0.70 | 0.749 ✓ (82.8 % of 116) | 0.627 ✗ (71.4 % of 119) |
+| medium: cluster-bootstrap lower bound ≥ 0.70 | 0.956 ✓ | 0.933 ✓ |
+| low ≤ medium − 0.20 | 0.467 ≤ 0.771 ✓ | 0.445 ≤ 0.753 ✓ |
+| S_err coverage (2·S_err) ≥ 0.90, high / medium | 0.985 / 0.984 ✓ | 0.990 / 0.983 ✓ |
+
+Other constraints: false-rival rate on homogeneous truth 0.000 ✓ (≤ 0.05; the `--quick` 20-seed check 0 of 20); abstention on `hom`
+5.2 % pooled, 7.8 % of the single cases ✓ (≤ 10 %); sequence delta false-alarm rate 0.0 % ✓ (≤ 5 %, both forms).
+
+**Reliability tables** (out of fold; pooled single cases and sequence tests; Wilson and cluster-bootstrap 95 % intervals; the single-case
+row in the last column):
+
+| k/S label | n | k and S right | Wilson | cluster | cover 2·S_err | single cases |
+|---|---|---|---|---|---|---|
+| high | 132 | 100.0 % | 97.2–100 % | 100–100 % | 98.5 % | 12, 100 % (75.8–100 %) |
+| medium | 684 | 97.1 % | 95.5–98.1 % | 95.6–98.3 % | 98.4 % | 116, 82.8 % (74.9–88.6 %) |
+| low | 867 | 46.7 % | 43.4–50.0 % | 40.4–52.5 % | 77.5 % | 492, 31.9 % (27.9–36.2 %) |
+
+| Headline label | n | fully right | Wilson | cluster | cover 2·S_err | single cases |
+|---|---|---|---|---|---|---|
+| high | 96 | 100.0 % | 96.2–100 % | 100–100 % | 99.0 % | 6, 100 % (61.0–100 %) |
+| medium | 717 | 95.3 % | 93.4–96.6 % | 93.3–96.9 % | 98.3 % | 119, 71.4 % (62.7–78.8 %) |
+| low | 870 | 44.5 % | 41.2–47.8 % | 38.3–50.5 % | 77.6 % | 495, 28.1 % (24.3–32.2 %) |
+
+Share labelled high: 5.7 % headline (96 of 1,683; 1.0 % of the single cases), 7.8 % k/S. Strict (k ±5 %, S ±0.3): high 95.8 %, medium
+90.4 %. Gas sub-table: high 17 (100 %), medium 63 (96.8 %), low 102 (41.2 %). k-held: 50 tests, all low (74 % k/S right). Brier 0.149,
+BSS 0.299 (reliability 0.006, resolution 0.070, uncertainty 0.213). Distractor caught 63 % of 101. Rate accuracy (engine Δq against
+q_correct): median |error| 0.01 %, P90 0.60 %; rate sources: allocation 579 cases (38 % fully right), table 61 (38 %). Envelope (5–95 %):
+C_D 24–12,254, S −0.7–13.1, t_D/C_D at the end 44–847,000, SNR_d 3.4–1,097, k 4.0–840 md, Δt_end 10–125 h.
+
+The app quotes the pooled rates; the single-case column is the harder population (distractor strata, the crossed factors, the 6 h
+day mismatch) and is the one the open bound fails on. KC2 caps a label outside the envelope at medium in the app; the tables are computed
+without that cap, which can only move high cases (all right) to medium.
+
+**Sequences** (re-run with the calibrated table; plain form shipped): delta false alarms 0.0 % of the constant wells, absolute 1.7 %;
+median confirmed-alert delay 1 test (1 on the 24–48 h wells); onset within one interval 94.9 %; Sen CI covering the true slope 41.7 %
+(target 85 %, open, §12.1); stimulation drop without a workover date classified as a shut-in 6 of 6; constant-skin gas wells with D
+resolved and no delta alert 3 of 3.
+
+**Reach** (analysable truth reaching an analysable test; target 0.90): hom 92.2 % (214/232), fault 96.7 %, comp 91.7 %, closed 91.7 %,
+gas 90.0 %, inj 83.3 % (20/24), dualpor 97.2 %, channel 100 %, wbschange 88.9 % (16/18), partpen 91.7 %, frac 100 %, constp 100 %, interf
+100 %; 574 of 618 overall (572 before WP8). Non-analysable truth: partial classified partial 3 of 10, bad data not analysable or not
+detected 12 of 12.
+
+**Acceptance and in-app.** `buildup-benchmark.test.js` (6 s): BM1 the 10 lite seeds and their snapshot, BM2 the high cases, BM3 the
+page's check; file 55's 24 in-app cases (margins 0.12–1.13) are the app's own labels with the calibrated table.
 
 ---
 
@@ -2422,7 +2517,7 @@ WP0 (lead, serial: FILES, shapes + fixtures, 53 skeleton with canon/hash16)
   - the two-zone kernel;
   - `PRiSM_openExternalBuildup` (§6.10);
   - placeholder calibration lookup: read `PRiSM_autoInterpCal` at call time, else `DEFAULTS`.
-- **Tests:** `buildup-engine-a.test.js` (EN1–EN11, ≤ 6 s) and `buildup-engine-b.test.js` (EN12–EN22, ≤ 6 s), one app per test as the
+- **Tests:** `buildup-engine-a.test.js` (EN1–EN11, ≤ 6 s) and `buildup-engine-b.test.js` (EN12–EN23, ≤ 6 s), one app per test as the
   harness gives:
 
   | # | Asserts |
@@ -2450,6 +2545,7 @@ WP0 (lead, serial: FILES, shapes + fixtures, 53 skeleton with canon/hash16)
   | EN20 | Slicing: `evalBudget` is count-only (the same fit under a frozen and an advancing clock gives identical results); a sliced fit equals the unsliced fit within 1e-9 relative; the plateau stop fires across slices; the evaluations per slice follow the §4.8 rule (11 for a homogeneous fit with 65 grid points and S ≥ 0) |
   | EN21 | `PRiSM_openExternalBuildup`: dataset, paste text and multi-rate written; `water_inj` → `water` / `falloff`; `activePeriod` contains tShut; the model is adopted before `setLastFit` (a `prism:fit-updated` listener sees a consistent `st`); `composite2` → `radialComposite`; after `reload()` PRiSM still shows the period |
   | EN22 | Reach and p*: numeric t_5 % on the reference case 13.2 h ± 5 % (= a direct scan; the A.1 correlation gives 15.5 h), reach.fair 52.7 h, reach.good 166.6 h; a 24 h test without IARF fits no rival and reports "too short"; with an estimated history inside the ×10 cover (true production 1 year, 90 days known) `pStarRange` brackets the true p* (a 5-year true history is out of scope, §3.1 `pStarRange`) |
+  | EN23 | Stored form (integration round): every non-integer number at 6 significant figures, no internal fields; the labels re-derive from the stored evidence and the sensitivity rows from the stored final; the stored copy of the reference result is under 11 kB (16 kB at full precision) |
 
   `prism-closedcircle.test.js` (≤ 3 s):
   - CC1: late pD′ = 2tD/reD² within 0.5 %;
@@ -2487,6 +2583,18 @@ WP0 (lead, serial: FILES, shapes + fixtures, 53 skeleton with canon/hash16)
   | DA14 | Two events in one day → `equalRateAssumed` |
   | DA15 | Intervention: a pressure above the previous p* by more than 2·T_s → `status:'intervention'`, not interpreted, listed in `missed.interventions` |
   | DA16 | Phase basis once per analysis: a water cut crossing 5 % mid-analysis → every test on the total basis; gas with condensate → the q_eq formula |
+  | DA17 | Gate (integration round): a 3 % cut (f̂ < 0.1 by late Δp differences) becomes a substep — no rate step, the day's rate unchanged, listed with the sub-threshold steps |
+  | DA18 | Manual events: none outside the record; the end never runs into the next event; a promoted sub-threshold step ends at its reopening step |
+  | DA19 | Day-rate steps: modest allocation day-rate drops (8 %, 10 %) open no event (`missed.rateSteps`); the shut-in 134 h after a drop that never recovers is found, not swallowed |
+  | DA20 | Precursor: a 30 % cut 6 h before a shut-in ends at the sharper rise (`END_AT_RISE`) and is classified partial from the response ratio (`derivRatio`, f̂ ≈ 0.3); the shut-in keeps its closing time and Δq |
+  | DA21 | Unconfirmed bound: a lasting 40 % cut with no confirming day ends at the first whole contradicting day ≥ 24 h after it (`END_ALLOC`) and enters no q = 0 period; a later shut-in is still found |
+  | DA22 | Data end: a 3 h test closing at 03:00 on the last (cut) day is confirmed by the hours its volume implies; a test running to the data end is confirmed by a day with no volume although its closing day fails R3 |
+  | DA23 | R3 sides: the rate level halves while the well is shut — the closing day takes q_ref from before the shut-in, the reopening day from after it; both pass and the shut-in is confirmed |
+  | DA24 | Interventions: an early phase-redistribution hump that decays is not one; a build-up far larger than an earlier, non-comparable one is not one; a renewed rise and fall inside a shut-in still is |
+  | DA25 | Inputs are never written: `rates()` and `scan()` leave the allocation rows as given |
+  | DA26 | Slow reopening: a large-storage, low-rate well that falls 2 psi per window after reopening ends at the reopening, so the next closing keeps its flowing rate; a flowing closing day without volume takes the previous day (R2) |
+  | DA27 | Precursor at 10-min sampling (WP8): the split leaves a 100-min flowing-trend window, so the closing comes 2–3 h after the precursor ends; the precursor is still gated by `derivRatio`, its rate interval runs to the closing, and the closing's Δq is the rate the cut left (the gap bound is max(2 h, L_t + 1.5 h)) |
+  | DA28 | Table closing ramp (WP8): a choke-back logged row by row in the last minute before the tabled closing is one closing at t_c with Δq = the pre-ramp rate, whether t_c falls inside the ramp or after it; a rate change outside the tolerance stays a step of its own |
 
   `buildup-run.test.js`, ≤ 5 s:
   - RU1: the Analysis passes `checkShape`;
@@ -2502,6 +2610,17 @@ WP0 (lead, serial: FILES, shapes + fixtures, 53 skeleton with canon/hash16)
   - RU9: 80 detected tests → 60 kept by selection (longest per day, then per week; baseline tests kept), the others `test cap`;
   - RU10: `WTS_buildup_compute({})` returns `{ok:false, code:'NO_DATA'}` without throwing; `inputHash` changes with the resolved zone name and
     not with a unit-system flip.
+  - RU11 (integration round): k-held final values scale the pass-1 values by k_old/k_new (gas: pseudo-pressure m, Δm_skin, Δp_skin), never
+    the liquid m with the oil B and μ;
+  - RU12: test ids are stable — an exclusion stays on its build-up when an earlier test is included (with or without the cache);
+  - RU13: work units hold at most one engine call (prepare or background check) per step; a failed k-held pass reaches the final labels as
+    `kHeldConverged:false`;
+  - RU14: manual events never disturb detected ones (a flowing-period time, a time before the record, a detected closing);
+  - RU15: `inputHash` is the hash of the input as given — deep copies of a record-mode run and of its stored re-run hash the same; the
+    input is never written;
+  - RU16: well checks — a gas formation volume factor down to 0.3 RB/Mscf is accepted; oil keeps 0.5; below 0.3 is refused;
+  - RU17: test cap re-admission — when the kept baseline candidates of a segment turn out low, its earliest capped tests are interpreted
+    after all and join the baseline.
 - **Done when:** the targets above pass; parse and detection meet the §4.8 desktop targets in a scratch run, with the measured µs per row
   and the frozen `chunkLines` in the merge note.
 
@@ -2697,6 +2816,16 @@ WP0 (lead, serial: FILES, shapes + fixtures, 53 skeleton with canon/hash16)
   - for both tables: high ≥ 95 % (lower bound ≥ 90 %), medium ≥ 80 % (lower bound ≥ 70 %), low ≤ medium − 20 points;
   - false-rival rate ≤ 5 %; delta false-alarm rate ≤ 5 %; abstention ≤ 10 % on `hom`;
   - the benchmark test passes.
+- **Tests:** `buildup-benchmark.test.js` (≤ 9 s; 6 s measured):
+  - BM1: the 10 acceptance seeds (hom short 100078, hom long 100224, fault seen 100232, comp 100332, closed 100376, gas 100390, inj
+    100485, dualpor 100498, partial 100619, baddata 100628), lite, end to end with file 55: status, k/S and headline labels and fully
+    right equal the snapshot recorded by `--write`, and every interpreted seed's evidence is ≥ 0.1 from every calibrated threshold;
+  - BM2: no "high" case is wrong — the BM1 seeds, file 55's in-app cases and the recorded high lite cases (100418, 100092, 100111) with
+    an expected high label are re-run; each gets its calibrated label, high k/S has k and S right, high headline is fully right;
+  - BM3 (added): the page's 24-case check repeats the calibration run — file 55's first three in-app cases give "3 of 3 cases as
+    expected" (the earlier page check gave 2 of 3).
+- **Outcome (2026-11-01):** §5.7. The constraints are met except three single-case lower bounds (k/S high, headline high — too few
+  single cases labelled high, all right — and headline medium); the strictest grid set is shipped (§5.4) and the bounds are open (§12.1).
 
 ### WP9 — Reviews and release
 
@@ -2857,8 +2986,52 @@ WP6, Q7). The others:
 - **WP6.** Loading a demo sets the demo's history option, production start or cumulative, and UTC gauge and production-day zones.
   Missing per-test detail renders from the summaries. Page tests seed one demo run and share it (PG2 is the only full analysis).
 - **Open after this round.** The stored result size (about 10 kB per test, §3.1) and the duplicated `t.pass1` block in the run layer;
-  the page-test runtime (about 16 s against the 9 s budget, one fresh app per test); the 24-case in-app check waits for the calibrated
-  file 55 (WP8).
+  the page-test runtime (about 16 s against the 9 s budget, one fresh app per test). (The 24-case in-app check waited for the calibrated
+  file 55: done in WP8.)
+- **WP8 (calibration run, resolutions).**
+  - Data layer: the precursor chain bound is max(2 h, L_t + 1.5 h) with L_t = max(30 min, 10·Δt_med) (`classifyJob` gets the QC
+    Δt_med; DA27); a tabled closing ramp is part of the closing, Δq the pre-ramp rate (DA28).
+  - Scorer (§5.3): an intra-day decrease of at least 10 % before the closing is scored as a partial cut before the closing.
+  - Page: the 24-case check repeats the calibration run (lite case, `synth.toInput`, `synth.scoreAnalysis`); "near threshold" uses the
+    recomputed evidence margin, `PRiSM_autoInterp.thresholdMargin` (one implementation for the tool, the page and BM1).
+  - Engine: `confidence().rates` are quoted at the stored precision (STORE_SF), so a stored result's labels re-derive exactly from its
+    evidence once file 55 carries calibrated rates (EN23).
+  - Tool: `--write` writes the candidate table to `<out>/cal-candidate.js` and verifies it before file 55 is written — the 120 sequences
+    are re-run with it (their alerts depend on the labels through the used set) and give the delta form and the sequence metrics; the
+    lite in-app pool runs with it, so the 24 expectations are the app's own labels (pass 2 and the envelope cap included) and their
+    margins come from that evidence; it also selects the BM1 seeds and up to 3 high lite cases for BM2. Every table row carries
+    `single {n, rate, lo, hi}` (the single-case Wilson row the §5.4 bound is taken on). The calibration was iterated once: the second
+    run labels with the first table, so the pass-2 evidence (baseline, k-held, KC5) behind the shipped tables is the calibrated one.
+- **Open after WP8.**
+  - **Headline single-case medium bound.** Infeasible with the §5.1 rules (§5.7): visible rivals (≥ 10 % derivative departure at
+    Δt_end, §5.3) below the T-up trigger (≥ 15 % over the last 0.2 cycle of the masked derivative, §4.6 item 9) are chosen homogeneous
+    with k and S right and labelled medium; no calibrated threshold separates them from homogeneous truth. Options for v3.4: a model
+    label rule on the late derivative ratio of the last full-window bins, or the T-up threshold in the calibration grid.
+  - **Single-case high bound.** Too few single cases are labelled high (all of them right) for the Wilson bound to reach 0.90 (it
+    needs about 35 all right).
+  - **Injector reach** 83 % (20 of 24): three fall-offs of 4–5 psi (high-k injectors) and one of 35 psi under 43 psi slugging noise
+    sit below T_s = max(5 psi, 10σ) and are listed as sub-threshold steps (detectability by design, §4.3 M§A5); one more is a slugging
+    injector whose fall-off the dpDiff gate reads as a negative fraction (substep).
+  - **Changing-storage reach** 89 % (16 of 18): one phase-redistribution hump reads as an intervention (rise then fall inside the event,
+    §4.3), and one closing 6 h after a 54 % partial cut in a 1.2 md well is not split from the cut (the sharper-rise rule does not fire).
+  - **Partial-cut status accuracy** 3 of 10: five partial cuts stay `not_confirmed` (neither a dpDiff reference nor the allocation
+    decides, as specified); two are confirmed as shut-ins — one by an allocation day that ignores the
+    shut-in (its R3 pass is computed under the "ignores" reading, so method 2 confirms; not confirming there would lose short shut-ins
+    without a reference), one by the hours check on a short closing day with a 6 h production-day mismatch.
+  - **Sen CI coverage** 42 % (target ≥ 85 %): 7 of 24 linear-path wells have every test model-only (KL1 low; no baseline, no trend),
+    and among the 17 with a CI 10 cover — the Theil–Sen interval reflects the scatter of the estimates (0.1–0.2 in S) only, not their
+    per-test S_err, so with 3–6 post-onset tests it is too narrow. A WP3 change (combine the Sen interval with the S_err-propagated
+    WLS slope interval) is open.
+  - **Review + report timing**: 83 ms on the oil demo against the 50 ms target (`--perf`, desktop, measured with the calibration
+    search running on another core).
+  - **Pressure-bin rounding (decision).** The stored `p` stays at 6 significant figures (frozen BuildupSpecStored rule): 0.01 psi at
+    1,000–9,999 psia (0.003 psi rms, below the benchmark's smallest σ of 0.005 psi) and 0.1 psi (0.03 psi rms) from 10,000 psia, which
+    only injectors reach in the benchmark (producers have p_i ≤ 8,000 psia). Kept; a Δp-relative store is the remedy if high-pressure,
+    high-kh wells need it.
+  - **IARF grade.** On the oil demo B1 and B2 the engine grades "good" where the generator predicts "fair" (their noise-free last half
+    cycle slopes at 0.012 and 0.0135 per ln Δt_e, at the 0.01 limit); IN1 checks the exact grade on B3–B9 and fair-or-good on B1, B2.
+    On the benchmark the engine often grades "fair" where the truth is "good" (noise-limited last half cycle); the grade is not part of
+    "fully right".
 
 ---
 

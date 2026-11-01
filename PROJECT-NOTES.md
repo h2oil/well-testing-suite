@@ -5,6 +5,49 @@ All changes land on `dev`; `master` is the stable tree consumed by the iOS sync 
 
 ---
 
+## 2026-11-01 — v3.3 WP8: Build-up Surveillance confidence labels calibrated
+
+`node prism-build/buildup-validate.js --sequences --workers 4 --write` on 640 single synthetic build-ups (15 strata, 126 of them
+distractors the engine does not model) and 120 multi-test wells (993 build-ups): 1,683 labelled build-ups, 5-fold cross-validation grouped
+by well, out-of-fold reliability tables. Plan: docs/BUILDUP-SURVEILLANCE-PLAN.md §5.4 (method) and §5.7 (results).
+
+**Fixed at the root first** (the diagnosis separated engine faults from honest difficulty): the precursor chain at coarse sampling and
+the tabled closing ramp in the data layer (Δq read the pre-cut rate / the last ramp row; DA27, DA28); the page's 24-case check now
+repeats the calibration run exactly (BM3); `confidence().rates` at the stored precision (EN23); the scorer treats an intra-day decrease
+of ≥ 10 % as the partial cut the engine's gate makes of it.
+
+**Outcome: the constraints cannot all be met, so the strictest grid set is shipped (§5.4: targets never relaxed).** Failing: the
+single-case Wilson lower bounds for high (k/S 0.76 on 12 cases, headline 0.61 on 6 — every single-case high label is right, there are
+too few for 0.90) and for the headline medium label (0.63; 71.4 % of 119): visible rivals below the T-up trigger and noise-level skin
+errors stay medium, and no calibrated threshold separates them. Thresholds: SNR_d high 30 / low 8, S_err high 0.3 / low 0.8 (floor 0.2),
+fair span 1.0, point-skin spread 0.2, τ_BIC 10, rate tolerance 15 %, disagreement 0.7 / 10 %, reach factor 5.0, KL9 on, k-held RMS 2.
+
+| k/S label | n | k and S right | Wilson 95 % | cluster 95 % | single cases |
+|---|---|---|---|---|---|
+| high | 132 | 100.0 % | 97.2–100 % | 100–100 % | 12, 100 % |
+| medium | 684 | 97.1 % | 95.5–98.1 % | 95.6–98.3 % | 116, 82.8 % |
+| low | 867 | 46.7 % | 43.4–50.0 % | 40.4–52.5 % | 492, 31.9 % |
+
+| Headline label | n | fully right | Wilson 95 % | cluster 95 % | single cases |
+|---|---|---|---|---|---|
+| high | 96 | 100.0 % | 96.2–100 % | 100–100 % | 6, 100 % |
+| medium | 717 | 95.3 % | 93.4–96.6 % | 93.3–96.9 % | 119, 71.4 % |
+| low | 870 | 44.5 % | 41.2–47.8 % | 38.3–50.5 % | 495, 28.1 % |
+
+- Share labelled high 5.7 % (headline), 7.8 % (k/S). Brier 0.149, BSS 0.299 (reliability 0.006, resolution 0.070, uncertainty 0.213).
+- S_err coverage (|ΔS| ≤ 2·S_err): 98.5 % / 98.4 % (k/S high / medium), 99.0 % / 98.3 % (headline).
+- False-rival rate on homogeneous truth 0 %; abstention 6.8 % overall, 5.2 % on `hom` (7.8 % of the single `hom` cases).
+- Rate accuracy (engine Δq vs the input-consistent rate): median 0.01 %, P90 0.60 %. C within ±25 % (unit slope sampled) 90.9 %.
+- Sequences (re-run with the calibrated table): delta false alarms 0 %, absolute 1.7 %; median confirmed delay 1 test (1 on 24–48 h
+  wells); onset within one interval 94.9 %; Sen CI coverage 41.7 % (target 85 %, open); stimulation without a workover date → shut-in
+  6 of 6; no delta alert on constant-skin gas wells with D resolved (3 of 3). **Shipped delta-alert form: plain.**
+- Reach ≥ 90 % in every stratum except injectors 83 % (sub-threshold fall-offs) and changing storage 89 %; partial-cut status 3 of 10.
+- New acceptance test `tests/buildup-benchmark.test.js` (BM1 snapshot of 10 seeds, BM2 no wrong high, BM3 the page's check; 6 s).
+- Open (plan §12.1): the two single-case bounds, Sen CI coverage, injector and changing-storage reach, partial-cut status, review +
+  report timing (83 ms against 50 ms).
+
+---
+
 ## 2026-04-26 — PRiSM module: 21-file build, 45 type-curve models, ~32k LOC
 
 Cumulative session work across 6 commits on `Dev`. Brings the PRiSM Well Test
