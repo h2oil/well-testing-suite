@@ -8252,6 +8252,14 @@ G.WTS_calcRegistry.historian = {
 // The record hash (WP2 definition, §3.11): hash16 over "n|t0|tN|digest", where
 // digest is a 32-bit FNV-1a pass over every sample (the time step in ms and the
 // pressure in units of 0.001 psi). It is the convention the WP0 fixture uses.
+//
+// Detection beyond the §4.3 rise/fall rules (v3.3 integration): an event ends at a
+// sharper rise inside it (another closing: END_AT_RISE / END_AT_CLOSING) or at a deep
+// slow fall; in daily mode the allocation is read at detection — a rise the day
+// volumes explain as a modest day-rate step opens no event (missed.rateSteps), and an
+// event no day confirms ends at the first whole day of production ≥ 24 h after its
+// closing (END_ALLOC). A precursor of a closing is gated by the ratio of the two
+// responses (fhatMethod 'derivRatio'). The inputs are never written (copies).
 // =============================================================================
 
 (function () {
@@ -8285,7 +8293,16 @@ G.WTS_calcRegistry.historian = {
             winMin: 5, riseMin: 5, riseSig: 10, persistMin: 30, multiScaleMin: 30, minDur_h: 2, gapN: 5, spike: 'off', partial: true,
             gapCloseMin: 10, gapCloseN: 5, trendMin: 30, trendN: 10, trendDtFactor: 10, trendMax: 200,
             firstSig: 4, firstMin_psi: 0.5, firstRun: 3, shutDayPersist_h: 2,
-            stepSig: 6, stepMin_psi: 2, stepMin_h: 2, interventionTs: 2, tableTolMin: 10, tableTolN: 5
+            stepSig: 6, stepMin_psi: 2, stepMin_h: 2, interventionTs: 2, interventionFrac: 0.25, tableTolMin: 10, tableTolN: 5,
+            // a sharper rise inside an event (another closing) ends it: the event has run ≥ splitMin_h, and the new rise is
+            // splitRatio× steeper than the steepest 30-min rise of the last hour (§4.3, end of the build-up)
+            splitMin_h: 1, splitRatio: 3,
+            // allocation evidence at detection (daily mode): days the event covers for ≥ allocShutMin_h hours; a day
+            // confirms when half of those hours are missing from its volume. No confirming day and every whole day with at
+            // most allocModest of the reference volume missing → a day-rate step, not a shut-in. An event with no
+            // confirming day ends at the first whole contradicting day ≥ allocBound_h after its closing; after a
+            // confirming day, at the first whole contradicting day (a reopening the pressure did not show).
+            allocShutMin_h: 6, allocModest: 0.3, allocBound_h: 24
         },
         classify: { fShut: 0.95, fInterp: 0.9, fPartial: 0.1, t2Div: 1.26, t1Div: 3.16, tdmaxFactor: 3 },
         rates: {
@@ -9337,19 +9354,39 @@ G.WTS_calcRegistry.historian = {
         return s0;
     }
 
-    // Builds one event from a rise detected at window k (multi-scale j).
-    function _eventAt(C, k, j, prevEndIdx) {
+    // Builds one event from a rise detected at window k (multi-scale j). prevSplit: the previous event did not end at a
+    // reopening (it ended at this rise or at an allocation cut), so the flowing trend is a straight line, not a log one.
+    function _eventAt(C, k, j, prevEndIdx, prevSplit) {
         var Wd = C.win, tk0 = Wd.t0 + k * Wd.w;
-        var tw = _trendWindow(C, Wd.first[k] - 1, prevEndIdx + 1, tk0, prevEndIdx >= 0 ? C.t[prevEndIdx] : null);
+        var tw = _trendWindow(C, Wd.first[k] - 1, prevEndIdx + 1, tk0, prevEndIdx >= 0 && !prevSplit ? C.t[prevEndIdx] : null);
         var kLim = mMin(Wd.K - 1, k + j + C.P + 1), iLim = C.n - 1;
         for (var kk = kLim; kk >= k; kk--) if (Wd.last[kk] >= 0) { iLim = Wd.last[kk]; break; }
         var j1 = _firstShut(C, tw.tr, Wd.first[k], iLim);
         if (j1 < 1) j1 = mMax(1, Wd.first[k + j] >= 0 ? Wd.first[k + j] : Wd.first[k]);
         var ev = _newEvent(C, j1, tw.tr, tw.warnings, { rise_psi: Wd.M[k + j] - Wd.M[k], riseScale_min: j * Wd.w / MIN });
-        _findEnd(C, ev);
+        _findEnd(C, ev, { split: true });
         refineClosing(C.record, ev, C.qc);
         _setStatus(C, ev);
         return ev;
+    }
+    // A sharper rise starting at window m inside an event (another closing): the multi-scale rise of the detector
+    // (M[m+j] − M[m] > T_s for some j ≤ J, persistent for 30 min) from a level within T_s of the event's highest level so
+    // far (or after a lower level held for an hour: a reopening the fall rule missed), and splitRatio× steeper than the
+    // steepest 30-min rise ending in the last hour. A build-up only slows down (dp/dt falls with Δt), so its own early
+    // rise, the recovery after a phase-redistribution hump and noise do not pass; a closing after a day-rate step, an
+    // intra-day rate change or a partial cut does. lowRun: windows the level has stayed below runMax − T_s. Returns j (0 = none).
+    function _sharperRise(C, m, mFirst, runMax, lowRun) {
+        var M = C.win.M, K = C.win.K, Ts = C.Ts, J = C.J, P = C.P;
+        if (M[m] < runMax - Ts && lowRun * C.win.w < HOUR) return 0;
+        var j = 0, jj, ii, a;
+        for (jj = 1; jj <= J && m + jj < K; jj++) { var v = M[m + jj]; if (v === v && v - M[m] > Ts) { j = jj; break; } }
+        if (!j) return 0;
+        var cnt = 0;
+        for (ii = 1; ii <= P && m + j + ii < K; ii++) { var v2 = M[m + j + ii]; if (v2 === v2) { cnt++; if (!(v2 - M[m] > Ts)) return 0; } }
+        if (cnt < 2) return 0;
+        var Lb = mMax(J, mCeil(HOUR / C.win.w)), rPrev = 0;
+        for (a = mMax(mFirst + J, m - Lb); a <= m; a++) { var x = M[a], y = M[a - J]; if (x === x && y === y && (x - y) / J > rPrev) rPrev = (x - y) / J; }
+        return (M[m + j] - M[m]) / j > C.S.splitRatio * rPrev ? j : 0;
     }
     function _setStatus(C, ev) {
         var t = C.t, S = C.S;
@@ -9369,9 +9406,20 @@ G.WTS_calcRegistry.historian = {
         for (var x = bi; x <= b; x++) if (sign * p[x] > sign * p[bi]) bi = x;
         ev.tEnd_ms = t[bi]; ev.endReason = 'reopen'; ev._endIdx = bi;
     }
+    // The highest (sign-aware) sample of windows ka … kb ends the build-up (a reopening found by its fall).
+    function _endAtRange(C, ev, ka, kb) {
+        var t = C.t, p = C.p, Wd = C.win, sign = C.sign;
+        var a = -1, b = -1, k;
+        for (k = mMax(0, ka); k <= mMin(Wd.K - 1, kb); k++) { if (Wd.first[k] >= 0 && a < 0) a = Wd.first[k]; if (Wd.last[k] >= 0) b = Wd.last[k]; }
+        if (a < 0 || b < 0) { a = mMax(ev.j1, lowerBound(t, Wd.t0 + kb * Wd.w) - 1); b = a; }
+        var bi = mMax(a, ev.j1);
+        for (var x = bi; x <= b; x++) if (sign * p[x] > sign * p[bi]) bi = x;
+        ev.tEnd_ms = t[bi]; ev.endReason = 'reopen'; ev._endIdx = bi;
+    }
     // End of the build-up: a persistent fall (every window up to +30 min, 2 h on an allocation day with no volume) to a
     // level below the one reached 30 min before; otherwise a gap or the data end. o {thr (fall threshold, default T_s),
-    // tMax_ms (manual events: the search stops before the next event's closing; returns false when nothing was found)}.
+    // tMax_ms (manual events: the search stops before the next event's closing; returns false when nothing was found),
+    // split (detection: a sharper rise inside the event, _sharperRise, ends it before that rise's flowing-trend window)}.
     function _findEnd(C, ev, o) {
         o = o || {};
         var t = C.t, p = C.p, n = C.n, Wd = C.win, M = Wd.M, S = C.S;
@@ -9380,9 +9428,38 @@ G.WTS_calcRegistry.historian = {
         var gs = INF, gIdx = -1;
         for (var g = 0; g < C.gaps.length; g++) if (C.gaps[g].t0_ms >= t[ev.j1]) { gs = C.gaps[g].t0_ms; gIdx = lowerBound(t, gs); break; }
         var P = C.P, P2 = mMax(P, mCeil(S.shutDayPersist_h * HOUR / Wd.w));
+        // the split needs room for the next event's flowing trend (max(30 min, 10·Δt_med)) after this event's first hour
+        var Lt = mMax(S.trendMin * MIN, S.trendDtFactor * C.dtMed), runMax = -INF, lowRun = 0, lowStart = -1, deepRun = 0;
+        var minRun = mMax(2 * C.J, mCeil(mMax(S.splitMin_h * HOUR, Lt + 30 * MIN) / Wd.w));
+        for (var k0 = mMax(0, mFirst); k0 <= mFirst + 1 && k0 < Wd.K; k0++) if (M[k0] === M[k0] && M[k0] > runMax) runMax = M[k0];
+        var M0 = M[mFirst] === M[mFirst] ? M[mFirst] : runMax;
         for (var m = mFirst + 1; m < Wd.K; m++) {
             if (Wd.t0 + m * Wd.w >= gs || Wd.t0 + m * Wd.w >= tMax) break;
             if (!(M[m] === M[m])) continue;
+            if (M[m] > runMax) runMax = M[m];
+            if (o.split && m - mFirst >= minRun && _sharperRise(C, m, mFirst, runMax, lowRun)) {
+                // END_AT_RISE: the new closing came while the event held its level (the classification gate then takes the
+                // event as a precursor of that closing): the event ends before that closing's flowing-trend window.
+                // END_AT_CLOSING: the level had fallen first (a slow reopening the fall rule missed), so the event is a
+                // shut-in of its own and ends at that fall (the flowing period up to the closing stays flowing).
+                if (M[m] < runMax - C.Ts) {
+                    _endAtRange(C, ev, mMax(mFirst, lowStart - C.J - 1), lowStart);
+                    ev.warnings.push(W('END_AT_CLOSING', 'info', 'The pressure fell, then another closing starts inside this event: the event ends at the fall.', ['D1']));
+                } else {
+                    var li0 = mMax(ev.j1, lowerBound(t, Wd.t0 + m * Wd.w - Lt) - 1);
+                    ev.tEnd_ms = t[li0]; ev._endIdx = li0; ev.endReason = 'reopen'; ev._noOpen = true;
+                    ev.warnings.push(W('END_AT_RISE', 'info', 'A sharper pressure rise (another closing) starts inside this event: the event ends before it.', ['D1']));
+                }
+                ev._split = true;
+                return true;
+            }
+            if (M[m] < runMax - C.Ts) { if (!lowRun) lowStart = m; lowRun++; } else lowRun = 0;
+            // a deep fall (more than half of the rise the event had made, and more than 2·T_s) held for 30 min, after the
+            // event's first hour, ends the event at the fall even when no single window fell by T_s (a slow reopening, a
+            // large storage volume); a phase-redistribution hump is a small part of the rise and comes back
+            if (o.split && m - mFirst >= minRun && M[m] < runMax - mMax(2 * C.Ts, 0.5 * (runMax - M0))) deepRun++; else deepRun = 0;
+            // (the fall began where the level first left runMax − T_s: the start of the current low run)
+            if (o.split && deepRun >= P) { _endAtRange(C, ev, mMax(mFirst, lowStart - C.J - 1), lowStart); return true; }
             var Pm = _inRanges(C.shutDays, Wd.t0 + m * Wd.w) ? P2 : P;
             var ok = true, cnt = 0, lastV = NaN;
             for (var ii = 1; ii <= Pm && m + ii < Wd.K; ii++) {
@@ -9422,8 +9499,79 @@ G.WTS_calcRegistry.historian = {
             record: record, qc: q, t: t, p: p, n: n, S: S, sign: sign, dtMed: dtMed, sigma: sig, sigFlow: q && isNum(q.sigmaFlow_psi) ? q.sigmaFlow_psi : sig,
             Ts: mMax(S.riseMin, S.riseSig * sig), J: mMax(1, mCeil(S.multiScaleMin * MIN / w)), P: mMax(2, mCeil(S.persistMin * MIN / w)),
             day: day, gaps: (q && q.gaps) || [], shutDays: (opts.shutDays || []).filter(function (r) { return r && isNum(r[0]) && isNum(r[1]); }),
-            win: null, w: w
+            allocDays: (opts.allocDays || []).filter(function (d) { return d && isNum(d.t0_ms) && isNum(d.t1_ms) && d.t1_ms > d.t0_ms && isNum(d.V) && d.V >= 0; })
+                .slice().sort(function (a, b) { return a.t0_ms - b.t0_ms; }),
+            win: null, w: w, rateSteps: []
         };
+    }
+
+    // Allocation evidence for a detected event (daily mode, C.allocDays = [{t0_ms, t1_ms, V}] in the main phase).
+    // V_ref = the median volume of up to 3 days before the closing day (within 10 days, no other event on them), else of
+    // up to 3 days after the event. For every day the event covers for ≥ allocShutMin_h hours: the missing volume in
+    // hours, hA = hours·(1 − V/V_ref), less the hours of the other events on that day (kept: the events already accepted
+    // and the stronger members of a split chain); fA = hA/hours; confirm = hA ≥ half the shut hours. Returns null
+    // without a reference, else {Vref, days:[{t0_ms, whole, fA, confirm}]}.
+    function _overlapH(a0, a1, b0, b1) { return mMax(0, mMin(a1, b1) - mMax(a0, b0)) / HOUR; }
+    function _allocCheck(C, ev, kept) {
+        var days = C.allocDays, S = C.S, tc = ev.tc_ms, te = ev.tEnd_ms;
+        if (!days.length || !(te > tc)) return null;
+        function busy(d) { for (var i = 0; i < kept.length; i++) if (kept[i].tc_ms < d.t1_ms && kept[i].tEnd_ms > d.t0_ms) return true; return false; }
+        function otherH(d) { var h = 0; for (var i = 0; i < kept.length; i++) h += _overlapH(kept[i].tc_ms, kept[i].tEnd_ms, d.t0_ms, d.t1_ms); return h; }
+        var i0 = -1, iE = days.length, a, ref = [];
+        for (a = 0; a < days.length; a++) if (days[a].t1_ms > tc) { i0 = a; break; }
+        if (i0 < 0) return null;
+        for (a = i0; a < days.length; a++) if (days[a].t0_ms >= te) { iE = a; break; }
+        for (a = i0 - 1; a >= 0 && ref.length < 3; a--) {
+            if (days[i0].t0_ms - days[a].t0_ms > 10.5 * DAY) break;
+            if (days[a].V > 0 && !busy(days[a])) ref.push(days[a].V);
+        }
+        if (ref.length < 2) {
+            for (a = iE; a < days.length && ref.length < 6; a++) {
+                if (days[a].t0_ms - te > 10.5 * DAY) break;
+                if (days[a].V > 0) ref.push(days[a].V);
+            }
+        }
+        if (ref.length < 2) return null;
+        var Vref = median(ref), out = { Vref: Vref, days: [] };
+        if (!(Vref > 0)) return null;
+        for (a = i0; a < iE; a++) {
+            var d = days[a], sh = (mMin(te, d.t1_ms) - mMax(tc, d.t0_ms)) / HOUR, dh = (d.t1_ms - d.t0_ms) / HOUR;
+            if (!(sh >= S.allocShutMin_h)) continue;
+            var hA = mMax(0, dh * clamp(1 - d.V / Vref, 0, 1) - otherH(d));
+            out.days.push({ t0_ms: d.t0_ms, whole: sh >= dh - 2, fA: hA / dh, confirm: hA >= 0.5 * sh });
+        }
+        return out;
+    }
+    // The allocation verdict on a detected event: 'drop' (no confirming day, and every whole day it covers has at most
+    // allocModest of the reference volume missing: a day-rate step the allocation explains, not a shut-in), or the time
+    // at which it must end (the first whole contradicting day after a confirming day, or ≥ allocBound_h after the closing
+    // when no day confirms), or null.
+    function _allocVerdict(C, ev, kept) {
+        var ac = _allocCheck(C, ev, kept), S = C.S;
+        if (!ac || !ac.days.length) return null;
+        var conf = false, wholeMax = -1, cut = null;
+        ac.days.forEach(function (x) { if (x.confirm) conf = true; if (x.whole) wholeMax = mMax(wholeMax, x.fA); });
+        if (!conf && wholeMax >= 0 && wholeMax < S.allocModest) return { drop: true, fA: wholeMax };
+        var seen = false;
+        ac.days.forEach(function (x) {
+            if (cut !== null) return;
+            if (x.confirm) { seen = true; return; }
+            if (x.whole && (seen || x.t0_ms >= ev.tc_ms + S.allocBound_h * HOUR)) cut = x.t0_ms;
+        });
+        return cut !== null ? { drop: false, cut_ms: cut, afterConfirm: seen } : null;
+    }
+    // Ends an event at the start of a production day the allocation contradicts (_allocVerdict cut_ms).
+    function _cutEvent(C, ev, vd) {
+        var li = mMax(ev.j1, lowerBound(C.t, vd.cut_ms) - 1);
+        if (!(li < ev._endIdx)) return;
+        ev.tEnd_ms = C.t[li]; ev._endIdx = li; ev.endReason = 'reopen'; ev._noOpen = true;
+        ev.dtEnd_h = mMax(0, (ev.tEnd_ms - ev.tc_ms) / HOUR);
+        ev.warnings = ev.warnings.filter(function (w) { return w.code !== 'END_AT_RISE' && w.code !== 'END_AT_CLOSING'; });
+        var day = dayOf(vd.cut_ms, C.day);
+        ev.warnings.push(W('END_ALLOC', 'warn', vd.afterConfirm
+            ? 'The allocation shows the well producing again on ' + day + ' and the pressure shows no reopening: the event ends at the start of that day.'
+            : 'No allocation day confirms a shut-in and ' + day + ' shows a full day of production: the event ends at the start of that day.', ['D1', 'R3']));
+        _setStatus(C, ev);
     }
 
     // Sub-threshold steps T_p = max(2 psi, 6σ) ≤ Δ < T_s, flat for ≥ 2 h on both sides (possible partial cut or choke change).
@@ -9499,9 +9647,45 @@ G.WTS_calcRegistry.historian = {
     // detectJob runs it in units (window medians; the scan, ≤ 20,000 windows or 10 events per unit; sub-threshold steps).
     function detectJob(record, q, opts) {
         opts = opts || {};
-        var res = null, phase = 0, C = null, events = [], k = 0, prevEndIdx = -1;
+        var res = null, phase = 0, C = null, events = [], k = 0, prevEndIdx = -1, prevSplit = false, chain = [];
         var table = !!(opts.rateTable && opts.rateTable.length);
         if (!record || !record.t || record.t.length < 10) res = { events: [], missed: _missed([], [], null, q, 0) };
+        // Allocation verdicts on a chain of candidates (each but the last ended at a sharper rise inside it; the last ended
+        // at a reopening, a gap or the data end), strongest first (Δp one hour after the closing), so a day's missing volume
+        // goes to the strongest event on it. Kept events join the list in time order; the scan resumes after the last
+        // one, at its cut, or after its rise when it was dropped.
+        function strength(e) {
+            var h = mMin(1, mMax(0, num(e.dtEnd_h, 0)));
+            var v = C.sign * (pAt(C.t, C.p, e.tc_ms + h * HOUR) - num(e.pwf0, 0));
+            return isNum(v) ? v : 0;
+        }
+        function resolveChain() {
+            var Wd = C.win, last = chain[chain.length - 1], acc = [];
+            if (C.allocDays.length) {
+                chain.slice().sort(function (a, b) { return strength(b.ev) - strength(a.ev) || a.ev.tc_ms - b.ev.tc_ms; }).forEach(function (c) {
+                    var vd = _allocVerdict(C, c.ev, events.concat(acc));
+                    if (vd && vd.drop) {
+                        c.drop = true;
+                        C.rateSteps.push({ t_ms: c.ev.tc_ms, dp_psi: C.sign * num(c.ev.rise_psi, 0), dur_h: mMax(0, num(c.ev.dtEnd_h, 0)), fAlloc: vd.fA });
+                        return;
+                    }
+                    if (vd && isNum(vd.cut_ms)) _cutEvent(C, c.ev, vd);
+                    acc.push(c.ev);
+                });
+            }
+            chain.forEach(function (c) { if (!c.drop) events.push(c.ev); });
+            chain = [];
+            if (last.drop) {
+                // a closing inside the dropped step's span gets its own candidate; the next trend starts after the last kept event
+                k = mMax(last.k + 1, last.k + last.j + C.P + 1);
+                var lk = events[events.length - 1];
+                prevEndIdx = lk ? lowerBound(C.t, lk.tEnd_ms + 1) - 1 : -1;
+                prevSplit = false;
+            } else {
+                prevEndIdx = last.ev._endIdx; prevSplit = !!last.ev._noOpen;
+                k = mMax(last.k + 1, mFloor((last.ev.tEnd_ms - Wd.t0) / Wd.w) + 1);
+            }
+        }
         function scanUnit() {
             var Wd = C.win, M = Wd.M, perWin = mMax(1, C.n / mMax(1, Wd.K));
             var lim = mMin(Wd.K, k + mMax(1, mCeil(UNIT_SAMPLES / perWin))), nEv = 0;
@@ -9516,11 +9700,18 @@ G.WTS_calcRegistry.historian = {
                     if (v2 === v2) { cnt++; if (!(v2 - M[k] > C.Ts)) { okp = false; break; } }
                 }
                 if (!okp || !(cnt >= 2 || (atEnd && cnt >= 1))) { k++; continue; }
-                var ev = _eventAt(C, k, j, prevEndIdx);
-                events.push(ev); nEv++;
-                prevEndIdx = ev._endIdx;
-                k = mMax(k + 1, mFloor((ev.tEnd_ms - Wd.t0) / Wd.w) + 1);
+                var ev = _eventAt(C, k, j, prevEndIdx, prevSplit);
+                nEv++;
+                chain.push({ ev: ev, k: k, j: j, drop: false });
+                if (ev._split) {
+                    // ended at another closing: its verdict waits for that closing (they may share a day)
+                    prevEndIdx = ev._endIdx; prevSplit = !!ev._noOpen;
+                    k = mMax(k + 1, mFloor((ev.tEnd_ms - Wd.t0) / Wd.w) + 1);
+                    continue;
+                }
+                resolveChain();
             }
+            if (k >= Wd.K && chain.length) resolveChain();
             return k >= Wd.K;
         }
         return {
@@ -9537,13 +9728,19 @@ G.WTS_calcRegistry.historian = {
                     if (scanUnit()) phase = 2;
                     return { done: false, progress: 0.3 + 0.5 * mMin(1, k / mMax(1, C.win.K)), label: 'Looking for shut-ins (' + events.length + ')' };
                 }
-                events.forEach(function (e, i) { e.id = 'E' + (i + 1); delete e._endIdx; });
+                events.forEach(function (e, i) { e.id = 'E' + (i + 1); delete e._endIdx; delete e._split; delete e._noOpen; });
                 var sub = table ? [] : _substeps(C, events);
-                res = { events: events, missed: _missed(events, sub, null, q, C.Ts) };
+                res = { events: events, missed: _missed(events, sub, null, q, C.Ts, C.rateSteps) };
                 return { done: true, progress: 1, label: 'Shut-ins found: ' + events.length };
             },
             result: function () { return res; },
-            cancel: function () { if (!res) res = { events: events, missed: _missed(events, [], null, q, C ? C.Ts : 0) }; }
+            cancel: function () {
+                if (res) return;
+                chain.forEach(function (c) { events.push(c.ev); });
+                chain = [];
+                events.forEach(function (e) { delete e._endIdx; delete e._split; delete e._noOpen; });
+                res = { events: events, missed: _missed(events, [], null, q, C ? C.Ts : 0, C ? C.rateSteps : []) };
+            }
         };
     }
     function detect(record, q, opts) { return runSync(detectJob(record, q, opts)); }
@@ -9604,12 +9801,12 @@ G.WTS_calcRegistry.historian = {
         return ev;
     }
 
-    // M§A5 missed list
-    function _missed(events, sub, rh, q, Ts) {
+    // M§A5 missed list. rateSteps (extra key): rises above T_s that the allocation explains as day-rate steps (not events).
+    function _missed(events, sub, rh, q, Ts, rateSteps) {
         var gaps = ((q && q.gaps) || []).filter(function (g) { return g.dur_h >= D.DEFAULTS.qc.gapReport_h; }).map(function (g) { return { t0_ms: g.t0_ms, t1_ms: g.t1_ms }; });
         // detectability: p* − pwf is known only after interpretation; run fills it from median(p* − pwf0) of the tests
         return {
-            subThreshold: sub || [], allocOnly: (rh && rh.allocOnly) || [], gaps: gaps,
+            subThreshold: sub || [], allocOnly: (rh && rh.allocOnly) || [], gaps: gaps, rateSteps: (rateSteps || []).slice(0, 200),
             detectability: { ok: true, pStarMinusPwf_psi: null, Ts_psi: Ts || 0 },
             tooShort: (events || []).filter(function (e) { return e.status === 'too_short'; }).map(function (e) { return e.id; }),
             interventions: (events || []).filter(function (e) { return e.status === 'intervention'; }).map(function (e) { return e.id; }),
@@ -9669,18 +9866,33 @@ G.WTS_calcRegistry.historian = {
     }
     // p* estimate from the last 0.5 cycle of a build-up: p = a + m′·ln Δt_e, extrapolated to Δt → ∞ (the intervention
     // check only; the engine's p* comes from its own line).
+    // Only a stable last cycle is extrapolated: the slope of the last 0.5 cycle within 30 % of the slope of the 0.5 cycle
+    // before it (a build-up still in storage, in a dual-porosity transition or near a boundary gives a slope that is
+    // still changing, and its p* would be far too low). Returns null otherwise.
     function _pStarEst(record, ev, fn) {
         if (!fn || !(ev.dtEnd_h >= 1)) return null;
         var t = record.t, p = record.p, sign = ev.kind === 'falloff' ? -1 : 1;
-        var a = lowerBound(t, ev.tc_ms + ev.dtEnd_h * HOUR / 3.16), b = lowerBound(t, ev.tEnd_ms + 1);
-        if (b - a < 5) return null;
-        var stride = mMax(1, mCeil((b - a) / 200)), sx = 0, sy = 0, sxx = 0, sxy = 0, m = 0;
-        for (var i = a; i < b; i += stride) { var x = fn((t[i] - ev.tc_ms) / HOUR), y = sign * p[i]; sx += x; sy += y; sxx += x * x; sxy += x * y; m++; }
-        var den = m * sxx - sx * sx;
-        if (!(den > 0)) return null;
-        var sl = (m * sxy - sx * sy) / den, ic = (sy - sl * sx) / m;
-        if (!(sl > 0)) return null;
-        return sign * (ic + sl * fn.c0);
+        function line(t0h, t1h) {
+            var a = lowerBound(t, ev.tc_ms + t0h * HOUR), b = lowerBound(t, ev.tc_ms + t1h * HOUR + 1);
+            if (b - a < 5) return null;
+            var stride = mMax(1, mCeil((b - a) / 200)), sx = 0, sy = 0, sxx = 0, sxy = 0, m = 0;
+            for (var i = a; i < b; i += stride) { var x = fn((t[i] - ev.tc_ms) / HOUR), y = sign * p[i]; sx += x; sy += y; sxx += x * x; sxy += x * y; m++; }
+            var den = m * sxx - sx * sx;
+            if (!(den > 0)) return null;
+            var sl = (m * sxy - sx * sy) / den;
+            return { sl: sl, ic: (sy - sl * sx) / m };
+        }
+        var L2 = line(ev.dtEnd_h / 3.16, ev.dtEnd_h), L1 = line(ev.dtEnd_h / 10, ev.dtEnd_h / 3.16);
+        if (!L2 || !(L2.sl > 0) || !L1 || !(L1.sl > 0) || mAbs(L2.sl / L1.sl - 1) > 0.3) return null;
+        return sign * (L2.ic + L2.sl * fn.c0);
+    }
+    // The previous build-up flattened: its rise over the last 0.5 cycle is below 0.5·T_s, so its last pressure is close to
+    // the level it was heading for (the intervention check may then compare with it).
+    function _flattened(record, ev, Ts) {
+        if (!(ev.dtEnd_h >= 1)) return false;
+        var sign = ev.kind === 'falloff' ? -1 : 1;
+        var a = pAt(record.t, record.p, ev.tc_ms + ev.dtEnd_h * HOUR / 3.16), b = pAt(record.t, record.p, ev.tEnd_ms);
+        return isNum(a) && isNum(b) && sign * (b - a) < 0.5 * Ts;
     }
     // f̂ from late Δp differences (M§A4 method 1): t2 = min(Δt_end)/1.26, t1 = t2/3.16, valid when t1 ≥ 3× the later
     // derivative maximum (both tests past storage, so skin cancels). The plan's ratio
@@ -9699,6 +9911,19 @@ G.WTS_calcRegistry.historian = {
         if (!(mAbs(b) > 1e-9)) return null;
         var lr = mLog(t2 / t1), Lref = fnRef(t2) - fnRef(t1), Hev = lr - (fnEv(t2) - fnEv(t1));
         var f = ((a / b) * qRatio * Lref + Hev) / lr;
+        return isNum(f) ? f : null;
+    }
+    // f̂ of a precursor (an event that ended at a sharper rise, END_AT_RISE) from the closing that follows it within 2 h:
+    // r = Δp_ev(Δt)/Δp_next(Δt) at Δt = min(1 h, half of each duration), f̂ = r/(1 + r). Null when it does not apply.
+    function _fhatChain(record, ev, nx) {
+        if (!ev || !nx || nx.dropped || !_isShutKind(nx) || !isNum(ev.tEnd_ms) || !isNum(nx.tc_ms)) return null;
+        if (!(ev.warnings || []).some(function (w) { return w.code === 'END_AT_RISE'; })) return null;
+        if (!(nx.tc_ms - ev.tEnd_ms <= 2 * HOUR) || !(nx.tc_ms > ev.tc_ms)) return null;
+        var dts = mMin(1, 0.5 * num(ev.dtEnd_h, 0), 0.5 * num(nx.dtEnd_h, 0));
+        if (!(dts > 0)) return null;
+        var a1 = _dpAt(record, ev, dts), a2 = _dpAt(record, nx, dts);
+        if (!(a1 > 0) || !(a2 > 0)) return null;
+        var f = (a1 / a2) / (1 + a1 / a2);
         return isNum(f) ? f : null;
     }
     function _segmentOf(date, workovers) {
@@ -9721,7 +9946,7 @@ G.WTS_calcRegistry.historian = {
         var dayList = days || (rh && rh.days) || null;
         var table = !!opts.table || !!(rh && rh.mode === 'table');
         var hasAlloc = !!(dayList && dayList.length) && !table;
-        var prevShut = null, fnCache = {}, stp = rh && rh.steps;
+        var prevShuts = [], fnCache = {}, stp = rh && rh.steps;
         function lnFn(e) {
             if (fnCache[e.id] !== undefined) return fnCache[e.id];
             var open = record.t[0] - D.DEFAULTS.rates.prependMin_h * HOUR, k2 = events.indexOf(e);
@@ -9729,6 +9954,9 @@ G.WTS_calcRegistry.historian = {
             fnCache[e.id] = _lnDteFn(e, stp, (e.tc_ms - open) / HOUR);
             return fnCache[e.id];
         }
+        // rate before a closing: the closing day's reference rate (clean days), else Δq of the preliminary pass (which spreads
+        // a partial cut's volume as if it were a full shut-in)
+        function qOfEv(x) { var b0 = byEv[x.id]; return (b0 && isNum(b0.qRef) && b0.qRef > 0) ? b0.qRef : ((b0 && b0.Dq) || x.qBefore); }
         function one(ev, idx) {
             if (!ev || ev.dropped) return;
             if (!_isShutKind(ev)) return;
@@ -9736,24 +9964,43 @@ G.WTS_calcRegistry.historian = {
             ev.warnings = ev.warnings || [];
             var alloc = { date: ev.alloc && ev.alloc.date ? ev.alloc.date : civil(ev.tc_ms), ratio: null, pass: null, ignoresShutin: false,
                           confirm: table ? 'n/a' : (hasAlloc ? 'not_confirmed' : 'no_alloc') };
-            var confirmed = false, contra = false;
+            var confirmed = false, contra = false, volDay = false;
             if (hasAlloc) {
-                var cd = _dayContaining(dayList, ev.tc_ms);
+                var cd = _dayContaining(dayList, ev.tc_ms), r3pass = false, r3fail = false, zeroDay = false;
                 if (cd) {
                     alloc.date = cd.date;
                     if (cd.R3) { alloc.ratio = cd.R3.ratio; alloc.pass = cd.R3.pass; }
                     alloc.ignoresShutin = !!cd.ignoresShutin;
-                    if (cd.R3 && cd.R3.status === 'pass') confirmed = true;
-                    else if (cd.R3 && cd.R3.status === 'fail') contra = true;
+                    r3pass = !!(cd.R3 && cd.R3.status === 'pass');
+                    r3fail = !!(cd.R3 && cd.R3.status === 'fail');
+                    // a closing day with fewer than closeDayMin_h flowing hours has R3 'unavailable' (too little volume
+                    // for a rate check), but its volume still shows whether the well was shut for the rest of the day:
+                    // the flowing hours it implies at q_ref, hours·V/q_ref, agree with the detected ones within
+                    // r3Tol·hours (plus the volume resolution) → the allocation confirms the full shut-in hours (M§A4 method 2)
+                    var RD = D.DEFAULTS.rates;
+                    if (cd.R3 && cd.R3.status === 'unavailable' && isNum(cd.qRef) && cd.qRef > 0 && isNum(cd.hEff) && cd.hEff < RD.closeDayMin_h && isNum(cd.V)) {
+                        var hImp = cd.hours * cd.V / cd.qRef, tolH = RD.r3Tol * cd.hours + 24 * num(cd.vRes, 1) / cd.qRef;
+                        alloc.hoursCheck = { implied_h: hImp, detected_h: cd.hEff, tol_h: tolH, pass: mAbs(hImp - cd.hEff) <= tolH };
+                        if (alloc.hoursCheck.pass) r3pass = true;
+                    }
                 }
-                // whole days inside the shut-in: no volume confirms it, volume contradicts it
+                // whole days inside the shut-in: no volume confirms it, volume contradicts it. A shut-in still running at
+                // the data end counts as shut to the end of that day (as in rates): a day with no volume there confirms it,
+                // a volume there does not contradict it (the well may have reopened after the data end).
+                // (an event that ends at a day start — a cut, a reopening at midnight — ends on its last sample before it:
+                // 10 min of slack)
+                var tEndA = ev.tEnd_ms + 10 * MIN;
+                if (ev.endReason === 'data_end') { var ld = _dayContaining(dayList, ev.tEnd_ms - 1); if (ld && ld.t1_ms > tEndA) tEndA = ld.t1_ms; }
                 dayList.forEach(function (d) {
-                    if (d.t0_ms >= ev.tc_ms && d.t1_ms <= ev.tEnd_ms) {
-                        if (d.V <= num(d.vRes, 1) + 1e-9) { if (!contra) confirmed = true; }
-                        else { contra = true; }
+                    if (d.t0_ms >= ev.tc_ms && d.t1_ms <= tEndA) {
+                        if (d.V <= num(d.vRes, 1) + 1e-9) zeroDay = true;
+                        else if (d.t1_ms <= ev.tEnd_ms + 10 * MIN) volDay = true;
                     }
                 });
-                if (contra) confirmed = false;
+                // a whole day with no volume confirms the shut-in even when the closing day's R3 fails (a rate change on
+                // the closing day fails R3 without contradicting the shut-in; the R3 failure stays in the rate checks)
+                confirmed = (r3pass || zeroDay) && !volDay;
+                contra = volDay || (r3fail && !zeroDay);
                 alloc.confirm = confirmed ? 'confirmed' : 'not_confirmed';
             }
             ev.alloc = alloc;
@@ -9770,10 +10017,7 @@ G.WTS_calcRegistry.historian = {
                     ref = e2; break;
                 }
                 if (ref && ev.dtEnd_h > 0 && ref.dtEnd_h > 0) {
-                    // rate before each closing: the closing day's reference rate (clean days), else Δq of the preliminary pass
-                    // (which spreads a partial cut's volume as if it were a full shut-in)
-                    var qOf = function (x) { var b0 = byEv[x.id]; return (b0 && isNum(b0.qRef) && b0.qRef > 0) ? b0.qRef : ((b0 && b0.Dq) || x.qBefore); };
-                    var qe = qOf(ev), qr = qOf(ref);
+                    var qe = qOfEv(ev), qr = qOfEv(ref);
                     var qRatio = (isNum(qe) && qe > 0 && isNum(qr) && qr > 0) ? qr / qe : 1;
                     f1 = _fhatDpDiff(record, ev, ref, qRatio, lnFn(ev), lnFn(ref));
                 }
@@ -9786,12 +10030,20 @@ G.WTS_calcRegistry.historian = {
                     if (mp > 0) fProxy = (_dpAt(record, ev, 4) - _dpAt(record, ev, 1)) / (mp * mLog(4));
                 }
                 ev.fhatProxy = isNum(fProxy) ? fProxy : null;
+                // a precursor: the event ended at a sharper rise (END_AT_RISE: a closing followed while it was still at its
+                // level), so it cut part of the rate and the closing cut the rest. With the same well response,
+                // Δp_ev(Δt)/Δp_next(Δt) = f/(1 − f) at the same Δt after each closing (superposition; skin and storage
+                // cancel), so f̂ = r/(1 + r) (method 'derivRatio'). The allocation of the day they share cannot separate them.
+                var fChain = _fhatChain(record, ev, events[idx + 1]);
+                // (rateEnd_ms, extra key: the cut lasts until that closing, so the rate history carries no full-rate gap
+                // over the closing's trend window and the closing's Δq is the rate the cut left)
+                if (fChain !== null) { f1 = fChain; confirmed = false; ev.rateEnd_ms = events[idx + 1].tc_ms; }
                 if (confirmed) {
                     ev.fhat = 1; ev.fhatMethod = 'allocation';
                     if (f1 !== null) ev.fhatDpDiff = f1;
                     if (f1 !== null && f1 < C.fInterp) ev.warnings.push(W('ALLOC_VS_PRESSURE', 'warn', 'The allocation says shut-in, the pressure says a partial cut (rate fraction ' + f1.toFixed(2) + ').', ['D6']));
                 } else if (f1 !== null) {
-                    ev.fhat = f1; ev.fhatMethod = 'dpDiff';
+                    ev.fhat = f1; ev.fhatMethod = fChain !== null ? 'derivRatio' : 'dpDiff';
                     if (f1 >= C.fShut) {
                         // full shut-in by the pressure; an allocation that contradicts it is reported, not followed (the
                         // pressure response is the stronger evidence; a 0.9–0.95 step expects residual volume anyway)
@@ -9809,6 +10061,13 @@ G.WTS_calcRegistry.historian = {
                         ev.kind = 'substep'; ev.status = 'not_confirmed'; ev.gateSubstep = true;
                         ev.warnings.push(W('NOT_CONFIRMED', 'warn', 'The pressure response is too small for a shut-in (rate fraction ' + f1.toFixed(2) + '): no rate change is entered; listed with the sub-threshold steps.', ['D6']));
                     }
+                } else if (hasAlloc && volDay) {
+                    // the allocation shows production on whole days inside the event and no pressure measure says shut-in:
+                    // a rate change the day rates already carry (a choke change, a day-rate step), not a q = 0 period
+                    ev.fhat = ev.fhatProxy; ev.fhatMethod = isNum(ev.fhatProxy) ? 'proxy' : null;
+                    ev.gateDp_psi = (ev.kind === 'falloff' ? -1 : 1) * num(ev.rise_psi, 0);
+                    ev.kind = 'substep'; ev.status = 'not_confirmed'; ev.gateSubstep = true;
+                    ev.warnings.push(W('NOT_CONFIRMED', 'warn', 'The allocation shows production on whole days inside this event and no reference build-up confirms a shut-in: no rate change is entered (the day rates stand); listed with the sub-threshold steps.', ['D6', 'R3']));
                 } else {
                     ev.fhat = ev.fhatProxy; ev.fhatMethod = isNum(ev.fhatProxy) ? 'proxy' : null;
                     if (ev.status === 'analysable') {
@@ -9819,8 +10078,12 @@ G.WTS_calcRegistry.historian = {
                 }
             }
             if (_isShutKind(ev) && (ev.status === 'analysable' || ev.status === 'too_short')) {
-                _intervention(ev, prevShut, record, Ts, opts, prevShut ? _pStarEst(record, prevShut, lnFn(prevShut)) : null);
-                if (ev.status === 'analysable') prevShut = ev;
+                // reference: the highest of the last 3 analysable build-ups of the same workover segment (one short or
+                // unstable earlier build-up does not make a later, longer one an intervention)
+                var segI = _segmentOf(ev.alloc && ev.alloc.date, opts.workovers), refX = null;
+                prevShuts.filter(function (x) { return x.seg === segI; }).slice(-3).forEach(function (x) { if (x.ref !== null && (refX === null || x.ref > refX.ref)) refX = x; });
+                _intervention(ev, refX, record, Ts, qOfEv(ev));
+                if (ev.status === 'analysable') prevShuts.push({ seg: segI, ref: _refPressure(record, ev, lnFn(ev), Ts, opts), pwf0: (ev.kind === 'falloff' ? -1 : 1) * num(ev.pwf0, 0), dq: qOfEv(ev) });
             }
         }
         var list = events || [], i = 0;
@@ -9837,23 +10100,49 @@ G.WTS_calcRegistry.historian = {
     function classify(events, record, days, opts) { return runSync(classifyJob(events, record, days, opts)); }
     // Intervention: the pressure exceeds the previous p_ext (or the previous build-up's last pressure) by more than 2·T_s,
     // or it rises and then falls by more than T_s inside the event (after the first hour) without recovering.
-    function _intervention(ev, prev, record, Ts, opts, pStarPrev) {
+    // The reference pressure of an analysable build-up for the intervention check (sign-aware): its p_ext when given, else
+    // its p* from a stable last cycle, else its highest pressure when it had flattened; null for a build-up still rising
+    // (any longer build-up would pass its last pressure).
+    function _refPressure(record, prev, fn, Ts, opts) {
+        var t = record.t, p = record.p, sign = prev.kind === 'falloff' ? -1 : 1;
+        if (opts.pExt && isNum(opts.pExt[prev.id])) return sign * opts.pExt[prev.id];
+        var ps = _pStarEst(record, prev, fn);
+        if (isNum(ps)) return sign * ps;
+        if (!_flattened(record, prev, Ts)) return null;
+        var m = _robustMax(record, sign, prev.tc_ms, prev.tEnd_ms);
+        return _isFin(m) ? m : null;
+    }
+    // refX {ref, pwf0} (sign-aware) of the reference build-up, or null. The margin is the larger of interventionTs·T_s and
+    // interventionFrac of the reference build-up's own rise (its p* extrapolation carries an error of that order).
+    // The highest 10-min median (≥ 3 samples) of sign·p between two times (a spike is not a level); the raw maximum when
+    // no window has 3 samples.
+    function _robustMax(record, sign, t0, t1) {
+        var t = record.t, p = record.p, a = lowerBound(t, t0 + 1), b = lowerBound(t, t1 + 1), best = -INF, raw = -INF, i;
+        for (i = a; i < b; i++) if (sign * p[i] > raw) raw = sign * p[i];
+        for (var s = t0; s < t1; s += 10 * MIN) {
+            var i0 = lowerBound(t, s), i1 = lowerBound(t, mMin(t1, s + 10 * MIN) + 1);
+            if (i1 - i0 >= 3) { var v = sign * medianRange(p, i0, i1); if (v > best) best = v; }
+        }
+        return _isFin(best) ? best : raw;
+    }
+    // refX {ref, pwf0, dq} (sign-aware) of the reference build-up, or null; dqEv: the rate before this closing. The margin
+    // is the larger of interventionTs·T_s and interventionFrac of the reference build-up's own rise (its p*
+    // extrapolation carries an error of that order). A reference whose rise per unit rate is less than a third of this
+    // event's was not a comparable full shut-in (a rate step, a partial cut): no comparison with it.
+    function _intervention(ev, refX, record, Ts, dqEv) {
         var t = record.t, p = record.p, sign = ev.kind === 'falloff' ? -1 : 1;
         var a = lowerBound(t, ev.tc_ms + 1), b = lowerBound(t, ev.tEnd_ms + 1);
         if (b - a < 3) return;
-        var pmax = -INF;
-        for (var i = a; i < b; i++) if (sign * p[i] > pmax) pmax = sign * p[i];
-        var refP = null;
-        if (prev) {
-            if (opts.pExt && isNum(opts.pExt[prev.id])) refP = sign * opts.pExt[prev.id];
-            else if (isNum(pStarPrev)) refP = sign * pStarPrev;
-            else {
-                var pa = lowerBound(t, prev.tc_ms + 1), pb = lowerBound(t, prev.tEnd_ms + 1), m = -INF;
-                for (var j = pa; j < pb; j++) if (sign * p[j] > m) m = sign * p[j];
-                refP = _isFin(m) ? m : null;
-            }
+        // the level of the second half of the event (an early phase-redistribution hump is not a higher reservoir pressure)
+        var pmax = _robustMax(record, sign, ev.tc_ms + 0.5 * (ev.tEnd_ms - ev.tc_ms), ev.tEnd_ms);
+        var DD = D.DEFAULTS.detect, refP = refX ? refX.ref : null;
+        var margin = refX ? mMax(DD.interventionTs * Ts, DD.interventionFrac * mMax(0, refX.ref - refX.pwf0)) : INF;
+        if (refX) {
+            var rN = pmax - sign * num(ev.pwf0, 0), rR = refX.ref - refX.pwf0;
+            var nN = (isNum(dqEv) && dqEv > 0) ? rN / dqEv : rN, nR = (isNum(refX.dq) && refX.dq > 0 && isNum(dqEv) && dqEv > 0) ? rR / refX.dq : rR;
+            if (!(rR > 0) || nN > 3 * nR) refP = null;
         }
-        if (refP !== null && pmax - refP > D.DEFAULTS.detect.interventionTs * Ts) {
+        if (refP !== null && pmax - refP > margin) {
             ev.status = 'intervention';
             ev.warnings.push(W('INTERVENTION', 'warn', 'Pressure ' + (pmax - refP).toFixed(1) + ' psi above the previous extrapolated pressure: suspected intervention, not interpreted. Enter a workover date if one took place.', ['D1']));
             return;
@@ -9868,7 +10157,11 @@ G.WTS_calcRegistry.historian = {
             meds.forEach(function (v, q) { if (v > mx) { mx = v; mi = q; } });
             var tail = meds.slice(mi + 1), k0 = -1;
             for (var z = 0; z < tail.length; z++) if (tail[z] < mx - Ts) { k0 = z; break; }
-            if (k0 >= 0 && mx - tail[tail.length - 1] > Ts && tail.slice(k0).every(function (v) { return v < mx - 0.5 * Ts; })) {
+            // the pressure rose into the peak by more than T_s inside the window (a renewed rise: the early peak of a
+            // phase-redistribution hump is not one), and the fall comes within 6 h of the peak (an intervention ends
+            // quickly; a slow roll-over over days is the depletion or interference a build-up can show)
+            var rose = meds.slice(0, mi).some(function (v) { return v < mx - Ts; });
+            if (rose && k0 >= 0 && k0 < 12 && mx - tail[tail.length - 1] > Ts && tail.slice(k0).every(function (v) { return v < mx - 0.5 * Ts; })) {
                 ev.status = 'intervention';
                 ev.warnings.push(W('INTERVENTION', 'warn', 'Pressure rose and then fell by ' + (mx - tail[tail.length - 1]).toFixed(1) + ' psi inside the shut-in: suspected intervention, not interpreted.', ['D1']));
             }
@@ -9961,7 +10254,8 @@ G.WTS_calcRegistry.historian = {
             var fv = (!fullShut && e.kind !== 'partial' && e.fhatMethod === 'dpDiff' && isNum(e.fhat) && e.fhat >= 0.9 && e.fhat < 0.95) ? e.fhat : f;
             var half = (e.ramp && e.ramp.present && e.ramp.dur_s > 0) ? mRound(e.ramp.dur_s * SEC / 2) : 0;
             if (half > 0) ivs.push({ t0: e.tc_ms - half, t1: e.tc_ms, f: 0.5, fv: 0.5, ramp: true, id: e.id, ev: e });
-            ivs.push({ t0: e.tc_ms, t1: e.tEnd_ms, f: f, fv: fv, ramp: false, id: e.id, ev: e });
+            var t1 = (isNum(e.rateEnd_ms) && e.rateEnd_ms > e.tEnd_ms) ? e.rateEnd_ms : e.tEnd_ms;    // a precursor: to the next closing
+            ivs.push({ t0: e.tc_ms, t1: t1, f: f, fv: fv, ramp: false, id: e.id, ev: e });
         });
         return ivs.sort(function (a, b) { return a.t0 - b.t0 || (a.ramp ? -1 : 1); });
     }
@@ -10007,7 +10301,8 @@ G.WTS_calcRegistry.historian = {
                     startHour: clamp(mRound(num(opts.day && +opts.day.startHour, 0)), 0, 23) };
         var warnings = [], resol = opts.resolution || {};
         var map = {};
-        (rows || []).forEach(function (r) { if (r && parseDate(r.date)) map[r.date] = r; });
+        // copies: the rows are input (hashed by run.inputHash) and the volumes below are written into the copies
+        (rows || []).forEach(function (r) { if (r && parseDate(r.date)) map[r.date] = Object.assign({}, r); });
         var rs = Object.keys(map).sort().map(function (k) { return map[k]; });
         if (!rs.length) return { ok: false, code: 'NO_ALLOCATION', errors: ['No daily allocation rows.'], bad: ['allocation'] };
         // R_s (scf/STB): §3.6 names the option rsScfStb; Rs is accepted too (WellInput.Rs)
@@ -10045,6 +10340,14 @@ G.WTS_calcRegistry.historian = {
         });
         var vRes = fluid === 'gas' ? num(resol.gas, 1) : fluid === 'water_inj' ? num(resol.water, 1) : basis === 'total' ? mMax(num(resol.oil, 1) * Bo, num(resol.water, 1) * Bw) : num(resol.oil, 1);
         var ivs = _intervals(events, !!opts.fullShut), mainIvs = ivs.filter(function (iv) { return !iv.ramp; });
+        // A shut-in still running at the data end is taken as shut until the end of that production day (the well is not
+        // seen reopening; an allocation exported at the data end covers the flowing hours before the closing only). Its
+        // interval end is not a reopening (no flush day, no reopening-day rule).
+        mainIvs.forEach(function (iv) {
+            if (!iv.ev || iv.ev.endReason !== 'data_end' || iv.f < 1) return;
+            var lb = dayBounds(dayOf(iv.t1 - 1, day), day);
+            if (lb && lb.t1_ms > iv.t1) { iv.t1 = lb.t1_ms; iv.noReopen = true; }
+        });
         var gaps = (opts.gaps || []).filter(function (g) { return g.dur_h >= R.cleanGap_h; });
         var days = rs.map(function (r) {
             var b = dayBounds(r.date, day), pcs = _pieces(ivs, b.t0_ms, b.t1_ms), h = _hours(pcs);
@@ -10052,9 +10355,9 @@ G.WTS_calcRegistry.historian = {
             mainIvs.forEach(function (iv) {
                 if (iv.t0 < b.t1_ms && iv.t1 > b.t0_ms && evIds.indexOf(iv.id) === -1) evIds.push(iv.id);
                 if (iv.t0 >= b.t0_ms && iv.t0 < b.t1_ms) closings.push(iv);
-                if (iv.t1 > b.t0_ms && iv.t1 <= b.t1_ms) reopens.push(iv);
+                if (!iv.noReopen && iv.t1 > b.t0_ms && iv.t1 <= b.t1_ms) reopens.push(iv);
             });
-            var flush = mainIvs.some(function (iv) { return iv.t1 >= b.t0_ms - R.flush_h * HOUR && iv.t1 < b.t0_ms; });
+            var flush = mainIvs.some(function (iv) { return !iv.noReopen && iv.t1 >= b.t0_ms - R.flush_h * HOUR && iv.t1 < b.t0_ms; });
             var gap = gaps.some(function (g) { return g.t0_ms < b.t1_ms && g.t1_ms > b.t0_ms; });
             var V = r._V, q = h.eff >= R.hOnMin_h ? 24 * V / h.eff : 0;
             if (V > vRes + 1e-9 && h.eff < R.hOnMin_h) warnings.push(W('VOLUME_ON_SHUT_DAY', 'warn', 'Allocated volume on ' + r.date + ' while the well was shut for the whole day.', ['R2']));
@@ -10062,12 +10365,21 @@ G.WTS_calcRegistry.historian = {
             return { row: r, date: r.date, t0_ms: b.t0_ms, t1_ms: b.t1_ms, hours: b.hours, hOn: h.on, hEff: h.eff, V: V, q: q, cls: cls, events: evIds,
                      closings: closings, reopens: reopens, pieces: pcs, qRef: null, qUse: q, sub: null };
         });
-        // q_ref: median of the 3 nearest clean days on each side within ±10 days (at least 2)
+        // q_ref: median of the 3 nearest clean days on each side within ±10 days (at least 2). When the two sides differ by
+        // more than the R3 tolerance (the rate changed while the well was shut), a closing day takes the side before the
+        // shut-in and a reopening day the side after it (at least 2 clean days on that side; qRefSide says which).
         days.forEach(function (d, i) {
-            var c = [];
-            for (var a = i - 1, na = 0; a >= 0 && na < R.refEach; a--) { if ((d.t0_ms - days[a].t0_ms) / DAY > R.refDays + 0.5) break; if (days[a].cls === 'clean' && days[a].q > 0) { c.push(days[a].q); na++; } }
-            for (var b2 = i + 1, nb = 0; b2 < days.length && nb < R.refEach; b2++) { if ((days[b2].t0_ms - d.t0_ms) / DAY > R.refDays + 0.5) break; if (days[b2].cls === 'clean' && days[b2].q > 0) { c.push(days[b2].q); nb++; } }
+            var cb = [], ca = [];
+            for (var a = i - 1, na = 0; a >= 0 && na < R.refEach; a--) { if ((d.t0_ms - days[a].t0_ms) / DAY > R.refDays + 0.5) break; if (days[a].cls === 'clean' && days[a].q > 0) { cb.push(days[a].q); na++; } }
+            for (var b2 = i + 1, nb = 0; b2 < days.length && nb < R.refEach; b2++) { if ((days[b2].t0_ms - d.t0_ms) / DAY > R.refDays + 0.5) break; if (days[b2].cls === 'clean' && days[b2].q > 0) { ca.push(days[b2].q); nb++; } }
+            var c = cb.concat(ca);
             d.qRef = c.length >= R.refMin ? median(c) : null;
+            d.qRefSide = 'both';
+            if (cb.length && ca.length && mAbs(median(ca) / median(cb) - 1) > R.r3Tol) {
+                var side = d.closings.length && !d.reopens.length ? 'before' : d.reopens.length && !d.closings.length ? 'after' : null;
+                var pick = side === 'before' ? cb : side === 'after' ? ca : null;
+                if (pick && pick.length >= R.refMin) { d.qRef = median(pick); d.qRefSide = side; }
+            }
             // preliminary pass (every event as a full shut-in): an event day's spread rate would put a partial cut's volume
             // into the flowing hours, so the rate history used by the classification gate takes the reference rate there
             if (opts.fullShut && d.events.length && d.qRef !== null) d.qUse = d.qRef;
@@ -10094,6 +10406,14 @@ G.WTS_calcRegistry.historian = {
                 else if (d.qRef !== null) { d.qUse = d.qRef; d.sub = 'qref'; }
                 if (d.sub && d.closings.length) warnings.push(W('SHORT_CLOSING_DAY', 'warn', 'Closing day ' + d.date + ' has ' + d.hOn.toFixed(1) + ' flowing hours: the rate before closing comes from ' + (d.sub === 'previousDay' ? 'the previous day.' : 'the reference rate.'), ['R1']));
                 if (d.sub && d.reopens.length && !d.closings.length) warnings.push(W('SHORT_REOPEN_DAY', 'info', 'Reopening day ' + d.date + ' has ' + d.hOn.toFixed(1) + ' flowing hours: the reference rate is used after the reopening (volume difference ' + (d.V - d.qUse * d.hEff / 24).toFixed(1) + ').', ['R2']));
+            }
+            // a closing day the gauge shows flowing (≥ hOnMin_h) but with no allocated volume (a misplaced or missing row):
+            // the rate before closing comes from the previous full day, else q_ref (R2), as on a short closing day
+            if (d.closings.length && !d.sub && !d.ignoresShutin && d.hEff >= R.hOnMin_h && !(d.V > vRes + 1e-9)) {
+                var pv = i > 0 ? days[i - 1] : null;
+                if (pv && pv.hOn >= pv.hours - R.cleanSlack_h && pv.q > 0 && (d.t0_ms - pv.t1_ms) < HOUR) { d.qUse = pv.qUse; d.sub = 'previousDay'; d.shortDay = true; }
+                else if (d.qRef !== null) { d.qUse = d.qRef; d.sub = 'qref'; d.shortDay = true; }
+                if (d.sub) warnings.push(W('NO_VOLUME_FLOWING', 'warn', 'Closing day ' + d.date + ' has ' + d.hOn.toFixed(1) + ' flowing hours in the gauge data but no allocated volume: the rate before closing comes from ' + (d.sub === 'previousDay' ? 'the previous day.' : 'the reference rate.'), ['R1', 'R2']));
             }
             if (d.events.length >= 2) d.equalRateAssumed = true;
         });
@@ -10175,7 +10495,7 @@ G.WTS_calcRegistry.historian = {
             var sum = 0, pass = 0, sd = days.map(function (d) {
                 var a = d.t0_ms + off * HOUR, b = d.t1_ms + off * HOUR, h = _hours(_pieces(ivs, a, b));
                 var evIn = false, cr = false;
-                mainIvs.forEach(function (iv) { if (iv.t0 < b && iv.t1 > a) evIn = true; if ((iv.t0 >= a && iv.t0 < b) || (iv.t1 > a && iv.t1 <= b)) cr = true; });
+                mainIvs.forEach(function (iv) { if (iv.t0 < b && iv.t1 > a) evIn = true; if ((iv.t0 >= a && iv.t0 < b) || (!iv.noReopen && iv.t1 > a && iv.t1 <= b)) cr = true; });
                 return { V: d.V, t0: a, h: h, cr: cr, clean: !evIn && h.on >= (b - a) / HOUR - R.cleanSlack_h, q: h.eff >= R.hOnMin_h ? 24 * d.V / h.eff : 0 };
             });
             sd.forEach(function (x, i) {
@@ -10206,7 +10526,7 @@ G.WTS_calcRegistry.historian = {
             return { date: d.date, t0_ms: d.t0_ms, t1_ms: d.t1_ms, hours: d.hours, hOn: d.hOn, V: d.V, q: d.q, cls: d.cls, events: d.events.slice(),
                      pwfMean_psia: d.pwfMean_psia, pwfMeanDatum_psia: d.pwfMean_psia === null ? null : d.pwfMean_psia + shift,
                      R3: d.R3, R4: null, R6: d.R6, ignoresShutin: d.ignoresShutin, equalRateAssumed: !!d.equalRateAssumed, shortDay: d.shortDay,
-                     hEff: d.hEff, qRef: d.qRef, qUse: d.qUse, vRes: vRes };
+                     hEff: d.hEff, qRef: d.qRef, qRefSide: d.qRefSide, qUse: d.qUse, vRes: vRes };
         });
         var twoPhase = fluid === 'oil' && ((Pb !== null && outDays.some(function (d) { return d.pwfMean_psia !== null && d.pwfMean_psia < Pb; })) || (Rs !== null && gorMax !== null && gorMax > R.gorFactor * Rs));
         if (basis === 'total') warnings.push(W('TOTAL_BASIS', 'info', 'Water cut or GOR above the oil-basis limits: every test uses the total reservoir rate (B = 1, oil viscosity), so k is a total-mobility equivalent (k = total mobility × oil viscosity).', ['R7']));
@@ -10325,12 +10645,19 @@ G.WTS_calcRegistry.historian = {
                 }
                 if (st.phase === 'detect') {
                     if (!st.sub) {
-                        var shutDays = [];
+                        var shutDays = [], allocDays = [];
                         (rows || []).forEach(function (r) {
-                            var v = (r.oil || 0) + (r.gas || 0) + (r.water || 0);
-                            if (v <= 0) { var b = dayBounds(r.date, day); if (b) shutDays.push([b.t0_ms, b.t1_ms]); }
+                            if (!r || !parseDate(r.date)) return;
+                            var v = (r.oil || 0) + (r.gas || 0) + (r.water || 0), b = dayBounds(r.date, day);
+                            if (!b) return;
+                            if (v <= 0) shutDays.push([b.t0_ms, b.t1_ms]);
+                            // the main-phase volume (only ratios between days are used at detection)
+                            var vm = well.fluid === 'gas' ? r.gas : well.fluid === 'water_inj' ? r.water
+                                : (isNum(r.oil) || isNum(r.water)) ? num(r.oil, 0) + num(r.water, 0) : null;
+                            if (isNum(vm) && vm >= 0) allocDays.push({ t0_ms: b.t0_ms, t1_ms: b.t1_ms, V: vm });
                         });
-                        st.sub = detectJob(rec, q0, { settings: S, fluid: well.fluid, day: day, rateTable: table ? opts.rateTable : null, shutDays: shutDays });
+                        st.sub = detectJob(rec, q0, { settings: S, fluid: well.fluid, day: day, rateTable: table ? opts.rateTable : null, shutDays: shutDays,
+                                                      allocDays: table ? [] : allocDays });
                     }
                     var sd = st.sub.step();
                     if (!sd.done) return { done: false, progress: 0.25 + 0.2 * sd.progress, label: sd.label };
@@ -10370,7 +10697,7 @@ G.WTS_calcRegistry.historian = {
                 if (st.phase === 'rates2') {                 // final rates with the partial cuts split
                     rh = table ? rateTable(opts.rateTable, { fluid: well.fluid, events: events, dtMed_s: q0 && q0.dtMed_s }) : rates(rec, events, rows, rateOpts(false));
                     if (rh && rh.ok === false) { res = rh; return { done: true, progress: 1, label: 'No rates' }; }
-                    res = { ok: true, qc: q1, events: events, missed: _missed(events, _subList(events, det.missed.subThreshold, q0), rh, q1, Ts), rates: rh, record: rec, qc0: q0 };
+                    res = { ok: true, qc: q1, events: events, missed: _missed(events, _subList(events, det.missed.subThreshold, q0), rh, q1, Ts, det.missed.rateSteps), rates: rh, record: rec, qc0: q0 };
                     return { done: true, progress: 1, label: 'Rates' };
                 }
                 return { done: true, progress: 1, label: '' };
@@ -13810,12 +14137,14 @@ G.WTS_calcRegistry.historian = {
         out.trend.baseN = Math.round(out.trend.baseN);
         return out;
     }
+    // B in RB/STB (oil, water) or RB/Mscf (gas: about 0.3 for deep dry gas at high pressure, so its lower bound is 0.3)
     var WELL_RANGES = { h: [1, 2000], phi: [0.01, 0.5], mu: [0.01, 1000], B: [0.5, 5], ct: [1e-7, 1e-3], rw: [0.1, 2] };
+    var B_GAS = [0.3, 5];
     function checkWell(w) {
         var bad = [], errs = [];
         if (!w || typeof w !== 'object') return fail('BAD_WELL', ['Well inputs are missing.'], ['well']);
         Object.keys(WELL_RANGES).forEach(function (k) {
-            var r = WELL_RANGES[k], v = w[k];
+            var r = (k === 'B' && w.fluid === 'gas') ? B_GAS : WELL_RANGES[k], v = w[k];
             if (!isNum(v) || v < r[0] || v > r[1]) { bad.push(k); errs.push(k + ' must be between ' + r[0] + ' and ' + r[1] + '.'); }
         });
         if (['oil', 'gas', 'water_inj'].indexOf(w.fluid) === -1) { bad.push('fluid'); errs.push('Well type must be oil, gas or water injector.'); }
@@ -14139,7 +14468,7 @@ G.WTS_calcRegistry.historian = {
     // the longest per day newest first, then the newest); the others are excluded with the reason 'test cap'. The cap
     // runs before stage 1, when the labels are not known yet, so the first 2·baseN live tests of each segment are kept:
     // the stage-2 baseline (the first baseN tests labelled ≥ medium) then still has candidates when some early tests
-    // turn out low. (Approximation: when more than baseN of them are low, the baseline has fewer tests.)
+    // turn out low; when that leaves capped tests earlier than the baseline, _readmit interprets them after all.
     function _cap(tests, st, workovers) {
         var live = tests.filter(function (t) { return t.status !== 'excluded'; });
         if (live.length <= MAX_TESTS) return;
@@ -14156,7 +14485,28 @@ G.WTS_calcRegistry.historian = {
         longestBy(function (t) { return mFloor((t.tc_ms - 345600000) / WEEK); }).forEach(add);     // weeks start on Monday 00:00 UTC
         longestBy(function (t) { return t.date; }).forEach(add);
         live.slice().sort(function (a, b) { return b.tc_ms - a.tc_ms; }).forEach(add);
-        live.forEach(function (t) { if (!keep[t.id]) { t.status = 'excluded'; t.statusReason = 'test cap'; t._capped = true; } });
+        live.forEach(function (t) { if (!keep[t.id]) { t._capPrev = { status: t.status, statusReason: t.statusReason }; t.status = 'excluded'; t.statusReason = 'test cap'; t._capped = true; } });
+    }
+    // Stage 2 re-admission (one round): the baseline is the first baseN tests of a segment labelled ≥ medium. When kept
+    // early tests turn out low, capped tests earlier than the baseN-th kept test labelled ≥ medium (all of them when there
+    // are fewer than baseN) could have been baseline tests: the earliest 2·baseN of them are interpreted in stage 1 after
+    // all and join the candidates. The number of interpreted tests may then exceed 60 by at most 2·baseN per segment.
+    function _readmit(tests, st, workovers) {
+        var out = [], segs = {}, n = st.trend.baseN;
+        tests.forEach(function (t) { var s = _segment(t.date, workovers); (segs[s] = segs[s] || []).push(t); });
+        Object.keys(segs).forEach(function (s) {
+            var list = segs[s].slice().sort(function (a, b) { return a.tc_ms - b.tc_ms; });
+            if (!list.some(function (t) { return t._capped; })) return;
+            var good = list.filter(function (t) { return !t._capped && t.status === 'interpreted' && t.result && t.result.confidence && rank(t.result.confidence.ks) >= 1; });
+            var tB = good.length >= n ? good[n - 1].tc_ms : Infinity, k = 0;
+            list.forEach(function (t) {
+                if (k >= 2 * n || !t._capped || !(t.tc_ms < tB)) return;
+                var pv = t._capPrev || { status: 'interpreted', statusReason: null };
+                t._capped = false; t.status = pv.status; t.statusReason = pv.statusReason;
+                out.push(t); k++;
+            });
+        });
+        return out;
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -14366,6 +14716,9 @@ G.WTS_calcRegistry.historian = {
             if (bw) return finish(bw);
             st = settingsOf(input.settings);
             zones = resolvedZones(input.zones);
+            // the input hash of the input as given, before any stage runs (the engines never write into the input: the
+            // data layer works on copies of the allocation rows)
+            X.inputHash = inputHash(input);
             cal = G.PRiSM_autoInterpCal || null;
             calVersion = cal && cal.version ? cal.version : null;
             var a = AI();
@@ -14466,41 +14819,40 @@ G.WTS_calcRegistry.historian = {
             return { done: false, progress: 0.26 + 0.03 * X.ci / X.cand.length, label: 'Preparing ' + e.id };
         }
         // The 60-test cap and the cache lookup.
+        function applyCache(t) {
+            var c = X.cacheMap[t._key];
+            if (!c || t._capped) return;
+            var r = clone(c.result);
+            r.id = t.id;
+            r.confidence = clone(c.pass1.confidence); r.final = clone(c.pass1.final); r.sErr = clone(c.pass1.sErr);
+            if (c.pass1.evidence !== undefined) r.evidence = clone(c.pass1.evidence);
+            r.kHeld = null; r.background = null;
+            t.result = r; t._cached = true;
+            // a stored copy has no bins.X / bins.dte (§3.1): recomputed in stage 1, one test per unit
+            var b = r.bins || {}, nb = Array.isArray(b.dt) ? b.dt.length : 0;
+            t._needDte = !(Array.isArray(b.dte) && b.dte.length === nb && Array.isArray(b.X) && b.X.length === nb);
+        }
         function finishTests() {
             _cap(tests, st, input.workovers);
             // cache
-            var cache = {};
-            if (opts.cache && opts.cache.tests) opts.cache.tests.forEach(function (c) { if (c && c.inputHash && c.result && c.pass1) cache[c.inputHash] = c; });
-            tests.forEach(function (t) {
-                t.inputHash = t._key;
-                var c = cache[t._key];
-                if (c && !t._capped) {
-                    var r = clone(c.result);
-                    r.id = t.id;
-                    r.confidence = clone(c.pass1.confidence); r.final = clone(c.pass1.final); r.sErr = clone(c.pass1.sErr);
-                    if (c.pass1.evidence !== undefined) r.evidence = clone(c.pass1.evidence);
-                    r.kHeld = null; r.background = null;
-                    t.result = r; t._cached = true;
-                    // a stored copy has no bins.X / bins.dte (§3.1): recomputed in stage 1, one test per unit
-                    var b = r.bins || {}, nb = Array.isArray(b.dt) ? b.dt.length : 0;
-                    t._needDte = !(Array.isArray(b.dte) && b.dte.length === nb && Array.isArray(b.X) && b.X.length === nb);
-                }
-            });
+            X.cacheMap = {};
+            if (opts.cache && opts.cache.tests) opts.cache.tests.forEach(function (c) { if (c && c.inputHash && c.result && c.pass1) X.cacheMap[c.inputHash] = c; });
+            tests.forEach(function (t) { t.inputHash = t._key; applyCache(t); });
             X.phase = 'stage1'; X.i = 0;
             return { done: false, progress: 0.3, label: tests.length + ' build-ups' };
         }
         function stage1() {
-            while (X.i < tests.length && (tests[X.i]._capped || (tests[X.i]._cached && !tests[X.i]._needDte))) X.i++;
+            while (X.i < tests.length && (tests[X.i]._capped || tests[X.i]._done || (tests[X.i]._cached && !tests[X.i]._needDte))) X.i++;
             if (X.i >= tests.length) { X.phase = 'stage2'; return { done: false, progress: 0.85, label: 'Interpretation done' }; }
             var t = tests[X.i], a = AI(), lab = 'Interpreting ' + t.id + ' (' + (X.i + 1) + '/' + tests.length + ')';
             if (t._cached) {
-                _ensureDte(t.result, t._spec); t._needDte = false; X.i++;
+                _ensureDte(t.result, t._spec); t._needDte = false; t._done = true; X.i++;
                 return { done: false, progress: prog(0.3, 0.85, X.i / tests.length), label: 'Stored result ' + t.id };
             }
             if (!X.sub) {
-                if (!a || typeof a.interpretJob !== 'function') { t.status = 'failed'; t.statusReason = 'The interpretation engine is not loaded.'; X.i++; return { done: false, progress: prog(0.3, 0.85, X.i / tests.length), label: lab }; }
+                if (!a || typeof a.interpretJob !== 'function') { t.status = 'failed'; t.statusReason = 'The interpretation engine is not loaded.'; t._done = true; X.i++; return { done: false, progress: prog(0.3, 0.85, X.i / tests.length), label: lab }; }
                 try { X.sub = a.interpretJob(t._spec, { cal: cal, rivals: st.interp.rivals, cheld: st.interp.cheld }); }
-                catch (e) { X.sub = null; t.status = 'failed'; t.statusReason = 'Interpretation failed: ' + String(e && e.message || e).slice(0, 200); X.i++; return { done: false, progress: prog(0.3, 0.85, X.i / tests.length), label: lab }; }
+                catch (e) { X.sub = null; t.status = 'failed'; t.statusReason = 'Interpretation failed: ' + String(e && e.message || e).slice(0, 200); t._done = true; X.i++; return { done: false, progress: prog(0.3, 0.85, X.i / tests.length), label: lab }; }
                 X.order.push('interpret:' + t.id);
             }
             var r;
@@ -14517,6 +14869,7 @@ G.WTS_calcRegistry.historian = {
                 t.result = res;
                 if (t.result.id !== t.id) t.result.id = t.id;
             }
+            t._done = true;
             X.i++;
             return { done: false, progress: prog(0.3, 0.85, X.i / tests.length), label: lab };
         }
@@ -14530,6 +14883,16 @@ G.WTS_calcRegistry.historian = {
         }
         // Stage 2: baseline over the pass-1 tests whose k/S label is ≥ medium (first up to baseN per segment).
         function stage2() {
+            if (!X.readmitDone) {
+                X.readmitDone = true;
+                var re = _readmit(tests, st, input.workovers);
+                if (re.length) {
+                    re.forEach(applyCache);
+                    X.order.push('readmit:' + re.map(function (t) { return t.id; }).join(','));
+                    X.phase = 'stage1'; X.i = 0;
+                    return { done: false, progress: 0.85, label: 'Re-admitting ' + re.length + ' capped build-ups for the baseline' };
+                }
+            }
             snapshotPass1();
             X.order.push('baseline');
             var cands = tests.filter(function (t) { return t.status === 'interpreted' && t.result && t.result.confidence && rank(t.result.confidence.ks) >= 1; });
@@ -14764,7 +15127,7 @@ G.WTS_calcRegistry.historian = {
             var meta = input.meta || {};
             an = {
                 ok: true, version: VERSION, appVersion: appVersion,
-                runAt: iso(Date.now()), inputHash: inputHash(input), resultHash: resultHash(outTests, X.trend),
+                runAt: iso(Date.now()), inputHash: X.inputHash, resultHash: resultHash(outTests, X.trend),
                 meta: { wellName: String(meta.wellName || ''), engineer: String(meta.engineer || ''), appVersion: String(meta.appVersion || '') },
                 well: input.well, completion: input.completion || null, depth: input.depth || null, settings: st, zones: zones,
                 record: recSum, qc: scanRes.qc, events: scanRes.events, missed: missed, rates: rh, baseline: X.baseline || null,
@@ -15313,15 +15676,25 @@ G.WTS_calcRegistry.historian = {
         if (!_own(o, 'summary')) o.summary = null;
         return o;
     }
+    // The chain uses the review's recipe (WTS_buildup.review.audit.entryHash and GENESIS): hash16(prevHash +
+    // canon(entry without hash)) with every numeric leaf serialised exactly first, so canon sorts the keys but rounds
+    // nothing and an edit at any digit breaks the chain. The first entry links to GENESIS.
+    var GENESIS = '0000000000000000';
+    function _exactLeaves(v) {
+        if (typeof v === 'number') return 'n:' + String(v);
+        if (Array.isArray(v)) return v.map(_exactLeaves);
+        if (v !== null && typeof v === 'object') { var o = {}; Object.keys(v).forEach(function (k) { o[k] = _exactLeaves(v[k]); }); return o; }
+        return v;
+    }
     function _entryHash(prev, e) {
         var c = {}, k;
         for (k in e) if (_own(e, k) && k !== 'hash') c[k] = e[k];
-        return _hash(String(prev || '') + _canon(c, 'inputs'));
+        return _hash(String(prev || '') + _canon(_exactLeaves(c), 'inputs'));
     }
     function chainHash() {
         var a = _auditRead();
-        if (a.entries.length) return a.entries[a.entries.length - 1].hash || '';
-        return (a.summary && a.summary.chainHash) || '';
+        if (a.entries.length) return a.entries[a.entries.length - 1].hash || GENESIS;
+        return (a.summary && a.summary.chainHash) || GENESIS;
     }
     function _fold(a, keep) {
         var nFold = a.entries.length - (keep == null ? AUDIT_KEEP : keep);
@@ -15338,7 +15711,7 @@ G.WTS_calcRegistry.historian = {
     function auditAppend(entry) {
         var a = _auditRead();
         var last = a.entries.length ? a.entries[a.entries.length - 1] : null;
-        var prev = last ? last.hash : ((a.summary && a.summary.chainHash) || '');
+        var prev = last ? last.hash : ((a.summary && a.summary.chainHash) || GENESIS);
         var seq = last ? (last.seq + 1) : ((a.summary && a.summary.toSeq) ? a.summary.toSeq + 1 : 1);
         var e = {
             seq: seq, at: (entry && entry.at) || new Date().toISOString(), who: String((entry && entry.who) || ''),
@@ -15359,7 +15732,7 @@ G.WTS_calcRegistry.historian = {
         return ok ? e : null;
     }
     function auditVerify() {
-        var a = _auditRead(), prev = (a.summary && a.summary.chainHash) || '';
+        var a = _auditRead(), prev = (a.summary && a.summary.chainHash) || GENESIS;
         for (var i = 0; i < a.entries.length; i++) {
             var e = a.entries[i];
             if (e.prevHash !== prev || _entryHash(prev, e) !== e.hash) return { ok: false, at: e.seq, n: a.entries.length };
@@ -17280,11 +17653,11 @@ G.WTS_calcRegistry.historian = {
                 break;
         }
         // rejection: Δp(Δt_end) ≥ 5 psi and pwf ≥ 50 psia (rate rescaled first, then k / h redrawn)
-        // gas: keep the formation volume factor inside the engines' accepted range (B 0.5–5 rb/Mscf): a very high p_i
-        // at a low temperature (Bg < 0.52 at p_i) is lowered until Bg(p_i) = 0.53 (flagged gasPiLimited)
+        // gas: keep the formation volume factor inside the engines' accepted range (gas B 0.3–5 rb/Mscf): a very high p_i
+        // at a low temperature (Bg < 0.32 at p_i) is lowered until Bg(p_i) = 0.33 (flagged gasPiLimited)
         if (fluid === 'gas') {
             var pv0 = gasPVT(cs.gas, MM.max(cs.pi * 1.6, 2000));
-            for (var lim0 = 0; lim0 < 8; lim0++) { var bg0 = pv0.props(cs.pi).Bg; if (bg0 >= 0.52) break; cs.pi *= bg0 / 0.53; cs.gasPiLimited = true; }
+            for (var lim0 = 0; lim0 < 8; lim0++) { var bg0 = pv0.props(cs.pi).Bg; if (bg0 >= 0.32) break; cs.pi *= bg0 / 0.33; cs.gasPiLimited = true; }
         }
         var pvt = fluid === 'gas' ? gasPVT(cs.gas, MM.max(cs.pi * 1.6, 2000)) : null;
         // A rescale aims at a Δp(Δt_end) level drawn per case (log-uniform 6–60 psi), so rescaled cases do not pile up at
@@ -19685,8 +20058,15 @@ G.WTS_calcRegistry.historian = {
         _setDisabled('bu_ai_copy', !has || !R || typeof R.aiExport !== 'function');
         _setDisabled('bu_ai_dl', !has || !R || typeof R.aiExport !== 'function');
         _setDisabled('bu_open_prism', !has || typeof G.PRiSM_openExternalBuildup !== 'function');
-        var S = B.synth, cal = G.PRiSM_autoInterpCal;
-        _setDisabled('bu_val_run', running || !(S && Array.isArray(S.IN_APP) && S.IN_APP.length && typeof S.caseFromSeed === 'function' && _Run() && cal && Array.isArray(cal.inApp)));
+        // The 24-case check compares outcomes with the calibrated expectations in file 55 (§5.6). The placeholder file
+        // (calibrated:false) has none, so the check stays disabled, with the reason shown, until WP8 calibrates it.
+        var S = B.synth, valReady = !!(S && Array.isArray(S.IN_APP) && S.IN_APP.length && typeof S.caseFromSeed === 'function' && _Run()), calOk = _calReady();
+        _setDisabled('bu_val_run', running || !valReady || !calOk);
+        var vo = _byId('bu_val_out');
+        if (vo && (!vo.textContent || vo.getAttribute('data-note') === '1')) {
+            if (valReady && !calOk) { vo.setAttribute('data-note', '1'); vo.textContent = 'The 24-case check becomes available once the confidence labels are calibrated (this version uses the provisional thresholds).'; }
+            else if (vo.getAttribute('data-note') === '1') { vo.removeAttribute('data-note'); vo.textContent = ''; }
+        }
         _setDisabled('bu_demo_load', !_Syn());
         _setDisabled('bu_h_load', !(G.WTS_historian && _D() && typeof _D().fromHistorian === 'function'));
         _setDisabled('bu_p_load', !(_D() && typeof _D().fromPRiSM === 'function'));
@@ -20193,7 +20573,8 @@ G.WTS_calcRegistry.historian = {
         try {
             if (!_st.review && typeof R.run === 'function' && !_st.missingTests) _st.review = R.run(a, _idx());
             if (_st.missingTests && !_st.review) return _fallbackReport(a, DETAIL_MISSING);
-            return R.report(_viewAnalysis(a), _st.review, _auditList(), _st.signoff || null, fmt);
+            // the evidence index of the stored analysis (the view only adds settings.report, which no evidence quotes)
+            return R.report(_viewAnalysis(a), _st.review, _auditList(), _st.signoff || null, fmt, { idx: _idx() });
         } catch (e) {
             if (!_st.missingTests && typeof console !== 'undefined' && console.error) console.error('[buildup] report failed', e);
             return _fallbackReport(a, _st.missingTests ? DETAIL_MISSING : 'The report could not be built from this analysis; press Analyse to recompute it.');
@@ -20904,6 +21285,38 @@ G.WTS_calcRegistry.historian = {
         set('bu_pb', w.Pb); set('bu_rs', w.Rs); set('bu_bw', w.Bw); set('bu_muw', w.muw); set('bu_alloc_acc', w.allocAccPct); set('bu_drift', w.driftPsiPerDay);
         if (w.gas) { set('bu_sg', w.gas.sg); set('bu_tres', w.gas.T_F); set('bu_co2', w.gas.co2); set('bu_h2s', w.gas.h2s); set('bu_n2', w.gas.n2); set('bu_pdew', w.gas.pdew); var pt = _byId('bu_ptime'); if (pt) pt.checked = !!w.gas.pseudoTime; }
     }
+    // The demo's history option and zones (synth metadata, §3.7 AnalysisInput.history / zones) → page inputs, so a
+    // loaded demo always passes the input check: a history mode is applied only with what it needs (a production
+    // start date, or a cumulative in the rate's field unit: STB, or Mscf shown as MMscf), otherwise "unknown".
+    // The production days and gauge times of a demo are in its own zones (UTC), whatever this device's zone is.
+    function _applyDemoMeta(d) {
+        var h = (d && d.history) || {}, fl = _val('bu_fluid') || 'oil', mode = 'unknown';
+        var hdate = typeof h.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(h.date) ? h.date : '';
+        if (h.mode === 'date' && hdate) {
+            mode = 'date';
+            var de = _byId('bu_hist_date'); if (de) de.value = hdate;
+        } else if (h.mode === 'cum' && _fin(h.cum) && h.cum >= 0) {
+            mode = 'cum';
+            if (fl === 'gas') _setVal('bu_hist_cumg', h.cum / 1000); else _setVal('bu_hist_cumo', h.cum);
+        }
+        var hm = _byId('bu_hist_mode'); if (hm) hm.value = mode;
+        var z = (d && d.zones) || {}, day = z.day || {};
+        var zsel = function (selId, offId, zone) {
+            if (!zone || !zone.mode) return;
+            var e = _byId(selId);
+            if (!e) return;
+            if (zone.mode === 'utc') e.value = 'utc';
+            else if (zone.mode === 'fixed' && _fin(zone.offset_h)) { e.value = 'fixed'; _setVal(offId, zone.offset_h); }
+        };
+        zsel('bu_g_tz', 'bu_g_tzoff', z.gauge);
+        zsel('bu_pd_tz', 'bu_pd_tzoff', day.zone);
+        if (_fin(day.startHour)) _setVal('bu_pd_start', day.startHour);
+        // a short note for the allocation status: what was set (fixed strings and a validated date only)
+        var note = [];
+        if (mode === 'date') note.push('production start ' + hdate);
+        if (day.zone && (day.zone.mode === 'utc' || day.zone.mode === 'fixed')) note.push('production days in ' + _zoneName(day.zone));
+        return note.join('; ');
+    }
     function _loadDemo() {
         var S = _Syn();
         if (!S) return;
@@ -20924,9 +21337,9 @@ G.WTS_calcRegistry.historian = {
             _setVal('bu_cmp_hp', c.hp_ft); _setVal('bu_cmp_htop', c.htop_ft); _setVal('bu_cmp_theta', c.theta_deg);
             if (c.kvkh) { _setVal('bu_cmp_kvlo', c.kvkh[0]); _setVal('bu_cmp_kvhi', c.kvkh[1]); }
         }
-        var hm = _byId('bu_hist_mode'); if (hm && d.history && d.history.mode) hm.value = d.history.mode;
+        var meta = _applyDemoMeta(d);
         var as = _byId('bu_a_status');
-        if (as) { as.setAttribute('data-msg', '1'); _status('bu_a_status', 'ok', _mem.allocation ? 'Demo allocation: ' + _mem.allocation.rows.length + ' days.' : 'Demo rates come from the rate table.'); }
+        if (as) { as.setAttribute('data-msg', '1'); _status('bu_a_status', 'ok', (_mem.allocation ? 'Demo allocation: ' + _mem.allocation.rows.length + ' days' : 'Demo rates come from the rate table') + (meta ? ' (' + meta + ').' : '.')); }
         _setRecord(rec, d.rateTable || null, d.name || ('Demo ' + kind));
     }
     function _parseAlloc(text, name) {
@@ -21219,7 +21632,7 @@ G.WTS_calcRegistry.historian = {
     function _aiText() {
         var R = _R(), a = _st && _st.analysis;
         if (!R || !a || typeof R.aiExport !== 'function') return null;
-        try { return R.aiExport(a, _st.review, { deidentify: _checked('bu_ai_deid'), includeDates: false, includeFreeText: _checked('bu_ai_free') }); } catch (e) { return null; }
+        try { return R.aiExport(a, _st.review, { deidentify: _checked('bu_ai_deid'), includeDates: false, includeFreeText: _checked('bu_ai_free'), idx: _idx() }); } catch (e) { return null; }
     }
     function _download(text, name) {
         try {
@@ -21298,9 +21711,15 @@ G.WTS_calcRegistry.historian = {
         if (typeof G.WTS_nav === 'function') G.WTS_nav('prism');
         if (typeof G.PRiSM_gotoStep === 'function') { try { G.PRiSM_gotoStep(3); } catch (e) { /* PRiSM decides */ } }
     }
+    // file 55 carries calibrated expectations for the in-app cases (not the placeholder)
+    function _calReady() {
+        var cal = G.PRiSM_autoInterpCal;
+        return !!(cal && cal.calibrated === true && Array.isArray(cal.inApp) && cal.inApp.length);
+    }
     function _validate() {
         var S = B.synth, R = _Run(), cal = G.PRiSM_autoInterpCal, root = _root();
-        if (!S || !R || !cal || !Array.isArray(cal.inApp) || !root || _run) return;
+        if (!S || !R || !_calReady() || !root || _run) return;
+        var vo = _byId('bu_val_out'); if (vo) vo.removeAttribute('data-note');
         var cases = cal.inApp.slice(0, 24), i = 0, done = 0, same = 0, near = 0, diffs = [], sub = null;
         var run = { token: ++_token, wellId: _wellId(), cancelled: false };
         _run = run; _buttons();

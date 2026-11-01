@@ -13571,6 +13571,13 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
 //   backgroundCheck, interpretJob / interpret, drive, stats; kernels
 //   (closed circle, two-zone composite, scaled Bessel functions); and
 //   PRiSM_MODELS.closedCircle (§3.3).
+// Stored precision (v3.3 integration): interpretJob's BuildupResult and
+//   kHeldJob's KHeld are JSON data with every non-integer number at STORE_SF
+//   (6) significant figures, assembled once so the in-memory and the stored
+//   copies are the same numbers. confidence(result.evidence) and
+//   storedSensitivity(result.final, spec.well) re-derive result.confidence and
+//   result.sensitivity exactly. kHeldJob's job.raw() keeps the full-precision
+//   KHeld with the fit's internal fields (diagnostics only).
 //
 // canon(obj, mode) → canonical JSON string. These rules are normative: plan
 // §3.1 "WP0 resolutions" and §8.4 point here, and the code below implements
@@ -13913,18 +13920,26 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
     }
     function _warn(code, level, text, ev) { return { code: code, level: level, text: _txt(text), ev: ev || ['M7'] }; }
     function _copy(o) { var r = {}; if (o) for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) r[k] = o[k]; return r; }
-    function _jsonClean(v) {
-        // finite-or-null for every number, plain arrays (JSON-safe), no undefined
+    // Stored precision of the engine's results (BuildupResult, KHeld): every non-integer number at
+    // STORE_SF significant figures, the precision of canon 'inputs' and of the stored spec's dt and p.
+    // It is applied once, when the result is assembled, so the in-memory result and its stored copy
+    // (wts_buildup_state, IndexedDB, project files) hold the same numbers: a reload changes no
+    // displayed value and no results hash. Integers (counts, flags as 0/1, epoch values) stay exact.
+    var STORE_SF = 6;
+    function _sfRound(v, sf) { return (v === 0) ? 0 : (Math.floor(v) === v ? v : +v.toPrecision(sf)); }
+    function _jsonClean(v, sf) {
+        // finite-or-null for every number, plain arrays (JSON-safe), no undefined, no internal (_) keys;
+        // sf (optional): round non-integer numbers to sf significant figures
         if (v === null || v === undefined) return null;
-        if (typeof v === 'number') return isFinite(v) ? v : null;
+        if (typeof v === 'number') return isFinite(v) ? (sf ? _sfRound(v, sf) : v) : null;
         if (typeof v !== 'object') return v;
         if (Array.isArray(v) || (typeof ArrayBuffer !== 'undefined' && ArrayBuffer.isView && ArrayBuffer.isView(v))) {
             var a = new Array(v.length);
-            for (var i = 0; i < v.length; i++) a[i] = _jsonClean(v[i]);
+            for (var i = 0; i < v.length; i++) a[i] = _jsonClean(v[i], sf);
             return a;
         }
         var o = {};
-        for (var k in v) if (Object.prototype.hasOwnProperty.call(v, k) && k.charAt(0) !== '_' && v[k] !== undefined && typeof v[k] !== 'function') o[k] = _jsonClean(v[k]);
+        for (var k in v) if (Object.prototype.hasOwnProperty.call(v, k) && k.charAt(0) !== '_' && v[k] !== undefined && typeof v[k] !== 'function') o[k] = _jsonClean(v[k], sf);
         return o;
     }
 
@@ -14778,11 +14793,19 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             reason: _txt(reason), ev: ['I1']
         }, extra || {});
     }
+    // The user's IARF tolerances travel in BuildupSpec.opts (band, slope: fractions; minCycles: cycles).
+    // An explicit opts value wins, then the spec's, then DEFAULTS.iarf, so every caller (interpretJob,
+    // kHeldJob, backgroundCheck, the Skin-check card) scans with the same settings.
+    var IARF_SPEC_KEYS = { band: 1, slope: 1, minCycles: 1 };
     function iarf(prep, opts) {
         opts = opts || {};
         var D = _copy(DEFAULTS.iarf);
+        var so = (prep && prep.spec && prep.spec.opts) || {};
         ['band', 'slope', 'bandCap', 'slopeCap', 'minCycles', 'goodCycles', 'goodSlope', 'goodSE', 'valleyDepth', 'mergeLevel', 'mergeGap']
-            .forEach(function (k) { if (_pos(opts[k])) D[k] = opts[k]; });
+            .forEach(function (k) {
+                if (_pos(opts[k])) D[k] = opts[k];
+                else if (IARF_SPEC_KEYS[k] && _pos(so[k])) D[k] = so[k];
+            });
         D.bandCap = Math.max(D.bandCap, D.band); D.slopeCap = Math.max(D.slopeCap, D.slope);
         var b = prep.bins, dv = prep.deriv, X = b.X, d = dv.deriv, full = dv.full, sd = b.sigma_d, n = X.length;
         var st = opts.storage || storage(prep);
@@ -16051,6 +16074,14 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
                  sSens: sSens, muNoEffectOnS: true, ev: ['U2', 'U3'] };
     }
 
+    // The result's sensitivity block: the rows from the stored-precision k and S (STORE_SF), so
+    // storedSensitivity(result.final, spec.well) rebuilds result.sensitivity exactly from a stored
+    // pass-1 final (a store may keep final and drop the 28 rows, about 2 kB per test).
+    function storedSensitivity(fin, well) {
+        var sf = function (v) { return _num(v) ? _sfRound(v, STORE_SF) : v; };
+        return _jsonClean(sensitivity({ k: sf(fin && fin.k), S: sf(fin && fin.S) }, { sens: (well && well.sens) || null }), STORE_SF);
+    }
+
     // ─────────────────────────────────────────────────────────────────────
     // confidence(ev, cal) — k/S label (K1), model label (K2), headline (§5.1)
     // ─────────────────────────────────────────────────────────────────────
@@ -16219,7 +16250,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         opts = opts || {};
         var k = opts.k, delta = _num(opts.delta) ? Math.abs(opts.delta) : 0.05;
         var start = _copy(opts.start || {});
-        var jobs = [], idx = 0, cur = null, fits = [], result = null;
+        var jobs = [], idx = 0, cur = null, fits = [], result = null, raw = null;
         var plan = [1, 1 + delta, 1 - delta];
         var seedS = _num(start.S) ? start.S : null, seedC = _pos(start.C) ? start.C : null;
         if (seedS === null || seedC === null) {
@@ -16243,13 +16274,19 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             var pD = dpEnd / (2 * mHeld);
             var sig = _median(prep.fitSet.sigma_b.map(function (sb) { return Math.sqrt(sb * sb + prep.sigmaLF * prep.sigmaLF); }));
             var rmsRatio = (ok && _num(f0.rmseDp) && sig > 0) ? f0.rmseDp / sig : (ok && _num(f0.rmseDp) && f0.rmseDp === 0 ? 0 : null);
-            result = {
+            raw = {
                 k: k, delta: delta, fit: ok ? f0 : _failFit('homogeneous', null, 'k-held fit failed', null),
                 refits: refits.filter(function (r) { return _num(r.S); }), S_k: _fin(Sk), S_kAnalytic: Math.abs(delta * (pD - 0.5)),
                 corrCS: ok ? _fin(f0.corr.CS) : null, rmsRatio: _fin(rmsRatio), converged: !!(ok && f0.converged),
                 n: bt ? bt.n : null, nEff: bt ? _fin(bt.nEff) : null, window: win ? { tmin: win.tmin } : null, humpAfterFitStart: humpAfter,
                 ev: ['M8']
             };
+            // The KHeld that run attaches to the stored result: JSON data at the stored precision, without
+            // the fit's internal fields (_fr, _res, _entry, _dpModel: about 7 kB). k and delta are echoed as
+            // given, and the held k of the fit stays the given k.
+            result = _jsonClean(raw, STORE_SF);
+            result.k = k; result.delta = delta;
+            if (ok && result.fit && result.fit.phys && f0.phys.k === k) result.fit.phys.k = k;
         }
         return {
             step: function () {
@@ -16274,6 +16311,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
                 return { done: false, progress: idx / 3, label: label };
             },
             result: function () { return result; },
+            raw: function () { return raw; },     // diagnostics: the KHeld with the fit's internal fields, full precision
             cancel: function () { if (cur) cur.cancel(); }
         };
     }
@@ -16373,7 +16411,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             S.prep = p;
             S.storage = storage(p);
             S.iarf = iarf(p, { storage: S.storage, window: ovr.window || null,
-                               band: spec.opts && spec.opts.band, slope: spec.opts && spec.opts.slope });
+                               band: so.band, slope: so.slope, minCycles: so.minCycles });
             S.iarf._st = S.storage;
             // The hump is present when max/m′ ≥ 1.2 (§4.6 item 2), m′ = the IARF level, else the derivative
             // minimum after the maximum. A smaller maximum still gates the IARF scan (the derivative maximum).
@@ -16569,7 +16607,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         R.add('uncertainty and confidence', function () {
             var p = S.prep, w = p.well, fin = S.final, cf = S.chosenFit;
             var thr = _thr(cal);
-            var sens = sensitivity({ k: fin.k, S: fin.S }, { sens: (spec.well && spec.well.sens) || null });
+            var sens = storedSensitivity(fin, spec.well);
             var m = fin.m;
             var sTc = 1.1513 * Math.abs(p.spec.dpdt_flow || 0) * (p.spec.dtc_h || 0) / m;
             var sPwf = 1.1513 * (p.spec.pwf0SE || 0) / m;
@@ -16614,6 +16652,9 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
                 dBicChosen: S.chosenKey === 'homogeneous' ? 0 : (cRow ? cRow.dBicHom : null), dBicNext: dNext, boundaryDepends: null,
                 compositeOutOfRace: !!S.compositeOut, stage: 'pass1'
             };
+            // The labels come from the evidence as it is stored (STORE_SF), so confidence(result.evidence)
+            // re-derives them exactly after a reload or in the review.
+            S.evidence = _jsonClean(S.evidence, STORE_SF);
             S.confidence = confidence(S.evidence, cal);
         });
         R.add('result', function () {
@@ -16645,7 +16686,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
                 history: S.history, background: null, kHeld: null, confidence: S.confidence, curves: curves, fitC4: fitC4, warnings: warnings,
                 evidence: S.evidence
             };
-            S.result = _jsonClean(res);
+            S.result = _jsonClean(res, STORE_SF);      // the stored precision (see STORE_SF)
             S.result.evidence.stage = 'pass1';
         });
         var nUnits0 = 7 + Math.ceil(nSamp / HASH_CHUNK);
@@ -16780,6 +16821,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
     AI.kHeldJob = kHeldJob;
     AI.sErr = sErr;
     AI.sensitivity = sensitivity;
+    AI.storedSensitivity = storedSensitivity;
     AI.confidence = confidence;
     AI.rinv = rinv;
     AI.compactHistory = compactHistory;
@@ -16791,7 +16833,8 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
     AI.stats = stats;
     AI.resetStats = resetStats;
     AI.evalsPerSlice = evalsPerSlice;
-    AI.clean = _jsonClean;
+    AI.clean = function (v) { return _jsonClean(v); };
+    AI.STORE_SF = STORE_SF;
     AI.thresholds = function (cal) { return _thr(cal); };
 
     AI.kernels = {
