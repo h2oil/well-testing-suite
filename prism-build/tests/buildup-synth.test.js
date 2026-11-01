@@ -9,6 +9,8 @@
 //   GE6  caseFromSeed follows the fixed seed table, covers every stratum, parameters within the §5.2 ranges
 //   GE7  source grep: the generator never references the data layer, the fitted PRiSM kernels or unseeded random numbers
 //   GE8  truth follows the given inputs and the true flowing hours; score never reads the engine's Δq; record cap
+//   GE8c (added, WP8) the scorer's intra-day rule: a decrease of ≥ 10 % before the closing scores the post-change rate
+//        (volume preserved); a smaller decrease or an increase keeps the day reading
 //   GE9  (added) file 55 placeholder passes checkShape('Cal') and is exactly what buildup-validate.js --placeholder writes;
 //        the tool's statistics helpers and its calibration path on stub outcomes
 //
@@ -172,7 +174,7 @@ module.exports = [
       assert.strictEqual(aRaise, 6, 'absolute raised at B7');
       assert(SS[6] - 5 < 1 - M && SS[6] - 5 > M && SS[7] >= 5 + M, 'B7 absolute excess ' + (SS[6] - 5).toFixed(2) + '; B8 confirms');
       assert(SS.slice(0, 5).every((s) => s - base < 2 - M), 'no delta alert before B6');
-      deq(assert, T.tests.map((t) => t.dtEnd_h), [72, 48, 36, 30, 48, 42, 48, 60, 72], 'durations');
+      deq(assert, T.tests.map((t) => t.dtEnd_h), [168, 64, 32, 30, 48, 54, 48, 60, 66], 'durations');
       T.tests.forEach((t) => {
         assert(t.dtEnd_h >= 1.2 * t.reachFair_h, t.id + ': ' + t.dtEnd_h + ' h ≥ 1.2 × ' + t.reachFair_h.toFixed(1) + ' h');
         assert.strictEqual(t.k, 45);
@@ -196,8 +198,9 @@ module.exports = [
         (near ? inside : outside).push(dtS);
       }
       assert.strictEqual(medianOf(inside), 60, '1 min sampling near events'); assert.strictEqual(medianOf(outside), 300, '5 min elsewhere');
-      // expected grades recorded (noise-free prediction of the §4.6 item 3 rule, margin ≥ 0.1 from the nearest other grade)
-      deq(assert, T.tests.map((x) => x.grade), ['fair', 'fair', 'fair', 'fair', 'fair', 'fair', 'fair', 'fair', 'fair'], 'expected grades');
+      // expected grades recorded: the engine's IARF definition (window, slope estimator) on the noise-free derivative against
+      // the input-consistent superposition time (the given allocation), each at least 0.1 from the nearest other grade
+      deq(assert, T.tests.map((x) => x.grade), ['good', 'fair', 'fair', 'fair', 'fair', 'fair', 'fair', 'fair', 'fair'], 'expected grades');
       T.tests.forEach((x) => assert(x.gradeMargin >= 0.1, x.id + ' grade margin ' + x.gradeMargin));
       deq(assert, d.expect.delta, { raisedAt: 'B6', confirmedAt: 'B7' }); deq(assert, d.expect.absolute, { raisedAt: 'B7', confirmedAt: 'B8' });
       // contracts
@@ -412,8 +415,9 @@ module.exports = [
         assert.near(a.tc_ms, b.tc_ms - 500 * cs.test.ramp_s, 1, seed + ': truth t_c at the ramp midpoint');
         assert(Math.abs(a.SStar - b.SStar) <= 0.1, seed + ' S* ' + a.SStar + ' vs ' + b.SStar);
         assert(Math.abs(a.kStar / b.kStar - 1) <= 0.01, seed + ' k* ' + a.kStar + ' vs ' + b.kStar);
-        // the grade is compared where neither prediction sits on a grade threshold (100502 without the ramp is exactly on
-        // the fair/good boundary, margin 0)
+        // the grade is compared where neither prediction sits within 0.1 of a grade threshold (with the engine-definition
+        // grade of WP8 both seeds qualify, margins 0.2 and 0.5; under the earlier rule 100502 without the ramp sat exactly on
+        // the fair/good boundary)
         if (a.gradeMargin >= 0.1 && b.gradeMargin >= 0.1) assert.strictEqual(a.grade, b.grade, seed + ' grade');
         else assert.strictEqual(seed, 100502, 'only the documented knife-edge case skips the grade comparison');
       });
@@ -431,6 +435,51 @@ module.exports = [
       assert.near(gm.mu, g.spec.gasRef.mu, 0.05 * gm.mu, 'μ(p̄) near the planning estimate');
       const sx = gt.S + 1.1513 * Math.log10((gv.h / gr.h) * (gv.phi / gr.phi) * (gv.ct / gr.ct)) + 2.3026 * Math.log10(gv.rw / gr.rw) - 1.1513 * Math.log10((gv.B / gr.B) * gt.f) + 1.1513 * Math.log10(gm.mu / gv.mu);
       assert.near(gt.SStarInputs, sx, 1e-4, 'gas S* = S′ + input terms + 1.1513·log10(μ(p̄)/μ′)');
+    },
+  },
+  {
+    name: 'GE8c scorer, intra-day rate change before the closing (§5.3, WP8): a decrease of ≥ 10 % (factor 0.85) scores the post-change rate with the day volume preserved; 0.95 and 1.1 keep the day reading 24·V/h',
+    wp: WP, opts: false,
+    run(app, assert, ctx) {
+      const { SY } = env(ctx);
+      // a plain allocation case (clean closing day from 00:00, no ramp / cut / ignores-shut-in / hours conflict / table /
+      // day offset / earlier shut-ins), closing at 08:00 or later so a 6 h lead stays inside the closing day
+      let plain = null;
+      for (let s = 100010; s < 100232 && !plain; s++) {
+        const cs = SY.caseFromSeed(s, { lite: true });
+        if (cs.test.ramp_s || cs.test.partialBefore || cs.alloc.ignoresShutin || cs.alloc.hoursConflict_h || cs.rateSource !== 'allocation' ||
+            cs.dayStart.trueHour !== cs.dayStart.statedHour || cs.test.closeHour < 8 || cs.history.earlierShutins) continue;
+        plain = cs;
+      }
+      assert(plain, 'found a plain case');
+      const LEAD = 6;
+      const run = (factor) => {
+        const cs = JSON.parse(JSON.stringify(plain));
+        cs.history.intraDayChange = true; cs.history.intra = { lead: LEAD, factor };
+        const sc = SY.generate(cs), tr = sc.truth;
+        const day = new Date(tr.tc_ms).toISOString().slice(0, 10), row = sc.allocation.rows.find((r) => r.date === day);
+        return { tr, V: row.oil, hOn: plain.test.closeHour, hours: row.hours };
+      };
+      // the intra-day change is part of the true rate: q_true is the rate after the change
+      const base = run(1.0), dec = run(0.85), small = run(0.95), inc = run(1.1);
+      assert.near(dec.tr.qTrue / base.tr.qTrue, 0.85, 1e-9, 'q_true after a 15 % decrease');
+      assert.near(inc.tr.qTrue / base.tr.qTrue, 1.1, 1e-9, 'q_true after a 10 % increase');
+      [dec, small, inc].forEach((x) => { assert.near(x.hours, x.hOn, 0.011, 'true flowing hours reported'); assert.strictEqual(x.tr.dqSource, 'closingDay'); });
+      // factor 0.85: a partial cut before the closing (the engine's gate f̂ ≥ 0.1) — the post-change rate, split from the
+      // day's given volume with the volume preserved: V = q·(h1/0.85 + h2)/24, h2 = the lead, h1 = the rest of the day
+      const h2 = LEAD, h1 = dec.hOn - LEAD, qc = dec.tr.qCorrect;
+      assert.near(qc * (h1 / 0.85 + h2) / 24, dec.V, 1e-6 * dec.V, 'volume preserved: q_correct·(h1/0.85 + h2)/24 = V_given');
+      assert.near(qc, 0.85 * 24 * dec.V / (h1 + 0.85 * h2), 1e-6 * qc, 'q_correct = 0.85·24·V/(h1 + 0.85·h2)');
+      assert(qc < 24 * dec.V / dec.hOn * 0.95, 'below the day reading 24·V/h (' + qc + ' vs ' + 24 * dec.V / dec.hOn + ')');
+      assert(Math.abs(dec.tr.f - 1) < 0.1, 'f = q_correct/q_true stays near 1 (allocation error only): ' + dec.tr.f);
+      // factor 0.95 (a decrease below 10 %) and 1.1 (an increase): no event — the day's volume over its flowing hours
+      [[small, 0.95], [inc, 1.1]].forEach(([x, fct]) => {
+        assert.near(x.tr.qCorrect, 24 * x.V / x.hOn, 1e-6 * x.tr.qCorrect, 'factor ' + fct + ': q_correct = 24·V_given/h_true,on (day reading)');
+      });
+      // the override only pins the drawn values: the case without it is unchanged
+      const cs1 = JSON.parse(JSON.stringify(plain)); cs1.history.intraDayChange = true;
+      const cs2 = JSON.parse(JSON.stringify(cs1)); cs2.history.intra = null;
+      assert.strictEqual(SY.generate(cs1).record.hash, SY.generate(cs2).record.hash, 'no override: the drawn intra-day change');
     },
   },
   {

@@ -1204,7 +1204,7 @@
         this.step = function (budget, fresh) {
             var used = 0, est;
             while (!self.done && (used < budget || used === 0)) {
-                if (phase === 0) { head = _truthHead(SC, steps, ev, al, nf); cv = _curveJob(SC, steps, ev, false); phase = 1; used += 20; continue; }
+                if (phase === 0) { head = _truthHead(SC, steps, ev, al, nf); cv = _curveJob(SC, steps, ev, false, _icPre(SC, ev, al, head)); phase = 1; used += 20; continue; }
                 if (phase === 1) {
                     used += cv.step(MM.max(1, budget - used));
                     if (cv.done()) { rcv = shareRef ? cv : _curveJob(SC, steps, ev, true); phase = 2; }
@@ -1386,6 +1386,45 @@
         for (i = 0; i < SC.steps.length && SC.steps[i].t < tcut; i++) { pre.push(SC.steps[i]); qN = SC.steps[i].q; }
         return { pre: pre, qN: qN };
     }
+    // The rate history a correct reading of the GIVEN data yields before the closing (input-consistent, §5.3), the abscissa of
+    // the grade prediction: the engine differentiates the build-up against the superposition time of the rates it reads, and
+    // the given rates differ from the smooth true ones by the allocation noise (the oil demo's 3 % day-to-day variation lives
+    // in the allocation only). The true steps before the closing (split at production-day boundaries), each scaled by its
+    // day's given / true volume; the closing day's by f = q_correct/q_true (the head's reading, so the last rate is
+    // q_correct); with a rate table, each step by its tabled rate. Steps before the record (truncated history) and the
+    // closing days of other tests whose allocation ignores the shut-in (a correct reading takes the reference rate) are kept.
+    // → {steps: [{t, q}], qN}
+    function _icPre(SC, ev, al, hd) {
+        var ps = _preSteps(SC, ev), pre = ps.pre, tc = _tcOf(ev), out = [], i, k;
+        if (!pre.length || !(hd && hd.qCorrect > 0)) return null;
+        var days = (al && al.days) || [], tbl = al && al.table;
+        function dayOf(t) { for (var j = 0; j < days.length; j++) if (t >= days[j].t0 && t < days[j].t0 + 24) return j; return -1; }
+        var kc = dayOf(ev.tc), ign = {};
+        if (SC.alloc && SC.alloc.ignoresShutin) SC.events.forEach(function (e2) { if (e2.isTest && e2 !== ev) { var d2 = dayOf(e2.tc); if (d2 > 0) ign[d2] = 1; } });
+        var cuts = [];
+        for (i = 0; i < pre.length; i++) {
+            var t0 = pre[i].t, t1 = i + 1 < pre.length ? pre[i + 1].t : tc;
+            cuts.push({ t: t0, q: pre[i].q });
+            if (!tbl) for (k = 0; k < days.length; k++) if (days[k].t0 > t0 && days[k].t0 < t1) cuts.push({ t: days[k].t0, q: pre[i].q });
+        }
+        cuts.sort(function (a, b) { return a.t - b.t; });
+        cuts.forEach(function (c) {
+            var r = 1;
+            if (tbl) {
+                if (c.t >= 0 && c.q > 0) {
+                    var tm = SC.T0_ms + MM.round(c.t * HOUR_MS);
+                    for (var j = 0; j < tbl.length; j++) if (tbl[j].t_ms === tm) { r = tbl[j].q / c.q; break; }
+                }
+            } else {
+                var d = dayOf(c.t);
+                if (d === kc && d >= 0) r = hd.f;
+                else if (d >= 0 && !ign[d] && days[d].V > 0 && days[d].Vg > 0) r = days[d].Vg / days[d].V;
+            }
+            out.push({ t: c.t, q: c.q * r });
+        });
+        out[out.length - 1].q = hd.qCorrect;
+        return { steps: out, qN: hd.qCorrect };
+    }
     // Σ Δq·pwD over a list of steps (all before t)
     function _accList(SC, list, t, useRef) {
         var s = 0, tdc = SC.tdc;
@@ -1394,13 +1433,20 @@
     }
     // The noise-free build-up curve as a count-sliced job: step(budget) evaluates points until `budget` ops are used
     // (at least one point; one point ≈ 3 superpositions over the steps, OPS.curvePoint per step evaluation).
-    function _curveJob(SC, steps, ev, useRef) {
+    // icPre (optional): the input-consistent rate history (_icPre); the curve then also carries Xg / dg, the derivative of the
+    // same noise-free Δp against the superposition time of that history (the abscissa of the grade prediction).
+    function _curveJob(SC, steps, ev, useRef, icPre) {
         var tc = _tcOf(ev), dur = ev.dur + (ev.tc - tc), res = SC.res, ps = _preSteps(SC, ev), qN = ps.qN, pre = ps.pre;
         var cP = (SC.fluid === 'gas') ? 1 : C_P * res.B * res.mu / (res.k * res.h);
         var a0 = _accList(SC, pre, tc, useRef);   // the flowing level at t_c with the pre-ramp rate (= the acc at t_c without a ramp)
         function lnDte(dt) {
             var v = MM.log(dt);
             for (var j = 0; j < pre.length; j++) { var w = pre[j].dq / qN; v += w * (MM.log(tc - pre[j].t) - MM.log(tc + dt - pre[j].t)); }
+            return v;
+        }
+        function lnDteG(dt) {
+            var v = MM.log(dt), L = icPre.steps, qG = icPre.qN, qp = 0;
+            for (var j = 0; j < L.length; j++) { var w = (L[j].q - qp) / qG; qp = L[j].q; v += w * (MM.log(tc - L[j].t) - MM.log(tc + dt - L[j].t)); }
             return v;
         }
         function dpD(dt) {
@@ -1412,8 +1458,10 @@
             return v;
         }
         var dt0 = MM.max(2e-3, 1 / 3600), n = MM.max(8, MM.ceil(20 * MM.log10(dur / dt0))), h = 0.01, k = 0;
-        var wNode = (steps[0] && (useRef ? (steps[0]._ref && steps[0]._ref.gw) : steps[0].gw)) ? 4 : 1, perPoint = OPS.curvePoint * steps.length * wNode + 3 * pre.length;
+        var withG = !!(icPre && icPre.steps && icPre.steps.length && icPre.qN > 0);
+        var wNode = (steps[0] && (useRef ? (steps[0]._ref && steps[0]._ref.gw) : steps[0].gw)) ? 4 : 1, perPoint = OPS.curvePoint * steps.length * wNode + 3 * pre.length + (withG ? 3 * icPre.steps.length : 0);
         var out = { dt: [], dte: [], X: [], dp: [], d: [] };
+        if (withG) { out.Xg = []; out.dg = []; }
         return {
             out: out,
             done: function () { return k > n; },
@@ -1422,9 +1470,11 @@
                 while (k <= n && (used === 0 || used + perPoint <= budget)) {
                     var dt = dt0 * MM.pow(dur / dt0, k / n);
                     var lp = lnDte(dt * MM.exp(h)), lm = lnDte(dt * MM.exp(-h));
-                    var dd = (dpD(dt * MM.exp(h)) - dpD(dt * MM.exp(-h))) / (lp - lm);
+                    var dpP = dpD(dt * MM.exp(h)), dpM = dpD(dt * MM.exp(-h));
+                    var dd = (dpP - dpM) / (lp - lm);
                     var le = lnDte(dt);
                     out.dt.push(dt); out.dte.push(MM.exp(le)); out.X.push(le / LN10); out.dp.push(dpD(dt)); out.d.push(dd);
+                    if (withG) { out.Xg.push(lnDteG(dt) / LN10); out.dg.push((dpP - dpM) / (lnDteG(dt * MM.exp(h)) - lnDteG(dt * MM.exp(-h)))); }
                     k++; used += perPoint;
                 }
                 return used;
@@ -1527,61 +1577,118 @@
         var dte = MM.exp(v);
         return dte < dt ? dt * dte / (dt - dte) : 1e9;
     }
-    // IARF grade on the noise-free derivative: the §4.6 item 3 rule at the fixed tolerances (band ±10 %, slope 0.03,
-    // span ≥ 0.5 log10 cycle; good: span ≥ 1 cycle and |slope| ≤ 0.01 over the last 0.5 cycle), full-window bins only
-    // (20 per cycle, ending one Bourdet distance of 0.1 cycle before Δt_e,end), the earliest qualifying run.
-    // The slope is the OLS slope of Δp′/ℓ per ln Δt_e (the derivative's own abscissa, D6), i.e. the log-log slope: this is
-    // the reading under which the plan's reference case (US4, 72 h) is fair (per log10 cycle it would have no window).
-    // margin: the normalised distance of the predicted grade from the nearest other grade (≥ 0; small = near a threshold).
+    // IARF grade on the noise-free derivative, by the engine's definition (§4.6 item 3 as built in WP1, at the fixed
+    // tolerances of a noise-free derivative; the generator's own code, no engine call):
+    //   - abscissa: ln Δt_e of the input-consistent rate history (_icPre: what a correct reading of the given data yields),
+    //     so the derivative is the one the engine sees on noise-free data; bins at 20 per log cycle, ending one Bourdet
+    //     distance (0.1 cycle) before Δt_e,end (full-window bins only);
+    //   - gate: the derivative maximum confirmed by a 10 % decline (the storage hump), the scan starting at the next bin;
+    //     without one, at the first bin whose local log-log slope falls below 0.25;
+    //   - windows of ≥ 0.5 cycle and ≥ 3 bins: band ±10 % around the window MEDIAN, OLS slope of Δp′/ℓ per ln Δt_e within
+    //     ±0.03, the level-drift guard (mean of the first and of the last 0.1 cycle within ±5 % of each other, and the last
+    //     no more than 5 % above the lowest 3-bin running mean) and the valley guard (the centre bin not a local minimum
+    //     ≥ 15 % below the highest bin within 0.5 cycle on each side);
+    //   - overlapping windows form plateau runs; runs with levels within 5 % and less than 0.2 cycle apart merge; the
+    //     window is the longest in the EARLIEST run (ties: the smaller rms);
+    //   - good: that window spans ≥ 1 cycle and the OLS slope over its last 0.5 cycle (divided by the median there) is
+    //     within ±0.01; fair: ≥ 0.5 cycle; none: no window.
+    // margin: the normalised distance of the predicted grade from the nearest other grade (≥ 0; small = near a threshold):
+    // good → the chosen window's min((span − 1)/1, (0.01 − |s_last|)/0.01, band and slope slack); fair → min(the best fair
+    // slack of the qualifying windows, the chosen window's distance to good); none → the best slack of the rejected windows,
+    // negated.
     function _predictGrade(cv) {
-        var X = [], D = [], i;
-        var Xend = cv.X[cv.X.length - 1];
-        var x0 = cv.X[0], nb = MM.floor((Xend - 0.1 - x0) * 20);
+        var srcX = cv.Xg || cv.X, srcD = cv.dg || cv.d, i;
+        var X = [], D = [];
+        var Xend = srcX[srcX.length - 1], x0 = srcX[0], nb = MM.floor((Xend - 0.1 - x0) * 20);
         for (i = 0; i <= nb; i++) {
             var x = x0 + i / 20, j = 1;
-            while (j < cv.X.length - 1 && cv.X[j] < x) j++;
-            var u = (x - cv.X[j - 1]) / (cv.X[j] - cv.X[j - 1]);
-            X.push(x); D.push(cv.d[j - 1] + u * (cv.d[j] - cv.d[j - 1]));
+            while (j < srcX.length - 1 && srcX[j] < x) j++;
+            var uu = (x - srcX[j - 1]) / (srcX[j] - srcX[j - 1]);
+            X.push(x); D.push(srcD[j - 1] + uu * (srcD[j] - srcD[j - 1]));
         }
         var n = X.length;
         if (n < 10) return { grade: 'none', span: 0, margin: null, toFair: null };
-        var hump = 0; for (i = 1; i < n; i++) if (D[i] > D[hump]) hump = i;
-        var a0 = hump;
-        if (hump === 0) { for (i = 1; i < n; i++) { if (D[i] > 0 && D[i - 1] > 0 && (MM.log10(D[i]) - MM.log10(D[i - 1])) / (X[i] - X[i - 1]) < 0.25) { a0 = i; break; } } }
-        function fit(a, b) {
-            var m = b - a + 1, sx = 0, sy = 0, sxx = 0, sxy = 0, mean = 0, k;
-            for (k = a; k <= b; k++) mean += D[k];
-            mean /= m;
-            for (k = a; k <= b; k++) { var xl = X[k] * LN10, y = D[k] / mean; sx += xl; sy += y; sxx += xl * xl; sxy += xl * y; }
-            var slope = (m * sxy - sx * sy) / (m * sxx - sx * sx), band = 0;
-            for (k = a; k <= b; k++) band = MM.max(band, MM.abs(D[k] / mean - 1));
-            return { slope: slope, band: band, mean: mean };
+        // gate (the engine's hump index: the running maximum confirmed by a 10 % decline)
+        var iMax = -1, hump = -1;
+        for (i = 0; i < n; i++) {
+            if (!(D[i] > 0)) continue;
+            if (iMax < 0 || D[i] > D[iMax]) { iMax = i; continue; }
+            if (D[i] < 0.9 * D[iMax]) { hump = iMax; break; }
         }
-        function slack(w) { return MM.min((w.span - 0.5) / 0.5, (0.10 - w.f.band) / 0.10, (0.03 - MM.abs(w.f.slope)) / 0.03); }
-        var qual = [], bestNear = -Infinity;
-        for (var a = a0; a < n; a++) for (var b = a + 10; b < n; b++) {
-            var span = X[b] - X[a];
-            if (span < 0.5 - 1e-9) continue;
-            var ft = fit(a, b), w0 = { a: a, b: b, span: span, f: ft };
-            if (ft.band <= 0.10 && MM.abs(ft.slope) <= 0.03) qual.push(w0);
-            else bestNear = MM.max(bestNear, slack(w0));
+        var a0 = n;
+        if (hump >= 0) a0 = hump + 1;
+        else for (i = 1; i < n - 1; i++) { if (D[i] > 0 && D[i + 1] > 0 && (MM.log(D[i + 1]) - MM.log(D[i])) / ((X[i + 1] - X[i]) * LN10) < 0.25) { a0 = i; break; } }
+        var m = n - a0;
+        if (m < 3) return { grade: 'none', span: 0, margin: null, toFair: null, a0: a0 };
+        var u = [], y = [];
+        for (i = a0; i < n; i++) { u.push(X[i] * LN10); y.push(D[i]); }
+        var Su = [0], Suu = [0], Sy = [0], Suy = [0], Syy = [0];
+        for (i = 0; i < m; i++) { Su.push(Su[i] + u[i]); Suu.push(Suu[i] + u[i] * u[i]); Sy.push(Sy[i] + y[i]); Suy.push(Suy[i] + u[i] * y[i]); Syy.push(Syy[i] + y[i] * y[i]); }
+        var HC = 0.1 * LN10, fwd = [], bwd = [], rm = [];
+        for (i = 0; i < m; i++) {
+            var fe = i; while (fe + 1 < m && u[fe + 1] - u[i] <= HC + 1e-12) fe++; fwd.push(fe);
+            var bs = i; while (bs - 1 >= 0 && u[i] - u[bs - 1] <= HC + 1e-12) bs--; bwd.push(bs);
+            var lo = MM.max(0, i - 1), hi = MM.min(m - 1, i + 1), sm = 0; for (var q = lo; q <= hi; q++) sm += y[q]; rm.push(sm / (hi - lo + 1));
         }
-        if (!qual.length) return { grade: 'none', span: 0, margin: isFinite(bestNear) ? -bestNear : null, toFair: isFinite(bestNear) ? -bestNear : null, a0: a0 };
-        qual.sort(function (p, q) { return p.a - q.a || q.b - p.b; });
-        var runEnd = qual[0].b, run = [];
-        qual.forEach(function (w) { if (w.a <= runEnd) { run.push(w); if (w.b > runEnd) runEnd = w.b; } });
-        var best = null, bestGood = null, goodMargin = -Infinity, toGood = -Infinity, fairSlack = -Infinity;
-        run.forEach(function (w) {
-            if (!best || w.span > best.span) best = w;
-            fairSlack = MM.max(fairSlack, slack(w));
-            var a2 = w.a; while (a2 < w.b && X[w.b] - X[a2] > 0.5 + 1e-9) a2++;
-            var fl = fit(a2, w.b);
-            var g = MM.min((w.span - 1) / 1, (0.01 - MM.abs(fl.slope)) / 0.01, (0.10 - w.f.band) / 0.10, (0.03 - MM.abs(w.f.slope)) / 0.03);
-            if (g >= 0 && g > goodMargin) { goodMargin = g; bestGood = w; }
-            toGood = MM.max(toGood, g);
+        function valleyAt(c) {   // c in scan indices; neighbours over every bin (the engine's valley guard)
+            var ii = a0 + c, maxL = -Infinity, maxR = -Infinity, k;
+            for (k = ii - 1; k >= 0 && (X[ii] - X[k]) <= 0.5 + 1e-12; k--) if (D[k] > maxL) maxL = D[k];
+            for (k = ii + 1; k < n && (X[k] - X[ii]) <= 0.5 + 1e-12; k++) if (D[k] > maxR) maxR = D[k];
+            var locMin = (c === 0 || y[c] <= y[c - 1]) && (c === m - 1 || y[c] <= y[c + 1]);
+            return locMin && D[ii] <= 0.85 * maxL && D[ii] <= 0.85 * maxR;
+        }
+        function olsSlope(a, b, lvl) { var nn = b - a + 1, su = Su[b + 1] - Su[a], mu = su / nn, Sxx = (Suu[b + 1] - Suu[a]) - nn * mu * mu; return Sxx > 0 ? ((Suy[b + 1] - Suy[a]) - mu * (Sy[b + 1] - Sy[a])) / Sxx / lvl : 0; }
+        function slack(w) { return MM.min((w.span - 0.5) / 0.5, (0.10 - w.band) / 0.10, (0.03 - MM.abs(w.slope)) / 0.03); }
+        function ins(arr, v) { var l2 = 0, h2 = arr.length; while (l2 < h2) { var md = (l2 + h2) >> 1; if (arr[md] < v) l2 = md + 1; else h2 = md; } arr.splice(l2, 0, v); }
+        var wins = [], bestNear = -Infinity;
+        for (var a = 0; a < m; a++) {
+            var sorted = [y[a]], mn = y[a], mx = y[a], rmMin = rm[a];
+            for (var b = a + 1; b < m; b++) {
+                ins(sorted, y[b]); if (y[b] < mn) mn = y[b]; if (y[b] > mx) mx = y[b]; if (rm[b] < rmMin) rmMin = rm[b];
+                if (b < a + 2) continue;
+                var span = (u[b] - u[a]) / LN10;
+                if (span < 0.5 - 1e-9) continue;
+                var nn = b - a + 1, hm = nn >> 1, lvl = (nn % 2) ? sorted[hm] : 0.5 * (sorted[hm - 1] + sorted[hm]);
+                if (!(lvl > 0) || !(mn > 0)) continue;
+                var band = MM.max(mx / lvl - 1, 1 - mn / lvl), sl = olsSlope(a, b, lvl), w0 = { a: a, b: b, span: span, band: band, slope: sl, level: lvl };
+                if (band > 0.10 || MM.abs(sl) > 0.03) { bestNear = MM.max(bestNear, slack(w0)); continue; }
+                var hEnd = MM.min(fwd[a], b), tSt = MM.max(bwd[b], a);
+                var headL = (Sy[hEnd + 1] - Sy[a]) / (hEnd - a + 1), tailL = (Sy[b + 1] - Sy[tSt]) / (b - tSt + 1);
+                if (MM.abs(tailL / headL - 1) > 0.05 || tailL / rmMin - 1 > 0.05) continue;
+                var cX = 0.5 * (u[a] + u[b]), c = a;
+                while (c + 1 <= b && MM.abs(u[c + 1] - cX) < MM.abs(u[c] - cX)) c++;
+                if (valleyAt(c)) continue;
+                var ssq = (Syy[b + 1] - Syy[a] - 2 * lvl * (Sy[b + 1] - Sy[a]) + nn * lvl * lvl) / (lvl * lvl);
+                w0.rms = MM.sqrt(MM.max(0, ssq) / nn);
+                wins.push(w0);
+            }
+        }
+        if (!wins.length) return { grade: 'none', span: 0, margin: isFinite(bestNear) ? -bestNear : null, toFair: isFinite(bestNear) ? -bestNear : null, a0: a0 };
+        wins.sort(function (p1, p2) { return p1.a - p2.a || p1.b - p2.b; });
+        function pick(ws) { return ws.reduce(function (p1, p2) { return (p2.span > p1.span + 1e-12 || (MM.abs(p2.span - p1.span) <= 1e-12 && p2.rms < p1.rms)) ? p2 : p1; }); }
+        var runs = [];
+        wins.forEach(function (w) { var r = runs[runs.length - 1]; if (r && w.a <= r.end) { r.w.push(w); if (w.b > r.end) r.end = w.b; } else runs.push({ start: w.a, end: w.b, w: [w] }); });
+        runs.forEach(function (r) { r.best = pick(r.w); r.level = r.best.level; });
+        var merged = [];
+        runs.forEach(function (r) {
+            var pr = merged[merged.length - 1];
+            if (pr && MM.abs(r.level / pr.level - 1) <= 0.05 && (u[r.start] - u[pr.end]) / LN10 < 0.2) { pr.w = pr.w.concat(r.w); pr.end = MM.max(pr.end, r.end); pr.best = pick(pr.w); pr.level = pr.best.level; }
+            else merged.push(r);
         });
-        if (bestGood) return { grade: 'good', span: bestGood.span, margin: goodMargin, a0: a0, dte0: MM.pow(10, X[bestGood.a]) };
-        return { grade: 'fair', span: best.span, margin: MM.min(fairSlack, -toGood), toGood: -toGood, fairSlack: fairSlack, a0: a0, dte0: MM.pow(10, X[best.a]) };
+        var ch = merged[0].best, il = ch.b;
+        while (il > ch.a && (u[ch.b] - u[il - 1]) / LN10 <= 0.5 + 1e-9) il--;
+        var lastY = y.slice(il, ch.b + 1).sort(function (p1, p2) { return p1 - p2; }), lh = lastY.length >> 1;
+        var lvlL = (lastY.length % 2) ? lastY[lh] : 0.5 * (lastY[lh - 1] + lastY[lh]), sL = olsSlope(il, ch.b, lvlL);
+        var g = MM.min((ch.span - 1) / 1, (0.01 - MM.abs(sL)) / 0.01, (0.10 - ch.band) / 0.10, (0.03 - MM.abs(ch.slope)) / 0.03);
+        var out = { span: ch.span, slopeLast: sL, a0: a0, dte0: MM.pow(10, X[a0 + ch.a]), dte1: MM.pow(10, X[a0 + ch.b]) };
+        if (g >= 0) { out.grade = 'good'; out.margin = g; }
+        else {
+            // fair needs any qualifying window: its distance to none is the best slack among them (the chosen window is the
+            // longest, so its own slack is small by construction)
+            var fs = -Infinity; wins.forEach(function (w) { fs = MM.max(fs, slack(w)); });
+            out.grade = 'fair'; out.margin = MM.min(fs, -g); out.toGood = -g; out.fairSlack = fs;
+        }
+        return out;
     }
 
     function _wellInput(SC, pmin) {
@@ -1863,6 +1970,13 @@
         return { n: n, withEffect: k, share: k / n, byEffect: by };
     }
 
+    // The intra-day rate change before the closing: lead 2–12 h, factor 0.8–1.2 (both drawn, so the stream is the same with
+    // or without an override); CaseSpec.history.intra {lead, factor} pins them (tests of the §5.3 scorer rule).
+    function _intraOf(hist, r) {
+        var o = { lead: r.uniform(2, 12), factor: r.uniform(0.8, 1.2) }, p = hist.intra;
+        if (p && isFinite(p.lead) && p.lead > 0 && isFinite(p.factor) && p.factor > 0) o = { lead: +p.lead, factor: +p.factor };
+        return o;
+    }
     // CaseSpec → internal scenario
     function _scenarioFromCase(cs, opts) {
         opts = opts || {};
@@ -1894,7 +2008,7 @@
         }
         var testEv = { kind: cs.stratum === 'partial' ? 'partial' : 'shutin', tc: tc, dur: dur, f: cs.stratum === 'partial' ? t.extra.f : 1,
                        ramp_s: cs.test.ramp_s || 0, pb: cs.test.partialBefore ? { f: cs.test.partialBefore, lead: cs.pbLead_h || 4 } : null,
-                       intra: hist.intraDayChange ? { lead: r.uniform(2, 12), factor: r.uniform(0.8, 1.2) } : null, Safter: null, isTest: true, label: 'test' };
+                       intra: hist.intraDayChange ? _intraOf(hist, r) : null, Safter: null, isTest: true, label: 'test' };
         if (testEv.intra && testEv.pb) testEv.intra = null;
         events.push(testEv);
         events.sort(function (a, b) { return a.tc - b.tc; });
@@ -2093,9 +2207,10 @@
     var DEMO_OIL = {
         seed: 3301, start: Date.UTC(2026, 0, 5), days: 135,
         res: { k: 45, h: 50, phi: 0.2, mu: 1, B: 1.2, ct: 1e-5, rw: 0.354, C: 0.01, pi: 4200, q: 800 },
-        // [day, closing hour, duration h, skin before the closing]; B1 closes on day 6 so that its noise-free grade prediction
-        // is clear of the fair/good boundary (margin ≥ 0.1, GE4)
-        tests: [[6, 9, 72, 1.2], [26, 10, 48, 1.3], [40, 15, 36, 1.1], [52, 8, 30, 1.8], [68, 9, 48, 2.9], [82, 7, 42, 4.0], [95, 10, 48, 5.9], [108, 9, 60, 6.8], [122, 8, 72, 7.4]],
+        // [day, closing hour, duration h, skin before the closing]; the durations put every expected grade (the engine's
+        // definition on the input-consistent derivative, _predictGrade) at least 0.1 from the nearest other grade (GE4):
+        // B1 (168 h) good, B2–B9 fair
+        tests: [[6, 9, 168, 1.2], [26, 10, 64, 1.3], [40, 15, 32, 1.1], [52, 8, 30, 1.8], [68, 9, 48, 2.9], [82, 7, 54, 4.0], [95, 10, 48, 5.9], [108, 9, 60, 6.8], [122, 8, 66, 7.4]],
         short: [33, 14, 1.5], partial: [60, 11, 24, 0.4],
         expect: { analysable: 9, tooShort: 1, partial: 1, delta: { raisedAt: 'B6', confirmedAt: 'B7' }, absolute: { raisedAt: 'B7', confirmedAt: 'B8' } }
     };
