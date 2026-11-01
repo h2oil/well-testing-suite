@@ -11,6 +11,7 @@
 //   GE8  truth follows the given inputs and the true flowing hours; score never reads the engine's Δq; record cap
 //   GE8c (added, WP8) the scorer's intra-day rule: a decrease of ≥ 10 % before the closing scores the post-change rate
 //        (volume preserved); a smaller decrease or an increase keeps the day reading
+//   GE10 (added, WP8) the threshold search's strict passes (an infeasible incumbent) and the strict fallback set
 //   GE9  (added) file 55 placeholder passes checkShape('Cal') and is exactly what buildup-validate.js --placeholder writes;
 //        the tool's statistics helpers and its calibration path on stub outcomes
 //
@@ -590,6 +591,50 @@ module.exports = [
       const sm3 = tool.sequenceMetrics([stim('shutin', 'analysable'), stim('partial', 'partial'), gasW(false), gasW(true)], 'plain');
       assert.strictEqual(sm3.stimN, 2); assert.strictEqual(sm3.stimShutinRate, 0.5, 'one of two post-workover tests classified as a shut-in');
       assert.strictEqual(sm3.gasResolvedN, 2); assert.strictEqual(sm3.gasNoAlertWhenDResolved, 0.5, 'one resolved gas well raised a delta alert');
+    },
+  },
+  {
+    name: 'GE10 tool (WP8): the threshold search leaves an infeasible incumbent through the strict passes — a set feasible only with BOTH a strict stage-1 and a strict stage-2 value is found; the shipped fallback is the strict set',
+    wp: WP, opts: false,
+    run(app, assert, ctx) {
+      const tool = require('../buildup-validate.js');
+      const { SY } = env(ctx);
+      // stub labeller: low when S_err > S_err low or SNR < SNR low; high when S_err ≤ S_err high and SNR ≥ SNR high
+      const stubAI = { version: '1.0', confidence(ev, calT) {
+        const th = calT.thresholds; let L = 'medium';
+        if (ev.sErr > th.sErrLow || ev.snrD < th.snrLow) L = 'low'; else if (ev.sErr <= th.sErrHigh && ev.snrD >= th.snrHigh) L = 'high';
+        return { ks: L, model: L, headline: L };
+      } };
+      const truthL = { tc_ms: 1.7e12, model: 'homogeneous', kStar: 50, SStar: 2, qCorrect: 500, visible: {}, notAnalysable: false, partial: false, distractor: false, stratum: 'hom' };
+      let seed = 100000;
+      const mk = (n, right, sErr, snrD) => Array.from({ length: n }, () => {
+        const test = { id: 'B1', status: 'interpreted', Dq: 500, tc_ms: 1.7e12, result: { final: { k: right ? 50.5 : 70, S: right ? 2.1 : 4, gas: null },
+          chosen: { key: 'homogeneous', label: 'Homogeneous', fullySeen: { status: 'n/a' } }, flags: [], triggers: { fired: [] }, confidence: { ks: 'medium', model: 'medium', headline: 'medium' },
+          bic: { rows: [], chosen: 'homogeneous' }, models: [], kHeld: false } };
+        const line = { kind: 'single', seed: seed++, stratum: 'hom', durClass: 'long', fluid: 'oil', truth: truthL, test, event: null, error: null, outcome: SY.score(test, truthL), evidence: { sErr, snrD } };
+        return line;
+      });
+      // C: 40 right, high under every set; A: 5 wrong at SNR 25 (high unless SNR high = 30); B: 30 wrong at S_err 0.9
+      // (medium unless S_err low = 0.8); D: 60 right medium
+      const lines = [].concat(mk(40, true, 0.25, 40), mk(5, false, 0.25, 25), mk(30, false, 0.9, 15), mk(60, true, 0.5, 15));
+      const cases = tool.labelledSet(lines), envS = { SY, AI: stubAI };
+      const T = (patch) => tool.tables(cases, cases.map((c) => tool.relabel(c, Object.assign({}, tool.PRE_THRESHOLDS, patch), envS)));
+      const ok = (patch) => tool.checkTargets(T(patch), { rng: SY.rng }).length === 0;
+      assert(!ok({}), 'the pre-calibration set is infeasible');
+      assert(!ok({ sErrLow: 0.8 }) && !ok({ snrHigh: 30 }), 'a strict value in ONE stage only is infeasible (the staged search from the incumbent cannot reach it)');
+      assert(ok({ sErrLow: 0.8, snrHigh: 30, sErrHigh: 0.3 }), 'strict values in both stages are feasible');
+      // grid sample 6912: stage 1 evaluates its first combination, stage 2 the first and the one with SNR high = 30
+      const r = tool.searchThresholds(cases, envS, 6912, {});
+      assert(r.best > -Infinity, 'a feasible set was found (' + r.feasible + ' of ' + r.evaluated + ' candidates feasible)');
+      assert.strictEqual(r.th.snrHigh, 30); assert.strictEqual(r.th.sErrLow, 0.8);
+      assert(r.evaluated >= 7 && r.feasible >= 1, 'counts reported: ' + r.evaluated + ' evaluated, ' + r.feasible + ' feasible');
+      // nothing feasible anywhere: the strict set (every LOW and HIGH label threshold at its strictest grid value, rate
+      // tolerance 10 %; S_err floor and τ at their pre-calibration values)
+      const bad = tool.labelledSet([].concat(mk(10, false, 0.25, 40), mk(10, false, 0.5, 15)));
+      const r2 = tool.searchThresholds(bad, envS, 6912, {});
+      assert.strictEqual(r2.best, -Infinity); assert.strictEqual(r2.feasible, 0);
+      deq(assert, r2.th, tool.strictSet(), 'fallback: the strict set');
+      assert.strictEqual(r2.th.rateTolPct, 10); assert.strictEqual(r2.th.sErrFloor, tool.PRE_THRESHOLDS.sErrFloor); assert.strictEqual(r2.th.tauBic, tool.PRE_THRESHOLDS.tauBic);
     },
   },
 ];

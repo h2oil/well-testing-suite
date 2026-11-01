@@ -11,8 +11,12 @@
 //   --seeds a-b    single-case seeds (ranges and comma lists; default the full table 100000–100639)
 //   --strata s,t   keep only these strata
 //   --sequences    also run the 120 multi-test wells (200000–200119)
-//   --write        calibration (§5.4): writes file 55 (calibrated:true) and <out>/calibration.md; exits 1 and leaves file 55
-//                  alone unless all 24 in-app cases meet margin ≥ 0.1 (the lite candidate pool widens before it gives up)
+//   --write        calibration (§5.4): the threshold searches (5 training folds + all folds, in parallel worker processes),
+//                  the first out-of-fold pass (no KC2 cap), the candidate table <out>/cal-candidate.js, a re-run of every
+//                  item with it, the second out-of-fold pass with the engine's KC2 envelope flags (the shipped tables, as
+//                  the app labels), the in-app and benchmark seeds; writes file 55 (calibrated:true), <out>/calibration.md
+//                  and <out>/benchmark-snapshot.js (the BM1 / BM2 arrays of buildup-benchmark.test.js); exits 1 and leaves
+//                  file 55 alone unless all 24 in-app cases meet margin ≥ 0.1 (the lite candidate pool widens before it gives up)
 //   --perf         the §4.8 timing targets (wall clock) on the oil demo, the reference case (US4, 72 h; per stage), the
 //                  365-daily-step reference and a 500k-row file; --strict exits 1 on a miss
 //   --workers n    child processes (default min(4, CPUs)); worker i takes the seeds ≡ i (mod n)
@@ -436,7 +440,10 @@ function round1(v) { return Math.round(v * 10) / 10; }
 // unlabelled: a truth that is not analysable (partial, baddata) and that the engine left without a label. §5.3 counts only
 // abstention on ANALYSABLE truth as "low, y = 0"; these cases stay out of both tables (their status accuracy is reported
 // separately). A non-analysable truth the engine interpreted keeps its label, with y = false.
-function relabel(c, th, env) {
+// keepEnvelope: keep the evidence's own KC2 flag (outsideEnvelope, computed by the engine against the envelope of the
+// table that was loaded when the case ran). Without it the flag is cleared, i.e. the labels are re-derived without the
+// envelope cap (the grid search and the first pass: the envelope is not yet fixed).
+function relabel(c, th, env, keepEnvelope) {
   const ev = c.evidence ? Object.assign({}, c.evidence) : null;
   const t = c.test, r = t && t.result;
   let outcome = c.outcome;
@@ -466,7 +473,7 @@ function relabel(c, th, env) {
       ev.chosenKey = key; ev.chosenFullySeen = t2.result.chosen.fullySeen.status;
     }
   }
-  ev.outsideEnvelope = false;
+  if (!keepEnvelope) ev.outsideEnvelope = false;
   let conf = null;
   try { conf = env.AI.confidence(ev, { version: 'grid', calibrated: true, thresholds: th, envelope: null, ksTable: [], table: [], inApp: [] }); } catch (e) { conf = null; }
   if (!conf || LABELS.indexOf(conf.ks) === -1) return { ks: 'low', headline: 'low', outcome, sErr, error: true };
@@ -621,11 +628,28 @@ function objective(cases, labels, opts, floor) {
 // the incumbent: a candidate replaces it only when strictly better, so ties keep the documented defaults. Inside the grid the
 // cluster bootstrap uses BOOT_GRID resamples (cached per label row); the winner is confirmed with the full 2,000, and when it
 // fails there the whole search is repeated at 2,000.
+// An infeasible incumbent can never be replaced by a candidate that differs from it in one stage only, so while no feasible
+// point has been found the search adds two passes: stage 2 from the strict stage-1 set (STRICT_STAGE1), then stage 1 from
+// the strict stage-2 set (STRICT_STAGE2). Every candidate evaluated while the incumbent is infeasible is checked against all
+// constraints, so `feasible` counts the feasible points among the `evaluated` ones exactly (once a feasible incumbent exists,
+// a candidate whose share cannot beat it is not checked).
+// When nothing is feasible the stricter set is shipped (§5.4: the targets are never relaxed): every LOW and HIGH label
+// threshold of the grid at its strictest value, the rate tolerance included (10 %). The S_err floor (0.2) and τ (10) keep
+// their pre-calibration values: the floor changes S_err itself (0.4 removes every high label, so the high constraints become
+// vacuous while the medium bound still fails) and τ also sets the model choice, not only a label boundary.
+const STRICT_STAGE1 = { sErrLow: 0.8, snrLow: 8, disagreeDS: 0.7, disagreeKPct: 10, reachFactor: 5.0, distractorRule: true, kHeldRmsK: 2 };
+const STRICT_STAGE2 = { snrHigh: 30, sErrHigh: 0.3, fairSpanHigh: 1.0, pointSkinSpread: 0.2, rateTolPct: 10 };
+function strictSet() { return Object.assign({}, PRE_THRESHOLDS, STRICT_STAGE1, STRICT_STAGE2); }
 function searchThresholds(cases, env, sample, opts) {
   opts = opts || {};
   const cache = new Map(), rng = env.SY.rng;
+  let evaluated = 0, feasible = 0;
   const run = (B) => {
-    const evalSet = (cand, floor) => objective(cases, cases.map((c) => relabel(c, cand, env)), { B, cache, rng }, floor);
+    const evalSet = (cand, floor) => {
+      const v = objective(cases, cases.map((c) => relabel(c, cand, env)), { B, cache, rng }, floor);
+      evaluated++; if (v > -Infinity) feasible++;
+      return v;
+    };
     let th = Object.assign({}, PRE_THRESHOLDS), best = evalSet(th);
     const stage = (grid) => {
       combos(grid).forEach((cmb, i) => {
@@ -635,6 +659,12 @@ function searchThresholds(cases, env, sample, opts) {
       });
     };
     stage(GRID_STAGE1); stage(GRID_STAGE2); stage(GRID_STAGE1);
+    if (best === -Infinity) {
+      th = Object.assign({}, PRE_THRESHOLDS, STRICT_STAGE1); stage(GRID_STAGE2);
+      if (best === -Infinity) { th = Object.assign({}, PRE_THRESHOLDS, STRICT_STAGE2); stage(GRID_STAGE1); }
+      else stage(GRID_STAGE1);
+      if (best === -Infinity) th = Object.assign({}, PRE_THRESHOLDS);
+    }
     return { th, best, evalSet };
   };
   const Bg = opts.bootGrid || BOOT_GRID;
@@ -645,39 +675,72 @@ function searchThresholds(cases, env, sample, opts) {
     if (!confirmed) res = run(BOOT_FULL);
   }
   let th = res.th;
-  if (res.best === -Infinity) {   // constraints unmet everywhere: the strictest set (never relaxed targets)
-    th = Object.assign({}, PRE_THRESHOLDS, { snrHigh: 30, sErrHigh: 0.3, fairSpanHigh: 1.0, pointSkinSpread: 0.2, sErrLow: 0.8, snrLow: 8, disagreeDS: 0.7, disagreeKPct: 10, reachFactor: 5.0, kHeldRmsK: 2 });
-  }
-  return { th, best: res.best };
+  if (res.best === -Infinity) th = strictSet();   // constraints unmet everywhere: the stricter set (never relaxed targets)
+  return { th, best: res.best, evaluated, feasible };
 }
-function calibrate(lines, env, opts) {
-  const cases = labelledSet(lines), K = 5, fold = foldsOf(cases, K), oof = new Array(cases.length), fcst = new Array(cases.length).fill(null);
-  console.log('[validate] calibration: ' + cases.length + ' labelled build-ups, ' + new Set(cases.map((c) => c.g)).size + ' wells, 5 folds');
-  for (let f = 0; f < K; f++) {
+// The threshold searches of one calibration (one per training fold and the final one on every fold), run in parallel in
+// child processes (each loads the app once; the staged grid is single-threaded). jobs: [{idx: case indices}] → results in
+// job order, each {th, best, evaluated, feasible}.
+function searchMany(cases, jobs, opts, nWorkers) {
+  return new Promise((resolve, reject) => {
+    const out = new Array(jobs.length);
+    let next = 0, done = 0, failed = false;
+    const W = Math.max(1, Math.min(nWorkers || 1, jobs.length));
+    const start = () => {
+      if (next >= jobs.length || failed) return;
+      const j = next++;
+      const child = fork(__filename, ['--search-worker'], { stdio: ['ignore', 'inherit', 'inherit', 'ipc'], env: Object.assign({}, process.env) });
+      child.on('message', (msg) => {
+        if (msg.type === 'ready') {
+          if (msg.missing && msg.missing.length) { failed = true; child.send({ type: 'exit' }); reject(Object.assign(new Error('missing'), { missing: msg.missing })); return; }
+          child.send({ type: 'search', cases: jobs[j].idx.map((i) => cases[i]), sample: opts.gridSample, bootGrid: opts.bootGrid || null });
+        } else if (msg.type === 'searched') {
+          out[j] = msg.result; child.send({ type: 'exit' });
+          if (opts.onDone) opts.onDone(j, msg.result);
+          if (++done === jobs.length) resolve(out); else start();
+        }
+      });
+      child.on('exit', (code) => { if (code && !failed) { failed = true; reject(new Error('search worker ' + j + ' exited with code ' + code)); } });
+      child.send({ type: 'init' });
+    };
+    for (let w = 0; w < W; w++) start();
+  });
+}
+function searchWorkerMain() {
+  let env = null;
+  process.on('message', (msg) => {
+    if (msg.type === 'init') { env = loadEnv(); process.send({ type: 'ready', missing: env.missing }); return; }
+    if (msg.type === 'search') {
+      const r = searchThresholds(msg.cases, env, msg.sample, { bootGrid: msg.bootGrid || undefined });
+      process.send({ type: 'searched', result: { th: r.th, best: r.best === -Infinity ? null : r.best, evaluated: r.evaluated, feasible: r.feasible } });
+      return;
+    }
+    if (msg.type === 'exit') process.exit(0);
+  });
+}
+// One out-of-fold pass: each held-out fold is labelled with its training fold's thresholds (foldTh[f]); the forecast of a
+// held-out case is the TRAINING-fold rate of its headline label (so the reliability term of the Murphy decomposition
+// measures something: the out-of-fold rates are not their own forecasts). keepEnvelope: see relabel.
+function oofPass(cases, fold, foldTh, env, keepEnvelope) {
+  const oof = new Array(cases.length), fcst = new Array(cases.length).fill(null);
+  foldTh.forEach((th, f) => {
     const train = cases.filter((_, i) => fold[i] !== f);
-    const { th } = searchThresholds(train, env, opts.gridSample, opts);
-    // the forecast of a held-out case is the TRAINING-fold rate of its headline label (so the reliability term of the
-    // Murphy decomposition measures something: the out-of-fold rates are not their own forecasts)
-    const Ttr = tables(train, train.map((c) => relabel(c, th, env))), rateTr = {};
+    const Ttr = tables(train, train.map((c) => relabel(c, th, env, keepEnvelope))), rateTr = {};
     LABELS.forEach((L) => { rateTr[L] = rowStats(Ttr.hd[L]).rate; });
     cases.forEach((c, i) => {
       if (fold[i] !== f) return;
-      oof[i] = relabel(c, th, env);
+      oof[i] = relabel(c, th, env, keepEnvelope);
       const o = oof[i].outcome || {}, L = o.abstained ? 'low' : oof[i].headline;
       if (!oof[i].unlabelled) fcst[i] = { p: rateTr[L] === null ? 0 : rateTr[L], bin: f + ':' + L };
     });
-    console.log('[validate]   fold ' + (f + 1) + '/5 done');
-  }
-  const final = searchThresholds(cases, env, opts.gridSample, opts).th;
-  // delta-alert form from the sequence false-alarm rate (plain unless it misses 5 %)
-  const seqPlain = sequenceMetrics(lines, 'plain'), seqBase = sequenceMetrics(lines, 'basevar');
-  final.deltaForm = (seqPlain.falseAlarmDelta !== null && seqPlain.falseAlarmDelta > TARGETS.falseAlarm && seqBase.falseAlarmDelta !== null &&
-                     seqBase.falseAlarmDelta <= TARGETS.falseAlarm) ? 'basevar' : 'plain';
-  const seqM = final.deltaForm === 'basevar' ? seqBase : seqPlain;
-  const T = tables(cases, oof);
-  const rng = env.SY.rng;
-  // single: the single-case rows of the same label (Wilson interval; the harder population, with the distractor strata
-  // and the crossed factors, that the single-case Wilson bound of the §5.4 constraints is taken on)
+  });
+  return { oof, fcst, T: tables(cases, oof) };
+}
+// The tables and scores of one pass (file 55 fields). single: the single-case rows of the same label (Wilson interval; the
+// harder population, with the distractor strata and the crossed factors, that the single-case Wilson bound of the §5.4
+// constraints is taken on).
+function passTables(cases, P, env) {
+  const { oof, fcst, T } = P, rng = env.SY.rng;
   const sgl = (items, yKey) => { const sg = items.filter((x) => x.single !== false), w = wilson(sg.filter((x) => x[yKey || 'y']).length, sg.length); return { n: sg.length, rate: w.rate, lo: w.lo, hi: w.hi }; };
   const ksRow = (L, items) => { const s = rowStats(items); const cb = clusterBootstrap(items, rng); return { label: L, n: s.n, right: s.rate, lo: s.lo, hi: s.hi, loCluster: cb.lo, hiCluster: cb.hi, medAbsDS: s.medAbsDS, cover2: s.cover2, single: sgl(items) }; };
   const tbRow = (L, items, yKey) => {
@@ -701,19 +764,71 @@ function calibrate(lines, env, opts) {
   let rel = 0, res = 0;
   Object.keys(bins).forEach((k) => { const b = bins[k], yk = b.y / b.n; rel += b.n * (b.p - yk) * (b.p - yk); res += b.n * (yk - ybar) * (yk - ybar); });
   const unc = ybar * (1 - ybar), brier = N ? bs / N : null;
+  const fr = falseRivalRate(cases, oof);
+  return {
+    nBuildups: LABELS.reduce((a, L) => a + T.hd[L].length, 0),
+    ksTable: LABELS.map((L) => ksRow(L, T.ks[L])), table: LABELS.map((L) => tbRow(L, T.hd[L])), strict: LABELS.map((L) => tbRow(L, T.hd[L], 'strict')),
+    kHeldTable: ['medium', 'low'].map((L) => ksRow(L, Tk.ks[L])), gasTable: LABELS.map((L) => tbRow(L, Tg.hd[L])),
+    brier, bss: (brier !== null && unc > 0) ? 1 - brier / unc : null, reliability: N ? rel / N : null, resolution: N ? res / N : null, uncertainty: unc, falseRival: fr.rate,
+  };
+}
+// Share labelled high (pooled and single cases) of one pass, for the report.
+function shares(T) {
+  const out = {};
+  [['ks', T.ks], ['headline', T.hd]].forEach(([k, tb]) => {
+    const all = LABELS.reduce((a, L) => a + tb[L].length, 0), sAll = LABELS.reduce((a, L) => a + tb[L].filter((x) => x.single !== false).length, 0);
+    const h = tb.high.length, hs = tb.high.filter((x) => x.single !== false).length;
+    out[k] = { high: h, n: all, share: all ? h / all : null, highSingle: hs, nSingle: sAll, shareSingle: sAll ? hs / sAll : null };
+  });
+  return out;
+}
+// Calibration (§5.4), first pass: the threshold searches (5 training folds + all folds), the out-of-fold labels WITHOUT the
+// KC2 envelope cap (the envelope is fixed by this pass), the envelope and the candidate table. The second pass
+// (finishCalibration) relabels the same folds with the evidence of a re-run that had the candidate table loaded, so the
+// shipped tables carry the KC2 cap exactly as the app applies it.
+//   calibrate(lines, env, opts)            synchronous, the searches in this process (env may be a stub labeller)
+//   calibrateParallel(lines, env, opts)    the --write path: the six searches in parallel worker processes (opts.workers)
+function calibrationJobs(cases, fold, K) {
+  const jobs = [];
+  for (let f = 0; f < K; f++) jobs.push({ idx: cases.map((_, i) => i).filter((i) => fold[i] !== f) });
+  jobs.push({ idx: cases.map((_, i) => i) });
+  return jobs;
+}
+function calibrate(lines, env, opts) {
+  const cases = labelledSet(lines), K = 5, fold = foldsOf(cases, K);
+  const search = calibrationJobs(cases, fold, K).map((j) => {
+    const r = searchThresholds(j.idx.map((i) => cases[i]), env, opts.gridSample, opts);
+    return { th: r.th, best: r.best === -Infinity ? null : r.best, evaluated: r.evaluated, feasible: r.feasible };
+  });
+  return calibrateWith(lines, env, opts, cases, fold, search);
+}
+async function calibrateParallel(lines, env, opts) {
+  const cases = labelledSet(lines), K = 5, fold = foldsOf(cases, K);
+  console.log('[validate] calibration: ' + cases.length + ' labelled build-ups, ' + new Set(cases.map((c) => c.g)).size + ' wells, 5 folds');
+  const search = await searchMany(cases, calibrationJobs(cases, fold, K), Object.assign({}, opts, {
+    onDone: (j, r) => console.log('[validate]   search ' + (j < K ? 'fold ' + (j + 1) : 'all folds') + ' done: ' + r.evaluated + ' candidates, ' + r.feasible + ' feasible'),
+  }), opts.workers || 1);
+  return calibrateWith(lines, env, opts, cases, fold, search);
+}
+function calibrateWith(lines, env, opts, cases, fold, search) {
+  const K = search.length - 1;
+  const foldTh = search.slice(0, K).map((r) => r.th), final = Object.assign({}, search[K].th);
+  // delta-alert form from the sequence false-alarm rate (plain unless it misses 5 %)
+  const seqPlain = sequenceMetrics(lines, 'plain'), seqBase = sequenceMetrics(lines, 'basevar');
+  final.deltaForm = (seqPlain.falseAlarmDelta !== null && seqPlain.falseAlarmDelta > TARGETS.falseAlarm && seqBase.falseAlarmDelta !== null &&
+                     seqBase.falseAlarmDelta <= TARGETS.falseAlarm) ? 'basevar' : 'plain';
+  const seqM = final.deltaForm === 'basevar' ? seqBase : seqPlain;
+  const P1 = oofPass(cases, fold, foldTh, env, false), T1 = passTables(cases, P1, env);
   const env5 = (vals) => [quantile(vals, 0.05), quantile(vals, 0.95)];
   const ev = cases.map((c) => c.evidence).filter(Boolean);
   const rateErr = cases.map((c) => (c.outcome && typeof c.outcome.rateErrPct === 'number' ? Math.abs(c.outcome.rateErrPct) : null)).filter((v) => v !== null);
   const dist = cases.filter((c) => c.truth && c.truth.distractor && c.truth.visible && c.truth.visible.distractor);
-  const fr = falseRivalRate(cases, oof);
-  const cal = {
+  const cal = Object.assign({
     version: 'cal-1', calibrated: true, generated: todayUTC(), app: 'v3.3', engine: (env.AI && env.AI.version) || '1.0',
     seeds: { single: SINGLE.slice(), sequences: SEQ.slice(), master: MASTER },
-    nCases: lines.filter((l) => l.kind === 'single' && !l.error).length, nBuildups: LABELS.reduce((a, L) => a + T.hd[L].length, 0),
+    nCases: lines.filter((l) => l.kind === 'single' && !l.error).length,
     thresholds: final,
-    ksTable: LABELS.map((L) => ksRow(L, T.ks[L])), table: LABELS.map((L) => tbRow(L, T.hd[L])), strict: LABELS.map((L) => tbRow(L, T.hd[L], 'strict')),
-    kHeldTable: ['medium', 'low'].map((L) => ksRow(L, Tk.ks[L])), gasTable: LABELS.map((L) => tbRow(L, Tg.hd[L])),
-    brier, bss: (brier !== null && unc > 0) ? 1 - brier / unc : null, reliability: N ? rel / N : null, resolution: N ? res / N : null, uncertainty: unc, falseRival: fr.rate,
+  }, T1, {
     abstain: abstention(cases), distractorCaught: { n: dist.length, rate: dist.length ? dist.filter((c) => c.outcome && c.outcome.distractorCaught).length / dist.length : null },
     rateAccuracy: { medAbsPct: quantile(rateErr, 0.5), p90AbsPct: quantile(rateErr, 0.9) },
     envelope: {
@@ -722,9 +837,27 @@ function calibrate(lines, env, opts) {
     },
     sequences: { falseAlarmDelta: seqM.falseAlarmDelta, falseAlarmAbs: seqM.falseAlarmAbs, delayMedian: seqM.delayMedian, delayMedianShort: seqM.delayMedianShort,
                  onsetWithin1: seqM.onsetWithin1, senCover: seqM.senCover },
+    envelopeCapped: false,
     inApp: [],
-  };
-  return { cal, cases, oof, T, seqPlain, seqBase };
+  });
+  return { cal, cases, fold, foldTh, search, oof: P1.oof, T: P1.T, T1, seqPlain, seqBase };
+}
+// Second pass: rerunLines are the same items run with the candidate table loaded (BUV_CAL_SRC), so each evidence carries the
+// engine's KC2 flag against the candidate's envelope (and the pass-2 evidence of the sequences under its labels). The
+// out-of-fold labels are re-derived with the first pass's fold thresholds, keeping that flag: the tables, the Brier score
+// and the shares then describe the labels the app shows. The first-pass (uncapped) tables are kept in cal.uncapped.
+function finishCalibration(res, rerunLines, env) {
+  const cases2 = labelledSet(rerunLines), K = res.foldTh.length;
+  if (cases2.length !== res.cases.length || cases2.some((c, i) => c.g !== res.cases[i].g)) throw new Error('second pass: the re-run does not give the same labelled build-ups (' + cases2.length + ' vs ' + res.cases.length + ')');
+  const fold2 = foldsOf(cases2, K);
+  const P2 = oofPass(cases2, fold2, res.foldTh, env, true), T2 = passTables(cases2, P2, env);
+  const cal = res.cal;
+  cal.uncapped = { ksTable: cal.ksTable, table: cal.table, shares: shares(res.T) };
+  Object.assign(cal, T2);
+  cal.envelopeCapped = true;
+  cal.capped = { outsideEnvelope: cases2.filter((c) => c.evidence && c.evidence.outsideEnvelope).length, shares: shares(P2.T) };
+  res.T2 = P2.T; res.oof2 = P2.oof;
+  return res;
 }
 // Normalised distance of a case's evidence to the nearest label threshold (§5.6 margin). The engine's own
 // PRiSM_autoInterp.thresholdMargin is used when an environment is given (one implementation for the tool, the page's
@@ -787,6 +920,51 @@ const BENCH_SLOTS = [
   ['partial', (x) => x.stratum === 'partial' && x.expect.status === 'partial'], ['baddata', (x) => x.stratum === 'baddata' && (x.expect.status === 'missed' || x.expect.status === 'not_analysable')],
 ];
 const RANK_L = { low: 1, medium: 2, high: 3 };
+const BENCH_HIGH = 8;
+// The sequence well BM2 re-runs (lite; see the --write flow): {seed, nSamples, tests: [{truthIdx, expect, margin}]}.
+function chooseBenchSequence(seqLines, th, env) {
+  if (env && env.AI) _marginAI = env.AI;
+  const cand = seqLines.filter((l) => !l.error && l.kind === 'sequence').map((l) => {
+    const tests = (l.matched || []).map((m) => {
+      const o = m.outcome || {}, lab = o.label || null, mg = m.evidence ? marginOf(m.evidence, th) : null;
+      return { truthIdx: m.truthIdx, expect: { status: o.status || null, ks: lab ? lab.ks : null, headline: lab ? lab.headline : null, fullyRight: !!o.fullyRight }, margin: mg };
+    }).filter((x) => x.margin !== null && x.margin >= 0.1 && (x.expect.ks === 'high' || x.expect.headline === 'high'));
+    return { seed: l.seed, nSamples: l.nSamples, tests, nHH: tests.filter((x) => x.expect.headline === 'high').length };
+  }).filter((c) => c.nHH >= 1);
+  if (!cand.length) return null;
+  const two = cand.filter((c) => c.nHH >= 2);
+  const pick = (two.length ? two.sort((a, b) => a.nSamples - b.nSamples || a.seed - b.seed) : cand.sort((a, b) => b.nHH - a.nHH || a.nSamples - b.nSamples || a.seed - b.seed))[0];
+  return { seed: pick.seed, nSamples: pick.nSamples, tests: pick.tests.map((x) => ({ truthIdx: x.truthIdx, expect: x.expect, margin: Math.round(x.margin * 1000) / 1000 })) };
+}
+// The BM1 / BM2 arrays of buildup-benchmark.test.js, as written by this run (<out>/benchmark-snapshot.js).
+function benchSnapshotSource(summary) {
+  const lit = (v) => (v && typeof v === 'object' ? '{ ' + Object.keys(v).map((k) => k + ': ' + lit(v[k])).join(', ') + ' }' : typeof v === 'string' ? "'" + v + "'" : String(v));
+  const row = (o) => '  ' + lit(o) + ',';
+  const L = ['// BM1-SNAPSHOT (buildup-validate.js --sequences --write, ' + todayUTC() + ')'];
+  (summary.bench || []).forEach((b) => L.push(row({ slot: b.slot, seed: b.seed, expect: b.expect, margin: b.margin })));
+  L.push('// BM2-HIGH (buildup-validate.js --sequences --write, ' + todayUTC() + ')');
+  (summary.benchHigh || []).forEach((b) => L.push(row({ seed: b.seed, stratum: b.stratum, expect: b.expect, margin: b.margin })));
+  if (summary.benchSeq) {
+    L.push('// BM2-SEQUENCE (buildup-validate.js --sequences --write, ' + todayUTC() + ')');
+    L.push('const HIGH_SEQ = { seed: ' + summary.benchSeq.seed + ', tests: [');
+    summary.benchSeq.tests.forEach((t) => L.push('  ' + row({ truthIdx: t.truthIdx, expect: t.expect, margin: t.margin })));
+    L.push('] };');
+  }
+  return L.join('\n') + '\n';
+}
+// The §5.4 constraint values of one pass (both tables), for the report: rate, single-case Wilson lower bound, cluster lower bound.
+function constraintRows(T, rng) {
+  const out = {};
+  [['ks', T.ks], ['headline', T.hd]].forEach(([name, tb]) => {
+    const r = {};
+    LABELS.forEach((L) => {
+      const s = rowStats(tb[L]), sg = rowStats(tb[L].filter((x) => x.single !== false)), cb = tb[L].length ? clusterBootstrap(tb[L], rng) : { lo: null };
+      r[L] = { n: s.n, rate: s.rate, singleN: sg.n, singleRate: sg.rate, singleLo: sg.lo, clusterLo: cb.lo, cover2: s.cover2 };
+    });
+    out[name] = r;
+  });
+  return out;
+}
 function chooseBench(liteLines, th, env) {
   if (env && env.AI) _marginAI = env.AI;
   const items = liteLines.filter((l) => !l.error && l.kind === 'single').map((l) => liteItem(l, th, env, true)).filter(Boolean);
@@ -864,8 +1042,25 @@ function markdown(cal, summary) {
     rows.forEach((r) => L.push('| ' + r.label + ' | ' + r.n + ' | ' + pct(r[yKey]) + ' | ' + pct(r.lo) + '–' + pct(r.hi) + ' | ' + pct(r.loCluster) + '–' + pct(r.hiCluster) + ' | ' + f2(r.medAbsDS) + ' | ' + pct(r.cover2) + ' | ' +
                                (r.single ? r.single.n + ', ' + pct(r.single.rate) + ', ' + pct(r.single.lo) + '–' + pct(r.single.hi) : '—') + ' |'));
   };
-  tbl('k/S label (k and S right)', cal.ksTable, 'right'); tbl('Headline label (fully right)', cal.table, 'fullyRight'); tbl('Strict (k ±5 %, S ±0.3)', cal.strict, 'fullyRight');
+  const capNote = cal.envelopeCapped ? ' — with the KC2 envelope cap, as the app labels' : ' — without the KC2 envelope cap';
+  tbl('k/S label (k and S right)' + capNote, cal.ksTable, 'right'); tbl('Headline label (fully right)' + capNote, cal.table, 'fullyRight'); tbl('Strict (k ±5 %, S ±0.3)', cal.strict, 'fullyRight');
   tbl('k-held sub-table', cal.kHeldTable, 'right'); tbl('Gas sub-table', cal.gasTable, 'fullyRight');
+  if (cal.uncapped) { tbl('k/S label — first pass, without the KC2 envelope cap', cal.uncapped.ksTable, 'right'); tbl('Headline label — first pass, without the KC2 envelope cap', cal.uncapped.table, 'fullyRight'); }
+  const shr = (sh) => sh ? 'headline ' + sh.headline.high + ' of ' + sh.headline.n + ' (' + pct(sh.headline.share) + '; single cases ' + sh.headline.highSingle + ' of ' + sh.headline.nSingle + ', ' + pct(sh.headline.shareSingle) + '), k/S ' +
+                           sh.ks.high + ' of ' + sh.ks.n + ' (' + pct(sh.ks.share) + '; single cases ' + sh.ks.highSingle + ' of ' + sh.ks.nSingle + ', ' + pct(sh.ks.shareSingle) + ')' : '—';
+  L.push('', '## Share labelled high', '');
+  if (cal.capped) L.push('- With the KC2 envelope cap (the app): ' + shr(cal.capped.shares) + '; ' + cal.capped.outsideEnvelope + ' build-ups outside the envelope');
+  if (cal.uncapped) L.push('- First pass, without the cap: ' + shr(cal.uncapped.shares));
+  if (summary.constraints) {
+    const C = summary.constraints, f3 = (v) => (v === null || v === undefined ? '—' : (+v).toFixed(3));
+    L.push('', '## Threshold search', '', '| search | candidates evaluated | feasible |', '|---|---|---|');
+    C.search.forEach((r) => L.push('| ' + r.job + ' | ' + r.evaluated + ' | ' + r.feasible + ' |'));
+    [['with the KC2 envelope cap (shipped tables)', C.capped], ['first pass, without the cap', C.uncapped]].forEach(([title, cr]) => {
+      L.push('', '## Constraint check — ' + title, '', '| table | label | n | rate | single cases: n, rate, Wilson lower | cluster lower | cover 2·S_err |', '|---|---|---|---|---|---|---|');
+      ['ks', 'headline'].forEach((k) => LABELS.forEach((lb) => { const r = cr[k][lb]; L.push('| ' + k + ' | ' + lb + ' | ' + r.n + ' | ' + f3(r.rate) + ' | ' + r.singleN + ', ' + f3(r.singleRate) + ', ' + f3(r.singleLo) + ' | ' + f3(r.clusterLo) + ' | ' + f3(r.cover2) + ' |'); }));
+    });
+    L.push('', '- Constraints missed without the cap: ' + (C.failsUncapped.length ? C.failsUncapped.join('; ') : 'none'));
+  }
   L.push('', '## Scores', '', '- Brier ' + f2(cal.brier) + ', BSS ' + f2(cal.bss) + ' (reliability ' + f2(cal.reliability) + ', resolution ' + f2(cal.resolution) + ', uncertainty ' + f2(cal.uncertainty) + ')',
     '- False-rival rate on homogeneous truth ' + pct(cal.falseRival), '- Abstention ' + pct(cal.abstain.rate) + ' (hom ' + pct(cal.abstain.rateHom) + ')',
     '- Distractor caught ' + pct(cal.distractorCaught.rate) + ' of ' + cal.distractorCaught.n, '- Rate accuracy: median |error| ' + f2(cal.rateAccuracy.medAbsPct) + ' %, P90 ' + f2(cal.rateAccuracy.p90AbsPct) + ' %');
@@ -881,7 +1076,7 @@ function markdown(cal, summary) {
   Object.keys(summary.reach || {}).forEach((k) => { const r = summary.reach[k]; L.push('| ' + k + ' | ' + r.n + ' | ' + r.reached + ' | ' + pct(r.rate) + ' |'); });
   L.push('', '## Other figures', '', '- C within ±25 % when the unit slope was sampled: ' + pct(summary.cWithin25 ? summary.cWithin25.rate : null) + ' of ' + (summary.cWithin25 ? summary.cWithin25.n : 0));
   Object.keys(summary.byRateSource || {}).forEach((k) => { const b = summary.byRateSource[k]; L.push('- Rate source ' + k + ': ' + b.n + ' cases, fully right ' + b.fullyRight + ', k/S right ' + b.ksRight); });
-  L.push('', '## Per stratum', '', '| stratum | n | errors | fully right | k/S right | abstained | high / medium / low | gen ms | analyse ms |', '|---|---|---|---|---|---|---|---|---|');
+  L.push('', '## Per stratum (labels as first run, with the table loaded at the start)', '', '| stratum | n | errors | fully right | k/S right | abstained | high / medium / low | gen ms | analyse ms |', '|---|---|---|---|---|---|---|---|---|');
   Object.keys(summary.perStratum).forEach((s) => { const p = summary.perStratum[s]; L.push('| ' + s + ' | ' + p.n + ' | ' + p.errors + ' | ' + p.fullyRight + ' | ' + p.ksRight + ' | ' + p.abstained + ' | ' + (p.high || 0) + ' / ' + (p.medium || 0) + ' / ' + (p.low || 0) + ' | ' + f2(p.gen_ms) + ' | ' + f2(p.analyse_ms) + ' |'); });
   L.push('', '## In-app cases (24, lite settings, run with the calibrated table)', '', '| seed | stratum | status | k/S | headline | fully right | margin |', '|---|---|---|---|---|---|---|');
   cal.inApp.forEach((c) => L.push('| ' + c.seed + ' | ' + c.stratum + ' | ' + dash(c.expect.status) + ' | ' + dash(c.expect.ks) + ' | ' + dash(c.expect.headline) + ' | ' +
@@ -893,6 +1088,10 @@ function markdown(cal, summary) {
   if (summary.benchHigh) {
     L.push('', '## High cases re-run by BM2 (lite, run with the calibrated table)', '', '| seed | stratum | status | k/S | headline | fully right | margin |', '|---|---|---|---|---|---|---|');
     summary.benchHigh.forEach((c) => L.push('| ' + c.seed + ' | ' + c.stratum + ' | ' + dash(c.expect.status) + ' | ' + dash(c.expect.ks) + ' | ' + dash(c.expect.headline) + ' | ' + dash(c.expect.fullyRight) + ' | ' + dash(c.margin) + ' |'));
+  }
+  if (summary.benchSeq) {
+    L.push('', '## Sequence well re-run by BM2 (lite, run with the calibrated table): ' + summary.benchSeq.seed + ' (' + summary.benchSeq.nSamples + ' samples)', '', '| test (truth index) | status | k/S | headline | fully right | margin |', '|---|---|---|---|---|---|');
+    summary.benchSeq.tests.forEach((c) => L.push('| ' + c.truthIdx + ' | ' + dash(c.expect.status) + ' | ' + dash(c.expect.ks) + ' | ' + dash(c.expect.headline) + ' | ' + dash(c.expect.fullyRight) + ' | ' + dash(c.margin) + ' |'));
   }
   if (summary.sequencesCalibrated) {
     const a = summary.sequencesCalibrated;
@@ -1057,17 +1256,29 @@ async function main() {
   }
   let calFailed = false;
   if (flag('--write')) {
-    const res = calibrate(lines, env, opts);
-    // The candidate table goes to <out>/cal-candidate.js and the workers load it (BUV_CAL_SRC): the sequences are re-run
-    // with it (their alerts depend on the labels through the used set), and the lite in-app pool runs with it, so the
-    // in-app expectations are the app's own labels (pass 2, the envelope cap) and their margins come from that evidence.
+    let res;
+    try { res = await calibrateParallel(lines, env, Object.assign({}, opts, { workers: nWorkers })); }
+    catch (e) { if (e && e.missing) return notRunnable(e.missing); console.error('[validate] crash: ' + (e && e.stack || e)); return 2; }
+    // The candidate table goes to <out>/cal-candidate.js and the workers load it (BUV_CAL_SRC). Every item is re-run with it:
+    // the singles and the sequences carry the engine's KC2 flag against the candidate's envelope (second pass: the shipped
+    // tables are capped as in the app), the sequences' alerts and pass-2 evidence follow its labels (through the used set),
+    // and the lite in-app pool runs with it, so the in-app expectations are the app's own labels and their margins come from
+    // that evidence.
     const candFile = path.join(out, 'cal-candidate.js');
     writeCal(res.cal, candFile);
-    if (lines.some((l) => l.kind === 'sequence')) {
-      let seqLines;
-      try { seqLines = await runItems(lines.filter((l) => l.kind === 'sequence').map((l) => ({ kind: 'sequence', seed: l.seed })), opts, nWorkers, null, candFile); }
-      catch (e) { if (e && e.missing) return notRunnable(e.missing); console.error('[validate] crash: ' + (e && e.stack || e)); return 2; }
-      seqLines.sort(order);
+    let reLines;
+    try { reLines = await runItems(lines.filter((l) => !l.error).map((l) => ({ kind: l.kind, seed: l.seed })), opts, nWorkers, progress, candFile); }
+    catch (e) { if (e && e.missing) return notRunnable(e.missing); console.error('[validate] crash: ' + (e && e.stack || e)); return 2; }
+    reLines.sort(order);
+    fs.writeFileSync(path.join(out, 'cases-calibrated.jsonl'), reLines.map((l) => JSON.stringify(l)).join('\n') + '\n');
+    const reErr = reLines.filter((l) => l.error).length;
+    if (reErr) { console.error('[validate] ' + reErr + ' errors in the re-run with the candidate table'); return 2; }
+    try { finishCalibration(res, reLines, env); }
+    catch (e) { console.error('[validate] crash: ' + (e && e.stack || e)); return 2; }
+    console.log('[validate] second pass (KC2 envelope cap as in the app): ' + res.cal.capped.outsideEnvelope + ' build-ups outside the envelope; headline high ' +
+                res.cal.uncapped.shares.headline.high + ' → ' + res.cal.capped.shares.headline.high + ', k/S high ' + res.cal.uncapped.shares.ks.high + ' → ' + res.cal.capped.shares.ks.high);
+    const seqLines = reLines.filter((l) => l.kind === 'sequence');
+    if (seqLines.length) {
       fs.writeFileSync(path.join(out, 'sequences-calibrated.jsonl'), seqLines.map((l) => JSON.stringify(l)).join('\n') + '\n');
       const sp = sequenceMetrics(seqLines, 'plain'), sb = sequenceMetrics(seqLines, 'basevar');
       res.cal.thresholds.deltaForm = (sp.falseAlarmDelta !== null && sp.falseAlarmDelta > TARGETS.falseAlarm && sb.falseAlarmDelta !== null &&
@@ -1077,8 +1288,8 @@ async function main() {
                             onsetWithin1: sm.onsetWithin1, senCover: sm.senCover };
       summary.sequencesCalibrated = { plain: sp, basevar: sb };
       if (sm.falseAlarmDelta !== null && sm.falseAlarmDelta > TARGETS.falseAlarm) fails.push('calibration: sequence delta false-alarm rate ' + pct(sm.falseAlarmDelta));
-      writeCal(res.cal, candFile);
     }
+    writeCal(res.cal, candFile);
     // the 24 in-app cases need margin ≥ 0.1 (§5.6); the candidate pool widens (6, 15, then every seed per stratum) before
     // giving up, and file 55 is never written as calibrated with fewer than 24
     const seen = new Set(), pools = [6, 15, Infinity];
@@ -1119,11 +1330,11 @@ async function main() {
         fs.writeFileSync(path.join(out, 'lite-calibrated.jsonl'), liteLines.slice().sort(order).map((l) => JSON.stringify(l)).join('\n') + '\n');
       }
     }
-    // BM2 needs high cases to check: up to 3 lite cases labelled high (k/S or headline) with margin ≥ 0.1; when the pool
-    // holds fewer than 3, every hom and gas seed not yet run is run lite with the candidate table
+    // BM2 needs high cases to check: up to BENCH_HIGH lite cases labelled high (k/S or headline; headline high first) with
+    // margin ≥ 0.1; when the pool holds fewer, every hom and gas seed not yet run is run lite with the candidate table
     const highsOf = () => liteLines.filter((l) => !l.error && l.kind === 'single').map((l) => liteItem(l, res.cal.thresholds, env, true)).filter((x) => x && x.hasEvidence && x.margin >= 0.1 &&
       (x.expect.ks === 'high' || x.expect.headline === 'high')).sort((a, b) => (b.expect.headline === 'high') - (a.expect.headline === 'high') || b.margin - a.margin || a.seed - b.seed);
-    if (highsOf().length < 3) {
+    if (highsOf().length < BENCH_HIGH) {
       const more2 = [];
       SY.SEED_TABLE.forEach((e) => { if (e.stratum !== 'hom' && e.stratum !== 'gas') return; for (let sd = e.from; sd <= e.to; sd++) if (!seen.has(sd)) { seen.add(sd); more2.push(sd); } });
       if (more2.length) {
@@ -1133,11 +1344,25 @@ async function main() {
       }
     }
     summary.bench = chooseBench(liteLines, res.cal.thresholds, env);
-    summary.benchHigh = highsOf().slice(0, 3).map((x) => ({ seed: x.seed, stratum: x.stratum, expect: x.expect, margin: Math.round(x.margin * 1000) / 1000 }));
+    summary.benchHigh = highsOf().slice(0, BENCH_HIGH).map((x) => ({ seed: x.seed, stratum: x.stratum, expect: x.expect, margin: Math.round(x.margin * 1000) / 1000 }));
+    // BM2 also re-runs one sequence well (lite): the sequence tests carry almost every pooled high label. Every sequence is
+    // run lite with the candidate table; the well with at least 2 headline-high tests (margin ≥ 0.1) and the fewest samples
+    // is taken (else the most headline-high tests), with every test labelled high (k/S or headline) at margin ≥ 0.1.
+    if (lines.some((l) => l.kind === 'sequence')) {
+      let seqLite;
+      try { seqLite = await runItems(lines.filter((l) => l.kind === 'sequence' && !l.error).map((l) => ({ kind: 'sequence', seed: l.seed })), { lite: true }, nWorkers, null, candFile); }
+      catch (e) { if (e && e.missing) return notRunnable(e.missing); console.error('[validate] crash: ' + (e && e.stack || e)); return 2; }
+      summary.benchSeq = chooseBenchSequence(seqLite, res.cal.thresholds, env);
+      console.log('[validate] sequence well for BM2: ' + (summary.benchSeq ? summary.benchSeq.seed + ' (' + summary.benchSeq.tests.length + ' high tests, ' + summary.benchSeq.nSamples + ' samples)' : 'none'));
+    }
     console.log('[validate] high cases for BM2: ' + (summary.benchHigh.map((b) => b.seed + ' (' + b.expect.ks + '/' + b.expect.headline + ')').join(', ') || 'none'));
     console.log('[validate] benchmark seeds (BM1): ' + summary.bench.map((b) => b.slot + ' ' + b.seed + ' (' + (b.expect.headline || b.expect.status) + ')').join(', '));
     if (res.cal.inApp.length !== 24) { calFailed = true; fails.push('only ' + res.cal.inApp.length + ' in-app cases with margin ≥ 0.1: file 55 not written'); }
-    checkTargets(res.T, { rng: SY.rng }).forEach((f) => fails.push('calibration: ' + f));
+    // the constraint check on the shipped (capped) tables; the first-pass (uncapped) check is reported alongside
+    summary.constraints = { capped: constraintRows(res.T2, SY.rng), uncapped: constraintRows(res.T, SY.rng),
+                            failsUncapped: checkTargets(res.T, { rng: SY.rng }), search: res.search.map((r, j) => ({ job: j < res.foldTh.length ? 'fold ' + (j + 1) : 'all folds', evaluated: r.evaluated, feasible: r.feasible })) };
+    checkTargets(res.T2, { rng: SY.rng }).forEach((f) => fails.push('calibration: ' + f));
+    fs.writeFileSync(path.join(out, 'benchmark-snapshot.js'), benchSnapshotSource(summary));
     if (!calFailed) writeCal(res.cal, calOut);
     fs.writeFileSync(path.join(out, 'calibration.md'), markdown(res.cal, summary));
     summary.calibration = { thresholds: res.cal.thresholds, falseRival: res.cal.falseRival, sequences: res.cal.sequences, written: !calFailed, inApp: res.cal.inApp.length };
@@ -1157,9 +1382,11 @@ async function main() {
 
 module.exports = { PRE_THRESHOLDS, GRID_STAGE1, GRID_STAGE2, TARGETS, IN_APP_PROVISIONAL, BOOT_FULL, BOOT_GRID, placeholderCal, calSource, writeCal, parseSeeds, wilson,
                    quantile, clusterBootstrap, bootRow, checkTargets, tables, rowStats, marginOf, sequenceMetrics, labelledSet, foldsOf, combos, calibrate, chooseInApp,
-                   summarize, markdown, relabel, CAL_FILE, chooseBench, liteItem };
+                   summarize, markdown, relabel, CAL_FILE, chooseBench, liteItem, searchThresholds, calibrateParallel, oofPass, passTables, finishCalibration, shares,
+                   constraintRows, STRICT_STAGE1, STRICT_STAGE2, strictSet, BENCH_HIGH, chooseBenchSequence };
 
 if (require.main === module) {
-  if (IS_WORKER) workerMain();
+  if (flag('--search-worker')) searchWorkerMain();
+  else if (IS_WORKER) workerMain();
   else main().then((code) => process.exit(code), (e) => { console.error('[validate] crash: ' + (e && e.stack || e)); process.exit(2); });
 }
