@@ -522,7 +522,7 @@ const SECTION_C = (G, src) => {
       if (!f) return 'no flow';
       const strip = o => { const c = JSON.parse(JSON.stringify(o)); delete c.ts; delete c.seq; return c; };
       // v3.3.1 (WP-E0): SAMPLE_FLOW.sim carries the seven new keys (sand / desander / T-202); the host Dynamic Simulation inputs
-      // that publish them come with WP-2D — until then a host flow with none of the seven is accepted (WP-2D: remove this)
+      // that publish them come with WP-2D — until then a host flow with none of the seven is accepted (interim allowance — WP-2D exit item: remove this, plan §10.1)
       const SIM7 = ['sand_pptb', 'sand_lbmmscf', 'sand_d50_um', 'desRating_psi', 'desAcc_gal', 'sithp_psig', 'surge2Cap_bbl'];
       const ref = strip(S.SAMPLE_FLOW);
       if (f.sim && SIM7.every(k => !(k in f.sim))) SIM7.forEach(k => { delete ref.sim[k]; });
@@ -587,7 +587,7 @@ const SECTION_X = (G) => {
       return miss.length === 0 || miss.slice(0, 8).join(', ');
     }]);
     // v3.3.1 (WP-E0): 31 adds desander.dump.lastT, surge2.tFull_s, surge2.transfer.trip; 32's copy gains them with WP-3D —
-    // until then 32 may equal the list without those three (WP-3D: drop the allowance once 32 carries them)
+    // until then 32 may equal the list without those three (interim allowance — WP-3D exit item: drop it once 32 carries them, plan §10.1)
     const NEW_NULL = ['desander.dump.lastT', 'surge2.tFull_s', 'surge2.transfer.trip'];
     if (Array.isArray(I.NULLABLE)) out.push(['X: 32 NULLABLE list equals WTS_sim.NULLABLE', () => {
       const a = JSON.stringify(I.NULLABLE.slice().sort()), b = S.NULLABLE.slice().sort();

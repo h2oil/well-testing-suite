@@ -408,9 +408,10 @@ function flowDerived(fs) {
   v = simNum(fs.sand_lbmmscf); if (v !== null) sd.lbPerMMscf = clamp(v, 0, 100);
   v = simNum(fs.sand_d50_um); if (v !== null) sd.d50_um = clamp(v, 20, 1000);
   v = simNum(fs.desRating_psi); if (v !== null) ds.rating_psi = (v === 5000 || v === 10000 || v === 15000) ? v : 10000;
-  v = simNum(fs.desAcc_gal); if (v !== null) ds.acc_gal = clamp(v, 10, 200);
+  // capacities: a value ≤ 0 counts as missing (default kept), as for surgeCap_bbl and the host's wtsClamp(gv(..) || def, …)
+  v = simNum(fs.desAcc_gal); if (v !== null && v > 0) ds.acc_gal = clamp(v, 10, 200);
   v = simNum(fs.sithp_psig); if (v !== null) ds.sithp_psig = clamp(v, 100, 20000);
-  v = simNum(fs.surge2Cap_bbl); if (v !== null) s2.cap_bbl = clamp(v, 20, 500);
+  v = simNum(fs.surge2Cap_bbl); if (v !== null && v > 0) s2.cap_bbl = clamp(v, 20, 500);
   o.sand = sd; o.desander = ds; o.surge2 = s2;
   return o;
 }
@@ -1294,6 +1295,13 @@ function create(flowIn, opts) {
   var Q_SEP = ['PSH_SEP', 'PSL_SEP', 'LSHH_SEP', 'LSH_SEP', 'LSLL_SEP', 'GAS_BLOWBY', 'ISHH_SEP', 'CARRYOVER', 'OIL_IN_WATER'];
   var Q_SURGE = ['LSHH_SURGE', 'LSLL_SURGE', 'PUMP_STARVED', 'PUMP_BLOCKED', 'LAH_SURGE_BOTH', 'XFER_FAIL', 'XFER_LOW_DP'];
   var Q_GAUGE = ['LAH_GT', 'LAH_GT_BOTH', 'PUMP_FAIL'];
+  // v1.4.0 quiet lists (§4.8, §5.5; = tests/_wts-equip-shapes.js Q_DES / Q_SAND / Q_SURGE2). Declared by WP-E0; WP-E1 / WP-E2
+  // use them in their own sections (desRig / desDerive, surge2Rig) and add their MSG entries there (MSG.<id> = function …)
+  var Q_DES = ['DES_DP_HIGH', 'DES_DP_LOW', 'DES_LAH', 'DES_LAHH', 'DES_DUMP_FAIL', 'DES_RATING', 'DES_PSHH', 'DES_RATE',
+    'HYD_desander', 'HYD_dsAcc', 'HYD_dsBleed'];
+  var Q_SAND = ['SAND_CHOKE', 'SAND_SEP'];
+  var Q_SURGE2 = ['PSHH_SURGE2', 'PSH_SURGE2', 'PSV_SURGE2', 'LSHH_SURGE2', 'LSLL_SURGE2', 'XFER2_DRYRUN', 'XFER2_FAIL',
+    'XFER2_LOW_DP', 'LAH_SURGE_ALL'];
   // separator dumps blocked: both XV-201 shut (surge tank in line) or both XV-301 shut (V-101 → T-301 direct)
   function surgeBlocked() {
     var blk = rSep && (rSurge ? (!uv[0] && !uv[1]) : (rGauge && pumpBlocked));
@@ -1872,7 +1880,7 @@ function create(flowIn, opts) {
     // rig-up: effective items (esd / choke always true), explanatory notes, signature ('1' per RIG_KEYS item in line)
     // full = every core item in; extras = optional items in (sig: 10 characters, RIG_KEYS order)
     rigup: { esd: true, choke: true, heater: true, separator: true, surge: true, gauge: true, pump: true, flare: true, desander: false, surge2: false,
-      full: true, sig: '1111111100', notes: [], extras: [], v: 0 },
+      full: true, sig: '1111111100', notes: [], extras: [], refused: '', v: 0 },
     cum: { oilIn_stb: 0, waterIn_bbl: 0, gasIn_mmscf: 0, flare_mmscf: 0, flash_mscf: 0, gaugeFlash_mscf: 0, gaugeVent_mscf: 0, vacBreak_scf: 0,
       gaugeOil_stb: 0, gaugeWater_bbl: 0, drainedOil_stb: 0, drainedWater_bbl: 0,
       liquidToFlareOil_stb: 0, liquidToFlareWater_bbl: 0, spillOil_stb: 0, spillWater_bbl: 0 },
@@ -2097,6 +2105,7 @@ function create(flowIn, opts) {
       for (i = 0; i < RIG_KEYS.length; i++) ru[RIG_KEYS[i]] = RG.rig[RIG_KEYS[i]];
       ru.full = RG.full; ru.sig = RG.sig; ru.notes = RG.notes.slice(); ru.extras = RG.extras.slice(); ru.v = rigVersion;
     }
+    ru.refused = rigRefused ? rigRefusedNow() : '';
     // v1.4.0 optional items: snapshot blocks (static values while out; WP-E1 / WP-E2 fill the live ones)
     desRefresh(s); surge2Refresh(s);
     // faults
@@ -2427,7 +2436,14 @@ function create(flowIn, opts) {
     // v1.4.0 optional items (every RIG_KEYS item needs an entry: a missing one throws)
     desander: [TAGS.desander, 'out of the rig-up (well stream straight to the choke)', 'in line upstream of the choke'],
     surge2: [TAGS.surge2, 'out of the rig-up', 'in the rig-up (standby: XV-202 shut)'] };
-  var rigRefused = '';                            // last refused rig-up change (plain text), '' when none
+  // last refused rig-up change (plain text, '' when none) and the effective rig-up it asked for; the snapshot shows the note
+  // (rigup.refused) only while the same change would still be refused (§3.3: 38 shows it and disables T-202's switch)
+  var rigRefused = '', rigRefusedRig = null;
+  function rigRefusedNow() {
+    if (!rigRefused || !rigRefusedRig) return '';
+    var why = desRig('check', RG.rig, rigRefusedRig, null) || surge2Rig('check', RG.rig, rigRefusedRig, null);
+    return why ? String(why) : '';
+  }
   function setRigNow(partial) {
     if (!isPlainObj(partial)) return false;
     var req = {}, i, k, changed = false;
@@ -2443,12 +2459,12 @@ function create(flowIn, opts) {
     // request is left as it was, the refusal is logged and setRigup returns false
     var nr = normRigup(req).rig, why = desRig('check', old, nr, null) || surge2Rig('check', old, nr, null);
     if (why) {
-      rigRefused = String(why);
+      rigRefused = String(why); rigRefusedRig = nr;
       logEntry('event', 'RIGUP', null, '', 'Rig-up change refused — ' + rigRefused);
       emit('event', { type: 'event', t: X.t, msg: 'Rig-up change refused — ' + rigRefused, tag: '' });
       return false;
     }
-    rigRefused = '';
+    rigRefused = ''; rigRefusedRig = null;
     setRigReq(req); applyRig();
     var r = RG.rig, parts = [];
     for (i = 0; i < RIG_KEYS.length; i++) { k = RIG_KEYS[i]; if (old[k] !== r[k]) parts.push(RIG_TXT[k][0] + ' ' + RIG_TXT[k][r[k] ? 2 : 1]); }
@@ -2501,6 +2517,7 @@ function create(flowIn, opts) {
   //   desHist(i)                  histSample, always           dsAccFrac, dsDP, sandChoke at ring index i
   //   desBalance(op, o)           'zero' (o = cum), 'ref' (o = ref), 'err' → health.massErr.sand (§4.4)
   //   desRig(phase, old, r, parts) setRigNow: 'check' → refusal text ('' = allowed); 'apply' when DS-101 enters / leaves (§3.3)
+  //                               'check' must be pure: refresh re-runs it while a refusal is stored (snapshot rigup.refused)
   //   desFault(id, on)            setFault (sandFlowback clock, sand-off release)
   //   desCtl(src, initial)        setControls → ctl.desander {bypass, auto, sp}
   //   desDump(cmd) / desSet(o)    api.dumpDesander → {ok, msg} / api.setDesander → bool
@@ -2557,6 +2574,7 @@ function create(flowIn, opts) {
   //   surge2Inv(op, o)            'oil' / 'water' / 'gas' → T-202 inventory (STB / bbl / scf; in every balance, §5.7);
   //                               'zero' (o = cum), 'ref' (o = ref)
   //   surge2Rig(phase, old, r, parts) setRigNow: 'check' → refusal text ('' = allowed); 'apply' when T-202 enters / leaves (§3.3)
+  //                               'check' must be pure: refresh re-runs it while a refusal is stored (snapshot rigup.refused)
   //   surge2Ctl(src, initial)     setControls → ctl.surge2 {inlet, auto, sp, hyst, strokeS} (prefs precedence §3.3)
   //   surge2Valve(open, isAuto)   setValve('surge2', 0, open) → bool;  surge2Route(mode) → {ok, msg};
   //   surge2Auto(on, o) / surge2Opts(o)  setAutoDivert / setValveOptions ('surge2') → bool

@@ -347,6 +347,44 @@ module.exports = [
     },
   },
   {
+    name: 'WTSEQ E0 review fixes: rigup.refused shows a refused T-202 removal only while it still applies; a capacity ≤ 0 keeps the default',
+    wp: WP,
+    opts: false,
+    run(app, assert) {
+      // a working engine whose T-202 'check' hook refuses removal while R.on (stands in for the WP-E2 rule of §3.3)
+      const hook = "function surge2Rig(phase, old, r, parts) { return ''; }";
+      const src = strip31(fs.readFileSync(path.join(BUILD_DIR, '31-wts-sim.js'), 'utf8'));
+      assert.strictEqual(src.split(hook).length, 2, '31 still has the WP-E0 surge2Rig stub (update this test when WP-E2 fills it)');
+      const R = { on: true, note: X.RIG_NOTES.surge2OnlyRouteRefused };
+      const S = X.loadEngine(src.replace(hook, "function surge2Rig(phase, old, r, parts) { return phase === 'check' && old.surge2 && !r.surge2 && __eqR.on ? __eqR.note : ''; }"), { __eqR: R });
+      const sim = S.create(S.SAMPLE_FLOW, { seed: 3, rigup: { surge2: true } });
+      let st = sim.getState();
+      assert.strictEqual(st.rigup.refused, '', 'nothing refused yet');
+      assert.ok(X.checkShape('rigup', J(st.rigup), { strict: true }).ok, 'rigup shape: ' + X.checkShape('rigup', J(st.rigup)).errors.join('; '));
+      const log = []; sim.on('event', (p) => log.push(p.msg));
+      assert.strictEqual(sim.setRigup({ surge2: false }), false, 'refused → false');
+      st = sim.getState();
+      assert.ok(st.rigup.surge2 === true && st.rigup.refused === R.note, 'refused note in the snapshot: ' + st.rigup.refused);
+      assert.ok(log.some((m) => m.indexOf(R.note) >= 0), 'refusal logged / emitted');
+      R.on = false; sim.advance(1);                           // the condition stops applying (e.g. a T-201 inlet opened); next refresh
+      assert.strictEqual(sim.getState().rigup.refused, '', 'note gone once the change would be accepted');
+      R.on = true; sim.setRigup({ surge2: false });
+      assert.strictEqual(sim.getState().rigup.refused, R.note);
+      R.on = false; assert.strictEqual(sim.setRigup({ surge2: false }), true, 'accepted');
+      R.on = true; st = sim.getState();
+      assert.ok(st.rigup.surge2 === false && st.rigup.refused === '', 'an accepted change clears the note');
+      // fixture helper
+      const f = X.fakeEquipSnapshot(null, { surge2: true, refused: true });
+      assert.ok(f.rigup.refused === R.note && X.fakeEquipSnapshot(null, { refused: true }).rigup.refused === '', 'fakeEquipSnapshot refused option (T-202 in only)');
+      // §6.3 capacities: a typed 0 / negative is missing (default kept), as surgeCap_bbl and the host's wtsClamp(gv(..) || def, …)
+      const W = X.loadEngine('work');
+      const cfgA = W.create(W.flowFromInputs({}, { desAcc_gal: 0, surge2Cap_bbl: -3 }), { seed: 1 })._internal().cfg;
+      assert.deepStrictEqual([cfgA.desander.acc_gal, cfgA.surge2.cap_bbl], [50, 100], 'capacity ≤ 0 → default');
+      const cfgB = W.create(W.flowFromInputs({}, { desAcc_gal: 5, surge2Cap_bbl: 1 }), { seed: 1 })._internal().cfg;
+      assert.deepStrictEqual([cfgB.desander.acc_gal, cfgB.surge2.cap_bbl], [10, 20], 'small positive → lower bound');
+    },
+  },
+  {
     name: 'WTSEQ E0 contract: the real snapshot matches _wts-equip-shapes (new blocks, nodes, lines, faults, history, NULLABLE, controls, DEFAULTS, SAMPLE_FLOW.sim, stepFor, API stubs)',
     wp: WP,
     run(app, assert) {

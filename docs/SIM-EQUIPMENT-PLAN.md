@@ -167,7 +167,10 @@ the `null`/`undefined` restore in `setRigNow` (L2268: null → the item's defaul
      line-up made before the vessel is disconnected, as T-202 entering snaps XV-202 shut), except a compartment at LSHH-201;
      log `event` / `ROUTE` 'XV-201A/B opened: T-202 left the rig-up'. If neither compartment can open, **refuse** the change
      (`setRigup` returns false; note 'T-202 is the only open route and T-201 cannot take the dumps (LSHH-201): open a T-201 inlet
-     first.'). 38 shows the note and disables T-202's switch with that reason while it applies.
+     first.'). 38 shows the note and disables T-202's switch with that reason while it applies. **Snapshot path (WP-E0
+     review):** `rigup.refused` — `''`, or the note of the last refused `setRigup` while the same change would still be refused
+     (re-checked through the `check` hooks on every refresh while a refusal is stored; cleared by the next accepted change).
+     The refusal is also logged (`event` / `RIGUP`) and emitted as an `'event'`; views read only `rigup.refused`.
   2. Release the latched act alarms explicitly (`quiet()` skips alarms with `act`): `XFER2_DRYRUN`, `LSHH_SURGE2`.
   3. `quiet(Q_SURGE2)` once (§5.5), so a `PSHH_SURGE2` / `LSHH_SURGE2` active at removal can never block the ESD reset.
 - **DS-101 leaving**: abort a running or held dump (phase → idle; the buffer moves into the accumulator by the capped rule of
@@ -584,6 +587,8 @@ surge2: { cap_bbl: 100, D_ft: 6, Psp: null, psh: null, pshh: null, mawp: null, l
 | `sithp_psig` | `desander.sithp_psig` | `wts_SITHP` "Max shut-in wellhead pressure (psig)" — blank = estimated (1.2 × WHP), shown as such | blank, or 100–20,000 | null |
 | `surge2Cap_bbl` | `surge2.cap_bbl` | `wts_surge2Cap` "Surge tank 2 capacity (bbl)" | 20–500 | 100 |
 
+Capacities (`desAcc_gal`, `surge2Cap_bbl`): a value ≤ 0 counts as missing in `flowDerived` (default kept), as v3.3's
+`surgeCap_bbl` and the host rule below (0 / blank → default); a small positive value is clamped up to the lower bound.
 Host: `wtsClamp(gv(..) || def, lo, hi)` as for `wts_surgeCap` (host L126668); `wts_SITHP` is clamped only when not blank (the
 wts3d host calc runs in a stub DOM). Engine `flowDerived` (L322-331): `isFin` plus the same clamp for the seven keys (an
 `Infinity` typed as `1e400` never gets through). `SAMPLE_FLOW.sim` gains the seven keys with the default values (shape-equality
@@ -614,7 +619,7 @@ nodes.desander: { tag:'DS-101', P (outlet = choke inlet = X.PB), Pin (= X.PBu), 
 nodes.surge2:   { P, T }
 nodes.esd.P     = X.PBu when DS-101 is in (else X.PB, as today) — continuous across PD steps;  nodes.choke.Pin = X.PB (unchanged);
                   segs[1].P0 = nodes.esd.P
-rigup:          + desander, surge2, extras[]            (sig 10 characters)
+rigup:          + desander, surge2, extras[], refused ('' | note, §3.3)    (sig 10 characters)
 health.massErr: + sand
 faults:         + 8 keys (object keyed by FAULT_IDS)
 ```
@@ -670,12 +675,25 @@ builders use before the engine lands. The engine's real snapshot is checked agai
   substep, 57,959 substeps per 4 h; `processAlarms` and `chooseH` run every substep. Run-to-run noise on unchanged code
   (`simeq/perf-noise.js`): 348–872 ms in one process, medians of runs 1–5 vs 6–10 differing by 19–29 % — a "median of 5 before
   and after" cannot resolve a 2 % change.
+- **Method actually used (WP0 / WP-E0 review; supersedes the single-process description below):** `wts-sim-perf.js` runs
+  `--rounds` (default 7) fresh child processes; each loads **two** vm contexts per engine (alternated pair by pair; the load order
+  of the two engines alternates with the round), 2 warm-ups per context, then ≥ 10 interleaved A/B pairs of 4 h at dt 10 on
+  `SAMPLE_FLOW` (seed 14). Gate values: **minRatio = median over the rounds of the per-round ratio of minima**, **medianRatio =
+  median of all per-pair ratios pooled over the rounds**; both ≤ 1.05. A/A noise on unchanged code (2026-11-01, 4-core box under
+  load): one process with one context per engine gave min ratios 0.88–1.27 (a context can be unlucky in what the JIT makes of
+  it); per-round min ratios with two contexts 0.80–1.17; the two gate values stayed within about ±0.03 of 1 with 7 rounds.
+  WP-E0 measured 1.022 / 1.013 (review run), so E1 + E2 together have only about 3 % headroom on the default spread:
+  **WP-E1 and WP-E2 each re-run the gate** before handing over, and the lead re-runs it after each merge (§10.4). The both-in
+  ≤ 1.4 check times the stub bodies until E1 / E2 land (≈ 1.0 at WP-E0): it is meaningful only from WP-E1 / WP-E2 onwards.
 - **Gate (default spread: both out, sand 0): new / v3.3 ≤ 1.05**, measured by the new tool `prism-build/wts-sim-perf.js` (WP0):
   it loads the frozen v3.3 engine `tests/_wts-sim-v33.js` and the working `31-wts-sim.js` into two vm contexts in one process,
   discards 2 warm-up runs of each, then runs ≥ 10 interleaved A/B pairs of 4 h at dt 10 on `SAMPLE_FLOW` (seed 14) and compares
   both the ratio of the minimum times and the median of the per-pair ratios (exit 1 if either > 1.05). Backed by a code-review
   check that every new per-substep block sits behind `rDes`, `rSurge2` or `sandOn` (only three predictable branches on the hot
-  path; new alarm groups, event location and history keys behind the same flags).
+  path; new alarm groups, event location and history keys behind the same flags). **Accepted deviation (WP-E0 review):** the
+  history hooks `desHist(i)` / `surge2Hist(i)` run on every history sample whatever the rig-up and write 0 while the item is
+  out, so the ring never holds stale entries after a removal. They run once per history sample (`histDt`), not per substep, and
+  cost nothing measurable; no gating or transition zero-fill is needed.
 - **Both in, flow-back on:** ratio of minima against the default spread in the same context ≤ 1.4 (same tool; no absolute
   millisecond budget, which a cold vm or a slow CI box would break).
 - Bundle and startup: `node prism-build/perf-budget.js` (bundle ≤ baseline × 1.10, startup ratio) at WP-I; re-record the
@@ -906,17 +924,19 @@ Modbus variables for T-202 / DS-101: follow-up (§1.2).
 | `wts3d-test.js` valve proxies | + `valve:surge2:0`, `dump:desander`, `bypass:desander` | 3D |
 | `wts3d-test.js` L298, L304 | 3D sig default `'11111100'`, `RIG_GROUPS` join, `'110101'` → `'11010100'` | 3D |
 | `wts3d-test.js` L315 | `STEP` pins unchanged + `WTS_sim.stepFor` check (the four combinations of §3.5) | E0 (31) / 3D / L |
-| `wts3d-test.js` L572-573 | "38 liveNodes(real) → **10** calc-shaped nodes with finite P/T" (`n.length === 10`) | L |
+| `wts3d-test.js` L572-573 | "38 liveNodes(real) → **10** calc-shaped nodes with finite P/T" (`n.length === 10`) | ~~L~~ **E0** (done in `43d6b16`: the 38 foundation's `NODE_KEYS` made liveNodes return 10) |
 | `wts3d-test.js` liveNodes / liveSegs names | `…\|Surge Tank\|Atm Tank\|Desander\|Surge Tank 2`, length 10; segs 6 | L |
 | `wts3d-test.js` L473 | `rigItems().length === 10`; persistence: default request = no key; optional-only request stored | E0 (38 foundation) |
 | `wts3d-test.js` host patch | `SAMPLE_FLOW` shape incl. `sim` keys; `runHostCalc` defaults for the 7 inputs; done markers | 2D |
 | 31 self-tests 13, 26, 14 | 20 line names, segs 6; rig combos `{desander:true}`, `{surge2:true}`, `{surge2:true, surge:false}` (rule), balances, no trip; test 14 best of 2 | E0 (+E1/E2 add their combos) |
 | 32 self-tests #6, #11, #13 | normalize defaults (no NaN with 10 nodes), fakeSnapshot schema / NULLABLE, framing | 3D |
-| 38 self-test #5 | `n.length === 10`, names | L |
+| 38 self-test #5 | `n.length === 10`, names | ~~L~~ **E0** (done in `43d6b16`, same reason) |
 | `tests/wts-rigup.test.js` L100, L112, L118, L242, L250 | RIG_KEYS list (10); default `full`, empty notes, sig `'1111111100'`; live view test adds the two switches; "T-201 out forces T-202 out (note) and the dumps go to T-301"; default card shows 'Full rig-up' with the button disabled | E0 / L |
 | `tests/wts-v31.test.js` L176 | card list + `'desander','surge2'`; assert `desander:ds-dump\|` pressed | L |
+| `tests/wts-v31.test.js` rig-up switch loop (L243-253) | optional switches start out: toggle in, then back (`!was` / `was`) | **E0** (done in `43d6b16`: the foundation's optional switches broke the "toggle out" pin) |
 | `tests/sweep-fixes-v31.test.js` (SWEEP31 Metric) | new canvas texts convert; row label substring kept | L / 2D |
 | `tests/wts-divert*.test.js` | re-run; `bx` offsets unchanged in every variant | 2D |
+| `tests/wts-divert.test.js` exact `getControls()` shape (L241-246) | + `surge2`, `desander` defaults | **E0** (done in `43d6b16`: new controls keys) |
 | `tests/ios-native.test.js` | passes once the version stamps are the release version | lead |
 
 ### 9.2 New tests and tools
@@ -1035,6 +1055,30 @@ and Tanks views, labels All / Equipment, each of the 4 optional combinations × 
 | **WP-I** integration + release | lead | all | merge on `sim-equip`, Round-7 rebuild, engine-backed view tests, full suite, perf, GUI sweep, browser checks, release items (§11), docs; then merge `sim-equip` → `Dev` | §10.5 all green |
 
 Builders A and B can be the same person (E1 then E2) if only one engine builder is available; the plan then loses about one day.
+
+**Hook signatures as built by WP-E0 (confirmed by the lead; these replace the names in the WP-E0 row above).** The section
+headers in `31-wts-sim.js` list each hook with its call site; E1 / E2 fill the bodies and keep the signatures.
+- Shared by both: `desDerive()` / `surge2Derive()`, `desInit()` / `surge2Init()`, `surge2Limits(h)`, `desStep(h, fEn)` /
+  `surge2Step(h)`, `desAlarms()` / `surge2Alarms()`, `desRefresh(s)` / `surge2Refresh(s)`, `desHist(i)` / `surge2Hist(i)`,
+  `desInternal(o)` / `surge2Internal(o)`.
+- `desChooseH(c)` / `surge2ChooseH(c)`: both receive one shared object `c = {h, te}` per `chooseH` call (step cap and time to
+  the next event) and may only lower `c.h` / `c.te`.
+- Balances by op code: `desBalance(op, o)` (`'zero'` o = cum, `'ref'` o = ref, `'err'` → `health.massErr.sand`);
+  `surge2Inv(op, o)` (`'oil'` STB / `'water'` bbl / `'gas'` scf inventory in every balance; `'zero'`, `'ref'`).
+- Rig-up by phase: `desRig(phase, old, r, parts)` / `surge2Rig(…)` — `'check'` returns the refusal text (`''` = allowed, before
+  anything changes); `'apply'` runs when the item enters / leaves and may push to `parts` (§3.3).
+- API hooks (added by WP-E0, not in the first list): `desFault(id, on)`, `desCtl(src, initial)`, `desDump(cmd)` → `{ok, msg}`,
+  `desSet(o)` → bool; `surge2Valve(open, isAuto)` → bool, `surge2Route(mode)` → `{ok, msg}`, `surge2Auto(on, o)` → bool,
+  `surge2Opts(o)` → bool, `surge2Ctl(src, initial)`.
+- Constants: `Q_DES`, `Q_SAND`, `Q_SURGE2` are declared by WP-E0 next to `Q_SEP` / `Q_SURGE` / `Q_GAUGE` (equal to the fixture
+  lists). The alarm **MSG** texts of the new alarms are not constants: each package adds its own entries inside its own section
+  (`MSG.DES_DP_HIGH = function (v, l) { … };` as a statement in the section, which runs after `MSG` is created). Any other new
+  constant goes to the lead (§10.2).
+
+**Exit items (tracked; the package does not finish until it is gone):**
+- WP-3D removes the interim allowance in `wts3d-test.js` that lets 32's `NULLABLE` copy lack the three new paths (§6.10).
+- WP-2D removes the interim allowance in `wts3d-test.js` that lets the host `flow.sim` lack the seven new keys (§6.3).
+Both are marked in the code ("interim allowance").
 WP-L and WP-2D no longer depend on each other (the `noSurge` refactor is dropped).
 
 ### 10.2 File ownership
@@ -1064,6 +1108,13 @@ WP-L and WP-2D no longer depend on each other (the `noSurge` refactor is dropped
   Round 7 in memory from 31/32/38, so they test with `node prism-build/accept-test.js --sources` (and `opts.sourceOverrides` work
   for 31/32/38) and `node prism-build/wts3d-test.js`. **Until WP0 has merged, the only valid gate for 31/32/38 changes is
   `wts3d-test.js`** (`--sources` would run the v3.3 copies injected in the HTML).
+- **On `sim-equip` until the WP-I rebuild, the gate is `accept-test.js --sources` plus `wts3d-test.js` (and `wts-sim-perf.js`
+  for 31).** `--html` loads the committed HTML, whose Round 7 is still v3.3, so `--html --integration --grep WTS` fails the E0 /
+  WTSRIG tests and the WTSDV persistence test by design (8 of 81 at WP-E0); the CLAUDE.md `--html` gate applies again after WP-I.
+- WP-E0 also edited test lines owned by WP-L and WP-2D (§9.1, marked E0). WP-L and WP-2D branch from `sim-equip` at or after
+  WP-E0 (`43d6b16`) and its review fixes, or rebase on it before they start.
+- Advance `sim-equip` only from the worktree that has it checked out (`git merge --ff-only <wp-branch>` there). Never move it
+  with `update-ref` / `branch -f` while another worktree has it checked out: that worktree's index then undoes the move.
 - View builders code against `_wts-equip-shapes.js` / `fakeEquipSnapshot` and the recording stub sim; nothing may depend on
   engine internals (`_internal`).
 - ES5 style as the existing files (`var`, `function`; no `??`, `?.`, `=>`; no `let` / `const` in 31/32).

@@ -355,7 +355,9 @@ var EXAMPLES = {};
 
 var EX_LINE = { q: 0, unit: 'BPD', frac: 0, vel: 0, ID_in: 3.068, phase: 'liquid', active: false };
 var EX_RIGUP = { esd: true, choke: true, heater: true, separator: true, surge: true, gauge: true, pump: true, flare: true,
-  desander: false, surge2: false, full: true, sig: SIG_DEFAULT, notes: [], extras: [], v: 1 };
+  desander: false, surge2: false, full: true, sig: SIG_DEFAULT, notes: [], extras: [], refused: '', v: 1 };
+// rigup.refused (§3.3, added after WP-E0 review): '' or the note of the last refused setRigup while the same change would still
+// be refused (RIG_NOTES.surge2OnlyRouteRefused for T-202); 38 shows it and disables T-202's switch with that reason
 
 // ─── checkShape (§6.4) ───────────────────────────────────────────────────────
 // Templates: a number accepts a finite number (or null when the template value is null — the NULLABLE paths); a string is
@@ -426,7 +428,8 @@ function checkShape(name, obj, opts) {
 
 // ─── fakeEquipSnapshot (§6.11) ───────────────────────────────────────────────
 // base: any snapshot-like object (a real v3.3 getState(), 32's fakeSnapshot(), or null for a bare skeleton); it is deep-copied
-// and never modified. o: { desander:bool, surge2:bool, sand:bool (default = desander), flushing:bool, held:bool, heldFrom }.
+// and never modified. o: { desander:bool, surge2:bool, sand:bool (default = desander), flushing:bool, held:bool, heldFrom,
+// refused:bool (T-202 in: rigup.refused = RIG_NOTES.surge2OnlyRouteRefused) }.
 // Result: every §6.4 path present and consistent (nodes.esd.P = desander.Pin when DS-101 is in; choke inlet unchanged),
 // six new lines, eight new fault keys, health.massErr.sand, rigup.desander / surge2 / extras / 10-character sig.
 function num(v, d) { return (typeof v === 'number' && isFinite(v)) ? v : d; }
@@ -450,6 +453,7 @@ function fakeEquipSnapshot(base, o) {
   ru.sig = RIG_KEYS.map(function (k) { return ru[k] ? '1' : '0'; }).join('');
   ru.full = RIG_KEYS_V33.every(function (k) { return ru[k]; });
   if (!Array.isArray(ru.notes)) ru.notes = [];
+  ru.refused = (uIn && o.refused === true) ? RIG_NOTES.surge2OnlyRouteRefused : (typeof ru.refused === 'string' && uIn ? ru.refused : '');
   if (typeof ru.v !== 'number') ru.v = 1;
   s.rigup = ru;
   // desander
