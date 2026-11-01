@@ -2246,9 +2246,13 @@
                 if (i >= cases.length) return { done: true, progress: 1, label: '' };
                 var c = cases[i];
                 try {
-                    // one work unit per step: the case is generated through synth.generateJob (§3.9), then analysed
+                    // one work unit per step: the case is generated through synth.generateJob (§3.9), then analysed.
+                    // The check repeats the calibration run exactly (buildup-validate.js --lite): the lite case
+                    // (60 s sampling, ≤ 30 days), the generator's own AnalysisInput (synth.toInput: its history,
+                    // zones, allocation resolution and the default settings, not the page's) and synth.scoreAnalysis
+                    // (the test matched to the true closing within 1 h).
                     if (!sub) {
-                        var spec = S.caseFromSeed(c.seed);
+                        var spec = S.caseFromSeed(c.seed, { lite: true });
                         sub = { gen: typeof S.generateJob === 'function' ? S.generateJob(spec) : null, spec: spec, sc: null, job: null };
                         if (!sub.gen) sub.sc = S.generate(spec);
                         if (sub.gen) return { done: false, progress: i / cases.length, label: 'Case ' + (i + 1) + ': generating' };
@@ -2261,20 +2265,20 @@
                         return { done: false, progress: i / cases.length, label: 'Case ' + (i + 1) + ': generated' };
                     }
                     if (!sub.job) {
-                        var sc = sub.sc;
-                        sub.job = R.job({ record: sc.record, stored: null, allocation: sc.allocation ? { rows: sc.allocation.rows, gUnit: 'Mscf', resolution: { oil: null, gas: null, water: null } } : null,
-                            rateTable: sc.rateTable || null, well: sc.well, completion: null, depth: null, history: { mode: 'unknown', date: null, cum: null },
-                            zones: { gauge: { mode: 'utc' }, day: { zone: { mode: 'utc' }, startHour: 0 } }, settings: gather().input.settings, overrides: [], workovers: [],
-                            meta: { wellName: 'Check case', engineer: '', appVersion: _appVer() } }, {});
+                        var inp = S.toInput(sub.sc, { appVersion: _appVer() });
+                        inp.meta.wellName = 'Check case';
+                        sub.job = R.job(inp, {});
                     }
                     var st = sub.job.step();
                     if (st.done) {
-                        var an = sub.job.result(), tr = sub.sc.truth || {}, best = null;
-                        (an && an.tests || []).forEach(function (t) { if (!best || Math.abs(t.tc_ms - tr.tc_ms) < Math.abs(best.tc_ms - tr.tc_ms)) best = t; });
-                        var sco = best ? S.score(best, tr, {}) : null, ex = c.expect || {};
+                        var an = sub.job.result(), m = S.scoreAnalysis(an, sub.sc), sco = m ? m.score : null, ex = c.expect || {};
                         var lab = sco && sco.label ? sco.label : {};
-                        var ok = !!sco && sco.status === ex.status && lab.ks === ex.ks && lab.headline === ex.headline;
-                        if (ok) same++; else if (_fin(c.margin) && c.margin < 0.1) near++; else diffs.push(String(c.seed));
+                        var ok = !!sco && sco.status === ex.status && (lab.ks || null) === (ex.ks || null) && (lab.headline || null) === (ex.headline || null);
+                        // a difference whose recomputed evidence lies within the stored margin of a threshold is "near a
+                        // threshold" (§5.6), not a failure
+                        var ev = m && m.test && m.test.result ? m.test.result.evidence : null, AI = G.PRiSM_autoInterp;
+                        var mNow = (ev && AI && typeof AI.thresholdMargin === 'function') ? AI.thresholdMargin(ev, cal.thresholds) : null;
+                        if (ok) same++; else if (_fin(c.margin) && _fin(mNow) && mNow <= c.margin) near++; else diffs.push(String(c.seed));
                         done++; i++; sub = null;
                     }
                 } catch (e) { diffs.push(String(c.seed)); done++; i++; sub = null; }

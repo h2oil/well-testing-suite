@@ -2623,6 +2623,26 @@
                  outsideCalibration: !!ev.outsideEnvelope, calVersion: c ? (c.version || null) : null, calibrated: calibrated, ev: ['K1', 'K2'] };
     }
 
+    // thresholdMargin(ev, th) — the smallest normalised distance |v − t|/|t| of an evidence vector to any calibrated label
+    // threshold that applies to it (§5.6: the in-app cases and the benchmark seeds are chosen with margin ≥ 0.1, and a
+    // re-run that lands within its stored margin of a threshold is "near threshold", not a failure). th: the calibrated
+    // thresholds (PRiSM_autoInterpCal.thresholds); null or no evidence → 0. One implementation for buildup-validate.js,
+    // the page's 24-case check and the benchmark test.
+    function thresholdMargin(ev, th) {
+        if (!ev || !th) return 0;
+        var d = [];
+        function add(v, t) { if (_num(v) && _num(t) && t) d.push(Math.abs(v - t) / Math.abs(t)); }
+        add(ev.snrD, th.snrHigh); add(ev.snrD, th.snrLow); add(ev.sErr, th.sErrHigh); add(ev.sErr, th.sErrLow);
+        if (ev.grade === 'fair') add(ev.span, th.fairSpanHigh);
+        add(ev.pointSkinSpread, th.pointSkinSpread);
+        if (ev.agree === false) { add(_num(ev.dS) ? Math.abs(ev.dS) : null, th.disagreeDS); add(_num(ev.dkPct) ? Math.abs(ev.dkPct) : null, th.disagreeKPct); }
+        if (_num(ev.dteEnd_h) && _num(ev.t10_h) && ev.t10_h > 0) add(ev.dteEnd_h / ev.t10_h, th.reachFactor);
+        if (ev.kHeld) add(ev.kHeldRmsRatio, th.kHeldRmsK);
+        if (_num(ev.r3)) add(Math.abs(ev.r3 - 1) * 100, th.rateTolPct);
+        if (_num(ev.dBicChosen) && ev.chosenKey && ev.chosenKey !== 'homogeneous') add(Math.abs(ev.dBicChosen), th.tauBic);
+        return d.length ? Math.min.apply(null, d) : 1;
+    }
+
     // ─────────────────────────────────────────────────────────────────────
     // p* range, p_ext, k-held, background check
     // ─────────────────────────────────────────────────────────────────────
@@ -3269,6 +3289,7 @@
     AI.sensitivity = sensitivity;
     AI.storedSensitivity = storedSensitivity;
     AI.confidence = confidence;
+    AI.thresholdMargin = thresholdMargin;
     AI.rinv = rinv;
     AI.compactHistory = compactHistory;
     AI.gasTable = gasTable;
