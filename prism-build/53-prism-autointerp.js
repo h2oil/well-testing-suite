@@ -2617,7 +2617,10 @@
         var rates = null;
         if (c && Array.isArray(c.ksTable) && Array.isArray(c.table)) {
             var a = c.ksTable.filter(function (r) { return r.label === ks; })[0], bRow = c.table.filter(function (r) { return r.label === headline; })[0];
-            if (a && bRow) rates = { ks: { rate: a.right, lo: a.lo, hi: a.hi }, headline: { rate: bRow.fullyRight, lo: bRow.lo, hi: bRow.hi } };
+            // quoted at the stored precision (STORE_SF), so a stored result's confidence re-derives exactly from its evidence
+            // once file 55 carries calibrated rates (EN23)
+            var q = function (v) { return _num(v) ? _sfRound(v, STORE_SF) : (v === undefined ? null : v); };
+            if (a && bRow) rates = { ks: { rate: q(a.right), lo: q(a.lo), hi: q(a.hi) }, headline: { rate: q(bRow.fullyRight), lo: q(bRow.lo), hi: q(bRow.hi) } };
         }
         return { ks: ks, model: model, headline: headline, stage: ev.stage === 'final' ? 'final' : 'pass1', reasons: reasons, rates: rates,
                  outsideCalibration: !!ev.outsideEnvelope, calVersion: c ? (c.version || null) : null, calibrated: calibrated, ev: ['K1', 'K2'] };
