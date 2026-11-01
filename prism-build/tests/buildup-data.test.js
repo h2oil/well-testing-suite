@@ -10,6 +10,7 @@
 //   DA17 gate substeps   DA18 manual events   DA19 day-rate steps (no event, nothing swallowed)   DA20 precursor of a closing
 //   DA21 bound on an unconfirmed event   DA22 data end (hours check, zero day)   DA23 R3 sides   DA24 interventions
 //   DA25 inputs never written   DA26 slow reopening, flowing closing day without volume
+//   DA27 precursor at 10-min sampling (the split leaves a 100-min flowing-trend window)   DA28 table closing ramp
 //
 // Synthetic records come from the small analytic generator below (homogeneous reservoir with wellbore storage and skin,
 // superposed over the rate steps), not from WP4's generator. Every test checks the §3 shapes of what it produces.
@@ -766,6 +767,49 @@ module.exports = [
       assert.strictEqual(s2.status, 'analysable');
       assert.rel(res.rates.byEvent[s2.id].Dq, 560, 0.1, 'Δq = the rate left after the cut (560 STB/d)');
       res.events.forEach((x) => shapeOk(assert, 'Event', x, x.id));
+    },
+  },
+  {
+    name: 'DA27 precursor at 10-min sampling (WP8): the split leaves a 100-min flowing-trend window, so the closing comes 2–3 h after the precursor ends; the precursor is still gated by derivRatio and the closing\'s Δq is the rate the cut left',
+    wp: WP,
+    run(app, assert) {
+      const D = Dof(app), d = (n, h) => T0 + n * DAY + (h || 0) * HOUR;
+      const evs = [{ t_ms: d(2, 9), dur_h: 30 }, { t_ms: d(6, 9), dur_h: 36, f: 0.3 }, { t_ms: d(6, 15), dur_h: 30, f: 0.7 }];
+      const g = makeRecord({ start_ms: T0, days: 10, sample_s: 600, events: evs, sigma: 0.02, sigmaFlow: 0.05, seed: 27 });
+      const rec = record(D, g), res = scan(D, rec, allocFromSteps(g, { start_ms: T0, days: 10 }));
+      assert.strictEqual(res.events.length, 3, 'reference, precursor, shut-in: ' + res.events.map((e) => e.id + ':' + e.kind + '/' + e.status).join(', '));
+      const p = res.events[1], s2 = res.events[2];
+      assert.ok(codes(p.warnings).includes('END_AT_RISE'), 'precursor ends at the sharper rise');
+      assert.ok(s2.tc_ms - p.tEnd_ms > 2 * HOUR, 'the closing comes more than 2 h after the precursor ends at 10-min sampling (' + ((s2.tc_ms - p.tEnd_ms) / HOUR).toFixed(2) + ' h)');
+      assert.strictEqual(p.fhatMethod, 'derivRatio');
+      assert.within(p.fhat, 0.22, 0.38, 'precursor f̂ (true 0.3)');
+      assert.strictEqual(p.kind, 'partial'); assert.strictEqual(p.status, 'partial');
+      assert.strictEqual(p.rateEnd_ms, s2.tc_ms, 'the cut lasts until the closing');
+      assert.strictEqual(s2.status, 'analysable');
+      assert.rel(res.rates.byEvent[s2.id].Dq, 560, 0.1, 'Δq = the rate left after the cut (560 STB/d), not the rate before it');
+      res.events.forEach((x) => shapeOk(assert, 'Event', x, x.id));
+    },
+  },
+  {
+    name: 'DA28 table closing ramp (WP8): a choke-back logged row by row in the last minute before the tabled closing is one closing at t_c with Δq = the pre-ramp rate, whether t_c falls inside the ramp or after it',
+    wp: WP,
+    run(app, assert) {
+      const D = Dof(app), tz = T0 + 10 * HOUR, S10 = 10000;
+      const ramp = [0.9, 0.7, 0.5, 0.3, 0.1].map((f, i) => ({ t_ms: tz - 50000 + i * S10, q: Math.round(650 * f * 10) / 10 }));
+      const tab = [{ t_ms: T0, q: 650 }].concat(ramp, [{ t_ms: tz, q: 0 }, { t_ms: T0 + 30 * HOUR, q: 700 }, { t_ms: T0 + 50 * HOUR, q: 0 }]);
+      [tz - 25000, tz + 60000].forEach((tc) => {
+        const tt = D.rateTable(tab, { events: [ev('E1', tc, 20)], dtMed_s: 600 });
+        shapeOk(assert, 'RateHistory', tt);
+        assert.deepStrictEqual(J(tt.steps.map((s) => s.q)), [650, 0, 700, 0], 'the ramp rows are part of the closing (t_c ' + (tc - tz) / 1000 + ' s from the zero row)');
+        assert.strictEqual(tt.steps[1].t_ms, tc, 'the closing step sits at the refined t_c');
+        assert.strictEqual(tt.byEvent.E1.Dq, 650, 'Δq = the rate before the ramp, not the last ramp row (65)');
+        assert.strictEqual(tt.byEvent.E1.dqSource, 'table');
+      });
+      // a rate change well before the closing (outside the tolerance) is a step of its own, not a ramp
+      const tab2 = [{ t_ms: T0, q: 650 }, { t_ms: tz - 3 * HOUR, q: 500 }, { t_ms: tz, q: 0 }, { t_ms: T0 + 30 * HOUR, q: 700 }];
+      const t2 = D.rateTable(tab2, { events: [ev('E1', tz + 20000, 20)], dtMed_s: 60 });
+      assert.deepStrictEqual(J(t2.steps.map((s) => s.q)), [650, 500, 0, 700]);
+      assert.strictEqual(t2.byEvent.E1.Dq, 500, 'Δq = the rate before the closing');
     },
   },
   {
