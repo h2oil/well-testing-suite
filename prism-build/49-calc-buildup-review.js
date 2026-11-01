@@ -2263,7 +2263,7 @@
             var m = c.an.missed;
             if (!m) return _ans('No detection result is available.', {}, ['D1'], 'partial');
             var tpl = 'Detection found {ne} events ({nt} build-up tests); too short: {ns}; suspected interventions: {ni}. Sub-threshold steps ({nsub}), allocation-only days ({nal}) and gaps ({ng}) could hide shut-ins. ';
-            tpl += (m.detectability && m.detectability.ok === false) ? 'Full shut-ins may be missed: p* − pwf ({d}) is less than twice the rise threshold ({ts}).' : 'Full shut-ins are detectable (p* − pwf {d} against the rise threshold {ts}).';
+            tpl += (m.detectability && m.detectability.ok === false) ? 'Full shut-ins may be missed: |p* − pwf| ({d}) is less than twice the rise threshold ({ts}).' : 'Full shut-ins are detectable (|p* − pwf| {d} against the rise threshold {ts}).';
             return _ans(tpl, { ne: c.V('D1', 'nEvents'), nt: c.V('D1', 'nTests'), ns: c.V('D1', 'nTooShort'), ni: c.V('D1', 'nInterventions'), nsub: c.V('D1', 'nSub'), nal: c.V('D1', 'nAllocOnly'),
                                ng: c.V('D1', 'nGaps'), d: c.V('D1', 'pStarMinusPwf_psi'), ts: c.V('D1', 'Ts_psi') }, ['D1'], 'full', ['How long should the shut-in be?']);
         }),
@@ -2453,7 +2453,7 @@
         if (an.rates && an.rates.offsetScan && an.rates.offsetScan.better) b.push(_verdict('warn', '⚠ The offset scan prefers {best} h over the current {cur} h: check the gauge and production-day zones.', { best: c.V('R3', 'best_h'), cur: c.V('R3', 'current_h') }, ['R3']));
         var m = an.missed || {};
         var tpl = 'Detection found {ne} events; {ns} too short, {ni} suspected interventions, {nsub} sub-threshold steps, {nal} allocation-only days and {ng} gaps could hide shut-ins. ';
-        tpl += (m.detectability && m.detectability.ok === false) ? 'Full shut-ins may be missed: p* − pwf ({d}) is less than twice the rise threshold ({ts}).' : 'Full shut-ins are detectable (p* − pwf {d} against the rise threshold {ts}).';
+        tpl += (m.detectability && m.detectability.ok === false) ? 'Full shut-ins may be missed: |p* − pwf| ({d}) is less than twice the rise threshold ({ts}).' : 'Full shut-ins are detectable (|p* − pwf| {d} against the rise threshold {ts}).';
         b.push(_notes('Notes', tpl, { ne: c.V('D1', 'nEvents'), ns: c.V('D1', 'nTooShort'), ni: c.V('D1', 'nInterventions'), nsub: c.V('D1', 'nSub'), nal: c.V('D1', 'nAllocOnly'), ng: c.V('D1', 'nGaps'),
                                          d: c.V('D1', 'pStarMinusPwf_psi'), ts: c.V('D1', 'Ts_psi') }, ['D1']));
         return { id: 'S3', title: 'Events and rates', blocks: b };

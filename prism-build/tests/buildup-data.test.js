@@ -959,4 +959,48 @@ module.exports = [
       shapeOk(assert, 'RateHistory', rh);
     },
   },
+  {
+    name: 'DA29 DST fall-back (WP9): naive Europe/London 1-min times across 2026-10-25 01:00 read the repeated hour twice from the row order (241 rows, no duplicates, 1-min gaps, DST_REPEATED_HOUR warn); hourly rows and chunking agree; the zone caches are capped',
+    wp: WP,
+    run(app, assert) {
+      const D = Dof(app), zone = { mode: 'iana', tz: 'Europe/London' };
+      const start = Date.UTC(2026, 9, 24, 23);
+      const lon = new app.win.Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
+      const local = (ms) => { const f = {}; lon.formatToParts(new Date(ms)).forEach((x) => { f[x.type] = x.value; }); return f.year + '-' + f.month + '-' + f.day + 'T' + f.hour + ':' + f.minute + ':' + f.second; };
+      const rows = ['time,pressure'];
+      for (let i = 0; i <= 240; i++) rows.push(local(start + i * MIN) + ',' + (3000 + i).toFixed(1));   // 1 psi per real minute
+      assert.strictEqual(rows.filter((r) => /T01:00:00/.test(r)).length, 2, 'the probe shows 01:00 twice');
+      const r = D.parse(rows.join('\n'), { zone });
+      const t = r.record.t, p = r.record.p;
+      assert.strictEqual(r.record.n, 241, 'every row kept');
+      let maxGap = 0, dup = 0, off = 0;
+      for (let i = 1; i < t.length; i++) { maxGap = Math.max(maxGap, t[i] - t[i - 1]); if (t[i] === t[i - 1]) dup++; }
+      for (let i = 0; i < t.length; i++) if (t[i] !== start + i * MIN || p[i] !== 3000 + i) off++;
+      assert.strictEqual(dup, 0, 'no duplicate timestamps'); assert.strictEqual(maxGap, MIN, '1-min max gap');
+      assert.strictEqual(off, 0, 'every row on its real instant with its own pressure (no blended medians)');
+      const cs = codes(r.record.warnings);
+      assert.ok(!cs.includes('DUPLICATE_TIMES') && !cs.includes('UNSORTED'), 'no merge or sort: ' + cs.join(','));
+      const w = r.record.warnings.find((x) => x.code === 'DST_REPEATED_HOUR');
+      assert.ok(w && w.level === 'warn' && /60 were read as its second occurrence/.test(w.text), 'DST_REPEATED_HOUR warn: ' + (w && w.text));
+      { const sh = S.checkShape('GaugeRecord', r.record); assert.ok(sh.ok, 'GaugeRecord shape: ' + JSON.stringify(sh.errors.slice(0, 4))); }
+      const rc = D.parse(rows.join('\n'), { zone, chunkLines: 7 });
+      assert.deepStrictEqual(Array.from(rc.record.t), Array.from(t), 'chunked = one-shot across the change');
+      // hourly samples: 00:00 BST, 01:00 BST, 01:00 GMT, 02:00 GMT
+      const hr = ['time,pressure'];
+      for (let i = 0; i <= 4; i++) hr.push(local(start + i * HOUR) + ',' + (3000 + i));
+      assert.deepStrictEqual(Array.from(D.parse(hr.join('\n'), { zone }).record.t), [0, 1, 2, 3, 4].map((i) => start + i * HOUR), 'hourly rows on their instants');
+      // the helpers: the repeated 01:30 has two instants, a normal time one; the cache is capped
+      const l130 = Date.UTC(2026, 9, 25, 1, 30);
+      assert.strictEqual(D.localToUtc(zone, l130), Date.UTC(2026, 9, 25, 0, 30), 'first occurrence');
+      assert.strictEqual(D.localLaterUtc(zone, l130), Date.UTC(2026, 9, 25, 1, 30), 'second occurrence');
+      assert.ok(Number.isNaN(D.localLaterUtc(zone, Date.UTC(2026, 9, 25, 2, 30))), 'not repeated');
+      assert.ok(Number.isNaN(D.localLaterUtc({ mode: 'utc' }, l130)), 'UTC never repeats');
+      const ny = { mode: 'iana', tz: 'America/New_York' }, max = D.tzCacheSize('America/New_York').max, Q = 15 * MIN;
+      assert.ok(max > 0 && max <= 100000, 'cap ' + max);
+      for (let i = 0; i < max + 10; i++) D.offsetAt(ny, Date.UTC(2020, 0, 1) + i * Q);   // one more 15-min bucket each time
+      const c = D.tzCacheSize('America/New_York');
+      assert.ok(c.offset > 0 && c.offset <= 10, 'offset cache dropped at the cap and refilled: ' + JSON.stringify(c));
+      assert.strictEqual(D.offsetAt(ny, Date.UTC(2020, 6, 1)), -4 * HOUR, 'offsets still right after the drop (EDT)');
+    },
+  },
 ];

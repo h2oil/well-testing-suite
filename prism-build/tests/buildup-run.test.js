@@ -730,4 +730,166 @@ module.exports = [
       shapeOk(assert, 'Analysis', J(an));
     },
   },
+  {
+    name: 'RU18 a summarised cache (the stored state after an overflow: summary:true, no bins, quality, storage) is never reused: those tests are re-interpreted and every result passes checkShape',
+    wp: WP,
+    run(app, assert) {
+      const st = stubs(app);
+      const input = makeInput(app);
+      const a = R(app).analyse(input);
+      // what the store writes for each test when the state overflows (49-calc-buildup-store.js _sumResult)
+      const summarise = (r) => ({ ok: r.ok, id: r.id, version: r.version, inputHash: r.inputHash, testType: r.testType, reason: r.reason || null, final: r.final || null,
+        sErr: r.sErr ? { value: r.sErr.value, mode: r.sErr.mode } : null,
+        confidence: r.confidence ? { ks: r.confidence.ks, model: r.confidence.model, headline: r.confidence.headline, stage: r.confidence.stage } : null,
+        chosen: r.chosen ? { key: r.chosen.key, label: r.chosen.label } : null,
+        iarf: r.iarf ? { found: r.iarf.found, grade: r.iarf.grade, cycles: r.iarf.cycles, dt0_h: r.iarf.dt0_h, dt1_h: r.iarf.dt1_h } : null,
+        evidence: r.evidence || null, summary: true });
+      const cache = J(a);
+      cache.tests.forEach((t) => { if (t.result) t.result = summarise(t.result); });
+      assert.ok(cache.tests.every((t) => t.inputHash && t.pass1 && t.result && t.result.summary), 'summaries keep inputHash and pass1');
+      st.log.length = 0;
+      const b = R(app).analyse(input, { cache });
+      assert.strictEqual(st.log.filter((l) => /^interpret:/.test(l)).length, 6, 'every summarised test re-interpreted');
+      b.tests.forEach((t) => {
+        assert.ok(!t.result.summary, t.id + ' is a whole result');
+        shapeOk(assert, 'BuildupResult', J(t.result), t.id + ' BuildupResult');
+      });
+      shapeOk(assert, 'Analysis', J(b));
+      assert.strictEqual(b.resultHash, a.resultHash, 'the same analysis as a fresh run');
+      // a mixed cache: the complete results are still reused, only the summarised one runs again
+      const mixed = J(a);
+      mixed.tests[1].result = summarise(mixed.tests[1].result);
+      st.log.length = 0;
+      const c = R(app).analyse(input, { cache: mixed });
+      assert.deepStrictEqual(st.log.filter((l) => /^interpret:/.test(l)), ['interpret:' + a.tests[1].id], 'only the summarised test re-runs');
+      assert.strictEqual(c.resultHash, a.resultHash);
+    },
+  },
+  {
+    name: 'RU19 anchored event overrides follow their closing when detection renumbers the events (event_drop, tc, an E-id exclude); a vanished closing is reported, never moved; legacy overrides keep the id rule',
+    wp: WP,
+    run(app, assert) {
+      stubs(app);
+      const base = { reason: 'Gauge swapped during this shut-in.', who: 'Engineer A', at: '2026-07-01T09:00:00Z', appVersion: '3.3' };
+      const full = R(app).analyse(makeInput(app));
+      const e3 = full.events.find((e) => e.id === 'E3');
+      assert.ok(e3 && Math.abs(e3.tc_ms - SCHED[2].t_ms) <= 5 * 60000, 'E3 is the third closing in the full record');
+      const anchor = e3.tc_ms;
+      // the first shut-in is no longer detected (a shorter record, a stricter setting): every later event id shifts down
+      const shifted = SCHED.slice(1);
+      const dropOv = Object.assign({ id: 'O1', kind: 'event_drop', target: 'E3', value: { anchor_ms: anchor } }, base);
+      const a = R(app).analyse(makeInput(app, { sched: shifted, overrides: [dropOv] }));
+      assert.strictEqual(a.events.find((e) => e.id === 'E3').tc_ms > anchor + DAY, true, 'E3 is now the next closing');
+      const dropped = a.events.filter((e) => e.dropped);
+      assert.strictEqual(dropped.length, 1, 'one event dropped');
+      assert.ok(Math.abs(dropped[0].tc_ms - anchor) <= 5 * 60000, 'the anchored closing is dropped (' + dropped[0].id + '), not the new E3');
+      assert.ok(!a.warnings.some((w) => w.code === 'OVERRIDE_NOT_APPLIED'), 'applied: no warning');
+      assert.ok(a.tests.every((t) => Math.abs(t.tc_ms - anchor) > HOUR), 'no test at the dropped closing');
+      shapeOk(assert, 'Analysis', J(a));
+      // the named closing itself vanishes: not applied (with the reason), and nothing else is dropped
+      const gone = R(app).analyse(makeInput(app, { sched: SCHED.filter((e, i) => i !== 2), overrides: [dropOv] }));
+      assert.strictEqual(gone.events.filter((e) => e.dropped).length, 0, 'nothing dropped');
+      const w = gone.warnings.find((x) => x.code === 'OVERRIDE_NOT_APPLIED' && /O1/.test(x.text));
+      assert.ok(w && /no longer detected/.test(w.text), 'OVERRIDE_NOT_APPLIED: ' + (w && w.text));
+      assert.strictEqual(gone.overrides[0].warnings[0].code, 'OVERRIDE_NOT_APPLIED');
+      // legacy (no anchor) keeps the id rule
+      const legacy = R(app).analyse(makeInput(app, { sched: shifted, overrides: [Object.assign({}, dropOv, { value: true })] }));
+      assert.strictEqual(legacy.events.find((e) => e.dropped).id, 'E3', 'legacy override: by id');
+      // a closing-time override follows its anchor too, and so does an exclude that names the event
+      const tcOv = Object.assign({ id: 'O2', kind: 'tc', target: 'E3', value: { tc_ms: anchor + 30 * 60000, anchor_ms: anchor } }, base);
+      const exOv = Object.assign({ id: 'O3', kind: 'exclude', target: 'E4', value: { anchor_ms: full.events.find((e) => e.id === 'E4').tc_ms } }, base);
+      const b = R(app).analyse(makeInput(app, { sched: shifted, overrides: [tcOv, exOv] }));
+      const moved = b.events.find((e) => (e.overrideIds || []).indexOf('O2') >= 0);
+      assert.ok(moved && moved.tc_ms === anchor + 30 * 60000 && moved.id === 'E2', 'tc override on the anchored event (now E2): ' + (moved && moved.id));
+      assert.ok(!b.events.some((e) => e.id === 'E3' && e.manual), 'the new E3 keeps its detected closing');
+      const tEx = b.tests.find((t) => t.status === 'excluded');
+      assert.ok(tEx && Math.abs(tEx.tc_ms - SCHED[3].t_ms) <= 5 * 60000 && tEx.overrides.indexOf('O3') >= 0, 'the exclude follows its closing: ' + (tEx && tEx.id));
+      assert.strictEqual(b.tests.filter((t) => t.status === 'excluded').length, 1);
+      assert.ok(b.tests.find((t) => t.eventId === 'E2').overrides.indexOf('O2') >= 0, 'the tc override is listed on its test');
+      shapeOk(assert, 'Analysis', J(b));
+    },
+  },
+  {
+    name: 'RU20 missed-shut-in detectability is sign-aware: an injector whose fall-offs end 300 psi below pwf (|p* − pwf| ≥ 2·T_s) is detectable; a producer 1 psi above is not',
+    wp: WP,
+    run(app, assert) {
+      stubs(app);
+      const AI = app.win.PRiSM_autoInterp, ij = AI.interpretJob;
+      let dp = 300;
+      AI.interpretJob = function (spec, jo) {
+        const j = ij(spec, jo);
+        return { step: j.step, cancel: j.cancel, result() { const r = j.result(); if (r) r.final.pStar = spec.pwf0 + (spec.testType === 'falloff' ? -1 : 1) * dp; return r; } };
+      };
+      // the producer record mirrored about 4,000 psia: injection raises the pressure, each shut-in is a fall-off
+      const inj = makeInput(app);
+      const D = app.win.WTS_buildup.data, p = Float64Array.from(inj.record.p, (v) => 8000 - v);
+      inj.record = Object.assign({}, inj.record, { p, hash: D.recordHash(inj.record.t, p) });
+      inj.well = Object.assign(J(WELL), { fluid: 'water_inj' });
+      inj.allocation.rows = inj.allocation.rows.map((r) => ({ date: r.date, oil: null, gas: null, water: r.oil, hours: r.hours }));
+      const a = R(app).analyse(inj);
+      assert.strictEqual(a.ok, true, JSON.stringify(a.errors || ''));
+      assert.ok(a.tests.length >= 5 && a.tests.every((t) => t.spec.testType === 'falloff'), 'fall-offs: ' + a.tests.map((t) => t.spec.testType).join(','));
+      const d = a.missed.detectability;
+      assert.ok(d.Ts_psi > 0 && 300 >= 2 * d.Ts_psi, 'the case meets |p* − pwf| ≥ 2·T_s (T_s ' + d.Ts_psi + ')');
+      assert.near(d.pStarMinusPwf_psi, 300, 1e-6, 'the sign-aware size of the change, not −300');
+      assert.strictEqual(d.ok, true, 'detectable');
+      shapeOk(assert, 'Analysis', J(a));
+      // a producer whose build-ups end only 1 psi above pwf: not detectable
+      dp = 1;
+      const b = R(app).analyse(makeInput(app));
+      assert.near(b.missed.detectability.pStarMinusPwf_psi, 1, 1e-6);
+      assert.strictEqual(b.missed.detectability.ok, false, 'below 2·T_s');
+    },
+  },
+  {
+    name: 'RU21 a previous id moves by event number only with a closing-time override: a vanished closing 4 h earlier with the same E number keeps its id (and its exclusion) to itself; a tc-moved closing keeps its own id',
+    wp: WP,
+    run(app, assert) {
+      stubs(app);
+      const base = { reason: 'bad gauge on that short shut-in', who: 'Engineer A', at: '2026-07-01T09:00:00Z', appVersion: '3.3' };
+      const input = makeInput(app);
+      const a = R(app).analyse(input);
+      const t2 = a.tests.find((t) => t.eventId === 'E2');
+      assert.strictEqual(t2.id, 'B2');
+      // the cache holds an earlier, short shut-in that is no longer detected: same E number, closing 4 h before E2
+      const cache = J(a);
+      const c2 = cache.tests.find((t) => t.eventId === 'E2');
+      c2.id = 'B99'; c2.tc_ms = t2.tc_ms - 4 * HOUR; if (c2.result) c2.result.id = 'B99';
+      const ov = Object.assign({ id: 'O1', kind: 'exclude', target: 'B99', value: true }, base);
+      const b = R(app).analyse(Object.assign({}, input, { overrides: [ov] }), { cache });
+      const n2 = b.tests.find((t) => t.eventId === 'E2');
+      assert.notStrictEqual(n2.id, 'B99', 'the id of the vanished shut-in is not given to E2');
+      assert.strictEqual(n2.status, 'interpreted', 'and its exclusion does not follow: ' + n2.statusReason);
+      assert.ok(!b.tests.some((t) => t.id === 'B99'), 'no test B99');
+      shapeOk(assert, 'Analysis', J(b));
+      // a closing-time override moving E3 by 2 h keeps its previous id (anchored and legacy)
+      const tc3 = a.tests.find((t) => t.eventId === 'E3').tc_ms;
+      [{ tc_ms: tc3 + 2 * HOUR, anchor_ms: tc3 }, { tc_ms: tc3 + 2 * HOUR }].forEach((value, i) => {
+        const tcOv = Object.assign({ id: 'O2', kind: 'tc', target: 'E3', value }, base);
+        const c = R(app).analyse(Object.assign({}, input, { overrides: [tcOv] }), { cache: a });
+        const m = c.tests.find((t) => t.tc_ms === tc3 + 2 * HOUR);
+        assert.ok(m && m.id === 'B3', (i ? 'legacy' : 'anchored') + ' tc override keeps B3: ' + (m && m.id));
+      });
+    },
+  },
+  {
+    name: 'RU22 gas wells need the gas gravity and the reservoir temperature: a gas well without well.gas, or with sg / T_F missing or out of range, is refused (BAD_WELL), never analysed as a liquid or with silent defaults',
+    wp: WP,
+    run(app, assert) {
+      stubs(app);
+      const gasWell = (gas) => Object.assign(J(WELL), { fluid: 'gas', B: 0.8, mu: 0.025, ct: 1e-4 }, gas === undefined ? {} : { gas });
+      const ok = R(app).analyse(Object.assign(makeInput(app), { well: gasWell({ sg: 0.65, T_F: 220 }) }));
+      assert.ok(!(ok.ok === false && ok.code === 'BAD_WELL'), 'complete gas inputs accepted: ' + JSON.stringify(ok.errors || ''));
+      [[undefined, ['gas.sg', 'gas.T_F']], [null, ['gas.sg', 'gas.T_F']], [{ sg: 0.65, T_F: null }, ['gas.T_F']], [{ sg: null, T_F: 220 }, ['gas.sg']],
+       [{ sg: 0.4, T_F: 220 }, ['gas.sg']], [{ sg: 0.65, T_F: 900 }, ['gas.T_F']]].forEach(([gas, bad]) => {
+        const r = R(app).analyse(Object.assign(makeInput(app), { well: gasWell(gas) }));
+        assert.strictEqual(r.code, 'BAD_WELL', JSON.stringify(gas) + ' refused');
+        assert.deepStrictEqual(J(r.bad), bad, JSON.stringify(gas) + ' names ' + bad.join(', '));
+        assert.ok(/gas gravity|reservoir temperature/.test(r.errors.join(' ')), r.errors.join(' '));
+      });
+      // oil and injector wells need no gas block
+      const oil = R(app).analyse(makeInput(app));
+      assert.notStrictEqual(oil.code, 'BAD_WELL');
+    },
+  },
 ];

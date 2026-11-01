@@ -1549,7 +1549,8 @@
         return P.then(function () {
             if (cancel()) throw { code: 'CANCELLED' };
             return R.analyseAsync(engIn, {
-                cache: _st.analysis || null, shouldCancel: cancel,
+                // stored summaries (detail not on this device, or still loading) are never a cache: every test is recomputed
+                cache: (_st.missingTests || _st.partial) ? null : (_st.analysis || null), shouldCancel: cancel,
                 onProgress: function (f, lab) { _status('bu_progress', '', 'Analysing… ' + Math.round((_fin(f) ? f : 0) * 100) + ' %' + (lab ? ' — ' + lab : '')); }
             });
         }).then(function (analysis) {
@@ -2069,12 +2070,14 @@
                 if (!(_fin(t0) && _fin(t1) && t0 > 0 && t1 > t0 * 1.2)) { _status('bu_dlg_msg', 'bad', 'Enter a window start and an end at least 20 % later, in hours of shut-in time.'); return; }
                 ov.target = ctx.test; ov.value = { dt0_h: t0, dt1_h: t1 };
             } else if (act === 'model') { ov.target = ctx.test; ov.value = MODEL_LABEL[_val('bu_dlg_model')] ? _val('bu_dlg_model') : 'homogeneous'; }
-            else if (act === 'event_drop') ov.target = t ? t.eventId : null;
+            // event-level overrides carry the closing of the event they name (anchor_ms): event ids are renumbered when
+            // detection changes, and the run then follows the closing, never the bare id
+            else if (act === 'event_drop') { ov.target = t ? t.eventId : null; ov.value = { anchor_ms: t ? t.tc_ms : null }; }
             else if (act === 'tc' || act === 'event_add' || /^missed:/.test(act)) {
                 var listed = /^missed:/.test(act);
                 var tm = listed ? Number(act.slice(7)) : _localToMs(_val('bu_dlg_time'), _gaugeZone());   // typed in the gauge zone
                 if (!_fin(tm)) { _status('bu_dlg_msg', 'bad', 'Enter the closing time.'); return; }
-                if (act === 'tc') { ov.target = t ? t.eventId : null; ov.value = { tc_ms: tm }; }
+                if (act === 'tc') { ov.target = t ? t.eventId : null; ov.value = { tc_ms: tm, anchor_ms: t ? t.tc_ms : null }; }
                 else { ov.kind = 'event_add'; ov.target = null; ov.value = listed ? { t_ms: tm } : { t_ms: tm, exact: true }; }   // a listed step is refined
             }
             if (ov.kind !== 'event_add' && !ov.target) { _status('bu_dlg_msg', 'bad', 'This action needs a test.'); return; }

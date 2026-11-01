@@ -104,7 +104,7 @@
     }
     // B in RB/STB (oil, water) or RB/Mscf (gas: about 0.3 for deep dry gas at high pressure, so its lower bound is 0.3)
     var WELL_RANGES = { h: [1, 2000], phi: [0.01, 0.5], mu: [0.01, 1000], B: [0.5, 5], ct: [1e-7, 1e-3], rw: [0.1, 2] };
-    var B_GAS = [0.3, 5];
+    var B_GAS = [0.3, 5], GAS_SG = [0.55, 3], GAS_TF = [32, 500];   // the page's bu_sg and bu_tres ranges
     function checkWell(w) {
         var bad = [], errs = [];
         if (!w || typeof w !== 'object') return fail('BAD_WELL', ['Well inputs are missing.'], ['well']);
@@ -114,6 +114,13 @@
         });
         if (['oil', 'gas', 'water_inj'].indexOf(w.fluid) === -1) { bad.push('fluid'); errs.push('Well type must be oil, gas or water injector.'); }
         if (w.fluid === 'water_inj' && (!isNum(w.Bw) || !isNum(w.muw) || w.Bw <= 0 || w.muw <= 0)) { bad.push('Bw'); errs.push('Water injectors need the water formation volume factor and viscosity.'); }
+        // gas: the gas table (z, μg, Bg, m(p)) needs the gas gravity and the reservoir temperature; never defaulted here
+        // (the page enters its defaults and lists them in well.defaulted, so the labels see them)
+        if (w.fluid === 'gas') {
+            var g = (w.gas && typeof w.gas === 'object') ? w.gas : {};
+            if (!isNum(g.sg) || g.sg < GAS_SG[0] || g.sg > GAS_SG[1]) { bad.push('gas.sg'); errs.push('Gas wells need the gas gravity (air = 1), between ' + GAS_SG[0] + ' and ' + GAS_SG[1] + '.'); }
+            if (!isNum(g.T_F) || g.T_F < GAS_TF[0] || g.T_F > GAS_TF[1]) { bad.push('gas.T_F'); errs.push('Gas wells need the reservoir temperature, between ' + GAS_TF[0] + ' and ' + GAS_TF[1] + ' °F.'); }
+        }
         return bad.length ? fail('BAD_WELL', errs, bad) : null;
     }
 
@@ -239,10 +246,10 @@
         return { sg: num(g.sg, 0.65), T_F: num(g.T_F, 200), co2: num(g.co2, 0), h2s: num(g.h2s, 0), n2: num(g.n2, 0), pseudoTime: !!g.pseudoTime,
                  pdew: isNum(g.pdew) && g.pdew > 0 ? g.pdew : null };
     }
-    function _ovFor(input, test) {
+    function _ovFor(input, test, emap) {
         var o = { window: null, model: null, excludeRivals: [] };
         (input.overrides || []).forEach(function (ov) {
-            if (!ov || (ov.target !== test.id && ov.target !== test.eventId)) return;
+            if (!_ovNames(ov, test.id, test.eventId, emap)) return;
             if (ov.kind === 'window' && ov.value && isNum(+ov.value.dt0_h) && isNum(+ov.value.dt1_h) && +ov.value.dt1_h > +ov.value.dt0_h && +ov.value.dt0_h > 0) o.window = { dt0_h: +ov.value.dt0_h, dt1_h: +ov.value.dt1_h };
             if (ov.kind === 'model' && ['homogeneous', 'linearBoundary', 'composite2', 'closedCircle'].indexOf(ov.value) >= 0) o.model = ov.value;
         });
@@ -302,7 +309,7 @@
             sigmaLF_psi: _sigmaLF(bins.dt, bins.p, event.dtEnd_h), dtSample_h: gaps.length ? median(gaps) : 1 / 60,
             driftPsiPerDay: num(w.driftPsiPerDay, 0.01),
             history: { estimated: !!hist.flag, tPrepend_h: num(hist.prepend_h, 0), source: hist.source || 'data' },
-            overrides: o.test ? _ovFor(input, o.test) : { window: null, model: null, excludeRivals: [] },
+            overrides: o.test ? _ovFor(input, o.test, o.emap) : { window: null, model: null, excludeRivals: [] },
             opts: _specOpts(st)
         };
         if (!(spec.dtSample_h > 0)) spec.dtSample_h = 1 / 60;
@@ -350,6 +357,48 @@
         if (!ovWarn || !ov || !ov.id) return;
         (ovWarn[ov.id] = ovWarn[ov.id] || []).push(W('OVERRIDE_NOT_APPLIED', 'warn', 'Override ' + ov.id + ' (' + String(ov.kind).replace(/_/g, ' ') + ') was not applied: ' + text, ['D1']));
     }
+    // Event ids (E<n>) are renumbered whenever detection changes (a detection setting, a record re-loaded with an earlier
+    // start), so an override that names an event also carries the closing of that event (value.anchor_ms, written by
+    // the page). An anchored override follows its closing: the live event closing within ±max(10 min, 5·Δt_med) of the
+    // anchor; when there is none it is not applied (OVERRIDE_NOT_APPLIED). Overrides without an anchor (older files, API
+    // callers) use the id.
+    function _isEId(x) { return /^E\d+$/.test(String(x)); }
+    function _anchorOf(ov) {
+        var v = ov && ov.value;
+        return (v && typeof v === 'object' && v.anchor_ms !== null && v.anchor_ms !== '' && isNum(+v.anchor_ms)) ? +v.anchor_ms : NaN;
+    }
+    function _nearestEvent(events, a, tol) {
+        var best = -1, bd = Infinity;
+        (events || []).forEach(function (x, i) { if (!x || x.dropped || !isNum(x.tc_ms)) return; var d = mAbs(x.tc_ms - a); if (d <= tol && d < bd) { bd = d; best = i; } });
+        return best;
+    }
+    function _isoMin(ms) { try { return new Date(ms).toISOString().slice(0, 16).replace('T', ' ') + ' UTC'; } catch (e) { return String(ms); } }
+    // ov.id → the live event id an E-id override names now (null: its closing is no longer detected, or a drop / closing-
+    // time override that was not applied). event_drop and tc: the event adjustEvents marked with the override id.
+    function _eTargets(input, events, tol) {
+        var map = {};
+        _ovList(input).forEach(function (ov) {
+            if (!ov.id || !_isEId(ov.target)) return;
+            if (ov.kind === 'event_drop' || ov.kind === 'tc') {
+                var hit = (events || []).filter(function (e) { return e && (e.overrideIds || []).indexOf(ov.id) >= 0; })[0];
+                map[ov.id] = hit ? hit.id : null;
+                return;
+            }
+            var a = _anchorOf(ov);
+            if (!isNum(a)) { map[ov.id] = ov.target; return; }
+            var i = _nearestEvent(events, a, tol);
+            map[ov.id] = i >= 0 ? events[i].id : null;
+        });
+        return map;
+    }
+    // Does the override name the test (id) or its event (eid, through the anchor map)?
+    function _ovNames(ov, id, eid, emap) {
+        if (!ov || ov.target == null) return false;
+        if (ov.target === id) return true;
+        if (!_isEId(ov.target)) return false;
+        var r = emap && Object.prototype.hasOwnProperty.call(emap, ov.id) ? emap[ov.id] : ov.target;
+        return r != null && r === eid;
+    }
     function _ovValueTime(v, key) {
         if (isNum(+v) && v !== null && v !== '' && typeof v !== 'object') return +v;
         if (v && typeof v === 'object') {
@@ -369,24 +418,36 @@
         function live() { return events.filter(function (x) { return x && !x.dropped; }).sort(function (a, b) { return a.tc_ms - b.tc_ms; }); }
         function startOf(x) { return isNum(x.j0) && x.j0 >= 0 && x.j0 < t.length ? t[x.j0] : x.tc_ms; }
         function mark(e, ov) { e.overrideIds = (e.overrideIds || []).concat([ov.id]); }
-        function noEvent(ov) { return /^E\d+$/.test(String(ov.target)) ? 'no event ' + ov.target + ' was detected.' : 'it names no detected event.'; }
+        function noEvent(ov) {
+            var a = _anchorOf(ov);
+            if (isNum(a)) return 'the shut-in it named (' + ov.target + ', closing ' + _isoMin(a) + ') is no longer detected.';
+            return _isEId(ov.target) ? 'no event ' + ov.target + ' was detected.' : 'it names no detected event.';
+        }
+        // the index of the event an event_drop / tc override names: by its anchored closing, else (legacy) by id
+        function targetIdx(ov) {
+            var a = _anchorOf(ov);
+            if (isNum(a)) return _isEId(ov.target) ? _nearestEvent(events, a, tolDup) : -1;
+            var idx = -1;
+            if (_isEId(ov.target)) events.forEach(function (x, i) { if (x && x.id === ov.target) idx = i; });
+            return idx;
+        }
         ovs.forEach(function (ov) {
             if (ov.kind === 'event_drop') {
-                var e = events.filter(function (x) { return x.id === ov.target; })[0];
+                var ie = targetIdx(ov), e = ie >= 0 ? events[ie] : null;
                 if (e) { e.dropped = true; e.status = 'excluded'; mark(e, ov); e.warnings.push(W('EVENT_DROPPED', 'info', 'Removed by override ' + ov.id + '.', ['D1'])); }
                 else _ovWarn(ovWarn, ov, noEvent(ov));
             } else if (ov.kind === 'tc') {
                 var tc = _ovValueTime(ov.value, 'tc_ms');
-                var idx = -1;
-                events.forEach(function (x, i) { if (x.id === ov.target) idx = i; });
-                if (!/^E\d+$/.test(String(ov.target)) || idx < 0) { _ovWarn(ovWarn, ov, noEvent(ov)); return; }
+                var idx = targetIdx(ov);
+                if (idx < 0) { _ovWarn(ovWarn, ov, noEvent(ov)); return; }
                 if (!isNum(tc) || tc < t0 || tc > tN) { _ovWarn(ovWarn, ov, 'the closing time is outside the gauge record.'); return; }
+                var tgt = events[idx];
                 var L = live(), prevE = null, nextE = null;
-                L.forEach(function (x) { if (x.id === ov.target) return; if (x.tc_ms < tc && (!prevE || x.tc_ms > prevE.tc_ms)) prevE = x; if (x.tc_ms > tc && (!nextE || x.tc_ms < nextE.tc_ms)) nextE = x; });
+                L.forEach(function (x) { if (x === tgt) return; if (x.tc_ms < tc && (!prevE || x.tc_ms > prevE.tc_ms)) prevE = x; if (x.tc_ms > tc && (!nextE || x.tc_ms < nextE.tc_ms)) nextE = x; });
                 if (prevE && tc <= prevE.tEnd_ms) { _ovWarn(ovWarn, ov, 'the closing time falls inside the shut-in of ' + prevE.id + '.'); return; }
                 var ne = D.eventAt(record, q, tc, Object.assign({ exact: true, prevEnd_ms: prevE ? prevE.tEnd_ms : null, nextStart_ms: nextE ? startOf(nextE) : null }, opts));
                 if (!ne) { _ovWarn(ovWarn, ov, 'no room before the next shut-in.'); return; }
-                ne.id = ov.target; ne.manual = true; ne.overrideIds = (events[idx].overrideIds || []).concat([ov.id]);
+                ne.id = tgt.id; ne.manual = true; ne.overrideIds = (tgt.overrideIds || []).concat([ov.id]);
                 ne.warnings.push(W('TC_OVERRIDE', 'info', 'Closing time set by override ' + ov.id + '.', ['D2']));
                 events[idx] = ne;
             } else if (ov.kind === 'event_add') {
@@ -420,12 +481,18 @@
             if ((ov.kind === 'event_add' || ov.kind === 'event_drop' || ov.kind === 'tc') && !applied[ov.id]) _ovWarn(ovWarn, ov, 'it needs the raw gauge record, which is not loaded.');
         });
     }
-    function _overrideState(input, ids) {
+    // exclude / include state keyed by the test id or the live event id they name (an anchored E-id target through emap;
+    // one whose closing is no longer detected is refused with a warning).
+    function _overrideState(input, emap, ovWarn) {
         var st = {};
         _ovList(input).forEach(function (ov) {
-            if (!ov || !ov.target) return;
-            if (ov.kind === 'exclude') st[ov.target] = { s: 'exclude', ov: ov };
-            else if (ov.kind === 'include') st[ov.target] = { s: 'include', ov: ov };
+            if (!ov || !ov.target || (ov.kind !== 'exclude' && ov.kind !== 'include')) return;
+            var key = ov.target;
+            if (_isEId(key) && emap && Object.prototype.hasOwnProperty.call(emap, ov.id)) {
+                key = emap[ov.id];
+                if (key == null) { _ovWarn(ovWarn, ov, 'the shut-in it named (' + ov.target + (isNum(_anchorOf(ov)) ? ', closing ' + _isoMin(_anchorOf(ov)) : '') + ') is no longer detected.'); return; }
+            }
+            st[key] = { s: ov.kind, ov: ov };
         });
         return st;
     }
@@ -553,6 +620,12 @@
         }
         return function (dt) { var v = mLog(dt); for (var j = 0; j < terms.length; j++) v += terms[j].w * (mLog(terms[j].off + dt) - mLog(terms[j].off)); return v; };
     }
+    // A cached result can stand for a fresh one only when it is a whole BuildupResult: a summarised copy (summary:true,
+    // written when the state overflowed) keeps inputHash and pass1 but no bins, quality, storage, reach or models.
+    function _fullResult(r) {
+        return !!(r && typeof r === 'object' && r.ok !== false && !r.summary && r.bins && Array.isArray(r.bins.dt) && r.bins.dt.length &&
+            r.iarf && typeof r.iarf === 'object' && r.storage && typeof r.storage === 'object' && r.quality && r.final);
+    }
     // The stored copy of a BuildupResult drops bins.X and bins.dte (§3.1); they are recomputed from bins.dt and the
     // rehydrated spec's rate steps with the superposition time function, so cached and fresh tests share one time axis.
     function _ensureDte(r, spec) {
@@ -616,13 +689,16 @@
     }
 
     // Stable test ids (B<n>). A previous analysis (the cache, or the stored tests) keeps its id for the same closing:
-    // matched by the event id with the closing within tol, then by the closing time within tol, then by the event id
-    // within 6 h (a closing-time override). A previous id is never given to another event, so an override that targets
-    // it can never move to a different build-up. A new test takes B<event number> when that id is free (so a fresh
+    // matched by the event id with the closing within tol, then by the closing time within tol, then — only for an event
+    // moved by a closing-time override — by that override's anchor (the closing it replaced) within tol, or for a legacy
+    // override without an anchor by the event id within 6 h. A previous id is never given to another event, so an
+    // override that targets it can never move to a different build-up. A new test takes B<event number> when that id is free (so a fresh
     // analysis gives the same ids whether or not an earlier event is included), else the next free number.
     function _bNum(id) { var m = /^B(\d+)$/.exec(String(id || '')); return m ? parseInt(m[1], 10) : 0; }
-    function _assignIds(cand, prev, tol) {
-        var out = {}, taken = {}, used = [], maxN = 0, rest = [];
+    function _assignIds(cand, prev, tol, ovList) {
+        var out = {}, taken = {}, used = [], maxN = 0, rest = [], ovById = {};
+        (ovList || []).forEach(function (o) { if (o && o.id && o.kind === 'tc') ovById[o.id] = o; });
+        function tcOvs(e) { return (e.overrideIds || []).map(function (id) { return ovById[id]; }).filter(Boolean); }
         prev = (prev || []).filter(function (p) { return p && _bNum(p.id) > 0; });
         prev.forEach(function (p) { taken[p.id] = 1; });
         function dtc(e, p) { return isNum(p.tc_ms) && isNum(e.tc_ms) ? mAbs(p.tc_ms - e.tc_ms) : Infinity; }
@@ -636,7 +712,16 @@
         }
         pass(function (e, p) { var d = dtc(e, p); return p.eventId === e.id && d <= tol ? d : null; });
         pass(function (e, p) { var d = dtc(e, p); return d <= tol ? d : null; });
-        pass(function (e, p) { var d = dtc(e, p); return p.eventId === e.id && d <= 6 * HOUR ? d : null; });
+        pass(function (e, p) {
+            var best = null;
+            tcOvs(e).forEach(function (ov) {
+                var a = _anchorOf(ov), d;
+                if (isNum(a)) d = isNum(p.tc_ms) ? mAbs(p.tc_ms - a) : Infinity;
+                else d = p.eventId === e.id ? dtc(e, p) : Infinity;
+                if (d <= (isNum(a) ? tol : 6 * HOUR) && (best === null || d < best)) best = d;
+            });
+            return best;
+        });
         cand.forEach(function (e) {
             if (out[e.id]) return;
             var en = /^E(\d+)$/.exec(String(e.id)), id = en ? 'B' + parseInt(en[1], 10) : null;
@@ -722,7 +807,9 @@
         // Test list, overrides, cap, specs and cache lookup (one unit).
         function buildTests() {
             var rh = scanRes.rates, events = scanRes.events, rec = scanRes.record || X.rec;
-            var ovs = _overrideState(input);
+            var dtMed0 = scanRes.qc && isNum(scanRes.qc.dtMed_s) && scanRes.qc.dtMed_s > 0 ? scanRes.qc.dtMed_s * 1000 : 60000;
+            X.emap = _eTargets(input, events, mMax(10 * 60000, 5 * dtMed0));
+            var ovs = _overrideState(input, X.emap, X.ovWarn);
             var shift = D.depthShift(input.depth);
             tests = [];
             var storedById = {}, evById = {};
@@ -740,7 +827,7 @@
             if (!rec) prev = (input.stored.tests || []).filter(Boolean).map(function (x) { return { id: x.id, eventId: x.eventId, tc_ms: evById[x.eventId] ? evById[x.eventId].tc_ms : null }; });
             else if (opts.cache && Array.isArray(opts.cache.tests)) prev = opts.cache.tests.filter(Boolean).map(function (c) { return { id: c.id, eventId: c.eventId, tc_ms: c.tc_ms }; });
             var dtMed = scanRes.qc && isNum(scanRes.qc.dtMed_s) && scanRes.qc.dtMed_s > 0 ? scanRes.qc.dtMed_s * 1000 : 60000;
-            X.idOf = _assignIds(cand, prev, mMax(10 * 60000, 5 * dtMed));
+            X.idOf = _assignIds(cand, prev, mMax(10 * 60000, 5 * dtMed), _ovList(input));
             X.cand = cand; X.ci = 0; X.bt = { rh: rh, rec: rec, ovs: ovs, shift: shift, storedById: storedById, origin: origin };
             X.phase = 'specs';
             return { done: false, progress: 0.26, label: cand.length + ' shut-ins to interpret' };
@@ -756,13 +843,13 @@
                     status: 'interpreted', statusReason: e.status !== 'analysable' ? 'Included by override (event status ' + e.status.replace(/_/g, ' ') + ').' : null,
                     spec: null, result: null, used: { baseline: false, trend: false, alert: false }, partialSuspect: false, overrides: []
                 };
-                _ovList(input).forEach(function (ov) { if (ov.target === id || ov.target === e.id) t.overrides.push(ov.id); });
+                _ovList(input).forEach(function (ov) { if (_ovNames(ov, id, e.id, X.emap)) t.overrides.push(ov.id); });
                 var o2 = ovs[id] || ovs[e.id];
                 if (o2 && o2.s === 'exclude') { t.status = 'excluded'; t.statusReason = 'Excluded by override ' + o2.ov.id + ': ' + String(o2.ov.reason || '').slice(0, 200); }
                 // spec
                 var spec, sto;
                 if (rec) {
-                    spec = specFor(e, rec, rh, input, { id: id, origin_ms: origin, settings: st, qc: scanRes.qc, test: t });
+                    spec = specFor(e, rec, rh, input, { id: id, origin_ms: origin, settings: st, qc: scanRes.qc, test: t, emap: X.emap });
                     if (spec.ok === false) { e.warnings.push(W('NOT_INTERPRETED', 'warn', 'Not interpreted: ' + spec.errors.join(' '), ['D5'])); return; }
                     sto = storedSpec(spec, rh, e.tc_ms);
                     if (!sto) { e.warnings.push(W('NOT_INTERPRETED', 'warn', 'Not interpreted: the closing is not in the rate history.', ['R5'])); return; }
@@ -772,7 +859,7 @@
                     sto.id = id;
                     // the stage-1 spec never carries R4 (filled in stage 3), so the engine and the cache key see what record mode sees
                     if (sto.rateQC) { sto.rateQC.r4 = null; sto.rateQC.r4Status = rh.mode === 'table' ? 'n/a' : 'unavailable'; }
-                    sto.overrides = _ovFor(input, t);
+                    sto.overrides = _ovFor(input, t, X.emap);
                     sto.opts = _specOpts(st);              // the current interpretation settings, as record mode builds them
                     var org = e.tc_ms - sto.tc_h * HOUR;
                     spec = rehydrate(sto, rh, org);
@@ -801,7 +888,8 @@
             _cap(tests, st, input.workovers);
             // cache
             X.cacheMap = {};
-            if (opts.cache && opts.cache.tests) opts.cache.tests.forEach(function (c) { if (c && c.inputHash && c.result && c.pass1) X.cacheMap[c.inputHash] = c; });
+            // only complete results are reused: a stored summary (state overflow, §3.11) has no bins, quality, storage, …
+            if (opts.cache && opts.cache.tests) opts.cache.tests.forEach(function (c) { if (c && c.inputHash && c.pass1 && _fullResult(c.result)) X.cacheMap[c.inputHash] = c; });
             tests.forEach(function (t) { t.inputHash = t._key; applyCache(t); });
             X.phase = 'stage1'; X.i = 0;
             return { done: false, progress: 0.3, label: tests.length + ' build-ups' };
@@ -1058,7 +1146,11 @@
                 t.pExtDatum = f && isNum(f.pExt) ? f.pExt + shift : null;
             });
             var missed = scanRes.missed || D.missed(scanRes.events, [], rh, scanRes.qc, 0);
-            var ps = tests.filter(function (t) { return t.result && isNum(t.result.final.pStar); }).map(function (t) { return t.result.final.pStar - t.pwf0; });
+            // sign-aware: a fall-off (injector) has p* below pwf0, so the size of the change is pwf0 − p* (|p* − pwf|)
+            var ps = tests.filter(function (t) { return t.status === 'interpreted' && t.result && t.result.final && isNum(t.result.final.pStar) && isNum(t.pwf0); }).map(function (t) {
+                var sp = t._spec || t.spec || {}, sg = (sp.testType === 'falloff' || (t._event && t._event.kind === 'falloff')) ? -1 : 1;
+                return sg * (t.result.final.pStar - t.pwf0);
+            });
             if (ps.length && missed.detectability) {
                 var md = median(ps);
                 missed.detectability.pStarMinusPwf_psi = md;
