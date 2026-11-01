@@ -5,7 +5,7 @@
 #
 #   bash install.sh [--allow 192.168.1.10:502] [--allow '10.0.0.0/24:502,plc.local:*']
 #                   [--port 8502] [--listen 127.0.0.1] [--allow-writes | --read-only]
-#                   [--origin https://my.site] [--autostart] [--keep-allow] [--reset]
+#                   [--origin https://app.company.example] [--autostart] [--keep-allow] [--reset]
 #                   [--yes] [--no-start] [--uninstall] [--help]
 #
 # One line, from the GitHub release (the release installer carries the bridge files):
@@ -43,7 +43,7 @@
 # --port    WebSocket port of the bridge (default 8502; the app's bridge URL is ws://127.0.0.1:<port>).
 # --listen  interface to listen on (default 127.0.0.1 = this computer only).
 # --allow-writes  forward Modbus write requests (FC 05/06/15/16); --read-only refuses them (default).
-# --origin  also accept pages from this origin (https://my.site, or null for a saved file:// copy
+# --origin  also accept pages from this origin (https://app.company.example, or null for a saved file:// copy
 #           of the app - any web site can send "null", so only on a PC not used for browsing).
 # --no-start      install only; do not start the bridge (with --autostart: it starts at the next login).
 # --reset         ignore the existing bridge-config.json and write a new one.

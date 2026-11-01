@@ -9,8 +9,8 @@
 //   • API 520 Part I: gas Eq. 2 / subcritical F2 form, steam 51.5 form,
 //     liquid 38·Kd·Kw·Kc·Kv form (Kv from R = 2800·Q·G/(μ√A)); Kb/Kw for
 //     balanced bellows only (straight-line Fig. 30 / Fig. 32); API 526 areas.
-//   • Crane TP-410: ΔP = K·ρ·V²/(2·gc·144); compressible discharge
-//     w = 0.525·Y·d²·√(ΔP·ρ1/K) with Fig. A-22 limits (k = 1.3).
+//   • K (resistance-coefficient) method: ΔP = K·ρ·V²/(2·gc·144); compressible discharge
+//     w = 0.525·Y·d²·√(ΔP·ρ1/K) with the standard expansion-factor chart limits (k = 1.3).
 //   • Critical-flow Cv gas equation Q[scfh] = 816·Cv·P1/√(G·T).
 //   • Towler & Mokhatab (2005) hydrate T; Hammerschmidt inhibitor balance.
 //   • ASME B31.3 Eq. 3a, S = min(UTS/3, 2Sy/3).
@@ -87,7 +87,7 @@ function liquidAreaRef(Q, G, mu, dp, Kd, Kw) {
   }
   return A;
 }
-function crane(tankPsig, idIn, L, SG, TF) {
+function kMethodVent(tankPsig, idIn, L, SG, TF) {
   const P1 = tankPsig + 14.7, M = SG * 28.9647, T = TF + 459.67, rho = P1 * M / (10.732 * T);
   const f = 0.25 / Math.pow(Math.log10(0.0018 / (3.7 * idIn)), 2);
   const K = f * L / (idIn / 12) + 1.5;
@@ -331,7 +331,7 @@ module.exports = [
     },
   },
   {
-    name: 'G4 prv inlet line: Crane ΔP includes gc (default 3" line ≈ 18.3 psi, 7.3 % → FAIL)',
+    name: 'G4 prv inlet line: K-method ΔP includes gc (default 3" line ≈ 18.3 psi, 7.3 % → FAIL)',
     wp: WP,
     run(app, assert) {
       app.hook.nav('prv');
@@ -351,7 +351,7 @@ module.exports = [
 
   // ── Flame arrestor ─────────────────────────────────────────────────────
   {
-    name: 'G4 flamearr: 500 MSCFD MW 18 @ 30 °C → 364.6 ACFM; Crane ΔP with K 11 → 3" recommended; metric same',
+    name: 'G4 flamearr: 500 MSCFD MW 18 @ 30 °C → 364.6 ACFM; K-method ΔP with K 11 → 3" recommended; metric same',
     wp: WP,
     run(app, assert) {
       app.hook.nav('flamearr');
@@ -552,14 +552,14 @@ module.exports = [
 
   // ── Liquid line / RO (prism-build/26) ──────────────────────────────────
   {
-    name: 'G4 liquidline: 4" LCV Cv 230 @ 1440 psig blowby 313.6 MMscfd; Crane vent 29.5 MMscfd; RO ideal-nozzle',
+    name: 'G4 liquidline: 4" LCV Cv 230 @ 1440 psig blowby 313.6 MMscfd; K-method vent 29.5 MMscfd; RO ideal-nozzle',
     wp: WP, opts: SRC,
     run(app, assert) {
       app.hook.nav('liquidline'); app.flush(10);
       app.click('wts_ll_calc_btn');
       const P1 = 1454.7, TR = 559.67, SG = 0.78;
       const qLcv = 816 * 230 * P1 / Math.sqrt(SG * TR) * 24 / 1e6;
-      const qVent = crane(50, 6.065, 100, SG, 100);
+      const qVent = kMethodVent(50, 6.065, 100, SG, 100);
       const cell = (lbl) => num(trow(app, 'wts_ll_results', lbl)[1]);
       assert.near(cell('Max Gas Rate Through LCV'), qLcv, 0.01);
       assert.near(cell('Vent Line Max Capacity'), qVent, 0.01);
@@ -568,8 +568,8 @@ module.exports = [
       const dReq = cell('Required RO Bore');
       assert.near(idealOrificeMMscfd(dReq, P1, SG, TR), qVent, 0.05);
       assert.includes(trow(app, 'wts_ll_results', 'RO Required?')[1], 'YES');
-      // Tank rated 5 psig, 2" × 300 ft vent — subsonic branch of Crane
-      assert.near(app.win.WTS_vent_capacity(2, 40, 300, 5, 0.65, 60), crane(5, 2.067, 300, 0.65, 60), 1e-6);
+      // Tank rated 5 psig, 2" × 300 ft vent — subsonic branch of the K-method vent form
+      assert.near(app.win.WTS_vent_capacity(2, 40, 300, 5, 0.65, 60), kMethodVent(5, 2.067, 300, 0.65, 60), 1e-6);
       noBadNumbers(assert, app, 'liquidline');
     },
   },

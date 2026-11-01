@@ -1457,7 +1457,7 @@ var MODEL_NAMES = {
     finiteFrac: 'Finite-conductivity fracture', finiteFracSkin: 'Finite-conductivity fracture with face skin',
     partialPenFrac: 'Partially penetrating fracture', inclined: 'Inclined (slanted) well', horizontal: 'Horizontal well',
     linearBoundary: 'Single fault or linear boundary', parallelChannel: 'Parallel faults (channel)',
-    closedChannel3: 'Channel closed at one end', closedRectangle: 'Closed rectangle', intersecting: 'Intersecting faults (wedge)',
+    closedChannel3: 'Channel closed at one end', closedRectangle: 'Closed rectangle', closedCircle: 'Closed circle', intersecting: 'Intersecting faults (wedge)',
     fogBoundary: 'Leaky fault', arps: 'Arps decline', duong: 'Duong decline', sepd: 'Stretched-exponential decline',
     fetkovich: 'Fetkovich type curve', doublePorosity: 'Dual porosity', partialPen: 'Partial penetration',
     verticalPulse: 'Vertical interference (partial penetration)', twoLayerXF: 'Two layers with crossflow',
@@ -2605,8 +2605,9 @@ function _fitResultsHTML(fit) {
             '<td class="prism-num">' + _esc(_ciText(key, ci[key], v)) + '</td><td>' + flag + '</td></tr>';
     };
     PHYS_ORDER.forEach(function (k) { addRow(k, phys[k], PHYS_LABELS[k] || (k === 'rinv' ? 'Radius of investigation' : k), PHYS_UNITS[k] || '-'); });
-    var dist = phys.distances_ft || {};
-    for (var dk in dist) if (Object.prototype.hasOwnProperty.call(dist, dk)) addRow('dist_' + dk, dist[dk], 'Distance ' + dk, 'ft');
+    // a model may name its distances (distLabel, e.g. the closed circle's drainage radius r_e = reD·rw); else 'Distance <key>'
+    var dist = phys.distances_ft || {}, mEntry = fit.modelKey ? _MODELS()[fit.modelKey] : null, dLab = mEntry && mEntry.distLabel && typeof mEntry.distLabel === 'object' ? mEntry.distLabel : {};
+    for (var dk in dist) if (Object.prototype.hasOwnProperty.call(dist, dk)) addRow('dist_' + dk, dist[dk], typeof dLab[dk] === 'string' && dLab[dk] ? dLab[dk] : 'Distance ' + dk, 'ft');
     var btRaw = fit.bootstrap || null;
     var bt = (btRaw && btRaw.percentiles) ? btRaw.percentiles : (fit.percentiles || fit.pBands || btRaw);
     var btRows = '';
@@ -2896,7 +2897,9 @@ G.PRiSM_ui04 = {
     G.addEventListener('prism:dataset-loaded', function () {
         var st = _st();
         var ds = G.PRiSM_dataset;
-        var n = (ds && ds.q) ? PRiSM_detectPeriods(ds.t, ds.q).length : 0;
+        // st.activePeriod indexes the C2 period list (PRiSM_rateHistory: the multi-rate table or the q column)
+        var rh = (typeof G.PRiSM_rateHistory === 'function' && ds) ? G.PRiSM_rateHistory(ds) : null;
+        var n = (rh && rh.ok && rh.periods) ? rh.periods.length : ((ds && ds.q) ? PRiSM_detectPeriods(ds.t, ds.q).length : 0);
         if (st.activePeriod != null && !(st.activePeriod >= 0 && st.activePeriod < n)) st.activePeriod = null;
         refresh();
     });
@@ -2959,6 +2962,9 @@ G.PRiSM_ui04 = {
 var G = (typeof window !== 'undefined') ? window
       : (typeof globalThis !== 'undefined' ? globalThis : {});
 var LN10 = Math.LN10;
+// v3.3: per-element loops call closure aliases of these builtins (inside an embedding sandbox,
+// such as the acceptance harness' vm context, a global lookup is an intercepted call).
+var _isFinite = isFinite, _log = Math.log;
 
 
 // =============================================================================
@@ -3146,7 +3152,7 @@ function PRiSM_jacobianForward(modelFn, t, params, baseline, freeKeys, derivStep
 }
 
 function _allFinite(a) {
-    for (var i = 0; i < a.length; i++) if (!isFinite(a[i])) return false;
+    for (var i = 0; i < a.length; i++) if (!_isFinite(a[i])) return false;
     return true;
 }
 
@@ -3328,7 +3334,11 @@ function PRiSM_lm(modelFn, data, params0, bounds, freeze, opts) {
         }
         return o;
     }
-    var fInt = function (t, pInt) { return modelFn(t, toExt(pInt)); };
+    // nEval counts every model evaluation of this call (Jacobian columns,
+    // trial steps, the start and the final Jacobian) — O.shouldStop budgets
+    // and sliced fits (v3.3) read it.
+    var nEval = 0;
+    var fInt = function (t, pInt) { nEval++; return modelFn(t, toExt(pInt)); };
 
     var params = {};
     for (var kk in params0) if (Object.prototype.hasOwnProperty.call(params0, kk)) params[kk] = params0[kk];
@@ -3336,28 +3346,52 @@ function PRiSM_lm(modelFn, data, params0, bounds, freeze, opts) {
         var kf = freeKeys[fk2];
         if (isLog[kf]) params[kf] = Math.log10(params0[kf]);
     }
+    // Resume (sliced fits): O.p0 carries the internal coordinates of the
+    // previous slice bit for bit (no ext → log10 round trip).
+    if (O.p0 && typeof O.p0 === 'object') {
+        for (var fk3 = 0; fk3 < freeKeys.length; fk3++) {
+            var kr0 = freeKeys[fk3];
+            if (typeof O.p0[kr0] === 'number' && isFinite(O.p0[kr0])) params[kr0] = O.p0[kr0];
+        }
+    }
     _clipInternal(params, freeKeys, ib);
 
     var W = _buildWeights(data.p, O.weightingMode, data.weights);
     var ctx = { isLog: isLog, ib: ib, extBounds: extBounds, toExt: toExt, stopReason: 'none' };
 
-    var yMod = fInt(data.t, params);
-    var ssr = _ssr(data.p, yMod, W);
-    if (!freeKeys.length) {
-        ctx.stopReason = 'no-free-params';
-        return _buildResult(params, freeKeys, null, data, yMod, W, ssr, 0, false, [ssr], ctx);
+    // Resume: O.y0 / O.ssr0 are the model vector and SSR at the start
+    // parameters (from the previous slice), so the start is not re-evaluated.
+    var yMod, ssr;
+    if (Array.isArray(O.y0) && O.y0.length === data.p.length && typeof O.ssr0 === 'number' && isFinite(O.ssr0)) {
+        yMod = O.y0.slice();
+        ssr = O.ssr0;
+    } else {
+        yMod = fInt(data.t, params);
+        ssr = _ssr(data.p, yMod, W);
     }
-    if (!isFinite(ssr)) {
-        ctx.stopReason = 'non-finite-start';
-        return _buildResult(params, freeKeys, null, data, yMod, W, ssr, 0, false, [ssr], ctx);
+    // Early returns carry the same resume fields as a full run (lambda, nEval, stagnantSteps, pInt, y).
+    function earlyOut(reason) {
+        ctx.stopReason = reason;
+        var r0 = _buildResult(params, freeKeys, null, data, yMod, W, ssr, 0, false, [ssr], ctx);
+        var pi0 = {};
+        for (var q0 = 0; q0 < freeKeys.length; q0++) pi0[freeKeys[q0]] = params[freeKeys[q0]];
+        r0.lambda = O.lambda0;
+        r0.nEval = nEval;
+        r0.stagnantSteps = (typeof O.stagnant0 === 'number' && isFinite(O.stagnant0)) ? O.stagnant0 : 0;
+        r0.pInt = pi0;
+        r0.y = yMod.slice();
+        r0.jac = null;
+        return r0;
     }
+    if (!freeKeys.length) return earlyOut('no-free-params');
+    if (!isFinite(ssr)) return earlyOut('non-finite-start');
 
     var boundArr = freeKeys.map(function (k) { return ib[k]; });
     var history = [ssr];
     var lambda = O.lambda0;
     var iter = 0;
     var converged = false;
-    var stagnantSteps = 0;
+    var stagnantSteps = (typeof O.stagnant0 === 'number' && isFinite(O.stagnant0)) ? O.stagnant0 : 0;
     var nf = freeKeys.length;
     var n = data.p.length;
     // 'exact' fit: weighted RMS residual ≤ 1e-7 of max(1, |y|) — at the
@@ -3373,37 +3407,69 @@ function PRiSM_lm(modelFn, data, params0, bounds, freeze, opts) {
     var hasDeadline = typeof O.deadline === 'number' && isFinite(O.deadline);
     var overBudget = function () {
         if (hasDeadline && Date.now() > O.deadline) return true;
-        if (typeof O.shouldStop === 'function') { try { return !!O.shouldStop(); } catch (e) { return false; } }
+        if (typeof O.shouldStop === 'function') { try { return !!O.shouldStop(nEval); } catch (e) { return false; } }
         return false;
     };
-    while (iter < O.maxIter) {
+    // O.done0 {converged, stopReason}: the previous slice already stopped —
+    // no iteration, only the final statistics at the carried parameters.
+    var done0 = O.done0 && typeof O.done0 === 'object';
+    if (done0) {
+        converged = !!O.done0.converged;
+        ctx.stopReason = O.done0.stopReason || (converged ? 'tolerance' : 'maxIter');
+    }
+    // O.trialStop(nEval) (sliced fits): the budget test between trial steps of
+    // one iteration (a trial costs one evaluation); O.shouldStop stays the test
+    // before an iteration starts. O.jac0 {JtWJ, JtWr, innerTries}: a slice that
+    // paused inside the trial loop hands over its normal equations, so the next
+    // slice continues the same iteration (no Jacobian at unchanged parameters,
+    // no extra iteration) and the path equals an unsliced run.
+    var trialOver = (typeof O.trialStop === 'function')
+        ? function () {
+            if (hasDeadline && Date.now() > O.deadline) return true;
+            try { return !!O.trialStop(nEval); } catch (e) { return false; }
+        }
+        : overBudget;
+    var jacIn = (O.jac0 && Array.isArray(O.jac0.JtWr) && O.jac0.JtWr.length === nf &&
+                 Array.isArray(O.jac0.JtWJ) && O.jac0.JtWJ.length === nf) ? O.jac0 : null;
+    while (!done0 && iter < O.maxIter) {
         iter++;
         if (ssr <= exactSsr) { converged = true; ctx.stopReason = 'exact'; break; }
-        if (overBudget()) { ctx.stopReason = 'budget'; break; }
-
-        var J = PRiSM_jacobianForward(fInt, data.t, params, yMod, freeKeys, O.derivStep, boundArr);
-        var JtWJ = _zeros2D(nf, nf);
-        var JtWr = new Array(nf);
-        for (var jj = 0; jj < nf; jj++) JtWr[jj] = 0;
-        for (var i = 0; i < n; i++) {
-            var ri = data.p[i] - yMod[i];
-            var wi = W[i];
-            if (wi === 0) continue;
-            for (var a = 0; a < nf; a++) {
-                var Jia = J[i][a];
-                if (Jia === 0) continue;
-                JtWr[a] += wi * Jia * ri;
-                for (var bb = a; bb < nf; bb++) JtWJ[a][bb] += wi * Jia * J[i][bb];
-            }
+        if (!jacIn && overBudget()) {
+            if (O.budgetFirst) iter--;     // a sliced fit pauses before this iteration: not counted
+            ctx.stopReason = 'budget'; break;
         }
-        for (var a2 = 0; a2 < nf; a2++) for (var b2 = a2 + 1; b2 < nf; b2++) JtWJ[b2][a2] = JtWJ[a2][b2];
+
+        var JtWJ, JtWr, innerTries0 = 0;
+        if (jacIn) {
+            JtWJ = jacIn.JtWJ.map(function (r) { return r.slice(); });
+            JtWr = jacIn.JtWr.slice();
+            innerTries0 = Math.max(0, Math.min(39, Math.floor(jacIn.innerTries) || 0));
+            jacIn = null;
+        } else {
+            var J = PRiSM_jacobianForward(fInt, data.t, params, yMod, freeKeys, O.derivStep, boundArr);
+            JtWJ = _zeros2D(nf, nf);
+            JtWr = new Array(nf);
+            for (var jj = 0; jj < nf; jj++) JtWr[jj] = 0;
+            for (var i = 0; i < n; i++) {
+                var ri = data.p[i] - yMod[i];
+                var wi = W[i];
+                if (wi === 0) continue;
+                for (var a = 0; a < nf; a++) {
+                    var Jia = J[i][a];
+                    if (Jia === 0) continue;
+                    JtWr[a] += wi * Jia * ri;
+                    for (var bb = a; bb < nf; bb++) JtWJ[a][bb] += wi * Jia * J[i][bb];
+                }
+            }
+            for (var a2 = 0; a2 < nf; a2++) for (var b2 = a2 + 1; b2 < nf; b2++) JtWJ[b2][a2] = JtWJ[a2][b2];
+        }
         var diagJtWJ = new Array(nf);
         for (var d = 0; d < nf; d++) diagJtWJ[d] = Math.max(JtWJ[d][d], 1e-30);
 
-        var accepted = false, innerTries = 0;
+        var accepted = false, innerTries = innerTries0;
         var newSsr = ssr, newParams = params, newYMod = yMod;
         while (!accepted && innerTries < 40) {
-            if (innerTries > 0 && overBudget()) break;
+            if (innerTries > 0 && trialOver()) break;
             innerTries++;
             var A = _copy2D(JtWJ);
             for (var dd = 0; dd < nf; dd++) {
@@ -3431,6 +3497,17 @@ function PRiSM_lm(modelFn, data, params0, bounds, freeze, opts) {
         }
 
         if (!accepted) {
+            // Sliced fits (O.budgetFirst): a slice that runs out of evaluations
+            // inside the trial loop only pauses — it hands over the normal
+            // equations, the trial count and the raised λ, and the next slice
+            // continues this iteration exactly where an unsliced run would — so
+            // no stationarity verdict is taken and the iteration is not counted here.
+            if (O.budgetFirst && lambda <= O.lambdaMax && innerTries < 40 && trialOver()) {
+                ctx.stopReason = 'budget';
+                ctx.jacOut = { JtWJ: JtWJ.map(function (r) { return r.slice(); }), JtWr: JtWr.slice(), innerTries: innerTries };
+                iter--;
+                break;
+            }
             history.push(ssr);
             if (typeof O.onIter === 'function') { try { O.onIter(iter, toExt(params), ssr, lambda); } catch (_) {} }
             var pred = _gnPredictedDecrease(JtWJ, JtWr, params, freeKeys, ib);
@@ -3439,7 +3516,9 @@ function PRiSM_lm(modelFn, data, params0, bounds, freeze, opts) {
             } else if (isFinite(pred) && pred <= O.gtol * Math.max(ssr, 1e-300)) {
                 converged = true; ctx.stopReason = 'stationary';
             } else {
-                ctx.stopReason = overBudget() ? 'budget' : 'lambda-max';
+                // λ ran past λmax (or 40 trials): a sliced fit ends here just as an
+                // unsliced one does, whatever its remaining evaluation budget.
+                ctx.stopReason = (!O.budgetFirst && overBudget()) ? 'budget' : 'lambda-max';
             }
             break;
         }
@@ -3462,8 +3541,28 @@ function PRiSM_lm(modelFn, data, params0, bounds, freeze, opts) {
     }
     if (!converged && ctx.stopReason === 'none') ctx.stopReason = 'maxIter';
 
+    // Resume state for sliced fits (v3.3): internal parameters, model vector,
+    // SSR, λ and the plateau counter.
+    var pIntOut = {};
+    for (var pq = 0; pq < freeKeys.length; pq++) pIntOut[freeKeys[pq]] = params[freeKeys[pq]];
+    if (O.skipFinal) {
+        // Intermediate slice: no final Jacobian / statistics.
+        return {
+            params: toExt(params), pInt: pIntOut, y: yMod.slice(), ssr: ssr, iterations: iter,
+            converged: !!converged, stopReason: ctx.stopReason, lambda: lambda, nEval: nEval,
+            stagnantSteps: stagnantSteps, residualHistory: history, freeKeys: freeKeys.slice(), sliced: true,
+            jac: ctx.jacOut || null
+        };
+    }
     var Jfinal = PRiSM_jacobianForward(fInt, data.t, params, yMod, freeKeys, O.derivStep, boundArr);
-    return _buildResult(params, freeKeys, Jfinal, data, yMod, W, ssr, iter, converged, history, ctx);
+    var res = _buildResult(params, freeKeys, Jfinal, data, yMod, W, ssr, iter, converged, history, ctx);
+    res.lambda = lambda;
+    res.nEval = nEval;
+    res.stagnantSteps = stagnantSteps;
+    res.pInt = pIntOut;
+    res.y = yMod.slice();
+    res.jac = ctx.jacOut || null;
+    return res;
 }
 
 // Gauss-Newton predicted SSR decrease over parameters that are not pinned at
@@ -3952,7 +4051,7 @@ function PRiSM_sandface_convolution(data, refRateIdx) {
 // PRiSM_physicalModel) is not loaded. They follow the same contract shapes.
 // =============================================================================
 
-function _num(x) { return typeof x === 'number' && isFinite(x); }
+function _num(x) { return typeof x === 'number' && _isFinite(x); }
 function _pos(x) { return _num(x) && x > 0; }
 function _pick() {
     for (var i = 0; i < arguments.length; i++) {
@@ -4001,6 +4100,66 @@ function _bourdet(x, y, L) {
         d[i] = (y[i] - y[i1]) / dl1 * (dl2 / dlT) + (y[i2] - y[i]) / dl2 * (dl1 / dlT);
     }
     return d;
+}
+// Precomputed Bourdet operator on fixed abscissae (v3.3): the window search and log spacings
+// of PRiSM_compute_bourdet (02), evaluated with the same operations in the same order.
+function _bourdetOp(x, L) {
+    L = (isFinite(L) && L > 0) ? L : 0;
+    var n = x.length, op = { n: n, idx: [], i1: [], i2: [], dl1: [], dl2: [], f1: [], f2: [] };
+    if (n < 3) return op;
+    for (var i = 1; i < n - 1; i++) {
+        if (!isFinite(x[i]) || x[i] <= 0) continue;
+        var i1 = i - 1, i2 = i + 1;
+        if (L > 0) {
+            var lnT = Math.log(x[i]);
+            while (i1 > 0 && lnT - Math.log(x[i1]) < L) i1--;
+            while (i2 < n - 1 && Math.log(x[i2]) - lnT < L) i2++;
+        }
+        var t1 = x[i1], t2 = x[i2], ti = x[i];
+        if (!isFinite(t1) || !isFinite(t2) || t1 <= 0 || t2 <= 0) continue;
+        var dl1 = Math.log(ti) - Math.log(t1);
+        var dl2 = Math.log(t2) - Math.log(ti);
+        var dlT = Math.log(t2) - Math.log(t1);
+        if (dl1 === 0 || dl2 === 0 || dlT === 0) continue;
+        op.idx.push(i); op.i1.push(i1); op.i2.push(i2); op.dl1.push(dl1); op.dl2.push(dl2);
+        op.f2.push(dl2 / dlT); op.f1.push(dl1 / dlT);
+    }
+    return op;
+}
+function _bourdetApply(op, y) {
+    var d = new Array(op.n), k;
+    for (k = 0; k < op.n; k++) d[k] = NaN;
+    for (k = 0; k < op.idx.length; k++) {
+        var i = op.idx[k];
+        if (!_isFinite(y[i])) continue;
+        d[i] = (y[i] - y[op.i1[k]]) / op.dl1[k] * op.f2[k] + (y[op.i2[k]] - y[i]) / op.dl2[k] * op.f1[k];
+    }
+    return d;
+}
+function _sameNumArr(a, b) {
+    if (!a || !b || a.length !== b.length) return false;
+    for (var i = 0; i < a.length; i++) if (!(a[i] === b[i] || (a[i] !== a[i] && b[i] !== b[i]))) return false;
+    return true;
+}
+// Verified operators by abscissae (compared value by value, so a reused or mutated array
+// never picks up a stale operator) and L, with the shared function they were checked against.
+var _BOP_CACHE = [], _BOP_MAX = 4;
+function _bopLookup(x, L) {
+    for (var c = 0; c < _BOP_CACHE.length; c++) {
+        var e = _BOP_CACHE[c];
+        if (e.L === L && e.x.length === x.length) {
+            var same = true;
+            for (var i = 0; i < x.length; i++) if (e.x[i] !== x[i]) { same = false; break; }
+            if (same) return e;
+        }
+    }
+    return null;
+}
+function _bopStore(x, L, op, fn) {
+    var e = _bopLookup(x, L);
+    if (e) { e.op = op; e.fn = fn; return; }
+    _BOP_CACHE.unshift({ x: Array.prototype.slice.call(x), L: L, op: op, fn: fn });
+    if (_BOP_CACHE.length > _BOP_MAX) _BOP_CACHE.pop();
 }
 
 // C1 fallback — well & fluid inputs from PRiSM_pvt.
@@ -4211,7 +4370,7 @@ function _shapeScale(sp) {
 // C3 fallback — dimensional wrapper around a dimensionless registry model.
 function _localPhysicalModel(modelKey, well, adata, opts) {
     opts = opts || {};
-    var entry = _registry()[modelKey];
+    var entry = (opts.entry && typeof opts.entry.pd === 'function') ? opts.entry : _registry()[modelKey];
     if (!entry || typeof entry.pd !== 'function') return { ok: false, reason: 'unknown model "' + modelKey + '"' };
     if (entry.kind === 'rate') return { ok: false, reason: 'rate model — use PRiSM_fitRate' };
     if (!adata || !adata.ok) return { ok: false, reason: 'no analysis data' };
@@ -4526,7 +4685,9 @@ function PRiSM_fitPhysical(modelKey, adata, well, opts) {
         return { ok: false, reason: reason, modelKey: modelKey, model: modelKey, kind: 'pressure',
                  source: 'regression', converged: false, warnings: [reason] };
     };
-    var entry = _registry()[modelKey];
+    // opts.entry (v3.3): a registry-like object used instead of PRiSM_MODELS[modelKey]
+    // (e.g. the automatic-interpretation grid entries); modelKey stays the label.
+    var entry = (opts.entry && typeof opts.entry.pd === 'function') ? opts.entry : _registry()[modelKey];
     if (!entry) return fail('Unknown model "' + modelKey + '".');
     if (entry.kind === 'rate') return fail('"' + modelKey + '" is a rate model — use the decline fit.');
     var ds = opts.dataset || G.PRiSM_dataset;
@@ -4544,7 +4705,7 @@ function PRiSM_fitPhysical(modelKey, adata, well, opts) {
                 : (!shutIn && ['pi', 'pwf0'].indexOf(adata.pRefSource) < 0);
     if (shutIn) floatPi = false;
 
-    var pm = _getPM(modelKey, well, adata, { floatPi: floatPi, mode: opts.mode, params0: opts.params0 });
+    var pm = _getPM(modelKey, well, adata, { floatPi: floatPi, mode: opts.mode, params0: opts.params0, entry: opts.entry, isolated: opts.isolated });
     if (!pm || !pm.ok) return fail('Physical model unavailable: ' + (pm && pm.reason || 'unknown reason'));
     var keys = pm.keys.filter(function (k) { return String(k).indexOf('__') !== 0; });
     if (keys.indexOf('pi') < 0) floatPi = false;
@@ -4572,8 +4733,26 @@ function PRiSM_fitPhysical(modelKey, adata, well, opts) {
     var PEN = 30;
 
     function modelDpAll(phys) { return pm.dp(tAll, phys); }
+    // The consistent model derivative applies the Bourdet operator at the fixed abscissae X
+    // every evaluation; its indices and log spacings depend on X and L only, so they are
+    // computed once (v3.3) and kept for later calls on the same abscissae (sliced fits).
+    // An operator is used only after it reproduced the shared PRiSM_compute_bourdet bit for
+    // bit; with an override that differs the shared function is called every time, so the
+    // numbers are unchanged either way.
+    var bOp = null, bOpChecked = false;
     function modelDeriv(phys, dpAll) {
-        if (derivMode === 'consistent') return _bourdet(X, dpAll, Lb);
+        if (derivMode === 'consistent') {
+            if (bOp) return _bourdetApply(bOp, dpAll);
+            if (!bOpChecked) {
+                bOpChecked = true;
+                var fnRef = G.PRiSM_compute_bourdet, ce = _bopLookup(X, Lb);
+                if (ce && ce.fn === fnRef) { bOp = ce.op; return _bourdetApply(bOp, dpAll); }
+                var d0 = _bourdet(X, dpAll, Lb), op = ce ? ce.op : _bourdetOp(X, Lb);
+                if (_sameNumArr(_bourdetApply(op, dpAll), d0)) { bOp = op; _bopStore(X, Lb, op, fnRef); }
+                return d0;
+            }
+            return _bourdet(X, dpAll, Lb);
+        }
         var tD = idxD.map(function (i) { return T[i]; });
         var dv = pm.deriv(tD, phys), full = new Array(T.length);
         for (var z = 0; z < idxD.length; z++) full[idxD[z]] = dv[z];
@@ -4592,13 +4771,13 @@ function PRiSM_fitPhysical(modelKey, adata, well, opts) {
         for (var a = 0; a < idxDp.length; a++) {
             var j = idxDp[a], yd = DP[j] + sh, ym = dpm[j];
             if (objective === 'dp') out[c++] = -((yd) - ym);
-            else out[c++] = (yd > 0 && ym > 0) ? -(Math.log(yd) - Math.log(ym)) : PEN;
+            else out[c++] = (yd > 0 && ym > 0) ? -(_log(yd) - _log(ym)) : PEN;
         }
         if (idxD.length) {
             var dm = modelDeriv(phys, dpm);
             for (var b = 0; b < idxD.length; b++) {
                 var jd = idxD[b], dmv = dm[jd];
-                out[c++] = (dmv > 0) ? -(Math.log(DD[jd]) - Math.log(dmv)) : PEN;
+                out[c++] = (dmv > 0) ? -(_log(DD[jd]) - _log(dmv)) : PEN;
             }
         }
         return out;
@@ -4674,17 +4853,59 @@ function PRiSM_fitPhysical(modelKey, adata, well, opts) {
         var resFn0 = resFn;
         resFn = function (a, b) { nEval++; return resFn0(a, b); };
     }
-    var best = null, nStartsOk = 0;
+    // v3.3 sliced fits (count-only, no clock): opts.evalBudget stops the LM after
+    // n model evaluations; opts.lmState resumes λ, the parameters, the model
+    // vector (no fresh start evaluation) and the plateau counter; opts.slice
+    // skips the final Jacobian / statistics. All are ignored when absent.
+    var lmStateIn = (opts.lmState && typeof opts.lmState === 'object') ? opts.lmState : null;
+    var evalBudget = _pos(opts.evalBudget) ? Math.floor(opts.evalBudget) : null;
+    var sliceMode = !!(lmStateIn || evalBudget || opts.slice);
+    if (lmStateIn) {
+        starts = [seed0];
+        if (_num(lmStateIn.lambda)) lmOpts.lambda0 = lmStateIn.lambda;
+        if (_num(lmStateIn.ssr) && Array.isArray(lmStateIn.y)) { lmOpts.ssr0 = lmStateIn.ssr; lmOpts.y0 = lmStateIn.y; }
+        if (lmStateIn.p && typeof lmStateIn.p === 'object') lmOpts.p0 = lmStateIn.p;
+        if (_num(lmStateIn.stagnant)) lmOpts.stagnant0 = lmStateIn.stagnant;
+        if (lmStateIn.jac && !lmStateIn.done) lmOpts.jac0 = lmStateIn.jac;
+        if (lmStateIn.done) lmOpts.done0 = { converged: !!lmStateIn.converged, stopReason: lmStateIn.stopReason };
+    }
+    if (evalBudget) {
+        // Count-only: an LM iteration (nFree Jacobian columns + one trial) starts only when it
+        // fits in the budget; the first iteration of a slice always runs. Between trial steps
+        // of an iteration the budget is one evaluation per trial.
+        var prevStop = lmOpts.shouldStop;
+        var nFreeFit = keys.filter(function (k) { return !freeze[k]; }).length;
+        lmOpts.shouldStop = function (n) {
+            return (n > 1 && n + nFreeFit + 1 > evalBudget) || (prevStop ? !!prevStop(n) : false);
+        };
+        lmOpts.trialStop = function (n) {
+            return n >= evalBudget || (prevStop ? !!prevStop(n) : false);
+        };
+        lmOpts.budgetFirst = true;
+    }
+    if (opts.slice) lmOpts.skipFinal = true;
+    var best = null, nStartsOk = 0, nEvalLM = 0;
     for (var si = 0; si < starts.length; si++) {
-        if (si > 0 && ((lmOpts.deadline && Date.now() > lmOpts.deadline) || (lmOpts.shouldStop && lmOpts.shouldStop()))) break;
+        if (si > 0 && ((lmOpts.deadline && Date.now() > lmOpts.deadline) || (lmOpts.shouldStop && lmOpts.shouldStop(0)))) break;
         var res;
         try { res = PRiSM_lm(resFn, data, starts[si], bounds, freeze, lmOpts); }
         catch (e) { continue; }
+        if (res && _num(res.nEval)) nEvalLM += res.nEval;
         if (!res || !isFinite(res.ssr)) continue;
         nStartsOk++;
         if (_betterRun(res, best)) best = res;
     }
     if (!best) return fail('Regression failed at every start.');
+    var lmStateOut = {
+        lambda: best.lambda, ssr: best.ssr, stagnant: best.stagnantSteps, iterations: best.iterations,
+        converged: !!best.converged, stopReason: best.stopReason, done: best.stopReason !== 'budget'
+    };
+    if (sliceMode) { lmStateOut.y = best.y; lmStateOut.p = best.pInt; if (best.jac) lmStateOut.jac = best.jac; }
+    if (opts.slice) {
+        return { ok: true, sliced: true, modelKey: modelKey, model: modelKey, kind: 'pressure', phys: _copy(best.params),
+                 lmState: lmStateOut, nEval: nEvalLM, iterations: best.iterations,
+                 converged: !!best.converged, stopReason: best.stopReason };
+    }
 
     var phys = _copy(best.params);
     var dpm = modelDpAll(phys);
@@ -4748,6 +4969,11 @@ function PRiSM_fitPhysical(modelKey, adata, well, opts) {
             warnings.push(refKey + ' and S are strongly correlated (r = ' + best.corr[iS][iL].toFixed(3) + ') — ' + refKey + ' is not identifiable from these data.');
         }
     }
+    // A drainage radius beyond the radius of investigation was never seen by the data (closed circle, reD·rw)
+    var reFt = physOut.distances_ft && _num(physOut.distances_ft.reD) ? physOut.distances_ft.reD : null;
+    if (reFt !== null && _pos(physOut.rinv) && reFt > physOut.rinv) {
+        warnings.push('r_e (' + _fmtNum(reFt) + ' ft) is beyond the radius of investigation (' + _fmtNum(physOut.rinv) + ' ft): the boundary is not seen, so the data only show r_e ≥ r_inv (the fitted r_e is not determined).');
+    }
     if (isFinite(r2) && r2 < 0.9) warnings.push('Poor match (R² = ' + r2.toFixed(3) + ').');
     // A fit stuck at a bound or with a poor match is not a converged result,
     // whatever the LM stop criterion said ('stationary' / 'plateau' at a bound).
@@ -4795,6 +5021,7 @@ function PRiSM_fitPhysical(modelKey, adata, well, opts) {
         datasetHash: _datasetHash(ds),
         timestamp: new Date().toISOString(),
         elapsedMs: Date.now() - t0,
+        lmState: lmStateOut, nEval: nEvalLM + 1,
         warnings: warnings
     };
 

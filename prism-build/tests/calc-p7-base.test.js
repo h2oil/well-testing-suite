@@ -208,7 +208,7 @@ module.exports = [
     },
   },
   {
-    name: 'P7 dual choke gas: Thornhill-Craver rate re-referred from 60 °F / 14.7 psia to the setting',
+    name: 'P7 dual choke gas: API 14B nozzle-equation rate re-referred from 60 °F / 14.7 psia to the setting',
     wp: WP,
     run(app, assert) {
       app.hook.nav('choke'); app.flush(20);

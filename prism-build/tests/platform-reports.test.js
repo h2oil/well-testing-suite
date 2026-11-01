@@ -60,7 +60,7 @@ module.exports = [
     name: 'Daily well-test report: client info, events, rates, cumulative volumes and flare emissions in template order',
     wp: WP,
     run(app, assert) {
-      setClient(app, { client: 'Acme Energy', well: 'W-7', field: 'North Block' });
+      setClient(app, { client: 'Operator Energy Ltd', well: 'W-7', field: 'North Block' });
       capture(app, 'oilgas', () => app.click(app.find('#pgBody .btn-primary')));
       capture(app, 'flareghg', () => app.input('fe_qg', '7.5'));
       const w = app.win;
@@ -72,7 +72,7 @@ module.exports = [
       const { ret, html } = report(app, () => w.WTS_reportTemplates.generate('daily'));
       assert.strictEqual(ret, true);
       assert.ok(pos(html, '<title>Daily Well Test Report</title>') >= 0, 'cover title');
-      const order = ['Client &amp; well information', 'Acme Energy', 'Sequence of events', 'Opened well on 24/64 in choke',
+      const order = ['Client &amp; well information', 'Operator Energy Ltd', 'Sequence of events', 'Opened well on 24/64 in choke',
         '<span>03</span>Rates', 'Oil &amp; Gas Rate', 'Well Test Simulator (T+02:30:00)', 'Rate calculations',
         'Cumulative volumes', 'Cumulative oil', 'Flare emissions'];
       inOrder(assert, html, order);

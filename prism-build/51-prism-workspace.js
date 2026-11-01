@@ -144,6 +144,7 @@
         linearBoundary: ['Well near one straight fault: sealing, or constant pressure.', 'Flat, then the derivative doubles (sealing) or falls away (constant pressure).', 'fault sealing no flow boundary barrier single fault doubling constant pressure aquifer gas cap'],
         parallelChannel: ['Well between two parallel sealing faults (a channel).', 'Flat, then a half-slope rise (linear flow along the channel).', 'channel parallel faults fluvial elongated'],
         closedChannel3: ['Channel closed at one end (three sealing faults, U shape).', 'Half-slope rise from the channel, steepening once the closed end is felt.', 'u shape three faults closed channel'],
+        closedCircle: ['Closed circular reservoir (well at the centre).', 'Flat, then the derivative bends up to a unit slope (pseudo-steady state).', 'closed circle circular bounded drainage radius depletion'],
         closedRectangle: ['Closed rectangular reservoir (four sealing faults).', 'Flat, then a unit slope at late time (pseudo-steady state, depletion).', 'closed bounded compartment depletion pseudo steady state box tank'],
         intersecting: ['Well inside a wedge formed by two intersecting faults.', 'Flat, then a higher flat level set by the wedge angle.', 'wedge intersecting faults angle corner'],
         fogBoundary: ['Fault that leaks (partially communicating).', 'Rises like a fault, then returns towards the first flat level.', 'leaky fault partially sealing semi permeable communicating'],

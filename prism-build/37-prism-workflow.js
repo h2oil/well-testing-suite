@@ -2164,6 +2164,7 @@
         { id: 'dsets',       fn: 'PRiSM_renderDatasetsPanel',       group: 'Data',     title: 'Gauges & analysis datasets',       sub: 'Store, sample and activate datasets' },
         { id: 'gas',         fn: 'PRiSM_renderGasPanel',            group: 'Diagnose', title: 'Gas analysis: m(p) and pseudo-time', sub: 'Pseudo-pressure basis for gas tests' },
         { id: 'rateskin',    fn: 'PRiSM_renderRateSkinPanel',       group: 'Diagnose', title: 'Rate-dependent skin (S′ vs rate)', sub: 'Separate mechanical skin S and D' },
+        { id: 'skincheck',   fn: 'PRiSM_renderSkinCheckPanel',      group: 'Diagnose', title: 'Skin check: IARF window, line vs match, uncertainty, confidence', sub: 'Automatic IARF window, skin uncertainty and confidence' },
         { id: 'deliv',       fn: 'PRiSM_renderDeliverabilityPanel', group: 'Diagnose', title: 'Deliverability: AOF (gas) / IPR (oil)', sub: 'Flow-after-flow, isochronal, IPR' },
         { id: 'rta',         fn: 'PRiSM_renderRTAPanel',            group: 'Diagnose', title: 'Rate-transient analysis',          sub: 'Normalised rate, FMB and linear flow' },
         { id: 'plottools',   fn: 'PRiSM_renderPlotToolsPanel',      group: 'Plot',     title: 'Plot tools',                       sub: 'Overlays, difference plot, copy & export' },

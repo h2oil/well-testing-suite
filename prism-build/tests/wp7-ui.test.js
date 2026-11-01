@@ -197,7 +197,7 @@ module.exports = [
     }),
   },
   {
-    name: 'Tab 3 library: card counts 45 / 41 / 4 by mode; selected hidden model still rendered',
+    name: 'Tab 3 library: card counts 46 / 42 / 4 by mode; selected hidden model still rendered',
     wp: 'WP7', opts: false,
     run: (_a, assert, ctx) => withApp(ctx, null, (app) => {
       app.openPRiSM();
@@ -209,8 +209,8 @@ module.exports = [
         counts[m] = app.findAll('#prism_tab_3 .prism-model-card').length;
       }
       assert.equal(counts.combined, total);
-      assert.equal(total, 45, 'registry has 45 models');
-      assert.equal(counts.transient, 41);
+      assert.equal(total, 46, 'registry has 46 models');
+      assert.equal(counts.transient, 42);
       assert.equal(counts.decline, 4);
       const keys = app.findAll('#prism_tab_3 .prism-model-card').map((c) => c.getAttribute('data-prism-model')).sort();
       assert.deepEqual(keys, ['arps', 'duong', 'fetkovich', 'sepd']);
@@ -222,7 +222,7 @@ module.exports = [
       app.win.PRiSM.mode = 'combined';
       app.renderTab(3);
       const thumbs = app.findAll('#prism_tab_3 .prism-model-card .prism-thumb svg').length;
-      assert.equal(thumbs, 45, 'every card has a schematic thumbnail');
+      assert.equal(thumbs, 46, 'every card has a schematic thumbnail');
       // Categories: chips built from the registry, known order first.
       const cats = app.findAll('#prism_model_chips .prism-chip').map((c) => c.getAttribute('data-prism-cat'));
       assert.equal(cats[0], 'all');
@@ -241,16 +241,16 @@ module.exports = [
       app.renderTab(3);
       app.input('prism_model_search', 'fault');
       const vis = visibleCards(app);
-      assert.ok(vis.length > 0 && vis.length < 41, 'search narrows the list (' + vis.length + ')');
+      assert.ok(vis.length > 0 && vis.length < 42, 'search narrows the list (' + vis.length + ')');
       vis.forEach((c) => assert.includes(c.getAttribute('data-prism-search'), 'fault'));
-      assert.includes(app.el('prism_model_count').textContent, 'of 41');
+      assert.includes(app.el('prism_model_count').textContent, 'of 42');
       app.input('prism_model_search', '');
       app.click(app.find('#prism_model_chips [data-prism-cat="boundary"]'));
       const vb = visibleCards(app);
       assert.ok(vb.length >= 5);
       vb.forEach((c) => assert.equal(c.getAttribute('data-prism-cat'), 'boundary'));
       app.click(app.find('#prism_model_chips [data-prism-cat="all"]'));
-      assert.equal(visibleCards(app).length, 41);
+      assert.equal(visibleCards(app).length, 42);
       app.evalInApp("window.__mc = []; window.addEventListener('prism:model-changed', function (e) { window.__mc.push(e.detail.model); });");
       app.click(app.find('#prism_tab_3 .prism-model-card[data-prism-model="horizontal"]'));
       const st = app.win.PRiSM_state;
@@ -796,13 +796,13 @@ module.exports = [
     },
   },
   {
-    name: '[c] Tab 3 counts with the current registry: 45 combined / 41 transient / 4 decline (WP4a/4b)',
+    name: '[c] Tab 3 counts with the current registry: 46 combined / 42 transient / 4 decline (WP4a/4b, v3.3 closed circle)',
     wp: 'WP7', integration: true,
     run(app, assert) {
       app.openPRiSM();
       const n = {};
       for (const m of ['combined', 'transient', 'decline']) { app.win.PRiSM.mode = m; app.renderTab(3); n[m] = app.findAll('#prism_tab_3 .prism-model-card').length; }
-      assert.deepEqual(n, { combined: 45, transient: 41, decline: 4 });
+      assert.deepEqual(n, { combined: 46, transient: 42, decline: 4 });
     },
   },
   {

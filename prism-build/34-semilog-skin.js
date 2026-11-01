@@ -401,7 +401,9 @@
     // Returns { steps:[{T, q}], n } in PRODUCTION sign convention where the
     // last step is the analysed period (T = its start, absolute hours).
 
-    function _steps(adata, method, testType) {
+    // exact (opts.exactSteps): keep every rate step (the superposition time an exact sum over all steps); otherwise a step
+    // within 1 % of the last kept one is merged into it
+    function _steps(adata, method, testType, exact) {
         var qRef = firstNum(adata.qRef);
         var tp = firstNum(adata.tp);
         var isShut = (testType === 'buildup' || testType === 'falloff');
@@ -433,7 +435,7 @@
         for (var i = 0; i < raw.length; i++) {
             if (raw[i].T > tStart + 1e-9) break;
             var last = steps[steps.length - 1];
-            if (last && Math.abs(last.q - raw[i].q) <= 0.01 * Math.max(Math.abs(last.q), Math.abs(raw[i].q))) continue;
+            if (last && (exact ? last.q === raw[i].q : Math.abs(last.q - raw[i].q) <= 0.01 * Math.max(Math.abs(last.q), Math.abs(raw[i].q)))) continue;
             steps.push({ T: raw[i].T, q: raw[i].q });
         }
         // Leading zero-rate steps carry no information (q_0 = 0 already).
@@ -739,7 +741,7 @@
         if (isNum(tp) && tp <= 0) tp = null;
         var adTp = { qRef: firstNum(adata.qRef, well.q), tp: tp, periods: adata.periods, rateHistory: adata.rateHistory,
             tStart: adata.tStart, tShut: adata.tShut };
-        var supSteps = _steps(adTp, 'superposition', testType);
+        var supSteps = _steps(adTp, 'superposition', testType, !!opts.exactSteps);
         var nFlow = supSteps ? supSteps.filter(function (s) { return s.q !== 0; }).length : 0;
         var multi = !!(supSteps && (isShut ? nFlow > 1 : supSteps.length > 1));
         var method = opts.method && opts.method !== 'auto' ? opts.method : null;

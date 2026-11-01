@@ -99,7 +99,7 @@ After this, the `ios/` Xcode project lives in git. Anyone else (including future
 
 ### Option 1 — Pure git / Xcode (recommended)
 
-1. Edit `well-testing-app.html` at repo root (from anywhere — web IDE, VSCode, Cursor, etc.)
+1. Edit `well-testing-app.html` at repo root in any text editor.
 2. `git push`
 3. **GitHub Actions auto-regenerates `ios-app/www/index.html`** and commits it
 4. On your Mac: `git pull` in Xcode → ⌘+R
@@ -211,7 +211,7 @@ Include a note emphasizing the native integrations so Apple doesn't flag 4.2.1:
 
 > H2Oil Well Testing is an engineering calculator suite for oilfield well-test
 > operations. The app includes 30+ calculators (AGA-3 gas flow, choke sizing,
-> flare radiation per API 521, well test simulator with live Thornhill-Craver
+> flare radiation per API 521, well test simulator with live API 14B nozzle-equation
 > choke back-solve, etc.), interactive 3D flare visualisations, decline-curve
 > analysis, and a full well-test flow simulator. All calculations run
 > on-device and the app works fully offline. The app is free with no

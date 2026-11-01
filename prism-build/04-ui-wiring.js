@@ -1445,7 +1445,7 @@ var MODEL_NAMES = {
     finiteFrac: 'Finite-conductivity fracture', finiteFracSkin: 'Finite-conductivity fracture with face skin',
     partialPenFrac: 'Partially penetrating fracture', inclined: 'Inclined (slanted) well', horizontal: 'Horizontal well',
     linearBoundary: 'Single fault or linear boundary', parallelChannel: 'Parallel faults (channel)',
-    closedChannel3: 'Channel closed at one end', closedRectangle: 'Closed rectangle', intersecting: 'Intersecting faults (wedge)',
+    closedChannel3: 'Channel closed at one end', closedRectangle: 'Closed rectangle', closedCircle: 'Closed circle', intersecting: 'Intersecting faults (wedge)',
     fogBoundary: 'Leaky fault', arps: 'Arps decline', duong: 'Duong decline', sepd: 'Stretched-exponential decline',
     fetkovich: 'Fetkovich type curve', doublePorosity: 'Dual porosity', partialPen: 'Partial penetration',
     verticalPulse: 'Vertical interference (partial penetration)', twoLayerXF: 'Two layers with crossflow',
@@ -2593,8 +2593,9 @@ function _fitResultsHTML(fit) {
             '<td class="prism-num">' + _esc(_ciText(key, ci[key], v)) + '</td><td>' + flag + '</td></tr>';
     };
     PHYS_ORDER.forEach(function (k) { addRow(k, phys[k], PHYS_LABELS[k] || (k === 'rinv' ? 'Radius of investigation' : k), PHYS_UNITS[k] || '-'); });
-    var dist = phys.distances_ft || {};
-    for (var dk in dist) if (Object.prototype.hasOwnProperty.call(dist, dk)) addRow('dist_' + dk, dist[dk], 'Distance ' + dk, 'ft');
+    // a model may name its distances (distLabel, e.g. the closed circle's drainage radius r_e = reD·rw); else 'Distance <key>'
+    var dist = phys.distances_ft || {}, mEntry = fit.modelKey ? _MODELS()[fit.modelKey] : null, dLab = mEntry && mEntry.distLabel && typeof mEntry.distLabel === 'object' ? mEntry.distLabel : {};
+    for (var dk in dist) if (Object.prototype.hasOwnProperty.call(dist, dk)) addRow('dist_' + dk, dist[dk], typeof dLab[dk] === 'string' && dLab[dk] ? dLab[dk] : 'Distance ' + dk, 'ft');
     var btRaw = fit.bootstrap || null;
     var bt = (btRaw && btRaw.percentiles) ? btRaw.percentiles : (fit.percentiles || fit.pBands || btRaw);
     var btRows = '';
@@ -2884,7 +2885,9 @@ G.PRiSM_ui04 = {
     G.addEventListener('prism:dataset-loaded', function () {
         var st = _st();
         var ds = G.PRiSM_dataset;
-        var n = (ds && ds.q) ? PRiSM_detectPeriods(ds.t, ds.q).length : 0;
+        // st.activePeriod indexes the C2 period list (PRiSM_rateHistory: the multi-rate table or the q column)
+        var rh = (typeof G.PRiSM_rateHistory === 'function' && ds) ? G.PRiSM_rateHistory(ds) : null;
+        var n = (rh && rh.ok && rh.periods) ? rh.periods.length : ((ds && ds.q) ? PRiSM_detectPeriods(ds.t, ds.q).length : 0);
         if (st.activePeriod != null && !(st.activePeriod >= 0 && st.activePeriod < n)) st.activePeriod = null;
         refresh();
     });
