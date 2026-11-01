@@ -1113,7 +1113,7 @@
             tests.forEach(function (t) { if (t._used) used[t.id] = true; });
             var rh = scanRes.rates, T = TR(), trend = null;
             var ctx = { well: input.well, completion: input.completion || null, depth: input.depth || null, settings: st, days: rh.days || [], workovers: input.workovers || [],
-                        fluid: input.well.fluid, firstTest_ms: first, mode: rh.mode, phaseBasis: rh.phaseBasis, start: rh.start, historyEstimated: !!(rh.start && rh.start.flag),
+                        fluid: input.well.fluid, firstTest_ms: first, mode: rh.mode, phaseBasis: rh.phaseBasis, start: rh.start, historyEstimated: !!(rh.start && rh.start.flag), steps: rh.steps || [],
                         baseline: X.baseline, used: used, windowLevelInconsistent: tests.filter(function (t) { return t._wli; }).map(function (t) { return t.id; }) };
             if (T && typeof T.compute === 'function') {
                 try { trend = T.compute(tt, ctx); } catch (e) { trend = null; X.warnings.push(W('TREND_FAILED', 'bad', 'The trend could not be computed: ' + String(e && e.message || e).slice(0, 200), ['T1'])); }

@@ -385,7 +385,7 @@
     // =========================================================================
     // SECTION 4 — RATE-DEPENDENT SKIN (M§A19)
     // =========================================================================
-    var RATE_DEFAULTS = Object.freeze({ qRatioMin: 1.5, maxDays: 60, joint: true, stable: null, corrMax: 0.8, dOverSeMin: 2, jointMinN: 4, serrMin: 0.05, serrDefault: 0.2, expectedFactor: 3 });
+    var RATE_DEFAULTS = Object.freeze({ qRatioMin: 1.5, maxDays: 60, joint: true, stable: null, corrMax: 0.8, dOverSeMin: 2, jointMinN: 5, serrMin: 0.05, serrDefault: 0.2, expectedFactor: 3, window: 'latest' });
 
     // Weighted least squares y = X·beta with weights w; returns {beta, cov, chi2, dof}.
     function wls(X, y, w) {
@@ -451,11 +451,12 @@
                  method: 'D = 2.222e-15·γg·k·h·β/(μg·rw·hp²), β = 2.6e10·k^-1.2; range ×1/3 to ×3' };
     }
 
-    // rateSkin(rows [{id, t_days, q, S, Serr}], opts {qRatioMin, maxDays, joint, stable, expected})
+    // rateSkin(rows [{id, t_days, q, S, Serr}], opts {qRatioMin, maxDays, joint, stable, expected, window: 'latest'|'earliest'})
     //   → {resolved, S, D, seD, n, qRatio, joint:null|{S0, r_per30d, D, seD, seR}, expectedD:number|null,
     //      expectedDRange:null|{D, lo, hi, beta, unit, method}, consistent, corrQT, ids, reason, ev:['T15']}
     // Window: the tests inside the span of at most maxDays (first to last test) that holds
-    // the most tests, the latest such window on a tie. A chain of weekly tests over a year
+    // the most tests, the latest such window on a tie (opts.window 'earliest': the earliest, e.g. the baseline of a
+    // surveillance segment, before any later skin change). A chain of weekly tests over a year
     // is therefore never one group (a skin trend would be confounded with D).
     // D needs q_max/q_min ≥ qRatioMin and D/se ≥ 2. Collinearity of rate and time
     // (|corr(q, t)| ≥ 0.8; two tests count as collinear) refuses:
@@ -464,8 +465,9 @@
     //     it has checked that S′ shows no significant time trend in these rows (for
     //     example Mann–Kendall over a stable-skin segment). Without that statement a
     //     skin trend cannot be told from D when rate and time move together.
-    // A joint fit S′ = S0 + r·t/30 + D·q runs with ≥ 4 tests and low collinearity; when its
-    // time term is significant (|r|/se ≥ 2) D comes from it.
+    // A joint fit S′ = S0 + r·t/30 + D·q runs with ≥ 5 tests (≥ 2 degrees of freedom) and low collinearity; when its
+    // time term is significant (|r|/se ≥ 2) D comes from it — unless the caller stated a stable skin (opts.stable):
+    // a significant time term then shows the window is not stable, and D is not resolved.
     // expectedD is the central value of the correlation (a number, as plan §3.0 requires
     // for every output number); expectedDRange carries its ×1/3 … ×3 range.
     function rateSkin(rows, opts) {
@@ -486,11 +488,11 @@
             list.push({ id: r.id == null ? '' : String(r.id), q: Math.abs(q), S: S, t: t, se: Math.max(se, o.serrMin) });
         });
         list.sort(function (a, b) { return a.t - b.t; });
-        // The window of span ≤ maxDays with the most tests (the latest on a tie).
-        var g = [], i0 = 0;
+        // The window of span ≤ maxDays with the most tests (the latest on a tie, or the earliest with window 'earliest').
+        var g = [], i0 = 0, early = o.window === 'earliest';
         for (var j = 0; j < list.length; j++) {
             while (list[j].t - list[i0].t > o.maxDays + 1e-9) i0++;
-            if (j - i0 + 1 >= g.length) g = list.slice(i0, j + 1);
+            if (early ? j - i0 + 1 > g.length : j - i0 + 1 >= g.length) g = list.slice(i0, j + 1);
         }
         out.n = g.length;
         out.ids = g.map(function (r) { return r.id; });
@@ -522,6 +524,11 @@
                 var ji = jf.dof > 0 ? Math.max(1, jf.chi2 / jf.dof) : 1;
                 var seR = Math.sqrt(jf.cov[1][1] * ji), seDj = Math.sqrt(jf.cov[2][2] * ji);
                 out.joint = { S0: fin(jf.beta[0]), r_per30d: fin(jf.beta[1]), D: fin(jf.beta[2]), seD: fin(seDj), seR: fin(seR) };
+                if (isNum(seR) && seR > 0 && Math.abs(jf.beta[1]) / seR >= o.dOverSeMin && out.stable) {
+                    out.S = out.D = out.seD = null;
+                    out.reason = 'A skin trend of ' + fmt(jf.beta[1], 2) + ' per 30 days (|r|/se ' + fmt(Math.abs(jf.beta[1]) / seR, 1) + ') in a window stated stable: the skin is not stable there, so D is not resolved; S′ is the apparent skin including D·q.';
+                    return out;
+                }
                 if (isNum(seR) && seR > 0 && Math.abs(jf.beta[1]) / seR >= o.dOverSeMin) {
                     var tMean = ts.reduce(function (a, b) { return a + b; }, 0) / ts.length;
                     S = jf.beta[0] + jf.beta[1] * tMean / 30;

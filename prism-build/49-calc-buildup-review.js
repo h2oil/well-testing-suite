@@ -1099,7 +1099,9 @@
                 var LF = L + '.result.final';
                 t8.ratioNow = FS('trend.pi.ratioNow', 'piRatio', { X: 'trend.pi.X', S: LF + '.S' }, 'ratio');
                 t8.rateAtStake = FS('trend.pi.rateAtStake', 'rateAtStake', { qNow: L + '.Dq', X: 'trend.pi.X', Snow: LF + '.S', Sbase: 'trend.baseline.S' }, 'q', rqc8);
-                t8.extraDrawdown_psi = FS('trend.pi.extraDrawdown_psi', 'extraDrawdownS', { q: L + '.Dq', B: 'well.B', mu: 'well.mu', Snow: LF + '.S', Sbase: 'trend.baseline.S', k: LF + '.k', h: 'well.h' }, 'p', 'pressure');
+                // B and μ on the analysis basis the trend used (total rate: B = 1; gas: the engine's Bg·μ), else the inputs
+                var bB = tr.pi && _isNum(tr.pi.B) ? 'trend.pi.B' : 'well.B', bMu = tr.pi && _isNum(tr.pi.mu) ? 'trend.pi.mu' : 'well.mu';
+                t8.extraDrawdown_psi = FS('trend.pi.extraDrawdown_psi', 'extraDrawdownS', { q: L + '.Dq', B: bB, mu: bMu, Snow: LF + '.S', Sbase: 'trend.baseline.S', k: LF + '.k', h: 'well.h' }, 'p', 'pressure');
             }
         }
         add('T8', 'T', null, 'PI ratio and production at stake', t8);
@@ -1465,7 +1467,8 @@
     });
     defRule('V11', 'major', 'S5', 'PI cross-check outside its band', ['T13'], function (c) {
         var pc = c.an.trend && c.an.trend.piCheck, out = [];
-        if (!pc || pc.available !== true) return out;
+        // an indicative check (no rate history for the transient prediction: PSS X; gas without m(p)) is reported, not a finding
+        if (!pc || pc.available !== true || pc.indicative === true) return out;
         _arr(pc.rows).forEach(function (row, j) {
             if (!row || !_isNum(row.RJ)) return;
             var rj = _r3(row.RJ);
@@ -2630,9 +2633,16 @@
                       [['S − S_sens', c.V('T3', 'loAt')], ['S', c.V('T3', 'raisedAt')], ['S + S_sens', c.V('T3', 'hiAt')]], ['T3']));
         return { id: 'S5', title: 'Trend and alerts', blocks: b };
     }
-    // Daily J_obs and J_pred (display only; T13 basis): p_ref interpolated between the used tests' p_ext.
+    // Daily J_obs and J_pred (display only; T13 basis): the trend's own per-day points when it has them (transient
+    // prediction through the rate history, on the analysis basis), else p_ref interpolated between the used tests' p_ext
+    // with the pseudo-steady-state X.
     function _jSeries(c) {
         var an = c.an, tr = an.trend || {}, days = an.rates ? _arr(an.rates.days) : [];
+        var cat0 = c.gas ? 'gasPI' : 'productivityIndex', pd = tr.piCheck ? _arr(tr.piCheck.days).filter(function (d) { return d && _isNum(d.tDays) && _isNum(d.jObs) && _isNum(d.jPred); }) : [];
+        if (c.fluid !== 'water_inj' && pd.length) {
+            return [_series('J observed', cat0, pd.map(function (d) { return d.tDays; }), pd.map(function (d) { return d.jObs; })),
+                    _series('J predicted', cat0, pd.map(function (d) { return d.tDays; }), pd.map(function (d) { return d.jPred; }))];
+        }
         if (c.fluid === 'water_inj' || !tr.pi || !_isNum(tr.pi.X) || !an.baseline || !_isNum(an.baseline.k) || !_isNum(c.t0)) return null;
         var used = c.tests.filter(function (t) { return t.used && t.used.trend && t.result && t.result.final && _isNum(t.result.final.pExt); });
         if (used.length < 2) return null;

@@ -1042,4 +1042,37 @@ module.exports = [
         'nothing stored → the formula value is quoted');
     },
   },
+  {
+    name: 'RV16 analysis basis (WP9): an indicative PI cross-check raises no V11; the T8 extra drawdown is checked with the B and μ the trend used (trend.pi.B / mu, B = 1 on the total-rate basis); the J chart uses the trend\'s own day points',
+    wp: WP,
+    opts: false,
+    run(app, assert) {
+      const R = R0();
+      // V11 fires on R_J 1.6 … unless the check is indicative (no rate history: the PSS X fallback)
+      const a = variant('V11');
+      assert(R.run(a, null, { at: AT }).findings.some((f) => f.rule === 'V11'), 'V11 on the crafted variant');
+      a.trend.piCheck.indicative = true;
+      assert(!R.run(a, null, { at: AT }).findings.some((f) => f.rule === 'V11'), 'indicative check: no V11');
+      // total-rate basis: the trend stored the extra drawdown with B = 1; the evidence check uses trend.pi.B, so no V14
+      const b = S.FIX.analysis, F = S.FORMULAS, L = [...b.tests].reverse().find((t) => t.result && t.used && t.used.trend);
+      assert(b.well.B !== 1, 'precondition: the oil B is not 1');
+      b.trend.pi.B = 1; b.trend.pi.mu = b.well.mu;
+      b.trend.pi.extraDrawdown_psi = F.extraDrawdown(L.Dq, 1, b.well.mu, L.result.final.S - b.trend.baseline.S, L.result.final.k, b.well.h);
+      const rb = R.run(b, null, { at: AT });
+      assert(!rb.findings.some((f) => f.rule === 'V14'), 'B = 1 drawdown passes the evidence check: ' + rb.findings.filter((f) => f.rule === 'V14').map((f) => f.values.ref.v).join(', '));
+      // … and a drawdown that used the oil B against a stated B = 1 is caught
+      b.trend.pi.extraDrawdown_psi *= b.well.B;
+      assert(R.run(b, null, { at: AT }).findings.some((f) => f.rule === 'V14' && f.values.ref.v === 'T8:extraDrawdown_psi'), 'oil B on the total basis → V14');
+      // the J chart: the trend's per-day points when present
+      const c = S.FIX.analysis;
+      c.trend.piCheck.days = [{ tDays: 5, jObs: 2.1, jPred: 2.0 }, { tDays: 6, jObs: 2.2, jPred: 2.05 }];
+      const m = R.report(c, R.run(c, null, { at: AT }), null, null, imp);
+      const charts = [];
+      m.sections.forEach((s) => s.blocks.forEach((bl) => { if (bl.kind === 'chart') charts.push(bl); }));
+      const jc = charts.find((ch) => (ch.series || []).some((sr) => sr.name === 'J predicted'));
+      assert(jc, 'J chart present');
+      const jp = jc.series.find((sr) => sr.name === 'J predicted');
+      assert.deepStrictEqual(plain(jp.x), [5, 6]); assert.deepStrictEqual(plain(jp.y), [2.0, 2.05]);
+    },
+  },
 ];
