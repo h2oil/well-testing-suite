@@ -65,7 +65,7 @@ module.exports = [
     name: 'switching wells keeps page inputs, legacy lists, Client & Well Info and results isolated',
     wp: WP,
     run(app, assert) {
-      app.storage.setItem('h2oil_client_info', JSON.stringify({ client: 'Acme', field: 'North', well: 'A-1', engineer: 'J. Doe', notes: 'A notes' }));
+      app.storage.setItem('h2oil_client_info', JSON.stringify({ client: 'Operator Energy Ltd', field: 'North', well: 'A-1', engineer: 'J. Doe', notes: 'A notes' }));
       go(app, 'aga3');
       app.input(app.find('#pgBody input[id]'), '1.234');
       app.flush(800);
@@ -83,7 +83,7 @@ module.exports = [
       assert.ok(!app.win.WTS_state.flareghg || app.win.WTS_state.flareghg.co2e_t !== coA, 'A results not in B');
       const ciB = rec(app, 'h2oil_client_info');
       assert.strictEqual(ciB.well, 'B-2');
-      assert.strictEqual(ciB.client, 'Acme', 'client / field / preparer inherited');
+      assert.strictEqual(ciB.client, 'Operator Energy Ltd', 'client / field / preparer inherited');
       assert.strictEqual(ciB.engineer, 'J. Doe');
       assert.ok(!('notes' in ciB), 'well notes not inherited');
       // A is parked in one blob.
@@ -288,10 +288,10 @@ module.exports = [
       // Client & Well Info: everything but the well name.
       app.storage.setItem('h2oil_client_info', JSON.stringify({ well: 'B' }));
       const blob = rec(app, 'wts_well_w1');
-      blob.keys.h2oil_client_info = JSON.stringify({ well: 'A', client: 'Acme', rig: 'R-9' });
+      blob.keys.h2oil_client_info = JSON.stringify({ well: 'A', client: 'Operator Energy Ltd', rig: 'R-9' });
       app.storage.setItem('wts_well_w1', JSON.stringify(blob));
       assert.ok(W(app).copyPage('w1', 'clientinfo').ok);
-      assert.deepStrictEqual(JSON.parse(JSON.stringify(rec(app, 'h2oil_client_info'))), { well: 'B', client: 'Acme', rig: 'R-9' });
+      assert.deepStrictEqual(JSON.parse(JSON.stringify(rec(app, 'h2oil_client_info'))), { well: 'B', client: 'Operator Energy Ltd', rig: 'R-9' });
     },
   },
   {
@@ -327,7 +327,7 @@ module.exports = [
     name: 'read-only snapshot: results inside, no scripts or handlers, download and iOS share sheet',
     wp: WP,
     run(app, assert) {
-      app.storage.setItem('h2oil_client_info', JSON.stringify({ client: 'Acme', well: 'A-1' }));
+      app.storage.setItem('h2oil_client_info', JSON.stringify({ client: 'Operator Energy Ltd', well: 'A-1' }));
       flareInput(app, '7.5');
       const co = app.win.WTS_state.flareghg.co2e_t;
       const job = app.win.WTS_snapshot.build('job');

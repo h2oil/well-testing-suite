@@ -640,6 +640,40 @@ module.exports = [
     },
   },
   {
+    name: 'SK4b rateSkin (WP9): window "earliest" takes the baseline window; a 4-test window gets no joint fit (≥ 2 degrees of freedom); a significant time term in a window stated stable leaves D unresolved',
+    wp: WP,
+    opts: false,
+    run(app, assert) {
+      const SC = skin();
+      const D = 2e-4, S0 = 2;
+      const mk = (qs, ts, f) => qs.map((q, i) => ({ id: 'B' + (i + 1), t_days: ts[i], q, S: (f ? f(q, ts[i], i) : S0 + D * q), Serr: 0.2 }));
+      // 8 tests every 16 days, constant skin for 6, then a rise: the earliest 60-day window is B1–B4, the latest B5–B8
+      const qs = [10000, 5000, 10000, 5000, 10000, 5000, 10000, 10000], ts = qs.map((q, i) => 16 * i);
+      const rising = (q, t, i) => S0 + D * q + (i === 6 ? 2.5 : i === 7 ? 5 : 0);
+      const late = SC.rateSkin(mk(qs, ts, rising));
+      assert.deepStrictEqual(plain(late.ids), ['B5', 'B6', 'B7', 'B8'], 'default: the latest window');
+      const early = SC.rateSkin(mk(qs, ts, rising), { window: 'earliest', stable: true });
+      assert.deepStrictEqual(plain(early.ids), ['B1', 'B2', 'B3', 'B4'], 'window earliest: the baseline window');
+      assert.strictEqual(early.resolved, true, early.reason);
+      assert.near(early.D, D, 1e-12, 'D from the stable window');
+      // 4 tests: 1 degree of freedom for S0 + r·t + D·q, so no joint fit (the 4-point joint fit gave 2.7× D on the gas demo)
+      assert.strictEqual(late.joint, null, 'no joint fit on 4 tests');
+      assert.strictEqual(SC.RATE_DEFAULTS.jointMinN, 5);
+      // 6 tests with a linear skin trend: the joint fit separates it when stability is not stated …
+      const lin = mk([10000, 5000, 5000, 10000, 10000, 5000], [0, 7, 14, 21, 28, 35], (q, t) => S0 + 0.06 * t + D * q);
+      const free = SC.rateSkin(lin);
+      assert.strictEqual(free.resolved, true, free.reason);
+      assert.near(free.D, D, 1e-9);
+      // … but a window the caller stated stable is not stable: D is not resolved there
+      const st = SC.rateSkin(lin, { stable: true });
+      assert.strictEqual(st.resolved, false, st.reason);
+      assert.deepStrictEqual([st.D, st.seD, st.S], [null, null, null]);
+      assert(/not stable/.test(st.reason) && /apparent skin/.test(st.reason), st.reason);
+      assert(st.joint && Number.isFinite(st.joint.r_per30d), 'the joint fit is still reported');
+      [late, early, free, st].forEach((r, i) => textsOk(assert, plain(r), 'rateSkin-b' + i));
+    },
+  },
+  {
     name: 'SK9a products: TR7 numbers, m, guard, bounds labelled when reSource is rinv',
     wp: WP,
     opts: false,
@@ -847,6 +881,15 @@ module.exports = [
       }
       assert(m.notes.indexOf('Calibrated on build-ups; indicative for drawdowns.') !== -1);
       if (eng.stubbed) assert.strictEqual(eng.calls.specs[eng.calls.specs.length - 1].testType, 'buildup');
+      // WP9: a drawdown card speaks of 'this test', never of a shut-in it did not have
+      const dh = mountHost(app);
+      w.PRiSM_skinCheck.renderPanel(dh);
+      const reachSec = dh.querySelector('#prism_skc_reach');
+      if (reachSec && /reachable|this test/.test(reachSec.textContent)) assert(!/; shut-in /.test(reachSec.textContent), 'reach row: ' + reachSec.textContent);
+      if (m.reach && m.reach.reachable && Number.isFinite(m.reach.fairShut_h)) assert(/; this test /.test(reachSec.textContent), 'reach row says this test: ' + reachSec.textContent);
+      assert(!/pwf at shut-in/.test(dh.querySelector('#prism_skc_root').textContent), 'no "pwf at shut-in" on a drawdown');
+      assert.strictEqual(dh.innerHTML.split('Calibrated on build-ups; indicative for drawdowns.').length - 1, 1, 'the calibration note once');
+      dh.parentNode.removeChild(dh);
       sk5bInjection(app, assert);
       sk5bNoTp(app, assert, eng);
     },
@@ -901,6 +944,35 @@ module.exports = [
       assert(log.some((e) => e.type === 'prism:fit-updated' && e.source === 'semilog'), 'the C7 event of the user action');
       // The card re-rendered on the event and is still mounted.
       assert(app.el('prism_skc_root'), 'card still mounted');
+    },
+  },
+  {
+    name: 'SK7b card (WP9): after "Use this window" keyboard focus returns to the re-created button; with no storage C the C-held button is disabled with the reason shown; the calibration note appears once',
+    wp: WP,
+    run(app, assert) {
+      const w = setupPRiSM(app);
+      engine(app);
+      const host = mountHost(app);
+      w.PRiSM_skinCheck.renderPanel(host);
+      const btn = app.el('prism_skc_usewin');
+      assert(btn && !btn.disabled, 'Use this window enabled');
+      btn.focus();
+      app.click('prism_skc_usewin');
+      app.flushUntilIdle(5000);
+      const now = host.querySelector('#prism_skc_usewin');
+      assert(now && now !== btn, 'the card re-rendered (a new button)');
+      assert.strictEqual(app.document.activeElement, now, 'focus on the re-created button, not lost: ' + (app.document.activeElement && (app.document.activeElement.id || app.document.activeElement.tagName)));
+      const NOTE = 'Calibrated on build-ups; indicative for drawdowns.';
+      assert.strictEqual(host.innerHTML.split(NOTE).length - 1, 1, 'the calibration note once');
+      // a match without wellbore storage C: the refits cannot run, so the button says why before any click
+      w.PRiSM_setLastFit(app.toWin({ modelKey: 'homogeneous', kind: 'pressure', params: { S: 2.5 }, phys: { k: 45, S: 2.5 }, r2: 0.999, converged: true }));
+      app.flushUntilIdle(5000);
+      w.PRiSM_skinCheck.renderPanel(host);
+      const m = w.PRiSM_skinCheck._ui.model;
+      assert.deepStrictEqual([m.cheldHasC, m.cheldAvailable], [false, false], 'no C: not available');
+      assert.strictEqual(host.querySelector('#prism_skc_cheld').disabled, true, 'button disabled');
+      const why = host.querySelector('#prism_skc_cheld_why');
+      assert(why && /wellbore storage C/.test(why.textContent), 'the reason is shown: ' + (why && why.textContent));
     },
   },
   {

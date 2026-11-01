@@ -299,7 +299,7 @@
         prefix16: F(['h'], 'first 16 hex characters', function (h) { return typeof h === 'string' ? h.slice(0, 16) : null; }),
         prefix8: F(['h'], 'first 8 hex characters', function (h) { return typeof h === 'string' ? h.slice(0, 8) : null; }),
         rawText: F(['raw'], 'raw gauge data embedded or not', function (r) { return (r === 'idb' || r === 'memory') ? 'embedded' : 'not embedded; interpretation and trend reproduce from the stored build-ups'; }),
-        basisText: F(['basis'], 'absolute alert basis', function (b) { return b === 'mechanical' ? 'mechanical skin' : b === 'total' ? 'total skin (may include geometric pseudo-skin)' : null; }),
+        basisText: F(['basis', 'dq'], 'absolute alert basis', function (b, dq) { return b === 'mechanical' ? (dq === true ? 'mechanical skin + D·q (D not resolved)' : 'mechanical skin') : b === 'total' ? 'total skin (may include geometric pseudo-skin)' : null; }),
         baseState: F(['unstable', 'provisional'], 'baseline state', function (u, p) { return u && p ? 'unstable and provisional' : u ? 'unstable' : p ? 'provisional' : 'stable'; }),
         rivalCount: F(['models'], 'number of rival fits', function (m) { return _isArr(m) ? MATH.max(0, m.length - 1) : null; }),
         resultsHashOf: F(['an'], 'results hash (display-precision canon of finals, S_err, labels, alerts, onset, recent slope)', function (an) { return _resultsHash(an); }),
@@ -1064,7 +1064,7 @@
             confirm: P('settings.trend.confirm'),
             recomputed: FL('alertRecomputed', { an: '$analysis', which: { lit: 'delta' } }, null, null, 'trend.alerts.delta.status') });
         add('T3', 'T', null, 'Absolute alert', { status: P('trend.alerts.absolute.status'), raisedAt: P('trend.alerts.absolute.raisedAt'), confirmedAt: P('trend.alerts.absolute.confirmedAt'),
-            threshold: P('trend.alerts.absolute.threshold', 'S'), basis: P('trend.alerts.absolute.basis'), basisText: FX('basisText', { basis: 'trend.alerts.absolute.basis' }),
+            threshold: P('trend.alerts.absolute.threshold', 'S'), basis: P('trend.alerts.absolute.basis'), basisText: FX('basisText', { basis: 'trend.alerts.absolute.basis', dq: 'trend.alerts.absolute.dqIncluded' }),
             kHeldOnly: P('trend.alerts.absolute.kHeldOnly'), loAt: P('trend.alerts.absolute.robustness.lo'), hiAt: P('trend.alerts.absolute.robustness.hi'), unchanged: P('trend.alerts.absolute.robustness.unchanged'),
             recomputed: FL('alertRecomputed', { an: '$analysis', which: { lit: 'absolute' } }, null, null, 'trend.alerts.absolute.status') });
         add('T4', 'T', null, 'Onset', { tauDays: P('trend.onset.tauDays', 'days'), date: P('trend.onset.date'), lo: P('trend.onset.interval[0]', 'days'), hi: P('trend.onset.interval[1]', 'days'),
@@ -1099,7 +1099,9 @@
                 var LF = L + '.result.final';
                 t8.ratioNow = FS('trend.pi.ratioNow', 'piRatio', { X: 'trend.pi.X', S: LF + '.S' }, 'ratio');
                 t8.rateAtStake = FS('trend.pi.rateAtStake', 'rateAtStake', { qNow: L + '.Dq', X: 'trend.pi.X', Snow: LF + '.S', Sbase: 'trend.baseline.S' }, 'q', rqc8);
-                t8.extraDrawdown_psi = FS('trend.pi.extraDrawdown_psi', 'extraDrawdownS', { q: L + '.Dq', B: 'well.B', mu: 'well.mu', Snow: LF + '.S', Sbase: 'trend.baseline.S', k: LF + '.k', h: 'well.h' }, 'p', 'pressure');
+                // B and μ on the analysis basis the trend used (total rate: B = 1; gas: the engine's Bg·μ), else the inputs
+                var bB = tr.pi && _isNum(tr.pi.B) ? 'trend.pi.B' : 'well.B', bMu = tr.pi && _isNum(tr.pi.mu) ? 'trend.pi.mu' : 'well.mu';
+                t8.extraDrawdown_psi = FS('trend.pi.extraDrawdown_psi', 'extraDrawdownS', { q: L + '.Dq', B: bB, mu: bMu, Snow: LF + '.S', Sbase: 'trend.baseline.S', k: LF + '.k', h: 'well.h' }, 'p', 'pressure');
             }
         }
         add('T8', 'T', null, 'PI ratio and production at stake', t8);
@@ -1465,7 +1467,8 @@
     });
     defRule('V11', 'major', 'S5', 'PI cross-check outside its band', ['T13'], function (c) {
         var pc = c.an.trend && c.an.trend.piCheck, out = [];
-        if (!pc || pc.available !== true) return out;
+        // an indicative check (no rate history for the transient prediction: PSS X; gas without m(p)) is reported, not a finding
+        if (!pc || pc.available !== true || pc.indicative === true) return out;
         _arr(pc.rows).forEach(function (row, j) {
             if (!row || !_isNum(row.RJ)) return;
             var rj = _r3(row.RJ);
@@ -2263,7 +2266,7 @@
             var m = c.an.missed;
             if (!m) return _ans('No detection result is available.', {}, ['D1'], 'partial');
             var tpl = 'Detection found {ne} events ({nt} build-up tests); too short: {ns}; suspected interventions: {ni}. Sub-threshold steps ({nsub}), allocation-only days ({nal}) and gaps ({ng}) could hide shut-ins. ';
-            tpl += (m.detectability && m.detectability.ok === false) ? 'Full shut-ins may be missed: p* − pwf ({d}) is less than twice the rise threshold ({ts}).' : 'Full shut-ins are detectable (p* − pwf {d} against the rise threshold {ts}).';
+            tpl += (m.detectability && m.detectability.ok === false) ? 'Full shut-ins may be missed: |p* − pwf| ({d}) is less than twice the rise threshold ({ts}).' : 'Full shut-ins are detectable (|p* − pwf| {d} against the rise threshold {ts}).';
             return _ans(tpl, { ne: c.V('D1', 'nEvents'), nt: c.V('D1', 'nTests'), ns: c.V('D1', 'nTooShort'), ni: c.V('D1', 'nInterventions'), nsub: c.V('D1', 'nSub'), nal: c.V('D1', 'nAllocOnly'),
                                ng: c.V('D1', 'nGaps'), d: c.V('D1', 'pStarMinusPwf_psi'), ts: c.V('D1', 'Ts_psi') }, ['D1'], 'full', ['How long should the shut-in be?']);
         }),
@@ -2453,7 +2456,7 @@
         if (an.rates && an.rates.offsetScan && an.rates.offsetScan.better) b.push(_verdict('warn', '⚠ The offset scan prefers {best} h over the current {cur} h: check the gauge and production-day zones.', { best: c.V('R3', 'best_h'), cur: c.V('R3', 'current_h') }, ['R3']));
         var m = an.missed || {};
         var tpl = 'Detection found {ne} events; {ns} too short, {ni} suspected interventions, {nsub} sub-threshold steps, {nal} allocation-only days and {ng} gaps could hide shut-ins. ';
-        tpl += (m.detectability && m.detectability.ok === false) ? 'Full shut-ins may be missed: p* − pwf ({d}) is less than twice the rise threshold ({ts}).' : 'Full shut-ins are detectable (p* − pwf {d} against the rise threshold {ts}).';
+        tpl += (m.detectability && m.detectability.ok === false) ? 'Full shut-ins may be missed: |p* − pwf| ({d}) is less than twice the rise threshold ({ts}).' : 'Full shut-ins are detectable (|p* − pwf| {d} against the rise threshold {ts}).';
         b.push(_notes('Notes', tpl, { ne: c.V('D1', 'nEvents'), ns: c.V('D1', 'nTooShort'), ni: c.V('D1', 'nInterventions'), nsub: c.V('D1', 'nSub'), nal: c.V('D1', 'nAllocOnly'), ng: c.V('D1', 'nGaps'),
                                          d: c.V('D1', 'pStarMinusPwf_psi'), ts: c.V('D1', 'Ts_psi') }, ['D1']));
         return { id: 'S3', title: 'Events and rates', blocks: b };
@@ -2582,7 +2585,10 @@
         if (J) b.push(_chart('bu_ch_j', J));
         if (c.fluid === 'oil' && tr.bubble && _arr(tr.bubble.rows).length) {
             var br = tr.bubble.rows, bx = br.map(function (r) { var s = series.filter(function (x) { return x.id === r.id; })[0]; return s ? s.tDays : null; });
-            var ser = [_series('Sandface pwf low', 'pressure', bx, br.map(function (r) { return r.pwfSand_lo; })), _series('Sandface pwf high', 'pressure', bx, br.map(function (r) { return r.pwfSand_hi; }))];
+            // without depth data the 'sandface' range is the gauge pwf (no depth correction, the ±20 % gradient band collapses)
+            var noDz = !(tr.bubble && tr.bubble.depthCorrected === true);
+            var ser = noDz ? [_series('Gauge pwf (no depth correction)', 'pressure', bx, br.map(function (r) { return r.pwfSand_lo; }))]
+                           : [_series('Sandface pwf low', 'pressure', bx, br.map(function (r) { return r.pwfSand_lo; })), _series('Sandface pwf high', 'pressure', bx, br.map(function (r) { return r.pwfSand_hi; }))];
             if (_isNum(an.well && an.well.Pb)) { var bxs = bx.filter(_isNum); if (bxs.length) ser.push(_series('Bubble point', 'pressure', [MATH.min.apply(null, bxs), MATH.max.apply(null, bxs)], [an.well.Pb, an.well.Pb])); }
             b.push(_chart('bu_ch_pwf', ser));
         }
@@ -2602,7 +2608,7 @@
             _row('Recent trend', _isNum(rec.slopePer30d) ? _tv('{sl} per 30 days (Sen interval {lo} to {hi}, Mann–Kendall p {p}, {n} tests' + (rec.indicative ? ', indicative' : '') + ')', { sl: c.V('T5', 'slopePer30d'), lo: c.V('T5', 'ciLo'), hi: c.V('T5', 'ciHi'), p: c.V('T5', 'mkP'), n: c.V('T5', 'n') })
                                                        : _tv('not computed ({n} tests after the onset)', { n: c.V('T5', 'n') }), ['T5']),
             _row('Forecast', fc.show ? _tv('crossing about {d} (earliest {e}, latest {l})', { d: c.V('T6', 'date'), e: c.V('T6', 'earliest'), l: c.V('T6', 'latest') }) : _tv('{why}', { why: c.V('T6', 'reason') }), ['T6']),
-            L && c.has('T7') && c.idx.items.T7.values[L.id + '_dpSkin'] ? _row('Pressure drop across the skin (latest test)', _tv('{dp} at {t}', { dp: c.V('T7', L.id + '_dpSkin'), t: c.V(L.id + '·A2', 'test') }), c.evs(['T7', L.id + '·A2'])) : null,
+            L && c.has('T7') && c.idx.items.T7.values[L.id + '_dpSkin'] ? _row(c.gas ? 'Pressure drop across S′ (includes D·q; latest test)' : 'Pressure drop across the skin (latest test)', _tv('{dp} at {t}', { dp: c.V('T7', L.id + '_dpSkin'), t: c.V(L.id + '·A2', 'test') }), c.evs(['T7', L.id + '·A2'])) : null,
             _row('PI ratio and production at stake', pi.guard ? _tv('not computable (strongly negative skin)', {}) :
                  _tv('PI ratio {now} now against {base} at the baseline' + (pi.ratioLowerBound ? ' (lower bound)' : '') + '; rate at stake {rate}; extra drawdown at constant rate {dd}; cumulative since the onset {cum}' + (pi.atStakeUpperBound ? ' (upper bounds)' : '') + '; pseudo-steady-state estimate',
                      { now: c.V('T8', 'ratioNow'), base: c.V('T8', 'ratioBase'), rate: c.V('T8', 'rateAtStake'), dd: c.V('T8', 'extraDrawdown_psi'), cum: c.V('T8', 'cumAtStake') }), ['T8']),
@@ -2626,13 +2632,23 @@
             b.push(_verdict('warn', '⚠ Depletion cannot be assessed (estimated history); the p* range at {t} is {lo} to {hi} against Pb {pb}.',
                             { t: c.V(L.id + '·A2', 'test'), lo: c.V(L.id + '·A2', 'pStarLo'), hi: c.V(L.id + '·A2', 'pStarHi'), pb: c.V('T12', 'pb') }, c.evs(['T10', 'T12', L.id + '·A2'])));
         }
-        b.push(_table('bu_tbl_robust', [{ text: 'Case', cat: null }, { text: 'First test meeting the absolute threshold', cat: null }],
-                      [['S − S_sens', c.V('T3', 'loAt')], ['S', c.V('T3', 'raisedAt')], ['S + S_sens', c.V('T3', 'hiAt')]], ['T3']));
+        // the ± rows hold the trend's reference test (the confirming test once the alert is confirmed, else the raising test):
+        // the S row uses the same reference, so equal rows mean S_sens does not move the alert
+        var absConf = an.trend && an.trend.alerts && an.trend.alerts.absolute && an.trend.alerts.absolute.status === 'confirmed';
+        b.push(_table('bu_tbl_robust', [{ text: 'Case', cat: null }, { text: absConf ? 'First test confirming the absolute alert' : 'First test raising the absolute alert', cat: null }],
+                      [['S − S_sens', c.V('T3', 'loAt')], ['S', c.V('T3', absConf ? 'confirmedAt' : 'raisedAt')], ['S + S_sens', c.V('T3', 'hiAt')]], ['T3']));
         return { id: 'S5', title: 'Trend and alerts', blocks: b };
     }
-    // Daily J_obs and J_pred (display only; T13 basis): p_ref interpolated between the used tests' p_ext.
+    // Daily J_obs and J_pred (display only; T13 basis): the trend's own per-day points when it has them (transient
+    // prediction through the rate history, on the analysis basis), else p_ref interpolated between the used tests' p_ext
+    // with the pseudo-steady-state X.
     function _jSeries(c) {
         var an = c.an, tr = an.trend || {}, days = an.rates ? _arr(an.rates.days) : [];
+        var cat0 = c.gas ? 'gasPI' : 'productivityIndex', pd = tr.piCheck ? _arr(tr.piCheck.days).filter(function (d) { return d && _isNum(d.tDays) && _isNum(d.jObs) && _isNum(d.jPred); }) : [];
+        if (c.fluid !== 'water_inj' && pd.length) {
+            return [_series('J observed', cat0, pd.map(function (d) { return d.tDays; }), pd.map(function (d) { return d.jObs; })),
+                    _series('J predicted', cat0, pd.map(function (d) { return d.tDays; }), pd.map(function (d) { return d.jPred; }))];
+        }
         if (c.fluid === 'water_inj' || !tr.pi || !_isNum(tr.pi.X) || !an.baseline || !_isNum(an.baseline.k) || !_isNum(c.t0)) return null;
         var used = c.tests.filter(function (t) { return t.used && t.used.trend && t.result && t.result.final && _isNum(t.result.final.pExt); });
         if (used.length < 2) return null;

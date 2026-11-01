@@ -162,6 +162,14 @@ module.exports = [
       assert.deepStrictEqual(Object.keys(m).sort(), r.truth.tests.map((x) => x.id).sort(), 'every demo build-up interpreted once');
       assert.ok(rs && rs.resolved, 'rate-dependent skin resolved: ' + (rs && rs.reason));
       assert.ok(rs.seD > 0 && rs.D / rs.seD >= 2, 'D/se = ' + (rs.D / rs.seD));
+      // WP9: D from the stable tests only, close to the demo's truth (2.0e-4 per Mscf/d); the reason counts the tests it used
+      assert.ok(Math.abs(rs.D / 2e-4 - 1) <= 0.35, 'D within 35 % of the truth 2.0e-4: ' + rs.D);
+      assert.ok(new RegExp('from ' + rs.n + ' tests').test(rs.reason), 'the reason names the tests D used: ' + rs.reason);
+      // … so the absolute alert on mechanical skin (truth 7.0 at test 8) is raised at test 8, not a false all-clear
+      const ab = a.trend.alerts.absolute;
+      assert.strictEqual(ab.basis, 'mechanical', 'absolute alert on mechanical skin');
+      assert.strictEqual(demoId(a, r.truth, ab.raisedAt), 'B8', 'absolute alert raised at test 8 (analysis ' + ab.raisedAt + ', status ' + ab.status + ')');
+      assert.strictEqual(a.trend.baseline.unstable, false, 'the rate-corrected baseline is stable');
       // the 6 constant-skin tests are demo B1–B6 (truth.constantSkinTests); test 7 / 8 are demo B7 / B8
       const al = a.trend.alerts.delta, nConst = r.truth.constantSkinTests || 6, at = demoId(a, r.truth, al.raisedAt);
       assert.ok(!(at && Number(at.slice(1)) <= nConst), 'no delta alert on the ' + nConst + ' constant-skin tests (raised at demo ' + at + ', analysis ' + al.raisedAt + ')');

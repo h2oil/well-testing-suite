@@ -717,7 +717,7 @@
 
             // Seed minimal state to exercise every section
             G.WTS_state = G.WTS_state || {};
-            G.WTS_state.clientInfo = { clientName: 'Acme Energy', wellName: 'X-1', fieldName: 'North Sea Block X' };
+            G.WTS_state.clientInfo = { clientName: 'Operator Energy Ltd', wellName: 'X-1', fieldName: 'North Sea Block X' };
             G.WTS_state.flow = { wellheadPressure: 4500, wellheadTemp: 180, gasRate: 25,
                                  oilRate: 2500, waterRate: 200, chokeBean: 32, separatorPressure: 350 };
             G.WTS_state.nodes = [
@@ -814,7 +814,7 @@
                           ok: legacyHtml.indexOf('0.90000') !== -1 && legacyHtml.indexOf('1.50') !== -1 });
             st0.lastFit = lf0;
             checks.push({ n: 'preview includes client name',
-                          ok: html.indexOf('Acme Energy') !== -1 });
+                          ok: html.indexOf('Operator Energy Ltd') !== -1 });
             checks.push({ n: 'preview includes print CSS',
                           ok: html.indexOf('@page') !== -1 });
 

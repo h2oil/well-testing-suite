@@ -1042,4 +1042,51 @@ module.exports = [
         'nothing stored → the formula value is quoted');
     },
   },
+  {
+    name: 'RV16 analysis basis (WP9): an indicative PI cross-check raises no V11; the T8 extra drawdown is checked with the B and μ the trend used (trend.pi.B / mu, B = 1 on the total-rate basis); the J chart uses the trend\'s own day points',
+    wp: WP,
+    opts: false,
+    run(app, assert) {
+      const R = R0();
+      // V11 fires on R_J 1.6 … unless the check is indicative (no rate history: the PSS X fallback)
+      const a = variant('V11');
+      assert(R.run(a, null, { at: AT }).findings.some((f) => f.rule === 'V11'), 'V11 on the crafted variant');
+      a.trend.piCheck.indicative = true;
+      assert(!R.run(a, null, { at: AT }).findings.some((f) => f.rule === 'V11'), 'indicative check: no V11');
+      // total-rate basis: the trend stored the extra drawdown with B = 1; the evidence check uses trend.pi.B, so no V14
+      const b = S.FIX.analysis, F = S.FORMULAS, L = [...b.tests].reverse().find((t) => t.result && t.used && t.used.trend);
+      assert(b.well.B !== 1, 'precondition: the oil B is not 1');
+      b.trend.pi.B = 1; b.trend.pi.mu = b.well.mu;
+      b.trend.pi.extraDrawdown_psi = F.extraDrawdown(L.Dq, 1, b.well.mu, L.result.final.S - b.trend.baseline.S, L.result.final.k, b.well.h);
+      const rb = R.run(b, null, { at: AT });
+      assert(!rb.findings.some((f) => f.rule === 'V14'), 'B = 1 drawdown passes the evidence check: ' + rb.findings.filter((f) => f.rule === 'V14').map((f) => f.values.ref.v).join(', '));
+      // … and a drawdown that used the oil B against a stated B = 1 is caught
+      b.trend.pi.extraDrawdown_psi *= b.well.B;
+      assert(R.run(b, null, { at: AT }).findings.some((f) => f.rule === 'V14' && f.values.ref.v === 'T8:extraDrawdown_psi'), 'oil B on the total basis → V14');
+      // the J chart: the trend's per-day points when present
+      const c = S.FIX.analysis;
+      c.trend.piCheck.days = [{ tDays: 5, jObs: 2.1, jPred: 2.0 }, { tDays: 6, jObs: 2.2, jPred: 2.05 }];
+      const m = R.report(c, R.run(c, null, { at: AT }), null, null, imp);
+      const charts = [];
+      m.sections.forEach((s) => s.blocks.forEach((bl) => { if (bl.kind === 'chart') charts.push(bl); }));
+      const jc = charts.find((ch) => (ch.series || []).some((sr) => sr.name === 'J predicted'));
+      assert(jc, 'J chart present');
+      const jp = jc.series.find((sr) => sr.name === 'J predicted');
+      assert.deepStrictEqual(plain(jp.x), [5, 6]); assert.deepStrictEqual(plain(jp.y), [2.0, 2.05]);
+      // gas with D not resolved: the 'mechanical' basis still contains D·q and the text says so
+      assert.strictEqual(R.FORMULAS.basisText('mechanical', true), 'mechanical skin + D·q (D not resolved)');
+      assert.strictEqual(R.FORMULAS.basisText('mechanical'), 'mechanical skin');
+      const g = S.FIX.analysis; g.trend.alerts.absolute.basis = 'mechanical'; g.trend.alerts.absolute.dqIncluded = true;
+      assert.strictEqual(R.evidence(g).items.T3.values.basisText.v, 'mechanical skin + D·q (D not resolved)');
+      // the robustness table: the S row uses the same reference test as the ± rows (the confirming test once confirmed)
+      const h = S.FIX.analysis; Object.assign(h.trend.alerts.absolute, { status: 'confirmed', raisedAt: 'B5', confirmedAt: 'B6', robustness: { lo: 'B6', hi: 'B6', unchanged: true } });
+      const mh = R.report(h, R.run(h, null, { at: AT }), null, null, imp);
+      let rob = null;
+      mh.sections.forEach((s) => s.blocks.forEach((bl) => { if (bl.id === 'bu_tbl_robust') rob = bl; }));
+      assert(rob, 'robustness table present');
+      const cell = (row) => { const v = rob.rows[row][1]; return v && typeof v === 'object' ? v.v : v; };
+      assert.deepStrictEqual([cell(0), cell(1), cell(2)], ['B6', 'B6', 'B6'], 'S − S_sens / S / S + S_sens all at the confirming test');
+      assert(/confirming/.test(rob.head[1].text), 'column title names the confirming test');
+    },
+  },
 ];

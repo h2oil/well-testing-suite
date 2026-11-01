@@ -228,6 +228,30 @@ module.exports = [
     },
   },
   {
+    name: 'superposition exactSteps (v3.3 WP9): rate steps within 1 % are merged by default; opts.exactSteps keeps every step, so a drawdown made of small steps is analysed exactly',
+    wp: 'WP5',
+    run(app, assert) {
+      // three rate steps 0.4 % apart, then the analysed period at 850 STB/d
+      const qs = [500, 502, 504], ts = [0, 4, 8], t1 = 10, q2 = 850;
+      const mu = 162.6 * 1.25 * 1.1 / (45 * 35);
+      const F = (tau) => mu * (Math.log10(tau) + LOGK + 0.8686 * 2.5);
+      const pw = (t) => {
+        let dp = 0, prev = 0;
+        ts.concat([t1]).forEach((tj, j) => { const qj = j < qs.length ? qs[j] : q2; if (t > tj) dp += (qj - prev) * F(t - tj); prev = qj; });
+        return 4200 - dp;
+      };
+      const dts = logspace(0.05, 100, 40), p = dts.map((dt) => pw(t1 + dt));
+      const ad = { ok: true, n: dts.length, t: dts, tAbs: dts.map((d) => d + t1), p, dp: p.map((v) => 4200 - v), pRef: 4200, pRefSource: 'pi', testType: 'drawdown',
+        tStart: t1, qRef: q2, rateHistory: qs.map((q, i) => ({ t: ts[i], q })).concat([{ t: t1, q: q2 }]), fluid: 'oil', warnings: [] };
+      const merged = app.win.PRiSM_semilogAnalysis(ad, SAMPLE_WELL);
+      const exact = app.win.PRiSM_semilogAnalysis(ad, SAMPLE_WELL, { exactSteps: true });
+      assert.equal(merged.steps.length, 2, 'default: the 1 % steps merged (500 → 850)');
+      assert.equal(exact.steps.length, 4, 'exactSteps: every step kept');
+      assert.near(exact.k, 45, 1e-6); assert.near(exact.S, 2.5, 1e-3);
+      assert.ok(Math.abs(merged.S - 2.5) > Math.abs(exact.S - 2.5), 'the exact sum is closer to the truth (' + merged.S + ' vs ' + exact.S + ')');
+    },
+  },
+  {
     name: 'injection and gas pseudo-pressure: signs and the 1637 equation',
     wp: 'WP5',
     run(app, assert) {

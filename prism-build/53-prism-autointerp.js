@@ -598,6 +598,7 @@
         pdPrime: function (td, params) { return _ccEval(td, params, true); },
         kind: 'pressure', timeInput: 'td', category: 'boundary', refLength: 'rw',
         defaultFrozen: [], evalCostMs: 1.5,
+        distLabel: { reD: 'Drainage radius r_e' },          // C3 distances_ft.reD = reD·rw (04 labels the row with it)
         defaults: { Cd: 100, S: 0, reD: 5000 },
         paramSpec: [
             { key: 'Cd', label: 'Wellbore storage Cd', unit: '-', min: 0, max: 1e10, default: 100, scale: 'log' },
@@ -874,6 +875,8 @@
         }
         return x;
     }
+    // The real shut-in length of a Prep (prep.dtEnd is on the bins' axis: pseudo-time when the gas option asks for it).
+    function _dtReal(p) { return p && _pos(p.dtEndReal) ? p.dtEndReal : p.dtEnd; }
     function _tideFit(dt, y, tc, dtEnd, nHarm) {
         var t0 = Math.max(2, dtEnd / 4), rows = [];
         var periods = nHarm === 2 ? [12.4206, 23.9345] : [12.4206];
@@ -958,6 +961,9 @@
         if (dtA.length < 5) return _failP('TOO_FEW_POINTS', 'Fewer than 5 valid build-up samples.', ['dt']);
         for (var c0 = 1; c0 < dtA.length; c0++) if (!(dtA[c0] > dtA[c0 - 1])) return _failP('NO_DATA', 'Build-up times are not ascending.', ['dt']);
         var dtEnd = dtA[dtA.length - 1];
+        // real elapsed time (dtA and dtEnd move to pseudo-time below when it is asked for; the tide, the drift, r_inv and the
+        // reported shut-in length stay on real time, the bins, reach, Δt_e,end and the history compaction on the bins' axis)
+        var dtReal = dtA.slice(), dtEndReal = dtEnd;
 
         // Gas: normalised pseudo-pressure (and optional pseudo-time for the build-up period)
         var gt = null, fluid = w.fluid || 'oil';
@@ -987,7 +993,7 @@
                 ta[tI] = acc; prevT = dtA[tI]; prevF = fI;
             }
             var okTa = ta.every(function (v, ii) { return v > 0 && (ii === 0 || v > ta[ii - 1]); });
-            if (okTa) { dtA = ta; warnings.push(_warn('PSEUDO_TIME', 'info', 'Pseudo-time replaces the elapsed time of the build-up period; earlier rate steps stay in real time.', ['M1'])); }
+            if (okTa) { dtA = ta; dtEnd = dtA[dtA.length - 1]; warnings.push(_warn('PSEUDO_TIME', 'info', 'Pseudo-time replaces the elapsed time of the build-up period; earlier rate steps stay in real time.', ['M1'])); }
         }
 
         // Tide (Q6): index and removal before the derivative
@@ -1007,19 +1013,19 @@
             return { dp: dp, X: X, d: derivative(X, dp, Lcyc) };
         }
         var D20 = derivOf(BB.b20);
-        if (tideMode !== 'off' && dtEnd >= DEFAULTS.tide.m2Min_h) {
+        if (tideMode !== 'off' && dtEndReal >= DEFAULTS.tide.m2Min_h) {
             var lateD = [];
             for (var lq = 0; lq < D20.X.length; lq++) if (D20.d.full[lq] && D20.d.deriv[lq] > 0 && D20.X[lq] >= D20.X[D20.X.length - 1] - 0.5 * LN10) lateD.push(D20.d.deriv[lq]);
             var mpProv = _median(lateD);
-            var nH = dtEnd >= DEFAULTS.tide.k1Min_h ? 2 : 1;
-            var tf = _pos(mpProv) ? _tideFit(dtA, yA, tc, dtEnd, nH) : null;
+            var nH = dtEndReal >= DEFAULTS.tide.k1Min_h ? 2 : 1;
+            var tf = _pos(mpProv) ? _tideFit(dtReal, yA, tc, dtEndReal, nH) : null;   // tides are a real-time signal
             if (tf) {
                 var sAw = 0;
                 tf.harm.forEach(function (hh) { sAw += hh.A * hh.w; });
-                rTide = sAw * dtEnd / mpProv;
+                rTide = sAw * dtEndReal / mpProv;
                 if (rTide > DEFAULTS.tide.index) {
                     yA = yA.map(function (v, ii) {
-                        var ta2 = tc + dtA[ii], corr = 0;
+                        var ta2 = tc + dtReal[ii], corr = 0;
                         tf.harm.forEach(function (hh) { corr += hh.a * Math.cos(hh.w * ta2) + hh.b * Math.sin(hh.w * ta2); });
                         return v - corr;
                     });
@@ -1109,7 +1115,7 @@
             for (var j = 0; j <= lf; j++) if (dv.full[j] && dv.deriv[j] > 0 && B20.X[j] >= B20.X[lf] - LN10) { lv.push(dv.deriv[j]); ls.push(sigma_d[j]); }
             var mp = _median(lv), sd = _median(ls);
             if (!_pos(mp)) return { snrD: null, rDrift: null };
-            return { snrD: Math.min(1e6, _pos(sd) ? mp / sd : 1e6), rDrift: _fin(((_num(spec.driftPsiPerDay) ? spec.driftPsiPerDay : 0) / 24) * dtEnd / mp) };
+            return { snrD: Math.min(1e6, _pos(sd) ? mp / sd : 1e6), rDrift: _fin(((_num(spec.driftPsiPerDay) ? spec.driftPsiPerDay : 0) / 24) * dtEndReal / mp) };
         })();
         var prep = {
             ok: true, id: _specId(spec), sign: sign, spec: spec,
@@ -1117,7 +1123,7 @@
             deriv: dv, fitSet: { dt: BF.dt, dp: BF.dp, n: BF.n, p: BF.p, sigma_b: sigma_bF, X: BF.X, idx: BF.dt.map(function (v, k) { return k; }) },
             adata: adata, adataLine: adataLine, well: wellC1, gasTable: gt,
             histFull: { steps: stepsU }, histFit: comp, time: tm, timeFit: tmFit, tpEff: tm.tpEff, singleRate: singleRate,
-            dtEnd: dtEnd, dteEnd: Math.exp(tm.lnDte(dtEnd)), Lcyc: Lcyc, L_ln: dv.L_ln, qUnit: qUnit,
+            dtEnd: dtEnd, dtEndReal: dtEndReal, dteEnd: Math.exp(tm.lnDte(dtEnd)), Lcyc: Lcyc, L_ln: dv.L_ln, qUnit: qUnit,
             snrD: q0.snrD, rDrift: q0.rDrift, rTide: _fin(rTide), tideRemoved: tideRemoved, tideFit: tideFit,
             sigma: sig, sigmaLF: sigLF, warnings: warnings, raw: { dt: dtA, y: yA, p: pA }
         };
@@ -1482,7 +1488,8 @@
         var wl = { fluid: w.fluid === 'gas' ? 'oil' : w.fluid, B: w.B, mu: w.mu, h: w.h, phi: w.phi, ct: w.ct, rw: w.rw, q: prep.spec.Dq, tp: adata.tp };
         var r;
         try {
-            r = fn(adata, wl, { method: prep.singleRate ? 'horner' : 'superposition', window: { t0: dt0 * (1 - 1e-9), t1: dt1 * (1 + 1e-9) }, L: prep.L_ln });
+            // exactSteps: the line's superposition time is the exact sum over every rate step, as the engine's own Δt_e (§4.6)
+            r = fn(adata, wl, { method: prep.singleRate ? 'horner' : 'superposition', window: { t0: dt0 * (1 - 1e-9), t1: dt1 * (1 + 1e-9) }, L: prep.L_ln, exactSteps: true });
         } catch (e) { return null; }
         if (!r || !r.ok || !_pos(r.k) || !_num(r.S)) return null;
         return r;
@@ -3099,7 +3106,7 @@
                         // p_ext is the infinite-acting extrapolation (pStar family) either way; pExtSource says whether it
                         // is the semilog line's p* or, with no line, the chosen model's extrapolated pressure.
                         pExtSource: _num(pStar) ? 'line' : (_num(piM) ? 'model' : null), piModel: _fin(piM),
-                        rinv_ft: rinv(k, p.dtEnd, w), rinvE_ft: rinv(k, p.dteEnd, w), dpSkin_psi: p.gasTable ? (gasOut.dpSkin_psi) : dpSkin,
+                        rinv_ft: rinv(k, _dtReal(p), w), rinvE_ft: rinv(k, p.dteEnd, w), dpSkin_psi: p.gasTable ? (gasOut.dpSkin_psi) : dpSkin,
                         distances: dist, minFaultDist_ft: _fin(minFault), gas: gasOut, ev: ['A2'] };
             // History sensitivity (item 14)
             S.history = { estimated: !!(spec.history && spec.history.estimated), dDerivPct: null, sensitive: false, ev: ['R5'] };
@@ -3110,8 +3117,16 @@
             var thr = _thr(cal);
             var sens = storedSensitivity(fin, spec.well);
             var m = fin.m;
-            var sTc = 1.1513 * Math.abs(p.spec.dpdt_flow || 0) * (p.spec.dtc_h || 0) / m;
-            var sPwf = 1.1513 * (p.spec.pwf0SE || 0) / m;
+            // dpdt_flow and pwf0SE are in psi; gas m is in normalised pseudo-pressure: convert with dp_n/dp at pwf0 =
+            // (μz/p)_ref·p/(μz) (about 0.8 at half the reference pressure; 1 for liquids)
+            var dpn = 1, gtU = p.gasTable;
+            if (gtU && gtU.ref && _pos(p.spec.pwf0) && typeof gtU.muOf === 'function' && typeof gtU.zOf === 'function') {
+                var muz0 = gtU.muOf(p.spec.pwf0) * gtU.zOf(p.spec.pwf0);
+                if (_pos(muz0)) dpn = (gtU.ref.mu * gtU.ref.z / gtU.ref.p) * p.spec.pwf0 / muz0;
+                if (!_pos(dpn)) dpn = 1;
+            }
+            var sTc = 1.1513 * dpn * Math.abs(p.spec.dpdt_flow || 0) * (p.spec.dtc_h || 0) / m;
+            var sPwf = 1.1513 * dpn * (p.spec.pwf0SE || 0) / m;
             var parts = { floor: thr.sErrFloor, seS: cf.se.S, sTc: sTc, sPwf: sPwf, sC: S.cheld ? S.cheld.S_C : 0, sSens: sens.sSens };
             if (S.line && fin.source !== 'model') {
                 var bias = S.agreementChosen.mode === 'bias';
@@ -3127,7 +3142,7 @@
             var mp = ir.found ? ir.level_psi : fin.mPrime;
             var snr = (_pos(sdW) ? mp / sdW : 1e6);
             snr = Math.min(1e6, snr);
-            var rDrift = ((spec.driftPsiPerDay || 0) / 24) * p.dtEnd / fin.mPrime;
+            var rDrift = ((spec.driftPsiPerDay || 0) / 24) * _dtReal(p) / fin.mPrime;
             S.quality = { sigma_psi: p.sigma, sigmaFlow_psi: _num(spec.sigmaFlow_psi) ? spec.sigmaFlow_psi : 0, sigmaD_psi: _num(sdW) ? sdW : 0,
                           snrD: snr, rDrift: rDrift, rTide: p.rTide, tideRemoved: p.tideRemoved, tideFit: p.tideFit, ev: ['I5', 'Q5', 'Q6'] };
             p.snrD = snr; p.rDrift = _fin(rDrift);   // Prep carries the window values from here on (§3.1)
@@ -3139,7 +3154,7 @@
             var rows = S.bic.rows, cRow = rows.filter(function (r) { return r.key === S.chosenKey; })[0];
             var others = rows.filter(function (r) { return r.key !== S.chosenKey && _num(r.bic); });
             var dNext = (others.length && cRow && _num(cRow.bic)) ? _rBic(Math.min.apply(null, others.map(function (r) { return r.bic; })) - cRow.bic) : null;
-            var env = _envelope(cal, { k: fin.k, S: fin.S, C: fin.C, well: w, dteEnd: p.dteEnd, snrD: snr, dtEnd: p.dtEnd });
+            var env = _envelope(cal, { k: fin.k, S: fin.S, C: fin.C, well: w, dteEnd: p.dteEnd, snrD: snr, dtEnd: _dtReal(p) });
             S.evidence = {
                 grade: ir.grade, noiseWidened: !!ir.noiseWidened, span: _fin(ir.cycles), pointSkinSpread: _fin(ir.pointSkin.spread),
                 agree: !!S.agreementChosen.agree, agreeMode: S.agreementChosen.mode, dkPct: _fin(S.agreementChosen.dkPct), dS: _fin(S.agreementChosen.dS),
@@ -3147,7 +3162,7 @@
                 rateSource: rq.source || 'allocation', r3: _fin(rq.r3), r3Status: rq.r3Status || 'unavailable', r4: _fin(rq.r4), r4Status: rq.r4Status || 'unavailable',
                 dqKnown: rq.dqKnown !== false, fRate: _num(spec.fRate) ? spec.fRate : 1, equalRateAssumed: !!rq.equalRateAssumed,
                 snrD: snr, rDrift: rDrift, rTide: p.rTide, tideRemoved: p.tideRemoved, flags: codes, distractorAtOrBeforeIarf: distr, humpAfterIarf: humpAfter, humpAfterFitStart: !!S.humpAfterFitStart,
-                dtEnd_h: p.dtEnd, dteEnd_h: p.dteEnd, t10_h: S.reach.t10_h, t5_h: S.reach.t5_h, historySensitive: !!S.history.sensitive,
+                dtEnd_h: _dtReal(p), dteEnd_h: p.dteEnd, t10_h: S.reach.t10_h, t5_h: S.reach.t5_h, historySensitive: !!S.history.sensitive,
                 outsideEnvelope: env, kHeld: false, kHeldConverged: null, kHeldCorrCS: null, kHeldRmsRatio: null, partialSuspect: null,
                 windowLevelInconsistent: null, chosenKey: S.chosenKey, chosenFullySeen: S.chosenFit.fullySeen.status, triggers: S.trig.fired.slice(),
                 dBicChosen: S.chosenKey === 'homogeneous' ? 0 : (cRow ? cRow.dBicHom : null), dBicNext: dNext, boundaryDepends: null,

@@ -97,6 +97,7 @@
     bubbleMargin: 100, gradTol: 0.2, spearmanMin: 0.7, spearmanN: 4,
     piLo: 0.8, piHi: 1.25,
     qRatioMin: 1.5, maxDays: 60, collinearCorr: 0.8, dSeMin: 2,
+    dSeStrong: 3,                  // a D outside the expected range is used only with D/se ≥ 3
     agreeMin: 0.3,                 // model-free ΔS agreement: max(0.3, S_err)
     workoverDrop: 2,               // skin drop between consecutive used tests that suggests an intervention
     weightFloor: 0.05,             // S_err floor for 1/S_err² weights
@@ -136,6 +137,25 @@
     return isFinite(d.getTime()) && d.toISOString().slice(0, 10) === s;
   }
   function dateOf(ms) { return (fin(ms) && Math.abs(ms) < 8.64e15) ? new Date(ms).toISOString().slice(0, 10) : null; }
+  // Production-day label of a UTC instant (onset and forecast dates, like the tests' own dates): ctx.dayOf (run passes
+  // the resolved day zone and start hour) when given, else the ctx.days interval holding it, else the last day's start
+  // offset carried forward (dates beyond the data), else the UTC date.
+  function dayLabeler(ctx) {
+    if (isObj(ctx) && typeof ctx.dayOf === 'function') {
+      return function (ms) { if (!fin(ms)) return null; try { var d = ctx.dayOf(ms); return validDate(d) ? d : dateOf(ms); } catch (e) { return dateOf(ms); } };
+    }
+    var days = (isObj(ctx) && Array.isArray(ctx.days) ? ctx.days : []).filter(function (d) { return isObj(d) && fin(d.t0_ms) && fin(d.t1_ms) && d.t1_ms > d.t0_ms && validDate(d.date); })
+      .slice().sort(function (a, b) { return a.t0_ms - b.t0_ms; });
+    if (!days.length) return dateOf;
+    var last = days[days.length - 1];
+    var shift = Date.UTC(+last.date.slice(0, 4), +last.date.slice(5, 7) - 1, +last.date.slice(8, 10)) - last.t0_ms;
+    return function (ms) {
+      if (!fin(ms)) return null;
+      var lo = 0, hi = days.length - 1;
+      while (lo <= hi) { var md = (lo + hi) >> 1, d = days[md]; if (ms < d.t0_ms) hi = md - 1; else if (ms >= d.t1_ms) lo = md + 1; else return d.date; }
+      return dateOf(ms + shift);
+    };
+  }
   function ruleOf(fluid) { return fluid === 'gas' ? 'gas' : fluid === 'water_inj' ? 'inj' : 'oil'; }
   function volUnit(qUnit) { return qUnit === 'Mscf/d' ? 'Mscf' : qUnit === 'bbl/d' ? 'bbl' : 'STB'; }
   function fmtNum(x, dp) { return fin(x) ? x.toFixed(dp) : ''; }
@@ -439,6 +459,25 @@
   function itemDate(it) { return validDate(it.date) ? it.date : dateOf(it.t_ms); }
   function itemLabel(it) { var c = isObj(it.conf) ? it.conf.ks : null; return RANK.hasOwnProperty(c) ? c : 'medium'; }
 
+  // Baseline stability (§4.7; WP9): χ² = Σ (S_i − S̄)²/S_err,i² above χ²(n − 1) at 95 % (5.99 for 3 tests), S̄ the
+  // 1/S_err²-weighted mean, S_err floored at DEFAULTS.weightFloor, compared at 0.001 (D27). The earlier rule (range >
+  // 2·max S_err) fired on a third to a half of constant-skin baselines with 3 tests.
+  var CHI2_95 = [3.841, 5.991, 7.815, 9.488, 11.070, 12.592, 14.067, 15.507, 16.919, 18.307];
+  function chi2q95(df) {
+    if (df <= CHI2_95.length) return CHI2_95[df - 1];
+    var a = 2 / (9 * df);
+    return df * Math.pow(1 - a + 1.6449 * Math.sqrt(a), 3);                   // Wilson–Hilferty
+  }
+  function baseUnstable(S, E) {
+    var n = S.length;
+    if (n < 2) return false;
+    var w = E.map(function (e) { var x = Math.max(fin(e) ? e : 0, DEFAULTS.weightFloor); return 1 / (x * x); });
+    var sw = 0, sy = 0, i;
+    for (i = 0; i < n; i++) { sw += w[i]; sy += w[i] * S[i]; }
+    var mean = sy / sw, chi = 0;
+    for (i = 0; i < n; i++) chi += w[i] * (S[i] - mean) * (S[i] - mean);
+    return r3(chi) > r3(chi2q95(n - 1));
+  }
   function baseline(series, n, opts) {
     n = Math.max(1, Math.floor(fin(n) ? n : DEFAULTS.baseN));
     var wo = sortedWorkovers(opts);
@@ -459,7 +498,7 @@
         seg: s, from: s === 0 ? itemDate(list[0]) : wo[s - 1], S: Sb,
         sigma: Math.max(median(E), 1.4826 * m / Math.sqrt(base.length)),
         tests: base.map(function (it) { return String(it.id); }),
-        unstable: hund(maxOf(S) - minOf(S)) > hund(2 * maxOf(E)),                 // range > 2·max S_err (D27)
+        unstable: baseUnstable(S, E),                                            // χ² test at 95 % (WP9)
         provisional: base.length < DEFAULTS.baseMinTests || base.some(function (it) { return it.kHeld === true; }),
         k: kMed, cvK: (kMed && kArr.length) ? 1.4826 * madAbout(kArr, kMed) / kMed : null, kh: khArr.length ? median(khArr) : null,
         n: base.length
@@ -625,6 +664,8 @@
         robustness: { lo: refOf(lo) || null, hi: refOf(hi) || null, unchanged: (refOf(lo) || null) === (nom || null) && (refOf(hi) || null) === (nom || null) },
         ev: ['T3']
       };
+      // dqIncluded (extra key, only when true): gas with D not resolved — the 'mechanical' skin still contains D·q
+      if (P.dqIncluded) res.absolute.dqIncluded = true;
     }
     // onset (T4): hinge regression with weights 1/S_err², CUSUM confirmation
     var tt = cur.map(function (r) { return r.td; }), yy = cur.map(function (r) { return val(r).S; });
@@ -636,7 +677,7 @@
     res.H = H;
     res.onset = {
       tauDays: tau, interval: tau !== null && H.interval ? [H.interval[0], H.interval[1]] : null,
-      date: tau !== null ? dateOf(P.first_ms + tau * DAY_MS) : null, model: H.model || 'constant', shape: H.shape || null,
+      date: tau !== null ? P.dayLabel(P.first_ms + tau * DAY_MS) : null, model: H.model || 'constant', shape: H.shape || null,
       cusum: { alarmAt: C.alarm !== null ? cur[C.alarm].id : null, onsetAt: C.onset !== null ? cur[C.onset].id : null },
       indicative: cur.length < 6, ev: ['T4']
     };
@@ -699,14 +740,69 @@
     var tEarly = kHi > 0 ? tLast + (target - sFit) / TS.hi : null;
     var tLate = kLo > 0 ? tLast + (target - sFit) / TS.lo : null;
     f.show = true;
-    f.date = dateOf(P.first_ms + tc * DAY_MS);
-    f.earliest = tEarly !== null ? dateOf(P.first_ms + tEarly * DAY_MS) : null;
-    f.latest = tLate !== null && !beyond(tLate) ? dateOf(P.first_ms + tLate * DAY_MS) : null;
+    f.date = P.dayLabel(P.first_ms + tc * DAY_MS);
+    f.earliest = tEarly !== null ? P.dayLabel(P.first_ms + tEarly * DAY_MS) : null;
+    f.latest = tLate !== null && !beyond(tLate) ? P.dayLabel(P.first_ms + tLate * DAY_MS) : null;
     f.reason = 'Sen-slope extrapolation of the recent skin trend to the absolute threshold (S − S_err = ' + fmtNum(P.ts.abs, 1) +
       '); the range comes from the 95 % slope bounds' + (f.latest ? '.' : tLate === null ? '; the late end is open (the lower slope bound is not above zero).' :
       ' and its late end lies beyond the forecast horizon.');
     f.tDays = tc;
     return f;
+  }
+
+  // S′ = S + D·q by weighted least squares (weights 1/S_err², floor DEFAULTS.weightFloor) over [{q, Sap, E}];
+  // → {S, D, c00, c01, c11} (covariance inflated by max(1, χ²/dof)) or null when D is not identifiable.
+  function fitSD(list) {
+    var n = list.length, Sw = 0, Sq = 0, Sqq = 0, Sy = 0, Sqy = 0;
+    if (n < 2) return null;
+    var wOf = function (r) { var e = Math.max(fin(r.E) ? r.E : 0, DEFAULTS.weightFloor); return 1 / (e * e); };
+    list.forEach(function (r) { var w = wOf(r); Sw += w; Sq += w * r.q; Sqq += w * r.q * r.q; Sy += w * r.Sap; Sqy += w * r.q * r.Sap; });
+    var det = Sw * Sqq - Sq * Sq;
+    if (!(det > 1e-9 * Sw * Sqq)) return null;
+    var D = (Sw * Sqy - Sq * Sy) / det, S = (Sy - D * Sq) / Sw, chi = 0;
+    list.forEach(function (r) { var res = r.Sap - S - D * r.q; chi += wOf(r) * res * res; });
+    var infl = n > 2 ? Math.max(1, chi / (n - 2)) : 1;
+    return { S: S, D: D, c00: infl * Sqq / det, c01: -infl * Sq / det, c11: infl * Sw / det };
+  }
+  // T15 rows (gas): the stable part of the current segment, never tests after a skin change. cur: the segment's used
+  // tests in time order ({id, td, q, Sap, E}); baseIds: its baseline tests.
+  //  1. seed: the leading tests up to the last baseline test, extended in time order until the rates differ by ≥ 1.5×;
+  //  2. S′ = S + D·q by weighted least squares on the kept tests; each later test is kept while its S′ lies within
+  //     2·√(S_err² + se_pred²) of the prediction (refit after each kept test). The first test that departs is the onset:
+  //     it and every later test are left out;
+  //  3. Mann–Kendall and Sen on the rate-corrected S′ − D̂·q of the kept tests (a rate-alternating S′ hides a rise in the
+  //     raw values): a significant trend falls back to the seed.
+  // → {rows, stable: true once the rows were checked (null: one rate level or fewer than 3 tests, rateSkin decides),
+  //    onset: id|null, seedN}
+  function stableRateRows(cur, baseIds) {
+    var list = (Array.isArray(cur) ? cur : []).filter(function (r) { return isObj(r) && fin(r.Sap) && pos(r.q) && fin(r.td); });
+    var out = { rows: list.slice(), stable: null, onset: null, seedN: 0 };
+    if (list.length < 3) return out;
+    var bset = {}, lastB = -1;
+    (Array.isArray(baseIds) ? baseIds : []).forEach(function (id) { bset[id] = true; });
+    list.forEach(function (r, i) { if (bset[r.id]) lastB = i; });
+    var ratio = function (n) { var qs = list.slice(0, n).map(function (r) { return r.q; }); return maxOf(qs) / minOf(qs); };
+    var k = Math.min(list.length, Math.max(2, lastB + 1));
+    while (k < list.length && !(ratio(k) >= DEFAULTS.qRatioMin)) k++;
+    var fit = ratio(k) >= DEFAULTS.qRatioMin ? fitSD(list.slice(0, k)) : null;
+    if (!fit) return out;
+    out.seedN = k;
+    var n = k;
+    for (; n < list.length; n++) {
+      var r = list[n], pred = fit.S + fit.D * r.q, vp = Math.max(0, fit.c00 + 2 * r.q * fit.c01 + r.q * r.q * fit.c11);
+      var e = Math.max(fin(r.E) ? r.E : 0, DEFAULTS.weightFloor);
+      if (Math.abs(r.Sap - pred) > 2 * Math.sqrt(e * e + vp)) { out.onset = String(r.id); break; }
+      fit = fitSD(list.slice(0, n + 1)) || fit;
+    }
+    var kept = list.slice(0, n);
+    if (kept.length > k && kept.length >= 3) {
+      var y = kept.map(function (x) { return x.Sap - fit.D * x.q; }), t = kept.map(function (x) { return x.td; });
+      var mk = mannKendall(y), tsn = theilSen(t, y);
+      var trend = !!(mk && ((fin(mk.p) && r3(mk.p) < DEFAULTS.mkAlpha) || (tsn && fin(tsn.lo) && fin(tsn.hi) && (s30(tsn.lo) > 0 || s30(tsn.hi) < 0))));
+      if (trend) { kept = list.slice(0, k); if (!out.onset) out.onset = String(list[k] ? list[k].id : '') || null; }
+    }
+    out.rows = kept; out.stable = true;
+    return out;
   }
 
   function computeTrend(tests, ctx) {
@@ -725,6 +821,9 @@
     var allocAccPct = fin(well.allocAccPct) ? well.allocAccPct : 5;
     var days = Array.isArray(ctx.days) ? ctx.days.filter(isObj) : [];
     var mech0 = skinFn('mechanicalSkin'), rateFn = skinFn('rateSkin'), prodFn = skinFn('products');
+    // gas gravity: the recombined well stream on the wet-gas-equivalent basis (R7), as the engine used it, else the entry
+    var pbIn = isObj(ctx.phaseBasis) ? ctx.phaseBasis : {};
+    var gasSg = pbIn.used === 'gasEq' && pos(pbIn.wellStreamSg) ? pbIn.wellStreamSg : (isObj(well.gas) && pos(well.gas.sg) ? well.gas.sg : null);
     var skinMissing = !mech0 || !rateFn || !prodFn;
 
     // ── enabled (TR14) ──
@@ -751,7 +850,7 @@
 
     // ── gas only: the current segment and its baseline on the reported skin S′ (rate-skin row selection) ──
     var valRep = function (r) { return { S: kind === 'gas' ? r.Sap : r.S, E: r.E }; };
-    var base = { recs: recs, ts: ts, wo: wo, form: form, enabled: enabled, first_ms: first_ms, sSens: sSensOfList };
+    var base = { recs: recs, ts: ts, wo: wo, form: form, enabled: enabled, first_ms: first_ms, sSens: sSensOfList, dayLabel: dayLabeler(ctx) };
     var A = { B: { tests: [] }, cur: [] };
     if (kind === 'gas') {
       A.B = baseline(recs.map(function (r) {
@@ -769,18 +868,15 @@
     if (kind !== 'gas') {
       rate.reason = kind === 'inj' ? 'Water injector: rate-dependent skin is not assessed.' : 'Oil well: rate-dependent skin is not assessed.';
     } else {
-      // rows: the current segment's used tests when S′ shows no significant time trend (two-sided Mann–Kendall
-      // p ≥ 0.10 and a Sen interval that contains 0); otherwise only its baseline tests. rateSkin applies the
-      // ≤ 60-day window and the q ratio itself. (A rate-alternating S′ is not a time trend, so it is kept.)
-      var segT = A.cur.map(function (r) { return r.td; }), segS = A.cur.map(function (r) { return r.Sap; });
-      var segMK = A.cur.length >= 3 ? mannKendall(segS) : null, segTS = A.cur.length >= 3 ? theilSen(segT, segS) : null;
-      var segTrend = !!(segMK && ((fin(segMK.p) && r3(segMK.p) < DEFAULTS.mkAlpha) || (segTS && fin(segTS.lo) && fin(segTS.hi) && (s30(segTS.lo) > 0 || s30(segTS.hi) < 0))));
-      var stable = segTrend ? A.cur.filter(function (r) { return A.B.tests.indexOf(r.id) !== -1; }) : A.cur.slice();
-      var rows = stable.filter(function (r) { return pos(r.q); }).map(function (r) { return { id: r.id, t_days: r.td, q: r.q, S: r.Sap, Serr: r.E }; });
+      // rows: the stable part of the current segment only (stableRateRows: the baseline seed, the later tests while S′
+      // stays on S + D̂·q, a Mann–Kendall check on the rate-corrected S′ − D̂·q), so D never comes from tests after a
+      // skin change. rateSkin applies the ≤ 60-day window (the earliest: the baseline) and the q ratio itself.
+      var sel = stableRateRows(A.cur.filter(function (r) { return pos(r.q); }), A.B.tests);
+      var rows = sel.rows.map(function (r) { return { id: r.id, t_days: r.td, q: r.q, S: r.Sap, Serr: r.E }; });
       var cmp = isObj(ctx.completion) ? ctx.completion : null;
-      var opts = { qRatioMin: DEFAULTS.qRatioMin, maxDays: DEFAULTS.maxDays, joint: true,
+      var opts = { qRatioMin: DEFAULTS.qRatioMin, maxDays: DEFAULTS.maxDays, joint: true, stable: sel.stable, window: 'earliest',
                    expected: { k: isObj(ctx.baseline) && pos(ctx.baseline.k) ? ctx.baseline.k : A.B.k, h: h, hp: cmp && pos(cmp.hp_ft) ? cmp.hp_ft : h, rw: rw,
-                               sg: isObj(well.gas) ? well.gas.sg : null, mu_g: well.mu } };
+                               sg: gasSg, mu_g: well.mu } };
       var rs = rateFn ? safeCall(rateFn, [rows, opts], warnings, 'RATE_SKIN', 'T15') : null;
       var corr = rows.length >= 3 ? pearson(rows.map(function (x) { return x.q; }), rows.map(function (x) { return x.t_days; })) : null;
       var expectedDRange = null;
@@ -790,7 +886,7 @@
         // alone gives its geometric centre (the arithmetic midpoint when a bound is not positive).
         var ed = rs.expectedD;
         var centre = function (lo, hi) { return lo > 0 && hi > 0 ? Math.sqrt(lo * hi) : 0.5 * (lo + hi); };
-        if (fin(ed)) expectedD = ed;
+        if (fin(ed)) { expectedD = ed; if (isObj(rs.expectedDRange) && fin(rs.expectedDRange.lo) && fin(rs.expectedDRange.hi)) expectedDRange = [rs.expectedDRange.lo, rs.expectedDRange.hi]; }
         else if (Array.isArray(ed) && fin(ed[0]) && fin(ed[1])) { expectedDRange = [ed[0], ed[1]]; expectedD = centre(ed[0], ed[1]); }
         else if (isObj(ed)) {
           if (fin(ed.lo) && fin(ed.hi)) expectedDRange = [ed.lo, ed.hi];
@@ -800,10 +896,19 @@
       if (!rateFn) rate.reason = 'The PRiSM skin module is not loaded: S′ is the apparent skin including D·q.';
       else if (corr !== null && Math.abs(corr) >= DEFAULTS.collinearCorr) {
         rate.reason = 'Rate and time are collinear in these tests (|r| = ' + fmtNum(Math.abs(corr), 2) + '): D cannot be separated from a skin trend; S′ is the apparent skin including D·q.';
+      } else if (rs && rs.resolved === true && fin(rs.D) && pos(rs.seD) && Math.abs(rs.D) / rs.seD >= DEFAULTS.dSeMin && (!fin(rs.qRatio) || rs.qRatio >= DEFAULTS.qRatioMin) &&
+                 rs.consistent === false && Math.abs(rs.D) / rs.seD < DEFAULTS.dSeStrong) {
+        // outside the expected-D range and not strong: withheld (a wrong D would shift every corrected and mechanical skin)
+        rate.reason = 'D = ' + rs.D.toExponential(2) + ' (D/se ' + fmtNum(Math.abs(rs.D) / rs.seD, 1) + ') lies outside the expected range' +
+          (expectedDRange ? ' (' + expectedDRange[0].toExponential(1) + ' to ' + expectedDRange[1].toExponential(1) + ')' : '') + ' with D/se below ' + DEFAULTS.dSeStrong +
+          ': not used; S′ is the apparent skin including D·q.';
+        warnings.push({ code: 'RATE_SKIN_WITHHELD', level: 'warn', text: 'The fitted rate-dependent skin D is outside the expected range and not strong enough (D/se < ' + DEFAULTS.dSeStrong + '): the D·q correction is not applied.', ev: ['T15'] });
       } else if (rs && rs.resolved === true && fin(rs.D) && pos(rs.seD) && Math.abs(rs.D) / rs.seD >= DEFAULTS.dSeMin && (!fin(rs.qRatio) || rs.qRatio >= DEFAULTS.qRatioMin)) {
         rate.resolved = true; rate.S = nn(rs.S); rate.D = rs.D; rate.seD = rs.seD; Dres = rs.D; seDres = rs.seD;
-        rate.reason = 'D resolved from ' + rows.length + ' tests in a stable-skin segment (' + (fin(rs.qRatio) ? 'q ratio ' + fmtNum(rs.qRatio, 2) + ', ' : '') +
-          'D/se ' + fmtNum(Math.abs(rs.D) / rs.seD, 1) + ').';
+        var rsIds = Array.isArray(rs.ids) ? rs.ids.filter(goodId).map(String) : [], nRs = fin(rs.n) ? rs.n : rsIds.length;
+        rate.reason = ('D resolved from ' + nRs + ' tests' + (rsIds.length ? ' (' + (rsIds.length > 2 ? rsIds[0] + '–' + rsIds[rsIds.length - 1] : rsIds.join(', ')) + ')' : '') +
+          ' in a stable-skin segment (' + (fin(rs.qRatio) ? 'q ratio ' + fmtNum(rs.qRatio, 2) + ', ' : '') + 'D/se ' + fmtNum(Math.abs(rs.D) / rs.seD, 1) + ').' +
+          (sel.onset ? ' Tests from ' + sel.onset + ' on are left out: their S′ departs from S + D·q.' : '')).slice(0, 298);
       } else {
         var why = rs && typeof rs.reason === 'string' && rs.reason && rs.reason.length < 200 ? rs.reason : '';
         rate.reason = /apparent skin/.test(why) ? why : (why ? why + ' ' : '') + 'S′ is the apparent skin including D·q.';
@@ -847,7 +952,7 @@
     var lowAbsVal = absVal;
 
     // ── pass B: alerts, onset, recent, forecast on the alert basis ──
-    var P = Object.assign({}, base, { val: valAl, absVal: absVal, lowAbsVal: lowAbsVal, absBasis: absBasis });
+    var P = Object.assign({}, base, { val: valAl, absVal: absVal, lowAbsVal: lowAbsVal, absBasis: absBasis, dqIncluded: kind === 'gas' && absBasis === 'mechanical' && !corrected });
     var R = seriesPass(P);
     var B = R.B, segEmpty = R.segEmpty;
     var baseIds = {}; B.segments.forEach(function (g) { g.tests.forEach(function (id) { baseIds[id] = true; }); });
@@ -892,22 +997,37 @@
     var cumFrom = tauCum === null ? null : tau !== null ? 'onset' : 'baselineEnd';
 
     // ── T7 Δp across the skin ──
+    // gas: the drop is across S′ (D·q included); with D resolved the D·q share is split off (dpDq_psi, extra key; the
+    // pseudo-pressure drop is linear in the skin, so the share is D·q/S′ of it)
     var skinDp = recs.filter(function (r) { return fin(r.S); }).map(function (r) {
       var t = r.t, v = fin(t.dpSkin_psi) ? t.dpSkin_psi : (fin(t.m) ? 0.8686 * t.m * r.S : null);
-      return { id: r.id, dpSkin_psi: v };
+      var o = { id: r.id, dpSkin_psi: v };
+      if (kind === 'gas' && corrected && fin(v) && fin(r.Sap) && r.Sap !== 0 && fin(r.q)) o.dpDq_psi = v * Dres * r.q / r.Sap;
+      return o;
     });
 
     // ── T8 PI ratio and production at stake (pseudo-steady-state estimates) ──
     var rinvMax = maxOf(used.map(function (r) { return pos(r.t.rinv_ft) ? r.t.rinv_ft : null; }));
     var reSource = pos(well.re_ft) ? 'input' : 'rinv', re = pos(well.re_ft) ? well.re_ft : rinvMax;
-    // B and μ from the well inputs (Bw and μw for injectors), as §4.7 writes 141.2·qBμ·ΔS/kh and J_pred
-    var B_ = fluid === 'water_inj' ? (pos(well.Bw) ? well.Bw : 1) : (pos(well.B) ? well.B : 1);
-    var mu_ = fluid === 'water_inj' ? (pos(well.muw) ? well.muw : 1) : (pos(well.mu) ? well.mu : 1);
+    // B and μ on the analysis basis, as the engine used them (run _wellForSpec): the total reservoir rate (R7, q in RB/d)
+    // with B = 1 and the oil viscosity; injectors Bw and μw; gas the engine's Bg_ref·μ_ref, recovered from the latest
+    // test's m = 162.6·q·B·μ/(k·h) (the stated μ kept, B the factor that matches it); oil B and μ. §4.7 141.2·qBμ·ΔS/kh, J_pred.
+    var totalBasis = isObj(ctx.phaseBasis) && ctx.phaseBasis.used === 'total';
+    var bmuOfTest = function (r) { return r && pos(r.t.m) && pos(r.k) && h && pos(r.t.Dq) ? r.t.m * r.k * h / (162.6 * r.t.Dq) : null; };
+    var B_, mu_, bmuSource = 'input';
+    if (kind === 'inj') { B_ = pos(well.Bw) ? well.Bw : 1; mu_ = pos(well.muw) ? well.muw : 1; }
+    else {
+      mu_ = pos(well.mu) ? well.mu : 1;
+      B_ = totalBasis ? 1 : (pos(well.B) ? well.B : 1);
+      if (totalBasis) bmuSource = 'totalRate';
+      var bmE = kind === 'gas' ? bmuOfTest(latestUsed) : null;
+      if (pos(bmE)) { B_ = bmE / mu_; bmuSource = 'engine'; }
+    }
     var bmuWell = B_ * mu_;
     var qUnit = latestUsed && latestUsed.t.qUnit ? latestUsed.t.qUnit : (kind === 'gas' ? 'Mscf/d' : kind === 'inj' ? 'bbl/d' : 'STB/d');
     var pi = { X: null, re_ft: nn(re), reSource: reSource, ratioNow: null, ratioBase: null, ratioLowerBound: reSource === 'rinv',
                rateAtStake: null, rateUnit: qUnit, extraDrawdown_psi: null, cumAtStake: null, cumUnit: volUnit(qUnit),
-               atStakeUpperBound: reSource === 'rinv', value: null, guard: false, cumFrom: null, cumFromDays: null, ev: ['T8'] };
+               atStakeUpperBound: reSource === 'rinv', value: null, guard: false, cumFrom: null, cumFromDays: null, B: nn(B_), mu: nn(mu_), bmuSource: bmuSource, ev: ['T8'] };
     // gas with D resolved: the X + S terms use S + D·q at the rate in question
     var effS = function (Sc, q) { return corrected && fin(q) ? Sc + Dres * (q - qRef) : Sc; };
     var latestVal = latestUsed ? valAl(latestUsed) : null;
@@ -916,7 +1036,8 @@
     if (prodFn && latestUsed && pos(re) && rw && fin(Snow)) {
       var common = { k: latestUsed.k, h: h, B: B_, mu: mu_, q: qNow, Dq: qNow, rw: rw, re_ft: re, reSource: reSource,
                      pbar: nn(latestUsed.t.pExtDatum), pwf: nn(latestUsed.t.pwf0Datum) };
-      var pNow = safeCall(prodFn, [Object.assign({ S: Snow }, common)], warnings, 'PRODUCTS', 'T8');
+      // the engine's Δp across the skin of the latest test (its own B·μ basis; gas through m(p)) gives FE
+      var pNow = safeCall(prodFn, [Object.assign({ S: Snow, dpSkin_psi: fin(latestUsed.t.dpSkin_psi) ? latestUsed.t.dpSkin_psi : null }, common)], warnings, 'PRODUCTS', 'T8');
       var pBase = fin(SbaseNow) && !segEmpty ? safeCall(prodFn, [Object.assign({ S: SbaseNow }, common)], warnings, 'PRODUCTS', 'T8') : null;
       // X is geometric (kept for T13); the PI ratio and at-stake numbers wait for a test in the current segment
       if (pNow && fin(pNow.X)) { X = pNow.X; pi.X = X; }
@@ -1026,8 +1147,11 @@
           if (!fin(a.dp) || !fin(b.dp) || !pos(r.q) || !pos(refT.q) || !fin(refT.t.m) || refT.t.m === 0) return;
           var dS = 1.1513 * ((a.dp / r.q - b.dp / refT.q) / (refT.t.m / refT.q) - Math.log10(a.dte / b.dte));
           var fitted = r.S - refT.S;
+          // tolerance (WP9): max(0.3, S_err, 1.1513·a·Δp_j/m_j) — normalising by the reference test's (m/q) turns a rate or
+          // k difference of a (the allocation accuracy) into 1.1513·a·Δp_j/m_j of skin (≈ 0.6 at S ≈ 7 for 5 %)
+          var tolA = fin(r.t.m) && r.t.m !== 0 ? 1.1513 * (allocAccPct / 100) * Math.abs(a.dp / r.t.m) : 0;
           modelFree.push({ id: r.id, refId: refT.id, dS: dS, fittedDS: fitted,
-                           agrees: hund(Math.abs(dS - fitted)) <= hund(Math.max(DEFAULTS.agreeMin, r.E)) });
+                           agrees: hund(Math.abs(dS - fitted)) <= hund(Math.max(DEFAULTS.agreeMin, r.E, tolA)) });
         });
       }
     }
@@ -1038,6 +1162,7 @@
     if (kind === 'oil' && Pb !== null) {
       var dep = isObj(ctx.depth) ? ctx.depth : null;
       var dz = dep && fin(dep.datumTVD) && fin(dep.gaugeTVD) ? dep.datumTVD - dep.gaugeTVD : 0;
+      if (dz !== 0) bubble.depthCorrected = true;       // extra key; absent = the 'sandface' range is the gauge pwf (no depth data)
       var G0 = dep && fin(dep.grad) ? dep.grad : 0;
       var GF = dep && fin(dep.gradFlow) ? dep.gradFlow : G0;
       var tau3 = [];
@@ -1055,17 +1180,53 @@
     }
 
     // ── T13 PI cross-check ──
+    // J_pred on each clean flowing day from the homogeneous model through the superposed rate history (exact for an
+    // infinite-acting well, the PSS X with r_e from r_inv is not: it predicted 10–20 % too high a PI on clean data):
+    //   X_eq(t) = Σ_j (q_j − q_j−1)·½[ln t_D(t − t_j) + 0.80907] / q(t),   t_D = 0.0002637·k·Δt_h/(φ·μ·c_t·r_w²),
+    // capped at the pseudo-steady-state X = ln(r_e/r_w) − 0.75 when r_e is entered; J_pred = k·h/(141.2·B·μ·(X_eq + S(t)))
+    // on the analysis basis. Gas: J on pseudo-pressure, J_obs = q/(m(p_ref) − m(pwf)), J_pred = k·h/(1422·T·(X_eq + S′(t)))
+    // (the engine's normalised form, reference free). Without the rate steps the PSS X is used and the check is indicative.
     var kBase = isObj(ctx.baseline) && pos(ctx.baseline.k) ? ctx.baseline.k : B.k;
-    var piCheck = { available: false, reason: null, rows: [], consistent: null, rho: null, ev: ['T13'] };
+    var piCheck = { available: false, reason: null, rows: [], consistent: null, rho: null, basis: null, form: kind === 'gas' ? 'pseudoPressure' : 'pressure',
+                    indicative: false, days: [], ev: ['T13'] };
+    var steps = (Array.isArray(ctx.steps) ? ctx.steps : []).filter(function (s) { return isObj(s) && fin(s.t_ms) && fin(s.q) && s.q >= 0; });
+    var phi_ = pos(well.phi) ? well.phi : null, ct_ = pos(well.ct) ? well.ct : null, muD = kind === 'inj' ? (pos(well.muw) ? well.muw : null) : (pos(well.mu) ? well.mu : null);
+    var canSup = steps.length >= 1 && phi_ && ct_ && muD && rw;
+    var Xpss = pos(well.re_ft) && rw && well.re_ft > rw ? Math.log(well.re_ft / rw) - 0.75 : null;
+    var gtab = null, T_R = isObj(well.gas) && fin(well.gas.T_F) ? well.gas.T_F + 459.67 : null;
     if (kind === 'inj') piCheck.reason = 'Water injector: the PI cross-check is not used.';
     else if (historyEstimated) piCheck.reason = 'The production start is estimated, so p* (and the reference pressure) is not reliable.';
     else if (!days.length) piCheck.reason = 'No daily rates (rate-table mode).';
-    else if (X === null) piCheck.reason = skinMissing ? 'The PRiSM skin module is not loaded.' : 'The drainage radius term is not available.';
+    else if (!canSup && X === null) piCheck.reason = skinMissing ? 'The PRiSM skin module is not loaded.' : 'The drainage radius term is not available.';
     else if (!pos(kBase) || !h) piCheck.reason = 'No baseline permeability.';
     else {
       var pKnots = used.filter(function (r) { return fin(r.t.pExtDatum) && fin(r.t.t_ms); }).map(function (r) { return [r.t.t_ms, r.t.pExtDatum]; });
       if (pKnots.length < 1 || used.length < 2) piCheck.reason = 'Fewer than 2 used tests with p_ext.';
       else {
+        piCheck.basis = canSup ? (Xpss !== null ? 'transientCapped' : 'transient') : 'pss';
+        piCheck.indicative = !canSup;
+        if (kind === 'gas') {
+          var AIg = G.PRiSM_autoInterp, pMaxG = maxOf(pKnots.map(function (k) { return k[1]; }));
+          if (AIg && typeof AIg.gasTable === 'function' && T_R && pos(pMaxG)) {
+            try {
+              var gt0 = AIg.gasTable({ sg: gasSg, T_F: well.gas.T_F, co2: well.gas.co2, h2s: well.gas.h2s, n2: well.gas.n2, pmax: Math.max(1.3 * pMaxG, pMaxG + 500) });
+              if (gt0 && gt0.ok && typeof gt0.mOf === 'function') gtab = gt0;
+            } catch (eG) { gtab = null; }
+          }
+          if (!gtab) { piCheck.form = 'pressure'; piCheck.indicative = true; }
+        }
+        var tD1 = canSup ? 0.0002637 * kBase / (phi_ * muD * ct_ * rw * rw) : null;   // t_D per hour
+        var xEqAt = function (ms) {
+          var s = 0, qPrev = 0, qNowS = 0;
+          for (var j = 0; j < steps.length && steps[j].t_ms < ms; j++) {
+            var dq = steps[j].q - qPrev, dth = (ms - steps[j].t_ms) / 3600000;
+            if (dq !== 0 && dth > 0) s += dq * 0.5 * (Math.log(tD1 * dth) + 0.80907);
+            qPrev = steps[j].q; qNowS = steps[j].q;
+          }
+          if (!(qNowS > 0)) return null;
+          var xe = s / qNowS;
+          return Xpss !== null ? Math.min(xe, Xpss) : xe;
+        };
         // one pass over the days: each clean flowing day falls in the interval (t_u−1, t_u) of consecutive used tests
         var allObs = [], allPred = [];
         var tU = used.map(function (r) { return r.t.t_ms; }), byInt = used.map(function () { return []; });
@@ -1079,9 +1240,17 @@
           if (lo < 1 || lo >= tU.length || !(mid > tU[lo - 1])) return;
           var pRef = lin(pKnots, mid); if (!(pRef > pwf)) return;
           var sd = effS(sAt((mid - first_ms) / DAY_MS), d.q);
-          if (!(X + sd > 0)) return;
-          var jObs = d.q / (pRef - pwf), jPred = kBase * h / (141.2 * bmuWell * (X + sd));
+          var Xd = canSup ? xEqAt(mid) : X;
+          if (!fin(Xd) || !(Xd + sd > 0)) return;
+          var jObs, jPred, toPsi = 1;
+          if (gtab) {
+            var dm = gtab.mOf(pRef) - gtab.mOf(pwf);
+            if (!(dm > 0)) return;
+            jObs = d.q / dm; jPred = kBase * h / (1422 * T_R * (Xd + sd)); toPsi = dm / (pRef - pwf);
+          } else { jObs = d.q / (pRef - pwf); jPred = kBase * h / (141.2 * bmuWell * (Xd + sd)); }
           byInt[lo].push(jObs / jPred); allObs.push(jObs); allPred.push(jPred);
+          // display series in q per psi (the ratio is unchanged)
+          piCheck.days.push({ tDays: (mid - first_ms) / DAY_MS, jObs: jObs * toPsi, jPred: jPred * toPsi });
         });
         for (var u = 1; u < used.length; u++) {
           piCheck.rows.push({ from: used[u - 1].id, to: used[u].id, RJ: byInt[u].length ? median(byInt[u]) : null, nDays: byInt[u].length });
@@ -1091,6 +1260,8 @@
         piCheck.consistent = withData.length ? withData.every(function (r) { return r3(r.RJ) >= DEFAULTS.piLo && r3(r.RJ) <= DEFAULTS.piHi; }) : null;
         piCheck.rho = allObs.length >= DEFAULTS.spearmanN ? spearman(allObs, allPred, DEFAULTS.spearmanN) : null;
         if (!withData.length) piCheck.reason = 'No clean flowing days between the used tests.';
+        else if (piCheck.indicative) piCheck.reason = (!canSup ? 'Indicative: no rate history for the transient prediction, so the pseudo-steady-state X (r_e ' + (reSource === 'rinv' ? 'from r_inv' : 'entered') + ') is used.'
+                                                               : 'Indicative: the gas table is not available, so J uses pressure instead of m(p).');
       }
     }
 
@@ -1158,8 +1329,13 @@
     L('inputs', 'The reservoir and fluid inputs are not checked against other data; a uniform input error shifts every skin equally, so the skin change is unaffected but the absolute skin is not.');
     L('allocation', ctx.mode === 'table' ? 'Rates come from the time-stamped rate table and are taken as measured.' : 'Rates come from the daily allocation spread over the detected flowing hours; its accuracy (about ' + fmtNum(allocAccPct, 0) + ' %) limits k and the skin.');
     L('totalSkin', mech.available ? 'The absolute alert uses the mechanical skin (total skin less the geometric pseudo-skins); the delta alert uses the total skin.' : 'Skins are total skins and may include geometric pseudo-skins (partial penetration, deviation); enter the completion to split them.');
-    L('pss', 'The PI ratio, the production at stake and the predicted PI are pseudo-steady-state estimates' + (reSource === 'rinv' ? ' with r_e assumed from the radius of investigation (PI ratio a lower bound, production at stake an upper bound).' : '.'));
+    L('pss', 'The PI ratio and the production at stake are pseudo-steady-state estimates' + (reSource === 'rinv' ? ' with r_e assumed from the radius of investigation (PI ratio a lower bound, production at stake an upper bound)' : '') +
+      (piCheck.basis === 'pss' ? '; so is the predicted PI of the cross-check (indicative).' : '; the predicted PI of the cross-check is the infinite-acting model through the rate history' + (piCheck.basis === 'transientCapped' ? ', capped at pseudo-steady state with the entered r_e.' : '.')));
     L('partialCuts', 'Partial rate cuts are classified and listed, not interpreted.');
+    if (bubble.depthCorrected !== true && bubble.rows.length) L('bubbleNoDepth', 'No gauge and datum depths were entered: the bubble-point check compares the gauge pwf at closing (no depth correction, so no ±20 % gradient range) with Pb.');
+    if (kind === 'inj') L('injector', 'Water injector fall-offs: k is the effective permeability to water in the injected-water bank (μw, Bw); a swept-zone / oil-zone radial composite is possible; c_t is taken as entered.');
+    if (kind === 'gas') L('gasSkinDrop', 'Gas: the pressure drop across the skin and FE are on S′, which includes the rate-dependent part D·q' + (corrected ? ' (the D·q share is given per test).' : ' (D is not resolved, so it is not split).'));
+    if (modelFree.length) L('modelFree', 'The model-free skin change (T11) is indicative: it normalises every test by the reference test\'s semilog slope, so a rate or k difference between tests widens its tolerance to max(0.3, S_err, 1.1513·a·Δp/m), a the allocation accuracy (' + fmtNum(allocAccPct, 0) + ' %).');
     L('storage', 'Changing wellbore storage is not modelled.');
     L('gradient', 'Gradient changes in the wellbore during the build-up are not modelled.');
     L('iarfEarliest', 'The IARF window is the earliest plateau after the storage hump, not the longest; the longest qualifying window is reported.');
@@ -1204,6 +1380,7 @@
     cusum: cusum,
     pFamily: pFamily,
     sSensOf: sSensOf,
+    stableRateRows: stableRateRows,
     normCdf: normCdf,
     spearman: function (x, y) { return spearman(x || [], y || [], 3); }
   };

@@ -683,6 +683,24 @@ module.exports = [
       assert.deepStrictEqual(J(out.modelFree), J(an.trend.modelFree), 'FIX modelFree');
     },
   },
+  {
+    name: 'TR10b model-free tolerance (WP9): a 3 % allocation error on a high-skin test (S 7) shifts the model-free ΔS by ≈ 0.4 — within max(0.3, S_err, 1.1513·a·Δp/m), so it agrees; a 1.2 skin difference still disagrees; the check is labelled indicative',
+    wp: WP, opts: false,
+    run(app, assert) {
+      const T = vmTrend();
+      const ref = tt({ id: 'B1', d: 0, S: 1.0 }), b2 = tt({ id: 'B2', d: 20, S: 7.0 });
+      b2.Dq = 800 * 0.97;                                                       // the allocated rate 3 % low; the pressures follow 800 STB/d
+      let out = T.compute([ref, b2], ctxOf());
+      const r = out.modelFree[0], gap = Math.abs(r.dS - r.fittedDS);
+      assert(gap > 0.3 && gap < 0.6, 'the allocation error moves the model-free ΔS by ' + gap.toFixed(3) + ' (more than the old max(0.3, S_err) tolerance)');
+      assert.strictEqual(r.agrees, true, 'agrees within 1.1513·a·Δp/m');
+      assert(out.limitations.some((l) => l.code === 'modelFree' && /indicative/.test(l.text)), 'T11 labelled indicative');
+      // a real disagreement is still caught: the bins carry S 5.8 while the fit says 7.0
+      const b3 = tt({ id: 'B2', d: 20, S: 7.0, binS: 5.8 });
+      out = T.compute([ref, b3], ctxOf());
+      assert.strictEqual(out.modelFree[0].agrees, false, '1.2 apart: disagrees');
+    },
+  },
 
   {
     name: 'TR11 bubble point: sandface range from the gradient ±20 %, levels, Spearman rule, off for gas and injectors, critical only when assessable',
@@ -1002,6 +1020,215 @@ module.exports = [
       const drift = series([0, 20, 40, 60, 80].map((d, i) => ({ id: 'B' + (i + 1), d, S: 1.2, pStar: 4000 - (0.01 + 1e-9) * d })));
       out = T.compute(drift, ctxOf());
       assert.strictEqual(out.pTrend.label, 'Depletion or gauge drift (the drift input could explain it).', 'drift comparison on rounded slopes');
+    },
+  },
+
+  {
+    name: 'TR18 gas D from the stable part only (WP9): the gas-demo pattern — 6 constant-skin tests alternating 10,000 / 5,000 Mscf/d, then the skin rises — gives D within 35 % of the truth from B1–B4, the reason names its tests, and the absolute alert on mechanical skin is raised at B8; an out-of-range D with D/se < 3 is withheld',
+    wp: WP,
+    run(app, assert) {
+      const T = appTrend(app, assert);
+      // the gas demo's trend inputs (k 20 md, h 40 ft, γg 0.68, truth S_mech 2 → 4.5 → 7, D 2e-4 per Mscf/d)
+      const gw = Object.assign({}, WELL, { fluid: 'gas', h: 40, phi: 0.15, mu: 0.0253772, B: 0.69945, ct: 1.08583e-4, Pb: null, re_ft: null,
+        gas: { sg: 0.68, T_F: 220, co2: 2, h2s: 0, n2: 1, pseudoTime: false, pdew: null, apiCond: null, Mo: null } });
+      const q = [9919, 5072, 10476, 4909, 9702, 5232, 9927, 9662], Sp = [3.892, 2.801, 3.705, 2.940, 3.897, 2.732, 6.349, 8.844];
+      const list = series(q.map((qq, i) => ({ id: 'B' + (i + 1), d: 16 * i, k: 20, q: qq, S: Sp[i], gasSprime: Sp[i], E: i === 7 ? 0.27 : 0.2, qUnit: 'Mscf/d' })), gw);
+      const ctx = ctxOf({ well: gw, fluid: 'gas', completion: { hp_ft: 40, htop_ft: 0, theta_deg: 0, kvkh: [0.1, 0.5], perf: null },
+                          phaseBasis: { used: 'gas', wcMax: null, gorRatioMax: null, twoPhaseCt: false } });
+      // precondition: raw S′ hides the rise (Mann–Kendall p ≥ 0.10 over all 8), which let the old selection keep B7–B8
+      assert(T.mannKendall(Sp).p >= 0.1, 'raw S′ Mann–Kendall p ' + T.mannKendall(Sp).p);
+      const out = T.compute(app.toWin(list), app.toWin(ctx));
+      shapeOk(assert, out, 'gas demo pattern');
+      const rs = out.rateSkin;
+      assert.strictEqual(rs.resolved, true, rs.reason);
+      assert(Math.abs(rs.D / 2e-4 - 1) <= 0.35, 'D within 35 % of the truth: ' + rs.D);
+      assert(rs.n >= 3 && rs.n <= 6, 'D from the stable tests only (n ' + rs.n + ')');
+      assert(new RegExp('from ' + rs.n + ' tests').test(rs.reason), 'the reason counts the tests D used: ' + rs.reason);
+      assert(/\(B1–B4\)/.test(rs.reason) && /from B7 on are left out/.test(rs.reason), 'the reason names them and the onset: ' + rs.reason);
+      assert.strictEqual(out.corrected, true);
+      assert.strictEqual(out.baseline.unstable, false, 'the rate-corrected baseline is stable');
+      const ab = out.alerts.absolute;
+      assert.strictEqual(ab.basis, 'mechanical');
+      assert.strictEqual(ab.raisedAt, 'B8', 'absolute alert on mechanical skin raised at B8: ' + JSON.stringify(ab));
+      const b8 = out.series.find((s) => s.id === 'B8');
+      assert(Math.abs(b8.Smech - 7) <= 0.5, 'B8 mechanical skin ≈ 7: ' + b8.Smech);
+      out.series.slice(0, 6).forEach((s) => assert(Math.abs(s.Smech - 2) <= 0.5, s.id + ' mechanical skin ≈ 2: ' + s.Smech));
+      assert.strictEqual(out.alerts.delta.raisedAt, 'B7');
+      // stableRateRows directly: B7 departs; a rising corrected skin inside the extension falls back to the seed
+      const recs = list.map((t, i) => ({ id: t.id, td: t.tDays, q: q[i], Sap: Sp[i], E: t.Serr }));
+      const sel = T.stableRateRows(app.toWin(recs), app.toWin(['B1', 'B2', 'B3']));
+      assert.deepStrictEqual(J(sel.rows.map((r) => r.id)), ['B1', 'B2', 'B3', 'B4', 'B5', 'B6']);
+      assert.deepStrictEqual([sel.stable, sel.onset, sel.seedN], [true, 'B7', 3]);
+      // a D outside the expected range with D/se < 3 is withheld (warning); with D/se ≥ 3 it is used
+      const gl = series([5000, 10000, 5000, 10000, 5000].map((qq, i) => ({ id: 'B' + (i + 1), d: 10 * i, q: qq, S: 1.5 + 2e-4 * qq, gasSprime: 1.5 + 2e-4 * qq, E: 0.2, qUnit: 'Mscf/d' })), gw);
+      const rsOut = (dse) => ({ resolved: true, S: 1.5, D: 2e-4, seD: 2e-4 / dse, n: 5, ids: ['B1', 'B2', 'B3', 'B4', 'B5'], qRatio: 2, joint: null, expectedD: 2e-5,
+                                expectedDRange: { D: 2e-5, lo: 2e-5 / 3, hi: 6e-5 }, consistent: false, reason: '', ev: ['T15'] });
+      let o2 = vmTrend({ rateSkin: () => rsOut(2.5) }).compute(gl, ctx);
+      shapeOk(assert, o2, 'withheld');
+      assert.strictEqual(o2.rateSkin.resolved, false, 'withheld: ' + o2.rateSkin.reason);
+      assert.strictEqual(o2.corrected, false);
+      assert(/outside the expected range/.test(o2.rateSkin.reason) && o2.rateSkin.reason.length < 300, o2.rateSkin.reason);
+      assert(o2.warnings.some((w) => w.code === 'RATE_SKIN_WITHHELD' && w.level === 'warn'), 'RATE_SKIN_WITHHELD warning');
+      // the mechanical basis then still contains D·q, and says so (review basisText: 'mechanical skin + D·q (D not resolved)')
+      assert.deepStrictEqual([o2.alerts.absolute.basis, o2.alerts.absolute.dqIncluded], ['mechanical', true], 'D·q left in the mechanical skin is flagged');
+      assert.ok(!out.alerts.absolute.dqIncluded, 'D resolved: D·q removed');
+      o2 = vmTrend({ rateSkin: () => rsOut(3.5) }).compute(gl, ctx);
+      assert.strictEqual(o2.rateSkin.resolved, true, 'D/se 3.5: used');
+      assert(/from 5 tests \(B1–B5\)/.test(o2.rateSkin.reason), o2.rateSkin.reason);
+    },
+  },
+
+  {
+    name: 'TR19 baseline stability by χ² (WP9): constant-skin scatter of 0.911 / 1.394 / 0.904 with S_err 0.2 (range 0.49 > 2·S_err) is stable (χ² 3.96 < 5.99); a spread of 2.6·S_err per test is unstable; baseN 5 uses χ²(4)',
+    wp: WP, opts: false,
+    run(app, assert) {
+      const T = vmTrend();
+      let out = T.compute(series(baseS([0.911, 1.394, 0.904], 0.2)), ctxOf());
+      assert.strictEqual(out.baseline.unstable, false, 'the clean oil demo baseline is stable');
+      out = T.compute(series(baseS([0.4, 1.4, 0.9], 0.2)), ctxOf());                // χ² = (0.5² + 0.5² + 0)/0.2² = 12.5 > 5.99
+      assert.strictEqual(out.baseline.unstable, true, 'a real spread is unstable');
+      const five = series([0.9, 1.3, 1.0, 1.4, 0.8].map((s, i) => ({ id: 'B' + (i + 1), d: 10 * i, S: s, E: 0.2 })));
+      out = T.compute(five, ctxOf({ settings: trendSet({ baseN: 5 }) }));            // χ² = 6.7 < 9.488 (4 dof)
+      assert.deepStrictEqual([out.baseline.tests.length, out.baseline.unstable], [5, false], '5 tests, χ²(4)');
+      // weights use each test's S_err: a 1.0 jump on a test with S_err 1.0 is not instability
+      out = T.compute(series([{ id: 'B1', d: 0, S: 1.0, E: 0.2 }, { id: 'B2', d: 20, S: 2.0, E: 1.0 }, { id: 'B3', d: 40, S: 1.1, E: 0.2 }]), ctxOf());
+      assert.strictEqual(out.baseline.unstable, false, 'large S_err on the outlier');
+    },
+  },
+
+  {
+    name: 'TR20 analysis basis (WP9): the PI cross-check predicts J through the superposed rate history (R_J = 1 on a clean infinite-acting well; the PSS X with r_e from r_inv gave ≈ 0.8, now only an indicative fallback); gas uses m(p); on the total-rate basis B = 1 in T8 and FE takes the engine Δp_skin',
+    wp: WP,
+    run(app, assert) {
+      const T = appTrend(app, assert);
+      const E1 = (x) => {                                                      // exponential integral E1 (series / continued fraction)
+        if (x < 1) { let s = -0.5772156649 - Math.log(x), t = 1; for (let k = 1; k < 60; k++) { t *= -x / k; s -= t / k; } return s; }
+        let f = 0; for (let k = 60; k >= 1; k--) f = k / (1 + k / (x + f)); return Math.exp(-x) / (x + f);
+      };
+      const w = Object.assign({}, WELL, { re_ft: null }), k = 45, Sk = 2, q = 800, pi = 4000;
+      const testDays = [0, 20, 40, 60, 80], start = T0 - 100 * DAY;
+      const steps = [{ t_ms: start, q }];
+      testDays.forEach((d) => { steps.push({ t_ms: T0 + d * DAY, q: 0 }); steps.push({ t_ms: T0 + d * DAY + DAY, q }); });
+      // exact line-source pwf with skin through the same steps (independent of the trend's log approximation)
+      const pwfAt = (ms) => {
+        let dp = 0, qPrev = 0, qNow = 0;
+        steps.forEach((s) => { if (s.t_ms >= ms) return; const dq = s.q - qPrev, th = (ms - s.t_ms) / 3600000;
+          dp += dq * 70.6 * w.B * w.mu / (k * w.h) * E1(948 * w.phi * w.mu * w.ct * w.rw * w.rw / (k * th)); qPrev = s.q; qNow = s.q; });
+        return pi - dp - 141.2 * qNow * w.B * w.mu * Sk / (k * w.h);
+      };
+      const days = [];
+      for (let d = -100; d < 85; d++) {
+        const t0 = T0 + d * DAY, shut = testDays.some((x) => d === x);
+        days.push({ date: iso(t0), t0_ms: t0, t1_ms: t0 + DAY, hours: 24, hOn: shut ? 0 : 24, V: shut ? 0 : q, q: shut ? 0 : q, cls: shut ? 'event' : 'clean', events: [],
+                    pwfMean_psia: shut ? null : pwfAt(t0 + DAY / 2), pwfMeanDatum_psia: null });
+      }
+      const list = series(testDays.map((d, i) => ({ id: 'B' + (i + 1), d, k, S: Sk, pStar: pi })), w);
+      const base = ctxOf({ well: w, days, steps, start: { source: 'date', prepend_h: 0, q, flag: false } });
+      let out = T.compute(app.toWin(list), app.toWin(base));
+      shapeOk(assert, out, 'transient');
+      assert.deepStrictEqual([out.piCheck.available, out.piCheck.basis, out.piCheck.indicative, out.piCheck.form], [true, 'transient', false, 'pressure']);
+      out.piCheck.rows.forEach((r) => assert(Math.abs(r.RJ - 1) <= 0.01, r.from + '→' + r.to + ' R_J ' + r.RJ + ' (clean infinite-acting well)'));
+      assert.strictEqual(out.piCheck.consistent, true);
+      assert(out.piCheck.days.length >= 60 && out.piCheck.days.every((d) => isNum(d.jObs) && isNum(d.jPred)), 'per-day J points for the report chart');
+      // without the steps: the old pseudo-steady-state X with r_e from r_inv — biased low, so indicative only
+      const noSteps = T.compute(app.toWin(list), app.toWin(Object.assign({}, base, { steps: [] })));
+      assert.deepStrictEqual([noSteps.piCheck.basis, noSteps.piCheck.indicative], ['pss', true]);
+      assert(noSteps.piCheck.rows.every((r) => r.RJ < 0.9), 'PSS X with r_e from r_inv under-predicts R_J: ' + noSteps.piCheck.rows.map((r) => r.RJ.toFixed(3)).join(' '));
+      assert(/Indicative/.test(noSteps.piCheck.reason), noSteps.piCheck.reason);
+      // an entered r_e caps X_eq at pseudo-steady state
+      const capped = T.compute(app.toWin(list), app.toWin(Object.assign({}, base, { well: Object.assign({}, w, { re_ft: 1500 }) })));
+      assert.strictEqual(capped.piCheck.basis, 'transientCapped');
+      // gas: J on pseudo-pressure m(p) with k·h/(1422·T·(X + S′)) — R_J = 1 on a clean gas well
+      const AI = app.win.PRiSM_autoInterp;
+      assert(AI && typeof AI.gasTable === 'function', 'the app build carries PRiSM_autoInterp.gasTable');
+      {
+        const gw = Object.assign({}, w, { fluid: 'gas', mu: 0.025, B: 0.7, ct: 1e-4, gas: { sg: 0.68, T_F: 220, co2: 0, h2s: 0, n2: 0, pseudoTime: false, pdew: null, apiCond: null, Mo: null } });
+        const gt = AI.gasTable({ sg: 0.68, T_F: 220, co2: 0, h2s: 0, n2: 0, pmax: Math.max(1.3 * pi, pi + 500) }), TR = 220 + 459.67, qg = 5000;
+        const gsteps = steps.map((s) => ({ t_ms: s.t_ms, q: s.q ? qg : 0 }));
+        const gdays = days.map((d) => {
+          if (d.cls !== 'clean') return Object.assign({}, d, { q: 0, V: 0 });
+          const ms = d.t0_ms + DAY / 2, tD1 = 0.0002637 * k / (gw.phi * gw.mu * gw.ct * gw.rw * gw.rw);
+          let xs = 0, qPrev = 0; gsteps.forEach((s) => { if (s.t_ms >= ms) return; xs += (s.q - qPrev) * 0.5 * (Math.log(tD1 * (ms - s.t_ms) / 3600000) + 0.80907); qPrev = s.q; });
+          const dm = 1422 * TR * (xs + qg * Sk) / (k * gw.h);
+          return Object.assign({}, d, { q: qg, V: qg, pwfMean_psia: gt.pOf(gt.mOf(pi) - dm) });
+        });
+        const glist = series(testDays.map((d, i) => ({ id: 'B' + (i + 1), d, k, q: qg, S: Sk, gasSprime: Sk, pStar: pi, qUnit: 'Mscf/d' })), gw);
+        const g = T.compute(app.toWin(glist), app.toWin(ctxOf({ well: gw, fluid: 'gas', days: gdays, steps: gsteps, start: { source: 'date', prepend_h: 0, q: qg, flag: false },
+          phaseBasis: { used: 'gas', wcMax: null, gorRatioMax: null, twoPhaseCt: false } })));
+        assert.deepStrictEqual([g.piCheck.form, g.piCheck.indicative], ['pseudoPressure', false]);
+        g.piCheck.rows.forEach((r) => assert(Math.abs(r.RJ - 1) <= 0.01, 'gas ' + r.from + '→' + r.to + ' R_J ' + r.RJ));
+      }
+      // total reservoir rate (R7): the engine works in RB/d with B = 1, so T8 does too (not the oil B); FE from the engine Δp_skin
+      const wT = Object.assign({}, WELL, { B: 1.3 }), engW = Object.assign({}, wT, { B: 1 });
+      const rise = series([{ id: 'B1', d: 0, S: 1.2 }, { id: 'B2', d: 20, S: 1.3 }, { id: 'B3', d: 40, S: 1.1 }, { id: 'B4', d: 60, S: 4.0 }, { id: 'B5', d: 80, S: 4.6 }], engW);
+      const daily = []; for (let d = 0; d < 110; d++) daily.push({ t0_ms: T0 + d * DAY, t1_ms: T0 + (d + 1) * DAY, q: 800, cls: 'clean', pwfMean_psia: 3400 });
+      const tot = T.compute(app.toWin(rise), app.toWin(ctxOf({ well: wT, days: daily, phaseBasis: { used: 'total', wcMax: 0.12, gorRatioMax: 1, twoPhaseCt: false } })));
+      shapeOk(assert, tot, 'total basis');
+      assert.deepStrictEqual([tot.pi.B, tot.pi.mu, tot.pi.bmuSource], [1, 1, 'totalRate'], 'B = 1 on the total basis');
+      const L = rise[4];
+      near(assert, tot.pi.extraDrawdown_psi, 141.2 * L.Dq * 1 * 1 * (4.6 - tot.baseline.S) / (L.k * wT.h), 1e-9, 'extra drawdown with B = 1');
+      near(assert, tot.pi.FE, (L.pExtDatum - L.pwf0Datum - L.dpSkin_psi) / (L.pExtDatum - L.pwf0Datum), 1e-9, 'FE from the engine Δp_skin');
+      const oilB = T.compute(app.toWin(rise), app.toWin(ctxOf({ well: wT, days: daily })));
+      near(assert, oilB.pi.extraDrawdown_psi / tot.pi.extraDrawdown_psi, 1.3, 1e-9, 'the oil basis keeps the oil B');
+    },
+  },
+
+  {
+    name: 'TR21 disclosures (WP9): no depth data → the bubble-point check says it uses the gauge pwf (no ±20 % band); injectors state what k means; gas states that Δp_skin is across S′ and splits the D·q share when D is resolved',
+    wp: WP, opts: false,
+    run(app, assert) {
+      const lim = (o, c) => o.limitations.find((l) => l.code === c);
+      const list = series(baseS([1.2, 1.3, 1.1], 0.3).concat([{ id: 'B4', d: 60, S: 4.0, pwf0: 2550 }]));
+      let out = vmTrend().compute(list, ctxOf());
+      assert.ok(out.bubble.rows.length && out.bubble.depthCorrected !== true, 'no depth: not depth corrected');
+      assert.ok(out.bubble.rows.every((r) => r.pwfSand_lo === r.pwfSand_hi), 'the gradient band collapses');
+      assert.ok(lim(out, 'bubbleNoDepth') && /no depth correction/.test(lim(out, 'bubbleNoDepth').text), 'limitation says so');
+      out = vmTrend().compute(list, ctxOf({ depth: { gaugeTVD: 9000, datumTVD: 9200, grad: 0.35, gradFlow: 0.3 } }));
+      assert.strictEqual(out.bubble.depthCorrected, true);
+      assert.ok(!lim(out, 'bubbleNoDepth') && out.bubble.rows.every((r) => r.pwfSand_hi > r.pwfSand_lo), 'depth data: a range, no limitation');
+      // injector
+      const inj = Object.assign({}, WELL, { fluid: 'water_inj' });
+      out = vmTrend().compute(series(baseS([1.2, 1.3, 1.1], 0.3), inj), ctxOf({ well: inj, fluid: 'water_inj' }));
+      assert.ok(lim(out, 'injector') && /injected-water bank/.test(lim(out, 'injector').text) && /composite/.test(lim(out, 'injector').text), 'injector limitation');
+      assert.ok(!lim(vmTrend().compute(list, ctxOf()), 'injector'), 'not for a producer');
+      // gas with D resolved: the D·q share of the drop; the limitation names S′
+      const gw = Object.assign({}, WELL, { fluid: 'gas', mu: 0.02, B: 0.8, Pb: null, gas: { sg: 0.65, T_F: 200, co2: 0, h2s: 0, n2: 0, pseudoTime: false, pdew: null, apiCond: null, Mo: null } });
+      const qs = [5000, 10000, 5000, 10000, 5000, 10000];
+      const gl = series(qs.map((q, i) => ({ id: 'B' + (i + 1), d: 10 * i, q, S: 1 + 2e-4 * q, gasSprime: 1 + 2e-4 * q, E: 0.2, qUnit: 'Mscf/d' })), gw);
+      const gctx = ctxOf({ well: gw, fluid: 'gas', phaseBasis: { used: 'gas', wcMax: null, gorRatioMax: null, twoPhaseCt: false } });
+      const rs = () => ({ resolved: true, S: 1, D: 2e-4, seD: 1e-5, n: 6, ids: gl.map((t) => t.id), qRatio: 2, joint: null, expectedD: null, consistent: null, reason: '', ev: ['T15'] });
+      out = vmTrend({ rateSkin: rs }).compute(gl, gctx);
+      assert.strictEqual(out.corrected, true);
+      out.skinDp.forEach((r, i) => near(assert, r.dpDq_psi, r.dpSkin_psi * 2e-4 * qs[i] / (1 + 2e-4 * qs[i]), 1e-9, r.id + ' D·q share of Δp_skin'));
+      assert.ok(lim(out, 'gasSkinDrop') && /S′/.test(lim(out, 'gasSkinDrop').text) && /D·q share/.test(lim(out, 'gasSkinDrop').text));
+      out = vmTrend({ rateSkin: () => Object.assign(rs(), { resolved: false, D: null, seD: null }) }).compute(gl, gctx);
+      assert.ok(out.skinDp.every((r) => r.dpDq_psi === undefined) && /not split/.test(lim(out, 'gasSkinDrop').text), 'D not resolved: no split');
+      shapeOk(assert, out, 'gas unresolved');
+    },
+  },
+
+  {
+    name: 'TR22 onset and forecast dates are production-day labels (WP9): with a day zone 10 h behind UTC the step onset at 09:00 UTC is labelled the day before its UTC date (from ctx.days, or ctx.dayOf as run passes it); without either the UTC date',
+    wp: WP, opts: false,
+    run(app, assert) {
+      const T = vmTrend();
+      const dd = [0, 10, 20, 30, 40, 50, 60, 70];
+      const step = series(dd.map((d, i) => ({ id: 'B' + (i + 1), d, S: i < 4 ? 1.0 + [0, 0.05, -0.05, 0][i] : 6.0 + [0, 0.1, -0.1, 0][i - 4], E: 0.3 })));
+      const utc = T.compute(step, ctxOf()).onset;
+      assert.strictEqual(utc.date, iso(T0 + utc.tauDays * DAY), 'no day data: the UTC date');
+      // production days of a zone 10 h behind UTC, starting at local midnight: [D 10:00 UTC, D+1 10:00 UTC) is labelled D
+      const days = [];
+      for (let k = -2; k < 90; k++) { const t0 = Date.UTC(2026, 0, 10 + k, 10); days.push({ date: iso(Date.UTC(2026, 0, 10 + k)), t0_ms: t0, t1_ms: t0 + DAY, q: 800, cls: 'clean', pwfMean_psia: 3400 }); }
+      const ms = T0 + utc.tauDays * DAY, label = days.find((d) => ms >= d.t0_ms && ms < d.t1_ms).date;
+      assert.notStrictEqual(label, iso(ms), 'precondition: the onset instant (' + new Date(ms).toISOString() + ') falls on the previous production day');
+      const byDays = T.compute(step, ctxOf({ days })).onset;
+      assert.strictEqual(byDays.tauDays, utc.tauDays);
+      assert.strictEqual(byDays.date, label, 'ctx.days label');
+      const byFn = T.compute(step, ctxOf({ dayOf: (x) => days.find((d) => x >= d.t0_ms && x < d.t1_ms).date })).onset;
+      assert.strictEqual(byFn.date, label, 'ctx.dayOf label');
+      // beyond the day data the last day's start offset is carried forward
+      const short = days.filter((d) => d.t1_ms <= T0 + 20 * DAY);
+      assert.strictEqual(T.compute(step, ctxOf({ days: short })).onset.date, label, 'offset carried beyond the data');
     },
   },
 ];

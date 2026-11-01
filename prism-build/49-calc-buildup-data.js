@@ -243,8 +243,16 @@
     }
     function _zoneKey(z) { return !z ? 'utc' : z.mode === 'iana' ? z.tz : z.mode === 'fixed' ? 'fixed' + z.offset_h : 'utc'; }
 
+    // Time-zone caches, one map per IANA zone: UTC 15-min bucket → offset, local 15-min bucket → offset. Each map is
+    // dropped once it holds TZ_CACHE_MAX buckets (about 3 years of data), so a long session cannot grow it without bound.
     var _offCache = {};
     var QUARTER = 15 * MIN;                   // every real-world transition falls on a 15-min boundary
+    var TZ_CACHE_MAX = 100000;
+    function _zoneCache(store, tz) {
+        var c = store[tz];
+        if (!c || c._n >= TZ_CACHE_MAX) { c = store[tz] = Object.create(null); c._n = 0; }
+        return c;
+    }
     function _ianaOffsetRaw(tz, ms) {
         var parts = _fmt(tz).formatToParts(new Date(ms)), f = {};
         for (var i = 0; i < parts.length; i++) f[parts[i].type] = parts[i].value;
@@ -258,13 +266,13 @@
         if (!zone || zone.mode === 'utc') return 0;
         if (zone.mode === 'fixed') return mRound(num(zone.offset_h, 0) * HOUR);
         if (zone.mode !== 'iana') return 0;
-        var c = _offCache[zone.tz] || (_offCache[zone.tz] = {});
+        var c = _zoneCache(_offCache, zone.tz);
         var key = mFloor(ms / QUARTER), v = c[key];
-        if (v === undefined) { v = _ianaOffsetRaw(zone.tz, key * QUARTER); c[key] = v; }
+        if (v === undefined) { v = _ianaOffsetRaw(zone.tz, key * QUARTER); c[key] = v; c._n++; }
         return v;
     }
     // Naive local wall-clock ms (UTC arithmetic) → UTC ms. In a DST gap the later offset is used; in an
-    // ambiguous hour the first occurrence.
+    // ambiguous hour the first occurrence (localLaterUtc gives the second one).
     function localToUtc(zone, local) {
         if (!zone || zone.mode === 'utc') return local;
         if (zone.mode === 'fixed') return local - mRound(num(zone.offset_h, 0) * HOUR);
@@ -277,18 +285,34 @@
         if (uE + offsetAt(zone, uE) === local) u = uE;
         return u;
     }
+    // The second UTC instant of a naive local time that the clocks show twice (the interval repeated when they go back),
+    // else NaN. The first instant is localToUtc(); the second is later by the size of the shift.
+    function localLaterUtc(zone, local) {
+        if (!zone || zone.mode !== 'iana') return NaN;
+        var uE = localToUtc(zone, local), oE = offsetAt(zone, uE), oL = offsetAt(zone, uE + 3 * HOUR);
+        if (!(oL < oE)) return NaN;
+        var uL = local - oL;
+        return (uL > uE && uL + offsetAt(zone, uL) === local) ? uL : NaN;
+    }
     var _l2u = {};
-    // Cached version for parsing many naive times: one conversion per local 15-min bucket unless a transition is near.
-    function localToUtcFast(zone, local) {
-        if (!zone || zone.mode !== 'iana') return localToUtc(zone, local);
-        var c = _l2u[zone.tz] || (_l2u[zone.tz] = {});
+    // Offset of the local 15-min bucket holding a naive time, cached per bucket; NaN for a bucket at or in a transition
+    // (a DST gap or a repeated interval), which callers must convert one time at a time.
+    function _bucketOffset(zone, local) {
+        var c = _zoneCache(_l2u, zone.tz);
         var key = mFloor(local / QUARTER), v = c[key];
         if (v === undefined) {
             var a = key * QUARTER, b = a + QUARTER - 1;
             var oa = a - localToUtc(zone, a), ob = b - localToUtc(zone, b);
-            v = (oa === ob) ? oa : NaN;
-            c[key] = v;
+            v = (oa === ob && !isNum(localLaterUtc(zone, a)) && !isNum(localLaterUtc(zone, b))) ? oa : NaN;
+            c[key] = v; c._n++;
         }
+        return v;
+    }
+    // Cached version for parsing many naive times: one conversion per local 15-min bucket unless a transition is near.
+    // Times in a repeated interval give the first occurrence; parseJob picks the occurrence from the row order.
+    function localToUtcFast(zone, local) {
+        if (!zone || zone.mode !== 'iana') return localToUtc(zone, local);
+        var v = _bucketOffset(zone, local);
         return (v === v) ? local - v : localToUtc(zone, local);
     }
 
@@ -596,14 +620,33 @@
         var cap = 4096, T = new Float64Array(cap), Pp = new Float64Array(cap), TT = cT >= 0 ? new Float64Array(cap) : null, Q = cq >= 0 ? new Float64Array(cap) : null;   // grown ×2 on demand
         var n = 0, phase = 'parse', res = null, cancelled = false, rec = null, warnings = [], fin2 = null;
         var useSimple = (sep !== ' ' && !merge);
+        // Naive local times in the interval the clocks repeat when they go back: the first pass through it is the first
+        // occurrence; once the previous row is already at or past a time's first occurrence (the clock went back), the
+        // time is its second occurrence.
+        var prevUtc = NaN, nRepeat = 0, nSecond = 0;
 
-        function parseTime(s) {
+        function naive(local) {
+            if (zone.mode !== 'iana') return localToUtc(zone, local);
+            var v = _bucketOffset(zone, local);
+            if (v === v) return local - v;
+            var uE = localToUtc(zone, local), uL = localLaterUtc(zone, local);
+            if (!isNum(uL)) return uE;
+            nRepeat++;
+            if (uE <= prevUtc && prevUtc < uL) { nSecond++; return uL; }
+            return uE;
+        }
+        function parseTime0(s) {
             if (elapsed) { var v = _num(s, decComma); return isNum(v) ? t0 + v * tMul : NaN; }
-            if (tf === 'serial') { var sv = _num(s, decComma); return isNum(sv) ? localToUtcFast(zone, mRound((sv - 25569) * DAY)) : NaN; }
-            if (tf === 'dmy' || tf === 'mdy') { var dm = _parseDMY(s, dayFirst); return dm === dm ? localToUtcFast(zone, dm) : NaN; }
+            if (tf === 'serial') { var sv = _num(s, decComma); return isNum(sv) ? naive(mRound((sv - 25569) * DAY)) : NaN; }
+            if (tf === 'dmy' || tf === 'mdy') { var dm = _parseDMY(s, dayFirst); return dm === dm ? naive(dm) : NaN; }
             var r = _parseIso(s);
-            if (r.ms !== r.ms) { var dm2 = _parseDMY(s, dayFirst); return dm2 === dm2 ? localToUtcFast(zone, dm2) : NaN; }
-            return r.abs ? r.ms : localToUtcFast(zone, r.ms);
+            if (r.ms !== r.ms) { var dm2 = _parseDMY(s, dayFirst); return dm2 === dm2 ? naive(dm2) : NaN; }
+            return r.abs ? r.ms : naive(r.ms);
+        }
+        function parseTime(s) {
+            var u = parseTime0(s);
+            if (u === u) prevUtc = u;
+            return u;
         }
         function doChunk() {
             var lines = 0;
@@ -649,6 +692,9 @@
                         return { done: true, progress: 1, label: 'No data' };
                     }
                     if (skipped) warnings.push(W('ROWS_SKIPPED', 'warn', skipped + ' rows without a valid time or pressure were skipped.', ['Q2']));
+                    if (nRepeat) warnings.push(W('DST_REPEATED_HOUR', 'warn', nRepeat + ' local times fell in the hour repeated when the clocks went back (' + zone.tz + '); ' +
+                        (nSecond ? nSecond + ' were read as its second occurrence from the row order.' : 'all were read as its first occurrence (the times never went back).') +
+                        ' Check any build-up that spans the change.', ['Q2']));
                     fin2 = _finishRecord(T, Pp, TT, n, { q: Q }, warnings);
                     if (fin2.T) { var any = false; for (var k = 0; k < fin2.n; k++) if (isNum(fin2.T[k])) { any = true; break; } if (!any) fin2.T = null; }
                     if (fin2.T) {
@@ -2102,7 +2148,7 @@
         var Bo = num(+opts.B, 1), Bw = num(+opts.Bw, 1), Rs = isNum(+rsIn) && rsIn !== null && rsIn !== '' ? +rsIn : null, Pb = isNum(+opts.Pb) && opts.Pb !== null ? +opts.Pb : null;
         var gas = opts.gas || {};
         // phase basis (R7), once per analysis
-        var wcMax = null, gorMax = null, basis = 'oil', phase = 'oil';
+        var wcMax = null, gorMax = null, basis = 'oil', phase = 'oil', wsSg = null, sepSg = null, cgrStbMMscf = null;
         if (fluid === 'water_inj') { phase = 'water_inj'; basis = 'oil'; }
         else if (fluid === 'gas') {
             var api = isNum(+gas.apiCond) && gas.apiCond !== null ? +gas.apiCond : 50, Mo = isNum(+gas.Mo) && gas.Mo !== null && +gas.Mo > 0 ? +gas.Mo : 6084 / (api - 5.9);
@@ -2112,6 +2158,19 @@
             phase = basis;
             var geo = 133.3 * go / Mo;
             rs.forEach(function (r) { r._V = (r.gas || 0) + (basis === 'gasEq' ? geo * (r.oil || 0) + (gas.wcond ? R.waterGE_Mscf * (r.water || 0) : 0) : 0); });
+            // wet-gas equivalent: the gas properties (z, μg, Bg, m(p)) belong to the recombined well stream, not the separator
+            // gas: γw = (R·γg + 4584·γo)/(R + 132,800·γo/Mo), R the producing GOR (scf/STB) over the days with both phases
+            if (basis === 'gasEq' && isNum(+gas.sg) && +gas.sg > 0) {
+                var sG = 0, sO = 0;
+                rs.forEach(function (r) { if (r.gas > 0 && r.oil > 0) { sG += r.gas; sO += r.oil; } });
+                if (sG > 0 && sO > 0) {
+                    var Rgor = 1000 * sG / sO;
+                    sepSg = +gas.sg; cgrStbMMscf = 1000 * sO / sG;
+                    wsSg = (Rgor * sepSg + 4584 * go) / (Rgor + 132800 * go / Mo);
+                    warnings.push(W('GAS_EQ_BASIS', 'info', 'Condensate above ' + R.condensatePct + ' % of the gas equivalent (' + cgrStbMMscf.toFixed(0) + ' STB/MMscf): rates are wet-gas equivalent and the gas properties use the recombined well-stream gravity ' +
+                        wsSg.toFixed(3) + ' (separator gas ' + sepSg.toFixed(3) + ').', ['R7']));
+                }
+            }
         } else {
             rs.forEach(function (r) {
                 var o = r.oil || 0, w = r.water || 0, g = r.gas || 0;
@@ -2326,7 +2385,9 @@
             mode: 'daily', unit: _unitFor(fluid, basis), phase: phase, days: outDays, steps: steps, start: start,
             offsetScan: { current_h: sh, best_h: sh + best.off, better: better, improvement: cur.sum > 0 ? 1 - best.sum / cur.sum : 0 },
             // kTotalMobility (extra key): on the total basis k means total mobility × oil viscosity (limitation for trend/review)
-            phaseBasis: { used: basis, wcMax: wcMax, gorRatioMax: (Rs && gorMax !== null) ? gorMax / Rs : null, twoPhaseCt: !!twoPhase, kTotalMobility: basis === 'total' },
+            // wellStreamSg / separatorSg / cgr (extra keys, gasEq only): the gravity the gas properties use on the wet-gas basis
+            phaseBasis: { used: basis, wcMax: wcMax, gorRatioMax: (Rs && gorMax !== null) ? gorMax / Rs : null, twoPhaseCt: !!twoPhase, kTotalMobility: basis === 'total',
+                          wellStreamSg: wsSg, separatorSg: sepSg, cgrStbMMscf: cgrStbMMscf },
             ev: ['R1', 'R2', 'R3', 'R4', 'R5', 'R6', 'R7'], warnings: warnings, byEvent: byEvent, allocOnly: allocOnly
         };
     }
@@ -2533,6 +2594,8 @@
     D.dayOf = dayOf;
     D.offsetAt = offsetAt;
     D.localToUtc = localToUtc;
+    D.localLaterUtc = localLaterUtc;
+    D.tzCacheSize = function (tz) { return { offset: (_offCache[tz] && _offCache[tz]._n) || 0, local: (_l2u[tz] && _l2u[tz]._n) || 0, max: TZ_CACHE_MAX }; };
     D.deviceZoneName = deviceZoneName;
     D.recordHash = recordHash;
     D.eventAt = eventAt;

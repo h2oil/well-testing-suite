@@ -385,7 +385,7 @@
     // =========================================================================
     // SECTION 4 — RATE-DEPENDENT SKIN (M§A19)
     // =========================================================================
-    var RATE_DEFAULTS = Object.freeze({ qRatioMin: 1.5, maxDays: 60, joint: true, stable: null, corrMax: 0.8, dOverSeMin: 2, jointMinN: 4, serrMin: 0.05, serrDefault: 0.2, expectedFactor: 3 });
+    var RATE_DEFAULTS = Object.freeze({ qRatioMin: 1.5, maxDays: 60, joint: true, stable: null, corrMax: 0.8, dOverSeMin: 2, jointMinN: 5, serrMin: 0.05, serrDefault: 0.2, expectedFactor: 3, window: 'latest' });
 
     // Weighted least squares y = X·beta with weights w; returns {beta, cov, chi2, dof}.
     function wls(X, y, w) {
@@ -451,11 +451,12 @@
                  method: 'D = 2.222e-15·γg·k·h·β/(μg·rw·hp²), β = 2.6e10·k^-1.2; range ×1/3 to ×3' };
     }
 
-    // rateSkin(rows [{id, t_days, q, S, Serr}], opts {qRatioMin, maxDays, joint, stable, expected})
+    // rateSkin(rows [{id, t_days, q, S, Serr}], opts {qRatioMin, maxDays, joint, stable, expected, window: 'latest'|'earliest'})
     //   → {resolved, S, D, seD, n, qRatio, joint:null|{S0, r_per30d, D, seD, seR}, expectedD:number|null,
     //      expectedDRange:null|{D, lo, hi, beta, unit, method}, consistent, corrQT, ids, reason, ev:['T15']}
     // Window: the tests inside the span of at most maxDays (first to last test) that holds
-    // the most tests, the latest such window on a tie. A chain of weekly tests over a year
+    // the most tests, the latest such window on a tie (opts.window 'earliest': the earliest, e.g. the baseline of a
+    // surveillance segment, before any later skin change). A chain of weekly tests over a year
     // is therefore never one group (a skin trend would be confounded with D).
     // D needs q_max/q_min ≥ qRatioMin and D/se ≥ 2. Collinearity of rate and time
     // (|corr(q, t)| ≥ 0.8; two tests count as collinear) refuses:
@@ -464,8 +465,9 @@
     //     it has checked that S′ shows no significant time trend in these rows (for
     //     example Mann–Kendall over a stable-skin segment). Without that statement a
     //     skin trend cannot be told from D when rate and time move together.
-    // A joint fit S′ = S0 + r·t/30 + D·q runs with ≥ 4 tests and low collinearity; when its
-    // time term is significant (|r|/se ≥ 2) D comes from it.
+    // A joint fit S′ = S0 + r·t/30 + D·q runs with ≥ 5 tests (≥ 2 degrees of freedom) and low collinearity; when its
+    // time term is significant (|r|/se ≥ 2) D comes from it — unless the caller stated a stable skin (opts.stable):
+    // a significant time term then shows the window is not stable, and D is not resolved.
     // expectedD is the central value of the correlation (a number, as plan §3.0 requires
     // for every output number); expectedDRange carries its ×1/3 … ×3 range.
     function rateSkin(rows, opts) {
@@ -486,11 +488,11 @@
             list.push({ id: r.id == null ? '' : String(r.id), q: Math.abs(q), S: S, t: t, se: Math.max(se, o.serrMin) });
         });
         list.sort(function (a, b) { return a.t - b.t; });
-        // The window of span ≤ maxDays with the most tests (the latest on a tie).
-        var g = [], i0 = 0;
+        // The window of span ≤ maxDays with the most tests (the latest on a tie, or the earliest with window 'earliest').
+        var g = [], i0 = 0, early = o.window === 'earliest';
         for (var j = 0; j < list.length; j++) {
             while (list[j].t - list[i0].t > o.maxDays + 1e-9) i0++;
-            if (j - i0 + 1 >= g.length) g = list.slice(i0, j + 1);
+            if (early ? j - i0 + 1 > g.length : j - i0 + 1 >= g.length) g = list.slice(i0, j + 1);
         }
         out.n = g.length;
         out.ids = g.map(function (r) { return r.id; });
@@ -522,6 +524,11 @@
                 var ji = jf.dof > 0 ? Math.max(1, jf.chi2 / jf.dof) : 1;
                 var seR = Math.sqrt(jf.cov[1][1] * ji), seDj = Math.sqrt(jf.cov[2][2] * ji);
                 out.joint = { S0: fin(jf.beta[0]), r_per30d: fin(jf.beta[1]), D: fin(jf.beta[2]), seD: fin(seDj), seR: fin(seR) };
+                if (isNum(seR) && seR > 0 && Math.abs(jf.beta[1]) / seR >= o.dOverSeMin && out.stable) {
+                    out.S = out.D = out.seD = null;
+                    out.reason = 'A skin trend of ' + fmt(jf.beta[1], 2) + ' per 30 days (|r|/se ' + fmt(Math.abs(jf.beta[1]) / seR, 1) + ') in a window stated stable: the skin is not stable there, so D is not resolved; S′ is the apparent skin including D·q.';
+                    return out;
+                }
                 if (isNum(seR) && seR > 0 && Math.abs(jf.beta[1]) / seR >= o.dOverSeMin) {
                     var tMean = ts.reduce(function (a, b) { return a + b; }, 0) / ts.length;
                     S = jf.beta[0] + jf.beta[1] * tMean / 30;
@@ -1065,7 +1072,11 @@
         // C-held result from a user run on the same inputs.
         var ch = opts.cheld && opts.cheld.sig === m.sig ? opts.cheld.result : null;
         m.cheld = ch || null;
-        m.cheldAvailable = typeof AI.cHeldJob === 'function' && typeof AI.drive === 'function' && !!hom;
+        // C-held refits also need a wellbore storage C to scale (the match's, else the final's): the button is disabled
+        // with that reason shown instead of failing on click
+        var cSeed = matchFromFit(fit, 'homogeneous');
+        m.cheldHasC = !!((cSeed && cSeed.phys && pos(cSeed.phys.C)) || (m.final && pos(m.final.C)));
+        m.cheldAvailable = typeof AI.cHeldJob === 'function' && typeof AI.drive === 'function' && !!hom && m.cheldHasC;
         // S_err (D10, plan §4.6 item 15).
         var cal = G.PRiSM_autoInterpCal || null;
         m.calibrated = !!(cal && cal.calibrated);
@@ -1234,13 +1245,16 @@
         if (!pc) return 'not checked';
         return (pc.pass ? 'pass' : 'fail') + ': kh ' + fmt(pc.khDiffPct, 1) + ' %, ΔS ' + fmt(pc.dS, 2);
     }
-    function reachText(r) {
+    // shut: the test is a build-up / fall-off (else the real-time reach is of 'this test', not of a shut-in)
+    function reachText(r, shut) {
         if (!r) return '—';
         var s = 'fair ' + sig(r.fair_h) + ' h, good ' + sig(r.good_h) + ' h (equivalent time)';
-        if (r.reachable && isNum(r.fairShut_h)) s += '; shut-in ' + sig(r.fairShut_h) + ' h / ' + (isNum(r.goodShut_h) ? sig(r.goodShut_h) + ' h' : '—');
+        if (r.reachable && isNum(r.fairShut_h)) s += '; ' + (shut === false ? 'this test' : 'shut-in') + ' ' + sig(r.fairShut_h) + ' h / ' + (isNum(r.goodShut_h) ? sig(r.goodShut_h) + ' h' : '—');
         return s;
     }
     var DRIVER = { floor: 'floor', se: 'fit standard error', lineMatch: 'line vs match', window: 'window shift', tc: 'closing time', pwf: 'pwf at shut-in', kHeld: 'held k' };
+    function shutOf(m) { return !m || !m.testType || m.testType === 'buildup' || m.testType === 'falloff'; }
+    function driverText(m, d) { return d === 'pwf' && !shutOf(m) ? 'pwf at the test start' : (DRIVER[d] || String(d || '—')); }
     var INPUT_NAME = { h: 'h', phi: 'φ', ct: 'ct', rw: 'rw', B: 'B', mu: 'μ', q: 'q' };
 
     function compInputsHTML(c, verified) {
@@ -1302,7 +1316,8 @@
         h += '<div class="prism-skc-row"><button type="button" class="prism-skc-btn" id="prism_skc_cheld"' + dis + '>Run C-held refits</button>' +
              '<button type="button" class="prism-skc-btn" id="prism_skc_cheld_cancel"' + (_ui.running ? '' : ' disabled') + '>Cancel</button>' +
              '<span class="prism-skc-note" id="prism_skc_cheld_status" role="status" aria-live="polite">' + esc(_ui.progress) + '</span></div>';
-        if (!m.cheldAvailable) h += '<div class="prism-skc-note">C-held refits need the automatic engine and k, S and C from a match or the line.</div>';
+        if (!m.cheldAvailable) h += '<div class="prism-skc-note" id="prism_skc_cheld_why">' + (m.cheldHasC === false ? 'C-held refits need wellbore storage C from the match or the unit slope.'
+                                                                                                  : 'C-held refits need the automatic engine and k, S and C from a match or the line.') + '</div>';
         return h;
     }
 
@@ -1353,8 +1368,8 @@
         var se = m.sErr;
         if (se) {
             var comp = [['Floor', fmt(se.floor, 2)], ['Fit standard error', fmt(se.seS, 2)], ['Line vs match', fmt(se.dLineMatch, 2)],
-                        ['Window shift', fmt(se.sWin, 2)], ['Closing time', fmt(se.sTc, 2)], ['pwf at shut-in', fmt(se.sPwf, 2)]];
-            h += sec('prism_skc_serr', 'Skin uncertainty S_err', kvHTML([['S_err', '± ' + fmt(se.value, 2)], ['Largest term', DRIVER[se.driver] || String(se.driver || '—')],
+                        ['Window shift', fmt(se.sWin, 2)], ['Closing time', fmt(se.sTc, 2)], [shutOf(m) ? 'pwf at shut-in' : 'pwf at the test start', fmt(se.sPwf, 2)]];
+            h += sec('prism_skc_serr', 'Skin uncertainty S_err', kvHTML([['S_err', '± ' + fmt(se.value, 2)], ['Largest term', driverText(m, se.driver)],
                 ['With the C-held range', '± ' + fmt(se.ext && se.ext.value, 2)], ['Inputs (typical ranges)', '± ' + fmt(se.sSens, 2)], ['Total with inputs', '± ' + fmt(se.sAbs, 2)]]) +
                 tableHTML(['Term', 'ΔS'], comp));
         }
@@ -1371,8 +1386,7 @@
             h += sec('prism_skc_conf', 'Confidence', '<div class="prism-skc-verdict">' + esc(verdictText(c)) + '</div>' +
                 (Array.isArray(c.reasons) && c.reasons.length ? tableHTML(['Rule', 'Kind', 'Reason', 'Evidence'],
                     c.reasons.map(function (x) { return [x.rule, x.kind, x.text, (x.ev || []).join(', ')]; })) : '<div class="prism-skc-note">Every rule for this label is met.</div>') +
-                '<div class="prism-skc-note">Rate checks: ' + esc(m.rate.status) + ' (' + esc(m.rate.text) + ')</div>' +
-                '<div class="prism-skc-note">' + esc(CHELD_NOTE) + '</div>');
+                '<div class="prism-skc-note">Rate checks: ' + esc(m.rate.status) + ' (' + esc(m.rate.text) + ')</div>');
         }
         // Products.
         var pr = m.products;
@@ -1387,7 +1401,7 @@
         // Mechanical skin.
         h += sec('prism_skc_mech', 'Mechanical skin', compInputsHTML(m.completion, KT.verified) + '<div id="prism_skc_mech_res">' + mechHTML(m) + '</div>');
         // Reach.
-        h += sec('prism_skc_reach', 'Expected IARF reach (from the fitted model)', kvHTML([['Reach', reachText(m.reach)], ['This test', sig(m.evidence ? m.evidence.dtEnd_h : null) + ' h']]) +
+        h += sec('prism_skc_reach', 'Expected IARF reach (from the fitted model)', kvHTML([['Reach', reachText(m.reach, shutOf(m))], ['This test', sig(m.evidence ? m.evidence.dtEnd_h : null) + ' h']]) +
             '<div class="prism-skc-note">Hours of equivalent time for a fair (0.5 cycle) and a good (1 cycle) IARF, allowing for the derivative window.</div>');
         // C-held.
         h += sec('prism_skc_cheld_sec', 'C-held refits (storage sensitivity)', cheldHTML(m));
@@ -1445,7 +1459,19 @@
         if (_ui.running && m.sig !== _ui.sig) _ui.cancel = true;
         _ui.model = m;
         list.forEach(function (h) { paint(h, m); });
+        restoreFocus();
         return m;
+    }
+    // A re-paint (e.g. 'Use this window' fires prism:fit-updated) replaces the focused button: keyboard focus goes back
+    // to the re-created control of the card the user acted on (or the card itself when the control is now disabled).
+    function restoreFocus() {
+        var f = _ui.refocus;
+        if (!f || !f.host || !live(f.host)) return;
+        var r = rootOf(f.host), el = q(r, f.id);
+        try {
+            if (el && !el.disabled && typeof el.focus === 'function') el.focus();
+            else if (r && typeof r.focus === 'function') { if (r.setAttribute) r.setAttribute('tabindex', '-1'); r.focus(); }
+        } catch (e) { /* focus is cosmetic */ }
     }
     function compFromInputs(root) {
         function v(id) { var e = root.querySelector('#' + id); return e ? e.value : null; }
@@ -1589,7 +1615,12 @@
             var t = ev.target;
             while (t && t !== root && !(t.id && /^prism_skc_/.test(t.id) && t.tagName === 'BUTTON')) t = t.parentNode;
             if (!t || t === root || t.disabled) return;
-            if (t.id === 'prism_skc_usewin') useWindow();
+            if (t.id === 'prism_skc_usewin') {
+                _ui.refocus = { host: root.parentNode, id: 'prism_skc_usewin' };
+                useWindow();
+                restoreFocus();
+                _ui.refocus = null;
+            }
             else if (t.id === 'prism_skc_cheld') startCheld(root);
             else if (t.id === 'prism_skc_cheld_cancel') { _ui.cancel = true; setStatus('Cancelling…', root); }
         });
@@ -1659,7 +1690,7 @@
         }
         kv.push(['Line vs match', agreeText(m.agreement)]);
         kv.push(['Line vs derivative plateau (sanity check)', plateauText(m.plateau)]);
-        if (m.sErr) kv.push(['Skin uncertainty S_err', '± ' + fmt(m.sErr.value, 2) + ' (largest term: ' + (DRIVER[m.sErr.driver] || String(m.sErr.driver || '—')) + ')']);
+        if (m.sErr) kv.push(['Skin uncertainty S_err', '± ' + fmt(m.sErr.value, 2) + ' (largest term: ' + driverText(m, m.sErr.driver) + ')']);
         if (m.final) kv.push(['Final k and S', 'k ' + sig(m.final.k) + ' md, S ' + fmt(m.final.S, 2) + ' (from the ' + m.final.source + ')']);
         kv.push(['Confidence', verdictText(m.confidence).replace(/^Confidence: /, '')]);
         if (m.products) {
@@ -1671,7 +1702,7 @@
             kv.push(['Mechanical skin', m.mech.available ? 'S_mech ' + fmt(m.mech.S_mech, 2) + ' ± ' + fmt(m.mech.S_mech_err, 2) + ' (pressure-drop basis), S_d local ' + fmt(m.mech.S_d_local, 2) +
                      ', kv/kh ' + fmt(m.mech.kvkh[0], 2) + ' to ' + fmt(m.mech.kvkh[1], 2) : String(m.mech.reason || 'not split')]);
         }
-        kv.push(['Expected IARF reach', reachText(m.reach)]);
+        kv.push(['Expected IARF reach', reachText(m.reach, shutOf(m))]);
         if (m.cheld && m.cheld.range) kv.push(['C-held S range', fmt(m.cheld.range.S[0], 2) + ' to ' + fmt(m.cheld.range.S[1], 2) + ' (S_C ' + fmt(m.cheld.S_C, 2) + ')']);
         var c = m.confidence;
         var rows = (c && Array.isArray(c.reasons)) ? c.reasons.map(function (x) { return [x.rule, x.kind, x.text, (x.ev || []).join(', ')]; }) : [];
