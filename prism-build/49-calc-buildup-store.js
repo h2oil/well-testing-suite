@@ -31,6 +31,7 @@
 //   loadState() → object|null     saveState(state, {wellId}) → {ok, bytes, overflow, overflowWrite?: Promise<{ok, engine}>}
 //   stripResult(result) → copy without the recomputable arrays (curves, bins.X, bins.dte)
 //   audit.list() / audit.append(entry) → entry|null / audit.summary() / audit.verify() / audit.chainHash()
+//   audit.info() → {state: missing|ok|unreadable, lost} (no chain check)
 //   audit.status() → {state: missing|ok|broken|unreadable, brokenAt, lost, lastRunSeq}; an unreadable log is kept
 //     under wts_buildup_audit_corrupt_<ms> before a new chain (with lost:{at, key, chars}) is started
 //   Project-file import (write) keeps only safe well ids, encoded records of the encoder's shape within RAW_CAP in
@@ -770,6 +771,8 @@
         summary: function () { return _auditRead().summary; },
         verify: auditVerify,
         status: auditStatus,
+        // without the chain check (cheap, for every render): {state: 'missing'|'ok'|'unreadable', lost}
+        info: function () { var L = _auditLoad(); return { state: L.state, lost: L.log.lost || null }; },
         chainHash: chainHash
     };
     S.engine = function () { return _engine || 'memory'; };

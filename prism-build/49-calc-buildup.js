@@ -306,8 +306,9 @@
         var arr = list.slice();
         arr.entries = list;                                       // array and object form in one value
         try { arr.summary = S && S.audit ? S.audit.summary() : null; arr.chainHash = S && S.audit ? S.audit.chainHash() : ''; } catch (e) { arr.summary = null; arr.chainHash = ''; }
-        var ast = _auditStatus();                                 // S10 shows an earlier log that could not be read
-        arr.lost = ast ? (ast.lost || (ast.state === 'unreadable' ? { key: null } : null)) : null;
+        var ai = null;                                            // S10 shows an earlier log that could not be read
+        try { ai = (S && S.audit && typeof S.audit.info === 'function') ? S.audit.info() : null; } catch (e) { ai = null; }
+        arr.lost = ai ? (ai.lost || (ai.state === 'unreadable' ? { key: null } : null)) : null;
         return arr;
     }
 
@@ -1192,7 +1193,7 @@
             var t = ((a.tests || []).filter(function (x) { return x && x.eventId === e.id; }))[0];
             var interp = !!(t && t.status === 'interpreted');
             out.push({ lvl: interp ? 'ok' : 'warn', text: 'Override ' + o.id + ' added event ' + e.id + ' at ' + _msToLocal(e.tc_ms, gz).replace('T', ' ') + ' ' + _zoneName(gz) + ': ' +
-                (EV_KIND_TXT[e.kind] || String(e.kind)) + (EV_STATUS_TXT[e.status] ? ', ' + EV_STATUS_TXT[e.status] : '') +
+                (_own(EV_KIND_TXT, e.kind) ? EV_KIND_TXT[e.kind] : String(e.kind)) + (_own(EV_STATUS_TXT, e.status) ? ', ' + EV_STATUS_TXT[e.status] : '') +
                 (interp ? '; interpreted as build-up ' + t.id + '.' : (t ? '; build-up ' + t.id + ' ' + String(t.status).replace(/_/g, ' ') + '.' : '; no build-up was interpreted from it.')) });
         });
         return out;
