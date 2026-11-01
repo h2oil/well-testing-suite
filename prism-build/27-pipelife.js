@@ -11,7 +11,7 @@
 //     3. Time-to-failure           (days, measured WT -> failure WT)
 //     4. Maximum allowable working pressure (ASME B31.3 Eq. 3a, measured WT)
 //
-//   Coflex flexible hoses are tagged "NOT APPLICABLE" because their wall
+//   Flexible hoses are tagged "NOT APPLICABLE" because their wall
 //   architecture does not erode in the same way as rigid line pipe.
 //
 // PUBLIC API (all on window.*)
@@ -143,8 +143,8 @@
         'A106-B':   { label: 'A106 Gr B',   density_lbft3: 490, tensile_psi: 60000,  yield_psi: 35000, erodes: true,  notes: 'mild carbon, ambient service' },
         'A333gr6':  { label: 'A333 Gr 6',   density_lbft3: 490, tensile_psi: 60000,  yield_psi: 35000, erodes: true,  notes: 'low-temperature service' },
         '316SS':    { label: '316 SS',      density_lbft3: 501, tensile_psi: 75000,  yield_psi: 30000, erodes: true,  notes: 'sour-service stainless' },
-        'Inconel625':{ label: 'Inconel 625', density_lbft3: 525, tensile_psi: 120000, yield_psi: 60000, erodes: true,  notes: 'premium sour / CRA' },
-        'Coflex':   { label: 'Coflex hose', density_lbft3: 96,  tensile_psi: 50000,  yield_psi: 30000, erodes: false, notes: 'flexible — no erosion calc' }
+        'alloy625': { label: 'Alloy 625 (UNS N06625)', density_lbft3: 525, tensile_psi: 120000, yield_psi: 60000, erodes: true,  notes: 'premium sour / CRA' },
+        'flexHose': { label: 'Flexible hose', density_lbft3: 96,  tensile_psi: 50000,  yield_psi: 30000, erodes: false, notes: 'flexible — no erosion calc' }
     };
 
     // ASME B36.10M — wall thickness in inches by NPS + schedule / weight class
@@ -178,7 +178,7 @@
     // upstream of choke ~3000 psig, downstream of choke ~500 psig,
     // separator ~150 psig, flare line ~50 psig — used as the velocity proxy.
     var DEFAULT_SEGMENTS = [
-        { key: 'wh_hose',   label: 'Wellhead -> Coflex Hose', material: 'Coflex',  nps_in: 4, sch: 80,
+        { key: 'wh_hose',   label: 'Wellhead -> Flexible Hose', material: 'flexHose', nps_in: 4, sch: 80,
           length_ft: 50,  measured_WT_in: 0.337, min_spec_WT_in: 0.295, failure_WT_in: 0.080,
           design_p_psig: 5000, design_T_F: 250, p_seg_psig: 3000, t_seg_F: 180 },
         { key: 'hose_ssv',  label: 'Hose -> SSV',             material: 'A333gr6', nps_in: 4, sch: 80,
@@ -358,7 +358,7 @@
     // The previous form (2·Sy·0.875·t/OD) used the full YIELD stress with no
     // design factor — a yield-onset pressure, ~1.5× higher than an allowable.
     // Temperature derating above ~400 °F is not applied (screening).
-    //   * For Coflex hose return the typical 5000 psi WP rating.
+    //   * For a flexible hose return the typical 5000 psi WP rating.
     // ───────────────────────────────────────────────────────────────
     function maxAllowablePressure(material_key, measured_WT_in, nps_in) {
         var m = MATERIALS[material_key] || MATERIALS['A333gr6'];
@@ -475,7 +475,7 @@
 
         // Hose: erosion calc not applicable.
         if (!mat.erodes) {
-            warnings.push('Coflex hose — sand-erosion service-life calc not applicable.');
+            warnings.push('Flexible hose — sand-erosion service-life calc not applicable.');
             out.note = 'NOT APPLICABLE TO HOSE';
             return out;
         }
@@ -840,6 +840,7 @@
                 '</div>' +
                 '<div id="wts_pl_import_msg" style="font-size:11px;color:var(--text3);margin-top:6px"></div>' +
                 '<div id="wts_pl_schnote" style="font-size:11px;color:var(--yellow, #d29922);margin-top:6px"></div>' +
+                '<div id="wts_pl_matnote" style="font-size:11px;color:var(--yellow, #d29922);margin-top:6px"></div>' +
             '</div>' +
 
             '<div class="card">' +
@@ -917,11 +918,26 @@
         try { vals = JSON.parse(localStorage.getItem(PL_LS_KEY) || 'null'); } catch (e) { vals = null; }
         if (!vals && G.WTS_state && G.WTS_state.pipelife && G.WTS_state.pipelife.values) vals = G.WTS_state.pipelife.values;
         if (!vals || typeof vals !== 'object') return;
+        var matNotes = [];
         for (var id in vals) {
             if (!Object.prototype.hasOwnProperty.call(vals, id)) continue;
             var el = _$(id);
-            if (el && vals[id] != null) el.value = vals[id];
+            if (!el || vals[id] == null) continue;
+            // A saved material key that is no longer in the list (v3.3 renamed two keys to generic names)
+            // loads as the segment's default material, with a visible note, never as an unknown key that the
+            // compute would treat as eroding carbon steel.
+            var mm = /^wts_pl_seg(\d+)_mat$/.exec(id);
+            if (mm && DEFAULT_SEGMENTS[+mm[1]] && !Object.prototype.hasOwnProperty.call(MATERIALS, String(vals[id]))) {
+                var d = DEFAULT_SEGMENTS[+mm[1]];
+                el.value = d.material;
+                matNotes.push(d.label.replace('->', '→') + ' → ' + MATERIALS[d.material].label);
+                continue;
+            }
+            el.value = vals[id];
         }
+        var mbox = _$('wts_pl_matnote');
+        if (mbox) mbox.textContent = matNotes.length ? '⚠ A saved material is not in the current list (materials now use generic names): loaded as the segment default on ' +
+            matNotes.join('; ') + '. Check the material of these segments.' : '';
     }
 
     // Pull solved conditions from the Well Test Simulator (window.WTS_lastCalc,
@@ -1209,7 +1225,7 @@
             checks.push({ n: 'MAWP > 0', ok: seg.max_allowable_pressure_psig > 0 });
 
             var hose = G.WTS_pipelife_segment({
-                material: 'Coflex', schedule_in: 80, nps_in: 4,
+                material: 'flexHose', schedule_in: 80, nps_in: 4,
                 measured_WT_in: 0.337, min_spec_WT_in: 0.295, failure_WT_in: 0.080,
                 design_pressure_psig: 5000, design_temp_F: 250,
                 sand_rate_lbMMscf: 50, c_constant: 300, mixture_velocity_fps: 30

@@ -211,7 +211,7 @@ Include a note emphasizing the native integrations so Apple doesn't flag 4.2.1:
 
 > H2Oil Well Testing is an engineering calculator suite for oilfield well-test
 > operations. The app includes 30+ calculators (AGA-3 gas flow, choke sizing,
-> flare radiation per API 521, well test simulator with live Thornhill-Craver
+> flare radiation per API 521, well test simulator with live API 14B nozzle-equation
 > choke back-solve, etc.), interactive 3D flare visualisations, decline-curve
 > analysis, and a full well-test flow simulator. All calculations run
 > on-device and the app works fully offline. The app is free with no

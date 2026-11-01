@@ -591,7 +591,7 @@ is regenerated. The GitHub Action handles the sync automatically on push.
 **Problem**: The gas branch was using a liquid-style equation that ignored pressure ratio,
 compressibility, and critical-flow behaviour. Output was off by ~30-50%.
 
-**Fix**: Rewrote the gas branch to Thornhill-Craver / Economides form:
+**Fix**: Rewrote the gas branch to the API 14B gas choke (nozzle) equation, Economides form:
 ```
 q[MSCF/D] = 879.77·Cd·A·P1·√( (k/(k-1))·(r^(2/k) − r^((k+1)/k)) / (SG·T·Z) )
 ```
@@ -638,7 +638,7 @@ rather than assuming choke bore.
 
 ### Choke → downstream coupling
 Previously only choke size changed. Now the downstream nodes recalculate:
-- P2 via Thornhill-Craver back-solve (bisection on pressure ratio under fixed q)
+- P2 via API 14B nozzle-equation back-solve (bisection on pressure ratio under fixed q)
 - T2 via Joule-Thomson estimate `ΔT ≈ μ_JT · ΔP` with μ_JT ~ 7 °F/100 psi for gas
 - V via actual gas volume at P2,T2 through downstream ID
 - Erosional check: `V_e = C/√ρ` (API RP 14E, C=100 continuous / 125 intermittent)

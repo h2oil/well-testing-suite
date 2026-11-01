@@ -34,7 +34,7 @@
 //                            tank_max_psig, gasSG, T_F)
 //       → Q_max_MMscfd  (maximum gas rate the tank vent line can pass
 //                        without lifting tank pressure above its rating —
-//                        simplified Crane TP-410 short-pipe form)
+//                        simplified K-method short-pipe form)
 //
 //   window.WTS_flammability_radii(Q_vent_MMscfd, wind_mph)
 //       → { x_ft, y_ft, s_ft }
@@ -55,14 +55,14 @@
 //   • Self-test at end of file (stripped during concat by sentinel).
 //
 // APPROXIMATIONS
-//   • LCV gas blowby uses Fisher-style choked Cv form
+//   • LCV gas blowby uses a simplified critical-flow Cv form
 //       Q [SCFH] = 816·Cv·P1 / sqrt(SG·T_R)   (critical-flow Cv form)
 //     adequate for screening at critical pressure ratio (~0.5).
 //   • RO sizing assumes critical flow:
 //       Q [MMscfd] = 1.12e-4·d²·P1 / sqrt(SG·T_R)   d in 64ths (Cd = 1)
 //   • Vent capacity is a simplified incompressible-equivalent
-//       Crane TP-410 w = 0.525·Y·d²·sqrt(ΔP·ρ1/K), K = f_T·L/D + 1.5,
-//     Y and the sonic ΔP/P1 limit from Crane Fig. A-22 (k = 1.3).
+//       K-method w = 0.525·Y·d²·sqrt(ΔP·ρ1/K), K = f_T·L/D + 1.5,
+//     the standard expansion-factor (Y) chart and sonic ΔP/P1 limit for k = 1.3.
 //   • Flammability radii are scaled from a baseline footprint
 //       y0=20, x0=36, s0=45 ft   at Q=25 MMscfd, wind=20 mph
 //     using sqrt(Q) and small wind-tilt correction.
@@ -128,7 +128,7 @@
 
     /**
      * Gas blowby through a control valve at choked conditions.
-     * Uses a simplified Fisher Cv-based form for critical flow.
+     * Uses a simplified critical-flow Cv form.
      *
      *   Q [SCFH] = 816·Cv·P1 / sqrt(SG·T_R)
      *   Q [MMscfd] = Q[SCFD] · 1e-6
@@ -198,7 +198,7 @@
     /**
      * Vent line max allowable capacity — simplified screening.
      *
-     *   Crane TP-410: w = 0.525·Y·d²·sqrt(ΔP·ρ1/K)  (see body)
+     *   K method: w = 0.525·Y·d²·sqrt(ΔP·ρ1/K)  (see body)
      *
      * with ΔP = tank rating (psig) to atmosphere, ρ1 at tank conditions.
      *
@@ -217,8 +217,8 @@
         T_F           = Number(T_F);
         if (!(line_NPS > 0) || !(tank_max_psig > 0) || !(gasSG > 0)) return 0;
 
-        // Crane TP-410 compressible discharge through a line to atmosphere
-        // (Eq. 3-20 with Fig. A-22 net expansion factor, k ≈ 1.3):
+        // K-method compressible discharge through a line to atmosphere
+        // (with the net expansion factor Y from the standard chart, k ≈ 1.3):
         //   w [lb/s] = 0.525 · Y · d² · sqrt(ΔP · ρ1 / K)
         //   K = f_T·L/D + 0.5 (entrance) + 1.0 (exit),  f_T fully-turbulent
         //   Darcy factor for commercial steel (ε = 0.0018 in).
@@ -238,7 +238,7 @@
         var fT = 0.25 / Math.pow(Math.log10(relRough), 2);
         var K  = fT * L_ft / (ID_in / 12) + 1.5;
 
-        // Crane A-22 limiting ΔP/P1 and Y at sonic velocity, k = 1.3.
+        // Standard-chart limiting ΔP/P1 and Y at sonic velocity, k = 1.3.
         var KT = [1.2, 1.5, 2, 3, 4, 6, 8, 10, 15, 20, 40, 100];
         var XT = [0.525, 0.550, 0.593, 0.642, 0.678, 0.722, 0.750, 0.773, 0.807, 0.831, 0.877, 0.920];
         var YT = [0.612, 0.631, 0.635, 0.658, 0.670, 0.685, 0.698, 0.705, 0.718, 0.718, 0.718, 0.718];

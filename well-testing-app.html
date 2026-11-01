@@ -2214,7 +2214,7 @@ function renderClientInfo(body) {
             <div class="fg-item"><label>Field / Block</label><input type="text" id="ci_field" value="${_rEsc(ci.field||'')}" placeholder="e.g. Alpha Field, Block 12"></div>
             <div class="fg-item"><label>Operator</label><input type="text" id="ci_operator" value="${_rEsc(ci.operator||'')}" placeholder="e.g. Operator Energy Ltd"></div>
             <div class="fg-item"><label>Country / Region</label><input type="text" id="ci_country" value="${_rEsc(ci.country||'')}" placeholder="e.g. Ghana, West Africa"></div>
-            <div class="fg-item"><label>Rig / Vessel</label><input type="text" id="ci_rig" value="${_rEsc(ci.rig||'')}" placeholder="e.g. Maersk Deliverer"></div>
+            <div class="fg-item"><label>Rig / Vessel</label><input type="text" id="ci_rig" value="${_rEsc(ci.rig||'')}" placeholder="e.g. Rig A"></div>
           </div>
         </div>
       </div>
@@ -5057,12 +5057,12 @@ window.calcChoke = function(){
     const deq=Math.sqrt(4*Aeq/Math.PI), deq64=deq*64;
     // Pressures are gauge (psig); every ratio / quadratic balance below uses absolute.
     const PATM=14.696, P1a=P1+PATM, P3a=P3+PATM;
-    // Thornhill-Craver standard rates are referred to 60 °F / 14.7 psia; re-refer them
+    // API 14B nozzle-equation standard rates are referred to 60 °F / 14.7 psia; re-refer them
     // to the standard-conditions setting when one is chosen.
     const _bcCk=_baseCond(60,14.7), ckBF=(14.7/_bcCk.Pb_psia)*(_bcCk.Tb_R/519.67);
     let P2a, Qgas=0, Qliq=0, Qoil=0, GLR=0, crit=0.546;
     if(ft==='gas'){
-        // Gas: Thornhill-Craver nozzle equation on BOTH chokes, solved for the P2 that
+        // Gas: API 14B gas choke (nozzle) equation on BOTH chokes, solved for the P2 that
         // passes the same standard rate through each (critical ratio clamped per choke).
         //   q[MSCF/D] = 1243.5·C·A·Pu·√( k/(k−1)·(r^(2/k) − r^((k+1)/k)) / (SG·T·Z) )
         // Audit fix (G1): the constant was 879.77, which is the SONIC-form constant
@@ -5125,7 +5125,7 @@ window.calcChoke = function(){
       </div>
     </div>
     <div class="info-bar" style="margin-top:12px">${ft==='gas'
-        ?'Gas: Thornhill-Craver nozzle equation (k = 1.28, Papay Z) balanced across both chokes; critical ratio '+fmt(crit,3)+'. '+_baseNote(_bcCk)
+        ?'Gas: API 14B gas choke (nozzle) equation (k = 1.28, Papay Z) balanced across both chokes; critical ratio '+fmt(crit,3)+'. '+_baseNote(_bcCk)
         :'Multiphase: P2 from a subcritical equal-flow balance; Gilbert rate (GLR = GOR &times; (1 &minus; WC)) assumes critical flow through the equivalent bean.'}</div>
     <div class="export-bar">
       <button class="btn-export" onclick="chokeExportCSV()">&#128196; Export CSV</button>
@@ -7696,7 +7696,7 @@ function renderPRV(body) {
               </div>
               <div>
                 <div class="card"><div class="card-title">Inlet Line Fitting Loss Factors (K)</div>
-                  <div class="info-bar">Resistance factors per Crane TP-410. Total K = f·L/D + ΣK_fittings. Inlet ΔP = K·ρ·V²/(2·g<sub>c</sub>·144).</div>
+                  <div class="info-bar">Resistance coefficients by the K method. Total K = f·L/D + ΣK_fittings. Inlet ΔP = K·ρ·V²/(2·g<sub>c</sub>·144).</div>
                   <table class="dtable"><tr><th>Fitting</th><th>K Value</th></tr>
                     <tr><td>Sharp-edged entrance</td><td>0.50</td></tr>
                     <tr><td>90° standard elbow</td><td>30×f (≈0.54)</td></tr>
@@ -7992,7 +7992,7 @@ window.calcPRVinlet = function() {
     const K_total = K_pipe + K_entrance + K_elbow + K_gate + K_rd;
     saveInputs('prv_inlet', ['pi_ps','pi_id','pi_len','pi_f','pi_el','pi_gv','pi_rd','pi_w','pi_rho']);
 
-    // Crane TP-410: ΔP = K·ρ·V²/(2·gc), gc = 32.174 lbm·ft/(lbf·s²); /144 → psi.
+    // K (resistance-coefficient) method: ΔP = K·ρ·V²/(2·gc), gc = 32.174 lbm·ft/(lbf·s²); /144 → psi.
     // (gc was missing, overstating ΔP 32×.)
     const dP_psi = K_total * rho * V*V / (2 * 32.174 * 144); // psi
     const limit_psi = 0.03 * Ps;
@@ -9628,7 +9628,7 @@ window.calcSepRate=function(){
 // Screening tool that combines:
 //   - Souders-Brown gas capacity (with mist-pad credit)
 //   - Liquid retention with oil/water split for 3-phase
-//   - Outlet hardware velocity + erosional checks (PCV/LCV/line/turbine/Daniel)
+//   - Outlet hardware velocity + erosional checks (PCV/LCV/line/turbine/orifice fitting)
 //   - Required Cv recommendation for control valves at 50% travel
 //   - Slug holdup capacity between NLL and HHLL
 //   - Z-factor via Papay correlation (Sutton pseudo-criticals) — auto or manual
@@ -9672,7 +9672,7 @@ function renderSepHandling(body){
         <div class="fg-item"><label>Lines (qty)</label><select id="sh_gqty"><option value="1" selected>1</option><option value="2">2 (50/50 split)</option></select></div>
         <div class="fg-item"><label>PCV size (in)</label><input type="number" id="sh_gpcv" value="2" step="0.25"></div>
         <div class="fg-item"><label>Line size (in)</label><input type="number" id="sh_gline" value="3" step="0.5"></div>
-        <div class="fg-item"><label>Daniel box ID (in, 0=none)</label><input type="number" id="sh_gdan" value="4" step="0.5"></div>
+        <div class="fg-item"><label>Orifice fitting ID (in, 0=none)</label><input type="number" id="sh_gdan" value="4" step="0.5"></div>
       </div></div>
       <div class="card"><div class="card-title">Oil Outlet</div><div class="fg">
         <div class="fg-item"><label>Lines (qty)</label><select id="sh_oqty"><option value="1" selected>1</option><option value="2">2 (50/50 split)</option></select></div>
@@ -9690,11 +9690,11 @@ function renderSepHandling(body){
         <div class="fg-item"><label>Gas line/PCV limit (m/s)</label><input type="number" id="sh_vlimg" value="20" step="0.5">
           <span style="font-size:10px;color:var(--text3)">Norsok P-100 / BS 6364 — noise &amp; vibration. API RP 14E erosional shown alongside.</span></div>
         <div class="fg-item"><label>Liquid line/LCV limit (m/s)</label><input type="number" id="sh_vliml" value="3" step="0.1">
-          <span style="font-size:10px;color:var(--text3)">CRANE TP-410 — typical liquid piping; 1-5 m/s range.</span></div>
+          <span style="font-size:10px;color:var(--text3)">Typical liquid piping; 1-5 m/s range.</span></div>
         <div class="fg-item"><label>Turbine bore warn (m/s)</label><input type="number" id="sh_vlimt" value="6" step="0.5">
           <span style="font-size:10px;color:var(--text3)">API MPMS Ch. 5.3 — liquid turbine linearity upper bound.</span></div>
-        <div class="fg-item"><label>Daniel box limit (m/s)</label><input type="number" id="sh_vlimd" value="20" step="0.5">
-          <span style="font-size:10px;color:var(--text3)">At separator pressure (Daniel sits upstream of PCV). Same physics as line.</span></div>
+        <div class="fg-item"><label>Orifice fitting limit (m/s)</label><input type="number" id="sh_vlimd" value="20" step="0.5">
+          <span style="font-size:10px;color:var(--text3)">At separator pressure (the orifice fitting sits upstream of the PCV). Same physics as line.</span></div>
         <div class="fg-item"><label>LCV ΔP design (psi)</label><input type="number" id="sh_dplcv" value="25" step="1"><span style="font-size:10px;color:var(--text3)">Used for required-Cv calc</span></div>
         <div class="fg-item"><label>Target valve travel (%)</label><input type="number" id="sh_travel" value="50" min="20" max="90"><span style="font-size:10px;color:var(--text3)">Cv recommendation basis</span></div>
       </div></div>
@@ -9723,7 +9723,7 @@ function renderSepHandling(body){
           (Sutton pseudo-criticals from gas SG); &rho;<sub>w</sub> = 1000 kg/m&sup3;.
           Effective length de-rated for foaming/emulsion. Outlet velocities use API RP 14E erosional limit screening
           (C/&radic;&rho; with C = 100 continuous service) layered on top of the user limits.
-          Cv recommendations: Fisher form for liquid (Cv = q&middot;&radic;(SG/&Delta;P)) and gas
+          Cv recommendations: ISA-75.01 / IEC 60534-2-1 liquid form (Cv = q&middot;&radic;(SG/&Delta;P)) and the standard gas form
           (Cv = q&middot;&radic;(SG&middot;T/(&Delta;P&middot;(P<sub>1</sub>+P<sub>2</sub>)))/963, &Delta;P capped at P<sub>1</sub>/2 when choked), reported at the chosen valve travel.
         </p>
       </div>
@@ -9908,7 +9908,7 @@ window.calcSepHandling=function(){
     const gQty = parseInt($('sh_gqty').value);
     const gPCV_in = parseFloat($('sh_gpcv').value);
     const gLine_in = parseFloat($('sh_gline').value);
-    const gDan_in = parseFloat($('sh_gdan').value);
+    const gOf_in = parseFloat($('sh_gdan').value);
     const oQty = parseInt($('sh_oqty').value);
     const oLCV_in = parseFloat($('sh_olcv').value);
     const oLine_in = parseFloat($('sh_oline').value);
@@ -9920,7 +9920,7 @@ window.calcSepHandling=function(){
     const vLimGas = parseFloat($('sh_vlimg').value);
     const vLimLiq = parseFloat($('sh_vliml').value);
     const vLimTurb = parseFloat($('sh_vlimt').value);
-    const vLimDan = parseFloat($('sh_vlimd').value);
+    const vLimOf = parseFloat($('sh_vlimd').value);
     const dpLCV = parseFloat($('sh_dplcv').value);
     const travelPct = parseFloat($('sh_travel').value)/100;
 
@@ -9934,15 +9934,15 @@ window.calcSepHandling=function(){
     function v_erosional(rho){ return 100 / Math.sqrt(rho * 0.062428) * 0.3048; }
     // ── Gas outlet pressure conventions ──────────────────────
     // The gas leg of a typical well-test separator runs:
-    //   vessel (P_sep) → Daniel orifice fitting (P_sep, used for FT/FE
+    //   vessel (P_sep) → orifice fitting (P_sep, used for FT/FE
     //   measurement, ALWAYS upstream of throttle) → Gas PCV (drops
-    //   P_sep → P_downstream) → Outlet flowline / Daniel-after-PCV
+    //   P_sep → P_downstream) → Outlet flowline / a meter after the PCV
     //   (P_downstream).
     // So density and actual volumetric flow differ between the upstream
     // (vessel) and downstream (post-PCV) sides:
-    //   - Daniel box → vessel-pressure (UPSTREAM): denser gas, smaller
+    //   - Orifice fitting → vessel-pressure (UPSTREAM): denser gas, smaller
     //     volume flow, lower velocity. Using downstream P here would
-    //     over-estimate Daniel velocity by P_sep/P_downstream (≈5× at
+    //     over-estimate the orifice-fitting velocity by P_sep/P_downstream (≈5× at
     //     500/100 psig).
     //   - Gas PCV    → conservative use downstream (higher v at same Q)
     //     because the PCV body sees both sides; downstream is where
@@ -9954,7 +9954,7 @@ window.calcSepHandling=function(){
     // (see _shCompute) rather than scaling the vessel-side values by P/Pd.
     const rho_gas_ds = r.rho_gas_ds;
     const Qg_ds_m3s = r.Qg_ds_m3s;
-    const vErosGasUS = v_erosional(r.rho_gas);   // vessel-pressure (Daniel)
+    const vErosGasUS = v_erosional(r.rho_gas);   // vessel-pressure (orifice fitting)
     const vErosGasDS = v_erosional(rho_gas_ds);  // downstream (PCV, line)
     // 2-phase: there is no water outlet, so the "oil" outlet carries the
     // whole liquid stream (oil + water) at the blended density. 3/4-phase:
@@ -9972,7 +9972,7 @@ window.calcSepHandling=function(){
     const outletChecks = [
         outletRow('Gas PCV (downstream)',     Qg_ds_m3s,        gPCV_in,  gQty, vLimGas, vErosGasDS),
         outletRow('Gas line (downstream)',    Qg_ds_m3s,        gLine_in, gQty, vLimGas, vErosGasDS),
-        outletRow('Gas Daniel box (@ P_sep)', r.Qg_actual_m3s,  gDan_in,  gQty, vLimDan, vErosGasUS),
+        outletRow('Gas orifice fitting (@ P_sep)', r.Qg_actual_m3s, gOf_in, gQty, vLimOf, vErosGasUS),
         outletRow(liqName+' LCV',             Q_liqOut_m3s,     oLCV_in,  oQty, vLimLiq, v_erosional(rho_liqOut)),
         outletRow(liqName+' line',            Q_liqOut_m3s,     oLine_in, oQty, vLimLiq, v_erosional(rho_liqOut)),
         outletRow(liqName+' turbine bore',    Q_liqOut_m3s,     oTurb_in, oQty, vLimTurb, null),
@@ -9984,7 +9984,7 @@ window.calcSepHandling=function(){
     }
 
     // ── Required Cv recommendation @ user travel target ──────
-    // Liquid (Fisher form):  Cv = q_gpm · √(SG/ΔP_psi)
+    // Liquid (ISA-75.01 form):  Cv = q_gpm · √(SG/ΔP_psi)
     // Gas:                  Cv = q_scfh / (963·√(ΔP·(P1+P2)/(SG·T_R))), ΔP ≤ P1/2 (choked cap) — see below
     function cvLiquid_gpm(Q_m3s, dP_psi, SG){
         if (!Q_m3s || dP_psi<=0) return 0;
@@ -10558,7 +10558,7 @@ window.calcFlameArr=function(){
     const SCFM=Q_mscfd*1000/(24*60);
     const ACFM=SCFM*(T_R/520)*(14.7/P);
     const rho=P*MW/(1.0*10.7316*T_R);
-    // Crane TP-410 resistance form: ΔP = K·ρ·V²/(2·gc·144) psi, V in ft/s at the
+    // K (resistance-coefficient) method: ΔP = K·ρ·V²/(2·gc·144) psi, V in ft/s at the
     // nominal bore. The old line used V in ft/min with no gc and an arbitrary
     // 0.02 factor (≈2,300 velocity heads). Generic K ≈ 10 for a crimped-ribbon
     // element (+1 exit head for end-of-line); manufacturer data governs.
@@ -11246,10 +11246,10 @@ const RELEASE_NOTES = [
       ] },
     { ver:'v1.3.x', date:'2026-04-25', title:'Separator Handling Estimator',
       items:[
-        ['new', 'Separator Handling', 'Screening tool combining Souders–Brown gas capacity (with mist-eliminator credit), oil and water retention for two- and three-phase service, and outlet velocity checks for the PCV, LCVs, lines, Daniel box and turbine meters against user limits and API RP 14E. Returns a single PASS / PASS WITH WARNINGS / FAIL verdict.'],
+        ['new', 'Separator Handling', 'Screening tool combining Souders–Brown gas capacity (with mist-eliminator credit), oil and water retention for two- and three-phase service, and outlet velocity checks for the PCV, LCVs, lines, orifice fitting and turbine meters against user limits and API RP 14E. Returns a single PASS / PASS WITH WARNINGS / FAIL verdict.'],
         ['calc', 'Design aids', 'Required Cv for the gas PCV and liquid LCVs, slug capacity between NLL and HHLL, a ±20% flow sensitivity table, quantitative fix-it hints and a vessel cross-section diagram. Z-factor from Papay with Sutton pseudo-criticals, or entered manually.'],
         ['ux', 'Navigation', 'Sidebar regrouped into clearer sections (Separation &amp; Vessels, Process Equipment, Electrical, Fluid &amp; Field Calcs) with matching dashboard tiles; in-app Release Notes page added.'],
-        ['fix', 'Daniel box velocity', 'Now evaluated at separator pressure rather than downstream pressure, which overstated the velocity.'],
+        ['fix', 'Orifice fitting velocity', 'Now evaluated at separator pressure rather than downstream pressure, which overstated the velocity.'],
       ] },
     { ver:'v1.3', date:'2026-04-23', from:'2026-04-20', title:'Flare visualisation &amp; iOS platform',
       note:'Rolls up the v1.1 and v1.2 iOS builds.',
@@ -11263,10 +11263,10 @@ const RELEASE_NOTES = [
     { ver:'v1.0', date:'2026-04-16', title:'Well Test Simulator &amp; iOS app',
       items:[
         ['new', 'Well Test Simulator', 'End-to-end surface flow path from wellhead through SSV, choke, heater and separator to the flare, plus surge and atmospheric tanks, with pressure, temperature and velocity at every node on a colour-coded flow diagram.'],
-        ['calc', 'Simulator physics', 'Papay Z-factor; Darcy–Weisbach with Swamee–Jain friction; API RP 14E erosional checks; Joule–Thomson cooling; Thornhill–Craver choke back-solve with critical/subcritical detection and a “bean too small” flag; hydrate check; heater duty; NPS and schedule per segment.'],
+        ['calc', 'Simulator physics', 'Papay Z-factor; Darcy–Weisbach with Swamee–Jain friction; API RP 14E erosional checks; Joule–Thomson cooling; API 14B nozzle-equation choke back-solve with critical/subcritical detection and a “bean too small” flag; hydrate check; heater duty; NPS and schedule per segment.'],
         ['ux', 'Touch gestures', 'Flare 2D and 3D views: drag to rotate or pan, pinch to zoom, tap to drop a noise marker.'],
         ['platform', 'iOS app', 'Native share sheet and Save to Files for PDF, PNG and CSV exports; fully offline PDF generation including the client cover page; full-screen layout with safe-area handling.'],
-        ['fix', 'Gas metering &amp; chokes', 'Gas choke rate now uses Thornhill–Craver critical/subcritical flow (the previous constant under-predicted by orders of magnitude); the Oil &amp; Gas orifice path uses the same Reader-Harris/Gallagher AGA-3 method as the AGA-3 calculator.'],
+        ['fix', 'Gas metering &amp; chokes', 'Gas choke rate now uses the API 14B nozzle equation with critical/subcritical flow (the previous constant under-predicted by orders of magnitude); the Oil &amp; Gas orifice path uses the same Reader-Harris/Gallagher AGA-3 method as the AGA-3 calculator.'],
       ] },
     { ver:'Update', date:'2026-04-15', title:'Calculation review &amp; flare acoustics',
       items:[
@@ -125886,7 +125886,7 @@ window.calcWTS=function(){
     // Seg 2: SSV → Choke (SSV is full-bore, pass-through)
     const s2=seg(2,Pssv,Tssv,'multi');
     const Pci=s2.Pout,Tci=s2.Tout;
-    // ── Choke: Thornhill-Craver (Economides form) back-solve for downstream P ──
+    // ── Choke: API 14B nozzle equation (Economides form) back-solve for downstream P ──
     // q_gsc[MSCF/D] = 879.77·Cd·A·P1 / √(SG·T·Z) · √(k/(k-1) · (r^(2/k) − r^((k+1)/k)))
     const k_ck=1.28;
     const P1a=Math.max(Pci+14.696,15), Tabs_ck=Tci+459.67;
@@ -125995,7 +125995,7 @@ window.calcWTS=function(){
         h+=`<tr><td style="font-weight:600">${segNm[i]}</td><td>${s.nps}"/SCH${s.sch}</td><td>${UV(s.ID,'lengthSmall',3,1)}</td><td style="color:${vc};font-weight:700">${UV(s.vel,'velocity',1,2)}</td><td>${UV(s.ve,'velocity',0,1)}</td><td style="color:${vc}">${fmt(s.vPct,0)}%</td><td>${UV(s.dP,'pressure',1)}</td><td>${UV(s.dT,'tempDelta',1)}</td><td style="color:${vc};font-weight:700">${s.vSt}${s.hydR?' &#10052;':''}</td></tr>`;
     });
     h+='</table></div>';
-    h+=`<div class="rbox" style="margin-top:10px"><div class="rbox-title">Choke (Thornhill-Craver / API 14B)</div>
+    h+=`<div class="rbox" style="margin-top:10px"><div class="rbox-title">Choke (API 14B nozzle equation)</div>
         <div class="rrow"><span class="rl">Bean / Cd</span><span class="rv">${bean}/64" (${fmt(bean/64,3)}") &middot; Cd=${Cd_ck}</span></div>
         <div class="rrow"><span class="rl">Upstream P</span><span class="rv">${uF(Pci,'pressureG',0,'psig')} (${uF(P1a,'pressure',0,'psia')}${_m?' abs':''})</span></div>
         <div class="rrow"><span class="rl">Downstream P (separator back-pressure)</span><span class="rv" style="color:var(--accent);font-weight:700">${uF(Pco,'pressureG',0,'psig')}</span></div>

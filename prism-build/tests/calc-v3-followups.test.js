@@ -220,17 +220,17 @@ module.exports = [
     },
   },
   {
-    name: 'V3 Scale: Langelier by the ASTM D3739 chart fit reproduces the USBR example; Carrier form still shown',
+    name: 'V3 Scale: Langelier by the ASTM D3739 chart fit reproduces the USBR example; approximate 1965 form still shown',
     wp: WP,
     run(app, assert) {
       const S = app.win.WTS_scale_compute;
       const r = S({ na: 93, k: 9, ca: 196.3, mg: 120.4, ba: 0.1426, sr: 0.12, cl: 1.9, hco3: 169.2, so4: 953, ph: 7.5, tds: 1566.56, t: 59, p: 14.7 });
       assert.ok(Math.abs(r.lsi.value - 0.18) < 0.01, 'LSI ' + r.lsi.value + ' vs USBR 0.18');
-      assert.ok(Math.abs(r.lsi.carrier.value - 0.133) < 0.005, 'Carrier form 0.13 kept for comparison');
+      assert.ok(Math.abs(r.lsi.approx.value - 0.133) < 0.005, 'approximate 1965 form 0.13 kept for comparison');
       // Stiff–Davis fit as published (USBR eq. 13): −0.04 against the worksheet's 0.12 (documented)
       assert.ok(Math.abs(r.sdi.value + 0.04) < 0.005, 'S&DSI ' + r.sdi.value);
       nav(app, 'scale', 'sc_root');
-      assert.ok(rows(app, 'sc_res').some((x) => /Carrier/.test(x.l)), 'Carrier row');
+      assert.ok(rows(app, 'sc_res').some((x) => /approximate 1965 form/.test(x.l)), 'approximate 1965 form row');
       assert.includes(app.el('sc_res').textContent, 'ASTM D3739');
     },
   },

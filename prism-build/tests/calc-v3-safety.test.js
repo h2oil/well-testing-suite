@@ -196,6 +196,35 @@ module.exports = [
       clean(app, assert, 'pipelife migration');
     },
   },
+  {
+    name: 'V3 pipelife: generic material names (flexible hose, Alloy 625); a saved key that is no longer listed loads as the segment default with a note, never as eroding steel',
+    wp: WP,
+    run(app, assert) {
+      const M = app.win.WTS_PIPELIFE_MATERIALS;
+      assert.ok(M.flexHose && M.flexHose.erodes === false && /^Flexible hose$/.test(M.flexHose.label), 'flexible hose entry');
+      assert.ok(M.alloy625 && M.alloy625.erodes === true && /UNS N06625/.test(M.alloy625.label), 'Alloy 625 entry');
+      // every material label is a generic designation (no product names): letters, digits, spaces and a few symbols only
+      Object.keys(M).forEach((k) => assert.ok(/^[A-Za-z0-9 .()-]+$/.test(M[k].label), 'label ' + M[k].label));
+      // a saved state from before the rename: unknown keys on the hose segment (seg 0) and on a steel segment (seg 1)
+      const saved = { wts_pl_seg0_mat: 'legacyHoseKey', wts_pl_seg1_mat: 'legacyAlloyKey', wts_pl_seg2_mat: '316SS', wts_pl_sand: '50' };
+      app.storage.setItem('wts_pipelife', JSON.stringify(saved));
+      go(app, 'pipelife'); app.flush(500);
+      assert.equal(app.el('wts_pl_seg0_mat').value, 'flexHose', 'hose segment keeps a non-eroding default');
+      assert.equal(app.el('wts_pl_seg1_mat').value, 'A333gr6', 'steel segment loads its default');
+      assert.equal(app.el('wts_pl_seg2_mat').value, '316SS', 'a listed key is kept');
+      const rep = app.win.WTS_pipelife_lastReport.segments;
+      assert.strictEqual(rep[0].applicable, false, 'hose segment is not given an erosion service life');
+      assert.strictEqual(rep[0].material, 'flexHose');
+      assert.includes(rep[0].warnings.join(' '), 'Flexible hose');
+      const note = app.el('wts_pl_matnote').textContent;
+      assert.includes(note, 'not in the current list'); assert.includes(note, 'Wellhead → Flexible Hose'); assert.includes(note, 'Hose → SSV');
+      assert.equal(JSON.parse(app.storage.getItem('wts_pipelife')).wts_pl_seg0_mat, 'flexHose', 'stored state migrated');
+      // the next visit has nothing to report
+      app.hook.nav('home'); go(app, 'pipelife'); app.flush(500);
+      assert.equal(app.el('wts_pl_matnote').textContent, '', 'no note once migrated');
+      clean(app, assert, 'pipelife material migration');
+    },
+  },
 
   // ── 3. ESD Lo-Pilot temperature ───────────────────────────────────────────
   {

@@ -14,11 +14,11 @@
 //   Ionic strength I = ½ Σ cᵢ·zᵢ² (mol/L).                         [Standard Methods 1030 / USBR MS-2016 eq. 1]
 //   Charge balance % = (Σcat − Σan)/(Σcat + Σan)·100 in meq/L;
 //     ≤ 5 % acceptable, 5–10 % questionable, > 10 % poor.           [Standard Methods 1030 E; USBR MS-2016 eq. 3]
-//   Langelier (v3.0: ASTM D3739 chart fit, the value shown and used):  [USBR MS-2016 eqs. 9–11; DuPont (1992)]
+//   Langelier (v3.0: ASTM D3739 chart fit, the value shown and used):  [USBR MS-2016 eqs. 9–11]
 //     pHs = pCa + pAlk + C,  pCa = −log10[Ca] (mol/L), pAlk = −log10(total alkalinity, eq/L),
 //     C(TDS, T) = 3.26·e^(−0.005·T) − 0.0116·log10(TDS³) + 0.0905·log10(TDS²) − 0.133·log10(TDS) − 0.02,
 //     T in °F; LSI = pH − pHs. Reproduces the USBR worked example (0.184 vs 0.18 published).
-//   Langelier, Carrier (1965) form (shown for comparison; the pre-v3.0 value): [Carrier (1965)]
+//   Langelier, approximate 1965 form (shown for comparison; the pre-v3.0 value): [approximate 1965 form]
 //     pHs = (9.3 + A + B) − (C + D); A = (log10 TDS − 1)/10,
 //     B = −13.12·log10(T_K) + 34.55, C = log10(Ca as CaCO3, mg/L) − 0.4,
 //     D = log10(total alkalinity as CaCO3, mg/L). USBR example: 0.13.
@@ -144,10 +144,10 @@
         // Alkalinity: HCO3 + 2·CO3 in eq/L; as CaCO3 mg/L = eq/L × 50,043.5
         var alkEq = c.hco3 + 2 * c.co3;
         var caCaCO3 = c.ca * CACO3 * 1000, alkCaCO3 = alkEq * CACO3 / 2 * 1000;
-        // Langelier, Carrier (1965) form (comparison)
+        // Langelier, approximate 1965 form (comparison)
         var A = (Math.log10(tds) - 1) / 10, B = -13.12 * Math.log10(tK) + 34.55;
         var C = Math.log10(caCaCO3) - 0.4, D = Math.log10(alkCaCO3);
-        var pHsCarrier = 9.3 + A + B - (C + D);
+        var pHsApprox = 9.3 + A + B - (C + D);
         // Langelier, ASTM D3739 chart fit (USBR MS-2016 eq. 9, T °F): pHs = pCa + pAlk + C(TDS, T)
         var lt = Math.log10(tds);
         var Cchart = 3.26 * Math.exp(-0.005 * t) - 0.0116 * 3 * lt + 0.0905 * 2 * lt - 0.133 * lt - 0.02;
@@ -183,7 +183,7 @@
             sumIons: sum, tds: tds, tdsMeasured: tdsIn != null, I: I, t: t, p: p, ph: ph, tC: tC,
             alkEq: alkEq, caCaCO3: caCaCO3, alkCaCO3: alkCaCO3,
             lsi: { Cchart: Cchart, pHs: pHsL, value: ph - pHsL, valid: tds <= 10000, band: band(ph - pHsL), tempOk: t <= 212,
-                carrier: { A: A, B: B, C: C, D: D, pHs: pHsCarrier, value: ph - pHsCarrier } },
+                approx: { A: A, B: B, C: C, D: D, pHs: pHsApprox, value: ph - pHsApprox } },
             sdi: { K: K, pCa: pCa, pAlk: pAlk, pHs: pHsS, value: ph - pHsS, band: band(ph - pHsS), tempOk: tC >= 0 && tC <= 90 },
             si: si, verdicts: verdicts, curve: curve, table: table
         };
@@ -277,7 +277,7 @@
         h += '<div class="rbox"><div class="rbox-title">Calcium Carbonate Indices</div>' +
             _row('Langelier saturation pH, pHs', _fx(L.pHs, 2)) +
             _row('Langelier index, LSI', _fx(L.value, 2)) +
-            _row('Langelier index, Carrier (1965) form (pre-v3.0 value)', _fx(L.carrier.value, 2)) +
+            _row('Langelier index, approximate 1965 form (pre-v3.0 value)', _fx(L.approx.value, 2)) +
             _row('Stiff–Davis K', _fx(S.K, 3)) +
             _row('Stiff–Davis saturation pH', _fx(S.pHs, 2)) +
             _row('Stiff–Davis index, S&DSI', _fx(S.value, 2)) +
@@ -286,8 +286,8 @@
             (S.tempOk ? '' : _warn('Temperature is outside the 0 to 90 °C range of the Stiff–Davis chart; K is extrapolated.')) +
             (L.valid && !L.tempOk ? _warn('Temperature is above 212 °F: the Langelier chart fit is extrapolated. Use Oddo–Tomson.') : '') +
             _note('Both indices use the measured pH and the analysis temperature. From v3.0 the LSI uses the ASTM D3739 ' +
-                'chart fit (DuPont 1992, USBR 2016 eq. 9: pHs = pCa + pAlk + C(TDS, T)), which reproduces the USBR worked ' +
-                'example (0.18); the Carrier (1965) form used before is shown for comparison (typically 0.02 to 0.06 lower). ' +
+                'chart fit (USBR 2016 eq. 9: pHs = pCa + pAlk + C(TDS, T)), which reproduces the USBR worked ' +
+                'example (0.18); the approximate 1965 form used before is shown for comparison (typically 0.02 to 0.06 lower). ' +
                 'Stiff–Davis K from the ASTM D4582 chart fit (USBR 2016 eqs. 13–14); on the USBR example it gives −0.04 against ' +
                 'the worksheet\'s 0.12, so treat |S&DSI| below about 0.2 as neutral. Positive values mean calcium carbonate ' +
                 'tends to deposit; values below −0.5 mean the water is aggressive to carbonate films.') +
