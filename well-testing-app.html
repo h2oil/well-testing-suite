@@ -11033,6 +11033,21 @@ window.calcVDrop=function(){
 // so write &amp; for a literal ampersand. Scope: engineering, usability and
 // platform changes only; aim for 3-10 items per release.
 const RELEASE_NOTES = [
+    { ver:'v3.3', date:'2026-11-01', title:'Build-up Surveillance &amp; PRiSM skin checks',
+      note:'A new page that interprets the shut-ins in permanent-gauge data and tracks skin over time, and a skin check for PRiSM analyses.',
+      items:[
+        ['new', 'Build-up Surveillance', 'Finds the shut-ins in permanent-gauge data, interprets each full build-up automatically and tracks skin, k, p* and productivity index over time, with delta and absolute skin alerts, the onset date and a forecast crossing date with its range. The page sits under Production &amp; Reservoir.'],
+        ['new', 'Rates over flowing hours', 'Daily allocated volumes are spread over the actual flowing hours, with allocation consistency checks and production-day and time-zone settings. Partial rate cuts are detected, put into the rate history and listed; they are not interpreted.'],
+        ['new', 'Review &amp; sign-off', 'An automated rule-based review whose evidence check ties every quoted number to the analysis, questions answered from the analysis, DRAFT until sign-off, a signature hash and an audit trail that each report verifies.'],
+        ['new', 'Gas wells &amp; injectors', 'Normalised pseudo-pressure for gas wells. The rate-dependent skin coefficient is taken only from tests in a stable-skin period and is withheld, with the reason, when the tests cannot separate it. Water-injector fall-offs are interpreted.'],
+        ['prism', 'Skin check', 'New Skin-check card: automatic IARF window, line-vs-match agreement, skin uncertainty with its composition, sensitivity, mechanical skin and a calibrated confidence label that quotes its measured single-build-up reliability next to the pooled rate.'],
+        ['prism', 'Closed circle model', 'New closed circular reservoir model (46 models).'],
+        ['report', 'Quick Report', 'Build-up surveillance section in the final report template; every statement carries an evidence reference. The App Store version is 3.3.'],
+        ['ux', 'Responsive analysis', 'Long imports and analyses run in short slices with progress and cancel, also on phones.'],
+        ['calc', 'Pipe Service Life materials', 'The material list has flexible hose and Alloy 625 (UNS N06625). A saved material that is no longer listed loads as the segment default with a visible note, instead of being treated as carbon steel.'],
+        ['fix', 'Chart ticks', 'A chart tick at minus zero reads 0, and the build-up charts choose tick decimals from the data range.'],
+        // <!-- v3.3 more items -->
+      ] },
     { ver:'v3.2', date:'2026-10-31', title:'Chemical Injection module &amp; flare line rework',
       note:'A new planner for every chemical injection line on a surface well-test spread: where to inject, how much, and the pump setting.',
       items:[
