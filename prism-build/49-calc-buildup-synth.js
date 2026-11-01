@@ -1306,7 +1306,12 @@
             var days = al.days, k = -1;
             for (var j = 0; j < days.length; j++) if (tc >= days[j].t0 && tc < days[j].t0 + 24) k = j;
             var dy = days[k];
-            var cut = ev.pb ? (1 - ev.pb.f) : 1;   // a partial cut before the closing: the post-cut rate
+            // A partial cut before the closing: the post-cut rate (§5.3). That is the generator's pb factor, or an intra-day
+            // rate decrease of at least 10 %: the engine's classification gate (§4.3 M§A4) makes a removed fraction f̂ ≥ 0.1
+            // a partial cut, so a correct reading of the pressure and the volumes gives the rate after it. A smaller
+            // decrease or an increase makes no event, and the day's volume over its flowing hours stays the reading.
+            var pb = ev.pb || ((ev.intra && 1 - ev.intra.factor >= 0.1) ? { f: 1 - ev.intra.factor, lead: ev.intra.lead } : null);
+            var cut = pb ? (1 - pb.f) : 1;
             if (SC.alloc.ignoresShutin && k > 0) {
                 var ref = [];
                 for (var m = k - 1; m >= 0 && ref.length < 3; m--) if (days[m].hOn >= 23.5) ref.push(24 * days[m].Vg / days[m].hOn);
@@ -1317,8 +1322,8 @@
                 // a closing ramp counts as half its length (two half-rate steps, t_c at its midpoint, §4.3): the true
                 // flowing hours up to t_c are hOn − ramp/2, so 24·V/h reads the pre-ramp rate exactly
                 var rIn = MM.max(0, MM.min(rampH, tc - dy.a)), base = 24 * dy.Vg / MM.max(1e-6, dy.hOn - 0.5 * rIn);
-                if (ev.pb) {
-                    var h2 = MM.max(0, tc - MM.max(dy.a, tc - ev.pb.lead)), h1 = MM.max(0, dy.hOn - h2), f0 = ev.pb.f;
+                if (pb) {
+                    var h2 = MM.max(0, tc - MM.max(dy.a, tc - pb.lead)), h1 = MM.max(0, dy.hOn - h2), f0 = pb.f;
                     base = (1 - f0) * 24 * dy.Vg / (h1 + (1 - f0) * MM.max(1e-6, h2 - 0.5 * rIn));
                 }
                 qCorrect = base;
