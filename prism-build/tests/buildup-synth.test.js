@@ -231,18 +231,19 @@ module.exports = [
       assert(SSg.slice(0, 6).every((s) => s - baseP < 2 - M), 'no delta alert on the constant-skin tests');
       assert(SSg[7] - baseP >= 2 + M && tests[7].Smech - first6[0].Smech >= 2 + M, 'test 8 confirms');
       // gas B is Bg in rb/Mscf (q in Mscf/d) and the WellInput passes the run layer's well check. Explicit stub of that check
-      // (§3: another WP's function in a WP4 test): WP2's WELL_RANGES in 49-calc-buildup-run.js, copied here.
-      const RANGES = { h: [1, 2000], phi: [0.01, 0.5], mu: [0.01, 1000], B: [0.5, 5], ct: [1e-7, 1e-3], rw: [0.1, 2] };
+      // (§3: another WP's function in a WP4 test): WP2's WELL_RANGES in 49-calc-buildup-run.js, copied here, with its gas B
+      // range B_GAS [0.3, 5].
+      const RANGES = { h: [1, 2000], phi: [0.01, 0.5], mu: [0.01, 1000], B: [0.3, 5], ct: [1e-7, 1e-3], rw: [0.1, 2] };
       const wellOk = (w) => Object.keys(RANGES).filter((k) => !(w[k] >= RANGES[k][0] && w[k] <= RANGES[k][1]));
       const SY = env(ctx).SY;
       const one = SY.generate(SY.caseFromSeed(100400, { lite: true })), seq = SY.generateSequence(200112, { lite: true });
       [['demo', d.well], ['single case 100400', one.well], ['sequence 200112', seq.well]].forEach(([what, w]) => {
         assert.strictEqual(w.fluid, 'gas', what);
-        assert(w.B >= 0.5 && w.B <= 5, what + ': gas B ' + w.B + ' rb/Mscf');
+        assert(w.B >= 0.3 && w.B <= 5, what + ': gas B ' + w.B + ' rb/Mscf');
         deq(assert, wellOk(w), [], what + ': passes the well check');
       });
       assert.near(d.well.B, 5.035 * d.info.gasRef.z * (220 + 459.67) / d.info.gasRef.p, 1e-4 * d.well.B, 'Bg = 5.035·z·T/p at the reference pressure');
-      for (let s = 100388; s < 100468; s++) { const cs = SY.caseFromSeed(s); assert(cs.given.B >= 0.52 && cs.given.B <= 5, s + ' gas B ' + cs.given.B); }
+      for (let s = 100388; s < 100468; s++) { const cs = SY.caseFromSeed(s); assert(cs.given.B >= 0.32 && cs.given.B <= 5, s + ' gas B ' + cs.given.B); }
       // S′ = S + D·q: the constant-skin tests differ by D·Δq = 1.0 < 2 (no delta alert expected)
       const Sp = first6.map((t) => t.S);
       assert.near(Math.max(...Sp) - Math.min(...Sp), 1.0, 1e-9, 'S′ spread on the constant tests');

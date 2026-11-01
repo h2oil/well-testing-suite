@@ -1781,11 +1781,11 @@
                 break;
         }
         // rejection: Δp(Δt_end) ≥ 5 psi and pwf ≥ 50 psia (rate rescaled first, then k / h redrawn)
-        // gas: keep the formation volume factor inside the engines' accepted range (B 0.5–5 rb/Mscf): a very high p_i
-        // at a low temperature (Bg < 0.52 at p_i) is lowered until Bg(p_i) = 0.53 (flagged gasPiLimited)
+        // gas: keep the formation volume factor inside the engines' accepted range (gas B 0.3–5 rb/Mscf): a very high p_i
+        // at a low temperature (Bg < 0.32 at p_i) is lowered until Bg(p_i) = 0.33 (flagged gasPiLimited)
         if (fluid === 'gas') {
             var pv0 = gasPVT(cs.gas, MM.max(cs.pi * 1.6, 2000));
-            for (var lim0 = 0; lim0 < 8; lim0++) { var bg0 = pv0.props(cs.pi).Bg; if (bg0 >= 0.52) break; cs.pi *= bg0 / 0.53; cs.gasPiLimited = true; }
+            for (var lim0 = 0; lim0 < 8; lim0++) { var bg0 = pv0.props(cs.pi).Bg; if (bg0 >= 0.32) break; cs.pi *= bg0 / 0.33; cs.gasPiLimited = true; }
         }
         var pvt = fluid === 'gas' ? gasPVT(cs.gas, MM.max(cs.pi * 1.6, 2000)) : null;
         // A rescale aims at a Δp(Δt_end) level drawn per case (log-uniform 6–60 psi), so rescaled cases do not pile up at
