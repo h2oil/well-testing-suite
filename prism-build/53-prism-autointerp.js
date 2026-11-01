@@ -2620,7 +2620,10 @@
             // quoted at the stored precision (STORE_SF), so a stored result's confidence re-derives exactly from its evidence
             // once file 55 carries calibrated rates (EN23)
             var q = function (v) { return _num(v) ? _sfRound(v, STORE_SF) : (v === undefined ? null : v); };
-            if (a && bRow) rates = { ks: { rate: q(a.right), lo: q(a.lo), hi: q(a.hi) }, headline: { rate: q(bRow.fullyRight), lo: q(bRow.lo), hi: q(bRow.hi) } };
+            // single: the single-build-up row of the same label (file 55 row.single, Wilson interval). The pooled rate is
+            // dominated by the sequence-well tests; a single test is quoted with both (§5.1, §5.7).
+            var sg = function (r) { var s = r && r.single; return (s && _num(s.n) && s.n > 0) ? { n: s.n, rate: q(s.rate), lo: q(s.lo), hi: q(s.hi) } : null; };
+            if (a && bRow) rates = { ks: { rate: q(a.right), lo: q(a.lo), hi: q(a.hi), single: sg(a) }, headline: { rate: q(bRow.fullyRight), lo: q(bRow.lo), hi: q(bRow.hi), single: sg(bRow) } };
         }
         return { ks: ks, model: model, headline: headline, stage: ev.stage === 'final' ? 'final' : 'pass1', reasons: reasons, rates: rates,
                  outsideCalibration: !!ev.outsideEnvelope, calVersion: c ? (c.version || null) : null, calibrated: calibrated, ev: ['K1', 'K2'] };
@@ -2644,6 +2647,35 @@
         if (_num(ev.r3)) add(Math.abs(ev.r3 - 1) * 100, th.rateTolPct);
         if (_num(ev.dBicChosen) && ev.chosenKey && ev.chosenKey !== 'homogeneous') add(Math.abs(ev.dBicChosen), th.tauBic);
         return d.length ? Math.min.apply(null, d) : 1;
+    }
+    // nearThreshold(ev, cal, expect, opts) — is a label that differs from its expectation explained by a threshold? (§5.6)
+    // Near only when BOTH hold: the evidence lies within the selection margin m (default 0.1, normalised as in
+    // thresholdMargin) of a calibrated threshold, AND moving ONE calibrated threshold by the same m (×(1 ± m)) reproduces
+    // the expected k/S and headline labels from this evidence. A difference with another cause (a flag, the IARF grade,
+    // a KC cap, the model choice) is never "near", however close some unrelated evidence item is to its threshold.
+    // → {near, margin, key, dir}: key and dir (+1 / −1) name the move that reproduces the expectation (null when none).
+    var NEAR_KEYS = ['snrHigh', 'snrLow', 'sErrHigh', 'sErrLow', 'fairSpanHigh', 'pointSkinSpread', 'disagreeDS', 'disagreeKPct',
+                     'reachFactor', 'kHeldRmsK', 'rateTolPct', 'tauBic'];
+    function nearThreshold(ev, cal, expect, opts) {
+        opts = opts || {};
+        var m = _pos(opts.margin) ? opts.margin : 0.1;
+        var c = _cal(cal), th = _thr(c), ex = expect || {};
+        var mg = ev ? thresholdMargin(ev, th) : null;
+        var out = { near: false, margin: _num(mg) ? mg : null, key: null, dir: null };
+        if (!ev || !c || !_num(mg) || !(mg < m) || !ex.ks || !ex.headline) return out;
+        for (var i = 0; i < NEAR_KEYS.length; i++) {
+            var k = NEAR_KEYS[i];
+            if (!_num(th[k]) || !th[k]) continue;
+            for (var s = -1; s <= 1; s += 2) {
+                var t2 = {}; Object.keys(th).forEach(function (kk) { t2[kk] = th[kk]; });
+                t2[k] = th[k] * (1 + s * m);
+                var c2 = {}; Object.keys(c).forEach(function (kk) { c2[kk] = c[kk]; });
+                c2.thresholds = t2;
+                var lab = confidence(ev, c2);
+                if (lab.ks === ex.ks && lab.headline === ex.headline) { out.near = true; out.key = k; out.dir = s; return out; }
+            }
+        }
+        return out;
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -3293,6 +3325,7 @@
     AI.storedSensitivity = storedSensitivity;
     AI.confidence = confidence;
     AI.thresholdMargin = thresholdMargin;
+    AI.nearThreshold = nearThreshold;
     AI.rinv = rinv;
     AI.compactHistory = compactHistory;
     AI.gasTable = gasTable;

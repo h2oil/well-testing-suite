@@ -1154,6 +1154,12 @@
                     vals[row.label + '_rate'] = FX('pct100', { x: pr + '.' + k[2] }, 'pct');
                     vals[row.label + '_lo'] = FX('pct100', { x: pr + '.lo' }, 'pct');
                     vals[row.label + '_hi'] = FX('pct100', { x: pr + '.hi' }, 'pct');
+                    // the single-build-up row of the label (file 55 row.single): the pooled rate is dominated by the
+                    // sequence-well tests, a single test is closer to this population (§5.7)
+                    if (row.single && _isNum(row.single.n) && row.single.n > 0) {
+                        vals[row.label + '_sn'] = P(pr + '.single.n', 'n');
+                        vals[row.label + '_srate'] = FX('pct100', { x: pr + '.single.rate' }, 'pct');
+                    }
                 });
             }
             add(k[0], 'K', null, k[3], vals);
@@ -2823,12 +2829,18 @@
         var b = [], cal = c.roots.cal;
         if (!cal) { b.push(_notes('Notes', 'The calibration table is not available in this build, so the labels are not calibrated.', {}, ['K1'])); return { id: 'S12', title: 'Confidence calibration', blocks: b }; }
         [['K1', 'ksTable', 'bu_tbl_cal_ks', 'k and S right (%)'], ['K2', 'table', 'bu_tbl_cal_hl', 'Fully right (%)']].forEach(function (k) {
-            var rows = _arr(cal[k[1]]).slice(0, MAX_ROWS).filter(function (r) { return r && r.label; }).map(function (r) {
-                return [r.label, c.V(k[0], r.label + '_n'), c.V(k[0], r.label + '_rate'), c.V(k[0], r.label + '_lo'), c.V(k[0], r.label + '_hi')];
+            var all = _arr(cal[k[1]]).slice(0, MAX_ROWS).filter(function (r) { return r && r.label; });
+            var withSingle = all.some(function (r) { return r.single && _isNum(r.single.n) && r.single.n > 0; });
+            var rows = all.map(function (r) {
+                var row = [r.label, c.V(k[0], r.label + '_n'), c.V(k[0], r.label + '_rate'), c.V(k[0], r.label + '_lo'), c.V(k[0], r.label + '_hi')];
+                if (withSingle) row.push(c.V(k[0], r.label + '_sn'), c.V(k[0], r.label + '_srate'));
+                return row;
             });
-            if (rows.length) b.push(_table(k[2], [{ text: 'Label', cat: null }, { text: 'Cases', cat: null }, { text: k[3], cat: null }, { text: 'Interval low (%)', cat: null }, { text: 'Interval high (%)', cat: null }], rows, [k[0]]));
+            var head = [{ text: 'Label', cat: null }, { text: 'Cases', cat: null }, { text: k[3], cat: null }, { text: 'Interval low (%)', cat: null }, { text: 'Interval high (%)', cat: null }];
+            if (withSingle) head.push({ text: 'Single build-ups', cat: null }, { text: 'Single build-ups: ' + k[3].charAt(0).toLowerCase() + k[3].slice(1), cat: null });
+            if (rows.length) b.push(_table(k[2], head, rows, [k[0]]));
         });
-        b.push(cal.calibrated ? _notes('Notes', 'Labels calibrated on {n} synthetic build-ups ({v}); the rates are out of sample, with Wilson intervals.', { n: c.V('K1', 'nBuildups'), v: c.V('K1', 'version') }, ['K1', 'K2'])
+        b.push(cal.calibrated ? _notes('Notes', 'Labels calibrated on {n} synthetic build-ups ({v}); the rates are out of sample, with Wilson intervals. They are pooled over single build-ups and the tests of sequence wells; the single build-up columns are the harder population that one test is closer to.', { n: c.V('K1', 'nBuildups'), v: c.V('K1', 'version') }, ['K1', 'K2'])
                               : _notes('Notes', 'Labels are not yet calibrated ({v}): every label is capped at medium (KC2).', { v: c.V('K1', 'version') }, ['K1', 'K2']));
         return { id: 'S12', title: 'Confidence calibration', blocks: b };
     }

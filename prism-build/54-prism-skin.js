@@ -1212,8 +1212,11 @@
     }
     function rateText(c) {
         if (!c || !c.rates || !c.rates.ks) return '';
-        var r = c.rates.ks;
-        return 'k and S right in ' + fmt(100 * r.rate, 0) + ' % of calibration cases labelled ' + lvl(c.ks) + ' (' + fmt(100 * r.lo, 0) + '–' + fmt(100 * r.hi, 0) + ' %).';
+        var r = c.rates.ks, sg = r.single;
+        // the pooled rate is dominated by the tests of the sequence wells; a single build-up is quoted with the single-case
+        // row of the same label next to it (§5.1, §5.7)
+        return 'k and S right in ' + fmt(100 * r.rate, 0) + ' % of calibration cases labelled ' + lvl(c.ks) + ' (' + fmt(100 * r.lo, 0) + '–' + fmt(100 * r.hi, 0) + ' %)' +
+            (sg && isNum(sg.rate) ? '; in ' + fmt(100 * sg.rate, 0) + ' % of single build-ups (' + fmt(100 * sg.lo, 0) + '–' + fmt(100 * sg.hi, 0) + ' %, ' + sg.n + ' cases).' : '.');
     }
     var GRADE_TEXT = { good: 'good', fair: 'fair', none: 'none' };
     function iarfText(iw) {

@@ -2236,7 +2236,7 @@
         var S = B.synth, R = _Run(), cal = G.PRiSM_autoInterpCal, root = _root();
         if (!S || !R || !_calReady() || !root || _run) return;
         var vo = _byId('bu_val_out'); if (vo) vo.removeAttribute('data-note');
-        var cases = cal.inApp.slice(0, 24), i = 0, done = 0, same = 0, near = 0, diffs = [], sub = null;
+        var cases = cal.inApp.slice(0, 24), i = 0, done = 0, same = 0, nears = [], diffs = [], sub = null;
         var run = { token: ++_token, wellId: _wellId(), cancelled: false };
         _run = run; _buttons();
         var cancel = _shouldCancel(run, root);
@@ -2274,11 +2274,13 @@
                         var an = sub.job.result(), m = S.scoreAnalysis(an, sub.sc), sco = m ? m.score : null, ex = c.expect || {};
                         var lab = sco && sco.label ? sco.label : {};
                         var ok = !!sco && sco.status === ex.status && (lab.ks || null) === (ex.ks || null) && (lab.headline || null) === (ex.headline || null);
-                        // a difference whose recomputed evidence lies within the stored margin of a threshold is "near a
-                        // threshold" (§5.6), not a failure
+                        // a difference is "near a threshold" (§5.6) only when the status matches, the recomputed evidence
+                        // lies within the selection margin (0.1) of a calibrated threshold AND moving that one threshold
+                        // by 0.1 reproduces the expected labels (PRiSM_autoInterp.nearThreshold); any other difference is
+                        // listed as different. Either way the check is not a pass (no ✓).
                         var ev = m && m.test && m.test.result ? m.test.result.evidence : null, AI = G.PRiSM_autoInterp;
-                        var mNow = (ev && AI && typeof AI.thresholdMargin === 'function') ? AI.thresholdMargin(ev, cal.thresholds) : null;
-                        if (ok) same++; else if (_fin(c.margin) && _fin(mNow) && mNow <= c.margin) near++; else diffs.push(String(c.seed));
+                        var nt = (!ok && sco && sco.status === ex.status && ev && AI && typeof AI.nearThreshold === 'function') ? AI.nearThreshold(ev, cal, ex) : null;
+                        if (ok) same++; else if (nt && nt.near) nears.push(String(c.seed)); else diffs.push(String(c.seed));
                         done++; i++; sub = null;
                     }
                 } catch (e) { diffs.push(String(c.seed)); done++; i++; sub = null; }
@@ -2288,7 +2290,9 @@
         };
         _drive(job, { shouldCancel: cancel, onProgress: function (f) { _status('bu_val_out', '', 'Checking… ' + Math.round(f * 100) + ' %'); } }).then(function () {
             if (_run === run) _run = null;
-            _status('bu_val_out', diffs.length ? 'warn' : 'ok', same + ' of ' + cases.length + ' cases as expected' + (near ? ', ' + near + ' near a threshold' : '') + (diffs.length ? '; different: seeds ' + diffs.slice(0, 8).join(', ') : '') + '.');
+            _status('bu_val_out', (diffs.length || nears.length) ? 'warn' : 'ok', same + ' of ' + cases.length + ' cases as expected' +
+                (nears.length ? ', ' + nears.length + ' near a threshold (seeds ' + nears.slice(0, 8).join(', ') + ')' : '') +
+                (diffs.length ? '; different: seeds ' + diffs.slice(0, 8).join(', ') : '') + '.');
             _buttons();
         }, function () { if (_run === run) _run = null; _status('bu_val_out', 'warn', 'Check cancelled.'); _buttons(); });
     }
