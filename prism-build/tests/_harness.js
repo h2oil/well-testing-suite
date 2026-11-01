@@ -8,9 +8,11 @@
 // loadApp(opts) options (all optional):
 //   fromSources  true (default) — rebuild the main script IN MEMORY from the
 //                current prism-build/ sources (phase1-2, phase3-4, round2..6,
-//                round8, round9 = every 4N-calc-*.js plus any such name in
+//                round 7 = 31-wts-sim / 32-wts-3d / 38-wts-live, round8,
+//                round9 = every 4N-calc-*.js plus any such name in
 //                sourceOverrides, round10 = every 6N-*.js live-data file;
-//                round 7 is left as it is in the HTML). A source that
+//                round 7 is rebuilt from 31/32/38 like the others, so
+//                sourceOverrides for those files reach the app). A source that
 //                fails a syntax check falls back to its git HEAD version (with
 //                a warning naming the file). false — use well-testing-app.html
 //                exactly as it is on disk.
@@ -85,7 +87,11 @@ const BUILD_DIR = path.resolve(__dirname, '..');
 const REPO = path.resolve(BUILD_DIR, '..');
 const HTML_PATH = path.join(REPO, 'well-testing-app.html');
 
-// Pipeline in injection order. Round 7 is never rebuilt here.
+// Pipeline in injection order. Round 7 (Well Test Simulator: 31-wts-sim,
+// 32-wts-3d, 38-wts-live) is rebuilt from 31/32/38 like the others, after
+// round 6 and before round 8 (inject-round8 anchors after the Round-7 END).
+// On an unchanged tree the in-memory build equals the HTML on disk
+// (wts-equipment.test.js checks it).
 const PIPELINE = [
   ['concat-phase1-2', 'inject-phase1-2'],
   ['concat-phase3-4', 'inject-phase3-4'],
@@ -94,6 +100,7 @@ const PIPELINE = [
   ['concat-round4', 'inject-round4'],
   ['concat-round5', 'inject-round5'],
   ['concat-round6', 'inject-round6'],
+  ['concat-round7', 'inject-round7'],   // Well Test Simulator: 31-wts-sim, 32-wts-3d, 38-wts-live
   ['concat-round8', 'inject-round8'],
   ['concat-round9', 'inject-round9'],   // plug-in calculators: every prism-build/4N-calc-*.js
   ['concat-round10', 'inject-round10'], // live data: every prism-build/6N-*.js (Modbus, Mini WellOS)
