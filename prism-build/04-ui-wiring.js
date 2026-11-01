@@ -2593,8 +2593,9 @@ function _fitResultsHTML(fit) {
             '<td class="prism-num">' + _esc(_ciText(key, ci[key], v)) + '</td><td>' + flag + '</td></tr>';
     };
     PHYS_ORDER.forEach(function (k) { addRow(k, phys[k], PHYS_LABELS[k] || (k === 'rinv' ? 'Radius of investigation' : k), PHYS_UNITS[k] || '-'); });
-    var dist = phys.distances_ft || {};
-    for (var dk in dist) if (Object.prototype.hasOwnProperty.call(dist, dk)) addRow('dist_' + dk, dist[dk], 'Distance ' + dk, 'ft');
+    // a model may name its distances (distLabel, e.g. the closed circle's drainage radius r_e = reD·rw); else 'Distance <key>'
+    var dist = phys.distances_ft || {}, mEntry = fit.modelKey ? _MODELS()[fit.modelKey] : null, dLab = mEntry && mEntry.distLabel && typeof mEntry.distLabel === 'object' ? mEntry.distLabel : {};
+    for (var dk in dist) if (Object.prototype.hasOwnProperty.call(dist, dk)) addRow('dist_' + dk, dist[dk], typeof dLab[dk] === 'string' && dLab[dk] ? dLab[dk] : 'Distance ' + dk, 'ft');
     var btRaw = fit.bootstrap || null;
     var bt = (btRaw && btRaw.percentiles) ? btRaw.percentiles : (fit.percentiles || fit.pBands || btRaw);
     var btRows = '';

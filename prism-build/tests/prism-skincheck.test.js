@@ -881,6 +881,15 @@ module.exports = [
       }
       assert(m.notes.indexOf('Calibrated on build-ups; indicative for drawdowns.') !== -1);
       if (eng.stubbed) assert.strictEqual(eng.calls.specs[eng.calls.specs.length - 1].testType, 'buildup');
+      // WP9: a drawdown card speaks of 'this test', never of a shut-in it did not have
+      const dh = mountHost(app);
+      w.PRiSM_skinCheck.renderPanel(dh);
+      const reachSec = dh.querySelector('#prism_skc_reach');
+      if (reachSec && /reachable|this test/.test(reachSec.textContent)) assert(!/; shut-in /.test(reachSec.textContent), 'reach row: ' + reachSec.textContent);
+      if (m.reach && m.reach.reachable && Number.isFinite(m.reach.fairShut_h)) assert(/; this test /.test(reachSec.textContent), 'reach row says this test: ' + reachSec.textContent);
+      assert(!/pwf at shut-in/.test(dh.querySelector('#prism_skc_root').textContent), 'no "pwf at shut-in" on a drawdown');
+      assert.strictEqual(dh.innerHTML.split('Calibrated on build-ups; indicative for drawdowns.').length - 1, 1, 'the calibration note once');
+      dh.parentNode.removeChild(dh);
       sk5bInjection(app, assert);
       sk5bNoTp(app, assert, eng);
     },
@@ -935,6 +944,35 @@ module.exports = [
       assert(log.some((e) => e.type === 'prism:fit-updated' && e.source === 'semilog'), 'the C7 event of the user action');
       // The card re-rendered on the event and is still mounted.
       assert(app.el('prism_skc_root'), 'card still mounted');
+    },
+  },
+  {
+    name: 'SK7b card (WP9): after "Use this window" keyboard focus returns to the re-created button; with no storage C the C-held button is disabled with the reason shown; the calibration note appears once',
+    wp: WP,
+    run(app, assert) {
+      const w = setupPRiSM(app);
+      engine(app);
+      const host = mountHost(app);
+      w.PRiSM_skinCheck.renderPanel(host);
+      const btn = app.el('prism_skc_usewin');
+      assert(btn && !btn.disabled, 'Use this window enabled');
+      btn.focus();
+      app.click('prism_skc_usewin');
+      app.flushUntilIdle(5000);
+      const now = host.querySelector('#prism_skc_usewin');
+      assert(now && now !== btn, 'the card re-rendered (a new button)');
+      assert.strictEqual(app.document.activeElement, now, 'focus on the re-created button, not lost: ' + (app.document.activeElement && (app.document.activeElement.id || app.document.activeElement.tagName)));
+      const NOTE = 'Calibrated on build-ups; indicative for drawdowns.';
+      assert.strictEqual(host.innerHTML.split(NOTE).length - 1, 1, 'the calibration note once');
+      // a match without wellbore storage C: the refits cannot run, so the button says why before any click
+      w.PRiSM_setLastFit(app.toWin({ modelKey: 'homogeneous', kind: 'pressure', params: { S: 2.5 }, phys: { k: 45, S: 2.5 }, r2: 0.999, converged: true }));
+      app.flushUntilIdle(5000);
+      w.PRiSM_skinCheck.renderPanel(host);
+      const m = w.PRiSM_skinCheck._ui.model;
+      assert.deepStrictEqual([m.cheldHasC, m.cheldAvailable], [false, false], 'no C: not available');
+      assert.strictEqual(host.querySelector('#prism_skc_cheld').disabled, true, 'button disabled');
+      const why = host.querySelector('#prism_skc_cheld_why');
+      assert(why && /wellbore storage C/.test(why.textContent), 'the reason is shown: ' + (why && why.textContent));
     },
   },
   {

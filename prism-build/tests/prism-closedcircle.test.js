@@ -141,4 +141,34 @@ module.exports = [
       assert.ok(typeof app.win.PRiSM_getModelSchematic === 'function' && /<svg/.test(app.win.PRiSM_getModelSchematic('closedCircle')), 'schematic');
     },
   },
+  {
+    name: 'CC6 (WP9) the drainage radius is labelled "Drainage radius r_e" (not "Distance reD"); a fitted r_e beyond the radius of investigation warns that the boundary is not seen',
+    wp: 'WP1', timeoutMs: 60000,
+    run(app, assert) {
+      const W = app.win, AI = W.PRiSM_autoInterp;
+      assert.deepEqual(JSON.parse(JSON.stringify(W.PRiSM_MODELS.closedCircle.distLabel)), { reD: 'Drainage radius r_e' });
+      // a 72 h build-up after 2,000 h at 800 STB/d in a 5,000 ft circle: r_inv ≈ 1,300 ft, so the boundary is not seen
+      const re = 5000, spec = synthClosed(W, { k: 45, S: 0, C: 0.002, reD: re / 0.354, steps: [{ t: 0, q: 800 }, { t: 2000, q: 0 }], dtEnd: 72 });
+      const prep = AI.prepare(app.toWin(spec));
+      assert.ok(prep.ok);
+      const fit = W.PRiSM_fitPhysical('closedCircle', prep.adata, prep.well, { entry: AI.gridEntry('closedCircle', prep), isolated: true, singleStart: true, maxIter: 3,
+        start: { k: 45, C: 0.002, S: 0, reD: re / 0.354 }, freeze: { reD: true } });
+      assert.ok(fit && fit.ok, 'fit ran: ' + (fit && fit.reason));
+      const reFt = fit.phys.distances_ft.reD, rinv = fit.phys.rinv;
+      assert.ok(reFt > rinv, 'precondition: r_e ' + reFt + ' ft beyond r_inv ' + rinv + ' ft');
+      const w = Array.from(fit.warnings).find((x) => /beyond the radius of investigation/.test(x));
+      assert.ok(w && /boundary is not seen/.test(w) && /r_e ≥ r_inv/.test(w), 'r_e warning: ' + JSON.stringify(Array.from(fit.warnings)));
+      // the fit results table
+      const host = W.document.createElement('div');
+      W.PRiSM_renderFitResults(host, fit);
+      const html = host.innerHTML;
+      assert.includes(html, 'Drainage radius r_e');
+      assert.ok(!/Distance reD/.test(html), 'no "Distance reD" label');
+      assert.includes(html, 'beyond the radius of investigation');
+      // other models keep the generic label
+      const h2 = W.document.createElement('div');
+      W.PRiSM_renderFitResults(h2, { modelKey: 'linearBoundary', ok: true, r2: 0.999, converged: true, phys: { k: 45, distances_ft: { dF: 300 } }, warnings: [] });
+      assert.includes(h2.innerHTML, 'Distance dF');
+    },
+  },
 ];

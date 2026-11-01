@@ -2052,6 +2052,11 @@ function PRiSM_fitPhysical(modelKey, adata, well, opts) {
             warnings.push(refKey + ' and S are strongly correlated (r = ' + best.corr[iS][iL].toFixed(3) + ') — ' + refKey + ' is not identifiable from these data.');
         }
     }
+    // A drainage radius beyond the radius of investigation was never seen by the data (closed circle, reD·rw)
+    var reFt = physOut.distances_ft && _num(physOut.distances_ft.reD) ? physOut.distances_ft.reD : null;
+    if (reFt !== null && _pos(physOut.rinv) && reFt > physOut.rinv) {
+        warnings.push('r_e (' + _fmtNum(reFt) + ' ft) is beyond the radius of investigation (' + _fmtNum(physOut.rinv) + ' ft): the boundary is not seen, so the data only show r_e ≥ r_inv (the fitted r_e is not determined).');
+    }
     if (isFinite(r2) && r2 < 0.9) warnings.push('Poor match (R² = ' + r2.toFixed(3) + ').');
     // A fit stuck at a bound or with a poor match is not a converged result,
     // whatever the LM stop criterion said ('stationary' / 'plateau' at a bound).

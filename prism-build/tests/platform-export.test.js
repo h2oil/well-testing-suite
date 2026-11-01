@@ -27,7 +27,7 @@ module.exports = [
     name: 'CSV export: long format with part / section / row / item / value / number / unit, BOM, formula-safe cells',
     wp: WP,
     async run(app, assert) {
-      app.storage.setItem('h2oil_client_info', JSON.stringify({ client: 'Acme', well: '=W-1' }));
+      app.storage.setItem('h2oil_client_info', JSON.stringify({ client: 'Operator Energy Ltd', well: '=W-1' }));
       go(app, 'gasdeliv');
       app.click('gd_go');
       await app.win.exportPageCSV();

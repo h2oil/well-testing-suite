@@ -570,4 +570,51 @@ module.exports = [
       assert.equal(JSON.stringify(run(app, spec)), txt, 'identical re-run');
     },
   },
+  {
+    name: 'EN24 gas pseudo-time (WP9): Δt_end, Δt_e,end and the bins share the pseudo-time axis while the tide is fitted and removed on real time (a real-time M2 tide leaves k and S′ as without it); r_inv and the reported Δt_end stay real; S_tc / S_pwf convert psi to normalised pseudo-pressure (dp_n/dp at pwf0)',
+    wp: 'WP1',
+    run(app, assert) {
+      const AI = AIof(app), W = app.win;
+      const gas = { sg: 0.65, T_F: 200, co2: 2, h2s: 0, n2: 1, pseudoTime: true, pdew: null };
+      const piP = 2400, k = 10, S = 3, C = 0.01, q = 5000, tc = 500;
+      const tideA = 0.5, w2 = 2 * Math.PI / 12.4206;
+      const make = (withTide) => {
+        let pr = 1900, sp = null, tbl = null;
+        for (let it = 0; it < 3; it++) {
+          tbl = AI.gasTable(app.toWin(Object.assign({ pmax: 4000 }, gas)));
+          tbl.setRef(pr);
+          const ref = tbl.ref;
+          const sy = synth(W, { k, S, C, q, steps: [{ t: 0, q }, { t: tc, q: 0 }], dtEnd: 72, pi: tbl.pn(piP), well: { mu: ref.mu, B: ref.Bg }, qUnit: 'Mscf/d', fluid: 'gas', gas,
+                                extra: withTide ? (dt) => tideA * Math.cos(w2 * (tc + dt)) : null });
+          sp = sy.spec;
+          sp.p = sp.p.map((v) => tbl.pOfPn(v)); sp.pwf0 = tbl.pOfPn(sp.pwf0);
+          pr = 0.5 * (sp.pwf0 + sp.p[sp.p.length - 1]);
+        }
+        return sp;
+      };
+      const sT = make(true), s0 = make(false);
+      const pT = prepOf(app, sT);
+      assert.ok(pT.ok, 'prepared');
+      assert.near(pT.dtEndReal, 72, 1e-9, 'the real shut-in length is kept');
+      assert.ok(Math.abs(pT.dtEnd - 72) > 0.5, 'Δt_end is on the pseudo-time axis (' + pT.dtEnd + ' h)');
+      assert.near(pT.dtEnd, pT.raw.dt[pT.raw.dt.length - 1], 1e-9, 'Δt_end = the last pseudo-time sample');
+      const dteB = pT.bins.dte[pT.bins.dte.length - 1];
+      assert.ok(dteB <= pT.dteEnd * (1 + 1e-9) && dteB >= 0.9 * pT.dteEnd, 'Δt_e,end on the bins\' axis: bins end ' + dteB + ' vs ' + pT.dteEnd);
+      assert.near(pT.dteEnd, Math.exp(pT.time.lnDte(pT.dtEnd)), 1e-9);
+      assert.strictEqual(pT.tideRemoved, true, 'tide removed (index ' + pT.rTide + ')');
+      const rT = run(app, sT), r0 = run(app, s0);
+      shapeOk(assert, 'BuildupResult', rT);
+      assert.rel(rT.final.k, r0.final.k, 0.02, 'k as without the tide');
+      assert.near(rT.final.gas.Sprime, r0.final.gas.Sprime, 0.1, 'S′ as without the tide');
+      assert.near(rT.evidence.dtEnd_h, 72, 1e-6, 'reported Δt_end is real');
+      assert.rel(rT.evidence.dteEnd_h, pT.dteEnd, 1e-5, 'evidence Δt_e,end on the bins\' axis');
+      assert.rel(rT.final.rinv_ft, AI.rinv(rT.final.k, 72, app.toWin(sT.well)), 1e-5, 'r_inv from the real Δt_end');
+      // S_pwf in normalised pseudo-pressure: 1.1513·(dp_n/dp at pwf0)·se/m
+      const sp2 = make(false); sp2.pwf0SE = 3; sp2.gas = Object.assign({}, sp2.gas, { pseudoTime: false });
+      const r2 = run(app, sp2), p2 = prepOf(app, sp2), gt = p2.gasTable;
+      const dpn = (gt.ref.mu * gt.ref.z / gt.ref.p) * sp2.pwf0 / (gt.muOf(sp2.pwf0) * gt.zOf(sp2.pwf0));
+      assert.ok(dpn < 0.98 && dpn > 0.5, 'dp_n/dp at pwf0 differs from 1 at this pressure: ' + dpn);
+      assert.rel(r2.sErr.sPwf, 1.1513 * dpn * 3 / r2.final.m, 1e-4, 'S_pwf converted');
+    },
+  },
 ];
