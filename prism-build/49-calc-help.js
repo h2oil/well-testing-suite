@@ -1,13 +1,6 @@
-// 49-calc-help.js — Help & User Guide page (route help), WTS_help API, search and the one guide renderer
-// for screen and print (docs/HELP-GUIDE-PLAN.md §2, WP-H). Content: data modules 48-calc-help-<group>.js push
-// { group, routes: [...], build() → { guides, start, tasks, course, scenarios, faq, glossary } } into
-// WTS_helpContent.factories; load() runs them once, on the first Help open (shapes: tests/_help-model.js).
-// Images: G.WTS_helpManifest.files['<folder>/<shot>-d.webp'] = { w, h, bytes, h8 } (generated, WP-S).
-// API (WTS_help, merged — 49-calc-help-print.js loads first): load, open(route, ctx), mount(body),
-// renderGuide(route, opts {units: current|both|imperial, print, imgBase, dataUris, images, headings}), renderBlocks,
-// md, search(q), syncHeader(page), hasGuide, titleOf, show, goTo; hooks H.printMenu(slot), H.onShow(view).
-// Prefs: wtspref_help_last, wtspref_help_offline. #help_root is .rp-skip, data-rp-nosnap, data-no-persist.
-// One IIFE, no timers, no polling, no function wrapping; loads without document.
+// 49-calc-help.js — Help & User Guide page (route help), WTS_help API, search and the guide renderer for screen and print
+// (docs/HELP-GUIDE-PLAN.md §2, WP-H). Content: 48-calc-help-<group>.js factories in WTS_helpContent.factories, run once by
+// load() (shapes: tests/_help-model.js). Images: WTS_helpManifest.files. Hooks H.printMenu(slot), H.onShow(view). No timers.
 (function () {
   'use strict';
   var G = (typeof window !== 'undefined') ? window : globalThis;
@@ -17,7 +10,7 @@
   if (!C.factories) C.factories = [];
   var SITE = 'welltest.h2oil.co.uk', EMAIL = 'software@h2oil.co.uk';
   var ROUTE_RE = /^[a-z][a-z0-9_]{1,31}$/;
-  var ALIAS = { dca: 'prism', pta: 'prism' };
+  var ALIAS = { dca: 'prism', pta: 'prism' }, NOROW = { releasenotes: 'Overview' };
   var LISTS = ['start', 'tasks', 'course', 'scenarios', 'faq'];
   var SECTIONS = [['what', 'What it does'], ['when', 'When to use it'], ['steps', 'Step by step'], ['inputs', 'Inputs'],
     ['results', 'Results and verdicts'], ['example', 'Worked example'], ['tips', 'Tips and pitfalls'],
@@ -45,7 +38,7 @@
     return null;
   }
 
-  // ── Content loading ───────────────────────────────────────────────
+  // — Content loading
   function load(force) {
     if (C._loaded && !force) return C;
     if (force) {
@@ -111,12 +104,13 @@
       });
       out.push({ label: txt(l), routes: routes });
     });
+    Object.keys(NOROW).forEach(r => { var g = out.filter(x => x.label === NOROW[r])[0]; if (g && !seen[r]) { seen[r] = 1; g.routes.push(r); } });
     var rest = Object.keys(C.guides).filter(r => !seen[r]);
     if (rest.length) out.push({ label: 'Other', routes: rest });
     return out;
   }
 
-  // ── Markup subset → HTML (content is escaped first; §2.8) ──────────
+  // — Markup subset → HTML (content is escaped first; §2.8)
   function sysNow() { var U = G.WTS_units; return U && U.getSystem ? U.getSystem() : 'imperial'; }
   function dec(s) { var A = G.WTS_a11y; return (A && A.decimalComma && A.decimalComma()) ? String(s).replace(/\./g, ',') : String(s); }
   function numTxt(v, dp, metric) {
@@ -152,7 +146,7 @@
     }
     return lk(r, lab, 0, sec);
   }
-  function md(s, o) {
+  function md(s, o, para) {
     o = o || {};
     var t = esc(s);
     t = t.replace(/\{\{([^{}]+)\}\}/g, (_, b) => token(b, o));
@@ -160,9 +154,9 @@
     t = t.replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
     t = t.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_, a, b) => linkHTML(a, b, o));
     t = t.replace(/[①-⑨]/g, c => { var n = c.charCodeAt(0) - 0x245F; return '<span class="help-co" aria-label="call-out ' + n + '">' + n + '</span>'; });
-    return t.split(/\n\s*\n/).join('</p><p>');
+    return t.split(/\n\s*\n/).join(para ? '</p><p>' : '<br><br>');
   }
-  function paras(list, o) { return arr(list).map(p => '<p>' + md(p, o) + '</p>').join(''); }
+  function paras(list, o) { return arr(list).map(p => '<p>' + md(p, o, 1) + '</p>').join(''); }
   function ul(list, o, cls) {
     list = arr(list);
     return list.length ? '<ul' + (cls ? ' class="' + cls + '"' : '') + '>' + list.map(x => li(md(x, o))).join('') + '</ul>' : '';
@@ -172,11 +166,10 @@
       '</tr></thead><tbody>' + rows.map(r => '<tr>' + r.map(c => '<td>' + md(c, o) + '</td>').join('') + '</tr>').join('') +
       '</tbody></table></div>';
   }
-  // Generic blocks (start chapters, course, scenarios): string | {h} | {list, ordered} | {table:{head, rows}} |
-  // {details:{summary, body}} | {shot: id}
+  // Blocks: string | {h} | {list, ordered} | {table:{head, rows}} | {details:{summary, body}} | {shot: id}
   function renderBlocks(blocks, o, shots, folder) {
     return arr(blocks).map(b => {
-      if (typeof b === 'string') return '<p>' + md(b, o) + '</p>';
+      if (typeof b === 'string') return '<p>' + md(b, o, 1) + '</p>';
       if (!b || typeof b !== 'object') return '';
       if (b.h) return '<h4>' + md(b.h, o) + '</h4>';
       if (b.list) return b.ordered ? '<ol>' + arr(b.list).map(x => li(md(x, o))).join('') + '</ol>' : ul(b.list, o);
@@ -187,7 +180,7 @@
     }).join('');
   }
 
-  // ── Screenshots ───────────────────────────────────────────────────
+  // — Screenshots
   function manifest() { var M = G.WTS_helpManifest; return (M && M.files) || {}; }
   function shotHTML(folder, s, o) {
     var M = manifest(), fd = folder + '/' + s.id + '-d.webp', fp = folder + '/' + s.id + '-p.webp';
@@ -205,7 +198,7 @@
   }
   function missingBox(cap, alt) { return '<div class="help-shot-missing" role="img" aria-label="' + alt + '"><b>Screenshot:</b> ' + cap + '<br><span>' + alt + '</span></div>'; }
 
-  // ── Guide renderer (D4) ───────────────────────────────────────────
+  // — Guide renderer (D4)
   function vmark(m) { return '<span class="help-v help-v-' + (VCLS[m] || 'ok') + '">' + esc(m) + '</span>'; }
   function guideBody(r, g, o, hl, idp) {
     var h = '', used = {}, folder = r, shots = arr(g.shots);
@@ -273,7 +266,7 @@
     return h + '</article>';
   }
 
-  // ── Search (§2.4) ─────────────────────────────────────────────────
+  // — Search (§2.4)
   var SYN = [['burner', 'flare'], ['bean', 'choke'], ['gauge tank', 'tank'], ['cushion', 'clean-up', 'cleanup', 'unload'],
     ['sithp', 'shut-in pressure'], ['bs&w', 'water cut'], ['psv', 'relief', 'safety valve'], ['gor', 'gas-oil ratio', 'gas oil ratio'],
     ['aof', 'absolute open flow'], ['ipr', 'inflow performance'], ['dp', 'differential'], ['h2s', 'sour'], ['mmscfd', 'gas rate'],
@@ -294,7 +287,7 @@
     }).join(' ');
   }
   function J(a, k) { return arr(a).map(x => typeof x === 'string' ? x : (x && x[k]) || '').join(' ; '); }
-  // Index entries: { kind, id, route, sec, title, module, f: [[weight class, text, section]] }
+  // Entries: { kind, id, route, sec, title, module, f: [{ w, t, l, sec }] }
   function buildIndex() {
     load();
     var out = [], seen = {};
@@ -324,48 +317,67 @@
     Object.keys(C.glossary || {}).forEach(k => { var e = C.glossary[k] || {}; add('glossary', k, e.term || k, 'Glossary', [['title', e.term || k], ['kw', J(e.variants)], ['body', e.def]]); });
     return out;
   }
-  var W = { title: 6, kw: 5, label: 3, std: 3, body: 1 };
+  // §2.4 weights per field class: phrase / synonym in full, else words (title pro rata; others 60 % all, 30 % pro rata),
+  // +2 when the entry has every word. Terms under 5 characters match whole words.
+  var W = { task: 8, title: 6, kw: 5, label: 3, std: 3, body: 1 }, STOP = ' the and for how what with from to of in on an is do my ', _re = {};
+  function has(l, t) {
+    if (t.length >= 5) return l.indexOf(t) !== -1;
+    var re = _re[t] || (_re[t] = new RegExp('(^|[^a-z0-9])' + t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '([^a-z0-9]|$)'));
+    return re.test(l);
+  }
+  function terms(ql) {
+    var t = [ql];
+    SYN.forEach(grp => { if (grp.some(s => has(ql, s))) grp.forEach(s => { if (t.indexOf(s) === -1) t.push(s); }); });
+    return t;
+  }
   function search(q) {
     var ql = low(q).replace(/\s+/g, ' ').trim();
     if (!ql) return [];
     if (!_index) _index = buildIndex();
-    var terms = [ql];
-    SYN.forEach(grp => { if (grp.some(s => ql.indexOf(s) !== -1)) grp.forEach(s => { if (terms.indexOf(s) === -1) terms.push(s); }); });
-    var words = ql.split(' ').filter(w => w.length > 1);
-    var press = PRESS.some(s => ql.indexOf(s) !== -1);
+    var tm = terms(ql), words = ql.split(' ').filter(w => w.length > 1 && STOP.indexOf(' ' + w + ' ') === -1), nw = words.length > 1 ? words.length : 0;
+    var press = PRESS.some(s => has(ql, s));
     var hits = [];
     _index.forEach(e => {
-      var sc = 0, at = null, tl = low(plain(e.title)), got = {};
-      if (tl === ql) sc += 10;
+      var sc = 0, at = null, best = 0, cls = {}, seen = {};
+      if (low(plain(e.title)) === ql) sc += 10;
       e.f.forEach(f => {
-        var any = terms.some(t => f.l.indexOf(t) !== -1);
-        if (f.w === 'task') { if (any) { sc += 8; at = at || f; } return; }
-        if (f.w === 'title') { if (any) sc += W.title; else if (words.some(x => f.l.indexOf(x) !== -1)) sc += 2; return; }
-        if (any && !got[f.w]) { got[f.w] = 1; sc += W[f.w] || 0; if (!at || (W[f.w] || 0) > (W[at.w] || 0)) at = f; }
+        var w = W[f.w] || 0, n = 0, v;
+        if (tm.some(t => has(f.l, t))) v = w + 0.01;
+        else {
+          if (nw) words.forEach(x => { if (has(f.l, x)) { n++; seen[x] = 1; } });
+          v = !n ? 0 : f.w === 'title' || f.w === 'task' ? w * n / nw : w * (n === nw ? 0.6 : 0.3 * n / nw);
+        }
+        if (v > (cls[f.w] || 0)) cls[f.w] = v;
+        if (v > best) { best = v; at = f; }
       });
+      Object.keys(cls).forEach(k => { sc += cls[k]; });
+      if (nw && Object.keys(seen).length === nw) sc += 2;
       if (press && ((e.kind === 'scenario' && /^FS-[12]$/.test(e.id)) || (e.kind === 'guide' && e.route === 'wts' && e.sec === 'inputs'))) { sc += e.kind === 'scenario' ? 8 : 5; }
-      if (sc > 0) hits.push({ e: e, sc: sc, at: at });
+      if (sc > 0) hits.push({ e: e, sc: Math.round(sc * 100) / 100, at: at });
     });
     hits.sort((a, b) => b.sc - a.sc || a.e.order - b.e.order);
     return hits.slice(0, 20).map(h => {
-      var e = h.e, f = h.at || e.f[0] || { t: '' };
-      return { kind: e.kind, id: e.id, route: e.route || null, sec: f.sec || e.sec || '', title: e.title, module: e.module,
-        snippet: snippet(f.t, terms), score: h.sc };
+      var e = h.e, f = h.at || e.f[0] || { t: '' }, s = f.sec || '';
+      return { kind: e.kind, id: e.id, route: e.route || null, sec: e.sec && s ? e.sec + '-' + s : s || e.sec || '', title: e.title, module: e.module,
+        secName: s ? (SECTIONS.filter(x => x[0] === s)[0] || [0, ''])[1] : '', snippet: snippet(f.t, tm.concat(words)), score: h.sc };
     });
   }
-  function snippet(t, terms) {
-    var l = low(t), at = -1, len = 0;
-    terms.forEach(x => { var i = l.indexOf(x); if (i !== -1 && (at === -1 || i < at)) { at = i; len = x.length; } });
-    var a = Math.max(0, at - 40), s = t.slice(a, a + 120);
-    var out = esc((a > 0 ? '…' : '') + s + (a + 120 < t.length ? '…' : ''));
-    terms.slice().sort((x, y) => y.length - x.length).forEach(x => {
-      var re = new RegExp(esc(x).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
-      out = out.replace(re, m => '\u0001' + m + '\u0002');
+  // Marks found on the raw text, pieces escaped one by one (no mark inside an entity).
+  function snippet(t, tm) {
+    var l = low(t), at = -1, mk = [], out = '', pos = 0;
+    tm.forEach(x => { var i = l.indexOf(x); if (i !== -1 && (at === -1 || i < at)) at = i; });
+    var a = Math.max(0, at - 40), s = t.slice(a, a + 120), sl = low(s);
+    tm.forEach(x => { for (var i = sl.indexOf(x); x && i !== -1; i = sl.indexOf(x, i + 1)) mk.push([i, i + x.length]); });
+    mk.sort((p, q) => p[0] - q[0]).forEach(m => {
+      if (m[1] <= pos) return;
+      var b = Math.max(m[0], pos);
+      out += esc(s.slice(pos, b)) + '<mark>' + esc(s.slice(b, m[1])) + '</mark>';
+      pos = m[1];
     });
-    return out.replace(/\u0001+/g, '<mark>').replace(/\u0002+/g, '</mark>');
+    return (a > 0 ? '…' : '') + out + esc(s.slice(pos)) + (a + 120 < t.length ? '…' : '');
   }
 
-  // ── Page ──────────────────────────────────────────────────────────
+  // — Page
   var _cur = 'clientinfo', _pending = null, _from = null, _view = null, _opener = null, _sel = -1, _results = [];
   var CSS = '<style>.help{--hb:1px solid var(--border)}' +
     '.help-bar{position:sticky;top:0;z-index:5;background:var(--bg0);display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;padding:6px 0 10px}' +
@@ -396,7 +408,7 @@
     if (C.course.length) links.push(lk('course', 'Simulator course'));
     if (C.scenarios.length) links.push(lk('scenarios', 'Field scenarios'));
     return '<div id="help_root" class="help rp-skip" data-rp-nosnap data-no-persist>' + CSS +
-      '<div class="help-bar" role="search"><input type="search" id="help_q" placeholder="Search help (/)" aria-label="Search help" autocomplete="off" spellcheck="false"' +
+      '<div class="help-bar" role="search"><input type="search" role="combobox" id="help_q" placeholder="Search help (/)" aria-label="Search help" autocomplete="off" spellcheck="false"' +
       ' data-no-persist aria-controls="help_res" aria-autocomplete="list" aria-expanded="false">' +
       '<span class="help-links">' + links.join(' · ') + '<span id="help_print_slot"></span>' +
       '<button type="button" class="help-a" id="help_back" hidden>← Back to <span id="help_back_t"></span></button></span></div>' +
@@ -441,7 +453,7 @@
   function det(sum, body) { return body ? '<details class="help-det"><summary>' + sum + '</summary>' + body + '</details>' : ''; }
   function sub(t, list, o) { return arr(list).length ? '<h4>' + t + '</h4>' + ul(list, o) : ''; }
   function pb(t, v, o) { return v ? '<p><b>' + t + ':</b> ' + md(v, o) + '</p>' : ''; }
-  // Course exercise (opts.worksheet: no answers, no trainer notes — for the print module).
+  // o.worksheet: no answers or trainer notes (print).
   function exerciseHTML(x, i, o) {
     var tn = x.trainer || {};
     return secHTML('help-course-' + esc(x.id), (i + 1) + ' ' + md(x.title, o), pb('Goal', x.goal, o) + sub('Set-up', x.setup, o) +
@@ -509,7 +521,7 @@
       box.hidden = !(q && q.value.trim());
     } else {
       box.innerHTML = _results.map((r, i) => {
-        return '<div role="option" id="help_opt_' + i + '" data-i="' + i + '" aria-selected="' + (i === _sel ? 'true' : 'false') + '"><b>' + esc(plain(r.title)) + '</b> <small>' + esc(r.module) + '</small><br><small>' + r.snippet + '</small></div>';
+        return '<div role="option" id="help_opt_' + i + '" data-i="' + i + '" aria-selected="' + (i === _sel ? 'true' : 'false') + '"><b>' + esc(plain(r.title)) + '</b> <small>' + esc(r.module + (r.secName ? ' · ' + r.secName : '')) + '</small><br><small>' + r.snippet + '</small></div>';
       }).join('');
       box.hidden = false;
     }
@@ -595,7 +607,7 @@
     });
     var lb = byId('help_lb');
     if (lb) lb.addEventListener('close', () => { if (_opener && _opener.focus) _opener.focus(); _opener = null; });
-    // A screenshot that fails to load (a saved copy with no help/ folder) becomes a caption box (§3.2).
+    // A failed screenshot becomes a caption box (§3.2).
     root.addEventListener('error', e => {
       var img = e.target;
       if (!img || !img.classList || !img.classList.contains('help-img')) return;
@@ -649,7 +661,7 @@
     if (norm(page) === 'prism') {
       var s = 0;
       try { s = typeof G.PRiSM_currentStep === 'function' ? G.PRiSM_currentStep() : 0; } catch (e) { s = 0; }
-      return s ? { section: 'step-' + s } : {};
+      return byId('prism_tools_drawer') ? { section: 'tools' } : s ? { section: 'step-' + s } : {};
     }
     if (page === 'wts') return { part: 'reference' };
     return {};
@@ -670,7 +682,7 @@
     return on;
   }
   Object.assign(H, { load: load, open: open, mount: mount, renderGuide: renderGuide, renderBlocks: renderBlocks, md: md, esc: esc,
-    titleOf: titleOf, search: search, syncHeader: syncHeader, hasGuide: hasGuide, sidebarGroups: sidebarGroups,
+    titleOf: titleOf, search: search, terms: terms, syncHeader: syncHeader, hasGuide: hasGuide, sidebarGroups: sidebarGroups,
     current: () => _cur, view: () => _view });
 
   var d0 = _doc();
@@ -697,7 +709,7 @@
     sub: 'How to use each module, the simulator course and field scenarios',
     group: 'Overview', icon: '?', desc: 'Guides, screenshots, training course and printable user guide',
     badge: 'Help', bc: 'dc-b-green',
-    hooks: { store: () => true },   // the host autosave writes nothing for help (no wts_page_help)
+    hooks: { store: () => true },   // no wts_page_help
     render: body => { G.WTS_help.mount(body); }
   };
 })();

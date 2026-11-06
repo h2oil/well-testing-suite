@@ -13,7 +13,9 @@
 //   • text is plain text plus the markup subset (§4.3): **bold** (must be visible text on the page: a label,
 //     button, card title, option or heading — or a menu path with →, or listed in boldExempt), `code`, [[route]],
 //     [[route#section|text]], [[glossary#term|text]], [[task#id|text]], [[fs#FS-1|text]], unit tokens
-//     {{value|category[|dp]}} in canonical imperial with a 22-units.js category, ①…⑨ call-outs, ✓ ⚠ ✗,
+//     {{value|category[|dp]}} in canonical imperial with a 22-units.js category — in a units:'dual' guide every
+//     measured value is a token (a bare "4.026 in" or "500 psig" is an error; the page's '0.125" plate' wording is
+//     allowed), ①…⑨ call-outs, ✓ ⚠ ✗,
 //     and {{site}} / {{email}} for the only address and e-mail. No HTML: < and > are rejected, and & only as a
 //     plain character (never an entity). No URL, domain, e-mail, ™ or ®.
 //   • inputs[].label is the page label without its trailing "(…)" group (the unit); inputs[].id must exist
@@ -52,7 +54,7 @@ const ORIFICE = {
   ],
   inputs: [
     { label: 'Target gas rate', id: 'op_q', cat: 'gasRateSmall', def: '{{5000|gasRateSmall}}', text: 'Expected rate at the base conditions.' },
-    { label: 'Meter run internal diameter', id: 'op_D', cat: 'lengthSmall', def: '{{4.026|lengthSmall}}', text: 'Measured tube bore; at least 2 in.' },
+    { label: 'Meter run internal diameter', id: 'op_D', cat: 'lengthSmall', def: '{{4.026|lengthSmall}}', text: 'Measured tube bore; at least {{2|lengthSmall}}.' },
     { label: 'Static (line) pressure', id: 'op_P', cat: 'pressureG', def: '{{500|pressureG}}', text: 'At the upstream tap.' },
     { label: 'Flowing temperature', id: 'op_T', cat: 'temperature', def: '{{80|temperature}}' },
     { label: 'Gas specific gravity', id: 'op_SG', def: '0.65', text: 'Air = 1; 0.5 to 1.8.' },
@@ -79,7 +81,7 @@ const ORIFICE = {
     { mark: '✗', match: 'lifts the differential above', text: 'Too little gas: use a smaller meter run or a lower range.' },
     { mark: '⚠', match: 'at the target rate — above 0.2', text: 'x1 above 0.2: Y1 is outside its validated range.' },
     { mark: '⚠', match: 'x1 exceeds 0.2', text: 'Line pressure is low for this range.' },
-    { mark: '⚠', match: 'below the AGA-3 minimum', text: 'Meter run below 2 in: treat the result as an estimate.' },
+    { mark: '⚠', match: 'below the AGA-3 minimum', text: 'Meter run below {{2|lengthSmall}}: treat the result as an estimate.' },
     { mark: '⚠', match: 'straight lengths', text: 'β above 0.6: check the upstream straight lengths.' },
   ],
   verdictCases: [{ set: { op_q: '50000' } }, { set: { op_lo: '49', op_hi: '51' } }, { set: { op_q: '20' } }, { set: { op_P: '50' } },
@@ -87,13 +89,13 @@ const ORIFICE = {
   example: {
     title: 'The default inputs',
     setup: ['{{5000|gasRateSmall}}, {{4.026|lengthSmall}} run, {{500|pressureG}}, {{80|temperature}}, gravity 0.65, cell 0 to {{200|pressureSmall60}}.'],
-    result: ['✓ 1.875" plate, β 0.466, {{97.2|pressureSmall60|1}} = 48.6 % of range.', 'Change down below {{3214|gasRateSmall}}, up above {{6406|gasRateSmall}}.'],
+    result: ['✓ {{1.875|lengthSmall|3}} plate, β 0.466, {{97.2|pressureSmall60|1}} = 48.6 % of range.', 'Change down below {{3214|gasRateSmall}}, up above {{6406|gasRateSmall}}.'],
     check: { kind: 'compute', fn: 'WTS_orifice_compute', tol: 0.001,
       input: { q: 5000, D: 4.026, Ps: 500, TfF: 80, SG: 0.65, co2: 0.5, n2: 1, h2s: 0, urv: 200 },
       expect: { inWindow: true, 'chosen.d': 1.875, 'chosen.beta': 0.4657, 'chosen.hw': 97.16, 'chosen.pct': 48.58, 'chosen.qLo': 3213.6, 'chosen.qHi': 6405.7 } },
   },
   tips: ['Keep the next plate up and down at the meter.'],
-  pitfalls: ['Enter the measured tube bore (4.026 in), not the nominal size.'],
+  pitfalls: ['Enter the measured tube bore ({{4.026|lengthSmall}}), not the nominal size.'],
   refs: [{ std: 'AGA Report No. 3 / API MPMS Ch. 14.3', note: 'orifice equation, β limits' }, { std: 'ISO 5167-1 and -2', note: 'working range of the differential' }],
   related: ['aga3', 'proving', 'sepqc'],
   shots: [

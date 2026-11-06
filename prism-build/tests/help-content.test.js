@@ -37,7 +37,8 @@ const CAPS = {
 const SUM_CAP = 330 * KB, GZIP_CAP = 90 * KB;
 const NOT_ROUTES = ['gaevents', 'dca', 'pta'];
 const OVERVIEW = ['home', 'help', 'clientinfo', 'wells', 'privacy', 'releasenotes'];
-const MANUAL_OK = ['wts', 'prism', 'buildup', 'wellos', 'modbus', 'historian'].concat(OVERVIEW);
+// §4.1: manual examples only for the simulator, PRiSM fits, Live Data and Overview (buildup and cheminj have pure engines)
+const MANUAL_OK = ['wts', 'prism', 'wellos', 'modbus', 'historian'].concat(OVERVIEW);
 const PARTS = ['prism', 'wts', 'buildup', 'cheminj', 'modbus'];
 const SRC_OVERRIDE = { wts: ['31-wts-sim.js', '32-wts-3d.js', '38-wts-live.js'] };
 const SEC_KEYS = ['top', 'what', 'when', 'steps', 'inputs', 'results', 'example', 'tips', 'refs', 'related'];
@@ -63,6 +64,10 @@ function denylist() {
   return DENY;
 }
 
+// a number followed by a unit (inches as `in` only before punctuation or the end, so "step 3 in the course" passes)
+const BARE_UNIT = new RegExp('(?:^|[^\\w.,])\\d+(?:[.,]\\d+)?\\s*(?:"|°\\s?[FC]\\b|in(?=\\s*(?:$|[^\\sA-Za-z]))|(?:inch(?:es)?|ft|psi[ga]?|MSCFD|MMSCFD|[Mm]{1,2}scf\\/d|' +
+  'bbls?(?:\\/d)?|BPD|BOPD|BWPD|STB(?:\\/d)?|lbm?|gpm|cP|mm|bar[ga]?|kPa)\\b)');
+const UNIT_ALLOW = ['0.125" plate', '0.125" bore'];   // the page's own plate-size wording
 // ── text checks ─────────────────────────────────────────────────────────
 // ctx: { cats: {category: 1}, routes: Set, glossary: {}, tasks: Set, fs: Set, course: Set, start: Set, guides: {} }
 function textIssues(s, where, ctx) {
@@ -86,6 +91,14 @@ function textIssues(s, where, ctx) {
     if (!m) e('malformed unit token ' + t + ' (write {{value|category[|dp]}})');
     else if (ctx && ctx.cats && !ctx.cats[m[2]]) e('unknown unit category in ' + t);
   });
+  if (ctx && ctx.dual) {
+    // §4.4 / D13: a measured value in a 'dual' guide is a unit token, so Metric mode converts it. Page wording such as
+    // a plate size name, **bold page text** and “quoted page text” are exempt.
+    let t = s.replace(/\{\{[^{}]*\}\}/g, ' ').replace(/\*\*[^*]+\*\*/g, ' ').replace(/“[^”]*”/g, ' ');
+    UNIT_ALLOW.forEach((a) => { t = t.split(a).join(' '); });
+    const m = BARE_UNIT.exec(t);
+    if (m) e('bare measurement "' + m[0].trim() + '" in a units:"dual" guide (write a unit token {{value|category}})');
+  }
   const lo = (s.match(/\[\[/g) || []).length, lc = (s.match(/\]\]/g) || []).length;
   if (lo !== lc) e('unbalanced [[ ]]');
   (s.match(/\[\[([^\]]*)\]\]/g) || []).forEach((t) => {
@@ -116,6 +129,23 @@ function sentences(s) { return String(s).replace(/\{\{[^}]*\}\}/g, 'x').split(/(
 function words(s) { return s.trim().split(/\s+/).filter(Boolean).length; }
 
 // ── structure and limits (§4.1, §4.6) ────────────────────────────────────
+// Limits shared by a guide and each of its parts: input / output labels and text, example.check, tips and pitfalls.
+function bodyIssues(r, g, e, isOverview) {
+  const A = (x) => (Array.isArray(x) ? x : []);
+  const len = (s) => String(s || '').length;
+  A(g.inputs).concat(A(g.outputs)).forEach((x, i) => {
+    if (!x || !x.label) e('inputs/outputs[' + i + '] label missing');
+    else if (len(x.label) > 60) e('label over 60: ' + x.label);
+    if (x && len(x.text) > 300) e('text over 300: ' + x.label);
+  });
+  if (g.example && g.example.check) {
+    const k = g.example.check.kind;
+    if (['compute', 'page', 'manual'].indexOf(k) === -1) e('example.check.kind must be compute | page | manual');
+    if (k === 'manual' && MANUAL_OK.indexOf(r) === -1) e('example.check manual is allowed only for the simulator, PRiSM, Live Data and Overview pages');
+    if (k === 'manual' && !g.example.check.reason) e('example.check manual needs a reason');
+  } else if (g.example && !isOverview) e('example.check missing');
+  A(g.tips).concat(A(g.pitfalls)).forEach((x, i) => { if (len(x) > 300) e('tips/pitfalls[' + i + '] over 300'); });
+}
 function limitIssues(r, g, warn) {
   const out = [], e = (m) => out.push(r + ': ' + m);
   const A = (x) => (Array.isArray(x) ? x : []);
@@ -128,23 +158,16 @@ function limitIssues(r, g, warn) {
   const st = A(g.steps);
   if (st.length < 3 || st.length > 12) e('steps: 3–12 items');
   st.forEach((s, i) => { const t = typeof s === 'string' ? s : s && s.t; if (!t) e('steps[' + i + '] empty'); else if (len(t) > 300) e('steps[' + i + '] over 300'); });
-  if (!A(g.inputs).length && g.units !== 'none' && !isOverview && !parts.length) e('inputs missing (set units:"none" for a page without inputs)');
-  A(g.inputs).concat(A(g.outputs)).forEach((x, i) => {
-    if (!x || !x.label) e('inputs/outputs[' + i + '] label missing');
-    else if (len(x.label) > 60) e('label over 60: ' + x.label);
-    if (x && len(x.text) > 300) e('text over 300: ' + x.label);
-  });
-  if (!A(g.outputs).length && !isOverview && !parts.length) e('outputs missing');
-  if (!g.example && !isOverview && !parts.length) e('example missing');
-  if (g.example && g.example.check) {
-    const k = g.example.check.kind;
-    if (['compute', 'page', 'manual'].indexOf(k) === -1) e('example.check.kind must be compute | page | manual');
-    if (k === 'manual' && MANUAL_OK.indexOf(r) === -1) e('example.check manual is allowed only for the simulator, PRiSM, Live Data and Overview pages');
-    if (k === 'manual' && !g.example.check.reason) e('example.check manual needs a reason');
-  } else if (g.example && !isOverview) e('example.check missing');
+  // A parts guide (§4.1) may hold inputs, outputs and the example in its parts: at least one of the top level or a part
+  // must have each, except where `manual` is allowed (simulator, PRiSM, Live Data, Overview).
+  const some = (k) => !!(k === 'example' ? g.example : A(g[k]).length) || parts.some((p) => p && (k === 'example' ? p.example : A(p[k]).length));
+  const need = !isOverview && !(parts.length && MANUAL_OK.indexOf(r) !== -1);
+  if (!some('inputs') && g.units !== 'none' && need) e('inputs missing (set units:"none" for a page without inputs)');
+  if (!some('outputs') && need) e('outputs missing');
+  if (!some('example') && need) e('example missing');
+  bodyIssues(r, g, e, isOverview);
   const tp = A(g.tips).concat(A(g.pitfalls));
   if (tp.length < 1 || tp.length > 10) e('tips + pitfalls: 1–10 items');
-  tp.forEach((x, i) => { if (len(x) > 300) e('tips/pitfalls[' + i + '] over 300'); });
   if (!A(g.refs).length && !g.noRefs) e('refs missing (or noRefs: "<reason>")');
   if (!A(g.related).length) e('related: at least one route');
   if (typeof g.reviewed !== 'string' || !/^v\d+\.\d+(\.\d+)?$/.test(g.reviewed)) e('reviewed must be a version string like v3.3.2');
@@ -159,10 +182,26 @@ function limitIssues(r, g, warn) {
   st.forEach((s, i) => { if (s && s.shot && !A(g.shots).some((x) => x.id === s.shot)) e('steps[' + i + '] names unknown shot ' + s.shot); });
   const size = Buffer.byteLength(JSON.stringify(g), 'utf8');
   if (size > (PARTS.indexOf(r) !== -1 ? 14 : 6) * 1024) e('guide is ' + size + ' bytes serialised (cap ' + (PARTS.indexOf(r) !== -1 ? 14 : 6) + ' kB)');
-  parts.forEach((p, i) => { if (!p || !p.id || !/^[a-z0-9-]+$/.test(p.id)) e('parts[' + i + '] id must be [a-z0-9-]'); });
+  parts.forEach((p, i) => {
+    if (!p || !p.id || !/^[a-z0-9-]+$/.test(p.id)) e('parts[' + i + '] id must be [a-z0-9-]');
+    if (!p || typeof p !== 'object') return;
+    const pe = (m) => e('parts[' + (p.id || i) + '] ' + m);
+    if (A(p.what).length > 3) pe('what: more than 3 paragraphs');
+    if (p.when !== undefined && (A(p.when).length < 2 || A(p.when).length > 5)) pe('when: 2–5 items');
+    A(p.when).forEach((x, j) => { if (len(x) > 200) pe('when[' + j + '] over 200'); });
+    const ps = A(p.steps);
+    if (p.steps !== undefined && (ps.length < 3 || ps.length > 12)) pe('steps: 3–12 items');
+    ps.forEach((s, j) => { const t = typeof s === 'string' ? s : s && s.t; if (!t) pe('steps[' + j + '] empty'); else if (len(t) > 300) pe('steps[' + j + '] over 300'); });
+    ps.forEach((s, j) => { if (s && s.shot && !A(g.shots).some((x) => x.id === s.shot)) pe('steps[' + j + '] names unknown shot ' + s.shot); });
+    if (A(p.tips).concat(A(p.pitfalls)).length > 10) pe('tips + pitfalls: at most 10 items');
+    bodyIssues(r, p, pe, isOverview);
+  });
   if (warn) {
     const lint = (arr, f) => A(arr).forEach((x) => { const t = typeof x === 'string' ? x : x && (x.t || x.text); if (t) sentences(t).forEach((s) => { if (words(s) > 25) warn(r + '.' + f + ': sentence of ' + words(s) + ' words'); }); });
-    lint(g.steps, 'steps'); lint(g.tips, 'tips'); lint(g.pitfalls, 'pitfalls'); lint(g.verdicts, 'verdicts');
+    [g].concat(parts.filter((p) => p && typeof p === 'object')).forEach((x, i) => {
+      const w = i ? 'parts[' + x.id + '].' : '';
+      lint(x.steps, w + 'steps'); lint(x.tips, w + 'tips'); lint(x.pitfalls, w + 'pitfalls'); lint(x.verdicts, w + 'verdicts');
+    });
   }
   return out;
 }
@@ -282,7 +321,8 @@ function getPath(o, p) { return String(p).split('.').reduce((a, k) => (a == null
 function near(a, b, tol) { return typeof b === 'number' ? (typeof a === 'number' && Math.abs(a - b) <= tol * Math.max(1, Math.abs(b))) : a === b; }
 function firstNum(s) { const m = /-?\d[\d,]*(?:\.\d+)?/.exec(String(s)); return m ? parseFloat(m[0].replace(/,/g, '')) : NaN; }
 
-function checkExample(app, r, g) {
+// g: the guide or one of its parts; r: the label in messages (route, or route.parts[id]); route: the guide's route.
+function checkExample(app, r, g, route0) {
   const out = [], ck = g.example && g.example.check;
   if (!ck || ck.kind === 'manual') return out;
   const tol = ck.tol == null ? 0.005 : ck.tol, W = app.win;
@@ -294,7 +334,7 @@ function checkExample(app, r, g) {
     return out;
   }
   // page
-  const route = ck.route || r;
+  const route = ck.route || route0 || r;
   goFresh(app, route);
   try { setInputs(app, ck.set); } catch (e) { return [r + ': example.check ' + e.message]; }
   if (ck.calc) { if (typeof W[ck.calc] !== 'function') return [r + ': example.check calc ' + ck.calc + ' missing']; W[ck.calc](); }
@@ -339,7 +379,8 @@ function pageIssues(app, r, g) {
     e('control #' + id + ' is on the page but not in inputs[] or notDocumented (page → guide)');
   });
   // shot selectors (recipes that open menus are checked by the shots tool)
-  if (!g._skipSelectors) A(g.shots).forEach((s) => {
+  if (g._skipSelectors) console.log('[help-content] ' + r + ': ' + A(g.shots).length + ' shot selector check(s) skipped — ' + (typeof g._skipSelectors === 'string' ? g._skipSelectors : 'no reason given'));
+  else A(g.shots).forEach((s) => {
     if (A(s.setup).some((op) => op && (op.click || op.action || op.press || op.hover))) return;
     const sels = (s.target && s.target !== 'viewport' ? [s.target] : []).concat(A(s.callouts).map((c) => c.sel));
     sels.forEach((sel) => {
@@ -376,7 +417,14 @@ function pageIssues(app, r, g) {
     if (!lines.length) e('verdictCases[' + i + '] shows no verdict');
     cover(lines, 'case ' + i);
   });
-  return out.concat(checkExample(app, r, g));
+  // worked examples of the guide and of every part reproduce; a page example's state is a verdict case too (§7.1)
+  [g].concat(A(g.parts).filter((p) => p && typeof p === 'object')).forEach((x, i) => {
+    const ck = x.example && x.example.check;
+    if (!ck) return;
+    checkExample(app, i ? r + '.parts[' + x.id + ']' : r, x, r).forEach((m) => out.push(m));
+    if (ck.kind === 'page' && (ck.route || r) === r) cover(verdictLines(pageRoot(app)), 'example' + (i ? ' of part ' + x.id : ''));
+  });
+  return out;
 }
 
 // ── context from the live app ─────────────────────────────────────────────
@@ -407,8 +455,9 @@ function makeCtx(app, C) {
 }
 function guideIssues(app, r, g, ctx, warn) {
   let out = limitIssues(r, g, warn);
-  strings(g, r, (s, p) => { out = out.concat(textIssues(s, p, ctx)); });
-  (g.shots || []).forEach((s, i) => ['alt', 'caption'].forEach((k) => { out = out.concat(textIssues(s && s[k], r + '.shots[' + i + '].' + k, ctx)); }));
+  const tctx = Object.assign({}, ctx, { dual: g.units === 'dual' });
+  strings(g, r, (s, p) => { out = out.concat(textIssues(s, p, tctx)); });
+  (g.shots || []).forEach((s, i) => ['alt', 'caption'].forEach((k) => { out = out.concat(textIssues(s && s[k], r + '.shots[' + i + '].' + k, tctx)); }));
   (g.related || []).forEach((x) => { if (!ctx.routes.has(x)) out.push(r + ': related route ' + x + ' is not live'); });
   out = out.concat(glossaryIssues(r, g, ctx.glossary));
   const h = srcHash(r);
@@ -529,7 +578,7 @@ const TESTS = [
       Object.keys(C.guides).forEach((r) => {
         if (!ctx.routes.has(r)) return;
         const g = Object.assign({}, C.guides[r]);
-        if (r === 'wts') g._skipSelectors = true;   // simulator HMI ids: Round 7 is not in the harness (§7.1)
+        if (r === 'wts') g._skipSelectors = 'Round 7 not in the harness';   // simulator HMI ids (§7.1)
         guideIssues(app, r, g, ctx, (w) => warns.push(w)).forEach((x) => issues.push(x));
       });
       otherIssues(C, ctx).forEach((x) => issues.push(x));
@@ -556,7 +605,7 @@ const TESTS = [
       const good = (s) => assert.deepStrictEqual(textIssues(s, 'x', ctx), [], 'accepted: ' + s);
       bad('<img src=x onerror=alert(1)>');
       bad('a &amp; b'); bad('x &#60; y');
-      bad('see https://example.org'); bad('see www.example.com'); bad('mail name@company.example'); bad('Acme.co.uk');
+      bad('see https://example.org'); bad('see www.example.com'); bad('mail name@company.example'); bad('operator-energy.co.uk');
       bad('Brand™'); bad('Brand®');
       bad('Uses the ' + cc([80, 73, 69]) + ' method');
       bad('open it in ' + cc([67, 104, 114, 111, 109, 101]));
@@ -564,9 +613,32 @@ const TESTS = [
       bad('[[nosuchroute]]'); bad('[[glossary#nope|x]]'); bad('[[fs#FS-9|x]]'); bad('[[orifice#nosection|x]]');
       good('Metering & Chokes: set {{150|pressureG}} and {{10|gasRate|1}} — see [[orifice]], [[aga3#inputs|AGA-3 inputs]], [[glossary#bean|bean]], {{site}}, {{email}} ① ✓ ⚠ ✗');
       good('A pie chart is not a name.');
+      // bare measurements in a units:'dual' guide (D13, §4.4)
+      const dual = Object.assign({}, ctx, { dual: true });
+      const badD = (s) => assert.ok(textIssues(s, 'x', dual).some((m) => /bare measurement/.test(m)), 'bare unit rejected: ' + s);
+      const goodD = (s) => assert.deepStrictEqual(textIssues(s, 'x', dual), [], 'accepted (dual): ' + s);
+      ['Tube bore 4.026 in.', 'at least 2 in', 'a 1.875" plate', 'set 500 psig', 'at 80 °F', '5000 MSCFD', '120 bbl/d', 'below 2 in: estimate'].forEach(badD);
+      ['Tube bore {{4.026|lengthSmall}}.', 'No 0.125" plate fits.', 'Step 3 in the course', 'Select **Line 2 in**.', '48.6 % of range, β 0.466', 'H2S and CO2'].forEach(goodD);
+      assert.deepStrictEqual(textIssues('set 500 psig', 'x', ctx), [], 'only dual guides are checked');
       const g = clone(MODEL.ORIFICE); g.purpose = 'x'.repeat(161); g.when = ['one'];
       const li = limitIssues('orifice', g);
       assert.ok(li.some((m) => /purpose over 160/.test(m)) && li.some((m) => /when: 2–5/.test(m)), li.join('; '));
+      // parts (§4.1): each part has the text limits; inputs / outputs / example may sit in a part, not nowhere
+      const pg = clone(MODEL.ORIFICE), keep = { inputs: pg.inputs, outputs: pg.outputs, example: pg.example };
+      delete pg.inputs; delete pg.outputs; delete pg.example;
+      pg.parts = [{ id: 'a', title: 'A', what: ['x'] }];
+      let pl = limitIssues('cheminj', pg);
+      ['inputs missing', 'outputs missing', 'example missing'].forEach((m) => assert.ok(pl.some((x) => x.indexOf(m) !== -1), m + ': ' + pl.join('; ')));
+      assert.ok(!limitIssues('prism', pg).some((x) => /missing/.test(x) && !/reviewedSrc|refs/.test(x)), 'PRiSM parts may go without (manual allowed)');
+      Object.assign(pg.parts[0], clone(keep));
+      pl = limitIssues('cheminj', pg);
+      assert.ok(!pl.some((x) => /(inputs|outputs|example) missing/.test(x)), 'satisfied by a part: ' + pl.join('; '));
+      pg.parts[0].steps = ['one', 'x'.repeat(301)];
+      pg.parts[0].inputs[0].label = 'y'.repeat(61);
+      pg.parts[0].example.check = { kind: 'manual', reason: 'r' };
+      pl = limitIssues('cheminj', pg);
+      [/parts\[a\] steps: 3–12/, /parts\[a\] steps\[1\] over 300/, /parts\[a\] label over 60/, /parts\[a\] example\.check manual is allowed only/].forEach((re) => assert.ok(pl.some((x) => re.test(x)), re + ': ' + pl.join('; ')));
+      assert.ok(limitIssues('buildup', pg).some((x) => /example\.check manual is allowed only/.test(x)), 'buildup has a pure engine: no manual example');
     },
   },
   {
@@ -582,6 +654,13 @@ const TESTS = [
       has(run((g) => { g.reviewedSrc = '00000000'; }), /not re-reviewed since its page changed/, 'stale review');
       has(run((g) => { g.steps[1].t = 'Enter the **Rate of gas** ①.'; }), /bold phrase "Rate of gas"/, 'bold phrase');
       has(run((g) => { g.example.check.expect['chosen.d'] = 2; }), /example chosen\.d/, 'worked example');
+      has(run((g) => { const ex = g.example; ex.check.expect['chosen.d'] = 2; delete g.example; g.parts = [{ id: 'p1', title: 'Part', what: ['x'], example: ex }]; }),
+        /orifice\.parts\[p1\]: example chosen\.d = 1\.875, guide says 2/, 'worked example inside a part');
+      const okPart = run((g) => { const ex = g.example; delete g.example; g.parts = [{ id: 'p1', title: 'Part', what: ['x'], example: ex }]; });
+      assert.ok(!okPart.some((m) => /example/.test(m)), 'a correct part example passes: ' + okPart.join(' | '));
+      has(run((g) => { g.example = { title: 'Page', setup: ['x'], result: ['y'], check: { kind: 'page', set: { op_q: '50000' }, expectText: ['✗'] } }; g.verdicts = g.verdicts.filter((v) => v.match !== 'keeps the differential below'); }),
+        /verdict "✗ .*" \(example\) matches no verdicts/, 'example page state is verdict-covered');
+      has(run((g) => { g.inputs[1].text = 'Tube bore, 4.026 in.'; }), /bare measurement "4\.026 in"/, 'bare unit in the model guide');
       has(run((g) => { g.inputs[0].cat = 'gasRate'; }), /tagged gasRateSmall/, 'unit category');
       has(run((g) => { g.shots[1].callouts[0].sel = '#op_nothing'; }), /selector #op_nothing matches nothing/, 'shot selector');
     },

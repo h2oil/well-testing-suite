@@ -20,9 +20,10 @@ const FIX = {
   guides: {
     orifice: MODEL.ORIFICE,
     flare: { route: 'flare', reviewed: 'v3.3.2', units: 'dual', keywords: ['burner boom'], purpose: 'Radiation and noise from the flare or burner boom.',
-      what: ['Fixture guide.'], when: ['a', 'b'], steps: ['one', 'two', 'three'], related: ['prv'] },
+      what: ['Fixture guide. Amp & volt readings; see the orifice notes on plate selection by category.'], when: ['a', 'b'], steps: ['one', 'two', 'three'], related: ['prv'] },
     prism: { route: 'prism', reviewed: 'v3.3.2', units: 'field', purpose: 'Pressure-transient analysis at {{150|pressureG}}.', what: ['Fixture.'],
-      parts: [1, 2, 3, 4, 5].map((n) => ({ id: 'step-' + n, title: 'Step ' + n, what: ['Part ' + n + '.'] })) },
+      parts: [1, 2, 3, 4, 5].map((n) => ({ id: 'step-' + n, title: 'Step ' + n, what: ['Part ' + n + '.'] })).concat([{ id: 'tools', title: 'Tools', what: ['The drawer.'] }]) },
+    releasenotes: { route: 'releasenotes', title: 'Release Notes', reviewed: 'v3.3.2', units: 'none', purpose: 'What changed in each version.', what: ['Fixture.'] },
     wts: { route: 'wts', reviewed: 'v3.3.2', units: 'dual', purpose: 'Dynamic replay around a steady design calculation.', what: ['Fixture.'],
       parts: [{ id: 'reference', title: 'Reference', what: ['The reference.'] }, { id: 'inputs', title: 'Inputs', what: ['Which pressure goes where.'] }] },
   },
@@ -33,7 +34,7 @@ const FIX = {
   glossary: { bean: { term: 'bean', def: 'Choke size in 64ths of an inch.' } },
 };
 const FIX_SRC = '(function () { var G = window; G.WTS_helpContent = G.WTS_helpContent || { guides: {}, factories: [] };\n' +
-  "G.WTS_helpContent.factories.push({ group: 'zztest', routes: ['orifice', 'flare', 'prism', 'wts'], build: function () { return " + JSON.stringify(FIX) + '; } });\n})();\n';
+  "G.WTS_helpContent.factories.push({ group: 'zztest', routes: ['orifice', 'flare', 'prism', 'wts', 'releasenotes'], build: function () { return " + JSON.stringify(FIX) + '; } });\n})();\n';
 const OVERRIDES = Object.assign({ '48-calc-help-zztest.js': FIX_SRC }, ...CONTENT.map((f) => ({ [f]: null })));
 
 let _html = null;
@@ -146,6 +147,13 @@ module.exports = [
       assert.deepStrictEqual([W.WTS_help.view().route, W.WTS_help.view().sec], ['prism', 'step-' + step]);
       assert.ok(app.el('help-prism-step-' + step), 'the part is rendered with its id');
       assert.ok(/PRiSM works in oilfield units/.test(txt(app.el('help_main'))), 'field-units notice');
+      app.hook.nav('prism');
+      app.flush(300);
+      assert.ok(W.PRiSM_openTools() !== null && app.el('prism_tools_drawer'), 'Tools drawer open');
+      app.key(app.el('pgBody'), 'F1');
+      assert.deepStrictEqual([W.WTS_help.view().route, W.WTS_help.view().sec], ['prism', 'tools'], 'the Tools drawer has its own part (§2.7)');
+      assert.ok(app.el('help-prism-tools'));
+      W.PRiSM_closeTools();
       app.hook.nav('wts');
       app.flush(200);
       app.key(app.el('pgBody'), 'F1');
@@ -193,13 +201,40 @@ module.exports = [
       const r0 = H.search('orifice')[0];
       assert.ok(/<mark>/i.test(r0.snippet) && r0.snippet.length < 400, 'snippet with marks');
       assert.ok(H.search('<b>x</b>').every((r) => !/<b>x/.test(r.snippet)), 'snippets escaped');
+      // loose word lists (§2.4): words need not be adjacent; title words outrank a body-only hit
+      assert.ok(H.search('bore transmitter').some((r) => r.route === 'orifice'), 'words in steps / inputs, not adjacent');
+      const so = H.search('selection orifice'), fl = so.find((r) => r.route === 'flare');
+      assert.strictEqual(so[0].route, 'orifice', JSON.stringify(so.map((r) => [r.title, r.score])));
+      assert.ok(fl && so[0].score > fl.score, 'title words (6) above the body-only hit');
+      // synonyms and short terms on word boundaries
+      assert.ok(H.terms('category').indexOf('gas-oil ratio') === -1 && H.terms('source').indexOf('sour') === -1, 'no trigger inside a word');
+      assert.ok(H.terms('gor').indexOf('gas-oil ratio') !== -1 && H.terms('h2s scavenger').indexOf('sour') !== -1, 'whole-word triggers expand');
+      assert.ok(!H.search('gor').some((r) => r.route === 'flare'), '"gor" does not match inside "category"');
+      // marks never land inside an escaped entity
+      const amp = H.search('amp').find((r) => r.route === 'flare');
+      assert.ok(amp && /<mark>Amp<\/mark> &amp; volt/.test(amp.snippet) && !/&<mark>|<mark>amp<\/mark>;/.test(amp.snippet), amp && amp.snippet);
+      assert.ok(H.search('transmitter range')[0].secName === 'Inputs', 'section of the hit');
+      // a blank line is a paragraph only where the caller wraps paragraphs
+      assert.ok(!/<\/?p>/.test(H.md('a\n\nb')) && /a<br><br>b/.test(H.md('a\n\nb')));
+      assert.ok(/<p>a<\/p><p>b<\/p>/.test(H.renderBlocks(['a\n\nb'], {})));
+      assert.ok(/<li>a<br><br>b<\/li>/.test(H.renderBlocks([{ list: ['a\n\nb'] }], {})));
+      // a route with no sidebar row goes to its plan group, not "Other"
+      assert.ok(H.sidebarGroups().find((g) => g.label === 'Overview').routes.indexOf('releasenotes') !== -1);
+      assert.ok(!H.sidebarGroups().some((g) => g.label === 'Other'));
+      assert.ok(/Overview · /.test(H.renderGuide('releasenotes')), 'guide meta line');
       app.hook.nav('help');
+      assert.strictEqual(app.el('help_q').getAttribute('role'), 'combobox');
+      assert.strictEqual(app.el('help_q').getAttribute('type'), 'search');
       app.key(app.el('pgBody'), '/');
       assert.strictEqual(app.document.activeElement.id, 'help_q', '/ focuses the search');
       app.input('help_q', 'orifice');
       const box = app.el('help_res'), q = app.el('help_q');
       assert.ok(!box.hidden && box.getAttribute('role') === 'listbox' && box.querySelectorAll('[role=option]').length >= 1);
       assert.strictEqual(q.getAttribute('aria-expanded'), 'true');
+      assert.ok(/Metering & Chokes/.test(txt(app.find('#help_res [role=option] small'))), 'module shown');
+      app.input('help_q', 'transmitter range');
+      assert.ok(/Metering & Chokes · Inputs/.test(txt(app.find('#help_res [role=option] small'))), 'module and section shown');
+      app.input('help_q', 'orifice');
       app.key('help_q', 'ArrowDown');
       assert.strictEqual(q.getAttribute('aria-activedescendant'), 'help_opt_0');
       assert.strictEqual(app.el('help_opt_0').getAttribute('aria-selected'), 'true');
@@ -293,7 +328,7 @@ module.exports = [
       const app = open(ctx), W = app.win;
       app.hook.nav('help');
       const toc = app.findAll('#help_toc_nav .help-a[data-help-go]').map((b) => b.getAttribute('data-help-go'));
-      const order = ['start', 'tasks', 'orifice', 'wts', 'prism', 'flare', 'scenarios', 'glossary'];
+      const order = ['start', 'tasks', 'releasenotes', 'orifice', 'wts', 'prism', 'flare', 'scenarios', 'glossary'];
       assert.deepStrictEqual(toc, order);
       assert.ok(app.el('help_toc').hasAttribute('open'), 'desktop: contents open');
       W.WTS_help.goTo('scenarios');
