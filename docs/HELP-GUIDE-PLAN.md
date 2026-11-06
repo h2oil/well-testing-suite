@@ -461,9 +461,27 @@ Per-file caps (raw, serialised source after concat; enforced by `help-content.te
 (Content round: 8 kB moved from start, 26 → 18 kB, to safety, 28 → 36 kB, for the Chemical Injection inputs and verdict
 actions; the sum stays 330 kB.)
 
-**Fallback if the measure is over at WP-I:** the glossary, the FAQ and the course answers and trainer notes move out of the
-HTML into `help/user-guide.html` only (the app links to the chapter there), which frees about 40–50 kB raw. A re-baseline is
-an owner decision; it is never done silently.
+**Measured after the content round (2026-11-06, help branch, serialised source after concat, gzip level 9):** the help files
+are **319.2 kB raw** (under the 330 kB cap) and **109.6 kB gzip**, about 19.6 kB over the 90 kB gzip cap. The manifest module
+is still a 1.7 kB stub with no entries; the 184 planned shots add about 25–30 B per row, about **6.0 kB raw and 2.0 kB gzip**,
+so the projected total once the shots are captured is about **325 kB raw and 111.6 kB gzip** (manifest about 7.7 kB, just
+under its 8 kB cap). Seven files are within 0.1 kB of their caps (flare 12.0, livedata 16.0, process 20.0, utilities 20.0,
+production 32.0, simcourse 38.0, print 15.0 kB), so any further content edit or the WP-S capture run will push files over.
+
+**The fallback does not solve the gzip cap.** Moving the glossary, the FAQ and the course answers and trainer notes out of the
+HTML into `help/user-guide.html` only frees about **9 kB raw and 3.8 kB gzip** (measured from the loaded content: glossary
+0.9 kB raw / 0.5 kB gzip, FAQ 1.8–2.0 / 0.9, course answers + trainer notes 5.9–6.1 / 2.4), not the 40–50 kB raw first
+assumed. With it the total is still about 105.7 kB gzip (about 107.7 kB once the manifest is full) against 90 kB. The real
+choice for the owner (Q13) is:
+
+1. **a new gzip allocation** for v3.3.2 Help of about **120 kB gzip and 345 kB raw**: the projected 111.6 / 325 kB plus about
+   5 % per-file headroom before the content freeze (the extra 30 kB gzip comes from the 26 kB reserve and 4 kB of the v3.4
+   DFIT share in the table above, or from a new `perf-budget.js` baseline), with the per-file caps raised by the same margin; or
+2. **larger cuts** (about 20 kB gzip, roughly 60–70 kB of guide prose), or **lazy loading** of the guide prose from
+   `help/` (the Help page would then need a fetch and a `file://` fallback, which D6 avoids today).
+
+A re-baseline is an owner decision; it is never done silently. Until it is made, `help-content.test.js` keeps the 90 kB
+gzip cap and its size test is a known failure.
 
 ---
 
@@ -1091,6 +1109,11 @@ their "today" text.
   no help WP owns a file that the `sim-equip` plan gives to one of its WPs (`gui-sweep.js`, 31/32/38, `_harness.js`,
   `wts3d-test.js`, the host file and the generated outputs). Help branches never commit a rebuilt `well-testing-app.html`
   or `ios-app/www`; they test with `accept-test.js --sources`.
+- **Help integration check** (every merge into `help`, and any change to help CSS or the iOS additions): `--sources` reads
+  the committed, not-yet-rebuilt HTML for the `--html` checks, so it cannot see what the help files put into the built page.
+  In a scratch worktree also rebuild Rounds 6 and 9, run `help-host-patch.js --apply` and `sync-from-main.js`, then run
+  `smoke-test.js` and `accept-test.js --html --integration`; the rebuilt HTML and www are thrown away, never committed (D21).
+  This is the check that keeps iOS-only CSS out of the web HTML (`ios-app-3d-layout.test.js`, "web HTML untouched").
 - The WP-0 answers are folded into the FAQ and the exercise order **before** the content freeze.
 - **Content freeze**, then a full `help-shots --all`, then the Round-9 rebuild (manifest module), then WP-G regenerates the
   guide, then WP-I.
@@ -1132,7 +1155,7 @@ before release.
 | Q10 | Whole guide on iOS | Open the bundled `help/user-guide.html` in an in-app reader inside the WebView (images resolve); for a whole-book PDF, the published web link (Q19) or the owner's handout PDF; quick cards, guides and groups through the normal report path |
 | Q11 | Exercise set-up button | Form inputs only in v1, with the rig-up and Reset listed as manual steps; automatic set-up and a trainer "hidden fault" mode later, with a public rig-up and fault API |
 | Q12 | Field review of the course | The owner names a reviewer with field well-test experience before WP-I; if none is available, the plan's numbers are re-checked in the harness and the browser only |
-| Q13 | Bundle budget | Agree the raw **and** gzip allocation across v3.3.1, v3.3.2 and v3.4 (§3.6) before WP-H starts. If the WP-I measure is over: move the glossary, FAQ and course answers to `help/user-guide.html` only; a re-baseline needs the owner's agreement |
+| Q13 | Bundle budget | Agree the raw **and** gzip allocation across v3.3.1, v3.3.2 and v3.4 (§3.6) before WP-H starts. Measured at 109.6 kB gzip (projected 111.6 kB with the full manifest) against 90 kB. Moving the glossary, FAQ and course answers out frees only about 3.8 kB gzip, so it is not enough: the owner chooses a new allocation (about 120 kB gzip / 345 kB raw with headroom) or larger cuts / lazy loading of guide prose (§3.6); a re-baseline needs the owner's agreement |
 | Q14 | WP-SIM in the same release? | Only if it passes its gate by the v3.3.2 freeze; otherwise the next release. The help text follows `WTS_sim.features` either way |
 | Q15 | Cushion defaults | 150 bbl, SG 1.00 (editable 0.80–1.50), 2,400 bbl/d, 2-7/8″ tubing capacity, gas fraction 5 % while unloading |
 | Q16 | Production-line default pressure | {{150|pressureG}} (equal to the separator default), range 0–1440 psig |
@@ -1223,7 +1246,7 @@ raise, but found while checking the code for it, are listed at the end.
 | R19 | major | Clock: `install` keeps time running; pausing stalls timers | `setFixedTime` for static pages; `install` + `pauseAt` with `runFor` inside the sim/PRiSM named actions; `runFor(32)` for frames; determinism check | §3.4, §9 |
 | R20 | major | Version bump re-shoots everything; bytes depend on the container | Merged with R6: version is information only; pixel-diff gate; runs only in the Linux container; Chromium revision and fonts in the manifest; `--check` never compares bytes to a fresh render | D7, §3.2, §3.4, §3.5 |
 | R21 | major | `user-guide.html` dated from the clock | Date from `RELEASE_NOTES[0].date`; byte-stable output; `help/*.html text eol=lf`; regeneration after shots in WP-S and WP-G done criteria | §5.1, §5.2, §9 |
-| R22 | major | Budget against raw headroom only; caps did not add up | Raw and gzip allocation across v3.3.1 / v3.3.2 / v3.4 (+reserve = 789 kB / 216 kB), agreed before WP-H; per-file caps summing to exactly 330 kB; gzip ≤ 90 kB; fallback listed; per-guide caps lowered so the file cap binds | D15, §3.6, §4.6, §7.1, Q13 |
+| R22 | major | Budget against raw headroom only; caps did not add up | Raw and gzip allocation across v3.3.1 / v3.3.2 / v3.4 (+reserve = 789 kB / 216 kB), agreed before WP-H; per-file caps summing to exactly 330 kB; gzip ≤ 90 kB; fallback measured at about 3.8 kB gzip, not enough (owner re-baseline, Q13); per-guide caps lowered so the file cap binds | D15, §3.6, §4.6, §7.1, Q13 |
 | R23 | major | iOS share loses images; canvas WebP re-encode | `fetch → blob → readAsDataURL`; iOS whole guide in an in-WebView reader; no inlined single-file variant (about 11 MB extra in the app bundle; the reviewer's second option was considered and not taken) | D9, §5.1, Q10 |
 | R24 | minor | `49-calc-help-print.js` loads before `49-calc-help.js` | Every help file merges into `WTS_help`; smoke check for `renderBook` and `renderGuide` | §4.2, §7.6 |
 | R25 | minor | Smoke extension unnecessary (smoke-test.js checks only key, render, title, group) | Item dropped; no change to that check | §2.1, §7.6 |

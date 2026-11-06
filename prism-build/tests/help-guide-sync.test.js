@@ -217,7 +217,9 @@ module.exports = [
       assert.ok(d && d.hasAttribute('open'), 'reader open');
       assert.ok(/^help\/user-guide\.html\?v=/.test(f.getAttribute('src')), f.getAttribute('src'));
       assert.ok(/welltest\.h2oil\.co\.uk\/help\/user-guide\.html/.test(d.textContent), 'the published link for a PDF');
-      assert.ok(/html\.ios-app \.help-rd\[open\]\{padding:max\(0px,calc\(4px \+ env\(safe-area-inset-top\)\)\)/.test(app.find('#help_print_slot style').textContent), 'safe-area padding');
+      const iosCss = fs.readFileSync(path.join(harness.REPO, 'ios-app', 'ios-additions', 'ios-styles.css'), 'utf8');
+      assert.ok(/html\.ios-app \.help-rd\[open\] \{[^}]*env\(safe-area-inset-top\)[^}]*env\(safe-area-inset-bottom\)/.test(iosCss), 'reader safe-area padding in ios-styles.css');
+      assert.ok(!/ios-app/.test(app.find('#help_print_slot style').textContent), 'no iOS-only CSS in the web code');
       assert.ok(d.querySelector('form[method="dialog"] button'), '✕ closes the dialog');
       // a rejection without a message never prints "undefined"
       app.document.documentElement.classList.remove('ios-app');

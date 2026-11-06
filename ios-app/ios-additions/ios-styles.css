@@ -221,9 +221,12 @@
         html.ios-app #bu_root .bu-act { min-height: 44px; }
 
         /* 8. v3.3.2 Help centre (prism-build/49-calc-help.js; docs/HELP-GUIDE-PLAN.md §2.6). The screenshot
-              lightbox (<dialog id="help_lb">) is the only Help overlay: each side keeps its 12 px web
-              padding or the inset plus a small gap, whichever is larger, in portrait and landscape. Block
-              layout while open, so the bottom padding stays inside the scrollable area. The header "?"
+              lightbox (<dialog id="help_lb">): each side keeps its 12 px web padding or the inset plus a small
+              gap, whichever is larger, in portrait and landscape. Block layout while open, so the bottom
+              padding stays inside the scrollable area. The full-screen User Guide reader (<dialog id="help_rd">,
+              prism-build/49-calc-help-print.js; Print ▾ → Whole user guide in the app) keeps its toolbar and
+              iframe clear of the status bar, notch / Dynamic Island and home indicator (flex layout; the
+              iframe scrolls inside it). The header "?"
               button (#pgHelpBtn) gets the 44 pt touch target (the "? Help" sidebar link is a .sb-relnotes
               button, already 44 pt in section 4); the lightbox × too. */
         html.ios-app .help-lb {
@@ -236,3 +239,8 @@
         html.ios-app .help-lb[open] { display: block; }
         html.ios-app #pgHelpBtn { width: 44px; height: 44px; min-height: 44px; font-size: 18px; }
         html.ios-app #help_lb_x { min-width: 44px; min-height: 44px; }
+        html.ios-app .help-rd[open] {
+            box-sizing: border-box;
+            padding: max(0px, calc(4px + env(safe-area-inset-top))) env(safe-area-inset-right)
+                     env(safe-area-inset-bottom) env(safe-area-inset-left);
+        }

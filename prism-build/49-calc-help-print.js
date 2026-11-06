@@ -180,8 +180,8 @@ function run(scope){
     .then(r=>{say('Sent to print.'+(r.missing.length?' '+r.missing.length+' screenshot(s) as captions.':''));return r;},e=>say('Printing failed: '+((e&&e.message)||'unknown error')));
 }
 var RCSS='.help-rd[open]{display:flex;flex-direction:column;width:100vw;height:100vh;max-width:none;max-height:none;margin:0;padding:0;border:0;background:var(--bg0);color:var(--text)}'+
-  '.help-rd-bar{display:flex;gap:10px;align-items:center;padding:6px 10px}.help-rd-bar span{flex:1}#help_rd_x{min-width:44px;min-height:44px}#help_rd_f{flex:1;border:0;background:#fff}'+
-  'html.ios-app .help-rd[open]{padding:max(0px,calc(4px + env(safe-area-inset-top))) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}';
+  '.help-rd-bar{display:flex;gap:10px;align-items:center;padding:6px 10px}.help-rd-bar span{flex:1}#help_rd_x{min-width:44px;min-height:44px}#help_rd_f{flex:1;border:0;background:#fff}';
+// iOS safe-area padding for the reader lives in ios-app/ios-additions/ios-styles.css (section 8), never in the web code.
 // Print ▾ as a native select (resets after each choice)
 H.printMenu=slot=>{
   if(!slot)return;
