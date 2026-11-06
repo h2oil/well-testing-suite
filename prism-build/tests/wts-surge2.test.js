@@ -299,20 +299,48 @@ module.exports = [
       // gauge-tank flash: the oil LCV-202 transfers flashes at T-301 (cum.gaugeFlash / gaugeVent and the gauge vent line)
       const gf = (x) => x.cum.gaugeFlash_mscf / x.cum.gaugeOil_stb;
       assert.ok(sb.cum.gaugeFlash_mscf > 0 && Math.abs(gf(sb) / gf(sa) - 1) < 0.02, 'gauge flash per STB ' + gf(sa) + ' / ' + gf(sb));
-      // direct rate check on route T-202 once LCV-201 has stopped: gauge_vent = po2·Rs(Pu2) (only T-202 transfers)
-      let checked = 0;
+      // direct rate check on route T-202 once LCV-201 has stopped: gauge-tank flash = po2·Rs(Pu2, Tu2) (only T-202 transfers),
+      // with Rs taken at T-202's pressure (not T-201's) and the gauge vent line carrying that rate
+      let checked = 0, worst = 0, pDiff = 0;
       const d = mk({ config: cfg });
       d.setFault('xferStuckClosed', true); d.setSurgeRoute('surge2');
       for (let i = 0; i < 4 * 360; i++) {
         d.advance(10);
-        const x = d.getState();
-        if (x.surge2.transfer.q_bpd > 0 && x.surge.transfer.q_bpd === 0 && x.lines.gauge_vent.q > 0) checked++;
+        const x = d.getState(), Iraw = d._internal().surge2, G = Iraw.gas;
+        if (x.surge2.transfer.q_bpd > 0 && x.surge.transfer.q_bpd === 0 && G.po1 === 0 && G.po2 > 0) {
+          const want = G.po2 * Iraw.RsE(G.P2A, G.T2);
+          worst = Math.max(worst, Math.abs(G.gvent / want - 1), Math.abs(G.Rs2 / Iraw.RsE(G.P2A, G.T2) - 1));
+          // the gauge vent line carries the same rate (MMSCFD = scf/s · 0.0864)
+          worst = Math.max(worst, Math.abs(x.lines.gauge_vent.q / (want * 0.0864) - 1));
+          pDiff = Math.max(pDiff, Math.abs(Iraw.RsE(G.P2A, G.T2) / Iraw.RsE(G.PuA, G.T2) - 1));
+          checked++;
+        }
       }
       const sd = st(d);
       assert.ok(checked > 10, 'LCV-202 alone feeds the gauge vent (' + checked + ' samples)');
+      assert.ok(worst < 1e-9, 'gauge flash = po2·Rs(P2): worst relative error ' + worst);
       balanced(assert, sd, 1e-9, 'gas');
-      const I = J(c._internal()).surge2;
+      // shrink on route both: 1 − Bo(tank) / BoX, BoX = (xo1·Bo(Pu) + xo2·Bo(Pu2)) / (xo1 + xo2)
+      const I = c._internal().surge2, Gc = I.gas;
       assert.ok(I.cum.xo1 > 0 && I.cum.xo2 > 0, 'transfer totals ' + JSON.stringify(I.cum));
+      const sc2 = c.getState().rates.shrink_pct;
+      const boX = (I.cum.xo1 * Gc.bo1 + I.cum.xo2 * Gc.bo2) / (I.cum.xo1 + I.cum.xo2);
+      const wantShrink = (1 - Gc.boTank / boX) * 100, legacy = (1 - Gc.boTank / Gc.bo1) * 100;
+      assert.ok(sc2 !== null && Math.abs(sc2 - wantShrink) < 1e-9 * Math.max(1, Math.abs(wantShrink)), 'shrink ' + sc2 + ' vs transfer-weighted ' + wantShrink);
+      if (Math.abs(Gc.bo2 / Gc.bo1 - 1) > 1e-6) assert.ok(Math.abs(wantShrink - legacy) > 1e-9, 'differs from the legacy T-201-only shrink ' + legacy);
+      // a run with T-202 at a different set point: Pu2 ≠ Pu, the weighted shrink differs from the legacy value
+      const e = mk({ config: { noise: { on: false }, surge2: { Psp: 40 } } });
+      // (the split is pressure-driven, so at unequal set points run T-202 alone, then T-201: both transfer totals grow)
+      e.setSurgeRoute('surge2');
+      for (let i = 0; i < 2 * 360; i++) e.advance(10);
+      e.setSurgeRoute('surge');
+      for (let i = 0; i < 2 * 360; i++) e.advance(10);
+      const Ie = e._internal().surge2, Ge = Ie.gas, se = e.getState();
+      assert.ok(Math.abs(Ge.Pu2A - Ge.PuA) > 1 && Ie.cum.xo1 > 0 && Ie.cum.xo2 > 0, 'Pu2 ≠ Pu ' + Ge.PuA + ' / ' + Ge.Pu2A + ' ' + JSON.stringify(Ie.cum));
+      const boXe = (Ie.cum.xo1 * Ge.bo1 + Ie.cum.xo2 * Ge.bo2) / (Ie.cum.xo1 + Ie.cum.xo2);
+      const wantE = (1 - Ge.boTank / boXe) * 100, legE = (1 - Ge.boTank / Ge.bo1) * 100;
+      assert.ok(se.rates.shrink_pct !== null && Math.abs(se.rates.shrink_pct - wantE) < 1e-9 * Math.max(1, Math.abs(wantE)), 'shrink ' + se.rates.shrink_pct + ' vs ' + wantE);
+      assert.ok(Math.abs(wantE - legE) > 1e-4, 'weighted shrink ' + wantE + ' differs from the legacy ' + legE);
       assert.ok(sc.rates.shrink_pct !== null && isFinite(sc.rates.shrink_pct) && Math.abs(sc.rates.shrink_pct - sa.rates.shrink_pct) < 0.5, 'shrink ' + sa.rates.shrink_pct + ' / ' + sc.rates.shrink_pct);
     },
   },
@@ -426,6 +454,14 @@ module.exports = [
       assert.ok(s.surge2.inRig && !s.surge2.inlet && Math.abs(s.surge2.Vo_stb - before.oil) < 1e-12, 'back with the same inventory, XV-202 shut');
       run(sim, 600, 10);
       balanced(assert, st(sim), 1e-9, 'back in');
+      // leaving with XV-202 open (route both): XV-202 is commanded shut with T-202, so the snapshot and getControls agree
+      const o = mk({ config: { noise: { on: false } } });
+      o.setSurgeRoute('both'); run(o, 60, 5);
+      assert.ok(st(o).surge2.inlet, 'XV-202 open on route both');
+      assert.strictEqual(o.setRigup({ surge2: false }), true);
+      s = st(o);
+      assert.ok(!s.surge2.inRig && s.surge2.inlet === false && s.surge2.pos === 0, 'out: inlet false, pos 0');
+      assert.strictEqual(J(o.getControls()).surge2.inlet, false, 'getControls().surge2.inlet false');
     },
   },
   {
@@ -443,6 +479,19 @@ module.exports = [
       assert.ok(s.alarmLog.some((l) => l.id === 'ROUTE' && l.msg === X.RIG_NOTES.surge2LeftLog), 'ROUTE log');
       run(sim, 300, 5);
       assert.ok(!active(st(sim), 'SURGE_BLOCKED'), 'dumps into T-201');
+      // D11: route T-202, T-201 removed (T-202 goes with it), T-201 added back: XV-201A/B were snapped open on the way out
+      const d = mk({ config: { noise: { on: false } } });
+      d.setSurgeRoute('surge2'); run(d, 60, 5);
+      assert.strictEqual(d.setRigup({ surge: false }), true);
+      s = st(d);
+      assert.ok(!s.rigup.surge && !s.rigup.surge2, 'T-201 and T-202 out ' + JSON.stringify(s.rigup));
+      assert.ok(s.alarmLog.some((l) => l.id === 'ROUTE' && l.msg === X.RIG_NOTES.surge2LeftLog), 'snap logged as for a normal removal');
+      assert.strictEqual(d.setRigup({ surge: true }), true);
+      s = st(d);
+      const dc = J(d.getControls());
+      assert.ok(s.surge.comps[0].inlet && s.surge.comps[1].inlet, 'XV-201A/B commanded open after T-201 is back');
+      assert.ok(dc.surge.inlet[0] && dc.surge.inlet[1], 'getControls XV-201A/B open ' + JSON.stringify(dc.surge));
+      assert.ok(!run(d, 300, 5, (x) => active(x, 'SURGE_BLOCKED') || x.esd.tripped), 'no SURGE_BLOCKED and no ESD in 300 s');
       // both compartments at LSHH-201 (LCV-201 stuck, small T-201): LSHH-201 shuts XV-201A/B and the well; T-202 the only route
       const b = mk({ sim: { surgeCap_bbl: 20 } });
       b.setFault('xferStuckClosed', true); b.setSurgeRoute('both');

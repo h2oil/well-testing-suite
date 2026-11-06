@@ -1658,7 +1658,8 @@ function create(flowIn, opts) {
         var qd1 = po * X.Bu + pw, qd2 = po2 * X2.Bu + pw2;
         giT = (qd1 * giT + qd2 * X2.Tu) / (qd1 + qd2);
         if (rGauge) { giB = (po * X.Bu + po2 * X2.Bu) / mmax(po + po2, 1e-300); giO += po2; giW += pw2; } else { exO += po2; exW += pw2; }
-        gvent += po2 * RsE(X2.PuA, X2.Tu);
+        F2.gP = X2.PuA; F2.gT = X2.Tu; F2.gRs = RsE(X2.PuA, X2.Tu);   // T-202 flash basis (diagnostic: surge2Internal)
+        gvent += po2 * F2.gRs;
       }
       cum.xo1 += po * h; cum.xo2 += po2 * h;
     }
@@ -2648,7 +2649,7 @@ function create(flowIn, opts) {
   // last-substep fluxes of T-202 (scf/s, STB/s, bbl/s): x1 / x2av opening of the T-201 / T-202 branch, s1 / s2 liquid shares,
   // in2 dump inflow (bbl/s at separator conditions), dO / dW dumps (STB/s, bbl/s), rV level rate (bbl/s)
   var F2 = { act: false, x1: 0, x2av: 0, x2new: 0, s1: 1, s2: 0, b2: 0, dO: 0, dW: 0, in2: 0, flash: 0, blow: 0, blk: 0, held: false,
-    bpv: 0, bpvCap: 0, psv: 0, po: 0, pw: 0, xBpd: 0, xCmd: 0, xdP: 0, sg: 0.85, rV: 0 };
+    bpv: 0, bpvCap: 0, psv: 0, po: 0, pw: 0, xBpd: 0, xCmd: 0, xdP: 0, sg: 0.85, rV: 0, gP: 0, gT: 0, gRs: 0 };
   var RIG2_REFUSED = 'T-202 is the only open route and T-201 cannot take the dumps (LSHH-201): open a T-201 inlet first.';
   // ── alarm texts (§5.5) and the two shared texts that name T-202 while it is in ──
   MSG.PSHH_SURGE2 = mHi('PSHH-202', 'surge tank 2', 'pressureG');
@@ -3055,7 +3056,8 @@ function create(flowIn, opts) {
       return '';
     }
     // leaving: make-before-break line-up when T-202 was the only route (snap XV-201A/B open, except at LSHH-201)
-    if (r.surge && surge2OnlyRoute()) {
+    // (also when T-201 leaves with it — D11 — so T-201 comes back with its inlets open; the refusal check stays in surge2RigCheck)
+    if (surge2OnlyRoute()) {
       var lim = cfg.surge.lshh * capK - 1e-9, opened = [];
       for (k = 0; k < 2; k++) if (compVliq(k) < lim) { uv[k] = true; hold.surge[k] = false; upos[k] = 1; opened.push(valveTag('surge', k)); }
       if (opened.length) {
@@ -3070,6 +3072,7 @@ function create(flowIn, opts) {
     if (AL.XFER2_DRYRUN && AL.XFER2_DRYRUN.active) clearA(AL.XFER2_DRYRUN);
     if (AL.LSHH_SURGE2 && AL.LSHH_SURGE2.active) clearA(AL.LSHH_SURGE2);
     quiet(Q_SURGE2);
+    ctl.surge2.inlet = false; u2pos = 0;              // XV-202 out with T-202: the snapshot, getControls and prefs read shut
     zeroF2();
     return '';
   }
@@ -3112,7 +3115,12 @@ function create(flowIn, opts) {
     o.surge2 = { Psp: Psp2, cap: cap2, D: D2, H: H2, qDd_bpd: qDd2 * 86400, pumpDesign: pumpDesign2, xferDesignDP: dPxD2, Ph: X2.Ph,
       mawp: X2.mawpU, psv: psvCase2 ? deepClone(psvCase2) : null, inv: { oil: uo2, water: uw2, gas: X2.n_u },
       pend: { closeU: pend2.closeU, close2: pend2.close2 }, xferOn: xferOn2,
-      cum: { xo1: cum.xo1 || 0, xo2: cum.xo2 || 0 } };
+      cum: { xo1: cum.xo1 || 0, xo2: cum.xo2 || 0 },
+      // gas accounting basis: last step's LCV-202 oil and flash basis; volume factors for the transfer-weighted shrink
+      gas: { po1: F.po, po2: F2.po, P2A: F2.gP, T2: F2.gT, Rs2: F2.gRs, gvent: F.gvent, PuA: X.PuA, Pu2A: X2.PuA,
+        bo1: BoR(X.PuA, X.Tu), bo2: BoR(X2.PuA, X2.Tu), boTank: BoR(PSC, tanks[active].T), boSep: BoR(X.PsepA, X.Tsep),
+        gaugeOil: cum.gaugeOil },
+      RsE: RsE };
   }
   // setControls → ctl.surge2 (initial: the saved line-up rebuilds t = 0, prefs precedence §3.3; later: XV-202 via its valve)
   function surge2Ctl(src, initial) {
