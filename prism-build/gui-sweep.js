@@ -989,11 +989,13 @@ async function simJob(browser) {
   // Run the Well Test Simulator for a few seconds (2D), then stop/reset.
   const { s } = await freshSession(browser, 'wts', DESKTOP);
   const route = 'wts', view = 'run';
+  let eqRun = null;                        // the equipment run (§9.3) also runs when the run above fails
   try {
     await navTo(s, 'wts'); await s.take();
     routeInfo.wts = routeInfo.wts || { title: '', views: {}, controls: 0, clicks: 0, fills: 0, selects: 0, exports: {}, noEffect: [] };
     const act = (sel, idx) => s.eval((a) => { const b = Array.from(document.querySelectorAll(a[0])).filter((x) => x.offsetParent)[a[1] || 0]; if (!b) return null; b.click(); return (b.getAttribute('aria-label') || b.innerText || a[0]).trim().slice(0, 60); }, [sel, idx || 0]);
     const clockTxt = () => s.eval(() => (Array.from(document.querySelectorAll('#pgBody *')).map((e) => e.childElementCount ? '' : e.textContent).find((t) => /^\s*(T\+)?\d{1,3}:\d{2}(:\d{2})?\s*$/.test(t || '')) || '').trim());
+    eqRun = () => equipmentRun(s, act, clockTxt, route);
     const runs = {};
     for (const mode of ['3d', '2d']) {
       await act('[data-act=mode' + mode + ']'); await sleep(800);
@@ -1033,10 +1035,12 @@ async function simJob(browser) {
     routeInfo.wts.simRun = runs;
     const info3d = await s.eval(() => (window.WTS_3d && window.WTS_3d.loadInfo ? window.WTS_3d.loadInfo() : null));
     routeInfo.wts.three = info3d;
-    runs.equipment = await equipmentRun(s, act, clockTxt, route);
   } catch (e) {
     addFinding({ severity: 'error', kind: 'sim', route, view, message: 'simulator run failed: ' + e.message.split('\n')[0] });
-  } finally { await s.close(); }
+  } finally {
+    try { if (eqRun && routeInfo.wts) routeInfo.wts.equipment = await eqRun(); } catch (e) { /* equipmentRun reports its own findings */ }
+    await s.close();
+  }
 }
 
 // v3.3.1 (docs/SIM-EQUIPMENT-PLAN.md §9.3): DS-101 desander and T-202 second surge tank. The fault loop above leaves every
@@ -1077,8 +1081,9 @@ async function equipmentRun(s, act, clockTxt, route) {
     // DS-101 card (the same path as a 3D / 2D pick) → Dump sand → confirm
     await s.eval(() => { const v = document.getElementById('wts_viz'), f = document.createElement('button'); f.setAttribute('data-act', 'focus'); f.setAttribute('data-v', 'desander'); v.appendChild(f); f.click(); f.remove(); });
     await sleep(400);
-    const dumpBtn = await act('#wtsl_card [data-act=ds-dump]');
-    if (!dumpBtn) note('error', 'DS-101 card: no enabled "Dump sand" button');
+    const dumpWhy = await s.eval(() => { const b = document.querySelector('#wtsl_card [data-act=ds-dump]'); return !b ? 'no button' : b.disabled ? 'disabled: ' + (b.getAttribute('title') || '') : ''; });
+    const dumpBtn = dumpWhy ? null : await act('#wtsl_card [data-act=ds-dump]');
+    if (!dumpBtn) note('error', 'DS-101 card: no enabled "Dump sand" button (' + (dumpWhy || 'not visible') + ')');
     await sleep(250);
     if (!(await act('[data-act=confirm-yes]'))) note('error', '"Dump sand": no confirmation');
     await sleep(300);
@@ -1098,8 +1103,8 @@ async function equipmentRun(s, act, clockTxt, route) {
     if (out.clockBefore && out.clockBefore === out.clockAfter) note('error', 'equipment run: the clock did not advance at ×600');
     await s.eval(() => { const v = document.getElementById('wts_viz'), f = document.createElement('button'); f.setAttribute('data-act', 'focus'); f.setAttribute('data-v', 'desander'); v.appendChild(f); f.click(); f.remove(); });
     await sleep(1200);
-    const card = await s.eval(() => { const c = document.getElementById('wtsl_card'); return c ? c.innerText : ''; });
-    const m = /Last dump[\s\S]*?(\d+) dumps?/.exec(card);
+    const card = await s.eval(() => { const c = document.getElementById('wtsl_card'); return c ? c.textContent : ''; });   // textContent: innerText would carry the CSS upper-casing of the labels
+    const m = /Last dump[\s\S]*?(\d+) dumps?/i.exec(card);
     out.dumps = m ? +m[1] : null;
     if (out.dumps !== 1) note('error', 'DS-101 card after ≥ 1,800 s at ×600: expected 1 completed dump, card says ' + (m ? m[1] : 'nothing'));
     if (/NaN|undefined|Infinity|\[object/.test(card)) note('error', 'DS-101 card shows NaN / undefined text');

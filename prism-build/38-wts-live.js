@@ -1359,7 +1359,7 @@ function createController(vizEl, mopts) {
         if (!_sim || typeof _sim.dumpDesander !== 'function') return;
         var r = null; try { r = _sim.dumpDesander(cmd); } catch (e) {}
         if (!r || !r.ok) toast((cmd === 'start' ? 'Dump sand' : cmd === 'resume' ? 'Resume dump' : 'Abort dump') + ' refused' + (r && r.msg ? ' — ' + r.msg : ''), 'bad');
-        else track('wts_ds_dump', { cmd: cmd });
+        else track('wts_ds_dump', { action: cmd });
         poke(); resig(); updateAll(state());
     }
     function dsSet(o, msg) {

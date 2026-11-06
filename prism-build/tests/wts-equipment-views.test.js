@@ -321,6 +321,42 @@ const HMI = [
     }
   },
   {
+    name: 'WTSEQV L reload restores the rig-up: DS-101 / T-202 switched in on the Rig-up card come back after a reload with their status rows, HUD line and cards (foundation engine, no stub); switched out again: nothing new is left',
+    wp: WP, integration: true,
+    run(app, assert, ctx) {
+      openWts(app);
+      const card = app.el('wtsl_rigup'), sw = (c, k) => c.querySelector('[data-rig="' + k + '"]');
+      app.click(sw(card, 'desander')); app.flush(300);
+      app.click(sw(card, 'surge2')); app.flush(1200);
+      assert.ok(sw(card, 'desander').getAttribute('aria-checked') === 'true' && sw(card, 'surge2').getAttribute('aria-checked') === 'true', 'both switched in');
+      const app2 = ctx.loadApp({ storage: app.storage });
+      try {
+        const live2 = openWts(app2);
+        app2.flush(1200);
+        const st = live2.getState();
+        assert.ok(st.rigup.desander === true && st.rigup.surge2 === true, 'engine rig-up restored: ' + st.rigup.sig);
+        const c2 = app2.el('wtsl_rigup');
+        assert.ok(sw(c2, 'desander').getAttribute('aria-checked') === 'true' && sw(c2, 'surge2').getAttribute('aria-checked') === 'true', 'switches restored');
+        assert.ok(c2.querySelector('[data-k="ds-status"]') && c2.querySelector('[data-k="t202-status"]'), 'status rows after the reload');
+        const hud = app2.el('wtsl_hud').querySelector('[data-h="tDs"]');
+        assert.ok(hud && !hud.hidden && /^DS-101 sand /.test(text(hud)), 'HUD DS-101 line: ' + text(hud));
+        ['desander', 'surge2'].forEach((id) => {
+          app2.win.WTS_live._internals.ctl()._debug.openCard(id); app2.flush(400);
+          const ct = text(app2.el('wtsl_card'));
+          assert.ok(!/Out of rig-up/.test(ct) && !/NaN|undefined|Infinity|\[object/.test(ct), id + ' card in service, no NaN: ' + ct.slice(0, 160));
+          app2.win.WTS_live._internals.ctl()._debug.closeCard();
+        });
+        // switched out again: no status rows, HUD line hidden, the saved request is the default (key removed)
+        app2.click(sw(c2, 'desander')); app2.flush(300);
+        app2.click(sw(c2, 'surge2')); app2.flush(1200);
+        assert.ok(!c2.querySelector('[data-k="ds-status"]') && !c2.querySelector('[data-k="t202-status"]') && hud.hidden, 'nothing left while out');
+        assert.strictEqual(app2.win.localStorage.getItem('wts_sim_rigup'), null, 'default request: key removed');
+        assert.strictEqual(app2.consoleErrors().length, 0, 'no console errors after the reload');
+      } finally { if (app2.dispose) app2.dispose(); }
+      assert.strictEqual(app.consoleErrors().length, 0, 'no console errors');
+    }
+  },
+  {
     name: 'WTSEQV L Metric mode: DS-101 / T-202 card, HUD and Rig-up status texts convert (kg, kg/d, mm/y, mm/d, kPa) — no psig / lb / gal / mpy / mil/d',
     wp: WP, integration: true,
     run(app, assert) {
