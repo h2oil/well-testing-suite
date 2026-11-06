@@ -29,11 +29,12 @@ const CONTENT_FILES = ['start', 'overview', 'metering', 'welltest', 'simcourse',
   .map((g) => '48-calc-help-' + g + '.js');
 const KB = 1000;
 const CAPS = {
-  '49-calc-help.js': 45, '49-calc-help-print.js': 15, '48-calc-help-start.js': 26, '48-calc-help-overview.js': 10,
+  '49-calc-help.js': 45, '49-calc-help-print.js': 15, '48-calc-help-start.js': 18, '48-calc-help-overview.js': 10,
   '48-calc-help-metering.js': 28, '48-calc-help-welltest.js': 32, '48-calc-help-production.js': 32, '48-calc-help-livedata.js': 16,
-  '48-calc-help-safety.js': 28, '48-calc-help-process.js': 20, '48-calc-help-flare.js': 12, '48-calc-help-utilities.js': 20,
+  '48-calc-help-safety.js': 36, '48-calc-help-process.js': 20, '48-calc-help-flare.js': 12, '48-calc-help-utilities.js': 20,
   '48-calc-help-simcourse.js': 38, '48-calc-help-manifest.js': 8,
 };
+// start 26 → 18 kB, safety 28 → 36 kB (WP-C6 fix round: the cheminj inputs and verdict actions); the sum stays 330 kB
 const SUM_CAP = 330 * KB, GZIP_CAP = 90 * KB;
 const NOT_ROUTES = ['gaevents', 'dca', 'pta'];
 const OVERVIEW = ['home', 'help', 'clientinfo', 'wells', 'privacy', 'releasenotes'];
@@ -244,6 +245,10 @@ function hostFn(name) {
   const b = h.indexOf('\n}', a + 1);
   return h.slice(a + 1, b === -1 ? h.length : b + 2);
 }
+// cheminj registers with `key: PG_KEY` (a variable), and the hydrate page function is also matched in 40-calc-chemlib.js,
+// so both page files are named here (kept apart from the SRC_OVERRIDE line so other overrides merge cleanly)
+SRC_OVERRIDE.cheminj = ['49-calc-cheminj.js'];
+SRC_OVERRIDE.hydrate = ['25-hydrate.js'];
 function srcTexts(route) {
   if (SRC_OVERRIDE[route]) return SRC_OVERRIDE[route].map((f) => ({ name: f, text: readSrc(f) }));
   const reg = SRC_FILES().filter((f) => /^4\d-calc-|^6\d-/.test(f) && new RegExp("key:\\s*['\"]" + route + "['\"]").test(readSrc(f)));
@@ -301,7 +306,8 @@ function verdictLines(root) {
     const tag = String(e.localName).toLowerCase();
     if (tag === 'script' || tag === 'style' || tag === 'option' || tag === 'select') return;
     const t = txt(e);
-    if (!/^[✓⚠✗]/.test(t) || t.length > 600) return;
+    // a lone mark is a status cell of a table (cheminj line summary), not a verdict sentence
+    if (!/^[✓⚠✗]/.test(t) || t.length > 600 || t.length < 2) return;
     if (Array.from(e.children).some((c) => txt(c) === t)) return;
     if (out.indexOf(t) === -1) out.push(t);
   });
