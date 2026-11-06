@@ -404,7 +404,8 @@ module.exports = [
       adv(sim, 200, 5);
       const s1 = J(sim.getState());
       assert.ok(s1.desander.dump.phase === 'bleed' && s1.desander.sand.buf_lb > 0, 'bleeding, caught sand goes to the buffer: ' + s1.desander.sand.buf_lb);
-      const acc = s1.desander.sand.acc_lb, buf = s1.desander.sand.buf_lb, cap = s1.desander.sand.cap_lb;
+      const acc = s1.desander.sand.acc_lb, buf = s1.desander.sand.buf_lb, cap = s1.desander.sand.cap_lb, esd1 = s1.nodes.esd.P;
+      assert.ok(s1.nodes.esd.P - s1.nodes.choke.Pin > 0.5, 'DS-101 in: choke inlet below the ESD node by the desander ΔP');
       let ab = null; sim.on('dump', (p) => { if (/aborted/.test(p.msg)) ab = p; });
       assert.strictEqual(sim.setRigup(app.toWin({ desander: false })), true, 'DS-101 out of the rig-up');
       const s2 = J(sim.getState());
@@ -413,6 +414,10 @@ module.exports = [
       assert.ok(s2.desander.dump.phase === 'idle' && !s2.desander.inRig, 'idle, out');
       assert.near(s2.desander.sand.acc_lb, Math.min(cap, acc + buf), 1e-6, 'buffer moved into the accumulator (capped)');
       assert.strictEqual(s2.desander.dP_psi, 0, 'no ΔP while out');
+      assert.strictEqual(s2.nodes.esd.P, esd1, 'rig-out: the ESD node is continuous (X.PB carries PBu, plan §6.4)');
+      assert.strictEqual(s2.nodes.choke.Pin, esd1, 'rig-out: the choke inlet loses the desander ΔP');
+      adv(sim, 1, 1);
+      assert.ok(Math.abs(J(sim.getState()).nodes.esd.P - esd1) < 1, 'ESD node: no step in the first second after the rig-out');
       assert.ok(ids(s2).filter((i) => /^DES_|^HYD_ds|HYD_desander/.test(i)).length === 0, 'Q_DES released');
       adv(sim, 60, 1);
       const s3 = J(sim.getState());

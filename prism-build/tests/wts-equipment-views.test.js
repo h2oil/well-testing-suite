@@ -5,7 +5,7 @@
 //     (route, XV-202, auto route, stroke, LCV-202 trip reset), the 375 px phone inset (44 px Dump sand), HUD / tiles / popovers /
 //     trends / legend, Scenarios menu, fault toasts, summaryOf, Metric texts.
 //   • 2D group (WP-2D): host wtsDrawDiag variants, 38 2D overlay / zones / taps, Dynamic Simulation inputs.
-//   • Engine group (WP-I): the same views driven by the real engine (no stub) with DS-101 / T-202 in the rig-up.
+//   • Engine group (WP-I): the same views driven by the real engine (no stub, no fixture) with DS-101 / T-202 switched in.
 // The HMI and 2D groups check the call contract with a recording stub sim installed through WTS_live._internals.useSim: it
 // delegates to the real engine and serves fakeEquipSnapshot over the real snapshot (tests/_wts-equip-shapes.js), so the visible
 // result comes from the frozen contract. Expected values are plan texts (§8.3 / §8.4), tags of the P&ID and fixture example
@@ -661,4 +661,125 @@ const D2 = [
   },
 ];
 
-module.exports = [].concat(HMI, D2);
+// ── Engine group (WP-I, plan §9.2): the same views on the real engine (no stub sim, no fixture snapshot), DS-101 and T-202
+// switched in on the Rig-up card. Expected values come from the engine's own snapshot read in the test, plan texts and tags.
+function rigBothIn(app) {
+  const card = app.el('wtsl_rigup'), sw = (k) => card.querySelector('[data-rig="' + k + '"]');
+  ['desander', 'surge2'].forEach((k) => { if (sw(k).getAttribute('aria-checked') !== 'true') { app.click(sw(k)); app.flush(300); } });
+  app.flush(1200);
+  return card;
+}
+function advSim(app, sim, secs, dt) { const n = Math.round(secs / dt); for (let i = 0; i < n; i++) sim.advance(dt); app.flush(1200); }
+const kv = (app, label) => {
+  const c = app.el('wtsl_card'); if (!c) return null;
+  const d = Array.from(c.querySelectorAll('.wtsl-kv > div')).filter((x) => !x.hidden && text(x.querySelector('.l')) === label)[0];
+  return d ? { v: text(d.querySelector('.v')), d: text(d.querySelector('.d')) } : null;
+};
+const NAN = /NaN|undefined|Infinity|\[object/;
+const ENG = [
+  {
+    name: 'WTSEQV engine: DS-101 / T-202 switched in on the Rig-up card — engine rig-up, status rows, HUD line, 2D variants and cards from the real snapshot, no NaN',
+    wp: WP, integration: true,
+    run(app, assert) {
+      const sim = openWts(app);
+      const card = rigBothIn(app);
+      const st = sim.getState();
+      assert.ok(st.rigup.desander === true && st.rigup.surge2 === true && st.desander.inRig && st.surge2.inRig, 'engine rig-up: ' + st.rigup.sig);
+      assert.ok(st.desander.dP_psi > 0 && Math.abs(st.nodes.esd.P - st.nodes.choke.Pin - st.desander.dP_psi) < 1e-6, 'choke inlet = ESD node − desander ΔP');
+      const ds = text(card.querySelector('[data-k="ds-status"] .rv')), t2 = text(card.querySelector('[data-k="t202-status"] .rv'));
+      assert.ok(/^ΔP [\d.]+ psi/.test(ds) && /capture [\d.]+ %/.test(ds) && /rating 10,000 psi/.test(ds), 'DS-101 status: ' + ds);
+      assert.ok(/route T-201/.test(t2) && /XV-202 SHUT/.test(t2), 'T-202 status: ' + t2);
+      const hud = app.el('wtsl_hud').querySelector('[data-h="tDs"]');
+      assert.ok(!hud.hidden && /^DS-101 sand \d+% · ΔP [\d.]+ psi$/.test(text(hud)), 'HUD DS-101 line: ' + text(hud));
+      const cv = app.el('wts_cv'); app.flush(1200);
+      const t = frameTexts(lastFrame(app, cv)).join('|');
+      assert.ok(/Desander/.test(t) && /T-202/.test(t) && !NAN.test(t), '2D variants drawn from the engine: ' + t.slice(0, 200));
+      ['desander', 'surge2'].forEach((id) => {
+        const ct = text(openCard(app, id));
+        assert.ok(!/Out of rig-up/.test(ct) && !NAN.test(ct), id + ' card in service, no NaN: ' + ct.slice(0, 200));
+        ctlOf(app)._debug.closeCard();
+      });
+      openCard(app, 'desander');
+      const dP = kv(app, 'ΔP');
+      assert.ok(dP && dP.v.indexOf(sim.getState().desander.dP_psi.toFixed(1)) >= 0, 'card ΔP ' + JSON.stringify(dP) + ' vs engine ' + sim.getState().desander.dP_psi);
+      assert.strictEqual(app.consoleErrors().length, 0, 'no console errors: ' + app.consoleErrors().map((l) => l.text).join(' | '));
+    }
+  },
+  {
+    name: 'WTSEQV engine: "Dump sand" from the DS-101 card runs the real dump sequence (button disabled while it runs) and the card shows 1 dump when it ends; sand balance holds',
+    wp: WP, integration: true, timeoutMs: 240000,
+    run(app, assert) {
+      const sim = openWts(app);
+      rigBothIn(app);
+      sim.setFault('sandFlowback', true);
+      advSim(app, sim, 1800, 10);
+      let st = sim.getState();
+      assert.ok(st.desander.sand.acc_lb > 0, 'sand caught before the dump: ' + st.desander.sand.acc_lb);
+      openCard(app, 'desander');
+      app.click(cardBtn(app, 'ds-dump')); app.flush(30);
+      assert.strictEqual(sim.getState().desander.dump.phase, 'idle', 'nothing before the confirm');
+      app.click(yes(app)); app.flush(300);
+      st = sim.getState();
+      assert.ok(st.desander.dump.phase !== 'idle', 'dump running: ' + st.desander.dump.phase);
+      assert.ok(cardBtn(app, 'ds-dump').disabled && /A dump is running/.test(cardBtn(app, 'ds-dump').getAttribute('title')), 'Dump sand disabled while it runs');
+      advSim(app, sim, 1500, 5);                       // the sequence takes about 1,043 s on the sample (plan §4.4)
+      st = sim.getState();
+      assert.ok(st.desander.dump.phase === 'idle' && st.desander.dump.count === 1 && !st.desander.dump.failed, 'one completed dump: ' + JSON.stringify(st.desander.dump));
+      assert.ok(st.sand.cum.dumped_lb > 0, 'sand dumped: ' + st.sand.cum.dumped_lb);
+      const last = kv(app, 'Last dump');
+      assert.ok(last && /^T\+/.test(last.v) && last.d === '1 dump', 'card Last dump: ' + JSON.stringify(last));
+      const cum = st.sand.cum, d = st.desander.sand, tol = 1e-6 * Math.max(1, cum.in_lb);
+      assert.ok(Math.abs(cum.in_lb - cum.capt_lb - cum.toChoke_lb) < tol && Math.abs(cum.capt_lb - d.acc_lb - d.buf_lb - cum.dumped_lb) < tol, 'sand balance');
+      assert.ok(!NAN.test(text(app.el('wtsl_card'))), 'no NaN on the card');
+      assert.strictEqual(app.consoleErrors().length, 0, 'no console errors');
+    }
+  },
+  {
+    name: 'WTSEQV engine: T-202 card route buttons drive the real engine (route both → XV-202 open; back to T-201 → XV-202 shut); the 375 px T-202 inset renders the real snapshot',
+    wp: WP, integration: true, opts: { viewport: { width: 375, height: 812 } },
+    run(app, assert) {
+      const sim = openWts(app);
+      rigBothIn(app);
+      openCard(app, 'surge2');
+      app.click(cardBtn(app, 's2route', 'both')); app.flush(50);
+      advSim(app, sim, 600, 5);
+      let st = sim.getState();
+      assert.ok(st.surge2.inlet === true && st.surge2.pos === 1 && st.surge2.route === 'both', 'route both: ' + JSON.stringify({ inlet: st.surge2.inlet, pos: st.surge2.pos, route: st.surge2.route }));
+      assert.ok(cardBtn(app, 's2route', 'both').classList.contains('on'), 'card marks route both');
+      const share = kv(app, 'Share of dumps');
+      assert.ok(share && !NAN.test(share.v), 'share row: ' + JSON.stringify(share));
+      app.click(cardBtn(app, 's2route', 'surge')); app.flush(50);
+      advSim(app, sim, 60, 5);
+      st = sim.getState();
+      assert.ok(st.surge2.inlet === false && st.surge2.pos === 0 && st.surge2.route === 'surge', 'back to T-201: ' + st.surge2.route);
+      ctlOf(app)._debug.closeCard();
+      ctlOf(app)._debug.openVin('surge2'); app.flush(50);
+      const vin = app.el('wtsl_vin');
+      assert.ok(vin && /T-202 surge tank/.test(text(vin)) && !NAN.test(text(vin)), 'T-202 inset on the real snapshot');
+      assert.strictEqual(app.consoleErrors().length, 0, 'no console errors');
+    }
+  },
+  {
+    name: 'WTSEQV engine: Metric mode on the real snapshot — DS-101 / T-202 cards and the HUD line show kPa, no psig / lb / gal',
+    wp: WP, integration: true,
+    run(app, assert) {
+      const sim = openWts(app);
+      rigBothIn(app);
+      sim.setFault('sandFlowback', true);
+      advSim(app, sim, 600, 10);
+      app.win.WTS_units.setSystem('metric'); app.flush(1200);
+      const IMP = /\bpsig?\b|\blb\b|\blb\/d\b|\bgal\b|\bmpy\b|mil\/d|°F/;
+      ['desander', 'surge2'].forEach((id) => {
+        const ct = text(openCard(app, id));
+        assert.ok(/kPa/.test(ct) && !IMP.test(ct), id + ' card metric: ' + (ct.match(new RegExp('.{25}(' + IMP.source + ').{10}')) || [''])[0]);
+        ctlOf(app)._debug.closeCard();
+      });
+      const hud = text(app.el('wtsl_hud').querySelector('[data-h="tDs"]'));
+      assert.ok(/kPa/.test(hud) && !/psi/.test(hud), 'HUD DS-101 line: ' + hud);
+      app.win.WTS_units.setSystem('imperial'); app.flush(300);
+      assert.strictEqual(app.consoleErrors().length, 0, 'no console errors');
+    }
+  },
+];
+
+module.exports = [].concat(HMI, D2, ENG);

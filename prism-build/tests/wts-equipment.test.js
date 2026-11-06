@@ -397,7 +397,7 @@ module.exports = [
       X.FAULTS_NEW.forEach((f) => assert.strictEqual(S.FAULTS.find((x) => x.id === f.id).label, f.label, 'fault label ' + f.id));
       Object.keys(X.DEFAULTS_NEW).forEach((k) => assert.deepStrictEqual(J(S.DEFAULTS[k]), X.DEFAULTS_NEW[k], 'DEFAULTS.' + k));
       assert.deepStrictEqual(J(S.SAMPLE_FLOW.sim), Object.assign({ sepID_in: 36, sepLss_ft: 10, surgeP_psig: 25, surgeCap_bbl: 100, gaugeCap_bbl: 100 }, X.SAMPLE_FLOW_SIM), 'SAMPLE_FLOW.sim');
-      X.API_STATIC_NEW.filter((k) => k !== 'sand').forEach((k) => assert.ok(k in S, 'WTS_sim.' + k));   // sand helpers: WP-E1
+      X.API_STATIC_NEW.forEach((k) => assert.ok(k in S, 'WTS_sim.' + k));
       X.STEP_COMBOS.forEach((c) => assert.deepStrictEqual(J(S.stepFor(app.toWin(c.rig))), c.step, 'stepFor ' + c.name));
       assert.deepStrictEqual(J(S.stepFor(app.toWin({ desander: 'yes', surge2: 1 }))), X.STEP_V33, 'stepFor strict true');
       const sim = S.create(S.SAMPLE_FLOW, app.toWin({ seed: 4 }));

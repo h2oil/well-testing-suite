@@ -175,7 +175,11 @@ the `null`/`undefined` restore in `setRigNow` (L2268: null → the item's defaul
   3. `quiet(Q_SURGE2)` once (§5.5), so a `PSHH_SURGE2` / `LSHH_SURGE2` active at removal can never block the ESD reset.
 - **DS-101 leaving**: abort a running or held dump (phase → idle; the buffer moves into the accumulator by the capped rule of
   §4.4; `logEntry('event','DS_DUMP', …,'dump aborted: DS-101 out of the rig-up')`), `quiet(Q_DES)`; `X.PD = 0` and the legacy
-  PB law takes over from the current `X.PB` (§4.3).
+  PB law takes over from **`X.PB = X.PBu`** (§4.3). **WP-I decision:** the ESD node is continuous (§6.4), so the single legacy
+  node carries the pressure upstream of DS-101 over and keeps its 5 s lag; the choke inlet loses the desander ΔP with the
+  bypass spool (a rig-up change is an instantaneous line-up, as T-202's snaps). Taking over from the choke inlet (`PBu − PD`, the
+  WP-E1 behaviour) would have stepped the ESD node down by ΔP. `wts-desander` asserts both nodes = the old PBu after the
+  rig-out and no ESD-node step in the next second.
 - **DS-101 entering**: `X.PBu = X.PB`, `X.PD = 0`, `P_acc = X.PB`, phase idle.
 - **T-202 entering from the card**: command XV-202 shut (position snaps to 0); its inventory is whatever it held (empty after
   `create`/`reset`). **Precedence:** device prefs (`h2viz3d_prefs.ctl.surge2`) restore the saved line-up on session start
@@ -347,12 +351,13 @@ State: `acc`, `buf` (lb), `P_acc` (psig, scalar, no fluid balance), `phase`, `ph
 Local scaled copies only (`qgL = qgE·s`, `qoL = qoE·s`, `qwL = qwE·s` used by the inflow law this substep; `qgE/qoE/qwE` are
 `derive()` constants and are never written):
 ```
-critical gas (chk.regime === 'Critical' && Qg > 0):  r = QmaxMMscfd·(Pci_ss − X.PD + 14.696)/(Pci_ss + 14.696) / Qg
+critical gas (chk.regime === 'Critical' && Qg > 0):  r = QmaxMMscfd·(Pci_ss − X.PD + 14.696)/(Pci_ss + 14.696) / (Qg·limFac)
 otherwise (liquid well or subcritical):              r = √(max(0, 1 − X.PD/(Pci_ss − Pck_ss)))
 s = 1 (r ≥ 1.02);  s = r (r ≤ 0.98);  s = (1 + r)/2 − ((r − 1)² + 0.0004)/0.08 in between     (C1-smooth minimum)
 flowLimited: set when r < 0.99, cleared when r > 1.00                                            (1 % hysteresis)
 ```
-`CHOKE_LIMIT` reads the dynamic flag while DS-101 is in. With DS-101 out the code path is the legacy one. The coupling only
+`Qg·limFac` is the rate the inflow law carries (= Qmax when the steady calculation is already flow-limited; WP-E1, text
+aligned at WP-I). `CHOKE_LIMIT` reads the dynamic flag while DS-101 is in. With DS-101 out the code path is the legacy one. The coupling only
 matters on liquid wells, or with a plugged liner near the choke limit: on the default gas sample X.PD must reach ≈ 200 psi.
 
 ### 4.7 Choke erosion indicator (display only)
@@ -1000,7 +1005,8 @@ Modbus variables for T-202 / DS-101: follow-up (§1.2).
   'surge2': `SURGE_BLOCKED` → LSHH-102 → ESD); LSLL-202 latches `XFER2_DRYRUN`, reset via `resetTrip`; `XFER2_DRYRUN` latched →
   `resetESD` succeeds and `esd.blocking` is empty; LSHH-301 shuts LCV-201 and LCV-202; oil / water / gas balance < 1e−6 over 4 h
   with route switches; **gas accounting direct**: gauge-tank flash rate = Σ po_k·Rs(P_k), GOR on route T-202 within 1 % of route
-  T-201 at equal set points, shrink uses the transfer-weighted BoR; PCV-203 holds SP ± 1 psi; `bpv2StuckClosed` → PAH-202 →
+  T-201 at equal set points, shrink uses the transfer-weighted BoR; PCV-203 holds SP ± 1 psi (**acceptance measure, WP-I**:
+  mean |P − SP| ≤ 1 psi and peak ≤ PCV-201's peak on the same workload + 0.5 psi — see the note after this list); `bpv2StuckClosed` → PAH-202 →
   PSHH-202 → XV-202 shut, PCV-204 held shut, ESD; **removal while tripped**: PCV-203 stuck closed → PSHH-202 trip → remove T-202
   → `resetESD` succeeds; **PSV-202**: `Cv_psvU2` relieves each sizing case at 1.10·mawpU2 (via `_internal`), and
   `oilDumpStuckOpen` on route 'surge2' keeps Pu2 ≤ 1.10·mawpU2 throughout (PSV-202 lifts if PSHH-202's closure has not yet
@@ -1026,9 +1032,18 @@ Modbus variables for T-202 / DS-101: follow-up (§1.2).
   is unchanged; label layout: project `ANCHORS` with the default overview camera at 1380 × 700 and run `layoutLabels` with DS-101
   and T-202 in — no equipment chip hidden (hiding accepted at phone width); scene builds and frames with each of the 4 optional
   combinations (existing framing gate, V-101 ≥ 55 × 170 px) at 1380 × 700 and 375 × 812 with the HUD heights measured after the
-  `tDs` line; a rig-up change does not move the camera when `userMoved` is true.
+  `tDs` line (**WP-I, measured with Playwright on the Round-7 build, both items in and out — identical**: at 1380 px the HUD
+  stays 56 px, insets 98 / 76; on a 375 × 812 phone (sm) the toolbar (48 px) and HUD tiles (128 px) sit outside the stage, the
+  3D view is 345 × 471 on the page and 375 × 620 maximised, insets 8 / 8; the gate uses those two views — the earlier 375 × 812
+  model with insets 233 / 108 is retired; 38 exports no separate HUD metrics, `_debug.insets()` is the source); a rig-up change does not move the camera when `userMoved` is true.
 - Expected counts after integration: smoke 326 (unchanged — it checks namespaces and the `wtsDrawDiag` bridge); accept ≈ 1,162 +
   100; wts3d-test ≈ 101 + 14.
+- **PCV-203 acceptance measure (WP-I, measured 2026-11-06 on the integrated engine):** `SAMPLE_FLOW`, T-202 in, SP 25 psig,
+  1800 s settle then 4 h sampled at dt 5 s, |P − SPeff| of T-202 against the same run's T-201 with T-202 out (PCV-201):
+  route T-202 mean 0.44 / p95 1.71 / peak 1.93 psi (PCV-201: 0.445 / 1.71 / 1.94); route both 0.16 / 1.61 / 1.95; the same with
+  noise on and at dt 1 s (0.44 / 1.71 / 1.94). The dump cycles move both back-pressure valves by up to about 2 psi for a few
+  seconds, so a literal ± 1 psi peak is not what PCV-201 does either; the acceptance measure is mean ≤ 1 psi and peak ≤ the
+  PCV-201 peak + 0.5 psi (`wts-surge2` 'PCV-203 holds the set point ± 1 psi').
 
 ### 9.3 GUI sweep (`gui-sweep.js`, owned by WP-L)
 Run job `simJob` (L988-1032): after the fault loop (which turns each fault on and leaves it on, L1019-1026), **reload the page**

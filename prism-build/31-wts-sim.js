@@ -1219,7 +1219,8 @@ function create(flowIn, opts) {
   }
   // Alarm / log texts: values with their unit through uq(). Imperial by default (field units); a host may pass
   // opts.fmt(v, cat, dp) → string (or call setFormatter) so the texts follow its unit system (38 passes WTS_live.fmtU).
-  var IMPU = { pressureG: ' psig', pressure: ' psi', temperature: ' °F', tempDelta: ' °F', gasRate: ' MMSCFD', velocity: ' ft/s', percent: '%' };
+  var IMPU = { pressureG: ' psig', pressure: ' psi', temperature: ' °F', tempDelta: ' °F', gasRate: ' MMSCFD', velocity: ' ft/s', percent: '%',
+    mass: ' lb' };
   var fmtHook = typeof opts.fmt === 'function' ? opts.fmt : null;
   function uq(v, cat, dp) {
     if (fmtHook && cat !== 'percent' && isNum(v)) { try { var s = fmtHook(v, cat, dp); if (typeof s === 'string' && s) return s; } catch (e) { /* fall back */ } }
@@ -2597,8 +2598,7 @@ function create(flowIn, opts) {
   var TB = { key: '', res: null, fb: null };
   var DUMP_TXT = { isolate: 'isolating the accumulator', bleed: 'bleeding the accumulator', flush: 'XV-103 open, flushing sand to the skip',
     equalise: 'equalising the accumulator with DS-101', reopen: 'reopening the accumulator isolation' };
-  // alarm / log texts of this section (MSG and the unit table are created above; these statements run at create time)
-  IMPU.mass = ' lb';
+  // alarm / log texts of this section (MSG and the unit table, incl. 'mass', are created above; these statements run at create time)
   MSG.DES_DP_HIGH = function (v, l) {
     var e = DX.dPexp;
     return 'PDAH-103 ' + TAGS.desander + ' ΔP ' + uq(v, 'pressure') + (e > 0 ? ' = ' + (v / e).toFixed(1) + ' × clean' : '') + ' (limit ' + uq(l, 'pressure') +
@@ -2989,7 +2989,10 @@ function create(flowIn, opts) {
         parts.push(TAGS.desander + ' dump aborted');
       }
       quiet(Q_DES);
-      DX.PD = 0; DX.PDraw = 0; DX.s = 1; DS.flowLim = false; DS.flowing = false;   // the legacy PB law takes over from the current X.PB
+      // the ESD node is continuous (§6.4): the legacy PB law takes over from the pressure upstream of DS-101 (X.PB = PBu, not the
+      // choke inlet PBu − PD) and carries it with its 5 s lag; the choke inlet loses the desander ΔP with the bypass spool (WP-I)
+      X.PB = DX.PBu;
+      DX.PD = 0; DX.PDraw = 0; DX.s = 1; DS.flowLim = false; DS.flowing = false;
     }
     return '';
   }

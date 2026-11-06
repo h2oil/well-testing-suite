@@ -351,6 +351,10 @@ const SECTION_B = (G /*, src */) => {
     // ── v1.2.0 (WP-3D): DS-101 desander + T-202 second surge tank — optional rig-up items (plan §8.0–8.1, §9.2) ──
     ...(() => {
       let EQ = null; try { EQ = require('./tests/_wts-equip-shapes.js'); } catch (e) { EQ = null; }
+      // 375×812 phone (WP-I, measured with Playwright on the integrated Round-7 build, both items in and out — identical): the 3D
+      // view is 345×471 on the page and 375×620 maximised; the HUD tiles (128 px) and the toolbar (48 px) sit outside the stage at
+      // the sm breakpoint, so 38 pushes insets 8 / 8 (computeInsets). The WP-3D model 375×812 with insets 233 / 108 is retired.
+      const PHONE_812 = [[345, 471, { top: 8, bottom: 8, left: 0, right: 0, card: null }], [375, 620, { top: 8, bottom: 8, left: 0, right: 0, card: null }]];
       const COMBOS = [{}, { desander: true }, { surge2: true }, { desander: true, surge2: true }];
       const OPTS = ['desander', 'surge2'];
       // v3.3 tables (frozen here, copied from the v3.3 scene) for the "both out = v3.3" checks
@@ -497,7 +501,7 @@ const SECTION_B = (G /*, src */) => {
         ['32: every view with every core group out frames as the default rig (finite, radius < 200); the flare view no longer flies to the origin', () => {
           const bad = [], core = {};
           I.RIG_GROUPS.filter(g => !I.OPT[g]).forEach(g => { core[g] = false; });
-          [[1380, 700, INS], [375, 471, {}], [375, 812, { top: 233, bottom: 108 }]].forEach(([w, h, ins]) => {
+          [[1380, 700, INS], [375, 471, {}]].concat(PHONE_812).forEach(([w, h, ins]) => {
             Object.keys(I.VIEWS).forEach(name => {
               const a = I.viewFor(name, core, w, h, ins), b = I.viewFor(name, {}, w, h, ins);
               const fin = isFinite(a.r) && a.tgt.every(isFinite) && a.r < 200;
@@ -543,11 +547,11 @@ const SECTION_B = (G /*, src */) => {
           });
           return bad.length === 0 || bad.join(',');
         }],
-        ['32: framing gate with each optional combination (V-101 ≥ 55 × 170 px at 1380×700; ≥ 22 px tall at 375×471 and 375×812)', () => {
+        ['32: framing gate with each optional combination (V-101 ≥ 55 × 170 px at 1380×700; ≥ 22 px tall at 375×471 and on a 375×812 phone: 345×471 page, 375×620 maximised)', () => {
           const bad = [];
           COMBOS.forEach(rig => {
             const a = sizeOf(I.V101_BOX, camOf(overview(rig, 1380, 700)), 1380, 700);
-            [[375, 471, {}], [375, 812, { top: 233, bottom: 108, left: 0, right: 0, card: null }]].forEach(([w, h, ins]) => {
+            [[375, 471, {}]].concat(PHONE_812).forEach(([w, h, ins]) => {
               const v = I.viewFor('process', rig, w, h, ins), c = camOf({ az: -10, el: 30, radius: v.r, target: v.tgt });
               const hb = h - (ins.top || 0) - (ins.bottom || 0), b = sizeOf(I.V101_BOX, c, w, h); if (!(b.h >= 22 && hb > 0)) bad.push(JSON.stringify(rig) + ' ' + w + 'x' + h + ' ' + b.h.toFixed(0));
             });
