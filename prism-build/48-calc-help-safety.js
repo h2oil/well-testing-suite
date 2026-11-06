@@ -149,7 +149,7 @@ check: PG({ 'cheminj.total_gal_d': 159.95, 'cheminj.hydrate.dT': 38.566 }, { exp
 pitfalls: ['A planning estimate: calibrate each pump at line pressure.'],
 refs: [{ std: 'Hammerschmidt; Nielsen–Bucklin', note: 'hydrate depression' }, { std: 'Towler and Mokhatab (2005)', note: 'hydrate temperature' }, { std: 'API RP 500 / 505', note: 'classified areas' }],
 related: ['hydrate', 'h2sroe', 'chem'],
-shots: [Sh('view', 'both', 'Chemical Injection input cards', '', ['#cj_qg~1']), Sh('res', 'desktop', 'Headline verdict', RES, ['#cj_res .cj-v~2'], { target: '#cj_res .cj-v' })]
+shots: [Sh('view', 'both', 'Chemical Injection input cards', '', ['#cj_qg~1']), Sh('res', 'desktop', 'Headline verdict and the boxes below it', RES, [], { target: '#cj_res', callouts: [{ sel: '#cj_res .cj-v', n: 2, at: 'right' }] })]
 }),
 liquidline: Gd('liquidline', '0e937304', 'wts_ll_', {
 keywords: ['blowby', 'LCV'],

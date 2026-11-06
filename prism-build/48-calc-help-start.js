@@ -136,7 +136,11 @@ S('', 'Enter them on the page that needs them.')] }];
 var glossary = {
 bean: { term: 'bean', variants: ['beans'], def: 'A fixed choke. Its size is the bore in 64ths of an inch: a 32 bean is 32/64 in.' },
 bsw: { term: 'BS&W', variants: ['basic sediment and water'], def: 'Basic sediment and water: the water and solids in the oil, in % of volume.' },
-cushion: { term: 'cushion', variants: ['cushions'], def: 'The completion fluid left in the well before the test. It is unloaded first, usually to the burner.' },
+cushion: { term: 'cushion', variants: ['cushions', 'water cushion', 'nitrogen cushion'], def: 'A liquid column (water, brine or diesel) or nitrogen placed in the test string above the tester valve. It limits the drawdown and the collapse load when the valve opens. It is unloaded first, usually to the burner.' },
+skin: { term: 'skin', variants: ['skin factor', 'mechanical skin'], def: 'A dimensionless number for the extra pressure drop near the wellbore. Positive: damage. Negative: a stimulated well.' },
+critical: { term: 'critical (sonic) flow', variants: ['choked flow', 'sonic flow'], def: 'Flow through a choke at sonic speed, below a P2/P1 of about 0.55. The rate then does not depend on the downstream pressure.' },
+iarf: { term: 'IARF', variants: ['infinite-acting radial flow', 'radial flow'], def: 'Infinite-acting radial flow: the flat part of the derivative. Permeability and skin come from it.' },
+pstar: { term: 'p*', variants: ['p star', 'extrapolated pressure'], def: 'The pressure the semilog straight line of a build-up reaches at infinite shut-in time (Horner time ratio of 1).' },
 fwhp: { term: 'FWHP', variants: ['FTHP', 'WHP'], def: 'Flowing wellhead (tubing) pressure, upstream of the choke.' },
 sithp: { term: 'SITHP', variants: ['SIWHP'], def: 'Shut-in tubing (wellhead) pressure with the well closed in.' },
 gor: { term: 'GOR', def: 'Gas-oil ratio: standard gas volume per stock-tank barrel of oil.' },

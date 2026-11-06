@@ -154,7 +154,7 @@ module.exports = [
     wp: WP, opts: false,
     async run(_, assert, ctx) {
       const app = openApp(ctx), W = app.win, H = W.WTS_help, sent = [];
-      W.__reportOverride = (t, html, sub) => { sent.push({ t, html, sub }); };
+      W.__reportOverride = (t, html, sub) => { sent.push({ t, html, sub, kicker: W.__reportKicker }); };
       const card = H.renderBook('card:orifice');
       assert.ok(/Quick card/.test(card) && /Select Plate/.test(card) && /Transmitter range, 0 to/.test(card) && /inside/.test(card), 'steps, inputs, verdicts');
       assert.ok(!/What it does|Worked example|Standards and references/.test(card), 'only the card sections');
@@ -172,12 +172,16 @@ module.exports = [
       const r = await p;
       assert.strictEqual(sent.length, 1, 'sent to the report window');
       assert.strictEqual(sent[0].t, 'Orifice Plate Selection');
-      assert.ok(/^Well Testing Suite v?[\d.]+/.test(sent[0].sub));
+      assert.ok(/^User guide · Well Testing Suite v?[\d.]+/.test(sent[0].sub), 'subtitle: ' + sent[0].sub);
+      assert.strictEqual(sent[0].kicker, 'User guide', 'host H6 kicker while the report is built');
+      assert.strictEqual(W.__reportKicker, undefined, 'kicker cleared afterwards');
+      assert.ok(!/class="bk-n"/.test(sent[0].html), 'a single-guide print has no chapter number');
       assert.ok(/src="data:image\/webp;base64,/.test(sent[0].html), 'the served image is a data URI');
       assert.ok(!/src="help\/img\//.test(sent[0].html), 'no file URL left (CSP img-src data:)');
       assert.ok(!/loading="lazy"|decoding="async"/.test(sent[0].html), 'no lazy images: the print window waits for every image load');
       assert.deepStrictEqual(Array.from(r.missing), ['orifice/view-d.webp', 'orifice/view-p.webp'], 'the phone view is tried before the caption');
-      assert.ok(/help-shot-missing[^>]*><b>Screenshot:<\/b> The page as it opens/.test(sent[0].html), 'the missing one prints as its caption');
+      assert.ok(/help-shot-missing[^>]*><b>Screenshot:<\/b> <span>Orifice Plate Selection with the default inputs<\/span><\/div><figcaption>The page as it opens<\/figcaption>/.test(sent[0].html),
+        'the missing one prints its alt text in the box and the caption once, in the figcaption');
       W.fetch = () => { throw new Error('no fetch with Images off'); };
       const p2 = H.print('card:orifice', { images: false });
       await app.flushAsync(10);

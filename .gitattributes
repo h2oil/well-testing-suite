@@ -7,3 +7,4 @@
 # byte-stable LF on every checkout (build-user-guide.js --check compares bytes).
 *.webp binary
 help/*.html text eol=lf
+ios-app/www/help/*.html text eol=lf

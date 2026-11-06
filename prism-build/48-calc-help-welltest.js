@@ -53,7 +53,7 @@ wts: {
     { id: 'layout', title: 'Page layout',
       what: ['Top: the live view (toolbar, alarm bar, 2D or 3D view, HUD), then the **Rig-up** card. Below: the form cards, **Pipe Segments**, **API RP 14E Settings** and the steady results. Steady warnings show above the form.'] },
     { id: 'inputs', title: 'Form inputs',
-      what: ['Which pressure goes where. Flowing wellhead or tubing pressure: **Wellhead Pressure**. Production or export line pressure: **Operating Pressure** plus the line loss, V-101 in only ([[fs#FS-2|FS-2]]). Burner boom: V-101 out, low **Operating Pressure** and **Surge Tank Pressure** as in [[fs#FS-1|FS-1]]. With V-101 out never enter the production or wellhead pressure in **Operating Pressure**: the steady check still uses it.'],
+      what: ['Which pressure goes where. Flowing wellhead or tubing pressure: **Wellhead Pressure**. Production or export line pressure: **Operating Pressure** plus the line loss, V-101 in only ([[fs#FS-2|FS-2]]). Burner boom ([[fs#FS-1|FS-1]]): lower **Surge Tank Pressure** (≤ {{10|pressure||imp}} per step), then **Operating Pressure**, then switch V-101 out; never lower Operating Pressure after that. Never put the production or wellhead pressure in it.'],
       inputs: [
         { label: 'Wellhead Pressure', id: 'wts_Pwh', def: '{{3000|pressureG}}', text: 'Flowing wellhead (tubing) pressure.' },
         { label: 'Wellhead Temp', id: 'wts_Twh', def: '{{180|temperature}}' },
@@ -124,7 +124,7 @@ wts: {
       tips: ['LSHH-202 shuts XV-202 only: on T-202 alone the dumps are then blocked and LSHH-102 trips the ESD.'] },
     { id: 'alarms', title: 'Alarms and ESD',
       steps: ['The alarm bar shows the newest alarm: select **Ack**.', 'Select **Alarms**: alarms with time and tag, steady design warnings, **Events**. **Ack all** acknowledges all.', 'After a trip the banner shows the cause. **Reset ESD** works once no trip alarm is active.'],
-      tips: ['Every trip closes SDV-101 (5 s to close, 15 s to open, then 180 s start-up grace) except LSHH-301 (shuts LCV-201 and LCV-202), LSHH-202 (shuts XV-202) and the LCV-201 / LCV-202 low-low.', 'PSHH-103 (DS-101 inlet at 95 % of its rating) is the only desander trip. PSHH-202 shuts XV-202 and PCV-204, then trips the ESD.', 'Shut in, WHP builds towards 1.2 × WHP (time constant 300 s).', 'Separator set points follow **Operating Pressure**: PAH = SP + max(10 %, {{15|pressure}}), PSHH = SP + max(20 %, {{25|pressure}}).'] },
+      tips: ['Every trip closes SDV-101: 5 s to close, 15 s to open, then 180 s start-up grace. The exceptions are LSHH-301 (shuts LCV-201 and LCV-202), LSHH-202 (shuts XV-202) and the LCV-201 / LCV-202 low-low.', 'PSHH-103 (DS-101 inlet at 95 % of its rating) is the only desander trip. PSHH-202 shuts XV-202 and PCV-204, then trips the ESD.', 'Shut in, WHP builds towards 1.2 × WHP (time constant 300 s).', 'Separator set points follow **Operating Pressure**: PAH = SP + max(10 %, {{15|pressure}}), PSHH = SP + max(20 %, {{25|pressure}}). Live with V-101 out too.'] },
     { id: 'reports', title: 'Reports and saving',
       what: ['The page export and the Quick Report hold the form, the **Rig-up** card and the steady results, not the live view. Inputs autosave; trends keep the last 4 h of sim time. [[wellos]] can log the form and live rates.'] },
     { id: 'views', title: '2D and 3D',

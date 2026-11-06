@@ -135,7 +135,8 @@
     if (p[0] === 'site') return SITE;
     if (p[0] === 'email') return EMAIL;
     var v = parseFloat(p[0]);
-    return esc(fmtU(v, p[1], p[2] != null && p[2] !== '' ? +p[2] : null, o.field ? 'imperial' : o.units));
+    // {{v|cat|dp|imp}}: a field the page leaves in field units (an untagged input such as Surge Tank Pressure) stays imperial
+    return esc(fmtU(v, p[1], p[2] != null && p[2] !== '' ? +p[2] : null, o.field || p[3] === 'imp' ? 'imperial' : o.units));
   }
   function lk(go, lab, cur, sec) { return '<button type="button" class="help-a" data-help-go="' + esc(go) + '"' + (sec ? ' data-help-sec="' + esc(sec) + '"' : '') + (cur ? ' aria-current="true"' : '') + '>' + lab + '</button>'; }
   function linkHTML(target, label, o) {
@@ -161,21 +162,30 @@
     list = arr(list);
     return list.length ? '<ul' + (cls ? ' class="' + cls + '"' : '') + '>' + list.map(x => li(md(x, o))).join('') + '</ul>' : '';
   }
+  // Equipment tags (V-101 in, PSHH-201) do not break at the hyphen in narrow table cells; text segments only, never inside a tag.
+  function nw(h) { return String(h).split(/(<[^>]*>)/).map(x => x.charAt(0) === '<' ? x : x.replace(/\b([A-Z]{1,5}-\d{2,4}[A-Z]?(?: (?:in|out))?)/g, '<span class="help-nw">$1</span>')).join(''); }
   function table(head, rows, o) {
     return '<div class="help-tbl"><table><thead><tr>' + head.map(h => '<th>' + esc(h) + '</th>').join('') +
-      '</tr></thead><tbody>' + rows.map(r => '<tr>' + r.map(c => '<td>' + md(c, o) + '</td>').join('') + '</tr>').join('') +
+      '</tr></thead><tbody>' + rows.map(r => '<tr>' + r.map(c => '<td>' + nw(md(c, o)) + '</td>').join('') + '</tr>').join('') +
       '</tbody></table></div>';
   }
   // Blocks: string | {h} | {list, ordered} | {table:{head, rows}} | {details:{summary, body}} | {shot: id}
-  function renderBlocks(blocks, o, shots, folder) {
+  // prefix: the course exercise or scenario id. help-shots.js saves those shots as <folder>/<slug(prefix)>-<shot id>-d.webp.
+  function shotSlug(x) { return String(x || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''); }
+  H.shotSlug = shotSlug;
+  function renderBlocks(blocks, o, shots, folder, prefix) {
     return arr(blocks).map(b => {
       if (typeof b === 'string') return '<p>' + md(b, o, 1) + '</p>';
       if (!b || typeof b !== 'object') return '';
       if (b.h) return '<h4>' + md(b.h, o) + '</h4>';
       if (b.list) return b.ordered ? '<ol>' + arr(b.list).map(x => li(md(x, o))).join('') + '</ol>' : ul(b.list, o);
       if (b.table) return table(arr(b.table.head), arr(b.table.rows), o);
-      if (b.details) return '<details class="help-det"><summary>' + md(b.details.summary, o) + '</summary>' + renderBlocks(b.details.body, o, shots, folder) + '</details>';
-      if (b.shot) { var s = arr(shots).filter(x => x.id === b.shot)[0]; return s ? shotHTML(folder, s, o) : ''; }
+      if (b.details) return '<details class="help-det"><summary>' + md(b.details.summary, o) + '</summary>' + renderBlocks(b.details.body, o, shots, folder, prefix) + '</details>';
+      if (b.shot) {
+        var s = arr(shots).filter(x => x.id === b.shot)[0];
+        if (s && prefix) s = Object.assign({}, s, { id: shotSlug(prefix) + '-' + s.id });
+        return s ? shotHTML(folder, s, o) : '';
+      }
       return '';
     }).join('');
   }
@@ -187,7 +197,7 @@
     var d = M[fd], p = M[fp], cap = md(s.caption, o), alt = esc(s.alt);
     if (o.images === false) return '';
     var fig = '<figure class="help-fig" data-help-shot="' + esc(folder + '/' + s.id) + '">';
-    if (!d && !p) return fig + missingBox(cap, alt) + '<figcaption>' + cap + '</figcaption></figure>';
+    if (!d && !p) return fig + missingBox(alt) + '<figcaption>' + cap + '</figcaption></figure>';
     var base = o.imgBase == null ? 'help/img/' : o.imgBase;
     var src = (f, e) => (o.dataUris && o.dataUris[f]) || (base + f + '?v=' + esc(e.h8 || ''));
     var main = d || p, mf = d ? fd : fp;
@@ -196,7 +206,8 @@
       '" loading="lazy" decoding="async"></picture>' +
       (!p && arr(s.callouts).length ? '<span class="help-enlarge">Select to enlarge</span>' : '') + '<figcaption>' + cap + '</figcaption></figure>';
   }
-  function missingBox(cap, alt) { return '<div class="help-shot-missing" role="img" aria-label="' + alt + '"><b>Screenshot:</b> ' + cap + '<br><span>' + alt + '</span></div>'; }
+  // The figure keeps its own <figcaption>, so the box shows only the alt text.
+  function missingBox(alt) { return '<div class="help-shot-missing" role="img" aria-label="' + alt + '"><b>Screenshot:</b> <span>' + alt + '</span></div>'; }
 
   // — Guide renderer (D4)
   function vmark(m) { return '<span class="help-v help-v-' + (VCLS[m] || 'ok') + '">' + esc(m) + '</span>'; }
@@ -274,7 +285,11 @@
   var PRESS = ['production pressure', 'fwhp', 'fthp', 'flowing pressure', 'tubing pressure', 'line pressure', 'export pressure', 'back pressure'];
   var _index = null;
   function low(s) { return String(s == null ? '' : s).toLowerCase(); }
-  function plain(s) { return String(s == null ? '' : s).replace(/\{\{([^|}]+)\|[^}]*\}\}/g, '$1').replace(/\[\[[^\]|]*\|([^\]]+)\]\]/g, '$1').replace(/\[\[([^\]]+)\]\]/g, '$1').replace(/[*`]/g, ''); }
+  // Only paired **bold** and `code` markup is stripped, so p* keeps its asterisk.
+  function plain(s) {
+    return String(s == null ? '' : s).replace(/\{\{([^|}]+)\|[^}]*\}\}/g, '$1').replace(/\[\[[^\]|]*\|([^\]]+)\]\]/g, '$1').replace(/\[\[([^\]]+)\]\]/g, '$1')
+      .replace(/\*\*([^*]+)\*\*/g, '$1').replace(/`([^`]+)`/g, '$1');
+  }
   function blocksText(b) {
     return arr(b).map(x => {
       if (typeof x === 'string') return x;
@@ -286,7 +301,7 @@
       return '';
     }).join(' ');
   }
-  function J(a, k) { return arr(a).map(x => typeof x === 'string' ? x : (x && x[k]) || '').join(' ; '); }
+  function J(a, k) { return arr(a).map(x => typeof x === 'string' ? x : (x && x[k]) || '').filter(Boolean).join(', '); }
   // Entries: { kind, id, route, sec, title, module, f: [{ w, t, l, sec }] }
   function buildIndex() {
     load();
@@ -338,7 +353,7 @@
     var press = PRESS.some(s => has(ql, s));
     var hits = [];
     _index.forEach(e => {
-      var sc = 0, at = null, best = 0, cls = {}, seen = {};
+      var sc = 0, at = null, best = 0, cls = {}, seen = {}, atT = null, bestT = 0;
       if (low(plain(e.title)) === ql) sc += 10;
       e.f.forEach(f => {
         var w = W[f.w] || 0, n = 0, v;
@@ -349,11 +364,12 @@
         }
         if (v > (cls[f.w] || 0)) cls[f.w] = v;
         if (v > best) { best = v; at = f; }
+        if (f.w !== 'kw' && v > bestT) { bestT = v; atT = f; }   // the snippet comes from a body or title field when one matches
       });
       Object.keys(cls).forEach(k => { sc += cls[k]; });
       if (nw && Object.keys(seen).length === nw) sc += 2;
       if (press && ((e.kind === 'scenario' && /^FS-[12]$/.test(e.id)) || (e.kind === 'guide' && e.route === 'wts' && e.sec === 'inputs'))) { sc += e.kind === 'scenario' ? 8 : 5; }
-      if (sc > 0) hits.push({ e: e, sc: Math.round(sc * 100) / 100, at: at });
+      if (sc > 0) hits.push({ e: e, sc: Math.round(sc * 100) / 100, at: atT || at });
     });
     hits.sort((a, b) => b.sc - a.sc || a.e.order - b.e.order);
     return hits.slice(0, 20).map(h => {
@@ -397,7 +413,10 @@
     '.help-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px}.help-tile{border:var(--hb);border-radius:8px;padding:10px;background:var(--bg1)}' +
     '#help_lb{max-width:96vw;max-height:96vh;padding:12px;border:var(--hb);background:var(--bg1);color:var(--text);overflow:auto}#help_lb img{max-width:100%;height:auto}' +
     '#help_lb::backdrop{background:rgba(0,0,0,.7)}#help_lb_x{float:right;min-width:32px;min-height:32px}' +
-    '@media (max-width:700px){.help-cols{grid-template-columns:minmax(0,1fr)}.help-toc>summary{display:list-item;font-weight:600}}' +
+    '.help-sec,.help-part,.help-h,.help dt[id],.help [id^=help-]{scroll-margin-top:calc(var(--help-bar-h,84px) + 8px)}#help_pm{width:auto;max-width:100%}' +
+    '.help-nw{white-space:nowrap}' +
+    '@media (max-width:700px){.help-cols{grid-template-columns:minmax(0,1fr)}.help-toc>summary{display:list-item;font-weight:600}' +
+    '.help-bar{position:static;padding:4px 0 6px}.help-sec,.help-part,.help-h,.help dt[id],.help [id^=help-]{scroll-margin-top:8px}}' +
     '@media (max-width:600px){.help-enlarge{display:block}}</style>';
   function shellHTML() {
     var phone = false;
@@ -443,9 +462,9 @@
     if (tr.length) h += '<h3>Training</h3><p>' + tr.join(' · ') + '</p>';
     var M = manifest(), keys = Object.keys(M);
     if (keys.length) {
-      var mb = keys.reduce((a, k) => a + (+M[k].bytes || 0), 0) / 1048576;
-      h += '<p><button type="button" class="btn btn-secondary" id="help_offline">Download screenshots for offline use (≈ ' + (Math.round(mb * 10) / 10) +
-        ' MB)</button> <span id="help_off_msg" class="help-note">' + (pref('wtspref_help_offline') === '1' ? 'Downloaded earlier on this device.' : '') + '</span></p>';
+      var MM = G.WTS_helpManifest, mb = Math.round((+(MM && MM.bytes) || keys.reduce((a, k) => a + (+M[k].bytes || 0), 0)) / 104857.6) / 10;
+      h += '<p><button type="button" class="btn btn-secondary" id="help_offline">Download screenshots for offline use' + (mb > 0 ? ' (≈ ' + dec(mb) + ' MB)' : '') +
+        '</button> <span id="help_off_msg" class="help-note">' + (pref('wtspref_help_offline') === '1' ? 'Downloaded earlier on this device.' : '') + '</span></p>';
     }
     return h;
   }
@@ -458,7 +477,7 @@
     var tn = x.trainer || {};
     return secHTML('help-course-' + esc(x.id), (i + 1) + ' ' + md(x.title, o), pb('Goal', x.goal, o) + sub('Set-up', x.setup, o) +
       (arr(x.steps).length ? '<h4>Steps</h4><ol>' + arr(x.steps).map(s => li(md(s, o))).join('') + '</ol>' : '') +
-      sub('What to observe', x.observe, o) + sub('Questions', x.questions, o) + renderBlocks(x.blocks, o, x.shots, 'course') +
+      sub('What to observe', x.observe, o) + sub('Questions', x.questions, o) + renderBlocks(x.blocks, o, x.shots, 'course', x.id || ('ex' + (i + 1))) +
       (o.worksheet ? '' : det('Answers', ul(x.answers, o)) + det('For the trainer', x.trainer ? pb('Duration', tn.duration, o) + pb('Fault to inject', tn.fault, o) +
         pb('A good response', tn.good, o) + sub('Common mistakes', tn.mistakes, o) + sub('Debrief questions', tn.debrief, o) : '')));
   }
@@ -474,7 +493,7 @@
     });
     if (kind === 'scenarios') C.scenarios.forEach(s => {
       var after = s.feature && F[s.feature] && s.afterSim;
-      h += secHTML('help-fs-' + esc(s.id), esc(s.id) + ' ' + md(s.title, o), [s.intro, s.blocks, after ? s.afterSim : s.today].map(b => renderBlocks(b, o, s.shots, 'scenarios')).join(''));
+      h += secHTML('help-fs-' + esc(s.id), esc(s.id) + ' ' + md(s.title, o), [s.intro, s.blocks, after ? s.afterSim : s.today].map(b => renderBlocks(b, o, s.shots, 'scenarios', s.id)).join(''));
     });
     if (kind === 'course') C.course.forEach((x, i) => { h += exerciseHTML(x, i, o); });
     if (kind === 'glossary') h += '<dl>' + Object.keys(C.glossary).sort().map(k => {
@@ -503,6 +522,8 @@
     var k = KINDS[v.kind];
     var target = v.sec ? byId(v.kind === 'guide' ? 'help-' + v.route + '-' + v.sec : 'help-' + (SECP[k] || k) + '-' + v.sec) : null;
     var hd = target ? (target.querySelector('h2,h3,h4,b') || target) : main.querySelector('.help-h');
+    var bar = byId('help_root') && byId('help_root').querySelector('.help-bar'), root = byId('help_root');
+    if (bar && root && root.style && root.style.setProperty && bar.offsetHeight > 0) root.style.setProperty('--help-bar-h', bar.offsetHeight + 'px');   // scroll-margin-top
     if (target && target.scrollIntoView) { try { target.scrollIntoView({ block: 'start' }); } catch (e) { /* layout-free */ } }
     if (hd && !noFocus) { if (!hd.hasAttribute('tabindex')) hd.setAttribute('tabindex', '-1'); if (hd.focus) hd.focus(); }
     if (typeof H.onShow === 'function') { try { H.onShow(v); } catch (e) { /* print module */ } }
@@ -612,10 +633,11 @@
       var img = e.target;
       if (!img || !img.classList || !img.classList.contains('help-img')) return;
       var fig = img.closest('figure'), pic = img.closest('picture') || img;
-      var fc = fig && fig.querySelector('figcaption');
       var box = _doc().createElement('div');
-      box.innerHTML = missingBox(fc ? esc(txt(fc)) : '', esc(img.getAttribute('alt') || ''));
+      box.innerHTML = missingBox(esc(img.getAttribute('alt') || ''));
       if (pic.parentNode) pic.parentNode.replaceChild(box.firstChild, pic);
+      var en = fig && fig.querySelector('.help-enlarge');   // nothing left to enlarge
+      if (en && en.parentNode) en.parentNode.removeChild(en);
       var main = byId('help_main');
       if (main && !byId('help_noimg')) {
         var n = _doc().createElement('p');
@@ -688,6 +710,10 @@
   var d0 = _doc();
   if (d0 && typeof d0.addEventListener === 'function') {
     d0.addEventListener('h2oil:pagechange', e => { syncHeader((e && e.detail && e.detail.page) || _cur); });
+    // Tokens follow the unit system and the decimal comma: re-render the open view (no focus move)
+    var rerender = () => { if (_cur === 'help' && byId('help_root') && byId('help_main')) { _index = null; show(_view, true); } };
+    d0.addEventListener('wts:unit-system-changed', rerender);
+    d0.addEventListener('click', e => { var t = e.target; if (t && t.closest && t.closest('#wts_dec_comma')) rerender(); });
     d0.addEventListener('click', e => {
       var t = e.target;
       if (t && t.closest && t.closest('#pgHelpBtn')) { e.preventDefault(); openCurrent(); }

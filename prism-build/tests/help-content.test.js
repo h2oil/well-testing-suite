@@ -29,14 +29,15 @@ const CONTENT_FILES = ['start', 'overview', 'metering', 'welltest', 'simcourse',
   .map((g) => '48-calc-help-' + g + '.js');
 const KB = 1000;
 const CAPS = {
-  '49-calc-help.js': 46, '49-calc-help-print.js': 16, '48-calc-help-start.js': 19, '48-calc-help-overview.js': 10.5,
-  '48-calc-help-metering.js': 29, '48-calc-help-welltest.js': 36, '48-calc-help-production.js': 33, '48-calc-help-livedata.js': 16.5,
-  '48-calc-help-safety.js': 37, '48-calc-help-process.js': 21, '48-calc-help-flare.js': 12.5, '48-calc-help-utilities.js': 21,
+  '49-calc-help.js': 48, '49-calc-help-print.js': 16, '48-calc-help-start.js': 17.5, '48-calc-help-overview.js': 10.5,
+  '48-calc-help-metering.js': 29, '48-calc-help-welltest.js': 36, '48-calc-help-production.js': 33.5, '48-calc-help-livedata.js': 16.5,
+  '48-calc-help-safety.js': 37, '48-calc-help-process.js': 20.5, '48-calc-help-flare.js': 12.5, '48-calc-help-utilities.js': 20.5,
   '48-calc-help-simcourse.js': 39, '48-calc-help-manifest.js': 8.5,
 };
 // Owner decision (Q13, option 1, 2026-11-06): the v3.3.2 Help allocation is 345 kB raw and 120 kB gzip (was 330 / 90). Every
 // per-file cap rises by about 5 %; welltest (+4 kB) and simcourse (+1 kB) also carry the v3.3.1 DS-101 / T-202 content. The caps
-// sum to 345 kB.
+// sum to 345 kB. WP-I review round (2026-11-06): 2.5 kB moved from start, process and utilities (unused headroom) to 49-calc-help
+// (+2: shot prefixes, unit re-render, scroll margins) and production (+0.5: glossary links); the sum is unchanged.
 const SUM_CAP = 345 * KB, GZIP_CAP = 120 * KB;
 const NOT_ROUTES = ['gaevents', 'dca', 'pta'];
 const OVERVIEW = ['home', 'help', 'clientinfo', 'wells', 'privacy', 'releasenotes'];
@@ -90,8 +91,8 @@ function textIssues(s, where, ctx) {
   (s.match(/\{\{([^{}]*)\}\}/g) || []).forEach((t) => {
     const b = t.slice(2, -2);
     if (b === 'site' || b === 'email') return;
-    const m = /^(-?\d+(?:\.\d+)?)\|([A-Za-z0-9]+)(?:\|(\d))?$/.exec(b);
-    if (!m) e('malformed unit token ' + t + ' (write {{value|category[|dp]}})');
+    const m = /^(-?\d+(?:\.\d+)?)\|([A-Za-z0-9]+)(?:\|(\d)?(?:\|imp)?)?$/.exec(b);
+    if (!m || /\|$/.test(b)) e('malformed unit token ' + t + ' (write {{value|category[|dp][|imp]}})');
     else if (ctx && ctx.cats && !ctx.cats[m[2]]) e('unknown unit category in ' + t);
   });
   if (ctx && ctx.dual) {
@@ -221,7 +222,7 @@ function glossaryIssues(r, g, glossary) {
     const e = glossary[k] || {}, forms = [e.term || k].concat(e.variants || []);
     const re = new RegExp('(^|[^A-Za-z0-9])(' + forms.map((f) => f.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')(?![A-Za-z0-9])', 'i');
     for (const s of texts) {
-      const plainStr = s.replace(/\{\{[^}]*\}\}/g, ' ');
+      const plainStr = s.replace(/\{\{[^}]*\}\}/g, ' ').replace(/\*\*/g, '  ');   // bold markup is not a p*
       const m = re.exec(plainStr);
       if (!m) continue;
       const at = m.index + m[1].length;
@@ -525,7 +526,42 @@ function sizeIssues() {
 const fail = (assert, list, what) => assert.ok(!list.length, what + ':\n  ' + list.slice(0, 40).join('\n  ') + (list.length > 40 ? '\n  … ' + (list.length - 40) + ' more' : ''));
 const clone = (o) => JSON.parse(JSON.stringify(o));
 
-const LIB = { textIssues, limitIssues, guideIssues, pageIssues, otherIssues, glossaryIssues, makeCtx, liveRoutes, srcHash, srcTexts, stripUnit, sizeIssues, verdictLines };
+// A unit token right after the label of an input the page leaves in field units (no units-layer tag) must be {{v|cat|dp|imp}}:
+// Metric mode would otherwise tell the user to type a converted value into a psig-only field (review: Surge Tank Pressure).
+// The clause after the label (to the sentence end, a ';' or the next bold label, ≤ 90 characters) is checked.
+function inputsOf(g) { return [].concat(g.inputs || [], ...(g.parts || []).map((p) => (p && p.inputs) || [])).filter((x) => x && x.id && x.label && x.label.length >= 4); }
+function untaggedTokenIssues(app, C, only) {
+  const W = app.win, U = W.WTS_units, out = [];
+  const tagged = (id) => { const el = app.el(id); if (el && el.getAttribute && (el.getAttribute('data-wts-unit-cat') || el.getAttribute('data-wts-unit-cat-out'))) return true;
+    const M = (U && U.MANIFEST) || {}; return Object.keys(M).some((r) => M[r] && M[r].inputs && M[r].inputs[id]); };
+  const texts = (r) => { const t = []; strings(C.guides[r], r, (x, p) => t.push([x, p])); if (r === 'wts') ['course', 'scenarios'].forEach((k) => strings(C[k] || [], k, (x, p) => t.push([x, p]))); return t; };
+  const tokRe = /\{\{([^{}]*)\}\}/g;
+  Object.keys(C.guides).filter((r) => !only || only.includes(r)).forEach((r) => {
+    const ins = inputsOf(C.guides[r]), tx = texts(r);
+    const cand = ins.filter((i) => tx.some(([x]) => clauseTokens(x, i.label).length));
+    if (!cand.length) return;
+    try { app.hook.nav(r); app.flush(200); } catch (e) { out.push(r + ': cannot open the page (' + e.message + ')'); return; }
+    cand.filter((i) => { const el = app.el(i.id); return el && String(el.localName).toLowerCase() === 'input' && !tagged(i.id); }).forEach((i) => tx.forEach(([x, p]) => clauseTokens(x, i.label).forEach((b) => {
+      if (b.split('|')[3] !== 'imp') out.push(p + ': {{' + b + '}} follows "' + i.label + '" (#' + i.id + ' has no unit tag, so the field stays in field units): write {{value|category|dp|imp}}');
+    })));
+  });
+  return out;
+  function clauseTokens(x, label) {
+    const res = [];
+    let i = x.indexOf(label);
+    while (i !== -1) {
+      let rest = x.slice(i + label.length).replace(/^\*\*/, '');
+      const cut = rest.search(/[.;!?](\s|$)|\*\*/);
+      rest = (cut === -1 ? rest : rest.slice(0, cut)).slice(0, 90);
+      let m; tokRe.lastIndex = 0;
+      while ((m = tokRe.exec(rest))) if (m[1] !== 'site' && m[1] !== 'email') res.push(m[1]);
+      i = x.indexOf(label, i + label.length);
+    }
+    return res;
+  }
+}
+
+const LIB = { untaggedTokenIssues, textIssues, limitIssues, guideIssues, pageIssues, otherIssues, glossaryIssues, makeCtx, liveRoutes, srcHash, srcTexts, stripUnit, sizeIssues, verdictLines };
 
 const TESTS = [
   {
@@ -596,7 +632,6 @@ const TESTS = [
       Object.keys(C.guides).forEach((r) => {
         if (!ctx.routes.has(r)) return;
         const g = Object.assign({}, C.guides[r]);
-        if (r === 'wts') g._skipSelectors = 'Round 7 not in the harness';   // simulator HMI ids (§7.1)
         guideIssues(app, r, g, ctx, (w) => warns.push(w)).forEach((x) => issues.push(x));
       });
       otherIssues(C, ctx).forEach((x) => issues.push(x));
@@ -615,6 +650,48 @@ const TESTS = [
     },
   },
   {
+    name: 'HELP content: every course / scenario screenshot in the manifest is referenced by the page and by help/user-guide.html (item-id prefix)',
+    wp: WP,
+    run(app, assert) {
+      const W = app.win, H = W.WTS_help;
+      H.load();
+      const M = W.WTS_helpManifest && W.WTS_helpManifest.files;
+      assert.ok(M && typeof M === 'object', 'manifest files map');
+      const files = Object.keys(M).filter((f) => /^(course|scenarios)\//.test(f));
+      assert.ok(files.length >= 17, files.length + ' course / scenario files');
+      const page = H.renderList('course') + H.renderList('scenarios');
+      const guide = fs.readFileSync(path.join(REPO, 'help', 'user-guide.html'), 'utf8');
+      const miss = files.filter((f) => page.indexOf('help/img/' + f + '?v=') === -1);
+      assert.deepStrictEqual(miss, [], 'page references every file');
+      const mains = files.filter((f) => /-d\.webp$/.test(f) || !M[f.replace(/-p\.webp$/, '-d.webp')]);
+      assert.deepStrictEqual(mains.filter((f) => guide.indexOf('img/' + f + '?v=') === -1), [], 'the printable guide references every main image');
+      assert.strictEqual((page.match(/help-shot-missing/g) || []).length, 0, 'no missing-image box on the course and scenarios pages');
+      assert.ok(page.indexOf('scenarios/fs-1-rigup-d.webp') !== -1 && page.indexOf('scenarios/fs-3-rigup-d.webp') !== -1, 'FS-1 and FS-3 "rigup" do not collide');
+    },
+  },
+  {
+    name: 'HELP content: a unit token after the label of an untagged (field-units) input is {{v|cat|dp|imp}}; the check bites; imp renders imperial in Metric mode',
+    wp: WP,
+    timeoutMs: 300000,
+    run(app, assert) {
+      const W = app.win, H = W.WTS_help, C = H.load();
+      fail(assert, untaggedTokenIssues(app, C), 'untagged-input tokens');
+      const fake = { guides: { wts: { inputs: [{ label: 'Surge Tank Pressure', id: 'wts_Psurge' }, { label: 'Operating Pressure', id: 'wts_Psep' }],
+        what: ['Set **Surge Tank Pressure** to {{5|pressureG}} and **Operating Pressure** to {{15|pressureG}}.', 'Surge Tank Pressure {{25|pressureG||imp}}.'] } }, course: [], scenarios: [] };
+      const got = untaggedTokenIssues(app, fake, ['wts']);
+      assert.strictEqual(got.length, 1, 'one issue (the tagged Operating Pressure and the |imp token pass): ' + got.join(' | '));
+      assert.ok(/\{\{5\|pressureG\}\} follows "Surge Tank Pressure"/.test(got[0]), got[0]);
+      W.WTS_units.setSystem('metric');
+      try {
+        assert.ok(/5 psig/.test(H.md('{{5|pressureG||imp}}')) && !/kPa/.test(H.md('{{5|pressureG||imp}}')), 'imp stays psig: ' + H.md('{{5|pressureG||imp}}'));
+        assert.ok(/kPa/.test(H.md('{{150|pressureG}}')), 'a normal token converts');
+        assert.ok(/^5 psig$/.test(H.md('{{5|pressureG||imp}}', { units: 'both' })), 'print: no metric twin for imp');
+      } finally { W.WTS_units.setSystem('imperial'); }
+      assert.ok(textIssues('{{5|pressureG||imp}} {{5.5|pressureG|1|imp}}', 'x', makeCtx(app, C)).length === 0, 'imp accepted by the validator');
+      assert.ok(textIssues('{{5|pressureG|imp}}', 'x', makeCtx(app, C)).length > 0, '{{v|cat|imp}} (no dp slot) rejected');
+    },
+  },
+  {
     name: 'HELP content: the validator rejects markup, entities, addresses, forbidden names, bad tokens and dangling links',
     wp: WP,
     run(app, assert) {
@@ -623,14 +700,14 @@ const TESTS = [
       const good = (s) => assert.deepStrictEqual(textIssues(s, 'x', ctx), [], 'accepted: ' + s);
       bad('<img src=x onerror=alert(1)>');
       bad('a &amp; b'); bad('x &#60; y');
-      bad('see https://example.org'); bad('see www.example.com'); bad('mail name@company.example'); bad('operator-energy.co.uk');
+      bad('see https://example.org'); bad('see www.example.com'); bad('mail name@company.example'); bad('name-' + 'x.co' + '.uk'); bad('operator-energy.example');
       bad('Brand™'); bad('Brand®');
       bad('Uses the ' + cc([80, 73, 69]) + ' method');
       bad('open it in ' + cc([67, 104, 114, 111, 109, 101]));
       bad('{{150|psiG}}'); bad('{{150|pressureG'); bad('{{abc|pressureG}}');
       bad('[[nosuchroute]]'); bad('[[glossary#nope|x]]'); bad('[[fs#FS-9|x]]'); bad('[[orifice#nosection|x]]');
       good('Metering & Chokes: set {{150|pressureG}} and {{10|gasRate|1}} — see [[orifice]], [[aga3#inputs|AGA-3 inputs]], [[glossary#bean|bean]], {{site}}, {{email}} ① ✓ ⚠ ✗');
-      good('A pie chart is not a name.');
+      good('A ' + cc([112, 105, 101]) + ' chart is not a name.');
       // bare measurements in a units:'dual' guide (D13, §4.4)
       const dual = Object.assign({}, ctx, { dual: true });
       const badD = (s) => assert.ok(textIssues(s, 'x', dual).some((m) => /bare measurement/.test(m)), 'bare unit rejected: ' + s);

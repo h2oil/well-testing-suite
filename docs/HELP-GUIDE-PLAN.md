@@ -449,17 +449,18 @@ Per-file caps (raw, serialised source after concat; enforced by `help-content.te
 
 | File | Cap | File | Cap |
 |---|---|---|---|
-| 49-calc-help.js (page, search, renderer) | 46 kB | 48-calc-help-safety.js | 37 kB |
-| 49-calc-help-print.js | 16 kB | 48-calc-help-process.js | 21 kB |
-| 48-calc-help-start.js (start, tasks, glossary, FAQ) | 19 kB | 48-calc-help-flare.js | 12.5 kB |
-| 48-calc-help-overview.js | 10.5 kB | 48-calc-help-utilities.js | 21 kB |
+| 49-calc-help.js (page, search, renderer) | 48 kB | 48-calc-help-safety.js | 37 kB |
+| 49-calc-help-print.js | 16 kB | 48-calc-help-process.js | 20.5 kB |
+| 48-calc-help-start.js (start, tasks, glossary, FAQ) | 17.5 kB | 48-calc-help-flare.js | 12.5 kB |
+| 48-calc-help-overview.js | 10.5 kB | 48-calc-help-utilities.js | 20.5 kB |
 | 48-calc-help-metering.js | 29 kB | 48-calc-help-simcourse.js | 39 kB |
 | 48-calc-help-welltest.js (incl. `wts` parts) | 36 kB | 48-calc-help-manifest.js (generated) | 8.5 kB |
-| 48-calc-help-production.js (incl. PRiSM parts) | 33 kB | **sum** | **345 kB** |
+| 48-calc-help-production.js (incl. PRiSM parts) | 33.5 kB | **sum** | **345 kB** |
 | 48-calc-help-livedata.js | 16.5 kB | | |
 
 (Owner decision, Q13 option 1: every cap rises by about 5 % from the content-round caps below; welltest 32 → 36 kB and
-simcourse 38 → 39 kB also carry the v3.3.1 DS-101 / T-202 content. Content-round caps: page 45, print 15, start 18,
+simcourse 38 → 39 kB also carry the v3.3.1 DS-101 / T-202 content. WP-I review round: 2.5 kB of unused headroom moved
+from start (19 → 17.5), process and utilities (21 → 20.5 each) to the page (46 → 48) and production (33 → 33.5); the sum is unchanged. Content-round caps: page 45, print 15, start 18,
 overview 10, metering 28, welltest 32, production 32, livedata 16, safety 36, process 20, flare 12, utilities 20,
 simcourse 38, manifest 8; sum 330 kB.)
 
@@ -773,13 +774,19 @@ pressure is **Operating Pressure** in the **Separator** card; the surge-tank pre
 | What the separator **Operating Pressure** controls | V-101 in | V-101 out (bypass to the burner) |
 |---|---|---|
 | Live model: PCV-101 set point, separator pressure | yes | no (PCV-101 held shut) |
-| Live model: separator alarms and relief (PAH, PSHH, PAL, PSV/MAWP) | derived from it | quiet |
+| Live model: separator alarms and relief (PAH, PSHH, PAL, PSV/MAWP) | derived from it | still live on the trapped vessel and still follow it: lowering it trips PSHH-101 (WP-I review) |
 | Live model: choke outlet pressure | separator pressure + line losses | 5 psig burner header + Sep→Flare loss + (steady choke outlet − Operating Pressure) |
 | Steady check (`calcWTS`): choke regime, capacity, J-T cooling, node temperatures, hydrate margins, line velocities | yes | **yes, still** — so it must be set near the burner back pressure |
 | Surge Tank Pressure limit (clamped to ≤ min(30, Operating Pressure − 10)) | yes | **yes, still** |
 
 **FS-1 Unloading the completion cushion straight to the burner boom.**
-- *Today (v3.3.x):*
+- **WP-I review (2026-11-06): the order below trips the ESD on the live sim** and was replaced in the shipped text
+  (`48-calc-help-simcourse.js`, checked step by step on the live sim by `help-course.test.js`): Surge Tank Pressure
+  {{25|pressureG||imp}} → {{15|pressureG||imp}} → {{5|pressureG||imp}} with V-101 in (PSHH-201 follows the set point, SP + 15 psi
+  here, faster than T-201 vents), then Operating Pressure {{15|pressureG}} with V-101 in, then V-101 out, then the unload rates
+  (a big rate step with V-101 in surges the separator past PSHH-101); never lower Operating Pressure after V-101 is out. The
+  switch to the separator is clean, stable returns; the 10 MMscf/d case gives ⚠ CHOKE_LIMIT (7.21 MMSCFD on 32/64) and ⚠ 291 / 259 ft/s.
+- *Today (v3.3.x, original draft — superseded by the note above):*
   1. **Rig-up:** switch **V-101 Test separator** out. The card note reads "whole well stream goes straight to the flare /
      burner (clean-up)". FS-401 stays in (it cannot be taken out at the same time).
   2. **Pressures:** set separator **Operating Pressure** to {{15|pressureG}} (roughly the burner-line back pressure; up to
@@ -1288,6 +1295,15 @@ raise, but found while checking the code for it, are listed at the end.
 | R29 | minor | Platform terms undecided | Allowed list (Q20); browsers never named | Conventions, §4.5, §4.7, §7.1, Q20 |
 | R30 | minor | Line references and fault count from v3.3 | Function names in §8 and Appendix B; Appendix B marked "re-derive after the sim-equip merge"; help-course reads `WTS_sim.FAULTS` | §8, Appendix B, §7.5 |
 | R31 | minor | Round-7 ids not in the harness yet | `wts` HMI and course selector checks skipped with a reason until the sim-equip merge; WP-I re-enables them | §7.1, §9 |
+
+**WP-I review round (2026-11-06).** All 24 findings were checked and fixed (2 blockers, 7 majors, 15 minors); none was
+rejected. The FS-1 order is above. Screenshot paths for course / scenario shots now carry the item id in the renderer and the
+print; untagged field-units inputs use `{{v|cat|dp|imp}}` tokens (checked); scroll margins under the sticky bar; unit and
+decimal-comma re-render; `plain()` keeps p*; offline size from the manifest total; glossary cushion corrected and skin,
+critical (sonic) flow, IARF and p* added; print "User guide" kicker (host H6) and no chapter number for one guide; dashboard
+count without the Help tile (H8); coarse-pointer ? button (H7); thin cheminj / build-up shots fixed or removed; reset toast
+masked in simulator shots; Round-7 selector checks re-enabled; v3.3.2 release items done (§9). Help caps: 2.5 kB moved
+between files (§3.6), sum unchanged.
 
 **Found while checking (not in the review).**
 - **Unit token categories were wrong.** `22-units.js` has `pressureG`, `pressure` (a difference), `gasRate`, `liquidRate`,

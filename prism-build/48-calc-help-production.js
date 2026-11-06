@@ -21,7 +21,7 @@ function open(t) { return { t: 'Select **' + t + '** in **Production & Reservoir
 var prism = {
   route: 'prism', reviewed: V, reviewedSrc: '09850fbd', units: 'field',
   keywords: ['well test analysis', 'pressure transient', 'PTA', 'derivative', 'skin'],
-  purpose: 'Interprets a pressure test: load the data, pick the period, read the derivative, fit a model, report k, skin and storage.',
+  purpose: 'Interprets a pressure test: load the data, pick the period, read the derivative, fit a model, report k, [[glossary#skin|skin]] and storage.',
   what: ['Five steps, ① Data to ⑤ Report, in the step bar.',
   'The results rail shows the latest fit and straight line. **Tools** holds the specialist panels.'],
   when: ['After a build-up, drawdown, injection or fall-off test.', 'To check for damage before or after a stimulation.', 'With rate-only data, for decline analysis and EUR.'],
@@ -39,7 +39,7 @@ var prism = {
   example: { title: 'The demo drawdown', setup: ['**Try demo data** (55 points, 850 STB/d, pi 4,200 psia, h 35 ft), then **▶ Analyse**.'],
   result: ['Homogeneous, ✓ converged, R² 1.00000: k 45.0 md, S +2.50, C 8.47e-4 bbl/psi, r_inv 1,549 ft.', 'Straight line (MDH): m 121 psi/cycle, k 45.0 md, S +2.49, FE 0.76.'],
   check: { kind: 'manual', reason: 'PRiSM fit: ▶ Analyse runs asynchronously; read from the page with the demo data' } },
-  tips: ['Run ▶ Analyse, then refine the period, window and model.', 'If line and model differ by over 5 % in k, check the IARF window.'],
+  tips: ['Run ▶ Analyse, then refine the period, window and model.', 'If line and model differ by over 5 % in k, check the [[glossary#iarf|IARF]] window.'],
   pitfalls: ['A field marked **sample** holds a demo value: enter yours.'],
   verdicts: [vd('✓', '✓', 'Step-bar tick: the step has what it needs.')],
   refs: [rf('Bourdet (1989, 2002)', 'derivative and models'), rf('Agarwal, Al-Hussainy and Ramey (1970)', 'storage and skin'), rf('Horner (1951)', 'semilog lines')],
@@ -237,13 +237,13 @@ var gaslift = {
 var buildup = {
   route: 'buildup', reviewed: V, reviewedSrc: 'fe00b2fe', units: 'dual',
   keywords: ['build-up', 'shut-in', 'permanent gauge', 'skin trend', 'sign-off'],
-  purpose: 'Finds the shut-ins in permanent-gauge data, interprets each build-up and trends skin, k, p* and PI, with alerts and sign-off.',
-  what: ['Each build-up gets an IARF window, semilog line, model match, S_err and confidence label. Alerts flag a skin change.',
+  purpose: 'Finds the shut-ins in permanent-gauge data, interprets each build-up and trends [[glossary#skin|skin]], k, [[glossary#pstar|p*]] and PI.',
+  what: ['Each build-up gets an [[glossary#iarf|IARF]] window, semilog line, model match, S_err and confidence label. Alerts flag a skin change.',
   'Partial rate cuts are listed, not interpreted; **Open this build-up in PRiSM** to deconvolve.'],
   when: ['When new permanent-gauge data arrive.', 'To decide on a stimulation from the skin trend.'],
   steps: [open('Build-up Surveillance'), 'Enter your name in **Engineer**. Pick the **Gauge data source** ① and load it (or **Demo data**, **Load demo**).',
   'In **Rates**, load the daily allocation or a rate table.', { t: 'Fill **Well and fluid** ② (gas: gravity, temperature, impurities).', shot: 'well' },
-  { t: 'Select **Analyse** ③; read the Summary, tests, trend and review.', shot: 'res' }, 'Decide the findings (Actions…), then sign off under **Sign-off**.'],
+  { t: 'Select **Analyse**; read the Summary, tests, trend and review.', shot: 'res' }, 'Decide the findings (Actions…), then sign off under **Sign-off**.'],
   inputs: [B('Engineer', 'eng', null, 'Needed for overrides and sign-off.'), B('Gauge data source', 'src', 'File (CSV or text)'), B('Demo', 'demo_kind', 'Oil producer'),
   B('Gauge file', 'g_file', null, 'A time and a pressure column.'), B('Historian tag', 'h_tag', null, 'From [[historian]].'), B('Time format', 'g_tfmt', 'Detect automatically'),
   B('Gauge time zone', 'g_tz'), B('Pressure unit in the file', 'g_punit', 'psia'), B('Rate source', 'rate_mode', 'Daily allocation'),
@@ -284,7 +284,6 @@ var buildup = {
   related: ['prism', 'historian', 'oilipr'],
   shots: [view('Build-up Surveillance with Data sources', [sel(1, '#bu_src')]),
   crop('well', '#bu_card_well', 'Well and fluid card', 'Well and fluid', [sel(2, '#bu_fluid')]),
-  crop('run', '.bu-run', 'Analyse button row', 'Analyse', [sel(3, '#bu_run')]),
   res('#bu_s_S1', 'Summary of the oil demo: skin, baseline, alerts', 'The oil demo after Analyse', null, [{ action: 'buildupDemo', args: 'oil' }, { click: '#bu_run' }, { waitFor: '#bu_res[data-done="1"]' }])]
 };
 

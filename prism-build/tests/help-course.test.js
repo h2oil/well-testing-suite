@@ -118,7 +118,24 @@ const CHECKS = {
     { kind: 'page', set: mix(FS1, { wts_Pwh: 100 }), tol: 0.02, expectState: { 'flow.choke.flowLimited': false, 'flow.choke.QmaxMMscfd': 0.387 } },
     { kind: 'page', set: mix(FS1, { wts_Pwh: 2000, wts_Qg: 5, wts_Qo: 500, wts_Qw: 300 }), tol: 0.01,
       expectState: { 'flow.choke.Pout': 24.1, 'flow.choke.QmaxMMscfd': 7.21, 'flow.choke.regime': 'Critical', 'flow.warnings.length': 0 } },
-    { kind: 'page', set: mix(FS1, { wts_Pwh: 3000, wts_Qg: 10, wts_Qo: 1000, wts_Qw: 200 }), expectText: ['Heater→Sep: Velocity 287 ft/s EXCEEDS erosional limit 240 ft/s'] },
+    // the bypass rate limit quoted after the steps: breakthrough values at 10 MMscf/d
+    { kind: 'page', set: mix(FS1, { wts_Pwh: 2000, wts_Qg: 10, wts_Qo: 500, wts_Qw: 300 }), tol: 0.01, expectState: { 'flow.choke.flowLimited': true, 'flow.choke.QmaxMMscfd': 7.21 },
+      expectText: ['Choke is flow-limited — bean 32/64" at Cd=0.85 can only pass 7.21 MMSCFD', 'Heater→Sep: Velocity 291 ft/s EXCEEDS erosional limit 259 ft/s'] },
+    // FS-1 steps 1–8 in the written order on the live sim (review blocker: the old order tripped PSHH-101 / PSHH-201): no ESD,
+    // ≈ 150 bbl to the burner in 90 min with the choke outlet ≈ 10.5 psig, and V-101 back in at 150 psig after the restore step
+    { kind: 'sim', run: 12000, dt: 2,
+      actions: [{ t: 300, form: { wts_Psurge: 15 } }, { t: 900, form: { wts_Psurge: 5 } }, { t: 1500, form: { wts_Psep: 15 } }, { t: 2100, rigup: { separator: false } },
+        { t: 2400, form: { wts_Qg: 0.3, wts_Qo: 0, wts_Qw: 2400, wts_Pwh: 500, wts_bean: 32 } }, { t: 7800, form: { wts_Qg: 5, wts_Qo: 500, wts_Qw: 300, wts_Pwh: 2000 } },
+        { t: 9000, form: { wts_Psep: 150, wts_Psurge: 25 } }, { t: 10200, rigup: { separator: true } }],
+      expect: [{ noAlarm: 'ESD_TRIPPED' }, { noAlarm: 'PSHH_SEP' }, { noAlarm: 'PSHH_SURGE' }, { at: 890, path: 'surge.P', v: 15, tol: 0.2 }, { at: 1490, path: 'surge.P', v: 5, tol: 0.3 },
+        { at: 2090, path: 'sep.P', v: 15, tol: 0.1 }, { at: 3000, path: 'nodes.choke.P', v: 10.5, tol: 0.05 }, { at: 3000, path: 'rigup.separator', v: false },
+        { at: 7800, path: 'cum.liquidToFlareWater_bbl', v: 150, tol: 0.05 }, { at: 12000, path: 'sep.P', v: 150, tol: 0.02 }, { at: 12000, path: 'rigup.separator', v: true }] },
+    // the four things the warning names each trip the ESD
+    { kind: 'sim', run: 600, dt: 2, actions: [{ t: 60, form: { wts_Qg: 0.3, wts_Qo: 0, wts_Qw: 2400, wts_Pwh: 500 } }], expect: [{ alarm: 'PSHH_SEP', from: 60, to: 120 }, { alarm: 'ESD_TRIPPED', from: 60, to: 120 }] },
+    { kind: 'sim', run: 600, dt: 2, actions: [{ t: 60, rigup: { separator: false } }, { t: 180, form: { wts_Psep: 15, wts_Psurge: 5 } }],
+      expect: [{ alarm: 'PSHH_SEP', from: 180, to: 300 }, { alarm: 'ESD_TRIPPED', from: 180, to: 300 }] },
+    { kind: 'sim', run: 600, dt: 2, actions: [{ t: 60, form: { wts_Psep: 15 } }], expect: [{ alarm: 'PSHH_SURGE', from: 60, to: 200 }, { alarm: 'ESD_TRIPPED', from: 60, to: 200 }] },
+    { kind: 'sim', run: 600, dt: 2, actions: [{ t: 60, form: { wts_Psurge: 5 } }], expect: [{ alarm: 'PSHH_SURGE', from: 60, to: 200 }, { alarm: 'ESD_TRIPPED', from: 60, to: 200 }] },
     { kind: 'sim', set: FS1, rig: { separator: false }, run: 900, dt: 5, expect: [{ at: 900, path: 'nodes.choke.P', v: 10.5, tol: 0.03 }, { at: 900, path: 'rigup.flare', v: true }] },
     { kind: 'sim', run: 900, dt: 5, rig: { separator: false }, expect: [{ at: 900, path: 'nodes.choke.P', v: 14.3, tol: 0.03 }] },
   ],
@@ -184,7 +201,9 @@ function pageCheck(app, where, ck) {
 const activeIds = (st) => A(st.alarms).filter((a) => a && a.active !== false).map((a) => a.id);
 // sim check: flow from calcWTS with `set` (else SAMPLE_FLOW), noise off, seed 7; actions at sim times; expectations:
 //   { alarm, from, to } first raise in [from, to] · { noAlarm } never active · { at, path, v, tol } value at a time ·
-//   actions: { t, fault, on } · { t, esd } · { t, resetESD: ok, blocking } · { t, sp } (separator set point) · { t, valve: [eq, idx, open] }
+//   actions: { t, fault, on } · { t, esd } · { t, resetESD: ok, blocking } · { t, sp } (separator set point) · { t, valve: [eq, idx, open] } ·
+//   { t, form: { wts_id: v } } (typed into the form as a user does: the page recalculates and the sim gets the new flow; form values
+//   accumulate over the run, on top of `set`) · { t, rigup: { key: on } }
 //   { batch: n, from, to } the n-th gauge batch is listed (closed and settled) in [from, to] · { gap: [a, b], max } b first raised
 //   0…max s after a · sim-equip: { t, dump: 'start'|'resume'|'abort', ok } · { t, bypass } (DS-101) · { t, route } (T-202) ·
 //   cfg (setConfig at create) · needs: a rig-up item the engine must have (WTS_sim.RIG_OPTIONAL), else the check is skipped ·
@@ -199,8 +218,11 @@ function simCheck(app, where, ck) {
   if (ck.rig) s.setRigup(app.toWin(ck.rig));
   const dt = ck.dt || 2, acts = A(ck.actions).map((a) => Object.assign({ done: false }, a)), first = {}, ats = A(ck.expect).filter((e) => e.at != null).map((e) => Object.assign({ done: false }, e));
   const whens = A(ck.expect).filter((e) => e.first).map((e) => Object.assign({ done: false }, e));
-  let batchT = {}, t = 0;
+  let batchT = {}, t = 0, seq = 1;
+  const form = Object.assign({}, ck.set || {});
   const doAct = (a) => {
+    if (a.form) { Object.assign(form, a.form); openWts(app, form); const f2 = JSON.parse(JSON.stringify(W.WTS_state.flow)); f2.seq = 1000 + (++seq); s.setFlow(app.toWin(f2)); }
+    if (a.rigup) s.setRigup(app.toWin(a.rigup));
     if (a.fault) s.setFault(a.fault, a.on !== false);
     if (a.esd) s.tripESD('manual');
     if (a.valve) s.setValve(a.valve[0], a.valve[1], !!a.valve[2]);
@@ -363,6 +385,7 @@ function simCheckShape(V) {
     A(c.actions).forEach((a) => { if (a.fault && !V.faultIds.has(a.fault)) out.push(w + ': fault ' + a.fault + ' not in WTS_sim.FAULTS'); });
     A(c.expect).forEach((e) => { [e.alarm, e.noAlarm, e.first && e.first.alarm].concat(A(e.gap)).filter(Boolean).forEach((a) => { if (!V.alarms.has(a)) out.push(w + ': alarm ' + a + ' not in the engine'); }); });
     Object.keys(c.rig || {}).forEach((k) => { if (!V.rig.has(k)) out.push(w + ': rig-up key ' + k + ' not in WTS_sim.RIG_KEYS'); });
+    A(c.actions).forEach((a) => Object.keys(a.rigup || {}).forEach((k) => { if (!V.rig.has(k)) out.push(w + ': rig-up key ' + k + ' not in WTS_sim.RIG_KEYS'); }));
   }));
   return out;
 }
@@ -430,7 +453,7 @@ module.exports = [
     },
   },
   {
-    name: 'HELPCOURSE dynamic numbers reproduce on the simulator (skipped until Round 7 is in the harness)',
+    name: 'HELPCOURSE dynamic numbers reproduce on the simulator, incl. the FS-1 order on the live sim',
     wp: WP,
     timeoutMs: 900000,
     run(app, assert) {

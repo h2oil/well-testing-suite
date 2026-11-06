@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // ════════════════════════════════════════════════════════════════════
-// help-host-patch.js — host edits H1–H5 for the Help centre (docs/HELP-GUIDE-PLAN.md §2.2, D21).
+// help-host-patch.js — host edits H1–H8 for the Help centre (docs/HELP-GUIDE-PLAN.md §2.2, D21).
 //
 // Help branches never edit well-testing-app.html by hand: this script holds the edits, the
 // help-page test applies patch() in memory to a sources build, and WP-I runs the CLI once on the
@@ -14,6 +14,10 @@
 //       WTS_help.syncHeader(page) before h2oil:pagechange
 //   H4  #exportBtns hidden on `help` (as on home / clientinfo)
 //   H5  Quick Report: route `help` in _REPORT_SKIP (never snapshotted)
+//   H6  report cover: the kicker reads window.__reportKicker when set ("User guide" for help prints), else
+//       "Engineering calculation report"
+//   H7  #pgHelpBtn: a 40 px target on coarse pointers (phone browsers; the iOS app has its own 44 pt rule)
+//   H8  dashboard #dash_count: tiles in the Overview section (the Help tile) are not counted as calculators
 //
 // Usage (from the repo root):
 //   node prism-build/help-host-patch.js            dry run: report only (the default — never writes)
@@ -89,6 +93,25 @@ const EDITS = [
     find: 'const _REPORT_SKIP = { home:1, clientinfo:1,',
     replace: 'const _REPORT_SKIP = { home:1, help:1, ' + M('H5') + ' clientinfo:1,',
   }] },
+  { id: 'H6', marker: M('H6'), steps: [{
+    find: "        '<div class=\"rp-kicker\">Engineering calculation report</div>' +\n",
+    replace: "        '<div class=\"rp-kicker\">' + _rEsc((typeof window.__reportKicker === 'string' && window.__reportKicker) || 'Engineering calculation report') + '</div>' +   " + M('H6') + "\n",
+  }] },
+  { id: 'H7', marker: M('H7'), steps: [{
+    find: "        .pg-help[hidden] { display: none; }\n",
+    replace: "        .pg-help[hidden] { display: none; }\n        @media (pointer: coarse) { .pg-help { width: 40px; height: 40px; } }   " + M('H7') + "\n",
+  }] },
+  { id: 'H8', marker: M('H8'), steps: [
+    {
+      find: "        let m = 0;\n        Array.from(sec.querySelectorAll('.dash-card')).forEach(c => {\n            total++;\n",
+      replace: "        let m = 0;\n        const ovw = sec.getAttribute('data-group') === 'Overview';   " + M('H8') + "\n" +
+        "        Array.from(sec.querySelectorAll('.dash-card')).forEach(c => {\n            if(!ovw) total++;\n",
+    },
+    {
+      find: "        sec.classList.toggle('hidden', !m);\n        n += m;\n",
+      replace: "        sec.classList.toggle('hidden', !m);\n        if(!ovw) n += m;\n",
+    },
+  ] },
 ];
 
 function count(hay, needle) { let n = 0, i = 0; while ((i = hay.indexOf(needle, i)) !== -1) { n++; i += needle.length; } return n; }

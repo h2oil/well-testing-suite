@@ -11,18 +11,18 @@
     "analogsig": "view-d 1280 800 5bfe019b,view-p 780 1688 8debff8c",
     "arc": "view-d 1280 800 f7b4fd42,view-p 780 1688 270ee7a2",
     "bottomsup": "view-d 1280 800 d1ee07ae,view-p 780 1688 01b89ad8",
-    "buildup": "res-d 982 345 be8b6dfd,run-d 987 50 7dd2723d,view-d 1280 800 0a1f03ae,view-p 780 1688 2d1d94aa,well-d 491 635 29e23bee",
+    "buildup": "res-d 982 345 be8b6dfd,view-d 1280 800 0a1f03ae,view-p 780 1688 6e37d4d5,well-d 491 635 29e23bee",
     "cablesz": "view-d 1280 800 baad4860,view-p 780 1688 669aa8cf",
     "casing": "view-d 1280 800 4f783b8e,view-p 780 1688 a6e4e46b",
     "chem": "view-d 1280 800 55f18589,view-p 780 1688 bdfaadbf",
-    "cheminj": "res-d 987 32 c0ca0425,view-d 1280 800 5c0e89e0,view-p 780 1688 ec544d78",
+    "cheminj": "res-d 982 635 27e9ce0a,view-d 1280 800 5c0e89e0,view-p 780 1688 cd5cd19d",
     "choke": "res-d 982 376 d323b373,view-d 1280 800 49632a14,view-p 780 1688 36b2ed60",
     "chokecnv": "view-d 1280 800 0b0620fe,view-p 780 1688 c4bb9a98",
     "chokeflow": "view-d 1280 800 d9334cc6,view-p 780 1688 38072e74",
     "chokeperf": "res-d 491 110 9b8a6c21,view-d 1280 800 55c56744,view-p 780 1688 ceea785f",
     "clientinfo": "view-d 1280 800 9e695396,view-p 780 1688 1573f8a3",
     "complfluids": "res-d 449 203 71aef0b7,view-d 1280 800 dd954a63,view-p 780 1688 66fbd630",
-    "course": "ex1-view-d 1280 800 0b368e22,ex1-view-p 780 1688 c511312f,ex10-t202-d 296 349 6ede300e,ex2-ck101-d 296 313 cf50313a,ex4-alarms-d 476 258 77664798,ex4-scen-d 531 465 0085c41d,ex4-v101-d 296 307 8b4cb53f,ex5-more-p 780 1688 1ceaf621,ex5-reset-d 213 93 09fc7e22,ex5-trends-d 1280 800 61f8a885,ex5-viewmenu-d 213 253 e385e263,ex6-events-d 476 183 dfcfa42c,ex6-t301-d 296 349 2c9ef751,ex7-t201-d 296 349 7ea5e89d,ex8-temp3d-d 1280 800 3b64c4e8,ex9-ds101-d 296 349 5067b499",
+    "course": "ex1-view-d 1280 800 0b368e22,ex1-view-p 780 1688 51a0b0a6,ex10-t202-d 296 349 6ede300e,ex2-ck101-d 296 313 cf50313a,ex4-alarms-d 476 258 77664798,ex4-scen-d 531 465 0085c41d,ex4-v101-d 296 307 8b4cb53f,ex5-more-p 780 1688 5ed6983e,ex5-reset-d 213 93 09fc7e22,ex5-trends-d 1280 800 6ef1a783,ex5-viewmenu-d 213 253 e385e263,ex6-events-d 476 183 dfcfa42c,ex6-t301-d 296 349 2c9ef751,ex7-t201-d 296 349 7ea5e89d,ex8-temp3d-d 1280 800 d3bf9cbf,ex9-ds101-d 296 349 5067b499",
     "dispersion": "res-d 491 488 4caee3b6,view-d 1280 800 329c3138,view-p 780 1688 fa30328b,weather-d 491 287 4664d775",
     "elec": "view-d 1280 800 e93f2161,view-p 780 1688 e2718cf7",
     "esdhi": "res-d 449 260 e988e9f5,view-d 1280 800 8caea0ea,view-p 780 1688 623de604",
@@ -39,9 +39,9 @@
     "gensz": "view-d 1280 800 e72fd96a,view-p 780 1688 6dbd598f",
     "h2sroe": "res-d 454 445 8422de94,view-d 1280 800 9ecdf2df,view-p 780 1688 7701a110",
     "heater": "view-d 1280 800 c215c256,view-p 780 1688 b55b4ddf",
-    "help": "view-d 1280 800 6f7b6c30,view-p 780 1688 b1fa0b6b",
+    "help": "view-d 1280 800 6f7b6c30,view-p 780 1688 722652b2",
     "historian": "export-d 982 331 b86996b1,view-d 1280 800 6442b9ee,view-p 780 1688 38ed2737",
-    "home": "view-d 1280 800 9e68f430,view-p 780 1688 415b9ec5",
+    "home": "view-d 1280 800 d66a41a7,view-p 780 1688 44ab3578",
     "hydrate": "sum-d 945 178 76d57306,view-d 1280 800 e118477f,view-p 780 1688 5c93006e",
     "lineheat": "res-d 987 416 7e6d3aaa,view-d 1280 800 afd8cd76,view-p 780 1688 2bd22587",
     "liquidline": "res-d 454 229 7f858d73,view-d 1280 800 883a1884,view-p 780 1688 f0f9f951",
@@ -57,7 +57,7 @@
     "proving": "res-d 491 520 9fd5cf32,view-d 1280 800 bbb6c233,view-p 780 1688 6955910f",
     "prv": "inlet-d 449 394 c76ae598,load-d 491 341 f6f0f4d8,res-d 449 441 4a49637e,view-d 1280 800 596c7610,view-p 780 1688 011c149a",
     "pumpsz": "view-d 1280 800 cf2117d4,view-p 780 1688 ed22e300",
-    "releasenotes": "view-d 1280 800 00657abe,view-p 780 1688 8203cba2",
+    "releasenotes": "view-d 1280 800 09ef3d8f,view-p 780 1688 93e8c991",
     "scale": "card-d 431 267 52db40a0,card-p 756 510 73b70afe,view-d 1280 800 dec8fef7,view-p 780 1688 2b542a04",
     "scenarios": "fs-1-rigup-d 982 488 1865a58d,fs-3-rigup-d 982 487 979a7c65",
     "sep": "view-d 1280 800 69685597,view-p 780 1688 f2bbb50e",
@@ -65,7 +65,7 @@
     "sepqc": "res-d 491 239 58385532,view-d 1280 800 9f200512,view-p 780 1688 67438f8a",
     "seprate": "view-d 1280 800 eeea4137,view-p 780 1688 ac37ed8a",
     "solgor": "calc-d 491 551 eac40ac6,res-d 449 224 c8e07ca1,view-d 1280 800 94b6bdd0,view-p 780 1688 351b540a",
-    "start": "first-d 491 395 eaced952,header-d 982 92 f3a218cf,screen-d 1280 800 939eff04",
+    "start": "first-d 491 395 eaced952,header-d 982 92 f3a218cf,screen-d 1280 800 55bcce64",
     "tank": "view-d 1280 800 700a3803,view-p 780 1688 5f9d6598",
     "turbmeter": "res-d 449 298 169bbd66,view-d 1280 800 537337b8,view-p 780 1688 e5a2640d",
     "units": "view-d 1280 800 62bc1859,view-p 780 1688 04f86a65",
@@ -74,10 +74,11 @@
     "wellkill": "res-d 611 315 361d37d8,view-d 1280 800 3bddfaee,view-p 780 1688 801538b1",
     "wellos": "modbus-d 982 154 6570dca0,view-d 1280 800 e3f6c5bc,view-p 780 1688 3b9ff94a",
     "wells": "view-d 1280 800 d9907e22,view-p 780 1688 7324b608",
-    "wts": "card-d 296 349 e4ae1be4,card-p 752 858 45a7da8a,rigup-d 982 488 71c236fa,tb-d 980 481 909ac3e3,view-d 1280 800 59d21845,view-p 780 1688 4e2e2134"
+    "wts": "card-d 296 349 e4ae1be4,card-p 752 858 45a7da8a,rigup-d 982 488 71c236fa,tb-d 980 481 909ac3e3,view-d 1280 800 2c844dde,view-p 780 1688 4ece66ab"
   };
   var M = G.WTS_helpManifest = G.WTS_helpManifest || {};
-  M.count = 210;
+  M.count = 209;
+  M.bytes = 7814206;   // total size of the image files (the offline download label)
   M.data = D;
   M.base = 'help/img/';
   // get(folder, shot, view) → {file, src, w, h, v} or null; view "desktop" | "phone"; base overrides M.base

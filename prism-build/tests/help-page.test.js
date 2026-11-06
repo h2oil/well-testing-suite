@@ -2,7 +2,7 @@
 //
 // Builds the app from sources with fixed in-memory test content (every real 48-calc-help-*.js content
 // file is left out, so the tests do not depend on what the writers have shipped) and applies the host
-// edits H1–H5 with prism-build/help-host-patch.js patch() in memory (D21: help branches never commit a
+// edits H1–H7 with prism-build/help-host-patch.js patch() in memory (D21: help branches never commit a
 // rebuilt well-testing-app.html). Covers the sidebar row and #sbHelp, the header ? button and F1, open /
 // Back with focus, PRiSM and simulator context, reports / autosave / snapshots / project keys, search
 // (ranking, synonyms, keyboard), Metric and decimal comma, escaping, missing images, the lightbox, the
@@ -266,6 +266,49 @@ module.exports = [
     },
   },
   {
+    name: 'HELP page review round: open guide re-renders on a unit / decimal-comma change; sections clear the sticky bar; p* keeps its asterisk; tags do not break in tables; course / scenario shots use the item prefix',
+    wp: WP, opts: false,
+    run(_, assert, ctx) {
+      const app = open(ctx), W = app.win, H = W.WTS_help;
+      app.hook.nav('orifice');
+      app.click('pgHelpBtn');
+      assert.ok(/500 psig/.test(txt(app.el('help_main'))), 'imperial first');
+      W.WTS_units.setSystem('metric');   // fires wts:unit-system-changed
+      assert.ok(/kPa\(g\)/.test(txt(app.el('help_main'))) && !/500 psig/.test(txt(app.el('help_main'))), 'the open guide follows Metric mode without navigating away');
+      W.WTS_units.setSystem('imperial');
+      assert.ok(/500 psig/.test(txt(app.el('help_main'))), 'and back');
+      const dc = app.el('wts_dec_comma');
+      assert.ok(dc, '#wts_dec_comma toggle present');
+      app.click(dc);
+      assert.ok(W.WTS_a11y.decimalComma() && /4,026/.test(txt(app.el('help_main'))), 'decimal comma applied to the open guide');
+      app.click(dc);
+      assert.ok(/4\.026/.test(txt(app.el('help_main'))), 'decimal point again');
+      // sticky bar: every jump target has scroll-margin-top from the measured bar height; the bar is static on phones
+      const css = app.find('#help_root style').textContent;
+      assert.ok(/\.help-sec,\.help-part,\.help-h,\.help dt\[id\],\.help \[id\^=help-\]\{scroll-margin-top:calc\(var\(--help-bar-h,84px\) \+ 8px\)\}/.test(css), 'scroll-margin-top');
+      assert.ok(/@media \(max-width:700px\)\{[^@]*\.help-bar\{position:static/.test(css), 'not sticky on phones');
+      assert.ok(/#help_pm\{width:auto/.test(css), 'Print ▾ keeps its own width');
+      // search: p* survives, keyword snippets read as a list, the snippet prefers the body
+      assert.ok(H.md('**Bold** p* `c`').indexOf('p*') !== -1);
+      W.WTS_helpContent.guides.flare.what = ['The extrapolated pressure p* from a shut-in.'];
+      W.WTS_helpContent.guides.flare.keywords = ['burner boom', 'sand', 'T-202'];
+      W.WTS_units.setSystem('metric'); W.WTS_units.setSystem('imperial');   // the re-render also drops the search index
+      const hit = H.search('p*').filter((h) => h.route === 'flare')[0];
+      assert.ok(hit && /p\*/.test(hit.snippet), 'p* matches and keeps its asterisk: ' + JSON.stringify(hit));
+      const kw = H.search('burner boom').filter((h) => h.route === 'flare')[0];
+      assert.ok(kw && kw.snippet.indexOf(' ; ') === -1, 'no " ; " list in a snippet: ' + (kw && kw.snippet));
+      // tables: tags wrapped so "V-101 in" does not break at the hyphen; never inside an attribute
+      const t = H.renderBlocks([{ table: { head: ['a', 'b'], rows: [['V-101 in', '[[fs#FS-1|FS-1]] and PSHH-201']] } }], {});
+      assert.ok(/<span class="help-nw">V-101 in<\/span>/.test(t) && /<span class="help-nw">PSHH-201<\/span>/.test(t), t);
+      assert.ok(!/data-help-sec="<span/.test(t) && /data-help-sec="FS-1"/.test(t), 'attributes untouched');
+      // course / scenario shots: <folder>/<slug(item id)>-<shot>-d.webp, as help-shots.js saves them
+      W.WTS_helpManifest = { files: { 'scenarios/fs-1-rigup-d.webp': { w: 982, h: 488, h8: '12345678' } } };
+      const b = H.renderBlocks([{ shot: 'rigup' }], {}, [{ id: 'rigup', alt: 'Rig-up', caption: 'Rig-up' }], 'scenarios', 'FS-1');
+      assert.ok(/src="help\/img\/scenarios\/fs-1-rigup-d\.webp\?v=12345678"/.test(b), b);
+      delete W.WTS_helpManifest;
+    },
+  },
+  {
     name: 'HELP page: content is escaped (a "<img onerror>" string is rejected by the validator and rendered inert); markup subset and links render',
     wp: WP, opts: false,
     run(_, assert, ctx) {
@@ -293,7 +336,9 @@ module.exports = [
       app.hook.nav('orifice');
       app.click('pgHelpBtn');
       assert.ok(app.findAll('#help_main .help-shot-missing').length === 2, 'both shots shown as caption boxes');
-      assert.ok(/The page as it opens/.test(txt(app.find('#help_main .help-shot-missing'))));
+      assert.ok(/Orifice Plate Selection with the default inputs/.test(txt(app.find('#help_main .help-shot-missing'))), 'the box shows the alt text');
+      assert.ok(!/The page as it opens/.test(txt(app.find('#help_main .help-shot-missing'))), 'the caption is not repeated in the box');
+      assert.strictEqual(txt(app.find('#help_main .help-fig figcaption')), 'The page as it opens', 'the caption stays in the figcaption');
       W.WTS_helpManifest = { files: { 'orifice/view-d.webp': { w: 1280, h: 800, bytes: 90000, h8: 'abcd1234' }, 'orifice/view-p.webp': { w: 780, h: 1688, bytes: 60000, h8: 'ef567890' } } };
       W.WTS_help.goTo('orifice');
       const img = app.find('#help_main img.help-img');
@@ -311,13 +356,27 @@ module.exports = [
       assert.ok(lb.hasAttribute('open'), 'Enter opens');
       app.click('help_lb_x');
       assert.ok(!lb.hasAttribute('open'), '✕ closes');
-      app.fire(img, 'error');
+      W.WTS_helpManifest = { files: { 'orifice/res-d.webp': { w: 987, h: 563, bytes: 9000, h8: '0badf00d' } } };   // desktop crop only, with call-outs
+      W.WTS_help.goTo('orifice');
+      const crop = app.find('#help_main img.help-img');
+      assert.ok(crop && app.find('#help_main .help-enlarge'), 'a desktop-only crop with call-outs offers "Select to enlarge"');
+      app.fire(crop, 'error');
+      assert.ok(!app.find('#help_main .help-enlarge'), 'nothing left to enlarge after the image fails');
+      W.WTS_helpManifest = { files: { 'orifice/view-d.webp': { w: 1280, h: 800, bytes: 90000, h8: 'abcd1234' }, 'orifice/view-p.webp': { w: 780, h: 1688, bytes: 60000, h8: 'ef567890' } } };
+      W.WTS_help.goTo('orifice');
+      app.fire(app.find('#help_main img.help-img'), 'error');
       assert.ok(!app.find('#help_main img.help-img'), 'broken image replaced');
       assert.strictEqual(app.findAll('#help_main .help-shot-missing').length, 2);
       assert.ok(/Screenshots are not available in this copy/.test(txt(app.el('help_noimg'))));
       W.WTS_helpManifest = { files: { 'orifice/view-d.webp': { w: 1280, h: 800, bytes: 1048576, h8: 'abcd1234' } } };
       W.WTS_help.goTo('landing');
       assert.ok(/Download screenshots for offline use \(≈ 1 MB\)/.test(txt(app.el('help_offline'))));
+      W.WTS_helpManifest = { bytes: 7776956, files: { 'orifice/view-d.webp': { w: 1280, h: 800, h8: 'abcd1234' } } };   // the generated module: rows + total
+      W.WTS_help.goTo('landing');
+      assert.ok(/\(≈ 7\.4 MB\)/.test(txt(app.el('help_offline'))), 'size from the module total: ' + txt(app.el('help_offline')));
+      W.WTS_helpManifest = { files: { 'orifice/view-d.webp': { w: 1280, h: 800, h8: 'abcd1234' } } };
+      W.WTS_help.goTo('landing');
+      assert.strictEqual(txt(app.el('help_offline')), 'Download screenshots for offline use', 'no "≈ 0 MB" when the size is unknown');
       delete W.WTS_helpManifest;
     },
   },

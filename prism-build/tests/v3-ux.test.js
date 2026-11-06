@@ -79,7 +79,7 @@ module.exports = [
       assert.deepStrictEqual(all.slice().sort(), sidebarCalcs.slice().sort(), 'every sidebar calculator has a tile');
       ['esdhi', 'esdlo', 'hydrate', 'liquidline', 'pipelife'].forEach((k) => assert.ok(all.includes(k), 'Test System Safety tile ' + k));
       assert.ok(all.length >= 50, '~50 tiles: ' + all.length);
-      assert.strictEqual(text(app.el('dash_count')), (all.length + ov.length) + ' calculators');
+      assert.strictEqual(text(app.el('dash_count')), all.length + ' calculators', 'the Overview (Help) tile is not a calculator');
       app.click(app.find('.dash-card[data-id="sepqc"]'));
       assert.strictEqual(app.hook.page(), 'sepqc', 'tile still navigates');
     },
@@ -92,7 +92,7 @@ module.exports = [
       app.hook.nav('home');
       app.input('dash_search', 'vogel');                        // only in the Oil IPR description
       assert.deepStrictEqual(visibleCards(app), ['oilipr']);
-      assert.strictEqual(text(app.el('dash_count')), '1 of ' + app.findAll('.dash-card').length + ' calculators');
+      assert.strictEqual(text(app.el('dash_count')), '1 of ' + (app.findAll('.dash-card').length - app.findAll('.dash-sec[data-group="Overview"] .dash-card').length) + ' calculators');
       assert.ok(app.el('dash_quick').classList.contains('hidden'), 'favourites / recent hidden while searching');
       app.input('dash_search', 'ELECTRICAL');                   // group label, case-insensitive
       const elec = ['gensz', 'cablesz', 'vdrop', 'elec'];      // the Electrical hub (v3.1: one entry in Fluids & Utilities)
