@@ -66,6 +66,9 @@ async function pdf(html, out) {
     const page = await browser.newPage();
     await page.route('**/help/user-guide.html*', (r) => r.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: html }));
     await page.goto(srv.base + 'help/user-guide.html', { waitUntil: 'load' });
+    // every screenshot decoded before printing (the book has no loading="lazy", but wait for each image regardless)
+    await page.evaluate(() => Promise.all(Array.from(document.images, (i) => i.complete ? null :
+      new Promise((res) => { i.addEventListener('load', res, { once: true }); i.addEventListener('error', res, { once: true }); }))));
     await page.pdf({ path: out, format: 'A4', printBackground: true, preferCSSPageSize: true });
     console.log('[ok] PDF written: ' + out);
     return 0;
