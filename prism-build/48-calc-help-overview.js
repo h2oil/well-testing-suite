@@ -1,5 +1,5 @@
 // prism-build/48-calc-help-overview.js — Help content: Overview (docs/HELP-GUIDE-PLAN.md §4.2, WP-C1).
-// Data only (no WTS_calcRegistry page). The factory runs on the first Help open (WTS_help.load()); nothing runs at load.
+// Data only. The factory runs on the first Help open (WTS_help.load()).
 (function () {
 'use strict';
 var G = (typeof window !== 'undefined') ? window : globalThis;
@@ -12,7 +12,7 @@ return { guides: {
 home: { route: 'home', reviewed: R, reviewedSrc: '6f6525b4', units: N, keywords: ['dashboard', 'start page', 'favourites', 'tiles', 'search'],
 notDocumented: [{ id: 'dash_search', why: 'the search box of step 2 (it has a placeholder, not a label)' }],
 purpose: 'The start page: search every calculator, pin favourites and open any module from its tile.',
-what: ['Tiles sit under the sidebar group headings, in sidebar order. Each tile has a group badge and one line on what the module does.'],
+what: ['Tiles sit under the sidebar group headings. Each has a group badge and one line on what the module does.'],
 when: ['To find a calculator by name, method or standard.', 'To get back to the pages you use most.'],
 steps: [{ t: 'Select **Dashboard** in **Overview**.', shot: 'view' },
 { t: 'Type in the search box ①: a name, a method or a standard. Tiles that do not match are hidden.' },
@@ -23,13 +23,14 @@ outputs: [{ label: 'Favourites', text: 'Your pinned tiles.' }, { label: 'Recentl
 verdicts: [{ mark: '⚠', match: '⚠', text: 'The ⚠ on the ESD Hi-Pilot tile is its icon, not a warning.' }],
 tips: ['Search for a standard, for example "API 521", to find every page that uses it.'],
 pitfalls: ['Favourites and Recently used belong to this device. They are not in project files.'],
-noRefs: 'A start page; it does no calculation.', related: ['help', 'clientinfo'],
+noRefs: 'A start page; no calculation.', related: ['help', 'clientinfo'],
 shots: v('Dashboard with the search box, the favourites hint and the first tiles', 'The Dashboard as it opens',
 [{ sel: '#dash_search', n: 1 }, { sel: '#dash_quick', n: 2 }, { sel: '.dash-sec[data-group] .dash-card', n: 3 }]) },
 help: { route: 'help', reviewed: R, reviewedSrc: 'f3fba7b2', units: N, keywords: ['help', 'guide', 'user guide', 'manual', 'training', 'how to'],
-notDocumented: [{ pattern: '^help_', why: 'the Help page controls: search, back, screenshot viewer, print and offline download (steps)' }],
+notDocumented: [{ id: 'help_q', why: 'search (step 2)' }, { id: 'help_back', why: 'Back (step 5)' }, { id: 'help_lb_x', why: 'closes a screenshot' },
+{ id: 'help_offline', why: 'offline screenshots' }, { pattern: '^help_print_', why: 'print menu' }],
 purpose: 'A guide for every module, with search, "How do I…" tasks, the simulator course and field scenarios.',
-what: ['Every guide has the same sections: what it does, when to use it, steps, inputs, results and verdicts, a worked example, tips, standards and related modules.', 'Help is never put in reports, autosave or project files.'],
+what: ['Every guide has the same sections: what it does, when to use it, steps, inputs, results and verdicts, an example, tips and standards.', 'Help is never put in reports, autosave or project files.'],
 when: ['You are new to a page, or a verdict is not clear.', 'A job needs several modules in order.'],
 steps: [{ t: 'Select **Help & Guide** in **Overview**. On other pages, the ? next to the page title opens that page’s guide.', shot: 'view' },
 { t: 'Type in the search box ①: a module, a label, a standard or an oilfield term. Select a result to open it at that section.' },
@@ -42,7 +43,7 @@ noRefs: 'Help pages only.', related: ['home'],
 shots: v('Help page with the search box, the contents list and the landing view', 'Help as it opens',
 [{ sel: '#help_q', n: 1 }, { sel: '#help_toc', n: 2 }, { sel: '#help_root .help-links [data-help-go="start"]', n: 3 }]) },
 clientinfo: { route: 'clientinfo', reviewed: R, reviewedSrc: 'c6d99fd1', units: N, keywords: ['client', 'well name', 'report header', 'cover page', 'logo', 'engineer'],
-notDocumented: [{ pattern: '^ci_(contact|email|ref|country|rig|position|company|eng_email)$', why: 'printed in the report header as typed' }, { id: 'ci_notes', why: 'free notes (Notes card)' }],
+notDocumented: [{ pattern: '^ci_(contact|email|ref|country|rig|position|company|eng_email)$', why: 'printed in the header as typed' }, { id: 'ci_notes', why: 'free notes (Notes card)' }],
 purpose: 'Client, well and engineer details for the cover and header of every PDF, PNG and Quick Report.',
 what: ['Each well keeps its own details, and they travel in project files. The optional client logo goes on the report cover.'],
 when: ['At the start of a job, before the first report.', 'When the client, well or rig changes.'],
@@ -56,7 +57,7 @@ inputs: [{ label: 'Client / Company Name', id: 'ci_client', text: 'Shown as Clie
 { label: 'Include client logo on PDF / PNG reports', id: 'ci_showlogo', text: 'Off by default: reports then carry the app branding only.' }],
 outputs: [{ label: 'Report header', text: 'Blank fields are left out.' }],
 tips: ['A new project keeps the Report Prepared By fields.', 'Export Session and Import Session move these details and every page input as one file.'],
-pitfalls: ['Clear All empties every field at once, with no question asked.', 'Use a small logo image (under about 500 kB): device storage is limited.'],
+pitfalls: ['Clear All empties every field at once, with no question asked.', 'Use a small logo (under about 500 kB): device storage is limited.'],
 noRefs: 'No calculation.', related: ['wells', 'home'],
 shots: v('Client & Well Information page with the client and well cards', 'Client & Well Information', [{ sel: '#ci_client', n: 1 }]) },
 wells: { route: 'wells', reviewed: R, reviewedSrc: '4e460de4', units: N, keywords: ['multi-well', 'compare wells', 'campaign', 'snapshot'],
@@ -65,9 +66,10 @@ what: ['Each well keeps its own inputs and results. The header Well menu creates
 when: ['A project holds several wells, for example a campaign.', 'To share a read-only table of results.'],
 steps: [{ t: 'Select **Well Comparison** in **Overview**, or Compare wells in the Well menu.', shot: 'view' },
 { t: 'Read **Key results per well** ①. ✓ marks the active well.' },
+{ t: 'Open with a well name switches to that well.' },
 { t: 'Select **New well** to add one. The app asks for its name and opens it with empty inputs.' },
 { t: 'Select **Share snapshot** to save the table as a read-only file.' }],
-outputs: [{ label: 'Key results per well', text: 'Each well’s last saved calculation; — where a page was not run.' }, { label: 'Rate source', text: 'The page the rates came from.' }],
+outputs: [{ label: 'Key results per well', text: 'Each well’s last saved results; — where a page was not run.' }, { label: 'Rate source', text: 'The page the rates came from.' }],
 tips: ['To refresh a well, open it and then its calculator page.'],
 pitfalls: ['Delete this well cannot be undone unless you saved a project file.'],
 noRefs: 'No calculation.', related: ['clientinfo', 'home'],
@@ -79,8 +81,8 @@ when: ['Before you enter client data.', 'When a client asks where the data goes.
 steps: [{ t: 'Select **Privacy** in **Overview**, or the privacy line under the sidebar.', shot: 'view' },
 { t: 'Read **Where your data is stored** ① and **Other network requests**.' },
 { t: 'Save a project file to keep a copy of your work.' }],
-outputs: [{ label: 'This build', text: 'Says whether usage analytics are active. The web version counts anonymous page views only; the iOS app sends none.' }],
-pitfalls: ['Clearing your browser’s site data removes every saved input. Nobody can recover it.'],
+outputs: [{ label: 'This build', text: 'Says whether usage analytics are active. The web version counts anonymous usage (page views, time on a page and generic button events). No input values, names, files or results are sent. The iOS app sends none.' }],
+pitfalls: ['Clearing the browser’s site data removes every saved input for good.'],
 noRefs: 'Information page.', related: ['home', 'clientinfo'],
 shots: v('Privacy page', 'Privacy', [{ sel: '#privacy_root', n: 1 }]) },
 releasenotes: { route: 'releasenotes', title: 'Release Notes', reviewed: R, reviewedSrc: 'fecd72c4', units: N, keywords: ['release notes', 'what’s new', 'version', 'changes'],
@@ -99,4 +101,4 @@ shots: v('Release Notes with the category filters', 'Release Notes', [{ sel: '.r
 })();
 
 // === SELF-TEST ===
-(function () { /* content is checked by tests/help-content.test.js */ })();
+(function () { /* tests/help-content.test.js */ })();

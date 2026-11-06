@@ -33,7 +33,7 @@ L(['**Sidebar**: nine groups. Select a group heading to open it; one group is op
 setup: [{ click: 'button[onclick="calcOilGas()"]' }, { waitFor: '#og_res .rbox' }] }], body: [
 O(['Open **Production & Reservoir** in the sidebar and select **Oil & Gas Rate**.',
 'The page opens with example inputs: a 60 min interval, meter readings {{1000|volume}} and {{1004.5|volume}}, 35 °API, separator {{500|pressureG}}, {{50|pressureSmall60}} on a {{2|lengthSmall}} plate.',
-'Select **Calculate**. **Combined Results** shows Oil Rate {{97.7|liquidRate|1}}, Gas Rate {{3793|gasRateSmall|0}} and GOR {{38809|gor|0}}.',
+'Select **Calculate**. **Combined Results** shows Oil Rate {{97.7|liquidRate|1}}, Gas Rate {{3792.554|gasRateSmall|3}} and GOR {{38809|gor|0}} (the page writes the GOR unit as scf/bbl).',
 'Change an input and select **Calculate** again. Your inputs are saved as you type.',
 'Use the export buttons for a PDF of the page, or **Copy results** for the text.']),
 { shot: 'first' },
@@ -77,7 +77,7 @@ L(['**Export buttons** on each calculator page: **Copy results** (text; tables t
 ['?', 'Well Test Simulator', 'Its own key list: Space play or pause, R reset, E trip the ESD, V 2D or 3D, A acknowledge all']] } },
 'Tiles and other click-only items take Enter or Space. Screen readers announce new results. The decimal comma is in [[start#units|Units]].'] },
 { id: 'trouble', title: 'Troubleshooting', body: [
-L(['**A page keeps odd values**: open a new well (Well menu → New well…), or File → New for a clean job. Save a project file first.',
+L(['**A page keeps odd values**: there is no reset for one page. Change the values back, or use File → New for a clean job (save a project file first). A new well (Well menu → New well…) also starts with empty pages; delete it afterwards if you only needed a clean page.',
 '**Clearing site data** in your browser’s site settings removes everything the app stored on this device. Save a project file first.',
 '**The 3D view stays blank**: it needs graphics support and, on the web, downloads its engine on first use. Use the 2D view.',
 '**Opening a file on iOS**: save the file in the Files app first, then pick it there.',
@@ -88,20 +88,20 @@ L(['**A page keeps odd values**: open a new well (Well menu → New well…), or
 var tasks = [
 { id: 'spread', title: 'Design a well test spread', purpose: 'Size the surface spread for the expected rates.', steps: [
 S('clientinfo', 'Client, well and rig.'),
-S('wts', 'Enter the rates, pressures and bean; read velocities and hydrate margins.', 'gas, oil and water rates; WHP; separator pressure'),
+S('wts', 'Enter the rates, pressures and bean; read velocities and hydrate margins.', 'gas, oil and water rates; wellhead pressure; separator pressure'),
 S('choke', 'Check the bean and critical flow.', 'bean size'),
 S('sep', 'Retention time at the test rates.', 'separator size'),
 S('flare', 'Radiation at the burner for the gas rate.', 'flare radiation'),
 S('prv', 'Relief load and orifice.', 'relief load'),
 S('', 'Quick Report ▾ → Final well-test report.')] },
 { id: 'cleanup', title: 'Clean up and unload the cushion', purpose: 'Unload the completion fluid to the burner, then go through the separator.', steps: [
-S('wts', 'Follow [[scenarios|field scenario FS-1]]: V-101 out, Operating Pressure low.', 'unload rate and gas rate'),
+S('wts', 'Follow field scenario FS-1 in [[scenarios|Field scenarios]]: it sets the simulator up for an unload to the burner.', 'unload rate and gas rate'),
 S('flare', 'Radiation at the burner for that gas rate.', 'burner back pressure'),
-S('dispersion', 'Where the burner gas and H2S go downwind.'),
+S('dispersion', 'Where the burner gas and the hydrogen sulphide (H2S) in it go downwind.'),
 S('hydrate', 'Hydrate risk downstream of the choke.', 'choke outlet pressure and temperature'),
 S('cheminj', 'Inhibitor rate and pump setting, if needed.')] },
 { id: 'metergas', title: 'Meter gas', purpose: 'Pick the plate, measure the rate and check the meters.', steps: [
-S('orifice', 'The plate that keeps DP inside the transmitter range.', 'plate bore and DP range'),
+S('orifice', 'The plate that keeps the differential pressure (DP) inside the transmitter range.', 'plate bore and DP range'),
 S('aga3', 'Gas rate from the readings.', 'gas rate'),
 S('proving', 'Liquid meter factor from the prover runs.', 'meter factor'),
 S('sepqc', 'Separator GOR and sample checks.')] },
@@ -114,7 +114,7 @@ S('', 'Quick Report ▾ → Daily well-test report.')] },
 S('wts', 'Choke outlet pressure and temperature (or [[choke]]).', 'choke outlet P and T'),
 S('hydrate', 'Hydrate margin per segment and inhibitor rate.', 'hydrate margin'),
 S('cheminj', 'Pump and injection point for the inhibitor.', 'inhibitor rate')] },
-{ id: 'buildup', title: 'Interpret a build-up', purpose: 'Get k, skin and p* from a shut-in.', steps: [
+{ id: 'buildup', title: 'Interpret a build-up', purpose: 'Get permeability k, skin and the extrapolated pressure p* from a shut-in.', steps: [
 S('buildup', 'Find and interpret the shut-ins in gauge data.', 'rate history; producing time'),
 S('prism', 'Or step by step: Data, Flow periods, Diagnose, Model & fit, Report.', 'k, skin, p*')] },
 { id: 'erosion', title: 'Size a flowline or check erosion', purpose: 'Pressure drop, velocity and sand erosion.', steps: [
@@ -123,21 +123,21 @@ S('pipesz', 'Pipe size for the velocity limits.', 'velocity against the API RP 1
 S('pipelife', 'Sand erosion time per segment.')] },
 { id: 'kill', title: 'Plan a well kill', purpose: 'Kill fluid and volumes.', steps: [
 S('wellkill', 'Kill weight and bullhead volumes.', 'kill weight; volumes'),
-S('complfluids', 'Brine or cement blend for that weight.')] },
+S('complfluids', 'Brine blend for that weight; cement slurry volumes if needed.')] },
 { id: 'live', title: 'Live data from a gauge', purpose: 'From the gauge to an interpretation.', steps: [
 S('modbus', 'Connect the device and set up the tags.', 'tags'),
 S('wellos', 'Watch the live values and alarms.'),
 S('historian', 'Keep the history and export it.', 'exported series'),
 S('prism', 'Load the series and interpret it.')] },
 { id: 'gasprops', title: 'Gas properties for a calculation', purpose: 'Z and related properties at line conditions.', steps: [
-S('gaspvt', 'Z, k, viscosity and J-T coefficient at the line pressure and temperature.', 'Z, k, μJT'),
+S('gaspvt', 'Z, k, viscosity and J-T coefficient at the line pressure and temperature.', 'Z, k, J-T coefficient'),
 S('', 'Enter them on the page that needs them.')] }];
 
 var glossary = {
 bean: { term: 'bean', variants: ['beans'], def: 'A fixed choke. Its size is the bore in 64ths of an inch: a 32 bean is 32/64 in.' },
 bsw: { term: 'BS&W', variants: ['basic sediment and water'], def: 'Basic sediment and water: the water and solids in the oil, in % of volume.' },
 cushion: { term: 'cushion', variants: ['cushions'], def: 'The completion fluid left in the well before the test. It is unloaded first, usually to the burner.' },
-fwhp: { term: 'FWHP', variants: ['FTHP'], def: 'Flowing wellhead (tubing) pressure, upstream of the choke.' },
+fwhp: { term: 'FWHP', variants: ['FTHP', 'WHP'], def: 'Flowing wellhead (tubing) pressure, upstream of the choke.' },
 sithp: { term: 'SITHP', variants: ['SIWHP'], def: 'Shut-in tubing (wellhead) pressure with the well closed in.' },
 gor: { term: 'GOR', def: 'Gas-oil ratio: standard gas volume per stock-tank barrel of oil.' },
 psv: { term: 'PSV', def: 'Pressure safety (relief) valve: opens at its set pressure to protect a vessel or line.' } };
@@ -145,9 +145,9 @@ psv: { term: 'PSV', def: 'Pressure safety (relief) valve: opens at its set press
 var faq = [
 { id: 'pressure', q: 'Which pressure goes where in the Well Test Simulator?', a: [L([
 'Flowing wellhead or tubing pressure: **Wellhead Pressure**, never the separator pressure.',
-'Production or export line pressure: the separator **Operating Pressure**, with V-101 in.',
-'Cushion or clean-up straight to the burner: V-101 out, **Operating Pressure** low (about {{15|pressureG}}) and **Surge Tank Pressure** at least {{10|pressure}} below it.']),
-'The steps and the checks are in [[scenarios|Field scenarios]] and the [[wts]] guide.'] },
+'Production or export line pressure: the separator **Operating Pressure**, with V-101 in; add the line loss to the header.',
+'Cushion or clean-up straight to the burner: set the simulator up as field scenario FS-1 says ([[scenarios|Field scenarios]]).']),
+'The steps and the checks are in field scenario FS-1 and the [[wts]] guide.'] },
 { id: 'training', q: 'Is there training for the simulator?', a: [
 'Help has a self-paced [[course|Well Test Simulator course]]. Each exercise has answers, trainer notes and a worksheet, so a supervisor can run it for a crew.',
 'Questions about training: {{email}}.'] },
