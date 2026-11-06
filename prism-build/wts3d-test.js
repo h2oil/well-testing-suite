@@ -478,6 +478,42 @@ const SECTION_B = (G /*, src */) => {
           if (!(wIn.min[2] <= I.EQ_BOX.desander[0][2] && tIn.min[2] <= I.EQ_BOX.surge2[0][2] + 1e-9 && I.viewBox('wellhead', {}).min[2] > I.EQ_BOX.desander[0][2])) bad.push('item framing');
           return bad.length === 0 || bad.join(',');
         }],
+        ['32: core item out (separator / surge / flare / …) — its ghost stays pickable and occludes; proxy, valve and occlusion tables equal v3.3', () => {
+          const bad = [], cam = camOf(overview({}, 1380, 700)), V33V = I.VALVE_PROXIES.filter(v => VALVES_V33.indexOf(v[0]) >= 0);
+          const rigs = [{ separator: false }, { surge: false }, { flare: false }, { heater: false, gauge: false, pump: false }, { separator: false, surge: false, flare: false, heater: false, gauge: false, pump: false }];
+          const targets = [[5.6, 2.0, 0], [10.2, 3.2, 4.0], [19.5, 5, -4.5], [16.4, 1.6, 4.0], [20.4, 0.6, 6.0], [-1.4, 1.7, 0.3], [9.6, 3.05, 2.0], [13.0, 0.45, 3.5]];
+          rigs.forEach(rig => {
+            const tag = JSON.stringify(rig);
+            if (JSON.stringify(I.rigProxies(rig)) !== JSON.stringify(PROXIES_V33)) bad.push(tag + ' proxies');
+            if (JSON.stringify(I.rigValveProxies(rig)) !== JSON.stringify(V33V)) bad.push(tag + ' valves');
+            targets.forEach(t => { const d = rayTo(cam, t), a = I.pickRay(cam.pos, d, I.rigProxies(rig), I.rigValveProxies(rig)), b = I.pickRay(cam.pos, d, PROXIES_V33, V33V);
+              if (a !== b) bad.push(tag + ' pick ' + t.join('/') + ' ' + a + '≠' + b); });
+            I.EQ_IDS.filter(id => !I.OPT[id]).forEach(id => { if (I.occludedFrom(cam.pos, I.ANCHORS[id], id, I.rigProxies(rig)) !== I.occludedFrom(cam.pos, I.ANCHORS[id], id, PROXIES_V33)) bad.push(tag + ' occ ' + id); });
+            I.EQ_IDS.filter(id => !I.OPT[id]).forEach(id => { if (!I.optIn(rig, id)) bad.push(tag + ' optIn ' + id); });
+          });
+          if (I.optIn({}, 'desander') || I.optIn({}, 'surge2') || !I.optIn({ desander: true }, 'desander')) bad.push('optIn optional');
+          return bad.length === 0 || bad.join('; ');
+        }],
+        ['32: every view with every core group out frames as the default rig (finite, radius < 200); the flare view no longer flies to the origin', () => {
+          const bad = [], core = {};
+          I.RIG_GROUPS.filter(g => !I.OPT[g]).forEach(g => { core[g] = false; });
+          [[1380, 700, INS], [375, 471, {}], [375, 812, { top: 233, bottom: 108 }]].forEach(([w, h, ins]) => {
+            Object.keys(I.VIEWS).forEach(name => {
+              const a = I.viewFor(name, core, w, h, ins), b = I.viewFor(name, {}, w, h, ins);
+              const fin = isFinite(a.r) && a.tgt.every(isFinite) && a.r < 200;
+              const eq = Math.abs(a.r - b.r) < 1e-9 && a.tgt.every((v, i) => Math.abs(v - b.tgt[i]) < 1e-9);
+              if (!fin || !eq) bad.push(name + ' ' + w + 'x' + h + ' r ' + a.r);
+            });
+            [['flare', { flare: false }], ['tanks', { gauge: false }], ['tanks', { surge: false, pump: false, gauge: false }], ['separator', { heater: false, separator: false }]].forEach(([name, rig]) => {
+              const a = I.viewFor(name, rig, w, h, ins), b = I.viewFor(name, {}, w, h, ins);
+              if (!(Math.abs(a.r - b.r) < 1e-9 && a.tgt.every((v, i) => Math.abs(v - b.tgt[i]) < 1e-9))) bad.push(name + ' ' + JSON.stringify(rig));
+            });
+          });
+          // an empty group list falls back to the overview fit set instead of {1e9, -1e9}
+          const save = I.VIEWS.flare.groups; I.VIEWS.flare.groups = ['desander'];
+          try { const b = I.viewBox('flare', {}); if (b.min[0] > b.max[0] || b !== I.fitPts({})) bad.push('empty box'); } finally { I.VIEWS.flare.groups = save; }
+          return bad.length === 0 || bad.join(', ');
+        }],
         ['32: tracer allocation per chain is unchanged with both items out (v3.3 rule; DR keeps the remainder); optional chains empty', () => {
           const L = I.routeLenFn(I.DEF_NPS), bad = [];
           const OLD = [['E1', 'E2', 'E3', 'E3c', 'E4a', 'E4'], ['G1'], ['VENT'], ['BLK'], ['LW', 'LM'], ['LO', 'LM'], ['X1', 'X2', 'XA'], ['DRA']];

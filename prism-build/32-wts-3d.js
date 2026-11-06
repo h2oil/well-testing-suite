@@ -74,6 +74,9 @@ var ANCHORS = {
 };
 // in the effective rig-up? core items: unless strictly false; optional items: only when strictly true (D2)
 function rigIn(rig, id) { return OPT[id] ? !!(rig && rig[id] === true) : !(rig && rig[id] === false); }
+// does the item take part in picking / occlusion / framing / focus? Core items always (their v3.3 ghost stays pickable and
+// still hides labels); optional items only while they are in the rig-up (§8.0, D18)
+function optIn(rig, id) { return !OPT[id] || rigIn(rig, id); }
 
 // Overview auto-fit box (process equipment + pipes only, capped at y 7) — §5.2
 var FIT_BOX = { min:[-15.8,0,-5.3], max:[20.0,7.0,6.5] };
@@ -161,17 +164,19 @@ var OBST_BOXES = [{ box:V101_BOX }, { box:{ min:[9.0, 0.9, 2.8], max:[11.4, 5.7,
                   { box:{ min:[11.5, 0.9, 1.3], max:[13.5, 5.5, 3.3] }, rig:'surge2' }];
 
 // ── tables filtered by the effective rig-up (§8.0, D18): a hidden item has no volume anywhere ──
-function rigProxies(rig) { return PROXIES.filter(function (p) { return rigIn(rig, p[0]); }); }
-function rigValveProxies(rig) { return VALVE_PROXIES.filter(function (p) { return rigIn(rig, proxyEq(p[0])); }); }
+function rigProxies(rig) { return PROXIES.filter(function (p) { return optIn(rig, p[0]); }); }
+function rigValveProxies(rig) { return VALVE_PROXIES.filter(function (p) { return optIn(rig, proxyEq(p[0])); }); }
 function rigObst(rig) { return OBST_BOXES.filter(function (o) { return !o.rig || rigIn(rig, o.rig); }); }
-function rigEqIds(rig) { return EQ_IDS.filter(function (id) { return rigIn(rig, id); }); }
+function rigEqIds(rig) { return EQ_IDS.filter(function (id) { return optIn(rig, id); }); }
 function rigBlobs(rig) { var b = BLOBS.slice(); ['desander', 'surge2'].forEach(function (g) { if (rigIn(rig, g)) b = b.concat(BLOBS_OPT[g]); }); return b; }
-// framing box of a view preset for the rig-up (groups that are out do not count); flameTop raises the flare view
+// framing box of a view preset for the rig-up (optional groups that are out do not count; core ghosts frame as in v3.3);
+// flameTop raises the flare view; an empty box falls back to the overview fit set
 function viewBox(name, rig, flameTop) {
   var vw = VIEWS[name] || VIEWS.overview;
   if (!vw.groups) return fitPts(rig);
   var box = { min:[1e9, 1e9, 1e9], max:[-1e9, -1e9, -1e9] };
-  vw.groups.forEach(function (g) { if (!rigIn(rig, g)) return; var b = EQ_BOX[g]; for (var i = 0; i < 3; i++) { box.min[i] = Math.min(box.min[i], b[0][i]); box.max[i] = Math.max(box.max[i], b[1][i]); } });
+  vw.groups.forEach(function (g) { if (!optIn(rig, g)) return; var b = EQ_BOX[g]; for (var i = 0; i < 3; i++) { box.min[i] = Math.min(box.min[i], b[0][i]); box.max[i] = Math.max(box.max[i], b[1][i]); } });
+  if (box.min[0] > box.max[0]) return fitPts(rig);
   if (vw.flame && flameTop != null) box.max[1] = Math.max(box.max[1], flameTop);
   return box;
 }
@@ -1849,7 +1854,7 @@ function buildScene(F, renderer, tier, env, rig) {
       var gG = new THREE.LatheGeometry(vesselProfile(R, Ls, hd, 12).map(v2), T.radV);
       var hG = new THREE.LatheGeometry(vesselProfile(Ri, Ls, hdi, 12).map(v2), T.radV);
       var v = vessel('desander', gG, hG, new V3(X, Y0, Z), new V3(X, Y0 + 0.005, Z), { centre:[X, Y0 + 0.62, Z], faceW:0.9, faceO:0.5, frontGlow:0.4 });
-      v.Ri = Ri; v.Ls = Ls; v.hd = hdi; v.Hint = Ls + 2 * hdi; v.kind = 'acc'; v.y0 = Y0 + 0.005;
+      v.Ri = Ri; v.Ls = Ls; v.hd = hdi; v.Hint = Ls + 2 * hdi; v.kind = 'v'; v.y0 = Y0 + 0.005;
       v.U.uWatCol.value = C(PALETTE.sandBody); v.U.uEmul.value = 0.012; v.U.uRip.value = 0.2;
       v.caps = [];
       // LAH / LAHH ticks on the accumulator glass
@@ -3454,7 +3459,7 @@ function createHandle(THREE, container, opts) {
     if (u2In && L.sep_surge2.active) {                                                  // dump header split by the engine shares (route 'both')
       if (!tr.edgeAct[I.LMb]) tr.nextE[I.LMa] = I.LM2; else { tr.altE[I.LMa] = I.LM2; tr.altP[I.LMa] = n.surge2.share; }
     }
-    tr.nextE[I.X0] = I.X2; tr.nextS[I.X0] = S.pipes.sX0join; tr.nextE[I.VENT2] = I.VENT; tr.nextS[I.VENT2] = S.pipes.sVENT2join;
+    tr.nextE[I.X0] = S.rigIn.gauge ? I.X2 : -1; tr.nextS[I.X0] = S.pipes.sX0join;   // gauge out: X0 ends at the tee (export spool) tr.nextE[I.VENT2] = I.VENT; tr.nextS[I.VENT2] = S.pipes.sVENT2join;
     tr.nextE[I.DRB] = I.DRA; tr.nextS[I.DRB] = S.pipes.sDRBjoin;
     for (i = 0; i < CHAIN_DEF.length; i++) tr.chainEntry[i] = I[CHAIN_DEF[i].entry];
     tr.chainEntry[7] = L.gauge_drain.tank === 1 ? I.DRB : I.DRA;
@@ -4439,12 +4444,12 @@ function createHandle(THREE, container, opts) {
   H.setInteraction = guard(function (o) { maxMode = !!(o && o.max); canvas.style.touchAction = maxMode ? 'none' : 'pan-y'; clearPointers(); });
   H.view = guard(function (name) { if (!VIEWS[name]) name = 'overview'; markInput(); userMoved = name !== defaultView(); if (W < 2) { needsFit = true; return; } startTween(viewTarget(name), 0.9); });
   H.focus = guard(function (id) {
-    var f = FOCUS[id]; if (!f || !rigIn(N.rig, id)) return; markInput(); userMoved = true;
+    var f = FOCUS[id]; if (!f || !optIn(N.rig, id)) return; markInput(); userMoved = true;
     var th = cam.th, d = ((th + 18 * Math.PI / 180) % (2 * Math.PI) + 3 * Math.PI) % (2 * Math.PI) - Math.PI;
     if (Math.abs(d) > Math.PI / 3) th = -18 * Math.PI / 180;
     startTween({ tgt:f[0], r:f[1], th:th, ph:clamp(cam.ph, 0.95, 1.3) }, 0.9);
   });
-  H.select = guard(function (id) { selected = id && EQ_IDS.indexOf(id) >= 0 && rigIn(N.rig, id) ? id : null; labelDirty = true; layoutDirty = true;
+  H.select = guard(function (id) { selected = id && EQ_IDS.indexOf(id) >= 0 && optIn(N.rig, id) ? id : null; labelDirty = true; layoutDirty = true;
     for (var i = 0; i < chips.length; i++) chips[i].el.classList.toggle('sel', chips[i].id === selected); });
   H.resetView = guard(function () {
     userMoved = false; tween = null;
@@ -4557,7 +4562,7 @@ var _internals = {
   EQ_IDS:EQ_IDS, OPT:OPT, TAGS:TAGS, TITLES:TITLES, PREF_SIDE:PREF_SIDE, HALO:HALO, BLOBS:BLOBS, BLOBS_OPT:BLOBS_OPT, OBST_BOXES:OBST_BOXES,
   NOZZLES:NOZZLES, NEW_ROUTES:NEW_ROUTES, PSV_ROUTE:PSV_ROUTE, FIT_OPT:FIT_OPT, MUSHROOM:MUSHROOM, PAD_RECT:PAD_RECT, SEG_CHIPS:SEG_CHIPS,
   LINE_NAMES:LINE_NAMES, NODE_NAMES:NODE_NAMES, IMP_UNITS:IMP_UNITS, STEP_ORDER:STEP_ORDER, DEF_NPS:DEF_NPS,
-  rigIn:rigIn, fitPts:fitPts, rigProxies:rigProxies, rigValveProxies:rigValveProxies, rigObst:rigObst, rigEqIds:rigEqIds, rigBlobs:rigBlobs,
+  rigIn:rigIn, optIn:optIn, fitPts:fitPts, rigProxies:rigProxies, rigValveProxies:rigValveProxies, rigObst:rigObst, rigEqIds:rigEqIds, rigBlobs:rigBlobs,
   viewBox:viewBox, viewFor:viewFor, rigRefitView:rigRefitView, pickRay:pickRay, occludedFrom:occludedFrom, rayBox:rayBox,
   valveOf:valveOf, proxyEq:proxyEq, stepFor:stepFor, routeBuilt:routeBuilt, routeRVis:routeRVis, joinS:joinS, routeLenFn:routeLenFn,
   chainEdges:chainEdges, chainWeights:chainWeights, tracerCounts:tracerCounts,
