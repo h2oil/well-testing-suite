@@ -74,10 +74,13 @@ const CHECKS = {
     { kind: 'sim', needs: 'desander', rig: { desander: true }, run: 60, dt: 1,
       expect: [{ at: 60, path: 'desander.dP_psi', v: 3.93, tol: 0.01 }, { at: 60, path: 'desander.d50c_um', v: 39.8, tol: 0.01 }, { at: 60, path: 'desander.effClean', v: 0.946, tol: 0.005 },
         { at: 60, path: 'desander.sand.cap_lb', v: 663, tol: 0.005 }, { at: 60, path: 'nodes.esd.P', v: 2999.26, tol: 0.001 }, { at: 60, path: 'nodes.choke.Pin', v: 2995.33, tol: 0.001 }] },
-    // flow-back → LAH-103 ≈ 3.5 h; dump ≈ 17 min (bleed < 50 psig, flush, equalise); bypass → all sand to the bean (HIGH), back in line → OK
+    // flow-back → LAH-103 ≈ 3.5 h at 80 % of the 663 lb accumulator (≈ 530 lb); dump ≈ 17 min (XV-103 opens below 50 psig, the isolation
+    // reopens within 75 psi of the desander); bypass → all sand to the bean (HIGH), back in line → OK
     { kind: 'sim', needs: 'desander', rig: { desander: true }, run: 14100, dt: 10,
       actions: [{ t: 0, fault: 'sandFlowback', on: true }, { t: 12700, dump: 'start', ok: true }, { t: 13800, bypass: true }, { t: 13920, bypass: false }],
-      expect: [{ alarm: 'DES_LAH', from: 12000, to: 13200 }, { at: 12900, path: 'desander.dump.phase', v: 'bleed' }, { at: 13300, path: 'desander.dump.phase', v: 'flush' },
+      expect: [{ alarm: 'DES_LAH', from: 12000, to: 13200 }, { first: { alarm: 'DES_LAH' }, path: 'desander.sand.acc_lb', v: 530, tol: 0.03 },
+        { first: { path: 'desander.dump.phase', v: 'flush' }, path: 'desander.dump.Pacc', max: 50 },
+        { first: { path: 'desander.dump.phase', v: 'reopen' }, diff: ['desander.Pin', 'desander.dump.Pacc'], max: 75 }, { at: 12900, path: 'desander.dump.phase', v: 'bleed' }, { at: 13300, path: 'desander.dump.phase', v: 'flush' },
         { at: 13700, path: 'desander.dump.phase', v: 'equalise' }, { at: 13790, path: 'desander.dump.phase', v: 'idle' }, { at: 13790, path: 'desander.dump.count', v: 1 },
         { alarm: 'SAND_CHOKE', from: 13800, to: 13920 }, { at: 13910, path: 'sand.choke.band', v: 'high' }, { at: 13910, path: 'desander.dP_psi', v: 0, tol: 0.01 },
         { at: 14100, path: 'sand.choke.band', v: 'ok' }, { noAlarm: 'ESD_TRIPPED' }] },
@@ -91,7 +94,7 @@ const CHECKS = {
       expect: [{ at: 10, path: 'surge2.inlet', v: false }, { at: 10, path: 'surge2.frac', v: 0, tol: 1e-6 }, { at: 10, path: 'surge2.route', v: 'surge' }, { at: 660, path: 'surge2.route', v: 'both' },
         { at: 660, path: 'surge2.share', v: 0, tol: 1e-6 }] },
     { kind: 'sim', needs: 'surge2', rig: { surge2: true }, run: 5200, dt: 5, actions: [{ t: 60, route: 'surge2' }],
-      expect: [{ at: 90, path: 'surge.comps.0.inlet', v: false }, { at: 90, path: 'surge2.lsh', v: 0.7 }, { at: 90, path: 'surge2.inlet', v: true }, { at: 4260, path: 'surge2.transfer.on', v: false }, { at: 5160, path: 'surge2.transfer.on', v: true }, { noAlarm: 'ESD_TRIPPED' }] },
+      expect: [{ at: 90, path: 'surge.comps.0.inlet', v: false }, { at: 90, path: 'surge2.lsh', v: 0.7 }, { at: 90, path: 'surge2.inlet', v: true }, { at: 4800, path: 'surge2.transfer.on', v: false }, { at: 5100, path: 'surge2.transfer.on', v: true }, { noAlarm: 'ESD_TRIPPED' }] },
     { kind: 'sim', needs: 'surge2', rig: { surge2: true }, run: 7000, dt: 5, actions: [{ t: 0, route: 'surge2' }, { t: 0, fault: 'xfer2StuckClosed', on: true }],
       expect: [{ alarm: 'LSHH_SURGE2', from: 5800, to: 6800 }, { alarm: 'SURGE_BLOCKED', from: 5800, to: 6800 }, { alarm: 'LSHH_SEP', from: 5800, to: 6900 }, { alarm: 'ESD_TRIPPED', from: 5800, to: 6900 }, { gap: ['LSHH_SURGE2', 'ESD_TRIPPED'], max: 60 }] },
     { kind: 'sim', needs: 'surge2', rig: { surge2: true }, run: 14500, dt: 10, actions: [{ t: 0, route: 'both' }, { t: 0, fault: 'xfer2StuckClosed', on: true }],
@@ -184,7 +187,9 @@ const activeIds = (st) => A(st.alarms).filter((a) => a && a.active !== false).ma
 //   actions: { t, fault, on } · { t, esd } · { t, resetESD: ok, blocking } · { t, sp } (separator set point) · { t, valve: [eq, idx, open] }
 //   { batch: n, from, to } the n-th gauge batch is listed (closed and settled) in [from, to] · { gap: [a, b], max } b first raised
 //   0…max s after a · sim-equip: { t, dump: 'start'|'resume'|'abort', ok } · { t, bypass } (DS-101) · { t, route } (T-202) ·
-//   cfg (setConfig at create) · needs: a rig-up item the engine must have (WTS_sim.RIG_OPTIONAL), else the check is skipped
+//   cfg (setConfig at create) · needs: a rig-up item the engine must have (WTS_sim.RIG_OPTIONAL), else the check is skipped ·
+//   { first: { alarm } | { path, v }, path, v, tol } or { …, max } (value ≤ max) or { first, diff: [a, b], max } (|a − b| ≤ max): read
+//   once, on the first step where the condition holds
 function simCheck(app, where, ck) {
   const out = [], W = app.win, S = W.WTS_sim;
   if (!S) return [where + ': WTS_sim missing'];
@@ -193,6 +198,7 @@ function simCheck(app, where, ck) {
   const s = S.create(app.toWin(flow), app.toWin({ seed: 7, config: Object.assign({ noise: { on: false } }, JSON.parse(JSON.stringify(ck.cfg || {}))) }));
   if (ck.rig) s.setRigup(app.toWin(ck.rig));
   const dt = ck.dt || 2, acts = A(ck.actions).map((a) => Object.assign({ done: false }, a)), first = {}, ats = A(ck.expect).filter((e) => e.at != null).map((e) => Object.assign({ done: false }, e));
+  const whens = A(ck.expect).filter((e) => e.first).map((e) => Object.assign({ done: false }, e));
   let batchT = {}, t = 0;
   const doAct = (a) => {
     if (a.fault) s.setFault(a.fault, a.on !== false);
@@ -218,6 +224,14 @@ function simCheck(app, where, ck) {
       const v = getPath(st, e.path);
       if (!near(v, e.v, e.tol)) out.push(where + ': at ' + e.at + ' s ' + e.path + ' = ' + v + ', text says ' + e.v);
     });
+    const ids = activeIds(st);
+    whens.forEach((e) => {
+      if (e.done || !(e.first.alarm ? ids.indexOf(e.first.alarm) !== -1 : near(getPath(st, e.first.path), e.first.v))) return;
+      e.done = true;
+      const what = (e.diff ? '|' + e.diff.join(' − ') + '|' : e.path) + ' at ' + (e.first.alarm || e.first.path + ' = ' + e.first.v) + ' (' + st.t + ' s)';
+      const v = e.diff ? Math.abs(getPath(st, e.diff[0]) - getPath(st, e.diff[1])) : getPath(st, e.path);
+      if (e.max != null ? !(v <= e.max) : !near(v, e.v, e.tol)) out.push(where + ': ' + what + ' = ' + v + ', text says ' + (e.max != null ? '≤ ' + e.max : e.v));
+    });
   };
   while (t < ck.run - 1e-9) {
     acts.forEach((a) => { if (!a.done && a.t <= t + 1e-9) { a.done = true; doAct(a); } });
@@ -231,6 +245,7 @@ function simCheck(app, where, ck) {
     if (e.batch) { const f = batchT[e.batch]; if (f == null || f < e.from || f > e.to) out.push(where + ': batch ' + e.batch + ' closed at ' + f + ' s, text needs ' + e.from + '–' + e.to + ' s'); }
   });
   ats.forEach((e) => { if (!e.done) out.push(where + ': run ended before ' + e.at + ' s'); });
+  whens.forEach((e) => { if (!e.done) out.push(where + ': ' + (e.first.alarm || e.first.path + ' = ' + e.first.v) + ' never reached'); });
   if (typeof s.dispose === 'function') s.dispose();
   return out;
 }
@@ -259,13 +274,37 @@ function refIssues(items, V) {
   }));
   return out;
 }
-// Bold phrases: visible text on the wts page (form, HUD, toolbar), or a string of the HMI / engine source, or a speed
-// label; a menu path "A → B" checks each part. afterSim is skipped (feature-gated).
+// String literals of a JS source (quotes and template text; comments, identifiers and regex-free code skipped).
+function literals(src) {
+  const out = [];
+  let i = 0;
+  const n = src.length;
+  while (i < n) {
+    const c = src[i];
+    if (c === '/' && src[i + 1] === '/') { const j = src.indexOf('\n', i); i = j < 0 ? n : j; continue; }
+    if (c === '/' && src[i + 1] === '*') { const j = src.indexOf('*/', i + 2); i = j < 0 ? n : j + 2; continue; }
+    if (c === '\'' || c === '"' || c === '`') {
+      let j = i + 1, t = '';
+      while (j < n && src[j] !== c && !(c !== '`' && src[j] === '\n')) { if (src[j] === '\\') { t += src[j + 1] || ''; j += 2; } else t += src[j++]; }
+      out.push(t);
+      i = j + 1;
+      continue;
+    }
+    i++;
+  }
+  return out;
+}
+// Bold phrases: visible text on the wts page (form, HUD, toolbar), or a string literal of the HMI / engine source (button,
+// row and menu labels; never a comment or a variable name), or a speed label; a menu path "A → B" checks each part.
+// afterSim is skipped (feature-gated).
+function boldVocab(app) {
+  const S = app.win.WTS_sim;
+  return [txt(app.el('pgBody')), txt(app.el('pgTitle'))].concat(literals(readSrc('38-wts-live.js')), literals(readSrc('31-wts-sim.js')),
+    A(S.DEFAULTS.speeds).map((v) => '×' + v)).join(' | ').replace(/&amp;/g, '&').toLowerCase();
+}
 function boldIssues(app, items) {
   openWts(app, {});
-  const S = app.win.WTS_sim;
-  const vocab = [txt(app.el('pgBody')), txt(app.el('pgTitle')), readSrc('38-wts-live.js'), readSrc('31-wts-sim.js'),
-    A(S.DEFAULTS.speeds).map((v) => '×' + v).join(' ')].join(' | ').replace(/&amp;/g, '&').toLowerCase();
+  const vocab = boldVocab(app);
   const out = [];
   items.forEach((x) => strings(x, x.id, (s, p) => {
     if (/\.afterSim/.test(p)) return;
@@ -322,7 +361,7 @@ function simCheckShape(V) {
     const w = id + ' sim[' + i + ']';
     if (!hasItem(V, c)) return;   // sim-equip check on an engine without that item
     A(c.actions).forEach((a) => { if (a.fault && !V.faultIds.has(a.fault)) out.push(w + ': fault ' + a.fault + ' not in WTS_sim.FAULTS'); });
-    A(c.expect).forEach((e) => { [e.alarm, e.noAlarm].concat(A(e.gap)).filter(Boolean).forEach((a) => { if (!V.alarms.has(a)) out.push(w + ': alarm ' + a + ' not in the engine'); }); });
+    A(c.expect).forEach((e) => { [e.alarm, e.noAlarm, e.first && e.first.alarm].concat(A(e.gap)).filter(Boolean).forEach((a) => { if (!V.alarms.has(a)) out.push(w + ': alarm ' + a + ' not in the engine'); }); });
     Object.keys(c.rig || {}).forEach((k) => { if (!V.rig.has(k)) out.push(w + ': rig-up key ' + k + ' not in WTS_sim.RIG_KEYS'); });
   }));
   return out;
@@ -449,6 +488,11 @@ module.exports = [
       const r = refIssues([c], V).join(' | ');
       assert.ok(/tag LSHH-999/.test(r) && /alarm id FAKE_ALARM/.test(r) && /fault "LCV-999 stuck"/.test(r), r);
       assert.ok(/bold "no such button"/.test(boldIssues(app, [{ id: 'x', steps: ['Select **No such button**.'] }]).join(' ')), 'bold check');
+      // a word that is only in comments or code of 38 (not in any string literal, not on the page) is not a label
+      const src38 = readSrc('38-wts-live.js'), vocab = boldVocab(app);
+      const codeOnly = (src38.match(/[A-Za-z]{9,}/g) || []).filter((w) => vocab.indexOf(w.toLowerCase()) === -1)[0];
+      assert.ok(codeOnly && src38.toLowerCase().indexOf(codeOnly.toLowerCase()) !== -1, 'a word of the 38 source outside its string literals: ' + codeOnly);
+      assert.ok(boldIssues(app, [{ id: 'x', steps: ['Select **' + codeOnly + '**.'] }]).length === 1, 'bold check ignores comments and identifiers (' + codeOnly + ')');
       openWts(app, {});
       const bad = JSON.parse(JSON.stringify(course));
       bad[0].trainer.debrief = ['one'];
@@ -459,6 +503,9 @@ module.exports = [
       assert.ok(/QmaxMMscfd = 9\.41/.test(pc) && /does not show "not on the page"/.test(pc), pc);
       const sc = simCheck(app, 'neg', { kind: 'sim', run: 60, expect: [{ alarm: 'CHOKE_LIMIT', from: 0, to: 30 }, { at: 60, path: 'nodes.wellhead.P', v: 2000 }] }).join(' | ');
       assert.ok(/alarm CHOKE_LIMIT first at undefined/.test(sc) && /nodes\.wellhead\.P = 3000/.test(sc.replace(/3000\.\d+/, '3000')), sc);
+      const sf = simCheck(app, 'neg', { kind: 'sim', run: 20, expect: [{ first: { path: 'esd.travel', v: 1 }, path: 'nodes.wellhead.P', max: 100 },
+        { first: { path: 'esd.travel', v: 1 }, diff: ['nodes.wellhead.P', 'nodes.esd.P'], max: 0 }, { first: { alarm: 'ESD_TRIPPED' }, path: 't', v: 0 }] }).join(' | ');
+      assert.ok(/nodes\.wellhead\.P at esd\.travel = 1 .* text says ≤ 100/.test(sf) && /\|nodes\.wellhead\.P − nodes\.esd\.P\|/.test(sf) && /ESD_TRIPPED never reached/.test(sf), sf);
     },
   },
 ];
