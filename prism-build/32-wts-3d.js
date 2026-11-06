@@ -284,7 +284,8 @@ var TIERS = {
 // Snapshot paths that may be null (copy of WTS_sim.NULLABLE; §3.3)
 var NULLABLE = ['esd.cause','esd.tripT','surge.tFull_s','surge.pump.trip','surge.transfer.trip','rates.gor_scf_stb','rates.bsw_pct','rates.tank_stbd',
   'rates.shrink_pct','alarms[*].value','alarms[*].limit','alarmLog[*].sev','gauge.batches[*].gor_scf_stb','gauge.batches[*].bsw_pct',
-  'desander.dump.lastT','surge2.tFull_s','surge2.transfer.trip'];
+  'desander.dump.lastT','surge2.tFull_s','surge2.transfer.trip',
+  'inputs.bean2','inputs.ck2Pos','cushion.tBreak'];   // v1.5.0 (WTS_sim 1.5.0; SIM-FOLLOWUP §5.4, §6.3)
 
 // ═════════════════════════════════════════════════════════════════════════
 // §B PURE HELPERS (Node-testable; exported as _internals)

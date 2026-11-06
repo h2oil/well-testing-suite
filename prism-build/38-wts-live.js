@@ -45,20 +45,22 @@ var ST_RANK = { ok: 0, evt: 1, hyd: 2, warn: 3, alarm: 4 };
 var SEV_RANK = { info: 1, hyd: 2, warn: 3, alarm: 4, trip: 5 };
 // v3.3.1: the optional rig-up items DS-101 (cyclonic desander upstream of the choke) and T-202 (second surge tank) are
 // appended; they are out by default and every view hides them while out (docs/SIM-EQUIPMENT-PLAN.md D18)
-var EQ_IDS = ['wellhead', 'esd', 'choke', 'heater', 'separator', 'flare', 'surge', 'pump', 'gauge', 'desander', 'surge2'];
+// v1.5.0 (docs/SIM-FOLLOWUP-PLAN.md): CK-102 heater inlet choke appended (optional, out by default)
+var EQ_IDS = ['wellhead', 'esd', 'choke', 'heater', 'separator', 'flare', 'surge', 'pump', 'gauge', 'desander', 'surge2', 'heaterChoke'];
 // STEP: the v3.3 numbering, kept as the fallback when WTS_sim.stepFor is missing (see stepMap)
 var STEP = { wellhead: '①', esd: '②', choke: '③', heater: '④', separator: '⑤',
     flare: '⑥', surge: '⑦', gauge: '⑧', pump: '⑨' };          // P-201 is downstream of the gauge tank (T-301 → export)
 var TAG = { wellhead: 'WH-101', esd: 'SDV-101', choke: 'CK-101', heater: 'H-101', separator: 'V-101',
-    flare: 'FS-401', surge: 'T-201', pump: 'P-201', gauge: 'T-301', desander: 'DS-101', surge2: 'T-202' };
+    flare: 'FS-401', surge: 'T-201', pump: 'P-201', gauge: 'T-301', desander: 'DS-101', surge2: 'T-202', heaterChoke: 'CK-102' };
 var NAME = { wellhead: 'Wellhead', esd: 'ESD Valve (SSV)', choke: 'Choke Manifold', heater: 'Line Heater',
     separator: 'Test Separator', flare: 'Flare Stack', surge: 'Surge Tank', pump: 'Transfer Pump', gauge: 'Gauge Tank',
-    desander: 'Desander (cyclonic)', surge2: 'Surge Tank 2' };
+    desander: 'Desander (cyclonic)', surge2: 'Surge Tank 2', heaterChoke: 'Heater inlet choke' };
 var EQ_ABBR = { wellhead: 'WH', esd: 'ESD', choke: 'CHK', heater: 'HTR', separator: 'SEP', flare: 'FLR',
-    surge: 'SURGE', pump: 'PUMP', gauge: 'GT', desander: 'DSND', surge2: 'T-202' };
-// host-node names / snapshot keys of liveNodes (append only: positional readers use the first 8; desander = 8, surge2 = 9)
-var HOST_NM = ['Wellhead', 'SSV', 'Choke', 'Heater', 'Separator', 'Flare', 'Surge Tank', 'Atm Tank', 'Desander', 'Surge Tank 2'];
-var NODE_KEYS = ['wellhead', 'esd', 'choke', 'heater', 'separator', 'flare', 'surge', 'gauge', 'desander', 'surge2'];
+    surge: 'SURGE', pump: 'PUMP', gauge: 'GT', desander: 'DSND', surge2: 'T-202', heaterChoke: 'CK2' };
+// host-node names / snapshot keys of liveNodes (append only: positional readers use the first 8; desander = 8, surge2 = 9,
+// heaterChoke = 10)
+var HOST_NM = ['Wellhead', 'SSV', 'Choke', 'Heater', 'Separator', 'Flare', 'Surge Tank', 'Atm Tank', 'Desander', 'Surge Tank 2', 'Heater Choke'];
+var NODE_KEYS = ['wellhead', 'esd', 'choke', 'heater', 'separator', 'flare', 'surge', 'gauge', 'desander', 'surge2', 'heaterChoke'];
 // Equipment lookup for valve actions (a 'surge2' click must never operate a T-201 or T-301 valve). Unknown eq → no action.
 var EQV = { surge: { kind: 'comps', valves: ['XV-201A', 'XV-201B'], suction: true }, surge2: { kind: 'single', valves: ['XV-202'] },
     gauge: { kind: 'tanks', valves: ['XV-301A', 'XV-301B'] }, desander: { kind: 'desander', dump: 'XV-103', bypass: 'HV-104' } };
@@ -78,7 +80,8 @@ var FAULTS = [['pcvStuckClosed', 'PCV-101 stuck closed'], ['pcvStuckOpen', 'PCV-
 var RIG_KEY = 'wts_sim_rigup';
 // [key, tag, name, locked, optional] in display (process) order; optional items are out by default
 var RIG_FALLBACK = [['esd', 'SDV-101', 'ESD valve (SSV)', 1], ['desander', 'DS-101', 'Cyclonic desander (upstream of the choke)', 0, 1],
-    ['choke', 'CK-101', 'Choke manifold / data header', 1], ['heater', 'H-101', 'Line heater (steam exchanger)'],
+    ['choke', 'CK-101', 'Choke manifold / data header', 1], ['heaterChoke', 'CK-102', 'Heater inlet choke', 0, 1],
+    ['heater', 'H-101', 'Line heater (steam exchanger)'],
     ['separator', 'V-101', 'Test separator'], ['surge', 'T-201', 'Surge tank'], ['surge2', 'T-202', 'Second surge tank', 0, 1], ['gauge', 'T-301', 'Gauge tank'],
     ['pump', 'P-201', 'Transfer pump (gauge tank → export / burner)'], ['flare', 'FS-401', 'Flare / burner']];
 var VIEWS = [['overview', 'Overview', '0'], ['wellhead', 'Wellhead & Choke', '1'], ['separator', 'Separator', '2'],
@@ -87,7 +90,8 @@ var OVERLAYS = [['phase', 'Phase'], ['pressure', 'Pressure'], ['temperature', 'T
 var QUALS = [['auto', 'Auto'], ['high', 'High'], ['medium', 'Medium'], ['low', 'Low']];
 var LABEL_MODES = [['all', 'All'], ['equip', 'Equipment'], ['off', 'Off']];
 var INPUT_FOR = { wellhead: 'wts_Pwh', esd: 'wts_Pwh', choke: 'wts_bean', heater: 'wts_Thtr', separator: 'wts_Psep',
-    surge: 'wts_Psurge', pump: 'wts_nps6', gauge: 'wts_gtCap', flare: 'wts_nps5', desander: 'wts_sandPptb', surge2: 'wts_surge2Cap' };
+    surge: 'wts_Psurge', pump: 'wts_nps6', gauge: 'wts_gtCap', flare: 'wts_nps5', desander: 'wts_sandPptb', surge2: 'wts_surge2Cap',
+    heaterChoke: 'wts_bean2' };
 var DEF_COL = { gas: '#b8d4f0', oil: '#c98a2b', water: '#1f7fe0', emulsion: '#a08650', sand: '#c4a46b' };
 var PREF_DEFAULTS = { mode: '3d', labels: 'all', overlay: 'phase', quality: 'auto', speed: 10,
     legend: false, trends: false, orbit: false, ctl: null };
@@ -223,7 +227,7 @@ function liveNodes(st, flow) {
     var N = (st && st.nodes) || {}, I = (st && st.inputs) || {}, out = [];
     if (flow === undefined) flow = _lastFlowObj;
     var FN = (flow && Array.isArray(flow.nodes)) ? flow.nodes : [];
-    for (var i = 0; i < NODE_KEYS.length; i++) {             // 10 nodes (the host diagram reads the first 8)
+    for (var i = 0; i < NODE_KEYS.length; i++) {             // 11 nodes (the host diagram reads the first 8)
         var k = NODE_KEYS[i], n = N[k] || {}, fn = FN[i] || {};
         if (fn.id && fn.id !== k) { fn = {}; for (var j = 0; j < FN.length; j++) if (FN[j] && FN[j].id === k) { fn = FN[j]; break; } }
         var th = (Object.prototype.hasOwnProperty.call(n, 'th') && isNum(n.th)) ? n.th : num(fn.th, 32);
@@ -233,6 +237,9 @@ function liveNodes(st, flow) {
             o.Qmax = num(n.QmaxMMscfd, 0) * 1000; o.flowLimited = !!n.flowLimited;
         } else if (k === 'heater') {
             o.duty = num(n.dutyMMBtuHr, 0); o.bypass = !!(n.bypass != null ? n.bypass : I.bypass);
+        } else if (k === 'heaterChoke') {                     // v1.5.0 CK-102 (live 2D reads it at index 10 while it is in line)
+            o.Pin = num(n.Pin, o.P); o.regime = typeof n.regime === 'string' ? n.regime : ''; o.bean = num(n.bean, 0);
+            o.active = n.active === true; o.bypassed = n.bypassed === true; o.flowLimited = !!n.flowLimited;
         }
         out.push(o);
     }
@@ -368,8 +375,26 @@ function inputsDiff(prev, next) {
     if (+a.Psep !== +b.Psep) { var pa = fmtParts(+a.Psep, 'pressureG'), pb = fmtParts(+b.Psep, 'pressureG'); out.push(['Separator SP ' + pa.v + '→' + pb.v + ' ' + pb.u, 'PCV-101']); }
     if (!!a.bypass !== !!b.bypass) out.push(['Heater bypass ' + (b.bypass ? 'ON' : 'OFF'), 'H-101']);
     if (+a.Qg !== +b.Qg || +a.Qo !== +b.Qo || +a.Qw !== +b.Qw) out.push(['Well rates updated', 'WH-101']);
+    // v1.5.0 (docs/SIM-FOLLOWUP-PLAN.md §3.4): CK-102 bean / position (flow.ck2, or flow.sepBy.ck2) and the V-101-out destination
+    // (flow.sim) — logged only when both flows carry the field (an old flow without it logs nothing)
+    var ka = ck2Of(prev), kb = ck2Of(next);
+    if (ka && kb && isNum(+ka.bean) && isNum(+kb.bean) && +ka.bean !== +kb.bean) out.push(['Heater choke bean ' + shortNum(ka.bean) + '→' + shortNum(kb.bean) + '/64″', 'CK-102']);
+    if (ka && kb && typeof ka.pos === 'string' && typeof kb.pos === 'string' && ka.pos !== kb.pos) out.push(['CK-102 position ' + posTxt(ka.pos) + '→' + posTxt(kb.pos), 'CK-102']);
+    var sa = prev.sim || {}, sb = next.sim || {};
+    if (typeof sa.sepByDest === 'string' && typeof sb.sepByDest === 'string' && sa.sepByDest !== sb.sepByDest)
+        out.push(['With V-101 out, well stream to ' + (sb.sepByDest === 'line' ? 'the production line' : 'the burner / flare line'), 'V-101']);
+    if (isNum(sa.sepByP_psig) && isNum(sb.sepByP_psig) && sa.sepByP_psig !== sb.sepByP_psig) {
+        var la = fmtParts(sa.sepByP_psig, 'pressureG'), lb = fmtParts(sb.sepByP_psig, 'pressureG');
+        out.push(['Production line pressure ' + la.v + '→' + lb.v + ' ' + lb.u, 'V-101']);
+    }
     return out;
 }
+function ck2Of(f) {
+    if (!f || typeof f !== 'object') return null;
+    var b = f.ck2 && typeof f.ck2 === 'object' ? f.ck2 : (f.sepBy && typeof f.sepBy === 'object' && f.sepBy.ck2 && typeof f.sepBy.ck2 === 'object' ? f.sepBy.ck2 : null);
+    return b;
+}
+function posTxt(p) { return p === 'midcoil' ? 'between the coil passes' : 'on the heater inlet'; }
 // Plain-JSON summary for WTS_state.sim (§6.12); deep-copied, never a live reference.
 function summaryOf(st) {
     if (!st) return null;
@@ -803,11 +828,41 @@ function readPrefs() {
             ['legend', 'trends', 'orbit'].forEach(function (b) { if (typeof o[b] === 'boolean') p[b] = o[b]; });
             // operator lineup (divert valves, pump suction, auto-divert): shape-checked here, value-checked by WTS_sim.setControls
             if (o.ctl && typeof o.ctl === 'object' && o.ctl.surge && typeof o.ctl.surge === 'object' && o.ctl.gauge && typeof o.ctl.gauge === 'object') p.ctl = deepClone(o.ctl);
+            if (o.cushion !== undefined) p.cushion = cushionPrefs(o.cushion);
         }
     } catch (e) {}
+    if (!p.cushion) p.cushion = cushionPrefs(null);
     return p;
 }
-function writePrefs(p) { try { if (G.localStorage) G.localStorage.setItem(PREFS_KEY, JSON.stringify(p)); } catch (e) {} }
+function writePrefs(p) {
+    try {
+        if (!G.localStorage) return;
+        var o = p;
+        if (p && typeof p === 'object' && Object.prototype.hasOwnProperty.call(p, 'cushion')) {   // the cushion form block is validated on the way out too
+            o = {}; for (var k in p) if (Object.prototype.hasOwnProperty.call(p, k)) o[k] = p[k];
+            o.cushion = cushionPrefs(p.cushion);
+        }
+        G.localStorage.setItem(PREFS_KEY, JSON.stringify(o));
+    } catch (e) {}
+}
+// v1.5.0 cushion-unload form values (Scenarios → Cushion unload; device prefs, not host inputs — docs/SIM-FOLLOWUP-PLAN.md D5,
+// §3.4): {V bbl, SG, q bbl/d, tbg (tubing size id → capacity), depth ft}, each clamped by WTS_sim.DEFAULTS.cushion.lim; a missing
+// or invalid field takes the default (D7)
+var CUSH_TBG = [['2-3/8', 0.00387], ['2-7/8', 0.00579], ['3-1/2', 0.00870], ['4-1/2', 0.01522]];
+var CUSH_LIM = { V: [1, 500], SG: [0.80, 1.50], q: [100, 6000], depth: [500, 25000] };
+function cushionDefs() {
+    var S = G.WTS_sim, C = S && S.DEFAULTS && S.DEFAULTS.cushion ? S.DEFAULTS.cushion : null, L = C && C.lim ? C.lim : CUSH_LIM;
+    return { d: { V: num(C && C.V_bbl, 50), SG: num(C && C.SG, 1.03), q: num(C && C.q_bpd, 1500), tbg: '3-1/2', depth: num(C && C.depth_ft, 10000) },
+        lim: { V: L.V || CUSH_LIM.V, SG: L.SG || CUSH_LIM.SG, q: L.q || CUSH_LIM.q, depth: L.depth || CUSH_LIM.depth } };
+}
+function cushionPrefs(o) {
+    var D = cushionDefs(), out = { V: D.d.V, SG: D.d.SG, q: D.d.q, tbg: D.d.tbg, depth: D.d.depth };
+    if (!o || typeof o !== 'object' || Array.isArray(o)) return out;
+    ['V', 'SG', 'q', 'depth'].forEach(function (k) { var v = o[k]; if (isNum(v)) out[k] = clamp(v, D.lim[k][0], D.lim[k][1]); });
+    for (var i = 0; i < CUSH_TBG.length; i++) if (o.tbg === CUSH_TBG[i][0]) out.tbg = o.tbg;
+    return out;
+}
+function cushionCap(tbg) { for (var i = 0; i < CUSH_TBG.length; i++) if (CUSH_TBG[i][0] === tbg) return CUSH_TBG[i][1]; return 0.00870; }
 // Rig-up items [{key, tag, name, locked, why}] from WTS_sim (fallback: local list)
 function rigItems() {
     var S = G.WTS_sim;
@@ -846,6 +901,14 @@ function writeRig(r) {
         rigItems().forEach(function (it) { var v = rigReqVal(r, it); out[it.key] = v; if (v !== rigDef(it)) dflt = false; });
         if (dflt) G.localStorage.removeItem(RIG_KEY); else G.localStorage.setItem(RIG_KEY, JSON.stringify(out));
     } catch (e) {}
+}
+// v1.5.0 (docs/SIM-FOLLOWUP-PLAN.md §3.4, §4.5): hand the effective rig-up to the host's display-only renderer of the
+// rig-dependent result rows (CK-102 rbox, node-table rows, warnings). It never saves, dispatches wts:calc, calls setFlow or
+// reads storage; a host without it (before WP-C) is left alone.
+function hostResults(rig) {
+    var fn = G.wtsRenderResults, L = G.WTS_lastCalc;
+    if (typeof fn !== 'function' || !L || !L.flow || !rig || typeof rig !== 'object') return false;
+    try { fn(L.flow, deepClone(rig)); return true; } catch (e) { return false; }
 }
 // equipment out of the rig-up (snapshot st.rigup; older snapshots: everything in)
 function rigOut(st, id) { var r = st && st.rigup; return !!(r && r[id] === false); }
@@ -1288,6 +1351,7 @@ function createController(vizEl, mopts) {
         h('pumpTrip', function (p) { toast((p && p.action ? p.action.replace(/transfer shut$/, 'transfer SHUT') : 'LCV-201 transfer SHUT') + ' (trip) — ' + (p && p.msg ? p.msg : ''), 'bad'); poke(); resig(); });
         h('pumpReset', function (p) { toast(p && p.msg ? p.msg : 'LCV-201 trip reset', 'ok'); poke(); resig(); });
         h('rigup', function (p) { if (p && p.rig && typeof _sim.getRigup === 'function') { try { writeRig(_sim.getRigup()); } catch (e) {} }
+            if (p && p.rig) hostResults(p.rig);           // v1.5.0: display only — never calcWTS (no wts:calc, no setFlow; §4.5)
             if (p && p.msg) toast(p.msg.replace(/^Rig-up: /, 'Rig-up — ')); poke(); resig(); renderRig(state(), true); });
     }
     function unhookSim() {
@@ -3810,6 +3874,8 @@ function createController(vizEl, mopts) {
             var s0 = _sim.getState();
             later(function () { toast('Resumed at T+' + (s0.clock || fmtClockLocal(s0.t))); }, 300);
         } else if (flowValid(flow)) createSim(flow);
+        // v1.5.0 (docs/SIM-FOLLOWUP-PLAN.md §3.4, §4.5): the page's rig-dependent result rows follow the live rig-up (display only)
+        if (_sim) hostResults(_sim.getState().rigup);
         // Listeners
         on(vizEl, 'click', onClick);
         on(vizEl, 'pointerenter', function () { pointerInside = true; });
@@ -3886,6 +3952,8 @@ G.WTS_live = {
         // v3.3.1 foundation: optional rig-up items, equipment lookup, step numbers (WTS_sim.stepFor, STEP fallback)
         rigIn: rigIn, EQV: EQV, STEP: STEP, stepFor: stepFor, stepMap: stepMap, EQ_IDS: EQ_IDS, TAG: TAG, NAME: NAME, EQ_ABBR: EQ_ABBR,
         HOST_NM: HOST_NM, NODE_KEYS: NODE_KEYS, IMP: IMP, INPUT_FOR: INPUT_FOR, palCol: palCol,
+        // v1.5.0 foundation (docs/SIM-FOLLOWUP-PLAN.md §3.4, §8.3)
+        cushionPrefs: cushionPrefs, cushionCap: cushionCap, CUSH_TBG: CUSH_TBG, hostResults: hostResults, writePrefs: writePrefs,
         // test hooks: the current engine, and a recording stub for view tests (useSim(null) restores nothing — it clears)
         sim: function () { return _sim; },
         useSim: function (stub) { _sim = (stub && typeof stub === 'object') ? stub : null; return _sim; },
@@ -3947,13 +4015,13 @@ G.WTS_live = {
         else if (G.WTS_3d && G.WTS_3d._internals && typeof G.WTS_3d._internals.fakeSnapshot === 'function') st = G.WTS_3d._internals.fakeSnapshot(12.3);
         else st = L._internals.miniSnapshot();
         var n = L.liveNodes(st), s = L.liveSegs(st);
-        // v3.3.1: 10 nodes (DS-101 and T-202 appended; positional readers use the first 8), segments stay 6
-        var names = ['Wellhead', 'SSV', 'Choke', 'Heater', 'Separator', 'Flare', 'Surge Tank', 'Atm Tank', 'Desander', 'Surge Tank 2'];
-        if (n.length !== 10 || s.length !== 6) return false;
-        for (var i = 0; i < 10; i++) if (n[i].nm !== names[i] || !isFinite(n[i].P) || !isFinite(n[i].T)) return false;
+        // v1.5.0: 11 nodes (DS-101, T-202 and CK-102 appended; positional readers use the first 8), segments stay 6
+        var names = ['Wellhead', 'SSV', 'Choke', 'Heater', 'Separator', 'Flare', 'Surge Tank', 'Atm Tank', 'Desander', 'Surge Tank 2', 'Heater Choke'];
+        if (n.length !== 11 || s.length !== 6) return false;
+        for (var i = 0; i < 11; i++) if (n[i].nm !== names[i] || !isFinite(n[i].P) || !isFinite(n[i].T)) return false;
         for (var j = 0; j < 6; j++) if (!isFinite(s[j].vel)) return false;
         var e = L.liveNodes(null);
-        return e.length === 10 && isFinite(e[0].P) && typeof n[2].regime === 'string' && isFinite(n[2].Qmax);
+        return e.length === 11 && isFinite(e[0].P) && typeof n[2].regime === 'string' && isFinite(n[2].Qmax) && isFinite(n[10].Pin);
     });
     // 6 mount contract
     t('mount(null)', function () { return typeof L.mount === 'function' && L.mount(null) === null; });

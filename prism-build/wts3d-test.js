@@ -201,12 +201,13 @@ const SECTION_A = (G, src) => {
     // ── v3.0.2 rig-up + pressure-driven surge → gauge transfer ──
     ['31: rig-up API + snapshot (setRigup / getRigup, rigup notes, RIGUP / normRigup exports; default = full rig-up)', () => {
       const bad = [];
-      // v1.4.0: 10 items (DS-101 / T-202 optional, out by default); the RIGUP key set = RIG_KEYS; sig appends desander, surge2
-      if (typeof S.normRigup !== 'function' || !Array.isArray(S.RIGUP) || S.RIGUP.length !== 10 || !deepFrozen(S.RIGUP)) bad.push('exports');
+      // v1.5.0: 11 items (DS-101 / T-202 / CK-102 optional, out by default); the RIGUP key set = RIG_KEYS; sig appends desander,
+      // surge2, heaterChoke
+      if (typeof S.normRigup !== 'function' || !Array.isArray(S.RIGUP) || S.RIGUP.length !== 11 || !deepFrozen(S.RIGUP)) bad.push('exports');
       if (S.RIGUP.map((it) => it.key).sort().join() !== S.RIG_KEYS.slice().sort().join()) bad.push('RIGUP keys = RIG_KEYS');
-      if (!deepFrozen(S.RIG_DEFAULTS) || !deepFrozen(S.RIG_OPTIONAL) || S.RIG_OPTIONAL.join() !== 'desander,surge2' || S.VERSION !== '1.4.0') bad.push('v1.4.0 exports');
+      if (!deepFrozen(S.RIG_DEFAULTS) || !deepFrozen(S.RIG_OPTIONAL) || S.RIG_OPTIONAL.join() !== 'desander,surge2,heaterChoke' || S.VERSION !== '1.5.0') bad.push('v1.5.0 exports');
       const s = S.create(F, { seed: 2 }); let st = s.getState();
-      if (!(st.rigup.full && st.rigup.sig === '1111111100' && st.rigup.notes.length === 0 && Array.isArray(st.rigup.extras) && st.rigup.extras.length === 0)) bad.push('default ' + st.rigup.sig);
+      if (!(st.rigup.full && st.rigup.sig === '11111111000' && st.rigup.notes.length === 0 && Array.isArray(st.rigup.extras) && st.rigup.extras.length === 0)) bad.push('default ' + st.rigup.sig);
       // step numbers (D17): the four combinations; the default is the v3.3 STEP table
       const STEPS = [[{}, { wellhead: '①', esd: '②', choke: '③', heater: '④', separator: '⑤', flare: '⑥', surge: '⑦', gauge: '⑧', pump: '⑨' }],
         [{ desander: true }, { wellhead: '①', esd: '②', desander: '③', choke: '④', heater: '⑤', separator: '⑥', flare: '⑦', surge: '⑧', gauge: '⑨', pump: '⑩' }],
@@ -219,7 +220,7 @@ const SECTION_A = (G, src) => {
       st = s.getState();
       if (st.rigup.separator !== false || st.rigup.flare !== true || !st.rigup.notes.some((n) => /nowhere to go/.test(n))) bad.push('rules');
       if (ev.length !== 1 || ev[0].sig !== st.rigup.sig) bad.push('event');
-      if (JSON.stringify(s.getRigup()) !== JSON.stringify({ esd: true, choke: true, heater: true, separator: false, surge: true, gauge: true, pump: true, flare: false, desander: false, surge2: false })) bad.push('request ' + JSON.stringify(s.getRigup()));
+      if (JSON.stringify(s.getRigup()) !== JSON.stringify({ esd: true, choke: true, heater: true, separator: false, surge: true, gauge: true, pump: true, flare: false, desander: false, surge2: false, heaterChoke: false })) bad.push('request ' + JSON.stringify(s.getRigup()));
       s.advance(600); const fw = []; finiteWalk(s.getState(), '', fw); if (fw.length) bad.push('finite ' + fw.slice(0, 3));
       const m = s.getState().health.massErr; if (Math.abs(m.oil) > 1e-9 || Math.abs(m.gas) > 1e-9) bad.push('mass');
       return bad.length === 0 || bad.join('; ');
@@ -661,7 +662,7 @@ const SECTION_C = (G, src) => {
     ['38: all HMI controls are buttons (no <input>/<select>/<textarea> markup)', () => !/<(input|select|textarea)\b/i.test(code) || 'found form control markup'],
     ['38: liveNodes/liveSegs follow the live snapshot (host names, psig, MSCF/D)', () => {
       const s = simAt(600); const st = s.getState(); const n = L.liveNodes(st), g = L.liveSegs(st);
-      return n.map(x => x.nm).join('|') === 'Wellhead|SSV|Choke|Heater|Separator|Flare|Surge Tank|Atm Tank|Desander|Surge Tank 2' &&
+      return n.map(x => x.nm).join('|') === 'Wellhead|SSV|Choke|Heater|Separator|Flare|Surge Tank|Atm Tank|Desander|Surge Tank 2|Heater Choke' &&
         n[4].P === st.nodes.separator.P && n[0].P === st.nodes.wellhead.P && n[2].Pci === st.nodes.choke.Pin &&
         Math.abs(n[2].Qmax - st.nodes.choke.QmaxMMscfd * 1000) < 1e-9 && n[2].regime === 'Critical' && n[2].flowLimited === false &&
         n[3].duty === st.nodes.heater.dutyMMBtuHr && n[6].P === st.nodes.surge.P && n[7].P === 0 &&
@@ -752,9 +753,9 @@ const SECTION_C = (G, src) => {
       G.localStorage = { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); }, removeItem: (k) => { delete store[k]; } };
       try {
         const bad = [];
-        // v3.3.1: 10 items; a request equal to RIG_DEFAULTS stores no key, any other request stores all 10 keys (display order)
-        if (I.RIG_KEY !== 'wts_sim_rigup' || I.rigItems().length !== 10) bad.push('key / items');
-        const ALL10 = '{"esd":true,"desander":false,"choke":true,"heater":false,"separator":true,"surge":true,"surge2":false,"gauge":true,"pump":true,"flare":true}';
+        // v1.5.0: 11 items; a request equal to RIG_DEFAULTS stores no key, any other request stores all 11 keys (display order)
+        if (I.RIG_KEY !== 'wts_sim_rigup' || I.rigItems().length !== 11) bad.push('key / items');
+        const ALL10 = '{"esd":true,"desander":false,"choke":true,"heaterChoke":false,"heater":false,"separator":true,"surge":true,"surge2":false,"gauge":true,"pump":true,"flare":true}';
         I.writeRig({ heater: false, surge: true }); if (store.wts_sim_rigup !== ALL10) bad.push('write ' + store.wts_sim_rigup);
         if (JSON.stringify(I.readRig()) !== ALL10) bad.push('read');
         store.wts_sim_rigup = '{"heater":"no","bogus":false}'; if (I.readRig() !== null) bad.push('shape');
@@ -762,7 +763,7 @@ const SECTION_C = (G, src) => {
         I.writeRig({ heater: true }); if ('wts_sim_rigup' in store) bad.push('full keeps no key');
         I.writeRig(S.RIG_DEFAULTS); if ('wts_sim_rigup' in store) bad.push('RIG_DEFAULTS keeps no key');
         I.writeRig({ desander: true }); const o1 = JSON.parse(store.wts_sim_rigup || '{}');
-        if (o1.desander !== true || o1.surge2 !== false || o1.heater !== true || Object.keys(o1).length !== 10) bad.push('optional-only request stored ' + store.wts_sim_rigup);
+        if (o1.desander !== true || o1.surge2 !== false || o1.heater !== true || o1.heaterChoke !== false || Object.keys(o1).length !== 11) bad.push('optional-only request stored ' + store.wts_sim_rigup);
         I.writeRig({ desander: 'yes', surge2: 1 }); if ('wts_sim_rigup' in store) bad.push('non-true optional = default');
         if (I.rigIn({ rigup: { desander: true } }, 'desander') !== true || I.rigIn({ rigup: { desander: 'x' } }, 'desander') || I.rigIn(null, 'surge2')) bad.push('rigIn');
         if (I.EQV.surge2.valves.join() !== 'XV-202' || I.EQV.surge.valves.join() !== 'XV-201A,XV-201B' || I.EQV.gauge.valves.join() !== 'XV-301A,XV-301B' || I.EQV.desander.dump !== 'XV-103') bad.push('EQV');
@@ -791,9 +792,14 @@ const SECTION_C = (G, src) => {
     ['host patch: patched calcWTS publishes flow v1 = WTS_sim.SAMPLE_FLOW (shape + Appendix A numbers)', () => {
       const r = runHostCalc(); const f = r.L.flow; const bad = [];
       if (!f) return 'no flow';
-      const strip = o => { const c = JSON.parse(JSON.stringify(o)); delete c.ts; delete c.seq; return c; };
+      // named allowance "fu-blocks" (docs/SIM-FOLLOWUP-PLAN.md §9.1, permanent): SAMPLE_FLOW deliberately has no flow.ck2 /
+      // flow.sepBy block (D3), so the host flow's blocks are stripped before the shape comparison
+      const strip = o => { const c = JSON.parse(JSON.stringify(o)); delete c.ts; delete c.seq; delete c.ck2; delete c.sepBy; return c; };
       // v3.3.1: SAMPLE_FLOW.sim carries the seven new keys (sand / desander / T-202), published by the host Dynamic Simulation inputs
       const ref = strip(S.SAMPLE_FLOW);
+      // interim allowance (WP-E0 → WP-C; removed as a WP-C exit item): SAMPLE_FLOW.sim has the two v1.5.0 keys (sepByDest,
+      // sepByP_psig) before the host publishes them
+      if (f.sim && !('sepByDest' in f.sim) && !('sepByP_psig' in f.sim)) { delete ref.sim.sepByDest; delete ref.sim.sepByP_psig; }
       eqShape(strip(f), ref, 'flow', bad);
       ['sand_pptb', 'sand_lbmmscf', 'sand_d50_um', 'desRating_psi', 'desAcc_gal', 'sithp_psig', 'surge2Cap_bbl'].forEach(k => {
         if (!f.sim || f.sim[k] !== S.SAMPLE_FLOW.sim[k]) bad.push('sim.' + k + ' ' + (f.sim && f.sim[k]) + ' ≠ ' + S.SAMPLE_FLOW.sim[k]); });
@@ -893,7 +899,7 @@ const SECTION_X = (G) => {
   }
   if (L) {
     if (typeof L.liveNodes === 'function') out.push(['X: 38 liveNodes(real) → 10 calc-shaped nodes with finite P/T', () => {
-      const n = L.liveNodes(real()); return Array.isArray(n) && n.length === 10 && n.every(x => isFinite(x.P) && isFinite(x.T));
+      const n = L.liveNodes(real()); return Array.isArray(n) && n.length === 11 && n.every(x => isFinite(x.P) && isFinite(x.T));
     }]);
     if (typeof L.liveSegs === 'function') out.push(['X: 38 liveSegs(real) → 6 calc-shaped segments with finite vel', () => {
       const s = L.liveSegs(real()); return Array.isArray(s) && s.length === 6 && s.every(x => isFinite(x.vel) && isFinite(x.vPct));
