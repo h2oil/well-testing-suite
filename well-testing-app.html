@@ -126580,7 +126580,7 @@ G.WTS_modbusBridgeSetup = {
 // ══════════════════════════════════════════════════════════════
 const WTS_PIPES={'2':{'40':2.067,'80':1.939,'160':1.687},'3':{'40':3.068,'80':2.900,'160':2.624},'4':{'40':4.026,'80':3.826,'160':3.438},'6':{'40':6.065,'80':5.761,'160':5.187},'8':{'40':7.981,'80':7.625,'160':6.813},'10':{'40':10.020,'80':9.564,'160':8.500}};
 
-const WTS_IDS=['wts_Pwh','wts_Twh','wts_Qg','wts_Qo','wts_Qw','wts_SGg','wts_API','wts_bean','wts_Cd','wts_Thtr','wts_htrEff','wts_bypass','wts_Psep','wts_nps1','wts_sch1','wts_len1','wts_nps2','wts_sch2','wts_len2','wts_nps3','wts_sch3','wts_len3','wts_nps4','wts_sch4','wts_len4','wts_nps5','wts_sch5','wts_len5','wts_nps6','wts_sch6','wts_len6','wts_Cfac','wts_eps','wts_sepID','wts_sepL','wts_Psurge','wts_surgeCap','wts_gtCap'];
+const WTS_IDS=['wts_Pwh','wts_Twh','wts_Qg','wts_Qo','wts_Qw','wts_SGg','wts_API','wts_bean','wts_Cd','wts_Thtr','wts_htrEff','wts_bypass','wts_Psep','wts_nps1','wts_sch1','wts_len1','wts_nps2','wts_sch2','wts_len2','wts_nps3','wts_sch3','wts_len3','wts_nps4','wts_sch4','wts_len4','wts_nps5','wts_sch5','wts_len5','wts_nps6','wts_sch6','wts_len6','wts_Cfac','wts_eps','wts_sepID','wts_sepL','wts_Psurge','wts_surgeCap','wts_gtCap','wts_sandPptb','wts_sandGas','wts_sandD50','wts_dsRating','wts_dsAcc','wts_SITHP','wts_surge2Cap'];
 function renderWTS(body){
     $('pgTitle').textContent='Well Test Simulator';
     $('pgSub').textContent='Live 3D process simulation — P, T, levels & velocity from wellhead to gauge tank (API RP 14E)';
@@ -126623,6 +126623,13 @@ function renderWTS(body){
         <div class="fg-item"><label>Surge Tank Pressure (psig, 0&ndash;30)</label><input type="number" id="wts_Psurge" value="25" min="0" max="30"></div>
         <div class="fg-item"><label>Surge Tank Capacity (bbl)</label><input type="number" id="wts_surgeCap" value="100" min="10" max="500"></div>
         <div class="fg-item"><label>Gauge Tank Compartment (bbl)</label><input type="number" id="wts_gtCap" value="100" min="10" max="500"></div>
+        <div class="fg-item"><label>Sand rate, liquid (lb/1000 bbl)</label><input type="number" id="wts_sandPptb" value="0" min="0" max="500" step="1"></div>
+        <div class="fg-item"><label>Sand rate, gas (lb/MMscf)</label><input type="number" id="wts_sandGas" value="0" min="0" max="100" step="0.5"></div>
+        <div class="fg-item"><label>Sand median size (&micro;m)</label><input type="number" id="wts_sandD50" value="150" min="20" max="1000" step="10"></div>
+        <div class="fg-item"><label>Desander rating (psi)</label><select id="wts_dsRating"><option value="5000">5,000</option><option value="10000" selected>10,000</option><option value="15000">15,000</option></select></div>
+        <div class="fg-item"><label>Desander accumulator (gal)</label><input type="number" id="wts_dsAcc" value="50" min="10" max="200"></div>
+        <div class="fg-item"><label>Max shut-in wellhead pressure (psig)</label><input type="number" id="wts_SITHP" value="" min="100" max="20000" placeholder="blank = 1.2 &times; WHP (estimated)"></div>
+        <div class="fg-item"><label>Surge tank 2 capacity (bbl)</label><input type="number" id="wts_surge2Cap" value="100" min="20" max="500"></div>
       </div></div>
     </div><div>
       <div class="card"><div class="card-title">Pipe Segments</div>
@@ -126666,6 +126673,13 @@ window.calcWTS=function(){
     const sepID=wtsClamp(gv('wts_sepID')||36,12,96),sepL=wtsClamp(gv('wts_sepL')||10,4,40),
           Psurge=wtsClamp(PsurgeRaw,0,Math.min(30,Math.max(0,Psep-10))),
           surgeCap=wtsClamp(gv('wts_surgeCap')||100,10,500),gtCap=wtsClamp(gv('wts_gtCap')||100,10,500);
+    // Sand, DS-101 desander and T-202 inputs (v3.3.1, imperial-only, untagged): 0 / blank → default, then clamped;
+    // the maximum shut-in WHP stays null when blank (the simulator estimates 1.2 × WHP) and is clamped only when given
+    const dsRatingIn=gv('wts_dsRating'),sithpEl=$('wts_SITHP'),sithpTxt=sithpEl&&sithpEl.value!=null?String(sithpEl.value).trim():'',sithpIn=parseFloat(sithpTxt);
+    const sandPptb=wtsClamp(gv('wts_sandPptb')||0,0,500),sandGas=wtsClamp(gv('wts_sandGas')||0,0,100),
+          sandD50=wtsClamp(gv('wts_sandD50')||150,20,1000),dsRating=[5000,10000,15000].indexOf(dsRatingIn)>=0?dsRatingIn:10000,
+          dsAcc=wtsClamp(gv('wts_dsAcc')||50,10,200),sithp=sithpTxt!==''&&!isNaN(sithpIn)?wtsClamp(sithpIn,100,20000):null,
+          surge2Cap=wtsClamp(gv('wts_surge2Cap')||100,20,500);
     const P_FLARE_HDR=5;   // psig, flare header downstream of PCV-101 (= sim cfg.sep.pcv.P2_psig)
     // Gas props
     const Mg=28.97*SGg;
@@ -126892,7 +126906,9 @@ window.calcWTS=function(){
           nodes:nodes.map((n,i)=>Object.assign({id:NODE_IDS[i]},n)),
           segs:segs.map((s,i)=>Object.assign({id:SEG_META[i][0],from:SEG_META[i][1],to:SEG_META[i][2],label:segNm[i]},s)),
           warnings:warns.map(w=>({t:w.t,m:stripHtml(w.m)})),
-          sim:{sepID_in:sepID,sepLss_ft:sepL,surgeP_psig:Psurge,surgeCap_bbl:surgeCap,gaugeCap_bbl:gtCap}
+          sim:{sepID_in:sepID,sepLss_ft:sepL,surgeP_psig:Psurge,surgeCap_bbl:surgeCap,gaugeCap_bbl:gtCap,
+               sand_pptb:sandPptb,sand_lbmmscf:sandGas,sand_d50_um:sandD50,desRating_psi:dsRating,desAcc_gal:dsAcc,sithp_psig:sithp,
+               surge2Cap_bbl:surge2Cap}
         };
         GW.WTS_state.flow=flow;
         GW.WTS_state.nodes=nodes.map((n,i)=>{const vi=[0,1,2,3,4,null,5,null][i];
@@ -126909,23 +126925,38 @@ window.calcWTS=function(){
     try{document.dispatchEvent(new CustomEvent('wts:calc',{detail:window.WTS_lastCalc}));}catch(_){}
 };
 
-const WTS_DIAG_LAYOUT={W:1200,H:340,tx:[85,230,380,535,695,950],cy:130,bx:[695,1000],by:245,cl:[18,16,20,27,30,10],strip:{x:20,y:215,w:600,h:103}};
-function wtsDrawDiag(nodes,segs){
+const WTS_DIAG_LAYOUT={W:1200,H:340,tx:[85,230,380,535,695,950],cy:130,bx:[695,1000],by:245,cl:[18,16,20,27,30,10],strip:{x:20,y:215,w:600,h:103},
+    ds:{tx:[70,180,400,535,695,950],x:290,cl:12},
+    t202:{x:775,w:30,h:38,hdrY:28,outY:12,lcv1X:738,lcv2X:805,riserX:822,seg5X:834}};
+// Effective 2D layout for a rig-up (v3.3.1): two fixed variants per row, no layout maths. The top row is the v3.3 row
+// unless DS-101 is in (then tx = ds.tx, DS-101 at ds.x); the bottom row is the v3.3 row unless T-202 is in (T-202 at
+// t202.x, LCV-201 on the T-201 outlet header under it). bx is the same in every variant. No rig-up (static calc, Mini
+// WellOS) or both items out → the base object itself, i.e. exactly the v3.3 picture.
+function wtsDiagLayout(ru){
+    const B=WTS_DIAG_LAYOUT, dsOn=!!(ru&&ru.desander===true), t2On=!!(ru&&ru.surge2===true&&ru.surge!==false);
+    if(!dsOn&&!t2On)return B;
+    const L=Object.assign({},B,{dsOn:dsOn,t2On:t2On});
+    if(dsOn)L.tx=B.ds.tx.slice();
+    return L;
+}
+function wtsDrawDiag(nodes,segs,opts){
     const uF=typeof _uFmt==='function'?_uFmt:(v,c,dp,imp)=>(isFinite(v)?fmt(v,dp):'—')+' '+imp;   // unit-system aware labels
     const cv=$('wts_cv');if(!cv)return;
     const ctx=cv.getContext('2d');
-    const L=WTS_DIAG_LAYOUT,W=L.W,H=L.H;
+    const L=wtsDiagLayout(opts&&opts.rigup),W=L.W,H=L.H;
     ctx.setTransform(cv.width/W,0,0,cv.height/H,0,0);
     ctx.clearRect(0,0,W,H);
     // Top-row node x positions (6 equipment)
     // Top-row node x positions, bottom-row tanks and pipe clearances (WTS_DIAG_LAYOUT)
     const tx=L.tx, cy=L.cy, bx=L.bx, by=L.by, cl=L.cl;
+    const ds=L.dsOn?L.ds:null, t2=L.t2On?L.t202:null, nDs=nodes[8], nT2=nodes[9];   // optional items (drawn only when in)
     const pipeClr=s=>s.vSt==='EXCEED'?'#f85149':s.vSt==='WARNING'?'#d29922':'#3fb950';
     // Draw top-row pipes (segs[0..4])
     for(let i=0;i<5;i++){
         const s=segs[i];
         const x1=tx[i]+cl[i]+3, x2=tx[i+1]-cl[i+1]-3;
-        wtsDrawPipe(ctx,x1,x2,cy,s,pipeClr(s));
+        if(ds&&i===1){wtsDrawPipe(ctx,x1,ds.x-ds.cl-3,cy,s,pipeClr(s));wtsDrawPipe(ctx,ds.x+ds.cl+3,x2,cy,s,pipeClr(s),{bare:true});}
+        else wtsDrawPipe(ctx,x1,x2,cy,s,pipeClr(s),ds&&i===0?{compact:true}:undefined);
     }
     // Vertical pipe: Separator → Surge Tank
     ctx.strokeStyle='#3fb950';ctx.lineWidth=4;
@@ -126935,7 +126966,17 @@ function wtsDrawDiag(nodes,segs){
     ctx.fillStyle='#6e7681';ctx.font='italic 9px sans-serif';ctx.textAlign='left';
     ctx.fillText('Oil/Water',tx[4]+7,(cy+by)/2);
     // Bottom-row pipe: Surge → Atm Tank (segs[5])
-    wtsDrawPipe(ctx,bx[0]+18,bx[1]-20,by,segs[5],pipeClr(segs[5]));
+    if(!t2)wtsDrawPipe(ctx,bx[0]+18,bx[1]-20,by,segs[5],pipeClr(segs[5]));
+    else{
+        // T-202 variant: T-201 outlet header under T-202 (LCV-201 on it, drawn by the live view) → riser → segment 5;
+        // T-202 side outlet → LCV-202 → tee into the riser
+        const c5=pipeClr(segs[5]),hy=by+t2.hdrY,oy=by+t2.outY;
+        ctx.strokeStyle=c5;ctx.lineWidth=4;
+        ctx.beginPath();ctx.moveTo(bx[0]-8,hy);ctx.lineTo(t2.riserX,hy);ctx.lineTo(t2.riserX,by);ctx.lineTo(t2.seg5X,by);ctx.stroke();
+        ctx.lineWidth=3;
+        ctx.beginPath();ctx.moveTo(t2.x+t2.w/2,oy);ctx.lineTo(t2.riserX,oy);ctx.stroke();
+        wtsDrawPipe(ctx,t2.seg5X,bx[1]-20,by,segs[5],c5);
+    }
     // Equipment symbols — top row
     wtsEqWH(ctx,tx[0],cy);
     wtsEqSSV(ctx,tx[1],cy);
@@ -126943,9 +126984,11 @@ function wtsDrawDiag(nodes,segs){
     wtsEqHtr(ctx,tx[3],cy,nodes[3].bypass);
     wtsEqSep(ctx,tx[4],cy);
     wtsEqFlr(ctx,tx[5],cy);
+    if(ds)wtsEqDs(ctx,ds.x,cy,nDs);
     // Equipment symbols — bottom row (surge & atm tanks)
     wtsEqTnk(ctx,bx[0],by);
     wtsEqAtm(ctx,bx[1],by);
+    if(t2)wtsEqTnk(ctx,t2.x,by,t2.w);
     // Equipment labels
     ctx.textAlign='center';
     const tlabels=['Wellhead','ESD / SSV','Choke','Heater','Separator','Flare'];
@@ -126953,9 +126996,11 @@ function wtsDrawDiag(nodes,segs){
         ctx.fillStyle='#e6edf3';ctx.font='bold 11px sans-serif';
         ctx.fillText(l,tx[i],cy-48);
     });
+    if(ds){ctx.fillStyle='#e6edf3';ctx.font='bold 11px sans-serif';ctx.fillText('Desander',ds.x,cy-48);}
     ctx.fillStyle='#8b949e';ctx.font='10px sans-serif';
     ctx.fillText('Surge Tank',bx[0],by+38);
     ctx.fillText('Gauge Tank',bx[1],by+38);
+    if(t2)ctx.fillText('T-202',t2.x,by+38);
     // Node P/T labels (top row)
     for(let i=0;i<6;i++){
         const nd=nodes[i], x=tx[i];
@@ -126978,6 +127023,27 @@ function wtsDrawDiag(nodes,segs){
         ctx.fillStyle='#58a6ff';ctx.font='10px sans-serif';
         ctx.fillText(uF(nd.T,'temperature',1,'\u00b0F'),x,by+65);
     }
+    const fin=v=>typeof v==='number'&&isFinite(v);
+    if(ds){
+        ctx.textAlign='center';
+        ctx.fillStyle='#f0883e';ctx.font='bold 10px sans-serif';
+        ctx.fillText(nDs&&fin(nDs.P)?uF(nDs.P,'pressureG',0,'psig'):'\u2014',ds.x,cy+50);
+        ctx.fillStyle='#58a6ff';ctx.font='10px sans-serif';
+        ctx.fillText(nDs&&fin(nDs.T)?uF(nDs.T,'temperature',1,'\u00b0F'):'\u2014',ds.x,cy+63);
+        if(nDs&&fin(nDs.T)&&fin(nDs.th)&&nDs.T<nDs.th&&nDs.P>10){ctx.fillStyle='#58a6ff';ctx.font='bold 9px sans-serif';ctx.fillText('\u2744 HYDRATE',ds.x,cy+76);}
+        // ΔP across DS-101, or the dump / sand state (live view: nodes[8].status)
+        const st8=nDs&&nDs.status;
+        ctx.font='bold 9px sans-serif';
+        ctx.fillStyle=st8==='SAND HIGH'?'#f85149':st8?'#d29922':'#8b949e';
+        ctx.fillText(st8?String(st8):nDs&&fin(nDs.dP)?'\u0394P '+uF(nDs.dP,'pressure',1,'psi'):'\u0394P \u2014',ds.x,cy-37);
+    }
+    if(t2){
+        ctx.textAlign='center';
+        ctx.fillStyle='#f0883e';ctx.font='bold 10px sans-serif';
+        ctx.fillText(nT2&&fin(nT2.P)?uF(nT2.P,'pressureG',0,'psig'):'\u2014',t2.x,by+52);
+        ctx.fillStyle='#58a6ff';ctx.font='10px sans-serif';
+        ctx.fillText(nT2&&fin(nT2.T)?uF(nT2.T,'temperature',1,'\u00b0F'):'\u2014',t2.x,by+65);
+    }
     // Choke regime (node 2)
     if(nodes[2].regime){
         ctx.fillStyle=nodes[2].flowLimited?'#f85149':nodes[2].regime==='Critical'?'#bc8cff':'#3fb950';
@@ -126998,10 +127064,10 @@ function wtsDrawDiag(nodes,segs){
     ctx.fillStyle='#6e7681';ctx.font='italic 9px sans-serif';ctx.textAlign='center';
     const phases=['Multiphase','Multiphase','Multiphase','Multiphase','Gas Only'];
     for(let i=0;i<5;i++){
-        ctx.fillText(phases[i],(tx[i]+tx[i+1])/2,cy-28);
+        ctx.fillText(phases[i],ds&&i===1?(tx[1]+cl[1]+3+ds.x-ds.cl-3)/2:(tx[i]+tx[i+1])/2,cy-28);
     }
-    // Phase label for Surge→Atm pipe
-    ctx.fillText('Liquid',(bx[0]+bx[1])/2,by-20);
+    // Phase label for Surge→Atm pipe (T-202 variant: at segment 5's midpoint, clear of the riser)
+    ctx.fillText('Liquid',t2?(t2.seg5X+bx[1]-20)/2:(bx[0]+bx[1])/2,by-20);
     // Title
     ctx.fillStyle='#e6edf3';ctx.font='bold 13px sans-serif';ctx.textAlign='left';
     ctx.fillText('Well Test Flow Diagram',20,22);
@@ -127018,7 +127084,8 @@ function wtsDrawDiag(nodes,segs){
     });
 }
 
-function wtsDrawPipe(ctx,x1,x2,y,s,c){
+function wtsDrawPipe(ctx,x1,x2,y,s,c,o){
+    // o (optional): {compact} short spec label ('4" S40'), {bare} pipe and arrow only (no labels)
     if(x2<=x1)return;
     ctx.strokeStyle=c;ctx.lineWidth=6;
     ctx.beginPath();ctx.moveTo(x1,y);ctx.lineTo(x2,y);ctx.stroke();
@@ -127029,12 +127096,13 @@ function wtsDrawPipe(ctx,x1,x2,y,s,c){
     // Flow arrow
     ctx.fillStyle=c;
     ctx.beginPath();ctx.moveTo(mx+9,y);ctx.lineTo(mx-4,y-5);ctx.lineTo(mx-4,y+5);ctx.closePath();ctx.fill();
+    if(o&&o.bare)return;
     // Velocity label
     ctx.fillStyle=c;ctx.font='bold 10px sans-serif';ctx.textAlign='center';
     ctx.fillText(fmt(s.vel,0)+' ft/s',mx,y-14);
     // Pipe spec
     ctx.fillStyle='#6e7681';ctx.font='9px sans-serif';
-    ctx.fillText(s.nps+'" SCH'+s.sch+' ('+s.L+'ft)',mx,y+18);
+    ctx.fillText(o&&o.compact?s.nps+'" S'+s.sch:s.nps+'" SCH'+s.sch+' ('+s.L+'ft)',mx,y+18);
     ctx.fillStyle='#8b949e';ctx.font='9px sans-serif';
     ctx.fillText('\u0394P:'+fmt(s.dP,1)+' psi',mx,y+30);
     if(s.hydR){ctx.fillStyle='#58a6ff';ctx.font='12px sans-serif';ctx.fillText('\u2744',mx,y+42);}
@@ -127097,14 +127165,43 @@ function wtsEqFlr(ctx,x,y){
     ctx.beginPath();ctx.moveTo(x-5,y-18);ctx.quadraticCurveTo(x-7,y-28,x,y-35);
     ctx.quadraticCurveTo(x+7,y-28,x+5,y-18);ctx.closePath();ctx.fill();
 }
-function wtsEqTnk(ctx,x,y){
+function wtsEqTnk(ctx,x,y,w0){
     ctx.fillStyle='#30363d';ctx.strokeStyle='#e6edf3';ctx.lineWidth=1.5;
-    const w=32,h=38;
+    const w=w0||32,h=38;
     ctx.fillRect(x-w/2,y-h/2,w,h);ctx.strokeRect(x-w/2,y-h/2,w,h);
     ctx.beginPath();ctx.ellipse(x,y-h/2,w/2,4,0,0,Math.PI*2);
     ctx.fillStyle='#3d444d';ctx.fill();ctx.stroke();
     ctx.fillStyle='rgba(88,166,255,0.15)';
     ctx.fillRect(x-w/2+1,y-3,w-2,h/2+3-1);
+}
+function wtsEqDs(ctx,x,y,nd){
+    // DS-101 cyclonic desander (v3.3.1): cyclone body 16 × 12 with a tangential inlet, cone, accumulator 18 × 14 (sand fill
+    // drawn by the live view) with LAH / LAHH ticks, dump valve XV-103 → sand skip, and the HV-104 bypass (dashed, shut)
+    const lah=nd&&typeof nd.lah==='number'?nd.lah:0.80,lahh=nd&&typeof nd.lahh==='number'?nd.lahh:0.95;
+    ctx.strokeStyle='#8b949e';ctx.lineWidth=2;
+    ctx.beginPath();ctx.moveTo(x-15,y);ctx.lineTo(x-12,y);ctx.lineTo(x-12,y-18);ctx.lineTo(x-8,y-18);ctx.stroke();     // inlet
+    ctx.beginPath();ctx.moveTo(x+8,y-16);ctx.lineTo(x+12,y-16);ctx.lineTo(x+12,y);ctx.lineTo(x+15,y);ctx.stroke();     // overflow
+    ctx.fillStyle='#30363d';ctx.strokeStyle='#e6edf3';ctx.lineWidth=1.5;
+    ctx.fillRect(x-8,y-22,16,12);ctx.strokeRect(x-8,y-22,16,12);
+    ctx.beginPath();ctx.moveTo(x-8,y-10);ctx.lineTo(x+8,y-10);ctx.lineTo(x+2,y+6);ctx.lineTo(x-2,y+6);ctx.closePath();ctx.fill();ctx.stroke();
+    ctx.beginPath();ctx.moveTo(x,y+6);ctx.lineTo(x,y+8);ctx.stroke();
+    ctx.fillRect(x-9,y+8,18,14);ctx.strokeRect(x-9,y+8,18,14);
+    [[lah,'#d29922'],[lahh,'#f85149']].forEach(t=>{const ty=y+22-14*Math.min(1,Math.max(0,t[0]));
+        ctx.strokeStyle=t[1];ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(x-13,ty);ctx.lineTo(x-9,ty);ctx.stroke();});
+    // dump line → XV-103 → sand skip
+    ctx.strokeStyle='#8b949e';ctx.lineWidth=1.5;
+    ctx.beginPath();ctx.moveTo(x+9,y+20);ctx.lineTo(x+11,y+20);ctx.moveTo(x+21,y+20);ctx.lineTo(x+28,y+20);ctx.stroke();
+    ctx.fillStyle='#8b949e';ctx.beginPath();ctx.moveTo(x+32,y+20);ctx.lineTo(x+27,y+17);ctx.lineTo(x+27,y+23);ctx.closePath();ctx.fill();
+    ctx.fillStyle='rgba(13,17,23,.9)';ctx.strokeStyle='#8b949e';ctx.lineWidth=1.2;
+    ctx.beginPath();ctx.moveTo(x+11,y+15);ctx.lineTo(x+11,y+25);ctx.lineTo(x+21,y+15);ctx.lineTo(x+21,y+25);ctx.closePath();ctx.fill();ctx.stroke();
+    ctx.fillStyle='#8b949e';ctx.font='bold 7px sans-serif';ctx.textAlign='left';
+    ctx.fillText('SAND',x+34,y+23);
+    // HV-104 bypass (dashed while shut)
+    ctx.save();ctx.setLineDash([3,3]);ctx.strokeStyle='#6e7681';ctx.lineWidth=1.5;
+    ctx.beginPath();ctx.moveTo(x-24,y);ctx.lineTo(x-24,y-29);ctx.lineTo(x+24,y-29);ctx.lineTo(x+24,y);ctx.stroke();ctx.restore();
+    ctx.fillStyle='rgba(13,17,23,.9)';ctx.strokeStyle='#6e7681';ctx.lineWidth=1.2;
+    ctx.beginPath();ctx.moveTo(x-5,y-32);ctx.lineTo(x-5,y-26);ctx.lineTo(x+5,y-32);ctx.lineTo(x+5,y-26);ctx.closePath();ctx.fill();ctx.stroke();
+    ctx.textAlign='center';
 }
 function wtsEqSSV(ctx,x,y){
     // Surface Safety Valve — hydraulic ball valve with actuator
@@ -127146,6 +127243,7 @@ function wtsEqAtm(ctx,x,y){
 
 // Bridges for the Round-7 live view (38-wts-live draws the live 2D through these).
 window.wtsDrawDiag=wtsDrawDiag; window.WTS_DIAG_LAYOUT=WTS_DIAG_LAYOUT;
+window.wtsDiagLayout=wtsDiagLayout;   // v3.3.1: the effective layout for a rig-up (DS-101 / T-202 variants)
 
 // ── Initial render ──
 render();

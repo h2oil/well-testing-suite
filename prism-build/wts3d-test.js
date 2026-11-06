@@ -357,7 +357,9 @@ const SECTION_C = (G, src) => {
     const body = html.slice(html.indexOf('window.calcWTS=function(){'), html.indexOf('\nconst WTS_DIAG_LAYOUT'));
     const vals = { wts_Pwh: '3000', wts_Twh: '180', wts_Qg: '10', wts_Qo: '1000', wts_Qw: '200', wts_SGg: '0.65', wts_API: '35', wts_bean: '32', wts_Cd: '0.85',
       wts_Thtr: '150', wts_htrEff: '80', wts_bypass: '0', wts_Psep: '150', wts_Cfac: '100', wts_eps: '0.0018', wts_sepID: '36', wts_sepL: '10', wts_Psurge: '25',
-      wts_surgeCap: '100', wts_gtCap: '100' };
+      wts_surgeCap: '100', wts_gtCap: '100',
+      // v3.3.1 Dynamic Simulation inputs (sand, DS-101, T-202): the form defaults (SITHP blank = estimated by the simulator)
+      wts_sandPptb: '0', wts_sandGas: '0', wts_sandD50: '150', wts_dsRating: '10000', wts_dsAcc: '50', wts_SITHP: '', wts_surge2Cap: '100' };
     [['4', '50'], ['4', '100'], ['6', '200'], ['6', '100'], ['6', '300'], ['3', '80']].forEach((p, i) => { vals['wts_nps' + (i + 1)] = p[0]; vals['wts_sch' + (i + 1)] = '40'; vals['wts_len' + (i + 1)] = p[1]; });
     Object.assign(vals, over || {});
     const els = {}; for (const k in vals) els[k] = { value: vals[k], style: {} };
@@ -521,12 +523,11 @@ const SECTION_C = (G, src) => {
       const r = runHostCalc(); const f = r.L.flow; const bad = [];
       if (!f) return 'no flow';
       const strip = o => { const c = JSON.parse(JSON.stringify(o)); delete c.ts; delete c.seq; return c; };
-      // v3.3.1 (WP-E0): SAMPLE_FLOW.sim carries the seven new keys (sand / desander / T-202); the host Dynamic Simulation inputs
-      // that publish them come with WP-2D — until then a host flow with none of the seven is accepted (interim allowance — WP-2D exit item: remove this, plan §10.1)
-      const SIM7 = ['sand_pptb', 'sand_lbmmscf', 'sand_d50_um', 'desRating_psi', 'desAcc_gal', 'sithp_psig', 'surge2Cap_bbl'];
+      // v3.3.1: SAMPLE_FLOW.sim carries the seven new keys (sand / desander / T-202), published by the host Dynamic Simulation inputs
       const ref = strip(S.SAMPLE_FLOW);
-      if (f.sim && SIM7.every(k => !(k in f.sim))) SIM7.forEach(k => { delete ref.sim[k]; });
       eqShape(strip(f), ref, 'flow', bad);
+      ['sand_pptb', 'sand_lbmmscf', 'sand_d50_um', 'desRating_psi', 'desAcc_gal', 'sithp_psig', 'surge2Cap_bbl'].forEach(k => {
+        if (!f.sim || f.sim[k] !== S.SAMPLE_FLOW.sim[k]) bad.push('sim.' + k + ' ' + (f.sim && f.sim[k]) + ' ≠ ' + S.SAMPLE_FLOW.sim[k]); });
       const near = (a, b, t) => Math.abs(a - b) <= t;
       if (!near(f.choke.Pout, S.SAMPLE_FLOW.choke.Pout, 0.01) || !near(f.heater.dutyMMBtuHr, 2.103, 0.001) || f.choke.regime !== 'Critical') bad.push('numbers');
       if (r.events.length !== 1 || r.events[0].type !== 'wts:calc' || r.events[0].detail !== r.L) bad.push('event');
@@ -540,6 +541,22 @@ const SECTION_C = (G, src) => {
       return a.sim.surgeP_psig === 30 && a.nodes[6].P === 30 && a.warnings.some(w => w.t === 'warn' && /limited to 30 psig/.test(w.m)) &&
         b.choke.regime === 'No Flow' && b.warnings.some(w => w.t === 'error' && /no flow possible/.test(w.m)) &&
         c.warnings.filter(w => /Hydrate/.test(w.m)).every(w => w.t === 'info') && c.warnings.length >= 1 || 'scenario mismatch';
+    }],
+    ['host patch: v3.3.1 Dynamic Simulation inputs — blank / 0 → defaults, clamps of §6.3, SITHP blank = null, 1e400 never gets through', () => {
+      const sim = o => runHostCalc(o).L.flow.sim, bad = [];
+      const vec = x => JSON.stringify([x.sand_pptb, x.sand_lbmmscf, x.sand_d50_um, x.desRating_psi, x.desAcc_gal, x.sithp_psig, x.surge2Cap_bbl]);
+      const blank = sim({ wts_sandPptb: '', wts_sandGas: '', wts_sandD50: '', wts_dsRating: '', wts_dsAcc: '', wts_SITHP: '', wts_surge2Cap: '' });
+      if (vec(blank) !== '[0,0,150,10000,50,null,100]') bad.push('blank ' + vec(blank));
+      const hi = sim({ wts_sandPptb: '9999', wts_sandGas: '1e400', wts_sandD50: '5000', wts_dsRating: '7000', wts_dsAcc: '1e400', wts_SITHP: '1e400', wts_surge2Cap: '9000' });
+      if (vec(hi) !== '[500,100,1000,10000,200,20000,500]') bad.push('high ' + vec(hi));
+      const lo = sim({ wts_sandPptb: '-5', wts_sandGas: '-1', wts_sandD50: '1', wts_dsRating: '5000', wts_dsAcc: '2', wts_SITHP: '10', wts_surge2Cap: '5' });
+      if (vec(lo) !== '[0,0,20,5000,10,100,20]') bad.push('low ' + vec(lo));
+      const mid = sim({ wts_sandPptb: '10', wts_sandGas: '5', wts_sandD50: '400', wts_dsRating: '15000', wts_dsAcc: '80', wts_SITHP: ' 5200 ', wts_surge2Cap: '150' });
+      if (vec(mid) !== '[10,5,400,15000,80,5200,150]') bad.push('mid ' + vec(mid));
+      // a flow carrying them is a valid flow for the engine (finite snapshot)
+      const f = runHostCalc({ wts_sandPptb: '10', wts_SITHP: '5200' }).L.flow, s = S.create(f, { seed: 3 }); s.advance(30);
+      if (!isFinite(s.getState().nodes.choke.Pin)) bad.push('engine');
+      return bad.length === 0 || bad.join('; ');
     }],
     ['host patch: flows from the patched calc drive the sim (bean 24 → CHOKE_LIMIT)', () => {
       const f = runHostCalc({ wts_bean: '24' }).L.flow; const s = S.create(f, { seed: 2 }); s.advance(30);
