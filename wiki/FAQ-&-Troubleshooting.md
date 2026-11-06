@@ -1,5 +1,7 @@
 # FAQ & Troubleshooting
 
+> **Superseded by the in-app Help** (Help & Guide → Troubleshooting and FAQ), which follows the current version. This page is kept for one release and will then be removed.
+
 ## General
 
 ### How do I install the application?

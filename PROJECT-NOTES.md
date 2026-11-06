@@ -5,6 +5,57 @@ All changes land on `dev`; `master` is the stable tree consumed by the iOS sync 
 
 ---
 
+## 2026-11-06 — v3.3.2 release: Help & User Guide, simulator course and field scenarios
+
+Plan: docs/HELP-GUIDE-PLAN.md (WP-H, WP-S, WP-C1…C9, WP-T, WP-G, WP-I; branch `help`). App and App Store version 3.3.2
+(`RELEASE_NOTES[0]`, both `MARKETING_VERSION`, both `ci_post_clone.sh` fallbacks, the static `#appVersionLabel` fallback).
+Owner request: a help section and a guide for every module with screenshots and a user guide. Budget: owner decision Q13
+option 1 (345 kB raw / 120 kB gzip for the help files); `perf-budget.js` passes against the 2026-11-01 baseline (no re-record).
+
+**What shipped**
+- `help` page (Overview row 2, `#sbHelp`, `#pgHelpBtn` / F1 with page context), 66 guides, search with tasks and synonyms,
+  Getting started, glossary, FAQ; 209 screenshots in `help/img/` (7.8 MB) from `help-shots.js`; Print ▾ (quick card / guide /
+  group / worksheet / whole guide, Images off; "User guide" report kicker via host H6) and the generated `help/user-guide.html`;
+  iOS in-app reader for the bundled guide.
+- Well Test Simulator course (10 exercises, trainer notes, worksheets) and field scenarios FS-1 (cushion to the burner),
+  FS-2 (production line), FS-3 (clean-up with sand), FS-4 (cold start-up).
+- Host edits only through `help-host-patch.js` H1–H8 (H6 report kicker, H7 coarse-pointer ? button, H8 dashboard count added
+  in the WP-I review round).
+
+**WP-I review round (fixes)**
+- FS-1 order (blocker): the old order (V-101 out, then Operating Pressure 15 and Surge Tank Pressure 5) always tripped the ESD
+  (PSHH-101 on the trapped separator, or PSHH-201 when the surge set point dropped 20 psi at once). FS-1, exercise 3 and the wts
+  inputs part now say: Surge Tank Pressure 25 → 15 → 5 psig with V-101 in, then Operating Pressure 15, then V-101 out, then the
+  unload rates; the restore raises both before V-101 goes back in. The CTRL table says the separator alarms stay live on the
+  trapped vessel. `help-course.test.js` runs the whole FS-1 sequence on the live sim (no ESD, ≈ 150 bbl to the burner in
+  90 min, choke outlet ≈ 10.5 psig, V-101 back at 150 psig) and checks that each of the four orders in the warning trips.
+  Exercise 7 sets Surge Tank Pressure 2 psig while paused, then Reset to steady (the live 23 psi step would trip too).
+- FS-1 breakthrough: the switch to the separator is clean, stable returns (BS&W and solids low and steady at a steady WHP and
+  rate); the erosion warning is a bypass-rate limit, quoted for the stated case (⚠ CHOKE_LIMIT 7.21 MMSCFD on 32/64; ⚠ 291 / 259 ft/s).
+- Course / scenario screenshots: the renderer and the print use `<folder>/<item id>-<shot id>` as help-shots saves them
+  (17 boxes were dashed placeholders); test that every manifest course / scenario file is referenced by the page and the guide.
+- Unit tokens `{{v|cat|dp|imp}}` keep untagged field-units inputs (Surge Tank Pressure, desander rating, SITHP) in psig in
+  Metric mode; a content test fails when a token after an untagged input's label lacks `imp`.
+- Help page: scroll-margin-top from the measured sticky-bar height (bar static on phones), re-render on a unit-system or
+  decimal-comma change, `plain()` keeps p*, snippets prefer body text and keywords join with ", ", offline size from the
+  manifest total (`M.bytes`), missing-image box shows the alt text only and drops "Select to enlarge", tags in table cells do
+  not break, `#help_pm` width auto; glossary: cushion corrected; skin, critical (sonic) flow, IARF and p* added.
+- Print: "User guide" kicker and subtitle; a single-guide print has no chapter number. Dashboard `#dash_count` leaves out the
+  Overview (Help) tile (H8). Screens: cheminj `res` shows the headline and the boxes below it (call-out beside the glyph);
+  the thin build-up `run` strip was removed; wts / course shots no longer show the reset toast. Help caps: 2.5 kB moved from
+  start, process and utilities to the page and production (sum unchanged at 345 kB). Round-7 selector checks re-enabled for
+  the wts guide; naming-rule literals in `help-content.test.js` built from parts; `.gitattributes` covers `ios-app/www/help`.
+- `wiki/*.md`: "superseded by the in-app Help" note on every page (to be deleted in the next release, Q6).
+
+**Verification (LF checkout, full rebuild with Round 7, help-host-patch H1–H8 applied):** smoke 330/330;
+`accept-test.js --html --integration` 1301/1301; wts3d-test 118/120 (the two CRLF checks); ux-layout-check 115 checks ok;
+perf-budget ok (html gzip 2295 kB, startup ratio 5.56 ≤ 6.41); help-shots `--check` ok (209 files); build-user-guide `--check`
+ok; gui-sweep `--route help --quick`: 0 errors, 1 warning ("Help home" on the landing page re-renders the same view).
+
+**Deploy (Q19):** upload `help/` next to the HTML; check one live `help/img/...` URL and `help/user-guide.html`.
+
+---
+
 ## 2026-11-06 — v3.3.1 release: simulator second surge tank & cyclonic desander
 
 Plan: docs/SIM-EQUIPMENT-PLAN.md (WP0, WP-E0, WP-E1, WP-E2, WP-3D, WP-L, WP-2D, WP-I; branch `sim-equip`). App and App Store

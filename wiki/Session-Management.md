@@ -1,5 +1,7 @@
 # Session Management
 
+> **Superseded by the in-app Help** (Help & Guide → Getting started (saving and projects)), which follows the current version. This page is kept for one release and will then be removed.
+
 The Well Testing Suite provides robust data persistence and portability through auto-save, session export, and session import.
 
 ## Auto-Save
