@@ -1695,7 +1695,10 @@ function create(flowIn, opts) {
       X.xiG = aG * X.xiG + sg * randn(); X.xiL = aG * X.xiL + sg * randn(); X.xiW = aW * X.xiW + msqrt(1 - aW * aW) * randn();
     }
     var aF = 1 - mexp(-h / Rr.tauFlow);
-    X.qBg += (qgE - X.qBg) * aF; X.qBo += (qoE - X.qBo) * aF; X.qBw += (qwE - X.qBw) * aF;
+    if (rDes) {                                     // DS-101 in: inflow scaled by the choke capacity coupling (§4.6; local copies, qgE/qoE/qwE untouched)
+      var sCk = DX.s;
+      X.qBg += (qgE * sCk - X.qBg) * aF; X.qBo += (qoE * sCk - X.qBo) * aF; X.qBw += (qwE * sCk - X.qBw) * aF;
+    } else { X.qBg += (qgE - X.qBg) * aF; X.qBo += (qoE - X.qBo) * aF; X.qBw += (qwE - X.qBw) * aF; }
     var fEn = clamp(X.esdTravel / 0.25, 0, 1);
     var mgn = N.on ? mmax(0, 1 + N.gasSigma * X.xiG) : 1, fTgt;
     if (qgD > 0) { X.f = fEn * X.qBg / qgD; fTgt = fEn * mgn * X.qBg / qgD; }
@@ -1712,7 +1715,8 @@ function create(flowIn, opts) {
       X.Pwh = SIT - (SIT - X.P0shut) / (1 + X.tShut / Rr.buildupTau);
     }
     var PBt = fEn > 0.01 ? X.Pwh - (Pwh_ss - Pci_ss) * X.fInst * X.fInst : pDown();
-    X.PB += (PBt - X.PB) * (1 - mexp(-h / 5));
+    if (rDes) DX.PBu += (PBt - DX.PBu) * (1 - mexp(-h / 5));   // DS-101 in: the same law upstream of it (= ESD node); desStep sets X.PB = PBu − PD
+    else X.PB += (PBt - X.PB) * (1 - mexp(-h / 5));
     if (rDes || sandOn) desStep(h, fEn);           // DS-101 ΔP, sand capture, accumulator / dump sequence (WP-E1)
     var thT = X.f > 0.05 ? 1 : 0;
     X.theta += (thT - X.theta) * (1 - mexp(-h / (thT > X.theta ? Rr.warmTau : Rr.coolTau)));
@@ -1941,17 +1945,20 @@ function create(flowIn, opts) {
       else if (on) { A.value = s.vPct; }
       else if (!on && A.active) clearA(A);
     }
-    var hn = ['wellhead', 'esd', 'choke', 'heater', 'separator'];
+    var hn = ['wellhead', 'esd', 'choke', 'heater', 'separator', 'desander'];   // desander: static hyd false while DS-101 is out
     for (i = 0; i < hn.length; i++) {
       var nd = snap.nodes[hn[i]];
       A = aDef('HYD_' + hn[i], TAGS[hn[i]], 'hyd', hn[i], 'd');
-      if (nd.hyd && !A.active) raise(A, nd.T, nd.th, NAMES[hn[i]] + ': ' + uq(nd.T, 'temperature') + ' below hydrate ' + uq(nd.th, 'temperature') + ' at ' + uq(nd.P, 'pressureG'));
-      else if (nd.hyd) { A.value = nd.T; A.limit = nd.th; }
+      var Tv = hn[i] === 'desander' ? nd.Tout : nd.T;             // desander: judged on its outlet temperature (after its own J-T drop)
+      if (nd.hyd && !A.active) raise(A, Tv, nd.th, NAMES[hn[i]] + ': ' + uq(Tv, 'temperature') + ' below hydrate ' + uq(nd.th, 'temperature') + ' at ' + uq(nd.P, 'pressureG'));
+      else if (nd.hyd) { A.value = Tv; A.limit = nd.th; }
       else if (A.active) clearA(A);
     }
     A = aDef('CHOKE_LIMIT', TAGS.choke, 'alarm', 'choke', 'd');
-    if (chk.flowLimited && !A.active) raise(A, Qg, chk.QmaxMMscfd, 'CK-101 flow-limited — bean ' + bean + '/64″ passes ' + uq(chk.QmaxMMscfd, 'gasRate', 2) + ' of ' + uq(Qg, 'gasRate', 2) + ' requested');
-    else if (!chk.flowLimited && A.active) clearA(A);
+    var flLim = rDes ? (chk.flowLimited || DS.flowLim) : chk.flowLimited;   // DS-101 in: the dynamic flag of the capacity coupling (§4.6)
+    if (flLim && !A.active) raise(A, Qg, chk.QmaxMMscfd, chk.flowLimited ? 'CK-101 flow-limited — bean ' + bean + '/64″ passes ' + uq(chk.QmaxMMscfd, 'gasRate', 2) + ' of ' + uq(Qg, 'gasRate', 2) + ' requested'
+      : 'CK-101 flow-limited — ' + TAGS.desander + ' ΔP ' + uq(DX.PD, 'pressure') + ' lowers the choke inlet below what the rate needs');
+    else if (!flLim && A.active) clearA(A);
   }
 
   function refresh() {
@@ -1965,11 +1972,11 @@ function create(flowIn, opts) {
     // nodes
     var th = X.theta, N = s.nodes, P;
     N.wellhead.P = X.Pwh; N.wellhead.T = Tamb + (Twh_ss - Tamb) * th; hydOf(N.wellhead);
-    N.esd.P = X.PB; N.esd.T = Tamb + (Tesd_ss - Tamb) * th; hydOf(N.esd);
+    N.esd.P = rDes ? DX.PBu : X.PB; N.esd.T = Tamb + (Tesd_ss - Tamb) * th; hydOf(N.esd);
     var fi2 = X.fInst * X.fInst, Pdn = pDown();
     P = Pdn + (Pck_ss - Psep_ss) * fi2;
     N.choke.P = P; N.choke.Pin = X.PB; N.choke.T = Tamb + (Tck_ss - Tamb) * th; hydOf(N.choke);
-    N.choke.regime = X.f < 0.01 ? 'No Flow' : chk.regime; N.choke.bean = bean; N.choke.flowLimited = chk.flowLimited; N.choke.QmaxMMscfd = chk.QmaxMMscfd;
+    N.choke.regime = X.f < 0.01 ? 'No Flow' : chk.regime; N.choke.bean = bean; N.choke.flowLimited = rDes ? (chk.flowLimited || DS.flowLim) : chk.flowLimited; N.choke.QmaxMMscfd = chk.QmaxMMscfd;
     N.choke.dTjt = X.f < 0.01 ? 0 : mmin(150, 0.07 * chk.wJT * mmax(X.PB - P, 0));
     N.heater.P = Pdn + (Ph_ss - Psep_ss) * fi2; N.heater.T = Tamb + (Th_ss - Tamb) * th; N.heater.Tin = Tamb + (Tin_ss - Tamb) * th;
     hydOf(N.heater); N.heater.bypass = bypass; N.heater.dutyMMBtuHr = duty_ss * X.f;
@@ -1984,7 +1991,7 @@ function create(flowIn, opts) {
     N.gauge.P = 0; N.gauge.T = tanks[active].T;
     // segments
     var pumpVel = liqVel(F.pumpBpd, SS[5].ID);
-    var nodeP0 = [X.Pwh, X.PB, N.choke.P, N.heater.P, rSep ? X.Psep : Pdn, X.Pu], nodeT0 = [N.wellhead.T, N.esd.T, N.choke.T, N.heater.T, X.Tsep, X.Tu];
+    var nodeP0 = [X.Pwh, N.esd.P, N.choke.P, N.heater.P, rSep ? X.Psep : Pdn, X.Pu], nodeT0 = [N.wellhead.T, N.esd.T, N.choke.T, N.heater.T, X.Tsep, X.Tu];
     var nodeT1 = [N.esd.T, N.choke.T, N.heater.T, X.Tsep, N.flare.T, tanks[active].T];
     for (i = 0; i < 6; i++) {
       var ss = SS[i], o = s.segs[i];
@@ -2522,41 +2529,526 @@ function create(flowIn, opts) {
   //   desCtl(src, initial)        setControls → ctl.desander {bypass, auto, sp}
   //   desDump(cmd) / desSet(o)    api.dumpDesander → {ok, msg} / api.setDesander → bool
   //   desInternal(o)              _internal() extension point
-  function desDerive() {}
-  function desInit() {}
-  function desStep(h, fEn) {}
-  function desAlarms() {}
-  function desChooseH(c) {}
-  function desFault(id, on) {}
-  function desBalance(op, o) { return op === 'err' ? 0 : undefined; }
-  function desRig(phase, old, r, parts) { return ''; }
-  function desDump(cmd) { return { ok: false, msg: 'not available yet' }; }
-  function desSet(o) { return false; }
-  function desInternal(o) {}
+  // hot state (one object: V8 updates its double fields in place). PBu = pressure upstream of DS-101 (= ESD node), PD = its ΔP
+  // (5 s lag, as PB), X.PB = PBu − PD = choke inlet while DS-101 is in; s = choke-capacity coupling factor (§4.6)
+  var DX = { PBu: 0, PD: 0, PDraw: 0, Pacc: 0, th: 0, acc: 0, buf: 0, phaseT: 0, tSand: 0, s: 1, W: 0, capR: 0, passR: 0, dumpR: 0,
+    d50c: 0, Er: 0, Ef: 0, C2pr: 0, C2pf: 0, effCleanR: 0, effCleanF: 0, eff: 0, effClean: 0, C2ch: 0, ero: 0, loss: 0, vIn: 0,
+    dPexp: 0, accF0: 0, Tbleed: 0, tEv: -1 };   // tEv: end time of the substep while the dump sequence steps (event / lastT stamps)
+  // discrete state: dump phase (§4.4), latches and flags
+  var DS = { phase: 'idle', heldFrom: '', count: 0, lastT: null, failed: false, failMsg: '', autoBlocked: false, flowLim: false,
+    bleedHyd: false, dumpAuto: false, aborted: false, flowing: false, open: false };
+  // steady quantities (desDerive, §4.2) and the capture / C2 tables of the two size distributions (formation, flow-back)
+  var DD = { ok: false, pptb: 0, lbm: 0, d50: 150, sg: 2, d50fb: 400, sgfb: 1.5, m: 2, Wss: 0, vss: 0, gvf: 0, rho: 0, rhoSI: 0,
+    carrier: 'liquid', mu: 0, rhoC: 0, drho: 103, d50ss: 0, dPss: 0, cap: 663, bufCap: 265, bulk: 99, rating: 10000, sit: 0,
+    sitEst: true, ratingOK: true, tMax: 350, tempOK: true, vtss: 0, cmix: 0, eroCoef: 0, eroN: 2.6, vMin: 10, vMax: 60, tkey: '' };
+  var TB = { key: '', res: null, fb: null };
+  var DUMP_TXT = { isolate: 'isolating the accumulator', bleed: 'bleeding the accumulator', flush: 'XV-103 open, flushing sand to the skip',
+    equalise: 'equalising the accumulator with DS-101', reopen: 'reopening the accumulator isolation' };
+  // alarm / log texts of this section (MSG and the unit table are created above; these statements run at create time)
+  IMPU.mass = ' lb';
+  MSG.DES_DP_HIGH = function (v, l) {
+    var e = DX.dPexp;
+    return 'PDAH-103 ' + TAGS.desander + ' ΔP ' + uq(v, 'pressure') + (e > 0 ? ' = ' + (v / e).toFixed(1) + ' × clean' : '') + ' (limit ' + uq(l, 'pressure') +
+      '): plugged liner, packed accumulator or over-rate';
+  };
+  MSG.DES_DP_LOW = function (v, l) { return 'PDAL-103 ' + TAGS.desander + ' ΔP ' + uq(v, 'pressure') + ' ≤ ' + uq(l, 'pressure') + ': liner washed out — desander ineffective'; };
+  MSG.DES_LAH = function (v, l) { return 'LAH-103 ' + TAGS.desander + ' accumulator ' + rnd(v) + '% ≥ ' + rnd(l) + '% — dump the accumulator'; };
+  MSG.DES_LAHH = function (v, l) { return 'LAHH-103 ' + TAGS.desander + ' accumulator ' + rnd(v) + '% ≥ ' + rnd(l) + '% — capture falling, sand carried to the choke'; };
+  MSG.DES_DUMP_FAIL = function () { return 'XV-103 ' + TAGS.desander + ' dump failed — ' + (DS.failMsg || 'see the log') + ' (auto-dump blocked)'; };
+  MSG.DES_RATING = function () {
+    var t = [];
+    if (!DD.ratingOK) t.push(TAGS.desander + ' rating ' + uq(DD.rating, 'pressure', 0) + ' < max shut-in wellhead pressure ' + uq(DD.sit, 'pressureG', 0) +
+      (DD.sitEst ? ' (SITHP estimated as ' + num(cfg.ramp.sithpFactor, 1.2) + ' × WHP)' : '') + ': rating below the maximum shut-in wellhead pressure; not fit for this well (no relief valve)');
+    if (!DD.tempOK) t.push(TAGS.desander + ' wellhead temperature ' + uq(Twh_ss, 'temperature') + ' (class ' + uq(num(cfg.desander.tempMin_F, -50), 'temperature', 0) +
+      ' … ' + uq(DD.tMax, 'temperature', 0) + '): well temperature outside the desander temperature class');
+    return t.join(' · ');
+  };
+  MSG.DES_PSHH = function (v, l) { return 'PSHH-103 ' + TAGS.desander + ' inlet ' + uq(v, 'pressureG') + ' ≥ rating ' + uq(l, 'pressure', 0) + ' — ' + TAGS.esd + ' (upstream of ' + TAGS.desander + ') shuts in the well'; };
+  MSG.DES_RATE = function (v, l) {
+    return TAGS.desander + ' inlet velocity ' + uq(v, 'velocity') + (v < l ? ' < ' + uq(l, 'velocity', 0) + ': below turndown — weak swirl' : ' > ' + uq(l, 'velocity', 0) + ': over-rate — carry-over');
+  };
+  MSG.HYD_dsAcc = function (v, l) { return 'DS-101A accumulator (no-flow dead leg at ambient) ' + uq(v, 'temperature') + ' below hydrate ' + uq(l, 'temperature') + ' at ' + uq(DX.Pacc, 'pressureG') + ': hydrate / plugging risk'; };
+  MSG.HYD_dsBleed = function (v, l) { return 'XV-103 bleed gas ≈ ' + uq(v, 'temperature') + ' below hydrate ' + uq(l, 'temperature') + ': bleed-line hydrate / ice risk: inject methanol'; };
+  MSG.SAND_CHOKE = function (v, l) { return TAGS.choke + ' sand reaching the choke ' + uq(v, 'mass') + '/d > ' + uq(l, 'mass', 0) + '/d — bean / downstream erosion'; };
+  MSG.SAND_SEP = function (v, l) { return TAGS.separator + ' sand building up: ' + rnd(v) + '% of the water section below LSL (> ' + rnd(l) + '%) — jet / clean before the dumps plug'; };
+
+  function ensureTables() {
+    if (TB.key === DD.tkey && TB.res) return;
+    TB.res = sandTables(DD.d50, DD.sg, DD.m, DD.rhoSI); TB.fb = sandTables(DD.d50fb, DD.sgfb, DD.m, DD.rhoSI); TB.key = DD.tkey;
+  }
+  function sandOff() { quiet(Q_SAND); DX.W = 0; DX.capR = 0; DX.passR = 0; DX.ero = 0; DX.C2ch = 0; }
+  function desDerive() {
+    var C = cfg.desander, Cs = cfg.sand, E = isPlainObj(Cs.erosion) ? Cs.erosion : {}, FB = isPlainObj(Cs.flowback) ? Cs.flowback : {};
+    var fl = isPlainObj(flow.fluid) ? flow.fluid : {}, fc = isPlainObj(flow.choke) ? flow.choke : {};
+    // values read here are clamped to the §6.3 ranges (setConfig, project files and Mini WellOS as well as the host form)
+    DD.pptb = clamp(num(Cs.pptb, 0), 0, 500); DD.lbm = clamp(num(Cs.lbPerMMscf, 0), 0, 100); DD.d50 = clamp(num(Cs.d50_um, 150), 20, 1000);
+    DD.sg = clamp(num(Cs.sigmaG, 2), 1, 5); DD.d50fb = clamp(num(FB.d50_um, 400), 20, 2000); DD.sgfb = clamp(num(FB.sigmaG, 1.5), 1, 5);
+    DD.m = clamp(num(C.m, 2), 0.5, 6);
+    var rt = num(C.rating_psi, 10000); DD.rating = (rt === 5000 || rt === 10000 || rt === 15000) ? rt : 10000;
+    var ag = num(C.acc_gal, 50); ag = ag > 0 ? clamp(ag, 10, 200) : 50;
+    var rhoS = clamp(num(C.rhoSand, 165.4), 100, 300);
+    DD.bulk = rhoS * (1 - clamp(num(C.porosity, 0.4), 0, 0.9));
+    DD.cap = ag * 0.133681 * DD.bulk; DD.bufCap = clamp(num(C.buf_gal, 20), 1, 200) * 0.133681 * DD.bulk;
+    var sit = isNum(C.sithp_psig) ? clamp(C.sithp_psig, 100, 20000) : null;
+    DD.sitEst = sit === null; DD.sit = sit === null ? num(cfg.ramp.sithpFactor, 1.2) * Pwh_ss : sit;
+    DD.ratingOK = DD.rating >= DD.sit;
+    DD.tMax = num(isPlainObj(C.tempMax_F) ? C.tempMax_F[DD.rating] : null, 350);
+    DD.tempOK = Twh_ss >= num(C.tempMin_F, -50) && Twh_ss <= DD.tMax;
+    DD.vMin = num(C.vMin_fts, 10); DD.vMax = num(C.vMax_fts, 60);
+    DD.Wss = DD.pptb * (Qo + Qw) / 1000 + DD.lbm * Qg;
+    var was = sandOn;
+    sandOn = DD.pptb > 0 || DD.lbm > 0 || !!faults.sandFlowback;
+    if (was && !sandOn) sandOff();
+    // segment 1 (esd_choke) and the fluid block: inlet velocity, ΔP, carrier, cut size
+    var s1 = SS[1], Ap = PI / 4 * mpow(s1.ID / 12, 2), qT = s1.vel * Ap, qLiq = Qo + Qw;
+    var TF = Tesd_ss, TR = TF + RANK, Pa = mmax(Pci_ss + PSC, PSC);
+    var rhoO = num(fl.rhoOil, 62.4 * SGo), rhoW = num(fl.rhoWat, 62.4), Mg = num(fl.Mg, 28.9647 * SGg);
+    DD.rho = s1.rhom; DD.rhoSI = s1.rhom * 16.018463;
+    var liquid = qLiq >= 1e-6, mu, rc, fg = 1;
+    if (liquid) { var wc = Qw / qLiq; mu = (1 - wc) * sandMuDeadOil(API, TF) + wc * sandMuWater(TF); rc = (1 - wc) * rhoO + wc * rhoW; }
+    else { var Zd = Zf(Pa, TR); mu = sandMuGas(SGg, TF, Zd, Pa); rc = Pa * Mg / (Zd * 10.7316 * TR); }   // dry gas: gas carrier
+    DD.carrier = liquid ? 'liquid' : 'gas'; DD.mu = mu; DD.rhoC = rc; DD.drho = mmax(rhoS - rc, 1);
+    DD.eroN = num(E.n, 2.6);
+    DD.eroCoef = sandErosionReducer(1, 0.3048, s1.ID * 0.0254, bean / 64 * 0.0254, null, 0, E) / 0.0254;   // mpy per lb/d at 1 ft/s, C2 = 1
+    if (!isFin(DD.eroCoef)) DD.eroCoef = 0;
+    if (!(qT > 0)) { DD.ok = false; DD.gvf = 0; DD.vss = 0; DD.dPss = 0; DD.d50ss = DD.d50; DD.vtss = 0; DD.cmix = 0; }
+    else {
+      DD.ok = true;
+      DD.vss = qT / mmax(num(C.Ain_ft2, 0.0341), 1e-4);
+      DD.dPss = sandDp(DD.rho, DD.vss, num(C.K_dp, 6));
+      var gvf = clamp(1 - qLiq * BBL / 86400 / qT, 0, 1); DD.gvf = gvf;
+      if (liquid) { var kn = clamp(num(C.gvfKnee, 0.9), 0, 0.99); fg = 1 + num(C.gvfGain, 0.5) * mpow(mmax(0, (gvf - kn) / (1 - kn)), 2); }   // ASSUMPTION
+      DD.d50ss = sandCut(mu, DD.drho, DD.vss, C) * fg;
+      // bean impact velocity proxy: upstream-density continuity at the bean, gas expanded to the throat pressure (isothermal),
+      // capped by the homogeneous-mixture speed of sound at the throat
+      var b64 = bean / 64, Ured = b64 > 0 ? s1.vel * mpow(s1.ID / b64, 2) : 0;
+      var Pt = chk.regime === 'Critical' ? Pa * clamp(num(fc.rCrit, 0.55), 0.2, 0.99) : Pck_ss + PSC;
+      Pt = mmin(mmax(Pt, PSC), Pa);
+      var Z1 = Zf(Pa, TR), Zt = Zf(Pt, TR), phi = (Pa / Pt) * (Zt / Z1), den = (1 - gvf) + gvf * phi;
+      DD.vtss = Ured * den;
+      var gvft = den > 0 ? gvf * phi / den : 0, rgt = Pt * Mg / (Zt * 10.7316 * TR);
+      var cg = msqrt(mmax(num(cfg.sep.pcv.k, 1.28), 1) * Zt * 1545.35 * TR / mmax(Mg, 1) * 32.174);
+      DD.cmix = sandMixSound(gvft, rgt, cg, liquid ? rc : rhoO, num(E.cL_fts, 4000));
+      if (!isFin(DD.vtss)) DD.vtss = 0;
+      if (!isFin(DD.cmix)) DD.cmix = 0;
+    }
+    DD.tkey = [DD.d50, DD.sg, DD.d50fb, DD.sgfb, DD.m, DD.rhoSI].join('|');
+    if (rDes || sandOn) ensureTables();
+  }
+  // ΔP multiplier: liner faults, packed accumulator above the efficiency knee, passing bypass (10 % of the stream around it)
+  function desFactor(fill) {
+    var C = cfg.desander;
+    return (faults.desanderPlugged ? num(C.plugFactor, 3) : 1) * (faults.desanderWashout ? num(C.washFactor, 0.3) : 1) *
+      (1 + num(C.packDpGain, 10) * mmax(0, fill - num(C.effFillKnee, 0.9))) * (faults.desanderBypassPassing ? 0.81 : 1);
+  }
+  // cut size and capture now (fI = max(fInst, 1e-3)); a non-finite value keeps the last finite ones
+  function desPerf(fI) {
+    var C = cfg.desander, v = DX.vIn;
+    var dc = DD.d50ss / msqrt(fI) * (v < DD.vMin ? DD.vMin / v : 1) * (1 + 2 * mmax(0, v / DD.vMax - 1));
+    var d = dc * (faults.desanderWashout ? num(C.washCut, 3) : 1) * (faults.slugging ? num(C.slugCut, 1.5) : 1);
+    if (!isFin(d) || !(d > 0) || !isFin(dc) || !(dc > 0)) return;
+    var xr = clamp(mlog(d / DD.d50) / LN10, -3, 2), xf = clamp(mlog(d / DD.d50fb) / LN10, -3, 2);
+    DX.d50c = d; DX.Er = sandInterp(TB.res.E, xr); DX.Ef = sandInterp(TB.fb.E, xf);
+    DX.C2pr = sandInterp(TB.res.C2p, xr); DX.C2pf = sandInterp(TB.fb.C2p, xf);
+    DX.effCleanR = sandInterp(TB.res.E, clamp(mlog(dc / DD.d50) / LN10, -3, 2));
+    DX.effCleanF = sandInterp(TB.fb.E, clamp(mlog(dc / DD.d50fb) / LN10, -3, 2));
+  }
+  // choke capacity coupling (S, §4.6): local scale factor of the inflow law; critical gas by capacity ∝ P1 abs, otherwise √ΔP
+  function desCoupling() {
+    if (cfg.desander.chokeCoupling === false) { DX.s = 1; DS.flowLim = false; return; }
+    var r = 1;
+    if (chk.regime === 'Critical' && Qg > 0) {
+      var qe = Qg * limFac;                       // the rate the inflow law carries (= Qmax when the steady calc is already flow-limited)
+      r = (qe > 0 && chk.QmaxMMscfd > 0) ? chk.QmaxMMscfd * (Pci_ss - DX.PD + PSC) / (Pci_ss + PSC) / qe : 1;
+    } else { var dPc = Pci_ss - Pck_ss; r = dPc > 0 ? msqrt(mmax(0, 1 - DX.PD / dPc)) : 1; }
+    if (!isFin(r)) r = 1;
+    DX.s = r >= 1.02 ? 1 : (r <= 0.98 ? mmax(r, 0) : (1 + r) / 2 - ((r - 1) * (r - 1) + 0.0004) / 0.08);   // C1-smooth minimum
+    if (!DS.flowLim && r < 0.99) DS.flowLim = true; else if (DS.flowLim && r > 1.0) DS.flowLim = false;   // 1 % hysteresis
+  }
+  function desInit() {
+    DS.phase = 'idle'; DS.heldFrom = ''; DS.count = 0; DS.lastT = null; DS.failed = false; DS.failMsg = ''; DS.autoBlocked = false;
+    DS.flowLim = false; DS.bleedHyd = false; DS.dumpAuto = false; DS.aborted = false; DS.flowing = false; DS.open = false;
+    DX.acc = 0; DX.buf = 0; DX.phaseT = 0; DX.tSand = 0; DX.s = 1; DX.W = 0; DX.capR = 0; DX.passR = 0; DX.dumpR = 0; DX.C2ch = 0;
+    DX.ero = 0; DX.loss = 0; DX.accF0 = 0; DX.th = X.theta; DX.d50c = DD.d50ss; DX.eff = 0; DX.effClean = 0; DX.vIn = 0; DX.dPexp = 0;
+    DX.PBu = X.PB; DX.PD = 0; DX.PDraw = 0; DX.Tbleed = 0;
+    if (rDes) {
+      ensureTables();
+      if (mode === 'steady' && DD.ok) {           // t = 0 at steady flow: the desander ΔP is already established (no start-up transient)
+        DS.flowing = true;
+        DX.vIn = mmax(DD.vss * X.fInst, 0.1); DX.dPexp = DD.dPss * X.fInst * X.fInst;
+        if (!ctl.desander.bypass) { DX.PDraw = DX.dPexp * desFactor(0); DX.PD = DX.PDraw; }
+        X.PB = DX.PBu - DX.PD;
+        desPerf(X.fInst > 1e-3 ? X.fInst : 1e-3);
+        DX.effClean = DX.effCleanR; DX.eff = ctl.desander.bypass ? 0 : DX.Er;
+        desCoupling();
+      }
+    }
+    DX.Pacc = X.PB;
+  }
+  // per substep (§4.3, §4.4; only while DS-101 is in or sand is on)
+  function desStep(h, fEn) {
+    var C = cfg.desander;
+    if (TB.key !== DD.tkey || !TB.res) ensureTables();
+    var fI = X.fInst > 1e-3 ? X.fInst : 1e-3, flowing = fEn > 0.01 && DD.ok, byp = !!ctl.desander.bypass;
+    var Wres = 0, Wfb = 0, W = 0, a = 0, capt = 0, sh = 0, iso = false, cyc = false;
+    DS.flowing = flowing;
+    if (rDes) {
+      if (DS.phase !== 'idle' && DS.phase !== 'held' && esdS.tripped) desHold();
+      var fill = DS.phase !== 'idle' ? DX.buf / DD.bufCap : DX.acc / DD.cap;
+      DX.vIn = flowing ? mmax(DD.vss * X.fInst, 0.1) : 0;
+      DX.dPexp = flowing ? DD.dPss * X.fInst * X.fInst : 0;
+      DX.PDraw = (flowing && !byp) ? DX.dPexp * desFactor(fill) : 0;
+      DX.PD += (DX.PDraw - DX.PD) * (1 - mexp(-h / 5));
+      X.PB = DX.PBu - DX.PD;                      // choke inlet: a ΔP step moves only the choke inlet, smoothly
+      var thT = X.f > 0.05 ? 1 : 0, wf = num(C.warmFactor, 3);
+      DX.th += (thT - DX.th) * (1 - mexp(-h / (wf * (thT > DX.th ? cfg.ramp.warmTau : cfg.ramp.coolTau))));   // vessel mass: 3 × the pipe lag
+      desCoupling();
+      if (flowing && !byp) {
+        cyc = true;
+        desPerf(fI);
+        a = clamp((1 - fill) / mmax(1 - num(C.effFillKnee, 0.9), 1e-6), 0, 1) * (1 - (faults.desanderBypassPassing ? num(C.bypassLeak, 0.1) : 0));
+      }
+      DX.tEv = X.t + h; desDumpStep(h); DX.tEv = -1;   // phase ends fall at the end of this substep
+      iso = DS.phase !== 'idle';
+    }
+    if (sandOn && flowing) {
+      var Cs = cfg.sand, FB = Cs.flowback, rx = num(Cs.rateExp, 1.5);
+      Wres = DD.Wss > 0 ? DD.Wss * mpow(fI, rx) : 0;
+      if (faults.sandFlowback) {
+        Wfb = 24 * num(FB.W0_lbph, 200) * mexp(-DX.tSand / mmax(num(FB.tau_h, 6) * 3600, 1)) * mpow(fI < 1.5 ? fI : 1.5, rx);
+        DX.tSand += h;
+      }
+      W = Wres + Wfb;
+      var Wd = W * h / 86400;
+      if (a > 0) {
+        var room = iso ? mmax(0, DD.bufCap - DX.buf) : mmax(0, DD.cap - DX.acc);
+        var ideal = (DX.Er * Wres + DX.Ef * Wfb) * a * h / 86400;
+        capt = mmin(mmax(ideal, 0), mmin(room, Wd));
+        sh = ideal - capt; if (!(sh > 0)) sh = 0;
+      }
+      if (!isFin(Wd) || !isFin(capt) || !isFin(sh)) { capt = 0; sh = 0; if (!isFin(Wd)) { Wd = 0; W = 0; Wres = 0; Wfb = 0; } }
+      var pass = Wd - capt;
+      if (iso) DX.buf += capt; else DX.acc += capt;
+      cum.sandIn += Wd; cum.sandCapt += capt; cum.sandToChoke += pass;
+      if (rSep) cum.sandToSep += pass; else cum.sandToFlare += pass;
+      // particle-size factor of what reaches the choke: what bypasses the cyclone at the inlet C2, the fine tail it passes,
+      // and any room-limited shortfall at the inlet C2 (DS-101 out or bypassed: the inlet mix)
+      var c2r = TB.res.C2in, c2f = TB.fb.C2in, c2m = W > 0 ? (Wres * c2r + Wfb * c2f) / W : c2r, C2ch = c2m;
+      if (cyc) {
+        var nm = Wres * ((1 - a) * c2r + a * (1 - DX.Er) * DX.C2pr) + Wfb * ((1 - a) * c2f + a * (1 - DX.Ef) * DX.C2pf);
+        var dn = Wres * ((1 - a) + a * (1 - DX.Er)) + Wfb * ((1 - a) + a * (1 - DX.Ef)), sr = sh * 86400 / h;
+        nm += sr * c2m; dn += sr;
+        C2ch = dn > 1e-12 ? nm / dn : c2m;
+      }
+      DX.W = W; DX.capR = capt * 86400 / h; DX.passR = pass * 86400 / h; DX.C2ch = isFin(C2ch) ? C2ch : 0;
+      var Up = mmin(DD.vtss * X.fInst, DD.cmix);
+      var ero = (DX.passR > 0 && Up > 0) ? DD.eroCoef * DX.passR * mpow(Up, DD.eroN) * DX.C2ch : 0;
+      DX.ero = isFin(ero) ? ero : 0;
+      DX.loss += DX.ero / 365.25 * h / 86400;
+    } else { DX.W = 0; DX.capR = 0; DX.passR = 0; DX.ero = 0; DX.C2ch = 0; }
+    if (cyc) {
+      var wr = W > 0 ? Wres / W : 1, wb = W > 0 ? Wfb / W : 0;
+      DX.eff = a * (DX.Er * wr + DX.Ef * wb); DX.effClean = DX.effCleanR * wr + DX.effCleanF * wb;
+    } else DX.eff = 0;
+  }
+  // ── dump sequence (§4.4): isolate → bleed → flush → equalise → reopen, scalar accumulator pressure, two interlocks ──
+  function desEmit(phase, msg, isAuto) {
+    logEntry('event', 'DS_DUMP', null, TAGS.dsDump, msg);
+    emit('dump', { type: 'dump', t: DX.tEv >= 0 ? DX.tEv : X.t, phase: phase, msg: msg, auto: !!isAuto });
+  }
+  function desStart(isAuto) {
+    DS.phase = 'isolate'; DS.heldFrom = ''; DX.phaseT = 0; DS.dumpAuto = !!isAuto; DS.aborted = false; DS.bleedHyd = false; DS.open = false;
+    desEmit('isolate', TAGS.desander + ' dump started: ' + DUMP_TXT.isolate + (isAuto ? ' (auto-dump at ' + rnd0(ctl.desander.sp * 100) + '%)' : ''), isAuto);
+    noteControl('desander', 'dump', isAuto, TAGS.desander + ' dump started');
+  }
+  function desPhase(next, why) {
+    var Dc = cfg.desander.dump, to = num(Dc.bleedTo_psig, 50);
+    DS.phase = next; DX.phaseT = 0; DS.open = false;
+    var msg = TAGS.desander + ' dump: ' + (why ? why + ' — ' : '') + DUMP_TXT[next];
+    if (next === 'flush') DX.accF0 = DX.acc;
+    if (next === 'bleed') {
+      msg += ' to below ' + uq(to, 'pressureG', 0);
+      // bleed-line hydrate check at bleed start (J-T estimate of the gas let down to the skip); held to the end of the dump
+      var Td = Tamb + (Tesd_ss - Tamb) * DX.th;
+      DX.Tbleed = Td - 0.07 * chk.wJT * mmax(0, X.PB - to);
+      DS.bleedHyd = DX.Tbleed < Thyd(to + PSC);
+    }
+    desEmit(next, msg, DS.dumpAuto);
+  }
+  function desFail(msg) {
+    DS.failed = true; DS.failMsg = msg; DS.autoBlocked = true;
+    desEmit(DS.phase, TAGS.desander + ' dump failed: ' + msg, DS.dumpAuto);
+  }
+  function desHold() {
+    DS.heldFrom = DS.phase; DS.phase = 'held'; DS.open = false;
+    desEmit('held', TAGS.desander + ' dump held at ' + DS.heldFrom + ': ESD tripped — XV-103 and the bleed shut, accumulator isolated; resume or abort after the ESD reset', DS.dumpAuto);
+  }
+  function desFinish() {
+    var mv = mmax(0, mmin(DX.buf, DD.cap - DX.acc)), ok = !DS.failed && !DS.aborted;
+    DX.acc += mv; DX.buf -= mv;
+    if (ok) { DS.count++; DS.lastT = DX.tEv >= 0 ? DX.tEv : X.t; }
+    var how = DS.aborted ? 'aborted' : DS.failed ? 'ended without dumping (' + DS.failMsg + ')' : 'complete';
+    DS.phase = 'idle'; DS.heldFrom = ''; DX.phaseT = 0; DS.bleedHyd = false; DS.open = false; DS.aborted = false; DX.Pacc = X.PB;
+    desEmit('idle', TAGS.desander + ' dump ' + how + ': isolation open, ' + rnd0(mv) + ' lb moved from the buffer to the accumulator', DS.dumpAuto);
+  }
+  function desDumpStep(h) {
+    var Dc = cfg.desander.dump, ph = DS.phase, PB = X.PB, P = DX.Pacc, to = num(Dc.bleedTo_psig, 50);
+    var kI = (ph !== 'idle' && faults.desanderIsoPassing) ? 1 / mmax(num(Dc.isoPassTauS, 30), 0.1) : 0;   // upper isolation passing
+    DS.open = false; DX.dumpR = 0;
+    if (ph === 'idle') {
+      if (!ctl.desander.bypass) DX.Pacc = PB;      // isolation open: the accumulator sits at the desander pressure
+      if (ctl.desander.auto && !esdS.tripped && !DS.autoBlocked && DX.acc >= ctl.desander.sp * DD.cap - 1e-9) desStart(true);
+      return;
+    }
+    if (ph === 'held') { if (kI > 0) DX.Pacc = PB + (P - PB) * mexp(-kI * h); return; }
+    DX.phaseT += h;
+    var pT = DX.phaseT;
+    var kB = (ph === 'bleed' || ph === 'flush') ? 4 / mmax(num(Dc.bleedS, 300), 1) : 0;    // bleed open to the skip (τ = bleedS/4)
+    var kE = ph === 'equalise' ? 4 / mmax(num(Dc.equalS, 120), 1) : 0;                     // equalising line open (τ = equalS/4)
+    if (ph === 'reopen') DX.Pacc = PB;
+    else { var k = kB + kE + kI; if (k > 0) { var Peq = (kE + kI) * PB / k; DX.Pacc = Peq + (P - Peq) * mexp(-k * h); } }
+    if (ph === 'isolate') { if (pT >= num(Dc.isoS, 8) - 1e-9) desPhase('bleed'); }
+    else if (ph === 'bleed') {
+      if (pT >= num(Dc.bleedS, 300) - 1e-9 && DX.Pacc < to) desPhase('flush');          // interlock 1: flush only once bled
+      else if (pT >= num(Dc.bleedTimeoutS, 600) - 1e-9) { desFail('accumulator not bled — upper isolation passing?'); desPhase('equalise', 'no flush'); }
+    } else if (ph === 'flush') {
+      var stuck = !!faults.desanderDumpStuck, fS = mmax(num(Dc.flushS, 600), 1);
+      DS.open = !stuck && DX.Pacc < to;            // XV-103 opens only with the isolation shut and the accumulator bled
+      if (DS.open) {
+        var rm = pT >= fS - 1e-9 ? DX.acc : mmin(DX.acc, DX.accF0 * h / fS);
+        DX.acc -= rm; cum.sandDumped += rm; DX.dumpR = rm * 86400 / h;
+      }
+      if (pT >= fS - 1e-9) { if (stuck) desFail('dump valve did not open'); desPhase('equalise'); }
+    } else if (ph === 'equalise') {
+      if (pT >= num(Dc.equalS, 120) - 1e-9 && mabs(PB - DX.Pacc) < num(Dc.equalTol_psi, 75)) desPhase('reopen');   // interlock 2
+    } else if (ph === 'reopen') {
+      if (pT >= num(Dc.reopenS, 8) - 1e-9) desFinish();
+    }
+  }
+  // time to the end of the current phase (event location) and to the end of the whole sequence (snapshot left_s)
+  function desPhaseLeft() {
+    var Dc = cfg.desander.dump, ph = DS.phase, pT = DX.phaseT, to = num(Dc.bleedTo_psig, 50), tol = num(Dc.equalTol_psi, 75);
+    if (ph === 'isolate') return num(Dc.isoS, 8) - pT;
+    if (ph === 'bleed') {
+      var tp = faults.desanderIsoPassing ? Infinity : (DX.Pacc > to ? num(Dc.bleedS, 300) / 4 * mlog(DX.Pacc / to) : 0);
+      return mmin(mmax(num(Dc.bleedS, 300) - pT, tp), num(Dc.bleedTimeoutS, 600) - pT);
+    }
+    if (ph === 'flush') return num(Dc.flushS, 600) - pT;
+    if (ph === 'equalise') { var d = mabs(X.PB - DX.Pacc); return mmax(num(Dc.equalS, 120) - pT, d > tol ? num(Dc.equalS, 120) / 4 * mlog(d / tol) : 0); }
+    if (ph === 'reopen') return num(Dc.reopenS, 8) - pT;
+    return Infinity;
+  }
+  function desLeft() {
+    var Dc = cfg.desander.dump, ph = DS.phase, PB = mmax(X.PB, 0), to = num(Dc.bleedTo_psig, 50), tol = num(Dc.equalTol_psi, 75);
+    if (ph === 'idle' || ph === 'held') return 0;
+    var bS = num(Dc.bleedS, 300), eS = num(Dc.equalS, 120), fS = num(Dc.flushS, 600), rS = num(Dc.reopenS, 8);
+    var bN = mmax(bS, PB > to ? bS / 4 * mlog(PB / to) : 0), eN = mmax(eS, PB > tol ? eS / 4 * mlog(PB / tol) : 0);
+    var cur = mmax(0, desPhaseLeft()); if (!isFin(cur)) cur = mmax(0, num(Dc.bleedTimeoutS, 600) - DX.phaseT);
+    var rest = ph === 'isolate' ? bN + fS + eN + rS : ph === 'bleed' ? fS + eN + rS : ph === 'flush' ? eN + rS : ph === 'equalise' ? rS : 0;
+    return cur + rest;
+  }
+  function desChooseH(c) {
+    if (!rDes) return;
+    var x = desPhaseLeft();
+    if (DS.phase === 'idle' && ctl.desander.auto && !DS.autoBlocked && DX.capR > 0) x = (ctl.desander.sp * DD.cap - DX.acc) / (DX.capR / 86400);
+    if (x >= 0 && x < c.te) c.te = x;
+  }
+  function desAlarms() {
+    var A, C = cfg.desander;
+    if (rDes) {
+      var fl = DS.flowing, byp = !!ctl.desander.bypass, ex = DX.dPexp, PD = DX.PD, hi = num(C.dpAlarmHi, 75), lowMin = num(C.dpLowMin, 2);
+      var thr = ex >= lowMin ? mmax(num(C.dpHighRatio, 2) * ex, ex + num(C.dpHighAdd, 5)) : Infinity, lim = mmin(thr, hi);
+      A = aDef('DES_DP_HIGH', 'PDAH-103', 'alarm', 'desander', 'p');
+      evalA(A, fl && !byp && PD >= lim, !fl || byp || PD < 0.9 * lim, PD, lim, MSG.DES_DP_HIGH, true);
+      var lo = num(C.dpLowFrac, 0.5) * ex, lowOn = fl && !byp && ex >= lowMin;
+      A = aDef('DES_DP_LOW', 'PDAL-103', 'warn', 'desander', 'p');
+      evalA(A, lowOn && PD < lo && DX.PDraw < lo, !lowOn || PD >= 1.1 * lo, PD, lo, MSG.DES_DP_LOW, true);
+      var af = DX.acc / DD.cap, db = cfg.alarm.levelDB, lah = num(C.lah, 0.8), lahh = num(C.lahh, 0.95);
+      var full = DX.acc >= DD.cap - 1e-9 && DX.buf >= DD.bufCap - 1e-9;
+      A = aDef('DES_LAH', 'LAH-103', 'alarm', 'desander', 'l');
+      evalA(A, af >= lah, af < lah - db, af * 100, lah * 100, MSG.DES_LAH, true);
+      A = aDef('DES_LAHH', 'LAHH-103', 'alarm', 'desander', 'l');
+      evalA(A, af >= lahh || full, af < lahh - db && !full, af * 100, lahh * 100, MSG.DES_LAHH, true);
+      A = aDef('DES_DUMP_FAIL', TAGS.dsDump, 'alarm', 'desander', 'b');
+      evalA(A, DS.failed, !DS.failed, null, null, MSG.DES_DUMP_FAIL, false);
+      var bad = !DD.ratingOK || !DD.tempOK;
+      A = aDef('DES_RATING', TAGS.desander, 'alarm', 'desander', 'd');
+      evalA(A, bad, !bad, DD.ratingOK ? Twh_ss : DD.sit, DD.ratingOK ? DD.tMax : DD.rating, MSG.DES_RATING, false);
+      // PSHH-103: the one desander trip (ESD; SDV-101 is upstream of DS-101, so the shut-in protects it)
+      A = aDef('DES_PSHH', 'PSHH-103', 'trip', 'desander', 'p');
+      evalA(A, fl && DX.PBu >= DD.rating, !fl || DX.PBu < 0.99 * DD.rating, DX.PBu, DD.rating, MSG.DES_PSHH, false);
+      var v = DX.vIn, out = fl && !byp && (v < DD.vMin || v > DD.vMax), back = !fl || byp || (v >= 1.05 * DD.vMin && v <= 0.95 * DD.vMax);
+      A = aDef('DES_RATE', TAGS.desander, 'warn', 'desander', 'b', true);   // grace: not during start-up
+      evalA(A, out, back, v, v < DD.vMin ? DD.vMin : DD.vMax, MSG.DES_RATE, true);
+      var thA = Thyd(mmax(DX.Pacc + PSC, 15)), hA = Tamb < thA && DX.Pacc > 10;
+      A = aDef('HYD_dsAcc', 'DS-101A', 'hyd', 'desander', 'd');
+      evalA(A, hA, !hA, Tamb, thA, MSG.HYD_dsAcc, true);
+      A = aDef('HYD_dsBleed', TAGS.dsDump, 'hyd', 'desander', 'd');
+      evalA(A, DS.bleedHyd, !DS.bleedHyd, DX.Tbleed, Thyd(num(C.dump.bleedTo_psig, 50) + PSC), MSG.HYD_dsBleed, false);
+    }
+    if (!sandOn) return;
+    // sand reaching the choke (any rig-up): warn above 5 lb/d, alarm above 50 lb/d (10 % hysteresis on both)
+    var Cs = cfg.sand, w = DX.passR, wL = num(Cs.chokeWarn_lbd, 5), aL = num(Cs.chokeAlarm_lbd, 50);
+    A = aDef('SAND_CHOKE', TAGS.choke, 'warn', 'choke', 'b');
+    var on = A.active ? w >= 0.9 * wL : w > wL, hiS = (A.active && A.sev === 'alarm') ? w >= 0.9 * aL : w > aL, sev = hiS ? 'alarm' : 'warn';
+    if (on && A.active && A.sev !== sev) clearA(A);
+    if (A.sev !== sev) { A.sev = sev; A.pub.sev = sev; alarmsDirty = true; }
+    if (on && !A.active) raise(A, w, hiS ? aL : wL, MSG.SAND_CHOKE(w, hiS ? aL : wL));
+    else if (on) { A.value = w; A.limit = hiS ? aL : wL; A.msg = MSG.SAND_CHOKE(w, A.limit); }
+    else if (A.active) clearA(A);
+    var sf = desSepFrac(), sl = num(Cs.sepWarnFrac, 0.1);
+    A = aDef('SAND_SEP', TAGS.separator, 'warn', 'separator', 'l');
+    evalA(A, rSep && sf >= sl, !rSep || sf < 0.95 * sl, sf * 100, sl * 100, MSG.SAND_SEP, true);
+  }
+  // bulk sand volume in V-101 as a fraction of the water-section volume below the water LSL
+  function desSepFrac() { var v = VW_lo * BBL; return v > 1e-9 ? cum.sandToSep / mmax(DD.bulk, 1) / v : 0; }
+  function desFault(id, on) {
+    if (id !== 'sandFlowback') return;
+    if (on) DX.tSand = 0;                          // the flow-back clock starts when the scenario is switched on
+    var was = sandOn;
+    sandOn = DD.pptb > 0 || DD.lbm > 0 || !!faults.sandFlowback;
+    if (was && !sandOn) sandOff();
+    if (sandOn) ensureTables();
+  }
+  // sand balance (exact identities): in = caught + to the choke; caught = accumulator + buffer + dumped; to the choke = to V-101 + to
+  // the flare. Residuals below 1e−12 of the throughput are double-precision rounding and read as 0.
+  function desBalance(op, o) {
+    if (op === 'zero') { o.sandIn = 0; o.sandCapt = 0; o.sandToChoke = 0; o.sandToSep = 0; o.sandToFlare = 0; o.sandDumped = 0; return undefined; }
+    if (op !== 'err') return undefined;
+    var c = cum, r1 = c.sandIn - (c.sandCapt + c.sandToChoke), r2 = c.sandCapt - (DX.acc + DX.buf + c.sandDumped),
+      r3 = c.sandToChoke - (c.sandToSep + c.sandToFlare);
+    var e = mmax(mabs(r1), mabs(r2), mabs(r3)) / mmax(c.sandIn, 1);
+    return isFin(e) ? (e < 1e-12 ? 0 : e) : 1;
+  }
+  function desRig(phase, old, r, parts) {
+    if (phase !== 'apply') return '';             // 'check': DS-101 never refuses a rig-up change
+    if (r.desander && !old.desander) {            // entering: the upstream law starts from the choke inlet, ΔP builds with its lag
+      DX.PBu = X.PB; DX.PD = 0; DX.PDraw = 0; DX.Pacc = X.PB; DX.phaseT = 0; DX.th = X.theta; DX.s = 1;
+      DS.phase = 'idle'; DS.heldFrom = ''; DS.flowLim = false; DS.open = false;
+      ensureTables();
+    } else if (!r.desander && old.desander) {     // leaving: abort a running or held dump (buffer → accumulator, capped), release its alarms
+      if (DS.phase !== 'idle') {
+        var mv = mmax(0, mmin(DX.buf, DD.cap - DX.acc));
+        DX.acc += mv; DX.buf -= mv;
+        DS.phase = 'idle'; DS.heldFrom = ''; DX.phaseT = 0; DS.bleedHyd = false; DS.open = false; DS.aborted = false;
+        logEntry('event', 'DS_DUMP', null, TAGS.dsDump, 'dump aborted: DS-101 out of the rig-up');
+        emit('dump', { type: 'dump', t: X.t, phase: 'idle', msg: 'dump aborted: DS-101 out of the rig-up', auto: false });
+        parts.push(TAGS.desander + ' dump aborted');
+      }
+      quiet(Q_DES);
+      DX.PD = 0; DX.PDraw = 0; DX.s = 1; DS.flowLim = false; DS.flowing = false;   // the legacy PB law takes over from the current X.PB
+    }
+    return '';
+  }
+  function desDump(cmd) {
+    var c = (cmd === undefined || cmd === null) ? 'start' : String(cmd), ph = DS.phase, why = '';
+    if (c !== 'start' && c !== 'resume' && c !== 'abort') return { ok: false, msg: 'unknown command ' + c };
+    if (!rDes) why = TAGS.desander + ' is out of the rig-up';
+    else if (esdS.tripped) why = 'ESD tripped — reset the ESD first';
+    else if (c === 'start' && ph !== 'idle') why = ph === 'held' ? 'a dump is held — resume or abort it' : 'a dump is already running';
+    else if (c === 'resume' && ph !== 'held') why = 'no held dump to resume';
+    else if (c === 'abort' && ph === 'idle') why = 'no dump to abort';
+    else if (c === 'abort' && (ph === 'equalise' || ph === 'reopen')) why = 'the dump is already ' + (ph === 'equalise' ? 'equalising' : 'reopening');
+    if (why) { logEntry('event', 'DS_DUMP', null, TAGS.dsDump, TAGS.desander + ' dump ' + c + ' refused — ' + why); return { ok: false, msg: why }; }
+    if (c === 'start') {
+      DS.failed = false; DS.failMsg = ''; DS.autoBlocked = false;   // DES_DUMP_FAIL clears and auto-dump is re-armed by a manual start
+      desStart(false);
+      return { ok: true, msg: TAGS.desander + ' dump started' };
+    }
+    if (c === 'resume') {
+      var to = DS.heldFrom || 'equalise';
+      DS.phase = to; DS.heldFrom = '';            // the elapsed time of the interrupted phase is kept; its gates still apply
+      desEmit(to, TAGS.desander + ' dump resumed: ' + DUMP_TXT[to], false);
+      return { ok: true, msg: TAGS.desander + ' dump resumed (' + to + ')' };
+    }
+    DS.aborted = true; DS.heldFrom = '';
+    desPhase('equalise', 'aborted, nothing more released');
+    return { ok: true, msg: TAGS.desander + ' dump aborted: equalising, then reopening' };
+  }
+  function desSetNow(o, isAuto) {
+    var C = ctl.desander, ch = false, msg;
+    if (typeof o.bypass === 'boolean' && o.bypass !== C.bypass) {
+      C.bypass = o.bypass; ch = true;
+      msg = C.bypass ? TAGS.dsBypass + ' open, ' + TAGS.desander + ' blocked in (bypass line-up; it stays pressurised until bled — Dump sand bleeds it)'
+        : TAGS.dsBypass + ' closed, ' + TAGS.desander + ' back in line';
+      logEntry('event', 'DS_BYPASS', null, TAGS.dsBypass, msg);
+      noteControl('desander', 'bypass', isAuto, msg);
+    }
+    var au = isPlainObj(o.auto) ? o.auto : null;
+    if (au) {
+      var on0 = C.auto, sp0 = C.sp;
+      if (typeof au.on === 'boolean') C.auto = au.on;
+      if (isNum(au.sp)) C.sp = clamp(au.sp, 0.5, 0.95);
+      if (C.auto !== on0 || C.sp !== sp0) {
+        ch = true;
+        msg = TAGS.desander + ' auto-dump ' + (C.auto ? 'ON' : 'OFF') + ' (SP ' + rnd0(C.sp * 100) + '%; assumes an attended, interlocked dump system)';
+        logEntry('event', 'AUTO', null, TAGS.desander, msg);
+        noteControl('desander', 'auto', isAuto, msg);
+      }
+    }
+    return ch;
+  }
+  function desSet(o) {
+    if (!isPlainObj(o) || !rDes) return false;    // the bypass line-up and auto-dump are set while DS-101 is in the rig-up
+    return desSetNow(o, false);
+  }
+  function desInternal(o) {
+    o.des = { PD: DX.PD, PDraw: DX.PDraw, PBu: DX.PBu, s: DX.s, flowLim: DS.flowLim, Pacc: DX.Pacc, acc: DX.acc, buf: DX.buf,
+      phase: DS.phase, phaseT: DX.phaseT, tSand: DX.tSand, dPss: DD.dPss, d50ss: DD.d50ss, vss: DD.vss, vtss: DD.vtss, cmix: DD.cmix,
+      eroCoef: DD.eroCoef, Wss: DD.Wss, cap: DD.cap, bufCap: DD.bufCap, sandOn: sandOn, qE: [qgE, qoE, qwE], Pci: Pci_ss, Pck: Pck_ss,
+      cum: { in: cum.sandIn, capt: cum.sandCapt, toChoke: cum.sandToChoke, toSep: cum.sandToSep, toFlare: cum.sandToFlare, dumped: cum.sandDumped } };
+  }
   function desCtl(src, initial) {
     var C = ctl.desander;
+    if (!initial && rDes) { desSetNow({ bypass: src.bypass, auto: { on: src.auto, sp: src.sp } }, false); return; }
     if (typeof src.bypass === 'boolean') C.bypass = src.bypass;
     if (typeof src.auto === 'boolean') C.auto = src.auto;
     if (isNum(src.sp)) C.sp = clamp(src.sp, 0.5, 0.95);
   }
-  function desHist(i) { H.k.dsAccFrac[i] = 0; H.k.dsDP[i] = 0; H.k.sandChoke[i] = 0; }
-  // static snapshot values (DS-101 out, sand off): the desander follows the choke inlet (X.PB), nothing flows through it
+  function desHist(i) {
+    H.k.dsAccFrac[i] = rDes ? DX.acc / DD.cap : 0; H.k.dsDP[i] = rDes ? DX.PD : 0; H.k.sandChoke[i] = sandOn ? DX.passR : 0;
+  }
+  // snapshot blocks (§6.4): live while DS-101 is in / sand is on; static values otherwise (the desander follows the choke inlet X.PB)
   function desRefresh(s) {
-    var d = s.desander, sd = s.sand, nd = s.nodes.desander, N = s.nodes, C = cfg.desander, Cs = cfg.sand, E = Cs.erosion;
-    var rating = num(C.rating_psi, 10000), sit = isNum(C.sithp_psig) ? C.sithp_psig : cfg.ramp.sithpFactor * Pwh_ss;
-    var tMax = num(C.tempMax_F && C.tempMax_F[rating], 350), capLb = num(C.acc_gal, 50) * 0.133681 * num(C.rhoSand, 165.4) * (1 - num(C.porosity, 0.4));
-    d.inRig = rDes; d.bypass = !!ctl.desander.bypass; d.Pin = X.PB; d.Pout = X.PB; d.T = N.esd.T; d.Tout = N.esd.T;
-    d.sand.cap_lb = capLb; d.sand.bufCap_lb = num(C.buf_gal, 20) * 0.133681 * num(C.rhoSand, 165.4) * (1 - num(C.porosity, 0.4));
-    d.sand.lah = num(C.lah, 0.8); d.sand.lahh = num(C.lahh, 0.95);
-    d.auto.on = !!ctl.desander.auto; d.auto.sp = ctl.desander.sp;
-    d.rating_psi = rating; d.sithp_psi = sit; d.sithpEst = !isNum(C.sithp_psig); d.ratingOK = rating >= sit; d.tempMax_F = tMax;
-    d.tempOK = Twh_ss >= num(C.tempMin_F, -50) && Twh_ss <= tMax;
-    nd.P = X.PB; nd.Pin = X.PB; nd.dP = 0; nd.T = N.esd.T; nd.Tout = N.esd.T; nd.Tacc = Tamb; nd.th = N.esd.th; nd.hyd = false;
-    sd.on = sandOn; sd.pptb = num(Cs.pptb, 0); sd.lbPerMMscf = num(Cs.lbPerMMscf, 0); sd.d50_um = num(Cs.d50_um, 150); sd.sigmaG = num(Cs.sigmaG, 2);
-    sd.flowback.on = !!faults.sandFlowback; sd.flowback.W0_lbph = num(Cs.flowback.W0_lbph, 200); sd.flowback.tau_h = num(Cs.flowback.tau_h, 6);
-    sd.flowback.d50_um = num(Cs.flowback.d50_um, 400); sd.flowback.sigmaG = num(Cs.flowback.sigmaG, 1.5);
-    var perDay = num(E.allowance_mil, 125) / mmax(num(E.testH, 72) / 24, 1e-6);
-    sd.choke.warn_mild = num(E.warnFrac, 0.05) * perDay; sd.choke.high_mild = num(E.highFrac, 0.5) * perDay;
+    var d = s.desander, sd = s.sand, nd = s.nodes.desander, N = s.nodes, C = cfg.desander, Cs = cfg.sand, E = Cs.erosion, FB = Cs.flowback;
+    var byp = !!ctl.desander.bypass, fl = rDes && DS.flowing, ph = DS.phase, dm = d.dump, ds = d.sand;
+    d.inRig = rDes; d.bypass = byp;
+    ds.acc_lb = DX.acc; ds.acc_frac = DX.acc / DD.cap; ds.cap_lb = DD.cap; ds.buf_lb = DX.buf; ds.buf_frac = DX.buf / DD.bufCap; ds.bufCap_lb = DD.bufCap;
+    ds.lah = num(C.lah, 0.8); ds.lahh = num(C.lahh, 0.95);
+    dm.phase = ph; dm.heldFrom = DS.heldFrom; dm.phaseT_s = ph === 'idle' ? 0 : DX.phaseT; dm.left_s = desLeft(); dm.open = DS.open && ph === 'flush';
+    dm.count = DS.count; dm.lastT = DS.lastT; dm.failed = DS.failed; dm.failMsg = DS.failMsg;
+    d.auto.on = !!ctl.desander.auto; d.auto.sp = ctl.desander.sp; d.auto.blocked = DS.autoBlocked;
+    d.rating_psi = DD.rating; d.sithp_psi = DD.sit; d.sithpEst = DD.sitEst; d.ratingOK = DD.ratingOK; d.tempMax_F = DD.tMax; d.tempOK = DD.tempOK;
+    d.carrier = DD.carrier;
+    if (rDes) {
+      var Tn = Tamb + (Tesd_ss - Tamb) * DX.th, To = Tn - 0.07 * chk.wJT * DX.PD;
+      d.Pin = DX.PBu; d.Pout = X.PB; d.dP_psi = DX.PD; d.dPclean_psi = DD.dPss; d.dPexp_psi = DX.dPexp; d.dPdesign_psi = DD.dPss;
+      d.T = Tn; d.Tout = To; d.vIn_fts = DX.vIn;
+      d.rate = (!fl || byp) ? 'none' : (DX.vIn < DD.vMin ? 'low' : (DX.vIn > DD.vMax ? 'high' : 'ok'));
+      d.gvf = DD.gvf; d.rhoMix = DD.rho; d.mu_cp = DD.mu; d.d50c_um = DX.d50c; d.eff = (fl && !byp) ? DX.eff : 0; d.effClean = DX.effClean;
+      ds.in_lbd = DX.W; ds.capt_lbd = DX.capR; ds.out_lbd = DX.passR;
+      dm.Pacc = DX.Pacc;
+      nd.P = X.PB; nd.Pin = DX.PBu; nd.dP = DX.PD; nd.T = Tn; nd.Tout = To; nd.Tacc = Tamb;
+      nd.th = Thyd(mmax(DX.PBu + PSC, 15)); nd.hyd = To < nd.th && DX.PBu > 10;
+    } else {
+      d.Pin = X.PB; d.Pout = X.PB; d.dP_psi = 0; d.dPclean_psi = 0; d.dPexp_psi = 0; d.dPdesign_psi = 0; d.T = N.esd.T; d.Tout = N.esd.T;
+      d.vIn_fts = 0; d.rate = 'none'; d.gvf = 0; d.rhoMix = 0; d.mu_cp = 0; d.d50c_um = 0; d.eff = 0; d.effClean = 0;
+      ds.in_lbd = 0; ds.capt_lbd = 0; ds.out_lbd = 0; dm.Pacc = 0;
+      nd.P = X.PB; nd.Pin = X.PB; nd.dP = 0; nd.T = N.esd.T; nd.Tout = N.esd.T; nd.Tacc = Tamb; nd.th = N.esd.th; nd.hyd = false;
+    }
+    sd.on = sandOn; sd.pptb = DD.pptb; sd.lbPerMMscf = DD.lbm; sd.d50_um = DD.d50; sd.sigmaG = DD.sg;
+    sd.in_lbd = DX.W; sd.toChoke_lbd = DX.passR;
+    sd.flowback.on = !!faults.sandFlowback; sd.flowback.W0_lbph = num(FB.W0_lbph, 200); sd.flowback.tau_h = num(FB.tau_h, 6);
+    sd.flowback.t_h = DX.tSand / 3600; sd.flowback.d50_um = DD.d50fb; sd.flowback.sigmaG = DD.sgfb;
+    var perDay = num(E.allowance_mil, 125) / mmax(num(E.testH, 72) / 24, 1e-6), ch = sd.choke, mild = DX.ero / 365.25;
+    ch.warn_mild = num(E.warnFrac, 0.05) * perDay; ch.high_mild = num(E.highFrac, 0.5) * perDay;
+    var Up = mmin(DD.vtss * X.fInst, DD.cmix);
+    ch.Up_fts = Up > 0 && isFin(Up) ? Up : 0; ch.C2 = DX.passR > 0 ? DX.C2ch : 0; ch.erosion_mpy = DX.ero; ch.erosion_mild = mild;
+    ch.band = DX.passR > 0 ? (mild < ch.warn_mild ? 'ok' : (mild < ch.high_mild ? 'warn' : 'high')) : 'none'; ch.loss_mil = DX.loss;
+    sd.sep.lb = cum.sandToSep; sd.sep.ft3 = cum.sandToSep / mmax(DD.bulk, 1); sd.sep.frac = desSepFrac();
+    var sc = sd.cum;
+    sc.in_lb = cum.sandIn; sc.capt_lb = cum.sandCapt; sc.toChoke_lb = cum.sandToChoke; sc.toSep_lb = cum.sandToSep; sc.toFlare_lb = cum.sandToFlare; sc.dumped_lb = cum.sandDumped;
+    setLine(s.lines.ds_dump, DX.dumpR, DD.cap / mmax(num(C.dump.flushS, 600), 1) * 86400, 0, 2.067, dm.open);
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -2637,6 +3129,99 @@ function create(flowIn, opts) {
 }
 
 // =============================================================================
+// ─── DS-101 desander / sand: pure helpers (WP-E1; docs/SIM-EQUIPMENT-PLAN.md §4.2; exported as WTS_sim.sand) ───
+// Field units unless stated. No state: the sim factory builds its tables and coefficients from these.
+//   etot(d50c, d50, sigmaG, m)           overall capture of a log-normal size distribution (median d50 µm, geometric spread
+//                                        sigmaG) over the grade-efficiency curve E(d) = 1 − exp(−ln2·(d/d50c)^m) (closed
+//                                        accumulator: no bypass fraction); 64-point quadrature z = −4…+4
+//   cut(mu_cp, drho, v_fts, o?)          cut size d50c (µm) from the velocity law d50c = d50ref·√((μ/μref)·(Δρref/Δρ)·(vref/v))
+//                                        (25 µm at 30 ft/s, 1 cP, Δρ 103 lb/ft³; o overrides d50ref_um / vref_fts / muRef_cp / drhoRef)
+//   dp(rho, v_fts, K?)                   ΔP (psi) = K·ρ·v²/9266.1 (inlet velocity head, K 6)
+//   erosionReducer(W_lbd, Up_ms, D1_m, D2_m, dp_um, rhoM_kgm3, o?)  steel-equivalent erosion rate (mm/yr) of the
+//                                        DNV-RP-O501 reducer model (o: K 2.0e-9, n 2.6, rhoT 7,800 kg/m³, alphaDeg 60); dp_um null → C2 = 1
+//   muDeadOil(API, T_F)                  dead-oil viscosity (cP; T clamped to 40–400 °F so the correlation stays finite)
+//   muGas(SGg, T_F, Z, P_psia)           gas viscosity (cP), Lee-Gonzalez-Eakin (same formula as 16-pvt.js; local copy — the
+//                                        engine loads stand-alone)
+//   c2(d_um, rhoM_kgm3)                  DNV particle-size factor min(1, d / (30·√ρm))
+//   mixSound(gvf, rhoG, cG, rhoL, cL)    homogeneous-mixture speed of sound 1/(ρm·c²) = Σ αi/(ρi·ci²) (the liquid term only
+//                                        when gvf < 1); any consistent units
+var SAND_LN2 = 0.693147, SAND_NQ = 64, SAND_NX = 101, SAND_X0 = -3, SAND_DX = 0.05;
+var SAND_Z = [], SAND_W = [];
+for (var sq = 0; sq < SAND_NQ; sq++) { var sz = -4 + 8 * (sq + 0.5) / SAND_NQ; SAND_Z.push(sz); SAND_W.push(Math.exp(-sz * sz / 2)); }
+function sandE(d, d50c, m) { return 1 - Math.exp(-SAND_LN2 * Math.pow(d / d50c, m)); }
+function sandEtot(d50c, d50, sigmaG, m) {
+  d50c = +d50c; d50 = +d50; sigmaG = +sigmaG; m = isNum(+m) && m > 0 ? +m : 2;
+  if (!(d50 > 0)) return 0;
+  if (!(d50c > 0)) return 1;
+  var ls = Math.log(sigmaG > 1 ? sigmaG : 1), s = 0, w = 0;
+  for (var k = 0; k < SAND_NQ; k++) { s += SAND_W[k] * sandE(d50 * Math.exp(SAND_Z[k] * ls), d50c, m); w += SAND_W[k]; }
+  return s / w;
+}
+function sandCut(mu_cp, drho, v_fts, o) {
+  o = isPlainObj(o) ? o : {};
+  var dr = num(o.d50ref_um, 25), vr = num(o.vref_fts, 30), mr = num(o.muRef_cp, 1), rr = num(o.drhoRef, 103);
+  var mu = mmax(num(mu_cp, 1), 1e-6), d = mmax(num(drho, rr), 1), v = mmax(num(v_fts, vr), 0.1);
+  return dr * msqrt((mu / mr) * (rr / d) * (vr / v));
+}
+function sandDp(rho, v_fts, K) { var k = isNum(+K) && K !== null ? +K : 6; return k * num(rho, 0) * num(v_fts, 0) * num(v_fts, 0) / 9266.1; }
+function sandC2(d_um, rhoM_kgm3) { var r = mmax(num(rhoM_kgm3, 0), 1e-9); return mmin(1, mmax(0, num(d_um, 0)) / (30 * msqrt(r))); }
+var DNV_A = [9.37, 42.295, 110.864, 175.804, 170.137, 98.398, 31.211, 4.17];
+function dnvF(alphaDeg) {
+  var a = num(alphaDeg, 60) * PI / 180, F = 0, p = a;
+  for (var i = 0; i < 8; i++) { F += (i % 2 ? -1 : 1) * DNV_A[i] * p; p *= a; }
+  return F;
+}
+function sandErosionReducer(W_lbd, Up_ms, D1_m, D2_m, dp_um, rhoM_kgm3, o) {
+  o = isPlainObj(o) ? o : {};
+  var K = num(o.K, 2.0e-9), n = num(o.n, 2.6), rhoT = num(o.rhoT, 7800), al = num(o.alphaDeg, 60);
+  var D1 = num(D1_m, 0), D2 = num(D2_m, 0), W = mmax(num(W_lbd, 0), 0), U = mmax(num(Up_ms, 0), 0);
+  if (!(D1 > D2) || !(D2 > 0) || !(W > 0) || !(U > 0)) return 0;
+  var a = al * PI / 180, At = PI / (4 * msin(a)) * (D1 * D1 - D2 * D2), Ar = 1 - D2 * D2 / (D1 * D1);
+  var C2 = (dp_um === null || dp_um === undefined) ? 1 : sandC2(dp_um, rhoM_kgm3);
+  return W * 0.45359237 / 86400 * K * dnvF(al) * mpow(U, n) / (rhoT * At) * Ar * C2 * 3.15e10;
+}
+function sandMuDeadOil(API, T_F) {
+  var T = clamp(num(T_F, 150), 40, 400), x = mpow(10, 3.0324 - 0.02023 * num(API, 35)) * mpow(T, -1.163);
+  return mpow(10, x) - 1;
+}
+function sandMuWater(T_F) { var T = clamp(num(T_F, 150), 32, 400); return mexp(1.003 - 1.479e-2 * T + 1.982e-5 * T * T); }
+function sandMuGas(SGg, T_F, Z, P_psia) {
+  var sg = num(SGg, 0.65), TR = num(T_F, 60) + RANK, z = num(Z, 1), P = mmax(num(P_psia, PSC), 0);
+  if (!(TR > 0) || !(z > 0) || !(sg > 0)) return 0.012;
+  var M = 28.9647 * sg, K = (9.4 + 0.02 * M) * mpow(TR, 1.5) / (209 + 19 * M + TR), Xv = 3.5 + 986 / TR + 0.01 * M, Y = 2.4 - 0.2 * Xv;
+  var rho = 1.4935e-3 * (P * M) / (z * TR);
+  return 1e-4 * K * mexp(Xv * mpow(rho, Y));
+}
+function sandMixSound(gvf, rhoG, cG, rhoL, cL) {
+  var a = clamp(num(gvf, 1), 0, 1), comp = 0, rm = 0;
+  if (a > 0) { var rg = mmax(num(rhoG, 0), 1e-9), cg = mmax(num(cG, 0), 1e-9); comp += a / (rg * cg * cg); rm += a * rg; }
+  if (a < 1) { var rl = mmax(num(rhoL, 0), 1e-9), cl = mmax(num(cL, 0), 1e-9); comp += (1 - a) / (rl * cl * cl); rm += (1 - a) * rl; }
+  return comp > 0 && rm > 0 ? msqrt(1 / (comp * rm)) : 0;
+}
+// tables over x = log10(d50c/d50) from −3 to +2 (step 0.05, 101 points) for one size distribution: overall capture E,
+// particle-size factor C2 of the sand the cyclone passes (C2p) and of the inlet sand (C2in, mass-weighted)
+function sandTables(d50, sigmaG, m, rhoM_kgm3) {
+  var E = new Float64Array(SAND_NX), C2p = new Float64Array(SAND_NX), ls = Math.log(sigmaG > 1 ? sigmaG : 1), dk = [], ck = [], k, i;
+  var w = 0, wc = 0;
+  for (k = 0; k < SAND_NQ; k++) { dk.push(d50 * Math.exp(SAND_Z[k] * ls)); ck.push(sandC2(dk[k], rhoM_kgm3)); w += SAND_W[k]; wc += SAND_W[k] * ck[k]; }
+  var C2in = wc / w;
+  for (i = 0; i < SAND_NX; i++) {
+    var d50c = d50 * mpow(10, SAND_X0 + SAND_DX * i), se = 0, wp = 0, wpc = 0;
+    for (k = 0; k < SAND_NQ; k++) { var e = sandE(dk[k], d50c, m), wk = SAND_W[k]; se += wk * e; wp += wk * (1 - e); wpc += wk * (1 - e) * ck[k]; }
+    E[i] = se / w; C2p[i] = wp > 1e-300 ? wpc / wp : ck[SAND_NQ - 1];
+  }
+  return { E: E, C2p: C2p, C2in: C2in };
+}
+function sandInterp(tab, x) {
+  var u = (x - SAND_X0) / SAND_DX;
+  if (!(u > 0)) return tab[0];
+  if (u >= SAND_NX - 1) return tab[SAND_NX - 1];
+  var i = mfloor(u), f = u - i;
+  return tab[i] + (tab[i + 1] - tab[i]) * f;
+}
+var SAND_API = deepFreeze({ etot: sandEtot, cut: sandCut, dp: sandDp, erosionReducer: sandErosionReducer, muDeadOil: sandMuDeadOil,
+  muGas: sandMuGas, c2: sandC2, mixSound: sandMixSound });
+
 G.WTS_sim = {
   VERSION: '1.4.0',
   TAGS: TAGS,
@@ -2651,6 +3236,7 @@ G.WTS_sim = {
   RIG_OPTIONAL: RIG_OPTIONAL,
   normRigup: normRigup,
   stepFor: stepFor,
+  sand: SAND_API,
   create: create,
   flowFromInputs: flowFromInputs,
   deepClone: deepClone,
@@ -3045,14 +3631,15 @@ test('26 rig-up', function () {
   var n2 = S.normRigup({ surge2: true, surge: false });
   assert(!n2.rig.surge2 && n2.notes.some(function (x) { return /T-202 works alongside T-201/.test(x); }), 'T-202 needs T-201');
   [{ heater: false }, { separator: false }, { surge: false }, { gauge: false }, { surge: false, gauge: false }, { pump: false }, { flare: false },
-    { desander: true }, { surge2: true }, { surge2: true, surge: false }].forEach(function (r) {
-    var sim = S.create(F0, { seed: 26, config: cfg, rigup: r });
+    { desander: true }, { surge2: true }, { surge2: true, surge: false }, { desander: true, sand: 10 }, { sand: 10 }].forEach(function (r) {
+    var sim = S.create(F0, { seed: 26, config: r.sand ? { noise: { on: false }, sand: { pptb: r.sand } } : cfg, rigup: r });
     run(sim, 3600, 20);
     var st = sim.getState(), m = st.health.massErr, key = JSON.stringify(r);
     if (r.desander || r.surge2) assert(st.rigup.desander === !!r.desander && st.rigup.surge2 === !!(r.surge2 && r.surge !== false), key + ' optional items ' + st.rigup.sig);
-    assert(Math.abs(m.oil) < 1e-9 && Math.abs(m.water) < 1e-9 && Math.abs(m.gas) < 1e-9, key + ' mass ' + JSON.stringify(m));
+    assert(Math.abs(m.oil) < 1e-9 && Math.abs(m.water) < 1e-9 && Math.abs(m.gas) < 1e-9 && m.sand < 1e-9, key + ' mass ' + JSON.stringify(m));
     var bad = schemaOK(st); assert(bad.length === 0, key + ' schema ' + bad.join(';'));
     assert(!st.esd.tripped, key + ' trip ' + st.esd.cause);
+    if (r.sand) assert(st.sand.on && st.sand.cum.in_lb > 0 && (r.desander ? st.desander.sand.acc_lb > 0 && st.sand.choke.band === 'ok' : st.sand.choke.band === 'warn'), key + ' sand ' + st.sand.choke.band);
   });
 });
 // 27 LCV-201: the surge → gauge transfer is pressure-driven (no pump): q = Cv·√(ΔP/SG)
