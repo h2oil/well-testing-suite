@@ -1124,9 +1124,17 @@ async function equipmentRun(s, act, clockTxt, route) {
     if (playing === 'Play') await act('[data-act=play]');
     await s.eval(() => { const S = window.WTS_live && window.WTS_live.getSim(); if (S && S.setSpeed) S.setSpeed(600); });
     out.clockBefore = await clockTxt();
+    // ≥ 1,800 s of engine time (plan §9.3): at least 3.5 s of real time, then wait (up to 40 s) until the engine clock has
+    // advanced 1,800 s — a loaded box (4 workers, software WebGL) can run the frame loop well below ×600 (WP-I)
+    const simT = () => s.eval(() => { const S = window.WTS_live && window.WTS_live.getSim(); return S ? S.getState().t : null; });
+    const t0 = await simT(), w0 = Date.now();
     await sleep(3500);
+    let t1 = await simT();
+    while (t0 != null && t1 != null && t1 - t0 < 1800 && Date.now() - w0 < 40000) { await sleep(500); t1 = await simT(); }
     out.clockAfter = await clockTxt();
-    if (out.clockBefore && out.clockBefore === out.clockAfter) note('error', 'equipment run: the clock did not advance at ×600');
+    out.simSeconds = t0 != null && t1 != null ? Math.round(t1 - t0) : null; out.realMs = Date.now() - w0;
+    if (out.simSeconds === 0 || (out.simSeconds == null && out.clockBefore && out.clockBefore === out.clockAfter)) note('error', 'equipment run: the clock did not advance at ×600');
+    else if (out.simSeconds != null && out.simSeconds < 1800) note('warning', 'equipment run: only ' + out.simSeconds + ' s of sim time in ' + Math.round(out.realMs / 1000) + ' s at ×600 (box too slow for the 1,800 s check)');
     await s.eval(() => { const v = document.getElementById('wts_viz'), f = document.createElement('button'); f.setAttribute('data-act', 'focus'); f.setAttribute('data-v', 'desander'); v.appendChild(f); f.click(); f.remove(); });
     await sleep(1200);
     const card = await s.eval(() => { const c = document.getElementById('wtsl_card'); return c ? c.textContent : ''; });   // textContent: innerText would carry the CSS upper-casing of the labels
@@ -1136,7 +1144,7 @@ async function equipmentRun(s, act, clockTxt, route) {
       return { l: t('.l'), v: t('.v'), d: t('.d') };
     }));
     out.dumps = dumpCountOf(rows);
-    if (out.dumps !== 1) note('error', 'DS-101 card after ≥ 1,800 s at ×600: expected 1 completed dump, card says ' + (out.dumps == null ? 'nothing' : out.dumps));
+    if (out.dumps !== 1 && !(out.simSeconds != null && out.simSeconds < 1800)) note('error', 'DS-101 card after ≥ 1,800 s at ×600: expected 1 completed dump, card says ' + (out.dumps == null ? 'nothing' : out.dumps));
     if (/NaN|undefined|Infinity|\[object/.test(card)) note('error', 'DS-101 card shows NaN / undefined text');
     eventsToFindings(await s.take(), { route, view, control: { label: 'run ×600 with DS-101 + T-202' }, action: 'equipment run' });
     out.faultsListed = listed; out.faultsEngine = engine;
