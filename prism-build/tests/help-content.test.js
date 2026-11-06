@@ -244,6 +244,10 @@ function hostFn(name) {
   const b = h.indexOf('\n}', a + 1);
   return h.slice(a + 1, b === -1 ? h.length : b + 2);
 }
+// cheminj registers with `key: PG_KEY` (a variable), and the hydrate page function is also matched in 40-calc-chemlib.js,
+// so both page files are named here (kept apart from the SRC_OVERRIDE line so other overrides merge cleanly)
+SRC_OVERRIDE.cheminj = ['49-calc-cheminj.js'];
+SRC_OVERRIDE.hydrate = ['25-hydrate.js'];
 function srcTexts(route) {
   if (SRC_OVERRIDE[route]) return SRC_OVERRIDE[route].map((f) => ({ name: f, text: readSrc(f) }));
   const reg = SRC_FILES().filter((f) => /^4\d-calc-|^6\d-/.test(f) && new RegExp("key:\\s*['\"]" + route + "['\"]").test(readSrc(f)));
