@@ -244,12 +244,12 @@
     add(C(4), 'alarms', 'Alarm drawer: alarms and events', 'Alarms and Events', [A('simFault', 'oilDumpStuckClosed'), RUN(10, 300), A('simMenu', 'alarms')], '.wtsl-drawer');
     add(C(5), 'reset', 'Reset menu open', 'The Reset menu', [A('simMenu', 'resetmenu')], MN);
     add(C(5), 'more', 'Phone toolbar with the More menu open', 'The More menu on a phone', [A('simMenu', 'more')], '', 'phone');
-    add(C(5), 'trends', 'Trends of pressures and levels after a restart', 'Trends', [RUN(60, 600), A('simMenu', 'trends')]);
+    add(C(5), 'trends', 'Trends of pressures and levels in the 3D view', 'Trends', [A('simView', '3d'), RUN(60, 600), A('simMenu', 'trends')]);
     add(C(6), 't301', 'T-301 card after the first batch', 'T-301 and its last batch', [RUN(600, 5400), A('simCard', 'gauge')], K);
     add(C(7), 't201', 'T-201 card: levels, pressure, LCV-201', 'The T-201 surge tank card', [RUN(10, 120), A('simCard', 'surge')], K);
     add(C(8), 'temp3d', '3D view with the Colour menu open', 'The 3D view and its Colour menu', [A('simView', '3d'), A('simMenu', 'colour')]);
     add(C(9), 'ds101', 'DS-101 card during sand flow-back', 'DS-101: ΔP, capture, accumulator and Dump sand', [A('simRigup', { desander: 'on' }), A('simFault', 'sandFlowback'), RUN(600, 3600), A('simCard', 'desander')], K);
-    add(C(10), 't202', 'T-202 card with the route buttons', 'T-202: route, XV-202 and LCV-202', [A('simRigup', { surge2: 'on' }), RUN(10, 60), A('simCard', 'surge2')], K);
+    add(C(10), 't202', 'T-202 card: level, pressure, inlet, route', 'T-202: route, XV-202 and LCV-202', [A('simRigup', { surge2: 'on' }), RUN(10, 60), A('simCard', 'surge2')], K);
     add(F('FS-1'), 'rigup', 'Rig-up card with V-101 out and its note', 'Rig-up: V-101 out for the burner', [A('simRigup', { separator: 'off' })], '.wtsl-rig');
     add(F('FS-3'), 'rigup', 'Rig-up card with DS-101 in', 'Rig-up with DS-101 in', [A('simRigup', { desander: 'on' })], '.wtsl-rig');
     return { guides: {}, course: course, scenarios: scenarios };
