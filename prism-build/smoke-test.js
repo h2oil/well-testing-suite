@@ -493,6 +493,36 @@ checks.push(['WP15 plot registry declineD / declineB', !!(win.PRiSM_PLOT_REGISTR
   checks.push(['no timers 5 s after opening Build-up Surveillance', okTimers]);
 })();
 
+// ── v3.3.2 Help centre (docs/HELP-GUIDE-PLAN.md §7.6, WP-H) ──
+// The API exists after the full concat (49-calc-help-print.js sorts before 49-calc-help.js, so every help
+// file merges into WTS_help: renderBook is required once the print module is in the build). The content
+// counts (≥ 66 guides, ≥ 10 tasks) are required once every content file is in; until then load() must
+// run every factory present without an error.
+(function helpChecks() {
+  const H = win.WTS_help || {};
+  const api = ['open', 'mount', 'load', 'renderGuide', 'search', 'syncHeader'];
+  const okApi = api.every((f) => typeof H[f] === 'function');
+  if (!okApi) console.error('[help] WTS_help is missing ' + api.filter((f) => typeof H[f] !== 'function').join(', ') + ' — expected from prism-build/49-calc-help.js (WP-H)');
+  checks.push(['window.WTS_help.' + api.join(' / '), okApi]);
+  const printIn = fs.existsSync(path.join(__dirname, '49-calc-help-print.js'));
+  checks.push(['WTS_help.renderBook + renderGuide after the full concat' + (printIn ? '' : ' (print module not in yet: renderGuide only)'),
+    typeof H.renderGuide === 'function' && (!printIn || typeof H.renderBook === 'function')]);
+  const reg = win.WTS_calcRegistry && win.WTS_calcRegistry.help;
+  checks.push(['WTS_calcRegistry.help in "Overview" (render, no calc)', !!reg && reg.key === 'help' && reg.group === 'Overview' && typeof reg.render === 'function']);
+  let okLoad = false, detail = '';
+  try {
+    const C = H.load();
+    const files = ['start', 'overview', 'metering', 'welltest', 'simcourse', 'production', 'livedata', 'safety', 'process', 'flare', 'utilities']
+      .map((g) => '48-calc-help-' + g + '.js');
+    const all = files.every((f) => fs.existsSync(path.join(__dirname, f)));
+    const n = Object.keys(C.guides || {}).length, t = (C.tasks || []).length;
+    okLoad = !(H.loadErrors || []).length && (!all || (n >= 66 && t >= 10));
+    detail = n + ' guides, ' + t + ' tasks' + (all ? '' : ' (content files not all in yet)') + ((H.loadErrors || []).length ? '; ' + H.loadErrors.join('; ') : '');
+  } catch (e) { detail = e.message; }
+  if (!okLoad) console.error('[help] WTS_help.load():', detail);
+  checks.push(['WTS_help.load() without errors (' + detail + ')', okLoad]);
+})();
+
 console.log('\nNamespace checks:');
 let fails = 0;
 for (const [name, ok] of checks) {

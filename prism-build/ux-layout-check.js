@@ -205,6 +205,38 @@ function tableState() {
           if (SHOTS) await p.screenshot({ path: path.join(SHOTS, 'web-' + w + 'x' + h + '-sidebar.png') });
           await ctx.close();
         }
+        // phone header at 390 px (docs/HELP-GUIDE-PLAN.md §2.2): on the five longest page titles the Help "?"
+        // button (#pgHelpBtn, host edit H3) is visible inside the viewport, the title wraps to at most two
+        // lines and the page has no horizontal scroll. A build without guides keeps the button hidden, so it
+        // is shown for the measurement; a build without the host edit is reported and skipped.
+        if (!t.ios) {
+          const { ctx, p } = await open(browser, t, 390, port, 844);
+          const routes = await p.evaluate(() => Array.from(new Set(Array.from(document.querySelectorAll('.nav-btn[data-p]')).map((b) => b.dataset.p))));
+          const lens = [];
+          for (const r of routes) { await go(p, r); lens.push({ r, n: await p.evaluate(() => (document.getElementById('pgTitle').textContent || '').trim().length) }); }
+          const longest = lens.sort((a, b) => b.n - a.n).slice(0, 5).map((x) => x.r);
+          for (const r of longest) {
+            await go(p, r); await p.waitForTimeout(r === 'wts' || r === 'prism' ? 600 : 150);
+            const h = await p.evaluate(() => {
+              const b = document.getElementById('pgHelpBtn'), h2 = document.getElementById('pgTitle'), vw = document.documentElement.clientWidth;
+              if (!b) return { absent: true };
+              const forced = b.hasAttribute('hidden');
+              if (forced) b.removeAttribute('hidden');
+              const br = b.getBoundingClientRect(), rg = document.createRange();
+              rg.selectNodeContents(h2);
+              const lines = new Set(Array.from(rg.getClientRects()).filter((x) => x.width > 0).map((x) => Math.round(x.top))).size;
+              const out = { forced, w: Math.round(br.width), hgt: Math.round(br.height), left: Math.round(br.left), right: Math.round(br.right), vw, lines,
+                over: document.documentElement.scrollWidth > vw + 1, shown: getComputedStyle(b).display !== 'none' && br.width > 0 };
+              if (forced) b.setAttribute('hidden', '');
+              return out;
+            });
+            summary.checks++;
+            if (h.absent) { say('[skip] web 390px header: #pgHelpBtn not in this build (prism-build/help-host-patch.js not applied yet)'); break; }
+            if (!h.shown || h.right > h.vw + 1 || h.left < 0 || h.lines > 2 || h.over) fail('web 390px header on ' + r + ': help button / title ' + JSON.stringify(h));
+          }
+          say('[web] 390px header: Help "?" checked on ' + longest.join(', '));
+          await ctx.close();
+        }
         // desktop: tables keep the table layout
         const { ctx, p } = await open(browser, t, 1280, port);
         for (const r of TABLE_ROUTES) {

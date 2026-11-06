@@ -1,5 +1,7 @@
 # Dual Choke Calculation
 
+> **Superseded by the in-app Help** (Help & Guide → Choke guides in Metering & Chokes), which follows the current version. This page is kept for one release and will then be removed.
+
 Calculates intermediate pressure, equivalent choke size, pressure drops, and flow rates for a dual (series) choke configuration.
 
 ## Inputs

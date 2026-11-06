@@ -1,5 +1,7 @@
 # DCA — Decline Curve Analysis
 
+> **Superseded by the in-app Help** (Help & Guide → PRiSM (decline analysis)), which follows the current version. This page is kept for one release and will then be removed.
+
 Performs production decline curve analysis with multiple model types, confidence intervals, and EUR estimation.
 
 ## Supported Models

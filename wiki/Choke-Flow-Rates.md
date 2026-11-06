@@ -1,5 +1,7 @@
 # Choke Flow Rates
 
+> **Superseded by the in-app Help** (Help & Guide → Choke Flow Rates), which follows the current version. This page is kept for one release and will then be removed.
+
 Calculates gas and oil flow rates through fixed chokes using industry-standard correlations.
 
 ## Gas Flow Rate

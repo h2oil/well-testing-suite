@@ -1,5 +1,7 @@
 # AGA-3 Gas Rate Calculator
 
+> **Superseded by the in-app Help** (Help & Guide → AGA-3 Gas Rate), which follows the current version. This page is kept for one release and will then be removed.
+
 Calculates orifice meter gas flow rate per **AGA Report No. 3 / API 14.3** with real-gas Z-factor and iterative discharge coefficient.
 
 ## Inputs
