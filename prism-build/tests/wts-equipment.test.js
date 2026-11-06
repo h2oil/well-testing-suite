@@ -351,12 +351,13 @@ module.exports = [
     wp: WP,
     opts: false,
     run(app, assert) {
-      // a working engine whose T-202 'check' hook refuses removal while R.on (stands in for the WP-E2 rule of §3.3)
-      const hook = "function surge2Rig(phase, old, r, parts) { return ''; }";
+      // a working engine whose T-202 'check' rule refuses removal while R.on (stands in for the WP-E2 rule of §3.3, which
+      // wts-surge2.test.js checks on the real engine): WP-E2's surge2Rig('check') delegates to the pure surge2RigCheck(old, r)
+      const hook = 'function surge2RigCheck(old, r) {';
       const src = strip31(fs.readFileSync(path.join(BUILD_DIR, '31-wts-sim.js'), 'utf8'));
-      assert.strictEqual(src.split(hook).length, 2, '31 still has the WP-E0 surge2Rig stub (update this test when WP-E2 fills it)');
+      assert.strictEqual(src.split(hook).length, 2, '31 has the WP-E2 surge2RigCheck rule');
       const R = { on: true, note: X.RIG_NOTES.surge2OnlyRouteRefused };
-      const S = X.loadEngine(src.replace(hook, "function surge2Rig(phase, old, r, parts) { return phase === 'check' && old.surge2 && !r.surge2 && __eqR.on ? __eqR.note : ''; }"), { __eqR: R });
+      const S = X.loadEngine(src.replace(hook, "function surge2RigCheck(old, r) { return old.surge2 && !r.surge2 && __eqR.on ? __eqR.note : ''; }\n  function surge2RigCheckReal(old, r) {"), { __eqR: R });
       const sim = S.create(S.SAMPLE_FLOW, { seed: 3, rigup: { surge2: true } });
       let st = sim.getState();
       assert.strictEqual(st.rigup.refused, '', 'nothing refused yet');
