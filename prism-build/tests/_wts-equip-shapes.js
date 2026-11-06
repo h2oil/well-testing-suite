@@ -8,7 +8,8 @@
 // Exports
 //   PLAN, VERSION_V33 '1.3.0', VERSION_NEW '1.4.0', PROBE_VERSION '9.9.9-probe'
 //   RIG_KEYS_V33 / RIG_KEYS (10, signature order, append only) / RIG_ORDER (display = process order, by key)
-//   RIG_ITEMS_NEW (the two new RIG_ITEMS rows), RIG_DEFAULTS, RIG_OPTIONAL, SIG_V33, SIG_DEFAULT, GETRIGUP_DEFAULT_JSON
+//   RIG_ITEMS_NEW (the two new RIG_ITEMS rows), RIG_DEFAULTS, RIG_OPTIONAL, SIG_V33, SIG_DEFAULT (11 characters since
+//   SIM-FOLLOWUP WP0), SIG_DEFAULT_V331 ('1111111100'), sigDefaultOf(S) (by S.VERSION), GETRIGUP_DEFAULT_JSON
 //   RIG_TXT_NEW, RIG_NOTES (plain-text notes of §3.2 / §3.3)
 //   TAGS_NEW, ALARM_TAGS_NEW, NAMES_NEW
 //   ALARMS (id → {tag, sev, eq, act?, esd?}), ALARM_IDS, Q_DES, Q_SAND, Q_SURGE2, ESD_TRIP_IDS, ACT_ALARMS
@@ -25,10 +26,10 @@
 //   ANCHORS (§4.9 / §9.2 worked numbers with tolerances)
 //   EXAMPLES (lazy deep copies): desander, sand, surge2, nodesDesander, nodesSurge2 (DS-101 / T-202 in, SAMPLE_FLOW, 10 pptb,
 //            idle / standby) and desanderOut, sandOut, surge2Out, nodesDesanderOut (static values while the item is out)
-//   SHAPE_NAMES, checkShape(name, obj, {strict}) → {ok, errors:['<path>: <reason>', …]}
+//   SHAPE_NAMES, checkShape(name, obj, {strict, rigKeys}) → {ok, errors:['<path>: <reason>', …]} (rigKeys: RIG_KEYS of the module under test)
 //   fakeEquipSnapshot(base, {desander, surge2, flushing, held, sand}) → a snapshot with every §6.4 path, for view builders
 //   identityDiff(v33, now) → ['<path>: a !== b', …] — exact (===) check of every v3.3 path (§7 sig rule for rigup.sig)
-//   loadEngine(which) → WTS_sim from 'v33' (tests/_wts-sim-v33.js), 'work' (31-wts-sim.js, self-test stripped as Round 7
+//   loadEngine(which) → WTS_sim from 'v33' (tests/_wts-sim-v33.js), 'v331' (tests/_wts-sim-v331.js), 'work' (31-wts-sim.js, self-test stripped as Round 7
 //            strips it) or a source string, each in its own vm context
 //
 // Conventions encoded here
@@ -78,7 +79,12 @@ var RIG_DEFAULTS = { esd: true, choke: true, heater: true, separator: true, surg
   desander: false, surge2: false };
 var RIG_OPTIONAL = ['desander', 'surge2'];
 var SIG_V33 = '11111111';
-var SIG_DEFAULT = '1111111100';
+// SIM-FOLLOWUP WP0 (docs/SIM-FOLLOWUP-PLAN.md §3.6): the default signature grows to 11 characters when CK-102 (heaterChoke) is
+// appended to RIG_KEYS (WTS_sim 1.5.0). SIG_DEFAULT_V331 is the v3.3.1 (1.4.0) default; sigDefaultOf(S) picks the one that
+// belongs to the engine under test by its VERSION (both literal, so the check stays exact before and after WP-E0).
+var SIG_DEFAULT_V331 = '1111111100';
+var SIG_DEFAULT = '11111111000';
+function sigDefaultOf(S) { return (S && S.VERSION === VERSION_NEW) ? SIG_DEFAULT_V331 : SIG_DEFAULT; }
 var GETRIGUP_DEFAULT_JSON = JSON.stringify(RIG_DEFAULTS);
 var RIG_TXT_NEW = {
   desander: ['DS-101', 'out of the rig-up (well stream straight to the choke)', 'in line upstream of the choke'],
@@ -355,7 +361,7 @@ var EXAMPLES = {};
 
 var EX_LINE = { q: 0, unit: 'BPD', frac: 0, vel: 0, ID_in: 3.068, phase: 'liquid', active: false };
 var EX_RIGUP = { esd: true, choke: true, heater: true, separator: true, surge: true, gauge: true, pump: true, flare: true,
-  desander: false, surge2: false, full: true, sig: SIG_DEFAULT, notes: [], extras: [], refused: '', v: 1 };
+  desander: false, surge2: false, full: true, sig: SIG_DEFAULT_V331, notes: [], extras: [], refused: '', v: 1 };
 // rigup.refused (§3.3, added after WP-E0 review): '' or the note of the last refused setRigup while the same change would still
 // be refused (RIG_NOTES.surge2OnlyRouteRefused for T-202); 38 shows it and disables T-202's switch with that reason
 
@@ -417,10 +423,22 @@ function walkShape(tpl, act, p, errs, strict) {
 function checkShape(name, obj, opts) {
   if (!hasOwn(SHAPES, name)) throw new Error('_wts-equip-shapes: unknown shape ' + name + ' (known: ' + SHAPE_NAMES.join(', ') + ')');
   var errs = [], S = SHAPES[name];
-  walkShape(S.tpl, obj, S.root, errs, !!(opts && opts.strict));
+  // opts.rigKeys: RIG_KEYS of the module under test (SIM-FOLLOWUP §3.6). Its keys beyond this fixture's RIG_KEYS are
+  // booleans of rigup (not "unexpected" in strict mode), and the sig must have exactly that many characters.
+  var rk = (opts && opts.rigKeys && opts.rigKeys.length) ? Array.prototype.slice.call(opts.rigKeys) : RIG_KEYS;
+  var tpl = S.tpl;
+  if (name === 'rigup' && rk !== RIG_KEYS) {
+    tpl = clone(S.tpl);
+    rk.forEach(function (k) { if (!hasOwn(tpl, k)) tpl[k] = true; });
+  }
+  walkShape(tpl, obj, S.root, errs, !!(opts && opts.strict));
+  if (name === 'rigup' && rk !== RIG_KEYS) {   // the module's own optional keys (beyond RIG_OPTIONAL) are valid extras
+    errs = errs.filter(function (e) { var m = /^rigup\.extras\[\d+\]: "([^"]*)" not allowed$/.exec(e); return !(m && rk.indexOf(m[1]) >= RIG_KEYS.length); });
+  }
   if (name === 'rigup' && obj && typeof obj.sig === 'string') {
-    if (!/^[01]{10}$/.test(obj.sig)) errs.push('rigup.sig: expected 10 characters of 0/1, got "' + obj.sig + '"');
-    else RIG_KEYS.forEach(function (k, i) { if (typeof obj[k] === 'boolean' && (obj.sig.charAt(i) === '1') !== obj[k]) errs.push('rigup.sig: character ' + i + ' disagrees with ' + k); });
+    if (!/^[01]{10,}$/.test(obj.sig)) errs.push('rigup.sig: expected at least 10 characters of 0/1, got "' + obj.sig + '"');
+    else if (rk !== RIG_KEYS && obj.sig.length !== rk.length) errs.push('rigup.sig: expected ' + rk.length + ' characters (RIG_KEYS of the module), got ' + obj.sig.length);
+    else rk.forEach(function (k, i) { if (typeof obj[k] === 'boolean' && (obj.sig.charAt(i) === '1') !== obj[k]) errs.push('rigup.sig: character ' + i + ' disagrees with ' + k); });
   }
   if (name === 'line' && obj && typeof obj.q === 'number' && obj.q < 0) errs.push('line.q: negative');
   return { ok: errs.length === 0, errors: errs };
@@ -505,13 +523,15 @@ function fakeEquipSnapshot(base, o) {
 // ─── frozen-engine identity (§7) ─────────────────────────────────────────────
 // identityDiff(a, b) walks every path of a (a v3.3 snapshot / value, from tests/_wts-sim-v33.js) and checks b at the same path
 // with === (numbers, strings, booleans, null); keys only in b (the additive v3.3.1 paths) are ignored. rigup.sig follows the
-// sig rule of §7: b.slice(0, 8) === a and b.slice(8) is '' (before WP-E0) or '00'. Returns ['<path>: <a> !== <b>', …] (≤ max).
+// sig rule of §7: b.slice(0, a.length) === a and the tail after it is only zeros (optional items appended after a's keys are
+// out: '' / '00' for v3.3 → v3.3.1, '0' for v3.3.1 → v3.3.3, '000' for v3.3 → v3.3.3; SIM-FOLLOWUP §3.6).
+// Returns ['<path>: <a> !== <b>', …] (≤ max).
 function identityDiff(a, b, max) {
   var out = [], lim = max || 20;
   (function walk(x, y, p) {
     if (out.length >= lim) return;
     if (p === 'rigup.sig' && typeof x === 'string' && typeof y === 'string') {
-      if (y.slice(0, x.length) !== x || (y.slice(x.length) !== '' && y.slice(x.length) !== '00')) out.push(p + ': ' + x + ' vs ' + y);
+      if (y.slice(0, x.length) !== x || !/^0*$/.test(y.slice(x.length))) out.push(p + ': ' + x + ' vs ' + y);
       return;
     }
     if (x === null || typeof x !== 'object') {
@@ -531,17 +551,19 @@ function identityDiff(a, b, max) {
 }
 
 // ─── engines in their own vm contexts ────────────────────────────────────────
-// which: 'v33' (frozen copy), 'work' (prism-build/31-wts-sim.js, self-test stripped as Round 7 strips it) or a source string.
+// which: 'v33' (frozen v3.3 copy), 'v331' (frozen v3.3.1 copy, SIM-FOLLOWUP D13), 'work' (prism-build/31-wts-sim.js,
+// self-test stripped as Round 7 strips it) or a source string.
 // Returns the context's WTS_sim (values live in that realm: compare numbers / strings, or JSON-copy objects).
 function loadEngine(which, ctxExtra) {
   var src;
   if (which === 'v33') src = fs.readFileSync(path.join(__dirname, '_wts-sim-v33.js'), 'utf8');
+  else if (which === 'v331') src = fs.readFileSync(path.join(__dirname, '_wts-sim-v331.js'), 'utf8');
   else if (which === 'work' || which === undefined) {
     src = require(path.join(BUILD_DIR, 'concat-round7.js')).stripSelfTest(
       fs.readFileSync(path.join(BUILD_DIR, '31-wts-sim.js'), 'utf8'), '31-wts-sim.js', { log: function () {}, warn: function () {} });
   } else src = String(which);
   var ctx = vm.createContext(Object.assign({ console: console }, ctxExtra || {}));
-  vm.runInContext(src, ctx, { filename: which === 'v33' ? '_wts-sim-v33.js' : '31-wts-sim.js' });
+  vm.runInContext(src, ctx, { filename: which === 'v33' ? '_wts-sim-v33.js' : which === 'v331' ? '_wts-sim-v331.js' : '31-wts-sim.js' });
   if (!ctx.WTS_sim) throw new Error('_wts-equip-shapes.loadEngine: WTS_sim not defined by ' + (typeof which === 'string' && which.length < 8 ? which : 'source'));
   return ctx.WTS_sim;
 }
@@ -549,7 +571,7 @@ function loadEngine(which, ctxExtra) {
 module.exports = deepFreeze({
   PLAN: PLAN, VERSION_V33: VERSION_V33, VERSION_NEW: VERSION_NEW, PROBE_VERSION: PROBE_VERSION,
   RIG_KEYS_V33: RIG_KEYS_V33, RIG_KEYS: RIG_KEYS, RIG_ORDER: RIG_ORDER, RIG_ITEMS_NEW: RIG_ITEMS_NEW, RIG_DEFAULTS: RIG_DEFAULTS,
-  RIG_OPTIONAL: RIG_OPTIONAL, SIG_V33: SIG_V33, SIG_DEFAULT: SIG_DEFAULT, GETRIGUP_DEFAULT_JSON: GETRIGUP_DEFAULT_JSON,
+  RIG_OPTIONAL: RIG_OPTIONAL, SIG_V33: SIG_V33, SIG_DEFAULT: SIG_DEFAULT, SIG_DEFAULT_V331: SIG_DEFAULT_V331, sigDefaultOf: sigDefaultOf, GETRIGUP_DEFAULT_JSON: GETRIGUP_DEFAULT_JSON,
   RIG_TXT_NEW: RIG_TXT_NEW, RIG_NOTES: RIG_NOTES,
   TAGS_NEW: TAGS_NEW, ALARM_TAGS_NEW: ALARM_TAGS_NEW, NAMES_NEW: NAMES_NEW,
   ALARMS: ALARMS, ALARM_IDS: ALARM_IDS, Q_DES: Q_DES, Q_SAND: Q_SAND, Q_SURGE2: Q_SURGE2, ESD_TRIP_IDS: ESD_TRIP_IDS,

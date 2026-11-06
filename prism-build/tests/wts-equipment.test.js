@@ -72,7 +72,7 @@ function sameStates(assert, a, b, tag) {
   a.states.forEach((st, i) => {
     const d = X.identityDiff(st, b.states[i], 5);
     assert.ok(d.length === 0, tag + ' state ' + i + ': ' + d.join('; '));
-    if (b.states[i].rigup) assert.strictEqual(b.states[i].rigup.sig.slice(8), '00', tag + ' both optional items out');
+    if (b.states[i].rigup) assert.ok(/^0+$/.test(b.states[i].rigup.sig.slice(8)), tag + ' every optional item out: ' + b.states[i].rigup.sig);
   });
   const ha = J(a.sim.getHistory ? X.HIST_KEYS_V33.map((k) => a.sim.getHistory(k)) : []), hb = J(X.HIST_KEYS_V33.map((k) => b.sim.getHistory(k)));
   const dh = X.identityDiff(ha, hb, 5);
@@ -196,7 +196,10 @@ module.exports = [
         const dh = X.identityDiff(ha, hb, 5);
         assert.ok(dh.length === 0, sc.name + ' history: ' + dh.join('; '));
       });
-      assert.ok(X.identityDiff({ rigup: { sig: X.SIG_V33 } }, { rigup: { sig: X.SIG_DEFAULT } }).length === 0, 'sig rule accepts the appended 00');
+      assert.ok(X.identityDiff({ rigup: { sig: X.SIG_V33 } }, { rigup: { sig: X.SIG_DEFAULT_V331 } }).length === 0, 'sig rule accepts the appended 00');
+      assert.ok(X.identityDiff({ rigup: { sig: X.SIG_V33 } }, { rigup: { sig: X.SIG_DEFAULT } }).length === 0, 'sig rule accepts the appended 000 (SIM-FOLLOWUP §3.6)');
+      assert.ok(X.identityDiff({ rigup: { sig: X.SIG_DEFAULT_V331 } }, { rigup: { sig: X.SIG_DEFAULT } }).length === 0, 'sig rule accepts v3.3.1 → 11 characters');
+      assert.ok(X.identityDiff({ rigup: { sig: X.SIG_DEFAULT_V331 } }, { rigup: { sig: '11111111001' } }).length === 1, 'sig rule rejects CK-102 in');
       assert.ok(X.identityDiff({ rigup: { sig: X.SIG_V33 } }, { rigup: { sig: '1111111110' } }).length === 1, 'sig rule rejects an optional item in');
     },
   },
@@ -220,7 +223,7 @@ module.exports = [
       assert.deepStrictEqual(Object.keys(X.CONTROLS_DEFAULT), ['surge', 'gauge', 'surge2', 'desander', 'v'], 'controls key order');
       assert.strictEqual(X.GETRIGUP_DEFAULT_JSON.indexOf('"flare":true,"desander":false,"surge2":false}') > 0, true);
       assert.deepStrictEqual(Object.keys(X.RIG_DEFAULTS), X.RIG_KEYS, 'RIG_DEFAULTS in signature order');
-      assert.strictEqual(X.RIG_KEYS.map((k) => (X.RIG_DEFAULTS[k] ? '1' : '0')).join(''), X.SIG_DEFAULT);
+      assert.strictEqual(X.RIG_KEYS.map((k) => (X.RIG_DEFAULTS[k] ? '1' : '0')).join(''), X.SIG_DEFAULT_V331);
       assert.deepStrictEqual(X.RIG_ORDER.slice().sort(), X.RIG_KEYS.slice().sort(), 'display order is a permutation of RIG_KEYS');
       // step numbers: STEP_V33 is today's table in 32 (and 38); the reference rule reproduces the four pinned combinations
       const S3 = app.win.WTS_3d && app.win.WTS_3d._internals && app.win.WTS_3d._internals.STEP;
@@ -318,10 +321,10 @@ module.exports = [
       assert.deepStrictEqual(J(S.RIG_DEFAULTS), X.RIG_DEFAULTS); assert.deepStrictEqual(J(S.RIG_OPTIONAL), X.RIG_OPTIONAL);
       assert.ok(Object.isFrozen(S.RIG_DEFAULTS) && Object.isFrozen(S.RIG_OPTIONAL), 'deep-frozen exports');
       const d = S.normRigup(app.toWin({}));
-      assert.ok(d.sig === X.SIG_DEFAULT && d.full === true && d.extras.length === 0 && d.notes.length === 0, 'default ' + d.sig);
+      assert.ok(d.sig === X.sigDefaultOf(S) && d.full === true && d.extras.length === 0 && d.notes.length === 0, 'default ' + d.sig);
       const v33 = {}; X.RIG_KEYS_V33.forEach((k) => { v33[k] = true; });
-      assert.strictEqual(S.normRigup(app.toWin(v33)).sig, X.SIG_DEFAULT, 'a v3.3 8-key request → both new items out');
-      [null, 'true', 1, 'yes', {}, []].forEach((v) => assert.strictEqual(S.normRigup(app.toWin({ desander: v, surge2: v })).sig, X.SIG_DEFAULT, 'optional ' + JSON.stringify(v) + ' → out'));
+      assert.strictEqual(S.normRigup(app.toWin(v33)).sig, X.sigDefaultOf(S), 'a v3.3 8-key request → both new items out');
+      [null, 'true', 1, 'yes', {}, []].forEach((v) => assert.strictEqual(S.normRigup(app.toWin({ desander: v, surge2: v })).sig, X.sigDefaultOf(S), 'optional ' + JSON.stringify(v) + ' → out'));
       const r = S.normRigup(app.toWin({ surge2: true, surge: false }));
       assert.ok(r.rig.surge2 === false && r.notes.indexOf(X.RIG_NOTES.surge2NeedsSurge) >= 0, 'surge2 without surge → out with the note');
       const both = S.normRigup(app.toWin({ desander: true, surge2: true }));
@@ -342,7 +345,7 @@ module.exports = [
       assert.strictEqual(JSON.stringify(sim.getRigup()), X.GETRIGUP_DEFAULT_JSON, 'null → each item default');
       assert.ok(/DS-101 out of the rig-up \(well stream straight to the choke\)/.test(msgs[msgs.length - 1]) && /\(full rig-up\)$/.test(msgs[msgs.length - 1]), msgs[msgs.length - 1]);
       st = sim.getState();
-      assert.ok(st.rigup.sig === X.SIG_DEFAULT && st.rigup.full, 'back to the default');
+      assert.ok(st.rigup.sig === X.sigDefaultOf(S) && st.rigup.full, 'back to the default');
       assert.strictEqual(sim.setRigup(app.toWin({ desander: false })), false, 'no change → false');
     },
   },

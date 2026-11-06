@@ -1,7 +1,7 @@
 # Simulator follow-up: heater inlet choke CK-102, bypass destination, cushion unload — implementation plan
 
 > **Status: plan, reviewed** (2026-11-06; revision 2 after the plan review — the changes are listed in the Review notes
-> appendix). Not built. Target: the next point release after the Help-centre release (v3.3.3 if Help ships as v3.3.2; the
+> appendix). **WP0 done** on `sim-fu` (contract, frozen copies, tools; re-anchored numbers in Appendix B); WP-E0 onward not built. Target: the next point release after the Help-centre release (v3.3.3 if Help ships as v3.3.2; the
 > version is fixed at WP-I, §13). Built in work packages WP0, WP-E0, WP-C, WP-E1, WP-E2, WP-3D, WP-L,
 > WP-2D, WP-HC and WP-I on a feature branch `sim-fu`. It replaces WP-SIM of `docs/HELP-GUIDE-PLAN.md` §8, which it takes over
 > in full (bypass destination §8.1, cushion unload §8.2, tests §8.3) and corrects where the audit found problems (§1.4).
@@ -1016,6 +1016,96 @@ CLAUDE.md full incantation with the Round-7 pair and check that `git diff --stat
   l.129722, `wtsDiagLayout` l.129729, `wtsDrawDiag` l.129736, `wtsEqChk` l.129913.
 - **Tests**: `_wts-equip-shapes.js` l.81 / 422 / 513-514; `wts-rigup.test.js` l.101-136; `wts-equipment.test.js` l.212 /
   290 / 469 / 540 / 550 / 573 / 625; `wts3d-test.js` l.144 / 205 / 209 / 756 / 765 / 896.
+
+---
+
+## Appendix B — WP0 notes (lead, 2026-11-06, branch `sim-fu` from `dev-87qwkg` = `52edeac`, at or after `3611343`)
+
+**Files (WP0 / lead).**
+- `tests/_wts-sim-v331.js`: 31 at `3611343` (VERSION 1.4.0, sha256 of the source in the header), self-test stripped by
+  `concat-round7.js` `stripSelfTest()`; `loadEngine('v331')` in `_wts-equip-shapes.js` loads it in its own vm context.
+  `_wts-sim-v33.js` and its tests are unchanged.
+- `prism-build/wts-calc-golden.js` (`--write`, `--check` (default), `--time`, `--json`) with the 12 literal input sets, and
+  `tests/_wts-calc-v331.js` (generated, never edit), `tests/_wts-calc-v331-src.js` (frozen calcWTS region of `3611343`).
+  - **The calcWTS region** is the host text from the line `const WTS_PIPES=` up to `const WTS_DIAG_LAYOUT` (WTS_PIPES,
+    WTS_IDS, renderWTS, calcWTS). WP-C keeps `wtsWalk`, `wtsRenderResults` and every helper calcWTS needs **inside** it.
+  - Stub DOM: `$` returns the input elements of the set and creates `#wts_res` / `#wts_warn` / `#wts_regime`; any other id
+    is `null` (so calcWTS must guard a missing new input, as an old page has none). `fmt` is the page's en-US formatter;
+    `saveInputs`, `wtsDrawDiag` are no-ops; a fresh storage stub per run with `wts_page_wts` and `wts_sim_rigup` cleared,
+    every `getItem` key recorded.
+  - The 12 sets: `defaults` (also Help FS-1 (e) and FS-2: the FS-2 page case is the default spread), `fs1a`–`fs1d` (Help
+    FS-1 (a)–(d)), `fs1c100` (FS-1 WHP 100), WHP 500 / 60 / 2,000, bean 16 / 64, heater bypass. The golden holds the
+    BASE_FIELDS of `flow` and the page output (`#wts_res` / `#wts_warn` HTML, display, `#wts_regime` text and colour).
+  - `--check` runs every set five times: plain, with the four new inputs present (three value sets, incl. `wts_sepByP` 0
+    and `line`) and with a stored CK-102 / V-101-out rig-up; base fields strict `===` (sign of 0 and NaN included), page
+    output exact, no read of `wts_sim_rigup`, exactly one `wts:calc` dispatch. With no `rig` given, `wtsRenderResults`
+    must therefore leave the v3.3.1 page byte-identical (§4.5).
+  - `--time`: a run is 20 calcWTS calls; 2 warm-ups, 10 interleaved runs, median ratio. Measured at WP0 (A/A, same text):
+    defaults 0.99, CK-102 + V-101-out inputs 1.01 (about 2 ms per call in the stub, most of it the results HTML).
+- `wts-sim-perf.js`: `--base v331` (default) | `v33`; secondary cases `--case all|both|ck2|cushion|line` (gates 1.6 / 1.10 /
+  1.15 / 1.05; each skipped with the reason until the engine and the host have it: `features`, `startCushion`, a host
+  `flow.ck2`); `--probe hist` stubs the two history keys into the working source (constant number writes per sample).
+  Measured at WP0 (7 rounds × 10 pairs, 4 h, unchanged engine): without the probe min-ratio median 0.997, pooled median 1.004; with `--probe hist` 0.994 / 1.016 (A/A within ±0.03); both-in ratio 1.46 (gate 1.6); the three new cases skipped.
+- `tests/_wts-fu-shapes.js` (§7.3) and `tests/wts-fu-identity.test.js` (7 tests, green on the unchanged tree).
+- `_wts-equip-shapes.js` sig helpers (§3.6): `SIG_DEFAULT` is now the 11-character `'11111111000'`, the v3.3.1 default is
+  `SIG_DEFAULT_V331`, and `sigDefaultOf(S)` picks by `S.VERSION` (1.4.0 → 10 characters, else 11), so the tests that used
+  `SIG_DEFAULT` stay exact before and after WP-E0. `checkShape('rigup', o, {rigKeys})` takes the module's RIG_KEYS (extra
+  keys are booleans, sig length must match, the module's own optional keys are valid extras); the regex is `{10,}`;
+  `identityDiff` accepts only zeros after the compared prefix (`/^0*$/`). `wts-equipment.test.js` uses `sigDefaultOf(S)` /
+  `SIG_DEFAULT_V331` and `/^0+$/` for "optional items out"; its other count sites stay for WP-E0 (COUNT_SITES).
+
+**ANCHORS_CK2 (re-computed; prototype `wtsWalk` of §4.3 in the scratchpad, base walk reproduced bit for bit against the
+golden).** Defaults (CK-101 32/64, 10 MMscf/d, 1,000 / 200 bbl/d, WHP 3,000, Psep 150; Pci 2,999.26):
+
+| CK-102 | Pm (psig) | CK-101 P2/P1 | CK-101 | QmaxPair | limiter | flow-limited | Tco2 / heater inlet (°F) | duty (MMBtu/h) |
+|---|---|---|---|---|---|---|---|---|
+| 4/64 | No Flow | — | — | 0.167 | CK-102 | yes | — | — |
+| 24/64 | No Flow | — | — | 5.695 | CK-102 | yes | — | — |
+| 32/64 | 2,753.6 | 0.919 | Subcritical | 8.920 | CK-102 | yes | 170.4 / 68.68 | 2.1045 |
+| 40/64 | 1,659.5 | 0.556 | Subcritical (just) | 10.659 | CK-102 | no | 127.6 / 68.68 | 2.1045 |
+| **48/64** | **1,135.1** | **0.382** | Critical | 10.710 | CK-101 | no | 107.0 / 68.68 | 2.1044 |
+| 64/64 | 634.4 | 0.216 | Critical | 10.710 | CK-101 | no | 87.4 / 68.69 | 2.1042 |
+| 96/64 | 278.2 | 0.098 | Critical | 10.710 | CK-101 | no | 73.5 / 68.71 | 2.1037 |
+| base (no CK-102) | — | 0.0572 | Critical | 10.710 | — | no | — / 68.735 | 2.1031 |
+
+- 32/64 is a state that exists (Pco2 < Pci) but cannot pass 10 MMscf/d: flow-limited, limiter CK-102 critical with CK-101
+  subcritical, as §4.6 says. Rule of thumb confirmed: CK-101 critical at 48 (≥ 1.35 × 32), subcritical at 40.
+- **Limiter 'both'** needs both chokes subcritical at the pair capacity, which at Psep 150 does not happen (equal beans
+  give 'CK-102'). It appears at a high back pressure: Psep 1,500 with 32/64 + 40/64 (QmaxPair 10.391, not limited) and
+  with equal beans 32/32 (8.844, limited). The fixture's 'both' anchors use Psep 1,500 (§9.2 "equal-bean and
+  both-subcritical cases" read at that pressure).
+- midcoil 48/64: same pressures and duty; Tp1 = 125.0 = Tho − 25 (the cap binds), CK-102 outlet 86.66 °F.
+- Dry gas (Qo = Qw = 0, 10 MMscf/d passes: base Qcrit 10.712): stages 137.85 + 12.15 = 150 °F; heater inlet T and duty
+  differ from the CK-101-only walk by 0.002 °F and 0.002 %. Recorded tolerance: 0.5 °F and 0.5 % duty.
+- Prototype choices (WP-C may differ within the 0.5 % anchor tolerance): Phi2 by 6 seg-4 passes back from P0; the first
+  outer pass evaluates seg 3 at Pm; T3 from seg 3 re-evaluated at the new (Pco2, Tco2); Z3 at (Pm, T3); the QmaxPair
+  Illinois solve takes F(0) = Qcrit and, when none of Q0·2^k fails, Qhi = 1.0001·Qcrit (CK-101 can never pass more);
+  both chokes critical at the pair capacity → limiter 'CK-101'; the midcoil split uses Tho = max(Thtr, T3).
+
+**ANCHORS_CUSH (prototype cushion step of §6.3 on SAMPLE_FLOW, V-101 in, noise off).** Z at the wellhead is 0.904 (not
+0.85), so Bgwh = 0.000967 rb/scf, qRes_ss = 10,869 rb/d, fUnload = 0.182; WHP target at the start 1,702.6 psig, end of the
+main slug 3,490.5; tBreak = 2,468 s after the start (42.5 / q + τf), Vtail 7.153 bbl, done ≈ tBreak + 8,933 s (3.16 h after
+the start). §6.4's numbers stand within these corrections. Two points for WP-E2:
+- the "62.5 bbl after 1 h" unit test cannot run on the defaults (breakthrough at 0.68 h): the anchor uses V 500 bbl with
+  gasFrac 0 (62.153 bbl = 62.5 − τf·q);
+- a substep-constant tail target over-delivers by about h/(2·τt)·Vtail (0.02 bbl at dt 10, 0.04 %), inside the 0.1 % gate;
+  the exact exponential integral over the substep removes it, and makes `done` agree between dt 1 and dt 10.
+
+**Q12 (gas-choke coefficients).** The calcWTS CK-101 capacity at 32/64 is 10.71 MMscf/d: 879.77 · Cd 0.85 · A 0.0491 in² ·
+P1 3,014 psia / √(SG 0.65 · T1 639.6 °R · Z1 0.904) · √fInner(r_c 0.549) (0.469). Cd 1 gives 12.60, Cd 1 at 519.67 °R
+13.98, Cd 1 at 519.67 °R and Z 1 13.29: none of Cd, T basis or Z reaches 17.4, so the research note's figure comes from its
+own coefficient (the session note is not in the repository and was not re-derived). CK-101 is unchanged.
+
+**Counts.** D12 lists eleven new alarm ids (§9.1 says thirteen): the fixture has 11, in Q_CK2 (4) / Q_SEPBY (2) /
+Q_CUSH (5). COUNT_SITES records every hit of the §3.6 grep on the WP0 tree (this fixture excluded): 64 hits — 32 rig counts with their owner (WP-E0 24, WP-3D 8), 4 done at WP0, 26 not rig counts, 2 frozen copies.
+
+**Fixture conventions decided at WP0.** `flow.ck2` / `flow.sepBy` warnings are `{t, msg}` (the base keeps `{t, m}`);
+`nodes.heaterChoke.bean` is 0 and `pos` 'inlet' while no block exists (only `inputs.bean2` / `inputs.ck2Pos` are nullable);
+`limiter` and `regime` are '' while CK-102 is out; `PSHH_SEPBY` is sev 'trip' with `esd` (the DES_PSHH path), eq
+'separator'; `SAMPLE_FLOW_SIM_KEYS` lists the 9 keys after the v3.3 five.
+
+**Gates at WP0.** accept `--sources` 1179/1179 (incl. the 7 new WTSFU tests); wts3d-test 118/120 (the two CRLF checks fail on the LF checkout, as expected); `wts-calc-golden.js --check --time` green;
+perf A/A as above.
 
 ---
 
