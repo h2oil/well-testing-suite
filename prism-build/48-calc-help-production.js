@@ -15,6 +15,7 @@ function pre(p) { return function (l, id, d, t) { return inp(l, p + id, d, t); }
 var O = pre('og_'), L = pre('gl_'), D = pre('gd_'), I = pre('oi_'), S = pre('sg_'), B = pre('bu_');
 function view(alt, co) { return { id: 'view', view: 'both', alt: alt, caption: 'The page as it opens', callouts: co }; }
 function res(target, alt, caption, co, setup) { var o = { id: 'res', view: 'desktop', target: target, alt: alt, caption: caption }; if (co) o.callouts = co; if (setup) o.setup = setup; return o; }
+function crop(id, target, alt, caption, co) { return { id: id, view: 'desktop', target: target, alt: alt, caption: caption, callouts: co }; }
 function open(t) { return { t: 'Select **' + t + '** in **Production & Reservoir**.', shot: 'view' }; }
 
 var prism = {
@@ -25,7 +26,7 @@ var prism = {
   'The results rail shows the latest fit and straight line. **Tools** holds the specialist panels.'],
   when: ['After a build-up, drawdown, injection or fall-off test.', 'To check for damage before or after a stimulation.', 'With rate-only data, for decline analysis and EUR.'],
   steps: [open('PRiSM — Well Test Analysis'),
-  'Select **Try demo data** ① or **Load data**.',
+  { t: 'Select **Try demo data** ① or **Load data**.', shot: 'load' },
   'Fill in **Well & Test**: test type, rate, h, φ, B, μ, ct and rw.',
   { t: 'Select **▶ Analyse** ②: PRiSM picks the period, fits a model, fills the rail ③.', shot: 'rail' },
   'Check each step with the step bar ④: [[prism#step-2|Flow periods]], [[prism#step-3|Diagnose]], [[prism#step-4|Model & fit]].',
@@ -48,7 +49,8 @@ var prism = {
   { pattern: '^prism_(data_(file|paste|clear)|rateonly|sheet|mapcol|map_reset|unit_|rate_phase|clean_|mrate|crop_[it]|crop_reset)', why: 'step-1 loader, mapping, cleanup, crop' },
   { pattern: '^prism_well_', why: 'Well & Test rows (label in a badge span)' },
   { pattern: '^prism_ft_', why: 'step-1 gauge and event rows' }],
-  shots: [view('PRiSM with the demo data, step ① Data', [sel(1, '#prism_data_demo'), sel(2, '#prism_analyse_btn'), sel(4, '#prism_step_btn_1')]),
+  shots: [view('PRiSM with the demo data, step ① Data', [sel(2, '#prism_analyse_btn'), sel(4, '#prism_step_btn_1')]),
+  crop('load', '#prism_load_card', 'Load Data card, step ①', 'Load Data', [sel(1, '#prism_data_demo')]),
   { id: 'rail', view: 'desktop', target: '#prism_rail', alt: 'Results rail after Analyse: k, skin, storage, straight line', caption: 'The results rail after ▶ Analyse',
     setup: [{ action: 'prismAnalyse' }], callouts: [sel(3, '#prism_rail')] },
   { id: 'tools', view: 'desktop', target: 'viewport', alt: 'The Tools drawer', caption: 'The Tools drawer',
@@ -85,7 +87,7 @@ var oilgas = {
   what: ['Oil: meter difference × meter factor × shrinkage × (1 − [[glossary#bsw|BS&W]]) × VCF. Gas: the [[aga3]] engine, flange taps.'],
   when: ['Every reading during a separator test.', 'To send a rate step to PRiSM.'],
   steps: [open('Oil & Gas Rate'), 'In **Oil Rate**, enter the interval, both meter readings ①, API, temperatures and factors.',
-  'In **Gas Rate**, enter run, plate, pressure, differential ②, gravity and temperature.', { t: 'Select **Calculate** and read the results.', shot: 'res' },
+  { t: 'In **Gas Rate**, enter run, plate, pressure, differential ②, gravity and temperature.', shot: 'gas' }, { t: 'Select **Calculate** and read the results.', shot: 'res' },
   'Optional: **Append rate step to PRiSM**.'],
   inputs: [O('Calc Interval', 'int', '60 min'), O('API Gravity', 'api', '35'), O('Hydrometer Temp', 'ht', '{{80|temperature}}'),
   O('Previous Meter', 'm0', '{{1000|volume}}'), O('Current Meter', 'm1', '{{1004.5|volume|1}}'), O('Oil Line Temp', 'olt', '{{120|temperature}}'),
@@ -102,7 +104,8 @@ var oilgas = {
   tips: ['A high GOR on a short interval is often a small meter difference.'],
   refs: [rf('API MPMS Ch. 11.1', 'API and VCF'), rf('AGA Report No. 3', 'orifice gas rate')],
   related: ['aga3', 'proving', 'solgor', 'prism'],
-  shots: [view('Oil & Gas Rate page', [sel(1, '#og_m1'), sel(2, '#og_dp')]),
+  shots: [view('Oil & Gas Rate page', [sel(1, '#og_m1')]),
+  crop('gas', '#pgBody .cols-2 > div > .card:nth-child(2)', 'Gas Rate card', 'Gas Rate', [sel(2, '#og_dp')]),
   res('#og_res', 'Combined Results: oil, gas, GOR, CGR', 'Default inputs', null, [{ click: '#pgBody .btn-primary' }, { waitFor: '#og_res .rbox' }])]
 };
 
@@ -124,7 +127,8 @@ var solgor = {
   tips: ['If they differ by over 15 %, use lab PVT.'],
   refs: [rf('Standing (1947)'), rf('Vasquez and Beggs (1980)')],
   related: ['oilgas', 'gaspvt', 'prism'],
-  shots: [view('Solution GOR page', [sel(1, '#sg_p'), sel(2, '#pgBody .btn-primary')]), res('#sg_res .rbox', 'Solution GOR Results: Rs by both correlations', 'Default inputs', null, [{ click: '#pgBody .btn-primary' }, { waitFor: '#sg_res .rbox' }])]
+  shots: [view('Solution GOR page', [sel(1, '#sg_p')]),
+  crop('calc', '#pgBody .cols-2 > div > .card:first-child', 'Inputs and Calculate', 'Inputs', [sel(1, '#sg_p'), sel(2, '#pgBody .btn-primary')]), res('#sg_res .rbox', 'Solution GOR Results: Rs by both correlations', 'Default inputs', null, [{ click: '#pgBody .btn-primary' }, { waitFor: '#sg_res .rbox' }])]
 };
 
 var gasdeliv = {
@@ -134,7 +138,7 @@ var gasdeliv = {
   what: ['Fits q = C (p̄r² − pwf²)ⁿ and p̄r² − pwf² = a·q + b·q² to the points, then tabulates both curves.'],
   when: ['After a flow-after-flow, isochronal or modified isochronal test.', 'For a single-point AOF with an assumed n.'],
   steps: [open('Gas Deliverability & AOF'), 'Pick the **Test type** ①; enter p̄r and the AOF back-pressure.',
-  'Fill **Test Points** ② (or **Insert example**, or paste and **Import rows**).', { t: 'Select **Calculate**; read the verdict and both equations ③.', shot: 'res' },
+  { t: 'Fill **Test Points** ② (or **Insert example**, or paste and **Import rows**).', shot: 'points' }, { t: 'Select **Calculate**; read the verdict and both equations ③.', shot: 'res' },
   'Read the **Deliverability Table**.'],
   inputs: [D('Test type', 'type', 'Flow-after-flow'), D('Average reservoir pressure, absolute', 'pr', '{{1952|pressure}}'),
   D('AOF back-pressure, absolute', 'pb', '{{14.65|pressure|2}}'), D('Assumed exponent n, single-point only', 'nass', '0.85'),
@@ -155,7 +159,8 @@ var gasdeliv = {
   tips: ['Above about {{2000|pressure}}, use pseudo-pressure in [[prism]].'], pitfalls: ['Enter absolute pressures, not gauge.'],
   refs: [rf('Rawlins and Schellhardt (1935)', 'back-pressure'), rf('Houpeurt (1959)', 'LIT')],
   related: ['prism', 'oilipr', 'gaspvt'],
-  shots: [view('Gas Deliverability page', [sel(1, '#gd_type'), sel(2, '#gd_pts')]),
+  shots: [view('Gas Deliverability page', [sel(1, '#gd_type')]),
+  crop('points', '#gd_root .cols-2 > div > .card:nth-child(2)', 'Test Points table', 'Test Points', [sel(2, '#gd_pts')]),
   res('#gd_res', 'Back-pressure and LIT results', 'Default test', [sel(3, '#gd_res .rbox')])]
 };
 
@@ -166,7 +171,7 @@ var oilipr = {
   what: ['Vogel / composite: Vogel when the bubble point is at or above p̄r, else a PI line above it and Vogel below.'],
   when: ['After a flowing test: qmax, rate at a pwf.', 'Before an artificial-lift design ([[gaslift]]).'],
   steps: [open('Oil Well IPR'), 'Pick the **IPR method** ①; enter p̄r and the bubble point.',
-  'Enter the test points in **Test Points** ②; Fetkovich uses every row.', { t: 'Select **Calculate**; read the result and the **IPR Table** ③.', shot: 'res' }],
+  { t: 'Enter the test points in **Test Points** ②; Fetkovich uses every row.', shot: 'points' }, { t: 'Select **Calculate**; read the result and the **IPR Table** ③.', shot: 'res' }],
   inputs: [I('IPR method', 'method', 'Vogel / composite (automatic)'), I('Average reservoir pressure, absolute', 'pr', '{{2400|pressure}}'),
   I('Bubble-point pressure, absolute', 'pb', '{{2400|pressure}}'), I('Flow efficiency FE, Standing', 'fe', '1.0', '0.3 to 2.0.'),
   I('Flowing pressure for rate readout, absolute', 'pwfd', '{{1200|pressure}}'), I('Target rate for pressure readout', 'qt', '{{150|liquidRate}}'),
@@ -184,7 +189,8 @@ var oilipr = {
   tips: ['Take p̄r from a build-up ([[buildup]]).'],
   refs: [rf('Vogel (1968)'), rf('Standing (1970)', 'flow efficiency'), rf('Fetkovich (1973)')],
   related: ['gasdeliv', 'gaslift', 'prism'],
-  shots: [view('Oil Well IPR page', [sel(1, '#oi_method'), sel(2, '#oi_pts')]), res('#oi_res', 'IPR result, table and chart', 'Results for the defaults', [sel(3, '#oi_tbl')])]
+  shots: [view('Oil Well IPR page', [sel(1, '#oi_method')]),
+  crop('points', '#oi_root .cols-2 > div > .card:nth-child(2)', 'Test Points table', 'Test Points', [sel(2, '#oi_pts')]), res('#oi_res', 'IPR result, table and chart', 'Results for the defaults', [sel(3, '#oi_tbl')])]
 };
 
 var gaslift = {
@@ -193,7 +199,7 @@ var gaslift = {
   purpose: 'Screening design of continuous gas lift: point of injection, gas needed, valve spacing and schedule.',
   what: ['Balances the gas column against the flowing traverse ([[flowline]] engine), then spaces and sets the valves.'],
   when: ['Can the well be lifted at the target rate, with how much gas?', 'To draft a valve schedule.'],
-  steps: [open('Gas Lift Design'), 'Fill **Well, Fluids & Inflow** ①, with the [[glossary#gor|GOR]].', 'Fill **Gas Lift System** ②: pressures, target GLR, valve data.',
+  steps: [open('Gas Lift Design'), 'Fill **Well, Fluids & Inflow** ①, with the [[glossary#gor|GOR]].', { t: 'Fill **Gas Lift System** ②: pressures, target GLR, valve data.', shot: 'system' },
   { t: 'Select **Calculate** and read the verdicts ③.', shot: 'res' }, 'Read the **Valve Schedule** and **Pressure vs Depth**.'],
   inputs: [L('Target oil rate', 'qo', '{{800|liquidRate}}'), L('Water rate', 'qw', '{{400|liquidRate}}'), L('Formation GOR', 'gor', '{{300|gor}}'),
   L('Oil gravity', 'api', '35'), L('Formation gas gravity, air = 1', 'sgg', '0.7'), L('Water specific gravity', 'sgw', '1.07'),
@@ -224,7 +230,8 @@ var gaslift = {
   pitfalls: ['Screening only: confirm with valve data, ratings and a nodal analysis.'],
   refs: [rf('API RP 11V6', 'continuous gas lift design')],
   related: ['oilipr', 'flowline'],
-  shots: [view('Gas Lift Quick Design inputs', [sel(1, '#gl_qo'), sel(2, '#gl_pso')]), res('#gl_res .rbox', 'Point of injection and the lift verdict', 'Default well', [sel(3, '#gl_res .rbox')])]
+  shots: [view('Gas Lift Quick Design inputs', [sel(1, '#gl_qo')]),
+  crop('system', '#gl_root > .card:nth-child(2)', 'Gas Lift System card', 'Gas Lift System', [sel(2, '#gl_pso')]), res('#gl_res .rbox', 'Point of injection and the lift verdict', 'Default well', [sel(3, '#gl_res .rbox')])]
 };
 
 var buildup = {
@@ -235,7 +242,7 @@ var buildup = {
   'Partial rate cuts are listed, not interpreted; **Open this build-up in PRiSM** to deconvolve.'],
   when: ['When new permanent-gauge data arrive.', 'To decide on a stimulation from the skin trend.'],
   steps: [open('Build-up Surveillance'), 'Enter your name in **Engineer**. Pick the **Gauge data source** ① and load it (or **Demo data**, **Load demo**).',
-  'In **Rates**, load the daily allocation or a rate table.', 'Fill **Well and fluid** ② (gas: gravity, temperature, impurities).',
+  'In **Rates**, load the daily allocation or a rate table.', { t: 'Fill **Well and fluid** ② (gas: gravity, temperature, impurities).', shot: 'well' },
   { t: 'Select **Analyse** ③; read the Summary, tests, trend and review.', shot: 'res' }, 'Decide the findings (Actions…), then sign off under **Sign-off**.'],
   inputs: [B('Engineer', 'eng', null, 'Needed for overrides and sign-off.'), B('Gauge data source', 'src', 'File (CSV or text)'), B('Demo', 'demo_kind', 'Oil producer'),
   B('Gauge file', 'g_file', null, 'A time and a pressure column.'), B('Historian tag', 'h_tag', null, 'From [[historian]].'), B('Time format', 'g_tfmt', 'Detect automatically'),
@@ -275,7 +282,9 @@ var buildup = {
   tips: ['Load the allocation: rates set Δq and superposition time.', 'The oil demo shows a rising skin and both alerts.'], pitfalls: ['No build-up shorter than 10 h is labelled high.'],
   refs: [rf('Bourdet (1989)', 'derivative'), rf('Papatzacos (1987)', 'geometric skin')],
   related: ['prism', 'historian', 'oilipr'],
-  shots: [view('Build-up Surveillance with Data sources', [sel(1, '#bu_src'), sel(2, '#bu_fluid'), sel(3, '#bu_run')]),
+  shots: [view('Build-up Surveillance with Data sources', [sel(1, '#bu_src')]),
+  crop('well', '#bu_card_well', 'Well and fluid card', 'Well and fluid', [sel(2, '#bu_fluid')]),
+  crop('run', '.bu-run', 'Analyse button row', 'Analyse', [sel(3, '#bu_run')]),
   res('#bu_s_S1', 'Summary of the oil demo: skin, baseline, alerts', 'The oil demo after Analyse', null, [{ action: 'buildupDemo', args: 'oil' }, { click: '#bu_run' }, { waitFor: '#bu_res[data-done="1"]' }])]
 };
 
