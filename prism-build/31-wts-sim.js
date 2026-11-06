@@ -1949,7 +1949,7 @@ function create(flowIn, opts) {
     for (i = 0; i < hn.length; i++) {
       var nd = snap.nodes[hn[i]];
       A = aDef('HYD_' + hn[i], TAGS[hn[i]], 'hyd', hn[i], 'd');
-      var Tv = i === 5 ? nd.Tout : nd.T;               // desander: judged on its outlet temperature (after its own J-T drop)
+      var Tv = hn[i] === 'desander' ? nd.Tout : nd.T;             // desander: judged on its outlet temperature (after its own J-T drop)
       if (nd.hyd && !A.active) raise(A, Tv, nd.th, NAMES[hn[i]] + ': ' + uq(Tv, 'temperature') + ' below hydrate ' + uq(nd.th, 'temperature') + ' at ' + uq(nd.P, 'pressureG'));
       else if (nd.hyd) { A.value = Tv; A.limit = nd.th; }
       else if (A.active) clearA(A);

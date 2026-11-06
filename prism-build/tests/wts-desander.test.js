@@ -303,6 +303,25 @@ module.exports = [
       assert.near(f.getState().sand.flowback.t_h, 1 / 3600, 1e-9, 'switching on again restarts the clock');
     },
   },
+  {
+    name: 'WTSDS determinism (§7): dt 1 s vs dt 10 s over 2 h of flow-back with DS-101 in — sand totals within 1 %',
+    wp: WP,
+    timeoutMs: 300000,
+    run(app, assert) {
+      const a = mk(app, { rig: { desander: true }, cfg: SAND10 }), b = mk(app, { rig: { desander: true }, cfg: SAND10 });
+      a.setFault('sandFlowback', true); b.setFault('sandFlowback', true);
+      adv(a, 7200, 1); adv(b, 7200, 10);
+      const sa = J(a.getState()), sb = J(b.getState());
+      assert.near(sa.t, sb.t, 1e-6, 'same clock');
+      ['in_lb', 'capt_lb', 'toChoke_lb', 'toSep_lb'].forEach((k) => {
+        assert.ok(sa.sand.cum[k] > 0, k + ' > 0');
+        assert.rel(sb.sand.cum[k], sa.sand.cum[k], 0.01, 'sand.cum.' + k + ' dt 10 vs dt 1');
+      });
+      assert.rel(sb.desander.sand.acc_lb + sb.desander.sand.buf_lb + sb.sand.cum.dumped_lb,
+        sa.desander.sand.acc_lb + sa.desander.sand.buf_lb + sa.sand.cum.dumped_lb, 0.01, 'caught inventory dt 10 vs dt 1');
+      sandIdentities(assert, sa, 'dt 1'); sandIdentities(assert, sb, 'dt 10');
+    },
+  },
   // ── dump sequence ──
   {
     name: 'WTSDS dump: isolate → bleed → flush → equalise → reopen; flush at 8 + 307 ± 2 s (interlock 1), total 1,043 ± 3 s, accumulator → 0, events, log, XV-103 line',
