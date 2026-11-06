@@ -7,6 +7,10 @@
  *   (no pump between T-201 and T-301: LCV-201 transfers on the surge tank pressure)
  *   · rig-up: equipment out of the spread (snapshot rigup) is shown as a ghost with its bypass
  *     spool (amber); the scene is rebuilt when the rig-up changes
+ *   · optional rig-up items (v1.2.0, docs/SIM-EQUIPMENT-PLAN.md §8.0–8.1): DS-101 cyclonic desander between
+ *     SDV-101 and CK-101 (bypass HV-104, sand dump XV-103 to a skip) and T-202 second surge tank (XV-202,
+ *     LCV-202, PCV-203/204, PSV-202) — out by default and then absent everywhere (geometry, picking, occlusion,
+ *     framing, chips, step numbers, tracers, lamps); step numbers come from WTS_sim.stepFor(rig)
  *   · Fresnel glass vessels with phase-banded, luminous fluids and animated
  *     interfaces (water / emulsion / oil / gas cap), weir cascade, bubbles
  *   · glass pipes with flow tracers walking an edge graph (real-time clock)
@@ -871,8 +875,10 @@ function fakeSnapshot(t, o) {
   var vLiq = function (q) { return q * 5.614583 / 86400 / A6; };
   var drainQ = otherState === 'draining' ? 3000 : 0;
   // optional items (o.desander / o.surge2 / o.flushing): DS-101 upstream of the choke (ESD node = choke inlet + ΔP), T-202 on route 'both'
-  var dsIn = o.desander === true, u2In = o.surge2 === true, dsFlush = dsIn && o.flushing === true;
-  var dsDP = dsIn && f > 0.01 ? 3.93 * fi * fi : 0, dsPin = Pci + dsDP, dsAcc = dsIn ? (dsFlush ? 0.3 : clamp(((t % 14400) + 14400) % 14400 / 14400 * 0.85, 0, 1)) : 0;
+  // o.held: the dump sequence held by an ESD (XV-103 shut, phase 'held', heldFrom 'flush'); o.flushing: XV-103 open in 'flush'
+  var dsIn = o.desander === true, u2In = o.surge2 === true, dsHeld = dsIn && o.held === true, dsFlush = dsIn && o.flushing === true && !dsHeld;
+  var dsDump = dsFlush || dsHeld;
+  var dsDP = dsIn && f > 0.01 ? 3.93 * fi * fi : 0, dsPin = Pci + dsDP, dsAcc = dsIn ? (dsDump ? 0.3 : clamp(((t % 14400) + 14400) % 14400 / 14400 * 0.85, 0, 1)) : 0;
   var u2Cyc = saw(t + 200, 1800, 0.66), u2Frac = u2In ? 0.2 + 0.5 * u2Cyc.v : 0, u2Fill = u2In && f > 0.01 ? (qOil + qWat) / 2 : 0, u2X = u2In && !u2Cyc.up && f > 0.01 ? 3752 : 0;
   var segs = SAMPLE_SEGS.map(function (s, i) {
     var c = JSON.parse(JSON.stringify(s)); var k = i < 4 ? fi : i === 4 ? f : 1;
@@ -947,7 +953,8 @@ function fakeSnapshot(t, o) {
       carrier:'liquid', mu_cp:dsIn ? 1.88 : 0, d50c_um:dsIn ? 39.8 : 0, eff:dsIn ? 0.946 : 0, effClean:dsIn ? 0.946 : 0,
       sand:{ in_lbd:dsIn ? 12 * f : 0, capt_lbd:dsIn ? 11.35 * f : 0, out_lbd:dsIn ? 0.646 * f : 0, acc_lb:dsAcc * 663, acc_frac:dsAcc, cap_lb:663,
         buf_lb:0, buf_frac:0, bufCap_lb:265, lah:0.8, lahh:0.95 },
-      dump:{ tag:'XV-103', phase:dsFlush ? 'flush' : 'idle', heldFrom:'', phaseT_s:dsFlush ? 120 : 0, left_s:dsFlush ? 608 : 0, open:dsFlush, Pacc:dsIn ? (dsFlush ? 30 : Pci) : 0,
+      dump:{ tag:'XV-103', phase:dsHeld ? 'held' : dsFlush ? 'flush' : 'idle', heldFrom:dsHeld ? 'flush' : '', phaseT_s:dsDump ? 120 : 0, left_s:dsFlush ? 608 : 0, open:dsFlush,
+        Pacc:dsIn ? (dsDump ? 30 : Pci) : 0,
         count:dsIn ? Math.floor(t / 14400) : 0, lastT:dsIn && t > 14400 ? 14400 * Math.floor(t / 14400) : null, failed:false, failMsg:'' },
       auto:{ on:false, sp:0.8, blocked:false }, rating_psi:10000, sithp_psi:3600, sithpEst:true, ratingOK:true, tempMax_F:350, tempOK:true },
     sand:{ on:dsIn, pptb:dsIn ? 10 : 0, lbPerMMscf:0, d50_um:150, sigmaG:2, in_lbd:dsIn ? 12 * f : 0, toChoke_lbd:dsIn ? 0.646 * f : 0,
@@ -4577,7 +4584,7 @@ G.WTS_3d = WTS_3d;
 (function () {
   var G = (typeof window !== 'undefined') ? window : globalThis;
   var W = G.WTS_3d; if (!W || !W._internals) return;
-  var I = W._internals, pass = 0, total = 14, fails = [];
+  var I = W._internals, pass = 0, total = 17, fails = [];
   function ok(n, c, msg) { if (c) pass++; else fails.push(n + (msg ? ' ' + msg : '')); }
   function near(a, b, e) { return Math.abs(a - b) <= e; }
   function t(n, fn) { try { fn(); } catch (e) { fails.push(n + ' threw ' + (e && e.message)); } }
@@ -4606,6 +4613,11 @@ G.WTS_3d = WTS_3d;
     ok(6, !bad.length && c === out && a.sep.c1fracW === 0.25 && a.sep.c1fracL === 0.6 && a.sep.bfrac === 0.32 && a.surge.frac === 0.55 && a.surge.fracW === 0.15 &&
       a.gauge.tanks[0].frac === 0.3 && a.gauge.tanks[1].frac === 0 && a.esd.travel === 1 && a.nodes.heater.firing === 1 && b.nodes.flare.qMMscfd === 10 && a.inp.API === 35 &&
       a.segs.length === 6 && a.segs[2].nps === '6', bad.join(','));
+    // v1.2.0: ten nodes, optional items out on an empty / older snapshot, in when the snapshot says so (§8.1)
+    var e = I.normalize(I.fakeSnapshot(5, { desander:true, surge2:true, flushing:true }), I.makeNorm()), bad2 = walk(e, '', []);
+    ok(6, !bad2.length && I.NODE_NAMES.length === 10 && a.rig.desander === false && a.rig.surge2 === false && a.rigSig === '11111100' && isFinite(a.nodes.desander.P) &&
+      isFinite(a.nodes.surge2.P) && c.rigSig === '11111100' && e.rig.desander === true && e.rig.surge2 === true && e.rigSig === '11111111' && e.ds.inRig && e.ds.dP > 0 &&
+      e.ds.phase === 'flush' && e.ds.open === true && e.surge2.inRig && e.surge2.frac > 0 && e.nodes.esd.P > e.nodes.choke.Pin, bad2.join(','));
   });
   // 7 tier pick
   t(7, function () { ok(7, I.pickTier({ mobile:true }) === 'medium' && I.pickTier({ software:true }) === 'low' && I.pickTier({}) === 'high'); });
@@ -4647,6 +4659,10 @@ G.WTS_3d = WTS_3d;
       if (v === null) { if (!nullable(q)) bad.push(q); } else if (typeof v === 'number') { if (!isFinite(v)) bad.push(q); } else if (typeof v === 'object') walk(v, q); } }
     [0, 12.3, 5000, 90000].forEach(function (tt) { walk(I.fakeSnapshot(tt), ''); });
     walk(I.fakeSnapshot(40, { esd:'tripped', tEsd:30 }), ''); walk(I.fakeSnapshot(40, { esd:'manual', tEsd:30 }), '');
+    [0, 5000, 20000].forEach(function (tt) { walk(I.fakeSnapshot(tt, { desander:true, surge2:true, flushing:true }), ''); walk(I.fakeSnapshot(tt, { desander:true, held:true }), ''); });
+    var se = I.fakeSnapshot(20000, { desander:true, surge2:true });
+    ok(11, se.rigup.sig === '1111111111' && se.desander.dump.lastT !== null && se.surge2.tFull_s !== undefined && typeof se.lines.ds_dump.vel === 'number' &&
+      I.LINE_NAMES.every(function (k) { return se.lines[k] && typeof se.lines[k].q === 'number'; }) && I.fakeSnapshot(5).rigup.sig === '1111111100', 'equipment paths');
     var s = I.fakeSnapshot(12.3);
     ok(11, !bad.length && s.v === 1 && s.segs.length === 6 && s.gauge.tanks.length === 2 && typeof s.lines.psv_surge.vel === 'number', bad.slice(0, 5).join(','));
   });
@@ -4669,6 +4685,15 @@ G.WTS_3d = WTS_3d;
     var sp = sizeOf(I.V101_BOX, fp, 375, 471);
     gate = { r:r, h:s.h, w:s.w, ph:sp.h };
     ok(13, near(r, fv.radius, 1e-9) && r <= rBox + 1e-6 && s.h >= 55 && s.w >= 170 && sp.h >= 22, JSON.stringify(gate));
+    // v1.2.0: the same gates with each of the four optional combinations; both out = the v3.3 fit set exactly
+    var gbad = [];
+    [{}, { desander:true }, { surge2:true }, { desander:true, surge2:true }].forEach(function (rig) {
+      var fvr = I.fitView(I.fitPts(rig), OV.az, OV.el, 36, 1380, 700, { top:98, bottom:76, left:0, right:0, card:null }), sr = sizeOf(I.V101_BOX, fvr, 1380, 700);
+      var vp = I.viewFor('process', rig, 375, 471, { top:0, bottom:0, left:0, right:0, card:null }), dpv = I.camDir(-10, 30);
+      var spr = sizeOf(I.V101_BOX, { az:-10, el:30, radius:vp.r, target:vp.tgt }, 375, 471);
+      if (!(sr.h >= 55 && sr.w >= 170 && spr.h >= 22 && dpv)) gbad.push(JSON.stringify(rig) + ' ' + Math.round(sr.h) + 'x' + Math.round(sr.w) + '/' + Math.round(spr.h));
+    });
+    ok(13, !gbad.length && I.fitPts({}) === I.FIT_PTS, gbad.join(';'));
   });
   // 14 compact stage: a chip with no free ring slot is docked in a free band (never faded over another chip)
   t(14, function () {
