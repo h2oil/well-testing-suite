@@ -216,8 +216,12 @@ module.exports = [
         });
         if (items().length) { app.click(opener()); app.flush(30); }
       });
-      // every equipment card (the 3D / 2D pick path) and every action in it
-      ['wellhead', 'esd', 'choke', 'heater', 'separator', 'flare', 'surge', 'pump', 'gauge'].forEach((eq) => {
+      // every equipment card (the 3D / 2D pick path) and every action in it — v3.3.1: with DS-101 and T-202 in the rig-up
+      // (optional items, out by default) and the ESD open, so "Dump sand" and the T-202 route / valve buttons are live
+      s.setRigup(app.toWin({ desander: true, surge2: true }));
+      if (s.getState().esd.tripped) s.resetESD();
+      app.flush(300);
+      ['wellhead', 'esd', 'choke', 'heater', 'separator', 'flare', 'surge', 'pump', 'gauge', 'desander', 'surge2'].forEach((eq) => {
         const f = app.document.createElement('button'); f.setAttribute('data-act', 'focus'); f.setAttribute('data-v', eq); root.appendChild(f); app.click(f); f.remove();
         app.flush(200);
         const card = app.el('wtsl_card');
@@ -236,18 +240,21 @@ module.exports = [
       const mx = app.find('[data-act="max"]');
       if (mx) { app.click(mx); app.flush(100); app.click(mx); app.flush(100); done.push('max|'); }
       if (process.env.WTS_SWEEP_VERBOSE) console.log('pressed ' + done.length + ': ' + done.join(' '));
-      ['play', 'speed', 'esd', 'resetmenu', 'alarms', 'mode2d', 'fault', 'dtab', 'ackall', 'view', 'gauge:valve', 'surge:suction', 'surge:auto', 'choke:bean', 'separator:sp', 'heater:bypass'].forEach((a) => assert.ok(done.some((d) => d.indexOf(a + '|') === 0), 'pressed ' + a + ' (' + done.length + ' buttons)'));
+      ['play', 'speed', 'esd', 'resetmenu', 'alarms', 'mode2d', 'fault', 'dtab', 'ackall', 'view', 'gauge:valve', 'surge:suction', 'surge:auto', 'choke:bean', 'separator:sp', 'heater:bypass',
+        'desander:ds-dump', 'desander:ds-bypass', 'desander:ds-auto', 'surge2:s2route', 'surge2:valve', 'surge2:auto'].forEach((a) => assert.ok(done.some((d) => d.indexOf(a + '|') === 0), 'pressed ' + a + ' (' + done.length + ' buttons)'));
       assert.ok(done.length >= 80, 'buttons pressed: ' + done.length);
       // rig-up switches: each one out and back in
       const rig = app.el('wtsl_rigup');
       assert.ok(rig, 'rig-up card');
       const keys = Array.from(rig.querySelectorAll('[data-rig]')).filter((b) => !b.disabled).map((b) => b.getAttribute('data-rig'));
       assert.ok(keys.length >= 6, 'switches: ' + keys.join());
+      // core items toggle out and back in; the optional items (DS-101, T-202, v3.3.1) start out, so they toggle in and back out
       keys.forEach((k) => {
+        const was = s.getRigup()[k];
         app.click(rig.querySelector('[data-rig="' + k + '"]')); app.flush(60);
-        assert.strictEqual(s.getRigup()[k], false, k + ' out');
+        assert.strictEqual(s.getRigup()[k], !was, k + (was ? ' out' : ' in'));
         app.click(rig.querySelector('[data-rig="' + k + '"]')); app.flush(60);
-        assert.strictEqual(s.getRigup()[k], true, k + ' back in');
+        assert.strictEqual(s.getRigup()[k], was, k + ' back');
       });
       app.click(rig.querySelector('[data-rig-act="all"]')); app.flush(60);
       assert.strictEqual(s.getState().rigup.full, true, 'full rig-up');
