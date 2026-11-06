@@ -1949,8 +1949,9 @@ function create(flowIn, opts) {
     for (i = 0; i < hn.length; i++) {
       var nd = snap.nodes[hn[i]];
       A = aDef('HYD_' + hn[i], TAGS[hn[i]], 'hyd', hn[i], 'd');
-      if (nd.hyd && !A.active) raise(A, nd.T, nd.th, NAMES[hn[i]] + ': ' + uq(nd.T, 'temperature') + ' below hydrate ' + uq(nd.th, 'temperature') + ' at ' + uq(nd.P, 'pressureG'));
-      else if (nd.hyd) { A.value = nd.T; A.limit = nd.th; }
+      var Tv = i === 5 ? nd.Tout : nd.T;               // desander: judged on its outlet temperature (after its own J-T drop)
+      if (nd.hyd && !A.active) raise(A, Tv, nd.th, NAMES[hn[i]] + ': ' + uq(Tv, 'temperature') + ' below hydrate ' + uq(nd.th, 'temperature') + ' at ' + uq(nd.P, 'pressureG'));
+      else if (nd.hyd) { A.value = Tv; A.limit = nd.th; }
       else if (A.active) clearA(A);
     }
     A = aDef('CHOKE_LIMIT', TAGS.choke, 'alarm', 'choke', 'd');
@@ -2532,7 +2533,7 @@ function create(flowIn, opts) {
   // (5 s lag, as PB), X.PB = PBu − PD = choke inlet while DS-101 is in; s = choke-capacity coupling factor (§4.6)
   var DX = { PBu: 0, PD: 0, PDraw: 0, Pacc: 0, th: 0, acc: 0, buf: 0, phaseT: 0, tSand: 0, s: 1, W: 0, capR: 0, passR: 0, dumpR: 0,
     d50c: 0, Er: 0, Ef: 0, C2pr: 0, C2pf: 0, effCleanR: 0, effCleanF: 0, eff: 0, effClean: 0, C2ch: 0, ero: 0, loss: 0, vIn: 0,
-    dPexp: 0, accF0: 0, Tbleed: 0 };
+    dPexp: 0, accF0: 0, Tbleed: 0, tEv: -1 };   // tEv: end time of the substep while the dump sequence steps (event / lastT stamps)
   // discrete state: dump phase (§4.4), latches and flags
   var DS = { phase: 'idle', heldFrom: '', count: 0, lastT: null, failed: false, failMsg: '', autoBlocked: false, flowLim: false,
     bleedHyd: false, dumpAuto: false, aborted: false, flowing: false, open: false };
@@ -2707,7 +2708,7 @@ function create(flowIn, opts) {
         desPerf(fI);
         a = clamp((1 - fill) / mmax(1 - num(C.effFillKnee, 0.9), 1e-6), 0, 1) * (1 - (faults.desanderBypassPassing ? num(C.bypassLeak, 0.1) : 0));
       }
-      desDumpStep(h);
+      DX.tEv = X.t + h; desDumpStep(h); DX.tEv = -1;   // phase ends fall at the end of this substep
       iso = DS.phase !== 'idle';
     }
     if (sandOn && flowing) {
@@ -2753,7 +2754,7 @@ function create(flowIn, opts) {
   // ── dump sequence (§4.4): isolate → bleed → flush → equalise → reopen, scalar accumulator pressure, two interlocks ──
   function desEmit(phase, msg, isAuto) {
     logEntry('event', 'DS_DUMP', null, TAGS.dsDump, msg);
-    emit('dump', { type: 'dump', t: X.t, phase: phase, msg: msg, auto: !!isAuto });
+    emit('dump', { type: 'dump', t: DX.tEv >= 0 ? DX.tEv : X.t, phase: phase, msg: msg, auto: !!isAuto });
   }
   function desStart(isAuto) {
     DS.phase = 'isolate'; DS.heldFrom = ''; DX.phaseT = 0; DS.dumpAuto = !!isAuto; DS.aborted = false; DS.bleedHyd = false; DS.open = false;
@@ -2785,7 +2786,7 @@ function create(flowIn, opts) {
   function desFinish() {
     var mv = mmax(0, mmin(DX.buf, DD.cap - DX.acc)), ok = !DS.failed && !DS.aborted;
     DX.acc += mv; DX.buf -= mv;
-    if (ok) { DS.count++; DS.lastT = X.t; }
+    if (ok) { DS.count++; DS.lastT = DX.tEv >= 0 ? DX.tEv : X.t; }
     var how = DS.aborted ? 'aborted' : DS.failed ? 'ended without dumping (' + DS.failMsg + ')' : 'complete';
     DS.phase = 'idle'; DS.heldFrom = ''; DX.phaseT = 0; DS.bleedHyd = false; DS.open = false; DS.aborted = false; DX.Pacc = X.PB;
     desEmit('idle', TAGS.desander + ' dump ' + how + ': isolation open, ' + rnd0(mv) + ' lb moved from the buffer to the accumulator', DS.dumpAuto);
