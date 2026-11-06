@@ -29,6 +29,7 @@
 //   --mobile  run the click sweep at 390 px (phone, touch) and save phone screenshots too
 //   --no-stub block the CDN libraries too (three.js, sql.js, SQLite WASM, html2canvas, jsPDF are served
 //             from ios-app/ios-additions/libs by default so 3D / historian / PDF paths are exercised)
+//   --self-test  run the sweep's own parser checks (no browser) and exit 0 / 1
 // Needs Playwright (+ Chromium). Prints "[skip] …" and exits 0 without it. Never runs `playwright install`.
 // Exit code: 0 (the sweep is a report, not a gate); 2 if the sweep itself crashed.
 'use strict';
@@ -603,6 +604,31 @@ class Session {
   }
   eval(fn, a, ms) { return withTimeout(this.page.evaluate(fn, a), ms || 30000); }
 }
+// DS-101 card: completed dumps from the 'Last dump' row's detail line ('1 dump' / '3 dumps'); null when absent.
+function dumpCountOf(rows) {
+  const r = (rows || []).find((x) => x && /^\s*last dump\s*$/i.test(x.l || ''));
+  const m = r ? /^\s*(\d+) dumps?\s*$/i.exec(r.d || '') : null;
+  return m ? +m[1] : null;
+}
+function selfTest() {
+  // the joined card text once a dump has finished must not be read as '231' (seconds digits + count)
+  const joined = 'Last dumpT+00:17:231 dump';
+  const bad = /Last dump[\s\S]*?(\d+) dumps?/i.exec(joined);
+  const cases = [
+    ['old joined-text regex is wrong on ' + JSON.stringify(joined), bad && bad[1] === '231'],
+    ['one dump', dumpCountOf([{ l: 'Dump', v: 'IDLE', d: '' }, { l: 'Last dump', v: 'T+00:17:23', d: '1 dump' }]) === 1],
+    ['three dumps', dumpCountOf([{ l: 'Last dump', v: 'T+01:02:03', d: '3 dumps' }]) === 3],
+    ['no dump yet', dumpCountOf([{ l: 'Last dump', v: 'none', d: '' }]) === null],
+    ['no row', dumpCountOf([{ l: 'Caught', v: '1 lb/d', d: '' }]) === null],
+    ['upper-cased label', dumpCountOf([{ l: 'LAST DUMP', v: 'T+00:00:05', d: '2 dumps' }]) === 2],
+  ];
+  let bad2 = 0;
+  cases.forEach(([n, ok]) => { if (!ok) bad2++; say((ok ? '[ok]   ' : '[FAIL] ') + n); });
+  say(bad2 ? '[gui-sweep] self-test: ' + bad2 + ' failed' : '[gui-sweep] self-test: all ' + cases.length + ' passed');
+  return bad2 ? 1 : 0;
+}
+if (has('--self-test')) process.exit(selfTest());
+
 function withTimeout(pr, ms) {
   let t; return Promise.race([pr, new Promise((_, rej) => { t = setTimeout(() => rej(new Error('TIMEOUT ' + ms + 'ms')), ms); })]).finally(() => clearTimeout(t));
 }
@@ -989,11 +1015,13 @@ async function simJob(browser) {
   // Run the Well Test Simulator for a few seconds (2D), then stop/reset.
   const { s } = await freshSession(browser, 'wts', DESKTOP);
   const route = 'wts', view = 'run';
+  let eqRun = null;                        // the equipment run (§9.3) also runs when the run above fails
   try {
     await navTo(s, 'wts'); await s.take();
     routeInfo.wts = routeInfo.wts || { title: '', views: {}, controls: 0, clicks: 0, fills: 0, selects: 0, exports: {}, noEffect: [] };
     const act = (sel, idx) => s.eval((a) => { const b = Array.from(document.querySelectorAll(a[0])).filter((x) => x.offsetParent)[a[1] || 0]; if (!b) return null; b.click(); return (b.getAttribute('aria-label') || b.innerText || a[0]).trim().slice(0, 60); }, [sel, idx || 0]);
     const clockTxt = () => s.eval(() => (Array.from(document.querySelectorAll('#pgBody *')).map((e) => e.childElementCount ? '' : e.textContent).find((t) => /^\s*(T\+)?\d{1,3}:\d{2}(:\d{2})?\s*$/.test(t || '')) || '').trim());
+    eqRun = () => equipmentRun(s, act, clockTxt, route);
     const runs = {};
     for (const mode of ['3d', '2d']) {
       await act('[data-act=mode' + mode + ']'); await sleep(800);
@@ -1035,7 +1063,95 @@ async function simJob(browser) {
     routeInfo.wts.three = info3d;
   } catch (e) {
     addFinding({ severity: 'error', kind: 'sim', route, view, message: 'simulator run failed: ' + e.message.split('\n')[0] });
-  } finally { await s.close(); }
+  } finally {
+    try { if (eqRun && routeInfo.wts) routeInfo.wts.equipment = await eqRun(); } catch (e) { /* equipmentRun reports its own findings */ }
+    await s.close();
+  }
+}
+
+// v3.3.1 (docs/SIM-EQUIPMENT-PLAN.md §9.3): DS-101 desander and T-202 second surge tank. The fault loop above leaves every
+// fault on, so the page is reloaded first (faults are not persisted; the rig-up is, in wts_sim_rigup). Then: DS-101 and T-202
+// in from the Rig-up card, sand in the well stream, DS-101 card → "Dump sand" + confirm, dumps routed to T-202, run at ×600
+// for ≥ 3 s (≥ 1,800 s of sim time, longer than the ≈ 1,043 s dump) and expect a completed dump; then restore the rig-up.
+async function equipmentRun(s, act, clockTxt, route) {
+  const view = 'equipment';
+  const out = { dumps: null, clockBefore: '', clockAfter: '' };
+  const note = (sev, msg) => addFinding({ severity: sev, kind: 'sim', route, view, message: msg });
+  try {
+    await s.page.reload({ waitUntil: 'load', timeout: 20000 });
+    await navTo(s, 'wts'); await s.take();
+    await act('[data-act=mode2d]'); await sleep(600);
+    const anyFault = await s.eval(() => { const S = window.WTS_live && window.WTS_live.getSim(); const f = S && S.getState().faults; return f ? Object.keys(f).filter((k) => f[k]) : null; });
+    if (anyFault && anyFault.length) note('warning', 'faults still active after the reload: ' + anyFault.join(', '));
+    // Scenarios menu lists every engine fault (opened and closed again)
+    await act('[data-act=scen]'); await sleep(250);
+    const listed = await s.eval(() => Array.from(document.querySelectorAll('[data-act=fault]')).filter((x) => x.offsetParent).length);
+    const engine = await s.eval(() => (window.WTS_sim && window.WTS_sim.FAULTS || []).length);
+    if (listed !== engine) note('warning', 'Scenarios menu lists ' + listed + ' of ' + engine + ' engine faults');
+    await s.page.keyboard.press('Escape'); await sleep(100);
+    eventsToFindings(await s.take(), { route, view, control: { label: 'reload + Scenarios menu' }, action: 'equipment setup' });
+    // DS-101 and T-202 into the rig-up from the Rig-up card
+    for (const k of ['desander', 'surge2']) {
+      const on = await s.eval((key) => { const b = document.querySelector('#wtsl_rigup [data-rig="' + key + '"]'); if (!b || b.disabled) return null; if (b.getAttribute('aria-checked') !== 'true') b.click(); return true; }, k);
+      if (!on) note('error', 'Rig-up card: no usable switch for ' + k);
+      await sleep(300);
+    }
+    eventsToFindings(await s.take(), { route, view, control: { label: 'Rig-up: DS-101 + T-202 in' }, action: 'rig-up' });
+    // sand in the well stream: the Dynamic Simulation input when the page has it, else the engine config
+    await s.eval(() => {
+      const el = document.getElementById('wts_sandPptb');
+      if (el) { el.value = '50'; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); return; }
+      const S = window.WTS_live && window.WTS_live.getSim(); if (S && S.setConfig) S.setConfig({ sand: { pptb: 50 } });
+    });
+    await sleep(800);
+    // DS-101 card (the same path as a 3D / 2D pick) → Dump sand → confirm
+    await s.eval(() => { const v = document.getElementById('wts_viz'), f = document.createElement('button'); f.setAttribute('data-act', 'focus'); f.setAttribute('data-v', 'desander'); v.appendChild(f); f.click(); f.remove(); });
+    await sleep(400);
+    const dumpWhy = await s.eval(() => { const b = document.querySelector('#wtsl_card [data-act=ds-dump]'); return !b ? 'no button' : b.disabled ? 'disabled: ' + (b.getAttribute('title') || '') : ''; });
+    const dumpBtn = dumpWhy ? null : await act('#wtsl_card [data-act=ds-dump]');
+    if (!dumpBtn) note('error', 'DS-101 card: no enabled "Dump sand" button (' + (dumpWhy || 'not visible') + ')');
+    await sleep(250);
+    if (!(await act('[data-act=confirm-yes]'))) note('error', '"Dump sand": no confirmation');
+    await sleep(300);
+    // dumps to T-202 (route button on the T-202 card)
+    await s.eval(() => { const v = document.getElementById('wts_viz'), f = document.createElement('button'); f.setAttribute('data-act', 'focus'); f.setAttribute('data-v', 'surge2'); v.appendChild(f); f.click(); f.remove(); });
+    await sleep(400);
+    if (!(await act('#wtsl_card [data-act=s2route][data-v=surge2]'))) note('warning', 'T-202 card: no route button for T-202');
+    await sleep(300);
+    eventsToFindings(await s.take(), { route, view, control: { label: 'Dump sand + route to T-202' }, action: 'equipment actions' });
+    // run at ×600 for ≥ 3 s
+    const playing = await s.eval(() => { const b = document.querySelector('[data-act=play]'); return b ? b.getAttribute('aria-label') : null; });
+    if (playing === 'Play') await act('[data-act=play]');
+    await s.eval(() => { const S = window.WTS_live && window.WTS_live.getSim(); if (S && S.setSpeed) S.setSpeed(600); });
+    out.clockBefore = await clockTxt();
+    await sleep(3500);
+    out.clockAfter = await clockTxt();
+    if (out.clockBefore && out.clockBefore === out.clockAfter) note('error', 'equipment run: the clock did not advance at ×600');
+    await s.eval(() => { const v = document.getElementById('wts_viz'), f = document.createElement('button'); f.setAttribute('data-act', 'focus'); f.setAttribute('data-v', 'desander'); v.appendChild(f); f.click(); f.remove(); });
+    await sleep(1200);
+    const card = await s.eval(() => { const c = document.getElementById('wtsl_card'); return c ? c.textContent : ''; });   // textContent: innerText would carry the CSS upper-casing of the labels
+    // the count is read per row (label / value / detail), never from the joined text: 'Last dumpT+00:17:231 dump'
+    const rows = await s.eval(() => Array.prototype.map.call(document.querySelectorAll('#wtsl_card .wtsl-kv > div'), (r) => {
+      const t = (sel) => { const e = r.querySelector(sel); return e ? e.textContent : ''; };
+      return { l: t('.l'), v: t('.v'), d: t('.d') };
+    }));
+    out.dumps = dumpCountOf(rows);
+    if (out.dumps !== 1) note('error', 'DS-101 card after ≥ 1,800 s at ×600: expected 1 completed dump, card says ' + (out.dumps == null ? 'nothing' : out.dumps));
+    if (/NaN|undefined|Infinity|\[object/.test(card)) note('error', 'DS-101 card shows NaN / undefined text');
+    eventsToFindings(await s.take(), { route, view, control: { label: 'run ×600 with DS-101 + T-202' }, action: 'equipment run' });
+    out.faultsListed = listed; out.faultsEngine = engine;
+  } catch (e) {
+    note('error', 'equipment run failed: ' + e.message.split('\n')[0]);
+  } finally {
+    // restore the rig-up (it persists in wts_sim_rigup across reloads)
+    try {
+      await s.eval(() => {
+        const S = window.WTS_live && window.WTS_live.getSim(); if (S && S.setRigup) S.setRigup({ desander: false, surge2: false });
+        try { localStorage.removeItem('wts_sim_rigup'); } catch (e) {}
+      });
+    } catch (e) {}
+  }
+  return out;
 }
 
 async function serviceWorkerJob(browser) {

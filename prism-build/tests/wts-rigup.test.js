@@ -287,7 +287,12 @@ module.exports = [
       const card = app.el('wtsl_rigup');
       assert.ok(card && card.classList.contains('card'), 'Rig-up card below the live view');
       const sw = (k) => card.querySelector('[data-rig="' + k + '"]');
-      ['esd', 'choke', 'heater', 'separator', 'surge', 'gauge', 'pump', 'flare'].forEach((k) => assert.ok(sw(k), 'switch ' + k));
+      ['esd', 'choke', 'heater', 'separator', 'surge', 'gauge', 'pump', 'flare', 'desander', 'surge2'].forEach((k) => assert.ok(sw(k), 'switch ' + k));
+      // v3.3.1 optional items: off by default, their rows rp-skip; the card lists them in process order (DS-101 after SDV-101, T-202 after T-201)
+      assert.ok(sw('desander').getAttribute('aria-checked') === 'false' && sw('surge2').getAttribute('aria-checked') === 'false', 'optional items off');
+      const order = Array.from(card.querySelectorAll('[data-rig]')).map((b) => b.getAttribute('data-rig'));
+      assert.deepStrictEqual(order, ['esd', 'desander', 'choke', 'heater', 'separator', 'surge', 'surge2', 'gauge', 'pump', 'flare'], 'process order');
+      assert.ok(/LCV-201, LCV-202/.test(card.textContent), 'intro: both surge tanks transfer on their own vessel pressure');
       assert.ok(sw('esd').disabled && sw('choke').disabled, 'ESD / choke locked');
       assert.ok(!sw('heater').disabled && sw('heater').getAttribute('aria-checked') === 'true', 'heater on by default');
       assert.ok(/no pump between the surge tank and the gauge tank/i.test(card.textContent), 'transfer explained');

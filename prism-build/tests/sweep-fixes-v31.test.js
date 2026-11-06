@@ -60,6 +60,32 @@ module.exports = [
     }
   },
   {
+    name: 'SWEEP31 Metric mode, v3.3.1 DS-101 / T-202 in the rig-up: their card texts, the T-202 strapping canvas and the Rig-up status rows are converted; the "T-201 → T-301 transfer" row is kept',
+    wp: WP, opts: OPTS, integration: true,
+    run(app, assert) {
+      metric(app);
+      app.click(navBtn(app, 'wts')); app.flush(1500);
+      const live = app.win.WTS_live.getSim();
+      live.setRigup(app.toWin({ desander: true, surge2: true })); app.flush(1200);
+      const ctl = app.win.WTS_live._internals.ctl();
+      const IMPERIAL = /\bpsig?\b|\blb\b|\blb\/d\b|\bgal\b|\bmpy\b|mil\/d|\bmil\b|\bbbl\b|°F|′|″/;
+      ['desander', 'surge2'].forEach((id) => {
+        ctl._debug.openCard(id); app.flush(1200);
+        const card = app.el('wtsl_card'), t = text(card);
+        assert.ok(!IMPERIAL.test(t), id + ' card: ' + (t.match(new RegExp('.{25}(' + IMPERIAL.source + ').{10}')) || [''])[0]);
+        const cvT = Array.from(card.querySelectorAll('canvas')).map((c) => app.canvasTexts(c).join(' ')).join(' | ');
+        assert.ok(!IMPERIAL.test(cvT), id + ' card canvases: ' + cvT.slice(0, 200));
+        if (id === 'surge2') assert.ok(/ m\b/.test(cvT), 'T-202 strapping in metres: ' + cvT.slice(0, 200));
+        ctl._debug.closeCard();
+      });
+      const rows = app.findAll('#wtsl_rigup .rrow').map(text);
+      assert.ok(rows.some((r) => /T-201 → T-301 transfer/.test(r)), 'row label kept');
+      const st = rows.filter((r) => /^(DS-101|T-202)(ΔP|level)/.test(r));
+      assert.strictEqual(st.length, 2, 'two status rows: ' + rows.join(' / '));
+      st.forEach((r) => assert.ok(!IMPERIAL.test(r) && /kPa/.test(r), 'status row: ' + r));
+    }
+  },
+  {
     name: 'SWEEP31 simulator alarm texts follow the formatter (Metric) and stay imperial without one',
     wp: WP, opts: OPTS,
     run(app, assert) {
