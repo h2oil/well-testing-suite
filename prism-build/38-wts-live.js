@@ -2775,14 +2775,34 @@ function createController(vizEl, mopts) {
     }
 
     // ── 2D live overlay (§6.10) ──────────────────────────────────────
+    // v3.3.1 (plan §8.2 / §8.3): the host draws two fixed variants per row — the v3.3 row while DS-101 / T-202 are out of the
+    // rig-up, the DS-101 / T-202 variant while they are in. lay2d(st) is the effective layout (host wtsDiagLayout); every 2D
+    // table below (valves2d, zones2d, nearValve, the strip) is filtered by st.rigup, so an item that is out draws nothing and
+    // has no zone or tap target.
+    function lay2d(st) {
+        var B = G.WTS_DIAG_LAYOUT, f = G.wtsDiagLayout;
+        if (!B) return null;
+        if (typeof f === 'function') { try { return f(st && st.rigup) || B; } catch (e) {} }
+        return B;
+    }
+    // Calc-shaped nodes for the host diagram; DS-101 (nodes[8]) also carries ΔP, the LAH / LAHH set points and the state text
+    function nodes2d(st) {
+        var n = liveNodes(st), d = st && st.desander;
+        if (n[8] && d && rigIn(st, 'desander')) {
+            var dm = d.dump || {}, sd = d.sand || {}, lah = num(sd.lah, 0.8);
+            n[8].dP = num(d.dP_psi, 0); n[8].lah = lah; n[8].lahh = num(sd.lahh, 0.95);
+            n[8].status = dm.phase === 'held' ? 'HELD' : (dm.phase && dm.phase !== 'idle') ? 'DUMPING' : (isNum(sd.acc_frac) && sd.acc_frac >= lah) ? 'SAND HIGH' : '';
+        }
+        return n;
+    }
     function draw2dLive(st, dt) {
         var draw = G.wtsDrawDiag, cv = E.cv;
         if (typeof draw !== 'function' || !cv) return;
         if (!st) { drawStatic2d(); return; }
         var target = st.running ? 1 : 0;
         flowGain = reduced ? target : clamp(flowGain + (target > flowGain ? 1 : -1) * dt / 0.4, 0, 1);
-        try { draw(liveNodes(st), liveSegs(st)); } catch (e) { return; }
-        var L = G.WTS_DIAG_LAYOUT;
+        try { draw(nodes2d(st), liveSegs(st), { rigup: st.rigup }); } catch (e) { return; }
+        var L = lay2d(st);
         if (!L) return;
         var ctx = cv.getContext('2d'); if (!ctx) return;
         ctx.save();
@@ -2829,6 +2849,14 @@ function createController(vizEl, mopts) {
         else tankFill(bx[0], by, 32, 38, su.fracW, su.frac);
         if (T.length === 2 && T[0].inlet != null) { tankFill(bx[1] - 9, by, 18, 36, T[0].fracW, T[0].frac); tankFill(bx[1] + 9, by, 18, 36, T[1].fracW, T[1].frac); }
         else { var at = T[num(ga.active, 0)] || {}; tankFill(bx[1], by, 36, 36, at.fracW, at.frac); }
+        var t2 = L.t2On ? L.t202 : null, ds = L.dsOn ? L.ds : null, u2 = st.surge2 || {}, dsd = st.desander || {};
+        var dsS = dsd.sand || {}, dsM = dsd.dump || {}, SAND = palCol('sand') || '#c4a46b';
+        if (t2) tankFill(t2.x, by, t2.w, t2.h, u2.fracW, u2.frac);
+        if (ds) {                                          // accumulator DS-101A: sand fill (bulk fraction of capacity)
+            var af = clamp(num(dsS.acc_frac, 0), 0, 1);
+            ctx.fillStyle = '#30363d'; ctx.fillRect(ds.x - 8, cy + 9, 16, 12);
+            if (af > 0.001) { ctx.globalAlpha = 0.95; ctx.fillStyle = SAND; ctx.fillRect(ds.x - 8, cy + 9 + 12 * (1 - af), 16, 12 * af); ctx.globalAlpha = 1; }
+        }
         ctx.strokeStyle = '#c9d1d9'; ctx.lineWidth = 1.2;
         if (SC.length === 2) { ctx.beginPath(); ctx.moveTo(bx[0], by - 16); ctx.lineTo(bx[0], by + 18); ctx.stroke(); }
         if (T.length === 2 && T[0].inlet != null) { ctx.beginPath(); ctx.moveTo(bx[1], by - 16); ctx.lineTo(bx[1], by + 17); ctx.stroke(); }
@@ -2838,8 +2866,9 @@ function createController(vizEl, mopts) {
         if (T.length === 2 && T[0].inlet != null) {        // fill header riser off the P-201 discharge line
             ctx.strokeStyle = '#8b949e'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(bx[1] - 26, by); ctx.lineTo(bx[1] - 26, by - 40); ctx.stroke();
         }
-        valves2d(L).forEach(function (vz) {
-            var vc = vz.kind === 'valve' ? (vz.eq === 'surge' ? SC[vz.i] : T[vz.i]) : null;
+        valves2d(L, st).forEach(function (vz) {
+            if (vz.kind === 'dump' || vz.kind === 'bypass') { dsValve2d(vz); return; }
+            var vc = vz.kind === 'valve' ? (vz.eq === 'surge' ? SC[vz.i] : vz.eq === 'surge2' ? u2 : T[vz.i]) : null;
             var open = vz.kind === 'valve' ? !!(vc && vc.inlet) : !!(SC[vz.i] && SC[vz.i].suction), trav = !!(vc && (vc.moving || vc.hold));
             var cx = vz.x + vz.w / 2, cyv = vz.y + vz.h / 2;
             ctx.strokeStyle = '#8b949e'; ctx.lineWidth = 1.2; ctx.beginPath();
@@ -2852,11 +2881,34 @@ function createController(vizEl, mopts) {
             else { ctx.moveTo(cx - 4, cyv - 3); ctx.lineTo(cx + 4, cyv - 3); ctx.lineTo(cx, cyv + 4); ctx.closePath(); }
             ctx.fill(); ctx.stroke();
         });
+        // XV-103 (dump: green open, amber while a dump sequence runs or is held, red shut) and HV-104 (bypass: green open)
+        function dsValve2d(vz) {
+            var cx = vz.x + vz.w / 2, cyv = vz.y + vz.h / 2, dump = vz.kind === 'dump';
+            var open = dump ? !!dsM.open : !!dsd.bypass, trav = dump && !open && !!dsM.phase && dsM.phase !== 'idle';
+            if (!dump && open) {                           // bypass line-up: the HV-104 path carries the stream
+                ctx.save(); ctx.strokeStyle = '#d29922'; ctx.lineWidth = 2; ctx.beginPath();
+                ctx.moveTo(ds.x - 24, cy); ctx.lineTo(ds.x - 24, cy - 29); ctx.lineTo(ds.x + 24, cy - 29); ctx.lineTo(ds.x + 24, cy); ctx.stroke(); ctx.restore();
+            }
+            ctx.fillStyle = trav ? '#d29922' : open ? '#3fb950' : 'rgba(13,17,23,.9)'; ctx.strokeStyle = trav ? '#d29922' : open ? '#3fb950' : '#f85149'; ctx.lineWidth = 1.4;
+            ctx.beginPath();
+            if (dump) { ctx.moveTo(cx - 5, cyv - 5); ctx.lineTo(cx - 5, cyv + 5); ctx.lineTo(cx + 5, cyv - 5); ctx.lineTo(cx + 5, cyv + 5); ctx.closePath(); }
+            else { ctx.moveTo(cx - 5, cyv - 3); ctx.lineTo(cx - 5, cyv + 3); ctx.lineTo(cx + 5, cyv - 3); ctx.lineTo(cx + 5, cyv + 3); ctx.closePath(); }
+            ctx.fill(); ctx.stroke();
+            ctx.save(); ctx.fillStyle = '#8b949e'; ctx.font = '7px sans-serif'; ctx.textAlign = dump ? 'center' : 'left';
+            if (dump) ctx.fillText('XV-103', cx, cyv + 13); else ctx.fillText('HV-104', ds.x + 27, cyv - 2);   // clear of the ΔP text above
+            ctx.restore();                                 // the later T-201 / T-301 'AUTO' texts keep their v3.3 alignment
+        }
         if (su.auto && su.auto.on) { ctx.fillStyle = '#58a6ff'; ctx.font = 'bold 7px sans-serif'; ctx.fillText('AUTO', bx[0] + 26, by - 26); }
+        if (t2 && u2.auto && u2.auto.on) { ctx.fillStyle = '#58a6ff'; ctx.font = 'bold 7px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('AUTO', t2.x, by - 44); }
         var xp = xferOf(st);
         if (xp && xp.tripped && !rigOut(st, 'surge')) {   // latched LCV-201 transfer trip flag on the transfer line
             ctx.fillStyle = '#f85149'; ctx.font = 'bold 8px sans-serif'; ctx.textAlign = 'center';
-            ctx.fillText('LCV-201 TRIP' + tripTag(xp.trip), (bx[0] + bx[1]) / 2, by + 14);
+            ctx.fillText('LCV-201 TRIP' + tripTag(xp.trip), t2 ? (t2.seg5X + bx[1] - 20) / 2 : (bx[0] + bx[1]) / 2, t2 ? by + 44 : by + 14);
+        }
+        var xp2 = t2 ? (u2.transfer || {}) : null;
+        if (xp2 && xp2.tripped) {                          // latched LCV-202 transfer trip
+            ctx.fillStyle = '#f85149'; ctx.font = 'bold 8px sans-serif'; ctx.textAlign = 'center';
+            ctx.fillText('LCV-202 TRIP' + tripTag(xp2.trip), (t2.seg5X + bx[1] - 20) / 2, by + 56);
         }
         if (ga.auto && ga.auto.on) { ctx.fillStyle = '#58a6ff'; ctx.font = 'bold 7px sans-serif'; ctx.fillText('AUTO', bx[1] + 28, by - 26); }
         // ESD ball: green open, amber moving/manual, red tripped
@@ -2875,6 +2927,7 @@ function createController(vizEl, mopts) {
         var lines = st.lines || {}, segs = st.segs || [];
         function dashLine(i, x1, y1, x2, y2, vel, color) {
             if (!(vel > 0.01)) return;
+            if (!isNum(dash[i])) dash[i] = 0;               // v3.3.1 paths use slots 8+
             dash[i] = (dash[i] - (4 + 18 * Math.log(1 + vel) / Math.LN10) * dt * flowGain) % 1600;
             ctx.save(); ctx.setLineDash([6, 10]); ctx.lineDashOffset = dash[i];
             ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.lineCap = 'round';
@@ -2882,13 +2935,25 @@ function createController(vizEl, mopts) {
         }
         for (var i = 0; i < 5; i++) {
             var sg = segs[i] || {}, v = num(sg.vel, 0), flowing = sg.flowing != null ? !!sg.flowing : v > 0.01;
-            if (flowing) dashLine(i, tx[i] + cl[i] + 3, cy, tx[i + 1] - cl[i + 1] - 3, cy, v, 'rgba(255,255,255,.38)');
+            if (!flowing) continue;
+            var dx1 = tx[i] + cl[i] + 3, dx2 = tx[i + 1] - cl[i + 1] - 3, DW = 'rgba(255,255,255,.38)';
+            if (ds && i === 1) {                           // ESD → DS-101 → choke, or round the HV-104 bypass
+                if (dsd.bypass) { dashLine(1, dx1, cy, ds.x - 24, cy, v, DW); dashLine(12, ds.x - 24, cy - 29, ds.x + 24, cy - 29, v, DW); dashLine(13, ds.x + 24, cy, dx2, cy, v, DW); }
+                else { dashLine(1, dx1, cy, ds.x - ds.cl - 3, cy, v, DW); dashLine(12, ds.x + ds.cl + 3, cy, dx2, cy, v, DW); }
+            } else dashLine(i, dx1, cy, dx2, cy, v, DW);
         }
         var lo = lines.sep_oil || {}, lw = lines.sep_water || {};
         var liqVel = (lo.active ? num(lo.vel, 0) : 0) + (lw.active ? num(lw.vel, 0) : 0);
         if (liqVel > 0.01) dashLine(5, tx[4], cy + 14, tx[4], by - 22, liqVel, lo.active ? OIL : WATER);
         var sg5 = segs[5] || {}, v5 = num(sg5.vel, 0), f5 = sg5.flowing != null ? !!sg5.flowing : v5 > 0.01;
-        if (f5) dashLine(6, bx[0] + 18, by, bx[1] - 20, by, v5, OIL);
+        if (f5) dashLine(6, t2 ? t2.seg5X : bx[0] + 18, by, bx[1] - 20, by, v5, OIL);
+        if (t2) {
+            var l2i = lines.sep_surge2 || {}, l2o = lines.surge2_gauge || {}, l1o = lines.surge_gauge || {};
+            if (l2i.active) { dashLine(8, bx[0], by - 40, t2.x, by - 40, Math.max(num(l2i.vel, 0), 0.5), lo.active ? OIL : WATER); }
+            if (l2o.active) dashLine(9, t2.x + t2.w / 2, by + t2.outY, t2.riserX, by + t2.outY, Math.max(num(l2o.vel, 0), 0.5), OIL);
+            if (l1o.active) dashLine(10, bx[0] - 8, by + t2.hdrY, t2.riserX, by + t2.hdrY, Math.max(num(l1o.vel, 0), 0.5), OIL);
+        }
+        if (ds && lines.ds_dump && lines.ds_dump.active) dashLine(11, ds.x + 21, cy + 20, ds.x + 30, cy + 20, 1, SAND);   // tan dump line while flushing
         // Flare flame glyph scaled by the relative flame size (D19), pilot at 0
         (function () {
             var fl = (st.nodes && st.nodes.flare) || {}, x = tx[5], y = cy, s = num(fl.flame, 0);
@@ -2920,7 +2985,7 @@ function createController(vizEl, mopts) {
         })();
         // Alarm outlines (info ignored except ESD_MANUAL, D38)
         var pulse = reduced ? 1 : 0.55 + 0.45 * Math.abs(Math.sin(nowMs() / 1000 * Math.PI));
-        var zs = zones2d(L);
+        var zs = zones2d(L, st);
         for (var z = 0; z < zs.length; z++) {
             var Z = zs[z]; if (Z.strip) continue;
             var s2 = statusOf(Z.id, st.alarms);
@@ -2947,7 +3012,7 @@ function createController(vizEl, mopts) {
     // Rig-up on the 2D schematic (logical units). Always: the surge → gauge transfer valve LCV-201 (no pump — the
     // surge tank pressure drives it) on the transfer line and P-201 downstream of the gauge tank (→ export / burner).
     // Equipment out of the rig-up is greyed with its bypass drawn as an amber dashed line.
-    var RIG2D = { lcvX: 758, pumpX: 1082, outX: 1188 };
+    var RIG2D = { lcvX: 758, pumpX: 1082, outX: 1188, lcvX2: 738, lcv2X: 805 };   // lcvX2 / lcv2X: T-202 variant (LCV-201 / LCV-202)
     function drawRig2d(ctx, L, st, OIL) {
         var tx = L.tx, cy = L.cy, bx = L.bx, by = L.by, ru = st.rigup || {};
         var off = function (k) { return ru[k] === false; };
@@ -2967,21 +3032,31 @@ function createController(vizEl, mopts) {
             ctx.restore();
         }
         var xp = xferOf(st) || {}, gp = (st.gauge && st.gauge.pump) || {};
-        // LCV-201 on the T-201 → T-301 line: control valve (bow-tie + actuator); green open, grey shut, red tripped / stuck
-        if (!off('surge')) {
-            var vx = RIG2D.lcvX, col = xp.failed || xp.tripped ? '#f85149' : xp.on ? (xp.lowDP ? AMB : '#3fb950') : GREY;
+        var t2 = L.t2On ? L.t202 : null;
+        // control valve glyph (bow-tie + actuator); tag above, ΔP below (or both to the right, `side`)
+        function lcv(vx, vy, col, tag, sub, side) {
             ctx.save();
-            ctx.fillStyle = 'rgba(13,17,23,.95)'; ctx.fillRect(vx - 9, by - 7, 18, 14);
+            ctx.fillStyle = 'rgba(13,17,23,.95)'; ctx.fillRect(vx - 9, vy - 7, 18, 14);
             ctx.fillStyle = col; ctx.strokeStyle = '#e6edf3'; ctx.lineWidth = 1;
-            ctx.beginPath(); ctx.moveTo(vx - 8, by - 6); ctx.lineTo(vx, by); ctx.lineTo(vx - 8, by + 6); ctx.closePath(); ctx.fill(); ctx.stroke();
-            ctx.beginPath(); ctx.moveTo(vx + 8, by - 6); ctx.lineTo(vx, by); ctx.lineTo(vx + 8, by + 6); ctx.closePath(); ctx.fill(); ctx.stroke();
-            ctx.beginPath(); ctx.moveTo(vx, by); ctx.lineTo(vx, by - 11); ctx.stroke();
-            ctx.beginPath(); ctx.arc(vx, by - 13, 4, Math.PI, 0); ctx.closePath(); ctx.stroke();
-            ctx.font = 'bold 8px sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = '#c9d1d9';
-            ctx.fillText('LCV-201', vx, by - 20);
+            ctx.beginPath(); ctx.moveTo(vx - 8, vy - 6); ctx.lineTo(vx, vy); ctx.lineTo(vx - 8, vy + 6); ctx.closePath(); ctx.fill(); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(vx + 8, vy - 6); ctx.lineTo(vx, vy); ctx.lineTo(vx + 8, vy + 6); ctx.closePath(); ctx.fill(); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(vx, vy); ctx.lineTo(vx, vy - 11); ctx.stroke();
+            ctx.beginPath(); ctx.arc(vx, vy - 13, 4, Math.PI, 0); ctx.closePath(); ctx.stroke();
+            ctx.font = 'bold 8px sans-serif'; ctx.textAlign = side ? 'left' : 'center'; ctx.fillStyle = '#c9d1d9';
+            ctx.fillText(tag, side ? vx - 11 : vx, side ? vy - 29 : vy - 20);
             ctx.font = '7.5px sans-serif'; ctx.fillStyle = GREY;
-            ctx.fillText(isNum(xp.dP_psi) ? 'ΔP ' + fmtU(xp.dP_psi, 'pressure', 1) : 'no pump', vx, by + 16);
+            ctx.fillText(sub, side ? vx - 11 : vx, side ? vy - 20 : vy + 16);
             ctx.restore();
+        }
+        // LCV-201 on the T-201 → T-301 line: green open, grey shut, red tripped / stuck (T-202 variant: on the outlet header)
+        if (!off('surge')) {
+            var col = xp.failed || xp.tripped ? '#f85149' : xp.on ? (xp.lowDP ? AMB : '#3fb950') : GREY;
+            lcv(t2 ? RIG2D.lcvX2 : RIG2D.lcvX, t2 ? by + t2.hdrY : by, col, 'LCV-201', isNum(xp.dP_psi) ? 'ΔP ' + fmtU(xp.dP_psi, 'pressure', 1) : 'no pump');
+        }
+        // LCV-202 on the T-202 side outlet (its own vessel pressure, D13)
+        if (t2) {
+            var x2 = (st.surge2 && st.surge2.transfer) || {}, col2 = x2.failed || x2.tripped ? '#f85149' : x2.on ? (x2.lowDP ? AMB : '#3fb950') : GREY;
+            lcv(RIG2D.lcv2X, by + t2.outY, col2, 'LCV-202', isNum(x2.dP_psi) ? 'ΔP ' + fmtU(x2.dP_psi, 'pressure', 1) : '—', true);
         }
         // P-201 downstream of T-301 → export / burner
         if (!off('gauge')) {
@@ -3030,6 +3105,19 @@ function createController(vizEl, mopts) {
         c.beginPath(); c.moveTo(x + r, y); c.lineTo(x + w - r, y); c.quadraticCurveTo(x + w, y, x + w, y + r); c.lineTo(x + w, y + h - r);
         c.quadraticCurveTo(x + w, y + h, x + w - r, y + h); c.lineTo(x + r, y + h); c.quadraticCurveTo(x, y + h, x, y + h - r); c.lineTo(x, y + r); c.quadraticCurveTo(x, y, x + r, y); c.closePath();
     }
+    // Strip bars that are visible for this rig-up, in process order, with their x (pitch 55 px for ≤ 5 bars — the v3.3 strip —,
+    // 46 px for 6, 42 px for 7). id = the equipment the bar opens; k = which bar of that equipment; out = greyed (out of rig-up).
+    function stripBars(st, S) {
+        S = S || { x: 20, y: 215, w: 600, h: 103 };
+        var b = [], dIn = rigIn(st, 'desander'), uIn = rigIn(st, 'surge2') && !rigOut(st, 'surge');
+        if (dIn) b.push({ id: 'desander', k: 0, out: false });
+        b.push({ id: 'separator', k: 0, out: rigOut(st, 'separator') }, { id: 'separator', k: 1, out: rigOut(st, 'separator') }, { id: 'surge', k: 0, out: rigOut(st, 'surge') });
+        if (uIn) b.push({ id: 'surge2', k: 0, out: false });
+        b.push({ id: 'gauge', k: 0, out: rigOut(st, 'gauge') }, { id: 'gauge', k: 1, out: rigOut(st, 'gauge') });
+        var pitch = b.length <= 5 ? 55 : b.length === 6 ? 46 : 42;
+        b.forEach(function (o, j) { o.x = S.x + 20 + pitch * j; o.pitch = pitch; });
+        return b;
+    }
     // "Levels & Pressures" strip in the empty lower-left region (K9).
     function drawStrip(ctx, S, st, OIL, WATER) {
         ctx.fillStyle = 'rgba(13,17,23,.6)'; rrect(ctx, S.x, S.y, S.w, S.h, 6); ctx.fill();
@@ -3039,19 +3127,21 @@ function createController(vizEl, mopts) {
         var od = sep.oilDump || {}, wd = sep.waterDump || {};
         var A = '#d29922', R = '#f85149', top = S.y + 20, bh = 58, bw = 14;
         var gv = function (t) { return t ? fmtParts(num(t.Vo_bbl, 0) + num(t.Vw_bbl, 0), 'volume', 1).v : '—'; };
-        var bars = [
-            { x: S.x + 20, fW: c1.fracW, fL: c1.fracL, ticks: [[wd.lsll, R], [wd.lsl, A], [wd.lsh, A], [wd.lshh, R], [sep.lahhTotal, R]], val: pctStr(c1.fracL), tag: 'V-101' },
-            { x: S.x + 75, fW: bk.fracW, fL: bk.frac, ticks: [[od.lsll, R], [od.lsl, A], [od.lsh, A], [od.lshh, R]], val: pctStr(bk.frac), tag: 'BUCKET' },
-            { x: S.x + 130, fW: su.fracW, fL: su.frac, ticks: [[su.lsll, R], [su.lsl, A], [su.lsh, A], [su.lshh, R]], val: pctStr(su.frac), tag: 'T-201' },
-            { x: S.x + 185, fW: T[0] && T[0].fracW, fL: T[0] && T[0].frac, ticks: T[0] ? [[T[0].switchFrac, A], [T[0].lahh, R]] : [], val: gv(T[0]), tag: 'T-301A', acc: act === 0 },
-            { x: S.x + 240, fW: T[1] && T[1].fracW, fL: T[1] && T[1].frac, ticks: T[1] ? [[T[1].switchFrac, A], [T[1].lahh, R]] : [], val: gv(T[1]), tag: 'T-301B', acc: act === 1 }
-        ];
-        var ofs = [rigOut(st, 'separator'), rigOut(st, 'separator'), rigOut(st, 'surge'), rigOut(st, 'gauge'), rigOut(st, 'gauge')];
+        var bars = stripBars(st, S), ofs = bars.map(function (b) { return b.out; });
+        var dsd = st.desander || {}, dsS = dsd.sand || {}, u2 = st.surge2 || {};
+        bars.forEach(function (b) {
+            if (b.id === 'desander') { b.fW = 0; b.fL = dsS.acc_frac; b.ticks = [[dsS.lah, A], [dsS.lahh, R]]; b.val = pctStr(dsS.acc_frac); b.tag = 'DS-101'; b.fill = palCol('sand') || '#c4a46b'; }
+            else if (b.id === 'separator' && b.k === 0) { b.fW = c1.fracW; b.fL = c1.fracL; b.ticks = [[wd.lsll, R], [wd.lsl, A], [wd.lsh, A], [wd.lshh, R], [sep.lahhTotal, R]]; b.val = pctStr(c1.fracL); b.tag = 'V-101'; }
+            else if (b.id === 'separator') { b.fW = bk.fracW; b.fL = bk.frac; b.ticks = [[od.lsll, R], [od.lsl, A], [od.lsh, A], [od.lshh, R]]; b.val = pctStr(bk.frac); b.tag = 'BUCKET'; }
+            else if (b.id === 'surge') { b.fW = su.fracW; b.fL = su.frac; b.ticks = [[su.lsll, R], [su.lsl, A], [su.lsh, A], [su.lshh, R]]; b.val = pctStr(su.frac); b.tag = 'T-201'; }
+            else if (b.id === 'surge2') { b.fW = u2.fracW; b.fL = u2.frac; b.ticks = [[u2.lsll, R], [u2.lsl, A], [u2.lsh, A], [u2.lshh, R]]; b.val = pctStr(u2.frac); b.tag = 'T-202'; }
+            else { var Tk = T[b.k]; b.fW = Tk && Tk.fracW; b.fL = Tk && Tk.frac; b.ticks = Tk ? [[Tk.switchFrac, A], [Tk.lahh, R]] : []; b.val = gv(Tk); b.tag = b.k ? 'T-301B' : 'T-301A'; b.acc = act === b.k; }
+        });
         bars.forEach(function (b, bi) {
             ctx.save(); if (ofs[bi]) { ctx.globalAlpha = 0.3; b.acc = false; }
             ctx.fillStyle = '#161b22'; ctx.fillRect(b.x, top, bw, bh);
             var fL = clamp(num(b.fL, 0), 0, 1), fW = clamp(num(b.fW, 0), 0, fL);
-            ctx.fillStyle = OIL; ctx.fillRect(b.x, top + bh * (1 - fL), bw, bh * (fL - fW));
+            ctx.fillStyle = b.fill || OIL; ctx.fillRect(b.x, top + bh * (1 - fL), bw, bh * (fL - fW));
             ctx.fillStyle = WATER; ctx.fillRect(b.x, top + bh * (1 - fW), bw, bh * fW);
             if (fL > 0.005) { ctx.fillStyle = 'rgba(255,255,255,.6)'; ctx.fillRect(b.x, top + bh * (1 - fL), bw, 1); }
             ctx.strokeStyle = b.acc ? '#f0883e' : '#484f58'; ctx.lineWidth = b.acc ? 1.5 : 1; ctx.strokeRect(b.x + 0.5, top + 0.5, bw - 1, bh - 1);
@@ -3068,14 +3158,17 @@ function createController(vizEl, mopts) {
             if (ofs[bi]) { ctx.fillStyle = '#d29922'; ctx.font = 'bold 8px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('OUT', b.x + bw / 2, top + bh / 2 + 3); }
         });
         ctx.fillStyle = '#6e7681'; ctx.font = '8px sans-serif'; ctx.textAlign = 'center';
-        ctx.fillText('(' + fmtParts(0, 'volume').u + ')', S.x + 219, S.y + 12);
+        var gA = null, gB = null;                          // centre the unit over the T-301A/B bars (S.x + 219 at the v3.3 pitch 55)
+        bars.forEach(function (b) { if (b.id === 'gauge') { if (b.k) gB = b; else gA = b; } });
+        ctx.fillText('(' + fmtParts(0, 'volume').u + ')', gA && gB ? (gA.x + gB.x + bw - 1) / 2 : S.x + 219, S.y + 12);
         // Pressure readouts 2×2
         var N = st.nodes || {}, ck = N.choke || {};
+        var dIn = rigIn(st, 'desander'), uIn = rigIn(st, 'surge2') && !rigOut(st, 'surge');
         var cells = [
-            { l: 'WHP', p: fmtParts(N.wellhead && N.wellhead.P, 'pressureG') },
+            { l: dIn ? 'WHP · DS-101 ΔP' : 'WHP', p: (function () { var a = fmtParts(N.wellhead && N.wellhead.P, 'pressureG'); return dIn ? { v: a.v, u: a.u + ' · ΔP ' + fmtU(dsd.dP_psi, 'pressure', 1) } : a; })() },
             { l: 'CHOKE IN → OUT', p: (function () { var a = fmtParts(ck.Pin, 'pressureG'), b = fmtParts(ck.P, 'pressureG'); return { v: a.v + '→' + b.v, u: b.u }; })() },
             { l: 'SEPARATOR', p: fmtParts(sep.P, 'pressureG'), bar: true },
-            { l: 'SURGE TANK', p: fmtParts(su.P, 'pressureTank') }
+            { l: uIn ? 'SURGE T-201 · T-202' : 'SURGE TANK', p: (function () { var a = fmtParts(su.P, 'pressureTank'); if (!uIn) return a; var b = fmtParts(u2.P, 'pressureTank'); return { v: a.v + ' · ' + b.v, u: b.u || a.u }; })() }
         ];
         cells.forEach(function (c, i) {
             var x = S.x + 310 + (i % 2) * 140, y = S.y + 14 + Math.floor(i / 2) * 44;
@@ -3097,40 +3190,61 @@ function createController(vizEl, mopts) {
     }
     // 2D operable valves (logical units): T-201 / T-301 inlet divert valves above each compartment, P-201 suctions below T-201.
     // hx/hy = header point the valve branch starts from, ty = compartment edge the branch ends at.
-    function valves2d(L) {
+    // v3.3.1: valves2d(L, st) — filtered by st.rigup (D18): XV-202 only with T-202 in, XV-103 / HV-104 only with DS-101 in.
+    function valves2d(L, st) {
+        if (st === undefined) st = state();
+        var E2 = lay2d(st) || L;
         var bx = L.bx, by = L.by, v = [];
         [0, 1].forEach(function (i) {
             v.push({ id: 'valve:surge:' + i, kind: 'valve', eq: 'surge', i: i, x: bx[0] - 8 + 16 * i - 6, y: by - 33, w: 12, h: 14, hx: bx[0], hy: by - 40, ty: by - 19 });
             v.push({ id: 'valve:gauge:' + i, kind: 'valve', eq: 'gauge', i: i, x: bx[1] - 9 + 18 * i - 6, y: by - 33, w: 12, h: 14, hx: bx[1] - 26, hy: by - 40, ty: by - 18 });
             v.push({ id: 'suction:surge:' + i, kind: 'suction', eq: 'surge', i: i, x: bx[0] - 8 + 16 * i - 6, y: by + 19, w: 12, h: 9, ty: by + 19 });
         });
+        if (E2.t2On && E2.t202) { var t2 = E2.t202;      // XV-202 on the inlet header extension (by − 40) above T-202
+            v.push({ id: 'valve:surge2:0', kind: 'valve', eq: 'surge2', i: 0, x: t2.x - 6, y: by - 33, w: 12, h: 14, hx: bx[0], hy: by - 40, ty: by - t2.h / 2 }); }
+        if (E2.dsOn && E2.ds) { var dx = E2.ds.x, cy = E2.cy;
+            v.push({ id: 'dump:desander', kind: 'dump', eq: 'desander', i: 0, x: dx + 10, y: cy + 14, w: 12, h: 12 });          // XV-103
+            v.push({ id: 'bypass:desander', kind: 'bypass', eq: 'desander', i: 0, x: dx - 6, y: cy - 33, w: 12, h: 8 }); }      // HV-104
         return v;
     }
     // 2D hit zones (logical units): equipment, strip bars and readouts → pick ids.
-    function zones2d(L) {
+    // zones2d(L, st): the zones of the effective layout for st's rig-up (st defaults to the current state)
+    function zones2d(L, st) {
+        if (st === undefined) st = state();
+        L = lay2d(st) || L;
         var z = [], ids = ['wellhead', 'esd', 'choke', 'heater', 'separator', 'flare'];
         for (var i = 0; i < 6; i++) z.push({ id: ids[i], x: L.tx[i] - 36, y: L.cy - 44, w: 72, h: 76 });
+        if (L.dsOn) z.push({ id: 'desander', x: L.ds.x - 30, y: L.cy - 44, w: 60, h: 76 });          // DS-101: x 260…320
         z.push({ id: 'surge', x: L.bx[0] - 28, y: L.by - 30, w: 56, h: 58 });
+        if (L.t2On) z.push({ id: 'surge2', x: L.t202.x - L.t202.w / 2, y: L.by - 30, w: L.t202.w, h: 58 });   // T-202: x 760…790
         z.push({ id: 'gauge', x: L.bx[1] - 30, y: L.by - 30, w: 60, h: 58 });
         z.push({ id: 'pump', x: RIG2D.pumpX - 14, y: L.by - 4, w: 28, h: 30 });            // P-201 (downstream of T-301)
-        z.push({ id: 'surge', x: RIG2D.lcvX - 12, y: L.by - 26, w: 24, h: 34 });            // LCV-201 → the surge card (its controls)
+        if (!L.t2On) z.push({ id: 'surge', x: RIG2D.lcvX - 12, y: L.by - 26, w: 24, h: 34 });            // LCV-201 → the surge card (its controls)
+        else {
+            z.push({ id: 'surge', x: RIG2D.lcvX2 - 12, y: L.by + 16, w: 24, h: 24 });         // LCV-201 on the T-201 outlet header
+            z.push({ id: 'surge2', x: RIG2D.lcv2X - 12, y: L.by - 2, w: 24, h: 24 });         // LCV-202 → the T-202 card
+        }
         var S = L.strip || { x: 20, y: 215, w: 600, h: 103 };
-        var sb = ['separator', 'separator', 'surge', 'gauge', 'gauge'];
-        for (var j = 0; j < 5; j++) z.push({ id: sb[j], x: S.x + 12 + 55 * j, y: S.y + 16, w: 32, h: 86, strip: true });
+        stripBars(st, S).forEach(function (b) { z.push({ id: b.id, x: b.x - 8, y: S.y + 16, w: Math.min(32, b.pitch - 4), h: 86, strip: true }); });
         var rd = ['wellhead', 'choke', 'separator', 'surge'];
         for (var k = 0; k < 4; k++) z.push({ id: rd[k], x: S.x + 306 + (k % 2) * 140, y: S.y + 12 + Math.floor(k / 2) * 44, w: 136, h: 42, strip: true });
-        if (_sim && _sim.getState().surge.comps) valves2d(L).forEach(function (v) { z.push({ id: v.id, x: v.x - 2, y: v.y - 2, w: v.w + 4, h: v.h + 4, strip: true }); });
+        var comps = !!(_sim && st && st.surge && st.surge.comps);
+        if (_sim) valves2d(L, st).forEach(function (v) { if ((v.eq === 'surge' || v.eq === 'gauge') && !comps) return; z.push({ id: v.id, x: v.x - 2, y: v.y - 2, w: v.w + 4, h: v.h + 4, strip: true }); });
         return z;
     }
     // Touch targets on phones: the 2D valve glyphs are ~12 logical units (≈ 4 CSS px on a 375 px screen). On a small or
     // coarse-pointer view a tap within 22 CSS px of any valve glyph (a 44 px target, WCAG 2.5.5 / Apple HIG) opens a
     // zoomed inset of that tank with 44 × 44 px valve buttons instead of toggling a glyph directly.
     function coarse2d() { return bp === 'sm' || !!(G.matchMedia && G.matchMedia('(pointer:coarse)').matches); }
+    // Equipment whose valves renderVin can show in the inset (surge / gauge; surge2 / desander since WP-I, with WP-L's inset).
+    // A tap whose nearest valve belongs to anything else opens that equipment's card instead (never the T-301 inset for a
+    // T-202 / DS-101 valve, and never a direct toggle of a small glyph); openVin refuses an item that is out of the rig-up.
+    var VIN_EQ = { surge: true, gauge: true, surge2: true, desander: true };
     function nearValve(ev) {
         var L = G.WTS_DIAG_LAYOUT, cv = E.cv; if (!L || !cv || !_sim) return null;
         var r = cv.getBoundingClientRect(); if (!r.width || !r.height) return null;
         var sx = r.width / L.W, sy = r.height / L.H, best = null, bd = 1e9;
-        valves2d(L).forEach(function (v) {
+        valves2d(L, state()).forEach(function (v) {
             var dx = (ev.clientX - r.left) - (v.x + v.w / 2) * sx, dy = (ev.clientY - r.top) - (v.y + v.h / 2) * sy, d = Math.sqrt(dx * dx + dy * dy);
             if (d < bd) { bd = d; best = v.eq; }
         });
@@ -3499,9 +3613,11 @@ function createController(vizEl, mopts) {
         }
         if (mode === '2d' && E.cv && (t === E.cv)) {
             var vq = coarse2d() ? nearValve(ev) : null;
-            if (vq) { openVin(vq); return; }             // phone / touch: ≥ 44 px target → zoomed inset with 44 px buttons
-            var id = hit2d(ev), vm2 = /^(valve|suction):(surge|gauge):([01])$/.exec(id || '');
+            if (vq) { if (VIN_EQ[vq]) openVin(vq); else openCard(vq); return; }   // phone / touch: ≥ 44 px target → zoomed inset (44 px buttons) or the card
+            var id = hit2d(ev), vm2 = /^(valve|suction):(surge|surge2|gauge):([01])$/.exec(id || '');
             if (vm2) { if (vm2[1] === 'valve') toggleValve(vm2[2], +vm2[3]); else toggleSuction(+vm2[3]); }
+            else if (id === 'dump:desander') doAct('ds-dump', null, ev);     // XV-103: the card's "Dump sand" (confirm first)
+            else if (id === 'bypass:desander') openCard('desander');         // HV-104: the bypass line-up is set on the DS-101 card
             else if (id) openCard(id); else closeCard();
         }
     }
