@@ -9,7 +9,11 @@
 //   • numbers: CHECKS below reproduce every number quoted in the text. 'page' checks run calcWTS on route wts now (host
 //     code, in the harness). 'sim' checks run the dynamic simulator; they run only when Round 7 is in the harness pipeline
 //     (sim-equip WP0) or with WTS_HELP_SIMCHECKS=1 (the HTML's injected Round 7), and are skipped with the reason otherwise;
-//   • FS-1 / FS-2 select the variant for WTS_sim.features (bypassDest); worksheets print without answers or trainer notes.
+//   • FS-1 / FS-2 select the variant for WTS_sim.features (bypassDest); worksheets print without answers or trainer notes;
+//   • sim-equip content (exercises 9-10, FS-3, the §6.4 shot recipes) is added only when the engine has DS-101 and T-202
+//     (WTS_sim.RIG_OPTIONAL). Without it the course ships 8 exercises and 3 scenarios; the gated content is still checked
+//     for shape, size, CHECKS entries and recipes by building it against a stand-in engine. Checks marked needs: run only
+//     when the engine has that item.
 // The checks live in this file, not in the content, so they add nothing to the app bundle (D15).
 'use strict';
 
@@ -40,7 +44,7 @@ const CHECKS = {
   ex3: [],   // its numbers are FS-1's
   ex4: [
     { kind: 'sim', run: 1800, actions: [{ t: 600, fault: 'oilDumpStuckClosed', on: true }, { t: 900, resetESD: false, blocking: 'LSHH_SEP' }, { t: 900, fault: 'oilDumpStuckClosed', on: false }, { t: 1500, resetESD: true }],
-      expect: [{ alarm: 'LSH_SEP', from: 720, to: 840 }, { alarm: 'LSHH_SEP', from: 790, to: 900 }, { alarm: 'ESD_TRIPPED', from: 790, to: 900 }] },
+      expect: [{ alarm: 'LSH_SEP', from: 720, to: 840 }, { alarm: 'LSHH_SEP', from: 790, to: 900 }, { alarm: 'ESD_TRIPPED', from: 790, to: 900 }, { gap: ['LSH_SEP', 'LSHH_SEP'], max: 60 }] },
     { kind: 'sim', run: 3000, actions: [{ t: 600, fault: 'waterDumpStuckClosed', on: true }], expect: [{ alarm: 'ISHH_SEP', from: 900, to: 2600 }, { noAlarm: 'ESD_TRIPPED' }] },
   ],
   ex5: [
@@ -64,6 +68,43 @@ const CHECKS = {
     { kind: 'page', set: { wts_Twh: 60, wts_bypass: '1' }, expectText: ['Heater→Sep: Hydrate risk', 'Sep→Flare: Hydrate risk'] },
     { kind: 'page', set: {}, tol: 0.01, expectState: { 'flow.nodes.2.T': 68.74, 'flow.nodes.2.th': 36.59 }, absentText: ['Hydrate risk'] },
     { kind: 'sim', set: { wts_Twh: 60 }, run: 120, expect: [{ alarm: 'HYD_choke', from: 0, to: 60 }] },
+  ],
+  // sim-equip (31 VERSION 1.4.0): SAMPLE_FLOW, DS-101 / T-202 in the rig-up (plan SIM-EQUIPMENT §4.9 anchors)
+  ex9: [
+    { kind: 'sim', needs: 'desander', rig: { desander: true }, run: 60, dt: 1,
+      expect: [{ at: 60, path: 'desander.dP_psi', v: 3.93, tol: 0.01 }, { at: 60, path: 'desander.d50c_um', v: 39.8, tol: 0.01 }, { at: 60, path: 'desander.effClean', v: 0.946, tol: 0.005 },
+        { at: 60, path: 'desander.sand.cap_lb', v: 663, tol: 0.005 }, { at: 60, path: 'nodes.esd.P', v: 2999.26, tol: 0.001 }, { at: 60, path: 'nodes.choke.Pin', v: 2995.33, tol: 0.001 }] },
+    // flow-back → LAH-103 ≈ 3.5 h; dump ≈ 17 min (bleed < 50 psig, flush, equalise); bypass → all sand to the bean (HIGH), back in line → OK
+    { kind: 'sim', needs: 'desander', rig: { desander: true }, run: 14100, dt: 10,
+      actions: [{ t: 0, fault: 'sandFlowback', on: true }, { t: 12700, dump: 'start', ok: true }, { t: 13800, bypass: true }, { t: 13920, bypass: false }],
+      expect: [{ alarm: 'DES_LAH', from: 12000, to: 13200 }, { at: 12900, path: 'desander.dump.phase', v: 'bleed' }, { at: 13300, path: 'desander.dump.phase', v: 'flush' },
+        { at: 13700, path: 'desander.dump.phase', v: 'equalise' }, { at: 13790, path: 'desander.dump.phase', v: 'idle' }, { at: 13790, path: 'desander.dump.count', v: 1 },
+        { alarm: 'SAND_CHOKE', from: 13800, to: 13920 }, { at: 13910, path: 'sand.choke.band', v: 'high' }, { at: 13910, path: 'desander.dP_psi', v: 0, tol: 0.01 },
+        { at: 14100, path: 'sand.choke.band', v: 'ok' }, { noAlarm: 'ESD_TRIPPED' }] },
+    // an ESD during a dump holds it; resume refused until the reset, then the interrupted phase continues
+    { kind: 'sim', needs: 'desander', rig: { desander: true }, run: 780, dt: 10,
+      actions: [{ t: 0, fault: 'sandFlowback', on: true }, { t: 600, dump: 'start', ok: true }, { t: 700, esd: true }, { t: 710, dump: 'resume', ok: false }, { t: 720, resetESD: true }, { t: 760, dump: 'resume', ok: true }],
+      expect: [{ at: 710, path: 'desander.dump.phase', v: 'held' }, { at: 780, path: 'desander.dump.phase', v: 'bleed' }] },
+  ],
+  ex10: [
+    { kind: 'sim', needs: 'surge2', rig: { surge2: true }, run: 660, dt: 1, actions: [{ t: 60, route: 'both' }],
+      expect: [{ at: 10, path: 'surge2.inlet', v: false }, { at: 10, path: 'surge2.frac', v: 0, tol: 1e-6 }, { at: 10, path: 'surge2.route', v: 'surge' }, { at: 660, path: 'surge2.route', v: 'both' },
+        { at: 660, path: 'surge2.share', v: 0, tol: 1e-6 }] },
+    { kind: 'sim', needs: 'surge2', rig: { surge2: true }, run: 5200, dt: 5, actions: [{ t: 60, route: 'surge2' }],
+      expect: [{ at: 90, path: 'surge.comps.0.inlet', v: false }, { at: 90, path: 'surge2.lsh', v: 0.7 }, { at: 90, path: 'surge2.inlet', v: true }, { at: 4260, path: 'surge2.transfer.on', v: false }, { at: 5160, path: 'surge2.transfer.on', v: true }, { noAlarm: 'ESD_TRIPPED' }] },
+    { kind: 'sim', needs: 'surge2', rig: { surge2: true }, run: 7000, dt: 5, actions: [{ t: 0, route: 'surge2' }, { t: 0, fault: 'xfer2StuckClosed', on: true }],
+      expect: [{ alarm: 'LSHH_SURGE2', from: 5800, to: 6800 }, { alarm: 'SURGE_BLOCKED', from: 5800, to: 6800 }, { alarm: 'LSHH_SEP', from: 5800, to: 6900 }, { alarm: 'ESD_TRIPPED', from: 5800, to: 6900 }, { gap: ['LSHH_SURGE2', 'ESD_TRIPPED'], max: 60 }] },
+    { kind: 'sim', needs: 'surge2', rig: { surge2: true }, run: 14500, dt: 10, actions: [{ t: 0, route: 'both' }, { t: 0, fault: 'xfer2StuckClosed', on: true }],
+      expect: [{ alarm: 'LSHH_SURGE2', from: 12000, to: 14500 }, { noAlarm: 'ESD_TRIPPED' }, { at: 14500, path: 'surge2.inlet', v: false }] },
+    { kind: 'sim', needs: 'surge2', rig: { surge2: true }, run: 1200, dt: 2, actions: [{ t: 0, route: 'surge2' }, { t: 120, fault: 'bpv2StuckClosed', on: true }],
+      expect: [{ alarm: 'PSH_SURGE2', from: 300, to: 500 }, { alarm: 'PSHH_SURGE2', from: 900, to: 1150 }, { alarm: 'ESD_TRIPPED', from: 900, to: 1150 }, { at: 1200, path: 'surge2.inlet', v: false }] },
+  ],
+  'FS-3': [
+    { kind: 'sim', needs: 'desander', rig: { desander: true }, run: 30, expect: [{ at: 30, path: 'desander.sithp_psi', v: 3600 }, { at: 30, path: 'desander.sithpEst', v: true }, { at: 30, path: 'desander.ratingOK', v: true }, { noAlarm: 'DES_RATING' }] },
+    { kind: 'sim', needs: 'desander', rig: { desander: true }, cfg: { desander: { rating_psi: 5000, sithp_psig: 6000 } }, run: 30, expect: [{ alarm: 'DES_RATING', from: 0, to: 30 }, { at: 30, path: 'desander.ratingOK', v: false }] },
+    // 10 lb/1000 bbl: steel-equivalent erosion WARN without DS-101, OK with it, ratio ≈ 68
+    { kind: 'sim', needs: 'desander', cfg: { sand: { pptb: 10 } }, run: 600, dt: 5, expect: [{ at: 600, path: 'sand.choke.band', v: 'warn' }, { at: 600, path: 'sand.choke.erosion_mild', v: 4.36, tol: 0.01 }] },
+    { kind: 'sim', needs: 'desander', rig: { desander: true }, cfg: { sand: { pptb: 10 } }, run: 600, dt: 5, expect: [{ at: 600, path: 'sand.choke.band', v: 'ok' }, { at: 600, path: 'sand.choke.erosion_mild', v: 0.0650, tol: 0.02 }] },
   ],
   // FS-1 (a)–(d) of plan §6.2; (e) is FS-2's default-spread check
   'FS-1': [
@@ -105,6 +146,13 @@ function strings(v, p, cb) {
   if (Array.isArray(v)) { v.forEach((x, i) => strings(x, p + '[' + i + ']', cb)); return; }
   if (v && typeof v === 'object') Object.keys(v).forEach((k) => { if (k !== 'form' && k !== '_group') strings(v[k], p + '.' + k, cb); });
 }
+const hasItem = (V, c) => !c.needs || V.optional.has(c.needs);
+const EQUIP = ['desander', 'surge2'];
+// The simcourse factory built against a stand-in engine that has DS-101 and T-202 (the sim-equip content), on any engine.
+function equipContent(app) {
+  const W = app.win, real = W.WTS_sim, f = A(W.WTS_helpContent.factories).filter((x) => x.group === 'simcourse')[0];
+  try { W.WTS_sim = Object.assign(Object.create(real), { RIG_OPTIONAL: app.toWin(EQUIP) }); return f.build(); } finally { W.WTS_sim = real; }
+}
 function content(app) { const C = app.win.WTS_help.load(); return { C, course: A(C.course).filter((x) => x._group === 'simcourse'), scenarios: A(C.scenarios).filter((x) => x._group === 'simcourse') }; }
 function openWts(app, set) {
   app.hook.nav('home');
@@ -134,13 +182,15 @@ const activeIds = (st) => A(st.alarms).filter((a) => a && a.active !== false).ma
 // sim check: flow from calcWTS with `set` (else SAMPLE_FLOW), noise off, seed 7; actions at sim times; expectations:
 //   { alarm, from, to } first raise in [from, to] · { noAlarm } never active · { at, path, v, tol } value at a time ·
 //   actions: { t, fault, on } · { t, esd } · { t, resetESD: ok, blocking } · { t, sp } (separator set point) · { t, valve: [eq, idx, open] }
-//   { batch: n, from, to } the n-th gauge batch is listed (closed and settled) in [from, to]
+//   { batch: n, from, to } the n-th gauge batch is listed (closed and settled) in [from, to] · { gap: [a, b], max } b first raised
+//   0…max s after a · sim-equip: { t, dump: 'start'|'resume'|'abort', ok } · { t, bypass } (DS-101) · { t, route } (T-202) ·
+//   cfg (setConfig at create) · needs: a rig-up item the engine must have (WTS_sim.RIG_OPTIONAL), else the check is skipped
 function simCheck(app, where, ck) {
   const out = [], W = app.win, S = W.WTS_sim;
   if (!S) return [where + ': WTS_sim missing'];
   let flow = S.SAMPLE_FLOW;
   if (ck.set && Object.keys(ck.set).length) { openWts(app, ck.set); flow = JSON.parse(JSON.stringify(W.WTS_state.flow)); }
-  const s = S.create(app.toWin(flow), app.toWin({ seed: 7, config: { noise: { on: false } } }));
+  const s = S.create(app.toWin(flow), app.toWin({ seed: 7, config: Object.assign({ noise: { on: false } }, JSON.parse(JSON.stringify(ck.cfg || {}))) }));
   if (ck.rig) s.setRigup(app.toWin(ck.rig));
   const dt = ck.dt || 2, acts = A(ck.actions).map((a) => Object.assign({ done: false }, a)), first = {}, ats = A(ck.expect).filter((e) => e.at != null).map((e) => Object.assign({ done: false }, e));
   let batchT = {}, t = 0;
@@ -148,6 +198,9 @@ function simCheck(app, where, ck) {
     if (a.fault) s.setFault(a.fault, a.on !== false);
     if (a.esd) s.tripESD('manual');
     if (a.valve) s.setValve(a.valve[0], a.valve[1], !!a.valve[2]);
+    if (a.bypass != null) s.setDesander(app.toWin({ bypass: !!a.bypass }));
+    if (a.route) { const r = s.setSurgeRoute(a.route); if (!r || !r.ok) out.push(where + ': route ' + a.route + ' at ' + a.t + ' s refused (' + (r && r.msg) + ')'); }
+    if (a.dump) { const r = s.dumpDesander(a.dump); if (!!(r && r.ok) !== !!a.ok) out.push(where + ': dump ' + a.dump + ' at ' + a.t + ' s gave ok=' + (r && r.ok) + ', text says ' + a.ok); }
     if (a.sp != null) { const f2 = JSON.parse(JSON.stringify(flow)); f2.separatorPressure = a.sp; f2.inputs.Psep = a.sp; f2.seq = (f2.seq || 1) + 1; s.setFlow(app.toWin(f2)); }
     if (a.resetESD != null) {
       const r = s.resetESD();
@@ -174,6 +227,7 @@ function simCheck(app, where, ck) {
   A(ck.expect).forEach((e) => {
     if (e.alarm) { const f = first[e.alarm]; if (f == null || f < e.from || f > e.to) out.push(where + ': alarm ' + e.alarm + ' first at ' + f + ' s, text needs ' + e.from + '–' + e.to + ' s'); }
     if (e.noAlarm && first[e.noAlarm] != null) out.push(where + ': ' + e.noAlarm + ' raised at ' + first[e.noAlarm] + ' s, text says it does not');
+    if (e.gap) { const a = first[e.gap[0]], b = first[e.gap[1]]; if (a == null || b == null || b < a || b - a > e.max) out.push(where + ': ' + e.gap[1] + ' ' + (b == null || a == null ? 'missing' : (b - a) + ' s') + ' after ' + e.gap[0] + ', text needs 0–' + e.max + ' s'); }
     if (e.batch) { const f = batchT[e.batch]; if (f == null || f < e.from || f > e.to) out.push(where + ': batch ' + e.batch + ' closed at ' + f + ' s, text needs ' + e.from + '–' + e.to + ' s'); }
   });
   ats.forEach((e) => { if (!e.done) out.push(where + ': run ended before ' + e.at + ' s'); });
@@ -188,8 +242,11 @@ function engineVocab(app) {
   const alarms = new Set();
   (src.match(/aDef\('([A-Z0-9_]+)/g) || []).forEach((m) => alarms.add(m.slice(6)));
   if (/aDef\('HYD_' \+/.test(src)) ['wellhead', 'esd', 'choke', 'heater', 'separator'].forEach((n) => alarms.add('HYD_' + n));
-  const faults = new Map(A(S.FAULTS).map((f) => [f.label, f.id]));
-  return { tags, alarms, faults, faultIds: new Set(A(S.FAULTS).map((f) => f.id)), rig: new Set(A(S.RIG_KEYS)) };
+  // Scenarios menu labels as 38 builds them (faultList): its own descriptive label for the ids it knows, else the engine label
+  const local = new Map(), m = /var FAULTS = \[([\s\S]*?)\]\];/.exec(readSrc('38-wts-live.js'));
+  ((m && m[1] + ']') || '').replace(/\['([A-Za-z0-9]+)', '([^']+)'\]/g, (x, id, l) => { local.set(id, l); return x; });
+  const faults = new Map(A(S.FAULTS).map((f) => [local.get(f.id) || f.label, f.id]));
+  return { tags, alarms, faults, faultIds: new Set(A(S.FAULTS).map((f) => f.id)), rig: new Set(A(S.RIG_KEYS)), optional: new Set(A(S.RIG_OPTIONAL)) };
 }
 const TAG_RE = /\b[A-Z]{1,5}-\d{3}[A-Z]?\b/g, ALARM_RE = /\b[A-Z]{2,}(?:_[A-Z]+)+\b/g;
 function refIssues(items, V) {
@@ -263,8 +320,9 @@ function simCheckShape(V) {
   const out = [];
   Object.keys(CHECKS).forEach((id) => CHECKS[id].filter((c) => c.kind === 'sim').forEach((c, i) => {
     const w = id + ' sim[' + i + ']';
+    if (!hasItem(V, c)) return;   // sim-equip check on an engine without that item
     A(c.actions).forEach((a) => { if (a.fault && !V.faultIds.has(a.fault)) out.push(w + ': fault ' + a.fault + ' not in WTS_sim.FAULTS'); });
-    A(c.expect).forEach((e) => { [e.alarm, e.noAlarm].filter(Boolean).forEach((a) => { if (!V.alarms.has(a)) out.push(w + ': alarm ' + a + ' not in the engine'); }); });
+    A(c.expect).forEach((e) => { [e.alarm, e.noAlarm].concat(A(e.gap)).filter(Boolean).forEach((a) => { if (!V.alarms.has(a)) out.push(w + ': alarm ' + a + ' not in the engine'); }); });
     Object.keys(c.rig || {}).forEach((k) => { if (!V.rig.has(k)) out.push(w + ': rig-up key ' + k + ' not in WTS_sim.RIG_KEYS'); });
   }));
   return out;
@@ -279,7 +337,30 @@ module.exports = [
       openWts(app, {});
       fail(assert, shapeIssues(app, course, scenarios), 'course and scenarios');
       assert.ok(scenarios.some((s) => s.id === 'FS-4'), 'FS-4 cold start-up shipped');
-      assert.ok(!course.some((x) => /desander|DS-101|T-202/.test(JSON.stringify(x))), 'exercises 9–10 wait for the sim-equip merge (not shipped half-written)');
+      const V = engineVocab(app), ids = (l) => A(l).map((x) => x.id).join(',');
+      const EX8 = 'ex1,ex2,ex3,ex4,ex5,ex6,ex7,ex8';
+      if (!EQUIP.every((k) => V.optional.has(k))) {
+        assert.strictEqual(ids(course), EX8, 'without DS-101 / T-202 in the engine: exercises 1–8');
+        assert.strictEqual(ids(scenarios), 'FS-1,FS-2,FS-4', 'without DS-101 / T-202 in the engine: FS-1, FS-2, FS-4');
+        assert.ok(!course.concat(scenarios).some((x) => /desander|DS-101|T-202/.test(JSON.stringify(x)) || x.shots), 'no sim-equip text or shot recipes on an engine without DS-101 and T-202');
+      } else assert.strictEqual(ids(course), EX8 + ',ex9,ex10', 'sim-equip engine: exercises 1–10');
+      // the sim-equip content, built against a stand-in engine, so its shape is checked on any engine
+      const E = equipContent(app);
+      assert.strictEqual(ids(E.course), EX8 + ',ex9,ex10', 'exercises 9 and 10 follow 8');
+      assert.strictEqual(ids(E.scenarios), 'FS-1,FS-2,FS-3,FS-4', 'FS-3 between FS-2 and FS-4');
+      fail(assert, shapeIssues(app, E.course, E.scenarios), 'sim-equip course and scenarios');
+      // §6.4 shot recipes: valid for help-shots.js, each shown by a { shot } block, phone shots of the viewport and the More menu
+      const HS = require(path.join(BUILD, 'help-shots.js'));
+      const shots = HS.collectShots({ course: E.course, scenarios: E.scenarios });
+      fail(assert, HS.validateShots(shots), 'shot recipes');
+      assert.ok(shots.length >= 14, shots.length + ' shot recipes');
+      const unref = [];
+      A(E.course).concat(A(E.scenarios)).forEach((x) => A(x.shots).forEach((s) => { if (JSON.stringify(A(x.blocks)).indexOf('"shot":"' + s.id + '"') === -1) unref.push(x.id + '/' + s.id); }));
+      fail(assert, unref, 'shots without a { shot } block');
+      const phone = shots.filter((s) => s.recipe.view === 'phone' || s.recipe.view === 'both').map((s) => s.folder + '/' + s.stem);
+      ['course/ex1-view', 'course/ex5-more'].forEach((k) => assert.ok(phone.indexOf(k) !== -1, 'phone shot ' + k + ' (' + phone + ')'));
+      ['course/ex2-ck101', 'course/ex4-scen', 'course/ex4-alarms', 'course/ex9-ds101', 'course/ex10-t202', 'scenarios/fs-1-rigup'].forEach((k) =>
+        assert.ok(shots.some((s) => s.folder + '/' + s.stem === k), 'shot ' + k));
     },
   },
   {
@@ -319,8 +400,10 @@ module.exports = [
       const all = [];
       Object.keys(CHECKS).forEach((id) => CHECKS[id].forEach((c, i) => { if (c.kind === 'sim') all.push([id + ' sim[' + i + ']', c]); }));
       if (!simInHarness()) { console.log('[help-course] ' + all.length + ' simulator check(s) skipped — ' + SIM_SKIP + ' (set WTS_HELP_SIMCHECKS=1 to run them on the HTML\'s Round 7)'); return; }
+      const run = all.filter(([, c]) => hasItem(V, c));
+      if (run.length < all.length) console.log('[help-course] ' + (all.length - run.length) + ' sim-equip simulator check(s) skipped — the engine has no ' + EQUIP.filter((k) => !V.optional.has(k)).join(' / '));
       const issues = [];
-      all.forEach(([w, c]) => simCheck(app, w, c).forEach((m) => issues.push(m)));
+      run.forEach(([w, c]) => simCheck(app, w, c).forEach((m) => issues.push(m)));
       fail(assert, issues, 'simulator checks');
     },
   },
