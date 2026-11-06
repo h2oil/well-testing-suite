@@ -77,7 +77,7 @@ related: ['esdhi', 'pipelife'],
 shots: [Sh('view', 'both', 'ESD Lo-Pilot inputs', '', ['#wts_esdlo_location~1', '#wts_esdlo_qleak~2']),
 Sh('res', 'desktop', 'Status card', RES, [], { target: '#wts_esdlo_status', setup: CL('#wts_esdlo_calc_btn', '#wts_esdlo_results .dtable') })]
 }),
-hydrate: Gd('hydrate', '8af6c29a', {
+hydrate: Gd('hydrate', '24305ead', {
 keywords: ['methanol', 'glycol'],
 notDocumented: ['wts_hydrate_run~step 4', 'wts_hydrate_gocj~opens [[cheminj]]', '^(hy_(up|dn)_[PT]|hy_tgt|wts_hydrate_inj)_[023]$~same fields on the other segment cards'],
 purpose: 'Hydrate temperature at four points of the spread, and the methanol or glycol rate that keeps each out of hydrates.',
