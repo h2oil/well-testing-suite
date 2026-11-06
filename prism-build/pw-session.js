@@ -62,7 +62,7 @@ function serve(opts) {
       return s.end(opts.pageHtml);
     }
     const f = path.join(root, rel);
-    if (!f.startsWith(root) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) { s.writeHead(404); return s.end(); }
+    if (!(f === root || f.startsWith(root + path.sep)) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) { s.writeHead(404); return s.end(); }
     s.writeHead(200, { 'content-type': MIME[path.extname(f).toLowerCase()] || 'application/octet-stream', 'cache-control': 'no-store' });
     s.end(fs.readFileSync(f));
   });
@@ -138,7 +138,11 @@ async function freshSession(browser, opts) {
   if (clock && clock.mode === 'install') {
     // Fake timers, paused from the start: nothing in the page runs unless the caller advances the clock
     // (s.advance / page.clock.runFor), so every run sees the same sequence of timers.
-    await p.clock.install({ time: t0 });
+    // pauseAt alone (it installs the fake clock itself), NOT install() + pauseAt(): each new document replays the
+    // clock log, and between an 'install' and a 'pauseAt' entry the replay advances the fake tick counter by the REAL
+    // time that passed between the two calls. requestAnimationFrame is aligned to ticks % 16, so that real gap
+    // (a few ms, more under load) changed the frame phase and the simulator's step count from run to run. With
+    // pauseAt only, ticks start at 0 in every document; Date reads t0 + 1 s.
     await p.clock.pauseAt(t0 + 1000);
   } else if (clock && clock.mode === 'fixed') {
     await p.clock.setFixedTime(t0);   // only Date is fixed; timers and animation frames run normally
@@ -146,16 +150,47 @@ async function freshSession(browser, opts) {
   s.installed = !!(clock && clock.mode === 'install');
   // Advance time: the fake clock in install mode, a real wait otherwise.
   s.advance = (ms) => (s.installed ? p.clock.runFor(ms) : p.waitForTimeout(ms));
+  // Render barrier (install mode): wait in REAL time for the next rendering update, with the fake clock still.
+  // ResizeObserver / IntersectionObserver callbacks are delivered by the real rendering pipeline, not by timers;
+  // observers the page created in the last task (a page mount, a click) are delivered in that same update. Without
+  // the barrier they fire part-way through the next runFor, at a fake time that depends on machine load (seen as a
+  // different simulator animation phase with 4 workers). No-op with the real clock.
+  s.render = async () => {
+    if (!s.installed) return;
+    await Promise.race([
+      p.evaluate(() => new Promise((done) => {
+        let n = 0;
+        const one = () => { if (++n === 2) done(true); };
+        try {
+          const ro = new ResizeObserver(() => { ro.disconnect(); one(); }); ro.observe(document.documentElement);
+          const io = new IntersectionObserver(() => { io.disconnect(); one(); }); io.observe(document.documentElement);
+        } catch (e) { done(false); }
+      })).catch(() => false),
+      sleep(5000),
+    ]);
+  };
   await p.goto(opts.base + PAGE, { waitUntil: 'load' });
   if (opts.waitReady !== false) {
     const ready = () => p.evaluate(() => typeof window.WTS_nav === 'function' && !!document.querySelector('.nav-btn')).catch(() => false);
+    // Install mode: wait in REAL time with the fake clock still paused, so the fake time at which the caller starts
+    // does not depend on how long the page took to load (machine load, worker count). Only when the app needs a timer
+    // to start does the clock move, in fixed 100 ms steps that each wait for the real-time work to finish.
     const until = Date.now() + 30000;
+    let fakeSteps = 0;
     while (!(await ready())) {
       if (Date.now() > until) throw new Error('the app did not start within 30 s');
-      if (s.installed) await p.clock.runFor(100);
-      await sleep(50);
+      if (s.installed && Date.now() > until - 25000) {
+        // 5 s of real time without readiness: the start needs timers. Advance by one fixed step and give the page
+        // up to 2 s of real time to react before the next (the step count then depends on the app, not the load).
+        await p.clock.runFor(100); fakeSteps++;
+        const t = Date.now() + 2000;
+        while (!(await ready()) && Date.now() < t) await sleep(50);
+        if (fakeSteps > 200) throw new Error('the app did not start within 20 s of fake time');
+      } else await sleep(50);
     }
-    await s.advance(500);
+    s.startSteps = fakeSteps;
+    await s.render();
+    await s.advance(500);   // a fixed amount of fake time after readiness
   }
   s.close = async () => { try { await ctx.close(); } catch (e) { /* ignore */ } };
   return s;
@@ -168,6 +203,7 @@ function settleMs(route) { return route === 'prism' || route === 'dca' || route 
 async function navTo(s, route, opts) {
   opts = opts || {};
   await s.page.evaluate((r) => { window.WTS_nav(r); }, route);
+  if (s.render) await s.render();
   const ms = opts.settle != null ? opts.settle : settleMs(route);
   if (s.advance) await s.advance(ms); else await s.page.waitForTimeout(ms);
 }

@@ -11,7 +11,8 @@
 //   node prism-build/help-shots.js --route orifice,wts      # some folders (a guide route, or course / scenarios / start)
 //   node prism-build/help-shots.js --changed                # only shots whose recipeHash or fingerprint differs
 //   node prism-build/help-shots.js --check                  # no browser: content ↔ manifest ↔ files ↔ module, caps, fingerprints
-//     options: --phone-only, --desktop-only, --workers 4, --verbose, --keep-png <dir>, --prune (delete orphan files)
+//     options: --phone-only, --desktop-only, --workers 4, --verbose, --keep-png <dir>, --prune (delete orphan files),
+//              --strict (a [warn], e.g. a crop target taller than the viewport, fails the shot)
 //              --out <dir> (image folder, default help/img), --module <file> (default prism-build/48-calc-help-manifest.js,
 //              or <out>/48-calc-help-manifest.js when --out is given), --content <file.js> (an extra help content file,
 //              loaded like a 48-calc-help-*.js source; tooling tests), --html (shoot the built well-testing-app.html
@@ -49,6 +50,11 @@ const SEED = {
   wts_unit_system: 'imperial',
   h2viz3d_prefs: { mode: '2d', quality: 'medium' },
 };
+// Masked chrome (§3.3): the version label and the simulator's DOM clock. Dates are NOT masked by selector: every shot
+// runs with Date fixed at TIME (setFixedTime, or the installed fake clock that starts at TIME), so report dates, Quick
+// Report / PDF dates and default-today date inputs always read 2 November 2026 and are part of the picture writers
+// describe. The 'SIM T+…' text drawn into the 2D canvas cannot be hidden by CSS; it is deterministic because the
+// simulator recipes run on the paused fake clock. [data-help-mask] is for pages that want a field hidden in every shot.
 const DEFAULT_MASK = ['#appVersionLabel', '.wtsl-clock', '[data-h="clock"]', '[data-h="t_clock"]', '[data-help-mask]'];
 
 // ── Size caps (§3.6) ─────────────────────────────────────────────────────
@@ -65,7 +71,9 @@ const OPS = ['set', 'select', 'click', 'press', 'hover', 'scroll', 'waitFor', 'w
 const INSTALL_ROUTES = ['wts', 'prism', 'dca', 'pta', 'buildup', 'modbus', 'wellos', 'historian'];
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-// Run until cond() is true: fake-clock steps of 250 ms (install) or real 250 ms waits, 120 s cap.
+// Run until cond() is true: fake-clock steps of 250 ms (install) or real 250 ms waits, 120 s cap. In install mode
+// the real sleep(5) between steps lets non-timer work (a library fetch, image decode) finish; the step at which cond()
+// first holds is then fixed by the page, not the load, as long as that work completes within the step.
 async function until(s, cond, what, capMs) {
   const cap = capMs || 120000;
   for (let t = 0; t <= cap; t += 250) {
@@ -86,14 +94,21 @@ async function settle(s, capMs) {
 }
 // Advance ms in 250 ms steps (lets promises resolve between timer batches).
 async function steps(s, ms) { for (let t = 0; t < ms; t += 250) { await s.advance(250); if (s.installed) await sleep(5); } }
+// After a simulator action: run a fixed 1 s of fake time in 250 ms steps (above the live view's 250 ms HUD and
+// 1000 ms slow-update periods, 38-wts-live.js loop()), then two animation frames, so the toolbar, HUD and chips have
+// all redrawn from the final state whatever phase their timers were in when the action started.
+async function simQuiet(s) { await steps(s, 1000); await s.advance(32); }
 // Click the first visible element matching sel (in the page).
-function clickVisible(s, sel) {
-  return s.page.evaluate((q) => {
+// Then the render barrier (s.render, pw-session.js), so observers the click set up fire at a fixed fake time.
+async function clickVisible(s, sel) {
+  const ok = await s.page.evaluate((q) => {
     const vis = (e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(e).visibility !== 'hidden'; };
     const el = Array.from(document.querySelectorAll(q)).find(vis);
     if (el) el.click();
     return !!el;
   }, sel);
+  if (ok && s.render) await s.render();
+  return ok;
 }
 async function mustClick(s, sel, what) { if (!(await clickVisible(s, sel))) throw new Error((what || 'control') + ' not found: ' + sel); }
 function liveSim(s, fn, arg) {
@@ -156,6 +171,7 @@ const ACTIONS = {
       if (await clickVisible(s, '[data-act=reset][data-v=' + k + ']')) { await s.advance(50); await clickVisible(s, '[data-act=confirm-yes]'); }
     } else await liveSim(s, 'sim.reset(a);', k);
     await s.advance(500);
+    await simQuiet(s);
   } },
   // {speed, simSeconds}: play, run simSeconds of simulated time, pause — public WTS_live / WTS_sim API only.
   simRun: { clock: 'install', run: async (s, a) => {
@@ -163,9 +179,9 @@ const ACTIONS = {
     await liveSim(s, 'if (sim.setSpeed) sim.setSpeed(a); sim.play();', speed);
     await s.advance(Math.round(secs / speed * 1000));
     await liveSim(s, 'sim.pause();', null);
-    await s.advance(32);
+    await simQuiet(s);
   } },
-  simFault: { clock: 'install', run: async (s, name) => { await liveSim(s, 'sim.setFault(a, true);', String(name)); await s.advance(500); } },
+  simFault: { clock: 'install', run: async (s, name) => { await liveSim(s, 'sim.setFault(a, true);', String(name)); await s.advance(500); await simQuiet(s); } },
   // {key: 'on'|'off'|true|false} for the rig-up switches.
   simRigup: { clock: 'install', run: async (s, a) => {
     for (const k of Object.keys(a || {}).sort()) {
@@ -177,8 +193,10 @@ const ACTIONS = {
         return true;
       }, [k, on]);
       if (!ok) throw new Error('rig-up switch not found: ' + k);
+      if (s.render) await s.render();
       await s.advance(300);
     }
+    await simQuiet(s);
   } },
   simCard: { clock: 'install', run: async (s, tag) => {
     await s.page.evaluate((t) => {
@@ -200,6 +218,7 @@ const ACTIONS = {
       if (!on3d) { s.view3d = false; await clickVisible(s, '[data-act=mode2d]'); }
       else s.view3d = true;
       await liveSim(s, 'sim.pause();', null);
+      await simQuiet(s);
     }
     await s.advance(32);
   } },
@@ -228,6 +247,8 @@ const ACTIONS = {
 };
 
 // ── Small helpers ────────────────────────────────────────────────────────
+// WTS_appVersion() returns RELEASE_NOTES[0].ver, which already carries the 'v' ('v3.3'); add it only when missing.
+const appVerOf = (v) => { const t = String(v == null ? '' : v).trim(); return !t ? '' : /^v/i.test(t) ? 'v' + t.slice(1) : 'v' + t; };
 const sha256 = (b) => crypto.createHash('sha256').update(b).digest('hex');
 function stable(v) {
   if (Array.isArray(v)) return v.map(stable);
@@ -366,6 +387,17 @@ const browserOnly = (s) => (s.recipe.setup || []).some((o) => o && (o.action || 
 // ── Structural fingerprint in the jsdom harness (no browser) ─────────────
 let _H = null;
 function harness() { if (!_H) _H = require('./tests/_harness'); return _H; }
+// The same seeded generator the browser shots install (captureOne), as source so both realms run identical code.
+const SEEDED_RANDOM = 'let a = 0x9e3779b9; Math.random = function () { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); ' +
+  't = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };';
+// Harness globals for the fingerprint: a Math whose random() is the seeded generator (pages that build ids or labels
+// from Math.random — 19-data-managers, 51-prism-workspace, 61-modbus-station — then fingerprint the same every run).
+function harnessGlobals() {
+  const M = Object.create(Math);
+  new Function('Math', SEEDED_RANDOM)(M);   // eslint-disable-line no-new-func
+  Object.getOwnPropertyNames(Math).forEach((k) => { if (k !== 'random') Object.defineProperty(M, k, Object.getOwnPropertyDescriptor(Math, k)); });
+  return { Math: M };
+}
 function seedStrings() { const o = {}; Object.keys(SEED).forEach((k) => { o[k] = typeof SEED[k] === 'string' ? SEED[k] : JSON.stringify(SEED[k]); }); return o; }
 
 function serialise(app, el) {
@@ -393,7 +425,10 @@ function serialise(app, el) {
 function fingerprint(s, view, opts) {
   if (browserOnly(s)) return { fp: 'browser', fpBox: null };
   const H = harness();
-  const app = H.loadApp(Object.assign({ fromSources: true, silentBuild: true, viewport: VIEWS[view].viewport, storage: H.createStorage(seedStrings()) },
+  // Same date as the shots (startTime = TIME) and the seeded Math.random. fpBox is the HARNESS layout box (its
+  // defaults, 900×420, or inline px sizes), not the browser's: it only catches a change in declared sizes.
+  const app = H.loadApp(Object.assign({ fromSources: true, silentBuild: true, viewport: VIEWS[view].viewport, storage: H.createStorage(seedStrings()),
+    startTime: Date.parse(TIME), globals: harnessGlobals() },
     opts && opts.html ? { html: opts.html } : opts && opts.sourceOverrides ? { sourceOverrides: opts.sourceOverrides } : {}));
   try {
     const ae = { allowErrors: true };
@@ -640,6 +675,7 @@ async function applyOps(s, shot) {
       await page.evaluate((n) => { window.__hsEv = window.__hsEv || {}; const f = () => { window.__hsEv[n] = true; }; document.addEventListener(n, f, { once: true }); window.addEventListener(n, f, { once: true }); }, op.waitEvent);
       await until(s, () => page.evaluate((n) => !!(window.__hsEv && window.__hsEv[n]), op.waitEvent), 'event ' + op.waitEvent, 120000);
     } else if (op.action) await ACTIONS[op.action].run(s, op.args);
+    if (s.render) await s.render();
     await s.advance(100);
   }
 }
@@ -653,7 +689,7 @@ async function decorate(s, shot) {
       '.__hs_co{position:fixed;z-index:2147483647;width:22px;height:22px;box-sizing:border-box;border-radius:50%;background:#ffb300;color:#111;' +
       'border:2px solid #111;font:700 13px/18px sans-serif;text-align:center;pointer-events:none;box-shadow:0 0 0 2px #ffb300}';
     document.head.appendChild(st);
-    const bad = [];
+    const bad = [], boxes = [];
     cos.forEach((c) => {
       const el = Array.from(document.querySelectorAll(c.sel)).find((e) => {
         const r = e.getBoundingClientRect();
@@ -662,49 +698,82 @@ async function decorate(s, shot) {
       if (!el) { bad.push(c.sel); return; }
       const r = el.getBoundingClientRect(), m = document.createElement('div');
       m.className = '__hs_co'; m.textContent = String(c.n);
-      m.style.left = Math.max(0, Math.min(innerWidth - 22, r.left - 11)) + 'px'; m.style.top = Math.max(0, Math.min(innerHeight - 22, r.top - 11)) + 'px';
+      const ml = Math.max(0, Math.min(innerWidth - 22, r.left - 11)), mt = Math.max(0, Math.min(innerHeight - 22, r.top - 11));
+      m.style.left = ml + 'px'; m.style.top = mt + 'px';
       document.body.appendChild(m);
+      // the 2 px amber ring (box-shadow) lies outside the 22 px box
+      boxes.push({ n: c.n, sel: c.sel, el: { l: r.left, t: r.top, r: r.right, b: r.bottom }, m: { l: ml - 2, t: mt - 2, r: ml + 24, b: mt + 24 } });
     });
-    return bad;
+    return { bad, boxes, vw: innerWidth, vh: innerHeight };
   }, [masks, shot.recipe.callouts || []]);
 }
 
+// The crop for an element shot: the target's box + 8 px, grown to hold every call-out marker, clipped to the viewport.
+// → { clip, errors[], warnings[] }. A call-out whose element lies outside the padded target, or whose marker does not
+// fit in the final clip, is an error (it would not appear in the image). A target larger than the viewport is a warning
+// (the image is cut at the viewport edge: target a smaller element, e.g. one .rbox).
+function cropFor(target, rect, deco) {
+  const P = 8, errors = [], warnings = [];
+  const box = { l: rect.l - P, t: rect.t - P, r: rect.r + P, b: rect.b + P };
+  const vw = rect.vw, vh = rect.vh;
+  if (rect.l < 0 || rect.t < 0 || rect.r > vw || rect.b > vh) {
+    warnings.push('target ' + target + ' (' + Math.round(rect.r - rect.l) + '×' + Math.round(rect.b - rect.t) + ') does not fit the ' + vw + '×' + vh +
+      ' viewport: the image is cut at the viewport edge — target a smaller element');
+  }
+  const u = Object.assign({}, box);
+  ((deco && deco.boxes) || []).forEach((c) => {
+    const inside = c.el.r > box.l && c.el.l < box.r && c.el.b > box.t && c.el.t < box.b;
+    if (!inside) { errors.push('call-out ' + c.n + ' (' + c.sel + ') is outside the target ' + target); return; }
+    u.l = Math.min(u.l, c.m.l); u.t = Math.min(u.t, c.m.t); u.r = Math.max(u.r, c.m.r); u.b = Math.max(u.b, c.m.b);
+  });
+  const x0 = Math.max(0, Math.floor(u.l)), y0 = Math.max(0, Math.floor(u.t)), x1 = Math.min(vw, Math.ceil(u.r)), y1 = Math.min(vh, Math.ceil(u.b));
+  if (x1 - x0 < 4 || y1 - y0 < 4) { errors.push('target is not visible: ' + target); return { clip: null, errors, warnings }; }
+  const clip = { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+  ((deco && deco.boxes) || []).forEach((c) => {
+    if (errors.some((e) => e.indexOf('call-out ' + c.n + ' ') === 0)) return;
+    if (c.m.l < x0 - 2 || c.m.t < y0 - 2 || c.m.r > x1 + 2 || c.m.b > y1 + 2) errors.push('call-out ' + c.n + ' (' + c.sel + ') falls outside the cropped image');
+  });
+  return { clip, errors, warnings };
+}
+
 // One (shot, view) in a fresh context → { png, view3d }.
-async function captureOne(browser, base, shot, view) {
+async function captureOne(browser, base, shot, view, opts) {
   const S = require('./pw-session');
   const V = VIEWS[view];
   const s = await S.freshSession(browser, {
     base, viewport: V.viewport, scale: V.scale, phone: V.phone, seed: SEED, contextOptions: CONTEXT,
     clock: { mode: clockOf(shot), time: TIME },
-    initScripts: [() => {   // seeded Math.random (shots only)
-      let a = 0x9e3779b9;
-      Math.random = function () { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
-    }],
+    initScripts: [{ fn: (src) => { new Function('Math', src)(Math); }, arg: SEEDED_RANDOM }],   // seeded Math.random (eslint-disable-line no-new-func)
   });
   try {
     await S.navTo(s, shot.route);
     await applyOps(s, shot);
     const target = shot.recipe.target;
-    let clip = null;
+    let clip = null, rect = null;
+    const warnings = [];
     if (!isViewport(target)) {
-      const r = await s.page.evaluate((q) => {
+      // scroll first: the call-out markers are position:fixed, placed after the page stops moving
+      rect = await s.page.evaluate((q) => {
         const e = document.querySelector(q); if (!e) return null;
         e.scrollIntoView({ block: 'nearest', inline: 'nearest' });
         const b = e.getBoundingClientRect();
         return { l: b.left, t: b.top, r: b.right, b: b.bottom, vw: innerWidth, vh: innerHeight };
       }, target);
-      if (!r) throw new Error('target not found: ' + target);
-      const x0 = Math.max(0, Math.floor(r.l - 8)), y0 = Math.max(0, Math.floor(r.t - 8));
-      const x1 = Math.min(r.vw, Math.ceil(r.r + 8)), y1 = Math.min(r.vh, Math.ceil(r.b + 8));
-      if (x1 - x0 < 4 || y1 - y0 < 4) throw new Error('target is not visible: ' + target);
-      clip = { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+      if (!rect) throw new Error('target not found: ' + target);
     }
-    const bad = await decorate(s, shot);
-    if (bad.length) throw new Error('call-out selector not visible in the ' + view + ' view: ' + bad.join(', '));
+    const deco = await decorate(s, shot);
+    if (deco.bad.length) throw new Error('call-out selector not visible in the ' + view + ' view: ' + deco.bad.join(', '));
+    if (rect) {
+      const c = cropFor(target, rect, deco);
+      if (c.errors.length) throw new Error(c.errors.join('; '));
+      c.warnings.forEach((w) => warnings.push(w));
+      if (opts && opts.strict && warnings.length) throw new Error(warnings.join('; ') + ' (--strict)');
+      clip = c.clip;
+    }
     await s.advance(32);   // two animation frames
     const png = await s.page.screenshot(Object.assign({ fullPage: false, animations: 'disabled', caret: 'hide', type: 'png', timeout: 90000 }, clip ? { clip } : {}));
     const errs = s.errors.slice();
-    return { png, view3d: s.view3d, errors: errs };
+    return { png, view3d: s.view3d, errors: errs, warnings };
   } finally { await s.close(); }
 }
 
@@ -727,7 +796,7 @@ function parseArgs(argv) {
   const all = (f) => { const out = []; argv.forEach((a, i) => { if (a === f && argv[i + 1]) out.push(argv[i + 1]); }); return out; };
   const out = arg('--out', null);
   return {
-    all: has('--all'), changed: has('--changed'), check: has('--check'), prune: has('--prune'), verbose: has('--verbose'),
+    all: has('--all'), changed: has('--changed'), check: has('--check'), prune: has('--prune'), verbose: has('--verbose'), strict: has('--strict'),
     html: has('--html'), phoneOnly: has('--phone-only'), desktopOnly: has('--desktop-only'),
     routes: all('--route').join(',').split(',').map((x) => x.trim()).filter(Boolean),
     workers: Math.max(1, parseInt(arg('--workers', '4'), 10) || 4),
@@ -756,7 +825,7 @@ async function capture(o) {
   const build = H.buildFromSources({ silent: true, overrides: sourceOverrides || undefined });
   const app = H.loadApp({ html: build.html, storage: H.createStorage(seedStrings()) });
   let content, appVer = '';
-  try { content = loadContent(app.win); appVer = typeof app.win.WTS_appVersion === 'function' ? 'v' + app.win.WTS_appVersion() : ''; }
+  try { content = loadContent(app.win); appVer = typeof app.win.WTS_appVersion === 'function' ? appVerOf(app.win.WTS_appVersion()) : ''; }
   finally { try { app.dispose(); } catch (e) { /* ignore */ } }
   const shots = collectShots(content);
   const verr = validateShots(shots);
@@ -800,7 +869,8 @@ async function capture(o) {
           const j = jobs[next++];
           const tag = j.file;
           try {
-            const r = await captureOne(browser, srv.base, j.shot, j.view);
+            const r = await captureOne(browser, srv.base, j.shot, j.view, { strict: o.strict });
+            r.warnings.forEach((w) => console.warn('[warn] ' + tag + ': ' + w));
             if (o.keepPng) { const kp = path.join(path.resolve(o.keepPng), j.file.replace(/\.webp$/, '.png')); fs.mkdirSync(path.dirname(kp), { recursive: true }); fs.writeFileSync(kp, r.png); }
             const img = await encodeCapped(enc, r.png, j.view, j.shot.recipe.target);
             const f = fingerprint(j.shot, j.view, { html: build.html });
@@ -854,7 +924,7 @@ async function main(argv) {
     return r.ok ? 0 : 1;
   }
   if (!o.all && !o.routes.length && !o.changed) {
-    console.log('usage: node prism-build/help-shots.js --all | --route a,b | --changed | --check  [--phone-only|--desktop-only] [--workers n] [--prune] [--keep-png dir] [--out dir] [--module file] [--content file.js] [--html] [--verbose]');
+    console.log('usage: node prism-build/help-shots.js --all | --route a,b | --changed | --check  [--phone-only|--desktop-only] [--workers n] [--prune] [--keep-png dir] [--strict] [--out dir] [--module file] [--content file.js] [--html] [--verbose]');
     return 2;
   }
   return capture(o);
@@ -862,7 +932,8 @@ async function main(argv) {
 
 module.exports = { VIEWS, CAPS, SEED, TIME, OPS, ACTIONS, INSTALL_ROUTES, RECIPE_SCHEMA, IMG_DIR, MODULE_FILE,
   loadContent, collectShots, validateShots, recipeHash, clockOf, browserOnly, fingerprint, serialise, webpSize,
-  emptyManifest, readManifest, manifestText, moduleSource, check, capFor, fileOf, viewsOf, parseArgs, main };
+  emptyManifest, readManifest, manifestText, moduleSource, check, capFor, fileOf, viewsOf, parseArgs, main,
+  appVerOf, cropFor, harnessGlobals, DEFAULT_MASK };
 
 if (require.main === module) {
   main(process.argv.slice(2)).then((code) => process.exit(code), (e) => { console.error('[help-shots] tool error: ' + (e && e.stack || e)); process.exit(2); });

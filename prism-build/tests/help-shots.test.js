@@ -337,4 +337,64 @@ module.exports = [
       assert.strictEqual(typeof srv.listen, 'function'); srv.close();
     },
   },
+  {
+    name: 'fix round: appVer has one v, crop grows to hold call-outs and warns on oversize targets, harness = seeded random + shot date, sim actions settle, server stays in its root',
+    wp: WP, opts: false,
+    async run(app, assert) {
+      // appVer: WTS_appVersion() already says 'v3.3'
+      ['v3.3', 'V3.3', '3.3', ' v3.3.2 '].forEach((v) => { const a = HS.appVerOf(v); assert.ok(/^v\d/.test(a) && !/^vv/i.test(a), v + ' → ' + a); });
+      assert.strictEqual(HS.appVerOf('v3.3.2'), 'v3.3.2'); assert.strictEqual(HS.appVerOf(''), '');
+      const src = fs.readFileSync(path.join(BUILD, 'help-shots.js'), 'utf8');
+      assert.ok(!/'v' \+ app\.win\.WTS_appVersion\(\)/.test(src), 'no second v added to the app version');
+      // crop: call-out on the target's top-left edge → the clip grows to hold its marker
+      const vp = { vw: 1280, vh: 800 };
+      const rect = Object.assign({ l: 300, t: 200, r: 700, b: 500 }, vp);
+      const mk = (n, l, t, el) => ({ n, sel: '#c' + n, el: el || { l, t, r: l + 50, b: t + 20 }, m: { l: l - 13, t: t - 13, r: l + 13, b: t + 13 } });
+      let c = HS.cropFor('#t', rect, { boxes: [mk(1, 300, 200)] });
+      assert.deepStrictEqual(c.errors, []);
+      assert.ok(c.clip.x <= 287 && c.clip.y <= 187, 'marker at left/top inside the clip: ' + JSON.stringify(c.clip));
+      assert.strictEqual(c.clip.x + c.clip.width, 708, 'right edge = target + 8 px');
+      // a call-out on an element outside the target fails
+      c = HS.cropFor('#t', rect, { boxes: [mk(2, 900, 600)] });
+      assert.ok(c.errors.some((e) => /call-out 2 .* outside the target/.test(e)), c.errors.join(';'));
+      // a marker clamped at the viewport edge stays inside the clip
+      c = HS.cropFor('#t', Object.assign({}, rect, { l: 2, t: 2 }), { boxes: [{ n: 3, sel: '#c3', el: { l: 2, t: 2, r: 40, b: 20 }, m: { l: -2, t: -2, r: 24, b: 24 } }] });
+      assert.deepStrictEqual(c.errors, []); assert.strictEqual(c.clip.x, 0);
+      // oversize target → a warning, not a silent cut
+      c = HS.cropFor('#t', Object.assign({ l: 300, t: 150, r: 791, b: 950 }, vp), { boxes: [] });
+      assert.ok(c.warnings.length === 1 && /does not fit the 1280×800 viewport/.test(c.warnings[0]), c.warnings.join(';'));
+      assert.strictEqual(c.clip.y + c.clip.height, 800, 'clipped to the viewport');
+      assert.deepStrictEqual(HS.cropFor('#t', rect, { boxes: [] }).warnings, [], 'a target that fits: no warning');
+      assert.strictEqual(HS.parseArgs(['--route', 'x', '--strict']).strict, true, '--strict');
+      // harness globals: the same seeded generator as the shots, and the shot date
+      const g1 = HS.harnessGlobals().Math, g2 = HS.harnessGlobals().Math;
+      const seq = [g1.random(), g1.random(), g1.random()];
+      assert.deepStrictEqual([g2.random(), g2.random(), g2.random()], seq, 'each fingerprint starts the same sequence');
+      assert.ok(Math.abs(seq[0] - 0.3588899802416563) < 1e-15, 'the browser init script algorithm (first value)');
+      assert.strictEqual(g1.max(1, 4), 4); assert.strictEqual(g1.PI, Math.PI);
+      assert.ok(/startTime: Date\.parse\(TIME\), globals: harnessGlobals\(\)/.test(src), 'fingerprint uses the shot date and the seeded random');
+      // simulator actions end with a fixed 1 s of fake time (HUD 250 ms / slow 1000 ms phases)
+      ['simRun', 'simReset', 'simFault', 'simRigup'].forEach((k) => assert.ok(/simQuiet\(s\)/.test(HS.ACTIONS[k].run.toString()), k + ' settles with simQuiet'));
+      assert.ok(/async function simQuiet\(s\) \{ await steps\(s, 1000\); await s\.advance\(32\); \}/.test(src), 'simQuiet = 1000 ms in 250 ms steps + 32 ms');
+      const pwsSrc = fs.readFileSync(path.join(BUILD, 'pw-session.js'), 'utf8');
+      assert.ok(/s\.startSteps = fakeSteps;\s*\n\s*await s\.render\(\);\s*\n\s*await s\.advance\(500\);/.test(pwsSrc), 'a fixed fake-time start after readiness and a render barrier');
+      // the install-mode clock is pauseAt alone: an install() + pauseAt() pair shifts the frame phase by the real gap between the calls
+      const code = pwsSrc.replace(/\/\/.*$/gm, '');
+      assert.ok(/p\.clock\.pauseAt\(t0 \+ 1000\)/.test(code) && !/p\.clock\.install\(/.test(code), 'pauseAt only, no clock.install');
+      assert.ok(/if \(s\.render\) await s\.render\(\);/.test(code), 'navTo waits for the render barrier');
+      // static server: a sibling folder with the same prefix is not served
+      const pws = require(path.join(BUILD, 'pw-session.js'));
+      const base = tmp('srv'), root = path.join(base, 'site'), sib = path.join(base, 'site-sibling');
+      fs.mkdirSync(root); fs.mkdirSync(sib);
+      fs.writeFileSync(path.join(root, 'a.txt'), 'in'); fs.writeFileSync(path.join(sib, 'b.txt'), 'out');
+      const srv = await pws.startServer({ root });
+      const get = (u) => new Promise((ok, no) => require('http').get(srv.base + u, (r) => { let b = ''; r.on('data', (d) => { b += d; }); r.on('end', () => ok({ status: r.statusCode, body: b })); }).on('error', no));
+      try {
+        const a = await get('a.txt');
+        assert.deepStrictEqual([a.status, a.body], [200, 'in'], 'a file in the root');
+        assert.strictEqual((await get('..%2Fsite-sibling%2Fb.txt')).status, 404, '../site-sibling is outside the root');
+        assert.strictEqual((await get('..%2F..%2Fetc%2Fpasswd')).status, 404, '../.. refused');
+      } finally { await srv.close(); }
+    },
+  },
 ];
