@@ -179,7 +179,9 @@ const SECTION_A = (G, src) => {
       if (!['setValve', 'setSuction', 'setAutoDivert', 'getControls', 'setControls'].every(k => typeof s[k] === 'function')) return 'api';
       const c0 = JSON.stringify(s.getControls());
       // v3.0: the lineup also carries the divert valve stroke (s) and the gauge 'allow interrupting batches' option
-      if (c0 !== JSON.stringify({ surge: { inlet: [true, true], suction: 'both', auto: false, sp: 0.8, hyst: 0.1, strokeS: 6 }, gauge: { inlet: [true, false], auto: false, sp: 0.9, hyst: 0.1, strokeS: 6, allowInterrupt: false }, v: 1 })) bad.push('defaults ' + c0);
+      // v1.4.0: + T-202 inlet / auto route (surge2) and DS-101 bypass / auto-dump (desander), exact key order
+      if (c0 !== JSON.stringify({ surge: { inlet: [true, true], suction: 'both', auto: false, sp: 0.8, hyst: 0.1, strokeS: 6 }, gauge: { inlet: [true, false], auto: false, sp: 0.9, hyst: 0.1, strokeS: 6, allowInterrupt: false },
+        surge2: { inlet: false, auto: false, sp: 0.8, hyst: 0.1, strokeS: 6 }, desander: { bypass: false, auto: false, sp: 0.8 }, v: 1 })) bad.push('defaults ' + c0);
       if (st.surge.comps.length !== 2 || st.surge.comps[0].tag !== 'T-201A' || st.gauge.tanks[1].valveTag !== 'XV-301B' || st.surge.auto.on !== false) bad.push('snapshot');
       s.setValve('gauge', 1, true); s.setValve('gauge', 0, false); s.setValve('surge', 1, false); s.setSuction('B'); s.setAutoDivert('surge', true, { sp: 0.85 });
       for (let i = 0; i < 60; i++) s.advance(10);
@@ -199,16 +201,25 @@ const SECTION_A = (G, src) => {
     // ── v3.0.2 rig-up + pressure-driven surge → gauge transfer ──
     ['31: rig-up API + snapshot (setRigup / getRigup, rigup notes, RIGUP / normRigup exports; default = full rig-up)', () => {
       const bad = [];
-      if (typeof S.normRigup !== 'function' || !Array.isArray(S.RIGUP) || S.RIGUP.length !== 8 || !deepFrozen(S.RIGUP)) bad.push('exports');
+      // v1.4.0: 10 items (DS-101 / T-202 optional, out by default); the RIGUP key set = RIG_KEYS; sig appends desander, surge2
+      if (typeof S.normRigup !== 'function' || !Array.isArray(S.RIGUP) || S.RIGUP.length !== 10 || !deepFrozen(S.RIGUP)) bad.push('exports');
+      if (S.RIGUP.map((it) => it.key).sort().join() !== S.RIG_KEYS.slice().sort().join()) bad.push('RIGUP keys = RIG_KEYS');
+      if (!deepFrozen(S.RIG_DEFAULTS) || !deepFrozen(S.RIG_OPTIONAL) || S.RIG_OPTIONAL.join() !== 'desander,surge2' || S.VERSION !== '1.4.0') bad.push('v1.4.0 exports');
       const s = S.create(F, { seed: 2 }); let st = s.getState();
-      if (!(st.rigup.full && st.rigup.sig === '11111111' && st.rigup.notes.length === 0)) bad.push('default ' + st.rigup.sig);
+      if (!(st.rigup.full && st.rigup.sig === '1111111100' && st.rigup.notes.length === 0 && Array.isArray(st.rigup.extras) && st.rigup.extras.length === 0)) bad.push('default ' + st.rigup.sig);
+      // step numbers (D17): the four combinations; the default is the v3.3 STEP table
+      const STEPS = [[{}, { wellhead: '①', esd: '②', choke: '③', heater: '④', separator: '⑤', flare: '⑥', surge: '⑦', gauge: '⑧', pump: '⑨' }],
+        [{ desander: true }, { wellhead: '①', esd: '②', desander: '③', choke: '④', heater: '⑤', separator: '⑥', flare: '⑦', surge: '⑧', gauge: '⑨', pump: '⑩' }],
+        [{ surge2: true }, { wellhead: '①', esd: '②', choke: '③', heater: '④', separator: '⑤', flare: '⑥', surge: '⑦', surge2: '⑧', gauge: '⑨', pump: '⑩' }],
+        [{ desander: true, surge2: true }, { wellhead: '①', esd: '②', desander: '③', choke: '④', heater: '⑤', separator: '⑥', flare: '⑦', surge: '⑧', surge2: '⑨', gauge: '⑩', pump: '⑪' }]];
+      if (typeof S.stepFor !== 'function' || !STEPS.every((p) => JSON.stringify(S.stepFor(p[0])) === JSON.stringify(p[1]))) bad.push('stepFor');
       if (typeof s.setRigup !== 'function' || typeof s.getRigup !== 'function') return 'api';
       const ev = []; s.on('rigup', (p) => ev.push(p));
       if (s.setRigup({ separator: false, flare: false }) !== true) bad.push('set');
       st = s.getState();
       if (st.rigup.separator !== false || st.rigup.flare !== true || !st.rigup.notes.some((n) => /nowhere to go/.test(n))) bad.push('rules');
       if (ev.length !== 1 || ev[0].sig !== st.rigup.sig) bad.push('event');
-      if (JSON.stringify(s.getRigup()) !== JSON.stringify({ esd: true, choke: true, heater: true, separator: false, surge: true, gauge: true, pump: true, flare: false })) bad.push('request ' + JSON.stringify(s.getRigup()));
+      if (JSON.stringify(s.getRigup()) !== JSON.stringify({ esd: true, choke: true, heater: true, separator: false, surge: true, gauge: true, pump: true, flare: false, desander: false, surge2: false })) bad.push('request ' + JSON.stringify(s.getRigup()));
       s.advance(600); const fw = []; finiteWalk(s.getState(), '', fw); if (fw.length) bad.push('finite ' + fw.slice(0, 3));
       const m = s.getState().health.massErr; if (Math.abs(m.oil) > 1e-9 || Math.abs(m.gas) > 1e-9) bad.push('mass');
       return bad.length === 0 || bad.join('; ');
@@ -245,7 +256,20 @@ const SECTION_B = (G /*, src */) => {
     'surge.P', 'surge.frac', 'surge.fracW', 'surge.pshh', 'surge.cap_bbl', 'surge.Vo_bbl', 'surge.Vw_bbl', 'surge.pump.on', 'surge.pump.q_bpd', 'surge.pump.design_bpd',
     'gauge.active', 'gauge.tanks.0.frac', 'gauge.tanks.0.fracW', 'gauge.tanks.1.state', 'gauge.tanks.0.cap_bbl', 'gauge.batches',
     'surge.transfer.on', 'surge.transfer.q_bpd', 'surge.transfer.lowDP', 'gauge.pump.on', 'gauge.pump.q_bpd', 'gauge.pump.mode', 'rigup.separator', 'rigup.gauge',
-    'rates.gas_mmscfd', 'cum.flare_mmscf', 'alarms'];
+    'rates.gas_mmscfd', 'cum.flare_mmscf', 'alarms',
+    // v1.2.0 (WP-3D): DS-101 / sand / T-202 paths the scene reads (§6.4; static values while the item is out)
+    'rigup.desander', 'rigup.surge2', 'nodes.desander.P', 'nodes.desander.Pin', 'nodes.surge2.P', 'nodes.surge2.T',
+    'desander.bypass', 'desander.Pin', 'desander.Pout', 'desander.dP_psi', 'desander.rate', 'desander.eff', 'desander.d50c_um', 'desander.ratingOK',
+    'desander.sand.acc_frac', 'desander.sand.buf_frac', 'desander.sand.acc_lb', 'desander.sand.cap_lb', 'desander.sand.capt_lbd', 'desander.sand.in_lbd',
+    'desander.sand.out_lbd', 'desander.sand.lah', 'desander.sand.lahh', 'desander.dump.phase', 'desander.dump.heldFrom', 'desander.dump.open',
+    'desander.dump.count', 'desander.dump.left_s', 'desander.dump.Pacc', 'desander.dump.failed', 'desander.auto.on', 'desander.auto.sp', 'desander.auto.blocked',
+    'sand.on', 'sand.toChoke_lbd', 'sand.choke.band', 'sand.choke.erosion_mild', 'sand.flowback.on', 'sand.cum.dumped_lb',
+    'surge2.P', 'surge2.SP', 'surge2.T', 'surge2.psh', 'surge2.pshh', 'surge2.frac', 'surge2.fracW', 'surge2.cap_bbl', 'surge2.Vo_bbl', 'surge2.Vw_bbl',
+    'surge2.inlet', 'surge2.pos', 'surge2.moving', 'surge2.route', 'surge2.share', 'surge2.fill_bpd', 'surge2.lsh', 'surge2.lshh',
+    'surge2.transfer.on', 'surge2.transfer.tripped', 'surge2.transfer.failed', 'surge2.transfer.blocked', 'surge2.transfer.q_bpd', 'surge2.transfer.lowDP',
+    'surge2.psv.lifting', 'surge2.bpv.u', 'surge2.blanket.u',
+    'lines.sep_surge2.active', 'lines.sep_surge2.vel', 'lines.surge2_gauge.active', 'lines.surge2_vent.vel', 'lines.blanket2.active', 'lines.psv_surge2.active',
+    'lines.ds_dump.active', 'lines.ds_dump.vel'];
   const finite = (o, bad, p) => { for (const k in o) { const v = o[k], q = p ? p + '.' + k : k; if (typeof v === 'number' && !isFinite(v)) bad.push(q); else if (v && typeof v === 'object') finite(v, bad, q); } return bad; };
   return [
     ['32: WTS_3d.isSupported() is false in Node (no WebGL)', () => typeof W.isSupported !== 'function' || W.isSupported() === false],
@@ -284,7 +308,10 @@ const SECTION_B = (G /*, src */) => {
     ['32: normalize maps twin surge compartments + inlet valves; six operable valve proxies (tap targets)', () => {
       const VP = I.VALVE_PROXIES || [];
       const ids = VP.map(v => v[0]).sort().join(',');
-      if (ids !== 'suction:surge:0,suction:surge:1,valve:gauge:0,valve:gauge:1,valve:surge:0,valve:surge:1') return 'proxies ' + ids;
+      // v1.2.0: + XV-202 (valve:surge2:0), XV-103 (dump:desander), HV-104 (bypass:desander); the six v3.3 targets are tappable with both items out
+      if (ids !== 'bypass:desander,dump:desander,suction:surge:0,suction:surge:1,valve:gauge:0,valve:gauge:1,valve:surge2:0,valve:surge:0,valve:surge:1') return 'proxies ' + ids;
+      const def = I.rigValveProxies({}).map(v => v[0]).sort().join(',');
+      if (def !== 'suction:surge:0,suction:surge:1,valve:gauge:0,valve:gauge:1,valve:surge:0,valve:surge:1') return 'default rig proxies ' + def;
       if (!S || !F) return true;
       const s = S.create(F, { seed: 6 }); s.setValve('surge', 0, false); s.setValve('gauge', 1, true); s.setSuction('A');
       for (let i = 0; i < 30; i++) s.advance(10);
@@ -296,11 +323,11 @@ const SECTION_B = (G /*, src */) => {
     }],
     ['32: rig-up: normalize reads rigup / surge.transfer / gauge.pump; rigSig follows; bypass spools join existing routes; P-201 downstream of T-301', () => {
       const bad = [], n0 = I.normalize(I.fakeSnapshot(100), I.makeNorm());
-      if (n0.rigSig !== '111111' || !I.RIG_GROUPS || I.RIG_GROUPS.join() !== 'heater,separator,surge,gauge,pump,flare') bad.push('default ' + n0.rigSig);
+      if (n0.rigSig !== '11111100' || !I.RIG_GROUPS || I.RIG_GROUPS.join() !== 'heater,separator,surge,gauge,pump,flare,desander,surge2') bad.push('default ' + n0.rigSig);
       if (S && F) {
         const s = S.create(F, { seed: 4, rigup: { surge: false, pump: false } }); s.advance(60);
         const st = s.getState(), n = I.normalize(st, I.makeNorm());
-        if (n.rig.surge !== false || n.rig.pump !== false || n.rig.gauge !== true || n.rigSig !== '110101') bad.push('rig ' + n.rigSig);
+        if (n.rig.surge !== false || n.rig.pump !== false || n.rig.gauge !== true || n.rigSig !== '11010100') bad.push('rig ' + n.rigSig);
         if (n.gauge.pumpMode !== 'gravity' || n.surge.pump_q !== st.surge.transfer.q_bpd) bad.push('pump / transfer');
       }
       // every spool starts and ends on an existing pipe (within 0.2 m of a route segment), so the amber bypass meets the live pipework
@@ -321,6 +348,259 @@ const SECTION_B = (G /*, src */) => {
       const card = { x:1000, y:100, w:360, h:500 }, o = I.layoutLabels(rects, anchors, { w:1380, h:700 }, { top:98, bottom:76, card });
       return o.every((p, i) => !p.vis || !(p.x < card.x + card.w && p.x + 120 > card.x && p.y < card.y + card.h && p.y + 44 > card.y));
     }],
+    // ── v1.2.0 (WP-3D): DS-101 desander + T-202 second surge tank — optional rig-up items (plan §8.0–8.1, §9.2) ──
+    ...(() => {
+      let EQ = null; try { EQ = require('./tests/_wts-equip-shapes.js'); } catch (e) { EQ = null; }
+      // 375×812 phone (WP-I, measured with Playwright on the integrated Round-7 build, both items in and out — identical): the 3D
+      // view is 345×471 on the page and 375×620 maximised; the HUD tiles (128 px) and the toolbar (48 px) sit outside the stage at
+      // the sm breakpoint, so 38 pushes insets 8 / 8 (computeInsets). The WP-3D model 375×812 with insets 233 / 108 is retired.
+      const PHONE_812 = [[345, 471, { top: 8, bottom: 8, left: 0, right: 0, card: null }], [375, 620, { top: 8, bottom: 8, left: 0, right: 0, card: null }]];
+      const COMBOS = [{}, { desander: true }, { surge2: true }, { desander: true, surge2: true }];
+      const OPTS = ['desander', 'surge2'];
+      // v3.3 tables (frozen here, copied from the v3.3 scene) for the "both out = v3.3" checks
+      const PROXIES_V33 = [['wellhead', [-15, 1.0, 0], [1.2, 2.4, 1.2]], ['esd', [-11.6, 1.8, 0], [0.9, 3.4, 0.9]], ['esd', [-12.6, 1.1, 1.5], [0.6, 0.9, 0.3]],
+        ['choke', [-7.2, 0.9, 0], [3.8, 1.4, 2.0]], ['heater', [-1.4, 1.6, 0], [3.4, 1.7, 1.7]], ['heater', [0.55, 3.5, 0.28], [0.5, 3.6, 0.5]],
+        ['separator', [5.6, 2.0, 0], [6.9, 1.8, 1.8]], ['surge', [10.2, 3.3, 4.0], [2.5, 4.9, 2.5]], ['pump', [20.35, 0.55, 5.95], [0.9, 1.1, 1.7]],
+        ['gauge', [16.4, 1.55, 4.0], [5.0, 2.6, 2.6]], ['flare', [19.5, 3.9, -4.5], [0.8, 7.8, 0.8]], ['flare', [19.5, 0.2, -4.5], [1.6, 0.4, 1.6]]];
+      const VALVES_V33 = ['valve:surge:0', 'valve:surge:1', 'suction:surge:0', 'suction:surge:1', 'valve:gauge:0', 'valve:gauge:1'];
+      const VIEW_GROUPS_V33 = { wellhead: ['wellhead', 'esd', 'choke'], tanks: ['surge', 'pump', 'gauge'], process: ['separator', 'surge', 'gauge'], separator: ['heater', 'separator'] };
+      const INS = { top: 98, bottom: 76, left: 0, right: 0, card: null };
+      // default overview camera at w × h → {pos, target, fov} for project()
+      const camOf = (fv) => { const d = I.camDir(fv.az, fv.el); return { target: fv.target, pos: fv.target.map((t, i) => t + d[i] * fv.radius), fov: 36 }; };
+      const overview = (rig, w, h, ins) => { const OV = I.VIEWS.overview; return I.fitView(I.fitPts(rig), OV.az, OV.el, 36, w, h, ins || INS); };
+      const rayTo = (cam, p) => { const d = p.map((v, i) => v - cam.pos[i]), L = Math.hypot(d[0], d[1], d[2]); return d.map(v => v / L); };
+      const sizeOf = (box, cam, w, h) => { let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+        I.boxCorners(box).forEach(c => { const p = I.project(c, cam, w, h); x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y); });
+        return { w: x1 - x0, h: y1 - y0 }; };
+      const route = (id) => I.ROUTES.filter(r => r.id === id)[0];
+      const dSeg = (p, a, b) => { const d = [0, 1, 2].map(i => b[i] - a[i]), L2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+        const t = L2 > 0 ? Math.max(0, Math.min(1, ((p[0] - a[0]) * d[0] + (p[1] - a[1]) * d[1] + (p[2] - a[2]) * d[2]) / L2)) : 0;
+        return Math.hypot(p[0] - a[0] - t * d[0], p[1] - a[1] - t * d[1], p[2] - a[2] - t * d[2]); };
+      return [
+        ['32: every EQ_IDS id has TAGS / TITLES / PREF_SIDE / ANCHORS / HALO / EQ_BOX / FOCUS; optional items DS-101 / T-202 appended', () => {
+          const miss = []; I.EQ_IDS.forEach(id => ['TAGS', 'TITLES', 'PREF_SIDE', 'ANCHORS', 'HALO', 'EQ_BOX', 'FOCUS'].forEach(t => { if (!I[t] || I[t][id] == null) miss.push(t + '.' + id); }));
+          if (I.EQ_IDS.slice(-2).join() !== 'desander,surge2' || I.TAGS.desander !== 'DS-101' || I.TAGS.surge2 !== 'T-202' || I.PREF_SIDE.desander !== 'se') miss.push('order / tags');
+          if (JSON.stringify(I.STEP) !== JSON.stringify({ wellhead: '①', esd: '②', choke: '③', heater: '④', separator: '⑤', flare: '⑥', surge: '⑦', gauge: '⑧', pump: '⑨' })) miss.push('STEP fallback changed');
+          return miss.length === 0 || miss.join(',');
+        }],
+        ['32: chip step numbers follow WTS_sim.stepFor for the four optional combinations (fallback = same rule)', () => {
+          const bad = [];
+          COMBOS.forEach(rig => {
+            const want = EQ ? EQ.STEP_COMBOS.filter(c => JSON.stringify(c.rig) === JSON.stringify(rig))[0].step : null;
+            const got = I.stepFor(rig); if (want && JSON.stringify(got) !== JSON.stringify(want)) bad.push('stepFor ' + JSON.stringify(rig));
+            if (S && S.stepFor && JSON.stringify(S.stepFor(rig)) !== JSON.stringify(got)) bad.push('engine ' + JSON.stringify(rig));
+          });
+          // fallback without the engine (WTS_sim absent): the local rule gives the same numbers
+          const keep = G.WTS_sim; try { G.WTS_sim = undefined; COMBOS.forEach(rig => { const want = EQ && EQ.stepForRef(rig); if (want && JSON.stringify(I.stepFor(rig)) !== JSON.stringify(want)) bad.push('fallback ' + JSON.stringify(rig)); }); }
+          finally { G.WTS_sim = keep; }
+          return bad.length === 0 || bad.join(';');
+        }],
+        ['32: 3D → 38 action payloads equal the fixture (XV-202 / XV-103 dump / HV-104 bypass); optional valve taps only while the item is in', () => {
+          const bad = [];
+          if (EQ) Object.keys(EQ.ACTIONS).forEach(k => { const a = EQ.ACTIONS[k]; if (JSON.stringify(I.valveOf(a.proxy)) !== JSON.stringify(a.action)) bad.push(k); });
+          if (JSON.stringify(I.valveOf('valve:surge:1')) !== JSON.stringify({ type: 'valve', eq: 'surge', idx: 1 }) || I.valveOf('dump:surge') !== null || I.valveOf('bypass:surge2') !== null) bad.push('regex');
+          const ids = (rig) => I.rigValveProxies(rig).map(v => v[0]);
+          if (ids({}).join() !== VALVES_V33.join()) bad.push('default ' + ids({}).join());
+          if (ids({ desander: true }).indexOf('dump:desander') < 0 || ids({ desander: true }).indexOf('bypass:desander') < 0 || ids({ desander: true }).indexOf('valve:surge2:0') >= 0) bad.push('desander');
+          if (ids({ surge2: true }).indexOf('valve:surge2:0') < 0 || ids({ surge2: true }).indexOf('dump:desander') >= 0) bad.push('surge2');
+          return bad.length === 0 || bad.join(';');
+        }],
+        ['32: 3D clearance on rendered primitives (≥ 0.05 m between primitives not joined) for each optional combination', () => {
+          const bad = [];
+          COMBOS.forEach(rig => { const c = I.clearanceCheck(rig, 0.05); if (c.length) bad.push(JSON.stringify(rig) + ' ' + c.slice(0, 4).map(x => x.a + '~' + x.b + ' ' + x.gap).join(', ')); });
+          // the model itself: T-202 shell is a primitive, its proxy is inscribed (x 11.55…13.45) and clear of T-201's proxy (x ≤ 11.45)
+          const P = I.clearancePrims({ surge2: true }), t202 = P.filter(p => p.id === 'T-202')[0], px = I.PROXIES.filter(p => p[0] === 'surge2')[0];
+          if (!t202 || t202.r !== 1.0 || !px || px[1][0] - px[2][0] / 2 < 11.45 + 0.09 || px[2][0] > 2.0 || px[2][1] > 4.9) bad.push('T-202 primitive / proxy');
+          const optIds = [].concat(I.OPT_PRIMS.desander, I.OPT_PRIMS.surge2).map(p => p.id), tagged = I.ROUTES.filter(r => r.rig).map(r => r.id);
+          if (I.clearancePrims({}).some(p => optIds.indexOf(p.id) >= 0 || tagged.indexOf(p.route) >= 0)) bad.push('both out: optional primitives present');
+          // a deliberate clash is detected (the check is not vacuous): a box on top of the T-202 shell
+          const sav = I.PROPS.length; I.PROPS.push(['probe', [12.4, 2.0, 1.25], [12.6, 2.2, 1.35]]); const hit = I.clearanceCheck({ surge2: true }, 0.05); I.PROPS.length = sav;
+          if (!hit.some(x => x.b === 'probe' || x.a === 'probe')) bad.push('probe clash not detected');
+          return bad.length === 0 || bad.join(' | ');
+        }],
+        ['32: every new route endpoint lies on a route, a tee or its item\'s nozzle; optional routes / tees exist only while the item is in', () => {
+          const bad = [], allSegs = rig => { const s = []; I.ROUTES.forEach(r => { if (!I.routeBuilt(r, rig)) return; for (let i = 0; i < r.pts.length - 1; i++) s.push([r.id, r.pts[i], r.pts[i + 1]]); });
+            for (let i = 0; i < I.PSV_ROUTE.length - 1; i++) s.push(['PSV', I.PSV_ROUTE[i], I.PSV_ROUTE[i + 1]]); return s; };
+          const both = { desander: true, surge2: true }, segs = allSegs(both);
+          I.NEW_ROUTES.forEach(id => { const r = route(id); if (!r) { bad.push('missing ' + id); return; }
+            [r.pts[0], r.pts[r.pts.length - 1]].forEach((p, e) => {
+              const onRoute = segs.some(s => s[0] !== id && dSeg(p, s[1], s[2]) < 0.02), onTee = I.TEES.some(t => Math.hypot(t[0] - p[0], t[1] - p[1], t[2] - p[2]) < 0.02);
+              const onNoz = OPTS.some(g => (I.NOZZLES[g] || []).some(q => Math.hypot(q[0] - p[0], q[1] - p[1], q[2] - p[2]) < 0.02));
+              const sdvOut = id === 'D0a' && !e && JSON.stringify(p) === JSON.stringify([-11.2, 1.2, 0]);      // SDV-101 outlet = the v3.3 E2 start
+              if (!onRoute && !onTee && !onNoz && !sdvOut) bad.push(id + (e ? ' end' : ' start'));
+            }); });
+          // both out: D0a + D0b + E2 = the v3.3 E2 polyline, LMa + LMb = the v3.3 LM polyline
+          const cat = ids => ids.map(route).reduce((a, r, i) => a.concat(i ? r.pts.slice(1) : r.pts), []);
+          if (JSON.stringify(cat(['D0a', 'D0b', 'E2'])) !== JSON.stringify([[-11.2, 1.2, 0], [-10.75, 1.2, 0], [-9.3, 1.2, 0], [-8.65, 1.2, 0], [-8.65, 1.2, 0.6], [-7.4, 1.2, 0.6]])) bad.push('E2 split');
+          if (JSON.stringify(cat(['LMa', 'LMb'])) !== JSON.stringify([[8.1, 0.55, 2.4], [8.1, 0.55, 4.0], [8.1, 2.9, 4.0], [8.1, 4.2, 4.0], [9.0, 4.2, 4.0]])) bad.push('LM split');
+          ['D1', 'D2', 'DD'].forEach(id => { if (I.routeBuilt(route(id), {}) || !I.routeBuilt(route(id), { desander: true }) || route(id).rig !== 'desander') bad.push('rig tag ' + id); });
+          ['LM2', 'X0', 'VENT2', 'BLK2', 'PSV2'].forEach(id => { if (I.routeBuilt(route(id), {}) || !I.routeBuilt(route(id), { surge2: true }) || route(id).rig !== 'surge2') bad.push('rig tag ' + id); });
+          ['D0a', 'D0b', 'LMa', 'LMb', 'E2'].forEach(id => { if (!I.routeBuilt(route(id), {})) bad.push('core route ' + id); });
+          if (I.TEES.filter(t => !t[4]).length !== 7) bad.push('v3.3 tees changed');
+          const D = I.ROUTES.filter(r => r.aSeg === 12 || r.aSeg === 1).map(r => r.id).sort().join(); if (D !== 'D0a,D0b,D1,D2,DD,E2,E2b') bad.push('aSeg ' + D);
+          return bad.length === 0 || bad.join(',');
+        }],
+        ['32: nextS[X0] = X2\'s arc length to the elbow (13.4, 0.45, 4.0); VENT2 joins VENT at (13.0, 6.1, 2.3)', () => {
+          const nps = I.DEF_NPS, bad = [];
+          // X2's elbow is filleted: the join is the arc point nearest the corner (≤ the fillet's corner offset); VENT's z-run is straight there
+          [['X2', [13.4, 0.45, 4.0], 0.6, 0.12], ['VENT', [13.0, 6.1, 2.3], null, 0.03]].forEach(([id, p, sPoly, tol]) => {
+            const r = route(id), rt = I.buildRoute(r.pts, I.routeRVis(r, nps)), s = I.joinS(id, p, nps), q = I.routeSample(rt, s).p, d = Math.hypot(q[0] - p[0], q[1] - p[1], q[2] - p[2]);
+            if (!(s > 0.1 && s < rt.length && d < tol && (sPoly == null || (s <= sPoly + 1e-9 && s > sPoly - 0.3)))) bad.push(id + ' s ' + s.toFixed(3) + ' d ' + d.toFixed(3));
+          });
+          const x0 = route('X0'), x2 = route('X2');
+          if (JSON.stringify(x0.pts[x0.pts.length - 1]) !== JSON.stringify([13.4, 0.45, 4.0]) || !x2.pts.some((p, i) => i && dSeg([13.4, 0.45, 4.0], x2.pts[i - 1], p) < 1e-9)) bad.push('X0 does not end on X2');
+          return bad.length === 0 || bad.join(',');
+        }],
+        ['32: both items out — picking at the DS-101 / T-202 screen positions and label occlusion equal v3.3 (1380×700, default overview)', () => {
+          const bad = [], cam = camOf(overview({}, 1380, 700)), core = I.rigProxies({});
+          if (JSON.stringify(core) !== JSON.stringify(PROXIES_V33)) bad.push('filtered proxy table ≠ v3.3');
+          const targets = [[-10.2, 1.6, -1.6], [-10.2, 2.8, -1.6], [-10.2, 0.45, -3.5], [-10.2, 0.62, -2.6], [-10.0, 1.4, 0], [12.5, 3.2, 2.3], [12.5, 5.0, 2.3], [9.6, 3.05, 2.0], [13.0, 0.45, 3.5]];
+          targets.forEach(t => { const d = rayTo(cam, t), a = I.pickRay(cam.pos, d, I.rigProxies({}), I.rigValveProxies({})), b = I.pickRay(cam.pos, d, PROXIES_V33, I.VALVE_PROXIES.filter(v => VALVES_V33.indexOf(v[0]) >= 0));
+            if (a !== b) bad.push('pick ' + t.join('/') + ' ' + a + '≠' + b); });
+          // with the item in, the same rays reach it
+          const bo = { desander: true, surge2: true }, pIn = I.pickRay(cam.pos, rayTo(cam, [12.5, 4.8, 2.3]), I.rigProxies(bo), I.rigValveProxies(bo));
+          const dIn = I.pickRay(cam.pos, rayTo(cam, [-10.2, 0.45, -3.5]), I.rigProxies(bo), I.rigValveProxies(bo));
+          if (pIn !== 'surge2' && pIn !== 'surge') bad.push('T-202 in: pick ' + pIn);
+          if (dIn !== 'desander' && dIn !== 'dump:desander') bad.push('DS-101 in: pick ' + dIn);
+          I.EQ_IDS.filter(id => !I.OPT[id]).forEach(id => { if (I.occludedFrom(cam.pos, I.ANCHORS[id], id, I.rigProxies({})) !== I.occludedFrom(cam.pos, I.ANCHORS[id], id, PROXIES_V33)) bad.push('occ ' + id); });
+          return bad.length === 0 || bad.join('; ');
+        }],
+        ['32: both items out — overview / Wellhead / Tanks / Process cameras equal v3.3; with the item in its group joins the framing', () => {
+          const bad = [], eq = (a, b) => Math.abs(a.r - b.r) < 1e-9 && a.tgt.every((v, i) => Math.abs(v - b.tgt[i]) < 1e-9) && a.th === b.th && a.ph === b.ph;
+          if (I.fitPts({}) !== I.FIT_PTS) bad.push('fitPts({}) ≠ FIT_PTS');
+          [[1380, 700, INS], [375, 471, {}]].forEach(([w, h, ins]) => {
+            Object.keys(VIEW_GROUPS_V33).forEach(name => {
+              const vw = I.VIEWS[name], box = { min: [1e9, 1e9, 1e9], max: [-1e9, -1e9, -1e9] };
+              VIEW_GROUPS_V33[name].forEach(g => { const b = I.EQ_BOX[g]; for (let i = 0; i < 3; i++) { box.min[i] = Math.min(box.min[i], b[0][i]); box.max[i] = Math.max(box.max[i], b[1][i]); } });
+              const f = I.fitView(box, vw.az, vw.el, 36, w, h, ins), v33 = { tgt: f.target, r: f.radius * (vw.margin || 1), th: vw.az * Math.PI / 180, ph: (90 - vw.el) * Math.PI / 180 };
+              if (!eq(I.viewFor(name, {}, w, h, ins), v33)) bad.push(name + ' ' + w);
+            });
+            const ov = I.fitView(I.FIT_PTS, -18, 20, 36, w, h, ins);
+            if (!eq(I.viewFor('overview', {}, w, h, ins), { tgt: ov.target, r: ov.radius, th: -18 * Math.PI / 180, ph: 70 * Math.PI / 180 })) bad.push('overview ' + w);
+          });
+          const wIn = I.viewBox('wellhead', { desander: true }), tIn = I.viewBox('tanks', { surge2: true });
+          if (!(wIn.min[2] <= I.EQ_BOX.desander[0][2] && tIn.min[2] <= I.EQ_BOX.surge2[0][2] + 1e-9 && I.viewBox('wellhead', {}).min[2] > I.EQ_BOX.desander[0][2])) bad.push('item framing');
+          return bad.length === 0 || bad.join(',');
+        }],
+        ['32: core item out (separator / surge / flare / …) — its ghost stays pickable and occludes; proxy, valve and occlusion tables equal v3.3', () => {
+          const bad = [], cam = camOf(overview({}, 1380, 700)), V33V = I.VALVE_PROXIES.filter(v => VALVES_V33.indexOf(v[0]) >= 0);
+          const rigs = [{ separator: false }, { surge: false }, { flare: false }, { heater: false, gauge: false, pump: false }, { separator: false, surge: false, flare: false, heater: false, gauge: false, pump: false }];
+          const targets = [[5.6, 2.0, 0], [10.2, 3.2, 4.0], [19.5, 5, -4.5], [16.4, 1.6, 4.0], [20.4, 0.6, 6.0], [-1.4, 1.7, 0.3], [9.6, 3.05, 2.0], [13.0, 0.45, 3.5]];
+          rigs.forEach(rig => {
+            const tag = JSON.stringify(rig);
+            if (JSON.stringify(I.rigProxies(rig)) !== JSON.stringify(PROXIES_V33)) bad.push(tag + ' proxies');
+            if (JSON.stringify(I.rigValveProxies(rig)) !== JSON.stringify(V33V)) bad.push(tag + ' valves');
+            targets.forEach(t => { const d = rayTo(cam, t), a = I.pickRay(cam.pos, d, I.rigProxies(rig), I.rigValveProxies(rig)), b = I.pickRay(cam.pos, d, PROXIES_V33, V33V);
+              if (a !== b) bad.push(tag + ' pick ' + t.join('/') + ' ' + a + '≠' + b); });
+            I.EQ_IDS.filter(id => !I.OPT[id]).forEach(id => { if (I.occludedFrom(cam.pos, I.ANCHORS[id], id, I.rigProxies(rig)) !== I.occludedFrom(cam.pos, I.ANCHORS[id], id, PROXIES_V33)) bad.push(tag + ' occ ' + id); });
+            I.EQ_IDS.filter(id => !I.OPT[id]).forEach(id => { if (!I.optIn(rig, id)) bad.push(tag + ' optIn ' + id); });
+          });
+          if (I.optIn({}, 'desander') || I.optIn({}, 'surge2') || !I.optIn({ desander: true }, 'desander')) bad.push('optIn optional');
+          return bad.length === 0 || bad.join('; ');
+        }],
+        ['32: every view with every core group out frames as the default rig (finite, radius < 200); the flare view no longer flies to the origin', () => {
+          const bad = [], core = {};
+          I.RIG_GROUPS.filter(g => !I.OPT[g]).forEach(g => { core[g] = false; });
+          [[1380, 700, INS], [375, 471, {}]].concat(PHONE_812).forEach(([w, h, ins]) => {
+            Object.keys(I.VIEWS).forEach(name => {
+              const a = I.viewFor(name, core, w, h, ins), b = I.viewFor(name, {}, w, h, ins);
+              const fin = isFinite(a.r) && a.tgt.every(isFinite) && a.r < 200;
+              const eq = Math.abs(a.r - b.r) < 1e-9 && a.tgt.every((v, i) => Math.abs(v - b.tgt[i]) < 1e-9);
+              if (!fin || !eq) bad.push(name + ' ' + w + 'x' + h + ' r ' + a.r);
+            });
+            [['flare', { flare: false }], ['tanks', { gauge: false }], ['tanks', { surge: false, pump: false, gauge: false }], ['separator', { heater: false, separator: false }]].forEach(([name, rig]) => {
+              const a = I.viewFor(name, rig, w, h, ins), b = I.viewFor(name, {}, w, h, ins);
+              if (!(Math.abs(a.r - b.r) < 1e-9 && a.tgt.every((v, i) => Math.abs(v - b.tgt[i]) < 1e-9))) bad.push(name + ' ' + JSON.stringify(rig));
+            });
+          });
+          // an empty group list falls back to the overview fit set instead of {1e9, -1e9}
+          const save = I.VIEWS.flare.groups; I.VIEWS.flare.groups = ['desander'];
+          try { const b = I.viewBox('flare', {}); if (b.min[0] > b.max[0] || b !== I.fitPts({})) bad.push('empty box'); } finally { I.VIEWS.flare.groups = save; }
+          return bad.length === 0 || bad.join(', ');
+        }],
+        ['32: tracer allocation per chain is unchanged with both items out (v3.3 rule; DR keeps the remainder); optional chains empty', () => {
+          const L = I.routeLenFn(I.DEF_NPS), bad = [];
+          const OLD = [['E1', 'E2', 'E3', 'E3c', 'E4a', 'E4'], ['G1'], ['VENT'], ['BLK'], ['LW', 'LM'], ['LO', 'LM'], ['X1', 'X2', 'XA'], ['DRA']];
+          const len = id => id === 'E2' ? L('D0a') + L('D0b') + L('E2') : id === 'LM' ? L('LMa') + L('LMb') : L(id);
+          const w = OLD.map((e, c) => e.reduce((a, id) => a + len(id), 0) * (c === 0 ? 1.6 : 1)), tw = w.reduce((a, b) => a + b, 0);
+          [700, 1200, 2400, 4000].forEach(nT => {
+            let k = 0; const v33 = w.map((x, c) => { const n = c === w.length - 1 ? nT - k : Math.round(nT * x / tw); k += n; return n; });
+            const now = I.tracerCounts(nT, I.chainWeights({}, L));
+            if (now.slice(0, 8).join() !== v33.join() || now.slice(8).some(n => n !== 0)) bad.push(nT + ': ' + now.join() + ' vs ' + v33.join());
+            const both = I.tracerCounts(nT, I.chainWeights({ desander: true, surge2: true }, L));
+            if (both.reduce((a, b) => a + b, 0) !== nT || both.slice(8).some(n => n <= 0)) bad.push('both ' + nT + ': ' + both.join());
+          });
+          if (I.chainEdges(0, {}).indexOf('D1') >= 0 || I.chainEdges(0, { desander: true }).indexOf('D1') < 0 || I.CHAIN_DEF[7].id !== 'DR' || I.CHAIN_DEF[8].id !== 'SAND') bad.push('chains');
+          return bad.length === 0 || bad.join('; ');
+        }],
+        ['32: label layout — default overview at 1380×700 with DS-101 and T-202 in hides no equipment chip', () => {
+          const bad = [];
+          [{ desander: true, surge2: true }, {}].forEach(rig => {
+            const cam = camOf(overview(rig, 1380, 700)), ids = I.rigEqIds(rig), rects = [], anchors = [];
+            ids.forEach((id, i) => { const p = I.project(I.ANCHORS[id], cam, 1380, 700); rects.push({ w: 168, h: 44, prio: 3 + I.EQ_IDS.indexOf(id) * 0.01, pref: I.PREF_SIDE[id], seg: false }); anchors.push({ x: p.x, y: p.y, hide: false }); });
+            const obs = I.rigObst(rig).map(o => { let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+              I.boxCorners(o.box).forEach(c => { const p = I.project(c, cam, 1380, 700); x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y); });
+              const sx = (x1 - x0) * 0.12, sy = (y1 - y0) * 0.12; return { x0: x0 + sx, x1: x1 - sx, y0: y0 + sy, y1: y1 - sy, on: true }; });
+            const out = I.layoutLabels(rects, anchors, { w: 1380, h: 700 }, { top: 98, bottom: 76, left: 0, right: 0, card: null, obs });
+            ids.forEach((id, i) => { if (!out[i].vis) bad.push(JSON.stringify(rig) + ' ' + id + ' hidden'); });
+            if (rig.surge2 && I.rigObst(rig).length !== 4) bad.push('T-202 obstacle missing'); if (!rig.surge2 && I.rigObst(rig).length !== 3) bad.push('obstacles out');
+          });
+          return bad.length === 0 || bad.join(',');
+        }],
+        ['32: framing gate with each optional combination (V-101 ≥ 55 × 170 px at 1380×700; ≥ 22 px tall at 375×471 and on a 375×812 phone: 345×471 page, 375×620 maximised)', () => {
+          const bad = [];
+          COMBOS.forEach(rig => {
+            const a = sizeOf(I.V101_BOX, camOf(overview(rig, 1380, 700)), 1380, 700);
+            [[375, 471, {}]].concat(PHONE_812).forEach(([w, h, ins]) => {
+              const v = I.viewFor('process', rig, w, h, ins), c = camOf({ az: -10, el: 30, radius: v.r, target: v.tgt });
+              const hb = h - (ins.top || 0) - (ins.bottom || 0), b = sizeOf(I.V101_BOX, c, w, h); if (!(b.h >= 22 && hb > 0)) bad.push(JSON.stringify(rig) + ' ' + w + 'x' + h + ' ' + b.h.toFixed(0));
+            });
+            if (!(a.h >= 55 && a.w >= 170)) bad.push(JSON.stringify(rig) + ' ' + a.h.toFixed(0) + 'x' + a.w.toFixed(0));
+            const box = I.fitPts(rig); OPTS.forEach(g => { if (rig[g]) { const b = I.FIT_OPT[g]; if (b[0].some((v, i) => v < box.min[i] - 1e-9) || b[1].some((v, i) => v > box.max[i] + 1e-9)) bad.push('fit box ' + g); } });
+          });
+          return bad.length === 0 || bad.join(',');
+        }],
+        ['32: sand colours pass the dark-surface contrast check (≥ 4.5 : 1 on the sky horizon and the pad); imperial units for the new quantities', () => {
+          const P = I.PALETTE, cr = (a, b) => { const x = I.luminance(a), y = I.luminance(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+          const bad = ['sandBody', 'sandTracer'].filter(k => !(typeof P[k] === 'string' && cr(P[k], P.skyHorizon) >= 4.5 && cr(P[k], P.pad) >= 4.5));
+          const U = I.IMP_UNITS; if (!(U.mass === 'lb' && U.volumeSmall === 'gal' && U.erosionRate === 'mpy' && U.erosionDay === 'mil/d')) bad.push('IMP_UNITS');
+          return bad.length === 0 || bad.join(',');
+        }],
+        ['32: a rig-up change refits the camera only while the user has not moved it', () => {
+          const rig = { desander: true, surge2: true }, a = I.rigRefitView(true, rig, 1380, 700, INS, 'overview'), b = I.rigRefitView(false, rig, 1380, 700, INS, 'overview');
+          const c = I.viewFor('overview', rig, 1380, 700, INS);
+          return (a === null && b && b.r === c.r && b.tgt.join() === c.tgt.join()) || 'refit ' + JSON.stringify([a, b && b.r]);
+        }],
+        ['32: fakeSnapshot with the optional items matches the equipment contract (checkShape) and normalizes finite; older snapshots → out', () => {
+          const bad = [], fin = (o, p) => { for (const k in o) { const v = o[k], q = p + '.' + k; if (typeof v === 'number' && !isFinite(v)) bad.push(q); else if (v && typeof v === 'object') fin(v, q); } };
+          const fk = I.fakeSnapshot(9000, { desander: true, surge2: true, flushing: true }), fo = I.fakeSnapshot(9000);
+          if (EQ) {
+            [['desander', fk.desander], ['sand', fk.sand], ['surge2', fk.surge2], ['nodes.desander', fk.nodes.desander], ['nodes.surge2', fk.nodes.surge2], ['rigup', fk.rigup],
+              ['desander', fo.desander], ['surge2', fo.surge2], ['rigup', fo.rigup], ['line', fk.lines.ds_dump], ['line', fk.lines.sep_surge2]]
+              .forEach(([n, o]) => { const r = EQ.checkShape(n, o); if (!r.ok) bad.push(n + ': ' + r.errors.slice(0, 2).join('; ')); });
+            if (EQ.LINE_NAMES.join() !== I.LINE_NAMES.join() || EQ.NODE_IDS.join() !== I.NODE_NAMES.join()) bad.push('line / node names');
+            // the view builders' helper over 32's own snapshot normalizes too (held dump)
+            const fe = I.normalize(EQ.fakeEquipSnapshot(I.fakeSnapshot(500), { desander: true, surge2: true, held: true }), I.makeNorm());
+            fin(fe, 'fe'); if (!(fe.rig.desander && fe.rig.surge2 && fe.ds.phase === 'held' && fe.rigSig === '11111111')) bad.push('fakeEquipSnapshot mapping');
+          }
+          const n = I.normalize(fk, I.makeNorm()); fin(n, 'n');
+          if (!(n.rigSig === '11111111' && n.ds.phase === 'flush' && n.ds.open && n.surge2.inRig && n.nodes.desander.Pin > n.nodes.desander.P)) bad.push('mapping');
+          const old = I.normalize(Object.assign({}, fo, { rigup: { surge: true, gauge: true } }), I.makeNorm());
+          if (old.rig.desander !== false || old.rig.surge2 !== false || old.rigSig !== '11111100') bad.push('older snapshot');
+          const str = I.normalize(Object.assign({}, fo, { rigup: { desander: 'yes', surge2: 1 } }), I.makeNorm());
+          if (str.rig.desander !== false || str.rig.surge2 !== false) bad.push('non-boolean → in');
+          return bad.length === 0 || bad.slice(0, 6).join(' | ');
+        }],
+        ['32: with both items out the real engine snapshot normalizes to the v3.3 scene state (rig, nodes, tracer edges unchanged)', () => {
+          if (!S || !F) return true;
+          const s = S.create(F, { seed: 12 }); for (let i = 0; i < 60; i++) s.advance(10);
+          const n = I.normalize(s.getState(), I.makeNorm());
+          if (!(n.rigSig === '11111100' && n.ds.inRig === false && n.surge2.inRig === false && n.ds.dP === 0)) return 'state ' + n.rigSig;
+          if (typeof s.setRigup === 'function' && s.setRigup({ desander: true, surge2: true })) { s.advance(20); const m = I.normalize(s.getState(), I.makeNorm()); if (m.rigSig !== '11111111') return 'in ' + m.rigSig; }
+          return true;
+        }],
+      ];
+    })(),
   ];
 };
 
@@ -346,7 +626,9 @@ const SECTION_C = (G, src) => {
     const body = html.slice(html.indexOf('window.calcWTS=function(){'), html.indexOf('\nconst WTS_DIAG_LAYOUT'));
     const vals = { wts_Pwh: '3000', wts_Twh: '180', wts_Qg: '10', wts_Qo: '1000', wts_Qw: '200', wts_SGg: '0.65', wts_API: '35', wts_bean: '32', wts_Cd: '0.85',
       wts_Thtr: '150', wts_htrEff: '80', wts_bypass: '0', wts_Psep: '150', wts_Cfac: '100', wts_eps: '0.0018', wts_sepID: '36', wts_sepL: '10', wts_Psurge: '25',
-      wts_surgeCap: '100', wts_gtCap: '100' };
+      wts_surgeCap: '100', wts_gtCap: '100',
+      // v3.3.1 Dynamic Simulation inputs (sand, DS-101, T-202): the form defaults (SITHP blank = estimated by the simulator)
+      wts_sandPptb: '0', wts_sandGas: '0', wts_sandD50: '150', wts_dsRating: '10000', wts_dsAcc: '50', wts_SITHP: '', wts_surge2Cap: '100' };
     [['4', '50'], ['4', '100'], ['6', '200'], ['6', '100'], ['6', '300'], ['3', '80']].forEach((p, i) => { vals['wts_nps' + (i + 1)] = p[0]; vals['wts_sch' + (i + 1)] = '40'; vals['wts_len' + (i + 1)] = p[1]; });
     Object.assign(vals, over || {});
     const els = {}; for (const k in vals) els[k] = { value: vals[k], style: {} };
@@ -379,7 +661,7 @@ const SECTION_C = (G, src) => {
     ['38: all HMI controls are buttons (no <input>/<select>/<textarea> markup)', () => !/<(input|select|textarea)\b/i.test(code) || 'found form control markup'],
     ['38: liveNodes/liveSegs follow the live snapshot (host names, psig, MSCF/D)', () => {
       const s = simAt(600); const st = s.getState(); const n = L.liveNodes(st), g = L.liveSegs(st);
-      return n.map(x => x.nm).join('|') === 'Wellhead|SSV|Choke|Heater|Separator|Flare|Surge Tank|Atm Tank' &&
+      return n.map(x => x.nm).join('|') === 'Wellhead|SSV|Choke|Heater|Separator|Flare|Surge Tank|Atm Tank|Desander|Surge Tank 2' &&
         n[4].P === st.nodes.separator.P && n[0].P === st.nodes.wellhead.P && n[2].Pci === st.nodes.choke.Pin &&
         Math.abs(n[2].Qmax - st.nodes.choke.QmaxMMscfd * 1000) < 1e-9 && n[2].regime === 'Critical' && n[2].flowLimited === false &&
         n[3].duty === st.nodes.heater.dutyMMBtuHr && n[6].P === st.nodes.surge.P && n[7].P === 0 &&
@@ -470,12 +752,21 @@ const SECTION_C = (G, src) => {
       G.localStorage = { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); }, removeItem: (k) => { delete store[k]; } };
       try {
         const bad = [];
-        if (I.RIG_KEY !== 'wts_sim_rigup' || I.rigItems().length !== 8) bad.push('key / items');
-        I.writeRig({ heater: false, surge: true }); if (store.wts_sim_rigup !== '{"heater":false,"surge":true}') bad.push('write ' + store.wts_sim_rigup);
-        if (JSON.stringify(I.readRig()) !== '{"heater":false,"surge":true}') bad.push('read');
+        // v3.3.1: 10 items; a request equal to RIG_DEFAULTS stores no key, any other request stores all 10 keys (display order)
+        if (I.RIG_KEY !== 'wts_sim_rigup' || I.rigItems().length !== 10) bad.push('key / items');
+        const ALL10 = '{"esd":true,"desander":false,"choke":true,"heater":false,"separator":true,"surge":true,"surge2":false,"gauge":true,"pump":true,"flare":true}';
+        I.writeRig({ heater: false, surge: true }); if (store.wts_sim_rigup !== ALL10) bad.push('write ' + store.wts_sim_rigup);
+        if (JSON.stringify(I.readRig()) !== ALL10) bad.push('read');
         store.wts_sim_rigup = '{"heater":"no","bogus":false}'; if (I.readRig() !== null) bad.push('shape');
         store.wts_sim_rigup = 'x'; if (I.readRig() !== null) bad.push('parse');
         I.writeRig({ heater: true }); if ('wts_sim_rigup' in store) bad.push('full keeps no key');
+        I.writeRig(S.RIG_DEFAULTS); if ('wts_sim_rigup' in store) bad.push('RIG_DEFAULTS keeps no key');
+        I.writeRig({ desander: true }); const o1 = JSON.parse(store.wts_sim_rigup || '{}');
+        if (o1.desander !== true || o1.surge2 !== false || o1.heater !== true || Object.keys(o1).length !== 10) bad.push('optional-only request stored ' + store.wts_sim_rigup);
+        I.writeRig({ desander: 'yes', surge2: 1 }); if ('wts_sim_rigup' in store) bad.push('non-true optional = default');
+        if (I.rigIn({ rigup: { desander: true } }, 'desander') !== true || I.rigIn({ rigup: { desander: 'x' } }, 'desander') || I.rigIn(null, 'surge2')) bad.push('rigIn');
+        if (I.EQV.surge2.valves.join() !== 'XV-202' || I.EQV.surge.valves.join() !== 'XV-201A,XV-201B' || I.EQV.gauge.valves.join() !== 'XV-301A,XV-301B' || I.EQV.desander.dump !== 'XV-103') bad.push('EQV');
+        if (JSON.stringify(I.stepFor({})) !== JSON.stringify(I.STEP) || I.stepFor({ desander: true }).choke !== '④') bad.push('stepFor fallback');
         const st = simAt(600), st0 = st.getState();
         if (I.xferShort(st0) !== 'OPEN' && I.xferShort(st0) !== 'SHUT') bad.push('xfer ' + I.xferShort(st0));
         if (!/RUNNING|STANDBY/.test(I.pumpShort(st0)) || I.rigOut(st0, 'heater')) bad.push('pump / rigOut');
@@ -501,7 +792,11 @@ const SECTION_C = (G, src) => {
       const r = runHostCalc(); const f = r.L.flow; const bad = [];
       if (!f) return 'no flow';
       const strip = o => { const c = JSON.parse(JSON.stringify(o)); delete c.ts; delete c.seq; return c; };
-      eqShape(strip(f), strip(S.SAMPLE_FLOW), 'flow', bad);
+      // v3.3.1: SAMPLE_FLOW.sim carries the seven new keys (sand / desander / T-202), published by the host Dynamic Simulation inputs
+      const ref = strip(S.SAMPLE_FLOW);
+      eqShape(strip(f), ref, 'flow', bad);
+      ['sand_pptb', 'sand_lbmmscf', 'sand_d50_um', 'desRating_psi', 'desAcc_gal', 'sithp_psig', 'surge2Cap_bbl'].forEach(k => {
+        if (!f.sim || f.sim[k] !== S.SAMPLE_FLOW.sim[k]) bad.push('sim.' + k + ' ' + (f.sim && f.sim[k]) + ' ≠ ' + S.SAMPLE_FLOW.sim[k]); });
       const near = (a, b, t) => Math.abs(a - b) <= t;
       if (!near(f.choke.Pout, S.SAMPLE_FLOW.choke.Pout, 0.01) || !near(f.heater.dutyMMBtuHr, 2.103, 0.001) || f.choke.regime !== 'Critical') bad.push('numbers');
       if (r.events.length !== 1 || r.events[0].type !== 'wts:calc' || r.events[0].detail !== r.L) bad.push('event');
@@ -515,6 +810,22 @@ const SECTION_C = (G, src) => {
       return a.sim.surgeP_psig === 30 && a.nodes[6].P === 30 && a.warnings.some(w => w.t === 'warn' && /limited to 30 psig/.test(w.m)) &&
         b.choke.regime === 'No Flow' && b.warnings.some(w => w.t === 'error' && /no flow possible/.test(w.m)) &&
         c.warnings.filter(w => /Hydrate/.test(w.m)).every(w => w.t === 'info') && c.warnings.length >= 1 || 'scenario mismatch';
+    }],
+    ['host patch: v3.3.1 Dynamic Simulation inputs — blank / 0 → defaults, clamps of §6.3, SITHP blank = null, 1e400 never gets through', () => {
+      const sim = o => runHostCalc(o).L.flow.sim, bad = [];
+      const vec = x => JSON.stringify([x.sand_pptb, x.sand_lbmmscf, x.sand_d50_um, x.desRating_psi, x.desAcc_gal, x.sithp_psig, x.surge2Cap_bbl]);
+      const blank = sim({ wts_sandPptb: '', wts_sandGas: '', wts_sandD50: '', wts_dsRating: '', wts_dsAcc: '', wts_SITHP: '', wts_surge2Cap: '' });
+      if (vec(blank) !== '[0,0,150,10000,50,null,100]') bad.push('blank ' + vec(blank));
+      const hi = sim({ wts_sandPptb: '9999', wts_sandGas: '1e400', wts_sandD50: '5000', wts_dsRating: '7000', wts_dsAcc: '1e400', wts_SITHP: '1e400', wts_surge2Cap: '9000' });
+      if (vec(hi) !== '[500,100,1000,10000,200,20000,500]') bad.push('high ' + vec(hi));
+      const lo = sim({ wts_sandPptb: '-5', wts_sandGas: '-1', wts_sandD50: '1', wts_dsRating: '5000', wts_dsAcc: '2', wts_SITHP: '10', wts_surge2Cap: '5' });
+      if (vec(lo) !== '[0,0,20,5000,10,100,20]') bad.push('low ' + vec(lo));
+      const mid = sim({ wts_sandPptb: '10', wts_sandGas: '5', wts_sandD50: '400', wts_dsRating: '15000', wts_dsAcc: '80', wts_SITHP: ' 5200 ', wts_surge2Cap: '150' });
+      if (vec(mid) !== '[10,5,400,15000,80,5200,150]') bad.push('mid ' + vec(mid));
+      // a flow carrying them is a valid flow for the engine (finite snapshot)
+      const f = runHostCalc({ wts_sandPptb: '10', wts_SITHP: '5200' }).L.flow, s = S.create(f, { seed: 3 }); s.advance(30);
+      if (!isFinite(s.getState().nodes.choke.Pin)) bad.push('engine');
+      return bad.length === 0 || bad.join('; ');
     }],
     ['host patch: flows from the patched calc drive the sim (bean 24 → CHOKE_LIMIT)', () => {
       const f = runHostCalc({ wts_bean: '24' }).L.flow; const s = S.create(f, { seed: 2 }); s.advance(30);
@@ -561,16 +872,28 @@ const SECTION_X = (G) => {
       walk(I.fakeSnapshot(), real(), '');
       return miss.length === 0 || miss.slice(0, 8).join(', ');
     }]);
-    if (Array.isArray(I.NULLABLE)) out.push(['X: 32 NULLABLE list equals WTS_sim.NULLABLE', () =>
-      JSON.stringify(I.NULLABLE.slice().sort()) === JSON.stringify(S.NULLABLE.slice().sort()) || 'differs']);
+    if (Array.isArray(I.NULLABLE)) out.push(['X: 32 NULLABLE list equals WTS_sim.NULLABLE', () => {
+      return JSON.stringify(I.NULLABLE.slice().sort()) === JSON.stringify(S.NULLABLE.slice().sort()) || 'differs';
+    }]);
+    if (typeof I.fakeSnapshot === 'function') out.push(['X: every path in 32 fakeSnapshot with DS-101 / T-202 in (flushing) exists in the real snapshot (same type)', () => {
+      const miss = [], st = real();
+      const walk = (a, b, p) => {
+        if (a === null || typeof a !== 'object') { if (b === undefined) miss.push(p); else if (a !== null && b !== null && typeof a !== typeof b) miss.push(p + ':' + typeof b); return; }
+        if (b === undefined || b === null) { miss.push(p); return; }
+        if (Array.isArray(a)) { if (a.length && b.length) walk(a[0], b[0], p + '[0]'); return; }
+        for (const k in a) walk(a[k], b[k], p ? p + '.' + k : k);
+      };
+      walk(I.fakeSnapshot(9000, { desander: true, surge2: true, flushing: true }), st, '');
+      return miss.length === 0 || miss.slice(0, 8).join(', ');
+    }]);
     if (typeof I.normalize === 'function') out.push(['X: 32 normalize(real snapshot) yields only finite numbers', () => {
       const bad = []; nonFinite(I.normalize(real()), '', bad); return bad.length === 0 || bad.slice(0, 6).join(', ');
     }]);
     if (T.STATUS_MAP) out.push(['X: STATUS_MAP covers every sim alarm severity', () => ['trip', 'alarm', 'warn', 'hyd', 'info'].every(k => typeof T.STATUS_MAP[k] === 'string')]);
   }
   if (L) {
-    if (typeof L.liveNodes === 'function') out.push(['X: 38 liveNodes(real) → 8 calc-shaped nodes with finite P/T', () => {
-      const n = L.liveNodes(real()); return Array.isArray(n) && n.length === 8 && n.every(x => isFinite(x.P) && isFinite(x.T));
+    if (typeof L.liveNodes === 'function') out.push(['X: 38 liveNodes(real) → 10 calc-shaped nodes with finite P/T', () => {
+      const n = L.liveNodes(real()); return Array.isArray(n) && n.length === 10 && n.every(x => isFinite(x.P) && isFinite(x.T));
     }]);
     if (typeof L.liveSegs === 'function') out.push(['X: 38 liveSegs(real) → 6 calc-shaped segments with finite vel', () => {
       const s = L.liveSegs(real()); return Array.isArray(s) && s.length === 6 && s.every(x => isFinite(x.vel) && isFinite(x.vPct));

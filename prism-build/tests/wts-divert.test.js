@@ -241,7 +241,9 @@ module.exports = [
       const c = JSON.parse(JSON.stringify(s.getControls()));
       // v3.0 adds the valve stroke (both tanks) and the gauge "allow interrupting batches" option to the lineup
       assert.deepStrictEqual(c, { surge: { inlet: [false, true], suction: 'A', auto: true, sp: 0.75, hyst: 0.15, strokeS: 6 },
-        gauge: { inlet: [false, true], auto: true, sp: 0.9, hyst: 0.1, strokeS: 8, allowInterrupt: true }, v: 1 });
+        gauge: { inlet: [false, true], auto: true, sp: 0.9, hyst: 0.1, strokeS: 8, allowInterrupt: true },
+        // v3.3.1 (sim 1.4.0): T-202 inlet / auto route and DS-101 bypass / auto-dump join the lineup (defaults here)
+        surge2: { inlet: false, auto: false, sp: 0.8, hyst: 0.1, strokeS: 6 }, desander: { bypass: false, auto: false, sp: 0.8 }, v: 1 });
       // a fresh sim restored at t = 0: same lineup, the initial gauge fill sits in B (no batch side effects)
       const s2 = sim(app, { seed: 41 });
       assert.strictEqual(s2.setControls(app.toWin(c), app.toWin({ initial: true })), true);

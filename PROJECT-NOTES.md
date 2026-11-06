@@ -5,6 +5,38 @@ All changes land on `dev`; `master` is the stable tree consumed by the iOS sync 
 
 ---
 
+## 2026-11-06 — v3.3.1 release: simulator second surge tank & cyclonic desander
+
+Plan: docs/SIM-EQUIPMENT-PLAN.md (WP0, WP-E0, WP-E1, WP-E2, WP-3D, WP-L, WP-2D, WP-I; branch `sim-equip`). App and App Store
+version 3.3.1 (`RELEASE_NOTES[0]`, both `MARKETING_VERSION`, both `ci_post_clone.sh` fallbacks, the static `#appVersionLabel`
+fallback); `WTS_sim.VERSION` 1.4.0, `WTS_3d` 1.2.0. Owner request: a second surge tank and a cyclonic desander upstream of the choke.
+
+**What shipped**
+- **DS-101 cyclonic desander** (optional rig-up item, out by default) between SDV-101 and CK-101: velocity-head ΔP with a lag,
+  cut size with turndown and GVF factors (carrier blended by GVF 0.95–0.995), log-normal capture for formation sand and
+  flow-back proppant, accumulator + buffer, interlocked dump (isolate, bleed, flush, equalise, reopen; ESD hold, resume re-checks
+  the equalise interlock, abort), auto-dump, HV-104 bypass line-up, eight faults, LAH / LAHH / ΔP / rating alarms and PSHH-103
+  (0.95 × rating, the only desander trip); rating checked against an entered SITHP or 1.2 × WHP; sand carried to the choke
+  (capacity coupling) and V-101; steel-equivalent choke erosion indicator (display only).
+- **T-202 second surge tank** (optional, needs T-201): own gas space, PCV-203 back-pressure, PCV-204 blanket, PSV-202, LAH /
+  LSHH-202, PSHH-202, XV-202, LCV-202 transfer to T-301 (LSHH-301 shuts both transfers); routes T-201 / T-202 / both
+  (make-before-break, pressure-driven split through check valves), optional auto route when T-201 is full; two faults.
+- **Views:** 3D scene (32), HMI cards / HUD / trends / phone insets / Scenarios menu from `WTS_sim.FAULTS` (38), 2D schematic
+  variants and live overlay (host `wtsDrawDiag`, `wtsDiagLayout`), seven Dynamic Simulation inputs; items out = absent and hidden.
+- **Tests / tools:** `tests/_harness.js` builds Round 7 in memory; frozen v3.3 engine `tests/_wts-sim-v33.js`; contract fixture
+  `tests/_wts-equip-shapes.js`; `tests/wts-{equipment,desander,surge2,equipment-views}.test.js`; `wts-sim-perf.js` A/B gate;
+  `wts3d-test.js` section B; gui-sweep equipment run.
+
+**Verification (LF checkout, full rebuild with Round 7):** smoke 326/326; `accept-test.js --html --integration` 1258/1258;
+ios-native 5/5, app-version 1/1; wts3d 118/120 (the two documented CRLF checks); wts-sim-perf passed (default spread 0.993 /
+1.009 vs the frozen v3.3 engine, both items in 1.463, gate 1.6).
+
+**Known limitations:** desander f_lo / f_hi / f_g, fill knee, flow-back profile and size distribution are assumptions; erosion is
+steel-equivalent and display only (assumed 125 mil / 72 h band basis); bleed / flush volumes are not in the balances; the T-202
+split has a one-substep header lag; PSHH-201 keeps the ESD-only action; no PSV fire case; sand stops at V-101.
+
+---
+
 ## 2026-11-01 — v3.3 release: Build-up Surveillance & PRiSM skin checks
 
 Plan: docs/BUILDUP-SURVEILLANCE-PLAN.md (WP0–WP9). App and App Store version 3.3 (`RELEASE_NOTES[0]`, `MARKETING_VERSION`, both
