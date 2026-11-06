@@ -48,7 +48,7 @@ app's own listing), Windows, macOS, Linux. Browsers are never named: write "your
 | D12 | Engine follow-up | WP-SIM: a bypass destination (burner/flare line, or production line at P psig) and a cushion-unload scenario. Off by default. It starts after `sim-equip` merges, and ships in v3.3.2 only if it passes its gate by the integration freeze, otherwise in the next release | Files 31/38 are locked by the sim-equip workflow; the help release must not wait on an engine change |
 | D13 | Metric mode | Numbers in content are unit tokens `{{150|pressureG}}`, rendered with `WTS_units.format` in the current system; print shows both systems. Control labels are quoted without their unit. PRiSM guides carry the field-units-only notice | The guide matches what the user sees in either unit system |
 | D14 | Kept out of reports and saves | `#help_root` is `.rp-skip`, `data-rp-nosnap` and `data-no-persist`. The export buttons are hidden on `help`, and the Quick Report never snapshots it. The only stored values are two `wtspref_` device prefs | Help must not appear in reports, autosave or project files |
-| D15 | Size caps | All help code and text ≤ 330 kB raw and ≤ 90 kB gzip in the HTML (renderer included), split into a byte cap per file (§3.6). Images ≤ 8 MB in total, ≤ 300 files, with a cap per file. The bundle headroom is allocated across v3.3.1, v3.3.2 and v3.4 in raw **and** gzip bytes, agreed with the owner before WP-H starts (§3.6) | Gzip, not raw size, is the binding limit (216 kB of gzip headroom); v3.3.1 and DFIT need room in the same budget |
+| D15 | Size caps | All help code and text ≤ 345 kB raw and ≤ 120 kB gzip in the HTML (renderer included; owner decision Q13 option 1, 2026-11-06; was 330 / 90), split into a byte cap per file (§3.6). Images ≤ 8 MB in total, ≤ 300 files, with a cap per file. The bundle headroom is allocated across v3.3.1, v3.3.2 and v3.4 in raw **and** gzip bytes, agreed with the owner before WP-H starts (§3.6) | Gzip, not raw size, is the binding limit (216 kB of gzip headroom); v3.3.1 and DFIT need room in the same budget |
 | D16 | Tests | `help-content`, `help-page`, `help-shots` (no browser: manifest and files), `help-guide-sync` and `help-course` tests, plus smoke checks (§7) | Every route has a guide with every section; no broken image reference; no forbidden names or URLs; text limits; worked examples reproduce |
 | D17 | Existing help | Kept as is: Notes boxes, info-bar method text, the Chemical Injection ⓘ pop-ups, PRiSM tooltips, the Modbus setup-guide card. Guides link to them instead of repeating them. The dormant generic tooltip MANIFEST in 28-help-tooltips.js is out of scope | No regressions; less duplicated text |
 | D18 | Stale `wiki/` | Each wiki page gets a one-line "superseded by the in-app Help (Help → <module>)" note; the pages are deleted in a later release (Q6) | They predate PRiSM and know nothing of the simulator, Live Data, Build-up or Chemical Injection |
@@ -431,7 +431,7 @@ node prism-build/help-shots.js --check                  # no browser: content �
 | phone viewport (780×1688 px) | ≤ 110 kB |
 | phone crop | ≤ 70 kB |
 | all images | ≤ 8 MB, ≤ 300 files |
-| help code + text inside the HTML | ≤ 330 kB raw and ≤ 90 kB gzip (per-file caps below) |
+| help code + text inside the HTML | ≤ 345 kB raw and ≤ 120 kB gzip (per-file caps below; owner decision Q13, option 1) |
 
 **Bundle headroom.** `perf-budget.js` fails any bundle above baseline × 1.10. On the 2026-11-01 baseline that is about
 **789 kB raw** (html 7,888,603 bytes) and about **216 kB gzip** (htmlGzip 2,159,131 bytes, level 9). Text compresses about
@@ -440,7 +440,7 @@ node prism-build/help-shots.js --check                  # no browser: content �
 | Release | Raw | Gzip | Basis |
 |---|---|---|---|
 | v3.3.1 sim-equip (31, 38, host) | 80 kB | 20 kB | about 600 added lines in its plan, with margin |
-| v3.3.2 Help (this plan) | 330 kB | 90 kB | per-file caps below |
+| v3.3.2 Help (this plan) | 330 kB → **345 kB** | 90 kB → **120 kB** | per-file caps below; raised by the owner (Q13, option 1): the extra 15 kB raw / 30 kB gzip come from the reserve and the v3.4 DFIT share (or a new `perf-budget.js` baseline) |
 | v3.4 DFIT (56–59, hooks) | 300 kB | 80 kB | four engine files; DFIT plan to confirm its own figure |
 | reserve | 79 kB | 26 kB | point releases, fixes |
 | **total** | **789 kB** | **216 kB** | = the +10 % headroom |
@@ -449,14 +449,19 @@ Per-file caps (raw, serialised source after concat; enforced by `help-content.te
 
 | File | Cap | File | Cap |
 |---|---|---|---|
-| 49-calc-help.js (page, search, renderer) | 45 kB | 48-calc-help-safety.js | 36 kB |
-| 49-calc-help-print.js | 15 kB | 48-calc-help-process.js | 20 kB |
-| 48-calc-help-start.js (start, tasks, glossary, FAQ) | 18 kB | 48-calc-help-flare.js | 12 kB |
-| 48-calc-help-overview.js | 10 kB | 48-calc-help-utilities.js | 20 kB |
-| 48-calc-help-metering.js | 28 kB | 48-calc-help-simcourse.js | 38 kB |
-| 48-calc-help-welltest.js (incl. `wts` parts) | 32 kB | 48-calc-help-manifest.js (generated) | 8 kB |
-| 48-calc-help-production.js (incl. PRiSM parts) | 32 kB | **sum** | **330 kB** |
-| 48-calc-help-livedata.js | 16 kB | | |
+| 49-calc-help.js (page, search, renderer) | 46 kB | 48-calc-help-safety.js | 37 kB |
+| 49-calc-help-print.js | 16 kB | 48-calc-help-process.js | 21 kB |
+| 48-calc-help-start.js (start, tasks, glossary, FAQ) | 19 kB | 48-calc-help-flare.js | 12.5 kB |
+| 48-calc-help-overview.js | 10.5 kB | 48-calc-help-utilities.js | 21 kB |
+| 48-calc-help-metering.js | 29 kB | 48-calc-help-simcourse.js | 39 kB |
+| 48-calc-help-welltest.js (incl. `wts` parts) | 36 kB | 48-calc-help-manifest.js (generated) | 8.5 kB |
+| 48-calc-help-production.js (incl. PRiSM parts) | 33 kB | **sum** | **345 kB** |
+| 48-calc-help-livedata.js | 16.5 kB | | |
+
+(Owner decision, Q13 option 1: every cap rises by about 5 % from the content-round caps below; welltest 32 → 36 kB and
+simcourse 38 → 39 kB also carry the v3.3.1 DS-101 / T-202 content. Content-round caps: page 45, print 15, start 18,
+overview 10, metering 28, welltest 32, production 32, livedata 16, safety 36, process 20, flare 12, utilities 20,
+simcourse 38, manifest 8; sum 330 kB.)
 
 (Content round: 8 kB moved from start, 26 → 18 kB, to safety, 28 → 36 kB, for the Chemical Injection inputs and verdict
 actions; the sum stays 330 kB.)
@@ -480,8 +485,13 @@ choice for the owner (Q13) is:
 2. **larger cuts** (about 20 kB gzip, roughly 60–70 kB of guide prose), or **lazy loading** of the guide prose from
    `help/` (the Help page would then need a fetch and a `file://` fallback, which D6 avoids today).
 
-A re-baseline is an owner decision; it is never done silently. Until it is made, `help-content.test.js` keeps the 90 kB
-gzip cap and its size test is a known failure.
+A re-baseline is an owner decision; it is never done silently.
+
+**Decision (owner, 2026-11-06): option 1.** The v3.3.2 Help allocation is **345 kB raw and 120 kB gzip**, with the per-file
+caps above; no content is cut and the guide prose stays in the HTML (D6). `help-content.test.js` enforces the new caps.
+Measured after the v3.3.1 update (help branch, DS-101 / T-202 content in, manifest still a stub): **323.4 kB raw and
+111.1 kB gzip**; with the full manifest about 329 kB raw and 113 kB gzip. `perf-budget.js` is re-measured against the new
+allocation at WP-I.
 
 ---
 
@@ -623,7 +633,7 @@ Raw `<`, `>`, `&`, URLs and e-mail addresses are rejected by the test, except `w
 | caption / alt | ≤ 160 / ≤ 200 chars |
 | one guide, serialised | ≤ 6 kB; parts modules (prism, wts, buildup, cheminj, modbus) ≤ 14 kB — the **file cap (§3.6) binds first**: a writer checks the file total, not only each guide |
 | one exercise (incl. trainer notes) / field scenario / task | ≤ 4 kB / ≤ 5 kB / ≤ 1 kB |
-| all help files | ≤ 330 kB raw, ≤ 90 kB gzip (per-file caps, §3.6) |
+| all help files | ≤ 345 kB raw, ≤ 120 kB gzip (per-file caps, §3.6) |
 | a sentence in steps, tips, pitfalls, verdict text | warning above 25 words (lint, not a failure) |
 
 ### 4.7 Getting started (`48-calc-help-start.js`)
@@ -833,8 +843,20 @@ pressure is **Operating Pressure** in the **Separator** card; the surge-tank pre
 - *After WP-SIM:* V-101 out with **Bypass destination = Production line at P psig**. FS-401 may then be out, and the
   totals go to "to production line".
 
-**FS-3 Clean-up with sand: the desander upstream of the choke.** This uses the DS-101 rig-up item, the sand-flow-back
-scenario and the dump sequence, as shipped in v3.3.1. WP-T writes it after re-checking against the merged code.
+**FS-3 Clean-up with sand: the desander upstream of the choke.** Written after the `sim-equip` merge (v3.3.1, `WTS_sim`
+1.4.0) and checked against the merged 31/38 code in the harness (scratch probes `help/ex9.js`, `help/ex10.js`):
+- Rig-up: **Cyclonic desander (upstream of the choke)** in (between SDV-101 and CK-101), through V-101 or V-101 out as FS-1.
+- Rating: Dynamic Simulation **Desander rating (psi)** (5,000 / 10,000 / 15,000) against **Max shut-in wellhead pressure
+  (psig)**; blank = 1.2 × WHP (3,600 psig on the defaults). Below it: `DES_RATING` and ✗ on the DS-101 card (no relief valve).
+  PSHH-103 (inlet ≥ 0.95 × rating) is the only desander trip.
+- Sand: **Sand rate, liquid (lb/1000 bbl)**, **Sand rate, gas (lb/MMscf)**, **Sand median size (µm)** (imperial only), or
+  **Scenarios → Sand / proppant flow-back (clean-up)**: LAH-103 at 80 % of the 663 lb accumulator (531 lb) 3.51 h later.
+- Dump at LAH-103 (**Dump sand**): isolate 8 s, bleed to 50 psig (307 s), flush 600 s, equalise to within 75 psi (120 s),
+  reopen 8 s: 1,043 s, well flowing. ESD mid-dump → HELD; after the reset **Resume dump** / **Abort dump**.
+- Clean ΔP 3.93 psi, cut size 39.8 µm, capture 94.6 %. At 10 lb/1000 bbl: 12.0 lb/d in, 0.65 lb/d to the choke; steel-equivalent
+  erosion 1,594 mpy (WARN, SAND_CHOKE) without DS-101 against 23.7 mpy (OK) with it, about 67×. Bypassed in flow-back: all the
+  sand to the bean, SAND_CHOKE alarm, erosion HIGH.
+- Limits: erosion is a screening figure (display only); sand stops at V-101; the steady check leaves out the desander ΔP.
 
 **FS-4 Cold start-up and hydrates.** Low WHT, heater bypassed, then the heater in. It links to [[hydrate]] and [[cheminj]].
 
@@ -860,8 +882,8 @@ bean 32, Psep 150, surge 25), Reset to steady, alarms acknowledged.
 | 6 | Tank gauging and batch rates | settling, shrinkage, LSHH-301 without ESD |
 | 7 | Surge tank operation | make-before-break, pressure-driven LCV-201, low-ΔP, LSLL latch |
 | 8 | Hydrates and the heater | J-T cooling, hydrate alarms, heater bypass |
-| 9 | Sand and the desander DS-101 | written only after `sim-equip` merges, against the merged labels; not shipped if not written |
-| 10 | Second surge tank T-202 | as 9 |
+| 9 | Sand and the desander DS-101 | written after the `sim-equip` merge against the merged labels and numbers (FS-3 above): ΔP, cut size, capture, LAH-103 at 3.5 h, the 17-minute interlocked dump, ESD hold / resume, bypass → choke erosion |
+| 10 | Second surge tank T-202 | as 9: routes T-201 / T-202 / Both (make-before-break, lower-pressure tank takes the dumps), LCV-202 at 70 % after 81 min on T-202 only, LSHH-202 (XV-202 only; LSHH-102 then trips within a minute), PCV-203 stuck → PAH-202 in about 5 min, PSHH-202 trip in about 15 min |
 
 - **Answers with numbers:** the steady ones (e.g. capacity 10.71 MMSCFD at the defaults, and 10.71 × (30/32)² ≈ 9.41
   MMSCFD on a 30/64 bean; the FS-1 figures) come from `calcWTS`, which is host code and already in the harness, so they are
@@ -948,7 +970,7 @@ merges.
   - optionally, a name denylist read from a file **outside the repository**, given by `WTS_HELP_DENYLIST=<path>`. The
     repository must never hold a list of other companies' names.
   - The same scan runs over `help/user-guide.html` and the manifest captions.
-- **Size:** each help file's serialised source ≤ its cap in §3.6; the sum ≤ 330 kB raw and ≤ 90 kB gzip.
+- **Size:** each help file's serialised source ≤ its cap in §3.6; the sum ≤ 345 kB raw and ≤ 120 kB gzip (Q13, option 1).
 
 ### 7.2 `tests/help-page.test.js`
 
@@ -1155,7 +1177,7 @@ before release.
 | Q10 | Whole guide on iOS | Open the bundled `help/user-guide.html` in an in-app reader inside the WebView (images resolve); for a whole-book PDF, the published web link (Q19) or the owner's handout PDF; quick cards, guides and groups through the normal report path |
 | Q11 | Exercise set-up button | Form inputs only in v1, with the rig-up and Reset listed as manual steps; automatic set-up and a trainer "hidden fault" mode later, with a public rig-up and fault API |
 | Q12 | Field review of the course | The owner names a reviewer with field well-test experience before WP-I; if none is available, the plan's numbers are re-checked in the harness and the browser only |
-| Q13 | Bundle budget | Agree the raw **and** gzip allocation across v3.3.1, v3.3.2 and v3.4 (§3.6) before WP-H starts. Measured at 109.6 kB gzip (projected 111.6 kB with the full manifest) against 90 kB. Moving the glossary, FAQ and course answers out frees only about 3.8 kB gzip, so it is not enough: the owner chooses a new allocation (about 120 kB gzip / 345 kB raw with headroom) or larger cuts / lazy loading of guide prose (§3.6); a re-baseline needs the owner's agreement |
+| Q13 | Bundle budget | Agree the raw **and** gzip allocation across v3.3.1, v3.3.2 and v3.4 (§3.6) before WP-H starts. Measured at 109.6 kB gzip (projected 111.6 kB with the full manifest) against 90 kB. Moving the glossary, FAQ and course answers out frees only about 3.8 kB gzip, so it is not enough: the owner chooses a new allocation (about 120 kB gzip / 345 kB raw with headroom) or larger cuts / lazy loading of guide prose (§3.6); a re-baseline needs the owner's agreement. **Owner: option 1** (2026-11-06): 345 kB raw / 120 kB gzip, per-file caps raised by about 5 %; no cuts, no lazy loading |
 | Q14 | WP-SIM in the same release? | Only if it passes its gate by the v3.3.2 freeze; otherwise the next release. The help text follows `WTS_sim.features` either way |
 | Q15 | Cushion defaults | 150 bbl, SG 1.00 (editable 0.80–1.50), 2,400 bbl/d, 2-7/8″ tubing capacity, gas fraction 5 % while unloading |
 | Q16 | Production-line default pressure | {{150|pressureG}} (equal to the separator default), range 0–1440 psig |
@@ -1217,6 +1239,16 @@ history keys, so WP-T and WP-SIM re-derive every item below from the merged code
 - **Labels on the page:** Separator card **Operating Pressure**; Dynamic Simulation card **Surge Tank Pressure**; Well
   Parameters card **Wellhead Pressure**, **Gas Rate**, **Condensate / Oil**, **Water Rate**; Choke card **Bean Size**.
 - **Re-check every label and number** against the merged `sim-equip` code before the v3.3.2 content freeze.
+- **Re-checked after the `sim-equip` merge (help branch, v3.3.1, `WTS_sim` 1.4.0).** `pDown()`, the ramp constants
+  (5 / 15 s SDV-101, 180 s grace, 1.2 × WHP, τ 300 s), the 600 s batch settle and the separator limits are unchanged, so the
+  FS-1 / FS-2 figures stand. Changed: `WTS_sim.FAULTS` has 16 entries (the eight above plus DS-101 liner plugged, liner washed
+  out, XV-103 stuck closed, upper isolation passing, HV-104 passing, sand / proppant flow-back, LCV-202 stuck closed, PCV-203
+  stuck closed; menu labels from `38-wts-live.js` `FAULT_MENU`). Optional rig-up items DS-101 and T-202 (`RIG_OPTIONAL`), out
+  by default; **Restore full rig-up** leaves them as they are. Trips that do not close SDV-101: LSHH-301 (shuts LCV-201 and
+  LCV-202), LSHH-202 (shuts XV-202), the LCV-201 / LCV-202 low-low; PSHH-103 is the only DS-101 trip; PSHH-202 shuts XV-202
+  and PCV-204 and trips the ESD. Seven Dynamic Simulation inputs (`wts_sandPptb`, `wts_sandGas`, `wts_sandD50`,
+  `wts_dsRating`, `wts_dsAcc`, `wts_SITHP`, `wts_surge2Cap`), untagged (field units). The `wts` guide `reviewedSrc` is
+  `669ef629` (31 + 32 + 38).
 
 ## Appendix C. Review notes (2026-11-06)
 

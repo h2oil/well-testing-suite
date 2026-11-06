@@ -29,13 +29,15 @@ const CONTENT_FILES = ['start', 'overview', 'metering', 'welltest', 'simcourse',
   .map((g) => '48-calc-help-' + g + '.js');
 const KB = 1000;
 const CAPS = {
-  '49-calc-help.js': 45, '49-calc-help-print.js': 15, '48-calc-help-start.js': 18, '48-calc-help-overview.js': 10,
-  '48-calc-help-metering.js': 28, '48-calc-help-welltest.js': 32, '48-calc-help-production.js': 32, '48-calc-help-livedata.js': 16,
-  '48-calc-help-safety.js': 36, '48-calc-help-process.js': 20, '48-calc-help-flare.js': 12, '48-calc-help-utilities.js': 20,
-  '48-calc-help-simcourse.js': 38, '48-calc-help-manifest.js': 8,
+  '49-calc-help.js': 46, '49-calc-help-print.js': 16, '48-calc-help-start.js': 19, '48-calc-help-overview.js': 10.5,
+  '48-calc-help-metering.js': 29, '48-calc-help-welltest.js': 36, '48-calc-help-production.js': 33, '48-calc-help-livedata.js': 16.5,
+  '48-calc-help-safety.js': 37, '48-calc-help-process.js': 21, '48-calc-help-flare.js': 12.5, '48-calc-help-utilities.js': 21,
+  '48-calc-help-simcourse.js': 39, '48-calc-help-manifest.js': 8.5,
 };
-// start 26 → 18 kB, safety 28 → 36 kB (WP-C6 fix round: the cheminj inputs and verdict actions); the sum stays 330 kB
-const SUM_CAP = 330 * KB, GZIP_CAP = 90 * KB;
+// Owner decision (Q13, option 1, 2026-11-06): the v3.3.2 Help allocation is 345 kB raw and 120 kB gzip (was 330 / 90). Every
+// per-file cap rises by about 5 %; welltest (+4 kB) and simcourse (+1 kB) also carry the v3.3.1 DS-101 / T-202 content. The caps
+// sum to 345 kB.
+const SUM_CAP = 345 * KB, GZIP_CAP = 120 * KB;
 const NOT_ROUTES = ['gaevents', 'dca', 'pta'];
 const OVERVIEW = ['home', 'help', 'clientinfo', 'wells', 'privacy', 'releasenotes'];
 // §4.1: manual examples only for the simulator, PRiSM fits, Live Data and Overview (buildup and cheminj have pure engines)
@@ -603,7 +605,7 @@ const TESTS = [
     },
   },
   {
-    name: 'HELP content: help files within their byte caps (§3.6); sum ≤ 330 kB raw and ≤ 90 kB gzip',
+    name: 'HELP content: help files within their byte caps (§3.6); sum ≤ 345 kB raw and ≤ 120 kB gzip',
     wp: WP,
     opts: false,
     run(app, assert) {

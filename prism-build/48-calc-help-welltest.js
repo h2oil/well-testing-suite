@@ -1,7 +1,7 @@
 // prism-build/48-calc-help-welltest.js — Help content: Well Test & Flowlines (docs/HELP-GUIDE-PLAN.md §4, WP-C3).
 // Data only (no WTS_calcRegistry page). The factory runs on the first Help open (WTS_help.load()); nothing runs at load.
 // Routes: wts (the simulator reference, in parts), bottomsup, casing, flowline, lineheat, pipesz.
-// The wts parts describe the v3.3 simulator (31/32/38); re-check them after the sim-equip merge (plan §9).
+// The wts parts describe the v3.3.1 simulator (31/32/38: DS-101 desander and T-202 second surge tank included).
 (function () {
 'use strict';
 var G = (typeof window !== 'undefined') ? window : globalThis;
@@ -12,10 +12,10 @@ var V = 'v3.3.2', CALC = 'The page also updates on every change.';
 return { guides: {
 
 wts: {
-  route: 'wts', reviewed: V, reviewedSrc: '67895886', units: 'dual',
-  keywords: ['simulator', 'training', 'rig-up', 'alarm', 'trip', 'surge tank', 'gauge tank', 'production pressure', 'burner'],
+  route: 'wts', reviewed: V, reviewedSrc: '669ef629', units: 'dual',
+  keywords: ['simulator', 'training', 'rig-up', 'alarm', 'trip', 'surge tank', 'gauge tank', 'production pressure', 'burner', 'desander', 'sand', 'T-202'],
   notDocumented: [{ pattern: '^wts_(nps|sch|len)[1-6]$', why: 'Pipe Segments table (Form inputs part)' }],
-  boldExempt: ['Note', 'Trip ESD', 'Reset ESD', 'Ack', 'Ack all', 'Swap tank', 'Auto-divert', 'Bypass ON', 'Events'],
+  boldExempt: ['Note', 'Trip ESD', 'Reset ESD', 'Ack', 'Ack all', 'Swap tank', 'Auto-divert', 'Bypass ON', 'Events', 'Dump sand', 'Resume dump', 'Abort dump', 'Auto-dump', 'Route', 'Both', 'Auto route', 'Reset LCV-202'],
   purpose: 'A live replay of a surface well test spread around a steady design calculation: practise line-ups, levels, alarms, ESD, tank gauging and upsets.',
   what: ['The form feeds a steady calculation from the wellhead through the choke, back-walked from the separator **Operating Pressure**. The live view runs the spread in time: valves, levels, pressures, alarms and trips. Training: [[course]] and [[scenarios]].'],
   when: ['Train a crew before a job, or brief a client.', 'Check a line-up: which equipment is in, where gas and liquids go.', 'Practise upsets: dump valve failure, ESD, hydrates, tank overfill.'],
@@ -73,6 +73,13 @@ wts: {
         { label: 'Surge Tank Pressure', id: 'wts_Psurge', def: '25', text: 'psig; used as at most 30, and at least 10 below Operating Pressure.' },
         { label: 'Surge Tank Capacity', id: 'wts_surgeCap', def: '100', text: 'Barrels.' },
         { label: 'Gauge Tank Compartment', id: 'wts_gtCap', def: '100', text: 'Barrels, each of two.' },
+        { label: 'Sand rate, liquid', id: 'wts_sandPptb', def: '0', text: 'Pounds per thousand barrels of liquid; 0 = none.' },
+        { label: 'Sand rate, gas', id: 'wts_sandGas', def: '0', text: 'lb/MMscf of gas.' },
+        { label: 'Sand median size', id: 'wts_sandD50', def: '150', text: 'µm.' },
+        { label: 'Desander rating', id: 'wts_dsRating', def: '10,000', text: 'psi; DS-101 has no relief valve.' },
+        { label: 'Desander accumulator', id: 'wts_dsAcc', def: '50', text: 'Gallons.' },
+        { label: 'Max shut-in wellhead pressure', id: 'wts_SITHP', def: 'blank', text: 'psig, the [[glossary#sithp|SITHP]] the rating is checked against; blank = 1.2 × WHP (estimated).' },
+        { label: 'Surge tank 2 capacity', id: 'wts_surge2Cap', def: '100', text: 'Barrels.' },
         { label: 'Pipe Segments', text: 'NPS, schedule and length of the six lines.' },
         { label: 'C-Factor', id: 'wts_Cfac', def: '100', text: '100 clean; 125 to 150 inhibited.' },
         { label: 'Pipe Roughness', id: 'wts_eps', def: '{{0.0018|lengthSmall}}' },
@@ -94,17 +101,30 @@ wts: {
       ] },
     { id: 'rigup', title: 'Rig-up',
       steps: ['Select a switch in **Rig-up** to take an item out or put it back.', 'Read the **Note** lines: they say what changes.', 'Select **Restore full rig-up** to put all back.'],
-      tips: ['SDV-101 and CK-101 stay in. V-101 and FS-401 cannot both be out. P-201 needs T-301.', 'V-101 out: all to the burner; no meter rates, [[glossary#gor|GOR]], [[glossary#bsw|BS&W]] or batches.', 'Saved in project files; the steady check ignores it.'] },
+      tips: ['SDV-101 and CK-101 stay in. V-101 and FS-401 cannot both be out. P-201 needs T-301.', 'Optional, out by default: DS-101 (desander, between SDV-101 and CK-101) and T-202 (second surge tank, needs T-201). Restore full rig-up leaves them as they are.', 'V-101 out: all to the burner; no meter rates, [[glossary#gor|GOR]], [[glossary#bsw|BS&W]] or batches.', 'Saved in project files; the steady check ignores it.'] },
     { id: 'toolbar', title: 'Toolbar and keys',
       steps: ['**3D** / **2D** (V). Play / pause (Space). Speed ×1, ×10, ×60, ×600 ([ and ]).', '**Reset → Reset to steady** (R) or **Reset → Start from empty**. After a minute it asks first: clock, totals and levels clear.',
-        '**ESD** trips SDV-101 (E), after a confirm. **Scenarios** switches each fault on or off.', '3D only: **View** (0 to 5), **Colour**, **Labels** (L), **Quality**. Also **Legend**, **Trends**, **Max** (F).', 'A acknowledges all; ? shows the keys; Esc closes. On a phone, More holds the rest.'] },
+        '**ESD** trips SDV-101 (E), after a confirm. **Scenarios** switches each fault on or off; a fault on DS-101 or T-202 while it is out is armed and acts once it is in. Faults: liner plugged or washed out, XV-103 stuck, isolation or HV-104 passing, sand flow-back; LCV-202, PCV-203 stuck.', '3D only: **View** (0 to 5), **Colour**, **Labels** (L), **Quality**. Also **Legend**, **Trends**, **Max** (F).', 'A acknowledges all; ? shows the keys; Esc closes. On a phone, More holds the rest.'] },
     { id: 'hud', title: 'HUD',
-      what: ['T+ clock, speed, RUNNING or PAUSED. WHP, Choke in→out, Sep with its bar (green ±{{5|pressure}} of set point, amber PAH, red PSHH), Surge. Gas, Oil, Water, GOR, BS&W, totals since T+0, tank and alarm lines. On a phone: tiles.'] },
+      what: ['T+ clock, speed, RUNNING or PAUSED. WHP, Choke in→out, Sep with its bar (green ±{{5|pressure}} of set point, amber PAH, red PSHH), Surge. Gas, Oil, Water, GOR, BS&W, totals since T+0, tank and alarm lines. T-202 adds its level to the surge line; DS-101 adds a line: accumulator sand, ΔP, dump. On a phone: tiles.'] },
     { id: 'cards', title: 'Equipment cards',
-      steps: ['Select equipment in the 2D or 3D view: live readings, design values, a trend.', 'SDV-101 **Trip ESD** / **Reset ESD**; CK-101 bean −/+ 2/64; H-101 **Bypass ON**; V-101 set point −/+ {{5|pressure}}.', 'T-201, T-301: inlet valves A and B, **Auto-divert**, valve stroke; T-301 **Swap tank**. T-201 also sets the LCV-201 suction (A, B or A+B) and resets an LCV-201 trip. Bean and set point write the form. Esc closes.'] },
+      steps: ['Select equipment in the 2D or 3D view: live readings, design values, a trend.', 'SDV-101 **Trip ESD** / **Reset ESD**; CK-101 bean −/+ 2/64; H-101 **Bypass ON**; V-101 set point −/+ {{5|pressure}}.', 'T-201, T-301: inlet valves A and B, **Auto-divert**, valve stroke; T-301 **Swap tank**. T-201 also sets the LCV-201 suction (A, B or A+B) and resets an LCV-201 trip. Bean and set point write the form. DS-101 and T-202: the parts below. Esc closes.'] },
+    { id: 'desander', title: 'DS-101 desander and sand',
+      what: ['A cyclonic desander between SDV-101 and CK-101 catches sand before the bean, where erosion is worst. Sand comes from the Dynamic Simulation sand rates or **Scenarios → Sand / proppant flow-back (clean-up)**. The steady check leaves out the desander ΔP.'],
+      steps: ['Switch **Cyclonic desander (upstream of the choke)** in, in **Rig-up**. Its card: ΔP, Cut size, Capture, Accumulator, To choke, Choke erosion, Rating.',
+        'At LAH-103 (80 %) select **Dump sand** and confirm: ISOLATING, BLEEDING, FLUSHING (XV-103 open), EQUALISING, REOPENING, about 17 minutes. The well keeps flowing.',
+        'An ESD during a dump HOLDS it. After **Reset ESD** select **Resume dump** or **Abort dump**. **Auto-dump** dumps at its set point; a failed dump blocks it.',
+        'Bypass (HV-104 open, DS-101 blocked in) sends all the sand to the bean. DS-101 stays pressurised until a dump bleeds it.'],
+      tips: ['Interlocks: XV-103 opens only below {{50|pressureG}} in the accumulator; the isolation reopens within {{75|pressure}} of the desander.', 'Rising ΔP: plugged liner or packed accumulator (PDAH-103). Low ΔP: washed-out liner (PDAL-103). A rating below the SITHP is ✗ on the card.', 'Choke erosion is a steel-equivalent screening figure, not a bean life.'] },
+    { id: 'surge2', title: 'T-202 second surge tank',
+      what: ['T-202 runs in parallel with T-201, with its own gas space: PCV-203 back-pressure, PCV-204 blanket, [[glossary#psv|PSV-202]], inlet XV-202 and LCV-202 to T-301 on its own pressure (no pump). It starts empty with XV-202 shut.'],
+      steps: ['Switch **Second surge tank** in (needs T-201). Its card: Level, Pressure, Inlet XV-202, Route, Share of dumps, LCV-202, Time to HH.',
+        'Under **Route** select T-201, T-202 or **Both** (open new, then close old). On Both the tank at the lower pressure takes the dumps (check valves).',
+        '**Auto route** switches the dumps at the high-level set point. After an LCV-202 dry-run trip select **Reset LCV-202**.'],
+      tips: ['LSHH-202 shuts XV-202 only: on T-202 alone the dumps are then blocked and LSHH-102 trips the ESD.'] },
     { id: 'alarms', title: 'Alarms and ESD',
       steps: ['The alarm bar shows the newest alarm: select **Ack**.', 'Select **Alarms**: alarms with time and tag, steady design warnings, **Events**. **Ack all** acknowledges all.', 'After a trip the banner shows the cause. **Reset ESD** works once no trip alarm is active.'],
-      tips: ['Every trip except LSHH-301 and the LCV-201 low-low closes SDV-101: 5 s to close, 15 s to open, then 180 s start-up grace.', 'Shut in, WHP builds towards 1.2 × WHP (time constant 300 s).', 'Separator set points follow **Operating Pressure**: PAH = SP + max(10 %, {{15|pressure}}), PSHH = SP + max(20 %, {{25|pressure}}).'] },
+      tips: ['Every trip closes SDV-101 (5 s to close, 15 s to open, then 180 s start-up grace) except LSHH-301 (shuts LCV-201 and LCV-202), LSHH-202 (shuts XV-202) and the LCV-201 / LCV-202 low-low.', 'PSHH-103 (DS-101 inlet at 95 % of its rating) is the only desander trip. PSHH-202 shuts XV-202 and PCV-204, then trips the ESD.', 'Shut in, WHP builds towards 1.2 × WHP (time constant 300 s).', 'Separator set points follow **Operating Pressure**: PAH = SP + max(10 %, {{15|pressure}}), PSHH = SP + max(20 %, {{25|pressure}}).'] },
     { id: 'reports', title: 'Reports and saving',
       what: ['The page export and the Quick Report hold the form, the **Rig-up** card and the steady results, not the live view. Inputs autosave; trends keep the last 4 h of sim time. [[wellos]] can log the form and live rates.'] },
     { id: 'views', title: '2D and 3D',
