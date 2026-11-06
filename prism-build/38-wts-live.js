@@ -2538,8 +2538,9 @@ function createController(vizEl, mopts) {
             if (dump) { ctx.moveTo(cx - 5, cyv - 5); ctx.lineTo(cx - 5, cyv + 5); ctx.lineTo(cx + 5, cyv - 5); ctx.lineTo(cx + 5, cyv + 5); ctx.closePath(); }
             else { ctx.moveTo(cx - 5, cyv - 3); ctx.lineTo(cx - 5, cyv + 3); ctx.lineTo(cx + 5, cyv - 3); ctx.lineTo(cx + 5, cyv + 3); ctx.closePath(); }
             ctx.fill(); ctx.stroke();
-            ctx.fillStyle = '#8b949e'; ctx.font = '7px sans-serif'; ctx.textAlign = dump ? 'center' : 'left';
+            ctx.save(); ctx.fillStyle = '#8b949e'; ctx.font = '7px sans-serif'; ctx.textAlign = dump ? 'center' : 'left';
             if (dump) ctx.fillText('XV-103', cx, cyv + 13); else ctx.fillText('HV-104', ds.x + 27, cyv - 2);   // clear of the ΔP text above
+            ctx.restore();                                 // the later T-201 / T-301 'AUTO' texts keep their v3.3 alignment
         }
         if (su.auto && su.auto.on) { ctx.fillStyle = '#58a6ff'; ctx.font = 'bold 7px sans-serif'; ctx.fillText('AUTO', bx[0] + 26, by - 26); }
         if (t2 && u2.auto && u2.auto.on) { ctx.fillStyle = '#58a6ff'; ctx.font = 'bold 7px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('AUTO', t2.x, by - 44); }
@@ -2801,7 +2802,9 @@ function createController(vizEl, mopts) {
             if (ofs[bi]) { ctx.fillStyle = '#d29922'; ctx.font = 'bold 8px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('OUT', b.x + bw / 2, top + bh / 2 + 3); }
         });
         ctx.fillStyle = '#6e7681'; ctx.font = '8px sans-serif'; ctx.textAlign = 'center';
-        ctx.fillText('(' + fmtParts(0, 'volume').u + ')', S.x + 219, S.y + 12);
+        var gA = null, gB = null;                          // centre the unit over the T-301A/B bars (S.x + 219 at the v3.3 pitch 55)
+        bars.forEach(function (b) { if (b.id === 'gauge') { if (b.k) gB = b; else gA = b; } });
+        ctx.fillText('(' + fmtParts(0, 'volume').u + ')', gA && gB ? (gA.x + gB.x + bw - 1) / 2 : S.x + 219, S.y + 12);
         // Pressure readouts 2×2
         var N = st.nodes || {}, ck = N.choke || {};
         var dIn = rigIn(st, 'desander'), uIn = rigIn(st, 'surge2') && !rigOut(st, 'surge');
@@ -2877,6 +2880,10 @@ function createController(vizEl, mopts) {
     // coarse-pointer view a tap within 22 CSS px of any valve glyph (a 44 px target, WCAG 2.5.5 / Apple HIG) opens a
     // zoomed inset of that tank with 44 × 44 px valve buttons instead of toggling a glyph directly.
     function coarse2d() { return bp === 'sm' || !!(G.matchMedia && G.matchMedia('(pointer:coarse)').matches); }
+    // Equipment whose valves renderVin can show in the inset (WP-L adds surge2 / desander when its inset lands). A tap whose
+    // nearest valve belongs to anything else opens that equipment's card instead (never the T-301 inset for a T-202 / DS-101
+    // valve, and never a direct toggle of a small glyph).
+    var VIN_EQ = { surge: true, gauge: true };
     function nearValve(ev) {
         var L = G.WTS_DIAG_LAYOUT, cv = E.cv; if (!L || !cv || !_sim) return null;
         var r = cv.getBoundingClientRect(); if (!r.width || !r.height) return null;
@@ -3207,7 +3214,7 @@ function createController(vizEl, mopts) {
         }
         if (mode === '2d' && E.cv && (t === E.cv)) {
             var vq = coarse2d() ? nearValve(ev) : null;
-            if (vq) { openVin(vq); return; }             // phone / touch: ≥ 44 px target → zoomed inset with 44 px buttons
+            if (vq) { if (VIN_EQ[vq]) openVin(vq); else openCard(vq); return; }   // phone / touch: ≥ 44 px target → zoomed inset (44 px buttons) or the card
             var id = hit2d(ev), vm2 = /^(valve|suction):(surge|surge2|gauge):([01])$/.exec(id || '');
             if (vm2) { if (vm2[1] === 'valve') toggleValve(vm2[2], +vm2[3]); else toggleSuction(+vm2[3]); }
             else if (id === 'dump:desander') doAct('ds-dump', null, ev);     // XV-103: the card's "Dump sand" (confirm first)

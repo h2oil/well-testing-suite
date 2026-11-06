@@ -136,11 +136,16 @@ module.exports = [
       assert.ok(!/Desander|T-202|LCV-202|XV-103|HV-104|DS-101/.test(t.join('|')), 'stub both out: nothing new drawn');
       const barX = (f) => f.filter((e) => e.op === 'fillRect' && e.args[1] === 235 && e.args[2] === 14 && e.args[3] === 58).map((e) => e.args[0]);
       assert.deepStrictEqual(barX(fr), [40, 95, 150, 205, 260], 'default strip: 5 bars, pitch 55');
+      const unitX = (f) => { const e = f.find((x) => x.op === 'fillText' && /^\(.+\)$/.test(String(x.args[0])) && x.args[2] === 227); return e && e.args[1]; };
+      assert.strictEqual(unitX(fr), 239, 'default strip: volume unit at its v3.3 x');
       stub.opts = { desander: true, surge2: true };
       redraw(app);
       fr = lastFrame(app, cv); t = frameTexts(fr);
       ['Desander', 'T-202', 'LCV-201', 'LCV-202', 'XV-103', 'HV-104', 'DS-101', 'SAND'].forEach((k) => assert.ok(t.indexOf(k) >= 0, k + ' drawn: ' + t.join('|')));
       assert.deepStrictEqual(barX(fr), [40, 82, 124, 166, 208, 250, 292], 'both in: 7 bars, pitch 42');
+      assert.strictEqual(unitX(fr), 277.5, 'both in: volume unit centred over the T-301A/B bars');
+      const hv = fr.findIndex((e) => e.op === 'fillText' && e.args[0] === 'HV-104');
+      assert.ok(hv >= 0 && fr[hv + 1] && fr[hv + 1].op === 'restore', 'HV-104 label drawn inside save/restore (textAlign not left behind)');
       assert.ok(t.some((x) => x === 'WHP · DS-101 ΔP') && t.some((x) => x === 'SURGE T-201 · T-202'), 'strip readouts name DS-101 / T-202');
       assert.ok(!/NaN|undefined|Infinity|\[object/.test(t.join('|')), 'no NaN text');
       // LCV-201 moves under T-202 (x 738, by + 28); T-202 fill at x 775
@@ -150,6 +155,7 @@ module.exports = [
       redraw(app);
       fr = lastFrame(app, cv);
       assert.deepStrictEqual(barX(fr), [40, 86, 132, 178, 224, 270], 'DS-101 only: 6 bars, pitch 46');
+      assert.strictEqual(unitX(fr), 253.5, 'DS-101 only: volume unit centred over the T-301A/B bars');
       const lab1 = fr.find((e) => e.op === 'fillText' && e.args[0] === 'LCV-201');
       assert.ok(lab1 && lab1.args[1] === 758 && lab1.args[2] === 225, 'T-202 out: LCV-201 at its v3.3 place');
       // dump states on the DS-101 label
@@ -194,6 +200,18 @@ module.exports = [
       assert.strictEqual(stub.calls.filter((c) => c[0] === 'setValve').length, 0, 'both out: nothing at the XV-202 slot');
       cv.dispatchEvent(new app.win.MouseEvent('click', canvasXY(app, cv, 306, L.cy + 20)));
       assert.strictEqual(stub.calls.length, 0, 'both out: nothing at the XV-103 slot');
+      // plan §9.2: with both out there is no DS-101 / T-202 zone — a click at either body opens neither card
+      const cardTag = () => { const c = app.el('wtsl_card'), b = c && !c.hidden && c.querySelector('.tt b'); return b ? String(b.textContent) : ''; };
+      cv.dispatchEvent(new app.win.MouseEvent('click', canvasXY(app, cv, 290, L.cy)));
+      assert.ok(!/DS-101|T-202/.test(cardTag()), 'both out: no DS-101 / T-202 card at the DS-101 body: ' + cardTag());
+      cv.dispatchEvent(new app.win.MouseEvent('click', canvasXY(app, cv, 775, L.by)));
+      assert.ok(!/DS-101|T-202/.test(cardTag()), 'both out: no DS-101 / T-202 card at the T-202 body: ' + cardTag());
+      // positive control: with both in, the same clicks open the DS-101 / T-202 cards
+      stub.opts = { desander: true, surge2: true }; redraw(app);
+      cv.dispatchEvent(new app.win.MouseEvent('click', canvasXY(app, cv, 290, L.cy)));
+      assert.strictEqual(cardTag(), 'DS-101', 'DS-101 in: its body opens the DS-101 card');
+      cv.dispatchEvent(new app.win.MouseEvent('click', canvasXY(app, cv, 775, L.by)));
+      assert.strictEqual(cardTag(), 'T-202', 'T-202 in: its body opens the T-202 card');
     }
   },
   {
@@ -213,10 +231,14 @@ module.exports = [
       assert.ok(!app.el('wtsl_vin') && stub.calls.length === 0, 'both out: no inset / call at the XV-202 slot');
       stub.opts = { surge2: true }; redraw(app);
       tap(775, L.by - 26);
-      const vin = app.el('wtsl_vin');
-      assert.ok(vin, 'T-202 in: the XV-202 tap opens an inset');
+      const vin = app.el('wtsl_vin'), card = app.el('wtsl_card');
+      const cardTag = card && !card.hidden && card.querySelector('.tt b') ? String(card.querySelector('.tt b').textContent) : '';
+      assert.ok((vin && !vin.hidden) || cardTag === 'T-202', 'T-202 in: the XV-202 tap opens its inset or the T-202 card (' + cardTag + ')');
+      if (vin) {                                         // never the T-301 inset for a T-202 valve (WP-L's renderVin owns its content)
+        assert.ok(!/T-301/.test(String(vin.getAttribute('aria-label') || '')), 'inset is not the T-301 inset: ' + vin.getAttribute('aria-label'));
+        assert.strictEqual(vin.querySelectorAll('[data-act="valve"][data-v^="gauge:"]').length, 0, 'no XV-301 buttons in the T-202 inset');
+      }
       assert.strictEqual(stub.calls.filter((c) => c[0] === 'setValve').length, 0, 'a phone tap never toggles a valve directly');
-      // (the inset's content for T-202 is WP-L's renderVin; this group checks only that the tap target exists and opens it)
     }
   },
   {
