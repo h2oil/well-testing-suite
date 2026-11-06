@@ -321,8 +321,9 @@ const HMI = [
       assert.deepStrictEqual(ids.slice(8), X.FAULTS_NEW.map((f) => f.id), 'then the new engine ids in engine order');
       const lbl = (id) => text(items[ids.indexOf(id)]);
       assert.strictEqual(lbl('sandFlowback'), 'Sand / proppant flow-back (clean-up)');
-      assert.strictEqual(lbl('desanderIsoPassing'), 'DS-101 upper isolation passing (dump interlock)');
-      assert.strictEqual(lbl('bpv2StuckClosed'), 'PCV-203 stuck closed (T-202 back-pressure)');
+      // default rig-up (both items out): their faults are marked armed (review fix); plain labels with the item in: 'review: … armed'
+      assert.strictEqual(lbl('desanderIsoPassing'), 'DS-101 upper isolation passing (dump interlock) (armed: DS-101 not in the rig-up)');
+      assert.strictEqual(lbl('bpv2StuckClosed'), 'PCV-203 stuck closed (T-202 back-pressure) (armed: T-202 not in the rig-up)');
       app.click(app.find('#wts_viz [data-act="more"]')); app.flush(30);
       live.setFault('sandFlowback', true); app.flush(50);
       assert.ok(app.findAll('.wtsl-toast').some((x) => /Sand \/ proppant flow-back \(clean-up\) ON/.test(text(x))), 'fault toast label');
@@ -398,7 +399,148 @@ const HMI = [
       } finally { t.restore(); }
       assert.strictEqual(app.consoleErrors().length, 0, 'no console errors');
     }
-  }
+  },
+  // ── review fixes (sim-equip review round) ──
+  {
+    name: 'WTSEQV L review: HUD tank lines keep their state words inside the 151 px cell — DS-101 state first (DUMPING / DUMP HELD / BYPASSED), short surge line with T-202 (full text, LCV-201 included, in the tooltip)',
+    wp: WP, integration: true,
+    run(app, assert) {
+      openWts(app);
+      const hud = app.el('wtsl_hud'), h = (k) => hud.querySelector('[data-h="' + k + '"]');
+      // 11 px mono measured at 6.02 px per character (1440 × 900): 151 px holds 25 characters
+      const FIT = 25;
+      const t = installStub(app, { flushing: true });
+      try {
+        app.flush(800);
+        let ds = text(h('tDs')), su = text(h('tSu'));
+        assert.ok(/^DS-101 DUMPING · sand \d+% · ΔP/.test(ds), 'state first: ' + ds);
+        assert.ok(ds.indexOf('DUMPING') + 'DUMPING'.length <= FIT, 'DUMPING inside the cell: ' + ds);
+        assert.ok(su.length <= FIT && /T-202 0%$/.test(su) && !/LCV-201/.test(su), 'short surge line with T-202 (' + su.length + ' chars): ' + su);
+        assert.ok(/^Surge .*T-202 0% · LCV-201 /.test(h('tSu').getAttribute('title') || ''), 'full surge line as tooltip: ' + h('tSu').getAttribute('title'));
+        t.set({ flushing: false, held: true }); app.flush(800);
+        ds = text(h('tDs'));
+        assert.ok(/^DS-101 DUMP HELD · /.test(ds) && ds.indexOf('HELD') + 4 <= FIT, 'held state first: ' + ds);
+        t.set({ held: false, patch: (s) => { s.desander.bypass = true; } }); app.flush(800);
+        ds = text(h('tDs'));
+        assert.ok(/^DS-101 BYPASSED · /.test(ds) && ds.indexOf('BYPASSED') + 8 <= FIT, 'bypass state first: ' + ds);
+        assert.strictEqual(h('tDs').getAttribute('title'), ds, 'DS-101 tooltip = the line');
+        // T-202 out: the v3.3 surge line (with LCV-201) is back
+        t.set({ surge2: false, patch: null }); app.flush(800);
+        assert.ok(/^Surge .*· LCV-201 /.test(text(h('tSu'))) && !/T-202/.test(text(h('tSu'))), 'v3.3 surge line: ' + text(h('tSu')));
+      } finally { t.restore(); }
+      assert.strictEqual(app.consoleErrors().length, 0, 'no console errors');
+    }
+  },
+  {
+    name: 'WTSEQV L review: DS-101 / T-202 faults switched on while the item is out are marked armed in the Scenarios menu and the toast; with the item in the labels are plain',
+    wp: WP, integration: true,
+    run(app, assert) {
+      const live = openWts(app);
+      app.flush(300);
+      app.click(app.find('#wts_viz [data-act="more"]')); app.flush(60);
+      let items = app.findAll('.wtsl-menu [data-act="fault"]');
+      const lbl = (id) => text(items.filter((b) => b.getAttribute('data-v') === id)[0]);
+      assert.strictEqual(lbl('desanderPlugged'), 'DS-101 liner plugged (armed: DS-101 not in the rig-up)', 'DS-101 fault armed');
+      assert.strictEqual(lbl('bpv2StuckClosed'), 'PCV-203 stuck closed (T-202 back-pressure) (armed: T-202 not in the rig-up)', 'T-202 fault armed');
+      assert.strictEqual(lbl('sandFlowback'), 'Sand / proppant flow-back (clean-up)', 'flow-back acts without DS-101: plain');
+      assert.strictEqual(lbl('pcvStuckClosed'), 'PCV-101 stuck closed', 'core faults plain');
+      app.click(app.find('#wts_viz [data-act="more"]')); app.flush(30);
+      live.setFault('desanderPlugged', true); app.flush(50);
+      assert.ok(app.findAll('.wtsl-toast').some((x) => /DS-101 liner plugged armed: acts when DS-101 is added to the rig-up/.test(text(x))), 'armed toast');
+      live.setFault('desanderPlugged', false); app.flush(50);
+      const t = installStub(app);
+      try {
+        app.flush(800);
+        app.click(app.find('#wts_viz [data-act="more"]')); app.flush(60);
+        items = app.findAll('.wtsl-menu [data-act="fault"]');
+        assert.strictEqual(lbl('desanderPlugged'), 'DS-101 liner plugged', 'DS-101 in: plain');
+        assert.strictEqual(lbl('bpv2StuckClosed'), 'PCV-203 stuck closed (T-202 back-pressure)', 'T-202 in: plain');
+        app.click(app.find('#wts_viz [data-act="more"]')); app.flush(30);
+      } finally { t.restore(); }
+      assert.strictEqual(app.consoleErrors().length, 0, 'no console errors');
+    }
+  },
+  {
+    name: 'WTSEQV L review: one toast per dump (started, complete) — the step messages stay on the card; a T-202 card left open after a rig-out shows no live values (actions disabled)',
+    wp: WP, integration: true,
+    run(app, assert) {
+      openWts(app);
+      const I = app.win.WTS_live._internals, real = I.sim();
+      app.flush(300);
+      // drive the dump events through the real engine with DS-101 in
+      real.setRigup(app.toWin({ desander: true })); app.flush(600);
+      const before = app.findAll('.wtsl-toast').length;
+      real.dumpDesander('start');
+      const seen = new Set(), grab = () => app.findAll('.wtsl-toast').forEach((x) => seen.add(text(x)));
+      grab();
+      for (let i = 0; i < 1200 && real.getState().desander.dump.phase !== 'idle'; i++) { real.advance(1); app.flush(5); grab(); }
+      app.flush(5); grab();
+      const all = Array.from(seen).join(' | ');
+      assert.ok(/dump started/.test(all), 'start toast: ' + all);
+      assert.ok(!/bleeding the accumulator|XV-103 open, flushing|equalising the accumulator|reopening the accumulator/.test(all), 'no step toasts: ' + all);
+      assert.ok(real.getState().desander.dump.count === 1 && /dump complete/.test(all), 'complete toast: ' + all + ' (' + before + ' before)');
+      // T-202 card: in, then taken out while the card is open
+      const t = installStub(app);
+      try {
+        app.flush(800);
+        const card = openCard(app, 'surge2');
+        assert.ok(card && cardBtn(app, 's2route') && /OPEN|SHUT/.test(text(card)), 'live card while in');
+        t.set({ surge2: false }); app.flush(800);
+        const c2 = app.el('wtsl_card');
+        const vals = Array.from(c2.querySelectorAll('.wtsl-kv .v')).map((v) => text(v));
+        assert.ok(vals.length > 5 && vals.every((v) => v === '—'), 'value rows blanked: ' + vals.join(', '));
+        const acts = Array.from(c2.querySelectorAll('[data-cref="act"] [data-act="s2route"], [data-cref="act"] [data-act="valve"]'));
+        assert.ok(acts.length === 4 && acts.every((b) => b.disabled), 'route and XV-202 buttons disabled while out');
+        assert.ok(/Not in the rig-up/.test(text(c2)) && /Out of rig-up/i.test(text(c2.querySelector('.wtsl-chip'))), 'out notice and chip');
+        t.set({ surge2: true }); app.flush(800);
+        assert.ok(cardBtn(app, 's2route') && !cardBtn(app, 's2route').disabled && /OPEN|SHUT/.test(text(app.el('wtsl_card'))), 'live again when it is in');
+      } finally { t.restore(); }
+      real.setRigup(app.toWin({ desander: false }));
+      assert.strictEqual(app.consoleErrors().length, 0, 'no console errors');
+    }
+  },
+  {
+    name: 'WTSEQV 3D review: T-202 focus frames it from +3° — no ray from the camera to T-202 crosses T-201, T-301, P-201, V-101 or the flare (EQ_BOX); new labels start hidden',
+    wp: WP,
+    run(app, assert) {
+      const I = app.win.WTS_3d && app.win.WTS_3d._internals;
+      assert.ok(I && I.FOCUS_TH && I.FOCUS_TH.surge2 === 3, 'surge2 focus azimuth 3°');
+      const f = I.FOCUS.surge2, B = I.EQ_BOX, tgt = f[0], r = f[1];
+      const box = (k) => ({ c: [0, 1, 2].map((i) => (B[k][0][i] + B[k][1][i]) / 2), s: [0, 1, 2].map((i) => B[k][1][i] - B[k][0][i]) });
+      const hitsAt = (thDeg) => { const th = thDeg * Math.PI / 180, hits = [];
+      [0.95, 1.19, 1.3].forEach((ph) => {
+        const cp = [tgt[0] + r * Math.sin(ph) * Math.sin(th), tgt[1] + r * Math.cos(ph), tgt[2] + r * Math.sin(ph) * Math.cos(th)];
+        [11.5, 12.5, 13.5].forEach((x) => [0.5, 3, 5.8].forEach((y) => [1.3, 2.3, 3.3].forEach((z) => {
+          const d = [x - cp[0], y - cp[1], z - cp[2]], L = Math.hypot(d[0], d[1], d[2]), u = d.map((v) => v / L);
+          ['surge', 'gauge', 'pump', 'separator', 'flare'].forEach((k) => { const b = box(k), tt = I.rayBox(cp, u, b.c, b.s); if (tt >= 0 && tt < L - 0.4) hits.push(k + '@' + ph); });
+        })));
+      });
+      return Array.from(new Set(hits)); };
+      assert.deepStrictEqual(hitsAt(I.FOCUS_TH.surge2), [], 'T-202 seen clear of the other vessels');
+      assert.ok(hitsAt(-18).some((k) => /^surge@/.test(k)), 'reference: the old −18° framing looks through T-201');
+      const src = fs.readFileSync(path.join(__dirname, '..', '32-wts-3d.js'), 'utf8');
+      assert.ok(/className = 'wts3d-chip';[^\n]*\n\s*el\.style\.visibility = 'hidden';/.test(src) && /className = 'wts3d-seg'; el\.style\.visibility = 'hidden';/.test(src),
+        'chips are created hidden until the first layout pass');
+    }
+  },
+  {
+    name: 'WTSEQV L review: a rating checked against an estimated SITHP with < 1.5 × margin shows ⚠ and asks for the measured SITHP (Rig-up status row and DS-101 card)',
+    wp: WP, integration: true,
+    run(app, assert) {
+      openWts(app);
+      const t = installStub(app, { patch: (s) => { s.desander.rating_psi = 5000; s.desander.sithp_psi = 3600; s.desander.sithpEst = true; s.desander.ratingOK = true; } });
+      try {
+        app.flush(1200);
+        const row = app.el('wtsl_rigup').querySelector('[data-k="ds-status"] .rv');
+        assert.ok(/rating 5,?000 psi ⚠ ≥ max SITHP 3600 psig \(estimated as 1\.2 × WHP — enter the measured SITHP\)$/.test(text(row)), 'status row: ' + text(row));
+        const card = openCard(app, 'desander');
+        assert.ok(/5,?000 psi ⚠/.test(text(card)) && /enter the measured SITHP/.test(text(card)), 'card rating row: ' + text(card));
+        t.set({ patch: (s) => { s.desander.rating_psi = 10000; s.desander.sithp_psi = 3600; s.desander.sithpEst = true; s.desander.ratingOK = true; } }); app.flush(1200);
+        assert.ok(/rating 10,000 psi ✓ ≥ max SITHP 3600 psig \(estimated\)$/.test(text(app.el('wtsl_rigup').querySelector('[data-k="ds-status"] .rv'))), 'ample margin: plain ✓');
+      } finally { t.restore(); }
+      assert.strictEqual(app.consoleErrors().length, 0, 'no console errors');
+    }
+  },
 ];
 // Recording stub: the real engine underneath (step / controls keep working), getState() = fakeEquipSnapshot(real, o)
 function stubSim(app, real, o) {

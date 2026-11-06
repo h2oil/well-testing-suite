@@ -249,7 +249,7 @@ var DEFAULTS = deepFreeze({ seed: 12345, speed: 10, speeds: [1, 10, 60, 600], hM
     plugFactor: 3, washFactor: 0.3, washCut: 3, slugCut: 1.5, bypassLeak: 0.10, warmFactor: 3,
     dump: { isoS: 8, bleedS: 300, flushS: 600, equalS: 120, reopenS: 8, bleedTo_psig: 50, bleedTimeoutS: 600, equalTol_psi: 75,
       isoPassTauS: 30 },
-    autoSp: 0.80, chokeCoupling: true },
+    autoSp: 0.80, chokeCoupling: true, pshhFrac: 0.95, gvfGasLo: 0.95, gvfGasHi: 0.995 },
   // sand in the well stream (default none): lb per 1,000 bbl liquid, lb/MMscf gas, size distribution (µm, σg),
   // flow-back clean-up scenario, choke / separator thresholds, steel-equivalent erosion screening constants
   sand: { pptb: 0, lbPerMMscf: 0, d50_um: 150, sigmaG: 2.0, rateExp: 1.5,
@@ -1758,7 +1758,8 @@ function create(flowIn, opts) {
       var tgtW = Pwh_ss * (1 + (N.on ? N.whpSigma * X.xiW : 0)) - Rr.drawdownFrac * Pwh_ss * mlog(1 + X.tFlow / 600) / LN10;
       X.Pwh += (tgtW - X.Pwh) * (1 - mexp(-h / Rr.drawdownTau));
     } else {
-      var SIT = Rr.sithpFactor * Pwh_ss;
+      // the entered SITHP (desander.sithp_psig) is the well's shut-in pressure; blank = the legacy sithpFactor × WHP estimate
+      var SIT = DD.sitEst === false ? DD.sit : Rr.sithpFactor * Pwh_ss;
       X.Pwh = SIT - (SIT - X.P0shut) / (1 + X.tShut / Rr.buildupTau);
     }
     var PBt = fEn > 0.01 ? X.Pwh - (Pwh_ss - Pci_ss) * X.fInst * X.fInst : pDown();
@@ -2616,7 +2617,7 @@ function create(flowIn, opts) {
       ' … ' + uq(DD.tMax, 'temperature', 0) + '): well temperature outside the desander temperature class');
     return t.join(' · ');
   };
-  MSG.DES_PSHH = function (v, l) { return 'PSHH-103 ' + TAGS.desander + ' inlet ' + uq(v, 'pressureG') + ' ≥ rating ' + uq(l, 'pressure', 0) + ' — ' + TAGS.esd + ' (upstream of ' + TAGS.desander + ') shuts in the well'; };
+  MSG.DES_PSHH = function (v, l) { return 'PSHH-103 ' + TAGS.desander + ' inlet ' + uq(v, 'pressureG') + ' ≥ set point ' + uq(l, 'pressureG', 0) + ' (' + rnd0(num(cfg.desander.pshhFrac, 0.95) * 100) + ' % of the ' + uq(DD.rating, 'pressure', 0) + ' rating) — ' + TAGS.esd + ' (upstream of ' + TAGS.desander + ') shuts in the well'; };
   MSG.DES_RATE = function (v, l) {
     return TAGS.desander + ' inlet velocity ' + uq(v, 'velocity') + (v < l ? ' < ' + uq(l, 'velocity', 0) + ': below turndown — weak swirl' : ' > ' + uq(l, 'velocity', 0) + ': over-rate — carry-over');
   };
@@ -2657,10 +2658,15 @@ function create(flowIn, opts) {
     var TF = Tesd_ss, TR = TF + RANK, Pa = mmax(Pci_ss + PSC, PSC);
     var rhoO = num(fl.rhoOil, 62.4 * SGo), rhoW = num(fl.rhoWat, 62.4), Mg = num(fl.Mg, 28.9647 * SGg);
     DD.rho = s1.rhom; DD.rhoSI = s1.rhom * 16.018463;
-    var liquid = qLiq >= 1e-6, mu, rc, fg = 1;
-    if (liquid) { var wc = Qw / qLiq; mu = (1 - wc) * sandMuDeadOil(API, TF) + wc * sandMuWater(TF); rc = (1 - wc) * rhoO + wc * rhoW; }
-    else { var Zd = Zf(Pa, TR); mu = sandMuGas(SGg, TF, Zd, Pa); rc = Pa * Mg / (Zd * 10.7316 * TR); }   // dry gas: gas carrier
-    DD.carrier = liquid ? 'liquid' : 'gas'; DD.mu = mu; DD.rhoC = rc; DD.drho = mmax(rhoS - rc, 1);
+    // carrier blended by GVF (§4.2): liquid below gvfGasLo (0.95), gas above gvfGasHi (0.995), linear in between, so a trace
+    // of liquid in a dry-gas well does not switch the cut size; with no flow area (qT 0) GVF is unknown: liquid if any liquid
+    var gvf0 = qT > 0 ? clamp(1 - qLiq * BBL / 86400 / qT, 0, 1) : (qLiq >= 1e-6 ? 0 : 1);
+    var gLo = clamp(num(C.gvfGasLo, 0.95), 0, 0.999), gHi = mmax(clamp(num(C.gvfGasHi, 0.995), 0, 1), gLo + 1e-6);
+    var wG = qLiq > 0 ? clamp((gvf0 - gLo) / (gHi - gLo), 0, 1) : 1, mu = 0, rc = 0, fg = 1;
+    if (wG < 1) { var wc = Qw / qLiq; mu = (1 - wG) * ((1 - wc) * sandMuDeadOil(API, TF) + wc * sandMuWater(TF)); rc = (1 - wG) * ((1 - wc) * rhoO + wc * rhoW); }
+    if (wG > 0) { var Zd = Zf(Pa, TR); mu += wG * sandMuGas(SGg, TF, Zd, Pa); rc += wG * Pa * Mg / (Zd * 10.7316 * TR); }
+    DD.carrier = wG < 0.5 ? 'liquid' : 'gas'; DD.wGas = wG; DD.mu = mu; DD.rhoC = rc; DD.drho = mmax(rhoS - rc, 1);
+    var liquid = wG < 1;
     DD.eroN = num(E.n, 2.6);
     DD.eroCoef = sandErosionReducer(1, 0.3048, s1.ID * 0.0254, bean / 64 * 0.0254, null, 0, E) / 0.0254;   // mpy per lb/d at 1 ft/s, C2 = 1
     if (!isFin(DD.eroCoef)) DD.eroCoef = 0;
@@ -2670,7 +2676,7 @@ function create(flowIn, opts) {
       DD.vss = qT / mmax(num(C.Ain_ft2, 0.0341), 1e-4);
       DD.dPss = sandDp(DD.rho, DD.vss, num(C.K_dp, 6));
       var gvf = clamp(1 - qLiq * BBL / 86400 / qT, 0, 1); DD.gvf = gvf;
-      if (liquid) { var kn = clamp(num(C.gvfKnee, 0.9), 0, 0.99); fg = 1 + num(C.gvfGain, 0.5) * mpow(mmax(0, (gvf - kn) / (1 - kn)), 2); }   // ASSUMPTION
+      if (liquid) { var kn = clamp(num(C.gvfKnee, 0.9), 0, 0.99); fg = 1 + (1 - wG) * num(C.gvfGain, 0.5) * mpow(mmax(0, (gvf - kn) / (1 - kn)), 2); }   // ASSUMPTION; → 1 with the gas carrier
       DD.d50ss = sandCut(mu, DD.drho, DD.vss, C) * fg;
       // bean impact velocity proxy: upstream-density continuity at the bean, gas expanded to the throat pressure (isothermal),
       // capped by the homogeneous-mixture speed of sound at the throat
@@ -2681,7 +2687,7 @@ function create(flowIn, opts) {
       DD.vtss = Ured * den;
       var gvft = den > 0 ? gvf * phi / den : 0, rgt = Pt * Mg / (Zt * 10.7316 * TR);
       var cg = msqrt(mmax(num(cfg.sep.pcv.k, 1.28), 1) * Zt * 1545.35 * TR / mmax(Mg, 1) * 32.174);
-      DD.cmix = sandMixSound(gvft, rgt, cg, liquid ? rc : rhoO, num(E.cL_fts, 4000));
+      DD.cmix = sandMixSound(gvft, rgt, cg, qLiq > 0 ? (Qw / qLiq) * rhoW + (1 - Qw / qLiq) * rhoO : rhoO, num(E.cL_fts, 4000));   // liquid density
       if (!isFin(DD.vtss)) DD.vtss = 0;
       if (!isFin(DD.cmix)) DD.cmix = 0;
     }
@@ -2929,7 +2935,10 @@ function create(flowIn, opts) {
       evalA(A, bad, !bad, DD.ratingOK ? Twh_ss : DD.sit, DD.ratingOK ? DD.tMax : DD.rating, MSG.DES_RATING, false);
       // PSHH-103: the one desander trip (ESD; SDV-101 is upstream of DS-101, so the shut-in protects it)
       A = aDef('DES_PSHH', 'PSHH-103', 'trip', 'desander', 'p');
-      evalA(A, fl && DX.PBu >= DD.rating, !fl || DX.PBu < 0.99 * DD.rating, DX.PBu, DD.rating, MSG.DES_PSHH, false);
+      // set at pshhFrac (0.95) × rating so the 5 s SDV-101 stroke ends below the rating; evaluated whenever SDV-101 is open
+      // (not only while the design flow is valid); clears 1 % of the rating below the set point
+      var pshF = clamp(num(C.pshhFrac, 0.95), 0.5, 1), pshL = pshF * DD.rating, esdOpen = X.esdTravel > 0.01;
+      evalA(A, esdOpen && DX.PBu >= pshL, !esdOpen || DX.PBu < (pshF - 0.01) * DD.rating, DX.PBu, pshL, MSG.DES_PSHH, false);
       var v = DX.vIn, out = fl && !byp && (v < DD.vMin || v > DD.vMax), back = !fl || byp || (v >= 1.05 * DD.vMin && v <= 0.95 * DD.vMax);
       A = aDef('DES_RATE', TAGS.desander, 'warn', 'desander', 'b', true);   // grace: not during start-up
       evalA(A, out, back, v, v < DD.vMin ? DD.vMin : DD.vMax, MSG.DES_RATE, true);
@@ -3013,6 +3022,9 @@ function create(flowIn, opts) {
     }
     if (c === 'resume') {
       var to = DS.heldFrom || 'equalise';
+      // a dump held while reopening goes back to equalising with its time served, so interlock 2 (|PB − Pacc| < equalTol_psi)
+      // is checked again before the upper isolation reopens: the accumulator was isolated while DS-101 moved through the ESD
+      if (to === 'reopen') { to = 'equalise'; DX.phaseT = num(cfg.desander.dump.equalS, 120); }
       DS.phase = to; DS.heldFrom = '';            // the elapsed time of the interrupted phase is kept; its gates still apply
       desEmit(to, TAGS.desander + ' dump resumed: ' + DUMP_TXT[to], false);
       return { ok: true, msg: TAGS.desander + ' dump resumed (' + to + ')' };
@@ -3331,7 +3343,9 @@ function create(flowIn, opts) {
         for (var it = 0; it < 12; it++) { var m = 0.5 * (a + b); if (clo * msqrt(m - blo) + chi * msqrt(m - bhi) > q) b = m; else a = m; }
         Ph = 0.5 * (a + b); qlo = clo * msqrt(Ph - blo); qhi = chi * msqrt(mmax(0, Ph - bhi));
       }
-      X2.Ph = Ph;
+      // the split pressure Ph only sets the shares: the dump back-pressure (and the reported header pressure) is the lower vessel
+      // pressure, as on the single routes (Pd = vessel pressure, no inlet loss), so opening a second parallel path never raises it
+      X2.Ph = blo;
       if (qlo + qhi > 0) s2 = (lo1 ? qhi : qlo) / (qlo + qhi);
       else s2 = mabs(b1 - b2) <= 0.5 ? (c1 + c2 > 0 ? c2 / (c1 + c2) : 0) : (lo1 ? 0 : 1);   // no liquid: blow-by to the lower-pressure branch
       F2.s2 = s2; F2.s1 = 1 - s2;
@@ -3671,7 +3685,7 @@ function create(flowIn, opts) {
     u.tFull_s = net > 1e-9 ? mmax(0, (C.lshh * cap2 - X2.VliqU) / net) : null;
     u.pos = u2pos; u.moving = u2pos !== surge2Tgt() || hold2; u.fill_bpd = F2.in2 * 86400;
     u.route = routeOf(); u.share = F2.act ? F2.s2 : 0;
-    u.Ph = F2.act ? (F2.x1 > 0 ? X2.Ph : X2.Pu) : X.Pu;
+    u.Ph = F2.act ? (F2.x1 > 0 ? mmin(X.Pu, X2.Pu) : X2.Pu) : X.Pu;   // both open: the lower vessel pressure (= the dump back-pressure, §5.2)
     u.bpv.u = X2.ubpv; u.blanket.u = X2.ublk; u.blanket.held = F2.held; u.psv.lifting = psvULift2;
     var tId = ptrip.XFER2_DRYRUN ? 'XFER2_DRYRUN' : (ptrip.LSHH_GT ? 'LSHH_GT' : null), rb = tId ? tripBlock(tId) : null;
     tr.on = F2.xCmd > 0; tr.tripped = !!tId; tr.failed = !!faults.xfer2StuckClosed; tr.blocked = pumpBlocked; tr.q_bpd = F2.xBpd; tr.x = F2.xCmd;

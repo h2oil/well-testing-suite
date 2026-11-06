@@ -626,4 +626,21 @@ module.exports = [
       balanced(assert, s, 1e-9, 'app');
     },
   },
+  {
+    name: 'WTSS2 review: a second open path never raises the dump back-pressure — route both: header Ph ≤ min(T-201, T-202) + 0.05 psi every 10 s for 1 h (single routes: Ph = the vessel pressure)',
+    wp: WP, opts: false,
+    run(app, assert) {
+      const sim = mk({ config: { noise: { on: false } } });
+      sim.setSurgeRoute('both');
+      let worst = -Infinity, n = 0;
+      run(sim, 3600, 10, (x) => {
+        if (x.surge2.route === 'both') { n++; worst = Math.max(worst, x.surge2.Ph - Math.min(x.surge.P, x.surge2.P)); }
+        return false;
+      });
+      assert.ok(n > 300 && worst <= 0.05, 'Ph − min(P) worst ' + worst.toFixed(3) + ' psi over ' + n + ' samples');
+      const s = st(sim);
+      assert.ok(s.surge2.share > 0.3 && s.surge2.share < 0.7, 'still shared: ' + s.surge2.share);
+      balanced(assert, s, 1e-9, 'both');
+    },
+  },
 ];

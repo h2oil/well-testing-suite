@@ -178,7 +178,7 @@ var DEFAULTS_NEW = {
     plugFactor: 3, washFactor: 0.3, washCut: 3, slugCut: 1.5, bypassLeak: 0.10, warmFactor: 3,
     dump: { isoS: 8, bleedS: 300, flushS: 600, equalS: 120, reopenS: 8, bleedTo_psig: 50, bleedTimeoutS: 600, equalTol_psi: 75,
       isoPassTauS: 30 },
-    autoSp: 0.80, chokeCoupling: true },
+    autoSp: 0.80, chokeCoupling: true, pshhFrac: 0.95, gvfGasLo: 0.95, gvfGasHi: 0.995 },
   sand: { pptb: 0, lbPerMMscf: 0, d50_um: 150, sigmaG: 2.0, rateExp: 1.5,
     flowback: { W0_lbph: 200, tau_h: 6, d50_um: 400, sigmaG: 1.5 },
     chokeWarn_lbd: 5, chokeAlarm_lbd: 50, sepWarnFrac: 0.10,

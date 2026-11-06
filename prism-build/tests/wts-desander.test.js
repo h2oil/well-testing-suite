@@ -881,4 +881,106 @@ module.exports = [
       }
     },
   },
+  // ── review fixes (sim-equip review round) ──
+  {
+    name: 'WTSDS review: a dump held while reopening goes back to equalising on resume — interlock 2 (|PB − Pacc| < 75 psi) holds before the isolation reopens',
+    wp: WP,
+    run(app, assert) {
+      const s = mk(app, { rig: { desander: true }, seed: 1, cfg: SAND10 });
+      adv(s, 60, 1);
+      assert.ok(s.dumpDesander('start').ok, 'start');
+      let n = 0;
+      while (s.getState().desander.dump.phase !== 'reopen' && n++ < 6000) s.advance(0.5);
+      assert.strictEqual(s.getState().desander.dump.phase, 'reopen', 'dump reached reopen');
+      s.tripESD('test');
+      adv(s, 1800, 10);
+      let st = J(s.getState());
+      assert.ok(st.desander.dump.phase === 'held' && st.desander.dump.heldFrom === 'reopen', 'held at reopen');
+      assert.ok(s.resetESD().ok, 'ESD reset');
+      s.advance(1);
+      st = J(s.getState());
+      assert.ok(Math.abs(st.desander.Pout - st.desander.dump.Pacc) > 1000, 'DS-101 and the accumulator far apart after the shut-in: ' +
+        st.desander.Pout.toFixed(0) + ' / ' + st.desander.dump.Pacc.toFixed(0));
+      const r = s.dumpDesander('resume');
+      assert.ok(r.ok && /equalise/.test(r.msg), 'resumed into equalise: ' + r.msg);
+      let prev = J(s.getState()), first = null;
+      for (let i = 0; i < 4000 && !first; i++) {
+        s.advance(0.25);
+        const x = J(s.getState());
+        if (x.desander.dump.phase === 'reopen') first = prev; else prev = x;
+      }
+      assert.ok(first && first.desander.dump.phase === 'equalise', 'the step before the reopen was equalising');
+      assert.ok(Math.abs(first.desander.Pout - first.desander.dump.Pacc) < 75 + 5, 'interlock 2 before the reopen (PB still rising after the restart: ± 5 psi in one 0.25 s step): |PB − Pacc| ' +
+        (first ? Math.abs(first.desander.Pout - first.desander.dump.Pacc).toFixed(1) : '—'));
+      adv(s, 30, 1);
+      assert.strictEqual(s.getState().desander.dump.phase, 'idle', 'dump completes');
+    },
+  },
+  {
+    name: 'WTSDS review: an entered SITHP drives the wellhead shut-in build-up (5,200 psig, not 1.2 × WHP); 6,000 psig on a 5,000 psi DS-101 trips PSHH-103 on the restart',
+    wp: WP,
+    run(app, assert) {
+      const s = mk(app, { rig: { desander: true }, cfg: { noise: { on: false }, desander: { rating_psi: 5000, sithp_psig: 5200 } } });
+      adv(s, 60, 1);
+      s.tripESD('test');
+      adv(s, 4 * 3600, 20);
+      const st = J(s.getState());
+      assert.within(st.nodes.wellhead.P, 5100, 5200, 'WHP builds towards the entered SITHP: ' + st.nodes.wellhead.P);
+      const b = mk(app, { rig: { desander: true }, cfg: { noise: { on: false } } });
+      adv(b, 60, 1); b.tripESD('test'); adv(b, 4 * 3600, 20);
+      assert.within(J(b.getState()).nodes.wellhead.P, 3500, 3600, 'blank SITHP: legacy 1.2 × WHP build-up');
+      const p = mk(app, { rig: { desander: true }, cfg: { noise: { on: false }, desander: { rating_psi: 5000, sithp_psig: 6000 } } });
+      adv(p, 60, 1); p.tripESD('test'); adv(p, 4 * 3600, 20);
+      assert.ok(p.resetESD().ok, 'ESD reset');
+      let trip = null; p.on('trip', (x) => { if (!trip) trip = x; });
+      adv(p, 120, 0.5);
+      const sp = J(p.getState());
+      assert.ok(sp.esd.tripped && sp.esd.cause === 'DES_PSHH' && trip && trip.tag === 'PSHH-103', 'PSHH-103 on the restart: ' + sp.esd.cause);
+    },
+  },
+  {
+    name: 'WTSDS review: PSHH-103 trips at 0.95 × rating (clears below 0.94 ×) whenever SDV-101 is open, also with a zero design velocity',
+    wp: WP,
+    run(app, assert) {
+      // inlet ≈ 4,800 psig: above 0.95 × 5,000 = 4,750, below the rating
+      const p = mk(app, { rig: { desander: true }, cfg: { noise: { on: false }, desander: { rating_psi: 5000, sithp_psig: 6000 } }, flow: hpFlow(app, 4800) });
+      adv(p, 30, 1);
+      let st = J(p.getState());
+      assert.ok(st.esd.tripped && st.esd.cause === 'DES_PSHH', 'trip below the rating: ' + st.esd.cause);
+      const A = st.alarmLog.filter((e) => e.id === 'DES_PSHH' && e.type === 'raise')[0];
+      assert.ok(A && /set point 4750 psig \(95 % of the 5,?000 psi rating\)/.test(A.msg), A && A.msg);
+      const q = mk(app, { rig: { desander: true }, cfg: { noise: { on: false }, desander: { rating_psi: 5000, sithp_psig: 6000 } }, flow: hpFlow(app, 4650) });
+      adv(q, 60, 1);
+      assert.ok(!J(q.getState()).esd.tripped, 'no trip at 4,700 psig (below 0.95 × rating)');
+      // zero design velocity (DD.ok false): PSHH-103 still evaluates while SDV-101 is open
+      const z = mk(app, { rig: { desander: true }, cfg: { noise: { on: false }, desander: { rating_psi: 5000, sithp_psig: 6000 } },
+        flow: hpFlow(app, 5150), edit: (f) => { f.segs[1].vel = 0; } });
+      adv(z, 30, 1);
+      st = J(z.getState());
+      assert.ok(!st.desander.flowing && st.esd.tripped && st.esd.cause === 'DES_PSHH', 'trip with no design flow: ' + st.esd.cause);
+    },
+  },
+  {
+    name: 'WTSDS review: the cut-size carrier is blended by GVF — a trace of liquid in a dry-gas well (Qo 0 → 1e-5 bbl/d) moves capture by < 0.01; the SAMPLE_FLOW anchors stay liquid',
+    wp: WP,
+    run(app, assert) {
+      const one = (qo) => {
+        const s = mk(app, { rig: { desander: true }, seed: 1, cfg: { noise: { on: false }, sand: { lbPerMMscf: 1 } }, flow: flowOf(app, (f) => { f.inputs.Qo = qo; f.inputs.Qw = 0; }) });
+        adv(s, 600, 10);
+        return J(s.getState());
+      };
+      const a = one(0), b = one(1e-5);
+      assert.strictEqual(a.desander.carrier, b.desander.carrier, 'same carrier: ' + a.desander.carrier + ' / ' + b.desander.carrier);
+      assert.ok(Math.abs(a.desander.eff - b.desander.eff) < 0.01, 'capture ' + a.desander.eff + ' → ' + b.desander.eff);
+      assert.rel(b.desander.d50c_um, a.desander.d50c_um, 0.01, 'cut size continuous');
+      assert.ok(b.sand.toChoke_lbd < 1e-3, 'sand to the choke stays a trace: ' + b.sand.toChoke_lbd);
+      // a sweep through the blend band (GVF 0.95 … 0.995) has no step: neighbouring rates move capture by < 0.05
+      let last = null;
+      [0, 1, 30, 60, 100, 150, 200, 300, 500].forEach((qo) => {
+        const e = one(qo).desander.eff;
+        if (last !== null) assert.ok(Math.abs(e - last) < 0.05, 'no step at Qo ' + qo + ': ' + last + ' → ' + e);
+        last = e;
+      });
+    },
+  },
 ];

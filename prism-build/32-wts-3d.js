@@ -152,6 +152,9 @@ var FOCUS = {
   separator:[[5.6,2.0,0],11], surge:[[10.2,3.2,4.0],11], pump:[[20.7,0.6,6.0],6], gauge:[[16.4,1.6,4.0],11],
   flare:[[19.5,5,-4.5],18], desander:[[-10.2,1.6,-2.2],7], surge2:[[12.5,3.2,2.3],10]
 };
+// fixed focus azimuth (deg) for items that another vessel hides from the usual -18° side: T-202 sits behind T-201 there,
+// so it is framed from +3° (between T-201 and T-301; wts3d framing check)
+var FOCUS_TH = { surge2:3 };
 // Equipment halos [x, z, radius] and blob shadows [x, z, sx, sz] (optional rows only while the item is in)
 var HALO = { wellhead:[-15, 0, 1.7], esd:[-11.9, 0.5, 1.3], choke:[-7.2, 0, 2.3], heater:[-1.4, 0.3, 2.5], separator:[5.6, 0, 3.9],
              flare:[19.5, -4.5, 1.4], surge:[10.2, 4.0, 1.8], pump:[20.4, 5.9, 1.1], gauge:[16.4, 4.0, 3.2],
@@ -3117,6 +3120,7 @@ function createHandle(THREE, container, opts) {
   var chips = [], segChips = [], chipById = {};
   function mkChip(id) {
     var el = doc.createElement('div'); el.className = 'wts3d-chip'; el.setAttribute('data-st', 'ok'); el.setAttribute('data-id', id);
+    el.style.visibility = 'hidden';                 // until the first layout pass places it (no stray label at 0,0 while building)
     el.innerHTML = '<div class="h"><b class="n"></b> <span class="tt"></span> <i class="g"></i></div><div class="v"><span class="s0"></span><u class="u0"></u><span class="ar"></span><span class="s1"></span><u class="u1"></u><span class="rg"></span></div><div class="rows"></div>';
     labelsEl.appendChild(el);
     var q = function (s) { return el.querySelector(s); };
@@ -3134,7 +3138,7 @@ function createHandle(THREE, container, opts) {
   }
   EQ_IDS.forEach(mkChip);
   SEG_CHIPS.forEach(function (sc) {
-    var el = doc.createElement('div'); el.className = 'wts3d-seg'; labelsEl.appendChild(el);
+    var el = doc.createElement('div'); el.className = 'wts3d-seg'; el.style.visibility = 'hidden'; labelsEl.appendChild(el);
     segChips.push({ def:sc, el:el, txt:'', st:'ok', w:90, h:18, measure:true, vis:false, x:-999, y:-999, anchor:new V3().fromArray(sc.at), sx:0, sy:0, behind:false, dRel:1, show:false, op:-1 });
   });
   var allChips = chips.concat(segChips);
@@ -4447,6 +4451,7 @@ function createHandle(THREE, container, opts) {
     var f = FOCUS[id]; if (!f || !optIn(N.rig, id)) return; markInput(); userMoved = true;
     var th = cam.th, d = ((th + 18 * Math.PI / 180) % (2 * Math.PI) + 3 * Math.PI) % (2 * Math.PI) - Math.PI;
     if (Math.abs(d) > Math.PI / 3) th = -18 * Math.PI / 180;
+    if (FOCUS_TH[id] != null) th = FOCUS_TH[id] * Math.PI / 180;
     startTween({ tgt:f[0], r:f[1], th:th, ph:clamp(cam.ph, 0.95, 1.3) }, 0.9);
   });
   H.select = guard(function (id) { selected = id && EQ_IDS.indexOf(id) >= 0 && optIn(N.rig, id) ? id : null; labelDirty = true; layoutDirty = true;
@@ -4550,7 +4555,7 @@ function mount(container, opts) {
 // ═════════════════════════════════════════════════════════════════════════
 var _internals = {
   PALETTE:PALETTE, STATUS_MAP:STATUS_MAP, FIT_BOX:FIT_BOX, PROCESS_BOX:PROCESS_BOX, FIT_PTS:FIT_PTS, V101_BOX:V101_BOX, PROXIES:PROXIES, VALVE_PROXIES:VALVE_PROXIES, ROUTES:ROUTES,
-  TIERS:TIERS, VIEWS:VIEWS, FOCUS:FOCUS, STEP:STEP, NULLABLE:NULLABLE, ANCHORS:ANCHORS, CHAIN_DEF:CHAIN_DEF,
+  TIERS:TIERS, VIEWS:VIEWS, FOCUS:FOCUS, FOCUS_TH:FOCUS_TH, STEP:STEP, NULLABLE:NULLABLE, ANCHORS:ANCHORS, CHAIN_DEF:CHAIN_DEF,
   pipeRadius:pipeRadius, buildRoute:buildRoute, routeLength:routeLength, routeSample:routeSample,
   capHalfWidth:capHalfWidth, vertCapRadius:vertCapRadius, vesselProfile:vesselProfile, oilColor:oilColor, velToScene:velToScene,
   flameLength:flameLength, phaseFractions:phaseFractions, niceRange:niceRange, pickTier:pickTier, lodForDistance:lodForDistance,

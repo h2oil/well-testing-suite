@@ -32,7 +32,7 @@ only with the lead's agreement), **C** could. **Code style:** the Round-7 source
 | D1 | Default state | Both items are **optional rig-up items, out by default** (`optional:true, def:false`). With both out and sand 0: engine results identical to v3.3 (checked against a frozen copy of the v3.3 engine, §7), 3D scene identical (optional tables filtered by the rig-up, §8.1), 2D schematic identical (each schematic row has a legacy variant drawn while its new item is out, §8.2). **What every user still sees change:** seven new Dynamic Simulation inputs (they also appear in the page report's Inputs), eight new Scenarios entries after the v3.3 ones, two new Rig-up switches (their rows are `rp-skip` while out, so the report rows stay as in v3.3) | The default spread, `SAMPLE_FLOW`, the balance tests, Mini WellOS and every saved v3.3 rig-up and project file keep their numbers and pictures; the per-substep budget is already at the edge (§7). The release note says what changes |
 | D2 | Backward compatibility of the rig-up request | A **missing** key takes the item's default (core = in, optional = out); an optional item is in only when its value is strictly `true` | Today a missing key means "in" (normRigup, setRigReq, getRigup, setRigNow(null), 38 applyFlow / fullRig / renderRig, 32 rigSigOf). Without D2 every old `wts_sim_rigup` and project file would suddenly carry T-202 and DS-101 |
 | D3 | Signature and `full` | `sig` grows to 10 characters by **appending** `desander`, `surge2` (default `'1111111100'`); `full` = all **core** items in; new `extras` = optional items in | `setRigNow` re-derives only when the sig changes, so the new keys must be in it; the first 8 characters keep their meaning; `full` assertions and "(full rig-up)" texts stay right |
-| D4 | Desander position and pressure class | DS-101 sits inside segment 1 (`esd_choke`): WH-101 → SDV-101 → **DS-101** → CK-101. SDV-101 stays nearest the well and also isolates the desander. DS-101 must match the flowhead / SDV-101 pressure class and be rated for the **maximum shut-in wellhead pressure** (new input, estimated as 1.2 × flowing WHP when blank), so it has no PSV. A rating below it, or a well temperature outside the rating's temperature class, is a design **alarm** (`DES_RATING`); flowing with the desander inlet at or above the rating trips the ESD (**PSHH-103**, the one desander trip) | Owner requirement (upstream of the choke); protects the bean and everything downstream. The engine never shows the desander SITHP dynamically (its only shut-in, SDV-101, is upstream of it), so the design check and PSHH-103 are the protection that the "no PSV" argument relies on |
+| D4 | Desander position and pressure class | DS-101 sits inside segment 1 (`esd_choke`): WH-101 → SDV-101 → **DS-101** → CK-101. SDV-101 stays nearest the well and also isolates the desander. DS-101 must match the flowhead / SDV-101 pressure class and be rated for the **maximum shut-in wellhead pressure** (new input, estimated as 1.2 × flowing WHP when blank; an entered value is also the wellhead's shut-in build-up target, review fix), so it has no PSV. A rating below it, or a well temperature outside the rating's temperature class, is a design **alarm** (`DES_RATING`); the desander inlet at or above 0.95 × the rating with SDV-101 open trips the ESD (**PSHH-103**, the one desander trip) | Owner requirement (upstream of the choke); protects the bean and everything downstream. The engine never shows the desander SITHP dynamically (its only shut-in, SDV-101, is upstream of it), so the design check and PSHH-103 are the protection that the "no PSV" argument relies on |
 | D5 | Desander physics | ΔP = K·ρmix·v_in²/9266 (velocity head, K 6); cut size d50c from a Plitt / Stokes velocity law with turndown, re-entrainment and high-GVF factors; carrier = blended liquid, or gas (Lee-Gonzalez-Eakin viscosity) for a well with no liquid; capture = log-normal PSD integrated over the Plitt grade-efficiency curve (m = 2) through precomputed tables, one for formation sand and one for flow-back proppant, weighted by mass; efficiency falls to 0 between 90 % and 100 % accumulator fill | research.md §1.3–1.7; table lookup keeps the substep cheap; the gas carrier keeps a dry-gas well finite |
 | D6 | Sand in the well stream | Inputs sand rate (lb per 1,000 bbl liquid, and lb/MMscf for gas), median size and spread. **Default 0** in the engine and in the host form. A **"Sand / proppant flow-back"** scenario (200 lb/h decaying with τ 6 h, proppant size 400 µm, σg 1.5, scaled by the choke opening) is the one-click demo; the DS-101 card says how to add sand when there is none | A non-zero default would add alarms and numbers to every existing user's default spread. With 0, v3.3 projects open unchanged |
 | D7 | Dump | Operator **"Dump sand"** (card, 3D valve, 2D glyph, phone inset) runs the published sequence isolate → bleed → flush → equalise → reopen (8 + ≥ 300 + 600 + ≥ 120 + 8 s) with a scalar accumulator pressure and the two interlocks: flush (XV-103 open) only once the accumulator is bled below 50 psig, reopen only within 75 psi of the desander pressure. An ESD trip mid-dump **holds** the sequence (XV-103 and the bleed shut, accumulator isolated) until the operator resumes or aborts after the ESD reset. The well keeps flowing; sand caught meanwhile goes to the 20 gal upper buffer. Optional auto-dump at LAH (blocked after a failed dump). Bleed gas and flush water are visual only (not in the balances) | Realistic practice (research §1.7) without a shut-in; the interlocks are what make dumping a wellhead-pressure vessel to an atmospheric skip safe, and the hazardous failure (passing upper isolation) can be shown |
@@ -160,6 +160,9 @@ the `null`/`undefined` restore in `setRigNow` (L2268: null → the item's defaul
 (`wts-rigup.test.js` L118). By D11 the effective `surge2` implies the effective `surge`.
 
 ### 3.3 `setRigNow` additions
+- Note (review): switching an optional item in and straight back out at t = 0 leaves the same short rig-change transient as a
+  core item does in v3.3 (heater out → in); reset clears it apart from the `alarmVersion` / `rigup.v` counters and the reset
+  log entry. No change.
 - `RIG_TXT.desander = [TAGS.desander, 'out of the rig-up (well stream straight to the choke)', 'in line upstream of the choke']`,
   `RIG_TXT.surge2 = [TAGS.surge2, 'out of the rig-up', 'in the rig-up (standby: XV-202 shut)']` — a missing entry throws.
 - **T-202 leaving** (whenever the effective `surge2` goes true → false, including through the D11 rule):
@@ -231,13 +234,18 @@ v_in,ss  = q_T / Ain_ft2                                             ft/s   (Ain
 ρmix     = segs[1].rhom                                              lb/ft³ (no-slip; host value)
 dP_ss    = K_dp · ρmix · v_in,ss² / 9266.1                           psi    (K 6)
 q_L      = (Qo+Qw)·5.614583/86400;  GVF = clamp(1 − q_L/q_T, 0, 1)
-liquid carrier (Qo+Qw ≥ 1e−6 bbl/d):
+carrier blended by GVF (review fix): w = clamp((GVF − gvfGasLo)/(gvfGasHi − gvfGasLo), 0, 1), gvfGasLo 0.95, gvfGasHi 0.995
+  (w = 1 with no liquid; with q_T = 0 the GVF is taken as 0 with liquid, 1 without); μ = (1−w)·μ_liq + w·μ_gas,
+  ρc = (1−w)·ρ_liq + w·ρ_g, f_g = 1 + (1−w)·(f_g,liq − 1); snapshot carrier = 'liquid' while w < 0.5, else 'gas'. A trace of
+  liquid in a dry-gas well no longer switches the cut size (it used to switch at Qo+Qw = 1e−6 bbl/d). SAMPLE_FLOW (GVF 0.890)
+  has w = 0, so the anchors are unchanged.
+liquid carrier terms (μ_liq, ρ_liq, f_g,liq):
   wc     = Qw/(Qo+Qw)
   μo     = 10^(10^(3.0324 − 0.02023·API) · T^−1.163) − 1            cP     (dead-oil, T = desander T in °F; conservative)
   μw     = exp(1.003 − 1.479e−2·T + 1.982e−5·T²)                     cP
   μ      = (1−wc)·μo + wc·μw;  ρc = (1−wc)·ρoil + wc·ρwat;  Δρ = ρs − ρc (ρs 165.4)
   f_g    = 1 + gvfGain·max(0,(GVF − gvfKnee)/(1 − gvfKnee))²         ASSUMPTION (≤ 1.5 at GVF → 1)
-gas carrier (Qo+Qw < 1e−6 bbl/d):
+gas carrier terms (μ_gas, ρ_g):
   wc = 0;  μ = μg(P_des, T_des) by Lee-Gonzalez-Eakin (local pure copy `muGasLGE(SGg, T_F, Z, P_psia)` in 31 — the engine loads
   stand-alone, so it does not call 16-pvt.js; same formula as `mu_g_leeGonzalezEakin`);  ρc = ρg = P·Mg/(Z·10.7316·T_R);
   Δρ = ρs − ρg;  f_g = 1
@@ -319,7 +327,8 @@ State: `acc`, `buf` (lb), `P_acc` (psig, scalar, no fluid balance), `phase`, `ph
   `DES_DUMP_FAIL` and no release.
 - **ESD trip mid-dump** (any phase): XV-103 and the bleed close, `heldFrom` = the interrupted phase, phase → `held`; the
   accumulator stays isolated (`P_acc` holds), the buffer keeps collecting (nothing arrives while shut in). After the ESD reset
-  the operator chooses `dumpDesander('resume')` (re-enters `heldFrom` with its elapsed time; the phase gates still apply) or
+  the operator chooses `dumpDesander('resume')` (re-enters `heldFrom` with its elapsed time; the phase gates still apply — a dump
+  held in `reopen` resumes in `equalise` with its time served, so interlock 2 is checked again before the isolation reopens) or
   `dumpDesander('abort')` (go to `equalise` → `reopen`, nothing more released). Both are refused while the ESD is tripped. Logged
   as `event` / `DS_DUMP`. Auto-dump never resumes a held dump.
 - `dumpDesander(cmd)` → `{ok, msg}`, `cmd` = `'start'` (default) | `'resume'` | `'abort'`: start is refused when DS-101 is out of
@@ -382,8 +391,8 @@ mpy is shown as the secondary value.
 | `DES_LAH` | LAH-103 | alarm | acc_frac ≥ lah (0.80) | dump the accumulator |
 | `DES_LAHH` | LAHH-103 | alarm | acc_frac ≥ lahh (0.95), or accumulator and buffer both full | capture falling, sand carried to the choke |
 | `DES_DUMP_FAIL` | XV-103 | alarm | `dump.failed` | 'dump valve did not open' or 'accumulator not bled — upper isolation passing?'; auto-dump blocked |
-| `DES_RATING` | DS-101 | **alarm** (design) | rating_psi < SITHP, or FWHT outside the class (−50…250 °F at 5,000 psi; −50…350 °F at 10,000 / 15,000) | 'rating below the maximum shut-in wellhead pressure; not fit for this well (no relief valve)' / 'well temperature outside the desander temperature class'; text adds '(SITHP estimated as 1.2 × WHP)' when estimated |
-| `DES_PSHH` | PSHH-103 | **trip** | DS-101 in, flowing, Pin (= X.PBu) ≥ rating_psi | ESD: SDV-101 is upstream of DS-101, so the shut-in protects it. The one exception to Q19 |
+| `DES_RATING` | DS-101 | **alarm** (design) | rating_psi < SITHP, or FWHT outside the class (−50…250 °F at 5,000 psi; −50…350 °F at 10,000 / 15,000) | 'rating below the maximum shut-in wellhead pressure; not fit for this well (no relief valve)' / 'well temperature outside the desander temperature class'; text adds '(SITHP estimated as 1.2 × WHP)' when estimated. While the SITHP is estimated and the rating is below 1.5 × the estimate, the Rig-up status row and the DS-101 card show ⚠ and 'enter the measured SITHP' (review fix; no alarm) |
+| `DES_PSHH` | PSHH-103 | **trip** | DS-101 in, SDV-101 open (esdTravel > 0.01; not gated on the design flow), Pin (= X.PBu) ≥ pshhFrac (0.95) × rating_psi; clears below (pshhFrac − 0.01) × rating (review fix: margin for the 5 s SDV-101 stroke) | ESD: SDV-101 is upstream of DS-101, so the shut-in protects it. The one exception to Q19 |
 | `DES_RATE` | DS-101 | warn | flowing for > startupGrace (180 s) and v_in < vMin or > vMax | 'below turndown: weak swirl' / 'over-rate: carry-over' |
 | `HYD_desander` | DS-101 | hyd | outlet T < Thyd(Pin), P > 10 psig (add `'desander'` to the `hn` list, L1790) | hydrate risk at the desander |
 | `HYD_dsAcc` | DS-101A | hyd | Tamb < Thyd(P_acc), P_acc > 10 psig (no-flow dead leg at ambient) | hydrate / plugging risk in the accumulator |
@@ -450,6 +459,10 @@ Temperature `Tu2` mixes like `Tu`.
   else: 12-step bisection of c_lo·√(Ph − b_lo) + c_hi·√(Ph − b_hi) = q_dump on [b_hi, b_lo + (q_dump/c_lo)²]
   shares s_k = q_k / q_dump
   ```
+  **Review fix:** the split pressure only sets the shares; `X2.Ph` (the dump back-pressure and the snapshot `surge2.Ph`) is `b_lo`,
+  the lower vessel pressure, as on the single routes (Pd = vessel pressure, no inlet loss). The conductance was sized on the
+  average design flow, so the on/off dump flow put Ph ≈ 8 psi above both vessels; a second open path now never raises the
+  back-pressure (≤ the single-route value).
   `q_dump` is this substep's dump flow computed with the back-pressure `Pd = X2.Ph` from the previous substep (one-substep lag,
   h ≤ 0.25 s, no iteration); `X2.Ph` initialises to `b_lo` when both inlets first open. Oil and water dumps and flash gas
   (`qFlash_k = dmpO_k·max(0, RsE(Psep) − RsE(P_k))`) go by `s_k`; blow-by gas (`oilDumpStuckOpen`) follows the liquid shares, and
@@ -487,7 +500,11 @@ Temperature `Tu2` mixes like `Tu`.
               surge2.psvMinMscfd·1000/86400 )
   Cv_psvU2 = Qreq / gq(1, 1.10·mawpU2 + PSC, P2a, TRs, Zf(1.10·mawpU2 + PSC, TRs))    relieves Qreq at 10 % accumulation
   ```
-  The fire case is not modelled (card note, known limitation).
+  The fire case is not modelled (card note, known limitation). **The two PSVs have different bases on purpose:** PSV-201 keeps
+  its v3.3 sizing (2·Cv_o blow-by relieved at MAWP, frozen for bit-identity), PSV-202 uses the formula above (one valve's blow-by
+  at 10 % accumulation), so on SAMPLE_FLOW PSV-202 has ≈ 46 % of PSV-201's Cv (23.96 vs 51.64). PSV-202 holds its own worst
+  modelled case (PSHH-202 defeated, PCV-203 stuck closed, LCV-102 stuck open: peak 50.23 psig ≤ 1.1 × MAWP); the PSV-202 card
+  note states the basis.
 - Flare totals (`cum.flare` L1560, `qFl` L1826, `qgFlare` history) add PCV-203 and PSV-202. Flux limiters: the separator limiter
   (L1493) becomes `qPcv + qPsv + qBlk + qBlk2 + qBlowO + qBlowW` (`qBlk2` = 0 when T-202 is out, so the legacy sum is unchanged
   bit for bit) and scales `qBlk2` with the others; T-202's own limiter `qBpv2 + qPsvU2 ≤ X2.n_u/h` (as L1495 for T-201).
@@ -1052,7 +1069,8 @@ Sand rate, open the DS-101 card, press "Dump sand" + confirm, route the dumps to
 time, longer than the ≈ 1,043 s dump) and assert the DS-101 card shows a completed dump (count 1); then restore the rig-up
 (it persists across reloads in `wts_sim_rigup`). Findings: no console error, no NaN / undefined text, the clock advances, the
 Scenarios menu lists every engine fault. `DESTRUCTIVE` needs no change (the dump is confirmed). Expectation: **no new error or
-warning findings** in `--route wts` and `--mobile`; cosmetic imperial-label findings for the untagged inputs (lb/1000 bbl,
+warning findings** in `--route wts` and `--mobile` (review: the inputs stay untagged — imperial labels in Metric mode, including Max
+SITHP (psig) and Desander rating (psi) while the DS-101 card shows kPa; the µm unit is kept lower case); cosmetic imperial-label findings for the untagged inputs (lb/1000 bbl,
 lb/MMscf, gal, bbl, psig) are accepted, as for the existing Dynamic Simulation inputs.
 
 ### 9.4 Browser checks before release (lead)

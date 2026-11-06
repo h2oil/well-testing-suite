@@ -892,6 +892,13 @@ function faultLabel(id) {
     for (var j = 0; j < FAULTS.length; j++) if (FAULTS[j][0] === id) return FAULTS[j][1];
     return String(id);
 }
+// faults of an optional item: accepted while the item is out, they act once it is added (plan §4.7) — the menu and the toast
+// say so ("armed")
+var FAULT_ITEM = { desanderPlugged: 'desander', desanderWashout: 'desander', desanderDumpStuck: 'desander', desanderIsoPassing: 'desander',
+    desanderBypassPassing: 'desander', xfer2StuckClosed: 'surge2', bpv2StuckClosed: 'surge2' };
+var FAULT_ITEM_TAG = { desander: 'DS-101', surge2: 'T-202' };
+function faultArmed(st, id) { var k = FAULT_ITEM[id]; return k && st && rigOut(st, k) ? FAULT_ITEM_TAG[k] : ''; }
+function faultMenuLabel(st, x) { var a = faultArmed(st, x[0]); return a ? x[1] + ' (armed: ' + a + ' not in the rig-up)' : x[1]; }
 // optional rig-up item (DS-101, T-202): out unless strictly in; core items: in unless strictly out
 function isOptKey(id) { var it = rigItems().filter(function (x) { return x.key === id; })[0]; return !!(it && it.optional); }
 function eqOut(st, id) { return isOptKey(id) ? !rigIn(st, id) : rigOut(st, id); }
@@ -907,6 +914,10 @@ function xfer2Short(st) {
     return x.failed ? 'STUCK SHUT' : x.tripped ? 'TRIP' : x.blocked ? 'BLOCKED' : x.on ? (x.lowDP ? 'OPEN · LOW ΔP' : 'OPEN') : 'SHUT';
 }
 // Rig-up card status rows (§8.4; '' while the item is out). Plain text; numbers through fmtU (Metric).
+// rating checked against an estimated SITHP (1.2 × WHP) with less than 1.5 × margin: a caution, not a pass (the real SITHP is
+// often well above 1.2 × the flowing WHP); a measured SITHP keeps the plain ✓ / ✗ (DES_RATING is the alarm)
+function dsSithpWeak(d) { return !!(d && d.sithpEst && d.ratingOK !== false && isNum(d.rating_psi) && isNum(d.sithp_psi) && d.rating_psi < 1.5 * d.sithp_psi); }
+function dsSithpNote(d) { return d && d.sithpEst ? (dsSithpWeak(d) ? ' (estimated as 1.2 × WHP — enter the measured SITHP)' : ' (estimated)') : ''; }
 function rigStatusDs(st) {
     if (!rigIn(st, 'desander') || !st.desander) return '';
     var d = st.desander, sd = d.sand || {}, dm = d.dump || {};
@@ -916,8 +927,8 @@ function rigStatusDs(st) {
         ' · last dump ' + (isNum(dm.lastT) ? 'T+' + fmtClockLocal(dm.lastT).replace(/:\d\d$/, '') : 'none');
     if (dumpBusy(d)) t += ' · dump ' + (DUMP_TXT[dm.phase] || String(dm.phase).toUpperCase());
     if (d.bypass) t += ' · BYPASSED (HV-104)';
-    t += ' · rating ' + fmtU(d.rating_psi, 'pressure', 0) + ' ' + (d.ratingOK === false ? '✗ <' : '✓ ≥') + ' max SITHP ' + fmtU(d.sithp_psi, 'pressureG', 0) +
-        (d.sithpEst ? ' (estimated)' : '') + (d.tempOK === false ? ' · ✗ outside the temperature class' : '');
+    t += ' · rating ' + fmtU(d.rating_psi, 'pressure', 0) + ' ' + (d.ratingOK === false ? '✗ <' : dsSithpWeak(d) ? '⚠ ≥' : '✓ ≥') + ' max SITHP ' + fmtU(d.sithp_psi, 'pressureG', 0) +
+        dsSithpNote(d) + (d.tempOK === false ? ' · ✗ outside the temperature class' : '');
     return t;
 }
 function rigStatusU2(st) {
@@ -1257,12 +1268,16 @@ function createController(vizEl, mopts) {
             poke();
         });
         h('fault', function (p) {
-            toast(faultLabel(p && p.id) + ' ' + (p && p.on ? 'ON' : 'OFF'), p && p.on ? 'bad' : '');
+            var arm = p && p.on ? faultArmed(state(), p.id) : '';
+            toast(faultLabel(p && p.id) + ' ' + (p && p.on ? (arm ? 'armed: acts when ' + arm + ' is added to the rig-up' : 'ON') : 'OFF'), p && p.on && !arm ? 'bad' : '');
             poke();
         });
         // DS-101 dump sequence (start, each phase, held, resume, abort, end, fail)
         h('dump', function (p) {
-            if (p && p.msg) toast(p.msg, p.phase === 'held' || /fail|not bled|did not open/i.test(p.msg) ? 'bad' : p.phase === 'idle' ? 'ok' : '');
+            // one toast per dump event that needs the operator (start, held, resume, abort, failure, end); the steps in between are
+            // shown by the card, the HUD and the inset, so they do not stack toasts over the card
+            var bad = p && p.msg && (p.phase === 'held' || /fail|not bled|did not open/i.test(p.msg));
+            if (p && p.msg && (bad || p.phase === 'idle' || /dump (started|resumed|aborted)/.test(p.msg))) toast(p.msg, bad ? 'bad' : p.phase === 'idle' ? 'ok' : '');
             poke(); resig();
         });
         h('reset', function (p) { _alarmMap = {}; toast('Test reset (' + (p && p.mode ? p.mode : 'steady') + ')'); poke(); });
@@ -1371,7 +1386,8 @@ function createController(vizEl, mopts) {
     function toggleDsBypass() {
         var st = state(), d = st && st.desander; if (!d) return;
         if (!rigIn(st, 'desander')) { toast('HV-104: DS-101 is not in the rig-up', 'bad'); return; }
-        dsSet({ bypass: !d.bypass }, d.bypass ? 'DS-101 back in line (HV-104 shut)' : 'DS-101 bypassed: HV-104 open, DS-101 blocked in (it stays pressurised until bled)');
+        dsSet({ bypass: !d.bypass }, d.bypass ? 'DS-101 back in line (HV-104 shut)' : dumpBusy(d) && d.dump.phase !== 'held' ? 'DS-101 bypassed: HV-104 open; the running dump continues'
+            : 'DS-101 bypassed: HV-104 open, DS-101 blocked in (it stays pressurised until bled)');
     }
     function toggleDsAuto() {
         var st = state(), a = st && st.desander && st.desander.auto; if (!a) return;
@@ -1935,10 +1951,19 @@ function createController(vizEl, mopts) {
         var ps2 = xferShort(st), SC = su.comps || [];
         var u2 = rigIn(st, 'surge2') && st.surge2 ? st.surge2 : null;      // T-202 part only while it is in the rig-up
         var t2 = u2 ? ' · ' + (u2.inlet ? '<span class="a">▸' : '<span>') + 'T-202 </span><b>' + pctStr(u2.frac) + '</b>' : '';
+        E.h.tSu.__full = null;
         if (rigOut(st, 'surge')) setHTML(E.h.tSu, 'Surge tank <b>out of rig-up</b>');
-        else setHTML(E.h.tSu, SC.length === 2 ? 'Surge ' + [0, 1].map(function (i) {
+        else if (u2) {
+            // T-202 in: the short form fits the tank cell (an open inlet is highlighted, no ▸); the full line, with LCV-201, is
+            // the tooltip
+            var cmp = function (on, lbl, fr) { return '<span' + (on ? ' class="a"' : '') + '>' + lbl + '</span> <b>' + pctStr(fr) + '</b>'; };
+            setHTML(E.h.tSu, (SC.length === 2 ? cmp(SC[0].inlet, 'A', SC[0].frac) + ' · ' + cmp(SC[1].inlet, 'B', SC[1].frac)
+                : cmp(true, 'T-201', su.frac)) + ' · ' + cmp(u2.inlet, 'T-202', u2.frac));
+            E.h.tSu.__full = 'Surge ' + (SC.length === 2 ? (SC[0].inlet ? '▸' : '') + 'A ' + pctStr(SC[0].frac) + ' · ' + (SC[1].inlet ? '▸' : '') + 'B ' + pctStr(SC[1].frac)
+                : pctStr(su.frac)) + ' · ' + (u2.inlet ? '▸' : '') + 'T-202 ' + pctStr(u2.frac) + ' · LCV-201 ' + ps2;
+        } else setHTML(E.h.tSu, SC.length === 2 ? 'Surge ' + [0, 1].map(function (i) {
             return (SC[i].inlet ? '<span class="a">▸' : '<span>') + (i ? 'B ' : 'A ') + '</span><b>' + pctStr(SC[i].frac) + '</b>';
-        }).join(' · ') + t2 + ' · LCV-201 ' + esc(ps2) : 'Surge <b>' + pctStr(su.frac) + '</b>' + t2 + ' · LCV-201 ' + esc(ps2));
+        }).join(' · ') + ' · LCV-201 ' + esc(ps2) : 'Surge <b>' + pctStr(su.frac) + '</b> · LCV-201 ' + esc(ps2));
         // DS-101 line (only while in): sand in the accumulator, ΔP, dump state — a fourth line in the same 56 px HUD
         var dIn = rigIn(st, 'desander') && st.desander ? st.desander : null;
         if (E.h.tDs) {
@@ -1946,8 +1971,10 @@ function createController(vizEl, mopts) {
             E.hud.classList.toggle('ds4', !!dIn);
             if (dIn) {
                 var dsd = dIn.sand || {}, dph = dIn.dump && dIn.dump.phase;
-                setHTML(E.h.tDs, 'DS-101 sand <b>' + pctStr(dsd.acc_frac) + '</b> · ΔP <b>' + esc(fmtU(dIn.dP_psi, 'pressure', 1)) + '</b>' +
-                    (dIn.bypass ? ' · <span class="a">BYPASSED</span>' : '') + (dumpBusy(dIn) ? ' · <span class="a">' + esc(dph === 'held' ? 'DUMP HELD' : 'DUMPING') + '</span>' : ''));
+                // the state word first, so it stays inside the tank cell (the line ends in an ellipsis; the tooltip has it all)
+                var dsw = [dIn.bypass ? 'BYPASSED' : '', dumpBusy(dIn) ? (dph === 'held' ? 'DUMP HELD' : 'DUMPING') : ''].filter(Boolean);
+                setHTML(E.h.tDs, 'DS-101 ' + (dsw.length ? '<span class="a">' + esc(dsw.join(' · ')) + '</span> · ' : '') + 'sand <b>' + pctStr(dsd.acc_frac) + '</b> · ΔP <b>' +
+                    esc(fmtU(dIn.dP_psi, 'pressure', 1)) + '</b>');
             }
         }
         var T = ga.tanks || [], act = num(ga.active, 0);
@@ -1960,7 +1987,7 @@ function createController(vizEl, mopts) {
         if (rigOut(st, 'gauge')) setHTML(E.h.tGt, 'Gauge tank <b>out of rig-up</b>');
         else setHTML(E.h.tGt, gtxt + (isNum(sh) ? ' · shr ' + sh.toFixed(1) + '%' : ''));
         // the tank cell is 172 / 158 px (lg / md): long lines end in an ellipsis, so each carries its full text as a tooltip
-        [E.h.tSu, E.h.tGt, E.h.tDs].forEach(function (el) { if (el && !el.hidden) setAttr(el, 'title', el.textContent); });
+        [E.h.tSu, E.h.tGt, E.h.tDs].forEach(function (el) { if (el && !el.hidden) setAttr(el, 'title', el.__full || el.textContent); });
         var c = alarmCount(st && st.alarms);
         setAttr(E.h.tAl, 'data-l', c.n ? c.level : 'ok');
         setText(E.h.tAl, c.n ? '⚠ ' + c.n + ' active' : '● No active alarms');
@@ -2254,8 +2281,8 @@ function createController(vizEl, mopts) {
                         function (s) { var m = DM(s); return isNum(m.count) ? m.count + ' dump' + (m.count === 1 ? '' : 's') : null; }],
                     ['Bypass', function (s) { return D(s).bypass ? 'ON · HV-104 open' : 'OFF'; }, ''],
                     ['Auto-dump', function (s) { var a = D(s).auto; return !a ? '—' : a.on ? 'ON · SP ' + Math.round(num(a.sp, 0.8) * 100) + '%' + (a.blocked ? ' · BLOCKED' : '') : 'OFF'; }, ''],
-                    ['Rating', function (s) { var d = D(s); return fmtU(d.rating_psi, 'pressure', 0) + ' ' + (d.ratingOK === false || d.tempOK === false ? '✗' : '✓'); }, '',
-                        function (s) { var d = D(s); return (d.ratingOK === false ? '< ' : '≥ ') + 'max SITHP ' + fmtU(d.sithp_psi, 'pressureG', 0) + (d.sithpEst ? ' (estimated)' : '') +
+                    ['Rating', function (s) { var d = D(s); return fmtU(d.rating_psi, 'pressure', 0) + ' ' + (d.ratingOK === false || d.tempOK === false ? '✗' : dsSithpWeak(d) ? '⚠' : '✓'); }, '',
+                        function (s) { var d = D(s); return (d.ratingOK === false ? '< ' : '≥ ') + 'max SITHP ' + fmtU(d.sithp_psi, 'pressureG', 0) + dsSithpNote(d) +
                             (d.tempOK === false ? ' · outside the temperature class' : ''); }]],
                     spark: [{ keys: ['dsAccFrac'], label: 'Accumulator sand', cat: 'frac', lim: 'dsAcc' }, { keys: ['dsDP'], label: 'Desander ΔP', cat: 'pressure' }],
                     widget: 'sandbar', actions: 'desander',
@@ -2280,7 +2307,9 @@ function createController(vizEl, mopts) {
                     ['Auto route', function (s) { return autoTxt(U(s).auto); }, '']],
                     spark: [{ keys: ['surge2Frac'], label: 'Level', cat: 'frac', lim: 'surge2L' }, { keys: ['surge2P'], label: 'Pressure', cat: 'pressureG' }],
                     widget: 'strap2', actions: 'surge2',
-                    note: 'PSV-202 relieves blocked-outlet and gas blow-by cases; the fire case is not modelled.' };
+                    note: 'PSV-202 relieves blocked-outlet and gas blow-by cases, sized for the largest of blow-by through the larger dump valve, PCV-204 wide open, ' +
+                        'the design flash with PCV-203 blocked and the minimum, at 10 % accumulation (PSV-201 keeps its v3.3 basis: blow-by through both dump valves at MAWP, so it is larger); ' +
+                        'the fire case is not modelled.' };
             }
         }
         return { rows: [] };
@@ -2510,8 +2539,10 @@ function createController(vizEl, mopts) {
     function updateCard(st, slow) {
         if (!cardId || !cardRefs) return;
         var spec = cardRefs.spec, flow = _lastFlowObj;
+        var optOut = !!st && isOptKey(cardId) && eqOut(st, cardId);    // DS-101 / T-202 taken out: no last live values, no live widget
         for (var i = 0; i < spec.rows.length; i++) {
             var r = spec.rows[i], s;
+            if (optOut) { setText(cardRefs['v' + i], '—'); if (cardRefs['d' + i]) setText(cardRefs['d' + i], ''); continue; }
             if (r[4]) { var vis = false; try { vis = !!(st && r[4](st)); } catch (e0) {} show(cardRefs['r' + i], vis); if (!vis) continue; }
             try { s = st ? r[1](st) : '—'; } catch (e) { s = '—'; }
             setText(cardRefs['v' + i], s);
@@ -2527,8 +2558,9 @@ function createController(vizEl, mopts) {
             if (out) setText(cardRefs.rigout, (cardId === 'heater' ? 'Bypassed' : cardId === 'separator' ? 'Bypassed — the well stream goes to the flare / burner' :
                 'Not in the rig-up') + ' — change it in the Rig-up card below the view.');
         }
-        renderCardActions(st);
-        if (slow) {
+        if (cardRefs.wg) show(cardRefs.wg, !optOut);
+        renderCardActions(st);                                         // while out: shown disabled, with the reason
+        if (slow && !optOut) {
             (spec.spark || []).forEach(function (sp, i) { drawCardSpark(cardRefs['sk' + i], cardRefs['skt' + i], sp, st); });
             renderWidget(st);
         }
@@ -3360,7 +3392,7 @@ function createController(vizEl, mopts) {
             it.push({ act: 'reset', v: 'steady', label: 'Reset to steady', key: 'R' }, { act: 'reset', v: 'empty', label: 'Start from empty' });
         } else if (kind === 'scen') {
             var f = (st && st.faults) || {};
-            faultList().forEach(function (x) { it.push({ act: 'fault', v: x[0], label: x[1], check: !!f[x[0]] }); });
+            faultList().forEach(function (x) { it.push({ act: 'fault', v: x[0], label: faultMenuLabel(st, x), check: !!f[x[0]] }); });
         } else if (kind === 'view') {
             VIEWS.forEach(function (v) { it.push({ act: 'view', v: v[0], label: v[1], key: v[2] }); });
             it.push({ act: 'orbit', label: 'Auto-rotate', check: !!prefs.orbit, key: 'O' });
@@ -3374,7 +3406,7 @@ function createController(vizEl, mopts) {
             it.push({ h: 'Test' }, { act: 'reset', v: 'steady', label: 'Reset to steady' }, { act: 'reset', v: 'empty', label: 'Start from empty' });
             it.push({ h: 'Scenarios' });
             var f2 = (st && st.faults) || {};
-            faultList().forEach(function (x) { it.push({ act: 'fault', v: x[0], label: x[1], check: !!f2[x[0]] }); });
+            faultList().forEach(function (x) { it.push({ act: 'fault', v: x[0], label: faultMenuLabel(st, x), check: !!f2[x[0]] }); });
             if (mode === '3d') {
                 it.push({ h: 'View' });
                 VIEWS.forEach(function (v) { it.push({ act: 'view', v: v[0], label: v[1] }); });
