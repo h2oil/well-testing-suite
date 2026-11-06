@@ -259,6 +259,9 @@ const HMI = [
         app.flush(800);
         assert.ok(/T-202 0%/.test(text(h('tSu'))), 'surge line names T-202: ' + text(h('tSu')));
         assert.ok(!h('tDs').hidden && hud.classList.contains('ds4') && /^DS-101 sand 0% · ΔP 3\.9 psi$/.test(text(h('tDs'))), 'DS-101 line: ' + text(h('tDs')));
+        // the 172 / 158 px tank cell ends long lines in an ellipsis: each line carries its full text as a tooltip
+        assert.ok(/T-202 0%.*LCV-201/.test(h('tSu').getAttribute('title') || ''), 'surge line tooltip: ' + h('tSu').getAttribute('title'));
+        assert.ok(/^DS-101 sand 0% · ΔP 3\.9 psi$/.test(h('tDs').getAttribute('title') || ''), 'DS-101 line tooltip: ' + h('tDs').getAttribute('title'));
         // trends and legend
         // the trends panel needs a stage tall enough in 2D (no layout in the harness): show it, the 1 Hz update draws it
         app.el('wtsl_trends').hidden = false; app.flush(1200);
@@ -271,6 +274,8 @@ const HMI = [
         const tile = (g) => { const b = app.document.createElement('div'); b.setAttribute('data-act', 'tile'); b.setAttribute('data-v', g); app.el('wts_viz').appendChild(b); app.click(b); b.remove(); app.flush(300); return app.find('.wtsl-pop'); };
         let pop = tile('press');
         assert.ok(pop && /DS-101 in → out/.test(text(pop)) && /Surge tank 2 \(T-202\)/.test(text(pop)), 'pressures popover: ' + text(pop));
+        // one if / else-if chain: the press rows keep their order with both items in (DS-101 after Wellhead, T-202 before Flare header)
+        assert.ok(/^Wellhead.*DS-101 in → out.*Choke in.*Surge tank(?! 2).*Surge tank 2 \(T-202\).*Flare header[^]*$/.test(text(pop)), 'pressures popover order: ' + text(pop));
         tile('press');
         pop = tile('tanks');
         assert.ok(pop && /T-202/.test(text(pop)) && /DS-101 sand/.test(text(pop)), 'tanks popover: ' + text(pop));

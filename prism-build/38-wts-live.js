@@ -1959,6 +1959,8 @@ function createController(vizEl, mopts) {
         var sh = R.shrink_pct;
         if (rigOut(st, 'gauge')) setHTML(E.h.tGt, 'Gauge tank <b>out of rig-up</b>');
         else setHTML(E.h.tGt, gtxt + (isNum(sh) ? ' · shr ' + sh.toFixed(1) + '%' : ''));
+        // the tank cell is 172 / 158 px (lg / md): long lines end in an ellipsis, so each carries its full text as a tooltip
+        [E.h.tSu, E.h.tGt, E.h.tDs].forEach(function (el) { if (el && !el.hidden) setAttr(el, 'title', el.textContent); });
         var c = alarmCount(st && st.alarms);
         setAttr(E.h.tAl, 'data-l', c.n ? c.level : 'ok');
         setText(E.h.tAl, c.n ? '⚠ ' + c.n + ' active' : '● No active alarms');
@@ -3293,10 +3295,10 @@ function createController(vizEl, mopts) {
         if (!E.pop || !popGroup) return;
         var N = (st && st.nodes) || {}, R = (st && st.rates) || {}, C = (st && st.cum) || {}, su = (st && st.surge) || {}, sep = (st && st.sep) || {}, rows = [];
         if (popGroup === 'clock') rows = [['Sim time', 'T+' + (st ? st.clock : '--')], ['Speed', '×' + (st ? st.speed : prefs.speed)], ['State', E.h.state ? E.h.state.textContent : '']];
-        else if (popGroup === 'press') rows = [['Wellhead', fmtU(N.wellhead && N.wellhead.P, 'pressureG')], ['Choke in', fmtU(N.choke && N.choke.Pin, 'pressureG')],
-            ['Choke out', fmtU(N.choke && N.choke.P, 'pressureG')], ['Separator', fmtU(sep.P, 'pressureG')], ['Sep setpoint', fmtU(sep.SPeff, 'pressureG')],
-            ['Surge tank', fmtU(su.P, 'pressureTank')], ['Flare header', fmtU(N.flare && N.flare.P, 'pressureG')]];
-        if (popGroup === 'press') {
+        else if (popGroup === 'press') {
+            rows = [['Wellhead', fmtU(N.wellhead && N.wellhead.P, 'pressureG')], ['Choke in', fmtU(N.choke && N.choke.Pin, 'pressureG')],
+                ['Choke out', fmtU(N.choke && N.choke.P, 'pressureG')], ['Separator', fmtU(sep.P, 'pressureG')], ['Sep setpoint', fmtU(sep.SPeff, 'pressureG')],
+                ['Surge tank', fmtU(su.P, 'pressureTank')], ['Flare header', fmtU(N.flare && N.flare.P, 'pressureG')]];
             var pd = rigIn(st, 'desander') && st.desander;
             if (pd) rows.splice(1, 0, ['DS-101 in → out', fmtParts(pd.Pin, 'pressureG').v + ' → ' + fmtU(pd.Pout, 'pressureG')]);
             if (rigIn(st, 'surge2') && st.surge2) rows.splice(rows.length - 1, 0, ['Surge tank 2 (T-202)', fmtU(st.surge2.P, 'pressureTank')]);

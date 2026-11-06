@@ -29,6 +29,7 @@
 //   --mobile  run the click sweep at 390 px (phone, touch) and save phone screenshots too
 //   --no-stub block the CDN libraries too (three.js, sql.js, SQLite WASM, html2canvas, jsPDF are served
 //             from ios-app/ios-additions/libs by default so 3D / historian / PDF paths are exercised)
+//   --self-test  run the sweep's own parser checks (no browser) and exit 0 / 1
 // Needs Playwright (+ Chromium). Prints "[skip] …" and exits 0 without it. Never runs `playwright install`.
 // Exit code: 0 (the sweep is a report, not a gate); 2 if the sweep itself crashed.
 'use strict';
@@ -603,6 +604,31 @@ class Session {
   }
   eval(fn, a, ms) { return withTimeout(this.page.evaluate(fn, a), ms || 30000); }
 }
+// DS-101 card: completed dumps from the 'Last dump' row's detail line ('1 dump' / '3 dumps'); null when absent.
+function dumpCountOf(rows) {
+  const r = (rows || []).find((x) => x && /^\s*last dump\s*$/i.test(x.l || ''));
+  const m = r ? /^\s*(\d+) dumps?\s*$/i.exec(r.d || '') : null;
+  return m ? +m[1] : null;
+}
+function selfTest() {
+  // the joined card text once a dump has finished must not be read as '231' (seconds digits + count)
+  const joined = 'Last dumpT+00:17:231 dump';
+  const bad = /Last dump[\s\S]*?(\d+) dumps?/i.exec(joined);
+  const cases = [
+    ['old joined-text regex is wrong on ' + JSON.stringify(joined), bad && bad[1] === '231'],
+    ['one dump', dumpCountOf([{ l: 'Dump', v: 'IDLE', d: '' }, { l: 'Last dump', v: 'T+00:17:23', d: '1 dump' }]) === 1],
+    ['three dumps', dumpCountOf([{ l: 'Last dump', v: 'T+01:02:03', d: '3 dumps' }]) === 3],
+    ['no dump yet', dumpCountOf([{ l: 'Last dump', v: 'none', d: '' }]) === null],
+    ['no row', dumpCountOf([{ l: 'Caught', v: '1 lb/d', d: '' }]) === null],
+    ['upper-cased label', dumpCountOf([{ l: 'LAST DUMP', v: 'T+00:00:05', d: '2 dumps' }]) === 2],
+  ];
+  let bad2 = 0;
+  cases.forEach(([n, ok]) => { if (!ok) bad2++; say((ok ? '[ok]   ' : '[FAIL] ') + n); });
+  say(bad2 ? '[gui-sweep] self-test: ' + bad2 + ' failed' : '[gui-sweep] self-test: all ' + cases.length + ' passed');
+  return bad2 ? 1 : 0;
+}
+if (has('--self-test')) process.exit(selfTest());
+
 function withTimeout(pr, ms) {
   let t; return Promise.race([pr, new Promise((_, rej) => { t = setTimeout(() => rej(new Error('TIMEOUT ' + ms + 'ms')), ms); })]).finally(() => clearTimeout(t));
 }
@@ -1104,9 +1130,13 @@ async function equipmentRun(s, act, clockTxt, route) {
     await s.eval(() => { const v = document.getElementById('wts_viz'), f = document.createElement('button'); f.setAttribute('data-act', 'focus'); f.setAttribute('data-v', 'desander'); v.appendChild(f); f.click(); f.remove(); });
     await sleep(1200);
     const card = await s.eval(() => { const c = document.getElementById('wtsl_card'); return c ? c.textContent : ''; });   // textContent: innerText would carry the CSS upper-casing of the labels
-    const m = /Last dump[\s\S]*?(\d+) dumps?/i.exec(card);
-    out.dumps = m ? +m[1] : null;
-    if (out.dumps !== 1) note('error', 'DS-101 card after ≥ 1,800 s at ×600: expected 1 completed dump, card says ' + (m ? m[1] : 'nothing'));
+    // the count is read per row (label / value / detail), never from the joined text: 'Last dumpT+00:17:231 dump'
+    const rows = await s.eval(() => Array.prototype.map.call(document.querySelectorAll('#wtsl_card .wtsl-kv > div'), (r) => {
+      const t = (sel) => { const e = r.querySelector(sel); return e ? e.textContent : ''; };
+      return { l: t('.l'), v: t('.v'), d: t('.d') };
+    }));
+    out.dumps = dumpCountOf(rows);
+    if (out.dumps !== 1) note('error', 'DS-101 card after ≥ 1,800 s at ×600: expected 1 completed dump, card says ' + (out.dumps == null ? 'nothing' : out.dumps));
     if (/NaN|undefined|Infinity|\[object/.test(card)) note('error', 'DS-101 card shows NaN / undefined text');
     eventsToFindings(await s.take(), { route, view, control: { label: 'run ×600 with DS-101 + T-202' }, action: 'equipment run' });
     out.faultsListed = listed; out.faultsEngine = engine;
