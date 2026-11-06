@@ -305,7 +305,8 @@ function verdictLines(root) {
     const tag = String(e.localName).toLowerCase();
     if (tag === 'script' || tag === 'style' || tag === 'option' || tag === 'select') return;
     const t = txt(e);
-    if (!/^[✓⚠✗]/.test(t) || t.length > 600) return;
+    // a lone mark is a status cell of a table (cheminj line summary), not a verdict sentence
+    if (!/^[✓⚠✗]/.test(t) || t.length > 600 || t.length < 2) return;
     if (Array.from(e.children).some((c) => txt(c) === t)) return;
     if (out.indexOf(t) === -1) out.push(t);
   });
