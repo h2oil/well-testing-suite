@@ -219,3 +219,20 @@
         html.ios-app #bu_root .bu-dlg-box input, html.ios-app #bu_root .bu-dlg-x { min-height: 44px; }
         html.ios-app #bu_root .bu-dlg-x { width: 44px; height: 44px; }
         html.ios-app #bu_root .bu-act { min-height: 44px; }
+
+        /* 8. v3.3.2 Help centre (prism-build/49-calc-help.js; docs/HELP-GUIDE-PLAN.md §2.6). The screenshot
+              lightbox (<dialog id="help_lb">) is the only Help overlay: each side keeps its 12 px web
+              padding or the inset plus a small gap, whichever is larger, in portrait and landscape. Block
+              layout while open, so the bottom padding stays inside the scrollable area. The header "?"
+              button (#pgHelpBtn) gets the 44 pt touch target (the "? Help" sidebar link is a .sb-relnotes
+              button, already 44 pt in section 4); the lightbox × too. */
+        html.ios-app .help-lb {
+            box-sizing: border-box;
+            padding: max(12px, calc(8px + env(safe-area-inset-top))) max(12px, calc(8px + env(safe-area-inset-right)))
+                     max(12px, calc(8px + env(safe-area-inset-bottom))) max(12px, calc(8px + env(safe-area-inset-left)));
+            overscroll-behavior: contain;
+            -webkit-overflow-scrolling: touch;
+        }
+        html.ios-app .help-lb[open] { display: block; }
+        html.ios-app #pgHelpBtn { width: 44px; height: 44px; min-height: 44px; font-size: 18px; }
+        html.ios-app #help_lb_x { min-width: 44px; min-height: 44px; }
