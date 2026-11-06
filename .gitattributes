@@ -2,3 +2,8 @@
 # option name"), whatever core.autocrlf says - e.g. tools/modbus-bridge/install.sh run from WSL,
 # Git Bash or copied to a Mac / Linux PC.
 *.sh text eol=lf
+
+# Help centre (docs/HELP-GUIDE-PLAN.md §3.2): screenshots are binary; the generated printable guide is
+# byte-stable LF on every checkout (build-user-guide.js --check compares bytes).
+*.webp binary
+help/*.html text eol=lf

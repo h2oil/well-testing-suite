@@ -147,6 +147,35 @@ if (histPins) {
     if (ok && !bad) console.log('[sync] historian SQLite libraries: ' + ok + ' files match their pinned SHA-384 (offline SQLite ready)');
 }
 
+// ── 8. Help centre files (docs/HELP-GUIDE-PLAN.md §3.2): served at capacitor://localhost/help/… so the guides'
+// screenshots and the printable user guide work offline in the app. www/help/ is rebuilt from scratch, and only
+// help/img/**/*.webp, help/img/manifest.json and help/user-guide.html are copied (nothing else under help/).
+// WTS_SYNC_HELP_DIR lets tests point at a scratch help/ folder.
+const HELP_SRC = process.env.WTS_SYNC_HELP_DIR ? path.resolve(process.env.WTS_SYNC_HELP_DIR) : path.join(ROOT, 'help');
+const HELP_OUT = path.join(WWW, 'help');
+fs.rmSync(HELP_OUT, { recursive: true, force: true });
+if (fs.existsSync(HELP_SRC)) {
+    const copied = [];
+    const copy = (rel) => {
+        const to = path.join(HELP_OUT, rel);
+        fs.mkdirSync(path.dirname(to), { recursive: true });
+        fs.copyFileSync(path.join(HELP_SRC, rel), to);
+        copied.push(rel);
+    };
+    const walk = (dir, rel) => {
+        if (!fs.existsSync(dir)) return;
+        fs.readdirSync(dir).sort().forEach((n) => {
+            const p = path.join(dir, n), r = rel + '/' + n;
+            if (fs.statSync(p).isDirectory()) walk(p, r);
+            else if (/\.webp$/i.test(n)) copy(r);
+        });
+    };
+    walk(path.join(HELP_SRC, 'img'), 'img');
+    if (fs.existsSync(path.join(HELP_SRC, 'img', 'manifest.json'))) copy('img/manifest.json');
+    if (fs.existsSync(path.join(HELP_SRC, 'user-guide.html'))) copy('user-guide.html');
+    console.log(`[sync] Copied help/ → www/help/ (${copied.length} files)`);
+}
+
 const size = (fs.statSync(OUTPUT).size / 1024).toFixed(1);
 console.log(`[sync] ✓ Wrote www/index.html (${size} KB)`);
 console.log(`[sync] Next: \`npx cap sync ios\` to push to Xcode project`);
