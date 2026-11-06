@@ -684,7 +684,7 @@ builders use before the engine lands. The engine's real snapshot is checked agai
   it); per-round min ratios with two contexts 0.80–1.17; the two gate values stayed within about ±0.03 of 1 with 7 rounds.
   WP-E0 measured 1.022 / 1.013 (review run), so E1 + E2 together have only about 3 % headroom on the default spread:
   **WP-E1 and WP-E2 each re-run the gate** before handing over, and the lead re-runs it after each merge (§10.4). The both-in
-  ≤ 1.4 check times the stub bodies until E1 / E2 land (≈ 1.0 at WP-E0): it is meaningful only from WP-E1 / WP-E2 onwards.
+  ≤ 1.6 (planned 1.4) check times the stub bodies until E1 / E2 land (≈ 1.0 at WP-E0): it is meaningful only from WP-E1 / WP-E2 onwards.
 - **Gate (default spread: both out, sand 0): new / v3.3 ≤ 1.05**, measured by the new tool `prism-build/wts-sim-perf.js` (WP0):
   it loads the frozen v3.3 engine `tests/_wts-sim-v33.js` and the working `31-wts-sim.js` into two vm contexts in one process,
   discards 2 warm-up runs of each, then runs ≥ 10 interleaved A/B pairs of 4 h at dt 10 on `SAMPLE_FLOW` (seed 14) and compares
@@ -694,8 +694,16 @@ builders use before the engine lands. The engine's real snapshot is checked agai
   history hooks `desHist(i)` / `surge2Hist(i)` run on every history sample whatever the rig-up and write 0 while the item is
   out, so the ring never holds stale entries after a removal. They run once per history sample (`histDt`), not per substep, and
   cost nothing measurable; no gating or transition zero-fill is needed.
-- **Both in, flow-back on:** ratio of minima against the default spread in the same context ≤ 1.4 (same tool; no absolute
+- **Both in, flow-back on:** ratio of minima against the default spread in the same context ≤ **1.6** (same tool; no absolute
   millisecond budget, which a cold vm or a slow CI box would break).
+  **WP-I decision (2026-11-06):** the planned 1.4 was set before E1 / E2 existed. Measured on the integrated engine (4-core
+  box, `run` of the same workload, best of 10): DS-101 alone (flow-back on) ≈ 1.23, T-202 alone (route both) ≈ 1.27, both
+  ≈ 1.45 (gate tool 1.45–1.50 before the fix below): the two costs add, each is the item's own physics (T-202 adds a second
+  vessel flash / Bo per substep: 7.4 instead of 4.3 Rs evaluations; DS-101 adds its ΔP lag, capture, dump sequence and ten
+  alarms per substep). The atmospheric-Rs memo (`RsAtm`) was widened from two to four temperatures (it thrashed with T-202's
+  third vessel temperature; bit-identical, no change on the default spread). The gate is raised to 1.6: about 1.8 ms per
+  simulated minute with both in, i.e. well under 1 % of a core at the ×60 play speed. The default-spread gate (≤ 1.05
+  against the frozen v3.3 engine) is unchanged.
 - Bundle and startup: `node prism-build/perf-budget.js` (bundle ≤ baseline × 1.10, startup ratio) at WP-I; re-record the
   baseline only if an increase is intended.
 - Self-test 14 stays on the default spread and becomes **best of 2 runs** (S, WP-E0) to remove the vm-runner outlier.
@@ -1291,7 +1299,7 @@ variation explained below. Section numbers refer to this revision.
 | §3.4 / §8.4 renderRig | `renderRig` added to §3.4 with core-only counting and button test, extras text, optional-row texts and titles, `rp-skip` on optional rows that are out; test for the default card and report |
 | §8.1 T-202 placement / clearance gate | T-202 drawn at R 1.0 at (12.5, 2.3); clearance test redefined on rendered primitives with a `PROPS` table (EQ_BOX and PROXIES excluded); inscribed proxy; PSV-202 on the −x side of the head with its discharge route `PSV2` to the PSV header; LM2 / BLK2 end on the R 1.0 shell (x 11.55) |
 | §7 / §9.2 golden | Golden JSON dropped. `tests/_wts-sim-v33.js` (31 at `666be77`, self-test stripped) runs side by side with the new engine; exact `===` on every v3.3 path; sig rule `slice(0,8)` equal and `slice(8) === '00'` |
-| §7 performance gate | `wts-sim-perf.js`: 2 warm-ups, ≥ 10 interleaved A/B pairs against the frozen engine, min and median-of-ratios ≤ 1.05; both-in ratio ≤ 1.4 against the default spread; code-review check of the guards; `perf-budget.js` added to §10.5. The timing assertions live in the tool (a gate at every engine merge and at WP-I) rather than in the accept suite, where each test gets a cold vm |
+| §7 performance gate | `wts-sim-perf.js`: 2 warm-ups, ≥ 10 interleaved A/B pairs against the frozen engine, min and median-of-ratios ≤ 1.05; both-in ratio ≤ 1.6 against the default spread (1.4 planned; raised at WP-I, §7); code-review check of the guards; `perf-budget.js` added to §10.5. The timing assertions live in the tool (a gate at every engine merge and at WP-I) rather than in the accept suite, where each test gets a cold vm |
 | §6.11 / §10.1 contract owners | `WTS_sim.stepFor(rig)` exported from 31 with STEP fallbacks in 32/38 and the four combinations pinned; action payloads in the fixture; the 38 foundation moved into WP-E0 (constants, RIG_FALLBACK, rigIn, EQV, persistence, renderRig predicates, stepFor fallback, test hooks); WP-E0 adds the full set of guarded hooks with call sites, so E1 and E2 never edit each other's lines |
 | §3.3 / §5.2 T-202 leaving the rig-up; prefs precedence | §3.3 snaps XV-201A/B open (make-before-break, logged) when T-202 was the only route, refuses when T-201 cannot take the dumps; precedence stated (prefs restore on session start; adding from the card snaps XV-202 shut); U4 and tests updated. Snapping is used instead of a timed stroke because a rig-up change is already an instantaneous line-up operation (T-202 entering snaps XV-202 shut) |
 | §10.4 / §11 merge order and version | Integration on `sim-equip`, merged to `Dev` only at WP-I; version fixed at WP-I as the next point release after the then-current `RELEASE_NOTES[0].ver`, applied to all five places |

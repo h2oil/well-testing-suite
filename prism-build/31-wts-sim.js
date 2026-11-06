@@ -483,12 +483,15 @@ function create(flowIn, opts) {
   // Hot-path memos (performance only — every value is bit-identical to the direct evaluation): the substep asks for
   // RsE / BoR at the same (P, T) several times (flash + vent at the surge tank, Bo of both vessels), and Rs at
   // atmospheric pressure per temperature. Small ring caches, cleared whenever the fluid changes (derive → boEpoch).
-  var rsA_T = [NaN, NaN], rsA_v = [0, 0], rsA_i = 0, rsA_e = -1;
+  // Four temperatures (T-201, T-202, separator, gauge tank): with T-202 in, a two-entry ring thrashed (WP-I perf gate).
+  var rsA_T = [NaN, NaN, NaN, NaN], rsA_v = [0, 0, 0, 0], rsA_i = 0, rsA_e = -1;
   function RsAtm(TF) {
-    if (rsA_e !== boEpoch) { rsA_e = boEpoch; rsA_T[0] = rsA_T[1] = NaN; }
+    if (rsA_e !== boEpoch) { rsA_e = boEpoch; rsA_T[0] = rsA_T[1] = rsA_T[2] = rsA_T[3] = NaN; }
     if (rsA_T[0] === TF) return rsA_v[0];
     if (rsA_T[1] === TF) return rsA_v[1];
-    var v = Rs(PSC, TF); rsA_i ^= 1; rsA_T[rsA_i] = TF; rsA_v[rsA_i] = v; return v;
+    if (rsA_T[2] === TF) return rsA_v[2];
+    if (rsA_T[3] === TF) return rsA_v[3];
+    var v = Rs(PSC, TF); rsA_i = (rsA_i + 1) & 3; rsA_T[rsA_i] = TF; rsA_v[rsA_i] = v; return v;
   }
   var rsE_P = [NaN, NaN, NaN, NaN], rsE_T = [NaN, NaN, NaN, NaN], rsE_v = [0, 0, 0, 0], rsE_i = 0, rsE_e = -1;
   function RsE(Pa, TF) {
