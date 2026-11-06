@@ -29,11 +29,12 @@ const CONTENT_FILES = ['start', 'overview', 'metering', 'welltest', 'simcourse',
   .map((g) => '48-calc-help-' + g + '.js');
 const KB = 1000;
 const CAPS = {
-  '49-calc-help.js': 45, '49-calc-help-print.js': 15, '48-calc-help-start.js': 26, '48-calc-help-overview.js': 10,
+  '49-calc-help.js': 45, '49-calc-help-print.js': 15, '48-calc-help-start.js': 18, '48-calc-help-overview.js': 10,
   '48-calc-help-metering.js': 28, '48-calc-help-welltest.js': 32, '48-calc-help-production.js': 32, '48-calc-help-livedata.js': 16,
-  '48-calc-help-safety.js': 28, '48-calc-help-process.js': 20, '48-calc-help-flare.js': 12, '48-calc-help-utilities.js': 20,
+  '48-calc-help-safety.js': 36, '48-calc-help-process.js': 20, '48-calc-help-flare.js': 12, '48-calc-help-utilities.js': 20,
   '48-calc-help-simcourse.js': 38, '48-calc-help-manifest.js': 8,
 };
+// start 26 → 18 kB, safety 28 → 36 kB (WP-C6 fix round: the cheminj inputs and verdict actions); the sum stays 330 kB
 const SUM_CAP = 330 * KB, GZIP_CAP = 90 * KB;
 const NOT_ROUTES = ['gaevents', 'dca', 'pta'];
 const OVERVIEW = ['home', 'help', 'clientinfo', 'wells', 'privacy', 'releasenotes'];
