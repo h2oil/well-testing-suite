@@ -81,8 +81,8 @@ var prism = {
 var oilgas = {
   route: 'oilgas', reviewed: V, reviewedSrc: '0314454b', units: 'dual',
   keywords: ['GOR', 'CGR', 'meter', 'VCF', 'shrinkage'],
-  purpose: 'Corrected oil rate from two meter readings, orifice gas rate, GOR and CGR.',
-  what: ['Oil: meter difference × meter factor × shrinkage × (1 − BS&W) × VCF. Gas: the [[aga3]] engine, flange taps.'],
+  purpose: 'Corrected oil rate from two meter readings, orifice gas rate, [[glossary#gor|GOR]] and CGR.',
+  what: ['Oil: meter difference × meter factor × shrinkage × (1 − [[glossary#bsw|BS&W]]) × VCF. Gas: the [[aga3]] engine, flange taps.'],
   when: ['Every reading during a separator test.', 'To send a rate step to PRiSM.'],
   steps: [open('Oil & Gas Rate'), 'In **Oil Rate**, enter the interval, both meter readings ①, API, temperatures and factors.',
   'In **Gas Rate**, enter run, plate, pressure, differential ②, gravity and temperature.', { t: 'Select **Calculate** and read the results.', shot: 'res' },
@@ -109,7 +109,7 @@ var oilgas = {
 var solgor = {
   route: 'solgor', reviewed: V, reviewedSrc: '46e17935', units: 'dual',
   keywords: ['Rs', 'solution gas', 'gas-oil ratio'],
-  purpose: 'Estimates the solution GOR Rs at a pressure and temperature by Standing and by Vasquez & Beggs.',
+  purpose: 'Estimates the solution [[glossary#gor|GOR]] Rs at a pressure and temperature by Standing and by Vasquez & Beggs.',
   what: ['Vasquez & Beggs corrects the gas gravity to a {{100|pressureG}} separator first; Standing uses it as entered.'],
   when: ['To check a separator GOR against Rs.', 'To estimate Rs for PVT inputs.'],
   steps: [open('Solution GOR'), 'In **Solution GOR Calculator**, enter pressure, temperature, gravity and API ①.',
@@ -193,7 +193,7 @@ var gaslift = {
   purpose: 'Screening design of continuous gas lift: point of injection, gas needed, valve spacing and schedule.',
   what: ['Balances the gas column against the flowing traverse ([[flowline]] engine), then spaces and sets the valves.'],
   when: ['Can the well be lifted at the target rate, with how much gas?', 'To draft a valve schedule.'],
-  steps: [open('Gas Lift Design'), 'Fill **Well, Fluids & Inflow** ①.', 'Fill **Gas Lift System** ②: pressures, target GLR, valve data.',
+  steps: [open('Gas Lift Design'), 'Fill **Well, Fluids & Inflow** ①, with the [[glossary#gor|GOR]].', 'Fill **Gas Lift System** ②: pressures, target GLR, valve data.',
   { t: 'Select **Calculate** and read the verdicts ③.', shot: 'res' }, 'Read the **Valve Schedule** and **Pressure vs Depth**.'],
   inputs: [L('Target oil rate', 'qo', '{{800|liquidRate}}'), L('Water rate', 'qw', '{{400|liquidRate}}'), L('Formation GOR', 'gor', '{{300|gor}}'),
   L('Oil gravity', 'api', '35'), L('Formation gas gravity, air = 1', 'sgg', '0.7'), L('Water specific gravity', 'sgw', '1.07'),

@@ -95,7 +95,7 @@ S('flare', 'Radiation at the burner for the gas rate.', 'flare radiation'),
 S('prv', 'Relief load and orifice.', 'relief load'),
 S('', 'Quick Report ▾ → Final well-test report.')] },
 { id: 'cleanup', title: 'Clean up and unload the cushion', purpose: 'Unload the completion fluid to the burner, then go through the separator.', steps: [
-S('wts', 'Follow field scenario FS-1 in [[scenarios|Field scenarios]]: it sets the simulator up for an unload to the burner.', 'unload rate and gas rate'),
+S('wts', 'Follow field scenario [[fs#FS-1|FS-1]]: it sets the simulator up for an unload to the burner.', 'unload rate and gas rate'),
 S('flare', 'Radiation at the burner for that gas rate.', 'burner back pressure'),
 S('dispersion', 'Where the burner gas and the hydrogen sulphide (H2S) in it go downwind.'),
 S('hydrate', 'Hydrate risk downstream of the choke.', 'choke outlet pressure and temperature'),
@@ -146,8 +146,8 @@ var faq = [
 { id: 'pressure', q: 'Which pressure goes where in the Well Test Simulator?', a: [L([
 'Flowing wellhead or tubing pressure: **Wellhead Pressure**, never the separator pressure.',
 'Production or export line pressure: the separator **Operating Pressure**, with V-101 in; add the line loss to the header.',
-'Cushion or clean-up straight to the burner: set the simulator up as field scenario FS-1 says ([[scenarios|Field scenarios]]).']),
-'The steps and the checks are in field scenario FS-1 and the [[wts]] guide.'] },
+'Cushion or clean-up straight to the burner: set the simulator up as field scenario [[fs#FS-1|FS-1]] says.']),
+'The steps and the checks are in FS-1 and the [[wts]] guide.'] },
 { id: 'training', q: 'Is there training for the simulator?', a: [
 'Help has a self-paced [[course|Well Test Simulator course]]. Each exercise has answers, trainer notes and a worksheet, so a supervisor can run it for a crew.',
 'Questions about training: {{email}}.'] },

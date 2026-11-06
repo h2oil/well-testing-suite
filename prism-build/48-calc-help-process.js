@@ -32,7 +32,7 @@ tips: ['More level or less rate gives more time; then check the gas on [[seprate
 refs: [J12], related: ['seprate', 'sephand', 'sepqc'],
 shots: V('Separator Retention', ['#sp_cap', '#sp_lvl', '#sp_basis', '#sp_q']) });
 
-g.seprate = A(S('seprate', 'e2582002', ['Souders-Brown', 'gas capacity']), {
+g.seprate = A(S('seprate', '31e7e713', ['Souders-Brown', 'gas capacity']), {
 purpose: 'Rates a separator: Souders-Brown gas capacity and liquid retention against a target, with one PASS or FAIL.',
 what: ['K follows the orientation and foaming. Gas flows above the liquid in a horizontal vessel, through the full bore in a vertical one. Water is added from the [[glossary#bsw|BS&W]]. The retention target is 3, 5 or 10 minutes for low, medium or high foaming. Z is taken as 0.9.'],
 when: ['Before a test, at the expected gas and oil rates.', 'When the rates rise or the fluid foams.'],
@@ -48,7 +48,7 @@ tips: ['Low pressure tends to fail the gas check; high liquid rates fail retenti
 refs: [J12], related: ['sep', 'sephand', 'gascalc'],
 shots: V('Separator Rating', ['#sr_orient']) });
 
-g.sephand = A(S('sephand', 'f315b34e', ['outlet velocity', 'Cv', 'slug', 'PCV']), {
+g.sephand = A(S('sephand', 'edc0b8df', ['outlet velocity', 'Cv', 'slug', 'PCV']), {
 purpose: 'Screens a separator and its outlets: gas capacity, retention, slug volume, outlet velocities and valve Cv.',
 what: ['K is ×1.5 with a mesh pad; retention is split between oil and water by the [[glossary#bsw|BS&W]]. Each outlet valve, line and bore is checked against your limit and the API RP 14E erosional velocity.',
 'Temperature is in degrees Celsius and the limits in m/s on both unit settings.'],
@@ -77,7 +77,7 @@ refs: [J12, { std: 'API RP 14E', note: 'erosional velocity' }], related: ['sepra
 shots: V('Separator Handling', ['#sh_service']).concat([{ id: 'res', view: 'desktop', target: '#sh_res > .rbox:first-child', setup: [{ click: '#pgBody .btn-primary' }],
 alt: 'Verdict box for the default inputs', caption: 'The verdict', callouts: [{ sel: '#sh_res .rbox-title', n: 2 }] }]) });
 
-g.heater = A(S('heater', 'e82e83d1', ['line heater', 'water bath', 'diesel']), {
+g.heater = A(S('heater', 'f844ff57', ['line heater', 'water bath', 'diesel']), {
 purpose: 'Estimates the heat duty, fired duty and diesel use of a water bath (indirect) heater.',
 what: ['Fired duty is the duty divided by the efficiency; diesel is 138,000 Btu per US gallon.'],
 when: ['Before a test: size the heater.', 'To estimate the diesel for the test.'],
@@ -124,7 +124,7 @@ check: P('calcTankRate', 0, { expectText: ['124.8 BPD'] }) },
 tips: ['Leave at least 30 minutes between readings.'], refs: [{ std: 'API MPMS Ch. 2', note: 'tank calibration' }], related: ['sep', 'sepqc', 'proving'],
 shots: V('Tank Calculator', ['#tr_h']) });
 
-g.pumpsz = A(S('pumpsz', 'f01192af', ['transfer pump', 'NPSH']), {
+g.pumpsz = A(S('pumpsz', 'c1d0e8cd', ['transfer pump', 'NPSH']), {
 purpose: 'Sizes a transfer pump: total dynamic head, power, NPSH available and pump type for a liquid line.',
 what: ['Head is the pressure rise, lift and friction (+30 % fittings), +6 %. NPSHa compares the suction and vapour pressures.', 'Heads and lengths are in metres on both unit settings.'],
 when: ['Choosing a transfer pump.', 'Checking that a pump will not cavitate.'],
@@ -139,7 +139,7 @@ check: P('calcPumpSz', 0, { expectText: ['238.3 m', '28.09 kW', '52.27 m', 'Cent
 pitfalls: ['Live crude is near its bubble point.'], refs: [P610], related: ['arc', 'tank', 'elec'],
 shots: V('Pump Sizing', ['#ps_q']) });
 
-g.arc = A(S('arc', '2ce9fdaa', ['recirculation', 'minimum flow']), {
+g.arc = A(S('arc', 'eb6b7d34', ['recirculation', 'minimum flow']), {
 purpose: 'Sizes an automatic recirculation (ARC) valve that keeps a centrifugal pump above its minimum flow.',
 what: ['Discharge at the minimum flow is taken 60 % of the way from normal to shut-off. The bypass ΔP sets the severity; the flow sets the size.'],
 when: ['A centrifugal pump can run throttled.', 'Choosing a bypass valve.'],
@@ -152,7 +152,7 @@ check: P('calcARC', 0, { expectText: ['390 psi', 'High', '1.5"'] }) },
 pitfalls: ['Take the minimum flow from the pump data sheet.'], refs: [P610], related: ['pumpsz', 'tank'],
 shots: V('ARC Valve Sizing', ['#av_qn', '#av_pso']) });
 
-g.aircomp = A(S('aircomp', 'bed3ba35', ['instrument air', 'receiver']), {
+g.aircomp = A(S('aircomp', 'a7200309', ['instrument air', 'receiver']), {
 purpose: 'Picks an air compressor capacity and type, and a receiver volume, for instrument or utility air.',
 what: ['Capacity is the demand + 10 %; the receiver 5 US gallons per SCFM. Rotary screw above {{30|airFlow}}, or continuous instrument air above {{15|airFlow}}.'],
 when: ['Planning air for controllers and ESD pilots.', 'Checking a rental compressor.'],

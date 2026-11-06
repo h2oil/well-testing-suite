@@ -117,7 +117,7 @@ S('res', 'Gas results', '#pg_res', 0, [{ click: B('calcPRVgas') }]),
 S('inlet', 'Inlet line check', '#pi_res .rbox', 0, [{ click: '#prvt4' }, { click: B('calcPRVinlet') }, { scroll: '#pi_res' }])]
 }),
 
-flamearr: Q('flamearr', '37985a3b', 'arrestor, flashback, vent', 'ISO 16852', 'tank flare', {
+flamearr: Q('flamearr', '5430a505', 'arrestor, flashback, vent', 'ISO 16852', 'tank flare', {
 notDocumented: [N('^fa_(t|p|elem)$')],
 purpose: 'The smallest flame arrestor size within your pressure drop limit.',
 what: ['Checks NPS 2 to NPS 12. Temperature is Celsius in both systems.'],

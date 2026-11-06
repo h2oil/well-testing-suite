@@ -90,11 +90,11 @@ Sr('Selected Plate box', ['#op_res .rbox:nth-child(2) .rrow:nth-child(2)~2'], { 
 Sh('tbl', 'desktop', 'Plate-change table', RES, ['#op_res table.dtable~3'], { target: '#op_res table.dtable' })]
 }),
 choke: Gd('choke', '1fb5df3c', {
-purpose: 'Two chokes in series: intermediate pressure, drop on each, critical checks, equivalent bean and rate.',
+purpose: 'Two chokes in series: intermediate pressure, drop on each, critical checks, equivalent [[glossary#bean|bean]] and rate.',
 what: ['Gas: the API 14B equation on both beans. Multiphase: Gilbert through the equivalent bean.'],
 when: ['A fixed and an adjustable choke in series.', 'Which choke takes the drop.'],
 steps: [H('Dual Choke'), 'Enter the **Upstream Pressure** ① and **Downstream Pressure** ②.', 'Choose the **Fluid Type**.',
-'Enter each choke size in 64ths and its Cd.', 'For multiphase, also enter the oil gravity, **GOR** and **Water Cut**.',
+'Enter each choke size in 64ths and its Cd.', 'For multiphase, also enter the oil gravity, [[glossary#gor|GOR]] and **Water Cut**.',
 { t: 'Select **Calculate**. Read P2 ③, the drop on each choke and the critical checks.', shot: 'res' }],
 inputs: ['Upstream Pressure~c_P1~p~1500', 'Downstream Pressure~c_P3~p~500', 'Fluid Type~c_ft~~Gas Only', 'Flowing Temp~c_T~t~150',
 'Choke 1 Size~c_s1~n~32~Upstream choke, 64ths.', 'Choke 1 Cd~c_cd1~x~0.85', 'Choke 2 Size~c_s2~n~24', 'Choke 2 Cd~c_cd2~x~0.85',
@@ -112,10 +112,10 @@ Sr('Choke Results and Flow Estimate', ['#c_res .rbox:nth-child(1) .rrow:nth-chil
 }),
 chokeflow: Gd('chokeflow', 'a47f381f', {
 purpose: 'Quick gas rate through a fixed choke, and oil rate by the Gilbert and Ros equations.',
-what: ['Gas: coefficient × absolute WHP ÷ √(gravity × absolute temperature), for critical flow of dry gas.'],
+what: ['Gas: coefficient × absolute [[glossary#fwhp|WHP]] ÷ √(gravity × absolute temperature), for critical flow of dry gas.'],
 when: ['A first rate estimate.', 'Cross-checking a meter.'],
 steps: [H('Choke Flow Rates'), 'For gas, enter the **Choke Size** ①, **Wellhead Pressure**, **Wellhead Temp** and **Gas Gravity**.',
-'Select **Calculate Gas Rate** ②.', 'For oil, enter the **Upstream Pressure**, bean and **GOR**, then select **Calculate Oil Rate**.',
+'Select **Calculate Gas Rate** ②.', 'For oil, enter the **Upstream Pressure**, [[glossary#bean|bean]] and [[glossary#gor|GOR]], then select **Calculate Oil Rate**.',
 'Look up a size in the **Choke Coefficient Reference** table.'],
 inputs: ['Choke Size~cf_cs~n~32~Gas, 2 to 128.', 'Wellhead Pressure~cf_whp~p~3000', 'Wellhead Temp~cf_wht~t~120', 'Gas Gravity~cf_sg~s~0.7',
 'Upstream Pressure~cf_op~p~1500', 'Choke Size~cf_ocs~n~32~Oil.', 'GOR~cf_gor~g~500~Used as the gas–liquid ratio.'],
@@ -127,16 +127,16 @@ refs: [{ std: 'Gilbert (1954), Ros (1960)', note: 'bean correlations' }],
 related: ['chokeperf', 'choke'],
 shots: [Sv('Choke Flow Rates page', ['#cf_cs~1', '#pgBody button[onclick^="calcChokeGas"]~2'])]
 }),
-chokecnv: Gd('chokecnv', 'b0672f6c', {
+chokecnv: Gd('chokecnv', '5fd92255', {
 units: 'none',
 purpose: 'Converts a choke size between 64ths of an inch, decimal inches and millimetres.',
 what: ['Type in one box; the others fill in. Not affected by the Metric setting.'],
-when: ['A bean stamped in mm.', 'A page asks for 64ths.'],
+when: ['A [[glossary#bean|bean]] stamped in mm.', 'A page asks for 64ths.'],
 steps: [H('Choke Conversions'), 'Type the size in **Size**, **Decimal Inches** or **Millimeters** ①.',
 'Read the other boxes. Clearing one clears all three.', 'The **Common Sizes** table lists the usual beans ②.'],
 inputs: ['Size~cc_64~~~In 64ths.', 'Decimal Inches~cc_in', 'Millimeters~cc_mm'],
 outputs: ['Common Sizes~8/64 to 64/64.'],
-example: { title: 'A 32/64 bean', setup: ['Type 32 in Size.'], result: ['0.5000 in, 12.70 mm.'], check: { kind: 'page', set: { cc_64: '32' }, expectValues: { cc_in: '0.5000', cc_mm: '12.70' }, pending: 'expectValues needs WP-H' } },
+example: { title: 'A 32/64 bean', setup: ['Type 32 in Size.'], result: ['0.5000 in, 12.70 mm.'], check: { kind: 'page', set: { cc_64: '32' }, expectValues: { cc_in: '0.5000', cc_mm: '12.70' } } },
 tips: ['A worn bean flows like a larger one: tune it on [[chokeperf]].'],
 noRefs: 'A unit conversion.',
 related: ['chokeperf'],
@@ -144,10 +144,10 @@ shots: [Sv('Choke Size Conversions page', ['#cc_64~1', '#pgBody .dtable~2'])]
 }),
 chokeperf: Gd('chokeperf', '1ba7c679', {
 notDocumented: [{ id: 'ck_calc', why: 'Calculate button: optional, the page updates on every change (step 6)' }],
-purpose: 'Critical-flow check, gas and multiphase rate through a bean, and a bean-up plan.',
-what: ['Gas: nozzle equation, k and Z from [[gaspvt]]. Oil wells: four correlations. The shut-in WHP gives the next beans.'],
+purpose: 'Critical-flow check, gas and multiphase rate through a [[glossary#bean|bean]], and a bean-up plan.',
+what: ['Gas: nozzle equation, k and Z from [[gaspvt]]. Oil wells: four correlations. The [[glossary#sithp|SITHP]] gives the next beans.'],
 when: ['Planning the next bean change.', 'Checking the bean flows critical.'],
-steps: [H('Choke Performance'), 'Choose **Flow through the bean** ①.', 'Enter the **Bean size** ② and both pressures.',
+steps: [H('Choke Performance'), 'Choose **Flow through the bean** ①.', 'Enter the **Bean size** ② and both pressures (upstream: the [[glossary#fwhp|WHP]]).',
 'Gas: enter temperature and gravity. Oil well: gas–liquid ratio and water cut.',
 'For bean-up, enter the **Shut-in wellhead pressure** and any measured rate.', { t: 'The page updates on every change. Read the **Checks** ③.', shot: 'res' }],
 inputs: ['Flow through the bean~ck_fluid~~Dry gas', 'Bean size~ck_size~~24', 'Bean size in~ck_sunit~~64ths of an inch', 'Upstream pressure, WHP~ck_p1~p~1500',
@@ -171,7 +171,7 @@ related: ['choke', 'gaspvt', 'wts'],
 shots: [Sv('Choke Performance page, default inputs', ['#ck_fluid~1', '#ck_size~2']),
 Sr('Checks box', ['#ck_res .rbox:nth-child(3) > div:nth-child(2)~3'], { target: '#ck_res .rbox:nth-child(3)' })]
 }),
-mcfshr: Gd('mcfshr', 'f4d101d2', {
+mcfshr: Gd('mcfshr', '9f7edad6', {
 purpose: 'Meter correction factor and shrinkage from turbine meter readings and surge tank levels.',
 what: ['MCF = tank volume moved ÷ metered volume. Levels are tank volumes.'],
 when: ['Oil meter against the tank.', 'Shrinkage in the tank.'],
@@ -187,7 +187,7 @@ noRefs: 'The definitions on the page. For a formal meter factor, use [[proving]]
 related: ['proving', 'turbmeter'],
 shots: [Sv('MCF and Shrinkage page', ['#ms_ti~1', '#ms_ss~2', BTN + '~3'])]
 }),
-turbmeter: Gd('turbmeter', 'b0cb08bb', {
+turbmeter: Gd('turbmeter', 'efaf81c9', {
 purpose: 'Sizes a liquid turbine meter and checks viscosity, Reynolds number and cavitation margin.',
 what: ['The smallest meter that covers Qmax; a note when Qmin is below its range.'],
 when: ['Choosing a liquid meter.', 'Low rates read badly.'],
@@ -234,7 +234,7 @@ Sr('Net Standard Volume ticket', ['#pv_res .rbox:nth-child(3) > div:last-child~3
 }),
 sepqc: Gd('sepqc', '1b3a3c07', {
 notDocumented: [{ pattern: '^sq_b(id|k|po|to|ps|sg)\\d+$', why: 'Sample Bottles cells (step 5)' }, B('sq_calc', 6)],
-purpose: 'Corrects the gas rate and GOR for the laboratory and checks the sample bottles (API RP 44).',
+purpose: 'Corrects the gas rate and [[glossary#gor|GOR]] for the laboratory and checks the sample bottles (API RP 44).',
 what: ['Laboratory gravity and Z, shrinkage, GOR on both bases, then each bottle and the duplicates.'],
 when: ['Before samples go to the laboratory.', 'Laboratory gravity differs from the meter.'],
 steps: [M('Sampling & GOR QC'), 'In **Separator and Rates**, enter the **Separator pressure** ①, conditions, rates and **Oil rate basis**.',

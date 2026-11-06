@@ -78,7 +78,7 @@ check: { kind: 'compute', fn: 'WTS_gaspvt_compute', tol: 0.001, input: { sg: 0.7
 pitfalls: ['For a rich or wet gas use a lab Z.'],
 refs: [{ std: 'DAK (1975); Hall–Yarborough (1973); Wichert–Aziz (1972)', note: 'Z' }, { std: 'AGA Report No. 3', note: 'Fpv' }], related: ['gascalc', 'aga3', 'hydrate'],
 shots: S('Gas PVT inputs and results', ['#gp_sg'], ['#gp_root .card:nth-child(2)', 'Separator card and Calculate', ['#gp_psep', '#gp_calc']]) }),
-chem: G0('chem', '71a7e9b1', ['dosage', 'ppm', 'chloride'], {
+chem: G0('chem', '72b43beb', ['dosage', 'ppm', 'chloride'], {
 purpose: 'Chemical injection rates in cc/min from flow and ppm dosage, and chlorides by silver-nitrate titration.',
 what: ['Rate = flow × ppm × 0.0001104. For injection points and pumps use [[cheminj]].'],
 when: ['Setting antifoam or demulsifier pump rates.', 'Checking water salinity.'],
@@ -114,7 +114,7 @@ check: P('calcScale', {}, ['Charge balance 0.13 %'], { expectState: { 'scale.si.
 pitfalls: ['Mixed waters: enter the blend.'],
 refs: [{ std: 'Oddo–Tomson (1994); ASTM D3739; ASTM D4582', note: 'indices' }], related: ['chem', 'cheminj'],
 shots: S('Scale & Water Analysis', ['#sc_na'], ['#sc_root .card:nth-child(2)', 'Conditions card and Calculate', ['#sc_t', '#sc_calc']]) }),
-gensz: G0('gensz', '32a9a7c8', ['generator', 'kVA', 'motor starting'], {
+gensz: G0('gensz', '8265f554', ['generator', 'kVA', 'motor starting'], {
 purpose: 'Estimates generator kVA from running loads and the worst motor starts, and picks a standard size.',
 what: ['Starting adds the three largest motor starts (kW × start factor). The larger of running and starting ÷ 1.6 gets × 1.32 for growth and margin.'],
 when: ['Sizing a set for a spread or camp.', 'Adding a motor.'],
@@ -126,7 +126,7 @@ outputs: [O('Recommended', 'kVA and kW.'), O('Standard Size', 'Next rating.')],
 example: { title: 'Defaults', setup: ['50 kW, pf 0.8, 480 V; 30 kW DOL, 2 × 15 kW star-delta.'], result: ['Start 365.8 kVA; 350 kVA set.'], check: P('calcGenSz', {}, ['Standard Size350 kVA']) },
 tips: ['Soft starters cut the set size.'], noRefs: 'Rule-of-thumb factors.', related: rel('gensz'),
 shots: S('Generator Sizing', ['#gs_nm', '#gs_motors']) }),
-cablesz: G0('cablesz', 'c7a944a7', ['cable', 'ampacity'], {
+cablesz: G0('cablesz', 'a165ba79', ['cable', 'ampacity'], {
 purpose: 'Picks the smallest copper cable that carries the derated load with at most 5 % voltage drop.',
 what: ['Each size is listed with derated ampacity and drop. Length is in metres and ambient in degrees Celsius.'],
 when: ['Powering a pump or cabin.', 'A long run.'],
@@ -139,7 +139,7 @@ example: { title: 'Defaults', setup: ['3-phase, 415 V, 50 A, 100 m.'], result: [
 pitfalls: ['Grouping is not derated.'],
 refs: [{ std: 'IEC 60364-5-52; IEC 60228', note: 'derating' }], related: rel('cablesz'),
 shots: S('Cable Sizing', ['#cs_i']) }),
-vdrop: G0('vdrop', '889cfb24', ['voltage drop', 'XLPE'], {
+vdrop: G0('vdrop', '7686926f', ['voltage drop', 'XLPE'], {
 purpose: 'Checks one cable’s voltage drop against 5 % for power loads or 3 % for sensitive equipment.',
 what: ['OK up to the limit, WARNING to 1.25 × the limit, then NOT OK.'],
 when: ['A new load on an old cable.', 'Supplying instruments.'],
@@ -152,7 +152,7 @@ example: { title: 'Defaults', setup: ['415 V, 80 A, 150 m, size 50 copper.'], re
 pitfalls: ['Motor starts drop far more.'],
 refs: [{ std: 'IEC 60228', note: 'resistance' }], related: rel('vdrop'),
 shots: S('Voltage Drop', ['#vd_lt']) }),
-elec: G0('elec', 'cbc614dd', ['motor current', 'HP', 'mud pump'], {
+elec: G0('elec', '205bddfb', ['motor current', 'HP', 'mud pump'], {
 purpose: 'Three-phase motor current, kW ↔ HP conversion and triplex mud-pump output.',
 what: ['Current = kW × 1000 / (√3 × V × pf); start-up about 7 ×.'],
 when: ['Checking a motor supply.', 'Setting pump strokes.'],
@@ -177,7 +177,7 @@ outputs: [O('Quick Reference', 'A dash: not physical.')],
 example: { title: 'Gas rate', setup: ['1000 SCF/D.'], result: ['28.31682 Sm3/d.'], check: P(null, { uc_val: '1000' }, ['Sm3/d28.31682']) },
 pitfalls: ['Pressure is converted as a number only: atmospheric pressure is not added or removed (gauge or absolute).'], noRefs: 'Fixed factors.', related: ['analogsig', 'gaspvt'],
 shots: S('Unit Conversions', ['#pgBody .tabs', '#uc_val']) }),
-analogsig: G0('analogsig', '44de7fd0', ['4-20 mA', 'NAMUR'], { units: 'none',
+analogsig: G0('analogsig', 'fbec1fee', ['4-20 mA', 'NAMUR'], { units: 'none',
 purpose: 'Converts between a 4–20 mA signal, a 0–10 V signal and the scaled process value.',
 what: ['A mA value outside the NAMUR NE 43 range, or in its fault band, gets a message.'],
 when: ['Checking [[modbus]] scaling.', 'Commissioning a loop.'],

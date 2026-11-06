@@ -28,14 +28,14 @@ steps: [
 'Under **Trends**, tick up to six variables; pick the window, **5 min** to **12 h**.',
 'Under **Alarms**: **Ack** or **Acknowledge all**; **Events** keeps the history.',
 'Under **CSV logging**: **Start logging**, then **Download CSV**.',
-'Under **Send to PRiSM**, choose the **Pressure gauge** and select **Send trend window to PRiSM**.'],
+'Under **Send to PRiSM**, choose the **Pressure gauge** ([[glossary#fwhp|WHP]] by default) and select **Send trend window to PRiSM**.'],
 inputs: [
 I('Data source', 'Form data', 'The simulator model, or the linked Modbus tags.'),
 I('Speed', '1×', 'Form data only.'),
 I('Trends', 0, 'Up to six variables; window 5 min, 30 min, 2 h or 12 h.'),
 I('Pressure gauge', 'Wellhead pressure (WHP)', 'The pressure sent to PRiSM.')],
 outputs: [
-I('Tiles', 0, 'Wellhead, bottom-hole gauge and separator pressure, the three rates, GOR (gas to oil ratio), water cut, flare gas rate.'),
+I('Tiles', 0, 'Wellhead, bottom-hole gauge and separator pressure, the three rates, [[glossary#gor|GOR]], water cut, flare gas rate.'),
 I('Quality', 0, 'good = fresh; stale = no update for 3 poll intervals; bad = comms error, exception or unit mismatch; — = not linked.'),
 I('Alarms', 0, 'HI, HIHI, LO, LOLO from the tag limits, or simulator alarms; UNACKNOWLEDGED, acknowledged or normal.')],
 verdicts: [

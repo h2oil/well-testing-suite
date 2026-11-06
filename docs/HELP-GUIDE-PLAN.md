@@ -449,14 +449,17 @@ Per-file caps (raw, serialised source after concat; enforced by `help-content.te
 
 | File | Cap | File | Cap |
 |---|---|---|---|
-| 49-calc-help.js (page, search, renderer) | 45 kB | 48-calc-help-safety.js | 28 kB |
+| 49-calc-help.js (page, search, renderer) | 45 kB | 48-calc-help-safety.js | 36 kB |
 | 49-calc-help-print.js | 15 kB | 48-calc-help-process.js | 20 kB |
-| 48-calc-help-start.js (start, tasks, glossary, FAQ) | 26 kB | 48-calc-help-flare.js | 12 kB |
+| 48-calc-help-start.js (start, tasks, glossary, FAQ) | 18 kB | 48-calc-help-flare.js | 12 kB |
 | 48-calc-help-overview.js | 10 kB | 48-calc-help-utilities.js | 20 kB |
 | 48-calc-help-metering.js | 28 kB | 48-calc-help-simcourse.js | 38 kB |
 | 48-calc-help-welltest.js (incl. `wts` parts) | 32 kB | 48-calc-help-manifest.js (generated) | 8 kB |
 | 48-calc-help-production.js (incl. PRiSM parts) | 32 kB | **sum** | **330 kB** |
 | 48-calc-help-livedata.js | 16 kB | | |
+
+(Content round: 8 kB moved from start, 26 → 18 kB, to safety, 28 → 36 kB, for the Chemical Injection inputs and verdict
+actions; the sum stays 330 kB.)
 
 **Fallback if the measure is over at WP-I:** the glossary, the FAQ and the course answers and trainer notes move out of the
 HTML into `help/user-guide.html` only (the app links to the chapter there), which frees about 40–50 kB raw. A re-baseline is

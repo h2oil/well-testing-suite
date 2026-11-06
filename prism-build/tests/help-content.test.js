@@ -214,7 +214,7 @@ function glossaryIssues(r, g, glossary) {
   if (!keys.length) return out;
   const texts = [];
   strings({ purpose: g.purpose, what: g.what, when: g.when, steps: g.steps, inputs: g.inputs, outputs: g.outputs, verdicts: g.verdicts, example: g.example,
-    tips: g.tips, pitfalls: g.pitfalls, parts: g.parts }, r, (s) => texts.push(s));
+    tips: g.tips, pitfalls: g.pitfalls, parts: g.parts }, r, (s, p) => { if (!/\.(cat|id|mark)$/.test(p)) texts.push(s); });   // a unit category key ('gor') or an id is not prose
   keys.forEach((k) => {
     const e = glossary[k] || {}, forms = [e.term || k].concat(e.variants || []);
     const re = new RegExp('(^|[^A-Za-z0-9])(' + forms.map((f) => f.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')(?![A-Za-z0-9])', 'i');
@@ -240,7 +240,7 @@ function readSrc(f) { return fs.readFileSync(path.join(BUILD, f), 'utf8').replac
 function hostFn(name) {
   const h = hostHtml();
   let a = h.indexOf('\nfunction ' + name + '(');
-  if (a === -1) a = h.indexOf('\nwindow.' + name + ' = function');
+  if (a === -1) { const m = new RegExp('\\nwindow\\.' + name.replace(/\$/g, '\\$') + '\\s*=\\s*function').exec(h); a = m ? m.index : -1; }   // window.calcX=function too
   if (a === -1) return null;
   const b = h.indexOf('\n}', a + 1);
   return h.slice(a + 1, b === -1 ? h.length : b + 2);
@@ -249,6 +249,10 @@ function hostFn(name) {
 // so both page files are named here (kept apart from the SRC_OVERRIDE line so other overrides merge cleanly)
 SRC_OVERRIDE.cheminj = ['49-calc-cheminj.js'];
 SRC_OVERRIDE.hydrate = ['25-hydrate.js'];
+// PRiSM: the files that render or wire the steps the guide documents; buildup (key: PG_KEY): the page and its engines
+SRC_OVERRIDE.prism = ['01-foundation.js', '04-ui-wiring.js', '07-data-enhancements.js', '12-data-crop.js', '16-pvt.js', '33-pta-core.js',
+  '34-semilog-skin.js', '36-report.js', '37-prism-workflow.js', '39-prism-fieldtools.js', '54-prism-skin.js'];
+SRC_OVERRIDE.buildup = fs.readdirSync(BUILD).filter((f) => /^49-calc-buildup.*\.js$/.test(f)).sort();
 function srcTexts(route) {
   if (SRC_OVERRIDE[route]) return SRC_OVERRIDE[route].map((f) => ({ name: f, text: readSrc(f) }));
   const reg = SRC_FILES().filter((f) => /^4\d-calc-|^6\d-/.test(f) && new RegExp("key:\\s*['\"]" + route + "['\"]").test(readSrc(f)));
@@ -306,8 +310,8 @@ function verdictLines(root) {
     const tag = String(e.localName).toLowerCase();
     if (tag === 'script' || tag === 'style' || tag === 'option' || tag === 'select') return;
     const t = txt(e);
-    // a lone mark is a status cell of a table (cheminj line summary), not a verdict sentence
-    if (!/^[✓⚠✗]/.test(t) || t.length > 600 || t.length < 2) return;
+    // a mark on its own (a status cell of the cheminj line summary, a tile icon on home) is not a verdict sentence
+    if (!/^[✓⚠✗]/.test(t) || t.length > 600 || /^[✓⚠✗]\uFE0F?$/.test(t)) return;
     if (Array.from(e.children).some((c) => txt(c) === t)) return;
     if (out.indexOf(t) === -1) out.push(t);
   });
@@ -349,6 +353,11 @@ function checkExample(app, r, g, route0) {
     const el = app.el(id), want = ck.expectIds[id];
     const got = el ? (typeof want === 'number' ? firstNum(txt(el)) : txt(el)) : undefined;
     if (!near(got, want, tol)) out.push(r + ': example #' + id + ' = ' + got + ', guide says ' + want);
+  });
+  // expectValues: an input's value (a converter fills its other boxes)
+  Object.keys(ck.expectValues || {}).forEach((id) => {
+    const el = app.el(id), want = ck.expectValues[id], got = el ? String(el.value) : undefined;
+    if (got !== String(want)) out.push(r + ': example #' + id + ' value = ' + got + ', guide says ' + want);
   });
   Object.keys(ck.expectState || {}).forEach((k) => { const v = getPath(W.WTS_state, k); if (!near(v, ck.expectState[k], tol)) out.push(r + ': example WTS_state.' + k + ' = ' + v + ', guide says ' + ck.expectState[k]); });
   const body = txt(app.el('pgBody'));
@@ -411,7 +420,8 @@ function pageIssues(app, r, g) {
   const vs = A(g.verdicts).concat([].concat.apply([], A(g.parts).map((p) => A(p && p.verdicts))));
   const cover = (lines, label) => lines.forEach((l) => {
     const mark = l[0];
-    if (!vs.some((v) => v.mark === mark && l.indexOf(verdictKey(v)) !== -1)) e('verdict "' + l.slice(0, 90) + '" (' + label + ') matches no verdicts[] entry');
+    // exact: the match is the whole line (a table cell), not a substring
+    if (!vs.some((v) => v.mark === mark && (v.exact ? l === verdictKey(v) : l.indexOf(verdictKey(v)) !== -1))) e('verdict "' + l.slice(0, 90) + '" (' + label + ') matches no verdicts[] entry');
   });
   cover(verdictLines(root), 'defaults');
   A(g.verdictCases).forEach((c, i) => {

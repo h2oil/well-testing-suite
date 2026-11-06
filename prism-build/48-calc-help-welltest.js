@@ -29,7 +29,7 @@ wts: {
     { t: 'Check the steady results: **Node Conditions**, **Pipe Segment Analysis**.' },
   ],
   example: { title: 'The default spread (steady check)',
-    setup: ['WHP {{3000|pressureG}}; {{10|gasRate}}, {{1000|liquidRate}} oil, {{200|liquidRate}} water; bean 32/64; separator {{150|pressureG}}.'],
+    setup: ['[[glossary#fwhp|WHP]] {{3000|pressureG}}; {{10|gasRate}}, {{1000|liquidRate}} oil, {{200|liquidRate}} water; [[glossary#bean|bean]] 32/64; separator {{150|pressureG}}.'],
     result: ['Choke downstream {{157.7|pressureG|1}}, P2/P1 0.057: **Critical**.', 'Maximum rate at this ratio {{10.71|gasRate|2}}: no flow limit. Fired duty {{2.103|powerLarge|3}}.'],
     check: { kind: 'page', calc: 'calcWTS', tol: 0.002,
       expectState: { 'flow.choke.Pout': 157.66, 'flow.choke.regime': 'Critical', 'flow.choke.flowLimited': false, 'flow.choke.QmaxMMscfd': 10.71, 'flow.choke.ratio': 0.05719, 'flow.heater.dutyMMBtuHr': 2.1031 } } },
@@ -53,7 +53,7 @@ wts: {
     { id: 'layout', title: 'Page layout',
       what: ['Top: the live view (toolbar, alarm bar, 2D or 3D view, HUD), then the **Rig-up** card. Below: the form cards, **Pipe Segments**, **API RP 14E Settings** and the steady results. Steady warnings show above the form.'] },
     { id: 'inputs', title: 'Form inputs',
-      what: ['Which pressure goes where. Flowing wellhead or tubing pressure: **Wellhead Pressure**. Production or export line pressure: **Operating Pressure** plus the line loss, V-101 in only. Burner boom: V-101 out, **Operating Pressure** about {{15|pressureG}}, **Surge Tank Pressure** 5 (psig, not converted; at least 10 below Operating Pressure). With V-101 out never enter the production or wellhead pressure in **Operating Pressure**: the steady check still uses it.'],
+      what: ['Which pressure goes where. Flowing wellhead or tubing pressure: **Wellhead Pressure**. Production or export line pressure: **Operating Pressure** plus the line loss, V-101 in only ([[fs#FS-2|FS-2]]). Burner boom: V-101 out, low **Operating Pressure** and **Surge Tank Pressure** as in [[fs#FS-1|FS-1]]. With V-101 out never enter the production or wellhead pressure in **Operating Pressure**: the steady check still uses it.'],
       inputs: [
         { label: 'Wellhead Pressure', id: 'wts_Pwh', def: '{{3000|pressureG}}', text: 'Flowing wellhead (tubing) pressure.' },
         { label: 'Wellhead Temp', id: 'wts_Twh', def: '{{180|temperature}}' },
@@ -94,7 +94,7 @@ wts: {
       ] },
     { id: 'rigup', title: 'Rig-up',
       steps: ['Select a switch in **Rig-up** to take an item out or put it back.', 'Read the **Note** lines: they say what changes.', 'Select **Restore full rig-up** to put all back.'],
-      tips: ['SDV-101 and CK-101 stay in. V-101 and FS-401 cannot both be out. P-201 needs T-301.', 'V-101 out: all to the burner; no meter rates, GOR, BS&W or batches.', 'Saved in project files; the steady check ignores it.'] },
+      tips: ['SDV-101 and CK-101 stay in. V-101 and FS-401 cannot both be out. P-201 needs T-301.', 'V-101 out: all to the burner; no meter rates, [[glossary#gor|GOR]], [[glossary#bsw|BS&W]] or batches.', 'Saved in project files; the steady check ignores it.'] },
     { id: 'toolbar', title: 'Toolbar and keys',
       steps: ['**3D** / **2D** (V). Play / pause (Space). Speed ×1, ×10, ×60, ×600 ([ and ]).', '**Reset → Reset to steady** (R) or **Reset → Start from empty**. After a minute it asks first: clock, totals and levels clear.',
         '**ESD** trips SDV-101 (E), after a confirm. **Scenarios** switches each fault on or off.', '3D only: **View** (0 to 5), **Colour**, **Labels** (L), **Quality**. Also **Legend**, **Trends**, **Max** (F).', 'A acknowledges all; ? shows the keys; Esc closes. On a phone, More holds the rest.'] },
@@ -114,10 +114,10 @@ wts: {
 },
 
 bottomsup: {
-  route: 'bottomsup', reviewed: V, reviewedSrc: '5781d9fc', units: 'dual',
+  route: 'bottomsup', reviewed: V, reviewedSrc: '5beb6488', units: 'dual',
   keywords: ['lag time', 'returns', 'sample arrival'],
   purpose: 'Time for fluid at the bottom of the tubing to reach surface at a given rate.',
-  what: ['Tubing volume ÷ rate: when a sample, a cushion tail or a pill reaches surface.'],
+  what: ['Tubing volume ÷ rate: when a sample, a [[glossary#cushion|cushion]] tail or a pill reaches surface.'],
   when: ['Before sampling: when does formation fluid arrive?', 'Clean-up or circulation: when should returns change?'],
   steps: [
     { t: 'Select **Bottoms Up Time** in **Well Test & Flowlines**.', shot: 'view' },
@@ -147,7 +147,7 @@ casing: {
   keywords: ['annulus', 'capacity', 'drift', 'tubular'],
   purpose: 'Capacity and volume of casing, tubing and the annulus, from the shared tubular table.',
   what: ['Pick each string by OD and weight. The page gives ID, drift, capacity per foot and total volume, and the annulus.'],
-  when: ['Plan a kill, a circulation or a cushion.', 'Get the tubing volume for [[bottomsup]].'],
+  when: ['Plan a kill, a circulation or a [[glossary#cushion|cushion]].', 'Get the tubing volume for [[bottomsup]].'],
   steps: [
     { t: 'Select **Casing & Tubing** in **Well Test & Flowlines**.', shot: 'view' },
     { t: 'Choose the **Casing** ① and the **Tubing** ②.' },
@@ -180,10 +180,10 @@ flowline: {
     { pattern: '^fl_(tair|wind|eps|wall|ins|kp|kins|cpo|cpw|cpg|jt)$', why: 'Heat Loss card (row Heat Loss)' }],
   purpose: 'Multiphase pressure drop from the choke outlet to the separator and from the gas PCV to the flare tip, with choke and PCV checks.',
   what: ['Both lines are marched back: from the separator pressure to the choke outlet, and from the flare tip to the PCV outlet.'],
-  when: ['Is the line big enough? Does the choke stay critical?', 'Flare line: Mach, PSV back-pressure, cold gas after the PCV.'],
+  when: ['Is the line big enough? Does the choke stay critical?', 'Flare line: Mach, [[glossary#psv|PSV]] back-pressure, cold gas after the PCV.'],
   steps: [
     { t: 'Select **Flowline Pressure Drop** in **Well Test & Flowlines**.', shot: 'view' },
-    { t: 'Fill **Stream & Conditions** ①.' },
+    { t: 'Fill **Stream & Conditions** ①, with the [[glossary#fwhp|WHP]].' },
     { t: 'Choose the **Temperature model**. Coupled: fill **Heat Loss (coupled temperature model only)**.' },
     { t: 'Fill **Segments: Choke Outlet to Separator**: length, inside diameter, elevation change.' },
     { t: 'Fill the flare data and **Segments: Gas PCV Outlet to Flare Tip**.' },
@@ -304,7 +304,7 @@ lineheat: {
 },
 
 pipesz: {
-  route: 'pipesz', reviewed: V, reviewedSrc: 'bfc45037', units: 'dual',
+  route: 'pipesz', reviewed: V, reviewedSrc: '0e39f615', units: 'dual',
   keywords: ['line size', 'velocity', 'erosional', 'sand'],
   notDocumented: [{ id: 'pp_sg', why: 'inputs row Gravity (its label holds a greater-than sign)' }],
   purpose: 'Picks a line size from velocity limits and pressure drop, and checks one line for erosional velocity and sand erosion.',

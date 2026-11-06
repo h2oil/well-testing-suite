@@ -35,7 +35,10 @@ const FIXTURE = `(function () { 'use strict';
     ] }
   } }; } });
 })();`;
+// The real content files (48-calc-help-<group>.js) are left out of these builds, so the fixture's recipes are the only ones;
+// the generated manifest module stays in.
 const OVR = { '48-calc-help-zz-test.js': FIXTURE };
+fs.readdirSync(BUILD).filter((f) => /^48-calc-help-.*\.js$/.test(f) && f !== '48-calc-help-manifest.js').forEach((f) => { OVR[f] = null; });
 
 // A WebP-shaped file: a valid VP8L header with the given size, padded to n bytes (--check reads headers, never pixels).
 function fakeWebp(w, h, n, salt) {
