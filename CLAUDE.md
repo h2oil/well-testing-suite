@@ -53,7 +53,16 @@ prism-build/                    ← PRiSM module source (numbered files + toolin
   22-30                         ← units layer, Test System Safety calcs, tooltips, project save, quick report
   31-32, 38                     ← Well Test Simulator / 3D (Round-7 — separate workstream); rig-up switches
                                   (wts_sim_rigup), surge→gauge transfer by vessel pressure via LCV-201 (no pump),
-                                  P-201 downstream of the gauge tank; LSHH-301 shuts LCV-201
+                                  P-201 downstream of the gauge tank; LSHH-301 shuts LCV-201.
+                                  v3.3.1 (WTS_sim 1.4.0, docs/SIM-EQUIPMENT-PLAN.md): 31 = optional rig-up items DS-101
+                                  cyclonic desander (SDV-101 → CK-101, upstream of the choke) and T-202 second surge tank (needs
+                                  T-201), both OUT by default (RIG_OPTIONAL, RIG_DEFAULTS; missing key = item default; 10-char
+                                  sig, first 8 = v1.3.0); sand in the well stream (sand rates / d50, flow-back), desander ΔP, cut
+                                  size, capture, accumulator + interlocked dump sequence (ESD hold / resume / abort, auto-dump,
+                                  HV-104 bypass, PSHH-103 = the only desander trip), choke erosion indicator; T-202 with PCV-203,
+                                  PCV-204 blanket, PSV-202, LAH/LSHH-202, LCV-202 transfer, routes T-201 / T-202 / both;
+                                  WTS_sim.stepFor(rig) step numbers. 32 (v1.2.0) / 38 / host 2D wtsDrawDiag: both items absent
+                                  and hidden while out (D18); with both out the engine, 3D and 2D are exactly v3.3
   33-pta-core.js                ← C1 getWell, C2 getAnalysisData/rateHistory, C3 physicalModel, C4 lastFit,
                                   C5 type-curve match, C8 save/restore state          (Round-8)
   34-semilog-skin.js            ← MDH/Horner/superposition straight lines, skin summary + decomposition (Round-8)
@@ -118,13 +127,18 @@ prism-build/                    ← PRiSM module source (numbered files + toolin
   buildup-validate.js           ← Build-up Surveillance benchmark + calibration (--sequences --workers 4 --write writes file 55
                                   and the benchmark snapshot; plan §5.5)
   smoke-test.js                 ← vm-sandboxed namespace + contract + no-perpetual-timer checks (326/326)
-  accept-test.js                ← numeric acceptance runner over tests/*.test.js (1162 tests; calc-g1…g5 = host-calculator audit,
+  accept-test.js                ← numeric acceptance runner over tests/*.test.js (1258 tests; calc-g1…g5 = host-calculator audit,
                                   calc-new1…4 = v1.7 calculators, calc-registry = plug-in contract, cheminj-* = v3.2
                                   Chemical Injection foundation / engine / page, buildup-* = v3.3 Build-up Surveillance
                                   (data, run, trend, synth, review, store, page, engine-a/b, shapes, integration, benchmark),
                                   prism-skincheck / prism-closedcircle = v3.3 PRiSM)
   tests/_buildup-shapes.js      ← frozen v3.3 contract fixtures (shapes + FIX analysis); _buildup-idb-fake.js = IndexedDB fake
-  tests/_harness.js             ← loadApp(): DOM store, recording canvas, manual timers, shared storage
+  tests/_harness.js             ← loadApp(): DOM store, recording canvas, manual timers, shared storage; since v3.3.1 it
+                                  rebuilds Round 7 (31/32/38) in memory after round 6 like the PRiSM rounds, so
+                                  sourceOverrides reach the simulator (the build incantation rule below still holds)
+  tests/_wts-sim-v33.js         ← FROZEN v3.3 simulator engine (31 at 666be77, self-test stripped) — never edit; frozen-engine
+                                  identity tests; tests/_wts-equip-shapes.js = DS-101 / T-202 contract fixture
+  wts-sim-perf.js               ← simulator A/B perf gate vs the frozen engine (default spread ≤ 1.05; both items in ≤ 1.6)
   .tmp/                         ← Extracted main script for syntax checks (gitignored)
 PRISM-PLAN.md                   ← Phasing plan + model catalogue + decisions
 docs/CHEMICAL-INJECTION-PLAN.md ← Chemical Injection module plan (v3.2a/3.2b; hydrate inhibitors, H2S scavengers, ppm chemicals,
@@ -163,7 +177,8 @@ via numbered "rounds":
    Safety: ESD Hi/Lo-Pilot, Hydrate, Liquid Line, Pipe Service Life), **Round-6**
    (28 help tooltips, 29 project save/open, 30 quick report). Same concat/inject
    pattern (`concat-round4.js` … `inject-round6.js`). Round-7 (31-32, 3D Well Test
-   Simulator) belongs to a separate workstream — never run it from PRiSM work.
+   Simulator) belongs to a separate workstream — never run it from PRiSM work (the test harness rebuilds it in
+   memory since v3.3.1; that does not change this rule for the build).
 
 4c. **Round-8 (`combined-round8.js`)** — files 33-37 (PTA core, semilog/skin, RTA/DCA,
    report, workflow), 39, 51-52 and, since v3.3, 53-55 (automatic interpretation, skin, the generated calibration
@@ -184,8 +199,9 @@ via numbered "rounds":
 5. **Always then run** `node ios-app/scripts/sync-from-main.js` to regen www.
 
 6. **Verify**: `node --check prism-build/.tmp/wts-main.js`, `node prism-build/smoke-test.js`
-   (326/326 must pass), `node prism-build/accept-test.js --html --integration` (1162/1162) and
-   `node prism-build/wts3d-test.js` (101 checks; on a Linux LF checkout the two CRLF checks fail; check 14 timing passes since v3.1).
+   (326/326 must pass), `node prism-build/accept-test.js --html --integration` (1258/1258) and
+   `node prism-build/wts3d-test.js` (120 checks; on a Linux LF checkout the two CRLF checks fail; check 14 timing passes since v3.1);
+   after simulator (31/32/38) changes also `node prism-build/wts-sim-perf.js`.
 
 7. **Re-normalise CRLF** after any inject run. Some inject scripts splice their block with LF-only
    line endings (the v1.7 integration found ~38k LF-only lines after a full rebuild). Check with
@@ -425,6 +441,11 @@ report snapshot, and `#hubTabs` (outside `#pgBody`) links the members. Release N
   is the earliest plateau (the longest window is reported); p* with an estimated rate history is a range; the single-build-up
   bounds of the calibration are below target (high labels: too few cases; headline medium: 72.6 % right, Wilson lower bound
   0.64 against 0.70); no build-up shorter than 10 h is labelled high (envelope); a stored result is about 10 kB per test.
+- **Simulator DS-101 / T-202 (v3.3.1)** (docs/SIM-EQUIPMENT-PLAN.md): desander efficiency factors f_lo / f_hi / f_g, the
+  accumulator fill knee and the flow-back profile and size distribution are ASSUMPTIONS; the choke erosion rate is a
+  steel-equivalent display-only screening value (band basis assumed: 125 mil over 72 h); dump bleed / flush volumes are not in
+  the balances; the T-202 split is pressure-driven with a one-substep header lag; PSHH-201 keeps its ESD-only action; the PSV
+  fire case is not modelled; sand stops at V-101 (no LCV erosion or plugging).
 
 ---
 
@@ -435,7 +456,7 @@ node prism-build/smoke-test.js
 # Expect: "[ok] all 326 smoke-test checks passed"
 # PRiSM_MODELS total: 46 entries
 node prism-build/accept-test.js --html --integration
-# Expect: "[ok] all 1162 acceptance tests passed"
+# Expect: "[ok] all 1258 acceptance tests passed"
 ```
 
 If a check fails, the test prints which one. Common failures and fixes:
@@ -496,7 +517,7 @@ node prism-build/gui-sweep.js --mobile                       # click sweep at 39
 
 ---
 
-## Cumulative stats (as of 2026-11-01, v3.3)
+## Cumulative stats (as of 2026-11-06, v3.3.1)
 
 ```
 PRiSM source files:           01-21 + 33-37, 39, 51-55 (Round-8) + tooling
@@ -507,12 +528,17 @@ Click-on-plot line tools:     24
 Decline curve types with EUR: 4 (Arps, Duong, SEPD, Fetkovich) + P10/P50/P90
 PVT correlations:             17 (Standing, DAK, Lee-Gonzalez, Beggs-Robinson, etc.)
 Smoke-test checks:            326/326 pass
-Acceptance tests:             1162/1162 pass (accept-test.js --html --integration and --sources)
-3D simulator tests:           101 checks (wts3d-test.js)
-Generated HTML:               ~127.2k lines (7.67 MB); www bundle ~7.7 MB
+Acceptance tests:             1258/1258 pass (accept-test.js --html --integration)
+3D simulator tests:           120 checks (wts3d-test.js; 118/120 on a Linux LF checkout — the two CRLF checks)
+Simulator perf gate:          wts-sim-perf.js (default spread ≈ 1.01 vs frozen v3.3; both items in ≈ 1.46, gate 1.6)
+Generated HTML:               ~130.0k lines (8.13 MB); www bundle ~8.1 MB
 ```
 
-Latest release: v3.3 (Build-up Surveillance: `buildup` page in Production & Reservoir — shut-ins found in permanent-gauge
+Latest release: v3.3.1 (Well Test Simulator equipment: optional DS-101 cyclonic desander upstream of the choke with sand in
+the well stream, interlocked accumulator dump, bypass and a steel-equivalent choke erosion indicator; optional T-202 second
+surge tank with its own back-pressure / blanket / PSV / level alarms and LCV-202 transfer, routes T-201 / T-202 / both; both out
+by default = v3.3 behaviour; new Dynamic Simulation sand and equipment inputs; WTS_sim 1.4.0), dated 2026-11-06, on top of
+v3.3 (Build-up Surveillance: `buildup` page in Production & Reservoir — shut-ins found in permanent-gauge
 data, each full build-up interpreted by PRiSM_autoInterp, skin / k / p* / PI trend with delta and absolute alerts, rule-based
 review with an evidence check, audit trail and sign-off; PRiSM Skin-check card and the closedCircle model (46); confidence labels
 calibrated on 1,683 synthetic build-ups, file 55 calibrated:true, single-build-up bounds open), dated 2026-11-01, on top of
@@ -521,7 +547,7 @@ as the 8th row of Test System Safety, THI hydrate design with real-gas J-T × 1.
 chemicals, pump settings ranked for classified areas with the air-driven liquid pump as the H1 default, surface discharge
 pressure / relief band, drive gas, calibration, tank; Hydrate-page rp-skip banner and Chemical & Dosage cross-link; Quick
 Report final + daily entries; 3.2b — H2S scavenger card, downhole capillary, LDHI screening, second expansion, batch — still
-to do), dated 2026-10-31, on top of v3.1.1 (iOS build warnings) and v3.1 (module-by-module review with the automated GUI sweep; metric-mode fixes; simulator rig-up + pressure-driven LCV-201 transfer, ~40 % faster sim; PRiSM undersaturated PVT, crop persistence, ω ≥ 0.95 ranking rule; Modbus BAD-quality + connect timeout; proprietary LICENSE; bridge exe signing in the release workflow), integrated 2026-10-01, on top of v3.0.2 (bridge 1.2.1 allows any device by default — re-installs replace an older installer's device list — one-click Windows installer; first published bridge release tag: `modbus-bridge-v1.2.2`) on top of v3.0.1 (bridge installers + setup guide, well-menu fix) and v3.0 (Mini WellOS + Modbus, multi-well projects, PRiSM workspace + gas, gas lift, standards review of metering/erosion/ESD/simulator safety, a11y/perf, UX), integrated 2026-09-30. App Store version = the in-app version: ci_post_clone.sh stamps MARKETING_VERSION from `RELEASE_NOTES[0].ver` (the same value as the label under the logo; currently **3.3**; build number = CI_BUILD_NUMBER). Keep the committed MARKETING_VERSION and the script's fallback `VERSION_BASE` equal to it (`tests/ios-native.test.js`). Once a version is released on the App Store, the next upload needs a newer release-notes entry — Apple rejects a version that is not higher (ITMS-90062).
+to do), dated 2026-10-31, on top of v3.1.1 (iOS build warnings) and v3.1 (module-by-module review with the automated GUI sweep; metric-mode fixes; simulator rig-up + pressure-driven LCV-201 transfer, ~40 % faster sim; PRiSM undersaturated PVT, crop persistence, ω ≥ 0.95 ranking rule; Modbus BAD-quality + connect timeout; proprietary LICENSE; bridge exe signing in the release workflow), integrated 2026-10-01, on top of v3.0.2 (bridge 1.2.1 allows any device by default — re-installs replace an older installer's device list — one-click Windows installer; first published bridge release tag: `modbus-bridge-v1.2.2`) on top of v3.0.1 (bridge installers + setup guide, well-menu fix) and v3.0 (Mini WellOS + Modbus, multi-well projects, PRiSM workspace + gas, gas lift, standards review of metering/erosion/ESD/simulator safety, a11y/perf, UX), integrated 2026-09-30. App Store version = the in-app version: ci_post_clone.sh stamps MARKETING_VERSION from `RELEASE_NOTES[0].ver` (the same value as the label under the logo; currently **3.3.1**; build number = CI_BUILD_NUMBER). Keep the committed MARKETING_VERSION and the script's fallback `VERSION_BASE` equal to it (`tests/ios-native.test.js`). Once a version is released on the App Store, the next upload needs a newer release-notes entry — Apple rejects a version that is not higher (ITMS-90062).
 
 **Shared engines (reuse, never duplicate):** `PRiSM_autoInterp` (53; `canon` / `hash16` for display-precision hashing, `drive` for
 sliced jobs), `PRiSM_skinCheck` (54), `WTS_buildup` (`data`, `run`, `trend`, `synth`, `review`, `store`, `plot`, `page`), `WTS_aga3_compute` (host; AGA-3 page, Oil & Gas, Orifice; Fpv = √(Zb/Zf), `gravityBasis` real|ideal), `WTS_flowline_march`, `WTS_modbus` (tags, polling; feeds `WTS_historian.record`; tag names are unique), `WTS_historian`, `WTS_wells` (multi-well; active well's keys stay where pages read them), `WTS_gaspvt_compute`, `WTS_gaspvt_z` / `WTS_gaspvt_isenthalpic` (impurities in mol %; 64-entry memo, `.stats()`), `WTS_chemlib` (chemical / pump / point data), `WTS_cheminj` / `WTS_cheminj_compute` (chemical-injection engines), `WTS_tubulars`, `WTS_wellkill_compute` / `WTS_gradient_compute`, `WTS_baseConditions` + host `_baseCond(defTbF, defPb)` (Std selector; "calculator default" keeps each page's legacy basis), host `_uFmt`. Open engineering decisions: docs/ROADMAP.md §1.7.

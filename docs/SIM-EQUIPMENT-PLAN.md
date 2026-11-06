@@ -1,8 +1,7 @@
 # Simulator equipment: second surge tank T-202 and cyclonic desander DS-101 — implementation plan
 
-> **Status: plan, reviewed** (2026-11-01). Target: the next point release after the `RELEASE_NOTES[0].ver` current at
-> integration (**v3.3.1 provisional**; the number is fixed at WP-I, §11). No code has been written. This file is the only
-> repository file changed by the planning step. The owner's request (user feedback with a screenshot): *"add equipment like 2
+> **Status: shipped in v3.3.1** (2026-11-06; planned and reviewed 2026-11-01; the version was fixed at WP-I, §11). Built in
+> work packages WP0, WP-E0, WP-E1, WP-E2, WP-3D, WP-L, WP-2D and WP-I on the `sim-equip` branch. The owner's request (user feedback with a screenshot): *"add equipment like 2
 > surge tanks, I also noticed you can't add cyclonic de sander. Do this — desander should be upstream of choke."* Equipment,
 > methods and standards are named generically, by standard designation or by correlation author only; no other company,
 > product, vendor or website is named. The review findings and what changed for each are in Appendix B.
