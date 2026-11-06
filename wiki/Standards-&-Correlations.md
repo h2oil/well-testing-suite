@@ -1,5 +1,7 @@
 # Standards & Correlations Reference
 
+> **Superseded by the in-app Help** (Help & Guide → the Standards index of the printable user guide), which follows the current version. This page is kept for one release and will then be removed.
+
 This page lists the industry standards, correlations, and equations used throughout the Well Testing Suite.
 
 ## Metering

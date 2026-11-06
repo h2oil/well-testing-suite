@@ -7837,18 +7837,18 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
     "analogsig": "view-d 1280 800 5bfe019b,view-p 780 1688 8debff8c",
     "arc": "view-d 1280 800 f7b4fd42,view-p 780 1688 270ee7a2",
     "bottomsup": "view-d 1280 800 d1ee07ae,view-p 780 1688 01b89ad8",
-    "buildup": "res-d 982 345 be8b6dfd,run-d 987 50 7dd2723d,view-d 1280 800 0a1f03ae,view-p 780 1688 2d1d94aa,well-d 491 635 29e23bee",
+    "buildup": "res-d 982 345 be8b6dfd,view-d 1280 800 0a1f03ae,view-p 780 1688 6e37d4d5,well-d 491 635 29e23bee",
     "cablesz": "view-d 1280 800 baad4860,view-p 780 1688 669aa8cf",
     "casing": "view-d 1280 800 4f783b8e,view-p 780 1688 a6e4e46b",
     "chem": "view-d 1280 800 55f18589,view-p 780 1688 bdfaadbf",
-    "cheminj": "res-d 987 32 c0ca0425,view-d 1280 800 5c0e89e0,view-p 780 1688 ec544d78",
+    "cheminj": "res-d 982 635 27e9ce0a,view-d 1280 800 5c0e89e0,view-p 780 1688 cd5cd19d",
     "choke": "res-d 982 376 d323b373,view-d 1280 800 49632a14,view-p 780 1688 36b2ed60",
     "chokecnv": "view-d 1280 800 0b0620fe,view-p 780 1688 c4bb9a98",
     "chokeflow": "view-d 1280 800 d9334cc6,view-p 780 1688 38072e74",
     "chokeperf": "res-d 491 110 9b8a6c21,view-d 1280 800 55c56744,view-p 780 1688 ceea785f",
     "clientinfo": "view-d 1280 800 9e695396,view-p 780 1688 1573f8a3",
     "complfluids": "res-d 449 203 71aef0b7,view-d 1280 800 dd954a63,view-p 780 1688 66fbd630",
-    "course": "ex1-view-d 1280 800 0b368e22,ex1-view-p 780 1688 c511312f,ex10-t202-d 296 349 6ede300e,ex2-ck101-d 296 313 cf50313a,ex4-alarms-d 476 258 77664798,ex4-scen-d 531 465 0085c41d,ex4-v101-d 296 307 8b4cb53f,ex5-more-p 780 1688 1ceaf621,ex5-reset-d 213 93 09fc7e22,ex5-trends-d 1280 800 61f8a885,ex5-viewmenu-d 213 253 e385e263,ex6-events-d 476 183 dfcfa42c,ex6-t301-d 296 349 2c9ef751,ex7-t201-d 296 349 7ea5e89d,ex8-temp3d-d 1280 800 3b64c4e8,ex9-ds101-d 296 349 5067b499",
+    "course": "ex1-view-d 1280 800 0b368e22,ex1-view-p 780 1688 51a0b0a6,ex10-t202-d 296 349 6ede300e,ex2-ck101-d 296 313 cf50313a,ex4-alarms-d 476 258 77664798,ex4-scen-d 531 465 0085c41d,ex4-v101-d 296 307 8b4cb53f,ex5-more-p 780 1688 5ed6983e,ex5-reset-d 213 93 09fc7e22,ex5-trends-d 1280 800 6ef1a783,ex5-viewmenu-d 213 253 e385e263,ex6-events-d 476 183 dfcfa42c,ex6-t301-d 296 349 2c9ef751,ex7-t201-d 296 349 7ea5e89d,ex8-temp3d-d 1280 800 d3bf9cbf,ex9-ds101-d 296 349 5067b499",
     "dispersion": "res-d 491 488 4caee3b6,view-d 1280 800 329c3138,view-p 780 1688 fa30328b,weather-d 491 287 4664d775",
     "elec": "view-d 1280 800 e93f2161,view-p 780 1688 e2718cf7",
     "esdhi": "res-d 449 260 e988e9f5,view-d 1280 800 8caea0ea,view-p 780 1688 623de604",
@@ -7865,9 +7865,9 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
     "gensz": "view-d 1280 800 e72fd96a,view-p 780 1688 6dbd598f",
     "h2sroe": "res-d 454 445 8422de94,view-d 1280 800 9ecdf2df,view-p 780 1688 7701a110",
     "heater": "view-d 1280 800 c215c256,view-p 780 1688 b55b4ddf",
-    "help": "view-d 1280 800 6f7b6c30,view-p 780 1688 b1fa0b6b",
+    "help": "view-d 1280 800 6f7b6c30,view-p 780 1688 722652b2",
     "historian": "export-d 982 331 b86996b1,view-d 1280 800 6442b9ee,view-p 780 1688 38ed2737",
-    "home": "view-d 1280 800 9e68f430,view-p 780 1688 415b9ec5",
+    "home": "view-d 1280 800 d66a41a7,view-p 780 1688 44ab3578",
     "hydrate": "sum-d 945 178 76d57306,view-d 1280 800 e118477f,view-p 780 1688 5c93006e",
     "lineheat": "res-d 987 416 7e6d3aaa,view-d 1280 800 afd8cd76,view-p 780 1688 2bd22587",
     "liquidline": "res-d 454 229 7f858d73,view-d 1280 800 883a1884,view-p 780 1688 f0f9f951",
@@ -7883,7 +7883,7 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
     "proving": "res-d 491 520 9fd5cf32,view-d 1280 800 bbb6c233,view-p 780 1688 6955910f",
     "prv": "inlet-d 449 394 c76ae598,load-d 491 341 f6f0f4d8,res-d 449 441 4a49637e,view-d 1280 800 596c7610,view-p 780 1688 011c149a",
     "pumpsz": "view-d 1280 800 cf2117d4,view-p 780 1688 ed22e300",
-    "releasenotes": "view-d 1280 800 00657abe,view-p 780 1688 8203cba2",
+    "releasenotes": "view-d 1280 800 09ef3d8f,view-p 780 1688 93e8c991",
     "scale": "card-d 431 267 52db40a0,card-p 756 510 73b70afe,view-d 1280 800 dec8fef7,view-p 780 1688 2b542a04",
     "scenarios": "fs-1-rigup-d 982 488 1865a58d,fs-3-rigup-d 982 487 979a7c65",
     "sep": "view-d 1280 800 69685597,view-p 780 1688 f2bbb50e",
@@ -7891,7 +7891,7 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
     "sepqc": "res-d 491 239 58385532,view-d 1280 800 9f200512,view-p 780 1688 67438f8a",
     "seprate": "view-d 1280 800 eeea4137,view-p 780 1688 ac37ed8a",
     "solgor": "calc-d 491 551 eac40ac6,res-d 449 224 c8e07ca1,view-d 1280 800 94b6bdd0,view-p 780 1688 351b540a",
-    "start": "first-d 491 395 eaced952,header-d 982 92 f3a218cf,screen-d 1280 800 939eff04",
+    "start": "first-d 491 395 eaced952,header-d 982 92 f3a218cf,screen-d 1280 800 55bcce64",
     "tank": "view-d 1280 800 700a3803,view-p 780 1688 5f9d6598",
     "turbmeter": "res-d 449 298 169bbd66,view-d 1280 800 537337b8,view-p 780 1688 e5a2640d",
     "units": "view-d 1280 800 62bc1859,view-p 780 1688 04f86a65",
@@ -7900,10 +7900,11 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
     "wellkill": "res-d 611 315 361d37d8,view-d 1280 800 3bddfaee,view-p 780 1688 801538b1",
     "wellos": "modbus-d 982 154 6570dca0,view-d 1280 800 e3f6c5bc,view-p 780 1688 3b9ff94a",
     "wells": "view-d 1280 800 d9907e22,view-p 780 1688 7324b608",
-    "wts": "card-d 296 349 e4ae1be4,card-p 752 858 45a7da8a,rigup-d 982 488 71c236fa,tb-d 980 481 909ac3e3,view-d 1280 800 59d21845,view-p 780 1688 4e2e2134"
+    "wts": "card-d 296 349 e4ae1be4,card-p 752 858 45a7da8a,rigup-d 982 488 71c236fa,tb-d 980 481 909ac3e3,view-d 1280 800 2c844dde,view-p 780 1688 4ece66ab"
   };
   var M = G.WTS_helpManifest = G.WTS_helpManifest || {};
-  M.count = 210;
+  M.count = 209;
+  M.bytes = 7814206;   // total size of the image files (the offline download label)
   M.data = D;
   M.base = 'help/img/';
   // get(folder, shot, view) → {file, src, w, h, v} or null; view "desktop" | "phone"; base overrides M.base
@@ -8237,7 +8238,7 @@ pitfalls: ['Favourites and Recently used belong to this device. They are not in 
 noRefs: 'A start page; no calculation.', related: ['help', 'clientinfo'],
 shots: v('Dashboard with the search box, the favourites hint and the first tiles', 'The Dashboard as it opens',
 [{ sel: '#dash_search', n: 1 }, { sel: '#dash_quick', n: 2 }, { sel: '.dash-sec[data-group] .dash-card', n: 3 }]) },
-help: { route: 'help', reviewed: R, reviewedSrc: 'f3fba7b2', units: N, keywords: ['help', 'guide', 'user guide', 'manual', 'training', 'how to'],
+help: { route: 'help', reviewed: R, reviewedSrc: 'afe2d950', units: N, keywords: ['help', 'guide', 'user guide', 'manual', 'training', 'how to'],
 notDocumented: [{ id: 'help_q', why: 'search (step 2)' }, { id: 'help_back', why: 'Back (step 5)' }, { id: 'help_lb_x', why: 'closes a screenshot' },
 { id: 'help_offline', why: 'offline screenshots' }, { pattern: '^help_(print_|pm)', why: 'print (step 6)' }],
 purpose: 'A guide for every module, with search, "How do I…" tasks, the simulator course and field scenarios.',
@@ -8516,7 +8517,7 @@ function open(t) { return { t: 'Select **' + t + '** in **Production & Reservoir
 var prism = {
   route: 'prism', reviewed: V, reviewedSrc: '09850fbd', units: 'field',
   keywords: ['well test analysis', 'pressure transient', 'PTA', 'derivative', 'skin'],
-  purpose: 'Interprets a pressure test: load the data, pick the period, read the derivative, fit a model, report k, skin and storage.',
+  purpose: 'Interprets a pressure test: load the data, pick the period, read the derivative, fit a model, report k, [[glossary#skin|skin]] and storage.',
   what: ['Five steps, ① Data to ⑤ Report, in the step bar.',
   'The results rail shows the latest fit and straight line. **Tools** holds the specialist panels.'],
   when: ['After a build-up, drawdown, injection or fall-off test.', 'To check for damage before or after a stimulation.', 'With rate-only data, for decline analysis and EUR.'],
@@ -8534,7 +8535,7 @@ var prism = {
   example: { title: 'The demo drawdown', setup: ['**Try demo data** (55 points, 850 STB/d, pi 4,200 psia, h 35 ft), then **▶ Analyse**.'],
   result: ['Homogeneous, ✓ converged, R² 1.00000: k 45.0 md, S +2.50, C 8.47e-4 bbl/psi, r_inv 1,549 ft.', 'Straight line (MDH): m 121 psi/cycle, k 45.0 md, S +2.49, FE 0.76.'],
   check: { kind: 'manual', reason: 'PRiSM fit: ▶ Analyse runs asynchronously; read from the page with the demo data' } },
-  tips: ['Run ▶ Analyse, then refine the period, window and model.', 'If line and model differ by over 5 % in k, check the IARF window.'],
+  tips: ['Run ▶ Analyse, then refine the period, window and model.', 'If line and model differ by over 5 % in k, check the [[glossary#iarf|IARF]] window.'],
   pitfalls: ['A field marked **sample** holds a demo value: enter yours.'],
   verdicts: [vd('✓', '✓', 'Step-bar tick: the step has what it needs.')],
   refs: [rf('Bourdet (1989, 2002)', 'derivative and models'), rf('Agarwal, Al-Hussainy and Ramey (1970)', 'storage and skin'), rf('Horner (1951)', 'semilog lines')],
@@ -8732,13 +8733,13 @@ var gaslift = {
 var buildup = {
   route: 'buildup', reviewed: V, reviewedSrc: 'fe00b2fe', units: 'dual',
   keywords: ['build-up', 'shut-in', 'permanent gauge', 'skin trend', 'sign-off'],
-  purpose: 'Finds the shut-ins in permanent-gauge data, interprets each build-up and trends skin, k, p* and PI, with alerts and sign-off.',
-  what: ['Each build-up gets an IARF window, semilog line, model match, S_err and confidence label. Alerts flag a skin change.',
+  purpose: 'Finds the shut-ins in permanent-gauge data, interprets each build-up and trends [[glossary#skin|skin]], k, [[glossary#pstar|p*]] and PI.',
+  what: ['Each build-up gets an [[glossary#iarf|IARF]] window, semilog line, model match, S_err and confidence label. Alerts flag a skin change.',
   'Partial rate cuts are listed, not interpreted; **Open this build-up in PRiSM** to deconvolve.'],
   when: ['When new permanent-gauge data arrive.', 'To decide on a stimulation from the skin trend.'],
   steps: [open('Build-up Surveillance'), 'Enter your name in **Engineer**. Pick the **Gauge data source** ① and load it (or **Demo data**, **Load demo**).',
   'In **Rates**, load the daily allocation or a rate table.', { t: 'Fill **Well and fluid** ② (gas: gravity, temperature, impurities).', shot: 'well' },
-  { t: 'Select **Analyse** ③; read the Summary, tests, trend and review.', shot: 'res' }, 'Decide the findings (Actions…), then sign off under **Sign-off**.'],
+  { t: 'Select **Analyse**; read the Summary, tests, trend and review.', shot: 'res' }, 'Decide the findings (Actions…), then sign off under **Sign-off**.'],
   inputs: [B('Engineer', 'eng', null, 'Needed for overrides and sign-off.'), B('Gauge data source', 'src', 'File (CSV or text)'), B('Demo', 'demo_kind', 'Oil producer'),
   B('Gauge file', 'g_file', null, 'A time and a pressure column.'), B('Historian tag', 'h_tag', null, 'From [[historian]].'), B('Time format', 'g_tfmt', 'Detect automatically'),
   B('Gauge time zone', 'g_tz'), B('Pressure unit in the file', 'g_punit', 'psia'), B('Rate source', 'rate_mode', 'Daily allocation'),
@@ -8779,7 +8780,6 @@ var buildup = {
   related: ['prism', 'historian', 'oilipr'],
   shots: [view('Build-up Surveillance with Data sources', [sel(1, '#bu_src')]),
   crop('well', '#bu_card_well', 'Well and fluid card', 'Well and fluid', [sel(2, '#bu_fluid')]),
-  crop('run', '.bu-run', 'Analyse button row', 'Analyse', [sel(3, '#bu_run')]),
   res('#bu_s_S1', 'Summary of the oil demo: skin, baseline, alerts', 'The oil demo after Analyse', null, [{ action: 'buildupDemo', args: 'oil' }, { click: '#bu_run' }, { waitFor: '#bu_res[data-done="1"]' }])]
 };
 
@@ -8944,7 +8944,7 @@ check: PG({ 'cheminj.total_gal_d': 159.95, 'cheminj.hydrate.dT': 38.566 }, { exp
 pitfalls: ['A planning estimate: calibrate each pump at line pressure.'],
 refs: [{ std: 'Hammerschmidt; Nielsen–Bucklin', note: 'hydrate depression' }, { std: 'Towler and Mokhatab (2005)', note: 'hydrate temperature' }, { std: 'API RP 500 / 505', note: 'classified areas' }],
 related: ['hydrate', 'h2sroe', 'chem'],
-shots: [Sh('view', 'both', 'Chemical Injection input cards', '', ['#cj_qg~1']), Sh('res', 'desktop', 'Headline verdict', RES, ['#cj_res .cj-v~2'], { target: '#cj_res .cj-v' })]
+shots: [Sh('view', 'both', 'Chemical Injection input cards', '', ['#cj_qg~1']), Sh('res', 'desktop', 'Headline verdict and the boxes below it', RES, [], { target: '#cj_res', callouts: [{ sel: '#cj_res .cj-v', n: 2, at: 'right' }] })]
 }),
 liquidline: Gd('liquidline', '0e937304', 'wts_ll_', {
 keywords: ['blowby', 'LCV'],
@@ -9133,16 +9133,16 @@ shots: [Sh('view', 'both', 'Cement and brine cards', '', ['#cmf_dh~1']), Sh('res
         { id: 'ex3', title: 'Clean-up: unload the cushion to the burner (V-101 out)', keywords: ['cushion', 'burner', 'clean-up', 'unload', 'bypass'],
             goal: 'Unload the completion cushion straight to the burner boom with the right pressures, then go through the separator.',
             setup: ['Base set-up as in exercise 1.'],
-            steps: ['Follow [[fs#FS-1|FS-1]] steps 1 to 7, including the Surge Tank Pressure setting and the restore step before V-101 goes back in.'],
+            steps: ['Follow [[fs#FS-1|FS-1]] steps 1 to 8 in that order: Surge Tank Pressure in two steps, then Operating Pressure, then V-101 out, and the restore step before V-101 goes back in.'],
             observe: ['The V-101 card says it is bypassed and the Rig-up note explains why there are no meter rates or batches.', 'The HUD total water against the cushion volume.',
             'The choke outlet with V-101 out is about {{10|pressureG}}, not the {{21|pressureG}} of the steady check.'],
             questions: ['Where do the flowing wellhead pressure and the production-line pressure go?', 'Why must Operating Pressure be low while V-101 is out?',
             'How long does a {{150|volume}} cushion take at {{2400|liquidRate}}?', 'What do you do before you put V-101 back in?'],
             answers: ['FWHP in **Wellhead Pressure**; line pressure in **Operating Pressure**, with V-101 in only.', 'The steady choke check still back-walks from it, and it sets the Surge Tank Pressure limit.',
-            'About 1.5 hours (cushion volume ÷ the rate actually flowing).', 'Set Operating Pressure back to the test pressure and Surge Tank Pressure to {{25|pressureG}}, and let them stabilise.'],
-            form: DEF, trainer: { duration: '30–40 minutes.', fault: 'None at first. Then ask for the breakthrough step at full rate and let the trainee find the erosional velocity warning.',
-            good: 'Sets the pressures before switching V-101 out, unloads on a bean that does not limit, and restores the pressures before V-101 goes back in.',
-            mistakes: ['Putting the production or flowing pressure in Operating Pressure.', 'Leaving Surge Tank Pressure at {{25|pressureG}}.', 'Switching V-101 in at {{15|pressureG}}.'],
+            'About 1.5 hours (cushion volume ÷ the rate actually flowing).', 'Set Operating Pressure back to the test pressure and Surge Tank Pressure to {{25|pressureG||imp}}, and let them stabilise.'],
+            form: DEF, trainer: { duration: '30–40 minutes.', fault: 'None at first. Then ask when to go through the separator: the answer is clean, stable returns, not a warning. Variant: ask for full rate on the bypass and let the trainee find the choke and velocity limits.',
+            good: 'Lowers Surge Tank Pressure, then Operating Pressure, before switching V-101 out; unloads on a bean that does not limit; restores the pressures before V-101 goes back in.',
+            mistakes: ['Putting the production or flowing pressure in Operating Pressure.', 'Lowering Operating Pressure before Surge Tank Pressure, or after V-101 is out (ESD trip).', 'Switching V-101 in at {{15|pressureG}}.'],
             debrief: ['What is the real back pressure of your burner line?', 'What tells you the cushion is out?', 'When is it time to go through the separator?'] } },
         { id: 'ex4', title: 'Separator upset: dump valve failure', keywords: ['LCV-102', 'LSHH', 'dump valve', 'upset', 'trip'],
             goal: 'Recognise a dump valve that does not open, act before the trip, and restart after it.',
@@ -9192,9 +9192,9 @@ shots: [Sh('view', 'both', 'Cement and brine cards', '', ['#cmf_dh~1']), Sh('res
             steps: ['Open the T-201 card. Read **Level (A+B)**, **Pressure**, **Transfer** and **Transfer ΔP**.',
             'Under **Inlet** select B to shut it, so only A fills. Now change over: select B, then A at once. A stays open until B is fully open (open new, then close old). Select A again so both are open.',
             'The trainer sets **Scenarios → LCV-201 stuck closed (surge transfer)**. Watch the level rise and **Time to HH**.', 'Clear the fault before LSHH-201, or watch it trip the ESD.',
-            'Reset, then set **Surge Tank Pressure** to {{2|pressureG}} in the form and watch **Transfer ΔP**.'],
+            'Pause, set **Surge Tank Pressure** to {{2|pressureG||imp}} in the form, select **Reset → Reset to steady**, then play and watch **Transfer ΔP**. Lowered by {{23|pressure||imp}} while running, PSHH-201 would trip the ESD.'],
             observe: ['LCV-201 has no pump: it transfers on the surge tank pressure plus the liquid head.', 'With LCV-201 stuck closed, LSHH-201 trips the ESD about an hour later at the default rates.',
-            'At {{2|pressureG}} the transfer ΔP falls to about {{1|pressure}} and LCV-201 raises a low ΔP warning.'],
+            'At {{2|pressureG||imp}} the transfer ΔP falls to about {{1|pressure}} and LCV-201 raises a low ΔP warning.'],
             questions: ['Why open the new inlet before closing the old one?', 'What drives the transfer to the gauge tank?', 'What would you change for a low-pressure surge tank?'],
             answers: ['So the separator dumps are never blocked during the change.', 'The surge tank pressure and the liquid head, against the lift to the gauge tank inlet.', 'Keep enough pressure for the lift, or plan for a slower transfer.'],
             form: DEF, trainer: { duration: '25 minutes.', fault: 'At about 10 minutes of sim time: **Scenarios → LCV-201 stuck closed (surge transfer)**.',
@@ -9220,25 +9220,28 @@ shots: [Sh('view', 'both', 'Cement and brine cards', '', ['#cmf_dh~1']), Sh('res
     var PRESS = { table: { head: ['The pressure you have', 'Where it goes', 'Rig-up', 'Scenario'], rows: [
         ['Flowing wellhead or tubing pressure (FWHP, FTHP, flowing pressure)', '**Wellhead Pressure**, never the separator pressure', 'any', 'all'],
         ['Production or export line pressure (the header the well flows into)', 'Separator **Operating Pressure**, plus the line loss to the header', 'V-101 in only', '[[fs#FS-2|FS-2]]'],
-        ['Burner boom (cushion or clean-up straight to the burner)', 'No line pressure: V-101 out, **Operating Pressure** low ({{15|pressureG}}), **Surge Tank Pressure** at least {{10|pressure}} lower ({{5|pressureG}})', 'V-101 out', '[[fs#FS-1|FS-1]]']] } };
+        ['Burner boom (cushion or clean-up straight to the burner)', 'No line pressure: **Surge Tank Pressure** {{5|pressureG||imp}} first (in two steps), then **Operating Pressure** low ({{15|pressureG}}), then V-101 out', 'V-101 out', '[[fs#FS-1|FS-1]]']] } };
     var CTRL = { table: { head: ['What Operating Pressure controls', 'V-101 in', 'V-101 out (to the burner)'], rows: [
         ['Live model: PCV-101 set point and separator pressure', 'yes', 'no (PCV-101 held shut)'],
-        ['Live model: separator alarms and relief (PAH, PSHH, PAL, PSV)', 'set from it', 'quiet'],
+        ['Live model: separator alarms and relief (PAH, PSHH, PAL, PSV)', 'set from it', 'live on the trapped vessel: lowering it trips PSHH-101'],
         ['Live model: choke outlet pressure', 'separator pressure + line losses', '{{5|pressureG}} burner header + Sep→Flare loss + (steady choke outlet − Operating Pressure)'],
         ['Steady check: choke regime, capacity, J-T, temperatures, hydrate margins, velocities', 'yes', 'yes, still: set it near the burner back pressure'],
-        ['Surge Tank Pressure limit: at most the smaller of {{30|pressureG}} and Operating Pressure − {{10|pressure}}', 'yes', 'yes, still']] } };
+        ['Surge Tank Pressure limit: at most the smaller of {{30|pressureG||imp}} and Operating Pressure − {{10|pressure||imp}}', 'yes', 'yes, still']] } };
     var scenarios = [
         { id: 'FS-1', title: 'Unloading the completion cushion straight to the burner boom', feature: 'bypassDest',
             keywords: ['cushion', 'burner', 'boom', 'clean-up', 'unload', 'production pressure', 'separator pressure', 'bypass'],
             intro: [{ h: 'Which pressure goes where' }, 'Well testers use “production pressure” for two different things, so check which one you have.', PRESS, CTRL],
-            today: [{ list: ['Rig-up: switch V-101 (Test separator) out in the **Rig-up** card. The note reads “the whole well stream goes straight to the flare / burner (clean-up)”. FS-401 stays in.',
-            'Pressures: set **Operating Pressure** to {{15|pressureG}} (about the burner-line back pressure; up to {{20|pressureG}} is fine) and **Surge Tank Pressure** to {{5|pressureG}}. Do not put the production pressure or the flowing wellhead pressure in Operating Pressure.',
-            'Left at {{25|pressureG}}, the page shows “⚠ Surge tank pressure too close to separator pressure — liquids cannot dump” and uses {{5|pressureG}} anyway: harmless with V-101 out, but set {{5|pressureG}} so the page is clean.',
-            'Unload (live changes, no Reset): **Gas Rate** {{0.3|gasRate}}, **Condensate / Oil** 0, **Water Rate** = the unload rate ({{2400|liquidRate}}), **Wellhead Pressure** = the flowing WHP while unloading ({{500|pressureG}}), bean 32. The steady check gives **Critical** (P2/P1 0.068), capacity {{1.78|gasRate}}, no CHOKE_LIMIT, choke downstream {{21|pressureG}} and no warnings. The live choke outlet is about {{10|pressureG}}.',
-            'Run at **×60** until the HUD total **Water** (next to **Cum oil**) reaches the cushion volume: {{150|volume}} at {{2400|liquidRate}} takes about 1.5 hours. An LCV-201 low ΔP warning may show: harmless, the tanks receive nothing.',
-            'If CK-101 shows CHOKE_LIMIT, raise the bean or lower the unload rate. The alarm cuts all three rates by the same factor, so the time is the cushion volume ÷ the rate actually flowing. Here it appears at a WHP of about {{60|pressureG}} (capacity {{0.25|gasRate}}) and is clear at {{100|pressureG}} ({{0.39|gasRate}}).',
-            'Breakthrough: raise gas, oil and WHP to the expected values and lower water to the formation rate, e.g. {{5|gasRate}}, {{500|liquidRate}} oil, {{300|liquidRate}} water, WHP {{2000|pressureG}}: Critical, capacity {{7.21|gasRate}}, choke downstream {{24|pressureG}}, no warnings. At {{10|gasRate}} the page shows ✗ “Heater→Sep: Velocity 287 ft/s EXCEEDS erosional limit 240 ft/s”: time to go through the separator.',
-            'Before V-101 goes back in: set **Operating Pressure** back to the test pressure ({{150|pressureG}}) and **Surge Tank Pressure** to {{25|pressureG}}, let them ramp and settle, then switch V-101 in. Otherwise the test runs at {{15|pressureG}} and every separator alarm limit is wrong.'], ordered: true },
+            today: [{ h: 'Order matters' }, 'Lower the pressures with V-101 in, Surge Tank Pressure first. Each of these trips the ESD:',
+            { list: ['lowering **Operating Pressure** before **Surge Tank Pressure**;', 'lowering Surge Tank Pressure by more than {{10|pressure||imp}} at a time;', 'lowering Operating Pressure after V-101 is out;', 'a big step in the well rates while V-101 is in.'] },
+            { list: ['Lower **Surge Tank Pressure** to {{15|pressureG||imp}}, wait for T-201 to come down to it, then set {{5|pressureG||imp}}. PSHH-201 follows the set point faster than T-201 vents. The field is in psig, also in Metric mode.',
+            'Set **Operating Pressure** to {{15|pressureG}}, about the burner-line back pressure (up to {{20|pressureG}} is fine), and let the separator settle.',
+            'Rig-up: switch V-101 (Test separator) out. FS-401 stays in. PCV-101 is now held shut and PSHH-101 still follows Operating Pressure.',
+            'Unload inputs (live, no Reset): **Gas Rate** {{0.3|gasRate}}, **Condensate / Oil** 0, **Water Rate** {{2400|liquidRate}}, **Wellhead Pressure** = the flowing WHP ({{500|pressureG}}), bean 32. Steady check: **Critical** (P2/P1 0.068), capacity {{1.78|gasRate}}, choke downstream {{21|pressureG}}, no warnings. Live choke outlet: about {{10|pressureG}}.',
+            'Run at **×60** until the HUD total **Water** reaches the cushion volume: {{150|volume}} at {{2400|liquidRate}} takes about 1.5 hours. An LCV-201 low ΔP warning is harmless here.',
+            'CHOKE_LIMIT on CK-101 cuts all three rates by the same factor: raise the bean or lower the rate. Here it appears at a WHP of about {{60|pressureG}} ({{0.25|gasRate}}) and clears at {{100|pressureG}} ({{0.39|gasRate}}).',
+            'Clean-up: set the expected rates, e.g. {{5|gasRate}}, {{500|liquidRate}} oil, {{300|liquidRate}} water, WHP {{2000|pressureG}}: Critical, capacity {{7.21|gasRate}}, choke downstream {{24|pressureG}}, no warnings. Go through the separator once the returns are clean and stable: BS&W and solids low and steady at a steady WHP and rate.',
+            'Restore before V-101 goes back in: **Operating Pressure** {{150|pressureG}} and **Surge Tank Pressure** {{25|pressureG||imp}} (raising them is safe), let them settle, then switch V-101 in.'], ordered: true },
+            'The bypass rate has a limit. At {{10|gasRate}} with the clean-up values the page shows ⚠ “Choke is flow-limited — bean 32/64″…” and ⚠ “Heater→Sep: Velocity 291 ft/s EXCEEDS erosional limit 259 ft/s”.',
             { h: 'Limits' }, 'The cushion itself is not modelled: no cushion density, no tail, and WHP does not rise by itself as the column unloads. The choke check uses the gas rate only, so the bean never limits the liquid rate.'],
             afterSim: ['In the Dynamic Simulation card choose **With V-101 out, well stream to → Burner / flare line**, then run **Scenarios → Cushion unload (clean-up)** with the cushion volume, SG and unload rate. The steady choke check then uses the real back pressure, so the low Operating Pressure and the restore step are not needed.'] },
         { id: 'FS-2', title: 'Flowing straight to a production line', feature: 'bypassDest',
@@ -9300,7 +9303,7 @@ shots: [Sh('view', 'both', 'Cement and brine cards', '', ['#cmf_dh~1']), Sh('res
     scenarios.splice(2, 0, { id: 'FS-3', title: 'Clean-up with sand: the desander upstream of the choke', keywords: ['sand', 'desander', 'proppant', 'flow-back', 'clean-up', 'erosion'],
         intro: ['After a frac or gravel pack the clean-up brings back proppant and sand. DS-101 catches it upstream of the choke, where erosion is worst. Train on [[course#ex9|exercise 9]].'],
         today: [{ list: ['Rig-up: switch **Cyclonic desander (upstream of the choke)** in. Keep the line-up of your clean-up: through V-101, or V-101 out to the burner as in [[fs#FS-1|FS-1]].',
-            'Rating: in Dynamic Simulation set **Desander rating (psi)** and **Max shut-in wellhead pressure (psig)**; blank uses 1.2 × WHP ({{3600|pressureG}} here). A rating below it gives ✗ on the DS-101 card: not fit for this well, as it has no relief valve.',
+            'Rating: in Dynamic Simulation set **Desander rating (psi)** and **Max shut-in wellhead pressure (psig)**; blank uses 1.2 × WHP ({{3600|pressureG||imp}} here). A rating below it gives ✗ on the DS-101 card: not fit for this well, as it has no relief valve.',
             'Sand (imperial-only inputs): set **Sand rate, liquid (lb/1000 bbl)** and **Sand median size (µm)**, or start ' + DS + ' (LAH-103 about 3.5 hours later).',
             'Dump at LAH-103 (**Dump sand**, about 17 minutes; the well keeps flowing). Rising ΔP: plugged liner or packed accumulator (PDAH-103). Low ΔP: washed-out liner (PDAL-103).',
             'Keep DS-101 in line while sand comes back. At 10 lb per 1,000 bbl on the default spread it cuts the choke erosion rate about 68 times: WARN without it, OK with it.'], ordered: true },
@@ -9477,7 +9480,11 @@ S('', 'Enter them on the page that needs them.')] }];
 var glossary = {
 bean: { term: 'bean', variants: ['beans'], def: 'A fixed choke. Its size is the bore in 64ths of an inch: a 32 bean is 32/64 in.' },
 bsw: { term: 'BS&W', variants: ['basic sediment and water'], def: 'Basic sediment and water: the water and solids in the oil, in % of volume.' },
-cushion: { term: 'cushion', variants: ['cushions'], def: 'The completion fluid left in the well before the test. It is unloaded first, usually to the burner.' },
+cushion: { term: 'cushion', variants: ['cushions', 'water cushion', 'nitrogen cushion'], def: 'A liquid column (water, brine or diesel) or nitrogen placed in the test string above the tester valve. It limits the drawdown and the collapse load when the valve opens. It is unloaded first, usually to the burner.' },
+skin: { term: 'skin', variants: ['skin factor', 'mechanical skin'], def: 'A dimensionless number for the extra pressure drop near the wellbore. Positive: damage. Negative: a stimulated well.' },
+critical: { term: 'critical (sonic) flow', variants: ['choked flow', 'sonic flow'], def: 'Flow through a choke at sonic speed, below a P2/P1 of about 0.55. The rate then does not depend on the downstream pressure.' },
+iarf: { term: 'IARF', variants: ['infinite-acting radial flow', 'radial flow'], def: 'Infinite-acting radial flow: the flat part of the derivative. Permeability and skin come from it.' },
+pstar: { term: 'p*', variants: ['p star', 'extrapolated pressure'], def: 'The pressure the semilog straight line of a build-up reaches at infinite shut-in time (Horner time ratio of 1).' },
 fwhp: { term: 'FWHP', variants: ['FTHP', 'WHP'], def: 'Flowing wellhead (tubing) pressure, upstream of the choke.' },
 sithp: { term: 'SITHP', variants: ['SIWHP'], def: 'Shut-in tubing (wellhead) pressure with the well closed in.' },
 gor: { term: 'GOR', def: 'Gas-oil ratio: standard gas volume per stock-tank barrel of oil.' },
@@ -9767,7 +9774,7 @@ wts: {
     { id: 'layout', title: 'Page layout',
       what: ['Top: the live view (toolbar, alarm bar, 2D or 3D view, HUD), then the **Rig-up** card. Below: the form cards, **Pipe Segments**, **API RP 14E Settings** and the steady results. Steady warnings show above the form.'] },
     { id: 'inputs', title: 'Form inputs',
-      what: ['Which pressure goes where. Flowing wellhead or tubing pressure: **Wellhead Pressure**. Production or export line pressure: **Operating Pressure** plus the line loss, V-101 in only ([[fs#FS-2|FS-2]]). Burner boom: V-101 out, low **Operating Pressure** and **Surge Tank Pressure** as in [[fs#FS-1|FS-1]]. With V-101 out never enter the production or wellhead pressure in **Operating Pressure**: the steady check still uses it.'],
+      what: ['Which pressure goes where. Flowing wellhead or tubing pressure: **Wellhead Pressure**. Production or export line pressure: **Operating Pressure** plus the line loss, V-101 in only ([[fs#FS-2|FS-2]]). Burner boom ([[fs#FS-1|FS-1]]): lower **Surge Tank Pressure** (≤ {{10|pressure||imp}} per step), then **Operating Pressure**, then switch V-101 out; never lower Operating Pressure after that. Never put the production or wellhead pressure in it.'],
       inputs: [
         { label: 'Wellhead Pressure', id: 'wts_Pwh', def: '{{3000|pressureG}}', text: 'Flowing wellhead (tubing) pressure.' },
         { label: 'Wellhead Temp', id: 'wts_Twh', def: '{{180|temperature}}' },
@@ -9838,7 +9845,7 @@ wts: {
       tips: ['LSHH-202 shuts XV-202 only: on T-202 alone the dumps are then blocked and LSHH-102 trips the ESD.'] },
     { id: 'alarms', title: 'Alarms and ESD',
       steps: ['The alarm bar shows the newest alarm: select **Ack**.', 'Select **Alarms**: alarms with time and tag, steady design warnings, **Events**. **Ack all** acknowledges all.', 'After a trip the banner shows the cause. **Reset ESD** works once no trip alarm is active.'],
-      tips: ['Every trip closes SDV-101 (5 s to close, 15 s to open, then 180 s start-up grace) except LSHH-301 (shuts LCV-201 and LCV-202), LSHH-202 (shuts XV-202) and the LCV-201 / LCV-202 low-low.', 'PSHH-103 (DS-101 inlet at 95 % of its rating) is the only desander trip. PSHH-202 shuts XV-202 and PCV-204, then trips the ESD.', 'Shut in, WHP builds towards 1.2 × WHP (time constant 300 s).', 'Separator set points follow **Operating Pressure**: PAH = SP + max(10 %, {{15|pressure}}), PSHH = SP + max(20 %, {{25|pressure}}).'] },
+      tips: ['Every trip closes SDV-101: 5 s to close, 15 s to open, then 180 s start-up grace. The exceptions are LSHH-301 (shuts LCV-201 and LCV-202), LSHH-202 (shuts XV-202) and the LCV-201 / LCV-202 low-low.', 'PSHH-103 (DS-101 inlet at 95 % of its rating) is the only desander trip. PSHH-202 shuts XV-202 and PCV-204, then trips the ESD.', 'Shut in, WHP builds towards 1.2 × WHP (time constant 300 s).', 'Separator set points follow **Operating Pressure**: PAH = SP + max(10 %, {{15|pressure}}), PSHH = SP + max(20 %, {{25|pressure}}). Live with V-101 out too.'] },
     { id: 'reports', title: 'Reports and saving',
       what: ['The page export and the Quick Report hold the form, the **Rig-up** card and the steady results, not the live view. Inputs autosave; trends keep the last 4 h of sim time. [[wellos]] can log the form and live rates.'] },
     { id: 'views', title: '2D and 3D',
@@ -32705,7 +32712,7 @@ var KIND={task:'start',tasks:'start',start:'start',fs:'fs',scenarios:'fs',course
 var KEYS=[['F1','Help for this page'],['/','Help: search box'],['↑ ↓ Enter Esc','Help search results'],['?','Simulator: keyboard shortcuts']];
 var arr=v=>Array.isArray(v)?v:v==null||v===''?[]:[v],C=()=>H.load(),esc=s=>H.esc(s),md=(s,o)=>H.md(s,o);
 var byId=id=>typeof document!=='undefined'?document.getElementById(id):null;
-var pt=s=>String(s||'').replace(/[*`]/g,''),nr=r=>r==='dca'||r==='pta'?'prism':r,ws=o=>Object.assign({},o,{worksheet:true});
+var pt=s=>String(s||'').replace(/\*\*([^*]+)\*\*/g,'$1').replace(/`([^`]+)`/g,'$1'),nr=r=>r==='dca'||r==='pta'?'prism':r,ws=o=>Object.assign({},o,{worksheet:true});
 var go=(r,l)=>'<button type="button" class="help-a" data-help-go="'+r+'">'+l+'</button>';
 var note=t=>'<p class="help-note">'+t+' not in this build yet.</p>';
 var lines=n=>new Array(n+1).join('<div class="bk-line"></div>');
@@ -32805,7 +32812,8 @@ function renderBook(scope,opts){
   opts=opts||{};
   H.load();
   var P=plan(),o={print:true,units:opts.units||'both',headings:4,imgBase:opts.imgBase,dataUris:opts.dataUris,images:opts.images!==false};
-  var b=links(numbers(withFiles(opts.files||files(),()=>body(String(scope||'all'),P,o)),P),P,opts.standalone)
+  var sc=String(scope||'all'),one=!!C().guides[nr(sc)]||/^card:/.test(sc);   // one guide: no chapter number in its heading
+  var b=links((one?x=>x:numbers)(withFiles(opts.files||files(),()=>body(sc,P,o)),P),P,opts.standalone)
     .replace(/<details class="help-det">/g,'<details class="help-det" open>').replace(/ tabindex="0" role="button"| loading="lazy"| decoding="async"/g,'').replace(/<\/(section|article|p|figure|ul|ol|table|h[2-5])>(?!\n)/g,'</$1>\n');
   if(!opts.standalone)return '<div class="help-book"><style>'+CSS+'</style>'+b.replace(/<source[^>]*>/g,'')+'</div>';
   return '<!DOCTYPE html>\n<html lang="en-GB">\n<head>\n<meta charset="utf-8">\n<!-- GENERATED by prism-build/build-user-guide.js. Never edit by hand. -->\n'+
@@ -32841,7 +32849,8 @@ function print(scope,op){
   };
   return next().then(()=>{
     var h=renderBook(scope,o);
-    send(t,h,'Well Testing Suite '+(R.ver||'')+when(R));
+    G.__reportKicker='User guide';   // host H6: the report cover says "User guide", not "Engineering calculation report"
+    try{send(t,h,'User guide · Well Testing Suite '+(R.ver||'')+when(R));}finally{try{delete G.__reportKicker;}catch(e){G.__reportKicker=undefined;}}
     return{title:t,html:h,images:Object.keys(d).length,missing:miss};
   });
 }
@@ -33031,7 +33040,8 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     if (p[0] === 'site') return SITE;
     if (p[0] === 'email') return EMAIL;
     var v = parseFloat(p[0]);
-    return esc(fmtU(v, p[1], p[2] != null && p[2] !== '' ? +p[2] : null, o.field ? 'imperial' : o.units));
+    // {{v|cat|dp|imp}}: a field the page leaves in field units (an untagged input such as Surge Tank Pressure) stays imperial
+    return esc(fmtU(v, p[1], p[2] != null && p[2] !== '' ? +p[2] : null, o.field || p[3] === 'imp' ? 'imperial' : o.units));
   }
   function lk(go, lab, cur, sec) { return '<button type="button" class="help-a" data-help-go="' + esc(go) + '"' + (sec ? ' data-help-sec="' + esc(sec) + '"' : '') + (cur ? ' aria-current="true"' : '') + '>' + lab + '</button>'; }
   function linkHTML(target, label, o) {
@@ -33057,21 +33067,30 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     list = arr(list);
     return list.length ? '<ul' + (cls ? ' class="' + cls + '"' : '') + '>' + list.map(x => li(md(x, o))).join('') + '</ul>' : '';
   }
+  // Equipment tags (V-101 in, PSHH-201) do not break at the hyphen in narrow table cells; text segments only, never inside a tag.
+  function nw(h) { return String(h).split(/(<[^>]*>)/).map(x => x.charAt(0) === '<' ? x : x.replace(/\b([A-Z]{1,5}-\d{2,4}[A-Z]?(?: (?:in|out))?)/g, '<span class="help-nw">$1</span>')).join(''); }
   function table(head, rows, o) {
     return '<div class="help-tbl"><table><thead><tr>' + head.map(h => '<th>' + esc(h) + '</th>').join('') +
-      '</tr></thead><tbody>' + rows.map(r => '<tr>' + r.map(c => '<td>' + md(c, o) + '</td>').join('') + '</tr>').join('') +
+      '</tr></thead><tbody>' + rows.map(r => '<tr>' + r.map(c => '<td>' + nw(md(c, o)) + '</td>').join('') + '</tr>').join('') +
       '</tbody></table></div>';
   }
   // Blocks: string | {h} | {list, ordered} | {table:{head, rows}} | {details:{summary, body}} | {shot: id}
-  function renderBlocks(blocks, o, shots, folder) {
+  // prefix: the course exercise or scenario id. help-shots.js saves those shots as <folder>/<slug(prefix)>-<shot id>-d.webp.
+  function shotSlug(x) { return String(x || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''); }
+  H.shotSlug = shotSlug;
+  function renderBlocks(blocks, o, shots, folder, prefix) {
     return arr(blocks).map(b => {
       if (typeof b === 'string') return '<p>' + md(b, o, 1) + '</p>';
       if (!b || typeof b !== 'object') return '';
       if (b.h) return '<h4>' + md(b.h, o) + '</h4>';
       if (b.list) return b.ordered ? '<ol>' + arr(b.list).map(x => li(md(x, o))).join('') + '</ol>' : ul(b.list, o);
       if (b.table) return table(arr(b.table.head), arr(b.table.rows), o);
-      if (b.details) return '<details class="help-det"><summary>' + md(b.details.summary, o) + '</summary>' + renderBlocks(b.details.body, o, shots, folder) + '</details>';
-      if (b.shot) { var s = arr(shots).filter(x => x.id === b.shot)[0]; return s ? shotHTML(folder, s, o) : ''; }
+      if (b.details) return '<details class="help-det"><summary>' + md(b.details.summary, o) + '</summary>' + renderBlocks(b.details.body, o, shots, folder, prefix) + '</details>';
+      if (b.shot) {
+        var s = arr(shots).filter(x => x.id === b.shot)[0];
+        if (s && prefix) s = Object.assign({}, s, { id: shotSlug(prefix) + '-' + s.id });
+        return s ? shotHTML(folder, s, o) : '';
+      }
       return '';
     }).join('');
   }
@@ -33083,7 +33102,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     var d = M[fd], p = M[fp], cap = md(s.caption, o), alt = esc(s.alt);
     if (o.images === false) return '';
     var fig = '<figure class="help-fig" data-help-shot="' + esc(folder + '/' + s.id) + '">';
-    if (!d && !p) return fig + missingBox(cap, alt) + '<figcaption>' + cap + '</figcaption></figure>';
+    if (!d && !p) return fig + missingBox(alt) + '<figcaption>' + cap + '</figcaption></figure>';
     var base = o.imgBase == null ? 'help/img/' : o.imgBase;
     var src = (f, e) => (o.dataUris && o.dataUris[f]) || (base + f + '?v=' + esc(e.h8 || ''));
     var main = d || p, mf = d ? fd : fp;
@@ -33092,7 +33111,8 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
       '" loading="lazy" decoding="async"></picture>' +
       (!p && arr(s.callouts).length ? '<span class="help-enlarge">Select to enlarge</span>' : '') + '<figcaption>' + cap + '</figcaption></figure>';
   }
-  function missingBox(cap, alt) { return '<div class="help-shot-missing" role="img" aria-label="' + alt + '"><b>Screenshot:</b> ' + cap + '<br><span>' + alt + '</span></div>'; }
+  // The figure keeps its own <figcaption>, so the box shows only the alt text.
+  function missingBox(alt) { return '<div class="help-shot-missing" role="img" aria-label="' + alt + '"><b>Screenshot:</b> <span>' + alt + '</span></div>'; }
 
   // — Guide renderer (D4)
   function vmark(m) { return '<span class="help-v help-v-' + (VCLS[m] || 'ok') + '">' + esc(m) + '</span>'; }
@@ -33170,7 +33190,11 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
   var PRESS = ['production pressure', 'fwhp', 'fthp', 'flowing pressure', 'tubing pressure', 'line pressure', 'export pressure', 'back pressure'];
   var _index = null;
   function low(s) { return String(s == null ? '' : s).toLowerCase(); }
-  function plain(s) { return String(s == null ? '' : s).replace(/\{\{([^|}]+)\|[^}]*\}\}/g, '$1').replace(/\[\[[^\]|]*\|([^\]]+)\]\]/g, '$1').replace(/\[\[([^\]]+)\]\]/g, '$1').replace(/[*`]/g, ''); }
+  // Only paired **bold** and `code` markup is stripped, so p* keeps its asterisk.
+  function plain(s) {
+    return String(s == null ? '' : s).replace(/\{\{([^|}]+)\|[^}]*\}\}/g, '$1').replace(/\[\[[^\]|]*\|([^\]]+)\]\]/g, '$1').replace(/\[\[([^\]]+)\]\]/g, '$1')
+      .replace(/\*\*([^*]+)\*\*/g, '$1').replace(/`([^`]+)`/g, '$1');
+  }
   function blocksText(b) {
     return arr(b).map(x => {
       if (typeof x === 'string') return x;
@@ -33182,7 +33206,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
       return '';
     }).join(' ');
   }
-  function J(a, k) { return arr(a).map(x => typeof x === 'string' ? x : (x && x[k]) || '').join(' ; '); }
+  function J(a, k) { return arr(a).map(x => typeof x === 'string' ? x : (x && x[k]) || '').filter(Boolean).join(', '); }
   // Entries: { kind, id, route, sec, title, module, f: [{ w, t, l, sec }] }
   function buildIndex() {
     load();
@@ -33234,7 +33258,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     var press = PRESS.some(s => has(ql, s));
     var hits = [];
     _index.forEach(e => {
-      var sc = 0, at = null, best = 0, cls = {}, seen = {};
+      var sc = 0, at = null, best = 0, cls = {}, seen = {}, atT = null, bestT = 0;
       if (low(plain(e.title)) === ql) sc += 10;
       e.f.forEach(f => {
         var w = W[f.w] || 0, n = 0, v;
@@ -33245,11 +33269,12 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         }
         if (v > (cls[f.w] || 0)) cls[f.w] = v;
         if (v > best) { best = v; at = f; }
+        if (f.w !== 'kw' && v > bestT) { bestT = v; atT = f; }   // the snippet comes from a body or title field when one matches
       });
       Object.keys(cls).forEach(k => { sc += cls[k]; });
       if (nw && Object.keys(seen).length === nw) sc += 2;
       if (press && ((e.kind === 'scenario' && /^FS-[12]$/.test(e.id)) || (e.kind === 'guide' && e.route === 'wts' && e.sec === 'inputs'))) { sc += e.kind === 'scenario' ? 8 : 5; }
-      if (sc > 0) hits.push({ e: e, sc: Math.round(sc * 100) / 100, at: at });
+      if (sc > 0) hits.push({ e: e, sc: Math.round(sc * 100) / 100, at: atT || at });
     });
     hits.sort((a, b) => b.sc - a.sc || a.e.order - b.e.order);
     return hits.slice(0, 20).map(h => {
@@ -33293,7 +33318,10 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     '.help-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px}.help-tile{border:var(--hb);border-radius:8px;padding:10px;background:var(--bg1)}' +
     '#help_lb{max-width:96vw;max-height:96vh;padding:12px;border:var(--hb);background:var(--bg1);color:var(--text);overflow:auto}#help_lb img{max-width:100%;height:auto}' +
     '#help_lb::backdrop{background:rgba(0,0,0,.7)}#help_lb_x{float:right;min-width:32px;min-height:32px}' +
-    '@media (max-width:700px){.help-cols{grid-template-columns:minmax(0,1fr)}.help-toc>summary{display:list-item;font-weight:600}}' +
+    '.help-sec,.help-part,.help-h,.help dt[id],.help [id^=help-]{scroll-margin-top:calc(var(--help-bar-h,84px) + 8px)}#help_pm{width:auto;max-width:100%}' +
+    '.help-nw{white-space:nowrap}' +
+    '@media (max-width:700px){.help-cols{grid-template-columns:minmax(0,1fr)}.help-toc>summary{display:list-item;font-weight:600}' +
+    '.help-bar{position:static;padding:4px 0 6px}.help-sec,.help-part,.help-h,.help dt[id],.help [id^=help-]{scroll-margin-top:8px}}' +
     '@media (max-width:600px){.help-enlarge{display:block}}</style>';
   function shellHTML() {
     var phone = false;
@@ -33339,9 +33367,9 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     if (tr.length) h += '<h3>Training</h3><p>' + tr.join(' · ') + '</p>';
     var M = manifest(), keys = Object.keys(M);
     if (keys.length) {
-      var mb = keys.reduce((a, k) => a + (+M[k].bytes || 0), 0) / 1048576;
-      h += '<p><button type="button" class="btn btn-secondary" id="help_offline">Download screenshots for offline use (≈ ' + (Math.round(mb * 10) / 10) +
-        ' MB)</button> <span id="help_off_msg" class="help-note">' + (pref('wtspref_help_offline') === '1' ? 'Downloaded earlier on this device.' : '') + '</span></p>';
+      var MM = G.WTS_helpManifest, mb = Math.round((+(MM && MM.bytes) || keys.reduce((a, k) => a + (+M[k].bytes || 0), 0)) / 104857.6) / 10;
+      h += '<p><button type="button" class="btn btn-secondary" id="help_offline">Download screenshots for offline use' + (mb > 0 ? ' (≈ ' + dec(mb) + ' MB)' : '') +
+        '</button> <span id="help_off_msg" class="help-note">' + (pref('wtspref_help_offline') === '1' ? 'Downloaded earlier on this device.' : '') + '</span></p>';
     }
     return h;
   }
@@ -33354,7 +33382,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     var tn = x.trainer || {};
     return secHTML('help-course-' + esc(x.id), (i + 1) + ' ' + md(x.title, o), pb('Goal', x.goal, o) + sub('Set-up', x.setup, o) +
       (arr(x.steps).length ? '<h4>Steps</h4><ol>' + arr(x.steps).map(s => li(md(s, o))).join('') + '</ol>' : '') +
-      sub('What to observe', x.observe, o) + sub('Questions', x.questions, o) + renderBlocks(x.blocks, o, x.shots, 'course') +
+      sub('What to observe', x.observe, o) + sub('Questions', x.questions, o) + renderBlocks(x.blocks, o, x.shots, 'course', x.id || ('ex' + (i + 1))) +
       (o.worksheet ? '' : det('Answers', ul(x.answers, o)) + det('For the trainer', x.trainer ? pb('Duration', tn.duration, o) + pb('Fault to inject', tn.fault, o) +
         pb('A good response', tn.good, o) + sub('Common mistakes', tn.mistakes, o) + sub('Debrief questions', tn.debrief, o) : '')));
   }
@@ -33370,7 +33398,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     });
     if (kind === 'scenarios') C.scenarios.forEach(s => {
       var after = s.feature && F[s.feature] && s.afterSim;
-      h += secHTML('help-fs-' + esc(s.id), esc(s.id) + ' ' + md(s.title, o), [s.intro, s.blocks, after ? s.afterSim : s.today].map(b => renderBlocks(b, o, s.shots, 'scenarios')).join(''));
+      h += secHTML('help-fs-' + esc(s.id), esc(s.id) + ' ' + md(s.title, o), [s.intro, s.blocks, after ? s.afterSim : s.today].map(b => renderBlocks(b, o, s.shots, 'scenarios', s.id)).join(''));
     });
     if (kind === 'course') C.course.forEach((x, i) => { h += exerciseHTML(x, i, o); });
     if (kind === 'glossary') h += '<dl>' + Object.keys(C.glossary).sort().map(k => {
@@ -33399,6 +33427,8 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     var k = KINDS[v.kind];
     var target = v.sec ? byId(v.kind === 'guide' ? 'help-' + v.route + '-' + v.sec : 'help-' + (SECP[k] || k) + '-' + v.sec) : null;
     var hd = target ? (target.querySelector('h2,h3,h4,b') || target) : main.querySelector('.help-h');
+    var bar = byId('help_root') && byId('help_root').querySelector('.help-bar'), root = byId('help_root');
+    if (bar && root && root.style && root.style.setProperty && bar.offsetHeight > 0) root.style.setProperty('--help-bar-h', bar.offsetHeight + 'px');   // scroll-margin-top
     if (target && target.scrollIntoView) { try { target.scrollIntoView({ block: 'start' }); } catch (e) { /* layout-free */ } }
     if (hd && !noFocus) { if (!hd.hasAttribute('tabindex')) hd.setAttribute('tabindex', '-1'); if (hd.focus) hd.focus(); }
     if (typeof H.onShow === 'function') { try { H.onShow(v); } catch (e) { /* print module */ } }
@@ -33508,10 +33538,11 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
       var img = e.target;
       if (!img || !img.classList || !img.classList.contains('help-img')) return;
       var fig = img.closest('figure'), pic = img.closest('picture') || img;
-      var fc = fig && fig.querySelector('figcaption');
       var box = _doc().createElement('div');
-      box.innerHTML = missingBox(fc ? esc(txt(fc)) : '', esc(img.getAttribute('alt') || ''));
+      box.innerHTML = missingBox(esc(img.getAttribute('alt') || ''));
       if (pic.parentNode) pic.parentNode.replaceChild(box.firstChild, pic);
+      var en = fig && fig.querySelector('.help-enlarge');   // nothing left to enlarge
+      if (en && en.parentNode) en.parentNode.removeChild(en);
       var main = byId('help_main');
       if (main && !byId('help_noimg')) {
         var n = _doc().createElement('p');
@@ -33584,6 +33615,10 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
   var d0 = _doc();
   if (d0 && typeof d0.addEventListener === 'function') {
     d0.addEventListener('h2oil:pagechange', e => { syncHeader((e && e.detail && e.detail.page) || _cur); });
+    // Tokens follow the unit system and the decimal comma: re-render the open view (no focus move)
+    var rerender = () => { if (_cur === 'help' && byId('help_root') && byId('help_main')) { _index = null; show(_view, true); } };
+    d0.addEventListener('wts:unit-system-changed', rerender);
+    d0.addEventListener('click', e => { var t = e.target; if (t && t.closest && t.closest('#wts_dec_comma')) rerender(); });
     d0.addEventListener('click', e => {
       var t = e.target;
       if (t && t.closest && t.closest('#pgHelpBtn')) { e.preventDefault(); openCurrent(); }

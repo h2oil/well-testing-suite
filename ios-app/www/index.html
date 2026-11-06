@@ -347,6 +347,7 @@
             color: var(--text2); font: inherit; font-size: 15px; font-weight: 700; line-height: 1; cursor: pointer; padding: 0; }
         .pg-help:hover, .pg-help:focus-visible { color: var(--accent); border-color: var(--accent); }
         .pg-help[hidden] { display: none; }
+        @media (pointer: coarse) { .pg-help { width: 40px; height: 40px; } }   /* help-host-patch:H7 */
         @media (min-width: 769px) {
             .sidebar-brand { padding: 12px 18px 10px; }
             .sb-search { padding: 8px 14px 2px; }
@@ -728,7 +729,7 @@
         <div class="sidebar-brand">
           <img src="data:image/png;base64,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" alt="H2Oil">
           <script>(function(){var s=document.querySelector('.sidebar-brand img'),m=document.getElementById('mobLogo');if(s&&m)m.src=s.src;})();</script>
-          <div><h1>H<sub style="font-size:9px;vertical-align:baseline;margin:0 1px">2</sub>Oil</h1><p id="appVersionLabel">Well Testing Suite v3.3.1</p><button type="button" class="sb-relnotes" id="sbReleaseNotes" data-nav="releasenotes" title="Release notes — what&#8217;s new in this version">&#128221; What&#8217;s new</button><!--help-host-patch:H2--><span class="sb-sep" aria-hidden="true"> &#183; </span><button type="button" class="sb-relnotes" id="sbHelp" data-nav="help" title="Help and user guide">? Help</button></div>
+          <div><h1>H<sub style="font-size:9px;vertical-align:baseline;margin:0 1px">2</sub>Oil</h1><p id="appVersionLabel">Well Testing Suite v3.3.2</p><button type="button" class="sb-relnotes" id="sbReleaseNotes" data-nav="releasenotes" title="Release notes — what&#8217;s new in this version">&#128221; What&#8217;s new</button><!--help-host-patch:H2--><span class="sb-sep" aria-hidden="true"> &#183; </span><button type="button" class="sb-relnotes" id="sbHelp" data-nav="help" title="Help and user guide">? Help</button></div>
         </div>
         <div class="sb-search" role="search"><input type="search" id="sb_search" placeholder="Search calculators" aria-label="Search calculators" autocomplete="off" spellcheck="false" data-no-persist></div>
         <div class="sb-empty hidden" id="sb_empty">No calculator matches.</div>
@@ -1755,14 +1756,15 @@ function __homeFilter() {
     let n = 0, total = 0;
     Array.from(body.querySelectorAll('.dash-sec[data-group]')).forEach(sec => {
         let m = 0;
+        const ovw = sec.getAttribute('data-group') === 'Overview';   /* help-host-patch:H8 */
         Array.from(sec.querySelectorAll('.dash-card')).forEach(c => {
-            total++;
+            if(!ovw) total++;
             const ok = !q.length || __uiMatch(q, c.getAttribute('data-search'));
             c.classList.toggle('hidden', !ok);
             if(ok) m++;
         });
         sec.classList.toggle('hidden', !m);
-        n += m;
+        if(!ovw) n += m;
     });
     const quick = $('dash_quick'), cnt = $('dash_count'), empty = $('dash_empty');
     if(quick && quick.classList) quick.classList.toggle('hidden', q.length > 0);
@@ -2797,7 +2799,7 @@ function buildReportCoverHTML(title, subtitle) {
     let h = '<header class="rp-hero"><div class="rp-hero-top">' +
         (logo ? '<img class="rp-logo" src="' + logo + '" alt="H2Oil">' : '<span class="rp-wordmark">H2Oil</span>') +
         '<span class="rp-brand">Well Testing Suite</span><span class="rp-date">' + _rEsc(_reportDate()) + '</span></div>' +
-        '<div class="rp-kicker">Engineering calculation report</div>' +
+        '<div class="rp-kicker">' + _rEsc((typeof window.__reportKicker === 'string' && window.__reportKicker) || 'Engineering calculation report') + '</div>' +   /* help-host-patch:H6 */
         '<h1>' + _rEsc(title) + '</h1>' +
         (subtitle ? '<div class="rp-sub">' + _rEsc(subtitle) + '</div>' : '') +
         '</header>';
@@ -10995,6 +10997,14 @@ window.calcVDrop=function(){
 // so write &amp; for a literal ampersand. Scope: engineering, usability and
 // platform changes only; aim for 3-10 items per release.
 const RELEASE_NOTES = [
+    { ver:'v3.3.2', date:'2026-11-06', title:'Help &amp; User Guide',
+      note:'Help &amp; User Guide: a guide for every module with screenshots, search, a ? button on every page (F1), Getting started, &quot;How do I&hellip;&quot; tasks, a printable user guide and quick cards; Well Test Simulator training course (10 exercises, with trainer notes and worksheets) and field scenarios (unloading the cushion to the burner or a production line).',
+      items:[
+        ['new', 'Help &amp; User Guide', 'A guide for every module, with screenshots: what it does, when to use it, steps, inputs, results, verdicts, a worked example, tips and the standards it follows. Open it from Help &amp; Guide in Overview, the Help link under the version, or the ? button next to each page title (F1).'],
+        ['ux', 'Search and Getting started', 'Help search ranks the &quot;How do I&hellip;&quot; tasks, guide titles, synonyms and the field answers (for example burner, production pressure, cushion); Getting started, a glossary and a troubleshooting FAQ.'],
+        ['new', 'Simulator course and field scenarios', 'A self-paced Well Test Simulator course of 10 exercises, each with steps, what to observe, questions, answers, trainer notes and a printable worksheet, and field scenarios: unloading the cushion to the burner, flowing to a production line, clean-up with sand and cold start-up. Each scenario says which pressure goes in which input and the order of the steps that runs without an ESD trip.'],
+        ['report', 'Printable user guide', 'Print or save as PDF a quick card, one guide, a sidebar group, a worksheet or the whole user guide, with an Images off option; the complete guide is also published as help/user-guide.html. The App Store version is 3.3.2.'],
+      ] },
     { ver:'v3.3.1', date:'2026-11-06', title:'Simulator: second surge tank &amp; cyclonic desander',
       note:'Two new optional items for the Well Test Simulator rig-up: a second surge tank and a cyclonic desander upstream of the choke. With both left out the simulator runs and looks as before; the Dynamic Simulation card has new sand and equipment inputs.',
       items:[
@@ -100969,18 +100979,18 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
     "analogsig": "view-d 1280 800 5bfe019b,view-p 780 1688 8debff8c",
     "arc": "view-d 1280 800 f7b4fd42,view-p 780 1688 270ee7a2",
     "bottomsup": "view-d 1280 800 d1ee07ae,view-p 780 1688 01b89ad8",
-    "buildup": "res-d 982 345 be8b6dfd,run-d 987 50 7dd2723d,view-d 1280 800 0a1f03ae,view-p 780 1688 2d1d94aa,well-d 491 635 29e23bee",
+    "buildup": "res-d 982 345 be8b6dfd,view-d 1280 800 0a1f03ae,view-p 780 1688 6e37d4d5,well-d 491 635 29e23bee",
     "cablesz": "view-d 1280 800 baad4860,view-p 780 1688 669aa8cf",
     "casing": "view-d 1280 800 4f783b8e,view-p 780 1688 a6e4e46b",
     "chem": "view-d 1280 800 55f18589,view-p 780 1688 bdfaadbf",
-    "cheminj": "res-d 987 32 c0ca0425,view-d 1280 800 5c0e89e0,view-p 780 1688 ec544d78",
+    "cheminj": "res-d 982 635 27e9ce0a,view-d 1280 800 5c0e89e0,view-p 780 1688 cd5cd19d",
     "choke": "res-d 982 376 d323b373,view-d 1280 800 49632a14,view-p 780 1688 36b2ed60",
     "chokecnv": "view-d 1280 800 0b0620fe,view-p 780 1688 c4bb9a98",
     "chokeflow": "view-d 1280 800 d9334cc6,view-p 780 1688 38072e74",
     "chokeperf": "res-d 491 110 9b8a6c21,view-d 1280 800 55c56744,view-p 780 1688 ceea785f",
     "clientinfo": "view-d 1280 800 9e695396,view-p 780 1688 1573f8a3",
     "complfluids": "res-d 449 203 71aef0b7,view-d 1280 800 dd954a63,view-p 780 1688 66fbd630",
-    "course": "ex1-view-d 1280 800 0b368e22,ex1-view-p 780 1688 c511312f,ex10-t202-d 296 349 6ede300e,ex2-ck101-d 296 313 cf50313a,ex4-alarms-d 476 258 77664798,ex4-scen-d 531 465 0085c41d,ex4-v101-d 296 307 8b4cb53f,ex5-more-p 780 1688 1ceaf621,ex5-reset-d 213 93 09fc7e22,ex5-trends-d 1280 800 61f8a885,ex5-viewmenu-d 213 253 e385e263,ex6-events-d 476 183 dfcfa42c,ex6-t301-d 296 349 2c9ef751,ex7-t201-d 296 349 7ea5e89d,ex8-temp3d-d 1280 800 3b64c4e8,ex9-ds101-d 296 349 5067b499",
+    "course": "ex1-view-d 1280 800 0b368e22,ex1-view-p 780 1688 51a0b0a6,ex10-t202-d 296 349 6ede300e,ex2-ck101-d 296 313 cf50313a,ex4-alarms-d 476 258 77664798,ex4-scen-d 531 465 0085c41d,ex4-v101-d 296 307 8b4cb53f,ex5-more-p 780 1688 5ed6983e,ex5-reset-d 213 93 09fc7e22,ex5-trends-d 1280 800 6ef1a783,ex5-viewmenu-d 213 253 e385e263,ex6-events-d 476 183 dfcfa42c,ex6-t301-d 296 349 2c9ef751,ex7-t201-d 296 349 7ea5e89d,ex8-temp3d-d 1280 800 d3bf9cbf,ex9-ds101-d 296 349 5067b499",
     "dispersion": "res-d 491 488 4caee3b6,view-d 1280 800 329c3138,view-p 780 1688 fa30328b,weather-d 491 287 4664d775",
     "elec": "view-d 1280 800 e93f2161,view-p 780 1688 e2718cf7",
     "esdhi": "res-d 449 260 e988e9f5,view-d 1280 800 8caea0ea,view-p 780 1688 623de604",
@@ -100997,9 +101007,9 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
     "gensz": "view-d 1280 800 e72fd96a,view-p 780 1688 6dbd598f",
     "h2sroe": "res-d 454 445 8422de94,view-d 1280 800 9ecdf2df,view-p 780 1688 7701a110",
     "heater": "view-d 1280 800 c215c256,view-p 780 1688 b55b4ddf",
-    "help": "view-d 1280 800 6f7b6c30,view-p 780 1688 b1fa0b6b",
+    "help": "view-d 1280 800 6f7b6c30,view-p 780 1688 722652b2",
     "historian": "export-d 982 331 b86996b1,view-d 1280 800 6442b9ee,view-p 780 1688 38ed2737",
-    "home": "view-d 1280 800 9e68f430,view-p 780 1688 415b9ec5",
+    "home": "view-d 1280 800 d66a41a7,view-p 780 1688 44ab3578",
     "hydrate": "sum-d 945 178 76d57306,view-d 1280 800 e118477f,view-p 780 1688 5c93006e",
     "lineheat": "res-d 987 416 7e6d3aaa,view-d 1280 800 afd8cd76,view-p 780 1688 2bd22587",
     "liquidline": "res-d 454 229 7f858d73,view-d 1280 800 883a1884,view-p 780 1688 f0f9f951",
@@ -101015,7 +101025,7 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
     "proving": "res-d 491 520 9fd5cf32,view-d 1280 800 bbb6c233,view-p 780 1688 6955910f",
     "prv": "inlet-d 449 394 c76ae598,load-d 491 341 f6f0f4d8,res-d 449 441 4a49637e,view-d 1280 800 596c7610,view-p 780 1688 011c149a",
     "pumpsz": "view-d 1280 800 cf2117d4,view-p 780 1688 ed22e300",
-    "releasenotes": "view-d 1280 800 00657abe,view-p 780 1688 8203cba2",
+    "releasenotes": "view-d 1280 800 09ef3d8f,view-p 780 1688 93e8c991",
     "scale": "card-d 431 267 52db40a0,card-p 756 510 73b70afe,view-d 1280 800 dec8fef7,view-p 780 1688 2b542a04",
     "scenarios": "fs-1-rigup-d 982 488 1865a58d,fs-3-rigup-d 982 487 979a7c65",
     "sep": "view-d 1280 800 69685597,view-p 780 1688 f2bbb50e",
@@ -101023,7 +101033,7 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
     "sepqc": "res-d 491 239 58385532,view-d 1280 800 9f200512,view-p 780 1688 67438f8a",
     "seprate": "view-d 1280 800 eeea4137,view-p 780 1688 ac37ed8a",
     "solgor": "calc-d 491 551 eac40ac6,res-d 449 224 c8e07ca1,view-d 1280 800 94b6bdd0,view-p 780 1688 351b540a",
-    "start": "first-d 491 395 eaced952,header-d 982 92 f3a218cf,screen-d 1280 800 939eff04",
+    "start": "first-d 491 395 eaced952,header-d 982 92 f3a218cf,screen-d 1280 800 55bcce64",
     "tank": "view-d 1280 800 700a3803,view-p 780 1688 5f9d6598",
     "turbmeter": "res-d 449 298 169bbd66,view-d 1280 800 537337b8,view-p 780 1688 e5a2640d",
     "units": "view-d 1280 800 62bc1859,view-p 780 1688 04f86a65",
@@ -101032,10 +101042,11 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
     "wellkill": "res-d 611 315 361d37d8,view-d 1280 800 3bddfaee,view-p 780 1688 801538b1",
     "wellos": "modbus-d 982 154 6570dca0,view-d 1280 800 e3f6c5bc,view-p 780 1688 3b9ff94a",
     "wells": "view-d 1280 800 d9907e22,view-p 780 1688 7324b608",
-    "wts": "card-d 296 349 e4ae1be4,card-p 752 858 45a7da8a,rigup-d 982 488 71c236fa,tb-d 980 481 909ac3e3,view-d 1280 800 59d21845,view-p 780 1688 4e2e2134"
+    "wts": "card-d 296 349 e4ae1be4,card-p 752 858 45a7da8a,rigup-d 982 488 71c236fa,tb-d 980 481 909ac3e3,view-d 1280 800 2c844dde,view-p 780 1688 4ece66ab"
   };
   var M = G.WTS_helpManifest = G.WTS_helpManifest || {};
-  M.count = 210;
+  M.count = 209;
+  M.bytes = 7814206;   // total size of the image files (the offline download label)
   M.data = D;
   M.base = 'help/img/';
   // get(folder, shot, view) → {file, src, w, h, v} or null; view "desktop" | "phone"; base overrides M.base
@@ -101369,7 +101380,7 @@ pitfalls: ['Favourites and Recently used belong to this device. They are not in 
 noRefs: 'A start page; no calculation.', related: ['help', 'clientinfo'],
 shots: v('Dashboard with the search box, the favourites hint and the first tiles', 'The Dashboard as it opens',
 [{ sel: '#dash_search', n: 1 }, { sel: '#dash_quick', n: 2 }, { sel: '.dash-sec[data-group] .dash-card', n: 3 }]) },
-help: { route: 'help', reviewed: R, reviewedSrc: 'f3fba7b2', units: N, keywords: ['help', 'guide', 'user guide', 'manual', 'training', 'how to'],
+help: { route: 'help', reviewed: R, reviewedSrc: 'afe2d950', units: N, keywords: ['help', 'guide', 'user guide', 'manual', 'training', 'how to'],
 notDocumented: [{ id: 'help_q', why: 'search (step 2)' }, { id: 'help_back', why: 'Back (step 5)' }, { id: 'help_lb_x', why: 'closes a screenshot' },
 { id: 'help_offline', why: 'offline screenshots' }, { pattern: '^help_(print_|pm)', why: 'print (step 6)' }],
 purpose: 'A guide for every module, with search, "How do I…" tasks, the simulator course and field scenarios.',
@@ -101648,7 +101659,7 @@ function open(t) { return { t: 'Select **' + t + '** in **Production & Reservoir
 var prism = {
   route: 'prism', reviewed: V, reviewedSrc: '09850fbd', units: 'field',
   keywords: ['well test analysis', 'pressure transient', 'PTA', 'derivative', 'skin'],
-  purpose: 'Interprets a pressure test: load the data, pick the period, read the derivative, fit a model, report k, skin and storage.',
+  purpose: 'Interprets a pressure test: load the data, pick the period, read the derivative, fit a model, report k, [[glossary#skin|skin]] and storage.',
   what: ['Five steps, ① Data to ⑤ Report, in the step bar.',
   'The results rail shows the latest fit and straight line. **Tools** holds the specialist panels.'],
   when: ['After a build-up, drawdown, injection or fall-off test.', 'To check for damage before or after a stimulation.', 'With rate-only data, for decline analysis and EUR.'],
@@ -101666,7 +101677,7 @@ var prism = {
   example: { title: 'The demo drawdown', setup: ['**Try demo data** (55 points, 850 STB/d, pi 4,200 psia, h 35 ft), then **▶ Analyse**.'],
   result: ['Homogeneous, ✓ converged, R² 1.00000: k 45.0 md, S +2.50, C 8.47e-4 bbl/psi, r_inv 1,549 ft.', 'Straight line (MDH): m 121 psi/cycle, k 45.0 md, S +2.49, FE 0.76.'],
   check: { kind: 'manual', reason: 'PRiSM fit: ▶ Analyse runs asynchronously; read from the page with the demo data' } },
-  tips: ['Run ▶ Analyse, then refine the period, window and model.', 'If line and model differ by over 5 % in k, check the IARF window.'],
+  tips: ['Run ▶ Analyse, then refine the period, window and model.', 'If line and model differ by over 5 % in k, check the [[glossary#iarf|IARF]] window.'],
   pitfalls: ['A field marked **sample** holds a demo value: enter yours.'],
   verdicts: [vd('✓', '✓', 'Step-bar tick: the step has what it needs.')],
   refs: [rf('Bourdet (1989, 2002)', 'derivative and models'), rf('Agarwal, Al-Hussainy and Ramey (1970)', 'storage and skin'), rf('Horner (1951)', 'semilog lines')],
@@ -101864,13 +101875,13 @@ var gaslift = {
 var buildup = {
   route: 'buildup', reviewed: V, reviewedSrc: 'fe00b2fe', units: 'dual',
   keywords: ['build-up', 'shut-in', 'permanent gauge', 'skin trend', 'sign-off'],
-  purpose: 'Finds the shut-ins in permanent-gauge data, interprets each build-up and trends skin, k, p* and PI, with alerts and sign-off.',
-  what: ['Each build-up gets an IARF window, semilog line, model match, S_err and confidence label. Alerts flag a skin change.',
+  purpose: 'Finds the shut-ins in permanent-gauge data, interprets each build-up and trends [[glossary#skin|skin]], k, [[glossary#pstar|p*]] and PI.',
+  what: ['Each build-up gets an [[glossary#iarf|IARF]] window, semilog line, model match, S_err and confidence label. Alerts flag a skin change.',
   'Partial rate cuts are listed, not interpreted; **Open this build-up in PRiSM** to deconvolve.'],
   when: ['When new permanent-gauge data arrive.', 'To decide on a stimulation from the skin trend.'],
   steps: [open('Build-up Surveillance'), 'Enter your name in **Engineer**. Pick the **Gauge data source** ① and load it (or **Demo data**, **Load demo**).',
   'In **Rates**, load the daily allocation or a rate table.', { t: 'Fill **Well and fluid** ② (gas: gravity, temperature, impurities).', shot: 'well' },
-  { t: 'Select **Analyse** ③; read the Summary, tests, trend and review.', shot: 'res' }, 'Decide the findings (Actions…), then sign off under **Sign-off**.'],
+  { t: 'Select **Analyse**; read the Summary, tests, trend and review.', shot: 'res' }, 'Decide the findings (Actions…), then sign off under **Sign-off**.'],
   inputs: [B('Engineer', 'eng', null, 'Needed for overrides and sign-off.'), B('Gauge data source', 'src', 'File (CSV or text)'), B('Demo', 'demo_kind', 'Oil producer'),
   B('Gauge file', 'g_file', null, 'A time and a pressure column.'), B('Historian tag', 'h_tag', null, 'From [[historian]].'), B('Time format', 'g_tfmt', 'Detect automatically'),
   B('Gauge time zone', 'g_tz'), B('Pressure unit in the file', 'g_punit', 'psia'), B('Rate source', 'rate_mode', 'Daily allocation'),
@@ -101911,7 +101922,6 @@ var buildup = {
   related: ['prism', 'historian', 'oilipr'],
   shots: [view('Build-up Surveillance with Data sources', [sel(1, '#bu_src')]),
   crop('well', '#bu_card_well', 'Well and fluid card', 'Well and fluid', [sel(2, '#bu_fluid')]),
-  crop('run', '.bu-run', 'Analyse button row', 'Analyse', [sel(3, '#bu_run')]),
   res('#bu_s_S1', 'Summary of the oil demo: skin, baseline, alerts', 'The oil demo after Analyse', null, [{ action: 'buildupDemo', args: 'oil' }, { click: '#bu_run' }, { waitFor: '#bu_res[data-done="1"]' }])]
 };
 
@@ -102076,7 +102086,7 @@ check: PG({ 'cheminj.total_gal_d': 159.95, 'cheminj.hydrate.dT': 38.566 }, { exp
 pitfalls: ['A planning estimate: calibrate each pump at line pressure.'],
 refs: [{ std: 'Hammerschmidt; Nielsen–Bucklin', note: 'hydrate depression' }, { std: 'Towler and Mokhatab (2005)', note: 'hydrate temperature' }, { std: 'API RP 500 / 505', note: 'classified areas' }],
 related: ['hydrate', 'h2sroe', 'chem'],
-shots: [Sh('view', 'both', 'Chemical Injection input cards', '', ['#cj_qg~1']), Sh('res', 'desktop', 'Headline verdict', RES, ['#cj_res .cj-v~2'], { target: '#cj_res .cj-v' })]
+shots: [Sh('view', 'both', 'Chemical Injection input cards', '', ['#cj_qg~1']), Sh('res', 'desktop', 'Headline verdict and the boxes below it', RES, [], { target: '#cj_res', callouts: [{ sel: '#cj_res .cj-v', n: 2, at: 'right' }] })]
 }),
 liquidline: Gd('liquidline', '0e937304', 'wts_ll_', {
 keywords: ['blowby', 'LCV'],
@@ -102265,16 +102275,16 @@ shots: [Sh('view', 'both', 'Cement and brine cards', '', ['#cmf_dh~1']), Sh('res
         { id: 'ex3', title: 'Clean-up: unload the cushion to the burner (V-101 out)', keywords: ['cushion', 'burner', 'clean-up', 'unload', 'bypass'],
             goal: 'Unload the completion cushion straight to the burner boom with the right pressures, then go through the separator.',
             setup: ['Base set-up as in exercise 1.'],
-            steps: ['Follow [[fs#FS-1|FS-1]] steps 1 to 7, including the Surge Tank Pressure setting and the restore step before V-101 goes back in.'],
+            steps: ['Follow [[fs#FS-1|FS-1]] steps 1 to 8 in that order: Surge Tank Pressure in two steps, then Operating Pressure, then V-101 out, and the restore step before V-101 goes back in.'],
             observe: ['The V-101 card says it is bypassed and the Rig-up note explains why there are no meter rates or batches.', 'The HUD total water against the cushion volume.',
             'The choke outlet with V-101 out is about {{10|pressureG}}, not the {{21|pressureG}} of the steady check.'],
             questions: ['Where do the flowing wellhead pressure and the production-line pressure go?', 'Why must Operating Pressure be low while V-101 is out?',
             'How long does a {{150|volume}} cushion take at {{2400|liquidRate}}?', 'What do you do before you put V-101 back in?'],
             answers: ['FWHP in **Wellhead Pressure**; line pressure in **Operating Pressure**, with V-101 in only.', 'The steady choke check still back-walks from it, and it sets the Surge Tank Pressure limit.',
-            'About 1.5 hours (cushion volume ÷ the rate actually flowing).', 'Set Operating Pressure back to the test pressure and Surge Tank Pressure to {{25|pressureG}}, and let them stabilise.'],
-            form: DEF, trainer: { duration: '30–40 minutes.', fault: 'None at first. Then ask for the breakthrough step at full rate and let the trainee find the erosional velocity warning.',
-            good: 'Sets the pressures before switching V-101 out, unloads on a bean that does not limit, and restores the pressures before V-101 goes back in.',
-            mistakes: ['Putting the production or flowing pressure in Operating Pressure.', 'Leaving Surge Tank Pressure at {{25|pressureG}}.', 'Switching V-101 in at {{15|pressureG}}.'],
+            'About 1.5 hours (cushion volume ÷ the rate actually flowing).', 'Set Operating Pressure back to the test pressure and Surge Tank Pressure to {{25|pressureG||imp}}, and let them stabilise.'],
+            form: DEF, trainer: { duration: '30–40 minutes.', fault: 'None at first. Then ask when to go through the separator: the answer is clean, stable returns, not a warning. Variant: ask for full rate on the bypass and let the trainee find the choke and velocity limits.',
+            good: 'Lowers Surge Tank Pressure, then Operating Pressure, before switching V-101 out; unloads on a bean that does not limit; restores the pressures before V-101 goes back in.',
+            mistakes: ['Putting the production or flowing pressure in Operating Pressure.', 'Lowering Operating Pressure before Surge Tank Pressure, or after V-101 is out (ESD trip).', 'Switching V-101 in at {{15|pressureG}}.'],
             debrief: ['What is the real back pressure of your burner line?', 'What tells you the cushion is out?', 'When is it time to go through the separator?'] } },
         { id: 'ex4', title: 'Separator upset: dump valve failure', keywords: ['LCV-102', 'LSHH', 'dump valve', 'upset', 'trip'],
             goal: 'Recognise a dump valve that does not open, act before the trip, and restart after it.',
@@ -102324,9 +102334,9 @@ shots: [Sh('view', 'both', 'Cement and brine cards', '', ['#cmf_dh~1']), Sh('res
             steps: ['Open the T-201 card. Read **Level (A+B)**, **Pressure**, **Transfer** and **Transfer ΔP**.',
             'Under **Inlet** select B to shut it, so only A fills. Now change over: select B, then A at once. A stays open until B is fully open (open new, then close old). Select A again so both are open.',
             'The trainer sets **Scenarios → LCV-201 stuck closed (surge transfer)**. Watch the level rise and **Time to HH**.', 'Clear the fault before LSHH-201, or watch it trip the ESD.',
-            'Reset, then set **Surge Tank Pressure** to {{2|pressureG}} in the form and watch **Transfer ΔP**.'],
+            'Pause, set **Surge Tank Pressure** to {{2|pressureG||imp}} in the form, select **Reset → Reset to steady**, then play and watch **Transfer ΔP**. Lowered by {{23|pressure||imp}} while running, PSHH-201 would trip the ESD.'],
             observe: ['LCV-201 has no pump: it transfers on the surge tank pressure plus the liquid head.', 'With LCV-201 stuck closed, LSHH-201 trips the ESD about an hour later at the default rates.',
-            'At {{2|pressureG}} the transfer ΔP falls to about {{1|pressure}} and LCV-201 raises a low ΔP warning.'],
+            'At {{2|pressureG||imp}} the transfer ΔP falls to about {{1|pressure}} and LCV-201 raises a low ΔP warning.'],
             questions: ['Why open the new inlet before closing the old one?', 'What drives the transfer to the gauge tank?', 'What would you change for a low-pressure surge tank?'],
             answers: ['So the separator dumps are never blocked during the change.', 'The surge tank pressure and the liquid head, against the lift to the gauge tank inlet.', 'Keep enough pressure for the lift, or plan for a slower transfer.'],
             form: DEF, trainer: { duration: '25 minutes.', fault: 'At about 10 minutes of sim time: **Scenarios → LCV-201 stuck closed (surge transfer)**.',
@@ -102352,25 +102362,28 @@ shots: [Sh('view', 'both', 'Cement and brine cards', '', ['#cmf_dh~1']), Sh('res
     var PRESS = { table: { head: ['The pressure you have', 'Where it goes', 'Rig-up', 'Scenario'], rows: [
         ['Flowing wellhead or tubing pressure (FWHP, FTHP, flowing pressure)', '**Wellhead Pressure**, never the separator pressure', 'any', 'all'],
         ['Production or export line pressure (the header the well flows into)', 'Separator **Operating Pressure**, plus the line loss to the header', 'V-101 in only', '[[fs#FS-2|FS-2]]'],
-        ['Burner boom (cushion or clean-up straight to the burner)', 'No line pressure: V-101 out, **Operating Pressure** low ({{15|pressureG}}), **Surge Tank Pressure** at least {{10|pressure}} lower ({{5|pressureG}})', 'V-101 out', '[[fs#FS-1|FS-1]]']] } };
+        ['Burner boom (cushion or clean-up straight to the burner)', 'No line pressure: **Surge Tank Pressure** {{5|pressureG||imp}} first (in two steps), then **Operating Pressure** low ({{15|pressureG}}), then V-101 out', 'V-101 out', '[[fs#FS-1|FS-1]]']] } };
     var CTRL = { table: { head: ['What Operating Pressure controls', 'V-101 in', 'V-101 out (to the burner)'], rows: [
         ['Live model: PCV-101 set point and separator pressure', 'yes', 'no (PCV-101 held shut)'],
-        ['Live model: separator alarms and relief (PAH, PSHH, PAL, PSV)', 'set from it', 'quiet'],
+        ['Live model: separator alarms and relief (PAH, PSHH, PAL, PSV)', 'set from it', 'live on the trapped vessel: lowering it trips PSHH-101'],
         ['Live model: choke outlet pressure', 'separator pressure + line losses', '{{5|pressureG}} burner header + Sep→Flare loss + (steady choke outlet − Operating Pressure)'],
         ['Steady check: choke regime, capacity, J-T, temperatures, hydrate margins, velocities', 'yes', 'yes, still: set it near the burner back pressure'],
-        ['Surge Tank Pressure limit: at most the smaller of {{30|pressureG}} and Operating Pressure − {{10|pressure}}', 'yes', 'yes, still']] } };
+        ['Surge Tank Pressure limit: at most the smaller of {{30|pressureG||imp}} and Operating Pressure − {{10|pressure||imp}}', 'yes', 'yes, still']] } };
     var scenarios = [
         { id: 'FS-1', title: 'Unloading the completion cushion straight to the burner boom', feature: 'bypassDest',
             keywords: ['cushion', 'burner', 'boom', 'clean-up', 'unload', 'production pressure', 'separator pressure', 'bypass'],
             intro: [{ h: 'Which pressure goes where' }, 'Well testers use “production pressure” for two different things, so check which one you have.', PRESS, CTRL],
-            today: [{ list: ['Rig-up: switch V-101 (Test separator) out in the **Rig-up** card. The note reads “the whole well stream goes straight to the flare / burner (clean-up)”. FS-401 stays in.',
-            'Pressures: set **Operating Pressure** to {{15|pressureG}} (about the burner-line back pressure; up to {{20|pressureG}} is fine) and **Surge Tank Pressure** to {{5|pressureG}}. Do not put the production pressure or the flowing wellhead pressure in Operating Pressure.',
-            'Left at {{25|pressureG}}, the page shows “⚠ Surge tank pressure too close to separator pressure — liquids cannot dump” and uses {{5|pressureG}} anyway: harmless with V-101 out, but set {{5|pressureG}} so the page is clean.',
-            'Unload (live changes, no Reset): **Gas Rate** {{0.3|gasRate}}, **Condensate / Oil** 0, **Water Rate** = the unload rate ({{2400|liquidRate}}), **Wellhead Pressure** = the flowing WHP while unloading ({{500|pressureG}}), bean 32. The steady check gives **Critical** (P2/P1 0.068), capacity {{1.78|gasRate}}, no CHOKE_LIMIT, choke downstream {{21|pressureG}} and no warnings. The live choke outlet is about {{10|pressureG}}.',
-            'Run at **×60** until the HUD total **Water** (next to **Cum oil**) reaches the cushion volume: {{150|volume}} at {{2400|liquidRate}} takes about 1.5 hours. An LCV-201 low ΔP warning may show: harmless, the tanks receive nothing.',
-            'If CK-101 shows CHOKE_LIMIT, raise the bean or lower the unload rate. The alarm cuts all three rates by the same factor, so the time is the cushion volume ÷ the rate actually flowing. Here it appears at a WHP of about {{60|pressureG}} (capacity {{0.25|gasRate}}) and is clear at {{100|pressureG}} ({{0.39|gasRate}}).',
-            'Breakthrough: raise gas, oil and WHP to the expected values and lower water to the formation rate, e.g. {{5|gasRate}}, {{500|liquidRate}} oil, {{300|liquidRate}} water, WHP {{2000|pressureG}}: Critical, capacity {{7.21|gasRate}}, choke downstream {{24|pressureG}}, no warnings. At {{10|gasRate}} the page shows ✗ “Heater→Sep: Velocity 287 ft/s EXCEEDS erosional limit 240 ft/s”: time to go through the separator.',
-            'Before V-101 goes back in: set **Operating Pressure** back to the test pressure ({{150|pressureG}}) and **Surge Tank Pressure** to {{25|pressureG}}, let them ramp and settle, then switch V-101 in. Otherwise the test runs at {{15|pressureG}} and every separator alarm limit is wrong.'], ordered: true },
+            today: [{ h: 'Order matters' }, 'Lower the pressures with V-101 in, Surge Tank Pressure first. Each of these trips the ESD:',
+            { list: ['lowering **Operating Pressure** before **Surge Tank Pressure**;', 'lowering Surge Tank Pressure by more than {{10|pressure||imp}} at a time;', 'lowering Operating Pressure after V-101 is out;', 'a big step in the well rates while V-101 is in.'] },
+            { list: ['Lower **Surge Tank Pressure** to {{15|pressureG||imp}}, wait for T-201 to come down to it, then set {{5|pressureG||imp}}. PSHH-201 follows the set point faster than T-201 vents. The field is in psig, also in Metric mode.',
+            'Set **Operating Pressure** to {{15|pressureG}}, about the burner-line back pressure (up to {{20|pressureG}} is fine), and let the separator settle.',
+            'Rig-up: switch V-101 (Test separator) out. FS-401 stays in. PCV-101 is now held shut and PSHH-101 still follows Operating Pressure.',
+            'Unload inputs (live, no Reset): **Gas Rate** {{0.3|gasRate}}, **Condensate / Oil** 0, **Water Rate** {{2400|liquidRate}}, **Wellhead Pressure** = the flowing WHP ({{500|pressureG}}), bean 32. Steady check: **Critical** (P2/P1 0.068), capacity {{1.78|gasRate}}, choke downstream {{21|pressureG}}, no warnings. Live choke outlet: about {{10|pressureG}}.',
+            'Run at **×60** until the HUD total **Water** reaches the cushion volume: {{150|volume}} at {{2400|liquidRate}} takes about 1.5 hours. An LCV-201 low ΔP warning is harmless here.',
+            'CHOKE_LIMIT on CK-101 cuts all three rates by the same factor: raise the bean or lower the rate. Here it appears at a WHP of about {{60|pressureG}} ({{0.25|gasRate}}) and clears at {{100|pressureG}} ({{0.39|gasRate}}).',
+            'Clean-up: set the expected rates, e.g. {{5|gasRate}}, {{500|liquidRate}} oil, {{300|liquidRate}} water, WHP {{2000|pressureG}}: Critical, capacity {{7.21|gasRate}}, choke downstream {{24|pressureG}}, no warnings. Go through the separator once the returns are clean and stable: BS&W and solids low and steady at a steady WHP and rate.',
+            'Restore before V-101 goes back in: **Operating Pressure** {{150|pressureG}} and **Surge Tank Pressure** {{25|pressureG||imp}} (raising them is safe), let them settle, then switch V-101 in.'], ordered: true },
+            'The bypass rate has a limit. At {{10|gasRate}} with the clean-up values the page shows ⚠ “Choke is flow-limited — bean 32/64″…” and ⚠ “Heater→Sep: Velocity 291 ft/s EXCEEDS erosional limit 259 ft/s”.',
             { h: 'Limits' }, 'The cushion itself is not modelled: no cushion density, no tail, and WHP does not rise by itself as the column unloads. The choke check uses the gas rate only, so the bean never limits the liquid rate.'],
             afterSim: ['In the Dynamic Simulation card choose **With V-101 out, well stream to → Burner / flare line**, then run **Scenarios → Cushion unload (clean-up)** with the cushion volume, SG and unload rate. The steady choke check then uses the real back pressure, so the low Operating Pressure and the restore step are not needed.'] },
         { id: 'FS-2', title: 'Flowing straight to a production line', feature: 'bypassDest',
@@ -102432,7 +102445,7 @@ shots: [Sh('view', 'both', 'Cement and brine cards', '', ['#cmf_dh~1']), Sh('res
     scenarios.splice(2, 0, { id: 'FS-3', title: 'Clean-up with sand: the desander upstream of the choke', keywords: ['sand', 'desander', 'proppant', 'flow-back', 'clean-up', 'erosion'],
         intro: ['After a frac or gravel pack the clean-up brings back proppant and sand. DS-101 catches it upstream of the choke, where erosion is worst. Train on [[course#ex9|exercise 9]].'],
         today: [{ list: ['Rig-up: switch **Cyclonic desander (upstream of the choke)** in. Keep the line-up of your clean-up: through V-101, or V-101 out to the burner as in [[fs#FS-1|FS-1]].',
-            'Rating: in Dynamic Simulation set **Desander rating (psi)** and **Max shut-in wellhead pressure (psig)**; blank uses 1.2 × WHP ({{3600|pressureG}} here). A rating below it gives ✗ on the DS-101 card: not fit for this well, as it has no relief valve.',
+            'Rating: in Dynamic Simulation set **Desander rating (psi)** and **Max shut-in wellhead pressure (psig)**; blank uses 1.2 × WHP ({{3600|pressureG||imp}} here). A rating below it gives ✗ on the DS-101 card: not fit for this well, as it has no relief valve.',
             'Sand (imperial-only inputs): set **Sand rate, liquid (lb/1000 bbl)** and **Sand median size (µm)**, or start ' + DS + ' (LAH-103 about 3.5 hours later).',
             'Dump at LAH-103 (**Dump sand**, about 17 minutes; the well keeps flowing). Rising ΔP: plugged liner or packed accumulator (PDAH-103). Low ΔP: washed-out liner (PDAL-103).',
             'Keep DS-101 in line while sand comes back. At 10 lb per 1,000 bbl on the default spread it cuts the choke erosion rate about 68 times: WARN without it, OK with it.'], ordered: true },
@@ -102609,7 +102622,11 @@ S('', 'Enter them on the page that needs them.')] }];
 var glossary = {
 bean: { term: 'bean', variants: ['beans'], def: 'A fixed choke. Its size is the bore in 64ths of an inch: a 32 bean is 32/64 in.' },
 bsw: { term: 'BS&W', variants: ['basic sediment and water'], def: 'Basic sediment and water: the water and solids in the oil, in % of volume.' },
-cushion: { term: 'cushion', variants: ['cushions'], def: 'The completion fluid left in the well before the test. It is unloaded first, usually to the burner.' },
+cushion: { term: 'cushion', variants: ['cushions', 'water cushion', 'nitrogen cushion'], def: 'A liquid column (water, brine or diesel) or nitrogen placed in the test string above the tester valve. It limits the drawdown and the collapse load when the valve opens. It is unloaded first, usually to the burner.' },
+skin: { term: 'skin', variants: ['skin factor', 'mechanical skin'], def: 'A dimensionless number for the extra pressure drop near the wellbore. Positive: damage. Negative: a stimulated well.' },
+critical: { term: 'critical (sonic) flow', variants: ['choked flow', 'sonic flow'], def: 'Flow through a choke at sonic speed, below a P2/P1 of about 0.55. The rate then does not depend on the downstream pressure.' },
+iarf: { term: 'IARF', variants: ['infinite-acting radial flow', 'radial flow'], def: 'Infinite-acting radial flow: the flat part of the derivative. Permeability and skin come from it.' },
+pstar: { term: 'p*', variants: ['p star', 'extrapolated pressure'], def: 'The pressure the semilog straight line of a build-up reaches at infinite shut-in time (Horner time ratio of 1).' },
 fwhp: { term: 'FWHP', variants: ['FTHP', 'WHP'], def: 'Flowing wellhead (tubing) pressure, upstream of the choke.' },
 sithp: { term: 'SITHP', variants: ['SIWHP'], def: 'Shut-in tubing (wellhead) pressure with the well closed in.' },
 gor: { term: 'GOR', def: 'Gas-oil ratio: standard gas volume per stock-tank barrel of oil.' },
@@ -102899,7 +102916,7 @@ wts: {
     { id: 'layout', title: 'Page layout',
       what: ['Top: the live view (toolbar, alarm bar, 2D or 3D view, HUD), then the **Rig-up** card. Below: the form cards, **Pipe Segments**, **API RP 14E Settings** and the steady results. Steady warnings show above the form.'] },
     { id: 'inputs', title: 'Form inputs',
-      what: ['Which pressure goes where. Flowing wellhead or tubing pressure: **Wellhead Pressure**. Production or export line pressure: **Operating Pressure** plus the line loss, V-101 in only ([[fs#FS-2|FS-2]]). Burner boom: V-101 out, low **Operating Pressure** and **Surge Tank Pressure** as in [[fs#FS-1|FS-1]]. With V-101 out never enter the production or wellhead pressure in **Operating Pressure**: the steady check still uses it.'],
+      what: ['Which pressure goes where. Flowing wellhead or tubing pressure: **Wellhead Pressure**. Production or export line pressure: **Operating Pressure** plus the line loss, V-101 in only ([[fs#FS-2|FS-2]]). Burner boom ([[fs#FS-1|FS-1]]): lower **Surge Tank Pressure** (≤ {{10|pressure||imp}} per step), then **Operating Pressure**, then switch V-101 out; never lower Operating Pressure after that. Never put the production or wellhead pressure in it.'],
       inputs: [
         { label: 'Wellhead Pressure', id: 'wts_Pwh', def: '{{3000|pressureG}}', text: 'Flowing wellhead (tubing) pressure.' },
         { label: 'Wellhead Temp', id: 'wts_Twh', def: '{{180|temperature}}' },
@@ -102970,7 +102987,7 @@ wts: {
       tips: ['LSHH-202 shuts XV-202 only: on T-202 alone the dumps are then blocked and LSHH-102 trips the ESD.'] },
     { id: 'alarms', title: 'Alarms and ESD',
       steps: ['The alarm bar shows the newest alarm: select **Ack**.', 'Select **Alarms**: alarms with time and tag, steady design warnings, **Events**. **Ack all** acknowledges all.', 'After a trip the banner shows the cause. **Reset ESD** works once no trip alarm is active.'],
-      tips: ['Every trip closes SDV-101 (5 s to close, 15 s to open, then 180 s start-up grace) except LSHH-301 (shuts LCV-201 and LCV-202), LSHH-202 (shuts XV-202) and the LCV-201 / LCV-202 low-low.', 'PSHH-103 (DS-101 inlet at 95 % of its rating) is the only desander trip. PSHH-202 shuts XV-202 and PCV-204, then trips the ESD.', 'Shut in, WHP builds towards 1.2 × WHP (time constant 300 s).', 'Separator set points follow **Operating Pressure**: PAH = SP + max(10 %, {{15|pressure}}), PSHH = SP + max(20 %, {{25|pressure}}).'] },
+      tips: ['Every trip closes SDV-101: 5 s to close, 15 s to open, then 180 s start-up grace. The exceptions are LSHH-301 (shuts LCV-201 and LCV-202), LSHH-202 (shuts XV-202) and the LCV-201 / LCV-202 low-low.', 'PSHH-103 (DS-101 inlet at 95 % of its rating) is the only desander trip. PSHH-202 shuts XV-202 and PCV-204, then trips the ESD.', 'Shut in, WHP builds towards 1.2 × WHP (time constant 300 s).', 'Separator set points follow **Operating Pressure**: PAH = SP + max(10 %, {{15|pressure}}), PSHH = SP + max(20 %, {{25|pressure}}). Live with V-101 out too.'] },
     { id: 'reports', title: 'Reports and saving',
       what: ['The page export and the Quick Report hold the form, the **Rig-up** card and the steady results, not the live view. Inputs autosave; trends keep the last 4 h of sim time. [[wellos]] can log the form and live rates.'] },
     { id: 'views', title: '2D and 3D',
@@ -125837,7 +125854,7 @@ var KIND={task:'start',tasks:'start',start:'start',fs:'fs',scenarios:'fs',course
 var KEYS=[['F1','Help for this page'],['/','Help: search box'],['↑ ↓ Enter Esc','Help search results'],['?','Simulator: keyboard shortcuts']];
 var arr=v=>Array.isArray(v)?v:v==null||v===''?[]:[v],C=()=>H.load(),esc=s=>H.esc(s),md=(s,o)=>H.md(s,o);
 var byId=id=>typeof document!=='undefined'?document.getElementById(id):null;
-var pt=s=>String(s||'').replace(/[*`]/g,''),nr=r=>r==='dca'||r==='pta'?'prism':r,ws=o=>Object.assign({},o,{worksheet:true});
+var pt=s=>String(s||'').replace(/\*\*([^*]+)\*\*/g,'$1').replace(/`([^`]+)`/g,'$1'),nr=r=>r==='dca'||r==='pta'?'prism':r,ws=o=>Object.assign({},o,{worksheet:true});
 var go=(r,l)=>'<button type="button" class="help-a" data-help-go="'+r+'">'+l+'</button>';
 var note=t=>'<p class="help-note">'+t+' not in this build yet.</p>';
 var lines=n=>new Array(n+1).join('<div class="bk-line"></div>');
@@ -125937,7 +125954,8 @@ function renderBook(scope,opts){
   opts=opts||{};
   H.load();
   var P=plan(),o={print:true,units:opts.units||'both',headings:4,imgBase:opts.imgBase,dataUris:opts.dataUris,images:opts.images!==false};
-  var b=links(numbers(withFiles(opts.files||files(),()=>body(String(scope||'all'),P,o)),P),P,opts.standalone)
+  var sc=String(scope||'all'),one=!!C().guides[nr(sc)]||/^card:/.test(sc);   // one guide: no chapter number in its heading
+  var b=links((one?x=>x:numbers)(withFiles(opts.files||files(),()=>body(sc,P,o)),P),P,opts.standalone)
     .replace(/<details class="help-det">/g,'<details class="help-det" open>').replace(/ tabindex="0" role="button"| loading="lazy"| decoding="async"/g,'').replace(/<\/(section|article|p|figure|ul|ol|table|h[2-5])>(?!\n)/g,'</$1>\n');
   if(!opts.standalone)return '<div class="help-book"><style>'+CSS+'</style>'+b.replace(/<source[^>]*>/g,'')+'</div>';
   return '<!DOCTYPE html>\n<html lang="en-GB">\n<head>\n<meta charset="utf-8">\n<!-- GENERATED by prism-build/build-user-guide.js. Never edit by hand. -->\n'+
@@ -125973,7 +125991,8 @@ function print(scope,op){
   };
   return next().then(()=>{
     var h=renderBook(scope,o);
-    send(t,h,'Well Testing Suite '+(R.ver||'')+when(R));
+    G.__reportKicker='User guide';   // host H6: the report cover says "User guide", not "Engineering calculation report"
+    try{send(t,h,'User guide · Well Testing Suite '+(R.ver||'')+when(R));}finally{try{delete G.__reportKicker;}catch(e){G.__reportKicker=undefined;}}
     return{title:t,html:h,images:Object.keys(d).length,missing:miss};
   });
 }
@@ -126163,7 +126182,8 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     if (p[0] === 'site') return SITE;
     if (p[0] === 'email') return EMAIL;
     var v = parseFloat(p[0]);
-    return esc(fmtU(v, p[1], p[2] != null && p[2] !== '' ? +p[2] : null, o.field ? 'imperial' : o.units));
+    // {{v|cat|dp|imp}}: a field the page leaves in field units (an untagged input such as Surge Tank Pressure) stays imperial
+    return esc(fmtU(v, p[1], p[2] != null && p[2] !== '' ? +p[2] : null, o.field || p[3] === 'imp' ? 'imperial' : o.units));
   }
   function lk(go, lab, cur, sec) { return '<button type="button" class="help-a" data-help-go="' + esc(go) + '"' + (sec ? ' data-help-sec="' + esc(sec) + '"' : '') + (cur ? ' aria-current="true"' : '') + '>' + lab + '</button>'; }
   function linkHTML(target, label, o) {
@@ -126189,21 +126209,30 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     list = arr(list);
     return list.length ? '<ul' + (cls ? ' class="' + cls + '"' : '') + '>' + list.map(x => li(md(x, o))).join('') + '</ul>' : '';
   }
+  // Equipment tags (V-101 in, PSHH-201) do not break at the hyphen in narrow table cells; text segments only, never inside a tag.
+  function nw(h) { return String(h).split(/(<[^>]*>)/).map(x => x.charAt(0) === '<' ? x : x.replace(/\b([A-Z]{1,5}-\d{2,4}[A-Z]?(?: (?:in|out))?)/g, '<span class="help-nw">$1</span>')).join(''); }
   function table(head, rows, o) {
     return '<div class="help-tbl"><table><thead><tr>' + head.map(h => '<th>' + esc(h) + '</th>').join('') +
-      '</tr></thead><tbody>' + rows.map(r => '<tr>' + r.map(c => '<td>' + md(c, o) + '</td>').join('') + '</tr>').join('') +
+      '</tr></thead><tbody>' + rows.map(r => '<tr>' + r.map(c => '<td>' + nw(md(c, o)) + '</td>').join('') + '</tr>').join('') +
       '</tbody></table></div>';
   }
   // Blocks: string | {h} | {list, ordered} | {table:{head, rows}} | {details:{summary, body}} | {shot: id}
-  function renderBlocks(blocks, o, shots, folder) {
+  // prefix: the course exercise or scenario id. help-shots.js saves those shots as <folder>/<slug(prefix)>-<shot id>-d.webp.
+  function shotSlug(x) { return String(x || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''); }
+  H.shotSlug = shotSlug;
+  function renderBlocks(blocks, o, shots, folder, prefix) {
     return arr(blocks).map(b => {
       if (typeof b === 'string') return '<p>' + md(b, o, 1) + '</p>';
       if (!b || typeof b !== 'object') return '';
       if (b.h) return '<h4>' + md(b.h, o) + '</h4>';
       if (b.list) return b.ordered ? '<ol>' + arr(b.list).map(x => li(md(x, o))).join('') + '</ol>' : ul(b.list, o);
       if (b.table) return table(arr(b.table.head), arr(b.table.rows), o);
-      if (b.details) return '<details class="help-det"><summary>' + md(b.details.summary, o) + '</summary>' + renderBlocks(b.details.body, o, shots, folder) + '</details>';
-      if (b.shot) { var s = arr(shots).filter(x => x.id === b.shot)[0]; return s ? shotHTML(folder, s, o) : ''; }
+      if (b.details) return '<details class="help-det"><summary>' + md(b.details.summary, o) + '</summary>' + renderBlocks(b.details.body, o, shots, folder, prefix) + '</details>';
+      if (b.shot) {
+        var s = arr(shots).filter(x => x.id === b.shot)[0];
+        if (s && prefix) s = Object.assign({}, s, { id: shotSlug(prefix) + '-' + s.id });
+        return s ? shotHTML(folder, s, o) : '';
+      }
       return '';
     }).join('');
   }
@@ -126215,7 +126244,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     var d = M[fd], p = M[fp], cap = md(s.caption, o), alt = esc(s.alt);
     if (o.images === false) return '';
     var fig = '<figure class="help-fig" data-help-shot="' + esc(folder + '/' + s.id) + '">';
-    if (!d && !p) return fig + missingBox(cap, alt) + '<figcaption>' + cap + '</figcaption></figure>';
+    if (!d && !p) return fig + missingBox(alt) + '<figcaption>' + cap + '</figcaption></figure>';
     var base = o.imgBase == null ? 'help/img/' : o.imgBase;
     var src = (f, e) => (o.dataUris && o.dataUris[f]) || (base + f + '?v=' + esc(e.h8 || ''));
     var main = d || p, mf = d ? fd : fp;
@@ -126224,7 +126253,8 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
       '" loading="lazy" decoding="async"></picture>' +
       (!p && arr(s.callouts).length ? '<span class="help-enlarge">Select to enlarge</span>' : '') + '<figcaption>' + cap + '</figcaption></figure>';
   }
-  function missingBox(cap, alt) { return '<div class="help-shot-missing" role="img" aria-label="' + alt + '"><b>Screenshot:</b> ' + cap + '<br><span>' + alt + '</span></div>'; }
+  // The figure keeps its own <figcaption>, so the box shows only the alt text.
+  function missingBox(alt) { return '<div class="help-shot-missing" role="img" aria-label="' + alt + '"><b>Screenshot:</b> <span>' + alt + '</span></div>'; }
 
   // — Guide renderer (D4)
   function vmark(m) { return '<span class="help-v help-v-' + (VCLS[m] || 'ok') + '">' + esc(m) + '</span>'; }
@@ -126302,7 +126332,11 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
   var PRESS = ['production pressure', 'fwhp', 'fthp', 'flowing pressure', 'tubing pressure', 'line pressure', 'export pressure', 'back pressure'];
   var _index = null;
   function low(s) { return String(s == null ? '' : s).toLowerCase(); }
-  function plain(s) { return String(s == null ? '' : s).replace(/\{\{([^|}]+)\|[^}]*\}\}/g, '$1').replace(/\[\[[^\]|]*\|([^\]]+)\]\]/g, '$1').replace(/\[\[([^\]]+)\]\]/g, '$1').replace(/[*`]/g, ''); }
+  // Only paired **bold** and `code` markup is stripped, so p* keeps its asterisk.
+  function plain(s) {
+    return String(s == null ? '' : s).replace(/\{\{([^|}]+)\|[^}]*\}\}/g, '$1').replace(/\[\[[^\]|]*\|([^\]]+)\]\]/g, '$1').replace(/\[\[([^\]]+)\]\]/g, '$1')
+      .replace(/\*\*([^*]+)\*\*/g, '$1').replace(/`([^`]+)`/g, '$1');
+  }
   function blocksText(b) {
     return arr(b).map(x => {
       if (typeof x === 'string') return x;
@@ -126314,7 +126348,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
       return '';
     }).join(' ');
   }
-  function J(a, k) { return arr(a).map(x => typeof x === 'string' ? x : (x && x[k]) || '').join(' ; '); }
+  function J(a, k) { return arr(a).map(x => typeof x === 'string' ? x : (x && x[k]) || '').filter(Boolean).join(', '); }
   // Entries: { kind, id, route, sec, title, module, f: [{ w, t, l, sec }] }
   function buildIndex() {
     load();
@@ -126366,7 +126400,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     var press = PRESS.some(s => has(ql, s));
     var hits = [];
     _index.forEach(e => {
-      var sc = 0, at = null, best = 0, cls = {}, seen = {};
+      var sc = 0, at = null, best = 0, cls = {}, seen = {}, atT = null, bestT = 0;
       if (low(plain(e.title)) === ql) sc += 10;
       e.f.forEach(f => {
         var w = W[f.w] || 0, n = 0, v;
@@ -126377,11 +126411,12 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         }
         if (v > (cls[f.w] || 0)) cls[f.w] = v;
         if (v > best) { best = v; at = f; }
+        if (f.w !== 'kw' && v > bestT) { bestT = v; atT = f; }   // the snippet comes from a body or title field when one matches
       });
       Object.keys(cls).forEach(k => { sc += cls[k]; });
       if (nw && Object.keys(seen).length === nw) sc += 2;
       if (press && ((e.kind === 'scenario' && /^FS-[12]$/.test(e.id)) || (e.kind === 'guide' && e.route === 'wts' && e.sec === 'inputs'))) { sc += e.kind === 'scenario' ? 8 : 5; }
-      if (sc > 0) hits.push({ e: e, sc: Math.round(sc * 100) / 100, at: at });
+      if (sc > 0) hits.push({ e: e, sc: Math.round(sc * 100) / 100, at: atT || at });
     });
     hits.sort((a, b) => b.sc - a.sc || a.e.order - b.e.order);
     return hits.slice(0, 20).map(h => {
@@ -126425,7 +126460,10 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     '.help-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px}.help-tile{border:var(--hb);border-radius:8px;padding:10px;background:var(--bg1)}' +
     '#help_lb{max-width:96vw;max-height:96vh;padding:12px;border:var(--hb);background:var(--bg1);color:var(--text);overflow:auto}#help_lb img{max-width:100%;height:auto}' +
     '#help_lb::backdrop{background:rgba(0,0,0,.7)}#help_lb_x{float:right;min-width:32px;min-height:32px}' +
-    '@media (max-width:700px){.help-cols{grid-template-columns:minmax(0,1fr)}.help-toc>summary{display:list-item;font-weight:600}}' +
+    '.help-sec,.help-part,.help-h,.help dt[id],.help [id^=help-]{scroll-margin-top:calc(var(--help-bar-h,84px) + 8px)}#help_pm{width:auto;max-width:100%}' +
+    '.help-nw{white-space:nowrap}' +
+    '@media (max-width:700px){.help-cols{grid-template-columns:minmax(0,1fr)}.help-toc>summary{display:list-item;font-weight:600}' +
+    '.help-bar{position:static;padding:4px 0 6px}.help-sec,.help-part,.help-h,.help dt[id],.help [id^=help-]{scroll-margin-top:8px}}' +
     '@media (max-width:600px){.help-enlarge{display:block}}</style>';
   function shellHTML() {
     var phone = false;
@@ -126471,9 +126509,9 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     if (tr.length) h += '<h3>Training</h3><p>' + tr.join(' · ') + '</p>';
     var M = manifest(), keys = Object.keys(M);
     if (keys.length) {
-      var mb = keys.reduce((a, k) => a + (+M[k].bytes || 0), 0) / 1048576;
-      h += '<p><button type="button" class="btn btn-secondary" id="help_offline">Download screenshots for offline use (≈ ' + (Math.round(mb * 10) / 10) +
-        ' MB)</button> <span id="help_off_msg" class="help-note">' + (pref('wtspref_help_offline') === '1' ? 'Downloaded earlier on this device.' : '') + '</span></p>';
+      var MM = G.WTS_helpManifest, mb = Math.round((+(MM && MM.bytes) || keys.reduce((a, k) => a + (+M[k].bytes || 0), 0)) / 104857.6) / 10;
+      h += '<p><button type="button" class="btn btn-secondary" id="help_offline">Download screenshots for offline use' + (mb > 0 ? ' (≈ ' + dec(mb) + ' MB)' : '') +
+        '</button> <span id="help_off_msg" class="help-note">' + (pref('wtspref_help_offline') === '1' ? 'Downloaded earlier on this device.' : '') + '</span></p>';
     }
     return h;
   }
@@ -126486,7 +126524,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     var tn = x.trainer || {};
     return secHTML('help-course-' + esc(x.id), (i + 1) + ' ' + md(x.title, o), pb('Goal', x.goal, o) + sub('Set-up', x.setup, o) +
       (arr(x.steps).length ? '<h4>Steps</h4><ol>' + arr(x.steps).map(s => li(md(s, o))).join('') + '</ol>' : '') +
-      sub('What to observe', x.observe, o) + sub('Questions', x.questions, o) + renderBlocks(x.blocks, o, x.shots, 'course') +
+      sub('What to observe', x.observe, o) + sub('Questions', x.questions, o) + renderBlocks(x.blocks, o, x.shots, 'course', x.id || ('ex' + (i + 1))) +
       (o.worksheet ? '' : det('Answers', ul(x.answers, o)) + det('For the trainer', x.trainer ? pb('Duration', tn.duration, o) + pb('Fault to inject', tn.fault, o) +
         pb('A good response', tn.good, o) + sub('Common mistakes', tn.mistakes, o) + sub('Debrief questions', tn.debrief, o) : '')));
   }
@@ -126502,7 +126540,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     });
     if (kind === 'scenarios') C.scenarios.forEach(s => {
       var after = s.feature && F[s.feature] && s.afterSim;
-      h += secHTML('help-fs-' + esc(s.id), esc(s.id) + ' ' + md(s.title, o), [s.intro, s.blocks, after ? s.afterSim : s.today].map(b => renderBlocks(b, o, s.shots, 'scenarios')).join(''));
+      h += secHTML('help-fs-' + esc(s.id), esc(s.id) + ' ' + md(s.title, o), [s.intro, s.blocks, after ? s.afterSim : s.today].map(b => renderBlocks(b, o, s.shots, 'scenarios', s.id)).join(''));
     });
     if (kind === 'course') C.course.forEach((x, i) => { h += exerciseHTML(x, i, o); });
     if (kind === 'glossary') h += '<dl>' + Object.keys(C.glossary).sort().map(k => {
@@ -126531,6 +126569,8 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     var k = KINDS[v.kind];
     var target = v.sec ? byId(v.kind === 'guide' ? 'help-' + v.route + '-' + v.sec : 'help-' + (SECP[k] || k) + '-' + v.sec) : null;
     var hd = target ? (target.querySelector('h2,h3,h4,b') || target) : main.querySelector('.help-h');
+    var bar = byId('help_root') && byId('help_root').querySelector('.help-bar'), root = byId('help_root');
+    if (bar && root && root.style && root.style.setProperty && bar.offsetHeight > 0) root.style.setProperty('--help-bar-h', bar.offsetHeight + 'px');   // scroll-margin-top
     if (target && target.scrollIntoView) { try { target.scrollIntoView({ block: 'start' }); } catch (e) { /* layout-free */ } }
     if (hd && !noFocus) { if (!hd.hasAttribute('tabindex')) hd.setAttribute('tabindex', '-1'); if (hd.focus) hd.focus(); }
     if (typeof H.onShow === 'function') { try { H.onShow(v); } catch (e) { /* print module */ } }
@@ -126640,10 +126680,11 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
       var img = e.target;
       if (!img || !img.classList || !img.classList.contains('help-img')) return;
       var fig = img.closest('figure'), pic = img.closest('picture') || img;
-      var fc = fig && fig.querySelector('figcaption');
       var box = _doc().createElement('div');
-      box.innerHTML = missingBox(fc ? esc(txt(fc)) : '', esc(img.getAttribute('alt') || ''));
+      box.innerHTML = missingBox(esc(img.getAttribute('alt') || ''));
       if (pic.parentNode) pic.parentNode.replaceChild(box.firstChild, pic);
+      var en = fig && fig.querySelector('.help-enlarge');   // nothing left to enlarge
+      if (en && en.parentNode) en.parentNode.removeChild(en);
       var main = byId('help_main');
       if (main && !byId('help_noimg')) {
         var n = _doc().createElement('p');
@@ -126716,6 +126757,10 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
   var d0 = _doc();
   if (d0 && typeof d0.addEventListener === 'function') {
     d0.addEventListener('h2oil:pagechange', e => { syncHeader((e && e.detail && e.detail.page) || _cur); });
+    // Tokens follow the unit system and the decimal comma: re-render the open view (no focus move)
+    var rerender = () => { if (_cur === 'help' && byId('help_root') && byId('help_main')) { _index = null; show(_view, true); } };
+    d0.addEventListener('wts:unit-system-changed', rerender);
+    d0.addEventListener('click', e => { var t = e.target; if (t && t.closest && t.closest('#wts_dec_comma')) rerender(); });
     d0.addEventListener('click', e => {
       var t = e.target;
       if (t && t.closest && t.closest('#pgHelpBtn')) { e.preventDefault(); openCurrent(); }

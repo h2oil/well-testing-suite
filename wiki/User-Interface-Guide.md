@@ -1,5 +1,7 @@
 # User Interface Guide
 
+> **Superseded by the in-app Help** (Help & Guide → Getting started), which follows the current version. This page is kept for one release and will then be removed.
+
 ## Layout
 
 The application uses a two-panel layout:

@@ -1,5 +1,7 @@
 # Exporting Reports
 
+> **Superseded by the in-app Help** (Help & Guide → Getting started (reports and saving)), which follows the current version. This page is kept for one release and will then be removed.
+
 The Well Testing Suite supports three export formats: PDF, PNG, and Session files.
 
 ## PDF Export

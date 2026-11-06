@@ -1,5 +1,7 @@
 # Flare Simulation
 
+> **Superseded by the in-app Help** (Help & Guide → the Flare & Relief guides), which follows the current version. This page is kept for one release and will then be removed.
+
 Interactive flare radiation model based on **API 521** for thermal radiation zone analysis.
 
 ## Features

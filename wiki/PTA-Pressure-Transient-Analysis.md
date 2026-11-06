@@ -1,5 +1,7 @@
 # PTA — Pressure Transient Analysis
 
+> **Superseded by the in-app Help** (Help & Guide → PRiSM), which follows the current version. This page is kept for one release and will then be removed.
+
 Performs pressure transient analysis using three complementary methods.
 
 ## Analysis Methods
