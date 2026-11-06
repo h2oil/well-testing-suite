@@ -595,8 +595,10 @@ module.exports = [
         assert.ok(sw(k).closest('.rrow').classList.contains('rp-skip'), k + ' row is rp-skip while out');
       });
       const model = app.win.collectPageReport(app.el('pgBody'), { charts: false });
-      const txt = JSON.stringify(model);
-      assert.ok(txt.indexOf('Rig-up') >= 0 && !/DS-101|T-202|desander/i.test(txt), 'default report has no DS-101 / T-202 rows');
+      // the Dynamic Simulation inputs (WP-2D: sand rate, "Desander rating", T-202 capacity …) are page inputs, always reported;
+      // the check is on everything else (rig-up rows, results)
+      const txt = JSON.stringify(model, (k, v) => (v && v.kind === 'input' ? undefined : v));
+      assert.ok(txt.indexOf('Rig-up') >= 0 && !/DS-101|T-202|desander/i.test(txt), 'default report has no DS-101 / T-202 rows: ' + (txt.match(/.{60}(DS-101|T-202|desander).{40}/i) || [''])[0]);
       // DS-101 in from the card: request saved with all keys; 'with DS-101' in the configuration row; button still disabled
       app.click(sw('desander'));
       assert.strictEqual(live.getState().rigup.desander, true, 'sim has DS-101');
