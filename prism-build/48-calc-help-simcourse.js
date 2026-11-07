@@ -45,18 +45,18 @@
             mistakes: ['Raising the bean far past the need.', 'Thinking the liquid rate sets the bean.'],
             debrief: ['How do you size a bean before the test?', 'What does a flow-limited choke do to the test data?', 'What else changes on a larger bean?'] } },
         { id: 'ex3', title: 'Clean-up: unload the cushion to the burner (V-101 out)', keywords: ['cushion', 'burner', 'clean-up', 'unload', 'bypass'],
-            goal: 'Unload the completion cushion straight to the burner boom with the right pressures, then go through the separator.',
+            goal: 'Unload the completion cushion straight to the burner boom, then go through the separator.',
             setup: ['Base set-up as in exercise 1.'],
-            steps: ['Follow [[fs#FS-1|FS-1]] steps 1 to 8 in that order: Surge Tank Pressure in two steps, then Operating Pressure, then V-101 out, and the restore step before V-101 goes back in.'],
-            observe: ['The V-101 card says it is bypassed and the Rig-up note explains why there are no meter rates or batches.', 'The HUD total water against the cushion volume.',
-            'The choke outlet with V-101 out is about {{10|pressureG}}, not the {{21|pressureG}} of the steady check.'],
-            questions: ['Where do the flowing wellhead pressure and the production-line pressure go?', 'Why must Operating Pressure be low while V-101 is out?',
-            'How long does a {{150|volume}} cushion take at {{2400|liquidRate}}?', 'What do you do before you put V-101 back in?'],
-            answers: ['FWHP in **Wellhead Pressure**; line pressure in **Operating Pressure**, with V-101 in only.', 'The steady choke check still back-walks from it, and it sets the Surge Tank Pressure limit.',
-            'About 1.5 hours (cushion volume ÷ the rate actually flowing).', 'Set Operating Pressure back to the test pressure and Surge Tank Pressure to {{25|pressureG||imp}}, and let them stabilise.'],
-            form: DEF, trainer: { duration: '30–40 minutes.', fault: 'None at first. Then ask when to go through the separator: the answer is clean, stable returns, not a warning. Variant: ask for full rate on the bypass and let the trainee find the choke and velocity limits.',
-            good: 'Lowers Surge Tank Pressure, then Operating Pressure, before switching V-101 out; unloads on a bean that does not limit; restores the pressures before V-101 goes back in.',
-            mistakes: ['Putting the production or flowing pressure in Operating Pressure.', 'Lowering Operating Pressure before Surge Tank Pressure, or after V-101 is out (ESD trip).', 'Switching V-101 in at {{15|pressureG}}.'],
+            steps: ['Follow [[fs#FS-1|FS-1]]: V-101 out to the **Burner / flare line**, then **Cushion unload (clean-up)** from **Scenarios** at the defaults, at **×60**.',
+            'Variant: V-101 in, then start the cushion again.'],
+            observe: ['WHP rises by itself as the column unloads; the choke outlet stays near {{5|pressureG}}.', 'CUSH_BURNER while cushion liquid goes to the burner.',
+            'Breakthrough about 41 minutes after the start, then the tail; done after about 3.2 hours with {{50|volume}} recovered.', 'Variant: CUSH_DUMP, then LAHH-101 and carry-over within 5 minutes.'],
+            questions: ['Where do the flowing wellhead pressure and the production-line pressure go?', 'Why does WHP rise while the cushion unloads?', 'Why warm the heater before breakthrough?', 'Why does V-101 flood in the variant?'],
+            answers: ['FWHP in **Wellhead Pressure**; line pressure in **Production line pressure** with V-101 out, or in **Operating Pressure** with V-101 in.', 'The cushion column in the tubing gets shorter, so less of the shut-in pressure is lost to its head.',
+            'At breakthrough the gas flows again and cools across the choke: a cold heater gives hydrate alarms.', 'Its water dump passes about {{790|liquidRate}}, less than the {{1500|liquidRate}} unload rate.'],
+            form: DEF, trainer: { duration: '30–40 minutes.', fault: 'None at first. Variant: bean 12/64 and a low gas rate, and let the trainee find CUSH_LIMIT.',
+            good: 'Sets the destination first, warns the burner crew (CUSH_BURNER), warms the heater before breakthrough and goes through V-101 only on clean, stable returns.',
+            mistakes: ['Putting the production or flowing pressure in Operating Pressure.', 'Unloading through V-101 faster than its water dump.', 'Sending an oil or diesel cushion to the burner without a plan.'],
             debrief: ['What is the real back pressure of your burner line?', 'What tells you the cushion is out?', 'When is it time to go through the separator?'] } },
         { id: 'ex4', title: 'Separator upset: dump valve failure', keywords: ['LCV-102', 'LSHH', 'dump valve', 'upset', 'trip'],
             goal: 'Recognise a dump valve that does not open, act before the trip, and restart after it.',
@@ -133,43 +133,39 @@
     ];
     var PRESS = { table: { head: ['The pressure you have', 'Where it goes', 'Rig-up', 'Scenario'], rows: [
         ['Flowing wellhead or tubing pressure (FWHP, FTHP, flowing pressure)', '**Wellhead Pressure**, never the separator pressure', 'any', 'all'],
-        ['Production or export line pressure (the header the well flows into)', 'Separator **Operating Pressure**, plus the line loss to the header', 'V-101 in only', '[[fs#FS-2|FS-2]]'],
-        ['Burner boom (cushion or clean-up straight to the burner)', 'No line pressure: **Surge Tank Pressure** {{5|pressureG||imp}} first (in two steps), then **Operating Pressure** low ({{15|pressureG}}), then V-101 out', 'V-101 out', '[[fs#FS-1|FS-1]]']] } };
-    var CTRL = { table: { head: ['What Operating Pressure controls', 'V-101 in', 'V-101 out (to the burner)'], rows: [
+        ['Production or export line pressure (the header the well flows into)', 'V-101 in: **Operating Pressure** plus the line loss. V-101 out: **Production line pressure**, destination Production line', 'V-101 in or out', '[[fs#FS-2|FS-2]]'],
+        ['Burner boom (cushion or clean-up straight to the burner)', 'Nothing to enter: destination **Burner / flare line** ({{5|pressureG}} header)', 'V-101 out', '[[fs#FS-1|FS-1]]'],
+        ['Surge tank back pressure', '**Surge Tank Pressure**, at most {{30|pressureG||imp}}; {{10|pressure||imp}} below Operating Pressure', 'V-101 in only', 'all']] } };
+    var CTRL = { table: { head: ['What Operating Pressure controls', 'V-101 in', 'V-101 out'], rows: [
         ['Live model: PCV-101 set point and separator pressure', 'yes', 'no (PCV-101 held shut)'],
         ['Live model: separator alarms and relief (PAH, PSHH, PAL, PSV)', 'set from it', 'live on the trapped vessel: lowering it trips PSHH-101'],
-        ['Live model: choke outlet pressure', 'separator pressure + line losses', '{{5|pressureG}} burner header + Sep→Flare loss + (steady choke outlet − Operating Pressure)'],
-        ['Steady check: choke regime, capacity, J-T, temperatures, hydrate margins, velocities', 'yes', 'yes, still: set it near the burner back pressure'],
-        ['Surge Tank Pressure limit: at most the smaller of {{30|pressureG||imp}} and Operating Pressure − {{10|pressure||imp}}', 'yes', 'yes, still']] } };
+        ['Choke outlet: steady check and live model', 'separator pressure + line losses', 'no: the destination pressure + the whole-stream line loss'],
+        ['Surge Tank Pressure limit (Operating Pressure − {{10|pressure||imp}})', 'yes', 'no (at most {{30|pressureG||imp}} only)']] } };
     var scenarios = [
         { id: 'FS-1', title: 'Unloading the completion cushion straight to the burner boom', feature: 'bypassDest',
             keywords: ['cushion', 'burner', 'boom', 'clean-up', 'unload', 'production pressure', 'separator pressure', 'bypass'],
             intro: [{ h: 'Which pressure goes where' }, 'Well testers use “production pressure” for two different things, so check which one you have.', PRESS, CTRL],
-            today: [{ h: 'Order matters' }, 'Lower the pressures with V-101 in, Surge Tank Pressure first. Each of these trips the ESD:',
-            { list: ['lowering **Operating Pressure** before **Surge Tank Pressure**;', 'lowering Surge Tank Pressure by more than {{10|pressure||imp}} at a time;', 'lowering Operating Pressure after V-101 is out;', 'a big step in the well rates while V-101 is in.'] },
-            { list: ['Lower **Surge Tank Pressure** to {{15|pressureG||imp}}, wait for T-201 to come down to it, then set {{5|pressureG||imp}}. PSHH-201 follows the set point faster than T-201 vents. The field is in psig, also in Metric mode.',
-            'Set **Operating Pressure** to {{15|pressureG}}, about the burner-line back pressure (up to {{20|pressureG}} is fine), and let the separator settle.',
-            'Rig-up: switch V-101 (Test separator) out. FS-401 stays in. PCV-101 is now held shut and PSHH-101 still follows Operating Pressure.',
-            'Unload inputs (live, no Reset): **Gas Rate** {{0.3|gasRate}}, **Condensate / Oil** 0, **Water Rate** {{2400|liquidRate}}, **Wellhead Pressure** = the flowing WHP ({{500|pressureG}}), bean 32. Steady check: **Critical** (P2/P1 0.068), capacity {{1.78|gasRate}}, choke downstream {{21|pressureG}}, no warnings. Live choke outlet: about {{10|pressureG}}.',
-            'Run at **×60** until the HUD total **Water** reaches the cushion volume: {{150|volume}} at {{2400|liquidRate}} takes about 1.5 hours. An LCV-201 low ΔP warning is harmless here.',
-            'CHOKE_LIMIT on CK-101 cuts all three rates by the same factor: raise the bean or lower the rate. Here it appears at a WHP of about {{60|pressureG}} ({{0.25|gasRate}}) and clears at {{100|pressureG}} ({{0.39|gasRate}}).',
-            'Clean-up: set the expected rates, e.g. {{5|gasRate}}, {{500|liquidRate}} oil, {{300|liquidRate}} water, WHP {{2000|pressureG}}: Critical, capacity {{7.21|gasRate}}, choke downstream {{24|pressureG}}, no warnings. Go through the separator once the returns are clean and stable: BS&W and solids low and steady at a steady WHP and rate.',
-            'Restore before V-101 goes back in: **Operating Pressure** {{150|pressureG}} and **Surge Tank Pressure** {{25|pressureG||imp}} (raising them is safe), let them settle, then switch V-101 in.'], ordered: true },
-            'The bypass rate has a limit. At {{10|gasRate}} with the clean-up values the page shows ⚠ “Choke is flow-limited — bean 32/64″…” and ⚠ “Heater→Sep: Velocity 291 ft/s EXCEEDS erosional limit 259 ft/s”.',
-            { h: 'Limits' }, 'The cushion itself is not modelled: no cushion density, no tail, and WHP does not rise by itself as the column unloads. The choke check uses the gas rate only, so the bean never limits the liquid rate.'],
-            afterSim: ['In the Dynamic Simulation card choose **With V-101 out, well stream to → Burner / flare line**, then run **Scenarios → Cushion unload (clean-up)** with the cushion volume, SG and unload rate. The steady choke check then uses the real back pressure, so the low Operating Pressure and the restore step are not needed.'] },
+            today: ['Without the bypass destination (an older simulator): lower **Surge Tank Pressure** in steps of {{10|pressure||imp}} at most, then **Operating Pressure** to about {{15|pressureG}}, with V-101 in; then switch V-101 out. Raise both again before V-101 goes back in. Lowering Operating Pressure after V-101 is out trips PSHH-101.'],
+            afterSim: [{ list: ['Rig-up: switch V-101 (**Test separator**) out. In **Dynamic Simulation** set **With V-101 out, well stream to** → **Burner / flare line**. Leave Operating Pressure and Surge Tank Pressure as they are.',
+            'Form: the flowing WHP in **Wellhead Pressure** and the expected clean-up rates. Keep H-101 in and warm.',
+            'Select **Scenarios**, then **Cushion unload (clean-up)**. Enter **Cushion volume**, **Cushion SG**, **Unload rate**, **Tubing** and **Tubing depth** ({{50|volume}}, SG 1.03, {{1500|liquidRate}}, 3-1/2″ to {{10000|length}}), then **Start**.',
+            'Run at **×60**. WHP falls to the column law (about {{1700|pressureG}}) and rises by itself as the column unloads; the choke outlet stays at about {{5|pressureG}}.',
+            'CUSH_BURNER: cushion liquid at the burner (water or brine: flame-out; oil or diesel: burning fallout).',
+            'Breakthrough about 41 minutes after the start: gas returns, WHP peaks near {{3370|pressureG}} and settles at the flowing WHP while the tail comes out. Done after about 3.2 hours, {{50|volume}} recovered.',
+            'Go through the separator once the returns are clean and stable: switch V-101 in.'], ordered: true },
+            'The bean can limit the liquid: CUSH_LIMIT on CK-101 (12/64 at {{1|gasRate}}: about {{1200|liquidRate}}). A well that cannot lift the cushion stalls with CUSH_NOLIFT. H-101 at its limit: HTR_FULL.',
+            'Through V-101 the water dump passes about {{790|liquidRate}} at the defaults: **Start** warns, CUSH_DUMP stays up, LAHH-101 within 5 minutes.',
+            { h: 'Limits' }, 'Liquid orifice law for the bean; flare-line geometry and no riser for the line loss; burning liquid is warned about, not modelled.'] },
         { id: 'FS-2', title: 'Flowing straight to a production line', feature: 'bypassDest',
             keywords: ['production line', 'export line', 'header', 'production pressure', 'line pressure', 'back pressure'],
             intro: [{ h: 'Which pressure goes where' }, 'The flowing wellhead pressure always goes in **Wellhead Pressure**. The production-line pressure goes in **Operating Pressure**, with V-101 in.', PRESS],
-            today: [{ h: 'What is valid' }, 'Keep V-101 in and set **Operating Pressure** = the production-line pressure plus the header line loss. This is right for the choke: ΔP, regime, capacity, J-T, hydrate margins and the upstream velocities.',
-            'In critical flow (P2/P1 below about 0.55) the rate does not depend on the back pressure. The default spread shows it: at {{150|pressureG}} the choke downstream is {{158|pressureG}}, P2/P1 0.057, Critical.',
-            { h: 'Closest rig-up' }, 'V-101 in at that pressure, FS-401 out (gas to the export line), T-201 and T-301 out (liquids straight to the export line).',
-            { h: 'What it gets wrong' }, { list: ['It still separates and meters the stream (meters, GOR, BS&W).', 'PCV-101 holds the pressure constant, unlike a real header.',
-                    'The gas path after PCV-101 is still modelled at the {{5|pressureG}} header.',
-                    'The separator alarm and relief set points follow the set point: PSHH = SP + the larger of 20 % and {{25|pressure}}; PAH = SP + the larger of 10 % and {{15|pressure}}; PAL = SP − the larger of 20 % and {{20|pressure}}; PSV and MAWP = the larger of {{1440|pressureG}} and 1.25 × PSHH. They do not represent the real header protection.',
-                    'The Surge Tank Pressure limit moves with the set point.'] },
-            { h: 'Not possible today' }, '“No separator, straight to the production line.” The rig-up puts FS-401 back in when V-101 and FS-401 are both out.'],
-            afterSim: ['Switch V-101 out and choose **With V-101 out, well stream to → Production line**, with the **Production line pressure**. FS-401 may then be out too, and the totals go to “To production line”.'] },
+            today: ['Without the bypass destination (an older simulator): keep V-101 in and set **Operating Pressure** = the line pressure plus the header line loss.'],
+            afterSim: [{ list: ['In **Dynamic Simulation** set **With V-101 out, well stream to** → **Production line** and **Production line pressure** = the line pressure at the tie-in (0 to {{1440|pressureG||imp}}).',
+            'Rig-up: switch V-101 out. FS-401 may be out too: tank relief then goes to vent (HUD **To vent**).',
+            'At {{300|pressureG||imp}} the choke downstream is about {{308|pressureG}}, P2/P1 0.107, **Critical**; the totals go to **To production line**.',
+            'The tie-in has NRV-501 and XV-501: after a shut-in NRV-501 holds the spread at line pressure; close XV-501 to isolate. PSHH-104 trips SDV-101 at 90 % of the {{1440|pressureG}} bypass-path rating; SEPBY_RATING warns when line pressure plus loss is above it.',
+            'A line pressure near the choke inlet makes CK-101 subcritical (WHP {{1000|pressureG}} into {{600|pressureG||imp}}: P2/P1 0.61): in a real well the rate would then follow the line.'], ordered: true },
+            { h: 'What it gets wrong' }, { list: ['The line pressure is constant; a real header varies.', 'No blocked-outlet dynamics.', 'No metering by design: V-101 is out.'] }] },
         { id: 'FS-4', title: 'Cold start-up and hydrates', keywords: ['cold', 'start-up', 'hydrate', 'heater', 'inhibitor'],
             intro: ['A well that has been shut in arrives cold at the choke, and J-T cooling takes the choke outlet far below the hydrate point. Plan the heater and the inhibitor before you open up.'],
             today: [{ list: ['Start with **Wellhead Temp** {{60|temperature}} and the heater **Bypass** set to “Yes — Full Bypass”, as before the heater is lit.',
@@ -222,6 +218,24 @@
             'Dump at LAH-103 (**Dump sand**, about 17 minutes; the well keeps flowing). Rising ΔP: plugged liner or packed accumulator (PDAH-103). Low ΔP: washed-out liner (PDAL-103).',
             'Keep DS-101 in line while sand comes back. At 10 lb per 1,000 bbl on the default spread it cuts the choke erosion rate about 68 times: WARN without it, OK with it.'], ordered: true },
             { h: 'Limits' }, '**Choke erosion** is a steel-equivalent screening figure: it compares cases and does not change the bean or the rate. Sand reaching V-101 is counted, not settled. The steady check leaves out the desander ΔP.'] });
+    var F0 = function (id) { return scenarios.filter(function (x) { return x.id === id; })[0]; };
+    var HC = O.indexOf('heaterChoke') >= 0;   // 31 v1.5.0: CK-102 (exercise 11, FS-4 staging and their shots)
+    if (HC) {
+    course.push({ id: 'ex11', title: 'Staging the drop with the heater choke CK-102', keywords: ['CK-102', 'heater choke', 'staging', 'CHOKE2_LIMIT', 'CK1_SUBCRIT'],
+        goal: 'Split the pressure drop between CK-101 and CK-102 and find which choke limits the rate.',
+        setup: [BASE, 'In the **Rig-up** card switch **Heater inlet choke** in (it needs H-101). CK-102 starts on 48/64, **On the heater inlet**.'],
+        steps: ['Open the CK-102 card. Read **Upstream P** (between the chokes), **Regime**, **Pair capacity** and **Limiter**.', 'Open the CK-101 card and read its regime.',
+            'In the form set **Heater choke CK-102 bean** to 32. Watch the alarms and both cards.', 'Set it to 64, then back to 48.', 'On the H-101 card select **Bypass**: CK-102 goes out of line with it. Select it again.', OUT('Heater inlet choke')],
+        observe: ['On 48/64 about {{1135|pressureG}} between the chokes: CK-101 P2/P1 0.38, **Critical**, and CK-101 limits the pair ({{10.71|gasRate}}).',
+            'On 32/64 CK-102 limits: {{8.92|gasRate}} for {{10|gasRate}} asked (CHOKE2_LIMIT), about {{2754|pressureG}} between the chokes, CK-101 subcritical (CK1_SUBCRIT).',
+            'On 64/64 about {{634|pressureG}} between the chokes.', 'The page warns that SITHP ({{3600|pressureG}}, estimated) is above the {{1440|pressureG}} design pressure between the chokes.'],
+        questions: ['Why does CK-101 go subcritical on 32/64?', 'Which choke sets the rate on 48/64?', 'What protects the line between the chokes?'],
+        answers: ['CK-102 holds the pressure between the chokes above about 0.55 of the CK-101 inlet.', 'CK-101: it is still critical and the pair passes its capacity.', 'Its design pressure, PAH-102 at 90 % and the blocked-in check; no relief valve is modelled between the chokes.'],
+        form: DEF, trainer: { duration: '20 minutes.', fault: 'None. Variant: start on 32/64 and ask why the rate is short.',
+            good: 'Reads the pressure between the chokes and the limiter, and opens CK-102 until CK-101 is critical again.', mistakes: ['Pinching CK-102 below the CK-101 bean.', 'Forgetting that the heater bypass takes CK-102 out of line.'],
+            debrief: ['Where would a second choke sit on your spread?', 'Why stage the drop at all?', 'What if CK-102 plugged with hydrate?'] } });
+        var T4 = F0('FS-4').today; T4.splice(T4.length - 2, 0, { h: 'Staging with CK-102' }, 'Switch **Heater inlet choke** in and pinch CK-102 while you open CK-101, so each takes part of the drop. Keep both outlets {{10|tempDelta}} above the hydrate temperature (CK-102 card **Hydrate T / margin**). **On the heater inlet** both drops are on cold fluid; **Between the coil passes** heats first. The line between the chokes is rated {{1440|pressureG}}: watch PAH-102 and the blocked-in warning ([[course#ex11|exercise 11]]).');
+    }
     var A = function (a, x) { return { action: a, args: x }; }, R0 = A('simReset', 'steady'), V2 = A('simView', '2d'), V3 = A('simView', '3d'), RUN = function (sp, s) { return A('simRun', { speed: sp, simSeconds: s }); };
     var add = function (x, id, alt, cap, ops, tgt, view) {
         var s = { id: id, view: view || 'desktop', alt: alt, caption: cap, setup: [R0, V2].concat(ops) };
@@ -245,6 +259,10 @@
     add(C(9), 'ds101', 'DS-101 card during sand flow-back', 'DS-101: ΔP, capture, accumulator and Dump sand', [A('simRigup', { desander: 'on' }), A('simFault', 'sandFlowback'), RUN(600, 3600), A('simCard', 'desander')], K);
     add(C(10), 't202', 'T-202 card: level, pressure, inlet, route', 'T-202: route, XV-202 and LCV-202', [A('simRigup', { surge2: 'on' }), RUN(10, 60), A('simCard', 'surge2')], K);
     add(F('FS-1'), 'rigup', 'Rig-up card with V-101 out and its note', 'Rig-up: V-101 out for the burner', [A('simRigup', { separator: 'off' })], '.wtsl-rig');
+    if (HC) add(C(11), 'ck102', 'CK-102 card on 48/64: pressure between the chokes, pair capacity, limiter', 'The CK-102 heater inlet choke card', [A('simRigup', { heaterChoke: 'on' }), RUN(10, 60), A('simCard', 'heaterChoke')], K);
+    if (HC) add(C(11), 'ck2d', '2D view with CK-101 and CK-102 in series, CK-102 on 32/64', 'Two chokes in series in the live 2D view', [A('simRigup', { heaterChoke: 'on' }), { set: { '#wts_bean2': '32' } }, RUN(10, 60)], '#wts_viz');
+    add(F('FS-1'), 'cushion', 'Live view while the cushion unloads to the burner: WHP rising, CUSH_BURNER', 'Cushion unload to the burner line', [A('simRigup', { separator: 'off' }), A('simMenu', 'scen'),
+        { click: MN + ' [data-act="cush-open"]' }, { click: '#wtsl_cush_start' }, { click: '#wtsl_cush_x' }, RUN(60, 1200)], '#wts_viz');
     add(F('FS-3'), 'rigup', 'Rig-up card with DS-101 in', 'Rig-up with DS-101 in', [A('simRigup', { desander: 'on' })], '.wtsl-rig');
     return { guides: {}, course: course, scenarios: scenarios };
     } });

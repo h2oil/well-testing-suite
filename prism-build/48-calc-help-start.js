@@ -149,9 +149,9 @@ psv: { term: 'PSV', def: 'Pressure safety (relief) valve: opens at its set press
 var faq = [
 { id: 'pressure', q: 'Which pressure goes where in the Well Test Simulator?', a: [L([
 'Flowing wellhead or tubing pressure: **Wellhead Pressure**, never the separator pressure.',
-'Production or export line pressure: the separator **Operating Pressure**, with V-101 in; add the line loss to the header.',
-'Cushion or clean-up straight to the burner: set the simulator up as field scenario [[fs#FS-1|FS-1]] says.']),
-'The steps and the checks are in FS-1 and the [[wts]] guide.'] },
+'Production or export line pressure: with V-101 in, the separator **Operating Pressure** plus the line loss to the header; with V-101 out, **Production line pressure** ([[fs#FS-2|FS-2]]).',
+'Cushion or clean-up straight to the burner: V-101 out to the **Burner / flare line**, then the cushion scenario ([[fs#FS-1|FS-1]]).']),
+'The steps are in FS-1, FS-2 and the [[wts]] guide.'] },
 { id: 'training', q: 'Is there training for the simulator?', a: [
 'Help has a self-paced [[course|Well Test Simulator course]]. Each exercise has answers, trainer notes and a worksheet, so a supervisor can run it for a crew.',
 'Questions about training: {{email}}.'] },

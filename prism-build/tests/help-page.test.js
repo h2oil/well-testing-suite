@@ -390,11 +390,14 @@ module.exports = [
       const order = ['start', 'tasks', 'releasenotes', 'orifice', 'wts', 'prism', 'flare', 'scenarios', 'glossary'];
       assert.deepStrictEqual(toc, order);
       assert.ok(app.el('help_toc').hasAttribute('open'), 'desktop: contents open');
+      const feat = W.WTS_sim && W.WTS_sim.features;   // the simulator ships the features since v1.5.0: hide them for the today variant
+      if (W.WTS_sim) W.WTS_sim.features = undefined;
       W.WTS_help.goTo('scenarios');
       assert.ok(/Switch V-101 out today/.test(txt(app.el('help_main'))) && !/bypass destination/.test(txt(app.el('help_main'))), 'today variant');
       W.WTS_sim = Object.assign(W.WTS_sim || {}, { features: { bypassDest: true } });
       W.WTS_help.goTo('scenarios');
       assert.ok(/Choose the bypass destination/.test(txt(app.el('help_main'))), 'after-WP-SIM variant by feature detection');
+      W.WTS_sim.features = feat;
       app.hook.nav('home');
       app.flush(5000);
       assert.strictEqual(app.pendingTimers(), 0, 'no pending timers: ' + JSON.stringify(app.timers()).slice(0, 300));

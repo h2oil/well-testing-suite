@@ -326,7 +326,8 @@
       });
     });
     arr(C.start).forEach(s => { add('start', s.id, s.title, 'Getting started', [['title', s.title], ['body', blocksText(s.body)]]); });
-    arr(C.scenarios).forEach(s => { add('scenario', s.id, s.id + ' ' + s.title, 'Field scenarios', [['title', s.title], ['kw', J(s.keywords)], ['body', blocksText([].concat(arr(s.intro), arr(s.blocks), arr(s.today)))]]); });
+    var SF = (G.WTS_sim && G.WTS_sim.features) || {};   // the variant shown (afterSim once the feature is in) is the one indexed
+    arr(C.scenarios).forEach(s => { add('scenario', s.id, s.id + ' ' + s.title, 'Field scenarios', [['title', s.title], ['kw', J(s.keywords)], ['body', blocksText([].concat(arr(s.intro), arr(s.blocks), arr(s.feature && SF[s.feature] && s.afterSim ? s.afterSim : s.today)))]]); });
     arr(C.course).forEach(x => { add('course', x.id, x.title, 'Simulator course', [['title', x.title], ['kw', J(x.keywords)], ['body', [x.goal].concat(arr(x.setup), arr(x.steps), arr(x.observe), arr(x.questions)).join(' ')]]); });
     arr(C.faq).forEach(x => { add('faq', x.id, x.q, 'FAQ', [['title', x.q], ['body', blocksText(x.a)]]); });
     Object.keys(C.glossary || {}).forEach(k => { var e = C.glossary[k] || {}; add('glossary', k, e.term || k, 'Glossary', [['title', e.term || k], ['kw', J(e.variants)], ['body', e.def]]); });
