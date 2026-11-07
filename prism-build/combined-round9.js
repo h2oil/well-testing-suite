@@ -32455,13 +32455,53 @@ pipesz: {
             var amp = num(a.amp, 0.05), ph = 2 * PI * r();
             return mapP(ds, 'pSurf', function (v, i, t) { return v + amp * Math.cos(2 * PI * t / 12 + ph); });
         } };
-    // surface channel from the BH channel: constant-gradient column plus displacement warm-back (§4.2)
+    // surface channel from the BH channel (§4.2). With WTS_wellbore (resolved at call time) the surface pressure is the exact
+    // inverse of WTS_wellbore.convert for the reference column: ρ(p,T) hydrostatics, the displaced (DFIT) temperature model with
+    // τ_T = a.tauT (the column cooled by the injection warms back after shut-in) and the pipe friction while pumping, so a
+    // converted surface gauge recovers the bottomhole record up to the gauge noise. Without it (or with a.grad given): the
+    // constant-gradient column plus an exponential warm-back of a.warm psi.
+    function surfaceCtx(tauT, tvd) {
+        var IR = G.PRiSM_dfit_inputRanges, inp = null;
+        try { if (IR && typeof IR.defaults === 'function') inp = IR.defaults(); } catch (e) { inp = null; }
+        inp = inp || { survey: null, fluid: { kind: 'water', rhoPpg: 8.43, salinityWt: null, muCp: 1.0, fr: 0, nPrime: null, kPrime: null, tInjF: 70 },
+                       temp: { model: 'static', surfF: 70, gradFper100: 1.5, tauLoH: 0.5, tauHiH: 5 }, datumMd: null };
+        surfaceInputs(inp, tauT, tvd);
+        var col = { survey: inp.survey, strings: inp.strings, fluid: inp.fluid, temp: { model: 'displaced', surfF: inp.temp.surfF, gradFper100: inp.temp.gradFper100, tauLoH: tauT, tauHiH: tauT },
+                    datumTvd: inp.datumTvd, datumMd: inp.datumMd };
+        return { column: col, fluid: inp.fluid, temp: col.temp, atmPsia: ATM, gaugeTvd: 0 };
+    }
+    // the column, fluid and temperature model of a surface-gauge case (shared by inputsFor and the surface artefact). The
+    // analysis band of the relaxation time is 1–4 h (its centre √(1·4) = 2 h is the default τ_T of the artefact).
+    function surfaceInputs(inp, tauT, tvd) {
+        inp.datumTvd = num(tvd, REF.datumTvd);
+        inp.strings = [{ tubKey: null, id: REF.idIn, od: REF.odIn, wall: REF.wallIn, topMd: 0, botMd: inp.datumTvd }];
+        inp.fluid.kind = 'slickwater'; inp.fluid.rhoPpg = REF.rhoPpg;
+        inp.temp.model = 'displaced'; inp.temp.tauLoH = fin(tauT) ? tauT / 2 : 1; inp.temp.tauHiH = fin(tauT) ? tauT * 2 : 4;
+        return inp;
+    }
     function surfaceOf(ds, a, ctx) {
         var grad = num(a.grad, GRAD_W), tvd = num(a.tvd, ctx.datumTvd || REF.datumTvd), tauT = num(a.tauT, 2), W = num(a.warm, 18);
-        return ds.p.map(function (v, i) {
+        var WB = G.WTS_wellbore, conv = WB && typeof WB.convert === 'function' && !WB.convert._dfitStub ? WB.convert : null;
+        var ps0 = ds.p.map(function (v, i) {
             var dt = ds.t[i] - ctx.ts, warm = dt > 0 ? W * (1 - Math.exp(-dt / tauT)) : 0;
             return v - grad * tvd + warm;
         });
+        if (!conv || fin(a.grad)) return ps0;
+        // fixed point p_s ← p_s + (p_w − convert(p_s)): convert is ≈ p_s + H(p_s, t), dH/dp_s ≪ 1, so a few passes converge to
+        // well below the 0.1 psi quantum. Samples the converter masks (surface at or below 0 psig) carry the last correction on.
+        var cx = surfaceCtx(tauT, tvd), ps = ps0.slice(), n = ps.length, it, i;
+        for (it = 0; it < 6; it++) {
+            var cv = null;
+            try { cv = conv({ t: ds.t, p: ps, q: ds.q || null }, cx, { band: false, channel: 'p' }); } catch (e) { cv = null; }
+            if (!cv || cv.ok === false || !Array.isArray(cv.pw)) return ps0;
+            var corr = 0, mx = 0;
+            for (i = 0; i < n; i++) {
+                if (fin(cv.pw[i])) corr = ds.p[i] - cv.pw[i];
+                ps[i] += corr; if (Math.abs(corr) > mx) mx = Math.abs(corr);
+            }
+            if (mx < 1e-3) break;
+        }
+        return ps;
     }
     A.surface = { target: 'pSurf', stage: 0, levels: [{ tauT: 0.5 }, { tauT: 1.5 }, { tauT: 3 }, { tauT: 5 }],
         apply: function (ds, a, ctx) { var o = copyDs(ds); o.pSurf = surfaceOf(ds, a, ctx); return o; } };
@@ -32794,20 +32834,30 @@ pipesz: {
             default: return null;
         }
     }
-    // p_r for which the constant-gradient surface equivalent of the reference falls to 0.5 psia 31 h after shut-in (with warm-back)
-    // (solved once by solveVacuumPr: 3,323.9 psia; S2 checks that the demo reaches vacuum 31 h after shut-in)
-    var VAC_PR = 3323.9, _vacPr = null;
-    function vacuumPr() { return VAC_PR; }
-    S.solveVacuumPr = function () { _vacPr = null; return solveVacuumPr(); };
+    // p_r for which the surface equivalent of the reference falls to 0.5 psia 31 h after shut-in (solved once by solveVacuumPr;
+    // S2 checks that the demo reaches vacuum 31 h after shut-in). Two columns, as surfaceOf: with WTS_wellbore the ρ(p,T) column
+    // (31 h is 15 relaxation times, so the geotherm column): 3,235.0 psia; without it the constant gradient plus the 18 psi
+    // warm-back: 3,323.9 psia.
+    var VAC_PR = 3323.9, VAC_PR_WB = 3235, _vacPr = {};
+    function _wbConv() { var WB = G.WTS_wellbore; return !!(WB && typeof WB.convert === 'function' && !WB.convert._dfitStub && typeof WB.hydrostatic === 'function' && typeof WB.column === 'function'); }
+    function vacuumPr() { return _wbConv() ? VAC_PR_WB : VAC_PR; }
+    S.solveVacuumPr = function () { _vacPr = {}; return solveVacuumPr(); };
     function solveVacuumPr() {
-        if (_vacPr != null) return _vacPr;
-        var col = GRAD_W * REF.datumTvd, warm = 18;
-        _vacPr = rnd(bisect(function (pr) {
+        var wb = _wbConv(), key = wb ? 'wb' : 'grad';
+        if (_vacPr[key] != null) return _vacPr[key];
+        var col = GRAD_W * REF.datumTvd, warm = 18, rel = 1 - Math.exp(-31 / 2);
+        if (wb) {
+            var cx = surfaceCtx(2, REF.datumTvd), c = G.WTS_wellbore.column(cx.column);
+            var Tg = G.WTS_wellbore.tempProfile(c, { model: 'static', surfF: cx.temp.surfF, gradFper100: cx.temp.gradFper100 }).T;
+            var h = G.WTS_wellbore.hydrostatic(0.5, 0, REF.datumTvd, c, Tg, { fluid: cx.fluid, stepFt: 25 });
+            col = h.dp; warm = 0;
+        }
+        _vacPr[key] = rnd(bisect(function (pr) {
             var s = srcGdomain(gdSpec('vac', 'normal', { pr: pr, pStart: pr }));
             if (!s.ok) return 1;
-            return s.p(s.tp + 31) - col + warm * (1 - Math.exp(-31 / 2)) - 0.5;
+            return s.p(s.tp + 31) - col + warm * rel - 0.5;
         }, 2500, 4500, 24), 1);
-        return _vacPr;
+        return _vacPr[key];
     }
     S.demoSpec = function (name) { var d = demoSpec(name); return d ? clone(d) : null; };
     S.DEMOS = ['reference', 'tight-linear', 'conventional-radial', 'contact', 'pdl', 'surface-gauge', 'two-cycle'];
@@ -32919,7 +32969,11 @@ pipesz: {
         inp.rock.EpSource = 'static';
         inp.rock.hf = (lk && lk.hf) || (gd && gd.hf) || (aca && (aca.hfrac || aca.h)) || REF.hf;
         inp.rock.hp = (lk && lk.hp) || (gd && gd.hp) || (aca && aca.h) || REF.hp;
-        if (spec && spec.primary === 'surface') inp.channels.primary = 'surface';
+        if (spec && spec.primary === 'surface') {
+            inp.channels.primary = 'surface';
+            var sa = (spec.artefacts || []).filter(function (a) { return a && a.kind === 'surface'; })[0] || {};
+            surfaceInputs(inp, num(sa.tauT, 2), REF.datumTvd);
+        }
         var r = IR.clamp(inp);
         return r && r.inputs ? r.inputs : r;
     };

@@ -78773,9 +78773,14 @@ try { if (G.PRiSM_state || _storage()) G.PRiSM_restoreState(); } catch (e) { /* 
     function _installListeners() {
         if (typeof G.addEventListener !== 'function' || G.__prismSemilogListeners) return;
         G.__prismSemilogListeners = true;
+        // in DFIT mode the semilog result is neither shown nor reported (an injection + falloff record): the recompute is
+        // deferred to the next change to another mode instead of running an IARF search on every DFIT dataset or C1 write
+        var pending = false;
         function recompute() {
             var ds = G.PRiSM_dataset;
             if (!ds || !ds.t || !ds.t.length) return;
+            if (G.PRiSM && G.PRiSM.mode === 'dfit') { pending = true; return; }
+            pending = false;
             var st = _state();
             var o = {};
             var so = (st.semilog && st.semilog.opts) || {};
@@ -78785,6 +78790,7 @@ try { if (G.PRiSM_state || _storage()) G.PRiSM_restoreState(); } catch (e) { /* 
         }
         G.addEventListener('prism:dataset-loaded', recompute);
         G.addEventListener('prism:well-changed', recompute);
+        G.addEventListener('prism:mode-changed', function () { if (pending && !(G.PRiSM && G.PRiSM.mode === 'dfit')) recompute(); });
     }
 
     // ── Public API ──────────────────────────────────────────────────
@@ -96478,11 +96484,17 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             return v;
         }
         // pump start refined by the pressure ramp onset (back-extrapolated to the pre-pump level within (t[i0−1], t[i0]])
+        // The onset is read from the first sample that has risen above the pre-pump level (a pressure still at that level
+        // at t[i0] means the pumping began at t[i0], the end of the bracket, not at its start): the line through that sample
+        // and the next one, back to the pre-pump level, clamped to the rate bracket.
         cycles.forEach(function (c) {
             var i0 = c.i0, tA = i0 > 0 ? t[i0 - 1] : t[i0], tS = tA;
             if (i0 > 0 && i0 + 1 < n) {
-                var pPre = p[i0 - 1], s = (p[i0 + 1] - p[i0]) / (t[i0 + 1] - t[i0]);
-                if (s > 0 && p[i0] > pPre) { var tx = t[i0] - (p[i0] - pPre) / s; tS = _clampN(tx, tA, t[i0]); }
+                var pPre = p[i0 - 1], thr = Math.max(5 * sig, 1), kR = i0;
+                while (kR < Math.min(n - 2, i0 + 3) && !(p[kR] - pPre > thr)) kR++;
+                var s = (p[kR + 1] - p[kR]) / (t[kR + 1] - t[kR]);
+                if (s > 0 && p[kR] - pPre > thr) { var tx = t[kR] - (p[kR] - pPre) / s; tS = _clampN(tx, tA, t[i0]); }
+                else if (s > 0 && p[i0] > pPre) { tx = t[i0] - (p[i0] - pPre) / s; tS = _clampN(tx, tA, t[i0]); }
             }
             c.tStart = tS;
             c.ts = t[c.i1];
@@ -96496,6 +96508,18 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         if (_fin(overrides.ts)) {
             ts = overrides.ts; src.ts = 'user';
             iS = 0; for (i = 0; i < n; i++) if (t[i] <= ts) iS = i;
+        }
+        // the last pumping sample from the pressure (§4.3: the largest negative pressure difference between the last pumping and
+        // the first falloff sample): a logger that writes the rate as the value from its time stamp on (forward-held) reports
+        // q = 0 at the shut-in sample while the pressure there is still the pumping pressure. When the largest drop within the
+        // next three samples comes after a sample that has not fallen, that sample is the last pumping one; the rate arrays
+        // keep iQ (the last sample with q > 0) and the volume carries the last rate up to it.
+        var iQ = iS;
+        if (src.ts === 'auto' && hasQ) {
+            var kD = iS, dBest = -INF, thrD = Math.max(5 * sig, 1);
+            for (i = iS; i <= Math.min(n - 2, iS + 3); i++) { var ddp = p[i] - p[i + 1]; if (ddp > dBest) { dBest = ddp; kD = i; } }
+            var flat = true; for (i = iS + 1; i <= kD; i++) if (p[i] < p[i - 1] - thrD) flat = false;
+            if (kD > iS && flat && dBest > thrD) { iS = kD; ts = t[kD]; }
         }
         // shut-in refined to sub-sample resolution by the water-hammer onset when a high-rate window gives one
         var tsRefined = false;
@@ -96514,8 +96538,8 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         if (hasQ) {
             // last stable rate: median of the pumping samples in the last 20 % of the cycle that lie within 5 % of the final run
             var runs = [], r0 = i0c;
-            for (i = i0c + 1; i <= iS + 1; i++) {
-                if (i > iS || Math.abs(q[i] - q[r0]) > 0.01 * Math.max(q[r0], 1e-9)) { runs.push({ a: r0, b: i - 1, q: _median(q.slice(r0, i)) }); r0 = i; }
+            for (i = i0c + 1; i <= iQ + 1; i++) {
+                if (i > iQ || Math.abs(q[i] - q[r0]) > 0.01 * Math.max(q[r0], 1e-9)) { runs.push({ a: r0, b: i - 1, q: _median(q.slice(r0, i)) }); r0 = i; }
             }
             var lastRun = runs[runs.length - 1];
             qLast = lastRun.q;
@@ -96537,14 +96561,15 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         // ramp-down: time with q below 95 % of q_last before shut-in, as a fraction of tp
         var tp = ts - tStart, rampDown = 0;
         if (hasQ && qLast > 0) {
-            var iR = iS; while (iR > i0c && q[iR] < 0.95 * qLast) iR--;
+            var iR = iQ; while (iR > i0c && q[iR] < 0.95 * qLast) iR--;
             rampDown = tp > 0 ? _clampN((ts - t[iR]) / tp, 0, 1) : 0;
             if (rampDown > 0.1) warnings.push(_W('RAMP_DOWN', 'warn', 'The rate ramps down over ' + _f1(rampDown * 100, 0) + ' % of the pumping time: the instantaneous shut-in is not defined, the data-driven G is used.'));
         }
         // volumes (bbl)
         var Vi = 0;
         if (hasQ) {
-            for (i = i0c; i <= iS; i++) Vi += q[i] * (t[i] - (i === i0c ? tStart : t[i - 1])) * 60;
+            for (i = i0c; i <= iQ; i++) Vi += q[i] * (t[i] - (i === i0c ? tStart : t[i - 1])) * 60;
+            if (iS > iQ) Vi += q[iQ] * (t[iS] - t[iQ]) * 60;
             if (cycles.length > 1) {
                 var prev = cycles[cycles.length - 2];
                 var pBetween = INF; for (i = prev.i1; i < cyc.i0; i++) if (p[i] < pBetween) pBetween = p[i];
@@ -96842,38 +96867,46 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
     // that leaves its plateau linearly in G (contact onset, the post-closure damping) is exactly this shape at the onset,
     // and the fit uses every pressure sample instead of the first noisy derivative crossing. sgn = +1 needs C > 0 (the
     // decline slows: closure, downward departure), −1 needs C < 0 (stiffening). → {G, p (= A, on the line), C, B} or null
-    function _hingeAt(x, p, i0, i1, gc, pm) {
+    function _hingeAt(x, p, i0, i1, gc, pm, curved) {
         // basis 1, u, u₊², u₊³ (u = G − G_c): the cubic term absorbs the change of the departure rate over the window, so
-        // the onset is not pulled early or late by a curvature that is not exactly quadratic
-        var m = 4, M = [], k, c, r, q;
-        for (r = 0; r < m; r++) { M.push([0, 0, 0, 0, 0]); }
-        var bs = [1, 0, 0, 0];
+        // the onset is not pulled early or late by a curvature that is not exactly quadratic. curved adds u² over the whole
+        // window: a base trend that already bends (reservoir-controlled leak-off, dP/dG declining with p − p_r), so u₊² is
+        // the change of curvature at G_c
+        var m = curved ? 5 : 4, M = [], k, c, r, q;
+        for (r = 0; r < m; r++) { var row = []; for (c = 0; c <= m; c++) row.push(0); M.push(row); }
+        var bs = [1, 0, 0, 0, 0];
         for (k = i0; k <= i1; k++) {
             var u = x[k] - gc, h = u > 0 ? u * u : 0, yy = p[k] - pm;
-            bs[1] = u; bs[2] = h; bs[3] = u > 0 ? h * u : 0;
+            bs[1] = u; bs[2] = h; bs[3] = u > 0 ? h * u : 0; bs[4] = u * u;
             for (r = 0; r < m; r++) { var br = bs[r]; if (br === 0) continue; for (c = r; c < m; c++) M[r][c] += br * bs[c]; M[r][m] += br * yy; }
         }
         for (r = 1; r < m; r++) for (c = 0; c < r; c++) M[r][c] = M[c][r];
-        if (!(M[3][3] > 0)) { m = 3; M = M.slice(0, 3).map(function (row) { return [row[0], row[1], row[2], row[4]]; }); }
+        var idx = []; for (r = 0; r < m; r++) idx.push(r);
+        if (!(M[3][3] > 0)) {          // no point past G_c far enough for the cubic term: drop it
+            idx = idx.filter(function (z) { return z !== 3; });
+            M = idx.map(function (rr) { return idx.map(function (cc) { return M[rr][cc]; }).concat([M[rr][m]]); });
+            m = idx.length;
+        }
         for (c = 0; c < m; c++) {
             var piv = c; for (r = c + 1; r < m; r++) if (Math.abs(M[r][c]) > Math.abs(M[piv][c])) piv = r;
             var tmp = M[c]; M[c] = M[piv]; M[piv] = tmp;
             if (Math.abs(M[c][c]) < 1e-200) return null;
             for (r = c + 1; r < m; r++) { var f = M[r][c] / M[c][c]; for (q = c; q <= m; q++) M[r][q] -= f * M[c][q]; }
         }
-        var co = [0, 0, 0, 0];
-        for (r = m - 1; r >= 0; r--) { var sum = M[r][m]; for (c = r + 1; c < m; c++) sum -= M[r][c] * co[c]; co[r] = sum / M[r][r]; }
+        var cs = []; for (r = 0; r < m; r++) cs.push(0);
+        for (r = m - 1; r >= 0; r--) { var sum = M[r][m]; for (c = r + 1; c < m; c++) sum -= M[r][c] * cs[c]; cs[r] = sum / M[r][r]; }
+        var co = [0, 0, 0, 0, 0]; idx.forEach(function (z, j) { co[z] = cs[j]; });
         var ss = 0;
-        for (k = i0; k <= i1; k++) { var u2 = x[k] - gc, e = (p[k] - pm) - (co[0] + co[1] * u2 + (u2 > 0 ? co[2] * u2 * u2 + co[3] * u2 * u2 * u2 : 0)); ss += e * e; }
-        return { A: co[0] + pm, B: co[1], C: co[2], D: co[3], ssr: ss };
+        for (k = i0; k <= i1; k++) { var u2 = x[k] - gc, e = (p[k] - pm) - (co[0] + co[1] * u2 + co[4] * u2 * u2 + (u2 > 0 ? co[2] * u2 * u2 + co[3] * u2 * u2 * u2 : 0)); ss += e * e; }
+        return { A: co[0] + pm, B: co[1], C: co[2], D: co[3], E: co[4], ssr: ss };
     }
-    function _hinge(x, p, i0, i1, jMax, sgn) {
+    function _hinge(x, p, i0, i1, jMax, sgn, curved) {
         if (i1 - i0 < 10) return null;
         var pm = 0, k; for (k = i0; k <= i1; k++) pm += p[k]; pm /= (i1 - i0 + 1);
         var best = null, bj = -1, ss = {};
         var jS = i0 + 5; while (jS < jMax && x[jS] < x[Math.min(jMax, i1 - 3)] * Math.exp(-0.45)) jS++;
         for (var j = jS; j <= Math.min(jMax, i1 - 3); j++) {
-            var f = _hingeAt(x, p, i0, i1, x[j], pm);
+            var f = _hingeAt(x, p, i0, i1, x[j], pm, curved);
             if (!f) continue;
             ss[j] = f.ssr;
             if (sgn * f.C > 0 && (!best || f.ssr < best.ssr)) { best = f; bj = j; best.gc = x[j]; }
@@ -96885,7 +96918,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         var gl = x[Math.max(i0 + 5, bj - 1)], gh = x[Math.min(Math.min(jMax, i1 - 3), bj + 1)], fine = [], q;
         if (gh > gl) {
             for (q = 0; q <= 8; q++) {
-                var gq = gl + (gh - gl) * q / 8, fq = _hingeAt(x, p, i0, i1, gq, pm);
+                var gq = gl + (gh - gl) * q / 8, fq = _hingeAt(x, p, i0, i1, gq, pm, curved);
                 fine.push({ g: gq, f: fq });
                 if (fq && sgn * fq.C > 0 && fq.ssr < best.ssr) { best = fq; best.gc = gq; }
             }
@@ -96896,7 +96929,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
                 if (den !== 0) {
                     var A2 = (x2 * (y1 - y0) + x1 * (y0 - y2) + x0 * (y2 - y1)) / den, B2 = (x2 * x2 * (y0 - y1) + x1 * x1 * (y2 - y0) + x0 * x0 * (y1 - y2)) / den;
                     if (A2 > 0) {
-                        var gv = _clampN(-B2 / (2 * A2), x0, x2), fv = _hingeAt(x, p, i0, i1, gv, pm);
+                        var gv = _clampN(-B2 / (2 * A2), x0, x2), fv = _hingeAt(x, p, i0, i1, gv, pm, curved);
                         if (fv && sgn * fv.C > 0 && fv.ssr <= best.ssr) { best = fv; best.gc = gv; }
                     }
                 }
@@ -96905,9 +96938,9 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         // profile interval of G_c: the samples whose SSR stays within σ²·(1 + ρ)/(1 − ρ) of the minimum (χ²₁ = 1, the
         // residual σ² and lag-1 ρ of the best fit), contiguous around it → se(G_c) = half its width (≥ half a sample step)
         var r = [], num = 0, den = 0;
-        for (k = i0; k <= i1; k++) { var u = x[k] - best.gc; r.push((p[k] - pm) - (best.A - pm + best.B * u + (u > 0 ? best.C * u * u + (best.D || 0) * u * u * u : 0))); }
+        for (k = i0; k <= i1; k++) { var u = x[k] - best.gc; r.push((p[k] - pm) - (best.A - pm + best.B * u + (best.E || 0) * u * u + (u > 0 ? best.C * u * u + (best.D || 0) * u * u * u : 0))); }
         for (k = 1; k < r.length; k++) { num += r[k] * r[k - 1]; den += r[k] * r[k]; }
-        var rho = den > 0 ? _clampN(num / den, 0, 0.95) : 0, s2 = best.ssr / Math.max(1, r.length - 5), lim = best.ssr + s2 * (1 + rho) / (1 - rho);
+        var rho = den > 0 ? _clampN(num / den, 0, 0.95) : 0, s2 = best.ssr / Math.max(1, r.length - (curved ? 6 : 5)), lim = best.ssr + s2 * (1 + rho) / (1 - rho);
         var jl = bj, jh = bj;
         while (ss[jl - 1] != null && ss[jl - 1] <= lim) jl--;
         while (ss[jh + 1] != null && ss[jh + 1] <= lim) jh++;
@@ -97421,6 +97454,33 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         var dep = _departure(v.G, v.y, lf, eS, epsC, sigY, rhoY);
         if (!dep) { res.noDeparture = true; return res; }
         var iDep = dep.i, down = dep.down, thrAt = dep.thr;
+        // 4b. a downward first departure followed by a strong stiffening is reservoir-controlled (matrix) leak-off, not a
+        //     closure: dP/dG declines smoothly as p − p_r falls (§4.11: 28-40 % to closure) and the closure is the later upward
+        //     departure from that declining trend. The trend is the straight G·dP/dG line over the last 0.7 ln units before the
+        //     dP/dG minimum; the search for the upward departure starts one Bourdet window L before that minimum.
+        if (down) {
+            var iMx = iDep, iMn = iDep;
+            for (i = iDep; i < n; i++) if (_fin(sm[i]) && sm[i] > sm[iMx]) iMx = i;
+            for (i = iDep; i <= iMx; i++) if (_fin(sm[i]) && sm[i] < sm[iMn]) iMn = i;
+            if (iMx - iMn >= 3 && sm[iMx] >= 1.3 * sm[iMn] && sm[iMn] < (1 - thrAt(iMn)) * b) {
+                var kT = function (gv) { var k = 0; while (k + 1 < n && v.G[k + 1] <= gv) k++; return k; };
+                var w0 = Math.max(e0, kT(v.G[iMn] * Math.exp(-0.7))), lf2 = (iMn - w0 >= 4) ? _linfit(v.G, v.y, w0, iMn, false) : null;
+                if (lf2 && lf2.b > 0) {
+                    lf2.iota = lf.iota; lf2.origin = false;
+                    var nz2 = _lineNoise(v.G, v.y, lf2, w0, iMn), q2s = Math.max(w0 + 1, kT(v.G[iMn] * Math.exp(-Lw))), dep2 = null;
+                    for (var tries = 0; tries < 6 && q2s < n - 3; tries++) {
+                        var dd2 = _departure(v.G, v.y, lf2, q2s, epsC, Math.max(nz2.sigma, sigY * 0.5, 1e-9), nz2.rho);
+                        if (!dd2) break;
+                        if (!dd2.down) { dep2 = dd2; break; }
+                        q2s = dd2.i + 1;
+                    }
+                    if (dep2) {
+                        dep = dep2; iDep = dep2.i; down = false; thrAt = dep2.thr; lf = lf2;
+                        res.matrixDecline = { gMin: _r(v.G[iMn], 3), drop: _r(1 - sm[iMn] / b, 3), trend: [_r(v.G[w0], 3), _r(v.G[iMn], 3)] };
+                    }
+                }
+            }
+        }
         // 5. the onset by the hinge fit on the pressure: from ln 0.7 before the departure (inside the early window) to where
         //    the derivative has moved by max(15 %, 2 thresholds) or ln 0.4 after it. A Bourdet window L shows a departure up
         //    to L early (the derivative at G sees G·e^L), so the onset is searched up to G_dep·e^L and the derivative
@@ -97430,7 +97490,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         var jMax = Math.max(iDep, kAt(v.G[iDep] * Math.exp(Lw))), h1 = jMax, gH = v.G[iDep] * Math.exp(0.4 + Lw);
         while (h1 + 1 < n && v.G[h1 + 1] <= gH && Math.abs(dep.rel(kAt(v.G[h1 + 1] * Math.exp(-Lw)))) <= Math.max(0.15, 2 * thrAt(h1))) h1++;
         h1 = Math.min(n - 1, Math.max(h1, jMax + 4));
-        var hg = _hinge(v.G, v.p, h0, h1, jMax, down ? 1 : -1);
+        var hg = _hinge(v.G, v.p, h0, h1, jMax, down ? 1 : -1, !!res.matrixDecline);
         if (hg && !(hg.G >= v.G[h0] && hg.G <= v.G[jMax])) hg = null;
         // an abrupt break (a pressure interval falling ≥ 3 × faster than the early slope while the interval before it falls
         // less than half as fast: a closure with an unbounded slope, as on an exact Carter after-closure line) is read at the start of
@@ -97439,7 +97499,16 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         if (!down) {
             var sl = function (k) { return (v.p[k] - v.p[k + 1]) / Math.max(v.G[k + 1] - v.G[k], 1e-12); }, kb = -1;
             for (i = Math.max(e0, iDep - 2); i <= Math.min(n - 2, jMax + 1); i++) if (kb < 0 || sl(i) > sl(kb)) kb = i;
-            if (kb > 0 && kb < n - 2 && sl(kb) > 3 * b && sl(kb - 1) < 0.5 * sl(kb)) brk = { k: kb, G: v.G[kb], p: v.p[kb], se: b * (v.G[kb + 1] - v.G[kb]) / (2 * Math.sqrt(3)) };
+            // the break starts in the first of the steep intervals: walk back from the steepest one while the interval before
+            // it still falls ≥ 3 × faster than the early slope (on an exact Carter line the slope keeps growing for a few samples
+            // after closure, so the steepest interval is not the one that holds the closure)
+            while (kb > Math.max(e0, 1) && sl(kb - 1) > 3 * b) kb--;
+            // the closure lies inside that interval, uniformly as far as the samples tell: its centre on the pre-closure line
+            // (p at the interval start minus the slope of the interval before it over half the interval), se = half-width / √3
+            if (kb > 0 && kb < n - 2 && sl(kb) > 3 * b && sl(kb - 1) < 0.5 * sl(kb)) {
+                var dGb = v.G[kb + 1] - v.G[kb], sPre = Math.max(0, sl(kb - 1));
+                brk = { k: kb, G: v.G[kb] + 0.5 * dGb, p: v.p[kb] - 0.5 * sPre * dGb, se: Math.max(sPre, b) * dGb / (2 * Math.sqrt(3)) };
+            }
         }
         res.abrupt = !!brk;
         if (!down) {
@@ -98003,7 +98072,18 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
                     var j = 1; while (j < Gm.length - 1 && Gm[j] < g) j++;
                     return Math.abs((Pm[j] - Pm[j - 1]) / ((Gm[j] - Gm[j - 1]) || 1e-12));
                 };
-                var sA = sl(Math.max(gA, Gm[1])), sC = sl(gC);
+                // the end of the window is the model's own closure when the model closes before the data's G_c: the expected
+                // change is the change up to σ_c (dP/dG ∝ p − p_r there), and past the model closure the slope is the
+                // after-closure one (it read +345 % on a matrix case whose model run closed at G 17.9 against the data's 19.3)
+                var gcm = run.events.Gc ? (_fin(run.events.Gc.gen) ? run.events.Gc.gen : run.events.Gc.a05) : null;
+                var gE = (_fin(gcm) && gcm > 0 && gcm < gC) ? 0.97 * gcm : gC;
+                // the end slope on the last model interval that ends at or before the window end (an interval that straddles
+                // the model closure mixes in the after-closure slope)
+                var slEnd = function (g) {
+                    var j = 1; while (j + 1 < Gm.length && Gm[j + 1] <= g) j++;
+                    return Math.abs((Pm[j] - Pm[j - 1]) / ((Gm[j] - Gm[j - 1]) || 1e-12));
+                };
+                var sA = sl(Math.max(gA, Gm[1])), sC = slEnd(gE);
                 if (sA > 0) return { k: (sC - sA) / sA, source: 'model' };
             }
         }
@@ -98030,6 +98110,10 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         var dtCons = pCons !== null ? _dtAtP(d, pCons) : null, gCons = _fin(dtCons) ? _GatD(d, dtCons / d.tp) : null;
         var gC = _fin(ctx.Gc) ? ctx.Gc : (ctx.frac && _fin(ctx.frac.Gc) ? ctx.frac.Gc : (_fin(gCons) ? gCons : (P.tangent ? P.tangent.G : v.G[n - 1])));
         var gcSource = _fin(ctx.Gc) ? 'ctx' : (ctx.frac && _fin(ctx.frac.Gc) ? 'frac' : (_fin(gCons) ? 'consensus' : (P.tangent ? 'tangent' : 'end')));
+        // §4.11: W ends at the tangent (end of stiffening) G. When the tangent pick lies after the closure candidate (a
+        // concave-up closure range: the F1 onset first, the F2 end later), W runs to it, so the stiffening between the two
+        // is part of κ; on a single closure the two coincide.
+        if (!_fin(ctx.Gc) && P.tangent && _fin(P.tangent.G) && !cf.noDeparture && P.tangent.G > gC * Math.exp(0.02) && (gcSource === 'frac' || gcSource === 'consensus')) { gC = P.tangent.G; gcSource = 'tangent'; }
         var iA = 0, iC = n - 1; while (iC > 0 && v.G[iC] > gC) iC--;
         var iota = _iota(v, iA, iC), curv = _relChange(v, hump ? hump.iEnd : iA, iC);
         var frac = ctx.frac || null, isip = _isipVal(ctx.isip); if (isip === null) isip = d.isip;
@@ -98617,6 +98701,25 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         return sorted[i] + (h - i) * (sorted[j] - sorted[i]);
     }
     function median(a) { var f = []; for (var i = 0; i < a.length; i++) if (fin(a[i])) f.push(a[i]); return f.length ? quant(sortNum(f), 0.5) : null; }
+    // the median of an array of finite numbers (no filtering) by selection in a typed buffer (O(n); the same value as
+    // quant(sortNum(a), 0.5)) — the IRLS loops of the leak-plot bootstrap
+    function _selectK(f, k, lo, hi) {
+        while (hi > lo) {
+            var pv = f[(lo + hi) >> 1], i = lo, j = hi;
+            while (i <= j) { while (f[i] < pv) i++; while (f[j] > pv) j--; if (i <= j) { var tmp = f[i]; f[i] = f[j]; f[j] = tmp; i++; j--; } }
+            if (k <= j) hi = j; else if (k >= i) lo = i; else return f[k];
+        }
+        return f[k];
+    }
+    function medianF(a, buf) {
+        var n = a.length; if (!n) return null;
+        var f = buf && buf.length === n ? buf : new Float64Array(n), i;
+        for (i = 0; i < n; i++) f[i] = a[i];
+        var h = (n - 1) * 0.5, k = Math.floor(h), v = _selectK(f, k, 0, n - 1);
+        if (h === k) return v;
+        var w = Infinity; for (i = k + 1; i < n; i++) if (f[i] < w) w = f[i];      // after selection f[k+1..] ≥ f[k]: the next order statistic
+        return v + 0.5 * (w - v);
+    }
     function mean(a) { var s = 0, n = 0; for (var i = 0; i < a.length; i++) if (fin(a[i])) { s += a[i]; n++; } return n ? s / n : null; }
     function wmedian(vals, ws) {
         var it = []; for (var i = 0; i < vals.length; i++) if (fin(vals[i]) && pos(ws[i])) it.push([vals[i], ws[i]]);
@@ -99124,6 +99227,7 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
     };
 
     // p_i consensus: intersect the brackets, weighted median of the candidates inside, label (§4.12)
+    var BR_TOL = 0.02;       // relative model-form allowance of the p_i bracket edges (see the brackets in PRiSM_dfit_aca)
     G.PRiSM_dfit_piConsensus = function (ctx) {
         try {
             ctx = ctx || {};
@@ -99362,6 +99466,15 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         if (deriv && i < n - 1 && (dg.storage || dg.steepened)) deriv = null;
         if (cart && !fin(cart[1])) cart = null;
         if (impB && !fin(impB[1])) impB = null;
+        // model-form allowance: the edges are exact for a Carter (constant-C_L) source; a reservoir-controlled or pressure-
+        // dependent leak-off history moves the late intercepts by up to about 1 % of the remaining Δp (the matrix integration
+        // case: F_L line 4,505.6 psia on a perfect fit, σ 0.2 psi, truth 4,500 with p_end 4,989). Each edge is widened outward by
+        // BR_TOL of its distance from the last pressure, so the bracket keeps the truth without changing a radial (small Δp) result.
+        var pEndB = p[p.length - 1], widen = function (b) {
+            if (!b || !fin(b[0]) || !fin(b[1]) || !fin(pEndB)) return b;
+            return [pEndB - (pEndB - b[0]) * (1 + BR_TOL), pEndB - (pEndB - b[1]) * (1 - BR_TOL)];
+        };
+        cart = widen(cart); impB = widen(impB); deriv = widen(deriv);
         // p_i candidates
         var cands = [], tr = null;
         if (summary === 'radial' || summary === 'linear-radial') { if (nol.rad) cands.push({ method: 'nolte-radial', value: nol.rad.pr, w: 2 }); if (imp.rad) cands.push({ method: 'impulse-radial', value: imp.rad.pi, w: 2 }); }
@@ -99592,24 +99705,35 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             var sigY = idx.map(function (j, k) { var sd = sigma > 0 ? sigma / (Math.SQRT2 * LB) : 0; return sd / (x[j] * Math.abs(PS[k].df)); });
             var drift = fin(ctx.driftSpec) ? ctx.driftSpec : 0.02, sd_ = Math.max(drift, 1e-6) / 24;     // psi/h
             var noiseY = median(sigY) || 0;
-            function fitW(Yv, wts) {
-                var A = [[0, 0, 0], [0, 0, 0], [0, 0, 0]], b = [0, 0, 0], r, c, k;
-                for (k = 0; k < Yv.length; k++) { var w = wts[k]; for (r = 0; r < 3; r++) { b[r] += w * X[k][r] * Yv[k]; for (c = 0; c < 3; c++) A[r][c] += w * X[k][r] * X[k][c]; } }
-                return { A: A, b: b };
+            var X0 = X.map(function (row) { return row[0]; }), X1 = X.map(function (row) { return row[1]; }), X2 = X.map(function (row) { return row[2]; });
+            function fitW(Yv, wts) {     // weighted normal equations (the same sums, flat arrays)
+                var a00 = 0, a01 = 0, a02 = 0, a11 = 0, a12 = 0, a22 = 0, b0 = 0, b1 = 0, b2 = 0, k;
+                for (k = 0; k < Yv.length; k++) {
+                    var w = wts[k], x0 = X0[k], x1 = X1[k], x2 = X2[k], y = Yv[k];
+                    b0 += w * x0 * y; b1 += w * x1 * y; b2 += w * x2 * y;
+                    a00 += w * x0 * x0; a01 += w * x0 * x1; a02 += w * x0 * x2; a11 += w * x1 * x1; a12 += w * x1 * x2; a22 += w * x2 * x2;
+                }
+                return { A: [[a00, a01, a02], [a01, a11, a12], [a02, a12, a22]], b: [b0, b1, b2] };
             }
+            // Huber IRLS; the residuals are finite by construction, so the medians skip the finiteness filter (the same values,
+            // a native numeric sort of a typed buffer: the bootstrap below calls this 120 times)
+            var nY = Y.length, bufR = new Float64Array(nY), resB = new Array(nY), absB = new Array(nY);
             function solveFit(Yv, sres) {
-                var wts = Yv.map(function () { return 1; }), beta = null, inv = null, s2 = 1, it, k;
+                var wts = [], beta = null, inv = null, s2 = 1, it, k;
+                for (k = 0; k < Yv.length; k++) wts.push(1);
                 for (it = 0; it < 12; it++) {
                     var NE = fitW(Yv, wts), s = Math.max(sres, 1e-12);
                     NE.A[2][2] += 1 / (sd_ * sd_) * s * s;           // prior pseudo-observation on d, scaled to the residual variance
                     var sol = solve(NE.A, NE.b, true); if (!sol) return null;
                     beta = sol.x; inv = sol.inv;
-                    var res = Yv.map(function (y, j) { return y - (beta[0] * X[j][0] + beta[1] * X[j][1] + beta[2] * X[j][2]); });
-                    var med = median(res), mad = median(res.map(function (r) { return Math.abs(r - med); })) * 1.4826;
+                    for (k = 0; k < nY; k++) resB[k] = Yv[k] - (beta[0] * X0[k] + beta[1] * X1[k] + beta[2] * X2[k]);
+                    var med = medianF(resB, bufR);
+                    for (k = 0; k < nY; k++) absB[k] = Math.abs(resB[k] - med);
+                    var mad = medianF(absB, bufR) * 1.4826;
                     var noise = noiseY;
                     s2 = Math.max(mad, noise, 1e-9 * Math.abs(beta[0] || 1));
-                    var c = 1.345 * s2, nw = res.map(function (r) { var a = Math.abs(r); return a <= c ? 1 : c / a; });
-                    var dw = 0; for (k = 0; k < nw.length; k++) dw = Math.max(dw, Math.abs(nw[k] - wts[k]));
+                    var c = 1.345 * s2, dw = 0, nw = new Array(nY);
+                    for (k = 0; k < nY; k++) { var a = Math.abs(resB[k]); nw[k] = a <= c ? 1 : c / a; dw = Math.max(dw, Math.abs(nw[k] - wts[k])); }
                     wts = nw; sres = s2;
                     if (dw < 1e-4) break;
                 }
@@ -99754,7 +99878,8 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
         return C.G[lo] + f * (C.G[hi] - C.G[lo]);
     }
     function _dtDOf(C, Gc) {
-        var n = C.G.length, ok = n && C.dtD.every(fin);
+        if (C._dtDok == null) C._dtDok = !!(C.G.length && C.dtD.every(fin));     // once per context (it was re-checked per draw)
+        var n = C.G.length, ok = C._dtDok;
         if (ok && Gc >= C.G[0] && Gc <= C.G[n - 1]) return interp(C.G, C.dtD, Gc);
         var lo = Math.log(1e-9), hi = Math.log(1e7), G05 = function (d) { return 4 / Math.PI * ((1 + d) * Math.asin(1 / Math.sqrt(1 + d)) + Math.sqrt(d) - Math.PI / 2); };
         for (var i = 0; i < 100; i++) { var m = 0.5 * (lo + hi); if (G05(Math.exp(m)) < Gc) lo = m; else hi = m; }
@@ -101170,11 +101295,21 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
             if (cands.length) { var wi = _call('PRiSM_dfit_whatIf', [cands, r.derivs, fctx(null, null)], P.W, 'WHATIF_FAILED'); r.whatIf = arrOk(wi) ? wi.filter(function (x) { return x && x.ok !== false && x.label; }) : []; }
             // integration: the classifier reads G_c from the frac candidate (gcSource 'frac'), the consensus as a fallback, and p_r for
             // κ_exp (the coarse reservoir-controlled model run of 58): C1 p_i, else the p_i-gradient prior at the datum
-            var wlC = P.well || {}, prC = fin(wlC.pi) ? wlC.pi : null, pgC = P.inputs.priors && P.inputs.priors.piGrad;
-            if (prC === null && fin(pgC) && pgC > 0 && fin(P.inputs.datumTvd) && P.inputs.datumTvd > 0) prC = pgC * P.inputs.datumTvd;
+            var wlC = P.well || {}, prC = fin(wlC.pi) ? wlC.pi : null, pgC = P.inputs.priors && P.inputs.priors.piGrad, prSrc = prC !== null ? 'well' : null;
+            if (prC === null && fin(pgC) && pgC > 0 && fin(P.inputs.datumTvd) && P.inputs.datumTvd > 0) { prC = pgC * P.inputs.datumTvd; prSrc = 'prior'; }
+            // nothing known: a normally pressured reservoir (the injected fluid's hydrostatic at the datum, as the CL-to-k
+            // conversion assumes, §4.10), replaced after the ACA by the after-closure p_i when that is labelled high or medium
+            var rhoC = P.inputs.fluid && fin(P.inputs.fluid.rhoPpg) ? P.inputs.fluid.rhoPpg : 8.43;
+            if (prC === null && fin(P.inputs.datumTvd) && P.inputs.datumTvd > 0) { prC = 0.052 * rhoC * P.inputs.datumTvd; prSrc = 'hydrostatic'; }
+            P.prSrc = prSrc;
             var frC = r.frac.chosen || _firstFamily(r.frac.byFamily);
-            r.classification = _call('PRiSM_dfit_classify', [r.derivs, { frac: frC, consensus: r.consensus || r.consensusLite || null, isip: r.isip, pr: prC, well: P.well,
-                curvExpRun: null, VwCwTheory: null, VwCwMeasured: r.events ? r.events.VwCwMeasured : null, events: r.events, inputs: P.inputs }], P.W, 'CLASSIFY_FAILED');
+            P.clsCtx = { frac: frC, consensus: r.consensus || r.consensusLite || null, isip: r.isip, pr: prC, well: P.well,
+                curvExpRun: null, VwCwTheory: null, VwCwMeasured: r.events ? r.events.VwCwMeasured : null, events: r.events, inputs: P.inputs };
+            r.classification = _call('PRiSM_dfit_classify', [r.derivs, P.clsCtx], P.W, 'CLASSIFY_FAILED');
+            if (r.classification && r.classification.ok !== false) {
+                r.classification.prSource = prSrc;
+                if (prSrc === 'hydrostatic' && arrOk(r.classification.evidence)) r.classification.evidence.push(_txt('p_r for the expected decline is assumed hydrostatic at the datum, ' + fmt(prC, 0) + ' psia (no p_i known).'));
+            }
         } },
         { id: 'aca', fn: function (P) {
             var r = P.run;
@@ -101189,6 +101324,20 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
                     P.triCtx.tide = { ampPsi: tdA.ampPsi, dpPsi: tdA.dpPsi, removed: tdA.applied === true };
                     var tr2 = _call('PRiSM_dfit_triage', [r.prep, r.events, P.triCtx], P.W, 'TRIAGE_FAILED');
                     if (tr2 && tr2.ok !== false) r.triage = tr2;
+                }
+                // κ_exp needs p_r (§4.11). Without C1 p_i or a p_i-gradient prior the classifier had no estimate; the
+                // after-closure p_i (label high or medium) is the reservoir pressure of this test, so the classifier runs once
+                // more with it and says where p_r came from
+                var piA = a.pi;
+                if (P.clsCtx && (P.prSrc === 'hydrostatic' || !fin(P.clsCtx.pr)) && piA && fin(piA.value) && (piA.label === 'high' || piA.label === 'medium') && r.classification && r.classification.ok !== false) {
+                    var cc2 = {}; for (var kc in P.clsCtx) cc2[kc] = P.clsCtx[kc];
+                    cc2.pr = piA.value;
+                    var cl2 = _call('PRiSM_dfit_classify', [r.derivs, cc2], P.W, 'CLASSIFY_FAILED');
+                    if (cl2 && cl2.ok !== false) {
+                        cl2.prSource = 'aca-pi';
+                        if (arrOk(cl2.evidence)) cl2.evidence.push(_txt('p_r for the expected decline is the after-closure p_i, ' + fmt(piA.value, 0) + ' psia (' + piA.label + ').'));
+                        r.classification = cl2;
+                    }
                 }
                 var chF = r.frac.chosen, gmF = chF && chF.geometry && chF.geometry.byModel ? chF.geometry.byModel[chF.geometry.model || 'PKN'] : null;
                 var wl = P.well || {}, Lf = gmF ? (pos(gmF.xf) ? gmF.xf : (pos(gmF.R) ? gmF.R : null)) : null;
@@ -104074,7 +104223,8 @@ G.PRiSM_report_internal = { fmt: _fmt, skinFromInputs: _skinFromInputs, bourdet:
     // the demo's own well set-up (49-calc-dfit-synth inputsFor / wellFor): rock, string, fluid, perforations, datum and channel into
     // the test inputs (logged), φ, c_t, μ, h, r_w into C1 as 'sample' values (never over a user value)
     var DEMO_INPUT_PATHS = ['datumTvd', 'strings', 'fluid.kind', 'fluid.rhoPpg', 'perfs.n', 'perfs.dIn', 'perfs.cd', 'rock.Ep', 'rock.EpSource',
-                            'rock.hf', 'rock.hp', 'channels.primary'];
+                            'rock.hf', 'rock.hp', 'channels.primary',
+                            'temp.model', 'temp.tauLoH', 'temp.tauHiH'];
     function _applyDemoSetup(T, S, name) {
         if (!S || typeof S.demoSpec !== 'function' || typeof S.inputsFor !== 'function') return false;
         var spec = null, inp = null, wl = null;
@@ -139262,13 +139412,53 @@ pipesz: {
             var amp = num(a.amp, 0.05), ph = 2 * PI * r();
             return mapP(ds, 'pSurf', function (v, i, t) { return v + amp * Math.cos(2 * PI * t / 12 + ph); });
         } };
-    // surface channel from the BH channel: constant-gradient column plus displacement warm-back (§4.2)
+    // surface channel from the BH channel (§4.2). With WTS_wellbore (resolved at call time) the surface pressure is the exact
+    // inverse of WTS_wellbore.convert for the reference column: ρ(p,T) hydrostatics, the displaced (DFIT) temperature model with
+    // τ_T = a.tauT (the column cooled by the injection warms back after shut-in) and the pipe friction while pumping, so a
+    // converted surface gauge recovers the bottomhole record up to the gauge noise. Without it (or with a.grad given): the
+    // constant-gradient column plus an exponential warm-back of a.warm psi.
+    function surfaceCtx(tauT, tvd) {
+        var IR = G.PRiSM_dfit_inputRanges, inp = null;
+        try { if (IR && typeof IR.defaults === 'function') inp = IR.defaults(); } catch (e) { inp = null; }
+        inp = inp || { survey: null, fluid: { kind: 'water', rhoPpg: 8.43, salinityWt: null, muCp: 1.0, fr: 0, nPrime: null, kPrime: null, tInjF: 70 },
+                       temp: { model: 'static', surfF: 70, gradFper100: 1.5, tauLoH: 0.5, tauHiH: 5 }, datumMd: null };
+        surfaceInputs(inp, tauT, tvd);
+        var col = { survey: inp.survey, strings: inp.strings, fluid: inp.fluid, temp: { model: 'displaced', surfF: inp.temp.surfF, gradFper100: inp.temp.gradFper100, tauLoH: tauT, tauHiH: tauT },
+                    datumTvd: inp.datumTvd, datumMd: inp.datumMd };
+        return { column: col, fluid: inp.fluid, temp: col.temp, atmPsia: ATM, gaugeTvd: 0 };
+    }
+    // the column, fluid and temperature model of a surface-gauge case (shared by inputsFor and the surface artefact). The
+    // analysis band of the relaxation time is 1–4 h (its centre √(1·4) = 2 h is the default τ_T of the artefact).
+    function surfaceInputs(inp, tauT, tvd) {
+        inp.datumTvd = num(tvd, REF.datumTvd);
+        inp.strings = [{ tubKey: null, id: REF.idIn, od: REF.odIn, wall: REF.wallIn, topMd: 0, botMd: inp.datumTvd }];
+        inp.fluid.kind = 'slickwater'; inp.fluid.rhoPpg = REF.rhoPpg;
+        inp.temp.model = 'displaced'; inp.temp.tauLoH = fin(tauT) ? tauT / 2 : 1; inp.temp.tauHiH = fin(tauT) ? tauT * 2 : 4;
+        return inp;
+    }
     function surfaceOf(ds, a, ctx) {
         var grad = num(a.grad, GRAD_W), tvd = num(a.tvd, ctx.datumTvd || REF.datumTvd), tauT = num(a.tauT, 2), W = num(a.warm, 18);
-        return ds.p.map(function (v, i) {
+        var WB = G.WTS_wellbore, conv = WB && typeof WB.convert === 'function' && !WB.convert._dfitStub ? WB.convert : null;
+        var ps0 = ds.p.map(function (v, i) {
             var dt = ds.t[i] - ctx.ts, warm = dt > 0 ? W * (1 - Math.exp(-dt / tauT)) : 0;
             return v - grad * tvd + warm;
         });
+        if (!conv || fin(a.grad)) return ps0;
+        // fixed point p_s ← p_s + (p_w − convert(p_s)): convert is ≈ p_s + H(p_s, t), dH/dp_s ≪ 1, so a few passes converge to
+        // well below the 0.1 psi quantum. Samples the converter masks (surface at or below 0 psig) carry the last correction on.
+        var cx = surfaceCtx(tauT, tvd), ps = ps0.slice(), n = ps.length, it, i;
+        for (it = 0; it < 6; it++) {
+            var cv = null;
+            try { cv = conv({ t: ds.t, p: ps, q: ds.q || null }, cx, { band: false, channel: 'p' }); } catch (e) { cv = null; }
+            if (!cv || cv.ok === false || !Array.isArray(cv.pw)) return ps0;
+            var corr = 0, mx = 0;
+            for (i = 0; i < n; i++) {
+                if (fin(cv.pw[i])) corr = ds.p[i] - cv.pw[i];
+                ps[i] += corr; if (Math.abs(corr) > mx) mx = Math.abs(corr);
+            }
+            if (mx < 1e-3) break;
+        }
+        return ps;
     }
     A.surface = { target: 'pSurf', stage: 0, levels: [{ tauT: 0.5 }, { tauT: 1.5 }, { tauT: 3 }, { tauT: 5 }],
         apply: function (ds, a, ctx) { var o = copyDs(ds); o.pSurf = surfaceOf(ds, a, ctx); return o; } };
@@ -139601,20 +139791,30 @@ pipesz: {
             default: return null;
         }
     }
-    // p_r for which the constant-gradient surface equivalent of the reference falls to 0.5 psia 31 h after shut-in (with warm-back)
-    // (solved once by solveVacuumPr: 3,323.9 psia; S2 checks that the demo reaches vacuum 31 h after shut-in)
-    var VAC_PR = 3323.9, _vacPr = null;
-    function vacuumPr() { return VAC_PR; }
-    S.solveVacuumPr = function () { _vacPr = null; return solveVacuumPr(); };
+    // p_r for which the surface equivalent of the reference falls to 0.5 psia 31 h after shut-in (solved once by solveVacuumPr;
+    // S2 checks that the demo reaches vacuum 31 h after shut-in). Two columns, as surfaceOf: with WTS_wellbore the ρ(p,T) column
+    // (31 h is 15 relaxation times, so the geotherm column): 3,235.0 psia; without it the constant gradient plus the 18 psi
+    // warm-back: 3,323.9 psia.
+    var VAC_PR = 3323.9, VAC_PR_WB = 3235, _vacPr = {};
+    function _wbConv() { var WB = G.WTS_wellbore; return !!(WB && typeof WB.convert === 'function' && !WB.convert._dfitStub && typeof WB.hydrostatic === 'function' && typeof WB.column === 'function'); }
+    function vacuumPr() { return _wbConv() ? VAC_PR_WB : VAC_PR; }
+    S.solveVacuumPr = function () { _vacPr = {}; return solveVacuumPr(); };
     function solveVacuumPr() {
-        if (_vacPr != null) return _vacPr;
-        var col = GRAD_W * REF.datumTvd, warm = 18;
-        _vacPr = rnd(bisect(function (pr) {
+        var wb = _wbConv(), key = wb ? 'wb' : 'grad';
+        if (_vacPr[key] != null) return _vacPr[key];
+        var col = GRAD_W * REF.datumTvd, warm = 18, rel = 1 - Math.exp(-31 / 2);
+        if (wb) {
+            var cx = surfaceCtx(2, REF.datumTvd), c = G.WTS_wellbore.column(cx.column);
+            var Tg = G.WTS_wellbore.tempProfile(c, { model: 'static', surfF: cx.temp.surfF, gradFper100: cx.temp.gradFper100 }).T;
+            var h = G.WTS_wellbore.hydrostatic(0.5, 0, REF.datumTvd, c, Tg, { fluid: cx.fluid, stepFt: 25 });
+            col = h.dp; warm = 0;
+        }
+        _vacPr[key] = rnd(bisect(function (pr) {
             var s = srcGdomain(gdSpec('vac', 'normal', { pr: pr, pStart: pr }));
             if (!s.ok) return 1;
-            return s.p(s.tp + 31) - col + warm * (1 - Math.exp(-31 / 2)) - 0.5;
+            return s.p(s.tp + 31) - col + warm * rel - 0.5;
         }, 2500, 4500, 24), 1);
-        return _vacPr;
+        return _vacPr[key];
     }
     S.demoSpec = function (name) { var d = demoSpec(name); return d ? clone(d) : null; };
     S.DEMOS = ['reference', 'tight-linear', 'conventional-radial', 'contact', 'pdl', 'surface-gauge', 'two-cycle'];
@@ -139726,7 +139926,11 @@ pipesz: {
         inp.rock.EpSource = 'static';
         inp.rock.hf = (lk && lk.hf) || (gd && gd.hf) || (aca && (aca.hfrac || aca.h)) || REF.hf;
         inp.rock.hp = (lk && lk.hp) || (gd && gd.hp) || (aca && aca.h) || REF.hp;
-        if (spec && spec.primary === 'surface') inp.channels.primary = 'surface';
+        if (spec && spec.primary === 'surface') {
+            inp.channels.primary = 'surface';
+            var sa = (spec.artefacts || []).filter(function (a) { return a && a.kind === 'surface'; })[0] || {};
+            surfaceInputs(inp, num(sa.tauT, 2), REF.datumTvd);
+        }
         var r = IR.clamp(inp);
         return r && r.inputs ? r.inputs : r;
     };
