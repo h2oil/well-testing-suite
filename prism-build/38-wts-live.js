@@ -683,7 +683,7 @@ var CSS = [
 '.wtsl-kv{display:grid;grid-template-columns:1fr 1fr;gap:6px 12px}',
 '.wtsl-kv div{min-width:0}.wtsl-kv .l{font:600 9.5px/1.2 system-ui;letter-spacing:.6px;text-transform:uppercase;color:#6e7681}',
 '.wtsl-kv .v{font:600 13.5px/1.3 var(--hmi-mono);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
-'.wtsl-kv .v.p{color:#f0883e}.wtsl-kv .v.t{color:#58a6ff}.wtsl-kv .d{font:500 10px/1.2 var(--hmi-mono);color:#6e7681;white-space:nowrap}',
+'.wtsl-kv .v.w{white-space:normal;font-size:12px}.wtsl-kv .v.p{color:#f0883e}.wtsl-kv .v.t{color:#58a6ff}.wtsl-kv .d{font:500 10px/1.2 var(--hmi-mono);color:#6e7681;white-space:nowrap}',
 '.wtsl-sk{display:block;width:100%;height:56px;border-radius:6px;background:rgba(1,4,9,.55)}',
 '.wtsl-skl{display:flex;justify-content:space-between;font:10px/1.2 system-ui;color:#6e7681;margin-top:-4px}',
 '.wtsl-sh{font:700 9.5px/1 system-ui;letter-spacing:.8px;text-transform:uppercase;color:#6e7681;margin-bottom:-3px}',
@@ -801,6 +801,7 @@ var CSS = [
 '.wtsl-cush-units{margin:0 0 8px;color:#8b949e;font-size:11px;font-style:italic}',
 '.wtsl-cush-f{display:grid;grid-template-columns:minmax(0,1fr) 150px;gap:6px 10px;align-items:center}',
 '.wtsl-cush-f label{color:#c9d1d9;font-size:12.5px}',
+'.wtsl-cush-f select{grid-column:1 / -1}',   // the tubing labels are long: the select takes the whole row (review round)
 '.wtsl-cush-f input,.wtsl-cush-f select{height:30px;box-sizing:border-box;width:100%;padding:0 8px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#e6edf3;font:inherit;font-size:13px}',
 '.wtsl-cush-st{margin:10px 0 0;padding:6px 8px;border-radius:6px;background:rgba(56,139,253,.1);color:#c9d1d9;font-size:12px}',
 '.wtsl-cush-st:empty{display:none}',
@@ -2416,7 +2417,7 @@ function createController(vizEl, mopts) {
                     ['Downstream P', function (s) { return P(K(s).P); }, 'p'],
                     ['Regime', function (s) { var c = K(s); return (c.flowLimited ? 'LIMITED · ' : '') + String(c.regime || '—').toUpperCase(); }, ''],
                     ['Bean', function (s) { var c = K(s); return isNum(c.bean) && c.bean > 0 ? c.bean + '/64″' : '—'; }, ''],
-                    ['Position', function (s) { return K(s).pos === 'midcoil' ? 'Between the coil passes' : 'On the heater inlet'; }, ''],
+                    ['Position', function (s) { return K(s).pos === 'midcoil' ? 'Between the coil passes' : 'On the heater inlet'; }, 'w'],
                     ['ΔP', function (s) { var c = K(s); return fmtU(num(c.Pin, NaN) - num(c.P, NaN), 'pressure'); }, 'p'],
                     ['J-T ΔT', function (s) { var v = K(s).dTjt; return isNum(v) ? fmtU(v, 'tempDelta', 1) : '—'; }, 't'],
                     ['Outlet T', function (s) { return T(K(s).T); }, 't', function (s) { var c = K(s); return isNum(c.Tin) ? 'inlet ' + T(c.Tin) : null; }],
@@ -3321,6 +3322,9 @@ function createController(vizEl, mopts) {
             var sb = st.sepBy || {};
             // (with a seg-3 hydrate mark, ❄ at x ≈ 613 cy + 31…42, the label moves right so it starts after x 620)
             var hy3 = !!(st.segs && st.segs[3] && st.segs[3].hydR);
+            // the separator P / T block and its liquid labels under the vessel are stale while it is bypassed: covered (as the 3D chip
+            // shows BYPASSED), so the destination label has its own row there (review round: it overlapped them)
+            ctx.save(); ctx.fillStyle = 'rgba(13,17,23,.96)'; ctx.fillRect(tx[4] - 62, cy + 30, 124, 30); ctx.restore();
             if (sb.dest === 'line') bypass([[tx[4] - 34, cy], [tx[4] + 34, cy]], 'BYPASSED → PRODUCTION LINE (' + pStr(sb.P_psig) + ' psig) · NRV-501 / XV-501', tx[4] + (hy3 ? 60 : 0), cy + 40);
             else bypass([[tx[4] - 34, cy], [tx[4] + 34, cy]], 'BYPASSED → BURNER LINE', tx[4], cy + 27);
             // PSHH-104 on the bypass path (D16: trips SDV-101), tagged while V-101 is out
@@ -3578,6 +3582,14 @@ function createController(vizEl, mopts) {
         CUSH_FIELDS.forEach(function (x) { var el = q('#' + cushFieldId(x[0]), ov); var v = el ? parseFloat(el.value) : NaN; if (isNum(v)) raw[x[0]] = v; });
         var sel = q('#wtsl_cush_tbg', ov); if (sel) raw.tbg = sel.value;
         var c = cushionPrefs(raw);
+        // review round: say which values were changed to fit the scenario's ranges (shown under the form on Start)
+        var lim = cushionDefs().lim;
+        E.cushNotes = [];
+        CUSH_FIELDS.forEach(function (x) {
+            var el = q('#' + cushFieldId(x[0]), ov), txt = el ? String(el.value).trim() : '', v = parseFloat(txt), m = /^(.*?) \((.*)\)$/.exec(x[1]), L = lim[x[0]] || [x[2], x[3]];
+            if (txt !== '' && (!isNum(v) || Math.abs(v - c[x[0]]) > 1e-9))
+                E.cushNotes.push((m ? m[1] : x[1]) + ' set to ' + c[x[0]] + (m ? ' ' + m[2] : '') + ' (range ' + L[0] + '–' + L[1] + ')');
+        });
         prefs.cushion = c; writePrefs(prefs);
         if (reflect !== false) {
             CUSH_FIELDS.forEach(function (x) { var el = q('#' + cushFieldId(x[0]), ov); if (el && parseFloat(el.value) !== c[x[0]]) el.value = String(c[x[0]]); });
@@ -3611,8 +3623,8 @@ function createController(vizEl, mopts) {
         var c = cushSave(true), r = null;
         try { r = _sim.startCushion(cushionOpts(c)); } catch (e) { r = { ok: false, msg: String(e && e.message || e) }; }
         r = r || { ok: false, msg: '' };
-        var w = E.cush ? q('#wtsl_cush_warn', E.cush) : null;
-        setText(w, r.ok ? String(r.warn || '') : String(r.msg || 'Cushion unload refused'));
+        var w = E.cush ? q('#wtsl_cush_warn', E.cush) : null, notes = (E.cushNotes || []).join(' · ');
+        setText(w, (notes ? notes + (r.ok && !r.warn ? '' : ' · ') : '') + (r.ok ? String(r.warn || '') : String(r.msg || 'Cushion unload refused')));
         if (r.ok) toast(String(r.msg || 'Cushion unload started') + (r.warn ? ' — ' + r.warn : ''), r.warn ? 'bad' : 'ok');
         else toast('Cushion unload: ' + String(r.msg || 'refused'), 'bad');
         track('wts_cushion', {});   // no payload (analytics allow list)

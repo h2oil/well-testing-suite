@@ -7848,7 +7848,7 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
     "chokeperf": "res-d 491 110 9b8a6c21,view-d 1280 800 55c56744,view-p 780 1688 ceea785f",
     "clientinfo": "view-d 1280 800 9e695396,view-p 780 1688 1573f8a3",
     "complfluids": "res-d 449 203 71aef0b7,view-d 1280 800 dd954a63,view-p 780 1688 66fbd630",
-    "course": "ex1-view-d 1280 800 0b368e22,ex1-view-p 780 1688 51a0b0a6,ex10-t202-d 296 349 6ede300e,ex11-ck102-d 296 349 f7e0e752,ex11-ck2d-d 980 481 734f3fae,ex2-ck101-d 296 313 cf50313a,ex4-alarms-d 476 258 77664798,ex4-scen-d 531 465 0085c41d,ex4-v101-d 296 307 8b4cb53f,ex5-more-p 780 1688 5ed6983e,ex5-reset-d 213 93 09fc7e22,ex5-trends-d 1280 800 4dc3a26b,ex5-viewmenu-d 213 253 fb8f5160,ex6-events-d 476 183 dfcfa42c,ex6-t301-d 296 349 2c9ef751,ex7-t201-d 296 349 7ea5e89d,ex8-temp3d-d 1280 800 77eaf582,ex9-ds101-d 296 349 5067b499",
+    "course": "ex1-view-d 1280 800 0b368e22,ex1-view-p 780 1688 51a0b0a6,ex10-t202-d 296 349 6ede300e,ex11-ck102-d 296 349 3baded14,ex11-ck2d-d 980 481 5c4ed169,ex2-ck101-d 296 313 cf50313a,ex4-alarms-d 476 258 77664798,ex4-scen-d 531 465 0085c41d,ex4-v101-d 296 307 8b4cb53f,ex5-more-p 780 1688 23d43e51,ex5-reset-d 213 93 09fc7e22,ex5-trends-d 1280 800 4dc3a26b,ex5-viewmenu-d 213 253 989985ac,ex6-events-d 476 183 dfcfa42c,ex6-t301-d 296 349 2c9ef751,ex7-t201-d 296 349 7ea5e89d,ex8-temp3d-d 1280 800 12c37a0b,ex9-ds101-d 296 349 5067b499",
     "dispersion": "res-d 491 488 4caee3b6,view-d 1280 800 329c3138,view-p 780 1688 fa30328b,weather-d 491 287 4664d775",
     "elec": "view-d 1280 800 e93f2161,view-p 780 1688 e2718cf7",
     "esdhi": "res-d 449 260 e988e9f5,view-d 1280 800 8caea0ea,view-p 780 1688 623de604",
@@ -7885,7 +7885,7 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
     "pumpsz": "view-d 1280 800 cf2117d4,view-p 780 1688 ed22e300",
     "releasenotes": "view-d 1280 800 09ef3d8f,view-p 780 1688 93e8c991",
     "scale": "card-d 431 267 52db40a0,card-p 756 510 73b70afe,view-d 1280 800 dec8fef7,view-p 780 1688 2b542a04",
-    "scenarios": "fs-1-cushion-d 980 481 149e6795,fs-1-rigup-d 982 525 bd66693c,fs-3-rigup-d 982 479 c6d15ac7",
+    "scenarios": "fs-1-cushion-d 980 481 9fcab6eb,fs-1-rigup-d 982 525 bd66693c,fs-3-rigup-d 982 479 c6d15ac7",
     "sep": "view-d 1280 800 69685597,view-p 780 1688 f2bbb50e",
     "sephand": "res-d 491 217 e112f798,view-d 1280 800 e238ce1a,view-p 780 1688 5cc8127e",
     "sepqc": "res-d 491 239 58385532,view-d 1280 800 9f200512,view-p 780 1688 67438f8a",
@@ -7904,7 +7904,7 @@ callouts: [{ sel: '#hist_demo_btn', n: 1 }, { sel: '#hist_root [data-seg="Time r
   };
   var M = G.WTS_helpManifest = G.WTS_helpManifest || {};
   M.count = 212;
-  M.bytes = 7902932;   // total size of the image files (the offline download label)
+  M.bytes = 7901726;   // total size of the image files (the offline download label)
   M.data = D;
   M.base = 'help/img/';
   // get(folder, shot, view) → {file, src, w, h, v} or null; view "desktop" | "phone"; base overrides M.base
@@ -9235,10 +9235,10 @@ shots: [Sh('view', 'both', 'Cement and brine cards', '', ['#cmf_dh~1']), Sh('res
             afterSim: [{ list: ['Rig-up: switch V-101 (**Test separator**) out. In **Dynamic Simulation** set **With V-101 out, well stream to** → **Burner / flare line**. Leave Operating Pressure and Surge Tank Pressure as they are.',
             'Form: the flowing WHP in **Wellhead Pressure** and the expected clean-up rates. Keep H-101 in and warm.',
             'Select **Scenarios**, then **Cushion unload (clean-up)**. Enter **Cushion volume**, **Cushion SG**, **Unload rate**, **Tubing** and **Tubing depth** ({{50|volume}}, SG 1.03, {{1500|liquidRate}}, 3-1/2″ to {{10000|length}}), then **Start**.',
-            'Run at **×60**. WHP falls to the column law (about {{1700|pressureG}}) and rises by itself as the column unloads; the choke outlet stays at about {{5|pressureG}}.',
+            'Run at **×60**. The WHP target drops to about {{1700|pressureG}} (the gauge bottoms near {{1840|pressureG}} after about 3 minutes) and rises as the column unloads; the choke outlet stays at about {{5|pressureG}} while it unloads.',
             'CUSH_BURNER: cushion liquid at the burner (water or brine: flame-out; oil or diesel: burning fallout).',
-            'Breakthrough about 41 minutes after the start: gas returns, WHP peaks near {{3370|pressureG}} and settles at the flowing WHP while the tail comes out. Done after about 3.2 hours, {{50|volume}} recovered.',
-            'Go through the separator once the returns are clean and stable.'], ordered: true },
+            'Breakthrough about 41 minutes after the start: gas returns, WHP peaks near {{3460|pressureG}} and settles at the flowing WHP while the tail comes out. Done after about 3.2 hours, {{50|volume}} recovered.',
+            'At the full gas rate the choke outlet rises to about {{35|pressureG}} and the FI velocity alarms (Choke→Heater, Heater→Sep, Sep→Flare) show the burner line is too small for it: cut the bean, or go through the separator once the returns are clean.'], ordered: true },
             'The bean can limit the liquid: CUSH_LIMIT on CK-101 (12/64 at {{1|gasRate}}: about {{1200|liquidRate}}). A well that cannot lift the cushion stalls with CUSH_NOLIFT. H-101 at its limit: HTR_FULL.',
             'Through V-101 the water dump passes about {{790|liquidRate}} at the defaults: **Start** warns, CUSH_DUMP stays up, LAHH-101 within 5 minutes.',
             { h: 'Limits' }, 'Liquid orifice law for the bean; flare-line geometry and no riser for the line loss; burning liquid is warned about, not modelled.'] },
@@ -9249,7 +9249,7 @@ shots: [Sh('view', 'both', 'Cement and brine cards', '', ['#cmf_dh~1']), Sh('res
             afterSim: [{ list: ['In **Dynamic Simulation** set **With V-101 out, well stream to** → **Production line** and **Production line pressure** = the line pressure at the tie-in (0 to {{1440|pressureG||imp}}).',
             'Rig-up: switch V-101 out. FS-401 may be out too: tank relief then goes to vent (HUD **To vent**).',
             'At {{300|pressureG||imp}} the choke downstream is about {{308|pressureG}}, P2/P1 0.107, **Critical**; the totals go to **To production line**.',
-            'The tie-in has NRV-501 and XV-501: after a shut-in NRV-501 holds the spread at line pressure; close XV-501 to isolate. PSHH-104 trips SDV-101 at 90 % of the {{1440|pressureG}} bypass-path rating; SEPBY_RATING warns when line pressure plus loss is above it.',
+            'The tie-in has NRV-501 and XV-501; after a shut-in NRV-501 holds the spread at line pressure. PSHH-104 (H-101 outlet) trips SDV-101 at 90 % of the {{1440|pressureG}} bypass-path rating, so a line above about {{1290|pressureG||imp}} shuts the well in (the page warns) and the ESD resets only below it. SEPBY_RATING: choke outlet above the rating.',
             'A line pressure near the choke inlet makes CK-101 subcritical (WHP {{1000|pressureG}} into {{600|pressureG||imp}}: P2/P1 0.61): in a real well the rate would then follow the line.'], ordered: true },
             { h: 'What it gets wrong' }, { list: ['The line pressure is constant; a real header varies.', 'No blocked-outlet dynamics.', 'No metering by design: V-101 is out.'] }] },
         { id: 'FS-4', title: 'Cold start-up and hydrates', keywords: ['cold', 'start-up', 'hydrate', 'heater', 'inhibitor'],
@@ -9313,8 +9313,8 @@ shots: [Sh('view', 'both', 'Cement and brine cards', '', ['#cmf_dh~1']), Sh('res
         steps: ['Open the CK-102 card. Read **Upstream P** (between the chokes), **Regime**, **Pair capacity** and **Limiter**.', 'Open the CK-101 card and read its regime.',
             'In the form set **Heater choke CK-102 bean** to 32. Watch the alarms and both cards.', 'Set it to 64, then back to 48.', 'On the H-101 card select **Bypass**: CK-102 goes out of line with it. Select it again.', OUT('Heater inlet choke')],
         observe: ['On 48/64 about {{1135|pressureG}} between the chokes: CK-101 P2/P1 0.38, **Critical**, and CK-101 limits the pair ({{10.71|gasRate}}).',
-            'On 32/64 CK-102 limits: {{8.92|gasRate}} for {{10|gasRate}} asked (CHOKE2_LIMIT), CK-101 subcritical (CK1_SUBCRIT); about {{2460|pressureG}} between the chokes at the cut rate.',
-            'On 64/64 about {{634|pressureG}} between the chokes.', 'The page warns: SITHP ({{3600|pressureG}}, estimated) is above the {{1440|pressureG}} rating between the chokes.'],
+            'On 32/64 CK-102 limits: {{8.92|gasRate}} for {{10|gasRate}} asked (CHOKE2_LIMIT), CK-101 subcritical (CK1_SUBCRIT); about {{2400|pressureG}} between the chokes at that rate (page and live).',
+            'On 64/64 about {{634|pressureG}} between the chokes.', 'Expected at the defaults: the page warns that SITHP ({{3600|pressureG}}, estimated) is above the {{1440|pressureG}} rating between the chokes (an assumed Class 600 line), and PAH-102 comes on from 44/64 down ({{1296|pressureG}}).'],
         questions: ['Why does CK-101 go subcritical on 32/64?', 'Which choke sets the rate on 48/64?', 'What protects the line between the chokes?'],
         answers: ['CK-102 holds the pressure between the chokes above about 0.55 of the CK-101 inlet.', 'CK-101: it is still critical and the pair passes its capacity.', 'Its design pressure, PAH-102 at 90 % and the blocked-in check; no relief valve is modelled between the chokes.'],
         form: DEF, trainer: { duration: '20 minutes.', fault: 'None. Variant: start on 32/64 and ask why the rate is short.',
@@ -9751,7 +9751,7 @@ var V = 'v3.3.2', CALC = 'The page also updates on every change.';
 return { guides: {
 
 wts: {
-  route: 'wts', reviewed: V, reviewedSrc: 'dee91a2e', units: 'dual',
+  route: 'wts', reviewed: V, reviewedSrc: 'ac541233', units: 'dual',
   keywords: ['simulator', 'training', 'rig-up', 'alarm', 'trip', 'surge tank', 'gauge tank', 'production pressure', 'burner', 'desander', 'sand', 'T-202', 'heater choke', 'CK-102', 'cushion', 'production line'],
   notDocumented: [{ pattern: '^wts_(nps|sch|len)[1-6]$', why: 'Pipe Segments table (Form inputs part)' },
     { pattern: '^wtsl_cush_', why: 'Cushion unload dialog (device prefs)' }],
@@ -9872,7 +9872,7 @@ wts: {
         '**Auto route** switches at the high level; after a dry-run trip, **Reset LCV-202**.'],
       tips: ['LSHH-202 shuts XV-202 only: on T-202 alone LSHH-102 then trips the ESD.'] },
     { id: 'ck2', title: 'CK-102 heater inlet choke',
-      steps: ['Switch **Heater inlet choke** in, in **Rig-up** (H-101 must be in).', 'Set **Heater choke CK-102 bean** and **CK-102 position** in the Heater card.', 'Its card: pressure between the chokes (PAH-102 at 90 % of {{1440|pressureG}}), pair capacity, limiter; [[course#ex11|exercise 11]].'] },
+      steps: ['Switch **Heater inlet choke** in, in **Rig-up** (H-101 must be in).', 'Set **Heater choke CK-102 bean** and **CK-102 position** in the Heater card.', 'Its card: pressure between the chokes (PAH-102 at 90 % of an assumed {{1440|pressureG}}: on from 44/64 down), pair capacity, limiter; [[course#ex11|exercise 11]].'] },
     { id: 'alarms', title: 'Alarms and ESD',
       steps: ['The alarm bar shows the newest alarm: select **Ack**.', 'Select **Alarms**: alarms with time and tag, steady design warnings, **Events**. **Ack all** acknowledges all.', 'After a trip the banner shows the cause. **Reset ESD** works once no trip alarm is active.'],
       tips: ['Every trip closes SDV-101 (5 s; 15 s to open, then 180 s grace), except LSHH-301, LSHH-202 and the LCV-201 / LCV-202 low-low. PSHH-103 and PSHH-104 trip it too.', 'Shut in, WHP builds towards 1.2 × WHP (time constant 300 s).', 'Separator set points follow **Operating Pressure**: PAH = SP + max(10 %, {{15|pressure}}), PSHH = SP + max(20 %, {{25|pressure}}). Live with V-101 out too.'] },

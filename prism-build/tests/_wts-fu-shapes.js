@@ -86,7 +86,7 @@ var RIG_NOTES = {
   heaterBypassConfirm: 'CK-102 goes out of line with it',   // added to 38's heater bypass confirm text while CK-102 is in
   flareSwitchLine: 'relief of the tanks goes to vent',      // 38 rig card: FS-401 switch with V-101 out and dest 'line'
   sepByNoBlockFlare: 'the destination of this flow differs from the engine setting; the flow block wins',   // snap.sepBy.note (§6.2), wording free
-  shutInLine: 'held at line pressure by NRV-501: close XV-501 to isolate',
+  shutInLine: 'held at line pressure by NRV-501: lower the line pressure below the PSHH-104 set point, or go to the burner line, to reset',   // review round: no XV-501 control is modelled
   ck2NoBlock: 'no heater-choke data in this flow (in line, ΔP 0)',
   ck2SkippedNote: 'no gas rate: the two-stage gas walk does not apply' };
 
@@ -230,7 +230,11 @@ var WARN_TEXTS = {   // host, flow.ck2.warnings / flow.sepBy.warnings (§4.5)
   ck2HydrateIn: 'Hydrate margin at the CK-102 inlet {x} °F (hydrate {y} °F at {p} psig)',   // WP-C review (§4.3-7 second check, seg 3 at Pm); lead, WP-I
   sepBySubcrit: 'Destination pressure makes CK-101 subcritical',
   sepByNoFlow: 'No flow: destination pressure ≥ choke upstream pressure',
-  sepByRating: 'Production line {x} psig plus line loss {y} psi above the 1,440 psig design pressure of the bypass path (blocked outlet not simulated)' };
+  // review round (lead, WP-I): the rating at the CK-101 outlet (the highest bypass-path pressure), PSHH-104 on the page, velocities
+  sepByRating: 'Bypass path {x} psig at the CK-101 outlet (production line {y} psig plus line loss {z} psi) above the 1,440 psig design pressure (blocked outlet not simulated)',
+  sepByPshh: 'PSHH-104 trips SDV-101 at {x} psig (H-101 outlet {y} psig): this line pressure shuts the well in — lower the line pressure or go to the burner line',
+  segVelExceed: '{seg}: Velocity {x} ft/s EXCEEDS erosional limit {y} ft/s',
+  segVelWarn: '{seg}: Velocity {x} ft/s is {y}% of limit — consider upsizing' };
 var ALARM_TEXTS = {  // engine (§5.5, §6.2, §6.3)
   CHOKE2_LIMIT: WARN_TEXTS.ck2Limit,
   CHOKE2_LIMIT_both: WARN_TEXTS.pairLimit,
@@ -238,7 +242,7 @@ var ALARM_TEXTS = {  // engine (§5.5, §6.2, §6.3)
   PAH_CK2_inlet: 'PAH-102: pressure between the chokes {x} psig, ≥ 90 % of the 1,440 psig design pressure of the line CK-101 → CK-102 — open CK-102',
   PAH_CK2_midcoil: 'PAH-102: pressure between the chokes {x} psig, ≥ 90 % of the 1,440 psig design pressure of the line and H-101 pass 1 — open CK-102',
   PSHH_SEPBY: 'PSHH-104: bypass path {x} psig ≥ 90 % of its 1,440 psig design pressure — SDV-101 tripped',
-  SEPBY_RATING: 'Production line {x} psig plus line loss {y} psi above the bypass-path design pressure; a blocked outlet is not simulated',
+  SEPBY_RATING: 'Bypass path {x} psig at the choke outlet (production line {y} psig plus line loss {z} psi) above its 1,440 psig design pressure; a blocked outlet is not simulated',
   CUSH_BURNER_water: 'Water / brine cushion to the burner: flame-out and fallout — put V-101 in (liquids to the tanks) or route to a production line',
   CUSH_BURNER_oil: 'Oil / diesel cushion to the burner: liquid fallout and burning liquid without an atomising burner (not modelled) — put V-101 in or route to a production line',
   CUSH_DUMP_start: 'V-101 water dump passes {x} bbl/d: reduce the unload rate or route to the line',
@@ -324,7 +328,7 @@ function baseFields(flow) {
 // defaults (wts-calc-golden.js SETS defaults: CK-101 32/64, Cd 0.85, 10 MMscf/d, 1,000 / 200 bbl/d, WHP 3,000, Psep 150)
 // unless `inputs` says otherwise. rel: relative tolerance (0.5 % as §4.6), abs: absolute; strings and booleans exact.
 // Field names follow flow.ck2: Pm = flow.ck2.Pin, Pco2 = ck1.Pout, ratio = ck1.ratio, ck1 = ck1.regime, ck2Crit = CK-102
-// critical at the requested rate (regime 'Critical'), QmaxPair = flow.ck2.QmaxMMscfd, Tco2 = ck1.Tout, dT1 = ck1.dTjt,
+// critical (regime 'Critical'), QmaxPair = flow.ck2.QmaxMMscfd, Tco2 = ck1.Tout, dT1 = ck1.dTjt,
 // dT2 = flow.ck2.dTjt, TmIn / TmOut = flow.ck2.Tin / Tout (TmOut = the heater inlet for 'inlet'), duty = heater.dutyMMBtuHr
 // (fired, as flow.heater). base* = the CK-101-only walk (the golden). Pci (CK-101 inlet) 2,999.26 psig at the defaults.
 var ANCHORS_CK2 = [
@@ -338,15 +342,19 @@ var ANCHORS_CK2 = [
   { id: 'bean40', inputs: { wts_bean2: '40' }, rel: 0.005,
     Pm: 1659.54, ratio: 0.5556, ck1: 'Subcritical', ck2Crit: true, QmaxPair: 10.6591, limiter: 'CK-102', flowLimited: false, Tco2: 127.55, TmOut: 68.68,
     text: '40/64: CK-101 just subcritical (P2/P1 0.556 > r_crit 0.549), CK1_SUBCRIT; pair passes 10.66 > 10 × 1.01' },
+  // review round (lead, WP-I): a flow-limited block publishes every state at the pair capacity QmaxPair (the rate that flows); the
+  // requested-rate walk has no physical state then (24/64: none at all — noFlow stays a flag, the regime is the one at QmaxPair)
   { id: 'bean32', inputs: { wts_bean2: '32' }, rel: 0.005,
-    Pm: 2753.56, ratio: 0.9185, ck1: 'Subcritical', ck2Crit: true, QmaxPair: 8.9202, limiter: 'CK-102', flowLimited: true, noFlow: false,
-    text: 'equal beans 32/32: flow-limited, limiter CK-102 (critical) with CK-101 subcritical; QmaxPair 8.92 < 10' },
+    Pm: 2401.58, Pco2: 2401.69, ratio: 0.8017, ck1: 'Subcritical', ck2Crit: true, regime: 'Critical', QmaxPair: 8.9202, limiter: 'CK-102', flowLimited: true, noFlow: false,
+    Tco2: 156.60, dT1: 23.40, dT2: 87.93, TmOut: 68.67, duty: 1.8775,
+    text: 'equal beans 32/32: flow-limited, limiter CK-102 (critical) with CK-101 subcritical; QmaxPair 8.92 < 10; states at 8.92 (about 2,400 psig between the chokes)' },
   { id: 'bean24', inputs: { wts_bean2: '24' }, rel: 0.005,
-    noFlow: true, flowLimited: true, QmaxPair: 5.6947, limiter: 'CK-102',
-    text: '24/64: no feasible state at 10 MMscf/d (No Flow guard), pair capacity 5.69' },
+    noFlow: true, flowLimited: true, QmaxPair: 5.6947, limiter: 'CK-102', regime: 'Critical', ck1: 'Subcritical',
+    Pm: 2795.53, Pco2: 2795.57, ratio: 0.9324, Tco2: 172.02, dT1: 7.975, TmOut: 68.65, duty: 1.1989,
+    text: '24/64: no feasible state at 10 MMscf/d (No Flow guard, the flag), pair capacity 5.69; states at 5.69 (CK-101 0.93 subcritical, CK-102 critical)' },
   { id: 'bean4', inputs: { wts_bean2: '4' }, rel: 0.02,
-    noFlow: true, flowLimited: true, QmaxPair: 0.1673, limiter: 'CK-102',
-    text: '4/64: No Flow, no throw; pair capacity at the infeasible edge (Illinois clamps there; 2 % tolerance)' },
+    noFlow: true, flowLimited: true, QmaxPair: 0.1673, limiter: 'CK-102', regime: 'No Flow',
+    text: '4/64: No Flow, no throw; pair capacity at the infeasible edge (Illinois clamps there; 2 % tolerance), so the state at it is No Flow too' },
   { id: 'bean64', inputs: { wts_bean2: '64' }, rel: 0.005,
     Pm: 634.42, ratio: 0.2155, ck1: 'Critical', QmaxPair: 10.7104, limiter: 'CK-101', flowLimited: false, TmOut: 68.69 },
   { id: 'bean96', inputs: { wts_bean2: '96' }, rel: 0.005,
@@ -355,8 +363,8 @@ var ANCHORS_CK2 = [
     Pm: 1939.67, ratio: 0.6485, ck1: 'Subcritical', ck2Crit: false, QmaxPair: 10.3908, limiter: 'both', flowLimited: false,
     text: 'both subcritical (separator 1,500 psig, 32/64 + 40/64): joint limit, limiter both' },
   { id: 'bothPsep1500b32', inputs: { wts_Psep: '1500', wts_bean2: '32' }, rel: 0.005,
-    Pm: 2753.56, ratio: 0.9185, ck1: 'Subcritical', ck2Crit: true, QmaxPair: 8.8438, limiter: 'both', flowLimited: true,
-    text: 'equal beans at 1,500 psig separator: flow-limited, limiter both (neither choke critical at the pair capacity)' },
+    Pm: 2415.87, ratio: 0.8065, ck1: 'Subcritical', ck2Crit: false, QmaxPair: 8.8438, limiter: 'both', flowLimited: true, duty: 0.6523,
+    text: 'equal beans at 1,500 psig separator: flow-limited, limiter both (neither choke critical at the pair capacity; states at 8.84)' },
   { id: 'dryGas48', inputs: { wts_Qo: '0', wts_Qw: '0', wts_bean2: '48' }, rel: 0.005,
     Pm: 1030.25, ratio: 0.3467, ck1: 'Critical', QmaxPair: 10.7116, limiter: 'CK-101', flowLimited: false, dT1: 137.85, dT2: 12.15, dTsum: 150,
     TmOut: 29.998, duty: 1.7370, baseTin: 29.996, baseDuty: 1.7371, tolTinAbs: 0.5, tolDutyRel: 0.005,

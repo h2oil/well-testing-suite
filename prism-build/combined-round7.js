@@ -775,7 +775,12 @@ function create(flowIn, opts) {
   //              Psep (= the seg-5 inlet) / Tin / duty / chk and SS[2..4]; with H-101 out the block's 5 psi heater drop is left
   //              out of the choke outlet (segments not re-solved, §4.2)
   //   ck2        CK-102 in line (ck2Act) and a flow.ck2 block (V-101 in) or flow.sepBy.ck2 (V-101 out): CK-101 outlet, heater,
-  //              Tin (= CK-102 outlet), duty, chk (regimeBase keeps the CK-101-only regime) and SS[2..3] from the block
+  //              Tin (= the H-101 coil inlet, block heater.Tin: the CK-102 outlet 'inlet', the seg-3 outlet 'midcoil'), duty, chk
+  //              (regimeBase keeps the CK-101-only regime) and SS[2..3] from the block. A flow-limited block publishes its states
+  //              at the pair capacity (lf = QmaxPair / Qg, the rate that flows): its segment ΔP / velocity and the duty are put
+  //              back on the requested-rate basis the live laws scale with f (ΔP / lf², vel / lf, duty / lf), so the steady state
+  //              at f = lf is the block's own state (the fixed 5 psi H-101 drop scales with f² as in the base, a few psi low at
+  //              f = lf); pressures / temperatures at the CK-101 outlet and the regimes stand as published
   //   A skipped block (no gas rate) counts as none and leaves its note in SEL.ck2Note. WP-E1 / WP-E2 read SEL (ck2Derive,
   //   bypDerive) and never edit these lines. Phi_ss = the steady CK-102 outlet (base: the CK-101 outlet less the seg-3 loss).
   function pickSteadyBlock() {
@@ -804,14 +809,21 @@ function create(flowIn, opts) {
     }
     if (cb) {
       var k1 = plain(cb.ck1), cn = plain(cb.nodes), cnh = plain(cn.heater), cnk = plain(cn.heaterChoke), chh = plain(cb.heater);
+      var lf = cb.flowLimited === true && Qg > 0 ? clamp(num(cb.QmaxMMscfd, Qg) / Qg, 1e-6, 1) : 1, l2 = lf * lf;
       Pck_ss = num(k1.Pout, Pck_ss); Tck_ss = num(k1.Tout, Tck_ss);
-      Ph_ss = num(cnh.P, Ph_ss); Th_ss = num(cnh.T, Th_ss);
-      Tin_ss = num(cb.Tout, Tin_ss); duty_ss = mmax(0, num(chh.dutyMMBtuHr, duty_ss));
+      Th_ss = num(cnh.T, Th_ss);
+      Tin_ss = num(chh.Tin, num(cb.Tout, Tin_ss)); duty_ss = mmax(0, num(chh.dutyMMBtuHr, duty_ss)) / lf;
       chk.regime = regimeOf(k1.regime) || chk.regime; chk.QmaxMMscfd = num(cb.QmaxMMscfd, chk.QmaxMMscfd);
       chk.flowLimited = !!cb.flowLimited; chk.wJT = num(k1.wJT, chk.wJT);
       b = Array.isArray(cb.segs) ? cb.segs : [];
-      for (i = 0; i < 2; i++) if (isPlainObj(b[i])) SS[2 + i] = segOf(b[i], 2 + i);
-      Phi_ss = num(cb.Pout, num(cnk.P, Ph_ss));
+      for (i = 0; i < 2; i++) if (isPlainObj(b[i])) {
+        var sg = segOf(b[i], 2 + i);
+        if (lf < 1) { sg.dP /= l2; sg.vel /= lf; }
+        SS[2 + i] = sg;
+      }
+      var PhB = num(cnh.P, Ph_ss), PiB = num(cb.Pout, num(cnk.P, PhB));
+      if (lf < 1) { Ph_ss = Psep_ss + SS[3].dP; Phi_ss = Ph_ss + (PiB - PhB); }   // the fixed 5 psi H-101 drop is a requested-rate value already (as the base)
+      else { Ph_ss = PhB; Phi_ss = PiB; }
     } else Phi_ss = Pck_ss - SS[2].dP;
     return S;
   }
@@ -2266,7 +2278,7 @@ function create(flowIn, opts) {
       else dP = ss.vel > 1e-9 ? ss.dP * (vel / ss.vel) * (vel / ss.vel) : 0;
       o.dP = dP;
       o.P0 = nodeP0[i];
-      o.Pout = i === 1 ? X.PB - dP : (i === 4 ? N.flare.Pline : mmax(o.P0 - dP, 0));
+      o.Pout = i === 1 ? X.PB - dP : (i === 4 ? (bypLine && SEL.sepByBlk !== null ? Pdn : N.flare.Pline) : mmax(o.P0 - dP, 0));   // line: the seg-5 value of v1.5.0 (the flare node idles)
       if (i === 1) o.Pout = mmax(o.Pout, 0);
       o.T0 = nodeT0[i]; o.Tout = nodeT1[i];
       o.hydR = ss.phase !== 'liquid' && o.T0 < Thyd(mmax(o.P0 + PSC, 15));
@@ -4028,10 +4040,10 @@ function create(flowIn, opts) {
   //   is continuous with today's law (the H-101 5 psi drop is not in the lag).
   //   Rules of this section (WP-E1):
   //   • CK2 is reassigned from the block on every derive() and holds no lag state. CK2.act = ck2Act && a usable block.
-  //   • Pm_ss = the block's CK-102 inlet (flow.ck2.Pin) at the requested rate. A 'No Flow' block (no feasible state at the
-  //     requested rate, §4.3-3) runs at its pair capacity (limFac = QmaxPair / Qg): its Pm_ss is set so that the critical
-  //     CK-102 law gives a CK-101 outlet Pm + seg-3 loss = Pci_ss − 0.5 (the infeasible edge, where the host's Illinois solve
-  //     clamps) at that rate.
+  //   • Pm_ss = the block's CK-102 inlet (flow.ck2.Pin). A flow-limited block (including 'No Flow' = no feasible state at the
+  //     requested rate, §4.3-3, a flag only) publishes it at the pair capacity (limFac = QmaxPair / Qg): Pm_ss is then put on
+  //     the requested-rate basis of the live law, so that ck2PmT at fi = limFac gives the block's Pin (critical CK-102: Pin + PSC
+  //     ∝ rate; subcritical: Phi + ΔP·fi²).
   //   • Live target PmT = max(Phi + (Pm_ss − Phi_ss)·fi², (Pm_ss + PSC)·fInst − PSC) (D11), capped so that the CK-101 outlet
   //     (PmT + the seg-3 loss) never exceeds the live CK-101 inlet X.PB (no reverse flow through CK-101). CK2.dPss = that ΔP at
   //     the steady flow fraction (limFac), so a 'steady' start (fuInit) is steady at t = 0 also for a flow-limited pair.
@@ -4043,7 +4055,7 @@ function create(flowIn, opts) {
   //   • Alarms only while CK2.act; released by quiet(Q_CK2) when CK-102 leaves the rig-up (ck2Rig) or drops out of line
   //     (heater bypass, H-101 out, block gone: ck2Derive).
   var CK2 = { act: false, Pm_ss: 0, Ph_ss: 0, dPss: 0, regime: '', bean: 0, b1: 0, pos: 'inlet', flowLimited: false, limiter: '',
-    Tin: 0, Tout: 0, noFlow: false, designP: 1440, note: '', Qmax: 0, pahFrac: 0.9 };
+    Tin: 0, Tout: 0, noFlow: false, designP: 1440, note: '', Qmax: 0, pahFrac: 0.9, rCrit: 0.55 };
   var CK2_NOBLOCK = 'no heater-choke data in this flow (in line, ΔP 0)';
   function ck2Lim(x) { return (x === 'CK-101' || x === 'CK-102' || x === 'both') ? x : ''; }
   // live CK-102 inlet target (psig) at the CK-102 outlet Phi and the flow fraction fi; capped so that the CK-101 outlet
@@ -4067,12 +4079,15 @@ function create(flowIn, opts) {
     CK2.bean = num(b.bean, 0); CK2.pos = b.pos === 'midcoil' ? 'midcoil' : 'inlet';
     CK2.noFlow = b.noFlow === true || b.regime === 'No Flow';
     CK2.regime = regimeOf(b.regime) || (CK2.noFlow ? 'No Flow' : 'Critical');
+    CK2.rCrit = clamp(num(isPlainObj(flow.choke) ? flow.choke.rCrit : NaN, 0.55), 0.2, 0.99);
     CK2.flowLimited = b.flowLimited === true || CK2.noFlow; CK2.limiter = ck2Lim(b.limiter);
     CK2.Qmax = mmax(0, num(b.QmaxMMscfd, chk.QmaxMMscfd));
     CK2.Tin = num(b.Tin, Tck_ss); CK2.Tout = num(b.Tout, Tin_ss);
-    var Pin = num(b.Pin, NaN), lf = limFac > 1e-9 ? limFac : 1e-9;
-    if (CK2.noFlow) CK2.Pm_ss = mmax(Phi_ss, (Pci_ss - 0.5 - SS[2].dP * lf * lf + PSC) / lf - PSC);
-    else CK2.Pm_ss = isNum(Pin) ? mmax(Phi_ss, Pin) : Phi_ss;
+    var Pin = num(b.Pin, NaN), lf = mmin(1, limFac > 1e-9 ? limFac : 1e-9), PiB = Psep_ss + (Phi_ss - Psep_ss) * lf * lf;
+    if (!isNum(Pin)) CK2.Pm_ss = Phi_ss;
+    else if (lf >= 1) CK2.Pm_ss = mmax(Phi_ss, Pin);
+    else if (CK2.regime === 'Subcritical') CK2.Pm_ss = Phi_ss + mmax(0, Pin - PiB) / (lf * lf);
+    else CK2.Pm_ss = mmax(Phi_ss, (Pin + PSC) / lf - PSC);
     // steady ΔP at the steady flow fraction (limFac; the separator at Psep_ss): fuInit's t = 0 value in 'steady' mode
     var fs = mmin(1, limFac), PhiS = Psep_ss + (Phi_ss - Psep_ss) * fs * fs;
     CK2.dPss = mmax(0, ck2PmT(PhiS, fs, Pci_ss) - PhiS);
@@ -4096,11 +4111,15 @@ function create(flowIn, opts) {
     var N = s.nodes, nk = N.heaterChoke, fi2 = X.fInst * X.fInst;
     var Phi = pDown() + (Phi_ss - Psep_ss) * fi2, dP = X.ck2dP > 0 ? X.ck2dP : 0;
     nk.active = true; nk.bypassed = false; nk.P = Phi; nk.Pin = Phi + X.ck2dP;
-    nk.Tin = Tamb + (CK2.Tin - Tamb) * X.theta;
+    // inlet: the live CK-101 outlet (N.choke.T, with the cushion offset when one flows) plus the steady seg-3 / pass-1 change
+    // (CK-102 inlet − CK-101 outlet of the block: ≈ 0 'inlet', the pass-1 heating 'midcoil') with the warm-up θ
+    nk.Tin = N.choke.T + (CK2.Tin - Tck_ss) * X.theta;
     var w = cushOn ? cushS.wJTe : chk.wJT;
     nk.dTjt = X.f < 0.01 ? 0 : mmax(0, mmin(150 - N.choke.dTjt, 0.07 * w * dP));
     nk.T = nk.Tin - nk.dTjt; hydOf(nk);
-    nk.regime = X.f < 0.01 ? 'No Flow' : CK2.regime; nk.bean = CK2.bean; nk.pos = CK2.pos;
+    // regime from the live ratio (absolute) against the critical ratio, as the CK-101 card reads it
+    var r2 = nk.Pin + PSC > 0 ? (nk.P + PSC) / (nk.Pin + PSC) : 1;
+    nk.regime = X.f < 0.01 ? 'No Flow' : (r2 <= CK2.rCrit + 1e-9 ? 'Critical' : 'Subcritical'); nk.bean = CK2.bean; nk.pos = CK2.pos;
     nk.flowLimited = CK2.flowLimited; nk.limiter = CK2.limiter; nk.QmaxMMscfd = CK2.Qmax; nk.designP_psig = CK2.designP; nk.note = '';
   }
   // alarm texts (§5.5; = tests/_wts-fu-shapes.js ALARM_TAGS / ALARM_TEXTS)
@@ -4223,18 +4242,21 @@ function create(flowIn, opts) {
   // (ft³/s) of the cushion mixture-rate fraction, and the P0-mismatch note
   var Bg5 = 0, bypMix = 0, bypNote = '';
   var SEPBY_MISMATCH = 'the destination of this flow differs from the engine setting; the flow block wins';
-  var SEPBY_SHUTIN = 'held at line pressure by NRV-501: close XV-501 to isolate';
+  var SEPBY_SHUTIN = 'held at line pressure by NRV-501: lower the line pressure below the PSHH-104 set point, or go to the burner line, to reset';
   // an integer with thousands separators (the alarm texts quote design pressures as "1,440 psig")
   function fmtK(v) { var s = mround(mabs(v)).toFixed(0), o = ''; while (s.length > 3) { o = ',' + s.slice(-3) + o; s = s.slice(0, -3); } return (v < 0 ? '-' : '') + s + o; }
   function uqK(v, cat) { return fmtHook ? uq(v, cat, 0) : fmtK(v) + IMPU[cat]; }
   MSG.PSHH_SEPBY = function (v) {
-    return 'PSHH-104: bypass path ' + uq(v, 'pressureG') + ' ≥ ' + rnd0(num(cfg.sep.bypass.pshhFrac, 0.9) * 100) + ' % of its ' +
+    return 'PSHH-104: bypass path ' + uqK(v, 'pressureG') + ' ≥ ' + rnd0(num(cfg.sep.bypass.pshhFrac, 0.9) * 100) + ' % of its ' +
       uqK(num(cfg.sep.bypass.designP_psig, 1440), 'pressureG') + ' design pressure — SDV-101 tripped';
   };
-  MSG.SEPBY_RATING = function () {
-    return 'Production line ' + uq(bypP0, 'pressureG') + ' plus line loss ' + uq(bypDP, 'pressure') + ' above the bypass-path design pressure; a blocked outlet is not simulated';
+  // v = the bypass-path pressure at the choke outlet (CK-101, or CK-102 while it is in line), l = the design pressure
+  MSG.SEPBY_RATING = function (v, l) {
+    return 'Bypass path ' + uqK(v, 'pressureG') + ' at the choke outlet (production line ' + uqK(bypP0, 'pressureG') + ' plus line loss ' +
+      uq(mmax(0, v - bypP0), 'pressure', 1) + ') above its ' + uqK(l, 'pressureG') + ' design pressure; a blocked outlet is not simulated';
   };
-  MSG.CUSH_LIMIT = function (v, l) { return 'CK-101 bean limits the cushion unload: ' + fmtK(v) + ' of ' + fmtK(l) + ' bbl/d (liquid orifice law across the choke ΔP)'; };
+  function uqL(v) { return fmtHook ? uq(v, 'liquidRate', 0) : fmtK(v) + ' bbl/d'; }   // liquid rates in the alarm texts (Metric mode)
+  MSG.CUSH_LIMIT = function (v, l) { return 'CK-101 bean limits the cushion unload: ' + (fmtHook ? uq(v, 'liquidRate', 0) : fmtK(v)) + ' of ' + uqL(l) + ' (liquid orifice law across the choke ΔP)'; };
   MSG.CUSH_NOLIFT = function (v, l) {
     return 'WH-101: the well cannot lift the cushion — column WHP ' + uq(v, 'pressureG') + ' at or below ' + uq(l, 'pressureG') +
       ' (back pressure + ' + rnd0(cushS.stallM) + ' psi); well dead (nitrogen lift / swab not modelled)';
@@ -4243,7 +4265,7 @@ function create(flowIn, opts) {
     return cushS.SG >= cushS.burnerSG ? 'Water / brine cushion to the burner: flame-out and fallout — put V-101 in (liquids to the tanks) or route to a production line'
       : 'Oil / diesel cushion to the burner: liquid fallout and burning liquid without an atomising burner (not modelled) — put V-101 in or route to a production line';
   };
-  MSG.CUSH_DUMP = function (v, l) { return 'V-101 water dump passes ' + fmtK(l) + ' bbl/d: reduce the unload rate or route to the line'; };
+  MSG.CUSH_DUMP = function (v, l) { return 'V-101 water dump passes ' + uqL(l) + ': reduce the unload rate or route to the line'; };
   MSG.HTR_FULL = function (v, l) { return 'H-101 at full firing: outlet ' + uq(v, 'temperature') + ', set point ' + uq(l, 'temperature'); };
 
   // ── bypass destination (§6.2) ──
@@ -4267,8 +4289,8 @@ function create(flowIn, opts) {
   }
   function bypRefresh(s, fg) {
     var Nf = s.nodes.flare;
-    Nf.P = bypP0; Nf.Pline = pDown();             // the inlet pDown uses, and the same expression for the line (§6.2)
-    if (bypLine) Nf.flame = 0;                    // the destination label is the views' (snap.sepBy.dest; note (5))
+    if (bypLine) { Nf.P = bypF0; Nf.Pline = bypF0; Nf.flame = 0; }   // FS-401 idle at its burner-header value: the line pressure is
+    else { Nf.P = bypP0; Nf.Pline = pDown(); }    // snap.sepBy.P0_psig (the views' destination row; note (5)); flare: the inlet pDown uses
     s.sepBy.note = bypLine && shut ? SEPBY_SHUTIN : bypNote;
   }
   // flare-node gas with V-101 out to a production line: the well stream goes to the line; with FS-401 out too the relief and
@@ -4280,9 +4302,12 @@ function create(flowIn, opts) {
     var Ph = pDown() + (Ph_ss - Psep_ss) * X.fInst * X.fInst;   // H-101 outlet / seg-4 inlet (PSHH-104 on the bypass path)
     A = aDef('PSHH_SEPBY', 'PSHH-104', 'trip', 'separator', 'p');
     evalA(A, Ph >= lim, Ph < 0.99 * lim, Ph, lim, MSG.PSHH_SEPBY, false);
-    var bad = bypLine && bypP0 + bypDP > dP;
+    // rating at the highest pressure of the bypass path: the choke outlet (CK-102's while it is in line, else CK-101's), i.e. the
+    // line pressure plus the whole line loss up to the choke
+    var fi2 = X.fInst * X.fInst, Pdn = pDown(), Pbp = CK2.act ? Pdn + (Phi_ss - Psep_ss) * fi2 : pckLive(Pdn, fi2);
+    var bad = bypLine && Pbp > dP;
     A = aDef('SEPBY_RATING', 'V-101', 'warn', 'separator', 'p');
-    evalA(A, bad, !bad, bypP0 + bypDP, dP, MSG.SEPBY_RATING, false);
+    evalA(A, bad, !bad, Pbp, dP, MSG.SEPBY_RATING, false);
   }
 
   // ── cushion unload (§6.3) ──
@@ -10185,7 +10210,7 @@ var CSS = [
 '.wtsl-kv{display:grid;grid-template-columns:1fr 1fr;gap:6px 12px}',
 '.wtsl-kv div{min-width:0}.wtsl-kv .l{font:600 9.5px/1.2 system-ui;letter-spacing:.6px;text-transform:uppercase;color:#6e7681}',
 '.wtsl-kv .v{font:600 13.5px/1.3 var(--hmi-mono);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
-'.wtsl-kv .v.p{color:#f0883e}.wtsl-kv .v.t{color:#58a6ff}.wtsl-kv .d{font:500 10px/1.2 var(--hmi-mono);color:#6e7681;white-space:nowrap}',
+'.wtsl-kv .v.w{white-space:normal;font-size:12px}.wtsl-kv .v.p{color:#f0883e}.wtsl-kv .v.t{color:#58a6ff}.wtsl-kv .d{font:500 10px/1.2 var(--hmi-mono);color:#6e7681;white-space:nowrap}',
 '.wtsl-sk{display:block;width:100%;height:56px;border-radius:6px;background:rgba(1,4,9,.55)}',
 '.wtsl-skl{display:flex;justify-content:space-between;font:10px/1.2 system-ui;color:#6e7681;margin-top:-4px}',
 '.wtsl-sh{font:700 9.5px/1 system-ui;letter-spacing:.8px;text-transform:uppercase;color:#6e7681;margin-bottom:-3px}',
@@ -10303,6 +10328,7 @@ var CSS = [
 '.wtsl-cush-units{margin:0 0 8px;color:#8b949e;font-size:11px;font-style:italic}',
 '.wtsl-cush-f{display:grid;grid-template-columns:minmax(0,1fr) 150px;gap:6px 10px;align-items:center}',
 '.wtsl-cush-f label{color:#c9d1d9;font-size:12.5px}',
+'.wtsl-cush-f select{grid-column:1 / -1}',   // the tubing labels are long: the select takes the whole row (review round)
 '.wtsl-cush-f input,.wtsl-cush-f select{height:30px;box-sizing:border-box;width:100%;padding:0 8px;border-radius:6px;border:1px solid #30363d;background:#161b22;color:#e6edf3;font:inherit;font-size:13px}',
 '.wtsl-cush-st{margin:10px 0 0;padding:6px 8px;border-radius:6px;background:rgba(56,139,253,.1);color:#c9d1d9;font-size:12px}',
 '.wtsl-cush-st:empty{display:none}',
@@ -11918,7 +11944,7 @@ function createController(vizEl, mopts) {
                     ['Downstream P', function (s) { return P(K(s).P); }, 'p'],
                     ['Regime', function (s) { var c = K(s); return (c.flowLimited ? 'LIMITED · ' : '') + String(c.regime || '—').toUpperCase(); }, ''],
                     ['Bean', function (s) { var c = K(s); return isNum(c.bean) && c.bean > 0 ? c.bean + '/64″' : '—'; }, ''],
-                    ['Position', function (s) { return K(s).pos === 'midcoil' ? 'Between the coil passes' : 'On the heater inlet'; }, ''],
+                    ['Position', function (s) { return K(s).pos === 'midcoil' ? 'Between the coil passes' : 'On the heater inlet'; }, 'w'],
                     ['ΔP', function (s) { var c = K(s); return fmtU(num(c.Pin, NaN) - num(c.P, NaN), 'pressure'); }, 'p'],
                     ['J-T ΔT', function (s) { var v = K(s).dTjt; return isNum(v) ? fmtU(v, 'tempDelta', 1) : '—'; }, 't'],
                     ['Outlet T', function (s) { return T(K(s).T); }, 't', function (s) { var c = K(s); return isNum(c.Tin) ? 'inlet ' + T(c.Tin) : null; }],
@@ -12823,6 +12849,9 @@ function createController(vizEl, mopts) {
             var sb = st.sepBy || {};
             // (with a seg-3 hydrate mark, ❄ at x ≈ 613 cy + 31…42, the label moves right so it starts after x 620)
             var hy3 = !!(st.segs && st.segs[3] && st.segs[3].hydR);
+            // the separator P / T block and its liquid labels under the vessel are stale while it is bypassed: covered (as the 3D chip
+            // shows BYPASSED), so the destination label has its own row there (review round: it overlapped them)
+            ctx.save(); ctx.fillStyle = 'rgba(13,17,23,.96)'; ctx.fillRect(tx[4] - 62, cy + 30, 124, 30); ctx.restore();
             if (sb.dest === 'line') bypass([[tx[4] - 34, cy], [tx[4] + 34, cy]], 'BYPASSED → PRODUCTION LINE (' + pStr(sb.P_psig) + ' psig) · NRV-501 / XV-501', tx[4] + (hy3 ? 60 : 0), cy + 40);
             else bypass([[tx[4] - 34, cy], [tx[4] + 34, cy]], 'BYPASSED → BURNER LINE', tx[4], cy + 27);
             // PSHH-104 on the bypass path (D16: trips SDV-101), tagged while V-101 is out
@@ -13080,6 +13109,14 @@ function createController(vizEl, mopts) {
         CUSH_FIELDS.forEach(function (x) { var el = q('#' + cushFieldId(x[0]), ov); var v = el ? parseFloat(el.value) : NaN; if (isNum(v)) raw[x[0]] = v; });
         var sel = q('#wtsl_cush_tbg', ov); if (sel) raw.tbg = sel.value;
         var c = cushionPrefs(raw);
+        // review round: say which values were changed to fit the scenario's ranges (shown under the form on Start)
+        var lim = cushionDefs().lim;
+        E.cushNotes = [];
+        CUSH_FIELDS.forEach(function (x) {
+            var el = q('#' + cushFieldId(x[0]), ov), txt = el ? String(el.value).trim() : '', v = parseFloat(txt), m = /^(.*?) \((.*)\)$/.exec(x[1]), L = lim[x[0]] || [x[2], x[3]];
+            if (txt !== '' && (!isNum(v) || Math.abs(v - c[x[0]]) > 1e-9))
+                E.cushNotes.push((m ? m[1] : x[1]) + ' set to ' + c[x[0]] + (m ? ' ' + m[2] : '') + ' (range ' + L[0] + '–' + L[1] + ')');
+        });
         prefs.cushion = c; writePrefs(prefs);
         if (reflect !== false) {
             CUSH_FIELDS.forEach(function (x) { var el = q('#' + cushFieldId(x[0]), ov); if (el && parseFloat(el.value) !== c[x[0]]) el.value = String(c[x[0]]); });
@@ -13113,8 +13150,8 @@ function createController(vizEl, mopts) {
         var c = cushSave(true), r = null;
         try { r = _sim.startCushion(cushionOpts(c)); } catch (e) { r = { ok: false, msg: String(e && e.message || e) }; }
         r = r || { ok: false, msg: '' };
-        var w = E.cush ? q('#wtsl_cush_warn', E.cush) : null;
-        setText(w, r.ok ? String(r.warn || '') : String(r.msg || 'Cushion unload refused'));
+        var w = E.cush ? q('#wtsl_cush_warn', E.cush) : null, notes = (E.cushNotes || []).join(' · ');
+        setText(w, (notes ? notes + (r.ok && !r.warn ? '' : ' · ') : '') + (r.ok ? String(r.warn || '') : String(r.msg || 'Cushion unload refused')));
         if (r.ok) toast(String(r.msg || 'Cushion unload started') + (r.warn ? ' — ' + r.warn : ''), r.warn ? 'bad' : 'ok');
         else toast('Cushion unload: ' + String(r.msg || 'refused'), 'bad');
         track('wts_cushion', {});   // no payload (analytics allow list)

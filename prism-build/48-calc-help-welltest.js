@@ -12,7 +12,7 @@ var V = 'v3.3.2', CALC = 'The page also updates on every change.';
 return { guides: {
 
 wts: {
-  route: 'wts', reviewed: V, reviewedSrc: 'dee91a2e', units: 'dual',
+  route: 'wts', reviewed: V, reviewedSrc: 'ac541233', units: 'dual',
   keywords: ['simulator', 'training', 'rig-up', 'alarm', 'trip', 'surge tank', 'gauge tank', 'production pressure', 'burner', 'desander', 'sand', 'T-202', 'heater choke', 'CK-102', 'cushion', 'production line'],
   notDocumented: [{ pattern: '^wts_(nps|sch|len)[1-6]$', why: 'Pipe Segments table (Form inputs part)' },
     { pattern: '^wtsl_cush_', why: 'Cushion unload dialog (device prefs)' }],
@@ -133,7 +133,7 @@ wts: {
         '**Auto route** switches at the high level; after a dry-run trip, **Reset LCV-202**.'],
       tips: ['LSHH-202 shuts XV-202 only: on T-202 alone LSHH-102 then trips the ESD.'] },
     { id: 'ck2', title: 'CK-102 heater inlet choke',
-      steps: ['Switch **Heater inlet choke** in, in **Rig-up** (H-101 must be in).', 'Set **Heater choke CK-102 bean** and **CK-102 position** in the Heater card.', 'Its card: pressure between the chokes (PAH-102 at 90 % of {{1440|pressureG}}), pair capacity, limiter; [[course#ex11|exercise 11]].'] },
+      steps: ['Switch **Heater inlet choke** in, in **Rig-up** (H-101 must be in).', 'Set **Heater choke CK-102 bean** and **CK-102 position** in the Heater card.', 'Its card: pressure between the chokes (PAH-102 at 90 % of an assumed {{1440|pressureG}}: on from 44/64 down), pair capacity, limiter; [[course#ex11|exercise 11]].'] },
     { id: 'alarms', title: 'Alarms and ESD',
       steps: ['The alarm bar shows the newest alarm: select **Ack**.', 'Select **Alarms**: alarms with time and tag, steady design warnings, **Events**. **Ack all** acknowledges all.', 'After a trip the banner shows the cause. **Reset ESD** works once no trip alarm is active.'],
       tips: ['Every trip closes SDV-101 (5 s; 15 s to open, then 180 s grace), except LSHH-301, LSHH-202 and the LCV-201 / LCV-202 low-low. PSHH-103 and PSHH-104 trip it too.', 'Shut in, WHP builds towards 1.2 × WHP (time constant 300 s).', 'Separator set points follow **Operating Pressure**: PAH = SP + max(10 %, {{15|pressure}}), PSHH = SP + max(20 %, {{25|pressure}}). Live with V-101 out too.'] },

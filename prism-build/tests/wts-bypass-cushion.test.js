@@ -82,9 +82,21 @@ const HOST = [
       assert.ok(sc.choke.regime === 'Subcritical' && warnHas(sc, X.WARN_TEXTS.sepBySubcrit) && !warnHas(sc, X.WARN_TEXTS.sepByNoFlow), 'subcritical: ' + JSON.stringify(sc.warnings));
       // production line plus the line loss above the bypass-path design pressure
       const rt = flowOf(LINE(1440)).flow.sepBy;
-      assert.ok(warnHas(rt, X.WARN_TEXTS.sepByRating) && rt.warnings.some((w) => /^Production line 1,440 psig plus line loss \d+ psi/.test(w.msg)), 'rating: ' + JSON.stringify(rt.warnings));
-      assert.ok(!warnHas(flowOf(LINE(300)).flow.sepBy, X.WARN_TEXTS.sepByRating) && flowOf({}).flow.sepBy.warnings.length === 0, 'no warnings at the defaults / line 300');
-      const all = Object.keys(X.WARN_TEXTS).map((k) => X.textRe(X.WARN_TEXTS[k]));
+      // review round: the rating is at the CK-101 outlet (line + the whole loss to the choke, 1 dp), and PSHH-104 is named on the page
+      assert.ok(warnHas(rt, X.WARN_TEXTS.sepByRating) && rt.warnings.some((w) => /^Bypass path 1,44\d psig at the CK-101 outlet \(production line 1,440 psig plus line loss [1-9]\d*\.\d psi\)/.test(w.msg)), 'rating: ' + JSON.stringify(rt.warnings));
+      assert.ok(Math.abs(rt.choke.Pout - 1440 - 5.6) < 0.5, 'CK-101 outlet ≈ 1,445.6 psig at line 1,440: ' + rt.choke.Pout);
+      [[1290, false], [1300, true], [1440, true], [300, false]].forEach(([P, on]) => {
+        const w = flowOf(LINE(P)).flow.sepBy;
+        assert.strictEqual(warnHas(w, X.WARN_TEXTS.sepByPshh), on, 'PSHH-104 page warning at line ' + P + ' psig: ' + JSON.stringify(w.warnings));
+      });
+      assert.ok(!warnHas(flowOf(LINE(300)).flow.sepBy, X.WARN_TEXTS.sepByRating) && flowOf(LINE(300)).flow.sepBy.warnings.length === 0, 'no warnings at line 300');
+      // the burner line at the defaults: the whole stream runs above the erosional velocity on seg 4 and seg 5 (review round), so the
+      // block carries exactly the segment velocity warnings in the base text form (the engine raises VEL_* live)
+      const dw = flowOf({}).flow.sepBy;
+      const vel = dw.warnings.filter((w) => X.textRe(X.WARN_TEXTS.segVelExceed).test(w.msg) || X.textRe(X.WARN_TEXTS.segVelWarn).test(w.msg));
+      assert.ok(vel.length === dw.warnings.length && dw.segs.filter((g) => g.vSt !== 'OK').length === vel.length, 'defaults: velocity warnings only ' + JSON.stringify(dw.warnings));
+      ['Heater→Sep', 'Sep→Flare'].forEach((nm) => assert.ok(dw.warnings.some((w) => w.t === 'error' && w.msg.indexOf(nm + ': Velocity ') === 0 && /EXCEEDS erosional limit/.test(w.msg)), nm + ' EXCEED'));
+      const all = Object.keys(X.WARN_TEXTS).filter((k) => !/^segVel/.test(k)).map((k) => X.textRe(X.WARN_TEXTS[k]));
       assert.ok(!flowOf(mix(LINE(1400), { wts_Pwh: '500' })).flow.warnings.some((w) => all.some((re) => re.test(w.m))), 'the base warnings carry none of the new texts');
     },
   },
@@ -103,7 +115,7 @@ const HOST = [
       assert.ok(!/Surge tank pressure too close to separator pressure/.test(warn), 'surge-vs-separator warning hidden while V-101 is out');
       const rl = C.run(mix(BASE, LINE(1440)));
       assert.ok(rl.page.res.indexOf('>' + X.LABELS.nodeRowLine + '</td>') >= 0 && /to production line/.test(rl.page.res), 'production-line row (calc keeps the last rig-up)');
-      assert.ok(/Production line 1,440 psig plus line loss/.test(rl.page.warn), 'rating warning shown');
+      assert.ok(/Bypass path 1,44\d psig at the CK-101 outlet \(production line 1,440 psig plus line loss/.test(rl.page.warn) && /PSHH-104 trips SDV-101 at 1,296 psig/.test(rl.page.warn), 'rating and PSHH-104 warnings shown');
       W.wtsRenderResults(rl.flow, J(X.RIG_DEFAULTS));
       const g = GOLD.loadGolden().sets[0].page;
       assert.ok($('wts_res').innerHTML === g.res && $('wts_warn').innerHTML === g.warn, 'V-101 back in: the v3.3.1 page');
@@ -220,7 +232,10 @@ const ENGINE = [
       // production line 300 psig: choke outlet follows 300 + the line loss, flame 0, totals to the line, FS-401 may be out
       const c = mk(S, sepByFlow(S, 'line', 300), { rigup: { separator: false } });
       st = c.getState();
-      assert.ok(Math.abs(st.nodes.flare.Pline - (300 + ex.segs[2].dP)) < 1e-6, 'line: pDown = 300 + loss');
+      // review round: FS-401 idles at its burner-header value while the stream goes to the line (the line P is snap.sepBy.P0_psig);
+      // seg 5 (V-101 position → the line) keeps the pDown value
+      assert.ok(Math.abs(st.segs[4].Pout - (300 + ex.segs[2].dP)) < 1e-6, 'line: pDown = 300 + loss');
+      assert.ok(st.nodes.flare.Pline <= 10 && st.nodes.flare.P <= 10 && st.sepBy.P0_psig === 300, 'line: FS-401 idle, not at the line pressure ' + st.nodes.flare.Pline);
       assert.ok(Math.abs(st.nodes.choke.P - (300 + ex.segs[2].dP + ex.nodes.choke.P - ex.nodes.sep.P)) < 0.05, 'choke outlet from the line pressure ' + st.nodes.choke.P);
       run(c, 900, 10);
       st = c.getState();
@@ -287,7 +302,7 @@ const ENGINE = [
       const f = mk(S, sepByFlow(S, 'line', 300), { rigup: { separator: false } });
       run(f, 120, 10); f.tripESD('test'); run(f, 900, 10);
       st = f.getState();
-      assert.ok(Math.abs(st.nodes.esd.P - 300) < 1 && st.sepBy.note === 'held at line pressure by NRV-501: close XV-501 to isolate', 'manual shut-in ' + st.nodes.esd.P);
+      assert.ok(Math.abs(st.nodes.esd.P - 300) < 1 && st.sepBy.note === X.RIG_NOTES.shutInLine, 'manual shut-in ' + st.nodes.esd.P);
     },
   },
   {
@@ -443,7 +458,7 @@ const ENGINE = [
       balanced(assert, st, 'cushion to the line');
       // with a block, pDown follows the mixture-rate fraction while the cushion flows (the liquid line loss, §6.2)
       const fu = bl._internal().fu, ex = X.EXAMPLES.flowSepBy;
-      assert.ok(fu.cushFm > 0.05 && Math.abs(st.nodes.flare.Pline - (300 + ex.segs[2].dP * fu.cushFm * fu.cushFm)) < 1e-6, 'pDown with cushFm ' + fu.cushFm);
+      assert.ok(fu.cushFm > 0.05 && Math.abs(st.segs[4].Pout - (300 + ex.segs[2].dP * fu.cushFm * fu.cushFm)) < 1e-6 && st.nodes.flare.Pline <= 10, 'pDown with cushFm ' + fu.cushFm);
       // V-101 in at the defaults: the start warning, CUSH_DUMP, the water level rises (LAH acts); Cv_w as sized throughout
       const v = mk(S), cv0 = v._internal().Cv.w;
       run(v, 300, 10);

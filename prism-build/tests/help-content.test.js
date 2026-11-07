@@ -30,9 +30,9 @@ const CONTENT_FILES = ['start', 'overview', 'metering', 'welltest', 'simcourse',
 const KB = 1000;
 const CAPS = {
   '49-calc-help.js': 48, '49-calc-help-print.js': 16, '48-calc-help-start.js': 17.5, '48-calc-help-overview.js': 10.5,
-  '48-calc-help-metering.js': 27.7, '48-calc-help-welltest.js': 38.3, '48-calc-help-production.js': 33.5, '48-calc-help-livedata.js': 16.1,
+  '48-calc-help-metering.js': 27.7, '48-calc-help-welltest.js': 37.6, '48-calc-help-production.js': 33.5, '48-calc-help-livedata.js': 16.1,
   '48-calc-help-safety.js': 35.6, '48-calc-help-process.js': 20.1, '48-calc-help-flare.js': 12.1, '48-calc-help-utilities.js': 20.1,
-  '48-calc-help-simcourse.js': 40.8, '48-calc-help-manifest.js': 8.7,
+  '48-calc-help-simcourse.js': 41.5, '48-calc-help-manifest.js': 8.7,
 };
 // Owner decision (Q13, option 1, 2026-11-06): the v3.3.2 Help allocation is 345 kB raw and 120 kB gzip (was 330 / 90). Every
 // per-file cap rises by about 5 %; welltest (+4 kB) and simcourse (+1 kB) also carry the v3.3.1 DS-101 / T-202 content. The caps
@@ -41,6 +41,8 @@ const CAPS = {
 // Simulator follow-up WP-HC (lead, 2026-11-07): 4.3 kB of unused headroom moved from metering (1.3), safety (1.4), livedata, process,
 // flare and utilities (0.4 each) to welltest (+2.3: CK-102, destination and cushion inputs, verdicts, two parts) and simcourse (+1.8:
 // FS-1 / FS-2 proper procedures, FS-4 staging, exercise 11) and the manifest module (+0.2: three shots); the sum stays 345 kB.
+// Review round (lead, WP-I): 0.7 kB of welltest's unused headroom to simcourse (FS-1 values as measured and the velocity alarms after
+// breakthrough, FS-2 PSHH-104 line limit, exercise 11 pair-capacity value and the expected PAH-102 / blocked-in warnings); sum unchanged.
 const SUM_CAP = 345 * KB, GZIP_CAP = 120 * KB;
 const NOT_ROUTES = ['gaevents', 'dca', 'pta'];
 const OVERVIEW = ['home', 'help', 'clientinfo', 'wells', 'privacy', 'releasenotes'];

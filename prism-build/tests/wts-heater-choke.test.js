@@ -48,7 +48,8 @@ const HOST = [
         if (a.limiter) assert.strictEqual(k.limiter, a.limiter, tag + ' limiter');
         if (typeof a.flowLimited === 'boolean') assert.strictEqual(k.flowLimited, a.flowLimited, tag + ' flow-limited');
         if (typeof a.noFlow === 'boolean') assert.strictEqual(k.noFlow, a.noFlow, tag + ' noFlow');
-        if (a.noFlow) assert.strictEqual(k.regime, 'No Flow', tag + ' regime No Flow');
+        if (a.regime) assert.strictEqual(k.regime, a.regime, tag + ' regime (at the pair capacity when flow-limited)');
+        if (a.flowLimited) assert.ok(Math.abs(k.nodes.choke.P - k.nodes.heaterChoke.Pin - k.segs[0].dP) < 1e-6 && k.nodes.choke.P < k.ck1.Pout + 1e-9 && k.Pin < 3000, tag + ': one physical state (at QmaxPair) — Pm below the CK-101 inlet');
         assert.ok(k.bean === +a.inputs.wts_bean2 && k.Cd === 0.85 && k.designP_psig === X.DESIGN_P_CK2, tag + ' bean / Cd / design P');
       });
       // the CK-102 node chain is consistent: CK-101 outlet = CK-102 inlet + the seg-3 loss; CK-102 outlet = heater outlet + 5 psi
@@ -258,17 +259,27 @@ const A = {}; X.ANCHORS_CK2.forEach((a) => { A[a.id] = a; });
 // ── flow.ck2 blocks from the anchors (the example block at 48/64 inlet; other numbers consistent with §4.3 at the defaults) ──
 function block(id, edit) {
   const b = X.EXAMPLES.flowCk2, a = A[id] || {};
+  // review round: a flow-limited block stands at the pair capacity (the host walk at QmaxPair: segments, heater, duty, nodes)
+  const atQ = (P, Phi, Tin, dT2, Tco2, dT1, s3, s4, duty) => {
+    Object.assign(b, { QmaxMMscfd: a.QmaxPair, Pin: P.Pm, Pout: Phi, dP: P.Pm - Phi, Tin, dTjt: dT2, Tout: Tin - dT2 });
+    Object.assign(b.ck1, { Pout: P.Pco2, ratio: a.ratio, QmaxMMscfd: a.QmaxPair, Tout: Tco2, dTjt: dT1 });
+    b.nodes.choke = { P: P.Pco2, T: Tco2 }; Object.assign(b.nodes.heaterChoke, { P: Phi, Pin: P.Pm, T: Tin - dT2, Tin });
+    Object.assign(b.nodes.heater, { P: Phi - 5, Tin: Tin - dT2, duty }); Object.assign(b.heater, { dutyMMBtuHr: duty, Tin: Tin - dT2 });
+    Object.assign(b.segs[0], { dP: s3[0], vel: s3[1], P0: P.Pco2, Pout: P.Pm }); Object.assign(b.segs[1], { dP: s4[0], vel: s4[1], P0: Phi - 5 });
+  };
   if (id === 'bean32') {
-    Object.assign(b, { bean: 32, regime: 'Critical', flowLimited: true, limiter: 'CK-102', QmaxMMscfd: a.QmaxPair, Pin: a.Pm, dP: a.Pm - b.Pout,
-      Tin: 170.4, dTjt: 101.7 });
-    Object.assign(b.ck1, { regime: 'Subcritical', Pout: a.Pm + 0.25, ratio: a.ratio, QmaxMMscfd: a.QmaxPair, Tout: 170.4, dTjt: 9.6 });
-    b.nodes.choke = { P: a.Pm + 0.25, T: 170.4 }; b.nodes.heaterChoke.Pin = a.Pm; b.nodes.heaterChoke.Tin = 170.4;
+    Object.assign(b, { bean: 32, regime: 'Critical', flowLimited: true, limiter: 'CK-102' }); b.ck1.regime = 'Subcritical';
+    atQ({ Pm: a.Pm, Pco2: a.Pco2 }, 155.8065, 156.6003, 87.9293, 156.6006, 23.3972, [0.1089316, 3.574155], [0.8064856, 52.9232], 1.877463);
   } else if (id === 'bean40') {
     Object.assign(b, { bean: 40, regime: 'Critical', flowLimited: false, limiter: 'CK-102', QmaxMMscfd: a.QmaxPair, Pin: a.Pm, dP: a.Pm - b.Pout, Tin: a.Tco2 });
     Object.assign(b.ck1, { regime: 'Subcritical', Pout: a.Pm + 0.25, ratio: a.ratio, QmaxMMscfd: a.QmaxPair, Tout: a.Tco2 });
-  } else if (id === 'bean4' || id === 'bean24') {
-    Object.assign(b, { bean: id === 'bean4' ? 4 : 24, regime: 'No Flow', noFlow: true, flowLimited: true, limiter: 'CK-102', QmaxMMscfd: a.QmaxPair, Pin: 2998.76, dP: 2842.75 });
-    Object.assign(b.ck1, { regime: 'Subcritical', Pout: 2998.76, ratio: 0.9998, QmaxMMscfd: a.QmaxPair });
+  } else if (id === 'bean24') {
+    Object.assign(b, { bean: 24, regime: 'Critical', noFlow: true, flowLimited: true, limiter: 'CK-102' }); b.ck1.regime = 'Subcritical';
+    atQ({ Pm: a.Pm, Pco2: a.Pco2 }, 155.3396, 172.0225, 103.3723, 172.0227, 7.975137, [0.04173572, 2.0818], [0.3396406, 33.88292], 1.198877);
+  } else if (id === 'bean4') {
+    Object.assign(b, { bean: 4, regime: 'No Flow', noFlow: true, flowLimited: true, limiter: 'CK-102' }); b.ck1.regime = 'No Flow';
+    atQ({ Pm: 2998.892, Pco2: 2998.892 }, 155.0005, 179.9832, 111.3477, 179.9832, 0.0146, [0.00006231801, 0.05889386], [0.0005278548, 0.9977022], 0.03523463);
+    b.ck1.QmaxMMscfd = 0;
   } else if (id === 'bean48mid') {
     Object.assign(b, { pos: 'midcoil', Tin: a.TmIn, Tout: a.TmOut });
   }
@@ -380,9 +391,14 @@ const ENGINE = [
       assert.ok(sub && sub.sev === 'warn' && sub.tag === 'CK-101' && sub.eq === 'choke' && sub.msg === X.ALARM_TEXTS.CK1_SUBCRIT, 'CK1_SUBCRIT ' + JSON.stringify(sub));
       assert.near(st.f, A.bean32.QmaxPair / 10, 0.002, 'rate at the pair capacity');
       assert.ok(st.nodes.heaterChoke.flowLimited && st.nodes.heaterChoke.limiter === 'CK-102' && st.nodes.choke.regime === 'Subcritical', 'node flags');
-      // flow-limited rate, critical CK-102: Pm = max(Phi + (Pm_ss − Phi_ss)·f², (Pm_ss + 14.696)·f − 14.696)
-      const f = st.fInst, nk = st.nodes.heaterChoke, PmT = Math.max(nk.P + (A.bean32.Pm - X.EXAMPLES.flowCk2.Pout) * f * f, (A.bean32.Pm + 14.696) * f - 14.696);
-      assert.near(nk.Pin, PmT, 0.5, 'live Pm at the limited rate');
+      // review round: the block stands at the pair capacity, so the live steady state at f = QmaxPair / Qg is the block's own state
+      // (one value on the page and live): Pm, the CK-102 outlet, the CK-101 outlet = Pm + the seg-3 loss, the heater duty
+      const nk = st.nodes.heaterChoke, bk = block('bean32');
+      assert.near(nk.Pin, A.bean32.Pm, 1.0, 'live Pm at the limited rate = the block (2,402 psig at 8.92)');
+      assert.near(nk.P, bk.Pout - 5 * (1 - st.fInst * st.fInst), 0.05, 'live CK-102 outlet = the block, less the fixed 5 psi H-101 drop scaled with f² (as the base)');
+      assert.near(st.nodes.choke.P, bk.ck1.Pout, 1.0, 'live CK-101 outlet = the block');
+      assert.near(st.nodes.heater.dutyMMBtuHr, bk.heater.dutyMMBtuHr, 0.02, 'live duty = the block duty at the pair capacity');
+      assert.ok(nk.regime === 'Critical' && Math.abs(st.nodes.choke.T - bk.ck1.Tout) < 0.5 && Math.abs(nk.Tin - bk.Tin) < 0.5, 'CK-102 regime / temperatures of the block');
       // the CK-101-only walk subcritical: no CK1_SUBCRIT
       const s2 = mk(S, flowWith(S, block('bean32'), (fl) => { fl.choke.regime = 'Subcritical'; }));
       adv(s2, 30, 1);
@@ -478,10 +494,14 @@ const ENGINE = [
       const s = mk(S, flowWith(S, block('bean48')));
       adv(s, 300, 1);
       assert.ok(ids(s.getState()).indexOf('PAH_CK2') < 0, 'no PAH-102 at 48/64');
-      const p0 = s.getState().nodes.choke.P;
-      s.setFlow(flowWith(S, block('bean24')));                      // bean2 24/64: setHostInput → calcWTS → setFlow
+      const p0 = s.getState().nodes.choke.P, b48 = block('bean48'), b24 = block('bean24');
+      s.setFlow(flowWith(S, b24));                                  // bean2 24/64: setHostInput → calcWTS → setFlow
       const st0 = s.getState();
-      assert.near(st0.nodes.choke.P, p0, 0.01, 'no step at the bean change (the ΔP lag holds)');
+      // the ΔP lag holds; the only change is the re-solved seg 3 / seg 4 of the new block (stated at its pair capacity, put back on
+      // the requested-rate basis: ΔP / lf²) at the flow fraction of the moment
+      const l2 = Math.pow(A.bean24.QmaxPair / 10, 2), fi2 = st0.fInst * st0.fInst;
+      const dS3 = fi2 * (b24.segs[0].dP / l2 - b48.segs[0].dP), dS4 = fi2 * (b24.segs[1].dP / l2 - (b48.nodes.heater.P - S.SAMPLE_FLOW.nodes[4].P));   // the old Ph − Psep came from the nodes
+      assert.near(st0.nodes.choke.P, p0 + dS3 + dS4, 0.01, 'no step at the bean change (the ΔP lag holds; seg 3 / 4 re-solved ' + (dS3 + dS4).toFixed(3) + ' psi)');
       let raised = -1;
       for (let t = 1; t <= 300; t++) {
         s.advance(1);
@@ -492,8 +512,11 @@ const ENGINE = [
       assert.ok(ids(st).indexOf('ESD_TRIPPED') < 0, 'no ESD');
       assert.match(pah.msg, X.textRe(X.ALARM_TEXTS.PAH_CK2_inlet), 'inlet text');
       assert.ok(pah.tag === 'PAH-102' && pah.value >= 0.9 * X.DESIGN_P_CK2 && pah.limit === 0.9 * X.DESIGN_P_CK2, 'value / limit');
-      assert.ok(nk.regime === 'No Flow' && nk.flowLimited && nk.limiter === 'CK-102', 'No Flow block');
-      assert.ok(nk.Pin <= st.nodes.choke.Pin + 1e-9 && nk.Pin > 0.95 * st.nodes.choke.Pin, 'Pm at the CK-101 inlet (infeasible edge), never above it: ' + nk.Pin + ' / ' + st.nodes.choke.Pin);
+      // review round: the No Flow block (no state at 10 MMscf/d) stands at its pair capacity 5.69: CK-102 critical there, live Pm =
+      // the block's Pm (2,796 psig, not the CK-101 inlet), CK-101 subcritical
+      assert.ok(nk.regime === 'Critical' && nk.flowLimited && nk.limiter === 'CK-102' && st.nodes.choke.regime === 'Subcritical', 'No Flow block at its pair capacity: ' + nk.regime);
+      assert.near(nk.Pin, A.bean24.Pm, 1.0, 'Pm = the block at the pair capacity');
+      assert.ok(nk.Pin <= st.nodes.choke.Pin + 1e-9, 'Pm never above the CK-101 inlet: ' + nk.Pin + ' / ' + st.nodes.choke.Pin);
       assert.ok(st.nodes.choke.P <= st.nodes.choke.Pin + 1e-9, 'CK-101 outlet (Pm + seg-3 loss) never above its inlet: ' + st.nodes.choke.P + ' / ' + st.nodes.choke.Pin);
       assert.near(st.f, A.bean24.QmaxPair / 10, 0.002, 'rate at the pair capacity');
       assert.ok(ids(st).indexOf('CHOKE2_LIMIT') >= 0 && ids(st).indexOf('CHOKE_LIMIT') < 0, 'CHOKE2_LIMIT (CHOKE_LIMIT suppressed)');
@@ -586,7 +609,8 @@ const ENGINE = [
       const S = X.loadEngine('work'), a = A.dryGas48;
       const dry = (f) => { f.inputs.Qo = 0; f.inputs.Qw = 0; f.choke.wJT = 1; f.choke.dTjt = 150; f.heater.Tin = a.baseTin; f.nodes[2].T = a.baseTin; f.heater.dutyMMBtuHr = a.baseDuty; };
       const b = block('bean48', (x) => { Object.assign(x, { Pin: a.Pm, dP: a.Pm - x.Pout, dTjt: a.dT2, Tin: 180 - a.dT1, Tout: a.TmOut });
-        Object.assign(x.ck1, { Pout: a.Pm + 0.25, ratio: a.ratio, Tout: 180 - a.dT1, dTjt: a.dT1, wJT: 1 }); x.heater.dutyMMBtuHr = a.duty; });
+        Object.assign(x.ck1, { Pout: a.Pm + 0.25, ratio: a.ratio, Tout: 180 - a.dT1, dTjt: a.dT1, wJT: 1 }); x.heater.dutyMMBtuHr = a.duty;
+        x.heater.Tin = a.TmOut; x.nodes.heater.Tin = a.TmOut; x.nodes.heaterChoke.T = a.TmOut; });   // 'inlet': the coil inlet = the CK-102 outlet
       const s = mk(S, flowWith(S, b, dry), { cfg: { noise: { on: false } } });
       let worst = 0;
       for (let i = 0; i < 120; i++) { s.advance(5); const n = s.getState().nodes; worst = Math.max(worst, n.choke.dTjt + n.heaterChoke.dTjt); }

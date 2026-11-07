@@ -300,6 +300,10 @@ const L = [
         assert.deepStrictEqual(sc[0][1], { V: D.lim.V[1], SG: D.lim.SG[0], q: D.q_bpd, cap: X.CUSHION_TUBING[1].cap, depth: D.lim.depth[0] }, 'sanitised options: ' + JSON.stringify(sc[0][1]));
         assert.ok(app.el('wtsl_cush_V').value === '500' && app.el('wtsl_cush_SG').value === '0.8' && app.el('wtsl_cush_q').value === '1500' && app.el('wtsl_cush_depth').value === '500', 'form shows the sanitised values');
         assert.ok(X.textRe(X.ALARM_TEXTS.CUSH_DUMP_start).test(text(app.el('wtsl_cush_warn'))), 'dump warning shown in the form: ' + text(app.el('wtsl_cush_warn')));
+        // review round: the form says which values it changed (an empty field takes the default silently)
+        const wt = text(app.el('wtsl_cush_warn'));
+        ['Cushion volume set to 500 bbl (range 1–500)', 'Cushion SG set to 0.8 (range 0.8–1.5)', 'Tubing depth set to 500 ft (range 500–25000)'].forEach((m) => assert.ok(wt.indexOf(m) >= 0, 'clamp note "' + m + '": ' + wt));
+        assert.ok(wt.indexOf('Unload rate') < 0, 'no note for the empty field: ' + wt);
         // device prefs, not the page record, not the report
         const I = app.win.WTS_live._internals;
         assert.deepStrictEqual(J(I.readPrefs().cushion), { V: 500, SG: 0.8, q: 1500, tbg: '2-7/8', depth: 500 }, 'prefs round trip');

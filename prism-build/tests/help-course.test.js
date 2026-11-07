@@ -114,10 +114,14 @@ const CHECKS = {
   ex11: [
     { kind: 'page', set: { wts_bean2: 48 }, tol: 0.002, expectState: { 'flow.ck2.Pin': 1135.1, 'flow.ck2.ck1.ratio': 0.3816, 'flow.ck2.ck1.regime': 'Critical', 'flow.ck2.limiter': 'CK-101',
       'flow.ck2.QmaxMMscfd': 10.71, 'flow.ck2.sit_psig': 3600, 'flow.ck2.sitEst': true, 'flow.ck2.ratingOK': false } },
-    { kind: 'page', set: { wts_bean2: 32 }, tol: 0.002, expectState: { 'flow.ck2.limiter': 'CK-102', 'flow.ck2.flowLimited': true, 'flow.ck2.QmaxMMscfd': 8.92, 'flow.ck2.Pin': 2753.6, 'flow.ck2.ck1.regime': 'Subcritical' } },
+    { kind: 'page', set: { wts_bean2: 32 }, tol: 0.002, expectState: { 'flow.ck2.limiter': 'CK-102', 'flow.ck2.flowLimited': true, 'flow.ck2.QmaxMMscfd': 8.92, 'flow.ck2.Pin': 2401.6, 'flow.ck2.ck1.regime': 'Subcritical' } },
+    // review round: the page states the pair at its capacity, so page and live agree (about 2,400 psig); PAH-102 from 44/64 down
+    { kind: 'page', set: { wts_bean2: 44 }, tol: 0.002, expectState: { 'flow.ck2.Pin': 1357.9, 'flow.ck2.flowLimited': false } },
     { kind: 'page', set: { wts_bean2: 64 }, tol: 0.002, expectState: { 'flow.ck2.Pin': 634.4, 'flow.ck2.ck1.regime': 'Critical' } },
     { kind: 'sim', needs: 'heaterChoke', set: { wts_bean2: 32 }, rig: { heaterChoke: true }, run: 120, expect: [{ alarm: 'CHOKE2_LIMIT', from: 0, to: 30 }, { alarm: 'CK1_SUBCRIT', from: 0, to: 30 }, { noAlarm: 'CHOKE_LIMIT' },
-      { at: 120, path: 'nodes.heaterChoke.Pin', v: 2460, tol: 0.01 }] },
+      { at: 120, path: 'nodes.heaterChoke.Pin', v: 2400, tol: 0.01 }] },
+    { kind: 'sim', needs: 'heaterChoke', set: { wts_bean2: 44 }, rig: { heaterChoke: true }, run: 60, expect: [{ alarm: 'PAH_CK2', from: 0, to: 30 }] },
+    { kind: 'sim', needs: 'heaterChoke', set: { wts_bean2: 48 }, rig: { heaterChoke: true }, run: 60, expect: [{ noAlarm: 'PAH_CK2' }] },
   ],
   // FS-1 (a)–(d) of plan §6.2; (e) is FS-2's default-spread check. Since 31 v1.5.0 the main text is the cushion scenario (afterSim, the
   // last three sim checks); the older checks stand for the short 'today' note (the order of the pressure changes) and the legacy V-101-out path.
@@ -150,12 +154,14 @@ const CHECKS = {
     // v1.5.0: the V-101-out back pressure uses the whole-stream line loss (11.5 psig here, 10.5 with the separator-gas loss of v3.3.1)
     { kind: 'sim', set: FS1, rig: { separator: false }, run: 900, dt: 5, expect: [{ at: 900, path: 'nodes.choke.P', v: 11.5, tol: 0.03 }, { at: 900, path: 'rigup.flare', v: true }] },
     { kind: 'sim', run: 900, dt: 5, rig: { separator: false }, expect: [{ at: 900, path: 'nodes.choke.P', v: 14.3, tol: 0.03 }] },
-    // the cushion to the burner at the defaults (ANCHORS_CUSH): CUSH_BURNER at once, WHP target ≈ 1,700 at the start, choke outlet ≈ 5 psig while
-    // unloading, breakthrough 2,468 s (41 min) after the start, WHP ≈ 3,370 just after it, done ≈ 3.2 h after the start, 50 bbl to the burner
+    // the cushion to the burner at the defaults (ANCHORS_CUSH): CUSH_BURNER at once, WHP target ≈ 1,700 at the start (the gauge bottoms ≈ 1,840
+    // 205 s after the start), choke outlet ≈ 5 psig while unloading, breakthrough 2,468 s (41 min) after the start, the WHP peak ≈ 3,460 at
+    // 41.75 min, done ≈ 3.2 h after the start, 50 bbl to the burner; at the full rate the choke outlet ≈ 35 psig, seg 4 / 5 above the erosional velocity (the FI VEL_* alarms; not while the column unloads)
     { kind: 'sim', needs: 'heaterChoke', set: { wts_sepByDest: 'flare' }, run: 12300, dt: 5, rig: { separator: false }, actions: [{ t: 300, cushion: {}, ok: true }],
       expect: [{ alarm: 'CUSH_BURNER', from: 300, to: 320 }, { noAlarm: 'ESD_TRIPPED' }, { noAlarm: 'CUSH_LIMIT' }, { noAlarm: 'CUSH_NOLIFT' },
         { first: { path: 'cushion.phase', v: 'unloading' }, path: 'cushion.WHPtgt_psig', v: 1700, tol: 0.01 }, { at: 1200, path: 'nodes.choke.P', v: 5.1, tol: 0.05 },
-        { first: { path: 'cushion.phase', v: 'breakthrough' }, path: 'cushion.tBreak', v: 300 + 2468, tol: 0.005 }, { at: 3000, path: 'nodes.wellhead.P', v: 3370, tol: 0.01 },
+        { first: { path: 'cushion.phase', v: 'breakthrough' }, path: 'cushion.tBreak', v: 300 + 2468, tol: 0.005 }, { at: 300 + 205, path: 'nodes.wellhead.P', v: 1840, tol: 0.01 },
+        { at: 300 + 2505, path: 'nodes.wellhead.P', v: 3460, tol: 0.01 }, { at: 300 + 5400, path: 'nodes.choke.P', v: 35, tol: 0.05 }, { at: 300 + 1200, path: 'segs.4.vSt', v: 'OK' }, { at: 300 + 5400, path: 'segs.3.vSt', v: 'EXCEED' }, { at: 300 + 5400, path: 'segs.4.vSt', v: 'EXCEED' },
         { first: { path: 'cushion.phase', v: 'done' }, path: 't', v: 300 + 3.2 * 3600, tol: 0.04 }, { at: 12300, path: 'cushion.recovered_bbl', v: 50, tol: 0.002 },
         { at: 12300, path: 'cushion.out.flare', v: 50, tol: 0.002 }] },
     // through V-101: Start warns, CUSH_DUMP (≈ 790 bbl/d dump), LAHH-101 within 5 minutes, carry-over

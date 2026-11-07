@@ -22,7 +22,7 @@
     "chokeperf": "res-d 491 110 9b8a6c21,view-d 1280 800 55c56744,view-p 780 1688 ceea785f",
     "clientinfo": "view-d 1280 800 9e695396,view-p 780 1688 1573f8a3",
     "complfluids": "res-d 449 203 71aef0b7,view-d 1280 800 dd954a63,view-p 780 1688 66fbd630",
-    "course": "ex1-view-d 1280 800 0b368e22,ex1-view-p 780 1688 51a0b0a6,ex10-t202-d 296 349 6ede300e,ex11-ck102-d 296 349 f7e0e752,ex11-ck2d-d 980 481 734f3fae,ex2-ck101-d 296 313 cf50313a,ex4-alarms-d 476 258 77664798,ex4-scen-d 531 465 0085c41d,ex4-v101-d 296 307 8b4cb53f,ex5-more-p 780 1688 5ed6983e,ex5-reset-d 213 93 09fc7e22,ex5-trends-d 1280 800 4dc3a26b,ex5-viewmenu-d 213 253 fb8f5160,ex6-events-d 476 183 dfcfa42c,ex6-t301-d 296 349 2c9ef751,ex7-t201-d 296 349 7ea5e89d,ex8-temp3d-d 1280 800 77eaf582,ex9-ds101-d 296 349 5067b499",
+    "course": "ex1-view-d 1280 800 0b368e22,ex1-view-p 780 1688 51a0b0a6,ex10-t202-d 296 349 6ede300e,ex11-ck102-d 296 349 3baded14,ex11-ck2d-d 980 481 5c4ed169,ex2-ck101-d 296 313 cf50313a,ex4-alarms-d 476 258 77664798,ex4-scen-d 531 465 0085c41d,ex4-v101-d 296 307 8b4cb53f,ex5-more-p 780 1688 23d43e51,ex5-reset-d 213 93 09fc7e22,ex5-trends-d 1280 800 4dc3a26b,ex5-viewmenu-d 213 253 989985ac,ex6-events-d 476 183 dfcfa42c,ex6-t301-d 296 349 2c9ef751,ex7-t201-d 296 349 7ea5e89d,ex8-temp3d-d 1280 800 12c37a0b,ex9-ds101-d 296 349 5067b499",
     "dispersion": "res-d 491 488 4caee3b6,view-d 1280 800 329c3138,view-p 780 1688 fa30328b,weather-d 491 287 4664d775",
     "elec": "view-d 1280 800 e93f2161,view-p 780 1688 e2718cf7",
     "esdhi": "res-d 449 260 e988e9f5,view-d 1280 800 8caea0ea,view-p 780 1688 623de604",
@@ -59,7 +59,7 @@
     "pumpsz": "view-d 1280 800 cf2117d4,view-p 780 1688 ed22e300",
     "releasenotes": "view-d 1280 800 09ef3d8f,view-p 780 1688 93e8c991",
     "scale": "card-d 431 267 52db40a0,card-p 756 510 73b70afe,view-d 1280 800 dec8fef7,view-p 780 1688 2b542a04",
-    "scenarios": "fs-1-cushion-d 980 481 149e6795,fs-1-rigup-d 982 525 bd66693c,fs-3-rigup-d 982 479 c6d15ac7",
+    "scenarios": "fs-1-cushion-d 980 481 9fcab6eb,fs-1-rigup-d 982 525 bd66693c,fs-3-rigup-d 982 479 c6d15ac7",
     "sep": "view-d 1280 800 69685597,view-p 780 1688 f2bbb50e",
     "sephand": "res-d 491 217 e112f798,view-d 1280 800 e238ce1a,view-p 780 1688 5cc8127e",
     "sepqc": "res-d 491 239 58385532,view-d 1280 800 9f200512,view-p 780 1688 67438f8a",
@@ -78,7 +78,7 @@
   };
   var M = G.WTS_helpManifest = G.WTS_helpManifest || {};
   M.count = 212;
-  M.bytes = 7902932;   // total size of the image files (the offline download label)
+  M.bytes = 7901726;   // total size of the image files (the offline download label)
   M.data = D;
   M.base = 'help/img/';
   // get(folder, shot, view) → {file, src, w, h, v} or null; view "desktop" | "phone"; base overrides M.base

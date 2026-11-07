@@ -1232,3 +1232,55 @@ change, Project New; no NaN, no console errors (45 checks).
 **Open after part 1.** The SEPBY_RATING text rounds a small line loss to "0 psi" at 1,440 psig (it quotes the seg-5 dP
 only); after `done` the cushion tail runs on, so CUSH_BURNER stays until the formation blend ends (E2 note (2)); release items
 of §13 (version, RELEASE_NOTES, README, CLAUDE.md limitations and stats, PROJECT-NOTES) are WP-I part 2.
+
+## Appendix D — WP-I review round (lead, 2026-11-07, branch `sim-fu`)
+
+Fixes to the engineering / GUI / compatibility review of part 1. They amend the sections named; where a section above says
+otherwise, this appendix wins.
+
+- **§4.3 / §4.4 (flow.ck2 at the pair capacity).** When the pair is flow-limited (`flowLimited`: the requested rate above
+  `1.01 × QmaxPair`, or No Flow), every state of the block — pressures, temperatures, regimes, segments, duty, hydrate and
+  warnings — is the walk at `QmaxPair` (the rate that flows; every rate scaled, as the walk's `qs`). The requested-rate walk
+  has no physical state then (24/64 at 10 MMscf/d gave Pm 5,656 psig above the WHP, 0 °F of CK-101 J-T and a heater inlet at
+  30 °F). `noFlow` stays a flag (no feasible state at the requested rate); `regime` is the regime at `QmaxPair` ('No Flow'
+  only when even that state is at the infeasible edge, 4/64). The CK-102 rbox adds "States shown at the pair capacity".
+  ANCHORS_CK2 bean32 / bean24 / bean4 / bothPsep1500b32 carry the values at `QmaxPair`; exercise 11 quotes about 2,400 psig
+  between the chokes on 32/64, the same on the page and live.
+- **§5.2 / §5.3 (engine).** `pickSteadyBlock` puts a flow-limited block back on the requested-rate basis the live laws scale
+  with f (`lf = QmaxPair / Qg`: segment ΔP / lf², velocity / lf, duty / lf; the fixed 5 psi H-101 drop is left as the base
+  treats it), so the steady state at f = lf is the block's own state. `ck2Derive` takes Pm_ss from the block's Pin (critical
+  CK-102: `(Pin + PSC) / lf − PSC`; subcritical: `Phi_ss + (Pin − Phi(lf)) / lf²`); the `Pci_ss − 0.5` construction is gone.
+  `Tin_ss` = the block's `heater.Tin` (the coil inlet: the CK-102 outlet on 'inlet', the seg-3 outlet on 'midcoil'), so the
+  cushion's `mcpSs = duty·eff / (Th − Tin)` uses the coil inlet. The live CK-102 inlet temperature is the live CK-101 outlet
+  (with the cushion offset) plus the steady seg-3 / pass-1 change; its regime is read from the live ratio against r_crit.
+- **§6.2 (flare node, protection).** With V-101 out to a production line, FS-401 idles at its burner-header value
+  (`N.flare.P = N.flare.Pline = bypF0`); the line pressure is `snap.sepBy.P0_psig` (seg 5 keeps the pDown value).
+  `SEPBY_RATING` is evaluated on the choke outlet (CK-102's while it is in line, else CK-101's) — the line pressure plus the
+  whole loss up to the choke — and quotes it with the loss to 1 dp; PSHH-104 and SEPBY_RATING texts group thousands. No XV-501
+  control is modelled: the shut-in note now says "lower the line pressure below the PSHH-104 set point, or go to the burner
+  line, to reset". The page (`flow.sepBy.warnings`) warns when the H-101 outlet is at or above 0.9 × 1,440 psig ("PSHH-104
+  trips SDV-101 … this line pressure shuts the well in": a line above about 1,290 psig) and gives the rating check on the
+  CK-101 outlet.
+- **§4.4 / §4.5 (page).** The block warnings carry the erosional-velocity warnings of their segments in the base text form
+  (sepBy: seg 3-5; ck2 and sepBy.ck2: seg 3-4); `wtsPaint` drops the base warnings of the segments an active block re-walks.
+  With CK-102 in line or V-101 out, the Node table's Choke / Heater (/ Separator) rows show the active block's states
+  ("Choke (with CK-102)", "Choke (V-101 out)", …); neither active → the v3.3.1 page byte for byte. Production line pressure is
+  enabled / disabled synchronously by the destination select (the page restore fires its change first), so it is restored from
+  `wts_page_wts` alone, and the row is muted (`.wts-dis`) while it does not apply.
+- **§8 (views).** 2D: the separator P / T block under the bypassed vessel is covered and the destination label has that row;
+  the CK-102 card position value wraps. Cushion form: a clamped value is reported under the form ("Cushion volume set to 1 bbl
+  (range 1–500)"); the tubing select takes the whole row. `CUSH_LIMIT` / `CUSH_DUMP` texts go through the host formatter.
+- **§11 (help).** FS-1: the WHP target 1,700 (the gauge bottoms near 1,840 after about 3 minutes), the peak near 3,460 at
+  breakthrough, the choke outlet about 35 psig at the full rate with the FI velocity alarms (the burner line is too small for
+  the full stream: cut the bean or go through V-101). FS-2: PSHH-104 and the line limit. Exercise 11 and the wts guide: PAH-102
+  and the blocked-in warning are expected at the defaults (the 1,440 psig rating between the chokes is an assumption; the owner
+  may raise it, D16). Caps: 0.7 kB of welltest's unused headroom to simcourse (sum unchanged).
+- **§13 wording.** The identity claim: "with CK-102 out, V-101 in and no cushion the simulation is unchanged; the rig-up card
+  and the Dynamic Simulation card show the new options" (not pixel-identical: one rig-up row, two Dynamic Simulation fields and
+  one page-report row are new). The 'calc' item and a CLAUDE.md limitations line: with V-101 out the choke outlet now includes
+  the whole-stream line loss to the destination, so a v3.3.1 / v3.3.2 rig-up with V-101 out runs slightly differently (≈ 14 →
+  ≈ 35 psig on the default burner line at the full rate, with the velocity alarms); the `noSepBy` identity scenario stays as the
+  legacy guard.
+- **Not changed.** A raised alarm keeps the text of the moment it was raised (`designAlarms` updates the value only): the same
+  in v3.3 and v3.3.1 (frozen engines), so left as it is. The 1,440 psig inter-choke rating stays the default (documented as
+  expected, above).
