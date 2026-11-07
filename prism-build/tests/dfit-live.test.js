@@ -102,7 +102,9 @@ module.exports = [
         const rp = win.PRiSM_dfit_replay(ds, { test: auto(), sigma: sig, block: 40 });
         assert(rp.ok === true, lab + ': replay ok');
         near(assert, rp.events.tStart, REF.tStart, 1e-6, lab + ': pump start from the pressure ramp');
-        assert(rp.events.source === 'ramp', lab + ': source ' + rp.events.source);
+        // the pump start comes from the pressure ramp: 57's own back-extrapolation ('ramp') or, once 56 is merged, 56's
+      // PRiSM_dfit_events ('events'), which reads the same ramp — the value check above is the same for both
+      assert(rp.events.source === 'ramp' || rp.events.source === 'events', lab + ': source ' + rp.events.source);
         const f = rp.firsts;
         assert(f.closureProvisional != null && f.closureProvisional >= TC, lab + ': provisional after t_c: ' + f.closureProvisional + ' vs ' + TC);
         near(assert, rp.closure.dt, REF.dtc, 0.02 * REF.dtc, lab + ': closure Δt_c');
@@ -110,7 +112,20 @@ module.exports = [
       });
       // the midpoint fallback (no usable ramp): the nuisance tp search inside the bracket keeps the call after t_c
       const ds = mkDs({ seed: 2, sigma: 0.01, tEnd: 10 }); ds.p[10] = 4500; ds.p[11] = 4500;      // no pressure rise on the first two pumping samples
-      const rp = win.PRiSM_dfit_replay(ds, { test: auto(), sigma: 0.01, block: 40 });
+      // 57's own fallback is exercised without 56's PRiSM_dfit_events (resolved at call time); with 56 merged the pump start
+      // comes from the rate step of the record instead (integration), which needs no ramp
+      const ev56 = win.PRiSM_dfit_events, real56 = typeof ev56 === 'function' && !ev56._dfitStub;
+      if (real56) {
+        const r56 = win.PRiSM_dfit_replay(ds, { test: auto(), sigma: 0.01, block: 40 });
+        // no usable ramp: 56's start is kept but is only known to the rate-step bracket, so the session marks it 'midpoint' and
+        // runs the nuisance tp search as without 56
+        assert(r56.ok && r56.events.source === 'midpoint' && r56.stats && r56.stats.tpRefined === true, '56 events, no ramp: source ' + (r56.events && r56.events.source) + ', tp refined');
+        // no pressure rise on the first pumping samples: the start lies in the rate-step bracket (one 12 s sample)
+        near(assert, r56.events.tStart, REF.tStart, 12 / 3600 + 1e-9, '56 events: pump start inside the rate-step bracket');
+        assert(r56.firsts.closureProvisional == null || r56.firsts.closureProvisional >= TC, '56 events: no call before t_c (' + r56.firsts.closureProvisional + ')');
+      }
+      let rp;
+      try { win.PRiSM_dfit_events = undefined; rp = win.PRiSM_dfit_replay(ds, { test: auto(), sigma: 0.01, block: 40 }); } finally { win.PRiSM_dfit_events = ev56; }
       assert(rp.ok && rp.events.source === 'midpoint' && rp.stats && rp.stats.tpRefined === true, 'midpoint start with a refined tp: ' + JSON.stringify(rp.events) + ' ' + JSON.stringify(rp.stats && rp.stats.tp));
       assert(rp.firsts.closureProvisional == null || rp.firsts.closureProvisional >= TC, 'midpoint start: no call before t_c (' + rp.firsts.closureProvisional + ')');
     },

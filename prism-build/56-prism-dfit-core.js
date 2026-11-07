@@ -747,6 +747,14 @@
         if (aP) for (i = 0; i < n; i++) if (_fin(p[i])) p[i] += aP;
         if (ps && aS) for (i = 0; i < n; i++) if (_fin(ps[i])) ps[i] += aS;
         if (aP || aS) flags.push(_W('ATM_APPLIED', 'info', 'Atmospheric correction applied: ' + _f1(aP || aS, 3) + ' psi (test value ' + _f1(ch.atmPsia, 3) + ' psia).'));
+        // depth fix (an applied 'gauge-to-datum' blunder fix of 49-calc-dfit-triage): the bottomhole channel is referred from the
+        // gauge depth to the datum by the static column difference dpPsi (datum minus gauge, psi); non-destructive like the unit fixes
+        var dFix = (_isObj2(ch.depthFix) && _fin(ch.depthFix.dpPsi)) ? ch.depthFix.dpPsi : 0;
+        if (dFix && ch.primary !== 'surface') {
+            for (i = 0; i < n; i++) if (_fin(p[i])) p[i] += dFix;
+            flags.push(_W('DEPTH_FIX', 'info', 'Gauge pressure referred to the datum: ' + (dFix > 0 ? '+' : '') + _f1(dFix, 2) + ' psi' +
+                (_fin(ch.depthFix.fromTvd) && _fin(ch.depthFix.toTvd) ? ' (' + _f1(ch.depthFix.fromTvd, 0) + ' ft to ' + _f1(ch.depthFix.toTvd, 0) + ' ft TVD).' : '.')));
+        } else dFix = 0;
         // clock offset (rate logger vs gauge): q'(t) = q(t − offset), sample-and-hold on the dataset clock
         var off = _fin(ch.clockOffsetH) ? ch.clockOffsetH : 0;
         if (qd && off !== 0) {
@@ -775,7 +783,7 @@
         if (nMasked) flags.push(_W('MASKED', 'info', nMasked + ' samples inside the masked windows were removed before any derivative.'));
         var out = { ok: true, t: [], pw: [], band: null, pSurf: ps ? [] : null, q: qd ? [] : null, T: TT ? [] : null, idx: keep.slice(),
                     src: 'bh', sigma: 0, quantum: 0,
-                    applied: { atmDelta: aP, unitFix: (ch.unitFix.p || ch.unitFix.q || ch.unitFix.t || ch.unitFix.pSurf) ? ch.unitFix : null, clockOffsetH: off, masked: nMasked },
+                    applied: { atmDelta: aP, unitFix: (ch.unitFix.p || ch.unitFix.q || ch.unitFix.t || ch.unitFix.pSurf) ? ch.unitFix : null, clockOffsetH: off, masked: nMasked, depthFixPsi: dFix },
                     flags: flags, hf: null };
         var qfbOut = qfb ? [] : null;
         for (var kk = 0; kk < keep.length; kk++) {
@@ -791,7 +799,16 @@
         var depthGauge = _fin(I.gauge.bhTvd) ? I.gauge.bhTvd : null;
         if (ch.primary === 'surface') {
             var conv = _wb('convert'), cv = null;
-            if (conv) { try { cv = conv({ t: out.t, p: out.pw, q: out.q ? out.q.map(function (x) { return x * 1440; }) : null }, { inputs: I, well: well || null }, { band: true }); } catch (e) { cv = null; } }
+            // integration: WTS_wellbore.convert(ds, prepCtx, opts) reads the surface channel from ds.pSurf (or ds.p with
+            // opts.channel 'p') and needs prepCtx.column (survey, strings, fluid, temperature, datum), the fluid, the temperature
+            // model and the test atmospheric pressure; the primary surface channel here is the dataset's p (psia)
+            var sCol = _fin(I.datumTvd) && I.datumTvd > 0 ? { survey: I.survey, strings: I.strings, fluid: I.fluid, temp: I.temp, datumTvd: I.datumTvd, datumMd: I.datumMd } : null;
+            if (conv && sCol) {
+                try {
+                    cv = conv({ t: out.t, p: out.pw, q: out.q ? out.q.map(function (x) { return x * 1440; }) : null, qFb: out.qFb ? out.qFb.map(function (x) { return x * 1440; }) : null },
+                              { column: sCol, fluid: I.fluid, temp: I.temp, atmPsia: ch.atmPsia, gaugeTvd: 0, well: well || null }, { band: true, channel: 'p' });
+                } catch (e) { cv = null; }
+            }
             if (_okRes(cv) && Array.isArray(cv.pw) && cv.pw.length === out.t.length) {
                 out.pSurf = out.pw.slice(); out.pw = cv.pw.slice();
                 if (cv.band && Array.isArray(cv.band.p10) && cv.band.p10.length === out.t.length) out.band = { p10: cv.band.p10.map(_nn), p90: cv.band.p90.map(_nn) };
@@ -806,7 +823,7 @@
                 flags.push(_W('NO_DATUM', 'bad', 'The datum depth is not set: the surface pressure cannot be converted to bottomhole and is used as recorded.'));
             }
             out.src = 'surface-converted';
-        } else if (depthGauge !== null && _fin(I.datumTvd) && Math.abs(I.datumTvd - depthGauge) > 0.5) {
+        } else if (!dFix && depthGauge !== null && _fin(I.datumTvd) && Math.abs(I.datumTvd - depthGauge) > 0.5) {     // an applied depth fix supersedes it
             var dz = 0.052 * I.fluid.rhoPpg * (I.datumTvd - depthGauge);
             out.pw = out.pw.map(function (v) { return v + dz; });
             flags.push(_W('GAUGE_TO_DATUM', 'info', 'Gauge pressure moved to the datum: ' + (dz >= 0 ? '+' : '') + _f1(dz, 1) + ' psi over ' + _f1(I.datumTvd - depthGauge, 0) + ' ft.'));
@@ -1633,10 +1650,12 @@
         // 1. water-hammer midline (WTS_wellbore.hammerQuick result passed in ctx.hammer)
         var hm = ctx.hammer;
         if (_okRes(hm) && _fin(hm.isip)) {
-            var bleedAtEnd = null, fitted = hm.bleedFitted === true;
+            // WTS_wellbore.hammerQuick reports the fit as hm.bleed.fitted and its own §4.4 verdict as hm.upper (false = accepted)
+            var bleedAtEnd = null, fitted = hm.bleedFitted === true || (_isObj2(hm.bleed) && hm.bleed.fitted === true);
             var dtEnd = _fin(hm.tEnd) ? (hm.tEnd > derivs.ts ? hm.tEnd - derivs.ts : hm.tEnd) : null;
             if (ctx.bleed && typeof ctx.bleed.curve === 'function' && _fin(dtEnd)) bleedAtEnd = ctx.bleed.curve(dtEnd);
-            var accepted = fitted || (_fin(bleedAtEnd) && bleedAtEnd < sig3);
+            if (!_fin(bleedAtEnd) && _isObj2(hm.bleed) && _fin(hm.bleed.dEnd)) bleedAtEnd = hm.bleed.dEnd;
+            var accepted = fitted || (_fin(bleedAtEnd) && bleedAtEnd < sig3) || (hm.upper === false && _fin(bleedAtEnd));
             cands.push({ method: 'wh', family: 'wave', value: hm.isip, se: _fin(hm.se) ? hm.se : Math.max(1, 3 * sigma), ok: true, upper: !accepted,
                          bleedAtEnd: _nn(bleedAtEnd), viscCorr: null,
                          why: _txt(accepted ? (fitted ? 'Water-hammer midline with the friction bleed-off term fitted.' : 'Water-hammer midline; the predicted bleed-off at the window end is ' + _f1(bleedAtEnd, 1) + ' psi.')
@@ -2452,8 +2471,14 @@
             if (sim && !sim._dfitStub && defs && !defs._dfitStub) {
                 try {
                     var cfg = defs();
-                    if (_okRes(cfg)) {
-                        cfg.sigmaC = sigC; cfg.pr = pr; cfg.wc = 1; cfg.CL = null; cfg.mode = 'prescribed';
+                    // integration: 58's 'prescribed' mode needs {Ap, cf, alpha, rp, tp} (Nolte's constant-area assumptions), taken
+                    // from the frac candidate's geometry; the leak-off is fully reservoir-controlled (CL with w_c = 1). Without a
+                    // geometry or p_r there is no model run (quasi-static form below).
+                    var fr = ctx.frac, gmK = fr && fr.geometry && fr.geometry.byModel ? fr.geometry.byModel[fr.geometry.model || 'PKN'] || fr.geometry.byModel.PKN : null;
+                    if (_okRes(cfg) && _isObj2(gmK) && _fin(gmK.Af) && gmK.Af > 0 && _fin(gmK.cf) && gmK.cf > 0 && _fin(gmK.CL) && gmK.CL > 0 && _fin(pr) && _fin(sigC) && sigC > pr) {
+                        cfg.sigmaC = sigC; cfg.pr = pr; cfg.wc = 1; cfg.CL = gmK.CL; cfg.mode = 'prescribed';
+                        cfg.prescribed = { Ap: gmK.Af, cf: gmK.cf, alpha: d.gType === 'a1' ? 1 : (d.gType === 'a05' ? 0.5 : (_fin(d.alpha) ? d.alpha : 0.5)), rp: _fin(gmK.rp) ? gmK.rp : undefined, tp: d.tp };
+                        if (_fin(isip) && isip > sigC) cfg.dpRef = isip - pr;
                         if (ctx.events && Array.isArray(ctx.events.schedule) && ctx.events.schedule.length) cfg.schedule = ctx.events.schedule.map(function (s) { return { t: s.t - ctx.events.schedule[0].t, q: s.q }; });
                         var r = sim(cfg, { grid: 'coarse' });
                         if (_okRes(r)) run = r;

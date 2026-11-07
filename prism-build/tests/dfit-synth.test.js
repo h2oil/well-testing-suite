@@ -10,6 +10,7 @@
 //   S5  aca-exact reproduces the example A and B tables (Δp and D) within 0.1 %; when 57's PRiSM_dfit_acaDiag is implemented,
 //       its D on the exact example-B record agrees with the exact D (skipped with a note until WP3 lands)
 //   S6  no Math.random in any DFIT source file
+//   S7  with the real 58 (integration): lk truth R_vis storage-consistent through lkVwcwAt; the storage label follows it
 //
 // Engine tests: opts:false. S1/S3/S4/S5 load 49-calc-dfit-synth.js in a bare vm context (no document); S2 uses one shared app.
 'use strict';
@@ -380,6 +381,27 @@ module.exports = [
         assert(!/Math\s*\.\s*random|Math\s*\[\s*['"]random['"]\s*\]/.test(src), f + ' uses no Math.random');
       });
       assert(strip(fs.readFileSync(path.join(BUILD, SYNTH), 'utf8'), SYNTH).indexOf('=== SELF-TEST ===') === -1, 'the synth self-test is stripped by concat');
+    },
+  },
+  {
+    name: 'S7 with the real 58: the lk truth R_vis is storage-consistent through lkVwcwAt, and the storage label follows it',
+    wp: WP, opts: false,
+    run(_app, assert, ctx) {
+      // integration (lead, after WP4 landed): the truth's V_w·c_w is read through S.lkVwcwAt from the real LkResult, and
+      // R_vis = A_f·c_f / (A_f·c_f + V_w·c_w(σ_c)); 'storage' only when R_vis < 0.3 (§4.11 / R5)
+      const W = SH.sharedApp(ctx).win, S = W.PRiSM_dfit_synth;
+      if (typeof W.PRiSM_dfit_lkSimulate !== 'function' || W.PRiSM_dfit_lkSimulate._dfitStub) { console.log('  [DF5] S7: 58 not merged — skipped'); return; }
+      ['q-storage-gas'].concat(S.cases('integration').map((c) => c.id)).forEach((id) => {
+        const cs = S.cases('quick').concat(S.cases('integration')).find((c) => c.id === id);
+        if (!cs || cs.source !== 'lk') return;
+        const m = S.make(cs, 3);
+        assert(m.ok === true && m.truth.source === 'lk', id + ': lk case made with the real 58');
+        const vw = S.lkVwcwAt(m.lkRes || {}, cs.wellbore, m.truth.sigmaC);
+        assert(Math.abs(m.truth.VwCw - vw) <= 1e-12 * Math.max(1, vw), id + ': truth V_w·c_w = lkVwcwAt at σ_c');
+        const rv = m.truth.AfCf / (m.truth.AfCf + vw);
+        assert(Math.abs(m.truth.Rvis - rv) <= 1e-9, id + ': R_vis ' + m.truth.Rvis + ' = A_f·c_f/(A_f·c_f + V_w·c_w) ' + rv);
+        if (cs.mechanism === 'storage') assert(m.truth.mechanism === (rv < 0.3 ? 'storage' : 'normal'), id + ': storage label follows R_vis ' + rv.toFixed(3));
+      });
     },
   },
 ];

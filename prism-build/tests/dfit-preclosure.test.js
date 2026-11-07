@@ -32,6 +32,7 @@
 //   P20 h-function (gate G6): not verified in 3.4a → hFn null, kH null, far-field null
 //   P21 masked samples never reach a derivative as null (no spike at the mask edge)
 //   P22 the frictional check uses p_p at the lower bracket edge and S_v 0.9 psi/ft for the veto
+//   P23 an applied gauge-to-datum depth fix (integration) shifts the bottomhole channel by dpPsi
 'use strict';
 
 const S = require('./_dfit-shapes');
@@ -312,7 +313,7 @@ module.exports = [
     },
   },
   {
-    name: 'P13 κ_exp from a stubbed w_c = 1 run (58 not merged) and the matrix classification',
+    name: 'P13 κ_exp from a stubbed w_c = 1 run and the matrix classification; the real 58 run; the quasi-static fallback without 58',
     wp: WP, opts: false,
     run(_a, assert, ctx) {
       const G = app(ctx), P = Object.assign({}, BASE, { nMat: 1 }), r = synthRun(G, P);
@@ -338,8 +339,15 @@ module.exports = [
         assert(c.features.curv < -0.1, 'dP/dG falls ' + (-c.features.curv * 100).toFixed(0) + ' % to closure');
         assert(c.type === 'matrix' || c.alt.indexOf('matrix') >= 0, 'matrix classification (got ' + c.type + ')');
       } finally { G.PRiSM_dfit_lkSimulate = prevS; G.PRiSM_dfit_lkDefaults = prevD; }
+      // the real 58 (integration): a prescribed-area (frac geometry) reservoir-controlled run gives a model κ_exp of the same sign
+      if (typeof prevS === 'function' && !prevS._dfitStub) {
+        const c3 = classify(G, r, { frac: fc, Gc: fc.Gc });
+        assert(c3.curvExpSource === 'model' && c3.features.curvExp < 0, 'real 58: κ_exp from the model run (' + c3.curvExpSource + ', ' + c3.features.curvExp + ')');
+      }
       // without 58 the quasi-static form is used and flagged
-      const c2 = classify(G, r, { frac: fc, Gc: fc.Gc });
+      let c2;
+      try { G.PRiSM_dfit_lkSimulate = undefined; G.PRiSM_dfit_lkDefaults = undefined; c2 = classify(G, r, { frac: fc, Gc: fc.Gc }); }
+      finally { G.PRiSM_dfit_lkSimulate = prevS; G.PRiSM_dfit_lkDefaults = prevD; }
       assert(c2.curvExpSource === 'quasi-static' && Math.abs(c2.features.curvExp - ((7000 - 4500) / (r.d.isip - 4500) - 1)) < 1e-3, 'quasi-static fallback');
     },
   },
@@ -504,6 +512,23 @@ module.exports = [
       const o = G.PRiSM_dfit_bounds(7700, { inputs: I, pi: 4500, isip: 7600 });
       assert(o.admissible === false && o.vetoes.some((w) => w.rule === 'order'), 'σ_c ≥ ISIP vetoed (order)');
       [b, v, h, o].forEach((x) => x.vetoes.concat(x.warnings).forEach((w) => assert(w.text.length < 300 && !/\b(null|undefined|NaN|Infinity)\b/.test(w.text), 'plain text')));
+    },
+  },
+  {
+    name: 'P23 an applied gauge-to-datum depth fix shifts the bottomhole channel by dpPsi (non-destructive) and is recorded',
+    wp: WP, opts: false,
+    run(_a, assert, ctx) {
+      // integration (lead): 49-calc-dfit-triage proposes channels.depthFix {kind 'gauge-to-datum', fromTvd, toTvd, dpPsi}; prepare
+      // applies it to the bottomhole channel only, after the atmospheric correction, before any derivative
+      const G = app(ctx), I = inputsRef(), ds = S.FIX.ds;
+      const p0 = G.PRiSM_dfit_prepare(ds, I, null);
+      I.channels.depthFix = { kind: 'gauge-to-datum', fromTvd: 9800, toTvd: 10000, dpPsi: 87.6 };
+      const p1 = G.PRiSM_dfit_prepare(ds, I, null);
+      okShape(assert, 'Prepared', p1);
+      assert(p1.pw.length === p0.pw.length && p1.pw.every((v, i) => Math.abs(v - p0.pw[i] - 87.6) < 1e-9), 'every sample + 87.6 psi');
+      assert(p1.applied.depthFixPsi === 87.6 && p0.applied.depthFixPsi === 0, 'applied.depthFixPsi');
+      assert(p1.flags.some((w) => w.code === 'DEPTH_FIX' && /9,?800 ft to 10,?000 ft/.test(w.text)), 'DEPTH_FIX flag names the depths');
+      assert(ds.p[5] === S.FIX.ds.p[5] && Math.abs(p0.pw[5] - ds.p[5]) < 1e-9, 'the dataset is not changed');
     },
   },
 ];

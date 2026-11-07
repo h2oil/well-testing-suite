@@ -302,36 +302,61 @@ module.exports = [
       delete ctx.WTS_parseNumber;
       assert.deepStrictEqual(warns, [], 'no warnings while loading 56');
 
-      // ── skeletons: load in one bare context (no document), export every §3 name as a NOT_IMPLEMENTED stub ──
+      // ── skeletons → engines: load in one bare context (no document) and export every §3 name. A name that is still the WP0
+      // stub returns NOT_IMPLEMENTED; once its work package has landed (integration, 3.4a: every file) a call with no arguments
+      // must not throw, and a refusal (ok false with a code) must have the §3.0 Failure shape. Getters that answer "nothing"
+      // (null), defaults objects and Promises are allowed: the contract for those is in each work package's own test file.
       const sk = loadBare(SKELETONS), G = sk.ctx;
       assert.deepStrictEqual(sk.warns, [], 'skeletons load silently');
       assert(typeof G.document === 'undefined', 'no document in the bare context');
       const isNI = (r) => r && r.ok === false && r.code === 'NOT_IMPLEMENTED' && Array.isArray(r.errors) && r.errors.length === 1 && Array.isArray(r.bad);
-      // a skeleton name is either still the WP0 stub (NOT_IMPLEMENTED) or implemented by its work package: then a call with
-      // no arguments must still return a §3.0 Failure (WPT's 49-calc-dfit-triage.js is implemented)
+      const stub = (fn) => typeof fn === 'function' && fn._dfitStub === true;
+      const noArgs = (label, fn) => {
+        let r;
+        try { r = fn(); } catch (e) { assert.fail(label + '() (implemented) throws: ' + e.message); }
+        if (r && typeof r === 'object' && r.ok === false && typeof r.code === 'string') {
+          assert(/^[A-Z_]+$/.test(r.code), label + '() failure code ' + r.code);
+          assert(S.checkShape('Failure', r).ok, label + '() failure shape: ' + JSON.stringify(S.checkShape('Failure', r).errors.slice(0, 3)));
+        }
+        return r;
+      };
+      const stubOrImpl = (label, fn) => {
+        if (stub(fn)) { const r = fn(); assert(isNI(r), label + '() returns NOT_IMPLEMENTED'); assert(S.checkShape('Failure', r).ok, label + ' failure shape'); return; }
+        noArgs(label, fn);
+      };
       Object.keys(NAMES).forEach((f) => NAMES[f].forEach((n) => {
         assert(typeof G[n] === 'function', f + ': ' + n + ' exported');
-        if (!G[n]._dfitStub && f === '49-calc-dfit-triage.js') { const r = G[n](); assert(r && r.ok === false && /^[A-Z_]+$/.test(r.code), n + '() (implemented) returns a Failure'); assert(S.checkShape('Failure', r).ok, n + ' failure shape'); return; }
-        assert(isNI(G[n]()), n + '() returns NOT_IMPLEMENTED');
-        assert(S.checkShape('Failure', G[n]()).ok, n + ' failure shape');
+        // PRiSM_dfit_lkVerify() with no arguments runs the whole §4.15 verification (≈ 0.6 s; dfit-leakoff covers it)
+        if (n === 'PRiSM_dfit_lkVerify' && !stub(G[n])) return;
+        stubOrImpl(n, G[n]);
       }));
       Object.keys(JOBS).forEach((f) => JOBS[f].forEach((n) => {
-        const j = G[n](); assert(S.checkShape('Job', j).ok && j.step().done === true && isNI(j.result()), n + ' returns a finished Job with a NOT_IMPLEMENTED result');
+        const j = G[n](); assert(S.checkShape('Job', j).ok, n + ' returns a Job');
+        let k = 0; while (!j.step().done && k++ < 1000);
+        assert(j.step().done === true, n + ' finishes');
+        const r = j.result();
+        if (stub(G[n])) assert(isNI(r), n + ' returns a finished Job with a NOT_IMPLEMENTED result');
+        else if (r && r.ok === false && typeof r.code === 'string') assert(S.checkShape('Failure', r).ok, n + ' result failure shape');
       }));
-      WELLBORE.forEach((n) => assert(typeof G.WTS_wellbore[n] === 'function' && isNI(G.WTS_wellbore[n]()), 'WTS_wellbore.' + n));
-      ['make', 'demo', 'cases', 'score'].forEach((n) => assert(isNI(G.PRiSM_dfit_synth[n]()), 'PRiSM_dfit_synth.' + n));
+      WELLBORE.forEach((n) => { assert(typeof G.WTS_wellbore[n] === 'function', 'WTS_wellbore.' + n); stubOrImpl('WTS_wellbore.' + n, G.WTS_wellbore[n]); });
+      ['make', 'demo', 'cases', 'score'].forEach((n) => { assert(typeof G.PRiSM_dfit_synth[n] === 'function', 'PRiSM_dfit_synth.' + n); stubOrImpl('PRiSM_dfit_synth.' + n, G.PRiSM_dfit_synth[n]); });
       assert.strictEqual(G.PRiSM_dfit_synth.version, 'g1', 'synth version');
-      assert(isNI(G.WTS_dfitInfo.open()) && typeof G.WTS_dfitInfo.notes === 'object', 'WTS_dfitInfo');
-      assert(isNI(G.PRiSM_dfit_live.create()), 'PRiSM_dfit_live.create');
+      assert(typeof G.WTS_dfitInfo.notes === 'object', 'WTS_dfitInfo.notes');
+      stubOrImpl('WTS_dfitInfo.open', G.WTS_dfitInfo.open);
+      stubOrImpl('PRiSM_dfit_live.create', G.PRiSM_dfit_live.create);
       assert.strictEqual(G.PRiSM_dfit_kConstraint(), null, 'kConstraint: null (no DFIT k)');
       assert(typeof G.PRiSM_dfit_analyse === 'function' && typeof G.PRiSM_dfit_analyse().then === 'function', 'PRiSM_dfit_analyse returns a Promise');
-      assert(G.PRiSM_dfit_hooks && G.PRiSM_dfit_hooks.liveVerdict === null && Array.isArray(G.PRiSM_dfit_hooks.railRows) && Array.isArray(G.PRiSM_dfit_hooks.step2Cards), 'PRiSM_dfit_hooks');
-      assert(G.PRiSM_dfit_units && typeof G.PRiSM_dfit_units.table === 'object' && isNI(G.PRiSM_dfit_units.toEngine()), 'PRiSM_dfit_units');
+      assert(G.PRiSM_dfit_hooks && 'liveVerdict' in G.PRiSM_dfit_hooks && Array.isArray(G.PRiSM_dfit_hooks.railRows) && Array.isArray(G.PRiSM_dfit_hooks.step2Cards), 'PRiSM_dfit_hooks');
+      // toEngine with no object refuses with a §3.0 Failure (WP2: BAD_INPUT, not the WP0 NOT_IMPLEMENTED)
+      assert(G.PRiSM_dfit_units && typeof G.PRiSM_dfit_units.table === 'object', 'PRiSM_dfit_units');
+      const te = G.PRiSM_dfit_units.toEngine();
+      assert(te && te.ok === false && S.checkShape('Failure', te).ok && (stub(G.PRiSM_dfit_units.toEngine) ? isNI(te) : true), 'PRiSM_dfit_units.toEngine() refuses: ' + (te && te.code));
       assert.deepStrictEqual(plain(G.PRiSM_dfit_cal), { calibrated: false, version: null, generator: null, n: 0,
         hitRate: { single: { high: null, medium: null, low: null }, range: { medium: null, low: null } }, intervalScore: { range: null },
         cusum: { k: 0.5, h: 5, decimate: '2L' }, thresholds: {} }, 'PRiSM_dfit_cal placeholder (§3.9)');
       assert(Object.isFrozen(G.PRiSM_dfit_cal.hitRate.single), 'cal table deep-frozen');
-      assert(!G.PRiSM_modeExt || !G.PRiSM_modeExt.dfit, 'the skeleton registers no mode extension');
+      if (stub(G.PRiSM_dfit_renderStep2)) assert(!G.PRiSM_modeExt || !G.PRiSM_modeExt.dfit, 'the skeleton registers no mode extension');
+      else assert(G.PRiSM_modeExt && G.PRiSM_modeExt.dfit, '59 registers the dfit mode extension');
       assert.deepStrictEqual(Object.keys(G).filter((k) => /^PRiSM_render[A-Za-z0-9_]*(Panel|Manager|Toolbar|Tool|Picker)$/.test(k)), [],
         'no PRiSM_render*Tool export before WP6 (37 would list it under "More")');
       assert(!G.WTS_calcRegistry || Object.keys(G.WTS_calcRegistry).length === 0, 'helper modules add no page');

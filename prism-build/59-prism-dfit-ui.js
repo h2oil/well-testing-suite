@@ -708,6 +708,8 @@
         }
         return true;
     }
+    // the active test when DFIT state already exists (never creates it: a session outside DFIT gets none until needed)
+    function st0Test() { var st = _st(); return (_isObj(st.dfit) && st.dfit.v === 2) ? test() : null; }
     function loadDemo(name, o) {
         o = o || {};
         var S = G.PRiSM_dfit_synth, ds = null;
@@ -720,11 +722,14 @@
         var box = _byId('prism_data_paste');
         if (box) box.value = csv;
         _batch('begin');
+        // the binding is decided before the commit: the dataset-loaded listener (_onDatasetLoaded → _checkBinding) binds an
+        // unbound test itself, which used to skip the demo set-up below (integration: the surface-gauge demo had no datum)
+        var T0 = st0Test(), prevRef = T0 && T0.dsRef ? T0.dsRef.hash : null, newH = dsHash(ds);
         if (typeof G.PRiSM_commitDataset === 'function') G.PRiSM_commitDataset(ds, { source: 'dfit-demo', name: ds.name });
         else { G.PRiSM_dataset = ds; _emit('prism:dataset-loaded', { source: 'dfit-demo', dataset: ds }); }
         var T = test();
-        if (!T.dsRef || T.dsRef.hash !== dsHash(ds)) {
-            if (!o.silentBind) logEntry(T, 'dsRef', T.dsRef ? T.dsRef.hash : null, dsHash(ds), 'Demo DFIT ' + name + ' loaded');
+        if (prevRef !== newH || !T.dsRef || T.dsRef.hash !== newH) {
+            if (!o.silentBind) logEntry(T, 'dsRef', prevRef, newH, 'Demo DFIT ' + name + ' loaded');
             T.dsRef = _dsRefOf(ds, 'demo', name);
             if (T.summary) { T.summary.forOtherDataset = false; T.summary.stale = true; }
             if (o.inputs !== false) _applyDemoSetup(T, S, name);
@@ -1911,6 +1916,28 @@
         var fn = ACTIONS[act];
         if (fn) { try { fn(arg, b); } catch (err) { _setStatus('⚠ ' + _txt(err && err.message), 'warn'); } }
     }
+    function _findBlunder(run, id) {
+        var bl = run && run.triage && run.triage.blunders;
+        if (!(bl instanceof Array)) return null;
+        for (var i = 0; i < bl.length; i++) if (bl[i] && bl[i].id === id) return bl[i];
+        return null;
+    }
+    function applyBlunderFix(id) {
+        var T = test(), run = _run(), b = _findBlunder(run, id);
+        if (!b || !_isObj(b.fix) || typeof b.fix.field !== 'string') return { ok: false, code: 'NO_FIX', errors: ['No fix for blunder ' + _txt(id) + ' in the current run.'], bad: [String(id)] };
+        var list = [b.fix].concat(b.fix.also instanceof Array ? b.fix.also.filter(function (a) { return _isObj(a) && typeof a.field === 'string'; }) : []);
+        var x = _clone(T.inputs), olds = list.map(function (a) { return _clone(_getPath(x, a.field)); });
+        list.forEach(function (a) { _setPath(x, a.field, _clone(a.to)); });
+        _batch('begin');
+        try {
+            T.inputs = _clampInputs(x);
+            list.forEach(function (a, i) { logEntry(T, 'inputs.' + a.field, olds[i], _getPath(T.inputs, a.field), 'Blunder fix ' + b.id + ': ' + (b.hypothesis || '')); });
+        } finally { _batch('end'); }
+        _setStatus('✓ Fix applied (' + list.map(function (a) { return a.field; }).join(', ') + '); Analyse again for the full chain.', 'ok');
+        _emit('prism:dfit-updated', { what: 'test', source: 'user' });
+        runFast('blunder fix'); _refreshUI();
+        return { ok: true, fields: list.map(function (a) { return a.field; }) };
+    }
     function _need(cond, msg) { if (!cond) { _setStatus('⚠ ' + msg, 'warn'); _toast(msg); } return !!cond; }
     function _toast(msg) { var el = _byId('prism_dfit_msg'); if (el) { el.style.display = ''; el.textContent = '⚠ ' + _txt(msg); } }
     var ACTIONS = {
@@ -1956,6 +1983,17 @@
             _setStatus(cl.survey ? '✓ Survey applied: ' + cl.survey.length + ' stations.' : 'Survey cleared: the well is treated as vertical.', 'ok');
             T.inputs.survey = cl.survey;
             logEntry(T, 'inputs.survey', null, cl.survey ? cl.survey.length : 0, 'Survey pasted');
+            _emit('prism:dfit-updated', { what: 'test', source: 'user' }); _refreshUI();
+        },
+        // §6.3 blunder cards: "Apply fix" writes fix.field and every fix.also[] entry into T.inputs (e.g. MD-as-TVD moves datumTvd and
+        // datumMd together), clamps, logs each field and re-runs; 56 applies channel fixes non-destructively. "It is real" dismisses.
+        blunderApply: function (id) { applyBlunderFix(id); },
+        blunderDismiss: function (id) {
+            var T = test(), run = _run(), b = _findBlunder(run, id);
+            if (!_need(b, 'That blunder is not in the current run.')) return;
+            var st = _st(); st._dfitBlunderDismissed = st._dfitBlunderDismissed || {}; st._dfitBlunderDismissed[T.id + ':' + id] = true;
+            logEntry(T, 'blunder:' + id, null, 'dismissed', 'It is real: ' + (b.hypothesis || id));
+            _setStatus('Blunder hypothesis dismissed: ' + _txt(b.hypothesis || id) + '.', 'ok');
             _emit('prism:dfit-updated', { what: 'test', source: 'user' }); _refreshUI();
         },
         override: function () { openOverride(); },
@@ -2186,7 +2224,14 @@
                 return [c.title, c.level, _isNum(c.value) ? _sig(c.value, 3) : '—', _isNum(c.threshold) ? _sig(c.threshold, 3) : '—', c.text, (c.ev || []).join(' ')];
             }), 'prism_dfit_triage_tbl');
             if (tr.repump) html += _rbox('Re-pump verdict', [_rrow('Verdict', tr.repump.verdict)].concat((tr.repump.rules || []).slice(0, 6).map(function (r) { return _rrow(r.id, r.text); })));
-            (tr.blunders || []).slice(0, 4).forEach(function (b) { if (b && b.text) html += _verdict('warn', b.text); });
+            var dis = _st()._dfitBlunderDismissed || {};
+            (tr.blunders || []).slice(0, 4).forEach(function (b) {
+                if (!b || !b.text || dis[test().id + ':' + b.id]) return;
+                var arg = ' data-dfit-arg="' + _esc(b.id) + '"';
+                html += _verdict('warn', b.text) + '<div class="prism-dfit-bar">' +
+                    (b.fix ? _btn('prism_dfit_blunder_apply_' + b.id, 'Apply fix', 'blunderApply').replace('data-dfit-act="blunderApply"', 'data-dfit-act="blunderApply"' + arg) : '') +
+                    _btn('prism_dfit_blunder_dismiss_' + b.id, 'It is real', 'blunderDismiss').replace('data-dfit-act="blunderDismiss"', 'data-dfit-act="blunderDismiss"' + arg) + '</div>';
+            });
         }
         html += _chart('dfitGradient', 220);
         h.innerHTML = html;
@@ -3354,7 +3399,7 @@
         publish: _publish, schedule: _schedule, storeHf: _storeHf, dsHash: dsHash, refresh: _refreshUI, css: function () { return CSS; }, s4Tabs: S4_TABS.map(function (t) { return t[0]; }),
         statusText: function () { return _status.text; },
         handles: _handles, acaConv: _acaConv, acaWin: _acaWin, setEvent: setEvent, hammer: _hammerOf, dtOfX: _dtOfX, xOfDt: _xOfDt, acaMatch: _acaMatch,
-        schematic: schematicSVG, schematicAt: _schemUpdate, applyDemoSetup: function (name) { var S = G.PRiSM_dfit_synth; return _applyDemoSetup(test(), S, name); }
+        schematic: schematicSVG, schematicAt: _schemUpdate, applyBlunderFix: applyBlunderFix, applyDemoSetup: function (name) { var S = G.PRiSM_dfit_synth; return _applyDemoSetup(test(), S, name); }
     };
 
     install();

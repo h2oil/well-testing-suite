@@ -368,7 +368,13 @@ module.exports = [
       installExt(app);
       W.PRiSM.setMode('transient');   // re-render the shell so the select learns the mode
       const opts = Array.from(app.el('prism_testtype').querySelectorAll('option')).map((o) => o.value);
-      assert.deepEqual(opts.slice(-2), ['combined', 'test'], 'ext option appended: ' + opts.join(','));
+      // the built-in modes come first; the extensions follow in registration order: 59 registers 'dfit' at load (since the
+      // 3.4a integration), the dummy 'test' extension is appended after it
+      const ci = opts.indexOf('combined');
+      const extOpts = opts.slice(ci + 1);
+      assert(ci >= 0 && extOpts[extOpts.length - 1] === 'test' && extOpts.every((v) => v === 'test' || (W.PRiSM_modeExt && W.PRiSM_modeExt[v])),
+        'ext option appended after the built-ins (only registered extensions, the dummy last): ' + opts.join(','));
+      assert(!W.PRiSM_dfit_renderStep2 || W.PRiSM_dfit_renderStep2._dfitStub || extOpts.indexOf('dfit') >= 0, "59's 'dfit' mode is listed: " + opts.join(','));
       app.change('prism_testtype', 'test');
       assert.equal(W.PRiSM.mode, 'test', 'select → setMode');
       assert.deepEqual(Array.from(W.__ext.log), ['enter:transient:test'], 'onEnter(prev) after the re-render');

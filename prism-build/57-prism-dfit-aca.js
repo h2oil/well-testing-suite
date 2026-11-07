@@ -866,6 +866,9 @@
                 try {
                     var td = G.PRiSM_tideAnalysis(tInj, p, { detrend: true });
                     tide.snr = td && fin(td.snr) ? td.snr : null;
+                    // amplitude (largest constituent) against the after-closure pressure change: the triage tides check (Q20)
+                    if (td && arrOk(td.constituents)) { var aMax = null; td.constituents.forEach(function (cn) { if (cn && fin(cn.amplitude) && (aMax === null || cn.amplitude > aMax)) aMax = cn.amplitude; }); tide.ampPsi = aMax; }
+                    tide.dpPsi = Math.abs(p[0] - p[p.length - 1]);
                     if (td && arrOk(td.p_corrected) && td.p_corrected.length === p.length && arrOk(td.constituents) && td.constituents.length && (tide.mode === 'on' || (fin(td.snr) && td.snr >= 3))) {
                         var pT = td.p_corrected.map(function (v, j) { return fin(v) ? v : p[j]; });
                         p = pT; tide.applied = true;
@@ -1091,7 +1094,14 @@
             var tEnd = pos(ctx.tEnd) ? ctx.tEnd : x[x.length - 1], th = fin(ctx.theta) ? ctx.theta : (lin ? 2 : null), qkMax = null;
             if (!fin(th) && !lin) { var eta = (aca.kh && pos(aca.kh.k) && pos(ctx.phi) && pos(ctx.mu) && pos(ctx.ct) && pos(ctx.L)) ? KC.etaC * aca.kh.k / (ctx.phi * ctx.mu * ctx.ct) : null; th = eta ? theta(eta * tEnd / (ctx.L * ctx.L)) : 4; }
             if (typeof G.PRiSM_dfit_leakBudget === 'function' && !G.PRiSM_dfit_leakBudget._dfitStub && ctx.useBudget !== false) {
-                try { var lb = G.PRiSM_dfit_leakBudget(V, tEnd, { sigmaP: sigma, VwCw: ctx.VwCw, driftSpec: drift }); if (lb && pos(lb.qkMax)) { qkMax = lb.qkMax; if (fin(lb.theta)) th = lb.theta; } } catch (e) { /* local rule */ }
+                // integration: t_DL draws from the after-closure k (bounds and estimate) when φ, μ, c_t and L are known, so the
+                // budget uses the leak-off flow regime (Θ) of this test, not the linear default
+                var kL = [], tdl = null;
+                if (aca.bounds && pos(aca.bounds.kLo)) kL.push(aca.bounds.kLo);
+                if (aca.kh && pos(aca.kh.k)) kL.push(aca.kh.k);
+                if (aca.bounds && pos(aca.bounds.kHi)) kL.push(aca.bounds.kHi);
+                if (kL.length && pos(ctx.phi) && pos(ctx.mu) && pos(ctx.ct) && pos(ctx.L)) tdl = kL.map(function (k) { return KC.etaC * k * tEnd / (ctx.phi * ctx.mu * ctx.ct * ctx.L * ctx.L); });
+                try { var lb = G.PRiSM_dfit_leakBudget(V, tEnd, { sigmaP: sigma, VwCw: ctx.VwCw, driftSpec: drift, tDLDraws: tdl || undefined }); if (lb && pos(lb.qkMax)) { qkMax = lb.qkMax; if (fin(lb.theta)) th = lb.theta; } } catch (e) { /* local rule */ }
             }
             if (qkMax == null) qkMax = qkMaxRule(fin(ctx.eps) ? ctx.eps : 0.05, V, th, tEnd);
             var verdict = 'none';
@@ -1532,15 +1542,21 @@
                     var prep = { ok: true, t: S.t, pw: S.p, q: S.q.map(function (v) { return fin(v) ? v : 0; }), T: null, band: null, pSurf: null, idx: null,
                                  src: 'bh', sigma: sigmaG, quantum: 0, applied: { atmDelta: 0, unitFix: null, clockOffsetH: 0, masked: 0 }, flags: [], hf: null };
                     var r = G.PRiSM_dfit_events(prep, ev, {});
+                    // integration: while the pump is still on, 56 places the shut-in at the end of the record; a live shut-in is
+                    // taken only once a zero-rate sample after it has arrived (else every block would move t_s and rebuild the state)
+                    var seenOff = false;
+                    if (r && fin(r.ts)) for (i = n - 1; i >= 0 && S.t[i] > r.ts; i--) if (fin(S.q[i]) && !(S.q[i] > 0.05 * qmax)) { seenOff = true; break; }
                     if (r && r.ok !== false && fin(r.tStart) && fin(r.ts) && r.ts > r.tStart) {
                         if (tS == null) { tS = r.tStart; src = 'events'; }
-                        if (tSh == null) tSh = r.ts;
+                        if (tSh == null && seenOff) tSh = r.ts;
                         if (r.tp && pos(r.tp.pump) && tStart0 == null) tpE = r.tp.pump;
                     }
                 } catch (e) { /* local rule below */ }
             }
             if (qmax > 0) {
-                if (tS == null) {
+                var fromEv = src === 'events';
+                if (tS == null || fromEv) {
+                    var tS56 = tS; tS = null;
                     var iF = -1; for (i = 0; i < n; i++) if (fin(S.q[i]) && S.q[i] > 0.02 * qmax) { iF = i; break; }
                     if (iF >= 0) {
                         var iZ = -1; for (i = iF - 1; i >= 0; i--) if (fin(S.q[i])) { iZ = i; break; }
@@ -1555,6 +1571,12 @@
                             if (est == null || est < tLo - 1e-12 || est > tHi + 1e-12) { est = 0.5 * (tLo + tHi); src = 'midpoint'; }
                             tS = est; bracket = [tLo, tHi];
                         }
+                    }
+                    // integration: 56's pump start is kept; when the record has no usable ramp (the start is only known to the
+                    // rate-step bracket) its tp is not trusted and the nuisance tp search runs over the bracket as for the midpoint
+                    if (fromEv) {
+                        if (src === 'midpoint' && bracket && tS56 >= bracket[0] - 1e-12 && tS56 <= bracket[1] + 1e-12) { tS = tS56; tpE = null; }
+                        else { tS = tS56; src = 'events'; }
                     }
                 }
                 if (tSh == null) {
@@ -2512,19 +2534,51 @@
         { id: 'isip', fn: function (P) {
             var r = P.run;
             var d0 = _call('PRiSM_dfit_derivs', [r.prep, r.events, P.dOpts], P.W, 'DERIVS_FAILED');
-            var ev = r.events && r.events.ok !== false ? r.events : null;
-            if (ev && r.prep && r.prep.hf && arrOk(r.prep.hf.windows) && r.prep.hf.windows.length) {
-                var w = r.prep.hf.windows[0]; P.extra.hammer = _wb('hammerQuick', [w.t || w.tHz, w.p, ev.ts, { qShut: ev.qLast }], P.W);
-            }
+            var ev = r.events && r.events.ok !== false ? r.events : null, I = P.inputs;
+            // step tests first: the step-down coefficients {b, β} seed the friction bleed-off term of the water-hammer fit
             if (ev && arrOk(ev.steps)) {
                 var down = ev.steps.filter(function (s) { return s.dir === 'down'; }), up = ev.steps.filter(function (s) { return s.dir === 'up'; });
-                if (down.length >= 3) P.extra.stepDown = _wb('stepDown', [down.map(function (s) { return { q: s.q, p: s.pSettled, n: s.n, t: s.t1 }; }), { beta: 0.5, drift: true, perfs: P.inputs.perfs, rhoPpg: P.inputs.fluid && P.inputs.fluid.rhoPpg }], P.W);
+                if (down.length >= 3) P.extra.stepDown = _wb('stepDown', [down.map(function (s) { return { q: s.q, p: s.pSettled, n: s.n, t: s.t1 }; }), { beta: 0.5, drift: true, perfs: I.perfs, rhoPpg: I.fluid && I.fluid.rhoPpg }], P.W);
                 if (up.length >= 3) P.extra.stepRate = _wb('stepRate', [up.map(function (s) { return { q: s.q, t0: s.t0, t1: s.t1 }; }), { seed: r.seed, t: r.prep.t, p: r.prep.pw }], P.W);
             }
-            r.isip = _call('PRiSM_dfit_isip', [r.prep, r.events, d0, { hammer: P.extra.hammer, stepDown: P.extra.stepDown, bleed: null, lumped: null }], P.W, 'ISIP_FAILED');
+            // integration: hammerQuick gets the wellbore column, the shut-in rate, V_w·c_w and tp, and the step-down {b, β, q_t} (or
+            // fitBleed:true when there is no step-down), so the wave ISIP can be accepted under §4.4 instead of being an upper estimate;
+            // the valve closing time comes from the dataset metadata when the logger recorded it
+            var sdOk = P.extra.stepDown && P.extra.stepDown.ok !== false && fin(P.extra.stepDown.b) && P.extra.stepDown.b > 0 ? P.extra.stepDown : null;
+            var meta = (P.ds && P.ds.meta) || {};
+            if (ev && r.prep && r.prep.hf && arrOk(r.prep.hf.windows) && r.prep.hf.windows.length) {
+                var w = r.prep.hf.windows[0];
+                var hctx = { qShut: ev.qLast, VwCw: fin(ev.VwCwUsed) ? ev.VwCwUsed : (fin(ev.VwCwMeasured) ? ev.VwCwMeasured : undefined), tp: ev.tp && fin(ev.tp.pump) ? ev.tp.pump : undefined, fluid: I.fluid };
+                if (fin(I.datumTvd) && I.datumTvd > 0) hctx.column = { survey: I.survey, strings: I.strings, fluid: I.fluid, temp: I.temp, datumTvd: I.datumTvd, datumMd: I.datumMd };
+                if (fin(meta.tCloseS) && meta.tCloseS >= 0) hctx.tClose = meta.tCloseS;
+                if (sdOk) hctx.bleed = { b: sdOk.b, beta: fin(sdOk.beta) ? sdOk.beta : 0.5, qt: 0.1 };
+                else hctx.fitBleed = true;
+                P.extra.hammer = _wb('hammerQuick', [w.t || w.tHz, w.p, ev.ts, hctx], P.W);
+            }
+            // the bleed-off law for the ISIP acceptance (§4.4) and the triage bleed window (Q13): WTS_wellbore.bleedOff from the
+            // step-down b / β (or the b fitted by the hammer), the shut-in rate and V_w·c_w
+            var bl = null, hmB = P.extra.hammer && P.extra.hammer.ok !== false && P.extra.hammer.bleed && fin(P.extra.hammer.bleed.b) ? P.extra.hammer.bleed.b : null;
+            var bB = sdOk ? sdOk.b : hmB, VC = ev && fin(ev.VwCwUsed) ? ev.VwCwUsed : (ev && fin(ev.VwCwMeasured) ? ev.VwCwMeasured : null);
+            if (ev && fin(bB) && bB > 0 && fin(VC) && VC > 0 && fin(ev.qLast) && ev.qLast > 0) {
+                bl = _wb('bleedOff', [{ b: bB, beta: sdOk && fin(sdOk.beta) ? sdOk.beta : 0.5, qt: 0.1, VwCw: VC, q0: ev.qLast }], P.W);
+                if (bl && bl.ok === false) bl = null;
+            }
+            P.extra.bleed = bl;
+            r.isip = _call('PRiSM_dfit_isip', [r.prep, r.events, d0, { hammer: P.extra.hammer, stepDown: P.extra.stepDown, bleed: bl, lumped: null }], P.W, 'ISIP_FAILED');
             var ui = P.picks.isip;
             if (r.isip && r.isip.ok !== false && ui && ui.source === 'user' && fin(ui.value)) { r.isip.value = ui.value; r.isip.why = (r.isip.why || []).concat([_txt('User ISIP pick: ' + (ui.reason || 'no reason given') + '.')]).slice(0, 8); }
-            if (realFn(G.PRiSM_dfit_triage)) r.triage = _call('PRiSM_dfit_triage', [r.prep, r.events, { isip: r.isip, derivs: d0, hammer: P.extra.hammer, ramps: P.extra.ramps, stepDown: P.extra.stepDown, inputs: P.inputs, well: P.well, plan: P.opts.plan || null }], P.W, 'TRIAGE_FAILED');
+            // triage context (integration): the raw dataset, the step-rate result, the bleed-off law, and the strap volume / valve
+            // closing time / tide when the dataset metadata (or opts) carry them. The tide check (Q20) needs the after-closure
+            // tide amplitude, known only after the ACA stage, so it is re-run there (stage 'aca').
+            if (realFn(G.PRiSM_dfit_triage)) {
+                P.triCtx = { isip: r.isip, derivs: d0, hammer: P.extra.hammer, ramps: P.extra.ramps, stepDown: P.extra.stepDown, stepRate: P.extra.stepRate,
+                             inputs: P.inputs, well: P.well, plan: P.opts.plan || null, ds: P.ds, bleed: bl };
+                var sv = fin(P.opts.strapVolume) ? P.opts.strapVolume : meta.strapVolume, tc = fin(P.opts.tCloseS) ? P.opts.tCloseS : meta.tCloseS;
+                if (fin(sv) && sv > 0) P.triCtx.strapVolume = sv;
+                if (fin(tc) && tc >= 0) P.triCtx.tCloseS = tc;
+                if (P.opts.tide && typeof P.opts.tide === 'object') P.triCtx.tide = P.opts.tide;
+                r.triage = _call('PRiSM_dfit_triage', [r.prep, r.events, P.triCtx], P.W, 'TRIAGE_FAILED');
+            }
             if (r.triage && r.triage.ok === false) r.triage = null;
             P.d0 = d0;
         } },
@@ -2562,7 +2616,13 @@
             ['F1', 'F2', 'F4'].forEach(function (F) { if (fams[F] && fin(fams[F].p50)) cands.push({ label: 'Family ' + F, family: F, p: fams[F].p50, method: F }); });
             if (P.opts.whatIf && fin(P.opts.whatIf.p)) cands.push({ label: 'What-if ' + fmt(P.opts.whatIf.p, 0) + ' psia', family: null, p: P.opts.whatIf.p, method: 'user' });
             if (cands.length) { var wi = _call('PRiSM_dfit_whatIf', [cands, r.derivs, fctx(null, null)], P.W, 'WHATIF_FAILED'); r.whatIf = arrOk(wi) ? wi.filter(function (x) { return x && x.ok !== false && x.label; }) : []; }
-            r.classification = _call('PRiSM_dfit_classify', [r.derivs, { frac: r.frac.chosen || _firstFamily(r.frac.byFamily), curvExpRun: null, VwCwTheory: null, VwCwMeasured: r.events ? r.events.VwCwMeasured : null, events: r.events, inputs: P.inputs }], P.W, 'CLASSIFY_FAILED');
+            // integration: the classifier reads G_c from the frac candidate (gcSource 'frac'), the consensus as a fallback, and p_r for
+            // κ_exp (the coarse reservoir-controlled model run of 58): C1 p_i, else the p_i-gradient prior at the datum
+            var wlC = P.well || {}, prC = fin(wlC.pi) ? wlC.pi : null, pgC = P.inputs.priors && P.inputs.priors.piGrad;
+            if (prC === null && fin(pgC) && pgC > 0 && fin(P.inputs.datumTvd) && P.inputs.datumTvd > 0) prC = pgC * P.inputs.datumTvd;
+            var frC = r.frac.chosen || _firstFamily(r.frac.byFamily);
+            r.classification = _call('PRiSM_dfit_classify', [r.derivs, { frac: frC, consensus: r.consensus || r.consensusLite || null, isip: r.isip, pr: prC, well: P.well,
+                curvExpRun: null, VwCwTheory: null, VwCwMeasured: r.events ? r.events.VwCwMeasured : null, events: r.events, inputs: P.inputs }], P.W, 'CLASSIFY_FAILED');
         } },
         { id: 'aca', fn: function (P) {
             var r = P.run;
@@ -2571,7 +2631,18 @@
             if (a && a.ok !== false) {
                 r.aca = a;
                 if (a.match && fin(a.match.evals)) r.counts.evals += a.match.evals;
-                var lp = G.PRiSM_dfit_leakPlot(a, { V: a.V, driftSpec: P.opts.driftSpec, sigma: r.prep ? r.prep.sigma : 0, seed: r.seed, nBoot: P.opts.fast ? 0 : 120 });     // fast: no bootstrap (§3.3a / §4.20)
+                // the triage tides check (Q20) once the after-closure tide is known (the other checks are unchanged by it)
+                var tdA = a.tide;
+                if (P.triCtx && r.triage && tdA && fin(tdA.ampPsi) && !P.triCtx.tide) {
+                    P.triCtx.tide = { ampPsi: tdA.ampPsi, dpPsi: tdA.dpPsi, removed: tdA.applied === true };
+                    var tr2 = _call('PRiSM_dfit_triage', [r.prep, r.events, P.triCtx], P.W, 'TRIAGE_FAILED');
+                    if (tr2 && tr2.ok !== false) r.triage = tr2;
+                }
+                var chF = r.frac.chosen, gmF = chF && chF.geometry && chF.geometry.byModel ? chF.geometry.byModel[chF.geometry.model || 'PKN'] : null;
+                var wl = P.well || {}, Lf = gmF ? (pos(gmF.xf) ? gmF.xf : (pos(gmF.R) ? gmF.R : null)) : null;
+                var lp = G.PRiSM_dfit_leakPlot(a, { V: a.V, driftSpec: P.opts.driftSpec, sigma: r.prep ? r.prep.sigma : 0, seed: r.seed, nBoot: P.opts.fast ? 0 : 120,
+                                                    phi: pos(wl.phi) ? wl.phi : undefined, mu: pos(wl.mu) ? wl.mu : undefined, ct: pos(wl.ct) ? wl.ct : undefined, L: Lf || undefined,
+                                                    VwCw: chF && pos(chF.VwCw) ? chF.VwCw : undefined });     // fast: no bootstrap (§3.3a / §4.20)
                 r.leak = lp && lp.ok !== false ? lp : null;
             } else if (a && a.code !== 'NO_CLOSURE') P.W.push(W('ACA_FAILED', 'info', 'After-closure analysis: ' + (a.errors && a.errors[0] || a.code), ['A1']));
         } },

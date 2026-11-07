@@ -12,7 +12,7 @@
 //   I5  Tab-7 report and PDF HTML            I15 PTA radial kh/μ = ACA kh/μ within 2 %
 //   I6  reload + project save/open (2 tests) I16 two stacked tests on two demo datasets
 //   I7  two wells keep separate DFIT states
-//   I8  Quick Report key line in DFIT mode
+//   I8  Quick Report key line in DFIT mode     I17 blunder card: fix + fix.also[] applied and logged
 'use strict';
 
 const WP = 'WP6';
@@ -399,4 +399,30 @@ I[16] = {
   },
 };
 
-module.exports = [1, 5, 8, 10, 16, 6, 2, 3, 15, 4, 7, 9, 11, 12, 13, 14].map((n) => I[n]);
+I[17] = {
+  name: 'I17 a triage blunder card applies fix.field and fix.also[] (MD-as-TVD moves datumTvd and datumMd), logged; an unknown id is refused',
+  wp: WP, integration: true, opts: false,
+  run(_app, assert, ctx) {
+    const app = shared(ctx);
+    const w = app.win;
+    if (!gate(w, false, [[w.PRiSM_dfit_ui && typeof w.PRiSM_dfit_ui.applyBlunderFix === 'function', '59 blunder actions']])) return;
+    const T = w.PRiSM_dfit_test();
+    T.inputs.datumTvd = 11500; T.inputs.datumMd = null;
+    // the 49-calc-dfit-triage md-as-tvd hypothesis (fix + also[]) on an otherwise empty run
+    const bl = { id: 'md-as-tvd', hypothesis: 'Measured depth entered as the datum TVD', score: 1, bf: null,
+      fix: { field: 'datumTvd', from: 11500, to: 10000, also: [{ field: 'datumMd', from: null, to: 11500 }] }, text: 'The datum 11,500 ft looks like MD.' };
+    w.PRiSM_state._dfitRun = app.toWin({ ok: true, triage: { ok: true, blunders: [bl] } });
+    const n0 = (T.log || []).length;
+    const r = w.PRiSM_dfit_ui.applyBlunderFix('md-as-tvd');
+    assert(r && r.ok === true && r.fields.join(',') === 'datumTvd,datumMd', 'fix applied: ' + JSON.stringify(r));
+    const T2 = w.PRiSM_dfit_test();
+    assert.strictEqual(T2.inputs.datumTvd, 10000, 'datumTvd from the fix');
+    assert.strictEqual(T2.inputs.datumMd, 11500, 'datumMd from fix.also[]');
+    const log = T2.log.slice(n0).map((e) => e.item);
+    assert(log.indexOf('inputs.datumTvd') >= 0 && log.indexOf('inputs.datumMd') >= 0, 'both fields logged: ' + log.join(','));
+    const r2 = w.PRiSM_dfit_ui.applyBlunderFix('no-such');
+    assert(r2.ok === false && r2.code === 'NO_FIX', 'unknown id refused');
+  },
+};
+
+module.exports = [1, 5, 8, 10, 16, 6, 2, 3, 15, 4, 7, 9, 11, 12, 13, 14, 17].map((n) => I[n]);
