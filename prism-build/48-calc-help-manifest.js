@@ -57,7 +57,7 @@
     "proving": "res-d 491 520 9fd5cf32,view-d 1280 800 bbb6c233,view-p 780 1688 6955910f",
     "prv": "inlet-d 449 394 c76ae598,load-d 491 341 f6f0f4d8,res-d 449 441 4a49637e,view-d 1280 800 596c7610,view-p 780 1688 011c149a",
     "pumpsz": "view-d 1280 800 cf2117d4,view-p 780 1688 ed22e300",
-    "releasenotes": "view-d 1280 800 09ef3d8f,view-p 780 1688 93e8c991",
+    "releasenotes": "view-d 1280 800 ddd594cb,view-p 780 1688 a2d554b7",
     "scale": "card-d 431 267 52db40a0,card-p 756 510 73b70afe,view-d 1280 800 dec8fef7,view-p 780 1688 2b542a04",
     "scenarios": "fs-1-cushion-d 980 481 9fcab6eb,fs-1-rigup-d 982 525 bd66693c,fs-3-rigup-d 982 479 c6d15ac7",
     "sep": "view-d 1280 800 69685597,view-p 780 1688 f2bbb50e",
@@ -78,7 +78,7 @@
   };
   var M = G.WTS_helpManifest = G.WTS_helpManifest || {};
   M.count = 212;
-  M.bytes = 7901726;   // total size of the image files (the offline download label)
+  M.bytes = 7914670;   // total size of the image files (the offline download label)
   M.data = D;
   M.base = 'help/img/';
   // get(folder, shot, view) → {file, src, w, h, v} or null; view "desktop" | "phone"; base overrides M.base

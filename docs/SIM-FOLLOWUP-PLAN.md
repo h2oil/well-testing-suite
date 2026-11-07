@@ -1,7 +1,8 @@
 # Simulator follow-up: heater inlet choke CK-102, bypass destination, cushion unload — implementation plan
 
-> **Status: plan, reviewed** (2026-11-06; revision 2 after the plan review — the changes are listed in the Review notes
-> appendix). **WP0 done** on `sim-fu` (contract, frozen copies, tools; re-anchored numbers in Appendix B); WP-E0 onward not built. Target: the next point release after the Help-centre release (v3.3.3 if Help ships as v3.3.2; the
+> **Status: shipped in v3.3.3** (2026-11-07, WTS_sim 1.5.0; all work packages built, merged on `sim-fu` and verified — Appendices C and D
+> record the integration and the review round; as-built text wins where the sections below differ). Plan history: reviewed (2026-11-06; revision 2 after the plan review — the changes are listed in the Review notes
+> appendix). **WP0 done** on `sim-fu` (contract, frozen copies, tools; re-anchored numbers in Appendix B); WP-E0 onward built later (Appendices C, D). Target: the next point release after the Help-centre release (v3.3.3 if Help ships as v3.3.2; the
 > version is fixed at WP-I, §13). Built in work packages WP0, WP-E0, WP-C, WP-E1, WP-E2, WP-3D, WP-L,
 > WP-2D, WP-HC and WP-I on a feature branch `sim-fu`. It replaces WP-SIM of `docs/HELP-GUIDE-PLAN.md` §8, which it takes over
 > in full (bypass destination §8.1, cushion unload §8.2, tests §8.3) and corrects where the audit found problems (§1.4).
