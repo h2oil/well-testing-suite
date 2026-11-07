@@ -30,6 +30,12 @@
 //   W22 ramp knee within 10 psi (truth inside P10–P90) and s₁ within 1 %
 //   W23 one-slope ramp → "no knee"; the LOT onset within 3σ of the true departure
 //   W24 the near-wellbore-corrected knee shifts by 99.6 psi (+ 0.4 psi perforation) at 0.5 bbl/min
+//   W25 a matched known reflector calibrates c; V_w·c_w from the period over that section only; match judged against the perforations
+//   W26 convert in flowback: perforation and near-wellbore terms flip sign
+//   W27 step-rate dpdtMax limit; ramp seed / nBoot and storage ratio to opts.VwCw
+//   W28 clock alignment on a 24 h 1 Hz record (scores only samples near rate changes; same offset as a full scan)
+// W12 also checks the free-β profile (truth β 0.7 at σ 0.1 psi recovered; σ 2 psi falls back to ½ with the wide 95 % band);
+// W16 / W16b check the §4.4 acceptance rule (no bleed-off law → upper; predicted Δ below max(2 psi, 3σ) → accepted)
 'use strict';
 
 const fs = require('fs');
@@ -295,10 +301,19 @@ module.exports = [
       assert.strictEqual(r.label, 'high', 'fit label'); assert.strictEqual(r.refused, null, 'not refused');
       assert(r.resid.length === 4 && r.resid.every((x) => Math.abs(x) < 1), 'residuals');
       assert(r.corr.ab < -0.9, 'a and b anti-correlated');
-      // β free with five noiseless steps: β recovered
-      const r5 = w.stepDown([5, 4, 3, 2, 1].map((q) => ({ q, p: 7598 + 1.505 * q * q + 140 * Math.pow(q, 0.5) })), { beta: 'free' });
+      assert(r.seed === 1 && r.nMc >= 500, 'the open-perforation Monte Carlo carries its seed and size (§3.0)');
+      // β free (profile over β 0.20–1.00, Δχ² ≤ 3.84 × max(1, χ²_r) = 95 %): a truth β 0.7 ≠ the ½ fallback, five noiseless steps
+      const sd5 = (beta) => [5, 4, 3, 2, 1].map((q) => ({ q, p: 7598 + 1.505 * q * q + 140 * Math.pow(q, beta) }));
+      const r5 = w.stepDown(sd5(0.7), { beta: 'free', sigma: 0.1 });
       shapeOk(assert, 'StepDown', r5);
-      near(assert, r5.beta, 0.5, 0.011, 'β free');
+      near(assert, r5.beta, 0.7, 0.02, 'β free recovered (σ 0.1 psi)');
+      assert(Array.isArray(r5.betaCI) && r5.betaCI[0] <= 0.7 && r5.betaCI[1] >= 0.7 && (r5.betaCI[1] - r5.betaCI[0]) / 2 < 0.15, 'β 95 % range narrower than ±0.15: ' + JSON.stringify(r5.betaCI));
+      near(assert, r5.b, 140, 0.5, 'b with the recovered β');
+      // σ 2 psi with five steps: β is not identifiable → the ½ fallback with the wide band and a note
+      const r2 = w.stepDown(sd5(0.7), { beta: 'free' });
+      assert.strictEqual(r2.beta, 0.5, 'σ 2 psi: β falls back to ½');
+      assert(r2.betaCI[0] <= 0.25 && r2.betaCI[1] >= 0.9, 'wide band ≈ 0.20–0.95: ' + JSON.stringify(r2.betaCI));
+      assert(r2.notes.some((x) => /not determined/.test(x) && /95 %/.test(x)), 'stated as a 95 % range');
     },
   },
   {
@@ -367,7 +382,14 @@ module.exports = [
       near(assert, h.joukowsky.expected, 232.1, 0.2, 'Joukowsky');
       near(assert, h.T, T, 0.02, 'period'); near(assert, h.tau, 6.5, 0.2, 'decay time');
       assert(h.sampling.ok && h.sampling.per2Lc > 200, 'sampling ≥ 10 per 2L/c');
-      assert(h.upper === false && h.bleed.fitted === false, 'no bleed term (no step-down)');
+      // §4.4: with no bleed-off law neither acceptance condition can be shown → upper estimate (the ISIP value itself is fine here)
+      assert(h.upper === true && h.bleed.fitted === false && /Upper estimate/.test(h.why) && /step-down/.test(h.why), 'no bleed model → upper');
+      // a step-down law whose predicted Δ at the window end is below max(2 psi, 3σ) accepts it without fitting the term
+      const hs = w.hammerQuick(hw.t, hw.p, ts, { column: col, qShut: 5, bleed: { b: 2, beta: 0.5, qt: 0.1 }, fitBleed: false });
+      shapeOk(assert, 'Hammer', hs);
+      assert(hs.upper === false && hs.bleed.fitted === false && hs.bleed.dEnd < 2, 'predicted Δ below the limit → accepted');
+      near(assert, hs.isip, 7605, 1, 'ISIP_wh (accepted)');
+      assert(h.cSource === 'korteweg' && Math.abs(h.delta - h.T / h.tau) < 1e-12, 'delta = T/τ (log decrement per period)');
       const slow = w.hammerQuick(hw.t.filter((_, i) => i % 50 === 0), hw.p.filter((_, i) => i % 50 === 0), ts, { column: col });
       assert(slow.ok === false && slow.code === 'NOT_RESOLVABLE' && slow.sampling.ok === false, '1 Hz: water hammer not resolvable');
     },
@@ -391,6 +413,15 @@ module.exports = [
       shapeOk(assert, 'Hammer', lin);
       assert(lin.isip >= 7620, 'linear midline reads ≥ 20 psi high: ' + lin.isip);
       assert(lin.upper === true && /Upper estimate/.test(lin.why), 'flagged "upper"');
+      // no step-down coefficients at all: the midline reads high (≈ 81 psi) and must not be accepted
+      const nob = w.hammerQuick(hw.t, hw.p, ts, { column: col, qShut: 5 });
+      shapeOk(assert, 'Hammer', nob);
+      assert(nob.isip > 7620 && nob.upper === true && nob.bleed.fitted === false, 'no bleed model → upper: ' + nob.isip);
+      // opt-in free fit of b from the default seed (b 100, β ½, q_t 0.1) when there is no step-down
+      const def = w.hammerQuick(hw.t, hw.p, ts, { column: col, qShut: 5, fitBleed: true });
+      near(assert, def.isip, 7600, 5, 'default-seeded bleed-aware midline ISIP');
+      assert(def.upper === false && def.bleed.fitted === true && def.bleed.seed === 'default', 'default seed → fitted and accepted');
+      assert(h.bleed.seed === 'step-down', 'the seed source is reported');
     },
   },
   {
@@ -545,6 +576,93 @@ module.exports = [
       near(assert, r.nwbCorr, 99.63 + 0.382, 0.02, 'correction = tortuosity + perforation');
       near(assert, r.knee.p - r.knee.pCorr, 100.0, 0.05, 'corrected knee shift');
       assert.strictEqual(r.why, null, 'corrected: no upper-bound caveat');
+    },
+  },
+  {
+    name: 'W25 a known reflector that rings calibrates c; V_w·c_w from the period uses that section only; the match is against the perforations',
+    wp: WP, opts: false,
+    run(_a, assert, ctx) {
+      // source: a damped quarter-wave ring off a packer at 6,000 ft MD, true c 2 % above the Korteweg value
+      const w = W(ctx), col = w.column(REFCOL), cs = w.csys(col), cTrue = 1.02 * cs.waveSpeed, T6 = 4 * 6000 / cTrue, ts = 0.1;
+      const hw = hammerWindow((s, nrm) => (s <= 0 ? 7953 : 7605 - 0.4 * s / 60 + 115 * Math.exp(-s / 6.5) * Math.cos(2 * Math.PI * s / T6) + 0.2 * nrm()), ts, 11);
+      const h = w.hammerQuick(hw.t, hw.p, ts, { column: col, qShut: 5, reflectorMd: 6000 });
+      shapeOk(assert, 'Hammer', h);
+      assert(h.regime === 'ringing' && h.reflectorMatch === 'shallower', 'judged against the perforations: shallower');
+      assert.strictEqual(h.cSource, 'calibrated', 'the matched known reflector calibrates c');
+      rel(assert, h.c, cTrue, 0.005, 'calibrated c = 4L/T'); near(assert, h.Lquarter, 6000, 1e-6, 'L = c·T/4 at the reflector');
+      // theory V_w·c_w of the 6,000 ft section at the true c: L·A·144/(ρc²)
+      const vTrue = 6000 * col.segments[0].area * 144 / (cs.rhoSlug * cTrue * cTrue) / BBL;
+      rel(assert, h.VwCwHammer, vTrue, 0.01, 'V_w·c_w of the section above the reflector (not the whole column)');
+      assert(h.VwCwHammer < 0.7 * cs.VwCw, 'well below the whole-column value (no false air/gas reading)');
+      // the same ring with no reflector given: no calibration and no V_w·c_w (the ringing depth is unknown)
+      const u = w.hammerQuick(hw.t, hw.p, ts, { column: col, qShut: 5 });
+      assert(u.cSource === 'korteweg' && u.VwCwHammer === null && u.reflectorMatch !== 'perfs', 'unknown reflector: korteweg c, no V_w·c_w');
+      // a reflector given but the ring at the perforations: matched to the perforations, c not recalibrated
+      const T10 = 4 * 10000 / cs.waveSpeed;
+      const hp = hammerWindow((s, nrm) => (s <= 0 ? 7953 : 7605 - 0.4 * s / 60 + 115 * Math.exp(-s / 6.5) * Math.cos(2 * Math.PI * s / T10) + 0.2 * nrm()), ts, 11);
+      const p = w.hammerQuick(hp.t, hp.p, ts, { column: col, qShut: 5, reflectorMd: 6000 });
+      assert(p.reflectorMatch === 'perfs' && p.cSource === 'korteweg', 'ring at the perforations');
+      rel(assert, p.VwCwHammer, cs.VwCw, 0.01, 'whole-column V_w·c_w when the perforations ring');
+    },
+  },
+  {
+    name: 'W26 convert during flowback: the perforation and near-wellbore terms flip sign (p_f = p_w + Δp_perf + Δp_nwb)',
+    wp: WP, opts: false,
+    run(_a, assert, ctx) {
+      const w = W(ctx), col = w.column(REFCOL), t = [], ps = [], q = [], qFb = [];
+      for (let i = 0; i <= 40; i++) { const ti = i * 0.01; t.push(ti); q.push(ti < 0.1 ? 7200 : 0); qFb.push(ti >= 0.3 ? 1440 : 0); ps.push(ti < 0.1 ? 3400 : 3200); }
+      const sd = { a: 1.528, b: 140.9, beta: 0.5 };
+      const cv = w.convert({ t, pSurf: ps, q, qFb }, { column: col, stepDown: sd });
+      assert(cv.ok, 'convert ok');
+      const iF = 35, perf1 = 1.528 * 1 * 1, nwb1 = w.nwbLoss(1, sd);
+      near(assert, cv.parts.perf[iF], -perf1, 1e-9, 'perforation term negative in flowback');
+      near(assert, cv.parts.nwb[iF], -nwb1, 1e-9, 'near-wellbore term negative in flowback');
+      assert(cv.parts.pipe[iF] > 0, 'pipe term positive in flowback');
+      near(assert, cv.pf[iF], cv.pw[iF] + perf1 + nwb1, 1e-9, 'p_f = p_w + Δp_perf(q_fb) + Δp_nwb(q_fb)');
+      near(assert, cv.pf[20], cv.pw[20], 1e-9, 'shut in, no flowback: p_f = p_w');
+      assert(cv.pf[5] < cv.pw[5], 'injecting: p_f below p_w');
+    },
+  },
+  {
+    name: 'W27 step-rate dpdtMax is an extra stabilisation limit; the ramp reports its seed and the storage ratio to opts.VwCw',
+    wp: WP, opts: false,
+    run(_a, assert, ctx) {
+      const w = W(ctx), qs = [0.5, 1.0, 1.5, 2.5, 3.0, 3.5], nrm = nrmOf(lcg(21)), t = [], p = [], steps = [];
+      const pOf = (q) => 5000 + 800 * Math.min(q, 2) + 40 * Math.max(0, q - 2);
+      // step 3 climbs 0.02 psi per sample (12 psi/h at 6-s samples): inside the drift rule (≤ 5 psi over the step), above 8 psi/h
+      qs.forEach((q, n) => {
+        const t0 = n * 0.5, t1 = (n + 1) * 0.5;
+        steps.push({ q, t0, t1 });
+        for (let j = 1; j <= 300; j++) { const tt = t0 + j / 600; t.push(tt); p.push(pOf(q) + (n === 2 ? 0.0066 * (j - 300) : 0) + 0.02 * nrm()); }
+      });
+      const base = w.stepRate(steps, t, p, { seed: 2 });
+      assert(base.steps.every((s) => s.stabilised), 'drift rule alone: all stabilised');
+      const lim = w.stepRate(steps, t, p, { seed: 2, dpdtMax: 2 });
+      shapeOk(assert, 'StepRate', lim);
+      assert.strictEqual(JSON.stringify(lim.steps.map((s) => s.stabilised)), JSON.stringify([true, true, false, true, true, true]), 'dpdtMax 2 psi/h flags step 3');
+      const d = rampData(false), r = w.ramp(d.t, d.p, d.q, null, { kind: 'reopening', seed: 3, VwCw: d.VC });
+      shapeOk(assert, 'Ramp', r);
+      assert(r.seed === 3 && r.nBoot >= 50, 'bootstrap seed and size returned (§3.0)');
+      near(assert, r.storageRatio, 1, 0.01, 'ramp storage / theory ≈ 1');
+      assert(r.VwCwTheory === d.VC, 'theory value echoed');
+      assert(w.ramp(d.t, d.p, d.q, null, {}).storageRatio === null, 'no theory value → no ratio');
+    },
+  },
+  {
+    name: 'W28 clock alignment on a long 1 Hz record (24 h) scores only the samples near rate changes: same offset, bounded time',
+    wp: WP, opts: false,
+    run(_a, assert, ctx) {
+      const w = W(ctx), nrm = nrmOf(lcg(8)), off = 37.4, N = 86400;
+      const qT = (t) => (t < 40000 ? 5 : t < 40600 ? 3.75 : t < 41200 ? 2.5 : t < 41800 ? 1.25 : 0);
+      const tp = new Array(N), pp = new Array(N), tq = [], qq = [];
+      for (let t = 0; t < N; t++) { const q = qT(t); tp[t] = t / 3600; pp[t] = 7600 - 0.001 * t + 1.505 * q * q + 140 * Math.sqrt(q) + 0.5 * nrm(); }
+      for (let t = 0; t < N; t++) { tq.push((t + off) / 3600); qq.push(qT(t)); }      // a held (step) rate log at 1 s
+      const h0 = process.hrtime.bigint();
+      const a = w.align(tp, pp, tq, qq);
+      const ms = Number(process.hrtime.bigint() - h0) / 1e6;
+      assert(a.ok && a.method === 'xcorr', 'cross-correlation');
+      near(assert, a.offsetS, off, 0.5, 'offset on the long record');
+      assert(ms < 1500, 'long record aligned in ' + ms.toFixed(0) + ' ms (ceiling 1,500 ms)');
     },
   },
 ];

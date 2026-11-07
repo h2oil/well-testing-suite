@@ -24,8 +24,13 @@
 //   stepDown, stepDownDesignCheck        step-down fit, identifiability, open perforations (seeded Monte Carlo)
 //   stepRate                             continuous hinge on end-of-step pressures, F-test, bootstrap, stabilisation
 //   ramp                                 pump-in ramp hinge in p vs V (knee, stiffness, onset, near-wellbore correction)
-//   hammerQuick                          water-hammer period, reflector, Joukowsky, bleed-aware midline ISIP
-//   align                                rate ↔ pressure clock offset (cross-correlation of first differences)
+//   hammerQuick                          water-hammer period, reflector, Joukowsky, bleed-aware midline ISIP (upper:true unless the
+//                                        bleed-off is fitted or predicted below max(2 psi, 3σ); ctx.fitBleed:true with no step-down
+//                                        fits b from a default seed); a matched ctx.reflectorMd calibrates c; delta = T/τ
+//   align                                rate ↔ pressure clock offset (cross-correlation of first differences, scored only over
+//                                        the pressure samples that can see a rate change)
+// Options beyond §3.4 rows: stepRate opts.dpdtMax (psi/h, extra stabilisation limit); ramp opts.VwCw → storageRatio;
+// stepDown / ramp / stepRate return their seed (§3.0); convert flips the perforation / near-wellbore signs in flowback.
 // Extra helpers (not in §3.4, used by the tests and by 56): pipeDp, perfConstant, salinityFromPpg, rhoScPpg, rhoAt,
 // vwcwFromPeriod, hinge.
 // =============================================================================
@@ -42,6 +47,7 @@
     var K_WATER = 3.2e5;                // psi, handbook bulk modulus of water (c_fluid 3.125e-6 1/psi)
     var PERF_C = 0.2369;                // the field perforation constant (§4.2)
     var Z1281 = 1.2815516;              // P10 / P90 of a normal
+    var DCHI2_95 = 3.841459;            // χ²(1) 95 % quantile: one-parameter profile interval
 
     // ── small helpers ────────────────────────────────────────────────────────
     function _fin(v) { return typeof v === 'number' && isFinite(v); }
@@ -683,13 +689,14 @@
                     hv = hg + rr * (hd - hg);
                 }
                 var fr0 = qm[ii] > 0 ? -pipeQ(qm[ii], P.fric, fluidX) : (qfb[ii] > 0 ? pipeQ(qfb[ii], P.fric, fluidX) : 0);
-                var qx = qm[ii] > 0 ? qm[ii] : 0;
+                // perforation and near-wellbore terms: + while injecting (p_f = p_w − Δp), − during flowback (p_f = p_w + Δp(q_fb), §4.2, §4.16)
+                var qx = qm[ii] > 0 ? qm[ii] : (qfb[ii] > 0 ? qfb[ii] : 0), sgn = qm[ii] > 0 ? 1 : -1;
                 var pf = 0, nw = 0;
                 if (qx > 0) {
                     var pfr = perfs && _fin(perfs.n) ? perfFriction(qx, { n: perfs.n, dIn: (perfs.dIn || 0.4) * P.dScale, cd: P.cd != null ? P.cd : perfs.cd }, fluidX.rhoPpg)
                         : (sd && _fin(sd.a) ? sd.a * qx * qx * (P.aScale || 1) : 0);
-                    pf = _fin(pfr) ? pfr : 0;
-                    nw = sd && _fin(sd.b) ? nwbLoss(qx, { b: sd.b + (P.db || 0), beta: _num(sd.beta, 0.5), qt: _num(sd.qt, 0.1) }) : 0;
+                    pf = sgn * (_fin(pfr) ? pfr : 0);
+                    nw = sgn * (sd && _fin(sd.b) ? nwbLoss(qx, { b: sd.b + (P.db || 0), beta: _num(sd.beta, 0.5), qt: _num(sd.qt, 0.1) }) : 0);
                 }
                 hyd.push(hv); pipe.push(fr0); perf.push(pf); nwb.push(nw);
                 pw.push(p0 + hv + fr0);
@@ -812,7 +819,7 @@
         if (!chk.ok) {
             return { ok: true, pFrac: null, se: { pFrac: _nn(chk.se.pFrac), a: _nn(chk.se.a), b: _nn(chk.se.b) }, a: null, b: null, beta: 0.5, drift: 0, nOpen: null,
                      nOpenBand: { p10: null, p50: null, p90: null, driver: 'not determinable' }, at: nullAt, label: 'refused', refused: chk.why, resid: [], corr: null,
-                     regime: null, notes: [] };
+                     regime: null, notes: [], seed: _num(o.seed, 1), nMc: 0 };
         }
         var pipeFn = typeof o.pipe === 'function' ? o.pipe : null;
         var y = st.map(function (s) { var pp = pipeFn ? pipeFn(s.q) : 0; return s.p - (_fin(pp) ? pp : 0); });
@@ -829,10 +836,10 @@
         if (!best) return _fail('SINGULAR', 'The step-down fit is singular (repeated rates).', ['steps']);
         if (o.beta === 'free') {
             var bb = null, grid = [];
-            for (var bt = 0.2; bt <= 1.0001; bt += 0.01) { var rr = fitBeta(bt); grid.push({ bt: bt, sse: rr ? rr.sse : Infinity }); if (rr && (!bb || rr.sse < bb.sse)) bb = { bt: bt, r: rr }; }
+            for (var kb = 20; kb <= 100; kb++) { var bt = kb / 100, rr = fitBeta(bt); grid.push({ bt: bt, sse: rr ? rr.sse : Infinity }); if (rr && (!bb || rr.sse < bb.r.sse)) bb = { bt: bt, r: rr }; }
             if (bb) {
                 var dof = Math.max(1, st.length - (hasDrift ? 5 : 4));
-                var s2 = Math.max(1, bb.r.sse / dof);
+                var s2 = DCHI2_95 * Math.max(1, bb.r.sse / dof);       // profile Δχ² ≤ 3.84 (one parameter, 95 %), scaled by χ²_r
                 var inC = grid.filter(function (g) { return g.sse <= bb.r.sse + s2; });
                 var bLo = Math.min.apply(null, inC.map(function (g) { return g.bt; })), bHi = Math.max.apply(null, inC.map(function (g) { return g.bt; }));
                 betaCI = [bLo, bHi];
@@ -853,6 +860,7 @@
         // open perforations
         var perfs = o.perfs || {}, rho = _num(o.rhoPpg, 8.43), dIn = _num(perfs.dIn, 0.40), cd = _num(perfs.cd, 0.62);
         var nOpen = null, band = { p10: null, p50: null, p90: null, driver: 'not determinable' }, nText = null;
+        var mcSeed = _num(o.seed, 1), nMc = 0;          // the open-perforation Monte Carlo (§3.0 determinism: the seed is returned)
         var pipeDominates = _fin(dpPipe) && dpPipe > 3 * Math.max(dpPerf, 0);
         if (pipeDominates) {
             nText = 'not determinable';
@@ -860,7 +868,8 @@
             notes.push('Open perforations are not determinable: the pipe friction at the top rate is more than three times the perforation friction, and the two terms correlate (r ≈ 0.999).');
         } else if (a > 0) {
             nOpen = Math.sqrt(PERF_C * rho / (a * Math.pow(dIn, 4) * cd * cd));
-            var N = Math.max(500, Math.min(50000, _num(o.nMc, 20000) | 0)), arr = [], z = _normals(_num(o.seed, 1), 3 * N);
+            var N = Math.max(500, Math.min(50000, _num(o.nMc, 20000) | 0)), arr = [], z = _normals(mcSeed, 3 * N);
+            nMc = N;
             var cdM = _num(o.cdMean, 0.62), cdS = _num(o.cdSd, 0.04);
             for (var k2 = 0; k2 < N; k2++) {
                 var cdk = Math.min(0.95, Math.max(0.5, cdM + cdS * z[3 * k2]));
@@ -890,7 +899,7 @@
         return { ok: true, pFrac: pFrac, se: se, a: a, b: b, beta: beta, drift: drift, nOpen: _nn(nOpen),
                  nOpenBand: { p10: _nn(band.p10), p50: _nn(band.p50), p90: _nn(band.p90), driver: band.driver }, nOpenText: nText,
                  at: { dpPerf: dpPerf, dpNwb: dpNwb, dpPipe: _nn(dpPipe) }, label: label, refused: null, resid: resid, corr: corr,
-                 regime: regime, betaCI: betaCI, chi2r: chi2r, notes: notes };
+                 regime: regime, betaCI: betaCI, chi2r: chi2r, notes: notes, seed: mcSeed, nMc: nMc };
     }
 
     // ── shared hinge (step-rate §4.15, ramp §4.15b): y = α + b1·min(x, x*) + b2·max(0, x − x*) ──
@@ -1003,6 +1012,7 @@
         if (Array.isArray(a2)) { t = a2; p = a3; o = a4 || {}; } else { o = a2 || {}; t = o.t || null; p = o.p || null; }
         var stabFrac = _num(o.stabFrac, 0.3), stabPsi = _num(o.stabPsi, 5), stabRise = _num(o.stabRiseFrac, 0.1);
         var nBoot = Math.max(50, Math.min(5000, _num(o.nBoot, 500) | 0)), seed = _num(o.seed, 1);
+        var dpdtMax = _fin(o.dpdtMax) && o.dpdtMax > 0 ? o.dpdtMax : null;
         var rows = [];
         (Array.isArray(steps) ? steps : []).forEach(function (s, i) {
             if (!s || !_fin(+s.q)) return;
@@ -1025,10 +1035,13 @@
         // stabilisation (needs the previous step's end pressure)
         for (var r = 0; r < rows.length; r++) {
             var R = rows[r];
-            if (R._drift == null) continue;
-            var prev = r > 0 ? rows[r - 1].pEnd : R._pStart;
-            var riseP = Math.abs(R.pEnd - prev);
-            R.stabilised = R._drift < Math.max(stabPsi, stabRise * riseP);
+            if (R._drift != null) {
+                var prev = r > 0 ? rows[r - 1].pEnd : R._pStart;
+                var riseP = Math.abs(R.pEnd - prev);
+                R.stabilised = R._drift < Math.max(stabPsi, stabRise * riseP);
+            }
+            // optional extra limit on the end-of-step slope (psi/h)
+            if (dpdtMax != null && _fin(R.dpdt) && Math.abs(R.dpdt) > dpdtMax) R.stabilised = false;
         }
         var order = rows.slice().sort(function (a, b) { return a.q - b.q; });
         function solve(list) {
@@ -1086,11 +1099,12 @@
         var line = _lsq(V.map(function (v) { return [1, v]; }), pp);
         var knee = null, band = null, s1, s2 = null, stiff = null, label, why = null;
         var hasKnee = h && h.breakFound && h.b1 > 0;
+        var rampBoot = Math.max(50, Math.min(2000, _num(o.nBoot, 500) | 0)), rampSeed = _num(o.seed, 1);
         if (hasKnee) {
             s1 = h.b1; s2 = h.b2;
             stiff = s2 > 0 ? s1 / s2 : null;
             knee = { p: h.yStar, V: h.qStar, t: _interp1(V, tt, h.qStar) };
-            var bt = _bootHinge(V, pp, h, Math.max(50, Math.min(2000, _num(o.nBoot, 500) | 0)), _num(o.seed, 1),
+            var bt = _bootHinge(V, pp, h, rampBoot, rampSeed,
                 { iLo: Math.max(2, Math.floor(0.03 * V.length)), iHiBack: Math.max(2, Math.floor(0.03 * V.length)), nGrid: 48,
                   xLo: h.qStar - 0.25 * V[V.length - 1], xHi: h.qStar + 0.25 * V[V.length - 1] });
             band = bt ? bt.y : null;
@@ -1120,9 +1134,13 @@
             why = 'Reopening reads high by the near-wellbore loss (no step-down to correct it): an upper bound on closure.';
         }
         var VwCwRamp = s1 > 0 ? 1 / s1 : null;
+        // opts.VwCw (bbl/psi, the theory value of csys): storage ratio ramp / theory (> 2 → air or gas in the column, triage §6.3)
+        var VCth = _fin(o.VwCw) && o.VwCw > 0 ? o.VwCw : null;
         return { ok: true, kind: kind, VwCwRamp: _nn(VwCwRamp), knee: knee, band: band, slopes: { s1: _nn(s1), s2: _nn(s2) }, stiffRatio: _nn(stiff),
                  nwbCorr: _nn(nwbCorr), label: label, why: why, onset: onset, sigma: sig, qRamp: qRamp, fTest: h ? { F: h.F, p: h.p } : null,
-                 AfCf: (hasKnee && s2 > 0 && s1 > 0) ? (1 / s2 - 1 / s1) : null };
+                 AfCf: (hasKnee && s2 > 0 && s1 > 0) ? (1 / s2 - 1 / s1) : null,
+                 storageRatio: (VCth && _fin(VwCwRamp)) ? VwCwRamp / VCth : null, VwCwTheory: VCth,
+                 seed: rampSeed, nBoot: hasKnee ? rampBoot : 0 };
     }
 
     // ── water hammer (§4.17, §4.4 item 1) ────────────────────────────────────
@@ -1146,7 +1164,11 @@
         var cs = c ? csys(c, fl) : null;
         var cw = _fin(cx.c) && cx.c > 0 ? cx.c : (cs && cs.ok ? cs.waveSpeed : 4500);
         var cSource = cx.cCalibrated ? 'calibrated' : 'korteweg';
-        var L = _fin(cx.reflectorMd) ? cx.reflectorMd : (c ? c.datumMd : null);
+        // L = the expected reflector (a known packer / tubing tail / liner top when given, else the perforation datum): it sets the
+        // sampling test and the period seed; the match is always reported against the perforation datum (Ld)
+        var Lref = _fin(cx.reflectorMd) && cx.reflectorMd > 0 ? cx.reflectorMd : null;
+        var Ld = c ? c.datumMd : Lref;
+        var L = Lref || Ld;
         var tClose = Math.max(0, _num(cx.tClose, 0));            // s
         var winS = _num(cx.windowS, 60);
         var s = [], y = [], i;
@@ -1190,7 +1212,11 @@
         // bleed term
         var bl = cx.bleed || null, VC = _fin(cx.VwCw) ? cx.VwCw : (cs && cs.ok ? cs.VwCw : null);
         var q0 = _num(cx.qShut, NaN);
-        var canBleed = bl && _fin(bl.b) && bl.b > 0 && VC > 0 && q0 > 0;
+        // no step-down coefficients: fitBleed:true asks for a free fit of b from the default seed (b 100, β ½, q_t 0.1). It is opt-in
+        // (a seed far from the truth costs LM iterations); otherwise the wave ISIP cannot be accepted (§4.4) and is an upper estimate
+        var bleedSeeded = 'step-down';
+        if (!(bl && _fin(bl.b) && bl.b > 0) && cx.fitBleed === true) { bl = { b: 100, beta: 0.5, qt: 0.1 }; bleedSeeded = 'default'; }
+        var canBleed = !!(bl && _fin(bl.b) && bl.b > 0 && VC > 0 && q0 > 0);
         var fitBleed = canBleed && cx.fitBleed !== false;
         function bleedCurve(b) {
             var bo = bleedOff({ b: b, beta: _num(bl.beta, 0.5), qt: _num(bl.qt, 0.1), VwCw: VC, q0: q0 });
@@ -1243,17 +1269,29 @@
                 upper = true;
                 whyB = 'Upper estimate: the friction bleed-off is not in the fit and still ' + _f(dEnd, 1) + ' psi at the end of the window.';
             }
-        } else whyB = 'Friction bleed-off not modelled (no step-down coefficients): the wave ISIP assumes a negligible bleed-off.';
-        // regime and reflector
-        var regime, Lq = cw * T / 4, Lh = cw * T / 2, match = 'unknown';
+        } else {
+            // §4.4: neither acceptance condition can be shown without the bleed-off law → upper estimate
+            upper = true;
+            whyB = 'Upper estimate: the friction bleed-off is not modelled (' + (!(bl && _fin(bl.b) && bl.b > 0) ? 'no step-down coefficients'
+                : (!(q0 > 0) ? 'no shut-in rate' : 'no wellbore storage V_w·c_w')) + '), so a decaying bleed-off may still lift the midline.';
+        }
+        // regime and reflector. 'staircase': the fitted period is ≈ 2L/c — a closed-end (Γ > 0) termination steps toward p_f every
+        // 2L/c, and with the midline removed those steps are a 2L/c-periodic component; 'ringing': ≈ 4L/c (open end, Γ < 0)
+        var regime, match = 'unknown';
         if (A < 3 * sigma) regime = 'none';
         else if (tau < T / 2) regime = 'single';
         else regime = (L && Math.abs(T / (2 * twoLc) - 0.5) < Math.abs(T / (2 * twoLc) - 1)) ? 'staircase' : 'ringing';
-        if (L && regime !== 'none') {
-            var Lr = regime === 'staircase' ? Lh : Lq;
-            if (Math.abs(Lr - L) / L <= 0.1) match = 'perfs';
-            else match = Lr < L ? 'shallower' : 'deeper';
+        var wf = regime === 'staircase' ? 2 : 4, Lr = cw * T / wf, onRef = false, onPerfs = false;
+        if (Ld && regime !== 'none') {
+            onPerfs = Math.abs(Lr - Ld) / Ld <= 0.1;
+            onRef = !onPerfs && Lref != null && Math.abs(Lr - Lref) / Lref <= 0.1;
+            match = onPerfs ? 'perfs' : (Lr < Ld ? 'shallower' : 'deeper');
         }
+        // the depth that rings when it is known: the perforations, or the given reflector
+        var Lring = onPerfs ? Ld : (onRef ? Lref : null);
+        // a known reflector that the ring matches calibrates c (§4.17): c = 4L/T (2L/T for the half wave)
+        if (onRef) { cw = wf * Lref / T; cSource = 'calibrated'; }
+        var Lq = cw * T / 4, Lh = cw * T / 2;
         var gDecay = regime === 'staircase' ? Math.exp(-T / tau) : Math.exp(-T / (2 * tau));
         // Joukowsky (expected at the shut-in rate, scaled by the closure duration; measured = first peak-to-trough)
         var seg0 = c && c.segments.length ? c.segments[0] : null, rho = fl.rhoPpg * SLUG_PER_PPG;
@@ -1262,19 +1300,24 @@
         var mx = -Infinity, mn = Infinity;
         for (i = 0; i < n && s[i] <= s[0] + T; i++) { var dd = A * Math.exp(-s[i] / tau) * Math.cos(2 * Math.PI * s[i] / T + phi); if (dd > mx) mx = dd; if (dd < mn) mn = dd; }
         var jMeas = _fin(mx) ? mx - mn : null;
+        // V_w·c_w = L·A/(ρc²) from the period, over the section that rings (surface → the matched known depth) only
         var VwCwH = null;
-        if (L && (match === 'perfs' || _fin(cx.reflectorMd)) && regime !== 'none') {
-            var cMeas = (regime === 'staircase' ? 2 : 4) * L / T;
-            var Vft3 = c && _fin(c.Vw) ? c.Vw * BBL : (seg0 ? seg0.area * L : null);
-            if (Vft3) VwCwH = Vft3 * 144 / (rho * cMeas * cMeas) / BBL;
+        if (Lring && regime !== 'none') {
+            var cMeas = wf * Lring / T, Vft3 = null;
+            if (c && c.segments.length) {
+                Vft3 = 0;
+                c.segments.forEach(function (sg) { var len = Math.min(sg.botMd, Lring) - sg.topMd; if (len > 0) Vft3 += len * sg.area; });
+            } else if (seg0) Vft3 = seg0.area * Lring;
+            if (Vft3 > 0) VwCwH = Vft3 * 144 / (rho * cMeas * cMeas) / BBL;
         }
         var why = whyB;
         if (regime === 'none') why = 'No water-hammer signal above the noise in the window.';
+        // delta = T/τ, the logarithmic decrement of the ring per fitted period
         return { ok: true, why: why ? why.slice(0, 299) : null, c: cw, cSource: cSource, T: T, tau: tau, delta: T / tau, A: A, phi: phi, isip: isip,
                  regime: regime, Lquarter: Lq, Lhalf: Lh, reflectorMatch: match, gammaDecay: gDecay,
                  joukowsky: { expected: _nn(jExp), measured: _nn(jMeas), ratio: (_fin(jExp) && jExp > 0 && _fin(jMeas)) ? jMeas / jExp : null },
                  VwCwHammer: _nn(VwCwH), tEnd: ts + s[n - 1] / 3600, sampling: sampling,
-                 upper: upper, bleed: { fitted: !!fitBleed, b: _nn(bFit), dEnd: _nn(dEnd) }, slope: mG, sigma: sigma, sigmaFit: sigmaFit, n: n, converged: lm.converged };
+                 upper: upper, bleed: { fitted: !!fitBleed, b: _nn(bFit), dEnd: _nn(dEnd), seed: canBleed ? bleedSeeded : null }, slope: mG, sigma: sigma, sigmaFit: sigmaFit, n: n, converged: lm.converged };
     }
 
     // ── rate ↔ pressure clock alignment (§4.1) ───────────────────────────────
@@ -1300,8 +1343,10 @@
         // scan ±maxLag around 0 and, when the event offset lies outside that, around it too; the better score wins
         var centres = [0];
         if (offEvent != null && Math.abs(offEvent) > maxLag) centres.push(Math.round(offEvent));
+        function lowerBound(arr, n, v) { var lo = 0, hi = n; while (lo < hi) { var m = (lo + hi) >> 1; if (arr[m] < v) lo = m + 1; else hi = m; } return lo; }
         function score(lag, k0, k1) {
-            var s = 0, j = 0, qPrev = null, ka = k0 || 0, kb = k1 || nP;
+            var ka = k0 || 0, kb = k1 || nP, s = 0, qPrev = null;
+            var j = Math.max(0, lowerBound(Tq, nQ, Tp[ka] + lag) - 1);
             for (var k = ka; k < kb; k++) {
                 var tt = Tp[k] + lag;
                 while (j + 1 < nQ && Tq[j + 1] < tt) j++;
@@ -1313,15 +1358,33 @@
             }
             return s;
         }
+        // the pressure-sample ranges that can see a rate change for some lag in [lagA, lagB]: outside them the interpolated rate is
+        // constant and adds nothing to the score, so scoring only these is exact and costs O(samples near changes) per lag
+        function ranges(lagA, lagB) {
+            var iv = [], j, out = [];
+            for (j = 0; j + 1 < nQ; j++) {
+                if (Q[j + 1] === Q[j]) continue;
+                var a = Tq[j] - lagB, b = Tq[j + 1] - lagA;
+                if (iv.length && a <= iv[iv.length - 1][1]) { if (b > iv[iv.length - 1][1]) iv[iv.length - 1][1] = b; } else iv.push([a, b]);
+            }
+            for (j = 0; j < iv.length; j++) {
+                var k0 = Math.max(0, lowerBound(Tp, nP, iv[j][0]) - 1), k1 = Math.min(nP, lowerBound(Tp, nP, iv[j][1]) + 1);
+                if (k1 - k0 < 2) continue;
+                if (out.length && k0 <= out[out.length - 1][1]) out[out.length - 1][1] = Math.max(out[out.length - 1][1], k1); else out.push([k0, k1]);
+            }
+            return out;
+        }
+        function scoreR(lag, rs) { var s = 0; for (var r = 0; r < rs.length; r++) s += score(lag, rs[r][0], rs[r][1]); return s; }
         var dtP = _median(Tp.slice(1).map(function (v, k) { return v - Tp[k]; }));
         var coarse = Math.max(0.5, Math.min(5, _fin(dtP) ? dtP : 1));
         var best = null;
         centres.forEach(function (centre) {
-            for (var lag = centre - maxLag; lag <= centre + maxLag + 1e-9; lag += coarse) { var sc = score(lag); if (!best || sc > best.s) best = { lag: lag, s: sc }; }
+            var rs = ranges(centre - maxLag - 1, centre + maxLag + 1);
+            for (var lag = centre - maxLag; lag <= centre + maxLag + 1e-9; lag += coarse) { var sc = scoreR(lag, rs); if (!best || sc > best.s) best = { lag: lag, s: sc }; }
         });
         var lag;
-        var fineStep = 0.1, fb = null, fineList = [];
-        for (lag = best.lag - 2 * coarse; lag <= best.lag + 2 * coarse + 1e-9; lag += fineStep) { var sf = score(lag); fineList.push([lag, sf]); if (!fb || sf > fb.s) fb = { lag: lag, s: sf, k: fineList.length - 1 }; }
+        var fineStep = 0.1, fb = null, fineList = [], rsF = ranges(best.lag - 2 * coarse - 1, best.lag + 2 * coarse + 1);
+        for (lag = best.lag - 2 * coarse; lag <= best.lag + 2 * coarse + 1e-9; lag += fineStep) { var sf = scoreR(lag, rsF); fineList.push([lag, sf]); if (!fb || sf > fb.s) fb = { lag: lag, s: sf, k: fineList.length - 1 }; }
         var off = fb.lag;
         if (fb.k > 0 && fb.k + 1 < fineList.length) {
             var y0 = fineList[fb.k - 1][1], y1 = fineList[fb.k][1], y2 = fineList[fb.k + 1][1], den = y0 - 2 * y1 + y2;
