@@ -558,7 +558,7 @@ active plot). Step views ② and ④ render their own cards (they are not tabs).
   boundary or going to storage are plain arrays; work arrays may be `Float64Array`.
 - **Failure.** `{ok:false, code:'<UPPER_SNAKE>', errors:[string], bad:[fieldName]}`. Public functions never throw (they catch and
   convert). Partial success: `ok:true` with `warnings`.
-- **Warnings and verdicts.** `{code, level:'info'|'warn'|'bad', text, ev:[evidenceId]}`; `text` is plain, under 299 characters and
+- **Warnings and verdicts.** `{code, level:'info'|'warn'|'bad', text, ev:[evidenceId]}`; `text` is plain, under 300 characters (≤ 299) and
   never contains the words "null", "undefined", "NaN" or "Infinity" (GUI-sweep text scan).
 - **Purity.** 56, 57, 58, `WTS_wellbore`, `PRiSM_dfit_triage` and `PRiSM_dfit_synth` touch no DOM, no storage and no timers, and fire
   no events. **Only 59 (and in 3.4b the 59-* files) touches the DOM, writes `PRiSM.multiRate`, writes C1 (`PRiSM_setWell`), writes
@@ -637,6 +637,7 @@ DfitInputs = {
   events: { tStart:null, tb:null, ts:null, flowback:null },            // user overrides only (detected events live in the run)
   options: {
     alpha:'auto',            // 'auto'|0.5|1|'general'|'data' ('auto' = data-driven when rate history exists, else 0.5)
+    alphaGeneral:0.75,       // the α used when alpha = 'general' (PRiSM_dfit_g accepts (0.5, 1]; stored 0.51–1)
     tp:'pump',               // 'pump'|'breakdown'|'veq' (pump start / breakdown / Vi ÷ q_last)
     L:0.1,                   // Bourdet window, ln units (0.05–0.4)
     gMin:'auto',             // 'auto' | number (G units)
@@ -682,6 +683,7 @@ it); text inputs are parsed with `WTS_parseNumber`.
 | `priors.sigmaGrad` / `priors.sigmaGradSd` / `priors.piGrad` | 0.4 / 0.005 / 0.2 | 1.3 / 0.2 / 1.0 | null / 0.02 / null | psi/ft |
 | `channels.atmPsia` | 10 | 15.2 | 14.696 | psia |
 | `channels.clockOffsetH` | −24 | 24 | 0 | h |
+| `options.alphaGeneral` (α for `alpha:'general'`, open at ½) | 0.51 | 1 | 0.75 | – |
 | `options.L` | 0.05 | 0.4 | 0.1 | ln units |
 | `options.gMin` | 0 | 50 | auto | G |
 | `options.eps.*` | 0.005 | 0.3 | 0.02 / 0.02 / 0.05 | – |
@@ -1100,6 +1102,36 @@ keys between tests. Every WP asserts `checkShape` on its outputs; WP6 builds aga
 - The failure form passes every engine-output shape; `{}` and `null` never pass. Stored `DfitInputs` must lie inside the table.
 - `FIX.run` follows §4.21's convention that the 25 bbl is V_i\* (an engine run on `FIX.ds` gives V_i\* 23.02 bbl): it is a shape
   and consistency fixture, not regression truth. The ISIP candidates are the §4.4 P3a given numbers.
+- **WP0 fix round** (review of WP0):
+  - **Votes.** Voting members are F1 `compliance`, F1 `loglog` when it is independent (|ι| ≥ 0.05, `sameEvidenceAs:null`),
+    F2 `tangent`, F4 `reopening` and a `user` pick in F1 / F2 / F4. `crel`, `sqrt` and `maxdpdg` never vote — `sqrt` not even
+    when ΔtD,c ≤ 5 and it carries no `sameEvidenceAs` (a √t pick never confirms a tangent pick); F0 and F3 never vote; a member
+    with `sameEvidenceAs` set never votes.
+  - **Clamp.** `clamp` / `clampInputs` always return inputs that pass `DfitInputs`: a non-object group → its defaults
+    (`INPUT_DEFAULT`); survey rows `[md, tvd]` finite with MD strictly ascending and string rows with id, od, wall > 0, id < od,
+    finite topMd < botMd (an invalid `tubKey` → null), others dropped (`ROWS_DROPPED`), then the row caps; flags (`psig.*`,
+    `axisLock`, `ppd`, `aca.carterExactFR`) keep true / false, coerce 'true' / 1 and 'false' / 0, else the default; each
+    `unitFix.*` is null or `{kind, factor, offset}`; `depthFix` null or an object; `mask` rows `[t0, t1, why]` with finite
+    t0 < t1 (why '' when not a string); `events.tStart / tb / ts` finite or null; `events.flowback` null or finite t0 ≤ t1.
+  - **Numeric strings.** A string with a comma is read with `WTS_parseNumber` (resolved at call time) when that parser follows the
+    decimal-comma option; otherwise '1,5' → 1.5, '1,500' (1–3 digits, comma, exactly three digits) is ambiguous → default with
+    `INPUT_DEFAULT` (never 1.5, never 1,500), '1,500,000' / '1,500.5' → thousands groups. Strings without a comma must match a
+    strict decimal pattern.
+  - **Modes.** Consensus: `single` ⇒ value, range null, confidence not `'not-estimable'`; `range` ⇒ value null, a range, not
+    `'high'`; `none` ⇒ value and range null, `'not-estimable'`. ConsensusLite: the same value / range rules. Summary.closure:
+    `single` ⇒ value, label not `'not-estimable'`; `range` ⇒ lo < hi and value null; `none` ⇒ value, lo and hi null.
+  - `HandoffPacket.model` adds `'radialComposite'` (an `acaMatch` candidate, §3.6 / §6.8). `options.alphaGeneral` (0.51–1,
+    default 0.75) holds the general α.
+  - Enumerations frozen without an earlier §3 source: `AcaDiag.regimes[].kind` `'linear'|'bilinear'|'radial'|'spherical'|
+    'storage'|'transition'|'artefact'`; `Uncertainty.inputs[].dist` `'normal'|'lognormal'|'uniform'|'triangular'|'fixed'|
+    'empirical'`; `Consensus.counterfactual.knob` `'L'|'tp'|'ts'|'eps'`; `DfitDataset.rateUnit` `'bbl/d'|'STB/d'`;
+    `channels.primary` `'bh'|'surface'`; `options.aca.origin` (and `AcaResult.origin`, `picks.aca.origin`) `'centroid'|'total'|
+    'midInjection'|'sinceClosure'`; `options.aca.tideRemove` `'auto'|'on'|'off'`. Text fields are < 300 characters (§3.0).
+  - `resetDfit` also runs the pending debounced C8 save (manual timers, `flush(400)`) and removes the `dfit` field of the
+    persisted `wts_prism_state`. Because the failure form passes every engine-output shape, **WP tests assert `result.ok === true`
+    next to `checkShape`**.
+  - `FIX.ds` / `FIX.run.aca`: the after-closure line has m_L = σ_c − p_r = 2,500 psi for continuity, not from CL, so its F_L-line k
+    (3.46e-3 md) differs from the CL k of `FIX.run.frac` (2.75e-3 md) by ≈ 26 %; it is not a physical consistency check.
 - The 59 skeleton registers no `PRiSM_modeExt.dfit`, panels, plots, tools or undo extras (a stub mode would appear in the header
   select as soon as WPH lands); WP6 registers them. It also does not export the five `PRiSM_renderDfit…Tool` functions: 37's
   `listTools` discovers every `window.PRiSM_render*Tool` by name and would list them under "More" until WPH marks catalogue
@@ -2724,7 +2756,7 @@ rail is the existing bottom sheet.
   asks for the value, method or family and a reason (required).
 - Linked cursor across the visible DFIT canvases through `prism:plot-hover` and `PRiSM_plot_overlay`.
 
-### 7.11 Verdict lines (plain text, each under 299 characters; numbers filled from results)
+### 7.11 Verdict lines (plain text, each under 300 characters; numbers filled from results)
 
 | Code | Level | Text |
 |---|---|---|

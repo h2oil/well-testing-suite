@@ -5,7 +5,9 @@
 //   SH2  the §3.2 range table clamps blank / 0 / −1 / 1e12 (and an unparsable string) for every field, keeps integers
 //        integral and writes plain warnings; clampInputs gives inputs that pass DfitInputs; 56 carries the same table and
 //        clamp; the nine skeleton files load in a bare context (no document) and export every §3 name as a
-//        NOT_IMPLEMENTED stub; concat-round8 lists 56–59 after 55
+//        NOT_IMPLEMENTED stub; concat-round8 lists 56–59 after 55; clamp repairs malformed rows, flags, unit fixes, mask and
+//        event overrides so its output always passes DfitInputs; '1,500' is ambiguous (never 1.5) unless WTS_parseNumber
+//        follows the decimal-comma option; sharedApp keeps one app per file and resetDfit clears every DFIT trace
 'use strict';
 
 const fs = require('fs');
@@ -167,6 +169,28 @@ module.exports = [
       expectFail(assert, broken('Hammer', sm.Hammer, (o) => { delete o.c; }), 'c', 'missing wave speed');
       expectFail(assert, broken('Consensus', run.consensus, (o) => { o.mode = 'range'; }), 'range', 'range mode without a range');
       expectFail(assert, broken('ClosurePick', run.picks[6], (o) => { o.vote = true; }), 'vote', 'F3 votes');
+      // an independent loglog (|ι| ≥ 0.05: sameEvidenceAs null) votes in F1 (§4.7, §4.22); crel / sqrt / maxdpdg never vote
+      assert.strictEqual(run.picks[2].method, 'loglog');
+      const llOk = broken('DfitRun', run, (o) => { o.picks[2].vote = true; o.picks[2].sameEvidenceAs = null; });
+      assert(llOk.ok, 'an independent loglog votes: ' + JSON.stringify(llOk.errors.slice(0, 3)));
+      expectFail(assert, broken('ClosurePick', run.picks[2], (o) => { o.vote = true; }), 'sameEvidenceAs', 'a dependent loglog votes');
+      expectFail(assert, broken('ClosurePick', run.picks[2], (o) => { o.vote = true; o.sameEvidenceAs = null; o.family = 'F2'; }), 'vote', 'loglog votes outside F1');
+      ['crel', 'sqrt', 'maxdpdg'].forEach((m) => {
+        const i = run.picks.findIndex((x) => x.method === m);
+        expectFail(assert, broken('ClosurePick', run.picks[i], (o) => { o.vote = true; o.sameEvidenceAs = null; }), 'vote', m + ' votes');
+      });
+      // mode consistency: Consensus, ConsensusLite and Summary.closure
+      expectFail(assert, broken('Consensus', run.consensus, (o) => { o.confidence = 'not-estimable'; }), 'confidence', "single mode with 'not-estimable'");
+      expectFail(assert, broken('ConsensusLite', run.consensusLite, (o) => { o.mode = 'none'; }), 'mode', 'lite mode none with a value');
+      expectFail(assert, broken('ConsensusLite', run.consensusLite, (o) => { o.mode = 'range'; o.range = { lo: 6900, hi: 7100 }; }), 'range', 'lite range with a value');
+      expectFail(assert, broken('ConsensusLite', run.consensusLite, (o) => { o.range = { lo: 6900, hi: 7100 }; }), 'value', 'lite single with a range');
+      assert(broken('ConsensusLite', run.consensusLite, (o) => { o.mode = 'none'; o.value = null; }).ok, 'lite mode none without value or range passes');
+      expectFail(assert, broken('Summary', run.summary, (o) => { o.closure.mode = 'range'; o.closure.lo = 6900; o.closure.hi = 7100; }), 'closure.value', 'summary range with a value');
+      expectFail(assert, broken('Summary', run.summary, (o) => { o.closure.label = 'not-estimable'; }), 'closure.label', "summary single with 'not-estimable'");
+      expectFail(assert, broken('Summary', run.summary, (o) => { o.closure.mode = 'none'; o.closure.value = null; o.closure.lo = 6900; }), 'closure.value', 'summary none with a bound');
+      // a radialComposite hand-off (acaMatch candidate, §3.6 / §6.8) passes
+      assert(broken('HandoffPacket', sm.HandoffPacket, (o) => { o.model = 'radialComposite'; }).ok, 'radialComposite hand-off');
+      expectFail(assert, broken('HandoffPacket', sm.HandoffPacket, (o) => { o.model = 'dualPorosity'; }), 'model', 'unknown hand-off model');
 
       // ── failure form, {} and null ──
       assert(S.checkShape('Prepared', sm.Failure).ok && S.checkShape('DfitRun', sm.Failure).ok && S.checkShape('Hammer', sm.Failure).ok, 'failure form passes engine outputs');
@@ -180,7 +204,7 @@ module.exports = [
     name: 'SH2 the range table clamps blank / 0 / −1 / 1e12 for every field and keeps integers integral; 56 carries the same table; skeletons export every §3 name',
     wp: WP,
     opts: false,
-    run(app, assert) {
+    run(app, assert, actx) {
       const BAN = /\b(null|undefined|NaN|Infinity)\b|\[object Object\]/;
       const fields = Object.keys(S.RANGES).filter((k) => !S.RANGES[k].rows);
       assert(fields.length >= 50, 'range table fields: ' + fields.length);
@@ -201,6 +225,49 @@ module.exports = [
         if (r.integer) { const c = S.clampValue(k, Math.min(r.max, r.min + 2.6)); assert(c.value === Math.round(Math.min(r.max, r.min + 2.6)) && c.warning.code === 'INPUT_ROUNDED', k + ' rounds'); }
       });
       near(assert, S.clampValue('fluid.muCp', '1,5').value, 1.5, 1e-12, 'decimal comma');
+      // '1,500' is ambiguous (thousands separator or decimal comma): never read as 1.5 nor as 1500
+      [['fluid.muCp', 1.0], ['datumTvd', null], ['rock.hf', null]].forEach(([k, d]) => {
+        const c = S.clampValue(k, '1,500');
+        assert(c.value === d && c.warning && c.warning.code === 'INPUT_DEFAULT' && /ambiguous/.test(c.warning.text), k + " '1,500' → default with an ambiguity warning, got " + JSON.stringify(c));
+      });
+      assert.strictEqual(S.clampValue('datumTvd', '12,500.5').value, 12500.5, 'thousands groups with a point');
+      assert.strictEqual(S.clampValue('datumTvd', '1,234,567').value, 40000, 'thousands groups (then clamped)');
+      assert.strictEqual(S.clampValue('fluid.muCp', '12,25').value, 12.25, 'decimal comma with two decimals');
+      assert.strictEqual(S.clampValue('fluid.muCp', '1,5,0').value, 1.0, 'malformed commas → default');
+      // whole-object clamp on malformed rows, flags, unit fixes, mask and event overrides → always a valid DfitInputs
+      const SR = { tubKey: null, id: 4.778, od: 5.5, wall: 0.361, topMd: 0, botMd: 100 };
+      const malformed = [
+        { strings: [Object.assign({}, SR, { id: 0 })] }, { strings: [Object.assign({}, SR, { topMd: 200 })] }, { strings: [Object.assign({}, SR, { id: 6 })] },
+        { strings: [Object.assign({}, SR, { tubKey: '' }), 'x', null, Object.assign({}, SR, { wall: NaN })] },
+        { survey: [[0, 0], [100, 'x'], [50, 50], [200, 199], [200, 200], null, [300]] }, { survey: 'abc' }, { strings: { a: 1 } },
+        { options: { axisLock: 'yes', ppd: 1, aca: { carterExactFR: 'false' } } }, { channels: { psig: { p: 'on', pSurf: 0, pAnn: null } } },
+        { channels: { mask: [[1]] } }, { channels: { mask: [[2, 1, 'x'], [1, 2], [1, 3, 7], 'w', [NaN, 4, 'q']] } }, { channels: { mask: 5 } },
+        { channels: { unitFix: { p: { kind: 'kPa', factor: 0.145, offset: 0 }, pSurf: { kind: '', factor: 1, offset: 0 }, q: 'x', t: { kind: 'min', factor: 'a', offset: 0 } } } },
+        { channels: { depthFix: 'x' } }, { channels: 'x' }, { options: { aca: 7, eps: [], unc: null } }, { fluid: 'x', temp: [], rock: 3 },
+        { events: { tStart: 'abc', tb: '0,25', ts: Infinity, flowback: { t0: 2, t1: 1 } } }, { events: { flowback: 'x' } }, { events: { flowback: { t0: 1, t1: 'b' } } },
+        { events: 'x' }, { options: { triage: 'x' } }, { gauge: null },
+      ];
+      malformed.forEach((m, i) => {
+        const out = S.clampInputs(JSON.parse(JSON.stringify(m, (k, v) => (typeof v === 'number' && !isFinite(v) ? '__nf' : v)), (k, v) => (v === '__nf' ? NaN : v)));
+        const sh = S.checkShape('DfitInputs', out.inputs);
+        assert(sh.ok, 'malformed[' + i + '] ' + JSON.stringify(m).slice(0, 80) + ' → valid DfitInputs: ' + JSON.stringify(sh.errors.slice(0, 4)));
+        assert(out.warnings.length > 0 || i === 7 || i === 8, 'malformed[' + i + '] warns');
+        out.warnings.forEach((w) => { assert(S.checkShape('Warning', w).ok && !BAN.test(w.text), 'malformed[' + i + '] warning: ' + w.text); });
+      });
+      const cm = S.clampInputs(malformed[4]);
+      assert.deepStrictEqual(cm.inputs.survey, [[0, 0], [50, 50], [200, 199]], 'survey: finite rows with MD ascending kept');
+      assert(cm.warnings.some((w) => w.code === 'ROWS_DROPPED' && /4 rows/.test(w.text)), 'survey ROWS_DROPPED');
+      const cs = S.clampInputs(malformed[3]);
+      assert(cs.inputs.strings.length === 1 && cs.inputs.strings[0].tubKey === null && cs.warnings.some((w) => w.code === 'ROWS_DROPPED'), 'strings: invalid rows dropped, empty tubKey → null');
+      const cf = S.clampInputs(malformed[7]).inputs.options, cp = S.clampInputs(malformed[8]).inputs.channels.psig;
+      assert(cf.axisLock === false && cf.ppd === true && cf.aca.carterExactFR === false && cp.p === false && cp.pSurf === false && cp.pAnn === false, 'flags coerced or defaulted');
+      assert.deepStrictEqual(S.clampInputs(malformed[10]).inputs.channels.mask, [[1, 2, ''], [1, 3, '']], 'mask rows [t0 < t1, why]');
+      const cu = S.clampInputs(malformed[12]).inputs.channels.unitFix;
+      assert(cu.p.kind === 'kPa' && cu.pSurf === null && cu.q === null && cu.t === null, 'unit fixes validated');
+      const ce = S.clampInputs(malformed[17]).inputs.events;
+      assert(ce.tStart === null && ce.tb === 0.25 && ce.ts === null && ce.flowback === null, 'event overrides parsed or reset');
+      // alphaGeneral: the general α lives in (0.5, 1] (stored range 0.51–1, default 0.75)
+      assert(S.RANGES['options.alphaGeneral'].def === 0.75 && S.clampValue('options.alphaGeneral', 0.5).value === 0.51 && S.defaultInputs().options.alphaGeneral === 0.75, 'options.alphaGeneral');
       assert(S.clampValue('options.gMin', 'auto').value === 'auto' && S.clampValue('options.gMin', 3).value === 3, "gMin keeps 'auto'");
       // whole-object clamp: every inputs field set to each probe gives inputs that pass the DfitInputs shape
       const inFields = fields.filter((k) => S.RANGES[k].scope === 'inputs');
@@ -225,6 +292,14 @@ module.exports = [
       assert.deepStrictEqual(plain(IR.defaults()), plain(S.defaultInputs()), '56 defaults');
       fields.forEach((k) => probes.concat([2.6, '7.25', 1e-9]).forEach((v) => assert.deepStrictEqual(plain(IR.clampValue(k, v)), plain(S.clampValue(k, v)), '56 clampValue(' + k + ', ' + JSON.stringify(v) + ')')));
       assert.deepStrictEqual(plain(IR.clamp(plain(big))), plain(cb), '56 clamp = reference clamp');
+      malformed.forEach((m, i) => assert.deepStrictEqual(plain(IR.clamp(plain(m))), plain(S.clampInputs(plain(m))), '56 clamp = reference clamp on malformed[' + i + ']'));
+      ['1,500', '12,500.5', '1,234,567', '12,25', '1,5,0', ' 7.5 '].forEach((v) => assert.deepStrictEqual(plain(IR.clampValue('fluid.muCp', v)), plain(S.clampValue('fluid.muCp', v)), '56 clampValue(muCp, ' + v + ')'));
+      // WTS_parseNumber is resolved at call time: with the decimal-comma option on, '1,500' is 1.5 (the user's setting says so)
+      ctx.WTS_parseNumber = (x) => { const m = /^\s*([-+]?\d*),(\d+(?:[eE][-+]?\d+)?)\s*$/.exec(String(x)); return parseFloat(m ? m[1] + '.' + m[2] : String(x)); };
+      assert(IR.clampValue('fluid.muCp', '1,500').value === 1.5 && IR.clampValue('fluid.muCp', '1,500').warning === null, 'decimal-comma option on: 1,500 → 1.5');
+      ctx.WTS_parseNumber = (x) => parseFloat(String(x));   // the option off (the app default: plain parseFloat)
+      assert(IR.clampValue('fluid.muCp', '1,500').warning.code === 'INPUT_DEFAULT' && IR.clampValue('fluid.muCp', '1,5').value === 1.5, 'decimal-comma option off: fallback rule');
+      delete ctx.WTS_parseNumber;
       assert.deepStrictEqual(warns, [], 'no warnings while loading 56');
 
       // ── skeletons: load in one bare context (no document), export every §3 name as a NOT_IMPLEMENTED stub ──
@@ -270,6 +345,23 @@ module.exports = [
       const { FILES } = require(path.join(BUILD, 'concat-round8.js'));
       const i55 = FILES.indexOf('55-prism-autointerp-cal.js');
       assert.deepStrictEqual(FILES.slice(i55 + 1, i55 + 5), ['56-prism-dfit-core.js', '57-prism-dfit-aca.js', '58-prism-dfit-leakoff.js', '59-prism-dfit-ui.js'], 'Round-8 FILES += 56–59');
+
+      // ── sharedApp: one app per file; resetDfit clears st.dfit, the runtime caches, the DFIT keys and wts_prism_state.dfit ──
+      const a1 = S.sharedApp(actx), a2 = S.sharedApp(actx);
+      assert(a1 && a1 === a2, 'sharedApp returns the same app within one file');
+      const st0 = a1.win.PRiSM_state;
+      assert(st0 && typeof st0 === 'object', 'PRiSM_state exists');
+      st0.dfit = S.FIX.state; st0._dfitRun = { x: 1 }; st0._dfitWhatIf = { y: 2 };
+      a1.storage.setItem('wts_prism_dfit_hf_t1', '[1,2]'); a1.storage.setItem('wts_prism_dfit_ui', '{}'); a1.storage.setItem('wts_keep_me', 'k');
+      const prevState = a1.storage.getItem('wts_prism_state');
+      const so = prevState ? JSON.parse(prevState) : {}; so.dfit = S.FIX.state; so.keepField = 3;
+      a1.storage.setItem('wts_prism_state', JSON.stringify(so));
+      S.resetDfit(a1);
+      assert(!('dfit' in st0) && !('_dfitRun' in st0) && !('_dfitWhatIf' in st0), 'resetDfit clears st.dfit and the runtime caches');
+      assert(a1.storage.getItem('wts_prism_dfit_hf_t1') === null && a1.storage.getItem('wts_prism_dfit_ui') === null, 'resetDfit removes wts_prism_dfit* keys');
+      assert.strictEqual(a1.storage.getItem('wts_keep_me'), 'k', 'other keys are kept');
+      const after = JSON.parse(a1.storage.getItem('wts_prism_state'));
+      assert(!('dfit' in after) && after.keepField === 3, 'wts_prism_state loses only its dfit field');
     },
   },
 ];

@@ -26,7 +26,8 @@
 //       FIX.ref     the closed-form reference constants and chain (REF, chain(pClosure), forecast) the fixtures were built from
 //   sharedApp(ctx, opts?)     one app per test FILE (opts:false files): created lazily through ctx.loadApp(opts) and kept in
 //                             this module; a request from another file (or other opts) disposes the previous app first
-//   resetDfit(app)            clears st.dfit, st._dfitRun, st._dfitWhatIf and every 'wts_prism_dfit*' storage key
+//   resetDfit(app)            clears st.dfit, st._dfitRun, st._dfitWhatIf, every 'wts_prism_dfit*' storage key and the dfit
+//                             field of the persisted wts_prism_state (after running a pending debounced save, manual timers)
 //   dsHash(ds), inputHash(inputs), picksHash(picks), resultHash(summary)   frozen hash definitions (below)
 //   rng(seed)                 the seeded PRNG used by the fixtures (mulberry32; never an unseeded generator)
 //   G                         { g, gPrime, G, Ginv } closed forms α = ½ and α = 1 (§4.5) used to build the fixtures
@@ -45,7 +46,13 @@
 //     anchors). Input shapes (DfitDataset, DfitInputs, LkConfig, DesignRanges, CaseSpec) accept null only where §3 shows it,
 //     and DfitInputs must lie inside the range table (stored inputs are clamped).
 //   • Failure form (§3.0): {ok:false, code:'UPPER_SNAKE', errors:[string], bad:[fieldName]} passes every engine-output shape
-//     (stubs return it with code 'NOT_IMPLEMENTED'). {} and null never pass.
+//     (stubs return it with code 'NOT_IMPLEMENTED'). {} and null never pass. Because of that, checkShape alone passes a stub
+//     or a failed run: every WP test that checks an engine output must ALSO assert result.ok === true next to checkShape.
+//   • ClosurePick votes: F1 compliance, F1 loglog when independent (|ι| ≥ 0.05, sameEvidenceAs null), F2 tangent, F4
+//     reopening and user picks in F1/F2/F4 may vote; crel, sqrt (at any ΔtD,c) and maxdpdg never vote; F0/F3 never vote; a
+//     member with sameEvidenceAs set never votes.
+//   • Numeric strings (range fields, event overrides): see parseRaw — WTS_parseNumber at call time when it follows the
+//     decimal-comma option, else '1,5' → 1.5, '1,500' ambiguous → default with INPUT_DEFAULT, '1,500,000' → 1500000.
 //   • Keys listed in §3 are required; '?' marks a key that may be absent. Extra keys are allowed. Enumerations are exact.
 //   • Text (warnings, verdicts, reasons, evidence sentences): plain, < 300 characters, never the words null, undefined, NaN,
 //     Infinity or '[object Object]'. Evidence ids /^[QXEIHSGCKMFALUPO]\d+$/ (§6.10 groups).
@@ -69,6 +76,9 @@
 //   regression truth. ISIP candidates are the §4.4 P3a "given numbers" (wh 7,605, G 7,600.0, sd 7,595.5, lp 7,599.4 — FIX.ds
 //   has no high-rate window and no step-down); their standard errors are chosen so the inverse-variance mean is 7,600.0.
 //   Stability samples, uncertainty draws and bootstrap bands come from rng(seed) and are illustrative.
+//   The after-closure line of FIX.ds (and FIX.run.aca) has m_L = σ_c − p_r = 2,500 psi, chosen for continuity at closure and
+//   NOT derived from CL: its F_L-line k (3.46e-3 md) differs from the CL-based k of FIX.run.frac (2.75e-3 md) by about 26 %.
+//   Tests and displays must not compare the two k values on FIX.run as a physical consistency check.
 'use strict';
 
 const path = require('path');
@@ -363,6 +373,7 @@ const RANGES = {
   'priors.piGrad':          { min: 0.2, max: 1.0, def: null, unit: 'psi/ft', integer: false, scope: 'inputs' },
   'channels.atmPsia':       { min: 10, max: 15.2, def: 14.696, unit: 'psia', integer: false, scope: 'inputs' },
   'channels.clockOffsetH':  { min: -24, max: 24, def: 0, unit: 'h', integer: false, scope: 'inputs' },
+  'options.alphaGeneral':   { min: 0.51, max: 1, def: 0.75, unit: '–', integer: false, scope: 'inputs' },
   'options.L':              { min: 0.05, max: 0.4, def: 0.1, unit: 'ln units', integer: false, scope: 'inputs' },
   'options.gMin':           { min: 0, max: 50, def: 'auto', unit: 'G', integer: false, scope: 'inputs' },
   'options.eps.compliance': { min: 0.005, max: 0.3, def: 0.02, unit: '–', integer: false, scope: 'inputs' },
@@ -407,7 +418,7 @@ function defaultInputs() {
                 unitFix: { p: null, pSurf: null, q: null, t: null }, depthFix: null, mask: [] },
     events: { tStart: null, tb: null, ts: null, flowback: null },
     options: {
-      alpha: 'auto', tp: 'pump', L: 0.1, gMin: 'auto',
+      alpha: 'auto', alphaGeneral: 0.75, tp: 'pump', L: 0.1, gMin: 'auto',
       eps: { compliance: 0.02, tangent: 0.02, loglog: 0.05 },
       tau: { abs: 15, fSigma: 0.003, fN: 0.03 },
       familyWeightF1: 0.5, axisLock: false, ppd: false,
@@ -418,19 +429,34 @@ function defaultInputs() {
   };
 }
 function fmtNum(x) { return Math.abs(x) >= 1e6 || (x !== 0 && Math.abs(x) < 1e-3) ? x.toExponential(3).replace('e+', 'e') : String(+x.toPrecision(6)); }
-// Parse a raw field value: numbers pass, numeric strings are parsed (decimal comma accepted when no point is present),
-// anything else is unparsable (→ default). Blank = undefined, null or an all-space string.
+// Parse a raw field value: numbers pass; blank = undefined, null or an all-space string; anything else is unparsable
+// (→ default). Strings without a comma must match a strict decimal pattern. A string with a comma is read, at call time,
+// with WTS_parseNumber (50-a11y) when that parser follows the decimal-comma option (WTS_parseNumber('1,5') === 1.5) and the
+// string has the 'digits,digits' form. Otherwise (no parser, or the option off) the fallback rule applies:
+//   '1,5' / '12,25' (one comma, no point, not three digits after it) → decimal comma: 1.5 / 12.25;
+//   '1,500' (one comma followed by exactly three digits, no point) → AMBIGUOUS (thousands separator or decimal comma): unparsable;
+//   '1,500,000' and '1,500.5' (well-formed thousands groups) → 1500000 / 1500.5; any other comma → unparsable.
+const NUM_RE = /^[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i;
+const DEC_COMMA_RE = /^[-+]?\d*,\d+(e[-+]?\d+)?$/i;
 function parseRaw(v) {
   if (v === undefined || v === null) return { blank: true };
   if (typeof v === 'number') return isFinite(v) ? { num: v } : { bad: true };
-  if (typeof v === 'string') {
-    const s = v.trim();
-    if (!s) return { blank: true };
-    const t = (s.indexOf('.') === -1 && /^-?\d+,\d+$/.test(s)) ? s.replace(',', '.') : s.replace(/,/g, '');
-    const x = Number(t);
-    return isFinite(x) && /^[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(t) ? { num: x } : { bad: true };
+  if (typeof v !== 'string') return { bad: true };
+  const s = v.replace(/^\s+|\s+$/g, '');
+  if (!s) return { blank: true };
+  let t = s;
+  if (s.indexOf(',') !== -1) {
+    const pn = typeof globalThis.WTS_parseNumber === 'function' ? globalThis.WTS_parseNumber : null;
+    if (pn && DEC_COMMA_RE.test(s) && pn('1,5') === 1.5) { const y = pn(s); return (typeof y === 'number' && isFinite(y)) ? { num: y } : { bad: true }; }
+    if (/^[-+]?\d+,\d+$/.test(s)) {
+      if (/^[-+]?\d{1,3},\d{3}$/.test(s)) return { bad: true, ambiguous: true };
+      t = s.replace(',', '.');
+    } else if (/^[-+]?\d{1,3}(,\d{3})+(\.\d*)?$/.test(s)) t = s.replace(/,/g, '');
+    else return { bad: true };
   }
-  return { bad: true };
+  if (!NUM_RE.test(t)) return { bad: true };
+  const x = Number(t);
+  return isFinite(x) ? { num: x } : { bad: true };
 }
 function clampValue(pathStr, v) {
   const r = RANGES[pathStr];
@@ -443,7 +469,7 @@ function clampValue(pathStr, v) {
     return { value: r.def, warning: W('INPUT_DEFAULT', pathStr + ' was blank; the default ' + fmtNum(r.def) + ' ' + r.unit + ' is used.') };
   }
   if (raw.bad) {
-    return { value: r.def, warning: W('INPUT_DEFAULT', pathStr + ' could not be read as a number; ' + (r.def === null ? 'it is left unset.' : 'the default ' + (r.def === 'auto' ? 'auto' : fmtNum(r.def) + ' ' + r.unit) + ' is used.')) };
+    return { value: r.def, warning: W('INPUT_DEFAULT', pathStr + (raw.ambiguous ? ' ' + v.trim() + ' is ambiguous (a thousands separator or a decimal comma); ' : ' could not be read as a number; ') + (r.def === null ? 'it is left unset.' : 'the default ' + (r.def === 'auto' ? 'auto' : fmtNum(r.def) + ' ' + r.unit) + ' is used.')) };
   }
   let x = raw.num;
   if (r.integer) x = Math.round(x);
@@ -461,10 +487,34 @@ function mergeDefaults(dst, src) {
   });
   return dst;
 }
-// The reference clamp: defaults completed, every 'inputs' field through clampValue, row caps applied, enums checked.
+// The reference clamp (PRiSM_dfit_inputRanges.clamp in 56 is the same, step for step and warning for warning):
+//   1. defaults completed; a non-object where the defaults hold an object → the default object (INPUT_DEFAULT)
+//   2. every 'inputs' range-table field through clampValue
+//   3. survey / strings: a non-list → unset / no string (INPUT_DEFAULT); invalid rows dropped (ROWS_DROPPED): a survey row is
+//      [md, tvd] with finite numbers and MD strictly ascending; a string row has id, od, wall > 0, id < od and finite
+//      topMd < botMd (an invalid tubKey becomes null); then the row caps (ROWS_TRUNCATED)
+//   4. enums → default when not allowed (INPUT_DEFAULT)
+//   5. flags (psig.*, axisLock, ppd, aca.carterExactFR): true / false kept, 'true' / 1 and 'false' / 0 coerced, else the
+//      default (INPUT_DEFAULT)
+//   6. channels.unitFix.* → null unless {kind: non-empty string, factor, offset: finite}; channels.depthFix → null unless an
+//      object; channels.mask → only [t0, t1, why] rows with finite t0 < t1 (why '' when not a string; ROWS_DROPPED)
+//   7. events.tStart / tb / ts → finite numbers or null (parsed like range fields); events.flowback → null unless finite
+//      t0 ≤ t1 (INPUT_DEFAULT)
+const W_ = (code, text) => ({ code, level: 'warn', text, ev: [] });
+const FLAGS = ['channels.psig.p', 'channels.psig.pSurf', 'channels.psig.pAnn', 'options.axisLock', 'options.ppd', 'options.aca.carterExactFR'];
+function repairObjects(out, def, prefix, warnings) {
+  Object.keys(def).forEach((k) => {
+    if (!isObj(def[k])) return;
+    const p = prefix ? prefix + '.' + k : k;
+    if (!isObj(out[k])) { out[k] = JSON.parse(JSON.stringify(def[k])); warnings.push(W_('INPUT_DEFAULT', p + ' is not a group of fields; its defaults are used.')); return; }
+    repairObjects(out[k], def[k], p, warnings);
+  });
+}
+const plural = (n) => (n === 1 ? '1 row is' : n + ' rows are');
 function clampInputs(inputs) {
   const out = mergeDefaults(defaultInputs(), isObj(inputs) ? inputs : {});
   const warnings = [];
+  repairObjects(out, defaultInputs(), '', warnings);
   Object.keys(RANGES).forEach((k) => {
     const r = RANGES[k];
     if (r.scope !== 'inputs') return;
@@ -472,23 +522,86 @@ function clampInputs(inputs) {
     setPath(out, k, c.value);
     if (c.warning) warnings.push(c.warning);
   });
+  // rows
+  if (out.survey !== null && !Array.isArray(out.survey)) { out.survey = null; warnings.push(W_('INPUT_DEFAULT', 'survey is not a list of rows; it is left unset.')); }
+  if (!Array.isArray(out.strings)) { out.strings = []; warnings.push(W_('INPUT_DEFAULT', 'strings is not a list of rows; no string is used.')); }
+  if (Array.isArray(out.survey)) {
+    const keep = []; let last = -Infinity;
+    out.survey.forEach((row) => { if (Array.isArray(row) && row.length >= 2 && isNum(row[0]) && isNum(row[1]) && row[0] > last) { keep.push([row[0], row[1]]); last = row[0]; } });
+    if (keep.length !== out.survey.length) warnings.push(W_('ROWS_DROPPED', 'survey: ' + plural(out.survey.length - keep.length) + ' not [MD, TVD] pairs of finite numbers with MD ascending; dropped.'));
+    out.survey = keep;
+  }
+  {
+    const keep = [];
+    out.strings.forEach((row) => {
+      if (!isObj(row)) return;
+      if (!(isNum(row.id) && isNum(row.od) && isNum(row.wall) && row.id > 0 && row.od > 0 && row.wall > 0 && row.id < row.od)) return;
+      if (!(isNum(row.topMd) && isNum(row.botMd) && row.topMd < row.botMd)) return;
+      const c = JSON.parse(JSON.stringify(row));
+      if (!(typeof c.tubKey === 'string' && c.tubKey.length > 0)) c.tubKey = null;
+      keep.push(c);
+    });
+    if (keep.length !== out.strings.length) warnings.push(W_('ROWS_DROPPED', 'strings: ' + plural(out.strings.length - keep.length) + ' without id < od, wall > 0 and top MD < bottom MD; dropped.'));
+    out.strings = keep;
+  }
   ['survey', 'strings'].forEach((k) => {
     const a = out[k];
-    if (k === 'survey' && a !== null && !Array.isArray(a)) { out.survey = null; warnings.push({ code: 'INPUT_DEFAULT', level: 'warn', text: 'survey is not a list of rows; it is left unset.', ev: [] }); return; }
-    if (k === 'strings' && !Array.isArray(a)) { out.strings = []; warnings.push({ code: 'INPUT_DEFAULT', level: 'warn', text: 'strings is not a list of rows; no string is used.', ev: [] }); return; }
     if (Array.isArray(a) && a.length > RANGES[k].max) {
       out[k] = a.slice(0, RANGES[k].max);
-      warnings.push({ code: 'ROWS_TRUNCATED', level: 'warn', text: k + ' has ' + a.length + ' rows; the first ' + RANGES[k].max + ' are kept.', ev: [] });
+      warnings.push(W_('ROWS_TRUNCATED', k + ' has ' + a.length + ' rows; the first ' + RANGES[k].max + ' are kept.'));
     }
   });
+  // enums
   Object.keys(ENUMS).forEach((k) => {
     const v = getPath(out, k);
     if (ENUMS[k].indexOf(v) === -1) {
       const d = getPath(defaultInputs(), k);
       setPath(out, k, d);
-      warnings.push({ code: 'INPUT_DEFAULT', level: 'warn', text: k + ' is not one of the allowed values; ' + d + ' is used.', ev: [] });
+      warnings.push(W_('INPUT_DEFAULT', k + ' is not one of the allowed values; ' + d + ' is used.'));
     }
   });
+  // flags
+  FLAGS.forEach((k) => {
+    const v = getPath(out, k);
+    if (v === true || v === false) return;
+    if (v === 'true' || v === 1) { setPath(out, k, true); return; }
+    if (v === 'false' || v === 0) { setPath(out, k, false); return; }
+    const d = getPath(defaultInputs(), k);
+    setPath(out, k, d);
+    warnings.push(W_('INPUT_DEFAULT', k + ' is not true or false; ' + d + ' is used.'));
+  });
+  // channels: unit fixes, depth fix, mask
+  const ch = out.channels;
+  ['p', 'pSurf', 'q', 't'].forEach((k) => {
+    const f = ch.unitFix[k];
+    if (f === null) return;
+    if (isObj(f) && typeof f.kind === 'string' && f.kind.length > 0 && isNum(f.factor) && isNum(f.offset)) return;
+    ch.unitFix[k] = null;
+    warnings.push(W_('INPUT_DEFAULT', 'channels.unitFix.' + k + ' is not a unit fix (kind, factor, offset); no fix is applied.'));
+  });
+  if (ch.depthFix !== null && !isObj(ch.depthFix)) { ch.depthFix = null; warnings.push(W_('INPUT_DEFAULT', 'channels.depthFix is not a depth fix; no fix is applied.')); }
+  if (!Array.isArray(ch.mask)) { ch.mask = []; warnings.push(W_('INPUT_DEFAULT', 'channels.mask is not a list of windows; nothing is masked.')); }
+  {
+    const keep = [];
+    ch.mask.forEach((m) => { if (Array.isArray(m) && m.length >= 2 && isNum(m[0]) && isNum(m[1]) && m[0] < m[1]) keep.push([m[0], m[1], typeof m[2] === 'string' ? m[2] : '']); });
+    if (keep.length !== ch.mask.length) warnings.push(W_('ROWS_DROPPED', 'channels.mask: ' + plural(ch.mask.length - keep.length) + ' not [t0, t1, why] windows with t0 < t1; dropped.'));
+    ch.mask = keep;
+  }
+  // events (user overrides)
+  const evs = out.events;
+  ['tStart', 'tb', 'ts'].forEach((k) => {
+    const raw = parseRaw(evs[k]);
+    if (raw.blank) { evs[k] = null; return; }
+    if (raw.bad) { evs[k] = null; warnings.push(W_('INPUT_DEFAULT', 'events.' + k + ' could not be read as a time; the detected event is used.')); return; }
+    evs[k] = raw.num === 0 ? 0 : raw.num;
+  });
+  if (evs.flowback !== null) {
+    const fb = evs.flowback;
+    if (isObj(fb) && isNum(fb.t0) && isNum(fb.t1) && fb.t0 <= fb.t1) { /* valid */ } else {
+      evs.flowback = null;
+      warnings.push(W_('INPUT_DEFAULT', 'events.flowback is not a window with t0 ≤ t1; the detected flowback is used.'));
+    }
+  }
   return { inputs: out, warnings };
 }
 // range rule used by the DfitInputs shape (stored inputs are clamped)
@@ -556,7 +669,7 @@ def('DfitInputs', false, all({
               unitFix: { p: UNITFIX, pSurf: UNITFIX, q: UNITFIX, t: UNITFIX }, depthFix: 'obj|null', mask: arr(tuple('num', 'num', 'str')) },
   events: { tStart: 'num|null', tb: 'num|null', ts: 'num|null', flowback: orNull(all({ t0: 'num', t1: 'num' }, ordered('t0', 't1'))) },
   options: {
-    alpha: "'auto'|0.5|1|'general'|'data'", tp: "'pump'|'breakdown'|'veq'", L: 'num', gMin: "'auto'|num",
+    alpha: "'auto'|0.5|1|'general'|'data'", alphaGeneral: 'num', tp: "'pump'|'breakdown'|'veq'", L: 'num', gMin: "'auto'|num",
     eps: { compliance: 'num', tangent: 'num', loglog: 'num' }, tau: { abs: 'num', fSigma: 'num', fN: 'num' },
     familyWeightF1: 'num', axisLock: 'bool', ppd: 'bool',
     aca: { origin: ORIGIN, LB: 'num', carterExactFR: 'bool', tideRemove: "'auto'|'on'|'off'" },
@@ -572,8 +685,10 @@ def('Summary', true, {
   closure: all({ mode: "'single'|'range'|'none'", value: 'psia', lo: 'psia', hi: 'psia', label: "'high'|'medium'|'low'|'not-estimable'", families: FAM_P50 },
     rule((v) => {
       if (v.mode === 'single' && !isNum(v.value)) return [['value', 'single mode needs a value']];
+      if (v.mode === 'single' && v.label === 'not-estimable') return [['label', "'not-estimable' only goes with mode none"]];
       if (v.mode === 'range' && !(isNum(v.lo) && isNum(v.hi) && v.lo < v.hi)) return [['lo', 'range mode needs lo < hi']];
-      if (v.mode === 'none' && v.value != null) return [['value', 'mode none has no value']];
+      if (v.mode === 'range' && v.value != null) return [['value', 'range mode has no value']];
+      if (v.mode === 'none' && (v.value != null || v.lo != null || v.hi != null)) return [['value', 'mode none has no value or range']];
       return null;
     })),
   pn: 'psi', eta: 'frac', CL: 'nonneg', Gamma: 'nonneg', xf: 'nonneg', R: 'nonneg', model: "'PKN'|'KGD'|'radial'|null",
@@ -699,9 +814,11 @@ def('ClosurePick', true, all({
   admissible: 'bool', vetoes: arr(LIMIT), warnings: arr(LIMIT), sameEvidenceAs: METHODS + '|null', upperSide: 'bool',
   evidence: arr({ text: 'text', ev: ev() }), ev: ev({ groups: 'CK' }),
 }, rule((v) => {
-  const voters = { compliance: 'F1', tangent: 'F2', reopening: 'F4' };
+  // voting members (§4.7, §4.22): F1 compliance, F1 loglog when independent (|ι| ≥ 0.05 ⇒ sameEvidenceAs null), F2 tangent,
+  // F4 reopening, and a user pick in F1/F2/F4. crel, sqrt and maxdpdg never vote (WP0 resolution, §3.13).
+  const voters = { compliance: 'F1', loglog: 'F1', tangent: 'F2', reopening: 'F4' };
   if ((v.family === 'F0' || v.family === 'F3') && v.vote === true) return [['vote', 'F0 and F3 are cross-checks and never vote']];
-  if (v.vote === true && v.method !== 'user' && voters[v.method] !== v.family) return [['vote', 'only the independent member of a voting family votes (F1 compliance, F2 tangent, F4 reopening)']];
+  if (v.vote === true && v.method !== 'user' && voters[v.method] !== v.family) return [['vote', 'only an independent member of a voting family votes (F1 compliance or an independent loglog, F2 tangent, F4 reopening)']];
   if (v.vote === true && v.sameEvidenceAs != null) return [['sameEvidenceAs', 'a dependent member never votes']];
   return null;
 })));
@@ -721,11 +838,17 @@ def('Consensus', true, all({
   if (v.mode === 'range' && (v.value !== null || !isObj(v.range))) return [['range', 'range mode: value null and a range']];
   if (v.mode === 'none' && (v.value !== null || v.range !== null || v.confidence !== 'not-estimable')) return [['mode', "mode none: value and range null, confidence 'not-estimable'"]];
   if (v.mode === 'range' && v.confidence === 'high') return [['confidence', "'high' is not available in range mode"]];
+  if (v.mode === 'single' && v.confidence === 'not-estimable') return [['confidence', "'not-estimable' only goes with mode none"]];
   return null;
 })), { fail: true });
 def('ConsensusLite', true, all({
   mode: "'single'|'range'|'none'", value: 'psia', range: orNull(all({ lo: 'psia', hi: 'psia' }, ordered('lo', 'hi'))), families: FAM_P50, confidence: "'stale'",
-}, rule((v) => (v.mode === 'single' && !isNum(v.value)) ? [['value', 'single mode needs a value']] : (v.mode === 'range' && !isObj(v.range)) ? [['range', 'range mode needs a range']] : null)));
+}, rule((v) => {
+  if (v.mode === 'single' && (!isNum(v.value) || v.range !== null)) return [['value', 'single mode: a value and range null']];
+  if (v.mode === 'range' && (v.value !== null || !isObj(v.range))) return [['range', 'range mode: value null and a range']];
+  if (v.mode === 'none' && (v.value !== null || v.range !== null)) return [['mode', 'mode none: value and range null']];
+  return null;
+})));
 
 // ── Classification (§3.5) ──
 def('Classification', true, {
@@ -837,7 +960,7 @@ def('ReportModel', true, all({
 }, uniqueIds('sections')));
 def('HandoffPacket', true, {
   target: "'pta'|'rta'|'frac'", family: "'F1'|'F2'|'F4'|null", setWell: 'obj', multiRate: arr({ t: 'h!', q: 'rate!' }), qEq: 'rate',
-  model: "'infiniteFrac'|'finiteFrac'|'homogeneous'|null", seeds: { xf: 'nonneg', k: 'nonneg', pi: 'psia' }, notes: arr('text'), blockers: arr('text'),
+  model: "'infiniteFrac'|'finiteFrac'|'homogeneous'|'radialComposite'|null", seeds: { xf: 'nonneg', k: 'nonneg', pi: 'psia' }, notes: arr('text'), blockers: arr('text'),
 });
 
 // ── 58 outputs (§3.7) ──
@@ -1576,9 +1699,14 @@ function sharedApp(ctx, opts) {
   _shared = { key, app: ctx.loadApp(opts || {}) };
   return _shared.app;
 }
+// resetDfit: (1) with manual timers, runs the pending debounced C8 save first (33 saves 300 ms after a C7 event; flush(400)
+// advances the virtual clock by 400 ms) so it cannot write st.dfit back afterwards; (2) deletes st.dfit, st._dfitRun and
+// st._dfitWhatIf; (3) removes every 'wts_prism_dfit*' key; (4) removes the dfit field from the persisted wts_prism_state
+// (once WPH adds 'dfit' to STATE_FIELDS a reload would otherwise bring the previous test's st.dfit back).
 function resetDfit(app) {
   const g = app && (app.win || app.window);
   if (!g) return;
+  if (app.timersMode === 'manual' && typeof app.flush === 'function') { try { app.flush(400); } catch (_) { /* ignore */ } }
   const st = g.PRiSM_state;
   if (st && typeof st === 'object') { delete st.dfit; delete st._dfitRun; delete st._dfitWhatIf; }
   const s = app.storage;
@@ -1586,6 +1714,13 @@ function resetDfit(app) {
     const keys = [];
     for (let i = 0; i < s.length; i++) { const k = s.key(i); if (k && /^wts_prism_dfit/.test(k)) keys.push(k); }
     keys.forEach((k) => s.removeItem(k));
+    let raw = null;
+    try { raw = s.getItem('wts_prism_state'); } catch (_) { raw = null; }
+    if (raw) {
+      let o = null;
+      try { o = JSON.parse(raw); } catch (_) { o = null; }
+      if (isObj(o) && Object.prototype.hasOwnProperty.call(o, 'dfit')) { delete o.dfit; s.setItem('wts_prism_state', JSON.stringify(o)); }
+    }
   }
 }
 
