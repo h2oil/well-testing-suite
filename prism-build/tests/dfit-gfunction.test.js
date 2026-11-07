@@ -125,21 +125,25 @@ module.exports = [
       const gs = G.PRiSM_dfit_gFromHistory([{ t: ts - tp, q: 5 }], ts, tp, { alpha: 0.5 });
       assert(gs.ok === true && gs.kind === 'data' && gs.tauNodes.length === 64, 'gSpec');
       near(assert, gs.g0, Math.PI / 2, 1e-4, 'data-driven g0 = π/2');
-      [0.01, 0.1, 1, 10, 61.7, 500].forEach((d) => near(assert, gs.G(d), G.PRiSM_dfit_G(d, 0.5), 1e-4, 'data G at ' + d));
+      // the gSpec's G(dt) / Gp(dt) take Δt in hours (§3.5); GD / GpD take ΔtD
+      assert(gs.dtUnit === 'h', 'gSpec time unit hours');
+      [0.01, 0.1, 1, 10, 61.7, 500].forEach((d) => near(assert, gs.G(d * tp), G.PRiSM_dfit_G(d, 0.5), 1e-4, 'data G at ΔtD ' + d + ' (Δt ' + (d * tp).toFixed(4) + ' h)'));
+      [0.1, 10].forEach((d) => { near(assert, gs.GD(d), gs.G(d * tp), 1e-12, 'GD(ΔtD) = G(Δt)'); near(assert, gs.Gp(d * tp), 4 / Math.PI * G.PRiSM_dfit_gPrime(d, 0.5), 1e-4, 'Gp(Δt) = dG/dΔtD'); });
+      near(assert, G.PRiSM_dfit_gPrime(10, gs), G.PRiSM_dfit_gPrime(10, 0.5), 1e-4, 'PRiSM_dfit_gPrime accepts a gSpec (ΔtD)');
       near(assert, G.PRiSM_dfit_G(10, gs), G.PRiSM_dfit_G(10, 0.5), 1e-4, 'PRiSM_dfit_G accepts a gSpec');
       near(assert, G.PRiSM_dfit_Ginv(18, gs), 61.019, 2e-3, 'PRiSM_dfit_Ginv accepts a gSpec');
       const g1 = G.PRiSM_dfit_gFromHistory([{ t: ts - tp, q: 5 }], ts, tp, { alpha: 1 });
-      near(assert, g1.G(10), G.PRiSM_dfit_G(10, 1), 1e-4, 'data G α 1');
+      near(assert, g1.G(10 * tp), G.PRiSM_dfit_G(10, 1), 1e-4, 'data G α 1');
       // ramped two-cycle schedule: a ramp, a pause and a second cycle
       const sch = [{ t: 0, q: 1 }, { t: 0.02, q: 3 }, { t: 0.04, q: 5 }, { t: 0.06, q: 0 }, { t: 0.09, q: 4 }, { t: 0.12, q: 2 }];
       const g2 = G.PRiSM_dfit_gFromHistory(sch, 0.15, 0.15, { alpha: 0.5 });
       assert(g2.ok === true, 'two-cycle gSpec');
       let prev = -1, mono = true;
-      for (let k = 0; k <= 200; k++) { const d = Math.pow(10, -4 + k * 0.035), v = g2.G(d); if (!(v > prev)) mono = false; prev = v; }
+      for (let k = 0; k <= 200; k++) { const d = Math.pow(10, -4 + k * 0.035), v = g2.G(d * 0.15); if (!(v > prev)) mono = false; prev = v; }
       assert(mono, 'the data-driven G is strictly increasing on the two-cycle schedule');
       // model-derived G from an area history: a constant area from t = 0 gives g = 2√(1 + ΔtD) (§4.5, review note 11)
       const gm = G.PRiSM_dfit_gFromHistory(null, ts, tp, { area: 'model', modelHist: { t: [ts - tp, ts - tp + 1e-9, ts], AL: [0, 1, 1] } });
-      near(assert, gm.G(3), 4 / Math.PI * (2 * Math.sqrt(4) - 2), 1e-3, 'model G with a constant area');
+      near(assert, gm.G(3 * tp), 4 / Math.PI * (2 * Math.sqrt(4) - 2), 1e-3, 'model G with a constant area');
       // Derivs on FIX.ds: alpha 'auto' with a rate history → the data-driven G, equal to the closed form here (constant rate)
       const ds = S.FIX.ds, inputs = S.FIX.state.tests[0].inputs;
       const prep = G.PRiSM_dfit_prepare(ds, inputs, {}), ev = G.PRiSM_dfit_events(prep, inputs.events, {});

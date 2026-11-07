@@ -373,6 +373,21 @@ module.exports = [
       const cm = classify(G, rm, { frac: fm, Gc: fm.Gc });
       assert(cm.type === 'matrix' || cm.alt.indexOf('matrix') >= 0, 'matrix (got ' + cm.type + ', alt ' + cm.alt + ')');
       assert(cm.type !== 'normal', 'not normal');
+      // without ctx.Gc or frac (minor review item): the classifier reads to the consensus closure when it is passed, else to
+      // the tangent G (gcSource says which). Normal leak-off and FIX.ds classify correctly that way. On a gradual-decline
+      // signature (matrix, tip extension) the closed-form picks — and so the consensus — land early, so the pipeline (57)
+      // must pass frac at the chosen closure (or Gc); the matrix case below only checks that the consensus G is the one used.
+      const pick = (r) => G.PRiSM_dfit_closurePicks(r.d, { inputs: r.I, isipValue: r.d.isip, pr: 4500, VwCw, well: WELL, pi: 4500, varcomp: false });
+      const lite = (r, pk) => G.PRiSM_dfit_consensusLite(pk, r.d, { inputs: r.I, isip: r.d.isip });
+      const pkn = pick(rn), consN = lite(rn, pkn);
+      assert(consN.mode === 'single' && Math.abs(consN.value - 7000) <= 5, 'normal: consensus 7,000 (got ' + consN.value + ')');
+      const cnc = classify(G, rn, { consensus: consN }), cnt = classify(G, rn);
+      assert(cnc.gcSource === 'consensus' && cnc.type === 'normal', 'normal from the consensus G (got ' + cnc.type + ', ' + cnc.gcSource + ')');
+      assert(cnt.gcSource === 'tangent' && cnt.type === 'normal', 'normal from the tangent G (got ' + cnt.type + ', ' + cnt.gcSource + ')');
+      const rf = fixRun(G), cf = classify(G, rf);
+      assert(cf.type === 'normal' && cf.gcSource === 'tangent' && Math.abs(cf.features.curv) < 0.05, 'FIX.ds without frac: normal (got ' + cf.type + ', κ ' + cf.features.curv + ')');
+      const pkm = pick(rm), consM = lite(rm, pkm), cq = classify(G, rm, { consensus: consM });
+      assert(cq.ok === true && cq.gcSource === 'consensus', 'matrix: the consensus G is used (gcSource ' + cq.gcSource + ')');
     },
   },
   {

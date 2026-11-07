@@ -23,6 +23,15 @@
 //       family band with P90 = P10 gets σ_f = max(1 psi, 2σ_gauge)
 //   C13 a near-wellbore-corrected F4 within τ of F1 keeps the mode single; an uncorrected F4 bound below the single value
 //       turns it into a range
+//   C14 noisy normal leak-off (§8.2 noise levels σ 0.05 / 0.3 / 1 psi white, and AR(1) ρ1 0.9): one closure in single mode,
+//       within the §8.3 single-mode tolerance max(25 psi, 0.5 % σ_c) = 35 psi (75 psi, the §8.3 'partial' band, at σ 1); a high label
+//       only when the value is right
+//   C15 noisy toy contact (same noise levels): a range that contains σ_c, F1 within 35 psi of 7,000 and F2 within 35 psi of
+//       6,507 (75 psi, the §8.3 'partial' band, at σ 1)
+//   C16 FIX.ds (the §4.21 reference, FIX.state t1 'single closure, high'): the exact Carter after-closure line has an
+//       unbounded slope at closure (a 220 psi drop in one sample); the engine reads the break at its start → single,
+//       7,000 ± 5, high
+// Noise: seeded Gaussian (S.rng), white or AR(1) e_k = ρ1·e_{k−1} + √(1 − ρ1²)·z_k, added to the 0.001 psi model values.
 'use strict';
 
 const S = require('./_dfit-shapes');
@@ -51,7 +60,9 @@ function synth(G, P, o) {
   for (let i = 1; i <= 120; i++) { const tt = tS + i * 2.5 / 3600; t.push(tt); p.push(Math.min(4500 + 6323 * (tt - tS) * 60, 7950)); q.push(7200); }
   const dts = []; for (let k = 0; ; k++) { const dt = (1 / 3600) * Math.pow(10, k / per); if (dt > tEnd) break; dts.push(dt); }
   const pf = G.PRiSM_dfit_vcModel(dts.map((dt) => G.PRiSM_dfit_G(dt / tp, 0.5)), P, { maxStep: 0.01 });
-  dts.forEach((dt, k) => { t.push(ts + dt); p.push(+pf[k].toFixed(3)); q.push(0); });
+  const sg = o.sigma || 0, rho = o.rho || 0, r = S.rng(o.seed || 1); let e = 0;
+  const gauss = () => { let u = 0; while (u === 0) u = r(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * r()); };
+  dts.forEach((dt, k) => { if (sg) e = rho * e + Math.sqrt(1 - rho * rho) * gauss(); t.push(ts + dt); p.push(+(pf[k] + sg * e).toFixed(3)); q.push(0); });
   return { t, p, q, name: 'synthetic', source: 'test', timeUnit: 'h', rateUnit: 'bbl/d', meta: { psigConverted: {} } };
 }
 function analyse(G, P, o) {
@@ -233,6 +244,14 @@ module.exports = [
       const G = app(ctx), r = analyse(G, TOY), c = r.cons;
       assert(r.picks.some((p) => p.method === 'varcomp' && p.family === 'F3' && p.vote === false), 'varcomp is present (F3, no vote)');
       assert.strictEqual(JSON.stringify(c.counts), JSON.stringify({ evals: (54 + 50) * 7, refits: 0, draws: 0 }), 'evaluation count');
+      // the counts are real calls (debug counters): 104 closed-form evaluations, the two ε settings of a grid cell share one
+      // derivative (27 cache hits), and no variable-compliance fit runs inside the grid or the bootstrap
+      const dbg = {}, c2 = G.PRiSM_dfit_consensus(r.picks, r.d, Object.assign({}, r.cctx, { _debug: dbg }));
+      assert(c2.ok === true && dbg.st.counts.cf === 104 && dbg.st.counts.cacheHits === 27, 'closed-form calls ' + dbg.st.counts.cf + ', derivative cache hits ' + dbg.st.counts.cacheHits);
+      assert.strictEqual(dbg.st.counts.vcInGrid, 0, 'no varcomp call inside the consensus');
+      // each grid item runs at its own L: the tangent grid cells differ across L on the toy contact
+      const rowsF2 = c.stability.grid.F2.map((row) => row[0]);
+      assert(rowsF2.every((x) => typeof x === 'number') && Math.max.apply(null, rowsF2) - Math.min.apply(null, rowsF2) > 0, 'the L axis moves the tangent: ' + JSON.stringify(rowsF2));
       assert.strictEqual(JSON.stringify(c.stability.L), '[0.05,0.1,0.2]', 'grid L'); assert.strictEqual(JSON.stringify(c.stability.tp), '["pump","breakdown","veq"]', 'grid tp');
       assert(c.stability.grid.F1.length === 3 && c.stability.grid.F1.every((row) => row.length === 3), '3 × 3 heat map per family');
       assert(c.families.F1.n === 104 && c.families.F2.n === 104, '54 settings + 50 bootstrap samples per family');
@@ -320,6 +339,54 @@ module.exports = [
       const u4 = pick(r2, 'reopening');
       assert(u4.vote === false && u4.upperSide === true, 'uncorrected reopening is an upper-side bound (no vote)');
       assert(r2.cons.mode === 'range' && r2.cons.range.lowFamily === 'F4', 'the bound below the single value makes a range (low end F4)');
+    },
+  },
+  {
+    name: 'C14 noisy normal leak-off (σ 0.05 / 0.3 / 1 white, ρ1 0.9 AR): single closure within the §8.3 tolerance; high only when right',
+    wp: WP, opts: false,
+    run(_a, assert, ctx) {
+      const G = app(ctx), tol = Math.max(25, 0.005 * 7000);
+      [{ sigma: 0.05 }, { sigma: 0.3 }, { sigma: 1, partial: true }, { sigma: 0.05, rho: 0.9 }, { sigma: 0.3, rho: 0.9 }, { sigma: 1, rho: 0.9, partial: true }].forEach((nz) => {
+        const r = analyse(G, BASE, { sigma: nz.sigma, rho: nz.rho, seed: 3, pickCtx: { varcomp: false }, consCtx: { nBoot: 8 } }), c = r.cons, tag = 'σ ' + nz.sigma + (nz.rho ? ' AR' : '');
+        assert(c.ok === true && c.mode === 'single', tag + ': single (got ' + c.mode + ')');
+        near(assert, c.value, 7000, nz.partial ? 75 : tol, tag + ': consensus closure');
+        near(assert, pick(r, 'compliance').p, 7000, nz.partial ? 75 : tol, tag + ': compliance pick');
+        if (c.confidence === 'high') near(assert, c.value, 7000, tol, tag + ': a high label is right');
+      });
+    },
+  },
+  {
+    name: 'C15 noisy toy contact (σ 0.05 / 0.3 / 1 white, ρ1 0.9 AR): range containing σ_c, F1 and F2 within the §8.3 tolerance',
+    wp: WP, opts: false,
+    run(_a, assert, ctx) {
+      const G = app(ctx), tol = Math.max(25, 0.005 * 7000);
+      [{ sigma: 0.05 }, { sigma: 0.3 }, { sigma: 1, partial: true }, { sigma: 0.05, rho: 0.9 }, { sigma: 0.3, rho: 0.9 }, { sigma: 1, rho: 0.9, partial: true }].forEach((nz) => {
+        const r = analyse(G, TOY, { sigma: nz.sigma, rho: nz.rho, seed: 3, pickCtx: { varcomp: false }, consCtx: { nBoot: 8 } }), c = r.cons, tag = 'σ ' + nz.sigma + (nz.rho ? ' AR' : '');
+        assert(c.ok === true && c.mode === 'range', tag + ': range (got ' + c.mode + ')');
+        assert(c.range.lo <= 7000 && c.range.hi >= 7000, tag + ': the range [' + c.range.lo + ', ' + c.range.hi + '] contains σ_c');
+        near(assert, c.families.F1.p50, 7000, nz.partial ? 75 : tol, tag + ': F1 median');
+        near(assert, c.families.F2.p50, 6507, nz.partial ? 75 : tol, tag + ': F2 median');
+        near(assert, pick(r, 'tangent').p, 6507, nz.partial ? 75 : tol, tag + ': tangent pick');
+        assert(c.confidence !== 'high', tag + ': range mode is never high');
+      });
+    },
+  },
+  {
+    name: 'C16 FIX.ds (§4.21 reference): the unbounded after-closure slope is read at the break → single 7,000 ± 5, high',
+    wp: WP, opts: false,
+    run(_a, assert, ctx) {
+      const G = app(ctx), I = inputs(), ds = S.FIX.ds;
+      const prep = G.PRiSM_dfit_prepare(ds, I, WELL), ev = G.PRiSM_dfit_events(prep, I.events, {});
+      const d = G.PRiSM_dfit_derivs(prep, ev, { alpha: 0.5, L: I.options.L });
+      const picks = G.PRiSM_dfit_closurePicks(d, { inputs: I, isipValue: d.isip, pr: 4500, VwCw, AfCf, well: WELL, pi: 4500 });
+      const c = G.PRiSM_dfit_consensus(picks, d, { prep, events: ev, inputs: I, isip: d.isip, well: WELL, pi: 4500, VwCw, ViStar: 25, seed: 1 });
+      const cf = G.PRiSM_dfit_closedForm(d, {});
+      assert(cf.abrupt === true, 'the closed form reports an abrupt break');
+      near(assert, pick({ picks }, 'compliance').p, 7000, 5, 'compliance at the break'); near(assert, pick({ picks }, 'tangent').p, 7000, 5, 'tangent at the break');
+      const fx = S.FIX.run.consensus;
+      assert(c.ok === true && c.mode === fx.mode, 'mode ' + c.mode + ' = FIX.run ' + fx.mode);
+      near(assert, c.value, 7000, 5, 'consensus closure'); near(assert, c.value, fx.value, 5, 'FIX.run value'); assert.strictEqual(fx.confidence, 'high', 'FIX.run label high');
+      assert.strictEqual(c.confidence, 'high', 'label high (fired: ' + c.rules.filter((x) => x.fired).map((x) => x.id).join(',') + ', metrics ' + JSON.stringify(c.metrics) + ', F1 ' + JSON.stringify(c.families.F1) + ', F2 ' + JSON.stringify(c.families.F2) + ')');
     },
   },
 ];
