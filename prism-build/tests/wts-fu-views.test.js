@@ -130,7 +130,7 @@ const L = [
         // no page input yet: the buttons are shown disabled with the reason
         if (!app.el('wts_bean2')) {                          // before WP-C the page has no CK-102 bean input
           const m = cardBtn(app, 'bean2', '-4');
-          assert.ok(m && m.disabled && /Heater card/.test(m.getAttribute('title')), 'disabled without wts_bean2: ' + (m && m.getAttribute('title')));
+          assert.ok(m && m.disabled && m.getAttribute('title').indexOf(X.LABELS.bean2) >= 0, 'disabled without wts_bean2: ' + (m && m.getAttribute('title')));
         }
         const el = hostInput(app, 'wts_bean2', 48), ev = [];
         el.addEventListener('input', () => ev.push(el.value));
@@ -395,6 +395,49 @@ const L = [
       const d = J(I.inputsDiff(app.toWin(a), app.toWin(b)));
       assert.deepStrictEqual(d.map((x) => x[1]), ['CK-102', 'V-101'], JSON.stringify(d));
       noErr(app, assert);
+    }
+  },
+  {
+    name: 'WTSFUV L Cushion form from stored device prefs: a damaged h2viz3d_prefs.cushion block opens sanitised (clamped by DEFAULTS.cushion.lim, unknown tubing → 3-1/2″); CK-102 ΔP in psi',
+    wp: WP, integration: true,
+    run(app, assert) {
+      const I0 = () => app.win.WTS_live._internals;
+      app.win.localStorage.setItem('h2viz3d_prefs', JSON.stringify({ mode: '2d', cushion: { V: 9999, SG: 'heavy', q: 50, tbg: '9-5/8', depth: 1e9 } }));
+      openWts(app);
+      const t = installStub(app, { ck2: true });
+      try {
+        app.flush(600);
+        ctlOf(app)._debug.openCushion(null); app.flush(50);
+        const D = X.DEFAULTS_NEW.cushion;
+        assert.ok(app.el('wtsl_cush_V').value === String(D.lim.V[1]) && app.el('wtsl_cush_SG').value === String(D.SG) && app.el('wtsl_cush_q').value === String(D.lim.q[0]) &&
+          app.el('wtsl_cush_tbg').value === '3-1/2' && app.el('wtsl_cush_depth').value === String(D.lim.depth[1]),
+          'sanitised form: ' + ['V', 'SG', 'q', 'tbg', 'depth'].map((k) => app.el('wtsl_cush_' + k).value).join(','));
+        assert.deepStrictEqual(J(I0().readPrefs().cushion), { V: 500, SG: D.SG, q: 100, tbg: '3-1/2', depth: 25000 }, 'prefs');
+        ctlOf(app)._debug.closeCushion();
+        openCard(app, 'heaterChoke');
+        const dp = cardRows(app)['ΔP'].v;
+        assert.ok(/^[\d,.]+ psi$/.test(dp), 'ΔP is a differential (psi, not psig): ' + dp);
+      } finally { t.restore(); }
+      noErr(app, assert);
+    }
+  },
+  {
+    name: 'WTSFUV L iOS: the cushion form overlay keeps its web padding or the safe-area inset plus a gap (all four sides, both widths), 16 px inputs, 44 pt controls; no insets in the web form CSS',
+    wp: WP,
+    run(app, assert) {
+      const fs = require('fs'), path = require('path');
+      const ios = fs.readFileSync(path.join(__dirname, '..', '..', 'ios-app', 'ios-additions', 'ios-styles.css'), 'utf8');
+      const blk = ios.slice(ios.indexOf('Cushion unload form'));
+      assert.ok(blk.length > 100, 'WP-L block present');
+      [16, 10].forEach((w) => ['top', 'right', 'bottom', 'left'].forEach((sd) =>
+        assert.ok(blk.indexOf('max(' + w + 'px, calc(8px + env(safe-area-inset-' + sd + ')))') >= 0, 'padding ' + w + ' px / ' + sd)));
+      assert.ok(/@media \(max-width: 600px\)[\s\S]*html\.ios-app \.wtsl-cush-ov/.test(blk), 'phone padding');
+      assert.ok(/html\.ios-app \.wtsl-cush-f input, html\.ios-app \.wtsl-cush-f select \{ font-size: 16px; min-height: 44px; \}/.test(blk), '16 px inputs, 44 pt');
+      assert.ok(/100dvh/.test(blk), 'box fits the dynamic viewport');
+      const src = fs.readFileSync(path.join(__dirname, '..', '38-wts-live.js'), 'utf8');
+      const css = src.slice(src.indexOf('var CSS = ['), src.indexOf('].join', src.indexOf('var CSS = [')));
+      assert.ok(/\.wtsl-cush-ov\{position:fixed/.test(css) && /padding:16px/.test(css) && /\.wtsl-cush-ov\{padding:10px\}/.test(css), 'web paddings 16 / 10 px (the iOS rule keeps them)');
+      assert.ok(css.split('\n').filter((l) => /wtsl-cush/.test(l)).every((l) => l.indexOf('env(') === -1), 'no safe-area insets in the web form CSS');
     }
   },
 ];

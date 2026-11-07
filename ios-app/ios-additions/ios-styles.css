@@ -220,19 +220,29 @@
         html.ios-app #bu_root .bu-dlg-x { width: 44px; height: 44px; }
         html.ios-app #bu_root .bu-act { min-height: 44px; }
 
-        /* 8. v3.3.x Well Test Simulator: Scenarios → Cushion unload form (prism-build/38-wts-live.js,
-              #wtsl_cush_dlg, docs/SIM-FOLLOWUP-PLAN.md §8.3; WP-L block, after the Help-centre rules).
-              The same two-part safe-area pattern as section 5: the full-screen <dialog> overlay keeps
-              the title, × and the Start / Stop buttons clear of the status bar, notch / Dynamic Island
-              and home indicator in portrait and landscape; the form box scrolls within the insets.
-              Inputs are 16 px (no zoom on focus) and every control gets the 44 pt touch target. */
+        /* 8. Well Test Simulator follow-up: Scenarios → Cushion unload form (prism-build/38-wts-live.js,
+              #wtsl_cush_dlg .wtsl-cush-ov, docs/SIM-FOLLOWUP-PLAN.md §8.3; WP-L block, kept after the Help-centre
+              rules). The full-screen <dialog> overlay keeps the title, × and the Start / Stop buttons clear of
+              the status bar, notch / Dynamic Island and home indicator in portrait and landscape: each side keeps
+              its web padding (16 px, 10 px below 600 px) or the inset plus a small gap, whichever is larger; the
+              form box scrolls within that padding. Inputs are 16 px (no zoom on focus), controls get 44 pt. */
         html.ios-app .wtsl-cush-ov {
-            padding: max(10px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right))
-                     max(10px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
+            padding: max(16px, calc(8px + env(safe-area-inset-top))) max(16px, calc(8px + env(safe-area-inset-right)))
+                     max(16px, calc(8px + env(safe-area-inset-bottom))) max(16px, calc(8px + env(safe-area-inset-left)));
         }
         html.ios-app .wtsl-cush {
-            max-height: calc(100vh - max(10px, env(safe-area-inset-top)) - max(10px, env(safe-area-inset-bottom)));
-            max-height: calc(100dvh - max(10px, env(safe-area-inset-top)) - max(10px, env(safe-area-inset-bottom)));
+            max-height: calc(100vh - max(16px, calc(8px + env(safe-area-inset-top))) - max(16px, calc(8px + env(safe-area-inset-bottom))));
+            max-height: calc(100dvh - max(16px, calc(8px + env(safe-area-inset-top))) - max(16px, calc(8px + env(safe-area-inset-bottom))));
+        }
+        @media (max-width: 600px) {
+            html.ios-app .wtsl-cush-ov {
+                padding: max(10px, calc(8px + env(safe-area-inset-top))) max(10px, calc(8px + env(safe-area-inset-right)))
+                         max(10px, calc(8px + env(safe-area-inset-bottom))) max(10px, calc(8px + env(safe-area-inset-left)));
+            }
+            html.ios-app .wtsl-cush {
+                max-height: calc(100vh - max(10px, calc(8px + env(safe-area-inset-top))) - max(10px, calc(8px + env(safe-area-inset-bottom))));
+                max-height: calc(100dvh - max(10px, calc(8px + env(safe-area-inset-top))) - max(10px, calc(8px + env(safe-area-inset-bottom))));
+            }
         }
         html.ios-app .wtsl-cush-f input, html.ios-app .wtsl-cush-f select { font-size: 16px; min-height: 44px; }
         html.ios-app .wtsl-cush-ft .wtsl-b, html.ios-app .wtsl-cush-hd .wtsl-b { min-height: 44px; min-width: 44px; }

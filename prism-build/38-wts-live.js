@@ -2417,7 +2417,7 @@ function createController(vizEl, mopts) {
                     ['Regime', function (s) { var c = K(s); return (c.flowLimited ? 'LIMITED · ' : '') + String(c.regime || '—').toUpperCase(); }, ''],
                     ['Bean', function (s) { var c = K(s); return isNum(c.bean) && c.bean > 0 ? c.bean + '/64″' : '—'; }, ''],
                     ['Position', function (s) { return K(s).pos === 'midcoil' ? 'Between the coil passes' : 'On the heater inlet'; }, ''],
-                    ['ΔP', function (s) { var c = K(s); return fmtU(num(c.Pin, NaN) - num(c.P, NaN), 'pressureG'); }, 'p'],
+                    ['ΔP', function (s) { var c = K(s); return fmtU(num(c.Pin, NaN) - num(c.P, NaN), 'pressure'); }, 'p'],
                     ['J-T ΔT', function (s) { var v = K(s).dTjt; return isNum(v) ? fmtU(v, 'tempDelta', 1) : '—'; }, 't'],
                     ['Outlet T', function (s) { return T(K(s).T); }, 't', function (s) { var c = K(s); return isNum(c.Tin) ? 'inlet ' + T(c.Tin) : null; }],
                     ['Hydrate T / margin', function (s) { var c = K(s); return T(c.th) + (isNum(c.T) && isNum(c.th) ? ' · ' + fmtU(c.T - c.th, 'tempDelta', 1) : ''); }, 't',
@@ -2607,7 +2607,7 @@ function createController(vizEl, mopts) {
             // v1.5.0 CK-102 bean: host input wts_bean2 (-4 / +4, 4-128); the snapshot bean when the page has no input yet
             var b2 = readHost('wts_bean2'), has2 = !!hostEl('wts_bean2'), inR2 = rigIn(st, 'heaterChoke');
             var nb2 = st && st.nodes && st.nodes.heaterChoke ? st.nodes.heaterChoke.bean : NaN, bv = isNum(b2) ? b2 : (isNum(nb2) && nb2 > 0 ? nb2 : NaN);
-            var dis2 = !inR2 ? 'CK-102 is not in the rig-up' : !has2 ? 'Set the CK-102 bean on the page (Heater card)' : '';
+            var dis2 = !inR2 ? 'CK-102 is not in the rig-up' : !has2 ? 'No "Heater choke CK-102 bean (64ths)" input on the page' : '';
             sig = 'bean2' + bv + dis2;
             h = '<span class="wtsl-hl" style="margin-right:4px">CK-102 bean</span>' +
                 '<button type="button" data-wts-ui class="wtsl-b" data-act="bean2" data-v="-4" aria-label="Smaller CK-102 bean"' + (dis2 ? bAttr(dis2) : ' title="CK-102 bean − 4/64″"') + '>−</button>' +
