@@ -237,6 +237,33 @@ function tableState() {
           say('[web] 390px header: Help "?" checked on ' + longest.join(', '));
           await ctx.close();
         }
+        // DFIT pass (docs/DFIT-PLAN.md §7.13): PRiSM in DFIT mode with the reference demo analysed, steps ①–⑤ and the four
+        // step-④ sub-views at 390 px and 1280 px — no page-level horizontal overflow (DFIT tables scroll in .dtable-wrap).
+        // A build without the WPH shell hooks cannot enter DFIT mode: reported and skipped.
+        if (!QUICK) for (const w of [390, 1280]) {
+          const { ctx, p } = await open(browser, t, w, port, w < 700 ? 844 : 800);
+          await go(p, 'prism'); await p.waitForTimeout(900);
+          const entered = await p.evaluate(async () => {
+            const U = window.PRiSM_dfit_ui;
+            if (!U || !window.PRiSM || typeof window.PRiSM.setMode !== 'function') return 'no DFIT UI in this build';
+            U.loadDemo('reference');
+            window.PRiSM.setMode('dfit');
+            if (window.PRiSM.mode !== 'dfit') return 'the WPH shell hooks are not in this build';
+            try { await window.PRiSM_dfit_analyse(); } catch (e) { return 'analyse failed: ' + e.message; }
+            return '';
+          });
+          if (entered) { say('[skip] ' + t.name + ' ' + w + 'px DFIT pass: ' + entered); await ctx.close(); continue; }
+          const views = [1, 2, 3, 4, 5].map((n) => ['step' + n, n, null]).concat(['aca', 'lk', 'unc', 'tell'].map((k) => ['step4-' + k, 4, k]));
+          for (const [name, n, sub] of views) {
+            await p.evaluate((a) => { window.PRiSM_gotoStep(a[0]); if (a[1]) { const b = document.getElementById('prism_dfit_s4_' + a[1]); if (b) b.click(); } }, [n, sub]);
+            await p.waitForTimeout(400);
+            const m = await p.evaluate(measure); summary.checks++; st.routes++;
+            if (m.over || m.nBad) { st.overflow++; fail(t.name + ' ' + w + 'px prism DFIT ' + name + ' overflow ' + JSON.stringify(m)); }
+            if (SHOTS) await p.screenshot({ path: path.join(SHOTS, t.name + '-' + w + '-dfit-' + name + '.png'), fullPage: false });
+          }
+          say('[' + t.name + '] ' + w + 'px DFIT pass: ' + views.length + ' views');
+          await ctx.close();
+        }
         // desktop: tables keep the table layout
         const { ctx, p } = await open(browser, t, 1280, port);
         for (const r of TABLE_ROUTES) {

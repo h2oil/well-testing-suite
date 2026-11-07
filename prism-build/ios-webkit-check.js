@@ -85,6 +85,38 @@ srv.listen(0, async () => {
     console.log('[sweep] ' + n + ' route×width checks: ' + over + ' with page overflow, ' + small + ' with controls < 16px' + (WEB ? ' (web layout, report only)' : ''));
     if (!WEB && (over || small)) fails++;
     if (!WEB) {
+      // 1b. one DFIT view (docs/DFIT-PLAN.md §7.13): PRiSM in DFIT mode with the reference demo analysed, step ③ and
+      //     the step-④ leak-off sub-view at 390 px — no page overflow, controls ≥ 16 px, the dialogs inside the safe area.
+      {
+        const { ctx, p } = await page(browser, 390);
+        await go(p, 'prism'); await p.waitForTimeout(1200);
+        const entered = await p.evaluate(async () => {
+          const U = window.PRiSM_dfit_ui;
+          if (!U || !window.PRiSM || typeof window.PRiSM.setMode !== 'function') return 'no DFIT UI in this build';
+          U.loadDemo('reference'); window.PRiSM.setMode('dfit');
+          if (window.PRiSM.mode !== 'dfit') return 'the WPH shell hooks are not in this build';
+          try { await window.PRiSM_dfit_analyse(); } catch (e) { return 'analyse failed: ' + e.message; }
+          return '';
+        });
+        if (entered) console.log('[skip] DFIT view: ' + entered);
+        else {
+          for (const [n, sub] of [[3, null], [4, 'lk']]) {
+            await p.evaluate((a) => { window.PRiSM_gotoStep(a[0]); if (a[1]) { const b = document.getElementById('prism_dfit_s4_' + a[1]); if (b) b.click(); } }, [n, sub]);
+            await p.waitForTimeout(500);
+            const m = await p.evaluate(measure);
+            console.log('[dfit] step ' + n + (sub ? ' ' + sub : '') + ': overflow=' + (m.over || m.nBad > 0) + ' small=' + m.nSmall);
+            if (m.over || m.nBad || m.nSmall) fails++;
+          }
+          const dlg = await p.evaluate(() => {
+            const d = window.PRiSM_dfit_ui.openOverride(); if (!d) return null;
+            const cs = getComputedStyle(d), out = { pt: cs.paddingTop, mh: cs.maxHeight };
+            window.PRiSM_dfit_ui.closeOverride(); return out;
+          });
+          console.log('[dfit] override dialog ' + JSON.stringify(dlg));
+          if (!dlg) fails++;
+        }
+        await ctx.close();
+      }
       // 2 + 3. 3D mount and lifecycle
       const { ctx, p } = await page(browser, 390);
       await go(p, 'wts');
