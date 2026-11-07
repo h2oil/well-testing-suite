@@ -946,7 +946,9 @@
             ts = overrides.ts; src.ts = 'user';
             iS = 0; for (i = 0; i < n; i++) if (t[i] <= ts) iS = i;
         }
+        // shut-in refined to sub-sample resolution by the water-hammer onset when a high-rate window gives one
         var tsRefined = false;
+        if (src.ts === 'auto' && _fin(opts.hammerOnset) && iS + 1 < n && opts.hammerOnset >= t[iS] && opts.hammerOnset < t[iS + 1]) { ts = opts.hammerOnset; tsRefined = true; }
         // breakdown: pressure maximum during pumping followed by a drop (> max(5σ, 0.5 % of the rise)) while pumping
         var iB = -1, pmx = -INF, i0c = cyc.i0;
         for (i = i0c; i <= iS; i++) if (p[i] > pmx) { pmx = p[i]; iB = i; }
@@ -1407,9 +1409,9 @@
                          bleedAtEnd: _nn(c.bleedAtEnd), viscCorr: _nn(c.viscCorr), why: _txt(c.why || 'Given estimate.'), ev: Array.isArray(c.ev) && c.ev.length ? c.ev : ['I3'] });
         });
         if (!cands.length) return _fail('NO_ISIP', 'No ISIP estimate is available (no early straight G segment, hammer or step-down).', ['isip']);
-        var pn = _fin(ctx.pn) ? ctx.pn : (_fin(ctx.sigmaC) ? null : null);
-        var rec = _reconcile(cands, { pn: _fin(ctx.pn) ? ctx.pn : (_fin(ctx.sigmaC) ? null : null) });
-        if (_fin(ctx.sigmaC) && rec) rec = _reconcile(cands, { pn: rec.value - ctx.sigmaC });
+        // the agreement bands scale with p_n: ctx.pn, else ISIP − ctx.sigmaC once the ISIP is known, else the 10 / 25 psi floors
+        var rec = _reconcile(cands, { pn: ctx.pn });
+        if (!_fin(ctx.pn) && _fin(ctx.sigmaC) && rec) rec = _reconcile(cands, { pn: rec.value - ctx.sigmaC });
         if (!rec) return _fail('NO_ISIP', 'No usable ISIP estimate.', ['isip']);
         // log-log check: the ISIP for which early Δp and D keep the Nolte ratio Δp/D = G/(ΔtD·G′)
         var best = [], d = derivs;
@@ -1741,7 +1743,7 @@
         var ov = { derivs: d };
         function mk(m, fam, src, o) { var oo = {}; for (var k in ov) oo[k] = ov[k]; for (k in o) oo[k] = o[k]; oo.G = src.G; oo.p = src.p; oo.dt = _dtAtG(d, src.G); oo.text = src.text; return _pick(m, fam, v, src.k, oo); }
         var dtDcT = P.tangent ? _dtAtG(d, P.tangent.G) / d.tp : null;
-        if (P.compliance) out.push(mk('compliance', 'F1', P.compliance, { vote: true, ev: 'C2', se: Math.max(d.sigma, 0.5) / Math.max(d.mG || 1, 1e-6) * (d.mG || 1) }));
+        if (P.compliance) out.push(mk('compliance', 'F1', P.compliance, { vote: true, ev: 'C2', se: Math.max(d.sigma, 0.5) }));
         if (P.crel) out.push(mk('crel', 'F1', P.crel, { vote: false, same: 'compliance', ev: 'C6' }));
         if (P.loglog) {
             var indep = Math.abs(cf.iota) >= 0.05;
