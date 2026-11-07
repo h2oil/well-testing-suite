@@ -116,7 +116,8 @@ const CHECKS = {
       'flow.ck2.QmaxMMscfd': 10.71, 'flow.ck2.sit_psig': 3600, 'flow.ck2.sitEst': true, 'flow.ck2.ratingOK': false } },
     { kind: 'page', set: { wts_bean2: 32 }, tol: 0.002, expectState: { 'flow.ck2.limiter': 'CK-102', 'flow.ck2.flowLimited': true, 'flow.ck2.QmaxMMscfd': 8.92, 'flow.ck2.Pin': 2753.6, 'flow.ck2.ck1.regime': 'Subcritical' } },
     { kind: 'page', set: { wts_bean2: 64 }, tol: 0.002, expectState: { 'flow.ck2.Pin': 634.4, 'flow.ck2.ck1.regime': 'Critical' } },
-    { kind: 'sim', needs: 'heaterChoke', set: { wts_bean2: 32 }, rig: { heaterChoke: true }, run: 120, expect: [{ alarm: 'CHOKE2_LIMIT', from: 0, to: 30 }, { alarm: 'CK1_SUBCRIT', from: 0, to: 30 }, { noAlarm: 'CHOKE_LIMIT' }] },
+    { kind: 'sim', needs: 'heaterChoke', set: { wts_bean2: 32 }, rig: { heaterChoke: true }, run: 120, expect: [{ alarm: 'CHOKE2_LIMIT', from: 0, to: 30 }, { alarm: 'CK1_SUBCRIT', from: 0, to: 30 }, { noAlarm: 'CHOKE_LIMIT' },
+      { at: 120, path: 'nodes.heaterChoke.Pin', v: 2460, tol: 0.01 }] },
   ],
   // FS-1 (a)–(d) of plan §6.2; (e) is FS-2's default-spread check. Since 31 v1.5.0 the main text is the cushion scenario (afterSim, the
   // last three sim checks); the older checks stand for the short 'today' note (the order of the pressure changes) and the legacy V-101-out path.

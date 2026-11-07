@@ -227,7 +227,7 @@
         steps: ['Open the CK-102 card. Read **Upstream P** (between the chokes), **Regime**, **Pair capacity** and **Limiter**.', 'Open the CK-101 card and read its regime.',
             'In the form set **Heater choke CK-102 bean** to 32. Watch the alarms and both cards.', 'Set it to 64, then back to 48.', 'On the H-101 card select **Bypass**: CK-102 goes out of line with it. Select it again.', OUT('Heater inlet choke')],
         observe: ['On 48/64 about {{1135|pressureG}} between the chokes: CK-101 P2/P1 0.38, **Critical**, and CK-101 limits the pair ({{10.71|gasRate}}).',
-            'On 32/64 CK-102 limits: {{8.92|gasRate}} for {{10|gasRate}} asked (CHOKE2_LIMIT), about {{2754|pressureG}} between the chokes, CK-101 subcritical (CK1_SUBCRIT).',
+            'On 32/64 CK-102 limits: {{8.92|gasRate}} for {{10|gasRate}} asked (CHOKE2_LIMIT), CK-101 subcritical (CK1_SUBCRIT); about {{2460|pressureG}} between the chokes at the cut rate.',
             'On 64/64 about {{634|pressureG}} between the chokes.', 'The page warns that SITHP ({{3600|pressureG}}, estimated) is above the {{1440|pressureG}} design pressure between the chokes.'],
         questions: ['Why does CK-101 go subcritical on 32/64?', 'Which choke sets the rate on 48/64?', 'What protects the line between the chokes?'],
         answers: ['CK-102 holds the pressure between the chokes above about 0.55 of the CK-101 inlet.', 'CK-101: it is still critical and the pair passes its capacity.', 'Its design pressure, PAH-102 at 90 % and the blocked-in check; no relief valve is modelled between the chokes.'],
