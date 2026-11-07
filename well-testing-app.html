@@ -129706,6 +129706,8 @@ window.calcWTS=function(){
             const htIn=ck2Pos==='midcoil'?T3:TmOut;
             const Qd=CpMix*((ck2Pos==='midcoil'?Tp1-T3:0)+Math.max(ToutH-TmOut,0))*3600,duty=htrEff>0?Qd/htrEff/1e6:0;
             const hydT=Thyd(W.Phi2a),margin=TmOut-hydT;
+            // §4.3-7 second check: seg 3 at the CK-102 inlet (Pm, T3); a warning only (the frozen hyd shape keeps {T, margin})
+            const hydT3=Thyd(W.Pma),margin3=T3-hydT3;
             const ws=[];
             if(flowLimited&&limiter==='CK-102')ws.push({t:'warn',msg:`CK-102 limits the rate: bean ${bean2}/64 passes ${fmt(Qp,2)} of ${fmt(Qg,2)} MMscf/d — open CK-102 or reduce the rate`});
             if(flowLimited&&limiter==='both')ws.push({t:'warn',msg:`CK-101 and CK-102 together pass ${fmt(Qp,2)} of ${fmt(Qg,2)} MMscf/d — open either choke or reduce the rate`});
@@ -129715,6 +129717,7 @@ window.calcWTS=function(){
                 ?`SITHP ${fmt(sitV,0)} psig above the 1,440 psig design pressure between the chokes: if CK-102 is closed or plugged the line and H-101 pass 1 see full SITHP`
                 :`SITHP ${fmt(sitV,0)} psig above the 1,440 psig design pressure of the line CK-101 → CK-102: if CK-102 is closed or plugged this line sees full SITHP; the coil is downstream of CK-102`});
             if(!noFlow&&W.Pm>DESIGN_P_CK2)ws.push({t:'warn',msg:`Pressure between the chokes ${fmt(W.Pm,0)} psig above the 1,440 psig design pressure — open CK-102 or reduce the rate`});
+            if(!noFlow&&margin3<10)ws.push({t:'warn',msg:`Hydrate margin at the CK-102 inlet ${fmt(margin3,1)} °F (hydrate ${fmt(hydT3,0)} °F at ${fmt(W.Pm,0)} psig)`});
             if(!noFlow&&margin<10)ws.push({t:'warn',msg:`Hydrate margin at the CK-102 outlet ${fmt(margin,1)} °F (hydrate ${fmt(hydT,0)} °F at ${fmt(W.Phi2,0)} psig)`});
             return {v:1,bean:bean2,pos:ck2Pos,Cd:Cd_ck,skipped:false,note:'',
                 regime,noFlow,flowLimited,limiter,QmaxMMscfd:Qp,Pin:W.Pm,Pout:W.Phi2,dP:W.Pm-W.Phi2,dTjt:dT2,Tin:TmIn,Tout:TmOut,
@@ -129877,7 +129880,8 @@ window.calcWTS=function(){
         inputs:{Pwh,Twh,Qg,Qo,Qw,SGg,API,bean,Cd:Cd_ck,Thtr,htrEff,bypass,Psep,Cfac,eps:epsIn},
         heater:{Tin:Thi,Tout:Tho,dutyMMBtu:QMM},choke:{Pin:Pci,Pout:Pco,ratio:pratio,Qmax:Qcap,dTjt},
         flow};                                                      // additive fields only
-    paintCtx.flow=flow; wtsRC=paintCtx; wtsPaint(paintCtx,wtsRig);  // the last rig-up 38 handed over (null: the v3.3.1 view)
+    paintCtx.flow=flow; wtsRC=paintCtx;
+    try{wtsPaint(paintCtx,wtsRig);}catch(e){console.warn('[WTS] results',e);}  // the last rig-up 38 handed over (null: the v3.3.1 view); the wts:calc dispatch always runs
     try{document.dispatchEvent(new CustomEvent('wts:calc',{detail:window.WTS_lastCalc}));}catch(_){}
 };
 // ── v3.3.3 display of the rig-dependent result rows (docs/SIM-FOLLOWUP-PLAN.md §4.5, D2) ──

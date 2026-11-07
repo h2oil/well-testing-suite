@@ -120,6 +120,10 @@ module.exports = [
       const cold = flowOf({ wts_bean2: '48', wts_Twh: '60' }).flow.ck2;
       assert.ok(cold.hyd.margin < 10 && warnHas(cold, X.WARN_TEXTS.ck2Hydrate), 'hydrate margin ' + cold.hyd.margin);
       assert.ok(!warnHas(b48, X.WARN_TEXTS.ck2Hydrate) && b48.hyd.margin > 10, 'defaults: no hydrate warning');
+      // §4.3-7 second check: seg 3 at the CK-102 inlet, Thyd(Pm) against T3 (a warning; the frozen hyd shape is the outlet)
+      const inRe = /^Hydrate margin at the CK-102 inlet -?[\d,.]+ °F \(hydrate [\d,.]+ °F at [\d,.]+ psig\)$/;
+      assert.ok(cold.warnings.some((w) => inRe.test(w.msg)), 'cold: inlet hydrate warning: ' + cold.warnings.map((w) => w.msg).join(' | '));
+      assert.ok(!b48.warnings.some((w) => /CK-102 inlet/.test(w.msg)), 'defaults: no inlet hydrate warning');
       // the base never carries the new texts
       const base = flowOf({ wts_bean2: '32' }).flow;
       const all = Object.keys(X.WARN_TEXTS).map((k) => X.textRe(X.WARN_TEXTS[k]));
