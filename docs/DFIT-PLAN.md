@@ -3644,13 +3644,31 @@ for soundness before recording them; none was reverted.
   (4) The tangent after an upward departure is the vertex of dP/dG: the line through the origin touches y = G·dP/dG where
   y′ = y/G, i.e. d(dP/dG)/dG = 0, so the touch point **is** the maximum of dP/dG — exact, not an approximation; a flat top longer than
   0.5 ln units keeps the §4.7 plateau-end rule. (5) The family band adds the voting pick's own se in quadrature — conservative
-  (never narrower). **Open (3.4b, WP8):** on gradual-decline signatures (the reservoir-controlled or propagating mini-model records of
-  `dfit-integration` I11 / I12, dP/dG falling ≈ 40 % before closure) the F1 compliance and F2 tangent picks still land at G ≈ 0.8
-  while the log-log departure finds the true closure; the classifier then reports PDL. The fix belongs to the calibrated
-  consensus (a κ_exp-aware departure test), not to a threshold change.
+  (never narrower).
+- **§4.7 abrupt break (integration fix).** The break is located in the **first** of the steep intervals (walking back from the
+  steepest while the interval before still falls ≥ 3 × the early slope) and read at the centre of that interval on the pre-closure
+  line, se = half-width/√3. Reason: on an exact Carter after-closure line the slope keeps growing for a few samples after closure, so
+  the steepest interval lies one sample past it, and its start pressure is already after-closure (reference demo: 6,936.8 psia →
+  7,002.6, truth 7,000).
+- **§4.7 reservoir-controlled decline (integration fix; was open).** A downward first departure followed by a stiffening of dP/dG
+  by ≥ 30 % is reservoir-controlled (matrix) leak-off, not closure: dP/dG falls with p − p_r (the 28–40 % of §4.11). The compliance
+  departure is then searched upward from the declining trend (the G·dP/dG line over the last 0.7 ln units before the dP/dG minimum,
+  starting one Bourdet window before it), and the hinge carries a u² base term (`closedForm.matrixDecline`). `dfit-integration`
+  I11 (matrix): 6,998.3 psia, single (was 7,569); I12 (contact): F1 7,002.2 / F2 6,736, range (truth 7,000 / 6,301; was 7,582).
+- **§4.3 events (integration fix).** The pump start is read from the first sample above the pre-pump level (a sample still at that
+  level puts the onset at the end of the rate bracket). The last pumping sample is taken from the pressure when the largest drop
+  within the next three samples follows a sample that has not fallen (a forward-held rate column writes q = 0 at the shut-in sample);
+  the volume carries the last rate to it. Reference demo tp 5.63 min against the true 5.65 (was 5.83); I14 V_i 25.00 bbl (was 24.32).
+  I14 then recovers A_f·c_f, xf and R_vis 2.8 % low (limit 3 %): the remainder is the ramp V_w·c_w, 1 % high because the model's
+  initial 1 ft fracture takes fluid during the ramp, amplified by R_vis 0.26 in A_f·c_f = C_sys − V_w·c_w.
 - **§4.11 κ_exp.** The coarse run is 58's `'prescribed'` mode with the frac candidate's geometry `{Ap = A_f, c_f, α, r_p, tp}` and a
   fully reservoir-controlled leak-off (CL with w_c = 1); without a geometry or p_r the quasi-static form is used, and without 58 too.
-  57 passes the consensus, the ISIP, the well and p_r (C1 p_i, else the p_i-gradient prior at the datum) to the classifier.
+  The model is read up to its own closure when it closes before the data's G_c, on the last model interval ending there (an interval
+  straddling the closure read the after-closure slope: +345 % instead of −31 %). W ends at the tangent G when that lies after the
+  closure candidate (§4.11 as written), so a closure range's stiffening is part of κ. p_r (57): C1 p_i, else the p_i-gradient prior,
+  else the injected fluid's hydrostatic at the datum (assumed, said in the evidence); after the ACA the classifier runs once more with
+  the after-closure p_i when that is labelled high or medium (`classification.prSource` 'well' | 'prior' | 'hydrostatic' |
+  'aca-pi').
 - **§4.4 ISIP acceptance.** 56 accepts the wave ISIP on `hammerQuick`'s own §4.4 verdict (`bleed.fitted`, `upper:false`, `bleed.dEnd`).
   57 runs the step tests first and passes the column, q_shut, V_w·c_w, tp, the valve closing time (`ds.meta.tCloseS`) and the
   step-down `{b, β, q_t}` — or `fitBleed:true` without a step-down — to `hammerQuick`, and builds the `bleedOff` law used by the ISIP
@@ -3659,6 +3677,10 @@ for soundness before recording them; none was reverted.
   channel, records `applied.depthFixPsi` and a `DEPTH_FIX` flag, and then skips the constant-gradient gauge-to-datum shift. A surface
   primary channel is converted with `WTS_wellbore.convert`'s own contract (column, fluid, temperature, atmPsia, channel 'p'), which
   gives the P10–P90 band and the vacuum time.
+- **§4.12 p_i bracket allowance.** Each bracket edge (Cartesian, impulse, derivative) is widened outward by 2 % of its distance from
+  the last pressure (`BR_TOL`). Reason: the edges are exact for a Carter source; a reservoir-controlled history moves the late
+  intercepts by about 1 % of the remaining Δp (I11: the F_L line fits 27–81 h with σ 0.2 psi and extrapolates to 4,505.6 psia against
+  the model's 4,500, p_end 4,989). On a radial record (small Δp) the change is a fraction of a psi.
 - **§6.6 rank correlation.** A Gaussian copula replaces Iman–Conover for the φ–c_t pair: with ρ_N = 2·sin(π·r_s/6) in normal space the
   Spearman coefficient of the drawn pair is exactly r_s (−0.3 by default) for any monotone marginals, which is the property
   Iman–Conover was chosen for. (The WP3 code used r_s directly as ρ_N, giving −0.287; corrected at integration.)
@@ -3675,10 +3697,24 @@ for soundness before recording them; none was reverted.
 
 **Demos and budgets**
 
+- **Surface-gauge demo and §4.2.** The demo's surface channel is the fixed-point inverse of `WTS_wellbore.convert` for the
+  reference column (ρ(p,T), the displaced temperature model with τ_T 2 h, pipe friction while pumping), so a converted analysis
+  recovers the bottomhole record to the gauge noise (closure 6,999.9 against 7,002.6 bottomhole); the constant-gradient column plus
+  warm-back stays as the fallback without the wellbore engine. Its inputs carry the displaced model with a 1–4 h τ band, and its
+  p_r is re-solved for that column (3,235.0 psia: vacuum 31 h after shut-in; 3,323.9 with the fallback column). Reason: the constant
+  0.438 psi/ft column is ≈ 40 psi off the ρ(p,T) column (§4.2) and drifts with the warm-back, which moved the converted closure by
+  196 psi.
+- **34 semilog recompute in DFIT mode.** The semilog listener defers its recompute while `PRiSM.mode === 'dfit'` and runs it on the
+  next change to another mode (the IARF search on every DFIT dataset commit and C1 write took ≈ 0.3 s and is neither shown nor
+  reported in DFIT mode).
 - **Appendix A / §4.21 reference demo.** The demo's tp is 5.65 min (main stage plus the step-down), not the 5.0 min of the §4.21
   table; Δt_c, CL, Γ, k_CL and G of the demo use this tp (stated in `ds.meta.note`). The §4.21 numbers stay the FIX.ds numbers.
 - **Budgets measured at integration** (Linux container, one file at a time, wall clock incl. the app load): `dfit-closure` 4.4 s for
-  16 tests (≤ 4 s planned), `dfit-integration` 12.2 s for 17 tests (≤ 8 s planned), `dfit-ui` 7.4 s, `dfit-hooks` 4.3 s for 14,
+  16 tests (≤ 4 s planned), `dfit-integration` 12.2 s for 17 tests at the first integration and ≈ 10.2 s after the engine cuts of the
+  second round (≤ 8 s planned: the leak-plot bootstrap's IRLS without the finiteness filter and with selection medians, the
+  per-draw finiteness check of the uncertainty propagator done once per context, the deferred semilog recompute; what remains is
+  eight demo analyses on cold app contexts — ≈ 0.35–0.55 s each, the stability grid ≈ 0.15 s of it — the Tab-7 render and the reload
+  and project tests), `dfit-ui` 7.4 s, `dfit-hooks` 4.3 s for 14,
   `dfit-synth` 3.9 s for 7, `dfit-leakfit` 3.9 s for 8; the 17 DFIT files total ≈ 55 s for 225 tests run file by file and 46 s in one `--html --integration --file dfit-` run (≤ 60 s planned). Accepted as
   exceptions for 3.4a.
 - **Demo binding (59).** `loadDemo` decides the dataset binding before the commit (the dataset-loaded listener binds an unbound test

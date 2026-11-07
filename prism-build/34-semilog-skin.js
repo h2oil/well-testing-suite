@@ -1534,9 +1534,14 @@
     function _installListeners() {
         if (typeof G.addEventListener !== 'function' || G.__prismSemilogListeners) return;
         G.__prismSemilogListeners = true;
+        // in DFIT mode the semilog result is neither shown nor reported (an injection + falloff record): the recompute is
+        // deferred to the next change to another mode instead of running an IARF search on every DFIT dataset or C1 write
+        var pending = false;
         function recompute() {
             var ds = G.PRiSM_dataset;
             if (!ds || !ds.t || !ds.t.length) return;
+            if (G.PRiSM && G.PRiSM.mode === 'dfit') { pending = true; return; }
+            pending = false;
             var st = _state();
             var o = {};
             var so = (st.semilog && st.semilog.opts) || {};
@@ -1546,6 +1551,7 @@
         }
         G.addEventListener('prism:dataset-loaded', recompute);
         G.addEventListener('prism:well-changed', recompute);
+        G.addEventListener('prism:mode-changed', function () { if (pending && !(G.PRiSM && G.PRiSM.mode === 'dfit')) recompute(); });
     }
 
     // ── Public API ──────────────────────────────────────────────────

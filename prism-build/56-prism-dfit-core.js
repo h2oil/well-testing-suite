@@ -994,6 +994,18 @@
             ts = overrides.ts; src.ts = 'user';
             iS = 0; for (i = 0; i < n; i++) if (t[i] <= ts) iS = i;
         }
+        // the last pumping sample from the pressure (§4.3: the largest negative pressure difference between the last pumping and
+        // the first falloff sample): a logger that writes the rate as the value from its time stamp on (forward-held) reports
+        // q = 0 at the shut-in sample while the pressure there is still the pumping pressure. When the largest drop within the
+        // next three samples comes after a sample that has not fallen, that sample is the last pumping one; the rate arrays
+        // keep iQ (the last sample with q > 0) and the volume carries the last rate up to it.
+        var iQ = iS;
+        if (src.ts === 'auto' && hasQ) {
+            var kD = iS, dBest = -INF, thrD = Math.max(5 * sig, 1);
+            for (i = iS; i <= Math.min(n - 2, iS + 3); i++) { var ddp = p[i] - p[i + 1]; if (ddp > dBest) { dBest = ddp; kD = i; } }
+            var flat = true; for (i = iS + 1; i <= kD; i++) if (p[i] < p[i - 1] - thrD) flat = false;
+            if (kD > iS && flat && dBest > thrD) { iS = kD; ts = t[kD]; }
+        }
         // shut-in refined to sub-sample resolution by the water-hammer onset when a high-rate window gives one
         var tsRefined = false;
         if (src.ts === 'auto' && _fin(opts.hammerOnset) && iS + 1 < n && opts.hammerOnset >= t[iS] && opts.hammerOnset < t[iS + 1]) { ts = opts.hammerOnset; tsRefined = true; }
@@ -1011,8 +1023,8 @@
         if (hasQ) {
             // last stable rate: median of the pumping samples in the last 20 % of the cycle that lie within 5 % of the final run
             var runs = [], r0 = i0c;
-            for (i = i0c + 1; i <= iS + 1; i++) {
-                if (i > iS || Math.abs(q[i] - q[r0]) > 0.01 * Math.max(q[r0], 1e-9)) { runs.push({ a: r0, b: i - 1, q: _median(q.slice(r0, i)) }); r0 = i; }
+            for (i = i0c + 1; i <= iQ + 1; i++) {
+                if (i > iQ || Math.abs(q[i] - q[r0]) > 0.01 * Math.max(q[r0], 1e-9)) { runs.push({ a: r0, b: i - 1, q: _median(q.slice(r0, i)) }); r0 = i; }
             }
             var lastRun = runs[runs.length - 1];
             qLast = lastRun.q;
@@ -1034,14 +1046,15 @@
         // ramp-down: time with q below 95 % of q_last before shut-in, as a fraction of tp
         var tp = ts - tStart, rampDown = 0;
         if (hasQ && qLast > 0) {
-            var iR = iS; while (iR > i0c && q[iR] < 0.95 * qLast) iR--;
+            var iR = iQ; while (iR > i0c && q[iR] < 0.95 * qLast) iR--;
             rampDown = tp > 0 ? _clampN((ts - t[iR]) / tp, 0, 1) : 0;
             if (rampDown > 0.1) warnings.push(_W('RAMP_DOWN', 'warn', 'The rate ramps down over ' + _f1(rampDown * 100, 0) + ' % of the pumping time: the instantaneous shut-in is not defined, the data-driven G is used.'));
         }
         // volumes (bbl)
         var Vi = 0;
         if (hasQ) {
-            for (i = i0c; i <= iS; i++) Vi += q[i] * (t[i] - (i === i0c ? tStart : t[i - 1])) * 60;
+            for (i = i0c; i <= iQ; i++) Vi += q[i] * (t[i] - (i === i0c ? tStart : t[i - 1])) * 60;
+            if (iS > iQ) Vi += q[iQ] * (t[iS] - t[iQ]) * 60;
             if (cycles.length > 1) {
                 var prev = cycles[cycles.length - 2];
                 var pBetween = INF; for (i = prev.i1; i < cyc.i0; i++) if (p[i] < pBetween) pBetween = p[i];

@@ -67,6 +67,25 @@
         return sorted[i] + (h - i) * (sorted[j] - sorted[i]);
     }
     function median(a) { var f = []; for (var i = 0; i < a.length; i++) if (fin(a[i])) f.push(a[i]); return f.length ? quant(sortNum(f), 0.5) : null; }
+    // the median of an array of finite numbers (no filtering) by selection in a typed buffer (O(n); the same value as
+    // quant(sortNum(a), 0.5)) — the IRLS loops of the leak-plot bootstrap
+    function _selectK(f, k, lo, hi) {
+        while (hi > lo) {
+            var pv = f[(lo + hi) >> 1], i = lo, j = hi;
+            while (i <= j) { while (f[i] < pv) i++; while (f[j] > pv) j--; if (i <= j) { var tmp = f[i]; f[i] = f[j]; f[j] = tmp; i++; j--; } }
+            if (k <= j) hi = j; else if (k >= i) lo = i; else return f[k];
+        }
+        return f[k];
+    }
+    function medianF(a, buf) {
+        var n = a.length; if (!n) return null;
+        var f = buf && buf.length === n ? buf : new Float64Array(n), i;
+        for (i = 0; i < n; i++) f[i] = a[i];
+        var h = (n - 1) * 0.5, k = Math.floor(h), v = _selectK(f, k, 0, n - 1);
+        if (h === k) return v;
+        var w = Infinity; for (i = k + 1; i < n; i++) if (f[i] < w) w = f[i];      // after selection f[k+1..] ≥ f[k]: the next order statistic
+        return v + 0.5 * (w - v);
+    }
     function mean(a) { var s = 0, n = 0; for (var i = 0; i < a.length; i++) if (fin(a[i])) { s += a[i]; n++; } return n ? s / n : null; }
     function wmedian(vals, ws) {
         var it = []; for (var i = 0; i < vals.length; i++) if (fin(vals[i]) && pos(ws[i])) it.push([vals[i], ws[i]]);
@@ -1052,24 +1071,35 @@
             var sigY = idx.map(function (j, k) { var sd = sigma > 0 ? sigma / (Math.SQRT2 * LB) : 0; return sd / (x[j] * Math.abs(PS[k].df)); });
             var drift = fin(ctx.driftSpec) ? ctx.driftSpec : 0.02, sd_ = Math.max(drift, 1e-6) / 24;     // psi/h
             var noiseY = median(sigY) || 0;
-            function fitW(Yv, wts) {
-                var A = [[0, 0, 0], [0, 0, 0], [0, 0, 0]], b = [0, 0, 0], r, c, k;
-                for (k = 0; k < Yv.length; k++) { var w = wts[k]; for (r = 0; r < 3; r++) { b[r] += w * X[k][r] * Yv[k]; for (c = 0; c < 3; c++) A[r][c] += w * X[k][r] * X[k][c]; } }
-                return { A: A, b: b };
+            var X0 = X.map(function (row) { return row[0]; }), X1 = X.map(function (row) { return row[1]; }), X2 = X.map(function (row) { return row[2]; });
+            function fitW(Yv, wts) {     // weighted normal equations (the same sums, flat arrays)
+                var a00 = 0, a01 = 0, a02 = 0, a11 = 0, a12 = 0, a22 = 0, b0 = 0, b1 = 0, b2 = 0, k;
+                for (k = 0; k < Yv.length; k++) {
+                    var w = wts[k], x0 = X0[k], x1 = X1[k], x2 = X2[k], y = Yv[k];
+                    b0 += w * x0 * y; b1 += w * x1 * y; b2 += w * x2 * y;
+                    a00 += w * x0 * x0; a01 += w * x0 * x1; a02 += w * x0 * x2; a11 += w * x1 * x1; a12 += w * x1 * x2; a22 += w * x2 * x2;
+                }
+                return { A: [[a00, a01, a02], [a01, a11, a12], [a02, a12, a22]], b: [b0, b1, b2] };
             }
+            // Huber IRLS; the residuals are finite by construction, so the medians skip the finiteness filter (the same values,
+            // a native numeric sort of a typed buffer: the bootstrap below calls this 120 times)
+            var nY = Y.length, bufR = new Float64Array(nY), resB = new Array(nY), absB = new Array(nY);
             function solveFit(Yv, sres) {
-                var wts = Yv.map(function () { return 1; }), beta = null, inv = null, s2 = 1, it, k;
+                var wts = [], beta = null, inv = null, s2 = 1, it, k;
+                for (k = 0; k < Yv.length; k++) wts.push(1);
                 for (it = 0; it < 12; it++) {
                     var NE = fitW(Yv, wts), s = Math.max(sres, 1e-12);
                     NE.A[2][2] += 1 / (sd_ * sd_) * s * s;           // prior pseudo-observation on d, scaled to the residual variance
                     var sol = solve(NE.A, NE.b, true); if (!sol) return null;
                     beta = sol.x; inv = sol.inv;
-                    var res = Yv.map(function (y, j) { return y - (beta[0] * X[j][0] + beta[1] * X[j][1] + beta[2] * X[j][2]); });
-                    var med = median(res), mad = median(res.map(function (r) { return Math.abs(r - med); })) * 1.4826;
+                    for (k = 0; k < nY; k++) resB[k] = Yv[k] - (beta[0] * X0[k] + beta[1] * X1[k] + beta[2] * X2[k]);
+                    var med = medianF(resB, bufR);
+                    for (k = 0; k < nY; k++) absB[k] = Math.abs(resB[k] - med);
+                    var mad = medianF(absB, bufR) * 1.4826;
                     var noise = noiseY;
                     s2 = Math.max(mad, noise, 1e-9 * Math.abs(beta[0] || 1));
-                    var c = 1.345 * s2, nw = res.map(function (r) { var a = Math.abs(r); return a <= c ? 1 : c / a; });
-                    var dw = 0; for (k = 0; k < nw.length; k++) dw = Math.max(dw, Math.abs(nw[k] - wts[k]));
+                    var c = 1.345 * s2, dw = 0, nw = new Array(nY);
+                    for (k = 0; k < nY; k++) { var a = Math.abs(resB[k]); nw[k] = a <= c ? 1 : c / a; dw = Math.max(dw, Math.abs(nw[k] - wts[k])); }
                     wts = nw; sres = s2;
                     if (dw < 1e-4) break;
                 }
@@ -1214,7 +1244,8 @@
         return C.G[lo] + f * (C.G[hi] - C.G[lo]);
     }
     function _dtDOf(C, Gc) {
-        var n = C.G.length, ok = n && C.dtD.every(fin);
+        if (C._dtDok == null) C._dtDok = !!(C.G.length && C.dtD.every(fin));     // once per context (it was re-checked per draw)
+        var n = C.G.length, ok = C._dtDok;
         if (ok && Gc >= C.G[0] && Gc <= C.G[n - 1]) return interp(C.G, C.dtD, Gc);
         var lo = Math.log(1e-9), hi = Math.log(1e7), G05 = function (d) { return 4 / Math.PI * ((1 + d) * Math.asin(1 / Math.sqrt(1 + d)) + Math.sqrt(d) - Math.PI / 2); };
         for (var i = 0; i < 100; i++) { var m = 0.5 * (lo + hi); if (G05(Math.exp(m)) < Gc) lo = m; else hi = m; }
@@ -2630,12 +2661,21 @@
             if (cands.length) { var wi = _call('PRiSM_dfit_whatIf', [cands, r.derivs, fctx(null, null)], P.W, 'WHATIF_FAILED'); r.whatIf = arrOk(wi) ? wi.filter(function (x) { return x && x.ok !== false && x.label; }) : []; }
             // integration: the classifier reads G_c from the frac candidate (gcSource 'frac'), the consensus as a fallback, and p_r for
             // κ_exp (the coarse reservoir-controlled model run of 58): C1 p_i, else the p_i-gradient prior at the datum
-            var wlC = P.well || {}, prC = fin(wlC.pi) ? wlC.pi : null, pgC = P.inputs.priors && P.inputs.priors.piGrad;
-            if (prC === null && fin(pgC) && pgC > 0 && fin(P.inputs.datumTvd) && P.inputs.datumTvd > 0) prC = pgC * P.inputs.datumTvd;
+            var wlC = P.well || {}, prC = fin(wlC.pi) ? wlC.pi : null, pgC = P.inputs.priors && P.inputs.priors.piGrad, prSrc = prC !== null ? 'well' : null;
+            if (prC === null && fin(pgC) && pgC > 0 && fin(P.inputs.datumTvd) && P.inputs.datumTvd > 0) { prC = pgC * P.inputs.datumTvd; prSrc = 'prior'; }
+            // nothing known: a normally pressured reservoir (the injected fluid's hydrostatic at the datum, as the CL-to-k
+            // conversion assumes, §4.10), replaced after the ACA by the after-closure p_i when that is labelled high or medium
+            var rhoC = P.inputs.fluid && fin(P.inputs.fluid.rhoPpg) ? P.inputs.fluid.rhoPpg : 8.43;
+            if (prC === null && fin(P.inputs.datumTvd) && P.inputs.datumTvd > 0) { prC = 0.052 * rhoC * P.inputs.datumTvd; prSrc = 'hydrostatic'; }
+            P.prSrc = prSrc;
             var frC = r.frac.chosen || _firstFamily(r.frac.byFamily);
             P.clsCtx = { frac: frC, consensus: r.consensus || r.consensusLite || null, isip: r.isip, pr: prC, well: P.well,
                 curvExpRun: null, VwCwTheory: null, VwCwMeasured: r.events ? r.events.VwCwMeasured : null, events: r.events, inputs: P.inputs };
             r.classification = _call('PRiSM_dfit_classify', [r.derivs, P.clsCtx], P.W, 'CLASSIFY_FAILED');
+            if (r.classification && r.classification.ok !== false) {
+                r.classification.prSource = prSrc;
+                if (prSrc === 'hydrostatic' && arrOk(r.classification.evidence)) r.classification.evidence.push(_txt('p_r for the expected decline is assumed hydrostatic at the datum, ' + fmt(prC, 0) + ' psia (no p_i known).'));
+            }
         } },
         { id: 'aca', fn: function (P) {
             var r = P.run;
@@ -2655,7 +2695,7 @@
                 // after-closure p_i (label high or medium) is the reservoir pressure of this test, so the classifier runs once
                 // more with it and says where p_r came from
                 var piA = a.pi;
-                if (P.clsCtx && !fin(P.clsCtx.pr) && piA && fin(piA.value) && (piA.label === 'high' || piA.label === 'medium') && r.classification && r.classification.ok !== false) {
+                if (P.clsCtx && (P.prSrc === 'hydrostatic' || !fin(P.clsCtx.pr)) && piA && fin(piA.value) && (piA.label === 'high' || piA.label === 'medium') && r.classification && r.classification.ok !== false) {
                     var cc2 = {}; for (var kc in P.clsCtx) cc2[kc] = P.clsCtx[kc];
                     cc2.pr = piA.value;
                     var cl2 = _call('PRiSM_dfit_classify', [r.derivs, cc2], P.W, 'CLASSIFY_FAILED');
